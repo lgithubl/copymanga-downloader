@@ -502,14 +502,6 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
             }
         };
 
-        if let Err(err) = comic.save_metadata(&app) {
-            let err_title = format!("更新库存过程中，保存漫画`{comic_title}`元数据失败，已跳过");
-            let message = err.to_message();
-            tracing::error!(err_title, message);
-            sleep(Duration::from_secs(interval_sec)).await;
-            continue;
-        }
-
         let has_downloaded_group = comic.comic.groups.iter().any(|(_, chapter_infos)| {
             chapter_infos
                 .iter()
