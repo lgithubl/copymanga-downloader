@@ -8,6 +8,7 @@ mod events;
 mod export;
 mod extensions;
 mod logger;
+mod metadata;
 mod responses;
 mod types;
 mod utils;
@@ -55,6 +56,7 @@ pub fn run() {
             resume_download_task,
             delete_download_task,
             save_metadata,
+            migrate_metadata_to_metadata_dir,
             get_downloaded_comics,
             export_cbz,
             export_pdf,

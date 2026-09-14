@@ -1,16 +1,12 @@
 use std::{collections::HashMap, io::Cursor, path::PathBuf};
 
-use eyre::{OptionExt, WrapErr};
+use eyre::WrapErr;
 use image::ImageReader;
 use regex_lite::{Captures, Regex};
 use tauri::AppHandle;
 use tracing::instrument;
-use walkdir::WalkDir;
 
-use crate::{
-    extensions::{AppHandleExt, WalkDirEntryExt},
-    types::Comic,
-};
+use crate::{extensions::AppHandleExt, metadata, types::Comic};
 
 pub fn filename_filter(s: &str) -> String {
     s.chars()
@@ -40,38 +36,15 @@ pub fn get_dimensions(img_data: &[u8]) -> eyre::Result<(u32, u32)> {
 #[instrument(level = "error", skip_all)]
 pub fn create_path_word_to_dir_map(app: &AppHandle) -> eyre::Result<HashMap<String, PathBuf>> {
     let mut path_word_to_dir_map: HashMap<String, PathBuf> = HashMap::new();
-    let download_dir = app.get_config().read().download_dir.clone();
-    if !download_dir.exists() {
-        return Ok(path_word_to_dir_map);
-    }
-
-    for entry in WalkDir::new(&download_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-        if !entry.is_comic_metadata() {
+    for path in metadata::comic_metadata_paths(app) {
+        let comic = Comic::from_metadata(app, &path)
+            .wrap_err(format!("读取漫画元数据`{}`失败", path.display()))?;
+        let Some(comic_download_dir) = comic.comic_download_dir else {
             continue;
-        }
-
-        let metadata_str =
-            std::fs::read_to_string(path).wrap_err(format!("读取`{}`失败", path.display()))?;
-        let comic_json: serde_json::Value = serde_json::from_str(&metadata_str).wrap_err(
-            format!("将`{}`反序列化为serde_json::Value失败", path.display()),
-        )?;
-        let path_word = comic_json
-            .pointer("/comic/path_word")
-            .and_then(|path_word| path_word.as_str())
-            .ok_or_eyre(format!("`{}`没有`comic.path_word`字段", path.display()))?
-            .to_string();
-
-        let parent = path
-            .parent()
-            .ok_or_eyre(format!("`{}`没有父目录", path.display()))?;
-
+        };
         path_word_to_dir_map
-            .entry(path_word)
-            .or_insert(parent.to_path_buf());
+            .entry(comic.comic.path_word)
+            .or_insert(comic_download_dir);
     }
 
     Ok(path_word_to_dir_map)

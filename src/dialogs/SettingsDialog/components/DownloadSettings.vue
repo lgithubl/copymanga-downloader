@@ -1,12 +1,60 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useStore } from '../../../store.ts'
-import { NInput, NRadio, NRadioGroup, NTooltip, NConfigProvider, NPopover } from 'naive-ui'
+import { open } from '@tauri-apps/plugin-dialog'
+import { commands } from '../../../bindings.ts'
+import { NButton, NInput, NInputGroup, NRadio, NRadioGroup, NTooltip, NConfigProvider, NPopover, useMessage } from 'naive-ui'
 
 const store = useStore()
+const message = useMessage()
 
 const comicDirFmt = ref<string>(store.config?.comicDirFmt ?? '')
 const chapterDirFmt = ref<string>(store.config?.chapterDirFmt ?? '')
+
+async function selectMetadataDir() {
+  if (store.config === undefined) {
+    return
+  }
+
+  const selectedDirPath = await open({ directory: true })
+  if (selectedDirPath === null) {
+    return
+  }
+
+  store.config.metadataDir = selectedDirPath
+}
+
+function clearMetadataDir() {
+  if (store.config === undefined) {
+    return
+  }
+  store.config.metadataDir = ''
+}
+
+async function migrateMetadata() {
+  if (store.config === undefined || store.config.metadataDir === '') {
+    message.error('请先配置元数据目录')
+    return
+  }
+
+  const confirmed = window.confirm('确认迁移元数据？\n\n将从当前下载目录复制 元数据.json / 章节元数据.json 到独立元数据目录。\n不会删除旧文件。若目标文件已存在，将覆盖。')
+  if (!confirmed) {
+    return
+  }
+
+  const loadingMessage = message.loading('正在迁移元数据', { duration: 0 })
+  const result = await commands.migrateMetadataToMetadataDir()
+  loadingMessage.destroy()
+
+  if (result.status === 'error') {
+    console.error(result.error)
+    message.error('迁移元数据失败')
+    return
+  }
+
+  const { comics, chapters, skipped } = result.data
+  message.success(`迁移完成：漫画 ${comics} 个，章节 ${chapters} 个，跳过 ${skipped} 个`)
+}
 </script>
 
 <template>
@@ -30,6 +78,21 @@ const chapterDirFmt = ref<string>(store.config?.chapterDirFmt ?? '')
         </template>
       </n-tooltip>
     </n-radio-group>
+
+    <span class="font-bold mt-2">独立元数据目录</span>
+    <n-input-group>
+      <n-input
+        :value="store.config.metadataDir"
+        size="small"
+        readonly
+        placeholder="为空时使用旧模式，元数据保存在图片目录"
+        @click="selectMetadataDir" />
+      <n-button size="small" @click="selectMetadataDir">选择</n-button>
+      <n-button size="small" @click="clearMetadataDir">清空</n-button>
+      <n-button size="small" type="primary" :disabled="store.config.metadataDir === ''" @click="migrateMetadata">
+        迁移元数据
+      </n-button>
+    </n-input-group>
 
     <span class="font-bold mt-2">漫画目录格式</span>
     <n-tooltip placement="top" trigger="hover">

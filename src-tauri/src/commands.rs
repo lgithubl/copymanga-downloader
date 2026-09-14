@@ -13,15 +13,15 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_specta::Event;
 use tokio::time::sleep;
 use tracing::instrument;
-use walkdir::WalkDir;
 
 use crate::{
     config::Config,
     errors::{CommandError, CommandResult},
     events::UpdateDownloadedComicsEvent,
     export,
-    extensions::{AppHandleExt, EyreReportToMessage, WalkDirEntryExt},
+    extensions::{AppHandleExt, EyreReportToMessage},
     logger,
+    metadata::{self, MigrateMetadataResult},
     responses::{
         ChapterInGetChaptersRespData, GetChapterRespData, LoginRespData, UserProfileRespData,
     },
@@ -234,9 +234,9 @@ pub async fn get_favorite(
     skip_all,
     fields(comic_uuid = comic.comic.uuid, comic_title = comic.comic.name)
 )]
-pub fn save_metadata(comic: Comic) -> CommandResult<()> {
+pub fn save_metadata(app: AppHandle, comic: Comic) -> CommandResult<()> {
     comic
-        .save_metadata()
+        .save_metadata(&app)
         .map_err(|err| CommandError::from("保存元数据失败", err))?;
 
     Ok(())
@@ -246,22 +246,18 @@ pub fn save_metadata(comic: Comic) -> CommandResult<()> {
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
 #[instrument(level = "error", skip_all)]
-pub fn get_downloaded_comics(app: AppHandle) -> Vec<Comic> {
-    let config = app.get_config();
+pub fn migrate_metadata_to_metadata_dir(app: AppHandle) -> CommandResult<MigrateMetadataResult> {
+    metadata::migrate_to_metadata_dir(&app).map_err(|err| CommandError::from("迁移元数据失败", err))
+}
 
-    let download_dir = config.read().download_dir.clone();
+#[tauri::command(async)]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+#[instrument(level = "error", skip_all)]
+pub fn get_downloaded_comics(app: AppHandle) -> Vec<Comic> {
     // 遍历下载目录，获取所有元数据文件的路径和修改时间
     let mut metadata_path_and_modify_time_pairs = Vec::new();
-    for entry in WalkDir::new(&download_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-
-        if !entry.is_comic_metadata() {
-            continue;
-        }
-
+    for path in metadata::comic_metadata_paths(&app) {
         let metadata = match path
             .metadata()
             .map_err(eyre::Report::from)
@@ -290,14 +286,14 @@ pub fn get_downloaded_comics(app: AppHandle) -> Vec<Comic> {
             }
         };
 
-        metadata_path_and_modify_time_pairs.push((path.to_path_buf(), modify_time));
+        metadata_path_and_modify_time_pairs.push((path, modify_time));
     }
     // 按照文件修改时间排序，最新的排在最前面
     metadata_path_and_modify_time_pairs.sort_by(|(_, a), (_, b)| b.cmp(a));
 
     let mut downloaded_comics = Vec::new();
     for (metadata_path, _) in metadata_path_and_modify_time_pairs {
-        match Comic::from_metadata(&metadata_path) {
+        match Comic::from_metadata(&app, &metadata_path) {
             Ok(comic) => downloaded_comics.push(comic),
             Err(err) => {
                 let err_title = "获取已下载漫画的过程中遇到错误，已跳过";
@@ -506,6 +502,14 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
             }
         };
 
+        if let Err(err) = comic.save_metadata(&app) {
+            let err_title = format!("更新库存过程中，保存漫画`{comic_title}`元数据失败，已跳过");
+            let message = err.to_message();
+            tracing::error!(err_title, message);
+            sleep(Duration::from_secs(interval_sec)).await;
+            continue;
+        }
+
         let has_downloaded_group = comic.comic.groups.iter().any(|(_, chapter_infos)| {
             chapter_infos
                 .iter()
@@ -614,7 +618,7 @@ pub fn get_synced_comic(app: AppHandle, mut comic: Comic) -> CommandResult<Comic
         .map_err(|err| CommandError::from("同步Comic的字段失败", err))?;
 
     comic
-        .update_fields(&path_word_to_dir_map)
+        .update_fields(&app, &path_word_to_dir_map)
         .map_err(|err| CommandError::from("同步Comic的字段失败", err))?;
 
     Ok(comic)

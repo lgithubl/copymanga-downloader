@@ -221,7 +221,7 @@ fn create_group_cbz_files(
 
         // 更新章节导出状态
         chapter_info.is_cbz_exported = true;
-        chapter_info.save_metadata()?;
+        chapter_info.save_metadata(app)?;
 
         // 更新创建cbz的进度
         let current = created_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;

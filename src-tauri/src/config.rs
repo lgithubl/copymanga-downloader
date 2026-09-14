@@ -13,6 +13,7 @@ const DEFAULT_API_DOMAIN: &str = "api.copy202601.com";
 pub struct Config {
     pub token: String,
     pub download_dir: PathBuf,
+    pub metadata_dir: PathBuf,
     pub export_dir: PathBuf,
     pub api_domain_mode: ApiDomainMode,
     pub custom_api_domain: String,
@@ -92,6 +93,7 @@ impl Config {
         Config {
             token: String::new(),
             download_dir: app_data_dir.join("漫画下载"),
+            metadata_dir: PathBuf::new(),
             export_dir: app_data_dir.join("漫画导出"),
             api_domain_mode: ApiDomainMode::default(),
             custom_api_domain: DEFAULT_API_DOMAIN.to_string(),

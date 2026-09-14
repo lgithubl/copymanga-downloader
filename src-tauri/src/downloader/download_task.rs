@@ -134,7 +134,7 @@ impl DownloadTask {
 
     #[instrument(level = "error", skip_all)]
     async fn download_chapter(self: &Arc<Self>) {
-        if let Err(err) = self.comic.save_metadata() {
+        if let Err(err) = self.comic.save_metadata(&self.app) {
             let err_title = "保存元数据失败";
             let message = err.to_message();
             tracing::error!(err_title, message);
@@ -198,7 +198,7 @@ impl DownloadTask {
             return;
         }
 
-        if let Err(err) = self.chapter_info.save_metadata() {
+        if let Err(err) = self.chapter_info.save_metadata(&self.app) {
             let err_title = "保存章节元数据失败";
             let message = err.to_message();
             tracing::error!(err_title, message);

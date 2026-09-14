@@ -9,7 +9,7 @@ use specta::Type;
 use tauri::AppHandle;
 use tracing::instrument;
 
-use crate::{extensions::AppHandleExt, types::Comic, utils};
+use crate::{extensions::AppHandleExt, metadata, types::Comic, utils};
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -53,26 +53,35 @@ impl ChapterInfo {
             order = self.order
         )
     )]
-    pub fn save_metadata(&self) -> eyre::Result<()> {
+    pub fn save_metadata(&self, app: &AppHandle) -> eyre::Result<()> {
+        let metadata_path = if metadata::independent_metadata_enabled(app) {
+            metadata::new_chapter_metadata_path(app, self)
+        } else {
+            metadata::old_chapter_metadata_path(self)?
+        };
+        self.save_metadata_to_path(&metadata_path)
+    }
+
+    pub fn save_old_metadata(&self) -> eyre::Result<()> {
+        let metadata_path = metadata::old_chapter_metadata_path(self)?;
+        self.save_metadata_to_path(&metadata_path)
+    }
+
+    fn save_metadata_to_path(&self, metadata_path: &Path) -> eyre::Result<()> {
         let mut chapter_info = self.clone();
         // 将is_downloaded和chapter_download_dir字段设置为None
         // 这样能使这些字段在序列化时被忽略
         chapter_info.is_downloaded = None;
         chapter_info.chapter_download_dir = None;
 
-        let chapter_download_dir = self
-            .chapter_download_dir
-            .as_ref()
-            .ok_or_eyre("`chapter_download_dir`字段为`None`")?;
-        let metadata_path = chapter_download_dir.join("章节元数据.json");
-
-        std::fs::create_dir_all(chapter_download_dir)
-            .wrap_err(format!("创建目录`{}`失败", chapter_download_dir.display()))?;
+        if let Some(parent) = metadata_path.parent() {
+            std::fs::create_dir_all(parent)
+                .wrap_err(format!("创建目录`{}`失败", parent.display()))?;
+        }
 
         let chapter_json = serde_json::to_string_pretty(&chapter_info)
             .wrap_err("将ChapterInfo序列化为json失败")?;
-
-        std::fs::write(&metadata_path, chapter_json)
+        std::fs::write(metadata_path, chapter_json)
             .wrap_err(format!("写入文件`{}`失败", metadata_path.display()))?;
 
         Ok(())

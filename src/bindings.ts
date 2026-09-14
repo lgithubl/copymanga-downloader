@@ -118,6 +118,14 @@ async saveMetadata(comic: Comic) : Promise<Result<null, CommandError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async migrateMetadataToMetadataDir() : Promise<Result<MigrateMetadataResult, CommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("migrate_metadata_to_metadata_dir") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getDownloadedComics() : Promise<Comic[]> {
     return await TAURI_INVOKE("get_downloaded_comics");
 },
@@ -275,7 +283,7 @@ export type ComicInGetChapterRespData = { name: string; uuid: string; path_word:
 export type ComicInSearch = { name: string; alias: string | null; pathWord: string; cover: string; ban: number; author: AuthorRespData[]; popular: number; isDownloaded: boolean; comicDownloadDir: string }
 export type ComicStatus = "ongoing" | "completed"
 export type CommandError = { err_title: string; message: string }
-export type Config = { token: string; downloadDir: string; exportDir: string; apiDomainMode: ApiDomainMode; customApiDomain: string; downloadFormat: DownloadFormat; enableFileLogger: boolean; chapterConcurrency: number; chapterDownloadIntervalSec: number; imgConcurrency: number; imgDownloadIntervalSec: number; updateDownloadedComicsIntervalSec: number; comicDirFmt: string; chapterDirFmt: string; exportDirFmt: string; mergePdfFmt: string; createPdfConcurrency: number; enableMergePdf: boolean; 
+export type Config = { token: string; downloadDir: string; metadataDir: string; exportDir: string; apiDomainMode: ApiDomainMode; customApiDomain: string; downloadFormat: DownloadFormat; enableFileLogger: boolean; chapterConcurrency: number; chapterDownloadIntervalSec: number; imgConcurrency: number; imgDownloadIntervalSec: number; updateDownloadedComicsIntervalSec: number; comicDirFmt: string; chapterDirFmt: string; exportDirFmt: string; mergePdfFmt: string; createPdfConcurrency: number; enableMergePdf: boolean; 
 /**
  * 导出跳过模式
  */
@@ -327,6 +335,7 @@ export type LogLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type LogMetadata = { timestamp: string; level: LogLevel; fields: { [key in string]: JsonValue }; target: string; filename: string; line_number: number; span?: JsonValue; spans?: LogSpan[] }
 export type LogSpan = ({ [key in string]: null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue } }) & { name: string }
 export type LoginRespData = { token: string; user_id: string; username: string; nickname: string; avatar: string; datetime_created: string; ticket: number; reward_ticket: number; downloads: number; vip_downloads: number; reward_downloads: number; scy_answer: boolean }
+export type MigrateMetadataResult = { comics: number; chapters: number; skipped: number }
 export type Pagination<T> = { list: T[]; total: number; limit: number; offset: number }
 export type RestrictRespData = { value: number; display: string }
 export type SearchResult = Pagination<ComicInSearch>
