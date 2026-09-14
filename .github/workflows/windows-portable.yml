@@ -1,0 +1,58 @@
+name: Windows Portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - windows-portable-build
+
+env:
+  REPO_NAME: copymanga-downloader
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri app
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --no-bundle
+
+      - name: Create portable zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $releaseDir = "src-tauri/target/x86_64-pc-windows-msvc/release"
+          $artifactDir = "artifacts/${{ env.REPO_NAME }}_${version}_windows_x64_portable"
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          Copy-Item "$releaseDir/${{ env.REPO_NAME }}.exe" "$artifactDir/${{ env.REPO_NAME }}.exe"
+          $webviewLoader = Get-ChildItem $releaseDir -Filter WebView2Loader.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($webviewLoader) {
+            Copy-Item $webviewLoader.FullName "$artifactDir/WebView2Loader.dll"
+          }
+          Compress-Archive -Path $artifactDir -DestinationPath "artifacts/${{ env.REPO_NAME }}_${version}_windows_x64_portable.zip" -Force
+
+      - name: Upload portable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-portable
+          path: artifacts/*_windows_x64_portable.zip
