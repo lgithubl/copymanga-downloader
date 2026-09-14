@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:windows-x64-portable": "scripts/build-windows-x64-portable-macos.sh",
     "build:windows-x64-portable:console": "scripts/build-windows-x64-portable-macos.sh --console",
+    "build:windows-x64-portable:github": "scripts/build-windows-x64-portable-github-actions.sh",
     "preview": "vite preview",
     "tauri": "tauri"
   },
