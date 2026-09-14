@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use eyre::{OptionExt, WrapErr};
 use serde::{Deserialize, Serialize};
@@ -87,23 +84,11 @@ where
 }
 
 pub fn comic_metadata_paths(app: &AppHandle) -> Vec<PathBuf> {
-    let mut paths_by_path_word = HashMap::<String, PathBuf>::new();
-
     if independent_metadata_enabled(app) {
-        for path in scan_new_comic_metadata_paths(app) {
-            if let Ok(path_word) = read_comic_path_word(&path) {
-                paths_by_path_word.entry(path_word).or_insert(path);
-            }
-        }
+        return scan_new_comic_metadata_paths(app);
     }
 
-    for path in scan_old_comic_metadata_paths(app) {
-        if let Ok(path_word) = read_comic_path_word(&path) {
-            paths_by_path_word.entry(path_word).or_insert(path);
-        }
-    }
-
-    paths_by_path_word.into_values().collect()
+    scan_old_comic_metadata_paths(app)
 }
 
 pub fn chapter_metadata_paths(
@@ -111,45 +96,32 @@ pub fn chapter_metadata_paths(
     comic_download_dir: &Path,
     comic_path_word: &str,
 ) -> Vec<PathBuf> {
-    let mut paths_by_chapter_uuid = HashMap::<String, PathBuf>::new();
-
     if independent_metadata_enabled(app) {
         let chapters_dir = metadata_dir(app)
             .join("comics")
             .join(comic_path_word)
             .join("chapters");
-        if chapters_dir.exists() {
-            for entry in WalkDir::new(chapters_dir)
-                .into_iter()
-                .filter_map(Result::ok)
-            {
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-                let path = entry.path().to_path_buf();
-                if let Ok(chapter_uuid) = read_chapter_uuid(&path) {
-                    paths_by_chapter_uuid.entry(chapter_uuid).or_insert(path);
-                }
-            }
+        if !chapters_dir.exists() {
+            return Vec::new();
         }
+        return WalkDir::new(chapters_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+            .map(|entry| entry.path().to_path_buf())
+            .collect();
     }
 
     if comic_download_dir.exists() {
-        for entry in WalkDir::new(comic_download_dir)
+        WalkDir::new(comic_download_dir)
             .into_iter()
             .filter_map(Result::ok)
-        {
-            if !entry.is_chapter_metadata() {
-                continue;
-            }
-            let path = entry.path().to_path_buf();
-            if let Ok(chapter_uuid) = read_chapter_uuid(&path) {
-                paths_by_chapter_uuid.entry(chapter_uuid).or_insert(path);
-            }
-        }
+            .filter(WalkDirEntryExt::is_chapter_metadata)
+            .map(|entry| entry.path().to_path_buf())
+            .collect()
+    } else {
+        Vec::new()
     }
-
-    paths_by_chapter_uuid.into_values().collect()
 }
 
 #[instrument(level = "error", skip_all)]
