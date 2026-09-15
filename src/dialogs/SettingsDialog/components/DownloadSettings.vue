@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useStore } from '../../../store.ts'
 import { open } from '@tauri-apps/plugin-dialog'
 import { commands } from '../../../bindings.ts'
-import { NButton, NInput, NInputGroup, NRadio, NRadioGroup, NTooltip, NConfigProvider, NPopover, useMessage } from 'naive-ui'
+import { NButton, NCheckbox, NInput, NInputGroup, NRadio, NRadioGroup, NTooltip, NConfigProvider, NPopover, useMessage } from 'naive-ui'
 
 const store = useStore()
 const message = useMessage()
@@ -93,6 +93,10 @@ async function migrateMetadata() {
         迁移元数据
       </n-button>
     </n-input-group>
+
+    <n-checkbox class="mt-2 w-fit" v-model:checked="store.config.enablePickedComicSyncGuard">
+      保护详情页同步
+    </n-checkbox>
 
     <span class="font-bold mt-2">漫画目录格式</span>
     <n-tooltip placement="top" trigger="hover">

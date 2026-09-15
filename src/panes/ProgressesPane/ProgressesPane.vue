@@ -62,7 +62,11 @@ onMounted(async () => {
 
         if (state === 'Completed') {
           progressData.chapterInfo.isDownloaded = true
-          await syncPickedComic(progressData)
+          if (store.config?.enablePickedComicSyncGuard) {
+            await syncPickedComicGuarded(progressData)
+          } else {
+            await syncPickedComic()
+          }
           await syncComicInSearch(progressData)
           await syncComicInFavorite(progressData)
         }
@@ -96,7 +100,20 @@ onUnmounted(() => {
   unListenDownloadEvent?.()
 })
 
-async function syncPickedComic(progressData: ProgressData) {
+async function syncPickedComic() {
+  if (store.pickedComic === undefined) {
+    return
+  }
+  const result = await commands.getSyncedComic(store.pickedComic)
+  if (result.status === 'error') {
+    console.error(result.error)
+    return
+  }
+  // TODO: 没必要 {...}，直接 Object.assign(store.pickedComic, result.data) 就行了
+  Object.assign(store.pickedComic, { ...result.data })
+}
+
+async function syncPickedComicGuarded(progressData: ProgressData) {
   const pickedComic = store.pickedComic
   const taskComicPathWord = progressData.comic.comic.path_word
   if (pickedComic === undefined || pickedComic.comic.path_word !== taskComicPathWord) {
