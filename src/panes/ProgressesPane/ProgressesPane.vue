@@ -62,7 +62,7 @@ onMounted(async () => {
 
         if (state === 'Completed') {
           progressData.chapterInfo.isDownloaded = true
-          await syncPickedComic()
+          await syncPickedComic(progressData)
           await syncComicInSearch(progressData)
           await syncComicInFavorite(progressData)
         }
@@ -96,13 +96,18 @@ onUnmounted(() => {
   unListenDownloadEvent?.()
 })
 
-async function syncPickedComic() {
-  if (store.pickedComic === undefined) {
+async function syncPickedComic(progressData: ProgressData) {
+  const pickedComic = store.pickedComic
+  const taskComicPathWord = progressData.comic.comic.path_word
+  if (pickedComic === undefined || pickedComic.comic.path_word !== taskComicPathWord) {
     return
   }
-  const result = await commands.getSyncedComic(store.pickedComic)
+  const result = await commands.getSyncedComic(pickedComic)
   if (result.status === 'error') {
     console.error(result.error)
+    return
+  }
+  if (store.pickedComic?.comic.path_word !== taskComicPathWord) {
     return
   }
   // TODO: 没必要 {...}，直接 Object.assign(store.pickedComic, result.data) 就行了
