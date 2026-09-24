@@ -56,6 +56,7 @@ const els = {
   downloadedChapters: document.querySelector('#downloaded-chapters'),
   viewerTitle: document.querySelector('#viewer-title'),
   viewerMeta: document.querySelector('#viewer-meta'),
+  viewerBack: document.querySelector('#viewer-back'),
   viewerRefresh: document.querySelector('#viewer-refresh'),
   viewerImages: document.querySelector('#viewer-images'),
   configSave: document.querySelector('#config-save'),
@@ -99,6 +100,7 @@ let viewerRendered = 0
 let viewerSentinel = null
 let viewerScrollHandler = null
 let viewerAppendLocked = false
+let viewerReturnView = 'search-view'
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -320,8 +322,11 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
 
 async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
   if (!comicPathWord || !chapterUuid) return
-  viewerState = { comicPathWord, chapterUuid, title }
+  const activeView = els.views.find((view) => view.classList.contains('active'))?.id
+  if (activeView && activeView !== 'viewer-view') viewerReturnView = activeView
+  viewerState = { comicPathWord, chapterUuid, title, returnView: viewerReturnView }
   showView('viewer-view')
+  els.viewerBack.disabled = false
   els.viewerRefresh.disabled = false
   els.viewerTitle.textContent = title || chapterUuid
   els.viewerMeta.textContent = '加载图片中...'
@@ -384,6 +389,7 @@ function appendViewerImages(fromScroll = false) {
     img.alt = `${viewerState?.title || viewerState?.chapterUuid || 'chapter'} ${Number(image.index ?? (viewerRendered + offset)) + 1}`
     img.loading = 'lazy'
     img.decoding = 'async'
+    img.fetchPriority = viewerRendered + offset < currentViewerBatchSize() ? 'high' : 'auto'
     els.viewerImages.append(img)
   }
   viewerRendered = end
@@ -404,7 +410,7 @@ function attachViewerSentinel() {
     const internalThreshold = Math.max(1, (els.viewerImages.scrollHeight - els.viewerImages.clientHeight) / 2)
     const internalReady = els.viewerImages.scrollTop >= internalThreshold
     const sentinelTop = viewerSentinel.getBoundingClientRect().top
-    const viewportReady = sentinelTop <= window.innerHeight * 1.5
+    const viewportReady = sentinelTop <= window.innerHeight * 1.8
     if (internalReady || viewportReady) appendViewerImages(true)
   }
   els.viewerImages.addEventListener('scroll', viewerScrollHandler)
@@ -724,6 +730,9 @@ els.downloadedUpdate.addEventListener('click', async () => {
 })
 els.viewerRefresh.addEventListener('click', () => {
   if (viewerState) openChapterViewer(viewerState)
+})
+els.viewerBack.addEventListener('click', () => {
+  showView(viewerState?.returnView || viewerReturnView || 'search-view')
 })
 els.sidebarToggle.addEventListener('click', () => {
   const collapsed = !els.app.classList.contains('sidebar-collapsed')
