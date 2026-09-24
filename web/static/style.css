@@ -293,10 +293,14 @@ h2 {
   flex-shrink: 0;
 }
 
+.chapter-actions select {
+  min-width: 132px;
+}
+
 .discover-panel {
   display: grid;
   gap: 12px;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -314,9 +318,25 @@ h2 {
 }
 
 .pager {
+  align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.page-jump {
+  align-items: center;
+  color: #667085;
+  display: flex;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.page-jump input {
+  height: 36px;
+  padding: 0 8px;
+  width: 70px;
 }
 
 .group {

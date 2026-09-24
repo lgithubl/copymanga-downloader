@@ -457,7 +457,6 @@ async function listDownloaded() {
         imageCount: imageFiles.length,
         updatedAt: info.mtime.toISOString(),
       })
-      if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
     } catch (error) {
       console.warn(`skip invalid inventory file ${file}: ${error.message}`)
     }
@@ -490,7 +489,7 @@ function updateInventory(update, patch) {
   emit('inventoryUpdate', publicInventoryUpdate(update))
 }
 
-function startInventoryUpdate(token = '') {
+function startInventoryUpdate({ token = '', scope = 'downloadedGroups' } = {}) {
   const running = [...inventoryUpdates.values()].find((update) => update.status === 'running')
   if (running) return running
 
@@ -503,6 +502,7 @@ function startInventoryUpdate(token = '') {
     skipped: 0,
     currentTitle: '',
     message: '准备更新库存',
+    scope,
     errors: [],
     jobs: [],
     createdAt: new Date().toISOString(),
@@ -510,7 +510,7 @@ function startInventoryUpdate(token = '') {
   }
   inventoryUpdates.set(update.id, update)
   emit('inventoryUpdate', publicInventoryUpdate(update))
-  runInventoryUpdate(update, token).catch((error) => {
+  runInventoryUpdate(update, { token, scope }).catch((error) => {
     updateInventory(update, {
       status: 'failed',
       message: error.message,
@@ -520,10 +520,14 @@ function startInventoryUpdate(token = '') {
   return update
 }
 
-async function runInventoryUpdate(update, token = '') {
+async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroups' } = {}) {
+  updateInventory(update, {
+    message: '正在扫描本地库存',
+  })
   const downloadedComics = await listDownloaded()
   updateInventory(update, {
     total: downloadedComics.length,
+    current: 0,
     message: downloadedComics.length === 0 ? '没有本地库存' : '正在获取最新章节',
   })
   const activeKeys = new Set(
@@ -548,8 +552,10 @@ async function runInventoryUpdate(update, token = '') {
       const chapterUuids = []
 
       for (const chapters of Object.values(comic.groupsChapters || {})) {
-        const hasDownloadedChapter = chapters.some((chapter) => chapter.isDownloaded === true)
-        if (!hasDownloadedChapter) continue
+        if (scope !== 'allGroups') {
+          const hasDownloadedChapter = chapters.some((chapter) => chapter.isDownloaded === true)
+          if (!hasDownloadedChapter) continue
+        }
 
         for (const chapter of chapters) {
           if (chapter.isDownloaded === true) continue
@@ -773,7 +779,10 @@ async function route(req, res) {
     if (pathname === '/api/downloaded' && req.method === 'GET') return json(res, 200, await listDownloaded())
     if (pathname === '/api/downloaded/update' && req.method === 'POST') {
       const body = await readJson(req)
-      return json(res, 202, publicInventoryUpdate(startInventoryUpdate(body.token || '')))
+      return json(res, 202, publicInventoryUpdate(startInventoryUpdate({
+        token: body.token || '',
+        scope: body.scope === 'allGroups' ? 'allGroups' : 'downloadedGroups',
+      })))
     }
     if (pathname === '/api/login' && req.method === 'POST') {
       const body = await readJson(req)

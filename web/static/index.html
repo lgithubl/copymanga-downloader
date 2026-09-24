@@ -65,7 +65,17 @@
             <div class="discover-panel">
               <div class="chapter-head">
                 <h2>发现</h2>
-                <button id="discover-refresh">刷新</button>
+                <div class="pager">
+                  <button id="discover-refresh">刷新</button>
+                  <button id="discover-prev" class="secondary" disabled>上一页</button>
+                  <label class="page-jump">
+                    <span>第</span>
+                    <input id="discover-page" type="number" min="1" value="1" />
+                    <span id="discover-page-total">/ 1 页</span>
+                  </label>
+                  <button id="discover-jump" class="secondary">跳转</button>
+                  <button id="discover-next" class="secondary" disabled>下一页</button>
+                </div>
               </div>
               <div class="filters">
                 <label>排序
@@ -139,10 +149,6 @@
               </div>
               <div id="discover-meta" class="muted"></div>
               <div id="discover-results" class="cards"></div>
-              <div class="pager">
-                <button id="discover-prev" class="secondary" disabled>上一页</button>
-                <button id="discover-next" class="secondary" disabled>下一页</button>
-              </div>
             </div>
           </section>
           <section class="chapter-panel">
@@ -178,8 +184,14 @@
           <section>
             <div class="chapter-head">
               <h2>本地库存</h2>
-              <button id="downloaded-update" class="secondary">更新库存</button>
-              <button id="downloaded-refresh">刷新</button>
+              <div class="chapter-actions">
+                <select id="downloaded-update-scope">
+                  <option value="downloadedGroups">仅已下载分组</option>
+                  <option value="allGroups">全部分组</option>
+                </select>
+                <button id="downloaded-update" class="secondary">更新库存</button>
+                <button id="downloaded-refresh">刷新</button>
+              </div>
             </div>
             <div id="inventory-progress" class="inventory-progress hidden">
               <div class="inventory-progress-text">更新库存</div>

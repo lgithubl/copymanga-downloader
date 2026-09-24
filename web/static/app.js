@@ -16,6 +16,9 @@ const els = {
   discoverRefresh: document.querySelector('#discover-refresh'),
   discoverPrev: document.querySelector('#discover-prev'),
   discoverNext: document.querySelector('#discover-next'),
+  discoverPage: document.querySelector('#discover-page'),
+  discoverPageTotal: document.querySelector('#discover-page-total'),
+  discoverJump: document.querySelector('#discover-jump'),
   discoverMeta: document.querySelector('#discover-meta'),
   discoverResults: document.querySelector('#discover-results'),
   discoverChapters: document.querySelector('#discover-chapters'),
@@ -36,6 +39,7 @@ const els = {
   favorites: document.querySelector('#favorites'),
   downloadedRefresh: document.querySelector('#downloaded-refresh'),
   downloadedUpdate: document.querySelector('#downloaded-update'),
+  downloadedUpdateScope: document.querySelector('#downloaded-update-scope'),
   inventoryProgress: document.querySelector('#inventory-progress'),
   inventoryProgressText: document.querySelector('#inventory-progress .inventory-progress-text'),
   inventoryProgressBar: document.querySelector('#inventory-progress-bar'),
@@ -164,7 +168,12 @@ function renderDiscover(data) {
   discoverTotal = Number(data.total || 0)
   const limit = Number(data.limit || els.discoverLimit.value || 10)
   discoverOffset = Number(data.offset || discoverOffset)
-  els.discoverMeta.textContent = `共 ${discoverTotal} 部 · ${Math.floor(discoverOffset / limit) + 1} 页`
+  const page = Math.floor(discoverOffset / limit) + 1
+  const totalPages = Math.max(1, Math.ceil(discoverTotal / limit))
+  els.discoverMeta.textContent = `共 ${discoverTotal} 部 · ${page}/${totalPages} 页`
+  els.discoverPage.value = String(page)
+  els.discoverPage.max = String(totalPages)
+  els.discoverPageTotal.textContent = `/ ${totalPages} 页`
   els.discoverPrev.disabled = discoverOffset <= 0
   els.discoverNext.disabled = discoverOffset + limit >= discoverTotal
   renderComicCards(els.discoverResults, list, (pathWord) => loadComic(pathWord, 'discover'))
@@ -276,9 +285,10 @@ function renderInventoryUpdate(update) {
   const total = Math.max(Number(update.total || 0), 0)
   const current = Math.min(Number(update.current || 0), total)
   const pct = total > 0 ? Math.round((current / total) * 100) : (update.status === 'completed' ? 100 : 0)
+  const scopeText = update.scope === 'allGroups' ? '全部分组' : '仅已下载分组'
   els.inventoryProgress.classList.remove('hidden')
   els.inventoryProgressBar.style.width = `${pct}%`
-  els.inventoryProgressText.textContent = `${update.message || '更新库存'} · ${current}/${total} · 新任务 ${update.created || 0} · 跳过 ${update.skipped || 0}`
+  els.inventoryProgressText.textContent = `${update.message || '更新库存'} · ${scopeText} · ${current}/${total} · 新任务 ${update.created || 0} · 跳过 ${update.skipped || 0}`
   els.inventoryProgress.title = (update.errors || [])
     .map((item) => `${item.title || item.comicPathWord}: ${item.error}`)
     .join('\n')
@@ -439,13 +449,29 @@ els.discoverNext.addEventListener('click', () => {
   discoverOffset += Number(els.discoverLimit.value || 10)
   loadDiscover()
 })
+els.discoverJump.addEventListener('click', () => {
+  jumpDiscoverPage()
+})
+els.discoverPage.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') jumpDiscoverPage()
+})
+function jumpDiscoverPage() {
+  const limit = Number(els.discoverLimit.value || 10)
+  const totalPages = Math.max(1, Math.ceil(discoverTotal / limit))
+  const page = Math.max(1, Math.min(totalPages, Math.floor(Number(els.discoverPage.value || 1))))
+  discoverOffset = (page - 1) * limit
+  loadDiscover()
+}
 els.downloadedRefresh.addEventListener('click', loadDownloaded)
 els.downloadedUpdate.addEventListener('click', async () => {
   try {
     setLoading(els.downloadedUpdate, true)
     const data = await api('/api/downloaded/update', {
       method: 'POST',
-      body: JSON.stringify({ token: els.token.value.trim() }),
+      body: JSON.stringify({
+        token: els.token.value.trim(),
+        scope: els.downloadedUpdateScope.value,
+      }),
     })
     renderInventoryUpdate(data)
     await loadDownloaded()
