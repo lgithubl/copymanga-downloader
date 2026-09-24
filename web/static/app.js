@@ -19,6 +19,7 @@ const els = {
   favoriteRefresh: document.querySelector('#favorite-refresh'),
   favorites: document.querySelector('#favorites'),
   downloadedRefresh: document.querySelector('#downloaded-refresh'),
+  downloadedUpdate: document.querySelector('#downloaded-update'),
   downloaded: document.querySelector('#downloaded'),
   configSave: document.querySelector('#config-save'),
   configDownloadDir: document.querySelector('#config-download-dir'),
@@ -318,6 +319,25 @@ async function loadDownloaded() {
 els.favoriteRefresh.addEventListener('click', loadFavorite)
 els.favoriteOrdering.addEventListener('change', loadFavorite)
 els.downloadedRefresh.addEventListener('click', loadDownloaded)
+els.downloadedUpdate.addEventListener('click', async () => {
+  try {
+    setLoading(els.downloadedUpdate, true)
+    const data = await api('/api/downloaded/update', {
+      method: 'POST',
+      body: JSON.stringify({ token: els.token.value.trim() }),
+    })
+    const createdJobs = data.jobs || []
+    const createdIds = new Set(createdJobs.map((job) => job.id))
+    jobs = [...createdJobs, ...jobs.filter((item) => !createdIds.has(item.id))]
+    renderJobs()
+    await loadDownloaded()
+    alert(`已检查 ${data.total} 部本地漫画，创建 ${data.created} 个下载任务`)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.downloadedUpdate, false)
+  }
+})
 els.configSave.addEventListener('click', async () => {
   try {
     setLoading(els.configSave, true)

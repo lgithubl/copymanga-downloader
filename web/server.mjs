@@ -352,6 +352,14 @@ function createJob({ comicPathWord, chapterUuids, token }) {
   }
 }
 
+function createChapterJobs({ comicPathWord, chapterUuids, token }) {
+  return chapterUuids.map((chapterUuid) => createJob({
+    comicPathWord,
+    chapterUuids: [chapterUuid],
+    token,
+  }))
+}
+
 function startJob(job) {
   job.status = 'queued'
   job.doneChapters = 0
@@ -449,6 +457,65 @@ function markDownloadedChapters(comic, downloadedComics) {
   }
   comic.isDownloaded = true
   return comic
+}
+
+function activeJobKey(job) {
+  return `${job.comicPathWord}:${job.chapterUuids?.[0] || ''}`
+}
+
+async function updateDownloadedComics(token = '') {
+  const downloadedComics = await listDownloaded()
+  const activeKeys = new Set(
+    [...jobs.values()]
+      .filter((job) => job.status !== 'completed')
+      .map(activeJobKey),
+  )
+  const createdJobs = []
+  const skipped = []
+
+  for (const downloadedComic of downloadedComics) {
+    const comicPathWord = downloadedComic.comicPathWord
+    if (!comicPathWord) continue
+
+    try {
+      const comic = await getComic(comicPathWord)
+      const chapterUuids = []
+
+      for (const chapters of Object.values(comic.groupsChapters || {})) {
+        const hasDownloadedChapter = chapters.some((chapter) => chapter.isDownloaded === true)
+        if (!hasDownloadedChapter) continue
+
+        for (const chapter of chapters) {
+          if (chapter.isDownloaded === true) continue
+          const uuid = chapter.uuid || chapter.chapter_uuid || chapter.chapterUuid
+          const key = `${comicPathWord}:${uuid}`
+          if (uuid && !activeKeys.has(key)) {
+            chapterUuids.push(uuid)
+            activeKeys.add(key)
+          }
+        }
+      }
+
+      const nextJobs = createChapterJobs({ comicPathWord, chapterUuids, token })
+      for (const job of nextJobs) startJob(job)
+      createdJobs.push(...nextJobs.map(publicJob))
+      if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
+    } catch (error) {
+      skipped.push({
+        comicPathWord,
+        title: downloadedComic.title,
+        error: error.message,
+      })
+      if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
+    }
+  }
+
+  return {
+    total: downloadedComics.length,
+    created: createdJobs.length,
+    jobs: createdJobs,
+    skipped,
+  }
 }
 
 async function downloadImage(url, filePath) {
@@ -623,6 +690,10 @@ async function route(req, res) {
       return json(res, 200, { cleared })
     }
     if (pathname === '/api/downloaded' && req.method === 'GET') return json(res, 200, await listDownloaded())
+    if (pathname === '/api/downloaded/update' && req.method === 'POST') {
+      const body = await readJson(req)
+      return json(res, 202, await updateDownloadedComics(body.token || ''))
+    }
     if (pathname === '/api/login' && req.method === 'POST') {
       const body = await readJson(req)
       return json(res, 200, await login(body.username, body.password))
@@ -652,10 +723,7 @@ async function route(req, res) {
       if (!body.comicPathWord || !Array.isArray(body.chapterUuids) || body.chapterUuids.length === 0) {
         return json(res, 400, { error: 'comicPathWord and chapterUuids are required' })
       }
-      const jobs = body.chapterUuids.map((chapterUuid) => createJob({
-        ...body,
-        chapterUuids: [chapterUuid],
-      }))
+      const jobs = createChapterJobs(body)
       for (const job of jobs) startJob(job)
       return json(res, 202, { jobs: jobs.map(publicJob) })
     }
