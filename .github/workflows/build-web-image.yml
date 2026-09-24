@@ -86,14 +86,14 @@ jobs:
           exit 1
 
       - name: Export image tarball
-        if: inputs.export_artifact == 'true'
+        if: ${{ github.event_name == 'push' || inputs.export_artifact == 'true' }}
         shell: bash
         run: |
           docker pull "${{ steps.image.outputs.image }}"
           docker save "${{ steps.image.outputs.image }}" | gzip -1 > "${{ steps.image.outputs.artifact_name }}.tar.gz"
 
       - name: Upload image artifact
-        if: inputs.export_artifact == 'true'
+        if: ${{ github.event_name == 'push' || inputs.export_artifact == 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.image.outputs.artifact_name }}
