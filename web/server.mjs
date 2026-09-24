@@ -602,9 +602,11 @@ async function route(req, res) {
     }
     if (pathname === '/api/jobs/retry-failed' && req.method === 'POST') {
       const retried = []
-      for (const job of [...jobs.values()]) {
+      for (const [id, job] of [...jobs.entries()]) {
         if (job.status !== 'failed') continue
         const retry = createJob(job)
+        jobs.delete(id)
+        emit('jobDelete', { id })
         startJob(retry)
         retried.push(publicJob(retry))
       }
@@ -650,9 +652,12 @@ async function route(req, res) {
       if (!body.comicPathWord || !Array.isArray(body.chapterUuids) || body.chapterUuids.length === 0) {
         return json(res, 400, { error: 'comicPathWord and chapterUuids are required' })
       }
-      const job = createJob(body)
-      startJob(job)
-      return json(res, 202, publicJob(job))
+      const jobs = body.chapterUuids.map((chapterUuid) => createJob({
+        ...body,
+        chapterUuids: [chapterUuid],
+      }))
+      for (const job of jobs) startJob(job)
+      return json(res, 202, { jobs: jobs.map(publicJob) })
     }
 
     return serveStatic(req, res, pathname)

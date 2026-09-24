@@ -390,8 +390,9 @@ els.download.addEventListener('click', async () => {
 })
 
 els.downloadAll.addEventListener('click', async () => {
-  const chapterUuids = [...els.chapters.querySelectorAll('input[type="checkbox"]:not(:disabled)')].map((item) => item.value)
-  await createDownload(chapterUuids)
+  const checkboxes = [...els.chapters.querySelectorAll('input[type="checkbox"]:not(:disabled)')]
+  for (const checkbox of checkboxes) checkbox.checked = true
+  await createDownload(checkboxes.map((item) => item.value))
 })
 
 async function createDownload(chapterUuids) {
@@ -399,7 +400,7 @@ async function createDownload(chapterUuids) {
   try {
     setLoading(els.download, true)
     setLoading(els.downloadAll, true)
-    const job = await api('/api/download', {
+    const data = await api('/api/download', {
       method: 'POST',
       body: JSON.stringify({
         comicPathWord: currentComicPathWord,
@@ -407,7 +408,9 @@ async function createDownload(chapterUuids) {
         token: els.token.value.trim(),
       }),
     })
-    jobs = [job, ...jobs.filter((item) => item.id !== job.id)]
+    const createdJobs = data.jobs || [data]
+    const createdIds = new Set(createdJobs.map((job) => job.id))
+    jobs = [...createdJobs, ...jobs.filter((item) => !createdIds.has(item.id))]
     renderJobs()
   } catch (error) {
     alert(error.message)
