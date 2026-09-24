@@ -93,6 +93,7 @@ let currentDownloadedComicPathWord = ''
 let discoverOffset = 0
 let discoverTotal = 0
 let inventoryUpdate = null
+let inventoryPollTimer = null
 let viewerState = null
 let viewerBatchSize = 5
 let viewerImages = []
@@ -445,10 +446,12 @@ function renderJobs() {
 }
 
 function renderInventoryUpdate(update) {
+  const wasRunning = inventoryUpdate?.status === 'running'
   inventoryUpdate = update
   if (!update) {
     els.inventoryProgress.classList.add('hidden')
     els.downloadedUpdate.disabled = false
+    stopInventoryPolling()
     return
   }
 
@@ -474,6 +477,29 @@ function renderInventoryUpdate(update) {
   els.downloadedUpdate.dataset.text ||= '更新库存'
   els.downloadedUpdate.disabled = update.status === 'running'
   els.downloadedUpdate.textContent = update.status === 'running' ? '更新中...' : els.downloadedUpdate.dataset.text
+  if (update.status === 'running') {
+    startInventoryPolling()
+  } else {
+    stopInventoryPolling()
+    if (wasRunning) loadDownloaded().catch(() => {})
+  }
+}
+
+function startInventoryPolling() {
+  if (inventoryPollTimer) return
+  inventoryPollTimer = setInterval(async () => {
+    try {
+      renderInventoryUpdate(await api('/api/inventory-update'))
+    } catch {
+      // SSE is the primary path; polling is only a fallback.
+    }
+  }, 1000)
+}
+
+function stopInventoryPolling() {
+  if (!inventoryPollTimer) return
+  clearInterval(inventoryPollTimer)
+  inventoryPollTimer = null
 }
 
 async function loadComic(pathWord, target = 'search') {

@@ -125,14 +125,30 @@ jobs:
                   )
                   try:
                       with urllib.request.urlopen(req, timeout=300) as resp:
-                          payload = resp.read()
                           self.send_response(resp.status)
-                          for k, v in resp.headers.items():
-                              if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
-                                  self.send_header(k, v)
-                          self.send_header("Content-Length", str(len(payload)))
-                          self.end_headers()
-                          self.wfile.write(payload)
+                          is_stream = self.path.startswith("/api/events") or resp.headers.get("Content-Type", "").startswith("text/event-stream")
+                          if is_stream:
+                              self.close_connection = True
+                              for k, v in resp.headers.items():
+                                  if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                                      self.send_header(k, v)
+                              self.send_header("Cache-Control", "no-cache")
+                              self.send_header("Connection", "close")
+                              self.end_headers()
+                              while True:
+                                  chunk = resp.readline()
+                                  if not chunk:
+                                      break
+                                  self.wfile.write(chunk)
+                                  self.wfile.flush()
+                          else:
+                              payload = resp.read()
+                              for k, v in resp.headers.items():
+                                  if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                                      self.send_header(k, v)
+                              self.send_header("Content-Length", str(len(payload)))
+                              self.end_headers()
+                              self.wfile.write(payload)
                   except urllib.error.HTTPError as exc:
                       payload = exc.read()
                       self.send_response(exc.code)
