@@ -162,6 +162,10 @@ h2 {
 
 .card {
   cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 76px minmax(0, 1fr);
+  min-height: 116px;
 }
 
 .card:hover {
@@ -194,6 +198,29 @@ h2 {
 .card-title,
 .chapter-title {
   font-weight: 700;
+}
+
+.card-body {
+  min-width: 0;
+}
+
+.cover {
+  aspect-ratio: 3 / 4;
+  background: #eef1f4;
+  border-radius: 6px;
+  display: block;
+  object-fit: cover;
+  width: 76px;
+}
+
+.cover.placeholder::after {
+  color: #8c959f;
+  content: "No Cover";
+  display: grid;
+  font-size: 11px;
+  height: 100%;
+  place-items: center;
+  text-align: center;
 }
 
 .muted {

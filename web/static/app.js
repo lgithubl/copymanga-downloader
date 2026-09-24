@@ -53,6 +53,10 @@ function pickComicPathWord(item) {
   return item.path_word || item.pathWord || item.comic?.path_word || item.comic?.pathWord
 }
 
+function pickComicCover(item) {
+  return item.cover || item.comic?.cover || ''
+}
+
 function chapterId(chapter) {
   return chapter.uuid || chapter.chapter_uuid || chapter.chapterUuid
 }
@@ -77,9 +81,12 @@ function renderComicCards(container, list) {
     const card = document.createElement('article')
     card.className = `card${isDownloaded ? ' downloaded-card' : ''}`
     card.innerHTML = `
-      <div class="card-title">${escapeHtml(pickComicTitle(comic))}</div>
-      <div class="muted">${escapeHtml(pathWord || '')}</div>
-      ${isDownloaded ? '<div class="badge">已下载</div>' : ''}
+      ${renderCover(pickComicCover(comic), pickComicTitle(comic))}
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(pickComicTitle(comic))}</div>
+        <div class="muted">${escapeHtml(pathWord || '')}</div>
+        ${isDownloaded ? '<div class="badge">已下载</div>' : ''}
+      </div>
     `
     card.addEventListener('click', () => {
       showView('search-view')
@@ -97,9 +104,13 @@ function renderDownloaded(list) {
     const card = document.createElement('article')
     card.className = 'card'
     card.innerHTML = `
-      <div class="card-title">${escapeHtml(item.title)}</div>
-      <div class="muted">${escapeHtml(item.comicPathWord)}</div>
-      <div class="muted">${item.chapterCount} 章 · ${item.imageCount} 张图 · ${escapeHtml(item.path)}</div>
+      ${renderCover(item.cover, item.title)}
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(item.title)}</div>
+        <div class="muted">${escapeHtml(item.comicPathWord)}</div>
+        <div class="muted">${item.chapterCount} 章 · ${item.imageCount} 张图 · ${escapeHtml(item.path)}</div>
+        <div class="badge">已下载</div>
+      </div>
     `
     if (item.comicPathWord) {
       card.addEventListener('click', () => {
@@ -285,6 +296,11 @@ function escapeHtml(value) {
     '"': '&quot;',
     "'": '&#039;',
   })[char])
+}
+
+function renderCover(src, alt) {
+  if (!src) return '<div class="cover placeholder"></div>'
+  return `<img class="cover" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" />`
 }
 
 api('/api/jobs').then((data) => {
