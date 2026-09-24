@@ -584,6 +584,7 @@ async function findLocalChapter(comicPathWord, chapterUuid) {
       return {
         chapter,
         relativeChapterDir,
+        metadataChapterFile: chapterFile,
         metadataChapterDir,
         downloadChapterDir,
         files,
@@ -1074,12 +1075,13 @@ function isSameOrChild(filePath, root) {
   return resolvedPath === resolvedRoot || resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)
 }
 
-async function moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterDir }) {
+async function moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterFile, metadataChapterDir }) {
   const candidates = []
   const local = await findLocalChapter(comicPathWord, chapterUuid)
   if (local?.downloadChapterDir) candidates.push(local.downloadChapterDir)
-  if (local?.metadataChapterDir) candidates.push(local.metadataChapterDir)
-  candidates.push(chapterDir, metadataChapterDir)
+  if (local?.metadataChapterFile) candidates.push(local.metadataChapterFile)
+  else if (local?.metadataChapterDir) candidates.push(local.metadataChapterDir)
+  candidates.push(chapterDir, metadataChapterFile || metadataChapterDir)
 
   const allowedRoots = [DOWNLOAD_DIR, metadataRoot()]
   const protectedDirs = [DOWNLOAD_DIR, metadataRoot(), comicDir, metadataComicDir].map((item) => path.resolve(item))
@@ -1141,7 +1143,7 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
       const metadataChapterDir = path.dirname(metadataChapterFile)
       if (force) {
         updateJob(job, { message: `移动旧章节 ${chapterTitle}` })
-        await moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterDir })
+        await moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterFile, metadataChapterDir })
       }
 
       await runWithConcurrency(contents, config.imgConcurrency, async (content, i) => {
