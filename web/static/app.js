@@ -53,6 +53,7 @@ const els = {
   downloadedReadFilter: document.querySelector('#downloaded-read-filter'),
   downloadedComicTitle: document.querySelector('#downloaded-comic-title'),
   downloadedComicMeta: document.querySelector('#downloaded-comic-meta'),
+  downloadedMarkAllRead: document.querySelector('#downloaded-mark-all-read'),
   downloadedComicRefresh: document.querySelector('#downloaded-comic-refresh'),
   downloadedChapters: document.querySelector('#downloaded-chapters'),
   viewerTitle: document.querySelector('#viewer-title'),
@@ -99,6 +100,7 @@ let discoverOffset = 0
 let discoverTotal = 0
 let inventoryUpdate = null
 let inventoryPollTimer = null
+let currentDownloadedComic = null
 let viewerState = null
 let viewerBatchSize = 5
 let viewerImages = []
@@ -199,6 +201,16 @@ function shortChapterTitle(chapter) {
   const title = chapterTitle(chapter)
   const order = chapter.ordered ?? chapter.index ?? chapter.order
   return order === undefined || String(title).includes(String(order)) ? title : `${order} ${title}`
+}
+
+function chapterPayloads(data) {
+  return Object.values(data.groupsChapters || {})
+    .flatMap((chapters) => Array.isArray(chapters) ? chapters : [])
+    .map((chapter) => ({
+      chapterUuid: chapterId(chapter),
+      chapterTitle: shortChapterTitle(chapter),
+    }))
+    .filter((chapter) => chapter.chapterUuid)
 }
 
 function renderResults(data) {
@@ -778,6 +790,7 @@ async function loadDownloadedComic(pathWord, { refreshOnly = false } = {}) {
   if (!pathWord) return
   currentDownloadedComicPathWord = pathWord
   els.downloadedComicRefresh.disabled = false
+  els.downloadedMarkAllRead.disabled = true
   if (!refreshOnly) {
     els.downloadedComicTitle.textContent = pathWord
     els.downloadedComicMeta.textContent = '读取本地 metadata...'
@@ -815,11 +828,14 @@ async function loadDownloadedComic(pathWord, { refreshOnly = false } = {}) {
 function renderDownloadedComic(data, sourceText) {
   const comicPathWord = data.comic?.path_word || data.comic?.pathWord || data.path_word || currentDownloadedComicPathWord
   const title = data.comic?.name || data.name || comicPathWord
+  const chapters = chapterPayloads(data)
   const localCount = data.downloadedInfo?.chapterCount ?? 0
   const totalCount = Object.values(data.groupsChapters || {})
     .reduce((total, chapters) => total + (Array.isArray(chapters) ? chapters.length : 0), 0)
+  currentDownloadedComic = { comicPathWord, comicTitle: title, chapters }
   els.downloadedComicTitle.textContent = title
   els.downloadedComicMeta.textContent = `${sourceText} · 本地 ${localCount}/${totalCount || '?'} 章`
+  els.downloadedMarkAllRead.disabled = chapters.length === 0
   renderChapterGroups(data, els.downloadedChapters, comicPathWord)
 }
 
@@ -879,6 +895,23 @@ els.downloadedReadFilter.addEventListener('change', () => {
 })
 els.downloadedComicRefresh.addEventListener('click', () => {
   if (currentDownloadedComicPathWord) loadDownloadedComic(currentDownloadedComicPathWord, { refreshOnly: true })
+})
+els.downloadedMarkAllRead.addEventListener('click', async () => {
+  if (!currentDownloadedComic?.comicPathWord || !currentDownloadedComic.chapters?.length) return
+  try {
+    setLoading(els.downloadedMarkAllRead, true)
+    const progress = await api('/api/reading-progress/mark-all', {
+      method: 'POST',
+      body: JSON.stringify(currentDownloadedComic),
+    })
+    readingProgress[progress.comicPathWord] = progress
+    applyReadingColors(progress.comicPathWord)
+    renderDownloaded(downloaded)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.downloadedMarkAllRead, false)
+  }
 })
 els.downloadedUpdate.addEventListener('click', async () => {
   try {

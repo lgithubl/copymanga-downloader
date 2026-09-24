@@ -747,6 +747,40 @@ async function recordReadingProgress({ comicPathWord, comicTitle = '', chapterUu
   return progress
 }
 
+async function markAllReadingProgress({ comicPathWord, comicTitle = '', chapters = [] }) {
+  if (!comicPathWord || !Array.isArray(chapters) || chapters.length === 0) {
+    throw new Error('comicPathWord and chapters are required')
+  }
+  const now = new Date().toISOString()
+  const current = await readReadingProgress(comicPathWord)
+  const progress = normalizeReadingProgress(current, comicPathWord)
+  progress.comicPathWord = comicPathWord
+  progress.comicTitle = comicTitle || progress.comicTitle
+  progress.readChapters ||= {}
+  for (const chapter of chapters) {
+    const chapterUuid = String(chapter.chapterUuid || chapter.uuid || '').trim()
+    if (!chapterUuid) continue
+    const chapterTitle = String(chapter.chapterTitle || chapter.title || chapterUuid)
+    progress.readChapters[chapterUuid] = {
+      ...(progress.readChapters[chapterUuid] || {}),
+      chapterUuid,
+      chapterTitle,
+      enteredAt: progress.readChapters[chapterUuid]?.enteredAt || now,
+      updatedAt: now,
+    }
+    progress.lastChapterUuid = chapterUuid
+    progress.lastChapterTitle = chapterTitle
+  }
+  if (!Object.keys(progress.readChapters).length) throw new Error('chapters are required')
+  progress.updatedAt = now
+  await mkdir(READING_PROGRESS_DIR, { recursive: true })
+  const file = readingProgressPath(comicPathWord)
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(tmp, JSON.stringify(progress, null, 2))
+  await rename(tmp, file)
+  return progress
+}
+
 async function serveLocalImage(res, relativePath) {
   const filePath = path.resolve(DOWNLOAD_DIR, relativePath || '')
   if (!filePath.startsWith(path.resolve(DOWNLOAD_DIR) + path.sep)) return text(res, 403, 'Forbidden')
@@ -1372,6 +1406,9 @@ async function route(req, res) {
     }
     if (pathname === '/api/reading-progress' && req.method === 'POST') {
       return json(res, 200, await recordReadingProgress(await readJson(req)))
+    }
+    if (pathname === '/api/reading-progress/mark-all' && req.method === 'POST') {
+      return json(res, 200, await markAllReadingProgress(await readJson(req)))
     }
     if (pathname === '/api/jobs/retry-failed' && req.method === 'POST') {
       const retried = []
