@@ -98,8 +98,7 @@ let viewerBatchSize = 5
 let viewerImages = []
 let viewerRendered = 0
 let viewerSentinel = null
-let viewerScrollHandler = null
-let viewerAppendLocked = false
+let viewerActiveBatch = null
 let viewerReturnView = 'search-view'
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
@@ -359,37 +358,43 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
 }
 
 function resetViewerBatch() {
-  if (viewerScrollHandler) els.viewerImages.removeEventListener('scroll', viewerScrollHandler)
-  if (viewerScrollHandler) window.removeEventListener('scroll', viewerScrollHandler)
-  viewerScrollHandler = null
   viewerSentinel = null
   viewerImages = []
   viewerRendered = 0
-  viewerAppendLocked = false
+  viewerActiveBatch = null
 }
 
 function currentViewerBatchSize() {
   return Math.max(1, Math.min(50, Math.floor(Number(viewerBatchSize || 5))))
 }
 
-function appendViewerImages(fromScroll = false) {
+function appendViewerImages() {
   if (!viewerImages.length) return
-  if (fromScroll && viewerAppendLocked) return
-  if (fromScroll) {
-    viewerAppendLocked = true
-    setTimeout(() => {
-      viewerAppendLocked = false
-    }, 400)
-  }
   if (viewerSentinel) viewerSentinel.remove()
+  const start = viewerRendered
   const end = Math.min(viewerImages.length, viewerRendered + currentViewerBatchSize())
-  for (const [offset, image] of viewerImages.slice(viewerRendered, end).entries()) {
+  const batch = {
+    total: end - start,
+    done: 0,
+    triggered: false,
+  }
+  viewerActiveBatch = batch
+  for (const [offset, image] of viewerImages.slice(start, end).entries()) {
     const img = document.createElement('img')
     img.src = image.url
-    img.alt = `${viewerState?.title || viewerState?.chapterUuid || 'chapter'} ${Number(image.index ?? (viewerRendered + offset)) + 1}`
+    img.alt = `${viewerState?.title || viewerState?.chapterUuid || 'chapter'} ${Number(image.index ?? (start + offset)) + 1}`
     img.loading = 'lazy'
     img.decoding = 'async'
-    img.fetchPriority = viewerRendered + offset < currentViewerBatchSize() ? 'high' : 'auto'
+    img.fetchPriority = start + offset < currentViewerBatchSize() ? 'high' : 'auto'
+    let settled = false
+    const markDone = () => {
+      if (settled) return
+      settled = true
+      markViewerImageDone(batch)
+    }
+    img.addEventListener('load', markDone, { once: true })
+    img.addEventListener('error', markDone, { once: true })
+    setTimeout(markDone, 15000)
     els.viewerImages.append(img)
   }
   viewerRendered = end
@@ -398,25 +403,21 @@ function appendViewerImages(fromScroll = false) {
   if (viewerRendered < viewerImages.length) attachViewerSentinel()
 }
 
+function markViewerImageDone(batch) {
+  if (!batch || batch !== viewerActiveBatch) return
+  batch.done += 1
+  if (!batch.triggered && batch.done / Math.max(batch.total, 1) >= 0.8 && viewerRendered < viewerImages.length) {
+    batch.triggered = true
+    appendViewerImages()
+  }
+}
+
 function attachViewerSentinel() {
   viewerSentinel = document.createElement('div')
   viewerSentinel.className = 'viewer-sentinel'
-  viewerSentinel.textContent = '继续加载'
-  viewerSentinel.addEventListener('click', () => appendViewerImages(false))
+  viewerSentinel.textContent = '加载更多'
+  viewerSentinel.addEventListener('click', appendViewerImages)
   els.viewerImages.append(viewerSentinel)
-  if (viewerScrollHandler) els.viewerImages.removeEventListener('scroll', viewerScrollHandler)
-  if (viewerScrollHandler) window.removeEventListener('scroll', viewerScrollHandler)
-  viewerScrollHandler = () => {
-    const internalThreshold = Math.max(1, (els.viewerImages.scrollHeight - els.viewerImages.clientHeight) / 2)
-    const internalReady = els.viewerImages.scrollTop >= internalThreshold
-    const sentinelTop = viewerSentinel.getBoundingClientRect().top
-    const gridBox = els.viewerImages.getBoundingClientRect()
-    const renderedHalfReady = gridBox.top + (els.viewerImages.scrollHeight / 2) <= window.innerHeight
-    const viewportReady = sentinelTop <= window.innerHeight * 1.8
-    if (internalReady || renderedHalfReady || viewportReady) appendViewerImages(true)
-  }
-  els.viewerImages.addEventListener('scroll', viewerScrollHandler)
-  window.addEventListener('scroll', viewerScrollHandler)
 }
 
 function renderJobs() {
