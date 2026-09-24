@@ -1,9 +1,11 @@
 import { createServer } from 'node:http'
-import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, readdir, stat, writeFile, mkdir, rename } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
+import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Buffer } from 'node:buffer'
+import { promisify } from 'node:util'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -20,6 +22,7 @@ const inventoryUpdates = new Map()
 const sseClients = new Set()
 const previewSessions = new Map()
 let config = defaultConfig()
+const execFileAsync = promisify(execFile)
 
 const apiHeaders = {
   'User-Agent': 'COPY/3.0.0',
@@ -71,6 +74,30 @@ function cleanName(value) {
 
 function safeSegment(value) {
   return cleanName(value).replace(/\.+/g, '.').slice(0, 180)
+}
+
+async function pathExists(filePath) {
+  try {
+    await stat(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function moveAside(sourcePath, reason = 'redownload') {
+  if (!sourcePath || !(await pathExists(sourcePath))) return null
+  const resolvedSource = path.resolve(sourcePath)
+  const targetRoot = path.join('/tmp', `copymanga-${reason}-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+  const targetPath = path.join(targetRoot, safeSegment(path.basename(resolvedSource)))
+  await mkdir(targetRoot, { recursive: true })
+  try {
+    await rename(resolvedSource, targetPath)
+  } catch (error) {
+    if (error.code !== 'EXDEV') throw error
+    await execFileAsync('mv', [resolvedSource, targetPath])
+  }
+  return targetPath
 }
 
 function defaultConfig() {
@@ -371,7 +398,7 @@ function latestInventoryUpdate() {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
 }
 
-function createJob({ comicPathWord, chapterUuids, token }) {
+function createJob({ comicPathWord, chapterUuids, token, force = false }) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   return {
     id,
@@ -379,6 +406,7 @@ function createJob({ comicPathWord, chapterUuids, token }) {
     comicPathWord,
     chapterUuids,
     token,
+    force: Boolean(force),
     totalChapters: chapterUuids.length,
     doneChapters: 0,
     totalImages: 0,
@@ -389,11 +417,12 @@ function createJob({ comicPathWord, chapterUuids, token }) {
   }
 }
 
-function createChapterJobs({ comicPathWord, chapterUuids, token }) {
+function createChapterJobs({ comicPathWord, chapterUuids, token, force = false }) {
   return chapterUuids.map((chapterUuid) => createJob({
     comicPathWord,
     chapterUuids: [chapterUuid],
     token,
+    force,
   }))
 }
 
@@ -495,6 +524,7 @@ async function findLocalChapter(comicPathWord, chapterUuid) {
       return {
         chapter,
         relativeChapterDir,
+        metadataChapterDir,
         downloadChapterDir,
         files,
       }
@@ -772,7 +802,31 @@ async function runWithConcurrency(items, concurrency, worker) {
   await Promise.all(workers)
 }
 
-async function runJob(job, { comicPathWord, chapterUuids, token }) {
+function isSameOrChild(filePath, root) {
+  const resolvedPath = path.resolve(filePath)
+  const resolvedRoot = path.resolve(root)
+  return resolvedPath === resolvedRoot || resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)
+}
+
+async function moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterDir }) {
+  const candidates = []
+  const local = await findLocalChapter(comicPathWord, chapterUuid)
+  if (local?.downloadChapterDir) candidates.push(local.downloadChapterDir)
+  if (local?.metadataChapterDir) candidates.push(local.metadataChapterDir)
+  candidates.push(chapterDir, metadataChapterDir)
+
+  const allowedRoots = [DOWNLOAD_DIR, metadataRoot()]
+  const protectedDirs = [DOWNLOAD_DIR, metadataRoot(), comicDir, metadataComicDir].map((item) => path.resolve(item))
+  const unique = [...new Set(candidates.map((item) => path.resolve(item)).filter((item) => (
+    allowedRoots.some((root) => isSameOrChild(item, root)) && !protectedDirs.includes(item)
+  )))]
+
+  for (const dir of unique) {
+    await moveAside(dir, 'redownload')
+  }
+}
+
+async function runJob(job, { comicPathWord, chapterUuids, token, force = false }) {
   try {
     updateJob(job, { status: 'running', message: '读取漫画信息' })
     const comic = await getComic(comicPathWord)
@@ -816,6 +870,13 @@ async function runJob(job, { comicPathWord, chapterUuids, token }) {
         chapter_title: chapterTitle,
         order,
       }))
+      const relativeChapterDir = path.relative(comicDir, chapterDir)
+      const metadataChapterDir = path.join(metadataComicDir, relativeChapterDir)
+      if (force) {
+        updateJob(job, { message: `移动旧章节 ${chapterTitle}` })
+        await moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterDir })
+      }
+
       await runWithConcurrency(contents, config.imgConcurrency, async (content, i) => {
         const imageUrl = String(content.url || '').replace('.c800x.', '.c1500x.')
         const index = Number(words[i] ?? i) + 1
@@ -826,8 +887,6 @@ async function runJob(job, { comicPathWord, chapterUuids, token }) {
         if (config.imgDownloadIntervalSec > 0) await sleep(config.imgDownloadIntervalSec)
       })
 
-      const relativeChapterDir = path.relative(comicDir, chapterDir)
-      const metadataChapterDir = path.join(metadataComicDir, relativeChapterDir)
       await mkdir(metadataChapterDir, { recursive: true })
       await writeFile(path.join(metadataChapterDir, 'chapter.json'), JSON.stringify({ comicPathWord, chapterUuid, chapterMeta }, null, 2))
       job.doneChapters += 1

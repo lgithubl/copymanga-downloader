@@ -393,12 +393,13 @@ h2 {
   align-items: center;
   display: grid;
   gap: 10px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   min-width: 0;
   padding: 10px;
 }
 
-.chapter-view {
+.chapter-view,
+.chapter-redownload {
   font-size: 12px;
   min-height: 30px;
   padding: 0 10px;
@@ -480,8 +481,9 @@ h2 {
   background: #ffffff;
   border: 1px solid #d8dee4;
   border-radius: 8px;
-  columns: 3 220px;
-  column-gap: 12px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
   overflow: auto;
   padding: 12px;
 }
@@ -490,10 +492,10 @@ h2 {
   background: #eef1f4;
   border: 1px solid #d8dee4;
   border-radius: 6px;
-  break-inside: avoid;
   display: block;
-  margin: 0 0 12px;
-  width: 100%;
+  margin: 0 auto;
+  max-width: 980px;
+  width: min(100%, 980px);
 }
 
 #app.sidebar-collapsed .sidebar {

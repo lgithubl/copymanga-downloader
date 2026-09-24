@@ -83,7 +83,8 @@ let viewerState = null
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
-els.app.classList.toggle('sidebar-collapsed', localStorage.getItem('copymanga.sidebarCollapsed') === '1')
+const savedSidebarCollapsed = localStorage.getItem('copymanga.sidebarCollapsed')
+els.app.classList.toggle('sidebar-collapsed', savedSidebarCollapsed === null ? true : savedSidebarCollapsed === '1')
 els.sidebarToggle.textContent = els.app.classList.contains('sidebar-collapsed') ? '›' : '‹'
 els.sidebarToggle.title = els.app.classList.contains('sidebar-collapsed') ? '展开任务栏' : '收缩任务栏'
 
@@ -250,6 +251,7 @@ function renderComic(data, target = 'search') {
           <span class="muted">${isDownloaded ? '已下载' : ''}</span>
         </span>
         <button class="chapter-view secondary" type="button">${isDownloaded ? '浏览' : '预览'}</button>
+        <button class="chapter-redownload danger" type="button">重下</button>
       `
       row.querySelector('.chapter-view').addEventListener('click', (event) => {
         event.preventDefault()
@@ -259,6 +261,11 @@ function renderComic(data, target = 'search') {
           chapterUuid: id,
           title,
         })
+      })
+      row.querySelector('.chapter-redownload').addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        createDownload([id], [event.currentTarget], { comicPathWord, force: true })
       })
       group.append(row)
     }
@@ -634,16 +641,17 @@ els.discoverDownloadAll.addEventListener('click', async () => {
   await createDownload(checkboxes.map((item) => item.value), [els.discoverDownload, els.discoverDownloadAll])
 })
 
-async function createDownload(chapterUuids, buttons) {
+async function createDownload(chapterUuids, buttons, options = {}) {
   if (chapterUuids.length === 0) return alert('请先勾选章节')
   try {
     for (const button of buttons) setLoading(button, true)
     const data = await api('/api/download', {
       method: 'POST',
       body: JSON.stringify({
-        comicPathWord: currentComicPathWord,
+        comicPathWord: options.comicPathWord || currentComicPathWord,
         chapterUuids,
         token: els.token.value.trim(),
+        force: options.force === true,
       }),
     })
     const createdJobs = data.jobs || [data]
