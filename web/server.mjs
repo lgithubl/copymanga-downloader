@@ -678,6 +678,9 @@ function startInventoryUpdate({ token = '', scope = 'downloadedGroups' } = {}) {
     chapterDownloaded: 0,
     chapterTotal: null,
     pendingChapters: 0,
+    aggregateChapterDownloaded: 0,
+    aggregateChapterTotal: 0,
+    aggregatePendingChapters: 0,
     created: 0,
     skipped: 0,
     currentTitle: '',
@@ -713,6 +716,9 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
     chapterDownloaded: 0,
     chapterTotal: null,
     pendingChapters: 0,
+    aggregateChapterDownloaded: 0,
+    aggregateChapterTotal: 0,
+    aggregatePendingChapters: 0,
     message: downloadedComics.length === 0 ? '没有本地库存' : '正在获取最新章节',
   })
   const activeKeys = new Set(
@@ -722,6 +728,9 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
   )
   const createdJobs = []
   const skipped = []
+  let aggregateChapterDownloaded = 0
+  let aggregateChapterTotal = 0
+  let aggregatePendingChapters = 0
 
   for (const [index, downloadedComic] of downloadedComics.entries()) {
     const comicPathWord = downloadedComic.comicPathWord
@@ -782,13 +791,21 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
       const nextJobs = createChapterJobs({ comicPathWord, chapterUuids, token })
       for (const job of nextJobs) startJob(job)
       createdJobs.push(...nextJobs.map(publicJob))
+      aggregateChapterDownloaded += chapterDownloaded
+      aggregateChapterTotal += chapterTotal
+      aggregatePendingChapters += chapterUuids.length
       updateInventory(update, {
         created: createdJobs.length,
         pendingChapters: chapterUuids.length,
+        aggregateChapterDownloaded,
+        aggregateChapterTotal,
+        aggregatePendingChapters,
         jobs: createdJobs.map(publicJob),
       })
       if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
     } catch (error) {
+      aggregateChapterDownloaded += downloadedComic.chapterCount || 0
+      if (downloadedComic.remoteChapterTotal) aggregateChapterTotal += downloadedComic.remoteChapterTotal
       skipped.push({
         comicPathWord,
         title: downloadedComic.title,
@@ -802,6 +819,9 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
         chapterDownloaded: downloadedComic.chapterCount || 0,
         chapterTotal: downloadedComic.remoteChapterTotal || null,
         pendingChapters: 0,
+        aggregateChapterDownloaded,
+        aggregateChapterTotal,
+        aggregatePendingChapters,
       })
       if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
     }
@@ -812,9 +832,12 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
     current: downloadedComics.length,
     groupCurrent: 0,
     groupTotal: null,
-    chapterDownloaded: 0,
-    chapterTotal: null,
-    pendingChapters: 0,
+    chapterDownloaded: aggregateChapterDownloaded,
+    chapterTotal: aggregateChapterTotal || null,
+    pendingChapters: aggregatePendingChapters,
+    aggregateChapterDownloaded,
+    aggregateChapterTotal,
+    aggregatePendingChapters,
     created: createdJobs.length,
     skipped: skipped.length,
     jobs: createdJobs.map(publicJob),

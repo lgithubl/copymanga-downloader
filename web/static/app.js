@@ -44,6 +44,12 @@ const els = {
   inventoryProgressText: document.querySelector('#inventory-progress .inventory-progress-text'),
   inventoryProgressBar: document.querySelector('#inventory-progress-bar'),
   downloaded: document.querySelector('#downloaded'),
+  downloadedPrev: document.querySelector('#downloaded-prev'),
+  downloadedNext: document.querySelector('#downloaded-next'),
+  downloadedPage: document.querySelector('#downloaded-page'),
+  downloadedPageTotal: document.querySelector('#downloaded-page-total'),
+  downloadedJump: document.querySelector('#downloaded-jump'),
+  downloadedLimit: document.querySelector('#downloaded-limit'),
   viewerTitle: document.querySelector('#viewer-title'),
   viewerMeta: document.querySelector('#viewer-meta'),
   viewerRefresh: document.querySelector('#viewer-refresh'),
@@ -77,6 +83,7 @@ let currentComicPathWord = ''
 let currentComicTarget = 'search'
 let jobs = []
 let downloaded = []
+let downloadedPage = 1
 let discoverOffset = 0
 let discoverTotal = 0
 let inventoryUpdate = null
@@ -86,6 +93,7 @@ let viewerImages = []
 let viewerRendered = 0
 let viewerSentinel = null
 let viewerScrollHandler = null
+let viewerAppendLocked = false
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -194,7 +202,17 @@ function renderDiscover(data) {
 function renderDownloaded(list) {
   downloaded = list
   els.downloaded.innerHTML = ''
-  for (const item of list) {
+  const limit = Math.max(1, Number(els.downloadedLimit.value || 10))
+  const totalPages = Math.max(1, Math.ceil(list.length / limit))
+  downloadedPage = Math.max(1, Math.min(totalPages, downloadedPage))
+  const offset = (downloadedPage - 1) * limit
+  els.downloadedPage.value = String(downloadedPage)
+  els.downloadedPage.max = String(totalPages)
+  els.downloadedPageTotal.textContent = `/ ${totalPages} 页`
+  els.downloadedPrev.disabled = downloadedPage <= 1
+  els.downloadedNext.disabled = downloadedPage >= totalPages
+
+  for (const item of list.slice(offset, offset + limit)) {
     const remoteChapterTotal = Number.isFinite(Number(item.remoteChapterTotal)) ? Number(item.remoteChapterTotal) : null
     const chapterTotalText = remoteChapterTotal && remoteChapterTotal > 0 ? String(remoteChapterTotal) : '?'
     const card = document.createElement('article')
@@ -217,6 +235,13 @@ function renderDownloaded(list) {
     els.downloaded.append(card)
   }
   if (list.length === 0) els.downloaded.innerHTML = '<p class="muted">暂无本地库存</p>'
+}
+
+function jumpDownloadedPage() {
+  const limit = Math.max(1, Number(els.downloadedLimit.value || 10))
+  const totalPages = Math.max(1, Math.ceil(downloaded.length / limit))
+  downloadedPage = Math.max(1, Math.min(totalPages, Math.floor(Number(els.downloadedPage.value || 1))))
+  renderDownloaded(downloaded)
 }
 
 function showView(id) {
@@ -318,18 +343,27 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
 
 function resetViewerBatch() {
   if (viewerScrollHandler) els.viewerImages.removeEventListener('scroll', viewerScrollHandler)
+  if (viewerScrollHandler) window.removeEventListener('scroll', viewerScrollHandler)
   viewerScrollHandler = null
   viewerSentinel = null
   viewerImages = []
   viewerRendered = 0
+  viewerAppendLocked = false
 }
 
 function currentViewerBatchSize() {
   return Math.max(1, Math.min(50, Math.floor(Number(viewerBatchSize || 5))))
 }
 
-function appendViewerImages() {
+function appendViewerImages(fromScroll = false) {
   if (!viewerImages.length) return
+  if (fromScroll && viewerAppendLocked) return
+  if (fromScroll) {
+    viewerAppendLocked = true
+    setTimeout(() => {
+      viewerAppendLocked = false
+    }, 400)
+  }
   if (viewerSentinel) viewerSentinel.remove()
   const end = Math.min(viewerImages.length, viewerRendered + currentViewerBatchSize())
   for (const [offset, image] of viewerImages.slice(viewerRendered, end).entries()) {
@@ -350,14 +384,19 @@ function attachViewerSentinel() {
   viewerSentinel = document.createElement('div')
   viewerSentinel.className = 'viewer-sentinel'
   viewerSentinel.textContent = '继续加载'
-  viewerSentinel.addEventListener('click', appendViewerImages)
+  viewerSentinel.addEventListener('click', () => appendViewerImages(false))
   els.viewerImages.append(viewerSentinel)
   if (viewerScrollHandler) els.viewerImages.removeEventListener('scroll', viewerScrollHandler)
+  if (viewerScrollHandler) window.removeEventListener('scroll', viewerScrollHandler)
   viewerScrollHandler = () => {
-    const nearBottom = els.viewerImages.scrollTop + els.viewerImages.clientHeight >= els.viewerImages.scrollHeight - 280
-    if (els.viewerImages.scrollTop > 0 && nearBottom) appendViewerImages()
+    const internalThreshold = Math.max(1, (els.viewerImages.scrollHeight - els.viewerImages.clientHeight) / 2)
+    const internalReady = els.viewerImages.scrollTop >= internalThreshold
+    const sentinelTop = viewerSentinel.getBoundingClientRect().top
+    const viewportReady = sentinelTop <= window.innerHeight * 1.5
+    if (internalReady || viewportReady) appendViewerImages(true)
   }
   els.viewerImages.addEventListener('scroll', viewerScrollHandler)
+  window.addEventListener('scroll', viewerScrollHandler)
 }
 
 function renderJobs() {
@@ -396,15 +435,18 @@ function renderInventoryUpdate(update) {
   const current = Math.min(Number(update.current || 0), total)
   const pct = total > 0 ? Math.round((current / total) * 100) : (update.status === 'completed' ? 100 : 0)
   const scopeText = update.scope === 'allGroups' ? '全部分组' : '仅已下载分组'
-  const groupText = update.groupTotal === null || update.groupTotal === undefined
+  const groupText = update.groupTotal === null || update.groupTotal === undefined || Number(update.groupTotal) <= 0
     ? '?/?'
     : `${update.groupCurrent || 0}/${update.groupTotal || 0}`
-  const chapterText = update.chapterTotal === null || update.chapterTotal === undefined
-    ? `${update.chapterDownloaded || 0}/?`
-    : `${update.chapterDownloaded || 0}/${update.chapterTotal || 0}`
+  const chapterDownloaded = update.aggregateChapterDownloaded || update.chapterDownloaded || 0
+  const chapterTotal = update.aggregateChapterTotal || update.chapterTotal
+  const pendingChapters = update.aggregatePendingChapters || update.pendingChapters || 0
+  const chapterText = Number(chapterTotal) > 0 ? `${chapterDownloaded}/${chapterTotal}` : `${chapterDownloaded}/?`
   els.inventoryProgress.classList.remove('hidden')
   els.inventoryProgressBar.style.width = `${pct}%`
-  els.inventoryProgressText.textContent = `${update.message || '更新库存'} · ${scopeText} · 漫画 ${current}/${total} · 分组 ${groupText} · 章节 ${chapterText} · 待下载 ${update.pendingChapters || 0} · 新任务 ${update.created || 0} · 跳过 ${update.skipped || 0}`
+  els.inventoryProgressText.textContent = total > 0
+    ? `${update.message || '更新库存'} · ${scopeText} · 漫画 ${current}/${total} · 分组 ${groupText} · 章节 ${chapterText} · 待下载 ${pendingChapters} · 新任务 ${update.created || 0} · 跳过 ${update.skipped || 0}`
+    : `${update.message || '更新库存'} · ${scopeText} · 本地库存 0 部`
   els.inventoryProgress.title = (update.errors || [])
     .map((item) => `${item.title || item.comicPathWord}: ${item.error}`)
     .join('\n')
@@ -539,6 +581,7 @@ async function loadDiscover() {
 async function loadDownloaded() {
   try {
     setLoading(els.downloadedRefresh, true)
+    downloadedPage = 1
     renderDownloaded(await api('/api/downloaded'))
   } catch (error) {
     alert(error.message)
@@ -581,6 +624,22 @@ function jumpDiscoverPage() {
   loadDiscover()
 }
 els.downloadedRefresh.addEventListener('click', loadDownloaded)
+els.downloadedPrev.addEventListener('click', () => {
+  downloadedPage = Math.max(1, downloadedPage - 1)
+  renderDownloaded(downloaded)
+})
+els.downloadedNext.addEventListener('click', () => {
+  downloadedPage += 1
+  renderDownloaded(downloaded)
+})
+els.downloadedJump.addEventListener('click', jumpDownloadedPage)
+els.downloadedPage.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') jumpDownloadedPage()
+})
+els.downloadedLimit.addEventListener('change', () => {
+  downloadedPage = 1
+  renderDownloaded(downloaded)
+})
 els.downloadedUpdate.addEventListener('click', async () => {
   try {
     setLoading(els.downloadedUpdate, true)

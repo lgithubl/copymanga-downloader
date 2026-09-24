@@ -122,6 +122,9 @@ h2 {
   display: flex;
   gap: 8px;
   padding: 10px 18px 0;
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
 .tab {
@@ -341,6 +344,15 @@ h2 {
   justify-content: flex-end;
 }
 
+.inventory-pager {
+  justify-content: flex-start;
+}
+
+.inventory-pager select {
+  height: 36px;
+  width: 80px;
+}
+
 .page-jump {
   align-items: center;
   color: #667085;
@@ -392,31 +404,28 @@ h2 {
 .chapter {
   align-items: center;
   display: grid;
-  gap: 10px;
+  gap: 6px;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
-  height: 54px;
+  height: 40px;
   min-width: 0;
-  padding: 10px;
+  padding: 6px 8px;
 }
 
 .chapter-view,
 .chapter-redownload {
   font-size: 12px;
-  height: 30px;
-  min-height: 30px;
-  padding: 0 10px;
-  width: 48px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
+  width: 44px;
 }
 
 .chapter-copy {
-  display: grid;
-  gap: 2px;
+  display: block;
 }
 
 .chapter .muted {
-  line-height: 14px;
-  margin-top: 0;
-  min-height: 14px;
+  display: none;
 }
 
 .chapter-copy,

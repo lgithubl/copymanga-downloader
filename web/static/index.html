@@ -198,6 +198,21 @@
               <div class="inventory-progress-text">更新库存</div>
               <div class="bar"><span id="inventory-progress-bar"></span></div>
             </div>
+            <div class="pager inventory-pager">
+              <button id="downloaded-prev" class="secondary" disabled>上一页</button>
+              <label class="page-jump">
+                <span>第</span>
+                <input id="downloaded-page" type="number" min="1" value="1" />
+                <span id="downloaded-page-total">/ 1 页</span>
+              </label>
+              <button id="downloaded-jump" class="secondary">跳转</button>
+              <button id="downloaded-next" class="secondary" disabled>下一页</button>
+              <select id="downloaded-limit">
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+              </select>
+            </div>
             <div id="downloaded" class="cards"></div>
           </section>
           <section>
