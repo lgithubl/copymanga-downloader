@@ -29,23 +29,57 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     return items
   }
 
-  async function importItem({ fileName = 'book.epub', buffer }) {
-    if (!buffer?.length) throw new Error('EPUB file is required')
-    const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'copymanga-library-epub-'))
-    const uploadPath = path.join(tmpDir, safeSegment(fileName || 'book.epub'))
-    await writeFile(uploadPath, buffer)
-    const parsed = await parseEpub(buffer, tmpDir, uploadPath)
-    const itemId = uniqueItemId(parsed.title || path.basename(fileName, path.extname(fileName)), buffer)
+  async function importItem({ fileName = 'book.epub', buffer, files = [], fields = {} }) {
+    const uploads = (files.length ? files : [{ filename: fileName, buffer }])
+      .filter((file) => file.buffer?.length)
+    if (!uploads.length) throw new Error('EPUB file is required')
+
+    const first = uploads[0]
+    const parsed = await parseUploadPreview(first)
+    const requestedItemId = String(fields.itemId || '').trim()
+    const collectionTitle = String(fields.title || fields.collectionTitle || '').trim()
+    const itemId = requestedItemId || uniqueCollectionId(collectionTitle || parsed.title || path.basename(first.filename, path.extname(first.filename)))
     const itemDir = itemPath(itemId)
-    if (await pathExists(itemDir)) await moveAside(itemDir, 'library-import')
-    await mkdir(itemDir, { recursive: true })
-    const originalPath = path.join(itemDir, 'original.epub')
-    const extractedDir = path.join(itemDir, 'extracted')
-    await copyFile(uploadPath, originalPath)
-    await extractZip(buffer, extractedDir)
-    const metadata = await parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName })
-    await writeMetadata(itemId, metadata)
-    return metadata
+    let metadata
+    if (requestedItemId && await pathExists(metadataPath(itemId))) {
+      metadata = await readMetadata(itemId)
+    } else {
+      if (await pathExists(itemDir)) await moveAside(itemDir, 'library-import')
+      await mkdir(itemDir, { recursive: true })
+      metadata = normalizeItem({
+        type: 'epub',
+        itemId,
+        title: collectionTitle || parsed.title || path.basename(first.filename, path.extname(first.filename)),
+        author: parsed.author || [],
+        cover: '',
+        fileName: '',
+        unitCount: 0,
+        mediaUnits: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    }
+
+    const existingUnits = mediaUnitsForItem(metadata)
+    const appended = []
+    for (const upload of uploads) {
+      const unit = await importEpubUnit({ itemId, itemDir, fileName: upload.filename || 'book.epub', buffer: upload.buffer, existingUnits })
+      existingUnits.push(unit)
+      appended.push(unit)
+    }
+
+    const next = normalizeItem({
+      ...metadata,
+      title: collectionTitle || metadata.title,
+      author: metadata.author?.length ? metadata.author : parsed.author,
+      cover: metadata.cover || appended.find((unit) => unit.cover)?.cover || '',
+      fileName: '',
+      unitCount: existingUnits.length,
+      mediaUnits: existingUnits.map((unit, index) => ({ ...unit, index })),
+      updatedAt: new Date().toISOString(),
+    })
+    await writeMetadata(itemId, next)
+    return next
   }
 
   async function createSampleItem() {
@@ -203,7 +237,36 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     return parseEpubMetadata({ itemId: 'preview', itemDir: outDir, originalPath: epubPath, extractedDir: extractDir, fileName: path.basename(epubPath) })
   }
 
-  async function parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName }) {
+  async function parseUploadPreview(file) {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'copymanga-library-epub-preview-'))
+    const uploadPath = path.join(tmpDir, safeSegment(file.filename || 'book.epub'))
+    await writeFile(uploadPath, file.buffer)
+    return parseEpub(file.buffer, tmpDir, uploadPath)
+  }
+
+  async function importEpubUnit({ itemId, itemDir, fileName, buffer, existingUnits }) {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'copymanga-library-epub-'))
+    const uploadPath = path.join(tmpDir, safeSegment(fileName || 'book.epub'))
+    await writeFile(uploadPath, buffer)
+    const preview = await parseEpub(buffer, tmpDir, uploadPath)
+    const unitId = uniqueUnitId(fileName, buffer, existingUnits)
+    const originalPath = path.join(itemDir, 'originals', `${unitId}.epub`)
+    const extractedDir = path.join(itemDir, 'extracted', unitId)
+    if (await pathExists(extractedDir)) await moveAside(extractedDir, 'library-unit-import')
+    if (await pathExists(originalPath)) await moveAside(originalPath, 'library-unit-import')
+    await mkdir(path.dirname(originalPath), { recursive: true })
+    await mkdir(extractedDir, { recursive: true })
+    await copyFile(uploadPath, originalPath)
+    await extractZip(buffer, extractedDir)
+    return epubMetadataToUnit({
+      unitId,
+      fileName,
+      metadata: await parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName, resourcePrefix: unitId }),
+      preview,
+    })
+  }
+
+  async function parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName, resourcePrefix = '' }) {
     const containerXml = await readFile(path.join(extractedDir, 'META-INF', 'container.xml'), 'utf8')
     const opfPath = xmlAttr(containerXml, 'rootfile', 'full-path')
     if (!opfPath) throw new Error('EPUB container missing OPF rootfile')
@@ -218,8 +281,9 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     for (const [index, idref] of spine.entries()) {
       const entry = manifest.get(idref)
       if (!entry?.href) continue
-      const resourcePath = normalizeZipPath(path.posix.join(opfDir, entry.href))
-      const unitTitle = navTitles.get(resourcePath) || await documentTitle(path.join(extractedDir, resourcePath)) || `章节 ${index + 1}`
+      const rawResourcePath = normalizeZipPath(path.posix.join(opfDir, entry.href))
+      const resourcePath = resourcePrefix ? normalizeZipPath(path.posix.join(resourcePrefix, rawResourcePath)) : rawResourcePath
+      const unitTitle = navTitles.get(rawResourcePath) || await documentTitle(path.join(extractedDir, rawResourcePath)) || `章节 ${index + 1}`
       units.push({
         type: 'chapter',
         unitId: safeUnitId(idref || `unit-${index + 1}`),
@@ -228,7 +292,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
         resourcePath,
       })
     }
-    const imageResources = collectImageResources(manifest, opfDir)
+    const imageResources = collectImageResources(manifest, opfDir, resourcePrefix)
     if (imageResources.length) {
       units.push({
         type: 'gallery',
@@ -241,9 +305,12 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     }
     const coverEntry = [...manifest.values()].find((entry) => (
       /\bcover-image\b/.test(entry.properties || '') || /^cover/i.test(entry.id || '')
-    )) || (imageResources[0] ? { href: path.posix.relative(opfDir, imageResources[0].resourcePath) } : null)
-    const cover = coverEntry?.href
-      ? `/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(normalizeZipPath(path.posix.join(opfDir, coverEntry.href)))}`
+    ))
+    const coverPath = coverEntry?.href
+      ? normalizeZipPath(path.posix.join(resourcePrefix, normalizeZipPath(path.posix.join(opfDir, coverEntry.href))))
+      : imageResources[0]?.resourcePath || ''
+    const cover = coverPath
+      ? `/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(coverPath)}`
       : ''
     const info = await stat(originalPath)
     return normalizeItem({
@@ -279,6 +346,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
 
 function normalizeItem(item) {
   const units = Array.isArray(item?.units) ? item.units : []
+  const mediaUnits = Array.isArray(item?.mediaUnits) ? item.mediaUnits.map(normalizeMediaUnit) : []
   return {
     type: 'epub',
     itemId: String(item?.itemId || ''),
@@ -286,17 +354,40 @@ function normalizeItem(item) {
     author: Array.isArray(item?.author) ? item.author : [],
     cover: String(item?.cover || ''),
     fileName: String(item?.fileName || ''),
-    unitCount: Number(item?.unitCount || units.length || 0),
+    unitCount: Number(item?.unitCount || mediaUnits.length || units.length || 0),
     units,
+    mediaUnits,
     imageResources: Array.isArray(item?.imageResources) ? item.imageResources : [],
     createdAt: String(item?.createdAt || ''),
     updatedAt: String(item?.updatedAt || new Date().toISOString()),
   }
 }
 
+function normalizeMediaUnit(unit) {
+  const sections = Array.isArray(unit?.sections) ? unit.sections : []
+  const imageResources = Array.isArray(unit?.imageResources) ? unit.imageResources : []
+  return {
+    type: unit?.type || 'epub',
+    unitId: String(unit?.unitId || ''),
+    title: String(unit?.title || unit?.fileName || unit?.unitId || 'EPUB'),
+    index: Number(unit?.index || 0),
+    fileName: String(unit?.fileName || ''),
+    cover: String(unit?.cover || ''),
+    sectionCount: Number(unit?.sectionCount || sections.length || 0),
+    chapterCount: Number(unit?.chapterCount || sections.filter((section) => section.type !== 'gallery').length || 0),
+    imageCount: Number(unit?.imageCount || imageResources.length || 0),
+    sections,
+    imageResources,
+    createdAt: String(unit?.createdAt || ''),
+    updatedAt: String(unit?.updatedAt || ''),
+  }
+}
+
 function mediaUnitsForItem(item) {
   if (Array.isArray(item?.mediaUnits) && item.mediaUnits.length) return item.mediaUnits
-  const sections = (Array.isArray(item?.units) ? item.units : []).map((unit, index) => ({
+  const legacyUnits = Array.isArray(item?.units) ? item.units : []
+  if (!legacyUnits.length) return []
+  const sections = legacyUnits.map((unit, index) => ({
     type: unit.type || 'chapter',
     sectionId: unit.sectionId || unit.unitId || `section-${index + 1}`,
     title: unit.title || `章节 ${index + 1}`,
@@ -319,6 +410,33 @@ function mediaUnitsForItem(item) {
     sections,
     imageResources: item.imageResources || [],
   }]
+}
+
+function epubMetadataToUnit({ unitId, fileName, metadata, preview }) {
+  const sections = (metadata.units || []).map((unit, index) => ({
+    type: unit.type || 'chapter',
+    sectionId: unit.sectionId || unit.unitId || `section-${index + 1}`,
+    title: unit.title || `章节 ${index + 1}`,
+    index,
+    resourcePath: unit.resourcePath || '',
+    virtual: Boolean(unit.virtual),
+    imageCount: unit.imageCount || 0,
+  }))
+  const imageResources = metadata.imageResources || []
+  return normalizeMediaUnit({
+    type: 'epub',
+    unitId,
+    title: preview?.title || path.basename(fileName, path.extname(fileName)) || fileName,
+    fileName,
+    cover: metadata.cover || '',
+    sectionCount: sections.length,
+    chapterCount: sections.filter((section) => section.type !== 'gallery').length,
+    imageCount: imageResources.length,
+    sections,
+    imageResources,
+    createdAt: new Date().toISOString(),
+    updatedAt: metadata.updatedAt || new Date().toISOString(),
+  })
 }
 
 function sectionNavigation(sections, sectionId) {
@@ -347,9 +465,22 @@ function normalizeProgress(value, itemId) {
   }
 }
 
-function uniqueItemId(title, buffer) {
-  const digest = createHash('sha1').update(buffer).digest('hex').slice(0, 10)
+function uniqueCollectionId(title) {
+  const digest = createHash('sha1').update(`${title}:${Date.now()}:${Math.random()}`).digest('hex').slice(0, 8)
   return `${slug(title)}-${digest}`
+}
+
+function uniqueUnitId(fileName, buffer, existingUnits) {
+  const digest = createHash('sha1').update(buffer).digest('hex').slice(0, 8)
+  const base = safeUnitId(path.basename(fileName || 'book', path.extname(fileName || 'book')) || 'epub')
+  const used = new Set(existingUnits.map((unit) => unit.unitId))
+  let candidate = `${base}_${digest}`
+  let index = 2
+  while (used.has(candidate)) {
+    candidate = `${base}_${digest}_${index}`
+    index += 1
+  }
+  return candidate
 }
 
 function slug(value) {
@@ -405,12 +536,12 @@ function parseSpine(opf) {
     .filter(Boolean)
 }
 
-function collectImageResources(manifest, opfDir) {
+function collectImageResources(manifest, opfDir, resourcePrefix = '') {
   const seen = new Set()
   const images = []
   for (const entry of manifest.values()) {
     if (!/^image\/(?:jpeg|jpg|png|gif|webp)$/i.test(entry.mediaType || '')) continue
-    const resourcePath = normalizeZipPath(path.posix.join(opfDir, entry.href))
+    const resourcePath = normalizeZipPath(path.posix.join(resourcePrefix, normalizeZipPath(path.posix.join(opfDir, entry.href))))
     if (!resourcePath || seen.has(resourcePath)) continue
     seen.add(resourcePath)
     images.push({

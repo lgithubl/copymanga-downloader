@@ -219,7 +219,7 @@ h2 {
 }
 
 .library-workspace > section:first-child {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .chapter-panel {
@@ -636,6 +636,10 @@ h2 {
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.media-import-panel {
+  align-content: start;
 }
 
 .media-reader-content {

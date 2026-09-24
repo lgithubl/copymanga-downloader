@@ -39,6 +39,7 @@
           <button class="tab" data-view="favorite-view">漫画收藏</button>
           <button class="tab" data-view="downloaded-view">本地库存</button>
           <button class="tab" data-view="library-view">媒体库</button>
+          <button class="tab" data-view="media-import-view">媒体导入</button>
           <button class="tab" data-view="media-viewer-view">媒体浏览</button>
           <button class="tab" data-view="viewer-view">图片浏览</button>
           <button class="tab" data-view="settings-view">配置</button>
@@ -268,10 +269,6 @@
                 <button id="library-refresh">刷新</button>
               </div>
             </div>
-            <div class="library-import">
-              <input id="library-file" type="file" accept=".epub,application/epub+zip" />
-              <button id="library-import" class="secondary">上传导入</button>
-            </div>
             <div id="library-items" class="cards"></div>
           </section>
           <section>
@@ -282,6 +279,42 @@
               </div>
             </div>
             <div id="library-units" class="chapters empty-panel">请选择媒体库条目</div>
+          </section>
+        </div>
+        <div id="media-import-view" class="workspace view">
+          <section>
+            <div class="chapter-head">
+              <h2>媒体导入</h2>
+              <button id="media-import-refresh" class="secondary">刷新合集</button>
+            </div>
+            <div class="settings-panel media-import-panel">
+              <label>类型
+                <select id="media-import-type">
+                  <option value="epub">EPUB</option>
+                </select>
+              </label>
+              <label>已有合集
+                <select id="media-import-item">
+                  <option value="">新建合集</option>
+                </select>
+              </label>
+              <label>合集名称
+                <input id="media-import-title" placeholder="新建合集时必填，选择已有合集时可改名" />
+              </label>
+              <label>EPUB 文件
+                <input id="media-import-files" type="file" accept=".epub,application/epub+zip" multiple />
+              </label>
+              <button id="media-import-submit">导入 EPUB</button>
+            </div>
+          </section>
+          <section>
+            <div class="chapter-head">
+              <div>
+                <h2>导入目标</h2>
+                <div id="media-import-meta" class="muted">请选择或输入一个合集</div>
+              </div>
+            </div>
+            <div id="media-import-items" class="cards"></div>
           </section>
         </div>
         <div id="media-viewer-view" class="media-viewer-view view">

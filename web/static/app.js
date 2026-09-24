@@ -68,12 +68,18 @@ const els = {
   libraryType: document.querySelector('#library-type'),
   librarySample: document.querySelector('#library-sample'),
   libraryRefresh: document.querySelector('#library-refresh'),
-  libraryFile: document.querySelector('#library-file'),
-  libraryImport: document.querySelector('#library-import'),
   libraryItems: document.querySelector('#library-items'),
   libraryItemTitle: document.querySelector('#library-item-title'),
   libraryItemMeta: document.querySelector('#library-item-meta'),
   libraryUnits: document.querySelector('#library-units'),
+  mediaImportType: document.querySelector('#media-import-type'),
+  mediaImportRefresh: document.querySelector('#media-import-refresh'),
+  mediaImportItem: document.querySelector('#media-import-item'),
+  mediaImportTitle: document.querySelector('#media-import-title'),
+  mediaImportFiles: document.querySelector('#media-import-files'),
+  mediaImportSubmit: document.querySelector('#media-import-submit'),
+  mediaImportMeta: document.querySelector('#media-import-meta'),
+  mediaImportItems: document.querySelector('#media-import-items'),
   mediaReaderTitle: document.querySelector('#media-reader-title'),
   mediaReaderMeta: document.querySelector('#media-reader-meta'),
   mediaReaderBack: document.querySelector('#media-reader-back'),
@@ -826,6 +832,7 @@ els.tabs.forEach((tab) => {
     if (tab.dataset.view === 'library-view') {
       loadLibraryTypes().then(loadLibraryItems).catch((error) => alert(error.message))
     }
+    if (tab.dataset.view === 'media-import-view') loadMediaImportItems()
     if (tab.dataset.view === 'settings-view') loadConfig()
   })
 })
@@ -956,6 +963,61 @@ async function loadLibraryItems() {
     alert(error.message)
   } finally {
     setLoading(els.libraryRefresh, false)
+  }
+}
+
+async function loadMediaImportItems() {
+  try {
+    setLoading(els.mediaImportRefresh, true)
+    const type = els.mediaImportType.value || 'epub'
+    const items = await api(`/api/library/items?type=${encodeURIComponent(type)}`)
+    renderMediaImportItems(items)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.mediaImportRefresh, false)
+  }
+}
+
+function renderMediaImportItems(items) {
+  els.mediaImportItem.innerHTML = '<option value="">新建合集</option>'
+  els.mediaImportItems.innerHTML = ''
+  for (const item of items) {
+    const option = document.createElement('option')
+    option.value = item.itemId
+    option.textContent = item.title
+    option.dataset.title = item.title
+    els.mediaImportItem.append(option)
+
+    const card = document.createElement('article')
+    card.className = 'card'
+    card.innerHTML = `
+      ${renderCover(item.cover, item.title)}
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(item.title)}</div>
+        <div class="muted">${escapeHtml(item.itemId)} · ${item.unitCount || 0} 个 EPUB</div>
+      </div>
+    `
+    card.addEventListener('click', () => {
+      els.mediaImportItem.value = item.itemId
+      els.mediaImportTitle.value = item.title
+      updateMediaImportMeta()
+    })
+    els.mediaImportItems.append(card)
+  }
+  if (items.length === 0) els.mediaImportItems.innerHTML = '<p class="muted">暂无 EPUB 合集</p>'
+  updateMediaImportMeta()
+}
+
+function updateMediaImportMeta() {
+  const selected = els.mediaImportItem.selectedOptions?.[0]
+  if (els.mediaImportItem.value) {
+    els.mediaImportTitle.value ||= selected?.dataset.title || selected?.textContent || ''
+    els.mediaImportMeta.textContent = `追加到：${selected?.textContent || els.mediaImportItem.value}`
+  } else {
+    els.mediaImportMeta.textContent = els.mediaImportTitle.value.trim()
+      ? `新建合集：${els.mediaImportTitle.value.trim()}`
+      : '输入合集名称后导入 EPUB'
   }
 }
 
@@ -1292,21 +1354,38 @@ els.librarySample.addEventListener('click', async () => {
     setLoading(els.librarySample, false)
   }
 })
-els.libraryImport.addEventListener('click', async () => {
-  const file = els.libraryFile.files?.[0]
-  if (!file) return alert('请选择 EPUB 文件')
+els.mediaImportRefresh.addEventListener('click', loadMediaImportItems)
+els.mediaImportType.addEventListener('change', loadMediaImportItems)
+els.mediaImportItem.addEventListener('change', () => {
+  const selected = els.mediaImportItem.selectedOptions?.[0]
+  if (els.mediaImportItem.value) els.mediaImportTitle.value = selected?.dataset.title || selected?.textContent || ''
+  updateMediaImportMeta()
+})
+els.mediaImportTitle.addEventListener('input', updateMediaImportMeta)
+els.mediaImportSubmit.addEventListener('click', async () => {
+  const files = [...(els.mediaImportFiles.files || [])]
+  if (!files.length) return alert('请选择 EPUB 文件')
+  if (!els.mediaImportItem.value && !els.mediaImportTitle.value.trim()) return alert('请输入合集名称')
   try {
-    setLoading(els.libraryImport, true)
+    setLoading(els.mediaImportSubmit, true)
     const form = new FormData()
-    form.set('file', file)
-    const item = await apiForm('/api/library/items?type=epub', form)
-    if (els.libraryType.value !== 'epub' && els.libraryType.value !== 'all') els.libraryType.value = 'all'
+    form.set('title', els.mediaImportTitle.value.trim())
+    if (els.mediaImportItem.value) form.set('itemId', els.mediaImportItem.value)
+    for (const file of files) form.append('file', file)
+    const item = await apiForm(`/api/library/items?type=${encodeURIComponent(els.mediaImportType.value || 'epub')}`, form)
+    els.mediaImportFiles.value = ''
+    await loadMediaImportItems()
+    els.mediaImportItem.value = item.itemId
+    els.mediaImportTitle.value = item.title
+    updateMediaImportMeta()
+    if (els.libraryType.value !== item.type && els.libraryType.value !== 'all') els.libraryType.value = 'all'
     await loadLibraryItems()
     await selectLibraryItem(item.type, item.itemId)
+    showView('library-view')
   } catch (error) {
     alert(error.message)
   } finally {
-    setLoading(els.libraryImport, false)
+    setLoading(els.mediaImportSubmit, false)
   }
 })
 els.mediaReaderBack.addEventListener('click', () => {

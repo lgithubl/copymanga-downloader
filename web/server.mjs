@@ -1473,9 +1473,15 @@ async function route(req, res) {
       const handler = libraryHandler(type)
       if (!handler.importItem) return json(res, 400, { error: 'This library type is not importable' })
       const form = await readMultipart(req)
-      const file = form.files.find((item) => item.name === 'file') || form.files[0]
+      const files = form.files.filter((item) => item.buffer?.length)
+      const file = files.find((item) => item.name === 'file') || files[0]
       if (!file) return json(res, 400, { error: 'file is required' })
-      return json(res, 201, await handler.importItem({ fileName: file.filename, buffer: file.buffer, fields: form.fields }))
+      return json(res, 201, await handler.importItem({
+        fileName: file.filename,
+        buffer: file.buffer,
+        files,
+        fields: form.fields,
+      }))
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'GET') {
       const parts = pathname.split('/').filter(Boolean)
