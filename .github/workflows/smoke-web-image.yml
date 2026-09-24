@@ -1,0 +1,88 @@
+name: Smoke Test Web Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Docker image to run
+        required: true
+        default: ghcr.io/lgithubl/copymanga-downloader:web
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  smoke:
+    name: Run image and capture page
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Login to GitHub Container Registry
+        if: ${{ startsWith(inputs.image, 'ghcr.io/') }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        run: docker pull "${{ inputs.image }}"
+
+      - name: Start server
+        run: |
+          mkdir -p "$RUNNER_TEMP/copymanga-data"
+          docker run -d --name copymanga-smoke \
+            -p 8080:8080 \
+            -v "$RUNNER_TEMP/copymanga-data:/data" \
+            "${{ inputs.image }}"
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/ >/tmp/copymanga-index.html; then
+              exit 0
+            fi
+            docker logs --tail 80 copymanga-smoke || true
+            sleep 2
+          done
+          docker logs copymanga-smoke || true
+          exit 1
+
+      - name: Check HTTP endpoints
+        run: |
+          curl -fsS http://127.0.0.1:8080/health | tee /tmp/copymanga-health.json | grep -q '"ok":true'
+          curl -fsS http://127.0.0.1:8080/api/jobs | tee /tmp/copymanga-jobs.json | grep -q '^\['
+          curl -fsS http://127.0.0.1:8080/api/downloaded | tee /tmp/copymanga-downloaded.json | grep -q '^\['
+          curl -fsS 'http://127.0.0.1:8080/api/favorite?page=1&ordering=Added&token=' | tee /tmp/copymanga-favorite.json | grep -q '"list"'
+
+      - name: Capture screenshot
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+          npx playwright screenshot --wait-for-timeout=2000 http://127.0.0.1:8080/ /tmp/copymanga-home.png
+
+      - name: Collect logs
+        if: always()
+        run: |
+          docker logs copymanga-smoke >/tmp/copymanga-container.log 2>&1 || true
+          docker ps -a >/tmp/copymanga-docker-ps.txt || true
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: copymanga-web-smoke
+          path: |
+            /tmp/copymanga-home.png
+            /tmp/copymanga-index.html
+            /tmp/copymanga-health.json
+            /tmp/copymanga-jobs.json
+            /tmp/copymanga-downloaded.json
+            /tmp/copymanga-favorite.json
+            /tmp/copymanga-container.log
+            /tmp/copymanga-docker-ps.txt
+          if-no-files-found: warn
+          retention-days: 7

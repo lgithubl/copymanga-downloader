@@ -1,0 +1,223 @@
+name: Interactive Web Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Docker image to run
+        required: true
+        default: ghcr.io/lgithubl/copymanga-downloader:web
+      minutes:
+        description: Minutes to keep the page alive
+        required: true
+        default: "60"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  interactive:
+    name: Start temporary web session
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+
+    steps:
+      - name: Login to GitHub Container Registry
+        if: ${{ startsWith(inputs.image, 'ghcr.io/') }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        run: docker pull "${{ inputs.image }}"
+
+      - name: Start copymanga web
+        run: |
+          mkdir -p "$RUNNER_TEMP/copymanga-data"
+          docker run -d --name copymanga-web \
+            -p 8080:8080 \
+            -v "$RUNNER_TEMP/copymanga-data:/data" \
+            "${{ inputs.image }}"
+
+      - name: Wait for app
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then
+              exit 0
+            fi
+            docker logs --tail 80 copymanga-web || true
+            sleep 2
+          done
+          docker logs copymanga-web || true
+          exit 1
+
+      - name: HTTP smoke test
+        run: |
+          curl -fsS http://127.0.0.1:8080/health | grep -q '"ok":true'
+          curl -fsS http://127.0.0.1:8080/ | grep -q '拷贝漫画下载器'
+          curl -fsS http://127.0.0.1:8080/api/jobs | grep -q '^\['
+          curl -fsS http://127.0.0.1:8080/api/downloaded | grep -q '^\['
+
+      - name: Start authenticated proxy
+        id: auth
+        shell: bash
+        run: |
+          USERNAME="copymanga"
+          PASSWORD="$(openssl rand -base64 18 | tr -d '=+/')"
+          {
+            echo "username=$USERNAME"
+            echo "password=$PASSWORD"
+          } >> "$GITHUB_OUTPUT"
+          cat >/tmp/basic_proxy.py <<'PY'
+          import base64
+          import http.server
+          import os
+          import urllib.error
+          import urllib.request
+
+          TARGET = "http://127.0.0.1:8080"
+          USERNAME = os.environ["BASIC_USER"]
+          PASSWORD = os.environ["BASIC_PASS"]
+          EXPECTED = "Basic " + base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
+          HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
+
+          class Proxy(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+
+              def _unauthorized(self):
+                  body = b"Authentication required\n"
+                  self.send_response(401)
+                  self.send_header("WWW-Authenticate", 'Basic realm="copymanga-web"')
+                  self.send_header("Content-Type", "text/plain")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def _proxy(self):
+                  if self.headers.get("Authorization") != EXPECTED:
+                      self._unauthorized()
+                      return
+                  length = int(self.headers.get("Content-Length") or 0)
+                  body = self.rfile.read(length) if length else None
+                  headers = {
+                      k: v for k, v in self.headers.items()
+                      if k.lower() not in HOP_BY_HOP and k.lower() != "host"
+                  }
+                  headers.pop("Authorization", None)
+                  req = urllib.request.Request(
+                      TARGET + self.path,
+                      data=body,
+                      headers=headers,
+                      method=self.command,
+                  )
+                  try:
+                      with urllib.request.urlopen(req, timeout=300) as resp:
+                          payload = resp.read()
+                          self.send_response(resp.status)
+                          for k, v in resp.headers.items():
+                              if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                                  self.send_header(k, v)
+                          self.send_header("Content-Length", str(len(payload)))
+                          self.end_headers()
+                          self.wfile.write(payload)
+                  except urllib.error.HTTPError as exc:
+                      payload = exc.read()
+                      self.send_response(exc.code)
+                      for k, v in exc.headers.items():
+                          if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                              self.send_header(k, v)
+                      self.send_header("Content-Length", str(len(payload)))
+                      self.end_headers()
+                      self.wfile.write(payload)
+
+              def do_GET(self): self._proxy()
+              def do_HEAD(self): self._proxy()
+              def do_POST(self): self._proxy()
+              def do_PUT(self): self._proxy()
+              def do_PATCH(self): self._proxy()
+              def do_DELETE(self): self._proxy()
+
+          http.server.ThreadingHTTPServer(("127.0.0.1", 8090), Proxy).serve_forever()
+          PY
+          BASIC_USER="$USERNAME" BASIC_PASS="$PASSWORD" python /tmp/basic_proxy.py >/tmp/basic_proxy.log 2>&1 &
+          echo $! >/tmp/basic_proxy.pid
+          sleep 1
+          curl -fsS -u "$USERNAME:$PASSWORD" http://127.0.0.1:8090/health >/dev/null
+
+      - name: Start Cloudflare quick tunnel
+        id: tunnel
+        shell: bash
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          /tmp/cloudflared tunnel --url http://127.0.0.1:8090 --no-autoupdate >/tmp/cloudflared.log 2>&1 &
+          echo $! >/tmp/cloudflared.pid
+          for i in $(seq 1 60); do
+            URL="$(grep -oE 'https://[-a-zA-Z0-9.]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)"
+            if [ -n "$URL" ]; then
+              echo "url=$URL" >> "$GITHUB_OUTPUT"
+              {
+                echo "## Temporary copymanga web page"
+                echo
+                echo "URL: $URL"
+                echo
+                echo "Username: \`${{ steps.auth.outputs.username }}\`"
+                echo
+                echo "Password: \`${{ steps.auth.outputs.password }}\`"
+                echo
+                echo "This runner will stay alive for ${{ inputs.minutes }} minutes unless cancelled."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::notice title=Temporary URL::$URL"
+              {
+                echo "URL=$URL"
+                echo "USERNAME=${{ steps.auth.outputs.username }}"
+                echo "PASSWORD=${{ steps.auth.outputs.password }}"
+              } > "$RUNNER_TEMP/copymanga-web-connection-info.txt"
+              exit 0
+            fi
+            cat /tmp/cloudflared.log || true
+            sleep 2
+          done
+          cat /tmp/cloudflared.log || true
+          exit 1
+
+      - name: Upload connection info
+        uses: actions/upload-artifact@v6
+        with:
+          name: copymanga-web-connection-info
+          path: ${{ runner.temp }}/copymanga-web-connection-info.txt
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Keep session alive
+        run: |
+          echo "Open this URL:"
+          echo "${{ steps.tunnel.outputs.url }}"
+          echo
+          echo "Basic Auth username: ${{ steps.auth.outputs.username }}"
+          echo "Basic Auth password: ${{ steps.auth.outputs.password }}"
+          echo
+          echo "Keeping session alive for ${{ inputs.minutes }} minutes..."
+          sleep "$(( ${{ inputs.minutes }} * 60 ))"
+
+      - name: Collect logs
+        if: always()
+        run: |
+          docker logs copymanga-web >/tmp/copymanga-web-container.log 2>&1 || true
+          cp /tmp/cloudflared.log /tmp/cloudflared.log.copy 2>/dev/null || true
+          cp /tmp/basic_proxy.log /tmp/basic_proxy.log.copy 2>/dev/null || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: copymanga-web-interactive-logs
+          path: |
+            /tmp/copymanga-web-container.log
+            /tmp/cloudflared.log.copy
+            /tmp/basic_proxy.log.copy
+          if-no-files-found: warn
+          retention-days: 3

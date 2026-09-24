@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>拷贝漫画下载器 Web</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <aside class="sidebar">
+        <h1>拷贝漫画下载器</h1>
+        <label>
+          Token
+          <textarea id="token" rows="4" placeholder="登录后自动填入，也可以手动粘贴"></textarea>
+        </label>
+        <div class="login-grid">
+          <input id="username" autocomplete="username" placeholder="账号" />
+          <input id="password" autocomplete="current-password" type="password" placeholder="密码" />
+          <button id="login">登录</button>
+        </div>
+        <section>
+          <h2>下载任务</h2>
+          <div id="jobs" class="jobs"></div>
+        </section>
+      </aside>
+
+      <section class="content">
+        <nav class="tabs">
+          <button class="tab active" data-view="search-view">漫画搜索</button>
+          <button class="tab" data-view="favorite-view">漫画收藏</button>
+          <button class="tab" data-view="downloaded-view">本地库存</button>
+        </nav>
+        <div class="toolbar">
+          <input id="keyword" placeholder="搜索漫画" />
+          <button id="search">搜索</button>
+        </div>
+        <div id="search-view" class="workspace view active">
+          <section>
+            <h2>搜索结果</h2>
+            <div id="results" class="cards"></div>
+          </section>
+          <section>
+            <div class="chapter-head">
+              <h2 id="comic-title">章节</h2>
+              <button id="download" disabled>下载勾选章节</button>
+            </div>
+            <div id="chapters" class="chapters"></div>
+          </section>
+        </div>
+        <div id="favorite-view" class="workspace view">
+          <section>
+            <div class="chapter-head">
+              <h2>漫画收藏</h2>
+              <select id="favorite-ordering">
+                <option value="Added">加到书架时间</option>
+                <option value="Updated">作品更新时间</option>
+                <option value="Read">上次阅读时间</option>
+              </select>
+              <button id="favorite-refresh">刷新</button>
+            </div>
+            <div id="favorites" class="cards"></div>
+          </section>
+          <section>
+            <h2>收藏说明</h2>
+            <div class="empty-panel">点击收藏里的漫画会回到章节列表。</div>
+          </section>
+        </div>
+        <div id="downloaded-view" class="workspace view">
+          <section>
+            <div class="chapter-head">
+              <h2>本地库存</h2>
+              <button id="downloaded-refresh">刷新</button>
+            </div>
+            <div id="downloaded" class="cards"></div>
+          </section>
+          <section>
+            <h2>下载目录</h2>
+            <div class="empty-panel">容器内目录：/data/downloads</div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
