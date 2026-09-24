@@ -1013,11 +1013,11 @@ function updateMediaImportMeta() {
   const selected = els.mediaImportItem.selectedOptions?.[0]
   if (els.mediaImportItem.value) {
     els.mediaImportTitle.value ||= selected?.dataset.title || selected?.textContent || ''
-    els.mediaImportMeta.textContent = `追加到：${selected?.textContent || els.mediaImportItem.value}`
+    els.mediaImportMeta.textContent = `本次导入会追加到已有合集：${selected?.textContent || els.mediaImportItem.value}`
   } else {
     els.mediaImportMeta.textContent = els.mediaImportTitle.value.trim()
-      ? `新建合集：${els.mediaImportTitle.value.trim()}`
-      : '输入合集名称后导入 EPUB'
+      ? `本次导入会新建合集：${els.mediaImportTitle.value.trim()}`
+      : '未选择已有合集时，会用合集名称新建一套'
   }
 }
 
@@ -1342,6 +1342,7 @@ els.downloadedMarkAllRead.addEventListener('click', async () => {
 els.libraryRefresh.addEventListener('click', loadLibraryItems)
 els.libraryType.addEventListener('change', loadLibraryItems)
 els.librarySample.addEventListener('click', async () => {
+  if (!confirm('生成示例会在媒体库里新增一套测试 EPUB 合集。确定要继续吗？')) return
   try {
     setLoading(els.librarySample, true)
     const item = await api('/api/library/items/sample?type=epub', { method: 'POST', body: '{}' })
