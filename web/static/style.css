@@ -217,6 +217,7 @@ h2 {
 .cards,
 .chapters,
 .jobs {
+  align-content: start;
   display: grid;
   gap: 10px;
   overflow: auto;
