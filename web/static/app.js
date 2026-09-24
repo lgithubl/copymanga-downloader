@@ -21,6 +21,7 @@ const els = {
 
 let currentComicPathWord = ''
 let jobs = []
+let downloaded = []
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -67,18 +68,22 @@ function renderResults(data) {
 }
 
 function renderComicCards(container, list) {
+  const downloadedPathWords = new Set(downloaded.map((item) => item.comicPathWord))
   container.innerHTML = ''
   for (const item of list) {
     const comic = item.comic || item
+    const pathWord = pickComicPathWord(comic)
+    const isDownloaded = comic.isDownloaded || downloadedPathWords.has(pathWord)
     const card = document.createElement('article')
-    card.className = 'card'
+    card.className = `card${isDownloaded ? ' downloaded-card' : ''}`
     card.innerHTML = `
       <div class="card-title">${escapeHtml(pickComicTitle(comic))}</div>
-      <div class="muted">${escapeHtml(pickComicPathWord(comic) || '')}</div>
+      <div class="muted">${escapeHtml(pathWord || '')}</div>
+      ${isDownloaded ? '<div class="badge">已下载</div>' : ''}
     `
     card.addEventListener('click', () => {
       showView('search-view')
-      loadComic(pickComicPathWord(comic))
+      loadComic(pathWord)
     })
     container.append(card)
   }
@@ -86,6 +91,7 @@ function renderComicCards(container, list) {
 }
 
 function renderDownloaded(list) {
+  downloaded = list
   els.downloaded.innerHTML = ''
   for (const item of list) {
     const card = document.createElement('article')
@@ -125,13 +131,14 @@ function renderComic(data) {
 
     for (const chapter of chapters) {
       const id = chapterId(chapter)
+      const isDownloaded = chapter.isDownloaded === true
       const row = document.createElement('label')
-      row.className = 'chapter'
+      row.className = `chapter${isDownloaded ? ' downloaded-chapter' : ''}`
       row.innerHTML = `
-        <input type="checkbox" value="${escapeHtml(id)}" />
+        <input type="checkbox" value="${escapeHtml(id)}" ${isDownloaded ? 'disabled' : ''} />
         <span>
           <span class="chapter-title">${escapeHtml(chapterTitle(chapter))}</span>
-          <span class="muted">${escapeHtml(id)}</span>
+          <span class="muted">${escapeHtml(id)}${isDownloaded ? ' · 已下载' : ''}</span>
         </span>
       `
       group.append(row)
@@ -167,6 +174,10 @@ async function loadComic(pathWord) {
   renderComic(data)
 }
 
+async function refreshDownloadedState() {
+  downloaded = await api('/api/downloaded')
+}
+
 els.login.addEventListener('click', async () => {
   try {
     setLoading(els.login, true)
@@ -190,6 +201,7 @@ els.search.addEventListener('click', async () => {
     setLoading(els.search, true)
     const q = encodeURIComponent(els.keyword.value.trim())
     const data = await api(`/api/search?q=${q}&page=1`)
+    await refreshDownloadedState()
     renderResults(data)
   } catch (error) {
     alert(error.message)
@@ -215,6 +227,7 @@ async function loadFavorite() {
       token: els.token.value.trim(),
     })
     const data = await api(`/api/favorite?${params}`)
+    await refreshDownloadedState()
     renderComicCards(els.favorites, data.list || [])
   } catch (error) {
     alert(error.message)
@@ -284,4 +297,12 @@ events.addEventListener('job', (event) => {
   const job = JSON.parse(event.data)
   jobs = [job, ...jobs.filter((item) => item.id !== job.id)]
   renderJobs()
+  if (job.status === 'completed') {
+    refreshDownloadedState().then(() => {
+      if (currentComicPathWord === job.comicPathWord) loadComic(currentComicPathWord)
+      if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
+    })
+  }
 })
+
+refreshDownloadedState().catch(() => {})

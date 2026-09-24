@@ -169,7 +169,7 @@ async function getComic(comicPathWord) {
   for (const groupPathWord of Object.keys(data.groups || {})) {
     groupsChapters[groupPathWord] = await getGroupChapters(comicPathWord, groupPathWord)
   }
-  return { ...data, groupsChapters }
+  return markDownloadedChapters({ ...data, groupsChapters }, await listDownloaded())
 }
 
 async function getChapter(comicPathWord, chapterUuid, token) {
@@ -224,6 +224,15 @@ async function listDownloaded() {
       const chapterFiles = files.filter((candidate) => (
         candidate.startsWith(`${comicDir}${path.sep}`) && path.basename(candidate) === 'chapter.json'
       ))
+      const chapterUuids = []
+      for (const chapterFile of chapterFiles) {
+        try {
+          const chapter = JSON.parse(await readFile(chapterFile, 'utf8'))
+          if (chapter.chapterUuid) chapterUuids.push(chapter.chapterUuid)
+        } catch {
+          // Ignore broken chapter metadata and keep the rest of the inventory usable.
+        }
+      }
       const imageFiles = files.filter((candidate) => (
         candidate.startsWith(`${comicDir}${path.sep}`) && /\.(webp|jpe?g)$/i.test(candidate)
       ))
@@ -235,6 +244,7 @@ async function listDownloaded() {
         cover: comic.comic?.cover || comic.cover || '',
         author: comic.comic?.author || comic.author || [],
         groups: comic.groups || {},
+        chapterUuids,
         chapterCount: chapterFiles.length,
         imageCount: imageFiles.length,
         updatedAt: info.mtime.toISOString(),
@@ -244,6 +254,22 @@ async function listDownloaded() {
     }
   }
   return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
+function markDownloadedChapters(comic, downloadedComics) {
+  const comicPathWord = comic.comic?.path_word || comic.comic?.pathWord || comic.path_word || ''
+  const downloaded = downloadedComics.find((item) => item.comicPathWord === comicPathWord)
+  if (!downloaded) return comic
+
+  const downloadedChapterUuids = new Set(downloaded.chapterUuids || [])
+  for (const chapters of Object.values(comic.groupsChapters || {})) {
+    for (const chapter of chapters) {
+      const uuid = chapter.uuid || chapter.chapter_uuid || chapter.chapterUuid
+      chapter.isDownloaded = downloadedChapterUuids.has(uuid)
+    }
+  }
+  comic.isDownloaded = true
+  return comic
 }
 
 async function downloadImage(url, filePath) {
