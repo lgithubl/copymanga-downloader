@@ -909,12 +909,6 @@ events.addEventListener('jobDelete', (event) => {
 events.addEventListener('inventoryUpdate', (event) => {
   const update = JSON.parse(event.data)
   renderInventoryUpdate(update)
-  const createdJobs = update.jobs || []
-  if (createdJobs.length > 0) {
-    const createdIds = new Set(createdJobs.map((job) => job.id))
-    jobs = [...createdJobs, ...jobs.filter((item) => !createdIds.has(item.id))]
-    renderJobs()
-  }
   if (update.status === 'completed') {
     loadDownloaded().catch(() => {})
   }

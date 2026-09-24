@@ -706,7 +706,6 @@ function startInventoryUpdate({ token = '', scope = 'downloadedGroups' } = {}) {
     message: '准备更新库存',
     scope,
     errors: [],
-    jobs: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
@@ -819,7 +818,6 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
         aggregateChapterDownloaded,
         aggregateChapterTotal,
         aggregatePendingChapters,
-        jobs: createdJobs.map(publicJob),
       })
       if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
     } catch (error) {
@@ -859,7 +857,6 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
     aggregatePendingChapters,
     created: createdJobs.length,
     skipped: skipped.length,
-    jobs: createdJobs.map(publicJob),
     errors: skipped.slice(-5),
     currentTitle: '',
     message: skipped.length > 0 ? `完成，跳过 ${skipped.length} 部` : '更新完成',
