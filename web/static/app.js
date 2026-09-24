@@ -6,6 +6,20 @@ const els = {
   keyword: document.querySelector('#keyword'),
   search: document.querySelector('#search'),
   results: document.querySelector('#results'),
+  discoverOrdering: document.querySelector('#discover-ordering'),
+  discoverTheme: document.querySelector('#discover-theme'),
+  discoverRegion: document.querySelector('#discover-region'),
+  discoverStatus: document.querySelector('#discover-status'),
+  discoverLimit: document.querySelector('#discover-limit'),
+  discoverRefresh: document.querySelector('#discover-refresh'),
+  discoverPrev: document.querySelector('#discover-prev'),
+  discoverNext: document.querySelector('#discover-next'),
+  discoverMeta: document.querySelector('#discover-meta'),
+  discoverResults: document.querySelector('#discover-results'),
+  discoverChapters: document.querySelector('#discover-chapters'),
+  discoverComicTitle: document.querySelector('#discover-comic-title'),
+  discoverDownload: document.querySelector('#discover-download'),
+  discoverDownloadAll: document.querySelector('#discover-download-all'),
   tabs: [...document.querySelectorAll('.tab')],
   views: [...document.querySelectorAll('.view')],
   chapters: document.querySelector('#chapters'),
@@ -48,6 +62,8 @@ const els = {
 let currentComicPathWord = ''
 let jobs = []
 let downloaded = []
+let discoverOffset = 0
+let discoverTotal = 0
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -97,7 +113,7 @@ function renderResults(data) {
   renderComicCards(els.results, list)
 }
 
-function renderComicCards(container, list) {
+function renderComicCards(container, list, onPick = undefined) {
   const downloadedPathWords = new Set(downloaded.map((item) => item.comicPathWord))
   container.innerHTML = ''
   for (const item of list) {
@@ -115,12 +131,27 @@ function renderComicCards(container, list) {
       </div>
     `
     card.addEventListener('click', () => {
-      showView('search-view')
-      loadComic(pathWord)
+      if (onPick) {
+        onPick(pathWord)
+      } else {
+        showView('search-view')
+        loadComic(pathWord)
+      }
     })
     container.append(card)
   }
   if (list.length === 0) container.innerHTML = '<p class="muted">没有结果</p>'
+}
+
+function renderDiscover(data) {
+  const list = data.list || []
+  discoverTotal = Number(data.total || 0)
+  const limit = Number(data.limit || els.discoverLimit.value || 10)
+  discoverOffset = Number(data.offset || discoverOffset)
+  els.discoverMeta.textContent = `共 ${discoverTotal} 部 · ${Math.floor(discoverOffset / limit) + 1} 页`
+  els.discoverPrev.disabled = discoverOffset <= 0
+  els.discoverNext.disabled = discoverOffset + limit >= discoverTotal
+  renderComicCards(els.discoverResults, list, (pathWord) => loadComic(pathWord, 'discover'))
 }
 
 function renderDownloaded(list) {
@@ -154,12 +185,17 @@ function showView(id) {
   for (const tab of els.tabs) tab.classList.toggle('active', tab.dataset.view === id)
 }
 
-function renderComic(data) {
+function renderComic(data, target = 'search') {
+  const isDiscover = target === 'discover'
+  const comicTitleEl = isDiscover ? els.discoverComicTitle : els.comicTitle
+  const downloadButton = isDiscover ? els.discoverDownload : els.download
+  const downloadAllButton = isDiscover ? els.discoverDownloadAll : els.downloadAll
+  const chaptersEl = isDiscover ? els.discoverChapters : els.chapters
   currentComicPathWord = data.comic?.path_word || data.comic?.pathWord || data.path_word || ''
-  els.comicTitle.textContent = data.comic?.name || data.name || '章节'
-  els.download.disabled = false
-  els.downloadAll.disabled = false
-  els.chapters.innerHTML = ''
+  comicTitleEl.textContent = data.comic?.name || data.name || '章节'
+  downloadButton.disabled = false
+  downloadAllButton.disabled = false
+  chaptersEl.innerHTML = ''
 
   for (const [groupPathWord, chapters] of Object.entries(data.groupsChapters || {})) {
     const group = document.createElement('div')
@@ -181,7 +217,7 @@ function renderComic(data) {
       `
       group.append(row)
     }
-    els.chapters.append(group)
+    chaptersEl.append(group)
   }
 }
 
@@ -206,11 +242,12 @@ function renderJobs() {
   if (sorted.length === 0) els.jobs.innerHTML = '<p class="muted">暂无任务</p>'
 }
 
-async function loadComic(pathWord) {
+async function loadComic(pathWord, target = 'search') {
   if (!pathWord) return
-  els.chapters.innerHTML = '<p class="muted">加载章节中...</p>'
+  const chaptersEl = target === 'discover' ? els.discoverChapters : els.chapters
+  chaptersEl.innerHTML = '<p class="muted">加载章节中...</p>'
   const data = await api(`/api/comic/${encodeURIComponent(pathWord)}`)
-  renderComic(data)
+  renderComic(data, target)
 }
 
 async function refreshDownloadedState() {
@@ -281,6 +318,7 @@ els.search.addEventListener('click', async () => {
 els.tabs.forEach((tab) => {
   tab.addEventListener('click', () => {
     showView(tab.dataset.view)
+    if (tab.dataset.view === 'discover-view') loadDiscover()
     if (tab.dataset.view === 'favorite-view') loadFavorite()
     if (tab.dataset.view === 'downloaded-view') loadDownloaded()
     if (tab.dataset.view === 'settings-view') loadConfig()
@@ -305,6 +343,26 @@ async function loadFavorite() {
   }
 }
 
+async function loadDiscover() {
+  try {
+    setLoading(els.discoverRefresh, true)
+    const params = new URLSearchParams({
+      ordering: els.discoverOrdering.value,
+      offset: String(discoverOffset),
+      limit: els.discoverLimit.value,
+    })
+    if (els.discoverTheme.value) params.set('theme', els.discoverTheme.value)
+    if (els.discoverRegion.value !== '') params.set('region', els.discoverRegion.value)
+    if (els.discoverStatus.value !== '') params.set('status', els.discoverStatus.value)
+    await refreshDownloadedState()
+    renderDiscover(await api(`/api/comics?${params}`))
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.discoverRefresh, false)
+  }
+}
+
 async function loadDownloaded() {
   try {
     setLoading(els.downloadedRefresh, true)
@@ -318,6 +376,24 @@ async function loadDownloaded() {
 
 els.favoriteRefresh.addEventListener('click', loadFavorite)
 els.favoriteOrdering.addEventListener('change', loadFavorite)
+els.discoverRefresh.addEventListener('click', () => {
+  discoverOffset = 0
+  loadDiscover()
+})
+for (const control of [els.discoverOrdering, els.discoverTheme, els.discoverRegion, els.discoverStatus, els.discoverLimit]) {
+  control.addEventListener('change', () => {
+    discoverOffset = 0
+    loadDiscover()
+  })
+}
+els.discoverPrev.addEventListener('click', () => {
+  discoverOffset = Math.max(0, discoverOffset - Number(els.discoverLimit.value || 10))
+  loadDiscover()
+})
+els.discoverNext.addEventListener('click', () => {
+  discoverOffset += Number(els.discoverLimit.value || 10)
+  loadDiscover()
+})
 els.downloadedRefresh.addEventListener('click', loadDownloaded)
 els.downloadedUpdate.addEventListener('click', async () => {
   try {
@@ -406,20 +482,30 @@ els.keyword.addEventListener('keydown', (event) => {
 
 els.download.addEventListener('click', async () => {
   const chapterUuids = [...els.chapters.querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value)
-  await createDownload(chapterUuids)
+  await createDownload(chapterUuids, [els.download, els.downloadAll])
 })
 
 els.downloadAll.addEventListener('click', async () => {
   const checkboxes = [...els.chapters.querySelectorAll('input[type="checkbox"]:not(:disabled)')]
   for (const checkbox of checkboxes) checkbox.checked = true
-  await createDownload(checkboxes.map((item) => item.value))
+  await createDownload(checkboxes.map((item) => item.value), [els.download, els.downloadAll])
 })
 
-async function createDownload(chapterUuids) {
+els.discoverDownload.addEventListener('click', async () => {
+  const chapterUuids = [...els.discoverChapters.querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value)
+  await createDownload(chapterUuids, [els.discoverDownload, els.discoverDownloadAll])
+})
+
+els.discoverDownloadAll.addEventListener('click', async () => {
+  const checkboxes = [...els.discoverChapters.querySelectorAll('input[type="checkbox"]:not(:disabled)')]
+  for (const checkbox of checkboxes) checkbox.checked = true
+  await createDownload(checkboxes.map((item) => item.value), [els.discoverDownload, els.discoverDownloadAll])
+})
+
+async function createDownload(chapterUuids, buttons) {
   if (chapterUuids.length === 0) return alert('请先勾选章节')
   try {
-    setLoading(els.download, true)
-    setLoading(els.downloadAll, true)
+    for (const button of buttons) setLoading(button, true)
     const data = await api('/api/download', {
       method: 'POST',
       body: JSON.stringify({
@@ -435,8 +521,7 @@ async function createDownload(chapterUuids) {
   } catch (error) {
     alert(error.message)
   } finally {
-    setLoading(els.download, false)
-    setLoading(els.downloadAll, false)
+    for (const button of buttons) setLoading(button, false)
   }
 }
 

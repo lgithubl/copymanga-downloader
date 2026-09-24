@@ -15,6 +15,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -43,6 +44,7 @@ button.danger {
 }
 
 input,
+select,
 textarea {
   border: 1px solid #d0d7de;
   border-radius: 6px;
@@ -149,6 +151,7 @@ h2 {
   gap: 12px;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
+  min-width: 0;
 }
 
 .cards,
@@ -256,6 +259,32 @@ h2 {
   gap: 8px;
 }
 
+.discover-panel {
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.filters {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.filters label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pager {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .group {
   display: grid;
   gap: 8px;
@@ -341,6 +370,10 @@ h2 {
 @media (max-width: 900px) {
   #app,
   .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .filters {
     grid-template-columns: 1fr;
   }
 

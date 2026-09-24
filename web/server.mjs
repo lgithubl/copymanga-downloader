@@ -254,6 +254,18 @@ async function search(keyword, page = 1) {
   })
 }
 
+async function listComics({ ordering = '-datetime_updated', limit = 10, offset = 0, theme = '', region = '', status = '' }) {
+  const query = {
+    ordering,
+    limit: clampNumber(limit, 1, 100, 10),
+    offset: Math.max(0, Number(offset) || 0),
+  }
+  if (theme) query.theme = theme
+  if (region !== '') query.region = region
+  if (status !== '') query.status = status
+  return copyFetch('/api/v3/comics', { query })
+}
+
 function favoriteOrdering(value) {
   switch (value) {
     case 'Updated':
@@ -703,6 +715,16 @@ async function route(req, res) {
     }
     if (pathname === '/api/search' && req.method === 'GET') {
       return json(res, 200, await search(url.searchParams.get('q') || '', url.searchParams.get('page') || 1))
+    }
+    if (pathname === '/api/comics' && req.method === 'GET') {
+      return json(res, 200, await listComics({
+        ordering: url.searchParams.get('ordering') || '-datetime_updated',
+        limit: url.searchParams.get('limit') || 10,
+        offset: url.searchParams.get('offset') || 0,
+        theme: url.searchParams.get('theme') || '',
+        region: url.searchParams.get('region') ?? '',
+        status: url.searchParams.get('status') ?? '',
+      }))
     }
     if (pathname === '/api/favorite' && req.method === 'GET') {
       return json(res, 200, await getFavorite(

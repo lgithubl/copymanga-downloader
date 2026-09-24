@@ -32,6 +32,7 @@
       <section class="content">
         <nav class="tabs">
           <button class="tab active" data-view="search-view">漫画搜索</button>
+          <button class="tab" data-view="discover-view">发现</button>
           <button class="tab" data-view="favorite-view">漫画收藏</button>
           <button class="tab" data-view="downloaded-view">本地库存</button>
           <button class="tab" data-view="settings-view">配置</button>
@@ -54,6 +55,102 @@
               </div>
             </div>
             <div id="chapters" class="chapters"></div>
+          </section>
+        </div>
+        <div id="discover-view" class="workspace view">
+          <section>
+            <div class="discover-panel">
+              <div class="chapter-head">
+                <h2>发现</h2>
+                <button id="discover-refresh">刷新</button>
+              </div>
+              <div class="filters">
+                <label>排序
+                  <select id="discover-ordering">
+                    <option value="-datetime_updated">更新时间 ↓</option>
+                    <option value="datetime_updated">更新时间 ↑</option>
+                    <option value="-popular">热度 ↓</option>
+                  </select>
+                </label>
+                <label>题材
+                  <select id="discover-theme">
+                    <option value="">不限</option>
+                    <option value="aiqing">爱情</option>
+                    <option value="huanlexiang">欢乐向</option>
+                    <option value="maoxian">冒险</option>
+                    <option value="qihuan">奇幻</option>
+                    <option value="baihe">百合</option>
+                    <option value="xiaoyuan">校园</option>
+                    <option value="kehuan">科幻</option>
+                    <option value="dongfang">东方</option>
+                    <option value="danmei">耽美</option>
+                    <option value="shenghuo">生活</option>
+                    <option value="gedou">格斗</option>
+                    <option value="xuanyi">悬疑</option>
+                    <option value="teenslove">TL</option>
+                    <option value="zhichang">职场</option>
+                    <option value="zhiyu">治愈</option>
+                    <option value="gaoxiao">搞笑</option>
+                    <option value="mohuan">魔幻</option>
+                    <option value="rexue">热血</option>
+                    <option value="hougong">后宫</option>
+                    <option value="zhentan">侦探</option>
+                    <option value="jingsong">惊悚</option>
+                    <option value="yishijie">异世界</option>
+                    <option value="zhanzheng">战争</option>
+                    <option value="lishi">历史</option>
+                    <option value="dushi">都市</option>
+                    <option value="chuanyue">穿越</option>
+                    <option value="chongsheng">重生</option>
+                    <option value="kongbu">恐怖</option>
+                    <option value="shengcun">生存</option>
+                    <option value="wuxia">武侠</option>
+                    <option value="zhuansheng">转生</option>
+                    <option value="fate">Fate</option>
+                    <option value="xianxia">仙侠</option>
+                  </select>
+                </label>
+                <label>地区
+                  <select id="discover-region">
+                    <option value="">不限</option>
+                    <option value="0">日本</option>
+                    <option value="1">韩国</option>
+                    <option value="2">欧美</option>
+                  </select>
+                </label>
+                <label>状态
+                  <select id="discover-status">
+                    <option value="">不限</option>
+                    <option value="0">连载中</option>
+                    <option value="1">已完结</option>
+                    <option value="2">短篇</option>
+                  </select>
+                </label>
+                <label>每页
+                  <select id="discover-limit">
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                  </select>
+                </label>
+              </div>
+              <div id="discover-meta" class="muted"></div>
+              <div id="discover-results" class="cards"></div>
+              <div class="pager">
+                <button id="discover-prev" class="secondary" disabled>上一页</button>
+                <button id="discover-next" class="secondary" disabled>下一页</button>
+              </div>
+            </div>
+          </section>
+          <section>
+            <div class="chapter-head">
+              <h2 id="discover-comic-title">章节</h2>
+              <div class="chapter-actions">
+                <button id="discover-download-all" class="secondary" disabled>下载全量</button>
+                <button id="discover-download" disabled>下载勾选章节</button>
+              </div>
+            </div>
+            <div id="discover-chapters" class="chapters"></div>
           </section>
         </div>
         <div id="favorite-view" class="workspace view">
