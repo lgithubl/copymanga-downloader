@@ -1,12 +1,9 @@
 import { createHash } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { deflateRawSync, inflateRawSync } from 'node:zlib'
 
-const execFileAsync = promisify(execFile)
 const EPUB_MIME = 'application/epub+zip'
 
 export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside }) {
@@ -37,7 +34,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'copymanga-library-epub-'))
     const uploadPath = path.join(tmpDir, safeSegment(fileName || 'book.epub'))
     await writeFile(uploadPath, buffer)
-    const parsed = await parseEpub(uploadPath, tmpDir)
+    const parsed = await parseEpub(buffer, tmpDir, uploadPath)
     const itemId = uniqueItemId(parsed.title || path.basename(fileName, path.extname(fileName)), buffer)
     const itemDir = itemPath(itemId)
     if (await pathExists(itemDir)) await moveAside(itemDir, 'library-import')
@@ -45,7 +42,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     const originalPath = path.join(itemDir, 'original.epub')
     const extractedDir = path.join(itemDir, 'extracted')
     await copyFile(uploadPath, originalPath)
-    await execFileAsync('unzip', ['-q', originalPath, '-d', extractedDir])
+    await extractZip(buffer, extractedDir)
     const metadata = await parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName })
     await writeMetadata(itemId, metadata)
     return metadata
@@ -53,8 +50,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
 
   async function createSampleItem() {
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'copymanga-library-sample-epub-'))
-    const epubPath = await createSampleEpub(tmpDir)
-    const buffer = await readFile(epubPath)
+    const buffer = await createSampleEpub()
     return importItem({ fileName: 'sample-library-book.epub', buffer })
   }
 
@@ -163,10 +159,10 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     return candidate
   }
 
-  async function parseEpub(epubPath, outDir) {
+  async function parseEpub(buffer, outDir, epubPath) {
     const extractDir = path.join(outDir, 'parse')
     await mkdir(extractDir, { recursive: true })
-    await execFileAsync('unzip', ['-q', epubPath, '-d', extractDir])
+    await extractZip(buffer, extractDir)
     return parseEpubMetadata({ itemId: 'preview', itemDir: outDir, originalPath: epubPath, extractedDir: extractDir, fileName: path.basename(epubPath) })
   }
 
@@ -414,18 +410,14 @@ function contentType(filePath) {
   return 'application/octet-stream'
 }
 
-async function createSampleEpub(tmpDir) {
-  const bookDir = path.join(tmpDir, 'sample-book')
-  const oebps = path.join(bookDir, 'OEBPS')
-  await mkdir(path.join(bookDir, 'META-INF'), { recursive: true })
-  await mkdir(path.join(oebps, 'text'), { recursive: true })
-  await mkdir(path.join(oebps, 'styles'), { recursive: true })
-  await writeFile(path.join(bookDir, 'mimetype'), EPUB_MIME)
-  await writeFile(path.join(bookDir, 'META-INF', 'container.xml'), `<?xml version="1.0"?>
+async function createSampleEpub() {
+  const files = new Map()
+  files.set('mimetype', Buffer.from(EPUB_MIME))
+  files.set('META-INF/container.xml', Buffer.from(`<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
-</container>`)
-  await writeFile(path.join(oebps, 'styles', 'book.css'), `body{font-family:serif;} p{line-height:1.8;}`)
+</container>`))
+  files.set('OEBPS/styles/book.css', Buffer.from(`body{font-family:serif;} p{line-height:1.8;}`))
   const chapters = [
     ['chapter1.xhtml', '第一章 入口', ['这是一本用于测试新媒体库的示例 EPUB。', '它包含多个章节、段落和内部资源，阅读进度会写入新系统的 progress 文件。']],
     ['chapter2.xhtml', '第二章 长廊', ['第二章用于测试上一章和下一章导航。', '滚动到接近底部时，这一章会被记录为完成阅读。']],
@@ -434,14 +426,133 @@ async function createSampleEpub(tmpDir) {
     ['chapter5.xhtml', '第五章 尾声', ['最后一章用于验证章节目录和结束位置。', '这个样例可以安全删除或重新生成。']],
   ]
   for (const [file, title, paragraphs] of chapters) {
-    await writeFile(path.join(oebps, 'text', file), chapterXhtml(title, paragraphs))
+    files.set(`OEBPS/text/${file}`, Buffer.from(chapterXhtml(title, paragraphs)))
   }
-  await writeFile(path.join(oebps, 'nav.xhtml'), navXhtml(chapters))
-  await writeFile(path.join(oebps, 'content.opf'), opfXml(chapters))
-  const epubPath = path.join(tmpDir, 'sample-library-book.epub')
-  await execFileAsync('zip', ['-X0', epubPath, 'mimetype'], { cwd: bookDir })
-  await execFileAsync('zip', ['-Xr9', epubPath, 'META-INF', 'OEBPS'], { cwd: bookDir })
-  return epubPath
+  files.set('OEBPS/nav.xhtml', Buffer.from(navXhtml(chapters)))
+  files.set('OEBPS/content.opf', Buffer.from(opfXml(chapters)))
+  return createZip(files)
+}
+
+async function extractZip(buffer, targetDir) {
+  const entries = readZipEntries(buffer)
+  for (const entry of entries) {
+    const entryPath = normalizeZipPath(entry.name)
+    if (!entryPath || entryPath.endsWith('/')) continue
+    const outPath = path.resolve(targetDir, entryPath)
+    const root = path.resolve(targetDir)
+    if (!outPath.startsWith(`${root}${path.sep}`)) continue
+    await mkdir(path.dirname(outPath), { recursive: true })
+    await writeFile(outPath, entry.body)
+  }
+}
+
+function readZipEntries(buffer) {
+  const eocdOffset = findSignatureBackwards(buffer, 0x06054b50)
+  if (eocdOffset < 0) throw new Error('Invalid ZIP: EOCD not found')
+  const entryCount = buffer.readUInt16LE(eocdOffset + 10)
+  let cursor = buffer.readUInt32LE(eocdOffset + 16)
+  const entries = []
+  for (let i = 0; i < entryCount; i += 1) {
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) throw new Error('Invalid ZIP: central directory expected')
+    const method = buffer.readUInt16LE(cursor + 10)
+    const compressedSize = buffer.readUInt32LE(cursor + 20)
+    const nameLength = buffer.readUInt16LE(cursor + 28)
+    const extraLength = buffer.readUInt16LE(cursor + 30)
+    const commentLength = buffer.readUInt16LE(cursor + 32)
+    const localOffset = buffer.readUInt32LE(cursor + 42)
+    const name = buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8')
+    if (buffer.readUInt32LE(localOffset) !== 0x04034b50) throw new Error('Invalid ZIP: local header expected')
+    const localNameLength = buffer.readUInt16LE(localOffset + 26)
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28)
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength
+    const compressed = buffer.subarray(dataStart, dataStart + compressedSize)
+    let body
+    if (method === 0) body = compressed
+    else if (method === 8) body = inflateRawSync(compressed)
+    else throw new Error(`Unsupported ZIP compression method: ${method}`)
+    entries.push({ name, body })
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  return entries
+}
+
+function createZip(files) {
+  const localParts = []
+  const centralParts = []
+  let offset = 0
+  for (const [name, body] of files.entries()) {
+    const nameBuffer = Buffer.from(name)
+    const stored = name === 'mimetype'
+    const compressed = stored ? body : deflateRawSync(body)
+    const method = stored ? 0 : 8
+    const crc = crc32(body)
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(0, 6)
+    local.writeUInt16LE(method, 8)
+    local.writeUInt32LE(0, 10)
+    local.writeUInt32LE(crc, 14)
+    local.writeUInt32LE(compressed.length, 18)
+    local.writeUInt32LE(body.length, 22)
+    local.writeUInt16LE(nameBuffer.length, 26)
+    local.writeUInt16LE(0, 28)
+    localParts.push(local, nameBuffer, compressed)
+
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(20, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(0, 8)
+    central.writeUInt16LE(method, 10)
+    central.writeUInt32LE(0, 12)
+    central.writeUInt32LE(crc, 16)
+    central.writeUInt32LE(compressed.length, 20)
+    central.writeUInt32LE(body.length, 24)
+    central.writeUInt16LE(nameBuffer.length, 28)
+    central.writeUInt16LE(0, 30)
+    central.writeUInt16LE(0, 32)
+    central.writeUInt16LE(0, 34)
+    central.writeUInt16LE(0, 36)
+    central.writeUInt32LE(0, 38)
+    central.writeUInt32LE(offset, 42)
+    centralParts.push(central, nameBuffer)
+    offset += local.length + nameBuffer.length + compressed.length
+  }
+  const centralSize = centralParts.reduce((total, part) => total + part.length, 0)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0)
+  eocd.writeUInt16LE(0, 4)
+  eocd.writeUInt16LE(0, 6)
+  eocd.writeUInt16LE(files.size, 8)
+  eocd.writeUInt16LE(files.size, 10)
+  eocd.writeUInt32LE(centralSize, 12)
+  eocd.writeUInt32LE(offset, 16)
+  eocd.writeUInt16LE(0, 20)
+  return Buffer.concat([...localParts, ...centralParts, eocd])
+}
+
+function findSignatureBackwards(buffer, signature) {
+  for (let offset = buffer.length - 22; offset >= 0; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === signature) return offset
+  }
+  return -1
+}
+
+const crcTable = new Uint32Array(256).map((_, index) => {
+  let value = index
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1)
+  }
+  return value >>> 0
+})
+
+function crc32(buffer) {
+  let crc = 0xffffffff
+  for (const byte of buffer) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  }
+  return (crc ^ 0xffffffff) >>> 0
 }
 
 function chapterXhtml(title, paragraphs) {
