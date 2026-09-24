@@ -23,12 +23,14 @@ const els = {
   discoverResults: document.querySelector('#discover-results'),
   discoverChapters: document.querySelector('#discover-chapters'),
   discoverComicTitle: document.querySelector('#discover-comic-title'),
+  discoverChapterRefresh: document.querySelector('#discover-chapter-refresh'),
   discoverDownload: document.querySelector('#discover-download'),
   discoverDownloadAll: document.querySelector('#discover-download-all'),
   tabs: [...document.querySelectorAll('.tab')],
   views: [...document.querySelectorAll('.view')],
   chapters: document.querySelector('#chapters'),
   comicTitle: document.querySelector('#comic-title'),
+  chapterRefresh: document.querySelector('#chapter-refresh'),
   download: document.querySelector('#download'),
   downloadAll: document.querySelector('#download-all'),
   jobs: document.querySelector('#jobs'),
@@ -92,6 +94,11 @@ const els = {
 
 let currentComicPathWord = ''
 let currentComicTarget = 'search'
+let latestComicRequest = { search: '', discover: '' }
+let selectedComicByTarget = {
+  search: { pathWord: '', title: '' },
+  discover: { pathWord: '', title: '' },
+}
 let jobs = []
 let downloaded = []
 let downloadedPage = 1
@@ -250,10 +257,10 @@ function renderComicCards(container, list, onPick = undefined) {
     })
     card.addEventListener('click', () => {
       if (onPick) {
-        onPick(pathWord)
+        onPick(pathWord, pickComicTitle(comic))
       } else {
         showView('search-view')
-        loadComic(pathWord)
+        loadComic(pathWord, 'search', pickComicTitle(comic))
       }
     })
     container.append(card)
@@ -274,7 +281,7 @@ function renderDiscover(data) {
   els.discoverPageTotal.textContent = `/ ${totalPages} 页`
   els.discoverPrev.disabled = discoverOffset <= 0
   els.discoverNext.disabled = discoverOffset + limit >= discoverTotal
-  renderComicCards(els.discoverResults, list, (pathWord) => loadComic(pathWord, 'discover'))
+  renderComicCards(els.discoverResults, list, (pathWord, title) => loadComic(pathWord, 'discover', title))
 }
 
 function renderDownloaded(list) {
@@ -336,24 +343,50 @@ function jumpDownloadedPage() {
   renderDownloaded(downloaded)
 }
 
+function comicPanel(target) {
+  const isDiscover = target === 'discover'
+  return {
+    title: isDiscover ? els.discoverComicTitle : els.comicTitle,
+    chapters: isDiscover ? els.discoverChapters : els.chapters,
+    refresh: isDiscover ? els.discoverChapterRefresh : els.chapterRefresh,
+    download: isDiscover ? els.discoverDownload : els.download,
+    downloadAll: isDiscover ? els.discoverDownloadAll : els.downloadAll,
+  }
+}
+
+function renderChapterLoadError({ target, pathWord, title, message }) {
+  const panel = comicPanel(target)
+  panel.title.textContent = title || pathWord || '章节'
+  panel.refresh.disabled = false
+  panel.download.disabled = true
+  panel.downloadAll.disabled = true
+  panel.chapters.className = 'chapters empty-panel'
+  panel.chapters.innerHTML = `
+    <div class="chapter-error">
+      <p>加载章节失败：${escapeHtml(message)}</p>
+      <button class="secondary" type="button">刷新章节</button>
+    </div>
+  `
+  panel.chapters.querySelector('button')?.addEventListener('click', () => loadComic(pathWord, target, title))
+}
+
 function showView(id) {
   for (const view of els.views) view.classList.toggle('active', view.id === id)
   for (const tab of els.tabs) tab.classList.toggle('active', tab.dataset.view === id)
 }
 
 function renderComic(data, target = 'search') {
-  const isDiscover = target === 'discover'
-  const comicTitleEl = isDiscover ? els.discoverComicTitle : els.comicTitle
-  const downloadButton = isDiscover ? els.discoverDownload : els.download
-  const downloadAllButton = isDiscover ? els.discoverDownloadAll : els.downloadAll
-  const chaptersEl = isDiscover ? els.discoverChapters : els.chapters
+  const panel = comicPanel(target)
   const comicPathWord = data.comic?.path_word || data.comic?.pathWord || data.path_word || ''
   currentComicPathWord = comicPathWord
   currentComicTarget = target
-  comicTitleEl.textContent = data.comic?.name || data.name || '章节'
-  downloadButton.disabled = false
-  downloadAllButton.disabled = false
-  renderChapterGroups(data, chaptersEl, comicPathWord)
+  const title = data.comic?.name || data.name || '章节'
+  selectedComicByTarget[target] = { pathWord: comicPathWord, title }
+  panel.title.textContent = title
+  panel.refresh.disabled = false
+  panel.download.disabled = false
+  panel.downloadAll.disabled = false
+  renderChapterGroups(data, panel.chapters, comicPathWord)
 }
 
 function renderChapterGroups(data, chaptersEl, comicPathWord) {
@@ -647,12 +680,31 @@ function stopInventoryPolling() {
   inventoryPollTimer = null
 }
 
-async function loadComic(pathWord, target = 'search') {
+async function loadComic(pathWord, target = 'search', title = '') {
   if (!pathWord) return
-  const chaptersEl = target === 'discover' ? els.discoverChapters : els.chapters
-  chaptersEl.innerHTML = '<p class="muted">加载章节中...</p>'
-  const data = await api(`/api/comic/${encodeURIComponent(pathWord)}`)
-  renderComic(data, target)
+  const panel = comicPanel(target)
+  const requestKey = `${target}:${pathWord}:${Date.now()}:${Math.random().toString(16).slice(2)}`
+  latestComicRequest[target] = requestKey
+  currentComicPathWord = pathWord
+  currentComicTarget = target
+  selectedComicByTarget[target] = { pathWord, title: title || pathWord }
+  panel.title.textContent = title || pathWord
+  panel.refresh.disabled = false
+  panel.download.disabled = true
+  panel.downloadAll.disabled = true
+  panel.chapters.classList.remove('empty-panel')
+  panel.chapters.innerHTML = '<p class="muted">加载章节中...</p>'
+  try {
+    setLoading(panel.refresh, true)
+    const data = await api(`/api/comic/${encodeURIComponent(pathWord)}`)
+    if (latestComicRequest[target] !== requestKey) return
+    renderComic(data, target)
+  } catch (error) {
+    if (latestComicRequest[target] !== requestKey) return
+    renderChapterLoadError({ target, pathWord, title: title || pathWord, message: error.message })
+  } finally {
+    if (latestComicRequest[target] === requestKey) setLoading(panel.refresh, false)
+  }
 }
 
 async function refreshDownloadedState() {
@@ -844,6 +896,14 @@ els.favoriteOrdering.addEventListener('change', loadFavorite)
 els.discoverRefresh.addEventListener('click', () => {
   discoverOffset = 0
   loadDiscover()
+})
+els.chapterRefresh.addEventListener('click', () => {
+  const selected = selectedComicByTarget.search
+  if (selected.pathWord) loadComic(selected.pathWord, 'search', selected.title)
+})
+els.discoverChapterRefresh.addEventListener('click', () => {
+  const selected = selectedComicByTarget.discover
+  if (selected.pathWord) loadComic(selected.pathWord, 'discover', selected.title)
 })
 for (const control of [els.discoverOrdering, els.discoverTheme, els.discoverRegion, els.discoverStatus, els.discoverLimit]) {
   control.addEventListener('change', () => {
