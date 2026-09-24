@@ -114,6 +114,7 @@ function defaultConfig() {
     chapterDownloadIntervalSec: 0,
     imgConcurrency: 6,
     imgDownloadIntervalSec: 0,
+    viewerImageBatchSize: 5,
     updateDownloadedComicsIntervalSec: 0,
     enablePickedComicSyncGuard: false,
     comicDirFmt: '{comic_title}',
@@ -149,6 +150,7 @@ function normalizeConfig(value) {
     chapterDownloadIntervalSec: clampNumber(value?.chapterDownloadIntervalSec, 0, 3600, defaults.chapterDownloadIntervalSec),
     imgConcurrency: clampNumber(value?.imgConcurrency, 1, 60, defaults.imgConcurrency),
     imgDownloadIntervalSec: clampNumber(value?.imgDownloadIntervalSec, 0, 3600, defaults.imgDownloadIntervalSec),
+    viewerImageBatchSize: clampNumber(value?.viewerImageBatchSize, 1, 50, defaults.viewerImageBatchSize),
     updateDownloadedComicsIntervalSec: clampNumber(
       value?.updateDownloadedComicsIntervalSec,
       0,
@@ -488,6 +490,7 @@ async function listDownloaded() {
       const imageFiles = downloadFiles.filter((candidate) => (
         candidate.startsWith(`${downloadComicDir}${path.sep}`) && /\.(webp|jpe?g)$/i.test(candidate)
       ))
+      const remoteChapterTotal = countComicChapters(comic)
       const info = await stat(file)
       comics.push({
         path: relativeComicDir,
@@ -498,6 +501,7 @@ async function listDownloaded() {
         groups: comic.groups || {},
         chapterUuids,
         chapterCount: chapterFiles.length,
+        remoteChapterTotal: remoteChapterTotal || null,
         imageCount: imageFiles.length,
         updatedAt: info.mtime.toISOString(),
       })
@@ -506,6 +510,18 @@ async function listDownloaded() {
     }
   }
   return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
+function countComicChapters(comic) {
+  return Object.values(comic.groupsChapters || {})
+    .reduce((total, chapters) => total + (Array.isArray(chapters) ? chapters.length : 0), 0)
+}
+
+async function writeDownloadedComicMetadata(downloadedComic, comic) {
+  if (!downloadedComic.path) return
+  const metadataComicDir = path.join(metadataRoot(), downloadedComic.path)
+  await mkdir(metadataComicDir, { recursive: true })
+  await writeFile(path.join(metadataComicDir, 'comic.json'), JSON.stringify(comic, null, 2))
 }
 
 async function findLocalChapter(comicPathWord, chapterUuid) {
@@ -657,6 +673,11 @@ function startInventoryUpdate({ token = '', scope = 'downloadedGroups' } = {}) {
     status: 'running',
     total: 0,
     current: 0,
+    groupCurrent: 0,
+    groupTotal: null,
+    chapterDownloaded: 0,
+    chapterTotal: null,
+    pendingChapters: 0,
     created: 0,
     skipped: 0,
     currentTitle: '',
@@ -687,6 +708,11 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
   updateInventory(update, {
     total: downloadedComics.length,
     current: 0,
+    groupCurrent: 0,
+    groupTotal: null,
+    chapterDownloaded: 0,
+    chapterTotal: null,
+    pendingChapters: 0,
     message: downloadedComics.length === 0 ? '没有本地库存' : '正在获取最新章节',
   })
   const activeKeys = new Set(
@@ -702,22 +728,40 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
     if (!comicPathWord) continue
     updateInventory(update, {
       current: index + 1,
+      groupCurrent: 0,
+      groupTotal: null,
+      chapterDownloaded: downloadedComic.chapterCount || 0,
+      chapterTotal: downloadedComic.remoteChapterTotal || null,
+      pendingChapters: 0,
       currentTitle: downloadedComic.title || comicPathWord,
       message: `检查 ${downloadedComic.title || comicPathWord}`,
     })
 
     try {
       const comic = await getComic(comicPathWord)
+      await writeDownloadedComicMetadata(downloadedComic, comic)
       const chapterUuids = []
+      const groupEntries = Object.entries(comic.groupsChapters || {})
+      const consideredGroups = scope === 'allGroups'
+        ? groupEntries
+        : groupEntries.filter(([, chapters]) => chapters.some((chapter) => chapter.isDownloaded === true))
+      const chapterTotal = consideredGroups.reduce((total, [, chapters]) => total + chapters.length, 0)
+      let chapterDownloaded = 0
 
-      for (const chapters of Object.values(comic.groupsChapters || {})) {
-        if (scope !== 'allGroups') {
-          const hasDownloadedChapter = chapters.some((chapter) => chapter.isDownloaded === true)
-          if (!hasDownloadedChapter) continue
-        }
+      updateInventory(update, {
+        groupCurrent: 0,
+        groupTotal: consideredGroups.length,
+        chapterDownloaded: 0,
+        chapterTotal,
+        pendingChapters: 0,
+      })
 
+      for (const [groupIndex, [, chapters]] of consideredGroups.entries()) {
         for (const chapter of chapters) {
-          if (chapter.isDownloaded === true) continue
+          if (chapter.isDownloaded === true) {
+            chapterDownloaded += 1
+            continue
+          }
           const uuid = chapter.uuid || chapter.chapter_uuid || chapter.chapterUuid
           const key = `${comicPathWord}:${uuid}`
           if (uuid && !activeKeys.has(key)) {
@@ -725,6 +769,14 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
             activeKeys.add(key)
           }
         }
+        updateInventory(update, {
+          groupCurrent: groupIndex + 1,
+          groupTotal: consideredGroups.length,
+          chapterDownloaded,
+          chapterTotal,
+          pendingChapters: chapterUuids.length,
+          message: `检查 ${downloadedComic.title || comicPathWord}`,
+        })
       }
 
       const nextJobs = createChapterJobs({ comicPathWord, chapterUuids, token })
@@ -732,6 +784,7 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
       createdJobs.push(...nextJobs.map(publicJob))
       updateInventory(update, {
         created: createdJobs.length,
+        pendingChapters: chapterUuids.length,
         jobs: createdJobs.map(publicJob),
       })
       if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
@@ -744,6 +797,11 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
       updateInventory(update, {
         skipped: skipped.length,
         errors: skipped.slice(-5),
+        groupCurrent: 0,
+        groupTotal: null,
+        chapterDownloaded: downloadedComic.chapterCount || 0,
+        chapterTotal: downloadedComic.remoteChapterTotal || null,
+        pendingChapters: 0,
       })
       if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
     }
@@ -752,6 +810,11 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
   updateInventory(update, {
     status: 'completed',
     current: downloadedComics.length,
+    groupCurrent: 0,
+    groupTotal: null,
+    chapterDownloaded: 0,
+    chapterTotal: null,
+    pendingChapters: 0,
     created: createdJobs.length,
     skipped: skipped.length,
     jobs: createdJobs.map(publicJob),

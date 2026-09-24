@@ -63,6 +63,7 @@ const els = {
   configChapterDownloadIntervalSec: document.querySelector('#config-chapter-download-interval-sec'),
   configImgConcurrency: document.querySelector('#config-img-concurrency'),
   configImgDownloadIntervalSec: document.querySelector('#config-img-download-interval-sec'),
+  configViewerImageBatchSize: document.querySelector('#config-viewer-image-batch-size'),
   configUpdateDownloadedComicsIntervalSec: document.querySelector('#config-update-downloaded-comics-interval-sec'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
@@ -80,6 +81,11 @@ let discoverOffset = 0
 let discoverTotal = 0
 let inventoryUpdate = null
 let viewerState = null
+let viewerBatchSize = 5
+let viewerImages = []
+let viewerRendered = 0
+let viewerSentinel = null
+let viewerScrollHandler = null
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -189,6 +195,8 @@ function renderDownloaded(list) {
   downloaded = list
   els.downloaded.innerHTML = ''
   for (const item of list) {
+    const remoteChapterTotal = Number.isFinite(Number(item.remoteChapterTotal)) ? Number(item.remoteChapterTotal) : null
+    const chapterTotalText = remoteChapterTotal && remoteChapterTotal > 0 ? String(remoteChapterTotal) : '?'
     const card = document.createElement('article')
     card.className = 'card'
     card.innerHTML = `
@@ -196,7 +204,7 @@ function renderDownloaded(list) {
       <div class="card-body">
         <div class="card-title">${escapeHtml(item.title)}</div>
         <div class="muted">${escapeHtml(item.comicPathWord)}</div>
-        <div class="muted">${item.chapterCount} 章 · ${item.imageCount} 张图 · ${escapeHtml(item.path)}</div>
+        <div class="muted">本地 ${item.chapterCount}/${chapterTotalText} 章 · ${item.imageCount} 张图 · ${escapeHtml(item.path)}</div>
         <div class="badge">已下载</div>
       </div>
     `
@@ -282,6 +290,7 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
   els.viewerMeta.textContent = '加载图片中...'
   els.viewerImages.className = 'viewer-grid'
   els.viewerImages.innerHTML = ''
+  resetViewerBatch()
 
   try {
     const params = new URLSearchParams({
@@ -291,17 +300,12 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
     })
     const data = await api(`/api/chapter-images?${params}`)
     const sourceText = data.source === 'local' ? '本地' : '远端预览'
-    els.viewerMeta.textContent = `${sourceText} · ${data.count || 0} 张图`
+    viewerState = { ...viewerState, sourceText, totalImages: data.count || 0 }
+    els.viewerMeta.textContent = `${sourceText} · 0/${data.count || 0} 张图`
     els.viewerImages.innerHTML = ''
-    for (const image of data.images || []) {
-      const img = document.createElement('img')
-      img.src = image.url
-      img.alt = `${title || chapterUuid} ${Number(image.index || 0) + 1}`
-      img.loading = 'lazy'
-      img.decoding = 'async'
-      els.viewerImages.append(img)
-    }
-    if (!data.images?.length) {
+    viewerImages = data.images || []
+    appendViewerImages()
+    if (!viewerImages.length) {
       els.viewerImages.className = 'viewer-grid empty-panel'
       els.viewerImages.textContent = '没有图片'
     }
@@ -310,6 +314,50 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
     els.viewerImages.textContent = error.message
     els.viewerMeta.textContent = '加载失败'
   }
+}
+
+function resetViewerBatch() {
+  if (viewerScrollHandler) els.viewerImages.removeEventListener('scroll', viewerScrollHandler)
+  viewerScrollHandler = null
+  viewerSentinel = null
+  viewerImages = []
+  viewerRendered = 0
+}
+
+function currentViewerBatchSize() {
+  return Math.max(1, Math.min(50, Math.floor(Number(viewerBatchSize || 5))))
+}
+
+function appendViewerImages() {
+  if (!viewerImages.length) return
+  if (viewerSentinel) viewerSentinel.remove()
+  const end = Math.min(viewerImages.length, viewerRendered + currentViewerBatchSize())
+  for (const [offset, image] of viewerImages.slice(viewerRendered, end).entries()) {
+    const img = document.createElement('img')
+    img.src = image.url
+    img.alt = `${viewerState?.title || viewerState?.chapterUuid || 'chapter'} ${Number(image.index ?? (viewerRendered + offset)) + 1}`
+    img.loading = 'lazy'
+    img.decoding = 'async'
+    els.viewerImages.append(img)
+  }
+  viewerRendered = end
+  const sourceText = viewerState?.sourceText || '图片'
+  els.viewerMeta.textContent = `${sourceText} · ${viewerRendered}/${viewerImages.length} 张图`
+  if (viewerRendered < viewerImages.length) attachViewerSentinel()
+}
+
+function attachViewerSentinel() {
+  viewerSentinel = document.createElement('div')
+  viewerSentinel.className = 'viewer-sentinel'
+  viewerSentinel.textContent = '继续加载'
+  viewerSentinel.addEventListener('click', appendViewerImages)
+  els.viewerImages.append(viewerSentinel)
+  if (viewerScrollHandler) els.viewerImages.removeEventListener('scroll', viewerScrollHandler)
+  viewerScrollHandler = () => {
+    const nearBottom = els.viewerImages.scrollTop + els.viewerImages.clientHeight >= els.viewerImages.scrollHeight - 280
+    if (els.viewerImages.scrollTop > 0 && nearBottom) appendViewerImages()
+  }
+  els.viewerImages.addEventListener('scroll', viewerScrollHandler)
 }
 
 function renderJobs() {
@@ -348,9 +396,15 @@ function renderInventoryUpdate(update) {
   const current = Math.min(Number(update.current || 0), total)
   const pct = total > 0 ? Math.round((current / total) * 100) : (update.status === 'completed' ? 100 : 0)
   const scopeText = update.scope === 'allGroups' ? '全部分组' : '仅已下载分组'
+  const groupText = update.groupTotal === null || update.groupTotal === undefined
+    ? '?/?'
+    : `${update.groupCurrent || 0}/${update.groupTotal || 0}`
+  const chapterText = update.chapterTotal === null || update.chapterTotal === undefined
+    ? `${update.chapterDownloaded || 0}/?`
+    : `${update.chapterDownloaded || 0}/${update.chapterTotal || 0}`
   els.inventoryProgress.classList.remove('hidden')
   els.inventoryProgressBar.style.width = `${pct}%`
-  els.inventoryProgressText.textContent = `${update.message || '更新库存'} · ${scopeText} · ${current}/${total} · 新任务 ${update.created || 0} · 跳过 ${update.skipped || 0}`
+  els.inventoryProgressText.textContent = `${update.message || '更新库存'} · ${scopeText} · 漫画 ${current}/${total} · 分组 ${groupText} · 章节 ${chapterText} · 待下载 ${update.pendingChapters || 0} · 新任务 ${update.created || 0} · 跳过 ${update.skipped || 0}`
   els.inventoryProgress.title = (update.errors || [])
     .map((item) => `${item.title || item.comicPathWord}: ${item.error}`)
     .join('\n')
@@ -391,6 +445,8 @@ async function loadConfig() {
   els.configChapterDownloadIntervalSec.value = config.chapterDownloadIntervalSec
   els.configImgConcurrency.value = config.imgConcurrency
   els.configImgDownloadIntervalSec.value = config.imgDownloadIntervalSec
+  viewerBatchSize = config.viewerImageBatchSize || 5
+  els.configViewerImageBatchSize.value = viewerBatchSize
   els.configUpdateDownloadedComicsIntervalSec.value = config.updateDownloadedComicsIntervalSec
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
@@ -574,6 +630,7 @@ els.configSave.addEventListener('click', async () => {
         chapterDownloadIntervalSec: Number(els.configChapterDownloadIntervalSec.value),
         imgConcurrency: Number(els.configImgConcurrency.value),
         imgDownloadIntervalSec: Number(els.configImgDownloadIntervalSec.value),
+        viewerImageBatchSize: Number(els.configViewerImageBatchSize.value),
         updateDownloadedComicsIntervalSec: Number(els.configUpdateDownloadedComicsIntervalSec.value),
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,

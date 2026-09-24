@@ -394,6 +394,7 @@ h2 {
   display: grid;
   gap: 10px;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
+  height: 54px;
   min-width: 0;
   padding: 10px;
 }
@@ -401,8 +402,21 @@ h2 {
 .chapter-view,
 .chapter-redownload {
   font-size: 12px;
+  height: 30px;
   min-height: 30px;
   padding: 0 10px;
+  width: 48px;
+}
+
+.chapter-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.chapter .muted {
+  line-height: 14px;
+  margin-top: 0;
+  min-height: 14px;
 }
 
 .chapter-copy,
@@ -496,6 +510,13 @@ h2 {
   margin: 0 auto;
   max-width: 980px;
   width: min(100%, 980px);
+}
+
+.viewer-sentinel {
+  color: #667085;
+  font-size: 13px;
+  padding: 12px;
+  text-align: center;
 }
 
 #app.sidebar-collapsed .sidebar {
