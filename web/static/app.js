@@ -926,6 +926,7 @@ async function loadDownloadedComic(pathWord, { refreshOnly = false } = {}) {
     } catch (error) {
       els.downloadedComicMeta.textContent = `本地 metadata 读取失败：${error.message}`
     }
+    return
   }
 
   try {

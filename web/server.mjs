@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { readFile, readdir, stat, writeFile, mkdir, rename } from 'node:fs/promises'
-import { createWriteStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -62,6 +62,14 @@ function binary(res, status, body, contentType) {
     'Cache-Control': 'public, max-age=3600',
   })
   res.end(body)
+}
+
+function streamFile(res, filePath, contentType) {
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Cache-Control': 'public, max-age=3600',
+  })
+  createReadStream(filePath).pipe(res)
 }
 
 function cleanName(value) {
@@ -542,8 +550,10 @@ async function walk(dir) {
 }
 
 async function listDownloaded() {
+  if (config.metadataDir) return listDownloadedFromMetadataDir()
+
   const downloadFiles = await walk(DOWNLOAD_DIR)
-  const metadataFiles = config.metadataDir ? await walk(metadataRoot()) : downloadFiles
+  const metadataFiles = downloadFiles
   const comicFiles = collectComicMetadataFiles(metadataFiles)
   const comics = []
   for (const file of comicFiles) {
@@ -592,6 +602,44 @@ async function listDownloaded() {
   return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
 
+function metadataComicDir(comicPathWord) {
+  return path.join(metadataRoot(), 'comics', safeSegment(comicPathWord))
+}
+
+function metadataComicFile(comicPathWord) {
+  return path.join(metadataComicDir(comicPathWord), APP_COMIC_METADATA)
+}
+
+function metadataChaptersDir(comicPathWord) {
+  return path.join(metadataComicDir(comicPathWord), 'chapters')
+}
+
+function metadataChapterFile(comicPathWord, chapterUuid) {
+  return path.join(metadataChaptersDir(comicPathWord), `${safeSegment(chapterUuid)}.json`)
+}
+
+async function listDownloadedFromMetadataDir() {
+  const comicsRoot = path.join(metadataRoot(), 'comics')
+  let entries = []
+  try {
+    entries = await readdir(comicsRoot, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const comics = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const comicPathWord = entry.name
+    const file = metadataComicFile(comicPathWord)
+    try {
+      comics.push(await downloadedComicSummaryFromMetadataFile(file, comicPathWord))
+    } catch (error) {
+      console.warn(`skip invalid inventory file ${file}: ${error.message}`)
+    }
+  }
+  return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
 function collectAllChapterUuids(comic) {
   normalizeComicMetadata(comic)
   return Object.values(comic.groupsChapters || {})
@@ -616,6 +664,8 @@ async function writeDownloadedComicMetadata(downloadedComic, comic) {
 }
 
 async function getDownloadedComic(comicPathWord, { refresh = false, token = '' } = {}) {
+  if (config.metadataDir) return getDownloadedComicFromMetadataDir(comicPathWord, { refresh, token })
+
   const downloadedComics = await listDownloaded()
   const downloadedComic = downloadedComics.find((item) => item.comicPathWord === comicPathWord)
   if (!downloadedComic) throw new Error(`本地库存不存在 ${comicPathWord}`)
@@ -634,7 +684,58 @@ async function getDownloadedComic(comicPathWord, { refresh = false, token = '' }
   }
 }
 
+async function getDownloadedComicFromMetadataDir(comicPathWord, { refresh = false, token = '' } = {}) {
+  const file = metadataComicFile(comicPathWord)
+  const comic = normalizeComicMetadata(JSON.parse(await readFile(file, 'utf8')))
+  const downloadedComic = await downloadedComicSummaryFromMetadataFile(file, comicPathWord)
+  if (refresh) {
+    const remote = await getComic(comicPathWord)
+    await writeDownloadedComicMetadata(downloadedComic, remote)
+    return { ...remote, source: 'remote', downloadedInfo: downloadedComic }
+  }
+  return {
+    ...markDownloadedChapters(comic, [downloadedComic]),
+    source: 'metadata',
+    downloadedInfo: downloadedComic,
+  }
+}
+
+async function downloadedComicSummaryFromMetadataFile(file, fallbackPathWord = '') {
+  const comic = normalizeComicMetadata(JSON.parse(await readFile(file, 'utf8')))
+  const metadataComicDir = path.dirname(file)
+  const relativeComicDir = inferRelativeComicDir({ comic, comicFile: file, metadataComicDir })
+  const comicPathWord = comicPathWordOf(comic) || fallbackPathWord || path.basename(metadataComicDir)
+  let chapterEntries = []
+  try {
+    chapterEntries = await readdir(path.join(metadataComicDir, 'chapters'), { withFileTypes: true })
+  } catch {
+    chapterEntries = []
+  }
+  const chapterUuids = chapterEntries
+    .filter((item) => item.isFile() && path.extname(item.name).toLowerCase() === '.json')
+    .map((item) => path.basename(item.name, '.json'))
+  const info = await stat(file)
+  return {
+    path: relativeComicDir,
+    metadataComicFile: file,
+    metadataComicDir,
+    comicPathWord,
+    title: comicTitleOf(comic, comicPathWord),
+    cover: comic.comic?.cover || comic.cover || '',
+    author: comic.comic?.author || comic.author || [],
+    groups: comic.groups || {},
+    allChapterUuids: collectAllChapterUuids(comic),
+    chapterUuids,
+    chapterCount: chapterUuids.length,
+    remoteChapterTotal: countComicChapters(comic) || null,
+    imageCount: null,
+    updatedAt: info.mtime.toISOString(),
+  }
+}
+
 async function findLocalChapter(comicPathWord, chapterUuid) {
+  if (config.metadataDir) return findLocalChapterFromMetadataDir(comicPathWord, chapterUuid)
+
   const metadataFiles = await walk(metadataRoot())
   const chapterFiles = metadataFiles.filter((file) => isChapterMetadataFile(file))
   for (const chapterFile of chapterFiles) {
@@ -678,6 +779,43 @@ async function findLocalChapter(comicPathWord, chapterUuid) {
     }
   }
   return null
+}
+
+async function findLocalChapterFromMetadataDir(comicPathWord, chapterUuid) {
+  const chapterFile = metadataChapterFile(comicPathWord, chapterUuid)
+  try {
+    const chapter = JSON.parse(await readFile(chapterFile, 'utf8'))
+    const comicFile = metadataComicFile(comicPathWord)
+    const comic = normalizeComicMetadata(JSON.parse(await readFile(comicFile, 'utf8')))
+    const metadataComicDir = path.dirname(comicFile)
+    const relativeComicDir = inferRelativeComicDir({ comic, comicFile, metadataComicDir })
+    const found = findChapter(comic, chapterUuid)
+    if (!found) return null
+    const groupTitle = cleanName(chapter.groupName || found.chapter.groupName || found.chapter.group_name || found.groupPathWord)
+    const chapterTitle = cleanName(chapterTitleOf(chapter, chapterUuid))
+    const downloadChapterDir = path.join(DOWNLOAD_DIR, relativeComicDir, formatPath(config.chapterDirFmt, {
+      ...comicDirParams(comic, comicPathWord),
+      group_path_word: found.groupPathWord,
+      group_title: groupTitle,
+      chapter_uuid: chapterUuid,
+      chapter_title: chapterTitle,
+      order: chapter.order ?? found.chapter.order ?? 1,
+    }))
+    const files = (await readdir(downloadChapterDir, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && /\.(webp|jpe?g|png|gif)$/i.test(entry.name))
+      .map((entry) => path.join(downloadChapterDir, entry.name))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    return {
+      chapter,
+      relativeChapterDir: path.relative(DOWNLOAD_DIR, downloadChapterDir),
+      metadataChapterFile: chapterFile,
+      metadataChapterDir: path.dirname(chapterFile),
+      downloadChapterDir,
+      files,
+    }
+  } catch {
+    return null
+  }
 }
 
 function imageContentType(filePath, fallback = 'image/webp') {
@@ -848,8 +986,7 @@ async function markAllReadingProgress({ comicPathWord, comicTitle = '', chapters
 async function serveLocalImage(res, relativePath) {
   const filePath = path.resolve(DOWNLOAD_DIR, relativePath || '')
   if (!filePath.startsWith(path.resolve(DOWNLOAD_DIR) + path.sep)) return text(res, 403, 'Forbidden')
-  const body = await readFile(filePath)
-  return binary(res, 200, body, imageContentType(filePath))
+  return streamFile(res, filePath, imageContentType(filePath))
 }
 
 async function servePreviewImage(res, sessionId, index) {
@@ -1063,6 +1200,17 @@ function buildChapterNavigation(comic, chapterUuid, downloadedChapterUuids = [])
 }
 
 async function getChapterNavigation({ comicPathWord, chapterUuid }) {
+  if (config.metadataDir) {
+    try {
+      const comicFile = metadataComicFile(comicPathWord)
+      const comic = normalizeComicMetadata(JSON.parse(await readFile(comicFile, 'utf8')))
+      const downloadedComic = await downloadedComicSummaryFromMetadataFile(comicFile, comicPathWord)
+      return buildChapterNavigation(comic, chapterUuid, downloadedComic.chapterUuids || [])
+    } catch {
+      return { prev: null, next: null }
+    }
+  }
+
   try {
     const downloadedComics = await listDownloaded()
     const downloadedComic = downloadedComics.find((item) => item.comicPathWord === comicPathWord)
@@ -1438,8 +1586,16 @@ async function serveStatic(req, res, pathname) {
 }
 
 async function route(req, res) {
+  const startedAt = process.hrtime.bigint()
   const url = new URL(req.url, `http://${req.headers.host}`)
   const pathname = decodeURIComponent(url.pathname)
+  const shouldLogRequest = pathname !== '/api/events'
+  if (shouldLogRequest) {
+    res.once('finish', () => {
+      const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6
+      console.log(`${req.method} ${pathname} ${res.statusCode} ${elapsedMs.toFixed(1)}ms`)
+    })
+  }
 
   try {
     if (pathname === '/health') return json(res, 200, { ok: true })
