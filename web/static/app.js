@@ -410,8 +410,10 @@ function attachViewerSentinel() {
     const internalThreshold = Math.max(1, (els.viewerImages.scrollHeight - els.viewerImages.clientHeight) / 2)
     const internalReady = els.viewerImages.scrollTop >= internalThreshold
     const sentinelTop = viewerSentinel.getBoundingClientRect().top
+    const gridBox = els.viewerImages.getBoundingClientRect()
+    const renderedHalfReady = gridBox.top + (els.viewerImages.scrollHeight / 2) <= window.innerHeight
     const viewportReady = sentinelTop <= window.innerHeight * 1.8
-    if (internalReady || viewportReady) appendViewerImages(true)
+    if (internalReady || renderedHalfReady || viewportReady) appendViewerImages(true)
   }
   els.viewerImages.addEventListener('scroll', viewerScrollHandler)
   window.addEventListener('scroll', viewerScrollHandler)
