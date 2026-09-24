@@ -127,7 +127,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
       }
     }
     const unitPath = safeExtractedPath(itemId, section.resourcePath)
-    const raw = await readFile(unitPath, 'utf8')
+    const raw = await readTextFile(unitPath)
     return {
       type: 'html',
       item: pickPublicItem(item),
@@ -267,10 +267,10 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
   }
 
   async function parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName, resourcePrefix = '' }) {
-    const containerXml = await readFile(path.join(extractedDir, 'META-INF', 'container.xml'), 'utf8')
+    const containerXml = await readTextFile(path.join(extractedDir, 'META-INF', 'container.xml'))
     const opfPath = xmlAttr(containerXml, 'rootfile', 'full-path')
     if (!opfPath) throw new Error('EPUB container missing OPF rootfile')
-    const opf = await readFile(path.join(extractedDir, opfPath), 'utf8')
+    const opf = await readTextFile(path.join(extractedDir, opfPath))
     const opfDir = path.posix.dirname(opfPath)
     const manifest = parseManifest(opf, opfDir)
     const spine = parseSpine(opf)
@@ -558,7 +558,7 @@ async function parseNavTitles({ extractedDir, manifest }) {
   const nav = [...manifest.values()].find((entry) => /\bnav\b/.test(entry.properties || ''))
   if (!nav?.absolutePath) return titles
   try {
-    const navHtml = await readFile(path.join(extractedDir, nav.absolutePath), 'utf8')
+    const navHtml = await readTextFile(path.join(extractedDir, nav.absolutePath))
     const navDir = path.posix.dirname(nav.absolutePath)
     for (const match of navHtml.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
       const href = attrValue(match[1], 'href').split('#')[0]
@@ -574,7 +574,7 @@ async function parseNavTitles({ extractedDir, manifest }) {
 
 async function documentTitle(filePath) {
   try {
-    const html = await readFile(filePath, 'utf8')
+    const html = await readTextFile(filePath)
     return textTag(html, 'title') || textTag(html, 'h1') || ''
   } catch {
     return ''
@@ -600,6 +600,66 @@ function sanitizeHtml(html, { itemId, basePath }) {
     return ` ${attr}="#"`
   })
   return body
+}
+
+async function readTextFile(filePath) {
+  return decodeTextBuffer(await readFile(filePath))
+}
+
+function decodeTextBuffer(buffer) {
+  if (!buffer?.length) return ''
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return decodeWith('utf-8', buffer.subarray(3))
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return decodeWith('utf-16le', buffer.subarray(2))
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return decodeWith('utf-16be', buffer.subarray(2))
+  }
+
+  const declared = declaredEncoding(buffer)
+  if (declared) {
+    const decoded = decodeWith(declared, buffer)
+    if (decoded) return decoded
+  }
+
+  const utf8 = decodeWith('utf-8', buffer, true)
+  if (utf8) return utf8
+
+  for (const encoding of ['shift_jis', 'gb18030', 'big5', 'utf-8']) {
+    const decoded = decodeWith(encoding, buffer)
+    if (decoded) return decoded
+  }
+  return buffer.toString('utf8')
+}
+
+function declaredEncoding(buffer) {
+  const head = buffer.subarray(0, Math.min(buffer.length, 4096)).toString('latin1')
+  const xml = /<\?xml[^>]*encoding\s*=\s*["']([^"']+)["']/i.exec(head)?.[1]
+  if (xml) return normalizeEncoding(xml)
+  const metaCharset = /<meta[^>]*charset\s*=\s*["']?\s*([^\s"'/>]+)/i.exec(head)?.[1]
+  if (metaCharset) return normalizeEncoding(metaCharset)
+  const httpEquiv = /<meta[^>]*content\s*=\s*["'][^"']*charset\s*=\s*([^"';\s]+)[^"']*["']/i.exec(head)?.[1]
+  if (httpEquiv) return normalizeEncoding(httpEquiv)
+  return ''
+}
+
+function normalizeEncoding(value) {
+  const label = String(value || '').trim().toLowerCase().replace(/_/g, '-')
+  if (['shift-jis', 'sjis', 'windows-31j', 'cp932'].includes(label)) return 'shift_jis'
+  if (['gbk', 'gb2312', 'gb-2312', 'cp936'].includes(label)) return 'gb18030'
+  if (['big5', 'big-5', 'cp950'].includes(label)) return 'big5'
+  if (['utf16', 'utf-16'].includes(label)) return 'utf-16le'
+  return label
+}
+
+function decodeWith(encoding, buffer, fatal = false) {
+  try {
+    return new TextDecoder(encoding, { fatal }).decode(buffer)
+  } catch {
+    return ''
+  }
 }
 
 function normalizeZipPath(value) {

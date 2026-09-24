@@ -86,6 +86,7 @@ const els = {
   mediaReaderBack: document.querySelector('#media-reader-back'),
   mediaReaderPrev: document.querySelector('#media-reader-prev'),
   mediaSectionSelect: document.querySelector('#media-section-select'),
+  mediaReaderTheme: document.querySelector('#media-reader-theme'),
   mediaPagePrev: document.querySelector('#media-page-prev'),
   mediaPageNext: document.querySelector('#media-page-next'),
   mediaReaderNext: document.querySelector('#media-reader-next'),
@@ -151,6 +152,7 @@ let mediaReturnView = 'library-view'
 let mediaPageIndex = 0
 let mediaPageCount = 1
 let mediaPageStep = 1
+let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
@@ -159,6 +161,7 @@ const savedSidebarCollapsed = localStorage.getItem('copymanga.sidebarCollapsed')
 els.app.classList.toggle('sidebar-collapsed', savedSidebarCollapsed === null ? true : savedSidebarCollapsed === '1')
 els.sidebarToggle.textContent = els.app.classList.contains('sidebar-collapsed') ? '›' : '‹'
 els.sidebarToggle.title = els.app.classList.contains('sidebar-collapsed') ? '展开任务栏' : '收缩任务栏'
+els.mediaReaderTheme.value = localStorage.getItem('copymanga.mediaReaderTheme') || 'light'
 
 async function api(path, options = {}) {
   const resp = await fetch(path, {
@@ -1080,6 +1083,7 @@ function renderLibraryUnits() {
       ? `${unit.chapterCount || 0} 个内部章节${unit.imageCount ? ` · ${unit.imageCount} 张图片` : ''}`
       : unit.unitId
     row.innerHTML = `
+      ${renderUnitThumb(unit.cover || currentLibraryItem?.cover, unit.title)}
       <span class="chapter-copy">
         <span class="chapter-title">${escapeHtml(unit.title)}</span>
         <span class="muted">${escapeHtml(unitMeta)}</span>
@@ -1165,7 +1169,7 @@ function renderMediaSectionSelect(reader) {
 }
 
 function renderMediaHtml(reader) {
-  els.mediaReaderContent.className = 'media-reader-content media-html'
+  els.mediaReaderContent.className = `media-reader-content media-html ${mediaReaderThemeClass()}`
   const pages = document.createElement('div')
   pages.className = 'media-html-pages'
   pages.innerHTML = reader.content || ''
@@ -1178,7 +1182,7 @@ function renderMediaHtml(reader) {
 }
 
 function renderMediaImages(reader) {
-  els.mediaReaderContent.className = 'media-reader-content media-images'
+  els.mediaReaderContent.className = `media-reader-content media-images ${mediaReaderThemeClass()}`
   if (!reader.images?.length) {
     els.mediaReaderContent.className = 'media-reader-content empty-panel'
     els.mediaReaderContent.textContent = '没有图片资源'
@@ -1205,22 +1209,28 @@ function layoutMediaPages() {
   const content = els.mediaReaderContent
   const pages = content.querySelector('.media-html-pages')
   if (!pages) return
-  const gap = 48
-  const pageWidth = Math.max(320, Math.min(760, content.clientWidth - 56))
+  const gap = Math.max(24, Math.min(48, Math.round(content.clientWidth * 0.06)))
+  const pageWidth = Math.max(320, content.clientWidth - 56)
   pages.style.setProperty('--media-page-width', `${pageWidth}px`)
+  pages.style.setProperty('--media-page-gap', `${gap}px`)
   mediaPageStep = pageWidth + gap
-  mediaPageCount = Math.max(1, Math.ceil((pages.scrollWidth + gap) / mediaPageStep))
+  mediaMaxScrollLeft = Math.max(0, content.scrollWidth - content.clientWidth)
+  mediaPageCount = mediaMaxScrollLeft <= 0 ? 1 : Math.ceil(mediaMaxScrollLeft / mediaPageStep) + 1
   mediaPageIndex = Math.max(0, Math.min(mediaPageIndex, mediaPageCount - 1))
-  content.scrollLeft = mediaPageIndex * mediaPageStep
+  content.scrollLeft = mediaPageScrollLeft(mediaPageIndex)
   updateMediaPageControls()
 }
 
 function setMediaPage(pageIndex, { save = true } = {}) {
   if (currentMediaReader?.type !== 'html') return
   mediaPageIndex = Math.max(0, Math.min(pageIndex, mediaPageCount - 1))
-  els.mediaReaderContent.scrollTo({ left: mediaPageIndex * mediaPageStep, top: 0, behavior: 'smooth' })
+  els.mediaReaderContent.scrollTo({ left: mediaPageScrollLeft(mediaPageIndex), top: 0, behavior: 'smooth' })
   updateMediaPageControls()
   if (save) scheduleLibraryProgressSave()
+}
+
+function mediaPageScrollLeft(pageIndex) {
+  return Math.max(0, Math.min(mediaMaxScrollLeft, pageIndex * mediaPageStep))
 }
 
 function mediaScrollRatio() {
@@ -1236,6 +1246,11 @@ function updateMediaPageControls() {
     const sectionText = currentMediaReader.section ? ` · ${currentMediaReader.section.index + 1}/${currentMediaReader.sections?.length || 1}` : ''
     els.mediaReaderMeta.textContent = `${currentMediaReader.item?.title || currentLibraryItem?.title || ''} · ${(currentMediaReader.unit?.index || 0) + 1}/${currentLibraryUnits.length}${sectionText} · 第 ${mediaPageIndex + 1}/${mediaPageCount} 页`
   }
+}
+
+function mediaReaderThemeClass() {
+  const theme = els.mediaReaderTheme?.value || 'light'
+  return `reader-theme-${['light', 'dark', 'warm', 'sepia'].includes(theme) ? theme : 'light'}`
 }
 
 async function saveLibraryProgress(scrollRatio = mediaScrollRatio()) {
@@ -1406,6 +1421,10 @@ els.mediaSectionSelect.addEventListener('change', () => {
   if (currentMediaReader?.unit?.unitId && els.mediaSectionSelect.value) {
     openMediaUnit(currentMediaReader.unit.unitId, els.mediaSectionSelect.value)
   }
+})
+els.mediaReaderTheme.addEventListener('change', () => {
+  localStorage.setItem('copymanga.mediaReaderTheme', els.mediaReaderTheme.value)
+  if (currentMediaReader) renderMediaReader(currentMediaReader)
 })
 els.mediaPagePrev.addEventListener('click', () => setMediaPage(mediaPageIndex - 1))
 els.mediaPageNext.addEventListener('click', () => {
@@ -1587,6 +1606,11 @@ function escapeHtml(value) {
 function renderCover(src, alt) {
   if (!src) return '<div class="cover placeholder"></div>'
   return `<img class="cover" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" />`
+}
+
+function renderUnitThumb(src, alt) {
+  if (!src) return '<span class="unit-thumb placeholder"></span>'
+  return `<img class="unit-thumb" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" />`
 }
 
 api('/api/jobs').then((data) => {

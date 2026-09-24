@@ -510,9 +510,29 @@ h2 {
 .library-unit {
   color: inherit;
   cursor: pointer;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  height: 58px;
   text-align: left;
   width: 100%;
+}
+
+.unit-thumb {
+  aspect-ratio: 3 / 4;
+  background: #eef1f4;
+  border: 1px solid #d8dee4;
+  border-radius: 4px;
+  display: block;
+  object-fit: cover;
+  width: 34px;
+}
+
+.unit-thumb.placeholder::after {
+  color: #8c959f;
+  content: "EPUB";
+  display: grid;
+  font-size: 10px;
+  height: 100%;
+  place-items: center;
 }
 
 .chapter-view,
@@ -530,6 +550,10 @@ h2 {
 
 .chapter .muted {
   display: none;
+}
+
+.library-unit .muted {
+  display: block;
 }
 
 .chapter-copy,
@@ -666,10 +690,42 @@ h2 {
 .media-html-pages {
   box-sizing: border-box;
   column-fill: auto;
-  column-gap: 48px;
+  column-gap: var(--media-page-gap, 48px);
   column-width: var(--media-page-width, 720px);
   height: 100%;
   padding: 28px;
+}
+
+.reader-theme-light {
+  background: #ffffff;
+  color: #202124;
+}
+
+.reader-theme-dark {
+  background: #111317;
+  border-color: #2b3038;
+  color: #e7e0d6;
+}
+
+.reader-theme-warm {
+  background: #fbf1df;
+  border-color: #ead7b9;
+  color: #33271e;
+}
+
+.reader-theme-sepia {
+  background: #f4ecd8;
+  border-color: #ded1b6;
+  color: #2f2a22;
+}
+
+.reader-theme-dark a {
+  color: #91c7ff;
+}
+
+.reader-theme-warm a,
+.reader-theme-sepia a {
+  color: #7a4d1d;
 }
 
 .media-reader-content h1,
