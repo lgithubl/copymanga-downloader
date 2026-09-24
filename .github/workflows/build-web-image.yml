@@ -1,6 +1,15 @@
 name: Build Web Docker Image
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "web/**"
+      - "Dockerfile.web"
+      - ".dockerignore"
+      - ".github/workflows/build-web-image.yml"
+      - ".github/workflows/interactive-web-image.yml"
   workflow_dispatch:
     inputs:
       tag:
@@ -42,9 +51,11 @@ jobs:
         id: image
         shell: bash
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}:${{ inputs.tag }}"
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="web"; fi
+          IMAGE="ghcr.io/${{ github.repository }}:${TAG}"
           echo "image=${IMAGE,,}" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=copymanga-downloader-web-${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=copymanga-downloader-web-${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
         uses: docker/build-push-action@v6

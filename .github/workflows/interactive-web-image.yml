@@ -1,6 +1,11 @@
 name: Interactive Web Image
 
 on:
+  workflow_run:
+    workflows:
+      - Build Web Docker Image
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       image:
@@ -19,12 +24,12 @@ permissions:
 jobs:
   interactive:
     name: Start temporary web session
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 75
 
     steps:
       - name: Login to GitHub Container Registry
-        if: ${{ startsWith(inputs.image, 'ghcr.io/') }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -32,15 +37,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull image
-        run: docker pull "${{ inputs.image }}"
+        run: |
+          IMAGE="${{ inputs.image }}"
+          if [ -z "$IMAGE" ]; then IMAGE="ghcr.io/lgithubl/copymanga-downloader:web"; fi
+          docker pull "$IMAGE"
 
       - name: Start copymanga web
         run: |
           mkdir -p "$RUNNER_TEMP/copymanga-data"
+          IMAGE="${{ inputs.image }}"
+          if [ -z "$IMAGE" ]; then IMAGE="ghcr.io/lgithubl/copymanga-downloader:web"; fi
           docker run -d --name copymanga-web \
             -p 8080:8080 \
             -v "$RUNNER_TEMP/copymanga-data:/data" \
-            "${{ inputs.image }}"
+            "$IMAGE"
 
       - name: Wait for app
         run: |
@@ -168,7 +178,9 @@ jobs:
                 echo
                 echo "Password: \`${{ steps.auth.outputs.password }}\`"
                 echo
-                echo "This runner will stay alive for ${{ inputs.minutes }} minutes unless cancelled."
+                MINUTES="${{ inputs.minutes }}"
+                if [ -z "$MINUTES" ]; then MINUTES="60"; fi
+                echo "This runner will stay alive for ${MINUTES} minutes unless cancelled."
               } >> "$GITHUB_STEP_SUMMARY"
               echo "::notice title=Temporary URL::$URL"
               {
@@ -194,14 +206,16 @@ jobs:
 
       - name: Keep session alive
         run: |
+          MINUTES="${{ inputs.minutes }}"
+          if [ -z "$MINUTES" ]; then MINUTES="60"; fi
           echo "Open this URL:"
           echo "${{ steps.tunnel.outputs.url }}"
           echo
           echo "Basic Auth username: ${{ steps.auth.outputs.username }}"
           echo "Basic Auth password: ${{ steps.auth.outputs.password }}"
           echo
-          echo "Keeping session alive for ${{ inputs.minutes }} minutes..."
-          sleep "$(( ${{ inputs.minutes }} * 60 ))"
+          echo "Keeping session alive for ${MINUTES} minutes..."
+          sleep "$(( MINUTES * 60 ))"
 
       - name: Collect logs
         if: always()
