@@ -65,6 +65,20 @@ const els = {
   viewerNext: document.querySelector('#viewer-next'),
   viewerRefresh: document.querySelector('#viewer-refresh'),
   viewerImages: document.querySelector('#viewer-images'),
+  libraryType: document.querySelector('#library-type'),
+  librarySample: document.querySelector('#library-sample'),
+  libraryRefresh: document.querySelector('#library-refresh'),
+  libraryFile: document.querySelector('#library-file'),
+  libraryImport: document.querySelector('#library-import'),
+  libraryItems: document.querySelector('#library-items'),
+  libraryItemTitle: document.querySelector('#library-item-title'),
+  libraryItemMeta: document.querySelector('#library-item-meta'),
+  libraryUnits: document.querySelector('#library-units'),
+  libraryReaderTitle: document.querySelector('#library-reader-title'),
+  libraryReaderMeta: document.querySelector('#library-reader-meta'),
+  libraryReaderPrev: document.querySelector('#library-reader-prev'),
+  libraryReaderNext: document.querySelector('#library-reader-next'),
+  libraryReaderContent: document.querySelector('#library-reader-content'),
   configSave: document.querySelector('#config-save'),
   configDownloadDir: document.querySelector('#config-download-dir'),
   configMetadataDir: document.querySelector('#config-metadata-dir'),
@@ -116,6 +130,13 @@ let viewerSentinel = null
 let viewerActiveBatch = null
 let viewerReturnView = 'search-view'
 let readingProgress = {}
+let libraryTypes = []
+let libraryItems = []
+let currentLibraryItem = null
+let currentLibraryUnits = []
+let currentLibraryProgress = null
+let currentLibraryReader = null
+let libraryProgressTimer = null
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -131,6 +152,16 @@ async function api(path, options = {}) {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
+  })
+  const data = await resp.json()
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`)
+  return data
+}
+
+async function apiForm(path, formData) {
+  const resp = await fetch(path, {
+    method: 'POST',
+    body: formData,
   })
   const data = await resp.json()
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`)
@@ -784,6 +815,9 @@ els.tabs.forEach((tab) => {
     if (tab.dataset.view === 'discover-view') loadDiscover()
     if (tab.dataset.view === 'favorite-view') loadFavorite()
     if (tab.dataset.view === 'downloaded-view') loadDownloaded()
+    if (tab.dataset.view === 'library-view') {
+      loadLibraryTypes().then(loadLibraryItems).catch((error) => alert(error.message))
+    }
     if (tab.dataset.view === 'settings-view') loadConfig()
   })
 })
@@ -891,6 +925,160 @@ function renderDownloadedComic(data, sourceText) {
   renderChapterGroups(data, els.downloadedChapters, comicPathWord)
 }
 
+async function loadLibraryTypes() {
+  libraryTypes = await api('/api/library/types')
+  const current = els.libraryType.value || 'all'
+  els.libraryType.innerHTML = '<option value="all">全部类型</option>'
+  for (const type of libraryTypes) {
+    const option = document.createElement('option')
+    option.value = type.type
+    option.textContent = type.label || type.type
+    els.libraryType.append(option)
+  }
+  els.libraryType.value = [...els.libraryType.options].some((option) => option.value === current) ? current : 'all'
+}
+
+async function loadLibraryItems() {
+  try {
+    setLoading(els.libraryRefresh, true)
+    const type = els.libraryType.value || 'all'
+    libraryItems = await api(`/api/library/items?type=${encodeURIComponent(type)}`)
+    renderLibraryItems()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.libraryRefresh, false)
+  }
+}
+
+function renderLibraryItems() {
+  els.libraryItems.innerHTML = ''
+  for (const item of libraryItems) {
+    const card = document.createElement('article')
+    card.className = 'card'
+    card.innerHTML = `
+      ${renderCover(item.cover, item.title)}
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(item.title)}</div>
+        <div class="muted">${escapeHtml(item.type)} · ${escapeHtml(item.itemId)}</div>
+        <div class="muted">${escapeHtml((item.author || []).join(', ') || '未知作者')} · ${item.unitCount || 0} 个目录项</div>
+      </div>
+    `
+    card.addEventListener('click', () => selectLibraryItem(item.type, item.itemId))
+    els.libraryItems.append(card)
+  }
+  if (libraryItems.length === 0) els.libraryItems.innerHTML = '<p class="muted">暂无媒体库条目</p>'
+}
+
+async function selectLibraryItem(type, itemId) {
+  try {
+    els.libraryItemTitle.textContent = itemId
+    els.libraryItemMeta.textContent = '读取目录中...'
+    els.libraryUnits.className = 'chapters empty-panel'
+    els.libraryUnits.textContent = '读取目录中...'
+    const [item, units, progress] = await Promise.all([
+      api(`/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}`),
+      api(`/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/units`),
+      api(`/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/progress`),
+    ])
+    currentLibraryItem = item
+    currentLibraryUnits = units
+    currentLibraryProgress = progress
+    els.libraryItemTitle.textContent = item.title
+    els.libraryItemMeta.textContent = `${item.type} · ${(item.author || []).join(', ') || '未知作者'} · ${units.length} 个目录项`
+    renderLibraryUnits()
+  } catch (error) {
+    els.libraryItemMeta.textContent = `读取失败：${error.message}`
+    els.libraryUnits.className = 'chapters empty-panel'
+    els.libraryUnits.textContent = error.message
+  }
+}
+
+function renderLibraryUnits() {
+  els.libraryUnits.classList.remove('empty-panel')
+  els.libraryUnits.innerHTML = ''
+  const readUnits = currentLibraryProgress?.readUnits || {}
+  for (const unit of currentLibraryUnits) {
+    const isRead = Boolean(readUnits[unit.unitId]?.enteredAt)
+    const row = document.createElement('button')
+    row.type = 'button'
+    row.className = `chapter library-unit${isRead ? ' read-chapter' : ' unread-chapter'}`
+    row.title = unit.title
+    row.innerHTML = `
+      <span class="chapter-copy">
+        <span class="chapter-title">${escapeHtml(unit.title)}</span>
+        <span class="muted">${escapeHtml(unit.unitId)}</span>
+      </span>
+      <span class="muted">${isRead ? '已读' : '未读'}</span>
+    `
+    row.addEventListener('click', () => openLibraryUnit(unit.unitId))
+    els.libraryUnits.append(row)
+  }
+  if (currentLibraryUnits.length === 0) {
+    els.libraryUnits.className = 'chapters empty-panel'
+    els.libraryUnits.textContent = '没有目录项'
+  }
+}
+
+async function openLibraryUnit(unitId) {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId || !unitId) return
+  try {
+    els.libraryReaderTitle.textContent = unitId
+    els.libraryReaderMeta.textContent = '加载中...'
+    els.libraryReaderContent.className = 'library-reader-content empty-panel'
+    els.libraryReaderContent.textContent = '加载中...'
+    const reader = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/reader/${encodeURIComponent(unitId)}`)
+    currentLibraryReader = reader
+    els.libraryReaderTitle.textContent = reader.unit?.title || unitId
+    els.libraryReaderMeta.textContent = `${reader.item?.title || currentLibraryItem.title} · ${reader.unit?.index + 1 || 1}/${currentLibraryUnits.length}`
+    els.libraryReaderPrev.disabled = !reader.navigation?.prev
+    els.libraryReaderNext.disabled = !reader.navigation?.next
+    renderLibraryReader(reader)
+    await saveLibraryProgress(0)
+    currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/progress`)
+    renderLibraryUnits()
+  } catch (error) {
+    els.libraryReaderMeta.textContent = `加载失败：${error.message}`
+    els.libraryReaderContent.className = 'library-reader-content empty-panel'
+    els.libraryReaderContent.textContent = error.message
+  }
+}
+
+function renderLibraryReader(reader) {
+  els.libraryReaderContent.className = `library-reader-content ${reader.type === 'html' ? 'library-reader-html' : ''}`
+  if (reader.type === 'html') {
+    els.libraryReaderContent.innerHTML = reader.content || ''
+  } else {
+    els.libraryReaderContent.textContent = `暂不支持的阅读内容类型：${reader.type}`
+  }
+  els.libraryReaderContent.scrollTop = 0
+}
+
+function libraryScrollRatio() {
+  const el = els.libraryReaderContent
+  const max = Math.max(1, el.scrollHeight - el.clientHeight)
+  return Math.max(0, Math.min(1, el.scrollTop / max))
+}
+
+async function saveLibraryProgress(scrollRatio = libraryScrollRatio()) {
+  if (!currentLibraryItem || !currentLibraryReader?.unit) return
+  currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/progress`, {
+    method: 'POST',
+    body: JSON.stringify({
+      unitId: currentLibraryReader.unit.unitId,
+      title: currentLibraryReader.unit.title,
+      scrollRatio,
+    }),
+  })
+}
+
+function scheduleLibraryProgressSave() {
+  if (libraryProgressTimer) clearTimeout(libraryProgressTimer)
+  libraryProgressTimer = setTimeout(() => {
+    saveLibraryProgress().catch(() => {})
+  }, 500)
+}
+
 els.favoriteRefresh.addEventListener('click', loadFavorite)
 els.favoriteOrdering.addEventListener('change', loadFavorite)
 els.discoverRefresh.addEventListener('click', () => {
@@ -973,6 +1161,47 @@ els.downloadedMarkAllRead.addEventListener('click', async () => {
     setLoading(els.downloadedMarkAllRead, false)
   }
 })
+els.libraryRefresh.addEventListener('click', loadLibraryItems)
+els.libraryType.addEventListener('change', loadLibraryItems)
+els.librarySample.addEventListener('click', async () => {
+  try {
+    setLoading(els.librarySample, true)
+    const item = await api('/api/library/items/sample?type=epub', { method: 'POST', body: '{}' })
+    if (els.libraryType.value !== 'epub' && els.libraryType.value !== 'all') els.libraryType.value = 'all'
+    await loadLibraryItems()
+    await selectLibraryItem(item.type, item.itemId)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.librarySample, false)
+  }
+})
+els.libraryImport.addEventListener('click', async () => {
+  const file = els.libraryFile.files?.[0]
+  if (!file) return alert('请选择 EPUB 文件')
+  try {
+    setLoading(els.libraryImport, true)
+    const form = new FormData()
+    form.set('file', file)
+    const item = await apiForm('/api/library/items?type=epub', form)
+    if (els.libraryType.value !== 'epub' && els.libraryType.value !== 'all') els.libraryType.value = 'all'
+    await loadLibraryItems()
+    await selectLibraryItem(item.type, item.itemId)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.libraryImport, false)
+  }
+})
+els.libraryReaderPrev.addEventListener('click', () => {
+  const target = currentLibraryReader?.navigation?.prev
+  if (target) openLibraryUnit(target.unitId)
+})
+els.libraryReaderNext.addEventListener('click', () => {
+  const target = currentLibraryReader?.navigation?.next
+  if (target) openLibraryUnit(target.unitId)
+})
+els.libraryReaderContent.addEventListener('scroll', scheduleLibraryProgressSave)
 els.downloadedUpdate.addEventListener('click', async () => {
   try {
     setLoading(els.downloadedUpdate, true)

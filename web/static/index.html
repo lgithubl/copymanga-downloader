@@ -38,6 +38,7 @@
           <button class="tab" data-view="discover-view">发现</button>
           <button class="tab" data-view="favorite-view">漫画收藏</button>
           <button class="tab" data-view="downloaded-view">本地库存</button>
+          <button class="tab" data-view="library-view">媒体库</button>
           <button class="tab" data-view="viewer-view">图片浏览</button>
           <button class="tab" data-view="settings-view">配置</button>
         </nav>
@@ -252,6 +253,47 @@
               </div>
             </div>
             <div id="viewer-images" class="viewer-grid empty-panel">请选择一个章节</div>
+          </section>
+        </div>
+        <div id="library-view" class="library-workspace view">
+          <section>
+            <div class="chapter-head">
+              <h2>媒体库</h2>
+              <div class="chapter-actions">
+                <select id="library-type">
+                  <option value="all">全部类型</option>
+                </select>
+                <button id="library-sample" class="secondary">生成示例</button>
+                <button id="library-refresh">刷新</button>
+              </div>
+            </div>
+            <div class="library-import">
+              <input id="library-file" type="file" accept=".epub,application/epub+zip" />
+              <button id="library-import" class="secondary">上传导入</button>
+            </div>
+            <div id="library-items" class="cards"></div>
+          </section>
+          <section>
+            <div class="chapter-head">
+              <div>
+                <h2 id="library-item-title">目录</h2>
+                <div id="library-item-meta" class="muted">请选择媒体库条目</div>
+              </div>
+            </div>
+            <div id="library-units" class="chapters empty-panel">请选择媒体库条目</div>
+          </section>
+          <section>
+            <div class="chapter-head">
+              <div>
+                <h2 id="library-reader-title">阅读</h2>
+                <div id="library-reader-meta" class="muted">请选择目录项</div>
+              </div>
+              <div class="chapter-actions">
+                <button id="library-reader-prev" class="secondary" disabled>上一章</button>
+                <button id="library-reader-next" class="secondary" disabled>下一章</button>
+              </div>
+            </div>
+            <article id="library-reader-content" class="library-reader-content empty-panel">请选择目录项</article>
           </section>
         </div>
         <div id="settings-view" class="workspace view">

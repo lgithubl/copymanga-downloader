@@ -6,6 +6,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Buffer } from 'node:buffer'
 import { promisify } from 'node:util'
+import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems } from './library/registry.mjs'
+import { createEpubHandler } from './library/types/epub.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -206,6 +208,63 @@ async function readJson(req) {
   for await (const chunk of req) chunks.push(chunk)
   const body = Buffer.concat(chunks).toString('utf8')
   return body ? JSON.parse(body) : {}
+}
+
+async function readBuffer(req) {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  return Buffer.concat(chunks)
+}
+
+async function readMultipart(req) {
+  const contentType = req.headers['content-type'] || ''
+  const boundary = /boundary=([^;]+)/i.exec(contentType)?.[1]?.replace(/^"|"$/g, '')
+  if (!boundary) throw new Error('multipart boundary is required')
+  const body = await readBuffer(req)
+  const parts = splitBuffer(body, Buffer.from(`--${boundary}`))
+  const fields = {}
+  const files = []
+  for (const rawPart of parts) {
+    let part = trimPart(rawPart)
+    if (!part.length || part.equals(Buffer.from('--'))) continue
+    if (part.subarray(0, 2).toString() === '--') continue
+    const headerEnd = part.indexOf('\r\n\r\n')
+    if (headerEnd < 0) continue
+    const headerText = part.subarray(0, headerEnd).toString('utf8')
+    let content = part.subarray(headerEnd + 4)
+    if (content.subarray(-2).toString() === '\r\n') content = content.subarray(0, -2)
+    const disposition = /content-disposition:\s*form-data;([^\r\n]+)/i.exec(headerText)?.[1] || ''
+    const name = /name="([^"]+)"/i.exec(disposition)?.[1] || ''
+    const filename = /filename="([^"]*)"/i.exec(disposition)?.[1] || ''
+    if (!name) continue
+    if (filename) {
+      files.push({ name, filename, buffer: content })
+    } else {
+      fields[name] = content.toString('utf8')
+    }
+  }
+  return { fields, files }
+}
+
+function splitBuffer(buffer, separator) {
+  const parts = []
+  let start = 0
+  let index = buffer.indexOf(separator, start)
+  while (index !== -1) {
+    parts.push(buffer.subarray(start, index))
+    start = index + separator.length
+    index = buffer.indexOf(separator, start)
+  }
+  parts.push(buffer.subarray(start))
+  return parts
+}
+
+function trimPart(buffer) {
+  let start = 0
+  let end = buffer.length
+  while (start < end && (buffer[start] === 13 || buffer[start] === 10)) start += 1
+  while (end > start && (buffer[end - 1] === 13 || buffer[end - 1] === 10)) end -= 1
+  return buffer.subarray(start, end)
 }
 
 async function copyFetch(urlPath, { method = 'GET', query, token, form } = {}) {
@@ -1398,6 +1457,47 @@ async function route(req, res) {
     if (pathname === '/api/config' && req.method === 'POST') {
       return json(res, 200, await saveConfig(await readJson(req)))
     }
+    if (pathname === '/api/library/types' && req.method === 'GET') {
+      return json(res, 200, libraryTypes())
+    }
+    if (pathname === '/api/library/items' && req.method === 'GET') {
+      return json(res, 200, await scanLibraryItems({ type: url.searchParams.get('type') || 'all' }))
+    }
+    if (pathname === '/api/library/items/sample' && req.method === 'POST') {
+      const handler = libraryHandler(url.searchParams.get('type') || 'epub')
+      if (!handler.createSampleItem) return json(res, 400, { error: 'This library type has no sample generator' })
+      return json(res, 201, await handler.createSampleItem())
+    }
+    if (pathname === '/api/library/items' && req.method === 'POST') {
+      const type = url.searchParams.get('type') || 'epub'
+      const handler = libraryHandler(type)
+      if (!handler.importItem) return json(res, 400, { error: 'This library type is not importable' })
+      const form = await readMultipart(req)
+      const file = form.files.find((item) => item.name === 'file') || form.files[0]
+      if (!file) return json(res, 400, { error: 'file is required' })
+      return json(res, 201, await handler.importItem({ fileName: file.filename, buffer: file.buffer, fields: form.fields }))
+    }
+    if (pathname.startsWith('/api/library/items/') && req.method === 'GET') {
+      const parts = pathname.split('/').filter(Boolean)
+      const [, , , type, itemId, action, unitId] = parts
+      const handler = libraryHandler(type)
+      if (!itemId) return json(res, 400, { error: 'itemId is required' })
+      if (!action) return json(res, 200, await handler.getItem(itemId))
+      if (action === 'units') return json(res, 200, await handler.listUnits(itemId))
+      if (action === 'reader') return json(res, 200, await handler.getReaderContent(itemId, unitId))
+      if (action === 'resource') {
+        const resource = await handler.getResource(itemId, url.searchParams.get('path') || '')
+        return binary(res, 200, resource.body, resource.contentType)
+      }
+      if (action === 'progress') return json(res, 200, await handler.getProgress(itemId))
+    }
+    if (pathname.startsWith('/api/library/items/') && req.method === 'POST') {
+      const parts = pathname.split('/').filter(Boolean)
+      const [, , , type, itemId, action] = parts
+      const handler = libraryHandler(type)
+      if (!itemId) return json(res, 400, { error: 'itemId is required' })
+      if (action === 'progress') return json(res, 200, await handler.saveProgress(itemId, await readJson(req)))
+    }
     if (pathname === '/api/reading-progress' && req.method === 'GET') {
       return json(res, 200, await listReadingProgress())
     }
@@ -1510,6 +1610,8 @@ async function route(req, res) {
     return json(res, 500, { error: error.message })
   }
 }
+
+registerLibraryHandler(createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExists, moveAside }))
 
 await mkdir(DOWNLOAD_DIR, { recursive: true })
 config = await loadConfig()
