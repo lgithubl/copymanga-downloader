@@ -595,6 +595,11 @@ function sanitizeHtml(html, { itemId, basePath }) {
     const target = normalizeZipPath(path.posix.join(basePath, decodeEntities(value).split('#')[0]))
     return ` ${attr}="/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(target)}"`
   })
+  body = body.replace(/\s(xlink:href)\s*=\s*["']([^"']+)["']/gi, (_, attr, value) => {
+    if (/^(?:https?:|data:|#)/i.test(value)) return ` ${attr}="${escapeAttr(value)}"`
+    const target = normalizeZipPath(path.posix.join(basePath, decodeEntities(value).split('#')[0]))
+    return ` ${attr}="/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(target)}"`
+  })
   body = body.replace(/\s(href)\s*=\s*["']([^"']+)["']/gi, (_, attr, value) => {
     if (/^#/i.test(value)) return ` ${attr}="${escapeAttr(value)}"`
     return ` ${attr}="#"`
@@ -673,11 +678,21 @@ function stripTags(value) {
 
 function decodeEntities(value) {
   return String(value || '')
+    .replace(/&#x([0-9a-f]+);?/gi, (raw, hex) => decodeCodePoint(Number.parseInt(hex, 16), raw))
+    .replace(/&#([0-9]+);?/g, (raw, dec) => decodeCodePoint(Number.parseInt(dec, 10), raw))
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+}
+
+function decodeCodePoint(codePoint, fallback) {
+  try {
+    return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : fallback
+  } catch {
+    return fallback
+  }
 }
 
 function escapeAttr(value) {

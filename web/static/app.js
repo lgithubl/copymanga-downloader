@@ -83,6 +83,7 @@ const els = {
   mediaImportItems: document.querySelector('#media-import-items'),
   mediaReaderTitle: document.querySelector('#media-reader-title'),
   mediaReaderMeta: document.querySelector('#media-reader-meta'),
+  mediaViewerView: document.querySelector('#media-viewer-view'),
   mediaReaderBack: document.querySelector('#media-reader-back'),
   mediaReaderPrev: document.querySelector('#media-reader-prev'),
   mediaSectionSelect: document.querySelector('#media-section-select'),
@@ -154,6 +155,7 @@ let mediaPageCount = 1
 let mediaPageStep = 1
 let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
+const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'reader-theme-warm', 'reader-theme-sepia']
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -1140,6 +1142,7 @@ async function openMediaUnit(unitId, sectionId = '') {
 }
 
 function renderMediaReader(reader) {
+  applyMediaReaderTheme()
   const index = Number(reader.unit?.index || 0)
   const sectionText = reader.section ? ` · ${reader.section.index + 1}/${reader.sections?.length || 1}` : ''
   const typeLabel = reader.type === 'images' ? `${reader.images?.length || 0} 张图` : '文本'
@@ -1169,7 +1172,8 @@ function renderMediaSectionSelect(reader) {
 }
 
 function renderMediaHtml(reader) {
-  els.mediaReaderContent.className = `media-reader-content media-html ${mediaReaderThemeClass()}`
+  const themeClass = applyMediaReaderTheme()
+  els.mediaReaderContent.className = `media-reader-content media-html ${themeClass}`
   const pages = document.createElement('div')
   pages.className = 'media-html-pages'
   pages.innerHTML = reader.content || ''
@@ -1182,7 +1186,8 @@ function renderMediaHtml(reader) {
 }
 
 function renderMediaImages(reader) {
-  els.mediaReaderContent.className = `media-reader-content media-images ${mediaReaderThemeClass()}`
+  const themeClass = applyMediaReaderTheme()
+  els.mediaReaderContent.className = `media-reader-content media-images ${themeClass}`
   if (!reader.images?.length) {
     els.mediaReaderContent.className = 'media-reader-content empty-panel'
     els.mediaReaderContent.textContent = '没有图片资源'
@@ -1251,6 +1256,13 @@ function updateMediaPageControls() {
 function mediaReaderThemeClass() {
   const theme = els.mediaReaderTheme?.value || 'light'
   return `reader-theme-${['light', 'dark', 'warm', 'sepia'].includes(theme) ? theme : 'light'}`
+}
+
+function applyMediaReaderTheme() {
+  const themeClass = mediaReaderThemeClass()
+  els.mediaViewerView.classList.remove(...mediaReaderThemeClasses)
+  els.mediaViewerView.classList.add(themeClass)
+  return themeClass
 }
 
 async function saveLibraryProgress(scrollRatio = mediaScrollRatio()) {
@@ -1424,6 +1436,7 @@ els.mediaSectionSelect.addEventListener('change', () => {
 })
 els.mediaReaderTheme.addEventListener('change', () => {
   localStorage.setItem('copymanga.mediaReaderTheme', els.mediaReaderTheme.value)
+  applyMediaReaderTheme()
   if (currentMediaReader) renderMediaReader(currentMediaReader)
 })
 els.mediaPagePrev.addEventListener('click', () => setMediaPage(mediaPageIndex - 1))
