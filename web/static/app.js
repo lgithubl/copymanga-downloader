@@ -335,6 +335,18 @@ api('/api/jobs').then((data) => {
   renderJobs()
 })
 
+async function syncJobs() {
+  const previousCompleted = new Set(jobs.filter((job) => job.status === 'completed').map((job) => job.id))
+  jobs = await api('/api/jobs')
+  renderJobs()
+  const hasNewCompletion = jobs.some((job) => job.status === 'completed' && !previousCompleted.has(job.id))
+  if (hasNewCompletion) {
+    await refreshDownloadedState()
+    if (currentComicPathWord) await loadComic(currentComicPathWord)
+    if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
+  }
+}
+
 const events = new EventSource('/api/events')
 events.addEventListener('job', (event) => {
   const job = JSON.parse(event.data)
@@ -354,3 +366,6 @@ events.addEventListener('jobDelete', (event) => {
 })
 
 refreshDownloadedState().catch(() => {})
+setInterval(() => {
+  syncJobs().catch(() => {})
+}, 2000)
