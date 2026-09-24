@@ -203,6 +203,10 @@ h2 {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+#downloaded-view > section:first-child {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
 .task-panel {
   display: grid;
   gap: 10px;
