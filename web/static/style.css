@@ -70,8 +70,8 @@ h2 {
 #app {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  height: 100vh;
-  overflow: hidden;
+  align-items: start;
+  min-height: 100vh;
 }
 
 #app.sidebar-collapsed {
@@ -84,9 +84,12 @@ h2 {
   display: grid;
   gap: 18px;
   grid-template-rows: auto auto auto minmax(0, 1fr);
+  height: 100vh;
   min-height: 0;
   overflow: hidden;
   padding: 18px;
+  position: sticky;
+  top: 0;
 }
 
 .sidebar-head {
@@ -117,9 +120,7 @@ h2 {
 .content {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  min-height: 0;
   min-width: 0;
-  overflow: hidden;
 }
 
 .tabs {
@@ -596,5 +597,8 @@ h2 {
   .sidebar {
     border-bottom: 1px solid #d8dee4;
     border-right: 0;
+    height: auto;
+    overflow: visible;
+    position: static;
   }
 }
