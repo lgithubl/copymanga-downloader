@@ -120,6 +120,7 @@ function defaultConfig() {
     imgConcurrency: 6,
     imgDownloadIntervalSec: 0,
     viewerImageBatchSize: 5,
+    siteTheme: 'light',
     readColor: '#ecfdf3',
     unreadColor: '#fff7ed',
     updateDownloadedComicsIntervalSec: 0,
@@ -141,6 +142,9 @@ function normalizeConfig(value) {
   const exportSkipMode = ['None', 'SkipExisting', 'SkipExported'].includes(value?.exportSkipMode)
     ? value.exportSkipMode
     : defaults.exportSkipMode
+  const siteTheme = ['light', 'dark', 'warm', 'sepia'].includes(value?.siteTheme)
+    ? value.siteTheme
+    : defaults.siteTheme
   return {
     token: String(value?.token || defaults.token),
     downloadDir: DOWNLOAD_DIR,
@@ -158,6 +162,7 @@ function normalizeConfig(value) {
     imgConcurrency: clampNumber(value?.imgConcurrency, 1, 60, defaults.imgConcurrency),
     imgDownloadIntervalSec: clampNumber(value?.imgDownloadIntervalSec, 0, 3600, defaults.imgDownloadIntervalSec),
     viewerImageBatchSize: clampNumber(value?.viewerImageBatchSize, 1, 50, defaults.viewerImageBatchSize),
+    siteTheme,
     readColor: normalizeColor(value?.readColor, defaults.readColor),
     unreadColor: normalizeColor(value?.unreadColor, defaults.unreadColor),
     updateDownloadedComicsIntervalSec: clampNumber(

@@ -2,6 +2,19 @@
   color: #202124;
   background: #f6f7f9;
   --sticky-offset: 45px;
+  --site-bg: #f6f7f9;
+  --site-panel: #ffffff;
+  --site-panel-soft: #f6f7f9;
+  --site-border: #d8dee4;
+  --site-control: #ffffff;
+  --site-control-border: #d0d7de;
+  --site-cover: #eef1f4;
+  --site-text: #202124;
+  --site-muted: #667085;
+  --site-primary: #1f6feb;
+  --site-primary-text: #0969da;
+  --site-secondary: #57606a;
+  --site-bar: #eaeef2;
   --read-color: #ecfdf3;
   --unread-color: #fff7ed;
   font-family:
@@ -13,6 +26,7 @@
 }
 
 body {
+  background: var(--site-bg);
   margin: 0;
 }
 
@@ -70,10 +84,138 @@ h2 {
 }
 
 #app {
+  background: var(--site-bg);
+  color: var(--site-text);
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   align-items: start;
   min-height: 100vh;
+}
+
+#app.site-theme-light {
+  --site-bg: #f6f7f9;
+  --site-panel: #ffffff;
+  --site-panel-soft: #f6f7f9;
+  --site-border: #d8dee4;
+  --site-control: #ffffff;
+  --site-control-border: #d0d7de;
+  --site-cover: #eef1f4;
+  --site-text: #202124;
+  --site-muted: #667085;
+  --site-primary: #1f6feb;
+  --site-primary-text: #0969da;
+  --site-secondary: #57606a;
+  --site-bar: #eaeef2;
+}
+
+#app.site-theme-dark {
+  --site-bg: #0d1117;
+  --site-panel: #161b22;
+  --site-panel-soft: #10151d;
+  --site-border: #30363d;
+  --site-control: #0d1117;
+  --site-control-border: #30363d;
+  --site-cover: #21262d;
+  --site-text: #e6edf3;
+  --site-muted: #9ba7b4;
+  --site-primary: #2f81f7;
+  --site-primary-text: #79c0ff;
+  --site-secondary: #30363d;
+  --site-bar: #30363d;
+}
+
+#app.site-theme-warm {
+  --site-bg: #f7ead4;
+  --site-panel: #fff8eb;
+  --site-panel-soft: #f3dfbf;
+  --site-border: #dfc8a4;
+  --site-control: #fffaf0;
+  --site-control-border: #d3b98e;
+  --site-cover: #ead8ba;
+  --site-text: #33271e;
+  --site-muted: #7a6755;
+  --site-primary: #9a5b20;
+  --site-primary-text: #7a4d1d;
+  --site-secondary: #8a7158;
+  --site-bar: #e4cfac;
+}
+
+#app.site-theme-sepia {
+  --site-bg: #ebe0c6;
+  --site-panel: #f7efd9;
+  --site-panel-soft: #e4d6b8;
+  --site-border: #d1c09d;
+  --site-control: #fff7df;
+  --site-control-border: #c9b690;
+  --site-cover: #ddcfaf;
+  --site-text: #2f2a22;
+  --site-muted: #6f6254;
+  --site-primary: #80612f;
+  --site-primary-text: #684b1f;
+  --site-secondary: #7c6b52;
+  --site-bar: #d8c8a7;
+}
+
+#app .sidebar,
+#app .tabs,
+#app .toolbar,
+#app .card,
+#app .chapter,
+#app .job,
+#app .settings-panel,
+#app .empty-panel,
+#app .inventory-progress,
+#app .viewer-grid,
+#app .media-reader-content {
+  background: var(--site-panel);
+  border-color: var(--site-border);
+  color: var(--site-text);
+}
+
+#app .chapter-head,
+#app .inventory-pager {
+  background: var(--site-bg);
+}
+
+#app input,
+#app select,
+#app textarea {
+  background: var(--site-control);
+  border-color: var(--site-control-border);
+  color: var(--site-text);
+}
+
+#app button.secondary {
+  background: var(--site-secondary);
+}
+
+#app .tab {
+  color: var(--site-muted);
+}
+
+#app .tab.active {
+  border-bottom-color: var(--site-primary);
+  color: var(--site-primary-text);
+}
+
+#app .muted,
+#app .page-jump,
+#app .inventory-progress-text,
+#app .viewer-sentinel,
+#app .empty-panel {
+  color: var(--site-muted);
+}
+
+#app .cover,
+#app .unit-thumb,
+#app .viewer-grid img,
+#app .media-image-list img {
+  background: var(--site-cover);
+  border-color: var(--site-border);
+}
+
+#app .bar {
+  background: var(--site-bar);
 }
 
 #app.sidebar-collapsed {

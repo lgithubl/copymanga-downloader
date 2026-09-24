@@ -108,6 +108,7 @@ const els = {
   configImgConcurrency: document.querySelector('#config-img-concurrency'),
   configImgDownloadIntervalSec: document.querySelector('#config-img-download-interval-sec'),
   configViewerImageBatchSize: document.querySelector('#config-viewer-image-batch-size'),
+  configSiteTheme: document.querySelector('#config-site-theme'),
   configReadColor: document.querySelector('#config-read-color'),
   configUnreadColor: document.querySelector('#config-unread-color'),
   configUpdateDownloadedComicsIntervalSec: document.querySelector('#config-update-downloaded-comics-interval-sec'),
@@ -156,6 +157,7 @@ let mediaPageStep = 1
 let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
 const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'reader-theme-warm', 'reader-theme-sepia']
+const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -785,6 +787,8 @@ async function loadConfig() {
   els.configImgDownloadIntervalSec.value = config.imgDownloadIntervalSec
   viewerBatchSize = config.viewerImageBatchSize || 5
   els.configViewerImageBatchSize.value = viewerBatchSize
+  els.configSiteTheme.value = config.siteTheme || 'light'
+  applySiteTheme(els.configSiteTheme.value)
   els.configReadColor.value = config.readColor || '#ecfdf3'
   els.configUnreadColor.value = config.unreadColor || '#fff7ed'
   document.documentElement.style.setProperty('--read-color', els.configReadColor.value)
@@ -1265,6 +1269,13 @@ function applyMediaReaderTheme() {
   return themeClass
 }
 
+function applySiteTheme(theme) {
+  const normalized = ['light', 'dark', 'warm', 'sepia'].includes(theme) ? theme : 'light'
+  els.app.classList.remove(...siteThemeClasses)
+  els.app.classList.add(`site-theme-${normalized}`)
+  return normalized
+}
+
 async function saveLibraryProgress(scrollRatio = mediaScrollRatio()) {
   if (!currentLibraryItem || !currentMediaReader?.unit) return
   currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/progress`, {
@@ -1439,6 +1450,9 @@ els.mediaReaderTheme.addEventListener('change', () => {
   applyMediaReaderTheme()
   if (currentMediaReader) renderMediaReader(currentMediaReader)
 })
+els.configSiteTheme.addEventListener('change', () => {
+  applySiteTheme(els.configSiteTheme.value)
+})
 els.mediaPagePrev.addEventListener('click', () => setMediaPage(mediaPageIndex - 1))
 els.mediaPageNext.addEventListener('click', () => {
   if (currentMediaReader?.type === 'html' && mediaPageIndex < mediaPageCount - 1) {
@@ -1513,6 +1527,7 @@ els.configSave.addEventListener('click', async () => {
         imgConcurrency: Number(els.configImgConcurrency.value),
         imgDownloadIntervalSec: Number(els.configImgDownloadIntervalSec.value),
         viewerImageBatchSize: Number(els.configViewerImageBatchSize.value),
+        siteTheme: els.configSiteTheme.value,
         readColor: els.configReadColor.value,
         unreadColor: els.configUnreadColor.value,
         updateDownloadedComicsIntervalSec: Number(els.configUpdateDownloadedComicsIntervalSec.value),
