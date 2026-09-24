@@ -11,6 +11,7 @@ const els = {
   chapters: document.querySelector('#chapters'),
   comicTitle: document.querySelector('#comic-title'),
   download: document.querySelector('#download'),
+  downloadAll: document.querySelector('#download-all'),
   jobs: document.querySelector('#jobs'),
   retryFailed: document.querySelector('#retry-failed'),
   clearActive: document.querySelector('#clear-active'),
@@ -19,6 +20,10 @@ const els = {
   favorites: document.querySelector('#favorites'),
   downloadedRefresh: document.querySelector('#downloaded-refresh'),
   downloaded: document.querySelector('#downloaded'),
+  configSave: document.querySelector('#config-save'),
+  configApiDomain: document.querySelector('#config-api-domain'),
+  configImgConcurrency: document.querySelector('#config-img-concurrency'),
+  configDownloadDir: document.querySelector('#config-download-dir'),
 }
 
 let currentComicPathWord = ''
@@ -134,6 +139,7 @@ function renderComic(data) {
   currentComicPathWord = data.comic?.path_word || data.comic?.pathWord || data.path_word || ''
   els.comicTitle.textContent = data.comic?.name || data.name || '章节'
   els.download.disabled = false
+  els.downloadAll.disabled = false
   els.chapters.innerHTML = ''
 
   for (const [groupPathWord, chapters] of Object.entries(data.groupsChapters || {})) {
@@ -192,6 +198,13 @@ async function refreshDownloadedState() {
   downloaded = await api('/api/downloaded')
 }
 
+async function loadConfig() {
+  const config = await api('/api/config')
+  els.configApiDomain.value = config.apiDomain
+  els.configImgConcurrency.value = config.imgConcurrency
+  els.configDownloadDir.value = config.downloadDir
+}
+
 els.login.addEventListener('click', async () => {
   try {
     setLoading(els.login, true)
@@ -229,6 +242,7 @@ els.tabs.forEach((tab) => {
     showView(tab.dataset.view)
     if (tab.dataset.view === 'favorite-view') loadFavorite()
     if (tab.dataset.view === 'downloaded-view') loadDownloaded()
+    if (tab.dataset.view === 'settings-view') loadConfig()
   })
 })
 
@@ -264,6 +278,23 @@ async function loadDownloaded() {
 els.favoriteRefresh.addEventListener('click', loadFavorite)
 els.favoriteOrdering.addEventListener('change', loadFavorite)
 els.downloadedRefresh.addEventListener('click', loadDownloaded)
+els.configSave.addEventListener('click', async () => {
+  try {
+    setLoading(els.configSave, true)
+    await api('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        apiDomain: els.configApiDomain.value,
+        imgConcurrency: Number(els.configImgConcurrency.value),
+      }),
+    })
+    await loadConfig()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.configSave, false)
+  }
+})
 els.retryFailed.addEventListener('click', async () => {
   try {
     setLoading(els.retryFailed, true)
@@ -295,9 +326,19 @@ els.keyword.addEventListener('keydown', (event) => {
 
 els.download.addEventListener('click', async () => {
   const chapterUuids = [...els.chapters.querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value)
+  await createDownload(chapterUuids)
+})
+
+els.downloadAll.addEventListener('click', async () => {
+  const chapterUuids = [...els.chapters.querySelectorAll('input[type="checkbox"]:not(:disabled)')].map((item) => item.value)
+  await createDownload(chapterUuids)
+})
+
+async function createDownload(chapterUuids) {
   if (chapterUuids.length === 0) return alert('请先勾选章节')
   try {
     setLoading(els.download, true)
+    setLoading(els.downloadAll, true)
     const job = await api('/api/download', {
       method: 'POST',
       body: JSON.stringify({
@@ -312,8 +353,9 @@ els.download.addEventListener('click', async () => {
     alert(error.message)
   } finally {
     setLoading(els.download, false)
+    setLoading(els.downloadAll, false)
   }
-})
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -366,6 +408,7 @@ events.addEventListener('jobDelete', (event) => {
 })
 
 refreshDownloadedState().catch(() => {})
+loadConfig().catch(() => {})
 setInterval(() => {
   syncJobs().catch(() => {})
 }, 2000)

@@ -34,6 +34,7 @@
           <button class="tab active" data-view="search-view">漫画搜索</button>
           <button class="tab" data-view="favorite-view">漫画收藏</button>
           <button class="tab" data-view="downloaded-view">本地库存</button>
+          <button class="tab" data-view="settings-view">配置</button>
         </nav>
         <div class="toolbar">
           <input id="keyword" placeholder="搜索漫画" />
@@ -47,7 +48,10 @@
           <section>
             <div class="chapter-head">
               <h2 id="comic-title">章节</h2>
-              <button id="download" disabled>下载勾选章节</button>
+              <div class="chapter-actions">
+                <button id="download-all" class="secondary" disabled>下载全量</button>
+                <button id="download" disabled>下载勾选章节</button>
+              </div>
             </div>
             <div id="chapters" class="chapters"></div>
           </section>
@@ -81,6 +85,32 @@
           <section>
             <h2>下载目录</h2>
             <div class="empty-panel">容器内目录：/data/downloads</div>
+          </section>
+        </div>
+        <div id="settings-view" class="workspace view">
+          <section>
+            <div class="chapter-head">
+              <h2>配置</h2>
+              <button id="config-save">保存配置</button>
+            </div>
+            <div class="settings-panel">
+              <label>
+                API 域名
+                <input id="config-api-domain" placeholder="api.copy202601.com" />
+              </label>
+              <label>
+                图片并发
+                <input id="config-img-concurrency" type="number" min="1" max="30" step="1" />
+              </label>
+              <label>
+                下载目录
+                <input id="config-download-dir" readonly />
+              </label>
+            </div>
+          </section>
+          <section>
+            <h2>说明</h2>
+            <div class="empty-panel">配置保存到容器 /data/config.json。下载目录由容器挂载决定。</div>
           </section>
         </div>
       </section>

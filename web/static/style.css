@@ -251,9 +251,30 @@ h2 {
   padding: 0 10px;
 }
 
+.chapter-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .group {
   display: grid;
   gap: 8px;
+}
+
+.settings-panel {
+  background: #ffffff;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.settings-panel label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .empty-panel {

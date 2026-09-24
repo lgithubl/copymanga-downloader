@@ -8,12 +8,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
 const DATA_DIR = process.env.DATA_DIR || '/data'
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(DATA_DIR, 'downloads')
-const API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
+const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
 const PORT = Number(process.env.PORT || 8080)
 
 const jobs = new Map()
 const sseClients = new Set()
+let config = defaultConfig()
 
 const apiHeaders = {
   'User-Agent': 'COPY/3.0.0',
@@ -54,6 +56,38 @@ function cleanName(value) {
     .trim() || 'unknown'
 }
 
+function defaultConfig() {
+  return {
+    apiDomain: DEFAULT_API_DOMAIN,
+    downloadDir: DOWNLOAD_DIR,
+    imgConcurrency: 6,
+  }
+}
+
+function normalizeConfig(value) {
+  const defaults = defaultConfig()
+  return {
+    apiDomain: String(value?.apiDomain || defaults.apiDomain).trim() || defaults.apiDomain,
+    downloadDir: DOWNLOAD_DIR,
+    imgConcurrency: Math.max(1, Math.min(30, Number(value?.imgConcurrency || defaults.imgConcurrency))),
+  }
+}
+
+async function loadConfig() {
+  try {
+    return normalizeConfig(JSON.parse(await readFile(CONFIG_PATH, 'utf8')))
+  } catch {
+    return defaultConfig()
+  }
+}
+
+async function saveConfig(nextConfig) {
+  config = normalizeConfig(nextConfig)
+  await mkdir(DATA_DIR, { recursive: true })
+  await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2))
+  return config
+}
+
 async function readJson(req) {
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
@@ -62,7 +96,7 @@ async function readJson(req) {
 }
 
 async function copyFetch(urlPath, { method = 'GET', query, token, form } = {}) {
-  const url = new URL(`https://${API_DOMAIN}${urlPath}`)
+  const url = new URL(`https://${config.apiDomain}${urlPath}`)
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null) url.searchParams.set(key, String(value))
@@ -338,6 +372,18 @@ async function downloadImage(url, filePath) {
   })
 }
 
+async function runWithConcurrency(items, concurrency, worker) {
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor
+      cursor += 1
+      await worker(items[index], index)
+    }
+  })
+  await Promise.all(workers)
+}
+
 async function runJob(job, { comicPathWord, chapterUuids, token }) {
   try {
     updateJob(job, { status: 'running', message: '读取漫画信息' })
@@ -366,14 +412,14 @@ async function runJob(job, { comicPathWord, chapterUuids, token }) {
       updateJob(job, { totalImages: job.totalImages })
 
       const chapterDir = path.join(comicDir, groupTitle, `${order} ${chapterTitle}`)
-      for (let i = 0; i < contents.length; i += 1) {
-        const imageUrl = String(contents[i].url || '').replace('.c800x.', '.c1500x.')
+      await runWithConcurrency(contents, config.imgConcurrency, async (content, i) => {
+        const imageUrl = String(content.url || '').replace('.c800x.', '.c1500x.')
         const index = Number(words[i] ?? i) + 1
         const filePath = path.join(chapterDir, `${String(index).padStart(3, '0')}.webp`)
         await downloadImage(imageUrl, filePath)
         job.doneImages += 1
         updateJob(job, { doneImages: job.doneImages, message: `下载 ${chapterTitle} ${job.doneImages}/${job.totalImages}` })
-      }
+      })
 
       await writeFile(path.join(chapterDir, 'chapter.json'), JSON.stringify({ comicPathWord, chapterUuid, chapterMeta }, null, 2))
       job.doneChapters += 1
@@ -421,6 +467,10 @@ async function route(req, res) {
       return
     }
     if (pathname === '/api/jobs' && req.method === 'GET') return json(res, 200, publicJobs())
+    if (pathname === '/api/config' && req.method === 'GET') return json(res, 200, config)
+    if (pathname === '/api/config' && req.method === 'POST') {
+      return json(res, 200, await saveConfig(await readJson(req)))
+    }
     if (pathname === '/api/jobs/retry-failed' && req.method === 'POST') {
       const retried = []
       for (const job of [...jobs.values()]) {
@@ -484,6 +534,7 @@ async function route(req, res) {
 }
 
 await mkdir(DOWNLOAD_DIR, { recursive: true })
+config = await loadConfig()
 createServer(route).listen(PORT, HOST, () => {
   console.log(`copymanga web listening on http://${HOST}:${PORT}`)
   console.log(`download dir: ${DOWNLOAD_DIR}`)
