@@ -57,6 +57,8 @@ const els = {
   viewerTitle: document.querySelector('#viewer-title'),
   viewerMeta: document.querySelector('#viewer-meta'),
   viewerBack: document.querySelector('#viewer-back'),
+  viewerPrev: document.querySelector('#viewer-prev'),
+  viewerNext: document.querySelector('#viewer-next'),
   viewerRefresh: document.querySelector('#viewer-refresh'),
   viewerImages: document.querySelector('#viewer-images'),
   configSave: document.querySelector('#config-save'),
@@ -327,6 +329,8 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
   viewerState = { comicPathWord, chapterUuid, title, returnView: viewerReturnView }
   showView('viewer-view')
   els.viewerBack.disabled = false
+  els.viewerPrev.disabled = true
+  els.viewerNext.disabled = true
   els.viewerRefresh.disabled = false
   els.viewerTitle.textContent = title || chapterUuid
   els.viewerMeta.textContent = '加载图片中...'
@@ -342,7 +346,9 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
     })
     const data = await api(`/api/chapter-images?${params}`)
     const sourceText = data.source === 'local' ? '本地' : '远端预览'
-    viewerState = { ...viewerState, sourceText, totalImages: data.count || 0 }
+    viewerState = { ...viewerState, sourceText, totalImages: data.count || 0, navigation: data.navigation || {} }
+    els.viewerPrev.disabled = !viewerState.navigation?.prev
+    els.viewerNext.disabled = !viewerState.navigation?.next
     els.viewerMeta.textContent = `${sourceText} · 0/${data.count || 0} 张图`
     els.viewerImages.innerHTML = ''
     viewerImages = data.images || []
@@ -352,10 +358,22 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
       els.viewerImages.textContent = '没有图片'
     }
   } catch (error) {
+    els.viewerPrev.disabled = true
+    els.viewerNext.disabled = true
     els.viewerImages.className = 'viewer-grid empty-panel'
     els.viewerImages.textContent = error.message
     els.viewerMeta.textContent = '加载失败'
   }
+}
+
+function openAdjacentViewer(direction) {
+  const target = viewerState?.navigation?.[direction]
+  if (!target) return
+  openChapterViewer({
+    comicPathWord: viewerState.comicPathWord,
+    chapterUuid: target.chapterUuid,
+    title: target.title,
+  })
 }
 
 function resetViewerBatch() {
@@ -760,6 +778,8 @@ els.downloadedUpdate.addEventListener('click', async () => {
 els.viewerRefresh.addEventListener('click', () => {
   if (viewerState) openChapterViewer(viewerState)
 })
+els.viewerPrev.addEventListener('click', () => openAdjacentViewer('prev'))
+els.viewerNext.addEventListener('click', () => openAdjacentViewer('next'))
 els.viewerBack.addEventListener('click', () => {
   showView(viewerState?.returnView || viewerReturnView || 'search-view')
 })

@@ -610,12 +610,14 @@ function previewImageUrl(sessionId, index) {
 }
 
 async function getChapterImages({ comicPathWord, chapterUuid, token = '' }) {
+  const navigation = await getChapterNavigation({ comicPathWord, chapterUuid })
   const local = await findLocalChapter(comicPathWord, chapterUuid)
   if (local?.files?.length) {
     return {
       source: 'local',
       title: chapterTitleOf(local.chapter, chapterUuid),
       count: local.files.length,
+      navigation,
       images: local.files.map((file, index) => ({
         index,
         url: `/api/local-image?path=${encodeURIComponent(path.relative(DOWNLOAD_DIR, file))}`,
@@ -643,6 +645,7 @@ async function getChapterImages({ comicPathWord, chapterUuid, token = '' }) {
     sessionId,
     title: chapter.chapter?.name || chapter.chapter?.chapter_name || chapterUuid,
     count: images.length,
+    navigation,
     images: images.map((_, index) => ({
       index,
       url: previewImageUrl(sessionId, index),
@@ -841,6 +844,51 @@ function appChapterMetadataPath(comic, chapterUuid, chapterDir) {
     return path.join(metadataRoot(), 'comics', comicPathWordOf(comic), 'chapters', `${chapterUuid}.json`)
   }
   return path.join(chapterDir, APP_CHAPTER_METADATA)
+}
+
+function buildChapterNavigation(comic, chapterUuid, downloadedChapterUuids = []) {
+  normalizeComicMetadata(comic)
+  const downloaded = new Set(downloadedChapterUuids)
+  const chapters = []
+  for (const [groupPathWord, groupChapters] of Object.entries(comic.groupsChapters || {})) {
+    for (const chapter of groupChapters || []) {
+      const uuid = chapterUuidOf(chapter)
+      if (!uuid) continue
+      chapters.push({
+        chapterUuid: uuid,
+        title: chapterTitleOf(chapter, uuid),
+        groupPathWord,
+        isDownloaded: downloaded.has(uuid),
+      })
+    }
+  }
+  const index = chapters.findIndex((chapter) => chapter.chapterUuid === chapterUuid)
+  if (index < 0) return { prev: null, next: null }
+  return {
+    prev: chapters[index - 1] || null,
+    next: chapters[index + 1] || null,
+  }
+}
+
+async function getChapterNavigation({ comicPathWord, chapterUuid }) {
+  try {
+    const downloadedComics = await listDownloaded()
+    const downloadedComic = downloadedComics.find((item) => item.comicPathWord === comicPathWord)
+    if (downloadedComic?.metadataComicFile) {
+      const comic = normalizeComicMetadata(JSON.parse(await readFile(downloadedComic.metadataComicFile, 'utf8')))
+      return buildChapterNavigation(comic, chapterUuid, downloadedComic.chapterUuids || [])
+    }
+  } catch {
+    // Fall back to remote metadata below.
+  }
+
+  try {
+    const comic = await getComic(comicPathWord)
+    const downloaded = (await listDownloaded()).find((item) => item.comicPathWord === comicPathWord)
+    return buildChapterNavigation(comic, chapterUuid, downloaded?.chapterUuids || [])
+  } catch {
+    return { prev: null, next: null }
+  }
 }
 
 function updateInventory(update, patch) {
