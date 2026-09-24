@@ -491,6 +491,8 @@ h2 {
   border-radius: 8px;
   display: grid;
   gap: 8px;
+  height: 58px;
+  overflow: hidden;
   padding: 10px;
 }
 
