@@ -159,6 +159,10 @@ h2 {
   padding: 14px 18px;
 }
 
+.toolbar.hidden {
+  display: none;
+}
+
 .workspace {
   display: grid;
   gap: 18px;

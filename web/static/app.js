@@ -7,6 +7,7 @@ const els = {
   login: document.querySelector('#login'),
   keyword: document.querySelector('#keyword'),
   search: document.querySelector('#search'),
+  searchToolbar: document.querySelector('#search-toolbar'),
   results: document.querySelector('#results'),
   discoverOrdering: document.querySelector('#discover-ordering'),
   discoverTheme: document.querySelector('#discover-theme'),
@@ -418,6 +419,7 @@ function renderChapterLoadError({ target, pathWord, title, message }) {
 function showView(id) {
   for (const view of els.views) view.classList.toggle('active', view.id === id)
   for (const tab of els.tabs) tab.classList.toggle('active', tab.dataset.view === id)
+  els.searchToolbar.classList.toggle('hidden', id !== 'search-view')
 }
 
 function renderComic(data, target = 'search') {
