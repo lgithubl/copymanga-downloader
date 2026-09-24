@@ -12,6 +12,7 @@ const STATIC_DIR = path.join(__dirname, 'static')
 const DATA_DIR = process.env.DATA_DIR || '/data'
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(DATA_DIR, 'downloads')
 const PREVIEW_CACHE_DIR = path.join(DATA_DIR, 'cache', 'preview')
+const READING_PROGRESS_DIR = path.join(DATA_DIR, 'cache', 'reading-progress')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -117,6 +118,8 @@ function defaultConfig() {
     imgConcurrency: 6,
     imgDownloadIntervalSec: 0,
     viewerImageBatchSize: 5,
+    readColor: '#ecfdf3',
+    unreadColor: '#fff7ed',
     updateDownloadedComicsIntervalSec: 0,
     enablePickedComicSyncGuard: false,
     comicDirFmt: '{comic_title}',
@@ -153,6 +156,8 @@ function normalizeConfig(value) {
     imgConcurrency: clampNumber(value?.imgConcurrency, 1, 60, defaults.imgConcurrency),
     imgDownloadIntervalSec: clampNumber(value?.imgDownloadIntervalSec, 0, 3600, defaults.imgDownloadIntervalSec),
     viewerImageBatchSize: clampNumber(value?.viewerImageBatchSize, 1, 50, defaults.viewerImageBatchSize),
+    readColor: normalizeColor(value?.readColor, defaults.readColor),
+    unreadColor: normalizeColor(value?.unreadColor, defaults.unreadColor),
     updateDownloadedComicsIntervalSec: clampNumber(
       value?.updateDownloadedComicsIntervalSec,
       0,
@@ -174,6 +179,11 @@ function clampNumber(value, min, max, fallback) {
   const n = Number(value)
   if (!Number.isFinite(n)) return fallback
   return Math.max(min, Math.min(max, Math.floor(n)))
+}
+
+function normalizeColor(value, fallback) {
+  const text = String(value || '').trim()
+  return /^#[0-9a-f]{6}$/i.test(text) ? text : fallback
 }
 
 async function loadConfig() {
@@ -492,6 +502,7 @@ async function listDownloaded() {
       const imageFiles = downloadFiles.filter((candidate) => (
         candidate.startsWith(`${downloadComicDir}${path.sep}`) && /\.(webp|jpe?g)$/i.test(candidate)
       ))
+      const allChapterUuids = collectAllChapterUuids(comic)
       const remoteChapterTotal = countComicChapters(comic)
       const info = await stat(file)
       comics.push({
@@ -503,6 +514,7 @@ async function listDownloaded() {
         cover: comic.comic?.cover || comic.cover || '',
         author: comic.comic?.author || comic.author || [],
         groups: comic.groups || {},
+        allChapterUuids,
         chapterUuids,
         chapterCount: chapterFiles.length,
         remoteChapterTotal: remoteChapterTotal || null,
@@ -514,6 +526,14 @@ async function listDownloaded() {
     }
   }
   return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
+function collectAllChapterUuids(comic) {
+  normalizeComicMetadata(comic)
+  return Object.values(comic.groupsChapters || {})
+    .flatMap((chapters) => Array.isArray(chapters) ? chapters : [])
+    .map(chapterUuidOf)
+    .filter(Boolean)
 }
 
 function countComicChapters(comic) {
@@ -651,6 +671,80 @@ async function getChapterImages({ comicPathWord, chapterUuid, token = '' }) {
       url: previewImageUrl(sessionId, index),
     })),
   }
+}
+
+function readingProgressPath(comicPathWord) {
+  return path.join(READING_PROGRESS_DIR, `${safeSegment(comicPathWord)}.json`)
+}
+
+function normalizeReadingProgress(progress, comicPathWord = '') {
+  const readChapters = progress?.readChapters && typeof progress.readChapters === 'object'
+    ? progress.readChapters
+    : {}
+  return {
+    comicPathWord: String(progress?.comicPathWord || comicPathWord || ''),
+    comicTitle: String(progress?.comicTitle || ''),
+    lastChapterUuid: String(progress?.lastChapterUuid || ''),
+    lastChapterTitle: String(progress?.lastChapterTitle || ''),
+    readChapters,
+    updatedAt: String(progress?.updatedAt || ''),
+  }
+}
+
+async function readReadingProgress(comicPathWord) {
+  if (!comicPathWord) return null
+  try {
+    const progress = JSON.parse(await readFile(readingProgressPath(comicPathWord), 'utf8'))
+    return normalizeReadingProgress(progress, comicPathWord)
+  } catch {
+    return null
+  }
+}
+
+async function listReadingProgress() {
+  let entries = []
+  try {
+    entries = await readdir(READING_PROGRESS_DIR, { withFileTypes: true })
+  } catch {
+    return {}
+  }
+  const result = {}
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    try {
+      const progress = normalizeReadingProgress(JSON.parse(await readFile(path.join(READING_PROGRESS_DIR, entry.name), 'utf8')))
+      if (progress.comicPathWord) result[progress.comicPathWord] = progress
+    } catch {
+      // Ignore broken reading state files; they should not block inventory.
+    }
+  }
+  return result
+}
+
+async function recordReadingProgress({ comicPathWord, comicTitle = '', chapterUuid, chapterTitle = '' }) {
+  if (!comicPathWord || !chapterUuid) throw new Error('comicPathWord and chapterUuid are required')
+  const now = new Date().toISOString()
+  const current = await readReadingProgress(comicPathWord)
+  const progress = normalizeReadingProgress(current, comicPathWord)
+  progress.comicPathWord = comicPathWord
+  progress.comicTitle = comicTitle || progress.comicTitle
+  progress.lastChapterUuid = chapterUuid
+  progress.lastChapterTitle = chapterTitle || progress.lastChapterTitle || chapterUuid
+  progress.readChapters ||= {}
+  progress.readChapters[chapterUuid] = {
+    ...(progress.readChapters[chapterUuid] || {}),
+    chapterUuid,
+    chapterTitle: chapterTitle || progress.readChapters[chapterUuid]?.chapterTitle || chapterUuid,
+    enteredAt: progress.readChapters[chapterUuid]?.enteredAt || now,
+    updatedAt: now,
+  }
+  progress.updatedAt = now
+  await mkdir(READING_PROGRESS_DIR, { recursive: true })
+  const file = readingProgressPath(comicPathWord)
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(tmp, JSON.stringify(progress, null, 2))
+  await rename(tmp, file)
+  return progress
 }
 
 async function serveLocalImage(res, relativePath) {
@@ -1269,6 +1363,15 @@ async function route(req, res) {
     if (pathname === '/api/config' && req.method === 'GET') return json(res, 200, config)
     if (pathname === '/api/config' && req.method === 'POST') {
       return json(res, 200, await saveConfig(await readJson(req)))
+    }
+    if (pathname === '/api/reading-progress' && req.method === 'GET') {
+      return json(res, 200, await listReadingProgress())
+    }
+    if (pathname.startsWith('/api/reading-progress/') && req.method === 'GET') {
+      return json(res, 200, await readReadingProgress(decodeURIComponent(pathname.split('/').pop())) || null)
+    }
+    if (pathname === '/api/reading-progress' && req.method === 'POST') {
+      return json(res, 200, await recordReadingProgress(await readJson(req)))
     }
     if (pathname === '/api/jobs/retry-failed' && req.method === 'POST') {
       const retried = []

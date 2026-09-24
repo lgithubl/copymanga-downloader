@@ -50,6 +50,7 @@ const els = {
   downloadedPageTotal: document.querySelector('#downloaded-page-total'),
   downloadedJump: document.querySelector('#downloaded-jump'),
   downloadedLimit: document.querySelector('#downloaded-limit'),
+  downloadedReadFilter: document.querySelector('#downloaded-read-filter'),
   downloadedComicTitle: document.querySelector('#downloaded-comic-title'),
   downloadedComicMeta: document.querySelector('#downloaded-comic-meta'),
   downloadedComicRefresh: document.querySelector('#downloaded-comic-refresh'),
@@ -77,6 +78,8 @@ const els = {
   configImgConcurrency: document.querySelector('#config-img-concurrency'),
   configImgDownloadIntervalSec: document.querySelector('#config-img-download-interval-sec'),
   configViewerImageBatchSize: document.querySelector('#config-viewer-image-batch-size'),
+  configReadColor: document.querySelector('#config-read-color'),
+  configUnreadColor: document.querySelector('#config-unread-color'),
   configUpdateDownloadedComicsIntervalSec: document.querySelector('#config-update-downloaded-comics-interval-sec'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
@@ -103,6 +106,7 @@ let viewerRendered = 0
 let viewerSentinel = null
 let viewerActiveBatch = null
 let viewerReturnView = 'search-view'
+let readingProgress = {}
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -142,6 +146,47 @@ function pickComicCover(item) {
   return item.cover || item.comic?.cover || ''
 }
 
+function readChapterSet(comicPathWord) {
+  return new Set(Object.keys(readingProgress[comicPathWord]?.readChapters || {}))
+}
+
+function allChapterUuidsOf(item) {
+  if (Array.isArray(item.allChapterUuids)) return item.allChapterUuids.filter(Boolean)
+  const groupsChapters = item.groupsChapters || item.comic?.groupsChapters || item.comic?.groups || {}
+  return Object.values(groupsChapters)
+    .flatMap((chapters) => Array.isArray(chapters) ? chapters : [])
+    .map(chapterId)
+    .filter(Boolean)
+}
+
+function readingStats(item) {
+  const pathWord = pickComicPathWord(item) || item.comicPathWord
+  const read = readChapterSet(pathWord)
+  const all = allChapterUuidsOf(item)
+  const total = all.length || Number(item.remoteChapterTotal || 0) || 0
+  const readCount = all.length
+    ? all.filter((uuid) => read.has(uuid)).length
+    : read.size
+  return { pathWord, readCount, total, hasAnyRead: read.size > 0 }
+}
+
+function readingClassForItem(item) {
+  const stats = readingStats(item)
+  if (stats.total > 0 && stats.readCount >= stats.total) return ' read-all'
+  if (stats.readCount > 0 || stats.hasAnyRead) return ' partial-read'
+  return ' unread-all'
+}
+
+function inventoryReadMatches(item) {
+  const filter = els.downloadedReadFilter?.value || 'all'
+  if (filter === 'all') return true
+  const stats = readingStats(item)
+  if (filter === 'hasUnread') return stats.total > 0 && stats.readCount < stats.total
+  if (filter === 'allRead') return stats.total > 0 && stats.readCount >= stats.total
+  if (filter === 'unread') return stats.readCount === 0
+  return true
+}
+
 function chapterId(chapter) {
   return chapter.uuid || chapter.chapter_uuid || chapter.chapterUuid
 }
@@ -169,16 +214,28 @@ function renderComicCards(container, list, onPick = undefined) {
     const comic = item.comic || item
     const pathWord = pickComicPathWord(comic)
     const isDownloaded = comic.isDownloaded || downloadedPathWords.has(pathWord)
+    const progress = readingProgress[pathWord]
     const card = document.createElement('article')
-    card.className = `card${isDownloaded ? ' downloaded-card' : ''}`
+    card.className = `card${isDownloaded ? ' downloaded-card' : ''}${readingClassForItem(comic)}`
     card.innerHTML = `
       ${renderCover(pickComicCover(comic), pickComicTitle(comic))}
       <div class="card-body">
         <div class="card-title">${escapeHtml(pickComicTitle(comic))}</div>
         <div class="muted">${escapeHtml(pathWord || '')}</div>
         ${isDownloaded ? '<div class="badge">已下载</div>' : ''}
+        ${progress?.lastChapterUuid ? '<button class="card-read secondary" type="button">阅读</button>' : ''}
       </div>
     `
+    card.querySelector('.card-read')?.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openChapterViewer({
+        comicPathWord: pathWord,
+        chapterUuid: progress.lastChapterUuid,
+        title: progress.lastChapterTitle,
+        comicTitle: pickComicTitle(comic),
+      })
+    })
     card.addEventListener('click', () => {
       if (onPick) {
         onPick(pathWord)
@@ -211,8 +268,9 @@ function renderDiscover(data) {
 function renderDownloaded(list) {
   downloaded = list
   els.downloaded.innerHTML = ''
+  const visibleList = list.filter(inventoryReadMatches)
   const limit = Math.max(1, Number(els.downloadedLimit.value || 10))
-  const totalPages = Math.max(1, Math.ceil(list.length / limit))
+  const totalPages = Math.max(1, Math.ceil(visibleList.length / limit))
   downloadedPage = Math.max(1, Math.min(totalPages, downloadedPage))
   const offset = (downloadedPage - 1) * limit
   els.downloadedPage.value = String(downloadedPage)
@@ -221,20 +279,34 @@ function renderDownloaded(list) {
   els.downloadedPrev.disabled = downloadedPage <= 1
   els.downloadedNext.disabled = downloadedPage >= totalPages
 
-  for (const item of list.slice(offset, offset + limit)) {
+  for (const item of visibleList.slice(offset, offset + limit)) {
     const remoteChapterTotal = Number.isFinite(Number(item.remoteChapterTotal)) ? Number(item.remoteChapterTotal) : null
     const chapterTotalText = remoteChapterTotal && remoteChapterTotal > 0 ? String(remoteChapterTotal) : '?'
+    const progress = readingProgress[item.comicPathWord]
+    const stats = readingStats(item)
+    const readTarget = progress?.lastChapterUuid || item.allChapterUuids?.[0] || item.chapterUuids?.[0] || ''
     const card = document.createElement('article')
-    card.className = 'card'
+    card.className = `card downloaded-card ${readingClassForItem(item)}`
     card.innerHTML = `
       ${renderCover(item.cover, item.title)}
       <div class="card-body">
         <div class="card-title">${escapeHtml(item.title)}</div>
         <div class="muted">${escapeHtml(item.comicPathWord)}</div>
-        <div class="muted">本地 ${item.chapterCount}/${chapterTotalText} 章 · ${item.imageCount} 张图 · ${escapeHtml(item.path)}</div>
+        <div class="muted">本地 ${item.chapterCount}/${chapterTotalText} 章 · 已读 ${stats.readCount}/${stats.total || '?'} · ${item.imageCount} 张图 · ${escapeHtml(item.path)}</div>
         <div class="badge">已下载</div>
+        ${readTarget ? `<button class="card-read secondary" type="button">${progress?.lastChapterUuid ? '阅读' : '开始'}</button>` : ''}
       </div>
     `
+    card.querySelector('.card-read')?.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openChapterViewer({
+        comicPathWord: item.comicPathWord,
+        chapterUuid: readTarget,
+        title: progress?.lastChapterTitle || readTarget,
+        comicTitle: item.title,
+      })
+    })
     if (item.comicPathWord) {
       card.addEventListener('click', () => {
         loadDownloadedComic(item.comicPathWord)
@@ -242,12 +314,12 @@ function renderDownloaded(list) {
     }
     els.downloaded.append(card)
   }
-  if (list.length === 0) els.downloaded.innerHTML = '<p class="muted">暂无本地库存</p>'
+  if (visibleList.length === 0) els.downloaded.innerHTML = '<p class="muted">暂无符合条件的本地库存</p>'
 }
 
 function jumpDownloadedPage() {
   const limit = Math.max(1, Number(els.downloadedLimit.value || 10))
-  const totalPages = Math.max(1, Math.ceil(downloaded.length / limit))
+  const totalPages = Math.max(1, Math.ceil(downloaded.filter(inventoryReadMatches).length / limit))
   downloadedPage = Math.max(1, Math.min(totalPages, Math.floor(Number(els.downloadedPage.value || 1))))
   renderDownloaded(downloaded)
 }
@@ -273,6 +345,8 @@ function renderComic(data, target = 'search') {
 }
 
 function renderChapterGroups(data, chaptersEl, comicPathWord) {
+  const read = readChapterSet(comicPathWord)
+  const comicTitle = data.comic?.name || data.name || comicPathWord
   chaptersEl.classList.remove('empty-panel')
   chaptersEl.innerHTML = ''
   for (const [groupPathWord, chapters] of Object.entries(data.groupsChapters || {})) {
@@ -284,10 +358,11 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
     for (const chapter of chapters) {
       const id = chapterId(chapter)
       const isDownloaded = chapter.isDownloaded === true
+      const isRead = read.has(id)
       const title = shortChapterTitle(chapter)
       const fullTitle = `${chapterTitle(chapter)} · ${id}`
       const row = document.createElement('label')
-      row.className = `chapter${isDownloaded ? ' downloaded-chapter' : ''}`
+      row.className = `chapter${isDownloaded ? ' downloaded-chapter' : ''}${isRead ? ' read-chapter' : ' unread-chapter'}`
       row.title = fullTitle
       row.innerHTML = `
         <input type="checkbox" value="${escapeHtml(id)}" ${isDownloaded ? 'disabled' : ''} />
@@ -305,6 +380,7 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
           comicPathWord,
           chapterUuid: id,
           title,
+          comicTitle,
         })
       })
       row.querySelector('.chapter-redownload').addEventListener('click', (event) => {
@@ -322,11 +398,11 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
   }
 }
 
-async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
+async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle }) {
   if (!comicPathWord || !chapterUuid) return
   const activeView = els.views.find((view) => view.classList.contains('active'))?.id
   if (activeView && activeView !== 'viewer-view') viewerReturnView = activeView
-  viewerState = { comicPathWord, chapterUuid, title, returnView: viewerReturnView }
+  viewerState = { comicPathWord, chapterUuid, title, comicTitle, returnView: viewerReturnView }
   showView('viewer-view')
   els.viewerBack.disabled = false
   els.viewerPrev.disabled = true
@@ -346,7 +422,9 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
     })
     const data = await api(`/api/chapter-images?${params}`)
     const sourceText = data.source === 'local' ? '本地' : '远端预览'
-    viewerState = { ...viewerState, sourceText, totalImages: data.count || 0, navigation: data.navigation || {} }
+    const resolvedTitle = data.title || title || chapterUuid
+    viewerState = { ...viewerState, title: resolvedTitle, sourceText, totalImages: data.count || 0, navigation: data.navigation || {} }
+    els.viewerTitle.textContent = resolvedTitle
     els.viewerPrev.disabled = !viewerState.navigation?.prev
     els.viewerNext.disabled = !viewerState.navigation?.next
     els.viewerMeta.textContent = `${sourceText} · 0/${data.count || 0} 张图`
@@ -357,6 +435,12 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
       els.viewerImages.className = 'viewer-grid empty-panel'
       els.viewerImages.textContent = '没有图片'
     }
+    recordReadingProgress({
+      comicPathWord,
+      comicTitle: comicTitle || viewerState.comicTitle || '',
+      chapterUuid,
+      chapterTitle: resolvedTitle,
+    }).catch(() => {})
   } catch (error) {
     els.viewerPrev.disabled = true
     els.viewerNext.disabled = true
@@ -373,7 +457,38 @@ function openAdjacentViewer(direction) {
     comicPathWord: viewerState.comicPathWord,
     chapterUuid: target.chapterUuid,
     title: target.title,
+    comicTitle: viewerState.comicTitle,
   })
+}
+
+async function loadReadingProgress() {
+  readingProgress = await api('/api/reading-progress')
+  applyReadingColors()
+}
+
+async function recordReadingProgress(payload) {
+  const progress = await api('/api/reading-progress', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  readingProgress[progress.comicPathWord] = progress
+  applyReadingColors(payload.comicPathWord, payload.chapterUuid)
+  if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
+}
+
+function applyReadingColors(comicPathWord = '', chapterUuid = '') {
+  const selectorUuid = globalThis.CSS?.escape ? CSS.escape(chapterUuid) : ''
+  const chapters = comicPathWord && chapterUuid
+    ? (selectorUuid ? [...document.querySelectorAll(`.chapter input[value="${selectorUuid}"]`)] : [...document.querySelectorAll('.chapter input[type="checkbox"]')].filter((input) => input.value === chapterUuid))
+    : [...document.querySelectorAll('.chapter input[type="checkbox"]')]
+  for (const input of chapters) {
+    const row = input.closest('.chapter')
+    if (!row) continue
+    const rowComicPathWord = comicPathWord || currentComicPathWord || currentDownloadedComicPathWord
+    const isRead = readChapterSet(rowComicPathWord).has(input.value)
+    row.classList.toggle('read-chapter', isRead)
+    row.classList.toggle('unread-chapter', !isRead)
+  }
 }
 
 function resetViewerBatch() {
@@ -554,6 +669,10 @@ async function loadConfig() {
   els.configImgDownloadIntervalSec.value = config.imgDownloadIntervalSec
   viewerBatchSize = config.viewerImageBatchSize || 5
   els.configViewerImageBatchSize.value = viewerBatchSize
+  els.configReadColor.value = config.readColor || '#ecfdf3'
+  els.configUnreadColor.value = config.unreadColor || '#fff7ed'
+  document.documentElement.style.setProperty('--read-color', els.configReadColor.value)
+  document.documentElement.style.setProperty('--unread-color', els.configUnreadColor.value)
   els.configUpdateDownloadedComicsIntervalSec.value = config.updateDownloadedComicsIntervalSec
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
@@ -754,6 +873,10 @@ els.downloadedLimit.addEventListener('change', () => {
   downloadedPage = 1
   renderDownloaded(downloaded)
 })
+els.downloadedReadFilter.addEventListener('change', () => {
+  downloadedPage = 1
+  renderDownloaded(downloaded)
+})
 els.downloadedComicRefresh.addEventListener('click', () => {
   if (currentDownloadedComicPathWord) loadDownloadedComic(currentDownloadedComicPathWord, { refreshOnly: true })
 })
@@ -812,6 +935,8 @@ els.configSave.addEventListener('click', async () => {
         imgConcurrency: Number(els.configImgConcurrency.value),
         imgDownloadIntervalSec: Number(els.configImgDownloadIntervalSec.value),
         viewerImageBatchSize: Number(els.configViewerImageBatchSize.value),
+        readColor: els.configReadColor.value,
+        unreadColor: els.configUnreadColor.value,
         updateDownloadedComicsIntervalSec: Number(els.configUpdateDownloadedComicsIntervalSec.value),
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,
@@ -961,6 +1086,7 @@ events.addEventListener('inventoryUpdate', (event) => {
 })
 
 refreshDownloadedState().catch(() => {})
+loadReadingProgress().catch(() => {})
 loadConfig().catch(() => {})
 api('/api/inventory-update').then(renderInventoryUpdate).catch(() => {})
 setInterval(() => {
