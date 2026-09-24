@@ -185,8 +185,48 @@ function emit(event, data) {
 }
 
 function updateJob(job, patch) {
+  if (!jobs.has(job.id)) return
   Object.assign(job, patch, { updatedAt: new Date().toISOString() })
-  emit('job', job)
+  emit('job', publicJob(job))
+}
+
+function publicJob(job) {
+  const { token, ...safeJob } = job
+  return safeJob
+}
+
+function publicJobs() {
+  return [...jobs.values()].map(publicJob)
+}
+
+function createJob({ comicPathWord, chapterUuids, token }) {
+  const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return {
+    id,
+    status: 'queued',
+    comicPathWord,
+    chapterUuids,
+    token,
+    totalChapters: chapterUuids.length,
+    doneChapters: 0,
+    totalImages: 0,
+    doneImages: 0,
+    message: '等待开始',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function startJob(job) {
+  job.status = 'queued'
+  job.doneChapters = 0
+  job.totalImages = 0
+  job.doneImages = 0
+  job.message = '等待开始'
+  job.updatedAt = new Date().toISOString()
+  jobs.set(job.id, job)
+  emit('job', publicJob(job))
+  runJob(job, job)
 }
 
 function findChapter(comic, chapterUuid) {
@@ -380,7 +420,27 @@ async function route(req, res) {
       res.write(`event: ready\ndata: {}\n\n`)
       return
     }
-    if (pathname === '/api/jobs' && req.method === 'GET') return json(res, 200, [...jobs.values()])
+    if (pathname === '/api/jobs' && req.method === 'GET') return json(res, 200, publicJobs())
+    if (pathname === '/api/jobs/retry-failed' && req.method === 'POST') {
+      const retried = []
+      for (const job of [...jobs.values()]) {
+        if (job.status !== 'failed') continue
+        const retry = createJob(job)
+        startJob(retry)
+        retried.push(publicJob(retry))
+      }
+      return json(res, 202, { retried })
+    }
+    if (pathname === '/api/jobs/clear-active' && req.method === 'POST') {
+      let cleared = 0
+      for (const [id, job] of [...jobs.entries()]) {
+        if (job.status === 'completed') continue
+        jobs.delete(id)
+        cleared += 1
+        emit('jobDelete', { id })
+      }
+      return json(res, 200, { cleared })
+    }
     if (pathname === '/api/downloaded' && req.method === 'GET') return json(res, 200, await listDownloaded())
     if (pathname === '/api/login' && req.method === 'POST') {
       const body = await readJson(req)
@@ -411,23 +471,9 @@ async function route(req, res) {
       if (!body.comicPathWord || !Array.isArray(body.chapterUuids) || body.chapterUuids.length === 0) {
         return json(res, 400, { error: 'comicPathWord and chapterUuids are required' })
       }
-      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-      const job = {
-        id,
-        status: 'queued',
-        comicPathWord: body.comicPathWord,
-        totalChapters: body.chapterUuids.length,
-        doneChapters: 0,
-        totalImages: 0,
-        doneImages: 0,
-        message: '等待开始',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }
-      jobs.set(id, job)
-      emit('job', job)
-      runJob(job, body)
-      return json(res, 202, job)
+      const job = createJob(body)
+      startJob(job)
+      return json(res, 202, publicJob(job))
     }
 
     return serveStatic(req, res, pathname)

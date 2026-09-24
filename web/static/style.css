@@ -34,6 +34,14 @@ button:disabled {
   opacity: 0.55;
 }
 
+button.secondary {
+  background: #57606a;
+}
+
+button.danger {
+  background: #cf222e;
+}
+
 input,
 textarea {
   border: 1px solid #d0d7de;
@@ -271,6 +279,28 @@ h2 {
 .job {
   display: grid;
   gap: 6px;
+}
+
+.job.failed {
+  border-color: #cf222e;
+}
+
+.job.running,
+.job.queued {
+  border-color: #1f6feb;
+}
+
+.task-head {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.task-head button {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 10px;
 }
 
 .bar {

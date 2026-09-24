@@ -12,6 +12,8 @@ const els = {
   comicTitle: document.querySelector('#comic-title'),
   download: document.querySelector('#download'),
   jobs: document.querySelector('#jobs'),
+  retryFailed: document.querySelector('#retry-failed'),
+  clearActive: document.querySelector('#clear-active'),
   favoriteOrdering: document.querySelector('#favorite-ordering'),
   favoriteRefresh: document.querySelector('#favorite-refresh'),
   favorites: document.querySelector('#favorites'),
@@ -160,18 +162,19 @@ function renderComic(data) {
 
 function renderJobs() {
   els.jobs.innerHTML = ''
-  const sorted = [...jobs].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+  const visible = jobs.filter((job) => job.status !== 'completed')
+  const sorted = [...visible].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   for (const job of sorted) {
     const total = Math.max(job.totalImages || job.totalChapters || 1, 1)
     const done = job.totalImages ? job.doneImages : job.doneChapters
     const pct = Math.min(100, Math.round((done / total) * 100))
     const el = document.createElement('article')
-    el.className = 'job'
+    el.className = `job ${job.status}`
     el.innerHTML = `
       <strong>${escapeHtml(job.comicTitle || job.comicPathWord || job.id)}</strong>
       <div class="muted">${escapeHtml(job.status)} · ${escapeHtml(job.message || '')}</div>
       <div class="bar"><span style="width:${pct}%"></span></div>
-      <div class="muted">${done}/${total}</div>
+      <div class="muted">章节 ${job.doneChapters}/${job.totalChapters} · 图片 ${job.doneImages}/${job.totalImages || '?'}</div>
     `
     els.jobs.append(el)
   }
@@ -261,6 +264,30 @@ async function loadDownloaded() {
 els.favoriteRefresh.addEventListener('click', loadFavorite)
 els.favoriteOrdering.addEventListener('change', loadFavorite)
 els.downloadedRefresh.addEventListener('click', loadDownloaded)
+els.retryFailed.addEventListener('click', async () => {
+  try {
+    setLoading(els.retryFailed, true)
+    const data = await api('/api/jobs/retry-failed', { method: 'POST', body: '{}' })
+    jobs = [...data.retried, ...jobs.filter((job) => job.status !== 'failed')]
+    renderJobs()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.retryFailed, false)
+  }
+})
+els.clearActive.addEventListener('click', async () => {
+  try {
+    setLoading(els.clearActive, true)
+    await api('/api/jobs/clear-active', { method: 'POST', body: '{}' })
+    jobs = jobs.filter((job) => job.status === 'completed')
+    renderJobs()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.clearActive, false)
+  }
+})
 
 els.keyword.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') els.search.click()
@@ -319,6 +346,11 @@ events.addEventListener('job', (event) => {
       if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
     })
   }
+})
+events.addEventListener('jobDelete', (event) => {
+  const { id } = JSON.parse(event.data)
+  jobs = jobs.filter((job) => job.id !== id)
+  renderJobs()
 })
 
 refreshDownloadedState().catch(() => {})
