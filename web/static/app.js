@@ -50,6 +50,10 @@ const els = {
   downloadedPageTotal: document.querySelector('#downloaded-page-total'),
   downloadedJump: document.querySelector('#downloaded-jump'),
   downloadedLimit: document.querySelector('#downloaded-limit'),
+  downloadedComicTitle: document.querySelector('#downloaded-comic-title'),
+  downloadedComicMeta: document.querySelector('#downloaded-comic-meta'),
+  downloadedComicRefresh: document.querySelector('#downloaded-comic-refresh'),
+  downloadedChapters: document.querySelector('#downloaded-chapters'),
   viewerTitle: document.querySelector('#viewer-title'),
   viewerMeta: document.querySelector('#viewer-meta'),
   viewerRefresh: document.querySelector('#viewer-refresh'),
@@ -84,6 +88,7 @@ let currentComicTarget = 'search'
 let jobs = []
 let downloaded = []
 let downloadedPage = 1
+let currentDownloadedComicPathWord = ''
 let discoverOffset = 0
 let discoverTotal = 0
 let inventoryUpdate = null
@@ -228,8 +233,7 @@ function renderDownloaded(list) {
     `
     if (item.comicPathWord) {
       card.addEventListener('click', () => {
-        showView('search-view')
-        loadComic(item.comicPathWord)
+        loadDownloadedComic(item.comicPathWord)
       })
     }
     els.downloaded.append(card)
@@ -261,8 +265,12 @@ function renderComic(data, target = 'search') {
   comicTitleEl.textContent = data.comic?.name || data.name || '章节'
   downloadButton.disabled = false
   downloadAllButton.disabled = false
-  chaptersEl.innerHTML = ''
+  renderChapterGroups(data, chaptersEl, comicPathWord)
+}
 
+function renderChapterGroups(data, chaptersEl, comicPathWord) {
+  chaptersEl.classList.remove('empty-panel')
+  chaptersEl.innerHTML = ''
   for (const [groupPathWord, chapters] of Object.entries(data.groupsChapters || {})) {
     const group = document.createElement('div')
     group.className = 'group'
@@ -303,6 +311,10 @@ function renderComic(data, target = 'search') {
       group.append(row)
     }
     chaptersEl.append(group)
+  }
+  if (!Object.keys(data.groupsChapters || {}).length) {
+    chaptersEl.classList.add('empty-panel')
+    chaptersEl.textContent = '本地 metadata 没有章节信息'
   }
 }
 
@@ -590,6 +602,55 @@ async function loadDownloaded() {
   }
 }
 
+async function loadDownloadedComic(pathWord, { refreshOnly = false } = {}) {
+  if (!pathWord) return
+  currentDownloadedComicPathWord = pathWord
+  els.downloadedComicRefresh.disabled = false
+  if (!refreshOnly) {
+    els.downloadedComicTitle.textContent = pathWord
+    els.downloadedComicMeta.textContent = '读取本地 metadata...'
+    els.downloadedChapters.className = 'chapters empty-panel'
+    els.downloadedChapters.textContent = '加载章节中...'
+    try {
+      const local = await api(`/api/downloaded/comic/${encodeURIComponent(pathWord)}`)
+      renderDownloadedComic(local, '本地 metadata')
+    } catch (error) {
+      els.downloadedComicMeta.textContent = `本地 metadata 读取失败：${error.message}`
+    }
+  }
+
+  try {
+    setLoading(els.downloadedComicRefresh, true)
+    const params = new URLSearchParams({
+      refresh: '1',
+      token: els.token.value.trim(),
+    })
+    const remote = await api(`/api/downloaded/comic/${encodeURIComponent(pathWord)}?${params}`)
+    renderDownloadedComic(remote, '远端最新')
+    await refreshDownloadedState()
+    renderDownloaded(downloaded)
+  } catch (error) {
+    if (!refreshOnly) {
+      els.downloadedComicMeta.textContent += ` · 获取最新失败：${error.message}`
+    } else {
+      alert(error.message)
+    }
+  } finally {
+    setLoading(els.downloadedComicRefresh, false)
+  }
+}
+
+function renderDownloadedComic(data, sourceText) {
+  const comicPathWord = data.comic?.path_word || data.comic?.pathWord || data.path_word || currentDownloadedComicPathWord
+  const title = data.comic?.name || data.name || comicPathWord
+  const localCount = data.downloadedInfo?.chapterCount ?? 0
+  const totalCount = Object.values(data.groupsChapters || {})
+    .reduce((total, chapters) => total + (Array.isArray(chapters) ? chapters.length : 0), 0)
+  els.downloadedComicTitle.textContent = title
+  els.downloadedComicMeta.textContent = `${sourceText} · 本地 ${localCount}/${totalCount || '?'} 章`
+  renderChapterGroups(data, els.downloadedChapters, comicPathWord)
+}
+
 els.favoriteRefresh.addEventListener('click', loadFavorite)
 els.favoriteOrdering.addEventListener('change', loadFavorite)
 els.discoverRefresh.addEventListener('click', () => {
@@ -639,6 +700,9 @@ els.downloadedPage.addEventListener('keydown', (event) => {
 els.downloadedLimit.addEventListener('change', () => {
   downloadedPage = 1
   renderDownloaded(downloaded)
+})
+els.downloadedComicRefresh.addEventListener('click', () => {
+  if (currentDownloadedComicPathWord) loadDownloadedComic(currentDownloadedComicPathWord, { refreshOnly: true })
 })
 els.downloadedUpdate.addEventListener('click', async () => {
   try {

@@ -524,6 +524,25 @@ async function writeDownloadedComicMetadata(downloadedComic, comic) {
   await writeFile(path.join(metadataComicDir, 'comic.json'), JSON.stringify(comic, null, 2))
 }
 
+async function getDownloadedComic(comicPathWord, { refresh = false, token = '' } = {}) {
+  const downloadedComics = await listDownloaded()
+  const downloadedComic = downloadedComics.find((item) => item.comicPathWord === comicPathWord)
+  if (!downloadedComic) throw new Error(`本地库存不存在 ${comicPathWord}`)
+  if (refresh) {
+    const comic = await getComic(comicPathWord)
+    await writeDownloadedComicMetadata(downloadedComic, comic)
+    return { ...comic, source: 'remote', downloadedInfo: downloadedComic }
+  }
+
+  const metadataComicFile = path.join(metadataRoot(), downloadedComic.path, 'comic.json')
+  const comic = JSON.parse(await readFile(metadataComicFile, 'utf8'))
+  return {
+    ...markDownloadedChapters(comic, downloadedComics),
+    source: 'metadata',
+    downloadedInfo: downloadedComic,
+  }
+}
+
 async function findLocalChapter(comicPathWord, chapterUuid) {
   const metadataFiles = await walk(metadataRoot())
   const chapterFiles = metadataFiles.filter((file) => path.basename(file) === 'chapter.json')
@@ -1051,6 +1070,13 @@ async function route(req, res) {
       return json(res, 200, { cleared })
     }
     if (pathname === '/api/downloaded' && req.method === 'GET') return json(res, 200, await listDownloaded())
+    if (pathname.startsWith('/api/downloaded/comic/') && req.method === 'GET') {
+      const comicPathWord = pathname.split('/').pop()
+      return json(res, 200, await getDownloadedComic(comicPathWord, {
+        refresh: url.searchParams.get('refresh') === '1',
+        token: url.searchParams.get('token') || '',
+      }))
+    }
     if (pathname === '/api/downloaded/update' && req.method === 'POST') {
       const body = await readJson(req)
       return json(res, 202, publicInventoryUpdate(startInventoryUpdate({
