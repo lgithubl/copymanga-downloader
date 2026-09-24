@@ -44,6 +44,10 @@ const els = {
   inventoryProgressText: document.querySelector('#inventory-progress .inventory-progress-text'),
   inventoryProgressBar: document.querySelector('#inventory-progress-bar'),
   downloaded: document.querySelector('#downloaded'),
+  viewerTitle: document.querySelector('#viewer-title'),
+  viewerMeta: document.querySelector('#viewer-meta'),
+  viewerRefresh: document.querySelector('#viewer-refresh'),
+  viewerImages: document.querySelector('#viewer-images'),
   configSave: document.querySelector('#config-save'),
   configDownloadDir: document.querySelector('#config-download-dir'),
   configMetadataDir: document.querySelector('#config-metadata-dir'),
@@ -75,6 +79,7 @@ let downloaded = []
 let discoverOffset = 0
 let discoverTotal = 0
 let inventoryUpdate = null
+let viewerState = null
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -216,7 +221,8 @@ function renderComic(data, target = 'search') {
   const downloadButton = isDiscover ? els.discoverDownload : els.download
   const downloadAllButton = isDiscover ? els.discoverDownloadAll : els.downloadAll
   const chaptersEl = isDiscover ? els.discoverChapters : els.chapters
-  currentComicPathWord = data.comic?.path_word || data.comic?.pathWord || data.path_word || ''
+  const comicPathWord = data.comic?.path_word || data.comic?.pathWord || data.path_word || ''
+  currentComicPathWord = comicPathWord
   currentComicTarget = target
   comicTitleEl.textContent = data.comic?.name || data.name || '章节'
   downloadButton.disabled = false
@@ -243,10 +249,59 @@ function renderComic(data, target = 'search') {
           <span class="chapter-title">${escapeHtml(title)}</span>
           <span class="muted">${isDownloaded ? '已下载' : ''}</span>
         </span>
+        <button class="chapter-view secondary" type="button">${isDownloaded ? '浏览' : '预览'}</button>
       `
+      row.querySelector('.chapter-view').addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        openChapterViewer({
+          comicPathWord,
+          chapterUuid: id,
+          title,
+        })
+      })
       group.append(row)
     }
     chaptersEl.append(group)
+  }
+}
+
+async function openChapterViewer({ comicPathWord, chapterUuid, title }) {
+  if (!comicPathWord || !chapterUuid) return
+  viewerState = { comicPathWord, chapterUuid, title }
+  showView('viewer-view')
+  els.viewerRefresh.disabled = false
+  els.viewerTitle.textContent = title || chapterUuid
+  els.viewerMeta.textContent = '加载图片中...'
+  els.viewerImages.className = 'viewer-grid'
+  els.viewerImages.innerHTML = ''
+
+  try {
+    const params = new URLSearchParams({
+      comicPathWord,
+      chapterUuid,
+      token: els.token.value.trim(),
+    })
+    const data = await api(`/api/chapter-images?${params}`)
+    const sourceText = data.source === 'local' ? '本地' : '远端预览'
+    els.viewerMeta.textContent = `${sourceText} · ${data.count || 0} 张图`
+    els.viewerImages.innerHTML = ''
+    for (const image of data.images || []) {
+      const img = document.createElement('img')
+      img.src = image.url
+      img.alt = `${title || chapterUuid} ${Number(image.index || 0) + 1}`
+      img.loading = 'lazy'
+      img.decoding = 'async'
+      els.viewerImages.append(img)
+    }
+    if (!data.images?.length) {
+      els.viewerImages.className = 'viewer-grid empty-panel'
+      els.viewerImages.textContent = '没有图片'
+    }
+  } catch (error) {
+    els.viewerImages.className = 'viewer-grid empty-panel'
+    els.viewerImages.textContent = error.message
+    els.viewerMeta.textContent = '加载失败'
   }
 }
 
@@ -480,6 +535,9 @@ els.downloadedUpdate.addEventListener('click', async () => {
   } finally {
     if (inventoryUpdate?.status !== 'running') setLoading(els.downloadedUpdate, false)
   }
+})
+els.viewerRefresh.addEventListener('click', () => {
+  if (viewerState) openChapterViewer(viewerState)
 })
 els.sidebarToggle.addEventListener('click', () => {
   const collapsed = !els.app.classList.contains('sidebar-collapsed')

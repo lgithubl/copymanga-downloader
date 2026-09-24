@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
 const DATA_DIR = process.env.DATA_DIR || '/data'
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(DATA_DIR, 'downloads')
+const PREVIEW_CACHE_DIR = path.join(DATA_DIR, 'cache', 'preview')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -17,6 +18,7 @@ const PORT = Number(process.env.PORT || 8080)
 const jobs = new Map()
 const inventoryUpdates = new Map()
 const sseClients = new Set()
+const previewSessions = new Map()
 let config = defaultConfig()
 
 const apiHeaders = {
@@ -45,6 +47,15 @@ function text(res, status, body) {
   res.end(body)
 }
 
+function binary(res, status, body, contentType) {
+  res.writeHead(status, {
+    'Content-Type': contentType,
+    'Content-Length': body.length,
+    'Cache-Control': 'public, max-age=3600',
+  })
+  res.end(body)
+}
+
 function cleanName(value) {
   return String(value || '')
     .replace(/[\\/]/g, ' ')
@@ -56,6 +67,10 @@ function cleanName(value) {
     .replace(/>/g, '》')
     .replace(/\|/g, '丨')
     .trim() || 'unknown'
+}
+
+function safeSegment(value) {
+  return cleanName(value).replace(/\.+/g, '.').slice(0, 180)
 }
 
 function defaultConfig() {
@@ -464,6 +479,120 @@ async function listDownloaded() {
   return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
 
+async function findLocalChapter(comicPathWord, chapterUuid) {
+  const metadataFiles = await walk(metadataRoot())
+  const chapterFiles = metadataFiles.filter((file) => path.basename(file) === 'chapter.json')
+  for (const chapterFile of chapterFiles) {
+    try {
+      const chapter = JSON.parse(await readFile(chapterFile, 'utf8'))
+      if (chapter.comicPathWord !== comicPathWord || chapter.chapterUuid !== chapterUuid) continue
+      const metadataChapterDir = path.dirname(chapterFile)
+      const relativeChapterDir = path.relative(metadataRoot(), metadataChapterDir)
+      const downloadChapterDir = path.join(DOWNLOAD_DIR, relativeChapterDir)
+      const files = (await walk(downloadChapterDir))
+        .filter((file) => /\.(webp|jpe?g|png|gif)$/i.test(file))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      return {
+        chapter,
+        relativeChapterDir,
+        downloadChapterDir,
+        files,
+      }
+    } catch {
+      // Ignore broken metadata and continue scanning.
+    }
+  }
+  return null
+}
+
+function imageContentType(filePath, fallback = 'image/webp') {
+  const ext = path.extname(filePath).toLowerCase()
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
+  if (ext === '.png') return 'image/png'
+  if (ext === '.gif') return 'image/gif'
+  if (ext === '.webp') return 'image/webp'
+  return fallback
+}
+
+function previewImageUrl(sessionId, index) {
+  return `/api/preview-image?sessionId=${encodeURIComponent(sessionId)}&index=${index}`
+}
+
+async function getChapterImages({ comicPathWord, chapterUuid, token = '' }) {
+  const local = await findLocalChapter(comicPathWord, chapterUuid)
+  if (local?.files?.length) {
+    return {
+      source: 'local',
+      title: local.chapter?.chapterMeta?.name || local.chapter?.chapterMeta?.chapter_name || chapterUuid,
+      count: local.files.length,
+      images: local.files.map((file, index) => ({
+        index,
+        url: `/api/local-image?path=${encodeURIComponent(path.relative(DOWNLOAD_DIR, file))}`,
+      })),
+    }
+  }
+
+  const chapter = await getChapter(comicPathWord, chapterUuid, token)
+  const contents = chapter.chapter?.contents || []
+  const words = chapter.chapter?.words || contents.map((_, index) => index)
+  const sessionId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const images = contents.map((content, index) => ({
+    index: Number(words[index] ?? index),
+    url: String(content.url || '').replace('.c800x.', '.c1500x.'),
+  })).filter((item) => item.url)
+  previewSessions.set(sessionId, {
+    id: sessionId,
+    comicPathWord,
+    chapterUuid,
+    images,
+    createdAt: Date.now(),
+  })
+  return {
+    source: 'remote',
+    sessionId,
+    title: chapter.chapter?.name || chapter.chapter?.chapter_name || chapterUuid,
+    count: images.length,
+    images: images.map((_, index) => ({
+      index,
+      url: previewImageUrl(sessionId, index),
+    })),
+  }
+}
+
+async function serveLocalImage(res, relativePath) {
+  const filePath = path.resolve(DOWNLOAD_DIR, relativePath || '')
+  if (!filePath.startsWith(path.resolve(DOWNLOAD_DIR) + path.sep)) return text(res, 403, 'Forbidden')
+  const body = await readFile(filePath)
+  return binary(res, 200, body, imageContentType(filePath))
+}
+
+async function servePreviewImage(res, sessionId, index) {
+  const session = previewSessions.get(sessionId)
+  const item = session?.images?.[Number(index)]
+  if (!session || !item?.url) return text(res, 404, 'Not found')
+  const url = new URL(item.url)
+  const ext = path.extname(url.pathname).replace('.', '').toLowerCase() || 'webp'
+  const fileName = `${String(Number(index) + 1).padStart(3, '0')}.${['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext) ? ext : 'webp'}`
+  const cachePath = path.join(
+    PREVIEW_CACHE_DIR,
+    safeSegment(session.comicPathWord),
+    safeSegment(session.chapterUuid),
+    fileName,
+  )
+  try {
+    const body = await readFile(cachePath)
+    return binary(res, 200, body, imageContentType(cachePath))
+  } catch {
+    const resp = await fetch(item.url)
+    if (!resp.ok) throw new Error(`preview image HTTP ${resp.status}: ${item.url}`)
+    const contentType = resp.headers.get('content-type') || imageContentType(cachePath)
+    const body = Buffer.from(await resp.arrayBuffer())
+    await mkdir(path.dirname(cachePath), { recursive: true })
+    await writeFile(cachePath, body)
+    return binary(res, 200, body, contentType)
+  }
+}
+
 function markDownloadedChapters(comic, downloadedComics) {
   const comicPathWord = comic.comic?.path_word || comic.comic?.pathWord || comic.path_word || ''
   const downloaded = downloadedComics.find((item) => item.comicPathWord === comicPathWord)
@@ -817,6 +946,19 @@ async function route(req, res) {
     if (pathname.startsWith('/api/chapter/') && req.method === 'GET') {
       const [, , , comicPathWord, chapterUuid] = pathname.split('/')
       return json(res, 200, await getChapter(comicPathWord, chapterUuid, url.searchParams.get('token') || ''))
+    }
+    if (pathname === '/api/chapter-images' && req.method === 'GET') {
+      return json(res, 200, await getChapterImages({
+        comicPathWord: url.searchParams.get('comicPathWord') || '',
+        chapterUuid: url.searchParams.get('chapterUuid') || '',
+        token: url.searchParams.get('token') || '',
+      }))
+    }
+    if (pathname === '/api/local-image' && req.method === 'GET') {
+      return serveLocalImage(res, url.searchParams.get('path') || '')
+    }
+    if (pathname === '/api/preview-image' && req.method === 'GET') {
+      return servePreviewImage(res, url.searchParams.get('sessionId') || '', url.searchParams.get('index') || 0)
     }
     if (pathname === '/api/download' && req.method === 'POST') {
       const body = await readJson(req)

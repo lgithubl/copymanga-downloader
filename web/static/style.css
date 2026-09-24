@@ -155,6 +155,22 @@ h2 {
   padding: 18px;
 }
 
+.viewer-view {
+  min-height: 0;
+  padding: 18px;
+}
+
+.viewer-view.active {
+  display: grid;
+}
+
+.viewer-view > section {
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
 .view {
   display: none;
 }
@@ -377,9 +393,15 @@ h2 {
   align-items: center;
   display: grid;
   gap: 10px;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-width: 0;
   padding: 10px;
+}
+
+.chapter-view {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 10px;
 }
 
 .chapter-copy,
@@ -452,6 +474,26 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.viewer-grid {
+  background: #ffffff;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  columns: 3 220px;
+  column-gap: 12px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.viewer-grid img {
+  background: #eef1f4;
+  border: 1px solid #d8dee4;
+  border-radius: 6px;
+  break-inside: avoid;
+  display: block;
+  margin: 0 0 12px;
+  width: 100%;
 }
 
 #app.sidebar-collapsed .sidebar {

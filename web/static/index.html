@@ -38,6 +38,7 @@
           <button class="tab" data-view="discover-view">发现</button>
           <button class="tab" data-view="favorite-view">漫画收藏</button>
           <button class="tab" data-view="downloaded-view">本地库存</button>
+          <button class="tab" data-view="viewer-view">图片浏览</button>
           <button class="tab" data-view="settings-view">配置</button>
         </nav>
         <div class="toolbar">
@@ -202,6 +203,20 @@
           <section>
             <h2>下载目录</h2>
             <div class="empty-panel">容器内目录：/data/downloads</div>
+          </section>
+        </div>
+        <div id="viewer-view" class="viewer-view view">
+          <section>
+            <div class="chapter-head">
+              <div>
+                <h2 id="viewer-title">图片浏览</h2>
+                <div id="viewer-meta" class="muted">请选择一个章节</div>
+              </div>
+              <div class="chapter-actions">
+                <button id="viewer-refresh" class="secondary" disabled>刷新</button>
+              </div>
+            </div>
+            <div id="viewer-images" class="viewer-grid empty-panel">请选择一个章节</div>
           </section>
         </div>
         <div id="settings-view" class="workspace view">
