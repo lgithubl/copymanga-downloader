@@ -70,7 +70,8 @@ h2 {
 #app {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 #app.sidebar-collapsed {
@@ -80,9 +81,11 @@ h2 {
 .sidebar {
   background: #ffffff;
   border-right: 1px solid #d8dee4;
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 18px;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
   padding: 18px;
 }
 
@@ -114,7 +117,9 @@ h2 {
 .content {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .tabs {
@@ -193,6 +198,13 @@ h2 {
 
 .chapter-panel {
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.task-panel {
+  display: grid;
+  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
 }
 
 .cards,
