@@ -1484,7 +1484,11 @@ async function route(req, res) {
       if (!itemId) return json(res, 400, { error: 'itemId is required' })
       if (!action) return json(res, 200, await handler.getItem(itemId))
       if (action === 'units') return json(res, 200, await handler.listUnits(itemId))
-      if (action === 'reader') return json(res, 200, await handler.getReaderContent(itemId, unitId))
+      if (action === 'reader') {
+        return json(res, 200, await handler.getReaderContent(itemId, unitId, {
+          sectionId: url.searchParams.get('sectionId') || '',
+        }))
+      }
       if (action === 'resource') {
         const resource = await handler.getResource(itemId, url.searchParams.get('path') || '')
         return binary(res, 200, resource.body, resource.contentType)

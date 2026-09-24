@@ -60,28 +60,54 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
 
   async function listUnits(itemId) {
     const item = await readMetadata(itemId)
-    return item.units || []
+    return mediaUnitsForItem(item)
   }
 
-  async function getReaderContent(itemId, unitId) {
+  async function getReaderContent(itemId, unitId, options = {}) {
     const item = await readMetadata(itemId)
-    const units = item.units || []
+    const units = mediaUnitsForItem(item)
     const index = units.findIndex((unit) => unit.unitId === unitId)
     if (index < 0) throw new Error(`Unit not found: ${unitId}`)
     const unit = units[index]
-    const unitPath = safeExtractedPath(itemId, unit.resourcePath)
+    const sections = unit.sections || []
+    const sectionId = String(options.sectionId || '').trim() || sections[0]?.sectionId || ''
+    const section = sections.find((item) => item.sectionId === sectionId) || sections[0]
+    if (!section) throw new Error(`Section not found: ${sectionId}`)
+    if (section.type === 'gallery') {
+      return {
+        type: 'images',
+        item: pickPublicItem(item),
+        unit,
+        section,
+        sections,
+        navigation: {
+          prev: units[index - 1] || null,
+          next: units[index + 1] || null,
+        },
+        sectionNavigation: sectionNavigation(sections, section.sectionId),
+        images: (unit.imageResources || item.imageResources || []).map((image, imageIndex) => ({
+          index: imageIndex,
+          title: image.title || path.posix.basename(image.resourcePath),
+          url: `/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(image.resourcePath)}`,
+        })),
+      }
+    }
+    const unitPath = safeExtractedPath(itemId, section.resourcePath)
     const raw = await readFile(unitPath, 'utf8')
     return {
       type: 'html',
       item: pickPublicItem(item),
       unit,
+      section,
+      sections,
       navigation: {
         prev: units[index - 1] || null,
         next: units[index + 1] || null,
       },
+      sectionNavigation: sectionNavigation(sections, section.sectionId),
       content: sanitizeHtml(raw, {
         itemId,
-        basePath: path.posix.dirname(unit.resourcePath),
+        basePath: path.posix.dirname(section.resourcePath),
       }),
     }
   }
@@ -109,6 +135,8 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     const unitId = String(patch.unitId || patch.lastUnitId || '').trim()
     if (unitId) {
       current.lastUnitId = unitId
+      current.lastSectionId = String(patch.sectionId || current.lastSectionId || '')
+      current.lastSectionTitle = String(patch.sectionTitle || current.lastSectionTitle || '')
       current.lastScrollRatio = clampRatio(patch.scrollRatio ?? patch.lastScrollRatio ?? current.lastScrollRatio)
       current.readUnits ||= {}
       current.readUnits[unitId] = {
@@ -117,6 +145,15 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
         title: String(patch.title || current.readUnits[unitId]?.title || unitId),
         enteredAt: current.readUnits[unitId]?.enteredAt || now,
         updatedAt: now,
+      }
+      if (current.lastSectionId) {
+        current.readUnits[unitId].sections ||= {}
+        current.readUnits[unitId].sections[current.lastSectionId] = {
+          sectionId: current.lastSectionId,
+          title: current.lastSectionTitle || current.lastSectionId,
+          enteredAt: current.readUnits[unitId].sections[current.lastSectionId]?.enteredAt || now,
+          updatedAt: now,
+        }
       }
       if (current.lastScrollRatio >= 0.9) current.readUnits[unitId].completedAt ||= now
     }
@@ -191,9 +228,20 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
         resourcePath,
       })
     }
+    const imageResources = collectImageResources(manifest, opfDir)
+    if (imageResources.length) {
+      units.push({
+        type: 'gallery',
+        unitId: '__images__',
+        title: '图片集',
+        index: units.length,
+        virtual: true,
+        imageCount: imageResources.length,
+      })
+    }
     const coverEntry = [...manifest.values()].find((entry) => (
       /\bcover-image\b/.test(entry.properties || '') || /^cover/i.test(entry.id || '')
-    ))
+    )) || (imageResources[0] ? { href: path.posix.relative(opfDir, imageResources[0].resourcePath) } : null)
     const cover = coverEntry?.href
       ? `/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(normalizeZipPath(path.posix.join(opfDir, coverEntry.href)))}`
       : ''
@@ -206,8 +254,9 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
       cover,
       fileName,
       itemDir,
-      unitCount: units.length,
+      unitCount: 1,
       units,
+      imageResources,
       createdAt: new Date().toISOString(),
       updatedAt: info.mtime.toISOString(),
     })
@@ -239,13 +288,49 @@ function normalizeItem(item) {
     fileName: String(item?.fileName || ''),
     unitCount: Number(item?.unitCount || units.length || 0),
     units,
+    imageResources: Array.isArray(item?.imageResources) ? item.imageResources : [],
     createdAt: String(item?.createdAt || ''),
     updatedAt: String(item?.updatedAt || new Date().toISOString()),
   }
 }
 
+function mediaUnitsForItem(item) {
+  if (Array.isArray(item?.mediaUnits) && item.mediaUnits.length) return item.mediaUnits
+  const sections = (Array.isArray(item?.units) ? item.units : []).map((unit, index) => ({
+    type: unit.type || 'chapter',
+    sectionId: unit.sectionId || unit.unitId || `section-${index + 1}`,
+    title: unit.title || `章节 ${index + 1}`,
+    index,
+    resourcePath: unit.resourcePath || '',
+    virtual: Boolean(unit.virtual),
+    imageCount: unit.imageCount || 0,
+  }))
+  const chapterCount = sections.filter((section) => section.type !== 'gallery').length
+  const imageCount = Number(item?.imageResources?.length || 0)
+  return [{
+    type: 'epub',
+    unitId: item.epubUnitId || '__epub__',
+    title: item.fileName || item.title || 'EPUB',
+    index: 0,
+    fileName: item.fileName || '',
+    sectionCount: sections.length,
+    chapterCount,
+    imageCount,
+    sections,
+    imageResources: item.imageResources || [],
+  }]
+}
+
+function sectionNavigation(sections, sectionId) {
+  const index = sections.findIndex((section) => section.sectionId === sectionId)
+  return {
+    prev: index > 0 ? sections[index - 1] : null,
+    next: index >= 0 && index < sections.length - 1 ? sections[index + 1] : null,
+  }
+}
+
 function pickPublicItem(item) {
-  const { units, ...publicItem } = item
+  const { units, mediaUnits, imageResources, ...publicItem } = item
   return publicItem
 }
 
@@ -254,6 +339,8 @@ function normalizeProgress(value, itemId) {
     type: 'epub',
     itemId,
     lastUnitId: String(value?.lastUnitId || ''),
+    lastSectionId: String(value?.lastSectionId || ''),
+    lastSectionTitle: String(value?.lastSectionTitle || ''),
     lastScrollRatio: clampRatio(value?.lastScrollRatio || 0),
     readUnits: value?.readUnits && typeof value.readUnits === 'object' ? value.readUnits : {},
     updatedAt: String(value?.updatedAt || ''),
@@ -316,6 +403,23 @@ function parseSpine(opf) {
   return [...opf.matchAll(/<itemref\b([^>]*)\/?>/gi)]
     .map((match) => attrValue(match[1], 'idref'))
     .filter(Boolean)
+}
+
+function collectImageResources(manifest, opfDir) {
+  const seen = new Set()
+  const images = []
+  for (const entry of manifest.values()) {
+    if (!/^image\/(?:jpeg|jpg|png|gif|webp)$/i.test(entry.mediaType || '')) continue
+    const resourcePath = normalizeZipPath(path.posix.join(opfDir, entry.href))
+    if (!resourcePath || seen.has(resourcePath)) continue
+    seen.add(resourcePath)
+    images.push({
+      resourcePath,
+      title: path.posix.basename(resourcePath),
+      mediaType: entry.mediaType,
+    })
+  }
+  return images.sort((a, b) => a.resourcePath.localeCompare(b.resourcePath, undefined, { numeric: true }))
 }
 
 async function parseNavTitles({ extractedDir, manifest }) {
@@ -418,10 +522,11 @@ async function createSampleEpub() {
   <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
 </container>`))
   files.set('OEBPS/styles/book.css', Buffer.from(`body{font-family:serif;} p{line-height:1.8;}`))
+  files.set('OEBPS/images/sample.png', samplePng())
   const chapters = [
     ['chapter1.xhtml', '第一章 入口', ['这是一本用于测试新媒体库的示例 EPUB。', '它包含多个章节、段落和内部资源，阅读进度会写入新系统的 progress 文件。']],
     ['chapter2.xhtml', '第二章 长廊', ['第二章用于测试上一章和下一章导航。', '滚动到接近底部时，这一章会被记录为完成阅读。']],
-    ['chapter3.xhtml', '第三章 窗边', ['这里放一些更长的正文，用来观察宽度、行高和滚动体验。', '新系统使用 item/unit/readerContent 的抽象，后续 CopyManga 也可以接入。']],
+    ['chapter3.xhtml', '第三章 窗边', ['这里放一些更长的正文，用来观察宽度、行高和滚动体验。', '新系统使用 item/unit/readerContent 的抽象，后续 CopyManga 也可以接入。', '<img src="../images/sample.png" alt="示例图片" />']],
     ['chapter4.xhtml', '第四章 雨声', ['EPUB handler 不调用外部漫画接口，只读取本地解包后的文件。', '资源会通过统一 resource API 输出。']],
     ['chapter5.xhtml', '第五章 尾声', ['最后一章用于验证章节目录和结束位置。', '这个样例可以安全删除或重新生成。']],
   ]
@@ -593,8 +698,16 @@ function opfXml(chapters) {
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="css" href="styles/book.css" media-type="text/css"/>
+    <item id="sample-image" href="images/sample.png" media-type="image/png" properties="cover-image"/>
     ${manifestChapters}
   </manifest>
   <spine>${spine}</spine>
 </package>`
+}
+
+function samplePng() {
+  return Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAVklEQVR4nO3PQQ0AIBDAMMC/5+ONAvZoFSzZnTtZ3Qf8bQOIAyAOgDgA4gCIAyAOgDgA4gCIAyAOgDgA4gCIAyAOgDgA4gCIAyAOgDgA4gCIAyAOgHhL1gKQGk2bWAAAAABJRU5ErkJggg==',
+    'base64',
+  )
 }

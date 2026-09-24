@@ -74,11 +74,15 @@ const els = {
   libraryItemTitle: document.querySelector('#library-item-title'),
   libraryItemMeta: document.querySelector('#library-item-meta'),
   libraryUnits: document.querySelector('#library-units'),
-  libraryReaderTitle: document.querySelector('#library-reader-title'),
-  libraryReaderMeta: document.querySelector('#library-reader-meta'),
-  libraryReaderPrev: document.querySelector('#library-reader-prev'),
-  libraryReaderNext: document.querySelector('#library-reader-next'),
-  libraryReaderContent: document.querySelector('#library-reader-content'),
+  mediaReaderTitle: document.querySelector('#media-reader-title'),
+  mediaReaderMeta: document.querySelector('#media-reader-meta'),
+  mediaReaderBack: document.querySelector('#media-reader-back'),
+  mediaReaderPrev: document.querySelector('#media-reader-prev'),
+  mediaSectionSelect: document.querySelector('#media-section-select'),
+  mediaPagePrev: document.querySelector('#media-page-prev'),
+  mediaPageNext: document.querySelector('#media-page-next'),
+  mediaReaderNext: document.querySelector('#media-reader-next'),
+  mediaReaderContent: document.querySelector('#media-reader-content'),
   configSave: document.querySelector('#config-save'),
   configDownloadDir: document.querySelector('#config-download-dir'),
   configMetadataDir: document.querySelector('#config-metadata-dir'),
@@ -135,7 +139,11 @@ let libraryItems = []
 let currentLibraryItem = null
 let currentLibraryUnits = []
 let currentLibraryProgress = null
-let currentLibraryReader = null
+let currentMediaReader = null
+let mediaReturnView = 'library-view'
+let mediaPageIndex = 0
+let mediaPageCount = 1
+let mediaPageStep = 1
 let libraryProgressTimer = null
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
@@ -1004,14 +1012,17 @@ function renderLibraryUnits() {
     row.type = 'button'
     row.className = `chapter library-unit${isRead ? ' read-chapter' : ' unread-chapter'}`
     row.title = unit.title
+    const unitMeta = unit.type === 'epub'
+      ? `${unit.chapterCount || 0} 个内部章节${unit.imageCount ? ` · ${unit.imageCount} 张图片` : ''}`
+      : unit.unitId
     row.innerHTML = `
       <span class="chapter-copy">
         <span class="chapter-title">${escapeHtml(unit.title)}</span>
-        <span class="muted">${escapeHtml(unit.unitId)}</span>
+        <span class="muted">${escapeHtml(unitMeta)}</span>
       </span>
       <span class="muted">${isRead ? '已读' : '未读'}</span>
     `
-    row.addEventListener('click', () => openLibraryUnit(unit.unitId))
+    row.addEventListener('click', () => openMediaUnit(unit.unitId))
     els.libraryUnits.append(row)
   }
   if (currentLibraryUnits.length === 0) {
@@ -1020,53 +1031,158 @@ function renderLibraryUnits() {
   }
 }
 
-async function openLibraryUnit(unitId) {
+async function openMediaUnit(unitId, sectionId = '') {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId || !unitId) return
+  const activeView = els.views.find((view) => view.classList.contains('active'))?.id
+  if (activeView && activeView !== 'media-viewer-view') mediaReturnView = activeView
+  showView('media-viewer-view')
   try {
-    els.libraryReaderTitle.textContent = unitId
-    els.libraryReaderMeta.textContent = '加载中...'
-    els.libraryReaderContent.className = 'library-reader-content empty-panel'
-    els.libraryReaderContent.textContent = '加载中...'
-    const reader = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/reader/${encodeURIComponent(unitId)}`)
-    currentLibraryReader = reader
-    els.libraryReaderTitle.textContent = reader.unit?.title || unitId
-    els.libraryReaderMeta.textContent = `${reader.item?.title || currentLibraryItem.title} · ${reader.unit?.index + 1 || 1}/${currentLibraryUnits.length}`
-    els.libraryReaderPrev.disabled = !reader.navigation?.prev
-    els.libraryReaderNext.disabled = !reader.navigation?.next
-    renderLibraryReader(reader)
-    await saveLibraryProgress(0)
+    currentMediaReader = null
+    mediaPageIndex = 0
+    mediaPageCount = 1
+    els.mediaReaderBack.disabled = false
+    els.mediaReaderPrev.disabled = true
+    els.mediaReaderNext.disabled = true
+    els.mediaSectionSelect.disabled = true
+    els.mediaSectionSelect.innerHTML = '<option value="">目录</option>'
+    els.mediaPagePrev.disabled = true
+    els.mediaPageNext.disabled = true
+    els.mediaReaderTitle.textContent = unitId
+    els.mediaReaderMeta.textContent = '加载中...'
+    els.mediaReaderContent.className = 'media-reader-content empty-panel'
+    els.mediaReaderContent.textContent = '加载中...'
+    const params = new URLSearchParams()
+    if (sectionId) params.set('sectionId', sectionId)
+    const suffix = params.toString() ? `?${params}` : ''
+    const reader = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)
+    currentMediaReader = reader
+    els.mediaReaderTitle.textContent = reader.section?.title || reader.unit?.title || unitId
+    els.mediaReaderPrev.disabled = !reader.navigation?.prev
+    els.mediaReaderNext.disabled = !reader.navigation?.next
+    renderMediaSectionSelect(reader)
+    renderMediaReader(reader)
+    await saveLibraryProgress(reader.section?.sectionId === currentLibraryProgress?.lastSectionId ? currentLibraryProgress.lastScrollRatio : 0)
     currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/progress`)
     renderLibraryUnits()
   } catch (error) {
-    els.libraryReaderMeta.textContent = `加载失败：${error.message}`
-    els.libraryReaderContent.className = 'library-reader-content empty-panel'
-    els.libraryReaderContent.textContent = error.message
+    els.mediaReaderMeta.textContent = `加载失败：${error.message}`
+    els.mediaReaderContent.className = 'media-reader-content empty-panel'
+    els.mediaReaderContent.textContent = error.message
   }
 }
 
-function renderLibraryReader(reader) {
-  els.libraryReaderContent.className = `library-reader-content ${reader.type === 'html' ? 'library-reader-html' : ''}`
+function renderMediaReader(reader) {
+  const index = Number(reader.unit?.index || 0)
+  const sectionText = reader.section ? ` · ${reader.section.index + 1}/${reader.sections?.length || 1}` : ''
+  const typeLabel = reader.type === 'images' ? `${reader.images?.length || 0} 张图` : '文本'
+  els.mediaReaderMeta.textContent = `${reader.item?.title || currentLibraryItem.title} · ${index + 1}/${currentLibraryUnits.length}${sectionText} · ${typeLabel}`
   if (reader.type === 'html') {
-    els.libraryReaderContent.innerHTML = reader.content || ''
+    renderMediaHtml(reader)
+  } else if (reader.type === 'images') {
+    renderMediaImages(reader)
   } else {
-    els.libraryReaderContent.textContent = `暂不支持的阅读内容类型：${reader.type}`
+    els.mediaReaderContent.className = 'media-reader-content empty-panel'
+    els.mediaReaderContent.textContent = `暂不支持的阅读内容类型：${reader.type}`
+    updateMediaPageControls()
   }
-  els.libraryReaderContent.scrollTop = 0
 }
 
-function libraryScrollRatio() {
-  const el = els.libraryReaderContent
-  const max = Math.max(1, el.scrollHeight - el.clientHeight)
-  return Math.max(0, Math.min(1, el.scrollTop / max))
+function renderMediaSectionSelect(reader) {
+  els.mediaSectionSelect.innerHTML = ''
+  for (const section of reader.sections || []) {
+    const option = document.createElement('option')
+    option.value = section.sectionId
+    const suffix = section.type === 'gallery' ? ` · ${section.imageCount || 0} 张图` : ''
+    option.textContent = `${section.index + 1}. ${section.title}${suffix}`
+    els.mediaSectionSelect.append(option)
+  }
+  els.mediaSectionSelect.value = reader.section?.sectionId || ''
+  els.mediaSectionSelect.disabled = !reader.sections?.length
 }
 
-async function saveLibraryProgress(scrollRatio = libraryScrollRatio()) {
-  if (!currentLibraryItem || !currentLibraryReader?.unit) return
+function renderMediaHtml(reader) {
+  els.mediaReaderContent.className = 'media-reader-content media-html'
+  const pages = document.createElement('div')
+  pages.className = 'media-html-pages'
+  pages.innerHTML = reader.content || ''
+  els.mediaReaderContent.replaceChildren(pages)
+  requestAnimationFrame(() => {
+    layoutMediaPages()
+    const ratio = reader.section?.sectionId === currentLibraryProgress?.lastSectionId ? currentLibraryProgress.lastScrollRatio : 0
+    setMediaPage(Math.round(ratio * Math.max(mediaPageCount - 1, 0)), { save: false })
+  })
+}
+
+function renderMediaImages(reader) {
+  els.mediaReaderContent.className = 'media-reader-content media-images'
+  if (!reader.images?.length) {
+    els.mediaReaderContent.className = 'media-reader-content empty-panel'
+    els.mediaReaderContent.textContent = '没有图片资源'
+  } else {
+    const list = document.createElement('div')
+    list.className = 'media-image-list'
+    for (const image of reader.images) {
+      const img = document.createElement('img')
+      img.src = image.url
+      img.alt = image.title || `${reader.unit?.title || '图片'} ${Number(image.index || 0) + 1}`
+      img.loading = 'lazy'
+      img.decoding = 'async'
+      list.append(img)
+    }
+    els.mediaReaderContent.replaceChildren(list)
+  }
+  mediaPageIndex = 0
+  mediaPageCount = 1
+  mediaPageStep = 1
+  updateMediaPageControls()
+}
+
+function layoutMediaPages() {
+  const content = els.mediaReaderContent
+  const pages = content.querySelector('.media-html-pages')
+  if (!pages) return
+  const gap = 48
+  const pageWidth = Math.max(320, Math.min(760, content.clientWidth - 56))
+  pages.style.setProperty('--media-page-width', `${pageWidth}px`)
+  mediaPageStep = pageWidth + gap
+  mediaPageCount = Math.max(1, Math.ceil((pages.scrollWidth + gap) / mediaPageStep))
+  mediaPageIndex = Math.max(0, Math.min(mediaPageIndex, mediaPageCount - 1))
+  content.scrollLeft = mediaPageIndex * mediaPageStep
+  updateMediaPageControls()
+}
+
+function setMediaPage(pageIndex, { save = true } = {}) {
+  if (currentMediaReader?.type !== 'html') return
+  mediaPageIndex = Math.max(0, Math.min(pageIndex, mediaPageCount - 1))
+  els.mediaReaderContent.scrollTo({ left: mediaPageIndex * mediaPageStep, top: 0, behavior: 'smooth' })
+  updateMediaPageControls()
+  if (save) scheduleLibraryProgressSave()
+}
+
+function mediaScrollRatio() {
+  if (currentMediaReader?.type !== 'html') return currentMediaReader?.type === 'images' ? 1 : 0
+  return mediaPageCount <= 1 ? 1 : Math.max(0, Math.min(1, mediaPageIndex / (mediaPageCount - 1)))
+}
+
+function updateMediaPageControls() {
+  const isHtml = currentMediaReader?.type === 'html'
+  els.mediaPagePrev.disabled = !isHtml || mediaPageIndex <= 0
+  els.mediaPageNext.disabled = !isHtml || (mediaPageIndex >= mediaPageCount - 1 && !currentMediaReader?.sectionNavigation?.next && !currentMediaReader?.navigation?.next)
+  if (isHtml) {
+    const sectionText = currentMediaReader.section ? ` · ${currentMediaReader.section.index + 1}/${currentMediaReader.sections?.length || 1}` : ''
+    els.mediaReaderMeta.textContent = `${currentMediaReader.item?.title || currentLibraryItem?.title || ''} · ${(currentMediaReader.unit?.index || 0) + 1}/${currentLibraryUnits.length}${sectionText} · 第 ${mediaPageIndex + 1}/${mediaPageCount} 页`
+  }
+}
+
+async function saveLibraryProgress(scrollRatio = mediaScrollRatio()) {
+  if (!currentLibraryItem || !currentMediaReader?.unit) return
   currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/progress`, {
     method: 'POST',
     body: JSON.stringify({
-      unitId: currentLibraryReader.unit.unitId,
-      title: currentLibraryReader.unit.title,
+      unitId: currentMediaReader.unit.unitId,
+      title: currentMediaReader.unit.title,
+      sectionId: currentMediaReader.section?.sectionId || '',
+      sectionTitle: currentMediaReader.section?.title || '',
       scrollRatio,
     }),
   })
@@ -1193,15 +1309,41 @@ els.libraryImport.addEventListener('click', async () => {
     setLoading(els.libraryImport, false)
   }
 })
-els.libraryReaderPrev.addEventListener('click', () => {
-  const target = currentLibraryReader?.navigation?.prev
-  if (target) openLibraryUnit(target.unitId)
+els.mediaReaderBack.addEventListener('click', () => {
+  showView(mediaReturnView || 'library-view')
 })
-els.libraryReaderNext.addEventListener('click', () => {
-  const target = currentLibraryReader?.navigation?.next
-  if (target) openLibraryUnit(target.unitId)
+els.mediaReaderPrev.addEventListener('click', () => {
+  const target = currentMediaReader?.navigation?.prev
+  if (target) openMediaUnit(target.unitId)
 })
-els.libraryReaderContent.addEventListener('scroll', scheduleLibraryProgressSave)
+els.mediaReaderNext.addEventListener('click', () => {
+  const target = currentMediaReader?.navigation?.next
+  if (target) openMediaUnit(target.unitId)
+})
+els.mediaSectionSelect.addEventListener('change', () => {
+  if (currentMediaReader?.unit?.unitId && els.mediaSectionSelect.value) {
+    openMediaUnit(currentMediaReader.unit.unitId, els.mediaSectionSelect.value)
+  }
+})
+els.mediaPagePrev.addEventListener('click', () => setMediaPage(mediaPageIndex - 1))
+els.mediaPageNext.addEventListener('click', () => {
+  if (currentMediaReader?.type === 'html' && mediaPageIndex < mediaPageCount - 1) {
+    setMediaPage(mediaPageIndex + 1)
+    return
+  }
+  const sectionTarget = currentMediaReader?.sectionNavigation?.next
+  if (sectionTarget) {
+    openMediaUnit(currentMediaReader.unit.unitId, sectionTarget.sectionId)
+    return
+  }
+  const target = currentMediaReader?.navigation?.next
+  if (target) openMediaUnit(target.unitId)
+})
+window.addEventListener('resize', () => {
+  if (currentMediaReader?.type === 'html' && document.querySelector('#media-viewer-view')?.classList.contains('active')) {
+    layoutMediaPages()
+  }
+})
 els.downloadedUpdate.addEventListener('click', async () => {
   try {
     setLoading(els.downloadedUpdate, true)

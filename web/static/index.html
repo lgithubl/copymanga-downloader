@@ -39,6 +39,7 @@
           <button class="tab" data-view="favorite-view">漫画收藏</button>
           <button class="tab" data-view="downloaded-view">本地库存</button>
           <button class="tab" data-view="library-view">媒体库</button>
+          <button class="tab" data-view="media-viewer-view">媒体浏览</button>
           <button class="tab" data-view="viewer-view">图片浏览</button>
           <button class="tab" data-view="settings-view">配置</button>
         </nav>
@@ -282,18 +283,26 @@
             </div>
             <div id="library-units" class="chapters empty-panel">请选择媒体库条目</div>
           </section>
+        </div>
+        <div id="media-viewer-view" class="media-viewer-view view">
           <section>
             <div class="chapter-head">
               <div>
-                <h2 id="library-reader-title">阅读</h2>
-                <div id="library-reader-meta" class="muted">请选择目录项</div>
+                <h2 id="media-reader-title">媒体浏览</h2>
+                <div id="media-reader-meta" class="muted">请选择媒体库目录项</div>
               </div>
               <div class="chapter-actions">
-                <button id="library-reader-prev" class="secondary" disabled>上一章</button>
-                <button id="library-reader-next" class="secondary" disabled>下一章</button>
+                <button id="media-reader-back" class="secondary" disabled>返回</button>
+                <button id="media-reader-prev" class="secondary" disabled>上一章</button>
+                <select id="media-section-select" disabled>
+                  <option value="">目录</option>
+                </select>
+                <button id="media-page-prev" class="secondary" disabled>上一页</button>
+                <button id="media-page-next" class="secondary" disabled>下一页</button>
+                <button id="media-reader-next" class="secondary" disabled>下一章</button>
               </div>
             </div>
-            <article id="library-reader-content" class="library-reader-content empty-panel">请选择目录项</article>
+            <article id="media-reader-content" class="media-reader-content empty-panel">请选择媒体库目录项</article>
           </section>
         </div>
         <div id="settings-view" class="workspace view">

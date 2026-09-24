@@ -167,7 +167,8 @@ h2 {
   padding: 18px;
 }
 
-.viewer-view {
+.viewer-view,
+.media-viewer-view {
   min-height: 0;
   padding: 18px;
 }
@@ -175,16 +176,18 @@ h2 {
 .library-workspace {
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(260px, 0.8fr) minmax(220px, 0.55fr) minmax(420px, 1.25fr);
+  grid-template-columns: minmax(300px, 0.8fr) minmax(300px, 1fr);
   min-height: 0;
   padding: 18px;
 }
 
-.viewer-view.active {
+.viewer-view.active,
+.media-viewer-view.active {
   display: grid;
 }
 
-.viewer-view > section {
+.viewer-view > section,
+.media-viewer-view > section {
   display: grid;
   gap: 12px;
   grid-template-rows: auto minmax(0, 1fr);
@@ -635,7 +638,7 @@ h2 {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.library-reader-content {
+.media-reader-content {
   background: #ffffff;
   border: 1px solid #d8dee4;
   border-radius: 8px;
@@ -646,28 +649,55 @@ h2 {
   padding: 28px;
 }
 
-.library-reader-html {
-  margin: 0 auto;
-  max-width: 860px;
-  width: 100%;
+.media-reader-content.media-html {
+  height: calc(100vh - 154px);
+  overflow: hidden;
+  padding: 0;
 }
 
-.library-reader-content h1,
-.library-reader-content h2,
-.library-reader-content h3 {
+.media-html-pages {
+  box-sizing: border-box;
+  column-fill: auto;
+  column-gap: 48px;
+  column-width: var(--media-page-width, 720px);
+  height: 100%;
+  padding: 28px;
+}
+
+.media-reader-content h1,
+.media-reader-content h2,
+.media-reader-content h3 {
   line-height: 1.35;
   margin: 0 0 18px;
 }
 
-.library-reader-content p {
+.media-reader-content p {
   margin: 0 0 1em;
 }
 
-.library-reader-content img {
+.media-reader-content img {
   display: block;
   height: auto;
   margin: 16px auto;
   max-width: 100%;
+}
+
+.media-reader-content.media-images {
+  overflow: auto;
+}
+
+.media-image-list {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.media-image-list img {
+  background: #eef1f4;
+  border: 1px solid #d8dee4;
+  border-radius: 6px;
+  max-width: 980px;
+  width: min(100%, 980px);
 }
 
 #app.sidebar-collapsed .sidebar {
