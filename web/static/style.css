@@ -72,6 +72,10 @@ h2 {
   min-height: 100vh;
 }
 
+#app.sidebar-collapsed {
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
 .sidebar {
   background: #ffffff;
   border-right: 1px solid #d8dee4;
@@ -79,6 +83,19 @@ h2 {
   flex-direction: column;
   gap: 18px;
   padding: 18px;
+}
+
+.sidebar-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+#sidebar-toggle {
+  font-size: 18px;
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 .sidebar label {
@@ -133,7 +150,7 @@ h2 {
 .workspace {
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(260px, 0.85fr) minmax(320px, 1.15fr);
+  grid-template-columns: minmax(360px, 1fr) minmax(240px, 0.6fr);
   min-height: 0;
   padding: 18px;
 }
@@ -152,6 +169,10 @@ h2 {
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
+}
+
+.chapter-panel {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .cards,
@@ -242,9 +263,21 @@ h2 {
 
 .chapter-head {
   align-items: center;
+  background: #f6f7f9;
   display: flex;
   gap: 12px;
   justify-content: space-between;
+  min-width: 0;
+  padding-bottom: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.chapter-head h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chapter-head select {
@@ -257,6 +290,7 @@ h2 {
 .chapter-actions {
   display: flex;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .discover-panel {
@@ -324,6 +358,18 @@ h2 {
   display: grid;
   gap: 10px;
   grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  padding: 10px;
+}
+
+.chapter-copy,
+.chapter-title,
+.job strong,
+.job .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .job {
@@ -367,9 +413,63 @@ h2 {
   transition: width 0.2s ease;
 }
 
+.inventory-progress {
+  background: #ffffff;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.inventory-progress.hidden {
+  display: none;
+}
+
+.inventory-progress-text {
+  color: #667085;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#app.sidebar-collapsed .sidebar {
+  gap: 12px;
+  padding: 12px;
+}
+
+#app.sidebar-collapsed h1,
+#app.sidebar-collapsed .sidebar-auth,
+#app.sidebar-collapsed .task-head h2,
+#app.sidebar-collapsed .job .muted,
+#app.sidebar-collapsed .job .bar {
+  display: none;
+}
+
+#app.sidebar-collapsed .task-head {
+  grid-template-columns: 1fr;
+}
+
+#app.sidebar-collapsed .task-head button {
+  width: 100%;
+}
+
+#app.sidebar-collapsed .job {
+  padding: 8px;
+}
+
+#app.sidebar-collapsed .job strong {
+  font-size: 12px;
+}
+
 @media (max-width: 900px) {
   #app,
   .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  #app.sidebar-collapsed {
     grid-template-columns: 1fr;
   }
 

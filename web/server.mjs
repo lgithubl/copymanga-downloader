@@ -15,6 +15,7 @@ const HOST = process.env.HOST || '0.0.0.0'
 const PORT = Number(process.env.PORT || 8080)
 
 const jobs = new Map()
+const inventoryUpdates = new Map()
 const sseClients = new Set()
 let config = defaultConfig()
 
@@ -346,6 +347,15 @@ function publicJobs() {
   return [...jobs.values()].map(publicJob)
 }
 
+function publicInventoryUpdate(update) {
+  return update
+}
+
+function latestInventoryUpdate() {
+  return [...inventoryUpdates.values()]
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
+}
+
 function createJob({ comicPathWord, chapterUuids, token }) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   return {
@@ -475,8 +485,47 @@ function activeJobKey(job) {
   return `${job.comicPathWord}:${job.chapterUuids?.[0] || ''}`
 }
 
-async function updateDownloadedComics(token = '') {
+function updateInventory(update, patch) {
+  Object.assign(update, patch, { updatedAt: new Date().toISOString() })
+  emit('inventoryUpdate', publicInventoryUpdate(update))
+}
+
+function startInventoryUpdate(token = '') {
+  const running = [...inventoryUpdates.values()].find((update) => update.status === 'running')
+  if (running) return running
+
+  const update = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    status: 'running',
+    total: 0,
+    current: 0,
+    created: 0,
+    skipped: 0,
+    currentTitle: '',
+    message: '准备更新库存',
+    errors: [],
+    jobs: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  inventoryUpdates.set(update.id, update)
+  emit('inventoryUpdate', publicInventoryUpdate(update))
+  runInventoryUpdate(update, token).catch((error) => {
+    updateInventory(update, {
+      status: 'failed',
+      message: error.message,
+      errors: [{ title: '更新库存失败', error: error.message }],
+    })
+  })
+  return update
+}
+
+async function runInventoryUpdate(update, token = '') {
   const downloadedComics = await listDownloaded()
+  updateInventory(update, {
+    total: downloadedComics.length,
+    message: downloadedComics.length === 0 ? '没有本地库存' : '正在获取最新章节',
+  })
   const activeKeys = new Set(
     [...jobs.values()]
       .filter((job) => job.status !== 'completed')
@@ -485,9 +534,14 @@ async function updateDownloadedComics(token = '') {
   const createdJobs = []
   const skipped = []
 
-  for (const downloadedComic of downloadedComics) {
+  for (const [index, downloadedComic] of downloadedComics.entries()) {
     const comicPathWord = downloadedComic.comicPathWord
     if (!comicPathWord) continue
+    updateInventory(update, {
+      current: index + 1,
+      currentTitle: downloadedComic.title || comicPathWord,
+      message: `检查 ${downloadedComic.title || comicPathWord}`,
+    })
 
     try {
       const comic = await getComic(comicPathWord)
@@ -511,6 +565,10 @@ async function updateDownloadedComics(token = '') {
       const nextJobs = createChapterJobs({ comicPathWord, chapterUuids, token })
       for (const job of nextJobs) startJob(job)
       createdJobs.push(...nextJobs.map(publicJob))
+      updateInventory(update, {
+        created: createdJobs.length,
+        jobs: createdJobs.map(publicJob),
+      })
       if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
     } catch (error) {
       skipped.push({
@@ -518,16 +576,24 @@ async function updateDownloadedComics(token = '') {
         title: downloadedComic.title,
         error: error.message,
       })
+      updateInventory(update, {
+        skipped: skipped.length,
+        errors: skipped.slice(-5),
+      })
       if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
     }
   }
 
-  return {
-    total: downloadedComics.length,
+  updateInventory(update, {
+    status: 'completed',
+    current: downloadedComics.length,
     created: createdJobs.length,
-    jobs: createdJobs,
-    skipped,
-  }
+    skipped: skipped.length,
+    jobs: createdJobs.map(publicJob),
+    errors: skipped.slice(-5),
+    currentTitle: '',
+    message: skipped.length > 0 ? `完成，跳过 ${skipped.length} 部` : '更新完成',
+  })
 }
 
 async function downloadImage(url, filePath) {
@@ -675,6 +741,9 @@ async function route(req, res) {
       return
     }
     if (pathname === '/api/jobs' && req.method === 'GET') return json(res, 200, publicJobs())
+    if (pathname === '/api/inventory-update' && req.method === 'GET') {
+      return json(res, 200, latestInventoryUpdate() || null)
+    }
     if (pathname === '/api/config' && req.method === 'GET') return json(res, 200, config)
     if (pathname === '/api/config' && req.method === 'POST') {
       return json(res, 200, await saveConfig(await readJson(req)))
@@ -704,7 +773,7 @@ async function route(req, res) {
     if (pathname === '/api/downloaded' && req.method === 'GET') return json(res, 200, await listDownloaded())
     if (pathname === '/api/downloaded/update' && req.method === 'POST') {
       const body = await readJson(req)
-      return json(res, 202, await updateDownloadedComics(body.token || ''))
+      return json(res, 202, publicInventoryUpdate(startInventoryUpdate(body.token || '')))
     }
     if (pathname === '/api/login' && req.method === 'POST') {
       const body = await readJson(req)

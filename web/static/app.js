@@ -1,5 +1,7 @@
 const els = {
   token: document.querySelector('#token'),
+  app: document.querySelector('#app'),
+  sidebarToggle: document.querySelector('#sidebar-toggle'),
   username: document.querySelector('#username'),
   password: document.querySelector('#password'),
   login: document.querySelector('#login'),
@@ -34,6 +36,9 @@ const els = {
   favorites: document.querySelector('#favorites'),
   downloadedRefresh: document.querySelector('#downloaded-refresh'),
   downloadedUpdate: document.querySelector('#downloaded-update'),
+  inventoryProgress: document.querySelector('#inventory-progress'),
+  inventoryProgressText: document.querySelector('#inventory-progress .inventory-progress-text'),
+  inventoryProgressBar: document.querySelector('#inventory-progress-bar'),
   downloaded: document.querySelector('#downloaded'),
   configSave: document.querySelector('#config-save'),
   configDownloadDir: document.querySelector('#config-download-dir'),
@@ -60,13 +65,18 @@ const els = {
 }
 
 let currentComicPathWord = ''
+let currentComicTarget = 'search'
 let jobs = []
 let downloaded = []
 let discoverOffset = 0
 let discoverTotal = 0
+let inventoryUpdate = null
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
+els.app.classList.toggle('sidebar-collapsed', localStorage.getItem('copymanga.sidebarCollapsed') === '1')
+els.sidebarToggle.textContent = els.app.classList.contains('sidebar-collapsed') ? '›' : '‹'
+els.sidebarToggle.title = els.app.classList.contains('sidebar-collapsed') ? '展开任务栏' : '收缩任务栏'
 
 async function api(path, options = {}) {
   const resp = await fetch(path, {
@@ -105,6 +115,12 @@ function chapterId(chapter) {
 
 function chapterTitle(chapter) {
   return chapter.name || chapter.chapter_name || chapter.chapterTitle || chapter.chapter_title || chapterId(chapter)
+}
+
+function shortChapterTitle(chapter) {
+  const title = chapterTitle(chapter)
+  const order = chapter.ordered ?? chapter.index ?? chapter.order
+  return order === undefined || String(title).includes(String(order)) ? title : `${order} ${title}`
 }
 
 function renderResults(data) {
@@ -192,6 +208,7 @@ function renderComic(data, target = 'search') {
   const downloadAllButton = isDiscover ? els.discoverDownloadAll : els.downloadAll
   const chaptersEl = isDiscover ? els.discoverChapters : els.chapters
   currentComicPathWord = data.comic?.path_word || data.comic?.pathWord || data.path_word || ''
+  currentComicTarget = target
   comicTitleEl.textContent = data.comic?.name || data.name || '章节'
   downloadButton.disabled = false
   downloadAllButton.disabled = false
@@ -206,13 +223,16 @@ function renderComic(data, target = 'search') {
     for (const chapter of chapters) {
       const id = chapterId(chapter)
       const isDownloaded = chapter.isDownloaded === true
+      const title = shortChapterTitle(chapter)
+      const fullTitle = `${chapterTitle(chapter)} · ${id}`
       const row = document.createElement('label')
       row.className = `chapter${isDownloaded ? ' downloaded-chapter' : ''}`
+      row.title = fullTitle
       row.innerHTML = `
         <input type="checkbox" value="${escapeHtml(id)}" ${isDownloaded ? 'disabled' : ''} />
-        <span>
-          <span class="chapter-title">${escapeHtml(chapterTitle(chapter))}</span>
-          <span class="muted">${escapeHtml(id)}${isDownloaded ? ' · 已下载' : ''}</span>
+        <span class="chapter-copy">
+          <span class="chapter-title">${escapeHtml(title)}</span>
+          <span class="muted">${isDownloaded ? '已下载' : ''}</span>
         </span>
       `
       group.append(row)
@@ -229,10 +249,13 @@ function renderJobs() {
     const total = Math.max(job.totalImages || job.totalChapters || 1, 1)
     const done = job.totalImages ? job.doneImages : job.doneChapters
     const pct = Math.min(100, Math.round((done / total) * 100))
+    const title = job.comicTitle || job.comicPathWord || job.id
+    const tip = `${title}\n${job.status} · ${job.message || ''}\n章节 ${job.doneChapters}/${job.totalChapters} · 图片 ${job.doneImages}/${job.totalImages || '?'}`
     const el = document.createElement('article')
     el.className = `job ${job.status}`
+    el.title = tip
     el.innerHTML = `
-      <strong>${escapeHtml(job.comicTitle || job.comicPathWord || job.id)}</strong>
+      <strong>${escapeHtml(title)}</strong>
       <div class="muted">${escapeHtml(job.status)} · ${escapeHtml(job.message || '')}</div>
       <div class="bar"><span style="width:${pct}%"></span></div>
       <div class="muted">章节 ${job.doneChapters}/${job.totalChapters} · 图片 ${job.doneImages}/${job.totalImages || '?'}</div>
@@ -240,6 +263,28 @@ function renderJobs() {
     els.jobs.append(el)
   }
   if (sorted.length === 0) els.jobs.innerHTML = '<p class="muted">暂无任务</p>'
+}
+
+function renderInventoryUpdate(update) {
+  inventoryUpdate = update
+  if (!update) {
+    els.inventoryProgress.classList.add('hidden')
+    els.downloadedUpdate.disabled = false
+    return
+  }
+
+  const total = Math.max(Number(update.total || 0), 0)
+  const current = Math.min(Number(update.current || 0), total)
+  const pct = total > 0 ? Math.round((current / total) * 100) : (update.status === 'completed' ? 100 : 0)
+  els.inventoryProgress.classList.remove('hidden')
+  els.inventoryProgressBar.style.width = `${pct}%`
+  els.inventoryProgressText.textContent = `${update.message || '更新库存'} · ${current}/${total} · 新任务 ${update.created || 0} · 跳过 ${update.skipped || 0}`
+  els.inventoryProgress.title = (update.errors || [])
+    .map((item) => `${item.title || item.comicPathWord}: ${item.error}`)
+    .join('\n')
+  els.downloadedUpdate.dataset.text ||= '更新库存'
+  els.downloadedUpdate.disabled = update.status === 'running'
+  els.downloadedUpdate.textContent = update.status === 'running' ? '更新中...' : els.downloadedUpdate.dataset.text
 }
 
 async function loadComic(pathWord, target = 'search') {
@@ -402,17 +447,20 @@ els.downloadedUpdate.addEventListener('click', async () => {
       method: 'POST',
       body: JSON.stringify({ token: els.token.value.trim() }),
     })
-    const createdJobs = data.jobs || []
-    const createdIds = new Set(createdJobs.map((job) => job.id))
-    jobs = [...createdJobs, ...jobs.filter((item) => !createdIds.has(item.id))]
-    renderJobs()
+    renderInventoryUpdate(data)
     await loadDownloaded()
-    alert(`已检查 ${data.total} 部本地漫画，创建 ${data.created} 个下载任务`)
   } catch (error) {
     alert(error.message)
   } finally {
-    setLoading(els.downloadedUpdate, false)
+    if (inventoryUpdate?.status !== 'running') setLoading(els.downloadedUpdate, false)
   }
+})
+els.sidebarToggle.addEventListener('click', () => {
+  const collapsed = !els.app.classList.contains('sidebar-collapsed')
+  els.app.classList.toggle('sidebar-collapsed', collapsed)
+  els.sidebarToggle.textContent = collapsed ? '›' : '‹'
+  els.sidebarToggle.title = collapsed ? '展开任务栏' : '收缩任务栏'
+  localStorage.setItem('copymanga.sidebarCollapsed', collapsed ? '1' : '0')
 })
 els.configSave.addEventListener('click', async () => {
   try {
@@ -552,7 +600,7 @@ async function syncJobs() {
   const hasNewCompletion = jobs.some((job) => job.status === 'completed' && !previousCompleted.has(job.id))
   if (hasNewCompletion) {
     await refreshDownloadedState()
-    if (currentComicPathWord) await loadComic(currentComicPathWord)
+    if (currentComicPathWord) await loadComic(currentComicPathWord, currentComicTarget)
     if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
   }
 }
@@ -564,7 +612,7 @@ events.addEventListener('job', (event) => {
   renderJobs()
   if (job.status === 'completed') {
     refreshDownloadedState().then(() => {
-      if (currentComicPathWord === job.comicPathWord) loadComic(currentComicPathWord)
+      if (currentComicPathWord === job.comicPathWord) loadComic(currentComicPathWord, currentComicTarget)
       if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
     })
   }
@@ -574,9 +622,23 @@ events.addEventListener('jobDelete', (event) => {
   jobs = jobs.filter((job) => job.id !== id)
   renderJobs()
 })
+events.addEventListener('inventoryUpdate', (event) => {
+  const update = JSON.parse(event.data)
+  renderInventoryUpdate(update)
+  const createdJobs = update.jobs || []
+  if (createdJobs.length > 0) {
+    const createdIds = new Set(createdJobs.map((job) => job.id))
+    jobs = [...createdJobs, ...jobs.filter((item) => !createdIds.has(item.id))]
+    renderJobs()
+  }
+  if (update.status === 'completed') {
+    loadDownloaded().catch(() => {})
+  }
+})
 
 refreshDownloadedState().catch(() => {})
 loadConfig().catch(() => {})
+api('/api/inventory-update').then(renderInventoryUpdate).catch(() => {})
 setInterval(() => {
   syncJobs().catch(() => {})
 }, 2000)
