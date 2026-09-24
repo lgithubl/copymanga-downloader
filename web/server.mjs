@@ -23,6 +23,8 @@ const sseClients = new Set()
 const previewSessions = new Map()
 let config = defaultConfig()
 const execFileAsync = promisify(execFile)
+const APP_COMIC_METADATA = '元数据.json'
+const APP_CHAPTER_METADATA = '章节元数据.json'
 
 const apiHeaders = {
   'User-Agent': 'COPY/3.0.0',
@@ -441,8 +443,9 @@ function startJob(job) {
 }
 
 function findChapter(comic, chapterUuid) {
+  normalizeComicMetadata(comic)
   for (const [groupPathWord, chapters] of Object.entries(comic.groupsChapters || {})) {
-    const chapter = chapters.find((item) => item.uuid === chapterUuid || item.chapter_uuid === chapterUuid)
+    const chapter = chapters.find((item) => chapterUuidOf(item) === chapterUuid)
     if (chapter) return { groupPathWord, chapter }
   }
   return undefined
@@ -467,22 +470,21 @@ async function walk(dir) {
 async function listDownloaded() {
   const downloadFiles = await walk(DOWNLOAD_DIR)
   const metadataFiles = config.metadataDir ? await walk(metadataRoot()) : downloadFiles
-  const comicFiles = metadataFiles.filter((file) => path.basename(file) === 'comic.json')
+  const comicFiles = collectComicMetadataFiles(metadataFiles)
   const comics = []
   for (const file of comicFiles) {
     try {
-      const comic = JSON.parse(await readFile(file, 'utf8'))
+      const comic = normalizeComicMetadata(JSON.parse(await readFile(file, 'utf8')))
       const metadataComicDir = path.dirname(file)
-      const relativeComicDir = path.relative(metadataRoot(), metadataComicDir)
+      const relativeComicDir = inferRelativeComicDir({ comic, comicFile: file, metadataComicDir })
       const downloadComicDir = path.join(DOWNLOAD_DIR, relativeComicDir)
-      const chapterFiles = metadataFiles.filter((candidate) => (
-        candidate.startsWith(`${metadataComicDir}${path.sep}`) && path.basename(candidate) === 'chapter.json'
-      ))
+      const chapterFiles = collectChapterMetadataFiles(metadataFiles, metadataComicDir)
       const chapterUuids = []
       for (const chapterFile of chapterFiles) {
         try {
           const chapter = JSON.parse(await readFile(chapterFile, 'utf8'))
-          if (chapter.chapterUuid) chapterUuids.push(chapter.chapterUuid)
+          const chapterUuid = chapterUuidOf(chapter)
+          if (chapterUuid) chapterUuids.push(chapterUuid)
         } catch {
           // Ignore broken chapter metadata and keep the rest of the inventory usable.
         }
@@ -494,8 +496,10 @@ async function listDownloaded() {
       const info = await stat(file)
       comics.push({
         path: relativeComicDir,
-        comicPathWord: comic.comic?.path_word || comic.comic?.pathWord || comic.path_word || '',
-        title: comic.comic?.name || comic.name || path.basename(downloadComicDir),
+        metadataComicFile: file,
+        metadataComicDir,
+        comicPathWord: comicPathWordOf(comic),
+        title: comicTitleOf(comic, path.basename(downloadComicDir)),
         cover: comic.comic?.cover || comic.cover || '',
         author: comic.comic?.author || comic.author || [],
         groups: comic.groups || {},
@@ -513,15 +517,18 @@ async function listDownloaded() {
 }
 
 function countComicChapters(comic) {
+  normalizeComicMetadata(comic)
   return Object.values(comic.groupsChapters || {})
     .reduce((total, chapters) => total + (Array.isArray(chapters) ? chapters.length : 0), 0)
 }
 
 async function writeDownloadedComicMetadata(downloadedComic, comic) {
   if (!downloadedComic.path) return
-  const metadataComicDir = path.join(metadataRoot(), downloadedComic.path)
-  await mkdir(metadataComicDir, { recursive: true })
-  await writeFile(path.join(metadataComicDir, 'comic.json'), JSON.stringify(comic, null, 2))
+  normalizeComicMetadata(comic)
+  const comicDir = path.join(DOWNLOAD_DIR, downloadedComic.path)
+  const metadataFile = appComicMetadataPath(comic, comicDir)
+  await mkdir(path.dirname(metadataFile), { recursive: true })
+  await writeFile(metadataFile, JSON.stringify(appComicMetadataFrom(comic), null, 2))
 }
 
 async function getDownloadedComic(comicPathWord, { refresh = false, token = '' } = {}) {
@@ -534,8 +541,8 @@ async function getDownloadedComic(comicPathWord, { refresh = false, token = '' }
     return { ...comic, source: 'remote', downloadedInfo: downloadedComic }
   }
 
-  const metadataComicFile = path.join(metadataRoot(), downloadedComic.path, 'comic.json')
-  const comic = JSON.parse(await readFile(metadataComicFile, 'utf8'))
+  const metadataComicFile = downloadedComic.metadataComicFile || path.join(metadataRoot(), downloadedComic.path, APP_COMIC_METADATA)
+  const comic = normalizeComicMetadata(JSON.parse(await readFile(metadataComicFile, 'utf8')))
   return {
     ...markDownloadedChapters(comic, downloadedComics),
     source: 'metadata',
@@ -545,14 +552,32 @@ async function getDownloadedComic(comicPathWord, { refresh = false, token = '' }
 
 async function findLocalChapter(comicPathWord, chapterUuid) {
   const metadataFiles = await walk(metadataRoot())
-  const chapterFiles = metadataFiles.filter((file) => path.basename(file) === 'chapter.json')
+  const chapterFiles = metadataFiles.filter((file) => isChapterMetadataFile(file))
   for (const chapterFile of chapterFiles) {
     try {
       const chapter = JSON.parse(await readFile(chapterFile, 'utf8'))
-      if (chapter.comicPathWord !== comicPathWord || chapter.chapterUuid !== chapterUuid) continue
+      if (chapter.comicPathWord !== comicPathWord || chapterUuidOf(chapter) !== chapterUuid) continue
       const metadataChapterDir = path.dirname(chapterFile)
-      const relativeChapterDir = path.relative(metadataRoot(), metadataChapterDir)
-      const downloadChapterDir = path.join(DOWNLOAD_DIR, relativeChapterDir)
+      let downloadChapterDir = metadataChapterDir
+      if (config.metadataDir) {
+        const downloadedComic = (await listDownloaded()).find((item) => item.comicPathWord === comicPathWord)
+        if (!downloadedComic) continue
+        const comic = normalizeComicMetadata(JSON.parse(await readFile(downloadedComic.metadataComicFile, 'utf8')))
+        const found = findChapter(comic, chapterUuid)
+        if (!found) continue
+        const groupTitle = cleanName(chapter.groupName || found.chapter.groupName || found.chapter.group_name || found.groupPathWord)
+        const chapterTitle = cleanName(chapterTitleOf(chapter, chapterUuid))
+        const chapterDir = path.join(DOWNLOAD_DIR, downloadedComic.path, formatPath(config.chapterDirFmt, {
+          ...comicDirParams(comic, comicPathWord),
+          group_path_word: found.groupPathWord,
+          group_title: groupTitle,
+          chapter_uuid: chapterUuid,
+          chapter_title: chapterTitle,
+          order: chapter.order ?? found.chapter.order ?? 1,
+        }))
+        downloadChapterDir = chapterDir
+      }
+      const relativeChapterDir = path.relative(DOWNLOAD_DIR, downloadChapterDir)
       const files = (await walk(downloadChapterDir))
         .filter((file) => /\.(webp|jpe?g|png|gif)$/i.test(file))
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
@@ -588,7 +613,7 @@ async function getChapterImages({ comicPathWord, chapterUuid, token = '' }) {
   if (local?.files?.length) {
     return {
       source: 'local',
-      title: local.chapter?.chapterMeta?.name || local.chapter?.chapterMeta?.chapter_name || chapterUuid,
+      title: chapterTitleOf(local.chapter, chapterUuid),
       count: local.files.length,
       images: local.files.map((file, index) => ({
         index,
@@ -666,7 +691,7 @@ function markDownloadedChapters(comic, downloadedComics) {
   const downloadedChapterUuids = new Set(downloaded.chapterUuids || [])
   for (const chapters of Object.values(comic.groupsChapters || {})) {
     for (const chapter of chapters) {
-      const uuid = chapter.uuid || chapter.chapter_uuid || chapter.chapterUuid
+      const uuid = chapterUuidOf(chapter)
       chapter.isDownloaded = downloadedChapterUuids.has(uuid)
     }
   }
@@ -676,6 +701,145 @@ function markDownloadedChapters(comic, downloadedComics) {
 
 function activeJobKey(job) {
   return `${job.comicPathWord}:${job.chapterUuids?.[0] || ''}`
+}
+
+function comicPathWordOf(comic) {
+  return comic.comic?.path_word || comic.comic?.pathWord || comic.path_word || comic.pathWord || ''
+}
+
+function comicTitleOf(comic, fallback = '') {
+  return comic.comic?.name || comic.name || fallback
+}
+
+function chapterUuidOf(chapter) {
+  return chapter.chapterUuid || chapter.chapter_uuid || chapter.uuid || ''
+}
+
+function chapterTitleOf(chapter, fallback = '') {
+  return chapter.chapterTitle || chapter.chapter_title || chapter.chapter_name || chapter.name || fallback
+}
+
+function chapterOrderOf(chapter, fallback = 1) {
+  return chapter.order ?? chapter.ordered ?? chapter.index ?? fallback
+}
+
+function appOrderOf(chapter, fallback = 1) {
+  const order = Number(chapterOrderOf(chapter, fallback) || 0)
+  return order / (order > 9 ? 10 : 1)
+}
+
+function normalizeComicMetadata(comic) {
+  if (!comic || typeof comic !== 'object') return comic
+  if (!comic.groupsChapters && comic.comic?.groups) {
+    comic.groupsChapters = comic.comic.groups
+  }
+  return comic
+}
+
+function isComicMetadataFile(file) {
+  return path.basename(file) === APP_COMIC_METADATA
+}
+
+function isChapterMetadataFile(file, metadataComicDir = '') {
+  const name = path.basename(file)
+  if (name === APP_CHAPTER_METADATA) return true
+  if (config.metadataDir && path.extname(file).toLowerCase() === '.json' && path.basename(path.dirname(file)) === 'chapters') return true
+  if (!metadataComicDir || path.extname(file).toLowerCase() !== '.json') return false
+  const chaptersDir = path.join(metadataComicDir, 'chapters')
+  return isSameOrChild(file, chaptersDir) && name !== APP_COMIC_METADATA
+}
+
+function collectComicMetadataFiles(metadataFiles) {
+  return metadataFiles.filter(isComicMetadataFile)
+}
+
+function collectChapterMetadataFiles(metadataFiles, metadataComicDir) {
+  return metadataFiles.filter((candidate) => (
+    candidate.startsWith(`${metadataComicDir}${path.sep}`) && isChapterMetadataFile(candidate, metadataComicDir)
+  ))
+}
+
+function isAppIndependentMetadataDir(metadataComicDir, comicFile) {
+  return config.metadataDir && path.basename(comicFile) === APP_COMIC_METADATA && path.basename(path.dirname(metadataComicDir)) === 'comics'
+}
+
+function comicDirParams(comic, fallbackPathWord = '') {
+  return {
+    comic_uuid: comic.comic?.uuid || comic.uuid || '',
+    comic_path_word: comicPathWordOf(comic) || fallbackPathWord,
+    comic_title: comicTitleOf(comic, fallbackPathWord),
+    author: authorText(comic),
+  }
+}
+
+function inferRelativeComicDir({ comic, comicFile, metadataComicDir }) {
+  const explicitDir = comic.comicDownloadDir || comic.comic_download_dir
+  if (explicitDir && isSameOrChild(explicitDir, DOWNLOAD_DIR)) return path.relative(DOWNLOAD_DIR, explicitDir)
+  if (isAppIndependentMetadataDir(metadataComicDir, comicFile)) return formatPath(config.comicDirFmt, comicDirParams(comic, path.basename(metadataComicDir)))
+  return path.relative(metadataRoot(), metadataComicDir)
+}
+
+function appChapterMetadataFrom({ comic, groupPathWord, groupTitle, groupSize, chapterMeta, chapterUuid, chapterTitle, order, chapterSize = 0 }) {
+  const statusValue = comic.comic?.status?.value ?? comic.status?.value ?? 0
+  return {
+    chapterUuid,
+    chapterTitle,
+    chapterSize,
+    comicUuid: comic.comic?.uuid || comic.uuid || '',
+    comicTitle: comicTitleOf(comic, ''),
+    comicPathWord: comicPathWordOf(comic),
+    groupPathWord,
+    groupName: groupTitle,
+    groupSize: chapterMeta.count ?? groupSize,
+    order: Number(order || 0),
+    comicStatus: Number(statusValue) === 0 ? 'ongoing' : 'completed',
+    isPdfExported: Boolean(chapterMeta.isPdfExported),
+    isCbzExported: Boolean(chapterMeta.isCbzExported),
+  }
+}
+
+function appComicMetadataFrom(comic) {
+  const metadata = structuredClone(comic)
+  metadata.comic ||= {}
+  metadata.comic.groups = {}
+  for (const [groupPathWord, chapters] of Object.entries(comic.groupsChapters || {})) {
+    const group = comic.groups?.[groupPathWord]
+    metadata.comic.groups[groupPathWord] = chapters.map((chapter, index) => {
+      const chapterUuid = chapterUuidOf(chapter)
+      const groupTitle = group?.name || group?.title || chapter.groupName || chapter.group_name || groupPathWord
+      const order = appOrderOf(chapter, index + 1)
+      return appChapterMetadataFrom({
+        comic,
+        groupPathWord,
+        groupTitle,
+        groupSize: chapters.length,
+        chapterMeta: chapter,
+        chapterUuid,
+        chapterTitle: chapterTitleOf(chapter, chapterUuid),
+        order,
+        chapterSize: chapter.size || chapter.chapterSize || 0,
+      })
+    })
+  }
+  delete metadata.groupsChapters
+  delete metadata.isDownloaded
+  delete metadata.comicDownloadDir
+  delete metadata.comic_download_dir
+  return metadata
+}
+
+function appComicMetadataPath(comic, comicDir) {
+  if (config.metadataDir) {
+    return path.join(metadataRoot(), 'comics', comicPathWordOf(comic), APP_COMIC_METADATA)
+  }
+  return path.join(comicDir, APP_COMIC_METADATA)
+}
+
+function appChapterMetadataPath(comic, chapterUuid, chapterDir) {
+  if (config.metadataDir) {
+    return path.join(metadataRoot(), 'comics', comicPathWordOf(comic), 'chapters', `${chapterUuid}.json`)
+  }
+  return path.join(chapterDir, APP_CHAPTER_METADATA)
 }
 
 function updateInventory(update, patch) {
@@ -789,7 +953,7 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
             chapterDownloaded += 1
             continue
           }
-          const uuid = chapter.uuid || chapter.chapter_uuid || chapter.chapterUuid
+          const uuid = chapterUuidOf(chapter)
           const key = `${comicPathWord}:${uuid}`
           if (uuid && !activeKeys.has(key)) {
             chapterUuids.push(uuid)
@@ -942,10 +1106,11 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
     job.comicTitle = comicTitle
     const relativeComicDir = formatPath(config.comicDirFmt, baseParams)
     const comicDir = path.join(DOWNLOAD_DIR, relativeComicDir)
-    const metadataComicDir = path.join(metadataRoot(), relativeComicDir)
+    const metadataComicFile = appComicMetadataPath(comic, comicDir)
+    const metadataComicDir = path.dirname(metadataComicFile)
     await mkdir(comicDir, { recursive: true })
     await mkdir(metadataComicDir, { recursive: true })
-    await writeFile(path.join(metadataComicDir, 'comic.json'), JSON.stringify(comic, null, 2))
+    await writeFile(metadataComicFile, JSON.stringify(appComicMetadataFrom(comic), null, 2))
 
     await runWithConcurrency(chapterUuids, config.chapterConcurrency, async (chapterUuid) => {
       const found = findChapter(comic, chapterUuid)
@@ -954,8 +1119,8 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
       const chapterMeta = found.chapter
       const group = comic.groups?.[found.groupPathWord]
       const groupTitle = cleanName(group?.name || group?.title || chapterMeta.group_name || found.groupPathWord)
-      const chapterTitle = cleanName(chapterMeta.name || chapterMeta.chapter_name || chapterMeta.chapter_title || chapterUuid)
-      const order = chapterMeta.ordered ?? chapterMeta.index ?? chapterMeta.order ?? job.doneChapters + 1
+      const chapterTitle = cleanName(chapterTitleOf(chapterMeta, chapterUuid))
+      const order = appOrderOf(chapterMeta, job.doneChapters + 1)
 
       updateJob(job, { message: `读取章节 ${chapterTitle}` })
       const chapter = await getChapter(comicPathWord, chapterUuid, token)
@@ -972,8 +1137,8 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
         chapter_title: chapterTitle,
         order,
       }))
-      const relativeChapterDir = path.relative(comicDir, chapterDir)
-      const metadataChapterDir = path.join(metadataComicDir, relativeChapterDir)
+      const metadataChapterFile = appChapterMetadataPath(comic, chapterUuid, chapterDir)
+      const metadataChapterDir = path.dirname(metadataChapterFile)
       if (force) {
         updateJob(job, { message: `移动旧章节 ${chapterTitle}` })
         await moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterDir })
@@ -990,7 +1155,18 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
       })
 
       await mkdir(metadataChapterDir, { recursive: true })
-      await writeFile(path.join(metadataChapterDir, 'chapter.json'), JSON.stringify({ comicPathWord, chapterUuid, chapterMeta }, null, 2))
+      const appChapterMetadata = appChapterMetadataFrom({
+        comic,
+        groupPathWord: found.groupPathWord,
+        groupTitle,
+        groupSize: (comic.groupsChapters?.[found.groupPathWord] || []).length,
+        chapterMeta,
+        chapterUuid,
+        chapterTitle,
+        order,
+        chapterSize: contents.length || chapterMeta.size || chapterMeta.chapterSize || 0,
+      })
+      await writeFile(metadataChapterFile, JSON.stringify(appChapterMetadata, null, 2))
       job.doneChapters += 1
       updateJob(job, { doneChapters: job.doneChapters })
       if (config.chapterDownloadIntervalSec > 0) await sleep(config.chapterDownloadIntervalSec)
