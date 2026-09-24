@@ -94,17 +94,47 @@
               <button id="config-save">保存配置</button>
             </div>
             <div class="settings-panel">
-              <label>
-                API 域名
-                <input id="config-api-domain" placeholder="api.copy202601.com" />
+              <h3>下载相关</h3>
+              <label>下载目录<input id="config-download-dir" readonly /></label>
+              <label>元数据目录<input id="config-metadata-dir" placeholder="为空时跟随下载目录" /></label>
+              <label>图片下载格式
+                <select id="config-download-format">
+                  <option value="Webp">webp</option>
+                  <option value="Jpeg">jpg</option>
+                </select>
               </label>
-              <label>
-                图片并发
-                <input id="config-img-concurrency" type="number" min="1" max="30" step="1" />
+              <label class="checkbox-line"><input id="config-enable-picked-sync-guard" type="checkbox" />保护详情页同步</label>
+              <label>漫画目录格式<input id="config-comic-dir-fmt" /></label>
+              <label>章节目录格式<input id="config-chapter-dir-fmt" /></label>
+
+              <h3>网络相关</h3>
+              <label>Token<textarea id="config-token" rows="3"></textarea></label>
+              <label>API 域名模式
+                <select id="config-api-domain-mode">
+                  <option value="Default">默认</option>
+                  <option value="Custom">自定义</option>
+                </select>
               </label>
-              <label>
-                下载目录
-                <input id="config-download-dir" readonly />
+              <label>自定义 API 域名<input id="config-custom-api-domain" placeholder="api.copy202601.com" /></label>
+              <label class="checkbox-line"><input id="config-enable-file-logger" type="checkbox" />输出文件日志</label>
+              <label>章节并发<input id="config-chapter-concurrency" type="number" min="1" max="30" step="1" /></label>
+              <label>每个章节下载完成后休息<input id="config-chapter-download-interval-sec" type="number" min="0" step="1" /></label>
+              <label>图片并发<input id="config-img-concurrency" type="number" min="1" max="60" step="1" /></label>
+              <label>每张图片下载完成后休息<input id="config-img-download-interval-sec" type="number" min="0" step="1" /></label>
+              <label>更新库存处理间隔<input id="config-update-downloaded-comics-interval-sec" type="number" min="0" step="1" /></label>
+
+              <h3>导出相关</h3>
+              <label>导出目录<input id="config-export-dir" /></label>
+              <label>导出目录格式<input id="config-export-dir-fmt" /></label>
+              <label>合并 PDF 目录格式<input id="config-merge-pdf-fmt" /></label>
+              <label>创建 PDF 并发<input id="config-create-pdf-concurrency" type="number" min="1" max="30" step="1" /></label>
+              <label class="checkbox-line"><input id="config-enable-merge-pdf" type="checkbox" />创建完成后自动合并</label>
+              <label>导出策略
+                <select id="config-export-skip-mode">
+                  <option value="None">不跳过，每次重新导出</option>
+                  <option value="SkipExisting">跳过已存在文件</option>
+                  <option value="SkipExported">跳过曾导出过的章节</option>
+                </select>
               </label>
             </div>
           </section>

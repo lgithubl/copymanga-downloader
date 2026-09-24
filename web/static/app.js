@@ -21,9 +21,27 @@ const els = {
   downloadedRefresh: document.querySelector('#downloaded-refresh'),
   downloaded: document.querySelector('#downloaded'),
   configSave: document.querySelector('#config-save'),
-  configApiDomain: document.querySelector('#config-api-domain'),
-  configImgConcurrency: document.querySelector('#config-img-concurrency'),
   configDownloadDir: document.querySelector('#config-download-dir'),
+  configMetadataDir: document.querySelector('#config-metadata-dir'),
+  configDownloadFormat: document.querySelector('#config-download-format'),
+  configEnablePickedSyncGuard: document.querySelector('#config-enable-picked-sync-guard'),
+  configComicDirFmt: document.querySelector('#config-comic-dir-fmt'),
+  configChapterDirFmt: document.querySelector('#config-chapter-dir-fmt'),
+  configToken: document.querySelector('#config-token'),
+  configApiDomainMode: document.querySelector('#config-api-domain-mode'),
+  configCustomApiDomain: document.querySelector('#config-custom-api-domain'),
+  configEnableFileLogger: document.querySelector('#config-enable-file-logger'),
+  configChapterConcurrency: document.querySelector('#config-chapter-concurrency'),
+  configChapterDownloadIntervalSec: document.querySelector('#config-chapter-download-interval-sec'),
+  configImgConcurrency: document.querySelector('#config-img-concurrency'),
+  configImgDownloadIntervalSec: document.querySelector('#config-img-download-interval-sec'),
+  configUpdateDownloadedComicsIntervalSec: document.querySelector('#config-update-downloaded-comics-interval-sec'),
+  configExportDir: document.querySelector('#config-export-dir'),
+  configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
+  configMergePdfFmt: document.querySelector('#config-merge-pdf-fmt'),
+  configCreatePdfConcurrency: document.querySelector('#config-create-pdf-concurrency'),
+  configEnableMergePdf: document.querySelector('#config-enable-merge-pdf'),
+  configExportSkipMode: document.querySelector('#config-export-skip-mode'),
 }
 
 let currentComicPathWord = ''
@@ -200,9 +218,31 @@ async function refreshDownloadedState() {
 
 async function loadConfig() {
   const config = await api('/api/config')
-  els.configApiDomain.value = config.apiDomain
-  els.configImgConcurrency.value = config.imgConcurrency
+  els.configToken.value = config.token || els.token.value.trim() || ''
+  if (config.token && !els.token.value) {
+    els.token.value = config.token
+    localStorage.setItem('copymanga.token', config.token)
+  }
   els.configDownloadDir.value = config.downloadDir
+  els.configMetadataDir.value = config.metadataDir
+  els.configDownloadFormat.value = config.downloadFormat
+  els.configEnablePickedSyncGuard.checked = config.enablePickedComicSyncGuard
+  els.configComicDirFmt.value = config.comicDirFmt
+  els.configChapterDirFmt.value = config.chapterDirFmt
+  els.configApiDomainMode.value = config.apiDomainMode
+  els.configCustomApiDomain.value = config.customApiDomain
+  els.configEnableFileLogger.checked = config.enableFileLogger
+  els.configChapterConcurrency.value = config.chapterConcurrency
+  els.configChapterDownloadIntervalSec.value = config.chapterDownloadIntervalSec
+  els.configImgConcurrency.value = config.imgConcurrency
+  els.configImgDownloadIntervalSec.value = config.imgDownloadIntervalSec
+  els.configUpdateDownloadedComicsIntervalSec.value = config.updateDownloadedComicsIntervalSec
+  els.configExportDir.value = config.exportDir
+  els.configExportDirFmt.value = config.exportDirFmt
+  els.configMergePdfFmt.value = config.mergePdfFmt
+  els.configCreatePdfConcurrency.value = config.createPdfConcurrency
+  els.configEnableMergePdf.checked = config.enableMergePdf
+  els.configExportSkipMode.value = config.exportSkipMode
 }
 
 els.login.addEventListener('click', async () => {
@@ -281,11 +321,31 @@ els.downloadedRefresh.addEventListener('click', loadDownloaded)
 els.configSave.addEventListener('click', async () => {
   try {
     setLoading(els.configSave, true)
+    els.token.value = els.configToken.value.trim()
+    localStorage.setItem('copymanga.token', els.token.value)
     await api('/api/config', {
       method: 'POST',
       body: JSON.stringify({
-        apiDomain: els.configApiDomain.value,
+        token: els.configToken.value.trim(),
+        metadataDir: els.configMetadataDir.value,
+        downloadFormat: els.configDownloadFormat.value,
+        enablePickedComicSyncGuard: els.configEnablePickedSyncGuard.checked,
+        comicDirFmt: els.configComicDirFmt.value,
+        chapterDirFmt: els.configChapterDirFmt.value,
+        apiDomainMode: els.configApiDomainMode.value,
+        customApiDomain: els.configCustomApiDomain.value,
+        enableFileLogger: els.configEnableFileLogger.checked,
+        chapterConcurrency: Number(els.configChapterConcurrency.value),
+        chapterDownloadIntervalSec: Number(els.configChapterDownloadIntervalSec.value),
         imgConcurrency: Number(els.configImgConcurrency.value),
+        imgDownloadIntervalSec: Number(els.configImgDownloadIntervalSec.value),
+        updateDownloadedComicsIntervalSec: Number(els.configUpdateDownloadedComicsIntervalSec.value),
+        exportDir: els.configExportDir.value,
+        exportDirFmt: els.configExportDirFmt.value,
+        mergePdfFmt: els.configMergePdfFmt.value,
+        createPdfConcurrency: Number(els.configCreatePdfConcurrency.value),
+        enableMergePdf: els.configEnableMergePdf.checked,
+        exportSkipMode: els.configExportSkipMode.value,
       }),
     })
     await loadConfig()

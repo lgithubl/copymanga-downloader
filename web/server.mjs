@@ -3,6 +3,7 @@ import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Buffer } from 'node:buffer'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -58,19 +59,74 @@ function cleanName(value) {
 
 function defaultConfig() {
   return {
-    apiDomain: DEFAULT_API_DOMAIN,
+    token: '',
     downloadDir: DOWNLOAD_DIR,
+    metadataDir: '',
+    exportDir: path.join(DATA_DIR, 'exports'),
+    apiDomainMode: 'Default',
+    customApiDomain: DEFAULT_API_DOMAIN,
+    downloadFormat: 'Webp',
+    enableFileLogger: true,
+    chapterConcurrency: 3,
+    chapterDownloadIntervalSec: 0,
     imgConcurrency: 6,
+    imgDownloadIntervalSec: 0,
+    updateDownloadedComicsIntervalSec: 0,
+    enablePickedComicSyncGuard: false,
+    comicDirFmt: '{comic_title}',
+    chapterDirFmt: '{group_title}/{order} {chapter_title}',
+    exportDirFmt: '{comic_title}/{export_format}/{group_title}/{order} {chapter_title}',
+    mergePdfFmt: '{comic_title}/pdf/{group_title}',
+    createPdfConcurrency: 2,
+    enableMergePdf: true,
+    exportSkipMode: 'None',
   }
 }
 
 function normalizeConfig(value) {
   const defaults = defaultConfig()
+  const apiDomainMode = value?.apiDomainMode === 'Custom' ? 'Custom' : 'Default'
+  const downloadFormat = value?.downloadFormat === 'Jpeg' ? 'Jpeg' : 'Webp'
+  const exportSkipMode = ['None', 'SkipExisting', 'SkipExported'].includes(value?.exportSkipMode)
+    ? value.exportSkipMode
+    : defaults.exportSkipMode
   return {
-    apiDomain: String(value?.apiDomain || defaults.apiDomain).trim() || defaults.apiDomain,
+    token: String(value?.token || defaults.token),
     downloadDir: DOWNLOAD_DIR,
-    imgConcurrency: Math.max(1, Math.min(30, Number(value?.imgConcurrency || defaults.imgConcurrency))),
+    metadataDir: String(value?.metadataDir || defaults.metadataDir),
+    exportDir: String(value?.exportDir || defaults.exportDir),
+    apiDomainMode,
+    customApiDomain: String(value?.customApiDomain || value?.apiDomain || defaults.customApiDomain).trim() || defaults.customApiDomain,
+    apiDomain: apiDomainMode === 'Custom'
+      ? (String(value?.customApiDomain || value?.apiDomain || defaults.customApiDomain).trim() || defaults.customApiDomain)
+      : DEFAULT_API_DOMAIN,
+    downloadFormat,
+    enableFileLogger: Boolean(value?.enableFileLogger ?? defaults.enableFileLogger),
+    chapterConcurrency: clampNumber(value?.chapterConcurrency, 1, 30, defaults.chapterConcurrency),
+    chapterDownloadIntervalSec: clampNumber(value?.chapterDownloadIntervalSec, 0, 3600, defaults.chapterDownloadIntervalSec),
+    imgConcurrency: clampNumber(value?.imgConcurrency, 1, 60, defaults.imgConcurrency),
+    imgDownloadIntervalSec: clampNumber(value?.imgDownloadIntervalSec, 0, 3600, defaults.imgDownloadIntervalSec),
+    updateDownloadedComicsIntervalSec: clampNumber(
+      value?.updateDownloadedComicsIntervalSec,
+      0,
+      3600,
+      defaults.updateDownloadedComicsIntervalSec,
+    ),
+    enablePickedComicSyncGuard: Boolean(value?.enablePickedComicSyncGuard ?? defaults.enablePickedComicSyncGuard),
+    comicDirFmt: String(value?.comicDirFmt || defaults.comicDirFmt),
+    chapterDirFmt: String(value?.chapterDirFmt || defaults.chapterDirFmt),
+    exportDirFmt: String(value?.exportDirFmt || defaults.exportDirFmt),
+    mergePdfFmt: String(value?.mergePdfFmt || defaults.mergePdfFmt),
+    createPdfConcurrency: clampNumber(value?.createPdfConcurrency, 1, 30, defaults.createPdfConcurrency),
+    enableMergePdf: Boolean(value?.enableMergePdf ?? defaults.enableMergePdf),
+    exportSkipMode,
   }
+}
+
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(n)))
 }
 
 async function loadConfig() {
@@ -82,7 +138,7 @@ async function loadConfig() {
 }
 
 async function saveConfig(nextConfig) {
-  config = normalizeConfig(nextConfig)
+  config = normalizeConfig({ ...config, ...nextConfig })
   await mkdir(DATA_DIR, { recursive: true })
   await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2))
   return config
@@ -96,7 +152,7 @@ async function readJson(req) {
 }
 
 async function copyFetch(urlPath, { method = 'GET', query, token, form } = {}) {
-  const url = new URL(`https://${config.apiDomain}${urlPath}`)
+  const url = new URL(`https://${getApiDomain()}${urlPath}`)
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null) url.searchParams.set(key, String(value))
@@ -105,7 +161,8 @@ async function copyFetch(urlPath, { method = 'GET', query, token, form } = {}) {
 
   const headers = { ...apiHeaders }
   let body
-  if (token) headers.authorization = `Token ${token}`
+  const effectiveToken = token || config.token
+  if (effectiveToken) headers.authorization = `Token ${effectiveToken}`
   if (form) {
     body = new URLSearchParams(form)
     headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8'
@@ -126,6 +183,50 @@ async function copyFetch(urlPath, { method = 'GET', query, token, form } = {}) {
     throw new Error(`CopyManga code ${parsed.code}: ${raw.slice(0, 500)}`)
   }
   return parsed.results
+}
+
+function getApiDomain() {
+  return config.apiDomainMode === 'Custom' ? config.customApiDomain : DEFAULT_API_DOMAIN
+}
+
+function formatTemplate(template, params) {
+  return String(template).replace(/\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/g, (_, key, fmt) => {
+    const raw = params[key]
+    if (raw === undefined || raw === null) return ''
+    if (key === 'order' && fmt) return formatOrder(raw, fmt)
+    return String(raw)
+  })
+}
+
+function formatOrder(value, fmt) {
+  const order = String(value)
+  const [intPart, fracPart = ''] = order.split('.')
+  const match = fmt.match(/^0>(\d+)$/)
+  const formatted = match ? intPart.padStart(Number(match[1]), '0') : intPart
+  return fracPart && fracPart !== '0' ? `${formatted}.${fracPart}` : formatted
+}
+
+function formatPath(template, params) {
+  const parts = String(template)
+    .split('/')
+    .map((part) => cleanName(formatTemplate(part, params)))
+    .filter(Boolean)
+  return path.join(...parts)
+}
+
+function sleep(seconds) {
+  return new Promise((resolve) => setTimeout(resolve, seconds * 1000))
+}
+
+function metadataRoot() {
+  return config.metadataDir ? path.resolve(config.metadataDir) : DOWNLOAD_DIR
+}
+
+function authorText(comic) {
+  return (comic.comic?.author || comic.author || [])
+    .map((author) => author.name)
+    .filter(Boolean)
+    .join(', ')
 }
 
 async function login(username, password) {
@@ -288,15 +389,18 @@ async function walk(dir) {
 }
 
 async function listDownloaded() {
-  const files = await walk(DOWNLOAD_DIR)
-  const comicFiles = files.filter((file) => path.basename(file) === 'comic.json')
+  const downloadFiles = await walk(DOWNLOAD_DIR)
+  const metadataFiles = config.metadataDir ? await walk(metadataRoot()) : downloadFiles
+  const comicFiles = metadataFiles.filter((file) => path.basename(file) === 'comic.json')
   const comics = []
   for (const file of comicFiles) {
     try {
       const comic = JSON.parse(await readFile(file, 'utf8'))
-      const comicDir = path.dirname(file)
-      const chapterFiles = files.filter((candidate) => (
-        candidate.startsWith(`${comicDir}${path.sep}`) && path.basename(candidate) === 'chapter.json'
+      const metadataComicDir = path.dirname(file)
+      const relativeComicDir = path.relative(metadataRoot(), metadataComicDir)
+      const downloadComicDir = path.join(DOWNLOAD_DIR, relativeComicDir)
+      const chapterFiles = metadataFiles.filter((candidate) => (
+        candidate.startsWith(`${metadataComicDir}${path.sep}`) && path.basename(candidate) === 'chapter.json'
       ))
       const chapterUuids = []
       for (const chapterFile of chapterFiles) {
@@ -307,14 +411,14 @@ async function listDownloaded() {
           // Ignore broken chapter metadata and keep the rest of the inventory usable.
         }
       }
-      const imageFiles = files.filter((candidate) => (
-        candidate.startsWith(`${comicDir}${path.sep}`) && /\.(webp|jpe?g)$/i.test(candidate)
+      const imageFiles = downloadFiles.filter((candidate) => (
+        candidate.startsWith(`${downloadComicDir}${path.sep}`) && /\.(webp|jpe?g)$/i.test(candidate)
       ))
       const info = await stat(file)
       comics.push({
-        path: path.relative(DOWNLOAD_DIR, comicDir),
+        path: relativeComicDir,
         comicPathWord: comic.comic?.path_word || comic.comic?.pathWord || comic.path_word || '',
-        title: comic.comic?.name || comic.name || path.basename(comicDir),
+        title: comic.comic?.name || comic.name || path.basename(downloadComicDir),
         cover: comic.comic?.cover || comic.cover || '',
         author: comic.comic?.author || comic.author || [],
         groups: comic.groups || {},
@@ -323,6 +427,7 @@ async function listDownloaded() {
         imageCount: imageFiles.length,
         updatedAt: info.mtime.toISOString(),
       })
+      if (config.updateDownloadedComicsIntervalSec > 0) await sleep(config.updateDownloadedComicsIntervalSec)
     } catch (error) {
       console.warn(`skip invalid inventory file ${file}: ${error.message}`)
     }
@@ -350,9 +455,12 @@ async function downloadImage(url, filePath) {
   const resp = await fetch(url)
   if (!resp.ok) throw new Error(`image HTTP ${resp.status}: ${url}`)
   const contentType = resp.headers.get('content-type') || ''
-  const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'webp'
+  const ext = config.downloadFormat === 'Jpeg' ? 'jpg' : (contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'webp')
   const target = filePath.replace(/\.[^.]+$/, `.${ext}`)
   await mkdir(path.dirname(target), { recursive: true })
+  if (config.downloadFormat === 'Jpeg' && contentType.includes('webp')) {
+    throw new Error('Web 版暂未实现 webp 转 jpg，请使用 Webp 下载格式')
+  }
   const stream = createWriteStream(target)
   await new Promise((resolve, reject) => {
     resp.body.pipeTo(
@@ -389,12 +497,21 @@ async function runJob(job, { comicPathWord, chapterUuids, token }) {
     updateJob(job, { status: 'running', message: '读取漫画信息' })
     const comic = await getComic(comicPathWord)
     const comicTitle = cleanName(comic.comic?.name || comic.name || comicPathWord)
+    const baseParams = {
+      comic_uuid: comic.comic?.uuid || comic.uuid || '',
+      comic_path_word: comic.comic?.path_word || comic.comic?.pathWord || comicPathWord,
+      comic_title: comic.comic?.name || comic.name || comicPathWord,
+      author: authorText(comic),
+    }
     job.comicTitle = comicTitle
-    const comicDir = path.join(DOWNLOAD_DIR, comicTitle)
+    const relativeComicDir = formatPath(config.comicDirFmt, baseParams)
+    const comicDir = path.join(DOWNLOAD_DIR, relativeComicDir)
+    const metadataComicDir = path.join(metadataRoot(), relativeComicDir)
     await mkdir(comicDir, { recursive: true })
-    await writeFile(path.join(comicDir, 'comic.json'), JSON.stringify(comic, null, 2))
+    await mkdir(metadataComicDir, { recursive: true })
+    await writeFile(path.join(metadataComicDir, 'comic.json'), JSON.stringify(comic, null, 2))
 
-    for (const chapterUuid of chapterUuids) {
+    await runWithConcurrency(chapterUuids, config.chapterConcurrency, async (chapterUuid) => {
       const found = findChapter(comic, chapterUuid)
       if (!found) throw new Error(`找不到章节 ${chapterUuid}`)
 
@@ -402,7 +519,7 @@ async function runJob(job, { comicPathWord, chapterUuids, token }) {
       const group = comic.groups?.[found.groupPathWord]
       const groupTitle = cleanName(group?.name || group?.title || chapterMeta.group_name || found.groupPathWord)
       const chapterTitle = cleanName(chapterMeta.name || chapterMeta.chapter_name || chapterMeta.chapter_title || chapterUuid)
-      const order = String(chapterMeta.index ?? chapterMeta.order ?? job.doneChapters + 1).padStart(3, '0')
+      const order = chapterMeta.ordered ?? chapterMeta.index ?? chapterMeta.order ?? job.doneChapters + 1
 
       updateJob(job, { message: `读取章节 ${chapterTitle}` })
       const chapter = await getChapter(comicPathWord, chapterUuid, token)
@@ -411,7 +528,14 @@ async function runJob(job, { comicPathWord, chapterUuids, token }) {
       job.totalImages += contents.length
       updateJob(job, { totalImages: job.totalImages })
 
-      const chapterDir = path.join(comicDir, groupTitle, `${order} ${chapterTitle}`)
+      const chapterDir = path.join(comicDir, formatPath(config.chapterDirFmt, {
+        ...baseParams,
+        group_path_word: found.groupPathWord,
+        group_title: groupTitle,
+        chapter_uuid: chapterUuid,
+        chapter_title: chapterTitle,
+        order,
+      }))
       await runWithConcurrency(contents, config.imgConcurrency, async (content, i) => {
         const imageUrl = String(content.url || '').replace('.c800x.', '.c1500x.')
         const index = Number(words[i] ?? i) + 1
@@ -419,12 +543,17 @@ async function runJob(job, { comicPathWord, chapterUuids, token }) {
         await downloadImage(imageUrl, filePath)
         job.doneImages += 1
         updateJob(job, { doneImages: job.doneImages, message: `下载 ${chapterTitle} ${job.doneImages}/${job.totalImages}` })
+        if (config.imgDownloadIntervalSec > 0) await sleep(config.imgDownloadIntervalSec)
       })
 
-      await writeFile(path.join(chapterDir, 'chapter.json'), JSON.stringify({ comicPathWord, chapterUuid, chapterMeta }, null, 2))
+      const relativeChapterDir = path.relative(comicDir, chapterDir)
+      const metadataChapterDir = path.join(metadataComicDir, relativeChapterDir)
+      await mkdir(metadataChapterDir, { recursive: true })
+      await writeFile(path.join(metadataChapterDir, 'chapter.json'), JSON.stringify({ comicPathWord, chapterUuid, chapterMeta }, null, 2))
       job.doneChapters += 1
       updateJob(job, { doneChapters: job.doneChapters })
-    }
+      if (config.chapterDownloadIntervalSec > 0) await sleep(config.chapterDownloadIntervalSec)
+    })
 
     updateJob(job, { status: 'completed', message: '下载完成' })
   } catch (error) {
