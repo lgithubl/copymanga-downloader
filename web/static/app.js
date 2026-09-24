@@ -511,6 +511,7 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
   els.viewerMeta.textContent = '加载图片中...'
   els.viewerImages.className = 'viewer-grid'
   els.viewerImages.innerHTML = ''
+  els.viewerImages.classList.remove('long-strip-viewer')
   resetViewerBatch()
 
   try {
@@ -623,6 +624,7 @@ function appendViewerImages() {
     const markDone = () => {
       if (settled) return
       settled = true
+      applyViewerImageLayout(img)
       markViewerImageDone(batch)
     }
     img.addEventListener('load', markDone, { once: true })
@@ -634,6 +636,16 @@ function appendViewerImages() {
   const sourceText = viewerState?.sourceText || '图片'
   els.viewerMeta.textContent = `${sourceText} · ${viewerRendered}/${viewerImages.length} 张图`
   if (viewerRendered < viewerImages.length) attachViewerSentinel()
+}
+
+function applyViewerImageLayout(img) {
+  if (!img.naturalWidth || !img.naturalHeight) return
+  const displayWidth = Math.min(img.naturalWidth, 980)
+  img.style.maxWidth = `${displayWidth}px`
+  img.style.width = `min(100%, ${displayWidth}px)`
+  const isLongStrip = img.naturalHeight / Math.max(img.naturalWidth, 1) >= 4
+  img.classList.toggle('long-strip-image', isLongStrip)
+  if (isLongStrip) els.viewerImages.classList.add('long-strip-viewer')
 }
 
 function markViewerImageDone(batch) {

@@ -784,7 +784,6 @@ h2 {
 }
 
 .viewer-grid img {
-  aspect-ratio: 2 / 3;
   background: #eef1f4;
   border: 1px solid #d8dee4;
   border-radius: 6px;
@@ -792,7 +791,21 @@ h2 {
   height: auto;
   margin: 0 auto;
   max-width: 980px;
-  width: min(100%, 980px);
+  object-fit: contain;
+  width: auto;
+}
+
+.viewer-grid.long-strip-viewer {
+  gap: 2px;
+}
+
+.viewer-grid.long-strip-viewer img {
+  border-radius: 0;
+  width: min(100%, 690px);
+}
+
+.viewer-grid img.long-strip-image {
+  border-radius: 0;
 }
 
 .viewer-sentinel {
