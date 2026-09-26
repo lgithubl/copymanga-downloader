@@ -1478,6 +1478,13 @@ function renderStreamMedia(reader) {
   player.preload = 'metadata'
   player.src = reader.stream?.url || reader.unit?.streamUrl || ''
   if (reader.type === 'video') player.playsInline = true
+  const playbackWarning = document.createElement('div')
+  playbackWarning.className = 'stream-player-warning hidden'
+  const canPlay = player.canPlayType?.(reader.unit?.contentType || '') || ''
+  if (reader.unit?.contentType && !canPlay) {
+    playbackWarning.classList.remove('hidden')
+    playbackWarning.textContent = `当前浏览器可能不支持播放 ${reader.unit.contentType}`
+  }
   const title = document.createElement('div')
   title.className = 'stream-player-title'
   title.textContent = reader.unit?.title || reader.unit?.fileName || '媒体'
@@ -1490,7 +1497,13 @@ function renderStreamMedia(reader) {
     reader.stream?.streamPath || '',
   ].filter(Boolean).join(' · ')
   player.addEventListener('ended', () => saveLibraryProgress(1).catch(() => {}))
-  shell.append(title, player, meta)
+  player.addEventListener('error', () => {
+    const code = player.error?.code
+    const suffix = code ? ` (${code})` : ''
+    playbackWarning.classList.remove('hidden')
+    playbackWarning.textContent = `播放失败${suffix}：浏览器不支持该编码，或媒体文件无法被当前播放器解码`
+  })
+  shell.append(title, player, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
   mediaPageIndex = 0
   mediaPageCount = 1

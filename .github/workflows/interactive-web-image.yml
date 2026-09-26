@@ -166,7 +166,7 @@ jobs:
                           if is_stream:
                               self.close_connection = True
                               for k, v in resp.headers.items():
-                                  if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                                  if k.lower() not in HOP_BY_HOP:
                                       self.send_header(k, v)
                               self.send_header("Connection", "close")
                               self.end_headers()
