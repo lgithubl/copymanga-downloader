@@ -42,6 +42,7 @@ const els = {
   favorites: document.querySelector('#favorites'),
   downloadedRefresh: document.querySelector('#downloaded-refresh'),
   downloadedUpdate: document.querySelector('#downloaded-update'),
+  downloadedImageCheck: document.querySelector('#downloaded-image-check'),
   downloadedUpdateScope: document.querySelector('#downloaded-update-scope'),
   inventoryProgress: document.querySelector('#inventory-progress'),
   inventoryProgressText: document.querySelector('#inventory-progress .inventory-progress-text'),
@@ -385,6 +386,7 @@ function renderDownloaded(list) {
     const chapterTotalText = remoteChapterTotal && remoteChapterTotal > 0 ? String(remoteChapterTotal) : '?'
     const progress = readingProgress[item.comicPathWord]
     const stats = readingStats(item)
+    const imageCheck = imageCheckSummaryText(item.imageCheckSummary)
     const readTarget = progress?.lastChapterUuid || item.allChapterUuids?.[0] || item.chapterUuids?.[0] || ''
     const card = document.createElement('article')
     card.className = `card downloaded-card ${readingClassForItem(item)}`
@@ -395,6 +397,7 @@ function renderDownloaded(list) {
         <div class="muted">${escapeHtml(item.comicPathWord)}</div>
         <div class="muted">本地 ${item.chapterCount}/${chapterTotalText} 章 · 已读 ${stats.readCount}/${stats.total || '?'} · ${item.imageCount} 张图 · ${escapeHtml(item.path)}</div>
         <div class="badge">已下载</div>
+        ${imageCheck ? `<div class="badge ${escapeHtml(imageCheck.className)}">${escapeHtml(imageCheck.text)}</div>` : ''}
         ${readTarget ? `<button class="card-read secondary" type="button">${progress?.lastChapterUuid ? '阅读' : '开始'}</button>` : ''}
       </div>
     `
@@ -416,6 +419,29 @@ function renderDownloaded(list) {
     els.downloaded.append(card)
   }
   if (visibleList.length === 0) els.downloaded.innerHTML = '<p class="muted">暂无符合条件的本地库存</p>'
+}
+
+function imageCheckSummaryText(summary = {}) {
+  const failed = Number(summary.failed || 0)
+  const checking = Number(summary.checking || 0)
+  const pending = Number(summary.pending || 0)
+  const unknown = Number(summary.unknown || 0)
+  const total = Number(summary.total || 0)
+  const passed = Number(summary.passed || 0)
+  if (failed > 0) return { text: `异常 ${failed}`, className: 'image-check-failed' }
+  if (checking > 0 || pending > 0) return { text: `检查中 ${checking + pending}`, className: 'image-check-checking' }
+  if (unknown > 0) return { text: `未检查 ${unknown}`, className: 'image-check-unknown' }
+  if (total > 0 && passed === total) return { text: '图片OK', className: 'image-check-passed' }
+  return null
+}
+
+function imageCheckChapterText(chapter = {}) {
+  const check = chapter.imageCheck || {}
+  const status = check.status || 'unknown'
+  if (status === 'passed') return { text: '图片OK', className: 'image-check-passed' }
+  if (status === 'failed') return { text: `异常 ${check.failed || 0}`, className: 'image-check-failed' }
+  if (status === 'checking' || status === 'pending') return { text: '检查中', className: 'image-check-checking' }
+  return { text: '未检查', className: 'image-check-unknown' }
 }
 
 function jumpDownloadedPage() {
@@ -489,6 +515,7 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
       const isRead = read.has(id)
       const title = shortChapterTitle(chapter)
       const fullTitle = `${chapterTitle(chapter)} · ${id}`
+      const imageCheck = imageCheckChapterText(chapter)
       const row = document.createElement('label')
       row.className = `chapter${isDownloaded ? ' downloaded-chapter' : ''}${isRead ? ' read-chapter' : ' unread-chapter'}`
       row.title = fullTitle
@@ -498,6 +525,7 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
           <span class="chapter-title">${escapeHtml(title)}</span>
           <span class="muted">${isDownloaded ? '已下载' : ''}</span>
         </span>
+        ${isDownloaded ? `<span class="badge ${escapeHtml(imageCheck.className)}">${escapeHtml(imageCheck.text)}</span>` : ''}
         <button class="chapter-view secondary" type="button">${isDownloaded ? '浏览' : '预览'}</button>
         <button class="chapter-redownload danger" type="button">重下</button>
       `
@@ -1694,6 +1722,22 @@ els.downloadedUpdate.addEventListener('click', async () => {
     if (inventoryUpdate?.status !== 'running') setLoading(els.downloadedUpdate, false)
   }
 })
+els.downloadedImageCheck.addEventListener('click', async () => {
+  try {
+    setLoading(els.downloadedImageCheck, true)
+    const data = await api('/api/image-check/inventory', { method: 'POST', body: '{}' })
+    els.downloadedImageCheck.dataset.text ||= '检查图片'
+    els.downloadedImageCheck.textContent = `检查中 ${data.summary?.queued || data.queued?.length || 0}`
+    await loadDownloaded()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setTimeout(() => {
+      els.downloadedImageCheck.disabled = false
+      els.downloadedImageCheck.textContent = els.downloadedImageCheck.dataset.text || '检查图片'
+    }, 800)
+  }
+})
 els.viewerRefresh.addEventListener('click', () => {
   if (viewerState) openChapterViewer(viewerState)
 })
@@ -1912,6 +1956,17 @@ events.addEventListener('jobDelete', (event) => {
   const { id } = JSON.parse(event.data)
   jobs = jobs.filter((job) => job.id !== id)
   renderJobs()
+})
+events.addEventListener('imageCheck', (event) => {
+  const job = JSON.parse(event.data)
+  if (job.status === 'completed' || job.status === 'failed') {
+    refreshDownloadedState().then(() => {
+      if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
+      if (currentDownloadedComicPathWord === job.comicPathWord) {
+        loadDownloadedComic(job.comicPathWord).catch(() => {})
+      }
+    }).catch(() => {})
+  }
 })
 events.addEventListener('inventoryUpdate', (event) => {
   const update = JSON.parse(event.data)

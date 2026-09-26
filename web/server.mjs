@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { readFile, readdir, stat, writeFile, mkdir, rename } from 'node:fs/promises'
+import { open, readFile, readdir, stat, writeFile, mkdir, rename } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
@@ -27,7 +27,12 @@ const runningJobIds = new Set()
 const jobBatches = new Map()
 const fileLocks = new Map()
 const chapterLocks = new Map()
+const imageCheckJobs = new Map()
+const imageCheckQueue = []
+const runningImageCheckIds = new Set()
 let jobQueueTimer = null
+let imageCheckQueueTimer = null
+let hasIdentifyCache = null
 const inventoryUpdates = new Map()
 const sseClients = new Set()
 const previewSessions = new Map()
@@ -528,6 +533,91 @@ function publicJobs() {
   return [...jobs.values()].filter((job) => !job.deleted).map(publicJob)
 }
 
+function publicImageCheckJob(job) {
+  return { ...job }
+}
+
+function publicImageCheckJobs() {
+  return [...imageCheckJobs.values()].map(publicImageCheckJob)
+}
+
+function latestImageCheckSummary() {
+  const jobs = publicImageCheckJobs()
+  const counts = { queued: 0, running: 0, completed: 0, failed: 0, skipped: 0 }
+  for (const job of jobs) counts[job.status] = (counts[job.status] || 0) + 1
+  return {
+    total: jobs.length,
+    queued: counts.queued || 0,
+    running: counts.running || 0,
+    completed: counts.completed || 0,
+    failed: counts.failed || 0,
+    skipped: counts.skipped || 0,
+    jobs,
+  }
+}
+
+function createImageCheckJob({ comicPathWord, chapterUuid, chapterTitle = '', reason = 'manual' }) {
+  const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return {
+    id,
+    status: 'queued',
+    comicPathWord,
+    chapterUuid,
+    chapterTitle,
+    reason,
+    message: '等待检查',
+    total: 0,
+    checked: 0,
+    failed: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function updateImageCheckJob(job, patch) {
+  if (!imageCheckJobs.has(job.id)) return
+  Object.assign(job, patch, { updatedAt: new Date().toISOString() })
+  emit('imageCheck', publicImageCheckJob(job))
+}
+
+function enqueueImageCheck(payload) {
+  if (!payload?.comicPathWord || !payload?.chapterUuid) return null
+  const duplicate = [...imageCheckJobs.values()].find((job) => (
+    (job.status === 'queued' || job.status === 'running') &&
+    job.comicPathWord === payload.comicPathWord &&
+    job.chapterUuid === payload.chapterUuid
+  ))
+  if (duplicate) return duplicate
+  const job = createImageCheckJob(payload)
+  imageCheckJobs.set(job.id, job)
+  imageCheckQueue.push(job.id)
+  emit('imageCheck', publicImageCheckJob(job))
+  scheduleImageCheckQueue()
+  return job
+}
+
+function scheduleImageCheckQueue() {
+  if (imageCheckQueueTimer) return
+  imageCheckQueueTimer = setTimeout(() => {
+    imageCheckQueueTimer = null
+    processImageCheckQueue()
+  }, 0)
+}
+
+function processImageCheckQueue() {
+  const limit = 1
+  while (runningImageCheckIds.size < limit && imageCheckQueue.length > 0) {
+    const id = imageCheckQueue.shift()
+    const job = imageCheckJobs.get(id)
+    if (!job || job.status !== 'queued') continue
+    runningImageCheckIds.add(id)
+    runImageCheckJob(job).finally(() => {
+      runningImageCheckIds.delete(id)
+      processImageCheckQueue()
+    })
+  }
+}
+
 function publicInventoryUpdate(update) {
   return update
 }
@@ -668,17 +758,24 @@ async function listDownloaded() {
       const downloadComicDir = path.join(DOWNLOAD_DIR, relativeComicDir)
       const chapterFiles = collectChapterMetadataFiles(metadataFiles, metadataComicDir)
       const chapterUuids = []
+      const imageCheckSummary = emptyImageCheckSummary()
+      const chapterImageChecks = {}
       for (const chapterFile of chapterFiles) {
         try {
           const chapter = JSON.parse(await readFile(chapterFile, 'utf8'))
           const chapterUuid = chapterUuidOf(chapter)
-          if (chapterUuid) chapterUuids.push(chapterUuid)
+          if (chapterUuid) {
+            chapterUuids.push(chapterUuid)
+            const tag = chapterImageCheckTag(chapter)
+            chapterImageChecks[chapterUuid] = tag
+            addImageCheckSummary(imageCheckSummary, tag)
+          }
         } catch {
           // Ignore broken chapter metadata and keep the rest of the inventory usable.
         }
       }
       const imageFiles = downloadFiles.filter((candidate) => (
-        candidate.startsWith(`${downloadComicDir}${path.sep}`) && /\.(webp|jpe?g)$/i.test(candidate)
+        candidate.startsWith(`${downloadComicDir}${path.sep}`) && /\.(webp|jpe?g|png|gif)$/i.test(candidate)
       ))
       const allChapterUuids = collectAllChapterUuids(comic)
       const remoteChapterTotal = countComicChapters(comic)
@@ -697,6 +794,8 @@ async function listDownloaded() {
         chapterCount: chapterFiles.length,
         remoteChapterTotal: remoteChapterTotal || null,
         imageCount: imageFiles.length,
+        imageCheckSummary,
+        chapterImageChecks,
         updatedAt: info.mtime.toISOString(),
       })
     } catch (error) {
@@ -822,6 +921,20 @@ async function downloadedComicSummaryFromMetadataFile(file, fallbackPathWord = '
   const chapterUuids = chapterEntries
     .filter((item) => item.isFile() && path.extname(item.name).toLowerCase() === '.json')
     .map((item) => path.basename(item.name, '.json'))
+  const imageCheckSummary = emptyImageCheckSummary()
+  const chapterImageChecks = {}
+  for (const entry of chapterEntries) {
+    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.json') continue
+    try {
+      const chapter = JSON.parse(await readFile(path.join(metadataComicDir, 'chapters', entry.name), 'utf8'))
+      const chapterUuid = chapterUuidOf(chapter) || path.basename(entry.name, '.json')
+      const tag = chapterImageCheckTag(chapter)
+      chapterImageChecks[chapterUuid] = tag
+      addImageCheckSummary(imageCheckSummary, tag)
+    } catch {
+      // Ignore broken chapter metadata and keep the rest of the inventory usable.
+    }
+  }
   const info = await stat(file)
   return {
     path: relativeComicDir,
@@ -837,6 +950,8 @@ async function downloadedComicSummaryFromMetadataFile(file, fallbackPathWord = '
     chapterCount: chapterUuids.length,
     remoteChapterTotal: countComicChapters(comic) || null,
     imageCount: null,
+    imageCheckSummary,
+    chapterImageChecks,
     updatedAt: info.mtime.toISOString(),
   }
 }
@@ -1134,6 +1249,7 @@ function markDownloadedChapters(comic, downloadedComics) {
     for (const chapter of chapters) {
       const uuid = chapterUuidOf(chapter)
       chapter.isDownloaded = downloadedChapterUuids.has(uuid)
+      if (downloaded.chapterImageChecks?.[uuid]) chapter.imageCheck = downloaded.chapterImageChecks[uuid]
     }
   }
   comic.isDownloaded = true
@@ -1576,6 +1692,192 @@ async function validateDownloadedImages({ chapterDir, files, expectedCount, chap
   }
 }
 
+async function hasIdentify() {
+  if (hasIdentifyCache !== null) return hasIdentifyCache
+  try {
+    await execFileAsync('identify', ['-version'])
+    hasIdentifyCache = true
+  } catch {
+    hasIdentifyCache = false
+  }
+  return hasIdentifyCache
+}
+
+async function imageSignature(filePath) {
+  const fd = await open(filePath, 'r')
+  try {
+    const buffer = Buffer.alloc(12)
+    const { bytesRead } = await fd.read(buffer, 0, buffer.length, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    await fd.close()
+  }
+}
+
+function validImageSignature(filePath, signature) {
+  const ext = path.extname(filePath).toLowerCase()
+  const hex = signature.toString('hex')
+  if (ext === '.webp') return /^52494646[0-9a-f]{8}57454250/i.test(hex)
+  if (ext === '.jpg' || ext === '.jpeg') return /^ffd8ff/i.test(hex)
+  if (ext === '.png') return /^89504e470d0a1a0a/i.test(hex)
+  if (ext === '.gif') return /^474946383761|^474946383961/i.test(hex)
+  return true
+}
+
+async function checkImageFile(filePath) {
+  let info
+  try {
+    info = await stat(filePath)
+  } catch (error) {
+    return { ok: false, reason: `missing: ${error.message}` }
+  }
+  if (!info.isFile() || info.size <= 0) return { ok: false, reason: 'empty_or_missing' }
+  const signature = await imageSignature(filePath)
+  if (!validImageSignature(filePath, signature)) return { ok: false, reason: 'bad_signature' }
+  if (await hasIdentify()) {
+    try {
+      const { stdout } = await execFileAsync('identify', ['-quiet', '-format', '%w %h', filePath])
+      const [width, height] = stdout.trim().split(/\s+/).map(Number)
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return { ok: false, reason: 'invalid_dimensions' }
+      }
+      return { ok: true, width, height, mode: 'imagemagick' }
+    } catch (error) {
+      return { ok: false, reason: `decode_failed: ${error.message}` }
+    }
+  }
+  return { ok: true, mode: 'signature' }
+}
+
+function normalizeImageCheckStatus(imageCheck) {
+  const status = String(imageCheck?.status || 'unknown')
+  return ['passed', 'failed', 'pending', 'checking', 'unknown'].includes(status) ? status : 'unknown'
+}
+
+function chapterImageCheckTag(chapter) {
+  const imageCheck = chapter?.imageCheck || {}
+  const status = normalizeImageCheckStatus(imageCheck)
+  return {
+    status,
+    checkedAt: String(imageCheck.checkedAt || ''),
+    total: Number(imageCheck.total || 0),
+    failed: Number(imageCheck.failed || 0),
+  }
+}
+
+function emptyImageCheckSummary() {
+  return {
+    passed: 0,
+    failed: 0,
+    checking: 0,
+    pending: 0,
+    unknown: 0,
+    total: 0,
+  }
+}
+
+function addImageCheckSummary(summary, tag) {
+  const status = normalizeImageCheckStatus(tag)
+  summary[status] = (summary[status] || 0) + 1
+  summary.total += 1
+  return summary
+}
+
+async function writeChapterImageCheck(local, imageCheck, jobId = 'image-check') {
+  if (!local?.metadataChapterFile) throw new Error('章节元数据不存在')
+  await withLock(fileLocks, path.resolve(local.metadataChapterFile), async () => {
+    const current = JSON.parse(await readFile(local.metadataChapterFile, 'utf8'))
+    current.imageCheck = imageCheck
+    await atomicWriteFile(local.metadataChapterFile, JSON.stringify(current, null, 2), { jobId })
+    const metadata = JSON.parse(await readFile(local.metadataChapterFile, 'utf8'))
+    if (chapterUuidOf(metadata) !== chapterUuidOf(local.chapter)) throw new Error('章节元数据检查状态写入校验失败')
+    if (!metadata.imageCheck?.status) throw new Error('章节图片检查状态缺失')
+    local.chapter = current
+  })
+}
+
+async function runImageCheckJob(job) {
+  try {
+    updateImageCheckJob(job, { status: 'running', message: '读取章节文件' })
+    const local = await findLocalChapter(job.comicPathWord, job.chapterUuid)
+    if (!local?.files?.length) {
+      throw new Error('找不到本地章节图片')
+    }
+    await writeChapterImageCheck(local, {
+      status: 'checking',
+      checkedAt: '',
+      checkerVersion: 1,
+      mode: await hasIdentify() ? 'imagemagick' : 'signature',
+      total: local.files.length,
+      passed: 0,
+      failed: 0,
+      failedFiles: [],
+    }, job.id)
+    updateImageCheckJob(job, { total: local.files.length, checked: 0, failed: 0, message: '检查图片' })
+    const failedFiles = []
+    let passed = 0
+    for (const [index, file] of local.files.entries()) {
+      const result = await checkImageFile(file)
+      if (result.ok) {
+        passed += 1
+      } else {
+        failedFiles.push({
+          index: index + 1,
+          file: path.basename(file),
+          reason: result.reason,
+        })
+      }
+      updateImageCheckJob(job, {
+        checked: index + 1,
+        failed: failedFiles.length,
+        message: `检查图片 ${index + 1}/${local.files.length}`,
+      })
+    }
+    const imageCheck = {
+      status: failedFiles.length ? 'failed' : 'passed',
+      checkedAt: new Date().toISOString(),
+      checkerVersion: 1,
+      mode: await hasIdentify() ? 'imagemagick' : 'signature',
+      total: local.files.length,
+      passed,
+      failed: failedFiles.length,
+      failedFiles,
+    }
+    await writeChapterImageCheck(local, imageCheck, job.id)
+    updateImageCheckJob(job, {
+      status: failedFiles.length ? 'failed' : 'completed',
+      checked: local.files.length,
+      failed: failedFiles.length,
+      message: failedFiles.length ? `发现异常图片 ${failedFiles.length}` : '检查通过',
+    })
+  } catch (error) {
+    updateImageCheckJob(job, { status: 'failed', message: error.message })
+  }
+}
+
+async function enqueueInventoryImageChecks() {
+  const downloadedComics = await listDownloaded()
+  const queued = []
+  const skipped = []
+  for (const comic of downloadedComics) {
+    for (const chapterUuid of comic.chapterUuids || []) {
+      const tag = comic.chapterImageChecks?.[chapterUuid]
+      if (tag?.status === 'passed') {
+        skipped.push({ comicPathWord: comic.comicPathWord, chapterUuid, reason: 'passed' })
+        continue
+      }
+      const job = enqueueImageCheck({
+        comicPathWord: comic.comicPathWord,
+        chapterUuid,
+        chapterTitle: chapterUuid,
+        reason: 'inventory-full-check',
+      })
+      if (job) queued.push(publicImageCheckJob(job))
+    }
+  }
+  return { queued, skipped, summary: latestImageCheckSummary() }
+}
+
 async function runWithConcurrency(items, concurrency, worker) {
   let cursor = 0
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
@@ -1735,6 +2037,7 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
         },
       })
       updateJob(job, { stage: 'metadata_ready', message: `元数据写入完成 ${chapterTitle}` })
+      enqueueImageCheck({ comicPathWord, chapterUuid, chapterTitle, reason: 'download-completed' })
       job.doneChapters += 1
       updateJob(job, { doneChapters: job.doneChapters })
       if (config.chapterDownloadIntervalSec > 0) await sleep(config.chapterDownloadIntervalSec)
@@ -1791,6 +2094,8 @@ async function route(req, res) {
       return
     }
     if (pathname === '/api/jobs' && req.method === 'GET') return json(res, 200, publicJobs())
+    if (pathname === '/api/image-check/status' && req.method === 'GET') return json(res, 200, latestImageCheckSummary())
+    if (pathname === '/api/image-check/inventory' && req.method === 'POST') return json(res, 202, await enqueueInventoryImageChecks())
     if (pathname === '/api/inventory-update' && req.method === 'GET') {
       return json(res, 200, latestInventoryUpdate() || null)
     }

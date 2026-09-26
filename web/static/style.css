@@ -456,6 +456,22 @@ h2 {
   padding: 5px 8px;
 }
 
+.badge.image-check-passed {
+  background: #2da44e;
+}
+
+.badge.image-check-failed {
+  background: #c92a2a;
+}
+
+.badge.image-check-checking {
+  background: #0969da;
+}
+
+.badge.image-check-unknown {
+  background: #6e7781;
+}
+
 .card-read {
   bottom: 10px;
   font-size: 12px;
