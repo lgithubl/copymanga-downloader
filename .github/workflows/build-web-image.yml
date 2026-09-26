@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - windows-portable-build
     paths:
       - "web/**"
       - "Dockerfile.web"

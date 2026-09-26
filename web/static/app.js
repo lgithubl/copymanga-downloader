@@ -170,8 +170,8 @@ const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'rea
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
 const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
-  audio: { label: '音频', unit: '个音频', accept: '.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,audio/*', source: true },
-  video: { label: '视频', unit: '个视频', accept: '.m4v,.mkv,.mov,.mp4,.webm,video/*', source: true },
+  audio: { label: '音频', unit: '个音频', accept: '.zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,audio/*', source: true },
+  video: { label: '视频', unit: '个视频', accept: '.zip,.m4v,.mkv,.mov,.mp4,.webm,video/*', source: true },
 }
 const stageLabels = {
   created: '创建完成',

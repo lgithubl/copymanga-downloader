@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -85,7 +86,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const fileInputs = files.filter((file) => file.buffer?.length)
     if (!sourcePath && !fileInputs.length) throw new Error('sourcePath or file is required')
 
-    const seedTitle = collectionTitle || (sourcePath ? path.basename(sourcePath) : path.basename(fileInputs[0]?.filename || type, path.extname(fileInputs[0]?.filename || '')))
+    const seedTitle = collectionTitle || seedTitleForImport({ sourcePath, fileInputs })
     const itemId = requestedItemId || uniqueItemId(seedTitle)
     const existing = requestedItemId && await pathExists(metadataPath(itemId))
       ? await readMetadata(itemId)
@@ -99,22 +100,25 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         updatedAt: new Date().toISOString(),
       })
 
-    await mkdir(filesPath(itemId), { recursive: true })
-    const units = mediaUnitsForItem(existing)
-    const imported = []
+    await mkdir(itemPath(itemId), { recursive: true })
     if (sourcePath) {
-      const sources = await collectSourceFiles(sourcePath)
-      for (const source of sources) {
-        imported.push(await moveSourceIntoItem({ itemId, source, existingUnits: units }))
-      }
+      const source = path.resolve(sourcePath)
+      await assertAllowedSource(source)
+      await assertMediaRoot(source)
+      await importSourceRoot({ itemId, source, preferredName: path.basename(source) })
     }
     for (const file of fileInputs) {
-      if (!isSupportedName(file.filename)) continue
-      imported.push(await writeUploadIntoItem({ itemId, file, existingUnits: units }))
+      if (isZipName(file.filename)) {
+        const source = await extractZipUpload(file)
+        await assertMediaRoot(source)
+        await importSourceRoot({ itemId, source, preferredName: path.basename(file.filename, path.extname(file.filename)) })
+      } else if (isSupportedName(file.filename)) {
+        await writeUploadIntoItem({ itemId, file })
+      }
     }
-    if (!imported.length) throw new Error(`没有找到支持的${label}文件`)
 
-    units.push(...imported)
+    const units = await scanMediaUnits(itemId)
+    if (!units.length) throw new Error(`没有找到支持的${label}文件`)
     units.sort((a, b) => String(a.fileName).localeCompare(String(b.fileName), undefined, { numeric: true }))
     const next = normalizeItem({
       ...existing,
@@ -191,12 +195,13 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return current
   }
 
-  async function collectSourceFiles(sourcePath) {
-    const source = path.resolve(sourcePath)
-    await assertAllowedSource(source)
+  async function assertMediaRoot(source) {
     const info = await stat(source)
-    const files = info.isDirectory() ? await walkMediaFiles(source) : [source]
-    return files.filter(isSupportedName).sort((a, b) => path.basename(a).localeCompare(path.basename(b), undefined, { numeric: true }))
+    const root = info.isDirectory() ? source : path.dirname(source)
+    const candidates = info.isDirectory() ? await walkFiles(source) : [source]
+    const mediaFiles = candidates.filter(isSupportedName)
+    if (!mediaFiles.length) throw new Error(`没有找到支持的${label}文件`)
+    return { root, mediaFiles }
   }
 
   async function assertAllowedSource(source) {
@@ -214,19 +219,99 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       .filter(Boolean)
   }
 
-  async function walkMediaFiles(dir) {
+  async function walkFiles(dir) {
     const result = []
     const entries = await readdir(dir, { withFileTypes: true })
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name)
-      if (entry.isDirectory()) result.push(...await walkMediaFiles(fullPath))
+      if (entry.isDirectory()) result.push(...await walkFiles(fullPath))
       else if (entry.isFile()) result.push(fullPath)
     }
     return result
   }
 
-  async function moveSourceIntoItem({ itemId, source, existingUnits }) {
-    const target = await uniqueTargetPath({ itemId, fileName: path.basename(source), existingUnits })
+  async function importSourceRoot({ itemId, source, preferredName }) {
+    const info = await stat(source)
+    if (info.isDirectory()) {
+      await importDirectoryRoot({ itemId, source, preferredName })
+    } else {
+      await importSingleFile({ itemId, source, relativeName: path.basename(source) })
+    }
+  }
+
+  async function importDirectoryRoot({ itemId, source, preferredName }) {
+    await mkdir(itemPath(itemId), { recursive: true })
+    if (!await pathExists(filesPath(itemId))) {
+      await movePath(source, filesPath(itemId))
+      return
+    }
+    const entries = await readdir(source, { withFileTypes: true })
+    for (const entry of entries) {
+      const from = path.join(source, entry.name)
+      const to = await uniqueImportTarget(path.join(filesPath(itemId), safeSegment(entry.name || preferredName || type)))
+      await movePath(from, to)
+    }
+  }
+
+  async function importSingleFile({ itemId, source, relativeName }) {
+    const target = await uniqueImportTarget(path.join(filesPath(itemId), safeRelativePath(relativeName || path.basename(source))))
+    await mkdir(path.dirname(target), { recursive: true })
+    await movePath(source, target)
+  }
+
+  async function writeUploadIntoItem({ itemId, file }) {
+    const target = await uniqueImportTarget(path.join(filesPath(itemId), safeRelativePath(file.filename || `${type}-upload`)))
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, file.buffer)
+  }
+
+  async function extractZipUpload(file) {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), `copymanga-${type}-zip-`))
+    const zipPath = path.join(tempDir, safeSegment(file.filename || `${type}.zip`))
+    const extractDir = path.join(tempDir, 'extract')
+    await mkdir(extractDir, { recursive: true })
+    await writeFile(zipPath, file.buffer)
+    await assertSafeZip(zipPath)
+    await execFileAsync('unzip', ['-q', zipPath, '-d', extractDir])
+    return extractDir
+  }
+
+  async function assertSafeZip(zipPath) {
+    const { stdout } = await execFileAsync('unzip', ['-Z1', zipPath])
+    const names = stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+    if (!names.length) throw new Error('zip 文件为空')
+    for (const name of names) {
+      const segments = name.split(/[\\/]+/).filter(Boolean)
+      if (
+        path.isAbsolute(name) ||
+        /^[a-zA-Z]:/.test(name) ||
+        segments.some((segment) => segment === '..')
+      ) {
+        throw new Error(`zip 内包含不安全路径：${name}`)
+      }
+    }
+  }
+
+  async function scanMediaUnits(itemId) {
+    if (!await pathExists(filesPath(itemId))) return []
+    const files = (await walkFiles(filesPath(itemId)))
+      .filter(isSupportedName)
+      .sort((a, b) => relativePath(itemId, a).localeCompare(relativePath(itemId, b), undefined, { numeric: true }))
+    return Promise.all(files.map((filePath) => unitFromFile({ itemId, filePath })))
+  }
+
+  async function uniqueImportTarget(candidate) {
+    const parsed = path.parse(candidate)
+    let target = candidate
+    let index = 2
+    while (await pathExists(target)) {
+      target = path.join(parsed.dir, `${parsed.name}-${index}${parsed.ext}`)
+      index += 1
+    }
+    return target
+  }
+
+  async function movePath(source, target) {
     await mkdir(path.dirname(target), { recursive: true })
     try {
       await rename(source, target)
@@ -234,39 +319,19 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       if (error.code !== 'EXDEV') throw error
       await execFileAsync('mv', [source, target])
     }
-    return unitFromFile({ itemId, filePath: target })
-  }
-
-  async function writeUploadIntoItem({ itemId, file, existingUnits }) {
-    const target = await uniqueTargetPath({ itemId, fileName: file.filename || `${type}-upload`, existingUnits })
-    await mkdir(path.dirname(target), { recursive: true })
-    await writeFile(target, file.buffer)
-    return unitFromFile({ itemId, filePath: target })
-  }
-
-  async function uniqueTargetPath({ itemId, fileName, existingUnits }) {
-    const parsed = path.parse(safeSegment(fileName || `${type}-file`))
-    const base = parsed.name || type
-    const ext = parsed.ext || ''
-    const used = new Set(existingUnits.map((unit) => path.resolve(unit.managedPath || '')))
-    let candidate = path.join(filesPath(itemId), `${base}${ext}`)
-    let index = 2
-    while (used.has(path.resolve(candidate)) || await pathExists(candidate)) {
-      candidate = path.join(filesPath(itemId), `${base}-${index}${ext}`)
-      index += 1
-    }
-    return candidate
   }
 
   async function unitFromFile({ itemId, filePath }) {
     const info = await stat(filePath)
-    const fileName = path.basename(filePath)
-    const unitId = uniqueUnitId(filePath)
+    const fileName = relativePath(itemId, filePath)
+    const title = path.basename(fileName, path.extname(fileName))
+    const unitId = uniqueUnitId(fileName)
     return normalizeMediaUnit({
       type,
       unitId,
-      title: path.basename(fileName, path.extname(fileName)),
+      title,
       fileName,
+      relativePath: fileName,
       managedPath: filePath,
       streamPath: streamPathForManagedPath(filePath),
       streamUrl: streamUrlForPath(filePath),
@@ -276,6 +341,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       updatedAt: info.mtime.toISOString(),
       createdAt: new Date().toISOString(),
     })
+  }
+
+  function relativePath(itemId, filePath) {
+    return path.relative(filesPath(itemId), filePath).split(path.sep).join('/')
   }
 
   function streamUrlForPath(managedPath) {
@@ -341,6 +410,7 @@ function normalizeMediaUnit(unit) {
     title: String(unit?.title || unit?.fileName || unit?.unitId || 'Media'),
     index: Number(unit?.index || 0),
     fileName: String(unit?.fileName || ''),
+    relativePath: String(unit?.relativePath || unit?.fileName || ''),
     managedPath: String(unit?.managedPath || ''),
     streamPath: String(unit?.streamPath || ''),
     streamUrl: String(unit?.streamUrl || ''),
@@ -370,6 +440,14 @@ function uniqueUnitId(filePath) {
   return `${slug(path.basename(filePath, path.extname(filePath)))}_${createHash('sha1').update(filePath).digest('hex').slice(0, 8)}`
 }
 
+function seedTitleForImport({ sourcePath, fileInputs }) {
+  if (sourcePath) return path.basename(sourcePath, path.extname(sourcePath)) || 'media'
+  const firstZip = fileInputs.find((file) => isZipName(file.filename))
+  if (firstZip) return path.basename(firstZip.filename, path.extname(firstZip.filename)) || 'media'
+  const firstFile = fileInputs[0]?.filename || 'media'
+  return path.basename(firstFile, path.extname(firstFile)) || 'media'
+}
+
 function slug(value) {
   return String(value || 'media')
     .normalize('NFKD')
@@ -378,6 +456,18 @@ function slug(value) {
     .replace(/\s+/g, '-')
     .toLowerCase()
     .slice(0, 64) || 'media'
+}
+
+function safeRelativePath(value) {
+  return String(value || 'media')
+    .split(/[\\/]+/)
+    .filter((segment) => segment && segment !== '.' && segment !== '..')
+    .map((segment) => segment.replace(/:/g, '：').replace(/\*/g, '⭐').replace(/\?/g, '？').replace(/"/g, "'").replace(/</g, '《').replace(/>/g, '》').replace(/\|/g, '丨'))
+    .join('/') || 'media'
+}
+
+function isZipName(filePath) {
+  return path.extname(filePath || '').toLowerCase() === '.zip'
 }
 
 function encodePath(value) {

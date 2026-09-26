@@ -12,6 +12,10 @@ on:
         description: Docker image to run
         required: true
         default: ghcr.io/lgithubl/copymanga-downloader:web
+      media_stream_image:
+        description: Media stream widget image to run
+        required: true
+        default: ghcr.io/lgithubl/media-stream-widget:latest
       minutes:
         description: Minutes to keep the page alive
         required: true
@@ -41,35 +45,57 @@ jobs:
           IMAGE="${{ inputs.image }}"
           if [ -z "$IMAGE" ]; then IMAGE="ghcr.io/lgithubl/copymanga-downloader:web"; fi
           docker pull "$IMAGE"
+          MEDIA_IMAGE="${{ inputs.media_stream_image }}"
+          if [ -z "$MEDIA_IMAGE" ]; then MEDIA_IMAGE="ghcr.io/lgithubl/media-stream-widget:latest"; fi
+          docker pull "$MEDIA_IMAGE"
 
       - name: Start copymanga web
         run: |
-          mkdir -p "$RUNNER_TEMP/copymanga-data"
+          mkdir -p "$RUNNER_TEMP/copymanga-data/library/media" "$RUNNER_TEMP/copymanga-input"
+          cat >"$RUNNER_TEMP/copymanga-data/config.json" <<'JSON'
+          {
+            "mediaStreamApiBase": "/media-stream",
+            "mediaManagedBasePath": "/data/library/media",
+            "mediaStreamBasePath": "/media",
+            "mediaImportSourceRoots": "/input"
+          }
+          JSON
           IMAGE="${{ inputs.image }}"
           if [ -z "$IMAGE" ]; then IMAGE="ghcr.io/lgithubl/copymanga-downloader:web"; fi
+          MEDIA_IMAGE="${{ inputs.media_stream_image }}"
+          if [ -z "$MEDIA_IMAGE" ]; then MEDIA_IMAGE="ghcr.io/lgithubl/media-stream-widget:latest"; fi
+          docker run -d --name media-stream-widget \
+            -p 8081:8080 \
+            -v "$RUNNER_TEMP/copymanga-data/library/media:/media:ro" \
+            "$MEDIA_IMAGE"
           docker run -d --name copymanga-web \
             -p 8080:8080 \
             -v "$RUNNER_TEMP/copymanga-data:/data" \
+            -v "$RUNNER_TEMP/copymanga-input:/input" \
             "$IMAGE"
 
       - name: Wait for app
         run: |
           for i in $(seq 1 90); do
-            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null && curl -fsS http://127.0.0.1:8081/health >/dev/null; then
               exit 0
             fi
             docker logs --tail 80 copymanga-web || true
+            docker logs --tail 80 media-stream-widget || true
             sleep 2
           done
           docker logs copymanga-web || true
+          docker logs media-stream-widget || true
           exit 1
 
       - name: HTTP smoke test
         run: |
           curl -fsS http://127.0.0.1:8080/health | grep -q '"ok":true'
+          curl -fsS http://127.0.0.1:8081/health | grep -q '"ok":true'
           curl -fsS http://127.0.0.1:8080/ | grep -q '拷贝漫画下载器'
           curl -fsS http://127.0.0.1:8080/api/jobs | grep -q '^\['
           curl -fsS http://127.0.0.1:8080/api/downloaded | grep -q '^\['
+          curl -fsS http://127.0.0.1:8080/api/config | grep -q '"/media-stream"'
 
       - name: Start authenticated proxy
         id: auth
@@ -89,6 +115,8 @@ jobs:
           import urllib.request
 
           TARGET = "http://127.0.0.1:8080"
+          STREAM_TARGET = "http://127.0.0.1:8081"
+          STREAM_PREFIX = "/media-stream"
           USERNAME = os.environ["BASIC_USER"]
           PASSWORD = os.environ["BASIC_PASS"]
           EXPECTED = "Basic " + base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
@@ -117,8 +145,16 @@ jobs:
                       if k.lower() not in HOP_BY_HOP and k.lower() != "host"
                   }
                   headers.pop("Authorization", None)
+                  target = TARGET
+                  request_path = self.path
+                  if self.path == STREAM_PREFIX:
+                      target = STREAM_TARGET
+                      request_path = "/"
+                  elif self.path.startswith(STREAM_PREFIX + "/"):
+                      target = STREAM_TARGET
+                      request_path = self.path[len(STREAM_PREFIX):]
                   req = urllib.request.Request(
-                      TARGET + self.path,
+                      target + request_path,
                       data=body,
                       headers=headers,
                       method=self.command,
@@ -126,17 +162,16 @@ jobs:
                   try:
                       with urllib.request.urlopen(req, timeout=300) as resp:
                           self.send_response(resp.status)
-                          is_stream = self.path.startswith("/api/events") or resp.headers.get("Content-Type", "").startswith("text/event-stream")
+                          is_stream = request_path.startswith("/api/stream/") or self.path.startswith("/api/events") or resp.headers.get("Content-Type", "").startswith("text/event-stream")
                           if is_stream:
                               self.close_connection = True
                               for k, v in resp.headers.items():
                                   if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
                                       self.send_header(k, v)
-                              self.send_header("Cache-Control", "no-cache")
                               self.send_header("Connection", "close")
                               self.end_headers()
                               while True:
-                                  chunk = resp.readline()
+                                  chunk = resp.read(1024 * 256)
                                   if not chunk:
                                       break
                                   self.wfile.write(chunk)
@@ -172,6 +207,7 @@ jobs:
           echo $! >/tmp/basic_proxy.pid
           sleep 1
           curl -fsS -u "$USERNAME:$PASSWORD" http://127.0.0.1:8090/health >/dev/null
+          curl -fsS -u "$USERNAME:$PASSWORD" http://127.0.0.1:8090/media-stream/health >/dev/null
 
       - name: Start Cloudflare quick tunnel
         id: tunnel
@@ -237,6 +273,7 @@ jobs:
         if: always()
         run: |
           docker logs copymanga-web >/tmp/copymanga-web-container.log 2>&1 || true
+          docker logs media-stream-widget >/tmp/media-stream-widget-container.log 2>&1 || true
           cp /tmp/cloudflared.log /tmp/cloudflared.log.copy 2>/dev/null || true
           cp /tmp/basic_proxy.log /tmp/basic_proxy.log.copy 2>/dev/null || true
 
@@ -247,6 +284,7 @@ jobs:
           name: copymanga-web-interactive-logs
           path: |
             /tmp/copymanga-web-container.log
+            /tmp/media-stream-widget-container.log
             /tmp/cloudflared.log.copy
             /tmp/basic_proxy.log.copy
           if-no-files-found: warn
