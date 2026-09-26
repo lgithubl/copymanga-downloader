@@ -1073,6 +1073,44 @@ h2 {
   overflow: auto;
 }
 
+.media-reader-content.media-stream {
+  align-items: center;
+  display: grid;
+  min-height: calc(100vh - 154px);
+  overflow: auto;
+  padding: 24px;
+}
+
+.stream-player {
+  display: grid;
+  gap: 14px;
+  margin: 0 auto;
+  max-width: 1040px;
+  width: min(100%, 1040px);
+}
+
+.stream-player-title {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stream-player audio,
+.stream-player video {
+  background: #101418;
+  border-radius: 8px;
+  display: block;
+  width: 100%;
+}
+
+.stream-player audio {
+  background: transparent;
+}
+
+.stream-player video {
+  max-height: calc(100vh - 260px);
+}
+
 .media-image-list {
   display: grid;
   gap: 14px;

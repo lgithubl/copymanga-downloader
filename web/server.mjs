@@ -8,6 +8,7 @@ import { Buffer } from 'node:buffer'
 import { promisify } from 'node:util'
 import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems } from './library/registry.mjs'
 import { createEpubHandler } from './library/types/epub.mjs'
+import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -159,6 +160,10 @@ function defaultConfig() {
     downloadDir: DOWNLOAD_DIR,
     metadataDir: '',
     exportDir: path.join(DATA_DIR, 'exports'),
+    mediaStreamApiBase: 'http://127.0.0.1:8080',
+    mediaManagedBasePath: path.join(DATA_DIR, 'library', 'media'),
+    mediaStreamBasePath: '/media',
+    mediaImportSourceRoots: '/input',
     apiDomainMode: 'Default',
     customApiDomain: DEFAULT_API_DOMAIN,
     downloadFormat: 'Webp',
@@ -198,6 +203,10 @@ function normalizeConfig(value) {
     downloadDir: DOWNLOAD_DIR,
     metadataDir: String(value?.metadataDir || defaults.metadataDir),
     exportDir: String(value?.exportDir || defaults.exportDir),
+    mediaStreamApiBase: String(value?.mediaStreamApiBase || defaults.mediaStreamApiBase).trim() || defaults.mediaStreamApiBase,
+    mediaManagedBasePath: String(value?.mediaManagedBasePath || defaults.mediaManagedBasePath).trim() || defaults.mediaManagedBasePath,
+    mediaStreamBasePath: String(value?.mediaStreamBasePath || defaults.mediaStreamBasePath).trim() || defaults.mediaStreamBasePath,
+    mediaImportSourceRoots: String(value?.mediaImportSourceRoots || defaults.mediaImportSourceRoots).trim() || defaults.mediaImportSourceRoots,
     apiDomainMode,
     customApiDomain: String(value?.customApiDomain || value?.apiDomain || defaults.customApiDomain).trim() || defaults.customApiDomain,
     apiDomain: apiDomainMode === 'Custom'
@@ -1807,10 +1816,9 @@ async function route(req, res) {
       const form = await readMultipart(req)
       const files = form.files.filter((item) => item.buffer?.length)
       const file = files.find((item) => item.name === 'file') || files[0]
-      if (!file) return json(res, 400, { error: 'file is required' })
       return json(res, 201, await handler.importItem({
-        fileName: file.filename,
-        buffer: file.buffer,
+        fileName: file?.filename || '',
+        buffer: file?.buffer || Buffer.alloc(0),
         files,
         fields: form.fields,
       }))
@@ -1983,6 +1991,8 @@ async function route(req, res) {
 }
 
 registerLibraryHandler(createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExists, moveAside }))
+registerLibraryHandler(createStreamMediaHandler({ type: 'audio', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config }))
+registerLibraryHandler(createStreamMediaHandler({ type: 'video', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config }))
 
 await mkdir(DOWNLOAD_DIR, { recursive: true })
 config = await loadConfig()

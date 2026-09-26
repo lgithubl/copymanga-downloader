@@ -292,6 +292,8 @@
               <label>类型
                 <select id="media-import-type">
                   <option value="epub">EPUB</option>
+                  <option value="audio">音频</option>
+                  <option value="video">视频</option>
                 </select>
               </label>
               <label>已有合集
@@ -302,7 +304,10 @@
               <label>合集名称
                 <input id="media-import-title" placeholder="新建合集时必填，选择已有合集时可改名" />
               </label>
-              <label>EPUB 文件
+              <label>来源路径
+                <input id="media-import-source-path" placeholder="/input/album 或 /input/movie.mp4" />
+              </label>
+              <label id="media-import-files-label">EPUB 文件
                 <input id="media-import-files" type="file" accept=".epub,application/epub+zip" multiple />
               </label>
               <button id="media-import-submit">导入 EPUB</button>
@@ -413,6 +418,12 @@
               <label>已读颜色<input id="config-read-color" type="color" /></label>
               <label>未读颜色<input id="config-unread-color" type="color" /></label>
               <label>更新库存处理间隔<input id="config-update-downloaded-comics-interval-sec" type="number" min="0" step="1" /></label>
+
+              <h3>流媒体相关</h3>
+              <label>流媒体服务地址<input id="config-media-stream-api-base" placeholder="http://127.0.0.1:8080" /></label>
+              <label>媒体受管目录<input id="config-media-managed-base-path" /></label>
+              <label>流媒体映射目录<input id="config-media-stream-base-path" placeholder="/media" /></label>
+              <label>允许导入来源<input id="config-media-import-source-roots" placeholder="/input,/downloads" /></label>
 
               <h3>导出相关</h3>
               <label>导出目录<input id="config-export-dir" /></label>
