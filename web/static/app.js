@@ -126,6 +126,7 @@ const els = {
   configMediaManagedBasePath: document.querySelector('#config-media-managed-base-path'),
   configMediaStreamBasePath: document.querySelector('#config-media-stream-base-path'),
   configMediaImportSourceRoots: document.querySelector('#config-media-import-source-roots'),
+  configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
   configMergePdfFmt: document.querySelector('#config-merge-pdf-fmt'),
@@ -950,6 +951,7 @@ async function loadConfig() {
   els.configMediaManagedBasePath.value = config.mediaManagedBasePath || ''
   els.configMediaStreamBasePath.value = config.mediaStreamBasePath || ''
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
+  els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || 'srt,vtt,crt'
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
   els.configMergePdfFmt.value = config.mergePdfFmt
@@ -1907,6 +1909,7 @@ els.configSave.addEventListener('click', async () => {
         mediaManagedBasePath: els.configMediaManagedBasePath.value,
         mediaStreamBasePath: els.configMediaStreamBasePath.value,
         mediaImportSourceRoots: els.configMediaImportSourceRoots.value,
+        mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,
         mergePdfFmt: els.configMergePdfFmt.value,

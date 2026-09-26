@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile)
 const AUDIO_EXTENSIONS = ['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav', 'webm']
 const VIDEO_EXTENSIONS = ['m4v', 'mkv', 'mov', 'mp4', 'webm']
 const IMAGE_EXTENSIONS = ['gif', 'jpg', 'jpeg', 'png', 'webp']
-const SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt']
+const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt']
 
 export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExists, getConfig }) {
   const extensions = type === 'video'
@@ -561,7 +561,16 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
 
   function isSubtitleName(filePath) {
     const ext = path.extname(filePath).slice(1).toLowerCase()
-    return SUBTITLE_EXTENSIONS.includes(ext)
+    return subtitleExtensions().includes(ext)
+  }
+
+  function subtitleExtensions() {
+    const configured = getConfig().mediaSubtitleExtensions
+    const input = Array.isArray(configured) ? configured : String(configured || '').split(/[,\s，]+/)
+    const values = [...new Set(input
+      .map((item) => String(item || '').trim().replace(/^\./, '').toLowerCase())
+      .filter(Boolean))]
+    return values.length ? values : DEFAULT_SUBTITLE_EXTENSIONS
   }
 
   function subtitlesByMediaKey(itemId, subtitleFiles) {

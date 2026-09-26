@@ -170,6 +170,7 @@ function defaultConfig() {
     mediaManagedBasePath: path.join(DATA_DIR, 'library', 'media'),
     mediaStreamBasePath: '/media',
     mediaImportSourceRoots: '/input',
+    mediaSubtitleExtensions: 'srt,vtt,crt',
     apiDomainMode: 'Default',
     customApiDomain: DEFAULT_API_DOMAIN,
     downloadFormat: 'Webp',
@@ -213,6 +214,7 @@ function normalizeConfig(value) {
     mediaManagedBasePath: String(value?.mediaManagedBasePath || defaults.mediaManagedBasePath).trim() || defaults.mediaManagedBasePath,
     mediaStreamBasePath: String(value?.mediaStreamBasePath || defaults.mediaStreamBasePath).trim() || defaults.mediaStreamBasePath,
     mediaImportSourceRoots: String(value?.mediaImportSourceRoots || defaults.mediaImportSourceRoots).trim() || defaults.mediaImportSourceRoots,
+    mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     apiDomainMode,
     customApiDomain: String(value?.customApiDomain || value?.apiDomain || defaults.customApiDomain).trim() || defaults.customApiDomain,
     apiDomain: apiDomainMode === 'Custom'
@@ -254,6 +256,14 @@ function clampNumber(value, min, max, fallback) {
 function normalizeColor(value, fallback) {
   const text = String(value || '').trim()
   return /^#[0-9a-f]{6}$/i.test(text) ? text : fallback
+}
+
+function normalizeExtensionList(value, fallback) {
+  const input = Array.isArray(value) ? value : String(value || fallback || '').split(/[,\s，]+/)
+  const extensions = [...new Set(input
+    .map((item) => String(item || '').trim().replace(/^\./, '').toLowerCase())
+    .filter((item) => /^[a-z0-9]+$/.test(item)))]
+  return extensions.length ? extensions.join(',') : fallback
 }
 
 async function loadConfig() {
