@@ -213,7 +213,14 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
   }
 
   async function readMetadata(itemId) {
-    return normalizeItem(JSON.parse(await readFile(metadataPath(itemId), 'utf8')))
+    const metadata = normalizeItem(JSON.parse(await readFile(metadataPath(itemId), 'utf8')))
+    const repaired = await repairCoverUrls({
+      itemId,
+      item: metadata,
+      extractedRoot: path.join(itemPath(itemId), 'extracted'),
+    })
+    if (repaired.changed) await writeMetadata(itemId, repaired.item)
+    return repaired.item
   }
 
   async function writeMetadata(itemId, metadata) {
@@ -303,12 +310,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
         imageCount: imageResources.length,
       })
     }
-    const coverEntry = [...manifest.values()].find((entry) => (
-      /\bcover-image\b/.test(entry.properties || '') || /^cover/i.test(entry.id || '')
-    ))
-    const coverPath = coverEntry?.href
-      ? normalizeZipPath(path.posix.join(resourcePrefix, normalizeZipPath(path.posix.join(opfDir, coverEntry.href))))
-      : imageResources[0]?.resourcePath || ''
+    const coverPath = await resolveCoverPath({ extractedDir, manifest, opfDir, resourcePrefix, imageResources })
     const cover = coverPath
       ? `/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(coverPath)}`
       : ''
@@ -437,6 +439,118 @@ function epubMetadataToUnit({ unitId, fileName, metadata, preview }) {
     createdAt: new Date().toISOString(),
     updatedAt: metadata.updatedAt || new Date().toISOString(),
   })
+}
+
+async function repairCoverUrls({ itemId, item, extractedRoot }) {
+  let changed = false
+  const next = normalizeItem(item)
+  const repair = async (cover) => {
+    const resourcePath = coverResourcePath(cover)
+    if (!resourcePath || isImageResourcePath(resourcePath)) return cover
+    const imagePath = await imagePathFromHtmlResource({
+      readResource: async (target) => readTextFile(path.join(extractedRoot, target)),
+      htmlResourcePath: resourcePath,
+    })
+    return imagePath
+      ? `/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(imagePath)}`
+      : cover
+  }
+
+  const repairedCover = await repair(next.cover)
+  if (repairedCover !== next.cover) {
+    next.cover = repairedCover
+    changed = true
+  }
+  next.mediaUnits = []
+  for (const unit of mediaUnitsForItem(item)) {
+    const repairedUnitCover = await repair(unit.cover)
+    if (repairedUnitCover !== unit.cover) changed = true
+    next.mediaUnits.push(normalizeMediaUnit({ ...unit, cover: repairedUnitCover }))
+  }
+  if (!next.cover) {
+    const unitCover = next.mediaUnits.find((unit) => unit.cover)?.cover || ''
+    if (unitCover) {
+      next.cover = unitCover
+      changed = true
+    }
+  }
+  return { item: normalizeItem(next), changed }
+}
+
+async function resolveCoverPath({ extractedDir, manifest, opfDir, resourcePrefix = '', imageResources = [] }) {
+  const entries = [...manifest.values()]
+  const imageCover = entries.find((entry) => (
+    entry.href
+    && isImageMediaType(entry.mediaType)
+    && (/\bcover-image\b/i.test(entry.properties || '') || /^cover/i.test(entry.id || ''))
+  ))
+  if (imageCover?.href) {
+    return prefixedResourcePath({ opfDir, href: imageCover.href, resourcePrefix })
+  }
+
+  const coverEntry = entries.find((entry) => (
+    entry.href
+    && (/\bcover-image\b/i.test(entry.properties || '') || /^cover/i.test(entry.id || ''))
+  ))
+  if (coverEntry?.href) {
+    const coverPath = normalizeZipPath(path.posix.join(opfDir, coverEntry.href))
+    if (isImageMediaType(coverEntry.mediaType) || isImageResourcePath(coverPath)) {
+      return prefixedResourcePath({ opfDir, href: coverEntry.href, resourcePrefix })
+    }
+    if (isHtmlMediaType(coverEntry.mediaType) || /\.(?:xhtml|html?)$/i.test(coverPath)) {
+      const imagePath = await imagePathFromHtmlResource({
+        readResource: async (target) => readTextFile(path.join(extractedDir, target)),
+        htmlResourcePath: coverPath,
+      })
+      if (imagePath) {
+        return resourcePrefix ? normalizeZipPath(path.posix.join(resourcePrefix, imagePath)) : imagePath
+      }
+    }
+  }
+
+  return imageResources[0]?.resourcePath || ''
+}
+
+async function imagePathFromHtmlResource({ readResource, htmlResourcePath }) {
+  try {
+    const html = await readResource(htmlResourcePath)
+    const imageRef = firstHtmlImageRef(html)
+    if (!imageRef) return ''
+    return normalizeZipPath(path.posix.join(path.posix.dirname(htmlResourcePath), imageRef.split('#')[0]))
+  } catch {
+    return ''
+  }
+}
+
+function firstHtmlImageRef(html) {
+  const tag = /<(?:img|image)\b([^>]*)>/i.exec(html)?.[1] || ''
+  return attrValue(tag, 'src') || attrValue(tag, 'href') || attrValue(tag, 'xlink:href')
+}
+
+function prefixedResourcePath({ opfDir, href, resourcePrefix = '' }) {
+  const rawPath = normalizeZipPath(path.posix.join(opfDir, href))
+  return resourcePrefix ? normalizeZipPath(path.posix.join(resourcePrefix, rawPath)) : rawPath
+}
+
+function coverResourcePath(cover) {
+  try {
+    const parsed = new URL(String(cover || ''), 'http://local')
+    return normalizeZipPath(parsed.searchParams.get('path') || '')
+  } catch {
+    return ''
+  }
+}
+
+function isImageMediaType(value) {
+  return /^image\/(?:jpeg|jpg|png|gif|webp|svg\+xml)$/i.test(String(value || ''))
+}
+
+function isHtmlMediaType(value) {
+  return /^(?:application\/xhtml\+xml|text\/html)$/i.test(String(value || ''))
+}
+
+function isImageResourcePath(value) {
+  return /\.(?:jpe?g|png|gif|webp|svg)$/i.test(String(value || '').split('?')[0])
 }
 
 function sectionNavigation(sections, sectionId) {
