@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, rename, stat, writeFile } from 'node
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { atomicWriteJson, withFileLock } from '../atomic-json-store.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -61,8 +62,22 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   }
 
   async function writeMetadata(itemId, item) {
-    await mkdir(itemPath(itemId), { recursive: true })
-    await writeFile(metadataPath(itemId), JSON.stringify(normalizeItem(item), null, 2))
+    const file = metadataPath(itemId)
+    return withFileLock(file, () => writeMetadataUnlocked(itemId, item))
+  }
+
+  async function writeMetadataUnlocked(itemId, item) {
+    await atomicWriteJson(metadataPath(itemId), normalizeItem(item))
+  }
+
+  async function updateMetadata(itemId, mutate) {
+    const file = metadataPath(itemId)
+    return withFileLock(file, async () => {
+      const current = normalizeItem(JSON.parse(await readFile(file, 'utf8')))
+      const next = normalizeItem(await mutate(current))
+      await writeMetadataUnlocked(itemId, next)
+      return next
+    })
   }
 
   async function scanItems() {
@@ -199,25 +214,24 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   }
 
   async function updateItemTags(itemId, tags = []) {
-    const item = await readMetadata(itemId)
-    const next = normalizeItem({
+    return updateMetadata(itemId, (item) => ({
       ...item,
       tags: parseTags(tags),
       updatedAt: new Date().toISOString(),
-    })
-    await writeMetadata(itemId, next)
-    return next
+    }))
   }
 
   async function updateUnitTags(itemId, unitId, tags = []) {
-    const item = await readMetadata(itemId)
-    const units = mediaUnitsForItem(item)
-    const index = units.findIndex((unit) => unit.unitId === unitId)
-    if (index < 0) throw new Error(`Unit not found: ${unitId}`)
-    units[index] = normalizeMediaUnit({ ...units[index], tags: parseTags(tags) })
-    const next = normalizeItem({ ...item, mediaUnits: units, updatedAt: new Date().toISOString() })
-    await writeMetadata(itemId, next)
-    return units[index]
+    let updatedUnit
+    await updateMetadata(itemId, (item) => {
+      const units = mediaUnitsForItem(item)
+      const index = units.findIndex((unit) => unit.unitId === unitId)
+      if (index < 0) throw new Error(`Unit not found: ${unitId}`)
+      updatedUnit = normalizeMediaUnit({ ...units[index], tags: parseTags(tags) })
+      units[index] = updatedUnit
+      return { ...item, mediaUnits: units, updatedAt: new Date().toISOString() }
+    })
+    return updatedUnit
   }
 
   async function getProgress(itemId) {
