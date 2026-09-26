@@ -534,6 +534,7 @@ function createJob({ comicPathWord, chapterUuids, token, force = false, batchId 
   return {
     id,
     status: 'queued',
+    stage: 'created',
     comicPathWord,
     chapterUuids,
     chapterUuid,
@@ -547,6 +548,7 @@ function createJob({ comicPathWord, chapterUuids, token, force = false, batchId 
     doneChapters: 0,
     totalImages: 0,
     doneImages: 0,
+    images: [],
     message: '等待开始',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -569,6 +571,8 @@ function startJob(job) {
   job.doneChapters = 0
   job.totalImages = 0
   job.doneImages = 0
+  job.images = []
+  job.stage = 'created'
   job.message = '等待开始'
   job.updatedAt = new Date().toISOString()
   jobs.set(job.id, job)
@@ -606,6 +610,13 @@ function validateJobCompletion(job) {
   if (job.totalImages <= 0 || job.doneImages !== job.totalImages) {
     throw new Error(`图片完成数异常：${job.doneImages}/${job.totalImages || '?'}`)
   }
+}
+
+function updateJobImage(job, imageIndex, patch) {
+  const image = job.images?.[imageIndex]
+  if (!image) return
+  Object.assign(image, patch, { updatedAt: new Date().toISOString() })
+  updateJob(job, {})
 }
 
 function findChapter(comic, chapterUuid) {
@@ -1595,7 +1606,7 @@ async function moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, me
 
 async function runJob(job, { comicPathWord, chapterUuids, token, force = false }) {
   try {
-    updateJob(job, { status: 'running', message: '读取漫画信息' })
+    updateJob(job, { status: 'running', stage: 'fetching_comic', message: '读取漫画信息' })
     const comic = await getComic(comicPathWord)
     const comicTitle = cleanName(comic.comic?.name || comic.name || comicPathWord)
     const baseParams = {
@@ -1617,6 +1628,7 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
         if (!comicPathWordOf(metadata)) throw new Error('漫画元数据写入校验失败')
       },
     })
+    updateJob(job, { stage: 'comic_ready', message: '漫画信息已获取' })
 
     for (const chapterUuid of chapterUuids) {
       await withLock(chapterLocks, `${comicPathWord}:${chapterUuid}`, async () => {
@@ -1631,7 +1643,7 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
       const order = appOrderOf(chapterMeta, groupChapters.findIndex((item) => chapterUuidOf(item) === chapterUuid) + 1 || job.doneChapters + 1)
       updateJob(job, { chapterUuid, chapterTitle })
 
-      updateJob(job, { message: `读取章节 ${chapterTitle}` })
+      updateJob(job, { stage: 'fetching_chapter', message: `读取章节 ${chapterTitle}` })
       const chapter = await getChapter(comicPathWord, chapterUuid, token)
       const contents = chapter.chapter?.contents || []
       const words = chapter.chapter?.words || contents.map((_, index) => index)
@@ -1640,7 +1652,6 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
         if (!content?.url) throw new Error(`章节图片地址为空：${chapterTitle} #${index + 1}`)
       }
       job.totalImages += contents.length
-      updateJob(job, { totalImages: job.totalImages })
 
       const chapterDir = path.join(comicDir, formatPath(config.chapterDirFmt, {
         ...baseParams,
@@ -1652,23 +1663,48 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
       }))
       const metadataChapterFile = appChapterMetadataPath(comic, chapterUuid, chapterDir)
       const metadataChapterDir = path.dirname(metadataChapterFile)
+      const imageJobs = contents.map((content, i) => {
+        const imageUrl = String(content.url || '').replace('.c800x.', '.c1500x.')
+        const index = Number(words[i] ?? i) + 1
+        return {
+          chapterUuid,
+          chapterTitle,
+          index,
+          url: imageUrl,
+          filePath: path.join(chapterDir, `${String(index).padStart(3, '0')}.webp`),
+          status: 'pending',
+          error: '',
+          updatedAt: new Date().toISOString(),
+        }
+      })
+      const imageOffset = job.images.length
+      job.images.push(...imageJobs)
+      updateJob(job, { stage: 'chapter_ready', totalImages: job.totalImages, message: `章节图片已获取 ${chapterTitle}` })
+
       if (force) {
-        updateJob(job, { message: `移动旧章节 ${chapterTitle}` })
+        updateJob(job, { stage: 'preparing_chapter', message: `移动旧章节 ${chapterTitle}` })
         await moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterFile, metadataChapterDir })
       }
 
       const downloadedFiles = []
-      await runWithConcurrency(contents, config.imgConcurrency, async (content, i) => {
-        const imageUrl = String(content.url || '').replace('.c800x.', '.c1500x.')
-        const index = Number(words[i] ?? i) + 1
-        const filePath = path.join(chapterDir, `${String(index).padStart(3, '0')}.webp`)
-        const downloadedFile = await downloadImage(imageUrl, filePath)
-        downloadedFiles.push(downloadedFile)
-        job.doneImages += 1
-        updateJob(job, { doneImages: job.doneImages, message: `下载 ${chapterTitle} ${job.doneImages}/${job.totalImages}` })
-        if (config.imgDownloadIntervalSec > 0) await sleep(config.imgDownloadIntervalSec)
+      updateJob(job, { stage: 'downloading_images', message: `下载 ${chapterTitle} ${job.doneImages}/${job.totalImages}` })
+      await runWithConcurrency(imageJobs, config.imgConcurrency, async (imageJob, i) => {
+        const absoluteImageIndex = imageOffset + i
+        updateJobImage(job, absoluteImageIndex, { status: 'running', error: '' })
+        try {
+          const downloadedFile = await downloadImage(imageJob.url, imageJob.filePath)
+          downloadedFiles.push(downloadedFile)
+          job.doneImages += 1
+          updateJobImage(job, absoluteImageIndex, { status: 'completed', filePath: downloadedFile })
+          updateJob(job, { doneImages: job.doneImages, message: `下载 ${chapterTitle} ${job.doneImages}/${job.totalImages}` })
+          if (config.imgDownloadIntervalSec > 0) await sleep(config.imgDownloadIntervalSec)
+        } catch (error) {
+          updateJobImage(job, absoluteImageIndex, { status: 'failed', error: error.message })
+          throw error
+        }
       })
       await validateDownloadedImages({ chapterDir, files: downloadedFiles, expectedCount: contents.length, chapterTitle })
+      updateJob(job, { stage: 'images_ready', message: `图片下载完成 ${chapterTitle}` })
 
       await mkdir(metadataChapterDir, { recursive: true })
       const appChapterMetadata = appChapterMetadataFrom({
@@ -1682,12 +1718,14 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
         order,
         chapterSize: contents.length || chapterMeta.size || chapterMeta.chapterSize || 0,
       })
+      updateJob(job, { stage: 'writing_metadata', message: `写入元数据 ${chapterTitle}` })
       await atomicWriteJson(metadataChapterFile, appChapterMetadata, {
         jobId: job.id,
         verify: (metadata) => {
           if (chapterUuidOf(metadata) !== chapterUuid) throw new Error(`章节元数据写入校验失败：${chapterTitle}`)
         },
       })
+      updateJob(job, { stage: 'metadata_ready', message: `元数据写入完成 ${chapterTitle}` })
       job.doneChapters += 1
       updateJob(job, { doneChapters: job.doneChapters })
       if (config.chapterDownloadIntervalSec > 0) await sleep(config.chapterDownloadIntervalSec)
@@ -1695,9 +1733,9 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
     }
 
     validateJobCompletion(job)
-    updateJob(job, { status: 'completed', message: '下载完成' })
+    updateJob(job, { status: 'completed', stage: 'completed', message: '下载完成' })
   } catch (error) {
-    updateJob(job, { status: 'failed', message: error.message })
+    updateJob(job, { status: 'failed', stage: 'failed', message: error.message })
   }
 }
 

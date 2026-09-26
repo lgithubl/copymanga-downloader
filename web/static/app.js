@@ -162,6 +162,20 @@ let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
 const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'reader-theme-warm', 'reader-theme-sepia']
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
+const stageLabels = {
+  created: '创建完成',
+  fetching_comic: '获取漫画信息',
+  comic_ready: '漫画信息完成',
+  fetching_chapter: '获取章节信息',
+  chapter_ready: '章节图片列表完成',
+  preparing_chapter: '准备章节目录',
+  downloading_images: '下载图片',
+  images_ready: '所有图片完成',
+  writing_metadata: '写入元数据',
+  metadata_ready: '元数据完成',
+  completed: '完成',
+  failed: '失败',
+}
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
 els.token.addEventListener('input', () => localStorage.setItem('copymanga.token', els.token.value.trim()))
@@ -694,6 +708,15 @@ function renderJobs() {
   renderTaskList()
 }
 
+function imageStatusSummary(images = []) {
+  const counts = { pending: 0, running: 0, completed: 0, failed: 0 }
+  for (const image of images) {
+    const status = image?.status || 'pending'
+    counts[status] = (counts[status] || 0) + 1
+  }
+  return counts
+}
+
 function renderTaskList() {
   if (!els.taskList) return
   const keyword = (els.taskSearch?.value || '').trim().toLowerCase()
@@ -713,7 +736,10 @@ function renderTaskList() {
         job.chapterUuid,
         ...(job.chapterUuids || []),
         job.status,
+        job.stage,
+        stageLabels[job.stage],
         job.message,
+        ...(job.images || []).flatMap((image) => [image.index, image.status, image.error]),
       ].join(' ').toLowerCase().includes(keyword)
     })
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
@@ -725,6 +751,12 @@ function renderTaskList() {
     const total = Math.max(job.totalImages || job.totalChapters || 1, 1)
     const done = job.totalImages ? job.doneImages : job.doneChapters
     const pct = Math.min(100, Math.round((done / total) * 100))
+    const imageCounts = imageStatusSummary(job.images || [])
+    const failedImages = (job.images || []).filter((image) => image.status === 'failed')
+    const stageText = stageLabels[job.stage] || job.stage || '创建完成'
+    const failedText = failedImages.length > 0
+      ? ` · 失败图片 ${failedImages.map((image) => `#${image.index}`).slice(0, 8).join(', ')}${failedImages.length > 8 ? '...' : ''}`
+      : ''
     const row = document.createElement('article')
     row.className = `task-row ${job.status}`
     row.innerHTML = `
@@ -734,10 +766,10 @@ function renderTaskList() {
         <small>${escapeHtml(job.chapterUuid || job.chapterUuids?.[0] || '')}</small>
       </div>
       <div class="task-state">
-        <span class="badge">${escapeHtml(job.status)}</span>
+        <span><span class="badge">${escapeHtml(job.status)}</span> <span class="badge">${escapeHtml(stageText)}</span></span>
         <span>${escapeHtml(job.message || '')}</span>
         <div class="bar"><span style="width:${pct}%"></span></div>
-        <small>章节 ${job.doneChapters}/${job.totalChapters} · 图片 ${job.doneImages}/${job.totalImages || '?'} · ${escapeHtml(job.updatedAt || '')}</small>
+        <small>章节 ${job.doneChapters}/${job.totalChapters} · 图片 ${job.doneImages}/${job.totalImages || '?'} · pending ${imageCounts.pending || 0} · running ${imageCounts.running || 0} · done ${imageCounts.completed || 0} · failed ${imageCounts.failed || 0}${escapeHtml(failedText)} · ${escapeHtml(job.updatedAt || '')}</small>
       </div>
       <div class="task-actions">
         <button class="danger" type="button">删除</button>
@@ -1644,7 +1676,9 @@ els.retryFailed.addEventListener('click', async () => {
   try {
     setLoading(els.retryFailed, true)
     const data = await api('/api/jobs/retry-failed', { method: 'POST', body: '{}' })
-    jobs = [...data.retried, ...jobs.filter((job) => job.status !== 'failed')]
+    const retried = data.retried || []
+    const retryIds = new Set(retried.map((job) => job.id))
+    jobs = [...retried, ...jobs.filter((job) => !retryIds.has(job.id))]
     renderJobs()
   } catch (error) {
     alert(error.message)
