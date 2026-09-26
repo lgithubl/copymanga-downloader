@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -21,6 +21,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       : [...new Set([...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS, ...IMAGE_EXTENSIONS])]
   const label = type === 'video' ? '视频' : type === 'audio' ? '音频' : '媒体'
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
+  const thumbnailRoot = path.join(dataDir, 'cache', 'library-thumbnails', type)
+  const thumbnailJobs = new Map()
+  const thumbnailQueue = []
+  let thumbnailWorkerRunning = false
 
   function managedBasePath() {
     return path.resolve(getConfig().mediaManagedBasePath)
@@ -44,6 +48,18 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
 
   function progressPath(itemId) {
     return path.join(progressRoot, `${safeSegment(itemId)}.json`)
+  }
+
+  function thumbnailDir(itemId, unitId) {
+    return path.join(thumbnailRoot, safeSegment(itemId), safeSegment(unitId))
+  }
+
+  function thumbnailPath(itemId, unitId, name) {
+    return path.join(thumbnailDir(itemId, unitId), name)
+  }
+
+  function thumbnailUrl(itemId, unitId, kind) {
+    return `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/thumbnail/${encodeURIComponent(unitId)}/${kind}`
   }
 
   async function readMetadata(itemId) {
@@ -220,6 +236,14 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
   }
 
+  async function getThumbnail(itemId, unitId, kind = 'cover') {
+    const name = kind === 'preview' ? 'preview.webp' : 'cover.webp'
+    return {
+      body: await readFile(thumbnailPath(itemId, unitId, name)),
+      contentType: 'image/webp',
+    }
+  }
+
   async function updateItemTags(itemId, tags = []) {
     return updateMetadata(itemId, (item) => ({
       ...item,
@@ -270,6 +294,46 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     await mkdir(progressRoot, { recursive: true })
     await writeFile(progressPath(itemId), JSON.stringify(current, null, 2))
     return current
+  }
+
+  async function enqueueThumbnail(itemId, unitId, { force = false } = {}) {
+    const item = await readMetadata(itemId)
+    const unit = mediaUnitsForItem(item).find((entry) => entry.unitId === unitId)
+    if (!unit) throw new Error(`Unit not found: ${unitId}`)
+    if (unit.mediaKind !== 'video') throw new Error('只支持生成视频缩略图')
+    const active = [...thumbnailJobs.values()].find((job) => (
+      !['completed', 'failed', 'skipped'].includes(job.status) &&
+      job.itemId === itemId &&
+      job.unitId === unitId
+    ))
+    if (active) return publicThumbnailJob(active)
+    const job = {
+      id: `thumb-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      itemId,
+      unitId,
+      title: unit.title || unit.fileName || unitId,
+      force: Boolean(force),
+      status: 'queued',
+      message: '等待生成缩略图',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    thumbnailJobs.set(job.id, job)
+    thumbnailQueue.push(job.id)
+    await setUnitThumbnailStatus(itemId, unitId, { status: 'queued', error: '' })
+    processThumbnailQueue()
+    return publicThumbnailJob(job)
+  }
+
+  async function enqueueThumbnails(itemId, { force = false } = {}) {
+    const item = await readMetadata(itemId)
+    const jobs = []
+    for (const unit of mediaUnitsForItem(item)) {
+      if (unit.mediaKind !== 'video') continue
+      if (!force && unit.thumbnail?.status === 'ready') continue
+      jobs.push(await enqueueThumbnail(itemId, unit.unitId, { force }))
+    }
+    return { queued: jobs }
   }
 
   async function assertMediaRoot(source) {
@@ -450,6 +514,158 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       }
     }
     return units.sort(compareMediaUnits)
+  }
+
+  function processThumbnailQueue() {
+    if (thumbnailWorkerRunning) return
+    thumbnailWorkerRunning = true
+    setImmediate(async () => {
+      try {
+        while (thumbnailQueue.length) {
+          const id = thumbnailQueue.shift()
+          const job = thumbnailJobs.get(id)
+          if (!job || job.status !== 'queued') continue
+          await runThumbnailJob(job)
+        }
+      } finally {
+        thumbnailWorkerRunning = false
+        if (thumbnailQueue.length) processThumbnailQueue()
+      }
+    })
+  }
+
+  async function runThumbnailJob(job) {
+    updateThumbnailJob(job, { status: 'running', message: '生成缩略图中' })
+    await setUnitThumbnailStatus(job.itemId, job.unitId, { status: 'running', error: '' })
+    try {
+      const item = await readMetadata(job.itemId)
+      const unit = mediaUnitsForItem(item).find((entry) => entry.unitId === job.unitId)
+      if (!unit) throw new Error(`Unit not found: ${job.unitId}`)
+      if (unit.mediaKind !== 'video') throw new Error('只支持生成视频缩略图')
+      if (
+        !job.force &&
+        await pathExists(thumbnailPath(job.itemId, job.unitId, 'cover.webp')) &&
+        await pathExists(thumbnailPath(job.itemId, job.unitId, 'preview.webp'))
+      ) {
+        await setUnitThumbnailReady(job.itemId, job.unitId, { status: 'ready', frameCount: unit.thumbnail?.frameCount || 0 })
+        updateThumbnailJob(job, { status: 'skipped', message: '缩略图已存在' })
+        return
+      }
+      const result = await generateVideoThumbnailSet({
+        itemId: job.itemId,
+        unitId: job.unitId,
+        filePath: unit.managedPath,
+        seed: unit.relativePath || unit.fileName || unit.unitId,
+      })
+      await setUnitThumbnailReady(job.itemId, job.unitId, result)
+      updateThumbnailJob(job, { status: 'completed', message: `缩略图完成 ${result.frameCount} 帧` })
+    } catch (error) {
+      await setUnitThumbnailStatus(job.itemId, job.unitId, { status: 'failed', error: error.message }).catch(() => {})
+      updateThumbnailJob(job, { status: 'failed', message: error.message })
+    }
+  }
+
+  async function generateVideoThumbnailSet({ itemId, unitId, filePath, seed }) {
+    const duration = await videoDuration(filePath)
+    const positions = thumbnailPositions(duration, seed)
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), `copymanga-thumb-${unitId}-`))
+    try {
+      const frames = []
+      for (const [index, seconds] of positions.entries()) {
+        const framePath = path.join(tempDir, `frame-${String(index + 1).padStart(3, '0')}.png`)
+        try {
+          await execFileAsync('ffmpeg', [
+            '-y',
+            '-ss', seconds.toFixed(3),
+            '-i', filePath,
+            '-frames:v', '1',
+            '-vf', 'scale=480:-2:flags=lanczos',
+            framePath,
+          ], { timeout: 45000 })
+          frames.push(framePath)
+        } catch {
+          // Some containers cannot seek to every sampled timestamp; keep usable frames.
+        }
+      }
+      if (!frames.length) throw new Error('无法从视频截取缩略图')
+      const coverTemp = path.join(tempDir, 'cover.webp')
+      const previewTemp = path.join(tempDir, 'preview.webp')
+      const coverSource = frames[Math.floor(frames.length / 2)]
+      await encodeStillWebp(coverSource, coverTemp)
+      await encodeAnimatedWebp(frames, previewTemp)
+      await mkdir(thumbnailDir(itemId, unitId), { recursive: true })
+      await rename(coverTemp, thumbnailPath(itemId, unitId, 'cover.webp'))
+      await rename(previewTemp, thumbnailPath(itemId, unitId, 'preview.webp'))
+      return { status: 'ready', frameCount: frames.length }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  async function videoDuration(filePath) {
+    try {
+      const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath], { timeout: 20000 })
+      const duration = Number(stdout.trim())
+      if (Number.isFinite(duration) && duration > 0) return duration
+    } catch {
+      // Fall through to a short-video fallback.
+    }
+    return 12
+  }
+
+  async function encodeStillWebp(inputPath, outputPath) {
+    try {
+      await execFileAsync('ffmpeg', ['-y', '-i', inputPath, '-vf', 'scale=360:-2:flags=lanczos', '-c:v', 'libwebp', '-compression_level', '5', outputPath], { timeout: 30000 })
+      return
+    } catch {
+      await runImageMagick([inputPath, '-resize', '360x', outputPath], { timeout: 30000 })
+    }
+  }
+
+  async function encodeAnimatedWebp(framePaths, outputPath) {
+    try {
+      await execFileAsync('ffmpeg', ['-y', '-framerate', '2', '-i', path.join(path.dirname(framePaths[0]), 'frame-%03d.png'), '-vf', 'scale=320:-2:flags=lanczos', '-loop', '0', '-c:v', 'libwebp', '-compression_level', '5', outputPath], { timeout: 60000 })
+      return
+    } catch {
+      await runImageMagick(['-delay', '50', '-loop', '0', ...framePaths, '-resize', '320x', outputPath], { timeout: 60000 })
+    }
+  }
+
+  async function runImageMagick(args, options) {
+    const errors = []
+    for (const command of ['magick', 'convert']) {
+      try {
+        await execFileAsync(command, args, options)
+        return
+      } catch (error) {
+        errors.push(`${command}: ${error.message}`)
+        if (error.code === 'ENOENT') continue
+      }
+    }
+    throw new Error(`WebP 编码失败：${errors.join('；')}`)
+  }
+
+  async function setUnitThumbnailStatus(itemId, unitId, thumbnail) {
+    return updateMetadata(itemId, (item) => ({
+      ...item,
+      mediaUnits: mediaUnitsForItem(item).map((unit) => (
+        unit.unitId === unitId
+          ? normalizeMediaUnit({ ...unit, thumbnail: normalizeThumbnail({ ...(unit.thumbnail || {}), ...thumbnail }) })
+          : unit
+      )),
+      updatedAt: new Date().toISOString(),
+    }))
+  }
+
+  async function setUnitThumbnailReady(itemId, unitId, thumbnail) {
+    return setUnitThumbnailStatus(itemId, unitId, {
+      status: thumbnail.status || 'ready',
+      coverUrl: thumbnailUrl(itemId, unitId, 'cover'),
+      previewUrl: thumbnailUrl(itemId, unitId, 'preview'),
+      frameCount: thumbnail.frameCount || 0,
+      generatedAt: new Date().toISOString(),
+      error: '',
+    })
   }
 
   async function uniqueImportTarget(candidate) {
@@ -637,6 +853,9 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     saveProgress,
     updateItemTags,
     updateUnitTags,
+    getThumbnail,
+    enqueueThumbnail,
+    enqueueThumbnails,
   }
 }
 
@@ -677,8 +896,21 @@ function normalizeMediaUnit(unit) {
     images: Array.isArray(unit?.images) ? unit.images : [],
     subtitles: Array.isArray(unit?.subtitles) ? unit.subtitles.map(normalizeSubtitle) : [],
     subtitleUnmatched: Boolean(unit?.subtitleUnmatched),
+    thumbnail: normalizeThumbnail(unit?.thumbnail),
     createdAt: String(unit?.createdAt || ''),
     updatedAt: String(unit?.updatedAt || ''),
+  }
+}
+
+function normalizeThumbnail(thumbnail) {
+  if (!thumbnail || typeof thumbnail !== 'object') return { status: '' }
+  return {
+    status: String(thumbnail.status || ''),
+    coverUrl: String(thumbnail.coverUrl || ''),
+    previewUrl: String(thumbnail.previewUrl || ''),
+    frameCount: Number(thumbnail.frameCount || 0),
+    generatedAt: String(thumbnail.generatedAt || ''),
+    error: String(thumbnail.error || ''),
   }
 }
 
@@ -706,6 +938,39 @@ function compareMediaUnits(a, b) {
   const rankDiff = rank(a) - rank(b)
   if (rankDiff) return rankDiff
   return String(a.relativePath || a.fileName).localeCompare(String(b.relativePath || b.fileName), undefined, { numeric: true })
+}
+
+function publicThumbnailJob(job) {
+  return {
+    id: job.id,
+    itemId: job.itemId,
+    unitId: job.unitId,
+    title: job.title,
+    status: job.status,
+    message: job.message,
+    force: job.force,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  }
+}
+
+function updateThumbnailJob(job, patch) {
+  Object.assign(job, patch, { updatedAt: new Date().toISOString() })
+}
+
+function thumbnailPositions(duration, seed) {
+  const ratios = [0.08, 0.18, 0.31, 0.45, 0.59, 0.72, 0.86]
+  const max = Math.max(1, Number(duration || 0))
+  return ratios.map((ratio, index) => {
+    const jitter = (stableRandom(`${seed}:${index}`) - 0.5) * 0.06
+    const sampled = max * Math.max(0.02, Math.min(0.98, ratio + jitter))
+    return Math.max(0.2, Math.min(max - 0.2, sampled))
+  })
+}
+
+function stableRandom(seed) {
+  const digest = createHash('sha1').update(String(seed)).digest()
+  return digest.readUInt32BE(0) / 0xffffffff
 }
 
 function mediaKind(filePath) {

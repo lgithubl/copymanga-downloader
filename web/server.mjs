@@ -2165,6 +2165,7 @@ async function route(req, res) {
         fields: form.fields,
       })
       await syncItemTagIndex(item)
+      if (handler.enqueueThumbnails) handler.enqueueThumbnails(item.itemId, { force: false }).catch(() => {})
       return json(res, 201, item)
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'GET') {
@@ -2178,6 +2179,11 @@ async function route(req, res) {
         return json(res, 200, await handler.getReaderContent(itemId, unitId, {
           sectionId: url.searchParams.get('sectionId') || '',
         }))
+      }
+      if (action === 'thumbnail') {
+        if (!handler.getThumbnail) return json(res, 400, { error: 'This library type does not support thumbnails' })
+        const thumb = await handler.getThumbnail(itemId, unitId, parts[7] || 'cover')
+        return binary(res, 200, thumb.body, thumb.contentType)
       }
       if (action === 'resource') {
         const resource = await handler.getResource(itemId, url.searchParams.get('path') || '', {
@@ -2199,6 +2205,16 @@ async function route(req, res) {
         const item = await handler.updateItemTags(itemId, body.tags || [])
         await setItemTags({ type, itemId, tags: item.tags || [] })
         return json(res, 200, item)
+      }
+      if (action === 'thumbnails') {
+        if (!handler.enqueueThumbnails) return json(res, 400, { error: 'This library type does not support thumbnails' })
+        const body = await readJson(req)
+        return json(res, 202, await handler.enqueueThumbnails(itemId, { force: body.force !== false }))
+      }
+      if (action === 'units' && parts[6] && parts[7] === 'thumbnail') {
+        if (!handler.enqueueThumbnail) return json(res, 400, { error: 'This library type does not support thumbnails' })
+        const body = await readJson(req)
+        return json(res, 202, { job: await handler.enqueueThumbnail(itemId, parts[6], { force: body.force !== false }) })
       }
       if (action === 'units' && parts[6] && parts[7] === 'tags') {
         if (!handler.updateUnitTags) return json(res, 400, { error: 'This library type does not support unit tags' })

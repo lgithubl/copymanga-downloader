@@ -80,6 +80,7 @@ const els = {
   libraryItemMeta: document.querySelector('#library-item-meta'),
   libraryItemTags: document.querySelector('#library-item-tags'),
   librarySaveTags: document.querySelector('#library-save-tags'),
+  libraryThumbnails: document.querySelector('#library-thumbnails'),
   libraryUnits: document.querySelector('#library-units'),
   mediaImportType: document.querySelector('#media-import-type'),
   mediaImportRefresh: document.querySelector('#media-import-refresh'),
@@ -1261,6 +1262,7 @@ async function selectLibraryItem(type, itemId) {
     els.libraryItemMeta.textContent = `${item.type} · ${(item.author || []).join(', ') || '未知作者'} · ${units.length} 个目录项`
     els.libraryItemTags.value = (item.tags || []).join(', ')
     els.librarySaveTags.disabled = false
+    els.libraryThumbnails.disabled = item.type !== 'media'
     renderLibraryUnits()
   } catch (error) {
     els.libraryItemMeta.textContent = `读取失败：${error.message}`
@@ -1292,25 +1294,36 @@ function renderLibraryUnits() {
     const subtitleText = unit.subtitles?.length
       ? ` · 字幕 ${unit.subtitles.length}: ${unit.subtitles.map((subtitle) => subtitle.title || subtitle.relativePath).join(', ')}`
       : ''
+    const thumbnailBadge = renderThumbnailBadge(unit.thumbnail)
     const unitMeta = unit.type === 'epub'
       ? `${unit.chapterCount || 0} 个内部章节${unit.imageCount ? ` · ${unit.imageCount} 张图片` : ''}`
       : unit.mediaKind === 'subtitle'
         ? `未匹配字幕 · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}`
         : `${unit.mediaKind || unit.type || ''} · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}${subtitleText}`
     row.innerHTML = `
-      ${renderUnitThumb(unit.cover || currentLibraryItem?.cover, unit.title)}
+      ${renderUnitThumb(unit.thumbnail?.coverUrl || unit.cover || currentLibraryItem?.cover, unit.title)}
       <span class="chapter-copy">
         <span class="chapter-title">${escapeHtml(unit.title)}</span>
         <span class="muted">${escapeHtml(unitMeta)}</span>
-        ${renderTagList(unit.tags || [])}
+        ${renderTagList(unit.tags || [])}${thumbnailBadge}
       </span>
       <span class="muted">${isRead ? '已读' : '未读'}</span>
+      <button class="unit-thumbnail secondary" type="button" ${unit.mediaKind === 'video' ? '' : 'hidden'}>缩略图</button>
       <button class="unit-tags secondary" type="button">标签</button>
     `
+    const thumb = row.querySelector('.unit-thumb')
+    if (thumb && unit.thumbnail?.previewUrl) {
+      thumb.addEventListener('mouseenter', () => { thumb.src = unit.thumbnail.previewUrl })
+      thumb.addEventListener('mouseleave', () => { thumb.src = unit.thumbnail.coverUrl })
+    }
     row.addEventListener('click', (event) => {
       if (event.target.closest('button')) return
       if (unit.mediaKind === 'subtitle') return
       openMediaUnit(unit.unitId)
+    })
+    row.querySelector('.unit-thumbnail')?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      regenerateUnitThumbnail(unit)
     })
     row.querySelector('.unit-tags')?.addEventListener('click', (event) => {
       event.stopPropagation()
@@ -1327,6 +1340,45 @@ function renderLibraryUnits() {
 function renderTagList(tags = []) {
   if (!tags.length) return ''
   return `<span class="tag-list">${tags.map((tag) => `<span class="tag-pill">${escapeHtml(tag)}</span>`).join('')}</span>`
+}
+
+function renderThumbnailBadge(thumbnail) {
+  const status = thumbnail?.status || ''
+  if (status === 'ready') return '<span class="tag-list"><span class="tag-pill thumbnail-ready">缩略图OK</span></span>'
+  if (status === 'queued' || status === 'running') return '<span class="tag-list"><span class="tag-pill thumbnail-running">缩略图生成中</span></span>'
+  if (status === 'failed') return '<span class="tag-list"><span class="tag-pill thumbnail-failed">缩略图失败</span></span>'
+  return ''
+}
+
+async function regenerateUnitThumbnail(unit) {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId || !unit?.unitId) return
+  try {
+    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/units/${encodeURIComponent(unit.unitId)}/thumbnail`, {
+      method: 'POST',
+      body: JSON.stringify({ force: true }),
+    })
+    await selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId)
+    setTimeout(() => selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId).catch(() => {}), 2500)
+  } catch (error) {
+    alert(error.message)
+  }
+}
+
+async function regenerateLibraryThumbnails() {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
+  try {
+    setLoading(els.libraryThumbnails, true)
+    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/thumbnails`, {
+      method: 'POST',
+      body: JSON.stringify({ force: true }),
+    })
+    await selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId)
+    setTimeout(() => selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId).catch(() => {}), 3500)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.libraryThumbnails, false)
+  }
 }
 
 async function saveLibraryItemTags() {
@@ -1752,6 +1804,7 @@ els.libraryTagSearch.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') loadLibraryItems()
 })
 els.librarySaveTags.addEventListener('click', saveLibraryItemTags)
+els.libraryThumbnails.addEventListener('click', regenerateLibraryThumbnails)
 els.librarySample.addEventListener('click', async () => {
   if (!confirm('生成示例会在媒体库里新增一套测试 EPUB 合集。确定要继续吗？')) return
   try {

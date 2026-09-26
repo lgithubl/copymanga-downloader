@@ -692,7 +692,7 @@ h2 {
 .library-unit {
   color: inherit;
   cursor: pointer;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   height: 58px;
   text-align: left;
   width: 100%;
@@ -789,7 +789,26 @@ h2 {
   padding: 3px 6px;
 }
 
-.unit-tags {
+.tag-pill.thumbnail-ready {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.tag-pill.thumbnail-running {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #075985;
+}
+
+.tag-pill.thumbnail-failed {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+.unit-tags,
+.unit-thumbnail {
   font-size: 12px;
   height: 26px;
   min-height: 26px;
