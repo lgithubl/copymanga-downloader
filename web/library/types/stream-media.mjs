@@ -142,7 +142,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
 
     const units = await scanMediaUnits(itemId)
     if (!units.length) throw new Error(`没有找到支持的${label}文件`)
-    units.sort((a, b) => String(a.fileName).localeCompare(String(b.fileName), undefined, { numeric: true }))
+    units.sort(compareMediaUnits)
     const next = normalizeItem({
       ...existing,
       title: collectionTitle || existing.title || seedTitle,
@@ -421,6 +421,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       })))
     }
     const units = []
+    const matchedSubtitlePaths = new Set()
     const imagesByDir = new Map()
     for (const filePath of files) {
       const kind = mediaKind(filePath)
@@ -431,17 +432,24 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         list.push(filePath)
         imagesByDir.set(key, list)
       } else {
+        const subtitles = subtitlesByKey.get(mediaSubtitleKey(itemId, filePath)) || []
+        for (const subtitle of subtitles) matchedSubtitlePaths.add(subtitle.relativePath)
         units.push(await unitFromFile({
           itemId,
           filePath,
-          subtitles: subtitlesByKey.get(mediaSubtitleKey(itemId, filePath)) || [],
+          subtitles,
         }))
       }
     }
     for (const [groupPath, imageFiles] of imagesByDir.entries()) {
       units.push(await galleryUnitFromFiles({ itemId, groupPath, files: imageFiles }))
     }
-    return units.sort((a, b) => String(a.relativePath || a.fileName).localeCompare(String(b.relativePath || b.fileName), undefined, { numeric: true }))
+    for (const filePath of subtitleFiles) {
+      if (!matchedSubtitlePaths.has(relativePath(itemId, filePath))) {
+        units.push(await subtitleUnitFromFile({ itemId, filePath }))
+      }
+    }
+    return units.sort(compareMediaUnits)
   }
 
   async function uniqueImportTarget(candidate) {
@@ -514,6 +522,26 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       images,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+    })
+  }
+
+  async function subtitleUnitFromFile({ itemId, filePath }) {
+    const info = await stat(filePath)
+    const fileName = relativePath(itemId, filePath)
+    return normalizeMediaUnit({
+      type,
+      unitId: `subtitle_${createHash('sha1').update(fileName).digest('hex').slice(0, 12)}`,
+      title: subtitleTitle(fileName),
+      fileName,
+      relativePath: fileName,
+      groupPath: groupPathOf(fileName),
+      mediaKind: 'subtitle',
+      tags: ['字幕', '未匹配'],
+      size: info.size,
+      contentType: 'text/vtt',
+      subtitleUnmatched: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: info.mtime.toISOString(),
     })
   }
 
@@ -648,6 +676,7 @@ function normalizeMediaUnit(unit) {
     imageCount: Number(unit?.imageCount || 0),
     images: Array.isArray(unit?.images) ? unit.images : [],
     subtitles: Array.isArray(unit?.subtitles) ? unit.subtitles.map(normalizeSubtitle) : [],
+    subtitleUnmatched: Boolean(unit?.subtitleUnmatched),
     createdAt: String(unit?.createdAt || ''),
     updatedAt: String(unit?.updatedAt || ''),
   }
@@ -670,6 +699,13 @@ function mediaUnitsForItem(item) {
 function pickPublicItem(item) {
   const { mediaUnits, ...publicItem } = item
   return publicItem
+}
+
+function compareMediaUnits(a, b) {
+  const rank = (unit) => unit?.mediaKind === 'subtitle' ? 1 : 0
+  const rankDiff = rank(a) - rank(b)
+  if (rankDiff) return rankDiff
+  return String(a.relativePath || a.fileName).localeCompare(String(b.relativePath || b.fileName), undefined, { numeric: true })
 }
 
 function mediaKind(filePath) {

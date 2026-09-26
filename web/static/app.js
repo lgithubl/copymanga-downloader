@@ -1286,11 +1286,16 @@ function renderLibraryUnits() {
     }
     const isRead = Boolean(readUnits[unit.unitId]?.enteredAt)
     const row = document.createElement('div')
-    row.className = `chapter library-unit${isRead ? ' read-chapter' : ' unread-chapter'}`
+    row.className = `chapter library-unit${isRead ? ' read-chapter' : ' unread-chapter'}${unit.mediaKind === 'subtitle' ? ' subtitle-unit' : ''}`
     row.title = unit.title
+    const subtitleText = unit.subtitles?.length
+      ? ` · 字幕 ${unit.subtitles.length}: ${unit.subtitles.map((subtitle) => subtitle.title || subtitle.relativePath).join(', ')}`
+      : ''
     const unitMeta = unit.type === 'epub'
       ? `${unit.chapterCount || 0} 个内部章节${unit.imageCount ? ` · ${unit.imageCount} 张图片` : ''}`
-      : `${unit.mediaKind || unit.type || ''} · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}`
+      : unit.mediaKind === 'subtitle'
+        ? `未匹配字幕 · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}`
+        : `${unit.mediaKind || unit.type || ''} · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}${subtitleText}`
     row.innerHTML = `
       ${renderUnitThumb(unit.cover || currentLibraryItem?.cover, unit.title)}
       <span class="chapter-copy">
@@ -1303,6 +1308,7 @@ function renderLibraryUnits() {
     `
     row.addEventListener('click', (event) => {
       if (event.target.closest('button')) return
+      if (unit.mediaKind === 'subtitle') return
       openMediaUnit(unit.unitId)
     })
     row.querySelector('.unit-tags')?.addEventListener('click', (event) => {

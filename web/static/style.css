@@ -757,6 +757,19 @@ h2 {
   display: block;
 }
 
+.library-unit.subtitle-unit {
+  border-style: dashed;
+  cursor: default;
+  opacity: 0.86;
+}
+
+.library-unit.subtitle-unit .chapter-title::after {
+  color: #b45309;
+  content: " · 未匹配";
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .tag-list {
   display: flex;
   flex-wrap: wrap;
