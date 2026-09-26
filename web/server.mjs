@@ -2170,7 +2170,9 @@ async function route(req, res) {
         }))
       }
       if (action === 'resource') {
-        const resource = await handler.getResource(itemId, url.searchParams.get('path') || '')
+        const resource = await handler.getResource(itemId, url.searchParams.get('path') || '', {
+          subtitle: url.searchParams.get('subtitle') === '1',
+        })
         return binary(res, 200, resource.body, resource.contentType)
       }
       if (action === 'progress') return json(res, 200, await handler.getProgress(itemId))

@@ -1177,6 +1177,11 @@ h2 {
   max-height: calc(100vh - 260px);
 }
 
+.stream-subtitle-select {
+  justify-self: start;
+  max-width: min(100%, 360px);
+}
+
 .stream-player-warning {
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.42);

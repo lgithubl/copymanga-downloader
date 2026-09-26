@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile)
 const AUDIO_EXTENSIONS = ['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav', 'webm']
 const VIDEO_EXTENSIONS = ['m4v', 'mkv', 'mov', 'mp4', 'webm']
 const IMAGE_EXTENSIONS = ['gif', 'jpg', 'jpeg', 'png', 'webp']
+const SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt']
 
 export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExists, getConfig }) {
   const extensions = type === 'video'
@@ -205,8 +206,14 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
   }
 
-  async function getResource(itemId, resourcePath) {
+  async function getResource(itemId, resourcePath, options = {}) {
     const filePath = safeManagedFilePath(itemId, resourcePath)
+    if (options.subtitle && isSubtitleName(filePath)) {
+      return {
+        body: Buffer.from(await subtitleFileToWebVtt(filePath)),
+        contentType: 'text/vtt; charset=utf-8',
+      }
+    }
     return {
       body: await readFile(filePath),
       contentType: contentType(filePath),
@@ -400,10 +407,19 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
 
   async function scanMediaUnits(itemId) {
     if (!await pathExists(filesPath(itemId))) return []
-    const files = (await walkFiles(filesPath(itemId)))
+    const allFiles = await walkFiles(filesPath(itemId))
+    const subtitleFiles = allFiles.filter(isSubtitleName)
+    const subtitlesByKey = subtitlesByMediaKey(itemId, subtitleFiles)
+    const files = allFiles
       .filter(isSupportedName)
       .sort((a, b) => relativePath(itemId, a).localeCompare(relativePath(itemId, b), undefined, { numeric: true }))
-    if (type !== 'media') return Promise.all(files.map((filePath) => unitFromFile({ itemId, filePath })))
+    if (type !== 'media') {
+      return Promise.all(files.map((filePath) => unitFromFile({
+        itemId,
+        filePath,
+        subtitles: subtitlesByKey.get(mediaSubtitleKey(itemId, filePath)) || [],
+      })))
+    }
     const units = []
     const imagesByDir = new Map()
     for (const filePath of files) {
@@ -415,7 +431,11 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         list.push(filePath)
         imagesByDir.set(key, list)
       } else {
-        units.push(await unitFromFile({ itemId, filePath }))
+        units.push(await unitFromFile({
+          itemId,
+          filePath,
+          subtitles: subtitlesByKey.get(mediaSubtitleKey(itemId, filePath)) || [],
+        }))
       }
     }
     for (const [groupPath, imageFiles] of imagesByDir.entries()) {
@@ -445,7 +465,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
   }
 
-  async function unitFromFile({ itemId, filePath }) {
+  async function unitFromFile({ itemId, filePath, subtitles = [] }) {
     const info = await stat(filePath)
     const fileName = relativePath(itemId, filePath)
     const title = path.basename(fileName, path.extname(fileName))
@@ -466,6 +486,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       metaUrl: metaUrlForPath(filePath),
       size: info.size,
       contentType: contentType(filePath),
+      subtitles,
       updatedAt: info.mtime.toISOString(),
       createdAt: new Date().toISOString(),
     })
@@ -538,6 +559,34 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return extensions.includes(ext)
   }
 
+  function isSubtitleName(filePath) {
+    const ext = path.extname(filePath).slice(1).toLowerCase()
+    return SUBTITLE_EXTENSIONS.includes(ext)
+  }
+
+  function subtitlesByMediaKey(itemId, subtitleFiles) {
+    const map = new Map()
+    for (const filePath of subtitleFiles.sort((a, b) => relativePath(itemId, a).localeCompare(relativePath(itemId, b), undefined, { numeric: true }))) {
+      const relative = relativePath(itemId, filePath)
+      const key = subtitleMediaKey(relative)
+      const list = map.get(key) || []
+      list.push({
+        title: subtitleTitle(relative),
+        relativePath: relative,
+        language: subtitleLanguage(relative),
+        url: `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(relative)}&subtitle=1`,
+        contentType: 'text/vtt',
+      })
+      map.set(key, list)
+    }
+    return map
+  }
+
+  function mediaSubtitleKey(itemId, filePath) {
+    const relative = relativePath(itemId, filePath)
+    return subtitleKey(groupPathOf(relative), path.posix.basename(relative, path.posix.extname(relative)))
+  }
+
   return {
     type,
     label,
@@ -589,8 +638,19 @@ function normalizeMediaUnit(unit) {
     contentType: String(unit?.contentType || ''),
     imageCount: Number(unit?.imageCount || 0),
     images: Array.isArray(unit?.images) ? unit.images : [],
+    subtitles: Array.isArray(unit?.subtitles) ? unit.subtitles.map(normalizeSubtitle) : [],
     createdAt: String(unit?.createdAt || ''),
     updatedAt: String(unit?.updatedAt || ''),
+  }
+}
+
+function normalizeSubtitle(subtitle) {
+  return {
+    title: String(subtitle?.title || subtitle?.relativePath || '字幕'),
+    relativePath: String(subtitle?.relativePath || ''),
+    language: String(subtitle?.language || ''),
+    url: String(subtitle?.url || ''),
+    contentType: String(subtitle?.contentType || 'text/vtt'),
   }
 }
 
@@ -614,6 +674,74 @@ function mediaKind(filePath) {
 function groupPathOf(relativePath) {
   const dir = path.posix.dirname(String(relativePath || '').split(path.sep).join('/'))
   return dir === '.' ? '' : dir
+}
+
+function subtitleMediaKey(relativePath) {
+  const dir = groupPathOf(relativePath)
+  let stem = path.posix.basename(relativePath, path.posix.extname(relativePath))
+  const tokens = ['sc', 'tc', 'chs', 'cht', 'zh', 'cn', 'jp', 'ja', 'en', 'eng', 'jpn', '字幕', 'sub', 'subs']
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const token of tokens) {
+      const pattern = new RegExp(`(?:[._ -])${escapeRegExp(token)}$`, 'i')
+      if (pattern.test(stem)) {
+        stem = stem.replace(pattern, '')
+        changed = true
+      }
+    }
+  }
+  return subtitleKey(dir, stem)
+}
+
+function subtitleKey(dir, stem) {
+  return `${String(dir || '').toLowerCase()}\u001f${String(stem || '').toLowerCase()}`
+}
+
+function subtitleTitle(relativePath) {
+  const stem = path.posix.basename(relativePath, path.posix.extname(relativePath))
+  const suffix = stem.split(/[._ -]+/).pop()
+  if (suffix && suffix !== stem && /^[a-z]{2,4}$/i.test(suffix)) return suffix.toUpperCase()
+  return stem
+}
+
+function subtitleLanguage(relativePath) {
+  const stem = path.posix.basename(relativePath, path.posix.extname(relativePath))
+  const suffix = stem.split(/[._ -]+/).pop()?.toLowerCase()
+  const languages = {
+    sc: 'zh-CN',
+    chs: 'zh-CN',
+    cn: 'zh-CN',
+    tc: 'zh-TW',
+    cht: 'zh-TW',
+    zh: 'zh',
+    en: 'en',
+    eng: 'en',
+    jp: 'ja',
+    ja: 'ja',
+    jpn: 'ja',
+  }
+  return languages[suffix] || ''
+}
+
+async function subtitleFileToWebVtt(filePath) {
+  const text = await readFile(filePath, 'utf8')
+  const ext = path.extname(filePath).slice(1).toLowerCase()
+  if (ext === 'vtt') return text.replace(/^\uFEFF/, '').startsWith('WEBVTT') ? text : `WEBVTT\n\n${text}`
+  return srtToWebVtt(text)
+}
+
+function srtToWebVtt(text) {
+  const normalized = String(text || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
+  return `WEBVTT\n\n${normalized.replace(/^\d+\n(?=\d{2}:\d{2}:\d{2}\.\d{3}\s+-->\s+)/gm, '')}`
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function uniqueItemId(title) {
@@ -683,6 +811,7 @@ function contentType(filePath) {
   if (['png'].includes(ext)) return 'image/png'
   if (['gif'].includes(ext)) return 'image/gif'
   if (['webp'].includes(ext)) return 'image/webp'
+  if (['vtt', 'srt', 'crt'].includes(ext)) return 'text/vtt; charset=utf-8'
   return 'application/octet-stream'
 }
 

@@ -1485,6 +1485,31 @@ function renderStreamMedia(reader) {
     playbackWarning.classList.remove('hidden')
     playbackWarning.textContent = `当前浏览器可能不支持播放 ${reader.unit.contentType}`
   }
+  const subtitleSelect = document.createElement('select')
+  subtitleSelect.className = 'stream-subtitle-select'
+  const noneOption = document.createElement('option')
+  noneOption.value = ''
+  noneOption.textContent = '无字幕'
+  subtitleSelect.append(noneOption)
+  for (const [index, subtitle] of (reader.unit?.subtitles || []).entries()) {
+    const option = document.createElement('option')
+    option.value = String(index)
+    option.textContent = subtitle.title || subtitle.relativePath || `字幕 ${index + 1}`
+    subtitleSelect.append(option)
+    const track = document.createElement('track')
+    track.kind = 'subtitles'
+    track.label = option.textContent
+    track.srclang = subtitle.language || 'zh'
+    track.src = subtitle.url
+    player.append(track)
+  }
+  subtitleSelect.disabled = !reader.unit?.subtitles?.length
+  subtitleSelect.addEventListener('change', () => {
+    const selectedIndex = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value)
+    for (const [index, track] of [...player.textTracks].entries()) {
+      track.mode = index === selectedIndex ? 'showing' : 'disabled'
+    }
+  })
   const title = document.createElement('div')
   title.className = 'stream-player-title'
   title.textContent = reader.unit?.title || reader.unit?.fileName || '媒体'
@@ -1503,7 +1528,7 @@ function renderStreamMedia(reader) {
     playbackWarning.classList.remove('hidden')
     playbackWarning.textContent = `播放失败${suffix}：浏览器不支持该编码，或媒体文件无法被当前播放器解码`
   })
-  shell.append(title, player, playbackWarning, meta)
+  shell.append(title, player, subtitleSelect, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
   mediaPageIndex = 0
   mediaPageCount = 1
