@@ -641,8 +641,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       await encodeStillWebp(coverSource, coverTemp)
       await encodeAnimatedWebp(frames, previewTemp)
       await mkdir(thumbnailDir(itemId, unitId), { recursive: true })
-      await rename(coverTemp, thumbnailPath(itemId, unitId, 'cover.webp'))
-      await rename(previewTemp, thumbnailPath(itemId, unitId, 'preview.webp'))
+      await movePath(coverTemp, thumbnailPath(itemId, unitId, 'cover.webp'))
+      await movePath(previewTemp, thumbnailPath(itemId, unitId, 'preview.webp'))
       return { status: 'ready', frameCount: frames.length }
     } finally {
       await rm(tempDir, { recursive: true, force: true }).catch(() => {})
