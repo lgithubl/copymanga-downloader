@@ -72,11 +72,14 @@ const els = {
   taskClearCompleted: document.querySelector('#task-clear-completed'),
   taskList: document.querySelector('#task-list'),
   libraryType: document.querySelector('#library-type'),
+  libraryTagSearch: document.querySelector('#library-tag-search'),
   librarySample: document.querySelector('#library-sample'),
   libraryRefresh: document.querySelector('#library-refresh'),
   libraryItems: document.querySelector('#library-items'),
   libraryItemTitle: document.querySelector('#library-item-title'),
   libraryItemMeta: document.querySelector('#library-item-meta'),
+  libraryItemTags: document.querySelector('#library-item-tags'),
+  librarySaveTags: document.querySelector('#library-save-tags'),
   libraryUnits: document.querySelector('#library-units'),
   mediaImportType: document.querySelector('#media-import-type'),
   mediaImportRefresh: document.querySelector('#media-import-refresh'),
@@ -171,8 +174,7 @@ const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'rea
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
 const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
-  audio: { label: '音频', unit: '个音频', accept: '.zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,audio/*', source: true },
-  video: { label: '视频', unit: '个视频', accept: '.zip,.m4v,.mkv,.mov,.mp4,.webm,video/*', source: true },
+  media: { label: '媒体', unit: '个媒体项', accept: '.zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,image/*,audio/*,video/*', source: true },
 }
 const stageLabels = {
   created: '创建完成',
@@ -1133,7 +1135,9 @@ async function loadLibraryItems() {
   try {
     setLoading(els.libraryRefresh, true)
     const type = els.libraryType.value || 'all'
-    libraryItems = await api(`/api/library/items?type=${encodeURIComponent(type)}`)
+    const params = new URLSearchParams({ type })
+    if (els.libraryTagSearch.value.trim()) params.set('tag', els.libraryTagSearch.value.trim())
+    libraryItems = await api(`/api/library/items?${params}`)
     renderLibraryItems()
   } catch (error) {
     alert(error.message)
@@ -1227,6 +1231,7 @@ function renderLibraryItems() {
         <div class="card-title">${escapeHtml(item.title)}</div>
         <div class="muted">${escapeHtml(item.type)} · ${escapeHtml(item.itemId)}</div>
         <div class="muted">${escapeHtml((item.author || []).join(', ') || '未知作者')} · ${item.unitCount || 0} 个目录项</div>
+        ${renderTagList(item.tags || [])}
       </div>
     `
     card.addEventListener('click', () => selectLibraryItem(item.type, item.itemId))
@@ -1251,6 +1256,8 @@ async function selectLibraryItem(type, itemId) {
     currentLibraryProgress = progress
     els.libraryItemTitle.textContent = item.title
     els.libraryItemMeta.textContent = `${item.type} · ${(item.author || []).join(', ') || '未知作者'} · ${units.length} 个目录项`
+    els.libraryItemTags.value = (item.tags || []).join(', ')
+    els.librarySaveTags.disabled = false
     renderLibraryUnits()
   } catch (error) {
     els.libraryItemMeta.textContent = `读取失败：${error.message}`
@@ -1263,30 +1270,91 @@ function renderLibraryUnits() {
   els.libraryUnits.classList.remove('empty-panel')
   els.libraryUnits.innerHTML = ''
   const readUnits = currentLibraryProgress?.readUnits || {}
+  let lastGroup = null
   for (const unit of currentLibraryUnits) {
+    const groupPath = unit.groupPath || ''
+    if (groupPath !== lastGroup) {
+      lastGroup = groupPath
+      if (groupPath) {
+        const divider = document.createElement('div')
+        divider.className = 'unit-group-divider'
+        divider.textContent = groupPath
+        els.libraryUnits.append(divider)
+      }
+    }
     const isRead = Boolean(readUnits[unit.unitId]?.enteredAt)
-    const row = document.createElement('button')
-    row.type = 'button'
+    const row = document.createElement('div')
     row.className = `chapter library-unit${isRead ? ' read-chapter' : ' unread-chapter'}`
     row.title = unit.title
     const unitMeta = unit.type === 'epub'
       ? `${unit.chapterCount || 0} 个内部章节${unit.imageCount ? ` · ${unit.imageCount} 张图片` : ''}`
-      : `${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}`
+      : `${unit.mediaKind || unit.type || ''} · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}`
     row.innerHTML = `
       ${renderUnitThumb(unit.cover || currentLibraryItem?.cover, unit.title)}
       <span class="chapter-copy">
         <span class="chapter-title">${escapeHtml(unit.title)}</span>
         <span class="muted">${escapeHtml(unitMeta)}</span>
+        ${renderTagList(unit.tags || [])}
       </span>
       <span class="muted">${isRead ? '已读' : '未读'}</span>
+      <button class="unit-tags secondary" type="button">标签</button>
     `
-    row.addEventListener('click', () => openMediaUnit(unit.unitId))
+    row.addEventListener('click', (event) => {
+      if (event.target.closest('button')) return
+      openMediaUnit(unit.unitId)
+    })
+    row.querySelector('.unit-tags')?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      editLibraryUnitTags(unit)
+    })
     els.libraryUnits.append(row)
   }
   if (currentLibraryUnits.length === 0) {
     els.libraryUnits.className = 'chapters empty-panel'
     els.libraryUnits.textContent = '没有目录项'
   }
+}
+
+function renderTagList(tags = []) {
+  if (!tags.length) return ''
+  return `<span class="tag-list">${tags.map((tag) => `<span class="tag-pill">${escapeHtml(tag)}</span>`).join('')}</span>`
+}
+
+async function saveLibraryItemTags() {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
+  try {
+    setLoading(els.librarySaveTags, true)
+    const item = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/tags`, {
+      method: 'POST',
+      body: JSON.stringify({ tags: parseTagInput(els.libraryItemTags.value) }),
+    })
+    currentLibraryItem = item
+    await loadLibraryItems()
+    await selectLibraryItem(item.type, item.itemId)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.librarySaveTags, false)
+  }
+}
+
+async function editLibraryUnitTags(unit) {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId || !unit?.unitId) return
+  const next = prompt('章节标签，逗号分隔', (unit.tags || []).join(', '))
+  if (next === null) return
+  try {
+    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/units/${encodeURIComponent(unit.unitId)}/tags`, {
+      method: 'POST',
+      body: JSON.stringify({ tags: parseTagInput(next) }),
+    })
+    await selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId)
+  } catch (error) {
+    alert(error.message)
+  }
+}
+
+function parseTagInput(value) {
+  return [...new Set(String(value || '').split(/[,\n，#]+/).map((item) => item.trim()).filter(Boolean))]
 }
 
 async function openMediaUnit(unitId, sectionId = '') {
@@ -1604,6 +1672,10 @@ els.downloadedMarkAllRead.addEventListener('click', async () => {
 })
 els.libraryRefresh.addEventListener('click', loadLibraryItems)
 els.libraryType.addEventListener('change', loadLibraryItems)
+els.libraryTagSearch.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') loadLibraryItems()
+})
+els.librarySaveTags.addEventListener('click', saveLibraryItemTags)
 els.librarySample.addEventListener('click', async () => {
   if (!confirm('生成示例会在媒体库里新增一套测试 EPUB 合集。确定要继续吗？')) return
   try {

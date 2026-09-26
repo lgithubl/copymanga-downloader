@@ -267,6 +267,7 @@
                 <select id="library-type">
                   <option value="all">全部类型</option>
                 </select>
+                <input id="library-tag-search" placeholder="tag:课程 -未整理" />
                 <button id="library-sample" class="secondary">生成示例</button>
                 <button id="library-refresh">刷新</button>
               </div>
@@ -278,6 +279,10 @@
               <div>
                 <h2 id="library-item-title">目录</h2>
                 <div id="library-item-meta" class="muted">请选择媒体库条目</div>
+              </div>
+              <div class="chapter-actions">
+                <input id="library-item-tags" placeholder="合集标签，逗号分隔" />
+                <button id="library-save-tags" class="secondary" disabled>保存标签</button>
               </div>
             </div>
             <div id="library-units" class="chapters empty-panel">请选择媒体库条目</div>
@@ -293,8 +298,7 @@
               <label>类型
                 <select id="media-import-type">
                   <option value="epub">EPUB</option>
-                  <option value="audio">音频</option>
-                  <option value="video">视频</option>
+                  <option value="media">媒体</option>
                 </select>
               </label>
               <label>已有合集

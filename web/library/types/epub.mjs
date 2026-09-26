@@ -51,6 +51,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
         itemId,
         title: collectionTitle || parsed.title || path.basename(first.filename, path.extname(first.filename)),
         author: parsed.author || [],
+        tags: parseTags(fields.tags || ''),
         cover: '',
         fileName: '',
         unitCount: 0,
@@ -72,6 +73,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
       ...metadata,
       title: collectionTitle || metadata.title,
       author: metadata.author?.length ? metadata.author : parsed.author,
+      tags: parseTags(fields.tags || '').length ? parseTags(fields.tags || '') : metadata.tags || [],
       cover: metadata.cover || appended.find((unit) => unit.cover)?.cover || '',
       fileName: '',
       unitCount: existingUnits.length,
@@ -198,6 +200,28 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     await writeFile(tmp, JSON.stringify(current, null, 2))
     await rename(tmp, file)
     return current
+  }
+
+  async function updateItemTags(itemId, tags = []) {
+    const item = await readMetadata(itemId)
+    const next = normalizeItem({
+      ...item,
+      tags: parseTags(tags),
+      updatedAt: new Date().toISOString(),
+    })
+    await writeMetadata(itemId, next)
+    return next
+  }
+
+  async function updateUnitTags(itemId, unitId, tags = []) {
+    const item = await readMetadata(itemId)
+    const units = mediaUnitsForItem(item)
+    const index = units.findIndex((unit) => unit.unitId === unitId)
+    if (index < 0) throw new Error(`Unit not found: ${unitId}`)
+    units[index] = normalizeMediaUnit({ ...units[index], tags: parseTags(tags) })
+    const next = normalizeItem({ ...item, mediaUnits: units, updatedAt: new Date().toISOString() })
+    await writeMetadata(itemId, next)
+    return units[index]
   }
 
   function itemPath(itemId) {
@@ -343,6 +367,8 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     getResource,
     getProgress,
     saveProgress,
+    updateItemTags,
+    updateUnitTags,
   }
 }
 
@@ -354,6 +380,7 @@ function normalizeItem(item) {
     itemId: String(item?.itemId || ''),
     title: String(item?.title || item?.itemId || 'Untitled'),
     author: Array.isArray(item?.author) ? item.author : [],
+    tags: parseTags(item?.tags || []),
     cover: String(item?.cover || ''),
     fileName: String(item?.fileName || ''),
     unitCount: Number(item?.unitCount || mediaUnits.length || units.length || 0),
@@ -374,6 +401,7 @@ function normalizeMediaUnit(unit) {
     title: String(unit?.title || unit?.fileName || unit?.unitId || 'EPUB'),
     index: Number(unit?.index || 0),
     fileName: String(unit?.fileName || ''),
+    tags: parseTags(unit?.tags || []),
     cover: String(unit?.cover || ''),
     sectionCount: Number(unit?.sectionCount || sections.length || 0),
     chapterCount: Number(unit?.chapterCount || sections.filter((section) => section.type !== 'gallery').length || 0),
@@ -817,6 +845,11 @@ function clampRatio(value) {
   const n = Number(value)
   if (!Number.isFinite(n)) return 0
   return Math.max(0, Math.min(1, n))
+}
+
+function parseTags(value) {
+  const input = Array.isArray(value) ? value : String(value || '').split(/[,\n，#]+/)
+  return [...new Set(input.map((item) => String(item || '').trim()).filter(Boolean))]
 }
 
 function contentType(filePath) {

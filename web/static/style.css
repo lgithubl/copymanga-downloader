@@ -692,10 +692,17 @@ h2 {
 .library-unit {
   color: inherit;
   cursor: pointer;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   height: 58px;
   text-align: left;
   width: 100%;
+}
+
+.unit-group-divider {
+  color: var(--site-muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 4px 0;
 }
 
 .unit-thumb {
@@ -748,6 +755,32 @@ h2 {
 
 .library-unit .muted {
   display: block;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.tag-pill {
+  background: #eaeef2;
+  border: 1px solid #d0d7de;
+  border-radius: 999px;
+  color: #57606a;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 6px;
+}
+
+.unit-tags {
+  font-size: 12px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
 }
 
 .chapter-copy,

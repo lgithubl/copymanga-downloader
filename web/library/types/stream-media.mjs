@@ -9,10 +9,15 @@ const execFileAsync = promisify(execFile)
 
 const AUDIO_EXTENSIONS = ['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav', 'webm']
 const VIDEO_EXTENSIONS = ['m4v', 'mkv', 'mov', 'mp4', 'webm']
+const IMAGE_EXTENSIONS = ['gif', 'jpg', 'jpeg', 'png', 'webp']
 
 export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExists, getConfig }) {
-  const extensions = type === 'video' ? VIDEO_EXTENSIONS : AUDIO_EXTENSIONS
-  const label = type === 'video' ? '视频' : '音频'
+  const extensions = type === 'video'
+    ? VIDEO_EXTENSIONS
+    : type === 'audio'
+      ? AUDIO_EXTENSIONS
+      : [...new Set([...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS, ...IMAGE_EXTENSIONS])]
+  const label = type === 'video' ? '视频' : type === 'audio' ? '音频' : '媒体'
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
 
   function managedBasePath() {
@@ -83,6 +88,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const requestedItemId = String(fields.itemId || '').trim()
     const sourcePath = String(fields.sourcePath || fields.path || '').trim()
     const collectionTitle = String(fields.title || fields.collectionTitle || '').trim()
+    const inputTags = parseTags(fields.tags || '')
     const fileInputs = files.filter((file) => file.buffer?.length)
     if (!sourcePath && !fileInputs.length) throw new Error('sourcePath or file is required')
 
@@ -94,6 +100,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         type,
         itemId,
         title: seedTitle,
+        tags: inputTags,
         mediaUnits: [],
         unitCount: 0,
         createdAt: new Date().toISOString(),
@@ -123,6 +130,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const next = normalizeItem({
       ...existing,
       title: collectionTitle || existing.title || seedTitle,
+      tags: inputTags.length ? inputTags : existing.tags || [],
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
       updatedAt: new Date().toISOString(),
@@ -146,8 +154,26 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const index = units.findIndex((unit) => unit.unitId === unitId)
     if (index < 0) throw new Error(`Unit not found: ${unitId}`)
     const unit = units[index]
+    if (unit.mediaKind === 'image-gallery') {
+      return {
+        type: 'images',
+        item: pickPublicItem(item),
+        unit,
+        sections: [],
+        section: null,
+        navigation: {
+          prev: units[index - 1] || null,
+          next: units[index + 1] || null,
+        },
+        images: (unit.images || []).map((image, imageIndex) => ({
+          index: imageIndex,
+          title: image.title || path.posix.basename(image.relativePath || ''),
+          url: `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(image.relativePath || '')}`,
+        })),
+      }
+    }
     return {
-      type,
+      type: unit.mediaKind || type,
       item: pickPublicItem(item),
       unit,
       sections: [],
@@ -162,6 +188,36 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         streamPath: streamPathForManagedPath(unit.managedPath),
       },
     }
+  }
+
+  async function getResource(itemId, resourcePath) {
+    const filePath = safeManagedFilePath(itemId, resourcePath)
+    return {
+      body: await readFile(filePath),
+      contentType: contentType(filePath),
+    }
+  }
+
+  async function updateItemTags(itemId, tags = []) {
+    const item = await readMetadata(itemId)
+    const next = normalizeItem({
+      ...item,
+      tags: parseTags(tags),
+      updatedAt: new Date().toISOString(),
+    })
+    await writeMetadata(itemId, next)
+    return next
+  }
+
+  async function updateUnitTags(itemId, unitId, tags = []) {
+    const item = await readMetadata(itemId)
+    const units = mediaUnitsForItem(item)
+    const index = units.findIndex((unit) => unit.unitId === unitId)
+    if (index < 0) throw new Error(`Unit not found: ${unitId}`)
+    units[index] = normalizeMediaUnit({ ...units[index], tags: parseTags(tags) })
+    const next = normalizeItem({ ...item, mediaUnits: units, updatedAt: new Date().toISOString() })
+    await writeMetadata(itemId, next)
+    return units[index]
   }
 
   async function getProgress(itemId) {
@@ -297,7 +353,25 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const files = (await walkFiles(filesPath(itemId)))
       .filter(isSupportedName)
       .sort((a, b) => relativePath(itemId, a).localeCompare(relativePath(itemId, b), undefined, { numeric: true }))
-    return Promise.all(files.map((filePath) => unitFromFile({ itemId, filePath })))
+    if (type !== 'media') return Promise.all(files.map((filePath) => unitFromFile({ itemId, filePath })))
+    const units = []
+    const imagesByDir = new Map()
+    for (const filePath of files) {
+      const kind = mediaKind(filePath)
+      if (kind === 'image') {
+        const dir = path.posix.dirname(relativePath(itemId, filePath))
+        const key = dir === '.' ? '' : dir
+        const list = imagesByDir.get(key) || []
+        list.push(filePath)
+        imagesByDir.set(key, list)
+      } else {
+        units.push(await unitFromFile({ itemId, filePath }))
+      }
+    }
+    for (const [groupPath, imageFiles] of imagesByDir.entries()) {
+      units.push(await galleryUnitFromFiles({ itemId, groupPath, files: imageFiles }))
+    }
+    return units.sort((a, b) => String(a.relativePath || a.fileName).localeCompare(String(b.relativePath || b.fileName), undefined, { numeric: true }))
   }
 
   async function uniqueImportTarget(candidate) {
@@ -326,12 +400,16 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const fileName = relativePath(itemId, filePath)
     const title = path.basename(fileName, path.extname(fileName))
     const unitId = uniqueUnitId(fileName)
+    const kind = mediaKind(filePath)
     return normalizeMediaUnit({
       type,
       unitId,
       title,
       fileName,
       relativePath: fileName,
+      groupPath: groupPathOf(fileName),
+      mediaKind: kind,
+      tags: [kind === 'audio' ? '音频' : kind === 'video' ? '视频' : '图片'],
       managedPath: filePath,
       streamPath: streamPathForManagedPath(filePath),
       streamUrl: streamUrlForPath(filePath),
@@ -343,8 +421,43 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     })
   }
 
+  async function galleryUnitFromFiles({ itemId, groupPath, files }) {
+    const relative = groupPath || 'images'
+    const unitId = `gallery_${createHash('sha1').update(relative).digest('hex').slice(0, 12)}`
+    const images = files.map((filePath, index) => ({
+      index,
+      title: path.basename(filePath),
+      relativePath: relativePath(itemId, filePath),
+      size: 0,
+    }))
+    return normalizeMediaUnit({
+      type,
+      unitId,
+      title: groupPath || '图片',
+      fileName: relative,
+      relativePath: relative,
+      groupPath,
+      mediaKind: 'image-gallery',
+      tags: ['图片'],
+      imageCount: images.length,
+      images,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+  }
+
   function relativePath(itemId, filePath) {
     return path.relative(filesPath(itemId), filePath).split(path.sep).join('/')
+  }
+
+  function safeManagedFilePath(itemId, resourcePath) {
+    const base = filesPath(itemId)
+    const normalized = path.normalize(String(resourcePath || '').replace(/^[/\\]+/, ''))
+    const target = path.resolve(base, normalized)
+    if (target !== path.resolve(base) && !target.startsWith(`${path.resolve(base)}${path.sep}`)) {
+      throw new Error('resource path is outside media item')
+    }
+    return target
   }
 
   function streamUrlForPath(managedPath) {
@@ -383,8 +496,11 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     getItem,
     listUnits,
     getReaderContent,
+    getResource,
     getProgress,
     saveProgress,
+    updateItemTags,
+    updateUnitTags,
   }
 }
 
@@ -395,6 +511,7 @@ function normalizeItem(item) {
     itemId: String(item?.itemId || ''),
     title: String(item?.title || item?.itemId || 'Untitled'),
     author: Array.isArray(item?.author) ? item.author : [],
+    tags: parseTags(item?.tags || []),
     cover: String(item?.cover || ''),
     unitCount: Number(item?.unitCount || mediaUnits.length || 0),
     mediaUnits,
@@ -411,12 +528,17 @@ function normalizeMediaUnit(unit) {
     index: Number(unit?.index || 0),
     fileName: String(unit?.fileName || ''),
     relativePath: String(unit?.relativePath || unit?.fileName || ''),
+    groupPath: String(unit?.groupPath || groupPathOf(unit?.relativePath || unit?.fileName || '')),
+    mediaKind: String(unit?.mediaKind || unit?.kind || unit?.type || ''),
+    tags: parseTags(unit?.tags || []),
     managedPath: String(unit?.managedPath || ''),
     streamPath: String(unit?.streamPath || ''),
     streamUrl: String(unit?.streamUrl || ''),
     metaUrl: String(unit?.metaUrl || ''),
     size: Number(unit?.size || 0),
     contentType: String(unit?.contentType || ''),
+    imageCount: Number(unit?.imageCount || 0),
+    images: Array.isArray(unit?.images) ? unit.images : [],
     createdAt: String(unit?.createdAt || ''),
     updatedAt: String(unit?.updatedAt || ''),
   }
@@ -429,6 +551,19 @@ function mediaUnitsForItem(item) {
 function pickPublicItem(item) {
   const { mediaUnits, ...publicItem } = item
   return publicItem
+}
+
+function mediaKind(filePath) {
+  const ext = path.extname(filePath).slice(1).toLowerCase()
+  if (AUDIO_EXTENSIONS.includes(ext)) return 'audio'
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video'
+  if (IMAGE_EXTENSIONS.includes(ext)) return 'image'
+  return 'unknown'
+}
+
+function groupPathOf(relativePath) {
+  const dir = path.posix.dirname(String(relativePath || '').split(path.sep).join('/'))
+  return dir === '.' ? '' : dir
 }
 
 function uniqueItemId(title) {
@@ -466,6 +601,11 @@ function safeRelativePath(value) {
     .join('/') || 'media'
 }
 
+function parseTags(value) {
+  const input = Array.isArray(value) ? value : String(value || '').split(/[,\n，#]+/)
+  return [...new Set(input.map((item) => String(item || '').trim()).filter(Boolean))]
+}
+
 function isZipName(filePath) {
   return path.extname(filePath || '').toLowerCase() === '.zip'
 }
@@ -489,6 +629,10 @@ function contentType(filePath) {
   if (['mov'].includes(ext)) return 'video/quicktime'
   if (['webm'].includes(ext)) return 'video/webm'
   if (['mkv'].includes(ext)) return 'video/x-matroska'
+  if (['jpg', 'jpeg'].includes(ext)) return 'image/jpeg'
+  if (['png'].includes(ext)) return 'image/png'
+  if (['gif'].includes(ext)) return 'image/gif'
+  if (['webp'].includes(ext)) return 'image/webp'
   return 'application/octet-stream'
 }
 

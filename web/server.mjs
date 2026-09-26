@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems } from './library/registry.mjs'
 import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
+import { initTagStore, listTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -2068,6 +2069,24 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
+async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
+  if (!String(tag || '').trim()) {
+    const items = await scanLibraryItems({ type })
+    for (const item of items) syncItemTagIndex(item).catch(() => {})
+    return items
+  }
+  const keys = searchItemKeys(tag, { type })
+  const items = []
+  for (const key of keys) {
+    try {
+      items.push(await libraryHandler(key.type).getItem(key.itemId))
+    } catch {
+      // Ignore stale tag index rows; future tag edits or imports will refresh them.
+    }
+  }
+  return items.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+}
+
 async function route(req, res) {
   const startedAt = process.hrtime.bigint()
   const url = new URL(req.url, `http://${req.headers.host}`)
@@ -2106,13 +2125,21 @@ async function route(req, res) {
     if (pathname === '/api/library/types' && req.method === 'GET') {
       return json(res, 200, libraryTypes())
     }
+    if (pathname === '/api/library/tags' && req.method === 'GET') {
+      return json(res, 200, listTags())
+    }
     if (pathname === '/api/library/items' && req.method === 'GET') {
-      return json(res, 200, await scanLibraryItems({ type: url.searchParams.get('type') || 'all' }))
+      return json(res, 200, await scanLibraryItemsWithTags({
+        type: url.searchParams.get('type') || 'all',
+        tag: url.searchParams.get('tag') || '',
+      }))
     }
     if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       const handler = libraryHandler(url.searchParams.get('type') || 'epub')
       if (!handler.createSampleItem) return json(res, 400, { error: 'This library type has no sample generator' })
-      return json(res, 201, await handler.createSampleItem())
+      const item = await handler.createSampleItem()
+      await syncItemTagIndex(item)
+      return json(res, 201, item)
     }
     if (pathname === '/api/library/items' && req.method === 'POST') {
       const type = url.searchParams.get('type') || 'epub'
@@ -2121,12 +2148,14 @@ async function route(req, res) {
       const form = await readMultipart(req)
       const files = form.files.filter((item) => item.buffer?.length)
       const file = files.find((item) => item.name === 'file') || files[0]
-      return json(res, 201, await handler.importItem({
+      const item = await handler.importItem({
         fileName: file?.filename || '',
         buffer: file?.buffer || Buffer.alloc(0),
         files,
         fields: form.fields,
-      }))
+      })
+      await syncItemTagIndex(item)
+      return json(res, 201, item)
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'GET') {
       const parts = pathname.split('/').filter(Boolean)
@@ -2152,6 +2181,20 @@ async function route(req, res) {
       const handler = libraryHandler(type)
       if (!itemId) return json(res, 400, { error: 'itemId is required' })
       if (action === 'progress') return json(res, 200, await handler.saveProgress(itemId, await readJson(req)))
+      if (action === 'tags') {
+        if (!handler.updateItemTags) return json(res, 400, { error: 'This library type does not support tags' })
+        const body = await readJson(req)
+        const item = await handler.updateItemTags(itemId, body.tags || [])
+        await setItemTags({ type, itemId, tags: item.tags || [] })
+        return json(res, 200, item)
+      }
+      if (action === 'units' && parts[6] && parts[7] === 'tags') {
+        if (!handler.updateUnitTags) return json(res, 400, { error: 'This library type does not support unit tags' })
+        const body = await readJson(req)
+        const unit = await handler.updateUnitTags(itemId, parts[6], body.tags || [])
+        await setUnitTags({ type, itemId, unitId: parts[6], tags: unit.tags || [] })
+        return json(res, 200, unit)
+      }
     }
     if (pathname === '/api/reading-progress' && req.method === 'GET') {
       return json(res, 200, await listReadingProgress())
@@ -2296,10 +2339,10 @@ async function route(req, res) {
 }
 
 registerLibraryHandler(createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExists, moveAside }))
-registerLibraryHandler(createStreamMediaHandler({ type: 'audio', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config }))
-registerLibraryHandler(createStreamMediaHandler({ type: 'video', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config }))
+registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config }))
 
 await mkdir(DOWNLOAD_DIR, { recursive: true })
+await initTagStore(DATA_DIR)
 config = await loadConfig()
 createServer(route).listen(PORT, HOST, () => {
   console.log(`copymanga web listening on http://${HOST}:${PORT}`)
