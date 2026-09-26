@@ -291,7 +291,13 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
 
   async function walkFiles(dir) {
     const result = []
-    const entries = await readdir(dir, { withFileTypes: true })
+    let entries
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch (error) {
+      if (error.code === 'ENOENT') return result
+      throw error
+    }
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name)
       if (entry.isDirectory()) result.push(...await walkFiles(fullPath))
@@ -342,8 +348,29 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     await mkdir(extractDir, { recursive: true })
     await writeFile(zipPath, file.buffer)
     await assertSafeZip(zipPath)
-    await execFileAsync('unzip', ['-q', zipPath, '-d', extractDir])
+    await extractZipArchive(zipPath, extractDir)
+    await assertSafeExtractedTree(extractDir)
     return extractDir
+  }
+
+  async function extractZipArchive(zipPath, extractDir) {
+    const attempts = [
+      ['unar', ['-quiet', '-force-overwrite', '-no-directory', '-output-directory', extractDir, zipPath]],
+      ['bsdtar', ['-xf', zipPath, '-C', extractDir]],
+      ['unzip', ['-q', zipPath, '-d', extractDir]],
+    ]
+    const errors = []
+    for (const [command, args] of attempts) {
+      try {
+        await execFileAsync(command, args)
+        return
+      } catch (error) {
+        errors.push(`${command}: ${error.message}`)
+        if (command === 'unar' && error.code === 'ENOENT') continue
+        if (command === 'bsdtar' && error.code === 'ENOENT') continue
+      }
+    }
+    throw new Error(`zip 解压失败：${errors.join('；')}`)
   }
 
   async function assertSafeZip(zipPath) {
@@ -359,6 +386,15 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       ) {
         throw new Error(`zip 内包含不安全路径：${name}`)
       }
+    }
+  }
+
+  async function assertSafeExtractedTree(dir) {
+    const entries = await readdir(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isSymbolicLink()) throw new Error(`zip 内包含不支持的链接：${entry.name}`)
+      if (entry.isDirectory()) await assertSafeExtractedTree(fullPath)
     }
   }
 
