@@ -25,6 +25,12 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background: var(--site-bg);
   margin: 0;
@@ -88,8 +94,10 @@ h2 {
   color: var(--site-text);
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  align-items: start;
-  min-height: 100vh;
+  align-items: stretch;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 #app.site-theme-light {
@@ -265,7 +273,10 @@ h2 {
 .content {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
+  height: 100vh;
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .tabs {
@@ -311,12 +322,14 @@ h2 {
   gap: 18px;
   grid-template-columns: minmax(360px, 1fr) minmax(240px, 0.6fr);
   min-height: 0;
+  overflow: hidden;
   padding: 18px;
 }
 
 .viewer-view,
 .media-viewer-view {
   min-height: 0;
+  overflow: hidden;
   padding: 18px;
 }
 
@@ -325,6 +338,7 @@ h2 {
   gap: 18px;
   grid-template-columns: minmax(300px, 0.8fr) minmax(300px, 1fr);
   min-height: 0;
+  overflow: hidden;
   padding: 18px;
 }
 
@@ -347,6 +361,8 @@ h2 {
 
 .view.active {
   display: grid;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .workspace > section {
@@ -390,6 +406,8 @@ h2 {
   align-content: start;
   display: grid;
   gap: 10px;
+  min-height: 0;
+  overscroll-behavior: contain;
   overflow: auto;
 }
 
@@ -743,6 +761,7 @@ h2 {
   display: grid;
   gap: 8px;
   min-height: 0;
+  overscroll-behavior: contain;
   overflow: auto;
 }
 
@@ -845,6 +864,7 @@ h2 {
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr);
+  overscroll-behavior: contain;
   overflow: auto;
   padding: 12px;
 }
@@ -1093,10 +1113,30 @@ h2 {
 }
 
 @media (max-width: 900px) {
+  html,
+  body {
+    height: auto;
+    overflow: auto;
+  }
+
   #app,
   .workspace,
   .library-workspace {
     grid-template-columns: 1fr;
+  }
+
+  #app,
+  .content {
+    height: auto;
+    overflow: visible;
+  }
+
+  .workspace,
+  .library-workspace,
+  .viewer-view,
+  .media-viewer-view,
+  .view.active {
+    overflow: visible;
   }
 
   #app.sidebar-collapsed {
