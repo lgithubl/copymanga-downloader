@@ -162,6 +162,7 @@ h2 {
 #app .card,
 #app .chapter,
 #app .job,
+#app .task-row,
 #app .settings-panel,
 #app .empty-panel,
 #app .inventory-progress,
@@ -720,6 +721,71 @@ h2 {
 .job.running,
 .job.queued {
   border-color: #1f6feb;
+}
+
+.tasks-view {
+  min-height: 0;
+  padding: 18px;
+}
+
+.tasks-view.active {
+  display: grid;
+}
+
+.tasks-view > section {
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.task-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.task-row {
+  align-items: center;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 0.75fr) minmax(320px, 1fr) auto;
+  padding: 10px;
+}
+
+.task-row.failed {
+  border-color: #cf222e;
+}
+
+.task-row.running,
+.task-row.queued {
+  border-color: #1f6feb;
+}
+
+.task-main,
+.task-state {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.task-main strong,
+.task-main span,
+.task-main small,
+.task-state span,
+.task-state small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .task-head {

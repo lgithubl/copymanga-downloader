@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { readFile, readdir, stat, writeFile, mkdir, rename } from 'node:fs/promises'
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,6 +21,12 @@ const HOST = process.env.HOST || '0.0.0.0'
 const PORT = Number(process.env.PORT || 8080)
 
 const jobs = new Map()
+const jobQueue = []
+const runningJobIds = new Set()
+const jobBatches = new Map()
+const fileLocks = new Map()
+const chapterLocks = new Map()
+let jobQueueTimer = null
 const inventoryUpdates = new Map()
 const sseClients = new Set()
 const previewSessions = new Map()
@@ -111,6 +117,40 @@ async function moveAside(sourcePath, reason = 'redownload') {
     await execFileAsync('mv', [resolvedSource, targetPath])
   }
   return targetPath
+}
+
+async function withLock(lockMap, key, work) {
+  const previous = lockMap.get(key) || Promise.resolve()
+  let release
+  const tail = new Promise((resolve) => {
+    release = resolve
+  })
+  const next = previous.catch(() => {}).then(() => tail)
+  lockMap.set(key, next)
+  await previous.catch(() => {})
+  try {
+    return await work()
+  } finally {
+    release()
+    if (lockMap.get(key) === next) lockMap.delete(key)
+  }
+}
+
+async function atomicWriteFile(filePath, body, { jobId = 'job' } = {}) {
+  await mkdir(path.dirname(filePath), { recursive: true })
+  const tmp = `${filePath}.tmp-${safeSegment(jobId)}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  await writeFile(tmp, body)
+  const info = await stat(tmp)
+  if (!info.isFile() || info.size <= 0) throw new Error(`临时文件写入失败 ${path.basename(filePath)}`)
+  await rename(tmp, filePath)
+}
+
+async function atomicWriteJson(filePath, payload, { jobId = 'job', verify } = {}) {
+  await withLock(fileLocks, path.resolve(filePath), async () => {
+    await atomicWriteFile(filePath, JSON.stringify(payload, null, 2), { jobId })
+    const parsed = JSON.parse(await readFile(filePath, 'utf8'))
+    if (verify) verify(parsed)
+  })
 }
 
 function defaultConfig() {
@@ -463,6 +503,10 @@ function emit(event, data) {
 function updateJob(job, patch) {
   if (!jobs.has(job.id)) return
   Object.assign(job, patch, { updatedAt: new Date().toISOString() })
+  if (job.deleted) {
+    emit('jobDelete', { id: job.id })
+    return
+  }
   emit('job', publicJob(job))
 }
 
@@ -472,7 +516,7 @@ function publicJob(job) {
 }
 
 function publicJobs() {
-  return [...jobs.values()].map(publicJob)
+  return [...jobs.values()].filter((job) => !job.deleted).map(publicJob)
 }
 
 function publicInventoryUpdate(update) {
@@ -484,15 +528,21 @@ function latestInventoryUpdate() {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
 }
 
-function createJob({ comicPathWord, chapterUuids, token, force = false }) {
+function createJob({ comicPathWord, chapterUuids, token, force = false, batchId = '', retryOf = '' }) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const chapterUuid = chapterUuids?.[0] || ''
   return {
     id,
     status: 'queued',
     comicPathWord,
     chapterUuids,
+    chapterUuid,
+    chapterTitle: '',
     token,
     force: Boolean(force),
+    batchId,
+    retryOf,
+    deleted: false,
     totalChapters: chapterUuids.length,
     doneChapters: 0,
     totalImages: 0,
@@ -503,12 +553,14 @@ function createJob({ comicPathWord, chapterUuids, token, force = false }) {
   }
 }
 
-function createChapterJobs({ comicPathWord, chapterUuids, token, force = false }) {
+function createChapterJobs({ comicPathWord, chapterUuids, token, force = false, batchId = '', retryOf = '' }) {
   return chapterUuids.map((chapterUuid) => createJob({
     comicPathWord,
     chapterUuids: [chapterUuid],
     token,
     force,
+    batchId,
+    retryOf,
   }))
 }
 
@@ -520,8 +572,40 @@ function startJob(job) {
   job.message = '等待开始'
   job.updatedAt = new Date().toISOString()
   jobs.set(job.id, job)
+  if (!jobQueue.includes(job.id) && !runningJobIds.has(job.id)) jobQueue.push(job.id)
   emit('job', publicJob(job))
-  runJob(job, job)
+  scheduleJobQueue()
+}
+
+function scheduleJobQueue() {
+  if (jobQueueTimer) return
+  jobQueueTimer = setTimeout(() => {
+    jobQueueTimer = null
+    processJobQueue()
+  }, 0)
+}
+
+function processJobQueue() {
+  const limit = Math.max(1, Number(config.chapterConcurrency || 1))
+  while (runningJobIds.size < limit && jobQueue.length > 0) {
+    const id = jobQueue.shift()
+    const job = jobs.get(id)
+    if (!job || job.deleted || job.status !== 'queued') continue
+    runningJobIds.add(id)
+    runJob(job, job).finally(() => {
+      runningJobIds.delete(id)
+      processJobQueue()
+    })
+  }
+}
+
+function validateJobCompletion(job) {
+  if (job.doneChapters !== job.totalChapters) {
+    throw new Error(`章节完成数异常：${job.doneChapters}/${job.totalChapters}`)
+  }
+  if (job.totalImages <= 0 || job.doneImages !== job.totalImages) {
+    throw new Error(`图片完成数异常：${job.doneImages}/${job.totalImages || '?'}`)
+  }
 }
 
 function findChapter(comic, chapterUuid) {
@@ -659,8 +743,12 @@ async function writeDownloadedComicMetadata(downloadedComic, comic) {
   normalizeComicMetadata(comic)
   const comicDir = path.join(DOWNLOAD_DIR, downloadedComic.path)
   const metadataFile = appComicMetadataPath(comic, comicDir)
-  await mkdir(path.dirname(metadataFile), { recursive: true })
-  await writeFile(metadataFile, JSON.stringify(appComicMetadataFrom(comic), null, 2))
+  await atomicWriteJson(metadataFile, appComicMetadataFrom(comic), {
+    jobId: 'inventory',
+    verify: (metadata) => {
+      if (!comicPathWordOf(metadata)) throw new Error('漫画元数据写入校验失败')
+    },
+  })
 }
 
 async function getDownloadedComic(comicPathWord, { refresh = false, token = '' } = {}) {
@@ -1294,7 +1382,7 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
   })
   const activeKeys = new Set(
     [...jobs.values()]
-      .filter((job) => job.status !== 'completed')
+      .filter((job) => !job.deleted && job.status !== 'completed')
       .map(activeJobKey),
   )
   const createdJobs = []
@@ -1359,7 +1447,18 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
         })
       }
 
-      const nextJobs = createChapterJobs({ comicPathWord, chapterUuids, token })
+      const batchId = `${update.id}-${comicPathWord}`
+      const nextJobs = createChapterJobs({ comicPathWord, chapterUuids, token, batchId })
+      if (nextJobs.length > 0) {
+        jobBatches.set(batchId, {
+          id: batchId,
+          comicPathWord,
+          requestedChapterUuids: chapterUuids,
+          createdJobIds: nextJobs.map((job) => job.id),
+          createdAt: new Date().toISOString(),
+          source: 'inventory-update',
+        })
+      }
       for (const job of nextJobs) startJob(job)
       createdJobs.push(...nextJobs.map(publicJob))
       aggregateChapterDownloaded += chapterDownloaded
@@ -1417,32 +1516,44 @@ async function runInventoryUpdate(update, { token = '', scope = 'downloadedGroup
 }
 
 async function downloadImage(url, filePath) {
+  if (!url) throw new Error('图片地址为空')
   const resp = await fetch(url)
   if (!resp.ok) throw new Error(`image HTTP ${resp.status}: ${url}`)
   const contentType = resp.headers.get('content-type') || ''
-  const ext = config.downloadFormat === 'Jpeg' ? 'jpg' : (contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'webp')
+  const normalizedContentType = contentType.toLowerCase()
+  if (!normalizedContentType.startsWith('image/')) throw new Error(`图片响应类型异常 ${contentType || 'unknown'}: ${url}`)
+  const ext = config.downloadFormat === 'Jpeg' ? 'jpg' : (normalizedContentType.includes('jpeg') || normalizedContentType.includes('jpg') ? 'jpg' : 'webp')
   const target = filePath.replace(/\.[^.]+$/, `.${ext}`)
   await mkdir(path.dirname(target), { recursive: true })
-  if (config.downloadFormat === 'Jpeg' && contentType.includes('webp')) {
+  if (config.downloadFormat === 'Jpeg' && normalizedContentType.includes('webp')) {
     throw new Error('Web 版暂未实现 webp 转 jpg，请使用 Webp 下载格式')
   }
-  const stream = createWriteStream(target)
-  await new Promise((resolve, reject) => {
-    resp.body.pipeTo(
-      new WritableStream({
-        write(chunk) {
-          stream.write(Buffer.from(chunk))
-        },
-        close() {
-          stream.end(resolve)
-        },
-        abort(error) {
-          stream.destroy()
-          reject(error)
-        },
-      }),
-    ).catch(reject)
-  })
+  const tmp = `${target}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const body = Buffer.from(await resp.arrayBuffer())
+  if (body.length <= 0) throw new Error(`图片内容为空: ${url}`)
+  await writeFile(tmp, body)
+  const tmpInfo = await stat(tmp)
+  if (!tmpInfo.isFile() || tmpInfo.size <= 0) throw new Error(`图片临时文件无效: ${url}`)
+  await rename(tmp, target)
+  const targetInfo = await stat(target)
+  if (!targetInfo.isFile() || targetInfo.size <= 0) throw new Error(`图片落盘失败: ${path.basename(target)}`)
+  return target
+}
+
+async function validateDownloadedImages({ chapterDir, files, expectedCount, chapterTitle }) {
+  const uniqueFiles = [...new Set(files.map((file) => path.resolve(file)))]
+  if (uniqueFiles.length !== expectedCount) {
+    throw new Error(`章节图片数量异常：${chapterTitle} ${uniqueFiles.length}/${expectedCount}`)
+  }
+  for (const file of uniqueFiles) {
+    const info = await stat(file)
+    if (!info.isFile() || info.size <= 0) throw new Error(`章节图片文件无效：${chapterTitle} ${path.basename(file)}`)
+  }
+  const entries = await readdir(chapterDir, { withFileTypes: true })
+  const validImages = entries.filter((entry) => entry.isFile() && /\.(webp|jpe?g|png|gif)$/i.test(entry.name))
+  if (validImages.length < expectedCount) {
+    throw new Error(`章节落盘图片不足：${chapterTitle} ${validImages.length}/${expectedCount}`)
+  }
 }
 
 async function runWithConcurrency(items, concurrency, worker) {
@@ -1500,22 +1611,34 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
     const metadataComicDir = path.dirname(metadataComicFile)
     await mkdir(comicDir, { recursive: true })
     await mkdir(metadataComicDir, { recursive: true })
-    await writeFile(metadataComicFile, JSON.stringify(appComicMetadataFrom(comic), null, 2))
+    await atomicWriteJson(metadataComicFile, appComicMetadataFrom(comic), {
+      jobId: job.id,
+      verify: (metadata) => {
+        if (!comicPathWordOf(metadata)) throw new Error('漫画元数据写入校验失败')
+      },
+    })
 
-    await runWithConcurrency(chapterUuids, config.chapterConcurrency, async (chapterUuid) => {
+    for (const chapterUuid of chapterUuids) {
+      await withLock(chapterLocks, `${comicPathWord}:${chapterUuid}`, async () => {
       const found = findChapter(comic, chapterUuid)
       if (!found) throw new Error(`找不到章节 ${chapterUuid}`)
 
       const chapterMeta = found.chapter
+      const groupChapters = comic.groupsChapters?.[found.groupPathWord] || []
       const group = comic.groups?.[found.groupPathWord]
       const groupTitle = cleanName(group?.name || group?.title || chapterMeta.group_name || found.groupPathWord)
       const chapterTitle = cleanName(chapterTitleOf(chapterMeta, chapterUuid))
-      const order = appOrderOf(chapterMeta, job.doneChapters + 1)
+      const order = appOrderOf(chapterMeta, groupChapters.findIndex((item) => chapterUuidOf(item) === chapterUuid) + 1 || job.doneChapters + 1)
+      updateJob(job, { chapterUuid, chapterTitle })
 
       updateJob(job, { message: `读取章节 ${chapterTitle}` })
       const chapter = await getChapter(comicPathWord, chapterUuid, token)
       const contents = chapter.chapter?.contents || []
       const words = chapter.chapter?.words || contents.map((_, index) => index)
+      if (contents.length === 0) throw new Error(`章节没有图片：${chapterTitle}`)
+      for (const [index, content] of contents.entries()) {
+        if (!content?.url) throw new Error(`章节图片地址为空：${chapterTitle} #${index + 1}`)
+      }
       job.totalImages += contents.length
       updateJob(job, { totalImages: job.totalImages })
 
@@ -1534,15 +1657,18 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
         await moveForcedChapterAside({ comicPathWord, chapterUuid, comicDir, metadataComicDir, chapterDir, metadataChapterFile, metadataChapterDir })
       }
 
+      const downloadedFiles = []
       await runWithConcurrency(contents, config.imgConcurrency, async (content, i) => {
         const imageUrl = String(content.url || '').replace('.c800x.', '.c1500x.')
         const index = Number(words[i] ?? i) + 1
         const filePath = path.join(chapterDir, `${String(index).padStart(3, '0')}.webp`)
-        await downloadImage(imageUrl, filePath)
+        const downloadedFile = await downloadImage(imageUrl, filePath)
+        downloadedFiles.push(downloadedFile)
         job.doneImages += 1
         updateJob(job, { doneImages: job.doneImages, message: `下载 ${chapterTitle} ${job.doneImages}/${job.totalImages}` })
         if (config.imgDownloadIntervalSec > 0) await sleep(config.imgDownloadIntervalSec)
       })
+      await validateDownloadedImages({ chapterDir, files: downloadedFiles, expectedCount: contents.length, chapterTitle })
 
       await mkdir(metadataChapterDir, { recursive: true })
       const appChapterMetadata = appChapterMetadataFrom({
@@ -1556,12 +1682,19 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
         order,
         chapterSize: contents.length || chapterMeta.size || chapterMeta.chapterSize || 0,
       })
-      await writeFile(metadataChapterFile, JSON.stringify(appChapterMetadata, null, 2))
+      await atomicWriteJson(metadataChapterFile, appChapterMetadata, {
+        jobId: job.id,
+        verify: (metadata) => {
+          if (chapterUuidOf(metadata) !== chapterUuid) throw new Error(`章节元数据写入校验失败：${chapterTitle}`)
+        },
+      })
       job.doneChapters += 1
       updateJob(job, { doneChapters: job.doneChapters })
       if (config.chapterDownloadIntervalSec > 0) await sleep(config.chapterDownloadIntervalSec)
-    })
+      })
+    }
 
+    validateJobCompletion(job)
     updateJob(job, { status: 'completed', message: '下载完成' })
   } catch (error) {
     updateJob(job, { status: 'failed', message: error.message })
@@ -1684,10 +1817,9 @@ async function route(req, res) {
     if (pathname === '/api/jobs/retry-failed' && req.method === 'POST') {
       const retried = []
       for (const [id, job] of [...jobs.entries()]) {
-        if (job.status !== 'failed') continue
-        const retry = createJob(job)
-        jobs.delete(id)
-        emit('jobDelete', { id })
+        if (job.deleted || job.status !== 'failed') continue
+        const retry = createJob({ ...job, retryOf: job.id })
+        updateJob(job, { message: `${job.message || '失败'} · 已创建重试任务 ${retry.id}` })
         startJob(retry)
         retried.push(publicJob(retry))
       }
@@ -1696,12 +1828,34 @@ async function route(req, res) {
     if (pathname === '/api/jobs/clear-active' && req.method === 'POST') {
       let cleared = 0
       for (const [id, job] of [...jobs.entries()]) {
-        if (job.status === 'completed') continue
-        jobs.delete(id)
+        if (job.deleted || job.status === 'completed') continue
+        job.deleted = true
+        job.updatedAt = new Date().toISOString()
         cleared += 1
         emit('jobDelete', { id })
       }
       return json(res, 200, { cleared })
+    }
+    if (pathname === '/api/jobs/clear-completed' && req.method === 'POST') {
+      let cleared = 0
+      for (const [id, job] of [...jobs.entries()]) {
+        if (job.deleted || job.status !== 'completed') continue
+        job.deleted = true
+        job.updatedAt = new Date().toISOString()
+        cleared += 1
+        emit('jobDelete', { id })
+      }
+      return json(res, 200, { cleared })
+    }
+    if (pathname.startsWith('/api/jobs/') && req.method === 'DELETE') {
+      const id = pathname.split('/').pop()
+      const job = jobs.get(id)
+      if (job && !job.deleted) {
+        job.deleted = true
+        job.updatedAt = new Date().toISOString()
+        emit('jobDelete', { id })
+      }
+      return json(res, 200, { deleted: Boolean(job) })
     }
     if (pathname === '/api/downloaded' && req.method === 'GET') return json(res, 200, await listDownloaded())
     if (pathname.startsWith('/api/downloaded/comic/') && req.method === 'GET') {
@@ -1770,9 +1924,17 @@ async function route(req, res) {
       if (!body.comicPathWord || !Array.isArray(body.chapterUuids) || body.chapterUuids.length === 0) {
         return json(res, 400, { error: 'comicPathWord and chapterUuids are required' })
       }
-      const jobs = createChapterJobs(body)
-      for (const job of jobs) startJob(job)
-      return json(res, 202, { jobs: jobs.map(publicJob) })
+      const batchId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      const nextJobs = createChapterJobs({ ...body, batchId })
+      jobBatches.set(batchId, {
+        id: batchId,
+        comicPathWord: body.comicPathWord,
+        requestedChapterUuids: body.chapterUuids,
+        createdJobIds: nextJobs.map((job) => job.id),
+        createdAt: new Date().toISOString(),
+      })
+      for (const job of nextJobs) startJob(job)
+      return json(res, 202, { batch: jobBatches.get(batchId), jobs: nextJobs.map(publicJob) })
     }
 
     return serveStatic(req, res, pathname)

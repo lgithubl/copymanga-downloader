@@ -42,6 +42,7 @@
           <button class="tab" data-view="media-import-view">媒体导入</button>
           <button class="tab" data-view="media-viewer-view">媒体浏览</button>
           <button class="tab" data-view="viewer-view">图片浏览</button>
+          <button class="tab" data-view="tasks-view">任务列表</button>
           <button class="tab" data-view="settings-view">配置</button>
         </nav>
         <div id="search-toolbar" class="toolbar">
@@ -342,6 +343,28 @@
               </div>
             </div>
             <article id="media-reader-content" class="media-reader-content empty-panel">请选择媒体库目录项</article>
+          </section>
+        </div>
+        <div id="tasks-view" class="tasks-view view">
+          <section>
+            <div class="chapter-head">
+              <div>
+                <h2>任务列表</h2>
+                <div class="muted">显示当前进程内未删除的全部任务</div>
+              </div>
+              <div class="chapter-actions">
+                <input id="task-search" placeholder="搜索漫画、章节、UUID、错误" />
+                <select id="task-status-filter">
+                  <option value="all">全部状态</option>
+                  <option value="queued">queued</option>
+                  <option value="running">running</option>
+                  <option value="failed">failed</option>
+                  <option value="completed">completed</option>
+                </select>
+                <button id="task-clear-completed" class="danger">删除全部已完成</button>
+              </div>
+            </div>
+            <div id="task-list" class="task-list empty-panel">暂无任务</div>
           </section>
         </div>
         <div id="settings-view" class="workspace view">

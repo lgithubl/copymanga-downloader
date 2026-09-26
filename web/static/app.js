@@ -66,6 +66,10 @@ const els = {
   viewerNext: document.querySelector('#viewer-next'),
   viewerRefresh: document.querySelector('#viewer-refresh'),
   viewerImages: document.querySelector('#viewer-images'),
+  taskSearch: document.querySelector('#task-search'),
+  taskStatusFilter: document.querySelector('#task-status-filter'),
+  taskClearCompleted: document.querySelector('#task-clear-completed'),
+  taskList: document.querySelector('#task-list'),
   libraryType: document.querySelector('#library-type'),
   librarySample: document.querySelector('#library-sample'),
   libraryRefresh: document.querySelector('#library-refresh'),
@@ -667,7 +671,7 @@ function attachViewerSentinel() {
 
 function renderJobs() {
   els.jobs.innerHTML = ''
-  const visible = jobs.filter((job) => job.status !== 'completed')
+  const visible = jobs.filter((job) => job.status !== 'completed' && !job.deleted)
   const sorted = [...visible].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   for (const job of sorted) {
     const total = Math.max(job.totalImages || job.totalChapters || 1, 1)
@@ -687,6 +691,69 @@ function renderJobs() {
     els.jobs.append(el)
   }
   if (sorted.length === 0) els.jobs.innerHTML = '<p class="muted">暂无任务</p>'
+  renderTaskList()
+}
+
+function renderTaskList() {
+  if (!els.taskList) return
+  const keyword = (els.taskSearch?.value || '').trim().toLowerCase()
+  const status = els.taskStatusFilter?.value || 'all'
+  const filtered = jobs
+    .filter((job) => !job.deleted)
+    .filter((job) => status === 'all' || job.status === status)
+    .filter((job) => {
+      if (!keyword) return true
+      return [
+        job.id,
+        job.batchId,
+        job.retryOf,
+        job.comicTitle,
+        job.comicPathWord,
+        job.chapterTitle,
+        job.chapterUuid,
+        ...(job.chapterUuids || []),
+        job.status,
+        job.message,
+      ].join(' ').toLowerCase().includes(keyword)
+    })
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+
+  els.taskList.classList.toggle('empty-panel', filtered.length === 0)
+  els.taskList.innerHTML = ''
+  for (const job of filtered) {
+    const title = job.chapterTitle || job.chapterUuid || job.chapterUuids?.[0] || '章节'
+    const total = Math.max(job.totalImages || job.totalChapters || 1, 1)
+    const done = job.totalImages ? job.doneImages : job.doneChapters
+    const pct = Math.min(100, Math.round((done / total) * 100))
+    const row = document.createElement('article')
+    row.className = `task-row ${job.status}`
+    row.innerHTML = `
+      <div class="task-main">
+        <strong>${escapeHtml(job.comicTitle || job.comicPathWord || job.id)}</strong>
+        <span title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+        <small>${escapeHtml(job.chapterUuid || job.chapterUuids?.[0] || '')}</small>
+      </div>
+      <div class="task-state">
+        <span class="badge">${escapeHtml(job.status)}</span>
+        <span>${escapeHtml(job.message || '')}</span>
+        <div class="bar"><span style="width:${pct}%"></span></div>
+        <small>章节 ${job.doneChapters}/${job.totalChapters} · 图片 ${job.doneImages}/${job.totalImages || '?'} · ${escapeHtml(job.updatedAt || '')}</small>
+      </div>
+      <div class="task-actions">
+        <button class="danger" type="button">删除</button>
+      </div>
+    `
+    row.querySelector('button').addEventListener('click', () => deleteTask(job.id))
+    els.taskList.append(row)
+  }
+  if (filtered.length === 0) els.taskList.textContent = '暂无任务'
+}
+
+async function deleteTask(id) {
+  if (!id) return
+  await api(`/api/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  jobs = jobs.filter((job) => job.id !== id)
+  renderJobs()
 }
 
 function renderInventoryUpdate(update) {
@@ -1510,6 +1577,20 @@ els.viewerPrev.addEventListener('click', () => openAdjacentViewer('prev'))
 els.viewerNext.addEventListener('click', () => openAdjacentViewer('next'))
 els.viewerBack.addEventListener('click', () => {
   showView(viewerState?.returnView || viewerReturnView || 'search-view')
+})
+els.taskSearch.addEventListener('input', renderTaskList)
+els.taskStatusFilter.addEventListener('change', renderTaskList)
+els.taskClearCompleted.addEventListener('click', async () => {
+  try {
+    setLoading(els.taskClearCompleted, true)
+    await api('/api/jobs/clear-completed', { method: 'POST', body: '{}' })
+    jobs = jobs.filter((job) => job.status !== 'completed')
+    renderJobs()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.taskClearCompleted, false)
+  }
 })
 els.sidebarToggle.addEventListener('click', () => {
   const collapsed = !els.app.classList.contains('sidebar-collapsed')
