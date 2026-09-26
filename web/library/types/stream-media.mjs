@@ -336,6 +336,53 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return { queued: jobs }
   }
 
+  async function rescanSubtitles(itemId) {
+    if (!await pathExists(filesPath(itemId))) throw new Error(`Media files not found: ${itemId}`)
+    const subtitleFiles = (await walkFiles(filesPath(itemId))).filter(isSubtitleName)
+    const subtitlesByKey = subtitlesByMediaKey(itemId, subtitleFiles)
+    let nextUnits = []
+    const matchedSubtitlePaths = new Set()
+    await updateMetadata(itemId, async (item) => {
+      const previousUnmatched = new Map(mediaUnitsForItem(item)
+        .filter((unit) => unit.mediaKind === 'subtitle')
+        .map((unit) => [unit.relativePath, unit]))
+      nextUnits = []
+      for (const unit of mediaUnitsForItem(item)) {
+        if (unit.mediaKind === 'subtitle') continue
+        if (unit.mediaKind === 'audio' || unit.mediaKind === 'video') {
+          const subtitles = subtitlesByKey.get(subtitleKey(groupPathOf(unit.relativePath || unit.fileName), path.posix.basename(unit.relativePath || unit.fileName, path.posix.extname(unit.relativePath || unit.fileName)))) || []
+          for (const subtitle of subtitles) matchedSubtitlePaths.add(subtitle.relativePath)
+          nextUnits.push(normalizeMediaUnit({ ...unit, subtitles }))
+        } else {
+          nextUnits.push(unit)
+        }
+      }
+      for (const filePath of subtitleFiles) {
+        const relative = relativePath(itemId, filePath)
+        if (matchedSubtitlePaths.has(relative)) continue
+        const subtitleUnit = await subtitleUnitFromFile({ itemId, filePath })
+        const previous = previousUnmatched.get(relative)
+        nextUnits.push(normalizeMediaUnit({
+          ...subtitleUnit,
+          tags: previous?.tags?.length ? previous.tags : subtitleUnit.tags,
+        }))
+      }
+      nextUnits.sort(compareMediaUnits)
+      return {
+        ...item,
+        unitCount: nextUnits.length,
+        mediaUnits: nextUnits.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
+        updatedAt: new Date().toISOString(),
+      }
+    })
+    return {
+      unitCount: nextUnits.length,
+      matched: matchedSubtitlePaths.size,
+      unmatched: nextUnits.filter((unit) => unit.mediaKind === 'subtitle').length,
+      units: nextUnits,
+    }
+  }
+
   async function assertMediaRoot(source) {
     const info = await stat(source)
     const root = info.isDirectory() ? source : path.dirname(source)
@@ -856,6 +903,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     getThumbnail,
     enqueueThumbnail,
     enqueueThumbnails,
+    rescanSubtitles,
   }
 }
 

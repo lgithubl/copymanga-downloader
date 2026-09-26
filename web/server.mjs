@@ -2211,10 +2211,18 @@ async function route(req, res) {
         const body = await readJson(req)
         return json(res, 202, await handler.enqueueThumbnails(itemId, { force: body.force !== false }))
       }
+      if (action === 'subtitles') {
+        if (!handler.rescanSubtitles) return json(res, 400, { error: 'This library type does not support subtitles' })
+        return json(res, 200, await handler.rescanSubtitles(itemId))
+      }
       if (action === 'units' && parts[6] && parts[7] === 'thumbnail') {
         if (!handler.enqueueThumbnail) return json(res, 400, { error: 'This library type does not support thumbnails' })
         const body = await readJson(req)
         return json(res, 202, { job: await handler.enqueueThumbnail(itemId, parts[6], { force: body.force !== false }) })
+      }
+      if (action === 'units' && parts[6] && parts[7] === 'subtitles') {
+        if (!handler.rescanSubtitles) return json(res, 400, { error: 'This library type does not support subtitles' })
+        return json(res, 200, await handler.rescanSubtitles(itemId, { unitId: parts[6] }))
       }
       if (action === 'units' && parts[6] && parts[7] === 'tags') {
         if (!handler.updateUnitTags) return json(res, 400, { error: 'This library type does not support unit tags' })

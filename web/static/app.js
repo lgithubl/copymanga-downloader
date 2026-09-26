@@ -80,6 +80,7 @@ const els = {
   libraryItemMeta: document.querySelector('#library-item-meta'),
   libraryItemTags: document.querySelector('#library-item-tags'),
   librarySaveTags: document.querySelector('#library-save-tags'),
+  librarySubtitles: document.querySelector('#library-subtitles'),
   libraryThumbnails: document.querySelector('#library-thumbnails'),
   libraryUnits: document.querySelector('#library-units'),
   mediaImportType: document.querySelector('#media-import-type'),
@@ -1262,6 +1263,7 @@ async function selectLibraryItem(type, itemId) {
     els.libraryItemMeta.textContent = `${item.type} · ${(item.author || []).join(', ') || '未知作者'} · ${units.length} 个目录项`
     els.libraryItemTags.value = (item.tags || []).join(', ')
     els.librarySaveTags.disabled = false
+    els.librarySubtitles.disabled = item.type !== 'media'
     els.libraryThumbnails.disabled = item.type !== 'media'
     renderLibraryUnits()
   } catch (error) {
@@ -1308,6 +1310,7 @@ function renderLibraryUnits() {
         ${renderTagList(unit.tags || [])}${thumbnailBadge}
       </span>
       <span class="muted">${isRead ? '已读' : '未读'}</span>
+      <button class="unit-subtitles secondary" type="button" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'hidden'}>字幕</button>
       <button class="unit-thumbnail secondary" type="button" ${unit.mediaKind === 'video' ? '' : 'hidden'}>缩略图</button>
       <button class="unit-tags secondary" type="button">标签</button>
     `
@@ -1324,6 +1327,10 @@ function renderLibraryUnits() {
     row.querySelector('.unit-thumbnail')?.addEventListener('click', (event) => {
       event.stopPropagation()
       regenerateUnitThumbnail(unit)
+    })
+    row.querySelector('.unit-subtitles')?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      rescanUnitSubtitles(unit)
     })
     row.querySelector('.unit-tags')?.addEventListener('click', (event) => {
       event.stopPropagation()
@@ -1378,6 +1385,35 @@ async function regenerateLibraryThumbnails() {
     alert(error.message)
   } finally {
     setLoading(els.libraryThumbnails, false)
+  }
+}
+
+async function rescanUnitSubtitles(unit) {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId || !unit?.unitId) return
+  try {
+    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/units/${encodeURIComponent(unit.unitId)}/subtitles`, {
+      method: 'POST',
+      body: '{}',
+    })
+    await selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId)
+  } catch (error) {
+    alert(error.message)
+  }
+}
+
+async function rescanLibrarySubtitles() {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
+  try {
+    setLoading(els.librarySubtitles, true)
+    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/subtitles`, {
+      method: 'POST',
+      body: '{}',
+    })
+    await selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.librarySubtitles, false)
   }
 }
 
@@ -1804,6 +1840,7 @@ els.libraryTagSearch.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') loadLibraryItems()
 })
 els.librarySaveTags.addEventListener('click', saveLibraryItemTags)
+els.librarySubtitles.addEventListener('click', rescanLibrarySubtitles)
 els.libraryThumbnails.addEventListener('click', regenerateLibraryThumbnails)
 els.librarySample.addEventListener('click', async () => {
   if (!confirm('生成示例会在媒体库里新增一套测试 EPUB 合集。确定要继续吗？')) return

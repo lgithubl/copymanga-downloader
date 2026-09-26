@@ -692,7 +692,7 @@ h2 {
 .library-unit {
   color: inherit;
   cursor: pointer;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
   height: 58px;
   text-align: left;
   width: 100%;
@@ -808,6 +808,7 @@ h2 {
 }
 
 .unit-tags,
+.unit-subtitles,
 .unit-thumbnail {
   font-size: 12px;
   height: 26px;
