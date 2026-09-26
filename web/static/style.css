@@ -757,6 +757,10 @@ h2 {
   min-height: 0;
 }
 
+.tasks-view .chapter-head {
+  position: static;
+}
+
 .task-list {
   display: grid;
   gap: 8px;
