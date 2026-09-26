@@ -177,6 +177,7 @@ const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
   media: { label: '媒体', unit: '个媒体项', accept: '.zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,image/*,audio/*,video/*', source: true },
 }
+const mediaPlaybackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 const stageLabels = {
   created: '创建完成',
   fetching_comic: '获取漫画信息',
@@ -1518,6 +1519,24 @@ function renderStreamMedia(reader) {
       track.mode = index === selectedIndex ? 'showing' : 'disabled'
     }
   })
+  const rateSelect = document.createElement('select')
+  rateSelect.className = 'stream-rate-select'
+  const savedRate = normalizePlaybackRate(localStorage.getItem('copymanga.mediaPlaybackRate') || '1')
+  for (const rate of mediaPlaybackRates) {
+    const option = document.createElement('option')
+    option.value = String(rate)
+    option.textContent = `${rate}x`
+    rateSelect.append(option)
+  }
+  rateSelect.value = String(savedRate)
+  player.playbackRate = savedRate
+  player.defaultPlaybackRate = savedRate
+  rateSelect.addEventListener('change', () => {
+    const rate = normalizePlaybackRate(rateSelect.value)
+    player.playbackRate = rate
+    player.defaultPlaybackRate = rate
+    localStorage.setItem('copymanga.mediaPlaybackRate', String(rate))
+  })
   const title = document.createElement('div')
   title.className = 'stream-player-title'
   title.textContent = reader.unit?.title || reader.unit?.fileName || '媒体'
@@ -1536,12 +1555,23 @@ function renderStreamMedia(reader) {
     playbackWarning.classList.remove('hidden')
     playbackWarning.textContent = `播放失败${suffix}：浏览器不支持该编码，或媒体文件无法被当前播放器解码`
   })
-  shell.append(title, player, subtitleSelect, playbackWarning, meta)
+  const controls = document.createElement('div')
+  controls.className = 'stream-extra-controls'
+  controls.append(rateSelect, subtitleSelect)
+  shell.append(title, player, controls, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
   mediaPageIndex = 0
   mediaPageCount = 1
   mediaPageStep = 1
   updateMediaPageControls()
+}
+
+function normalizePlaybackRate(value) {
+  const rate = Number(value)
+  if (!Number.isFinite(rate)) return 1
+  return mediaPlaybackRates.reduce((best, item) => (
+    Math.abs(item - rate) < Math.abs(best - rate) ? item : best
+  ), 1)
 }
 
 function mediaReaderTypeLabel(reader) {

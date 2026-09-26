@@ -1190,6 +1190,14 @@ h2 {
   max-height: calc(100vh - 260px);
 }
 
+.stream-extra-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stream-rate-select,
 .stream-subtitle-select {
   justify-self: start;
   max-width: min(100%, 360px);
