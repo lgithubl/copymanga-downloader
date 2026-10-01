@@ -1,0 +1,284 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+
+const PRODUCT_RE = /(?:^|[^A-Z0-9])((?:RJ|VJ|BJ|EJ)\d{6,8})(?=$|[^A-Z0-9])/gi
+
+export async function generateTags(ctx) {
+  const options = normalizeOptions(ctx.script?.options)
+  const units = Array.isArray(ctx.units) ? ctx.units : []
+  const itemProductIds = productIdsFromTexts([ctx.item?.title, ctx.item?.itemId, ctx.item?.path, ctx.item?.sourcePath])
+  const unitIds = new Map(units.map((unit) => [unit.unitId, productIdsFromTexts(unitTexts(unit))]))
+  const allProductIds = unique([...itemProductIds, ...[...unitIds.values()].flat()])
+
+  const itemCandidates = [
+    tag('product_status', `RJ编号状态v1: ${allProductIds.length ? '有' : '无'}`),
+    tag('product_multi', `RJ多编号v1: ${allProductIds.length > 1 ? '是' : '否'}`),
+    ...allProductIds.map((id) => tag('product_id', id)),
+    ...unique(allProductIds.map(productPrefix)).map((prefix) => tag('product_prefix', `RJ类型: ${prefix}`)),
+  ]
+
+  const detailsById = new Map()
+  for (const productId of allProductIds) {
+    const detail = await loadProductDetail(productId, options, ctx.cacheDir)
+    detailsById.set(productId, detail)
+    itemCandidates.push(...detailToTags(productId, detail))
+  }
+
+  const unitTags = units.map((unit) => {
+    const ids = unitIds.get(unit.unitId) || []
+    const candidates = ids.flatMap((productId) => [
+      tag('product_id', productId),
+      tag('product_prefix', `RJ类型: ${productPrefix(productId)}`),
+      ...detailToTags(productId, detailsById.get(productId)),
+    ])
+    return {
+      unitId: unit.unitId,
+      tags: filterTags(candidates, options),
+    }
+  }).filter((entry) => entry.unitId && entry.tags.length)
+
+  return {
+    itemTags: filterTags(itemCandidates, options),
+    unitTags,
+  }
+}
+
+function normalizeOptions(value = {}) {
+  return {
+    site: String(value.site || 'auto').trim() || 'auto',
+    cacheTtlHours: Number.isFinite(Number(value.cacheTtlHours)) ? Number(value.cacheTtlHours) : 168,
+    includeKinds: stringSet(value.includeKinds),
+    excludeKinds: stringSet(value.excludeKinds),
+    includeTags: normalizedTagSet(value.includeTags),
+    excludeTags: normalizedTagSet(value.excludeTags),
+  }
+}
+
+async function loadProductDetail(productId, options, cacheDir) {
+  const cachePath = cacheDir ? path.join(cacheDir, `${productId}.json`) : ''
+  const cached = cachePath ? await readCache(cachePath, options.cacheTtlHours) : null
+  if (cached) return cached
+  const site = resolveSite(productId, options.site)
+  const detail = {
+    productId,
+    site,
+    status: 'fetch_failed',
+    title: '',
+    circle: '',
+    workType: '',
+    age: '',
+    genres: [],
+    creators: [],
+    series: [],
+    fetchedAt: new Date().toISOString(),
+  }
+  const errors = []
+  try {
+    const ajax = await fetchJson(`https://www.dlsite.com/${site}/product/info/ajax?product_id=${encodeURIComponent(productId)}`)
+    const row = ajax?.[productId] || ajax?.[productId.toUpperCase()] || (Array.isArray(ajax) ? ajax[0] : null)
+    mergeAjaxDetail(detail, row)
+  } catch (error) {
+    errors.push(String(error?.message || error))
+  }
+  try {
+    const html = await fetchText(`https://www.dlsite.com/${site}/work/=/product_id/${encodeURIComponent(productId)}.html`)
+    mergeHtmlDetail(detail, html)
+  } catch (error) {
+    errors.push(String(error?.message || error))
+  }
+  detail.status = detail.title || detail.genres.length || detail.circle ? 'found' : errors.length >= 2 ? 'fetch_failed' : 'not_found'
+  if (errors.length) detail.error = errors.join('; ')
+  if (cachePath) await writeCache(cachePath, detail)
+  return detail
+}
+
+function detailToTags(productId, detail = {}) {
+  const status = detail.status === 'found' ? '有' : detail.status === 'not_found' ? '无' : '获取失败'
+  return compact([
+    tag('dlsite_status', `DLsite状态v1: ${status}`),
+    tag('dlsite_site', `DLsite站点: ${detail.site || resolveSite(productId, 'auto')}`),
+    detail.title ? tag('title', `DLsite标题: ${detail.title}`) : null,
+    detail.circle ? tag('circle', `DLsite社团: ${detail.circle}`) : null,
+    detail.workType ? tag('work_type', `DLsite类型v1: ${detail.workType}`) : null,
+    detail.age ? tag('age', `DLsite年龄v1: ${detail.age}`) : null,
+    ...unique(detail.genres || []).map((value) => tag('genre', `DLsite标签: ${value}`)),
+    ...unique(detail.creators || []).map((value) => tag('creator', `DLsite作者: ${value}`)),
+    ...unique(detail.series || []).map((value) => tag('series', `DLsite系列: ${value}`)),
+  ])
+}
+
+function mergeAjaxDetail(detail, row) {
+  if (!row || typeof row !== 'object') return
+  detail.title ||= clean(row.work_name || row.title || row.name)
+  detail.circle ||= clean(row.maker_name || row.circle_name || row.brand_name || row.maker?.name)
+  detail.workType ||= clean(row.work_type || row.work_type_string || row.category_name || row.work_category)
+  detail.age ||= clean(row.age_category_string || row.age_category || row.age_rating || row.rate)
+  detail.genres = unique([...detail.genres, ...valuesFrom(row.genre), ...valuesFrom(row.genres), ...valuesFrom(row.genre_name)])
+  detail.creators = unique([
+    ...detail.creators,
+    ...valuesFrom(row.creators),
+    ...valuesFrom(row.author),
+    ...valuesFrom(row.voice_by),
+    ...valuesFrom(row.scenario_by),
+    ...valuesFrom(row.illust_by),
+  ])
+  detail.series = unique([...detail.series, ...valuesFrom(row.series), ...valuesFrom(row.series_name)])
+}
+
+function mergeHtmlDetail(detail, html) {
+  if (!html) return
+  detail.title ||= clean(matchText(html, /<h1[^>]*(?:id=["']work_name["'][^>]*)?[^>]*>([\s\S]*?)<\/h1>/i))
+  detail.circle ||= clean(matchText(html, /<[^>]+class=["'][^"']*(?:maker_name|maker_name_inner)[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i))
+  detail.workType ||= clean(labelValue(html, ['作品类型', 'Work type', 'Work Type']))
+  detail.age ||= clean(labelValue(html, ['年龄指定', '年齢指定', 'Age']))
+  detail.genres = unique([...detail.genres, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/genre\//i)])
+  detail.creators = unique([...detail.creators, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/(?:creater|creator|author|voice_actor|scenario|illust)/i)])
+  detail.series = unique([...detail.series, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/series/i)])
+
+  const keywords = clean(matchText(html, /<meta[^>]+name=["']keywords["'][^>]+content=["']([^"']+)["']/i))
+  if (keywords) detail.genres = unique([...detail.genres, ...keywords.split(',').map(clean).filter((value) => value && !/^RJ|VJ|BJ|EJ/i.test(value))])
+}
+
+async function fetchJson(url) {
+  const text = await fetchText(url)
+  return JSON.parse(text)
+}
+
+async function fetchText(url) {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; copymanga-tag-script/1.0)',
+      Accept: 'application/json,text/html;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'ja,en;q=0.8,zh-CN;q=0.7',
+    },
+  })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  return await res.text()
+}
+
+async function readCache(filePath, ttlHours) {
+  try {
+    const cached = JSON.parse(await readFile(filePath, 'utf8'))
+    const ageMs = Date.now() - Date.parse(cached.fetchedAt || cached.cachedAt || 0)
+    if (ttlHours <= 0 || ageMs <= ttlHours * 3600 * 1000) return cached
+  } catch {
+    return null
+  }
+  return null
+}
+
+async function writeCache(filePath, payload) {
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`)
+}
+
+function filterTags(candidates, options) {
+  return unique(candidates.filter((entry) => {
+    if (!entry?.tag) return false
+    const kind = normalize(entry.kind)
+    const normalized = normalize(entry.tag)
+    if (options.includeKinds.size && !options.includeKinds.has(kind)) return false
+    if (options.excludeKinds.has(kind)) return false
+    if (options.includeTags.size && !options.includeTags.has(normalized)) return false
+    if (options.excludeTags.has(normalized)) return false
+    return true
+  }).map((entry) => entry.tag))
+}
+
+function productIdsFromTexts(values) {
+  return unique(compact(values).flatMap((value) => [...String(value).matchAll(PRODUCT_RE)].map((match) => match[1].toUpperCase())))
+}
+
+function unitTexts(unit = {}) {
+  return [unit.title, unit.fileName, unit.relativePath, unit.groupPath, unit.managedPath, unit.streamPath]
+}
+
+function resolveSite(productId, requested) {
+  const explicit = String(requested || '').trim().toLowerCase()
+  if (explicit && explicit !== 'auto') return explicit
+  const prefix = productPrefix(productId)
+  if (prefix === 'VJ') return 'pro'
+  if (prefix === 'BJ') return 'books'
+  return 'maniax'
+}
+
+function productPrefix(productId) {
+  return String(productId || '').slice(0, 2).toUpperCase()
+}
+
+function valuesFrom(value) {
+  if (!value) return []
+  if (Array.isArray(value)) return value.flatMap(valuesFrom)
+  if (typeof value === 'object') return compact([value.name, value.label, value.value, value.work_name, value.creater_name])
+  return compact(String(value).split(/[,/、，]/).map(clean))
+}
+
+function anchorTexts(html, hrefPattern) {
+  const result = []
+  const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi
+  for (const match of html.matchAll(anchorRe)) {
+    if (!hrefPattern.test(match[1] || '')) continue
+    const text = clean(match[2])
+    if (text) result.push(text)
+  }
+  return result
+}
+
+function labelValue(html, labels) {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const value = matchText(html, new RegExp(`<tr[^>]*>[\\s\\S]*?<th[^>]*>[\\s\\S]*?${escaped}[\\s\\S]*?<\\/th>[\\s\\S]*?<td[^>]*>([\\s\\S]*?)<\\/td>[\\s\\S]*?<\\/tr>`, 'i'))
+    if (value) return value
+  }
+  return ''
+}
+
+function matchText(text, re) {
+  const match = re.exec(text || '')
+  return match ? match[1] : ''
+}
+
+function clean(value) {
+  return decodeEntities(stripTags(String(value || ''))).replace(/\s+/g, ' ').trim()
+}
+
+function stripTags(value) {
+  return value.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ')
+}
+
+function decodeEntities(value) {
+  return value
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+}
+
+function tag(kind, value) {
+  const text = clean(value)
+  return text ? { kind, tag: text } : null
+}
+
+function stringSet(values) {
+  return new Set((Array.isArray(values) ? values : String(values || '').split(/[,\n，]+/)).map(normalize).filter(Boolean))
+}
+
+function normalizedTagSet(values) {
+  return new Set((Array.isArray(values) ? values : String(values || '').split(/[,\n，]+/)).map(clean).map(normalize).filter(Boolean))
+}
+
+function normalize(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function unique(values) {
+  return [...new Set(compact(values))]
+}
+
+function compact(values) {
+  return values.map((value) => typeof value === 'string' ? value.trim() : value).filter(Boolean)
+}

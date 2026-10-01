@@ -2521,6 +2521,7 @@ function normalizeTagScriptManifest(manifest, dirName) {
     libraryTypes: Array.isArray(manifest?.libraryTypes) ? manifest.libraryTypes.map(String) : [],
     mediaKinds: Array.isArray(manifest?.mediaKinds) ? manifest.mediaKinds.map(String) : [],
     exclusiveTagGroups: parseTags(manifest?.exclusiveTagGroups || manifest?.exclusiveGroups || []),
+    options: manifest?.options && typeof manifest.options === 'object' ? manifest.options : {},
     defaultEnabled: Boolean(manifest?.defaultEnabled),
     main: String(manifest?.main || 'main.js'),
     dirName,
@@ -2568,6 +2569,7 @@ async function scanTagScripts({ force = false } = {}) {
           libraryTypes: [],
           mediaKinds: [],
           exclusiveTagGroups: [],
+          options: {},
           defaultEnabled: false,
           dirName: entry.name,
           source: rootDir.label,
@@ -2689,6 +2691,13 @@ async function executeTagScript(script, { type, item, units }) {
     item,
     units,
     filesRoot: item?.mediaUnits?.[0]?.managedPath ? path.dirname(item.mediaUnits[0].managedPath) : '',
+    cacheDir: path.join(DATA_DIR, 'cache', 'library', 'tag-script-cache', safeSegment(script.id)),
+    script: {
+      id: script.id,
+      name: script.name,
+      version: script.version,
+      options: script.options || {},
+    },
     config,
   }
   const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('脚本超时')), 60000))
