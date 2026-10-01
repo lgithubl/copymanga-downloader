@@ -178,6 +178,7 @@ let mediaPageCount = 1
 let mediaPageStep = 1
 let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
+let currentStreamCleanup = null
 const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'reader-theme-warm', 'reader-theme-sepia']
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
 const mediaImportTypeInfo = {
@@ -1303,14 +1304,19 @@ function updateMediaImportControls() {
 function renderLibraryItems() {
   els.libraryItems.innerHTML = ''
   for (const item of libraryItems) {
+    const summary = libraryItemSummary(item)
+    const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
     const card = document.createElement('article')
-    card.className = 'card'
+    card.className = `card library-card${selected ? ' selected' : ''}`
     card.innerHTML = `
-      ${renderCover(item.cover, item.title)}
+      <div class="library-card-cover">${renderCover(item.cover, item.title)}</div>
       <div class="card-body">
-        <div class="card-title">${escapeHtml(item.title)}</div>
-        <div class="muted">${escapeHtml(item.type)} · ${escapeHtml(item.itemId)}</div>
-        <div class="muted">${escapeHtml((item.author || []).join(', ') || '未知作者')} · ${item.unitCount || 0} 个目录项</div>
+        <div class="library-card-top">
+          <div class="card-title">${escapeHtml(item.title)}</div>
+          <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
+        </div>
+        <div class="library-card-meta">${escapeHtml(summary.primary)}</div>
+        <div class="library-card-meta">${escapeHtml(summary.secondary)}</div>
         ${renderTagList(item.tags || [])}
       </div>
     `
@@ -1335,11 +1341,12 @@ async function selectLibraryItem(type, itemId) {
     currentLibraryUnits = units
     currentLibraryProgress = progress
     els.libraryItemTitle.textContent = item.title
-    els.libraryItemMeta.textContent = `${item.type} · ${(item.author || []).join(', ') || '未知作者'} · ${units.length} 个目录项`
+    els.libraryItemMeta.textContent = libraryDetailMeta(item, units)
     els.libraryItemTags.value = (item.tags || []).join(', ')
     els.librarySaveTags.disabled = false
     els.librarySubtitles.disabled = item.type !== 'media'
     els.libraryThumbnails.disabled = item.type !== 'media'
+    renderLibraryItems()
     renderLibraryUnits()
   } catch (error) {
     els.libraryItemMeta.textContent = `读取失败：${error.message}`
@@ -1352,6 +1359,10 @@ function renderLibraryUnits() {
   els.libraryUnits.classList.remove('empty-panel')
   els.libraryUnits.innerHTML = ''
   const readUnits = currentLibraryProgress?.readUnits || {}
+  const detail = document.createElement('div')
+  detail.className = 'library-detail-card'
+  detail.innerHTML = renderLibraryDetailSummary(currentLibraryItem, currentLibraryUnits, readUnits)
+  els.libraryUnits.append(detail)
   let lastGroup = null
   for (const unit of currentLibraryUnits) {
     const groupPath = unit.groupPath || ''
@@ -1377,14 +1388,20 @@ function renderLibraryUnits() {
       : unit.mediaKind === 'subtitle'
         ? `未匹配字幕 · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}`
         : `${unit.mediaKind || unit.type || ''} · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}${subtitleText}`
+    const statusBadges = [
+      unit.mediaKind ? mediaKindLabel(unit.mediaKind) : unit.type,
+      isRead ? '已读' : '未读',
+      unit.subtitles?.length ? `字幕${unit.subtitles.length}` : '',
+      unit.imageCount ? `${unit.imageCount}图` : '',
+    ].filter(Boolean)
     row.innerHTML = `
       ${renderUnitThumb(unit.thumbnail?.coverUrl || unit.cover || currentLibraryItem?.cover, unit.title)}
       <span class="chapter-copy">
         <span class="chapter-title">${escapeHtml(unit.title)}</span>
-        <span class="muted">${escapeHtml(unitMeta)}</span>
+        <span class="library-unit-path">${escapeHtml(unitMeta)}</span>
         ${renderTagList(unit.tags || [])}${thumbnailBadge}
       </span>
-      <span class="muted">${isRead ? '已读' : '未读'}</span>
+      <span class="library-unit-status">${statusBadges.map((badge) => `<span>${escapeHtml(badge)}</span>`).join('')}</span>
       <button class="unit-subtitles secondary" type="button" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'hidden'}>字幕</button>
       <button class="unit-thumbnail secondary" type="button" ${unit.mediaKind === 'video' ? '' : 'hidden'}>缩略图</button>
       <button class="unit-tags secondary" type="button">标签</button>
@@ -1417,6 +1434,86 @@ function renderLibraryUnits() {
     els.libraryUnits.className = 'chapters empty-panel'
     els.libraryUnits.textContent = '没有目录项'
   }
+}
+
+function libraryItemSummary(item) {
+  const units = Array.isArray(item.mediaUnits) ? item.mediaUnits : []
+  const counts = libraryUnitCounts(units)
+  const typeLabel = mediaImportTypeInfo[item.type]?.label || item.type || '媒体'
+  const primary = [
+    `${item.unitCount || units.length || 0} 个目录项`,
+    counts.video ? `视频 ${counts.video}` : '',
+    counts.audio ? `音频 ${counts.audio}` : '',
+    counts.imageGallery ? `图片 ${counts.imageGallery}` : '',
+    counts.epub ? `EPUB ${counts.epub}` : '',
+  ].filter(Boolean).join(' · ')
+  const secondary = [
+    (item.author || []).join(', ') || '',
+    item.updatedAt ? `更新 ${formatShortDate(item.updatedAt)}` : '',
+    item.itemId || '',
+  ].filter(Boolean).join(' · ') || '未记录作者'
+  return { typeLabel, primary, secondary }
+}
+
+function libraryDetailMeta(item, units) {
+  const counts = libraryUnitCounts(units)
+  const parts = [
+    mediaImportTypeInfo[item.type]?.label || item.type,
+    `${units.length} 个目录项`,
+    counts.video ? `视频 ${counts.video}` : '',
+    counts.audio ? `音频 ${counts.audio}` : '',
+    counts.imageGallery ? `图片 ${counts.imageGallery}` : '',
+    counts.subtitle ? `未匹配字幕 ${counts.subtitle}` : '',
+  ].filter(Boolean)
+  return parts.join(' · ')
+}
+
+function renderLibraryDetailSummary(item, units, readUnits = {}) {
+  const counts = libraryUnitCounts(units)
+  const readCount = units.filter((unit) => readUnits[unit.unitId]?.enteredAt).length
+  const playableCount = units.filter((unit) => unit.mediaKind !== 'subtitle').length
+  const stats = [
+    ['目录项', units.length],
+    ['已进入', `${readCount}/${playableCount || units.length || 0}`],
+    ['视频', counts.video],
+    ['音频', counts.audio],
+    ['图片集', counts.imageGallery],
+    ['未匹配字幕', counts.subtitle],
+  ]
+  return `
+    <div class="library-detail-cover">${renderCover(item?.cover, item?.title)}</div>
+    <div class="library-detail-main">
+      <div class="library-detail-title">${escapeHtml(item?.title || '目录')}</div>
+      <div class="library-detail-subtitle">${escapeHtml([item?.itemId, item?.updatedAt ? `更新 ${formatShortDate(item.updatedAt)}` : ''].filter(Boolean).join(' · '))}</div>
+      ${renderTagList(item?.tags || [])}
+      <div class="library-detail-stats">
+        ${stats.map(([label, value]) => `<span><strong>${escapeHtml(value)}</strong>${escapeHtml(label)}</span>`).join('')}
+      </div>
+    </div>
+  `
+}
+
+function libraryUnitCounts(units = []) {
+  return units.reduce((counts, unit) => {
+    const kind = unit.mediaKind || unit.type || 'unknown'
+    if (kind === 'video') counts.video += 1
+    else if (kind === 'audio') counts.audio += 1
+    else if (kind === 'image-gallery') counts.imageGallery += 1
+    else if (kind === 'subtitle') counts.subtitle += 1
+    else if (unit.type === 'epub') counts.epub += 1
+    else counts.other += 1
+    return counts
+  }, { video: 0, audio: 0, imageGallery: 0, subtitle: 0, epub: 0, other: 0 })
+}
+
+function mediaKindLabel(kind) {
+  const labels = {
+    audio: '音频',
+    video: '视频',
+    'image-gallery': '图片',
+    subtitle: '字幕',
+  }
+  return labels[kind] || kind
 }
 
 function renderTagList(tags = []) {
@@ -1571,6 +1668,10 @@ async function openMediaUnit(unitId, sectionId = '') {
 
 function renderMediaReader(reader) {
   applyMediaReaderTheme()
+  if (!(reader.type === 'audio' || reader.type === 'video') && currentStreamCleanup) {
+    currentStreamCleanup()
+    currentStreamCleanup = null
+  }
   const index = Number(reader.unit?.index || 0)
   const sectionText = reader.section ? ` · ${reader.section.index + 1}/${reader.sections?.length || 1}` : ''
   const typeLabel = mediaReaderTypeLabel(reader)
@@ -1641,6 +1742,10 @@ function renderMediaImages(reader) {
 }
 
 function renderStreamMedia(reader) {
+  if (currentStreamCleanup) {
+    currentStreamCleanup()
+    currentStreamCleanup = null
+  }
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-stream ${themeClass}`
   const shell = document.createElement('div')
@@ -1650,6 +1755,7 @@ function renderStreamMedia(reader) {
   const player = document.createElement(reader.type)
   player.controls = false
   player.preload = 'metadata'
+  if (reader.type === 'video') player.crossOrigin = 'anonymous'
   player.src = reader.stream?.url || reader.unit?.streamUrl || ''
   if (reader.type === 'video') player.playsInline = true
   if (reader.type === 'audio') {
@@ -1734,6 +1840,12 @@ function renderStreamMedia(reader) {
   fullscreen.className = 'stream-icon-button stream-fullscreen'
   fullscreen.title = '全屏'
   fullscreen.textContent = '⛶'
+  const vrToggle = document.createElement('button')
+  vrToggle.type = 'button'
+  vrToggle.className = 'stream-toggle stream-vr-toggle'
+  vrToggle.title = '切换普通/3D 全景拖动模式'
+  vrToggle.textContent = '3D'
+  vrToggle.hidden = reader.type !== 'video'
   const loopToggle = document.createElement('button')
   loopToggle.type = 'button'
   loopToggle.className = 'stream-toggle'
@@ -1833,6 +1945,9 @@ function renderStreamMedia(reader) {
     if (document.fullscreenElement) document.exitFullscreen?.()
     else frame.requestFullscreen?.()
   })
+  const vrViewer = reader.type === 'video'
+    ? createVrVideoViewer({ frame, player, toggle: vrToggle, warning: playbackWarning })
+    : null
   const title = document.createElement('div')
   title.className = 'stream-player-title'
   title.textContent = reader.unit?.title || reader.unit?.fileName || '媒体'
@@ -1863,14 +1978,268 @@ function renderStreamMedia(reader) {
   })
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, fullscreen)
+  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, vrToggle, fullscreen)
   frame.append(player, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
+  currentStreamCleanup = () => vrViewer?.destroy()
   mediaPageIndex = 0
   mediaPageCount = 1
   mediaPageStep = 1
   updateMediaPageControls()
+}
+
+function createVrVideoViewer({ frame, player, toggle, warning }) {
+  const canvas = document.createElement('canvas')
+  canvas.className = 'stream-vr-canvas'
+  canvas.hidden = true
+  const subtitleOverlay = document.createElement('div')
+  subtitleOverlay.className = 'stream-vr-subtitles'
+  subtitleOverlay.hidden = true
+  frame.insertBefore(canvas, player.nextSibling)
+  frame.insertBefore(subtitleOverlay, canvas.nextSibling)
+  const state = {
+    active: false,
+    initialized: false,
+    dragging: false,
+    lastX: 0,
+    lastY: 0,
+    yaw: 0,
+    pitch: 0,
+    fov: Math.PI / 2.6,
+    raf: 0,
+    gl: null,
+    program: null,
+    texture: null,
+    buffer: null,
+    locations: null,
+  }
+  const showWarning = (message) => {
+    warning.classList.remove('hidden')
+    warning.textContent = message
+  }
+  const setActive = (active) => {
+    if (active && !initVr()) return
+    state.active = active
+    toggle.classList.toggle('active', active)
+    toggle.setAttribute('aria-pressed', active ? 'true' : 'false')
+    player.classList.toggle('stream-video-hidden', active)
+    canvas.hidden = !active
+    subtitleOverlay.hidden = !active
+    if (active) {
+      resizeVrCanvas(canvas)
+      renderVr()
+    } else if (state.raf) {
+      cancelAnimationFrame(state.raf)
+      state.raf = 0
+    }
+  }
+  toggle.addEventListener('click', () => setActive(!state.active))
+  canvas.addEventListener('pointerdown', (event) => {
+    state.dragging = true
+    state.lastX = event.clientX
+    state.lastY = event.clientY
+    canvas.setPointerCapture?.(event.pointerId)
+  })
+  canvas.addEventListener('pointermove', (event) => {
+    if (!state.dragging) return
+    const dx = event.clientX - state.lastX
+    const dy = event.clientY - state.lastY
+    state.lastX = event.clientX
+    state.lastY = event.clientY
+    state.yaw -= dx * 0.005
+    state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch - dy * 0.005))
+  })
+  canvas.addEventListener('pointerup', (event) => {
+    state.dragging = false
+    canvas.releasePointerCapture?.(event.pointerId)
+  })
+  canvas.addEventListener('pointercancel', () => {
+    state.dragging = false
+  })
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault()
+    state.fov = Math.max(Math.PI / 5, Math.min(Math.PI * 0.82, state.fov + event.deltaY * 0.001))
+  }, { passive: false })
+  const resizeHandler = () => {
+    if (state.active) resizeVrCanvas(canvas)
+  }
+  window.addEventListener('resize', resizeHandler)
+  function initVr() {
+    if (state.initialized) return true
+    const gl = canvas.getContext('webgl', { antialias: false, alpha: false })
+    if (!gl) {
+      showWarning('当前浏览器不支持 WebGL，无法打开 3D 全景模式')
+      return false
+    }
+    const program = createVrProgram(gl)
+    if (!program) {
+      showWarning('3D 全景模式初始化失败')
+      return false
+    }
+    const buffer = gl.createBuffer()
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,
+      1, -1,
+      -1, 1,
+      1, 1,
+    ]), gl.STATIC_DRAW)
+    const texture = gl.createTexture()
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    state.gl = gl
+    state.program = program
+    state.buffer = buffer
+    state.texture = texture
+    state.locations = {
+      position: gl.getAttribLocation(program, 'a_position'),
+      resolution: gl.getUniformLocation(program, 'u_resolution'),
+      yaw: gl.getUniformLocation(program, 'u_yaw'),
+      pitch: gl.getUniformLocation(program, 'u_pitch'),
+      fov: gl.getUniformLocation(program, 'u_fov'),
+      texture: gl.getUniformLocation(program, 'u_texture'),
+    }
+    state.initialized = true
+    return true
+  }
+  function renderVr() {
+    if (!state.active || !state.gl) return
+    resizeVrCanvas(canvas)
+    const gl = state.gl
+    gl.viewport(0, 0, canvas.width, canvas.height)
+    gl.clearColor(0, 0, 0, 1)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+    gl.useProgram(state.program)
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffer)
+    gl.enableVertexAttribArray(state.locations.position)
+    gl.vertexAttribPointer(state.locations.position, 2, gl.FLOAT, false, 0, 0)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, state.texture)
+    if (player.readyState >= 2 && player.videoWidth > 0 && player.videoHeight > 0) {
+      try {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, player)
+      } catch {
+        showWarning('3D 全景模式无法读取当前视频帧，可能是浏览器限制或视频源不支持')
+        setActive(false)
+        return
+      }
+    }
+    gl.uniform1i(state.locations.texture, 0)
+    gl.uniform2f(state.locations.resolution, canvas.width, canvas.height)
+    gl.uniform1f(state.locations.yaw, state.yaw)
+    gl.uniform1f(state.locations.pitch, state.pitch)
+    gl.uniform1f(state.locations.fov, state.fov)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+    renderVrSubtitles(player, subtitleOverlay)
+    state.raf = requestAnimationFrame(renderVr)
+  }
+  return {
+    destroy() {
+      setActive(false)
+      const gl = state.gl
+      if (gl) {
+        if (state.texture) gl.deleteTexture(state.texture)
+        if (state.buffer) gl.deleteBuffer(state.buffer)
+        if (state.program) gl.deleteProgram(state.program)
+      }
+      window.removeEventListener('resize', resizeHandler)
+      canvas.remove()
+      subtitleOverlay.remove()
+    },
+  }
+}
+
+function renderVrSubtitles(player, subtitleOverlay) {
+  const cues = []
+  for (const track of player.textTracks || []) {
+    if (track.mode !== 'showing') continue
+    for (const cue of track.activeCues || []) cues.push(cue.text || '')
+  }
+  subtitleOverlay.textContent = cues.filter(Boolean).join('\n')
+  subtitleOverlay.classList.toggle('hidden', !subtitleOverlay.textContent)
+}
+
+function resizeVrCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect()
+  const ratio = Math.min(window.devicePixelRatio || 1, 2)
+  const width = Math.max(1, Math.floor(rect.width * ratio))
+  const height = Math.max(1, Math.floor(rect.height * ratio))
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width
+    canvas.height = height
+  }
+}
+
+function createVrProgram(gl) {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, `
+    attribute vec2 a_position;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_position * 0.5 + 0.5;
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `)
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, `
+    precision mediump float;
+    uniform sampler2D u_texture;
+    uniform vec2 u_resolution;
+    uniform float u_yaw;
+    uniform float u_pitch;
+    uniform float u_fov;
+    varying vec2 v_uv;
+    const float PI = 3.141592653589793;
+
+    vec3 rotateX(vec3 value, float angle) {
+      float c = cos(angle);
+      float s = sin(angle);
+      return vec3(value.x, value.y * c - value.z * s, value.y * s + value.z * c);
+    }
+
+    vec3 rotateY(vec3 value, float angle) {
+      float c = cos(angle);
+      float s = sin(angle);
+      return vec3(value.x * c + value.z * s, value.y, -value.x * s + value.z * c);
+    }
+
+    void main() {
+      vec2 ndc = v_uv * 2.0 - 1.0;
+      float aspect = u_resolution.x / max(u_resolution.y, 1.0);
+      float scale = tan(u_fov * 0.5);
+      vec3 dir = normalize(vec3(ndc.x * aspect * scale, -ndc.y * scale, -1.0));
+      dir = rotateY(rotateX(dir, u_pitch), u_yaw);
+      float lon = atan(dir.x, -dir.z);
+      float lat = asin(clamp(dir.y, -1.0, 1.0));
+      vec2 coord = vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);
+      gl_FragColor = texture2D(u_texture, coord);
+    }
+  `)
+  if (!vertex || !fragment) return null
+  const program = gl.createProgram()
+  gl.attachShader(program, vertex)
+  gl.attachShader(program, fragment)
+  gl.linkProgram(program)
+  gl.deleteShader(vertex)
+  gl.deleteShader(fragment)
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    gl.deleteProgram(program)
+    return null
+  }
+  return program
+}
+
+function compileShader(gl, type, source) {
+  const shader = gl.createShader(type)
+  gl.shaderSource(shader, source)
+  gl.compileShader(shader)
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    gl.deleteShader(shader)
+    return null
+  }
+  return shader
 }
 
 function normalizePlaybackRate(value) {
@@ -2400,6 +2769,12 @@ function formatBytes(value) {
   }
   const digits = size >= 100 || index === 0 ? 0 : size >= 10 ? 1 : 2
   return `${size.toFixed(digits)} ${units[index]}`
+}
+
+function formatShortDate(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value || '')
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 function renderCover(src, alt) {
