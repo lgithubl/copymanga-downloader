@@ -1050,7 +1050,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   }
 
   async function setUnitThumbnailReady(itemId, unitId, thumbnail) {
-    return setUnitThumbnailStatus(itemId, unitId, {
+    const nextThumbnail = normalizeThumbnail({
       status: thumbnail.status || 'ready',
       coverUrl: thumbnailUrl(itemId, unitId, 'cover'),
       previewUrl: thumbnailUrl(itemId, unitId, 'preview'),
@@ -1058,6 +1058,16 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       generatedAt: new Date().toISOString(),
       error: '',
     })
+    return updateMetadata(itemId, (item) => ({
+      ...item,
+      cover: item.cover || nextThumbnail.coverUrl,
+      mediaUnits: mediaUnitsForItem(item).map((unit) => (
+        unit.unitId === unitId
+          ? normalizeMediaUnit({ ...unit, thumbnail: nextThumbnail })
+          : unit
+      )),
+      updatedAt: new Date().toISOString(),
+    }))
   }
 
   async function uniqueImportTarget(candidate) {

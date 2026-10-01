@@ -224,7 +224,7 @@ const mediaImportTypeInfo = {
 }
 const mediaImportProfiles = {
   custom: { label: '自定义', type: '', sourcePlaceholder: '' },
-  'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', scriptHints: ['subtitle'], batch: true },
+  'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', scriptHints: ['subtitle', 'rj-dlsite'], batch: true },
   'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video', scriptHints: ['subtitle', 'video-normal', 'video'] },
   epub: { label: 'EPUB', type: 'epub', sourcePlaceholder: '', scriptHints: [] },
 }
@@ -1573,9 +1573,14 @@ function applyMediaImportProfile() {
   if (profile.sourcePlaceholder) els.mediaImportSourcePath.placeholder = profile.sourcePlaceholder
   updateMediaImportControls()
   const hints = profile.scriptHints || []
+  const defaultScriptIds = new Set(currentMediaImportProfileConfig().defaultTagScripts || [])
   for (const input of document.querySelectorAll('input[name="media-import-tag-script"]')) {
     const script = tagScripts.find((item) => item.id === input.value)
-    input.checked = Boolean(script?.defaultEnabled || hints.some((hint) => script?.id.includes(hint) || script?.name.toLowerCase().includes(hint)))
+    input.checked = Boolean(
+      script?.defaultEnabled ||
+      defaultScriptIds.has(input.value) ||
+      hints.some((hint) => script?.id.includes(hint) || script?.name.toLowerCase().includes(hint)),
+    )
   }
 }
 
@@ -1661,6 +1666,7 @@ async function selectLibraryItem(type, itemId) {
     currentLibraryItem = item
     currentLibraryUnits = units
     currentLibraryProgress = progress
+    syncLibraryItemInList(item)
     els.libraryItemTitle.textContent = item.title
     els.libraryItemMeta.textContent = libraryDetailMeta(item, units)
     els.libraryItemTags.value = (item.tags || []).join(', ')
@@ -1676,6 +1682,13 @@ async function selectLibraryItem(type, itemId) {
     els.libraryUnits.className = 'chapters empty-panel'
     els.libraryUnits.textContent = error.message
   }
+}
+
+function syncLibraryItemInList(item) {
+  if (!item?.type || !item?.itemId) return
+  const index = libraryItems.findIndex((candidate) => candidate.type === item.type && candidate.itemId === item.itemId)
+  if (index >= 0) libraryItems[index] = { ...libraryItems[index], ...item }
+  else libraryItems.unshift(item)
 }
 
 function renderLibraryUnits() {

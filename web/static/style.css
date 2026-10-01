@@ -228,7 +228,7 @@ h2 {
 }
 
 #app.sidebar-collapsed {
-  grid-template-columns: 104px minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -1398,6 +1398,16 @@ h2 {
 
 .media-import-panel {
   align-content: start;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 72px;
+  position: relative;
+}
+
+#media-import-submit {
+  bottom: 12px;
+  position: sticky;
+  z-index: 2;
 }
 
 .media-reader-content {
@@ -1661,7 +1671,7 @@ h2 {
 }
 
 .stream-vr-subtitles {
-  bottom: 74px;
+  bottom: 120px;
   color: #ffffff;
   font-size: clamp(16px, 2.2vw, 28px);
   font-weight: 700;
@@ -1681,7 +1691,7 @@ h2 {
 }
 
 .stream-subtitle-overlay {
-  bottom: 76px;
+  bottom: 120px;
   color: #ffffff;
   font-size: clamp(16px, 2vw, 26px);
   font-weight: 800;
@@ -1698,6 +1708,14 @@ h2 {
 
 .stream-subtitle-overlay.hidden {
   display: none;
+}
+
+.stream-frame-audio .stream-subtitle-overlay {
+  bottom: auto;
+  font-size: 16px;
+  left: 220px;
+  right: 20px;
+  top: 16px;
 }
 
 .stream-extra-controls {
@@ -1871,8 +1889,8 @@ h2 {
 }
 
 #app.sidebar-collapsed .sidebar {
-  gap: 12px;
-  padding: 12px;
+  gap: 8px;
+  padding: 8px;
 }
 
 #app.sidebar-collapsed h1,
@@ -1896,6 +1914,7 @@ h2 {
 }
 
 #app.sidebar-collapsed .job strong {
+  display: none;
   font-size: 12px;
 }
 
