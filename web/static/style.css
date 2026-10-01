@@ -631,6 +631,11 @@ h2 {
   width: auto;
 }
 
+.inventory-pager input#downloaded-keyword {
+  min-width: 220px;
+  width: min(320px, 100%);
+}
+
 .page-jump {
   align-items: center;
   color: #667085;

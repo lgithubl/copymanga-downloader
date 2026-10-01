@@ -15,6 +15,7 @@ const els = {
   discoverStatus: document.querySelector('#discover-status'),
   discoverLimit: document.querySelector('#discover-limit'),
   discoverRefresh: document.querySelector('#discover-refresh'),
+  discoverFirst: document.querySelector('#discover-first'),
   discoverPrev: document.querySelector('#discover-prev'),
   discoverNext: document.querySelector('#discover-next'),
   discoverPage: document.querySelector('#discover-page'),
@@ -48,6 +49,8 @@ const els = {
   inventoryProgressText: document.querySelector('#inventory-progress .inventory-progress-text'),
   inventoryProgressBar: document.querySelector('#inventory-progress-bar'),
   downloaded: document.querySelector('#downloaded'),
+  downloadedKeyword: document.querySelector('#downloaded-keyword'),
+  downloadedFirst: document.querySelector('#downloaded-first'),
   downloadedPrev: document.querySelector('#downloaded-prev'),
   downloadedNext: document.querySelector('#downloaded-next'),
   downloadedPage: document.querySelector('#downloaded-page'),
@@ -371,6 +374,7 @@ function renderDiscover(data) {
   els.discoverPage.value = String(page)
   els.discoverPage.max = String(totalPages)
   els.discoverPageTotal.textContent = `/ ${totalPages} 页`
+  els.discoverFirst.disabled = discoverOffset <= 0
   els.discoverPrev.disabled = discoverOffset <= 0
   els.discoverNext.disabled = discoverOffset + limit >= discoverTotal
   renderComicCards(els.discoverResults, list, (pathWord, title) => loadComic(pathWord, 'discover', title))
@@ -392,6 +396,7 @@ function renderDownloaded(payload) {
   }
   els.downloadedPage.max = String(totalPages)
   els.downloadedPageTotal.textContent = `/ ${totalPages} 页`
+  els.downloadedFirst.disabled = downloadedPage <= 1
   els.downloadedPrev.disabled = downloadedPage <= 1
   els.downloadedNext.disabled = downloadedPage >= totalPages
 
@@ -1124,6 +1129,7 @@ function downloadedPageParams(page = downloadedPage) {
     page: String(Math.max(1, Math.floor(Number(page) || 1))),
     limit: String(Math.max(1, Number(els.downloadedLimit.value || 10))),
     readFilter: els.downloadedReadFilter?.value || 'all',
+    keyword: els.downloadedKeyword?.value.trim() || '',
   })
 }
 
@@ -1840,6 +1846,10 @@ for (const control of [els.discoverOrdering, els.discoverTheme, els.discoverRegi
     loadDiscover()
   })
 }
+els.discoverFirst.addEventListener('click', () => {
+  discoverOffset = 0
+  loadDiscover()
+})
 els.discoverPrev.addEventListener('click', () => {
   discoverOffset = Math.max(0, discoverOffset - Number(els.discoverLimit.value || 10))
   loadDiscover()
@@ -1864,6 +1874,10 @@ function jumpDiscoverPage() {
 els.downloadedRefresh.addEventListener('click', () => {
   loadDownloaded()
 })
+els.downloadedFirst.addEventListener('click', () => {
+  downloadedPage = 1
+  loadDownloaded()
+})
 els.downloadedPrev.addEventListener('click', () => {
   downloadedPage = Math.max(1, downloadedPage - 1)
   loadDownloaded()
@@ -1875,6 +1889,16 @@ els.downloadedNext.addEventListener('click', () => {
 els.downloadedJump.addEventListener('click', jumpDownloadedPage)
 els.downloadedPage.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') jumpDownloadedPage()
+})
+els.downloadedKeyword.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    downloadedPage = 1
+    loadDownloaded()
+  }
+})
+els.downloadedKeyword.addEventListener('change', () => {
+  downloadedPage = 1
+  loadDownloaded()
 })
 els.downloadedLimit.addEventListener('change', () => {
   downloadedPage = 1

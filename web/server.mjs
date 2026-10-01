@@ -854,6 +854,57 @@ function inventoryReadMatchesServer(item, readFilter, progressMap = {}) {
   return true
 }
 
+function inventorySearchTokens(query = '') {
+  return String(query || '')
+    .trim()
+    .split(/\s+/)
+    .map((raw) => raw.trim())
+    .filter(Boolean)
+    .map((raw) => {
+      const exclude = raw.startsWith('-')
+      const body = exclude ? raw.slice(1) : raw
+      return { exclude, text: body.replace(/^tag:/i, '').toLowerCase() }
+    })
+    .filter((item) => item.text)
+}
+
+function inventoryImageTag(summary = {}) {
+  const failed = Number(summary.failed || 0)
+  const checking = Number(summary.checking || 0)
+  const pending = Number(summary.pending || 0)
+  const unknown = Number(summary.unknown || 0)
+  const total = Number(summary.total || 0)
+  const passed = Number(summary.passed || 0)
+  if (failed > 0) return ['图片异常', '图片未完全检查ok']
+  if (checking > 0 || pending > 0) return ['图片检查中', '图片未完全检查ok']
+  if (unknown > 0) return ['图片未检查', '图片未完全检查ok']
+  if (total > 0 && passed === total) return ['图片ok', '图片检查ok', '图片检查通过']
+  return ['图片未检查', '图片未完全检查ok']
+}
+
+function inventoryNeedsImageCheckSearch(keyword = '') {
+  return inventorySearchTokens(keyword).some((token) => (
+    token.text.includes('图片') || token.text.includes('image')
+  ))
+}
+
+function inventoryKeywordMatchesServer(item, keyword = '') {
+  const tokens = inventorySearchTokens(keyword)
+  if (!tokens.length) return true
+  const tags = inventoryImageTag(item.imageCheckSummary || {})
+  const haystack = [
+    item.title,
+    item.comicPathWord,
+    item.path,
+    ...(Array.isArray(item.author) ? item.author : []),
+    ...tags,
+  ].join(' ').toLowerCase()
+  return tokens.every((token) => {
+    const matched = haystack.includes(token.text)
+    return token.exclude ? !matched : matched
+  })
+}
+
 function publicDownloadedItem(item) {
   const { chapterMetadataFiles, ...publicItem } = item
   return publicItem
@@ -963,12 +1014,16 @@ async function listDownloaded({ includeDetails = false } = {}) {
   return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
 
-async function listDownloadedPage({ page = 1, limit = 10, readFilter = 'all' } = {}) {
+async function listDownloadedPage({ page = 1, limit = 10, readFilter = 'all', keyword = '' } = {}) {
   const pageNumber = Math.max(1, Math.floor(Number(page) || 1))
   const pageSize = clampNumber(limit, 1, 100, 10)
   const progressMap = await listReadingProgress()
+  const needsImageCheck = inventoryNeedsImageCheckSearch(keyword)
   const summaries = await listDownloaded({ includeDetails: false })
-  const filtered = summaries.filter((item) => inventoryReadMatchesServer(item, readFilter, progressMap))
+  const searchable = needsImageCheck ? await Promise.all(summaries.map(enrichDownloadedComicDetails)) : summaries
+  const filtered = searchable
+    .filter((item) => inventoryReadMatchesServer(item, readFilter, progressMap))
+    .filter((item) => inventoryKeywordMatchesServer(item, keyword))
   const total = filtered.length
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const normalizedPage = Math.max(1, Math.min(totalPages, pageNumber))
@@ -2476,6 +2531,7 @@ async function route(req, res) {
           page: url.searchParams.get('page') || 1,
           limit: url.searchParams.get('limit') || 10,
           readFilter: url.searchParams.get('readFilter') || 'all',
+          keyword: url.searchParams.get('keyword') || '',
         }))
       }
       return json(res, 200, (await listDownloaded({ includeDetails: false })).map(publicDownloadedItem))
