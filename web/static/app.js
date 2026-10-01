@@ -2535,12 +2535,30 @@ function renderStreamMedia(reader, options = {}) {
   fullscreen.className = 'stream-icon-button stream-fullscreen'
   fullscreen.title = '页面全屏'
   fullscreen.textContent = '⛶'
-  const vrToggle = document.createElement('button')
-  vrToggle.type = 'button'
-  vrToggle.className = 'stream-toggle stream-vr-toggle'
-  vrToggle.title = '切换普通/3D 全景拖动模式'
-  vrToggle.textContent = '3D'
-  vrToggle.hidden = reader.type !== 'video'
+  const vrModeSelect = document.createElement('select')
+  vrModeSelect.className = 'stream-vr-mode'
+  vrModeSelect.title = '3D / VR 渲染模式'
+  vrModeSelect.hidden = reader.type !== 'video'
+  const vrModes = [
+    ['off', '普通'],
+    ['equirect', '360'],
+    ['equirect-mirror-x', '360镜像'],
+    ['equirect-flip-y', '360上下翻'],
+    ['equirect-sbs-left', '左右-左眼'],
+    ['equirect-sbs-right', '左右-右眼'],
+    ['equirect-tb-top', '上下-上眼'],
+    ['equirect-tb-bottom', '上下-下眼'],
+    ['flat', '平面'],
+    ['flat-mirror-x', '平面镜像'],
+  ]
+  const savedVrMode = localStorage.getItem('copymanga.mediaVrMode') || 'off'
+  for (const [value, label] of vrModes) {
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = label
+    vrModeSelect.append(option)
+  }
+  vrModeSelect.value = vrModes.some(([value]) => value === savedVrMode) ? savedVrMode : 'off'
   const loopToggle = document.createElement('button')
   loopToggle.type = 'button'
   loopToggle.className = 'stream-toggle'
@@ -2670,7 +2688,7 @@ function renderStreamMedia(reader, options = {}) {
     fullscreen.title = active ? '退出页面全屏' : '页面全屏'
   })
   const vrViewer = reader.type === 'video'
-    ? createVrVideoViewer({ frame, player, toggle: vrToggle, warning: playbackWarning })
+    ? createVrVideoViewer({ frame, player, modeSelect: vrModeSelect, warning: playbackWarning })
     : null
   const title = document.createElement('div')
   title.className = 'stream-player-title'
@@ -2703,7 +2721,7 @@ function renderStreamMedia(reader, options = {}) {
   })
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, vrToggle, fullscreen)
+  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, vrModeSelect, fullscreen)
   frame.append(player, subtitleOverlay, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
@@ -2718,7 +2736,7 @@ function renderStreamMedia(reader, options = {}) {
   updateMediaPageControls()
 }
 
-function createVrVideoViewer({ frame, player, toggle, warning }) {
+function createVrVideoViewer({ frame, player, modeSelect, warning }) {
   const canvas = document.createElement('canvas')
   canvas.className = 'stream-vr-canvas'
   canvas.hidden = true
@@ -2742,16 +2760,20 @@ function createVrVideoViewer({ frame, player, toggle, warning }) {
     texture: null,
     buffer: null,
     locations: null,
+    mode: 'off',
   }
   const showWarning = (message) => {
     warning.classList.remove('hidden')
     warning.textContent = message
   }
+  const setMode = (mode) => {
+    state.mode = mode || 'off'
+    localStorage.setItem('copymanga.mediaVrMode', state.mode)
+    setActive(state.mode !== 'off')
+  }
   const setActive = (active) => {
     if (active && !initVr()) return
     state.active = active
-    toggle.classList.toggle('active', active)
-    toggle.setAttribute('aria-pressed', active ? 'true' : 'false')
     player.classList.toggle('stream-video-hidden', active)
     canvas.hidden = !active
     subtitleOverlay.hidden = !active
@@ -2763,7 +2785,10 @@ function createVrVideoViewer({ frame, player, toggle, warning }) {
       state.raf = 0
     }
   }
-  toggle.addEventListener('click', () => setActive(!state.active))
+  modeSelect.addEventListener('change', () => setMode(modeSelect.value))
+  if (modeSelect.value && modeSelect.value !== 'off') {
+    setTimeout(() => setMode(modeSelect.value), 0)
+  }
   canvas.addEventListener('pointerdown', (event) => {
     state.dragging = true
     state.lastX = event.clientX
@@ -2830,6 +2855,7 @@ function createVrVideoViewer({ frame, player, toggle, warning }) {
       yaw: gl.getUniformLocation(program, 'u_yaw'),
       pitch: gl.getUniformLocation(program, 'u_pitch'),
       fov: gl.getUniformLocation(program, 'u_fov'),
+      mode: gl.getUniformLocation(program, 'u_mode'),
       texture: gl.getUniformLocation(program, 'u_texture'),
     }
     state.initialized = true
@@ -2862,6 +2888,7 @@ function createVrVideoViewer({ frame, player, toggle, warning }) {
     gl.uniform1f(state.locations.yaw, state.yaw)
     gl.uniform1f(state.locations.pitch, state.pitch)
     gl.uniform1f(state.locations.fov, state.fov)
+    gl.uniform1i(state.locations.mode, vrModeCode(state.mode))
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     renderVrSubtitles(player, subtitleOverlay)
     state.raf = requestAnimationFrame(renderVr)
@@ -2879,7 +2906,23 @@ function createVrVideoViewer({ frame, player, toggle, warning }) {
       canvas.remove()
       subtitleOverlay.remove()
     },
+    setMode,
   }
+}
+
+function vrModeCode(mode) {
+  const codes = {
+    equirect: 1,
+    'equirect-mirror-x': 2,
+    'equirect-flip-y': 3,
+    'equirect-sbs-left': 4,
+    'equirect-sbs-right': 5,
+    'equirect-tb-top': 6,
+    'equirect-tb-bottom': 7,
+    flat: 20,
+    'flat-mirror-x': 21,
+  }
+  return codes[mode] || 0
 }
 
 function renderVrSubtitles(player, subtitleOverlay) {
@@ -2919,6 +2962,7 @@ function createVrProgram(gl) {
     uniform float u_yaw;
     uniform float u_pitch;
     uniform float u_fov;
+    uniform int u_mode;
     varying vec2 v_uv;
     const float PI = 3.141592653589793;
 
@@ -2934,8 +2978,22 @@ function createVrProgram(gl) {
       return vec3(value.x * c + value.z * s, value.y, -value.x * s + value.z * c);
     }
 
+    vec2 sourceCoord(vec2 coord) {
+      if (u_mode == 2 || u_mode == 21) coord.x = 1.0 - coord.x;
+      if (u_mode == 3) coord.y = 1.0 - coord.y;
+      if (u_mode == 4) coord.x = coord.x * 0.5;
+      if (u_mode == 5) coord.x = coord.x * 0.5 + 0.5;
+      if (u_mode == 6) coord.y = coord.y * 0.5;
+      if (u_mode == 7) coord.y = coord.y * 0.5 + 0.5;
+      return coord;
+    }
+
     void main() {
       vec2 ndc = v_uv * 2.0 - 1.0;
+      if (u_mode >= 20) {
+        gl_FragColor = texture2D(u_texture, sourceCoord(v_uv));
+        return;
+      }
       float aspect = u_resolution.x / max(u_resolution.y, 1.0);
       float scale = tan(u_fov * 0.5);
       vec3 dir = normalize(vec3(ndc.x * aspect * scale, -ndc.y * scale, -1.0));
@@ -2943,7 +3001,7 @@ function createVrProgram(gl) {
       float lon = atan(dir.x, -dir.z);
       float lat = asin(clamp(dir.y, -1.0, 1.0));
       vec2 coord = vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);
-      gl_FragColor = texture2D(u_texture, coord);
+      gl_FragColor = texture2D(u_texture, sourceCoord(coord));
     }
   `)
   if (!vertex || !fragment) return null

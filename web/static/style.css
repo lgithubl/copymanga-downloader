@@ -2198,7 +2198,8 @@ h2 {
 }
 
 .stream-rate-select,
-.stream-subtitle-select {
+.stream-subtitle-select,
+.stream-vr-mode {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.18);
   color: #f8fafc;
@@ -2216,22 +2217,29 @@ h2 {
   min-width: 120px;
 }
 
+.stream-vr-mode {
+  min-width: 112px;
+}
+
 #app .stream-rate-select,
-#app .stream-subtitle-select {
+#app .stream-subtitle-select,
+#app .stream-vr-mode {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.18);
   color: #f8fafc;
 }
 
 #app .media-mode-audio .stream-rate-select,
-#app .media-mode-audio .stream-subtitle-select {
+#app .media-mode-audio .stream-subtitle-select,
+#app .media-mode-audio .stream-vr-mode {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.18);
   color: #f8fafc;
 }
 
 .stream-rate-select option,
-.stream-subtitle-select option {
+.stream-subtitle-select option,
+.stream-vr-mode option {
   color: #111827;
 }
 
@@ -2318,6 +2326,7 @@ h2 {
 
   .stream-rate-select,
   .stream-subtitle-select,
+  .stream-vr-mode,
   .stream-toggle,
   .stream-fullscreen {
     grid-column: auto / span 2;
