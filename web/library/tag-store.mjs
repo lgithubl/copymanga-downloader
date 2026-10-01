@@ -49,7 +49,16 @@ export function parseTags(value) {
 
 export function listTags() {
   ensureDb()
-  return db.prepare('SELECT name, normalized_name AS normalizedName, color FROM tags ORDER BY name COLLATE NOCASE').all()
+  return db.prepare(`
+    SELECT
+      tags.name,
+      tags.normalized_name AS normalizedName,
+      tags.color,
+      (SELECT COUNT(*) FROM item_tags WHERE item_tags.tag_id = tags.id) AS itemCount,
+      (SELECT COUNT(*) FROM unit_tags WHERE unit_tags.tag_id = tags.id) AS unitCount
+    FROM tags
+    ORDER BY (itemCount + unitCount) DESC, name COLLATE NOCASE
+  `).all()
 }
 
 export async function setItemTags({ type, itemId, tags }) {
@@ -97,7 +106,7 @@ export function searchItemKeys(query, { type = 'all' } = {}) {
   const negative = tokens.filter((item) => item.exclude)
   let keys
   for (const token of positive) {
-    const set = itemKeySetForTag(token.name, type)
+    const set = itemKeySetForTag(token.name, type, token.unitOnly)
     keys = keys ? intersect(keys, set) : set
   }
   if (!keys) {
@@ -107,7 +116,7 @@ export function searchItemKeys(query, { type = 'all' } = {}) {
     ).all(...(type === 'all' ? [] : [type])).map((row) => row.key))
   }
   for (const token of negative) {
-    for (const key of itemKeySetForTag(token.name, type)) keys.delete(key)
+    for (const key of itemKeySetForTag(token.name, type, token.unitOnly)) keys.delete(key)
   }
   return [...keys].map((key) => {
     const [itemType, itemId] = key.split('\u001f')
@@ -116,28 +125,44 @@ export function searchItemKeys(query, { type = 'all' } = {}) {
 }
 
 function parseTagQuery(query) {
-  return String(query || '')
-    .split(/\s+/)
+  const input = String(query || '').trim()
+  if (/^-?(?:tag|unitTag):/i.test(input) && !/\s-?(?:tag|unitTag):/i.test(input)) {
+    return [parseTagToken(input)].filter((item) => item.name)
+  }
+  return [...input.matchAll(/-?(?:tag|unitTag):"[^"]+"|-?(?:tag|unitTag):\S+|-\S+|\S+/gi)]
+    .map((match) => match[0])
     .map((raw) => raw.trim())
     .filter(Boolean)
-    .map((raw) => {
-      const exclude = raw.startsWith('-')
-      const body = exclude ? raw.slice(1) : raw
-      return { exclude, name: body.replace(/^tag:/i, '') }
-    })
+    .map(parseTagToken)
     .filter((item) => item.name)
 }
 
-function itemKeySetForTag(name, type) {
+function parseTagToken(raw) {
+  const exclude = raw.startsWith('-')
+  let body = exclude ? raw.slice(1) : raw
+  const unitOnly = /^unitTag:/i.test(body)
+  body = body.replace(/^(?:tag|unitTag):/i, '')
+  body = body.replace(/^"|"$/g, '')
+  return { exclude, unitOnly, name: body }
+}
+
+function itemKeySetForTag(name, type, unitOnly = false) {
   const normalized = normalizeTagName(name)
-  const rows = db.prepare(`
+  const rows = unitOnly ? [] : db.prepare(`
     SELECT DISTINCT item_tags.type || char(31) || item_tags.item_id AS key
     FROM item_tags
     JOIN tags ON tags.id = item_tags.tag_id
     WHERE tags.normalized_name = ?
     ${type === 'all' ? '' : 'AND item_tags.type = ?'}
   `).all(...(type === 'all' ? [normalized] : [normalized, type]))
-  return new Set(rows.map((row) => row.key))
+  const unitRows = db.prepare(`
+    SELECT DISTINCT unit_tags.type || char(31) || unit_tags.item_id AS key
+    FROM unit_tags
+    JOIN tags ON tags.id = unit_tags.tag_id
+    WHERE tags.normalized_name = ?
+    ${type === 'all' ? '' : 'AND unit_tags.type = ?'}
+  `).all(...(type === 'all' ? [normalized] : [normalized, type]))
+  return new Set([...rows, ...unitRows].map((row) => row.key))
 }
 
 function ensureTag(name) {

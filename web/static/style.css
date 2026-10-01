@@ -602,6 +602,87 @@ h2 {
   padding: 0 10px;
 }
 
+.tag-manager-view {
+  min-height: 0;
+  overflow: hidden;
+  padding: 18px;
+}
+
+.tag-manager-view.active {
+  display: grid;
+}
+
+.tag-manager-view > section {
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.tag-manager-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(320px, 1fr);
+  min-height: 0;
+}
+
+.tag-manager-grid > div {
+  display: grid;
+  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr) auto minmax(0, 0.7fr);
+  min-height: 0;
+}
+
+.tag-manager-tags,
+.tag-manager-scripts {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.tag-manager-jobs {
+  min-height: 120px;
+}
+
+.tag-manager-card {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.tag-script-error {
+  border-color: #fca5a5;
+}
+
+.tag-script-bar {
+  align-items: center;
+  background: var(--site-panel);
+  border: 1px solid var(--site-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.tag-script-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.tag-script-option {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  margin: 0;
+}
+
+.tag-script-option small {
+  color: var(--site-muted);
+}
+
+.tag-pill {
+  cursor: pointer;
+}
+
 #downloaded-view > section:first-child {
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }

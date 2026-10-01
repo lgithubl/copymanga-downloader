@@ -86,18 +86,27 @@ const els = {
   librarySubtitles: document.querySelector('#library-subtitles'),
   libraryThumbnails: document.querySelector('#library-thumbnails'),
   libraryUnits: document.querySelector('#library-units'),
+  libraryTagScripts: document.querySelector('#library-tag-scripts'),
+  libraryRunTagScripts: document.querySelector('#library-run-tag-scripts'),
+  tagScriptsReload: document.querySelector('#tag-scripts-reload'),
+  tagManagerRefresh: document.querySelector('#tag-manager-refresh'),
+  tagManagerTags: document.querySelector('#tag-manager-tags'),
+  tagManagerScripts: document.querySelector('#tag-manager-scripts'),
+  tagManagerJobs: document.querySelector('#tag-manager-jobs'),
   historyType: document.querySelector('#history-type'),
   historyKeyword: document.querySelector('#history-keyword'),
   historyRefresh: document.querySelector('#history-refresh'),
   historyClear: document.querySelector('#history-clear'),
   historyList: document.querySelector('#history-list'),
   mediaImportType: document.querySelector('#media-import-type'),
+  mediaImportProfile: document.querySelector('#media-import-profile'),
   mediaImportRefresh: document.querySelector('#media-import-refresh'),
   mediaImportItem: document.querySelector('#media-import-item'),
   mediaImportTitle: document.querySelector('#media-import-title'),
   mediaImportSourcePath: document.querySelector('#media-import-source-path'),
   mediaImportFilesLabel: document.querySelector('#media-import-files-label'),
   mediaImportFiles: document.querySelector('#media-import-files'),
+  mediaImportTagScripts: document.querySelector('#media-import-tag-scripts'),
   mediaImportSubmit: document.querySelector('#media-import-submit'),
   mediaImportMeta: document.querySelector('#media-import-meta'),
   mediaImportItems: document.querySelector('#media-import-items'),
@@ -175,6 +184,9 @@ let libraryTypes = []
 let libraryItems = []
 let libraryHistory = []
 let libraryHistoryByKey = new Map()
+let tagScripts = []
+let tagJobs = []
+let tagCatalog = []
 let currentLibraryItem = null
 let currentLibraryUnits = []
 let currentLibraryProgress = null
@@ -191,6 +203,12 @@ const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-war
 const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
   media: { label: '媒体', unit: '个媒体项', accept: '.zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
+}
+const mediaImportProfiles = {
+  custom: { label: '自定义', type: '', sourcePlaceholder: '' },
+  'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', scriptHints: ['subtitle', 'rj', 'video-r'] },
+  'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video', scriptHints: ['subtitle', 'video-normal', 'video'] },
+  epub: { label: 'EPUB', type: 'epub', sourcePlaceholder: '', scriptHints: [] },
 }
 const mediaPlaybackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 const defaultMediaSubtitleExtensions = 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub'
@@ -1073,6 +1091,9 @@ els.tabs.forEach((tab) => {
     if (tab.dataset.view === 'history-view') {
       loadLibraryTypes().then(loadLibraryHistory).catch((error) => alert(error.message))
     }
+    if (tab.dataset.view === 'tag-manager-view') {
+      loadTagManager().catch((error) => alert(error.message))
+    }
     if (tab.dataset.view === 'media-import-view') loadMediaImportItems()
     if (tab.dataset.view === 'settings-view') loadConfig()
   })
@@ -1248,9 +1269,114 @@ async function loadLibraryItems() {
   }
 }
 
+async function loadTagScripts({ reload = false } = {}) {
+  tagScripts = await api(`/api/tag-scripts${reload ? '?reload=1' : ''}`)
+  renderTagScriptPickers()
+  return tagScripts
+}
+
+function renderTagScriptPickers() {
+  renderTagScriptCheckboxes(els.mediaImportTagScripts, 'media-import-tag-script')
+  renderTagScriptCheckboxes(els.libraryTagScripts, 'library-tag-script')
+  applyMediaImportProfile()
+}
+
+function renderTagScriptCheckboxes(container, name) {
+  if (!container) return
+  container.classList.remove('muted')
+  container.innerHTML = ''
+  const valid = tagScripts.filter((script) => !script.error)
+  if (!valid.length) {
+    container.classList.add('muted')
+    container.textContent = '暂无 tag 脚本'
+    return
+  }
+  for (const script of valid) {
+    const label = document.createElement('label')
+    label.className = 'checkbox-line tag-script-option'
+    label.innerHTML = `
+      <input type="checkbox" name="${name}" value="${escapeHtml(script.id)}" ${script.defaultEnabled ? 'checked' : ''} />
+      <span>${escapeHtml(script.name)} <small>v${escapeHtml(script.version)}</small></span>
+    `
+    container.append(label)
+  }
+}
+
+function checkedTagScriptIds(name) {
+  return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value)
+}
+
+async function loadTagManager({ reloadScripts = false } = {}) {
+  try {
+    setLoading(els.tagManagerRefresh, true)
+    const [tags, scripts, jobs] = await Promise.all([
+      api('/api/library/tags'),
+      loadTagScripts({ reload: reloadScripts }),
+      api('/api/tag-jobs'),
+    ])
+    tagCatalog = tags
+    tagJobs = jobs
+    renderTagManager()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.tagManagerRefresh, false)
+  }
+}
+
+function renderTagManager() {
+  els.tagManagerTags.innerHTML = ''
+  for (const tag of tagCatalog) {
+    const card = document.createElement('article')
+    card.className = 'card tag-manager-card'
+    card.innerHTML = `
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(tag.name)}</div>
+        <div class="library-card-meta">合集 ${tag.itemCount || 0} · 章节 ${tag.unitCount || 0}</div>
+      </div>
+    `
+    card.addEventListener('click', () => {
+      showView('library-view')
+      els.libraryTagSearch.value = `tag:${tag.name}`
+      loadLibraryItems().catch((error) => alert(error.message))
+    })
+    els.tagManagerTags.append(card)
+  }
+  if (!tagCatalog.length) els.tagManagerTags.innerHTML = '<p class="muted">暂无 tag</p>'
+
+  els.tagManagerScripts.innerHTML = ''
+  for (const script of tagScripts) {
+    const card = document.createElement('article')
+    card.className = `card tag-manager-card${script.error ? ' tag-script-error' : ''}`
+    card.innerHTML = `
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(script.name)}</div>
+        <div class="library-card-meta">${escapeHtml(script.id)} · v${escapeHtml(script.version)}</div>
+        <div class="library-card-meta">${escapeHtml(script.description || '')}</div>
+      </div>
+    `
+    els.tagManagerScripts.append(card)
+  }
+  if (!tagScripts.length) els.tagManagerScripts.innerHTML = '<p class="muted">暂无脚本，目录 /data/tag-scripts</p>'
+
+  els.tagManagerJobs.innerHTML = ''
+  for (const job of tagJobs) {
+    const row = document.createElement('div')
+    row.className = `job ${job.status}`
+    row.innerHTML = `
+      <strong>${escapeHtml(job.status)} · ${escapeHtml(job.type)}/${escapeHtml(job.itemId)}</strong>
+      <span class="muted">${escapeHtml(job.scriptIds.join(', '))}</span>
+      <small>${escapeHtml(job.message || '')}</small>
+    `
+    els.tagManagerJobs.append(row)
+  }
+  if (!tagJobs.length) els.tagManagerJobs.innerHTML = '<p class="muted">暂无 tag 任务</p>'
+}
+
 async function loadMediaImportItems() {
   try {
     setLoading(els.mediaImportRefresh, true)
+    if (!tagScripts.length) await loadTagScripts().catch(() => {})
     const type = els.mediaImportType.value || 'epub'
     const items = await api(`/api/library/items?type=${encodeURIComponent(type)}`)
     renderMediaImportItems(items)
@@ -1322,6 +1448,20 @@ function updateMediaImportControls() {
   updateMediaImportMeta()
 }
 
+function applyMediaImportProfile() {
+  const profile = mediaImportProfiles[els.mediaImportProfile.value] || mediaImportProfiles.custom
+  if (profile.type && [...els.mediaImportType.options].some((option) => option.value === profile.type)) {
+    els.mediaImportType.value = profile.type
+  }
+  if (profile.sourcePlaceholder) els.mediaImportSourcePath.placeholder = profile.sourcePlaceholder
+  updateMediaImportControls()
+  const hints = profile.scriptHints || []
+  for (const input of document.querySelectorAll('input[name="media-import-tag-script"]')) {
+    const script = tagScripts.find((item) => item.id === input.value)
+    input.checked = Boolean(script?.defaultEnabled || hints.some((hint) => script?.id.includes(hint) || script?.name.toLowerCase().includes(hint)))
+  }
+}
+
 function renderLibraryItems() {
   els.libraryItems.innerHTML = ''
   for (const item of libraryItems) {
@@ -1374,6 +1514,8 @@ async function selectLibraryItem(type, itemId) {
     els.librarySaveTags.disabled = false
     els.librarySubtitles.disabled = item.type !== 'media'
     els.libraryThumbnails.disabled = item.type !== 'media'
+    if (!tagScripts.length) await loadTagScripts().catch(() => {})
+    els.libraryRunTagScripts.disabled = tagScripts.filter((script) => !script.error).length === 0
     renderLibraryItems()
     renderLibraryUnits()
   } catch (error) {
@@ -1683,7 +1825,7 @@ function historyPositionForReader() {
 
 function renderTagList(tags = []) {
   if (!tags.length) return ''
-  return `<span class="tag-list">${tags.map((tag) => `<span class="tag-pill">${escapeHtml(tag)}</span>`).join('')}</span>`
+  return `<span class="tag-list">${tags.map((tag) => `<span class="tag-pill" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}</span>`
 }
 
 function renderThumbnailBadge(thumbnail) {
@@ -2645,6 +2787,25 @@ els.libraryType.addEventListener('change', loadLibraryItems)
 els.libraryTagSearch.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') loadLibraryItems()
 })
+els.libraryRunTagScripts.addEventListener('click', async () => {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
+  const scriptIds = checkedTagScriptIds('library-tag-script')
+  if (!scriptIds.length) return alert('请选择 tag 脚本')
+  try {
+    setLoading(els.libraryRunTagScripts, true)
+    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/tag-scripts`, {
+      method: 'POST',
+      body: JSON.stringify({ scriptIds }),
+    })
+    setTimeout(() => selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId).catch(() => {}), 1500)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.libraryRunTagScripts, false)
+  }
+})
+els.tagManagerRefresh.addEventListener('click', () => loadTagManager())
+els.tagScriptsReload.addEventListener('click', () => loadTagManager({ reloadScripts: true }))
 els.historyRefresh.addEventListener('click', loadLibraryHistory)
 els.historyType.addEventListener('change', loadLibraryHistory)
 els.historyKeyword.addEventListener('keydown', (event) => {
@@ -2686,6 +2847,10 @@ els.mediaImportType.addEventListener('change', () => {
   updateMediaImportControls()
   loadMediaImportItems()
 })
+els.mediaImportProfile.addEventListener('change', () => {
+  applyMediaImportProfile()
+  loadMediaImportItems()
+})
 els.mediaImportItem.addEventListener('change', () => {
   const selected = els.mediaImportItem.selectedOptions?.[0]
   if (els.mediaImportItem.value) els.mediaImportTitle.value = selected?.dataset.title || selected?.textContent || ''
@@ -2706,6 +2871,8 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     form.set('title', els.mediaImportTitle.value.trim())
     if (els.mediaImportItem.value) form.set('itemId', els.mediaImportItem.value)
     if (sourcePath) form.set('sourcePath', sourcePath)
+    const tagScriptIds = checkedTagScriptIds('media-import-tag-script')
+    if (tagScriptIds.length) form.set('tagScriptIds', tagScriptIds.join(','))
     for (const file of files) form.append('file', file)
     const item = await apiForm(`/api/library/items?type=${encodeURIComponent(type)}`, form)
     els.mediaImportFiles.value = ''
@@ -2747,6 +2914,14 @@ els.mediaReaderTheme.addEventListener('change', () => {
 })
 els.configSiteTheme.addEventListener('change', () => {
   applySiteTheme(els.configSiteTheme.value)
+})
+document.addEventListener('click', (event) => {
+  const pill = event.target.closest?.('.tag-pill[data-tag]')
+  if (!pill) return
+  event.stopPropagation()
+  showView('library-view')
+  els.libraryTagSearch.value = `tag:"${String(pill.dataset.tag || '').replace(/"/g, '\\"')}"`
+  loadLibraryItems().catch((error) => alert(error.message))
 })
 els.mediaPagePrev.addEventListener('click', () => setMediaPage(mediaPageIndex - 1))
 els.mediaPageNext.addEventListener('click', () => {

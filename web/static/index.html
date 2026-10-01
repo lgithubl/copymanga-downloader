@@ -41,6 +41,7 @@
           <button class="tab" data-view="downloaded-view">本地库存</button>
           <button class="tab" data-view="library-view">媒体库</button>
           <button class="tab" data-view="history-view">历史</button>
+          <button class="tab" data-view="tag-manager-view">标签管理</button>
           <button class="tab" data-view="media-import-view">媒体导入</button>
           <button class="tab" data-view="media-viewer-view">媒体浏览</button>
           <button class="tab" data-view="viewer-view">图片浏览</button>
@@ -292,7 +293,37 @@
                 <button id="library-thumbnails" class="secondary" disabled>批量缩略图</button>
               </div>
             </div>
+            <div class="tag-script-bar">
+              <div id="library-tag-scripts" class="tag-script-list muted">暂无 tag 脚本</div>
+              <button id="library-run-tag-scripts" class="secondary" disabled>重新生成 tag</button>
+            </div>
             <div id="library-units" class="chapters empty-panel">请选择媒体库条目</div>
+          </section>
+        </div>
+        <div id="tag-manager-view" class="tag-manager-view view">
+          <section>
+            <div class="chapter-head">
+              <div>
+                <h2>标签管理</h2>
+                <div class="muted">展示 tag 使用数和外置 tag 脚本</div>
+              </div>
+              <div class="chapter-actions">
+                <button id="tag-scripts-reload" class="secondary">重载脚本</button>
+                <button id="tag-manager-refresh">刷新</button>
+              </div>
+            </div>
+            <div class="tag-manager-grid">
+              <div>
+                <h2>Tag</h2>
+                <div id="tag-manager-tags" class="cards tag-manager-tags"></div>
+              </div>
+              <div>
+                <h2>脚本</h2>
+                <div id="tag-manager-scripts" class="cards tag-manager-scripts"></div>
+                <h2>运行任务</h2>
+                <div id="tag-manager-jobs" class="jobs tag-manager-jobs"></div>
+              </div>
+            </div>
           </section>
         </div>
         <div id="history-view" class="history-view view">
@@ -334,6 +365,17 @@
               </label>
               <label>来源路径
                 <input id="media-import-source-path" placeholder="/input/album 或 /input/movie.mp4" />
+              </label>
+              <label>导入方案
+                <select id="media-import-profile">
+                  <option value="custom">自定义</option>
+                  <option value="rj-media">RJ 媒体</option>
+                  <option value="normal-video">普通视频</option>
+                  <option value="epub">EPUB</option>
+                </select>
+              </label>
+              <label>Tag 脚本
+                <div id="media-import-tag-scripts" class="tag-script-list muted">暂无 tag 脚本</div>
               </label>
               <label id="media-import-files-label">EPUB 文件
                 <input id="media-import-files" type="file" accept=".epub,application/epub+zip" multiple />

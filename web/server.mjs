@@ -3,13 +3,13 @@ import { open, readFile, readdir, stat, writeFile, mkdir, rename, rm } from 'nod
 import { createReadStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Buffer } from 'node:buffer'
 import { promisify } from 'node:util'
 import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems } from './library/registry.mjs'
 import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
-import { initTagStore, listTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
+import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -20,6 +20,8 @@ const READING_PROGRESS_DIR = path.join(DATA_DIR, 'cache', 'reading-progress')
 const INVENTORY_INDEX_DIR = path.join(DATA_DIR, 'cache', 'inventory-index')
 const LIBRARY_HISTORY_DIR = path.join(DATA_DIR, 'cache', 'library', 'history')
 const LIBRARY_HISTORY_INDEX = path.join(LIBRARY_HISTORY_DIR, 'index.json')
+const TAG_SCRIPTS_DIR = process.env.TAG_SCRIPTS_DIR || path.join(DATA_DIR, 'tag-scripts')
+const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -45,6 +47,11 @@ const libraryHistoryDirty = new Set()
 const libraryHistoryTimers = new Map()
 let libraryHistoryIndex = null
 let libraryHistoryIndexTimer = null
+let tagScriptsCache = null
+const tagJobs = new Map()
+const tagQueue = []
+const runningTagJobIds = new Set()
+let tagWorkerTimer = null
 let config = defaultConfig()
 const execFileAsync = promisify(execFile)
 const APP_COMIC_METADATA = '元数据.json'
@@ -2502,6 +2509,247 @@ async function clearLibraryHistory(type = 'all') {
   }
 }
 
+function normalizeTagScriptManifest(manifest, dirName) {
+  const id = safeScriptId(manifest?.id || dirName)
+  return {
+    id,
+    name: String(manifest?.name || id),
+    version: String(manifest?.version || '0.0.0'),
+    description: String(manifest?.description || ''),
+    scope: Array.isArray(manifest?.scope) ? manifest.scope.map(String) : ['item', 'unit'],
+    libraryTypes: Array.isArray(manifest?.libraryTypes) ? manifest.libraryTypes.map(String) : [],
+    mediaKinds: Array.isArray(manifest?.mediaKinds) ? manifest.mediaKinds.map(String) : [],
+    defaultEnabled: Boolean(manifest?.defaultEnabled),
+    main: String(manifest?.main || 'main.js'),
+    dirName,
+  }
+}
+
+function safeScriptId(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120) || 'script'
+}
+
+async function scanTagScripts({ force = false } = {}) {
+  if (tagScriptsCache && !force) return tagScriptsCache
+  await mkdir(TAG_SCRIPTS_DIR, { recursive: true })
+  const entries = await readdir(TAG_SCRIPTS_DIR, { withFileTypes: true }).catch(() => [])
+  const scripts = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const dir = path.join(TAG_SCRIPTS_DIR, entry.name)
+    try {
+      const manifest = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'))
+      const script = normalizeTagScriptManifest(manifest, entry.name)
+      const mainPath = path.resolve(dir, script.main)
+      const root = path.resolve(dir)
+      if (!mainPath.startsWith(`${root}${path.sep}`) && mainPath !== root) throw new Error('main path escapes script dir')
+      script.mainPath = mainPath
+      scripts.push(script)
+    } catch (error) {
+      scripts.push({
+        id: safeScriptId(entry.name),
+        name: entry.name,
+        version: 'invalid',
+        description: `加载失败：${error.message}`,
+        scope: [],
+        libraryTypes: [],
+        mediaKinds: [],
+        defaultEnabled: false,
+        dirName: entry.name,
+        error: error.message,
+      })
+    }
+  }
+  tagScriptsCache = scripts.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+  return tagScriptsCache
+}
+
+function publicTagJob(job) {
+  return {
+    id: job.id,
+    type: job.type,
+    itemId: job.itemId,
+    scriptIds: job.scriptIds,
+    status: job.status,
+    message: job.message,
+    results: job.results || [],
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  }
+}
+
+function updateTagJob(job, patch) {
+  Object.assign(job, patch, { updatedAt: new Date().toISOString() })
+  emit('tagJob', publicTagJob(job))
+}
+
+function enqueueTagScripts({ type, itemId, scriptIds = [], reason = 'manual' }) {
+  const ids = [...new Set((scriptIds || []).map((id) => safeScriptId(id)).filter(Boolean))]
+  if (!type || !itemId || !ids.length) return null
+  const now = new Date().toISOString()
+  const id = `tag-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const job = {
+    id,
+    type,
+    itemId,
+    scriptIds: ids,
+    reason,
+    status: 'queued',
+    message: '等待生成 tag',
+    results: [],
+    createdAt: now,
+    updatedAt: now,
+  }
+  tagJobs.set(id, job)
+  tagQueue.push(id)
+  emit('tagJob', publicTagJob(job))
+  scheduleTagWorker()
+  return job
+}
+
+function scheduleTagWorker() {
+  if (tagWorkerTimer) return
+  tagWorkerTimer = setImmediate(processTagQueue)
+}
+
+async function processTagQueue() {
+  tagWorkerTimer = null
+  if (runningTagJobIds.size > 0) return
+  const id = tagQueue.shift()
+  if (!id) return
+  const job = tagJobs.get(id)
+  if (!job || job.status !== 'queued') return scheduleTagWorker()
+  runningTagJobIds.add(id)
+  try {
+    await runTagJob(job)
+  } finally {
+    runningTagJobIds.delete(id)
+    if (tagQueue.length) scheduleTagWorker()
+  }
+}
+
+async function runTagJob(job) {
+  updateTagJob(job, { status: 'running', message: '生成 tag 中' })
+  const scripts = await scanTagScripts()
+  const byId = new Map(scripts.filter((script) => !script.error).map((script) => [script.id, script]))
+  const handler = libraryHandler(job.type)
+  const item = await handler.getItem(job.itemId)
+  const units = handler.listUnits ? await handler.listUnits(job.itemId) : (item.mediaUnits || [])
+  const results = []
+  for (const scriptId of job.scriptIds) {
+    const script = byId.get(scriptId)
+    if (!script) {
+      results.push({ scriptId, status: 'failed', message: '脚本不存在或加载失败' })
+      continue
+    }
+    try {
+      updateTagJob(job, { message: `运行 ${script.name}` })
+      const output = await executeTagScript(script, { type: job.type, item, units })
+      const applied = await applyTagScriptOutput({ type: job.type, itemId: job.itemId, script, output })
+      results.push({ scriptId, scriptVersion: script.version, status: 'completed', ...applied })
+    } catch (error) {
+      results.push({ scriptId, scriptVersion: script.version, status: 'failed', message: error.message })
+    }
+  }
+  const failed = results.filter((item) => item.status === 'failed').length
+  updateTagJob(job, {
+    status: failed ? 'failed' : 'completed',
+    message: failed ? `tag 生成完成，失败 ${failed} 个` : 'tag 生成完成',
+    results,
+  })
+}
+
+async function executeTagScript(script, { type, item, units }) {
+  const info = await stat(script.mainPath)
+  const mod = await import(`${pathToFileURL(script.mainPath).href}?v=${encodeURIComponent(`${info.mtimeMs}-${script.version}`)}`)
+  if (typeof mod.generateTags !== 'function') throw new Error('main.js 必须 export async function generateTags(ctx)')
+  const ctx = {
+    type,
+    item,
+    units,
+    filesRoot: item?.mediaUnits?.[0]?.managedPath ? path.dirname(item.mediaUnits[0].managedPath) : '',
+    config,
+  }
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('脚本超时')), 60000))
+  return await Promise.race([Promise.resolve(mod.generateTags(ctx)), timeout])
+}
+
+function tagRunPath(type, itemId, scriptId) {
+  return path.join(TAG_SCRIPT_RUN_DIR, safeSegment(type), safeSegment(itemId), `${safeSegment(scriptId)}.json`)
+}
+
+async function readTagRun(type, itemId, scriptId) {
+  try {
+    return JSON.parse(await readFile(tagRunPath(type, itemId, scriptId), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function normalizeScriptTags(values) {
+  if (!Array.isArray(values)) return []
+  return parseTags(values.map((item) => typeof item === 'string' ? item : item?.tag).filter(Boolean))
+}
+
+function normalizeTagScriptOutput(output) {
+  return {
+    itemTags: normalizeScriptTags(output?.itemTags || output?.item || []),
+    unitTags: Array.isArray(output?.unitTags || output?.units)
+      ? (output.unitTags || output.units).map((entry) => ({
+        unitId: String(entry?.unitId || ''),
+        tags: normalizeScriptTags(entry?.tags || []),
+      })).filter((entry) => entry.unitId && entry.tags.length)
+      : [],
+  }
+}
+
+async function applyTagScriptOutput({ type, itemId, script, output }) {
+  const handler = libraryHandler(type)
+  if (!handler.updateItemTags || !handler.updateUnitTags) throw new Error('当前媒体类型不支持 tag 更新')
+  const previous = await readTagRun(type, itemId, script.id)
+  const next = normalizeTagScriptOutput(output)
+  const item = await handler.getItem(itemId)
+  const previousItemTags = previous?.itemTags || []
+  const mergedItemTags = mergeGeneratedTags(item.tags || [], previousItemTags, next.itemTags)
+  const updatedItem = await handler.updateItemTags(itemId, mergedItemTags)
+  await setItemTags({ type, itemId, tags: updatedItem.tags || [] })
+  const units = handler.listUnits ? await handler.listUnits(itemId) : (updatedItem.mediaUnits || [])
+  const byUnit = new Map(units.map((unit) => [unit.unitId, unit]))
+  const previousByUnit = new Map((previous?.unitTags || []).map((entry) => [entry.unitId, entry.tags || []]))
+  const touched = new Set([...next.unitTags.map((entry) => entry.unitId), ...previousByUnit.keys()])
+  const appliedUnitTags = []
+  for (const unitId of touched) {
+    const unit = byUnit.get(unitId)
+    if (!unit) continue
+    const nextEntry = next.unitTags.find((entry) => entry.unitId === unitId)
+    const merged = mergeGeneratedTags(unit.tags || [], previousByUnit.get(unitId) || [], nextEntry?.tags || [])
+    const updatedUnit = await handler.updateUnitTags(itemId, unitId, merged)
+    await setUnitTags({ type, itemId, unitId, tags: updatedUnit.tags || [] })
+    appliedUnitTags.push({ unitId, tags: nextEntry?.tags || [] })
+  }
+  const runRecord = {
+    type,
+    itemId,
+    scriptId: script.id,
+    scriptVersion: script.version,
+    itemTags: next.itemTags,
+    unitTags: appliedUnitTags,
+    updatedAt: new Date().toISOString(),
+  }
+  await atomicWriteJson(tagRunPath(type, itemId, script.id), runRecord, { jobId: `tag-run-${script.id}` })
+  return { itemTagCount: next.itemTags.length, unitTagCount: appliedUnitTags.reduce((sum, entry) => sum + entry.tags.length, 0) }
+}
+
+function mergeGeneratedTags(currentTags, previousGenerated, nextGenerated) {
+  const previous = new Set((previousGenerated || []).map(normalizeTagName))
+  const kept = parseTags(currentTags).filter((tag) => !previous.has(normalizeTagName(tag)))
+  return parseTags([...kept, ...(nextGenerated || [])])
+}
+
 async function route(req, res) {
   const startedAt = process.hrtime.bigint()
   const url = new URL(req.url, `http://${req.headers.host}`)
@@ -2554,6 +2802,12 @@ async function route(req, res) {
     if (pathname === '/api/library/tags' && req.method === 'GET') {
       return json(res, 200, listTags())
     }
+    if (pathname === '/api/tag-scripts' && req.method === 'GET') {
+      return json(res, 200, await scanTagScripts({ force: url.searchParams.get('reload') === '1' }))
+    }
+    if (pathname === '/api/tag-jobs' && req.method === 'GET') {
+      return json(res, 200, [...tagJobs.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(publicTagJob))
+    }
     if (pathname === '/api/library/history' && req.method === 'GET') {
       return json(res, 200, await listLibraryHistory({
         type: url.searchParams.get('type') || 'all',
@@ -2593,6 +2847,8 @@ async function route(req, res) {
       })
       await syncItemTagIndex(item)
       if (handler.enqueueThumbnails) handler.enqueueThumbnails(item.itemId, { force: false }).catch(() => {})
+      const tagScriptIds = parseTags(form.fields.tagScriptIds || form.fields.tagScripts || '')
+      if (tagScriptIds.length) enqueueTagScripts({ type, itemId: item.itemId, scriptIds: tagScriptIds, reason: 'import' })
       return json(res, 201, item)
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'GET') {
@@ -2634,6 +2890,12 @@ async function route(req, res) {
       if (action === 'history-flush') {
         const body = await readJson(req)
         return json(res, 200, await recordLibraryHistory(type, itemId, body, { flush: true }))
+      }
+      if (action === 'tag-scripts') {
+        const body = await readJson(req)
+        const job = enqueueTagScripts({ type, itemId, scriptIds: body.scriptIds || body.tagScriptIds || [], reason: 'manual' })
+        if (!job) return json(res, 400, { error: 'scriptIds is required' })
+        return json(res, 202, { job: publicTagJob(job) })
       }
       if (action === 'tags') {
         if (!handler.updateItemTags) return json(res, 400, { error: 'This library type does not support tags' })
