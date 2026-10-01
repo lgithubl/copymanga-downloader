@@ -206,6 +206,7 @@ let libraryProgressTimer = null
 let currentStreamCleanup = null
 let appConfig = null
 const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'reader-theme-warm', 'reader-theme-sepia']
+const mediaModeClasses = ['media-mode-empty', 'media-mode-html', 'media-mode-images', 'media-mode-audio', 'media-mode-video']
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
 const defaultMediaImportProfiles = {
   'rj-media': {
@@ -2123,6 +2124,7 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     els.mediaSectionSelect.innerHTML = '<option value="">目录</option>'
     els.mediaPagePrev.disabled = true
     els.mediaPageNext.disabled = true
+    setMediaViewerMode('empty')
     els.mediaReaderTitle.textContent = unitId
     els.mediaReaderMeta.textContent = '加载中...'
     els.mediaReaderContent.className = 'media-reader-content empty-panel'
@@ -2143,6 +2145,7 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     renderLibraryUnits()
   } catch (error) {
     els.mediaReaderMeta.textContent = `加载失败：${error.message}`
+    setMediaViewerMode('empty')
     els.mediaReaderContent.className = 'media-reader-content empty-panel'
     els.mediaReaderContent.textContent = error.message
   }
@@ -2150,6 +2153,7 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
 
 function renderMediaReader(reader, options = {}) {
   applyMediaReaderTheme()
+  setMediaViewerMode(reader.type)
   if (!(reader.type === 'audio' || reader.type === 'video') && currentStreamCleanup) {
     currentStreamCleanup()
     currentStreamCleanup = null
@@ -2169,6 +2173,18 @@ function renderMediaReader(reader, options = {}) {
     els.mediaReaderContent.textContent = `暂不支持的阅读内容类型：${reader.type}`
     updateMediaPageControls()
   }
+}
+
+function setMediaViewerMode(type) {
+  els.mediaViewerView.classList.remove(...mediaModeClasses)
+  const mode = type === 'html'
+    ? 'html'
+    : type === 'images'
+      ? 'images'
+      : type === 'audio' || type === 'video'
+        ? type
+        : 'empty'
+  els.mediaViewerView.classList.add(`media-mode-${mode}`)
 }
 
 function renderMediaSectionSelect(reader) {
@@ -2476,7 +2492,7 @@ function renderStreamMedia(reader, options = {}) {
   title.className = 'stream-player-title'
   title.textContent = reader.unit?.title || reader.unit?.fileName || '媒体'
   const meta = document.createElement('div')
-  meta.className = 'muted'
+  meta.className = 'stream-player-meta'
   meta.textContent = [
     reader.unit?.fileName || '',
     reader.unit?.contentType || '',
