@@ -440,13 +440,60 @@ h2 {
   width: 100%;
 }
 
+.library-more-controls {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.library-more-controls summary {
+  align-items: center;
+  background: var(--site-secondary);
+  border: 1px solid var(--site-control-border);
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 700;
+  min-height: 36px;
+  padding: 0 12px;
+  user-select: none;
+}
+
+.library-more-controls[open] summary {
+  border-color: var(--site-primary);
+}
+
+.library-more-controls:not([open]) > div {
+  display: none;
+}
+
+.library-more-controls > div {
+  background: var(--site-panel);
+  border: 1px solid var(--site-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  min-width: 260px;
+  padding: 10px;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 10;
+}
+
+.library-more-controls select {
+  min-width: 120px;
+}
+
 .library-workspace .chapter-actions > * {
   flex: 0 0 auto;
 }
 
 .library-workspace #library-tag-search,
 .library-workspace #library-item-tags {
-  flex: 1 1 240px;
+  flex: 1 1 260px;
   min-width: 220px;
 }
 
