@@ -68,6 +68,7 @@ async function loadProductDetail(productId, options, cacheDir) {
     age: '',
     genres: [],
     creators: [],
+    voiceActors: [],
     series: [],
     fetchedAt: new Date().toISOString(),
   }
@@ -112,6 +113,7 @@ function detailToTags(productId, detail = {}) {
     detail.age ? tag('age', `DL年龄: ${detail.age}`) : null,
     ...unique(detail.genres || []).map((value) => tag('genre', `DL标签: ${value}`)),
     ...unique(detail.creators || []).map((value) => tag('creator', `DL作者: ${value}`)),
+    ...unique(detail.voiceActors || []).map((value) => tag('voice_actor', `DL声优: ${value}`)),
     ...unique(detail.series || []).map((value) => tag('series', `DL系列: ${value}`)),
   ])
 }
@@ -123,13 +125,26 @@ function mergeAjaxDetail(detail, row) {
   detail.workType ||= clean(row.work_type || row.work_type_string || row.category_name || row.work_category)
   detail.age ||= clean(row.age_category_string || row.age_category || row.age_rating || row.rate)
   detail.genres = unique([...detail.genres, ...valuesFrom(row.genre), ...valuesFrom(row.genres), ...valuesFrom(row.genre_name)])
+  const creaters = row.creaters || row.creators || {}
   detail.creators = unique([
     ...detail.creators,
     ...valuesFrom(row.creators),
+    ...valuesFrom(row.creaters),
     ...valuesFrom(row.author),
-    ...valuesFrom(row.voice_by),
     ...valuesFrom(row.scenario_by),
     ...valuesFrom(row.illust_by),
+    ...valuesFrom(creaters.author),
+    ...valuesFrom(creaters.scenario_by),
+    ...valuesFrom(creaters.illust_by),
+  ])
+  detail.voiceActors = unique([
+    ...detail.voiceActors,
+    ...valuesFrom(row.voice_by),
+    ...valuesFrom(row.voice_actor),
+    ...valuesFrom(row.voice_actors),
+    ...valuesFrom(creaters.voice_by),
+    ...valuesFrom(creaters.voice_actor),
+    ...valuesFrom(creaters.voice_actors),
   ])
   detail.series = unique([...detail.series, ...valuesFrom(row.series), ...valuesFrom(row.series_name)])
 }
@@ -141,7 +156,12 @@ function mergeHtmlDetail(detail, html) {
   detail.workType ||= clean(labelValue(html, ['作品类型', 'Work type', 'Work Type']))
   detail.age ||= clean(labelValue(html, ['年龄指定', '年齢指定', 'Age']))
   detail.genres = unique([...detail.genres, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/genre\//i)])
-  detail.creators = unique([...detail.creators, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/(?:creater|creator|author|voice_actor|scenario|illust)/i)])
+  detail.creators = unique([...detail.creators, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/(?:creater|creator|author|scenario|illust)/i)])
+  detail.voiceActors = unique([
+    ...detail.voiceActors,
+    ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/(?:voice_actor|cv)/i),
+    ...splitLabelValues(labelValue(html, ['声優', '声优', 'CV', 'Voice Actor', 'Voice actor'])),
+  ])
   detail.series = unique([...detail.series, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/series/i)])
 
   const keywords = clean(matchText(html, /<meta[^>]+name=["']keywords["'][^>]+content=["']([^"']+)["']/i))
@@ -283,8 +303,20 @@ function productPrefix(productId) {
 function valuesFrom(value) {
   if (!value) return []
   if (Array.isArray(value)) return value.flatMap(valuesFrom)
-  if (typeof value === 'object') return compact([value.name, value.label, value.value, value.work_name, value.creater_name])
+  if (typeof value === 'object') return compact([
+    value.name,
+    value.label,
+    value.value,
+    value.work_name,
+    value.creater_name,
+    value.creator_name,
+    value.voice_actor_name,
+  ])
   return compact(String(value).split(/[,/、，]/).map(clean))
+}
+
+function splitLabelValues(value) {
+  return valuesFrom(clean(value).replace(/\s*[×x]\s*/gi, '/'))
 }
 
 function anchorTexts(html, hrefPattern) {
