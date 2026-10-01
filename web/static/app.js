@@ -153,6 +153,7 @@ let discoverOffset = 0
 let discoverTotal = 0
 let inventoryUpdate = null
 let inventoryPollTimer = null
+let downloadedRefreshTimer = null
 let currentDownloadedComic = null
 let viewerState = null
 let viewerBatchSize = 5
@@ -386,7 +387,9 @@ function renderDownloaded(payload) {
   downloadedTotalPages = totalPages
   downloadedPage = isPaged ? Math.max(1, Number(payload.page || 1)) : Math.max(1, Math.min(totalPages, downloadedPage))
   const offset = isPaged ? 0 : (downloadedPage - 1) * limit
-  els.downloadedPage.value = String(downloadedPage)
+  if (document.activeElement !== els.downloadedPage) {
+    els.downloadedPage.value = String(downloadedPage)
+  }
   els.downloadedPage.max = String(totalPages)
   els.downloadedPageTotal.textContent = `/ ${totalPages} 页`
   els.downloadedPrev.disabled = downloadedPage <= 1
@@ -918,7 +921,7 @@ function renderInventoryUpdate(update) {
     startInventoryPolling()
   } else {
     stopInventoryPolling()
-    if (wasRunning) loadDownloaded().catch(() => {})
+    if (wasRunning) scheduleDownloadedRefreshIfActive(0)
   }
 }
 
@@ -1096,15 +1099,24 @@ async function loadDiscover() {
   }
 }
 
-async function loadDownloaded() {
+async function loadDownloaded({ silent = false } = {}) {
   try {
-    setLoading(els.downloadedRefresh, true)
+    if (!silent) setLoading(els.downloadedRefresh, true)
     renderDownloaded(await api(`/api/downloaded?${downloadedPageParams(downloadedPage)}`))
   } catch (error) {
     alert(error.message)
   } finally {
-    setLoading(els.downloadedRefresh, false)
+    if (!silent) setLoading(els.downloadedRefresh, false)
   }
+}
+
+function scheduleDownloadedRefreshIfActive(delay = 1200) {
+  if (!document.querySelector('#downloaded-view')?.classList.contains('active')) return
+  if (downloadedRefreshTimer) clearTimeout(downloadedRefreshTimer)
+  downloadedRefreshTimer = setTimeout(() => {
+    downloadedRefreshTimer = null
+    loadDownloaded({ silent: true }).catch(() => {})
+  }, Math.max(0, delay))
 }
 
 function downloadedPageParams(page = downloadedPage) {
@@ -1850,7 +1862,6 @@ function jumpDiscoverPage() {
   loadDiscover()
 }
 els.downloadedRefresh.addEventListener('click', () => {
-  downloadedPage = 1
   loadDownloaded()
 })
 els.downloadedPrev.addEventListener('click', () => {
@@ -2012,7 +2023,6 @@ els.downloadedUpdate.addEventListener('click', async () => {
       }),
     })
     renderInventoryUpdate(data)
-    await loadDownloaded()
   } catch (error) {
     alert(error.message)
   } finally {
@@ -2236,13 +2246,7 @@ async function syncJobs() {
   if (hasNewCompletion) {
     await refreshDownloadedState()
     if (currentComicPathWord) await loadComic(currentComicPathWord, currentComicTarget)
-    await refreshDownloadedViewIfActive()
-  }
-}
-
-async function refreshDownloadedViewIfActive() {
-  if (document.querySelector('#downloaded-view')?.classList.contains('active')) {
-    await loadDownloaded()
+    scheduleDownloadedRefreshIfActive()
   }
 }
 
@@ -2254,7 +2258,7 @@ events.addEventListener('job', (event) => {
   if (job.status === 'completed') {
     refreshDownloadedState().then(() => {
       if (currentComicPathWord === job.comicPathWord) loadComic(currentComicPathWord, currentComicTarget)
-      refreshDownloadedViewIfActive().catch(() => {})
+      scheduleDownloadedRefreshIfActive()
     })
   }
 })
@@ -2267,7 +2271,7 @@ events.addEventListener('imageCheck', (event) => {
   const job = JSON.parse(event.data)
   if (job.status === 'completed' || job.status === 'failed') {
     refreshDownloadedState().then(() => {
-      refreshDownloadedViewIfActive().catch(() => {})
+      scheduleDownloadedRefreshIfActive()
       if (currentDownloadedComicPathWord === job.comicPathWord) {
         loadDownloadedComic(job.comicPathWord).catch(() => {})
       }
@@ -2278,7 +2282,7 @@ events.addEventListener('inventoryUpdate', (event) => {
   const update = JSON.parse(event.data)
   renderInventoryUpdate(update)
   if (update.status === 'completed') {
-    loadDownloaded().catch(() => {})
+    scheduleDownloadedRefreshIfActive(0)
   }
 })
 
