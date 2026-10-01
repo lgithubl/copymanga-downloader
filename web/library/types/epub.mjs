@@ -122,11 +122,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
           next: units[index + 1] || null,
         },
         sectionNavigation: sectionNavigation(sections, section.sectionId),
-        images: (unit.imageResources || item.imageResources || []).map((image, imageIndex) => ({
-          index: imageIndex,
-          title: image.title || path.posix.basename(image.resourcePath),
-          url: `/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(image.resourcePath)}`,
-        })),
+        images: epubImageEntries({ type: 'epub', itemId, item, unit }),
       }
     }
     const unitPath = safeExtractedPath(itemId, section.resourcePath)
@@ -143,6 +139,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
       },
       sectionNavigation: sectionNavigation(sections, section.sectionId),
       content: sanitizeHtml(raw, {
+        type: 'epub',
         itemId,
         basePath: path.posix.dirname(section.resourcePath),
       }),
@@ -267,12 +264,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
   }
 
   function safeExtractedPath(itemId, resourcePath) {
-    const extractedRoot = path.resolve(itemPath(itemId), 'extracted')
-    const candidate = path.resolve(extractedRoot, resourcePath || '')
-    if (candidate !== extractedRoot && !candidate.startsWith(`${extractedRoot}${path.sep}`)) {
-      throw new Error('Forbidden resource path')
-    }
-    return candidate
+    return safeExtractedPathFromItemDir(itemPath(itemId), resourcePath)
   }
 
   async function parseEpub(buffer, outDir, epubPath) {
@@ -289,7 +281,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     return parseEpub(file.buffer, tmpDir, uploadPath)
   }
 
-  async function importEpubUnit({ itemId, itemDir, fileName, buffer, existingUnits }) {
+  async function importEpubUnit({ itemId, itemDir, fileName, buffer, existingUnits, resourceType = 'epub' }) {
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'copymanga-library-epub-'))
     const uploadPath = path.join(tmpDir, safeSegment(fileName || 'book.epub'))
     await writeFile(uploadPath, buffer)
@@ -306,12 +298,12 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     return epubMetadataToUnit({
       unitId,
       fileName,
-      metadata: await parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName, resourcePrefix: unitId }),
+      metadata: await parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName, resourcePrefix: unitId, resourceType }),
       preview,
     })
   }
 
-  async function parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName, resourcePrefix = '' }) {
+  async function parseEpubMetadata({ itemId, itemDir, originalPath, extractedDir, fileName, resourcePrefix = '', resourceType = 'epub' }) {
     const containerXml = await readTextFile(path.join(extractedDir, 'META-INF', 'container.xml'))
     const opfPath = xmlAttr(containerXml, 'rootfile', 'full-path')
     if (!opfPath) throw new Error('EPUB container missing OPF rootfile')
@@ -349,9 +341,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
       })
     }
     const coverPath = await resolveCoverPath({ extractedDir, manifest, opfDir, resourcePrefix, imageResources })
-    const cover = coverPath
-      ? `/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(coverPath)}`
-      : ''
+    const cover = epubResourceUrl({ type: resourceType, itemId, resourcePath: coverPath })
     const info = await stat(originalPath)
     return normalizeItem({
       type: 'epub',
@@ -383,6 +373,58 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
     saveProgress,
     updateItemTags,
     updateUnitTags,
+    importUnitIntoItem: async ({ itemId, itemDir, fileName, buffer, existingUnits = [], type = 'epub' }) => importEpubUnit({
+      itemId,
+      itemDir,
+      fileName,
+      buffer,
+      existingUnits,
+      resourceType: type,
+    }),
+    getReaderContentFromItem: async ({ item, itemDir, itemId, unit, units, index, sectionId, type = 'epub' }) => {
+      const sections = unit.sections || []
+      const selectedSectionId = String(sectionId || '').trim() || sections[0]?.sectionId || ''
+      const section = sections.find((entry) => entry.sectionId === selectedSectionId) || sections[0]
+      if (!section) throw new Error(`Section not found: ${selectedSectionId}`)
+      const navigation = {
+        prev: units[index - 1] || null,
+        next: units[index + 1] || null,
+      }
+      if (section.type === 'gallery') {
+        return {
+          type: 'images',
+          item: pickPublicItem(item),
+          unit,
+          section,
+          sections,
+          navigation,
+          sectionNavigation: sectionNavigation(sections, section.sectionId),
+          images: epubImageEntries({ type, itemId, item, unit }),
+        }
+      }
+      const raw = await readTextFile(safeExtractedPathFromItemDir(itemDir, section.resourcePath))
+      return {
+        type: 'html',
+        item: pickPublicItem(item),
+        unit,
+        section,
+        sections,
+        navigation,
+        sectionNavigation: sectionNavigation(sections, section.sectionId),
+        content: sanitizeHtml(raw, {
+          type,
+          itemId,
+          basePath: path.posix.dirname(section.resourcePath),
+        }),
+      }
+    },
+    getResourceFromItem: async ({ itemDir, resourcePath }) => {
+      const filePath = safeExtractedPathFromItemDir(itemDir, resourcePath)
+      return {
+        body: await readFile(filePath),
+        contentType: contentType(filePath),
+      }
+    },
   }
 }
 
@@ -517,6 +559,29 @@ async function repairCoverUrls({ itemId, item, extractedRoot }) {
     }
   }
   return { item: normalizeItem(next), changed }
+}
+
+function safeExtractedPathFromItemDir(itemDir, resourcePath) {
+  const extractedRoot = path.resolve(itemDir, 'extracted')
+  const candidate = path.resolve(extractedRoot, resourcePath || '')
+  if (candidate !== extractedRoot && !candidate.startsWith(`${extractedRoot}${path.sep}`)) {
+    throw new Error('Forbidden resource path')
+  }
+  return candidate
+}
+
+function epubResourceUrl({ type = 'epub', itemId, resourcePath }) {
+  return resourcePath
+    ? `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(resourcePath)}`
+    : ''
+}
+
+function epubImageEntries({ type = 'epub', itemId, item = null, unit }) {
+  return (unit.imageResources || item?.imageResources || []).map((image, imageIndex) => ({
+    index: imageIndex,
+    title: image.title || path.posix.basename(image.resourcePath),
+    url: epubResourceUrl({ type, itemId, resourcePath: image.resourcePath }),
+  }))
 }
 
 async function resolveCoverPath({ extractedDir, manifest, opfDir, resourcePrefix = '', imageResources = [] }) {
@@ -737,7 +802,7 @@ async function documentTitle(filePath) {
   }
 }
 
-function sanitizeHtml(html, { itemId, basePath }) {
+function sanitizeHtml(html, { type = 'epub', itemId, basePath }) {
   let body = /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] || html
   body = body
     .replace(/<script\b[\s\S]*?<\/script>/gi, '')
@@ -749,12 +814,12 @@ function sanitizeHtml(html, { itemId, basePath }) {
   body = body.replace(/\s(src)\s*=\s*["']([^"']+)["']/gi, (_, attr, value) => {
     if (/^(?:https?:|data:|#)/i.test(value)) return ` ${attr}="${escapeAttr(value)}"`
     const target = normalizeZipPath(path.posix.join(basePath, decodeEntities(value).split('#')[0]))
-    return ` ${attr}="/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(target)}"`
+    return ` ${attr}="${epubResourceUrl({ type, itemId, resourcePath: target })}"`
   })
   body = body.replace(/\s(xlink:href)\s*=\s*["']([^"']+)["']/gi, (_, attr, value) => {
     if (/^(?:https?:|data:|#)/i.test(value)) return ` ${attr}="${escapeAttr(value)}"`
     const target = normalizeZipPath(path.posix.join(basePath, decodeEntities(value).split('#')[0]))
-    return ` ${attr}="/api/library/items/epub/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(target)}"`
+    return ` ${attr}="${epubResourceUrl({ type, itemId, resourcePath: target })}"`
   })
   body = body.replace(/\s(href)\s*=\s*["']([^"']+)["']/gi, (_, attr, value) => {
     if (/^#/i.test(value)) return ` ${attr}="${escapeAttr(value)}"`

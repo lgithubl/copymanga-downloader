@@ -11,14 +11,15 @@ const execFileAsync = promisify(execFile)
 const AUDIO_EXTENSIONS = ['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav', 'webm']
 const VIDEO_EXTENSIONS = ['m4v', 'mkv', 'mov', 'mp4', 'webm']
 const IMAGE_EXTENSIONS = ['gif', 'jpg', 'jpeg', 'png', 'webp']
+const EPUB_EXTENSIONS = ['epub']
 const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt', 'ass', 'ssa', 'lrc', 'sbv', 'smi', 'sami', 'ttml', 'dfxp', 'xml', 'sub']
 
-export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExists, getConfig }) {
+export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExists, getConfig, epubSupport = null }) {
   const extensions = type === 'video'
     ? VIDEO_EXTENSIONS
     : type === 'audio'
       ? AUDIO_EXTENSIONS
-      : [...new Set([...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS, ...IMAGE_EXTENSIONS])]
+      : [...new Set([...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS, ...IMAGE_EXTENSIONS, ...EPUB_EXTENSIONS])]
   const label = type === 'video' ? '视频' : type === 'audio' ? '音频' : '媒体'
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
   const thumbnailRoot = path.join(dataDir, 'cache', 'library-thumbnails', type)
@@ -164,13 +165,14 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       }
     }
 
-    const units = await scanMediaUnits(itemId)
+    const units = await scanMediaUnits(itemId, mediaUnitsForItem(existing))
     if (!units.length) throw new Error(`没有找到支持的${label}文件`)
     units.sort(compareMediaUnits)
     const next = normalizeItem({
       ...existing,
       title: collectionTitle || existing.title || seedTitle,
       tags: inputTags.length ? inputTags : existing.tags || [],
+      cover: existing.cover || units.find((unit) => unit.cover)?.cover || '',
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
       updatedAt: new Date().toISOString(),
@@ -188,7 +190,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return mediaUnitsForItem(item)
   }
 
-  async function getReaderContent(itemId, unitId) {
+  async function getReaderContent(itemId, unitId, options = {}) {
     const item = await readMetadata(itemId)
     const units = mediaUnitsForItem(item)
     const index = units.findIndex((unit) => unit.unitId === unitId)
@@ -212,6 +214,18 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         })),
       }
     }
+    if (unit.mediaKind === 'epub' && epubSupport?.getReaderContentFromItem) {
+      return epubSupport.getReaderContentFromItem({
+        item,
+        itemDir: itemPath(itemId),
+        itemId,
+        unit,
+        units,
+        index,
+        sectionId: options.sectionId || '',
+        type,
+      })
+    }
     return {
       type: unit.mediaKind || type,
       item: pickPublicItem(item),
@@ -231,6 +245,12 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   }
 
   async function getResource(itemId, resourcePath, options = {}) {
+    if (resourcePath && epubSupport?.getResourceFromItem) {
+      const item = await readMetadata(itemId).catch(() => null)
+      if (isEpubResourcePath(resourcePath, mediaUnitsForItem(item))) {
+        return epubSupport.getResourceFromItem({ itemDir: itemPath(itemId), resourcePath })
+      }
+    }
     const filePath = safeManagedFilePath(itemId, resourcePath)
     if (options.subtitle && isSubtitleName(filePath)) {
       return {
@@ -525,7 +545,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
   }
 
-  async function scanMediaUnits(itemId) {
+  async function scanMediaUnits(itemId, previousUnits = []) {
     if (!await pathExists(filesPath(itemId))) return []
     const allFiles = await walkFiles(filesPath(itemId))
     const subtitleFiles = allFiles.filter(isSubtitleName)
@@ -543,6 +563,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const units = []
     const matchedSubtitlePaths = new Set()
     const imagesByDir = new Map()
+    const previousEpubUnits = new Map(previousUnits
+      .filter((unit) => unit.mediaKind === 'epub' && unit.relativePath)
+      .map((unit) => [unit.relativePath, unit]))
+    const importedEpubUnits = []
     for (const filePath of files) {
       const kind = mediaKind(filePath)
       if (kind === 'image') {
@@ -551,6 +575,15 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         const list = imagesByDir.get(key) || []
         list.push(filePath)
         imagesByDir.set(key, list)
+      } else if (kind === 'epub') {
+        const unit = await epubUnitFromFile({
+          itemId,
+          filePath,
+          previous: previousEpubUnits.get(relativePath(itemId, filePath)),
+          existingUnits: [...units, ...importedEpubUnits],
+        })
+        importedEpubUnits.push(unit)
+        units.push(unit)
       } else {
         const subtitles = subtitlesByKey.get(mediaSubtitleKey(itemId, filePath)) || []
         for (const subtitle of subtitles) matchedSubtitlePaths.add(subtitle.relativePath)
@@ -831,6 +864,42 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     })
   }
 
+  async function epubUnitFromFile({ itemId, filePath, previous = null, existingUnits = [] }) {
+    if (!epubSupport?.importUnitIntoItem) throw new Error('EPUB support is not configured')
+    const info = await stat(filePath)
+    const fileName = relativePath(itemId, filePath)
+    if (
+      previous &&
+      previous.size === info.size &&
+      previous.updatedAt === info.mtime.toISOString() &&
+      previous.sections?.length
+    ) {
+      return normalizeMediaUnit(previous)
+    }
+    const imported = await epubSupport.importUnitIntoItem({
+      itemId,
+      itemDir: itemPath(itemId),
+      fileName,
+      buffer: await readFile(filePath),
+      existingUnits,
+      type,
+    })
+    return normalizeMediaUnit({
+      ...imported,
+      type,
+      mediaKind: 'epub',
+      fileName,
+      relativePath: fileName,
+      groupPath: groupPathOf(fileName),
+      tags: imported.tags?.length ? imported.tags : ['EPUB'],
+      managedPath: filePath,
+      size: info.size,
+      contentType: contentType(filePath),
+      updatedAt: info.mtime.toISOString(),
+      createdAt: imported.createdAt || new Date().toISOString(),
+    })
+  }
+
   async function galleryUnitFromFiles({ itemId, groupPath, files }) {
     const relative = groupPath || 'images'
     const unitId = `gallery_${createHash('sha1').update(relative).digest('hex').slice(0, 12)}`
@@ -1002,6 +1071,7 @@ function normalizeMediaUnit(unit) {
     groupPath: String(unit?.groupPath || groupPathOf(unit?.relativePath || unit?.fileName || '')),
     mediaKind: String(unit?.mediaKind || unit?.kind || unit?.type || ''),
     tags: parseTags(unit?.tags || []),
+    cover: String(unit?.cover || ''),
     managedPath: String(unit?.managedPath || ''),
     streamPath: String(unit?.streamPath || ''),
     streamUrl: String(unit?.streamUrl || ''),
@@ -1010,6 +1080,10 @@ function normalizeMediaUnit(unit) {
     contentType: String(unit?.contentType || ''),
     imageCount: Number(unit?.imageCount || 0),
     images: Array.isArray(unit?.images) ? unit.images : [],
+    sectionCount: Number(unit?.sectionCount || 0),
+    chapterCount: Number(unit?.chapterCount || 0),
+    sections: Array.isArray(unit?.sections) ? unit.sections : [],
+    imageResources: Array.isArray(unit?.imageResources) ? unit.imageResources : [],
     subtitles: Array.isArray(unit?.subtitles) ? unit.subtitles.map(normalizeSubtitle) : [],
     subtitleUnmatched: Boolean(unit?.subtitleUnmatched),
     thumbnail: normalizeThumbnail(unit?.thumbnail),
@@ -1094,7 +1168,24 @@ function mediaKind(filePath) {
   if (AUDIO_EXTENSIONS.includes(ext)) return 'audio'
   if (VIDEO_EXTENSIONS.includes(ext)) return 'video'
   if (IMAGE_EXTENSIONS.includes(ext)) return 'image'
+  if (EPUB_EXTENSIONS.includes(ext)) return 'epub'
   return 'unknown'
+}
+
+function isEpubResourcePath(resourcePath, units = []) {
+  const firstSegment = normalizeZipPath(resourcePath).split('/')[0]
+  return Boolean(firstSegment && units.some((unit) => unit.mediaKind === 'epub' && unit.unitId === firstSegment))
+}
+
+function normalizeZipPath(value) {
+  const parts = String(value || '').replace(/\\/g, '/').split('/')
+  const out = []
+  for (const part of parts) {
+    if (!part || part === '.') continue
+    if (part === '..') out.pop()
+    else out.push(part)
+  }
+  return out.join('/')
 }
 
 function groupPathOf(relativePath) {
@@ -1488,6 +1579,7 @@ function contentType(filePath) {
   if (['png'].includes(ext)) return 'image/png'
   if (['gif'].includes(ext)) return 'image/gif'
   if (['webp'].includes(ext)) return 'image/webp'
+  if (['epub'].includes(ext)) return 'application/epub+zip'
   if (['vtt', 'srt', 'crt'].includes(ext)) return 'text/vtt; charset=utf-8'
   return 'application/octet-stream'
 }

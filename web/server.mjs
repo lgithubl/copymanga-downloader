@@ -3461,8 +3461,9 @@ async function route(req, res) {
   }
 }
 
-registerLibraryHandler(createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExists, moveAside }))
-registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config }))
+const epubHandler = createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExists, moveAside })
+registerLibraryHandler(epubHandler)
+registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config, epubSupport: epubHandler }))
 
 await mkdir(DOWNLOAD_DIR, { recursive: true })
 await initTagStore(DATA_DIR)

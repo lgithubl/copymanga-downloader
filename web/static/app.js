@@ -205,7 +205,7 @@ const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'rea
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
 const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
-  media: { label: '媒体', unit: '个媒体项', accept: '.zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
+  media: { label: '媒体', unit: '个媒体项', accept: '.zip,.epub,application/epub+zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
 }
 const mediaImportProfiles = {
   custom: { label: '自定义', type: '', sourcePlaceholder: '' },
@@ -1720,6 +1720,7 @@ function libraryDetailMeta(item, units) {
     counts.video ? `视频 ${counts.video}` : '',
     counts.audio ? `音频 ${counts.audio}` : '',
     counts.imageGallery ? `图片 ${counts.imageGallery}` : '',
+    counts.epub ? `EPUB ${counts.epub}` : '',
     counts.subtitle ? `未匹配字幕 ${counts.subtitle}` : '',
   ].filter(Boolean)
   return parts.join(' · ')
@@ -1736,6 +1737,7 @@ function renderLibraryDetailSummary(item, units, readUnits = {}) {
     ['视频', counts.video],
     ['音频', counts.audio],
     ['图片集', counts.imageGallery],
+    ['EPUB', counts.epub],
     ['未匹配字幕', counts.subtitle],
   ]
   return `
@@ -1759,7 +1761,7 @@ function libraryUnitCounts(units = []) {
     else if (kind === 'audio') counts.audio += 1
     else if (kind === 'image-gallery') counts.imageGallery += 1
     else if (kind === 'subtitle') counts.subtitle += 1
-    else if (unit.type === 'epub') counts.epub += 1
+    else if (kind === 'epub' || unit.type === 'epub') counts.epub += 1
     else counts.other += 1
     return counts
   }, { video: 0, audio: 0, imageGallery: 0, subtitle: 0, epub: 0, other: 0 })
@@ -1770,6 +1772,7 @@ function mediaKindLabel(kind) {
     audio: '音频',
     video: '视频',
     'image-gallery': '图片',
+    epub: 'EPUB',
     subtitle: '字幕',
   }
   return labels[kind] || kind
