@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const PRODUCT_RE = /(?:^|[^A-Z0-9])((?:RJ|VJ|BJ|EJ)\d{6,8})(?=$|[^A-Z0-9])/gi
+let lastRequestAt = 0
 
 export async function generateTags(ctx) {
   const options = normalizeOptions(ctx.script?.options)
@@ -23,6 +24,7 @@ export async function generateTags(ctx) {
     detailsById.set(productId, detail)
     itemCandidates.push(...detailToTags(productId, detail))
   }
+  itemCandidates.unshift(tag('rj_generation', `RJ生成v1: ${generationStatus(allProductIds, [...detailsById.values()])}`))
 
   const unitTags = units.map((unit) => {
     const ids = unitIds.get(unit.unitId) || []
@@ -47,6 +49,16 @@ function normalizeOptions(value = {}) {
   return {
     site: String(value.site || 'auto').trim() || 'auto',
     cacheTtlHours: Number.isFinite(Number(value.cacheTtlHours)) ? Number(value.cacheTtlHours) : 168,
+    cacheOnly: value.cacheOnly === true,
+    fetchAjax: value.fetchAjax !== false,
+    fetchHtml: value.fetchHtml !== false,
+    requestMinIntervalMs: finiteNumber(value.requestMinIntervalMs, 800),
+    requestJitterMs: finiteNumber(value.requestJitterMs, 400),
+    requestTimeoutMs: finiteNumber(value.requestTimeoutMs, 20000),
+    requestMaxRetries: Math.max(0, Math.floor(finiteNumber(value.requestMaxRetries, 2))),
+    requestRetryBaseMs: finiteNumber(value.requestRetryBaseMs, 1500),
+    requestRetryMaxMs: finiteNumber(value.requestRetryMaxMs, 60000),
+    respectRetryAfter: value.respectRetryAfter !== false,
     includeKinds: stringSet(value.includeKinds),
     excludeKinds: stringSet(value.excludeKinds),
     includeTags: normalizedTagSet(value.includeTags),
@@ -72,28 +84,38 @@ async function loadProductDetail(productId, options, cacheDir) {
     series: [],
     fetchedAt: new Date().toISOString(),
   }
+  if (options.cacheOnly) {
+    detail.status = 'skipped'
+    detail.error = 'cacheOnly enabled and cache missing'
+    return detail
+  }
   const errors = []
-  try {
-    const ajax = await fetchJson(`https://www.dlsite.com/${site}/product/info/ajax?product_id=${encodeURIComponent(productId)}`)
-    const row = ajax?.[productId] || ajax?.[productId.toUpperCase()] || (Array.isArray(ajax) ? ajax[0] : null)
-    mergeAjaxDetail(detail, row)
-  } catch (error) {
-    errors.push(String(error?.message || error))
+  if (options.fetchAjax) {
+    try {
+      const ajax = await fetchJson(`https://www.dlsite.com/${site}/product/info/ajax?product_id=${encodeURIComponent(productId)}`, options)
+      const row = ajax?.[productId] || ajax?.[productId.toUpperCase()] || (Array.isArray(ajax) ? ajax[0] : null)
+      mergeAjaxDetail(detail, row)
+    } catch (error) {
+      errors.push(String(error?.message || error))
+    }
   }
-  try {
-    const html = await fetchText(`https://www.dlsite.com/${site}/work/=/product_id/${encodeURIComponent(productId)}.html`)
-    mergeHtmlDetail(detail, html)
-  } catch (error) {
-    errors.push(String(error?.message || error))
+  if (options.fetchHtml) {
+    try {
+      const html = await fetchText(`https://www.dlsite.com/${site}/work/=/product_id/${encodeURIComponent(productId)}.html`, options)
+      mergeHtmlDetail(detail, html)
+    } catch (error) {
+      errors.push(String(error?.message || error))
+    }
   }
-  detail.status = detail.title || detail.genres.length || detail.circle ? 'found' : errors.length >= 2 ? 'fetch_failed' : 'not_found'
+  const fetchCount = Number(options.fetchAjax !== false) + Number(options.fetchHtml !== false)
+  detail.status = detail.title || detail.genres.length || detail.circle ? 'found' : errors.length >= fetchCount ? 'fetch_failed' : 'not_found'
   if (errors.length) detail.error = errors.join('; ')
   if (cachePath) await writeCache(cachePath, detail)
   return detail
 }
 
 function detailToTags(productId, detail = {}) {
-  const status = detail.status === 'found' ? '有' : detail.status === 'not_found' ? '无' : '获取失败'
+  const status = detail.status === 'found' ? '有' : detail.status === 'not_found' ? '无' : detail.status === 'skipped' ? '跳过' : '获取失败'
   return compact([
     tag('dlsite_status', `DLsite状态v1: ${status}`),
     tag('dlsite_site', `DLsite站点: ${detail.site || resolveSite(productId, 'auto')}`),
@@ -139,21 +161,44 @@ function mergeHtmlDetail(detail, html) {
   if (keywords) detail.genres = unique([...detail.genres, ...keywords.split(',').map(clean).filter((value) => value && !/^RJ|VJ|BJ|EJ/i.test(value))])
 }
 
-async function fetchJson(url) {
-  const text = await fetchText(url)
+async function fetchJson(url, options) {
+  const text = await fetchText(url, options)
   return JSON.parse(text)
 }
 
-async function fetchText(url) {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; copymanga-tag-script/1.0)',
-      Accept: 'application/json,text/html;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'ja,en;q=0.8,zh-CN;q=0.7',
-    },
-  })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-  return await res.text()
+async function fetchText(url, options) {
+  let lastError
+  for (let attempt = 0; attempt <= options.requestMaxRetries; attempt += 1) {
+    if (attempt > 0) await sleep(retryDelayMs(attempt, options, lastError?.retryAfterMs))
+    await waitForRateLimit(options)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(new Error('request timeout')), options.requestTimeoutMs)
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; copymanga-tag-script/1.0)',
+          Accept: 'application/json,text/html;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'ja,en;q=0.8,zh-CN;q=0.7',
+        },
+      })
+      if (!res.ok) {
+        const error = new Error(`${res.status} ${res.statusText}`)
+        error.status = res.status
+        error.retryAfterMs = retryAfterMs(res.headers.get('retry-after'))
+        if (!shouldRetry(error, attempt, options)) throw error
+        lastError = error
+        continue
+      }
+      return await res.text()
+    } catch (error) {
+      lastError = error
+      if (!shouldRetry(error, attempt, options)) throw error
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+  throw lastError || new Error('request failed')
 }
 
 async function readCache(filePath, ttlHours) {
@@ -183,6 +228,48 @@ function filterTags(candidates, options) {
     if (options.excludeTags.has(normalized)) return false
     return true
   }).map((entry) => entry.tag))
+}
+
+function generationStatus(productIds, details) {
+  if (!productIds.length) return '无编号'
+  const failed = details.filter((detail) => detail?.status === 'fetch_failed').length
+  if (failed === 0) return '成功'
+  return failed === details.length ? '失败' : '部分失败'
+}
+
+async function waitForRateLimit(options) {
+  const now = Date.now()
+  const minDelay = Math.max(0, options.requestMinIntervalMs || 0)
+  const jitter = Math.max(0, Math.floor(Math.random() * (options.requestJitterMs || 0)))
+  const waitMs = Math.max(0, lastRequestAt + minDelay + jitter - now)
+  if (waitMs) await sleep(waitMs)
+  lastRequestAt = Date.now()
+}
+
+function shouldRetry(error, attempt, options) {
+  if (attempt >= options.requestMaxRetries) return false
+  if (error?.name === 'AbortError') return true
+  if (!error?.status) return true
+  return error.status === 429 || error.status === 403 || error.status >= 500
+}
+
+function retryDelayMs(attempt, options, retryAfter) {
+  if (options.respectRetryAfter && retryAfter) return Math.min(retryAfter, options.requestRetryMaxMs)
+  const base = Math.max(0, options.requestRetryBaseMs)
+  const jitter = Math.floor(Math.random() * Math.max(0, options.requestJitterMs))
+  return Math.min(options.requestRetryMaxMs, base * (2 ** Math.max(0, attempt - 1)) + jitter)
+}
+
+function retryAfterMs(value) {
+  if (!value) return 0
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 0
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function productIdsFromTexts(values) {
@@ -273,6 +360,11 @@ function normalizedTagSet(values) {
 
 function normalize(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function finiteNumber(value, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
 }
 
 function unique(values) {

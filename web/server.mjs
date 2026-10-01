@@ -2639,6 +2639,7 @@ function publicTagJob(job) {
     type: job.type,
     itemId: job.itemId,
     scriptIds: job.scriptIds,
+    force: Boolean(job.force),
     status: job.status,
     message: job.message,
     results: job.results || [],
@@ -2652,7 +2653,7 @@ function updateTagJob(job, patch) {
   emit('tagJob', publicTagJob(job))
 }
 
-function enqueueTagScripts({ type, itemId, scriptIds = [], reason = 'manual' }) {
+function enqueueTagScripts({ type, itemId, scriptIds = [], reason = 'manual', force = false }) {
   const ids = [...new Set((scriptIds || []).map((id) => safeScriptId(id)).filter(Boolean))]
   if (!type || !itemId || !ids.length) return null
   const now = new Date().toISOString()
@@ -2663,6 +2664,7 @@ function enqueueTagScripts({ type, itemId, scriptIds = [], reason = 'manual' }) 
     itemId,
     scriptIds: ids,
     reason,
+    force: Boolean(force),
     status: 'queued',
     message: '等待生成 tag',
     results: [],
@@ -2712,6 +2714,16 @@ async function runTagJob(job) {
       continue
     }
     try {
+      const previous = await readTagRun(job.type, job.itemId, script.id)
+      if (!job.force && isCompletedSameVersionRun(previous, script, item, units)) {
+        results.push({
+          scriptId,
+          scriptVersion: script.version,
+          status: 'skipped',
+          message: '同版本已生成，跳过',
+        })
+        continue
+      }
       updateTagJob(job, { message: `运行 ${script.name}` })
       const output = await executeTagScript(script, { type: job.type, item, units })
       const applied = await applyTagScriptOutput({ type: job.type, itemId: job.itemId, script, output })
@@ -2726,6 +2738,27 @@ async function runTagJob(job) {
     message: failed ? `tag 生成完成，失败 ${failed} 个` : 'tag 生成完成',
     results,
   })
+}
+
+function isCompletedSameVersionRun(previous, script, item, units = []) {
+  if (!(previous?.status === 'completed' &&
+    previous.scriptId === script.id &&
+    previous.scriptVersion === script.version)) return false
+  return previousGeneratedTagsExist(previous, item, units)
+}
+
+function previousGeneratedTagsExist(previous, item, units = []) {
+  const itemTags = new Set((item?.tags || []).map(normalizeTagName))
+  const previousItemTags = previous?.itemTags || []
+  const previousUnitTags = previous?.unitTags || []
+  if (!previousItemTags.length && !previousUnitTags.length) return false
+  if (!previousItemTags.every((tag) => itemTags.has(normalizeTagName(tag)))) return false
+  const unitsById = new Map((units || []).map((unit) => [unit.unitId, unit]))
+  for (const entry of previousUnitTags) {
+    const unitTags = new Set((unitsById.get(entry.unitId)?.tags || []).map(normalizeTagName))
+    if (!(entry.tags || []).every((tag) => unitTags.has(normalizeTagName(tag)))) return false
+  }
+  return true
 }
 
 async function executeTagScript(script, { type, item, units }) {
@@ -2746,7 +2779,8 @@ async function executeTagScript(script, { type, item, units }) {
     },
     config,
   }
-  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('脚本超时')), 60000))
+  const timeoutMs = Number.isFinite(Number(script.options?.scriptTimeoutMs)) ? Number(script.options.scriptTimeoutMs) : 60000
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('脚本超时')), timeoutMs))
   return await Promise.race([Promise.resolve(mod.generateTags(ctx)), timeout])
 }
 
@@ -2898,6 +2932,7 @@ async function applyTagScriptOutput({ type, itemId, script, output }) {
     appliedUnitTags.push({ unitId, tags: nextEntry?.tags || [] })
   }
   const runRecord = {
+    status: 'completed',
     type,
     itemId,
     scriptId: script.id,
@@ -3124,7 +3159,7 @@ async function route(req, res) {
       }
       if (action === 'tag-scripts') {
         const body = await readJson(req)
-        const job = enqueueTagScripts({ type, itemId, scriptIds: body.scriptIds || body.tagScriptIds || [], reason: 'manual' })
+        const job = enqueueTagScripts({ type, itemId, scriptIds: body.scriptIds || body.tagScriptIds || [], reason: 'manual', force: body.force === true })
         if (!job) return json(res, 400, { error: 'scriptIds is required' })
         return json(res, 202, { job: publicTagJob(job) })
       }
