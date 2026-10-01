@@ -1652,17 +1652,20 @@ function renderLibraryItems() {
     const summary = libraryItemSummary(item)
     const history = libraryHistoryByKey.get(libraryKey(item.type, item.itemId))
     const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
+    const displayTitle = libraryDisplayTitle(item)
+    const fullTitle = libraryFullTitle(item)
     const card = document.createElement('article')
     card.className = `card library-card${selected ? ' selected' : ''}`
+    card.title = fullTitle
     card.innerHTML = `
-      <div class="library-card-cover">${renderCover(item.cover, item.title)}</div>
+      <div class="library-card-cover">${renderCover(item.cover, displayTitle)}</div>
       <div class="card-body">
         <div class="library-card-top">
-          <div class="card-title">${escapeHtml(item.title)}</div>
+          <div class="card-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
           <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
         </div>
-        <div class="library-card-meta">${escapeHtml(summary.primary)}</div>
-        <div class="library-card-meta">${escapeHtml(summary.secondary)}</div>
+        <div class="library-card-meta" title="${escapeHtml(summary.primary)}">${escapeHtml(summary.primary)}</div>
+        <div class="library-card-meta" title="${escapeHtml(summary.secondary)}">${escapeHtml(summary.secondary)}</div>
         ${history ? `<div class="library-card-history">继续：${escapeHtml(history.lastUnitTitle || history.lastUnitId || item.title)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''}</div>` : ''}
         ${renderTagList(item.tags || [])}
         <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
@@ -1745,7 +1748,7 @@ function renderLibraryUnits() {
     const isRead = Boolean(readUnits[unit.unitId]?.enteredAt)
     const row = document.createElement('div')
     row.className = `chapter library-unit${isRead ? ' read-chapter' : ' unread-chapter'}${unit.mediaKind === 'subtitle' ? ' subtitle-unit' : ''}`
-    row.title = unit.title
+    row.title = [unit.title, unit.relativePath, unit.managedPath].filter(Boolean).join('\n')
     const subtitleText = unit.subtitles?.length
       ? ` · 字幕 ${unit.subtitles.length}: ${unit.subtitles.map((subtitle) => subtitle.title || subtitle.relativePath).join(', ')}`
       : ''
@@ -1764,8 +1767,8 @@ function renderLibraryUnits() {
     row.innerHTML = `
       ${renderUnitThumb(unit.thumbnail?.coverUrl || unit.cover || currentLibraryItem?.cover, unit.title)}
       <span class="chapter-copy">
-        <span class="chapter-title">${escapeHtml(unit.title)}</span>
-        <span class="library-unit-path">${escapeHtml(unitMeta)}</span>
+        <span class="chapter-title" title="${escapeHtml(row.title)}">${escapeHtml(unit.title)}</span>
+        <span class="library-unit-path" title="${escapeHtml(unitMeta)}">${escapeHtml(unitMeta)}</span>
         ${renderTagList(unit.tags || [])}${thumbnailBadge}
       </span>
       <span class="library-unit-status">${statusBadges.map((badge) => `<span>${escapeHtml(badge)}</span>`).join('')}</span>
@@ -1818,8 +1821,24 @@ function libraryItemSummary(item) {
     (item.author || []).join(', ') || '',
     item.updatedAt ? `更新 ${formatShortDate(item.updatedAt)}` : '',
     item.itemId || '',
+    item.path || item.relativePath || '',
   ].filter(Boolean).join(' · ') || '未记录作者'
   return { typeLabel, primary, secondary }
+}
+
+function libraryDisplayTitle(item = {}) {
+  return item.dlsite?.title || item.extractedTitle || item.title || item.itemId || '媒体'
+}
+
+function libraryFullTitle(item = {}) {
+  const displayTitle = libraryDisplayTitle(item)
+  return [
+    displayTitle,
+    item.title && item.title !== displayTitle ? item.title : '',
+    item.itemId || '',
+    item.path || item.relativePath || '',
+    item.dlsite?.circle ? `社团: ${item.dlsite.circle}` : '',
+  ].filter(Boolean).join('\n')
 }
 
 function libraryDetailMeta(item, units) {
@@ -1841,6 +1860,8 @@ function renderLibraryDetailSummary(item, units, readUnits = {}) {
   const readCount = units.filter((unit) => readUnits[unit.unitId]?.enteredAt).length
   const playableCount = units.filter((unit) => unit.mediaKind !== 'subtitle').length
   const history = libraryHistoryByKey.get(libraryKey(item?.type, item?.itemId))
+  const displayTitle = libraryDisplayTitle(item)
+  const fullTitle = libraryFullTitle(item)
   const stats = [
     ['目录项', units.length],
     ['已进入', `${readCount}/${playableCount || units.length || 0}`],
@@ -1851,10 +1872,10 @@ function renderLibraryDetailSummary(item, units, readUnits = {}) {
     ['未匹配字幕', counts.subtitle],
   ]
   return `
-    <div class="library-detail-cover">${renderCover(item?.cover, item?.title)}</div>
+    <div class="library-detail-cover">${renderCover(item?.cover, displayTitle)}</div>
     <div class="library-detail-main">
-      <div class="library-detail-title">${escapeHtml(item?.title || '目录')}</div>
-      <div class="library-detail-subtitle">${escapeHtml([item?.itemId, item?.updatedAt ? `更新 ${formatShortDate(item.updatedAt)}` : ''].filter(Boolean).join(' · '))}</div>
+      <div class="library-detail-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
+      <div class="library-detail-subtitle" title="${escapeHtml(fullTitle)}">${escapeHtml([item?.itemId, item?.title && item.title !== displayTitle ? item.title : '', item?.updatedAt ? `更新 ${formatShortDate(item.updatedAt)}` : ''].filter(Boolean).join(' · '))}</div>
       ${history ? `<div class="library-detail-history">最近：${escapeHtml(history.lastUnitTitle || history.lastUnitId)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''} · ${escapeHtml(formatShortDate(history.updatedAt))}</div>` : ''}
       ${renderTagList(item?.tags || [])}
       <div class="library-detail-stats">
@@ -2027,7 +2048,7 @@ function renderTagList(tags = []) {
   if (!tags.length) return ''
   const visibleCount = 4
   const hiddenCount = Math.max(0, tags.length - visibleCount)
-  return `<span class="tag-list${hiddenCount ? ' tag-list-collapsed' : ''}" data-collapsed="1">${tags.map((tag, index) => `<span class="tag-pill${index >= visibleCount ? ' tag-pill-extra' : ''}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}${hiddenCount ? `<button class="tag-toggle secondary" type="button" data-more="${hiddenCount}">+${hiddenCount}</button>` : ''}</span>`
+  return `<span class="tag-list${hiddenCount ? ' tag-list-collapsed' : ''}" data-collapsed="1">${tags.map((tag, index) => `<span class="tag-pill${index >= visibleCount ? ' tag-pill-extra' : ''}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}${hiddenCount ? `<button class="tag-toggle secondary" type="button" data-more="${hiddenCount}">+${hiddenCount}</button>` : ''}</span>`
 }
 
 function renderThumbnailBadge(thumbnail) {

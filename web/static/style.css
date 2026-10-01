@@ -359,7 +359,7 @@ h2 {
 .library-workspace {
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(300px, 0.8fr) minmax(300px, 1fr);
+  grid-template-columns: minmax(420px, 1.35fr) minmax(280px, 0.65fr);
   min-height: 0;
   overflow: hidden;
   padding: 18px;
@@ -415,20 +415,29 @@ h2 {
 }
 
 .library-workspace .chapter-head {
-  align-items: center;
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
   position: static;
   top: auto;
   z-index: auto;
+}
+
+.library-workspace .chapter-head h2 {
+  white-space: normal;
 }
 
 .library-workspace .chapter-actions {
   align-items: center;
   flex: 1 1 auto;
   flex-shrink: 1;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   justify-content: flex-start;
   max-width: 100%;
-  overflow-x: auto;
+  overflow: visible;
+  row-gap: 6px;
+  width: 100%;
 }
 
 .library-workspace .chapter-actions > * {
@@ -437,11 +446,15 @@ h2 {
 
 .library-workspace #library-tag-search,
 .library-workspace #library-item-tags {
+  flex: 1 1 240px;
   min-width: 220px;
 }
 
 .library-workspace #library-items {
+  align-content: start;
+  grid-auto-rows: max-content;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  overflow: auto;
 }
 
 .card.library-card {
@@ -469,7 +482,7 @@ h2 {
 }
 
 .library-card .cover {
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 10;
   border-radius: 0;
   height: auto;
   object-fit: contain;
@@ -477,12 +490,13 @@ h2 {
 }
 
 .library-card .cover.placeholder {
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 10;
 }
 
 .library-card .card-body {
   display: grid;
   gap: 7px;
+  min-width: 0;
   padding: 10px 12px 12px;
 }
 
@@ -521,13 +535,21 @@ h2 {
   line-height: 1.35;
 }
 
+.library-card-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .library-card .tag-list {
-  max-height: 52px;
+  max-height: 24px;
   overflow: hidden;
 }
 
 .library-card .tag-list[data-collapsed="0"] {
-  max-height: none;
+  flex-wrap: wrap;
+  max-height: 112px;
+  overflow: auto;
 }
 
 .library-card .library-continue {
@@ -575,14 +597,21 @@ h2 {
 }
 
 .library-detail-title {
+  display: -webkit-box;
   font-size: 17px;
   font-weight: 800;
   line-height: 1.25;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .library-detail-subtitle {
   color: var(--site-muted);
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .library-detail-stats {
@@ -1094,9 +1123,9 @@ h2 {
 .library-unit {
   color: inherit;
   cursor: pointer;
-  grid-template-columns: auto minmax(0, 1fr) minmax(96px, auto) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(72px, auto) auto auto auto;
   height: auto;
-  min-height: 48px;
+  min-height: 72px;
   scroll-margin-top: 72px;
   text-align: left;
   width: 100%;
@@ -1168,11 +1197,23 @@ h2 {
 
 .library-unit .chapter-copy {
   display: grid;
-  gap: 2px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .library-unit .chapter-title {
+  display: -webkit-box;
   line-height: 1.25;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.library-unit .library-unit-path {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .library-unit-status {
@@ -1181,6 +1222,7 @@ h2 {
   flex-wrap: wrap;
   gap: 4px;
   justify-content: flex-end;
+  max-width: 120px;
 }
 
 .library-unit.subtitle-unit {
@@ -1201,6 +1243,12 @@ h2 {
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 5px;
+  min-width: 0;
+}
+
+.tag-list.tag-list-collapsed {
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .tag-list.tag-list-collapsed .tag-pill-extra {
@@ -1216,7 +1264,11 @@ h2 {
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
+  max-width: 170px;
+  overflow: hidden;
   padding: 3px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tag-toggle {
