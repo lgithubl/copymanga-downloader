@@ -883,6 +883,13 @@ h2 {
   padding: 10px;
 }
 
+.tag-script-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .tag-script-list {
   display: flex;
   flex-wrap: wrap;
@@ -1228,12 +1235,17 @@ h2 {
 .library-unit {
   color: inherit;
   cursor: pointer;
-  grid-template-columns: auto minmax(0, 1fr) minmax(72px, auto) auto auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(72px, auto) auto auto auto;
   height: auto;
   min-height: 72px;
   scroll-margin-top: 72px;
   text-align: left;
   width: 100%;
+}
+
+.unit-metadata-select {
+  justify-self: center;
+  margin: 0;
 }
 
 #library-units {

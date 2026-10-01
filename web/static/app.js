@@ -96,6 +96,7 @@ const els = {
   libraryUnits: document.querySelector('#library-units'),
   libraryTagScripts: document.querySelector('#library-tag-scripts'),
   libraryRunTagScripts: document.querySelector('#library-run-tag-scripts'),
+  libraryRunSelectedUnits: document.querySelector('#library-run-selected-units'),
   tagScriptsReload: document.querySelector('#tag-scripts-reload'),
   tagScriptUploadFile: document.querySelector('#tag-script-upload-file'),
   tagScriptUpload: document.querySelector('#tag-script-upload'),
@@ -223,7 +224,7 @@ const defaultMediaImportProfiles = {
   'rj-media': {
     maxDepth: 6,
     idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-    defaultTagScripts: ['subtitle-v1', 'rj-dlsite-v1'],
+    defaultMetadataActions: ['builtin-subtitles', 'rj-dlsite-v1'],
     fetchDlsiteCover: true,
     fetchDlsiteTitle: true,
     dlsiteRequestMinIntervalMs: 1500,
@@ -1308,7 +1309,7 @@ async function loadLibraryItems() {
 }
 
 async function loadTagScripts({ reload = false } = {}) {
-  tagScripts = await api(`/api/tag-scripts${reload ? '?reload=1' : ''}`)
+  tagScripts = await api(`/api/metadata-actions${reload ? '?reload=1' : ''}`)
   renderTagScriptPickers()
   return tagScripts
 }
@@ -1326,7 +1327,7 @@ function renderTagScriptCheckboxes(container, name) {
   const valid = tagScripts.filter((script) => !script.error)
   if (!valid.length) {
     container.classList.add('muted')
-    container.textContent = '暂无 tag 脚本'
+    container.textContent = '暂无元数据脚本'
     return
   }
   for (const script of valid) {
@@ -1350,7 +1351,7 @@ async function loadTagManager({ reloadScripts = false } = {}) {
     const [tags, scripts, jobs] = await Promise.all([
       api('/api/library/tags'),
       loadTagScripts({ reload: reloadScripts }),
-      api('/api/tag-jobs'),
+      api('/api/metadata-jobs'),
     ])
     tagCatalog = tags
     tagJobs = jobs
@@ -1386,6 +1387,7 @@ function renderTagManager() {
 
   els.tagManagerScripts.innerHTML = ''
   for (const script of tagScripts) {
+    const configurable = script.actionType !== 'builtin'
     const card = document.createElement('article')
     card.className = `card tag-manager-card${script.error ? ' tag-script-error' : ''}`
     card.innerHTML = `
@@ -1393,8 +1395,8 @@ function renderTagManager() {
         <div class="card-title">${escapeHtml(script.name)}</div>
         <div class="library-card-meta">${escapeHtml(script.id)} · v${escapeHtml(script.version)}</div>
         <div class="library-card-meta">${escapeHtml(script.description || '')}</div>
-        <div class="library-card-meta">配置：${escapeHtml(tagScriptConfigSummary(script))}</div>
-        <div class="tag-script-config-actions">
+        <div class="library-card-meta" ${configurable ? '' : 'hidden'}>配置：${escapeHtml(tagScriptConfigSummary(script))}</div>
+        <div class="tag-script-config-actions" ${configurable ? '' : 'hidden'}>
           <button class="secondary tag-script-config-toggle" type="button">配置</button>
           <button class="secondary tag-script-config-reset" type="button" ${Object.keys(script.userOptions || {}).length ? '' : 'disabled'}>重置</button>
         </div>
@@ -1425,7 +1427,7 @@ function renderTagManager() {
     })
     els.tagManagerScripts.append(card)
   }
-  if (!tagScripts.length) els.tagManagerScripts.innerHTML = '<p class="muted">暂无脚本，目录 /data/tag-scripts</p>'
+  if (!tagScripts.length) els.tagManagerScripts.innerHTML = '<p class="muted">暂无元数据脚本，目录 /data/tag-scripts</p>'
 
   els.tagManagerJobs.innerHTML = ''
   for (const job of tagJobs) {
@@ -1433,12 +1435,12 @@ function renderTagManager() {
     row.className = `job ${job.status}`
     row.innerHTML = `
       <strong>${escapeHtml(job.status)} · ${escapeHtml(job.type)}/${escapeHtml(job.itemId)}</strong>
-      <span class="muted">${escapeHtml(job.scriptIds.join(', '))}</span>
+      <span class="muted">${escapeHtml((job.actionIds || job.scriptIds || []).join(', '))}</span>
       <small>${escapeHtml(job.message || '')}</small>
     `
     els.tagManagerJobs.append(row)
   }
-  if (!tagJobs.length) els.tagManagerJobs.innerHTML = '<p class="muted">暂无 tag 任务</p>'
+  if (!tagJobs.length) els.tagManagerJobs.innerHTML = '<p class="muted">暂无元数据任务</p>'
 }
 
 function tagDisplayKeyOf(tag = '') {
@@ -1542,7 +1544,7 @@ async function saveTagScriptConfig(script, raw) {
     return
   }
   try {
-    await api(`/api/tag-scripts/${encodeURIComponent(script.id)}/config`, {
+    await api(`/api/metadata-actions/${encodeURIComponent(script.id)}/config`, {
       method: 'POST',
       body: JSON.stringify({ options }),
     })
@@ -1554,7 +1556,7 @@ async function saveTagScriptConfig(script, raw) {
 
 async function resetTagScriptConfig(script) {
   try {
-    await api(`/api/tag-scripts/${encodeURIComponent(script.id)}/config`, { method: 'DELETE' })
+    await api(`/api/metadata-actions/${encodeURIComponent(script.id)}/config`, { method: 'DELETE' })
     await loadTagManager({ reloadScripts: true })
   } catch (error) {
     alert(error.message)
@@ -1568,7 +1570,7 @@ async function uploadTagScriptPackage() {
   form.append('file', file)
   try {
     setLoading(els.tagScriptUpload, true)
-    const result = await apiForm('/api/tag-scripts/upload', form)
+    const result = await apiForm('/api/metadata-actions/upload', form)
     els.tagScriptUploadFile.value = ''
     await loadTagManager({ reloadScripts: true })
     alert(`已安装 ${result.installed?.length || 0} 个脚本`)
@@ -1675,7 +1677,7 @@ function applyMediaImportProfile() {
   if (profile.sourcePlaceholder) els.mediaImportSourcePath.placeholder = profile.sourcePlaceholder
   updateMediaImportControls()
   const hints = profile.scriptHints || []
-  const defaultScriptIds = new Set(currentMediaImportProfileConfig().defaultTagScripts || [])
+  const defaultScriptIds = new Set(currentMediaImportProfileConfig().defaultMetadataActions || [])
   for (const input of document.querySelectorAll('input[name="media-import-tag-script"]')) {
     const script = tagScripts.find((item) => item.id === input.value)
     input.checked = Boolean(
@@ -1797,6 +1799,7 @@ async function selectLibraryItem(type, itemId) {
     els.libraryThumbnails.disabled = item.type !== 'media'
     if (!tagScripts.length) await loadTagScripts().catch(() => {})
     els.libraryRunTagScripts.disabled = tagScripts.filter((script) => !script.error).length === 0
+    els.libraryRunSelectedUnits.disabled = tagScripts.filter((script) => !script.error).length === 0
     renderLibraryItems()
     renderLibraryUnits()
   } catch (error) {
@@ -1853,6 +1856,7 @@ function renderLibraryUnits() {
       unit.imageCount ? `${unit.imageCount}图` : '',
     ].filter(Boolean)
     row.innerHTML = `
+      <input class="unit-metadata-select" type="checkbox" value="${escapeHtml(unit.unitId)}" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'disabled'} aria-label="选择章节" />
       ${renderUnitThumb(unit.thumbnail?.coverUrl || unit.cover || currentLibraryItem?.cover, unit.title)}
       <span class="chapter-copy">
         <span class="chapter-title" title="${escapeHtml(row.title)}">${escapeHtml(unit.title)}</span>
@@ -1860,8 +1864,7 @@ function renderLibraryUnits() {
         ${renderTagList(unit.tags || [])}${thumbnailBadge}
       </span>
       <span class="library-unit-status">${statusBadges.map((badge) => `<span>${escapeHtml(badge)}</span>`).join('')}</span>
-      <button class="unit-subtitles secondary" type="button" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'hidden'}>字幕</button>
-      <button class="unit-thumbnail secondary" type="button" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'hidden'}>缩略图</button>
+      <button class="unit-metadata-action secondary" type="button" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'hidden'}>执行</button>
       <button class="unit-tags secondary" type="button">标签</button>
     `
     const thumb = row.querySelector('.unit-thumb')
@@ -1870,17 +1873,13 @@ function renderLibraryUnits() {
       thumb.addEventListener('mouseleave', () => { thumb.src = unit.thumbnail.coverUrl })
     }
     row.addEventListener('click', (event) => {
-      if (event.target.closest('button')) return
+      if (event.target.closest('button,input')) return
       if (unit.mediaKind === 'subtitle') return
       openMediaUnit(unit.unitId)
     })
-    row.querySelector('.unit-thumbnail')?.addEventListener('click', (event) => {
+    row.querySelector('.unit-metadata-action')?.addEventListener('click', (event) => {
       event.stopPropagation()
-      regenerateUnitThumbnail(unit)
-    })
-    row.querySelector('.unit-subtitles')?.addEventListener('click', (event) => {
-      event.stopPropagation()
-      rescanUnitSubtitles(unit)
+      runMetadataActionsForUnit(unit)
     })
     row.querySelector('.unit-tags')?.addEventListener('click', (event) => {
       event.stopPropagation()
@@ -3282,13 +3281,13 @@ els.libraryLimit?.addEventListener('change', () => {
 })
 els.libraryRunTagScripts.addEventListener('click', async () => {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
-  const scriptIds = checkedTagScriptIds('library-tag-script')
-  if (!scriptIds.length) return alert('请选择 tag 脚本')
+  const actionIds = checkedTagScriptIds('library-tag-script')
+  if (!actionIds.length) return alert('请选择元数据脚本')
   try {
     setLoading(els.libraryRunTagScripts, true)
-    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/tag-scripts`, {
+    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/metadata-actions`, {
       method: 'POST',
-      body: JSON.stringify({ scriptIds }),
+      body: JSON.stringify({ actionIds, force: true }),
     })
     setTimeout(() => selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId).catch(() => {}), 1500)
   } catch (error) {
@@ -3297,6 +3296,41 @@ els.libraryRunTagScripts.addEventListener('click', async () => {
     setLoading(els.libraryRunTagScripts, false)
   }
 })
+
+els.libraryRunSelectedUnits.addEventListener('click', async () => {
+  const unitIds = checkedLibraryUnitIds()
+  if (!unitIds.length) return alert('请选择章节')
+  await runMetadataActions({ unitIds, button: els.libraryRunSelectedUnits })
+})
+
+async function runMetadataActionsForUnit(unit) {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId || !unit?.unitId) return
+  await runMetadataActions({ unitIds: [unit.unitId] })
+}
+
+function checkedLibraryUnitIds() {
+  return [...els.libraryUnits.querySelectorAll('.unit-metadata-select:checked')]
+    .map((input) => input.value)
+    .filter(Boolean)
+}
+
+async function runMetadataActions({ unitIds = [], button = null } = {}) {
+  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
+  const actionIds = checkedTagScriptIds('library-tag-script')
+  if (!actionIds.length) return alert('请选择元数据脚本')
+  try {
+    if (button) setLoading(button, true)
+    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/metadata-actions`, {
+      method: 'POST',
+      body: JSON.stringify({ actionIds, unitIds, force: true }),
+    })
+    setTimeout(() => selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId).catch(() => {}), 1500)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    if (button) setLoading(button, false)
+  }
+}
 els.tagManagerRefresh.addEventListener('click', () => loadTagManager())
 els.tagScriptsReload.addEventListener('click', () => loadTagManager({ reloadScripts: true }))
 els.tagScriptUpload.addEventListener('click', uploadTagScriptPackage)
@@ -3383,8 +3417,8 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     form.set('importProfile', els.mediaImportProfile.value)
     if (!profile.batch && els.mediaImportItem.value) form.set('itemId', els.mediaImportItem.value)
     if (sourcePath) form.set('sourcePath', sourcePath)
-    const tagScriptIds = checkedTagScriptIds('media-import-tag-script')
-    if (!profile.batch && tagScriptIds.length) form.set('tagScriptIds', tagScriptIds.join(','))
+    const metadataActionIds = checkedTagScriptIds('media-import-tag-script')
+    if (!profile.batch && metadataActionIds.length) form.set('metadataActionIds', metadataActionIds.join(','))
     for (const file of files) form.append('file', file)
     const result = await apiForm(`/api/library/items?type=${encodeURIComponent(type)}`, form)
     const importedItems = Array.isArray(result.items) ? result.items : [result]

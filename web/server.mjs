@@ -212,7 +212,7 @@ function defaultConfig() {
       'rj-media': {
         maxDepth: 6,
         idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-        defaultTagScripts: ['subtitle-v1', 'rj-dlsite-v1'],
+        defaultMetadataActions: ['builtin-subtitles', 'rj-dlsite-v1'],
         fetchDlsiteCover: true,
         fetchDlsiteTitle: true,
         dlsiteRequestMinIntervalMs: 1500,
@@ -307,7 +307,7 @@ function normalizeMediaImportProfiles(value, defaults) {
     'rj-media': {
       maxDepth: clampNumber(rj.maxDepth, 1, 20, fallback.maxDepth),
       idPattern: String(rj.idPattern || fallback.idPattern).trim() || fallback.idPattern,
-      defaultTagScripts: normalizeRjDefaultTagScripts(rj.defaultTagScripts, fallback.defaultTagScripts),
+      defaultMetadataActions: normalizeRjDefaultMetadataActions(rj.defaultMetadataActions, fallback.defaultMetadataActions),
       fetchDlsiteCover: Boolean(rj.fetchDlsiteCover ?? fallback.fetchDlsiteCover),
       fetchDlsiteTitle: Boolean(rj.fetchDlsiteTitle ?? fallback.fetchDlsiteTitle),
       dlsiteRequestMinIntervalMs: clampNumber(rj.dlsiteRequestMinIntervalMs, 0, 60000, fallback.dlsiteRequestMinIntervalMs),
@@ -316,9 +316,8 @@ function normalizeMediaImportProfiles(value, defaults) {
   }
 }
 
-function normalizeRjDefaultTagScripts(value, fallback) {
+function normalizeRjDefaultMetadataActions(value, fallback) {
   const tags = parseTags(value || fallback)
-  if (tags.length === 1 && tags[0] === 'subtitle-v1') return ['subtitle-v1', 'rj-dlsite-v1']
   return tags.length ? tags : fallback
 }
 
@@ -2621,6 +2620,10 @@ async function scanTagScripts({ force = false } = {}) {
         const manifest = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'))
         const script = normalizeTagScriptManifest(manifest, entry.name)
         scriptId = script.id
+        if (scriptId === 'subtitle-v1') {
+          seenIds.add(scriptId)
+          continue
+        }
         if (seenIds.has(scriptId)) continue
         const userOptions = await readTagScriptOptions(script.id)
         script.userOptions = userOptions
@@ -2658,6 +2661,55 @@ async function scanTagScripts({ force = false } = {}) {
   return tagScriptsCache
 }
 
+async function scanMetadataActions({ force = false } = {}) {
+  const scripts = await scanTagScripts({ force })
+  return [
+    ...builtinMetadataActions(),
+    ...scripts.map((script) => ({
+      ...script,
+      actionType: 'script',
+      capabilities: script.capabilities?.length ? script.capabilities : ['tags'],
+    })),
+  ]
+}
+
+function builtinMetadataActions() {
+  return [
+    {
+      id: 'builtin-subtitles',
+      name: '字幕扫描',
+      version: '1.0.0',
+      description: '扫描媒体文件附近的字幕并写入章节元数据，同时刷新字幕 tag。',
+      scope: ['item', 'unit'],
+      libraryTypes: ['media'],
+      mediaKinds: ['audio', 'video'],
+      exclusiveTagGroups: ['字幕v1'],
+      defaultOptions: {},
+      userOptions: {},
+      options: {},
+      defaultEnabled: false,
+      actionType: 'builtin',
+      capabilities: ['subtitles', 'tags'],
+    },
+    {
+      id: 'builtin-thumbnails',
+      name: '缩略图生成',
+      version: '1.0.0',
+      description: '为音视频章节生成封面和预览缩略图。',
+      scope: ['item', 'unit'],
+      libraryTypes: ['media'],
+      mediaKinds: ['audio', 'video'],
+      exclusiveTagGroups: [],
+      defaultOptions: {},
+      userOptions: {},
+      options: {},
+      defaultEnabled: false,
+      actionType: 'builtin',
+      capabilities: ['thumbnail'],
+    },
+  ]
+}
+
 function tagScriptRoots() {
   return [{ dir: path.resolve(TAG_SCRIPTS_DIR), label: 'runtime', writable: true }]
 }
@@ -2687,7 +2739,7 @@ async function saveTagScriptOptions(scriptId, options) {
 }
 
 async function deleteTagScriptOptions(scriptId) {
-  await rm(tagScriptConfigPath(scriptId), { force: true })
+  await moveAside(tagScriptConfigPath(scriptId), 'metadata-action-config-reset').catch(() => {})
   tagScriptsCache = null
   return await scanTagScripts({ force: true })
 }
@@ -2726,7 +2778,7 @@ async function installTagScriptPackage(file) {
     tagScriptsCache = null
     return { installed, scripts: await scanTagScripts({ force: true }) }
   } finally {
-    await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    await moveAside(tempDir, 'metadata-action-upload-temp').catch(() => {})
   }
 }
 
@@ -2775,6 +2827,8 @@ function publicTagJob(job) {
     type: job.type,
     itemId: job.itemId,
     scriptIds: job.scriptIds,
+    actionIds: job.scriptIds,
+    unitIds: job.unitIds || [],
     force: Boolean(job.force),
     status: job.status,
     message: job.message,
@@ -2787,9 +2841,9 @@ function publicTagJob(job) {
 function importTagScriptIds(fields = {}) {
   const profile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
   if (profile === 'rj-media') {
-    return parseTags(config.mediaImportProfiles?.['rj-media']?.defaultTagScripts || ['subtitle-v1'])
+    return parseTags(config.mediaImportProfiles?.['rj-media']?.defaultMetadataActions || ['builtin-subtitles', 'rj-dlsite-v1'])
   }
-  return parseTags(fields.tagScriptIds || fields.tagScripts || '')
+  return parseTags(fields.metadataActionIds || fields.actionIds || fields.tagScriptIds || fields.tagScripts || '')
 }
 
 function updateTagJob(job, patch) {
@@ -2797,20 +2851,22 @@ function updateTagJob(job, patch) {
   emit('tagJob', publicTagJob(job))
 }
 
-function enqueueTagScripts({ type, itemId, scriptIds = [], reason = 'manual', force = false }) {
-  const ids = [...new Set((scriptIds || []).map((id) => safeScriptId(id)).filter(Boolean))]
+function enqueueMetadataActions({ type, itemId, actionIds = [], unitIds = [], reason = 'manual', force = false }) {
+  const ids = [...new Set((actionIds || []).map((id) => safeScriptId(id)).filter(Boolean))]
+  const selectedUnitIds = [...new Set((unitIds || []).map((id) => String(id || '').trim()).filter(Boolean))]
   if (!type || !itemId || !ids.length) return null
   const now = new Date().toISOString()
-  const id = `tag-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const id = `metadata-${Date.now()}-${Math.random().toString(16).slice(2)}`
   const job = {
     id,
     type,
     itemId,
     scriptIds: ids,
+    unitIds: selectedUnitIds,
     reason,
     force: Boolean(force),
     status: 'queued',
-    message: '等待生成 tag',
+    message: '等待执行元数据脚本',
     results: [],
     createdAt: now,
     updatedAt: now,
@@ -2844,44 +2900,85 @@ async function processTagQueue() {
 }
 
 async function runTagJob(job) {
-  updateTagJob(job, { status: 'running', message: '生成 tag 中' })
-  const scripts = await scanTagScripts()
-  const byId = new Map(scripts.filter((script) => !script.error).map((script) => [script.id, script]))
+  updateTagJob(job, { status: 'running', message: '执行元数据脚本中' })
+  const actions = await scanMetadataActions()
+  const byId = new Map(actions.filter((action) => !action.error).map((action) => [action.id, action]))
   const handler = libraryHandler(job.type)
   const item = await handler.getItem(job.itemId)
   const units = handler.listUnits ? await handler.listUnits(job.itemId) : (item.mediaUnits || [])
   const results = []
   for (const scriptId of job.scriptIds) {
-    const script = byId.get(scriptId)
-    if (!script) {
-      results.push({ scriptId, status: 'failed', message: '脚本不存在或加载失败' })
+    const action = byId.get(scriptId)
+    if (!action) {
+      results.push({ scriptId, actionId: scriptId, status: 'failed', message: '脚本不存在或加载失败' })
       continue
     }
     try {
-      const previous = await readTagRun(job.type, job.itemId, script.id)
-      if (!job.force && isCompletedSameVersionRun(previous, script, item, units)) {
+      if (action.actionType === 'builtin') {
+        updateTagJob(job, { message: `运行 ${action.name}` })
+        const applied = await executeBuiltinMetadataAction({ action, handler, type: job.type, itemId: job.itemId, unitIds: job.unitIds || [], force: job.force })
+        results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'completed', ...applied })
+        continue
+      }
+      const previous = await readTagRun(job.type, job.itemId, action.id)
+      if (!job.force && !(job.unitIds || []).length && isCompletedSameVersionRun(previous, action, item, units)) {
         results.push({
           scriptId,
-          scriptVersion: script.version,
+          actionId: action.id,
+          scriptVersion: action.version,
           status: 'skipped',
           message: '同版本已生成，跳过',
         })
         continue
       }
-      updateTagJob(job, { message: `运行 ${script.name}` })
-      const output = await executeTagScript(script, { type: job.type, item, units })
-      const applied = await applyTagScriptOutput({ type: job.type, itemId: job.itemId, script, output })
-      results.push({ scriptId, scriptVersion: script.version, status: 'completed', ...applied })
+      updateTagJob(job, { message: `运行 ${action.name}` })
+      const selectedUnits = (job.unitIds || []).length
+        ? units.filter((unit) => job.unitIds.includes(unit.unitId))
+        : units
+      const output = await executeTagScript(action, { type: job.type, item, units: selectedUnits, selectedUnitIds: job.unitIds || [] })
+      const applied = await applyTagScriptOutput({ type: job.type, itemId: job.itemId, script: action, output, unitIds: job.unitIds || [] })
+      results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'completed', ...applied })
     } catch (error) {
-      results.push({ scriptId, scriptVersion: script.version, status: 'failed', message: error.message })
+      results.push({ scriptId, actionId: scriptId, scriptVersion: action?.version || '', status: 'failed', message: error.message })
     }
   }
   const failed = results.filter((item) => item.status === 'failed').length
   updateTagJob(job, {
     status: failed ? 'failed' : 'completed',
-    message: failed ? `tag 生成完成，失败 ${failed} 个` : 'tag 生成完成',
+    message: failed ? `元数据脚本执行完成，失败 ${failed} 个` : '元数据脚本执行完成',
     results,
   })
+}
+
+async function executeBuiltinMetadataAction({ action, handler, type, itemId, unitIds = [], force = false }) {
+  if (action.id === 'builtin-subtitles') {
+    if (!handler.rescanSubtitles) throw new Error('当前媒体类型不支持字幕扫描')
+    const result = await handler.rescanSubtitles(itemId)
+    const playable = (result.units || []).filter((unit) => unit.mediaKind === 'audio' || unit.mediaKind === 'video')
+    const matched = playable.filter((unit) => Array.isArray(unit.subtitles) && unit.subtitles.length > 0)
+    const unmatched = (result.units || []).filter((unit) => unit.mediaKind === 'subtitle')
+    const output = {
+      itemTags: [`字幕v1: ${matched.length || unmatched.length ? '有' : '无'}`],
+      unitTags: (result.units || []).map((unit) => ({
+        unitId: unit.unitId,
+        tags: [`字幕v1: ${unit.mediaKind === 'subtitle' ? '未匹配' : Array.isArray(unit.subtitles) && unit.subtitles.length ? '有' : '无'}`],
+      })),
+    }
+    const applied = await applyTagScriptOutput({ type, itemId, script: action, output, unitIds })
+    return { message: unitIds.length ? `已扫描字幕并更新 ${unitIds.length} 个章节 tag` : '已扫描字幕并更新 tag', result, ...applied }
+  }
+  if (action.id === 'builtin-thumbnails') {
+    if (unitIds.length) {
+      if (!handler.enqueueThumbnail) throw new Error('当前媒体类型不支持单章节缩略图')
+      const jobs = []
+      for (const unitId of unitIds) jobs.push(await handler.enqueueThumbnail(itemId, unitId, { force }))
+      return { message: `已提交缩略图任务 ${jobs.length} 个`, thumbnailJobs: jobs.length }
+    }
+    if (!handler.enqueueThumbnails) throw new Error('当前媒体类型不支持批量缩略图')
+    const result = await handler.enqueueThumbnails(itemId, { force })
+    return { message: '已提交批量缩略图任务', result }
+  }
+  throw new Error(`未知内置元数据脚本：${action.id}`)
 }
 
 function isCompletedSameVersionRun(previous, script, item, units = []) {
@@ -2905,7 +3002,7 @@ function previousGeneratedTagsExist(previous, item, units = []) {
   return true
 }
 
-async function executeTagScript(script, { type, item, units }) {
+async function executeTagScript(script, { type, item, units, selectedUnitIds = [] }) {
   const info = await stat(script.mainPath)
   const mod = await import(`${pathToFileURL(script.mainPath).href}?v=${encodeURIComponent(`${info.mtimeMs}-${script.version}`)}`)
   if (typeof mod.generateTags !== 'function') throw new Error('main.js 必须 export async function generateTags(ctx)')
@@ -2913,6 +3010,8 @@ async function executeTagScript(script, { type, item, units }) {
     type,
     item,
     units,
+    selectedUnitIds,
+    scope: selectedUnitIds.length ? 'units' : 'item',
     filesRoot: item?.mediaUnits?.[0]?.managedPath ? path.dirname(item.mediaUnits[0].managedPath) : '',
     cacheDir: path.join(DATA_DIR, 'cache', 'library', 'tag-script-cache', safeSegment(script.id)),
     script: {
@@ -3038,27 +3137,37 @@ function normalizeTagScriptOutput(output) {
   }
 }
 
-async function applyTagScriptOutput({ type, itemId, script, output }) {
+async function applyTagScriptOutput({ type, itemId, script, output, unitIds = [] }) {
   const handler = libraryHandler(type)
   if (!handler.updateItemTags || !handler.updateUnitTags) throw new Error('当前媒体类型不支持 tag 更新')
   const previous = await readTagRun(type, itemId, script.id)
   const allRuns = await readAllTagRuns(type, itemId)
   const overrides = await readTagOverrides(type, itemId)
   const next = normalizeTagScriptOutput(output)
+  const selectedUnitIds = new Set(unitIds || [])
+  if (selectedUnitIds.size) {
+    next.unitTags = next.unitTags.filter((entry) => selectedUnitIds.has(entry.unitId))
+    next.itemTags = []
+  }
   const exclusiveGroups = scriptExclusiveGroups(script)
   const item = await handler.getItem(itemId)
   const previousItemTags = previous?.itemTags || []
-  const generatedItemTags = allRuns.flatMap((run) => run?.itemTags || [])
-  const mergedItemTags = mergeGeneratedTags(item.tags || [], previousItemTags, next.itemTags, exclusiveGroups, {
-    generatedTags: generatedItemTags,
-    manualOverrides: overrides.item,
-  })
-  const updatedItem = await handler.updateItemTags(itemId, mergedItemTags)
-  await setItemTags({ type, itemId, tags: updatedItem.tags || [] })
+  let updatedItem = item
+  if (!selectedUnitIds.size) {
+    const generatedItemTags = allRuns.flatMap((run) => run?.itemTags || [])
+    const mergedItemTags = mergeGeneratedTags(item.tags || [], previousItemTags, next.itemTags, exclusiveGroups, {
+      generatedTags: generatedItemTags,
+      manualOverrides: overrides.item,
+    })
+    updatedItem = await handler.updateItemTags(itemId, mergedItemTags)
+    await setItemTags({ type, itemId, tags: updatedItem.tags || [] })
+  }
   const units = handler.listUnits ? await handler.listUnits(itemId) : (updatedItem.mediaUnits || [])
   const byUnit = new Map(units.map((unit) => [unit.unitId, unit]))
   const previousByUnit = new Map((previous?.unitTags || []).map((entry) => [entry.unitId, entry.tags || []]))
-  const touched = new Set([...next.unitTags.map((entry) => entry.unitId), ...previousByUnit.keys()])
+  const touched = selectedUnitIds.size
+    ? new Set([...selectedUnitIds])
+    : new Set([...next.unitTags.map((entry) => entry.unitId), ...previousByUnit.keys()])
   const appliedUnitTags = []
   for (const unitId of touched) {
     const unit = byUnit.get(unitId)
@@ -3081,8 +3190,13 @@ async function applyTagScriptOutput({ type, itemId, script, output }) {
     itemId,
     scriptId: script.id,
     scriptVersion: script.version,
-    itemTags: next.itemTags,
-    unitTags: appliedUnitTags,
+    itemTags: selectedUnitIds.size ? previousItemTags : next.itemTags,
+    unitTags: selectedUnitIds.size
+      ? [
+        ...(previous?.unitTags || []).filter((entry) => !selectedUnitIds.has(entry.unitId)),
+        ...appliedUnitTags,
+      ]
+      : appliedUnitTags,
     updatedAt: new Date().toISOString(),
   }
   await atomicWriteJson(tagRunPath(type, itemId, script.id), runRecord, { jobId: `tag-run-${script.id}` })
@@ -3117,7 +3231,7 @@ function scriptExclusiveGroups(script) {
 }
 
 async function knownExclusiveTagGroups() {
-  const scripts = await scanTagScripts()
+  const scripts = await scanMetadataActions()
   return new Set(scripts.flatMap((script) => script.exclusiveTagGroups || []).map(normalizeTagName))
 }
 
@@ -3201,26 +3315,26 @@ async function route(req, res) {
     if (pathname === '/api/library/tags' && req.method === 'GET') {
       return json(res, 200, listTags())
     }
-    if (pathname === '/api/tag-scripts' && req.method === 'GET') {
-      return json(res, 200, await scanTagScripts({ force: url.searchParams.get('reload') === '1' }))
+    if ((pathname === '/api/metadata-actions' || pathname === '/api/tag-scripts') && req.method === 'GET') {
+      return json(res, 200, await scanMetadataActions({ force: url.searchParams.get('reload') === '1' }))
     }
-    if (pathname === '/api/tag-scripts/upload' && req.method === 'POST') {
+    if ((pathname === '/api/metadata-actions/upload' || pathname === '/api/tag-scripts/upload') && req.method === 'POST') {
       const form = await readMultipart(req)
       const file = form.files.find((item) => item.name === 'file') || form.files[0]
       return json(res, 201, await installTagScriptPackage(file))
     }
-    if (pathname.startsWith('/api/tag-scripts/') && req.method === 'POST') {
+    if ((pathname.startsWith('/api/metadata-actions/') || pathname.startsWith('/api/tag-scripts/')) && req.method === 'POST') {
       const [, , scriptId, action] = pathname.split('/').filter(Boolean)
       if (action !== 'config') return json(res, 404, { error: 'Not found' })
       const body = await readJson(req)
       return json(res, 200, await saveTagScriptOptions(scriptId, body.options || body))
     }
-    if (pathname.startsWith('/api/tag-scripts/') && req.method === 'DELETE') {
+    if ((pathname.startsWith('/api/metadata-actions/') || pathname.startsWith('/api/tag-scripts/')) && req.method === 'DELETE') {
       const [, , scriptId, action] = pathname.split('/').filter(Boolean)
       if (action !== 'config') return json(res, 404, { error: 'Not found' })
       return json(res, 200, await deleteTagScriptOptions(scriptId))
     }
-    if (pathname === '/api/tag-jobs' && req.method === 'GET') {
+    if ((pathname === '/api/metadata-jobs' || pathname === '/api/tag-jobs') && req.method === 'GET') {
       return json(res, 200, [...tagJobs.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(publicTagJob))
     }
     if (pathname === '/api/library/history' && req.method === 'GET') {
@@ -3264,8 +3378,8 @@ async function route(req, res) {
       for (const imported of items) {
         await syncItemTagIndex(imported)
         if (handler.enqueueThumbnails) handler.enqueueThumbnails(imported.itemId, { force: false }).catch(() => {})
-        const tagScriptIds = importTagScriptIds(form.fields)
-        if (tagScriptIds.length) enqueueTagScripts({ type, itemId: imported.itemId, scriptIds: tagScriptIds, reason: 'import' })
+        const actionIds = importTagScriptIds(form.fields)
+        if (actionIds.length) enqueueMetadataActions({ type, itemId: imported.itemId, actionIds, reason: 'import' })
       }
       return json(res, 201, Array.isArray(item?.items) ? { ...item, items } : items[0])
     }
@@ -3309,10 +3423,17 @@ async function route(req, res) {
         const body = await readJson(req)
         return json(res, 200, await recordLibraryHistory(type, itemId, body, { flush: true }))
       }
-      if (action === 'tag-scripts') {
+      if (action === 'metadata-actions' || action === 'tag-scripts') {
         const body = await readJson(req)
-        const job = enqueueTagScripts({ type, itemId, scriptIds: body.scriptIds || body.tagScriptIds || [], reason: 'manual', force: body.force === true })
-        if (!job) return json(res, 400, { error: 'scriptIds is required' })
+        const job = enqueueMetadataActions({
+          type,
+          itemId,
+          actionIds: body.actionIds || body.scriptIds || body.tagScriptIds || [],
+          unitIds: body.unitIds || [],
+          reason: 'manual',
+          force: body.force === true,
+        })
+        if (!job) return json(res, 400, { error: 'actionIds is required' })
         return json(res, 202, { job: publicTagJob(job) })
       }
       if (action === 'tags') {

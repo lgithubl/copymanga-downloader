@@ -319,13 +319,16 @@
               <div class="chapter-actions">
                 <input id="library-item-tags" placeholder="合集标签，逗号分隔" />
                 <button id="library-save-tags" class="secondary" disabled>保存标签</button>
-                <button id="library-subtitles" class="secondary" disabled>重扫字幕</button>
-                <button id="library-thumbnails" class="secondary" disabled>批量缩略图</button>
+                <button id="library-subtitles" class="secondary hidden" disabled>重扫字幕</button>
+                <button id="library-thumbnails" class="secondary hidden" disabled>批量缩略图</button>
               </div>
             </div>
             <div class="tag-script-bar">
-              <div id="library-tag-scripts" class="tag-script-list muted">暂无 tag 脚本</div>
-              <button id="library-run-tag-scripts" class="secondary" disabled>重新生成 tag</button>
+              <div id="library-tag-scripts" class="tag-script-list muted">暂无元数据脚本</div>
+              <div class="tag-script-actions">
+                <button id="library-run-selected-units" class="secondary" disabled>执行选中章节</button>
+                <button id="library-run-tag-scripts" class="secondary" disabled>执行全量</button>
+              </div>
             </div>
             <div id="library-units" class="chapters empty-panel">请选择媒体库条目</div>
           </section>
@@ -335,11 +338,11 @@
             <div class="chapter-head">
               <div>
                 <h2>标签管理</h2>
-                <div class="muted">展示 tag 使用数和外置 tag 脚本</div>
+                <div class="muted">展示 tag 使用数和外置元数据脚本</div>
               </div>
               <div class="chapter-actions">
                 <input id="tag-script-upload-file" type="file" accept=".tgz,.tar.gz,.zip,application/gzip,application/x-gzip,application/zip" />
-                <button id="tag-script-upload" class="secondary">上传脚本包</button>
+                <button id="tag-script-upload" class="secondary">上传元数据脚本</button>
                 <button id="tag-scripts-reload" class="secondary">重载脚本</button>
                 <button id="tag-manager-refresh">刷新</button>
               </div>
@@ -352,7 +355,7 @@
                 <div id="tag-manager-tags" class="cards tag-manager-tags"></div>
               </div>
               <div>
-                <h2>脚本</h2>
+                <h2>元数据脚本</h2>
                 <div id="tag-manager-scripts" class="cards tag-manager-scripts"></div>
                 <h2>运行任务</h2>
                 <div id="tag-manager-jobs" class="jobs tag-manager-jobs"></div>
@@ -408,8 +411,8 @@
                   <option value="epub">EPUB</option>
                 </select>
               </label>
-              <label>Tag 脚本
-                <div id="media-import-tag-scripts" class="tag-script-list muted">暂无 tag 脚本</div>
+              <label>元数据脚本
+                <div id="media-import-tag-scripts" class="tag-script-list muted">暂无元数据脚本</div>
               </label>
               <label class="media-import-profile-config">导入方案配置
                 <textarea id="media-import-profile-config" rows="9" spellcheck="false"></textarea>
