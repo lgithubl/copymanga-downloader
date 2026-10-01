@@ -235,13 +235,12 @@ h2 {
   grid-template-columns: minmax(0, 1fr);
 }
 
-#app.media-viewer-focused .sidebar,
-#app.media-viewer-focused .tabs {
+#app.media-viewer-focused .sidebar {
   display: none;
 }
 
 #app.media-viewer-focused .content {
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 #app.media-viewer-focused .media-viewer-view {
@@ -933,6 +932,7 @@ h2 {
 
 .chapter-actions select {
   min-width: 132px;
+  width: auto;
 }
 
 .discover-panel {
@@ -1618,6 +1618,27 @@ h2 {
 
 #app.media-viewer-focused .media-mode-video .chapter-head .muted {
   color: rgba(248, 250, 252, 0.68);
+}
+
+#app.media-viewer-focused .media-viewer-view .chapter-actions {
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+#app.media-viewer-focused .media-viewer-view .chapter-actions button,
+#app.media-viewer-focused .media-viewer-view .chapter-actions select {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#app.media-viewer-focused .media-viewer-view #media-section-select {
+  min-width: 180px;
+  max-width: min(42vw, 520px);
+}
+
+#app.media-viewer-focused .media-viewer-view #media-reader-theme {
+  min-width: 96px;
 }
 
 #app.media-viewer-focused .media-mode-video .chapter-head select {

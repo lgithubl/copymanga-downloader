@@ -134,8 +134,9 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const importProfile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
     const fileInputs = files.filter((file) => file.buffer?.length)
     if (!sourcePath && !fileInputs.length) throw new Error('sourcePath or file is required')
-    if (importProfile === 'rj-media' && sourcePath && !fileInputs.length) {
-      return importRjDirectoryBatch({ sourcePath, inputTags })
+    if (importProfile === 'rj-media') {
+      if (sourcePath && !fileInputs.length) return importRjDirectoryBatch({ sourcePath, inputTags })
+      if (fileInputs.length) return importRjUploadBatch({ files: fileInputs, inputTags })
     }
 
     const seedTitle = collectionTitle || seedTitleForImport({ sourcePath, fileInputs })
@@ -194,6 +195,30 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const options = rjImportOptions()
     const roots = await findRjImportRoots(source, options)
     if (!roots.length) throw new Error(`没有找到 RJ/VJ/BJ/EJ 目录：${source}`)
+    const items = []
+    for (const root of roots) {
+      await assertMediaRoot(root.path)
+      const item = await importRjDirectoryItem({ root, inputTags, options })
+      items.push(item)
+    }
+    return {
+      type,
+      profile: 'rj-media',
+      imported: items.length,
+      items,
+    }
+  }
+
+  async function importRjUploadBatch({ files = [], inputTags = [] }) {
+    const options = rjImportOptions()
+    const roots = []
+    for (const file of files) {
+      if (!isZipName(file.filename)) throw new Error('RJ 导入方案上传只支持 zip 文件')
+      const source = await extractZipUpload(file)
+      const found = await findRjImportRoots(source, options)
+      roots.push(...found)
+    }
+    if (!roots.length) throw new Error('上传 zip 中没有找到 RJ/VJ/BJ/EJ 目录')
     const items = []
     for (const root of roots) {
       await assertMediaRoot(root.path)
