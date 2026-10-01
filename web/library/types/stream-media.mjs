@@ -884,7 +884,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
 
   function mediaSubtitleKey(itemId, filePath) {
     const relative = relativePath(itemId, filePath)
-    return subtitleKey(groupPathOf(relative), path.posix.basename(relative, path.posix.extname(relative)))
+    return subtitleKey(groupPathOf(relative), subtitleMatchStem(relative))
   }
 
   return {
@@ -1036,8 +1036,24 @@ function groupPathOf(relativePath) {
 
 function subtitleMediaKey(relativePath) {
   const dir = groupPathOf(relativePath)
+  return subtitleKey(dir, subtitleMatchStem(relativePath))
+}
+
+function subtitleMatchStem(relativePath) {
   let stem = path.posix.basename(relativePath, path.posix.extname(relativePath))
-  const tokens = ['sc', 'tc', 'chs', 'cht', 'zh', 'cn', 'jp', 'ja', 'en', 'eng', 'jpn', '字幕', 'sub', 'subs']
+  let changed = true
+  while (changed) {
+    const before = stem
+    stem = stripTrailingSubtitleToken(stem)
+    stem = stripTrailingMediaExtension(stem)
+    stem = stripTrailingSubtitleToken(stem)
+    changed = stem !== before
+  }
+  return stem
+}
+
+function stripTrailingSubtitleToken(stem) {
+  const tokens = ['sc', 'tc', 'chs', 'cht', 'zh', 'cn', 'jp', 'ja', 'en', 'eng', 'jpn', 'zh-cn', 'zh-tw', '字幕', 'sub', 'subs']
   let changed = true
   while (changed) {
     changed = false
@@ -1049,7 +1065,14 @@ function subtitleMediaKey(relativePath) {
       }
     }
   }
-  return subtitleKey(dir, stem)
+  return stem
+}
+
+function stripTrailingMediaExtension(stem) {
+  const ext = path.posix.extname(stem).slice(1).toLowerCase()
+  if (!ext) return stem
+  const mediaExtensions = [...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS]
+  return mediaExtensions.includes(ext) ? stem.slice(0, -(ext.length + 1)) : stem
 }
 
 function subtitleKey(dir, stem) {
