@@ -2392,7 +2392,11 @@ async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
       // Ignore stale tag index rows; future tag edits or imports will refresh them.
     }
   }
-  return items.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+  return items.sort(compareLibraryImportOrder)
+}
+
+function compareLibraryImportOrder(a, b) {
+  return String(b.createdAt || b.updatedAt || '').localeCompare(String(a.createdAt || a.updatedAt || ''))
 }
 
 function libraryHistoryKey(type, itemId) {

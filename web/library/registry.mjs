@@ -26,5 +26,9 @@ export async function scanLibraryItems({ type = 'all' } = {}) {
   for (const handler of selected) {
     items.push(...await handler.scanItems())
   }
-  return items.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+  return items.sort(compareLibraryImportOrder)
+}
+
+function compareLibraryImportOrder(a, b) {
+  return String(b.createdAt || b.updatedAt || '').localeCompare(String(a.createdAt || a.updatedAt || ''))
 }
