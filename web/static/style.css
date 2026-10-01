@@ -621,9 +621,8 @@ h2 {
   background: #f6f7f9;
   justify-content: flex-start;
   padding-bottom: 8px;
-  position: sticky;
-  top: calc(var(--sticky-offset) + 44px);
-  z-index: 3;
+  position: static;
+  z-index: auto;
 }
 
 .inventory-pager select {
@@ -960,11 +959,17 @@ h2 {
   background: #ffffff;
   border: 1px solid #d8dee4;
   border-radius: 8px;
+  box-sizing: border-box;
   display: grid;
   gap: 8px;
-  height: 58px;
+  min-height: 58px;
   overflow: hidden;
   padding: 10px;
+}
+
+#downloaded-view > section:first-child > .chapter-head {
+  position: static;
+  z-index: auto;
 }
 
 .inventory-progress.hidden {
