@@ -86,6 +86,11 @@ const els = {
   librarySubtitles: document.querySelector('#library-subtitles'),
   libraryThumbnails: document.querySelector('#library-thumbnails'),
   libraryUnits: document.querySelector('#library-units'),
+  historyType: document.querySelector('#history-type'),
+  historyKeyword: document.querySelector('#history-keyword'),
+  historyRefresh: document.querySelector('#history-refresh'),
+  historyClear: document.querySelector('#history-clear'),
+  historyList: document.querySelector('#history-list'),
   mediaImportType: document.querySelector('#media-import-type'),
   mediaImportRefresh: document.querySelector('#media-import-refresh'),
   mediaImportItem: document.querySelector('#media-import-item'),
@@ -168,6 +173,8 @@ let viewerReturnView = 'search-view'
 let readingProgress = {}
 let libraryTypes = []
 let libraryItems = []
+let libraryHistory = []
+let libraryHistoryByKey = new Map()
 let currentLibraryItem = null
 let currentLibraryUnits = []
 let currentLibraryProgress = null
@@ -1063,6 +1070,9 @@ els.tabs.forEach((tab) => {
     if (tab.dataset.view === 'library-view') {
       loadLibraryTypes().then(loadLibraryItems).catch((error) => alert(error.message))
     }
+    if (tab.dataset.view === 'history-view') {
+      loadLibraryTypes().then(loadLibraryHistory).catch((error) => alert(error.message))
+    }
     if (tab.dataset.view === 'media-import-view') loadMediaImportItems()
     if (tab.dataset.view === 'settings-view') loadConfig()
   })
@@ -1192,14 +1202,18 @@ function renderDownloadedComic(data, sourceText) {
 async function loadLibraryTypes() {
   libraryTypes = await api('/api/library/types')
   const current = els.libraryType.value || 'all'
+  const currentHistory = els.historyType?.value || 'all'
   const currentImport = els.mediaImportType.value || 'epub'
   els.libraryType.innerHTML = '<option value="all">全部类型</option>'
+  els.historyType.innerHTML = '<option value="all">全部类型</option>'
   els.mediaImportType.innerHTML = ''
   for (const type of libraryTypes) {
     const option = document.createElement('option')
     option.value = type.type
     option.textContent = type.label || type.type
     els.libraryType.append(option)
+    const historyOption = option.cloneNode(true)
+    els.historyType.append(historyOption)
     if (type.importable) {
       const importOption = document.createElement('option')
       importOption.value = type.type
@@ -1208,6 +1222,7 @@ async function loadLibraryTypes() {
     }
   }
   els.libraryType.value = [...els.libraryType.options].some((option) => option.value === current) ? current : 'all'
+  els.historyType.value = [...els.historyType.options].some((option) => option.value === currentHistory) ? currentHistory : 'all'
   els.mediaImportType.value = [...els.mediaImportType.options].some((option) => option.value === currentImport) ? currentImport : 'epub'
   updateMediaImportControls()
 }
@@ -1218,7 +1233,13 @@ async function loadLibraryItems() {
     const type = els.libraryType.value || 'all'
     const params = new URLSearchParams({ type })
     if (els.libraryTagSearch.value.trim()) params.set('tag', els.libraryTagSearch.value.trim())
-    libraryItems = await api(`/api/library/items?${params}`)
+    const historyParams = new URLSearchParams({ type, limit: '1000' })
+    const [items, histories] = await Promise.all([
+      api(`/api/library/items?${params}`),
+      api(`/api/library/history?${historyParams}`),
+    ])
+    libraryItems = items
+    setLibraryHistory(histories)
     renderLibraryItems()
   } catch (error) {
     alert(error.message)
@@ -1305,6 +1326,7 @@ function renderLibraryItems() {
   els.libraryItems.innerHTML = ''
   for (const item of libraryItems) {
     const summary = libraryItemSummary(item)
+    const history = libraryHistoryByKey.get(libraryKey(item.type, item.itemId))
     const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
     const card = document.createElement('article')
     card.className = `card library-card${selected ? ' selected' : ''}`
@@ -1317,10 +1339,16 @@ function renderLibraryItems() {
         </div>
         <div class="library-card-meta">${escapeHtml(summary.primary)}</div>
         <div class="library-card-meta">${escapeHtml(summary.secondary)}</div>
+        ${history ? `<div class="library-card-history">继续：${escapeHtml(history.lastUnitTitle || history.lastUnitId || item.title)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''}</div>` : ''}
         ${renderTagList(item.tags || [])}
+        <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
       </div>
     `
     card.addEventListener('click', () => selectLibraryItem(item.type, item.itemId))
+    card.querySelector('.library-continue')?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      continueLibraryItem(item).catch((error) => alert(error.message))
+    })
     els.libraryItems.append(card)
   }
   if (libraryItems.length === 0) els.libraryItems.innerHTML = '<p class="muted">暂无媒体库条目</p>'
@@ -1472,6 +1500,7 @@ function renderLibraryDetailSummary(item, units, readUnits = {}) {
   const counts = libraryUnitCounts(units)
   const readCount = units.filter((unit) => readUnits[unit.unitId]?.enteredAt).length
   const playableCount = units.filter((unit) => unit.mediaKind !== 'subtitle').length
+  const history = libraryHistoryByKey.get(libraryKey(item?.type, item?.itemId))
   const stats = [
     ['目录项', units.length],
     ['已进入', `${readCount}/${playableCount || units.length || 0}`],
@@ -1485,6 +1514,7 @@ function renderLibraryDetailSummary(item, units, readUnits = {}) {
     <div class="library-detail-main">
       <div class="library-detail-title">${escapeHtml(item?.title || '目录')}</div>
       <div class="library-detail-subtitle">${escapeHtml([item?.itemId, item?.updatedAt ? `更新 ${formatShortDate(item.updatedAt)}` : ''].filter(Boolean).join(' · '))}</div>
+      ${history ? `<div class="library-detail-history">最近：${escapeHtml(history.lastUnitTitle || history.lastUnitId)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''} · ${escapeHtml(formatShortDate(history.updatedAt))}</div>` : ''}
       ${renderTagList(item?.tags || [])}
       <div class="library-detail-stats">
         ${stats.map(([label, value]) => `<span><strong>${escapeHtml(value)}</strong>${escapeHtml(label)}</span>`).join('')}
@@ -1514,6 +1544,141 @@ function mediaKindLabel(kind) {
     subtitle: '字幕',
   }
   return labels[kind] || kind
+}
+
+function libraryKey(type, itemId) {
+  return `${type || ''}\u001f${itemId || ''}`
+}
+
+function setLibraryHistory(histories = []) {
+  libraryHistory = Array.isArray(histories) ? histories : []
+  libraryHistoryByKey = new Map(libraryHistory.map((history) => [libraryKey(history.type, history.itemId), history]))
+}
+
+function historyProgressText(history) {
+  const position = history?.position || {}
+  if (position.duration > 0 && position.seconds > 0) {
+    return `${formatMediaTime(position.seconds)} / ${formatMediaTime(position.duration)}`
+  }
+  if (position.ratio > 0) return `${Math.round(position.ratio * 100)}%`
+  return ''
+}
+
+async function continueLibraryItem(itemOrHistory) {
+  const type = itemOrHistory.type
+  const itemId = itemOrHistory.itemId
+  let history = libraryHistoryByKey.get(libraryKey(type, itemId))
+  if (!history) {
+    history = await api(`/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/history`)
+    if (history) {
+      libraryHistoryByKey.set(libraryKey(type, itemId), history)
+    }
+  }
+  await selectLibraryItem(type, itemId)
+  const targetUnitId = history?.lastUnitId || currentLibraryUnits.find((unit) => unit.mediaKind !== 'subtitle')?.unitId
+  if (!targetUnitId) return
+  await openMediaUnit(targetUnitId, history?.lastSectionId || '', { position: history?.position || null })
+}
+
+async function loadLibraryHistory() {
+  try {
+    setLoading(els.historyRefresh, true)
+    const params = new URLSearchParams({
+      type: els.historyType.value || 'all',
+      limit: '200',
+      keyword: els.historyKeyword.value.trim(),
+    })
+    setLibraryHistory(await api(`/api/library/history?${params}`))
+    renderLibraryHistory()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.historyRefresh, false)
+  }
+}
+
+function renderLibraryHistory() {
+  els.historyList.classList.remove('empty-panel')
+  els.historyList.innerHTML = ''
+  for (const history of libraryHistory) {
+    const card = document.createElement('article')
+    card.className = 'card history-card'
+    card.innerHTML = `
+      ${renderCover(history.cover, history.title)}
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(history.title)}</div>
+        <div class="library-card-meta">${escapeHtml([mediaImportTypeInfo[history.type]?.label || history.type, history.itemId].filter(Boolean).join(' · '))}</div>
+        <div class="history-last">${escapeHtml(history.lastUnitTitle || history.lastUnitId || '未记录章节')}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''}</div>
+        <div class="library-card-meta">${escapeHtml(formatShortDate(history.updatedAt))} · 访问 ${history.visits || 0} 次</div>
+        ${renderTagList(history.tags || [])}
+        <div class="history-actions">
+          <button class="history-continue" type="button">继续</button>
+          <button class="history-open secondary" type="button">打开合集</button>
+          <button class="history-delete danger" type="button">删除</button>
+        </div>
+      </div>
+    `
+    card.querySelector('.history-continue')?.addEventListener('click', () => continueLibraryItem(history).catch((error) => alert(error.message)))
+    card.querySelector('.history-open')?.addEventListener('click', async () => {
+      showView('library-view')
+      await loadLibraryTypes()
+      await loadLibraryItems()
+      await selectLibraryItem(history.type, history.itemId)
+    })
+    card.querySelector('.history-delete')?.addEventListener('click', async () => {
+      await api(`/api/library/items/${encodeURIComponent(history.type)}/${encodeURIComponent(history.itemId)}/history`, { method: 'DELETE' })
+      await loadLibraryHistory()
+    })
+    els.historyList.append(card)
+  }
+  if (!libraryHistory.length) {
+    els.historyList.className = 'cards history-list empty-panel'
+    els.historyList.textContent = '暂无浏览历史'
+  }
+}
+
+async function recordCurrentLibraryHistory({ flush = false, visit = false, position = null } = {}) {
+  if (!currentLibraryItem || !currentMediaReader?.unit) return null
+  const unit = currentMediaReader.unit
+  const body = {
+    title: currentLibraryItem.title,
+    cover: currentLibraryItem.cover || unit.thumbnail?.coverUrl || unit.cover || '',
+    tags: currentLibraryItem.tags || [],
+    lastUnitId: unit.unitId,
+    lastUnitTitle: unit.title || unit.fileName || unit.unitId,
+    lastSectionId: currentMediaReader.section?.sectionId || '',
+    lastSectionTitle: currentMediaReader.section?.title || '',
+    position: position || historyPositionForReader(),
+    visit,
+    flush,
+  }
+  const action = flush ? 'history-flush' : 'history'
+  const record = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+  libraryHistoryByKey.set(libraryKey(record.type, record.itemId), record)
+  return record
+}
+
+function historyPositionForReader() {
+  if (currentMediaReader?.type === 'audio' || currentMediaReader?.type === 'video') {
+    const player = document.querySelector('.stream-player audio, .stream-player video')
+    const seconds = Number(player?.currentTime || 0)
+    const duration = Number(player?.duration || 0)
+    return {
+      kind: 'time',
+      seconds,
+      duration: Number.isFinite(duration) ? duration : 0,
+      ratio: duration > 0 ? Math.max(0, Math.min(1, seconds / duration)) : 0,
+    }
+  }
+  return {
+    kind: currentMediaReader?.type || '',
+    seconds: 0,
+    duration: 0,
+    ratio: mediaScrollRatio(),
+  }
 }
 
 function renderTagList(tags = []) {
@@ -1626,7 +1791,7 @@ function parseTagInput(value) {
   return [...new Set(String(value || '').split(/[,\n，#]+/).map((item) => item.trim()).filter(Boolean))]
 }
 
-async function openMediaUnit(unitId, sectionId = '') {
+async function openMediaUnit(unitId, sectionId = '', options = {}) {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId || !unitId) return
   const activeView = els.views.find((view) => view.classList.contains('active'))?.id
   if (activeView && activeView !== 'media-viewer-view') mediaReturnView = activeView
@@ -1655,8 +1820,9 @@ async function openMediaUnit(unitId, sectionId = '') {
     els.mediaReaderPrev.disabled = !reader.navigation?.prev
     els.mediaReaderNext.disabled = !reader.navigation?.next
     renderMediaSectionSelect(reader)
-    renderMediaReader(reader)
+    renderMediaReader(reader, options)
     await saveLibraryProgress(reader.section?.sectionId === currentLibraryProgress?.lastSectionId ? currentLibraryProgress.lastScrollRatio : 0)
+    await recordCurrentLibraryHistory({ visit: true, position: options.position || historyPositionForReader() }).catch(() => {})
     currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/progress`)
     renderLibraryUnits()
   } catch (error) {
@@ -1666,7 +1832,7 @@ async function openMediaUnit(unitId, sectionId = '') {
   }
 }
 
-function renderMediaReader(reader) {
+function renderMediaReader(reader, options = {}) {
   applyMediaReaderTheme()
   if (!(reader.type === 'audio' || reader.type === 'video') && currentStreamCleanup) {
     currentStreamCleanup()
@@ -1681,7 +1847,7 @@ function renderMediaReader(reader) {
   } else if (reader.type === 'images') {
     renderMediaImages(reader)
   } else if (reader.type === 'audio' || reader.type === 'video') {
-    renderStreamMedia(reader)
+    renderStreamMedia(reader, options)
   } else {
     els.mediaReaderContent.className = 'media-reader-content empty-panel'
     els.mediaReaderContent.textContent = `暂不支持的阅读内容类型：${reader.type}`
@@ -1741,7 +1907,7 @@ function renderMediaImages(reader) {
   updateMediaPageControls()
 }
 
-function renderStreamMedia(reader) {
+function renderStreamMedia(reader, options = {}) {
   if (currentStreamCleanup) {
     currentStreamCleanup()
     currentStreamCleanup = null
@@ -1903,6 +2069,7 @@ function renderStreamMedia(reader) {
   }
   setToggleState()
   setMuteState()
+  let lastHistoryAt = 0
   play.addEventListener('click', () => {
     if (player.paused) player.play().catch(() => {})
     else player.pause()
@@ -1914,8 +2081,22 @@ function renderStreamMedia(reader) {
   })
   player.addEventListener('play', setPlayState)
   player.addEventListener('pause', setPlayState)
-  player.addEventListener('loadedmetadata', setProgress)
-  player.addEventListener('timeupdate', setProgress)
+  player.addEventListener('pause', () => recordCurrentLibraryHistory({ flush: true, visit: false }).catch(() => {}))
+  player.addEventListener('loadedmetadata', () => {
+    setProgress()
+    const seconds = Number(options.position?.seconds || 0)
+    if (seconds > 0 && Number.isFinite(player.duration) && player.duration > 0) {
+      player.currentTime = Math.max(0, Math.min(seconds, player.duration - 0.2))
+    }
+  })
+  player.addEventListener('timeupdate', () => {
+    setProgress()
+    const now = Date.now()
+    if (now - lastHistoryAt > 5000) {
+      lastHistoryAt = now
+      recordCurrentLibraryHistory({ visit: false }).catch(() => {})
+    }
+  })
   progress.addEventListener('input', () => {
     if (!Number.isFinite(player.duration) || player.duration <= 0) return
     player.currentTime = (Number(progress.value) / Number(progress.max)) * player.duration
@@ -1961,6 +2142,7 @@ function renderStreamMedia(reader) {
   ].filter(Boolean).join(' · ')
   player.addEventListener('ended', () => {
     saveLibraryProgress(1).catch(() => {})
+    recordCurrentLibraryHistory({ flush: true, visit: false, position: { kind: 'time', seconds: player.duration || player.currentTime || 0, duration: player.duration || 0, ratio: 1 } }).catch(() => {})
     if (localStorage.getItem('copymanga.mediaAutoReplay') === '1') {
       player.currentTime = 0
       player.play().catch(() => {})
@@ -2341,6 +2523,12 @@ async function saveLibraryProgress(scrollRatio = mediaScrollRatio()) {
       scrollRatio,
     }),
   })
+  if (!(currentMediaReader.type === 'audio' || currentMediaReader.type === 'video')) {
+    recordCurrentLibraryHistory({
+      visit: false,
+      position: { kind: currentMediaReader.type || '', seconds: 0, duration: 0, ratio: scrollRatio },
+    }).catch(() => {})
+  }
 }
 
 function scheduleLibraryProgressSave() {
@@ -2456,6 +2644,25 @@ els.libraryRefresh.addEventListener('click', loadLibraryItems)
 els.libraryType.addEventListener('change', loadLibraryItems)
 els.libraryTagSearch.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') loadLibraryItems()
+})
+els.historyRefresh.addEventListener('click', loadLibraryHistory)
+els.historyType.addEventListener('change', loadLibraryHistory)
+els.historyKeyword.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') loadLibraryHistory()
+})
+els.historyClear.addEventListener('click', async () => {
+  const type = els.historyType.value || 'all'
+  if (!confirm(`确定清空${type === 'all' ? '全部' : type}浏览历史吗？`)) return
+  try {
+    setLoading(els.historyClear, true)
+    await api(`/api/library/history?type=${encodeURIComponent(type)}`, { method: 'DELETE' })
+    await loadLibraryHistory()
+    if (document.querySelector('#library-view')?.classList.contains('active')) await loadLibraryItems()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.historyClear, false)
+  }
 })
 els.librarySaveTags.addEventListener('click', saveLibraryItemTags)
 els.librarySubtitles.addEventListener('click', rescanLibrarySubtitles)

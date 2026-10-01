@@ -472,6 +472,21 @@ h2 {
   line-height: 1.35;
 }
 
+.library-card-history,
+.library-detail-history,
+.history-last {
+  color: var(--site-primary-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.library-continue {
+  justify-self: start;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
 .library-detail-card {
   background: linear-gradient(180deg, var(--site-panel), var(--site-panel-soft));
   border: 1px solid var(--site-border);
@@ -536,6 +551,55 @@ h2 {
 
 .chapter-panel {
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.history-view {
+  min-height: 0;
+  overflow: hidden;
+  padding: 18px;
+}
+
+.history-view.active {
+  display: grid;
+}
+
+.history-view > section {
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.history-list {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.history-card {
+  grid-template-columns: 86px minmax(0, 1fr);
+  min-height: 132px;
+}
+
+.history-card .cover {
+  height: 100%;
+  object-fit: cover;
+  width: 86px;
+}
+
+.history-card .card-body {
+  display: grid;
+  gap: 6px;
+}
+
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.history-actions button {
+  min-height: 30px;
+  padding: 0 10px;
 }
 
 #downloaded-view > section:first-child {

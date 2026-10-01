@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { open, readFile, readdir, stat, writeFile, mkdir, rename } from 'node:fs/promises'
+import { open, readFile, readdir, stat, writeFile, mkdir, rename, rm } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
@@ -18,6 +18,8 @@ const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(DATA_DIR, 'downloads'
 const PREVIEW_CACHE_DIR = path.join(DATA_DIR, 'cache', 'preview')
 const READING_PROGRESS_DIR = path.join(DATA_DIR, 'cache', 'reading-progress')
 const INVENTORY_INDEX_DIR = path.join(DATA_DIR, 'cache', 'inventory-index')
+const LIBRARY_HISTORY_DIR = path.join(DATA_DIR, 'cache', 'library', 'history')
+const LIBRARY_HISTORY_INDEX = path.join(LIBRARY_HISTORY_DIR, 'index.json')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -38,6 +40,11 @@ let hasIdentifyCache = null
 const inventoryUpdates = new Map()
 const sseClients = new Set()
 const previewSessions = new Map()
+const libraryHistoryCache = new Map()
+const libraryHistoryDirty = new Set()
+const libraryHistoryTimers = new Map()
+let libraryHistoryIndex = null
+let libraryHistoryIndexTimer = null
 let config = defaultConfig()
 const execFileAsync = promisify(execFile)
 const APP_COMIC_METADATA = '元数据.json'
@@ -2317,6 +2324,184 @@ async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
   return items.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
 }
 
+function libraryHistoryKey(type, itemId) {
+  return `${String(type || '')}\u001f${String(itemId || '')}`
+}
+
+function libraryHistoryPath(type, itemId) {
+  return path.join(LIBRARY_HISTORY_DIR, safeSegment(type), `${safeSegment(itemId)}.json`)
+}
+
+function normalizeLibraryHistory(value) {
+  const now = new Date().toISOString()
+  const type = String(value?.type || '')
+  const itemId = String(value?.itemId || '')
+  const position = value?.position && typeof value.position === 'object' ? value.position : {}
+  return {
+    type,
+    itemId,
+    title: String(value?.title || itemId || 'Untitled'),
+    cover: String(value?.cover || ''),
+    tags: Array.isArray(value?.tags) ? value.tags.map(String).filter(Boolean) : [],
+    lastUnitId: String(value?.lastUnitId || ''),
+    lastUnitTitle: String(value?.lastUnitTitle || ''),
+    lastSectionId: String(value?.lastSectionId || ''),
+    lastSectionTitle: String(value?.lastSectionTitle || ''),
+    position: {
+      kind: String(position.kind || ''),
+      seconds: Number.isFinite(Number(position.seconds)) ? Number(position.seconds) : 0,
+      duration: Number.isFinite(Number(position.duration)) ? Number(position.duration) : 0,
+      ratio: Number.isFinite(Number(position.ratio)) ? Math.max(0, Math.min(1, Number(position.ratio))) : 0,
+    },
+    enteredAt: String(value?.enteredAt || now),
+    updatedAt: String(value?.updatedAt || now),
+    visits: Math.max(0, Math.floor(Number(value?.visits || 0))),
+  }
+}
+
+async function ensureLibraryHistoryIndex() {
+  if (libraryHistoryIndex) return libraryHistoryIndex
+  try {
+    const records = JSON.parse(await readFile(LIBRARY_HISTORY_INDEX, 'utf8'))
+    libraryHistoryIndex = Array.isArray(records) ? records.map(normalizeLibraryHistory) : []
+  } catch {
+    libraryHistoryIndex = []
+  }
+  return libraryHistoryIndex
+}
+
+async function readLibraryHistory(type, itemId) {
+  const key = libraryHistoryKey(type, itemId)
+  if (libraryHistoryCache.has(key)) return libraryHistoryCache.get(key)
+  try {
+    const record = normalizeLibraryHistory(JSON.parse(await readFile(libraryHistoryPath(type, itemId), 'utf8')))
+    libraryHistoryCache.set(key, record)
+    return record
+  } catch {
+    return null
+  }
+}
+
+async function listLibraryHistory({ type = 'all', limit = 100, keyword = '' } = {}) {
+  const index = await ensureLibraryHistoryIndex()
+  const normalizedType = String(type || 'all')
+  const normalizedKeyword = String(keyword || '').trim().toLowerCase()
+  const max = Math.max(1, Math.min(1000, Math.floor(Number(limit) || 100)))
+  return index
+    .filter((record) => normalizedType === 'all' || record.type === normalizedType)
+    .filter((record) => {
+      if (!normalizedKeyword) return true
+      return [
+        record.title,
+        record.itemId,
+        record.lastUnitTitle,
+        record.lastSectionTitle,
+        ...(record.tags || []),
+      ].join('\n').toLowerCase().includes(normalizedKeyword)
+    })
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+    .slice(0, max)
+}
+
+function updateLibraryHistoryIndex(record) {
+  const next = normalizeLibraryHistory(record)
+  const key = libraryHistoryKey(next.type, next.itemId)
+  const index = libraryHistoryIndex || []
+  const filtered = index.filter((item) => libraryHistoryKey(item.type, item.itemId) !== key)
+  filtered.unshift(next)
+  libraryHistoryIndex = filtered
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+    .slice(0, 1000)
+  scheduleLibraryHistoryIndexFlush()
+}
+
+function scheduleLibraryHistoryIndexFlush(delay = 3000) {
+  if (libraryHistoryIndexTimer) clearTimeout(libraryHistoryIndexTimer)
+  libraryHistoryIndexTimer = setTimeout(() => {
+    flushLibraryHistoryIndex().catch(() => {})
+  }, delay)
+}
+
+async function flushLibraryHistoryIndex() {
+  if (!libraryHistoryIndex) return
+  if (libraryHistoryIndexTimer) {
+    clearTimeout(libraryHistoryIndexTimer)
+    libraryHistoryIndexTimer = null
+  }
+  await atomicWriteJson(LIBRARY_HISTORY_INDEX, libraryHistoryIndex, { jobId: 'library-history-index' })
+}
+
+function scheduleLibraryHistoryFlush(type, itemId, delay = 3000) {
+  const key = libraryHistoryKey(type, itemId)
+  if (libraryHistoryTimers.has(key)) clearTimeout(libraryHistoryTimers.get(key))
+  libraryHistoryTimers.set(key, setTimeout(() => {
+    libraryHistoryTimers.delete(key)
+    flushLibraryHistory(type, itemId).catch(() => {})
+  }, delay))
+}
+
+async function flushLibraryHistory(type, itemId) {
+  const key = libraryHistoryKey(type, itemId)
+  if (libraryHistoryTimers.has(key)) {
+    clearTimeout(libraryHistoryTimers.get(key))
+    libraryHistoryTimers.delete(key)
+  }
+  const record = libraryHistoryCache.get(key)
+  if (!record || !libraryHistoryDirty.has(key)) return record || null
+  await atomicWriteJson(libraryHistoryPath(type, itemId), record, { jobId: `library-history-${type}-${itemId}` })
+  libraryHistoryDirty.delete(key)
+  updateLibraryHistoryIndex(record)
+  await flushLibraryHistoryIndex()
+  return record
+}
+
+async function recordLibraryHistory(type, itemId, patch, { flush = false } = {}) {
+  const now = new Date().toISOString()
+  const current = await readLibraryHistory(type, itemId)
+  const merged = normalizeLibraryHistory({
+    ...(current || {}),
+    ...patch,
+    type,
+    itemId,
+    position: {
+      ...(current?.position || {}),
+      ...(patch?.position || {}),
+    },
+    enteredAt: current?.enteredAt || patch?.enteredAt || now,
+    updatedAt: patch?.updatedAt || now,
+    visits: Math.max(1, Number(current?.visits || 0) + (patch?.visit === false ? 0 : 1)),
+  })
+  const key = libraryHistoryKey(type, itemId)
+  libraryHistoryCache.set(key, merged)
+  libraryHistoryDirty.add(key)
+  updateLibraryHistoryIndex(merged)
+  if (flush) await flushLibraryHistory(type, itemId)
+  else scheduleLibraryHistoryFlush(type, itemId)
+  return merged
+}
+
+async function deleteLibraryHistory(type, itemId) {
+  const key = libraryHistoryKey(type, itemId)
+  if (libraryHistoryTimers.has(key)) {
+    clearTimeout(libraryHistoryTimers.get(key))
+    libraryHistoryTimers.delete(key)
+  }
+  libraryHistoryCache.delete(key)
+  libraryHistoryDirty.delete(key)
+  await rm(libraryHistoryPath(type, itemId), { force: true })
+  await ensureLibraryHistoryIndex()
+  libraryHistoryIndex = libraryHistoryIndex.filter((item) => libraryHistoryKey(item.type, item.itemId) !== key)
+  await flushLibraryHistoryIndex()
+}
+
+async function clearLibraryHistory(type = 'all') {
+  await ensureLibraryHistoryIndex()
+  const records = type === 'all' ? libraryHistoryIndex : libraryHistoryIndex.filter((item) => item.type === type)
+  for (const record of records) {
+    await deleteLibraryHistory(record.type, record.itemId)
+  }
+}
+
 async function route(req, res) {
   const startedAt = process.hrtime.bigint()
   const url = new URL(req.url, `http://${req.headers.host}`)
@@ -2369,6 +2554,17 @@ async function route(req, res) {
     if (pathname === '/api/library/tags' && req.method === 'GET') {
       return json(res, 200, listTags())
     }
+    if (pathname === '/api/library/history' && req.method === 'GET') {
+      return json(res, 200, await listLibraryHistory({
+        type: url.searchParams.get('type') || 'all',
+        limit: url.searchParams.get('limit') || 100,
+        keyword: url.searchParams.get('keyword') || '',
+      }))
+    }
+    if (pathname === '/api/library/history' && req.method === 'DELETE') {
+      await clearLibraryHistory(url.searchParams.get('type') || 'all')
+      return json(res, 200, { ok: true })
+    }
     if (pathname === '/api/library/items' && req.method === 'GET') {
       return json(res, 200, await scanLibraryItemsWithTags({
         type: url.searchParams.get('type') || 'all',
@@ -2406,6 +2602,7 @@ async function route(req, res) {
       if (!itemId) return json(res, 400, { error: 'itemId is required' })
       if (!action) return json(res, 200, await handler.getItem(itemId))
       if (action === 'units') return json(res, 200, await handler.listUnits(itemId))
+      if (action === 'history') return json(res, 200, await readLibraryHistory(type, itemId) || null)
       if (action === 'reader') {
         return json(res, 200, await handler.getReaderContent(itemId, unitId, {
           sectionId: url.searchParams.get('sectionId') || '',
@@ -2430,6 +2627,14 @@ async function route(req, res) {
       const handler = libraryHandler(type)
       if (!itemId) return json(res, 400, { error: 'itemId is required' })
       if (action === 'progress') return json(res, 200, await handler.saveProgress(itemId, await readJson(req)))
+      if (action === 'history') {
+        const body = await readJson(req)
+        return json(res, 200, await recordLibraryHistory(type, itemId, body, { flush: Boolean(body.flush) }))
+      }
+      if (action === 'history-flush') {
+        const body = await readJson(req)
+        return json(res, 200, await recordLibraryHistory(type, itemId, body, { flush: true }))
+      }
       if (action === 'tags') {
         if (!handler.updateItemTags) return json(res, 400, { error: 'This library type does not support tags' })
         const body = await readJson(req)
@@ -2461,6 +2666,15 @@ async function route(req, res) {
         const unit = await handler.updateUnitTags(itemId, parts[6], body.tags || [])
         await setUnitTags({ type, itemId, unitId: parts[6], tags: unit.tags || [] })
         return json(res, 200, unit)
+      }
+    }
+    if (pathname.startsWith('/api/library/items/') && req.method === 'DELETE') {
+      const parts = pathname.split('/').filter(Boolean)
+      const [, , , type, itemId, action] = parts
+      if (!itemId) return json(res, 400, { error: 'itemId is required' })
+      if (action === 'history') {
+        await deleteLibraryHistory(type, itemId)
+        return json(res, 200, { ok: true })
       }
     }
     if (pathname === '/api/reading-progress' && req.method === 'GET') {
