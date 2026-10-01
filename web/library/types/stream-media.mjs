@@ -13,6 +13,7 @@ const VIDEO_EXTENSIONS = ['m4v', 'mkv', 'mov', 'mp4', 'webm']
 const IMAGE_EXTENSIONS = ['gif', 'jpg', 'jpeg', 'png', 'webp']
 const EPUB_EXTENSIONS = ['epub']
 const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt', 'ass', 'ssa', 'lrc', 'sbv', 'smi', 'sami', 'ttml', 'dfxp', 'xml', 'sub']
+const ITEM_COVER_UNIT_ID = '__cover'
 
 export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExists, getConfig, epubSupport = null }) {
   const extensions = type === 'video'
@@ -219,6 +220,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       error: error.message,
       productId: root.productId,
     }))
+    const cover = options.fetchDlsiteCover ? await cacheExternalCover(itemId, dlsite.cover).catch(() => dlsite.cover || '') : ''
     const next = normalizeItem({
       type,
       itemId,
@@ -227,7 +229,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       sourceProfile: 'rj-media',
       dlsite,
       tags: inputTags,
-      cover: options.fetchDlsiteCover ? dlsite.cover || '' : '',
+      cover,
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
       createdAt: new Date().toISOString(),
@@ -440,6 +442,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       error: error.message,
       fetchedAt: new Date().toISOString(),
     }))
+    const cover = dlsite.cover ? await cacheExternalCover(itemId, dlsite.cover, { force }).catch(() => dlsite.cover || '') : ''
     let updated
     await updateMetadata(itemId, (current) => {
       updated = normalizeItem({
@@ -449,16 +452,57 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
           ...dlsite,
           productId: item.productId,
         },
-        cover: dlsite.cover || current.cover || '',
+        cover: cover || current.cover || '',
         updatedAt: new Date().toISOString(),
       })
       return updated
     })
     return {
       status: dlsite.cover ? 'completed' : (dlsite.status || 'failed'),
-      cover: dlsite.cover || '',
+      cover: cover || dlsite.cover || '',
       message: dlsite.cover ? 'DL 封面已更新' : (dlsite.error || '未获取到 DL 封面'),
     }
+  }
+
+  async function cacheExternalCover(itemId, coverUrl, { force = false } = {}) {
+    if (!coverUrl) return ''
+    if (force) await moveThumbnailDirAside(itemId, ITEM_COVER_UNIT_ID)
+    const existing = !force ? await existingThumbnailName(itemId, ITEM_COVER_UNIT_ID, 'cover') : ''
+    if (existing) return thumbnailUrl(itemId, ITEM_COVER_UNIT_ID, 'cover')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 20000)
+    try {
+      const res = await fetch(coverUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; copymanga-rj-cover/1.0)',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+      })
+      const contentType = String(res.headers.get('content-type') || '').toLowerCase()
+      if (!res.ok || !contentType.startsWith('image/')) return coverUrl
+      const body = Buffer.from(await res.arrayBuffer())
+      if (!body.length) return coverUrl
+      const ext = imageExtensionFromContentType(contentType) || imageExtensionFromUrl(coverUrl) || 'jpg'
+      await mkdir(thumbnailDir(itemId, ITEM_COVER_UNIT_ID), { recursive: true })
+      await writeFile(thumbnailPath(itemId, ITEM_COVER_UNIT_ID, `cover.${ext}`), body)
+      return thumbnailUrl(itemId, ITEM_COVER_UNIT_ID, 'cover')
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  function imageExtensionFromContentType(contentType) {
+    if (contentType.includes('webp')) return 'webp'
+    if (contentType.includes('png')) return 'png'
+    if (contentType.includes('jpeg') || contentType.includes('jpg')) return 'jpg'
+    if (contentType.includes('gif')) return 'gif'
+    return ''
+  }
+
+  function imageExtensionFromUrl(value) {
+    const ext = path.extname(String(value || '').split('?')[0]).replace(/^\./, '').toLowerCase()
+    return IMAGE_EXTENSIONS.includes(ext) ? ext : ''
   }
 
   async function rescanSubtitles(itemId) {
@@ -644,7 +688,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const id = String(productId || '').toUpperCase()
     const match = /^(RJ|VJ|BJ|EJ)(\d{6,8})$/.exec(id)
     if (!match) return []
-    const bucket = `${match[1]}${match[2].slice(0, 3)}${'0'.repeat(match[2].length - 3)}`
+    const bucketNumber = String(Math.ceil(Number(match[2]) / 1000) * 1000).padStart(match[2].length, '0')
+    const bucket = `${match[1]}${bucketNumber}`
     const categories = match[1] === 'VJ' ? ['professional', 'doujin'] : ['doujin', 'professional', 'books']
     return categories.flatMap((category) => [
       `https://img.dlsite.jp/modpub/images2/work/${category}/${bucket}/${id}_img_main.jpg`,

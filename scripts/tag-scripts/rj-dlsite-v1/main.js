@@ -9,8 +9,7 @@ export async function generateTags(ctx) {
   const units = Array.isArray(ctx.units) ? ctx.units : []
   const itemProductIds = productIdsFromTexts([ctx.item?.productId, ctx.item?.title, ctx.item?.itemId, ctx.item?.path, ctx.item?.sourcePath])
   const unitIds = new Map(units.map((unit) => [unit.unitId, productIdsFromTexts(unitTexts(unit))]))
-  const itemOnly = ctx.item?.sourceProfile === 'rj-media'
-  const allProductIds = unique([...itemProductIds, ...(itemOnly ? [] : [...unitIds.values()].flat())])
+  const allProductIds = unique([...itemProductIds, ...[...unitIds.values()].flat()])
 
   const itemCandidates = [
     tag('product_status', `编号: ${allProductIds.length ? '有' : '无'}`),
@@ -27,22 +26,9 @@ export async function generateTags(ctx) {
   }
   itemCandidates.unshift(tag('rj_generation', `RJ生成: ${generationStatus(allProductIds, [...detailsById.values()])}`))
 
-  const unitTags = itemOnly ? [] : units.map((unit) => {
-    const ids = unitIds.get(unit.unitId) || []
-    const candidates = ids.flatMap((productId) => [
-      tag('product_id', productId),
-      tag('product_prefix', `RJ类: ${productPrefix(productId)}`),
-      ...detailToTags(productId, detailsById.get(productId)),
-    ])
-    return {
-      unitId: unit.unitId,
-      tags: filterTags(candidates, options),
-    }
-  }).filter((entry) => entry.unitId && entry.tags.length)
-
   return {
     itemTags: filterTags(itemCandidates, options),
-    unitTags,
+    unitTags: [],
   }
 }
 
