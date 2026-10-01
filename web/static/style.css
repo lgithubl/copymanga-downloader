@@ -93,7 +93,7 @@ h2 {
   background: var(--site-bg);
   color: var(--site-text);
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 288px minmax(0, 1fr);
   align-items: stretch;
   height: 100vh;
   min-height: 0;
@@ -228,19 +228,19 @@ h2 {
 }
 
 #app.sidebar-collapsed {
-  grid-template-columns: 132px minmax(0, 1fr);
+  grid-template-columns: 104px minmax(0, 1fr);
 }
 
 .sidebar {
   background: #ffffff;
   border-right: 1px solid #d8dee4;
   display: grid;
-  gap: 18px;
+  gap: 12px;
   grid-template-rows: auto auto auto minmax(0, 1fr);
   height: 100vh;
   min-height: 0;
   overflow: hidden;
-  padding: 18px;
+  padding: 14px;
   position: sticky;
   top: 0;
 }
@@ -683,10 +683,11 @@ h2 {
   align-items: center;
   display: grid;
   gap: 6px;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
   height: 40px;
   min-width: 0;
   padding: 6px 8px;
+  cursor: pointer;
 }
 
 .library-unit {
@@ -725,6 +726,7 @@ h2 {
 }
 
 .chapter-view,
+.chapter-image-check,
 .chapter-redownload {
   font-size: 12px;
   height: 26px;
@@ -921,6 +923,18 @@ h2 {
   font-size: 12px;
   min-height: 30px;
   padding: 0 10px;
+}
+
+.icon-button {
+  align-items: center;
+  display: inline-grid;
+  font-size: 17px;
+  font-weight: 800;
+  justify-content: center;
+  line-height: 1;
+  min-width: 30px;
+  padding: 0;
+  width: 30px;
 }
 
 .bar {

@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>拷贝漫画下载器 Web</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
@@ -25,8 +26,8 @@
         <section class="task-panel">
           <div class="task-head">
             <h2>下载任务</h2>
-            <button id="retry-failed" class="secondary">批量继续</button>
-            <button id="clear-active" class="danger">批量清理</button>
+            <button id="retry-failed" class="secondary icon-button" title="批量继续" aria-label="批量继续">↻</button>
+            <button id="clear-active" class="danger icon-button" title="批量清理" aria-label="批量清理">×</button>
           </div>
           <div id="jobs" class="jobs"></div>
         </section>
@@ -371,6 +372,7 @@
                   <option value="queued">queued</option>
                   <option value="running">running</option>
                   <option value="failed">failed</option>
+                  <option value="superseded">superseded</option>
                   <option value="completed">completed</option>
                 </select>
                 <button id="task-clear-completed" class="danger">删除全部已完成</button>

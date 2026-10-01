@@ -17,6 +17,7 @@ const DATA_DIR = process.env.DATA_DIR || '/data'
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(DATA_DIR, 'downloads')
 const PREVIEW_CACHE_DIR = path.join(DATA_DIR, 'cache', 'preview')
 const READING_PROGRESS_DIR = path.join(DATA_DIR, 'cache', 'reading-progress')
+const INVENTORY_INDEX_DIR = path.join(DATA_DIR, 'cache', 'inventory-index')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -157,6 +158,26 @@ async function atomicWriteJson(filePath, payload, { jobId = 'job', verify } = {}
     await atomicWriteFile(filePath, JSON.stringify(payload, null, 2), { jobId })
     const parsed = JSON.parse(await readFile(filePath, 'utf8'))
     if (verify) verify(parsed)
+  })
+}
+
+async function atomicWriteJsonIfChanged(filePath, payload, { jobId = 'job', verify } = {}) {
+  const nextBody = JSON.stringify(payload, null, 2)
+  return await withLock(fileLocks, path.resolve(filePath), async () => {
+    try {
+      const currentBody = await readFile(filePath, 'utf8')
+      if (currentBody === nextBody) {
+        const parsed = JSON.parse(currentBody)
+        if (verify) verify(parsed)
+        return false
+      }
+    } catch {
+      // Missing or unreadable metadata should be rewritten normally.
+    }
+    await atomicWriteFile(filePath, nextBody, { jobId })
+    const parsed = JSON.parse(await readFile(filePath, 'utf8'))
+    if (verify) verify(parsed)
+    return true
   })
 }
 
@@ -638,7 +659,7 @@ function latestInventoryUpdate() {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
 }
 
-function createJob({ comicPathWord, chapterUuids, token, force = false, batchId = '', retryOf = '' }) {
+function createJob({ comicPathWord, chapterUuids, token, force = false, batchId = '', retryOf = '', supersededBy = '' }) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   const chapterUuid = chapterUuids?.[0] || ''
   return {
@@ -653,6 +674,7 @@ function createJob({ comicPathWord, chapterUuids, token, force = false, batchId 
     force: Boolean(force),
     batchId,
     retryOf,
+    supersededBy,
     deleted: false,
     totalChapters: chapterUuids.length,
     doneChapters: 0,
@@ -754,11 +776,132 @@ async function walk(dir) {
   return files
 }
 
-async function listDownloaded() {
-  if (config.metadataDir) return listDownloadedFromMetadataDir()
+async function walkMatchingFiles(dir, predicate) {
+  let entries = []
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const files = []
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) files.push(...await walkMatchingFiles(fullPath, predicate))
+    else if (predicate(fullPath, entry.name)) files.push(fullPath)
+  }
+  return files
+}
 
-  const downloadFiles = await walk(DOWNLOAD_DIR)
-  const metadataFiles = downloadFiles
+function inventoryIndexPath(comicPathWord) {
+  return path.join(INVENTORY_INDEX_DIR, `${safeSegment(comicPathWord)}.json`)
+}
+
+async function readInventoryIndex(comicPathWord) {
+  if (!comicPathWord) return {}
+  try {
+    return JSON.parse(await readFile(inventoryIndexPath(comicPathWord), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+async function writeInventoryContentIndex(comicPathWord, patch = {}) {
+  if (!comicPathWord) return
+  const current = await readInventoryIndex(comicPathWord)
+  const next = {
+    ...current,
+    comicPathWord,
+    contentUpdatedAt: patch.contentUpdatedAt || current.contentUpdatedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  await atomicWriteJson(inventoryIndexPath(comicPathWord), next, { jobId: 'inventory-index' })
+}
+
+async function countImagesUnder(dir) {
+  const files = await walkMatchingFiles(dir, (file) => /\.(webp|jpe?g|png|gif)$/i.test(file))
+  return files.length
+}
+
+async function newestFileMtime(files = []) {
+  let newest = ''
+  for (const file of files) {
+    try {
+      const info = await stat(file)
+      const mtime = info.mtime.toISOString()
+      if (mtime > newest) newest = mtime
+    } catch {
+      // Ignore files that disappeared during inventory scan.
+    }
+  }
+  return newest
+}
+
+function readingStatsForItem(item, progressMap = {}) {
+  const progress = progressMap[item.comicPathWord] || {}
+  const read = new Set(Object.keys(progress.readChapters || {}))
+  const all = item.allChapterUuids || []
+  const total = all.length || Number(item.remoteChapterTotal || 0) || 0
+  const readCount = all.length ? all.filter((uuid) => read.has(uuid)).length : read.size
+  return { readCount, total, hasAnyRead: read.size > 0 }
+}
+
+function inventoryReadMatchesServer(item, readFilter, progressMap = {}) {
+  if (!readFilter || readFilter === 'all') return true
+  const stats = readingStatsForItem(item, progressMap)
+  if (readFilter === 'hasUnread') return stats.total > 0 && stats.readCount < stats.total
+  if (readFilter === 'allRead') return stats.total > 0 && stats.readCount >= stats.total
+  if (readFilter === 'unread') return stats.readCount === 0
+  return true
+}
+
+function publicDownloadedItem(item) {
+  const { chapterMetadataFiles, ...publicItem } = item
+  return publicItem
+}
+
+async function enrichDownloadedComicDetails(summary) {
+  const chapterImageChecks = {}
+  const imageCheckSummary = emptyImageCheckSummary()
+  let chapterFiles = []
+  try {
+    const chaptersDir = path.join(summary.metadataComicDir, 'chapters')
+    const entries = await readdir(chaptersDir, { withFileTypes: true })
+    chapterFiles = entries
+      .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.json')
+      .map((entry) => path.join(chaptersDir, entry.name))
+  } catch {
+    chapterFiles = summary.chapterMetadataFiles || []
+  }
+  for (const chapterFile of chapterFiles) {
+    try {
+      const chapter = JSON.parse(await readFile(chapterFile, 'utf8'))
+      const chapterUuid = chapterUuidOf(chapter) || path.basename(chapterFile, '.json')
+      if (!chapterUuid) continue
+      const tag = chapterImageCheckTag(chapter)
+      chapterImageChecks[chapterUuid] = tag
+      addImageCheckSummary(imageCheckSummary, tag)
+    } catch {
+      // Ignore broken chapter metadata and keep the page usable.
+    }
+  }
+  let imageCount = summary.imageCount
+  if (imageCount == null && summary.path) {
+    imageCount = await countImagesUnder(path.join(DOWNLOAD_DIR, summary.path))
+  }
+  return {
+    ...summary,
+    imageCount,
+    imageCheckSummary,
+    chapterImageChecks,
+  }
+}
+
+async function listDownloaded({ includeDetails = false } = {}) {
+  if (config.metadataDir) return listDownloadedFromMetadataDir({ includeDetails })
+
+  const metadataFiles = await walkMatchingFiles(DOWNLOAD_DIR, (file, name) => (
+    name === APP_COMIC_METADATA || name === APP_CHAPTER_METADATA
+  ))
   const comicFiles = collectComicMetadataFiles(metadataFiles)
   const comics = []
   for (const file of comicFiles) {
@@ -775,8 +918,9 @@ async function listDownloaded() {
         try {
           const chapter = JSON.parse(await readFile(chapterFile, 'utf8'))
           const chapterUuid = chapterUuidOf(chapter)
-          if (chapterUuid) {
-            chapterUuids.push(chapterUuid)
+          if (!chapterUuid) continue
+          chapterUuids.push(chapterUuid)
+          if (includeDetails) {
             const tag = chapterImageCheckTag(chapter)
             chapterImageChecks[chapterUuid] = tag
             addImageCheckSummary(imageCheckSummary, tag)
@@ -785,13 +929,12 @@ async function listDownloaded() {
           // Ignore broken chapter metadata and keep the rest of the inventory usable.
         }
       }
-      const imageFiles = downloadFiles.filter((candidate) => (
-        candidate.startsWith(`${downloadComicDir}${path.sep}`) && /\.(webp|jpe?g|png|gif)$/i.test(candidate)
-      ))
       const allChapterUuids = collectAllChapterUuids(comic)
       const remoteChapterTotal = countComicChapters(comic)
       const info = await stat(file)
-      comics.push({
+      const index = await readInventoryIndex(comicPathWordOf(comic))
+      const contentUpdatedAt = index.contentUpdatedAt || await newestFileMtime(chapterFiles) || info.mtime.toISOString()
+      const summary = {
         path: relativeComicDir,
         metadataComicFile: file,
         metadataComicDir,
@@ -804,16 +947,40 @@ async function listDownloaded() {
         chapterUuids,
         chapterCount: chapterFiles.length,
         remoteChapterTotal: remoteChapterTotal || null,
-        imageCount: imageFiles.length,
+        imageCount: null,
         imageCheckSummary,
         chapterImageChecks,
-        updatedAt: info.mtime.toISOString(),
-      })
+        metadataUpdatedAt: info.mtime.toISOString(),
+        contentUpdatedAt,
+        updatedAt: contentUpdatedAt,
+        chapterMetadataFiles: chapterFiles,
+      }
+      comics.push(includeDetails ? await enrichDownloadedComicDetails(summary) : summary)
     } catch (error) {
       console.warn(`skip invalid inventory file ${file}: ${error.message}`)
     }
   }
   return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
+async function listDownloadedPage({ page = 1, limit = 10, readFilter = 'all' } = {}) {
+  const pageNumber = Math.max(1, Math.floor(Number(page) || 1))
+  const pageSize = clampNumber(limit, 1, 100, 10)
+  const progressMap = await listReadingProgress()
+  const summaries = await listDownloaded({ includeDetails: false })
+  const filtered = summaries.filter((item) => inventoryReadMatchesServer(item, readFilter, progressMap))
+  const total = filtered.length
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const normalizedPage = Math.max(1, Math.min(totalPages, pageNumber))
+  const offset = (normalizedPage - 1) * pageSize
+  const items = await Promise.all(filtered.slice(offset, offset + pageSize).map(enrichDownloadedComicDetails))
+  return {
+    items: items.map(publicDownloadedItem),
+    total,
+    page: normalizedPage,
+    limit: pageSize,
+    totalPages,
+  }
 }
 
 function metadataComicDir(comicPathWord) {
@@ -832,7 +999,7 @@ function metadataChapterFile(comicPathWord, chapterUuid) {
   return path.join(metadataChaptersDir(comicPathWord), `${safeSegment(chapterUuid)}.json`)
 }
 
-async function listDownloadedFromMetadataDir() {
+async function listDownloadedFromMetadataDir({ includeDetails = true } = {}) {
   const comicsRoot = path.join(metadataRoot(), 'comics')
   let entries = []
   try {
@@ -846,7 +1013,8 @@ async function listDownloadedFromMetadataDir() {
     const comicPathWord = entry.name
     const file = metadataComicFile(comicPathWord)
     try {
-      comics.push(await downloadedComicSummaryFromMetadataFile(file, comicPathWord))
+      const summary = await downloadedComicSummaryFromMetadataFile(file, comicPathWord)
+      comics.push(includeDetails ? await enrichDownloadedComicDetails(summary) : summary)
     } catch (error) {
       console.warn(`skip invalid inventory file ${file}: ${error.message}`)
     }
@@ -873,7 +1041,7 @@ async function writeDownloadedComicMetadata(downloadedComic, comic) {
   normalizeComicMetadata(comic)
   const comicDir = path.join(DOWNLOAD_DIR, downloadedComic.path)
   const metadataFile = appComicMetadataPath(comic, comicDir)
-  await atomicWriteJson(metadataFile, appComicMetadataFrom(comic), {
+  await atomicWriteJsonIfChanged(metadataFile, appComicMetadataFrom(comic), {
     jobId: 'inventory',
     verify: (metadata) => {
       if (!comicPathWordOf(metadata)) throw new Error('漫画元数据写入校验失败')
@@ -932,21 +1100,10 @@ async function downloadedComicSummaryFromMetadataFile(file, fallbackPathWord = '
   const chapterUuids = chapterEntries
     .filter((item) => item.isFile() && path.extname(item.name).toLowerCase() === '.json')
     .map((item) => path.basename(item.name, '.json'))
-  const imageCheckSummary = emptyImageCheckSummary()
-  const chapterImageChecks = {}
-  for (const entry of chapterEntries) {
-    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.json') continue
-    try {
-      const chapter = JSON.parse(await readFile(path.join(metadataComicDir, 'chapters', entry.name), 'utf8'))
-      const chapterUuid = chapterUuidOf(chapter) || path.basename(entry.name, '.json')
-      const tag = chapterImageCheckTag(chapter)
-      chapterImageChecks[chapterUuid] = tag
-      addImageCheckSummary(imageCheckSummary, tag)
-    } catch {
-      // Ignore broken chapter metadata and keep the rest of the inventory usable.
-    }
-  }
   const info = await stat(file)
+  const index = await readInventoryIndex(comicPathWord)
+  const chapterFiles = chapterUuids.map((chapterUuid) => path.join(metadataComicDir, 'chapters', `${chapterUuid}.json`))
+  const contentUpdatedAt = index.contentUpdatedAt || await newestFileMtime(chapterFiles) || info.mtime.toISOString()
   return {
     path: relativeComicDir,
     metadataComicFile: file,
@@ -961,9 +1118,11 @@ async function downloadedComicSummaryFromMetadataFile(file, fallbackPathWord = '
     chapterCount: chapterUuids.length,
     remoteChapterTotal: countComicChapters(comic) || null,
     imageCount: null,
-    imageCheckSummary,
-    chapterImageChecks,
-    updatedAt: info.mtime.toISOString(),
+    imageCheckSummary: emptyImageCheckSummary(),
+    chapterImageChecks: {},
+    metadataUpdatedAt: info.mtime.toISOString(),
+    contentUpdatedAt,
+    updatedAt: contentUpdatedAt,
   }
 }
 
@@ -1867,7 +2026,7 @@ async function runImageCheckJob(job) {
 }
 
 async function enqueueInventoryImageChecks() {
-  const downloadedComics = await listDownloaded()
+  const downloadedComics = await listDownloaded({ includeDetails: true })
   const queued = []
   const skipped = []
   for (const comic of downloadedComics) {
@@ -2047,6 +2206,7 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
           if (chapterUuidOf(metadata) !== chapterUuid) throw new Error(`章节元数据写入校验失败：${chapterTitle}`)
         },
       })
+      await writeInventoryContentIndex(comicPathWord, { contentUpdatedAt: new Date().toISOString() })
       updateJob(job, { stage: 'metadata_ready', message: `元数据写入完成 ${chapterTitle}` })
       enqueueImageCheck({ comicPathWord, chapterUuid, chapterTitle, reason: 'download-completed' })
       job.doneChapters += 1
@@ -2071,7 +2231,12 @@ async function serveStatic(req, res, pathname) {
     if (!info.isFile()) return text(res, 404, 'Not found')
     const body = await readFile(filePath)
     const ext = path.extname(filePath)
-    const type = ext === '.js' ? 'text/javascript' : ext === '.css' ? 'text/css' : 'text/html'
+    const type = ({
+      '.css': 'text/css',
+      '.html': 'text/html',
+      '.js': 'text/javascript',
+      '.svg': 'image/svg+xml',
+    })[ext] || 'application/octet-stream'
     res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Content-Length': body.length })
     res.end(body)
   } catch {
@@ -2125,6 +2290,17 @@ async function route(req, res) {
     if (pathname === '/api/jobs' && req.method === 'GET') return json(res, 200, publicJobs())
     if (pathname === '/api/image-check/status' && req.method === 'GET') return json(res, 200, latestImageCheckSummary())
     if (pathname === '/api/image-check/inventory' && req.method === 'POST') return json(res, 202, await enqueueInventoryImageChecks())
+    if (pathname === '/api/image-check/chapter' && req.method === 'POST') {
+      const body = await readJson(req)
+      const job = enqueueImageCheck({
+        comicPathWord: body.comicPathWord || '',
+        chapterUuid: body.chapterUuid || '',
+        chapterTitle: body.chapterTitle || '',
+        reason: 'manual',
+      })
+      if (!job) return json(res, 400, { error: 'comicPathWord and chapterUuid are required' })
+      return json(res, 202, { job: publicImageCheckJob(job) })
+    }
     if (pathname === '/api/inventory-update' && req.method === 'GET') {
       return json(res, 200, latestInventoryUpdate() || null)
     }
@@ -2246,14 +2422,21 @@ async function route(req, res) {
     }
     if (pathname === '/api/jobs/retry-failed' && req.method === 'POST') {
       const retried = []
+      const superseded = []
       for (const [id, job] of [...jobs.entries()]) {
         if (job.deleted || job.status !== 'failed') continue
         const retry = createJob({ ...job, retryOf: job.id })
-        updateJob(job, { message: `${job.message || '失败'} · 已创建重试任务 ${retry.id}` })
         startJob(retry)
+        updateJob(job, {
+          status: 'superseded',
+          stage: 'superseded',
+          supersededBy: retry.id,
+          message: `${job.message || '失败'} · 已创建重试任务 ${retry.id}`,
+        })
         retried.push(publicJob(retry))
+        superseded.push(publicJob(job))
       }
-      return json(res, 202, { retried })
+      return json(res, 202, { retried, superseded })
     }
     if (pathname === '/api/jobs/clear-active' && req.method === 'POST') {
       let cleared = 0
@@ -2287,7 +2470,16 @@ async function route(req, res) {
       }
       return json(res, 200, { deleted: Boolean(job) })
     }
-    if (pathname === '/api/downloaded' && req.method === 'GET') return json(res, 200, await listDownloaded())
+    if (pathname === '/api/downloaded' && req.method === 'GET') {
+      if (url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('readFilter')) {
+        return json(res, 200, await listDownloadedPage({
+          page: url.searchParams.get('page') || 1,
+          limit: url.searchParams.get('limit') || 10,
+          readFilter: url.searchParams.get('readFilter') || 'all',
+        }))
+      }
+      return json(res, 200, (await listDownloaded({ includeDetails: false })).map(publicDownloadedItem))
+    }
     if (pathname.startsWith('/api/downloaded/comic/') && req.method === 'GET') {
       const comicPathWord = pathname.split('/').pop()
       return json(res, 200, await getDownloadedComic(comicPathWord, {

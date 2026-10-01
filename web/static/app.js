@@ -147,6 +147,7 @@ let selectedComicByTarget = {
 let jobs = []
 let downloaded = []
 let downloadedPage = 1
+let downloadedTotalPages = 1
 let currentDownloadedComicPathWord = ''
 let discoverOffset = 0
 let discoverTotal = 0
@@ -193,6 +194,7 @@ const stageLabels = {
   metadata_ready: '元数据完成',
   completed: '完成',
   failed: '失败',
+  superseded: '已重试',
 }
 
 els.token.value = localStorage.getItem('copymanga.token') || ''
@@ -373,14 +375,17 @@ function renderDiscover(data) {
   renderComicCards(els.discoverResults, list, (pathWord, title) => loadComic(pathWord, 'discover', title))
 }
 
-function renderDownloaded(list) {
+function renderDownloaded(payload) {
+  const isPaged = payload && !Array.isArray(payload) && Array.isArray(payload.items)
+  const list = isPaged ? payload.items : payload
   downloaded = list
   els.downloaded.innerHTML = ''
-  const visibleList = list.filter(inventoryReadMatches)
+  const visibleList = isPaged ? list : list.filter(inventoryReadMatches)
   const limit = Math.max(1, Number(els.downloadedLimit.value || 10))
-  const totalPages = Math.max(1, Math.ceil(visibleList.length / limit))
-  downloadedPage = Math.max(1, Math.min(totalPages, downloadedPage))
-  const offset = (downloadedPage - 1) * limit
+  const totalPages = isPaged ? Math.max(1, Number(payload.totalPages || 1)) : Math.max(1, Math.ceil(visibleList.length / limit))
+  downloadedTotalPages = totalPages
+  downloadedPage = isPaged ? Math.max(1, Number(payload.page || 1)) : Math.max(1, Math.min(totalPages, downloadedPage))
+  const offset = isPaged ? 0 : (downloadedPage - 1) * limit
   els.downloadedPage.value = String(downloadedPage)
   els.downloadedPage.max = String(totalPages)
   els.downloadedPageTotal.textContent = `/ ${totalPages} 页`
@@ -451,10 +456,8 @@ function imageCheckChapterText(chapter = {}) {
 }
 
 function jumpDownloadedPage() {
-  const limit = Math.max(1, Number(els.downloadedLimit.value || 10))
-  const totalPages = Math.max(1, Math.ceil(downloaded.filter(inventoryReadMatches).length / limit))
-  downloadedPage = Math.max(1, Math.min(totalPages, Math.floor(Number(els.downloadedPage.value || 1))))
-  renderDownloaded(downloaded)
+  downloadedPage = Math.max(1, Math.min(downloadedTotalPages, Math.floor(Number(els.downloadedPage.value || 1))))
+  loadDownloaded()
 }
 
 function comicPanel(target) {
@@ -533,8 +536,19 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
         </span>
         ${isDownloaded ? `<span class="badge ${escapeHtml(imageCheck.className)}">${escapeHtml(imageCheck.text)}</span>` : ''}
         <button class="chapter-view secondary" type="button">${isDownloaded ? '浏览' : '预览'}</button>
+        ${isDownloaded ? '<button class="chapter-image-check secondary" type="button" title="检查本章图片">检查</button>' : ''}
         <button class="chapter-redownload danger" type="button">重下</button>
       `
+      row.addEventListener('click', (event) => {
+        if (event.target.closest('button') || event.target.closest('input')) return
+        event.preventDefault()
+        openChapterViewer({
+          comicPathWord,
+          chapterUuid: id,
+          title,
+          comicTitle,
+        })
+      })
       row.querySelector('.chapter-view').addEventListener('click', (event) => {
         event.preventDefault()
         event.stopPropagation()
@@ -543,6 +557,16 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
           chapterUuid: id,
           title,
           comicTitle,
+        })
+      })
+      row.querySelector('.chapter-image-check')?.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        requestChapterImageCheck({
+          comicPathWord,
+          chapterUuid: id,
+          chapterTitle: chapterTitle(chapter),
+          button: event.currentTarget,
         })
       })
       row.querySelector('.chapter-redownload').addEventListener('click', (event) => {
@@ -557,6 +581,26 @@ function renderChapterGroups(data, chaptersEl, comicPathWord) {
   if (!Object.keys(data.groupsChapters || {}).length) {
     chaptersEl.classList.add('empty-panel')
     chaptersEl.textContent = '本地 metadata 没有章节信息'
+  }
+}
+
+async function requestChapterImageCheck({ comicPathWord, chapterUuid, chapterTitle, button }) {
+  if (!comicPathWord || !chapterUuid) return
+  try {
+    setLoading(button, true)
+    await api('/api/image-check/chapter', {
+      method: 'POST',
+      body: JSON.stringify({ comicPathWord, chapterUuid, chapterTitle }),
+    })
+    button.textContent = '检查中'
+    await refreshDownloadedState()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setTimeout(() => {
+      button.disabled = false
+      button.textContent = '检查'
+    }, 800)
   }
 }
 
@@ -730,7 +774,7 @@ function attachViewerSentinel() {
 
 function renderJobs() {
   els.jobs.innerHTML = ''
-  const visible = jobs.filter((job) => job.status !== 'completed' && !job.deleted)
+  const visible = jobs.filter((job) => !['completed', 'superseded'].includes(job.status) && !job.deleted)
   const sorted = [...visible].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   for (const job of sorted) {
     const total = Math.max(job.totalImages || job.totalChapters || 1, 1)
@@ -775,6 +819,7 @@ function renderTaskList() {
         job.id,
         job.batchId,
         job.retryOf,
+        job.supersededBy,
         job.comicTitle,
         job.comicPathWord,
         job.chapterTitle,
@@ -802,6 +847,10 @@ function renderTaskList() {
     const failedText = failedImages.length > 0
       ? ` · 失败图片 ${failedImages.map((image) => `#${image.index}`).slice(0, 8).join(', ')}${failedImages.length > 8 ? '...' : ''}`
       : ''
+    const relationText = [
+      job.retryOf ? `重试自 ${job.retryOf}` : '',
+      job.supersededBy ? `已由 ${job.supersededBy} 重试` : '',
+    ].filter(Boolean).join(' · ')
     const row = document.createElement('article')
     row.className = `task-row ${job.status}`
     row.innerHTML = `
@@ -814,7 +863,7 @@ function renderTaskList() {
         <span><span class="badge">${escapeHtml(job.status)}</span> <span class="badge">${escapeHtml(stageText)}</span></span>
         <span>${escapeHtml(job.message || '')}</span>
         <div class="bar"><span style="width:${pct}%"></span></div>
-        <small>章节 ${job.doneChapters}/${job.totalChapters} · 图片 ${job.doneImages}/${job.totalImages || '?'} · pending ${imageCounts.pending || 0} · running ${imageCounts.running || 0} · done ${imageCounts.completed || 0} · failed ${imageCounts.failed || 0}${escapeHtml(failedText)} · ${escapeHtml(job.updatedAt || '')}</small>
+        <small>章节 ${job.doneChapters}/${job.totalChapters} · 图片 ${job.doneImages}/${job.totalImages || '?'} · pending ${imageCounts.pending || 0} · running ${imageCounts.running || 0} · done ${imageCounts.completed || 0} · failed ${imageCounts.failed || 0}${escapeHtml(failedText)}${relationText ? ` · ${escapeHtml(relationText)}` : ''} · ${escapeHtml(job.updatedAt || '')}</small>
       </div>
       <div class="task-actions">
         <button class="danger" type="button">删除</button>
@@ -1050,13 +1099,20 @@ async function loadDiscover() {
 async function loadDownloaded() {
   try {
     setLoading(els.downloadedRefresh, true)
-    downloadedPage = 1
-    renderDownloaded(await api('/api/downloaded'))
+    renderDownloaded(await api(`/api/downloaded?${downloadedPageParams(downloadedPage)}`))
   } catch (error) {
     alert(error.message)
   } finally {
     setLoading(els.downloadedRefresh, false)
   }
+}
+
+function downloadedPageParams(page = downloadedPage) {
+  return new URLSearchParams({
+    page: String(Math.max(1, Math.floor(Number(page) || 1))),
+    limit: String(Math.max(1, Number(els.downloadedLimit.value || 10))),
+    readFilter: els.downloadedReadFilter?.value || 'all',
+  })
 }
 
 async function loadDownloadedComic(pathWord, { refreshOnly = false } = {}) {
@@ -1793,14 +1849,17 @@ function jumpDiscoverPage() {
   discoverOffset = (page - 1) * limit
   loadDiscover()
 }
-els.downloadedRefresh.addEventListener('click', loadDownloaded)
+els.downloadedRefresh.addEventListener('click', () => {
+  downloadedPage = 1
+  loadDownloaded()
+})
 els.downloadedPrev.addEventListener('click', () => {
   downloadedPage = Math.max(1, downloadedPage - 1)
-  renderDownloaded(downloaded)
+  loadDownloaded()
 })
 els.downloadedNext.addEventListener('click', () => {
-  downloadedPage += 1
-  renderDownloaded(downloaded)
+  downloadedPage = Math.min(downloadedTotalPages, downloadedPage + 1)
+  loadDownloaded()
 })
 els.downloadedJump.addEventListener('click', jumpDownloadedPage)
 els.downloadedPage.addEventListener('keydown', (event) => {
@@ -1808,11 +1867,11 @@ els.downloadedPage.addEventListener('keydown', (event) => {
 })
 els.downloadedLimit.addEventListener('change', () => {
   downloadedPage = 1
-  renderDownloaded(downloaded)
+  loadDownloaded()
 })
 els.downloadedReadFilter.addEventListener('change', () => {
   downloadedPage = 1
-  renderDownloaded(downloaded)
+  loadDownloaded()
 })
 els.downloadedComicRefresh.addEventListener('click', () => {
   if (currentDownloadedComicPathWord) loadDownloadedComic(currentDownloadedComicPathWord, { refreshOnly: true })
@@ -2056,8 +2115,10 @@ els.retryFailed.addEventListener('click', async () => {
     setLoading(els.retryFailed, true)
     const data = await api('/api/jobs/retry-failed', { method: 'POST', body: '{}' })
     const retried = data.retried || []
-    const retryIds = new Set(retried.map((job) => job.id))
-    jobs = [...retried, ...jobs.filter((job) => !retryIds.has(job.id))]
+    const superseded = data.superseded || []
+    const changedJobs = [...retried, ...superseded]
+    const changedIds = new Set(changedJobs.map((job) => job.id))
+    jobs = [...changedJobs, ...jobs.filter((job) => !changedIds.has(job.id))]
     renderJobs()
   } catch (error) {
     alert(error.message)
@@ -2175,7 +2236,13 @@ async function syncJobs() {
   if (hasNewCompletion) {
     await refreshDownloadedState()
     if (currentComicPathWord) await loadComic(currentComicPathWord, currentComicTarget)
-    if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
+    await refreshDownloadedViewIfActive()
+  }
+}
+
+async function refreshDownloadedViewIfActive() {
+  if (document.querySelector('#downloaded-view')?.classList.contains('active')) {
+    await loadDownloaded()
   }
 }
 
@@ -2187,7 +2254,7 @@ events.addEventListener('job', (event) => {
   if (job.status === 'completed') {
     refreshDownloadedState().then(() => {
       if (currentComicPathWord === job.comicPathWord) loadComic(currentComicPathWord, currentComicTarget)
-      if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
+      refreshDownloadedViewIfActive().catch(() => {})
     })
   }
 })
@@ -2200,7 +2267,7 @@ events.addEventListener('imageCheck', (event) => {
   const job = JSON.parse(event.data)
   if (job.status === 'completed' || job.status === 'failed') {
     refreshDownloadedState().then(() => {
-      if (document.querySelector('#downloaded-view')?.classList.contains('active')) renderDownloaded(downloaded)
+      refreshDownloadedViewIfActive().catch(() => {})
       if (currentDownloadedComicPathWord === job.comicPathWord) {
         loadDownloadedComic(job.comicPathWord).catch(() => {})
       }
