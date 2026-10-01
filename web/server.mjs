@@ -3410,7 +3410,13 @@ async function route(req, res) {
       return json(res, 200, { deleted: Boolean(job) })
     }
     if (pathname === '/api/downloaded' && req.method === 'GET') {
-      if (url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('readFilter') || url.searchParams.has('imageFilter')) {
+      if (
+        url.searchParams.has('page')
+        || url.searchParams.has('limit')
+        || url.searchParams.has('readFilter')
+        || url.searchParams.has('imageFilter')
+        || url.searchParams.has('keyword')
+      ) {
         return json(res, 200, await listDownloadedPage({
           page: url.searchParams.get('page') || 1,
           limit: url.searchParams.get('limit') || 10,

@@ -658,6 +658,9 @@ async function requestChapterImageCheck({ comicPathWord, chapterUuid, chapterTit
     })
     button.textContent = '检查中'
     await refreshDownloadedState()
+    if (currentDownloadedComicPathWord === comicPathWord) {
+      loadDownloadedComic(comicPathWord).catch(() => {})
+    }
   } catch (error) {
     alert(error.message)
   } finally {
@@ -2293,6 +2296,7 @@ function renderStreamMedia(reader, options = {}) {
   frame.className = `stream-frame stream-frame-${reader.type}`
   const player = document.createElement(reader.type)
   player.controls = false
+  player.autoplay = true
   player.preload = 'metadata'
   if (reader.type === 'video') player.crossOrigin = 'anonymous'
   player.src = reader.stream?.url || reader.unit?.streamUrl || ''
@@ -2466,6 +2470,15 @@ function renderStreamMedia(reader, options = {}) {
   setToggleState()
   setMuteState()
   let lastHistoryAt = 0
+  let autoPlayAttempted = false
+  const attemptAutoPlay = () => {
+    if (autoPlayAttempted || !player.paused) return
+    autoPlayAttempted = true
+    player.play().catch(() => {
+      playbackWarning.classList.remove('hidden')
+      playbackWarning.textContent = '浏览器拦截了自动播放，可点击播放按钮继续'
+    })
+  }
   play.addEventListener('click', () => {
     if (player.paused) player.play().catch(() => {})
     else player.pause()
@@ -2485,6 +2498,7 @@ function renderStreamMedia(reader, options = {}) {
     if (seconds > 0 && Number.isFinite(player.duration) && player.duration > 0) {
       player.currentTime = Math.max(0, Math.min(seconds, player.duration - 0.2))
     }
+    attemptAutoPlay()
   })
   player.addEventListener('timeupdate', () => {
     setProgress()
@@ -2564,6 +2578,7 @@ function renderStreamMedia(reader, options = {}) {
   frame.append(player, subtitleOverlay, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
+  setTimeout(attemptAutoPlay, 0)
   currentStreamCleanup = () => {
     els.mediaViewerView.classList.remove('stream-page-fullscreen')
     vrViewer?.destroy()
