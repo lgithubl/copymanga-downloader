@@ -240,21 +240,24 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     await importDirectoryRoot({ itemId, source: root.path, preferredName: title })
     const units = await scanMediaUnits(itemId, [])
     if (!units.length) throw new Error(`没有找到支持的${label}文件：${root.path}`)
-    const dlsite = await fetchRjImportDlsite(root.productId, options).catch((error) => ({
-      status: 'fetch_failed',
-      error: error.message,
+    const dlsite = {
       productId: root.productId,
-    }))
-    const cover = options.fetchDlsiteCover ? await cacheExternalCover(itemId, dlsite.cover).catch(() => dlsite.cover || '') : ''
+      status: 'pending',
+      site: '',
+      title: '',
+      circle: '',
+      cover: '',
+      fetchedAt: '',
+    }
     const next = normalizeItem({
       type,
       itemId,
-      title: options.fetchDlsiteTitle && dlsite.title ? dlsite.title : title,
+      title,
       productId: root.productId,
       sourceProfile: 'rj-media',
       dlsite,
       tags: inputTags,
-      cover,
+      cover: '',
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
       createdAt: new Date().toISOString(),
