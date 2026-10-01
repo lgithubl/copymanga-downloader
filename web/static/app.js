@@ -110,6 +110,9 @@ const els = {
   mediaImportFilesLabel: document.querySelector('#media-import-files-label'),
   mediaImportFiles: document.querySelector('#media-import-files'),
   mediaImportTagScripts: document.querySelector('#media-import-tag-scripts'),
+  mediaImportProfileConfig: document.querySelector('#media-import-profile-config'),
+  mediaImportProfileConfigSave: document.querySelector('#media-import-profile-config-save'),
+  mediaImportProfileConfigReset: document.querySelector('#media-import-profile-config-reset'),
   mediaImportSubmit: document.querySelector('#media-import-submit'),
   mediaImportMeta: document.querySelector('#media-import-meta'),
   mediaImportItems: document.querySelector('#media-import-items'),
@@ -201,15 +204,27 @@ let mediaPageStep = 1
 let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
 let currentStreamCleanup = null
+let appConfig = null
 const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'reader-theme-warm', 'reader-theme-sepia']
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
+const defaultMediaImportProfiles = {
+  'rj-media': {
+    maxDepth: 6,
+    idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
+    defaultTagScripts: ['subtitle-v1'],
+    fetchDlsiteCover: true,
+    fetchDlsiteTitle: true,
+    dlsiteRequestMinIntervalMs: 1500,
+    dlsiteRequestJitterMs: 800,
+  },
+}
 const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
   media: { label: '媒体', unit: '个媒体项', accept: '.zip,.epub,application/epub+zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
 }
 const mediaImportProfiles = {
   custom: { label: '自定义', type: '', sourcePlaceholder: '' },
-  'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', scriptHints: ['subtitle', 'rj', 'video-r'] },
+  'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', scriptHints: ['subtitle'], batch: true },
   'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video', scriptHints: ['subtitle', 'video-normal', 'video'] },
   epub: { label: 'EPUB', type: 'epub', sourcePlaceholder: '', scriptHints: [] },
 }
@@ -1010,6 +1025,7 @@ async function refreshDownloadedState() {
 
 async function loadConfig() {
   const config = await api('/api/config')
+  appConfig = config
   els.configToken.value = config.token || els.token.value.trim() || ''
   if (config.token && !els.token.value) {
     els.token.value = config.token
@@ -1048,6 +1064,7 @@ async function loadConfig() {
   els.configCreatePdfConcurrency.value = config.createPdfConcurrency
   els.configEnableMergePdf.checked = config.enableMergePdf
   els.configExportSkipMode.value = config.exportSkipMode
+  renderMediaImportProfileConfig()
 }
 
 els.login.addEventListener('click', async () => {
@@ -1509,8 +1526,13 @@ function renderMediaImportItems(items) {
 function updateMediaImportMeta() {
   const type = els.mediaImportType.value || 'epub'
   const info = mediaImportTypeInfo[type] || { label: type, source: false }
+  const profile = mediaImportProfiles[els.mediaImportProfile.value] || mediaImportProfiles.custom
   const selected = els.mediaImportItem.selectedOptions?.[0]
-  if (els.mediaImportItem.value) {
+  if (profile.batch) {
+    els.mediaImportMeta.textContent = els.mediaImportSourcePath.value.trim()
+      ? `RJ 批量导入会递归扫描来源目录，并把每个 RJ/VJ/BJ/EJ 目录导成独立媒体：${els.mediaImportSourcePath.value.trim()}`
+      : 'RJ 批量导入会递归扫描来源目录，并把每个 RJ/VJ/BJ/EJ 目录导成独立媒体'
+  } else if (els.mediaImportItem.value) {
     els.mediaImportTitle.value ||= selected?.dataset.title || selected?.textContent || ''
     els.mediaImportMeta.textContent = `本次导入会追加到已有合集：${selected?.textContent || els.mediaImportItem.value}`
   } else {
@@ -1526,12 +1548,20 @@ function updateMediaImportMeta() {
 function updateMediaImportControls() {
   const type = els.mediaImportType.value || 'epub'
   const info = mediaImportTypeInfo[type] || { label: type, accept: '', source: false }
+  const profile = mediaImportProfiles[els.mediaImportProfile.value] || mediaImportProfiles.custom
   els.mediaImportFiles.accept = info.accept || ''
   els.mediaImportFilesLabel.firstChild.textContent = `${info.label} 文件`
-  els.mediaImportSubmit.textContent = `导入 ${info.label}`
+  els.mediaImportSubmit.textContent = profile.batch ? `批量导入 ${profile.label}` : `导入 ${info.label}`
   els.mediaImportSourcePath.disabled = !info.source
   els.mediaImportSourcePath.placeholder = info.source ? '/input/album 或 /input/movie.mp4' : 'EPUB 暂不支持路径导入'
   if (!info.source) els.mediaImportSourcePath.value = ''
+  els.mediaImportItem.disabled = Boolean(profile.batch)
+  els.mediaImportTitle.disabled = Boolean(profile.batch)
+  if (profile.batch) {
+    els.mediaImportItem.value = ''
+    els.mediaImportTitle.value = ''
+  }
+  renderMediaImportProfileConfig()
   updateMediaImportMeta()
 }
 
@@ -1547,6 +1577,42 @@ function applyMediaImportProfile() {
     const script = tagScripts.find((item) => item.id === input.value)
     input.checked = Boolean(script?.defaultEnabled || hints.some((hint) => script?.id.includes(hint) || script?.name.toLowerCase().includes(hint)))
   }
+}
+
+function currentMediaImportProfileConfig() {
+  const key = els.mediaImportProfile.value
+  return {
+    ...(defaultMediaImportProfiles[key] || {}),
+    ...((appConfig?.mediaImportProfiles || {})[key] || {}),
+  }
+}
+
+function renderMediaImportProfileConfig() {
+  if (!els.mediaImportProfileConfig) return
+  const key = els.mediaImportProfile.value
+  const supported = key === 'rj-media'
+  els.mediaImportProfileConfig.closest('label').hidden = !supported
+  els.mediaImportProfileConfigSave.hidden = !supported
+  els.mediaImportProfileConfigReset.hidden = !supported
+  if (!supported) {
+    els.mediaImportProfileConfig.value = ''
+    return
+  }
+  els.mediaImportProfileConfig.value = JSON.stringify(currentMediaImportProfileConfig(), null, 2)
+}
+
+async function saveMediaImportProfileConfig(value) {
+  const key = els.mediaImportProfile.value
+  if (key !== 'rj-media') return
+  const nextProfiles = {
+    ...(appConfig?.mediaImportProfiles || {}),
+    [key]: value,
+  }
+  appConfig = await api('/api/config', {
+    method: 'POST',
+    body: JSON.stringify({ mediaImportProfiles: nextProfiles }),
+  })
+  renderMediaImportProfileConfig()
 }
 
 function renderLibraryItems() {
@@ -2972,6 +3038,22 @@ els.mediaImportProfile.addEventListener('change', () => {
   applyMediaImportProfile()
   loadMediaImportItems()
 })
+els.mediaImportProfileConfigSave.addEventListener('click', async () => {
+  try {
+    const value = JSON.parse(els.mediaImportProfileConfig.value || '{}')
+    await saveMediaImportProfileConfig(value)
+  } catch (error) {
+    alert(`导入方案配置无效：${error.message}`)
+  }
+})
+els.mediaImportProfileConfigReset.addEventListener('click', async () => {
+  try {
+    const key = els.mediaImportProfile.value
+    await saveMediaImportProfileConfig(defaultMediaImportProfiles[key] || {})
+  } catch (error) {
+    alert(error.message)
+  }
+})
 els.mediaImportItem.addEventListener('change', () => {
   const selected = els.mediaImportItem.selectedOptions?.[0]
   if (els.mediaImportItem.value) els.mediaImportTitle.value = selected?.dataset.title || selected?.textContent || ''
@@ -2982,30 +3064,37 @@ els.mediaImportSourcePath.addEventListener('input', updateMediaImportMeta)
 els.mediaImportSubmit.addEventListener('click', async () => {
   const type = els.mediaImportType.value || 'epub'
   const info = mediaImportTypeInfo[type] || { label: type, source: false }
+  const profile = mediaImportProfiles[els.mediaImportProfile.value] || mediaImportProfiles.custom
   const files = [...(els.mediaImportFiles.files || [])]
   const sourcePath = els.mediaImportSourcePath.value.trim()
   if (!files.length && (!info.source || !sourcePath)) return alert(`请选择 ${info.label} 文件${info.source ? '或填写来源路径' : ''}`)
-  if (!els.mediaImportItem.value && !els.mediaImportTitle.value.trim()) return alert('请输入合集名称')
+  if (!profile.batch && !els.mediaImportItem.value && !els.mediaImportTitle.value.trim()) return alert('请输入合集名称')
   try {
     setLoading(els.mediaImportSubmit, true)
     const form = new FormData()
     form.set('title', els.mediaImportTitle.value.trim())
-    if (els.mediaImportItem.value) form.set('itemId', els.mediaImportItem.value)
+    form.set('importProfile', els.mediaImportProfile.value)
+    if (!profile.batch && els.mediaImportItem.value) form.set('itemId', els.mediaImportItem.value)
     if (sourcePath) form.set('sourcePath', sourcePath)
     const tagScriptIds = checkedTagScriptIds('media-import-tag-script')
-    if (tagScriptIds.length) form.set('tagScriptIds', tagScriptIds.join(','))
+    if (!profile.batch && tagScriptIds.length) form.set('tagScriptIds', tagScriptIds.join(','))
     for (const file of files) form.append('file', file)
-    const item = await apiForm(`/api/library/items?type=${encodeURIComponent(type)}`, form)
+    const result = await apiForm(`/api/library/items?type=${encodeURIComponent(type)}`, form)
+    const importedItems = Array.isArray(result.items) ? result.items : [result]
+    const item = importedItems[0]
     els.mediaImportFiles.value = ''
     if (sourcePath) els.mediaImportSourcePath.value = ''
     await loadMediaImportItems()
-    els.mediaImportItem.value = item.itemId
-    els.mediaImportTitle.value = item.title
+    if (!profile.batch && item) {
+      els.mediaImportItem.value = item.itemId
+      els.mediaImportTitle.value = item.title
+    }
     updateMediaImportMeta()
-    if (els.libraryType.value !== item.type && els.libraryType.value !== 'all') els.libraryType.value = 'all'
+    if (item && els.libraryType.value !== item.type && els.libraryType.value !== 'all') els.libraryType.value = 'all'
     await loadLibraryItems()
-    await selectLibraryItem(item.type, item.itemId)
+    if (item) await selectLibraryItem(item.type, item.itemId)
     showView('library-view')
+    if (profile.batch) alert(`已导入 ${importedItems.length} 个 RJ 媒体`)
   } catch (error) {
     alert(error.message)
   } finally {

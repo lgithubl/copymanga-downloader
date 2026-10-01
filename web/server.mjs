@@ -208,6 +208,17 @@ function defaultConfig() {
     mediaManagedBasePath: path.join(DATA_DIR, 'library', 'media'),
     mediaStreamBasePath: '/media',
     mediaImportSourceRoots: '/input',
+    mediaImportProfiles: {
+      'rj-media': {
+        maxDepth: 6,
+        idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
+        defaultTagScripts: ['subtitle-v1'],
+        fetchDlsiteCover: true,
+        fetchDlsiteTitle: true,
+        dlsiteRequestMinIntervalMs: 1500,
+        dlsiteRequestJitterMs: 800,
+      },
+    },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
     apiDomainMode: 'Default',
     customApiDomain: DEFAULT_API_DOMAIN,
@@ -252,6 +263,7 @@ function normalizeConfig(value) {
     mediaManagedBasePath: String(value?.mediaManagedBasePath || defaults.mediaManagedBasePath).trim() || defaults.mediaManagedBasePath,
     mediaStreamBasePath: String(value?.mediaStreamBasePath || defaults.mediaStreamBasePath).trim() || defaults.mediaStreamBasePath,
     mediaImportSourceRoots: String(value?.mediaImportSourceRoots || defaults.mediaImportSourceRoots).trim() || defaults.mediaImportSourceRoots,
+    mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     apiDomainMode,
     customApiDomain: String(value?.customApiDomain || value?.apiDomain || defaults.customApiDomain).trim() || defaults.customApiDomain,
@@ -282,6 +294,23 @@ function normalizeConfig(value) {
     createPdfConcurrency: clampNumber(value?.createPdfConcurrency, 1, 30, defaults.createPdfConcurrency),
     enableMergePdf: Boolean(value?.enableMergePdf ?? defaults.enableMergePdf),
     exportSkipMode,
+  }
+}
+
+function normalizeMediaImportProfiles(value, defaults) {
+  const source = value && typeof value === 'object' ? value : {}
+  const rj = source['rj-media'] && typeof source['rj-media'] === 'object' ? source['rj-media'] : {}
+  const fallback = defaults['rj-media']
+  return {
+    'rj-media': {
+      maxDepth: clampNumber(rj.maxDepth, 1, 20, fallback.maxDepth),
+      idPattern: String(rj.idPattern || fallback.idPattern).trim() || fallback.idPattern,
+      defaultTagScripts: parseTags(rj.defaultTagScripts || fallback.defaultTagScripts),
+      fetchDlsiteCover: Boolean(rj.fetchDlsiteCover ?? fallback.fetchDlsiteCover),
+      fetchDlsiteTitle: Boolean(rj.fetchDlsiteTitle ?? fallback.fetchDlsiteTitle),
+      dlsiteRequestMinIntervalMs: clampNumber(rj.dlsiteRequestMinIntervalMs, 0, 60000, fallback.dlsiteRequestMinIntervalMs),
+      dlsiteRequestJitterMs: clampNumber(rj.dlsiteRequestJitterMs, 0, 60000, fallback.dlsiteRequestJitterMs),
+    },
   }
 }
 
@@ -2737,6 +2766,14 @@ function publicTagJob(job) {
   }
 }
 
+function importTagScriptIds(fields = {}) {
+  const profile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
+  if (profile === 'rj-media') {
+    return parseTags(config.mediaImportProfiles?.['rj-media']?.defaultTagScripts || ['subtitle-v1'])
+  }
+  return parseTags(fields.tagScriptIds || fields.tagScripts || '')
+}
+
 function updateTagJob(job, patch) {
   Object.assign(job, patch, { updatedAt: new Date().toISOString() })
   emit('tagJob', publicTagJob(job))
@@ -3205,11 +3242,14 @@ async function route(req, res) {
         files,
         fields: form.fields,
       })
-      await syncItemTagIndex(item)
-      if (handler.enqueueThumbnails) handler.enqueueThumbnails(item.itemId, { force: false }).catch(() => {})
-      const tagScriptIds = parseTags(form.fields.tagScriptIds || form.fields.tagScripts || '')
-      if (tagScriptIds.length) enqueueTagScripts({ type, itemId: item.itemId, scriptIds: tagScriptIds, reason: 'import' })
-      return json(res, 201, item)
+      const items = Array.isArray(item?.items) ? item.items : [item]
+      for (const imported of items) {
+        await syncItemTagIndex(imported)
+        if (handler.enqueueThumbnails) handler.enqueueThumbnails(imported.itemId, { force: false }).catch(() => {})
+        const tagScriptIds = importTagScriptIds(form.fields)
+        if (tagScriptIds.length) enqueueTagScripts({ type, itemId: imported.itemId, scriptIds: tagScriptIds, reason: 'import' })
+      }
+      return json(res, 201, Array.isArray(item?.items) ? { ...item, items } : items[0])
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'GET') {
       const parts = pathname.split('/').filter(Boolean)

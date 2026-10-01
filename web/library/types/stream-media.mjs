@@ -130,8 +130,12 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const sourcePath = String(fields.sourcePath || fields.path || '').trim()
     const collectionTitle = String(fields.title || fields.collectionTitle || '').trim()
     const inputTags = parseTags(fields.tags || '')
+    const importProfile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
     const fileInputs = files.filter((file) => file.buffer?.length)
     if (!sourcePath && !fileInputs.length) throw new Error('sourcePath or file is required')
+    if (importProfile === 'rj-media' && sourcePath && !fileInputs.length) {
+      return importRjDirectoryBatch({ sourcePath, inputTags })
+    }
 
     const seedTitle = collectionTitle || seedTitleForImport({ sourcePath, fileInputs })
     const itemId = requestedItemId || uniqueItemId(seedTitle)
@@ -175,6 +179,58 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       cover: existing.cover || units.find((unit) => unit.cover)?.cover || '',
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
+      updatedAt: new Date().toISOString(),
+    })
+    await writeMetadata(itemId, next)
+    return next
+  }
+
+  async function importRjDirectoryBatch({ sourcePath, inputTags = [] }) {
+    const source = path.resolve(sourcePath)
+    await assertAllowedSource(source)
+    const sourceInfo = await stat(source)
+    if (!sourceInfo.isDirectory()) throw new Error('RJ 导入方案只支持目录来源')
+    const options = rjImportOptions()
+    const roots = await findRjImportRoots(source, options)
+    if (!roots.length) throw new Error(`没有找到 RJ/VJ/BJ/EJ 目录：${source}`)
+    const items = []
+    for (const root of roots) {
+      await assertMediaRoot(root.path)
+      const item = await importRjDirectoryItem({ root, inputTags, options })
+      items.push(item)
+    }
+    return {
+      type,
+      profile: 'rj-media',
+      imported: items.length,
+      items,
+    }
+  }
+
+  async function importRjDirectoryItem({ root, inputTags = [], options }) {
+    const title = root.productId
+    const itemId = uniqueItemId(title)
+    await mkdir(itemPath(itemId), { recursive: true })
+    await importDirectoryRoot({ itemId, source: root.path, preferredName: title })
+    const units = await scanMediaUnits(itemId, [])
+    if (!units.length) throw new Error(`没有找到支持的${label}文件：${root.path}`)
+    const dlsite = await fetchRjImportDlsite(root.productId, options).catch((error) => ({
+      status: 'fetch_failed',
+      error: error.message,
+      productId: root.productId,
+    }))
+    const next = normalizeItem({
+      type,
+      itemId,
+      title: options.fetchDlsiteTitle && dlsite.title ? dlsite.title : title,
+      productId: root.productId,
+      sourceProfile: 'rj-media',
+      dlsite,
+      tags: inputTags,
+      cover: options.fetchDlsiteCover ? dlsite.cover || '' : '',
+      unitCount: units.length,
+      mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
     await writeMetadata(itemId, next)
@@ -434,6 +490,161 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean)
+  }
+
+  function rjImportOptions() {
+    const raw = getConfig().mediaImportProfiles?.['rj-media'] || {}
+    return {
+      maxDepth: finiteNumber(raw.maxDepth, 6),
+      idPattern: String(raw.idPattern || '(?:RJ|VJ|BJ|EJ)\\d{6,8}'),
+      fetchDlsiteCover: raw.fetchDlsiteCover !== false,
+      fetchDlsiteTitle: raw.fetchDlsiteTitle === true,
+      dlsiteRequestMinIntervalMs: finiteNumber(raw.dlsiteRequestMinIntervalMs, 1500),
+      dlsiteRequestJitterMs: finiteNumber(raw.dlsiteRequestJitterMs, 800),
+    }
+  }
+
+  async function findRjImportRoots(source, options) {
+    const roots = []
+    let pattern
+    try {
+      pattern = new RegExp(`^(${options.idPattern})$`, 'i')
+    } catch {
+      pattern = /^((?:RJ|VJ|BJ|EJ)\d{6,8})$/i
+    }
+    async function visit(dir, depth) {
+      const name = path.basename(dir)
+      const match = pattern.exec(name)
+      if (match) {
+        const mediaFiles = (await walkFiles(dir)).filter(isSupportedName)
+        if (mediaFiles.length) roots.push({ path: dir, productId: match[1].toUpperCase() })
+        return
+      }
+      if (depth >= options.maxDepth) return
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))) {
+        if (!entry.isDirectory()) continue
+        if (entry.name.startsWith('.') || entry.name === '__MACOSX') continue
+        await visit(path.join(dir, entry.name), depth + 1)
+      }
+    }
+    await visit(source, 0)
+    return roots
+  }
+
+  async function fetchRjImportDlsite(productId, options) {
+    const result = {
+      productId,
+      status: 'skipped',
+      site: '',
+      title: '',
+      circle: '',
+      cover: '',
+      fetchedAt: new Date().toISOString(),
+    }
+    if (!options.fetchDlsiteCover && !options.fetchDlsiteTitle) return result
+    if (options.fetchDlsiteTitle) {
+      Object.assign(result, await fetchDlsiteAjaxDetail(productId, options))
+    }
+    if (options.fetchDlsiteCover) {
+      result.cover ||= await resolveDlsiteCover(productId, options)
+    }
+    result.status = result.title || result.circle || result.cover ? 'found' : 'not_found'
+    return result
+  }
+
+  async function fetchDlsiteAjaxDetail(productId, options) {
+    for (const site of dlsiteSites(productId)) {
+      await sleep(Math.max(0, options.dlsiteRequestMinIntervalMs || 0) + Math.floor(Math.random() * Math.max(0, options.dlsiteRequestJitterMs || 0)))
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 12000)
+      try {
+        const res = await fetch(`https://www.dlsite.com/${site}/product/info/ajax?product_id=${encodeURIComponent(productId)}`, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; copymanga-rj-import/1.0)',
+            Accept: 'application/json,*/*;q=0.8',
+            'Accept-Language': 'ja,en;q=0.8,zh-CN;q=0.7',
+          },
+        })
+        if (!res.ok) continue
+        const data = await res.json()
+        const row = data?.[productId] || data?.[String(productId).toUpperCase()] || (Array.isArray(data) ? data[0] : null)
+        if (!row || typeof row !== 'object') continue
+        return {
+          site,
+          title: cleanText(row.work_name || row.title || row.name),
+          circle: cleanText(row.maker_name || row.circle_name || row.brand_name || row.maker?.name),
+          cover: normalizeDlsiteImageUrl(cleanText(row.image_main || row.image || row.image_url || row.work_image)),
+        }
+      } catch {
+        // Try the next DLsite area; network metadata is best-effort for imports.
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return {}
+  }
+
+  function dlsiteSites(productId) {
+    const prefix = String(productId || '').slice(0, 2).toUpperCase()
+    if (prefix === 'VJ') return ['pro', 'maniax']
+    if (prefix === 'BJ') return ['books', 'maniax']
+    return ['maniax', 'pro', 'books']
+  }
+
+  async function resolveDlsiteCover(productId, options) {
+    for (const url of dlsiteCoverCandidates(productId)) {
+      if (await imageUrlExists(url, options)) return url
+    }
+    return ''
+  }
+
+  function dlsiteCoverCandidates(productId) {
+    const id = String(productId || '').toUpperCase()
+    const match = /^(RJ|VJ|BJ|EJ)(\d{6,8})$/.exec(id)
+    if (!match) return []
+    const bucket = `${match[1]}${match[2].slice(0, 3)}${'0'.repeat(match[2].length - 3)}`
+    const categories = match[1] === 'VJ' ? ['professional', 'doujin'] : ['doujin', 'professional', 'books']
+    return categories.flatMap((category) => [
+      `https://img.dlsite.jp/modpub/images2/work/${category}/${bucket}/${id}_img_main.jpg`,
+      `https://img.dlsite.jp/modpub/images2/work/${category}/${bucket}/${id}_img_sam.jpg`,
+    ])
+  }
+
+  async function imageUrlExists(url, options) {
+    await sleep(Math.max(0, options.dlsiteRequestMinIntervalMs || 0) + Math.floor(Math.random() * Math.max(0, options.dlsiteRequestJitterMs || 0)))
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 12000)
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          Range: 'bytes=0-2047',
+          'User-Agent': 'Mozilla/5.0 (compatible; copymanga-rj-import/1.0)',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+      })
+      return res.ok && String(res.headers.get('content-type') || '').toLowerCase().startsWith('image/')
+    } catch {
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  function cleanText(value) {
+    return String(value || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+  }
+
+  function normalizeDlsiteImageUrl(value) {
+    const text = String(value || '').trim()
+    if (!text) return ''
+    if (text.startsWith('//')) return `https:${text}`
+    if (/^https?:\/\//i.test(text)) return text
+    if (text.startsWith('/')) return `https://www.dlsite.com${text}`
+    return text
   }
 
   async function walkFiles(dir) {
@@ -1053,6 +1264,18 @@ function normalizeItem(item) {
     author: Array.isArray(item?.author) ? item.author : [],
     tags: parseTags(item?.tags || []),
     cover: String(item?.cover || ''),
+    productId: String(item?.productId || ''),
+    sourceProfile: String(item?.sourceProfile || ''),
+    dlsite: item?.dlsite && typeof item.dlsite === 'object' ? {
+      productId: String(item.dlsite.productId || item?.productId || ''),
+      status: String(item.dlsite.status || ''),
+      site: String(item.dlsite.site || ''),
+      title: String(item.dlsite.title || ''),
+      circle: String(item.dlsite.circle || ''),
+      cover: String(item.dlsite.cover || ''),
+      error: String(item.dlsite.error || ''),
+      fetchedAt: String(item.dlsite.fetchedAt || ''),
+    } : null,
     unitCount: Number(item?.unitCount || mediaUnits.length || 0),
     mediaUnits,
     createdAt: String(item?.createdAt || ''),
@@ -1510,6 +1733,15 @@ function decodeHtmlEntities(value) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function finiteNumber(value, fallback) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
 }
 
 function uniqueItemId(title) {
