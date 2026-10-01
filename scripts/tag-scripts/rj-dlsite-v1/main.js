@@ -7,9 +7,10 @@ let lastRequestAt = 0
 export async function generateTags(ctx) {
   const options = normalizeOptions(ctx.script?.options)
   const units = Array.isArray(ctx.units) ? ctx.units : []
-  const itemProductIds = productIdsFromTexts([ctx.item?.title, ctx.item?.itemId, ctx.item?.path, ctx.item?.sourcePath])
+  const itemProductIds = productIdsFromTexts([ctx.item?.productId, ctx.item?.title, ctx.item?.itemId, ctx.item?.path, ctx.item?.sourcePath])
   const unitIds = new Map(units.map((unit) => [unit.unitId, productIdsFromTexts(unitTexts(unit))]))
-  const allProductIds = unique([...itemProductIds, ...[...unitIds.values()].flat()])
+  const itemOnly = ctx.item?.sourceProfile === 'rj-media'
+  const allProductIds = unique([...itemProductIds, ...(itemOnly ? [] : [...unitIds.values()].flat())])
 
   const itemCandidates = [
     tag('product_status', `编号: ${allProductIds.length ? '有' : '无'}`),
@@ -26,7 +27,7 @@ export async function generateTags(ctx) {
   }
   itemCandidates.unshift(tag('rj_generation', `RJ生成: ${generationStatus(allProductIds, [...detailsById.values()])}`))
 
-  const unitTags = units.map((unit) => {
+  const unitTags = itemOnly ? [] : units.map((unit) => {
     const ids = unitIds.get(unit.unitId) || []
     const candidates = ids.flatMap((productId) => [
       tag('product_id', productId),

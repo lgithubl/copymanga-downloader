@@ -212,7 +212,7 @@ function defaultConfig() {
       'rj-media': {
         maxDepth: 6,
         idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-        defaultTagScripts: ['subtitle-v1'],
+        defaultTagScripts: ['subtitle-v1', 'rj-dlsite-v1'],
         fetchDlsiteCover: true,
         fetchDlsiteTitle: true,
         dlsiteRequestMinIntervalMs: 1500,
@@ -305,13 +305,19 @@ function normalizeMediaImportProfiles(value, defaults) {
     'rj-media': {
       maxDepth: clampNumber(rj.maxDepth, 1, 20, fallback.maxDepth),
       idPattern: String(rj.idPattern || fallback.idPattern).trim() || fallback.idPattern,
-      defaultTagScripts: parseTags(rj.defaultTagScripts || fallback.defaultTagScripts),
+      defaultTagScripts: normalizeRjDefaultTagScripts(rj.defaultTagScripts, fallback.defaultTagScripts),
       fetchDlsiteCover: Boolean(rj.fetchDlsiteCover ?? fallback.fetchDlsiteCover),
       fetchDlsiteTitle: Boolean(rj.fetchDlsiteTitle ?? fallback.fetchDlsiteTitle),
       dlsiteRequestMinIntervalMs: clampNumber(rj.dlsiteRequestMinIntervalMs, 0, 60000, fallback.dlsiteRequestMinIntervalMs),
       dlsiteRequestJitterMs: clampNumber(rj.dlsiteRequestJitterMs, 0, 60000, fallback.dlsiteRequestJitterMs),
     },
   }
+}
+
+function normalizeRjDefaultTagScripts(value, fallback) {
+  const tags = parseTags(value || fallback)
+  if (tags.length === 1 && tags[0] === 'subtitle-v1') return ['subtitle-v1', 'rj-dlsite-v1']
+  return tags.length ? tags : fallback
 }
 
 function clampNumber(value, min, max, fallback) {

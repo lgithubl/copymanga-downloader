@@ -211,7 +211,7 @@ const defaultMediaImportProfiles = {
   'rj-media': {
     maxDepth: 6,
     idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-    defaultTagScripts: ['subtitle-v1'],
+    defaultTagScripts: ['subtitle-v1', 'rj-dlsite-v1'],
     fetchDlsiteCover: true,
     fetchDlsiteTitle: true,
     dlsiteRequestMinIntervalMs: 1500,
