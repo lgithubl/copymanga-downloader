@@ -411,6 +411,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   }
 
   async function enqueueThumbnails(itemId, { force = false } = {}) {
+    const externalCover = await refreshExternalCover(itemId, { force }).catch((error) => ({
+      status: 'failed',
+      message: error.message,
+    }))
     const item = await readMetadata(itemId)
     const jobs = []
     for (const unit of mediaUnitsForItem(item)) {
@@ -418,7 +422,43 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       if (!force && unit.thumbnail?.status === 'ready') continue
       jobs.push(await enqueueThumbnail(itemId, unit.unitId, { force }))
     }
-    return { queued: jobs }
+    return { queued: jobs, externalCover }
+  }
+
+  async function refreshExternalCover(itemId, { force = false } = {}) {
+    const item = await readMetadata(itemId)
+    if (item.sourceProfile !== 'rj-media' || !item.productId) {
+      return { status: 'skipped', message: '不是 RJ 导入媒体' }
+    }
+    const options = rjImportOptions()
+    if (!force && item.cover && item.dlsite?.cover) {
+      return { status: 'skipped', message: 'DL 封面已存在', cover: item.cover }
+    }
+    const dlsite = await fetchRjImportDlsite(item.productId, { ...options, fetchDlsiteCover: true, fetchDlsiteTitle: true }).catch((error) => ({
+      productId: item.productId,
+      status: 'fetch_failed',
+      error: error.message,
+      fetchedAt: new Date().toISOString(),
+    }))
+    let updated
+    await updateMetadata(itemId, (current) => {
+      updated = normalizeItem({
+        ...current,
+        dlsite: {
+          ...(current.dlsite || {}),
+          ...dlsite,
+          productId: item.productId,
+        },
+        cover: dlsite.cover || current.cover || '',
+        updatedAt: new Date().toISOString(),
+      })
+      return updated
+    })
+    return {
+      status: dlsite.cover ? 'completed' : (dlsite.status || 'failed'),
+      cover: dlsite.cover || '',
+      message: dlsite.cover ? 'DL 封面已更新' : (dlsite.error || '未获取到 DL 封面'),
+    }
   }
 
   async function rescanSubtitles(itemId) {
@@ -1251,6 +1291,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     getThumbnail,
     enqueueThumbnail,
     enqueueThumbnails,
+    refreshExternalCover,
     rescanSubtitles,
   }
 }

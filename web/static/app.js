@@ -2012,12 +2012,15 @@ async function regenerateLibraryThumbnails() {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
   try {
     setLoading(els.libraryThumbnails, true)
-    await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/thumbnails`, {
+    const result = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/thumbnails`, {
       method: 'POST',
       body: JSON.stringify({ force: true }),
     })
     await selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId)
     setTimeout(() => selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId).catch(() => {}), 3500)
+    if (result.externalCover?.status && !['completed', 'skipped'].includes(result.externalCover.status)) {
+      alert(`DL 封面刷新失败：${result.externalCover.message || result.externalCover.status}`)
+    }
   } catch (error) {
     alert(error.message)
   } finally {
