@@ -77,6 +77,13 @@ const els = {
   taskList: document.querySelector('#task-list'),
   libraryType: document.querySelector('#library-type'),
   libraryTagSearch: document.querySelector('#library-tag-search'),
+  libraryFirst: document.querySelector('#library-first'),
+  libraryPrev: document.querySelector('#library-prev'),
+  libraryPage: document.querySelector('#library-page'),
+  libraryPageTotal: document.querySelector('#library-page-total'),
+  libraryJump: document.querySelector('#library-jump'),
+  libraryNext: document.querySelector('#library-next'),
+  libraryLimit: document.querySelector('#library-limit'),
   librarySample: document.querySelector('#library-sample'),
   libraryRefresh: document.querySelector('#library-refresh'),
   libraryItems: document.querySelector('#library-items'),
@@ -188,6 +195,8 @@ let viewerReturnView = 'search-view'
 let readingProgress = {}
 let libraryTypes = []
 let libraryItems = []
+let libraryPage = 1
+let libraryTotalPages = 1
 let libraryHistory = []
 let libraryHistoryByKey = new Map()
 let tagScripts = []
@@ -1624,7 +1633,19 @@ async function saveMediaImportProfileConfig(value) {
 
 function renderLibraryItems() {
   els.libraryItems.innerHTML = ''
-  for (const item of libraryItems) {
+  const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
+  libraryTotalPages = Math.max(1, Math.ceil(libraryItems.length / limit))
+  libraryPage = Math.max(1, Math.min(libraryTotalPages, libraryPage))
+  const offset = (libraryPage - 1) * limit
+  if (els.libraryPage && document.activeElement !== els.libraryPage) {
+    els.libraryPage.value = String(libraryPage)
+  }
+  if (els.libraryPage) els.libraryPage.max = String(libraryTotalPages)
+  if (els.libraryPageTotal) els.libraryPageTotal.textContent = `/ ${libraryTotalPages} 页`
+  if (els.libraryFirst) els.libraryFirst.disabled = libraryPage <= 1
+  if (els.libraryPrev) els.libraryPrev.disabled = libraryPage <= 1
+  if (els.libraryNext) els.libraryNext.disabled = libraryPage >= libraryTotalPages
+  for (const item of libraryItems.slice(offset, offset + limit)) {
     const summary = libraryItemSummary(item)
     const history = libraryHistoryByKey.get(libraryKey(item.type, item.itemId))
     const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
@@ -1652,6 +1673,11 @@ function renderLibraryItems() {
     els.libraryItems.append(card)
   }
   if (libraryItems.length === 0) els.libraryItems.innerHTML = '<p class="muted">暂无媒体库条目</p>'
+}
+
+function jumpLibraryPage() {
+  libraryPage = Math.max(1, Math.min(libraryTotalPages, Math.floor(Number(els.libraryPage?.value || 1))))
+  renderLibraryItems()
 }
 
 async function selectLibraryItem(type, itemId) {
@@ -2153,6 +2179,7 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
 }
 
 function renderMediaReader(reader, options = {}) {
+  syncMediaReaderThemeControl(reader.type)
   applyMediaReaderTheme()
   setMediaViewerMode(reader.type)
   if (!(reader.type === 'audio' || reader.type === 'video') && currentStreamCleanup) {
@@ -2174,6 +2201,19 @@ function renderMediaReader(reader, options = {}) {
     els.mediaReaderContent.textContent = `暂不支持的阅读内容类型：${reader.type}`
     updateMediaPageControls()
   }
+}
+
+function syncMediaReaderThemeControl(type) {
+  if (!els.mediaReaderTheme) return
+  if (type === 'audio' || type === 'video') {
+    els.mediaReaderTheme.value = 'dark'
+    els.mediaReaderTheme.disabled = true
+    els.mediaReaderTheme.title = '音视频播放器使用固定深色主题'
+    return
+  }
+  els.mediaReaderTheme.disabled = false
+  els.mediaReaderTheme.title = '阅读主题'
+  els.mediaReaderTheme.value = localStorage.getItem('copymanga.mediaReaderTheme') || 'light'
 }
 
 function setMediaViewerMode(type) {
@@ -3008,9 +3048,35 @@ els.downloadedMarkAllRead.addEventListener('click', async () => {
   }
 })
 els.libraryRefresh.addEventListener('click', loadLibraryItems)
-els.libraryType.addEventListener('change', loadLibraryItems)
+els.libraryType.addEventListener('change', () => {
+  libraryPage = 1
+  loadLibraryItems()
+})
 els.libraryTagSearch.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') loadLibraryItems()
+  if (event.key === 'Enter') {
+    libraryPage = 1
+    loadLibraryItems()
+  }
+})
+els.libraryFirst?.addEventListener('click', () => {
+  libraryPage = 1
+  renderLibraryItems()
+})
+els.libraryPrev?.addEventListener('click', () => {
+  libraryPage = Math.max(1, libraryPage - 1)
+  renderLibraryItems()
+})
+els.libraryNext?.addEventListener('click', () => {
+  libraryPage = Math.min(libraryTotalPages, libraryPage + 1)
+  renderLibraryItems()
+})
+els.libraryJump?.addEventListener('click', jumpLibraryPage)
+els.libraryPage?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') jumpLibraryPage()
+})
+els.libraryLimit?.addEventListener('change', () => {
+  libraryPage = 1
+  renderLibraryItems()
 })
 els.libraryRunTagScripts.addEventListener('click', async () => {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
@@ -3183,8 +3249,9 @@ document.addEventListener('click', (event) => {
   event.stopPropagation()
   showView('library-view')
   els.libraryTagSearch.value = `tag:"${String(pill.dataset.tag || '').replace(/"/g, '\\"')}"`
+  libraryPage = 1
   loadLibraryItems().catch((error) => alert(error.message))
-})
+}, true)
 els.mediaPagePrev.addEventListener('click', () => setMediaPage(mediaPageIndex - 1))
 els.mediaPageNext.addEventListener('click', () => {
   if (currentMediaReader?.type === 'html' && mediaPageIndex < mediaPageCount - 1) {

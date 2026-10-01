@@ -407,6 +407,7 @@ h2 {
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .library-workspace > section:first-child {
@@ -414,9 +415,29 @@ h2 {
 }
 
 .library-workspace .chapter-head {
+  align-items: center;
   position: static;
   top: auto;
   z-index: auto;
+}
+
+.library-workspace .chapter-actions {
+  align-items: center;
+  flex: 1 1 auto;
+  flex-shrink: 1;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.library-workspace .chapter-actions > * {
+  flex: 0 0 auto;
+}
+
+.library-workspace #library-tag-search,
+.library-workspace #library-item-tags {
+  min-width: 220px;
 }
 
 .library-workspace #library-items {
@@ -503,6 +524,10 @@ h2 {
 .library-card .tag-list {
   max-height: 52px;
   overflow: hidden;
+}
+
+.library-card .tag-list[data-collapsed="0"] {
+  max-height: none;
 }
 
 .library-card .library-continue {
@@ -918,6 +943,10 @@ h2 {
   z-index: 4;
 }
 
+.chapter-head > div:first-child {
+  min-width: 0;
+}
+
 .chapter-head h2 {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -944,9 +973,17 @@ h2 {
   max-width: 260px;
 }
 
+.chapter-actions input:not([type="file"]) {
+  width: auto;
+}
+
 .chapter-actions select {
   min-width: 132px;
   width: auto;
+}
+
+.chapter-actions .page-jump input {
+  width: 64px;
 }
 
 .discover-panel {

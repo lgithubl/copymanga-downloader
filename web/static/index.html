@@ -154,6 +154,7 @@
                     <option value="10">10</option>
                     <option value="20">20</option>
                     <option value="50">50</option>
+                    <option value="100">100</option>
                   </select>
                 </label>
               </div>
@@ -232,6 +233,7 @@
                 <option value="10">10</option>
                 <option value="20">20</option>
                 <option value="50">50</option>
+                <option value="100">100</option>
               </select>
               <select id="downloaded-read-filter">
                 <option value="all">全部阅读状态</option>
@@ -282,6 +284,21 @@
                   <option value="all">全部类型</option>
                 </select>
                 <input id="library-tag-search" placeholder="tag:课程 -未整理" />
+                <button id="library-first" class="secondary" disabled>首页</button>
+                <button id="library-prev" class="secondary" disabled>上一页</button>
+                <label class="page-jump">
+                  <span>第</span>
+                  <input id="library-page" type="number" min="1" value="1" />
+                  <span id="library-page-total">/ 1 页</span>
+                </label>
+                <button id="library-jump" class="secondary">跳转</button>
+                <button id="library-next" class="secondary" disabled>下一页</button>
+                <select id="library-limit" title="每页">
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
                 <button id="library-sample" class="secondary">生成示例</button>
                 <button id="library-refresh">刷新</button>
               </div>
