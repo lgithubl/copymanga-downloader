@@ -23,6 +23,7 @@ const LIBRARY_HISTORY_INDEX = path.join(LIBRARY_HISTORY_DIR, 'index.json')
 const TAG_SCRIPTS_DIR = process.env.TAG_SCRIPTS_DIR || path.join(DATA_DIR, 'tag-scripts')
 const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
 const TAG_OVERRIDE_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-overrides')
+const TAG_SCRIPT_CONFIG_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-script-config')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -2512,6 +2513,7 @@ async function clearLibraryHistory(type = 'all') {
 
 function normalizeTagScriptManifest(manifest, dirName) {
   const id = safeScriptId(manifest?.id || dirName)
+  const defaultOptions = manifest?.options && typeof manifest.options === 'object' ? manifest.options : {}
   return {
     id,
     name: String(manifest?.name || id),
@@ -2521,7 +2523,9 @@ function normalizeTagScriptManifest(manifest, dirName) {
     libraryTypes: Array.isArray(manifest?.libraryTypes) ? manifest.libraryTypes.map(String) : [],
     mediaKinds: Array.isArray(manifest?.mediaKinds) ? manifest.mediaKinds.map(String) : [],
     exclusiveTagGroups: parseTags(manifest?.exclusiveTagGroups || manifest?.exclusiveGroups || []),
-    options: manifest?.options && typeof manifest.options === 'object' ? manifest.options : {},
+    defaultOptions,
+    userOptions: {},
+    options: defaultOptions,
     defaultEnabled: Boolean(manifest?.defaultEnabled),
     main: String(manifest?.main || 'main.js'),
     dirName,
@@ -2552,6 +2556,9 @@ async function scanTagScripts({ force = false } = {}) {
         const script = normalizeTagScriptManifest(manifest, entry.name)
         scriptId = script.id
         if (seenIds.has(scriptId)) continue
+        const userOptions = await readTagScriptOptions(script.id)
+        script.userOptions = userOptions
+        script.options = mergePlainObject(script.defaultOptions, userOptions)
         const mainPath = path.resolve(dir, script.main)
         const root = path.resolve(dir)
         if (!mainPath.startsWith(`${root}${path.sep}`) && mainPath !== root) throw new Error('main path escapes script dir')
@@ -2569,6 +2576,8 @@ async function scanTagScripts({ force = false } = {}) {
           libraryTypes: [],
           mediaKinds: [],
           exclusiveTagGroups: [],
+          defaultOptions: {},
+          userOptions: {},
           options: {},
           defaultEnabled: false,
           dirName: entry.name,
@@ -2585,6 +2594,43 @@ async function scanTagScripts({ force = false } = {}) {
 
 function tagScriptRoots() {
   return [{ dir: path.resolve(TAG_SCRIPTS_DIR), label: 'runtime', writable: true }]
+}
+
+function tagScriptConfigPath(scriptId) {
+  return path.join(TAG_SCRIPT_CONFIG_DIR, `${safeScriptId(scriptId)}.json`)
+}
+
+async function readTagScriptOptions(scriptId) {
+  try {
+    const value = JSON.parse(await readFile(tagScriptConfigPath(scriptId), 'utf8'))
+    return value?.options && typeof value.options === 'object' ? value.options : {}
+  } catch {
+    return {}
+  }
+}
+
+async function saveTagScriptOptions(scriptId, options) {
+  const id = safeScriptId(scriptId)
+  await atomicWriteJson(tagScriptConfigPath(id), {
+    scriptId: id,
+    options: options && typeof options === 'object' ? options : {},
+    updatedAt: new Date().toISOString(),
+  }, { jobId: `tag-script-config-${id}` })
+  tagScriptsCache = null
+  return await scanTagScripts({ force: true })
+}
+
+async function deleteTagScriptOptions(scriptId) {
+  await rm(tagScriptConfigPath(scriptId), { force: true })
+  tagScriptsCache = null
+  return await scanTagScripts({ force: true })
+}
+
+function mergePlainObject(base = {}, override = {}) {
+  return {
+    ...(base && typeof base === 'object' ? base : {}),
+    ...(override && typeof override === 'object' ? override : {}),
+  }
 }
 
 function publicTagJob(job) {
@@ -2978,6 +3024,17 @@ async function route(req, res) {
     }
     if (pathname === '/api/tag-scripts' && req.method === 'GET') {
       return json(res, 200, await scanTagScripts({ force: url.searchParams.get('reload') === '1' }))
+    }
+    if (pathname.startsWith('/api/tag-scripts/') && req.method === 'POST') {
+      const [, , scriptId, action] = pathname.split('/').filter(Boolean)
+      if (action !== 'config') return json(res, 404, { error: 'Not found' })
+      const body = await readJson(req)
+      return json(res, 200, await saveTagScriptOptions(scriptId, body.options || body))
+    }
+    if (pathname.startsWith('/api/tag-scripts/') && req.method === 'DELETE') {
+      const [, , scriptId, action] = pathname.split('/').filter(Boolean)
+      if (action !== 'config') return json(res, 404, { error: 'Not found' })
+      return json(res, 200, await deleteTagScriptOptions(scriptId))
     }
     if (pathname === '/api/tag-jobs' && req.method === 'GET') {
       return json(res, 200, [...tagJobs.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(publicTagJob))

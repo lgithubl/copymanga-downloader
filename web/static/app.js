@@ -1353,8 +1353,36 @@ function renderTagManager() {
         <div class="card-title">${escapeHtml(script.name)}</div>
         <div class="library-card-meta">${escapeHtml(script.id)} · v${escapeHtml(script.version)}</div>
         <div class="library-card-meta">${escapeHtml(script.description || '')}</div>
+        <div class="library-card-meta">配置：${escapeHtml(tagScriptConfigSummary(script))}</div>
+        <div class="tag-script-config-actions">
+          <button class="secondary tag-script-config-toggle" type="button">配置</button>
+          <button class="secondary tag-script-config-reset" type="button" ${Object.keys(script.userOptions || {}).length ? '' : 'disabled'}>重置</button>
+        </div>
+        <div class="tag-script-config-editor" hidden>
+          <textarea spellcheck="false">${escapeHtml(JSON.stringify(script.userOptions || {}, null, 2))}</textarea>
+          <div class="tag-script-config-actions">
+            <button class="tag-script-config-save" type="button">保存</button>
+            <button class="secondary tag-script-config-cancel" type="button">取消</button>
+          </div>
+        </div>
       </div>
     `
+    const editor = card.querySelector('.tag-script-config-editor')
+    const textarea = card.querySelector('textarea')
+    card.querySelector('.tag-script-config-toggle')?.addEventListener('click', () => {
+      editor.hidden = !editor.hidden
+    })
+    card.querySelector('.tag-script-config-cancel')?.addEventListener('click', () => {
+      textarea.value = JSON.stringify(script.userOptions || {}, null, 2)
+      editor.hidden = true
+    })
+    card.querySelector('.tag-script-config-save')?.addEventListener('click', async () => {
+      await saveTagScriptConfig(script, textarea.value)
+    })
+    card.querySelector('.tag-script-config-reset')?.addEventListener('click', async () => {
+      if (!confirm(`重置 ${script.name} 的用户配置吗？`)) return
+      await resetTagScriptConfig(script)
+    })
     els.tagManagerScripts.append(card)
   }
   if (!tagScripts.length) els.tagManagerScripts.innerHTML = '<p class="muted">暂无脚本，目录 /data/tag-scripts</p>'
@@ -1371,6 +1399,43 @@ function renderTagManager() {
     els.tagManagerJobs.append(row)
   }
   if (!tagJobs.length) els.tagManagerJobs.innerHTML = '<p class="muted">暂无 tag 任务</p>'
+}
+
+function tagScriptConfigSummary(script) {
+  const userCount = Object.keys(script.userOptions || {}).length
+  const defaultCount = Object.keys(script.defaultOptions || {}).length
+  if (userCount) return `用户覆盖 ${userCount} 项 / 默认 ${defaultCount} 项`
+  if (defaultCount) return `默认 ${defaultCount} 项`
+  return '无'
+}
+
+async function saveTagScriptConfig(script, raw) {
+  let options
+  try {
+    options = JSON.parse(raw || '{}')
+    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error('配置必须是 JSON object')
+  } catch (error) {
+    alert(`配置 JSON 无效：${error.message}`)
+    return
+  }
+  try {
+    await api(`/api/tag-scripts/${encodeURIComponent(script.id)}/config`, {
+      method: 'POST',
+      body: JSON.stringify({ options }),
+    })
+    await loadTagManager({ reloadScripts: true })
+  } catch (error) {
+    alert(error.message)
+  }
+}
+
+async function resetTagScriptConfig(script) {
+  try {
+    await api(`/api/tag-scripts/${encodeURIComponent(script.id)}/config`, { method: 'DELETE' })
+    await loadTagManager({ reloadScripts: true })
+  } catch (error) {
+    alert(error.message)
+  }
 }
 
 async function loadMediaImportItems() {
