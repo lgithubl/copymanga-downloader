@@ -1915,7 +1915,9 @@ function historyPositionForReader() {
 
 function renderTagList(tags = []) {
   if (!tags.length) return ''
-  return `<span class="tag-list">${tags.map((tag) => `<span class="tag-pill" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}</span>`
+  const visibleCount = 4
+  const hiddenCount = Math.max(0, tags.length - visibleCount)
+  return `<span class="tag-list${hiddenCount ? ' tag-list-collapsed' : ''}" data-collapsed="1">${tags.map((tag, index) => `<span class="tag-pill${index >= visibleCount ? ' tag-pill-extra' : ''}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}${hiddenCount ? `<button class="tag-toggle secondary" type="button" data-more="${hiddenCount}">+${hiddenCount}</button>` : ''}</span>`
 }
 
 function renderThumbnailBadge(thumbnail) {
@@ -2197,12 +2199,24 @@ function renderStreamMedia(reader, options = {}) {
     track.src = subtitle.url
     player.append(track)
   }
+  const subtitleOverlay = document.createElement('div')
+  subtitleOverlay.className = 'stream-subtitle-overlay hidden'
+  const renderStreamSubtitles = () => {
+    const selectedIndex = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value)
+    const track = selectedIndex >= 0 ? player.textTracks?.[selectedIndex] : null
+    const text = track ? [...(track.activeCues || [])].map((cue) => cue.text).filter(Boolean).join('\n') : ''
+    subtitleOverlay.textContent = text
+    subtitleOverlay.classList.toggle('hidden', !text)
+  }
   subtitleSelect.disabled = !reader.unit?.subtitles?.length
   const applySubtitleSelection = () => {
     const selectedIndex = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value)
     for (const [index, track] of [...player.textTracks].entries()) {
-      track.mode = index === selectedIndex ? 'showing' : 'disabled'
+      track.mode = index === selectedIndex ? 'hidden' : 'disabled'
+      track.oncuechange = renderStreamSubtitles
     }
+    renderStreamSubtitles()
+    setTimeout(renderStreamSubtitles, 250)
   }
   subtitleSelect.addEventListener('change', applySubtitleSelection)
   if (reader.unit?.subtitles?.length) {
@@ -2241,7 +2255,7 @@ function renderStreamMedia(reader, options = {}) {
   const fullscreen = document.createElement('button')
   fullscreen.type = 'button'
   fullscreen.className = 'stream-icon-button stream-fullscreen'
-  fullscreen.title = '全屏'
+  fullscreen.title = '页面全屏'
   fullscreen.textContent = '⛶'
   const vrToggle = document.createElement('button')
   vrToggle.type = 'button'
@@ -2321,6 +2335,7 @@ function renderStreamMedia(reader, options = {}) {
   player.addEventListener('pause', () => recordCurrentLibraryHistory({ flush: true, visit: false }).catch(() => {}))
   player.addEventListener('loadedmetadata', () => {
     setProgress()
+    renderStreamSubtitles()
     const seconds = Number(options.position?.seconds || 0)
     if (seconds > 0 && Number.isFinite(player.duration) && player.duration > 0) {
       player.currentTime = Math.max(0, Math.min(seconds, player.duration - 0.2))
@@ -2328,12 +2343,14 @@ function renderStreamMedia(reader, options = {}) {
   })
   player.addEventListener('timeupdate', () => {
     setProgress()
+    renderStreamSubtitles()
     const now = Date.now()
     if (now - lastHistoryAt > 5000) {
       lastHistoryAt = now
       recordCurrentLibraryHistory({ visit: false }).catch(() => {})
     }
   })
+  player.addEventListener('seeked', renderStreamSubtitles)
   progress.addEventListener('input', () => {
     if (!Number.isFinite(player.duration) || player.duration <= 0) return
     player.currentTime = (Number(progress.value) / Number(progress.max)) * player.duration
@@ -2360,8 +2377,9 @@ function renderStreamMedia(reader, options = {}) {
     setToggleState()
   })
   fullscreen.addEventListener('click', () => {
-    if (document.fullscreenElement) document.exitFullscreen?.()
-    else frame.requestFullscreen?.()
+    const active = els.mediaViewerView.classList.toggle('stream-page-fullscreen')
+    fullscreen.classList.toggle('active', active)
+    fullscreen.title = active ? '退出页面全屏' : '页面全屏'
   })
   const vrViewer = reader.type === 'video'
     ? createVrVideoViewer({ frame, player, toggle: vrToggle, warning: playbackWarning })
@@ -2398,10 +2416,13 @@ function renderStreamMedia(reader, options = {}) {
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
   controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, vrToggle, fullscreen)
-  frame.append(player, controls)
+  frame.append(player, subtitleOverlay, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
-  currentStreamCleanup = () => vrViewer?.destroy()
+  currentStreamCleanup = () => {
+    els.mediaViewerView.classList.remove('stream-page-fullscreen')
+    vrViewer?.destroy()
+  }
   mediaPageIndex = 0
   mediaPageCount = 1
   mediaPageStep = 1
@@ -3016,6 +3037,19 @@ els.configSiteTheme.addEventListener('change', () => {
   applySiteTheme(els.configSiteTheme.value)
 })
 document.addEventListener('click', (event) => {
+  const toggle = event.target.closest?.('.tag-toggle')
+  if (toggle) {
+    event.preventDefault()
+    event.stopPropagation()
+    const list = toggle.closest('.tag-list')
+    const collapsed = list?.dataset.collapsed !== '0'
+    if (list) {
+      list.dataset.collapsed = collapsed ? '0' : '1'
+      list.classList.toggle('tag-list-collapsed', !collapsed)
+      toggle.textContent = collapsed ? '收起' : `+${toggle.dataset.more || 0}`
+    }
+    return
+  }
   const pill = event.target.closest?.('.tag-pill[data-tag]')
   if (!pill) return
   event.stopPropagation()
