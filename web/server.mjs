@@ -21,6 +21,7 @@ const INVENTORY_INDEX_DIR = path.join(DATA_DIR, 'cache', 'inventory-index')
 const LIBRARY_HISTORY_DIR = path.join(DATA_DIR, 'cache', 'library', 'history')
 const LIBRARY_HISTORY_INDEX = path.join(LIBRARY_HISTORY_DIR, 'index.json')
 const TAG_SCRIPTS_DIR = process.env.TAG_SCRIPTS_DIR || path.join(DATA_DIR, 'tag-scripts')
+const BUILTIN_TAG_SCRIPTS_DIR = path.join(path.dirname(__dirname), 'tag-scripts')
 const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
@@ -2519,6 +2520,7 @@ function normalizeTagScriptManifest(manifest, dirName) {
     scope: Array.isArray(manifest?.scope) ? manifest.scope.map(String) : ['item', 'unit'],
     libraryTypes: Array.isArray(manifest?.libraryTypes) ? manifest.libraryTypes.map(String) : [],
     mediaKinds: Array.isArray(manifest?.mediaKinds) ? manifest.mediaKinds.map(String) : [],
+    exclusiveTagGroups: parseTags(manifest?.exclusiveTagGroups || manifest?.exclusiveGroups || []),
     defaultEnabled: Boolean(manifest?.defaultEnabled),
     main: String(manifest?.main || 'main.js'),
     dirName,
@@ -2535,37 +2537,61 @@ function safeScriptId(value) {
 
 async function scanTagScripts({ force = false } = {}) {
   if (tagScriptsCache && !force) return tagScriptsCache
-  await mkdir(TAG_SCRIPTS_DIR, { recursive: true })
-  const entries = await readdir(TAG_SCRIPTS_DIR, { withFileTypes: true }).catch(() => [])
   const scripts = []
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    const dir = path.join(TAG_SCRIPTS_DIR, entry.name)
-    try {
-      const manifest = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'))
-      const script = normalizeTagScriptManifest(manifest, entry.name)
-      const mainPath = path.resolve(dir, script.main)
-      const root = path.resolve(dir)
-      if (!mainPath.startsWith(`${root}${path.sep}`) && mainPath !== root) throw new Error('main path escapes script dir')
-      script.mainPath = mainPath
-      scripts.push(script)
-    } catch (error) {
-      scripts.push({
-        id: safeScriptId(entry.name),
-        name: entry.name,
-        version: 'invalid',
-        description: `加载失败：${error.message}`,
-        scope: [],
-        libraryTypes: [],
-        mediaKinds: [],
-        defaultEnabled: false,
-        dirName: entry.name,
-        error: error.message,
-      })
+  const seenIds = new Set()
+  for (const rootDir of tagScriptRoots()) {
+    if (rootDir.writable) await mkdir(rootDir.dir, { recursive: true }).catch(() => {})
+    const entries = await readdir(rootDir.dir, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const dir = path.join(rootDir.dir, entry.name)
+      let scriptId = safeScriptId(entry.name)
+      try {
+        const manifest = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'))
+        const script = normalizeTagScriptManifest(manifest, entry.name)
+        scriptId = script.id
+        if (seenIds.has(scriptId)) continue
+        const mainPath = path.resolve(dir, script.main)
+        const root = path.resolve(dir)
+        if (!mainPath.startsWith(`${root}${path.sep}`) && mainPath !== root) throw new Error('main path escapes script dir')
+        script.mainPath = mainPath
+        script.source = rootDir.label
+        scripts.push(script)
+      } catch (error) {
+        if (seenIds.has(scriptId)) continue
+        scripts.push({
+          id: scriptId,
+          name: entry.name,
+          version: 'invalid',
+          description: `加载失败：${error.message}`,
+          scope: [],
+          libraryTypes: [],
+          mediaKinds: [],
+          exclusiveTagGroups: [],
+          defaultEnabled: false,
+          dirName: entry.name,
+          source: rootDir.label,
+          error: error.message,
+        })
+      }
+      seenIds.add(scriptId)
     }
   }
   tagScriptsCache = scripts.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
   return tagScriptsCache
+}
+
+function tagScriptRoots() {
+  const roots = [
+    { dir: path.resolve(TAG_SCRIPTS_DIR), label: 'runtime', writable: true },
+    { dir: path.resolve(BUILTIN_TAG_SCRIPTS_DIR), label: 'builtin', writable: false },
+  ]
+  const seen = new Set()
+  return roots.filter((root) => {
+    if (seen.has(root.dir)) return false
+    seen.add(root.dir)
+    return true
+  })
 }
 
 function publicTagJob(job) {
@@ -2712,9 +2738,10 @@ async function applyTagScriptOutput({ type, itemId, script, output }) {
   if (!handler.updateItemTags || !handler.updateUnitTags) throw new Error('当前媒体类型不支持 tag 更新')
   const previous = await readTagRun(type, itemId, script.id)
   const next = normalizeTagScriptOutput(output)
+  const exclusiveGroups = scriptExclusiveGroups(script)
   const item = await handler.getItem(itemId)
   const previousItemTags = previous?.itemTags || []
-  const mergedItemTags = mergeGeneratedTags(item.tags || [], previousItemTags, next.itemTags)
+  const mergedItemTags = mergeGeneratedTags(item.tags || [], previousItemTags, next.itemTags, exclusiveGroups)
   const updatedItem = await handler.updateItemTags(itemId, mergedItemTags)
   await setItemTags({ type, itemId, tags: updatedItem.tags || [] })
   const units = handler.listUnits ? await handler.listUnits(itemId) : (updatedItem.mediaUnits || [])
@@ -2726,7 +2753,7 @@ async function applyTagScriptOutput({ type, itemId, script, output }) {
     const unit = byUnit.get(unitId)
     if (!unit) continue
     const nextEntry = next.unitTags.find((entry) => entry.unitId === unitId)
-    const merged = mergeGeneratedTags(unit.tags || [], previousByUnit.get(unitId) || [], nextEntry?.tags || [])
+    const merged = mergeGeneratedTags(unit.tags || [], previousByUnit.get(unitId) || [], nextEntry?.tags || [], exclusiveGroups)
     const updatedUnit = await handler.updateUnitTags(itemId, unitId, merged)
     await setUnitTags({ type, itemId, unitId, tags: updatedUnit.tags || [] })
     appliedUnitTags.push({ unitId, tags: nextEntry?.tags || [] })
@@ -2744,10 +2771,45 @@ async function applyTagScriptOutput({ type, itemId, script, output }) {
   return { itemTagCount: next.itemTags.length, unitTagCount: appliedUnitTags.reduce((sum, entry) => sum + entry.tags.length, 0) }
 }
 
-function mergeGeneratedTags(currentTags, previousGenerated, nextGenerated) {
+function mergeGeneratedTags(currentTags, previousGenerated, nextGenerated, exclusiveGroups = new Set()) {
   const previous = new Set((previousGenerated || []).map(normalizeTagName))
-  const kept = parseTags(currentTags).filter((tag) => !previous.has(normalizeTagName(tag)))
-  return parseTags([...kept, ...(nextGenerated || [])])
+  const kept = canonicalizeExclusiveTags(parseTags(currentTags).filter((tag) => !previous.has(normalizeTagName(tag))), exclusiveGroups)
+  const keptGroups = new Set(kept.map((tag) => exclusiveTagGroup(tag, exclusiveGroups)).filter(Boolean))
+  const allowedGenerated = []
+  for (const tag of parseTags(nextGenerated || [])) {
+    const group = exclusiveTagGroup(tag, exclusiveGroups)
+    if (group && keptGroups.has(group)) continue
+    allowedGenerated.push(tag)
+  }
+  return canonicalizeExclusiveTags([...kept, ...allowedGenerated], exclusiveGroups)
+}
+
+function scriptExclusiveGroups(script) {
+  return new Set(parseTags(script?.exclusiveTagGroups || []).map(normalizeTagName))
+}
+
+async function knownExclusiveTagGroups() {
+  const scripts = await scanTagScripts()
+  return new Set(scripts.flatMap((script) => script.exclusiveTagGroups || []).map(normalizeTagName))
+}
+
+function canonicalizeExclusiveTags(tags, exclusiveGroups = new Set()) {
+  const result = []
+  const indexByGroup = new Map()
+  for (const tag of parseTags(tags)) {
+    const group = exclusiveTagGroup(tag, exclusiveGroups)
+    if (group && indexByGroup.has(group)) result[indexByGroup.get(group)] = null
+    if (group) indexByGroup.set(group, result.length)
+    result.push(tag)
+  }
+  return result.filter(Boolean)
+}
+
+function exclusiveTagGroup(tag, exclusiveGroups = new Set()) {
+  if (!exclusiveGroups?.size) return ''
+  const match = /^([^:：]+)\s*[:：]/.exec(String(tag || '').trim())
+  const group = normalizeTagName(match?.[1] || '')
+  return group && exclusiveGroups.has(group) ? group : ''
 }
 
 async function route(req, res) {
@@ -2900,7 +2962,7 @@ async function route(req, res) {
       if (action === 'tags') {
         if (!handler.updateItemTags) return json(res, 400, { error: 'This library type does not support tags' })
         const body = await readJson(req)
-        const item = await handler.updateItemTags(itemId, body.tags || [])
+        const item = await handler.updateItemTags(itemId, canonicalizeExclusiveTags(body.tags || [], await knownExclusiveTagGroups()))
         await setItemTags({ type, itemId, tags: item.tags || [] })
         return json(res, 200, item)
       }
@@ -2925,7 +2987,7 @@ async function route(req, res) {
       if (action === 'units' && parts[6] && parts[7] === 'tags') {
         if (!handler.updateUnitTags) return json(res, 400, { error: 'This library type does not support unit tags' })
         const body = await readJson(req)
-        const unit = await handler.updateUnitTags(itemId, parts[6], body.tags || [])
+        const unit = await handler.updateUnitTags(itemId, parts[6], canonicalizeExclusiveTags(body.tags || [], await knownExclusiveTagGroups()))
         await setUnitTags({ type, itemId, unitId: parts[6], tags: unit.tags || [] })
         return json(res, 200, unit)
       }

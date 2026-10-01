@@ -1,0 +1,12 @@
+{
+  "id": "subtitle-v1",
+  "name": "字幕 v1",
+  "version": "1.0.0",
+  "description": "扫描媒体条目里的字幕匹配情况，生成 字幕v1: 有/无/未匹配 标签。",
+  "scope": ["item", "unit"],
+  "libraryTypes": ["media"],
+  "mediaKinds": ["audio", "video", "subtitle"],
+  "exclusiveTagGroups": ["字幕v1"],
+  "defaultEnabled": true,
+  "main": "main.js"
+}
