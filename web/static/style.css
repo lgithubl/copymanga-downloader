@@ -231,6 +231,27 @@ h2 {
   grid-template-columns: 72px minmax(0, 1fr);
 }
 
+#app.media-viewer-focused {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#app.media-viewer-focused .sidebar,
+#app.media-viewer-focused .tabs {
+  display: none;
+}
+
+#app.media-viewer-focused .content {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+#app.media-viewer-focused .media-viewer-view {
+  padding: 0;
+}
+
+#app.media-viewer-focused .media-viewer-view > section {
+  gap: 0;
+}
+
 .sidebar {
   background: #ffffff;
   border-right: 1px solid #d8dee4;
@@ -1584,6 +1605,42 @@ h2 {
   z-index: 4;
 }
 
+#app.media-viewer-focused .media-mode-audio .chapter-head,
+#app.media-viewer-focused .media-mode-video .chapter-head {
+  margin: 0;
+}
+
+#app.media-viewer-focused .media-mode-video .chapter-head {
+  background: #101418;
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
+}
+
+#app.media-viewer-focused .media-mode-video .chapter-head .muted {
+  color: rgba(248, 250, 252, 0.68);
+}
+
+#app.media-viewer-focused .media-mode-video .chapter-head select {
+  background: #1c232b;
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f8fafc;
+}
+
+#app.media-viewer-focused .media-mode-video .chapter-head select:disabled {
+  background: #313943;
+  color: rgba(248, 250, 252, 0.55);
+}
+
+#app.media-viewer-focused .media-mode-video .chapter-head button.secondary {
+  background: #313943;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+}
+
+#app.media-viewer-focused .media-mode-video .chapter-head button.secondary:disabled {
+  color: rgba(248, 250, 252, 0.42);
+}
+
 .media-mode-audio .media-reader-content,
 .media-mode-video .media-reader-content {
   background: transparent;
@@ -1607,6 +1664,15 @@ h2 {
   margin: 0 -18px -18px;
   min-height: calc(100vh - 110px);
   padding: 22px 24px 28px;
+}
+
+#app.media-viewer-focused .media-mode-video .media-reader-content.media-stream {
+  margin: 0;
+  min-height: 0;
+}
+
+#app.media-viewer-focused .media-mode-audio .media-reader-content.media-stream {
+  min-height: 0;
 }
 
 #app .media-mode-video .media-reader-content.media-stream.reader-theme-light,

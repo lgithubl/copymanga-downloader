@@ -393,7 +393,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       job.itemId === itemId &&
       job.unitId === unitId
     ))
-    if (active) return publicThumbnailJob(active)
+    if (active) {
+      if (force && !active.force) updateThumbnailJob(active, { force: true })
+      return publicThumbnailJob(active)
+    }
     const job = {
       id: `thumb-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       itemId,
@@ -932,7 +935,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         await existingThumbnailName(job.itemId, job.unitId, 'cover') &&
         await existingThumbnailName(job.itemId, job.unitId, 'preview')
       ) {
-        await setUnitThumbnailReady(job.itemId, job.unitId, { status: 'ready', frameCount: unit.thumbnail?.frameCount || 0 })
+        await setUnitThumbnailReady(job.itemId, job.unitId, { status: 'ready', frameCount: unit.thumbnail?.frameCount || 0 }, { force: job.force })
         updateThumbnailJob(job, { status: 'skipped', message: '缩略图已存在' })
         return
       }
@@ -945,7 +948,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
           filePath: unit.managedPath,
           seed: unit.relativePath || unit.fileName || unit.unitId,
         })
-      await setUnitThumbnailReady(job.itemId, job.unitId, result)
+      await setUnitThumbnailReady(job.itemId, job.unitId, result, { force: job.force })
       updateThumbnailJob(job, { status: 'completed', message: `缩略图完成 ${result.frameCount} 帧` })
     } catch (error) {
       await setUnitThumbnailStatus(job.itemId, job.unitId, { status: 'failed', error: error.message }).catch(() => {})
@@ -1094,7 +1097,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }))
   }
 
-  async function setUnitThumbnailReady(itemId, unitId, thumbnail) {
+  async function setUnitThumbnailReady(itemId, unitId, thumbnail, { force = false } = {}) {
     const nextThumbnail = normalizeThumbnail({
       status: thumbnail.status || 'ready',
       coverUrl: thumbnailUrl(itemId, unitId, 'cover'),
@@ -1103,16 +1106,35 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       generatedAt: new Date().toISOString(),
       error: '',
     })
-    return updateMetadata(itemId, (item) => ({
-      ...item,
-      cover: item.cover || nextThumbnail.coverUrl,
-      mediaUnits: mediaUnitsForItem(item).map((unit) => (
+    return updateMetadata(itemId, (item) => {
+      const mediaUnits = mediaUnitsForItem(item).map((unit) => (
         unit.unitId === unitId
           ? normalizeMediaUnit({ ...unit, thumbnail: nextThumbnail })
           : unit
-      )),
-      updatedAt: new Date().toISOString(),
-    }))
+      ))
+      const withThumbnail = normalizeItem({ ...item, mediaUnits })
+      return normalizeItem({
+        ...withThumbnail,
+        cover: nextItemCoverAfterThumbnail(withThumbnail, { force }) || withThumbnail.cover || '',
+        updatedAt: new Date().toISOString(),
+      })
+    })
+  }
+
+  function nextItemCoverAfterThumbnail(item, { force = false } = {}) {
+    if (item.sourceProfile === 'rj-media') return item.cover || ''
+    if (!force && item.cover && !isGeneratedThumbnailCover(item, item.cover)) return item.cover
+    const readyUnits = mediaUnitsForItem(item).filter((unit) => unit.thumbnail?.status === 'ready' && unit.thumbnail?.coverUrl)
+    return (
+      readyUnits.find((unit) => unit.mediaKind === 'video')?.thumbnail?.coverUrl ||
+      readyUnits.find((unit) => unit.mediaKind === 'audio')?.thumbnail?.coverUrl ||
+      ''
+    )
+  }
+
+  function isGeneratedThumbnailCover(item, cover) {
+    const prefix = `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(item.itemId)}/thumbnail/`
+    return String(cover || '').startsWith(prefix)
   }
 
   async function uniqueImportTarget(candidate) {

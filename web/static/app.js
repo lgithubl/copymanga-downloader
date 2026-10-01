@@ -545,6 +545,7 @@ function showView(id) {
   for (const view of els.views) view.classList.toggle('active', view.id === id)
   for (const tab of els.tabs) tab.classList.toggle('active', tab.dataset.view === id)
   els.searchToolbar.classList.toggle('hidden', id !== 'search-view')
+  els.app.classList.toggle('media-viewer-focused', id === 'media-viewer-view')
 }
 
 function renderComic(data, target = 'search') {
