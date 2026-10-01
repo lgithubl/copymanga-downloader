@@ -224,7 +224,7 @@ const defaultMediaImportProfiles = {
   'rj-media': {
     maxDepth: 6,
     idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-    defaultMetadataActions: ['builtin-subtitles', 'rj-dlsite-v1'],
+    defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'builtin-thumbnails'],
     fetchDlsiteCover: true,
     fetchDlsiteTitle: true,
     dlsiteRequestMinIntervalMs: 1500,

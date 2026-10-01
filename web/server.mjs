@@ -212,7 +212,7 @@ function defaultConfig() {
       'rj-media': {
         maxDepth: 6,
         idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-        defaultMetadataActions: ['builtin-subtitles', 'rj-dlsite-v1'],
+        defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'builtin-thumbnails'],
         fetchDlsiteCover: true,
         fetchDlsiteTitle: true,
         dlsiteRequestMinIntervalMs: 1500,
@@ -318,6 +318,7 @@ function normalizeMediaImportProfiles(value, defaults) {
 
 function normalizeRjDefaultMetadataActions(value, fallback) {
   const tags = parseTags(value || fallback)
+  if (tags.join(',') === 'builtin-subtitles,rj-dlsite-v1') return fallback
   return tags.length ? tags : fallback
 }
 
@@ -2676,6 +2677,22 @@ async function scanMetadataActions({ force = false } = {}) {
 function builtinMetadataActions() {
   return [
     {
+      id: 'builtin-scan-media-units',
+      name: '媒体目录扫描',
+      version: '1.0.0',
+      description: '扫描托管目录并刷新章节列表、字幕匹配和媒体基础元数据。',
+      scope: ['item'],
+      libraryTypes: ['media'],
+      mediaKinds: [],
+      exclusiveTagGroups: [],
+      defaultOptions: {},
+      userOptions: {},
+      options: {},
+      defaultEnabled: false,
+      actionType: 'builtin',
+      capabilities: ['metadata', 'units'],
+    },
+    {
       id: 'builtin-subtitles',
       name: '字幕扫描',
       version: '1.0.0',
@@ -2841,7 +2858,7 @@ function publicTagJob(job) {
 function importTagScriptIds(fields = {}) {
   const profile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
   if (profile === 'rj-media') {
-    return parseTags(config.mediaImportProfiles?.['rj-media']?.defaultMetadataActions || ['builtin-subtitles', 'rj-dlsite-v1'])
+    return parseTags(config.mediaImportProfiles?.['rj-media']?.defaultMetadataActions || ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'builtin-thumbnails'])
   }
   return parseTags(fields.metadataActionIds || fields.actionIds || fields.tagScriptIds || fields.tagScripts || '')
 }
@@ -2904,10 +2921,10 @@ async function runTagJob(job) {
   const actions = await scanMetadataActions()
   const byId = new Map(actions.filter((action) => !action.error).map((action) => [action.id, action]))
   const handler = libraryHandler(job.type)
-  const item = await handler.getItem(job.itemId)
-  const units = handler.listUnits ? await handler.listUnits(job.itemId) : (item.mediaUnits || [])
   const results = []
   for (const scriptId of job.scriptIds) {
+    const item = await handler.getItem(job.itemId)
+    const units = handler.listUnits ? await handler.listUnits(job.itemId) : (item.mediaUnits || [])
     const action = byId.get(scriptId)
     if (!action) {
       results.push({ scriptId, actionId: scriptId, status: 'failed', message: '脚本不存在或加载失败' })
@@ -2951,6 +2968,14 @@ async function runTagJob(job) {
 }
 
 async function executeBuiltinMetadataAction({ action, handler, type, itemId, unitIds = [], force = false }) {
+  if (action.id === 'builtin-scan-media-units') {
+    if (!handler.rescanMediaUnits) throw new Error('当前媒体类型不支持目录扫描')
+    if (unitIds.length) throw new Error('目录扫描只支持合集级执行')
+    const result = await handler.rescanMediaUnits(itemId)
+    const updated = await handler.getItem(itemId)
+    await syncItemTagIndex(updated)
+    return { message: `已扫描目录，章节 ${result.unitCount || 0} 个`, result }
+  }
   if (action.id === 'builtin-subtitles') {
     if (!handler.rescanSubtitles) throw new Error('当前媒体类型不支持字幕扫描')
     const result = await handler.rescanSubtitles(itemId)
@@ -3377,8 +3402,10 @@ async function route(req, res) {
       const items = Array.isArray(item?.items) ? item.items : [item]
       for (const imported of items) {
         await syncItemTagIndex(imported)
-        if (handler.enqueueThumbnails) handler.enqueueThumbnails(imported.itemId, { force: false }).catch(() => {})
         const actionIds = importTagScriptIds(form.fields)
+        if (handler.enqueueThumbnails && imported.sourceProfile !== 'rj-media') {
+          handler.enqueueThumbnails(imported.itemId, { force: false }).catch(() => {})
+        }
         if (actionIds.length) enqueueMetadataActions({ type, itemId: imported.itemId, actionIds, reason: 'import' })
       }
       return json(res, 201, Array.isArray(item?.items) ? { ...item, items } : items[0])

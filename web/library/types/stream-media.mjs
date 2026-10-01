@@ -197,7 +197,6 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     if (!roots.length) throw new Error(`没有找到 RJ/VJ/BJ/EJ 目录：${source}`)
     const items = []
     for (const root of roots) {
-      await assertMediaRoot(root.path)
       const item = await importRjDirectoryItem({ root, inputTags, options })
       items.push(item)
     }
@@ -221,7 +220,6 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     if (!roots.length) throw new Error('上传 zip 中没有找到 RJ/VJ/BJ/EJ 目录')
     const items = []
     for (const root of roots) {
-      await assertMediaRoot(root.path)
       const item = await importRjDirectoryItem({ root, inputTags, options })
       items.push(item)
     }
@@ -238,8 +236,6 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const itemId = uniqueItemId(title)
     await mkdir(itemPath(itemId), { recursive: true })
     await importDirectoryRoot({ itemId, source: root.path, preferredName: title })
-    const units = await scanMediaUnits(itemId, [])
-    if (!units.length) throw new Error(`没有找到支持的${label}文件：${root.path}`)
     const dlsite = {
       productId: root.productId,
       status: 'pending',
@@ -258,8 +254,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       dlsite,
       tags: inputTags,
       cover: '',
-      unitCount: units.length,
-      mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
+      unitCount: 0,
+      mediaUnits: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
@@ -583,6 +579,38 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
   }
 
+  async function rescanMediaUnits(itemId) {
+    if (!await pathExists(filesPath(itemId))) throw new Error(`Media files not found: ${itemId}`)
+    let nextUnits = []
+    const updated = await updateMetadata(itemId, async (item) => {
+      const previousUnits = mediaUnitsForItem(item)
+      nextUnits = mergePreviousUnitState(await scanMediaUnits(itemId, previousUnits), previousUnits)
+      return {
+        ...item,
+        unitCount: nextUnits.length,
+        mediaUnits: nextUnits.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
+        updatedAt: new Date().toISOString(),
+      }
+    })
+    return { itemId, unitCount: nextUnits.length, units: mediaUnitsForItem(updated) }
+  }
+
+  function mergePreviousUnitState(units = [], previousUnits = []) {
+    const previousById = new Map(previousUnits.map((unit) => [unit.unitId, unit]))
+    const previousByPath = new Map(previousUnits.filter((unit) => unit.relativePath).map((unit) => [unit.relativePath, unit]))
+    return units.map((unit) => {
+      const previous = previousById.get(unit.unitId) || previousByPath.get(unit.relativePath)
+      if (!previous) return normalizeMediaUnit(unit)
+      return normalizeMediaUnit({
+        ...unit,
+        tags: previous.tags?.length ? previous.tags : unit.tags,
+        thumbnail: previous.thumbnail?.status ? previous.thumbnail : unit.thumbnail,
+        cover: previous.cover || unit.cover,
+        createdAt: previous.createdAt || unit.createdAt,
+      })
+    })
+  }
+
   async function assertMediaRoot(source) {
     const info = await stat(source)
     const root = info.isDirectory() ? source : path.dirname(source)
@@ -631,8 +659,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       const name = path.basename(dir)
       const match = pattern.exec(name)
       if (match) {
-        const mediaFiles = (await walkFiles(dir)).filter(isSupportedName)
-        if (mediaFiles.length) roots.push({ path: dir, productId: match[1].toUpperCase() })
+        roots.push({ path: dir, productId: match[1].toUpperCase() })
         return
       }
       if (depth >= options.maxDepth) return
@@ -1397,6 +1424,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     enqueueThumbnail,
     enqueueThumbnails,
     refreshExternalCover,
+    rescanMediaUnits,
     rescanSubtitles,
   }
 }
