@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile)
 const AUDIO_EXTENSIONS = ['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav', 'webm']
 const VIDEO_EXTENSIONS = ['m4v', 'mkv', 'mov', 'mp4', 'webm']
 const IMAGE_EXTENSIONS = ['gif', 'jpg', 'jpeg', 'png', 'webp']
-const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt']
+const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt', 'ass', 'ssa', 'lrc', 'sbv', 'smi', 'sami', 'ttml', 'dfxp', 'xml', 'sub']
 
 export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExists, getConfig }) {
   const extensions = type === 'video'
@@ -151,7 +151,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         const source = await extractZipUpload(file)
         await assertMediaRoot(source)
         await importSourceRoot({ itemId, source, preferredName: path.basename(file.filename, path.extname(file.filename)) })
-      } else if (isSupportedName(file.filename)) {
+      } else if (isSupportedName(file.filename) || isSubtitleName(file.filename)) {
         await writeUploadIntoItem({ itemId, file })
       }
     }
@@ -1086,16 +1086,244 @@ async function subtitleFileToWebVtt(filePath) {
   const text = await readFile(filePath, 'utf8')
   const ext = path.extname(filePath).slice(1).toLowerCase()
   if (ext === 'vtt') return text.replace(/^\uFEFF/, '').startsWith('WEBVTT') ? text : `WEBVTT\n\n${text}`
+  if (ext === 'ass' || ext === 'ssa') return assToWebVtt(text)
+  if (ext === 'lrc') return lrcToWebVtt(text)
+  if (ext === 'sbv') return sbvToWebVtt(text)
+  if (ext === 'smi' || ext === 'sami') return samiToWebVtt(text)
+  if (ext === 'ttml' || ext === 'dfxp' || ext === 'xml') return ttmlToWebVtt(text)
+  if (ext === 'sub' && /^\s*\{\d+\}\{\d+\}/m.test(text)) return microDvdToWebVtt(text)
   return srtToWebVtt(text)
 }
 
 function srtToWebVtt(text) {
-  const normalized = String(text || '')
-    .replace(/^\uFEFF/, '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
+  const normalized = normalizeSubtitleText(text)
     .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
   return `WEBVTT\n\n${normalized.replace(/^\d+\n(?=\d{2}:\d{2}:\d{2}\.\d{3}\s+-->\s+)/gm, '')}`
+}
+
+function assToWebVtt(text) {
+  const lines = normalizeSubtitleText(text).split('\n')
+  let fields = ['layer', 'start', 'end', 'style', 'name', 'marginl', 'marginr', 'marginv', 'effect', 'text']
+  const cues = []
+  for (const line of lines) {
+    if (/^format\s*:/i.test(line)) {
+      fields = line.replace(/^format\s*:/i, '').split(',').map((item) => item.trim().toLowerCase())
+      continue
+    }
+    if (!/^dialogue\s*:/i.test(line)) continue
+    const payload = line.replace(/^dialogue\s*:/i, '')
+    const parts = splitAssDialogue(payload, fields.length)
+    const start = parseAssTime(parts[fields.indexOf('start')])
+    const end = parseAssTime(parts[fields.indexOf('end')])
+    const raw = parts[fields.indexOf('text')] || ''
+    if (start == null || end == null || end <= start) continue
+    cues.push({ start, end, text: cleanAssText(raw) })
+  }
+  return cuesToWebVtt(cues)
+}
+
+function lrcToWebVtt(text) {
+  const entries = []
+  for (const line of normalizeSubtitleText(text).split('\n')) {
+    const times = [...line.matchAll(/\[(\d{1,3}:\d{2}(?::\d{2})?(?:[.:]\d{1,3})?)\]/g)]
+    if (!times.length) continue
+    const lyric = line.replace(/\[[^\]]+\]/g, '').trim()
+    if (!lyric) continue
+    for (const match of times) {
+      const start = parseLrcTime(match[1])
+      if (start != null) entries.push({ start, text: lyric })
+    }
+  }
+  entries.sort((a, b) => a.start - b.start)
+  const cues = entries.map((entry, index) => ({
+    start: entry.start,
+    end: Math.max(entry.start + 0.5, entries[index + 1]?.start ?? entry.start + 4),
+    text: entry.text,
+  }))
+  return cuesToWebVtt(cues)
+}
+
+function sbvToWebVtt(text) {
+  const cues = []
+  const blocks = normalizeSubtitleText(text).split(/\n{2,}/)
+  for (const block of blocks) {
+    const lines = block.split('\n').filter(Boolean)
+    const timing = lines.shift() || ''
+    const match = timing.match(/^\s*(.+?)\s*,\s*(.+?)\s*$/)
+    if (!match) continue
+    const start = parseFlexibleTime(match[1])
+    const end = parseFlexibleTime(match[2])
+    if (start == null || end == null || end <= start) continue
+    cues.push({ start, end, text: lines.join('\n') })
+  }
+  return cuesToWebVtt(cues)
+}
+
+function samiToWebVtt(text) {
+  const normalized = normalizeSubtitleText(text)
+  const syncs = [...normalized.matchAll(/<sync\b[^>]*\bstart\s*=\s*["']?(\d+)["']?[^>]*>([\s\S]*?)(?=<sync\b|<\/body>|<\/sami>|$)/gi)]
+  const cues = []
+  for (const [index, match] of syncs.entries()) {
+    const start = Number(match[1]) / 1000
+    const end = Number(syncs[index + 1]?.[1]) / 1000 || start + 4
+    const cueText = htmlToSubtitleText(match[2])
+    if (end > start && cueText) cues.push({ start, end, text: cueText })
+  }
+  return cuesToWebVtt(cues)
+}
+
+function ttmlToWebVtt(text) {
+  const normalized = normalizeSubtitleText(text)
+  const cues = []
+  for (const match of normalized.matchAll(/<p\b([^>]*)>([\s\S]*?)<\/p>/gi)) {
+    const attrs = match[1] || ''
+    const start = parseFlexibleTime(attrValue(attrs, 'begin'))
+    let end = parseFlexibleTime(attrValue(attrs, 'end'))
+    const duration = parseFlexibleTime(attrValue(attrs, 'dur'))
+    if (start == null) continue
+    if (end == null && duration != null) end = start + duration
+    if (end == null || end <= start) end = start + 4
+    const cueText = htmlToSubtitleText(match[2])
+    if (cueText) cues.push({ start, end, text: cueText })
+  }
+  return cuesToWebVtt(cues)
+}
+
+function microDvdToWebVtt(text) {
+  const fps = Number(normalizeSubtitleText(text).match(/^\s*\{1\}\{1\}(\d+(?:\.\d+)?)\s*$/m)?.[1]) || 25
+  const cues = []
+  for (const line of normalizeSubtitleText(text).split('\n')) {
+    const match = line.match(/^\s*\{(\d+)\}\{(\d+)\}([\s\S]*)$/)
+    if (!match) continue
+    const start = Number(match[1]) / fps
+    const end = Number(match[2]) / fps
+    const cueText = match[3].replace(/\|/g, '\n').replace(/\{[^}]+\}/g, '').trim()
+    if (end > start && cueText) cues.push({ start, end, text: cueText })
+  }
+  return cuesToWebVtt(cues)
+}
+
+function cuesToWebVtt(cues) {
+  const valid = cues
+    .filter((cue) => Number.isFinite(cue.start) && Number.isFinite(cue.end) && cue.end > cue.start && String(cue.text || '').trim())
+    .sort((a, b) => a.start - b.start)
+  return `WEBVTT\n\n${valid.map((cue) => `${formatVttTime(cue.start)} --> ${formatVttTime(cue.end)}\n${escapeCueText(cue.text)}`).join('\n\n')}`
+}
+
+function normalizeSubtitleText(text) {
+  return String(text || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+}
+
+function splitAssDialogue(value, fieldCount) {
+  const parts = []
+  let rest = String(value || '')
+  for (let index = 0; index < fieldCount - 1; index += 1) {
+    const comma = rest.indexOf(',')
+    if (comma < 0) {
+      parts.push(rest)
+      rest = ''
+    } else {
+      parts.push(rest.slice(0, comma))
+      rest = rest.slice(comma + 1)
+    }
+  }
+  parts.push(rest)
+  return parts
+}
+
+function cleanAssText(value) {
+  return String(value || '')
+    .replace(/\{[^}]*\}/g, '')
+    .replace(/\\[nNh]/g, '\n')
+    .replace(/\\[A-Za-z]+(?:\([^)]*\))?/g, '')
+    .trim()
+}
+
+function htmlToSubtitleText(value) {
+  return decodeHtmlEntities(String(value || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\u00a0/g, ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n'))
+}
+
+function attrValue(attrs, name) {
+  const match = String(attrs || '').match(new RegExp(`\\b${escapeRegExp(name)}\\s*=\\s*["']([^"']+)["']`, 'i'))
+  return match?.[1] || ''
+}
+
+function parseAssTime(value) {
+  const match = String(value || '').trim().match(/^(\d+):(\d{2}):(\d{2})(?:[.](\d{1,3}))?$/)
+  if (!match) return null
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number((match[4] || '0').padEnd(3, '0')) / 1000
+}
+
+function parseLrcTime(value) {
+  const parts = String(value || '').trim().split(':')
+  if (parts.length < 2) return null
+  const seconds = Number(parts.pop().replace(',', '.'))
+  const minutes = Number(parts.pop())
+  const hours = parts.length ? Number(parts.pop()) : 0
+  if (![hours, minutes, seconds].every(Number.isFinite)) return null
+  return hours * 3600 + minutes * 60 + seconds
+}
+
+function parseFlexibleTime(value) {
+  const input = String(value || '').trim()
+  if (!input) return null
+  const unit = input.match(/^(\d+(?:\.\d+)?)(h|m|s|ms)$/i)
+  if (unit) {
+    const amount = Number(unit[1])
+    const suffix = unit[2].toLowerCase()
+    if (suffix === 'h') return amount * 3600
+    if (suffix === 'm') return amount * 60
+    if (suffix === 'ms') return amount / 1000
+    return amount
+  }
+  const parts = input.replace(',', '.').split(':')
+  if (parts.length === 3) {
+    const [hours, minutes, seconds] = parts.map(Number)
+    if ([hours, minutes, seconds].every(Number.isFinite)) return hours * 3600 + minutes * 60 + seconds
+  }
+  if (parts.length === 2) {
+    const [minutes, seconds] = parts.map(Number)
+    if ([minutes, seconds].every(Number.isFinite)) return minutes * 60 + seconds
+  }
+  const numeric = Number(input)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function formatVttTime(seconds) {
+  const totalMs = Math.max(0, Math.round(Number(seconds || 0) * 1000))
+  const hours = Math.floor(totalMs / 3600000)
+  const minutes = Math.floor((totalMs % 3600000) / 60000)
+  const secs = Math.floor((totalMs % 60000) / 1000)
+  const ms = totalMs % 1000
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
+}
+
+function escapeCueText(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/-->/g, '--&gt;')
+}
+
+function decodeHtmlEntities(value) {
+  const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+  return String(value || '').replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity) => {
+    const key = entity.toLowerCase()
+    if (key[0] === '#') {
+      const code = key[1] === 'x' ? Number.parseInt(key.slice(2), 16) : Number.parseInt(key.slice(1), 10)
+      return Number.isFinite(code) ? String.fromCodePoint(code) : match
+    }
+    return Object.prototype.hasOwnProperty.call(named, key) ? named[key] : match
+  })
 }
 
 function escapeRegExp(value) {

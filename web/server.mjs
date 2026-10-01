@@ -191,7 +191,7 @@ function defaultConfig() {
     mediaManagedBasePath: path.join(DATA_DIR, 'library', 'media'),
     mediaStreamBasePath: '/media',
     mediaImportSourceRoots: '/input',
-    mediaSubtitleExtensions: 'srt,vtt,crt',
+    mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
     apiDomainMode: 'Default',
     customApiDomain: DEFAULT_API_DOMAIN,
     downloadFormat: 'Webp',

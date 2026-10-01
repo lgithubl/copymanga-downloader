@@ -182,9 +182,10 @@ const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'rea
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
 const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
-  media: { label: '媒体', unit: '个媒体项', accept: '.zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,image/*,audio/*,video/*', source: true },
+  media: { label: '媒体', unit: '个媒体项', accept: '.zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
 }
 const mediaPlaybackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
+const defaultMediaSubtitleExtensions = 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub'
 const stageLabels = {
   created: '创建完成',
   fetching_comic: '获取漫画信息',
@@ -1011,7 +1012,7 @@ async function loadConfig() {
   els.configMediaManagedBasePath.value = config.mediaManagedBasePath || ''
   els.configMediaStreamBasePath.value = config.mediaStreamBasePath || ''
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
-  els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || 'srt,vtt,crt'
+  els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
   els.configMergePdfFmt.value = config.mergePdfFmt
@@ -1644,11 +1645,28 @@ function renderStreamMedia(reader) {
   els.mediaReaderContent.className = `media-reader-content media-stream ${themeClass}`
   const shell = document.createElement('div')
   shell.className = `stream-player stream-player-${reader.type}`
+  const frame = document.createElement('div')
+  frame.className = `stream-frame stream-frame-${reader.type}`
   const player = document.createElement(reader.type)
-  player.controls = true
+  player.controls = false
   player.preload = 'metadata'
   player.src = reader.stream?.url || reader.unit?.streamUrl || ''
   if (reader.type === 'video') player.playsInline = true
+  if (reader.type === 'audio') {
+    const art = document.createElement('div')
+    art.className = 'stream-audio-art'
+    const thumb = reader.unit?.thumbnail?.coverUrl || reader.unit?.thumbnail?.previewUrl || ''
+    if (thumb) {
+      const img = document.createElement('img')
+      img.src = thumb
+      img.alt = ''
+      img.loading = 'lazy'
+      art.append(img)
+    } else {
+      art.textContent = 'Audio'
+    }
+    frame.append(art)
+  }
   const playbackWarning = document.createElement('div')
   playbackWarning.className = 'stream-player-warning hidden'
   const canPlay = player.canPlayType?.(reader.unit?.contentType || '') || ''
@@ -1658,6 +1676,7 @@ function renderStreamMedia(reader) {
   }
   const subtitleSelect = document.createElement('select')
   subtitleSelect.className = 'stream-subtitle-select'
+  subtitleSelect.title = '字幕'
   const noneOption = document.createElement('option')
   noneOption.value = ''
   noneOption.textContent = '无字幕'
@@ -1683,6 +1702,7 @@ function renderStreamMedia(reader) {
   })
   const rateSelect = document.createElement('select')
   rateSelect.className = 'stream-rate-select'
+  rateSelect.title = '倍速'
   const savedRate = normalizePlaybackRate(localStorage.getItem('copymanga.mediaPlaybackRate') || '1')
   for (const rate of mediaPlaybackRates) {
     const option = document.createElement('option')
@@ -1699,6 +1719,120 @@ function renderStreamMedia(reader) {
     player.defaultPlaybackRate = rate
     localStorage.setItem('copymanga.mediaPlaybackRate', String(rate))
   })
+  const play = document.createElement('button')
+  play.type = 'button'
+  play.className = 'stream-icon-button stream-play'
+  play.title = '播放/暂停'
+  play.textContent = '▶'
+  const mute = document.createElement('button')
+  mute.type = 'button'
+  mute.className = 'stream-icon-button stream-mute'
+  mute.title = '静音'
+  mute.textContent = '音'
+  const fullscreen = document.createElement('button')
+  fullscreen.type = 'button'
+  fullscreen.className = 'stream-icon-button stream-fullscreen'
+  fullscreen.title = '全屏'
+  fullscreen.textContent = '⛶'
+  const loopToggle = document.createElement('button')
+  loopToggle.type = 'button'
+  loopToggle.className = 'stream-toggle'
+  loopToggle.title = '结束后自动重播'
+  loopToggle.textContent = '重播'
+  const nextToggle = document.createElement('button')
+  nextToggle.type = 'button'
+  nextToggle.className = 'stream-toggle'
+  nextToggle.title = '结束后自动下一章'
+  nextToggle.textContent = '连播'
+  const currentTime = document.createElement('span')
+  currentTime.className = 'stream-time'
+  currentTime.textContent = '00:00'
+  const duration = document.createElement('span')
+  duration.className = 'stream-time'
+  duration.textContent = '--:--'
+  const progress = document.createElement('input')
+  progress.type = 'range'
+  progress.className = 'stream-progress'
+  progress.min = '0'
+  progress.max = '1000'
+  progress.step = '1'
+  progress.value = '0'
+  progress.title = '播放进度'
+  const volume = document.createElement('input')
+  volume.type = 'range'
+  volume.className = 'stream-volume'
+  volume.min = '0'
+  volume.max = '1'
+  volume.step = '0.01'
+  volume.value = localStorage.getItem('copymanga.mediaVolume') || '1'
+  player.volume = Math.max(0, Math.min(1, Number(volume.value) || 1))
+  const setToggleState = () => {
+    const loopEnabled = localStorage.getItem('copymanga.mediaAutoReplay') === '1'
+    const nextEnabled = localStorage.getItem('copymanga.mediaAutoNext') === '1'
+    loopToggle.classList.toggle('active', loopEnabled)
+    loopToggle.setAttribute('aria-pressed', loopEnabled ? 'true' : 'false')
+    nextToggle.classList.toggle('active', nextEnabled)
+    nextToggle.setAttribute('aria-pressed', nextEnabled ? 'true' : 'false')
+  }
+  const setProgress = () => {
+    currentTime.textContent = formatMediaTime(player.currentTime)
+    duration.textContent = Number.isFinite(player.duration) ? formatMediaTime(player.duration) : '--:--'
+    if (Number.isFinite(player.duration) && player.duration > 0 && document.activeElement !== progress) {
+      progress.value = String(Math.round((player.currentTime / player.duration) * Number(progress.max)))
+    }
+  }
+  const setPlayState = () => {
+    play.textContent = player.paused ? '▶' : 'Ⅱ'
+    play.title = player.paused ? '播放' : '暂停'
+  }
+  const setMuteState = () => {
+    mute.textContent = player.muted || player.volume === 0 ? '静' : '音'
+    mute.title = player.muted || player.volume === 0 ? '取消静音' : '静音'
+  }
+  setToggleState()
+  setMuteState()
+  play.addEventListener('click', () => {
+    if (player.paused) player.play().catch(() => {})
+    else player.pause()
+  })
+  player.addEventListener('click', () => {
+    if (reader.type !== 'video') return
+    if (player.paused) player.play().catch(() => {})
+    else player.pause()
+  })
+  player.addEventListener('play', setPlayState)
+  player.addEventListener('pause', setPlayState)
+  player.addEventListener('loadedmetadata', setProgress)
+  player.addEventListener('timeupdate', setProgress)
+  progress.addEventListener('input', () => {
+    if (!Number.isFinite(player.duration) || player.duration <= 0) return
+    player.currentTime = (Number(progress.value) / Number(progress.max)) * player.duration
+    setProgress()
+  })
+  mute.addEventListener('click', () => {
+    player.muted = !player.muted
+    setMuteState()
+  })
+  volume.addEventListener('input', () => {
+    player.volume = Math.max(0, Math.min(1, Number(volume.value) || 0))
+    player.muted = player.volume === 0
+    localStorage.setItem('copymanga.mediaVolume', String(player.volume))
+    setMuteState()
+  })
+  loopToggle.addEventListener('click', () => {
+    const enabled = localStorage.getItem('copymanga.mediaAutoReplay') === '1'
+    localStorage.setItem('copymanga.mediaAutoReplay', enabled ? '0' : '1')
+    setToggleState()
+  })
+  nextToggle.addEventListener('click', () => {
+    const enabled = localStorage.getItem('copymanga.mediaAutoNext') === '1'
+    localStorage.setItem('copymanga.mediaAutoNext', enabled ? '0' : '1')
+    setToggleState()
+  })
+  fullscreen.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen?.()
+    else frame.requestFullscreen?.()
+  })
   const title = document.createElement('div')
   title.className = 'stream-player-title'
   title.textContent = reader.unit?.title || reader.unit?.fileName || '媒体'
@@ -1710,7 +1844,17 @@ function renderStreamMedia(reader) {
     reader.unit?.size ? formatBytes(reader.unit.size) : '',
     reader.stream?.streamPath || '',
   ].filter(Boolean).join(' · ')
-  player.addEventListener('ended', () => saveLibraryProgress(1).catch(() => {}))
+  player.addEventListener('ended', () => {
+    saveLibraryProgress(1).catch(() => {})
+    if (localStorage.getItem('copymanga.mediaAutoReplay') === '1') {
+      player.currentTime = 0
+      player.play().catch(() => {})
+      return
+    }
+    if (localStorage.getItem('copymanga.mediaAutoNext') === '1' && currentMediaReader?.navigation?.next) {
+      openMediaUnit(currentMediaReader.navigation.next.unitId)
+    }
+  })
   player.addEventListener('error', () => {
     const code = player.error?.code
     const suffix = code ? ` (${code})` : ''
@@ -1719,8 +1863,9 @@ function renderStreamMedia(reader) {
   })
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(rateSelect, subtitleSelect)
-  shell.append(title, player, controls, playbackWarning, meta)
+  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, fullscreen)
+  frame.append(player, controls)
+  shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
   mediaPageIndex = 0
   mediaPageCount = 1
@@ -1734,6 +1879,16 @@ function normalizePlaybackRate(value) {
   return mediaPlaybackRates.reduce((best, item) => (
     Math.abs(item - rate) < Math.abs(best - rate) ? item : best
   ), 1)
+}
+
+function formatMediaTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00'
+  const total = Math.floor(seconds)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const secs = total % 60
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+  return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
 }
 
 function mediaReaderTypeLabel(reader) {
