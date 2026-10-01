@@ -220,6 +220,7 @@ function defaultConfig() {
       },
     },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
+    mediaTagDisplayKeys: ['DL标题:', 'DL社团:', 'DL声优:', 'DL标签:', '字幕v1:'],
     apiDomainMode: 'Default',
     customApiDomain: DEFAULT_API_DOMAIN,
     downloadFormat: 'Webp',
@@ -265,6 +266,7 @@ function normalizeConfig(value) {
     mediaImportSourceRoots: String(value?.mediaImportSourceRoots || defaults.mediaImportSourceRoots).trim() || defaults.mediaImportSourceRoots,
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
+    mediaTagDisplayKeys: normalizeStringList(value?.mediaTagDisplayKeys, defaults.mediaTagDisplayKeys),
     apiDomainMode,
     customApiDomain: String(value?.customApiDomain || value?.apiDomain || defaults.customApiDomain).trim() || defaults.customApiDomain,
     apiDomain: apiDomainMode === 'Custom'
@@ -337,6 +339,12 @@ function normalizeExtensionList(value, fallback) {
     .map((item) => String(item || '').trim().replace(/^\./, '').toLowerCase())
     .filter((item) => /^[a-z0-9]+$/.test(item)))]
   return extensions.length ? extensions.join(',') : fallback
+}
+
+function normalizeStringList(value, fallback = []) {
+  const input = Array.isArray(value) ? value : String(value || '').split(/[,\n，]+/)
+  const list = [...new Set(input.map((item) => String(item || '').trim()).filter(Boolean))]
+  return list.length ? list : fallback
 }
 
 async function loadConfig() {

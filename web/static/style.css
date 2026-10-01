@@ -724,6 +724,64 @@ h2 {
   min-height: 0;
 }
 
+.tag-manager-grid > div:first-child {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.tag-display-priority {
+  background: var(--site-panel);
+  border: 1px solid var(--site-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.tag-display-help {
+  color: var(--site-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.tag-display-list {
+  display: grid;
+  gap: 6px;
+}
+
+.tag-display-row {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.tag-display-row label {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tag-display-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-display-row button {
+  min-height: 26px;
+  padding: 0 8px;
+}
+
+.tag-display-save {
+  justify-self: start;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
 .tag-manager-tags,
 .tag-manager-scripts {
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

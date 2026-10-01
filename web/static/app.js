@@ -100,6 +100,7 @@ const els = {
   tagScriptUploadFile: document.querySelector('#tag-script-upload-file'),
   tagScriptUpload: document.querySelector('#tag-script-upload'),
   tagManagerRefresh: document.querySelector('#tag-manager-refresh'),
+  tagDisplayPriority: document.querySelector('#tag-display-priority'),
   tagManagerTags: document.querySelector('#tag-manager-tags'),
   tagManagerScripts: document.querySelector('#tag-manager-scripts'),
   tagManagerJobs: document.querySelector('#tag-manager-jobs'),
@@ -202,6 +203,7 @@ let libraryHistoryByKey = new Map()
 let tagScripts = []
 let tagJobs = []
 let tagCatalog = []
+let mediaTagDisplayKeys = []
 let currentLibraryItem = null
 let currentLibraryUnits = []
 let currentLibraryProgress = null
@@ -1072,6 +1074,7 @@ async function loadConfig() {
   els.configMediaStreamBasePath.value = config.mediaStreamBasePath || ''
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
+  mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
   els.configMergePdfFmt.value = config.mergePdfFmt
@@ -1360,6 +1363,8 @@ async function loadTagManager({ reloadScripts = false } = {}) {
 }
 
 function renderTagManager() {
+  renderTagDisplayPriority()
+
   els.tagManagerTags.innerHTML = ''
   for (const tag of tagCatalog) {
     const card = document.createElement('article')
@@ -1434,6 +1439,89 @@ function renderTagManager() {
     els.tagManagerJobs.append(row)
   }
   if (!tagJobs.length) els.tagManagerJobs.innerHTML = '<p class="muted">暂无 tag 任务</p>'
+}
+
+function tagDisplayKeyOf(tag = '') {
+  const text = String(tag || '').trim()
+  const index = text.indexOf(':')
+  if (index >= 0) return `${text.slice(0, index + 1).trim()}`
+  const cnIndex = text.indexOf('：')
+  if (cnIndex >= 0) return `${text.slice(0, cnIndex + 1).trim()}`
+  return text
+}
+
+function availableTagDisplayKeys() {
+  return [...new Set([
+    ...mediaTagDisplayKeys,
+    ...tagCatalog.map((tag) => tagDisplayKeyOf(tag.name)).filter(Boolean),
+  ])]
+}
+
+function renderTagDisplayPriority() {
+  if (!els.tagDisplayPriority) return
+  const keys = availableTagDisplayKeys()
+  if (!keys.length) {
+    els.tagDisplayPriority.innerHTML = '<p class="muted">暂无 tag key</p>'
+    return
+  }
+  const selected = new Set(mediaTagDisplayKeys)
+  els.tagDisplayPriority.innerHTML = `
+    <div class="tag-display-help">勾选后按这里的顺序优先展示，未选 tag 继续折叠。</div>
+    <div class="tag-display-list">
+      ${keys.map((key, index) => `
+        <div class="tag-display-row" data-key="${escapeHtml(key)}">
+          <label><input type="checkbox" ${selected.has(key) ? 'checked' : ''} /> <span>${escapeHtml(key)}</span></label>
+          <button class="secondary tag-display-up" type="button" ${index === 0 ? 'disabled' : ''}>↑</button>
+          <button class="secondary tag-display-down" type="button" ${index === keys.length - 1 ? 'disabled' : ''}>↓</button>
+        </div>
+      `).join('')}
+    </div>
+    <button class="tag-display-save" type="button">保存展示顺序</button>
+  `
+  els.tagDisplayPriority.querySelectorAll('.tag-display-up').forEach((button) => {
+    button.addEventListener('click', () => moveTagDisplayRow(button.closest('.tag-display-row'), -1))
+  })
+  els.tagDisplayPriority.querySelectorAll('.tag-display-down').forEach((button) => {
+    button.addEventListener('click', () => moveTagDisplayRow(button.closest('.tag-display-row'), 1))
+  })
+  els.tagDisplayPriority.querySelector('.tag-display-save')?.addEventListener('click', saveTagDisplayPriority)
+}
+
+function moveTagDisplayRow(row, delta) {
+  if (!row) return
+  const sibling = delta < 0 ? row.previousElementSibling : row.nextElementSibling
+  if (!sibling) return
+  if (delta < 0) row.parentElement.insertBefore(row, sibling)
+  else row.parentElement.insertBefore(sibling, row)
+  syncTagDisplayMoveButtons()
+}
+
+function syncTagDisplayMoveButtons() {
+  const rows = [...els.tagDisplayPriority.querySelectorAll('.tag-display-row')]
+  rows.forEach((row, index) => {
+    row.querySelector('.tag-display-up').disabled = index === 0
+    row.querySelector('.tag-display-down').disabled = index === rows.length - 1
+  })
+}
+
+async function saveTagDisplayPriority() {
+  const rows = [...els.tagDisplayPriority.querySelectorAll('.tag-display-row')]
+  const keys = rows
+    .filter((row) => row.querySelector('input')?.checked)
+    .map((row) => row.dataset.key)
+    .filter(Boolean)
+  try {
+    await api('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({ mediaTagDisplayKeys: keys }),
+    })
+    mediaTagDisplayKeys = keys
+    renderTagDisplayPriority()
+    renderLibraryItems()
+    if (currentLibraryItem) renderLibraryUnits()
+  } catch (error) {
+    alert(error.message)
+  }
 }
 
 function tagScriptConfigSummary(script) {
@@ -2046,9 +2134,29 @@ function historyPositionForReader() {
 
 function renderTagList(tags = []) {
   if (!tags.length) return ''
-  const visibleCount = 4
-  const hiddenCount = Math.max(0, tags.length - visibleCount)
-  return `<span class="tag-list${hiddenCount ? ' tag-list-collapsed' : ''}" data-collapsed="1">${tags.map((tag, index) => `<span class="tag-pill${index >= visibleCount ? ' tag-pill-extra' : ''}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}${hiddenCount ? `<button class="tag-toggle secondary" type="button" data-more="${hiddenCount}">+${hiddenCount}</button>` : ''}</span>`
+  const prioritized = orderedDisplayTags(tags)
+  const visibleCount = Math.max(4, prioritized.priorityCount)
+  const hiddenCount = Math.max(0, prioritized.tags.length - visibleCount)
+  return `<span class="tag-list${hiddenCount ? ' tag-list-collapsed' : ''}" data-collapsed="1">${prioritized.tags.map((tag, index) => `<span class="tag-pill${index >= visibleCount ? ' tag-pill-extra' : ''}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}${hiddenCount ? `<button class="tag-toggle secondary" type="button" data-more="${hiddenCount}">+${hiddenCount}</button>` : ''}</span>`
+}
+
+function orderedDisplayTags(tags = []) {
+  const source = [...tags]
+  const picked = []
+  const used = new Set()
+  for (const key of mediaTagDisplayKeys) {
+    for (const [index, tag] of source.entries()) {
+      if (used.has(index)) continue
+      if (tagDisplayKeyOf(tag) !== key) continue
+      picked.push(tag)
+      used.add(index)
+    }
+  }
+  const rest = source.filter((_, index) => !used.has(index))
+  return {
+    tags: [...picked, ...rest],
+    priorityCount: picked.length,
+  }
 }
 
 function renderThumbnailBadge(thumbnail) {
