@@ -23,6 +23,7 @@ const LIBRARY_HISTORY_INDEX = path.join(LIBRARY_HISTORY_DIR, 'index.json')
 const TAG_SCRIPTS_DIR = process.env.TAG_SCRIPTS_DIR || path.join(DATA_DIR, 'tag-scripts')
 const BUILTIN_TAG_SCRIPTS_DIR = path.join(path.dirname(__dirname), 'tag-scripts')
 const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
+const TAG_OVERRIDE_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-overrides')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -2708,12 +2709,93 @@ function tagRunPath(type, itemId, scriptId) {
   return path.join(TAG_SCRIPT_RUN_DIR, safeSegment(type), safeSegment(itemId), `${safeSegment(scriptId)}.json`)
 }
 
+function tagOverridePath(type, itemId) {
+  return path.join(TAG_OVERRIDE_DIR, safeSegment(type), `${safeSegment(itemId)}.json`)
+}
+
 async function readTagRun(type, itemId, scriptId) {
   try {
     return JSON.parse(await readFile(tagRunPath(type, itemId, scriptId), 'utf8'))
   } catch {
     return null
   }
+}
+
+async function readAllTagRuns(type, itemId) {
+  const dir = path.dirname(tagRunPath(type, itemId, 'placeholder'))
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  const runs = []
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    try {
+      runs.push(JSON.parse(await readFile(path.join(dir, entry.name), 'utf8')))
+    } catch {
+      // Ignore corrupt historical script-run records; the next run will rewrite its own record.
+    }
+  }
+  return runs
+}
+
+async function readTagOverrides(type, itemId) {
+  try {
+    return normalizeTagOverrides(JSON.parse(await readFile(tagOverridePath(type, itemId), 'utf8')))
+  } catch {
+    return normalizeTagOverrides(null)
+  }
+}
+
+function normalizeTagOverrides(value) {
+  const units = {}
+  for (const [unitId, tags] of Object.entries(value?.units || {})) {
+    units[unitId] = normalizeOverrideMap(tags)
+  }
+  return {
+    item: normalizeOverrideMap(value?.item || {}),
+    units,
+    updatedAt: String(value?.updatedAt || ''),
+  }
+}
+
+function normalizeOverrideMap(value) {
+  const result = {}
+  for (const [group, tag] of Object.entries(value || {})) {
+    const normalizedGroup = normalizeTagName(group)
+    const normalizedTag = parseTags([tag])[0]
+    if (normalizedGroup && normalizedTag) result[normalizedGroup] = normalizedTag
+  }
+  return result
+}
+
+async function writeTagOverrides(type, itemId, overrides) {
+  await atomicWriteJson(tagOverridePath(type, itemId), {
+    item: overrides.item || {},
+    units: overrides.units || {},
+    updatedAt: new Date().toISOString(),
+  }, { jobId: `tag-overrides-${type}-${itemId}` })
+}
+
+async function saveManualTagOverrides({ type, itemId, unitId = '', tags, exclusiveGroups }) {
+  const groups = exclusiveGroups instanceof Set ? exclusiveGroups : new Set()
+  const normalizedTags = canonicalizeExclusiveTags(tags || [], groups)
+  if (!groups.size) return normalizedTags
+  const overrides = await readTagOverrides(type, itemId)
+  const groupTags = tagsByExclusiveGroup(normalizedTags, groups)
+  if (unitId) {
+    const unitOverrides = { ...(overrides.units[unitId] || {}) }
+    for (const group of groups) {
+      if (groupTags[group]) unitOverrides[group] = groupTags[group]
+      else delete unitOverrides[group]
+    }
+    if (Object.keys(unitOverrides).length) overrides.units[unitId] = unitOverrides
+    else delete overrides.units[unitId]
+  } else {
+    for (const group of groups) {
+      if (groupTags[group]) overrides.item[group] = groupTags[group]
+      else delete overrides.item[group]
+    }
+  }
+  await writeTagOverrides(type, itemId, overrides)
+  return normalizedTags
 }
 
 function normalizeScriptTags(values) {
@@ -2737,11 +2819,17 @@ async function applyTagScriptOutput({ type, itemId, script, output }) {
   const handler = libraryHandler(type)
   if (!handler.updateItemTags || !handler.updateUnitTags) throw new Error('当前媒体类型不支持 tag 更新')
   const previous = await readTagRun(type, itemId, script.id)
+  const allRuns = await readAllTagRuns(type, itemId)
+  const overrides = await readTagOverrides(type, itemId)
   const next = normalizeTagScriptOutput(output)
   const exclusiveGroups = scriptExclusiveGroups(script)
   const item = await handler.getItem(itemId)
   const previousItemTags = previous?.itemTags || []
-  const mergedItemTags = mergeGeneratedTags(item.tags || [], previousItemTags, next.itemTags, exclusiveGroups)
+  const generatedItemTags = allRuns.flatMap((run) => run?.itemTags || [])
+  const mergedItemTags = mergeGeneratedTags(item.tags || [], previousItemTags, next.itemTags, exclusiveGroups, {
+    generatedTags: generatedItemTags,
+    manualOverrides: overrides.item,
+  })
   const updatedItem = await handler.updateItemTags(itemId, mergedItemTags)
   await setItemTags({ type, itemId, tags: updatedItem.tags || [] })
   const units = handler.listUnits ? await handler.listUnits(itemId) : (updatedItem.mediaUnits || [])
@@ -2753,7 +2841,13 @@ async function applyTagScriptOutput({ type, itemId, script, output }) {
     const unit = byUnit.get(unitId)
     if (!unit) continue
     const nextEntry = next.unitTags.find((entry) => entry.unitId === unitId)
-    const merged = mergeGeneratedTags(unit.tags || [], previousByUnit.get(unitId) || [], nextEntry?.tags || [], exclusiveGroups)
+    const generatedUnitTags = allRuns.flatMap((run) => (
+      run?.unitTags || []
+    ).filter((entry) => entry?.unitId === unitId).flatMap((entry) => entry.tags || []))
+    const merged = mergeGeneratedTags(unit.tags || [], previousByUnit.get(unitId) || [], nextEntry?.tags || [], exclusiveGroups, {
+      generatedTags: generatedUnitTags,
+      manualOverrides: overrides.units?.[unitId] || {},
+    })
     const updatedUnit = await handler.updateUnitTags(itemId, unitId, merged)
     await setUnitTags({ type, itemId, unitId, tags: updatedUnit.tags || [] })
     appliedUnitTags.push({ unitId, tags: nextEntry?.tags || [] })
@@ -2771,17 +2865,27 @@ async function applyTagScriptOutput({ type, itemId, script, output }) {
   return { itemTagCount: next.itemTags.length, unitTagCount: appliedUnitTags.reduce((sum, entry) => sum + entry.tags.length, 0) }
 }
 
-function mergeGeneratedTags(currentTags, previousGenerated, nextGenerated, exclusiveGroups = new Set()) {
+function mergeGeneratedTags(currentTags, previousGenerated, nextGenerated, exclusiveGroups = new Set(), options = {}) {
   const previous = new Set((previousGenerated || []).map(normalizeTagName))
-  const kept = canonicalizeExclusiveTags(parseTags(currentTags).filter((tag) => !previous.has(normalizeTagName(tag))), exclusiveGroups)
+  const generated = new Set((options.generatedTags || []).map(normalizeTagName))
+  const manualOverrides = normalizeOverrideMap(options.manualOverrides || {})
+  const nextGroups = new Set(parseTags(nextGenerated || []).map((tag) => exclusiveTagGroup(tag, exclusiveGroups)).filter(Boolean))
+  const kept = canonicalizeExclusiveTags(parseTags(currentTags).filter((tag) => {
+    const normalized = normalizeTagName(tag)
+    const group = exclusiveTagGroup(tag, exclusiveGroups)
+    if (previous.has(normalized)) return false
+    if (group && manualOverrides[group]) return false
+    if (group && nextGroups.has(group) && generated.has(normalized)) return false
+    return true
+  }), exclusiveGroups)
   const keptGroups = new Set(kept.map((tag) => exclusiveTagGroup(tag, exclusiveGroups)).filter(Boolean))
   const allowedGenerated = []
   for (const tag of parseTags(nextGenerated || [])) {
     const group = exclusiveTagGroup(tag, exclusiveGroups)
-    if (group && keptGroups.has(group)) continue
+    if (group && (manualOverrides[group] || keptGroups.has(group))) continue
     allowedGenerated.push(tag)
   }
-  return canonicalizeExclusiveTags([...kept, ...allowedGenerated], exclusiveGroups)
+  return canonicalizeExclusiveTags([...kept, ...allowedGenerated, ...Object.values(manualOverrides)], exclusiveGroups)
 }
 
 function scriptExclusiveGroups(script) {
@@ -2810,6 +2914,15 @@ function exclusiveTagGroup(tag, exclusiveGroups = new Set()) {
   const match = /^([^:：]+)\s*[:：]/.exec(String(tag || '').trim())
   const group = normalizeTagName(match?.[1] || '')
   return group && exclusiveGroups.has(group) ? group : ''
+}
+
+function tagsByExclusiveGroup(tags, exclusiveGroups = new Set()) {
+  const result = {}
+  for (const tag of canonicalizeExclusiveTags(tags || [], exclusiveGroups)) {
+    const group = exclusiveTagGroup(tag, exclusiveGroups)
+    if (group) result[group] = tag
+  }
+  return result
 }
 
 async function route(req, res) {
@@ -2962,7 +3075,8 @@ async function route(req, res) {
       if (action === 'tags') {
         if (!handler.updateItemTags) return json(res, 400, { error: 'This library type does not support tags' })
         const body = await readJson(req)
-        const item = await handler.updateItemTags(itemId, canonicalizeExclusiveTags(body.tags || [], await knownExclusiveTagGroups()))
+        const tags = await saveManualTagOverrides({ type, itemId, tags: body.tags || [], exclusiveGroups: await knownExclusiveTagGroups() })
+        const item = await handler.updateItemTags(itemId, tags)
         await setItemTags({ type, itemId, tags: item.tags || [] })
         return json(res, 200, item)
       }
@@ -2987,7 +3101,8 @@ async function route(req, res) {
       if (action === 'units' && parts[6] && parts[7] === 'tags') {
         if (!handler.updateUnitTags) return json(res, 400, { error: 'This library type does not support unit tags' })
         const body = await readJson(req)
-        const unit = await handler.updateUnitTags(itemId, parts[6], canonicalizeExclusiveTags(body.tags || [], await knownExclusiveTagGroups()))
+        const tags = await saveManualTagOverrides({ type, itemId, unitId: parts[6], tags: body.tags || [], exclusiveGroups: await knownExclusiveTagGroups() })
+        const unit = await handler.updateUnitTags(itemId, parts[6], tags)
         await setUnitTags({ type, itemId, unitId: parts[6], tags: unit.tags || [] })
         return json(res, 200, unit)
       }
