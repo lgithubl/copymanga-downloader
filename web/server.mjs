@@ -1186,7 +1186,8 @@ async function getDownloadedComic(comicPathWord, { refresh = false, token = '' }
   if (config.metadataDir) return getDownloadedComicFromMetadataDir(comicPathWord, { refresh, token })
 
   const downloadedComics = await listDownloaded()
-  const downloadedComic = downloadedComics.find((item) => item.comicPathWord === comicPathWord)
+  const downloadedComicSummary = downloadedComics.find((item) => item.comicPathWord === comicPathWord)
+  const downloadedComic = downloadedComicSummary ? await enrichDownloadedComicDetails(downloadedComicSummary) : null
   if (!downloadedComic) throw new Error(`本地库存不存在 ${comicPathWord}`)
   if (refresh) {
     const comic = await getComic(comicPathWord)
@@ -1206,7 +1207,7 @@ async function getDownloadedComic(comicPathWord, { refresh = false, token = '' }
 async function getDownloadedComicFromMetadataDir(comicPathWord, { refresh = false, token = '' } = {}) {
   const file = metadataComicFile(comicPathWord)
   const comic = normalizeComicMetadata(JSON.parse(await readFile(file, 'utf8')))
-  const downloadedComic = await downloadedComicSummaryFromMetadataFile(file, comicPathWord)
+  const downloadedComic = await enrichDownloadedComicDetails(await downloadedComicSummaryFromMetadataFile(file, comicPathWord))
   if (refresh) {
     const remote = await getComic(comicPathWord)
     await writeDownloadedComicMetadata(downloadedComic, remote)

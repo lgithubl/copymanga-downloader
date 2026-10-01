@@ -236,7 +236,7 @@ const mediaImportTypeInfo = {
   media: { label: '媒体', unit: '个媒体项', accept: '.zip,.epub,application/epub+zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
 }
 const mediaImportProfiles = {
-  custom: { label: '自定义', type: '', sourcePlaceholder: '' },
+  custom: { label: '自定义', type: 'media', sourcePlaceholder: '/input/album' },
   'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', scriptHints: ['subtitle', 'rj-dlsite'], batch: true },
   'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video', scriptHints: ['subtitle', 'video-normal', 'video'] },
   epub: { label: 'EPUB', type: 'epub', sourcePlaceholder: '', scriptHints: [] },
@@ -1468,7 +1468,10 @@ function renderTagDisplayPriority() {
   }
   const selected = new Set(mediaTagDisplayKeys)
   els.tagDisplayPriority.innerHTML = `
-    <div class="tag-display-help">勾选后按这里的顺序优先展示，未选 tag 继续折叠。</div>
+    <div class="tag-display-top">
+      <div class="tag-display-help">勾选后按这里的顺序优先展示，未选 tag 继续折叠。</div>
+      <button class="tag-display-save" type="button">保存展示顺序</button>
+    </div>
     <div class="tag-display-list">
       ${keys.map((key, index) => `
         <div class="tag-display-row" data-key="${escapeHtml(key)}">
@@ -1478,7 +1481,6 @@ function renderTagDisplayPriority() {
         </div>
       `).join('')}
     </div>
-    <button class="tag-display-save" type="button">保存展示顺序</button>
   `
   els.tagDisplayPriority.querySelectorAll('.tag-display-up').forEach((button) => {
     button.addEventListener('click', () => moveTagDisplayRow(button.closest('.tag-display-row'), -1))
@@ -1850,7 +1852,6 @@ function renderLibraryUnits() {
         ? `未匹配字幕 · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}`
         : `${unit.mediaKind || unit.type || ''} · ${unit.fileName || unit.unitId}${unit.size ? ` · ${formatBytes(unit.size)}` : ''}${subtitleText}`
     const statusBadges = [
-      unit.mediaKind ? mediaKindLabel(unit.mediaKind) : unit.type,
       isRead ? '已读' : '未读',
       unit.subtitles?.length ? `字幕${unit.subtitles.length}` : '',
       unit.imageCount ? `${unit.imageCount}图` : '',

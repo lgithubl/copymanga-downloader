@@ -264,6 +264,16 @@ h2 {
   gap: 0;
 }
 
+#app.media-viewer-focused .media-mode-html,
+#app.media-viewer-focused .media-mode-images {
+  padding: 12px 18px 18px;
+}
+
+#app.media-viewer-focused .media-mode-html > section,
+#app.media-viewer-focused .media-mode-images > section {
+  gap: 12px;
+}
+
 .sidebar {
   background: #ffffff;
   border-right: 1px solid #d8dee4;
@@ -795,21 +805,33 @@ h2 {
   border-radius: 8px;
   display: grid;
   gap: 8px;
-  max-height: 220px;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: 240px;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 10px;
+}
+
+.tag-display-top {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .tag-display-help {
   color: var(--site-muted);
   font-size: 12px;
   line-height: 1.35;
+  min-width: 0;
 }
 
 .tag-display-list {
   display: grid;
   gap: 6px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .tag-display-row {
@@ -846,6 +868,7 @@ h2 {
   justify-self: start;
   min-height: 30px;
   padding: 0 10px;
+  white-space: nowrap;
 }
 
 .tag-manager-tags,
@@ -1275,7 +1298,7 @@ h2 {
 .library-unit {
   color: inherit;
   cursor: pointer;
-  grid-template-columns: auto auto minmax(0, 1fr) minmax(72px, auto) auto auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(48px, auto) auto auto;
   height: auto;
   min-height: 72px;
   scroll-margin-top: 72px;
@@ -1367,10 +1390,10 @@ h2 {
 }
 
 .library-unit .library-unit-path {
-  display: -webkit-box;
+  display: block;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .library-unit-status {
@@ -1379,7 +1402,7 @@ h2 {
   flex-wrap: wrap;
   gap: 4px;
   justify-content: flex-end;
-  max-width: 120px;
+  max-width: 84px;
 }
 
 .library-unit.subtitle-unit {
@@ -1751,7 +1774,8 @@ h2 {
 }
 
 .media-reader-content.media-html {
-  height: calc(100vh - 154px);
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   padding: 0;
 }
