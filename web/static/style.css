@@ -80,6 +80,14 @@ textarea {
   width: 100%;
 }
 
+input[type="checkbox"],
+input[type="radio"] {
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  width: 16px;
+}
+
 h1,
 h2,
 p {
@@ -808,7 +816,7 @@ h2 {
   align-items: center;
   display: grid;
   gap: 6px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) 30px 30px;
 }
 
 .tag-display-row label {
@@ -819,14 +827,19 @@ h2 {
 }
 
 .tag-display-row span {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tag-display-row button {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
   min-height: 26px;
-  padding: 0 8px;
+  padding: 0;
 }
 
 .tag-display-save {
@@ -918,8 +931,16 @@ h2 {
 .tag-script-option {
   align-items: center;
   display: inline-flex;
+  flex: 0 1 auto;
   gap: 6px;
   margin: 0;
+  min-width: 0;
+}
+
+.tag-script-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tag-script-option small {
