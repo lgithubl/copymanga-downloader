@@ -2622,7 +2622,7 @@ function renderStreamMedia(reader, options = {}) {
     autoPlayAttempted = true
     player.play().catch(() => {
       playbackWarning.classList.remove('hidden')
-      playbackWarning.textContent = '浏览器拦截了自动播放，可点击播放按钮继续'
+      playbackWarning.textContent = '点击播放开始'
     })
   }
   play.addEventListener('click', () => {
