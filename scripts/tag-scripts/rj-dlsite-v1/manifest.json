@@ -6,12 +6,12 @@
   "scope": ["item", "unit"],
   "libraryTypes": ["media"],
   "exclusiveTagGroups": [
-    "RJ生成v1",
-    "RJ编号状态v1",
-    "RJ多编号v1",
-    "DLsite状态v1",
-    "DLsite年龄v1",
-    "DLsite类型v1"
+    "RJ生成",
+    "编号",
+    "多编号",
+    "DL状态",
+    "DL年龄",
+    "DL类型"
   ],
   "defaultEnabled": false,
   "main": "main.js",

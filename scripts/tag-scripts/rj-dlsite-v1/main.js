@@ -12,10 +12,10 @@ export async function generateTags(ctx) {
   const allProductIds = unique([...itemProductIds, ...[...unitIds.values()].flat()])
 
   const itemCandidates = [
-    tag('product_status', `RJ编号状态v1: ${allProductIds.length ? '有' : '无'}`),
-    tag('product_multi', `RJ多编号v1: ${allProductIds.length > 1 ? '是' : '否'}`),
+    tag('product_status', `编号: ${allProductIds.length ? '有' : '无'}`),
+    tag('product_multi', `多编号: ${allProductIds.length > 1 ? '是' : '否'}`),
     ...allProductIds.map((id) => tag('product_id', id)),
-    ...unique(allProductIds.map(productPrefix)).map((prefix) => tag('product_prefix', `RJ类型: ${prefix}`)),
+    ...unique(allProductIds.map(productPrefix)).map((prefix) => tag('product_prefix', `RJ类: ${prefix}`)),
   ]
 
   const detailsById = new Map()
@@ -24,13 +24,13 @@ export async function generateTags(ctx) {
     detailsById.set(productId, detail)
     itemCandidates.push(...detailToTags(productId, detail))
   }
-  itemCandidates.unshift(tag('rj_generation', `RJ生成v1: ${generationStatus(allProductIds, [...detailsById.values()])}`))
+  itemCandidates.unshift(tag('rj_generation', `RJ生成: ${generationStatus(allProductIds, [...detailsById.values()])}`))
 
   const unitTags = units.map((unit) => {
     const ids = unitIds.get(unit.unitId) || []
     const candidates = ids.flatMap((productId) => [
       tag('product_id', productId),
-      tag('product_prefix', `RJ类型: ${productPrefix(productId)}`),
+      tag('product_prefix', `RJ类: ${productPrefix(productId)}`),
       ...detailToTags(productId, detailsById.get(productId)),
     ])
     return {
@@ -117,15 +117,15 @@ async function loadProductDetail(productId, options, cacheDir) {
 function detailToTags(productId, detail = {}) {
   const status = detail.status === 'found' ? '有' : detail.status === 'not_found' ? '无' : detail.status === 'skipped' ? '跳过' : '获取失败'
   return compact([
-    tag('dlsite_status', `DLsite状态v1: ${status}`),
-    tag('dlsite_site', `DLsite站点: ${detail.site || resolveSite(productId, 'auto')}`),
-    detail.title ? tag('title', `DLsite标题: ${detail.title}`) : null,
-    detail.circle ? tag('circle', `DLsite社团: ${detail.circle}`) : null,
-    detail.workType ? tag('work_type', `DLsite类型v1: ${detail.workType}`) : null,
-    detail.age ? tag('age', `DLsite年龄v1: ${detail.age}`) : null,
-    ...unique(detail.genres || []).map((value) => tag('genre', `DLsite标签: ${value}`)),
-    ...unique(detail.creators || []).map((value) => tag('creator', `DLsite作者: ${value}`)),
-    ...unique(detail.series || []).map((value) => tag('series', `DLsite系列: ${value}`)),
+    tag('dlsite_status', `DL状态: ${status}`),
+    tag('dlsite_site', `DL站点: ${detail.site || resolveSite(productId, 'auto')}`),
+    detail.title ? tag('title', `DL标题: ${detail.title}`) : null,
+    detail.circle ? tag('circle', `DL社团: ${detail.circle}`) : null,
+    detail.workType ? tag('work_type', `DL类型: ${detail.workType}`) : null,
+    detail.age ? tag('age', `DL年龄: ${detail.age}`) : null,
+    ...unique(detail.genres || []).map((value) => tag('genre', `DL标签: ${value}`)),
+    ...unique(detail.creators || []).map((value) => tag('creator', `DL作者: ${value}`)),
+    ...unique(detail.series || []).map((value) => tag('series', `DL系列: ${value}`)),
   ])
 }
 
