@@ -1,8 +1,9 @@
 import { createServer } from 'node:http'
-import { open, readFile, readdir, stat, writeFile, mkdir, rename, rm } from 'node:fs/promises'
+import { open, readFile, readdir, stat, writeFile, mkdir, rename, rm, mkdtemp } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
+import os from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Buffer } from 'node:buffer'
 import { promisify } from 'node:util'
@@ -904,6 +905,23 @@ function inventoryNeedsImageCheckSearch(keyword = '') {
   ))
 }
 
+function inventoryImageFilterMatchesServer(item, imageFilter = 'all') {
+  if (!imageFilter || imageFilter === 'all') return true
+  const summary = item.imageCheckSummary || emptyImageCheckSummary()
+  const passed = Number(summary.passed || 0)
+  const failed = Number(summary.failed || 0)
+  const checking = Number(summary.checking || 0)
+  const pending = Number(summary.pending || 0)
+  const unknown = Number(summary.unknown || 0)
+  const total = Number(summary.total || 0)
+  if (imageFilter === 'ok') return total > 0 && passed === total
+  if (imageFilter === 'failed') return failed > 0
+  if (imageFilter === 'checking') return checking + pending > 0
+  if (imageFilter === 'unknown') return total === 0 || unknown > 0
+  if (imageFilter === 'not-ok') return total === 0 || failed + checking + pending + unknown > 0 || passed < total
+  return true
+}
+
 function inventoryKeywordMatchesServer(item, keyword = '') {
   const tokens = inventorySearchTokens(keyword)
   if (!tokens.length) return true
@@ -1030,15 +1048,16 @@ async function listDownloaded({ includeDetails = false } = {}) {
   return comics.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
 
-async function listDownloadedPage({ page = 1, limit = 10, readFilter = 'all', keyword = '' } = {}) {
+async function listDownloadedPage({ page = 1, limit = 10, readFilter = 'all', imageFilter = 'all', keyword = '' } = {}) {
   const pageNumber = Math.max(1, Math.floor(Number(page) || 1))
   const pageSize = clampNumber(limit, 1, 100, 10)
   const progressMap = await listReadingProgress()
-  const needsImageCheck = inventoryNeedsImageCheckSearch(keyword)
+  const needsImageCheck = inventoryNeedsImageCheckSearch(keyword) || (imageFilter && imageFilter !== 'all')
   const summaries = await listDownloaded({ includeDetails: false })
   const searchable = needsImageCheck ? await Promise.all(summaries.map(enrichDownloadedComicDetails)) : summaries
   const filtered = searchable
     .filter((item) => inventoryReadMatchesServer(item, readFilter, progressMap))
+    .filter((item) => inventoryImageFilterMatchesServer(item, imageFilter))
     .filter((item) => inventoryKeywordMatchesServer(item, keyword))
   const total = filtered.length
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -2626,6 +2645,76 @@ async function deleteTagScriptOptions(scriptId) {
   return await scanTagScripts({ force: true })
 }
 
+async function installTagScriptPackage(file) {
+  if (!file?.buffer?.length) throw new Error('脚本包不能为空')
+  const filename = String(file.filename || '').toLowerCase()
+  if (!/\.(tar\.gz|tgz|zip)$/.test(filename)) throw new Error('只支持 .tar.gz/.tgz/.zip 脚本包')
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'copymanga-tag-scripts-'))
+  const archivePath = path.join(tempDir, safeSegment(file.filename || 'tag-scripts.tgz'))
+  const extractDir = path.join(tempDir, 'extract')
+  await mkdir(extractDir, { recursive: true })
+  await writeFile(archivePath, file.buffer)
+  try {
+    if (/\.zip$/.test(filename)) {
+      await execFileAsync('unzip', ['-q', archivePath, '-d', extractDir], { timeout: 60000 })
+    } else {
+      await execFileAsync('tar', ['-xzf', archivePath, '-C', extractDir], { timeout: 60000 })
+    }
+    const scriptDirs = await findExtractedTagScriptDirs(extractDir)
+    if (!scriptDirs.length) throw new Error('脚本包里没有找到 manifest.json')
+    await mkdir(TAG_SCRIPTS_DIR, { recursive: true })
+    const installed = []
+    for (const sourceDir of scriptDirs) {
+      const manifest = JSON.parse(await readFile(path.join(sourceDir, 'manifest.json'), 'utf8'))
+      const script = normalizeTagScriptManifest(manifest, path.basename(sourceDir))
+      const mainPath = path.resolve(sourceDir, script.main)
+      const root = path.resolve(sourceDir)
+      if (!mainPath.startsWith(`${root}${path.sep}`) && mainPath !== root) throw new Error(`${script.id}: main path escapes script dir`)
+      if (!await pathExists(mainPath)) throw new Error(`${script.id}: main.js 不存在`)
+      const target = path.join(TAG_SCRIPTS_DIR, safeScriptId(script.id))
+      if (await pathExists(target)) await moveAside(target, 'tag-script-replace')
+      await renameOrMove(sourceDir, target)
+      installed.push({ id: script.id, name: script.name, version: script.version })
+    }
+    tagScriptsCache = null
+    return { installed, scripts: await scanTagScripts({ force: true }) }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+async function findExtractedTagScriptDirs(rootDir) {
+  const found = []
+  async function visit(dir, depth = 0) {
+    if (depth > 3) return
+    if (await pathExists(path.join(dir, 'manifest.json'))) {
+      found.push(dir)
+      return
+    }
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (entry.name.startsWith('__MACOSX')) continue
+      await visit(path.join(dir, entry.name), depth + 1)
+    }
+  }
+  await visit(rootDir)
+  const resolvedRoot = path.resolve(rootDir)
+  return found
+    .map((dir) => path.resolve(dir))
+    .filter((dir) => dir === resolvedRoot || dir.startsWith(`${resolvedRoot}${path.sep}`))
+}
+
+async function renameOrMove(sourcePath, targetPath) {
+  await mkdir(path.dirname(targetPath), { recursive: true })
+  try {
+    await rename(sourcePath, targetPath)
+  } catch (error) {
+    if (error.code !== 'EXDEV') throw error
+    await execFileAsync('mv', [sourcePath, targetPath])
+  }
+}
+
 function mergePlainObject(base = {}, override = {}) {
   return {
     ...(base && typeof base === 'object' ? base : {}),
@@ -3060,6 +3149,11 @@ async function route(req, res) {
     if (pathname === '/api/tag-scripts' && req.method === 'GET') {
       return json(res, 200, await scanTagScripts({ force: url.searchParams.get('reload') === '1' }))
     }
+    if (pathname === '/api/tag-scripts/upload' && req.method === 'POST') {
+      const form = await readMultipart(req)
+      const file = form.files.find((item) => item.name === 'file') || form.files[0]
+      return json(res, 201, await installTagScriptPackage(file))
+    }
     if (pathname.startsWith('/api/tag-scripts/') && req.method === 'POST') {
       const [, , scriptId, action] = pathname.split('/').filter(Boolean)
       if (action !== 'config') return json(res, 404, { error: 'Not found' })
@@ -3270,11 +3364,12 @@ async function route(req, res) {
       return json(res, 200, { deleted: Boolean(job) })
     }
     if (pathname === '/api/downloaded' && req.method === 'GET') {
-      if (url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('readFilter')) {
+      if (url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('readFilter') || url.searchParams.has('imageFilter')) {
         return json(res, 200, await listDownloadedPage({
           page: url.searchParams.get('page') || 1,
           limit: url.searchParams.get('limit') || 10,
           readFilter: url.searchParams.get('readFilter') || 'all',
+          imageFilter: url.searchParams.get('imageFilter') || 'all',
           keyword: url.searchParams.get('keyword') || '',
         }))
       }

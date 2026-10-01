@@ -58,6 +58,7 @@ const els = {
   downloadedJump: document.querySelector('#downloaded-jump'),
   downloadedLimit: document.querySelector('#downloaded-limit'),
   downloadedReadFilter: document.querySelector('#downloaded-read-filter'),
+  downloadedImageFilter: document.querySelector('#downloaded-image-filter'),
   downloadedComicTitle: document.querySelector('#downloaded-comic-title'),
   downloadedComicMeta: document.querySelector('#downloaded-comic-meta'),
   downloadedMarkAllRead: document.querySelector('#downloaded-mark-all-read'),
@@ -89,6 +90,8 @@ const els = {
   libraryTagScripts: document.querySelector('#library-tag-scripts'),
   libraryRunTagScripts: document.querySelector('#library-run-tag-scripts'),
   tagScriptsReload: document.querySelector('#tag-scripts-reload'),
+  tagScriptUploadFile: document.querySelector('#tag-script-upload-file'),
+  tagScriptUpload: document.querySelector('#tag-script-upload'),
   tagManagerRefresh: document.querySelector('#tag-manager-refresh'),
   tagManagerTags: document.querySelector('#tag-manager-tags'),
   tagManagerScripts: document.querySelector('#tag-manager-scripts'),
@@ -1162,6 +1165,7 @@ function downloadedPageParams(page = downloadedPage) {
     page: String(Math.max(1, Math.floor(Number(page) || 1))),
     limit: String(Math.max(1, Number(els.downloadedLimit.value || 10))),
     readFilter: els.downloadedReadFilter?.value || 'all',
+    imageFilter: els.downloadedImageFilter?.value || 'all',
     keyword: els.downloadedKeyword?.value.trim() || '',
   })
 }
@@ -1438,6 +1442,24 @@ async function resetTagScriptConfig(script) {
   }
 }
 
+async function uploadTagScriptPackage() {
+  const file = els.tagScriptUploadFile.files?.[0]
+  if (!file) return alert('请选择 .tar.gz/.tgz/.zip 脚本包')
+  const form = new FormData()
+  form.append('file', file)
+  try {
+    setLoading(els.tagScriptUpload, true)
+    const result = await apiForm('/api/tag-scripts/upload', form)
+    els.tagScriptUploadFile.value = ''
+    await loadTagManager({ reloadScripts: true })
+    alert(`已安装 ${result.installed?.length || 0} 个脚本`)
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.tagScriptUpload, false)
+  }
+}
+
 async function loadMediaImportItems() {
   try {
     setLoading(els.mediaImportRefresh, true)
@@ -1638,7 +1660,7 @@ function renderLibraryUnits() {
       </span>
       <span class="library-unit-status">${statusBadges.map((badge) => `<span>${escapeHtml(badge)}</span>`).join('')}</span>
       <button class="unit-subtitles secondary" type="button" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'hidden'}>字幕</button>
-      <button class="unit-thumbnail secondary" type="button" ${unit.mediaKind === 'video' ? '' : 'hidden'}>缩略图</button>
+      <button class="unit-thumbnail secondary" type="button" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'hidden'}>缩略图</button>
       <button class="unit-tags secondary" type="button">标签</button>
     `
     const thumb = row.querySelector('.unit-thumb')
@@ -2173,12 +2195,17 @@ function renderStreamMedia(reader, options = {}) {
     player.append(track)
   }
   subtitleSelect.disabled = !reader.unit?.subtitles?.length
-  subtitleSelect.addEventListener('change', () => {
+  const applySubtitleSelection = () => {
     const selectedIndex = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value)
     for (const [index, track] of [...player.textTracks].entries()) {
       track.mode = index === selectedIndex ? 'showing' : 'disabled'
     }
-  })
+  }
+  subtitleSelect.addEventListener('change', applySubtitleSelection)
+  if (reader.unit?.subtitles?.length) {
+    subtitleSelect.value = '0'
+    setTimeout(applySubtitleSelection, 0)
+  }
   const rateSelect = document.createElement('select')
   rateSelect.className = 'stream-rate-select'
   rateSelect.title = '倍速'
@@ -2827,6 +2854,10 @@ els.downloadedReadFilter.addEventListener('change', () => {
   downloadedPage = 1
   loadDownloaded()
 })
+els.downloadedImageFilter.addEventListener('change', () => {
+  downloadedPage = 1
+  loadDownloaded()
+})
 els.downloadedComicRefresh.addEventListener('click', () => {
   if (currentDownloadedComicPathWord) loadDownloadedComic(currentDownloadedComicPathWord, { refreshOnly: true })
 })
@@ -2871,6 +2902,7 @@ els.libraryRunTagScripts.addEventListener('click', async () => {
 })
 els.tagManagerRefresh.addEventListener('click', () => loadTagManager())
 els.tagScriptsReload.addEventListener('click', () => loadTagManager({ reloadScripts: true }))
+els.tagScriptUpload.addEventListener('click', uploadTagScriptPackage)
 els.historyRefresh.addEventListener('click', loadLibraryHistory)
 els.historyType.addEventListener('change', loadLibraryHistory)
 els.historyKeyword.addEventListener('keydown', (event) => {

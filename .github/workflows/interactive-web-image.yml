@@ -64,6 +64,9 @@ jobs:
           if [ -z "$IMAGE" ]; then IMAGE="ghcr.io/lgithubl/copymanga-downloader:web"; fi
           MEDIA_IMAGE="${{ inputs.media_stream_image }}"
           if [ -z "$MEDIA_IMAGE" ]; then MEDIA_IMAGE="ghcr.io/lgithubl/media-stream-widget:latest"; fi
+          SCRIPT_CONTAINER="$(docker create "$IMAGE")"
+          docker cp "$SCRIPT_CONTAINER:/opt/copymanga/tag-scripts" "$RUNNER_TEMP/copymanga-data/tag-scripts" || true
+          docker rm "$SCRIPT_CONTAINER"
           docker run -d --name media-stream-widget \
             -p 8081:8080 \
             -v "$RUNNER_TEMP/copymanga-data/library/media:/media:ro" \

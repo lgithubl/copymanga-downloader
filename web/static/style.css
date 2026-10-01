@@ -284,6 +284,8 @@ h2 {
   border-bottom: 1px solid #d8dee4;
   display: flex;
   gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding: 10px 18px 0;
   position: sticky;
   top: 0;
@@ -295,6 +297,7 @@ h2 {
   border-bottom: 2px solid transparent;
   border-radius: 0;
   color: #57606a;
+  flex: 0 0 auto;
   min-height: 34px;
 }
 
@@ -728,6 +731,7 @@ h2 {
   min-height: 0;
   overscroll-behavior: contain;
   overflow: auto;
+  scroll-padding-top: 12px;
 }
 
 .card,
@@ -895,8 +899,15 @@ h2 {
 
 .chapter-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   flex-shrink: 0;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.chapter-actions input[type="file"] {
+  max-width: 260px;
 }
 
 .chapter-actions select {
@@ -1011,8 +1022,9 @@ h2 {
 .library-unit {
   color: inherit;
   cursor: pointer;
-  grid-template-columns: auto minmax(0, 1fr) minmax(120px, auto) auto auto auto;
-  height: 58px;
+  grid-template-columns: auto minmax(0, 1fr) minmax(96px, auto) auto auto auto;
+  height: auto;
+  min-height: 48px;
   scroll-margin-top: 72px;
   text-align: left;
   width: 100%;
@@ -1208,6 +1220,8 @@ h2 {
   min-height: 0;
   overscroll-behavior: contain;
   overflow: auto;
+  padding-top: 2px;
+  scroll-padding-top: 12px;
 }
 
 .task-row {
@@ -1651,8 +1665,8 @@ h2 {
 .stream-extra-controls {
   align-items: center;
   background: rgba(15, 20, 25, 0.94);
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto 48px minmax(160px, 1fr) 48px auto minmax(72px, 96px) auto minmax(120px, 220px) auto auto auto auto;
   gap: 10px;
   padding: 12px;
 }
@@ -1686,7 +1700,6 @@ h2 {
 
 .stream-progress {
   accent-color: #14b8a6;
-  flex: 1 1 220px;
   min-width: 160px;
   padding: 0;
 }
@@ -1750,8 +1763,11 @@ h2 {
   }
 
   .stream-progress {
-    flex-basis: 100%;
-    order: 10;
+    grid-column: 1 / -1;
+  }
+
+  .stream-extra-controls {
+    grid-template-columns: auto 48px minmax(0, 1fr) 48px auto minmax(72px, 96px);
   }
 }
 

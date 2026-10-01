@@ -62,6 +62,14 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/thumbnail/${encodeURIComponent(unitId)}/${kind}`
   }
 
+  async function existingThumbnailName(itemId, unitId, kind) {
+    for (const ext of ['webp', 'png', 'jpg', 'jpeg']) {
+      const name = `${kind}.${ext}`
+      if (await pathExists(thumbnailPath(itemId, unitId, name))) return name
+    }
+    return ''
+  }
+
   async function readMetadata(itemId) {
     const item = normalizeItem(JSON.parse(await readFile(metadataPath(itemId), 'utf8')))
     const mediaUnits = mediaUnitsForItem(item).map((unit, index) => normalizeMediaUnit({
@@ -237,10 +245,11 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   }
 
   async function getThumbnail(itemId, unitId, kind = 'cover') {
-    const name = kind === 'preview' ? 'preview.webp' : 'cover.webp'
+    const name = await existingThumbnailName(itemId, unitId, kind === 'preview' ? 'preview' : 'cover')
+    if (!name) throw new Error('缩略图不存在')
     return {
       body: await readFile(thumbnailPath(itemId, unitId, name)),
-      contentType: 'image/webp',
+      contentType: contentType(name),
     }
   }
 
@@ -300,7 +309,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const item = await readMetadata(itemId)
     const unit = mediaUnitsForItem(item).find((entry) => entry.unitId === unitId)
     if (!unit) throw new Error(`Unit not found: ${unitId}`)
-    if (unit.mediaKind !== 'video') throw new Error('只支持生成视频缩略图')
+    if (!(unit.mediaKind === 'video' || unit.mediaKind === 'audio')) throw new Error('只支持生成音视频缩略图')
     const active = [...thumbnailJobs.values()].find((job) => (
       !['completed', 'failed', 'skipped'].includes(job.status) &&
       job.itemId === itemId &&
@@ -329,7 +338,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const item = await readMetadata(itemId)
     const jobs = []
     for (const unit of mediaUnitsForItem(item)) {
-      if (unit.mediaKind !== 'video') continue
+      if (!(unit.mediaKind === 'video' || unit.mediaKind === 'audio')) continue
       if (!force && unit.thumbnail?.status === 'ready') continue
       jobs.push(await enqueueThumbnail(itemId, unit.unitId, { force }))
     }
@@ -588,22 +597,25 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       const item = await readMetadata(job.itemId)
       const unit = mediaUnitsForItem(item).find((entry) => entry.unitId === job.unitId)
       if (!unit) throw new Error(`Unit not found: ${job.unitId}`)
-      if (unit.mediaKind !== 'video') throw new Error('只支持生成视频缩略图')
+      if (!(unit.mediaKind === 'video' || unit.mediaKind === 'audio')) throw new Error('只支持生成音视频缩略图')
       if (
         !job.force &&
-        await pathExists(thumbnailPath(job.itemId, job.unitId, 'cover.webp')) &&
-        await pathExists(thumbnailPath(job.itemId, job.unitId, 'preview.webp'))
+        await existingThumbnailName(job.itemId, job.unitId, 'cover') &&
+        await existingThumbnailName(job.itemId, job.unitId, 'preview')
       ) {
         await setUnitThumbnailReady(job.itemId, job.unitId, { status: 'ready', frameCount: unit.thumbnail?.frameCount || 0 })
         updateThumbnailJob(job, { status: 'skipped', message: '缩略图已存在' })
         return
       }
-      const result = await generateVideoThumbnailSet({
-        itemId: job.itemId,
-        unitId: job.unitId,
-        filePath: unit.managedPath,
-        seed: unit.relativePath || unit.fileName || unit.unitId,
-      })
+      if (job.force) await moveThumbnailDirAside(job.itemId, job.unitId)
+      const result = unit.mediaKind === 'audio'
+        ? await generateAudioThumbnailSet({ itemId: job.itemId, unitId: job.unitId, filePath: unit.managedPath })
+        : await generateVideoThumbnailSet({
+          itemId: job.itemId,
+          unitId: job.unitId,
+          filePath: unit.managedPath,
+          seed: unit.relativePath || unit.fileName || unit.unitId,
+        })
       await setUnitThumbnailReady(job.itemId, job.unitId, result)
       updateThumbnailJob(job, { status: 'completed', message: `缩略图完成 ${result.frameCount} 帧` })
     } catch (error) {
@@ -638,12 +650,53 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       const coverTemp = path.join(tempDir, 'cover.webp')
       const previewTemp = path.join(tempDir, 'preview.webp')
       const coverSource = frames[Math.floor(frames.length / 2)]
-      await encodeStillWebp(coverSource, coverTemp)
-      await encodeAnimatedWebp(frames, previewTemp)
+      const coverFile = await encodeStillThumbnail(coverSource, path.join(tempDir, 'cover'))
+      let previewFile = previewTemp
+      try {
+        await encodeAnimatedWebp(frames, previewTemp)
+      } catch {
+        previewFile = await encodeStillThumbnail(coverSource, path.join(tempDir, 'preview'))
+      }
       await mkdir(thumbnailDir(itemId, unitId), { recursive: true })
-      await movePath(coverTemp, thumbnailPath(itemId, unitId, 'cover.webp'))
-      await movePath(previewTemp, thumbnailPath(itemId, unitId, 'preview.webp'))
+      await movePath(coverFile, thumbnailPath(itemId, unitId, path.basename(coverFile)))
+      await movePath(previewFile, thumbnailPath(itemId, unitId, path.basename(previewFile)))
       return { status: 'ready', frameCount: frames.length }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  async function generateAudioThumbnailSet({ itemId, unitId, filePath }) {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), `copymanga-audio-thumb-${unitId}-`))
+    try {
+      const coverSource = path.join(tempDir, 'embedded-cover')
+      const waveformSource = path.join(tempDir, 'waveform.png')
+      let source = ''
+      try {
+        await execFileAsync('ffmpeg', [
+          '-y',
+          '-i', filePath,
+          '-an',
+          '-vcodec', 'copy',
+          `${coverSource}.jpg`,
+        ], { timeout: 20000 })
+        source = `${coverSource}.jpg`
+      } catch {
+        await execFileAsync('ffmpeg', [
+          '-y',
+          '-i', filePath,
+          '-filter_complex', 'aformat=channel_layouts=mono,showwavespic=s=640x360:colors=#14b8a6',
+          '-frames:v', '1',
+          waveformSource,
+        ], { timeout: 45000 })
+        source = waveformSource
+      }
+      const coverFile = await encodeStillThumbnail(source, path.join(tempDir, 'cover'))
+      const previewFile = await encodeStillThumbnail(source, path.join(tempDir, 'preview'))
+      await mkdir(thumbnailDir(itemId, unitId), { recursive: true })
+      await movePath(coverFile, thumbnailPath(itemId, unitId, path.basename(coverFile)))
+      await movePath(previewFile, thumbnailPath(itemId, unitId, path.basename(previewFile)))
+      return { status: 'ready', frameCount: 1 }
     } finally {
       await rm(tempDir, { recursive: true, force: true }).catch(() => {})
     }
@@ -660,12 +713,20 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return 12
   }
 
-  async function encodeStillWebp(inputPath, outputPath) {
+  async function encodeStillThumbnail(inputPath, outputBasePath) {
+    const webpPath = `${outputBasePath}.webp`
     try {
-      await execFileAsync('ffmpeg', ['-y', '-i', inputPath, '-vf', 'scale=360:-2:flags=lanczos', '-c:v', 'libwebp', '-compression_level', '5', outputPath], { timeout: 30000 })
-      return
+      await execFileAsync('ffmpeg', ['-y', '-i', inputPath, '-vf', 'scale=360:-2:flags=lanczos', '-c:v', 'libwebp', '-compression_level', '5', webpPath], { timeout: 30000 })
+      return webpPath
     } catch {
-      await runImageMagick([inputPath, '-resize', '360x', outputPath], { timeout: 30000 })
+      try {
+        await runImageMagick([inputPath, '-resize', '360x', webpPath], { timeout: 30000 })
+        return webpPath
+      } catch {
+        const pngPath = `${outputBasePath}.png`
+        await execFileAsync('ffmpeg', ['-y', '-i', inputPath, '-vf', 'scale=360:-2:flags=lanczos', '-frames:v', '1', '-update', '1', pngPath], { timeout: 30000 })
+        return pngPath
+      }
     }
   }
 
@@ -734,6 +795,13 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       if (error.code !== 'EXDEV') throw error
       await execFileAsync('mv', [source, target])
     }
+  }
+
+  async function moveThumbnailDirAside(itemId, unitId) {
+    const source = thumbnailDir(itemId, unitId)
+    if (!await pathExists(source)) return
+    const target = path.join(os.tmpdir(), `copymanga-thumbnail-${Date.now()}-${safeSegment(unitId)}`)
+    await movePath(source, target)
   }
 
   async function unitFromFile({ itemId, filePath, subtitles = [] }) {

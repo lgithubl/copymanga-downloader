@@ -211,6 +211,14 @@
             </div>
             <div class="pager inventory-pager">
               <input id="downloaded-keyword" placeholder="关键字 / tag:图片未完全检查OK" />
+              <select id="downloaded-image-filter">
+                <option value="all">全部图片检查</option>
+                <option value="not-ok">图片未完全OK</option>
+                <option value="ok">图片检查OK</option>
+                <option value="failed">存在异常图片</option>
+                <option value="unknown">未检查/未知</option>
+                <option value="checking">检查中</option>
+              </select>
               <button id="downloaded-first" class="secondary" disabled>首页</button>
               <button id="downloaded-prev" class="secondary" disabled>上一页</button>
               <label class="page-jump">
@@ -308,6 +316,8 @@
                 <div class="muted">展示 tag 使用数和外置 tag 脚本</div>
               </div>
               <div class="chapter-actions">
+                <input id="tag-script-upload-file" type="file" accept=".tgz,.tar.gz,.zip,application/gzip,application/x-gzip,application/zip" />
+                <button id="tag-script-upload" class="secondary">上传脚本包</button>
                 <button id="tag-scripts-reload" class="secondary">重载脚本</button>
                 <button id="tag-manager-refresh">刷新</button>
               </div>
