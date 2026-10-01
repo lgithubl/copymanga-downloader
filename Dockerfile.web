@@ -12,6 +12,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY web ./web
+COPY scripts/tag-scripts /opt/copymanga/tag-scripts
 
 RUN mkdir -p /data/downloads
 

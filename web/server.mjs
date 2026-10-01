@@ -21,7 +21,6 @@ const INVENTORY_INDEX_DIR = path.join(DATA_DIR, 'cache', 'inventory-index')
 const LIBRARY_HISTORY_DIR = path.join(DATA_DIR, 'cache', 'library', 'history')
 const LIBRARY_HISTORY_INDEX = path.join(LIBRARY_HISTORY_DIR, 'index.json')
 const TAG_SCRIPTS_DIR = process.env.TAG_SCRIPTS_DIR || path.join(DATA_DIR, 'tag-scripts')
-const BUILTIN_TAG_SCRIPTS_DIR = path.join(path.dirname(__dirname), 'tag-scripts')
 const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
 const TAG_OVERRIDE_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-overrides')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
@@ -2583,16 +2582,7 @@ async function scanTagScripts({ force = false } = {}) {
 }
 
 function tagScriptRoots() {
-  const roots = [
-    { dir: path.resolve(TAG_SCRIPTS_DIR), label: 'runtime', writable: true },
-    { dir: path.resolve(BUILTIN_TAG_SCRIPTS_DIR), label: 'builtin', writable: false },
-  ]
-  const seen = new Set()
-  return roots.filter((root) => {
-    if (seen.has(root.dir)) return false
-    seen.add(root.dir)
-    return true
-  })
+  return [{ dir: path.resolve(TAG_SCRIPTS_DIR), label: 'runtime', writable: true }]
 }
 
 function publicTagJob(job) {
