@@ -2265,14 +2265,18 @@ function renderStreamMedia(reader, options = {}) {
   const subtitleSelect = document.createElement('select')
   subtitleSelect.className = 'stream-subtitle-select'
   subtitleSelect.title = '字幕'
+  const subtitlePathTitle = (subtitle) => subtitle?.relativePath || subtitle?.url || ''
   const noneOption = document.createElement('option')
   noneOption.value = ''
   noneOption.textContent = '无字幕'
+  noneOption.title = '无字幕'
   subtitleSelect.append(noneOption)
   for (const [index, subtitle] of (reader.unit?.subtitles || []).entries()) {
     const option = document.createElement('option')
     option.value = String(index)
     option.textContent = subtitle.title || subtitle.relativePath || `字幕 ${index + 1}`
+    option.title = subtitlePathTitle(subtitle)
+    option.dataset.path = subtitlePathTitle(subtitle)
     subtitleSelect.append(option)
     const track = document.createElement('track')
     track.kind = 'subtitles'
@@ -2293,6 +2297,8 @@ function renderStreamMedia(reader, options = {}) {
   subtitleSelect.disabled = !reader.unit?.subtitles?.length
   const applySubtitleSelection = () => {
     const selectedIndex = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value)
+    const selectedSubtitle = selectedIndex >= 0 ? reader.unit?.subtitles?.[selectedIndex] : null
+    subtitleSelect.title = selectedSubtitle ? subtitlePathTitle(selectedSubtitle) || '字幕' : '无字幕'
     for (const [index, track] of [...player.textTracks].entries()) {
       track.mode = index === selectedIndex ? 'hidden' : 'disabled'
       track.oncuechange = renderStreamSubtitles
