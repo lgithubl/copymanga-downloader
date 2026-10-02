@@ -209,10 +209,11 @@ async function fetchText(url, options) {
 }
 
 async function readCache(filePath, ttlHours) {
+  if (ttlHours <= 0) return null
   try {
     const cached = JSON.parse(await readFile(filePath, 'utf8'))
     const ageMs = Date.now() - Date.parse(cached.fetchedAt || cached.cachedAt || 0)
-    if (ttlHours <= 0 || ageMs <= ttlHours * 3600 * 1000) return cached
+    if (ageMs <= ttlHours * 3600 * 1000) return cached
   } catch {
     return null
   }
