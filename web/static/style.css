@@ -2379,7 +2379,9 @@ h2 {
 
 .stream-rate-select,
 .stream-subtitle-select,
-.stream-vr-mode {
+.stream-vr-mode,
+.stream-vr-layout,
+.stream-vr-eye {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.18);
   color: #f8fafc;
@@ -2401,9 +2403,24 @@ h2 {
   min-width: 112px;
 }
 
+.stream-vr-layout,
+.stream-vr-eye {
+  min-width: 82px;
+}
+
+.stream-vr-controls {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
 #app .stream-rate-select,
 #app .stream-subtitle-select,
-#app .stream-vr-mode {
+#app .stream-vr-mode,
+#app .stream-vr-layout,
+#app .stream-vr-eye {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.18);
   color: #f8fafc;
@@ -2411,7 +2428,9 @@ h2 {
 
 #app .media-mode-audio .stream-rate-select,
 #app .media-mode-audio .stream-subtitle-select,
-#app .media-mode-audio .stream-vr-mode {
+#app .media-mode-audio .stream-vr-mode,
+#app .media-mode-audio .stream-vr-layout,
+#app .media-mode-audio .stream-vr-eye {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.18);
   color: #f8fafc;
@@ -2419,7 +2438,9 @@ h2 {
 
 .stream-rate-select option,
 .stream-subtitle-select option,
-.stream-vr-mode option {
+.stream-vr-mode option,
+.stream-vr-layout option,
+.stream-vr-eye option {
   color: #111827;
 }
 

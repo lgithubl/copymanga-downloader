@@ -2720,12 +2720,12 @@ function builtinMetadataActions() {
     {
       id: 'builtin-thumbnails',
       name: '缩略图生成',
-      version: '1.0.0',
-      description: '为音视频章节生成封面和预览缩略图。',
+      version: '1.0.1',
+      description: '为音视频章节生成封面和预览缩略图，并标记 DL 封面刷新状态。',
       scope: ['item', 'unit'],
       libraryTypes: ['media'],
       mediaKinds: ['audio', 'video'],
-      exclusiveTagGroups: [],
+      exclusiveTagGroups: ['DL封面'],
       defaultOptions: {},
       userOptions: {},
       options: {},
@@ -3009,10 +3009,53 @@ async function executeBuiltinMetadataAction({ action, handler, type, itemId, uni
       return { message: `已提交缩略图任务 ${jobs.length} 个`, thumbnailJobs: jobs.length }
     }
     if (!handler.enqueueThumbnails) throw new Error('当前媒体类型不支持批量缩略图')
-    const result = await handler.enqueueThumbnails(itemId, { force })
-    return { message: '已提交批量缩略图任务', result }
+    return await enqueueThumbnailsWithCoverTag({ action, handler, type, itemId, force })
   }
   throw new Error(`未知内置元数据脚本：${action.id}`)
+}
+
+async function enqueueThumbnailsWithCoverTag({ action, handler, type, itemId, force = false }) {
+  const result = await handler.enqueueThumbnails(itemId, { force })
+  const coverTag = dlCoverTagFromExternalCover(result.externalCover)
+  const applied = coverTag
+    ? await applyTagScriptOutput({
+        type,
+        itemId,
+        script: action,
+        output: {
+          itemTags: [coverTag],
+          logs: dlCoverLogs(result.externalCover),
+        },
+      })
+    : {}
+  return {
+    message: coverTag ? `已提交批量缩略图任务，${coverTag}` : '已提交批量缩略图任务',
+    result,
+    ...applied,
+  }
+}
+
+function dlCoverLogs(externalCover = {}) {
+  return [
+    `DL 封面状态: ${externalCover?.status || 'unknown'}`,
+    externalCover?.productId ? `DL 编号: ${externalCover.productId}` : '',
+    externalCover?.site ? `DL 站点: ${externalCover.site}` : '',
+    externalCover?.cover ? `DL 封面: ${externalCover.cover}` : '',
+    externalCover?.message ? `DL 信息: ${externalCover.message}` : '',
+    externalCover?.error ? `DL 错误: ${externalCover.error}` : '',
+  ].filter(Boolean)
+}
+
+function dlCoverTagFromExternalCover(externalCover = {}) {
+  const status = String(externalCover?.status || '').toLowerCase()
+  const message = String(externalCover?.message || '')
+  if (status === 'completed') return 'DL封面: 成功'
+  if (status === 'not_found') return 'DL封面: 无'
+  if (status === 'failed' || status === 'fetch_failed') return 'DL封面: 失败'
+  if (status === 'skipped' && /不是 RJ/.test(message)) return 'DL封面: 非RJ'
+  if (status === 'skipped') return 'DL封面: 跳过'
+  if (status) return `DL封面: ${status}`
+  return ''
 }
 
 function isCompletedSameVersionRun(previous, script, item, units = []) {
@@ -3168,6 +3211,29 @@ function normalizeTagScriptOutput(output) {
         tags: normalizeScriptTags(entry?.tags || []),
       })).filter((entry) => entry.unitId && entry.tags.length)
       : [],
+    logs: normalizeScriptLogs(output?.logs || output?.log || output?.messages || []),
+    details: normalizeScriptDetails(output?.details || output?.detail || null),
+  }
+}
+
+function normalizeScriptLogs(value) {
+  const list = Array.isArray(value) ? value : (value ? [value] : [])
+  return list
+    .flatMap((entry) => String(entry || '').split(/\r?\n/))
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, 80)
+    .map((entry) => entry.slice(0, 500))
+}
+
+function normalizeScriptDetails(value) {
+  if (!value) return null
+  if (typeof value === 'string') return value.slice(0, 4000)
+  try {
+    const text = JSON.stringify(value)
+    return text.length > 4000 ? `${text.slice(0, 4000)}...` : value
+  } catch {
+    return String(value).slice(0, 4000)
   }
 }
 
@@ -3234,7 +3300,12 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     updatedAt: new Date().toISOString(),
   }
   await atomicWriteJson(tagRunPath(type, itemId, script.id), runRecord, { jobId: `tag-run-${script.id}` })
-  return { itemTagCount: next.itemTags.length, unitTagCount: appliedUnitTags.reduce((sum, entry) => sum + entry.tags.length, 0) }
+  return {
+    itemTagCount: next.itemTags.length,
+    unitTagCount: appliedUnitTags.reduce((sum, entry) => sum + entry.tags.length, 0),
+    logs: next.logs,
+    details: next.details,
+  }
 }
 
 function mergeGeneratedTags(currentTags, previousGenerated, nextGenerated, exclusiveGroups = new Set(), options = {}) {
@@ -3483,7 +3554,14 @@ async function route(req, res) {
       if (action === 'thumbnails') {
         if (!handler.enqueueThumbnails) return json(res, 400, { error: 'This library type does not support thumbnails' })
         const body = await readJson(req)
-        return json(res, 202, await handler.enqueueThumbnails(itemId, { force: body.force !== false }))
+        const thumbnailAction = builtinMetadataActions().find((item) => item.id === 'builtin-thumbnails')
+        return json(res, 202, await enqueueThumbnailsWithCoverTag({
+          action: thumbnailAction,
+          handler,
+          type,
+          itemId,
+          force: body.force !== false,
+        }))
       }
       if (action === 'subtitles') {
         if (!handler.rescanSubtitles) return json(res, 400, { error: 'This library type does not support subtitles' })

@@ -485,9 +485,12 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       return updated
     })
     return {
+      productId: dlsite.productId || item.productId,
+      site: dlsite.site || '',
       status: dlsite.cover ? 'completed' : (dlsite.status || 'failed'),
       cover: cover || dlsite.cover || '',
       message: dlsite.cover ? 'DL 封面已更新' : (dlsite.error || '未获取到 DL 封面'),
+      error: dlsite.error || '',
     }
   }
 

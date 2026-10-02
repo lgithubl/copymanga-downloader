@@ -14,14 +14,17 @@ export async function generateTags(ctx) {
   const itemCandidates = [
     tag('product_status', `编号: ${allProductIds.length ? '有' : '无'}`),
     tag('product_multi', `多编号: ${allProductIds.length > 1 ? '是' : '否'}`),
-    ...allProductIds.map((id) => tag('product_id', id)),
-    ...unique(allProductIds.map(productPrefix)).map((prefix) => tag('product_prefix', `RJ类: ${prefix}`)),
+    ...allProductIds.map((id) => tag('product_id', `DLID: ${id}`)),
+    ...unique(allProductIds.map(productPrefix)).map((prefix) => tag('product_prefix', `DL类: ${prefix}`)),
   ]
 
   const detailsById = new Map()
+  const logs = [`识别编号 ${allProductIds.length ? allProductIds.join(', ') : '无'}`]
   for (const productId of allProductIds) {
     const detail = await loadProductDetail(productId, options, ctx.cacheDir)
     detailsById.set(productId, detail)
+    logs.push(...(detail.logs || []))
+    logs.push(`${productId}: DL状态 ${detail.status}${detail.title ? ` · ${detail.title}` : ''}${detail.error ? ` · ${detail.error}` : ''}`)
     itemCandidates.push(...detailToTags(productId, detail))
   }
   itemCandidates.unshift(tag('rj_generation', `RJ生成: ${generationStatus(allProductIds, [...detailsById.values()])}`))
@@ -29,6 +32,7 @@ export async function generateTags(ctx) {
   return {
     itemTags: filterTags(itemCandidates, options),
     unitTags: [],
+    logs,
   }
 }
 
@@ -54,9 +58,10 @@ function normalizeOptions(value = {}) {
 }
 
 async function loadProductDetail(productId, options, cacheDir) {
+  const logs = []
   const cachePath = cacheDir ? path.join(cacheDir, `${productId}.json`) : ''
   const cached = cachePath ? await readCache(cachePath, options.cacheTtlHours) : null
-  if (cached) return cached
+  if (cached) return { ...cached, logs: [`${productId}: 使用缓存 ${cachePath}`] }
   const site = resolveSite(productId, options.site)
   const detail = {
     productId,
@@ -75,29 +80,39 @@ async function loadProductDetail(productId, options, cacheDir) {
   if (options.cacheOnly) {
     detail.status = 'skipped'
     detail.error = 'cacheOnly enabled and cache missing'
+    detail.logs = [`${productId}: cacheOnly 开启且缓存不存在，跳过请求`]
     return detail
   }
   const errors = []
   if (options.fetchAjax) {
     try {
+      logs.push(`${productId}: 请求 DLsite ajax ${site}`)
       const ajax = await fetchJson(`https://www.dlsite.com/${site}/product/info/ajax?product_id=${encodeURIComponent(productId)}`, options)
       const row = ajax?.[productId] || ajax?.[productId.toUpperCase()] || (Array.isArray(ajax) ? ajax[0] : null)
       mergeAjaxDetail(detail, row)
+      logs.push(`${productId}: ajax ${row ? '命中' : '无数据'}`)
     } catch (error) {
-      errors.push(String(error?.message || error))
+      const message = String(error?.message || error)
+      errors.push(message)
+      logs.push(`${productId}: ajax 失败 ${message}`)
     }
   }
   if (options.fetchHtml) {
     try {
+      logs.push(`${productId}: 请求 DLsite html ${site}`)
       const html = await fetchText(`https://www.dlsite.com/${site}/work/=/product_id/${encodeURIComponent(productId)}.html`, options)
       mergeHtmlDetail(detail, html)
+      logs.push(`${productId}: html 获取成功 ${html.length} bytes`)
     } catch (error) {
-      errors.push(String(error?.message || error))
+      const message = String(error?.message || error)
+      errors.push(message)
+      logs.push(`${productId}: html 失败 ${message}`)
     }
   }
   const fetchCount = Number(options.fetchAjax !== false) + Number(options.fetchHtml !== false)
   detail.status = detail.title || detail.genres.length || detail.circle ? 'found' : errors.length >= fetchCount ? 'fetch_failed' : 'not_found'
   if (errors.length) detail.error = errors.join('; ')
+  detail.logs = logs
   if (cachePath) await writeCache(cachePath, detail)
   return detail
 }

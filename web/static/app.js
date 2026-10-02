@@ -97,6 +97,7 @@ const els = {
   libraryUnits: document.querySelector('#library-units'),
   libraryTagScripts: document.querySelector('#library-tag-scripts'),
   libraryRunTagScripts: document.querySelector('#library-run-tag-scripts'),
+  libraryRunPageTagScripts: document.querySelector('#library-run-page-tag-scripts'),
   libraryRunSelectedUnits: document.querySelector('#library-run-selected-units'),
   tagScriptsReload: document.querySelector('#tag-scripts-reload'),
   tagScriptUploadFile: document.querySelector('#tag-script-upload-file'),
@@ -1507,10 +1508,13 @@ function summarizeMetadataJobResults(job) {
   const lines = []
   for (const result of job.results || []) {
     const label = [result.actionId || result.scriptId, result.status].filter(Boolean).join(' · ')
+    const logs = Array.isArray(result.logs) ? result.logs : []
     const summary = [
       result.message || '',
+      logs.length ? `日志:\n${logs.map((line) => `    ${line}`).join('\n')}` : '',
       Number.isFinite(result.itemTagCount) ? `合集 tag ${result.itemTagCount}` : '',
       Number.isFinite(result.unitTagCount) ? `章节 tag ${result.unitTagCount}` : '',
+      result.details ? `详情: ${typeof result.details === 'string' ? result.details : JSON.stringify(result.details)}` : '',
       result.error ? `错误: ${result.error}` : '',
     ].filter(Boolean).join(' · ')
     lines.push([label, summary].filter(Boolean).join('\n  '))
@@ -1887,6 +1891,7 @@ async function selectLibraryItem(type, itemId) {
     els.libraryThumbnails.disabled = item.type !== 'media'
     if (!tagScripts.length) await loadTagScripts().catch(() => {})
     els.libraryRunTagScripts.disabled = tagScripts.filter((script) => !script.error).length === 0
+    if (els.libraryRunPageTagScripts) els.libraryRunPageTagScripts.disabled = tagScripts.filter((script) => !script.error).length === 0 || !libraryItems.length
     els.libraryRunSelectedUnits.disabled = tagScripts.filter((script) => !script.error).length === 0
     renderLibraryItems()
     renderLibraryUnits()
@@ -2616,30 +2621,7 @@ function renderStreamMedia(reader, options = {}) {
   fullscreen.className = 'stream-icon-button stream-fullscreen'
   fullscreen.title = '页面全屏'
   fullscreen.textContent = '⛶'
-  const vrModeSelect = document.createElement('select')
-  vrModeSelect.className = 'stream-vr-mode'
-  vrModeSelect.title = '3D / VR 渲染模式'
-  vrModeSelect.hidden = reader.type !== 'video'
-  const vrModes = [
-    ['off', '普通'],
-    ['equirect', '360'],
-    ['equirect-mirror-x', '360镜像'],
-    ['equirect-flip-y', '360上下翻'],
-    ['equirect-sbs-left', '左右-左眼'],
-    ['equirect-sbs-right', '左右-右眼'],
-    ['equirect-tb-top', '上下-上眼'],
-    ['equirect-tb-bottom', '上下-下眼'],
-    ['flat', '平面'],
-    ['flat-mirror-x', '平面镜像'],
-  ]
-  const savedVrMode = localStorage.getItem('copymanga.mediaVrMode') || 'off'
-  for (const [value, label] of vrModes) {
-    const option = document.createElement('option')
-    option.value = value
-    option.textContent = label
-    vrModeSelect.append(option)
-  }
-  vrModeSelect.value = vrModes.some(([value]) => value === savedVrMode) ? savedVrMode : 'off'
+  const vrControls = createVrControls(reader.type === 'video')
   const loopToggle = document.createElement('button')
   loopToggle.type = 'button'
   loopToggle.className = 'stream-toggle'
@@ -2769,7 +2751,7 @@ function renderStreamMedia(reader, options = {}) {
     fullscreen.title = active ? '退出页面全屏' : '页面全屏'
   })
   const vrViewer = reader.type === 'video'
-    ? createVrVideoViewer({ frame, player, modeSelect: vrModeSelect, warning: playbackWarning })
+    ? createVrVideoViewer({ frame, player, controls: vrControls, warning: playbackWarning })
     : null
   const title = document.createElement('div')
   title.className = 'stream-player-title'
@@ -2802,7 +2784,7 @@ function renderStreamMedia(reader, options = {}) {
   })
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, vrModeSelect, fullscreen)
+  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, vrControls.element, fullscreen)
   frame.append(player, subtitleOverlay, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
@@ -2817,7 +2799,116 @@ function renderStreamMedia(reader, options = {}) {
   updateMediaPageControls()
 }
 
-function createVrVideoViewer({ frame, player, modeSelect, warning }) {
+function createVrControls(visible) {
+  const wrap = document.createElement('span')
+  wrap.className = 'stream-vr-controls'
+  wrap.hidden = !visible
+  const makeSelect = (className, title, options, value) => {
+    const select = document.createElement('select')
+    select.className = className
+    select.title = title
+    for (const [optionValue, label] of options) {
+      const option = document.createElement('option')
+      option.value = optionValue
+      option.textContent = label
+      select.append(option)
+    }
+    select.value = options.some(([optionValue]) => optionValue === value) ? value : options[0][0]
+    return select
+  }
+  const legacy = legacyVrModeToState(localStorage.getItem('copymanga.mediaVrMode') || '')
+  const projection = makeSelect('stream-vr-mode', '投影', [
+    ['off', '普通'],
+    ['equirect360', '360'],
+    ['equirect180', '180'],
+    ['fisheye180', '鱼眼180'],
+    ['dualfisheye180', '双鱼眼'],
+    ['flat', '平面'],
+  ], localStorage.getItem('copymanga.mediaVrProjection') || legacy.projection)
+  const layout = makeSelect('stream-vr-layout', '布局', [
+    ['mono', '单画面'],
+    ['sbs', '左右'],
+    ['tb', '上下'],
+  ], localStorage.getItem('copymanga.mediaVrLayout') || legacy.layout)
+  const eye = makeSelect('stream-vr-eye', '眼睛', [
+    ['left', '左/上'],
+    ['right', '右/下'],
+  ], localStorage.getItem('copymanga.mediaVrEye') || legacy.eye)
+  const mirror = document.createElement('button')
+  mirror.type = 'button'
+  mirror.className = 'stream-toggle stream-vr-correction'
+  mirror.title = '水平镜像'
+  mirror.textContent = '镜像'
+  const flipY = document.createElement('button')
+  flipY.type = 'button'
+  flipY.className = 'stream-toggle stream-vr-correction'
+  flipY.title = '上下翻转'
+  flipY.textContent = '上下翻'
+  const setPressed = (button, pressed) => {
+    button.dataset.active = pressed ? '1' : '0'
+    button.classList.toggle('active', pressed)
+  }
+  setPressed(mirror, (localStorage.getItem('copymanga.mediaVrMirrorX') || legacy.mirrorX) === '1')
+  setPressed(flipY, (localStorage.getItem('copymanga.mediaVrFlipY') || legacy.flipY) === '1')
+  wrap.append(projection, layout, eye, mirror, flipY)
+  const value = () => ({
+    projection: projection.value,
+    layout: layout.value,
+    eye: eye.value,
+    mirrorX: mirror.dataset.active === '1',
+    flipY: flipY.dataset.active === '1',
+  })
+  const save = () => {
+    const state = value()
+    localStorage.setItem('copymanga.mediaVrProjection', state.projection)
+    localStorage.setItem('copymanga.mediaVrLayout', state.layout)
+    localStorage.setItem('copymanga.mediaVrEye', state.eye)
+    localStorage.setItem('copymanga.mediaVrMirrorX', state.mirrorX ? '1' : '0')
+    localStorage.setItem('copymanga.mediaVrFlipY', state.flipY ? '1' : '0')
+  }
+  return {
+    element: wrap,
+    projection,
+    layout,
+    eye,
+    mirror,
+    flipY,
+    value,
+    save,
+    onChange(callback) {
+      const emit = () => {
+        save()
+        callback(value())
+      }
+      projection.addEventListener('change', emit)
+      layout.addEventListener('change', emit)
+      eye.addEventListener('change', emit)
+      mirror.addEventListener('click', () => {
+        setPressed(mirror, mirror.dataset.active !== '1')
+        emit()
+      })
+      flipY.addEventListener('click', () => {
+        setPressed(flipY, flipY.dataset.active !== '1')
+        emit()
+      })
+    },
+  }
+}
+
+function legacyVrModeToState(mode) {
+  const state = { projection: 'off', layout: 'mono', eye: 'left', mirrorX: '', flipY: '' }
+  if (!mode || mode === 'off') return state
+  if (mode.startsWith('flat')) state.projection = 'flat'
+  else state.projection = 'equirect360'
+  if (mode.includes('sbs')) state.layout = 'sbs'
+  if (mode.includes('tb')) state.layout = 'tb'
+  if (mode.endsWith('right') || mode.endsWith('bottom')) state.eye = 'right'
+  if (mode.includes('mirror-x')) state.mirrorX = '1'
+  if (mode.includes('flip-y')) state.flipY = '1'
+  return state
+}
+
+function createVrVideoViewer({ frame, player, controls, warning }) {
   const canvas = document.createElement('canvas')
   canvas.className = 'stream-vr-canvas'
   canvas.hidden = true
@@ -2841,16 +2932,15 @@ function createVrVideoViewer({ frame, player, modeSelect, warning }) {
     texture: null,
     buffer: null,
     locations: null,
-    mode: 'off',
+    vrState: controls.value(),
   }
   const showWarning = (message) => {
     warning.classList.remove('hidden')
     warning.textContent = message
   }
-  const setMode = (mode) => {
-    state.mode = mode || 'off'
-    localStorage.setItem('copymanga.mediaVrMode', state.mode)
-    setActive(state.mode !== 'off')
+  const setVrState = (value) => {
+    state.vrState = value || controls.value()
+    setActive(state.vrState.projection !== 'off')
   }
   const setActive = (active) => {
     if (active && !initVr()) return
@@ -2866,9 +2956,9 @@ function createVrVideoViewer({ frame, player, modeSelect, warning }) {
       state.raf = 0
     }
   }
-  modeSelect.addEventListener('change', () => setMode(modeSelect.value))
-  if (modeSelect.value && modeSelect.value !== 'off') {
-    setTimeout(() => setMode(modeSelect.value), 0)
+  controls.onChange(setVrState)
+  if (state.vrState.projection !== 'off') {
+    setTimeout(() => setVrState(controls.value()), 0)
   }
   canvas.addEventListener('pointerdown', (event) => {
     state.dragging = true
@@ -2936,7 +3026,11 @@ function createVrVideoViewer({ frame, player, modeSelect, warning }) {
       yaw: gl.getUniformLocation(program, 'u_yaw'),
       pitch: gl.getUniformLocation(program, 'u_pitch'),
       fov: gl.getUniformLocation(program, 'u_fov'),
-      mode: gl.getUniformLocation(program, 'u_mode'),
+      projection: gl.getUniformLocation(program, 'u_projection'),
+      layout: gl.getUniformLocation(program, 'u_layout'),
+      eye: gl.getUniformLocation(program, 'u_eye'),
+      mirrorX: gl.getUniformLocation(program, 'u_mirror_x'),
+      flipY: gl.getUniformLocation(program, 'u_flip_y'),
       texture: gl.getUniformLocation(program, 'u_texture'),
     }
     state.initialized = true
@@ -2969,7 +3063,11 @@ function createVrVideoViewer({ frame, player, modeSelect, warning }) {
     gl.uniform1f(state.locations.yaw, state.yaw)
     gl.uniform1f(state.locations.pitch, state.pitch)
     gl.uniform1f(state.locations.fov, state.fov)
-    gl.uniform1i(state.locations.mode, vrModeCode(state.mode))
+    gl.uniform1i(state.locations.projection, vrProjectionCode(state.vrState.projection))
+    gl.uniform1i(state.locations.layout, vrLayoutCode(state.vrState.layout))
+    gl.uniform1i(state.locations.eye, state.vrState.eye === 'right' ? 1 : 0)
+    gl.uniform1i(state.locations.mirrorX, state.vrState.mirrorX ? 1 : 0)
+    gl.uniform1i(state.locations.flipY, state.vrState.flipY ? 1 : 0)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     renderVrSubtitles(player, subtitleOverlay)
     state.raf = requestAnimationFrame(renderVr)
@@ -2987,23 +3085,26 @@ function createVrVideoViewer({ frame, player, modeSelect, warning }) {
       canvas.remove()
       subtitleOverlay.remove()
     },
-    setMode,
+    setMode: (mode) => setVrState(legacyVrModeToState(mode)),
   }
 }
 
-function vrModeCode(mode) {
-  const codes = {
-    equirect: 1,
-    'equirect-mirror-x': 2,
-    'equirect-flip-y': 3,
-    'equirect-sbs-left': 4,
-    'equirect-sbs-right': 5,
-    'equirect-tb-top': 6,
-    'equirect-tb-bottom': 7,
+function vrProjectionCode(value) {
+  return {
+    equirect360: 1,
+    equirect180: 2,
+    fisheye180: 3,
+    dualfisheye180: 4,
     flat: 20,
-    'flat-mirror-x': 21,
-  }
-  return codes[mode] || 0
+  }[value] || 0
+}
+
+function vrLayoutCode(value) {
+  return {
+    mono: 0,
+    sbs: 1,
+    tb: 2,
+  }[value] || 0
 }
 
 function renderVrSubtitles(player, subtitleOverlay) {
@@ -3043,7 +3144,11 @@ function createVrProgram(gl) {
     uniform float u_yaw;
     uniform float u_pitch;
     uniform float u_fov;
-    uniform int u_mode;
+    uniform int u_projection;
+    uniform int u_layout;
+    uniform int u_eye;
+    uniform bool u_mirror_x;
+    uniform bool u_flip_y;
     varying vec2 v_uv;
     const float PI = 3.141592653589793;
 
@@ -3060,18 +3165,36 @@ function createVrProgram(gl) {
     }
 
     vec2 sourceCoord(vec2 coord) {
-      if (u_mode == 2 || u_mode == 21) coord.x = 1.0 - coord.x;
-      if (u_mode == 3) coord.y = 1.0 - coord.y;
-      if (u_mode == 4) coord.x = coord.x * 0.5;
-      if (u_mode == 5) coord.x = coord.x * 0.5 + 0.5;
-      if (u_mode == 6) coord.y = coord.y * 0.5;
-      if (u_mode == 7) coord.y = coord.y * 0.5 + 0.5;
+      if (u_mirror_x) coord.x = 1.0 - coord.x;
+      if (u_flip_y) coord.y = 1.0 - coord.y;
+      if (u_layout == 1) coord.x = coord.x * 0.5 + (u_eye == 1 ? 0.5 : 0.0);
+      if (u_layout == 2) coord.y = coord.y * 0.5 + (u_eye == 1 ? 0.5 : 0.0);
       return coord;
+    }
+
+    vec3 equirectCoord(vec3 dir, bool halfDome) {
+      float lon = atan(dir.x, -dir.z);
+      float lat = asin(clamp(dir.y, -1.0, 1.0));
+      if (halfDome && abs(lon) > PI * 0.5) return vec3(0.0, 0.0, 0.0);
+      float x = halfDome ? lon / PI + 0.5 : lon / (2.0 * PI) + 0.5;
+      return vec3(x, 0.5 - lat / PI, 1.0);
+    }
+
+    vec3 fisheyeCoord(vec3 dir, bool dual) {
+      bool back = dir.z > 0.0;
+      vec3 viewDir = back ? vec3(-dir.x, dir.y, -dir.z) : dir;
+      float theta = acos(clamp(-viewDir.z, -1.0, 1.0));
+      if (theta > PI * 0.5) return vec3(0.0, 0.0, 0.0);
+      float phi = atan(viewDir.y, viewDir.x);
+      float radius = theta / (PI * 0.5) * 0.5;
+      vec2 center = dual ? vec2(back ? 0.75 : 0.25, 0.5) : vec2(0.5, 0.5);
+      float scale = dual ? 0.5 : 1.0;
+      return vec3(center + vec2(cos(phi), sin(phi)) * radius * scale, 1.0);
     }
 
     void main() {
       vec2 ndc = v_uv * 2.0 - 1.0;
-      if (u_mode >= 20) {
+      if (u_projection >= 20) {
         gl_FragColor = texture2D(u_texture, sourceCoord(v_uv));
         return;
       }
@@ -3079,10 +3202,18 @@ function createVrProgram(gl) {
       float scale = tan(u_fov * 0.5);
       vec3 dir = normalize(vec3(ndc.x * aspect * scale, -ndc.y * scale, -1.0));
       dir = rotateY(rotateX(dir, u_pitch), u_yaw);
-      float lon = atan(dir.x, -dir.z);
-      float lat = asin(clamp(dir.y, -1.0, 1.0));
-      vec2 coord = vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);
-      gl_FragColor = texture2D(u_texture, sourceCoord(coord));
+      vec3 projected = u_projection == 2
+        ? equirectCoord(dir, true)
+        : u_projection == 3
+          ? fisheyeCoord(dir, false)
+          : u_projection == 4
+            ? fisheyeCoord(dir, true)
+            : equirectCoord(dir, false);
+      if (projected.z < 0.5) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+      }
+      gl_FragColor = texture2D(u_texture, sourceCoord(projected.xy));
     }
   `)
   if (!vertex || !fragment) return null
@@ -3383,6 +3514,31 @@ els.libraryRunTagScripts.addEventListener('click', async () => {
   }
 })
 
+els.libraryRunPageTagScripts?.addEventListener('click', async () => {
+  const actionIds = checkedTagScriptIds('library-tag-script')
+  if (!actionIds.length) return alert('请选择元数据脚本')
+  const items = currentLibraryPageItems()
+  if (!items.length) return alert('当前页没有媒体')
+  if (!confirm(`对当前页 ${items.length} 个媒体执行选中的元数据脚本吗？`)) return
+  try {
+    setLoading(els.libraryRunPageTagScripts, true)
+    for (const item of items) {
+      await api(`/api/library/items/${encodeURIComponent(item.type)}/${encodeURIComponent(item.itemId)}/metadata-actions`, {
+        method: 'POST',
+        body: JSON.stringify({ actionIds, force: true }),
+      })
+    }
+    await loadTagManager().catch(() => {})
+    if (currentLibraryItem?.type && currentLibraryItem?.itemId) {
+      setTimeout(() => selectLibraryItem(currentLibraryItem.type, currentLibraryItem.itemId).catch(() => {}), 1500)
+    }
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.libraryRunPageTagScripts, false)
+  }
+})
+
 els.libraryRunSelectedUnits.addEventListener('click', async () => {
   const unitIds = checkedLibraryUnitIds()
   if (!unitIds.length) return alert('请选择章节')
@@ -3398,6 +3554,14 @@ function checkedLibraryUnitIds() {
   return [...els.libraryUnits.querySelectorAll('.unit-metadata-select:checked')]
     .map((input) => input.value)
     .filter(Boolean)
+}
+
+function currentLibraryPageItems() {
+  const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
+  libraryTotalPages = Math.max(1, Math.ceil(libraryItems.length / limit))
+  libraryPage = Math.max(1, Math.min(libraryTotalPages, libraryPage))
+  const offset = (libraryPage - 1) * limit
+  return libraryItems.slice(offset, offset + limit)
 }
 
 async function runMetadataActions({ unitIds = [], button = null } = {}) {
