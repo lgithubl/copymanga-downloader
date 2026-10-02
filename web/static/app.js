@@ -1865,7 +1865,6 @@ function renderLibraryUnits() {
         ${renderTagList(unit.tags || [])}${thumbnailBadge}
       </span>
       <span class="library-unit-status">${statusBadges.map((badge) => `<span>${escapeHtml(badge)}</span>`).join('')}</span>
-      <button class="unit-metadata-action secondary" type="button" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'hidden'}>执行</button>
       <button class="unit-tags secondary" type="button">标签</button>
     `
     const thumb = row.querySelector('.unit-thumb')
@@ -1877,10 +1876,6 @@ function renderLibraryUnits() {
       if (event.target.closest('button,input')) return
       if (unit.mediaKind === 'subtitle') return
       openMediaUnit(unit.unitId)
-    })
-    row.querySelector('.unit-metadata-action')?.addEventListener('click', (event) => {
-      event.stopPropagation()
-      runMetadataActionsForUnit(unit)
     })
     row.querySelector('.unit-tags')?.addEventListener('click', (event) => {
       event.stopPropagation()

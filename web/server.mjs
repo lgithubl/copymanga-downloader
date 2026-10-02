@@ -1192,13 +1192,17 @@ async function getDownloadedComic(comicPathWord, { refresh = false, token = '' }
   if (refresh) {
     const comic = await getComic(comicPathWord)
     await writeDownloadedComicMetadata(downloadedComic, comic)
-    return { ...comic, source: 'remote', downloadedInfo: downloadedComic }
+    return {
+      ...markDownloadedChapters(comic, [downloadedComic]),
+      source: 'remote',
+      downloadedInfo: downloadedComic,
+    }
   }
 
   const metadataComicFile = downloadedComic.metadataComicFile || path.join(metadataRoot(), downloadedComic.path, APP_COMIC_METADATA)
   const comic = normalizeComicMetadata(JSON.parse(await readFile(metadataComicFile, 'utf8')))
   return {
-    ...markDownloadedChapters(comic, downloadedComics),
+    ...markDownloadedChapters(comic, [downloadedComic]),
     source: 'metadata',
     downloadedInfo: downloadedComic,
   }
@@ -1211,7 +1215,11 @@ async function getDownloadedComicFromMetadataDir(comicPathWord, { refresh = fals
   if (refresh) {
     const remote = await getComic(comicPathWord)
     await writeDownloadedComicMetadata(downloadedComic, remote)
-    return { ...remote, source: 'remote', downloadedInfo: downloadedComic }
+    return {
+      ...markDownloadedChapters(remote, [downloadedComic]),
+      source: 'remote',
+      downloadedInfo: downloadedComic,
+    }
   }
   return {
     ...markDownloadedChapters(comic, [downloadedComic]),
