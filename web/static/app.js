@@ -85,6 +85,7 @@ const els = {
   libraryNext: document.querySelector('#library-next'),
   libraryLimit: document.querySelector('#library-limit'),
   librarySample: document.querySelector('#library-sample'),
+  librarySearch: document.querySelector('#library-search'),
   libraryRefresh: document.querySelector('#library-refresh'),
   libraryItems: document.querySelector('#library-items'),
   libraryItemTitle: document.querySelector('#library-item-title'),
@@ -101,6 +102,12 @@ const els = {
   tagScriptUploadFile: document.querySelector('#tag-script-upload-file'),
   tagScriptUpload: document.querySelector('#tag-script-upload'),
   tagManagerRefresh: document.querySelector('#tag-manager-refresh'),
+  tagManagerKeyword: document.querySelector('#tag-manager-keyword'),
+  tagManagerSearch: document.querySelector('#tag-manager-search'),
+  tagManagerFirst: document.querySelector('#tag-manager-first'),
+  tagManagerPrev: document.querySelector('#tag-manager-prev'),
+  tagManagerNext: document.querySelector('#tag-manager-next'),
+  tagManagerPageInfo: document.querySelector('#tag-manager-page-info'),
   tagDisplayPriority: document.querySelector('#tag-display-priority'),
   tagManagerTags: document.querySelector('#tag-manager-tags'),
   tagManagerScripts: document.querySelector('#tag-manager-scripts'),
@@ -204,6 +211,8 @@ let libraryHistoryByKey = new Map()
 let tagScripts = []
 let tagJobs = []
 let tagCatalog = []
+let tagManagerPage = 1
+let tagManagerPageSize = 60
 let mediaTagDisplayKeys = []
 let currentLibraryItem = null
 let currentLibraryUnits = []
@@ -1367,7 +1376,19 @@ function renderTagManager() {
   renderTagDisplayPriority()
 
   els.tagManagerTags.innerHTML = ''
-  for (const tag of tagCatalog) {
+  const keyword = String(els.tagManagerKeyword?.value || '').trim().toLowerCase()
+  const filteredTags = keyword
+    ? tagCatalog.filter((tag) => String(tag.name || '').toLowerCase().includes(keyword))
+    : tagCatalog
+  const totalPages = Math.max(1, Math.ceil(filteredTags.length / tagManagerPageSize))
+  tagManagerPage = Math.max(1, Math.min(totalPages, tagManagerPage))
+  const offset = (tagManagerPage - 1) * tagManagerPageSize
+  const visibleTags = filteredTags.slice(offset, offset + tagManagerPageSize)
+  if (els.tagManagerPageInfo) els.tagManagerPageInfo.textContent = `第 ${tagManagerPage} / ${totalPages} 页 · ${filteredTags.length} 个`
+  if (els.tagManagerFirst) els.tagManagerFirst.disabled = tagManagerPage <= 1
+  if (els.tagManagerPrev) els.tagManagerPrev.disabled = tagManagerPage <= 1
+  if (els.tagManagerNext) els.tagManagerNext.disabled = tagManagerPage >= totalPages
+  for (const tag of visibleTags) {
     const card = document.createElement('article')
     card.className = 'card tag-manager-card'
     card.innerHTML = `
@@ -1383,7 +1404,7 @@ function renderTagManager() {
     })
     els.tagManagerTags.append(card)
   }
-  if (!tagCatalog.length) els.tagManagerTags.innerHTML = '<p class="muted">暂无 tag</p>'
+  if (!filteredTags.length) els.tagManagerTags.innerHTML = '<p class="muted">暂无 tag</p>'
 
   els.tagManagerScripts.innerHTML = ''
   for (const script of tagScripts) {
@@ -1476,6 +1497,7 @@ function renderTagDisplayPriority() {
       ${keys.map((key, index) => `
         <div class="tag-display-row" data-key="${escapeHtml(key)}">
           <label><input type="checkbox" ${selected.has(key) ? 'checked' : ''} /> <span>${escapeHtml(key)}</span></label>
+          <button class="secondary tag-display-top-button" type="button" ${index === 0 ? 'disabled' : ''} title="置顶">⇧</button>
           <button class="secondary tag-display-up" type="button" ${index === 0 ? 'disabled' : ''}>↑</button>
           <button class="secondary tag-display-down" type="button" ${index === keys.length - 1 ? 'disabled' : ''}>↓</button>
         </div>
@@ -1484,6 +1506,9 @@ function renderTagDisplayPriority() {
   `
   els.tagDisplayPriority.querySelectorAll('.tag-display-up').forEach((button) => {
     button.addEventListener('click', () => moveTagDisplayRow(button.closest('.tag-display-row'), -1))
+  })
+  els.tagDisplayPriority.querySelectorAll('.tag-display-top-button').forEach((button) => {
+    button.addEventListener('click', () => moveTagDisplayRowToTop(button.closest('.tag-display-row')))
   })
   els.tagDisplayPriority.querySelectorAll('.tag-display-down').forEach((button) => {
     button.addEventListener('click', () => moveTagDisplayRow(button.closest('.tag-display-row'), 1))
@@ -1500,9 +1525,16 @@ function moveTagDisplayRow(row, delta) {
   syncTagDisplayMoveButtons()
 }
 
+function moveTagDisplayRowToTop(row) {
+  if (!row?.parentElement || row === row.parentElement.firstElementChild) return
+  row.parentElement.insertBefore(row, row.parentElement.firstElementChild)
+  syncTagDisplayMoveButtons()
+}
+
 function syncTagDisplayMoveButtons() {
   const rows = [...els.tagDisplayPriority.querySelectorAll('.tag-display-row')]
   rows.forEach((row, index) => {
+    row.querySelector('.tag-display-top-button').disabled = index === 0
     row.querySelector('.tag-display-up').disabled = index === 0
     row.querySelector('.tag-display-down').disabled = index === rows.length - 1
   })
@@ -2130,7 +2162,7 @@ function historyPositionForReader() {
 function renderTagList(tags = []) {
   if (!tags.length) return ''
   const prioritized = orderedDisplayTags(tags)
-  const visibleCount = Math.max(4, prioritized.priorityCount)
+  const visibleCount = Math.min(Math.max(4, prioritized.priorityCount || 0), prioritized.tags.length)
   const hiddenCount = Math.max(0, prioritized.tags.length - visibleCount)
   return `<span class="tag-list${hiddenCount ? ' tag-list-collapsed' : ''}" data-collapsed="1">${prioritized.tags.map((tag, index) => `<span class="tag-pill${index >= visibleCount ? ' tag-pill-extra' : ''}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}${hiddenCount ? `<button class="tag-toggle secondary" type="button" data-more="${hiddenCount}">+${hiddenCount}</button>` : ''}</span>`
 }
@@ -3245,6 +3277,10 @@ els.downloadedMarkAllRead.addEventListener('click', async () => {
   }
 })
 els.libraryRefresh.addEventListener('click', loadLibraryItems)
+els.librarySearch?.addEventListener('click', () => {
+  libraryPage = 1
+  loadLibraryItems()
+})
 els.libraryType.addEventListener('change', () => {
   libraryPage = 1
   loadLibraryItems()
@@ -3330,6 +3366,28 @@ async function runMetadataActions({ unitIds = [], button = null } = {}) {
 els.tagManagerRefresh.addEventListener('click', () => loadTagManager())
 els.tagScriptsReload.addEventListener('click', () => loadTagManager({ reloadScripts: true }))
 els.tagScriptUpload.addEventListener('click', uploadTagScriptPackage)
+els.tagManagerSearch?.addEventListener('click', () => {
+  tagManagerPage = 1
+  renderTagManager()
+})
+els.tagManagerKeyword?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    tagManagerPage = 1
+    renderTagManager()
+  }
+})
+els.tagManagerFirst?.addEventListener('click', () => {
+  tagManagerPage = 1
+  renderTagManager()
+})
+els.tagManagerPrev?.addEventListener('click', () => {
+  tagManagerPage = Math.max(1, tagManagerPage - 1)
+  renderTagManager()
+})
+els.tagManagerNext?.addEventListener('click', () => {
+  tagManagerPage += 1
+  renderTagManager()
+})
 els.historyRefresh.addEventListener('click', loadLibraryHistory)
 els.historyType.addEventListener('change', loadLibraryHistory)
 els.historyKeyword.addEventListener('keydown', (event) => {
