@@ -437,6 +437,10 @@ h2 {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.library-workspace > section:last-child {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
 .library-workspace .chapter-head {
   align-items: start;
   display: grid;
@@ -1351,7 +1355,7 @@ h2 {
   cursor: pointer;
   grid-template-columns: auto 42px minmax(0, 1fr) minmax(48px, auto) auto;
   height: auto;
-  min-height: 110px;
+  min-height: 132px;
   scroll-margin-top: 72px;
   text-align: left;
   width: 100%;
@@ -1437,12 +1441,12 @@ h2 {
 .library-unit .chapter-title {
   display: -webkit-box;
   line-height: 1.28;
-  min-height: 2.56em;
+  min-height: 3.84em;
   overflow: hidden;
   text-overflow: clip;
   white-space: normal;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 
 .library-unit .library-unit-path {
@@ -1459,6 +1463,16 @@ h2 {
   gap: 4px;
   justify-content: flex-end;
   max-width: 96px;
+}
+
+.library-unit .tag-list {
+  max-height: 42px;
+  overflow: hidden;
+}
+
+.library-unit .tag-list[data-collapsed="0"] {
+  max-height: 82px;
+  overflow: auto;
 }
 
 .library-unit.subtitle-unit {

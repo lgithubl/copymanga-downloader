@@ -1354,6 +1354,14 @@ function checkedTagScriptIds(name) {
   return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value)
 }
 
+function filterTagScriptIdsByScope(actionIds, scope) {
+  if (!scope) return actionIds
+  const selected = new Set(actionIds)
+  return tagScripts
+    .filter((script) => selected.has(script.id) && Array.isArray(script.scope) && script.scope.includes(scope))
+    .map((script) => script.id)
+}
+
 async function loadTagManager({ reloadScripts = false } = {}) {
   try {
     setLoading(els.tagManagerRefresh, true)
@@ -3348,8 +3356,12 @@ function checkedLibraryUnitIds() {
 
 async function runMetadataActions({ unitIds = [], button = null } = {}) {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
-  const actionIds = checkedTagScriptIds('library-tag-script')
-  if (!actionIds.length) return alert('请选择元数据脚本')
+  const selectedActionIds = checkedTagScriptIds('library-tag-script')
+  const actionIds = unitIds.length ? filterTagScriptIdsByScope(selectedActionIds, 'unit') : selectedActionIds
+  if (!actionIds.length) return alert(unitIds.length ? '请选择支持章节执行的元数据脚本' : '请选择元数据脚本')
+  if (unitIds.length && selectedActionIds.length !== actionIds.length) {
+    console.info('已跳过不支持章节执行的元数据脚本', selectedActionIds.filter((id) => !actionIds.includes(id)))
+  }
   try {
     if (button) setLoading(button, true)
     await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/metadata-actions`, {
