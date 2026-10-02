@@ -2864,6 +2864,53 @@ function publicTagJob(job) {
   }
 }
 
+function publicTagJobSummary(job) {
+  return {
+    ...publicTagJob(job),
+    results: (job.results || []).map((result) => ({
+      scriptId: result.scriptId,
+      actionId: result.actionId,
+      scriptVersion: result.scriptVersion,
+      status: result.status,
+      message: result.message,
+      itemTagCount: result.itemTagCount,
+      unitTagCount: result.unitTagCount,
+      thumbnailJobs: result.thumbnailJobs,
+      error: result.error,
+      hasDetails: Boolean(
+        result.details ||
+        result.result ||
+        result.logs?.length ||
+        result.itemTags?.length ||
+        result.unitTags?.length
+      ),
+    })),
+  }
+}
+
+function paginatedResponse(items, { page, limit, total }) {
+  const safeLimit = Math.max(1, Math.floor(Number(limit) || 200))
+  const safeTotal = Math.max(0, Math.floor(Number(total) || 0))
+  const safePage = Math.max(1, Math.floor(Number(page) || 1))
+  return {
+    items,
+    page: safePage,
+    limit: safeLimit,
+    total: safeTotal,
+    totalPages: Math.max(1, Math.ceil(safeTotal / safeLimit)),
+  }
+}
+
+function paginationFromSearchParams(params, defaultLimit = 200, maxLimit = 1000) {
+  const hasPagination = params.has('page') || params.has('limit') || params.has('offset') || params.has('keyword')
+  if (!hasPagination) return null
+  const limit = Math.max(1, Math.min(maxLimit, Math.floor(Number(params.get('limit') || defaultLimit) || defaultLimit)))
+  const page = Math.max(1, Math.floor(Number(params.get('page') || 1) || 1))
+  const explicitOffset = params.has('offset') ? Math.max(0, Math.floor(Number(params.get('offset') || 0) || 0)) : null
+  const offset = explicitOffset ?? ((page - 1) * limit)
+  return { page: Math.floor(offset / limit) + 1, limit, offset, keyword: params.get('keyword') || '' }
+}
+
 function importTagScriptIds(fields = {}) {
   const profile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
   if (profile === 'rj-media') {
@@ -3418,10 +3465,28 @@ async function route(req, res) {
       return json(res, 200, libraryTypes())
     }
     if (pathname === '/api/library/tags' && req.method === 'GET') {
-      return json(res, 200, listTags())
+      const pagination = paginationFromSearchParams(url.searchParams, 200, 1000)
+      if (!pagination) return json(res, 200, listTags())
+      const result = listTags(pagination)
+      return json(res, 200, paginatedResponse(result.items, {
+        page: pagination.page,
+        limit: result.limit,
+        total: result.total,
+      }))
     }
     if ((pathname === '/api/metadata-actions' || pathname === '/api/tag-scripts') && req.method === 'GET') {
-      return json(res, 200, await scanMetadataActions({ force: url.searchParams.get('reload') === '1' }))
+      const actions = await scanMetadataActions({ force: url.searchParams.get('reload') === '1' })
+      const pagination = paginationFromSearchParams(url.searchParams, 200, 1000)
+      if (!pagination) return json(res, 200, actions)
+      const keyword = normalizeTagName(pagination.keyword)
+      const filtered = keyword
+        ? actions.filter((item) => [item.id, item.name, item.description, item.version].some((value) => normalizeTagName(value).includes(keyword)))
+        : actions
+      return json(res, 200, paginatedResponse(filtered.slice(pagination.offset, pagination.offset + pagination.limit), {
+        page: pagination.page,
+        limit: pagination.limit,
+        total: filtered.length,
+      }))
     }
     if ((pathname === '/api/metadata-actions/upload' || pathname === '/api/tag-scripts/upload') && req.method === 'POST') {
       const form = await readMultipart(req)
@@ -3440,7 +3505,31 @@ async function route(req, res) {
       return json(res, 200, await deleteTagScriptOptions(scriptId))
     }
     if ((pathname === '/api/metadata-jobs' || pathname === '/api/tag-jobs') && req.method === 'GET') {
-      return json(res, 200, [...tagJobs.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(publicTagJob))
+      const pagination = paginationFromSearchParams(url.searchParams, 200, 1000)
+      const sorted = [...tagJobs.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      if (!pagination) return json(res, 200, sorted.map(publicTagJob))
+      const keyword = normalizeTagName(pagination.keyword)
+      const filtered = keyword
+        ? sorted.filter((job) => [
+            job.id,
+            job.type,
+            job.itemId,
+            job.status,
+            job.message,
+            ...(job.scriptIds || []),
+          ].some((value) => normalizeTagName(value).includes(keyword)))
+        : sorted
+      return json(res, 200, paginatedResponse(filtered.slice(pagination.offset, pagination.offset + pagination.limit).map(publicTagJobSummary), {
+        page: pagination.page,
+        limit: pagination.limit,
+        total: filtered.length,
+      }))
+    }
+    if ((pathname.startsWith('/api/metadata-jobs/') || pathname.startsWith('/api/tag-jobs/')) && req.method === 'GET') {
+      const parts = pathname.split('/').filter(Boolean)
+      const job = tagJobs.get(parts[2])
+      if (!job) return json(res, 404, { error: 'Job not found' })
+      return json(res, 200, publicTagJob(job))
     }
     if (pathname === '/api/library/history' && req.method === 'GET') {
       return json(res, 200, await listLibraryHistory({

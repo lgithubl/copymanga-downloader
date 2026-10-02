@@ -47,18 +47,45 @@ export function parseTags(value) {
   return [...new Set(input.map((item) => String(item || '').trim()).filter(Boolean))]
 }
 
-export function listTags() {
+export function listTags({ limit = 0, offset = 0, keyword = '' } = {}) {
   ensureDb()
-  return db.prepare(`
+  const pageLimit = Math.max(0, Math.min(1000, Math.floor(Number(limit) || 0)))
+  const pageOffset = Math.max(0, Math.floor(Number(offset) || 0))
+  const normalizedKeyword = normalizeTagName(keyword)
+  const where = normalizedKeyword ? 'WHERE tags.normalized_name LIKE ?' : ''
+  const params = normalizedKeyword ? [`%${normalizedKeyword}%`] : []
+  const rows = db.prepare(`
+    WITH item_counts AS (
+      SELECT tag_id, COUNT(*) AS itemCount
+      FROM item_tags
+      GROUP BY tag_id
+    ),
+    unit_counts AS (
+      SELECT tag_id, COUNT(*) AS unitCount
+      FROM unit_tags
+      GROUP BY tag_id
+    )
     SELECT
       tags.name,
       tags.normalized_name AS normalizedName,
       tags.color,
-      (SELECT COUNT(*) FROM item_tags WHERE item_tags.tag_id = tags.id) AS itemCount,
-      (SELECT COUNT(*) FROM unit_tags WHERE unit_tags.tag_id = tags.id) AS unitCount
+      COALESCE(item_counts.itemCount, 0) AS itemCount,
+      COALESCE(unit_counts.unitCount, 0) AS unitCount
     FROM tags
+    LEFT JOIN item_counts ON item_counts.tag_id = tags.id
+    LEFT JOIN unit_counts ON unit_counts.tag_id = tags.id
+    ${where}
     ORDER BY (itemCount + unitCount) DESC, name COLLATE NOCASE
-  `).all()
+    ${pageLimit ? 'LIMIT ? OFFSET ?' : ''}
+  `).all(...(pageLimit ? [...params, pageLimit, pageOffset] : params))
+  if (!pageLimit) return rows
+  const total = db.prepare(`SELECT COUNT(*) AS total FROM tags ${where}`).get(...params).total
+  return {
+    items: rows,
+    total,
+    limit: pageLimit,
+    offset: pageOffset,
+  }
 }
 
 export async function setItemTags({ type, itemId, tags }) {

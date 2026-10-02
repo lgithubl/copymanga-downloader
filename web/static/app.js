@@ -221,11 +221,17 @@ let tagScripts = []
 let tagJobs = []
 let tagCatalog = []
 let tagManagerPage = 1
-let tagManagerPageSize = 60
+let tagManagerPageSize = 200
+let tagManagerTotal = 0
+let tagManagerTotalPages = 1
 let tagScriptsPage = 1
-let tagScriptsPageSize = 8
+let tagScriptsPageSize = 200
+let tagScriptsTotal = 0
+let tagScriptsTotalPages = 1
 let tagJobsPage = 1
-let tagJobsPageSize = 12
+let tagJobsPageSize = 200
+let tagJobsTotal = 0
+let tagJobsTotalPages = 1
 let mediaTagDisplayKeys = []
 let currentLibraryItem = null
 let currentLibraryUnits = []
@@ -1333,7 +1339,10 @@ async function loadLibraryItems() {
 }
 
 async function loadTagScripts({ reload = false } = {}) {
-  tagScripts = await api(`/api/metadata-actions${reload ? '?reload=1' : ''}`)
+  const params = new URLSearchParams({ page: '1', limit: '1000' })
+  if (reload) params.set('reload', '1')
+  const payload = await api(`/api/metadata-actions?${params}`)
+  tagScripts = pageItems(payload)
   renderTagScriptPickers()
   return tagScripts
 }
@@ -1378,16 +1387,62 @@ function filterTagScriptIdsByScope(actionIds, scope) {
     .map((script) => script.id)
 }
 
+function pageItems(payload) {
+  return Array.isArray(payload) ? payload : (Array.isArray(payload?.items) ? payload.items : [])
+}
+
+function pageMeta(payload, fallbackPage, fallbackLimit) {
+  if (Array.isArray(payload)) {
+    return {
+      page: fallbackPage,
+      limit: fallbackLimit,
+      total: payload.length,
+      totalPages: Math.max(1, Math.ceil(payload.length / Math.max(1, fallbackLimit))),
+    }
+  }
+  return {
+    page: Number(payload?.page || fallbackPage || 1),
+    limit: Number(payload?.limit || fallbackLimit || 200),
+    total: Number(payload?.total || 0),
+    totalPages: Number(payload?.totalPages || 1),
+  }
+}
+
 async function loadTagManager({ reloadScripts = false } = {}) {
   try {
     setLoading(els.tagManagerRefresh, true)
-    const [tags, scripts, jobs] = await Promise.all([
-      api('/api/library/tags'),
-      loadTagScripts({ reload: reloadScripts }),
-      api('/api/metadata-jobs'),
+    const keyword = String(els.tagManagerKeyword?.value || '').trim()
+    const tagParams = new URLSearchParams({ page: String(tagManagerPage), limit: String(tagManagerPageSize) })
+    if (keyword) tagParams.set('keyword', keyword)
+    const scriptParams = new URLSearchParams({ page: String(tagScriptsPage), limit: String(tagScriptsPageSize) })
+    if (reloadScripts) scriptParams.set('reload', '1')
+    const jobParams = new URLSearchParams({ page: String(tagJobsPage), limit: String(tagJobsPageSize) })
+    const [tagsPayload, scriptsPayload, jobsPayload] = await Promise.all([
+      api(`/api/library/tags?${tagParams}`),
+      api(`/api/metadata-actions?${scriptParams}`),
+      api(`/api/metadata-jobs?${jobParams}`),
     ])
-    tagCatalog = tags
-    tagJobs = jobs
+    const tagMeta = pageMeta(tagsPayload, tagManagerPage, tagManagerPageSize)
+    tagCatalog = pageItems(tagsPayload)
+    tagManagerPage = tagMeta.page
+    tagManagerPageSize = tagMeta.limit
+    tagManagerTotal = tagMeta.total
+    tagManagerTotalPages = tagMeta.totalPages
+
+    const scriptMeta = pageMeta(scriptsPayload, tagScriptsPage, tagScriptsPageSize)
+    tagScripts = pageItems(scriptsPayload)
+    tagScriptsPage = scriptMeta.page
+    tagScriptsPageSize = scriptMeta.limit
+    tagScriptsTotal = scriptMeta.total
+    tagScriptsTotalPages = scriptMeta.totalPages
+    renderTagScriptPickers()
+
+    const jobMeta = pageMeta(jobsPayload, tagJobsPage, tagJobsPageSize)
+    tagJobs = pageItems(jobsPayload)
+    tagJobsPage = jobMeta.page
+    tagJobsPageSize = jobMeta.limit
+    tagJobsTotal = jobMeta.total
+    tagJobsTotalPages = jobMeta.totalPages
     renderTagManager()
   } catch (error) {
     alert(error.message)
@@ -1400,18 +1455,11 @@ function renderTagManager() {
   renderTagDisplayPriority()
 
   els.tagManagerTags.innerHTML = ''
-  const keyword = String(els.tagManagerKeyword?.value || '').trim().toLowerCase()
-  const filteredTags = keyword
-    ? tagCatalog.filter((tag) => String(tag.name || '').toLowerCase().includes(keyword))
-    : tagCatalog
-  const totalPages = Math.max(1, Math.ceil(filteredTags.length / tagManagerPageSize))
-  tagManagerPage = Math.max(1, Math.min(totalPages, tagManagerPage))
-  const offset = (tagManagerPage - 1) * tagManagerPageSize
-  const visibleTags = filteredTags.slice(offset, offset + tagManagerPageSize)
-  if (els.tagManagerPageInfo) els.tagManagerPageInfo.textContent = `第 ${tagManagerPage} / ${totalPages} 页 · ${filteredTags.length} 个`
+  const visibleTags = tagCatalog
+  if (els.tagManagerPageInfo) els.tagManagerPageInfo.textContent = `第 ${tagManagerPage} / ${tagManagerTotalPages} 页 · ${tagManagerTotal} 个`
   if (els.tagManagerFirst) els.tagManagerFirst.disabled = tagManagerPage <= 1
   if (els.tagManagerPrev) els.tagManagerPrev.disabled = tagManagerPage <= 1
-  if (els.tagManagerNext) els.tagManagerNext.disabled = tagManagerPage >= totalPages
+  if (els.tagManagerNext) els.tagManagerNext.disabled = tagManagerPage >= tagManagerTotalPages
   for (const tag of visibleTags) {
     const card = document.createElement('article')
     card.className = 'card tag-manager-card'
@@ -1428,17 +1476,14 @@ function renderTagManager() {
     })
     els.tagManagerTags.append(card)
   }
-  if (!filteredTags.length) els.tagManagerTags.innerHTML = '<p class="muted">暂无 tag</p>'
+  if (!tagCatalog.length) els.tagManagerTags.innerHTML = '<p class="muted">暂无 tag</p>'
 
   els.tagManagerScripts.innerHTML = ''
-  const totalScriptPages = Math.max(1, Math.ceil(tagScripts.length / tagScriptsPageSize))
-  tagScriptsPage = Math.max(1, Math.min(totalScriptPages, tagScriptsPage))
-  const scriptOffset = (tagScriptsPage - 1) * tagScriptsPageSize
-  const visibleScripts = tagScripts.slice(scriptOffset, scriptOffset + tagScriptsPageSize)
-  if (els.tagScriptsPageInfo) els.tagScriptsPageInfo.textContent = `第 ${tagScriptsPage} / ${totalScriptPages} 页 · ${tagScripts.length} 个`
+  const visibleScripts = tagScripts
+  if (els.tagScriptsPageInfo) els.tagScriptsPageInfo.textContent = `第 ${tagScriptsPage} / ${tagScriptsTotalPages} 页 · ${tagScriptsTotal} 个`
   if (els.tagScriptsFirst) els.tagScriptsFirst.disabled = tagScriptsPage <= 1
   if (els.tagScriptsPrev) els.tagScriptsPrev.disabled = tagScriptsPage <= 1
-  if (els.tagScriptsNext) els.tagScriptsNext.disabled = tagScriptsPage >= totalScriptPages
+  if (els.tagScriptsNext) els.tagScriptsNext.disabled = tagScriptsPage >= tagScriptsTotalPages
   for (const script of visibleScripts) {
     const configurable = script.actionType !== 'builtin'
     const card = document.createElement('article')
@@ -1483,14 +1528,11 @@ function renderTagManager() {
   if (!tagScripts.length) els.tagManagerScripts.innerHTML = '<p class="muted">暂无元数据脚本，目录 /data/tag-scripts</p>'
 
   els.tagManagerJobs.innerHTML = ''
-  const totalJobPages = Math.max(1, Math.ceil(tagJobs.length / tagJobsPageSize))
-  tagJobsPage = Math.max(1, Math.min(totalJobPages, tagJobsPage))
-  const jobOffset = (tagJobsPage - 1) * tagJobsPageSize
-  const visibleJobs = tagJobs.slice(jobOffset, jobOffset + tagJobsPageSize)
-  if (els.tagJobsPageInfo) els.tagJobsPageInfo.textContent = `第 ${tagJobsPage} / ${totalJobPages} 页 · ${tagJobs.length} 个`
+  const visibleJobs = tagJobs
+  if (els.tagJobsPageInfo) els.tagJobsPageInfo.textContent = `第 ${tagJobsPage} / ${tagJobsTotalPages} 页 · ${tagJobsTotal} 个`
   if (els.tagJobsFirst) els.tagJobsFirst.disabled = tagJobsPage <= 1
   if (els.tagJobsPrev) els.tagJobsPrev.disabled = tagJobsPage <= 1
-  if (els.tagJobsNext) els.tagJobsNext.disabled = tagJobsPage >= totalJobPages
+  if (els.tagJobsNext) els.tagJobsNext.disabled = tagJobsPage >= tagJobsTotalPages
   for (const job of visibleJobs) {
     const row = document.createElement('div')
     row.className = `job ${job.status}`
@@ -1500,11 +1542,27 @@ function renderTagManager() {
       <strong title="${escapeHtml(job.id || '')}">${escapeHtml(job.status)} · ${escapeHtml(job.type)}/${escapeHtml(job.itemId)}</strong>
       <span class="muted">${escapeHtml(unitText)} · ${escapeHtml((job.actionIds || job.scriptIds || []).join(', ') || '未记录脚本')}</span>
       <small>${escapeHtml([job.message || '', formatShortDate(job.updatedAt || job.createdAt)].filter(Boolean).join(' · '))}</small>
-      ${resultText ? `<details class="tag-job-details"><summary>详情</summary><pre>${escapeHtml(resultText)}</pre></details>` : ''}
+      ${(resultText || job.results?.some((result) => result.hasDetails)) ? `<details class="tag-job-details" data-job-id="${escapeHtml(job.id || '')}"><summary>详情</summary><pre>${escapeHtml(resultText || '加载详情...')}</pre></details>` : ''}
     `
+    const details = row.querySelector('.tag-job-details')
+    details?.addEventListener('toggle', () => {
+      if (!details.open || details.dataset.loaded === '1') return
+      loadTagJobDetails(details.dataset.jobId, details.querySelector('pre')).catch((error) => {
+        const pre = details.querySelector('pre')
+        if (pre) pre.textContent = error.message
+      })
+    })
     els.tagManagerJobs.append(row)
   }
   if (!tagJobs.length) els.tagManagerJobs.innerHTML = '<p class="muted">暂无元数据任务</p>'
+}
+
+async function loadTagJobDetails(jobId, pre) {
+  if (!jobId || !pre) return
+  pre.textContent = '加载详情...'
+  const job = await api(`/api/metadata-jobs/${encodeURIComponent(jobId)}`)
+  pre.textContent = summarizeMetadataJobResults(job) || '暂无详情'
+  pre.closest('.tag-job-details')?.setAttribute('data-loaded', '1')
 }
 
 function summarizeMetadataJobResults(job) {
@@ -3601,49 +3659,49 @@ els.tagScriptsReload.addEventListener('click', () => loadTagManager({ reloadScri
 els.tagScriptUpload.addEventListener('click', uploadTagScriptPackage)
 els.tagManagerSearch?.addEventListener('click', () => {
   tagManagerPage = 1
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagManagerKeyword?.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
     tagManagerPage = 1
-    renderTagManager()
+    loadTagManager().catch((error) => alert(error.message))
   }
 })
 els.tagManagerFirst?.addEventListener('click', () => {
   tagManagerPage = 1
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagManagerPrev?.addEventListener('click', () => {
   tagManagerPage = Math.max(1, tagManagerPage - 1)
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagManagerNext?.addEventListener('click', () => {
   tagManagerPage += 1
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagScriptsFirst?.addEventListener('click', () => {
   tagScriptsPage = 1
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagScriptsPrev?.addEventListener('click', () => {
   tagScriptsPage = Math.max(1, tagScriptsPage - 1)
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagScriptsNext?.addEventListener('click', () => {
   tagScriptsPage += 1
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagJobsFirst?.addEventListener('click', () => {
   tagJobsPage = 1
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagJobsPrev?.addEventListener('click', () => {
   tagJobsPage = Math.max(1, tagJobsPage - 1)
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.tagJobsNext?.addEventListener('click', () => {
   tagJobsPage += 1
-  renderTagManager()
+  loadTagManager().catch((error) => alert(error.message))
 })
 els.historyRefresh.addEventListener('click', loadLibraryHistory)
 els.historyType.addEventListener('change', loadLibraryHistory)
