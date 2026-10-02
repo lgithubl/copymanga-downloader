@@ -909,6 +909,15 @@ h2 {
   white-space: nowrap;
 }
 
+.tag-manager-toolbar.compact {
+  justify-content: flex-start;
+}
+
+.tag-manager-toolbar.compact button {
+  min-height: 28px;
+  padding: 0 8px;
+}
+
 .tag-manager-jobs {
   min-height: 120px;
   max-height: 300px;
@@ -1355,7 +1364,7 @@ h2 {
   cursor: pointer;
   grid-template-columns: auto 42px minmax(0, 1fr) minmax(48px, auto) auto;
   height: auto;
-  min-height: 132px;
+  min-height: 152px;
   scroll-margin-top: 72px;
   text-align: left;
   width: 100%;
@@ -1434,6 +1443,7 @@ h2 {
   display: grid;
   align-self: start;
   gap: 5px;
+  grid-template-rows: auto auto auto auto;
   min-width: 0;
   padding: 1px 0;
 }
@@ -1441,12 +1451,12 @@ h2 {
 .library-unit .chapter-title {
   display: -webkit-box;
   line-height: 1.28;
-  min-height: 3.84em;
+  min-height: 2.56em;
   overflow: hidden;
   text-overflow: clip;
   white-space: normal;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 
 .library-unit .library-unit-path {
@@ -1466,7 +1476,7 @@ h2 {
 }
 
 .library-unit .tag-list {
-  max-height: 42px;
+  max-height: 40px;
   overflow: hidden;
 }
 
@@ -1571,6 +1581,28 @@ h2 {
 .job {
   display: grid;
   gap: 6px;
+}
+
+.tag-job-details summary {
+  color: var(--site-primary-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tag-job-details pre {
+  background: var(--site-control);
+  border: 1px solid var(--site-border);
+  border-radius: 6px;
+  color: var(--site-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  margin: 4px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
 }
 
 .job.failed {

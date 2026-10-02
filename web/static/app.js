@@ -108,6 +108,14 @@ const els = {
   tagManagerPrev: document.querySelector('#tag-manager-prev'),
   tagManagerNext: document.querySelector('#tag-manager-next'),
   tagManagerPageInfo: document.querySelector('#tag-manager-page-info'),
+  tagScriptsFirst: document.querySelector('#tag-scripts-first'),
+  tagScriptsPrev: document.querySelector('#tag-scripts-prev'),
+  tagScriptsNext: document.querySelector('#tag-scripts-next'),
+  tagScriptsPageInfo: document.querySelector('#tag-scripts-page-info'),
+  tagJobsFirst: document.querySelector('#tag-jobs-first'),
+  tagJobsPrev: document.querySelector('#tag-jobs-prev'),
+  tagJobsNext: document.querySelector('#tag-jobs-next'),
+  tagJobsPageInfo: document.querySelector('#tag-jobs-page-info'),
   tagDisplayPriority: document.querySelector('#tag-display-priority'),
   tagManagerTags: document.querySelector('#tag-manager-tags'),
   tagManagerScripts: document.querySelector('#tag-manager-scripts'),
@@ -213,6 +221,10 @@ let tagJobs = []
 let tagCatalog = []
 let tagManagerPage = 1
 let tagManagerPageSize = 60
+let tagScriptsPage = 1
+let tagScriptsPageSize = 8
+let tagJobsPage = 1
+let tagJobsPageSize = 12
 let mediaTagDisplayKeys = []
 let currentLibraryItem = null
 let currentLibraryUnits = []
@@ -1415,7 +1427,15 @@ function renderTagManager() {
   if (!filteredTags.length) els.tagManagerTags.innerHTML = '<p class="muted">暂无 tag</p>'
 
   els.tagManagerScripts.innerHTML = ''
-  for (const script of tagScripts) {
+  const totalScriptPages = Math.max(1, Math.ceil(tagScripts.length / tagScriptsPageSize))
+  tagScriptsPage = Math.max(1, Math.min(totalScriptPages, tagScriptsPage))
+  const scriptOffset = (tagScriptsPage - 1) * tagScriptsPageSize
+  const visibleScripts = tagScripts.slice(scriptOffset, scriptOffset + tagScriptsPageSize)
+  if (els.tagScriptsPageInfo) els.tagScriptsPageInfo.textContent = `第 ${tagScriptsPage} / ${totalScriptPages} 页 · ${tagScripts.length} 个`
+  if (els.tagScriptsFirst) els.tagScriptsFirst.disabled = tagScriptsPage <= 1
+  if (els.tagScriptsPrev) els.tagScriptsPrev.disabled = tagScriptsPage <= 1
+  if (els.tagScriptsNext) els.tagScriptsNext.disabled = tagScriptsPage >= totalScriptPages
+  for (const script of visibleScripts) {
     const configurable = script.actionType !== 'builtin'
     const card = document.createElement('article')
     card.className = `card tag-manager-card${script.error ? ' tag-script-error' : ''}`
@@ -1459,17 +1479,43 @@ function renderTagManager() {
   if (!tagScripts.length) els.tagManagerScripts.innerHTML = '<p class="muted">暂无元数据脚本，目录 /data/tag-scripts</p>'
 
   els.tagManagerJobs.innerHTML = ''
-  for (const job of tagJobs) {
+  const totalJobPages = Math.max(1, Math.ceil(tagJobs.length / tagJobsPageSize))
+  tagJobsPage = Math.max(1, Math.min(totalJobPages, tagJobsPage))
+  const jobOffset = (tagJobsPage - 1) * tagJobsPageSize
+  const visibleJobs = tagJobs.slice(jobOffset, jobOffset + tagJobsPageSize)
+  if (els.tagJobsPageInfo) els.tagJobsPageInfo.textContent = `第 ${tagJobsPage} / ${totalJobPages} 页 · ${tagJobs.length} 个`
+  if (els.tagJobsFirst) els.tagJobsFirst.disabled = tagJobsPage <= 1
+  if (els.tagJobsPrev) els.tagJobsPrev.disabled = tagJobsPage <= 1
+  if (els.tagJobsNext) els.tagJobsNext.disabled = tagJobsPage >= totalJobPages
+  for (const job of visibleJobs) {
     const row = document.createElement('div')
     row.className = `job ${job.status}`
+    const unitText = Array.isArray(job.unitIds) && job.unitIds.length ? `章节 ${job.unitIds.length}` : '合集全量'
+    const resultText = summarizeMetadataJobResults(job)
     row.innerHTML = `
-      <strong>${escapeHtml(job.status)} · ${escapeHtml(job.type)}/${escapeHtml(job.itemId)}</strong>
-      <span class="muted">${escapeHtml((job.actionIds || job.scriptIds || []).join(', '))}</span>
-      <small>${escapeHtml(job.message || '')}</small>
+      <strong title="${escapeHtml(job.id || '')}">${escapeHtml(job.status)} · ${escapeHtml(job.type)}/${escapeHtml(job.itemId)}</strong>
+      <span class="muted">${escapeHtml(unitText)} · ${escapeHtml((job.actionIds || job.scriptIds || []).join(', ') || '未记录脚本')}</span>
+      <small>${escapeHtml([job.message || '', formatShortDate(job.updatedAt || job.createdAt)].filter(Boolean).join(' · '))}</small>
+      ${resultText ? `<details class="tag-job-details"><summary>详情</summary><pre>${escapeHtml(resultText)}</pre></details>` : ''}
     `
     els.tagManagerJobs.append(row)
   }
   if (!tagJobs.length) els.tagManagerJobs.innerHTML = '<p class="muted">暂无元数据任务</p>'
+}
+
+function summarizeMetadataJobResults(job) {
+  const lines = []
+  for (const result of job.results || []) {
+    const label = [result.actionId || result.scriptId, result.status].filter(Boolean).join(' · ')
+    const summary = [
+      result.message || '',
+      Number.isFinite(result.itemTagCount) ? `合集 tag ${result.itemTagCount}` : '',
+      Number.isFinite(result.unitTagCount) ? `章节 tag ${result.unitTagCount}` : '',
+      result.error ? `错误: ${result.error}` : '',
+    ].filter(Boolean).join(' · ')
+    lines.push([label, summary].filter(Boolean).join('\n  '))
+  }
+  return lines.join('\n')
 }
 
 function tagDisplayKeyOf(tag = '') {
@@ -3398,6 +3444,30 @@ els.tagManagerPrev?.addEventListener('click', () => {
 })
 els.tagManagerNext?.addEventListener('click', () => {
   tagManagerPage += 1
+  renderTagManager()
+})
+els.tagScriptsFirst?.addEventListener('click', () => {
+  tagScriptsPage = 1
+  renderTagManager()
+})
+els.tagScriptsPrev?.addEventListener('click', () => {
+  tagScriptsPage = Math.max(1, tagScriptsPage - 1)
+  renderTagManager()
+})
+els.tagScriptsNext?.addEventListener('click', () => {
+  tagScriptsPage += 1
+  renderTagManager()
+})
+els.tagJobsFirst?.addEventListener('click', () => {
+  tagJobsPage = 1
+  renderTagManager()
+})
+els.tagJobsPrev?.addEventListener('click', () => {
+  tagJobsPage = Math.max(1, tagJobsPage - 1)
+  renderTagManager()
+})
+els.tagJobsNext?.addEventListener('click', () => {
+  tagJobsPage += 1
   renderTagManager()
 })
 els.historyRefresh.addEventListener('click', loadLibraryHistory)
