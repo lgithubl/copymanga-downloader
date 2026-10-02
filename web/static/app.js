@@ -1372,7 +1372,7 @@ function renderTagManager() {
     card.className = 'card tag-manager-card'
     card.innerHTML = `
       <div class="card-body">
-        <div class="card-title">${escapeHtml(tag.name)}</div>
+        <div class="card-title" title="${escapeHtml(tag.name)}">${escapeHtml(tag.name)}</div>
         <div class="library-card-meta">合集 ${tag.itemCount || 0} · 章节 ${tag.unitCount || 0}</div>
       </div>
     `
