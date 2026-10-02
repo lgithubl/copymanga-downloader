@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const PRODUCT_RE = /(?:^|[^A-Z0-9])((?:RJ|VJ|BJ|EJ)\d{6,8})(?=$|[^A-Z0-9])/gi
+const CACHE_VERSION = 2
 let lastRequestAt = 0
 
 export async function generateTags(ctx) {
@@ -50,6 +51,7 @@ function normalizeOptions(value = {}) {
     requestRetryBaseMs: finiteNumber(value.requestRetryBaseMs, 1500),
     requestRetryMaxMs: finiteNumber(value.requestRetryMaxMs, 60000),
     respectRetryAfter: value.respectRetryAfter !== false,
+    preferOriginalWork: value.preferOriginalWork !== false,
     includeKinds: stringSet(value.includeKinds),
     excludeKinds: stringSet(value.excludeKinds),
     includeTags: normalizedTagSet(value.includeTags),
@@ -57,7 +59,7 @@ function normalizeOptions(value = {}) {
   }
 }
 
-async function loadProductDetail(productId, options, cacheDir) {
+async function loadProductDetail(productId, options, cacheDir, depth = 0) {
   const logs = []
   const cachePath = cacheDir ? path.join(cacheDir, `${productId}.json`) : ''
   const cached = cachePath ? await readCache(cachePath, options.cacheTtlHours) : null
@@ -69,6 +71,7 @@ async function loadProductDetail(productId, options, cacheDir) {
     status: 'fetch_failed',
     title: '',
     circle: '',
+    cover: '',
     workType: '',
     age: '',
     genres: [],
@@ -109,6 +112,33 @@ async function loadProductDetail(productId, options, cacheDir) {
       logs.push(`${productId}: html 失败 ${message}`)
     }
   }
+  if (options.preferOriginalWork && depth === 0) {
+    const originalProductId = originalProductIdFromDetail(detail)
+    if (originalProductId && originalProductId !== productId) {
+      logs.push(`${productId}: 发现原始作品 ${originalProductId}`)
+      try {
+        const original = await loadProductDetail(originalProductId, { ...options, preferOriginalWork: false }, cacheDir, depth + 1)
+        logs.push(...(original.logs || []).map((line) => `${productId}: 原作 ${line}`))
+        if (original.status === 'found' || original.title || original.circle || original.genres?.length) {
+          detail.translation = translationSnapshot(detail)
+          detail.originalProductId = originalProductId
+          detail.originalSite = original.site || resolveSite(originalProductId, options.site)
+          detail.title = original.title || detail.title
+          detail.circle = original.circle || detail.circle
+          detail.cover = original.cover || detail.cover
+          detail.workType = original.workType || detail.workType
+          detail.age = original.age || detail.age
+          detail.genres = original.genres?.length ? original.genres : detail.genres
+          detail.creators = original.creators?.length ? original.creators : detail.creators
+          detail.voiceActors = original.voiceActors?.length ? original.voiceActors : detail.voiceActors
+          detail.series = original.series?.length ? original.series : detail.series
+          logs.push(`${productId}: 使用原作 ${originalProductId} 的 DL 标题/社团/tag`)
+        }
+      } catch (error) {
+        logs.push(`${productId}: 原作 ${originalProductId} 获取失败 ${error.message}`)
+      }
+    }
+  }
   const fetchCount = Number(options.fetchAjax !== false) + Number(options.fetchHtml !== false)
   detail.status = detail.title || detail.genres.length || detail.circle ? 'found' : errors.length >= fetchCount ? 'fetch_failed' : 'not_found'
   if (errors.length) detail.error = errors.join('; ')
@@ -124,6 +154,12 @@ function detailToTags(productId, detail = {}) {
     tag('dlsite_site', `DL站点: ${detail.site || resolveSite(productId, 'auto')}`),
     detail.title ? tag('title', `DL标题: ${detail.title}`) : null,
     detail.circle ? tag('circle', `DL社团: ${detail.circle}`) : null,
+    detail.originalProductId ? tag('original_product_id', `DL原作ID: ${detail.originalProductId}`) : null,
+    detail.translation ? tag('translation_status', 'DL翻译: 有') : null,
+    detail.translation?.productId ? tag('translation_product_id', `DL翻译ID: ${detail.translation.productId}`) : null,
+    detail.translation?.site ? tag('translation_site', `DL翻译站点: ${detail.translation.site}`) : null,
+    detail.translation?.title ? tag('translation_title', `DL翻译标题: ${detail.translation.title}`) : null,
+    detail.translation?.circle ? tag('translation_circle', `DL翻译社团: ${detail.translation.circle}`) : null,
     detail.workType ? tag('work_type', `DL类型: ${detail.workType}`) : null,
     detail.age ? tag('age', `DL年龄: ${detail.age}`) : null,
     ...unique(detail.genres || []).map((value) => tag('genre', `DL标签: ${value}`)),
@@ -137,6 +173,7 @@ function mergeAjaxDetail(detail, row) {
   if (!row || typeof row !== 'object') return
   detail.title ||= clean(row.work_name || row.title || row.name)
   detail.circle ||= clean(row.maker_name || row.circle_name || row.brand_name || row.maker?.name)
+  detail.cover ||= normalizeDlsiteImageUrl(clean(row.image_main || row.image || row.image_url || row.work_image))
   detail.workType ||= clean(row.work_type || row.work_type_string || row.category_name || row.work_category)
   detail.age ||= clean(row.age_category_string || row.age_category || row.age_rating || row.rate)
   detail.genres = unique([...detail.genres, ...valuesFrom(row.genre), ...valuesFrom(row.genres), ...valuesFrom(row.genre_name)])
@@ -168,6 +205,7 @@ function mergeHtmlDetail(detail, html) {
   if (!html) return
   detail.title ||= clean(matchText(html, /<h1[^>]*(?:id=["']work_name["'][^>]*)?[^>]*>([\s\S]*?)<\/h1>/i))
   detail.circle ||= clean(matchText(html, /<[^>]+class=["'][^"']*(?:maker_name|maker_name_inner)[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i))
+  detail.circle ||= clean(matchText(html, /<li[^>]+class=["'][^"']*topicpath_item[^"']*["'][^>]*>\s*<a[^>]+\/circle\/profile\/=\/maker_id\/[^>]+>\s*<span>([\s\S]*?)<\/span>/i))
   detail.workType ||= clean(labelValue(html, ['作品类型', 'Work type', 'Work Type']))
   detail.age ||= clean(labelValue(html, ['年龄指定', '年齢指定', 'Age']))
   detail.genres = unique([...detail.genres, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/genre\//i)])
@@ -227,6 +265,7 @@ async function readCache(filePath, ttlHours) {
   if (ttlHours <= 0) return null
   try {
     const cached = JSON.parse(await readFile(filePath, 'utf8'))
+    if (cached.cacheVersion !== CACHE_VERSION) return null
     const ageMs = Date.now() - Date.parse(cached.fetchedAt || cached.cachedAt || 0)
     if (ageMs <= ttlHours * 3600 * 1000) return cached
   } catch {
@@ -237,7 +276,33 @@ async function readCache(filePath, ttlHours) {
 
 async function writeCache(filePath, payload) {
   await mkdir(path.dirname(filePath), { recursive: true })
-  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`)
+  await writeFile(filePath, `${JSON.stringify({ ...payload, cacheVersion: CACHE_VERSION }, null, 2)}\n`)
+}
+
+function translationSnapshot(detail = {}) {
+  return {
+    productId: detail.productId || '',
+    site: detail.site || '',
+    status: detail.status || '',
+    title: detail.title || '',
+    circle: detail.circle || '',
+    cover: detail.cover || '',
+  }
+}
+
+function originalProductIdFromDetail(detail = {}) {
+  const ids = productIdsFromTexts([detail.cover]).filter((id) => id !== detail.productId)
+  const fromCover = ids[ids.length - 1] || ''
+  return fromCover && fromCover !== detail.productId ? fromCover : ''
+}
+
+function normalizeDlsiteImageUrl(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  if (text.startsWith('//')) return `https:${text}`
+  if (/^https?:\/\//i.test(text)) return text
+  if (text.startsWith('/')) return `https://www.dlsite.com${text}`
+  return text
 }
 
 function filterTags(candidates, options) {

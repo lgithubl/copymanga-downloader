@@ -680,22 +680,57 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   async function fetchRjImportDlsite(productId, options) {
     const result = {
       productId,
+      originalProductId: '',
       status: 'skipped',
       site: '',
+      originalSite: '',
       title: '',
       circle: '',
       cover: '',
+      translation: null,
       fetchedAt: new Date().toISOString(),
     }
     if (!options.fetchDlsiteCover && !options.fetchDlsiteTitle) return result
     if (options.fetchDlsiteTitle) {
-      Object.assign(result, await fetchDlsiteAjaxDetail(productId, options))
+      Object.assign(result, await fetchDlsiteDetail(productId, options))
     }
     if (options.fetchDlsiteCover) {
       result.cover ||= await resolveDlsiteCover(productId, options)
     }
+    const originalProductId = originalProductIdFromCover(result.cover, productId)
+    if (originalProductId) {
+      const original = await fetchDlsiteDetail(originalProductId, options).catch(() => ({}))
+      if (original.title || original.circle || original.cover) {
+        result.translation = {
+          productId: result.productId,
+          site: result.site,
+          title: result.title,
+          circle: result.circle,
+          cover: result.cover,
+        }
+        result.originalProductId = originalProductId
+        result.originalSite = original.site || ''
+        result.title = original.title || result.title
+        result.circle = original.circle || result.circle
+        result.cover = original.cover || result.cover
+      }
+    }
     result.status = result.title || result.circle || result.cover ? 'found' : 'not_found'
     return result
+  }
+
+  async function fetchDlsiteDetail(productId, options) {
+    const detail = await fetchDlsiteAjaxDetail(productId, options)
+    if (!detail.title || !detail.circle) {
+      const html = await fetchDlsiteHtmlDetail(productId, options).catch(() => ({}))
+      return {
+        ...detail,
+        site: detail.site || html.site || '',
+        title: detail.title || html.title || '',
+        circle: detail.circle || html.circle || '',
+      }
+    }
+    return detail
   }
 
   async function fetchDlsiteAjaxDetail(productId, options) {
@@ -724,6 +759,36 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         }
       } catch {
         // Try the next DLsite area; network metadata is best-effort for imports.
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return {}
+  }
+
+  async function fetchDlsiteHtmlDetail(productId, options) {
+    for (const site of dlsiteSites(productId)) {
+      await sleep(Math.max(0, options.dlsiteRequestMinIntervalMs || 0) + Math.floor(Math.random() * Math.max(0, options.dlsiteRequestJitterMs || 0)))
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 12000)
+      try {
+        const res = await fetch(`https://www.dlsite.com/${site}/work/=/product_id/${encodeURIComponent(productId)}.html`, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; copymanga-rj-import/1.0)',
+            Accept: 'text/html,*/*;q=0.8',
+            'Accept-Language': 'ja,en;q=0.8,zh-CN;q=0.7',
+          },
+        })
+        if (!res.ok) continue
+        const html = await res.text()
+        return {
+          site,
+          title: cleanText(matchText(html, /<h1[^>]*>([\s\S]*?)<\/h1>/i)),
+          circle: cleanText(matchText(html, /<li[^>]+class=["'][^"']*topicpath_item[^"']*["'][^>]*>\s*<a[^>]+\/circle\/profile\/=\/maker_id\/[^>]+>\s*<span>([\s\S]*?)<\/span>/i)),
+        }
+      } catch {
+        // Try the next DLsite area.
       } finally {
         clearTimeout(timer)
       }
@@ -791,6 +856,18 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     if (/^https?:\/\//i.test(text)) return text
     if (text.startsWith('/')) return `https://www.dlsite.com${text}`
     return text
+  }
+
+  function originalProductIdFromCover(cover, productId) {
+    const ids = [...String(cover || '').matchAll(/(?:^|[^A-Z0-9])((?:RJ|VJ|BJ|EJ)\d{6,8})(?=$|[^A-Z0-9])/gi)]
+      .map((match) => match[1].toUpperCase())
+      .filter((id) => id !== String(productId || '').toUpperCase())
+    return ids[ids.length - 1] || ''
+  }
+
+  function matchText(text, re) {
+    const match = re.exec(text || '')
+    return match ? match[1] : ''
   }
 
   async function walkFiles(dir) {
@@ -1445,11 +1522,20 @@ function normalizeItem(item) {
     sourceProfile: String(item?.sourceProfile || ''),
     dlsite: item?.dlsite && typeof item.dlsite === 'object' ? {
       productId: String(item.dlsite.productId || item?.productId || ''),
+      originalProductId: String(item.dlsite.originalProductId || ''),
       status: String(item.dlsite.status || ''),
       site: String(item.dlsite.site || ''),
+      originalSite: String(item.dlsite.originalSite || ''),
       title: String(item.dlsite.title || ''),
       circle: String(item.dlsite.circle || ''),
       cover: String(item.dlsite.cover || ''),
+      translation: item.dlsite.translation && typeof item.dlsite.translation === 'object' ? {
+        productId: String(item.dlsite.translation.productId || ''),
+        site: String(item.dlsite.translation.site || ''),
+        title: String(item.dlsite.translation.title || ''),
+        circle: String(item.dlsite.translation.circle || ''),
+        cover: String(item.dlsite.translation.cover || ''),
+      } : null,
       error: String(item.dlsite.error || ''),
       fetchedAt: String(item.dlsite.fetchedAt || ''),
     } : null,
