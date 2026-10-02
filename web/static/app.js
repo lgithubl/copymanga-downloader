@@ -1146,7 +1146,9 @@ els.tabs.forEach((tab) => {
     if (tab.dataset.view === 'favorite-view') loadFavorite()
     if (tab.dataset.view === 'downloaded-view') loadDownloaded()
     if (tab.dataset.view === 'library-view') {
-      loadLibraryTypes().then(loadLibraryItems).catch((error) => alert(error.message))
+      loadLibraryTypes()
+        .then(() => Promise.all([loadLibraryItems(), loadTagScripts()]))
+        .catch((error) => alert(error.message))
     }
     if (tab.dataset.view === 'history-view') {
       loadLibraryTypes().then(loadLibraryHistory).catch((error) => alert(error.message))
@@ -1340,6 +1342,7 @@ function renderTagScriptPickers() {
   renderTagScriptCheckboxes(els.mediaImportTagScripts, 'media-import-tag-script')
   renderTagScriptCheckboxes(els.libraryTagScripts, 'library-tag-script')
   applyMediaImportProfile()
+  updateLibraryMetadataActionButtons()
 }
 
 function renderTagScriptCheckboxes(container, name) {
@@ -1861,6 +1864,7 @@ function renderLibraryItems() {
     els.libraryItems.append(card)
   }
   if (libraryItems.length === 0) els.libraryItems.innerHTML = '<p class="muted">暂无媒体库条目</p>'
+  updateLibraryMetadataActionButtons()
 }
 
 function jumpLibraryPage() {
@@ -1890,9 +1894,7 @@ async function selectLibraryItem(type, itemId) {
     els.librarySubtitles.disabled = item.type !== 'media'
     els.libraryThumbnails.disabled = item.type !== 'media'
     if (!tagScripts.length) await loadTagScripts().catch(() => {})
-    els.libraryRunTagScripts.disabled = tagScripts.filter((script) => !script.error).length === 0
-    if (els.libraryRunPageTagScripts) els.libraryRunPageTagScripts.disabled = tagScripts.filter((script) => !script.error).length === 0 || !libraryItems.length
-    els.libraryRunSelectedUnits.disabled = tagScripts.filter((script) => !script.error).length === 0
+    updateLibraryMetadataActionButtons()
     renderLibraryItems()
     renderLibraryUnits()
   } catch (error) {
@@ -3562,6 +3564,15 @@ function currentLibraryPageItems() {
   libraryPage = Math.max(1, Math.min(libraryTotalPages, libraryPage))
   const offset = (libraryPage - 1) * limit
   return libraryItems.slice(offset, offset + limit)
+}
+
+function updateLibraryMetadataActionButtons() {
+  const hasScripts = tagScripts.some((script) => !script.error)
+  const hasCurrentItem = Boolean(currentLibraryItem?.type && currentLibraryItem?.itemId)
+  const hasPageItems = currentLibraryPageItems().length > 0
+  if (els.libraryRunTagScripts) els.libraryRunTagScripts.disabled = !hasScripts || !hasCurrentItem
+  if (els.libraryRunSelectedUnits) els.libraryRunSelectedUnits.disabled = !hasScripts || !hasCurrentItem
+  if (els.libraryRunPageTagScripts) els.libraryRunPageTagScripts.disabled = !hasScripts || !hasPageItems
 }
 
 async function runMetadataActions({ unitIds = [], button = null } = {}) {
