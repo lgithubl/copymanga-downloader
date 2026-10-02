@@ -859,10 +859,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   }
 
   function originalProductIdFromCover(cover, productId) {
-    const ids = [...String(cover || '').matchAll(/(?:^|[^A-Z0-9])((?:RJ|VJ|BJ|EJ)\d{6,8})(?=$|[^A-Z0-9])/gi)]
-      .map((match) => match[1].toUpperCase())
-      .filter((id) => id !== String(productId || '').toUpperCase())
-    return ids[ids.length - 1] || ''
+    const fileName = decodeURIComponent(String(cover || '').split(/[?#]/)[0].split('/').pop() || '')
+    const match = /(?:^|[_-])((?:RJ|VJ|BJ|EJ)\d{6,8})(?=(?:[_-]|\.|$))/i.exec(fileName)
+    const id = match ? match[1].toUpperCase() : ''
+    return id && id !== String(productId || '').toUpperCase() ? id : ''
   }
 
   function matchText(text, re) {

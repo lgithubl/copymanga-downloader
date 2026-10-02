@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const PRODUCT_RE = /(?:^|[^A-Z0-9])((?:RJ|VJ|BJ|EJ)\d{6,8})(?=$|[^A-Z0-9])/gi
+const COVER_FILE_PRODUCT_RE = /(?:^|[_-])((?:RJ|VJ|BJ|EJ)\d{6,8})(?=(?:[_-]|\.|$))/i
 const CACHE_VERSION = 2
 let lastRequestAt = 0
 
@@ -291,9 +292,14 @@ function translationSnapshot(detail = {}) {
 }
 
 function originalProductIdFromDetail(detail = {}) {
-  const ids = productIdsFromTexts([detail.cover]).filter((id) => id !== detail.productId)
-  const fromCover = ids[ids.length - 1] || ''
+  const fromCover = productIdFromCoverFileName(detail.cover)
   return fromCover && fromCover !== detail.productId ? fromCover : ''
+}
+
+function productIdFromCoverFileName(cover) {
+  const fileName = decodeURIComponent(String(cover || '').split(/[?#]/)[0].split('/').pop() || '')
+  const match = COVER_FILE_PRODUCT_RE.exec(fileName)
+  return match ? match[1].toUpperCase() : ''
 }
 
 function normalizeDlsiteImageUrl(value) {
