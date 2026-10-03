@@ -282,10 +282,6 @@
               <div class="chapter-actions">
                 <input id="library-tag-search" placeholder="tag:课程 -未整理" />
                 <button id="library-search" class="secondary">搜索</button>
-                <button id="library-refresh">刷新</button>
-                <button id="library-index-rebuild" class="secondary">重建缓存</button>
-                <span id="library-index-status" class="muted">缓存未读取</span>
-                <button id="library-first" class="secondary" disabled>首页</button>
                 <button id="library-prev" class="secondary" disabled>上一页</button>
                 <label class="page-jump">
                   <span>第</span>
@@ -297,6 +293,10 @@
                 <details class="library-more-controls">
                   <summary>更多</summary>
                   <div>
+                    <button id="library-refresh">刷新</button>
+                    <button id="library-first" class="secondary" disabled>首页</button>
+                    <button id="library-index-rebuild" class="secondary">重建缓存</button>
+                    <span id="library-index-status" class="muted library-index-status">缓存未读取</span>
                     <select id="library-type">
                       <option value="all">全部类型</option>
                     </select>

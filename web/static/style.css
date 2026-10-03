@@ -502,12 +502,19 @@ h2 {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 6px;
-  min-width: 260px;
+  min-width: min(420px, calc(100vw - 24px));
   padding: 10px;
   position: absolute;
   right: 0;
   top: 100%;
   z-index: 10;
+}
+
+.library-index-status {
+  flex: 1 0 100%;
+  line-height: 1.4;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .library-more-controls select {
