@@ -521,6 +521,18 @@ h2 {
   min-width: 120px;
 }
 
+@media (max-width: 700px) {
+  .library-more-controls > div {
+    left: 12px;
+    max-height: min(70vh, 520px);
+    min-width: 0;
+    overflow: auto;
+    position: fixed;
+    right: 12px;
+    top: 136px;
+  }
+}
+
 .library-workspace .chapter-actions > * {
   flex: 0 0 auto;
 }
