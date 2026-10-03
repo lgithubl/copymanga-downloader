@@ -63,6 +63,8 @@ const libraryIndexState = {
   sourceCount: 0,
   itemCount: 0,
 }
+let libraryIndexRebuildPromise = null
+let libraryIndexRebuildRequested = false
 let tagScriptsCache = null
 const tagJobs = new Map()
 const tagQueue = []
@@ -2470,6 +2472,7 @@ function libraryIndexPublicStatus() {
     itemCount: libraryIndexState.itemCount,
     error: libraryIndexState.error,
     buildId: libraryIndexState.buildId,
+    rebuildQueued: Boolean(libraryIndexRebuildRequested),
   }
 }
 
@@ -2520,12 +2523,28 @@ async function rebuildLibraryIndex() {
 }
 
 function startLibraryIndexRebuild() {
-  const targetBuildId = libraryIndexState.buildId + 1
-  libraryIndexState.buildId = targetBuildId - 1
-  rebuildLibraryIndex().catch((error) => {
-    console.error('library index rebuild failed', error)
-  })
+  if (libraryIndexRebuildPromise) {
+    libraryIndexRebuildRequested = true
+    if (libraryIndexState.status === 'ready') libraryIndexState.dirty = true
+    return libraryIndexPublicStatus()
+  }
+  libraryIndexRebuildPromise = runLibraryIndexRebuildLoop()
   return libraryIndexPublicStatus()
+}
+
+async function runLibraryIndexRebuildLoop() {
+  try {
+    do {
+      libraryIndexRebuildRequested = false
+      try {
+        await rebuildLibraryIndex()
+      } catch (error) {
+        console.error('library index rebuild failed', error)
+      }
+    } while (libraryIndexRebuildRequested)
+  } finally {
+    libraryIndexRebuildPromise = null
+  }
 }
 
 async function writeLibraryIndexPayload(payload, buildId) {
