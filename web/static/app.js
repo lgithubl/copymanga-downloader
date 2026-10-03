@@ -1948,7 +1948,7 @@ function renderLibraryItems() {
 function renderLibraryIndexStatus() {
   if (!els.libraryIndexStatus) return
   const status = libraryIndexStatus || {}
-  const built = status.builtAt ? formatShortDate(status.builtAt) : '无'
+  const built = status.builtAt ? formatMinuteDate(status.builtAt) : '无'
   const stateText = ({
     ready: status.dirty ? '缓存需更新' : '缓存正常',
     building: '缓存构建中',
@@ -4143,6 +4143,13 @@ function formatShortDate(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return String(value || '')
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function formatMinuteDate(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value || '')
+  const year = String(date.getFullYear()).slice(-2)
+  return `${year}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 function renderCover(src, alt) {

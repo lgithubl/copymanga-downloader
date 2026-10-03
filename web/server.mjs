@@ -3255,6 +3255,36 @@ function enqueueMetadataActions({ type, itemId, actionIds = [], unitIds = [], re
   return job
 }
 
+function enqueueLibraryIndexRefreshTrigger({ reason = 'import', delaySeconds = 3 } = {}) {
+  const existingId = tagQueue.find((id) => {
+    const queued = tagJobs.get(id)
+    return queued?.type === 'library-index-refresh' && queued.status === 'queued'
+  })
+  if (existingId) return tagJobs.get(existingId)
+  const now = new Date().toISOString()
+  const id = `metadata-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const job = {
+    id,
+    type: 'library-index-refresh',
+    itemId: '__library_index__',
+    scriptIds: ['library-index-refresh'],
+    unitIds: [],
+    reason,
+    force: false,
+    delaySeconds: Math.max(0, Number(delaySeconds) || 0),
+    status: 'queued',
+    message: '等待触发媒体缓存刷新',
+    results: [],
+    createdAt: now,
+    updatedAt: now,
+  }
+  tagJobs.set(id, job)
+  tagQueue.push(id)
+  emit('tagJob', publicTagJob(job))
+  scheduleTagWorker()
+  return job
+}
+
 function scheduleTagWorker() {
   if (tagWorkerTimer) return
   tagWorkerTimer = setImmediate(processTagQueue)
@@ -3277,6 +3307,22 @@ async function processTagQueue() {
 }
 
 async function runTagJob(job) {
+  if (job.type === 'library-index-refresh') {
+    updateTagJob(job, { status: 'running', message: '等待媒体脚本任务完成后触发缓存刷新' })
+    if (job.delaySeconds) await sleep(job.delaySeconds)
+    const status = startLibraryIndexRebuild()
+    updateTagJob(job, {
+      status: 'completed',
+      message: '已触发媒体缓存刷新',
+      results: [{
+        scriptId: 'library-index-refresh',
+        actionId: 'library-index-refresh',
+        status: 'completed',
+        message: `缓存状态：${status.status}`,
+      }],
+    })
+    return
+  }
   updateTagJob(job, { status: 'running', message: '执行元数据脚本中' })
   const actions = await scanMetadataActions()
   const byId = new Map(actions.filter((action) => !action.error).map((action) => [action.id, action]))
@@ -3894,15 +3940,16 @@ async function route(req, res) {
         fields: form.fields,
       })
       const items = Array.isArray(item?.items) ? item.items : [item]
+      const actionIds = importTagScriptIds(form.fields)
       for (const imported of items) {
         await syncItemTagIndex(imported)
-        const actionIds = importTagScriptIds(form.fields)
         if (handler.enqueueThumbnails && imported.sourceProfile !== 'rj-media') {
           handler.enqueueThumbnails(imported.itemId, { force: false }).catch(() => {})
         }
         if (actionIds.length) enqueueMetadataActions({ type, itemId: imported.itemId, actionIds, reason: 'import' })
       }
       markLibraryIndexDirty()
+      if (items.length) enqueueLibraryIndexRefreshTrigger({ reason: 'import', delaySeconds: 3 })
       return json(res, 201, Array.isArray(item?.items) ? { ...item, items } : items[0])
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'GET') {
