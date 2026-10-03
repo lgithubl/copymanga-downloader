@@ -14,6 +14,7 @@ export async function generateTags(ctx) {
   const allProductIds = unique([...itemProductIds, ...[...unitIds.values()].flat()])
 
   const itemCandidates = [
+    tag('script_version', `DL脚本: ${ctx.script?.version || 'unknown'}`),
     tag('product_status', `编号: ${allProductIds.length ? '有' : '无'}`),
     tag('product_multi', `多编号: ${allProductIds.length > 1 ? '是' : '否'}`),
     ...allProductIds.map((id) => tag('product_id', `DLID: ${id}`)),
