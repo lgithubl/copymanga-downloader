@@ -87,6 +87,8 @@ const els = {
   librarySample: document.querySelector('#library-sample'),
   librarySearch: document.querySelector('#library-search'),
   libraryRefresh: document.querySelector('#library-refresh'),
+  libraryIndexRebuild: document.querySelector('#library-index-rebuild'),
+  libraryIndexStatus: document.querySelector('#library-index-status'),
   libraryItems: document.querySelector('#library-items'),
   libraryItemTitle: document.querySelector('#library-item-title'),
   libraryItemMeta: document.querySelector('#library-item-meta'),
@@ -215,6 +217,8 @@ let libraryTypes = []
 let libraryItems = []
 let libraryPage = 1
 let libraryTotalPages = 1
+let libraryTotalItems = 0
+let libraryIndexStatus = null
 let libraryHistory = []
 let libraryHistoryByKey = new Map()
 let tagScripts = []
@@ -1321,14 +1325,24 @@ async function loadLibraryItems() {
   try {
     setLoading(els.libraryRefresh, true)
     const type = els.libraryType.value || 'all'
-    const params = new URLSearchParams({ type })
+    const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
+    const params = new URLSearchParams({
+      type,
+      page: String(libraryPage),
+      limit: String(limit),
+    })
     if (els.libraryTagSearch.value.trim()) params.set('tag', els.libraryTagSearch.value.trim())
     const historyParams = new URLSearchParams({ type, limit: '1000' })
-    const [items, histories] = await Promise.all([
+    const [payload, histories] = await Promise.all([
       api(`/api/library/items?${params}`),
       api(`/api/library/history?${historyParams}`),
     ])
-    libraryItems = items
+    libraryItems = pageItems(payload)
+    const meta = pageMeta(payload, libraryPage, limit)
+    libraryPage = meta.page
+    libraryTotalPages = meta.totalPages
+    libraryTotalItems = meta.total
+    libraryIndexStatus = payload?.index || null
     setLibraryHistory(histories)
     renderLibraryItems()
   } catch (error) {
@@ -1406,6 +1420,10 @@ function pageMeta(payload, fallbackPage, fallbackLimit) {
     total: Number(payload?.total || 0),
     totalPages: Number(payload?.totalPages || 1),
   }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function loadTagManager({ reloadScripts = false } = {}) {
@@ -1879,19 +1897,17 @@ async function saveMediaImportProfileConfig(value) {
 
 function renderLibraryItems() {
   els.libraryItems.innerHTML = ''
-  const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
-  libraryTotalPages = Math.max(1, Math.ceil(libraryItems.length / limit))
   libraryPage = Math.max(1, Math.min(libraryTotalPages, libraryPage))
-  const offset = (libraryPage - 1) * limit
   if (els.libraryPage && document.activeElement !== els.libraryPage) {
     els.libraryPage.value = String(libraryPage)
   }
   if (els.libraryPage) els.libraryPage.max = String(libraryTotalPages)
-  if (els.libraryPageTotal) els.libraryPageTotal.textContent = `/ ${libraryTotalPages} 页`
+  if (els.libraryPageTotal) els.libraryPageTotal.textContent = `/ ${libraryTotalPages} 页 · ${libraryTotalItems} 个`
   if (els.libraryFirst) els.libraryFirst.disabled = libraryPage <= 1
   if (els.libraryPrev) els.libraryPrev.disabled = libraryPage <= 1
   if (els.libraryNext) els.libraryNext.disabled = libraryPage >= libraryTotalPages
-  for (const item of libraryItems.slice(offset, offset + limit)) {
+  renderLibraryIndexStatus()
+  for (const item of libraryItems) {
     const summary = libraryItemSummary(item)
     const history = libraryHistoryByKey.get(libraryKey(item.type, item.itemId))
     const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
@@ -1921,13 +1937,52 @@ function renderLibraryItems() {
     })
     els.libraryItems.append(card)
   }
-  if (libraryItems.length === 0) els.libraryItems.innerHTML = '<p class="muted">暂无媒体库条目</p>'
+  if (libraryItems.length === 0) {
+    els.libraryItems.innerHTML = libraryIndexStatus && libraryIndexStatus.status !== 'ready'
+      ? '<p class="muted">媒体缓存未就绪，请点击重建缓存</p>'
+      : '<p class="muted">暂无媒体库条目</p>'
+  }
   updateLibraryMetadataActionButtons()
+}
+
+function renderLibraryIndexStatus() {
+  if (!els.libraryIndexStatus) return
+  const status = libraryIndexStatus || {}
+  const built = status.builtAt ? formatShortDate(status.builtAt) : '无'
+  const stateText = ({
+    ready: status.dirty ? '缓存需更新' : '缓存正常',
+    building: '缓存构建中',
+    failed: '缓存失败',
+    missing: '缓存缺失',
+  })[status.status] || '缓存未知'
+  els.libraryIndexStatus.textContent = `${stateText} · 上次成功 ${built} · ${status.itemCount || 0} 个`
+  els.libraryIndexStatus.title = status.error || ''
+}
+
+async function rebuildLibraryIndex() {
+  try {
+    setLoading(els.libraryIndexRebuild, true)
+    libraryIndexStatus = await api('/api/library/index/rebuild', { method: 'POST', body: '{}' })
+    renderLibraryIndexStatus()
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < 120000) {
+      await sleep(1500)
+      libraryIndexStatus = await api('/api/library/index/status')
+      renderLibraryIndexStatus()
+      if (libraryIndexStatus.status !== 'building') break
+    }
+    libraryPage = 1
+    await loadLibraryItems()
+  } catch (error) {
+    alert(error.message)
+  } finally {
+    setLoading(els.libraryIndexRebuild, false)
+  }
 }
 
 function jumpLibraryPage() {
   libraryPage = Math.max(1, Math.min(libraryTotalPages, Math.floor(Number(els.libraryPage?.value || 1))))
-  renderLibraryItems()
+  loadLibraryItems().catch((error) => alert(error.message))
 }
 
 async function selectLibraryItem(type, itemId) {
@@ -3522,6 +3577,7 @@ els.downloadedMarkAllRead.addEventListener('click', async () => {
   }
 })
 els.libraryRefresh.addEventListener('click', loadLibraryItems)
+els.libraryIndexRebuild?.addEventListener('click', rebuildLibraryIndex)
 els.librarySearch?.addEventListener('click', () => {
   libraryPage = 1
   loadLibraryItems()
@@ -3538,15 +3594,15 @@ els.libraryTagSearch.addEventListener('keydown', (event) => {
 })
 els.libraryFirst?.addEventListener('click', () => {
   libraryPage = 1
-  renderLibraryItems()
+  loadLibraryItems().catch((error) => alert(error.message))
 })
 els.libraryPrev?.addEventListener('click', () => {
   libraryPage = Math.max(1, libraryPage - 1)
-  renderLibraryItems()
+  loadLibraryItems().catch((error) => alert(error.message))
 })
 els.libraryNext?.addEventListener('click', () => {
   libraryPage = Math.min(libraryTotalPages, libraryPage + 1)
-  renderLibraryItems()
+  loadLibraryItems().catch((error) => alert(error.message))
 })
 els.libraryJump?.addEventListener('click', jumpLibraryPage)
 els.libraryPage?.addEventListener('keydown', (event) => {
@@ -3554,7 +3610,7 @@ els.libraryPage?.addEventListener('keydown', (event) => {
 })
 els.libraryLimit?.addEventListener('change', () => {
   libraryPage = 1
-  renderLibraryItems()
+  loadLibraryItems().catch((error) => alert(error.message))
 })
 els.libraryRunTagScripts.addEventListener('click', async () => {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
@@ -3617,11 +3673,7 @@ function checkedLibraryUnitIds() {
 }
 
 function currentLibraryPageItems() {
-  const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
-  libraryTotalPages = Math.max(1, Math.ceil(libraryItems.length / limit))
-  libraryPage = Math.max(1, Math.min(libraryTotalPages, libraryPage))
-  const offset = (libraryPage - 1) * limit
-  return libraryItems.slice(offset, offset + limit)
+  return libraryItems
 }
 
 function updateLibraryMetadataActionButtons() {

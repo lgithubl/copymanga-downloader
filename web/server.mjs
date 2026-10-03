@@ -21,6 +21,8 @@ const READING_PROGRESS_DIR = path.join(DATA_DIR, 'cache', 'reading-progress')
 const INVENTORY_INDEX_DIR = path.join(DATA_DIR, 'cache', 'inventory-index')
 const LIBRARY_HISTORY_DIR = path.join(DATA_DIR, 'cache', 'library', 'history')
 const LIBRARY_HISTORY_INDEX = path.join(LIBRARY_HISTORY_DIR, 'index.json')
+const LIBRARY_INDEX_DIR = path.join(DATA_DIR, 'cache', 'library-index')
+const LIBRARY_INDEX_BASE = path.join(LIBRARY_INDEX_DIR, 'media-items')
 const TAG_SCRIPTS_DIR = process.env.TAG_SCRIPTS_DIR || path.join(DATA_DIR, 'tag-scripts')
 const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
 const TAG_OVERRIDE_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-overrides')
@@ -50,6 +52,17 @@ const libraryHistoryDirty = new Set()
 const libraryHistoryTimers = new Map()
 let libraryHistoryIndex = null
 let libraryHistoryIndexTimer = null
+const libraryIndexState = {
+  items: [],
+  builtAt: '',
+  loadedFrom: '',
+  status: 'missing',
+  dirty: true,
+  error: '',
+  buildId: 0,
+  sourceCount: 0,
+  itemCount: 0,
+}
 let tagScriptsCache = null
 const tagJobs = new Map()
 const tagQueue = []
@@ -2387,6 +2400,16 @@ async function serveStatic(req, res, pathname) {
 }
 
 async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
+  const indexed = searchLibraryIndex({
+    type,
+    tag,
+    keyword: '',
+    sourceProfile: '',
+    page: 1,
+    limit: 0,
+    sort: 'imported_desc',
+  })
+  if (indexed.index.status === 'ready') return indexed.items
   if (!String(tag || '').trim()) {
     const items = await scanLibraryItems({ type })
     for (const item of items) syncItemTagIndex(item).catch(() => {})
@@ -2406,6 +2429,287 @@ async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
 
 function compareLibraryImportOrder(a, b) {
   return String(b.createdAt || b.updatedAt || '').localeCompare(String(a.createdAt || a.updatedAt || ''))
+}
+
+function libraryIndexPath(version = 0) {
+  return `${LIBRARY_INDEX_BASE}.${version}.json`
+}
+
+async function loadLibraryIndexCache() {
+  await mkdir(LIBRARY_INDEX_DIR, { recursive: true })
+  for (const version of [0, 1, 2]) {
+    const filePath = libraryIndexPath(version)
+    try {
+      const payload = JSON.parse(await readFile(filePath, 'utf8'))
+      if (payload?.schema !== 1 || !Array.isArray(payload.items)) continue
+      libraryIndexState.items = payload.items.map(normalizeLibraryIndexItem)
+      libraryIndexState.builtAt = String(payload.builtAt || '')
+      libraryIndexState.loadedFrom = filePath
+      libraryIndexState.status = 'ready'
+      libraryIndexState.dirty = false
+      libraryIndexState.error = ''
+      libraryIndexState.sourceCount = Number(payload.sourceCount || payload.items.length || 0)
+      libraryIndexState.itemCount = libraryIndexState.items.length
+      return libraryIndexPublicStatus()
+    } catch {
+      // Try the next cache generation.
+    }
+  }
+  libraryIndexState.status = 'missing'
+  libraryIndexState.dirty = true
+  return libraryIndexPublicStatus()
+}
+
+function libraryIndexPublicStatus() {
+  return {
+    status: libraryIndexState.status,
+    dirty: Boolean(libraryIndexState.dirty),
+    builtAt: libraryIndexState.builtAt,
+    loadedFrom: libraryIndexState.loadedFrom,
+    sourceCount: libraryIndexState.sourceCount,
+    itemCount: libraryIndexState.itemCount,
+    error: libraryIndexState.error,
+    buildId: libraryIndexState.buildId,
+  }
+}
+
+function markLibraryIndexDirty() {
+  if (libraryIndexState.status === 'ready') libraryIndexState.dirty = true
+}
+
+async function rebuildLibraryIndex() {
+  const buildId = libraryIndexState.buildId + 1
+  libraryIndexState.buildId = buildId
+  libraryIndexState.status = 'building'
+  libraryIndexState.error = ''
+  const startedAt = new Date().toISOString()
+  try {
+    const items = await scanLibraryItems({ type: 'all' })
+    if (libraryIndexState.buildId !== buildId) {
+      return { ...libraryIndexPublicStatus(), status: 'cancelled' }
+    }
+    const summaries = items.map(libraryIndexItemFromMetadata).sort(compareLibraryIndexItems)
+    const payload = {
+      schema: 1,
+      builtAt: new Date().toISOString(),
+      startedAt,
+      sourceCount: items.length,
+      itemCount: summaries.length,
+      items: summaries,
+    }
+    await writeLibraryIndexPayload(payload, buildId)
+    if (libraryIndexState.buildId !== buildId) {
+      return { ...libraryIndexPublicStatus(), status: 'cancelled' }
+    }
+    libraryIndexState.items = summaries
+    libraryIndexState.builtAt = payload.builtAt
+    libraryIndexState.loadedFrom = libraryIndexPath(0)
+    libraryIndexState.status = 'ready'
+    libraryIndexState.dirty = false
+    libraryIndexState.error = ''
+    libraryIndexState.sourceCount = items.length
+    libraryIndexState.itemCount = summaries.length
+    return libraryIndexPublicStatus()
+  } catch (error) {
+    if (libraryIndexState.buildId === buildId) {
+      libraryIndexState.status = 'failed'
+      libraryIndexState.error = error.message
+    }
+    throw error
+  }
+}
+
+function startLibraryIndexRebuild() {
+  const targetBuildId = libraryIndexState.buildId + 1
+  libraryIndexState.buildId = targetBuildId - 1
+  rebuildLibraryIndex().catch((error) => {
+    console.error('library index rebuild failed', error)
+  })
+  return libraryIndexPublicStatus()
+}
+
+async function writeLibraryIndexPayload(payload, buildId) {
+  await mkdir(LIBRARY_INDEX_DIR, { recursive: true })
+  const nextPath = `${LIBRARY_INDEX_BASE}.next.json`
+  await atomicWriteJson(nextPath, payload, {
+    jobId: `library-index-${buildId}`,
+    verify: (value) => {
+      if (value?.schema !== 1 || !Array.isArray(value.items)) throw new Error('library index cache verify failed')
+    },
+  })
+  for (const [from, to] of [[1, 2], [0, 1]]) {
+    const source = libraryIndexPath(from)
+    if (await pathExists(source)) await renameOrMove(source, libraryIndexPath(to))
+  }
+  await renameOrMove(nextPath, libraryIndexPath(0))
+}
+
+function libraryIndexItemFromMetadata(item = {}) {
+  const units = Array.isArray(item.mediaUnits) ? item.mediaUnits : []
+  const tags = parseTags(item.tags || [])
+  const unitTags = parseTags(units.flatMap((unit) => unit.tags || []))
+  const dlsite = item.dlsite && typeof item.dlsite === 'object' ? item.dlsite : {}
+  const displayTitle = String(dlsite.title || item.extractedTitle || item.title || item.itemId || '')
+  const searchParts = [
+    item.type,
+    item.itemId,
+    item.title,
+    displayTitle,
+    item.sourceProfile,
+    item.productId,
+    dlsite.title,
+    dlsite.circle,
+    ...(Array.isArray(item.author) ? item.author : []),
+    ...tags,
+    ...unitTags,
+  ]
+  return normalizeLibraryIndexItem({
+    type: item.type,
+    itemId: item.itemId,
+    title: item.title,
+    displayTitle,
+    cover: item.cover,
+    sourceProfile: item.sourceProfile,
+    productId: item.productId,
+    unitCount: item.unitCount || units.length || 0,
+    tags,
+    unitTags,
+    dlsite: {
+      title: dlsite.title || '',
+      circle: dlsite.circle || '',
+    },
+    createdAt: item.createdAt,
+    importedAt: item.createdAt,
+    sortTitle: displayTitle || item.title || item.itemId,
+    sortImportedAt: item.createdAt || '',
+    searchText: normalizeTagName(searchParts.filter(Boolean).join('\n')),
+  })
+}
+
+function normalizeLibraryIndexItem(item = {}) {
+  return {
+    type: String(item.type || ''),
+    itemId: String(item.itemId || ''),
+    title: String(item.title || item.itemId || ''),
+    displayTitle: String(item.displayTitle || item.title || item.itemId || ''),
+    cover: String(item.cover || ''),
+    sourceProfile: String(item.sourceProfile || ''),
+    productId: String(item.productId || ''),
+    unitCount: Number(item.unitCount || 0),
+    tags: parseTags(item.tags || []),
+    unitTags: parseTags(item.unitTags || []),
+    dlsite: {
+      title: String(item.dlsite?.title || ''),
+      circle: String(item.dlsite?.circle || ''),
+    },
+    createdAt: String(item.createdAt || ''),
+    importedAt: String(item.importedAt || item.createdAt || ''),
+    sortTitle: normalizeTagName(item.sortTitle || item.displayTitle || item.title || item.itemId || ''),
+    sortImportedAt: String(item.sortImportedAt || item.importedAt || item.createdAt || ''),
+    searchText: String(item.searchText || '').toLowerCase(),
+  }
+}
+
+function compareLibraryIndexItems(a, b) {
+  return String(b.sortImportedAt || '').localeCompare(String(a.sortImportedAt || '')) ||
+    String(b.createdAt || '').localeCompare(String(a.createdAt || '')) ||
+    String(a.itemId || '').localeCompare(String(b.itemId || ''))
+}
+
+function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfile = '', page = 1, limit = 50, sort = 'imported_desc' } = {}) {
+  if (libraryIndexState.status !== 'ready') {
+    return {
+      items: [],
+      page,
+      limit,
+      total: 0,
+      totalPages: 1,
+      index: libraryIndexPublicStatus(),
+    }
+  }
+  const normalizedType = String(type || 'all')
+  const normalizedKeyword = normalizeTagName(keyword)
+  const normalizedSourceProfile = String(sourceProfile || '').trim()
+  const tagTokens = parseLibraryIndexTagQuery(tag)
+  let items = libraryIndexState.items.filter((item) => normalizedType === 'all' || item.type === normalizedType)
+  if (normalizedSourceProfile) items = items.filter((item) => item.sourceProfile === normalizedSourceProfile)
+  if (normalizedKeyword) items = items.filter((item) => item.searchText.includes(normalizedKeyword))
+  if (tagTokens.length) {
+    items = items.filter((item) => libraryIndexTagTokensMatch(item, tagTokens))
+  }
+  items = sortLibraryIndexItems(items, sort)
+  const safeLimit = Math.max(0, Math.min(1000, Math.floor(Number(limit) || 50)))
+  const safePage = Math.max(1, Math.floor(Number(page) || 1))
+  const total = items.length
+  const totalPages = Math.max(1, safeLimit ? Math.ceil(total / safeLimit) : 1)
+  const offset = safeLimit ? (safePage - 1) * safeLimit : 0
+  return {
+    items: safeLimit ? items.slice(offset, offset + safeLimit).map(publicLibraryIndexItem) : items.map(publicLibraryIndexItem),
+    page: safePage,
+    limit: safeLimit,
+    total,
+    totalPages,
+    index: libraryIndexPublicStatus(),
+  }
+}
+
+function publicLibraryIndexItem(item) {
+  return {
+    type: item.type,
+    itemId: item.itemId,
+    title: item.title,
+    extractedTitle: item.displayTitle,
+    cover: item.cover,
+    sourceProfile: item.sourceProfile,
+    productId: item.productId,
+    unitCount: item.unitCount,
+    tags: item.tags,
+    dlsite: item.dlsite,
+    createdAt: item.createdAt,
+  }
+}
+
+function parseLibraryIndexTagQuery(query = '') {
+  const input = String(query || '').trim()
+  if (!input) return []
+  return [...input.matchAll(/-?(?:tag|unitTag):"[^"]+"|-?(?:tag|unitTag):\S+|-\S+|\S+/gi)]
+    .map((match) => match[0])
+    .map((raw) => {
+      const exclude = raw.startsWith('-')
+      let body = exclude ? raw.slice(1) : raw
+      const unitOnly = /^unitTag:/i.test(body)
+      body = body.replace(/^(?:tag|unitTag):/i, '').replace(/^"|"$/g, '')
+      return { exclude, unitOnly, name: normalizeTagName(body) }
+    })
+    .filter((item) => item.name)
+}
+
+function libraryIndexTagTokensMatch(item, tokens) {
+  const itemTags = new Set((item.tags || []).map(normalizeTagName))
+  const unitTags = new Set((item.unitTags || []).map(normalizeTagName))
+  for (const token of tokens) {
+    const source = token.unitOnly ? unitTags : new Set([...itemTags, ...unitTags])
+    const matched = source.has(token.name)
+    if (token.exclude ? matched : !matched) return false
+  }
+  return true
+}
+
+function sortLibraryIndexItems(items, sort) {
+  const list = [...items]
+  const mode = String(sort || 'imported_desc')
+  const byTitle = (a, b) => String(a.sortTitle || '').localeCompare(String(b.sortTitle || ''), undefined, { numeric: true })
+  const byImported = (a, b) => String(a.sortImportedAt || '').localeCompare(String(b.sortImportedAt || ''))
+  const byUnitCount = (a, b) => Number(a.unitCount || 0) - Number(b.unitCount || 0)
+  const comparators = {
+    imported_asc: byImported,
+    imported_desc: (a, b) => byImported(b, a),
+    title_asc: byTitle,
+    title_desc: (a, b) => byTitle(b, a),
+    unit_count_asc: byUnitCount,
+    unit_count_desc: (a, b) => byUnitCount(b, a),
+  }
+  return list.sort(comparators[mode] || comparators.imported_desc)
 }
 
 function libraryHistoryKey(type, itemId) {
@@ -3021,6 +3325,7 @@ async function runTagJob(job) {
     message: failed ? `元数据脚本执行完成，失败 ${failed} 个` : '元数据脚本执行完成',
     results,
   })
+  markLibraryIndexDirty()
 }
 
 async function executeBuiltinMetadataAction({ action, handler, type, itemId, unitIds = [], force = false }) {
@@ -3542,7 +3847,26 @@ async function route(req, res) {
       await clearLibraryHistory(url.searchParams.get('type') || 'all')
       return json(res, 200, { ok: true })
     }
+    if (pathname === '/api/library/index/status' && req.method === 'GET') {
+      return json(res, 200, libraryIndexPublicStatus())
+    }
+    if (pathname === '/api/library/index/rebuild' && req.method === 'POST') {
+      return json(res, 202, startLibraryIndexRebuild())
+    }
     if (pathname === '/api/library/items' && req.method === 'GET') {
+      const hasPagedQuery = url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('keyword') || url.searchParams.has('sort') || url.searchParams.has('sourceProfile')
+      if (hasPagedQuery) {
+        const pagination = paginationFromSearchParams(url.searchParams, 50, 1000) || { page: 1, limit: 50, offset: 0, keyword: '' }
+        return json(res, 200, searchLibraryIndex({
+          type: url.searchParams.get('type') || 'all',
+          tag: url.searchParams.get('tag') || '',
+          keyword: pagination.keyword,
+          sourceProfile: url.searchParams.get('sourceProfile') || '',
+          page: pagination.page,
+          limit: pagination.limit,
+          sort: url.searchParams.get('sort') || 'imported_desc',
+        }))
+      }
       return json(res, 200, await scanLibraryItemsWithTags({
         type: url.searchParams.get('type') || 'all',
         tag: url.searchParams.get('tag') || '',
@@ -3553,6 +3877,7 @@ async function route(req, res) {
       if (!handler.createSampleItem) return json(res, 400, { error: 'This library type has no sample generator' })
       const item = await handler.createSampleItem()
       await syncItemTagIndex(item)
+      markLibraryIndexDirty()
       return json(res, 201, item)
     }
     if (pathname === '/api/library/items' && req.method === 'POST') {
@@ -3577,6 +3902,7 @@ async function route(req, res) {
         }
         if (actionIds.length) enqueueMetadataActions({ type, itemId: imported.itemId, actionIds, reason: 'import' })
       }
+      markLibraryIndexDirty()
       return json(res, 201, Array.isArray(item?.items) ? { ...item, items } : items[0])
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'GET') {
@@ -3638,6 +3964,7 @@ async function route(req, res) {
         const tags = await saveManualTagOverrides({ type, itemId, tags: body.tags || [], exclusiveGroups: await knownExclusiveTagGroups() })
         const item = await handler.updateItemTags(itemId, tags)
         await setItemTags({ type, itemId, tags: item.tags || [] })
+        markLibraryIndexDirty()
         return json(res, 200, item)
       }
       if (action === 'thumbnails') {
@@ -3671,6 +3998,7 @@ async function route(req, res) {
         const tags = await saveManualTagOverrides({ type, itemId, unitId: parts[6], tags: body.tags || [], exclusiveGroups: await knownExclusiveTagGroups() })
         const unit = await handler.updateUnitTags(itemId, parts[6], tags)
         await setUnitTags({ type, itemId, unitId: parts[6], tags: unit.tags || [] })
+        markLibraryIndexDirty()
         return json(res, 200, unit)
       }
     }
@@ -3856,6 +4184,7 @@ registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_D
 await mkdir(DOWNLOAD_DIR, { recursive: true })
 await initTagStore(DATA_DIR)
 config = await loadConfig()
+await loadLibraryIndexCache()
 createServer(route).listen(PORT, HOST, () => {
   console.log(`copymanga web listening on http://${HOST}:${PORT}`)
   console.log(`download dir: ${DOWNLOAD_DIR}`)
