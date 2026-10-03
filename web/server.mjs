@@ -2569,15 +2569,18 @@ function libraryIndexItemFromMetadata(item = {}) {
   const unitTags = parseTags(units.flatMap((unit) => unit.tags || []))
   const dlsite = item.dlsite && typeof item.dlsite === 'object' ? item.dlsite : {}
   const displayTitle = String(dlsite.title || item.extractedTitle || item.title || item.itemId || '')
+  const publishedAt = String(item.publishedAt || item.createdAt || '')
+  const productId = String(item.productId || dlsite.productId || item.itemId || '')
   const searchParts = [
     item.type,
     item.itemId,
     item.title,
     displayTitle,
     item.sourceProfile,
-    item.productId,
+    productId,
     dlsite.title,
     dlsite.circle,
+    dlsite.releaseDate,
     ...(Array.isArray(item.author) ? item.author : []),
     ...tags,
     ...unitTags,
@@ -2589,18 +2592,22 @@ function libraryIndexItemFromMetadata(item = {}) {
     displayTitle,
     cover: item.cover,
     sourceProfile: item.sourceProfile,
-    productId: item.productId,
+    productId,
     unitCount: item.unitCount || units.length || 0,
     tags,
     unitTags,
     dlsite: {
       title: dlsite.title || '',
       circle: dlsite.circle || '',
+      releaseDate: dlsite.releaseDate || '',
     },
     createdAt: item.createdAt,
     importedAt: item.createdAt,
+    publishedAt,
     sortTitle: displayTitle || item.title || item.itemId,
     sortImportedAt: item.createdAt || '',
+    sortPublishedAt: publishedAt,
+    sortProductId: productId,
     searchText: normalizeTagName(searchParts.filter(Boolean).join('\n')),
   })
 }
@@ -2620,11 +2627,15 @@ function normalizeLibraryIndexItem(item = {}) {
     dlsite: {
       title: String(item.dlsite?.title || ''),
       circle: String(item.dlsite?.circle || ''),
+      releaseDate: String(item.dlsite?.releaseDate || ''),
     },
     createdAt: String(item.createdAt || ''),
     importedAt: String(item.importedAt || item.createdAt || ''),
+    publishedAt: String(item.publishedAt || item.createdAt || ''),
     sortTitle: normalizeTagName(item.sortTitle || item.displayTitle || item.title || item.itemId || ''),
     sortImportedAt: String(item.sortImportedAt || item.importedAt || item.createdAt || ''),
+    sortPublishedAt: String(item.sortPublishedAt || item.publishedAt || item.importedAt || item.createdAt || ''),
+    sortProductId: normalizeTagName(item.sortProductId || item.productId || item.itemId || ''),
     searchText: String(item.searchText || '').toLowerCase(),
   }
 }
@@ -2685,6 +2696,8 @@ function publicLibraryIndexItem(item) {
     tags: item.tags,
     dlsite: item.dlsite,
     createdAt: item.createdAt,
+    importedAt: item.importedAt,
+    publishedAt: item.publishedAt,
   }
 }
 
@@ -2719,10 +2732,16 @@ function sortLibraryIndexItems(items, sort) {
   const mode = String(sort || 'imported_desc')
   const byTitle = (a, b) => String(a.sortTitle || '').localeCompare(String(b.sortTitle || ''), undefined, { numeric: true })
   const byImported = (a, b) => String(a.sortImportedAt || '').localeCompare(String(b.sortImportedAt || ''))
+  const byPublished = (a, b) => String(a.sortPublishedAt || '').localeCompare(String(b.sortPublishedAt || ''))
+  const byProductId = (a, b) => String(a.sortProductId || '').localeCompare(String(b.sortProductId || ''), undefined, { numeric: true })
   const byUnitCount = (a, b) => Number(a.unitCount || 0) - Number(b.unitCount || 0)
   const comparators = {
     imported_asc: byImported,
     imported_desc: (a, b) => byImported(b, a),
+    published_asc: byPublished,
+    published_desc: (a, b) => byPublished(b, a),
+    product_id_asc: byProductId,
+    product_id_desc: (a, b) => byProductId(b, a),
     title_asc: byTitle,
     title_desc: (a, b) => byTitle(b, a),
     unit_count_asc: byUnitCount,
@@ -3630,7 +3649,37 @@ function normalizeTagScriptOutput(output) {
       : [],
     logs: normalizeScriptLogs(output?.logs || output?.log || output?.messages || []),
     details: normalizeScriptDetails(output?.details || output?.detail || null),
+    itemPatch: normalizeScriptItemPatch(output?.itemPatch || output?.metadataPatch || null),
   }
+}
+
+function normalizeScriptItemPatch(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const patch = {}
+  const publishedAt = normalizeIsoDateTime(value.publishedAt)
+  if (publishedAt) patch.publishedAt = publishedAt
+  if (value.dlsite && typeof value.dlsite === 'object' && !Array.isArray(value.dlsite)) {
+    const dlsite = {}
+    for (const key of ['productId', 'originalProductId', 'status', 'site', 'originalSite', 'title', 'circle', 'cover', 'releaseDate', 'error', 'fetchedAt']) {
+      if (value.dlsite[key] !== undefined) dlsite[key] = String(value.dlsite[key] || '').slice(0, 2000)
+    }
+    if (value.dlsite.translation && typeof value.dlsite.translation === 'object' && !Array.isArray(value.dlsite.translation)) {
+      dlsite.translation = {}
+      for (const key of ['productId', 'site', 'title', 'circle', 'cover', 'releaseDate']) {
+        if (value.dlsite.translation[key] !== undefined) dlsite.translation[key] = String(value.dlsite.translation[key] || '').slice(0, 2000)
+      }
+      if (!Object.keys(dlsite.translation).length) delete dlsite.translation
+    }
+    if (Object.keys(dlsite).length) patch.dlsite = dlsite
+  }
+  return Object.keys(patch).length ? patch : null
+}
+
+function normalizeIsoDateTime(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const timestamp = Date.parse(text)
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : ''
 }
 
 function normalizeScriptLogs(value) {
@@ -3678,6 +3727,10 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     })
     updatedItem = await handler.updateItemTags(itemId, mergedItemTags)
     await setItemTags({ type, itemId, tags: updatedItem.tags || [] })
+    if (next.itemPatch) {
+      if (!handler.patchItemMetadata) throw new Error('当前媒体类型不支持元数据更新')
+      updatedItem = await handler.patchItemMetadata(itemId, next.itemPatch)
+    }
   }
   const units = handler.listUnits ? await handler.listUnits(itemId) : (updatedItem.mediaUnits || [])
   const byUnit = new Map(units.map((unit) => [unit.unitId, unit]))
@@ -3708,6 +3761,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     scriptId: script.id,
     scriptVersion: script.version,
     itemTags: selectedUnitIds.size ? previousItemTags : next.itemTags,
+    itemPatch: selectedUnitIds.size ? previous?.itemPatch || null : next.itemPatch,
     unitTags: selectedUnitIds.size
       ? [
         ...(previous?.unitTags || []).filter((entry) => !selectedUnitIds.has(entry.unitId)),
@@ -3720,6 +3774,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
   return {
     itemTagCount: next.itemTags.length,
     unitTagCount: appliedUnitTags.reduce((sum, entry) => sum + entry.tags.length, 0),
+    metadataPatched: Boolean(!selectedUnitIds.size && next.itemPatch),
     logs: next.logs,
     details: next.details,
   }

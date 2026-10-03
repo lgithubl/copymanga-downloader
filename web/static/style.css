@@ -497,16 +497,20 @@ h2 {
   background: var(--site-panel);
   border: 1px solid var(--site-border);
   border-radius: 8px;
+  box-sizing: border-box;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 6px;
-  min-width: min(420px, calc(100vw - 24px));
+  max-height: min(70vh, 560px);
+  min-width: 0;
+  overflow: auto;
   padding: 10px;
-  position: absolute;
-  right: 0;
-  top: 100%;
+  position: fixed;
+  right: 12px;
+  top: 132px;
+  width: min(760px, calc(100vw - 24px));
   z-index: 10;
 }
 
@@ -523,13 +527,8 @@ h2 {
 
 @media (max-width: 700px) {
   .library-more-controls > div {
-    left: 12px;
-    max-height: min(70vh, 520px);
-    min-width: 0;
-    overflow: auto;
-    position: fixed;
-    right: 12px;
     top: 136px;
+    width: calc(100vw - 24px);
   }
 }
 

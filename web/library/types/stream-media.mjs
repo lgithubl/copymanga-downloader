@@ -151,6 +151,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         mediaUnits: [],
         unitCount: 0,
         createdAt: new Date().toISOString(),
+        publishedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       })
 
@@ -181,6 +182,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       cover: existing.cover || units.find((unit) => unit.cover)?.cover || '',
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
+      publishedAt: existing.publishedAt || existing.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
     await writeMetadata(itemId, next)
@@ -257,6 +259,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       unitCount: 0,
       mediaUnits: [],
       createdAt: new Date().toISOString(),
+      publishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
     await writeMetadata(itemId, next)
@@ -374,6 +377,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       return { ...item, mediaUnits: units, updatedAt: new Date().toISOString() }
     })
     return updatedUnit
+  }
+
+  async function patchItemMetadata(itemId, patch = {}) {
+    return updateMetadata(itemId, (item) => mergeItemPatch(item, patch))
   }
 
   async function getProgress(itemId) {
@@ -1500,6 +1507,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     saveProgress,
     updateItemTags,
     updateUnitTags,
+    patchItemMetadata,
     getThumbnail,
     enqueueThumbnail,
     enqueueThumbnails,
@@ -1529,12 +1537,14 @@ function normalizeItem(item) {
       title: String(item.dlsite.title || ''),
       circle: String(item.dlsite.circle || ''),
       cover: String(item.dlsite.cover || ''),
+      releaseDate: String(item.dlsite.releaseDate || ''),
       translation: item.dlsite.translation && typeof item.dlsite.translation === 'object' ? {
         productId: String(item.dlsite.translation.productId || ''),
         site: String(item.dlsite.translation.site || ''),
         title: String(item.dlsite.translation.title || ''),
         circle: String(item.dlsite.translation.circle || ''),
         cover: String(item.dlsite.translation.cover || ''),
+        releaseDate: String(item.dlsite.translation.releaseDate || ''),
       } : null,
       error: String(item.dlsite.error || ''),
       fetchedAt: String(item.dlsite.fetchedAt || ''),
@@ -1542,8 +1552,38 @@ function normalizeItem(item) {
     unitCount: Number(item?.unitCount || mediaUnits.length || 0),
     mediaUnits,
     createdAt: String(item?.createdAt || ''),
+    publishedAt: String(item?.publishedAt || item?.createdAt || item?.updatedAt || ''),
     updatedAt: String(item?.updatedAt || new Date().toISOString()),
   }
+}
+
+function mergeItemPatch(item, patch = {}) {
+  const next = { ...item }
+  const publishedAt = normalizePublishedAt(patch.publishedAt)
+  if (publishedAt) next.publishedAt = publishedAt
+  if (patch.dlsite && typeof patch.dlsite === 'object') {
+    const current = item.dlsite && typeof item.dlsite === 'object' ? item.dlsite : {}
+    const dlsite = { ...current }
+    for (const key of ['productId', 'originalProductId', 'status', 'site', 'originalSite', 'title', 'circle', 'cover', 'releaseDate', 'error', 'fetchedAt']) {
+      if (patch.dlsite[key] !== undefined) dlsite[key] = String(patch.dlsite[key] || '')
+    }
+    if (patch.dlsite.translation && typeof patch.dlsite.translation === 'object') {
+      const currentTranslation = current.translation && typeof current.translation === 'object' ? current.translation : {}
+      dlsite.translation = { ...currentTranslation }
+      for (const key of ['productId', 'site', 'title', 'circle', 'cover', 'releaseDate']) {
+        if (patch.dlsite.translation[key] !== undefined) dlsite.translation[key] = String(patch.dlsite.translation[key] || '')
+      }
+    }
+    next.dlsite = dlsite
+  }
+  return { ...next, updatedAt: new Date().toISOString() }
+}
+
+function normalizePublishedAt(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const timestamp = Date.parse(text)
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : ''
 }
 
 function normalizeMediaUnit(unit) {

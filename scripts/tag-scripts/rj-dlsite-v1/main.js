@@ -26,14 +26,16 @@ export async function generateTags(ctx) {
     const detail = await loadProductDetail(productId, options, ctx.cacheDir)
     detailsById.set(productId, detail)
     logs.push(...(detail.logs || []))
-    logs.push(`${productId}: DL状态 ${detail.status}${detail.title ? ` · ${detail.title}` : ''}${detail.error ? ` · ${detail.error}` : ''}`)
+    logs.push(`${productId}: DL状态 ${detail.status}${detail.title ? ` · ${detail.title}` : ''}${detail.releaseDate ? ` · 发售日 ${detail.releaseDate}` : ''}${detail.error ? ` · ${detail.error}` : ''}`)
     itemCandidates.push(...detailToTags(productId, detail))
   }
   itemCandidates.unshift(tag('rj_generation', `RJ生成: ${generationStatus(allProductIds, [...detailsById.values()])}`))
+  const patchDetail = firstPatchableDetail([...detailsById.values()])
 
   return {
     itemTags: filterTags(itemCandidates, options),
     unitTags: [],
+    itemPatch: patchDetail ? detailToItemPatch(patchDetail) : null,
     logs,
   }
 }
@@ -79,6 +81,7 @@ async function loadProductDetail(productId, options, cacheDir, depth = 0) {
     creators: [],
     voiceActors: [],
     series: [],
+    releaseDate: '',
     fetchedAt: new Date().toISOString(),
   }
   if (options.cacheOnly) {
@@ -129,6 +132,7 @@ async function loadProductDetail(productId, options, cacheDir, depth = 0) {
           detail.cover = original.cover || detail.cover
           detail.workType = original.workType || detail.workType
           detail.age = original.age || detail.age
+          detail.releaseDate = original.releaseDate || detail.releaseDate
           detail.genres = original.genres?.length ? original.genres : detail.genres
           detail.creators = original.creators?.length ? original.creators : detail.creators
           detail.voiceActors = original.voiceActors?.length ? original.voiceActors : detail.voiceActors
@@ -161,6 +165,8 @@ function detailToTags(productId, detail = {}) {
     detail.translation?.site ? tag('translation_site', `DL翻译站点: ${detail.translation.site}`) : null,
     detail.translation?.title ? tag('translation_title', `DL翻译标题: ${detail.translation.title}`) : null,
     detail.translation?.circle ? tag('translation_circle', `DL翻译社团: ${detail.translation.circle}`) : null,
+    detail.translation?.releaseDate ? tag('translation_release_date', `DL翻译发售日: ${detail.translation.releaseDate}`) : null,
+    detail.releaseDate ? tag('release_date', `DL发售日: ${detail.releaseDate}`) : null,
     detail.workType ? tag('work_type', `DL类型: ${detail.workType}`) : null,
     detail.age ? tag('age', `DL年龄: ${detail.age}`) : null,
     ...unique(detail.genres || []).map((value) => tag('genre', `DL标签: ${value}`)),
@@ -177,6 +183,7 @@ function mergeAjaxDetail(detail, row) {
   detail.cover ||= normalizeDlsiteImageUrl(clean(row.image_main || row.image || row.image_url || row.work_image))
   detail.workType ||= clean(row.work_type || row.work_type_string || row.category_name || row.work_category)
   detail.age ||= clean(row.age_category_string || row.age_category || row.age_rating || row.rate)
+  detail.releaseDate ||= normalizeReleaseDate(row.regist_date || row.release_date || row.sales_date || row.sale_date || row.work_date || row.date)
   detail.genres = unique([...detail.genres, ...valuesFrom(row.genre), ...valuesFrom(row.genres), ...valuesFrom(row.genre_name)])
   const creaters = row.creaters || row.creators || {}
   detail.creators = unique([
@@ -209,6 +216,7 @@ function mergeHtmlDetail(detail, html) {
   detail.circle ||= clean(matchText(html, /<li[^>]+class=["'][^"']*topicpath_item[^"']*["'][^>]*>\s*<a[^>]+\/circle\/profile\/=\/maker_id\/[^>]+>\s*<span>([\s\S]*?)<\/span>/i))
   detail.workType ||= clean(labelValue(html, ['作品类型', 'Work type', 'Work Type']))
   detail.age ||= clean(labelValue(html, ['年龄指定', '年齢指定', 'Age']))
+  detail.releaseDate ||= normalizeReleaseDate(labelValue(html, ['販売日', '発売日', 'Release date', 'Release Date', 'Sales date', 'Sales Date']))
   detail.genres = unique([...detail.genres, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/genre\//i)])
   detail.creators = unique([...detail.creators, ...anchorTexts(html, /\/(?:maniax|pro|books)\/fsr\/=\/(?:creater|creator|author|scenario|illust)/i)])
   detail.voiceActors = unique([
@@ -288,7 +296,47 @@ function translationSnapshot(detail = {}) {
     title: detail.title || '',
     circle: detail.circle || '',
     cover: detail.cover || '',
+    releaseDate: detail.releaseDate || '',
   }
+}
+
+function firstPatchableDetail(details = []) {
+  return details.find((detail) => detail?.releaseDate || detail?.title || detail?.circle || detail?.status === 'found') || null
+}
+
+function detailToItemPatch(detail = {}) {
+  const publishedAt = releaseDateToIso(detail.releaseDate)
+  const patch = {
+    dlsite: {
+      productId: detail.productId || '',
+      originalProductId: detail.originalProductId || '',
+      status: detail.status || '',
+      site: detail.site || '',
+      originalSite: detail.originalSite || '',
+      title: detail.title || '',
+      circle: detail.circle || '',
+      cover: detail.cover || '',
+      releaseDate: detail.releaseDate || '',
+      error: detail.error || '',
+      fetchedAt: detail.fetchedAt || '',
+      translation: detail.translation ? {
+        productId: detail.translation.productId || '',
+        site: detail.translation.site || '',
+        title: detail.translation.title || '',
+        circle: detail.translation.circle || '',
+        cover: detail.translation.cover || '',
+        releaseDate: detail.translation.releaseDate || '',
+      } : null,
+    },
+  }
+  if (publishedAt) patch.publishedAt = publishedAt
+  return patch
+}
+
+function releaseDateToIso(value) {
+  const date = normalizeReleaseDate(value)
+  if (!date) return ''
+  return `${date}T00:00:00.000Z`
 }
 
 function originalProductIdFromDetail(detail = {}) {
@@ -424,6 +472,17 @@ function labelValue(html, labels) {
     if (value) return value
   }
   return ''
+}
+
+function normalizeReleaseDate(value) {
+  const text = clean(value)
+  if (!text) return ''
+  const ymd = /(\d{4})[./-](\d{1,2})[./-](\d{1,2})/.exec(text)
+  if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`
+  const jp = /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/.exec(text)
+  if (jp) return `${jp[1]}-${jp[2].padStart(2, '0')}-${jp[3].padStart(2, '0')}`
+  const timestamp = Date.parse(text)
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : ''
 }
 
 function matchText(text, re) {

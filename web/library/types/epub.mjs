@@ -58,6 +58,7 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
         unitCount: 0,
         mediaUnits: [],
         createdAt: new Date().toISOString(),
+        publishedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       })
     }
@@ -444,6 +445,7 @@ function normalizeItem(item) {
     mediaUnits,
     imageResources: Array.isArray(item?.imageResources) ? item.imageResources : [],
     createdAt: String(item?.createdAt || ''),
+    publishedAt: String(item?.publishedAt || item?.createdAt || item?.updatedAt || ''),
     updatedAt: String(item?.updatedAt || new Date().toISOString()),
   }
 }

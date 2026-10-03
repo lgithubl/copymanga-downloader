@@ -84,6 +84,7 @@ const els = {
   libraryJump: document.querySelector('#library-jump'),
   libraryNext: document.querySelector('#library-next'),
   libraryLimit: document.querySelector('#library-limit'),
+  librarySort: document.querySelector('#library-sort'),
   librarySample: document.querySelector('#library-sample'),
   librarySearch: document.querySelector('#library-search'),
   libraryRefresh: document.querySelector('#library-refresh'),
@@ -219,8 +220,11 @@ let libraryPage = 1
 let libraryTotalPages = 1
 let libraryTotalItems = 0
 let libraryIndexStatus = null
+let libraryStateRestored = false
 let libraryHistory = []
 let libraryHistoryByKey = new Map()
+
+const LIBRARY_STATE_KEY = 'copymanga.library.state'
 let tagScripts = []
 let tagJobs = []
 let tagCatalog = []
@@ -1318,7 +1322,39 @@ async function loadLibraryTypes() {
   els.libraryType.value = [...els.libraryType.options].some((option) => option.value === current) ? current : 'all'
   els.historyType.value = [...els.historyType.options].some((option) => option.value === currentHistory) ? currentHistory : 'all'
   els.mediaImportType.value = [...els.mediaImportType.options].some((option) => option.value === currentImport) ? currentImport : 'epub'
+  restoreLibraryState()
   updateMediaImportControls()
+}
+
+function restoreLibraryState() {
+  if (libraryStateRestored) return
+  libraryStateRestored = true
+  let state = null
+  try {
+    state = JSON.parse(localStorage.getItem(LIBRARY_STATE_KEY) || 'null')
+  } catch {
+    state = null
+  }
+  if (!state || typeof state !== 'object') return
+  const type = String(state.type || 'all')
+  if (els.libraryType && [...els.libraryType.options].some((option) => option.value === type)) els.libraryType.value = type
+  const limit = String(state.limit || '')
+  if (els.libraryLimit && [...els.libraryLimit.options].some((option) => option.value === limit)) els.libraryLimit.value = limit
+  const sort = String(state.sort || '')
+  if (els.librarySort && [...els.librarySort.options].some((option) => option.value === sort)) els.librarySort.value = sort
+  if (els.libraryTagSearch) els.libraryTagSearch.value = String(state.tag || '')
+  libraryPage = Math.max(1, Math.floor(Number(state.page || 1)))
+}
+
+function saveLibraryState() {
+  const state = {
+    type: els.libraryType?.value || 'all',
+    limit: Number(els.libraryLimit?.value || 10),
+    sort: els.librarySort?.value || 'imported_desc',
+    tag: els.libraryTagSearch?.value || '',
+    page: Math.max(1, Math.floor(Number(libraryPage || 1))),
+  }
+  localStorage.setItem(LIBRARY_STATE_KEY, JSON.stringify(state))
 }
 
 async function loadLibraryItems() {
@@ -1326,10 +1362,12 @@ async function loadLibraryItems() {
     setLoading(els.libraryRefresh, true)
     const type = els.libraryType.value || 'all'
     const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
+    const sort = els.librarySort?.value || 'imported_desc'
     const params = new URLSearchParams({
       type,
       page: String(libraryPage),
       limit: String(limit),
+      sort,
     })
     if (els.libraryTagSearch.value.trim()) params.set('tag', els.libraryTagSearch.value.trim())
     const historyParams = new URLSearchParams({ type, limit: '1000' })
@@ -1344,6 +1382,7 @@ async function loadLibraryItems() {
     libraryTotalItems = meta.total
     libraryIndexStatus = payload?.index || null
     setLibraryHistory(histories)
+    saveLibraryState()
     renderLibraryItems()
   } catch (error) {
     alert(error.message)
@@ -3609,6 +3648,10 @@ els.libraryPage?.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') jumpLibraryPage()
 })
 els.libraryLimit?.addEventListener('change', () => {
+  libraryPage = 1
+  loadLibraryItems().catch((error) => alert(error.message))
+})
+els.librarySort?.addEventListener('change', () => {
   libraryPage = 1
   loadLibraryItems().catch((error) => alert(error.message))
 })
