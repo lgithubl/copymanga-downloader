@@ -2617,7 +2617,7 @@ function compareLibraryIndexItems(a, b) {
 }
 
 function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfile = '', page = 1, limit = 50, sort = 'imported_desc' } = {}) {
-  if (libraryIndexState.status !== 'ready') {
+  if (!libraryIndexState.items.length) {
     return {
       items: [],
       page,
