@@ -115,16 +115,24 @@ jobs:
 
           http.server.ThreadingHTTPServer(("0.0.0.0", 11594), Handler).serve_forever()
           PY
-          COPYMANGA_DATA_DIR="$RUNNER_TEMP/copymanga-data" python /tmp/mock_asr.py >/tmp/mock_asr.log 2>&1 &
-          echo $! >/tmp/mock_asr.pid
+          docker network create copymanga-action-net
           SCRIPT_CONTAINER="$(docker create "$IMAGE")"
           docker cp "$SCRIPT_CONTAINER:/opt/copymanga/tag-scripts" "$RUNNER_TEMP/copymanga-data/tag-scripts" || true
           docker rm "$SCRIPT_CONTAINER"
+          docker run -d --name mock-asr \
+            --network copymanga-action-net \
+            -p 11594:11594 \
+            -e COPYMANGA_DATA_DIR=/data \
+            -v "$RUNNER_TEMP/copymanga-data:/data" \
+            -v /tmp/mock_asr.py:/mock_asr.py:ro \
+            python:3-alpine python /mock_asr.py
           docker run -d --name media-stream-widget \
+            --network copymanga-action-net \
             -p 8081:8080 \
             -v "$RUNNER_TEMP/copymanga-data/library/media:/media:ro" \
             "$MEDIA_IMAGE"
           docker run -d --name copymanga-web \
+            --network copymanga-action-net \
             -p 8080:8080 \
             --add-host host.docker.internal:host-gateway \
             -v "$RUNNER_TEMP/copymanga-data:/data" \
@@ -139,12 +147,12 @@ jobs:
             fi
             docker logs --tail 80 copymanga-web || true
             docker logs --tail 80 media-stream-widget || true
-            tail -n 80 /tmp/mock_asr.log || true
+            docker logs --tail 80 mock-asr || true
             sleep 2
           done
           docker logs copymanga-web || true
           docker logs media-stream-widget || true
-          cat /tmp/mock_asr.log || true
+          docker logs mock-asr || true
           exit 1
 
       - name: HTTP smoke test
@@ -343,7 +351,7 @@ jobs:
         run: |
           docker logs copymanga-web >/tmp/copymanga-web-container.log 2>&1 || true
           docker logs media-stream-widget >/tmp/media-stream-widget-container.log 2>&1 || true
-          cp /tmp/mock_asr.log /tmp/mock-asr.log.copy 2>/dev/null || true
+          docker logs mock-asr >/tmp/mock-asr.log.copy 2>&1 || true
           cp /tmp/cloudflared.log /tmp/cloudflared.log.copy 2>/dev/null || true
           cp /tmp/basic_proxy.log /tmp/basic_proxy.log.copy 2>/dev/null || true
 
