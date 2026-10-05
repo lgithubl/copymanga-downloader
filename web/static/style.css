@@ -2030,12 +2030,16 @@ h2 {
 }
 
 .media-mode-audio,
-.media-mode-video {
+.media-mode-video,
+#media-viewer-view.media-mode-audio,
+#media-viewer-view.media-mode-video {
   background: #101418;
 }
 
 .media-mode-audio .chapter-head,
-.media-mode-video .chapter-head {
+.media-mode-video .chapter-head,
+#media-viewer-view.media-mode-audio .chapter-head,
+#media-viewer-view.media-mode-video .chapter-head {
   background: #101418;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   color: #f8fafc;
@@ -2114,7 +2118,9 @@ h2 {
 }
 
 .media-mode-audio .media-reader-content,
-.media-mode-video .media-reader-content {
+.media-mode-video .media-reader-content,
+#media-viewer-view.media-mode-audio .media-reader-content,
+#media-viewer-view.media-mode-video .media-reader-content {
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -2131,7 +2137,9 @@ h2 {
 }
 
 .media-mode-audio .media-reader-content.media-stream,
-.media-mode-video .media-reader-content.media-stream {
+.media-mode-video .media-reader-content.media-stream,
+#media-viewer-view.media-mode-audio .media-reader-content.media-stream,
+#media-viewer-view.media-mode-video .media-reader-content.media-stream {
   background: #101418;
   color: #f8fafc;
   margin: 0 -18px -18px;
@@ -2140,7 +2148,9 @@ h2 {
 }
 
 #app.media-viewer-focused .media-mode-audio .media-reader-content.media-stream,
-#app.media-viewer-focused .media-mode-video .media-reader-content.media-stream {
+#app.media-viewer-focused .media-mode-video .media-reader-content.media-stream,
+#app.media-viewer-focused #media-viewer-view.media-mode-audio .media-reader-content.media-stream,
+#app.media-viewer-focused #media-viewer-view.media-mode-video .media-reader-content.media-stream {
   margin: 0;
   min-height: 0;
 }
@@ -2150,7 +2160,13 @@ h2 {
 #app .media-mode-audio .media-reader-content.media-stream.reader-theme-sepia,
 #app .media-mode-video .media-reader-content.media-stream.reader-theme-light,
 #app .media-mode-video .media-reader-content.media-stream.reader-theme-warm,
-#app .media-mode-video .media-reader-content.media-stream.reader-theme-sepia {
+#app .media-mode-video .media-reader-content.media-stream.reader-theme-sepia,
+#app #media-viewer-view.media-mode-audio .media-reader-content.media-stream.reader-theme-light,
+#app #media-viewer-view.media-mode-audio .media-reader-content.media-stream.reader-theme-warm,
+#app #media-viewer-view.media-mode-audio .media-reader-content.media-stream.reader-theme-sepia,
+#app #media-viewer-view.media-mode-video .media-reader-content.media-stream.reader-theme-light,
+#app #media-viewer-view.media-mode-video .media-reader-content.media-stream.reader-theme-warm,
+#app #media-viewer-view.media-mode-video .media-reader-content.media-stream.reader-theme-sepia {
   background: #101418;
   color: #f8fafc;
 }
