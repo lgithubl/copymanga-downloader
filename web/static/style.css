@@ -2065,8 +2065,11 @@ h2 {
 
 #app.media-viewer-focused .media-viewer-view .chapter-actions {
   align-items: center;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  max-width: min(100%, 820px);
+  overflow: visible;
 }
 
 #app.media-viewer-focused .media-viewer-view .chapter-actions button,
@@ -2076,8 +2079,9 @@ h2 {
 }
 
 #app.media-viewer-focused .media-viewer-view #media-section-select {
+  flex: 1 1 240px;
   min-width: 180px;
-  max-width: min(42vw, 520px);
+  max-width: min(42vw, 460px);
 }
 
 #app.media-viewer-focused .media-viewer-view #media-reader-theme {
@@ -2361,8 +2365,8 @@ h2 {
 .stream-extra-controls {
   align-items: center;
   background: rgba(15, 20, 25, 0.94);
-  display: grid;
-  grid-template-columns: auto 48px minmax(140px, 1fr) 48px auto minmax(72px, 96px) auto minmax(120px, 200px) auto auto auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 12px;
 }
@@ -2370,9 +2374,23 @@ h2 {
 .media-mode-audio .stream-extra-controls {
   background: rgba(15, 20, 25, 0.94);
   color: #f8fafc;
-  display: flex;
-  flex-wrap: wrap;
   padding: 12px;
+}
+
+.stream-extra-controls > * {
+  flex: 0 0 auto;
+}
+
+.stream-extra-controls .stream-progress {
+  flex: 1 1 220px;
+}
+
+.stream-extra-controls .stream-subtitle-select {
+  flex: 1 1 180px;
+}
+
+.stream-extra-controls .stream-vr-controls {
+  flex: 1 1 220px;
 }
 
 .media-mode-audio .stream-progress {
@@ -2380,7 +2398,7 @@ h2 {
 }
 
 .media-mode-audio .stream-subtitle-select {
-  flex: 0 1 160px;
+  flex: 1 1 160px;
 }
 
 .media-mode-audio .stream-icon-button,
@@ -2458,8 +2476,9 @@ h2 {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.18);
   color: #f8fafc;
-  max-width: min(100%, 240px);
+  max-width: min(100%, 280px);
   min-height: 32px;
+  min-width: 0;
   padding: 5px 8px;
   width: auto;
 }
@@ -2469,7 +2488,7 @@ h2 {
 }
 
 .stream-subtitle-select {
-  min-width: 120px;
+  min-width: 150px;
 }
 
 .stream-vr-mode {
