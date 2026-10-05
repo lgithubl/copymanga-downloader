@@ -3224,7 +3224,9 @@ function publicTagJobSummary(job) {
         result.result ||
         result.logs?.length ||
         result.itemTags?.length ||
-        result.unitTags?.length
+        result.unitTags?.length ||
+        result.unitPatches?.length ||
+        result.unitPatchCount
       ),
     })),
   }
@@ -3647,9 +3649,34 @@ function normalizeTagScriptOutput(output) {
         tags: normalizeScriptTags(entry?.tags || []),
       })).filter((entry) => entry.unitId && entry.tags.length)
       : [],
+    unitPatches: normalizeScriptUnitPatches(output?.unitPatches || output?.unitPatch || []),
     logs: normalizeScriptLogs(output?.logs || output?.log || output?.messages || []),
     details: normalizeScriptDetails(output?.details || output?.detail || null),
     itemPatch: normalizeScriptItemPatch(output?.itemPatch || output?.metadataPatch || null),
+  }
+}
+
+function normalizeScriptUnitPatches(values) {
+  const list = Array.isArray(values) ? values : (values ? [values] : [])
+  return list.map((entry) => {
+    const patch = {}
+    if (Array.isArray(entry?.subtitles)) {
+      patch.subtitles = entry.subtitles.map(normalizeScriptSubtitle).filter((subtitle) => subtitle.relativePath)
+    }
+    return {
+      unitId: String(entry?.unitId || ''),
+      patch,
+    }
+  }).filter((entry) => entry.unitId && Object.keys(entry.patch).length)
+}
+
+function normalizeScriptSubtitle(value = {}) {
+  return {
+    title: String(value.title || value.relativePath || '字幕').slice(0, 500),
+    relativePath: String(value.relativePath || '').replace(/^[/\\]+/, '').slice(0, 2000),
+    language: String(value.language || '').slice(0, 50),
+    url: '',
+    contentType: String(value.contentType || 'text/vtt').slice(0, 100),
   }
 }
 
@@ -3713,6 +3740,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
   const selectedUnitIds = new Set(unitIds || [])
   if (selectedUnitIds.size) {
     next.unitTags = next.unitTags.filter((entry) => selectedUnitIds.has(entry.unitId))
+    next.unitPatches = next.unitPatches.filter((entry) => selectedUnitIds.has(entry.unitId))
     next.itemTags = []
   }
   const exclusiveGroups = scriptExclusiveGroups(script)
@@ -3739,6 +3767,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     ? new Set([...selectedUnitIds])
     : new Set([...next.unitTags.map((entry) => entry.unitId), ...previousByUnit.keys()])
   const appliedUnitTags = []
+  const appliedUnitPatches = []
   for (const unitId of touched) {
     const unit = byUnit.get(unitId)
     if (!unit) continue
@@ -3754,6 +3783,13 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     await setUnitTags({ type, itemId, unitId, tags: updatedUnit.tags || [] })
     appliedUnitTags.push({ unitId, tags: nextEntry?.tags || [] })
   }
+  if (next.unitPatches.length) {
+    if (!handler.patchUnitMetadata) throw new Error('当前媒体类型不支持章节元数据更新')
+    for (const entry of next.unitPatches) {
+      await handler.patchUnitMetadata(itemId, entry.unitId, entry.patch)
+      appliedUnitPatches.push(entry)
+    }
+  }
   const runRecord = {
     status: 'completed',
     type,
@@ -3762,6 +3798,12 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     scriptVersion: script.version,
     itemTags: selectedUnitIds.size ? previousItemTags : next.itemTags,
     itemPatch: selectedUnitIds.size ? previous?.itemPatch || null : next.itemPatch,
+    unitPatches: selectedUnitIds.size
+      ? [
+        ...(previous?.unitPatches || []).filter((entry) => !selectedUnitIds.has(entry.unitId)),
+        ...appliedUnitPatches,
+      ]
+      : appliedUnitPatches,
     unitTags: selectedUnitIds.size
       ? [
         ...(previous?.unitTags || []).filter((entry) => !selectedUnitIds.has(entry.unitId)),
@@ -3775,6 +3817,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     itemTagCount: next.itemTags.length,
     unitTagCount: appliedUnitTags.reduce((sum, entry) => sum + entry.tags.length, 0),
     metadataPatched: Boolean(!selectedUnitIds.size && next.itemPatch),
+    unitPatchCount: appliedUnitPatches.length,
     logs: next.logs,
     details: next.details,
   }

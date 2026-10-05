@@ -383,6 +383,35 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return updateMetadata(itemId, (item) => mergeItemPatch(item, patch))
   }
 
+  async function patchUnitMetadata(itemId, unitId, patch = {}) {
+    const safePatch = await validateUnitPatch(itemId, patch)
+    let updatedUnit
+    await updateMetadata(itemId, (item) => {
+      const units = mediaUnitsForItem(item)
+      const index = units.findIndex((unit) => unit.unitId === unitId)
+      if (index < 0) throw new Error(`Unit not found: ${unitId}`)
+      updatedUnit = mergeUnitPatch(units[index], safePatch)
+      units[index] = updatedUnit
+      return { ...item, mediaUnits: units, updatedAt: new Date().toISOString() }
+    })
+    return updatedUnit
+  }
+
+  async function validateUnitPatch(itemId, patch = {}) {
+    const next = {}
+    if (Array.isArray(patch.subtitles)) {
+      next.subtitles = []
+      for (const subtitle of patch.subtitles) {
+        const normalized = normalizeSubtitle(subtitle)
+        if (!normalized.relativePath) continue
+        const filePath = safeManagedFilePath(itemId, normalized.relativePath)
+        if (!await pathExists(filePath)) throw new Error(`Subtitle file not found: ${normalized.relativePath}`)
+        next.subtitles.push(normalized)
+      }
+    }
+    return next
+  }
+
   async function getProgress(itemId) {
     try {
       return normalizeProgress(JSON.parse(await readFile(progressPath(itemId), 'utf8')), itemId)
@@ -556,7 +585,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       for (const unit of mediaUnitsForItem(item)) {
         if (unit.mediaKind === 'subtitle') continue
         if (unit.mediaKind === 'audio' || unit.mediaKind === 'video') {
-          const subtitles = subtitlesByKey.get(subtitleKey(groupPathOf(unit.relativePath || unit.fileName), path.posix.basename(unit.relativePath || unit.fileName, path.posix.extname(unit.relativePath || unit.fileName)))) || []
+          const scannedSubtitles = subtitlesByKey.get(subtitleKey(groupPathOf(unit.relativePath || unit.fileName), path.posix.basename(unit.relativePath || unit.fileName, path.posix.extname(unit.relativePath || unit.fileName)))) || []
+          const subtitles = mergeSubtitles(unit.subtitles || [], scannedSubtitles)
           for (const subtitle of subtitles) matchedSubtitlePaths.add(subtitle.relativePath)
           nextUnits.push(normalizeMediaUnit({ ...unit, subtitles }))
         } else {
@@ -991,6 +1021,9 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const allFiles = await walkFiles(filesPath(itemId))
     const subtitleFiles = allFiles.filter(isSubtitleName)
     const subtitlesByKey = subtitlesByMediaKey(itemId, subtitleFiles)
+    const previousByPath = new Map((previousUnits || [])
+      .filter((unit) => unit.relativePath)
+      .map((unit) => [unit.relativePath, unit]))
     const files = allFiles
       .filter(isSupportedName)
       .sort((a, b) => relativePath(itemId, a).localeCompare(relativePath(itemId, b), undefined, { numeric: true }))
@@ -998,7 +1031,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       return Promise.all(files.map((filePath) => unitFromFile({
         itemId,
         filePath,
-        subtitles: subtitlesByKey.get(mediaSubtitleKey(itemId, filePath)) || [],
+        previous: previousByPath.get(relativePath(itemId, filePath)),
+        subtitles: mergeSubtitles(previousByPath.get(relativePath(itemId, filePath))?.subtitles || [], subtitlesByKey.get(mediaSubtitleKey(itemId, filePath)) || []),
       })))
     }
     const units = []
@@ -1031,7 +1065,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         units.push(await unitFromFile({
           itemId,
           filePath,
-          subtitles,
+          previous: previousByPath.get(relativePath(itemId, filePath)),
+          subtitles: mergeSubtitles(previousByPath.get(relativePath(itemId, filePath))?.subtitles || [], subtitles),
         }))
       }
     }
@@ -1307,7 +1342,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     await movePath(source, target)
   }
 
-  async function unitFromFile({ itemId, filePath, subtitles = [] }) {
+  async function unitFromFile({ itemId, filePath, previous = null, subtitles = [] }) {
     const info = await stat(filePath)
     const fileName = relativePath(itemId, filePath)
     const title = path.basename(fileName, path.extname(fileName))
@@ -1321,7 +1356,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       relativePath: fileName,
       groupPath: groupPathOf(fileName),
       mediaKind: kind,
-      tags: [kind === 'audio' ? '音频' : kind === 'video' ? '视频' : '图片'],
+      tags: previous?.tags?.length ? previous.tags : [kind === 'audio' ? '音频' : kind === 'video' ? '视频' : '图片'],
       managedPath: filePath,
       streamPath: streamPathForManagedPath(filePath),
       streamUrl: streamUrlForPath(filePath),
@@ -1330,7 +1365,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       contentType: contentType(filePath),
       subtitles,
       updatedAt: info.mtime.toISOString(),
-      createdAt: new Date().toISOString(),
+      createdAt: previous?.createdAt || new Date().toISOString(),
     })
   }
 
@@ -1508,6 +1543,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     updateItemTags,
     updateUnitTags,
     patchItemMetadata,
+    patchUnitMetadata,
     getThumbnail,
     enqueueThumbnail,
     enqueueThumbnails,
@@ -1579,6 +1615,24 @@ function mergeItemPatch(item, patch = {}) {
   return { ...next, updatedAt: new Date().toISOString() }
 }
 
+function mergeUnitPatch(unit, patch = {}) {
+  const next = { ...unit }
+  if (Array.isArray(patch.subtitles)) {
+    const subtitles = []
+    const seen = new Set()
+    for (const subtitle of [...(unit.subtitles || []), ...patch.subtitles]) {
+      const normalized = normalizeSubtitle(subtitle)
+      if (!normalized.relativePath) continue
+      const key = normalized.relativePath.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      subtitles.push(normalized)
+    }
+    next.subtitles = subtitles
+  }
+  return normalizeMediaUnit({ ...next, updatedAt: new Date().toISOString() })
+}
+
 function normalizePublishedAt(value) {
   const text = String(value || '').trim()
   if (!text) return ''
@@ -1638,6 +1692,20 @@ function normalizeSubtitle(subtitle) {
     url: String(subtitle?.url || ''),
     contentType: String(subtitle?.contentType || 'text/vtt'),
   }
+}
+
+function mergeSubtitles(current = [], incoming = []) {
+  const result = []
+  const seen = new Set()
+  for (const subtitle of [...current, ...incoming]) {
+    const normalized = normalizeSubtitle(subtitle)
+    if (!normalized.relativePath) continue
+    const key = normalized.relativePath.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(normalized)
+  }
+  return result
 }
 
 function mediaUnitsForItem(item) {
