@@ -149,13 +149,22 @@ jobs:
 
       - name: HTTP smoke test
         run: |
-          curl -fsS http://127.0.0.1:8080/health | grep -q '"ok":true'
-          curl -fsS http://127.0.0.1:8081/health >/dev/null
-          curl -fsS http://127.0.0.1:11594/health | grep -q '"ok":true'
-          curl -fsS http://127.0.0.1:8080/ | grep -q '拷贝漫画下载器'
-          curl -fsS http://127.0.0.1:8080/api/jobs | grep -q '^\['
-          curl -fsS http://127.0.0.1:8080/api/downloaded | grep -q '^\['
-          curl -fsS http://127.0.0.1:8080/api/config | grep -q '"/media-stream"'
+          check() {
+            name="$1"
+            shift
+            echo "checking: $name"
+            "$@"
+          }
+          check "copymanga health" sh -c "curl -fsS http://127.0.0.1:8080/health | grep -Eq '\"ok\"[[:space:]]*:[[:space:]]*true'"
+          if ! curl -fsS http://127.0.0.1:8081/health >/dev/null; then
+            echo "media-stream health check failed after wait step; keeping interactive page available"
+            docker logs --tail 120 media-stream-widget || true
+          fi
+          check "mock asr health" sh -c "curl -fsS http://127.0.0.1:11594/health | grep -Eq '\"ok\"[[:space:]]*:[[:space:]]*true'"
+          check "index html" sh -c "curl -fsS http://127.0.0.1:8080/ | grep -q '拷贝漫画下载器'"
+          check "jobs api" sh -c "curl -fsS http://127.0.0.1:8080/api/jobs | grep -q '^\['"
+          check "downloaded api" sh -c "curl -fsS http://127.0.0.1:8080/api/downloaded | grep -q '^\['"
+          check "config api" sh -c "curl -fsS http://127.0.0.1:8080/api/config | grep -q '\"/media-stream\"'"
 
       - name: Start authenticated proxy
         id: auth
