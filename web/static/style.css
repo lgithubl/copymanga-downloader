@@ -536,10 +536,44 @@ h2 {
   flex: 0 0 auto;
 }
 
-.library-workspace #library-tag-search,
+.tag-search-wrap,
 .library-workspace #library-item-tags {
   flex: 1 1 260px;
   min-width: 220px;
+}
+
+.tag-search-wrap {
+  display: inline-flex;
+  position: relative;
+}
+
+.tag-search-wrap #library-tag-search {
+  padding-right: 34px;
+  width: 100%;
+}
+
+.tag-search-clear {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--site-muted);
+  display: inline-flex;
+  font-size: 18px;
+  font-weight: 800;
+  height: 28px;
+  justify-content: center;
+  min-height: 0;
+  padding: 0;
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+}
+
+.tag-search-clear:hover {
+  background: var(--site-secondary);
+  color: var(--site-text);
 }
 
 .library-workspace #library-items {
@@ -2255,14 +2289,17 @@ h2 {
 .stream-vr-subtitles {
   bottom: 120px;
   color: #ffffff;
-  font-size: clamp(16px, 2.2vw, 28px);
+  cursor: move;
+  font-size: calc(24px * var(--subtitle-scale, 1));
   font-weight: 700;
   left: 8%;
   line-height: 1.35;
-  pointer-events: none;
+  max-width: min(86%, 1100px);
+  pointer-events: auto;
   position: absolute;
   right: 8%;
   text-align: center;
+  touch-action: none;
   text-shadow: 0 2px 4px #000000, 0 0 10px #000000;
   white-space: pre-line;
   z-index: 2;
@@ -2275,14 +2312,17 @@ h2 {
 .stream-subtitle-overlay {
   bottom: 120px;
   color: #ffffff;
-  font-size: clamp(16px, 2vw, 26px);
+  cursor: move;
+  font-size: calc(24px * var(--subtitle-scale, 1));
   font-weight: 800;
   left: 8%;
   line-height: 1.35;
-  pointer-events: none;
+  max-width: min(86%, 1100px);
+  pointer-events: auto;
   position: absolute;
   right: 8%;
   text-align: center;
+  touch-action: none;
   text-shadow: 0 2px 5px #000000, 0 0 12px #000000;
   white-space: pre-line;
   z-index: 3;
@@ -2295,9 +2335,10 @@ h2 {
 .stream-frame-audio .stream-subtitle-overlay {
   bottom: auto;
   color: #f8fafc;
-  font-size: 15px;
+  font-size: calc(15px * var(--subtitle-scale, 1));
   font-weight: 700;
   left: 264px;
+  max-width: calc(100% - 286px);
   right: 22px;
   text-shadow: 0 2px 5px #000000;
   top: 22px;

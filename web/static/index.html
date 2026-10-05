@@ -280,7 +280,10 @@
             <div class="chapter-head">
               <h2>媒体库</h2>
               <div class="chapter-actions">
-                <input id="library-tag-search" placeholder="tag:课程 -未整理" />
+                <span class="tag-search-wrap">
+                  <input id="library-tag-search" placeholder="tag:课程 -未整理" />
+                  <button id="library-tag-clear" class="tag-search-clear" type="button" title="清空">×</button>
+                </span>
                 <button id="library-search" class="secondary">搜索</button>
                 <button id="library-prev" class="secondary" disabled>上一页</button>
                 <label class="page-jump">
@@ -318,6 +321,7 @@
                       <option value="product_id_desc">Product ID Z-A</option>
                       <option value="unit_count_desc">章节数倒序</option>
                       <option value="unit_count_asc">章节数正序</option>
+                      <option value="random">随机排序</option>
                     </select>
                     <button id="library-sample" class="secondary">生成示例</button>
                   </div>

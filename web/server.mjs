@@ -2730,6 +2730,7 @@ function libraryIndexTagTokensMatch(item, tokens) {
 function sortLibraryIndexItems(items, sort) {
   const list = [...items]
   const mode = String(sort || 'imported_desc')
+  if (mode === 'random') return shuffleLibraryIndexItems(list)
   const byTitle = (a, b) => String(a.sortTitle || '').localeCompare(String(b.sortTitle || ''), undefined, { numeric: true })
   const byImported = (a, b) => String(a.sortImportedAt || '').localeCompare(String(b.sortImportedAt || ''))
   const byPublished = (a, b) => String(a.sortPublishedAt || '').localeCompare(String(b.sortPublishedAt || ''))
@@ -2748,6 +2749,16 @@ function sortLibraryIndexItems(items, sort) {
     unit_count_desc: (a, b) => byUnitCount(b, a),
   }
   return list.sort(comparators[mode] || comparators.imported_desc)
+}
+
+function shuffleLibraryIndexItems(items) {
+  for (let index = items.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    const current = items[index]
+    items[index] = items[swapIndex]
+    items[swapIndex] = current
+  }
+  return items
 }
 
 function libraryHistoryKey(type, itemId) {

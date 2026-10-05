@@ -77,6 +77,7 @@ const els = {
   taskList: document.querySelector('#task-list'),
   libraryType: document.querySelector('#library-type'),
   libraryTagSearch: document.querySelector('#library-tag-search'),
+  libraryTagClear: document.querySelector('#library-tag-clear'),
   libraryFirst: document.querySelector('#library-first'),
   libraryPrev: document.querySelector('#library-prev'),
   libraryPage: document.querySelector('#library-page'),
@@ -225,6 +226,7 @@ let libraryHistory = []
 let libraryHistoryByKey = new Map()
 
 const LIBRARY_STATE_KEY = 'copymanga.library.state'
+const MEDIA_SUBTITLE_SETTINGS_KEY = 'copymanga.mediaSubtitleOverlay'
 let tagScripts = []
 let tagJobs = []
 let tagCatalog = []
@@ -2652,6 +2654,96 @@ function renderMediaImages(reader) {
   updateMediaPageControls()
 }
 
+function loadSubtitleOverlaySettings() {
+  try {
+    const value = JSON.parse(localStorage.getItem(MEDIA_SUBTITLE_SETTINGS_KEY) || '{}')
+    return normalizeSubtitleOverlaySettings(value)
+  } catch {
+    return normalizeSubtitleOverlaySettings({})
+  }
+}
+
+function saveSubtitleOverlaySettings(settings) {
+  localStorage.setItem(MEDIA_SUBTITLE_SETTINGS_KEY, JSON.stringify(normalizeSubtitleOverlaySettings(settings)))
+}
+
+function normalizeSubtitleOverlaySettings(value = {}) {
+  const scale = Math.max(0.6, Math.min(3, Number(value.scale || 1)))
+  const x = Number(value.x)
+  const y = Number(value.y)
+  return {
+    scale,
+    x: Number.isFinite(x) ? Math.max(4, Math.min(96, x)) : null,
+    y: Number.isFinite(y) ? Math.max(4, Math.min(96, y)) : null,
+  }
+}
+
+function applySubtitleOverlaySettings(overlay, settings = loadSubtitleOverlaySettings()) {
+  const next = normalizeSubtitleOverlaySettings(settings)
+  overlay.style.setProperty('--subtitle-scale', String(next.scale))
+  if (next.x !== null && next.y !== null) {
+    overlay.style.left = `${next.x}%`
+    overlay.style.top = `${next.y}%`
+    overlay.style.right = 'auto'
+    overlay.style.bottom = 'auto'
+    overlay.style.transform = 'translate(-50%, -50%)'
+  }
+  return next
+}
+
+function adjustSubtitleOverlayScale(delta, overlays = []) {
+  const current = loadSubtitleOverlaySettings()
+  const next = normalizeSubtitleOverlaySettings({ ...current, scale: current.scale + delta })
+  saveSubtitleOverlaySettings(next)
+  for (const overlay of overlays.filter(Boolean)) applySubtitleOverlaySettings(overlay, next)
+}
+
+function makeSubtitleOverlayInteractive(overlay, frame) {
+  let settings = applySubtitleOverlaySettings(overlay)
+  let dragging = false
+  let pointerId = null
+  const moveTo = (clientX, clientY) => {
+    const rect = frame.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    settings = normalizeSubtitleOverlaySettings({
+      ...settings,
+      x: ((clientX - rect.left) / rect.width) * 100,
+      y: ((clientY - rect.top) / rect.height) * 100,
+    })
+    applySubtitleOverlaySettings(overlay, settings)
+  }
+  overlay.addEventListener('pointerdown', (event) => {
+    if (event.button !== undefined && event.button !== 0) return
+    dragging = true
+    pointerId = event.pointerId
+    overlay.setPointerCapture?.(event.pointerId)
+    moveTo(event.clientX, event.clientY)
+    event.preventDefault()
+    event.stopPropagation()
+  })
+  overlay.addEventListener('pointermove', (event) => {
+    if (!dragging || event.pointerId !== pointerId) return
+    moveTo(event.clientX, event.clientY)
+    event.preventDefault()
+  })
+  const finishDrag = (event) => {
+    if (!dragging || event.pointerId !== pointerId) return
+    dragging = false
+    pointerId = null
+    overlay.releasePointerCapture?.(event.pointerId)
+    saveSubtitleOverlaySettings(settings)
+    event.preventDefault()
+  }
+  overlay.addEventListener('pointerup', finishDrag)
+  overlay.addEventListener('pointercancel', finishDrag)
+  overlay.addEventListener('wheel', (event) => {
+    event.preventDefault()
+    settings = normalizeSubtitleOverlaySettings({ ...settings, scale: settings.scale + (event.deltaY < 0 ? 0.08 : -0.08) })
+    saveSubtitleOverlaySettings(settings)
+    applySubtitleOverlaySettings(overlay, settings)
+  }, { passive: false })
+}
+
 function renderStreamMedia(reader, options = {}) {
   if (currentStreamCleanup) {
     currentStreamCleanup()
@@ -2717,6 +2809,7 @@ function renderStreamMedia(reader, options = {}) {
   }
   const subtitleOverlay = document.createElement('div')
   subtitleOverlay.className = 'stream-subtitle-overlay hidden'
+  makeSubtitleOverlayInteractive(subtitleOverlay, frame)
   const renderStreamSubtitles = () => {
     const selectedIndex = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value)
     const track = selectedIndex >= 0 ? player.textTracks?.[selectedIndex] : null
@@ -2760,6 +2853,16 @@ function renderStreamMedia(reader, options = {}) {
     player.defaultPlaybackRate = rate
     localStorage.setItem('copymanga.mediaPlaybackRate', String(rate))
   })
+  const subtitleSmaller = document.createElement('button')
+  subtitleSmaller.type = 'button'
+  subtitleSmaller.className = 'stream-icon-button stream-subtitle-size'
+  subtitleSmaller.title = '缩小字幕'
+  subtitleSmaller.textContent = '字-'
+  const subtitleLarger = document.createElement('button')
+  subtitleLarger.type = 'button'
+  subtitleLarger.className = 'stream-icon-button stream-subtitle-size'
+  subtitleLarger.title = '放大字幕'
+  subtitleLarger.textContent = '字+'
   const play = document.createElement('button')
   play.type = 'button'
   play.className = 'stream-icon-button stream-play'
@@ -2907,6 +3010,8 @@ function renderStreamMedia(reader, options = {}) {
   const vrViewer = reader.type === 'video'
     ? createVrVideoViewer({ frame, player, controls: vrControls, warning: playbackWarning })
     : null
+  subtitleSmaller.addEventListener('click', () => adjustSubtitleOverlayScale(-0.1, [subtitleOverlay, vrViewer?.subtitleOverlay]))
+  subtitleLarger.addEventListener('click', () => adjustSubtitleOverlayScale(0.1, [subtitleOverlay, vrViewer?.subtitleOverlay]))
   const title = document.createElement('div')
   title.className = 'stream-player-title'
   title.textContent = reader.unit?.title || reader.unit?.fileName || '媒体'
@@ -2938,7 +3043,7 @@ function renderStreamMedia(reader, options = {}) {
   })
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, loopToggle, nextToggle, vrControls.element, fullscreen)
+  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, subtitleSmaller, subtitleLarger, loopToggle, nextToggle, vrControls.element, fullscreen)
   frame.append(player, subtitleOverlay, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
@@ -3069,6 +3174,7 @@ function createVrVideoViewer({ frame, player, controls, warning }) {
   const subtitleOverlay = document.createElement('div')
   subtitleOverlay.className = 'stream-vr-subtitles'
   subtitleOverlay.hidden = true
+  makeSubtitleOverlayInteractive(subtitleOverlay, frame)
   frame.insertBefore(canvas, player.nextSibling)
   frame.insertBefore(subtitleOverlay, canvas.nextSibling)
   const state = {
@@ -3239,6 +3345,7 @@ function createVrVideoViewer({ frame, player, controls, warning }) {
       canvas.remove()
       subtitleOverlay.remove()
     },
+    subtitleOverlay,
     setMode: (mode) => setVrState(legacyVrModeToState(mode)),
   }
 }
@@ -3264,7 +3371,7 @@ function vrLayoutCode(value) {
 function renderVrSubtitles(player, subtitleOverlay) {
   const cues = []
   for (const track of player.textTracks || []) {
-    if (track.mode !== 'showing') continue
+    if (track.mode !== 'showing' && track.mode !== 'hidden') continue
     for (const cue of track.activeCues || []) cues.push(cue.text || '')
   }
   subtitleOverlay.textContent = cues.filter(Boolean).join('\n')
@@ -3630,6 +3737,10 @@ els.libraryTagSearch.addEventListener('keydown', (event) => {
     libraryPage = 1
     loadLibraryItems()
   }
+})
+els.libraryTagClear?.addEventListener('click', () => {
+  els.libraryTagSearch.value = ''
+  els.libraryTagSearch.focus()
 })
 els.libraryFirst?.addEventListener('click', () => {
   libraryPage = 1
