@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 
 const VERSION_TAG_GROUP = 'AI字幕version'
 
@@ -90,7 +90,8 @@ function normalizeOptions(raw = {}) {
     segmenter: String(raw.segmenter || 'asmr-onnx'),
     vadFilter: raw.vadFilter === null || raw.vadFilter === undefined || raw.vadFilter === '' ? null : Boolean(raw.vadFilter),
     fastMode: raw.fastMode !== false,
-    overwriteExisting: raw.overwriteExisting === true,
+    overwriteExisting: raw.force === true || raw.overwriteExisting === true,
+    force: raw.force === true || raw.overwriteExisting === true,
     outputDirTemplate: String(raw.outputDirTemplate || '{itemId}'),
     subtitleTitle: String(raw.subtitleTitle || 'AI.jp'),
     requestTimeoutMs: finiteNumber(raw.requestTimeoutMs, 3600000),
@@ -129,7 +130,7 @@ function groupFastModeUnits(units) {
 
 async function createSubtitle({ ctx, options, unit, logs }) {
   const outputFormat = safeOutputFormat(options.outputFormat)
-  const fileName = `${randomUUID()}.${options.language}.${outputFormat}`
+  const fileName = `asr-${dateStamp()}-${randomToken()}.${options.language}.${outputFormat}`
   const outputDir = renderTemplate(options.outputDirTemplate, { item: ctx.item, unit, fileName, options }, '{itemId}')
   const request = {
     input_path: mapPath(unit.managedPath, options.inputPathFrom, options.inputPathTo, { item: ctx.item, unit, fileName, options }),
@@ -220,6 +221,17 @@ function renderTemplate(template, { item, unit, fileName, options }, fallback = 
 function safeOutputFormat(value) {
   const format = String(value || 'srt').replace(/^\./, '').toLowerCase()
   return ['srt', 'vtt', 'json', 'txt'].includes(format) ? format : 'srt'
+}
+
+function dateStamp(date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}${month}${day}`
+}
+
+function randomToken() {
+  return randomBytes(3).toString('hex')
 }
 
 function stem(value) {

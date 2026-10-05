@@ -20,6 +20,7 @@
     "segmenter": "asmr-onnx",
     "vadFilter": null,
     "fastMode": true,
+    "force": false,
     "overwriteExisting": false,
     "outputDirTemplate": "{itemId}",
     "subtitleTitle": "AI.jp",
