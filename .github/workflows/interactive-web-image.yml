@@ -113,7 +113,7 @@ jobs:
                       "segments": 1,
                   })
 
-          http.server.ThreadingHTTPServer(("127.0.0.1", 11594), Handler).serve_forever()
+          http.server.ThreadingHTTPServer(("0.0.0.0", 11594), Handler).serve_forever()
           PY
           COPYMANGA_DATA_DIR="$RUNNER_TEMP/copymanga-data" python /tmp/mock_asr.py >/tmp/mock_asr.log 2>&1 &
           echo $! >/tmp/mock_asr.pid
