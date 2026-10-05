@@ -114,6 +114,46 @@ jobs:
 
           http.server.ThreadingHTTPServer(("0.0.0.0", 11594), Handler).serve_forever()
           PY
+          cat >/tmp/mock_llm.py <<'PY'
+          import json
+          import http.server
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+
+              def _json(self, status, payload):
+                  body = json.dumps(payload, ensure_ascii=False).encode()
+                  self.send_response(status)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_GET(self):
+                  if self.path == "/health":
+                      self._json(200, {"ok": True})
+                      return
+                  self._json(404, {"error": "not found"})
+
+              def do_POST(self):
+                  if self.path != "/v1/chat/completions":
+                      self._json(404, {"error": "not found"})
+                      return
+                  length = int(self.headers.get("Content-Length") or 0)
+                  payload = json.loads(self.rfile.read(length) or b"{}")
+                  content = payload.get("messages", [{}])[-1].get("content", "")
+                  translated = "\n".join(
+                      "mock zh subtitle" if line and "-->" not in line and not line.isdigit() and not line.startswith("将下面") else line
+                      for line in content.splitlines()
+                  ).strip()
+                  self._json(200, {
+                      "id": "mock-llm",
+                      "object": "chat.completion",
+                      "choices": [{"index": 0, "message": {"role": "assistant", "content": translated}, "finish_reason": "stop"}],
+                  })
+
+          http.server.ThreadingHTTPServer(("0.0.0.0", 11595), Handler).serve_forever()
+          PY
           docker network create copymanga-action-net
           SCRIPT_CONTAINER="$(docker create "$IMAGE")"
           docker cp "$SCRIPT_CONTAINER:/opt/copymanga/tag-scripts" "$RUNNER_TEMP/copymanga-data/tag-scripts" || true
@@ -125,6 +165,11 @@ jobs:
             -v "$RUNNER_TEMP/copymanga-data:/data" \
             -v /tmp/mock_asr.py:/mock_asr.py:ro \
             python:3-alpine python /mock_asr.py
+          docker run -d --name mock-llm \
+            --network copymanga-action-net \
+            -p 11595:11595 \
+            -v /tmp/mock_llm.py:/mock_llm.py:ro \
+            python:3-alpine python /mock_llm.py
           docker run -d --name media-stream-widget \
             --network copymanga-action-net \
             -p 8081:8080 \
@@ -141,17 +186,19 @@ jobs:
       - name: Wait for app
         run: |
           for i in $(seq 1 90); do
-            if curl -fsS http://127.0.0.1:8080/health >/dev/null && curl -fsS http://127.0.0.1:8081/health >/dev/null && curl -fsS http://127.0.0.1:11594/health >/dev/null; then
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null && curl -fsS http://127.0.0.1:8081/health >/dev/null && curl -fsS http://127.0.0.1:11594/health >/dev/null && curl -fsS http://127.0.0.1:11595/health >/dev/null; then
               exit 0
             fi
             docker logs --tail 80 copymanga-web || true
             docker logs --tail 80 media-stream-widget || true
             docker logs --tail 80 mock-asr || true
+            docker logs --tail 80 mock-llm || true
             sleep 2
           done
           docker logs copymanga-web || true
           docker logs media-stream-widget || true
           docker logs mock-asr || true
+          docker logs mock-llm || true
           exit 1
 
       - name: HTTP smoke test
@@ -168,6 +215,7 @@ jobs:
             docker logs --tail 120 media-stream-widget || true
           fi
           check "mock asr health" sh -c "curl -fsS http://127.0.0.1:11594/health | grep -Eq '\"ok\"[[:space:]]*:[[:space:]]*true'"
+          check "mock llm health" sh -c "curl -fsS http://127.0.0.1:11595/health | grep -Eq '\"ok\"[[:space:]]*:[[:space:]]*true'"
           check "index html" sh -c "curl -fsS http://127.0.0.1:8080/ | grep -q '拷贝漫画下载器'"
           check "jobs api" sh -c "curl -fsS http://127.0.0.1:8080/api/jobs | grep -q '^\['"
           check "downloaded api" sh -c "curl -fsS http://127.0.0.1:8080/api/downloaded | grep -q '^\['"
@@ -351,6 +399,7 @@ jobs:
           docker logs copymanga-web >/tmp/copymanga-web-container.log 2>&1 || true
           docker logs media-stream-widget >/tmp/media-stream-widget-container.log 2>&1 || true
           docker logs mock-asr >/tmp/mock-asr.log.copy 2>&1 || true
+          docker logs mock-llm >/tmp/mock-llm.log.copy 2>&1 || true
           cp /tmp/cloudflared.log /tmp/cloudflared.log.copy 2>/dev/null || true
           cp /tmp/basic_proxy.log /tmp/basic_proxy.log.copy 2>/dev/null || true
 
@@ -363,6 +412,7 @@ jobs:
             /tmp/copymanga-web-container.log
             /tmp/media-stream-widget-container.log
             /tmp/mock-asr.log.copy
+            /tmp/mock-llm.log.copy
             /tmp/cloudflared.log.copy
             /tmp/basic_proxy.log.copy
           if-no-files-found: warn

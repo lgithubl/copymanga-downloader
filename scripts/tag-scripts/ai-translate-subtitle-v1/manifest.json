@@ -1,0 +1,26 @@
+{
+  "id": "ai-translate-subtitle-v1",
+  "name": "AI 字幕翻译 v1",
+  "version": "1.0.0",
+  "description": "调用 local-llm-server 翻译 AI.jp 字幕为 AI.zh 字幕，并写入显式字幕映射。",
+  "scope": ["item", "unit"],
+  "libraryTypes": ["media"],
+  "mediaKinds": ["audio", "video"],
+  "exclusiveTagGroups": ["字幕v1", "AI字幕", "AI翻译version"],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "apiBase": "http://127.0.0.1:8080",
+    "model": "sakura",
+    "sourceTitlePrefix": "AI.jp",
+    "targetTitle": "AI.zh",
+    "sourceLanguage": "ja",
+    "targetLanguage": "zh",
+    "outputFormat": "srt",
+    "outputDir": "ai-subtitles",
+    "force": false,
+    "requestTimeoutMs": 3600000,
+    "scriptTimeoutMs": 3600000,
+    "prompt": "将下面日文字幕翻译成简体中文。保持 SRT 序号和时间轴不变，只翻译字幕文本，不要添加解释。"
+  }
+}

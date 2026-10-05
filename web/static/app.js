@@ -2787,12 +2787,18 @@ function renderStreamMedia(reader, options = {}) {
   const subtitleSelect = document.createElement('select')
   subtitleSelect.className = 'stream-subtitle-select'
   subtitleSelect.title = '字幕'
+  const secondarySubtitleSelect = document.createElement('select')
+  secondarySubtitleSelect.className = 'stream-subtitle-select stream-subtitle-select-secondary'
+  secondarySubtitleSelect.title = '副字幕'
   const subtitlePathTitle = (subtitle) => subtitle?.relativePath || subtitle?.url || ''
   const noneOption = document.createElement('option')
   noneOption.value = ''
   noneOption.textContent = '无字幕'
   noneOption.title = '无字幕'
   subtitleSelect.append(noneOption)
+  const secondaryNoneOption = noneOption.cloneNode(true)
+  secondaryNoneOption.textContent = '无副字幕'
+  secondarySubtitleSelect.append(secondaryNoneOption)
   for (const [index, subtitle] of (reader.unit?.subtitles || []).entries()) {
     const option = document.createElement('option')
     option.value = String(index)
@@ -2800,6 +2806,7 @@ function renderStreamMedia(reader, options = {}) {
     option.title = subtitlePathTitle(subtitle)
     option.dataset.path = subtitlePathTitle(subtitle)
     subtitleSelect.append(option)
+    secondarySubtitleSelect.append(option.cloneNode(true))
     const track = document.createElement('track')
     track.kind = 'subtitles'
     track.label = option.textContent
@@ -2810,28 +2817,50 @@ function renderStreamMedia(reader, options = {}) {
   const subtitleOverlay = document.createElement('div')
   subtitleOverlay.className = 'stream-subtitle-overlay hidden'
   makeSubtitleOverlayInteractive(subtitleOverlay, frame)
+  const selectedSubtitleIndexes = () => {
+    const values = [subtitleSelect.value, secondarySubtitleSelect.value]
+      .filter((value) => value !== '')
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value >= 0)
+    return [...new Set(values)]
+  }
   const renderStreamSubtitles = () => {
-    const selectedIndex = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value)
-    const track = selectedIndex >= 0 ? player.textTracks?.[selectedIndex] : null
-    const text = track ? [...(track.activeCues || [])].map((cue) => cue.text).filter(Boolean).join('\n') : ''
-    subtitleOverlay.textContent = text
-    subtitleOverlay.classList.toggle('hidden', !text)
+    const rows = selectedSubtitleIndexes()
+      .map((index) => {
+        const track = player.textTracks?.[index]
+        return track ? [...(track.activeCues || [])].map((cue) => cue.text).filter(Boolean).join('\n') : ''
+      })
+      .filter(Boolean)
+    subtitleOverlay.replaceChildren(...rows.map((text, index) => {
+      const row = document.createElement('div')
+      row.className = `stream-subtitle-line stream-subtitle-line-${index}`
+      row.textContent = text
+      return row
+    }))
+    subtitleOverlay.classList.toggle('hidden', !rows.length)
   }
   subtitleSelect.disabled = !reader.unit?.subtitles?.length
+  secondarySubtitleSelect.disabled = !reader.unit?.subtitles?.length
   const applySubtitleSelection = () => {
-    const selectedIndex = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value)
+    const selectedIndexes = selectedSubtitleIndexes()
+    const selectedIndex = selectedIndexes[0] ?? -1
+    const secondaryIndex = selectedIndexes[1] ?? -1
     const selectedSubtitle = selectedIndex >= 0 ? reader.unit?.subtitles?.[selectedIndex] : null
+    const secondarySubtitle = secondaryIndex >= 0 ? reader.unit?.subtitles?.[secondaryIndex] : null
     subtitleSelect.title = selectedSubtitle ? subtitlePathTitle(selectedSubtitle) || '字幕' : '无字幕'
+    secondarySubtitleSelect.title = secondarySubtitle ? subtitlePathTitle(secondarySubtitle) || '副字幕' : '无副字幕'
     for (const [index, track] of [...player.textTracks].entries()) {
-      track.mode = index === selectedIndex ? 'hidden' : 'disabled'
+      track.mode = selectedIndexes.includes(index) ? 'hidden' : 'disabled'
       track.oncuechange = renderStreamSubtitles
     }
     renderStreamSubtitles()
     setTimeout(renderStreamSubtitles, 250)
   }
   subtitleSelect.addEventListener('change', applySubtitleSelection)
+  secondarySubtitleSelect.addEventListener('change', applySubtitleSelection)
   if (reader.unit?.subtitles?.length) {
     subtitleSelect.value = '0'
+    secondarySubtitleSelect.value = String(defaultSecondarySubtitleIndex(reader.unit.subtitles, 0))
     setTimeout(applySubtitleSelection, 0)
   }
   const rateSelect = document.createElement('select')
@@ -3043,7 +3072,7 @@ function renderStreamMedia(reader, options = {}) {
   })
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, subtitleSmaller, subtitleLarger, loopToggle, nextToggle, vrControls.element, fullscreen)
+  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, secondarySubtitleSelect, subtitleSmaller, subtitleLarger, loopToggle, nextToggle, vrControls.element, fullscreen)
   frame.append(player, subtitleOverlay, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
@@ -3165,6 +3194,18 @@ function legacyVrModeToState(mode) {
   if (mode.includes('mirror-x')) state.mirrorX = '1'
   if (mode.includes('flip-y')) state.flipY = '1'
   return state
+}
+
+function defaultSecondarySubtitleIndex(subtitles = [], primaryIndex = 0) {
+  if (!Array.isArray(subtitles) || subtitles.length < 2) return ''
+  const zh = subtitles.findIndex((subtitle, index) => (
+    index !== primaryIndex &&
+    (/zh|chi|chs|cht|cn/i.test(String(subtitle?.language || '')) ||
+      /AI\.zh|中文|简体|繁体/i.test(String(subtitle?.title || '')))
+  ))
+  if (zh >= 0) return zh
+  const next = subtitles.findIndex((_, index) => index !== primaryIndex)
+  return next >= 0 ? next : ''
 }
 
 function createVrVideoViewer({ frame, player, controls, warning }) {
