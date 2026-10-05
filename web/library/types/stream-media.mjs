@@ -1620,7 +1620,7 @@ function mergeUnitPatch(unit, patch = {}) {
   if (Array.isArray(patch.subtitles)) {
     const subtitles = []
     const seen = new Set()
-    for (const subtitle of [...(unit.subtitles || []), ...patch.subtitles]) {
+    for (const subtitle of [...patch.subtitles, ...(unit.subtitles || [])]) {
       const normalized = normalizeSubtitle(subtitle)
       if (!normalized.relativePath) continue
       const key = normalized.relativePath.toLowerCase()

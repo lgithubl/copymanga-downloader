@@ -105,12 +105,11 @@ jobs:
                       "ok": True,
                       "accepted": False,
                       "async": False,
-                      "job_id": "mock-asr",
-                      "trace_id": "mock-asr",
-                      "output_dir": output_dir,
                       "output_key": output_key,
-                      "output_path": f"/outputs/{output_dir}/{output_key}",
+                      "output_path": f"/outputs/{output_key}",
                       "segments": 1,
+                      "tmp_path": f"/outputs/{output_key}.tmp",
+                      "err_log_path": f"/outputs/{output_key}.err.log",
                   })
 
           http.server.ThreadingHTTPServer(("0.0.0.0", 11594), Handler).serve_forever()

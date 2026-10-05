@@ -3778,14 +3778,21 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
       updatedItem = await handler.patchItemMetadata(itemId, next.itemPatch)
     }
   }
+  const appliedUnitTags = []
+  const appliedUnitPatches = []
+  if (next.unitPatches.length) {
+    if (!handler.patchUnitMetadata) throw new Error('当前媒体类型不支持章节元数据更新')
+    for (const entry of next.unitPatches) {
+      await handler.patchUnitMetadata(itemId, entry.unitId, entry.patch)
+      appliedUnitPatches.push(entry)
+    }
+  }
   const units = handler.listUnits ? await handler.listUnits(itemId) : (updatedItem.mediaUnits || [])
   const byUnit = new Map(units.map((unit) => [unit.unitId, unit]))
   const previousByUnit = new Map((previous?.unitTags || []).map((entry) => [entry.unitId, entry.tags || []]))
   const touched = selectedUnitIds.size
     ? new Set([...selectedUnitIds])
     : new Set([...next.unitTags.map((entry) => entry.unitId), ...previousByUnit.keys()])
-  const appliedUnitTags = []
-  const appliedUnitPatches = []
   for (const unitId of touched) {
     const unit = byUnit.get(unitId)
     if (!unit) continue
@@ -3800,13 +3807,6 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     const updatedUnit = await handler.updateUnitTags(itemId, unitId, merged)
     await setUnitTags({ type, itemId, unitId, tags: updatedUnit.tags || [] })
     appliedUnitTags.push({ unitId, tags: nextEntry?.tags || [] })
-  }
-  if (next.unitPatches.length) {
-    if (!handler.patchUnitMetadata) throw new Error('当前媒体类型不支持章节元数据更新')
-    for (const entry of next.unitPatches) {
-      await handler.patchUnitMetadata(itemId, entry.unitId, entry.patch)
-      appliedUnitPatches.push(entry)
-    }
   }
   const runRecord = {
     status: 'completed',

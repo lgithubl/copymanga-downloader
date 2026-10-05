@@ -4,6 +4,7 @@ const VERSION_TAG_GROUP = 'AI字幕version'
 
 export async function generateTags(ctx) {
   const options = normalizeOptions(ctx.script?.options || {})
+  if (!Array.isArray(ctx.selectedUnitIds) || !ctx.selectedUnitIds.length) options.fastMode = true
   const units = playableUnits(Array.isArray(ctx.units) ? ctx.units : [])
     .filter((unit) => options.overwriteExisting || !(Array.isArray(unit.subtitles) && unit.subtitles.length))
   const logs = [
@@ -41,11 +42,7 @@ export async function generateTags(ctx) {
   }
 
   return {
-    itemTags: [
-      '字幕v1: 有',
-      'AI字幕: AI.jp',
-      `${VERSION_TAG_GROUP}: ${ctx.script?.version || 'unknown'}`,
-    ],
+    itemTags: [],
     unitTags,
     unitPatches,
     logs: [
@@ -70,7 +67,7 @@ function normalizeOptions(raw = {}) {
     outputFormat: String(raw.outputFormat || 'srt').replace(/^\./, '').toLowerCase(),
     segmenter: String(raw.segmenter || 'asmr-onnx'),
     vadFilter: raw.vadFilter === null || raw.vadFilter === undefined || raw.vadFilter === '' ? null : Boolean(raw.vadFilter),
-    fastMode: raw.fastMode === true,
+    fastMode: raw.fastMode !== false,
     overwriteExisting: raw.overwriteExisting === true,
     outputDirTemplate: String(raw.outputDirTemplate || '{itemId}'),
     subtitleTitle: String(raw.subtitleTitle || 'AI.jp'),
@@ -114,12 +111,13 @@ async function createSubtitle({ ctx, options, unit, logs }) {
     output_dir: outputDir,
   }
   if (options.vadFilter !== null) request.vad_filter = options.vadFilter
-  logs.push(`${unit.title || unit.unitId}: 请求 AI 字幕 ${request.input_path} -> ${outputDir}/${fileName}`)
+  logs.push(`${unit.title || unit.unitId}: 开始请求 ASR ${request.input_path} -> ${outputDir}/${fileName}`)
   const response = await postJson(`${options.apiBase}/v1/subtitles`, request, options.requestTimeoutMs)
+  logs.push(`${unit.title || unit.unitId}: ASR 返回 ok=${response.ok !== false} accepted=${Boolean(response.accepted)} async=${Boolean(response.async)} segments=${response.segments ?? ''}`)
   const outputPath = mapPath(String(response.output_path || ''), options.outputPathFrom, options.outputPathTo, { item: ctx.item, unit, fileName, options })
   const relativePath = outputPathToRelativePath(outputPath, unit)
   if (!relativePath) throw new Error(`${unit.title || unit.unitId}: 无法把 ASR 输出路径映射到媒体 files 目录: ${response.output_path || ''}`)
-  logs.push(`${unit.title || unit.unitId}: AI 字幕完成 ${relativePath}`)
+  logs.push(`${unit.title || unit.unitId}: 结束请求 ASR，AI 字幕完成 ${relativePath}`)
   return {
     title: options.subtitleTitle,
     relativePath,
