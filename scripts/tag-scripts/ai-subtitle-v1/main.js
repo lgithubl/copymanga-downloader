@@ -4,8 +4,11 @@ const VERSION_TAG_GROUP = 'AI字幕version'
 
 export async function generateTags(ctx) {
   const options = normalizeOptions(ctx.script?.options || {})
-  if (!Array.isArray(ctx.selectedUnitIds) || !ctx.selectedUnitIds.length) options.fastMode = true
-  const units = playableUnits(Array.isArray(ctx.units) ? ctx.units : [])
+  const fullRun = !Array.isArray(ctx.selectedUnitIds) || !ctx.selectedUnitIds.length
+  if (fullRun) options.fastMode = true
+  const allPlayableUnits = playableUnits(Array.isArray(ctx.units) ? ctx.units : [])
+  const existingAiUnits = allPlayableUnits.filter((unit) => hasAiSubtitle(unit, options))
+  const units = allPlayableUnits
     .filter((unit) => options.overwriteExisting || !(Array.isArray(unit.subtitles) && unit.subtitles.length))
   const logs = [
     `AI 字幕候选 ${units.length} 个`,
@@ -13,10 +16,18 @@ export async function generateTags(ctx) {
   ]
   if (!units.length) {
     return {
-      itemTags: [],
-      unitTags: [],
+      itemTags: fullRun && existingAiUnits.length ? aiSubtitleTags(ctx.script?.version) : [],
+      unitTags: fullRun
+        ? existingAiUnits.map((unit) => ({
+          unitId: unit.unitId,
+          tags: aiSubtitleTags(ctx.script?.version),
+        }))
+        : [],
       unitPatches: [],
-      logs,
+      logs: [
+        ...logs,
+        existingAiUnits.length ? `已有 AI 字幕 ${existingAiUnits.length} 个 unit，刷新 tag` : '没有需要生成的 AI 字幕',
+      ],
     }
   }
 
@@ -41,8 +52,19 @@ export async function generateTags(ctx) {
     }
   }
 
+  const generated = new Set(processed)
+  if (fullRun) {
+    for (const unit of existingAiUnits) {
+      if (generated.has(unit.unitId)) continue
+      unitTags.push({
+        unitId: unit.unitId,
+        tags: aiSubtitleTags(ctx.script?.version),
+      })
+    }
+  }
+
   return {
-    itemTags: [],
+    itemTags: fullRun ? aiSubtitleTags(ctx.script?.version) : [],
     unitTags,
     unitPatches,
     logs: [
@@ -85,6 +107,13 @@ function aiSubtitleTags(version) {
     'AI字幕: AI.jp',
     `${VERSION_TAG_GROUP}: ${version || 'unknown'}`,
   ]
+}
+
+function hasAiSubtitle(unit, options) {
+  return (unit.subtitles || []).some((subtitle) => (
+    String(subtitle?.title || '') === options.subtitleTitle ||
+    String(subtitle?.relativePath || '').replace(/\\/g, '/').startsWith('ai-subtitles/')
+  ))
 }
 
 function groupFastModeUnits(units) {
