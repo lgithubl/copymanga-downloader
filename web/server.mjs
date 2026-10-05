@@ -84,37 +84,44 @@ const apiHeaders = {
   region: '1',
 }
 
+function webHeaders(headers = {}) {
+  return {
+    'Permissions-Policy': 'clipboard-read=(self), clipboard-write=(self)',
+    ...headers,
+  }
+}
+
 function json(res, status, payload) {
   const body = JSON.stringify(payload)
-  res.writeHead(status, {
+  res.writeHead(status, webHeaders({
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
-  })
+  }))
   res.end(body)
 }
 
 function text(res, status, body) {
-  res.writeHead(status, {
+  res.writeHead(status, webHeaders({
     'Content-Type': 'text/plain; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
-  })
+  }))
   res.end(body)
 }
 
 function binary(res, status, body, contentType) {
-  res.writeHead(status, {
+  res.writeHead(status, webHeaders({
     'Content-Type': contentType,
     'Content-Length': body.length,
     'Cache-Control': 'public, max-age=3600',
-  })
+  }))
   res.end(body)
 }
 
 function streamFile(res, filePath, contentType) {
-  res.writeHead(200, {
+  res.writeHead(200, webHeaders({
     'Content-Type': contentType,
     'Cache-Control': 'public, max-age=3600',
-  })
+  }))
   createReadStream(filePath).pipe(res)
 }
 
@@ -2394,7 +2401,7 @@ async function serveStatic(req, res, pathname) {
       '.js': 'text/javascript',
       '.svg': 'image/svg+xml',
     })[ext] || 'application/octet-stream'
-    res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Content-Length': body.length })
+    res.writeHead(200, webHeaders({ 'Content-Type': `${type}; charset=utf-8`, 'Content-Length': body.length }))
     res.end(body)
   } catch {
     text(res, 404, 'Not found')
@@ -3909,11 +3916,11 @@ async function route(req, res) {
   try {
     if (pathname === '/health') return json(res, 200, { ok: true })
     if (pathname === '/api/events') {
-      res.writeHead(200, {
+      res.writeHead(200, webHeaders({
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
-      })
+      }))
       sseClients.add(res)
       req.on('close', () => sseClients.delete(res))
       res.write(`event: ready\ndata: {}\n\n`)
