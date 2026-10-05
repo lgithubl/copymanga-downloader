@@ -111,8 +111,10 @@ function aiSubtitleTags(version) {
 }
 
 function hasAiSubtitle(unit, options) {
+  const titlePrefix = `${options.subtitleTitle}.`
   return (unit.subtitles || []).some((subtitle) => (
     String(subtitle?.title || '') === options.subtitleTitle ||
+    String(subtitle?.title || '').startsWith(titlePrefix) ||
     String(subtitle?.relativePath || '').replace(/\\/g, '/').startsWith('ai-subtitles/')
   ))
 }
@@ -149,7 +151,7 @@ async function createSubtitle({ ctx, options, unit, logs }) {
   if (!relativePath) throw new Error(`${unit.title || unit.unitId}: 无法把 ASR 输出路径映射到媒体 files 目录: ${response.output_path || ''}`)
   logs.push(`${unit.title || unit.unitId}: 结束请求 ASR，AI 字幕完成 ${relativePath}`)
   return {
-    title: options.subtitleTitle,
+    title: `${options.subtitleTitle}.${dateStamp()}`,
     relativePath,
     language: options.language,
     contentType: 'text/vtt',
