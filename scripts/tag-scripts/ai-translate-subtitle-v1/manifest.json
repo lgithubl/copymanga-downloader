@@ -25,6 +25,7 @@
     "minLenCheckChars": 20,
     "maxRequestFactor": 2,
     "retryOnSuspiciousLength": true,
+    "reportMode": "onIssue",
     "requestTimeoutMs": 600000,
     "scriptTimeoutMs": 86400000,
     "prompt": "将下面日文字幕翻译成简体中文。保持 SRT 序号和时间轴不变，只翻译字幕文本，不要添加解释。"

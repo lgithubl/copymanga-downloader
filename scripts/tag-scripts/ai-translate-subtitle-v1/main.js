@@ -131,6 +131,7 @@ function normalizeOptions(raw = {}) {
     minLenCheckChars: Math.max(0, Math.trunc(finiteNumber(raw.minLenCheckChars, 20))),
     maxRequestFactor: Math.max(1, finiteNumber(raw.maxRequestFactor, 2)),
     retryOnSuspiciousLength: raw.retryOnSuspiciousLength !== false,
+    reportMode: ['always', 'onIssue', 'never'].includes(String(raw.reportMode)) ? String(raw.reportMode) : 'onIssue',
     requestTimeoutMs: finiteNumber(raw.requestTimeoutMs, 3600000),
     prompt: String(raw.prompt || '将下面日文字幕翻译成简体中文。保持 SRT 序号和时间轴不变，只翻译字幕文本，不要添加解释。'),
   }
@@ -181,23 +182,41 @@ async function translateSubtitle({ ctx, options, unit, source, logs }) {
   const sourcePath = subtitlePath(unit, source)
   const sourceText = await readFile(sourcePath, 'utf8')
   const cues = parseCues(sourceText)
-  if (!cues.length) throw new Error(`${label}: 源字幕没有解析出任何 cue`)
+  const fileName = `tr-${dateStamp()}-${randomToken()}.${options.targetLanguage}.${options.outputFormat}`
+  const relativePath = `${options.outputDir}/${fileName}`
+  const filesRoot = filesRootForUnit(unit)
+  // 事件在整条流水线里累积，成功和失败都要落报告——失败时磁盘上本来什么都不留，
+  // 恰恰最需要追溯。
+  const events = []
+  const budget = { used: 0, max: Math.max(4, Math.ceil(Math.max(cues.length, 1) * options.maxRequestFactor)) }
+  const report = { options, unit, source, cues, fileName, relativePath, filesRoot, events, budget, label, logs }
+
+  if (!cues.length) {
+    const message = '源字幕没有解析出任何 cue'
+    events.push({ type: '解析失败', from: 0, to: 0, detail: message })
+    await writeReport({ ...report, status: `失败：${message}`, ok: false })
+    throw new Error(`${label}: ${message}`)
+  }
   logs.push(`${label}: 开始翻译 ${source.relativePath}，共 ${cues.length} 条`)
 
-  // 调用次数上限：LLM 持续返回坏数据时二分会退化成 2N-1 次，必须封顶
-  const budget = { used: 0, max: Math.max(4, Math.ceil(cues.length * options.maxRequestFactor)) }
   const texts = cues.map((cue) => cue.text)
-  const translated = await translateAll({ options, texts, logs, label, budget })
-  if (translated.length !== cues.length) {
-    throw new Error(`${label}: 译文条数 ${translated.length} 与源 ${cues.length} 不符`)
+  let translated = null
+  try {
+    translated = await translateAll({ options, texts, logs, label, budget, events })
+    if (translated.length !== cues.length) {
+      throw new Error(`译文条数 ${translated.length} 与源 ${cues.length} 不符`)
+    }
+  } catch (error) {
+    // 报告里已有「章节」行，去掉错误信息里重复的 label 前缀
+    const bare = error.message.startsWith(`${label}: `) ? error.message.slice(label.length + 2) : error.message
+    await writeReport({ ...report, status: `失败：${bare}`, ok: false })
+    throw error instanceof Error && error.message.startsWith(label) ? error : new Error(`${label}: ${error.message}`)
   }
 
-  const fileName = `tr-${dateStamp()}-${randomToken()}.${options.targetLanguage}.${options.outputFormat}`
-  const filesRoot = filesRootForUnit(unit)
-  const relativePath = `${options.outputDir}/${fileName}`
   const targetPath = path.join(filesRoot, relativePath)
   await mkdir(path.dirname(targetPath), { recursive: true })
   await writeFile(targetPath, buildSrt(cues, translated), 'utf8')
+  await writeReport({ ...report, status: '成功', ok: true })
   logs.push(`${label}: 翻译完成 ${relativePath}，LLM 调用 ${budget.used} 次`)
   return {
     title: `${options.targetTitle}.${dateStamp()}`,
@@ -207,37 +226,48 @@ async function translateSubtitle({ ctx, options, unit, source, logs }) {
   }
 }
 
-async function translateAll({ options, texts, logs, label, budget }) {
+async function translateAll({ options, texts, logs, label, budget, events }) {
   const out = []
   for (let i = 0; i < texts.length; i += options.batchSize) {
     const slice = texts.slice(i, i + options.batchSize)
     const context = options.contextSize > 0 ? texts.slice(Math.max(0, i - options.contextSize), i) : []
-    out.push(...await translateBatch({ options, texts: slice, context, logs, label, budget }))
+    out.push(...await translateBatch({ options, texts: slice, context, logs, label, budget, events, offset: i }))
   }
   return out
 }
 
-// 返回数量对不上就二分重试，分到单条仍失败则抛错（整个 unit 判失败）
-async function translateBatch({ options, texts, context, logs, label, budget }) {
+// 返回数量对不上就二分重试，分到单条仍失败则抛错（整个 unit 判失败）。
+// offset 是本批在整条字幕里的起始下标，用来在报告里给出绝对 cue 编号。
+async function translateBatch({ options, texts, context, logs, label, budget, events, offset }) {
   if (!texts.length) return []
+  const from = offset + 1
+  const to = offset + texts.length
   let result = null
   let reason = ''
   try {
-    result = await requestJsonArray({ options, texts, context, budget })
-    if (result.length !== texts.length) {
-      reason = `返回 ${result.length} 项、期望 ${texts.length} 项`
-      result = null
+    const got = await requestJsonArray({ options, texts, context, budget })
+    if (got.texts.length !== texts.length) {
+      reason = `返回 ${got.texts.length} 项、期望 ${texts.length} 项`
+    } else {
+      result = got.texts
+      for (const i of got.cleanedIndexes) {
+        events.push({ type: '格式清洗', from: offset + i + 1, to: offset + i + 1, detail: '译文含时间轴/序号/WEBVTT，已剥离' })
+      }
     }
   } catch (error) {
     reason = error.message
   }
-  if (result) return refineLongCues({ options, texts, result, context, logs, label, budget })
-  if (texts.length === 1) throw new Error(`${label}: 单条翻译失败（${reason}）`)
-  logs.push(`${label}: ${texts.length} 条批次失败（${reason}），二分重试`)
+  if (result) return refineLongCues({ options, texts, result, context, logs, label, budget, events, offset })
+  if (texts.length === 1) {
+    events.push({ type: '单条失败', from, to, detail: reason })
+    throw new Error(`${label}: cue ${from} 单条翻译失败（${reason}）`)
+  }
   const mid = texts.length >> 1
   const head = texts.slice(0, mid)
+  events.push({ type: '批次重试', from, to, detail: `${reason} → 二分为 ${from}-${offset + mid} / ${offset + mid + 1}-${to}` })
+  logs.push(`${label}: cue ${from}-${to} 批次失败（${reason}），二分重试`)
   return [
-    ...await translateBatch({ options, texts: head, context, logs, label, budget }),
+    ...await translateBatch({ options, texts: head, context, logs, label, budget, events, offset }),
     ...await translateBatch({
       options,
       texts: texts.slice(mid),
@@ -245,24 +275,37 @@ async function translateBatch({ options, texts, context, logs, label, budget }) 
       logs,
       label,
       budget,
+      events,
+      offset: offset + mid,
     }),
   ]
 }
 
 // 译文显著偏长往往是模型在解释或幻觉，重试一次；仍偏长就保留较短的那个。
 // 这是启发式，不判失败——否则一句拟声词就能把整章标红。
-async function refineLongCues({ options, texts, result, context, logs, label, budget }) {
+async function refineLongCues({ options, texts, result, context, logs, label, budget, events, offset }) {
   if (!options.retryOnSuspiciousLength) return result
   const out = [...result]
   for (let i = 0; i < out.length; i += 1) {
     if (!isSuspiciousLength(texts[i], out[i], options)) continue
-    logs.push(`${label}: 第 ${i + 1} 条译文偏长（${texts[i].trim().length} -> ${out[i].trim().length}），重试`)
+    const no = offset + i + 1
+    const srcLen = texts[i].trim().length
+    const firstLen = out[i].trim().length
+    logs.push(`${label}: cue ${no} 译文偏长（${srcLen} -> ${firstLen}），重试`)
+    let detail = `${srcLen} 字 → ${firstLen} 字 (${(firstLen / srcLen).toFixed(1)}x)`
     try {
       const retry = await requestJsonArray({ options, texts: [texts[i]], context, budget })
-      if (retry.length === 1 && retry[0] && retry[0].length < out[i].length) out[i] = retry[0]
+      if (retry.texts.length === 1 && retry.texts[0] && retry.texts[0].length < out[i].length) {
+        out[i] = retry.texts[0]
+        detail += `，重试后 ${out[i].trim().length} 字，已采纳`
+      } else {
+        detail += '，重试未更短，保留首次结果'
+      }
     } catch (error) {
-      logs.push(`${label}: 第 ${i + 1} 条重试失败（${error.message}），保留首次结果`)
+      detail += `，重试失败（${error.message}），保留首次结果`
+      logs.push(`${label}: cue ${no} 重试失败（${error.message}）`)
     }
+    events.push({ type: '长度告警', from: no, to: no, detail })
   }
   return out
 }
@@ -282,7 +325,13 @@ async function requestJsonArray({ options, texts, context, budget }) {
   const parsed = extractJsonArray(raw)
   if (!parsed) throw new Error('返回内容不是 JSON 数组')
   if (!parsed.every((item) => typeof item === 'string')) throw new Error('JSON 数组含非字符串元素')
-  return parsed.map(cleanCueText)
+  const cleanedIndexes = []
+  const cleaned = parsed.map((item, index) => {
+    const value = cleanCueText(item)
+    if (value !== String(item || '').trim()) cleanedIndexes.push(index)
+    return value
+  })
+  return { texts: cleaned, cleanedIndexes }
 }
 
 function buildBatchPrompt(options, texts, context) {
@@ -382,6 +431,71 @@ async function callLlmTranslate(options, sourceText) {
   } finally {
     clearTimeout(timer)
   }
+}
+
+// reportMode: always 总是写 / onIssue 仅有事件或失败时写 / never 不写。
+// 落在 <outputDir>/log/ 下，与输出共用同一个文件名 token，方便配对。
+// 扩展名 .log 不在 DEFAULT_SUBTITLE_EXTENSIONS 里，不会被字幕扫描误认。
+async function writeReport({ options, unit, source, cues, fileName, relativePath, filesRoot, events, budget, label, logs, status, ok }) {
+  if (options.reportMode === 'never') return
+  if (options.reportMode !== 'always' && ok && !events.length) return
+  if (!filesRoot) return
+  const reportRelative = `${options.outputDir}/log/${fileName.replace(/\.[^.]+$/, '')}.log`
+  try {
+    const targetPath = path.join(filesRoot, reportRelative)
+    await mkdir(path.dirname(targetPath), { recursive: true })
+    await writeFile(targetPath, renderReport({ options, unit, source, cues, relativePath, events, budget, status, ok }), 'utf8')
+    logs.push(`${label}: 执行报告 ${reportRelative}`)
+  } catch (error) {
+    logs.push(`${label}: 执行报告写入失败（${error.message}）`)
+  }
+}
+
+function renderReport({ options, unit, source, cues, relativePath, events, budget, status, ok }) {
+  const lines = [
+    '# AI 字幕翻译报告',
+    `章节  ${unit.title || unit.unitId} (${unit.unitId})`,
+    `源    ${source.relativePath}  (${cues.length} 条)`,
+    `输出  ${ok ? relativePath : '未产出'}`,
+    `结果  ${status}`,
+    `调用  ${budget.used} 次 / 上限 ${budget.max}`,
+    `配置  batchSize=${options.batchSize} contextSize=${options.contextSize} maxLenRatio=${options.maxLenRatio} minLenCheckChars=${options.minLenCheckChars} maxRequestFactor=${options.maxRequestFactor}`,
+    '',
+    `## 事件 ${events.length} 条`,
+  ]
+  if (!events.length) {
+    lines.push('（无）')
+  } else {
+    for (const event of events) {
+      const range = event.from === event.to ? `cue ${event.from}` : `cue ${event.from}-${event.to}`
+      lines.push(`[${event.type}] ${range.padEnd(14)} ${event.detail}`)
+    }
+  }
+  lines.push('', '## 后续操作')
+  for (const hint of reportHints({ options, events, ok })) lines.push(`- ${hint}`)
+  return `${lines.join('\n')}\n`
+}
+
+function reportHints({ options, events, ok }) {
+  const hints = []
+  if (!ok) {
+    hints.push(`本 unit 已标记「AI字幕: ${options.targetTitle}失败」，未产出译文文件`)
+    hints.push('修复 LLM 服务后重跑本脚本即可，已成功的 unit 会自动跳过')
+    hints.push(`批量排查：重建缓存后搜 tag:"AI字幕: ${options.targetTitle}失败"`)
+  }
+  const lengthWarnings = events.filter((event) => event.type === '长度告警').length
+  if (lengthWarnings) {
+    hints.push(`长度告警 ${lengthWarnings} 条；若频繁出现，考虑调大 maxLenRatio（当前 ${options.maxLenRatio}）或关闭 retryOnSuspiciousLength`)
+  }
+  const retry = events.filter((event) => event.type === '批次重试').length
+  if (retry) {
+    hints.push(`批次重试 ${retry} 次，说明模型未严格按 JSON 数组返回；可调小 batchSize（当前 ${options.batchSize}）降低单批难度`)
+  }
+  if (events.some((event) => event.type === '格式清洗')) {
+    hints.push('模型把字幕格式混进了译文，已自动剥离；若大量出现可在 prompt 里再强调「只返回译文文本」')
+  }
+  if (!hints.length) hints.push('无需处理')
+  return hints
 }
 
 function subtitlePath(unit, subtitle) {
