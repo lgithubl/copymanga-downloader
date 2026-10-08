@@ -115,7 +115,14 @@ function upstreamFailed(unit, options) {
 }
 
 function normalizeOptions(raw = {}) {
+  const protocol = ['json', 'lines', 'plain'].includes(String(raw.protocol)) ? String(raw.protocol) : 'json'
+  // plain 是一问一答，批量没有意义
+  const batchSize = protocol === 'plain' ? 1 : Math.max(1, Math.trunc(finiteNumber(raw.batchSize, 15)))
   return {
+    protocol,
+    batchSize,
+    retryCount: Math.max(0, Math.trunc(finiteNumber(raw.retryCount, 2))),
+    retrySleepMs: Math.max(0, Math.trunc(finiteNumber(raw.retrySleepMs, 3000))),
     apiBase: String(raw.apiBase || 'http://127.0.0.1:8080').replace(/\/+$/, ''),
     model: String(raw.model || 'sakura'),
     sourceTitlePrefix: String(raw.sourceTitlePrefix || 'AI.jp'),
@@ -125,7 +132,6 @@ function normalizeOptions(raw = {}) {
     outputFormat: safeOutputFormat(raw.outputFormat || 'srt'),
     outputDir: safePathSegment(raw.outputDir || 'ai-subtitles'),
     force: raw.force === true,
-    batchSize: Math.max(1, Math.trunc(finiteNumber(raw.batchSize, 15))),
     contextSize: Math.max(0, Math.trunc(finiteNumber(raw.contextSize, 2))),
     maxLenRatio: Math.max(1, finiteNumber(raw.maxLenRatio, 3)),
     minLenCheckChars: Math.max(0, Math.trunc(finiteNumber(raw.minLenCheckChars, 20))),
@@ -328,10 +334,10 @@ function isSuspiciousLength(sourceText, targetText, options) {
 async function requestJsonArray({ options, texts, context, budget }) {
   if (budget.used >= budget.max) throw new Error(`LLM 调用次数超出上限 ${budget.max}`)
   budget.used += 1
-  const raw = await callLlmTranslate(options, buildBatchPrompt(options, texts, context))
-  const parsed = extractJsonArray(raw)
-  if (!parsed) throw rawError('返回内容不是 JSON 数组', raw)
-  if (!parsed.every((item) => typeof item === 'string')) throw rawError('JSON 数组含非字符串元素', raw)
+  const raw = await callWithRetry(options, buildBatchPrompt(options, texts, context))
+  const parsed = parseByProtocol(options, raw, texts.length)
+  if (!parsed) throw rawError(protocolParseError(options), raw)
+  if (!parsed.every((item) => typeof item === 'string')) throw rawError('响应含非字符串元素', raw)
   const cleanedIndexes = []
   const cleaned = parsed.map((item, index) => {
     const value = cleanCueText(item)
@@ -339,6 +345,47 @@ async function requestJsonArray({ options, texts, context, budget }) {
     return value
   })
   return { texts: cleaned, cleanedIndexes, raw }
+}
+
+// 传输层重试：网络抖动和超时值得等一会再试；格式问题交给二分，不在这里重试。
+async function callWithRetry(options, content) {
+  let lastError = null
+  for (let attempt = 0; attempt <= options.retryCount; attempt += 1) {
+    try {
+      return await callLlmTranslate(options, content)
+    } catch (error) {
+      lastError = error
+      if (attempt >= options.retryCount) break
+      await sleep(options.retrySleepMs)
+    }
+  }
+  throw lastError
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
+}
+
+function parseByProtocol(options, raw, expected) {
+  if (options.protocol === 'plain') {
+    // 专用翻译模型（如 sakura）不遵循结构化输出指令，收到什么就当译文
+    const text = cleanCueText(raw)
+    return expected === 1 && text ? [text] : null
+  }
+  if (options.protocol === 'lines') {
+    const lines = String(raw || '')
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s*(?:\[\d+\]|\d+[.、)])\s*/, '').trim())
+      .filter(Boolean)
+    return lines.length ? lines : null
+  }
+  return extractJsonArray(raw)
+}
+
+function protocolParseError(options) {
+  if (options.protocol === 'plain') return '响应为空'
+  if (options.protocol === 'lines') return '响应没有可用行'
+  return '返回内容不是 JSON 数组'
 }
 
 // 把原始响应挂在异常上，报告里才能说明「模型到底回了什么」
@@ -355,12 +402,37 @@ function rawSnippet(value, limit) {
 }
 
 function buildBatchPrompt(options, texts, context) {
-  const parts = [options.prompt, '', '严格要求：', `- 只返回一个 JSON 数组，长度必须正好是 ${texts.length}`, '- 元素为字符串，顺序与输入一一对应', '- 不要输出解释、前言或 markdown 代码块', '- 不要输出序号、时间轴等字幕格式，只要译文文本']
-  if (context.length) {
-    parts.push('', '上文参考（仅供理解语境，不要翻译、不要出现在返回中）：', JSON.stringify(context, null, 0))
+  // plain 协议完全不提格式要求：专用翻译模型给什么指令都只会翻译，
+  // 多说反而会让它把指令文本也译出来。
+  if (options.protocol === 'plain') {
+    return `${options.prompt}\n\n${texts[0]}`
   }
-  parts.push('', `待翻译（共 ${texts.length} 条）：`, JSON.stringify(texts, null, 0))
+  const parts = [options.prompt, '', '严格要求：']
+  if (options.protocol === 'lines') {
+    parts.push(
+      `- 每条译文单独占一行，正好输出 ${texts.length} 行`,
+      '- 行的顺序与输入一一对应',
+      '- 不要加行号、不要空行、不要解释或前言',
+      '- 原文内部的换行请用空格代替，保证一条译文只占一行',
+    )
+  } else {
+    parts.push(
+      `- 只返回一个 JSON 数组，长度必须正好是 ${texts.length}`,
+      '- 元素为字符串，顺序与输入一一对应',
+      '- 不要输出解释、前言或 markdown 代码块',
+    )
+  }
+  parts.push('- 不要输出序号、时间轴等字幕格式，只要译文文本')
+  if (context.length) {
+    parts.push('', '上文参考（仅供理解语境，不要翻译、不要出现在返回中）：', renderPayload(options, context))
+  }
+  parts.push('', `待翻译（共 ${texts.length} 条）：`, renderPayload(options, texts))
   return parts.join('\n')
+}
+
+function renderPayload(options, texts) {
+  if (options.protocol === 'lines') return texts.map((text) => String(text).replace(/\s*\n\s*/g, ' ')).join('\n')
+  return JSON.stringify(texts, null, 0)
 }
 
 // 容忍前言和 markdown 围栏：截取首个 [ 到末个 ] 再解析
