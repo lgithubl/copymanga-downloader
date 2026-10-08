@@ -28,6 +28,6 @@
     "reportMode": "onIssue",
     "requestTimeoutMs": 600000,
     "scriptTimeoutMs": 86400000,
-    "prompt": "将下面日文字幕翻译成简体中文。保持 SRT 序号和时间轴不变，只翻译字幕文本，不要添加解释。"
+    "prompt": "将下面的日文字幕逐条翻译成简体中文。保持口语化和角色语气，不要添加原文没有的解释或注释。"
   }
 }
