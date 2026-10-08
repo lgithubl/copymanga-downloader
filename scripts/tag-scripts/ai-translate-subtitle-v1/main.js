@@ -132,6 +132,7 @@ function normalizeOptions(raw = {}) {
     maxRequestFactor: Math.max(1, finiteNumber(raw.maxRequestFactor, 2)),
     retryOnSuspiciousLength: raw.retryOnSuspiciousLength !== false,
     reportMode: ['always', 'onIssue', 'never'].includes(String(raw.reportMode)) ? String(raw.reportMode) : 'onIssue',
+    rawSnippetChars: Math.max(0, Math.trunc(finiteNumber(raw.rawSnippetChars, 300))),
     requestTimeoutMs: finiteNumber(raw.requestTimeoutMs, 3600000),
     prompt: String(raw.prompt || '将下面日文字幕翻译成简体中文。保持 SRT 序号和时间轴不变，只翻译字幕文本，不要添加解释。'),
   }
@@ -244,8 +245,10 @@ async function translateBatch({ options, texts, context, logs, label, budget, ev
   const to = offset + texts.length
   let result = null
   let reason = ''
+  let raw = null
   try {
     const got = await requestJsonArray({ options, texts, context, budget })
+    raw = got.raw
     if (got.texts.length !== texts.length) {
       reason = `返回 ${got.texts.length} 项、期望 ${texts.length} 项`
     } else {
@@ -256,15 +259,19 @@ async function translateBatch({ options, texts, context, logs, label, budget, ev
     }
   } catch (error) {
     reason = error.message
+    raw = error.raw
   }
   if (result) return refineLongCues({ options, texts, result, context, logs, label, budget, events, offset })
+  // 原样附上模型返回的内容，否则「不是 JSON 数组」这类报错无从排查
+  const snippet = options.rawSnippetChars > 0 ? ` | 原始响应: ${rawSnippet(raw, options.rawSnippetChars)}` : ''
   if (texts.length === 1) {
-    events.push({ type: '单条失败', from, to, detail: reason })
+    events.push({ type: '单条失败', from, to, detail: `${reason}${snippet}` })
+    events.push({ type: '失败原文', from, to, detail: rawSnippet(texts[0], options.rawSnippetChars || 200) })
     throw new Error(`${label}: cue ${from} 单条翻译失败（${reason}）`)
   }
   const mid = texts.length >> 1
   const head = texts.slice(0, mid)
-  events.push({ type: '批次重试', from, to, detail: `${reason} → 二分为 ${from}-${offset + mid} / ${offset + mid + 1}-${to}` })
+  events.push({ type: '批次重试', from, to, detail: `${reason} → 二分为 ${from}-${offset + mid} / ${offset + mid + 1}-${to}${snippet}` })
   logs.push(`${label}: cue ${from}-${to} 批次失败（${reason}），二分重试`)
   return [
     ...await translateBatch({ options, texts: head, context, logs, label, budget, events, offset }),
@@ -323,15 +330,28 @@ async function requestJsonArray({ options, texts, context, budget }) {
   budget.used += 1
   const raw = await callLlmTranslate(options, buildBatchPrompt(options, texts, context))
   const parsed = extractJsonArray(raw)
-  if (!parsed) throw new Error('返回内容不是 JSON 数组')
-  if (!parsed.every((item) => typeof item === 'string')) throw new Error('JSON 数组含非字符串元素')
+  if (!parsed) throw rawError('返回内容不是 JSON 数组', raw)
+  if (!parsed.every((item) => typeof item === 'string')) throw rawError('JSON 数组含非字符串元素', raw)
   const cleanedIndexes = []
   const cleaned = parsed.map((item, index) => {
     const value = cleanCueText(item)
     if (value !== String(item || '').trim()) cleanedIndexes.push(index)
     return value
   })
-  return { texts: cleaned, cleanedIndexes }
+  return { texts: cleaned, cleanedIndexes, raw }
+}
+
+// 把原始响应挂在异常上，报告里才能说明「模型到底回了什么」
+function rawError(message, raw) {
+  const error = new Error(message)
+  error.raw = raw
+  return error
+}
+
+function rawSnippet(value, limit) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return '(空响应)'
+  return text.length > limit ? `${text.slice(0, limit)}…[共 ${text.length} 字符]` : text
 }
 
 function buildBatchPrompt(options, texts, context) {
