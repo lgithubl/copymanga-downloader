@@ -3,22 +3,10 @@
   "name": "AI 字幕翻译 v1",
   "version": "1.3.0",
   "description": "调用 local-llm-server 翻译 AI.jp 字幕为 AI.zh 字幕，并写入显式字幕映射。",
-  "scope": [
-    "item",
-    "unit"
-  ],
-  "libraryTypes": [
-    "media"
-  ],
-  "mediaKinds": [
-    "audio",
-    "video"
-  ],
-  "exclusiveTagGroups": [
-    "字幕v1",
-    "AI字幕",
-    "AI翻译version"
-  ],
+  "scope": ["item", "unit"],
+  "libraryTypes": ["media"],
+  "mediaKinds": ["audio", "video"],
+  "exclusiveTagGroups": ["字幕v1", "AI字幕", "AI翻译version"],
   "defaultEnabled": false,
   "main": "main.js",
   "options": {
