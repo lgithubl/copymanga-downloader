@@ -8,24 +8,35 @@ export async function generateTags(ctx) {
   const options = normalizeOptions(ctx.script?.options || {})
   const fullRun = !Array.isArray(ctx.selectedUnitIds) || !ctx.selectedUnitIds.length
   const units = playableUnits(Array.isArray(ctx.units) ? ctx.units : [])
-  const candidates = units
+  // 上游字幕阶段失败的 unit：翻译帮不上忙，不能让合集 tag 声称翻译完成
+  const blocked = units.filter((unit) => upstreamFailed(unit, options))
+  const pending = units
     .map((unit) => ({ unit, source: sourceSubtitle(unit, options), existing: existingTranslation(unit, options) }))
     .filter((entry) => entry.source && (options.force || !entry.existing))
+  // 多个 unit 共用同一份源字幕时只翻一次，结果挂给整组
+  const jobs = groupBySource(pending)
   const existingTranslatedUnits = units.filter((unit) => existingTranslation(unit, options))
   const logs = [
-    `AI 翻译候选 ${candidates.length} 个`,
+    `AI 翻译候选 ${pending.length} 个 unit / ${jobs.length} 份源字幕`,
     `模型 ${options.model} · ${options.sourceLanguage}->${options.targetLanguage}`,
   ]
-  if (!candidates.length) {
+  if (blocked.length) {
+    logs.push(`${blocked.length} 个 unit 处于 ${options.sourceTitlePrefix} 失败态，本次不改合集 tag`)
+  }
+  if (!jobs.length) {
     return {
-      itemTags: fullRun && existingTranslatedUnits.length ? translationTags(options, ctx.script?.version) : [],
+      itemTags: fullRun && !blocked.length && existingTranslatedUnits.length
+        ? translationTags(options, ctx.script?.version)
+        : [],
       unitTags: fullRun
         ? existingTranslatedUnits.map((unit) => ({ unitId: unit.unitId, tags: translationTags(options, ctx.script?.version) }))
         : [],
       unitPatches: [],
       logs: [
         ...logs,
-        existingTranslatedUnits.length ? `已有 AI.zh 字幕 ${existingTranslatedUnits.length} 个 unit，刷新 tag` : '没有需要翻译的 AI.jp 字幕',
+        existingTranslatedUnits.length
+          ? `已有 ${options.targetTitle} 字幕 ${existingTranslatedUnits.length} 个 unit，刷新 tag`
+          : `没有需要翻译的 ${options.sourceTitlePrefix} 字幕`,
       ],
     }
   }
@@ -34,43 +45,73 @@ export async function generateTags(ctx) {
   const unitPatches = []
   const processed = []
   const failed = []
-  for (const { unit, source } of candidates) {
+  for (const group of jobs) {
+    const primary = group[0]
     let subtitle = null
     try {
-      subtitle = await translateSubtitle({ ctx, options, unit, source, logs })
+      subtitle = await translateSubtitle({ ctx, options, unit: primary.unit, source: primary.source, logs })
     } catch (error) {
-      // 单个 unit 失败不中断整批：记失败 tag 后继续，已成功的 patch 才不会被丢掉
-      failed.push(unit.unitId)
-      logs.push(`${unit.title || unit.unitId}: AI 翻译失败 ${error.message}`)
-      unitTags.push({ unitId: unit.unitId, tags: translationFailedTags(options, ctx.script?.version) })
+      // 单个源失败不中断整批：记失败 tag 后继续，已成功的 patch 才不会被丢掉
+      failed.push(...group.map((entry) => entry.unit.unitId))
+      logs.push(`${primary.unit.title || primary.unit.unitId}: AI 翻译失败 ${error.message}`)
+      for (const entry of group) {
+        unitTags.push({ unitId: entry.unit.unitId, tags: translationFailedTags(options, ctx.script?.version) })
+      }
       continue
     }
-    processed.push(unit.unitId)
-    unitTags.push({ unitId: unit.unitId, tags: translationTags(options, ctx.script?.version) })
-    unitPatches.push({ unitId: unit.unitId, subtitles: [subtitle] })
+    for (const entry of group) {
+      processed.push(entry.unit.unitId)
+      unitTags.push({ unitId: entry.unit.unitId, tags: translationTags(options, ctx.script?.version) })
+      unitPatches.push({ unitId: entry.unit.unitId, subtitles: [subtitle] })
+    }
   }
   if (fullRun) {
-    const processedSet = new Set(processed)
-    const failedSet = new Set(failed)
+    const touched = new Set([...processed, ...failed])
     for (const unit of existingTranslatedUnits) {
-      if (processedSet.has(unit.unitId) || failedSet.has(unit.unitId)) continue
+      if (touched.has(unit.unitId)) continue
       unitTags.push({ unitId: unit.unitId, tags: translationTags(options, ctx.script?.version) })
     }
   }
-  // item 三态只看本次实际处理的 unit，不含因已有译文而跳过的
+  // 三态只看本次实际处理的 unit；有 unit 卡在上游失败态时完全不动合集 tag，
+  // 留着字幕脚本写的失败态，等源字幕补齐后再切。
   const itemState = !failed.length ? '' : (processed.length ? '部分失败' : '失败')
   return {
-    itemTags: fullRun
-      ? (itemState ? translationFailedTags(options, ctx.script?.version, itemState) : translationTags(options, ctx.script?.version))
-      : [],
+    itemTags: (!fullRun || blocked.length)
+      ? []
+      : (itemState
+        ? translationFailedTags(options, ctx.script?.version, itemState)
+        : translationTags(options, ctx.script?.version)),
     unitTags,
     unitPatches,
     logs: [
       ...logs,
-      `AI 翻译完成 ${processed.length}/${candidates.length} 个 unit${failed.length ? `，失败 ${failed.length} 个` : ''}`,
+      `AI 翻译完成 ${processed.length}/${pending.length} 个 unit${failed.length ? `，失败 ${failed.length} 个` : ''}`,
     ],
-    details: { processedUnitIds: processed, failedUnitIds: failed },
+    details: {
+      processedUnitIds: processed,
+      failedUnitIds: failed,
+      blockedUnitIds: blocked.map((unit) => unit.unitId),
+    },
   }
+}
+
+// 同一份源字幕被多个 unit 共用时合成一组，只发一次翻译请求
+function groupBySource(entries) {
+  const groups = new Map()
+  for (const entry of entries) {
+    const key = normalizePath(entry.source?.relativePath || '').toLowerCase()
+    const list = groups.get(key) || []
+    list.push(entry)
+    groups.set(key, list)
+  }
+  return [...groups.values()]
+}
+
+// 只认源标题的失败 tag。不能用泛化的「以失败结尾」，否则本脚本上一轮的
+// AI.zh失败 也会算进来，导致重试成功后依然写不了合集 tag。
+function upstreamFailed(unit, options) {
+  const want = `AI字幕:${options.sourceTitlePrefix}失败`
+  return (unit.tags || []).some((tag) => String(tag).replace(/\s+/g, '') === want)
 }
 
 function normalizeOptions(raw = {}) {
@@ -113,19 +154,17 @@ function existingTranslation(unit, options) {
   })
 }
 
+// 只负责 AI字幕 组；字幕v1 归 builtin-subtitles 管，这里不碰。
 function translationTags(options, version) {
   return [
-    '字幕v1: 有',
     `AI字幕: ${options.targetTitle}`,
     `${VERSION_TAG_GROUP}: ${version || 'unknown'}`,
   ]
 }
 
 // state: '失败' 表示本次处理的 unit 全部失败，'部分失败' 表示有成功也有失败。
-// 字幕v1 归 builtin-subtitles 管：全失败时不碰它，部分成功时如实标「有」。
 function translationFailedTags(options, version, state = '失败') {
   return [
-    ...(state === '部分失败' ? ['字幕v1: 有'] : []),
     `AI字幕: ${options.targetTitle}${state}`,
     `${VERSION_TAG_GROUP}: ${version || 'unknown'}`,
   ]
