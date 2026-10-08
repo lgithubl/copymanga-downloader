@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 
 const VERSION_TAG_GROUP = 'AI字幕version'
 
@@ -36,6 +38,7 @@ export async function generateTags(ctx) {
   const unitPatches = []
   const processed = []
   const failed = []
+  const failures = []
 
   for (const group of jobs) {
     const primary = group[0]
@@ -45,6 +48,7 @@ export async function generateTags(ctx) {
     } catch (error) {
       // 单个 unit 失败不中断整批：记失败 tag 后继续，已成功的 patch 才不会被丢掉
       failed.push(...group.map((unit) => unit.unitId))
+      failures.push({ units: group, message: error.message })
       logs.push(`${primary.title || primary.unitId}: AI 字幕失败 ${error.message}`)
       for (const unit of group) {
         unitTags.push({
@@ -80,6 +84,7 @@ export async function generateTags(ctx) {
 
   // item 三态只看本次实际处理的 unit，不含因已有字幕而跳过的
   const itemState = !failed.length ? '' : (processed.length ? '部分失败' : '失败')
+  await writeFailureReport({ ctx, options, units, failures, processed, logs })
 
   return {
     itemTags: fullRun
@@ -99,6 +104,47 @@ export async function generateTags(ctx) {
   }
 }
 
+// 失败时在 <logDir> 下留一份报告。成功的 unit 有字幕文件可查，失败的什么都不留，
+// 而 job 记录是每个 (item, 脚本) 一份、重跑即覆盖，所以这里补一份跟着媒体走的痕迹。
+async function writeFailureReport({ ctx, options, units, failures, processed, logs }) {
+  if (options.reportMode === 'never' || !failures.length) return
+  const filesRoot = filesRootForUnit(units.find((unit) => filesRootForUnit(unit)) || {})
+  if (!filesRoot) return
+  const relative = `${options.logDir}/asr-${dateStamp()}-${randomToken()}.log`
+  const failedCount = failures.reduce((sum, entry) => sum + entry.units.length, 0)
+  const lines = [
+    '# AI 字幕生成报告',
+    `合集  ${ctx.item?.title || ctx.item?.itemId || ''} (${ctx.item?.itemId || ''})`,
+    `结果  ${processed.length ? '部分失败' : '失败'}：成功 ${processed.length} / 失败 ${failedCount}，共 ${units.length} 个候选 unit`,
+    `配置  apiBase=${options.apiBase} language=${options.language} segmenter=${options.segmenter} fastMode=${options.fastMode}`,
+    '',
+    `## 失败明细 ${failures.length} 组`,
+  ]
+  for (const entry of failures) {
+    const names = entry.units.map((unit) => `${unit.title || unit.unitId} (${unit.unitId})`).join('、')
+    lines.push(`[失败] ${names}`)
+    lines.push(`       ${entry.message}`)
+  }
+  lines.push('', '## 后续操作')
+  lines.push(`- 失败的 unit 已标记「AI字幕: ${options.subtitleTitle}失败」，未产出字幕`)
+  lines.push('- 修复 ASR 服务后重跑本脚本即可，已有字幕的 unit 会自动跳过')
+  lines.push(`- 批量排查：重建缓存后搜 tag:"AI字幕: ${options.subtitleTitle}失败"`)
+  if (failures.some((entry) => /fetch failed|timeout|ECONN/i.test(entry.message))) {
+    lines.push(`- 错误指向网络或超时，先确认 ${options.apiBase} 可达，再看 requestTimeoutMs（当前 ${options.requestTimeoutMs} ms）是否够`)
+  }
+  if (failures.some((entry) => /无法把 ASR 输出路径映射/.test(entry.message))) {
+    lines.push('- 路径映射失败：核对 outputPathFrom / outputPathTo 与 ASR 服务实际写盘位置是否一致')
+  }
+  try {
+    const targetPath = path.join(filesRoot, relative)
+    await mkdir(path.dirname(targetPath), { recursive: true })
+    await writeFile(targetPath, `${lines.join('\n')}\n`, 'utf8')
+    logs.push(`执行报告 ${relative}`)
+  } catch (error) {
+    logs.push(`执行报告写入失败（${error.message}）`)
+  }
+}
+
 function normalizeOptions(raw = {}) {
   return {
     apiBase: String(raw.apiBase || 'http://192.168.50.56:11594').replace(/\/+$/, ''),
@@ -115,6 +161,8 @@ function normalizeOptions(raw = {}) {
     force: raw.force === true || raw.overwriteExisting === true,
     outputDirTemplate: String(raw.outputDirTemplate || '{itemId}'),
     subtitleTitle: String(raw.subtitleTitle || 'AI.jp'),
+    logDir: String(raw.logDir || 'ai-subtitles/log').replace(/^[/\\]+|[/\\]+$/g, ''),
+    reportMode: ['onFailure', 'never'].includes(String(raw.reportMode)) ? String(raw.reportMode) : 'onFailure',
     requestTimeoutMs: finiteNumber(raw.requestTimeoutMs, 3600000),
   }
 }

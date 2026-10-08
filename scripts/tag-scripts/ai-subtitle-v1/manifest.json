@@ -24,6 +24,8 @@
     "overwriteExisting": false,
     "outputDirTemplate": "{itemId}",
     "subtitleTitle": "AI.jp",
+    "logDir": "ai-subtitles/log",
+    "reportMode": "onFailure",
     "scriptTimeoutMs": 86400000,
     "requestTimeoutMs": 600000
   }
