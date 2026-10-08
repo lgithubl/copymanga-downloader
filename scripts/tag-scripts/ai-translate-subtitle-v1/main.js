@@ -139,8 +139,10 @@ function normalizeOptions(raw = {}) {
     retryOnSuspiciousLength: raw.retryOnSuspiciousLength !== false,
     reportMode: ['always', 'onIssue', 'never'].includes(String(raw.reportMode)) ? String(raw.reportMode) : 'onIssue',
     rawSnippetChars: Math.max(0, Math.trunc(finiteNumber(raw.rawSnippetChars, 300))),
+    debugIo: raw.debugIo === true,
+    debugIoChars: Math.max(0, Math.trunc(finiteNumber(raw.debugIoChars, 4000))),
     requestTimeoutMs: finiteNumber(raw.requestTimeoutMs, 3600000),
-    prompt: String(raw.prompt || '将下面日文字幕翻译成简体中文。保持 SRT 序号和时间轴不变，只翻译字幕文本，不要添加解释。'),
+    prompt: String(raw.prompt || '将下面的日文字幕翻译成简体中文。保持口语化和角色语气，不要添加原文没有的解释或注释。'),
   }
 }
 
@@ -195,8 +197,9 @@ async function translateSubtitle({ ctx, options, unit, source, logs }) {
   // 事件在整条流水线里累积，成功和失败都要落报告——失败时磁盘上本来什么都不留，
   // 恰恰最需要追溯。
   const events = []
+  const io = []
   const budget = { used: 0, max: Math.max(4, Math.ceil(Math.max(cues.length, 1) * options.maxRequestFactor)) }
-  const report = { options, unit, source, cues, fileName, relativePath, filesRoot, events, budget, label, logs }
+  const report = { options, unit, source, cues, fileName, relativePath, filesRoot, events, io, budget, label, logs }
 
   if (!cues.length) {
     const message = '源字幕没有解析出任何 cue'
@@ -209,7 +212,7 @@ async function translateSubtitle({ ctx, options, unit, source, logs }) {
   const texts = cues.map((cue) => cue.text)
   let translated = null
   try {
-    translated = await translateAll({ options, texts, logs, label, budget, events })
+    translated = await translateAll({ options, texts, logs, label, budget, events, io })
     if (translated.length !== cues.length) {
       throw new Error(`译文条数 ${translated.length} 与源 ${cues.length} 不符`)
     }
@@ -233,19 +236,19 @@ async function translateSubtitle({ ctx, options, unit, source, logs }) {
   }
 }
 
-async function translateAll({ options, texts, logs, label, budget, events }) {
+async function translateAll({ options, texts, logs, label, budget, events, io }) {
   const out = []
   for (let i = 0; i < texts.length; i += options.batchSize) {
     const slice = texts.slice(i, i + options.batchSize)
     const context = options.contextSize > 0 ? texts.slice(Math.max(0, i - options.contextSize), i) : []
-    out.push(...await translateBatch({ options, texts: slice, context, logs, label, budget, events, offset: i }))
+    out.push(...await translateBatch({ options, texts: slice, context, logs, label, budget, events, io, offset: i }))
   }
   return out
 }
 
 // 返回数量对不上就二分重试，分到单条仍失败则抛错（整个 unit 判失败）。
 // offset 是本批在整条字幕里的起始下标，用来在报告里给出绝对 cue 编号。
-async function translateBatch({ options, texts, context, logs, label, budget, events, offset }) {
+async function translateBatch({ options, texts, context, logs, label, budget, events, io, offset }) {
   if (!texts.length) return []
   const from = offset + 1
   const to = offset + texts.length
@@ -253,7 +256,7 @@ async function translateBatch({ options, texts, context, logs, label, budget, ev
   let reason = ''
   let raw = null
   try {
-    const got = await requestJsonArray({ options, texts, context, budget })
+    const got = await requestJsonArray({ options, texts, context, budget, io })
     raw = got.raw
     if (got.texts.length !== texts.length) {
       reason = `返回 ${got.texts.length} 项、期望 ${texts.length} 项`
@@ -267,7 +270,7 @@ async function translateBatch({ options, texts, context, logs, label, budget, ev
     reason = error.message
     raw = error.raw
   }
-  if (result) return refineLongCues({ options, texts, result, context, logs, label, budget, events, offset })
+  if (result) return refineLongCues({ options, texts, result, context, logs, label, budget, events, io, offset })
   // 原样附上模型返回的内容，否则「不是 JSON 数组」这类报错无从排查
   const snippet = options.rawSnippetChars > 0 ? ` | 原始响应: ${rawSnippet(raw, options.rawSnippetChars)}` : ''
   if (texts.length === 1) {
@@ -280,7 +283,7 @@ async function translateBatch({ options, texts, context, logs, label, budget, ev
   events.push({ type: '批次重试', from, to, detail: `${reason} → 二分为 ${from}-${offset + mid} / ${offset + mid + 1}-${to}${snippet}` })
   logs.push(`${label}: cue ${from}-${to} 批次失败（${reason}），二分重试`)
   return [
-    ...await translateBatch({ options, texts: head, context, logs, label, budget, events, offset }),
+    ...await translateBatch({ options, texts: head, context, logs, label, budget, events, io, offset }),
     ...await translateBatch({
       options,
       texts: texts.slice(mid),
@@ -289,6 +292,7 @@ async function translateBatch({ options, texts, context, logs, label, budget, ev
       label,
       budget,
       events,
+      io,
       offset: offset + mid,
     }),
   ]
@@ -296,7 +300,7 @@ async function translateBatch({ options, texts, context, logs, label, budget, ev
 
 // 译文显著偏长往往是模型在解释或幻觉，重试一次；仍偏长就保留较短的那个。
 // 这是启发式，不判失败——否则一句拟声词就能把整章标红。
-async function refineLongCues({ options, texts, result, context, logs, label, budget, events, offset }) {
+async function refineLongCues({ options, texts, result, context, logs, label, budget, events, io, offset }) {
   if (!options.retryOnSuspiciousLength) return result
   const out = [...result]
   for (let i = 0; i < out.length; i += 1) {
@@ -307,7 +311,7 @@ async function refineLongCues({ options, texts, result, context, logs, label, bu
     logs.push(`${label}: cue ${no} 译文偏长（${srcLen} -> ${firstLen}），重试`)
     let detail = `${srcLen} 字 → ${firstLen} 字 (${(firstLen / srcLen).toFixed(1)}x)`
     try {
-      const retry = await requestJsonArray({ options, texts: [texts[i]], context, budget })
+      const retry = await requestJsonArray({ options, texts: [texts[i]], context, budget, io })
       if (retry.texts.length === 1 && retry.texts[0] && retry.texts[0].length < out[i].length) {
         out[i] = retry.texts[0]
         detail += `，重试后 ${out[i].trim().length} 字，已采纳`
@@ -331,10 +335,18 @@ function isSuspiciousLength(sourceText, targetText, options) {
   return dst > src * options.maxLenRatio
 }
 
-async function requestJsonArray({ options, texts, context, budget }) {
+async function requestJsonArray({ options, texts, context, budget, io }) {
   if (budget.used >= budget.max) throw new Error(`LLM 调用次数超出上限 ${budget.max}`)
   budget.used += 1
-  const raw = await callWithRetry(options, buildBatchPrompt(options, texts, context))
+  const seq = budget.used
+  const prompt = buildBatchPrompt(options, texts, context)
+  let raw = null
+  try {
+    raw = await callWithRetry(options, prompt)
+  } finally {
+    // debugIo 下无论成败都留一份请求/响应，排查模型行为时不用再猜
+    if (options.debugIo && io) io.push({ seq, count: texts.length, prompt, raw })
+  }
   const parsed = parseByProtocol(options, raw, texts.length)
   if (!parsed) throw rawError(protocolParseError(options), raw)
   if (!parsed.every((item) => typeof item === 'string')) throw rawError('响应含非字符串元素', raw)
@@ -528,22 +540,23 @@ async function callLlmTranslate(options, sourceText) {
 // reportMode: always 总是写 / onIssue 仅有事件或失败时写 / never 不写。
 // 落在 <outputDir>/log/ 下，与输出共用同一个文件名 token，方便配对。
 // 扩展名 .log 不在 DEFAULT_SUBTITLE_EXTENSIONS 里，不会被字幕扫描误认。
-async function writeReport({ options, unit, source, cues, fileName, relativePath, filesRoot, events, budget, label, logs, status, ok }) {
+async function writeReport({ options, unit, source, cues, fileName, relativePath, filesRoot, events, io, budget, label, logs, status, ok }) {
   if (options.reportMode === 'never') return
-  if (options.reportMode !== 'always' && ok && !events.length) return
+  // debugIo 开着就一定落盘，否则一次顺利的调试跑什么都看不到
+  if (options.reportMode !== 'always' && !options.debugIo && ok && !events.length) return
   if (!filesRoot) return
   const reportRelative = `${options.outputDir}/log/${fileName.replace(/\.[^.]+$/, '')}.log`
   try {
     const targetPath = path.join(filesRoot, reportRelative)
     await mkdir(path.dirname(targetPath), { recursive: true })
-    await writeFile(targetPath, renderReport({ options, unit, source, cues, relativePath, events, budget, status, ok }), 'utf8')
+    await writeFile(targetPath, renderReport({ options, unit, source, cues, relativePath, events, io, budget, status, ok }), 'utf8')
     logs.push(`${label}: 执行报告 ${reportRelative}`)
   } catch (error) {
     logs.push(`${label}: 执行报告写入失败（${error.message}）`)
   }
 }
 
-function renderReport({ options, unit, source, cues, relativePath, events, budget, status, ok }) {
+function renderReport({ options, unit, source, cues, relativePath, events, io, budget, status, ok }) {
   const lines = [
     '# AI 字幕翻译报告',
     `章节  ${unit.title || unit.unitId} (${unit.unitId})`,
@@ -551,7 +564,8 @@ function renderReport({ options, unit, source, cues, relativePath, events, budge
     `输出  ${ok ? relativePath : '未产出'}`,
     `结果  ${status}`,
     `调用  ${budget.used} 次 / 上限 ${budget.max}`,
-    `配置  batchSize=${options.batchSize} contextSize=${options.contextSize} maxLenRatio=${options.maxLenRatio} minLenCheckChars=${options.minLenCheckChars} maxRequestFactor=${options.maxRequestFactor}`,
+    `协议  ${options.protocol}  batchSize=${options.batchSize} contextSize=${options.contextSize} retryCount=${options.retryCount} retrySleepMs=${options.retrySleepMs}`,
+    `检查  maxLenRatio=${options.maxLenRatio} minLenCheckChars=${options.minLenCheckChars} maxRequestFactor=${options.maxRequestFactor}`,
     '',
     `## 事件 ${events.length} 条`,
   ]
@@ -563,9 +577,23 @@ function renderReport({ options, unit, source, cues, relativePath, events, budge
       lines.push(`[${event.type}] ${range.padEnd(14)} ${event.detail}`)
     }
   }
+  if (options.debugIo && io?.length) {
+    lines.push('', `## 调试：请求/响应 ${io.length} 次`)
+    for (const entry of io) {
+      lines.push('', `--- #${entry.seq}  ${entry.count} 条 ---`, '[请求]', truncate(entry.prompt, options.debugIoChars), '[响应]', truncate(entry.raw, options.debugIoChars))
+    }
+  }
   lines.push('', '## 后续操作')
   for (const hint of reportHints({ options, events, ok })) lines.push(`- ${hint}`)
   return `${lines.join('\n')}\n`
+}
+
+// 调试段保留原始换行，只截断长度——换行本身就是 lines 协议要排查的东西
+function truncate(value, limit) {
+  const text = String(value ?? '')
+  if (!text) return '(空)'
+  if (limit <= 0 || text.length <= limit) return text
+  return `${text.slice(0, limit)}\n…[截断，共 ${text.length} 字符]`
 }
 
 function reportHints({ options, events, ok }) {

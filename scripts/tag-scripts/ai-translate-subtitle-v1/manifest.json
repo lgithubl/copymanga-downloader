@@ -30,6 +30,8 @@
     "retryOnSuspiciousLength": true,
     "reportMode": "onIssue",
     "rawSnippetChars": 300,
+    "debugIo": false,
+    "debugIoChars": 4000,
     "requestTimeoutMs": 600000,
     "scriptTimeoutMs": 86400000,
     "prompt": "将下面的日文字幕逐条翻译成简体中文。保持口语化和角色语气，不要添加原文没有的解释或注释。"
