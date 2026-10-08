@@ -110,7 +110,7 @@ async function writeFailureReport({ ctx, options, units, failures, processed, lo
   if (options.reportMode === 'never' || !failures.length) return
   const filesRoot = filesRootForUnit(units.find((unit) => filesRootForUnit(unit)) || {})
   if (!filesRoot) return
-  const relative = `${options.logDir}/asr-${dateStamp()}-${randomToken()}.log`
+  const relative = `${options.logDir}/asr-${timeStamp()}-${randomToken()}.log`
   const failedCount = failures.reduce((sum, entry) => sum + entry.units.length, 0)
   const lines = [
     '# AI 字幕生成报告',
@@ -211,7 +211,7 @@ function groupFastModeUnits(units) {
 
 async function createSubtitle({ ctx, options, unit, logs }) {
   const outputFormat = safeOutputFormat(options.outputFormat)
-  const fileName = `asr-${dateStamp()}-${randomToken()}.${options.language}.${outputFormat}`
+  const fileName = `asr-${timeStamp()}-${randomToken()}.${options.language}.${outputFormat}`
   const outputDir = renderTemplate(options.outputDirTemplate, { item: ctx.item, unit, fileName, options }, '{itemId}')
   const request = {
     input_path: mapPath(unit.managedPath, options.inputPathFrom, options.inputPathTo, { item: ctx.item, unit, fileName, options }),
@@ -302,6 +302,13 @@ function renderTemplate(template, { item, unit, fileName, options }, fallback = 
 function safeOutputFormat(value) {
   const format = String(value || 'srt').replace(/^\./, '').toLowerCase()
   return ['srt', 'vtt', 'json', 'txt'].includes(format) ? format : 'srt'
+}
+
+// 文件名用到秒，便于按时间排序、区分同一天的多次生成
+function timeStamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+    + `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
 }
 
 function dateStamp(date = new Date()) {

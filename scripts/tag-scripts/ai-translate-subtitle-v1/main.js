@@ -191,7 +191,7 @@ async function translateSubtitle({ ctx, options, unit, source, logs }) {
   const sourcePath = subtitlePath(unit, source)
   const sourceText = await readFile(sourcePath, 'utf8')
   const cues = parseCues(sourceText)
-  const fileName = `tr-${dateStamp()}-${randomToken()}.${options.targetLanguage}.${options.outputFormat}`
+  const fileName = `tr-${timeStamp()}-${randomToken()}.${options.targetLanguage}.${options.outputFormat}`
   const relativePath = `${options.outputDir}/${fileName}`
   const filesRoot = filesRootForUnit(unit)
   // 事件在整条流水线里累积，成功和失败都要落报告——失败时磁盘上本来什么都不留，
@@ -636,6 +636,13 @@ function filesRootForUnit(unit) {
 function safeOutputFormat(value) {
   const format = String(value || 'srt').replace(/^\./, '').toLowerCase()
   return ['srt', 'vtt'].includes(format) ? format : 'srt'
+}
+
+// 文件名用到秒，便于按时间排序、区分同一天的多次生成
+function timeStamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+    + `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
 }
 
 function dateStamp(date = new Date()) {
