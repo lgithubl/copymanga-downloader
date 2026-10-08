@@ -64,6 +64,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/thumbnail/${encodeURIComponent(unitId)}/${kind}`
   }
 
+  function subtitleResourceUrl(itemId, relative) {
+    return `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(relative)}&subtitle=1`
+  }
+
   async function existingThumbnailName(itemId, unitId, kind) {
     for (const ext of ['webp', 'png', 'jpg', 'jpeg']) {
       const name = `${kind}.${ext}`
@@ -406,7 +410,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         if (!normalized.relativePath) continue
         const filePath = safeManagedFilePath(itemId, normalized.relativePath)
         if (!await pathExists(filePath)) throw new Error(`Subtitle file not found: ${normalized.relativePath}`)
-        next.subtitles.push(normalized)
+        next.subtitles.push({ ...normalized, url: subtitleResourceUrl(itemId, normalized.relativePath) })
       }
     }
     return next
@@ -1516,7 +1520,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         title: subtitleTitle(relative),
         relativePath: relative,
         language: subtitleLanguage(relative),
-        url: `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/resource?path=${encodeURIComponent(relative)}&subtitle=1`,
+        url: subtitleResourceUrl(itemId, relative),
         contentType: 'text/vtt',
       })
       map.set(key, list)
