@@ -1,7 +1,7 @@
 {
   "id": "ai-subtitle-v1",
   "name": "AI 字幕 v1",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "调用 local-asr-server 为无字幕音视频生成 AI 字幕，并写入显式字幕映射。",
   "scope": ["item", "unit"],
   "libraryTypes": ["media"],
@@ -24,7 +24,7 @@
     "overwriteExisting": false,
     "outputDirTemplate": "{itemId}",
     "subtitleTitle": "AI.jp",
-    "scriptTimeoutMs": 3600000,
-    "requestTimeoutMs": 3600000
+    "scriptTimeoutMs": 86400000,
+    "requestTimeoutMs": 600000
   }
 }

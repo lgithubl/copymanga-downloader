@@ -18,9 +18,9 @@ export async function generateTags(ctx) {
   ]
   if (!candidates.length) {
     return {
-      itemTags: fullRun && existingTranslatedUnits.length ? translationTags(ctx.script?.version) : [],
+      itemTags: fullRun && existingTranslatedUnits.length ? translationTags(options, ctx.script?.version) : [],
       unitTags: fullRun
-        ? existingTranslatedUnits.map((unit) => ({ unitId: unit.unitId, tags: translationTags(ctx.script?.version) }))
+        ? existingTranslatedUnits.map((unit) => ({ unitId: unit.unitId, tags: translationTags(options, ctx.script?.version) }))
         : [],
       unitPatches: [],
       logs: [
@@ -33,28 +33,43 @@ export async function generateTags(ctx) {
   const unitTags = []
   const unitPatches = []
   const processed = []
+  const failed = []
   for (const { unit, source } of candidates) {
-    const subtitle = await translateSubtitle({ ctx, options, unit, source, logs })
+    let subtitle = null
+    try {
+      subtitle = await translateSubtitle({ ctx, options, unit, source, logs })
+    } catch (error) {
+      // 单个 unit 失败不中断整批：记失败 tag 后继续，已成功的 patch 才不会被丢掉
+      failed.push(unit.unitId)
+      logs.push(`${unit.title || unit.unitId}: AI 翻译失败 ${error.message}`)
+      unitTags.push({ unitId: unit.unitId, tags: translationFailedTags(options, ctx.script?.version) })
+      continue
+    }
     processed.push(unit.unitId)
-    unitTags.push({ unitId: unit.unitId, tags: translationTags(ctx.script?.version) })
+    unitTags.push({ unitId: unit.unitId, tags: translationTags(options, ctx.script?.version) })
     unitPatches.push({ unitId: unit.unitId, subtitles: [subtitle] })
   }
   if (fullRun) {
     const processedSet = new Set(processed)
+    const failedSet = new Set(failed)
     for (const unit of existingTranslatedUnits) {
-      if (processedSet.has(unit.unitId)) continue
-      unitTags.push({ unitId: unit.unitId, tags: translationTags(ctx.script?.version) })
+      if (processedSet.has(unit.unitId) || failedSet.has(unit.unitId)) continue
+      unitTags.push({ unitId: unit.unitId, tags: translationTags(options, ctx.script?.version) })
     }
   }
+  // item 三态只看本次实际处理的 unit，不含因已有译文而跳过的
+  const itemState = !failed.length ? '' : (processed.length ? '部分失败' : '失败')
   return {
-    itemTags: fullRun ? translationTags(ctx.script?.version) : [],
+    itemTags: fullRun
+      ? (itemState ? translationFailedTags(options, ctx.script?.version, itemState) : translationTags(options, ctx.script?.version))
+      : [],
     unitTags,
     unitPatches,
     logs: [
       ...logs,
-      `AI 翻译完成 ${processed.length}/${candidates.length} 个 unit`,
+      `AI 翻译完成 ${processed.length}/${candidates.length} 个 unit${failed.length ? `，失败 ${failed.length} 个` : ''}`,
     ],
-    details: { processedUnitIds: processed },
+    details: { processedUnitIds: processed, failedUnitIds: failed },
   }
 }
 
@@ -98,10 +113,20 @@ function existingTranslation(unit, options) {
   })
 }
 
-function translationTags(version) {
+function translationTags(options, version) {
   return [
     '字幕v1: 有',
-    'AI字幕: AI.zh',
+    `AI字幕: ${options.targetTitle}`,
+    `${VERSION_TAG_GROUP}: ${version || 'unknown'}`,
+  ]
+}
+
+// state: '失败' 表示本次处理的 unit 全部失败，'部分失败' 表示有成功也有失败。
+// 字幕v1 归 builtin-subtitles 管：全失败时不碰它，部分成功时如实标「有」。
+function translationFailedTags(options, version, state = '失败') {
+  return [
+    ...(state === '部分失败' ? ['字幕v1: 有'] : []),
+    `AI字幕: ${options.targetTitle}${state}`,
     `${VERSION_TAG_GROUP}: ${version || 'unknown'}`,
   ]
 }

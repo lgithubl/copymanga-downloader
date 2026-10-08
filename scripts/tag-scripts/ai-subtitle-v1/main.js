@@ -16,11 +16,11 @@ export async function generateTags(ctx) {
   ]
   if (!units.length) {
     return {
-      itemTags: fullRun && existingAiUnits.length ? aiSubtitleTags(ctx.script?.version) : [],
+      itemTags: fullRun && existingAiUnits.length ? aiSubtitleTags(options, ctx.script?.version) : [],
       unitTags: fullRun
         ? existingAiUnits.map((unit) => ({
           unitId: unit.unitId,
-          tags: aiSubtitleTags(ctx.script?.version),
+          tags: aiSubtitleTags(options, ctx.script?.version),
         }))
         : [],
       unitPatches: [],
@@ -35,15 +35,30 @@ export async function generateTags(ctx) {
   const unitTags = []
   const unitPatches = []
   const processed = []
+  const failed = []
 
   for (const group of jobs) {
     const primary = group[0]
-    const subtitle = await createSubtitle({ ctx, options, unit: primary, logs })
+    let subtitle = null
+    try {
+      subtitle = await createSubtitle({ ctx, options, unit: primary, logs })
+    } catch (error) {
+      // 单个 unit 失败不中断整批：记失败 tag 后继续，已成功的 patch 才不会被丢掉
+      failed.push(...group.map((unit) => unit.unitId))
+      logs.push(`${primary.title || primary.unitId}: AI 字幕失败 ${error.message}`)
+      for (const unit of group) {
+        unitTags.push({
+          unitId: unit.unitId,
+          tags: aiSubtitleFailedTags(options, ctx.script?.version),
+        })
+      }
+      continue
+    }
     processed.push(...group.map((unit) => unit.unitId))
     for (const unit of group) {
       unitTags.push({
         unitId: unit.unitId,
-        tags: aiSubtitleTags(ctx.script?.version),
+        tags: aiSubtitleTags(options, ctx.script?.version),
       })
       unitPatches.push({
         unitId: unit.unitId,
@@ -58,21 +73,27 @@ export async function generateTags(ctx) {
       if (generated.has(unit.unitId)) continue
       unitTags.push({
         unitId: unit.unitId,
-        tags: aiSubtitleTags(ctx.script?.version),
+        tags: aiSubtitleTags(options, ctx.script?.version),
       })
     }
   }
 
+  // item 三态只看本次实际处理的 unit，不含因已有字幕而跳过的
+  const itemState = !failed.length ? '' : (processed.length ? '部分失败' : '失败')
+
   return {
-    itemTags: fullRun ? aiSubtitleTags(ctx.script?.version) : [],
+    itemTags: fullRun
+      ? (itemState ? aiSubtitleFailedTags(options, ctx.script?.version, itemState) : aiSubtitleTags(options, ctx.script?.version))
+      : [],
     unitTags,
     unitPatches,
     logs: [
       ...logs,
-      `AI 字幕完成 ${processed.length}/${units.length} 个 unit`,
+      `AI 字幕完成 ${processed.length}/${units.length} 个 unit${failed.length ? `，失败 ${failed.length} 个` : ''}`,
     ],
     details: {
       processedUnitIds: processed,
+      failedUnitIds: failed,
       fastMode: options.fastMode,
     },
   }
@@ -102,10 +123,20 @@ function playableUnits(units) {
   return units.filter((unit) => unit?.mediaKind === 'audio' || unit?.mediaKind === 'video')
 }
 
-function aiSubtitleTags(version) {
+function aiSubtitleTags(options, version) {
   return [
     '字幕v1: 有',
-    'AI字幕: AI.jp',
+    `AI字幕: ${options.subtitleTitle}`,
+    `${VERSION_TAG_GROUP}: ${version || 'unknown'}`,
+  ]
+}
+
+// state: '失败' 表示本次处理的 unit 全部失败，'部分失败' 表示有成功也有失败。
+// 字幕v1 归 builtin-subtitles 管：全失败时不碰它，部分成功时如实标「有」。
+function aiSubtitleFailedTags(options, version, state = '失败') {
+  return [
+    ...(state === '部分失败' ? ['字幕v1: 有'] : []),
+    `AI字幕: ${options.subtitleTitle}${state}`,
     `${VERSION_TAG_GROUP}: ${version || 'unknown'}`,
   ]
 }
