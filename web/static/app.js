@@ -273,6 +273,11 @@ const defaultMediaImportProfiles = {
     dlsiteRequestMinIntervalMs: 1500,
     dlsiteRequestJitterMs: 800,
   },
+  // 原先靠 scriptHints 模糊匹配勾上字幕扫描，去掉模糊匹配后在这里显式列出，
+  // 行为与之前一致（但不再误勾 AI 字幕/翻译）
+  'normal-video': {
+    defaultMetadataActions: ['builtin-subtitles'],
+  },
 }
 const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
@@ -280,9 +285,9 @@ const mediaImportTypeInfo = {
 }
 const mediaImportProfiles = {
   custom: { label: '自定义', type: 'media', sourcePlaceholder: '/input/album' },
-  'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', scriptHints: ['subtitle', 'rj-dlsite'], batch: true },
-  'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video', scriptHints: ['subtitle', 'video-normal', 'video'] },
-  epub: { label: 'EPUB', type: 'epub', sourcePlaceholder: '', scriptHints: [] },
+  'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', batch: true },
+  'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video' },
+  epub: { label: 'EPUB', type: 'epub', sourcePlaceholder: '' },
 }
 const mediaPlaybackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 const defaultMediaSubtitleExtensions = 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub'
@@ -1897,15 +1902,13 @@ function applyMediaImportProfile() {
   }
   if (profile.sourcePlaceholder) els.mediaImportSourcePath.placeholder = profile.sourcePlaceholder
   updateMediaImportControls()
-  const hints = profile.scriptHints || []
   const defaultScriptIds = new Set(currentMediaImportProfileConfig().defaultMetadataActions || [])
   for (const input of document.querySelectorAll('input[name="media-import-tag-script"]')) {
     const script = tagScripts.find((item) => item.id === input.value)
-    input.checked = Boolean(
-      script?.defaultEnabled ||
-      defaultScriptIds.has(input.value) ||
-      hints.some((hint) => script?.id.includes(hint) || script?.name.toLowerCase().includes(hint)),
-    )
+    // 只认两个明确来源：脚本自己的 defaultEnabled，和方案里列出的 defaultMetadataActions。
+    // 原先还有一套 scriptHints 子串模糊匹配，'subtitle' 会连 ai-subtitle-v1 /
+    // ai-translate-subtitle-v1 一起勾上——这两个要调外部 ASR/LLM，必须用户自己勾。
+    input.checked = Boolean(script?.defaultEnabled || defaultScriptIds.has(input.value))
   }
 }
 
