@@ -2724,12 +2724,44 @@ function renderMediaSectionSelect(reader) {
   els.mediaSectionSelect.disabled = !reader.sections?.length
 }
 
+// EPUB 封面常写成 <svg width="100%" ...><image/></svg>。这种 svg 没有固有尺寸，
+// max-width:100% 把它撑满容器宽、max-height 又独立压高度，两边互不相关，比例必垮
+// （实测竖版封面 400x900 被拉成 1506x650，形变 +421%）。
+// 只要把 svg 盒子的比例修对就够了：内层 <image> 本来就守规矩，盒子比例对了之后
+// 即使写着 preserveAspectRatio="none"，那个拉伸也成了恒等变换，不必改写作者属性。
+function normalizeEpubGraphics(root) {
+  const absolute = (value) => /^\d+(\.\d+)?(px)?$/.test(String(value || '').trim())
+  for (const svg of root.querySelectorAll('svg')) {
+    if (svg.style.aspectRatio) continue
+    // 自带绝对尺寸的 svg 本来就不会垮，别去动它（动了反而会缩小）
+    if (absolute(svg.getAttribute('width')) && absolute(svg.getAttribute('height'))) continue
+    let w = 0
+    let h = 0
+    const box = (svg.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number)
+    if (box.length === 4 && box[2] > 0 && box[3] > 0) {
+      w = box[2]
+      h = box[3]
+    } else {
+      // 没有 viewBox 时退而求其次，用内层图片自己声明的尺寸
+      const inner = svg.querySelector('image')
+      w = Number(inner?.getAttribute('width')) || 0
+      h = Number(inner?.getAttribute('height')) || 0
+    }
+    if (w <= 0 || h <= 0) continue
+    svg.style.aspectRatio = `${w} / ${h}`
+    // 只有 aspect-ratio 不够：width="100%" 给了确定宽、max-height 给了确定高，
+    // 两边都确定时 aspect-ratio 会被架空。width:auto 让宽度由高度反推出来。
+    svg.style.width = 'auto'
+  }
+}
+
 function renderMediaHtml(reader) {
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-html ${themeClass}`
   const pages = document.createElement('div')
   pages.className = 'media-html-pages'
   pages.innerHTML = reader.content || ''
+  normalizeEpubGraphics(pages)
   els.mediaReaderContent.replaceChildren(pages)
   requestAnimationFrame(() => {
     layoutMediaPages()
