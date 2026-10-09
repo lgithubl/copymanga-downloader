@@ -2738,7 +2738,7 @@ function compareLibraryIndexItems(a, b) {
     String(a.itemId || '').localeCompare(String(b.itemId || ''))
 }
 
-function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfile = '', seriesSubtitle = 'any', page = 1, limit = 50, sort = 'imported_desc' } = {}) {
+function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfile = '', seriesSubtitle = 'any', seriesKey = '', page = 1, limit = 50, sort = 'imported_desc' } = {}) {
   if (!libraryIndexState.items.length) {
     return {
       items: [],
@@ -2752,9 +2752,11 @@ function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfil
   const normalizedType = String(type || 'all')
   const normalizedKeyword = normalizeTagName(keyword)
   const normalizedSourceProfile = String(sourceProfile || '').trim()
+  const normalizedSeriesKey = String(seriesKey || '').trim()
   const tagTokens = parseLibraryIndexTagQuery(tag)
   let items = libraryIndexState.items.filter((item) => normalizedType === 'all' || item.type === normalizedType)
   if (normalizedSourceProfile) items = items.filter((item) => item.sourceProfile === normalizedSourceProfile)
+  if (normalizedSeriesKey) items = items.filter((item) => seriesKeyOf(item) === normalizedSeriesKey)
   if (normalizedKeyword) items = items.filter((item) => item.searchText.includes(normalizedKeyword))
   if (seriesSubtitle === 'has' || seriesSubtitle === 'none') {
     const want = seriesSubtitle === 'has'
@@ -4142,7 +4144,7 @@ async function route(req, res) {
       return json(res, 202, startLibraryIndexRebuild())
     }
     if (pathname === '/api/library/items' && req.method === 'GET') {
-      const hasPagedQuery = url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('keyword') || url.searchParams.has('sort') || url.searchParams.has('sourceProfile') || url.searchParams.has('seriesSubtitle')
+      const hasPagedQuery = url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('keyword') || url.searchParams.has('sort') || url.searchParams.has('sourceProfile') || url.searchParams.has('seriesSubtitle') || url.searchParams.has('seriesKey')
       if (hasPagedQuery) {
         const pagination = paginationFromSearchParams(url.searchParams, 50, 1000) || { page: 1, limit: 50, offset: 0, keyword: '' }
         return json(res, 200, searchLibraryIndex({
@@ -4151,6 +4153,7 @@ async function route(req, res) {
           keyword: pagination.keyword,
           sourceProfile: url.searchParams.get('sourceProfile') || '',
           seriesSubtitle: url.searchParams.get('seriesSubtitle') || 'any',
+          seriesKey: url.searchParams.get('seriesKey') || '',
           page: pagination.page,
           limit: pagination.limit,
           sort: url.searchParams.get('sort') || 'imported_desc',

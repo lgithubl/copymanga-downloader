@@ -1971,34 +1971,82 @@ function renderSeriesBadges(item) {
   `
 }
 
-function openSeriesModal(item) {
+async function openSeriesModal(item) {
   const series = item.series
   if (!series || !els.seriesModal) return
   els.seriesModalTitle.textContent = `同系列 ${series.count} 个`
-  els.seriesModalList.innerHTML = ''
-  for (const member of series.members || []) {
-    const current = member.itemId === item.itemId
-    const row = document.createElement('button')
-    row.type = 'button'
-    row.className = `series-modal-row${current ? ' current' : ''}`
-    row.innerHTML = `
-      ${member.cover ? `<img src="${escapeHtml(member.cover)}" alt="" loading="lazy" />` : '<div class="series-modal-nocover"></div>'}
-      <div class="series-modal-title" title="${escapeHtml(member.title || member.itemId)}">${escapeHtml(member.title || member.itemId)}</div>
-      <span class="series-modal-sub ${member.hasSubtitle ? 'yes' : 'no'}">${member.hasSubtitle ? '字幕 ✓' : '字幕 ✗'}</span>
-    `
-    if (!current) {
-      row.addEventListener('click', () => {
-        closeSeriesModal()
-        selectLibraryItem(member.type || item.type, member.itemId)
-      })
-    }
-    els.seriesModalList.append(row)
-  }
+  els.seriesModalList.innerHTML = '<p class="muted">加载中…</p>'
   els.seriesModal.classList.remove('hidden')
+  try {
+    // 列表接口只给当前页挂了精简的 series.members（没有 tag 等字段），
+    // 要按媒体库卡片的样子展示就得把整个系列的完整条目取回来。
+    const data = await api(`/api/library/items?seriesKey=${encodeURIComponent(series.key)}&limit=1000`)
+    // members 已按「有字幕优先」排好序，按它对齐，别让列表的默认排序把顺序打乱。
+    const order = new Map((series.members || []).map((member, index) => [libraryKey(member.type, member.itemId), index]))
+    const list = (data.items || []).slice().sort((a, b) =>
+      (order.get(libraryKey(a.type, a.itemId)) ?? Number.MAX_SAFE_INTEGER)
+      - (order.get(libraryKey(b.type, b.itemId)) ?? Number.MAX_SAFE_INTEGER))
+    els.seriesModalList.innerHTML = ''
+    for (const member of list) {
+      const card = createLibraryCard(member, { seriesBadges: false })
+      // 卡片自带的点击是「选中」，弹框里点完还得把框关掉
+      card.addEventListener('click', closeSeriesModal)
+      card.querySelector('.library-continue')?.addEventListener('click', closeSeriesModal)
+      els.seriesModalList.append(card)
+    }
+    if (!list.length) els.seriesModalList.innerHTML = '<p class="muted">没有取到同系列条目</p>'
+  } catch (error) {
+    els.seriesModalList.innerHTML = `<p class="muted">加载失败：${escapeHtml(error.message)}</p>`
+  }
 }
 
 function closeSeriesModal() {
   els.seriesModal?.classList.add('hidden')
+}
+
+// 媒体库卡片的唯一构造处。系列弹框复用它，这样两边的外观和交互不会各走各的。
+// seriesBadges=false 用于弹框：框里本来就是同一个系列，再挂红点和「进入」没有意义。
+function createLibraryCard(item, { seriesBadges = true } = {}) {
+  const summary = libraryItemSummary(item)
+  const history = libraryHistoryByKey.get(libraryKey(item.type, item.itemId))
+  const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
+  const displayTitle = libraryDisplayTitle(item)
+  const fullTitle = libraryFullTitle(item)
+  const card = document.createElement('article')
+  card.className = `card library-card${selected ? ' selected' : ''}`
+  card.title = fullTitle
+  card.innerHTML = `
+      <div class="library-card-cover">${renderCover(item.cover, displayTitle)}</div>
+      <div class="card-body">
+        <div class="library-card-top">
+          <div class="card-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
+          <div class="library-card-badges">
+            <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
+            ${seriesBadges ? renderSeriesBadges(item) : ''}
+          </div>
+        </div>
+        <div class="library-card-meta" title="${escapeHtml(summary.primary)}">${escapeHtml(summary.primary)}</div>
+        <div class="library-card-meta" title="${escapeHtml(summary.secondary)}">${escapeHtml(summary.secondary)}</div>
+        ${history ? `<div class="library-card-history">继续：${escapeHtml(history.lastUnitTitle || history.lastUnitId || item.title)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''}</div>` : ''}
+        ${renderTagList(item.tags || [])}
+        <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
+      </div>
+    `
+  card.addEventListener('click', () => selectLibraryItem(item.type, item.itemId))
+  card.querySelector('.library-series-dot')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    openSeriesModal(item)
+  })
+  card.querySelector('.library-series-go')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    const target = item.series?.primaryItemId
+    if (target) selectLibraryItem(item.type, target)
+  })
+  card.querySelector('.library-continue')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    continueLibraryItem(item).catch((error) => alert(error.message))
+  })
+  return card
 }
 
 function renderLibraryItems() {
@@ -2014,46 +2062,7 @@ function renderLibraryItems() {
   if (els.libraryNext) els.libraryNext.disabled = libraryPage >= libraryTotalPages
   renderLibraryIndexStatus()
   for (const item of libraryItems) {
-    const summary = libraryItemSummary(item)
-    const history = libraryHistoryByKey.get(libraryKey(item.type, item.itemId))
-    const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
-    const displayTitle = libraryDisplayTitle(item)
-    const fullTitle = libraryFullTitle(item)
-    const card = document.createElement('article')
-    card.className = `card library-card${selected ? ' selected' : ''}`
-    card.title = fullTitle
-    card.innerHTML = `
-      <div class="library-card-cover">${renderCover(item.cover, displayTitle)}</div>
-      <div class="card-body">
-        <div class="library-card-top">
-          <div class="card-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
-          <div class="library-card-badges">
-            <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
-            ${renderSeriesBadges(item)}
-          </div>
-        </div>
-        <div class="library-card-meta" title="${escapeHtml(summary.primary)}">${escapeHtml(summary.primary)}</div>
-        <div class="library-card-meta" title="${escapeHtml(summary.secondary)}">${escapeHtml(summary.secondary)}</div>
-        ${history ? `<div class="library-card-history">继续：${escapeHtml(history.lastUnitTitle || history.lastUnitId || item.title)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''}</div>` : ''}
-        ${renderTagList(item.tags || [])}
-        <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
-      </div>
-    `
-    card.addEventListener('click', () => selectLibraryItem(item.type, item.itemId))
-    card.querySelector('.library-series-dot')?.addEventListener('click', (event) => {
-      event.stopPropagation()
-      openSeriesModal(item)
-    })
-    card.querySelector('.library-series-go')?.addEventListener('click', (event) => {
-      event.stopPropagation()
-      const target = item.series?.primaryItemId
-      if (target) selectLibraryItem(item.type, target)
-    })
-    card.querySelector('.library-continue')?.addEventListener('click', (event) => {
-      event.stopPropagation()
-      continueLibraryItem(item).catch((error) => alert(error.message))
-    })
-    els.libraryItems.append(card)
+    els.libraryItems.append(createLibraryCard(item))
   }
   if (libraryItems.length === 0) {
     els.libraryItems.innerHTML = libraryIndexStatus && libraryIndexStatus.status !== 'ready'
