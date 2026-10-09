@@ -2638,11 +2638,17 @@ h2 {
   padding: 0;
 }
 
+/* 行必须是 1fr 且不能 center：align-content:center 会让行按内容定高，
+   video 的 height:100% 又失去参照，退化成「只按宽度撑」。视口比视频更宽
+   更矮时（1600x600 实测）画面会撑到 899 高、超出视口 301px，控制条直接
+   跑到屏幕外。给满整行后 object-fit:contain 才会在高宽之间选紧的那条边。 */
 .media-viewer-view.stream-page-fullscreen .stream-player {
-  align-content: center;
+  align-content: stretch;
   gap: 0;
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   max-width: 100%;
+  min-height: 0;
   width: 100%;
 }
 
@@ -2674,6 +2680,15 @@ h2 {
   transform: translateY(-100%);
   transition: transform 0.22s ease;
   z-index: 30;
+}
+
+/* tabs 一旦 fixed 就不再是网格项，视图会顶替到 media-viewer-focused 那条
+   规则的第一行（auto）里去。auto 行按内容定高，video 的 height:100% 失去
+   参照，只能按宽度推 16:9 —— 结果非 16:9 视口下高度方向白白空出一截
+   （1024x768 实测空 191px，画幅只有 74.7%），控制条也跟着悬在半空。
+   这里显式给视图整行，contain 才能在高宽之间选紧的那个。 */
+#app.stream-immersive .content {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 #app.stream-immersive.stream-chrome-visible .tabs {
@@ -3016,4 +3031,35 @@ h2 {
 .series-modal-list .library-card .tag-list {
   max-height: 88px;
   overflow: auto;
+}
+
+/* 定高布局（>900px 宽，#app 是 height:100vh + overflow:hidden）下，普通态
+   播放器那摞「标题 + 画面 + 控制条 + 元信息」全是 auto 行，矮视口顶出视口
+   后会被 overflow:hidden 悄悄切掉（960x600 实测元信息被切 20px）。
+   让画面那一行吃掉剩余空间、其余按内容排，整摞就能随可用高度收缩。
+   ≤900px 是另一套响应式：html/body 改成可滚动长页面，那是既定行为，不动。
+   沉浸态要排除——它把标题/元信息隐掉了，只剩 frame 一个网格项，套上这个
+   模板反而会落进第一行 auto，重新变成「只按宽度撑」。 */
+@media (min-width: 901px) {
+  .media-viewer-view.media-mode-video:not(.stream-page-fullscreen) .stream-player {
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .media-viewer-view.media-mode-video:not(.stream-page-fullscreen) .stream-frame-video {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .media-viewer-view.media-mode-video:not(.stream-page-fullscreen) .stream-frame-video > video {
+    flex: 1 1 auto;
+    min-height: 0;
+    object-fit: contain;
+  }
+
+  .media-viewer-view.media-mode-video:not(.stream-page-fullscreen) .stream-frame-video > .stream-extra-controls {
+    flex: 0 0 auto;
+  }
 }
