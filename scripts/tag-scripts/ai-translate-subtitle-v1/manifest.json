@@ -20,6 +20,7 @@
     "outputDir": "ai-subtitles",
     "force": false,
     "protocol": "json",
+    "promptRole": "user",
     "batchSize": 15,
     "retryCount": 2,
     "retrySleepMs": 3000,

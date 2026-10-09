@@ -121,6 +121,7 @@ function normalizeOptions(raw = {}) {
   return {
     protocol,
     batchSize,
+    promptRole: String(raw.promptRole) === 'system' ? 'system' : 'user',
     retryCount: Math.max(0, Math.trunc(finiteNumber(raw.retryCount, 2))),
     retrySleepMs: Math.max(0, Math.trunc(finiteNumber(raw.retrySleepMs, 3000))),
     apiBase: String(raw.apiBase || 'http://127.0.0.1:8080').replace(/\/+$/, ''),
@@ -414,12 +415,14 @@ function rawSnippet(value, limit) {
 }
 
 function buildBatchPrompt(options, texts, context) {
-  // plain 协议完全不提格式要求：专用翻译模型给什么指令都只会翻译，
-  // 多说反而会让它把指令文本也译出来。
+  const systemRole = options.promptRole === 'system'
+  // plain + system 时 user 消息里只剩原文，一个指令字都没有——
+  // 这是专用翻译模型唯一可靠的喂法。
   if (options.protocol === 'plain') {
-    return `${options.prompt}\n\n${texts[0]}`
+    return systemRole ? texts[0] : `${options.prompt}\n\n${texts[0]}`
   }
-  const parts = [options.prompt, '', '严格要求：']
+  const parts = systemRole ? [] : [options.prompt, '']
+  parts.push('严格要求：')
   if (options.protocol === 'lines') {
     parts.push(
       `- 每条译文单独占一行，正好输出 ${texts.length} 行`,
@@ -506,13 +509,16 @@ function toSrtTimeLine(line) {
 }
 
 async function callLlmTranslate(options, sourceText) {
+  // promptRole=system：指令走 system 消息，user 只放待译文本。
+  // 专用翻译模型（sakura 等）会把 user 消息里的一切都当成待翻译内容，
+  // 指令混在里面会被一并「翻译」掉。
+  const messages = options.promptRole === 'system'
+    ? [{ role: 'system', content: options.prompt }, { role: 'user', content: sourceText }]
+    : [{ role: 'user', content: `${options.prompt}\n\n${sourceText}` }]
   const payload = {
     model: options.model,
     stream: false,
-    messages: [{
-      role: 'user',
-      content: `${options.prompt}\n\n${sourceText}`,
-    }],
+    messages,
   }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(new Error('request timeout')), options.requestTimeoutMs)
