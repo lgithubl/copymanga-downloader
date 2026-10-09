@@ -345,8 +345,11 @@ async function requestJsonArray({ options, texts, context, budget, io }) {
   try {
     raw = await callWithRetry(options, prompt)
   } finally {
-    // debugIo 下无论成败都留一份请求/响应，排查模型行为时不用再猜
-    if (options.debugIo && io) io.push({ seq, count: texts.length, prompt, raw })
+    // debugIo 下无论成败都留一份请求/响应，排查模型行为时不用再猜。
+    // 分开记 system / user —— 「user 里混进了指令」正是要排查的问题之一。
+    if (options.debugIo && io) {
+      io.push({ seq, count: texts.length, role: options.promptRole, prompt, raw })
+    }
   }
   const parsed = parseByProtocol(options, raw, texts.length)
   if (!parsed) throw rawError(protocolParseError(options), raw)
@@ -414,15 +417,16 @@ function rawSnippet(value, limit) {
   return text.length > limit ? `${text.slice(0, limit)}…[共 ${text.length} 字符]` : text
 }
 
+// 返回 { instruction, payload }：instruction 是所有指令（提示词 + 协议要求 +
+// 上文参考），payload 只有待翻译文本。promptRole=system 时 instruction 整块走
+// system 消息，user 里一个指令字都不留——专用翻译模型（sakura 等）会把 user
+// 里的一切都当待翻译内容，指令混进去就会被一并「翻译」掉。
+// 提示词只在这里拼一次，callLlmTranslate 不再重复加。
 function buildBatchPrompt(options, texts, context) {
-  const systemRole = options.promptRole === 'system'
-  // plain + system 时 user 消息里只剩原文，一个指令字都没有——
-  // 这是专用翻译模型唯一可靠的喂法。
   if (options.protocol === 'plain') {
-    return systemRole ? texts[0] : `${options.prompt}\n\n${texts[0]}`
+    return { instruction: options.prompt, payload: texts[0] }
   }
-  const parts = systemRole ? [] : [options.prompt, '']
-  parts.push('严格要求：')
+  const parts = [options.prompt, '', '严格要求：']
   if (options.protocol === 'lines') {
     parts.push(
       `- 每条译文单独占一行，正好输出 ${texts.length} 行`,
@@ -438,11 +442,13 @@ function buildBatchPrompt(options, texts, context) {
     )
   }
   parts.push('- 不要输出序号、时间轴等字幕格式，只要译文文本')
+  // 上文参考是「不要翻译」的内容，必须跟指令走，否则 system 模式下它会混进
+  // user 被当成待译文本
   if (context.length) {
     parts.push('', '上文参考（仅供理解语境，不要翻译、不要出现在返回中）：', renderPayload(options, context))
   }
-  parts.push('', `待翻译（共 ${texts.length} 条）：`, renderPayload(options, texts))
-  return parts.join('\n')
+  parts.push('', `待翻译（共 ${texts.length} 条）：`)
+  return { instruction: parts.join('\n'), payload: renderPayload(options, texts) }
 }
 
 function renderPayload(options, texts) {
@@ -508,13 +514,14 @@ function toSrtTimeLine(line) {
   return String(line || '').replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$2')
 }
 
-async function callLlmTranslate(options, sourceText) {
-  // promptRole=system：指令走 system 消息，user 只放待译文本。
+async function callLlmTranslate(options, prompt) {
+  // promptRole=system：指令整块走 system 消息，user 只放待译文本。
   // 专用翻译模型（sakura 等）会把 user 消息里的一切都当成待翻译内容，
   // 指令混在里面会被一并「翻译」掉。
+  const { instruction, payload: sourceText } = prompt
   const messages = options.promptRole === 'system'
-    ? [{ role: 'system', content: options.prompt }, { role: 'user', content: sourceText }]
-    : [{ role: 'user', content: `${options.prompt}\n\n${sourceText}` }]
+    ? [{ role: 'system', content: instruction }, { role: 'user', content: sourceText }]
+    : [{ role: 'user', content: `${instruction}\n${sourceText}` }]
   const payload = {
     model: options.model,
     stream: false,
@@ -592,7 +599,14 @@ function renderReport({ options, unit, source, cues, relativePath, events, io, b
   if (options.debugIo && io?.length) {
     lines.push('', `## 调试：请求/响应 ${io.length} 次`)
     for (const entry of io) {
-      lines.push('', `--- #${entry.seq}  ${entry.count} 条 ---`, '[请求]', truncate(entry.prompt, options.debugIoChars), '[响应]', truncate(entry.raw, options.debugIoChars))
+      lines.push('', `--- #${entry.seq}  ${entry.count} 条  promptRole=${entry.role} ---`)
+      if (entry.role === 'system') {
+        lines.push('[system]', truncate(entry.prompt?.instruction || '', options.debugIoChars),
+          '[user]', truncate(entry.prompt?.payload || '', options.debugIoChars))
+      } else {
+        lines.push('[user]', truncate(`${entry.prompt?.instruction || ''}\n${entry.prompt?.payload || ''}`, options.debugIoChars))
+      }
+      lines.push('[响应]', truncate(entry.raw, options.debugIoChars))
     }
   }
   lines.push('', '## 后续操作')
