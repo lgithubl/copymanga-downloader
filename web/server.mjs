@@ -52,8 +52,15 @@ const libraryHistoryDirty = new Set()
 const libraryHistoryTimers = new Map()
 let libraryHistoryIndex = null
 let libraryHistoryIndexTimer = null
+const SUBTITLE_PRESENT_TAG = normalizeTagName('字幕v1: 有')
+const SERIES_TAG_PREFIX = normalizeTagName('系列:')
+// 超过这个条目数，JSON.stringify 的产出会逼近 V8 的 512MB 字符串上限，
+// 届时重建是直接抛 Invalid string length，而不是变慢。
+const LIBRARY_INDEX_SIZE_WARN = 250000
+
 const libraryIndexState = {
   items: [],
+  seriesMap: new Map(),
   builtAt: '',
   loadedFrom: '',
   status: 'missing',
@@ -192,9 +199,10 @@ async function atomicWriteFile(filePath, body, { jobId = 'job' } = {}) {
   await rename(tmp, filePath)
 }
 
-async function atomicWriteJson(filePath, payload, { jobId = 'job', verify } = {}) {
+async function atomicWriteJson(filePath, payload, { jobId = 'job', verify, compact = false } = {}) {
   await withLock(fileLocks, path.resolve(filePath), async () => {
-    await atomicWriteFile(filePath, JSON.stringify(payload, null, 2), { jobId })
+    // compact 用于超大 payload：缩进会多占约 15% 的字符串长度和峰值内存
+    await atomicWriteFile(filePath, JSON.stringify(payload, null, compact ? 0 : 2), { jobId })
     const parsed = JSON.parse(await readFile(filePath, 'utf8'))
     if (verify) verify(parsed)
   })
@@ -2450,8 +2458,11 @@ async function loadLibraryIndexCache() {
     const filePath = libraryIndexPath(version)
     try {
       const payload = JSON.parse(await readFile(filePath, 'utf8'))
-      if (payload?.schema !== 1 || !Array.isArray(payload.items)) continue
+      if (payload?.schema !== 3 || !Array.isArray(payload.items)) continue
       libraryIndexState.items = payload.items.map(normalizeLibraryIndexItem)
+      libraryIndexState.seriesMap = Array.isArray(payload.series) && payload.series.length
+        ? new Map(payload.series.map((entry) => [entry.key, entry]))
+        : buildSeriesMap(libraryIndexState.items)
       libraryIndexState.builtAt = String(payload.builtAt || '')
       libraryIndexState.loadedFrom = filePath
       libraryIndexState.status = 'ready'
@@ -2499,19 +2510,25 @@ async function rebuildLibraryIndex() {
       return { ...libraryIndexPublicStatus(), status: 'cancelled' }
     }
     const summaries = items.map(libraryIndexItemFromMetadata).sort(compareLibraryIndexItems)
+    const seriesMap = buildSeriesMap(summaries)
+    if (summaries.length >= LIBRARY_INDEX_SIZE_WARN) {
+      console.warn(`library index has ${summaries.length} items; approaching the V8 512MB string limit for JSON.stringify — consider sharding the cache`)
+    }
     const payload = {
-      schema: 1,
+      schema: 3,
       builtAt: new Date().toISOString(),
       startedAt,
       sourceCount: items.length,
       itemCount: summaries.length,
       items: summaries,
+      series: [...seriesMap.values()],
     }
     await writeLibraryIndexPayload(payload, buildId)
     if (libraryIndexState.buildId !== buildId) {
       return { ...libraryIndexPublicStatus(), status: 'cancelled' }
     }
     libraryIndexState.items = summaries
+    libraryIndexState.seriesMap = seriesMap
     libraryIndexState.builtAt = payload.builtAt
     libraryIndexState.loadedFrom = libraryIndexPath(0)
     libraryIndexState.status = 'ready'
@@ -2559,8 +2576,9 @@ async function writeLibraryIndexPayload(payload, buildId) {
   const nextPath = `${LIBRARY_INDEX_BASE}.next.json`
   await atomicWriteJson(nextPath, payload, {
     jobId: `library-index-${buildId}`,
+    compact: true,
     verify: (value) => {
-      if (value?.schema !== 1 || !Array.isArray(value.items)) throw new Error('library index cache verify failed')
+      if (value?.schema !== 3 || !Array.isArray(value.items)) throw new Error('library index cache verify failed')
     },
   })
   for (const [from, to] of [[1, 2], [0, 1]]) {
@@ -2568,6 +2586,65 @@ async function writeLibraryIndexPayload(payload, buildId) {
     if (await pathExists(source)) await renameOrMove(source, libraryIndexPath(to))
   }
   await renameOrMove(nextPath, libraryIndexPath(0))
+}
+
+// 没有 系列: tag 的条目按「单成员系列」处理，筛选和展示就不必写特例。
+function seriesKeyOf(item) {
+  for (const tag of item.tags || []) {
+    const normalized = normalizeTagName(tag)
+    if (normalized.startsWith(SERIES_TAG_PREFIX)) {
+      const value = normalized.slice(SERIES_TAG_PREFIX.length).trim()
+      if (value) return value
+    }
+  }
+  return `\u0000${item.type}\u001f${item.itemId}`
+}
+
+// 带 productId 的整体靠前；都带则先看字幕（有>无）再按 productId 逆序；
+// 都不带按标题逆序。排第一的即「快速进入」的目标。
+function compareSeriesPriority(a, b) {
+  const pa = a.productId ? 1 : 0
+  const pb = b.productId ? 1 : 0
+  if (pa !== pb) return pb - pa
+  if (pa === 1) {
+    if (a.hasSubtitle !== b.hasSubtitle) return a.hasSubtitle ? -1 : 1
+    const cmp = String(b.productId).localeCompare(String(a.productId), undefined, { numeric: true })
+    if (cmp !== 0) return cmp
+  }
+  return String(b.title || '').localeCompare(String(a.title || ''), undefined, { numeric: true })
+}
+
+function buildSeriesMap(items) {
+  const groups = new Map()
+  for (const item of items) {
+    const key = seriesKeyOf(item)
+    const member = {
+      type: item.type,
+      itemId: item.itemId,
+      title: item.displayTitle || item.title || item.itemId,
+      cover: item.cover || '',
+      productId: String(item.realProductId || ''),
+    hasSubtitle: Boolean(item.hasSubtitle),
+    }
+    const list = groups.get(key)
+    if (list) list.push(member)
+    else groups.set(key, [member])
+  }
+  const result = new Map()
+  for (const [key, members] of groups) {
+    members.sort(compareSeriesPriority)
+    result.set(key, {
+      key,
+      members,
+      hasSubtitle: members.some((member) => member.hasSubtitle),
+      primaryItemId: members[0]?.itemId || '',
+    })
+  }
+  return result
+}
+
+function seriesOfItem(item) {
+  return libraryIndexState.seriesMap.get(seriesKeyOf(item)) || null
 }
 
 function libraryIndexItemFromMetadata(item = {}) {
@@ -2578,6 +2655,7 @@ function libraryIndexItemFromMetadata(item = {}) {
   const displayTitle = String(dlsite.title || item.extractedTitle || item.title || item.itemId || '')
   const publishedAt = String(item.publishedAt || item.createdAt || '')
   const productId = String(item.productId || dlsite.productId || item.itemId || '')
+  const realProductId = String(item.productId || dlsite.productId || '')
   const searchParts = [
     item.type,
     item.itemId,
@@ -2615,6 +2693,8 @@ function libraryIndexItemFromMetadata(item = {}) {
     sortImportedAt: item.createdAt || '',
     sortPublishedAt: publishedAt,
     sortProductId: productId,
+    realProductId,
+    hasSubtitle: [...tags, ...unitTags].some((tag) => normalizeTagName(tag) === SUBTITLE_PRESENT_TAG),
     searchText: normalizeTagName(searchParts.filter(Boolean).join('\n')),
   })
 }
@@ -2643,6 +2723,8 @@ function normalizeLibraryIndexItem(item = {}) {
     sortImportedAt: String(item.sortImportedAt || item.importedAt || item.createdAt || ''),
     sortPublishedAt: String(item.sortPublishedAt || item.publishedAt || item.importedAt || item.createdAt || ''),
     sortProductId: normalizeTagName(item.sortProductId || item.productId || item.itemId || ''),
+    realProductId: String(item.realProductId || ''),
+    hasSubtitle: Boolean(item.hasSubtitle),
     searchText: String(item.searchText || '').toLowerCase(),
   }
 }
@@ -2653,7 +2735,7 @@ function compareLibraryIndexItems(a, b) {
     String(a.itemId || '').localeCompare(String(b.itemId || ''))
 }
 
-function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfile = '', page = 1, limit = 50, sort = 'imported_desc' } = {}) {
+function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfile = '', seriesSubtitle = 'any', page = 1, limit = 50, sort = 'imported_desc' } = {}) {
   if (!libraryIndexState.items.length) {
     return {
       items: [],
@@ -2671,6 +2753,10 @@ function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfil
   let items = libraryIndexState.items.filter((item) => normalizedType === 'all' || item.type === normalizedType)
   if (normalizedSourceProfile) items = items.filter((item) => item.sourceProfile === normalizedSourceProfile)
   if (normalizedKeyword) items = items.filter((item) => item.searchText.includes(normalizedKeyword))
+  if (seriesSubtitle === 'has' || seriesSubtitle === 'none') {
+    const want = seriesSubtitle === 'has'
+    items = items.filter((item) => Boolean(seriesOfItem(item)?.hasSubtitle) === want)
+  }
   if (tagTokens.length) {
     items = items.filter((item) => libraryIndexTagTokensMatch(item, tagTokens))
   }
@@ -2681,7 +2767,7 @@ function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfil
   const totalPages = Math.max(1, safeLimit ? Math.ceil(total / safeLimit) : 1)
   const offset = safeLimit ? (safePage - 1) * safeLimit : 0
   return {
-    items: safeLimit ? items.slice(offset, offset + safeLimit).map(publicLibraryIndexItem) : items.map(publicLibraryIndexItem),
+    items: (safeLimit ? items.slice(offset, offset + safeLimit) : items).map(decorateWithSeries),
     page: safePage,
     limit: safeLimit,
     total,
@@ -2732,6 +2818,24 @@ function libraryIndexTagTokensMatch(item, tokens) {
     if (token.exclude ? matched : !matched) return false
   }
   return true
+}
+
+// 只给当前页挂系列信息：整库挂一遍没必要，而且会把 payload 撑大几倍。
+function decorateWithSeries(item) {
+  const entry = seriesOfItem(item)
+  const base = publicLibraryIndexItem(item)
+  if (!entry || entry.members.length < 2) return base
+  return {
+    ...base,
+    series: {
+      key: entry.key,
+      count: entry.members.length,
+      hasSubtitle: entry.hasSubtitle,
+      primaryItemId: entry.primaryItemId,
+      selfHasSubtitle: Boolean(item.hasSubtitle),
+      members: entry.members,
+    },
+  }
 }
 
 function sortLibraryIndexItems(items, sort) {
@@ -4035,7 +4139,7 @@ async function route(req, res) {
       return json(res, 202, startLibraryIndexRebuild())
     }
     if (pathname === '/api/library/items' && req.method === 'GET') {
-      const hasPagedQuery = url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('keyword') || url.searchParams.has('sort') || url.searchParams.has('sourceProfile')
+      const hasPagedQuery = url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('keyword') || url.searchParams.has('sort') || url.searchParams.has('sourceProfile') || url.searchParams.has('seriesSubtitle')
       if (hasPagedQuery) {
         const pagination = paginationFromSearchParams(url.searchParams, 50, 1000) || { page: 1, limit: 50, offset: 0, keyword: '' }
         return json(res, 200, searchLibraryIndex({
@@ -4043,6 +4147,7 @@ async function route(req, res) {
           tag: url.searchParams.get('tag') || '',
           keyword: pagination.keyword,
           sourceProfile: url.searchParams.get('sourceProfile') || '',
+          seriesSubtitle: url.searchParams.get('seriesSubtitle') || 'any',
           page: pagination.page,
           limit: pagination.limit,
           sort: url.searchParams.get('sort') || 'imported_desc',
