@@ -263,6 +263,7 @@ let mediaPageStep = 1
 let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
 let currentStreamCleanup = null
+let currentStreamImmersiveToggle = null
 const JOB_POLL_KEY = 'copymanga.jobPollEnabled'
 let jobPollIntervalMs = 5000
 let jobPollTimer = null
@@ -778,6 +779,9 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
     els.viewerImmersive.disabled = !viewerBatch.images.length
     // 沉浸态下切章是异步重渲染的，控制条上的章节信息要跟着走
     syncGalleryImmersive()
+    if (viewerBatch.images.length && !galleryImmersive && immersivePref('viewer')) {
+      enterGalleryImmersive(viewerImmersiveOptions(false))
+    }
     if (!viewerBatch.images.length) {
       els.viewerImages.className = 'viewer-grid empty-panel'
       els.viewerImages.textContent = '没有图片'
@@ -2717,6 +2721,12 @@ function renderMediaReader(reader, options = {}) {
     els.mediaReaderContent.textContent = `暂不支持的阅读内容类型：${reader.type}`
     updateMediaPageControls()
   }
+  // 「默认沉浸」：音视频在 renderStreamMedia 里自己处理（它要等播放器建好），
+  // 这里只管阅读类。内容已经同步渲染完了，所以能直接进。
+  if (reader.type === 'html' && !epubImmersive && immersivePref('html')) enterEpubImmersive()
+  if (reader.type === 'images' && !galleryImmersive && immersivePref('images')) {
+    enterGalleryImmersive(galleryImmersiveOptions(false))
+  }
 }
 
 function syncMediaReaderThemeControl(type) {
@@ -2802,6 +2812,8 @@ function renderMediaHtml(reader) {
     layoutMediaPages()
     const ratio = reader.section?.sectionId === currentLibraryProgress?.lastSectionId ? currentLibraryProgress.lastScrollRatio : 0
     setMediaPage(Math.round(ratio * Math.max(mediaPageCount - 1, 0)), { save: false })
+    // 沉浸态下换章不会重建控制条，页码/目录/上下章状态得在这里补一刀
+    syncEpubImmersive()
   })
 }
 
@@ -3388,17 +3400,21 @@ function renderStreamMedia(reader, options = {}) {
   }
   document.addEventListener('mousemove', onPointerMove)
 
-  const setImmersive = (active) => {
+  const setImmersive = (active, { remember = false } = {}) => {
     els.mediaViewerView.classList.toggle('stream-page-fullscreen', active)
     // 顶栏在 .media-viewer-view 外面（挂在 .content 下），只能靠 #app 上的类去管
     els.app.classList.toggle('stream-immersive', active)
     fullscreen.classList.toggle('active', active)
+    els.mediaImmersive?.classList.toggle('active', active)
     fullscreen.title = active ? '退出页面全屏' : '页面全屏'
+    if (remember) saveImmersivePref(reader.type, active)
     clearTimeout(chromeTimer)
     if (active) revealChrome()
     else { setChromeVisible(false); setMoreOpen(false) }
   }
-  fullscreen.addEventListener('click', () => setImmersive(!inFullscreen()))
+  // 头部的「沉浸」按钮和播放器里的 ⛶ 是同一个开关，统一入口
+  currentStreamImmersiveToggle = (active) => setImmersive(active, { remember: true })
+  fullscreen.addEventListener('click', () => setImmersive(!inFullscreen(), { remember: true }))
   // 返回 = 退出全屏 + 回上一个视图。顺序不能反：showView 之后再清沉浸类，
   // 媒体库页会短暂地顶着 fixed 顶栏和满屏类渲染一帧。
   backBtn.addEventListener('click', () => {
@@ -3410,7 +3426,7 @@ function renderStreamMedia(reader, options = {}) {
   const onKeyDown = (event) => {
     if (event.key !== 'Escape' || !inFullscreen()) return
     if (!morePanel.classList.contains('hidden')) { setMoreOpen(false); return }
-    setImmersive(false)
+    setImmersive(false, { remember: true })
   }
   document.addEventListener('keydown', onKeyDown)
   controls.addEventListener('click', (event) => event.stopPropagation())
@@ -3429,15 +3445,19 @@ function renderStreamMedia(reader, options = {}) {
   els.mediaReaderContent.replaceChildren(shell)
   // 只在播放视图仍然在前台时恢复：后台续播（用户已经切去媒体库）时
   // 强行加沉浸类会让库页顶着满屏样式和 fixed 顶栏渲染。
-  if (wasImmersive && els.mediaViewerView.classList.contains('active')) setImmersive(true)
+  // wasImmersive 管切章保状态，immersivePref 管「默认沉浸」的首次进入。
+  const inForeground = els.mediaViewerView.classList.contains('active')
+  if ((wasImmersive || immersivePref(reader.type)) && inForeground) setImmersive(true)
   setTimeout(attemptAutoPlay, 0)
   currentStreamCleanup = () => {
     document.removeEventListener('mousemove', onPointerMove)
     document.removeEventListener('keydown', onKeyDown)
     subtitleResizeObserver.disconnect()
     clearTimeout(chromeTimer)
+    currentStreamImmersiveToggle = null
     els.mediaViewerView.classList.remove('stream-page-fullscreen')
     els.app.classList.remove('stream-immersive', 'stream-chrome-visible')
+    els.mediaImmersive?.classList.remove('active')
     vrViewer?.destroy()
   }
   mediaPageIndex = 0
@@ -4004,6 +4024,87 @@ function mediaStepTarget(direction) {
   return null
 }
 
+// 沉浸是阅读/观看的默认姿势，但必须记住用户的选择：硬性「每次都强制进沉浸」
+// 会让人按了 Esc、翻到下一章又被塞回去，永远退不出来。
+// 按内容类型分开记 —— 看视频想沉浸、翻 EPUB 想查目录，是合理组合。
+const IMMERSIVE_PREF_KEY = 'copymanga.immersivePref'
+
+function immersivePref(kind) {
+  if (!kind) return false
+  try {
+    const all = JSON.parse(localStorage.getItem(IMMERSIVE_PREF_KEY) || '{}')
+    return all[kind] !== false   // 没存过 = 开，这就是「默认沉浸」的初值
+  } catch {
+    return true
+  }
+}
+
+function saveImmersivePref(kind, on) {
+  if (!kind) return
+  let all = {}
+  try {
+    all = JSON.parse(localStorage.getItem(IMMERSIVE_PREF_KEY) || '{}')
+  } catch {
+    all = {}
+  }
+  all[kind] = Boolean(on)
+  localStorage.setItem(IMMERSIVE_PREF_KEY, JSON.stringify(all))
+}
+
+// 沉浸态下目录下拉的数据源，口径和 mediaStepTarget 一致：
+// EPUB 用书内 section，媒体库图集/音视频用 unit。默认沉浸之后头部那个
+// #media-section-select 一直是藏着的，不补这个就跳不了章。
+function mediaTocEntries() {
+  const reader = currentMediaReader
+  if ((reader?.sections?.length || 0) > 1 && reader?.unit?.unitId) {
+    return {
+      current: reader.section?.sectionId || '',
+      items: reader.sections.map((section) => ({ id: section.sectionId, title: `${section.index + 1}. ${section.title}` })),
+      go: (id) => openUnitInSession(reader.unit.unitId, id),
+    }
+  }
+  if (currentLibraryUnits.length > 1) {
+    return {
+      current: reader?.unit?.unitId || '',
+      items: currentLibraryUnits.map((unit, index) => ({ id: unit.unitId, title: `${index + 1}. ${unit.title}` })),
+      go: (id) => openUnitInSession(id),
+    }
+  }
+  return null
+}
+
+function makeImmersiveToc() {
+  const select = document.createElement('select')
+  select.className = 'immersive-toc'
+  select.title = '目录'
+  select.addEventListener('change', () => {
+    const toc = mediaTocEntries()
+    if (toc && select.value) toc.go(select.value)
+  })
+  return select
+}
+
+function syncImmersiveToc(select) {
+  const toc = mediaTocEntries()
+  if (!toc) {
+    select.hidden = true
+    return
+  }
+  select.hidden = false
+  // 只有条目真的变了才重建，不然每次 syncInfo 都会把展开的下拉关掉
+  const signature = toc.items.map((item) => `${item.id} ${item.title}`).join('')
+  if (select.dataset.signature !== signature) {
+    select.dataset.signature = signature
+    select.replaceChildren(...toc.items.map((item) => {
+      const option = document.createElement('option')
+      option.value = item.id
+      option.textContent = item.title
+      return option
+    }))
+  }
+  select.value = toc.current
+}
+
 function setMediaPage(pageIndex, { save = true } = {}) {
   if (currentMediaReader?.type !== 'html') return
   mediaPageIndex = Math.max(0, Math.min(pageIndex, mediaPageCount - 1))
@@ -4020,22 +4121,31 @@ function mediaPageScrollLeft(pageIndex) {
 // stream-page-fullscreen —— 那些规则里针对 .stream-player / media-stream 的部分
 // 对 epub 是空操作，而「隐藏 chapter-head、section 单行、顶栏 fixed」正好就是要的。
 let epubImmersive = null
+let epubImmersiveSync = null
 
 function epubImmersiveActive() {
   return Boolean(epubImmersive)
 }
 
-function exitEpubImmersive() {
+// 沉浸态下换章是异步重渲染的，控制条上的页码/目录/上下章状态要跟着走
+function syncEpubImmersive() {
+  epubImmersiveSync?.()
+}
+
+function exitEpubImmersive({ remember = false } = {}) {
   if (!epubImmersive) return
+  if (remember) saveImmersivePref('html', false)
   const finish = epubImmersive
   epubImmersive = null
+  epubImmersiveSync = null
   finish()
 }
 
-function enterEpubImmersive() {
-  if (epubImmersive) { exitEpubImmersive(); return }
+function enterEpubImmersive({ remember = false } = {}) {
+  if (epubImmersive) { exitEpubImmersive({ remember }); return }
   const content = els.mediaReaderContent
   if (!content.querySelector('.media-html-pages')) return
+  if (remember) saveImmersivePref('html', true)
 
   const bar = document.createElement('div')
   bar.className = 'epub-bar'
@@ -4054,9 +4164,10 @@ function enterEpubImmersive() {
   info.className = 'epub-page-info'
   const nextPg = mk('epub-page-next', '下页', '下一页')
   const nextCh = mk('epub-chapter-next', '下章', '下一章')
+  const toc = makeImmersiveToc()
   const widthBtn = mk('epub-width', '宽度', '调整阅读宽度')
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, widthBtn, exitBtn)
+  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -4065,13 +4176,17 @@ function enterEpubImmersive() {
     nextCh.disabled = !mediaStepTarget('next')
     prevPg.disabled = mediaPageIndex <= 0
     nextPg.disabled = mediaPageIndex >= mediaPageCount - 1
+    syncImmersiveToc(toc)
   }
+  epubImmersiveSync = syncInfo
 
   // —— 贴边唤出，和视频同一套手感 ——
   const EDGE = 72
   const HIDE_DELAY = 2400
   let timer = null
+  // 目录下拉展开时焦点在 select 上，这时收起控制条会直接把下拉关掉
   const held = () => widthAdjustCleanup || bar.matches(':hover')
+    || document.activeElement?.tagName === 'SELECT'
   const setVisible = (v) => els.app.classList.toggle('stream-chrome-visible', v)
   const schedule = () => {
     clearTimeout(timer)
@@ -4111,14 +4226,15 @@ function enterEpubImmersive() {
 
   const onKey = (event) => {
     if (widthAdjustCleanup) return
-    if (event.key === 'Escape') { event.preventDefault(); exitEpubImmersive() }
+    if (event.key === 'Escape') { event.preventDefault(); exitEpubImmersive({ remember: true }) }
     else if (event.key === 'ArrowLeft') { setMediaPage(mediaPageIndex - 1); setTimeout(syncInfo, 350) }
     else if (event.key === 'ArrowRight') { setMediaPage(mediaPageIndex + 1); setTimeout(syncInfo, 350) }
   }
   document.addEventListener('keydown', onKey)
 
+  // 「返回」是读完了要走，不是「不想要沉浸」，所以不改偏好
   back.addEventListener('click', () => { exitEpubImmersive(); els.mediaReaderBack?.click() })
-  exitBtn.addEventListener('click', () => exitEpubImmersive())
+  exitBtn.addEventListener('click', () => exitEpubImmersive({ remember: true }))
   prevCh.addEventListener('click', () => { mediaStepTarget('prev')?.() })
   nextCh.addEventListener('click', () => { mediaStepTarget('next')?.() })
   prevPg.addEventListener('click', () => { setMediaPage(mediaPageIndex - 1); setTimeout(syncInfo, 350) })
@@ -4162,13 +4278,16 @@ function enterEpubImmersive() {
 let galleryImmersive = null
 let galleryImmersiveSync = null
 let galleryImmersiveView = ''
+let galleryImmersiveKind = ''
 
-function exitGalleryImmersive() {
+function exitGalleryImmersive({ remember = false } = {}) {
   if (!galleryImmersive) return
+  if (remember) saveImmersivePref(galleryImmersiveKind, false)
   const finish = galleryImmersive
   galleryImmersive = null
   galleryImmersiveSync = null
   galleryImmersiveView = ''
+  galleryImmersiveKind = ''
   finish()
 }
 
@@ -4182,9 +4301,10 @@ function syncGalleryImmersive() {
   galleryImmersiveSync?.()
 }
 
-function enterGalleryImmersive({ view, content, toggle, chapter }) {
-  if (galleryImmersive) { exitGalleryImmersive(); return }
+function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', remember = false }) {
+  if (galleryImmersive) { exitGalleryImmersive({ remember }); return }
   if (!content?.querySelector('img')) return
+  if (remember) saveImmersivePref(kind, true)
 
   const bar = document.createElement('div')
   bar.className = 'epub-bar gallery-bar'
@@ -4201,14 +4321,17 @@ function enterGalleryImmersive({ view, content, toggle, chapter }) {
   const info = document.createElement('span')
   info.className = 'epub-page-info gallery-info'
   const nextCh = mk('gallery-chapter-next', '下章', '下一章')
+  const toc = makeImmersiveToc()
   const exitBtn = mk('gallery-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, info, nextCh, exitBtn)
+  bar.append(back, prevCh, info, nextCh, toc, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
     info.textContent = chapter.label()
     prevCh.disabled = !chapter.canPrev()
     nextCh.disabled = !chapter.canNext()
+    if (chapter.toc === false) toc.hidden = true
+    else syncImmersiveToc(toc)
   }
   galleryImmersiveSync = syncInfo
 
@@ -4216,10 +4339,12 @@ function enterGalleryImmersive({ view, content, toggle, chapter }) {
   const EDGE = 72
   const HIDE_DELAY = 2400
   let timer = null
+  // 目录下拉展开时焦点在 select 上，这时收起控制条会直接把下拉关掉
+  const held = () => bar.matches(':hover') || document.activeElement?.tagName === 'SELECT'
   const setVisible = (v) => els.app.classList.toggle('stream-chrome-visible', v)
   const schedule = () => {
     clearTimeout(timer)
-    timer = setTimeout(() => { if (bar.matches(':hover')) { schedule(); return } setVisible(false) }, HIDE_DELAY)
+    timer = setTimeout(() => { if (held()) { schedule(); return } setVisible(false) }, HIDE_DELAY)
   }
   const reveal = () => { setVisible(true); schedule() }
   const onPointerMove = (event) => {
@@ -4254,7 +4379,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter }) {
   const onKey = (event) => {
     if (event.key === 'Escape') {
       event.preventDefault()
-      exitGalleryImmersive()
+      exitGalleryImmersive({ remember: true })
     } else if (event.key === 'ArrowLeft') {
       if (chapter.canPrev()) { chapter.prev(); setTimeout(syncInfo, 400) }
     } else if (event.key === 'ArrowRight') {
@@ -4263,8 +4388,9 @@ function enterGalleryImmersive({ view, content, toggle, chapter }) {
   }
   document.addEventListener('keydown', onKey)
 
+  // 「返回」是看完了要走，不是「不想要沉浸」，所以不改偏好
   back.addEventListener('click', () => { exitGalleryImmersive(); chapter.back() })
-  exitBtn.addEventListener('click', () => exitGalleryImmersive())
+  exitBtn.addEventListener('click', () => exitGalleryImmersive({ remember: true }))
   prevCh.addEventListener('click', () => { chapter.prev(); setTimeout(syncInfo, 400) })
   nextCh.addEventListener('click', () => { chapter.next(); setTimeout(syncInfo, 400) })
   bar.addEventListener('click', (event) => event.stopPropagation())
@@ -4272,6 +4398,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter }) {
   view.classList.add('stream-page-fullscreen')
   els.app.classList.add('stream-immersive')
   galleryImmersiveView = view.id
+  galleryImmersiveKind = kind
   toggle?.classList.add('active')
   toggle?.blur()
   syncInfo()
@@ -4409,9 +4536,9 @@ function mediaScrollRatio() {
 function updateMediaPageControls() {
   // 只有 epub(html) 才有可调的阅读宽度
   if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = currentMediaReader?.type !== 'html'
-  // 沉浸两种内容都支持：epub 是分页翻，图集是滚动看
+  // 沉浸四种内容都支持：epub 分页翻、图集滚动看、音视频铺满播
   if (els.mediaImmersive) {
-    els.mediaImmersive.disabled = !['html', 'images'].includes(currentMediaReader?.type)
+    els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video'].includes(currentMediaReader?.type)
   }
   const isHtml = currentMediaReader?.type === 'html'
   els.mediaPagePrev.disabled = !isHtml || mediaPageIndex <= 0
@@ -4882,29 +5009,40 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     setLoading(els.mediaImportSubmit, false)
   }
 })
-// 沉浸按钮同时服务 epub（分页）和图集（滚动看图），按当前内容类型分流
+// 沉浸按钮服务全部四种内容：epub 分页、图集滚动、音视频播放。按类型分流。
+function galleryImmersiveOptions(remember) {
+  return {
+    view: els.mediaViewerView,
+    content: els.mediaReaderContent,
+    toggle: els.mediaImmersive,
+    kind: 'images',
+    remember,
+    chapter: {
+      // EPUB 的图片集是书内的一个 section，章号要按 section 走；
+      // 媒体库图集没有 section，才按 unit 走（显示「第几个 unit / 共几个」）
+      label: () => (currentMediaReader?.section
+        ? `${currentMediaReader.section.index + 1} / ${currentMediaReader.sections?.length || 1}`
+        : `${Number(currentMediaReader?.unit?.index || 0) + 1} / ${currentLibraryUnits.length}`),
+      canPrev: () => Boolean(mediaStepTarget('prev')),
+      canNext: () => Boolean(mediaStepTarget('next')),
+      prev: () => { mediaStepTarget('prev')?.() },
+      next: () => { mediaStepTarget('next')?.() },
+      back: () => els.mediaReaderBack?.click(),
+    },
+  }
+}
+
 els.mediaImmersive?.addEventListener('click', () => {
-  if (currentMediaReader?.type === 'images') {
-    enterGalleryImmersive({
-      view: els.mediaViewerView,
-      content: els.mediaReaderContent,
-      toggle: els.mediaImmersive,
-      chapter: {
-        // EPUB 的图片集是书内的一个 section，章号要按 section 走；
-        // 媒体库图集没有 section，才按 unit 走（显示「第几个 unit / 共几个」）
-        label: () => (currentMediaReader?.section
-          ? `${currentMediaReader.section.index + 1} / ${currentMediaReader.sections?.length || 1}`
-          : `${Number(currentMediaReader?.unit?.index || 0) + 1} / ${currentLibraryUnits.length}`),
-        canPrev: () => Boolean(mediaStepTarget('prev')),
-        canNext: () => Boolean(mediaStepTarget('next')),
-        prev: () => { mediaStepTarget('prev')?.() },
-        next: () => { mediaStepTarget('next')?.() },
-        back: () => els.mediaReaderBack?.click(),
-      },
-    })
+  const type = currentMediaReader?.type
+  if (type === 'audio' || type === 'video') {
+    currentStreamImmersiveToggle?.(!els.mediaViewerView.classList.contains('stream-page-fullscreen'))
     return
   }
-  enterEpubImmersive()
+  if (type === 'images') {
+    enterGalleryImmersive(galleryImmersiveOptions(true))
+    return
+  }
+  enterEpubImmersive({ remember: true })
 })
 els.mediaWidthAdjust?.addEventListener('click', toggleWidthAdjust)
 els.mediaReaderBack.addEventListener('click', () => {
@@ -5015,12 +5153,16 @@ els.viewerRefresh.addEventListener('click', () => {
 })
 els.viewerPrev.addEventListener('click', () => openAdjacentViewer('prev'))
 els.viewerNext.addEventListener('click', () => openAdjacentViewer('next'))
-els.viewerImmersive?.addEventListener('click', () => {
-  enterGalleryImmersive({
+// 图片浏览 tab 没有整本的章节表（navigation 只给 prev/next），所以 toc: false
+function viewerImmersiveOptions(remember) {
+  return {
     view: els.viewerView,
     content: els.viewerImages,
     toggle: els.viewerImmersive,
+    kind: 'viewer',
+    remember,
     chapter: {
+      toc: false,
       label: () => viewerState?.title || '',
       canPrev: () => Boolean(viewerState?.navigation?.prev),
       canNext: () => Boolean(viewerState?.navigation?.next),
@@ -5028,7 +5170,11 @@ els.viewerImmersive?.addEventListener('click', () => {
       next: () => openAdjacentViewer('next'),
       back: () => els.viewerBack?.click(),
     },
-  })
+  }
+}
+
+els.viewerImmersive?.addEventListener('click', () => {
+  enterGalleryImmersive(viewerImmersiveOptions(true))
 })
 els.viewerBack.addEventListener('click', () => {
   showView(viewerState?.returnView || viewerReturnView || 'search-view')

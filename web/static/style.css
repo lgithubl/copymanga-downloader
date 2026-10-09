@@ -3182,6 +3182,27 @@ h2 {
   text-align: center;
 }
 
+/* 沉浸态下头部的 #media-section-select 被 chapter-head 一起隐掉了，
+   默认沉浸之后没有它就跳不了章，所以在控制条里补一个 */
+.immersive-toc {
+  background: rgba(15, 20, 25, 0.9);
+  border: 1px solid rgba(248, 250, 252, 0.28);
+  border-radius: 6px;
+  color: #f8fafc;
+  font-size: 13px;
+  max-width: 220px;
+  padding: 5px 8px;
+}
+
+.immersive-toc[hidden] {
+  display: none;
+}
+
+.immersive-toc option {
+  background: #0f1419;
+  color: #f8fafc;
+}
+
 /* 沉浸态下正文铺满：头部已被 stream-page-fullscreen 隐掉，这里把内边距也收掉 */
 #media-viewer-view.stream-page-fullscreen .media-reader-content.media-html,
 .media-viewer-view.stream-page-fullscreen .media-reader-content.media-html {
