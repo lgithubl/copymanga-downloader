@@ -3116,3 +3116,49 @@ h2 {
   background: var(--site-primary, #1f6feb);
   color: #ffffff;
 }
+
+/* EPUB 沉浸阅读的覆盖控制条。挂在 body 上用 fixed —— .media-reader-content
+   是横向滚动容器，absolute 不随 scrollLeft 走，翻过页就会被甩出视口
+   （宽度参考线踩过这个坑）。 */
+.epub-bar {
+  align-items: center;
+  background: linear-gradient(to top, rgba(15, 20, 25, 0.96), rgba(15, 20, 25, 0.75) 70%, transparent);
+  bottom: 0;
+  display: none;
+  gap: 10px;
+  justify-content: center;
+  left: 0;
+  padding: 24px 16px 14px;
+  position: fixed;
+  right: 0;
+  transform: translateY(100%);
+  transition: transform 0.22s ease;
+  z-index: 35;
+}
+
+#app.stream-immersive .epub-bar {
+  display: flex;
+}
+
+#app.stream-immersive.stream-chrome-visible .epub-bar {
+  transform: none;
+}
+
+.epub-page-info {
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 700;
+  min-width: 72px;
+  text-align: center;
+}
+
+/* 沉浸态下正文铺满：头部已被 stream-page-fullscreen 隐掉，这里把内边距也收掉 */
+#media-viewer-view.stream-page-fullscreen .media-reader-content.media-html,
+.media-viewer-view.stream-page-fullscreen .media-reader-content.media-html {
+  padding: 0;
+}
+
+#media-immersive.active {
+  background: var(--site-primary, #1f6feb);
+  color: #ffffff;
+}

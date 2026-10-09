@@ -157,6 +157,7 @@ const els = {
   mediaReaderPrev: document.querySelector('#media-reader-prev'),
   mediaSectionSelect: document.querySelector('#media-section-select'),
   mediaReaderTheme: document.querySelector('#media-reader-theme'),
+  mediaImmersive: document.querySelector('#media-immersive'),
   mediaWidthAdjust: document.querySelector('#media-width-adjust'),
   mediaPagePrev: document.querySelector('#media-page-prev'),
   mediaPageNext: document.querySelector('#media-page-next'),
@@ -2919,6 +2920,7 @@ function makeSubtitleOverlayInteractive(overlay, frame, getBox = null) {
 }
 
 function renderStreamMedia(reader, options = {}) {
+  exitEpubImmersive()   // 从 epub 切到音视频时，epub 的沉浸状态必须先收干净
   // 切章会整个重建播放器，而 currentStreamCleanup 里要清沉浸类（那是给
   // 「离开播放器」准备的）。沉浸是当前的观看模式，不该被重建顺带清掉，
   // 先记下来，新播放器建好后恢复。
@@ -3962,6 +3964,146 @@ function mediaPageScrollLeft(pageIndex) {
   return Math.max(0, Math.min(mediaMaxScrollLeft, pageIndex * mediaPageStep))
 }
 
+// EPUB 沉浸阅读。隐藏顶栏/头部那套直接复用视频的 stream-immersive +
+// stream-page-fullscreen —— 那些规则里针对 .stream-player / media-stream 的部分
+// 对 epub 是空操作，而「隐藏 chapter-head、section 单行、顶栏 fixed」正好就是要的。
+let epubImmersive = null
+
+function epubImmersiveActive() {
+  return Boolean(epubImmersive)
+}
+
+function exitEpubImmersive() {
+  if (!epubImmersive) return
+  const finish = epubImmersive
+  epubImmersive = null
+  finish()
+}
+
+function enterEpubImmersive() {
+  if (epubImmersive) { exitEpubImmersive(); return }
+  const content = els.mediaReaderContent
+  if (!content.querySelector('.media-html-pages')) return
+
+  const bar = document.createElement('div')
+  bar.className = 'epub-bar'
+  const mk = (cls, text, title) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = `stream-icon-button ${cls}`
+    b.textContent = text
+    b.title = title
+    return b
+  }
+  const back = mk('epub-back', '返回', '退出沉浸并返回')
+  const prevCh = mk('epub-chapter-prev', '上章', '上一章')
+  const prevPg = mk('epub-page-prev', '上页', '上一页')
+  const info = document.createElement('span')
+  info.className = 'epub-page-info'
+  const nextPg = mk('epub-page-next', '下页', '下一页')
+  const nextCh = mk('epub-chapter-next', '下章', '下一章')
+  const widthBtn = mk('epub-width', '宽度', '调整阅读宽度')
+  const exitBtn = mk('epub-exit', '退出', '退出沉浸')
+  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, widthBtn, exitBtn)
+  els.app.append(bar)
+
+  const syncInfo = () => {
+    info.textContent = `${mediaPageIndex + 1} / ${mediaPageCount}`
+    prevCh.disabled = !currentMediaReader?.navigation?.prev
+    nextCh.disabled = !currentMediaReader?.navigation?.next
+    prevPg.disabled = mediaPageIndex <= 0
+    nextPg.disabled = mediaPageIndex >= mediaPageCount - 1
+  }
+
+  // —— 贴边唤出，和视频同一套手感 ——
+  const EDGE = 72
+  const HIDE_DELAY = 2400
+  let timer = null
+  const held = () => widthAdjustCleanup || bar.matches(':hover')
+  const setVisible = (v) => els.app.classList.toggle('stream-chrome-visible', v)
+  const schedule = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => { if (held()) { schedule(); return } setVisible(false) }, HIDE_DELAY)
+  }
+  const reveal = () => { setVisible(true); schedule() }
+  const onPointerMove = (event) => {
+    if (event.clientY <= EDGE || event.clientY >= window.innerHeight - EDGE) reveal()
+  }
+  document.addEventListener('mousemove', onPointerMove)
+
+  // —— 左右点击翻页 ——
+  // epub 正文是可选中的，不能用裸 click：想选一段话时按下拖动会被当成翻页。
+  // 只认「位移小 + 没有选区 + 没点在链接上」的点击。
+  let downAt = null
+  const onDown = (event) => {
+    if (widthAdjustCleanup) return
+    downAt = { x: event.clientX, y: event.clientY }
+  }
+  const onUp = (event) => {
+    const start = downAt
+    downAt = null
+    if (!start || widthAdjustCleanup) return
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) return
+    if (String(window.getSelection?.() || '').length > 0) return
+    if (event.target?.closest?.('a[href], button, select, input')) return
+    const rect = content.getBoundingClientRect()
+    const ratio = (event.clientX - rect.left) / Math.max(1, rect.width)
+    if (ratio < 0.3) setMediaPage(mediaPageIndex - 1)
+    else if (ratio > 0.7) setMediaPage(mediaPageIndex + 1)
+    else if (els.app.classList.contains('stream-chrome-visible')) setVisible(false)
+    else reveal()
+    setTimeout(syncInfo, 350)
+  }
+  content.addEventListener('pointerdown', onDown)
+  content.addEventListener('pointerup', onUp)
+
+  const onKey = (event) => {
+    if (widthAdjustCleanup) return
+    if (event.key === 'Escape') { event.preventDefault(); exitEpubImmersive() }
+    else if (event.key === 'ArrowLeft') { setMediaPage(mediaPageIndex - 1); setTimeout(syncInfo, 350) }
+    else if (event.key === 'ArrowRight') { setMediaPage(mediaPageIndex + 1); setTimeout(syncInfo, 350) }
+  }
+  document.addEventListener('keydown', onKey)
+
+  back.addEventListener('click', () => { exitEpubImmersive(); els.mediaReaderBack?.click() })
+  exitBtn.addEventListener('click', () => exitEpubImmersive())
+  prevCh.addEventListener('click', () => els.mediaReaderPrev?.click())
+  nextCh.addEventListener('click', () => els.mediaReaderNext?.click())
+  prevPg.addEventListener('click', () => { setMediaPage(mediaPageIndex - 1); setTimeout(syncInfo, 350) })
+  nextPg.addEventListener('click', () => { setMediaPage(mediaPageIndex + 1); setTimeout(syncInfo, 350) })
+  widthBtn.addEventListener('click', () => { setVisible(true); clearTimeout(timer); toggleWidthAdjust() })
+  bar.addEventListener('click', (event) => event.stopPropagation())
+
+  els.mediaViewerView.classList.add('stream-page-fullscreen')
+  els.app.classList.add('stream-immersive')
+  els.mediaImmersive?.classList.add('active')
+  els.mediaImmersive?.blur()
+  // 容器尺寸变了（头部被隐藏），必须重排，否则页宽还是旧的
+  requestAnimationFrame(() => {
+    const keep = mediaPageAnchor()
+    layoutMediaPages({ anchor: keep })
+    syncInfo()
+    reveal()
+  })
+
+  epubImmersive = () => {
+    clearTimeout(timer)
+    document.removeEventListener('mousemove', onPointerMove)
+    document.removeEventListener('keydown', onKey)
+    content.removeEventListener('pointerdown', onDown)
+    content.removeEventListener('pointerup', onUp)
+    bar.remove()
+    exitWidthAdjust({ apply: false })
+    els.mediaViewerView.classList.remove('stream-page-fullscreen')
+    els.app.classList.remove('stream-immersive', 'stream-chrome-visible')
+    els.mediaImmersive?.classList.remove('active')
+    requestAnimationFrame(() => {
+      const keep = mediaPageAnchor()
+      layoutMediaPages({ anchor: keep })
+    })
+  }
+}
+
 // 拖动调宽度：全程只移动参考线，一个字都不重排。
 // 改 --media-page-width 会让浏览器立刻重排多列，拖动时每帧都重排整章会卡，
 // 所以宽度只在"确认退出"那一刻写入，整本只重排一次。
@@ -4081,6 +4223,7 @@ function mediaScrollRatio() {
 function updateMediaPageControls() {
   // 只有 epub(html) 才有可调的阅读宽度
   if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = currentMediaReader?.type !== 'html'
+  if (els.mediaImmersive) els.mediaImmersive.disabled = currentMediaReader?.type !== 'html'
   const isHtml = currentMediaReader?.type === 'html'
   els.mediaPagePrev.disabled = !isHtml || mediaPageIndex <= 0
   els.mediaPageNext.disabled = !isHtml || (mediaPageIndex >= mediaPageCount - 1 && !currentMediaReader?.sectionNavigation?.next && !currentMediaReader?.navigation?.next)
@@ -4550,6 +4693,7 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     setLoading(els.mediaImportSubmit, false)
   }
 })
+els.mediaImmersive?.addEventListener('click', enterEpubImmersive)
 els.mediaWidthAdjust?.addEventListener('click', toggleWidthAdjust)
 els.mediaReaderBack.addEventListener('click', () => {
   showView(mediaReturnView || 'library-view')
