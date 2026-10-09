@@ -218,10 +218,8 @@ let downloadedRefreshTimer = null
 let currentDownloadedComic = null
 let viewerState = null
 let viewerBatchSize = 5
-let viewerImages = []
-let viewerRendered = 0
-let viewerSentinel = null
-let viewerActiveBatch = null
+let viewerBatch = null
+let galleryBatch = null
 let viewerReturnView = 'search-view'
 let readingProgress = {}
 let libraryTypes = []
@@ -744,7 +742,13 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
   els.viewerImages.className = 'viewer-grid'
   els.viewerImages.innerHTML = ''
   els.viewerImages.classList.remove('long-strip-viewer')
-  resetViewerBatch()
+  viewerBatch = createImageBatch({
+    container: els.viewerImages,
+    onMeta: (rendered, total) => {
+      els.viewerMeta.textContent = `${viewerState?.sourceText || '图片'} · ${rendered}/${total} 张图`
+    },
+    altFor: (image, index) => `${viewerState?.title || viewerState?.chapterUuid || 'chapter'} ${Number(image.index ?? index) + 1}`,
+  })
 
   try {
     const params = new URLSearchParams({
@@ -761,9 +765,9 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
     els.viewerNext.disabled = !viewerState.navigation?.next
     els.viewerMeta.textContent = `${sourceText} · 0/${data.count || 0} 张图`
     els.viewerImages.innerHTML = ''
-    viewerImages = data.images || []
-    appendViewerImages()
-    if (!viewerImages.length) {
+    viewerBatch.images = data.images || []
+    appendImageBatch(viewerBatch)
+    if (!viewerBatch.images.length) {
       els.viewerImages.className = 'viewer-grid empty-panel'
       els.viewerImages.textContent = '没有图片'
     }
@@ -823,78 +827,90 @@ function applyReadingColors(comicPathWord = '', chapterUuid = '') {
   }
 }
 
-function resetViewerBatch() {
-  viewerSentinel = null
-  viewerImages = []
-  viewerRendered = 0
-  viewerActiveBatch = null
+// 图片分批渲染：图片浏览 tab（老模式）和媒体库图集（新模式）共用同一套。
+// container 是放 img 的容器，onMeta 负责把「已渲染/总数」写到各自的信息栏。
+function createImageBatch({ container, onMeta, altFor }) {
+  return { container, onMeta, altFor, images: [], rendered: 0, sentinel: null, active: null }
+}
+
+function resetImageBatch(batch) {
+  if (!batch) return
+  batch.images = []
+  batch.rendered = 0
+  batch.sentinel = null
+  batch.active = null
 }
 
 function currentViewerBatchSize() {
   return Math.max(1, Math.min(50, Math.floor(Number(viewerBatchSize || 5))))
 }
 
-function appendViewerImages() {
-  if (!viewerImages.length) return
-  if (viewerSentinel) viewerSentinel.remove()
-  const start = viewerRendered
-  const end = Math.min(viewerImages.length, viewerRendered + currentViewerBatchSize())
-  const batch = {
+function appendImageBatch(batch) {
+  if (!batch?.images.length) return
+  if (batch.sentinel) {
+    batch.sentinel.remove()
+    batch.sentinel = null
+  }
+  const size = currentViewerBatchSize()
+  const start = batch.rendered
+  const end = Math.min(batch.images.length, start + size)
+  const round = {
     total: end - start,
     done: 0,
     triggered: false,
   }
-  viewerActiveBatch = batch
-  for (const [offset, image] of viewerImages.slice(start, end).entries()) {
+  batch.active = round
+  for (const [offset, image] of batch.images.slice(start, end).entries()) {
+    const index = start + offset
     const img = document.createElement('img')
     img.src = image.url
-    img.alt = `${viewerState?.title || viewerState?.chapterUuid || 'chapter'} ${Number(image.index ?? (start + offset)) + 1}`
+    img.alt = batch.altFor(image, index)
     img.loading = 'lazy'
     img.decoding = 'async'
-    img.fetchPriority = start + offset < currentViewerBatchSize() ? 'high' : 'auto'
+    img.fetchPriority = index < size ? 'high' : 'auto'
     let settled = false
     const markDone = () => {
       if (settled) return
       settled = true
-      applyViewerImageLayout(img)
-      markViewerImageDone(batch)
+      applyImageBatchLayout(batch, img)
+      markImageBatchDone(batch, round)
     }
     img.addEventListener('load', markDone, { once: true })
     img.addEventListener('error', markDone, { once: true })
+    // 兜底：某张图卡住时别把整批的进度堵死
     setTimeout(markDone, 15000)
-    els.viewerImages.append(img)
+    batch.container.append(img)
   }
-  viewerRendered = end
-  const sourceText = viewerState?.sourceText || '图片'
-  els.viewerMeta.textContent = `${sourceText} · ${viewerRendered}/${viewerImages.length} 张图`
-  if (viewerRendered < viewerImages.length) attachViewerSentinel()
+  batch.rendered = end
+  batch.onMeta(batch.rendered, batch.images.length)
+  if (batch.rendered < batch.images.length) attachImageBatchSentinel(batch)
 }
 
-function applyViewerImageLayout(img) {
+function applyImageBatchLayout(batch, img) {
   if (!img.naturalWidth || !img.naturalHeight) return
   const displayWidth = Math.min(img.naturalWidth, 980)
   img.style.maxWidth = `${displayWidth}px`
   img.style.width = `min(100%, ${displayWidth}px)`
   const isLongStrip = img.naturalHeight / Math.max(img.naturalWidth, 1) >= 4
   img.classList.toggle('long-strip-image', isLongStrip)
-  if (isLongStrip) els.viewerImages.classList.add('long-strip-viewer')
+  if (isLongStrip) batch.container.classList.add('long-strip-viewer')
 }
 
-function markViewerImageDone(batch) {
-  if (!batch || batch !== viewerActiveBatch) return
-  batch.done += 1
-  if (!batch.triggered && batch.done / Math.max(batch.total, 1) >= 0.8 && viewerRendered < viewerImages.length) {
-    batch.triggered = true
-    appendViewerImages()
+function markImageBatchDone(batch, round) {
+  if (!round || round !== batch.active) return
+  round.done += 1
+  if (!round.triggered && round.done / Math.max(round.total, 1) >= 0.8 && batch.rendered < batch.images.length) {
+    round.triggered = true
+    appendImageBatch(batch)
   }
 }
 
-function attachViewerSentinel() {
-  viewerSentinel = document.createElement('div')
-  viewerSentinel.className = 'viewer-sentinel'
-  viewerSentinel.textContent = '加载更多'
-  viewerSentinel.addEventListener('click', appendViewerImages)
-  els.viewerImages.append(viewerSentinel)
+function attachImageBatchSentinel(batch) {
+  batch.sentinel = document.createElement('div')
+  batch.sentinel.className = 'viewer-sentinel'
+  batch.sentinel.textContent = '加载更多'
+  batch.sentinel.addEventListener('click', () => appendImageBatch(batch))
+  batch.container.append(batch.sentinel)
 }
 
 function renderJobs() {
@@ -2776,21 +2792,24 @@ function renderMediaHtml(reader) {
 function renderMediaImages(reader) {
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-images ${themeClass}`
+  galleryBatch = null
   if (!reader.images?.length) {
     els.mediaReaderContent.className = 'media-reader-content empty-panel'
     els.mediaReaderContent.textContent = '没有图片资源'
   } else {
     const list = document.createElement('div')
     list.className = 'media-image-list'
-    for (const image of reader.images) {
-      const img = document.createElement('img')
-      img.src = image.url
-      img.alt = image.title || `${reader.unit?.title || '图片'} ${Number(image.index || 0) + 1}`
-      img.loading = 'lazy'
-      img.decoding = 'async'
-      list.append(img)
-    }
     els.mediaReaderContent.replaceChildren(list)
+    const prefix = `${reader.item?.title || currentLibraryItem?.title || ''} · ${Number(reader.unit?.index || 0) + 1}/${currentLibraryUnits.length}`
+    galleryBatch = createImageBatch({
+      container: list,
+      onMeta: (rendered, total) => {
+        els.mediaReaderMeta.textContent = `${prefix} · ${rendered}/${total} 张图`
+      },
+      altFor: (image, index) => image.title || `${reader.unit?.title || '图片'} ${Number(image.index ?? index) + 1}`,
+    })
+    galleryBatch.images = reader.images
+    appendImageBatch(galleryBatch)
   }
   mediaPageIndex = 0
   mediaPageCount = 1

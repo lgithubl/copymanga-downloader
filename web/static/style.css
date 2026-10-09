@@ -2788,8 +2788,25 @@ h2 {
   background: #eef1f4;
   border: 1px solid #d8dee4;
   border-radius: 6px;
+  display: block;
+  height: auto;
+  margin: 0 auto;
   max-width: 980px;
-  width: min(100%, 980px);
+  object-fit: contain;
+  width: auto;
+}
+
+.media-image-list.long-strip-viewer {
+  gap: 2px;
+}
+
+.media-image-list.long-strip-viewer img {
+  border-radius: 0;
+  width: min(100%, 690px);
+}
+
+.media-image-list img.long-strip-image {
+  border-radius: 0;
 }
 
 #app.sidebar-collapsed .sidebar {
