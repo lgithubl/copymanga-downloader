@@ -26,6 +26,11 @@
     "subtitleTitle": "AI.jp",
     "logDir": "ai-subtitles/log",
     "reportMode": "onFailure",
+    "asyncMode": false,
+    "pollIntervalMs": 5000,
+    "pollTimeoutMs": 7200000,
+    "debugIo": false,
+    "debugIoChars": 4000,
     "scriptTimeoutMs": 86400000,
     "requestTimeoutMs": 600000
   }
