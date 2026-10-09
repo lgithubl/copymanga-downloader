@@ -522,13 +522,19 @@ async function callLlmTranslate(options, sourceText) {
   }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(new Error('request timeout')), options.requestTimeoutMs)
+  const startedAt = Date.now()
   try {
-    const res = await fetch(`${options.apiBase}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    })
+    let res = null
+    try {
+      res = await fetch(`${options.apiBase}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+    } catch (error) {
+      throw new Error(describeFetchError(error, Date.now() - startedAt))
+    }
     const text = await res.text()
     let body = null
     try {
@@ -660,6 +666,21 @@ function dateStamp(date = new Date()) {
 
 function randomToken() {
   return randomBytes(3).toString('hex')
+}
+
+// Node 的 fetch 失败只给一句 "fetch failed"，真正原因埋在 error.cause 链里
+// （UND_ERR_HEADERS_TIMEOUT / ECONNRESET / ENOTFOUND ...）。耗时也一并带上，
+// 用来区分「立刻失败」和「卡到某个超时才失败」。
+function describeFetchError(error, elapsedMs) {
+  const parts = [String(error?.message || error)]
+  let cause = error?.cause
+  for (let depth = 0; cause && depth < 3; depth += 1) {
+    const detail = [cause.code, cause.message].filter(Boolean).join(' ')
+    if (detail) parts.push(`cause: ${detail}`)
+    cause = cause.cause
+  }
+  parts.push(`耗时 ${(elapsedMs / 1000).toFixed(1)}s`)
+  return parts.join(' | ')
 }
 
 function normalizePath(value) {
