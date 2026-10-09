@@ -841,7 +841,8 @@ h2 {
 
 .tag-manager-view {
   min-height: 0;
-  overflow: auto;
+  /* 页面整体不滚，交给下面四个盒子各自滚（跟 .workspace 一个路子） */
+  overflow: hidden;
   padding: 18px;
 }
 
@@ -852,12 +853,13 @@ h2 {
 .tag-manager-view > section {
   display: grid;
   gap: 12px;
-  grid-template-rows: auto auto;
+  /* 第二行吃满剩余高度，否则下面的 1fr 没有可分的空间 */
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 
 .tag-manager-grid {
-  align-items: start;
+  align-items: stretch;
   display: grid;
   gap: 18px;
   grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.05fr);
@@ -867,12 +869,17 @@ h2 {
 .tag-manager-grid > div {
   display: grid;
   gap: 10px;
-  grid-auto-rows: max-content;
   min-height: 0;
 }
 
+/* 左列：标题 / 优先框 / 标题 / 工具条 / Tag 列表 —— 两个列表各占 1fr */
 .tag-manager-grid > div:first-child {
-  grid-auto-rows: max-content;
+  grid-template-rows: auto minmax(0, 1fr) auto auto minmax(0, 1fr);
+}
+
+/* 右列：标题 / 工具条 / 脚本 / 标题 / 工具条 / 运行任务 —— 同样各占 1fr */
+.tag-manager-grid > div:last-child {
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto minmax(0, 1fr);
 }
 
 .tag-display-priority {
@@ -882,7 +889,7 @@ h2 {
   display: grid;
   gap: 8px;
   grid-template-rows: auto minmax(0, 1fr);
-  max-height: 240px;
+  max-height: none;
   min-height: 0;
   overflow: hidden;
   padding: 10px;
@@ -2696,6 +2703,39 @@ h2 {
 #app.sidebar-collapsed .job strong {
   display: none;
   font-size: 12px;
+}
+
+/* 侧栏(288) + 两列(320+360) + 间距 = 1022px，低于这个数双栏必裂。
+   窄屏退成单列、页面正常滚，每块各自封顶仍然自己滚。 */
+@media (max-width: 1100px) {
+  .tag-manager-view {
+    overflow: auto;
+  }
+
+  .tag-manager-view > section {
+    grid-template-rows: auto auto;
+  }
+
+  .tag-manager-grid {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tag-manager-grid > div:first-child,
+  .tag-manager-grid > div:last-child {
+    grid-template-rows: none;
+    grid-auto-rows: max-content;
+  }
+
+  .tag-display-priority {
+    max-height: 240px;
+  }
+
+  .tag-manager-tags,
+  .tag-manager-scripts,
+  .tag-manager-jobs {
+    max-height: min(50vh, 420px);
+  }
 }
 
 @media (max-width: 900px) {
