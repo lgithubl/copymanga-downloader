@@ -610,17 +610,20 @@
           </section>
         </div>
       </section>
-    </main>
-    <div id="series-modal" class="series-modal hidden">
-      <div class="series-modal-backdrop"></div>
-      <div class="series-modal-panel" role="dialog" aria-modal="true" aria-labelledby="series-modal-title">
-        <div class="series-modal-head">
-          <strong id="series-modal-title">同系列</strong>
-          <button id="series-modal-close" class="secondary" type="button">关闭</button>
+      <!-- 必须放在 #app 内：主题变量定义在 #app.site-theme-* 上，放外面就只能
+           拿到 :root 的浅色值，深色主题下媒体库是深的、弹框却是白的；
+           #app .card 等规则也够不着弹框里的卡片。fixed 定位不影响 grid 布局。 -->
+      <div id="series-modal" class="series-modal hidden">
+        <div class="series-modal-backdrop"></div>
+        <div class="series-modal-panel" role="dialog" aria-modal="true" aria-labelledby="series-modal-title">
+          <div class="series-modal-head">
+            <strong id="series-modal-title">同系列</strong>
+            <button id="series-modal-close" class="secondary" type="button">关闭</button>
+          </div>
+          <div id="series-modal-list" class="series-modal-list"></div>
         </div>
-        <div id="series-modal-list" class="series-modal-list"></div>
       </div>
-    </div>
+    </main>
     <script src="/app.js" type="module"></script>
   </body>
 </html>
