@@ -622,6 +622,9 @@ h2 {
 .library-card .card-body {
   display: grid;
   gap: 7px;
+  /* 隐式列是 auto，会被超长标题的 max-content 撑开（实测 465px / 卡片只有 289px），
+     里层 .library-card-top 的 minmax(0,1fr) 也就无从约束。必须在这里封顶。 */
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   padding: 10px 12px 12px;
 }
