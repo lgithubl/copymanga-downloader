@@ -3140,11 +3140,7 @@ function renderStreamMedia(reader, options = {}) {
     localStorage.setItem('copymanga.mediaAutoNext', enabled ? '0' : '1')
     setToggleState()
   })
-  fullscreen.addEventListener('click', () => {
-    const active = els.mediaViewerView.classList.toggle('stream-page-fullscreen')
-    fullscreen.classList.toggle('active', active)
-    fullscreen.title = active ? '退出页面全屏' : '页面全屏'
-  })
+  // 页面全屏的开关逻辑挪到下面和「更多面板」「贴边唤出」一起管，三者要联动
   const vrViewer = reader.type === 'video'
     ? createVrVideoViewer({ frame, player, controls: vrControls, warning: playbackWarning })
     : null
@@ -3187,15 +3183,111 @@ function renderStreamMedia(reader, options = {}) {
     playbackWarning.classList.remove('hidden')
     playbackWarning.textContent = `播放失败${suffix}：浏览器不支持该编码，或媒体文件无法被当前播放器解码`
   })
+  // 「更多」面板：日常观看用不到的控件收进来，否则 15 个控件会折成两行、
+  // 浮在画面上要占掉 20% 的高度。
+  const more = document.createElement('button')
+  more.type = 'button'
+  more.className = 'stream-icon-button stream-more'
+  more.title = '更多设置'
+  more.textContent = '⚙'
+  const morePanel = document.createElement('div')
+  morePanel.className = 'stream-more-panel hidden'
+  morePanel.append(rateSelect, subtitleSelect, secondarySubtitleSelect, subtitleSmaller,
+    subtitleLarger, loopToggle, nextToggle, vrControls.element)
+  const setMoreOpen = (open) => {
+    morePanel.classList.toggle('hidden', !open)
+    more.classList.toggle('active', open)
+    more.setAttribute('aria-expanded', open ? 'true' : 'false')
+  }
+  setMoreOpen(false)
+  more.addEventListener('click', (event) => {
+    event.stopPropagation()
+    setMoreOpen(morePanel.classList.contains('hidden'))
+  })
+
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(play, currentTime, progress, duration, mute, volume, rateSelect, subtitleSelect, secondarySubtitleSelect, subtitleSmaller, subtitleLarger, loopToggle, nextToggle, vrControls.element, fullscreen)
-  frame.append(player, subtitleOverlay, controls)
+  controls.append(play, currentTime, progress, duration, mute, volume, more, fullscreen)
+
+  // —— 页面全屏下的「贴边唤出」——
+  // 鼠标贴近上/下边缘才显示顶栏和控制条，移开后延时收起。
+  const EDGE = 72
+  const HIDE_DELAY = 2400
+  let chromeTimer = null
+  const inFullscreen = () => els.mediaViewerView.classList.contains('stream-page-fullscreen')
+  // 这些情况下不能收起，否则会打断正在进行的操作。
+  // 焦点只认 select：原生下拉展开时焦点在它身上，收起会直接关掉下拉；
+  // 而按钮点完焦点也会留在上面，若一并算作「占用」，点一次 ⛶ 之后
+  // 控制条就再也不会自动隐藏了。
+  const chromeHeld = () => !morePanel.classList.contains('hidden')
+    || document.activeElement?.tagName === 'SELECT'
+    || controls.matches(':hover')
+    || morePanel.matches(':hover')
+  const setChromeVisible = (visible) => els.app.classList.toggle('stream-chrome-visible', visible)
+  const scheduleHide = () => {
+    clearTimeout(chromeTimer)
+    chromeTimer = setTimeout(() => {
+      if (chromeHeld()) { scheduleHide(); return }
+      setChromeVisible(false)
+    }, HIDE_DELAY)
+  }
+  const revealChrome = () => {
+    setChromeVisible(true)
+    scheduleHide()
+  }
+  const onPointerMove = (event) => {
+    if (!inFullscreen()) return
+    const nearEdge = event.clientY <= EDGE || event.clientY >= window.innerHeight - EDGE
+    if (nearEdge) revealChrome()
+  }
+  // 触屏没有 hover，点画面即切换显隐
+  const onFrameTap = () => {
+    if (!inFullscreen()) return
+    if (els.app.classList.contains('stream-chrome-visible')) setChromeVisible(false)
+    else revealChrome()
+  }
+  document.addEventListener('mousemove', onPointerMove)
+
+  const setImmersive = (active) => {
+    els.mediaViewerView.classList.toggle('stream-page-fullscreen', active)
+    // 顶栏在 .media-viewer-view 外面（挂在 .content 下），只能靠 #app 上的类去管
+    els.app.classList.toggle('stream-immersive', active)
+    fullscreen.classList.toggle('active', active)
+    fullscreen.title = active ? '退出页面全屏' : '页面全屏'
+    clearTimeout(chromeTimer)
+    if (active) revealChrome()
+    else { setChromeVisible(false); setMoreOpen(false) }
+  }
+  fullscreen.addEventListener('click', () => setImmersive(!inFullscreen()))
+  // 沉浸态下「返回」按钮在 chapter-head 里被隐藏了，没有 Esc 就只能靠
+  // 自动隐藏的 ⛶ 退出，手感很差
+  const onKeyDown = (event) => {
+    if (event.key !== 'Escape' || !inFullscreen()) return
+    if (!morePanel.classList.contains('hidden')) { setMoreOpen(false); return }
+    setImmersive(false)
+  }
+  document.addEventListener('keydown', onKeyDown)
+  controls.addEventListener('click', (event) => event.stopPropagation())
+  morePanel.addEventListener('click', (event) => event.stopPropagation())
+  // 点画面：面板开着就先关面板（不误触播放/暂停），否则走显隐切换
+  frame.addEventListener('click', () => {
+    if (!morePanel.classList.contains('hidden')) { setMoreOpen(false); return }
+    onFrameTap()
+  })
+  if (reader.type === 'video') {
+    player.addEventListener('dblclick', () => setImmersive(!inFullscreen()))
+  }
+
+  frame.append(player, subtitleOverlay, morePanel, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
   setTimeout(attemptAutoPlay, 0)
   currentStreamCleanup = () => {
+    document.removeEventListener('mousemove', onPointerMove)
+    document.removeEventListener('keydown', onKeyDown)
+    clearTimeout(chromeTimer)
     els.mediaViewerView.classList.remove('stream-page-fullscreen')
+    els.app.classList.remove('stream-immersive', 'stream-chrome-visible')
     vrViewer?.destroy()
   }
   mediaPageIndex = 0
