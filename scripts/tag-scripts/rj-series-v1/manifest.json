@@ -1,0 +1,18 @@
+{
+  "id": "rj-series-v1",
+  "name": "RJ 系列生成 v1",
+  "version": "1.0.0",
+  "description": "按「有原档用原档 ID、否则用自身 ID」生成合集维度的 系列 关联键，必须在 RJ / DLsite 之后执行。",
+  "scope": ["item"],
+  "libraryTypes": ["media"],
+  "mediaKinds": ["audio", "video"],
+  "exclusiveTagGroups": ["系列"],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "tagPrefix": "系列",
+    "preferOriginal": true,
+    "dryRun": false,
+    "scriptTimeoutMs": 600000
+  }
+}
