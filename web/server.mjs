@@ -257,6 +257,8 @@ function defaultConfig() {
     enableFileLogger: true,
     chapterConcurrency: 3,
     chapterDownloadIntervalSec: 0,
+    // 任务列表的兜底轮询间隔。实时更新本来就走 SSE，这个只是防 SSE 断线漏事件。
+    jobPollIntervalMs: 5000,
     imgConcurrency: 6,
     imgDownloadIntervalSec: 0,
     viewerImageBatchSize: 5,
@@ -306,6 +308,7 @@ function normalizeConfig(value) {
     enableFileLogger: Boolean(value?.enableFileLogger ?? defaults.enableFileLogger),
     chapterConcurrency: clampNumber(value?.chapterConcurrency, 1, 30, defaults.chapterConcurrency),
     chapterDownloadIntervalSec: clampNumber(value?.chapterDownloadIntervalSec, 0, 3600, defaults.chapterDownloadIntervalSec),
+    jobPollIntervalMs: clampNumber(value?.jobPollIntervalMs, 1000, 600000, defaults.jobPollIntervalMs),
     imgConcurrency: clampNumber(value?.imgConcurrency, 1, 60, defaults.imgConcurrency),
     imgDownloadIntervalSec: clampNumber(value?.imgDownloadIntervalSec, 0, 3600, defaults.imgDownloadIntervalSec),
     viewerImageBatchSize: clampNumber(value?.viewerImageBatchSize, 1, 50, defaults.viewerImageBatchSize),

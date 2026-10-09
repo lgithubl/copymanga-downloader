@@ -26,6 +26,7 @@
         <section class="task-panel">
           <div class="task-head">
             <h2>下载任务</h2>
+            <button id="toggle-job-poll" class="secondary icon-button" title="任务兜底轮询" aria-label="任务兜底轮询" aria-pressed="true">⟳</button>
             <button id="retry-failed" class="secondary icon-button" title="批量继续" aria-label="批量继续">↻</button>
             <button id="clear-active" class="danger icon-button" title="批量清理" aria-label="批量清理">×</button>
           </div>
@@ -565,6 +566,7 @@
               <label class="checkbox-line"><input id="config-enable-file-logger" type="checkbox" />输出文件日志</label>
               <label>章节并发<input id="config-chapter-concurrency" type="number" min="1" max="30" step="1" /></label>
               <label>每个章节下载完成后休息<input id="config-chapter-download-interval-sec" type="number" min="0" step="1" /></label>
+              <label>任务兜底轮询间隔（毫秒）<input id="config-job-poll-interval-ms" type="number" min="1000" max="600000" step="1000" /></label>
               <label>图片并发<input id="config-img-concurrency" type="number" min="1" max="60" step="1" /></label>
               <label>每张图片下载完成后休息<input id="config-img-download-interval-sec" type="number" min="0" step="1" /></label>
               <label>浏览图片批量加载<input id="config-viewer-image-batch-size" type="number" min="1" max="50" step="1" /></label>

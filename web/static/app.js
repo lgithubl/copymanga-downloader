@@ -174,6 +174,8 @@ const els = {
   configEnableFileLogger: document.querySelector('#config-enable-file-logger'),
   configChapterConcurrency: document.querySelector('#config-chapter-concurrency'),
   configChapterDownloadIntervalSec: document.querySelector('#config-chapter-download-interval-sec'),
+  configJobPollIntervalMs: document.querySelector('#config-job-poll-interval-ms'),
+  toggleJobPoll: document.querySelector('#toggle-job-poll'),
   configImgConcurrency: document.querySelector('#config-img-concurrency'),
   configImgDownloadIntervalSec: document.querySelector('#config-img-download-interval-sec'),
   configViewerImageBatchSize: document.querySelector('#config-viewer-image-batch-size'),
@@ -259,6 +261,9 @@ let mediaPageStep = 1
 let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
 let currentStreamCleanup = null
+const JOB_POLL_KEY = 'copymanga.jobPollEnabled'
+let jobPollIntervalMs = 5000
+let jobPollTimer = null
 let appConfig = null
 const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'reader-theme-warm', 'reader-theme-sepia']
 const mediaModeClasses = ['media-mode-empty', 'media-mode-html', 'media-mode-images', 'media-mode-audio', 'media-mode-video']
@@ -1107,6 +1112,9 @@ async function loadConfig() {
   els.configEnableFileLogger.checked = config.enableFileLogger
   els.configChapterConcurrency.value = config.chapterConcurrency
   els.configChapterDownloadIntervalSec.value = config.chapterDownloadIntervalSec
+  if (els.configJobPollIntervalMs) els.configJobPollIntervalMs.value = config.jobPollIntervalMs
+  jobPollIntervalMs = Number(config.jobPollIntervalMs) || jobPollIntervalMs
+  applyJobPolling()
   els.configImgConcurrency.value = config.imgConcurrency
   els.configImgDownloadIntervalSec.value = config.imgDownloadIntervalSec
   viewerBatchSize = config.viewerImageBatchSize || 5
@@ -4320,6 +4328,7 @@ els.configSave.addEventListener('click', async () => {
         enableFileLogger: els.configEnableFileLogger.checked,
         chapterConcurrency: Number(els.configChapterConcurrency.value),
         chapterDownloadIntervalSec: Number(els.configChapterDownloadIntervalSec.value),
+        jobPollIntervalMs: Number(els.configJobPollIntervalMs.value),
         imgConcurrency: Number(els.configImgConcurrency.value),
         imgDownloadIntervalSec: Number(els.configImgDownloadIntervalSec.value),
         viewerImageBatchSize: Number(els.configViewerImageBatchSize.value),
@@ -4491,6 +4500,7 @@ async function syncJobs() {
 }
 
 const events = new EventSource('/api/events')
+events.addEventListener('open', () => { syncJobs().catch(() => {}) })
 events.addEventListener('job', (event) => {
   const job = JSON.parse(event.data)
   jobs = [job, ...jobs.filter((item) => item.id !== job.id)]
@@ -4530,6 +4540,35 @@ refreshDownloadedState().catch(() => {})
 loadReadingProgress().catch(() => {})
 loadConfig().catch(() => {})
 api('/api/inventory-update').then(renderInventoryUpdate).catch(() => {})
-setInterval(() => {
-  syncJobs().catch(() => {})
-}, 2000)
+// 任务的实时更新本来就走 SSE（/api/events），这里的轮询只是兜底：
+// emit() 没写 id 字段，EventSource 重连拿不到 Last-Event-ID，断线期间的事件补不回来。
+// 侧栏那个 ⟳ 按钮控制开关，状态存 localStorage，刷新页面后保持。
+function jobPollEnabled() {
+  return localStorage.getItem(JOB_POLL_KEY) !== '0'   // 默认开
+}
+
+function applyJobPolling() {
+  if (jobPollTimer) {
+    clearInterval(jobPollTimer)
+    jobPollTimer = null
+  }
+  const enabled = jobPollEnabled()
+  if (els.toggleJobPoll) {
+    els.toggleJobPoll.classList.toggle('active', enabled)
+    els.toggleJobPoll.setAttribute('aria-pressed', enabled ? 'true' : 'false')
+    els.toggleJobPoll.title = enabled ? `任务兜底轮询：开（每 ${Math.round(jobPollIntervalMs / 1000)} 秒）` : '任务兜底轮询：关'
+  }
+  if (!enabled) return
+  jobPollTimer = setInterval(() => {
+    syncJobs().catch(() => {})
+  }, Math.max(1000, jobPollIntervalMs))
+}
+
+els.toggleJobPoll?.addEventListener('click', () => {
+  const next = !jobPollEnabled()
+  localStorage.setItem(JOB_POLL_KEY, next ? '1' : '0')
+  applyJobPolling()
+  if (next) syncJobs().catch(() => {})   // 刚打开立刻对齐一次，不干等一个周期
+})
+
+applyJobPolling()
