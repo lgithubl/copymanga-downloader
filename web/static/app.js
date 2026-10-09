@@ -2885,6 +2885,10 @@ function makeSubtitleOverlayInteractive(overlay, frame, getBox = null) {
 }
 
 function renderStreamMedia(reader, options = {}) {
+  // 切章会整个重建播放器，而 currentStreamCleanup 里要清沉浸类（那是给
+  // 「离开播放器」准备的）。沉浸是当前的观看模式，不该被重建顺带清掉，
+  // 先记下来，新播放器建好后恢复。
+  const wasImmersive = els.mediaViewerView.classList.contains('stream-page-fullscreen')
   if (currentStreamCleanup) {
     currentStreamCleanup()
     currentStreamCleanup = null
@@ -3220,6 +3224,30 @@ function renderStreamMedia(reader, options = {}) {
     playbackWarning.classList.remove('hidden')
     playbackWarning.textContent = `播放失败${suffix}：浏览器不支持该编码，或媒体文件无法被当前播放器解码`
   })
+  // 沉浸态会把页面头部整行压成 0（.stream-page-fullscreen > section 单行 +
+  // .chapter-head display:none，都是既有规则），返回/上一章/下一章 就都够不着了。
+  // 这里在控制条里补三个，行为一律委托给原来的按钮，不另起一套逻辑。
+  const backBtn = document.createElement('button')
+  backBtn.type = 'button'
+  backBtn.className = 'stream-icon-button stream-back'
+  backBtn.title = '退出全屏并返回'
+  backBtn.textContent = '←'
+  const prevChapter = document.createElement('button')
+  prevChapter.type = 'button'
+  prevChapter.className = 'stream-icon-button stream-chapter-prev'
+  prevChapter.title = '上一章'
+  // ⏮/⏭ 实测会渲染成缺字形方框，改用中文文本（和同条里的 音/字±/重播/连播 一致）
+  prevChapter.textContent = '上章'
+  prevChapter.disabled = !reader.navigation?.prev
+  const nextChapter = document.createElement('button')
+  nextChapter.type = 'button'
+  nextChapter.className = 'stream-icon-button stream-chapter-next'
+  nextChapter.title = '下一章'
+  nextChapter.textContent = '下章'
+  nextChapter.disabled = !reader.navigation?.next
+  prevChapter.addEventListener('click', () => els.mediaReaderPrev?.click())
+  nextChapter.addEventListener('click', () => els.mediaReaderNext?.click())
+
   // 「更多」面板：日常观看用不到的控件收进来，否则 15 个控件会折成两行、
   // 浮在画面上要占掉 20% 的高度。
   const more = document.createElement('button')
@@ -3244,7 +3272,8 @@ function renderStreamMedia(reader, options = {}) {
 
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(play, currentTime, progress, duration, mute, volume, more, fullscreen)
+  controls.append(backBtn, prevChapter, play, nextChapter, currentTime, progress, duration,
+    mute, volume, more, fullscreen)
 
   // —— 页面全屏下的「贴边唤出」——
   // 鼠标贴近上/下边缘才显示顶栏和控制条，移开后延时收起。
@@ -3296,6 +3325,12 @@ function renderStreamMedia(reader, options = {}) {
     else { setChromeVisible(false); setMoreOpen(false) }
   }
   fullscreen.addEventListener('click', () => setImmersive(!inFullscreen()))
+  // 返回 = 退出全屏 + 回上一个视图。顺序不能反：showView 之后再清沉浸类，
+  // 媒体库页会短暂地顶着 fixed 顶栏和满屏类渲染一帧。
+  backBtn.addEventListener('click', () => {
+    setImmersive(false)
+    els.mediaReaderBack?.click()
+  })
   // 沉浸态下「返回」按钮在 chapter-head 里被隐藏了，没有 Esc 就只能靠
   // 自动隐藏的 ⛶ 退出，手感很差
   const onKeyDown = (event) => {
@@ -3318,6 +3353,9 @@ function renderStreamMedia(reader, options = {}) {
   frame.append(player, subtitleOverlay, morePanel, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
+  // 只在播放视图仍然在前台时恢复：后台续播（用户已经切去媒体库）时
+  // 强行加沉浸类会让库页顶着满屏样式和 fixed 顶栏渲染。
+  if (wasImmersive && els.mediaViewerView.classList.contains('active')) setImmersive(true)
   setTimeout(attemptAutoPlay, 0)
   currentStreamCleanup = () => {
     document.removeEventListener('mousemove', onPointerMove)
