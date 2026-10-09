@@ -2787,12 +2787,32 @@ function normalizeSubtitleOverlaySettings(value = {}) {
   }
 }
 
-function applySubtitleOverlaySettings(overlay, settings = loadSubtitleOverlaySettings()) {
+// 字幕的参照物应该是「画面」而不是 frame：frame 常有黑边（普通态
+// 1280x546 的 frame 里画面只有 971x546），同一个百分比落在画面上的
+// 位置会随黑边宽度变化，全屏后字幕就横向漂了。
+function subtitlePictureBox(frame, media) {
+  const rect = frame?.getBoundingClientRect()
+  if (!rect?.width || !rect?.height) return null
+  const ar = (media?.videoWidth || 0) / (media?.videoHeight || 0)
+  if (!Number.isFinite(ar) || ar <= 0) return { left: 0, top: 0, width: rect.width, height: rect.height }
+  const wide = rect.width / rect.height > ar
+  const width = wide ? rect.height * ar : rect.width
+  const height = wide ? rect.height : rect.width / ar
+  return { left: (rect.width - width) / 2, top: (rect.height - height) / 2, width, height }
+}
+
+// 24px 是按原先普通态画面高 546px 定的，折合 4.4%；换算成比例后
+// 字号才会跟着画面一起放大，否则全屏时相对画面会小掉约 39%。
+const SUBTITLE_HEIGHT_RATIO = 24 / 546
+
+function applySubtitleOverlaySettings(overlay, settings = loadSubtitleOverlaySettings(), box = null) {
   const next = normalizeSubtitleOverlaySettings(settings)
   overlay.style.setProperty('--subtitle-scale', String(next.scale))
+  if (box) overlay.style.setProperty('--subtitle-base', `${box.height * SUBTITLE_HEIGHT_RATIO}px`)
   if (next.x !== null && next.y !== null) {
-    overlay.style.left = `${next.x}%`
-    overlay.style.top = `${next.y}%`
+    // 有画面盒就按画面定位（px），否则退回相对 frame 的百分比（VR 走这条）
+    overlay.style.left = box ? `${box.left + (box.width * next.x) / 100}px` : `${next.x}%`
+    overlay.style.top = box ? `${box.top + (box.height * next.y) / 100}px` : `${next.y}%`
     overlay.style.right = 'auto'
     overlay.style.bottom = 'auto'
     overlay.style.transform = 'translate(-50%, -50%)'
@@ -2807,19 +2827,27 @@ function adjustSubtitleOverlayScale(delta, overlays = []) {
   for (const overlay of overlays.filter(Boolean)) applySubtitleOverlaySettings(overlay, next)
 }
 
-function makeSubtitleOverlayInteractive(overlay, frame) {
-  let settings = applySubtitleOverlaySettings(overlay)
+function makeSubtitleOverlayInteractive(overlay, frame, getBox = null) {
+  const box = () => (getBox ? getBox() : null)
+  let settings = applySubtitleOverlaySettings(overlay, loadSubtitleOverlaySettings(), box())
   let dragging = false
   let pointerId = null
   const moveTo = (clientX, clientY) => {
     const rect = frame.getBoundingClientRect()
     if (!rect.width || !rect.height) return
+    // 拖拽的落点也要换算成画面坐标，否则存进去的百分比和回放时的参照物不一致
+    const pic = box()
+    const originX = rect.left + (pic ? pic.left : 0)
+    const originY = rect.top + (pic ? pic.top : 0)
+    const spanX = pic ? pic.width : rect.width
+    const spanY = pic ? pic.height : rect.height
+    if (!spanX || !spanY) return
     settings = normalizeSubtitleOverlaySettings({
       ...settings,
-      x: ((clientX - rect.left) / rect.width) * 100,
-      y: ((clientY - rect.top) / rect.height) * 100,
+      x: ((clientX - originX) / spanX) * 100,
+      y: ((clientY - originY) / spanY) * 100,
     })
-    applySubtitleOverlaySettings(overlay, settings)
+    applySubtitleOverlaySettings(overlay, settings, box())
   }
   overlay.addEventListener('pointerdown', (event) => {
     if (event.button !== undefined && event.button !== 0) return
@@ -2849,8 +2877,11 @@ function makeSubtitleOverlayInteractive(overlay, frame) {
     event.preventDefault()
     settings = normalizeSubtitleOverlaySettings({ ...settings, scale: settings.scale + (event.deltaY < 0 ? 0.08 : -0.08) })
     saveSubtitleOverlaySettings(settings)
-    applySubtitleOverlaySettings(overlay, settings)
+    applySubtitleOverlaySettings(overlay, settings, box())
   }, { passive: false })
+  // 画面尺寸变了（进出沉浸、窗口缩放、视频元数据到位）就重算一次，
+  // 位置和字号都是按画面比例存的，不重算会停在旧尺寸上
+  return () => applySubtitleOverlaySettings(overlay, settings, box())
 }
 
 function renderStreamMedia(reader, options = {}) {
@@ -2925,7 +2956,13 @@ function renderStreamMedia(reader, options = {}) {
   }
   const subtitleOverlay = document.createElement('div')
   subtitleOverlay.className = 'stream-subtitle-overlay hidden'
-  makeSubtitleOverlayInteractive(subtitleOverlay, frame)
+  const syncSubtitleLayout = makeSubtitleOverlayInteractive(subtitleOverlay, frame,
+    () => subtitlePictureBox(frame, player))
+  // frame 尺寸一变（进出沉浸、窗口缩放）就重算字幕的位置和字号
+  const subtitleResizeObserver = new ResizeObserver(() => syncSubtitleLayout())
+  subtitleResizeObserver.observe(frame)
+  // 元数据到位前拿不到 videoWidth，算不出画面盒，到位后补一次
+  player.addEventListener('loadedmetadata', () => syncSubtitleLayout())
   const selectedSubtitleIndexes = () => {
     const values = [subtitleSelect.value, secondarySubtitleSelect.value]
       .filter((value) => value !== '')
@@ -3285,6 +3322,7 @@ function renderStreamMedia(reader, options = {}) {
   currentStreamCleanup = () => {
     document.removeEventListener('mousemove', onPointerMove)
     document.removeEventListener('keydown', onKeyDown)
+    subtitleResizeObserver.disconnect()
     clearTimeout(chromeTimer)
     els.mediaViewerView.classList.remove('stream-page-fullscreen')
     els.app.classList.remove('stream-immersive', 'stream-chrome-visible')

@@ -2343,7 +2343,7 @@ h2 {
   bottom: 120px;
   color: #ffffff;
   cursor: move;
-  font-size: calc(24px * var(--subtitle-scale, 1));
+  font-size: calc(var(--subtitle-base, 24px) * var(--subtitle-scale, 1));
   font-weight: 700;
   left: 8%;
   line-height: 1.35;
@@ -2366,7 +2366,7 @@ h2 {
   bottom: 120px;
   color: #ffffff;
   cursor: move;
-  font-size: calc(24px * var(--subtitle-scale, 1));
+  font-size: calc(var(--subtitle-base, 24px) * var(--subtitle-scale, 1));
   font-weight: 800;
   left: 8%;
   line-height: 1.35;
