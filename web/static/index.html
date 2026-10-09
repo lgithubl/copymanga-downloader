@@ -310,6 +310,11 @@
                       <option value="100">100</option>
                       <option value="500">500</option>
                     </select>
+                    <select id="library-series-subtitle" title="按系列字幕筛选">
+                      <option value="any">系列字幕：全部</option>
+                      <option value="has">系列有字幕</option>
+                      <option value="none">系列无字幕</option>
+                    </select>
                     <select id="library-sort" title="排序">
                       <option value="imported_desc">导入日期倒序</option>
                       <option value="imported_asc">导入日期正序</option>
@@ -604,6 +609,16 @@
         </div>
       </section>
     </main>
+    <div id="series-modal" class="series-modal hidden">
+      <div class="series-modal-backdrop"></div>
+      <div class="series-modal-panel" role="dialog" aria-modal="true" aria-labelledby="series-modal-title">
+        <div class="series-modal-head">
+          <strong id="series-modal-title">同系列</strong>
+          <button id="series-modal-close" class="secondary" type="button">关闭</button>
+        </div>
+        <div id="series-modal-list" class="series-modal-list"></div>
+      </div>
+    </div>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

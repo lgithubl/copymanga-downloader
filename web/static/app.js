@@ -77,6 +77,11 @@ const els = {
   taskList: document.querySelector('#task-list'),
   libraryType: document.querySelector('#library-type'),
   libraryTagSearch: document.querySelector('#library-tag-search'),
+  librarySeriesSubtitle: document.querySelector('#library-series-subtitle'),
+  seriesModal: document.querySelector('#series-modal'),
+  seriesModalTitle: document.querySelector('#series-modal-title'),
+  seriesModalList: document.querySelector('#series-modal-list'),
+  seriesModalClose: document.querySelector('#series-modal-close'),
   libraryTagClear: document.querySelector('#library-tag-clear'),
   libraryFirst: document.querySelector('#library-first'),
   libraryPrev: document.querySelector('#library-prev'),
@@ -1345,6 +1350,7 @@ function restoreLibraryState() {
   const sort = String(state.sort || '')
   if (els.librarySort && [...els.librarySort.options].some((option) => option.value === sort)) els.librarySort.value = sort
   if (els.libraryTagSearch) els.libraryTagSearch.value = String(state.tag || '')
+  if (els.librarySeriesSubtitle) els.librarySeriesSubtitle.value = String(state.seriesSubtitle || 'any')
   libraryPage = Math.max(1, Math.floor(Number(state.page || 1)))
 }
 
@@ -1354,6 +1360,7 @@ function saveLibraryState() {
     limit: Number(els.libraryLimit?.value || 10),
     sort: els.librarySort?.value || 'imported_desc',
     tag: els.libraryTagSearch?.value || '',
+    seriesSubtitle: els.librarySeriesSubtitle?.value || 'any',
     page: Math.max(1, Math.floor(Number(libraryPage || 1))),
   }
   localStorage.setItem(LIBRARY_STATE_KEY, JSON.stringify(state))
@@ -1372,6 +1379,8 @@ async function loadLibraryItems() {
       sort,
     })
     if (els.libraryTagSearch.value.trim()) params.set('tag', els.libraryTagSearch.value.trim())
+    const seriesSubtitle = els.librarySeriesSubtitle?.value || 'any'
+    if (seriesSubtitle !== 'any') params.set('seriesSubtitle', seriesSubtitle)
     const historyParams = new URLSearchParams({ type, limit: '1000' })
     const [payload, histories] = await Promise.all([
       api(`/api/library/items?${params}`),
@@ -1936,6 +1945,49 @@ async function saveMediaImportProfileConfig(value) {
   renderMediaImportProfileConfig()
 }
 
+// 只在成员 >1 时出现。紫色「字」角标表示本项无字幕但系列里有——
+// 这是唯一值得单独提示的差异，其余情况卡片上的 字幕v1 tag 已经说明了。
+function renderSeriesBadges(item) {
+  const series = item.series
+  if (!series || series.count < 2) return ''
+  const elsewhere = series.hasSubtitle && !series.selfHasSubtitle
+  const dotTitle = elsewhere ? `同系列 ${series.count} 个，本项无字幕但系列中有` : `同系列 ${series.count} 个`
+  return `
+    <button class="library-series-dot${elsewhere ? ' elsewhere' : ''}" type="button" title="${escapeHtml(dotTitle)}">${series.count}</button>
+    <button class="library-series-go" type="button" title="快速进入系列中优先级最高的一项">进入</button>
+  `
+}
+
+function openSeriesModal(item) {
+  const series = item.series
+  if (!series || !els.seriesModal) return
+  els.seriesModalTitle.textContent = `同系列 ${series.count} 个`
+  els.seriesModalList.innerHTML = ''
+  for (const member of series.members || []) {
+    const current = member.itemId === item.itemId
+    const row = document.createElement('button')
+    row.type = 'button'
+    row.className = `series-modal-row${current ? ' current' : ''}`
+    row.innerHTML = `
+      ${member.cover ? `<img src="${escapeHtml(member.cover)}" alt="" loading="lazy" />` : '<div class="series-modal-nocover"></div>'}
+      <div class="series-modal-title" title="${escapeHtml(member.title || member.itemId)}">${escapeHtml(member.title || member.itemId)}</div>
+      <span class="series-modal-sub ${member.hasSubtitle ? 'yes' : 'no'}">${member.hasSubtitle ? '字幕 ✓' : '字幕 ✗'}</span>
+    `
+    if (!current) {
+      row.addEventListener('click', () => {
+        closeSeriesModal()
+        selectLibraryItem(member.type || item.type, member.itemId)
+      })
+    }
+    els.seriesModalList.append(row)
+  }
+  els.seriesModal.classList.remove('hidden')
+}
+
+function closeSeriesModal() {
+  els.seriesModal?.classList.add('hidden')
+}
+
 function renderLibraryItems() {
   els.libraryItems.innerHTML = ''
   libraryPage = Math.max(1, Math.min(libraryTotalPages, libraryPage))
@@ -1962,7 +2014,10 @@ function renderLibraryItems() {
       <div class="card-body">
         <div class="library-card-top">
           <div class="card-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
-          <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
+          <div class="library-card-badges">
+            <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
+            ${renderSeriesBadges(item)}
+          </div>
         </div>
         <div class="library-card-meta" title="${escapeHtml(summary.primary)}">${escapeHtml(summary.primary)}</div>
         <div class="library-card-meta" title="${escapeHtml(summary.secondary)}">${escapeHtml(summary.secondary)}</div>
@@ -1972,6 +2027,15 @@ function renderLibraryItems() {
       </div>
     `
     card.addEventListener('click', () => selectLibraryItem(item.type, item.itemId))
+    card.querySelector('.library-series-dot')?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      openSeriesModal(item)
+    })
+    card.querySelector('.library-series-go')?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      const target = item.series?.primaryItemId
+      if (target) selectLibraryItem(item.type, target)
+    })
     card.querySelector('.library-continue')?.addEventListener('click', (event) => {
       event.stopPropagation()
       continueLibraryItem(item).catch((error) => alert(error.message))
@@ -3806,6 +3870,15 @@ els.libraryLimit?.addEventListener('change', () => {
 els.librarySort?.addEventListener('change', () => {
   libraryPage = 1
   loadLibraryItems().catch((error) => alert(error.message))
+})
+els.librarySeriesSubtitle?.addEventListener('change', () => {
+  libraryPage = 1
+  loadLibraryItems().catch((error) => alert(error.message))
+})
+els.seriesModalClose?.addEventListener('click', closeSeriesModal)
+els.seriesModal?.querySelector('.series-modal-backdrop')?.addEventListener('click', closeSeriesModal)
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !els.seriesModal?.classList.contains('hidden')) closeSeriesModal()
 })
 els.libraryRunTagScripts.addEventListener('click', async () => {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
