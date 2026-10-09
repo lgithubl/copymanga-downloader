@@ -1592,6 +1592,8 @@ function renderTagManager() {
     const textarea = card.querySelector('textarea')
     card.querySelector('.tag-script-config-toggle')?.addEventListener('click', () => {
       editor.hidden = !editor.hidden
+      // 脚本框是定高滚动区，展开的面板常落在框外，不滚一下看不见
+      if (!editor.hidden) editor.scrollIntoView({ block: 'nearest' })
     })
     card.querySelector('.tag-script-config-cancel')?.addEventListener('click', () => {
       textarea.value = JSON.stringify(script.userOptions || {}, null, 2)

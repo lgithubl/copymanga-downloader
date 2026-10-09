@@ -839,6 +839,13 @@ h2 {
   padding: 0 10px;
 }
 
+/* .icon-button 之前没有任何 .active 样式，开关点了看不出变化。
+   #app button.secondary 是 (1,1,1)，所以这里也要带 #app 才生效。 */
+#app .icon-button.active {
+  background: var(--site-primary);
+  color: #ffffff;
+}
+
 .tag-manager-view {
   min-height: 0;
   /* 页面整体不滚，交给下面四个盒子各自滚（跟 .workspace 一个路子） */
@@ -995,20 +1002,27 @@ h2 {
   overflow: auto;
 }
 
-.tag-manager-card {
+/* 必须带 .card 前缀：.card 定义在后面且同特异性，否则它的
+   "76px 封面列 + 内容列" 会盖掉这里的单列，card-body 被塞进 76px 里，
+   标题竖排、配置按钮被压成 0x0 */
+.card.tag-manager-card {
   grid-template-columns: minmax(0, 1fr);
-  min-height: 112px;
+  /* 必须显式 auto：通用 .card 有 min-height: 116px，而卡片是 grid 容器，
+     定高会把内容行压住 —— body 实际要 135px，溢出到卡外被下一行卡片盖住，
+     「配置」按钮就点不到了。改 auto 后卡片长到 161px，溢出归零。 */
+  min-height: auto;
   align-content: start;
   cursor: pointer;
   padding: 12px;
   width: 100%;
-  overflow: hidden;
 }
 
 .tag-manager-card .card-body {
   display: grid;
   gap: 7px;
-  min-height: 0;
+  /* 不能是 0：那样 body 对网格行的最小贡献为 0，卡片永远停在 min-height，
+     body 只好把文字行压成 5px（展开配置后甚至压到 0），标题就看不见了 */
+  min-height: auto;
 }
 
 .tag-manager-card .card-title {
