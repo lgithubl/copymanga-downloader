@@ -157,6 +157,7 @@ const els = {
   mediaReaderPrev: document.querySelector('#media-reader-prev'),
   mediaSectionSelect: document.querySelector('#media-section-select'),
   mediaReaderTheme: document.querySelector('#media-reader-theme'),
+  mediaWidthAdjust: document.querySelector('#media-width-adjust'),
   mediaPagePrev: document.querySelector('#media-page-prev'),
   mediaPageNext: document.querySelector('#media-page-next'),
   mediaReaderNext: document.querySelector('#media-reader-next'),
@@ -2756,6 +2757,7 @@ function normalizeEpubGraphics(root) {
 }
 
 function renderMediaHtml(reader) {
+  exitWidthAdjust({ apply: false })   // 换章节时参考线不能留着
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-html ${themeClass}`
   const pages = document.createElement('div')
@@ -3885,19 +3887,66 @@ function mediaReaderTypeLabel(reader) {
   return '文本'
 }
 
-function layoutMediaPages() {
+// 阅读宽度存本地而不是服务端配置：这个值该跟屏幕走，
+// 台式机和笔记本共用一个服务端值会互相打架。
+const EPUB_WIDTH_KEY = 'copymanga.epubPageWidth'
+
+function loadEpubPageWidth() {
+  const raw = Number(localStorage.getItem(EPUB_WIDTH_KEY))
+  return Number.isFinite(raw) && raw >= 320 ? raw : 0   // 0 = 不限制，铺满
+}
+
+function saveEpubPageWidth(width) {
+  if (width > 0) localStorage.setItem(EPUB_WIDTH_KEY, String(Math.round(width)))
+  else localStorage.removeItem(EPUB_WIDTH_KEY)
+}
+
+// 重排会让同一个页码指向不同内容。重排前记下视口左上角那个元素，
+// 重排后滚回它所在的页，读者才不会"调个宽度就不知道跳哪去了"。
+function mediaPageAnchor() {
+  const content = els.mediaReaderContent
+  const rect = content.getBoundingClientRect()
+  for (let dy = 24; dy < Math.min(rect.height, 400); dy += 40) {
+    for (let dx = 24; dx < Math.min(rect.width, 300); dx += 40) {
+      const el = document.elementFromPoint(rect.left + dx, rect.top + dy)
+      if (el && el !== content && content.contains(el)) return el
+    }
+  }
+  return null
+}
+
+function restoreMediaPageAnchor(anchor) {
+  if (!anchor || !anchor.isConnected) return false
+  const content = els.mediaReaderContent
+  // 锚点相对内容起点的横向偏移，换算成页码
+  const offset = content.scrollLeft + (anchor.getBoundingClientRect().left - content.getBoundingClientRect().left)
+  const page = Math.round(offset / Math.max(1, mediaPageStep))
+  mediaPageIndex = Math.max(0, Math.min(page, mediaPageCount - 1))
+  content.scrollLeft = mediaPageScrollLeft(mediaPageIndex)
+  return true
+}
+
+function layoutMediaPages({ anchor = null } = {}) {
   const content = els.mediaReaderContent
   const pages = content.querySelector('.media-html-pages')
   if (!pages) return
   const gap = Math.max(24, Math.min(48, Math.round(content.clientWidth * 0.06)))
-  const pageWidth = Math.max(320, content.clientWidth - 56)
+  const available = Math.max(320, content.clientWidth - 56)
+  const limit = loadEpubPageWidth()
+  const pageWidth = limit > 0 ? Math.max(320, Math.min(limit, available)) : available
+  // 内边距要把多列内容盒恰好压到 pageWidth，否则 column-width 只是"最小建议值"，
+  // 浏览器会在剩余空间里并排塞第二列，变成"双页跨页却一次只翻一页"。
+  const padX = Math.max(0, Math.round((content.clientWidth - pageWidth) / 2))
   pages.style.setProperty('--media-page-width', `${pageWidth}px`)
   pages.style.setProperty('--media-page-gap', `${gap}px`)
+  pages.style.setProperty('--media-page-pad-x', `${padX}px`)
   mediaPageStep = pageWidth + gap
   mediaMaxScrollLeft = Math.max(0, content.scrollWidth - content.clientWidth)
   mediaPageCount = mediaMaxScrollLeft <= 0 ? 1 : Math.ceil(mediaMaxScrollLeft / mediaPageStep) + 1
-  mediaPageIndex = Math.max(0, Math.min(mediaPageIndex, mediaPageCount - 1))
-  content.scrollLeft = mediaPageScrollLeft(mediaPageIndex)
+  if (!restoreMediaPageAnchor(anchor)) {
+    mediaPageIndex = Math.max(0, Math.min(mediaPageIndex, mediaPageCount - 1))
+    content.scrollLeft = mediaPageScrollLeft(mediaPageIndex)
+  }
   updateMediaPageControls()
 }
 
@@ -3913,12 +3962,125 @@ function mediaPageScrollLeft(pageIndex) {
   return Math.max(0, Math.min(mediaMaxScrollLeft, pageIndex * mediaPageStep))
 }
 
+// 拖动调宽度：全程只移动参考线，一个字都不重排。
+// 改 --media-page-width 会让浏览器立刻重排多列，拖动时每帧都重排整章会卡，
+// 所以宽度只在"确认退出"那一刻写入，整本只重排一次。
+let widthAdjustCleanup = null
+
+function exitWidthAdjust({ apply = false, width = 0 } = {}) {
+  if (!widthAdjustCleanup) return
+  const finish = widthAdjustCleanup
+  widthAdjustCleanup = null
+  finish(apply, width)
+}
+
+function toggleWidthAdjust() {
+  if (widthAdjustCleanup) { exitWidthAdjust({ apply: false }); return }
+  const content = els.mediaReaderContent
+  if (!content.querySelector('.media-html-pages')) return
+
+  const layer = document.createElement('div')
+  layer.className = 'media-width-layer'
+  const left = document.createElement('div')
+  left.className = 'media-width-edge media-width-edge-left'
+  const right = document.createElement('div')
+  right.className = 'media-width-edge media-width-edge-right'
+  const label = document.createElement('div')
+  label.className = 'media-width-label'
+  layer.append(left, right, label)
+  document.body.append(layer)
+
+  const available = Math.max(320, content.clientWidth - 56)
+  const limit = loadEpubPageWidth()
+  let width = limit > 0 ? Math.min(limit, available) : available
+
+  const paint = () => {
+    // 参考线层必须用 fixed 按容器的屏幕矩形定位：.media-reader-content 是横向
+    // 滚动容器，absolute 相对的是 padding box，不随 scrollLeft 走 —— 翻过页
+    // 之后（scrollLeft 几千）参考线会被甩出视口左边。
+    const rect = content.getBoundingClientRect()
+    layer.style.left = `${rect.left}px`
+    layer.style.top = `${rect.top}px`
+    layer.style.width = `${rect.width}px`
+    layer.style.height = `${rect.height}px`
+    const pad = Math.max(0, (rect.width - width) / 2)
+    left.style.left = `${pad}px`
+    right.style.left = `${pad + width}px`
+    label.textContent = `${Math.round(width)} px${width >= available ? '（铺满）' : ''}`
+  }
+  paint()
+
+  // 列是居中的，必须对称：拖右边时左边同步内移，否则确认后文字重新居中，
+  // 和拖的时候看到的位置对不上。
+  let dragging = null
+  let moved = false
+  const onDown = (event, side) => {
+    dragging = side
+    moved = false
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const onMove = (event) => {
+    if (!dragging) return
+    const rect = content.getBoundingClientRect()
+    const centre = rect.left + rect.width / 2
+    const half = dragging === 'left' ? centre - event.clientX : event.clientX - centre
+    width = Math.max(320, Math.min(available, Math.round(half * 2)))
+    moved = true
+    paint()
+  }
+  const onUp = () => { dragging = null }
+  left.addEventListener('pointerdown', (e) => onDown(e, 'left'))
+  right.addEventListener('pointerdown', (e) => onDown(e, 'right'))
+  document.addEventListener('pointermove', onMove)
+  document.addEventListener('pointerup', onUp)
+  window.addEventListener('resize', paint)
+  const onKey = (event) => {
+    if (event.key !== 'Escape' && event.key !== 'Enter') return
+    // 焦点还在「宽度」按钮上，Enter 会先走到这里、再触发按钮自身的默认激活，
+    // 结果刚退出就又被重新打开。必须拦掉默认行为。
+    event.preventDefault()
+    if (event.key === 'Escape') exitWidthAdjust({ apply: false })
+    else exitWidthAdjust({ apply: true, width })
+  }
+  document.addEventListener('keydown', onKey)
+  // 点参考线以外的空白 = 确认。必须排掉拖动：pointerdown 在参考线上、
+  // pointerup 落在层背景上时，浏览器会在共同祖先（layer）上合成一次 click，
+  // target 同样是 layer —— 不防的话每次拖完松手都会自动确认，Esc 没机会取消。
+  layer.addEventListener('click', (event) => {
+    if (event.target !== layer || moved) { moved = false; return }
+    exitWidthAdjust({ apply: true, width })
+  })
+
+  els.mediaWidthAdjust?.blur()
+  els.mediaWidthAdjust?.classList.add('active')
+  els.mediaReaderContent.classList.add('width-adjusting')
+
+  widthAdjustCleanup = (apply, finalWidth) => {
+    document.removeEventListener('pointermove', onMove)
+    document.removeEventListener('pointerup', onUp)
+    window.removeEventListener('resize', paint)
+    document.removeEventListener('keydown', onKey)
+    layer.remove()
+    els.mediaWidthAdjust?.classList.remove('active')
+    els.mediaReaderContent.classList.remove('width-adjusting')
+    if (!apply) return
+    // 到这一刻才真正改宽度并重排，整本只重排一次
+    const anchor = mediaPageAnchor()
+    saveEpubPageWidth(finalWidth >= available ? 0 : finalWidth)
+    layoutMediaPages({ anchor })
+    scheduleLibraryProgressSave()
+  }
+}
+
 function mediaScrollRatio() {
   if (currentMediaReader?.type !== 'html') return currentMediaReader?.type === 'images' ? 1 : 0.1
   return mediaPageCount <= 1 ? 1 : Math.max(0, Math.min(1, mediaPageIndex / (mediaPageCount - 1)))
 }
 
 function updateMediaPageControls() {
+  // 只有 epub(html) 才有可调的阅读宽度
+  if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = currentMediaReader?.type !== 'html'
   const isHtml = currentMediaReader?.type === 'html'
   els.mediaPagePrev.disabled = !isHtml || mediaPageIndex <= 0
   els.mediaPageNext.disabled = !isHtml || (mediaPageIndex >= mediaPageCount - 1 && !currentMediaReader?.sectionNavigation?.next && !currentMediaReader?.navigation?.next)
@@ -4388,6 +4550,7 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     setLoading(els.mediaImportSubmit, false)
   }
 })
+els.mediaWidthAdjust?.addEventListener('click', toggleWidthAdjust)
 els.mediaReaderBack.addEventListener('click', () => {
   showView(mediaReturnView || 'library-view')
 })
