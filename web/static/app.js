@@ -749,6 +749,7 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
   els.viewerImages.className = 'viewer-grid'
   els.viewerImages.innerHTML = ''
   els.viewerImages.classList.remove('long-strip-viewer')
+  retireImageBatch(viewerBatch)   // 上一章的兜底定时器不能再往这个容器里塞图
   viewerBatch = createImageBatch({
     container: els.viewerImages,
     onMeta: (rendered, total) => {
@@ -840,14 +841,16 @@ function applyReadingColors(comicPathWord = '', chapterUuid = '') {
 // 图片分批渲染：图片浏览 tab（老模式）和媒体库图集（新模式）共用同一套。
 // container 是放 img 的容器，onMeta 负责把「已渲染/总数」写到各自的信息栏。
 function createImageBatch({ container, onMeta, altFor }) {
-  return { container, onMeta, altFor, images: [], rendered: 0, sentinel: null, active: null }
+  return { container, onMeta, altFor, images: [], rendered: 0, sentinel: null, active: null, retired: false }
 }
 
-function resetImageBatch(batch) {
+// 换章/换内容类型时必须退役旧批次：每张图都挂着 15s 兜底定时器（视口外的
+// lazy 图不会触发 load，只能靠它推进度），闭包抓着旧 batch。不退役的话这些
+// 定时器到点会继续续批、继续调 onMeta —— 实测 EPUB 正文页顶上会出现
+// 「图集测试 · 25/30 张图」。
+function retireImageBatch(batch) {
   if (!batch) return
-  batch.images = []
-  batch.rendered = 0
-  batch.sentinel = null
+  batch.retired = true
   batch.active = null
 }
 
@@ -856,7 +859,7 @@ function currentViewerBatchSize() {
 }
 
 function appendImageBatch(batch) {
-  if (!batch?.images.length) return
+  if (!batch || batch.retired || !batch.images.length) return
   if (batch.sentinel) {
     batch.sentinel.remove()
     batch.sentinel = null
@@ -2701,6 +2704,8 @@ function renderMediaReader(reader, options = {}) {
   const sectionText = reader.section ? ` · ${reader.section.index + 1}/${reader.sections?.length || 1}` : ''
   const typeLabel = mediaReaderTypeLabel(reader)
   els.mediaReaderMeta.textContent = `${reader.item?.title || currentLibraryItem?.title || ''} · ${index + 1}/${currentLibraryUnits.length}${sectionText} · ${typeLabel}`
+  // 上一章的分批批次到这里就作废了，不然它的兜底定时器会继续往信息栏写字
+  retireImageBatch(galleryBatch)
   if (reader.type === 'html') {
     renderMediaHtml(reader)
   } else if (reader.type === 'images') {
