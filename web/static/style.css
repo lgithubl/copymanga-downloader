@@ -2831,9 +2831,16 @@ h2 {
   background: #b91c1c;
 }
 
-/* 本项无字幕但系列里有——唯一值得提示的差异场景 */
+/* 本项无字幕但系列里有——唯一值得提示的差异场景。
+   配色与左邻的 .library-type-pill 一致，紫色太跳。 */
 .library-series-dot.elsewhere {
-  background: #7c3aed;
+  background: #e0f2fe;
+  border: 1px solid #7dd3fc;
+  color: #075985;
+}
+
+.library-series-dot.elsewhere:hover {
+  background: #bae6fd;
 }
 
 .library-series-dot.elsewhere::after {
