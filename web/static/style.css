@@ -695,6 +695,13 @@ h2 {
   line-height: 1.35;
 }
 
+.history-card .card-title,
+.history-card .history-last {
+  /* 无空格的长串（拉丁文件名之类）断不了行，会把 card-body 的 grid 列撑宽，
+     整列内容越过卡片盖到隔壁卡上，连 tag 都会点错 */
+  overflow-wrap: anywhere;
+}
+
 .library-continue {
   justify-self: start;
   min-height: 30px;
@@ -799,7 +806,9 @@ h2 {
   align-items: start;
   gap: 10px;
   grid-template-columns: 96px minmax(0, 1fr);
-  min-height: 0;
+  /* 不能是 0：外层 .cards 的行高由同行其它卡决定，长标题的卡会被压扁到行高，
+     内容直接掉出卡片底部 */
+  min-height: auto;
 }
 
 .history-card .cover {
