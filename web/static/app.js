@@ -2394,23 +2394,35 @@ function renderLibraryHistory() {
   }
 }
 
-async function recordCurrentLibraryHistory({ flush = false, visit = false, position = null } = {}) {
-  if (!currentLibraryItem || !currentMediaReader?.unit) return null
-  const unit = currentMediaReader.unit
+// 阅读会话归属哪个合集，由会话自己说了算，不能读媒体库页的当前选中项——
+// 否则「A 后台播着、媒体库页点开了 B」时，A 的进度和历史会写到 B 头上。
+function readerOwner(reader = currentMediaReader) {
+  return reader?.item?.itemId ? reader.item : currentLibraryItem
+}
+
+function isLibraryPageOwner(owner) {
+  return Boolean(owner && currentLibraryItem
+    && owner.type === currentLibraryItem.type && owner.itemId === currentLibraryItem.itemId)
+}
+
+async function recordCurrentLibraryHistory({ flush = false, visit = false, position = null, reader = currentMediaReader } = {}) {
+  const owner = readerOwner(reader)
+  if (!owner || !reader?.unit) return null
+  const unit = reader.unit
   const body = {
-    title: currentLibraryItem.title,
-    cover: currentLibraryItem.cover || unit.thumbnail?.coverUrl || unit.cover || '',
-    tags: currentLibraryItem.tags || [],
+    title: owner.title,
+    cover: owner.cover || unit.thumbnail?.coverUrl || unit.cover || '',
+    tags: owner.tags || [],
     lastUnitId: unit.unitId,
     lastUnitTitle: unit.title || unit.fileName || unit.unitId,
-    lastSectionId: currentMediaReader.section?.sectionId || '',
-    lastSectionTitle: currentMediaReader.section?.title || '',
-    position: position || historyPositionForReader(),
+    lastSectionId: reader.section?.sectionId || '',
+    lastSectionTitle: reader.section?.title || '',
+    position: position || historyPositionForReader(reader),
     visit,
     flush,
   }
   const action = flush ? 'history-flush' : 'history'
-  const record = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/${action}`, {
+  const record = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/${action}`, {
     method: 'POST',
     body: JSON.stringify(body),
   })
@@ -2418,8 +2430,8 @@ async function recordCurrentLibraryHistory({ flush = false, visit = false, posit
   return record
 }
 
-function historyPositionForReader() {
-  if (currentMediaReader?.type === 'audio' || currentMediaReader?.type === 'video') {
+function historyPositionForReader(reader = currentMediaReader) {
+  if (reader?.type === 'audio' || reader?.type === 'video') {
     const player = document.querySelector('.stream-player audio, .stream-player video')
     const seconds = Number(player?.currentTime || 0)
     const duration = Number(player?.duration || 0)
@@ -2431,7 +2443,7 @@ function historyPositionForReader() {
     }
   }
   return {
-    kind: currentMediaReader?.type || '',
+    kind: reader?.type || '',
     seconds: 0,
     duration: 0,
     ratio: mediaScrollRatio(),
@@ -2573,11 +2585,17 @@ function parseTagInput(value) {
   return [...new Set(String(value || '').split(/[,\n，#]+/).map((item) => item.trim()).filter(Boolean))]
 }
 
+// options.owner      显式指定这次打开属于哪个合集（后台续播必须传，否则会跟着媒体库页的选中项跑偏）
+// options.background 后台续播：不抢视图、不动媒体库页的状态
 async function openMediaUnit(unitId, sectionId = '', options = {}) {
-  if (!currentLibraryItem?.type || !currentLibraryItem?.itemId || !unitId) return
-  const activeView = els.views.find((view) => view.classList.contains('active'))?.id
-  if (activeView && activeView !== 'media-viewer-view') mediaReturnView = activeView
-  showView('media-viewer-view')
+  const owner = options.owner?.itemId ? options.owner : currentLibraryItem
+  if (!owner?.type || !owner?.itemId || !unitId) return
+  const background = options.background === true
+  if (!background) {
+    const activeView = els.views.find((view) => view.classList.contains('active'))?.id
+    if (activeView && activeView !== 'media-viewer-view') mediaReturnView = activeView
+    showView('media-viewer-view')
+  }
   try {
     currentMediaReader = null
     mediaPageIndex = 0
@@ -2597,17 +2615,22 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     const params = new URLSearchParams()
     if (sectionId) params.set('sectionId', sectionId)
     const suffix = params.toString() ? `?${params}` : ''
-    const reader = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)
+    const reader = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)
     currentMediaReader = reader
     els.mediaReaderTitle.textContent = reader.section?.title || reader.unit?.title || unitId
     els.mediaReaderPrev.disabled = !reader.navigation?.prev
     els.mediaReaderNext.disabled = !reader.navigation?.next
     renderMediaSectionSelect(reader)
     renderMediaReader(reader, options)
-    await saveLibraryProgress(reader.section?.sectionId === currentLibraryProgress?.lastSectionId ? currentLibraryProgress.lastScrollRatio : 0)
-    await recordCurrentLibraryHistory({ visit: true, position: options.position || historyPositionForReader() }).catch(() => {})
-    currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/progress`)
-    renderLibraryUnits()
+    const resumeRatio = isLibraryPageOwner(owner) && reader.section?.sectionId === currentLibraryProgress?.lastSectionId
+      ? currentLibraryProgress.lastScrollRatio
+      : 0
+    await saveLibraryProgress(resumeRatio, reader)
+    await recordCurrentLibraryHistory({ visit: true, reader, position: options.position || historyPositionForReader(reader) }).catch(() => {})
+    if (isLibraryPageOwner(owner)) {
+      currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/progress`)
+      renderLibraryUnits()
+    }
   } catch (error) {
     els.mediaReaderMeta.textContent = `加载失败：${error.message}`
     setMediaViewerMode('empty')
@@ -3117,15 +3140,23 @@ function renderStreamMedia(reader, options = {}) {
     reader.stream?.streamPath || '',
   ].filter(Boolean).join(' · ')
   player.addEventListener('ended', () => {
-    saveLibraryProgress(1).catch(() => {})
-    recordCurrentLibraryHistory({ flush: true, visit: false, position: { kind: 'time', seconds: player.duration || player.currentTime || 0, duration: player.duration || 0, ratio: 1 } }).catch(() => {})
+    // 全部用闭包里的 reader，不读全局：这样 A 在后台播完时，进度/历史/续播
+    // 都还认 A，即使媒体库页此刻已经切到 B。
+    saveLibraryProgress(1, reader).catch(() => {})
+    recordCurrentLibraryHistory({ flush: true, visit: false, reader, position: { kind: 'time', seconds: player.duration || player.currentTime || 0, duration: player.duration || 0, ratio: 1 } }).catch(() => {})
     if (localStorage.getItem('copymanga.mediaAutoReplay') === '1') {
       player.currentTime = 0
       player.play().catch(() => {})
       return
     }
-    if (localStorage.getItem('copymanga.mediaAutoNext') === '1' && currentMediaReader?.navigation?.next) {
-      openMediaUnit(currentMediaReader.navigation.next.unitId)
+    if (localStorage.getItem('copymanga.mediaAutoNext') === '1' && reader.navigation?.next) {
+      // 这个播放器已经被别的会话顶掉了就别再续了（用户点了 B 的章节 = 覆盖）
+      if (currentMediaReader && currentMediaReader !== reader) return
+      const viewerActive = els.mediaViewerView.classList.contains('active')
+      openMediaUnit(reader.navigation.next.unitId, '', {
+        owner: readerOwner(reader),
+        background: !viewerActive,
+      })
     }
   })
   player.addEventListener('error', () => {
@@ -3694,22 +3725,26 @@ function applySiteTheme(theme) {
   return normalized
 }
 
-async function saveLibraryProgress(scrollRatio = mediaScrollRatio()) {
-  if (!currentLibraryItem || !currentMediaReader?.unit) return
-  currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(currentLibraryItem.type)}/${encodeURIComponent(currentLibraryItem.itemId)}/progress`, {
+async function saveLibraryProgress(scrollRatio = mediaScrollRatio(), reader = currentMediaReader) {
+  const owner = readerOwner(reader)
+  if (!owner || !reader?.unit) return
+  const saved = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/progress`, {
     method: 'POST',
     body: JSON.stringify({
-      unitId: currentMediaReader.unit.unitId,
-      title: currentMediaReader.unit.title,
-      sectionId: currentMediaReader.section?.sectionId || '',
-      sectionTitle: currentMediaReader.section?.title || '',
+      unitId: reader.unit.unitId,
+      title: reader.unit.title,
+      sectionId: reader.section?.sectionId || '',
+      sectionTitle: reader.section?.title || '',
       scrollRatio,
     }),
   })
-  if (!(currentMediaReader.type === 'audio' || currentMediaReader.type === 'video')) {
+  // 后台续播写的是别的合集，不能拿它覆盖媒体库页正在用的进度
+  if (isLibraryPageOwner(owner)) currentLibraryProgress = saved
+  if (!(reader.type === 'audio' || reader.type === 'video')) {
     recordCurrentLibraryHistory({
       visit: false,
-      position: { kind: currentMediaReader.type || '', seconds: 0, duration: 0, ratio: scrollRatio },
+      reader,
+      position: { kind: reader.type || '', seconds: 0, duration: 0, ratio: scrollRatio },
     }).catch(() => {})
   }
 }
