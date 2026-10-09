@@ -3073,7 +3073,7 @@ function renderStreamMedia(reader, options = {}) {
   })
   player.addEventListener('play', setPlayState)
   player.addEventListener('pause', setPlayState)
-  player.addEventListener('pause', () => recordCurrentLibraryHistory({ flush: true, visit: false }).catch(() => {}))
+  player.addEventListener('pause', () => recordCurrentLibraryHistory({ flush: true, visit: false, reader }).catch(() => {}))
   player.addEventListener('loadedmetadata', () => {
     setProgress()
     renderStreamSubtitles()
@@ -3089,7 +3089,7 @@ function renderStreamMedia(reader, options = {}) {
     const now = Date.now()
     if (now - lastHistoryAt > 5000) {
       lastHistoryAt = now
-      recordCurrentLibraryHistory({ visit: false }).catch(() => {})
+      recordCurrentLibraryHistory({ visit: false, reader }).catch(() => {})
     }
   })
   player.addEventListener('seeked', renderStreamSubtitles)
@@ -4169,17 +4169,22 @@ els.mediaImportSubmit.addEventListener('click', async () => {
 els.mediaReaderBack.addEventListener('click', () => {
   showView(mediaReturnView || 'library-view')
 })
+// 阅读器导航（上一章/下一章/目录/翻页）作用在当前会话上，归属必须跟着会话走
+function openUnitInSession(unitId, sectionId = '') {
+  return openMediaUnit(unitId, sectionId, { owner: readerOwner(currentMediaReader) })
+}
+
 els.mediaReaderPrev.addEventListener('click', () => {
   const target = currentMediaReader?.navigation?.prev
-  if (target) openMediaUnit(target.unitId)
+  if (target) openUnitInSession(target.unitId)
 })
 els.mediaReaderNext.addEventListener('click', () => {
   const target = currentMediaReader?.navigation?.next
-  if (target) openMediaUnit(target.unitId)
+  if (target) openUnitInSession(target.unitId)
 })
 els.mediaSectionSelect.addEventListener('change', () => {
   if (currentMediaReader?.unit?.unitId && els.mediaSectionSelect.value) {
-    openMediaUnit(currentMediaReader.unit.unitId, els.mediaSectionSelect.value)
+    openUnitInSession(currentMediaReader.unit.unitId, els.mediaSectionSelect.value)
   }
 })
 els.mediaReaderTheme.addEventListener('change', () => {
@@ -4220,11 +4225,11 @@ els.mediaPageNext.addEventListener('click', () => {
   }
   const sectionTarget = currentMediaReader?.sectionNavigation?.next
   if (sectionTarget) {
-    openMediaUnit(currentMediaReader.unit.unitId, sectionTarget.sectionId)
+    openUnitInSession(currentMediaReader.unit.unitId, sectionTarget.sectionId)
     return
   }
   const target = currentMediaReader?.navigation?.next
-  if (target) openMediaUnit(target.unitId)
+  if (target) openUnitInSession(target.unitId)
 })
 window.addEventListener('resize', () => {
   if (currentMediaReader?.type === 'html' && document.querySelector('#media-viewer-view')?.classList.contains('active')) {
