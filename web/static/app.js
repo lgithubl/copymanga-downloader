@@ -67,6 +67,8 @@ const els = {
   viewerTitle: document.querySelector('#viewer-title'),
   viewerMeta: document.querySelector('#viewer-meta'),
   viewerBack: document.querySelector('#viewer-back'),
+  viewerView: document.querySelector('#viewer-view'),
+  viewerImmersive: document.querySelector('#viewer-immersive'),
   viewerPrev: document.querySelector('#viewer-prev'),
   viewerNext: document.querySelector('#viewer-next'),
   viewerRefresh: document.querySelector('#viewer-refresh'),
@@ -607,6 +609,10 @@ function renderChapterLoadError({ target, pathWord, title, message }) {
 }
 
 function showView(id) {
+  // 离开沉浸所属的视图就收起沉浸态，否则顶栏会一直是 fixed+收起的，别的页没法用。
+  // 切章也走 showView('viewer-view')，所以只在「换了视图」时才收。
+  if (galleryImmersiveView && galleryImmersiveView !== id) exitGalleryImmersive()
+  if (epubImmersive && id !== 'media-viewer-view') exitEpubImmersive()
   for (const view of els.views) view.classList.toggle('active', view.id === id)
   for (const tab of els.tabs) tab.classList.toggle('active', tab.dataset.view === id)
   els.searchToolbar.classList.toggle('hidden', id !== 'search-view')
@@ -737,6 +743,7 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
   els.viewerPrev.disabled = true
   els.viewerNext.disabled = true
   els.viewerRefresh.disabled = false
+  els.viewerImmersive.disabled = true
   els.viewerTitle.textContent = title || chapterUuid
   els.viewerMeta.textContent = '加载图片中...'
   els.viewerImages.className = 'viewer-grid'
@@ -767,6 +774,9 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
     els.viewerImages.innerHTML = ''
     viewerBatch.images = data.images || []
     appendImageBatch(viewerBatch)
+    els.viewerImmersive.disabled = !viewerBatch.images.length
+    // 沉浸态下切章是异步重渲染的，控制条上的章节信息要跟着走
+    syncGalleryImmersive()
     if (!viewerBatch.images.length) {
       els.viewerImages.className = 'viewer-grid empty-panel'
       els.viewerImages.textContent = '没有图片'
@@ -2775,6 +2785,7 @@ function normalizeEpubGraphics(root) {
 
 function renderMediaHtml(reader) {
   exitWidthAdjust({ apply: false })   // 换章节时参考线不能留着
+  exitGalleryImmersive()              // 图集的沉浸态在 epub 上没有意义
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-html ${themeClass}`
   const pages = document.createElement('div')
@@ -2790,6 +2801,7 @@ function renderMediaHtml(reader) {
 }
 
 function renderMediaImages(reader) {
+  exitEpubImmersive()   // epub 的分页沉浸态在图集上没有意义
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-images ${themeClass}`
   galleryBatch = null
@@ -2810,6 +2822,8 @@ function renderMediaImages(reader) {
     })
     galleryBatch.images = reader.images
     appendImageBatch(galleryBatch)
+    // 沉浸态下切章是异步重渲染的，控制条上的章节信息要跟着走
+    syncGalleryImmersive()
   }
   mediaPageIndex = 0
   mediaPageCount = 1
@@ -2939,7 +2953,7 @@ function makeSubtitleOverlayInteractive(overlay, frame, getBox = null) {
 }
 
 function renderStreamMedia(reader, options = {}) {
-  exitEpubImmersive()   // 从 epub 切到音视频时，epub 的沉浸状态必须先收干净
+  exitReaderImmersive()   // 从 epub/图集 切到音视频时，阅读的沉浸状态必须先收干净
   // 切章会整个重建播放器，而 currentStreamCleanup 里要清沉浸类（那是给
   // 「离开播放器」准备的）。沉浸是当前的观看模式，不该被重建顺带清掉，
   // 先记下来，新播放器建好后恢复。
@@ -4123,6 +4137,140 @@ function enterEpubImmersive() {
   }
 }
 
+// 看图沉浸：正常滚动看图，点右侧下一章、点左侧上一章，其余 chrome 收进去。
+// 媒体库图集（新模式）和图片浏览 tab（老模式）共用同一套。
+// 和 epub 沉浸的区别：这里不分页，所以没有上页/下页/页码，左右点击直接切章。
+let galleryImmersive = null
+let galleryImmersiveSync = null
+let galleryImmersiveView = ''
+
+function exitGalleryImmersive() {
+  if (!galleryImmersive) return
+  const finish = galleryImmersive
+  galleryImmersive = null
+  galleryImmersiveSync = null
+  galleryImmersiveView = ''
+  finish()
+}
+
+function exitReaderImmersive() {
+  exitEpubImmersive()
+  exitGalleryImmersive()
+}
+
+// 切章是异步重渲染的，渲染完要把控制条上的章节信息和按钮状态补一刀
+function syncGalleryImmersive() {
+  galleryImmersiveSync?.()
+}
+
+function enterGalleryImmersive({ view, content, toggle, chapter }) {
+  if (galleryImmersive) { exitGalleryImmersive(); return }
+  if (!content?.querySelector('img')) return
+
+  const bar = document.createElement('div')
+  bar.className = 'epub-bar gallery-bar'
+  const mk = (cls, text, title) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = `stream-icon-button ${cls}`
+    b.textContent = text
+    b.title = title
+    return b
+  }
+  const back = mk('gallery-back', '返回', '退出沉浸并返回')
+  const prevCh = mk('gallery-chapter-prev', '上章', '上一章')
+  const info = document.createElement('span')
+  info.className = 'epub-page-info gallery-info'
+  const nextCh = mk('gallery-chapter-next', '下章', '下一章')
+  const exitBtn = mk('gallery-exit', '退出', '退出沉浸')
+  bar.append(back, prevCh, info, nextCh, exitBtn)
+  els.app.append(bar)
+
+  const syncInfo = () => {
+    info.textContent = chapter.label()
+    prevCh.disabled = !chapter.canPrev()
+    nextCh.disabled = !chapter.canNext()
+  }
+  galleryImmersiveSync = syncInfo
+
+  // —— 贴边唤出，和视频/epub 同一套手感 ——
+  const EDGE = 72
+  const HIDE_DELAY = 2400
+  let timer = null
+  const setVisible = (v) => els.app.classList.toggle('stream-chrome-visible', v)
+  const schedule = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => { if (bar.matches(':hover')) { schedule(); return } setVisible(false) }, HIDE_DELAY)
+  }
+  const reveal = () => { setVisible(true); schedule() }
+  const onPointerMove = (event) => {
+    if (event.clientY <= EDGE || event.clientY >= window.innerHeight - EDGE) reveal()
+  }
+  document.addEventListener('mousemove', onPointerMove)
+
+  // —— 左右点击切章 ——
+  // 滚动看图时手会在图上拖，不能用裸 click：只认「位移小 + 没有选区 +
+  // 没点在可交互元素上」的点击。.viewer-sentinel 是「加载更多」，点它只该加载。
+  let downAt = null
+  const onDown = (event) => { downAt = { x: event.clientX, y: event.clientY } }
+  const onUp = (event) => {
+    const start = downAt
+    downAt = null
+    if (!start) return
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) return
+    if (String(window.getSelection?.() || '').length > 0) return
+    if (event.target?.closest?.('a[href], button, select, input, .viewer-sentinel')) return
+    const rect = content.getBoundingClientRect()
+    const ratio = (event.clientX - rect.left) / Math.max(1, rect.width)
+    if (ratio < 0.3) {
+      if (chapter.canPrev()) { chapter.prev(); setTimeout(syncInfo, 400) }
+    } else if (ratio > 0.7) {
+      if (chapter.canNext()) { chapter.next(); setTimeout(syncInfo, 400) }
+    } else if (els.app.classList.contains('stream-chrome-visible')) setVisible(false)
+    else reveal()
+  }
+  content.addEventListener('pointerdown', onDown)
+  content.addEventListener('pointerup', onUp)
+
+  const onKey = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      exitGalleryImmersive()
+    } else if (event.key === 'ArrowLeft') {
+      if (chapter.canPrev()) { chapter.prev(); setTimeout(syncInfo, 400) }
+    } else if (event.key === 'ArrowRight') {
+      if (chapter.canNext()) { chapter.next(); setTimeout(syncInfo, 400) }
+    }
+  }
+  document.addEventListener('keydown', onKey)
+
+  back.addEventListener('click', () => { exitGalleryImmersive(); chapter.back() })
+  exitBtn.addEventListener('click', () => exitGalleryImmersive())
+  prevCh.addEventListener('click', () => { chapter.prev(); setTimeout(syncInfo, 400) })
+  nextCh.addEventListener('click', () => { chapter.next(); setTimeout(syncInfo, 400) })
+  bar.addEventListener('click', (event) => event.stopPropagation())
+
+  view.classList.add('stream-page-fullscreen')
+  els.app.classList.add('stream-immersive')
+  galleryImmersiveView = view.id
+  toggle?.classList.add('active')
+  toggle?.blur()
+  syncInfo()
+  reveal()
+
+  galleryImmersive = () => {
+    clearTimeout(timer)
+    document.removeEventListener('mousemove', onPointerMove)
+    document.removeEventListener('keydown', onKey)
+    content.removeEventListener('pointerdown', onDown)
+    content.removeEventListener('pointerup', onUp)
+    bar.remove()
+    view.classList.remove('stream-page-fullscreen')
+    els.app.classList.remove('stream-immersive', 'stream-chrome-visible')
+    toggle?.classList.remove('active')
+  }
+}
+
 // 拖动调宽度：全程只移动参考线，一个字都不重排。
 // 改 --media-page-width 会让浏览器立刻重排多列，拖动时每帧都重排整章会卡，
 // 所以宽度只在"确认退出"那一刻写入，整本只重排一次。
@@ -4242,7 +4390,10 @@ function mediaScrollRatio() {
 function updateMediaPageControls() {
   // 只有 epub(html) 才有可调的阅读宽度
   if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = currentMediaReader?.type !== 'html'
-  if (els.mediaImmersive) els.mediaImmersive.disabled = currentMediaReader?.type !== 'html'
+  // 沉浸两种内容都支持：epub 是分页翻，图集是滚动看
+  if (els.mediaImmersive) {
+    els.mediaImmersive.disabled = !['html', 'images'].includes(currentMediaReader?.type)
+  }
   const isHtml = currentMediaReader?.type === 'html'
   els.mediaPagePrev.disabled = !isHtml || mediaPageIndex <= 0
   els.mediaPageNext.disabled = !isHtml || (mediaPageIndex >= mediaPageCount - 1 && !currentMediaReader?.sectionNavigation?.next && !currentMediaReader?.navigation?.next)
@@ -4712,7 +4863,26 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     setLoading(els.mediaImportSubmit, false)
   }
 })
-els.mediaImmersive?.addEventListener('click', enterEpubImmersive)
+// 沉浸按钮同时服务 epub（分页）和图集（滚动看图），按当前内容类型分流
+els.mediaImmersive?.addEventListener('click', () => {
+  if (currentMediaReader?.type === 'images') {
+    enterGalleryImmersive({
+      view: els.mediaViewerView,
+      content: els.mediaReaderContent,
+      toggle: els.mediaImmersive,
+      chapter: {
+        label: () => `${Number(currentMediaReader?.unit?.index || 0) + 1} / ${currentLibraryUnits.length}`,
+        canPrev: () => Boolean(currentMediaReader?.navigation?.prev),
+        canNext: () => Boolean(currentMediaReader?.navigation?.next),
+        prev: () => els.mediaReaderPrev?.click(),
+        next: () => els.mediaReaderNext?.click(),
+        back: () => els.mediaReaderBack?.click(),
+      },
+    })
+    return
+  }
+  enterEpubImmersive()
+})
 els.mediaWidthAdjust?.addEventListener('click', toggleWidthAdjust)
 els.mediaReaderBack.addEventListener('click', () => {
   showView(mediaReturnView || 'library-view')
@@ -4822,6 +4992,21 @@ els.viewerRefresh.addEventListener('click', () => {
 })
 els.viewerPrev.addEventListener('click', () => openAdjacentViewer('prev'))
 els.viewerNext.addEventListener('click', () => openAdjacentViewer('next'))
+els.viewerImmersive?.addEventListener('click', () => {
+  enterGalleryImmersive({
+    view: els.viewerView,
+    content: els.viewerImages,
+    toggle: els.viewerImmersive,
+    chapter: {
+      label: () => viewerState?.title || '',
+      canPrev: () => Boolean(viewerState?.navigation?.prev),
+      canNext: () => Boolean(viewerState?.navigation?.next),
+      prev: () => openAdjacentViewer('prev'),
+      next: () => openAdjacentViewer('next'),
+      back: () => els.viewerBack?.click(),
+    },
+  })
+})
 els.viewerBack.addEventListener('click', () => {
   showView(viewerState?.returnView || viewerReturnView || 'search-view')
 })

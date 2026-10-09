@@ -2618,12 +2618,25 @@ h2 {
   display: none;
 }
 
-.media-viewer-view.stream-page-fullscreen > section {
+.media-viewer-view.stream-page-fullscreen > section,
+.viewer-view.stream-page-fullscreen > section {
   grid-template-rows: minmax(0, 1fr);
 }
 
-.media-viewer-view.stream-page-fullscreen .chapter-head {
+.media-viewer-view.stream-page-fullscreen .chapter-head,
+.viewer-view.stream-page-fullscreen .chapter-head {
   display: none;
+}
+
+/* 看图沉浸：图自己滚，容器铺满整屏，边框圆角让位 */
+#media-viewer-view.stream-page-fullscreen .media-reader-content.media-images,
+.media-viewer-view.stream-page-fullscreen .media-reader-content.media-images,
+.viewer-view.stream-page-fullscreen .viewer-grid {
+  border: 0;
+  border-radius: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0 0 72px;
 }
 
 /* 沉浸模式：画面铺满，标题/元信息/内边距全让位。
@@ -3175,7 +3188,8 @@ h2 {
   padding: 0;
 }
 
-#media-immersive.active {
+#media-immersive.active,
+#viewer-immersive.active {
   background: var(--site-primary, #1f6feb);
   color: #ffffff;
 }
