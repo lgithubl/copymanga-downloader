@@ -242,7 +242,7 @@ function defaultConfig() {
       'rj-media': {
         maxDepth: 6,
         idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-        defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'builtin-thumbnails'],
+        defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'builtin-thumbnails'],
         fetchDlsiteCover: true,
         fetchDlsiteTitle: true,
         dlsiteRequestMinIntervalMs: 1500,
@@ -349,9 +349,17 @@ function normalizeMediaImportProfiles(value, defaults) {
   }
 }
 
+// 历次被取代的默认组合。config.json 一旦存过就会压住代码里的默认值，
+// 所以每次改默认都要把上一版的精确组合登记在这里，老实例才跟得上；
+// 用户真正改过的自定义列表不会命中，保持原样。
+const SUPERSEDED_RJ_ACTION_SETS = new Set([
+  'builtin-subtitles,rj-dlsite-v1',
+  'builtin-scan-media-units,builtin-subtitles,rj-dlsite-v1,builtin-thumbnails',
+])
+
 function normalizeRjDefaultMetadataActions(value, fallback) {
   const tags = parseTags(value || fallback)
-  if (tags.join(',') === 'builtin-subtitles,rj-dlsite-v1') return fallback
+  if (SUPERSEDED_RJ_ACTION_SETS.has(tags.join(','))) return fallback
   return tags.length ? tags : fallback
 }
 
@@ -3383,11 +3391,15 @@ function paginationFromSearchParams(params, defaultLimit = 200, maxLimit = 1000)
 }
 
 function importTagScriptIds(fields = {}) {
+  const explicit = parseTags(fields.metadataActionIds || fields.actionIds || fields.tagScriptIds || fields.tagScripts || '')
   const profile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
   if (profile === 'rj-media') {
-    return parseTags(config.mediaImportProfiles?.['rj-media']?.defaultMetadataActions || ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'builtin-thumbnails'])
+    // 页面勾了什么就跑什么；没带字段（老客户端、脚本直接调接口）才退回方案默认
+    if (explicit.length) return explicit
+    return parseTags(config.mediaImportProfiles?.['rj-media']?.defaultMetadataActions
+      || ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'builtin-thumbnails'])
   }
-  return parseTags(fields.metadataActionIds || fields.actionIds || fields.tagScriptIds || fields.tagScripts || '')
+  return explicit
 }
 
 function updateTagJob(job, patch) {

@@ -28,7 +28,9 @@ const els = {
   discoverChapterRefresh: document.querySelector('#discover-chapter-refresh'),
   discoverDownload: document.querySelector('#discover-download'),
   discoverDownloadAll: document.querySelector('#discover-download-all'),
-  tabs: [...document.querySelectorAll('.tab')],
+  // 只收真正切视图的 tab：顶栏里还有个 .tab.tab-back 是「返回」，
+  // 它没有 data-view，混进来会让点击走到 showView(undefined) 把所有视图隐掉
+  tabs: [...document.querySelectorAll('.tab[data-view]')],
   views: [...document.querySelectorAll('.view')],
   chapters: document.querySelector('#chapters'),
   comicTitle: document.querySelector('#comic-title'),
@@ -67,6 +69,7 @@ const els = {
   viewerTitle: document.querySelector('#viewer-title'),
   viewerMeta: document.querySelector('#viewer-meta'),
   viewerBack: document.querySelector('#viewer-back'),
+  globalBack: document.querySelector('#global-back'),
   viewerView: document.querySelector('#viewer-view'),
   viewerImmersive: document.querySelector('#viewer-immersive'),
   viewerPrev: document.querySelector('#viewer-prev'),
@@ -275,7 +278,7 @@ const defaultMediaImportProfiles = {
   'rj-media': {
     maxDepth: 6,
     idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-    defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'builtin-thumbnails'],
+    defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'builtin-thumbnails'],
     fetchDlsiteCover: true,
     fetchDlsiteTitle: true,
     dlsiteRequestMinIntervalMs: 1500,
@@ -618,6 +621,8 @@ function showView(id) {
   for (const tab of els.tabs) tab.classList.toggle('active', tab.dataset.view === id)
   els.searchToolbar.classList.toggle('hidden', id !== 'search-view')
   els.app.classList.toggle('media-viewer-focused', id === 'media-viewer-view')
+  // 顶栏的「返回」只在两个阅读视图里有意义，别的页没有「上一处」可回
+  if (els.globalBack) els.globalBack.hidden = !['media-viewer-view', 'viewer-view'].includes(id)
 }
 
 function renderComic(data, target = 'search') {
@@ -4985,7 +4990,9 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     if (!profile.batch && els.mediaImportItem.value) form.set('itemId', els.mediaImportItem.value)
     if (sourcePath) form.set('sourcePath', sourcePath)
     const metadataActionIds = checkedTagScriptIds('media-import-tag-script')
-    if (!profile.batch && metadataActionIds.length) form.set('metadataActionIds', metadataActionIds.join(','))
+    // batch 方案（RJ）以前不发这个字段，页面上勾什么都没用。现在一律发，
+    // 服务端优先用它，只有字段缺失时才退回方案默认。
+    if (metadataActionIds.length) form.set('metadataActionIds', metadataActionIds.join(','))
     for (const file of files) form.append('file', file)
     const result = await apiForm(`/api/library/items?type=${encodeURIComponent(type)}`, form)
     const importedItems = Array.isArray(result.items) ? result.items : [result]
@@ -5152,6 +5159,13 @@ els.viewerRefresh.addEventListener('click', () => {
   if (viewerState) openChapterViewer(viewerState)
 })
 els.viewerPrev.addEventListener('click', () => openAdjacentViewer('prev'))
+// 顶栏的「返回」按当前视图分流，目标和各自页内那个「返回」一致。
+// 沉浸态下顶栏贴上边缘才会滑出，但它确实够得到，比 chapter-head 里那个强。
+els.globalBack?.addEventListener('click', () => {
+  const active = els.views.find((view) => view.classList.contains('active'))?.id
+  if (active === 'media-viewer-view') els.mediaReaderBack?.click()
+  else if (active === 'viewer-view') els.viewerBack?.click()
+})
 els.viewerNext.addEventListener('click', () => openAdjacentViewer('next'))
 // 图片浏览 tab 没有整本的章节表（navigation 只给 prev/next），所以 toc: false
 function viewerImmersiveOptions(remember) {

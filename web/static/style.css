@@ -350,6 +350,22 @@ h2 {
   font-weight: 700;
 }
 
+/* 顶栏右端的「返回」。.tabs 在窄屏会横向溢出（1024px 实测溢出 146px），
+   纯 margin-left:auto 会把它推到滚动区外面等于没有，所以用 sticky 钉在右边缘。 */
+.tab.tab-back {
+  background: var(--site-panel, #ffffff);
+  border-left: 1px solid #d8dee4;
+  color: #0969da;
+  margin-left: auto;
+  padding-left: 14px;
+  position: sticky;
+  right: 0;
+}
+
+.tab.tab-back[hidden] {
+  display: none;
+}
+
 .toolbar {
   background: #ffffff;
   border-bottom: 1px solid #d8dee4;
@@ -1851,7 +1867,12 @@ h2 {
   padding: 12px;
 }
 
-.viewer-grid img {
+/* 图片浏览 tab（.viewer-grid）和媒体库图集（.media-image-list）用同一套分批渲染，
+   图的表现也必须一致。容器规则各自保留（.viewer-grid 自己是滚动容器，
+   .media-image-list 的滚动容器在外层 .media-reader-content），
+   但图和长条图的规则合并成一份，避免改一边忘另一边悄悄漂移。 */
+.viewer-grid img,
+.media-image-list img {
   background: #eef1f4;
   border: 1px solid #d8dee4;
   border-radius: 6px;
@@ -1863,16 +1884,19 @@ h2 {
   width: auto;
 }
 
-.viewer-grid.long-strip-viewer {
+.viewer-grid.long-strip-viewer,
+.media-image-list.long-strip-viewer {
   gap: 2px;
 }
 
-.viewer-grid.long-strip-viewer img {
+.viewer-grid.long-strip-viewer img,
+.media-image-list.long-strip-viewer img {
   border-radius: 0;
   width: min(100%, 690px);
 }
 
-.viewer-grid img.long-strip-image {
+.viewer-grid img.long-strip-image,
+.media-image-list img.long-strip-image {
   border-radius: 0;
 }
 
@@ -2791,35 +2815,12 @@ h2 {
   }
 }
 
+/* 图和长条图的规则已经和 .viewer-grid 合并在一处，这里只留容器自己的排版。
+   gap 对齐成 12px，之前 14px 是无意义的不一致。 */
 .media-image-list {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   grid-template-columns: minmax(0, 1fr);
-}
-
-.media-image-list img {
-  background: #eef1f4;
-  border: 1px solid #d8dee4;
-  border-radius: 6px;
-  display: block;
-  height: auto;
-  margin: 0 auto;
-  max-width: 980px;
-  object-fit: contain;
-  width: auto;
-}
-
-.media-image-list.long-strip-viewer {
-  gap: 2px;
-}
-
-.media-image-list.long-strip-viewer img {
-  border-radius: 0;
-  width: min(100%, 690px);
-}
-
-.media-image-list img.long-strip-image {
-  border-radius: 0;
 }
 
 #app.sidebar-collapsed .sidebar {
