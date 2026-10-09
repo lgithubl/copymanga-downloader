@@ -3990,6 +3990,20 @@ function layoutMediaPages({ anchor = null } = {}) {
   updateMediaPageControls()
 }
 
+// 沉浸态「上一章/下一章」的目标。EPUB 的书内章节是 section，unit 是「同一条目
+// 里相邻的 epub 文件」—— 单文件 EPUB 的 navigation 恒为 null，只认它的话上下章
+// 永远是灰的。优先级和 #media-page-next 保持一致：先 section，再 unit。
+// 图集（stream-media）没有 sectionNavigation，自然退回 unit 级，行为不变。
+function mediaStepTarget(direction) {
+  const section = currentMediaReader?.sectionNavigation?.[direction]
+  if (section && currentMediaReader?.unit?.unitId) {
+    return () => openUnitInSession(currentMediaReader.unit.unitId, section.sectionId)
+  }
+  const unit = currentMediaReader?.navigation?.[direction]
+  if (unit) return () => openUnitInSession(unit.unitId)
+  return null
+}
+
 function setMediaPage(pageIndex, { save = true } = {}) {
   if (currentMediaReader?.type !== 'html') return
   mediaPageIndex = Math.max(0, Math.min(pageIndex, mediaPageCount - 1))
@@ -4047,8 +4061,8 @@ function enterEpubImmersive() {
 
   const syncInfo = () => {
     info.textContent = `${mediaPageIndex + 1} / ${mediaPageCount}`
-    prevCh.disabled = !currentMediaReader?.navigation?.prev
-    nextCh.disabled = !currentMediaReader?.navigation?.next
+    prevCh.disabled = !mediaStepTarget('prev')
+    nextCh.disabled = !mediaStepTarget('next')
     prevPg.disabled = mediaPageIndex <= 0
     nextPg.disabled = mediaPageIndex >= mediaPageCount - 1
   }
@@ -4105,8 +4119,8 @@ function enterEpubImmersive() {
 
   back.addEventListener('click', () => { exitEpubImmersive(); els.mediaReaderBack?.click() })
   exitBtn.addEventListener('click', () => exitEpubImmersive())
-  prevCh.addEventListener('click', () => els.mediaReaderPrev?.click())
-  nextCh.addEventListener('click', () => els.mediaReaderNext?.click())
+  prevCh.addEventListener('click', () => { mediaStepTarget('prev')?.() })
+  nextCh.addEventListener('click', () => { mediaStepTarget('next')?.() })
   prevPg.addEventListener('click', () => { setMediaPage(mediaPageIndex - 1); setTimeout(syncInfo, 350) })
   nextPg.addEventListener('click', () => { setMediaPage(mediaPageIndex + 1); setTimeout(syncInfo, 350) })
   widthBtn.addEventListener('click', () => { setVisible(true); clearTimeout(timer); toggleWidthAdjust() })
@@ -4876,11 +4890,15 @@ els.mediaImmersive?.addEventListener('click', () => {
       content: els.mediaReaderContent,
       toggle: els.mediaImmersive,
       chapter: {
-        label: () => `${Number(currentMediaReader?.unit?.index || 0) + 1} / ${currentLibraryUnits.length}`,
-        canPrev: () => Boolean(currentMediaReader?.navigation?.prev),
-        canNext: () => Boolean(currentMediaReader?.navigation?.next),
-        prev: () => els.mediaReaderPrev?.click(),
-        next: () => els.mediaReaderNext?.click(),
+        // EPUB 的图片集是书内的一个 section，章号要按 section 走；
+        // 媒体库图集没有 section，才按 unit 走（显示「第几个 unit / 共几个」）
+        label: () => (currentMediaReader?.section
+          ? `${currentMediaReader.section.index + 1} / ${currentMediaReader.sections?.length || 1}`
+          : `${Number(currentMediaReader?.unit?.index || 0) + 1} / ${currentLibraryUnits.length}`),
+        canPrev: () => Boolean(mediaStepTarget('prev')),
+        canNext: () => Boolean(mediaStepTarget('next')),
+        prev: () => { mediaStepTarget('prev')?.() },
+        next: () => { mediaStepTarget('next')?.() },
         back: () => els.mediaReaderBack?.click(),
       },
     })
