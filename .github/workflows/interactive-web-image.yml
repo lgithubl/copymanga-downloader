@@ -52,6 +52,47 @@ jobs:
       - name: Start copymanga web
         run: |
           mkdir -p "$RUNNER_TEMP/copymanga-data/library/media" "$RUNNER_TEMP/copymanga-input"
+          # anidb-v1 的配置项一律没有默认值（没配就 failed），这里先按 mock 预置一份，
+          # 省得每次起会话都要从零填。要打真实 AniDB 只需改 apiBaseUrl 和 apiClient。
+          # 预置 dump：没有它 anidb-v1 一上来就失败，会话里还得先手点一次「刷新 AniDB dump」。
+          # 拉不到不算致命（AniDB 可能挡云端 IP），页面上那个按钮仍可重试。
+          # 和构建产物一样要验内容：被挡时 AniDB 回的是 200 的 HTML，不验就会存下一份假 dump。
+          mkdir -p "$RUNNER_TEMP/copymanga-data/cache/anidb"
+          if curl -fsSL --max-time 180 -A "copymanga-downloader/ci" \
+               https://anidb.net/api/anime-titles.xml.gz \
+               -o "$RUNNER_TEMP/copymanga-data/cache/anidb/anime-titles.xml.gz"; then
+            COUNT="$(gzip -dc "$RUNNER_TEMP/copymanga-data/cache/anidb/anime-titles.xml.gz" | grep -c '<anime aid=' || true)"
+            if [ "${COUNT:-0}" -ge 1000 ]; then
+              printf '{"animeCount":%s,"fetchedAt":"%s"}\n' "$COUNT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                > "$RUNNER_TEMP/copymanga-data/cache/anidb/anime-titles.meta.json"
+              echo "dump 预置完成：$COUNT 部"
+            else
+              echo "dump 内容不可信（$COUNT 条），删掉，交给页面按钮重试"
+              rm -f "$RUNNER_TEMP/copymanga-data/cache/anidb/anime-titles.xml.gz"
+            fi
+          else
+            echo "dump 预置失败，交给页面上的「刷新 AniDB dump」按钮"
+          fi
+          mkdir -p "$RUNNER_TEMP/copymanga-data/cache/library/tag-script-config"
+          cat >"$RUNNER_TEMP/copymanga-data/cache/library/tag-script-config/anidb-v1.json" <<'JSON'
+          {
+            "scriptId": "anidb-v1",
+            "options": {
+              "dumpDir": "/data/cache/anidb",
+              "matchThreshold": 0.85,
+              "force": false,
+              "apiEnabled": true,
+              "apiBaseUrl": "http://mock-anidb:11596/httpapi",
+              "apiClient": "mockclient",
+              "apiClientVer": "1",
+              "apiCacheDir": "/data/cache/anidb-api",
+              "apiSleepBaseMs": 200,
+              "apiSleepJitterMs": 300,
+              "apiTimeoutMs": 8000,
+              "scriptTimeoutMs": 600000
+            }
+          }
+          JSON
           cat >"$RUNNER_TEMP/copymanga-data/config.json" <<'JSON'
           {
             "mediaStreamApiBase": "/media-stream",
@@ -154,6 +195,75 @@ jobs:
 
           http.server.ThreadingHTTPServer(("0.0.0.0", 11595), Handler).serve_forever()
           PY
+          # AniDB httpapi 的替身。dump 匹配用不到它，但「调详情接口」这条分支
+          # 不挂替身就只能把 apiEnabled 关掉，等于永远测不到。
+          # 真实地址由使用者自行在脚本配置里改 apiBaseUrl，这里绝不指向 anidb.net。
+          cat >/tmp/mock_anidb.py <<'PY'
+          import http.server
+          import time
+          import urllib.parse
+
+          OK = '''<?xml version="1.0" encoding="UTF-8"?><anime id="{aid}" restricted="true">
+          <type>OVA</type><episodecount>2</episodecount>
+          <startdate>2022-02-04</startdate><enddate>2022-02-04</enddate>
+          <titles><title type="main" xml:lang="x-jat">Mock Title {aid}</title></titles>
+          <tags><tag id="1"><name>drama</name></tag><tag id="2"><name>mock tag</name></tag></tags>
+          </anime>'''
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+
+              def log_message(self, *a):
+                  pass
+
+              def do_GET(self):
+                  try:
+                      self._handle()
+                  except (BrokenPipeError, ConnectionResetError):
+                      pass
+
+              def _send(self, status, body, ctype="text/xml; charset=utf-8"):
+                  data = body.encode()
+                  self.send_response(status)
+                  self.send_header("Content-Type", ctype)
+                  self.send_header("Content-Length", str(len(data)))
+                  self.end_headers()
+                  self.wfile.write(data)
+
+              def _handle(self):
+                  parsed = urllib.parse.urlparse(self.path)
+                  q = urllib.parse.parse_qs(parsed.query)
+                  aid = (q.get("aid") or ["0"])[0]
+                  client = (q.get("client") or [""])[0]
+                  if parsed.path == "/health":
+                      self._send(200, '{"ok":true}', "application/json")
+                      return
+                  # 失败模式用路径后缀选：查询串会被脚本自己拼的 ?request=anime 污染
+                  mode = parsed.path.rsplit("/", 1)[-1]
+                  if mode == "error":
+                      self._send(200, '<error code="330">no such anime</error>')
+                      return
+                  if mode == "notanime":
+                      self._send(200, '<?xml version="1.0"?><something/>')
+                      return
+                  if mode == "http500":
+                      self._send(500, "boom", "text/plain")
+                      return
+                  if not client:
+                      self._send(200, '<error code="302">client version missing or invalid</error>')
+                      return
+                  if aid == "999001":
+                      self._send(200, '<error code="330">no such anime</error>')
+                      return
+                  if aid == "999002":
+                      time.sleep(30)
+                  if aid == "999003":
+                      self._send(500, "boom", "text/plain")
+                      return
+                  self._send(200, OK.format(aid=aid))
+
+          http.server.ThreadingHTTPServer(("0.0.0.0", 11596), Handler).serve_forever()
+          PY
           docker network create copymanga-action-net
           SCRIPT_CONTAINER="$(docker create "$IMAGE")"
           docker cp "$SCRIPT_CONTAINER:/opt/copymanga/tag-scripts" "$RUNNER_TEMP/copymanga-data/tag-scripts" || true
@@ -170,6 +280,11 @@ jobs:
             -p 11595:11595 \
             -v /tmp/mock_llm.py:/mock_llm.py:ro \
             python:3-alpine python /mock_llm.py
+          docker run -d --name mock-anidb \
+            --network copymanga-action-net \
+            -p 11596:11596 \
+            -v /tmp/mock_anidb.py:/mock_anidb.py:ro \
+            python:3-alpine python /mock_anidb.py
           docker run -d --name media-stream-widget \
             --network copymanga-action-net \
             -p 8081:8080 \
@@ -193,6 +308,7 @@ jobs:
             docker logs --tail 80 media-stream-widget || true
             docker logs --tail 80 mock-asr || true
             docker logs --tail 80 mock-llm || true
+            docker logs --tail 80 mock-anidb || true
             sleep 2
           done
           docker logs copymanga-web || true
@@ -216,6 +332,8 @@ jobs:
           fi
           check "mock asr health" sh -c "curl -fsS http://127.0.0.1:11594/health | grep -Eq '\"ok\"[[:space:]]*:[[:space:]]*true'"
           check "mock llm health" sh -c "curl -fsS http://127.0.0.1:11595/health | grep -Eq '\"ok\"[[:space:]]*:[[:space:]]*true'"
+          check "mock anidb health" sh -c "curl -fsS http://127.0.0.1:11596/health | grep -Eq '\"ok\"[[:space:]]*:[[:space:]]*true'"
+          check "mock anidb xml" sh -c "curl -fsS 'http://127.0.0.1:11596/httpapi?request=anime&client=mockclient&aid=16913' | grep -q '<anime'"
           check "index html" sh -c "curl -fsS http://127.0.0.1:8080/ | grep -q '拷贝漫画下载器'"
           check "jobs api" sh -c "curl -fsS http://127.0.0.1:8080/api/jobs | grep -q '^\['"
           check "downloaded api" sh -c "curl -fsS http://127.0.0.1:8080/api/downloaded | grep -q '^\['"
@@ -400,6 +518,7 @@ jobs:
           docker logs media-stream-widget >/tmp/media-stream-widget-container.log 2>&1 || true
           docker logs mock-asr >/tmp/mock-asr.log.copy 2>&1 || true
           docker logs mock-llm >/tmp/mock-llm.log.copy 2>&1 || true
+          docker logs mock-anidb >/tmp/mock-anidb.log.copy 2>&1 || true
           cp /tmp/cloudflared.log /tmp/cloudflared.log.copy 2>/dev/null || true
           cp /tmp/basic_proxy.log /tmp/basic_proxy.log.copy 2>/dev/null || true
 
@@ -413,6 +532,7 @@ jobs:
             /tmp/media-stream-widget-container.log
             /tmp/mock-asr.log.copy
             /tmp/mock-llm.log.copy
+            /tmp/mock-anidb.log.copy
             /tmp/cloudflared.log.copy
             /tmp/basic_proxy.log.copy
           if-no-files-found: warn
