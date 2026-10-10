@@ -2817,17 +2817,30 @@ function parseLibraryIndexTagQuery(query = '') {
       let body = exclude ? raw.slice(1) : raw
       const unitOnly = /^unitTag:/i.test(body)
       body = body.replace(/^(?:tag|unitTag):/i, '').replace(/^"|"$/g, '')
-      return { exclude, unitOnly, name: normalizeTagName(body) }
+      const name = normalizeTagName(body)
+      // 结尾的 * 表示按前缀匹配。没有它就没法问「有没有任何系列」——
+      // 精确匹配下 -系列 排除的是「字面就叫『系列』的 tag」，而实际 tag 是
+      // 「系列: RJxxxx」，于是一条都排不掉，等于没过滤。
+      const prefix = name.endsWith('*')
+      return { exclude, unitOnly, prefix, name: prefix ? name.slice(0, -1).trim() : name }
     })
     .filter((item) => item.name)
 }
 
 function libraryIndexTagTokensMatch(item, tokens) {
-  const itemTags = new Set((item.tags || []).map(normalizeTagName))
-  const unitTags = new Set((item.unitTags || []).map(normalizeTagName))
+  const itemTags = (item.tags || []).map(normalizeTagName)
+  const unitTags = (item.unitTags || []).map(normalizeTagName)
+  const itemSet = new Set(itemTags)
+  const unitSet = new Set(unitTags)
   for (const token of tokens) {
-    const source = token.unitOnly ? unitTags : new Set([...itemTags, ...unitTags])
-    const matched = source.has(token.name)
+    let matched
+    if (token.prefix) {
+      // 前缀只能线性扫；带 * 的 token 一般就一两个，整库过一遍可接受
+      const list = token.unitOnly ? unitTags : itemTags.concat(unitTags)
+      matched = list.some((tag) => tag.startsWith(token.name))
+    } else {
+      matched = token.unitOnly ? unitSet.has(token.name) : (itemSet.has(token.name) || unitSet.has(token.name))
+    }
     if (token.exclude ? matched : !matched) return false
   }
   return true
