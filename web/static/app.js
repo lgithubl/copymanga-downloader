@@ -5104,7 +5104,7 @@ els.mergeRunPage?.addEventListener('click', async () => {
   const data = await api(`/api/library/merge-candidates?page=${mergePage}&limit=${MERGE_PAGE_SIZE}`)
   const groups = data.items || []
   if (!groups.length) return
-  if (!confirm(`将合并当前页 ${groups.length} 组。合并不可逆，确定？`)) return
+  if (!confirm(`将合并当前页 ${groups.length} 组。源条目的文件会进 cache/library-trash（可人工取回），但元数据不保留，确定？`)) return
   button.disabled = true
   const original = button.textContent
   let ok = 0

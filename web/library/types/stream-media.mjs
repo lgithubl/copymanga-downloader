@@ -24,6 +24,9 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   const label = type === 'video' ? '视频' : type === 'audio' ? '音频' : '媒体'
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
   const thumbnailRoot = path.join(dataDir, 'cache', 'library-thumbnails', type)
+  // 合并掉的源条目搬到这里等人工处理，不直接删。放 dataDir 下而不是 os.tmpdir()，
+  // 因为系统会清理 tmp——需要的时候东西还得在。
+  const trashRoot = path.join(dataDir, 'cache', 'library-trash', type)
   const thumbnailJobs = new Map()
   const thumbnailQueue = []
   let thumbnailWorkerRunning = false
@@ -1410,6 +1413,19 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return target
   }
 
+  // 合并掉的源条目整个搬进回收目录，等人工确认后再删。带时间戳是为了能看出
+  // 什么时候合的；uniqueImportTarget 兜底同一秒内合并同名条目的情况。
+  async function trashItemDir(itemId) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const target = await uniqueImportTarget(path.join(trashRoot, `${safeSegment(itemId)}-${stamp}`))
+    await movePath(itemPath(itemId), target)
+    // 缩略图挂在另一个根（cache/library-thumbnails）下，以前合并完谁也不清，
+    // 永久变孤儿；一并归到同一个回收目录，人工清理时一次清干净。
+    const thumbnails = path.join(thumbnailRoot, safeSegment(itemId))
+    if (await pathExists(thumbnails)) await movePath(thumbnails, path.join(target, 'thumbnails'))
+    return target
+  }
+
   async function movePath(source, target) {
     await mkdir(path.dirname(target), { recursive: true })
     try {
@@ -1614,8 +1630,9 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return subtitleKey(groupPathOf(relative), subtitleMatchStem(relative))
   }
 
-  // 把若干条目合并成一个：源条目的文件搬进目标、重扫出 unit、源目录删掉。
-  // 不可逆（没有拆分能力），所以 itemId 校验从严，宁可报错也不要走偏。
+  // 把若干条目合并成一个：源条目的文件搬进目标、重扫出 unit、源目录进回收站。
+  // 没有拆分能力，所以 itemId 校验从严，宁可报错也不要走偏。文件本身留在
+  // cache/library-trash 下可人工取回，但元数据（标题、tag、unit 标注）是真的没了。
   // 调用方负责清理 itemId 之外的状态（历史、tag 索引），那些不在本类型的职责里。
   async function mergeItems({ targetItemId, sourceItemIds = [] }) {
     const target = String(targetItemId || '').trim()
@@ -1657,8 +1674,17 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         await movePath(filePath, to)
         moved.push({ from: `${sourceId}/${relative}`, to: relativePath(target, to) })
       }
-      await rm(itemPath(sourceId), { recursive: true, force: true })
-      skipped.push({ itemId: sourceId, reason: '', title: sourceMeta.title, files: files.length, isolatedInto: prefix })
+      // 文件此时已经搬进目标了，回收这一步再抛就是半合并状态。而且 rm(force) 几乎
+      // 不会失败、movePath 会（跨盘没有 mv、回收目录没写权限），所以这里只记不抛：
+      // 失败就把源目录原样留着——它会以 0 单元的条目重新出现在候选里，可见且没删东西。
+      let trashedTo = ''
+      let trashError = ''
+      try {
+        trashedTo = await trashItemDir(sourceId)
+      } catch (error) {
+        trashError = error.message
+      }
+      skipped.push({ itemId: sourceId, reason: '', title: sourceMeta.title, files: files.length, isolatedInto: prefix, trashedTo, trashError })
     }
 
     const units = await scanMediaUnits(target, mediaUnitsForItem(targetMeta))

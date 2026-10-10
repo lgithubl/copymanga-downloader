@@ -371,7 +371,7 @@
             <div class="chapter-head">
               <div>
                 <h2>条目合并</h2>
-                <div class="muted">共享同一个作品键（workKey）且有 2 个以上条目的分组。合并不可逆——没有拆分功能，合错了只能靠脚本改 workKey 重来。</div>
+                <div class="muted">共享同一个作品键（workKey）且有 2 个以上条目的分组。没有拆分功能，合错了只能靠脚本改 workKey 重来。源条目的文件和缩略图不删，整个搬到 <code>cache/library-trash/</code> 等你人工清理；但标题、tag、单元标注这些元数据不保留。</div>
               </div>
               <div class="chapter-actions">
                 <button id="merge-dump-refresh" class="secondary" title="下载/刷新 AniDB 标题 dump。服务端没更新时返回 304，不会重复下载">刷新 AniDB dump</button>
