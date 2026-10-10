@@ -54,6 +54,8 @@ let libraryHistoryIndex = null
 let libraryHistoryIndexTimer = null
 const SUBTITLE_PRESENT_TAG = normalizeTagName('字幕v1: 有')
 const SERIES_TAG_PREFIX = normalizeTagName('系列:')
+// 带冒号，所以「系列priority:」不会被 SERIES_TAG_PREFIX 当成系列值吞掉。
+const SERIES_PRIORITY_TAG_PREFIX = normalizeTagName('系列priority:')
 // 超过这个条目数，JSON.stringify 的产出会逼近 V8 的 512MB 字符串上限，
 // 届时重建是直接抛 Invalid string length，而不是变慢。
 const LIBRARY_INDEX_SIZE_WARN = 250000
@@ -2611,9 +2613,31 @@ function seriesKeyOf(item) {
   return `\u0000${item.type}\u001f${item.itemId}`
 }
 
-// 带 productId 的整体靠前；都带则先看字幕（有>无）再按 productId 逆序；
-// 都不带按标题逆序。排第一的即「快速进入」的目标。
+// 手动置顶用：系列priority 大的排前面。没打这个 tag 的返回 null，
+// 整体落在带 tag 的后面，彼此之间仍走下面的原有规则。
+function seriesPriorityOf(item) {
+  let best = null
+  for (const tag of item.tags || []) {
+    const normalized = normalizeTagName(tag)
+    if (!normalized.startsWith(SERIES_PRIORITY_TAG_PREFIX)) continue
+    // Number('') 是 0 不是 NaN——空值不先挡掉，「系列priority:」会被当成 0 而排到没配置的前面
+    const raw = normalized.slice(SERIES_PRIORITY_TAG_PREFIX.length).trim()
+    if (!raw) continue
+    const value = Number(raw)
+    if (Number.isFinite(value) && (best === null || value > best)) best = value
+  }
+  return best
+}
+
+// 先看 系列priority（大的在前）；再带 productId 的整体靠前；都带则先看字幕（有>无）
+// 再按 productId 逆序；都不带按标题逆序。排第一的即「快速进入」的目标。
 function compareSeriesPriority(a, b) {
+  // member 要落盘，JSON 里没有 -Infinity，所以统一按「非有限数 = 没配置」兜底，
+  // 让内存态和从缓存读回来的状态行为一致。
+  const ra = Number.isFinite(a.priority) ? a.priority : Number.NEGATIVE_INFINITY
+  const rb = Number.isFinite(b.priority) ? b.priority : Number.NEGATIVE_INFINITY
+  // 用 > 比较而不是相减——两边都是 -Infinity 时相减会得到 NaN
+  if (ra !== rb) return ra > rb ? -1 : 1
   const pa = a.productId ? 1 : 0
   const pb = b.productId ? 1 : 0
   if (pa !== pb) return pb - pa
@@ -2636,6 +2660,7 @@ function buildSeriesMap(items) {
       cover: item.cover || '',
       productId: String(item.realProductId || ''),
     hasSubtitle: Boolean(item.hasSubtitle),
+      priority: seriesPriorityOf(item),
     }
     const list = groups.get(key)
     if (list) list.push(member)
