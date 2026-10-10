@@ -3378,11 +3378,32 @@ h2 {
   min-width: 0;
 }
 
+/* 用 CSS 画三角而不是 ▸ 字符：实测字符版只有 9x18.8px，同字号「中」字是 15px 宽，
+   细、灰、小三样凑一起根本读不出是个可点的控件——用户会以为这页没做改动。
+   画出来的三角不依赖字体，尺寸和颜色都拿得准，展开状态直接用 aria-expanded 转 90°，
+   JS 不用再去改 textContent。 */
 .merge-group-caret {
-  color: var(--site-muted);
+  border-bottom: 6px solid transparent;
+  border-left: 9px solid var(--site-secondary);
+  border-top: 6px solid transparent;
   flex-shrink: 0;
-  font-size: 15px;
-  line-height: 1.25;
+  height: 0;
+  margin: 5px 2px 0 0;
+  transition: transform 0.15s ease;
+  width: 0;
+}
+
+.merge-group-toggle[aria-expanded="true"] .merge-group-caret {
+  transform: rotate(90deg);
+}
+
+/* 整行要看得出可点：光标 + 悬停时标题加下划线、三角变主色 */
+.merge-group-toggle:hover .merge-group-name {
+  text-decoration: underline;
+}
+
+.merge-group-toggle:hover .merge-group-caret {
+  border-left-color: var(--site-primary);
 }
 
 /* 现在它嵌在 .muted 那行里和计数并排，不能是 block——一 block 就把「N 个条目」

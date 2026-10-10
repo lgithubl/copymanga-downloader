@@ -2277,7 +2277,7 @@ function createMergeGroupCard(group) {
   card.innerHTML = `
       <div class="merge-group-head">
         <button class="merge-group-toggle" type="button" aria-expanded="false">
-          <span class="merge-group-caret">▸</span>
+          <span class="merge-group-caret" aria-hidden="true"></span>
           <span>
             <span class="merge-group-name" title="${escapeHtml(primary.title || '')}">${escapeHtml(primary.title || group.key)}</span>
             <span class="muted"><span class="merge-group-key">${escapeHtml(group.key)}</span> · ${group.count} 个条目 · 合并后 ${group.unitTotal} 单元</span>
@@ -2293,8 +2293,8 @@ function createMergeGroupCard(group) {
   let loaded = false
   async function setOpen(open) {
     cards.hidden = !open
+    // 三角的朝向由 CSS 按 aria-expanded 画，这里只负责把状态说清楚
     toggle.setAttribute('aria-expanded', String(open))
-    card.querySelector('.merge-group-caret').textContent = open ? '▾' : '▸'
     // 记住展开的是哪一组：从卡片点进视频会切到媒体库，切回来时整页重建，
     // 不记就永远落回「全部折叠的第一页」。
     if (open) expandedGroupKeys.add(group.key)
