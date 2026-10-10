@@ -1250,7 +1250,8 @@ els.tabs.forEach((tab) => {
       loadTagManager().catch((error) => alert(error.message))
     }
     if (tab.dataset.view === 'merge-view') {
-      mergePage = 1
+      // 这里故意不重置 mergePage：从成员卡片点进视频会切走，再点回合并 tab 就是
+      // 这条路径。重置的话每次回来都落到第 1 页，翻到第 3 页看的那组就找不着了。
       Promise.all([loadMergeCandidates(), refreshAnidbDumpStatus()]).catch(() => {})
     }
     if (tab.dataset.view === 'media-import-view') loadMediaImportItems()
@@ -2165,6 +2166,26 @@ const MERGE_PAGE_SIZE = 20
 // 哪些组点过了，否则那张卡看上去和没合过一模一样。刷新即清空——它只是视觉标记，
 // 不是事实来源，真相始终在重建后的索引里。
 const mergedGroupKeys = new Map()
+// 展开过哪几组 + 滚到哪儿。从成员卡片点进视频会切到媒体库，切回来时这一页是整个
+// 重建的，不记这两样就永远落回「全部折叠的第一页」，刚看到哪组全白费。
+// 按 workKey 记而不是按下标：翻页、搜索、合并之后下标早就不是同一组了。
+const expandedGroupKeys = new Set()
+let mergeScrollTop = 0
+
+function rememberMergeScroll() {
+  if (els.mergeGroups) mergeScrollTop = els.mergeGroups.scrollTop || 0
+}
+
+function restoreMergeScroll() {
+  if (els.mergeGroups && mergeScrollTop) els.mergeGroups.scrollTop = mergeScrollTop
+}
+
+// 翻页、搜索、重建索引是「主动换了一批内容」，还原旧位置就成了跳到不相干的地方。
+// 只有「切走再切回来」才该还原，所以这些入口要显式清掉。
+function resetMergePosition() {
+  expandedGroupKeys.clear()
+  mergeScrollTop = 0
+}
 
 function mergeCandidatesQuery(page = mergePage) {
   const params = new URLSearchParams({ page: String(page), limit: String(MERGE_PAGE_SIZE) })
@@ -2222,6 +2243,7 @@ async function refreshMergeCandidates() {
     libraryIndexStatus = status
     renderLibraryIndexStatus()
     mergedGroupKeys.clear()
+    resetMergePosition()
     mergePage = 1
     await loadMergeCandidates()
   } finally {
@@ -2241,43 +2263,42 @@ function renderMergeGroups(groups) {
   for (const group of groups) {
     els.mergeGroups.append(createMergeGroupCard(group))
   }
+  // 卡片是展开时异步拉的，不等一帧的话此刻列表高度还没撑开，scrollTop 会被钳成 0
+  requestAnimationFrame(restoreMergeScroll)
 }
 
 function createMergeGroupCard(group) {
   const card = document.createElement('article')
   card.className = 'card merge-group'
   const done = mergedGroupKeys.get(group.key)
+  // 折叠行显示主条目标题而不是光秃秃的 workKey：anidb:16913 这种 key 根本认不出
+  // 是哪部作品，只剩它的话每组都得点开才知道是什么，等于没有折叠态。
+  const primary = group.members[0] || {}
   card.innerHTML = `
       <div class="merge-group-head">
         <button class="merge-group-toggle" type="button" aria-expanded="false">
           <span class="merge-group-caret">▸</span>
           <span>
-            <span class="merge-group-key">${escapeHtml(group.key)}</span>
-            <span class="muted">${group.count} 个条目 · 合并后 ${group.unitTotal} 单元</span>
+            <span class="merge-group-name" title="${escapeHtml(primary.title || '')}">${escapeHtml(primary.title || group.key)}</span>
+            <span class="muted"><span class="merge-group-key">${escapeHtml(group.key)}</span> · ${group.count} 个条目 · 合并后 ${group.unitTotal} 单元</span>
           </span>
         </button>
         <span class="merge-group-done" ${done ? '' : 'hidden'}>${escapeHtml(done || '')}</span>
         <button class="merge-group-run" type="button" ${done ? 'disabled' : ''}>${done ? '已合并' : '合并这组'}</button>
       </div>
-      <ul class="merge-members">${group.members.map((member, index) => `
-        <li class="merge-member${index === 0 ? ' primary' : ''}">
-          <span class="merge-member-title" title="${escapeHtml(member.title)}">${escapeHtml(member.title)}</span>
-          <span class="muted">${escapeHtml(member.itemId)} · ${member.unitCount} 单元${index === 0 ? ' · 主条目（创建最早）' : ''}</span>
-        </li>`).join('')}</ul>
       <div class="merge-group-cards" hidden></div>`
 
   const toggle = card.querySelector('.merge-group-toggle')
   const cards = card.querySelector('.merge-group-cards')
-  const list = card.querySelector('.merge-members')
   let loaded = false
-  toggle.addEventListener('click', async () => {
-    const open = cards.hidden
+  async function setOpen(open) {
     cards.hidden = !open
-    // 两种表示二选一：折叠时用紧凑列表扫一眼，展开时换成卡片看内容。
-    // 同时显示的话标题会重复两遍，日文长标题下一组就占掉大半屏。
-    list.hidden = open
     toggle.setAttribute('aria-expanded', String(open))
     card.querySelector('.merge-group-caret').textContent = open ? '▾' : '▸'
+    // 记住展开的是哪一组：从卡片点进视频会切到媒体库，切回来时整页重建，
+    // 不记就永远落回「全部折叠的第一页」。
+    if (open) expandedGroupKeys.add(group.key)
+    else expandedGroupKeys.delete(group.key)
     // 候选里的成员记录没有 tags（只有 type/itemId/title/cover/unitCount 这些），
     // 渲染卡片要完整 item，所以展开时才拉——不展开就一个请求都不发。
     if (!open || loaded) return
@@ -2290,7 +2311,9 @@ function createMergeGroupCard(group) {
       loaded = false
       cards.textContent = `读取失败：${error.message}`
     }
-  })
+  }
+  toggle.addEventListener('click', () => { setOpen(cards.hidden).catch(() => {}) })
+  if (expandedGroupKeys.has(group.key)) setOpen(true).catch(() => {})
 
   card.querySelector('.merge-group-run').addEventListener('click', async (event) => {
     const button = event.currentTarget
@@ -2336,7 +2359,11 @@ async function loadMergeMemberCards(group) {
     if (index === 0) node.classList.add('merge-member-primary')
     // createLibraryCard 的点击目标是媒体库视图的面板，停在合并页点下去会写进
     // 一个看不见的 DOM。捕获阶段先把视图切过去，再让它原来的处理器跑。
-    node.addEventListener('click', () => showView('library-view'), { capture: true })
+    // 顺便记下滚动位置——这一跳正是「回来时找不到刚才那组」的起点。
+    node.addEventListener('click', () => {
+      rememberMergeScroll()
+      showView('library-view')
+    }, { capture: true })
     return node
   })
 }
@@ -5203,6 +5230,7 @@ els.mergeRefresh?.addEventListener('click', () => {
 function applyMergeKeyword() {
   mergeKeyword = (els.mergeKeyword?.value || '').trim()
   mergePage = 1
+  resetMergePosition()
   loadMergeCandidates().catch((error) => alert(error.message))
 }
 els.mergeSearch?.addEventListener('click', applyMergeKeyword)
@@ -5212,10 +5240,10 @@ els.mergeKeyword?.addEventListener('keydown', (event) => {
 // type=search 的小叉号走 input 事件而不是 keydown，不接的话清空后列表不动
 els.mergeKeyword?.addEventListener('search', applyMergeKeyword)
 els.mergePrev?.addEventListener('click', () => {
-  if (mergePage > 1) { mergePage -= 1; loadMergeCandidates().catch(() => {}) }
+  if (mergePage > 1) { mergePage -= 1; resetMergePosition(); loadMergeCandidates().catch(() => {}) }
 })
 els.mergeNext?.addEventListener('click', () => {
-  if (mergePage < mergeTotalPages) { mergePage += 1; loadMergeCandidates().catch(() => {}) }
+  if (mergePage < mergeTotalPages) { mergePage += 1; resetMergePosition(); loadMergeCandidates().catch(() => {}) }
 })
 els.mergeDumpRefresh?.addEventListener('click', async () => {
   const button = els.mergeDumpRefresh

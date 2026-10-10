@@ -3295,17 +3295,34 @@ h2 {
   margin-bottom: 12px;
 }
 
+/* 合并页以前根本没有滚动容器：section 按内容撑高，超出的部分被 .view.active 的
+   overflow:hidden 直接裁掉，滚轮一动不动（实测 1609px 内容塞在 905px 视口里，
+   下面的分组够不到）。媒体库那边是 #library-items 自己 overflow:auto 在兜。
+   这里用 flex 而不是 grid-template-rows：「索引过期」那条提示会整条 display:none，
+   grid 的行数会跟着少一行，固定行模板就错位了。 */
+.merge-view.view.active > section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .merge-groups {
   display: grid;
+  flex: 1;
   gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* .card 是「76px 封面 + 内容」的两列 grid，合并分组借它的边框样式但没有封面：
    不覆盖的话 .merge-group-head 会落进 76px 的封面列，workKey 被挤成每行一个字，
-   「合并这组」按钮还会溢出去压在成员标题上。整张卡也不可点，光标一起改掉。 */
+   「合并这组」按钮还会溢出去压在成员标题上。整张卡也不可点，光标一起改掉。
+   min-height 同理——116px 是给带封面的卡留的，折叠态只需要 73px，不盖掉的话
+   每组底下凭空多出 40 多 px 空白，一屏能扫的组数直接少三分之一。 */
 .merge-group {
   cursor: default;
   display: block;
+  min-height: auto;
   padding: 12px 14px;
 }
 
@@ -3316,37 +3333,25 @@ h2 {
   justify-content: space-between;
 }
 
+/* 折叠行的主标题：一组占两行，第一行就能认出是哪部作品。
+   两行封顶，日文长标题不至于把一组撑成半屏。 */
+.merge-group-name {
+  display: -webkit-box;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 /* workKey 可能很长，断行而不是把按钮挤出去 */
 .merge-group-key {
-  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
 .merge-group-run {
   flex-shrink: 0;
-}
-
-.merge-members {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 0;
-}
-
-.merge-member {
-  border-top: 1px solid var(--site-border);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  padding: 6px 0;
-}
-
-/* 主条目（创建最早、合并后保留的那个）标出来，避免误以为顺序无所谓 */
-.merge-member.primary .merge-member-title {
-  font-weight: 700;
-}
-
-.merge-member-title {
-  overflow-wrap: anywhere;
 }
 
 /* 分组标题整行变成展开开关。必须把 button 的默认外观全部重置，否则它会套用
@@ -3380,12 +3385,10 @@ h2 {
   line-height: 1.25;
 }
 
-.merge-members[hidden] {
-  display: none;
-}
-
+/* 现在它嵌在 .muted 那行里和计数并排，不能是 block——一 block 就把「N 个条目」
+   挤到下一行去了。 */
 .merge-group-key {
-  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .merge-group-done {
