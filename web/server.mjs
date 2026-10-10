@@ -4773,7 +4773,24 @@ process.on('uncaughtException', (error) => {
   console.error('[fatal-guard] 未捕获异常，进程继续运行：', error?.stack || error)
 })
 
-createServer(route).listen(PORT, HOST, () => {
+// route 是 async，而 createServer 不消费它返回的 promise。route 内部那个
+// try/catch 已经是请求级的，对 await 过的异常完全有效；但「漏了 await」的拒绝
+// 既进不了那个 catch，也没人接——只能掉到进程级兜底，结果是进程活下来了，
+// res 却从没被 end，这个请求挂到客户端超时为止。
+// 在这里收口，让最后一道防线留在请求级：该失败的请求拿到 500，别的请求不受影响。
+createServer((req, res) => {
+  route(req, res).catch((error) => {
+    console.error('[request-guard] 请求未捕获异常：', error?.stack || error)
+    if (res.writableEnded) return
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: error?.message || 'internal error' }))
+      return
+    }
+    // 头已经发出去了（多半是流式响应中途炸的），改不了状态码，只能断掉
+    res.destroy()
+  })
+}).listen(PORT, HOST, () => {
   console.log(`copymanga web listening on http://${HOST}:${PORT}`)
   console.log(`download dir: ${DOWNLOAD_DIR}`)
 })
