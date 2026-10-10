@@ -90,6 +90,9 @@ const els = {
   mergePrev: document.querySelector('#merge-prev'),
   mergeNext: document.querySelector('#merge-next'),
   mergePageInfo: document.querySelector('#merge-page-info'),
+  mergeKeyword: document.querySelector('#merge-keyword'),
+  mergeSearch: document.querySelector('#merge-search'),
+  mergeIndexHint: document.querySelector('#merge-index-hint'),
   mergeDumpRefresh: document.querySelector('#merge-dump-refresh'),
   mergeDumpStatus: document.querySelector('#merge-dump-status'),
   seriesModal: document.querySelector('#series-modal'),
@@ -2152,23 +2155,36 @@ function syncLibrarySourceProfileOptions() {
 }
 
 // —— 合并 ——
-// 候选来自索引缓存里的 workGroups（workKey 相同且 >=2），所以脚本写完 workKey
-// 之后必须先重建缓存，这里才看得到新分组。
+// 候选来自索引缓存里的 workGroups（workKey 相同且 >=2）。进页面只读内存里的那份，
+// 不重建；脚本写完 workKey 之后得点「重建索引并刷新」，否则看到的还是旧分组。
 let mergePage = 1
 let mergeTotalPages = 1
+let mergeKeyword = ''
 const MERGE_PAGE_SIZE = 20
+// 合并完不自动刷新（人工逐组确认的流程，列表在脚下变掉最烦），所以得自己记住
+// 哪些组点过了，否则那张卡看上去和没合过一模一样。刷新即清空——它只是视觉标记，
+// 不是事实来源，真相始终在重建后的索引里。
+const mergedGroupKeys = new Map()
+
+function mergeCandidatesQuery(page = mergePage) {
+  const params = new URLSearchParams({ page: String(page), limit: String(MERGE_PAGE_SIZE) })
+  if (mergeKeyword) params.set('q', mergeKeyword)
+  return `/api/library/merge-candidates?${params}`
+}
 
 async function loadMergeCandidates() {
   if (!els.mergeGroups) return
   els.mergeGroups.textContent = '读取中...'
   try {
-    const data = await api(`/api/library/merge-candidates?page=${mergePage}&limit=${MERGE_PAGE_SIZE}`)
+    const data = await api(mergeCandidatesQuery())
     const groups = data.items || []
     mergeTotalPages = Math.max(1, Math.ceil((data.total || 0) / MERGE_PAGE_SIZE))
     if (els.mergePageInfo) {
       els.mergePageInfo.textContent = `第 ${mergePage} / ${mergeTotalPages} 页 · 共 ${data.total || 0} 组`
+        + (mergeKeyword ? `（搜索 "${mergeKeyword}"）` : '')
         + (data.indexStatus !== 'ready' ? `（索引 ${data.indexStatus}）` : '')
     }
+    renderMergeIndexHint(data)
     if (els.mergePrev) els.mergePrev.disabled = mergePage <= 1
     if (els.mergeNext) els.mergeNext.disabled = mergePage >= mergeTotalPages
     if (els.mergeRunPage) els.mergeRunPage.disabled = !groups.length
@@ -2178,45 +2194,151 @@ async function loadMergeCandidates() {
   }
 }
 
+// 索引被标脏之后 status 仍然是 'ready'，不单独提示的话，页面看起来一切正常，
+// 实际显示的是重建之前的分组——「改完没生效」的困惑基本都出在这儿。
+function renderMergeIndexHint(data) {
+  if (!els.mergeIndexHint) return
+  const stale = Boolean(data?.indexDirty)
+  els.mergeIndexHint.hidden = !stale
+  if (stale) {
+    els.mergeIndexHint.textContent = '索引已过期：条目有变动但还没重建，下面是旧分组。'
+      + '点右上角「重建索引并刷新」。'
+  }
+}
+
+// 重建索引再读候选。进页面走的是纯内存读（约 0.6ms），重建是全盘扫描（31 条约 390ms），
+// 所以只在手动点这个按钮时才付这份代价。
+async function refreshMergeCandidates() {
+  const button = els.mergeRefresh
+  const original = button?.textContent
+  if (button) { button.disabled = true; button.textContent = '重建中...' }
+  try {
+    let status = await api('/api/library/index/rebuild', { method: 'POST', body: '{}' })
+    const startedAt = Date.now()
+    while (status.status === 'building' && Date.now() - startedAt < 120000) {
+      await sleep(1500)
+      status = await api('/api/library/index/status')
+    }
+    libraryIndexStatus = status
+    renderLibraryIndexStatus()
+    mergedGroupKeys.clear()
+    mergePage = 1
+    await loadMergeCandidates()
+  } finally {
+    if (button) { button.disabled = false; button.textContent = original }
+  }
+}
+
 function renderMergeGroups(groups) {
   els.mergeGroups.innerHTML = ''
   if (!groups.length) {
-    els.mergeGroups.innerHTML = '<p class="muted">没有可合并的分组。候选来自索引缓存，'
-      + '元数据脚本写完 workKey 之后需要先「重建缓存」。</p>'
+    els.mergeGroups.innerHTML = mergeKeyword
+      ? `<p class="muted">没有标题含「${escapeHtml(mergeKeyword)}」的分组。</p>`
+      : '<p class="muted">没有可合并的分组。候选来自索引缓存，'
+        + '元数据脚本写完 workKey 之后需要先点「重建索引并刷新」。</p>'
     return
   }
   for (const group of groups) {
-    const card = document.createElement('article')
-    card.className = 'card merge-group'
-    const members = group.members.map((m, i) => `
-      <li class="merge-member${i === 0 ? ' primary' : ''}">
-        <span class="merge-member-title" title="${escapeHtml(m.title)}">${escapeHtml(m.title)}</span>
-        <span class="muted">${escapeHtml(m.itemId)} · ${m.unitCount} 单元${i === 0 ? ' · 主条目（创建最早）' : ''}</span>
-      </li>`).join('')
-    card.innerHTML = `
-      <div class="merge-group-head">
-        <div>
-          <div class="merge-group-key">${escapeHtml(group.key)}</div>
-          <div class="muted">${group.count} 个条目 · 合并后 ${group.unitTotal} 单元</div>
-        </div>
-        <button class="merge-group-run" type="button">合并这组</button>
-      </div>
-      <ul class="merge-members">${members}</ul>`
-    card.querySelector('.merge-group-run').addEventListener('click', async (event) => {
-      const button = event.currentTarget
-      button.disabled = true
-      button.textContent = '合并中...'
-      try {
-        await runMergeGroup(group)
-        await loadMergeCandidates()
-      } catch (error) {
-        alert(`合并失败：${error.message}`)
-        button.disabled = false
-        button.textContent = '合并这组'
-      }
-    })
-    els.mergeGroups.append(card)
+    els.mergeGroups.append(createMergeGroupCard(group))
   }
+}
+
+function createMergeGroupCard(group) {
+  const card = document.createElement('article')
+  card.className = 'card merge-group'
+  const done = mergedGroupKeys.get(group.key)
+  card.innerHTML = `
+      <div class="merge-group-head">
+        <button class="merge-group-toggle" type="button" aria-expanded="false">
+          <span class="merge-group-caret">▸</span>
+          <span>
+            <span class="merge-group-key">${escapeHtml(group.key)}</span>
+            <span class="muted">${group.count} 个条目 · 合并后 ${group.unitTotal} 单元</span>
+          </span>
+        </button>
+        <span class="merge-group-done" ${done ? '' : 'hidden'}>${escapeHtml(done || '')}</span>
+        <button class="merge-group-run" type="button" ${done ? 'disabled' : ''}>${done ? '已合并' : '合并这组'}</button>
+      </div>
+      <ul class="merge-members">${group.members.map((member, index) => `
+        <li class="merge-member${index === 0 ? ' primary' : ''}">
+          <span class="merge-member-title" title="${escapeHtml(member.title)}">${escapeHtml(member.title)}</span>
+          <span class="muted">${escapeHtml(member.itemId)} · ${member.unitCount} 单元${index === 0 ? ' · 主条目（创建最早）' : ''}</span>
+        </li>`).join('')}</ul>
+      <div class="merge-group-cards" hidden></div>`
+
+  const toggle = card.querySelector('.merge-group-toggle')
+  const cards = card.querySelector('.merge-group-cards')
+  const list = card.querySelector('.merge-members')
+  let loaded = false
+  toggle.addEventListener('click', async () => {
+    const open = cards.hidden
+    cards.hidden = !open
+    // 两种表示二选一：折叠时用紧凑列表扫一眼，展开时换成卡片看内容。
+    // 同时显示的话标题会重复两遍，日文长标题下一组就占掉大半屏。
+    list.hidden = open
+    toggle.setAttribute('aria-expanded', String(open))
+    card.querySelector('.merge-group-caret').textContent = open ? '▾' : '▸'
+    // 候选里的成员记录没有 tags（只有 type/itemId/title/cover/unitCount 这些），
+    // 渲染卡片要完整 item，所以展开时才拉——不展开就一个请求都不发。
+    if (!open || loaded) return
+    loaded = true
+    cards.textContent = '读取中...'
+    try {
+      cards.innerHTML = ''
+      cards.append(...await loadMergeMemberCards(group))
+    } catch (error) {
+      loaded = false
+      cards.textContent = `读取失败：${error.message}`
+    }
+  })
+
+  card.querySelector('.merge-group-run').addEventListener('click', async (event) => {
+    const button = event.currentTarget
+    button.disabled = true
+    button.textContent = '合并中...'
+    try {
+      const result = await runMergeGroup(group)
+      markMergeGroupDone(card, group, result)
+    } catch (error) {
+      alert(`合并失败：${error.message}`)
+      button.disabled = false
+      button.textContent = '合并这组'
+    }
+  })
+  return card
+}
+
+// 合并成功只就地标一下，不自动刷新也不移除卡片——逐组人工确认的流程里，
+// 列表在脚下重排比留着一张旧卡更难受。真实状态要等你自己点刷新。
+function markMergeGroupDone(card, group, result) {
+  const moved = (result?.merged || []).length
+  const label = `已合并 ${moved} 项，刷新后消失`
+  mergedGroupKeys.set(group.key, label)
+  const done = card.querySelector('.merge-group-done')
+  done.hidden = false
+  done.textContent = label
+  const button = card.querySelector('.merge-group-run')
+  button.disabled = true
+  button.textContent = '已合并'
+  card.classList.add('merged')
+}
+
+async function loadMergeMemberCards(group) {
+  const items = await Promise.all(group.members.map(async (member) => {
+    const type = member.type || group.members[0]?.type || 'media'
+    const item = await api(`/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(member.itemId)}`)
+    return { ...item, type: item.type || type }
+  }))
+  return items.map((item, index) => {
+    // 系列红点在这儿没意义：一个分组本来就是同一部作品，再挂一次只会干扰判断。
+    const node = createLibraryCard(item, { seriesBadges: false })
+    node.classList.add('merge-member-card')
+    if (index === 0) node.classList.add('merge-member-primary')
+    // createLibraryCard 的点击目标是媒体库视图的面板，停在合并页点下去会写进
+    // 一个看不见的 DOM。捕获阶段先把视图切过去，再让它原来的处理器跑。
+    node.addEventListener('click', () => showView('library-view'), { capture: true })
+    return node
+  })
 }
 
 async function runMergeGroup(group) {
@@ -5073,9 +5195,22 @@ els.librarySort?.addEventListener('change', () => {
 })
 syncLibrarySourceProfileOptions()
 els.mergeRefresh?.addEventListener('click', () => {
-  loadMergeCandidates().catch((error) => alert(error.message))
+  refreshMergeCandidates().catch((error) => alert(error.message))
   refreshAnidbDumpStatus().catch(() => {})
 })
+// 搜索改的是服务端过滤条件，必须回到第 1 页——不然在第 3 页改关键字，
+// 过滤后可能一共就 1 页，拿到的是空列表，看着像「搜不到」。
+function applyMergeKeyword() {
+  mergeKeyword = (els.mergeKeyword?.value || '').trim()
+  mergePage = 1
+  loadMergeCandidates().catch((error) => alert(error.message))
+}
+els.mergeSearch?.addEventListener('click', applyMergeKeyword)
+els.mergeKeyword?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') applyMergeKeyword()
+})
+// type=search 的小叉号走 input 事件而不是 keydown，不接的话清空后列表不动
+els.mergeKeyword?.addEventListener('search', applyMergeKeyword)
 els.mergePrev?.addEventListener('click', () => {
   if (mergePage > 1) { mergePage -= 1; loadMergeCandidates().catch(() => {}) }
 })
@@ -5100,8 +5235,10 @@ els.mergeDumpRefresh?.addEventListener('click', async () => {
 })
 els.mergeRunPage?.addEventListener('click', async () => {
   const button = els.mergeRunPage
-  // 当前页全量：逐组串行执行，一组失败不影响后面的，最后汇总报告
-  const data = await api(`/api/library/merge-candidates?page=${mergePage}&limit=${MERGE_PAGE_SIZE}`)
+  // 当前页全量：逐组串行执行，一组失败不影响后面的，最后汇总报告。
+  // 必须复用同一个查询（含关键字），否则开着搜索点「合并当前页全部」，
+  // 合掉的是未过滤的那一页——你根本没看见过的那些组。
+  const data = await api(mergeCandidatesQuery())
   const groups = data.items || []
   if (!groups.length) return
   if (!confirm(`将合并当前页 ${groups.length} 组。源条目的文件会进 cache/library-trash（可人工取回），但元数据不保留，确定？`)) return
@@ -5120,9 +5257,16 @@ els.mergeRunPage?.addEventListener('click', async () => {
   }
   button.disabled = false
   button.textContent = original
-  mergePage = 1
-  await loadMergeCandidates().catch(() => {})
+  // 和单组合并一致：不自动刷新。把合过的组就地标掉，列表留在原处等你自己点刷新。
+  for (const card of els.mergeGroups.querySelectorAll('.merge-group')) {
+    const key = card.querySelector('.merge-group-key')?.textContent || ''
+    const group = groups.find((candidate) => candidate.key === key)
+    if (group && !failed.some((line) => line.startsWith(`${group.key}: `))) {
+      markMergeGroupDone(card, group, null)
+    }
+  }
   if (failed.length) alert(`成功 ${ok} 组，失败 ${failed.length} 组：\n${failed.join('\n')}`)
+  else alert(`成功合并 ${ok} 组。列表没有自动刷新，点「重建索引并刷新」查看结果。`)
 })
 els.librarySourceProfile?.addEventListener('change', () => {
   libraryPage = 1

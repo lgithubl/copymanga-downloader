@@ -4383,7 +4383,14 @@ async function route(req, res) {
     // 合并候选：workKey 相同且 >=2 的分组。候选随索引重建，所以脚本写完 workKey
     // 之后要先重建缓存才看得到新候选。
     if (pathname === '/api/library/merge-candidates' && req.method === 'GET') {
-      const groups = libraryIndexState.workGroups || []
+      const all = libraryIndexState.workGroups || []
+      // 过滤必须在分页之前：分页是这里 slice 出去的，前端只拿得到当前一页，
+      // 在前端过滤就只能搜到这 20 组，翻页后结果还会变。
+      const keyword = String(url.searchParams.get('q') || '').trim().toLowerCase()
+      const groups = keyword
+        ? all.filter((group) => (group.members || [])
+          .some((member) => String(member.title || '').toLowerCase().includes(keyword)))
+        : all
       const pagination = paginationFromSearchParams(url.searchParams, 20, 200)
         || { page: 1, limit: 20, offset: 0 }
       const page = groups.slice(pagination.offset, pagination.offset + pagination.limit)
@@ -4393,6 +4400,9 @@ async function route(req, res) {
         page: pagination.page,
         limit: pagination.limit,
         indexStatus: libraryIndexState.status,
+        // 索引被标脏之后 status 仍然是 'ready'，不把 dirty 带出去，前端就没法
+        // 区分「真的没有新分组」和「脚本写完 workKey 但索引还没重建」。
+        indexDirty: Boolean(libraryIndexState.dirty),
         builtAt: libraryIndexState.builtAt,
       })
     }

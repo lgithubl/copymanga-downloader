@@ -3348,3 +3348,91 @@ h2 {
 .merge-member-title {
   overflow-wrap: anywhere;
 }
+
+/* 分组标题整行变成展开开关。必须把 button 的默认外观全部重置，否则它会套用
+   全局 button 的背景和内边距，整行变成一个色块，而不是看着像标题。 */
+.merge-group-toggle {
+  align-items: flex-start;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  font: inherit;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+/* 装 workKey 和计数的那层要恢复成竖向堆叠：父级是 flex，不设这个就并排了 */
+.merge-group-toggle > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.merge-group-caret {
+  color: var(--site-muted);
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.merge-members[hidden] {
+  display: none;
+}
+
+.merge-group-key {
+  display: block;
+}
+
+.merge-group-done {
+  align-self: center;
+  color: var(--site-primary-text);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.merge-group.merged {
+  opacity: 0.68;
+}
+
+/* 展开区沿用媒体库的卡片栅格（240px 起），两边看着是同一种东西 */
+.merge-group-cards {
+  border-top: 1px solid var(--site-border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+/* 主条目描边，和上面成员列表里的加粗对应，展开后也分得出留哪个 */
+.merge-group-cards .merge-member-primary {
+  border-color: var(--site-primary);
+  box-shadow: inset 0 0 0 1px var(--site-primary);
+}
+
+.merge-keyword {
+  flex: 1;
+  max-width: 320px;
+  min-width: 0;
+}
+
+/* 和 .stream-player-warning 同一套告警配色，保持页面内一致 */
+.merge-index-hint {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.42);
+  border-radius: 8px;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+}
+
+.merge-index-hint[hidden] {
+  display: none;
+}
