@@ -757,7 +757,12 @@ function processImageCheckQueue() {
     const job = imageCheckJobs.get(id)
     if (!job || job.status !== 'queued') continue
     runningImageCheckIds.add(id)
-    runImageCheckJob(job).finally(() => {
+    runImageCheckJob(job).catch((error) => {
+      // .finally 不消费拒绝——p.finally() 返回的仍是 rejected promise，没人接就是
+      // 未处理拒绝，进程直接死。这两个函数目前内部自己包了 try/catch，但不能把
+      // 「调用方安全」寄托在「被调方永远不抛」上。
+      console.error(`[job] 未捕获异常 ${error?.stack || error}`)
+    }).finally(() => {
       runningImageCheckIds.delete(id)
       processImageCheckQueue()
     })
@@ -842,7 +847,12 @@ function processJobQueue() {
     const job = jobs.get(id)
     if (!job || job.deleted || job.status !== 'queued') continue
     runningJobIds.add(id)
-    runJob(job, job).finally(() => {
+    runJob(job, job).catch((error) => {
+      // .finally 不消费拒绝——p.finally() 返回的仍是 rejected promise，没人接就是
+      // 未处理拒绝，进程直接死。这两个函数目前内部自己包了 try/catch，但不能把
+      // 「调用方安全」寄托在「被调方永远不抛」上。
+      console.error(`[job] 未捕获异常 ${error?.stack || error}`)
+    }).finally(() => {
       runningJobIds.delete(id)
       processJobQueue()
     })
@@ -4211,6 +4221,10 @@ async function route(req, res) {
     })
   }
 
+  // 这个 try 是整个进程唯一的请求级兜底，但它只接得住「await 过的」异常：
+  // try 块里写 `return asyncFn()` 不加 await，try 在 return 那一刻就结束了，
+  // 被返回的 promise 拒绝时会直接穿过 route 抛给 http 监听器——监听器不接，
+  // 就是未处理拒绝，Node 默认直接杀进程。所以本函数内所有 async 调用必须 await。
   try {
     if (pathname === '/health') return json(res, 200, { ok: true })
     if (pathname === '/api/events') {
@@ -4685,10 +4699,10 @@ async function route(req, res) {
       }))
     }
     if (pathname === '/api/local-image' && req.method === 'GET') {
-      return serveLocalImage(res, url.searchParams.get('path') || '')
+      return await serveLocalImage(res, url.searchParams.get('path') || '')
     }
     if (pathname === '/api/preview-image' && req.method === 'GET') {
-      return servePreviewImage(res, url.searchParams.get('sessionId') || '', url.searchParams.get('index') || 0)
+      return await servePreviewImage(res, url.searchParams.get('sessionId') || '', url.searchParams.get('index') || 0)
     }
     if (pathname === '/api/download' && req.method === 'POST') {
       const body = await readJson(req)
@@ -4708,7 +4722,7 @@ async function route(req, res) {
       return json(res, 202, { batch: jobBatches.get(batchId), jobs: nextJobs.map(publicJob) })
     }
 
-    return serveStatic(req, res, pathname)
+    return await serveStatic(req, res, pathname)
   } catch (error) {
     console.error(error)
     return json(res, 500, { error: error.message })
@@ -4723,6 +4737,20 @@ await mkdir(DOWNLOAD_DIR, { recursive: true })
 await initTagStore(DATA_DIR)
 config = await loadConfig()
 await loadLibraryIndexCache()
+// 最后一道防线。上面每个已知入口都补了 await，但「以后新增的某个入口忘了 await」
+// 是迟早的事，而这类疏漏的代价是整个进程被杀——一次瞬时的对端超时就能让所有
+// 正在下载的任务一起陪葬。所以这里选择记录并存活，而不是让它死。
+//
+// 不退出是权衡过的：本服务的持久状态都在磁盘上且走原子写，内存里只有队列和缓存，
+// 残留一个坏请求远好过丢掉全部在途任务。真正的修复永远是补 await，不是靠这里兜。
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal-guard] 未处理的 Promise 拒绝，进程继续运行：',
+    reason instanceof Error ? reason.stack : reason)
+})
+process.on('uncaughtException', (error) => {
+  console.error('[fatal-guard] 未捕获异常，进程继续运行：', error?.stack || error)
+})
+
 createServer(route).listen(PORT, HOST, () => {
   console.log(`copymanga web listening on http://${HOST}:${PORT}`)
   console.log(`download dir: ${DOWNLOAD_DIR}`)
