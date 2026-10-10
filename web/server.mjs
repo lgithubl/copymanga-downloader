@@ -56,6 +56,8 @@ const SUBTITLE_PRESENT_TAG = normalizeTagName('字幕v1: 有')
 const SERIES_TAG_PREFIX = normalizeTagName('系列:')
 // 带冒号，所以「系列priority:」不会被 SERIES_TAG_PREFIX 当成系列值吞掉。
 const SERIES_PRIORITY_TAG_PREFIX = normalizeTagName('系列priority:')
+// 默认脚本列表里自带 builtin-thumbnails 的导入方案，导入后不再自动排一次缩略图
+const SELF_THUMBNAIL_IMPORT_PROFILES = new Set(['rj-media', 'monthly-ani'])
 // 超过这个条目数，JSON.stringify 的产出会逼近 V8 的 512MB 字符串上限，
 // 届时重建是直接抛 Invalid string length，而不是变慢。
 const LIBRARY_INDEX_SIZE_WARN = 250000
@@ -4239,7 +4241,8 @@ async function route(req, res) {
       const actionIds = importTagScriptIds(form.fields)
       for (const imported of items) {
         await syncItemTagIndex(imported)
-        if (handler.enqueueThumbnails && imported.sourceProfile !== 'rj-media') {
+        // 这些方案的默认脚本列表里已经显式带了 builtin-thumbnails，再自动排一次会重复
+        if (handler.enqueueThumbnails && !SELF_THUMBNAIL_IMPORT_PROFILES.has(imported.sourceProfile)) {
           handler.enqueueThumbnails(imported.itemId, { force: false }).catch(() => {})
         }
         if (actionIds.length) enqueueMetadataActions({ type, itemId: imported.itemId, actionIds, reason: 'import' })

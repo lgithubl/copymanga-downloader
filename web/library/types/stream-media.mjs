@@ -142,6 +142,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       if (sourcePath && !fileInputs.length) return importRjDirectoryBatch({ sourcePath, inputTags })
       if (fileInputs.length) return importRjUploadBatch({ files: fileInputs, inputTags })
     }
+    if (importProfile === 'monthly-ani') {
+      if (fileInputs.length) throw new Error('月度 ANI 导入方案只支持来源路径，不支持上传文件')
+      return importMonthlyAniBatch({ sourcePath, inputTags })
+    }
 
     const seedTitle = collectionTitle || seedTitleForImport({ sourcePath, fileInputs })
     const itemId = requestedItemId || uniqueItemId(seedTitle)
@@ -262,6 +266,83 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       cover: '',
       unitCount: 0,
       mediaUnits: [],
+      createdAt: new Date().toISOString(),
+      publishedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    await writeMetadata(itemId, next)
+    return next
+  }
+
+  // 月度 ANI：遍历来源目录下的所有视频，每个视频单独成一个合集。
+  // 字幕按「同目录 + 归一化词干」跟着它的视频一起搬——用的就是 scanMediaUnits
+  // 匹配字幕的那套键（subtitleMediaKey），保证搬进来的一定配得上，不会出现
+  // 「文件在条目里却挂不上」的分裂。配不上任何视频的字幕不导入，但会回报出来。
+  async function importMonthlyAniBatch({ sourcePath, inputTags = [] }) {
+    if (!sourcePath) throw new Error('月度 ANI 导入方案需要来源路径')
+    const source = path.resolve(sourcePath)
+    await assertAllowedSource(source)
+    const sourceInfo = await stat(source)
+    if (!sourceInfo.isDirectory()) throw new Error('月度 ANI 导入方案只支持目录来源')
+
+    const relOf = (filePath) => path.relative(source, filePath).split(path.sep).join('/')
+    const byRelative = (a, b) => relOf(a).localeCompare(relOf(b), undefined, { numeric: true })
+    const allFiles = await walkFiles(source)
+    const videos = allFiles.filter((filePath) => mediaKind(filePath) === 'video').sort(byRelative)
+    if (!videos.length) throw new Error(`没有找到视频文件：${source}`)
+
+    const subtitlesByKey = new Map()
+    for (const filePath of allFiles.filter(isSubtitleName).sort(byRelative)) {
+      const key = subtitleMediaKey(relOf(filePath))
+      const list = subtitlesByKey.get(key) || []
+      list.push(filePath)
+      subtitlesByKey.set(key, list)
+    }
+
+    const items = []
+    const takenSubtitles = new Set()
+    for (const video of videos) {
+      const subtitles = subtitlesByKey.get(subtitleMediaKey(relOf(video))) || []
+      for (const subtitle of subtitles) takenSubtitles.add(subtitle)
+      items.push(await importMonthlyAniItem({ video, subtitles, inputTags }))
+    }
+    // 没被任何视频认领的字幕：常见于字幕单独放 Subs/ 子目录，或命名和视频对不上。
+    // 静默丢掉会让人以为字幕丢了，所以显式回报。
+    const skippedSubtitles = allFiles
+      .filter(isSubtitleName)
+      .filter((filePath) => !takenSubtitles.has(filePath))
+      .map(relOf)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    return {
+      type,
+      profile: 'monthly-ani',
+      imported: items.length,
+      skippedSubtitles,
+      items,
+    }
+  }
+
+  async function importMonthlyAniItem({ video, subtitles = [], inputTags = [] }) {
+    const title = path.basename(video, path.extname(video)) || type
+    const itemId = uniqueItemId(title)
+    await mkdir(itemPath(itemId), { recursive: true })
+    // 一律拍平到条目根：一个条目只有一个视频不会撞名，而字幕和视频必须落在
+    // 同一层目录，匹配键的目录部分才相等（见 subtitleKey）。
+    await importSingleFile({ itemId, source: video, relativeName: path.basename(video) })
+    for (const subtitle of subtitles) {
+      await importSingleFile({ itemId, source: subtitle, relativeName: path.basename(subtitle) })
+    }
+    const units = await scanMediaUnits(itemId, [])
+    units.sort(compareMediaUnits)
+    const next = normalizeItem({
+      type,
+      itemId,
+      title,
+      sourceProfile: 'monthly-ani',
+      tags: inputTags,
+      cover: units.find((unit) => unit.cover)?.cover || '',
+      unitCount: units.length,
+      mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
       createdAt: new Date().toISOString(),
       publishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

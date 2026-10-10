@@ -289,6 +289,11 @@ const defaultMediaImportProfiles = {
   'normal-video': {
     defaultMetadataActions: ['builtin-subtitles'],
   },
+  // 导入时已经建好章节、配好字幕，所以不需要 builtin-scan-media-units；
+  // builtin-subtitles 留着是为了刷出「字幕v1: 有/无」tag，媒体库的字幕筛选靠它。
+  'monthly-ani': {
+    defaultMetadataActions: ['builtin-subtitles', 'monthly-ani-v1', 'builtin-thumbnails'],
+  },
 }
 const mediaImportTypeInfo = {
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
@@ -298,6 +303,8 @@ const mediaImportProfiles = {
   custom: { label: '自定义', type: 'media', sourcePlaceholder: '/input/album' },
   'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', batch: true },
   'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video' },
+  // batch: true —— 一个来源目录会产出多个合集（每个视频一个），和 rj-media 同类
+  'monthly-ani': { label: '月度 ANI', type: 'media', sourcePlaceholder: '/input/ani', batch: true },
   epub: { label: 'EPUB', type: 'epub', sourcePlaceholder: '' },
 }
 const mediaPlaybackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
