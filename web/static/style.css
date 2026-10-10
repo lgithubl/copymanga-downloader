@@ -3300,7 +3300,12 @@ h2 {
   gap: 12px;
 }
 
+/* .card 是「76px 封面 + 内容」的两列 grid，合并分组借它的边框样式但没有封面：
+   不覆盖的话 .merge-group-head 会落进 76px 的封面列，workKey 被挤成每行一个字，
+   「合并这组」按钮还会溢出去压在成员标题上。整张卡也不可点，光标一起改掉。 */
 .merge-group {
+  cursor: default;
+  display: block;
   padding: 12px 14px;
 }
 
