@@ -249,14 +249,19 @@ jobs:
                   if mode == "http500":
                       self._send(500, "boom", "text/plain")
                       return
+                  if mode == "slow":
+                      # 超时分支也必须走路径后缀。靠 aid=999002 触发是行不通的：
+                      # 脚本会把 ?request=anime&...&aid=<dump匹配到的aid> 拼在 base 后面，
+                      # 调用方根本左右不了最终的 aid。
+                      time.sleep(30)
+                      self._send(200, OK.format(aid=aid))
+                      return
                   if not client:
                       self._send(200, '<error code="302">client version missing or invalid</error>')
                       return
                   if aid == "999001":
                       self._send(200, '<error code="330">no such anime</error>')
                       return
-                  if aid == "999002":
-                      time.sleep(30)
                   if aid == "999003":
                       self._send(500, "boom", "text/plain")
                       return
