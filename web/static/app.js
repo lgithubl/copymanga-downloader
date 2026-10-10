@@ -4006,10 +4006,14 @@ function layoutMediaPages({ anchor = null } = {}) {
   const available = Math.max(320, frame - 56)
   const limit = loadEpubPageWidth()
   const pageWidth = limit > 0 ? Math.max(320, Math.min(limit, available)) : available
-  // 变量设在滚动容器上：CSS 变量继承给 .media-html-pages 的 column-width，
-  // 同时让容器自己的 max-width 把视口收到一页宽（相邻栏才会被裁掉）。
+  // 左右留白：padding 加在多列元素上（内容盒仍是 pageWidth，所以栏宽和翻页步长不变），
+  // 视口相应放宽到 pageWidth + 2*gutter。gutter 必须 <= gap，否则视口右边会
+  // 多出 gutter-gap 的空间，把下一栏的开头露出来。
+  const gutter = Math.min(28, gap)
   content.style.setProperty('--media-page-width', `${pageWidth}px`)
   content.style.setProperty('--media-page-gap', `${gap}px`)
+  content.style.setProperty('--media-page-gutter', `${gutter}px`)
+  content.style.setProperty('--media-page-port', `${pageWidth + gutter * 2}px`)
   pages.style.removeProperty('--media-page-width')
   pages.style.removeProperty('--media-page-gap')
   pages.style.removeProperty('--media-page-pad-x')

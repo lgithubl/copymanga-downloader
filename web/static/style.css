@@ -1984,14 +1984,16 @@ h2 {
   color: inherit;
 }
 
-/* 滚动视口本身收窄到一页宽并居中，而不是给内容加左右 padding。
-   padding 在滚动内容里，翻一页就滚走了，相邻栏会从两侧补进视口
+/* 滚动视口本身收窄到「一页 + 左右留白」并居中，而不是给内容加会滚走的 padding。
+   padding 在滚动内容里时，翻一页就滚走了，相邻栏会从两侧补进视口
    （实测 1564px 视口 / 900px 一栏，同屏能看到 3 栏内容）。
-   视口 = 一页宽之后，多出来的栏自然被 overflow:hidden 裁掉。 */
+   留白走 .media-html-pages 的左右 padding：它在多列元素上，内容盒仍是一页宽，
+   所以每一栏都带着自己的留白滚动，栏宽和翻页步长都不变；
+   视口相应放宽 2*gutter，多出来的栏仍被 overflow:hidden 裁掉。 */
 .media-reader-content.media-html {
   height: 100%;
   margin-inline: auto;
-  max-width: var(--media-page-width, none);
+  max-width: var(--media-page-port, none);
   min-height: 0;
   overflow: hidden;
   padding: 0;
@@ -2003,7 +2005,7 @@ h2 {
   column-gap: var(--media-page-gap, 48px);
   column-width: var(--media-page-width, 720px);
   height: 100%;
-  padding: 28px 0;
+  padding: 28px var(--media-page-gutter, 28px);
 }
 
 .reader-theme-light {
