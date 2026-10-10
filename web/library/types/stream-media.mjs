@@ -1213,6 +1213,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
           if (!job || job.status !== 'queued') continue
           await runThumbnailJob(job)
         }
+      } catch (error) {
+        // 原本只有 try/finally：runThumbnailJob 自己包了 try/catch，但队列循环本身
+        // （取任务、读 Map）一旦抛出就会逃逸成未处理拒绝，把整个进程带走。
+        console.error(`[thumbnail-queue] 未捕获异常 ${error?.stack || error}`)
       } finally {
         thumbnailWorkerRunning = false
         if (thumbnailQueue.length) processThumbnailQueue()

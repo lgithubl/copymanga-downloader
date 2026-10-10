@@ -132,11 +132,27 @@ function binary(res, status, body, contentType) {
 }
 
 function streamFile(res, filePath, contentType) {
+  const stream = createReadStream(filePath)
+  // pipe 不转发错误，这是 Node 的经典坑：读流或 res 任意一端 emit error 而没有
+  // 监听器，就是同步抛出 -> uncaughtException -> 整个进程死。而触发条件极普通：
+  // 看视频中途关标签页（res EPIPE）、文件正在被替换（读流 ENOENT）。
+  // 这里的 try/catch 兜不住——streamFile 是同步返回的，错误在它返回之后才发生。
+  stream.on('error', (error) => {
+    console.error(`[stream] 读取失败 ${filePath}: ${error.message}`)
+    // 响应头早发出去了，改不了状态码，只能断连接让客户端知道这次传输不完整
+    res.destroy()
+  })
+  // 客户端先走的情况：必须主动销毁读流，否则它会继续读、继续往已关闭的 res 写
+  res.on('error', (error) => {
+    console.error(`[stream] 响应中断 ${filePath}: ${error.message}`)
+    stream.destroy()
+  })
+  res.on('close', () => stream.destroy())
   res.writeHead(200, webHeaders({
     'Content-Type': contentType,
     'Cache-Control': 'public, max-age=3600',
   }))
-  createReadStream(filePath).pipe(res)
+  stream.pipe(res)
 }
 
 function cleanName(value) {
@@ -3650,7 +3666,13 @@ function enqueueLibraryIndexRefreshTrigger({ reason = 'import', delaySeconds = 3
 
 function scheduleTagWorker() {
   if (tagWorkerTimer) return
-  tagWorkerTimer = setImmediate(processTagQueue)
+  // 不能裸传 async 函数引用：setImmediate 不接它返回的 promise，
+  // processTagQueue 只有 try/finally 没有 catch，一次拒绝就是未处理拒绝。
+  tagWorkerTimer = setImmediate(() => {
+    processTagQueue().catch((error) => {
+      console.error(`[tag-queue] 未捕获异常 ${error?.stack || error}`)
+    })
+  })
 }
 
 async function processTagQueue() {
