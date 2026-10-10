@@ -35,7 +35,7 @@ export async function generateTags(ctx) {
   }
 
   // —— 1. dump 匹配 ——
-  const query = matchQueryOf(item)
+  const query = matchQueryOf(item, options, logs)
   logs.push(`匹配输入：${JSON.stringify(query)}`)
   const index = await loadDumpIndex(options.dumpDir)
   logs.push(`dump：${index.entries.length} 部（${index.source}）`)
@@ -126,6 +126,10 @@ function requireOptions(raw) {
     matchThreshold: num('matchThreshold'),
     force: raw.force === true,
     apiEnabled: raw.apiEnabled === true,
+    // 这两项和本脚本「所有参数必填」的惯例相反，是可选的：不配就完全不做预处理，
+    // 行为和没有这个功能时一模一样。故意如此——它们是纯增强，不该强迫所有人填。
+    titleEncoding: titleEncodingOf(raw.titleEncoding),
+    titleRewrite: compileRewrite(raw.titleRewrite),
   }
   if (!options.apiEnabled) return options
   // 只有开了 API 才校验这批，否则不调用 API 的人被迫填一堆没用的
@@ -139,6 +143,88 @@ function requireOptions(raw) {
     apiSleepJitterMs: num('apiSleepJitterMs'),
     apiTimeoutMs: num('apiTimeoutMs'),
   }
+}
+
+// 允许的编码。顺序即 auto 模式下的尝试顺序，也是分数打平时的优先级。
+const TITLE_ENCODINGS = ['utf-8', 'euc-jp', 'shift_jis', 'cp932', 'gb18030']
+
+function titleEncodingOf(value) {
+  const v = String(value ?? '').trim().toLowerCase()
+  if (!v) return ''                      // 不配 = 不解码
+  if (v === 'auto') return 'auto'
+  if (TITLE_ENCODINGS.includes(v)) return v
+  throw new Error(`titleEncoding 不支持：${JSON.stringify(value)}（可选 auto / ${TITLE_ENCODINGS.join(' / ')}）`)
+}
+
+// 正则在这里就编译掉：配错了当场报「配置不完整」，而不是等跑到一半才炸。
+function compileRewrite(value) {
+  if (value === null || value === undefined || value === '') return []
+  if (!Array.isArray(value)) throw new Error('titleRewrite 必须是数组')
+  return value.map((rule, i) => {
+    const pattern = String(rule?.pattern ?? '')
+    if (!pattern) throw new Error(`titleRewrite[${i}].pattern 不能为空`)
+    const flags = String(rule?.flags ?? 'g')
+    let re
+    try {
+      re = new RegExp(pattern, flags)
+    } catch (error) {
+      throw new Error(`titleRewrite[${i}] 正则非法：${error.message}`)
+    }
+    return { re, replace: String(rule?.replace ?? ''), pattern, flags }
+  })
+}
+
+// 合理性打分：解对了会是成片的假名和常用汉字；解错了会蹦出私用区和生僻字。
+// 这招分不开 GB18030 和 EUC-JP 互相误读的情况（实测 4/17 会判错，且分数打平），
+// 所以 auto 只是省事，真有歧义得靠 titleEncoding 显式指定。
+function plausibility(text) {
+  if (!text) return -Infinity
+  let kana = 0; let cjk = 0; let ascii = 0; let junk = 0; let rare = 0
+  for (const ch of text) {
+    const c = ch.codePointAt(0)
+    if (c >= 0x3040 && c <= 0x30ff) kana += 1
+    else if (c >= 0x4e00 && c <= 0x9fff) cjk += 1
+    else if (c < 128) ascii += 1
+    if ((c >= 0xe000 && c <= 0xf8ff) || ch === '\uFFFD') junk += 1
+    else if (c > 0x9fff && c < 0xf900) rare += 1
+  }
+  return (kana * 3 + cjk * 2 + ascii * 0.5 - junk * 20 - rare * 5) / text.length
+}
+
+function decodeTitle(text, encoding, logs) {
+  // 闸门：没有 %XX 就完全不碰。正常标题一个字符都不会动，零回归面。
+  if (!encoding || !/%[0-9a-fA-F]{2}/.test(text)) return text
+  let bytes
+  try {
+    bytes = Uint8Array.from(
+      text.replace(/%([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))),
+      (ch) => ch.charCodeAt(0) & 0xff,
+    )
+  } catch (error) {
+    logs.push(`百分号解码失败，按原文匹配：${error.message}`)
+    return text
+  }
+  const candidates = []
+  for (const enc of encoding === 'auto' ? TITLE_ENCODINGS : [encoding]) {
+    try {
+      const decoded = new TextDecoder(enc, { fatal: true }).decode(bytes)
+      candidates.push({ enc, decoded, score: plausibility(decoded) })
+    } catch {
+      // 解不出就是淘汰，不记噪声日志
+    }
+  }
+  if (!candidates.length) {
+    logs.push(`${encoding} 下没有任何编码解得出，按原文匹配`)
+    return text
+  }
+  candidates.sort((a, b) => b.score - a.score)
+  const best = candidates[0]
+  logs.push(`编码候选：${candidates.map((c) => `${c.enc}(${c.score.toFixed(2)})`).join(' ')} -> 选 ${best.enc}`)
+  // 分数贴得太近就是没把握，明说出来，别让人以为判定是确定的
+  if (candidates[1] && best.score - candidates[1].score < 0.3) {
+    logs.push(`⚠ 前两名分差 ${(best.score - candidates[1].score).toFixed(2)} < 0.3，可能判错；建议把 titleEncoding 写死`)
+  }
+  return best.decoded
 }
 
 // —— dump 载入：目录里找 anime-titles.xml(.gz)，解析成 aid -> 标题数组 ——
@@ -259,9 +345,21 @@ function scoreIdf(a, b, idf) {
   return total ? (2 * inter) / total : 0
 }
 
-function matchQueryOf(item) {
+function matchQueryOf(item, options, logs) {
   // 条目标题就是导入时取的文件名词干，是最贴近片源命名的那个
-  return String(item.title || item.itemId || '')
+  const raw = String(item.title || item.itemId || '')
+  // 下面两步只改「喂给 dump 的那个串」。item.title 本身、dump 侧、API 调用、
+  // 产出的 tag——全都不受影响。
+  const decoded = decodeTitle(raw, options.titleEncoding, logs)
+  if (decoded !== raw) logs.push(`解码后：${JSON.stringify(decoded)}`)
+  let rewritten = decoded
+  for (const rule of options.titleRewrite) {
+    rewritten = rewritten.replace(rule.re, rule.replace)
+  }
+  rewritten = rewritten.trim()
+  if (rewritten !== decoded) logs.push(`重写后：${JSON.stringify(rewritten)}`)
+  // 规则吃光了就退回解码前的串，宁可匹配不准也不要拿空串去搜
+  return rewritten || decoded || raw
 }
 
 function searchDump(index, query) {
