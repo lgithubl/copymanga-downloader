@@ -3995,16 +3995,24 @@ function layoutMediaPages({ anchor = null } = {}) {
   const content = els.mediaReaderContent
   const pages = content.querySelector('.media-html-pages')
   if (!pages) return
-  const gap = Math.max(24, Math.min(48, Math.round(content.clientWidth * 0.06)))
-  const available = Math.max(320, content.clientWidth - 56)
+  // 宽度必须量父容器：content 自己被 --media-page-width 驱动的 max-width 限制着，
+  // 拿它量就是拿"上一轮的结果"当这一轮的输入，会一路自我收缩
+  //（实测首次布局时 clientWidth 还是 0，算出 320 写死，之后再也回不到铺满）。
+  const host = content.parentElement || content
+  const frame = host.clientWidth
+  // 视图还没布局出来（切到别的 tab、首帧）时先不算，等真正可见时会再调一次
+  if (frame < 100) return
+  const gap = Math.max(24, Math.min(48, Math.round(frame * 0.06)))
+  const available = Math.max(320, frame - 56)
   const limit = loadEpubPageWidth()
   const pageWidth = limit > 0 ? Math.max(320, Math.min(limit, available)) : available
-  // 内边距要把多列内容盒恰好压到 pageWidth，否则 column-width 只是"最小建议值"，
-  // 浏览器会在剩余空间里并排塞第二列，变成"双页跨页却一次只翻一页"。
-  const padX = Math.max(0, Math.round((content.clientWidth - pageWidth) / 2))
-  pages.style.setProperty('--media-page-width', `${pageWidth}px`)
-  pages.style.setProperty('--media-page-gap', `${gap}px`)
-  pages.style.setProperty('--media-page-pad-x', `${padX}px`)
+  // 变量设在滚动容器上：CSS 变量继承给 .media-html-pages 的 column-width，
+  // 同时让容器自己的 max-width 把视口收到一页宽（相邻栏才会被裁掉）。
+  content.style.setProperty('--media-page-width', `${pageWidth}px`)
+  content.style.setProperty('--media-page-gap', `${gap}px`)
+  pages.style.removeProperty('--media-page-width')
+  pages.style.removeProperty('--media-page-gap')
+  pages.style.removeProperty('--media-page-pad-x')
   mediaPageStep = pageWidth + gap
   mediaMaxScrollLeft = Math.max(0, content.scrollWidth - content.clientWidth)
   mediaPageCount = mediaMaxScrollLeft <= 0 ? 1 : Math.ceil(mediaMaxScrollLeft / mediaPageStep) + 1
@@ -4179,8 +4187,8 @@ function enterEpubImmersive({ remember = false } = {}) {
     info.textContent = `${mediaPageIndex + 1} / ${mediaPageCount}`
     prevCh.disabled = !mediaStepTarget('prev')
     nextCh.disabled = !mediaStepTarget('next')
-    prevPg.disabled = mediaPageIndex <= 0
-    nextPg.disabled = mediaPageIndex >= mediaPageCount - 1
+    prevPg.disabled = mediaPageIndex <= 0 && !mediaStepTarget('prev')
+    nextPg.disabled = mediaPageIndex >= mediaPageCount - 1 && !mediaStepTarget('next')
     syncImmersiveToc(toc)
   }
   epubImmersiveSync = syncInfo
@@ -4211,6 +4219,12 @@ function enterEpubImmersive({ remember = false } = {}) {
     if (widthAdjustCleanup) return
     downAt = { x: event.clientX, y: event.clientY }
   }
+  // 本章翻完了就续到下一章节/下一单元，而不是在最后一页上卡死
+  const goPage = (delta) => {
+    const next = mediaPageIndex + delta
+    if (next >= 0 && next <= mediaPageCount - 1) { setMediaPage(next); return }
+    mediaStepTarget(delta > 0 ? 'next' : 'prev')?.()
+  }
   const onUp = (event) => {
     const start = downAt
     downAt = null
@@ -4219,9 +4233,14 @@ function enterEpubImmersive({ remember = false } = {}) {
     if (String(window.getSelection?.() || '').length > 0) return
     if (event.target?.closest?.('a[href], button, select, input')) return
     const rect = content.getBoundingClientRect()
-    const ratio = (event.clientX - rect.left) / Math.max(1, rect.width)
-    if (ratio < 0.3) setMediaPage(mediaPageIndex - 1)
-    else if (ratio > 0.7) setMediaPage(mediaPageIndex + 1)
+    // 滚动条那条在 rect 里、不在 clientWidth/clientHeight 里。
+    // 用 rect.width 算比例的话，点滚动条 ratio≈0.99 会被当成"下一页"。
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    if (x >= content.clientWidth || y >= content.clientHeight) return
+    const ratio = x / Math.max(1, content.clientWidth)
+    if (ratio < 0.3) goPage(-1)
+    else if (ratio > 0.7) goPage(1)
     else if (els.app.classList.contains('stream-chrome-visible')) setVisible(false)
     else reveal()
     setTimeout(syncInfo, 350)
@@ -4232,8 +4251,8 @@ function enterEpubImmersive({ remember = false } = {}) {
   const onKey = (event) => {
     if (widthAdjustCleanup) return
     if (event.key === 'Escape') { event.preventDefault(); exitEpubImmersive({ remember: true }) }
-    else if (event.key === 'ArrowLeft') { setMediaPage(mediaPageIndex - 1); setTimeout(syncInfo, 350) }
-    else if (event.key === 'ArrowRight') { setMediaPage(mediaPageIndex + 1); setTimeout(syncInfo, 350) }
+    else if (event.key === 'ArrowLeft') { goPage(-1); setTimeout(syncInfo, 350) }
+    else if (event.key === 'ArrowRight') { goPage(1); setTimeout(syncInfo, 350) }
   }
   document.addEventListener('keydown', onKey)
 
@@ -4242,8 +4261,8 @@ function enterEpubImmersive({ remember = false } = {}) {
   exitBtn.addEventListener('click', () => exitEpubImmersive({ remember: true }))
   prevCh.addEventListener('click', () => { mediaStepTarget('prev')?.() })
   nextCh.addEventListener('click', () => { mediaStepTarget('next')?.() })
-  prevPg.addEventListener('click', () => { setMediaPage(mediaPageIndex - 1); setTimeout(syncInfo, 350) })
-  nextPg.addEventListener('click', () => { setMediaPage(mediaPageIndex + 1); setTimeout(syncInfo, 350) })
+  prevPg.addEventListener('click', () => { goPage(-1); setTimeout(syncInfo, 350) })
+  nextPg.addEventListener('click', () => { goPage(1); setTimeout(syncInfo, 350) })
   widthBtn.addEventListener('click', () => { setVisible(true); clearTimeout(timer); toggleWidthAdjust() })
   bar.addEventListener('click', (event) => event.stopPropagation())
 
@@ -4370,7 +4389,12 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     if (String(window.getSelection?.() || '').length > 0) return
     if (event.target?.closest?.('a[href], button, select, input, .viewer-sentinel')) return
     const rect = content.getBoundingClientRect()
-    const ratio = (event.clientX - rect.left) / Math.max(1, rect.width)
+    // 滚动条那条在 rect 里、不在 clientWidth/clientHeight 里。
+    // 用 rect.width 算比例的话，点右侧滚动条 ratio≈0.99 会被当成「下一章」。
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    if (x >= content.clientWidth || y >= content.clientHeight) return
+    const ratio = x / Math.max(1, content.clientWidth)
     if (ratio < 0.3) {
       if (chapter.canPrev()) { chapter.prev(); setTimeout(syncInfo, 400) }
     } else if (ratio > 0.7) {
@@ -4450,20 +4474,25 @@ function toggleWidthAdjust() {
   layer.append(left, right, label)
   document.body.append(layer)
 
-  const available = Math.max(320, content.clientWidth - 56)
+  // 水平范围必须按父容器量：正文容器自己被 max-width 收到了一页宽，
+  // 拿它算 available 会让宽度只能越调越窄、再也拉不回铺满。
+  const host = content.parentElement || content
+  const available = Math.max(320, host.clientWidth - 56)
   const limit = loadEpubPageWidth()
   let width = limit > 0 ? Math.min(limit, available) : available
 
   const paint = () => {
-    // 参考线层必须用 fixed 按容器的屏幕矩形定位：.media-reader-content 是横向
+    // 参考线层必须用 fixed 按屏幕矩形定位：.media-reader-content 是横向
     // 滚动容器，absolute 相对的是 padding box，不随 scrollLeft 走 —— 翻过页
     // 之后（scrollLeft 几千）参考线会被甩出视口左边。
+    // 垂直范围跟正文走，水平范围跟整块阅读区走。
     const rect = content.getBoundingClientRect()
-    layer.style.left = `${rect.left}px`
+    const hostRect = host.getBoundingClientRect()
+    layer.style.left = `${hostRect.left}px`
     layer.style.top = `${rect.top}px`
-    layer.style.width = `${rect.width}px`
+    layer.style.width = `${hostRect.width}px`
     layer.style.height = `${rect.height}px`
-    const pad = Math.max(0, (rect.width - width) / 2)
+    const pad = Math.max(0, (hostRect.width - width) / 2)
     left.style.left = `${pad}px`
     right.style.left = `${pad + width}px`
     label.textContent = `${Math.round(width)} px${width >= available ? '（铺满）' : ''}`
@@ -4482,8 +4511,8 @@ function toggleWidthAdjust() {
   }
   const onMove = (event) => {
     if (!dragging) return
-    const rect = content.getBoundingClientRect()
-    const centre = rect.left + rect.width / 2
+    const hostRect = host.getBoundingClientRect()
+    const centre = hostRect.left + hostRect.width / 2
     const half = dragging === 'left' ? centre - event.clientX : event.clientX - centre
     width = Math.max(320, Math.min(available, Math.round(half * 2)))
     moved = true
