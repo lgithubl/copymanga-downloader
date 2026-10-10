@@ -3282,3 +3282,64 @@ h2 {
   background: var(--site-primary, #1f6feb);
   color: #ffffff;
 }
+
+/* —— 合并页 —— */
+.merge-dump-status {
+  margin: 6px 0 10px;
+}
+
+.merge-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.merge-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.merge-group {
+  padding: 12px 14px;
+}
+
+.merge-group-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+/* workKey 可能很长，断行而不是把按钮挤出去 */
+.merge-group-key {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.merge-group-run {
+  flex-shrink: 0;
+}
+
+.merge-members {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.merge-member {
+  border-top: 1px solid var(--site-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 0;
+}
+
+/* 主条目（创建最早、合并后保留的那个）标出来，避免误以为顺序无所谓 */
+.merge-member.primary .merge-member-title {
+  font-weight: 700;
+}
+
+.merge-member-title {
+  overflow-wrap: anywhere;
+}

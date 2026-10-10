@@ -2697,6 +2697,22 @@ async function readAnidbDumpStatus() {
   } catch {
     // .meta.json 丢了不影响用 dump，只是下次刷新拿不到条件请求的好处
   }
+  if (!status.animeCount) {
+    // meta 缺失时从 dump 本身算一次并补写回去，别在界面上显示「? 部」。
+    // 只在缺的时候算，之后都走 meta，不会每次状态查询都解压 7MB。
+    try {
+      const count = (gunzipSync(await readFile(file)).toString('utf8').match(/<anime aid="/g) || []).length
+      if (count) {
+        status.animeCount = count
+        await writeFile(meta, JSON.stringify({
+          etag: status.etag, lastModified: status.lastModified, animeCount: count,
+          fetchedAt: new Date().toISOString(),
+        }, null, 2)).catch(() => {})
+      }
+    } catch {
+      // dump 坏了也不该让状态接口报错，animeCount 留 0 让界面自己表达
+    }
+  }
   return status
 }
 
@@ -2941,6 +2957,7 @@ function publicLibraryIndexItem(item) {
     extractedTitle: item.displayTitle,
     cover: item.cover,
     sourceProfile: item.sourceProfile,
+    workKey: item.workKey || '',
     productId: item.productId,
     unitCount: item.unitCount,
     tags: item.tags,

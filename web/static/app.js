@@ -84,6 +84,14 @@ const els = {
   libraryTagSearch: document.querySelector('#library-tag-search'),
   librarySeriesSubtitle: document.querySelector('#library-series-subtitle'),
   librarySourceProfile: document.querySelector('#library-source-profile'),
+  mergeGroups: document.querySelector('#merge-groups'),
+  mergeRefresh: document.querySelector('#merge-refresh'),
+  mergeRunPage: document.querySelector('#merge-run-page'),
+  mergePrev: document.querySelector('#merge-prev'),
+  mergeNext: document.querySelector('#merge-next'),
+  mergePageInfo: document.querySelector('#merge-page-info'),
+  mergeDumpRefresh: document.querySelector('#merge-dump-refresh'),
+  mergeDumpStatus: document.querySelector('#merge-dump-status'),
   seriesModal: document.querySelector('#series-modal'),
   seriesModalTitle: document.querySelector('#series-modal-title'),
   seriesModalList: document.querySelector('#series-modal-list'),
@@ -1238,6 +1246,10 @@ els.tabs.forEach((tab) => {
     if (tab.dataset.view === 'tag-manager-view') {
       loadTagManager().catch((error) => alert(error.message))
     }
+    if (tab.dataset.view === 'merge-view') {
+      mergePage = 1
+      Promise.all([loadMergeCandidates(), refreshAnidbDumpStatus()]).catch(() => {})
+    }
     if (tab.dataset.view === 'media-import-view') loadMediaImportItems()
     if (tab.dataset.view === 'settings-view') loadConfig()
   })
@@ -2137,6 +2149,99 @@ function syncLibrarySourceProfileOptions() {
     select.append(option)
   }
   select.value = [...select.options].some((o) => o.value === current) ? current : ''
+}
+
+// —— 合并 ——
+// 候选来自索引缓存里的 workGroups（workKey 相同且 >=2），所以脚本写完 workKey
+// 之后必须先重建缓存，这里才看得到新分组。
+let mergePage = 1
+let mergeTotalPages = 1
+const MERGE_PAGE_SIZE = 20
+
+async function loadMergeCandidates() {
+  if (!els.mergeGroups) return
+  els.mergeGroups.textContent = '读取中...'
+  try {
+    const data = await api(`/api/library/merge-candidates?page=${mergePage}&limit=${MERGE_PAGE_SIZE}`)
+    const groups = data.items || []
+    mergeTotalPages = Math.max(1, Math.ceil((data.total || 0) / MERGE_PAGE_SIZE))
+    if (els.mergePageInfo) {
+      els.mergePageInfo.textContent = `第 ${mergePage} / ${mergeTotalPages} 页 · 共 ${data.total || 0} 组`
+        + (data.indexStatus !== 'ready' ? `（索引 ${data.indexStatus}）` : '')
+    }
+    if (els.mergePrev) els.mergePrev.disabled = mergePage <= 1
+    if (els.mergeNext) els.mergeNext.disabled = mergePage >= mergeTotalPages
+    if (els.mergeRunPage) els.mergeRunPage.disabled = !groups.length
+    renderMergeGroups(groups)
+  } catch (error) {
+    els.mergeGroups.textContent = `读取失败：${error.message}`
+  }
+}
+
+function renderMergeGroups(groups) {
+  els.mergeGroups.innerHTML = ''
+  if (!groups.length) {
+    els.mergeGroups.innerHTML = '<p class="muted">没有可合并的分组。候选来自索引缓存，'
+      + '元数据脚本写完 workKey 之后需要先「重建缓存」。</p>'
+    return
+  }
+  for (const group of groups) {
+    const card = document.createElement('article')
+    card.className = 'card merge-group'
+    const members = group.members.map((m, i) => `
+      <li class="merge-member${i === 0 ? ' primary' : ''}">
+        <span class="merge-member-title" title="${escapeHtml(m.title)}">${escapeHtml(m.title)}</span>
+        <span class="muted">${escapeHtml(m.itemId)} · ${m.unitCount} 单元${i === 0 ? ' · 主条目（创建最早）' : ''}</span>
+      </li>`).join('')
+    card.innerHTML = `
+      <div class="merge-group-head">
+        <div>
+          <div class="merge-group-key">${escapeHtml(group.key)}</div>
+          <div class="muted">${group.count} 个条目 · 合并后 ${group.unitTotal} 单元</div>
+        </div>
+        <button class="merge-group-run" type="button">合并这组</button>
+      </div>
+      <ul class="merge-members">${members}</ul>`
+    card.querySelector('.merge-group-run').addEventListener('click', async (event) => {
+      const button = event.currentTarget
+      button.disabled = true
+      button.textContent = '合并中...'
+      try {
+        await runMergeGroup(group)
+        await loadMergeCandidates()
+      } catch (error) {
+        alert(`合并失败：${error.message}`)
+        button.disabled = false
+        button.textContent = '合并这组'
+      }
+    })
+    els.mergeGroups.append(card)
+  }
+}
+
+async function runMergeGroup(group) {
+  const sourceItemIds = group.members.slice(1).map((m) => m.itemId)
+  if (!sourceItemIds.length) return null
+  return api('/api/library/merge', {
+    method: 'POST',
+    body: JSON.stringify({
+      type: group.members[0].type || 'media',
+      targetItemId: group.targetItemId,
+      sourceItemIds,
+    }),
+  })
+}
+
+async function refreshAnidbDumpStatus() {
+  if (!els.mergeDumpStatus) return
+  try {
+    const d = await api('/api/anidb/dump')
+    els.mergeDumpStatus.textContent = d.exists
+      ? `dump：${d.animeCount || '?'} 部 · ${(d.size / 1048576).toFixed(1)} MB · 更新于 ${String(d.mtime).slice(0, 19).replace('T', ' ')}`
+      : `dump 还没下载（目录 ${d.dir}）`
+  } catch (error) {
+    els.mergeDumpStatus.textContent = `dump 状态读取失败：${error.message}`
+  }
 }
 
 function renderLibraryItems() {
@@ -4967,6 +5072,58 @@ els.librarySort?.addEventListener('change', () => {
   loadLibraryItems().catch((error) => alert(error.message))
 })
 syncLibrarySourceProfileOptions()
+els.mergeRefresh?.addEventListener('click', () => {
+  loadMergeCandidates().catch((error) => alert(error.message))
+  refreshAnidbDumpStatus().catch(() => {})
+})
+els.mergePrev?.addEventListener('click', () => {
+  if (mergePage > 1) { mergePage -= 1; loadMergeCandidates().catch(() => {}) }
+})
+els.mergeNext?.addEventListener('click', () => {
+  if (mergePage < mergeTotalPages) { mergePage += 1; loadMergeCandidates().catch(() => {}) }
+})
+els.mergeDumpRefresh?.addEventListener('click', async () => {
+  const button = els.mergeDumpRefresh
+  button.disabled = true
+  const original = button.textContent
+  button.textContent = '刷新中...'
+  try {
+    const d = await api('/api/anidb/dump/refresh', { method: 'POST' })
+    els.mergeDumpStatus.textContent = d.message || '已刷新'
+    await refreshAnidbDumpStatus()
+  } catch (error) {
+    els.mergeDumpStatus.textContent = `刷新失败：${error.message}`
+  } finally {
+    button.disabled = false
+    button.textContent = original
+  }
+})
+els.mergeRunPage?.addEventListener('click', async () => {
+  const button = els.mergeRunPage
+  // 当前页全量：逐组串行执行，一组失败不影响后面的，最后汇总报告
+  const data = await api(`/api/library/merge-candidates?page=${mergePage}&limit=${MERGE_PAGE_SIZE}`)
+  const groups = data.items || []
+  if (!groups.length) return
+  if (!confirm(`将合并当前页 ${groups.length} 组。合并不可逆，确定？`)) return
+  button.disabled = true
+  const original = button.textContent
+  let ok = 0
+  const failed = []
+  for (const [index, group] of groups.entries()) {
+    button.textContent = `合并中 ${index + 1}/${groups.length}`
+    try {
+      await runMergeGroup(group)
+      ok += 1
+    } catch (error) {
+      failed.push(`${group.key}: ${error.message}`)
+    }
+  }
+  button.disabled = false
+  button.textContent = original
+  mergePage = 1
+  await loadMergeCandidates().catch(() => {})
+  if (failed.length) alert(`成功 ${ok} 组，失败 ${failed.length} 组：\n${failed.join('\n')}`)
+})
 els.librarySourceProfile?.addEventListener('change', () => {
   libraryPage = 1
   loadLibraryItems().catch((error) => alert(error.message))

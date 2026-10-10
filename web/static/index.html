@@ -43,6 +43,7 @@
           <button class="tab" data-view="library-view">媒体库</button>
           <button class="tab" data-view="history-view">历史</button>
           <button class="tab" data-view="tag-manager-view">标签管理</button>
+          <button class="tab" data-view="merge-view">合并</button>
           <button class="tab" data-view="media-import-view">媒体导入</button>
           <button class="tab" data-view="media-viewer-view">媒体浏览</button>
           <button class="tab" data-view="viewer-view">图片浏览</button>
@@ -363,6 +364,28 @@
               </div>
             </div>
             <div id="library-units" class="chapters empty-panel">请选择媒体库条目</div>
+          </section>
+        </div>
+        <div id="merge-view" class="merge-view view">
+          <section>
+            <div class="chapter-head">
+              <div>
+                <h2>条目合并</h2>
+                <div class="muted">共享同一个作品键（workKey）且有 2 个以上条目的分组。合并不可逆——没有拆分功能，合错了只能靠脚本改 workKey 重来。</div>
+              </div>
+              <div class="chapter-actions">
+                <button id="merge-dump-refresh" class="secondary" title="下载/刷新 AniDB 标题 dump。服务端没更新时返回 304，不会重复下载">刷新 AniDB dump</button>
+                <button id="merge-refresh" class="secondary">刷新候选</button>
+                <button id="merge-run-page">合并当前页全部</button>
+              </div>
+            </div>
+            <div id="merge-dump-status" class="muted merge-dump-status">dump 状态未读取</div>
+            <div class="merge-toolbar">
+              <button id="merge-prev" class="secondary">上一页</button>
+              <span id="merge-page-info" class="muted">第 1 / 1 页</span>
+              <button id="merge-next" class="secondary">下一页</button>
+            </div>
+            <div id="merge-groups" class="merge-groups"></div>
           </section>
         </div>
         <div id="tag-manager-view" class="tag-manager-view view">
