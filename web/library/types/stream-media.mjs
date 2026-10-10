@@ -146,7 +146,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       if (fileInputs.length) return importRjUploadBatch({ files: fileInputs, inputTags })
     }
     if (importProfile === 'monthly-ani') {
-      if (fileInputs.length) throw new Error('月度 ANI 导入方案只支持来源路径，不支持上传文件')
+      if (fileInputs.length) return importMonthlyAniUploadBatch({ files: fileInputs, inputTags })
       return importMonthlyAniBatch({ sourcePath, inputTags })
     }
 
@@ -287,7 +287,40 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     await assertAllowedSource(source)
     const sourceInfo = await stat(source)
     if (!sourceInfo.isDirectory()) throw new Error('月度 ANI 导入方案只支持目录来源')
+    return scanMonthlyAniSource({ source, inputTags })
+  }
 
+  // 上传走和 rj-media 一样的路子：先把上传内容落到一个暂存目录，再复用目录版逻辑。
+  // 白名单（assertAllowedSource）只管用户指定的服务端路径，暂存目录是我们自己建的，
+  // 不需要也不应该过那道检查。
+  async function importMonthlyAniUploadBatch({ files = [], inputTags = [] }) {
+    const stage = await mkdtemp(path.join(os.tmpdir(), `copymanga-${type}-ani-`))
+    try {
+      for (const file of files) {
+        if (isZipName(file.filename)) {
+          // 多个 zip 合并进同一个暂存目录，一次导入就能跨 zip 配字幕
+          const extracted = await extractZipUpload(file)
+          for (const entry of await readdir(extracted)) {
+            const to = await uniqueImportTarget(path.join(stage, safeSegment(entry)))
+            await movePath(path.join(extracted, entry), to)
+          }
+        } else {
+          const to = await uniqueImportTarget(path.join(stage, safeRelativePath(file.filename || `${type}-upload`)))
+          await mkdir(path.dirname(to), { recursive: true })
+          await writeFile(to, file.buffer)
+        }
+      }
+      // 必须 await：try/finally 里 `return promise` 会让 finally 立刻跑，
+      // 暂存目录在扫描搬文件之前就被 rm 掉，报 ENOENT。
+      return await scanMonthlyAniSource({ source: stage, inputTags })
+    } finally {
+      // 视频和已匹配字幕都被 movePath 搬进条目了，这里只剩没被认领的文件；
+      // 它们在 skippedSubtitles 里有记录，而且上传方本来就还留着原件。
+      await rm(stage, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  async function scanMonthlyAniSource({ source, inputTags = [] }) {
     const relOf = (filePath) => path.relative(source, filePath).split(path.sep).join('/')
     const byRelative = (a, b) => relOf(a).localeCompare(relOf(b), undefined, { numeric: true })
     const allFiles = await walkFiles(source)
