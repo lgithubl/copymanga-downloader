@@ -100,6 +100,32 @@ jobs:
         run: |
           tar -C scripts -czf "${{ steps.image.outputs.artifact_name }}-tag-scripts.tar.gz" tag-scripts
 
+      # anidb-v1 要一份标题 dump 才能匹配。这里现拉而不是把 1.8MB 的 gz 提进仓库：
+      # 那是 AniDB 的数据集，不该由本仓库转发，而且提进去就会一直陈旧下去。
+      # AniDB 可能挡云端 IP，所以整步失败也不许拖垮镜像构建——拿不到就不传这个产物。
+      - name: Package AniDB dump
+        id: dump
+        if: ${{ github.event_name == 'push' || inputs.export_artifact == 'true' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p anidb-dump
+          curl -fsSL --max-time 180 -A "copymanga-downloader/ci" \
+            https://anidb.net/api/anime-titles.xml.gz -o anidb-dump/anime-titles.xml.gz
+          # 必须验内容：AniDB 挡访问时会回一个 200 的 HTML 页面，直接存下来
+          # 就是一份「看起来成功」的垃圾 dump，用的时候才炸。
+          COUNT="$(gzip -dc anidb-dump/anime-titles.xml.gz | grep -c '<anime aid=' || true)"
+          if [ "${COUNT:-0}" -lt 1000 ]; then
+            echo "dump 内容不可信（只解出 ${COUNT:-0} 条 <anime aid=>），放弃打包"
+            exit 1
+          fi
+          printf '{"animeCount":%s,"fetchedAt":"%s","source":"https://anidb.net/api/anime-titles.xml.gz"}\n' \
+            "$COUNT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > anidb-dump/anime-titles.meta.json
+          tar -czf "${{ steps.image.outputs.artifact_name }}-anidb-dump.tar.gz" -C anidb-dump .
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "✅ dump 打包完成，$COUNT 部"
+
       - name: Upload image artifact
         if: ${{ github.event_name == 'push' || inputs.export_artifact == 'true' }}
         uses: actions/upload-artifact@v6
@@ -115,5 +141,14 @@ jobs:
         with:
           name: ${{ steps.image.outputs.artifact_name }}-tag-scripts
           path: ${{ steps.image.outputs.artifact_name }}-tag-scripts.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload AniDB dump artifact
+        if: ${{ steps.dump.outcome == 'success' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.image.outputs.artifact_name }}-anidb-dump
+          path: ${{ steps.image.outputs.artifact_name }}-anidb-dump.tar.gz
           if-no-files-found: error
           retention-days: 30
