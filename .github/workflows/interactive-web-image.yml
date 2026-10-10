@@ -20,6 +20,10 @@ on:
         description: Minutes to keep the page alive
         required: true
         default: "60"
+      zip_filename_encoding:
+        description: 上传 zip 里文件名的编码（utf-8 / gbk / gb18030 / shift_jis / euc-jp / big5）
+        required: false
+        default: utf-8
 
 permissions:
   contents: read
@@ -299,6 +303,7 @@ jobs:
             --network copymanga-action-net \
             -p 8080:8080 \
             --add-host host.docker.internal:host-gateway \
+            -e ZIP_FILENAME_ENCODING="${{ inputs.zip_filename_encoding || 'utf-8' }}" \
             -v "$RUNNER_TEMP/copymanga-data:/data" \
             -v "$RUNNER_TEMP/copymanga-input:/input" \
             "$IMAGE"

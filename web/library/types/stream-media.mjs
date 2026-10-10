@@ -15,6 +15,26 @@ const EPUB_EXTENSIONS = ['epub']
 const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt', 'ass', 'ssa', 'lrc', 'sbv', 'smi', 'sami', 'ttml', 'dfxp', 'xml', 'sub']
 const ITEM_COVER_UNIT_ID = '__cover'
 
+// 上传 zip 里的文件名按哪种编码解。zip 规范只有一条硬规则：通用标志位的 0x800 置位
+// 表示文件名是 UTF-8；没置位时存的是打包方本地代码页的裸字节，规范本身说不出是哪个。
+// 而这里是 shell 到 unzip 解压的，标志位在那一刻就丢了，磁盘上只剩裸字节——Node 的
+// readdir 默认按 UTF-8 解，解不开的字节变成 U+FFFD，那个字符串再也指不回真实文件，
+// 后续 rename 直接 ENOENT。所以让部署方直接声明，不做猜测：GBK 环境就设 gbk。
+// 只作用于刚解压出来的临时目录；媒体库自己的目录名都是我们生成的，不走这条路。
+const ZIP_FILENAME_ENCODING = String(process.env.ZIP_FILENAME_ENCODING || 'utf-8').trim().toLowerCase()
+// TextDecoder 不认 cp936/cp932 这两个最常被写出来的名字，统一映射掉
+const ZIP_ENCODING_ALIASES = {
+  cp936: 'gbk', gb2312: 'gbk', cp932: 'shift_jis', sjis: 'shift_jis', 'shift-jis': 'shift_jis',
+  eucjp: 'euc-jp', utf8: 'utf-8',
+}
+const zipFilenameEncoding = ZIP_ENCODING_ALIASES[ZIP_FILENAME_ENCODING] || ZIP_FILENAME_ENCODING
+
+// 判断一串字节是不是合法 UTF-8。不能用 buf.toString('utf8') 看有没有 U+FFFD：
+// 原文件名里本来就可能带这个字符，那样会误判。往返比较才是确定的。
+function isValidUtf8(buf) {
+  return Buffer.compare(Buffer.from(buf.toString('utf8'), 'utf8'), buf) === 0
+}
+
 export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExists, getConfig, epubSupport = null }) {
   const extensions = type === 'video'
     ? VIDEO_EXTENSIONS
@@ -1088,8 +1108,63 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     await writeFile(zipPath, file.buffer)
     await assertSafeZip(zipPath)
     await extractZipArchive(zipPath, extractDir)
+    // 规整放在安全校验之前：assertSafeExtractedTree 查的是磁盘上的最终名字，
+    // 让它看到改完之后的结果，而不是一堆 U+FFFD。
+    await normalizeExtractedNames(Buffer.from(extractDir))
     await assertSafeExtractedTree(extractDir)
     return extractDir
+  }
+
+  // 把解压出来的非 UTF-8 文件名按 ZIP_FILENAME_ENCODING 解码后改名。
+  // 为什么放在这一步，而不是去改 walkFiles/readdir：walkFiles 同时还扫条目自己的
+  // filesPath()，那边的名字一直是我们生成的合法 UTF-8，不该被这套解码逻辑碰。
+  // 在这里收口，下游所有扫描（assertMediaRoot / findRjImportRoots / scanMonthlyAniSource）
+  // 看到的都是正常名字，一行都不用改。
+  async function normalizeExtractedNames(dirBuf) {
+    if (zipFilenameEncoding === 'utf-8') return 0
+    let decoder
+    try {
+      decoder = new TextDecoder(zipFilenameEncoding, { fatal: true })
+    } catch {
+      // 配错了就在用到的时候报清楚，不在模块加载时把整个服务带下去——
+      // 这是只影响 zip 导入的设置，没理由让别的功能一起不能用。
+      throw new Error(`ZIP_FILENAME_ENCODING 不是支持的编码：${ZIP_FILENAME_ENCODING}`
+        + '（可用 utf-8 / gbk / gb18030 / shift_jis / euc-jp / big5；cp936 请写 gbk，cp932 请写 shift_jis）')
+    }
+    const entries = await readdir(dirBuf, { encoding: 'buffer', withFileTypes: true })
+    let renamed = 0
+    for (const entry of entries) {
+      const from = Buffer.concat([dirBuf, Buffer.from(path.sep), entry.name])
+      // 先递归进子目录再改自己：父目录一改名，手上这些子项路径立刻全失效。
+      if (entry.isDirectory()) renamed += await normalizeExtractedNames(from)
+      if (isValidUtf8(entry.name)) continue
+      let decoded
+      try {
+        decoded = decoder.decode(entry.name)
+      } catch {
+        continue // 这个编码也解不开，原样留着让后面的安全校验或导入去报错
+      }
+      // 解出来的内容可能自带路径分隔符，safeSegment 负责把它压成单段，防止跳出目录
+      const safe = safeSegment(decoded)
+      if (!safe) continue
+      const target = await uniqueBufferTarget(dirBuf, safe)
+      await rename(from, target)
+      renamed += 1
+    }
+    return renamed
+  }
+
+  // 父目录此刻可能还是非 UTF-8 的名字（后序遍历，先改子再改父），所以目标路径
+  // 也必须用 Buffer 拼，不能走字符串。
+  async function uniqueBufferTarget(dirBuf, name) {
+    const ext = path.extname(name)
+    const base = name.slice(0, name.length - ext.length)
+    for (let i = 0; i < 1000; i += 1) {
+      const candidate = i === 0 ? name : `${base}-${i}${ext}`
+      const full = Buffer.concat([dirBuf, Buffer.from(path.sep), Buffer.from(candidate)])
+      if (!await stat(full).then(() => true, () => false)) return full
+    }
+    throw new Error(`解压后重名太多，无法规整文件名：${name}`)
   }
 
   async function extractZipArchive(zipPath, extractDir) {
