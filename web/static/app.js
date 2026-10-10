@@ -2894,12 +2894,17 @@ function saveSubtitleOverlaySettings(settings) {
 
 function normalizeSubtitleOverlaySettings(value = {}) {
   const scale = Math.max(0.6, Math.min(3, Number(value.scale || 1)))
-  const x = Number(value.x)
-  const y = Number(value.y)
+  // x/y 为 null 表示「没拖过，用默认位置」。不能直接 Number()——Number(null) 是 0
+  // 而且 isFinite，会被钳成 4，于是光调字号也把字幕钉到左上角。
+  const toPercent = (raw) => {
+    if (raw === null || raw === undefined || raw === '') return null
+    const n = Number(raw)
+    return Number.isFinite(n) ? Math.max(4, Math.min(96, n)) : null
+  }
   return {
     scale,
-    x: Number.isFinite(x) ? Math.max(4, Math.min(96, x)) : null,
-    y: Number.isFinite(y) ? Math.max(4, Math.min(96, y)) : null,
+    x: toPercent(value.x),
+    y: toPercent(value.y),
   }
 }
 
@@ -3375,7 +3380,7 @@ function renderStreamMedia(reader, options = {}) {
   const morePanel = document.createElement('div')
   morePanel.className = 'stream-more-panel hidden'
   morePanel.append(rateSelect, subtitleSelect, secondarySubtitleSelect, subtitleSmaller,
-    subtitleLarger, loopToggle, nextToggle, vrControls.element)
+    subtitleLarger, loopToggle, nextToggle, vrControls.element, vrControls.presetNote)
   const setMoreOpen = (open) => {
     morePanel.classList.toggle('hidden', !open)
     more.classList.toggle('active', open)
@@ -3390,7 +3395,7 @@ function renderStreamMedia(reader, options = {}) {
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
   controls.append(backBtn, prevChapter, play, nextChapter, currentTime, progress, duration,
-    mute, volume, more, fullscreen)
+    mute, volume, vrControls.presetElement, more, fullscreen)
 
   // —— 页面全屏下的「贴边唤出」——
   // 鼠标贴近上/下边缘才显示顶栏和控制条，移开后延时收起。
@@ -3556,6 +3561,82 @@ function createVrControls(visible) {
     mirrorX: mirror.dataset.active === '1',
     flipY: flipY.dataset.active === '1',
   })
+
+  // —— 预设 ——
+  // 片源格式不止一种（180左右 / 360单画面 / 鱼眼…），每换一种要动 3~4 个控件，
+  // 单个持久化槽位只记得最后一次。所以存具名预设，主控制条上一个下拉直接切。
+  // 「关闭 3D」只改投影：实测另外 4 项与开关无关（setActive 只看 projection），
+  // 不动它们才能在切回预设前保住手动微调过的值。
+  const OFF = '__off__'
+  const CUSTOM = '__custom__'
+  const sameState = (a, b) => !!a && !!b && ['projection', 'layout', 'eye', 'mirrorX', 'flipY']
+    .every((key) => a[key] === b[key])
+  const presetSelect = document.createElement('select')
+  presetSelect.className = 'stream-vr-preset'
+  presetSelect.title = '3D 预设'
+  presetSelect.hidden = !visible
+  const presetNote = document.createElement('span')
+  presetNote.className = 'stream-vr-preset-note'
+
+  const nameInput = document.createElement('input')
+  nameInput.className = 'stream-vr-preset-name'
+  nameInput.placeholder = '预设名称'
+  const noteInput = document.createElement('input')
+  noteInput.className = 'stream-vr-preset-desc'
+  noteInput.placeholder = '什么场景用（可空）'
+  const saveBtn = document.createElement('button')
+  saveBtn.type = 'button'
+  saveBtn.className = 'stream-toggle stream-vr-preset-save'
+  saveBtn.textContent = '存为预设'
+  const deleteBtn = document.createElement('button')
+  deleteBtn.type = 'button'
+  deleteBtn.className = 'stream-toggle stream-vr-preset-delete'
+  deleteBtn.textContent = '删除'
+  const presetForm = document.createElement('span')
+  presetForm.className = 'stream-vr-preset-form'
+  presetForm.append(nameInput, noteInput, saveBtn, deleteBtn)
+  wrap.append(presetForm)
+
+  const loadPresets = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem('copymanga.mediaVrPresets') || '[]')
+      return Array.isArray(list) ? list.filter((item) => item && item.name && item.state) : []
+    } catch {
+      return []
+    }
+  }
+  const savePresets = (list) => {
+    localStorage.setItem('copymanga.mediaVrPresets', JSON.stringify(list))
+  }
+  const renderPresets = () => {
+    const list = loadPresets()
+    const current = value()
+    const match = list.find((item) => sameState(item.state, current))
+    presetSelect.innerHTML = ''
+    const add = (optionValue, label, title) => {
+      const option = document.createElement('option')
+      option.value = optionValue
+      option.textContent = label
+      if (title) option.title = title
+      presetSelect.append(option)
+      return option
+    }
+    add(OFF, '关闭 3D', '只把投影切成普通，其余设置原样保留')
+    for (const item of list) add(item.name, item.name, item.note || '')
+    // 当前状态不属于任何预设时才给个「自定义」占位，否则下拉里一直挂个没用的项
+    const isOff = current.projection === 'off'
+    if (!match && !isOff) add(CUSTOM, '自定义', '当前设置还没存成预设')
+    presetSelect.value = isOff ? OFF : (match ? match.name : CUSTOM)
+    const active = list.find((item) => item.name === presetSelect.value)
+    presetNote.textContent = active?.note || ''
+    presetNote.hidden = !active?.note
+    deleteBtn.disabled = !active
+    if (active) {
+      nameInput.value = active.name
+      noteInput.value = active.note || ''
+    }
+  }
+
   const save = () => {
     const state = value()
     localStorage.setItem('copymanga.mediaVrProjection', state.projection)
@@ -3564,8 +3645,17 @@ function createVrControls(visible) {
     localStorage.setItem('copymanga.mediaVrMirrorX', state.mirrorX ? '1' : '0')
     localStorage.setItem('copymanga.mediaVrFlipY', state.flipY ? '1' : '0')
   }
+  // 先渲染一次：onChange 只有视频路径会接，不能把首次填充依赖在它身上
+  renderPresets()
   return {
     element: wrap,
+    presetElement: presetSelect,
+    presetNote,
+    presetSelect,
+    nameInput,
+    noteInput,
+    saveBtn,
+    deleteBtn,
     projection,
     layout,
     eye,
@@ -3576,6 +3666,7 @@ function createVrControls(visible) {
     onChange(callback) {
       const emit = () => {
         save()
+        renderPresets()
         callback(value())
       }
       projection.addEventListener('change', emit)
@@ -3589,6 +3680,44 @@ function createVrControls(visible) {
         setPressed(flipY, flipY.dataset.active !== '1')
         emit()
       })
+      const applyState = (state) => {
+        projection.value = state.projection
+        layout.value = state.layout
+        eye.value = state.eye
+        setPressed(mirror, state.mirrorX)
+        setPressed(flipY, state.flipY)
+      }
+      presetSelect.addEventListener('change', () => {
+        const picked = presetSelect.value
+        if (picked === CUSTOM) return
+        if (picked === OFF) projection.value = 'off'
+        else {
+          const hit = loadPresets().find((item) => item.name === picked)
+          if (!hit) return
+          applyState(hit.state)
+        }
+        emit()
+      })
+      saveBtn.addEventListener('click', () => {
+        const name = nameInput.value.trim()
+        if (!name) { nameInput.focus(); return }
+        // 预设名就是身份，重名直接覆盖——比默默存出两个同名项好懂
+        const list = loadPresets().filter((item) => item.name !== name)
+        list.push({ name, note: noteInput.value.trim(), state: value() })
+        savePresets(list)
+        renderPresets()
+        presetSelect.value = name
+        renderPresets()
+      })
+      deleteBtn.addEventListener('click', () => {
+        const name = presetSelect.value
+        if (name === OFF || name === CUSTOM) return
+        savePresets(loadPresets().filter((item) => item.name !== name))
+        nameInput.value = ''
+        noteInput.value = ''
+        renderPresets()
+      })
+      renderPresets()
     },
   }
 }

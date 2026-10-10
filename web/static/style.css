@@ -2589,8 +2589,63 @@ h2 {
   min-width: 0;
 }
 
+/* 预设下拉在主控制条上，和旁边的图标按钮一排，所以不换行、不被挤扁 */
+.stream-vr-preset {
+  flex-shrink: 0;
+  max-width: 128px;
+}
+
+.stream-vr-preset[hidden] {
+  display: none;
+}
+
+/* 存预设的表单：名称 + 说明 + 两个按钮，收在「更多」面板里 */
+.stream-vr-preset-form {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 带 #app 前缀才压得过 style.css:202 的 `#app input`（id+元素 的特异性比纯类高），
+   旁边的 .stream-rate-select 也是这么写的 */
+#app .stream-vr-preset-name,
+#app .stream-vr-preset-desc {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  color: #f8fafc;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+
+#app .stream-vr-preset-name {
+  width: 92px;
+}
+
+#app .stream-vr-preset-desc {
+  width: 150px;
+}
+
+#app .stream-vr-preset-name::placeholder,
+#app .stream-vr-preset-desc::placeholder {
+  color: rgba(248, 250, 252, 0.5);
+}
+
+/* 选中预设时把「什么场景用」显示出来，光靠 option 的 tooltip 不够显眼 */
+.stream-vr-preset-note {
+  color: rgba(248, 250, 252, 0.7);
+  font-size: 12px;
+  width: 100%;
+}
+
+.stream-vr-preset-note[hidden] {
+  display: none;
+}
+
 #app .stream-rate-select,
 #app .stream-subtitle-select,
+#app .stream-vr-preset,
 #app .stream-vr-mode,
 #app .stream-vr-layout,
 #app .stream-vr-eye {
