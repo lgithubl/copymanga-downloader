@@ -6,6 +6,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Buffer } from 'node:buffer'
+import { gunzipSync } from 'node:zlib'
 import { promisify } from 'node:util'
 import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems } from './library/registry.mjs'
 import { createEpubHandler } from './library/types/epub.mjs'
@@ -65,6 +66,8 @@ const LIBRARY_INDEX_SIZE_WARN = 250000
 const libraryIndexState = {
   items: [],
   seriesMap: new Map(),
+  // 合并候选分组（workKey 相同且 >=2 的），和 seriesMap 一样随索引重建
+  workGroups: [],
   builtAt: '',
   loadedFrom: '',
   status: 'missing',
@@ -254,6 +257,10 @@ function defaultConfig() {
       },
     },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
+    // AniDB 标题 dump 的存放目录和下载地址。anidb-v1 脚本从这个目录读 dump，
+    // 刷新接口往这里写。脚本自己的 dumpDir 必须和这里一致（脚本不读全局配置）。
+    anidbDumpDir: path.join(DATA_DIR, 'cache', 'anidb'),
+    anidbDumpUrl: 'https://anidb.net/api/anime-titles.xml.gz',
     mediaTagDisplayKeys: ['DL标题:', 'DL社团:', 'DL声优:', 'DL标签:', '字幕v1:'],
     apiDomainMode: 'Default',
     customApiDomain: DEFAULT_API_DOMAIN,
@@ -302,6 +309,8 @@ function normalizeConfig(value) {
     mediaImportSourceRoots: String(value?.mediaImportSourceRoots || defaults.mediaImportSourceRoots).trim() || defaults.mediaImportSourceRoots,
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
+    anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
+    anidbDumpUrl: String(value?.anidbDumpUrl || defaults.anidbDumpUrl).trim() || defaults.anidbDumpUrl,
     mediaTagDisplayKeys: normalizeStringList(value?.mediaTagDisplayKeys, defaults.mediaTagDisplayKeys),
     apiDomainMode,
     customApiDomain: String(value?.customApiDomain || value?.apiDomain || defaults.customApiDomain).trim() || defaults.customApiDomain,
@@ -2478,6 +2487,10 @@ async function loadLibraryIndexCache() {
       libraryIndexState.seriesMap = Array.isArray(payload.series) && payload.series.length
         ? new Map(payload.series.map((entry) => [entry.key, entry]))
         : buildSeriesMap(libraryIndexState.items)
+      // 旧版缓存没有 workGroups 字段，现算一次，不强迫用户先重建
+      libraryIndexState.workGroups = Array.isArray(payload.workGroups)
+        ? payload.workGroups
+        : buildWorkGroups(libraryIndexState.items)
       libraryIndexState.builtAt = String(payload.builtAt || '')
       libraryIndexState.loadedFrom = filePath
       libraryIndexState.status = 'ready'
@@ -2537,6 +2550,7 @@ async function rebuildLibraryIndex() {
       itemCount: summaries.length,
       items: summaries,
       series: [...seriesMap.values()],
+      workGroups: buildWorkGroups(summaries),
     }
     await writeLibraryIndexPayload(payload, buildId)
     if (libraryIndexState.buildId !== buildId) {
@@ -2544,6 +2558,7 @@ async function rebuildLibraryIndex() {
     }
     libraryIndexState.items = summaries
     libraryIndexState.seriesMap = seriesMap
+    libraryIndexState.workGroups = payload.workGroups
     libraryIndexState.builtAt = payload.builtAt
     libraryIndexState.loadedFrom = libraryIndexPath(0)
     libraryIndexState.status = 'ready'
@@ -2651,8 +2666,105 @@ function compareSeriesPriority(a, b) {
   return String(b.title || '').localeCompare(String(a.title || ''), undefined, { numeric: true })
 }
 
-function buildSeriesMap(items) {
+// 合并候选：共享同一个 workKey 且条目数 >= 2 的分组。
+// 只认 workKey，不拿「系列」兜底——系列里装的是相关作品（RJ 原档+译版），
+// 合并它们是错的；workKey 的语义才是「同一部作品的不同部分」。
+// 主条目取创建时间最早的，它可能已经有观看历史和进度，保住它的 itemId。
+// AniDB 标题 dump 的本地管理。dump 是服务端的静态文件，带 etag / last-modified
+// （实测过，httpapi 则一个缓存头都没有），所以刷新走条件请求：没变返回 304、
+// 零字节，不会反复白下 1.8MB。etag 存在旁边的 .meta.json 里。
+function anidbDumpPaths() {
+  const dir = config.anidbDumpDir
+  return { dir, file: path.join(dir, 'anime-titles.xml.gz'), meta: path.join(dir, 'anime-titles.meta.json') }
+}
+
+async function readAnidbDumpStatus() {
+  const { dir, file, meta } = anidbDumpPaths()
+  const status = { dir, url: config.anidbDumpUrl, exists: false, size: 0, mtime: '', etag: '', lastModified: '', animeCount: 0 }
+  try {
+    const info = await stat(file)
+    status.exists = true
+    status.size = info.size
+    status.mtime = info.mtime.toISOString()
+  } catch {
+    return status
+  }
+  try {
+    const saved = JSON.parse(await readFile(meta, 'utf8'))
+    status.etag = String(saved.etag || '')
+    status.lastModified = String(saved.lastModified || '')
+    status.animeCount = Number(saved.animeCount || 0)
+  } catch {
+    // .meta.json 丢了不影响用 dump，只是下次刷新拿不到条件请求的好处
+  }
+  return status
+}
+
+async function refreshAnidbDump() {
+  const { dir, file, meta } = anidbDumpPaths()
+  const before = await readAnidbDumpStatus()
+  const headers = {}
+  // 两个条件头都带上：实测服务端对 If-None-Match 和 If-Modified-Since 都认
+  if (before.etag) headers['If-None-Match'] = before.etag
+  if (before.lastModified) headers['If-Modified-Since'] = before.lastModified
+  const res = await fetch(config.anidbDumpUrl, { headers })
+  if (res.status === 304) {
+    return { ...before, changed: false, message: '服务端未更新（304），沿用本地 dump' }
+  }
+  if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`)
+  const buffer = Buffer.from(await res.arrayBuffer())
+  // 先验证能解开再落盘，别把半截响应写成 dump
+  let animeCount = 0
+  try {
+    animeCount = (gunzipSync(buffer).toString('utf8').match(/<anime aid="/g) || []).length
+  } catch (error) {
+    throw new Error(`下载内容不是合法 gzip：${error.message}`)
+  }
+  if (!animeCount) throw new Error('下载内容里没有任何 <anime> 条目')
+  await mkdir(dir, { recursive: true })
+  await writeFile(file, buffer)
+  await writeFile(meta, JSON.stringify({
+    etag: res.headers.get('etag') || '',
+    lastModified: res.headers.get('last-modified') || '',
+    animeCount,
+    fetchedAt: new Date().toISOString(),
+  }, null, 2))
+  return { ...(await readAnidbDumpStatus()), changed: true, message: `已更新，${animeCount} 部` }
+}
+
+function buildWorkGroups(items) {
   const groups = new Map()
+  for (const item of items) {
+    const key = String(item.workKey || '')
+    if (!key) continue
+    const list = groups.get(key) || []
+    list.push({
+      type: item.type,
+      itemId: item.itemId,
+      title: item.displayTitle || item.title || item.itemId,
+      cover: item.cover || '',
+      unitCount: item.unitCount || 0,
+      sourceProfile: item.sourceProfile || '',
+      createdAt: String(item.importedAt || item.createdAt || ''),
+    })
+    groups.set(key, list)
+  }
+  const result = []
+  for (const [key, members] of groups) {
+    if (members.length < 2) continue
+    members.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)) || a.itemId.localeCompare(b.itemId))
+    result.push({
+      key,
+      count: members.length,
+      targetItemId: members[0].itemId,
+      unitTotal: members.reduce((sum, m) => sum + (m.unitCount || 0), 0),
+      members,
+    })
+  }
+  return result.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+}
+
+function buildSeriesMap(items) {  const groups = new Map()
   for (const item of items) {
     const key = seriesKeyOf(item)
     const member = {
@@ -2715,6 +2827,7 @@ function libraryIndexItemFromMetadata(item = {}) {
     displayTitle,
     cover: item.cover,
     sourceProfile: item.sourceProfile,
+    workKey: String(item.workKey || ''),
     productId,
     unitCount: item.unitCount || units.length || 0,
     tags,
@@ -2739,6 +2852,10 @@ function libraryIndexItemFromMetadata(item = {}) {
 
 function normalizeLibraryIndexItem(item = {}) {
   return {
+    // 作品身份键。这是 workKey 要穿过的第四道白名单（normalizeItem →
+    // mergeItemPatch → normalizeScriptItemPatch → 这里），少一道就会被静默丢掉，
+    // 表现是元数据里有值但索引里没有、合并候选永远是 0 组。
+    workKey: String(item.workKey || ''),
     type: String(item.type || ''),
     itemId: String(item.itemId || ''),
     title: String(item.title || item.itemId || ''),
@@ -3862,6 +3979,9 @@ function normalizeScriptSubtitle(value = {}) {
 function normalizeScriptItemPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const patch = {}
+  // 作品身份键：脚本写它来决定合并分组。空字符串是有意义的（显式清除），
+  // 所以这里只排除 undefined，不能用真值判断。
+  if (value.workKey !== undefined) patch.workKey = String(value.workKey || '').slice(0, 200)
   const publishedAt = normalizeIsoDateTime(value.publishedAt)
   if (publishedAt) patch.publishedAt = publishedAt
   if (value.dlsite && typeof value.dlsite === 'object' && !Array.isArray(value.dlsite)) {
@@ -4194,6 +4314,61 @@ async function route(req, res) {
     }
     if (pathname === '/api/library/index/rebuild' && req.method === 'POST') {
       return json(res, 202, startLibraryIndexRebuild())
+    }
+    // AniDB dump 刷新。服务端的 dump 是静态文件、带 etag 和 last-modified
+    // （实测过），所以用条件请求：没变就 304 零字节，不会白下 1.8MB。
+    if (pathname === '/api/anidb/dump' && req.method === 'GET') {
+      return json(res, 200, await readAnidbDumpStatus())
+    }
+    if (pathname === '/api/anidb/dump/refresh' && req.method === 'POST') {
+      try {
+        return json(res, 200, await refreshAnidbDump())
+      } catch (error) {
+        return json(res, 502, { error: error.message })
+      }
+    }
+    // 合并候选：workKey 相同且 >=2 的分组。候选随索引重建，所以脚本写完 workKey
+    // 之后要先重建缓存才看得到新候选。
+    if (pathname === '/api/library/merge-candidates' && req.method === 'GET') {
+      const groups = libraryIndexState.workGroups || []
+      const pagination = paginationFromSearchParams(url.searchParams, 20, 200)
+        || { page: 1, limit: 20, offset: 0 }
+      const page = groups.slice(pagination.offset, pagination.offset + pagination.limit)
+      return json(res, 200, {
+        items: page,
+        total: groups.length,
+        page: pagination.page,
+        limit: pagination.limit,
+        indexStatus: libraryIndexState.status,
+        builtAt: libraryIndexState.builtAt,
+      })
+    }
+    if (pathname === '/api/library/merge' && req.method === 'POST') {
+      const body = await readJson(req)
+      const type = String(body?.type || 'media')
+      const handler = libraryHandler(type)
+      if (!handler.mergeItems) return json(res, 400, { error: 'This library type does not support merging' })
+      const targetItemId = String(body?.targetItemId || '').trim()
+      const sourceItemIds = Array.isArray(body?.sourceItemIds) ? body.sourceItemIds : []
+      if (!targetItemId || !sourceItemIds.length) {
+        return json(res, 400, { error: 'targetItemId 和 sourceItemIds 都是必填' })
+      }
+      const result = await handler.mergeItems({ targetItemId, sourceItemIds })
+      // itemId 之外的状态得在这里收尾：历史不清会在历史页显示孤儿记录（标题退化成
+      // itemId）；tag 索引不清只影响标签管理的用量数字；进度没有任何读取路径能
+      // 触达，留着无害。
+      for (const merged of result.merged) {
+        await deleteLibraryHistory(type, merged.itemId).catch(() => {})
+        // 注意两点：参数是对象不是位置参数；而且它是 async、写操作排在 writeTail
+        // 这条 promise 链上，同步 try/catch 接不住它的抛出——接不住就是未处理拒绝，
+        // 直接把进程干掉。所以必须 await + catch。
+        // tag 索引只是旁路统计表（影响标签管理的用量数字），清不掉不该让合并失败。
+        await setItemTags({ type, itemId: merged.itemId, tags: [] }).catch(() => {})
+      }
+      await syncItemTagIndex(result.item).catch(() => {})
+      markLibraryIndexDirty()
+      enqueueLibraryIndexRefreshTrigger({ reason: 'merge', delaySeconds: 1 })
+      return json(res, 200, result)
     }
     if (pathname === '/api/library/items' && req.method === 'GET') {
       const hasPagedQuery = url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('keyword') || url.searchParams.has('sort') || url.searchParams.has('sourceProfile') || url.searchParams.has('seriesSubtitle') || url.searchParams.has('seriesKey')

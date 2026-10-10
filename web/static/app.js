@@ -83,6 +83,7 @@ const els = {
   libraryType: document.querySelector('#library-type'),
   libraryTagSearch: document.querySelector('#library-tag-search'),
   librarySeriesSubtitle: document.querySelector('#library-series-subtitle'),
+  librarySourceProfile: document.querySelector('#library-source-profile'),
   seriesModal: document.querySelector('#series-modal'),
   seriesModalTitle: document.querySelector('#series-modal-title'),
   seriesModalList: document.querySelector('#series-modal-list'),
@@ -292,7 +293,7 @@ const defaultMediaImportProfiles = {
   // 导入时已经建好章节、配好字幕，所以不需要 builtin-scan-media-units；
   // builtin-subtitles 留着是为了刷出「字幕v1: 有/无」tag，媒体库的字幕筛选靠它。
   'monthly-ani': {
-    defaultMetadataActions: ['builtin-subtitles', 'monthly-ani-v1', 'builtin-thumbnails'],
+    defaultMetadataActions: ['builtin-subtitles', 'anidb-v1', 'builtin-thumbnails'],
   },
 }
 const mediaImportTypeInfo = {
@@ -1411,6 +1412,7 @@ function restoreLibraryState() {
   if (els.librarySort && [...els.librarySort.options].some((option) => option.value === sort)) els.librarySort.value = sort
   if (els.libraryTagSearch) els.libraryTagSearch.value = String(state.tag || '')
   if (els.librarySeriesSubtitle) els.librarySeriesSubtitle.value = String(state.seriesSubtitle || 'any')
+  if (els.librarySourceProfile) els.librarySourceProfile.value = String(state.sourceProfile || '')
   libraryPage = Math.max(1, Math.floor(Number(state.page || 1)))
 }
 
@@ -1421,6 +1423,7 @@ function saveLibraryState() {
     sort: els.librarySort?.value || 'imported_desc',
     tag: els.libraryTagSearch?.value || '',
     seriesSubtitle: els.librarySeriesSubtitle?.value || 'any',
+    sourceProfile: els.librarySourceProfile?.value || '',
     page: Math.max(1, Math.floor(Number(libraryPage || 1))),
   }
   localStorage.setItem(LIBRARY_STATE_KEY, JSON.stringify(state))
@@ -1441,6 +1444,8 @@ async function loadLibraryItems() {
     if (els.libraryTagSearch.value.trim()) params.set('tag', els.libraryTagSearch.value.trim())
     const seriesSubtitle = els.librarySeriesSubtitle?.value || 'any'
     if (seriesSubtitle !== 'any') params.set('seriesSubtitle', seriesSubtitle)
+    const sourceProfileFilter = els.librarySourceProfile?.value || ''
+    if (sourceProfileFilter) params.set('sourceProfile', sourceProfileFilter)
     const historyParams = new URLSearchParams({ type, limit: '1000' })
     const [payload, histories] = await Promise.all([
       api(`/api/library/items?${params}`),
@@ -2058,7 +2063,9 @@ function closeSeriesModal() {
 // 将来要加新方案或做成每条目可覆盖（item.openMode），只改这个函数。
 const VIEWER_FIRST_IMPORT_PROFILES = new Set(['monthly-ani'])
 function libraryCardOpensViewer(item) {
-  return VIEWER_FIRST_IMPORT_PROFILES.has(item?.sourceProfile)
+  // 必须同时看单元数：合并把多集并进一个条目后，直接跳播放器就不对了，
+  // 这时候应该进目录。单元数是结构事实，不需要额外维护。
+  return VIEWER_FIRST_IMPORT_PROFILES.has(item?.sourceProfile) && item?.unitCount === 1
 }
 
 // 媒体库卡片的唯一构造处。系列弹框复用它，这样两边的外观和交互不会各走各的。
@@ -2113,6 +2120,23 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
     continueLibraryItem(item).catch((error) => alert(error.message))
   })
   return card
+}
+
+// 导入方案筛选的选项直接取自 mediaImportProfiles，和导入页同一份定义，
+// 新增方案时不用两边各改一次。
+function syncLibrarySourceProfileOptions() {
+  const select = els.librarySourceProfile
+  if (!select) return
+  const current = select.value
+  select.innerHTML = '<option value="">导入方案：全部</option>'
+  for (const [value, info] of Object.entries(mediaImportProfiles)) {
+    if (value === 'custom') continue
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = `方案：${info.label}`
+    select.append(option)
+  }
+  select.value = [...select.options].some((o) => o.value === current) ? current : ''
 }
 
 function renderLibraryItems() {
@@ -4939,6 +4963,11 @@ els.libraryLimit?.addEventListener('change', () => {
   loadLibraryItems().catch((error) => alert(error.message))
 })
 els.librarySort?.addEventListener('change', () => {
+  libraryPage = 1
+  loadLibraryItems().catch((error) => alert(error.message))
+})
+syncLibrarySourceProfileOptions()
+els.librarySourceProfile?.addEventListener('change', () => {
   libraryPage = 1
   loadLibraryItems().catch((error) => alert(error.message))
 })

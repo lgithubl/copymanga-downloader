@@ -1614,11 +1614,72 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     return subtitleKey(groupPathOf(relative), subtitleMatchStem(relative))
   }
 
+  // 把若干条目合并成一个：源条目的文件搬进目标、重扫出 unit、源目录删掉。
+  // 不可逆（没有拆分能力），所以 itemId 校验从严，宁可报错也不要走偏。
+  // 调用方负责清理 itemId 之外的状态（历史、tag 索引），那些不在本类型的职责里。
+  async function mergeItems({ targetItemId, sourceItemIds = [] }) {
+    const target = String(targetItemId || '').trim()
+    if (!target) throw new Error('targetItemId is required')
+    const sources = [...new Set(sourceItemIds.map((id) => String(id || '').trim()).filter(Boolean))]
+      .filter((id) => id !== target)
+    if (!sources.length) throw new Error('没有可合并的源条目')
+
+    const targetMeta = await readMetadata(target)
+    const moved = []
+    const skipped = []
+    for (const sourceId of sources) {
+      let sourceMeta
+      try {
+        sourceMeta = await readMetadata(sourceId)
+      } catch {
+        skipped.push({ itemId: sourceId, reason: '读不到元数据' })
+        continue
+      }
+      const files = await walkFiles(filesPath(sourceId))
+      // 撞名不能逐文件改名：字幕是按「目录 + 文件名词干」挂到视频上的，
+      // 视频被改成 01-2.mp4 而字幕还叫 01.srt，词干就对不上了——实测的结果是
+      // B 的视频丢了字幕，而 A 的同名视频反而把 B 的字幕吃了过去，数据直接串台。
+      // 所以只要有任何一个文件会撞，就把这个源条目整组搬进自己的子目录：
+      // 组内的目录和词干关系完整保留，也绝不会和目标条目的文件混在一起。
+      let collides = false
+      for (const filePath of files) {
+        if (await pathExists(path.join(filesPath(target), safeRelativePath(relativePath(sourceId, filePath))))) {
+          collides = true
+          break
+        }
+      }
+      const prefix = collides ? safeSegment(sourceId) : ''
+      for (const filePath of files) {
+        const relative = relativePath(sourceId, filePath)
+        // 加了前缀之后理论上不会再撞，uniqueImportTarget 只作最后兜底
+        const to = await uniqueImportTarget(path.join(filesPath(target), prefix, safeRelativePath(relative)))
+        await mkdir(path.dirname(to), { recursive: true })
+        await movePath(filePath, to)
+        moved.push({ from: `${sourceId}/${relative}`, to: relativePath(target, to) })
+      }
+      await rm(itemPath(sourceId), { recursive: true, force: true })
+      skipped.push({ itemId: sourceId, reason: '', title: sourceMeta.title, files: files.length, isolatedInto: prefix })
+    }
+
+    const units = await scanMediaUnits(target, mediaUnitsForItem(targetMeta))
+    units.sort(compareMediaUnits)
+    const next = normalizeItem({
+      ...targetMeta,
+      cover: targetMeta.cover || units.find((unit) => unit.cover)?.cover || '',
+      unitCount: units.length,
+      mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
+      updatedAt: new Date().toISOString(),
+    })
+    await writeMetadata(target, next)
+    return { item: next, moved, merged: skipped.filter((s) => !s.reason), skipped: skipped.filter((s) => s.reason) }
+  }
+
   return {
     type,
     label,
     scanItems,
     importItem,
+    mergeItems,
     getItem,
     listUnits,
     getReaderContent,
@@ -1649,6 +1710,10 @@ function normalizeItem(item) {
     cover: String(item?.cover || ''),
     productId: String(item?.productId || ''),
     sourceProfile: String(item?.sourceProfile || ''),
+    // 作品身份键，带来源命名空间（anidb:17344 / dlsite:RJ123456）。
+    // 共享同一个 workKey 的条目属于同一部作品，是合并候选的唯一依据。
+    // 和「系列」是不同层级：workKey 多对一（多条目合成一个），系列一对多。
+    workKey: String(item?.workKey || ''),
     dlsite: item?.dlsite && typeof item.dlsite === 'object' ? {
       productId: String(item.dlsite.productId || item?.productId || ''),
       originalProductId: String(item.dlsite.originalProductId || ''),
@@ -1680,6 +1745,9 @@ function normalizeItem(item) {
 
 function mergeItemPatch(item, patch = {}) {
   const next = { ...item }
+  // workKey 是合并候选的依据，脚本可以改写（anidb-v1 的 force 开关就靠这个），
+  // 传空字符串表示显式清除分组。
+  if (patch.workKey !== undefined) next.workKey = String(patch.workKey || '')
   const publishedAt = normalizePublishedAt(patch.publishedAt)
   if (publishedAt) next.publishedAt = publishedAt
   if (patch.dlsite && typeof patch.dlsite === 'object') {

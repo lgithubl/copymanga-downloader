@@ -1,0 +1,26 @@
+{
+  "id": "anidb-v1",
+  "name": "AniDB v1",
+  "version": "1.0.0",
+  "description": "用 AniDB 标题 dump 匹配作品身份（workKey），可选调用 AniDB HTTP API 补元数据。所有参数必须显式配置，缺任何一项都会直接失败。",
+  "scope": ["item"],
+  "libraryTypes": ["media"],
+  "mediaKinds": ["video", "audio"],
+  "exclusiveTagGroups": ["AniDB", "AniDBAPI", "ANI类型", "ANI集数", "ANI年份", "ANI季度"],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "dumpDir": "",
+    "matchThreshold": null,
+    "force": false,
+    "apiEnabled": false,
+    "apiBaseUrl": "",
+    "apiClient": "",
+    "apiClientVer": "",
+    "apiCacheDir": "",
+    "apiSleepBaseMs": null,
+    "apiSleepJitterMs": null,
+    "apiTimeoutMs": null,
+    "scriptTimeoutMs": 600000
+  }
+}
