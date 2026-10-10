@@ -2038,7 +2038,9 @@ async function openSeriesModal(item) {
       const card = createLibraryCard(member, { seriesBadges: false })
       // 卡片自带的点击是「选中」，弹框里点完还得把框关掉
       card.addEventListener('click', closeSeriesModal)
+      // 这两个按钮内部都 stopPropagation 了，事件到不了上面那个 card 监听，得各自补一次
       card.querySelector('.library-continue')?.addEventListener('click', closeSeriesModal)
+      card.querySelector('.library-units-go')?.addEventListener('click', closeSeriesModal)
       els.seriesModalList.append(card)
     }
     if (!list.length) els.seriesModalList.innerHTML = '<p class="muted">没有取到同系列条目</p>'
@@ -2051,6 +2053,14 @@ function closeSeriesModal() {
   els.seriesModal?.classList.add('hidden')
 }
 
+// 点卡片是直接进播放器还是进目录。只认 sourceProfile——它是导入时写死的结构化
+// 字段，用户在详情页改不到；用 tag 驱动导航行为的话，手滑删一个 tag 就会静默改掉交互。
+// 将来要加新方案或做成每条目可覆盖（item.openMode），只改这个函数。
+const VIEWER_FIRST_IMPORT_PROFILES = new Set(['monthly-ani'])
+function libraryCardOpensViewer(item) {
+  return VIEWER_FIRST_IMPORT_PROFILES.has(item?.sourceProfile)
+}
+
 // 媒体库卡片的唯一构造处。系列弹框复用它，这样两边的外观和交互不会各走各的。
 // seriesBadges=false 用于弹框：框里本来就是同一个系列，再挂红点和「进入」没有意义。
 function createLibraryCard(item, { seriesBadges = true } = {}) {
@@ -2059,6 +2069,7 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
   const displayTitle = libraryDisplayTitle(item)
   const fullTitle = libraryFullTitle(item)
+  const viewerFirst = libraryCardOpensViewer(item)
   const card = document.createElement('article')
   card.className = `card library-card${selected ? ' selected' : ''}`
   card.title = fullTitle
@@ -2068,6 +2079,7 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
         <div class="library-card-top">
           <div class="card-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
           <div class="library-card-badges">
+            ${viewerFirst ? '<button class="library-units-go" type="button" title="点卡片直接播放；这里进目录">目录</button>' : ''}
             <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
             ${seriesBadges ? renderSeriesBadges(item) : ''}
           </div>
@@ -2079,7 +2091,14 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
         <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
       </div>
     `
-  card.addEventListener('click', () => selectLibraryItem(item.type, item.itemId))
+  card.addEventListener('click', () => {
+    if (viewerFirst) continueLibraryItem(item).catch((error) => alert(error.message))
+    else selectLibraryItem(item.type, item.itemId)
+  })
+  card.querySelector('.library-units-go')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    selectLibraryItem(item.type, item.itemId)
+  })
   card.querySelector('.library-series-dot')?.addEventListener('click', (event) => {
     event.stopPropagation()
     openSeriesModal(item)
