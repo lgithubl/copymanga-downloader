@@ -65,23 +65,52 @@ export async function generateTags(ctx) {
       ? `括号 tag：条目 ${fileTags.length} 个（${fileTags.join('、')}）；${unitBracketTags.length}/${units.length} 个章节有产出`
       : '文件名和章节名里都没有括号内容可提取')
   }
-  const query = matchQueryOf(item, options, logs)
-  logs.push(`匹配输入：${JSON.stringify(query)}`)
   const index = await loadDumpIndex(options.dumpDir)
   logs.push(`dump：${index.entries.length} 部（${index.source}）`)
-  const hit = searchWithMode(index, query, options, logs)
-  if (!hit) {
-    logs.push('dump 里没有任何候选')
-    return {
-      ...empty(logs, { matched: false }, unitBracketTags),
-      itemTags: [...fileTags, 'AniDB: 待确认'],
+
+  // 已经匹配过就不再重新匹配。aid 一旦定下来就该稳定：重跑让它漂移会把已合并的组打散，
+  // 而短标题（实测 "rj" 能满分撞上「ロミオ×ジュリエット」）每次重算都是一次赌博。
+  // forceRematch 打开才强制重走 dump。
+  //
+  // 跳过的只是「打分」，不是「取数据」——这里仍按 aid 回查 dump 拿标题。不回查的话
+  // 这一轮产不出 AniDB标题，而服务端把「上次产出、这次没有」的 tag 当作要删除的
+  // （server.mjs mergeGeneratedTags，实测验证过），复用路径反而会把标题 tag 抹掉。
+  const knownAid = options.forceRematch ? 0 : aidFromTags(item.tags)
+  let hit
+  if (knownAid) {
+    const entry = index.entries.find((e) => e.aid === knownAid)
+    hit = {
+      aid: knownAid,
+      title: entry?.main || '',
+      ja: entry?.ja || '',
+      score: null,
+      reused: true,
+      // 上次如果是退化命中，那个标记现在仍然成立。不带上的话服务端会把它当成
+      // 「本脚本上次产出、这次没有」删掉——而它恰恰是标记「需要人工复核」的 tag，
+      // 静默消失最危险（这条是被测试抓出来的，不是预想到的）。
+      keptMatchNote: (item.tags || []).map(String).find((t) => t.startsWith('AniDB匹配: ')) || '',
     }
+    logs.push(entry
+      ? `tag 里已有 aid=${knownAid}，跳过 dump 匹配（标题：${entry.ja || entry.main}）`
+      : `tag 里已有 aid=${knownAid}，跳过 dump 匹配；但该 aid 不在当前 dump 里，这次拿不到标题`)
+  } else {
+    const query = matchQueryOf(item, options, logs)
+    logs.push(`匹配输入：${JSON.stringify(query)}`)
+    hit = searchWithMode(index, query, options, logs)
+    if (!hit) {
+      logs.push('dump 里没有任何候选')
+      return {
+        ...empty(logs, { matched: false }, unitBracketTags),
+        itemTags: [...fileTags, 'AniDB: 待确认'],
+      }
+    }
+    logs.push(`最佳匹配 aid=${hit.aid} 分=${hit.score.toFixed(3)} 标题=${hit.title}`)
+    if (hit.runnerUp) logs.push(`次优 aid=${hit.runnerUp.aid} 分=${hit.runnerUp.score.toFixed(3)}`)
   }
-  logs.push(`最佳匹配 aid=${hit.aid} 分=${hit.score.toFixed(3)} 标题=${hit.title}`)
-  if (hit.runnerUp) logs.push(`次优 aid=${hit.runnerUp.aid} 分=${hit.runnerUp.score.toFixed(3)}`)
 
   // —— 2. 低分就停 ——
-  if (hit.score < options.matchThreshold) {
+  // 复用路径没有分数（score=null），不参与阈值判断——那个 aid 是上次已经过了阈值才写下的。
+  if (!hit.reused && hit.score < options.matchThreshold) {
     logs.push(`低于阈值 ${options.matchThreshold}，只记待确认，不写 workKey`)
     return {
       ...empty(logs, { matched: false, aid: hit.aid, score: hit.score }, unitBracketTags),
@@ -108,6 +137,9 @@ export async function generateTags(ctx) {
   if (hit.viaPrefix) {
     itemTags.push(`AniDB匹配: 前缀 ${hit.viaPrefix} 段`)
     logs.push(`注意：本次是前缀退化命中（用「${hit.prefixQuery}」匹配上的），建议复核`)
+  } else if (hit.keptMatchNote) {
+    itemTags.push(hit.keptMatchNote)
+    logs.push(`沿用上次的匹配标记「${hit.keptMatchNote}」（本次未重新匹配）`)
   }
   const itemPatch = { workKey }
   // 日文标题改条目标题。dump 里没有 ja 就什么都不做——宁可保持原标题，
@@ -198,6 +230,9 @@ function requireOptions(raw) {
     bracketTags: raw.bracketTags === true,
     // 提出来的 tag 前缀。
     bracketTagPrefix: String(raw.bracketTagPrefix ?? '标签'),
+    // 强制重新走 dump 匹配。默认关：tag 里已有 AniDB: <aid> 就直接复用那个 aid，
+    // 不重新打分。匹配一次定下来比每次重算稳——重算可能换成另一个作品，把已合并的组打散。
+    forceRematch: raw.forceRematch === true,
   }
   if (!options.apiEnabled) return options
   // 只有开了 API 才校验这批，否则不调用 API 的人被迫填一堆没用的
@@ -609,5 +644,18 @@ function metadataTags(parsed) {
   if (parsed.type) out.push(`ANI类型: ${parsed.type}`)
   if (parsed.episodeCount) out.push(`ANI集数: ${parsed.episodeCount}`)
   if (parsed.year) out.push(`ANI年份: ${parsed.year}`)
+  // AniDB 的 restricted 是布尔（成人内容标记），不带分级数字，所以固定写 18。
+  // 前缀必须是 restricted:，UI 按这个挑出来渲染成红色小标识（app.js MEDIA_INFO_RESTRICTED）。
+  // 只有调了 API 才有这个信息——dump 里只有标题，没有 restricted。
+  if (parsed.restricted) out.push('restricted: 18')
   return out
+}
+
+// 从 tag 里读已经写过的 aid。"AniDB: 待确认" 不是数字，自然不会命中。
+function aidFromTags(tags) {
+  for (const tag of tags || []) {
+    const m = /^AniDB:\s*(\d+)\s*$/.exec(String(tag))
+    if (m) return Number(m[1])
+  }
+  return 0
 }
