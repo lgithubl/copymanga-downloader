@@ -109,7 +109,7 @@ jobs:
               "client": "testanimaudp",
               "clientVer": "2",
               "animeXmlDir": "/data/cache/anidb-api",
-              "cacheDir": "/data/cache/anidb-udp",
+              "cacheDir": "/data/cache/anidb-udp-mock",
               "tagPrefix": "AniDBU",
               "creatorTypes": { "Animation Work": "制作", "Work": "制作", "Original Work": "原作" },
               "characterTypes": ["main character in"],

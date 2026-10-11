@@ -15,7 +15,7 @@
 // （同版本的 module 会被 import 缓存复用），懒登录、空闲自动登出。放函数局部的话，
 // scriptTimeoutMs 超时只是让上层 reject，generateTags 还在后台跑，socket 就泄漏了。
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import dgram from 'node:dgram'
 import path from 'node:path'
 
@@ -77,24 +77,32 @@ export async function generateTags(ctx) {
       break
     }
     let row
+    let fromCache = false
     try {
       const hit = await readCache(options, target)
       if (hit !== null) {
         row = hit
+        fromCache = true
         cached += 1
       } else {
         attempted += 1
         row = await fetchRow(options, target, logs)
-        await writeCache(options, target, row)   // 先落盘原始响应，再解析
+        const stored = await writeCache(options, target, row)   // 先落盘原始响应，再解析
+        if (!stored) {
+          await appendErrLog(options, target, { aid }, `响应解析后是空行，没有写入缓存，原始响应：${JSON.stringify(row)}`)
+          logs.push(`${target.kind} ${target.id} 响应为空行，未写缓存（详见 ${target.id}.err.log）`)
+        }
         fetched += 1
       }
     } catch (error) {
       failed += 1
       logs.push(`${target.kind} ${target.id} 查询失败：${error.message}`)
-      // 登录就没成功的话后面每个 target 都会重发一次 AUTH、再等满一个 udpTimeoutMs，
-      // 纯浪费。直接收场，日志里也能一眼看出卡在登录而不是查询。
-      if (error.loginFailed) {
-        logs.push(`登录未成功，剩余 ${targets.length - cached - failed} 个对象本次不再尝试`)
+      await appendErrLog(options, target, { aid }, error.message)
+      // 一个包都没回就别再试剩下的了。两种情况：登录就没通；或者 session 还在、
+      // 跑到一半链路断了（这种 ensureSession 会直接返回，不走 loginFailed）。
+      // 不收场的话每个 target 都要等满一个 udpTimeoutMs，12 个能干等 144s。
+      if (error.loginFailed || error.timedOut) {
+        logs.push(`${error.loginFailed ? '登录未成功' : '请求无响应'}，剩余 ${targets.length - cached - failed} 个对象本次不再尝试`)
         break
       }
       continue
@@ -102,8 +110,13 @@ export async function generateTags(ctx) {
     const name = japaneseName(row)
     if (!name) {
       logs.push(`${target.kind} ${target.id}（${target.romaji}）没有日文名，跳过`)
+      // 这条最容易误判成"AniDB 没录日文名"，实际也可能是缓存里存着查无此人的结果。
+      // 把来源写清楚，省得下次又要去翻缓存文件。
+      await appendErrLog(options, target, { aid },
+        `没有日文名（来源：${fromCache ? '缓存' : '本次查询'}），原始行：${JSON.stringify(row)}`)
       continue
     }
+    await clearErrLog(options, target)   // 拿到名字就把历史错误清掉：有文件 = 现在还没解决
     itemTags.push(`${options.tagPrefix}${target.label}: ${name}`)
   }
 
@@ -163,17 +176,46 @@ function japaneseName(row) {
 function cacheFile(options, target) {
   return path.join(options.cacheDir, target.kind, `${target.id}.txt`)
 }
+function errLogFile(options, target) {
+  return path.join(options.cacheDir, target.kind, `${target.id}.err.log`)
+}
 async function readCache(options, target) {
   try {
-    return await readFile(cacheFile(options, target), 'utf8')
+    const raw = await readFile(cacheFile(options, target), 'utf8')
+    // 空内容按未命中处理。readFile 对空文件返回 ''，不是 null——当成命中的话这个 id
+    // 就再也查不回来了，日志还只说"没有日文名"，根本看不出是缓存坏了。
+    return raw.trim() ? raw : null
   } catch {
     return null
   }
 }
 async function writeCache(options, target, row) {
+  // 不把空行写进缓存，免得下次自己把自己坑了（245 却没有第二行、或写一半被杀）
+  if (!String(row || '').trim()) return false
   const file = cacheFile(options, target)
   await mkdir(path.dirname(file), { recursive: true })
   await writeFile(file, row, 'utf8')
+  return true
+}
+
+// 查这个 id 出了什么问题，就近记在 <id>.err.log，和 <id>.txt 放一起。
+// 成功之后删掉——文件存在就代表"现在还没解决"，不用再去比时间戳。
+const ERR_LOG_MAX_LINES = 50
+async function appendErrLog(options, target, context, message) {
+  const file = errLogFile(options, target)
+  const line = `[${new Date().toISOString()}] aid=${context.aid} ${target.kind}=${target.id}`
+    + ` label=${target.label} romaji=${target.romaji || '-'}`
+    + ` host=${options.udpHost}:${options.udpPort} | ${String(message).replace(/\s+/g, ' ').trim()}`
+  try {
+    let prev = ''
+    try { prev = await readFile(file, 'utf8') } catch { /* 第一次写，没有就没有 */ }
+    const kept = [...prev.split('\n').filter(Boolean), line].slice(-ERR_LOG_MAX_LINES)
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, `${kept.join('\n')}\n`, 'utf8')
+  } catch { /* 写日志失败绝不能影响 tag 产出 */ }
+}
+async function clearErrLog(options, target) {
+  try { await rm(errLogFile(options, target)) } catch { /* 本来就没有 */ }
 }
 
 // —— UDP ——
@@ -247,7 +289,10 @@ function send(options, payload) {
       if (pending) { reject(new Error('上一个请求还没回来')); return }
       const timer = setTimeout(() => {
         pending = null
-        reject(new Error('UDP 超时'))
+        // 标记出来：一个包都没回，说明是链路问题，后面的 target 基本不用再试了
+        const e = new Error('UDP 超时')
+        e.timedOut = true
+        reject(e)
       }, options.udpTimeoutMs)
       pending = {
         resolve: (v) => { clearTimeout(timer); resolve(v) },
