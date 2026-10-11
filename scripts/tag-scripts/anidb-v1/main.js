@@ -39,7 +39,7 @@ export async function generateTags(ctx) {
   logs.push(`匹配输入：${JSON.stringify(query)}`)
   const index = await loadDumpIndex(options.dumpDir)
   logs.push(`dump：${index.entries.length} 部（${index.source}）`)
-  const hit = searchDump(index, query)
+  const hit = searchWithMode(index, query, options, logs)
   if (!hit) {
     logs.push('dump 里没有任何候选')
     return {
@@ -71,6 +71,12 @@ export async function generateTags(ctx) {
   }
 
   const itemTags = [`AniDB: ${hit.aid}`, `AniDB标题: ${hit.title}`]
+  // 退化命中单独标出来。和精确命中混在一起的话，你没法把需要人工复核的那批挑出来，
+  // 而退化命中恰恰是最可能错的那批（短前缀撞上同名作品，还是满分撞上）。
+  if (hit.viaPrefix) {
+    itemTags.push(`AniDB匹配: 前缀 ${hit.viaPrefix} 段`)
+    logs.push(`注意：本次是前缀退化命中（用「${hit.prefixQuery}」匹配上的），建议复核`)
+  }
   const itemPatch = { workKey }
   logs.push(`写入 workKey=${workKey}${existing === workKey ? '（与原值相同）' : ''}`)
 
@@ -130,6 +136,18 @@ function requireOptions(raw) {
     // 行为和没有这个功能时一模一样。故意如此——它们是纯增强，不该强迫所有人填。
     titleEncoding: titleEncodingOf(raw.titleEncoding),
     titleRewrite: compileRewrite(raw.titleRewrite),
+    // 匹配模式。同样可选，不配就是 exact——和没有这个功能时逐字节一致。
+    // prefix 的存在理由：dump 里存的是作品名，片源文件名常是「作品名 副标题 话数」，
+    // 对称相似度被长度差拖垮（实测 やりマン不動産：全名 0.313，只留作品名 1.000）。
+    matchMode: matchModeOf(raw.matchMode),
+    // 退化到比这更短就停。dump 里 ≤4 字的标题有 6530 条，退到那个长度几乎必然
+    // 撞上不相干的作品，而且是满分撞上——比「不确定就不写」危险得多。
+    prefixMinChars: optionalNum(raw.prefixMinChars, 5),
+    // 原标题不足这么多段就不退化：没有噪声可削，退化只会削掉正文。
+    prefixMinSegments: optionalNum(raw.prefixMinSegments, 2),
+    // 退化命中要求 最佳分 ≥ 次优分 × 它。0 = 关闭。撞同名作品时次优分通常也高，
+    // 这条能挡一部分；但同系列多部作品次优分天然高，开太大会误杀。
+    prefixRunnerUpRatio: optionalNum(raw.prefixRunnerUpRatio, 0),
   }
   if (!options.apiEnabled) return options
   // 只有开了 API 才校验这批，否则不调用 API 的人被迫填一堆没用的
@@ -154,6 +172,22 @@ function titleEncodingOf(value) {
   if (v === 'auto') return 'auto'
   if (TITLE_ENCODINGS.includes(v)) return v
   throw new Error(`titleEncoding 不支持：${JSON.stringify(value)}（可选 auto / ${TITLE_ENCODINGS.join(' / ')}）`)
+}
+
+function matchModeOf(value) {
+  const v = String(value ?? '').trim().toLowerCase()
+  if (!v) return 'exact'                 // 不配 = 现在的行为
+  if (v === 'exact' || v === 'prefix') return v
+  throw new Error(`matchMode 不支持：${JSON.stringify(value)}（可选 exact / prefix）`)
+}
+
+// 和 num() 不同：这批是可选项，不配用默认值，配了就必须合法——
+// 静默忽略一个写错的阈值，比报错危险得多。
+function optionalNum(value, fallback) {
+  if (value === null || value === undefined || value === '') return fallback
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) throw new Error(`不是合法数值：${JSON.stringify(value)}`)
+  return n
 }
 
 // 正则在这里就编译掉：配错了当场报「配置不完整」，而不是等跑到一半才炸。
@@ -360,6 +394,44 @@ function matchQueryOf(item, options, logs) {
   if (rewritten !== decoded) logs.push(`重写后：${JSON.stringify(rewritten)}`)
   // 规则吃光了就退回解码前的串，宁可匹配不准也不要拿空串去搜
   return rewritten || decoded || raw
+}
+
+// 按 matchMode 分派。exact 就是原来那条路，一个字节都没变。
+// prefix 按空格从右往左逐段削：「A B C」→「A B」→「A」，第一个过阈值的就收。
+// 这么做的原因是 dump 存作品名、文件名带副标题和话数，对称相似度被长度差拖垮；
+// 削掉尾巴不需要知道噪声长什么样，所以不像正则那样「匹配不完」。
+function searchWithMode(index, query, options, logs) {
+  const first = searchDump(index, query)
+  if (options.matchMode !== 'prefix') return first
+  if (first && first.score >= options.matchThreshold) return first
+
+  const segments = String(query).split(/\s+/).filter(Boolean)
+  if (segments.length < options.prefixMinSegments) {
+    logs.push(`prefix：只有 ${segments.length} 段，不足 ${options.prefixMinSegments} 段，不退化`)
+    return first
+  }
+  for (let n = segments.length - 1; n >= 1; n -= 1) {
+    const candidate = segments.slice(0, n).join(' ')
+    if (candidate.length < options.prefixMinChars) {
+      logs.push(`prefix：退到「${candidate}」已短于 ${options.prefixMinChars} 字，停止`)
+      break
+    }
+    const hit = searchDump(index, candidate)
+    if (!hit) continue
+    logs.push(`prefix：${n}/${segments.length} 段「${candidate}」→ aid=${hit.aid} 分=${hit.score.toFixed(3)}`)
+    if (hit.score < options.matchThreshold) continue
+    // 撞同名作品时次优分通常也高，这条用来挡一部分。0 = 关闭。
+    const runnerUp = hit.runnerUp?.score || 0
+    if (options.prefixRunnerUpRatio > 0 && runnerUp > 0
+        && hit.score < runnerUp * options.prefixRunnerUpRatio) {
+      logs.push(`prefix：与次优 ${runnerUp.toFixed(3)} 差距不足 ${options.prefixRunnerUpRatio} 倍，不采信`)
+      continue
+    }
+    // 标出来是退化命中的：和精确命中混在一起的话，你没法挑出需要复核的那批
+    return { ...hit, viaPrefix: `${n}/${segments.length}`, prefixQuery: candidate }
+  }
+  logs.push('prefix：逐级退化后仍无命中')
+  return first
 }
 
 function searchDump(index, query) {
