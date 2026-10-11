@@ -125,6 +125,8 @@ const els = {
   libraryRunTagScripts: document.querySelector('#library-run-tag-scripts'),
   libraryRunPageTagScripts: document.querySelector('#library-run-page-tag-scripts'),
   libraryRunAllTagScripts: document.querySelector('#library-run-all-tag-scripts'),
+  libraryDetailPanel: document.querySelector('#library-detail-panel'),
+  libraryDetailToggle: document.querySelector('#library-detail-toggle'),
   libraryRunSelectedUnits: document.querySelector('#library-run-selected-units'),
   tagScriptsReload: document.querySelector('#tag-scripts-reload'),
   tagScriptUploadFile: document.querySelector('#tag-script-upload-file'),
@@ -2059,13 +2061,47 @@ function pickTagValues(tags, prefix) {
 
 // 媒体维度只显示分辨率，混装合集会有多个。超出一行就截断——用户明确说看不到也接受，
 // 重点是别把卡片撑变形。
+// 档位从高到低。非主流的 WxH 没有档位名，统一排在主流之后、彼此按像素数比。
+const RESOLUTION_ORDER = ['4K', '1440P', '1080P', '720P', '576P', '480P', '360P']
+
+function resolutionWeight(value) {
+  const index = RESOLUTION_ORDER.indexOf(value)
+  if (index >= 0) return RESOLUTION_ORDER.length - index
+  const [w, h] = String(value).split('x').map(Number)
+  return -1 - 1 / (((Number(w) || 0) * (Number(h) || 0)) + 1)
+}
+
+// 按「宽度预算」截断，不是按个数。实测只限个数不够：1080P 这种 4~5 字符的徽标
+// 和 854x362 这种 8 字符的宽度差一倍，3 个长徽标照样占满 207px，把左边的
+// 「N 个目录项」压到 48px 不可读。所以短档位记 1 分、非主流 WxH 记 2 分，总分 3 分封顶。
+const MEDIA_INFO_BADGE_BUDGET = 3
+
+function badgeCost(value) {
+  return RESOLUTION_ORDER.includes(value) ? 1 : 2
+}
+
 function renderMediaInfoLine(tags) {
-  const values = pickTagValues(tags, MEDIA_INFO_RESOLUTION)
+  const values = [...pickTagValues(tags, MEDIA_INFO_RESOLUTION)]
+    .sort((a, b) => resolutionWeight(b) - resolutionWeight(a))
   if (!values.length) return ''
-  // 混装合集会有多个档位，每个单独一个徽标——挤成一串 "4K / 1080P / 720P" 读起来费劲
-  return `<span class="library-card-mediainfo">${values
+  const shown = []
+  let budget = MEDIA_INFO_BADGE_BUDGET
+  for (const value of values) {
+    const cost = badgeCost(value)
+    // 至少显示一个：预算再紧也不能一个都不显示，那样整行只剩 +N 看不出是什么
+    if (shown.length && cost > budget) break
+    shown.push(value)
+    budget -= cost
+  }
+  const rest = values.slice(shown.length)
+  // 不依赖 tag 的存储顺序：那取决于脚本写入时的顺序和后续人工编辑，UI 自己排才稳定
+  const badges = shown
     .map((value) => `<span class="mediainfo-badge" title="${escapeHtml(value)}">${escapeHtml(value)}</span>`)
-    .join('')}</span>`
+    .join('')
+  const more = rest.length
+    ? `<span class="mediainfo-badge mediainfo-more" title="${escapeHtml(`还有 ${rest.join('、')}`)}">+${rest.length}</span>`
+    : ''
+  return `<span class="library-card-mediainfo">${badges}${more}</span>`
 }
 
 // 章节维度：分辨率 + 时长，放标题行右侧。没有就整个不渲染，不占位。
@@ -5897,6 +5933,25 @@ els.taskClearCompleted.addEventListener('click', async () => {
     setLoading(els.taskClearCompleted, false)
   }
 })
+// 右侧面板上半部分（标题/标签输入/脚本列表/执行按钮）折叠起来，把高度让给章节列表。
+// 折叠时标题和这个按钮本身要留着：全收掉就没有展开的入口了，而标题是唯一能确认
+// 「当前看的是哪个条目」的东西。状态记进 localStorage，和侧栏折叠同一套做法。
+function applyLibraryDetailCollapsed(collapsed) {
+  if (!els.libraryDetailPanel || !els.libraryDetailToggle) return
+  els.libraryDetailPanel.classList.toggle('detail-collapsed', collapsed)
+  els.libraryDetailToggle.textContent = collapsed ? '⌄' : '⌃'
+  els.libraryDetailToggle.title = collapsed ? '展开上方操作区' : '收起上方操作区，只看章节列表'
+  els.libraryDetailToggle.setAttribute('aria-expanded', String(!collapsed))
+}
+
+applyLibraryDetailCollapsed(localStorage.getItem('copymanga.libraryDetailCollapsed') === '1')
+
+els.libraryDetailToggle?.addEventListener('click', () => {
+  const collapsed = !els.libraryDetailPanel.classList.contains('detail-collapsed')
+  applyLibraryDetailCollapsed(collapsed)
+  localStorage.setItem('copymanga.libraryDetailCollapsed', collapsed ? '1' : '0')
+})
+
 els.sidebarToggle.addEventListener('click', () => {
   const collapsed = !els.app.classList.contains('sidebar-collapsed')
   els.app.classList.toggle('sidebar-collapsed', collapsed)

@@ -3521,3 +3521,48 @@ h2 {
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) auto;
 }
+
+/* 折叠徽标用弱一点的配色，和真实档位区分开——否则 +4 看着像另一个分辨率 */
+.mediainfo-badge.mediainfo-more {
+  background: transparent;
+  border-color: var(--site-border);
+  color: var(--site-muted);
+  font-weight: 400;
+}
+
+/* 右侧面板折叠：只留标题行和折叠按钮，其余让位给章节列表。
+   不用 display:none 收掉整个 .chapter-head——那样折叠按钮自己也没了，没法展开回来。 */
+#library-detail-panel.detail-collapsed .chapter-head > div:first-child #library-item-meta,
+#library-detail-panel.detail-collapsed .tag-script-bar {
+  display: none;
+}
+
+#library-detail-panel.detail-collapsed .chapter-actions > *:not(#library-detail-toggle) {
+  display: none;
+}
+
+#library-detail-toggle {
+  flex-shrink: 0;
+}
+
+/* 这个 section 有三个子元素（标题行 / 脚本区 / 章节列表），而 .workspace > section
+   的 grid 模板只有两行 auto minmax(0,1fr)——章节列表落进隐式的 auto 行，按内容高度
+   走，真正占 1fr 的反而是脚本区。结果折叠脚本区之后列表不升反降（实测 560→529px）。
+   改成 flex 列：列表吃掉剩余高度，对可见子元素个数不敏感，折叠谁都不影响。 */
+#library-detail-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#library-detail-panel > #library-units {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 展开态 .library-workspace .chapter-head 是单列 grid（标题长、按钮多，堆叠是有意的）。
+   折叠态只剩标题和一个小按钮，再堆成两行就白占高度——而折叠的目的恰恰是省高度。 */
+#library-detail-panel.detail-collapsed .chapter-head {
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
