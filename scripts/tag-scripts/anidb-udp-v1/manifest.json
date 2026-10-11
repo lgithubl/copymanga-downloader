@@ -1,0 +1,43 @@
+{
+  "id": "anidb-udp-v1",
+  "name": "C AniDB日文名 v1",
+  "version": "1.0.0",
+  "description": "把 AniDB 的罗马字制作方/原作者/声优名换成日文原名（走 UDP API）。需要先由 AniDB v1 写入 \"AniDB: <aid>\" tag 并缓存 anime XML。默认关闭。",
+  "scope": [
+    "item"
+  ],
+  "libraryTypes": [
+    "media"
+  ],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "enabled": false,
+    "udpHost": "api.anidb.net",
+    "udpPort": 9000,
+    "user": "",
+    "pass": "",
+    "client": "",
+    "clientVer": "1",
+    "animeXmlDir": "/data/cache/anidb-api",
+    "cacheDir": "/data/cache/anidb-udp",
+    "tagPrefix": "AniDBU",
+    "creatorTypes": {
+      "Animation Work": "制作",
+      "Work": "制作",
+      "Original Work": "原作"
+    },
+    "characterTypes": [
+      "main character in"
+    ],
+    "seiyuuLabel": "声优",
+    "characterLabel": "角色",
+    "fetchSeiyuu": true,
+    "fetchCharacterName": false,
+    "udpIntervalMs": 4000,
+    "udpTimeoutMs": 15000,
+    "udpIdleLogoutMs": 300000,
+    "maxRequestsPerItem": 12,
+    "scriptTimeoutMs": 600000
+  }
+}
