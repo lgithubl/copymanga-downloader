@@ -2170,7 +2170,6 @@ function renderSeriesBadges(item) {
   const dotTitle = elsewhere ? `同系列 ${series.count} 个，本项无字幕但系列中有` : `同系列 ${series.count} 个`
   return `
     <button class="library-series-dot${elsewhere ? ' elsewhere' : ''}" type="button" title="${escapeHtml(dotTitle)}">${series.count}</button>
-    <button class="library-series-go" type="button" title="快速进入系列中优先级最高的一项">进入</button>
   `
 }
 
@@ -2213,6 +2212,18 @@ function closeSeriesModal() {
 // 字段，用户在详情页改不到；用 tag 驱动导航行为的话，手滑删一个 tag 就会静默改掉交互。
 // 将来要加新方案或做成每条目可覆盖（item.openMode），只改这个函数。
 const VIEWER_FIRST_IMPORT_PROFILES = new Set(['monthly-ani'])
+
+// 点卡片要操作哪一项：有系列就是系列里优先级最高的那个，否则就是自己。
+// 「系列选哪一项」和「进目录还是直接播」是两件事——后者仍由 libraryCardOpensViewer
+// 按目标项自己的 sourceProfile/unitCount 决定，这里只负责选目标。
+function libraryCardTarget(item) {
+  const series = item?.series
+  if (!series || series.count < 2 || !series.primaryItemId) return item
+  if (series.primaryItemId === item.itemId) return item
+  const primary = (series.members || []).find((member) => member.itemId === series.primaryItemId)
+  // members 是列表接口附带的精简结构；拿不到就退回自己，别把点击变成空操作
+  return primary || item
+}
 function libraryCardOpensViewer(item) {
   // 必须同时看单元数：合并把多集并进一个条目后，直接跳播放器就不对了，
   // 这时候应该进目录。单元数是结构事实，不需要额外维护。
@@ -2227,7 +2238,12 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
   const displayTitle = libraryDisplayTitle(item)
   const fullTitle = libraryFullTitle(item)
+  const target = libraryCardTarget(item)
+  const targetIsSelf = target.itemId === item.itemId
   const viewerFirst = libraryCardOpensViewer(item)
+  // 「目录」是回到本项自己的入口。点卡片会跳到系列目标时必须给，否则自己的目录就没法进了；
+  // 目标就是自己且不是 viewerFirst 时，它和点卡片完全同义，没必要多一个按钮。
+  const showUnitsGo = viewerFirst || !targetIsSelf
   const card = document.createElement('article')
   card.className = `card library-card${selected ? ' selected' : ''}`
   card.title = fullTitle
@@ -2237,7 +2253,7 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
         <div class="library-card-top">
           <div class="card-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
           <div class="library-card-badges">
-            ${viewerFirst ? '<button class="library-units-go" type="button" title="点卡片直接播放；这里进目录">目录</button>' : ''}
+            ${showUnitsGo ? `<button class="library-units-go" type="button" title="${escapeHtml(targetIsSelf ? '点卡片直接播放；这里进目录' : '点卡片进入系列中优先级最高的一项；这里进本项目录')}">目录</button>` : ''}
             <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
             ${renderMergeBadge(item)}
             ${seriesBadges ? renderSeriesBadges(item) : ''}
@@ -2254,8 +2270,9 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
       </div>
     `
   card.addEventListener('click', () => {
-    if (viewerFirst) continueLibraryItem(item).catch((error) => alert(error.message))
-    else selectLibraryItem(item.type, item.itemId)
+    // continueLibraryItem 只用到 {type,itemId}，精简的 member 就够，不必取完整条目
+    if (libraryCardOpensViewer(target)) continueLibraryItem(target).catch((error) => alert(error.message))
+    else selectLibraryItem(target.type, target.itemId)
   })
   card.querySelector('.library-units-go')?.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -2268,11 +2285,6 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   card.querySelector('.library-merge-dot')?.addEventListener('click', (event) => {
     event.stopPropagation()
     jumpToMergeGroup(item.mergeGroup?.key || '').catch((error) => alert(error.message))
-  })
-  card.querySelector('.library-series-go')?.addEventListener('click', (event) => {
-    event.stopPropagation()
-    const target = item.series?.primaryItemId
-    if (target) selectLibraryItem(item.type, target)
   })
   card.querySelector('.library-continue')?.addEventListener('click', (event) => {
     event.stopPropagation()

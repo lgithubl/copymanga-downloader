@@ -2816,6 +2816,11 @@ function buildSeriesMap(items) {  const groups = new Map()
       cover: item.cover || '',
       productId: String(item.realProductId || ''),
     hasSubtitle: Boolean(item.hasSubtitle),
+      // 卡片点系列要按"目标项自己"决定是进目录还是直接播，而那个判断看的是
+      // sourceProfile + unitCount。不带上的话只能拿当前卡片的去套，
+      // 当前项 1 集、目标项 5 集时就会错跳成直接播第一集。
+      sourceProfile: String(item.sourceProfile || ''),
+      unitCount: Number(item.unitCount || 0),
       priority: seriesPriorityOf(item),
     }
     const list = groups.get(key)

@@ -3078,10 +3078,9 @@ h2 {
   font-size: 9px;
 }
 
-/* 「目录」按钮：只在点卡片直接进播放器的条目上出现，提供回到目录的入口。
-   和同排的 .library-series-go 共用一套外观，不再引入第三种徽章样式。 */
-.library-units-go,
-.library-series-go {
+/* 「目录」按钮：点卡片不会停在本项目录时才出现（直接进播放器，或跳去系列目标），
+   提供回到本项目录的入口。和同排的系列红点共用一套徽章外观。 */
+.library-units-go {
   background: #f1f5f9;
   border: 1px solid #cbd5f5;
   border-radius: 999px;
@@ -3093,8 +3092,7 @@ h2 {
   padding: 3px 7px;
 }
 
-.library-units-go:hover,
-.library-series-go:hover {
+.library-units-go:hover {
   background: #e2e8f0;
 }
 
