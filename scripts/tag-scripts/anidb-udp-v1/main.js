@@ -64,13 +64,16 @@ export async function generateTags(ctx) {
   }
 
   const itemTags = []
+  let attempted = 0
   let fetched = 0
   let cached = 0
   let failed = 0
   for (const target of targets) {
-    if (fetched >= options.maxRequestsPerItem) {
+    // 按"发了几次"算上限，不是"成功几次"：全失败时 fetched 永远是 0，上限形同虚设，
+    // 12 个 target × (4s 间隔 + 8s 超时) 会干等 144s 才收场
+    if (attempted >= options.maxRequestsPerItem) {
       // 撞 scriptTimeoutMs 被硬杀的话这一轮产出会整个丢掉，不如自己停下、下次接着跑
-      logs.push(`本条目已发 ${fetched} 次请求，到达上限 ${options.maxRequestsPerItem}，剩余 ${targets.length - fetched - cached} 个下次再跑`)
+      logs.push(`本条目已发 ${attempted} 次请求，到达上限 ${options.maxRequestsPerItem}，剩余 ${targets.length - attempted - cached} 个下次再跑`)
       break
     }
     let row
@@ -80,6 +83,7 @@ export async function generateTags(ctx) {
         row = hit
         cached += 1
       } else {
+        attempted += 1
         row = await fetchRow(options, target, logs)
         await writeCache(options, target, row)   // 先落盘原始响应，再解析
         fetched += 1
@@ -87,6 +91,12 @@ export async function generateTags(ctx) {
     } catch (error) {
       failed += 1
       logs.push(`${target.kind} ${target.id} 查询失败：${error.message}`)
+      // 登录就没成功的话后面每个 target 都会重发一次 AUTH、再等满一个 udpTimeoutMs，
+      // 纯浪费。直接收场，日志里也能一眼看出卡在登录而不是查询。
+      if (error.loginFailed) {
+        logs.push(`登录未成功，剩余 ${targets.length - cached - failed} 个对象本次不再尝试`)
+        break
+      }
       continue
     }
     const name = japaneseName(row)
@@ -97,11 +107,11 @@ export async function generateTags(ctx) {
     itemTags.push(`${options.tagPrefix}${target.label}: ${name}`)
   }
 
-  logs.push(`命中缓存 ${cached}，实际请求 ${fetched}，失败 ${failed}`)
+  logs.push(`命中缓存 ${cached}，发出请求 ${attempted}（成功 ${fetched}），失败 ${failed}`)
   return {
     itemTags: [...new Set(itemTags)],
     unitTags: [], unitPatches: [], logs,
-    details: { aid, targets: targets.length, cached, fetched, failed },
+    details: { aid, targets: targets.length, cached, attempted, fetched, failed },
   }
 }
 
@@ -193,9 +203,23 @@ async function ensureSession(options, logs) {
   if (session) return
   const auth = `AUTH user=${options.user}&pass=${options.pass}&protover=3`
     + `&client=${options.client}&clientver=${options.clientVer}&enc=UTF8`
-  const resp = await send(options, auth)
+  let resp
+  try {
+    resp = await send(options, auth)
+  } catch (error) {
+    // 这里区分出来很重要：之前登录超时和查询超时打出来的日志一模一样，
+    // 只能靠"有没有「已登录」那行"反推，排查一次要翻半天
+    const e = new Error(`登录 ${options.udpHost}:${options.udpPort} 没有回应（${error.message}）。`
+      + '包已经发出去了，是没收到回复——检查本机到该端口的 UDP 出站是否被挡')
+    e.loginFailed = true
+    throw e
+  }
   const m = /^20[01] (\S+) /.exec(resp)
-  if (!m) throw new Error(`登录失败：${resp.slice(0, 120)}`)
+  if (!m) {
+    const e = new Error(`登录被拒：${resp.slice(0, 120)}`)
+    e.loginFailed = true
+    throw e
+  }
   session = m[1]
   logs.push('已登录 AniDB UDP')
 }
