@@ -1729,10 +1729,30 @@ async function loadTagJobDetails(jobId, pre) {
   pre.closest('.tag-job-details')?.setAttribute('data-loaded', '1')
 }
 
+// 耗时：毫秒级太短看不出，分钟级又不想读一长串毫秒
+function formatElapsed(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return ''
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(ms / 60000)}m${String(Math.round((ms % 60000) / 1000)).padStart(2, '0')}s`
+}
+
+function clockOf(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('zh-CN', { hour12: false })
+}
+
 function summarizeMetadataJobResults(job) {
   const lines = []
+  let totalMs = 0
   for (const result of job.results || []) {
-    const label = [result.actionId || result.scriptId, result.status].filter(Boolean).join(' · ')
+    // 起止时刻都给：只给耗时的话看不出脚本之间的空档（排队、等限流）
+    const span = [clockOf(result.startedAt), clockOf(result.finishedAt)].filter(Boolean).join('→')
+    const elapsed = formatElapsed(result.elapsedMs)
+    if (Number.isFinite(result.elapsedMs)) totalMs += result.elapsedMs
+    const label = (span ? `[${span}] ` : '')
+      + [result.actionId || result.scriptId, result.status, elapsed].filter(Boolean).join(' · ')
     const logs = Array.isArray(result.logs) ? result.logs : []
     const summary = [
       result.message || '',
@@ -1744,6 +1764,7 @@ function summarizeMetadataJobResults(job) {
     ].filter(Boolean).join(' · ')
     lines.push([label, summary].filter(Boolean).join('\n  '))
   }
+  if (lines.length > 1 && totalMs > 0) lines.push(`合计 ${lines.length} 个脚本 · ${formatElapsed(totalMs)}`)
   return lines.join('\n')
 }
 

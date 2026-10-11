@@ -3564,6 +3564,9 @@ function publicTagJobSummary(job) {
       itemTagCount: result.itemTagCount,
       unitTagCount: result.unitTagCount,
       thumbnailJobs: result.thumbnailJobs,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      elapsedMs: result.elapsedMs,
       error: result.error,
       hasDetails: Boolean(
         result.details ||
@@ -3725,11 +3728,24 @@ async function runTagJob(job) {
   const handler = libraryHandler(job.type)
   const results = []
   for (const scriptId of job.scriptIds) {
+    // 给每条结果盖起止时间。循环体里有 5 个 results.push 和好几处 continue，
+    // 用一个闭包统一盖，将来新增 push 点也不会漏。
+    const startedAtMs = Date.now()
+    const resultsBefore = results.length
+    const stampTime = () => {
+      const finishedAtMs = Date.now()
+      for (let i = resultsBefore; i < results.length; i += 1) {
+        results[i].startedAt = new Date(startedAtMs).toISOString()
+        results[i].finishedAt = new Date(finishedAtMs).toISOString()
+        results[i].elapsedMs = finishedAtMs - startedAtMs
+      }
+    }
     const item = await handler.getItem(job.itemId)
     const units = handler.listUnits ? await handler.listUnits(job.itemId) : (item.mediaUnits || [])
     const action = byId.get(scriptId)
     if (!action) {
       results.push({ scriptId, actionId: scriptId, status: 'failed', message: '脚本不存在或加载失败' })
+      stampTime()
       continue
     }
     try {
@@ -3759,6 +3775,8 @@ async function runTagJob(job) {
       results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'completed', ...applied })
     } catch (error) {
       results.push({ scriptId, actionId: scriptId, scriptVersion: action?.version || '', status: 'failed', message: error.message })
+    } finally {
+      stampTime()      // continue 也会走到这里
     }
   }
   const failed = results.filter((item) => item.status === 'failed').length
