@@ -2466,6 +2466,18 @@ h2 {
   flex: 1 1 220px;
 }
 
+/* 必须写成 .stream-extra-controls .xxx：上面的 `> *` 是 flex:0 0 auto，
+   同特异性且在后面，单写 .stream-title-info 会被它盖掉，就不会独占一行了 */
+.stream-extra-controls .stream-title-info {
+  color: rgba(248, 250, 252, 0.82);
+  flex: 0 0 100%;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stream-extra-controls .stream-subtitle-select {
   flex: 1 1 180px;
 }

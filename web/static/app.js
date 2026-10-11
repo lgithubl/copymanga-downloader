@@ -3842,9 +3842,25 @@ function renderStreamMedia(reader, options = {}) {
     setMoreOpen(morePanel.classList.contains('hidden'))
   })
 
+  // 全屏下 .chapter-head 整个被 display:none（既有规则），标题和 meta 一起没了，
+  // 而控制条里原本没有任何文字元素——音频播放时屏幕上根本不知道在放哪一首。
+  // 放进 controls 而不是新建浮层：它跟着控制条一起淡入淡出，不用另写一套显隐；
+  // controls 是 flex-wrap，flex-basis:100% 会让它自己占一行，不挤进度条。
+  const titleInfo = document.createElement('div')
+  titleInfo.className = 'stream-title-info'
+  const unitTitle = reader.section?.title || reader.unit?.title || ''
+  const posText = currentLibraryUnits.length
+    ? `${Number(reader.unit?.index || 0) + 1}/${currentLibraryUnits.length}`
+    : ''
+  titleInfo.textContent = [unitTitle, posText].filter(Boolean).join(' · ')
+  // 长标题截断后鼠标悬停能看全文，顺带把合集名也带上
+  titleInfo.title = [reader.item?.title || currentLibraryItem?.title || '', unitTitle, posText]
+    .filter(Boolean).join('\n')
+  titleInfo.hidden = !titleInfo.textContent
+
   const controls = document.createElement('div')
   controls.className = 'stream-extra-controls'
-  controls.append(backBtn, prevChapter, play, nextChapter, currentTime, progress, duration,
+  controls.append(titleInfo, backBtn, prevChapter, play, nextChapter, currentTime, progress, duration,
     mute, volume, vrControls.presetElement, more, fullscreen)
 
   // —— 页面全屏下的「贴边唤出」——
@@ -4793,7 +4809,10 @@ function enterEpubImmersive({ remember = false } = {}) {
   els.app.append(bar)
 
   const syncInfo = () => {
-    info.textContent = `${mediaPageIndex + 1} / ${mediaPageCount}`
+    // 原来只有页码，看不出在读哪一章；和图集沉浸条对齐
+    const chapterTitle = currentMediaReader?.section?.title || currentMediaReader?.unit?.title || ''
+    info.textContent = [chapterTitle, `${mediaPageIndex + 1} / ${mediaPageCount}`].filter(Boolean).join(' · ')
+    info.title = chapterTitle
     prevCh.disabled = !mediaStepTarget('prev')
     nextCh.disabled = !mediaStepTarget('next')
     prevPg.disabled = mediaPageIndex <= 0 && !mediaStepTarget('prev')
