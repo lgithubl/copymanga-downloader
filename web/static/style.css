@@ -3536,6 +3536,19 @@ h2 {
   border-color: rgba(130, 80, 223, 0.42);
 }
 
+/* 分级标识：红色实心，比其他徽标小一圈。做小是为了不计入宽度预算——
+   它和分辨率、时长并排，三个都按原尺寸会把左边的文字挤到不可读。
+   #cf222e 是本表里已有的 danger 红，和分辨率徽标的 #1f6feb 同一套色板。 */
+.mediainfo-badge.mediainfo-restricted {
+  background: #cf222e;
+  border-color: #cf222e;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
 /* 右侧面板折叠：只留标题行和折叠按钮，其余让位给章节列表。
    不用 display:none 收掉整个 .chapter-head——那样折叠按钮自己也没了，没法展开回来。 */
 #library-detail-panel.detail-collapsed .chapter-head > div:first-child #library-item-meta,

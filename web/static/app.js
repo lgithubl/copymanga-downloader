@@ -2051,6 +2051,8 @@ function renderMergeBadge(item) {
 // 脚本里改了前缀，这里也要跟着改，否则页面上找不到（所以那两个前缀默认别动）。
 const MEDIA_INFO_RESOLUTION = '分辨率:'
 const MEDIA_INFO_DURATION = '时长:'
+// 分级标识。渲染 tag 里的实际值而不是写死 "18"，以后出现 restricted: 15 不用改代码。
+const MEDIA_INFO_RESTRICTED = 'restricted:'
 
 function pickTagValues(tags, prefix) {
   return (tags || [])
@@ -2088,7 +2090,8 @@ function renderMediaInfoLine(tags) {
   // 压到 26px 完全不可读。所以时长照常计费，只是从分辨率的预算里扣，
   // 让分辨率多折几个给它让位，而不是反过来。
   const duration = pickTagValues(tags, MEDIA_INFO_DURATION)[0] || ''
-  if (!values.length && !duration) return ''
+  const restricted = pickTagValues(tags, MEDIA_INFO_RESTRICTED)[0] || ''
+  if (!values.length && !duration && !restricted) return ''
   const shown = []
   let budget = MEDIA_INFO_BADGE_BUDGET - (duration ? badgeCost(duration) : 0)
   for (const value of values) {
@@ -2113,7 +2116,14 @@ function renderMediaInfoLine(tags) {
   const durationBadge = duration
     ? `<span class="mediainfo-badge mediainfo-duration" title="${escapeHtml(durationHint)}">${escapeHtml(duration)}</span>`
     : ''
-  return `<span class="library-card-mediainfo">${badges}${more}${durationBadge}</span>`
+  // 分级标识放最左，在分辨率之前。字号和内边距都比普通徽标小一圈，所以不计预算。
+  // 实测它占 ~21px：最坏场景（3 档分辨率 + 时长 + 分级）左侧从 105px 降到 83px，
+  // 刚好够放「1 个目录项」（84px）。再长的文案例如「12 个目录项 · 视频 12」(186px)
+  // 本来就放不下——那是这一行固有的截断，不是分级标识带来的。
+  const restrictedBadge = restricted
+    ? `<span class="mediainfo-badge mediainfo-restricted" title="${escapeHtml(`分级 ${restricted}`)}">${escapeHtml(restricted)}</span>`
+    : ''
+  return `<span class="library-card-mediainfo">${restrictedBadge}${badges}${more}${durationBadge}</span>`
 }
 
 // 章节维度：分辨率 + 时长，放标题行右侧。没有就整个不渲染，不占位。
