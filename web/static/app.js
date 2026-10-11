@@ -4940,6 +4940,13 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   // 滚的是 content.scrollTop：.content 外壳是 overflow:hidden，真正滚的是内容容器自己。
   // 用 rAF 不用 setInterval——后者在不同刷新率下速度会飘，切到后台还会积压回调。
   const SPEED_KEY = 'copymanga.galleryScrollSpeed'
+  // 分段模式：按住时每隔一段时间跳一次，而不是匀速推进。
+  // 匀速滚动逼着眼睛一直做平滑追踪，这是按住比滚轮晕的主因；跳跃之间的静止期
+  // 把"注视"还给眼睛，和滚轮一格一跳是同一个道理。
+  const MODE_KEY = 'copymanga.galleryScrollMode'
+  const STEP_RATIO = 0.35        // 每跳一屏的 35%，留足上下文重叠
+  const JUMP_MS = 180            // 单次跳跃的动画时长
+  const MIN_PAUSE_MS = 160       // 两跳之间至少静止这么久，否则退化成连续滚动
   const SPEED_MIN = 100
   const SPEED_MAX = 3000
   const readSpeed = () => {
@@ -4949,6 +4956,8 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     return Number.isFinite(n) && n >= SPEED_MIN && n <= SPEED_MAX ? n : 320
   }
   let speed = readSpeed()
+  const readMode = () => (localStorage.getItem(MODE_KEY) === 'step' ? 'step' : 'smooth')
+  let mode = readMode()
 
   const nav = document.createElement('div')
   nav.className = 'gallery-scroll-nav'
@@ -4999,9 +5008,50 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     raf = requestAnimationFrame(step)
   }
 
-  // 松手：只是把目标速度归零，让 step 自己减速收尾
+  // —— 分段模式 ——
+  let jumpFrom = 0
+  let jumpTo = 0
+  let jumpStart = 0
+  let jumpTimer = null
+  const easeOut = (t) => 1 - ((1 - t) ** 3)
+  const jumpDistance = () => Math.max(40, content.clientHeight * STEP_RATIO)
+
+  const stepJump = (ts) => {
+    if (!jumpStart) jumpStart = ts
+    const t = Math.min(1, (ts - jumpStart) / JUMP_MS)
+    pos = jumpFrom + (jumpTo - jumpFrom) * easeOut(t)
+    content.scrollTop = pos
+    if (t < 1) { raf = requestAnimationFrame(stepJump); return }
+    raf = 0
+    if (scrollDir) scheduleJump()
+  }
+
+  function scheduleJump() {
+    // 滑块在两种模式下含义一致：平均速度。间隔由"跳多远 / 多快"反推，
+    // 但不能短于一次跳跃 + 最小静止，否则又变回连续滚动（分段模式因此有速度上限）。
+    const interval = Math.max(JUMP_MS + MIN_PAUSE_MS, (jumpDistance() / speed) * 1000)
+    jumpTimer = setTimeout(() => {
+      jumpTimer = null
+      if (scrollDir) beginJump()
+    }, interval - JUMP_MS)
+  }
+
+  function beginJump() {
+    const max = Math.max(0, content.scrollHeight - content.clientHeight)
+    jumpFrom = content.scrollTop
+    jumpTo = Math.max(0, Math.min(max, jumpFrom + scrollDir * jumpDistance()))
+    if (jumpTo === jumpFrom) {           // 已经到头，别空转 rAF
+      if (scrollDir) scheduleJump()
+      return
+    }
+    jumpStart = 0
+    raf = requestAnimationFrame(stepJump)
+  }
+
+  // 松手：只是把目标速度归零，让 step 自己减速收尾；分段模式下让当前这一跳走完
   const releaseScroll = () => {
     scrollDir = 0
+    if (jumpTimer) { clearTimeout(jumpTimer); jumpTimer = null }
     nav.classList.remove('active')
   }
   // 硬停：退出沉浸模式时用。不能只 releaseScroll——减速那 160ms 里 rAF 还在跑，
@@ -5010,6 +5060,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     scrollDir = 0
     vel = 0
     lastTs = 0
+    if (jumpTimer) { clearTimeout(jumpTimer); jumpTimer = null }
     if (raf) cancelAnimationFrame(raf)
     raf = 0
     nav.classList.remove('active')
@@ -5023,6 +5074,11 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     lastTs = 0
     pos = content.scrollTop     // 期间可能被滚轮/跳章改过，重新对齐
     nav.classList.add('active')
+    if (mode === 'step') {
+      // 立刻跳第一下，按下去要有即时反馈，不能先等一个间隔
+      if (!raf && !jumpTimer) beginJump()
+      return
+    }
     if (!raf) raf = requestAnimationFrame(step)
   }
   for (const b of [upBtn, downBtn]) {
@@ -5047,9 +5103,26 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   }
   document.addEventListener('mousemove', bumpNav)
 
+  // 用栏里现成的 mk()，样式和返回/上章/退出保持一致
+  const modeBtn = mk('gallery-scroll-mode', '', '')
+  const syncMode = () => {
+    modeBtn.textContent = mode === 'step' ? '分段' : '连续'
+    modeBtn.title = mode === 'step'
+      ? `分段滚动：每次跳一屏的 ${Math.round(STEP_RATIO * 100)}%，跳跃之间有静止，看久了不容易晕。点击切回连续`
+      : '连续滚动：匀速推进。点击切换为分段'
+  }
+  modeBtn.addEventListener('click', (event) => {
+    event.stopPropagation()
+    stopScroll()                       // 切模式前先把当前这轮收干净
+    mode = mode === 'step' ? 'smooth' : 'step'
+    syncMode()
+    try { localStorage.setItem(MODE_KEY, mode) } catch { /* 存不下就只在本次生效 */ }
+  })
+  syncMode()
+
   const speedWrap = document.createElement('label')
   speedWrap.className = 'gallery-speed'
-  speedWrap.title = '长按箭头时的滚动速度'
+  speedWrap.title = '长按箭头时的滚动速度（分段模式下是平均速度，上限受最小静止时间限制）'
   const speedInput = document.createElement('input')
   speedInput.type = 'range'
   speedInput.min = String(SPEED_MIN)
@@ -5068,7 +5141,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   syncSpeed()
   speedWrap.append(speedInput, speedVal)
 
-  bar.append(back, prevCh, info, nextCh, toc, speedWrap, exitBtn)
+  bar.append(back, prevCh, info, nextCh, toc, modeBtn, speedWrap, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
