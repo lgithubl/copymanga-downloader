@@ -2028,6 +2028,16 @@ async function saveMediaImportProfileConfig(value) {
 
 // 只在成员 >1 时出现。紫色「字」角标表示本项无字幕但系列里有——
 // 这是唯一值得单独提示的差异，其余情况卡片上的 字幕v1 tag 已经说明了。
+// 可合并角标。只在条目的 workKey 确实构成分组（>=2 个条目）时出现，
+// 点一下直接跳到合并页的那一组——否则你得自己记住 workKey 再去翻页找。
+function renderMergeBadge(item) {
+  const group = item.mergeGroup
+  if (!group || group.count < 2) return ''
+  const title = `可与另外 ${group.count - 1} 个条目合并（${group.key}），点击去合并页`
+  return `<button class="library-merge-dot" type="button" data-work-key="${escapeHtml(group.key)}"
+    title="${escapeHtml(title)}">合并 ${group.count}</button>`
+}
+
 function renderSeriesBadges(item) {
   const series = item.series
   if (!series || series.count < 2) return ''
@@ -2104,6 +2114,7 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
           <div class="library-card-badges">
             ${viewerFirst ? '<button class="library-units-go" type="button" title="点卡片直接播放；这里进目录">目录</button>' : ''}
             <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
+            ${renderMergeBadge(item)}
             ${seriesBadges ? renderSeriesBadges(item) : ''}
           </div>
         </div>
@@ -2125,6 +2136,10 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   card.querySelector('.library-series-dot')?.addEventListener('click', (event) => {
     event.stopPropagation()
     openSeriesModal(item)
+  })
+  card.querySelector('.library-merge-dot')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    jumpToMergeGroup(item.mergeGroup?.key || '').catch((error) => alert(error.message))
   })
   card.querySelector('.library-series-go')?.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -2191,6 +2206,32 @@ function mergeCandidatesQuery(page = mergePage) {
   const params = new URLSearchParams({ page: String(page), limit: String(MERGE_PAGE_SIZE) })
   if (mergeKeyword) params.set('q', mergeKeyword)
   return `/api/library/merge-candidates?${params}`
+}
+
+// 从媒体库角标跳过来：只知道 workKey，不知道在第几页，交给服务端用 focus 算。
+// 落地后自动展开那一组——跳过来就是为了看它，还要再点一下没道理。
+async function jumpToMergeGroup(workKey) {
+  if (!workKey) return
+  showView('merge-view')
+  resetMergePosition()
+  mergeKeyword = ''
+  if (els.mergeKeyword) els.mergeKeyword.value = ''
+  const params = new URLSearchParams({ limit: String(MERGE_PAGE_SIZE), focus: workKey })
+  const data = await api(`/api/library/merge-candidates?${params}`)
+  if (!data.focusFound) {
+    // 索引没重建时媒体库和合并页会短暂不一致，这时候得说清楚，不能静默落到第 1 页
+    alert(`合并页里找不到这一组（${workKey}）。可能索引还没重建，点「重建索引并刷新」再试。`)
+  }
+  mergePage = data.page || 1
+  expandedGroupKeys.add(workKey)
+  await loadMergeCandidates()
+  refreshAnidbDumpStatus().catch(() => {})
+  // 滚到那一组。展开是异步拉卡片的，等一帧让高度先撑开，否则滚不到位。
+  requestAnimationFrame(() => {
+    const card = [...document.querySelectorAll('.merge-group')]
+      .find((node) => node.querySelector('.merge-group-key')?.textContent === workKey)
+    card?.scrollIntoView({ block: 'start' })
+  })
 }
 
 async function loadMergeCandidates() {

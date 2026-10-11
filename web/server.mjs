@@ -3037,9 +3037,11 @@ function libraryIndexTagTokensMatch(item, tokens) {
 function decorateWithSeries(item) {
   const entry = seriesOfItem(item)
   const base = publicLibraryIndexItem(item)
-  if (!entry || entry.members.length < 2) return base
+  const merge = mergeGroupOfItem(item)
+  const withMerge = merge ? { ...base, mergeGroup: merge } : base
+  if (!entry || entry.members.length < 2) return withMerge
   return {
-    ...base,
+    ...withMerge,
     series: {
       key: entry.key,
       count: entry.members.length,
@@ -3049,6 +3051,15 @@ function decorateWithSeries(item) {
       members: entry.members,
     },
   }
+}
+
+// 条目所属的可合并分组。媒体库那边挂这个角标，点一下直接跳到合并页对应的组，
+// 省得人工记住 workKey 再去翻页找。只给计数，成员明细合并页展开时自己拉。
+function mergeGroupOfItem(item) {
+  const key = String(item.workKey || '')
+  if (!key) return null
+  const group = (libraryIndexState.workGroups || []).find((entry) => entry.key === key)
+  return group ? { key, count: group.count } : null
 }
 
 function sortLibraryIndexItems(items, sort) {
@@ -4388,17 +4399,25 @@ async function route(req, res) {
       // 在前端过滤就只能搜到这 20 组，翻页后结果还会变。
       const keyword = String(url.searchParams.get('q') || '').trim().toLowerCase()
       const groups = keyword
-        ? all.filter((group) => (group.members || [])
-          .some((member) => String(member.title || '').toLowerCase().includes(keyword)))
+        ? all.filter((group) => String(group.key || '').toLowerCase().includes(keyword)
+          || (group.members || [])
+            .some((member) => String(member.title || '').toLowerCase().includes(keyword)))
         : all
       const pagination = paginationFromSearchParams(url.searchParams, 20, 200)
         || { page: 1, limit: 20, offset: 0 }
-      const page = groups.slice(pagination.offset, pagination.offset + pagination.limit)
+      // 媒体库角标跳过来时只知道 workKey，不知道它在第几页。服务端算一次，
+      // 省得前端一页页翻着找。找不到就当没传，照常返回请求的那一页。
+      const focus = String(url.searchParams.get('focus') || '').trim()
+      const focusIndex = focus ? groups.findIndex((group) => group.key === focus) : -1
+      const page = focusIndex >= 0 ? Math.floor(focusIndex / pagination.limit) + 1 : pagination.page
+      const offset = focusIndex >= 0 ? (page - 1) * pagination.limit : pagination.offset
+      const slice = groups.slice(offset, offset + pagination.limit)
       return json(res, 200, {
-        items: page,
+        items: slice,
         total: groups.length,
-        page: pagination.page,
+        page,
         limit: pagination.limit,
+        focusFound: focusIndex >= 0,
         indexStatus: libraryIndexState.status,
         // 索引被标脏之后 status 仍然是 'ready'，不把 dirty 带出去，前端就没法
         // 区分「真的没有新分组」和「脚本写完 workKey 但索引还没重建」。
