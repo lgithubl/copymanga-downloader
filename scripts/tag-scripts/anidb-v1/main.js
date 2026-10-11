@@ -35,6 +35,17 @@ export async function generateTags(ctx) {
   }
 
   // —— 1. dump 匹配 ——
+  // 括号 tag 先算：它来自文件名，和 AniDB 匹配成不成功没关系。放在成功分支里的话，
+  // 匹配不上的条目一个标签都拿不到——而那恰恰是最需要人工靠文件名辨认的那批。
+  // 用的是【原始】标题：titleRewrite 那套规则第一件事就是把括号删掉，用重写后的串提不到。
+  const fileTags = options.bracketTags
+    ? bracketTagsOf(String(item.title || ''), options.bracketTagPrefix)
+    : []
+  if (options.bracketTags) {
+    logs.push(fileTags.length
+      ? `从文件名括号提取 ${fileTags.length} 个 tag：${fileTags.join('、')}`
+      : '文件名里没有括号内容可提取')
+  }
   const query = matchQueryOf(item, options, logs)
   logs.push(`匹配输入：${JSON.stringify(query)}`)
   const index = await loadDumpIndex(options.dumpDir)
@@ -44,7 +55,7 @@ export async function generateTags(ctx) {
     logs.push('dump 里没有任何候选')
     return {
       ...empty(logs, { matched: false }),
-      itemTags: ['AniDB: 待确认'],
+      itemTags: [...fileTags, 'AniDB: 待确认'],
     }
   }
   logs.push(`最佳匹配 aid=${hit.aid} 分=${hit.score.toFixed(3)} 标题=${hit.title}`)
@@ -55,7 +66,7 @@ export async function generateTags(ctx) {
     logs.push(`低于阈值 ${options.matchThreshold}，只记待确认，不写 workKey`)
     return {
       ...empty(logs, { matched: false, aid: hit.aid, score: hit.score }),
-      itemTags: ['AniDB: 待确认'],
+      itemTags: [...fileTags, 'AniDB: 待确认'],
     }
   }
 
@@ -66,11 +77,11 @@ export async function generateTags(ctx) {
     logs.push(`已有 workKey=${existing}，与本次 ${workKey} 不同；force 未开启，保持原值`)
     return {
       ...empty(logs, { matched: true, aid: hit.aid, score: hit.score, kept: existing }),
-      itemTags: ['AniDB: 待确认'],
+      itemTags: [...fileTags, 'AniDB: 待确认'],
     }
   }
 
-  const itemTags = [`AniDB: ${hit.aid}`, `AniDB标题: ${hit.title}`]
+  const itemTags = [...fileTags, `AniDB: ${hit.aid}`, `AniDB标题: ${hit.title}`]
   // 退化命中单独标出来。和精确命中混在一起的话，你没法把需要人工复核的那批挑出来，
   // 而退化命中恰恰是最可能错的那批（短前缀撞上同名作品，还是满分撞上）。
   if (hit.viaPrefix) {
@@ -78,6 +89,16 @@ export async function generateTags(ctx) {
     logs.push(`注意：本次是前缀退化命中（用「${hit.prefixQuery}」匹配上的），建议复核`)
   }
   const itemPatch = { workKey }
+  // 日文标题改条目标题。dump 里没有 ja 就什么都不做——宁可保持原标题，
+  // 也不要把它换成罗马字（那等于把一个可读的名字换成另一种写法，没有收益）。
+  if (options.titleFromJa) {
+    if (hit.ja) {
+      itemPatch.title = hit.ja
+      logs.push(`条目标题改为日文官方标题：${JSON.stringify(hit.ja)}`)
+    } else {
+      logs.push(`titleFromJa 开着，但 aid=${hit.aid} 在 dump 里没有日文标题，保持原标题`)
+    }
+  }
   logs.push(`写入 workKey=${workKey}${existing === workKey ? '（与原值相同）' : ''}`)
 
   // —— 3. API 开关 ——
@@ -148,6 +169,14 @@ function requireOptions(raw) {
     // 退化命中要求 最佳分 ≥ 次优分 × 它。0 = 关闭。撞同名作品时次优分通常也高，
     // 这条能挡一部分；但同系列多部作品次优分天然高，开太大会误杀。
     prefixRunnerUpRatio: optionalNum(raw.prefixRunnerUpRatio, 0),
+    // 匹配上之后，把条目标题改成 dump 里的日文官方标题。默认关：改标题是看得见的
+    // 破坏性动作，不该因为装了新版脚本就自动发生。章节标题不受影响。
+    titleFromJa: raw.titleFromJa === true,
+    // 从原始文件名的各类括号里提 tag（[] 【】 （） () 〔〕 {}）。默认关，同上。
+    // 注意用的是原始标题，不是 titleRewrite 之后的——那一步正是把括号删掉的。
+    bracketTags: raw.bracketTags === true,
+    // 提出来的 tag 前缀。
+    bracketTagPrefix: String(raw.bracketTagPrefix ?? '标签'),
   }
   if (!options.apiEnabled) return options
   // 只有开了 API 才校验这批，否则不调用 API 的人被迫填一堆没用的
@@ -179,6 +208,25 @@ function matchModeOf(value) {
   if (!v) return 'exact'                 // 不配 = 现在的行为
   if (v === 'exact' || v === 'prefix') return v
   throw new Error(`matchMode 不支持：${JSON.stringify(value)}（可选 exact / prefix）`)
+}
+
+// 从原始文件名的各类括号里提 tag。中英文括号都认，嵌套不处理（真实片源里没见过，
+// 为它加复杂度不值）。不做去重以外的任何过滤——纯数字的 [140404] 也要，
+// 先保证完整性，看着不对再加规则。
+const BRACKET_RE = /\[([^\]]*)\]|【([^】]*)】|（([^）]*)）|\(([^)]*)\)|〔([^〕]*)〕|\{([^}]*)\}/g
+function bracketTagsOf(title, prefix) {
+  const out = []
+  const seen = new Set()
+  for (const m of String(title).matchAll(BRACKET_RE)) {
+    const text = (m.slice(1).find((g) => g !== undefined) || '').trim()
+    // 空括号跳过；tag 里带冒号会和「前缀: 值」的格式打架，一并跳过
+    if (!text || text.includes(':') || text.includes('：')) continue
+    const tag = `${prefix}: ${text}`
+    if (seen.has(tag)) continue
+    seen.add(tag)
+    out.push(tag)
+  }
+  return out
 }
 
 // 和 num() 不同：这批是可选项，不配用默认值，配了就必须合法——
@@ -288,14 +336,19 @@ function buildIndex(xml, source) {
   for (const m of xml.matchAll(/<anime aid="(\d+)">([\s\S]*?)<\/anime>/g)) {
     const titles = []
     let main = ''
+    let ja = ''
     for (const t of m[2].matchAll(/<title([^>]*)>([\s\S]*?)<\/title>/g)) {
       const text = decodeXml(t[2])
       titles.push(text)
       // 展示用优先 main，其次 official，避免列候选时蹦出法语/韩语标题
       const type = /type="([^"]+)"/.exec(t[1])?.[1] || ''
       if (type === 'main' || (!main && type === 'official')) main = text
+      // 日文标题单独留一份：type="main" 往往是 x-jat 罗马字（实测 aid=10459 的 main
+      // 是 Yariman Fudousan，而 ja/official 才是「やりマン不動産」）。
+      const lang = /xml:lang="([^"]+)"/.exec(t[1])?.[1] || ''
+      if (lang === 'ja' && (type === 'official' || !ja)) ja = text
     }
-    if (titles.length) entries.push({ aid: Number(m[1]), titles, main: main || titles[0] })
+    if (titles.length) entries.push({ aid: Number(m[1]), titles, main: main || titles[0], ja })
   }
   return { entries, source, idf: buildIdf(entries) }
 }
@@ -444,8 +497,8 @@ function searchDump(index, query) {
       const v = scoreIdf(q, stripEpisodeTail(normalize(t)), index.idf)
       if (v > s) s = v
     }
-    if (!best || s > best.score) { second = best; best = { aid: e.aid, title: e.main, score: s } }
-    else if (!second || s > second.score) second = { aid: e.aid, title: e.main, score: s }
+    if (!best || s > best.score) { second = best; best = { aid: e.aid, title: e.main, ja: e.ja || '', score: s } }
+    else if (!second || s > second.score) second = { aid: e.aid, title: e.main, ja: e.ja || '', score: s }
   }
   if (!best || best.score <= 0) return null
   return { ...best, runnerUp: second }

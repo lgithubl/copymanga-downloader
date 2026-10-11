@@ -1886,6 +1886,12 @@ function mergeItemPatch(item, patch = {}) {
   // workKey 是合并候选的依据，脚本可以改写（anidb-v1 的 force 开关就靠这个），
   // 传空字符串表示显式清除分组。
   if (patch.workKey !== undefined) next.workKey = String(patch.workKey || '')
+  // 条目标题：anidb-v1 用它写日文官方标题。服务端已经 trim + 限长 300 过了，
+  // 这里只拦空串——清空标题会让条目在列表里变成一个认不出的空行。
+  if (patch.title !== undefined) {
+    const title = String(patch.title || '').trim()
+    if (title) next.title = title
+  }
   const publishedAt = normalizePublishedAt(patch.publishedAt)
   if (publishedAt) next.publishedAt = publishedAt
   if (patch.dlsite && typeof patch.dlsite === 'object') {

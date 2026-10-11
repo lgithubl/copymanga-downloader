@@ -1,7 +1,7 @@
 {
   "id": "anidb-v1",
   "name": "AniDB v1",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "用 AniDB 标题 dump 匹配作品身份（workKey），可选调用 AniDB HTTP API 补元数据。可选的 titleEncoding / titleRewrite 只影响喂给 dump 的匹配串。",
   "scope": [
     "item"
@@ -82,6 +82,9 @@
     "matchMode": "exact",
     "prefixMinChars": 5,
     "prefixMinSegments": 2,
-    "prefixRunnerUpRatio": 0
+    "prefixRunnerUpRatio": 0,
+    "titleFromJa": false,
+    "bracketTags": false,
+    "bracketTagPrefix": "标签"
   }
 }

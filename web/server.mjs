@@ -4042,6 +4042,13 @@ function normalizeScriptItemPatch(value) {
   // 作品身份键：脚本写它来决定合并分组。空字符串是有意义的（显式清除），
   // 所以这里只排除 undefined，不能用真值判断。
   if (value.workKey !== undefined) patch.workKey = String(value.workKey || '').slice(0, 200)
+  // 条目标题：脚本可以改（anidb-v1 用它写日文官方标题）。和 workKey 不同，
+  // 空串在这里没有意义——清空标题只会让条目变成一个认不出的空行，所以要求非空。
+  // 限长 300：标题会进卡片、索引、合并页，让脚本写进一个超长串会拖垮这几处渲染。
+  if (value.title !== undefined) {
+    const title = String(value.title || '').trim().slice(0, 300)
+    if (title) patch.title = title
+  }
   const publishedAt = normalizeIsoDateTime(value.publishedAt)
   if (publishedAt) patch.publishedAt = publishedAt
   if (value.dlsite && typeof value.dlsite === 'object' && !Array.isArray(value.dlsite)) {
