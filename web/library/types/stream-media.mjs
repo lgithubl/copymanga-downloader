@@ -14,6 +14,11 @@ const IMAGE_EXTENSIONS = ['gif', 'jpg', 'jpeg', 'png', 'webp']
 // 同名图当封面时认的后缀，比 IMAGE_EXTENSIONS 宽。单独一张表是为了不动
 // mediaKind / 图集导入的识别范围——那两处改了会波及已有的图集条目。
 const COVER_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'jpe', 'jfif', 'png', 'webp', 'gif', 'bmp', 'avif', 'tif', 'tiff']
+// 封面图放条目的 files/.cover/ 下。不能放 files/ 外面——/resource?path= 被
+// safeManagedFilePath 沙箱限制在 files/ 内，放外面就取不到；放 files/ 根下又会被
+// scanMediaUnits 收进图集单元（实测 unitCount 从 1 变 2）。所以用一个保留子目录，
+// 扫描单元时显式跳过它。walkFiles 不跳隐藏目录，光靠 . 前缀没用。
+const COVER_DIR = '.cover'
 const EPUB_EXTENSIONS = ['epub']
 const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt', 'ass', 'ssa', 'lrc', 'sbv', 'smi', 'sami', 'ttml', 'dfxp', 'xml', 'sub']
 const ITEM_COVER_UNIT_ID = '__cover'
@@ -407,9 +412,11 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     for (const subtitle of subtitles) {
       await importSingleFile({ itemId, source: subtitle, relativeName: path.basename(subtitle) })
     }
+    // 封面图进保留子目录，不和视频/字幕混在 files/ 根下——根下的图片会被
+    // scanMediaUnits 收成图集单元。
     const coverNames = []
     for (const image of images) {
-      const name = path.basename(image)
+      const name = `${COVER_DIR}/${path.basename(image)}`
       await importSingleFile({ itemId, source: image, relativeName: name })
       coverNames.push(name)
     }
@@ -1249,6 +1256,11 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       .map((unit) => [unit.relativePath, unit]))
     const files = allFiles
       .filter(isSupportedName)
+      // .cover/ 是封面图的保留目录，不参与单元构造。不排除的话这些图会被按目录
+      // 分组成一个多余的 image-gallery 单元，条目凭空多出一章（实测 unitCount 1→2）。
+      // 判「任意一段等于 .cover」而不是 startsWith：合并撞名时整个源组会被塞进
+      // files/{sourceId}/，路径变成 {sourceId}/.cover/a.jpg，只看开头就漏了。
+      .filter((filePath) => !isCoverDirPath(relativePath(itemId, filePath)))
       .sort((a, b) => relativePath(itemId, a).localeCompare(relativePath(itemId, b), undefined, { numeric: true }))
     if (type !== 'media') {
       return Promise.all(files.map((filePath) => unitFromFile({
@@ -1743,6 +1755,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   function isCoverImageName(filePath) {
     const ext = path.extname(filePath).slice(1).toLowerCase()
     return COVER_IMAGE_EXTENSIONS.includes(ext)
+  }
+
+  function isCoverDirPath(relative) {
+    return String(relative || '').split('/').includes(COVER_DIR)
   }
 
   function itemResourceUrl(itemId, relativeName) {
