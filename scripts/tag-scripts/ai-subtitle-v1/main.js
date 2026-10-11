@@ -169,6 +169,7 @@ function normalizeOptions(raw = {}) {
     vadFilter: raw.vadFilter === null || raw.vadFilter === undefined || raw.vadFilter === '' ? null : Boolean(raw.vadFilter),
     fastMode: raw.fastMode !== false,
     fastModeKeywords: fastModeKeywords(raw.fastModeKeywords),
+    fastModeCrossGroup: raw.fastModeCrossGroup !== false,
     overwriteExisting: raw.force === true || raw.overwriteExisting === true,
     force: raw.force === true || raw.overwriteExisting === true,
     outputDirTemplate: String(raw.outputDirTemplate || '{itemId}'),
@@ -215,6 +216,9 @@ function hasAiSubtitle(unit, options) {
   ))
 }
 
+// 跨目录分组用的作用域哨兵。真实目录名不可能含 \u0000，不会撞上
+const CROSS_GROUP_SCOPE = '\u0000cross'
+
 // SE有り / SE無し 这类同一段台词的变体，文件名只差一个关键字，ASR 跑一次就够。
 // 必须按长度降序：'SEなし' 里含 'SE'，短的先命中会留下一个 'なし'，两边永远合不上。
 // 这里强制排序，不指望使用者把配置顺序写对。
@@ -240,7 +244,13 @@ function groupFastModeUnits(units, options, logs) {
   const groups = new Map()
   for (const unit of units) {
     const name = stem(unit.relativePath || unit.fileName || unit.title || unit.unitId)
-    const key = `${String(unit.groupPath || '').toLowerCase()}\u001f${fastModeKey(name, options.fastModeKeywords)}`
+    const normalized = fastModeKey(name, options.fastModeKeywords)
+    // 跨目录合并额外要求 key 里至少有一个字母/假名/汉字。纯数字名（01 / 02）在
+    // 本編/ 特典/ 这种多目录作品里必然撞车，而整组共用 group[0] 的字幕——
+    // 合错了就是字幕贴错轨道，界面上完全看不出来。
+    const cross = options.fastModeCrossGroup && /\p{L}/u.test(normalized)
+    const scope = cross ? CROSS_GROUP_SCOPE : String(unit.groupPath || '').toLowerCase()
+    const key = `${scope}\u001f${normalized}`
     const list = groups.get(key) || []
     list.push(unit)
     groups.set(key, list)
@@ -248,7 +258,8 @@ function groupFastModeUnits(units, options, logs) {
   // 合并了哪些必须写进日志：整组共用 group[0] 的字幕，合错了表面上看不出来
   for (const list of groups.values()) {
     if (list.length < 2) continue
-    logs.push(`归一化合并 ${list.length} 个章节，共用一次 ASR：`
+    const dirs = new Set(list.map((u) => String(u.groupPath || '')))
+    logs.push(`归一化合并 ${list.length} 个章节${dirs.size > 1 ? `（跨 ${dirs.size} 个目录：${[...dirs].join('、')}）` : ''}，共用一次 ASR：`
       + list.map((u) => u.title || u.unitId).join(' / '))
   }
   return [...groups.values()]
