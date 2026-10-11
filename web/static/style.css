@@ -3547,11 +3547,23 @@ h2 {
 
 /* 「N 个目录项 · 视频 x」那行：左边文字占剩余宽度，分辨率徽标贴右。
    minmax(0,1fr) 不能省，否则长文字会把徽标挤出卡片。 */
+/* 挤不下时让徽标整体换到第二行，而不是把左边的文字压没。
+   原来是 grid-template-columns: minmax(0,1fr) auto —— 左列可以一路收缩到 0，
+   右列要多少给多少，实测 8K 分辨率 + 长时长 + 分级 那组徽标自己就约 249px，
+   比 1280px 下卡片的内容区还宽，左边的「N 个目录项」被压到 4px 完全不可读。
+   换行最多让卡片高 20px，比丢掉文字好。 */
 .library-card-primary {
   align-items: center;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  justify-content: space-between;
+}
+
+.library-card-primary > .library-card-meta {
+  flex: 1 1 auto;
+  /* 实测「1 个目录项」需要 62px；低于这个值就该换行而不是继续压 */
+  min-width: 62px;
 }
 
 .library-card-mediainfo,
