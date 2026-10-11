@@ -165,12 +165,12 @@ export async function generateTags(ctx) {
   }
 
   // —— 4. 先查本地缓存，miss 才发请求 ——
-  const detail = await loadDetail({ aid: hit.aid, options, logs })
+  const detail = await loadDetail({ ctx, aid: hit.aid, options, logs })
   if (!detail.ok) {
     return {
-      itemTags: [...itemTags, 'AniDBAPI: 失败'],
+      itemTags: [...itemTags, detail.banned ? 'AniDBAPI: 被封' : 'AniDBAPI: 失败'],
       unitTags: unitBracketTags, unitPatches: [], itemPatch, logs,
-      details: { aid: hit.aid, score: hit.score, workKey, api: 'failed', error: detail.error, request: detail.request, response: detail.response },
+      details: { aid: hit.aid, score: hit.score, workKey, api: detail.banned ? 'banned' : 'failed', error: detail.error, request: detail.request, response: detail.response },
     }
   }
 
@@ -245,6 +245,11 @@ function requireOptions(raw) {
     apiSleepBaseMs: num('apiSleepBaseMs'),
     apiSleepJitterMs: num('apiSleepJitterMs'),
     apiTimeoutMs: num('apiTimeoutMs'),
+    // 服务端会把 manifest 默认值合进来（mergePlainObject），老配置缺这项也拿得到；
+    // 这里再兜一层，免得绕过合并的调用路径算出 NaN 的 until
+    banCooldownMs: raw.banCooldownMs === null || raw.banCooldownMs === undefined || raw.banCooldownMs === ''
+      ? 1800000
+      : num('banCooldownMs'),
   }
 }
 
@@ -367,6 +372,67 @@ function decodeTitle(text, encoding, logs) {
 
 // —— dump 载入：目录里找 anime-titles.xml(.gz)，解析成 aid -> 标题数组 ——
 let dumpCache = null
+
+// —— 熔断 ——
+// 和 anidb-udp-v1 各记各的：UDP client 与 HTTP client 在 AniDB 是分开注册的，
+// HTTP 被封不代表 UDP 也被封。（AniDB 同时也按 IP 封，两者是否连带没有实测证据，
+// 所以不替用户合并。）
+// 维度是脚本全局，不是 per-aid。内存当快路径，真相落 ctx.cacheDir：
+// 服务端按脚本 id 给的目录，不受用户 apiCacheDir 配置影响；文件名带目标主机。
+let breaker = null
+
+function breakerFile(ctx, options) {
+  const dir = String(ctx?.cacheDir || '')
+  if (!dir) return ''
+  let host = options.apiBaseUrl
+  try { host = new URL(options.apiBaseUrl).host } catch { /* 配了非法 URL 就用原串 */ }
+  return path.join(dir, `ban-${String(host).replace(/[^\w.-]/g, '_')}.json`)
+}
+
+function breakerKey(options) {
+  return `${options.apiBaseUrl}|${options.apiClient}|${options.apiClientVer}`
+}
+
+// 以文件为准，内存只在没有落盘位置时兜底——见 anidb-udp-v1 里的同名函数
+async function readBreaker(ctx, options) {
+  const key = breakerKey(options)
+  const valid = (rec) => rec && rec.key === key && rec.until > Date.now()
+  const file = breakerFile(ctx, options)
+  if (!file) return valid(breaker) ? breaker : null
+  try {
+    const rec = JSON.parse(await readFile(file, 'utf8'))
+    breaker = rec
+    return valid(rec) ? rec : null
+  } catch {
+    breaker = null
+    return null
+  }
+}
+
+async function tripBreaker(ctx, options, reason, logs) {
+  const rec = { until: Date.now() + options.banCooldownMs, reason: String(reason).slice(0, 200), key: breakerKey(options) }
+  breaker = rec
+  logs.push(`触发熔断，冷却 ${Math.round(options.banCooldownMs / 60000)} 分钟：${rec.reason}`)
+  const file = breakerFile(ctx, options)
+  if (!file) {
+    logs.push('没有 ctx.cacheDir，熔断只在内存生效，重启后失效')
+    return
+  }
+  try {
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, JSON.stringify(rec), 'utf8')
+  } catch (error) {
+    logs.push(`熔断状态落盘失败（仅内存生效）：${error.message}`)
+  }
+}
+
+// AniDB 用 HTTP 200 返回业务错误，ban 只能从 body 文本认。没有实测过真实的
+// 封禁响应长什么样，所以同时认 <error> 里的关键词和 403/503 状态码，
+// 并把原文写进日志——真撞上了可以照着把判定收紧。
+function looksBanned(status, body) {
+  if (status === 403 || status === 503) return true
+  return /ban|too many|rate.?limit|flood/i.test(String(body || ''))
+}
 async function loadDumpIndex(dir) {
   const candidates = ['anime-titles.xml.gz', 'anime-titles.xml']
   for (const name of candidates) {
@@ -561,7 +627,7 @@ function searchDump(index, query) {
 }
 
 // —— 详情：本地缓存优先，miss 才发请求 ——
-async function loadDetail({ aid, options, logs }) {
+async function loadDetail({ ctx, aid, options, logs }) {
   const cacheFile = path.join(options.apiCacheDir, `${aid}.xml`)
   try {
     const xml = await readFile(cacheFile, 'utf8')
@@ -569,6 +635,14 @@ async function loadDetail({ aid, options, logs }) {
     return { ok: true, xml, fromCache: true }
   } catch (error) {
     if (error?.code !== 'ENOENT') logs.push(`读缓存失败（当作未命中）：${error.message}`)
+  }
+
+  // 熔断检查放在缓存之后：命中缓存不发包，没理由被挡
+  const ban = await readBreaker(ctx, options)
+  if (ban) {
+    const mins = Math.ceil((ban.until - Date.now()) / 60000)
+    logs.push(`处于熔断冷却中（还剩 ${mins} 分钟），本次不发请求：${ban.reason}`)
+    return { ok: false, banned: true, error: `熔断冷却中，还剩 ${mins} 分钟`, request: null, response: null }
   }
 
   // 没有任何限流反馈，间隔只能自己控。加随机抖动避免多条目同时撞上。
@@ -595,12 +669,22 @@ async function loadDetail({ aid, options, logs }) {
     response = { status: res.status, headers: Object.fromEntries(res.headers), bodyPreview: body.slice(0, 2000) }
     if (!res.ok) {
       logs.push(`HTTP ${res.status}`)
+      if (looksBanned(res.status, body)) {
+        await tripBreaker(ctx, options, `HTTP ${res.status}`, logs)
+        return { ok: false, banned: true, error: `HTTP ${res.status}`, request, response }
+      }
       return { ok: false, error: `HTTP ${res.status}`, request, response }
     }
     // AniDB 用 200 返回业务错误，必须看 body 而不是状态码
     const err = /<error[^>]*>([\s\S]*?)<\/error>/.exec(body)
     if (err) {
       logs.push(`接口返回错误：${err[0].slice(0, 160)}`)
+      // 只有像封禁的才熔断。"aid 不存在"这类是正常业务错误，熔断了会把
+      // 后面所有条目一起挡住。
+      if (looksBanned(res.status, err[0])) {
+        await tripBreaker(ctx, options, err[1].trim(), logs)
+        return { ok: false, banned: true, error: err[1].trim(), request, response }
+      }
       return { ok: false, error: err[1].trim(), request, response }
     }
     if (!/<anime\b/.test(body)) {

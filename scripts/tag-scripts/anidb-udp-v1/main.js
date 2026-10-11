@@ -16,8 +16,70 @@
 // scriptTimeoutMs 超时只是让上层 reject，generateTags 还在后台跑，socket 就泄漏了。
 
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import dgram from 'node:dgram'
 import path from 'node:path'
+
+// —— 熔断 ——
+// 维度是脚本全局：AniDB 按 client+IP 封，和 aid 无关，记在 item tag 上拦不住下一条。
+// 内存只当快路径——module 实例跨条目跨 job 都在，但服务端一重启就没了，
+// 而封禁按小时算，重启后立刻恢复猛敲正是最该避免的。所以真相落盘。
+// 落在 ctx.cacheDir（服务端按脚本 id 给的目录），不用 options.cacheDir：后者用户可配，
+// 指向 mock 时熔断状态会跟着环境漂。文件名带目标主机，打 mock 不会挡住真实请求。
+// 带凭据指纹：改了账号密码说明是配错了不是被封，旧熔断作废，不用干等。
+const BAN_CODES = new Set(['555', '601', '602', '604'])
+let breaker = null
+
+function fingerprint(options) {
+  return createHash('sha256')
+    .update(`${options.user}\u0000${options.pass}\u0000${options.client}\u0000${options.clientVer}`)
+    .digest('hex').slice(0, 12)
+}
+
+function breakerFile(ctx, options) {
+  const dir = String(ctx?.cacheDir || '')
+  if (!dir) return ''
+  return path.join(dir, `ban-${options.udpHost.replace(/[^\w.-]/g, '_')}.json`)
+}
+
+// 以文件为准，内存只在没有落盘位置时兜底。冷却时长是猜的，所以"删掉文件立即解封"
+// 必须真的管用；内存优先的话要等重启才生效。每个条目多读一个几十字节的 JSON，可以忽略。
+async function readBreaker(ctx, options) {
+  const fp = fingerprint(options)
+  const valid = (rec) => rec && rec.host === options.udpHost && rec.fingerprint === fp && rec.until > Date.now()
+  const file = breakerFile(ctx, options)
+  if (!file) return valid(breaker) ? breaker : null
+  try {
+    const rec = JSON.parse(await readFile(file, 'utf8'))
+    breaker = rec
+    return valid(rec) ? rec : null
+  } catch {
+    breaker = null          // 文件被删 / 读坏了，内存里的也作废
+    return null
+  }
+}
+
+async function tripBreaker(ctx, options, reason, logs) {
+  const rec = {
+    until: Date.now() + options.banCooldownMs,
+    reason: String(reason).slice(0, 200),
+    host: options.udpHost,
+    fingerprint: fingerprint(options),
+  }
+  breaker = rec
+  logs.push(`触发熔断，冷却 ${Math.round(options.banCooldownMs / 60000)} 分钟：${rec.reason}`)
+  const file = breakerFile(ctx, options)
+  if (!file) {
+    logs.push('没有 ctx.cacheDir，熔断只在内存生效，重启后失效')
+    return
+  }
+  try {
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, JSON.stringify(rec), 'utf8')
+  } catch (error) {
+    logs.push(`熔断状态落盘失败（仅内存生效）：${error.message}`)
+  }
+}
 
 // —— 模块级连接状态。跨条目复用，不是每个条目都重新登录 ——
 let sock = null
@@ -63,6 +125,12 @@ export async function generateTags(ctx) {
     return empty(logs, { aid, targets: 0, status: '无对象' }, [statusTag(options, '无对象')])
   }
 
+  // 熔断只挡"要发包"的对象：全命中缓存时照常产出，没理由因为被封就不给 tag
+  const ban = await readBreaker(ctx, options)
+  if (ban) {
+    logs.push(`处于熔断冷却中（还剩 ${Math.ceil((ban.until - Date.now()) / 60000)} 分钟），本次不发包：${ban.reason}`)
+  }
+
   const itemTags = []
   let attempted = 0
   let fetched = 0
@@ -71,6 +139,8 @@ export async function generateTags(ctx) {
   // 拿到明确答复的 target 数（有日文名、或确认 AniDB 就是没录）。
   // 没答复的 = 查询失败 + 撞上限没轮到的，这两种重跑才可能补上。
   let answered = 0
+  let blocked = 0        // 因熔断没发包的对象
+  let banHit = false     // 本次是否撞上服务端拒绝
   for (const target of targets) {
     // 按"发了几次"算上限，不是"成功几次"：全失败时 fetched 永远是 0，上限形同虚设，
     // 12 个 target × (4s 间隔 + 8s 超时) 会干等 144s 才收场
@@ -87,6 +157,9 @@ export async function generateTags(ctx) {
         row = hit
         fromCache = true
         cached += 1
+      } else if (ban) {
+        blocked += 1
+        continue
       } else {
         attempted += 1
         row = await fetchRow(options, target, logs)
@@ -105,6 +178,12 @@ export async function generateTags(ctx) {
       // 一个包都没回就别再试剩下的了。两种情况：登录就没通；或者 session 还在、
       // 跑到一半链路断了（这种 ensureSession 会直接返回，不走 loginFailed）。
       // 不收场的话每个 target 都要等满一个 udpTimeoutMs，12 个能干等 144s。
+      if (error.banned) {
+        await tripBreaker(ctx, options, error.message, logs)
+        logs.push(`服务端拒绝，剩余 ${targets.length - cached - failed} 个对象本次不再尝试`)
+        banHit = true
+        break
+      }
       if (error.loginFailed || error.timedOut) {
         logs.push(`${error.loginFailed ? '登录未成功' : '请求无响应'}，剩余 ${targets.length - cached - failed} 个对象本次不再尝试`)
         break
@@ -125,13 +204,17 @@ export async function generateTags(ctx) {
   }
 
   const unresolved = targets.length - answered
-  const status = unresolved === 0 ? '成功' : (itemTags.length ? '部分失败' : '失败')
+  // 被封优先于失败：两者都是"没拿到"，但前者要你别再跑，后者可以重试
+  const status = unresolved === 0
+    ? '成功'
+    : ((banHit || blocked) ? '被封' : (itemTags.length ? '部分失败' : '失败'))
   logs.push(`命中缓存 ${cached}，发出请求 ${attempted}（成功 ${fetched}），失败 ${failed}`
+    + (blocked ? `，熔断拦下 ${blocked}` : '')
     + `；${targets.length} 个对象里 ${answered} 个有明确答复 → ${status}`)
   return {
     itemTags: [...new Set([...itemTags, statusTag(options, status)])],
     unitTags: [], unitPatches: [], logs,
-    details: { aid, targets: targets.length, cached, attempted, fetched, failed, answered, status },
+    details: { aid, targets: targets.length, cached, attempted, fetched, failed, blocked, answered, status },
   }
 }
 
@@ -240,7 +323,12 @@ async function fetchRow(options, target, logs) {
   }
   if (code === '245' || code === '235') return resp.split('\n')[1] || ''
   if (code === '340') return '0|||||||||'          // NO SUCH CHARACTER，当作查无此人缓存起来
-  throw new Error(resp.slice(0, 120))
+  const error = new Error(resp.slice(0, 120))
+  // 555 BANNED / 601 OUT OF SERVICE / 602 SERVER BUSY / 604 TIMEOUT-RESUBMIT：
+  // 都是"服务端在拒绝你"，继续发只会更糟。原来这些走的是普通失败分支，
+  // 实测单条目会顶着 555 把 12 个对象全发一遍。
+  if (BAN_CODES.has(code)) error.banned = true
+  throw error
 }
 
 async function request(options, body, logs) {
@@ -267,6 +355,9 @@ async function ensureSession(options, logs) {
   if (!m) {
     const e = new Error(`登录被拒：${resp.slice(0, 120)}`)
     e.loginFailed = true
+    // 凭据不对的话重试一百次也还是不对，而每个条目都会重来一次 AUTH——
+    // 实测 3 个条目 3 次 AUTH，这正是把临时限制升级成封禁的典型路径
+    e.banned = true
     throw e
   }
   session = m[1]
@@ -398,5 +489,7 @@ function requireOptions(raw) {
     udpIdleLogoutMs: num('udpIdleLogoutMs', 300000),
     // 单条目请求上限。撞 scriptTimeoutMs 被硬杀的话整轮产出会丢，不如自己先停。
     maxRequestsPerItem: num('maxRequestsPerItem', 12),
+    // AniDB 不返回 Retry-After，冷却时长只能自己定。30 分钟是保守猜测，不是实测值。
+    banCooldownMs: num('banCooldownMs', 1800000),
   }
 }

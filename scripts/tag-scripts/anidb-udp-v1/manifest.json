@@ -1,7 +1,7 @@
 {
   "id": "anidb-udp-v1",
   "name": "C AniDB日文名 v1",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "把 AniDB 的罗马字制作方/原作者/声优名换成日文原名（走 UDP API）。需要先由 AniDB v1 写入 \"AniDB: <aid>\" tag 并缓存 anime XML。默认关闭。",
   "scope": [
     "item"
@@ -38,6 +38,7 @@
     "udpTimeoutMs": 15000,
     "udpIdleLogoutMs": 300000,
     "maxRequestsPerItem": 12,
+    "banCooldownMs": 1800000,
     "scriptTimeoutMs": 600000
   },
   "exclusiveTagGroups": [
