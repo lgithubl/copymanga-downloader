@@ -2083,12 +2083,14 @@ function badgeCost(value) {
 function renderMediaInfoLine(tags) {
   const values = [...pickTagValues(tags, MEDIA_INFO_RESOLUTION)]
     .sort((a, b) => resolutionWeight(b) - resolutionWeight(a))
-  // 总时长每个条目只有一个、宽度可预期，所以固定显示在最右，不参与上面那套折叠预算。
-  // 让它一起抢预算的话，一个多分辨率的合集会把时长挤成 "+1"——那就白加了。
+  // 总时长固定显示、永不折叠——它每个条目只有一个，折掉就白加了。
+  // 但「固定」不等于「免费」：实测七档分辨率 + 999:59:59 会把左边的「N 个目录项」
+  // 压到 26px 完全不可读。所以时长照常计费，只是从分辨率的预算里扣，
+  // 让分辨率多折几个给它让位，而不是反过来。
   const duration = pickTagValues(tags, MEDIA_INFO_DURATION)[0] || ''
   if (!values.length && !duration) return ''
   const shown = []
-  let budget = MEDIA_INFO_BADGE_BUDGET
+  let budget = MEDIA_INFO_BADGE_BUDGET - (duration ? badgeCost(duration) : 0)
   for (const value of values) {
     const cost = badgeCost(value)
     // 至少显示一个：预算再紧也不能一个都不显示，那样整行只剩 +N 看不出是什么
