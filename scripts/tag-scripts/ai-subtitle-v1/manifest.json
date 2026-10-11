@@ -1,12 +1,24 @@
 {
   "id": "ai-subtitle-v1",
   "name": "AI 字幕 v1",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "调用 local-asr-server 为无字幕音视频生成 AI 字幕，并写入显式字幕映射。",
-  "scope": ["item", "unit"],
-  "libraryTypes": ["media"],
-  "mediaKinds": ["audio", "video"],
-  "exclusiveTagGroups": ["字幕v1", "AI字幕", "AI字幕version"],
+  "scope": [
+    "item",
+    "unit"
+  ],
+  "libraryTypes": [
+    "media"
+  ],
+  "mediaKinds": [
+    "audio",
+    "video"
+  ],
+  "exclusiveTagGroups": [
+    "字幕v1",
+    "AI字幕",
+    "AI字幕version"
+  ],
   "defaultEnabled": false,
   "main": "main.js",
   "options": {
@@ -20,6 +32,16 @@
     "segmenter": "asmr-onnx",
     "vadFilter": null,
     "fastMode": true,
+    "fastModeKeywords": [
+      "SEなし",
+      "SE無し",
+      "SEナシ",
+      "SE無",
+      "SEあり",
+      "SE有り",
+      "SE有",
+      "SE"
+    ],
     "force": false,
     "overwriteExisting": false,
     "outputDirTemplate": "{itemId}",

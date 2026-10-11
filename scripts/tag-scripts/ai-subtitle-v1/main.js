@@ -33,7 +33,7 @@ export async function generateTags(ctx) {
     }
   }
 
-  const jobs = options.fastMode ? groupFastModeUnits(units) : units.map((unit) => [unit])
+  const jobs = options.fastMode ? groupFastModeUnits(units, options, logs) : units.map((unit) => [unit])
   const unitTags = []
   const unitPatches = []
   const processed = []
@@ -168,6 +168,7 @@ function normalizeOptions(raw = {}) {
     segmenter: String(raw.segmenter || 'asmr-onnx'),
     vadFilter: raw.vadFilter === null || raw.vadFilter === undefined || raw.vadFilter === '' ? null : Boolean(raw.vadFilter),
     fastMode: raw.fastMode !== false,
+    fastModeKeywords: fastModeKeywords(raw.fastModeKeywords),
     overwriteExisting: raw.force === true || raw.overwriteExisting === true,
     force: raw.force === true || raw.overwriteExisting === true,
     outputDirTemplate: String(raw.outputDirTemplate || '{itemId}'),
@@ -214,13 +215,41 @@ function hasAiSubtitle(unit, options) {
   ))
 }
 
-function groupFastModeUnits(units) {
+// SE有り / SE無し 这类同一段台词的变体，文件名只差一个关键字，ASR 跑一次就够。
+// 必须按长度降序：'SEなし' 里含 'SE'，短的先命中会留下一个 'なし'，两边永远合不上。
+// 这里强制排序，不指望使用者把配置顺序写对。
+function fastModeKeywords(raw) {
+  const list = Array.isArray(raw)
+    ? raw
+    : ['SEなし', 'SE無し', 'SEナシ', 'SE無', 'SEあり', 'SE有り', 'SE有', 'SE']
+  return [...new Set(list
+    .map((kw) => String(kw || '').normalize('NFKC').toLowerCase().trim())
+    .filter(Boolean))]
+    .sort((a, b) => b.length - a.length)
+}
+
+// 数字特意保留（\p{N} 不替换）：轨号不同就是不同轨道。剥掉的话
+// 01./02./03. 同名的三条会合成一组，group[0] 的字幕直接套到另外两条上。
+function fastModeKey(value, keywords) {
+  const base = String(value || '').normalize('NFKC').toLowerCase()
+  const stripped = keywords.reduce((acc, kw) => acc.split(kw).join(' '), base)
+  return stripped.replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+}
+
+function groupFastModeUnits(units, options, logs) {
   const groups = new Map()
   for (const unit of units) {
-    const key = `${String(unit.groupPath || '').toLowerCase()}\u001f${stem(unit.relativePath || unit.fileName || unit.title || unit.unitId)}`
+    const name = stem(unit.relativePath || unit.fileName || unit.title || unit.unitId)
+    const key = `${String(unit.groupPath || '').toLowerCase()}\u001f${fastModeKey(name, options.fastModeKeywords)}`
     const list = groups.get(key) || []
     list.push(unit)
     groups.set(key, list)
+  }
+  // 合并了哪些必须写进日志：整组共用 group[0] 的字幕，合错了表面上看不出来
+  for (const list of groups.values()) {
+    if (list.length < 2) continue
+    logs.push(`归一化合并 ${list.length} 个章节，共用一次 ASR：`
+      + list.map((u) => u.title || u.unitId).join(' / '))
   }
   return [...groups.values()]
 }
