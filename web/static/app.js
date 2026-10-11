@@ -5516,6 +5516,9 @@ function updateLibraryMetadataActionButtons() {
   if (els.libraryRunTagScripts) els.libraryRunTagScripts.disabled = !hasScripts || !hasCurrentItem
   if (els.libraryRunSelectedUnits) els.libraryRunSelectedUnits.disabled = !hasScripts || !hasCurrentItem
   if (els.libraryRunPageTagScripts) els.libraryRunPageTagScripts.disabled = !hasScripts || !hasPageItems
+  // 「执行所有页」只要求选了脚本：它自己按筛选条件重新查，不依赖当前页已加载的内容。
+  // 当初漏掉这行，按钮永远是 disabled——HTML 里写死了 disabled，没人解除就是个死按钮。
+  if (els.libraryRunAllTagScripts) els.libraryRunAllTagScripts.disabled = !hasScripts
 }
 
 async function runMetadataActions({ unitIds = [], button = null } = {}) {
