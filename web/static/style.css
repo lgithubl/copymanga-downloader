@@ -3530,6 +3530,12 @@ h2 {
   font-weight: 400;
 }
 
+/* 总时长换个色：和分辨率并排时，同色会让人以为 2:14:30 也是个分辨率档位 */
+.mediainfo-badge.mediainfo-duration {
+  background: rgba(130, 80, 223, 0.1);
+  border-color: rgba(130, 80, 223, 0.42);
+}
+
 /* 右侧面板折叠：只留标题行和折叠按钮，其余让位给章节列表。
    不用 display:none 收掉整个 .chapter-head——那样折叠按钮自己也没了，没法展开回来。 */
 #library-detail-panel.detail-collapsed .chapter-head > div:first-child #library-item-meta,

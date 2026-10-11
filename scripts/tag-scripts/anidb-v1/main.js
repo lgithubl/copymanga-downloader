@@ -38,13 +38,32 @@ export async function generateTags(ctx) {
   // 括号 tag 先算：它来自文件名，和 AniDB 匹配成不成功没关系。放在成功分支里的话，
   // 匹配不上的条目一个标签都拿不到——而那恰恰是最需要人工靠文件名辨认的那批。
   // 用的是【原始】标题：titleRewrite 那套规则第一件事就是把括号删掉，用重写后的串提不到。
+  const units = Array.isArray(ctx.units) ? ctx.units : []
+  // 章节各提各的；条目提「自己的标题 + 所有章节标题」的并集，跨标题去重。
+  //
+  // 条目这里用并集而不是只看 item.title，是因为 titleFromJa 会把条目标题换成日文
+  // （括号随之消失）。重跑时只看 item.title 会提到空数组，而 mergeGeneratedTags
+  // 把「本脚本上次产出、这次没有」的 tag 当作要删除的——括号 tag 会在第二次运行时
+  // 自己消失。章节标题取自文件名且永不改写，并集能把它们重新提回来。
+  // 合并后的条目下，章节来自不同源文件、括号各不相同，并集也正是想要的结果。
+  const unitBracketTags = options.bracketTags
+    ? units
+      .map((unit) => ({
+        unitId: unit.unitId,
+        tags: bracketTagsOf(String(unit.title || ''), options.bracketTagPrefix),
+      }))
+      .filter((entry) => entry.unitId && entry.tags.length)
+    : []
   const fileTags = options.bracketTags
-    ? bracketTagsOf(String(item.title || ''), options.bracketTagPrefix)
+    ? [...new Set([
+      ...bracketTagsOf(String(item.title || ''), options.bracketTagPrefix),
+      ...unitBracketTags.flatMap((entry) => entry.tags),
+    ])]
     : []
   if (options.bracketTags) {
     logs.push(fileTags.length
-      ? `从文件名括号提取 ${fileTags.length} 个 tag：${fileTags.join('、')}`
-      : '文件名里没有括号内容可提取')
+      ? `括号 tag：条目 ${fileTags.length} 个（${fileTags.join('、')}）；${unitBracketTags.length}/${units.length} 个章节有产出`
+      : '文件名和章节名里都没有括号内容可提取')
   }
   const query = matchQueryOf(item, options, logs)
   logs.push(`匹配输入：${JSON.stringify(query)}`)
@@ -54,7 +73,7 @@ export async function generateTags(ctx) {
   if (!hit) {
     logs.push('dump 里没有任何候选')
     return {
-      ...empty(logs, { matched: false }),
+      ...empty(logs, { matched: false }, unitBracketTags),
       itemTags: [...fileTags, 'AniDB: 待确认'],
     }
   }
@@ -65,7 +84,7 @@ export async function generateTags(ctx) {
   if (hit.score < options.matchThreshold) {
     logs.push(`低于阈值 ${options.matchThreshold}，只记待确认，不写 workKey`)
     return {
-      ...empty(logs, { matched: false, aid: hit.aid, score: hit.score }),
+      ...empty(logs, { matched: false, aid: hit.aid, score: hit.score }, unitBracketTags),
       itemTags: [...fileTags, 'AniDB: 待确认'],
     }
   }
@@ -76,12 +95,14 @@ export async function generateTags(ctx) {
     // 已经分过组又算出不同的键：默认不动，否则重跑一次可能把已合并的组打散
     logs.push(`已有 workKey=${existing}，与本次 ${workKey} 不同；force 未开启，保持原值`)
     return {
-      ...empty(logs, { matched: true, aid: hit.aid, score: hit.score, kept: existing }),
+      ...empty(logs, { matched: true, aid: hit.aid, score: hit.score, kept: existing }, unitBracketTags),
       itemTags: [...fileTags, 'AniDB: 待确认'],
     }
   }
 
-  const itemTags = [...fileTags, `AniDB: ${hit.aid}`, `AniDB标题: ${hit.title}`]
+  // tag 用日文标题。dump 实测 17046 部里 15108 部（88.6%）有 ja，剩下 11.4%
+  // 回退罗马字 main，不额外标记——混着也能接受，总比没有强。
+  const itemTags = [...fileTags, `AniDB: ${hit.aid}`, `AniDB标题: ${hit.ja || hit.title}`]
   // 退化命中单独标出来。和精确命中混在一起的话，你没法把需要人工复核的那批挑出来，
   // 而退化命中恰恰是最可能错的那批（短前缀撞上同名作品，还是满分撞上）。
   if (hit.viaPrefix) {
@@ -106,7 +127,7 @@ export async function generateTags(ctx) {
     logs.push('apiEnabled=false，不调用 API')
     return {
       itemTags: [...itemTags, 'AniDBAPI: 未触发'],
-      unitTags: [], unitPatches: [], itemPatch, logs,
+      unitTags: unitBracketTags, unitPatches: [], itemPatch, logs,
       details: { aid: hit.aid, score: hit.score, workKey, api: 'disabled' },
     }
   }
@@ -116,7 +137,7 @@ export async function generateTags(ctx) {
   if (!detail.ok) {
     return {
       itemTags: [...itemTags, 'AniDBAPI: 失败'],
-      unitTags: [], unitPatches: [], itemPatch, logs,
+      unitTags: unitBracketTags, unitPatches: [], itemPatch, logs,
       details: { aid: hit.aid, score: hit.score, workKey, api: 'failed', error: detail.error, request: detail.request, response: detail.response },
     }
   }
@@ -125,13 +146,13 @@ export async function generateTags(ctx) {
   logs.push(`解析出：type=${parsed.type} 集数=${parsed.episodeCount} 年份=${parsed.year} tag=${parsed.tags.length} 个`)
   return {
     itemTags: [...itemTags, `AniDBAPI: ${detail.fromCache ? '缓存' : '成功'}`, ...metadataTags(parsed)],
-    unitTags: [], unitPatches: [], itemPatch, logs,
+    unitTags: unitBracketTags, unitPatches: [], itemPatch, logs,
     details: { aid: hit.aid, score: hit.score, workKey, api: detail.fromCache ? 'cache' : 'fetched', parsed },
   }
 }
 
-function empty(logs, details) {
-  return { itemTags: [], unitTags: [], unitPatches: [], logs, details }
+function empty(logs, details, unitTags = []) {
+  return { itemTags: [], unitTags, unitPatches: [], logs, details }
 }
 
 // —— 配置：一个都不许缺 ——

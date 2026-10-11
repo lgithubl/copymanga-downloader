@@ -2083,7 +2083,10 @@ function badgeCost(value) {
 function renderMediaInfoLine(tags) {
   const values = [...pickTagValues(tags, MEDIA_INFO_RESOLUTION)]
     .sort((a, b) => resolutionWeight(b) - resolutionWeight(a))
-  if (!values.length) return ''
+  // 总时长每个条目只有一个、宽度可预期，所以固定显示在最右，不参与上面那套折叠预算。
+  // 让它一起抢预算的话，一个多分辨率的合集会把时长挤成 "+1"——那就白加了。
+  const duration = pickTagValues(tags, MEDIA_INFO_DURATION)[0] || ''
+  if (!values.length && !duration) return ''
   const shown = []
   let budget = MEDIA_INFO_BADGE_BUDGET
   for (const value of values) {
@@ -2101,7 +2104,14 @@ function renderMediaInfoLine(tags) {
   const more = rest.length
     ? `<span class="mediainfo-badge mediainfo-more" title="${escapeHtml(`还有 ${rest.join('、')}`)}">+${rest.length}</span>`
     : ''
-  return `<span class="library-card-mediainfo">${badges}${more}</span>`
+  // 结尾的 "+" 是脚本标的：有章节没读出时长，这是个部分和
+  const durationHint = duration.endsWith('+')
+    ? `总时长 ${duration.slice(0, -1)}（部分章节无时长，实际更长）`
+    : `总时长 ${duration}`
+  const durationBadge = duration
+    ? `<span class="mediainfo-badge mediainfo-duration" title="${escapeHtml(durationHint)}">${escapeHtml(duration)}</span>`
+    : ''
+  return `<span class="library-card-mediainfo">${badges}${more}${durationBadge}</span>`
 }
 
 // 章节维度：分辨率 + 时长，放标题行右侧。没有就整个不渲染，不占位。
