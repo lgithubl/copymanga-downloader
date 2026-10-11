@@ -3259,6 +3259,69 @@ h2 {
   display: flex;
 }
 
+/* 长按滚动的一对箭头。贴着滚动条（约 12px）放在中间偏下，position:fixed 够用——
+   它和控制条一样是进沉浸时建、退出时删，不会残留下来飘位置。 */
+.gallery-scroll-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  opacity: 0.35;
+  position: fixed;
+  right: 14px;
+  top: 58%;
+  transition: opacity 0.35s ease;
+  z-index: 60;
+}
+
+/* 淡到还看得见，不是彻底消失——全透明的话用户找不回来 */
+.gallery-scroll-nav.dim {
+  opacity: 0.1;
+}
+
+.gallery-scroll-nav:hover {
+  opacity: 0.85;
+}
+
+.gallery-scroll-nav.active {
+  opacity: 1;
+}
+
+.gallery-scroll-arrow {
+  background: rgba(15, 20, 25, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 10px 8px;
+  /* 按住拖动时别选中页面文字，也别触发浏览器的滚动手势 */
+  touch-action: none;
+  user-select: none;
+}
+
+.gallery-scroll-arrow:hover {
+  background: rgba(15, 20, 25, 0.9);
+}
+
+.gallery-speed {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.gallery-speed input[type="range"] {
+  width: 110px;
+}
+
+.gallery-speed-val {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
 #app.stream-immersive.stream-chrome-visible .epub-bar {
   transform: none;
 }

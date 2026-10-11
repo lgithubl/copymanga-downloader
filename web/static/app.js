@@ -4931,7 +4931,107 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const nextCh = mk('gallery-chapter-next', '下章', '下一章')
   const toc = makeImmersiveToc()
   const exitBtn = mk('gallery-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, info, nextCh, toc, exitBtn)
+
+  // —— 长按滚动：右侧贴着滚动条的一对箭头 + 栏里的调速滑块 ——
+  // 滚的是 content.scrollTop：.content 外壳是 overflow:hidden，真正滚的是内容容器自己。
+  // 用 rAF 不用 setInterval——后者在不同刷新率下速度会飘，切到后台还会积压回调。
+  const SPEED_KEY = 'copymanga.galleryScrollSpeed'
+  const SPEED_MIN = 100
+  const SPEED_MAX = 3000
+  const readSpeed = () => {
+    const n = Number(localStorage.getItem(SPEED_KEY))
+    return Number.isFinite(n) && n >= SPEED_MIN && n <= SPEED_MAX ? n : 600
+  }
+  let speed = readSpeed()
+
+  const nav = document.createElement('div')
+  nav.className = 'gallery-scroll-nav'
+  const mkArrow = (d, text, title) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'gallery-scroll-arrow'
+    b.textContent = text
+    b.title = title
+    b.dataset.dir = String(d)
+    return b
+  }
+  const upBtn = mkArrow(-1, '▲', '按住向上滚')
+  const downBtn = mkArrow(1, '▼', '按住向下滚')
+  nav.append(upBtn, downBtn)
+  els.app.append(nav)
+
+  let raf = 0
+  let lastTs = 0
+  let scrollDir = 0
+  const step = (ts) => {
+    if (!scrollDir) return
+    // 切后台回来第一帧的 dt 可能是几秒，不钳住会直接蹦到底
+    const dt = lastTs ? Math.min(ts - lastTs, 100) : 16.7
+    lastTs = ts
+    content.scrollTop += scrollDir * speed * (dt / 1000)
+    raf = requestAnimationFrame(step)
+  }
+  const stopScroll = () => {
+    scrollDir = 0
+    lastTs = 0
+    if (raf) cancelAnimationFrame(raf)
+    raf = 0
+    nav.classList.remove('active')
+  }
+  const startScroll = (event, d) => {
+    event.preventDefault()
+    event.stopPropagation()
+    // 必须捕获指针：否则按住后手一移出按钮就收不到 pointerup，会一直滚停不下来
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    scrollDir = d
+    lastTs = 0
+    nav.classList.add('active')
+    if (!raf) raf = requestAnimationFrame(step)
+  }
+  for (const b of [upBtn, downBtn]) {
+    const d = Number(b.dataset.dir)
+    b.addEventListener('pointerdown', (event) => startScroll(event, d))
+    b.addEventListener('pointerup', stopScroll)
+    // 移动端的滑动手势会把指针抢走，不处理 cancel 就会一直滚
+    b.addEventListener('pointercancel', stopScroll)
+    b.addEventListener('lostpointercapture', stopScroll)
+  }
+  nav.addEventListener('click', (event) => event.stopPropagation())
+
+  // 自动淡出：长图阅读时一直有个块压在画面上。淡到还看得见，不是完全消失——
+  // 全透明的话用户找不回来。
+  let dimTimer = null
+  const bumpNav = () => {
+    nav.classList.remove('dim')
+    clearTimeout(dimTimer)
+    dimTimer = setTimeout(() => {
+      if (!scrollDir && !nav.matches(':hover')) nav.classList.add('dim')
+    }, 2500)
+  }
+  document.addEventListener('mousemove', bumpNav)
+
+  const speedWrap = document.createElement('label')
+  speedWrap.className = 'gallery-speed'
+  speedWrap.title = '长按箭头时的滚动速度'
+  const speedInput = document.createElement('input')
+  speedInput.type = 'range'
+  speedInput.min = String(SPEED_MIN)
+  speedInput.max = String(SPEED_MAX)
+  speedInput.step = '50'
+  speedInput.value = String(speed)
+  const speedVal = document.createElement('span')
+  speedVal.className = 'gallery-speed-val'
+  const syncSpeed = () => { speedVal.textContent = `${speed}` }
+  speedInput.addEventListener('input', () => {
+    speed = Number(speedInput.value)
+    syncSpeed()
+    // 隐私模式下 setItem 会抛，但速度本身已经生效，不该因为存不下就报错
+    try { localStorage.setItem(SPEED_KEY, String(speed)) } catch { /* 存不下就只在本次生效 */ }
+  })
+  syncSpeed()
+  speedWrap.append(speedInput, speedVal)
+
+  bar.append(back, prevCh, info, nextCh, toc, speedWrap, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -5019,6 +5119,10 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
 
   galleryImmersive = () => {
     clearTimeout(timer)
+    stopScroll()
+    clearTimeout(dimTimer)
+    document.removeEventListener('mousemove', bumpNav)
+    nav.remove()
     document.removeEventListener('mousemove', onPointerMove)
     document.removeEventListener('keydown', onKey)
     content.removeEventListener('pointerdown', onDown)
