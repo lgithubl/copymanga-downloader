@@ -38,13 +38,13 @@ export async function generateTags(ctx) {
   }
   if (!options.enabled) {
     logs.push('enabled=false，不做任何事')
-    return empty(logs, { skipped: 'disabled' })
+    return empty(logs, { skipped: 'disabled', status: '未触发' }, [statusTag(options, '未触发')])
   }
 
   const aid = aidFromTags(item.tags)
   if (!aid) {
     logs.push('条目上没有 "AniDB: <aid>" tag，先跑 AniDB v1')
-    return empty(logs, { skipped: 'no-aid' })
+    return empty(logs, { skipped: 'no-aid', status: '缺前置' }, [statusTag(options, '缺前置')])
   }
 
   // id 来自 anidb-v1 缓存的 anime XML，本脚本不自己打 HTTP
@@ -54,13 +54,13 @@ export async function generateTags(ctx) {
     xml = await readFile(xmlPath, 'utf8')
   } catch {
     logs.push(`找不到 ${xmlPath}；先让 AniDB v1 开 apiEnabled 把 XML 拉下来`)
-    return empty(logs, { skipped: 'no-xml', aid })
+    return empty(logs, { skipped: 'no-xml', aid, status: '缺前置' }, [statusTag(options, '缺前置')])
   }
 
   const targets = collectTargets(xml, options, logs)
   if (!targets.length) {
     logs.push('白名单过滤后没有要查的对象')
-    return empty(logs, { aid, targets: 0 })
+    return empty(logs, { aid, targets: 0, status: '无对象' }, [statusTag(options, '无对象')])
   }
 
   const itemTags = []
@@ -68,6 +68,9 @@ export async function generateTags(ctx) {
   let fetched = 0
   let cached = 0
   let failed = 0
+  // 拿到明确答复的 target 数（有日文名、或确认 AniDB 就是没录）。
+  // 没答复的 = 查询失败 + 撞上限没轮到的，这两种重跑才可能补上。
+  let answered = 0
   for (const target of targets) {
     // 按"发了几次"算上限，不是"成功几次"：全失败时 fetched 永远是 0，上限形同虚设，
     // 12 个 target × (4s 间隔 + 8s 超时) 会干等 144s 才收场
@@ -94,6 +97,7 @@ export async function generateTags(ctx) {
         }
         fetched += 1
       }
+      answered += 1
     } catch (error) {
       failed += 1
       logs.push(`${target.kind} ${target.id} 查询失败：${error.message}`)
@@ -120,11 +124,14 @@ export async function generateTags(ctx) {
     itemTags.push(`${options.tagPrefix}${target.label}: ${name}`)
   }
 
-  logs.push(`命中缓存 ${cached}，发出请求 ${attempted}（成功 ${fetched}），失败 ${failed}`)
+  const unresolved = targets.length - answered
+  const status = unresolved === 0 ? '成功' : (itemTags.length ? '部分失败' : '失败')
+  logs.push(`命中缓存 ${cached}，发出请求 ${attempted}（成功 ${fetched}），失败 ${failed}`
+    + `；${targets.length} 个对象里 ${answered} 个有明确答复 → ${status}`)
   return {
-    itemTags: [...new Set(itemTags)],
+    itemTags: [...new Set([...itemTags, statusTag(options, status)])],
     unitTags: [], unitPatches: [], logs,
-    details: { aid, targets: targets.length, cached, attempted, fetched, failed },
+    details: { aid, targets: targets.length, cached, attempted, fetched, failed, answered, status },
   }
 }
 
@@ -338,8 +345,15 @@ function decodeXml(value) {
     .replace(/&amp;/g, '&')
 }
 
-function empty(logs, details) {
-  return { itemTags: [], unitTags: [], unitPatches: [], logs, details }
+// 状态 tag。失败路径原本什么都不产出，在库里和"从没跑过"长得一模一样，
+// 没法筛出待处理的条目。tagPrefix 复用同一个前缀（默认 AniDBU），
+// manifest 里把 AniDBU 声明为 exclusive group，所以同时只会有一个状态。
+function statusTag(options, state) {
+  return `${options.tagPrefix}: ${state}`
+}
+
+function empty(logs, details, statusTags = []) {
+  return { itemTags: statusTags, unitTags: [], unitPatches: [], logs, details }
 }
 
 function requireOptions(raw) {
