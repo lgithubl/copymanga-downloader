@@ -3482,14 +3482,34 @@ h2 {
   display: none;
 }
 
-/* 媒体信息：卡片上 tag 行下面那一行。只放分辨率，混装合集会有多个。
-   单行截断——用户明确说超出看不到可以接受，重点是别把卡片撑变形。 */
-.library-card-mediainfo {
-  color: var(--site-muted);
-  font-size: 12px;
-  line-height: 1.3;
+/* 「N 个目录项 · 视频 x」那行：左边文字占剩余宽度，分辨率徽标贴右。
+   minmax(0,1fr) 不能省，否则长文字会把徽标挤出卡片。 */
+.library-card-primary {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.library-card-mediainfo,
+.unit-mediainfo {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+/* 带边框和底色，否则混在一堆灰字里看不见——这是用户明确提的 */
+.mediainfo-badge {
+  background: rgba(31, 111, 235, 0.1);
+  border: 1px solid rgba(31, 111, 235, 0.42);
+  border-radius: 4px;
+  color: var(--site-primary-text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.5;
+  padding: 0 5px;
   white-space: nowrap;
 }
 
@@ -3500,12 +3520,4 @@ h2 {
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.unit-mediainfo {
-  color: var(--site-muted);
-  flex-shrink: 0;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }

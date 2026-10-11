@@ -291,7 +291,7 @@ const defaultMediaImportProfiles = {
   'rj-media': {
     maxDepth: 6,
     idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-    defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'builtin-thumbnails'],
+    defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'media-info-v1', 'builtin-thumbnails'],
     fetchDlsiteCover: true,
     fetchDlsiteTitle: true,
     dlsiteRequestMinIntervalMs: 1500,
@@ -300,12 +300,12 @@ const defaultMediaImportProfiles = {
   // 原先靠 scriptHints 模糊匹配勾上字幕扫描，去掉模糊匹配后在这里显式列出，
   // 行为与之前一致（但不再误勾 AI 字幕/翻译）
   'normal-video': {
-    defaultMetadataActions: ['builtin-subtitles'],
+    defaultMetadataActions: ['builtin-subtitles', 'media-info-v1'],
   },
   // 导入时已经建好章节、配好字幕，所以不需要 builtin-scan-media-units；
   // builtin-subtitles 留着是为了刷出「字幕v1: 有/无」tag，媒体库的字幕筛选靠它。
   'monthly-ani': {
-    defaultMetadataActions: ['builtin-subtitles', 'anidb-v1', 'builtin-thumbnails'],
+    defaultMetadataActions: ['builtin-subtitles', 'anidb-v1', 'media-info-v1', 'builtin-thumbnails'],
   },
 }
 const mediaImportTypeInfo = {
@@ -2062,8 +2062,10 @@ function pickTagValues(tags, prefix) {
 function renderMediaInfoLine(tags) {
   const values = pickTagValues(tags, MEDIA_INFO_RESOLUTION)
   if (!values.length) return ''
-  const text = values.join(' / ')
-  return `<div class="library-card-mediainfo" title="${escapeHtml(text)}">${escapeHtml(text)}</div>`
+  // 混装合集会有多个档位，每个单独一个徽标——挤成一串 "4K / 1080P / 720P" 读起来费劲
+  return `<span class="library-card-mediainfo">${values
+    .map((value) => `<span class="mediainfo-badge" title="${escapeHtml(value)}">${escapeHtml(value)}</span>`)
+    .join('')}</span>`
 }
 
 // 章节维度：分辨率 + 时长，放标题行右侧。没有就整个不渲染，不占位。
@@ -2073,8 +2075,9 @@ function renderUnitMediaInfo(tags) {
     pickTagValues(tags, MEDIA_INFO_DURATION)[0] || '',
   ].filter(Boolean)
   if (!parts.length) return ''
-  const text = parts.join(' · ')
-  return `<span class="unit-mediainfo" title="${escapeHtml(text)}">${escapeHtml(text)}</span>`
+  return `<span class="unit-mediainfo">${parts
+    .map((value) => `<span class="mediainfo-badge" title="${escapeHtml(value)}">${escapeHtml(value)}</span>`)
+    .join('')}</span>`
 }
 
 function renderSeriesBadges(item) {
@@ -2157,11 +2160,13 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
             ${seriesBadges ? renderSeriesBadges(item) : ''}
           </div>
         </div>
-        <div class="library-card-meta" title="${escapeHtml(summary.primary)}">${escapeHtml(summary.primary)}</div>
+        <div class="library-card-primary">
+          <span class="library-card-meta" title="${escapeHtml(summary.primary)}">${escapeHtml(summary.primary)}</span>
+          ${renderMediaInfoLine(item.tags || [])}
+        </div>
         <div class="library-card-meta" title="${escapeHtml(summary.secondary)}">${escapeHtml(summary.secondary)}</div>
         ${history ? `<div class="library-card-history">继续：${escapeHtml(history.lastUnitTitle || history.lastUnitId || item.title)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''}</div>` : ''}
         ${renderTagList(item.tags || [])}
-        ${renderMediaInfoLine(item.tags || [])}
         <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
       </div>
     `

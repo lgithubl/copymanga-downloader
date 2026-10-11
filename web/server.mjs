@@ -265,7 +265,7 @@ function defaultConfig() {
       'rj-media': {
         maxDepth: 6,
         idPattern: '(?:RJ|VJ|BJ|EJ)\\d{6,8}',
-        defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'builtin-thumbnails'],
+        defaultMetadataActions: ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'media-info-v1', 'builtin-thumbnails'],
         fetchDlsiteCover: true,
         fetchDlsiteTitle: true,
         dlsiteRequestMinIntervalMs: 1500,
@@ -3608,7 +3608,7 @@ function importTagScriptIds(fields = {}) {
     // 页面勾了什么就跑什么；没带字段（老客户端、脚本直接调接口）才退回方案默认
     if (explicit.length) return explicit
     return parseTags(config.mediaImportProfiles?.['rj-media']?.defaultMetadataActions
-      || ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'builtin-thumbnails'])
+      || ['builtin-scan-media-units', 'builtin-subtitles', 'rj-dlsite-v1', 'rj-series-v1', 'media-info-v1', 'builtin-thumbnails'])
   }
   return explicit
 }

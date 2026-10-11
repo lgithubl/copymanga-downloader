@@ -47,7 +47,7 @@ export async function generateTags(ctx) {
   // 媒体维度汇总所有不同的分辨率。混装的合集（1080p + 720p）两个都要，
   // 只留一个会让人以为整套都是那个规格。按像素数从大到小，顺序稳定。
   const itemTags = [...new Set(resolutions)]
-    .sort((a, b) => pixels(b) - pixels(a))
+    .sort((a, b) => resolutionRank(b) - resolutionRank(a))
     .map((value) => `${options.resolutionPrefix}: ${value}`)
   if (failed) logs.push(`${failed} 个单元探测失败`)
   return {
@@ -76,6 +76,8 @@ async function probe(filePath, options) {
     // 封面图会被 ffprobe 当成一条 video 流（mjpeg/png），宽高是封面的尺寸不是视频的。
     // 音频文件带内嵌封面时尤其明显，所以这里排掉这几种编码。
     resolution: video && !COVER_CODECS.includes(video.codec_name) && video.width && video.height
+      ? resolutionLabel(video.width, video.height) : '',
+    pixels: video && !COVER_CODECS.includes(video.codec_name) && video.width && video.height
       ? `${video.width}x${video.height}` : '',
     duration: Number.isFinite(duration) && duration > 0 ? duration : 0,
     videoCodec: video && !COVER_CODECS.includes(video.codec_name) ? String(video.codec_name || '') : '',
@@ -96,6 +98,7 @@ function tagsOf(info, options) {
   if (info.resolution) out.push(`${options.resolutionPrefix}: ${info.resolution}`)
   if (info.duration) out.push(`${options.durationPrefix}: ${formatDuration(info.duration)}`)
   if (!options.extraTags) return out
+  if (info.pixels && info.pixels !== info.resolution) out.push(`像素: ${info.pixels}`)
   if (info.videoCodec) out.push(`视频编码: ${info.videoCodec}`)
   if (info.audioCodec) out.push(`音频编码: ${info.audioCodec}`)
   if (info.channels) out.push(`声道: ${info.channels}`)
@@ -119,9 +122,29 @@ function parseFps(value) {
   return Math.round((num / den) * 100) / 100
 }
 
-function pixels(resolution) {
-  const [w, h] = String(resolution).split('x').map(Number)
-  return (Number(w) || 0) * (Number(h) || 0)
+// 主流档位简化成 1080P 这种写法；非主流保留 WxH，不硬塞进最近的档。
+// 判定用 max(高, 宽*9/16)：2.35:1 的片源是 1920x816，只看高会判成 720P；
+// 只看宽又会让 4:3 的 640x480 判成 360P。竖屏按短边（1080x1920 就是 1080P）。
+const RESOLUTION_TABLE = [[2000, '4K'], [1300, '1440P'], [950, '1080P'], [620, '720P'],
+  [520, '576P'], [440, '480P'], [330, '360P']]
+
+function resolutionLabel(width, height) {
+  const w = Number(width) || 0
+  const h = Number(height) || 0
+  if (!w || !h) return ''
+  const nominal = h > w ? w : Math.max(h, Math.round((w * 9) / 16))
+  for (const [floor, label] of RESOLUTION_TABLE) {
+    if (nominal >= floor) return label
+  }
+  return `${w}x${h}`
+}
+
+// 媒体维度排序用：1080P 这种标签没法直接比大小，按档位表的位置排。
+function resolutionRank(label) {
+  const index = RESOLUTION_TABLE.findIndex(([, name]) => name === label)
+  if (index >= 0) return RESOLUTION_TABLE.length - index
+  const [w, h] = String(label).split('x').map(Number)
+  return -((Number(w) || 0) * (Number(h) || 0))   // 非主流排在主流之后
 }
 
 function normalizeOptions(raw) {
