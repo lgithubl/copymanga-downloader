@@ -11,6 +11,9 @@ const execFileAsync = promisify(execFile)
 const AUDIO_EXTENSIONS = ['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav', 'webm']
 const VIDEO_EXTENSIONS = ['m4v', 'mkv', 'mov', 'mp4', 'webm']
 const IMAGE_EXTENSIONS = ['gif', 'jpg', 'jpeg', 'png', 'webp']
+// 同名图当封面时认的后缀，比 IMAGE_EXTENSIONS 宽。单独一张表是为了不动
+// mediaKind / 图集导入的识别范围——那两处改了会波及已有的图集条目。
+const COVER_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'jpe', 'jfif', 'png', 'webp', 'gif', 'bmp', 'avif', 'tif', 'tiff']
 const EPUB_EXTENSIONS = ['epub']
 const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt', 'ass', 'ssa', 'lrc', 'sbv', 'smi', 'sami', 'ttml', 'dfxp', 'xml', 'sub']
 const ITEM_COVER_UNIT_ID = '__cover'
@@ -354,31 +357,47 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       list.push(filePath)
       subtitlesByKey.set(key, list)
     }
+    // 图片走和字幕完全相同的配对键：同目录、同文件名就认领，不做任何额外推断。
+    // 「1号室~.jpg」这种 stem 不同的自然配不上，按约定直接忽略、留在原地。
+    const imagesByKey = new Map()
+    for (const filePath of allFiles.filter(isCoverImageName).sort(byRelative)) {
+      const key = subtitleMediaKey(relOf(filePath))
+      const list = imagesByKey.get(key) || []
+      list.push(filePath)
+      imagesByKey.set(key, list)
+    }
 
     const items = []
     const takenSubtitles = new Set()
+    const takenImages = new Set()
     for (const video of videos) {
-      const subtitles = subtitlesByKey.get(subtitleMediaKey(relOf(video))) || []
+      const key = subtitleMediaKey(relOf(video))
+      const subtitles = subtitlesByKey.get(key) || []
       for (const subtitle of subtitles) takenSubtitles.add(subtitle)
-      items.push(await importMonthlyAniItem({ video, subtitles, inputTags }))
+      const images = imagesByKey.get(key) || []
+      for (const image of images) takenImages.add(image)
+      items.push(await importMonthlyAniItem({ video, subtitles, images, inputTags }))
     }
     // 没被任何视频认领的字幕：常见于字幕单独放 Subs/ 子目录，或命名和视频对不上。
     // 静默丢掉会让人以为字幕丢了，所以显式回报。
-    const skippedSubtitles = allFiles
-      .filter(isSubtitleName)
-      .filter((filePath) => !takenSubtitles.has(filePath))
+    const unclaimed = (filter) => allFiles
+      .filter(filter.match)
+      .filter((filePath) => !filter.taken.has(filePath))
       .map(relOf)
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    const skippedSubtitles = unclaimed({ match: isSubtitleName, taken: takenSubtitles })
+    const skippedImages = unclaimed({ match: isCoverImageName, taken: takenImages })
     return {
       type,
       profile: 'monthly-ani',
       imported: items.length,
       skippedSubtitles,
+      skippedImages,
       items,
     }
   }
 
-  async function importMonthlyAniItem({ video, subtitles = [], inputTags = [] }) {
+  async function importMonthlyAniItem({ video, subtitles = [], images = [], inputTags = [] }) {
     const title = path.basename(video, path.extname(video)) || type
     const itemId = uniqueItemId(title)
     await mkdir(itemPath(itemId), { recursive: true })
@@ -388,15 +407,23 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     for (const subtitle of subtitles) {
       await importSingleFile({ itemId, source: subtitle, relativeName: path.basename(subtitle) })
     }
+    const coverNames = []
+    for (const image of images) {
+      const name = path.basename(image)
+      await importSingleFile({ itemId, source: image, relativeName: name })
+      coverNames.push(name)
+    }
     const units = await scanMediaUnits(itemId, [])
     units.sort(compareMediaUnits)
+    // 同名图片优先当封面；没有就退回单元自己的（缩略图生成后会填上）。
+    // 多张同名只可能是扩展名不同，取排序后的第一张，结果稳定可预期。
     const next = normalizeItem({
       type,
       itemId,
       title,
       sourceProfile: 'monthly-ani',
       tags: inputTags,
-      cover: units.find((unit) => unit.cover)?.cover || '',
+      cover: coverNames.length ? itemResourceUrl(itemId, coverNames[0]) : (units.find((unit) => unit.cover)?.cover || ''),
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
       createdAt: new Date().toISOString(),
@@ -1708,6 +1735,19 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   function isSubtitleName(filePath) {
     const ext = path.extname(filePath).slice(1).toLowerCase()
     return subtitleExtensions().includes(ext)
+  }
+
+  // 封面图单独一张表，不复用 IMAGE_EXTENSIONS：那个还被 mediaKind 和图集导入用着，
+  // 往里加后缀会顺带改变图集的识别范围。这里只管「同名图当封面」，互不影响。
+  // 不收 heic/heif——浏览器渲染不了，挂上去只会是个破图，还不如没有封面。
+  function isCoverImageName(filePath) {
+    const ext = path.extname(filePath).slice(1).toLowerCase()
+    return COVER_IMAGE_EXTENSIONS.includes(ext)
+  }
+
+  function itemResourceUrl(itemId, relativeName) {
+    return `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}`
+      + `/resource?path=${encodeURIComponent(relativeName)}`
   }
 
   function subtitleExtensions() {
