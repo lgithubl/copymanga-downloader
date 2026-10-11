@@ -235,11 +235,31 @@ jobs:
           import time
           import urllib.parse
 
+          # creators / characters 是从 aid=10459 的真实响应原样截下来的（只留 2 个主役，
+          # 整段 12 个角色太大）。UDP 脚本要靠这两段里的 id 才有东西可查——
+          # 之前的模板没有它们，脚本一直报"白名单命中 0 个"，等于没测。
           OK = '''<?xml version="1.0" encoding="UTF-8"?><anime id="{aid}" restricted="true">
           <type>OVA</type><episodecount>2</episodecount>
           <startdate>2022-02-04</startdate><enddate>2022-02-04</enddate>
-          <titles><title type="main" xml:lang="x-jat">Mock Title {aid}</title></titles>
+          <picture>325826.jpg</picture>
+          <titles><title type="main" xml:lang="x-jat">Mock Title {aid}</title>
+          <title type="official" xml:lang="ja">やりマン不動産</title></titles>
+          <creators>
+          <name id="15709" type="Work">AniMan</name>
+          <name id="39412" type="Original Work">Itaba Hiroshi</name>
+          <name id="13236" type="Direction">Kondou Takashi</name>
+          </creators>
           <tags><tag id="1"><name>drama</name></tag><tag id="2"><name>mock tag</name></tag></tags>
+          <characters>
+          <character id="64764" type="main character in"><name>Onna Shachou</name>
+          <gender>female</gender><picture>157820.jpg</picture>
+          <seiyuu id="39305" picture="203454.jpg">Akimoto Nerine</seiyuu></character>
+          <character id="64765" type="main character in"><name>Shinjin Shain</name>
+          <gender>male</gender><picture>157821.jpg</picture>
+          <seiyuu id="39414" picture="203455.jpg">Kohinata Konoko</seiyuu></character>
+          <character id="64770" type="appears in"><name>Mob A</name>
+          <seiyuu id="39303" picture="0.jpg">Undou Kai</seiyuu></character>
+          </characters>
           </anime>'''
 
           class Handler(http.server.BaseHTTPRequestHandler):
