@@ -306,8 +306,12 @@ const defaultMediaImportProfiles = {
   },
   // 导入时已经建好章节、配好字幕，所以不需要 builtin-scan-media-units；
   // builtin-subtitles 留着是为了刷出「字幕v1: 有/无」tag，媒体库的字幕筛选靠它。
+  // anidb-udp-v1 读的是 anidb-v1 写的「AniDB: <aid>」tag 和缓存的 anime XML，必须后跑。
+  // 注意：执行顺序不由这个数组决定——提交的是 checkedTagScriptIds() 的 DOM 顺序，
+  // 也就是服务端按 name localeCompare 排的顺序（「AniDB v1」< 「C AniDB日文名 v1」）。
+  // 改脚本显示名时要保证这个先后关系还在。
   'monthly-ani': {
-    defaultMetadataActions: ['builtin-subtitles', 'anidb-v1', 'media-info-v1', 'builtin-thumbnails'],
+    defaultMetadataActions: ['builtin-subtitles', 'anidb-v1', 'anidb-udp-v1', 'media-info-v1', 'builtin-thumbnails'],
   },
 }
 const mediaImportTypeInfo = {
