@@ -4944,7 +4944,9 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const SPEED_MAX = 3000
   const readSpeed = () => {
     const n = Number(localStorage.getItem(SPEED_KEY))
-    return Number.isFinite(n) && n >= SPEED_MIN && n <= SPEED_MAX ? n : 600
+    // 默认从 600 降到 320：900px 视口下 600px/s 是 1.5 秒换一整屏，而且匀速不停，
+    // 眼睛只能一直做平滑追踪，看久了会晕。想快的人拉滑块。
+    return Number.isFinite(n) && n >= SPEED_MIN && n <= SPEED_MAX ? n : 320
   }
   let speed = readSpeed()
 
@@ -4964,19 +4966,49 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   nav.append(upBtn, downBtn)
   els.app.append(nav)
 
+  // 起步/收尾的加减速。没有这一段的话速度是从 0 直接阶跃到满速，
+  // 画面不是"被拉动"而是"突然开始平移"，缺的就是加速度线索。
+  const RAMP_UP_MS = 220
+  const RAMP_DOWN_MS = 160
+
   let raf = 0
   let lastTs = 0
   let scrollDir = 0
+  let vel = 0        // 当前速度 px/s，带符号
+  let pos = 0        // 自己累加的浮点位置
+
   const step = (ts) => {
-    if (!scrollDir) return
     // 切后台回来第一帧的 dt 可能是几秒，不钳住会直接蹦到底
     const dt = lastTs ? Math.min(ts - lastTs, 100) : 16.7
     lastTs = ts
-    content.scrollTop += scrollDir * speed * (dt / 1000)
+
+    const target = scrollDir * speed
+    const rampMs = Math.abs(target) > Math.abs(vel) ? RAMP_UP_MS : RAMP_DOWN_MS
+    const maxStep = speed * (dt / rampMs)
+    vel += Math.max(-maxStep, Math.min(maxStep, target - vel))
+    if (!scrollDir && Math.abs(vel) < 1) vel = 0
+
+    // 位置必须自己用浮点累加。原来写的是 content.scrollTop += delta，而 scrollTop
+    // 会取整，读-改-写每帧都吞掉小数：实测 100px/s 跑出 120px/s（+20%），
+    // 帧间隔一抖还会在 1px/2px 之间跳，就是肉眼看到的顿挫。
+    const max = Math.max(0, content.scrollHeight - content.clientHeight)
+    pos = Math.max(0, Math.min(max, pos + vel * (dt / 1000)))
+    content.scrollTop = pos
+
+    if (!scrollDir && vel === 0) { raf = 0; return }
     raf = requestAnimationFrame(step)
   }
+
+  // 松手：只是把目标速度归零，让 step 自己减速收尾
+  const releaseScroll = () => {
+    scrollDir = 0
+    nav.classList.remove('active')
+  }
+  // 硬停：退出沉浸模式时用。不能只 releaseScroll——减速那 160ms 里 rAF 还在跑，
+  // 会去摸已经被移除的 content
   const stopScroll = () => {
     scrollDir = 0
+    vel = 0
     lastTs = 0
     if (raf) cancelAnimationFrame(raf)
     raf = 0
@@ -4989,16 +5021,17 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     event.currentTarget.setPointerCapture?.(event.pointerId)
     scrollDir = d
     lastTs = 0
+    pos = content.scrollTop     // 期间可能被滚轮/跳章改过，重新对齐
     nav.classList.add('active')
     if (!raf) raf = requestAnimationFrame(step)
   }
   for (const b of [upBtn, downBtn]) {
     const d = Number(b.dataset.dir)
     b.addEventListener('pointerdown', (event) => startScroll(event, d))
-    b.addEventListener('pointerup', stopScroll)
+    b.addEventListener('pointerup', releaseScroll)
     // 移动端的滑动手势会把指针抢走，不处理 cancel 就会一直滚
-    b.addEventListener('pointercancel', stopScroll)
-    b.addEventListener('lostpointercapture', stopScroll)
+    b.addEventListener('pointercancel', releaseScroll)
+    b.addEventListener('lostpointercapture', releaseScroll)
   }
   nav.addEventListener('click', (event) => event.stopPropagation())
 
