@@ -3481,3 +3481,31 @@ h2 {
 .merge-index-hint[hidden] {
   display: none;
 }
+
+/* 媒体信息：卡片上 tag 行下面那一行。只放分辨率，混装合集会有多个。
+   单行截断——用户明确说超出看不到可以接受，重点是别把卡片撑变形。 */
+.library-card-mediainfo {
+  color: var(--site-muted);
+  font-size: 12px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 章节标题行：标题占满剩余宽度，信息贴右。minmax(0,1fr) 是必须的——
+   不加的话长标题会把右侧信息挤出容器（.card 那次崩版就是同一个原因）。 */
+.chapter-title-row {
+  align-items: baseline;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.unit-mediainfo {
+  color: var(--site-muted);
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

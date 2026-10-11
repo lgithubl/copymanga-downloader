@@ -124,6 +124,7 @@ const els = {
   libraryTagScripts: document.querySelector('#library-tag-scripts'),
   libraryRunTagScripts: document.querySelector('#library-run-tag-scripts'),
   libraryRunPageTagScripts: document.querySelector('#library-run-page-tag-scripts'),
+  libraryRunAllTagScripts: document.querySelector('#library-run-all-tag-scripts'),
   libraryRunSelectedUnits: document.querySelector('#library-run-selected-units'),
   tagScriptsReload: document.querySelector('#tag-scripts-reload'),
   tagScriptUploadFile: document.querySelector('#tag-script-upload-file'),
@@ -1445,23 +1446,29 @@ function saveLibraryState() {
   localStorage.setItem(LIBRARY_STATE_KEY, JSON.stringify(state))
 }
 
+// 媒体库的查询条件。抽出来是因为「执行所有页」要用同一套条件逐页翻——
+// 两边各拼一份的话，加了筛选条件只改一处，执行的就是另一批（看不见的那批）媒体。
+function libraryQueryParams(page, limit) {
+  const params = new URLSearchParams({
+    type: els.libraryType.value || 'all',
+    page: String(page),
+    limit: String(limit),
+    sort: els.librarySort?.value || 'imported_desc',
+  })
+  if (els.libraryTagSearch.value.trim()) params.set('tag', els.libraryTagSearch.value.trim())
+  const seriesSubtitle = els.librarySeriesSubtitle?.value || 'any'
+  if (seriesSubtitle !== 'any') params.set('seriesSubtitle', seriesSubtitle)
+  const sourceProfileFilter = els.librarySourceProfile?.value || ''
+  if (sourceProfileFilter) params.set('sourceProfile', sourceProfileFilter)
+  return params
+}
+
 async function loadLibraryItems() {
   try {
     setLoading(els.libraryRefresh, true)
-    const type = els.libraryType.value || 'all'
     const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
-    const sort = els.librarySort?.value || 'imported_desc'
-    const params = new URLSearchParams({
-      type,
-      page: String(libraryPage),
-      limit: String(limit),
-      sort,
-    })
-    if (els.libraryTagSearch.value.trim()) params.set('tag', els.libraryTagSearch.value.trim())
-    const seriesSubtitle = els.librarySeriesSubtitle?.value || 'any'
-    if (seriesSubtitle !== 'any') params.set('seriesSubtitle', seriesSubtitle)
-    const sourceProfileFilter = els.librarySourceProfile?.value || ''
-    if (sourceProfileFilter) params.set('sourceProfile', sourceProfileFilter)
+    const type = els.libraryType.value || 'all'
+    const params = libraryQueryParams(libraryPage, limit)
     const historyParams = new URLSearchParams({ type, limit: '1000' })
     const [payload, histories] = await Promise.all([
       api(`/api/library/items?${params}`),
@@ -2038,6 +2045,38 @@ function renderMergeBadge(item) {
     title="${escapeHtml(title)}">合并 ${group.count}</button>`
 }
 
+// 媒体信息从 tag 里挑出来单独渲染。前缀和 media-info-v1 的默认配置对应；
+// 脚本里改了前缀，这里也要跟着改，否则页面上找不到（所以那两个前缀默认别动）。
+const MEDIA_INFO_RESOLUTION = '分辨率:'
+const MEDIA_INFO_DURATION = '时长:'
+
+function pickTagValues(tags, prefix) {
+  return (tags || [])
+    .filter((tag) => String(tag).startsWith(prefix))
+    .map((tag) => String(tag).slice(prefix.length).trim())
+    .filter(Boolean)
+}
+
+// 媒体维度只显示分辨率，混装合集会有多个。超出一行就截断——用户明确说看不到也接受，
+// 重点是别把卡片撑变形。
+function renderMediaInfoLine(tags) {
+  const values = pickTagValues(tags, MEDIA_INFO_RESOLUTION)
+  if (!values.length) return ''
+  const text = values.join(' / ')
+  return `<div class="library-card-mediainfo" title="${escapeHtml(text)}">${escapeHtml(text)}</div>`
+}
+
+// 章节维度：分辨率 + 时长，放标题行右侧。没有就整个不渲染，不占位。
+function renderUnitMediaInfo(tags) {
+  const parts = [
+    pickTagValues(tags, MEDIA_INFO_RESOLUTION)[0] || '',
+    pickTagValues(tags, MEDIA_INFO_DURATION)[0] || '',
+  ].filter(Boolean)
+  if (!parts.length) return ''
+  const text = parts.join(' · ')
+  return `<span class="unit-mediainfo" title="${escapeHtml(text)}">${escapeHtml(text)}</span>`
+}
+
 function renderSeriesBadges(item) {
   const series = item.series
   if (!series || series.count < 2) return ''
@@ -2122,6 +2161,7 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
         <div class="library-card-meta" title="${escapeHtml(summary.secondary)}">${escapeHtml(summary.secondary)}</div>
         ${history ? `<div class="library-card-history">继续：${escapeHtml(history.lastUnitTitle || history.lastUnitId || item.title)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''}</div>` : ''}
         ${renderTagList(item.tags || [])}
+        ${renderMediaInfoLine(item.tags || [])}
         <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
       </div>
     `
@@ -2578,7 +2618,10 @@ function renderLibraryUnits() {
       <input class="unit-metadata-select" type="checkbox" value="${escapeHtml(unit.unitId)}" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'disabled'} aria-label="选择章节" />
       ${renderUnitThumb(unit.thumbnail?.coverUrl || unit.cover || currentLibraryItem?.cover, unit.title)}
       <span class="chapter-copy">
-        <span class="chapter-title" title="${escapeHtml(row.title)}">${escapeHtml(unit.title)}</span>
+        <span class="chapter-title-row">
+          <span class="chapter-title" title="${escapeHtml(row.title)}">${escapeHtml(unit.title)}</span>
+          ${renderUnitMediaInfo(unit.tags || [])}
+        </span>
         <span class="library-unit-path" title="${escapeHtml(unitMeta)}">${escapeHtml(unitMeta)}</span>
         ${renderTagList(unit.tags || [])}${thumbnailBadge}
       </span>
@@ -5391,6 +5434,58 @@ els.libraryRunPageTagScripts?.addEventListener('click', async () => {
   } finally {
     setLoading(els.libraryRunPageTagScripts, false)
   }
+})
+
+// 执行所有页：用当前筛选条件逐页翻，对搜出来的全部媒体执行。
+// 每页都重新请求而不是先把所有 itemId 收齐——库可能很大，一次性拉全量既慢又占内存；
+// 而且脚本执行本身就会改 tag，收齐的那份快照反而可能是过期的。
+els.libraryRunAllTagScripts?.addEventListener('click', async () => {
+  const actionIds = checkedTagScriptIds('library-tag-script')
+  if (!actionIds.length) return alert('请选择元数据脚本')
+  const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
+  let head
+  try {
+    head = await api(`/api/library/items?${libraryQueryParams(1, limit)}`)
+  } catch (error) {
+    return alert(`读取媒体列表失败：${error.message}`)
+  }
+  const meta = pageMeta(head, 1, limit)
+  const total = meta.total || pageItems(head).length
+  if (!total) return alert('当前搜索条件下没有媒体')
+  if (!confirm(`将按当前搜索条件，对 ${meta.totalPages} 页共 ${total} 个媒体执行选中的元数据脚本。\n`
+    + '这会排很多任务且无法中途撤销，确定继续？')) return
+
+  const button = els.libraryRunAllTagScripts
+  const original = button.textContent
+  button.disabled = true
+  let done = 0
+  const failed = []
+  try {
+    for (let page = 1; page <= meta.totalPages; page += 1) {
+      button.textContent = `第 ${page}/${meta.totalPages} 页`
+      // 每页重新取：前面几页跑完后排序可能已经变（按更新时间排时尤其明显）。
+      // 这点无法根治，所以把实际处理数报出来，让人能对账。
+      const payload = await api(`/api/library/items?${libraryQueryParams(page, limit)}`)
+      for (const item of pageItems(payload)) {
+        try {
+          await api(`/api/library/items/${encodeURIComponent(item.type)}/${encodeURIComponent(item.itemId)}/metadata-actions`, {
+            method: 'POST',
+            body: JSON.stringify({ actionIds, force: true }),
+          })
+          done += 1
+        } catch (error) {
+          failed.push(`${item.title || item.itemId}: ${error.message}`)
+        }
+      }
+    }
+  } finally {
+    button.disabled = false
+    button.textContent = original
+  }
+  await loadTagManager().catch(() => {})
+  alert(failed.length
+    ? `已提交 ${done} 个，失败 ${failed.length} 个：\n${failed.slice(0, 10).join('\n')}`
+    : `已提交 ${done} 个媒体的脚本任务。任务队列同时只跑一个，完成需要时间。`)
 })
 
 els.libraryRunSelectedUnits.addEventListener('click', async () => {

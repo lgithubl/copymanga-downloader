@@ -1,0 +1,19 @@
+{
+  "id": "media-info-v1",
+  "name": "媒体信息 v1",
+  "version": "1.0.0",
+  "description": "用 ffprobe 读分辨率、时长、编码等信息，写成章节 tag；媒体维度汇总所有不同分辨率。",
+  "scope": ["item"],
+  "libraryTypes": ["media"],
+  "mediaKinds": ["audio", "video"],
+  "exclusiveTagGroups": ["媒体信息"],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "ffprobePath": "ffprobe",
+    "timeoutMs": 20000,
+    "resolutionPrefix": "分辨率",
+    "durationPrefix": "时长",
+    "extraTags": true
+  }
+}
