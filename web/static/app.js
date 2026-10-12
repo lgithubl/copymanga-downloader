@@ -4999,12 +4999,16 @@ function epubTtsAdvancePage(delta) {
   return false
 }
 
+// 只要求句子的起始位置翻到当前页可见，不要求整句都在一页内——长句子本来就可能
+// 跨栏（CSS 分栏和按标点分句是两套互不知道对方的机制，句子跨栏是常态不是例外）。
+// 跨栏时后半截自然溢到下一栏，边读边翻页，和纸质书翻到一半继续读是一回事；
+// 之前要求整句都可见的话，跨栏句子永远凑不齐条件，会把页面滚到不该停的地方。
 function ensureEpubTtsSentenceVisible(element, content) {
   let guard = 0
   while (guard++ < mediaPageCount + 1) {
     const rect = content.getBoundingClientRect()
     const er = element.getBoundingClientRect()
-    if (er.left >= rect.left - 1 && er.right <= rect.left + content.clientWidth + 1) return
+    if (er.left >= rect.left - 1 && er.left < rect.left + content.clientWidth - 1) return
     if (!epubTtsAdvancePage(1)) return
   }
 }
