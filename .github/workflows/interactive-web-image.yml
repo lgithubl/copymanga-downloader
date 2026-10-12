@@ -27,6 +27,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
   packages: read
 
 jobs:
@@ -666,6 +667,21 @@ jobs:
           done
           cat /tmp/cloudflared.log || true
           exit 1
+
+      - name: Post connection info to tracking issue
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY="Run: ${{ github.run_id }}
+          $(cat "$RUNNER_TEMP/copymanga-web-connection-info.txt")
+          Expires: runner stops after ${{ inputs.minutes }} minutes"
+          ISSUE_NUM="$(gh issue list --repo "${{ github.repository }}" --search 'in:title "copymanga-web-session"' --state open --json number -q '.[0].number' || true)"
+          if [ -z "$ISSUE_NUM" ]; then
+            ISSUE_NUM="$(gh issue create --repo "${{ github.repository }}" --title "copymanga-web-session (tracking, auto-managed)" --body "$BODY" --json number -q '.number' 2>/dev/null || true)"
+          else
+            gh issue comment "$ISSUE_NUM" --repo "${{ github.repository }}" --body "$BODY" || true
+          fi
 
       - name: Upload connection info
         continue-on-error: true
