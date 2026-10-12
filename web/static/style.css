@@ -2825,6 +2825,16 @@ h2 {
   transform: none;
 }
 
+/* 标题脱离 flex 流：nowrap 下 flex:0 0 100% 会挤占进度条宽度，
+   绝对定位到控制条顶部的 24px padding 区域内，不参与 nowrap 的宽度分配 */
+.media-viewer-view.stream-page-fullscreen .stream-extra-controls .stream-title-info {
+  flex: 0 0 auto;
+  left: 16px;
+  position: absolute;
+  right: 16px;
+  top: 4px;
+}
+
 /* 沉浸态隐藏鼠标：控制条收起后光标也不该停在画面上 */
 .media-viewer-view.stream-page-fullscreen .stream-frame {
   cursor: none;
