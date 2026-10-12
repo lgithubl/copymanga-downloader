@@ -4996,7 +4996,9 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   // 匀速滚动逼着眼睛一直做平滑追踪，这是按住比滚轮晕的主因；跳跃之间的静止期
   // 把"注视"还给眼睛，和滚轮一格一跳是同一个道理。
   const MODE_KEY = 'copymanga.galleryScrollMode'
-  const STEP_RATIO = 0.35        // 每跳一屏的 35%，留足上下文重叠
+  const STEP_RATIO_KEY = 'copymanga.galleryScrollStepRatio'
+  const STEP_RATIO_MIN = 0.15
+  const STEP_RATIO_MAX = 0.9
   const JUMP_MS = 180            // 单次跳跃的动画时长
   const MIN_PAUSE_MS = 160       // 两跳之间至少静止这么久，否则退化成连续滚动
   const SPEED_MIN = 100
@@ -5010,6 +5012,13 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   let speed = readSpeed()
   const readMode = () => (localStorage.getItem(MODE_KEY) === 'step' ? 'step' : 'smooth')
   let mode = readMode()
+  // 每跳的幅度原来是写死的 35%，有人觉得跳得太短——改成可调，
+  // 范围不让跌破 15%（太碎跟连续滚动没区别）或超过 90%（重叠太少容易跟丢位置）。
+  const readStepRatio = () => {
+    const n = Number(localStorage.getItem(STEP_RATIO_KEY))
+    return Number.isFinite(n) && n >= STEP_RATIO_MIN && n <= STEP_RATIO_MAX ? n : 0.35
+  }
+  let stepRatio = readStepRatio()
 
   const nav = document.createElement('div')
   nav.className = 'gallery-scroll-nav'
@@ -5066,7 +5075,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   let jumpStart = 0
   let jumpTimer = null
   const easeOut = (t) => 1 - ((1 - t) ** 3)
-  const jumpDistance = () => Math.max(40, content.clientHeight * STEP_RATIO)
+  const jumpDistance = () => Math.max(40, content.clientHeight * stepRatio)
 
   const stepJump = (ts) => {
     if (!jumpStart) jumpStart = ts
@@ -5160,8 +5169,9 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const syncMode = () => {
     modeBtn.textContent = mode === 'step' ? '分段' : '连续'
     modeBtn.title = mode === 'step'
-      ? `分段滚动：每次跳一屏的 ${Math.round(STEP_RATIO * 100)}%，跳跃之间有静止，看久了不容易晕。点击切回连续`
+      ? `分段滚动：每次跳一屏的 ${Math.round(stepRatio * 100)}%，跳跃之间有静止，看久了不容易晕。点击切回连续`
       : '连续滚动：匀速推进。点击切换为分段'
+    stepRatioWrap.hidden = mode !== 'step'
   }
   modeBtn.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -5170,7 +5180,6 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     syncMode()
     try { localStorage.setItem(MODE_KEY, mode) } catch { /* 存不下就只在本次生效 */ }
   })
-  syncMode()
 
   const speedWrap = document.createElement('label')
   speedWrap.className = 'gallery-speed'
@@ -5193,7 +5202,31 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   syncSpeed()
   speedWrap.append(speedInput, speedVal)
 
-  bar.append(back, prevCh, info, nextCh, toc, modeBtn, speedWrap, exitBtn)
+  // 只在分段模式下有意义（连续模式没有"跳一下多远"这回事），显隐交给 syncMode
+  const stepRatioWrap = document.createElement('label')
+  stepRatioWrap.className = 'gallery-speed'
+  stepRatioWrap.title = '分段模式下每次跳多远（占可视区域的百分比），跳得太碎和连续滚动没区别，跳得太远容易跟丢位置'
+  const stepRatioInput = document.createElement('input')
+  stepRatioInput.type = 'range'
+  stepRatioInput.min = String(Math.round(STEP_RATIO_MIN * 100))
+  stepRatioInput.max = String(Math.round(STEP_RATIO_MAX * 100))
+  stepRatioInput.step = '5'
+  stepRatioInput.value = String(Math.round(stepRatio * 100))
+  const stepRatioVal = document.createElement('span')
+  stepRatioVal.className = 'gallery-speed-val'
+  const syncStepRatio = () => { stepRatioVal.textContent = `${Math.round(stepRatio * 100)}%` }
+  stepRatioInput.addEventListener('input', () => {
+    stepRatio = Number(stepRatioInput.value) / 100
+    syncStepRatio()
+    syncMode()      // 分段模式的提示文字里带百分比，拖动时顺带刷新
+    try { localStorage.setItem(STEP_RATIO_KEY, String(stepRatio)) } catch { /* 存不下就只在本次生效 */ }
+  })
+  syncStepRatio()
+  stepRatioWrap.append(stepRatioInput, stepRatioVal)
+
+  syncMode()
+
+  bar.append(back, prevCh, info, nextCh, toc, modeBtn, speedWrap, stepRatioWrap, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
