@@ -28,7 +28,7 @@ on:
           - "false"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -126,29 +126,26 @@ jobs:
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "✅ dump 打包完成，$COUNT 部"
 
-      - name: Upload image artifact
+      - name: Publish build artifacts to a release
         if: ${{ github.event_name == 'push' || inputs.export_artifact == 'true' }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ steps.image.outputs.artifact_name }}
-          path: ${{ steps.image.outputs.artifact_name }}.tar.gz
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload tag scripts artifact
-        if: ${{ github.event_name == 'push' || inputs.export_artifact == 'true' }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ steps.image.outputs.artifact_name }}-tag-scripts
-          path: ${{ steps.image.outputs.artifact_name }}-tag-scripts.tar.gz
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload AniDB dump artifact
-        if: ${{ steps.dump.outcome == 'success' }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ steps.image.outputs.artifact_name }}-anidb-dump
-          path: ${{ steps.image.outputs.artifact_name }}-anidb-dump.tar.gz
-          if-no-files-found: error
-          retention-days: 30
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="web"; fi
+          RELEASE_TAG="build-${TAG}"
+          ASSETS=("${{ steps.image.outputs.artifact_name }}.tar.gz" "${{ steps.image.outputs.artifact_name }}-tag-scripts.tar.gz")
+          if [ "${{ steps.dump.outcome }}" = "success" ]; then
+            ASSETS+=("${{ steps.image.outputs.artifact_name }}-anidb-dump.tar.gz")
+          fi
+          # Release assets 不占 Actions/Packages 那份共享存储配额，artifact 之前
+          # 老是把配额打满，挪到这里是治本而不是治标（配额是按月累计的 GB 小时，
+          # 删旧 artifact 对已经超的部分没用，只能等下个计费周期）。
+          # 用固定 tag 滚动覆盖，不然每次构建都新开一个 release 迟早把 Releases 页面刷屏。
+          if ! gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "${{ github.repository }}" \
+              --title "Web build artifacts ($TAG)" \
+              --notes "由 build-web-image.yml 自动发布，每次构建覆盖最新产物，不代表某个固定版本。镜像另见 ${{ steps.image.outputs.image }}。"
+          fi
+          gh release upload "$RELEASE_TAG" "${ASSETS[@]}" --repo "${{ github.repository }}" --clobber
