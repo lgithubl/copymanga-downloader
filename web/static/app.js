@@ -3305,6 +3305,20 @@ function normalizeEpubGraphics(root) {
 // 定位"当前在读哪句"、高亮、以及"从当前页第一句开始读"。
 const EPUB_TTS_SENTENCE_RE = /[^。！？.!?]+[。！？.!?]*/g
 
+// 块级元素之间不能被当成连续文本直接拼起来分句——实测"第一章 入口"这种没有
+// 终止标点的标题会直接和下一段正文粘成一句，朗读内容对不上、高亮也跟着跨块乱跳。
+// 按最近的块级祖先把文本节点分组，组与组之间强制断句，组内部再按标点正常切。
+const EPUB_TTS_BLOCK_SELECTOR = 'p, div, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, dt, dd, figcaption, pre, tr, section, article, header, footer, aside, caption'
+
+function nearestEpubTtsBlock(node, root) {
+  let el = node.parentElement
+  while (el && el !== root) {
+    if (el.matches(EPUB_TTS_BLOCK_SELECTOR)) return el
+    el = el.parentElement
+  }
+  return root
+}
+
 function collectEpubTtsSentences(root) {
   // 之前排除了 a/button 里的文字，想法是"不包它们免得影响点击"，结果是整段文字
   // 从句子里丢了——链接文字既不发音也不计入朗读内容。实测 surroundContents
@@ -3313,25 +3327,35 @@ function collectEpubTtsSentences(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) => (node.nodeValue && node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
   })
-  // 先把所有文本节点按"全文"拼起来，记下每个节点在全文里的起止偏移，
-  // 分句完了再用偏移反查回具体是哪个节点的哪一段——这样句子才能跨标签正确切。
-  const nodes = []
-  let fullText = ''
+  // 按块分组：同一组内的文本节点才拼成"全文"一起分句，换组就强制断句，
+  // 不管上一组最后一句有没有终止标点。
+  const runs = []
+  let currentBlock = null
+  let currentRun = null
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    nodes.push({ node, start: fullText.length })
-    fullText += node.nodeValue
+    const block = nearestEpubTtsBlock(node, root)
+    if (block !== currentBlock) {
+      currentBlock = block
+      currentRun = { nodes: [], fullText: '' }
+      runs.push(currentRun)
+    }
+    currentRun.nodes.push({ node, start: currentRun.fullText.length })
+    currentRun.fullText += node.nodeValue
   }
-  if (!fullText.trim()) return []
   const sentences = []
-  let match
-  EPUB_TTS_SENTENCE_RE.lastIndex = 0
-  while ((match = EPUB_TTS_SENTENCE_RE.exec(fullText))) {
-    const text = match[0].trim()
-    if (!text) continue
-    sentences.push({ text, start: match.index, end: match.index + match[0].length })
+  for (const run of runs) {
+    if (!run.fullText.trim()) continue
+    let match
+    EPUB_TTS_SENTENCE_RE.lastIndex = 0
+    while ((match = EPUB_TTS_SENTENCE_RE.exec(run.fullText))) {
+      const text = match[0].trim()
+      if (!text) continue
+      sentences.push({ text, start: match.index, end: match.index + match[0].length, nodes: run.nodes })
+    }
   }
-  return { nodes, sentences }
+  return sentences
 }
+
 
 // 把 [start, end) 这段全文偏移转成一个真实 DOM Range。nodes 按 start 升序排列，
 // 用二分也行，句子数量通常不多，线性扫一遍足够。
@@ -3353,13 +3377,13 @@ function rangeForOffsets(nodes, start, end) {
 }
 
 function splitEpubTtsSentences(root) {
-  const { nodes, sentences } = collectEpubTtsSentences(root) || {}
-  if (!sentences?.length) return []
+  const sentences = collectEpubTtsSentences(root)
+  if (!sentences.length) return []
   const wrapped = []
   // 从后往前包：Range.surroundContents 会修改 DOM，前面句子的偏移对后面还有效，
   // 但反过来不行——从后往前就不用管前面已经包过的 span 会不会污染偏移。
   for (let i = sentences.length - 1; i >= 0; i--) {
-    const { text, start, end } = sentences[i]
+    const { text, start, end, nodes } = sentences[i]
     const range = rangeForOffsets(nodes, start, end)
     if (!range) continue
     const span = document.createElement('span')
@@ -5012,10 +5036,14 @@ async function playEpubTtsFrom(startIndex, content) {
       const ratio = computeEpubTtsRatio(chunk.subtitle, audio.currentTime, audio.duration)
       entry.element.style.setProperty('--tts-progress', `${Math.round(ratio * 100)}%`)
     })
-    await new Promise((resolve) => {
+    const ended = new Promise((resolve) => {
       audio.addEventListener('ended', resolve, { once: true })
       audio.addEventListener('error', resolve, { once: true })
     })
+    // 漏了这行会直接卡死：Audio 对象造出来、事件也挂了，但从没真的开始播，
+    // ended 永远不触发，--tts-progress 就定在刚设的初始值上不会再动。
+    audio.play().catch(() => {})
+    await ended
     if (!epubTtsPlaying || epubTtsCurrentAudio !== audio) return   // 被打断（暂停/切章/退出）
     index++
   }
