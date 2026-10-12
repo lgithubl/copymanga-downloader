@@ -668,6 +668,7 @@ jobs:
           exit 1
 
       - name: Upload connection info
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: copymanga-web-connection-info
