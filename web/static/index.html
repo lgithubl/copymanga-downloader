@@ -625,6 +625,19 @@
               <label>允许导入来源<input id="config-media-import-source-roots" placeholder="/input,/downloads" /></label>
               <label>字幕后缀<input id="config-media-subtitle-extensions" placeholder="srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub" /></label>
 
+              <h3>朗读（TTS）</h3>
+              <label>TTS 服务地址<input id="config-epub-tts-api-base" placeholder="http://127.0.0.1:8000" /></label>
+              <label>参考音频（speaker_audio）<input id="config-epub-tts-speaker-audio" placeholder="examples/speaker.wav 或 URL" /></label>
+              <label>提示音频（prompt_audio）<input id="config-epub-tts-prompt-audio" placeholder="examples/prompt.wav 或 URL" /></label>
+              <label>提示音频文本（prompt_text，留空自动识别）<input id="config-epub-tts-prompt-text" /></label>
+              <label>音频格式
+                <select id="config-epub-tts-media-type">
+                  <option value="wav">wav</option>
+                  <option value="ogg">ogg</option>
+                  <option value="aac">aac</option>
+                </select>
+              </label>
+
               <h3>导出相关</h3>
               <label>导出目录<input id="config-export-dir" /></label>
               <label>导出目录格式<input id="config-export-dir-fmt" /></label>

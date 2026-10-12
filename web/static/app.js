@@ -209,6 +209,11 @@ const els = {
   configMediaManagedBasePath: document.querySelector('#config-media-managed-base-path'),
   configMediaStreamBasePath: document.querySelector('#config-media-stream-base-path'),
   configMediaImportSourceRoots: document.querySelector('#config-media-import-source-roots'),
+  configEpubTtsApiBase: document.querySelector('#config-epub-tts-api-base'),
+  configEpubTtsSpeakerAudio: document.querySelector('#config-epub-tts-speaker-audio'),
+  configEpubTtsPromptAudio: document.querySelector('#config-epub-tts-prompt-audio'),
+  configEpubTtsPromptText: document.querySelector('#config-epub-tts-prompt-text'),
+  configEpubTtsMediaType: document.querySelector('#config-epub-tts-media-type'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
@@ -1195,6 +1200,11 @@ async function loadConfig() {
   els.configMediaStreamApiBase.value = config.mediaStreamApiBase || ''
   els.configMediaManagedBasePath.value = config.mediaManagedBasePath || ''
   els.configMediaStreamBasePath.value = config.mediaStreamBasePath || ''
+  els.configEpubTtsApiBase.value = config.epubTtsApiBase || ''
+  els.configEpubTtsSpeakerAudio.value = config.epubTtsSpeakerAudio || ''
+  els.configEpubTtsPromptAudio.value = config.epubTtsPromptAudio || ''
+  els.configEpubTtsPromptText.value = config.epubTtsPromptText || ''
+  els.configEpubTtsMediaType.value = config.epubTtsMediaType || 'wav'
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
@@ -3291,15 +3301,100 @@ function normalizeEpubGraphics(root) {
   }
 }
 
+// EPUB 朗读分句：按中/英标点切句，每句包成 <span data-tts-index>，供朗读播放器
+// 定位"当前在读哪句"、高亮、以及"从当前页第一句开始读"。
+const EPUB_TTS_SENTENCE_RE = /[^。！？.!?]+[。！？.!?]*/g
+
+function collectEpubTtsSentences(root) {
+  // 之前排除了 a/button 里的文字，想法是"不包它们免得影响点击"，结果是整段文字
+  // 从句子里丢了——链接文字既不发音也不计入朗读内容。实测 surroundContents
+  // 在句子完整覆盖一个 <a> 时不会出问题（只有切到元素内部才会抛），
+  // 真出问题也有下面的 catch 兜底，所以这里全收，不按标签过滤。
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => (node.nodeValue && node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+  })
+  // 先把所有文本节点按"全文"拼起来，记下每个节点在全文里的起止偏移，
+  // 分句完了再用偏移反查回具体是哪个节点的哪一段——这样句子才能跨标签正确切。
+  const nodes = []
+  let fullText = ''
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    nodes.push({ node, start: fullText.length })
+    fullText += node.nodeValue
+  }
+  if (!fullText.trim()) return []
+  const sentences = []
+  let match
+  EPUB_TTS_SENTENCE_RE.lastIndex = 0
+  while ((match = EPUB_TTS_SENTENCE_RE.exec(fullText))) {
+    const text = match[0].trim()
+    if (!text) continue
+    sentences.push({ text, start: match.index, end: match.index + match[0].length })
+  }
+  return { nodes, sentences }
+}
+
+// 把 [start, end) 这段全文偏移转成一个真实 DOM Range。nodes 按 start 升序排列，
+// 用二分也行，句子数量通常不多，线性扫一遍足够。
+function rangeForOffsets(nodes, start, end) {
+  const range = document.createRange()
+  let started = false
+  for (const { node, start: nodeStart } of nodes) {
+    const nodeEnd = nodeStart + node.nodeValue.length
+    if (!started && start >= nodeStart && start < nodeEnd) {
+      range.setStart(node, start - nodeStart)
+      started = true
+    }
+    if (started && end <= nodeEnd) {
+      range.setEnd(node, end - nodeStart)
+      return range
+    }
+  }
+  return null
+}
+
+function splitEpubTtsSentences(root) {
+  const { nodes, sentences } = collectEpubTtsSentences(root) || {}
+  if (!sentences?.length) return []
+  const wrapped = []
+  // 从后往前包：Range.surroundContents 会修改 DOM，前面句子的偏移对后面还有效，
+  // 但反过来不行——从后往前就不用管前面已经包过的 span 会不会污染偏移。
+  for (let i = sentences.length - 1; i >= 0; i--) {
+    const { text, start, end } = sentences[i]
+    const range = rangeForOffsets(nodes, start, end)
+    if (!range) continue
+    const span = document.createElement('span')
+    span.className = 'epub-tts-sentence'
+    span.dataset.ttsIndex = String(i)
+    try {
+      range.surroundContents(span)
+    } catch {
+      // 句子横跨了多个元素边界（比如 <b>加粗</b>跨进普通文本），surroundContents
+      // 吃不了"选区不是单个节点内的部分内容"这种情况，退化成手动搬运节点。
+      const content = range.extractContents()
+      span.append(content)
+      range.insertNode(span)
+    }
+    wrapped[i] = { text, index: i, element: span }
+  }
+  return wrapped
+}
+
 function renderMediaHtml(reader) {
   exitWidthAdjust({ apply: false })   // 换章节时参考线不能留着
   exitGalleryImmersive()              // 图集的沉浸态在 epub 上没有意义
+  // 朗读跨章节续播靠 epubTtsAutoResume 这个信号：读到本章末尾时 playEpubTtsFrom
+  // 会先把它置 true 再触发翻章，这里读到信号就跳过"停"，换完章节直接接着播，
+  // 不然每次翻页都会被下面这行 stopEpubTts() 打断，朗读到章节末尾就断掉了。
+  const resumeTts = epubTtsAutoResume
+  stopEpubTts()
+  epubTtsAutoResume = false
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-html ${themeClass}`
   const pages = document.createElement('div')
   pages.className = 'media-html-pages'
   pages.innerHTML = reader.content || ''
   normalizeEpubGraphics(pages)
+  epubTtsSentences = splitEpubTtsSentences(pages)
   els.mediaReaderContent.replaceChildren(pages)
   requestAnimationFrame(() => {
     layoutMediaPages()
@@ -3307,6 +3402,7 @@ function renderMediaHtml(reader) {
     setMediaPage(Math.round(ratio * Math.max(mediaPageCount - 1, 0)), { save: false })
     // 沉浸态下换章不会重建控制条，页码/目录/上下章状态得在这里补一刀
     syncEpubImmersive()
+    if (resumeTts && epubTtsSentences.length) playEpubTtsFrom(0, els.mediaReaderContent).catch(() => {})
   })
 }
 
@@ -4791,6 +4887,149 @@ function exitEpubImmersive({ remember = false } = {}) {
   finish()
 }
 
+// —— EPUB 朗读播放控制器 ——
+// epubTtsSentences 由 renderMediaHtml 在每次换章节/切书时重新赋值（splitEpubTtsSentences）。
+// epubTtsAutoResume 是跨章节续读的信号：读到本章末尾时先把它置 true 再触发翻章，
+// renderMediaHtml 里读到这个信号就跳过"停"直接从新章节第 0 句继续播，不然
+// 每次翻页都会被 renderMediaHtml 开头的 stopEpubTts() 打断。
+let epubTtsSentences = []
+let epubTtsPlaying = false
+let epubTtsAutoResume = false
+let epubTtsCurrentAudio = null
+let epubTtsToggleBtn = null
+
+function epubTtsConfigured() {
+  return Boolean(appConfig?.epubTtsSpeakerAudio && appConfig?.epubTtsPromptAudio)
+}
+
+function epubTtsItemId() {
+  return currentMediaReader?.item?.itemId || ''
+}
+
+function clearEpubTtsHighlight() {
+  document.querySelector('.epub-tts-sentence.epub-tts-current')?.classList.remove('epub-tts-current')
+}
+
+function stopEpubTts() {
+  epubTtsPlaying = false
+  if (epubTtsCurrentAudio) {
+    epubTtsCurrentAudio.pause()
+    epubTtsCurrentAudio.src = ''
+    epubTtsCurrentAudio = null
+  }
+  clearEpubTtsHighlight()
+  epubTtsToggleBtn?.classList.remove('active')
+}
+
+// 从当前可视列范围里找第一个句子——"从当前页开始读"不是从全书第一句开始。
+function findEpubTtsStartIndex(content) {
+  const rect = content.getBoundingClientRect()
+  for (const entry of epubTtsSentences) {
+    if (!entry) continue
+    const r = entry.element.getBoundingClientRect()
+    if (r.width > 0 && r.right > rect.left + 1 && r.left < rect.left + content.clientWidth - 1) return entry.index
+  }
+  return epubTtsSentences.findIndex(Boolean)
+}
+
+// 一次请求带上当前句+预加载窗口，命中缓存的句子后端几乎零延迟返回。
+// 用 chunkPromise 去重：同一句子不会被并发请求两次。
+async function ensureEpubTtsChunks(indexes) {
+  const itemId = epubTtsItemId()
+  const need = [...new Set(indexes)].filter((i) => epubTtsSentences[i] && !epubTtsSentences[i].chunk && !epubTtsSentences[i].chunkPromise)
+  if (!need.length || !itemId) return
+  const promise = fetch(`/api/epub/${itemId}/tts-chunk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ texts: need.map((i) => epubTtsSentences[i].text) }),
+  }).then((res) => res.json()).then((data) => {
+    for (const chunk of data.chunks || []) {
+      const i = need[chunk.index]
+      if (epubTtsSentences[i]) { epubTtsSentences[i].chunk = chunk; epubTtsSentences[i].chunkPromise = null }
+    }
+  }).catch((error) => {
+    for (const i of need) {
+      if (epubTtsSentences[i]) { epubTtsSentences[i].chunk = { error: error.message }; epubTtsSentences[i].chunkPromise = null }
+    }
+  })
+  for (const i of need) epubTtsSentences[i].chunkPromise = promise
+  await promise
+}
+
+// 有 subtitle 时间戳就按时间戳估，没有就退化成 currentTime/duration——
+// 两种都只到句子维度的"大致位置"，不追求逐字对齐。
+function computeEpubTtsRatio(subtitle, currentTime, duration) {
+  if (!duration) return 0
+  if (Array.isArray(subtitle) && subtitle.length) {
+    const total = subtitle[subtitle.length - 1]?.end_s || duration
+    return Math.max(0, Math.min(1, currentTime / total))
+  }
+  return Math.max(0, Math.min(1, currentTime / duration))
+}
+
+// 翻页沿用 enterEpubImmersive 里 goPage 的那几行逻辑（那是个闭包，这里独立复制一份，
+// 因为朗读要跨章节续播，不能依赖沉浸条自己的闭包状态）。
+function epubTtsAdvancePage(delta) {
+  const next = mediaPageIndex + delta
+  if (next >= 0 && next <= mediaPageCount - 1) { setMediaPage(next); return true }
+  return false
+}
+
+function ensureEpubTtsSentenceVisible(element, content) {
+  let guard = 0
+  while (guard++ < mediaPageCount + 1) {
+    const rect = content.getBoundingClientRect()
+    const er = element.getBoundingClientRect()
+    if (er.left >= rect.left - 1 && er.right <= rect.left + content.clientWidth + 1) return
+    if (!epubTtsAdvancePage(1)) return
+  }
+}
+
+async function playEpubTtsFrom(startIndex, content) {
+  epubTtsPlaying = true
+  epubTtsToggleBtn?.classList.add('active')
+  let index = startIndex
+  while (epubTtsPlaying) {
+    if (!epubTtsSentences[index]) {
+      // 本节读完了，接到下一章继续——不能直接 stop，交给 renderMediaHtml 续播
+      const next = mediaStepTarget('next')
+      if (next) { epubTtsAutoResume = true; next(); return }
+      break
+    }
+    await ensureEpubTtsChunks([index])
+    if (!epubTtsPlaying) return
+    const entry = epubTtsSentences[index]
+    const chunk = entry.chunk
+    if (!chunk || chunk.error) { index++; continue }   // 单句失败不中断整体朗读，跳过
+    ensureEpubTtsChunks([index + 1, index + 2].filter((i) => epubTtsSentences[i]))
+    clearEpubTtsHighlight()
+    entry.element.classList.add('epub-tts-current')
+    entry.element.style.setProperty('--tts-progress', '0%')
+    ensureEpubTtsSentenceVisible(entry.element, content)
+    const audio = new Audio(chunk.url)
+    epubTtsCurrentAudio = audio
+    audio.addEventListener('timeupdate', () => {
+      const ratio = computeEpubTtsRatio(chunk.subtitle, audio.currentTime, audio.duration)
+      entry.element.style.setProperty('--tts-progress', `${Math.round(ratio * 100)}%`)
+    })
+    await new Promise((resolve) => {
+      audio.addEventListener('ended', resolve, { once: true })
+      audio.addEventListener('error', resolve, { once: true })
+    })
+    if (!epubTtsPlaying || epubTtsCurrentAudio !== audio) return   // 被打断（暂停/切章/退出）
+    index++
+  }
+  stopEpubTts()
+}
+
+function toggleEpubTts(btn, content) {
+  epubTtsToggleBtn = btn
+  if (epubTtsPlaying) { epubTtsAutoResume = false; stopEpubTts(); return }
+  const startIndex = findEpubTtsStartIndex(content)
+  if (startIndex < 0) return
+  playEpubTtsFrom(startIndex, content).catch(() => {})
+}
+
 function enterEpubImmersive({ remember = false } = {}) {
   if (epubImmersive) { exitEpubImmersive({ remember }); return }
   const content = els.mediaReaderContent
@@ -4816,8 +5055,10 @@ function enterEpubImmersive({ remember = false } = {}) {
   const nextCh = mk('epub-chapter-next', '下章', '下一章')
   const toc = makeImmersiveToc()
   const widthBtn = mk('epub-width', '宽度', '调整阅读宽度')
+  const ttsBtn = mk('epub-tts-toggle', '朗读', epubTtsConfigured() ? '从当前页开始朗读' : '未配置参考音频，去配置页填 speaker_audio/prompt_audio')
+  ttsBtn.disabled = !epubTtsConfigured()
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, exitBtn)
+  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -4904,6 +5145,7 @@ function enterEpubImmersive({ remember = false } = {}) {
   prevPg.addEventListener('click', () => { goPage(-1); setTimeout(syncInfo, 350) })
   nextPg.addEventListener('click', () => { goPage(1); setTimeout(syncInfo, 350) })
   widthBtn.addEventListener('click', () => { setVisible(true); clearTimeout(timer); toggleWidthAdjust() })
+  ttsBtn.addEventListener('click', () => toggleEpubTts(ttsBtn, content))
   bar.addEventListener('click', (event) => event.stopPropagation())
 
   els.mediaViewerView.classList.add('stream-page-fullscreen')
@@ -4919,6 +5161,8 @@ function enterEpubImmersive({ remember = false } = {}) {
   })
 
   epubImmersive = () => {
+    epubTtsAutoResume = false
+    stopEpubTts()
     clearTimeout(timer)
     document.removeEventListener('mousemove', onPointerMove)
     document.removeEventListener('keydown', onKey)
@@ -6311,6 +6555,11 @@ els.configSave.addEventListener('click', async () => {
         mediaManagedBasePath: els.configMediaManagedBasePath.value,
         mediaStreamBasePath: els.configMediaStreamBasePath.value,
         mediaImportSourceRoots: els.configMediaImportSourceRoots.value,
+        epubTtsApiBase: els.configEpubTtsApiBase.value,
+        epubTtsSpeakerAudio: els.configEpubTtsSpeakerAudio.value,
+        epubTtsPromptAudio: els.configEpubTtsPromptAudio.value,
+        epubTtsPromptText: els.configEpubTtsPromptText.value,
+        epubTtsMediaType: els.configEpubTtsMediaType.value,
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,

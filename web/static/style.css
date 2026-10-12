@@ -2541,6 +2541,25 @@ h2 {
   font-weight: 700;
 }
 
+.epub-tts-toggle.active {
+  background: #14b8a6;
+  border-color: #2dd4bf;
+  color: #042f2e;
+  font-weight: 700;
+}
+
+/* 当前朗读句：渐变背景左边已读、右边未读，--tts-progress 由播放器按
+   audio.currentTime 实时更新，句子维度的大致位置，不追求逐字对齐 */
+.epub-tts-current {
+  --tts-progress: 0%;
+  background: linear-gradient(
+    to right,
+    rgba(250, 204, 21, 0.45) var(--tts-progress),
+    rgba(250, 204, 21, 0.16) var(--tts-progress)
+  );
+  border-radius: 3px;
+}
+
 .stream-time {
   color: rgba(248, 250, 252, 0.82);
   font-size: 12px;

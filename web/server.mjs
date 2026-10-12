@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { open, readFile, readdir, stat, writeFile, mkdir, rename, rm, mkdtemp } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
@@ -12,6 +13,7 @@ import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems 
 import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
+import { callGsvTtsBatched } from './library/epub-tts.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -28,6 +30,7 @@ const TAG_SCRIPTS_DIR = process.env.TAG_SCRIPTS_DIR || path.join(DATA_DIR, 'tag-
 const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
 const TAG_OVERRIDE_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-overrides')
 const TAG_SCRIPT_CONFIG_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-script-config')
+const EPUB_TTS_CACHE_DIR = path.join(DATA_DIR, 'cache', 'epub-tts')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -261,6 +264,13 @@ function defaultConfig() {
     mediaManagedBasePath: path.join(DATA_DIR, 'library', 'media'),
     mediaStreamBasePath: '/media',
     mediaImportSourceRoots: '/input',
+    // EPUB 朗读：GSV-TTS-Lite 是参考音频克隆音色，不是挑 voice 枚举，
+    // speakerAudio/promptAudio 留空时前端直接把朗读按钮置灰。
+    epubTtsApiBase: 'http://127.0.0.1:8000',
+    epubTtsSpeakerAudio: '',
+    epubTtsPromptAudio: '',
+    epubTtsPromptText: '',
+    epubTtsMediaType: 'wav',
     mediaImportProfiles: {
       'rj-media': {
         maxDepth: 6,
@@ -323,6 +333,11 @@ function normalizeConfig(value) {
     mediaManagedBasePath: String(value?.mediaManagedBasePath || defaults.mediaManagedBasePath).trim() || defaults.mediaManagedBasePath,
     mediaStreamBasePath: String(value?.mediaStreamBasePath || defaults.mediaStreamBasePath).trim() || defaults.mediaStreamBasePath,
     mediaImportSourceRoots: String(value?.mediaImportSourceRoots || defaults.mediaImportSourceRoots).trim() || defaults.mediaImportSourceRoots,
+    epubTtsApiBase: String(value?.epubTtsApiBase || defaults.epubTtsApiBase).trim() || defaults.epubTtsApiBase,
+    epubTtsSpeakerAudio: String(value?.epubTtsSpeakerAudio || defaults.epubTtsSpeakerAudio).trim(),
+    epubTtsPromptAudio: String(value?.epubTtsPromptAudio || defaults.epubTtsPromptAudio).trim(),
+    epubTtsPromptText: String(value?.epubTtsPromptText || defaults.epubTtsPromptText),
+    epubTtsMediaType: ['wav', 'ogg', 'aac'].includes(value?.epubTtsMediaType) ? value.epubTtsMediaType : defaults.epubTtsMediaType,
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
@@ -4635,6 +4650,27 @@ async function route(req, res) {
         return json(res, 200, unit)
       }
     }
+    if (pathname.startsWith('/api/epub/') && pathname.endsWith('/tts-chunk') && req.method === 'POST') {
+      const parts = pathname.split('/').filter(Boolean)
+      const itemId = parts[2]
+      if (!itemId) return json(res, 400, { error: 'itemId is required' })
+      const body = await readJson(req)
+      const texts = Array.isArray(body.texts) ? body.texts.map((text) => String(text || '')).filter(Boolean) : []
+      if (!texts.length) return json(res, 400, { error: 'texts is required' })
+      const chunks = await resolveEpubTtsChunks(itemId, texts)
+      return json(res, 200, { chunks })
+    }
+    if (pathname.startsWith('/api/epub/') && pathname.includes('/tts-chunk/') && req.method === 'GET') {
+      const parts = pathname.split('/').filter(Boolean)
+      const itemId = parts[2]
+      const filename = parts[4] || ''
+      const match = /^([0-9a-f]{40})\.(wav|ogg|aac)$/.exec(filename)
+      if (!itemId || !match) return json(res, 400, { error: 'invalid chunk filename' })
+      const [, hash, ext] = match
+      const filePath = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId), `${hash}.${ext}`)
+      if (!(await pathExists(filePath))) return json(res, 404, { error: 'chunk not found' })
+      return streamFile(res, filePath, `audio/${ext === 'wav' ? 'wav' : ext}`)
+    }
     if (pathname.startsWith('/api/library/items/') && req.method === 'DELETE') {
       const parts = pathname.split('/').filter(Boolean)
       const [, , , type, itemId, action] = parts
@@ -4813,6 +4849,59 @@ async function route(req, res) {
 const epubHandler = createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExists, moveAside })
 registerLibraryHandler(epubHandler)
 registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config, epubSupport: epubHandler }))
+
+// EPUB 朗读：按「文本+参考音频+格式」内容寻址缓存，命中就不用再打 GSV-TTS-Lite。
+// 缺的那些合并成一次 /tts/batched 调用——这也是为什么入参是一批 texts 而不是单句。
+async function resolveEpubTtsChunks(itemId, texts) {
+  const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
+  const mediaType = config.epubTtsMediaType || 'wav'
+  const hashFor = (text) => createHash('sha1')
+    .update(`${text}\n${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}\n${mediaType}`)
+    .digest('hex')
+  const chunks = new Array(texts.length)
+  const missing = []
+  for (let i = 0; i < texts.length; i++) {
+    const hash = hashFor(texts[i])
+    const audioPath = path.join(cacheDir, `${hash}.${mediaType}`)
+    const subtitlePath = path.join(cacheDir, `${hash}.json`)
+    if (await pathExists(audioPath)) {
+      const subtitle = await readFile(subtitlePath, 'utf8').then(JSON.parse).catch(() => null)
+      chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.${mediaType}`, subtitle }
+    } else {
+      missing.push(i)
+    }
+  }
+  if (missing.length) {
+    const results = await callGsvTtsBatched({
+      apiBase: config.epubTtsApiBase,
+      speakerAudio: config.epubTtsSpeakerAudio,
+      promptAudio: config.epubTtsPromptAudio,
+      promptText: config.epubTtsPromptText,
+      mediaType,
+      texts: missing.map((i) => texts[i]),
+    })
+    await mkdir(cacheDir, { recursive: true })
+    for (let j = 0; j < missing.length; j++) {
+      const i = missing[j]
+      const result = results[j]
+      if (result.error) { chunks[i] = { index: i, error: result.error }; continue }
+      const hash = hashFor(texts[i])
+      const audioPath = path.join(cacheDir, `${hash}.${mediaType}`)
+      const subtitlePath = path.join(cacheDir, `${hash}.json`)
+      await withLock(fileLocks, audioPath, async () => {
+        if (await pathExists(audioPath)) return // 并发请求已经写过了
+        const audioTmp = `${audioPath}.${process.pid}.${Date.now()}.tmp`
+        await writeFile(audioTmp, result.buffer)
+        await rename(audioTmp, audioPath)
+        const subtitleTmp = `${subtitlePath}.${process.pid}.${Date.now()}.tmp`
+        await writeFile(subtitleTmp, JSON.stringify(result.subtitle || null))
+        await rename(subtitleTmp, subtitlePath)
+      })
+      chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.${mediaType}`, subtitle: result.subtitle || null }
+    }
+  }
+  return chunks
+}
 
 await mkdir(DOWNLOAD_DIR, { recursive: true })
 await initTagStore(DATA_DIR)
