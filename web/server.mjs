@@ -13,7 +13,7 @@ import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems 
 import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
-import { callGsvTts } from './library/epub-tts.mjs'
+import { callGsvTts, callGsvTtsBatched } from './library/epub-tts.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -4856,9 +4856,15 @@ registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_D
 
 // EPUB 朗读：按「文本+参考音频」内容寻址缓存，命中就不用再打 GSV-TTS-Lite。
 // GSV-TTS-Lite 的 Docker 部署（docker/web_app.py，Dockerfile.web 唯一真实跑的
-// 入口）没有批量接口，/api/tts 一次只认一句 text——所以这里缺的句子是各自
-// 单独发请求，靠下面的并发限制排队，不是合并成一次批量调用。
-// 文件统一存 .wav：接口本身也是写死返回 wav。
+// 入口）在 disable-auto-download 分支上把 /tts/batched 加回来了，和单句的
+// /api/tts 并存。这里按一次调用里缺几句来选用哪个：
+//   缺 1 句 → 单句 /api/tts：这通常是"当前要读的这句，播放器在等它"
+//            （playEpubTtsFrom 里 await ensureEpubTtsChunks([index]) 就是
+//            单独一句），批量接口要等一整批合成完才返回，首句去凑批反而更慢。
+//   缺 2+ 句 → /tts/batched：这通常是预加载窗口（ensureEpubTtsChunks 一次
+//             塞 [index+1, index+2]），不着急要，批量合成能减少请求数、
+//             让 GPU 吃到更大的 batch，效率更高。
+// 文件统一存 .wav：两个接口都是写死返回 wav。
 async function resolveEpubTtsChunks(itemId, texts) {
   const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
   const hashFor = (text) => createHash('sha1')
@@ -4877,11 +4883,29 @@ async function resolveEpubTtsChunks(itemId, texts) {
       missing.push(i)
     }
   }
-  if (missing.length) {
-    await mkdir(cacheDir, { recursive: true })
-    // 每句各自一次请求，排队到配置的并发上限——预加载窗口和用户快速翻页都
-    // 可能同时触发好几个 /api/epub/.../tts-chunk 请求，GSV-TTS-Lite 扛不住乱打。
-    await Promise.all(missing.map((i) => withEpubTtsConcurrencyLimit(async () => {
+  if (!missing.length) return chunks
+  await mkdir(cacheDir, { recursive: true })
+
+  const writeResult = async (i, result) => {
+    if (result.error) { chunks[i] = { index: i, error: result.error }; return }
+    const hash = hashFor(texts[i])
+    const audioPath = path.join(cacheDir, `${hash}.wav`)
+    const subtitlePath = path.join(cacheDir, `${hash}.json`)
+    await withLock(fileLocks, audioPath, async () => {
+      if (await pathExists(audioPath)) return // 并发请求已经写过了
+      const audioTmp = `${audioPath}.${process.pid}.${Date.now()}.tmp`
+      await writeFile(audioTmp, result.buffer)
+      await rename(audioTmp, audioPath)
+      const subtitleTmp = `${subtitlePath}.${process.pid}.${Date.now()}.tmp`
+      await writeFile(subtitleTmp, JSON.stringify(result.subtitle || null))
+      await rename(subtitleTmp, subtitlePath)
+    })
+    chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.wav`, subtitle: result.subtitle || null }
+  }
+
+  if (missing.length === 1) {
+    const i = missing[0]
+    await withEpubTtsConcurrencyLimit(async () => {
       const result = await callGsvTts({
         apiBase: config.epubTtsApiBase,
         speakerAudio: config.epubTtsSpeakerAudio,
@@ -4889,21 +4913,19 @@ async function resolveEpubTtsChunks(itemId, texts) {
         promptText: config.epubTtsPromptText,
         text: texts[i],
       })
-      if (result.error) { chunks[i] = { index: i, error: result.error }; return }
-      const hash = hashFor(texts[i])
-      const audioPath = path.join(cacheDir, `${hash}.wav`)
-      const subtitlePath = path.join(cacheDir, `${hash}.json`)
-      await withLock(fileLocks, audioPath, async () => {
-        if (await pathExists(audioPath)) return // 并发请求已经写过了
-        const audioTmp = `${audioPath}.${process.pid}.${Date.now()}.tmp`
-        await writeFile(audioTmp, result.buffer)
-        await rename(audioTmp, audioPath)
-        const subtitleTmp = `${subtitlePath}.${process.pid}.${Date.now()}.tmp`
-        await writeFile(subtitleTmp, JSON.stringify(result.subtitle || null))
-        await rename(subtitleTmp, subtitlePath)
+      await writeResult(i, result)
+    })
+  } else {
+    await withEpubTtsConcurrencyLimit(async () => {
+      const results = await callGsvTtsBatched({
+        apiBase: config.epubTtsApiBase,
+        speakerAudio: config.epubTtsSpeakerAudio,
+        promptAudio: config.epubTtsPromptAudio,
+        promptText: config.epubTtsPromptText,
+        texts: missing.map((i) => texts[i]),
       })
-      chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.wav`, subtitle: result.subtitle || null }
-    })))
+      await Promise.all(missing.map((i, j) => writeResult(i, results[j])))
+    })
   }
   return chunks
 }
