@@ -17,7 +17,7 @@ on:
         default: "60"
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 jobs:
