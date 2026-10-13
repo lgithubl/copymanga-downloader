@@ -61,11 +61,14 @@ jobs:
           # （Ubuntu 这台 runner 上大概率是被某些 apt 自带的同名包的 egg-info
           # 影响了判断）。干脆把 pyproject.toml 列出的运行时依赖全部显式
           # --force-reinstall 装一遍，不依赖 pip install . 自己去解析。
-          python3 -m pip install --quiet --force-reinstall --no-deps \
+          # 注意：这里不能带 --no-deps——上一次带了，transformers 自己的
+          # 传递依赖（regex 等）就没装上，同样的 ModuleNotFoundError 又犯了
+          # 一遍，只是换了个包名。
+          python3 -m pip install --quiet --force-reinstall \
             einops tqdm transformers sounddevice safetensors numpy \
             py3langid pysbd onnxruntime soundfile requests nltk future \
             inflect wordsegment pypinyin jieba pyopenjtalk-plus
-          python3 -m pip install --quiet --force-reinstall --no-deps --only-binary=:all: av
+          python3 -m pip install --quiet --force-reinstall --only-binary=:all: av
           python3 -m pip install --quiet --no-deps .
           # 上次跑的时候，/tts/batched 请求返回了 500，FastAPI 把真实的导入异常
           # 吞成了一句写死的提示（"Unable to import gsv_tts..."），看不到根因。
