@@ -76,10 +76,22 @@ jobs:
           # 并让这一步 fail，而不是等到真的发 TTS 请求时才发现、还看不清原因。
           python3 -c "from gsv_tts import TTS; print('gsv_tts import OK')"
           mkdir -p "$RUNNER_TEMP/gsv-models" "$RUNNER_TEMP/gsv-refs" "$RUNNER_TEMP/gsv-outputs"
+          # 上次跑起来之后用户把 copymanga 这边的 speaker_audio/prompt_audio
+          # 留空测试"交给服务端默认值兜底"这条新路径，结果 400：
+          # speaker_audio not found: /refs/speaker.wav——因为这里从没配过
+          # DEFAULT_SPEAKER_AUDIO/DEFAULT_PROMPT_AUDIO，docker/web_app.py
+          # 落回去用的是它自己硬编码的 /refs/speaker.wav，这台 runner 上根本
+          # 没这个文件。参考 GSV-TTS-Lite 自己 build-model-artifacts.yml 的
+          # 参考音频，这里也配上。
+          cp "$RUNNER_TEMP/gsv-tts-lite/examples/laffey.mp3" "$RUNNER_TEMP/gsv-refs/speaker.mp3"
+          cp "$RUNNER_TEMP/gsv-tts-lite/examples/AnAn.ogg" "$RUNNER_TEMP/gsv-refs/prompt.ogg"
           PORT=9880 \
           MODELS_DIR="$RUNNER_TEMP/gsv-models" \
           REFS_DIR="$RUNNER_TEMP/gsv-refs" \
           OUTPUTS_DIR="$RUNNER_TEMP/gsv-outputs" \
+          DEFAULT_SPEAKER_AUDIO="$RUNNER_TEMP/gsv-refs/speaker.mp3" \
+          DEFAULT_PROMPT_AUDIO="$RUNNER_TEMP/gsv-refs/prompt.ogg" \
+          DEFAULT_PROMPT_TEXT="参考音频占位文本，仅用于验证朗读链路" \
           GSV_TTS_AUTO_DOWNLOAD=true \
           GSV_TTS_USE_BERT=false \
           GSV_TTS_USE_FLASH_ATTN=false \
@@ -96,15 +108,15 @@ jobs:
       - name: Start copymanga-web pointed at real TTS
         run: |
           mkdir -p "$RUNNER_TEMP/data"
-          # speaker/prompt 用仓库自带的 examples/laffey.mp3 当参考音频，
-          # prompt_text 是占位文本——只验证链路通不通、能不能拿到真实音频，
-          # 不评测音色还原度。
+          # 故意留空 speaker/prompt_audio/prompt_text——这是用户刚发现的那个
+          # 场景（留空交给服务端 DEFAULT_SPEAKER_AUDIO 等环境变量兜底），
+          # 得验证这条路径真的通，不是只测"显式传路径"那条本来就没问题的路径。
           cat > "$RUNNER_TEMP/data/config.json" <<JSON
           {
             "epubTtsApiBase": "http://host.docker.internal:9880",
-            "epubTtsSpeakerAudio": "$RUNNER_TEMP/gsv-tts-lite/examples/laffey.mp3",
-            "epubTtsPromptAudio": "$RUNNER_TEMP/gsv-tts-lite/examples/laffey.mp3",
-            "epubTtsPromptText": "参考音频占位文本，仅用于验证朗读链路",
+            "epubTtsSpeakerAudio": "",
+            "epubTtsPromptAudio": "",
+            "epubTtsPromptText": "",
             "epubTtsMaxConcurrency": 1
           }
           JSON
