@@ -92,6 +92,7 @@ const els = {
   mergePage: document.querySelector('#merge-page'),
   mergePageTotal: document.querySelector('#merge-page-total'),
   mergeJump: document.querySelector('#merge-jump'),
+  mergeLimit: document.querySelector('#merge-limit'),
   mergePageInfo: document.querySelector('#merge-page-info'),
   mergeKeyword: document.querySelector('#merge-keyword'),
   mergeSearch: document.querySelector('#merge-search'),
@@ -2329,7 +2330,8 @@ function syncLibrarySourceProfileOptions() {
 let mergePage = 1
 let mergeTotalPages = 1
 let mergeKeyword = ''
-const MERGE_PAGE_SIZE = 20
+// 每页条数原来是写死的常量，现在跟媒体库页一样给个下拉框选，20 是没选过时的默认值。
+const mergeLimit = () => Math.max(1, Number(els.mergeLimit?.value || 20))
 // 合并完不自动刷新（人工逐组确认的流程，列表在脚下变掉最烦），所以得自己记住
 // 哪些组点过了，否则那张卡看上去和没合过一模一样。刷新即清空——它只是视觉标记，
 // 不是事实来源，真相始终在重建后的索引里。
@@ -2356,7 +2358,7 @@ function resetMergePosition() {
 }
 
 function mergeCandidatesQuery(page = mergePage) {
-  const params = new URLSearchParams({ page: String(page), limit: String(MERGE_PAGE_SIZE) })
+  const params = new URLSearchParams({ page: String(page), limit: String(mergeLimit()) })
   if (mergeKeyword) params.set('q', mergeKeyword)
   return `/api/library/merge-candidates?${params}`
 }
@@ -2369,7 +2371,7 @@ async function jumpToMergeGroup(workKey) {
   resetMergePosition()
   mergeKeyword = ''
   if (els.mergeKeyword) els.mergeKeyword.value = ''
-  const params = new URLSearchParams({ limit: String(MERGE_PAGE_SIZE), focus: workKey })
+  const params = new URLSearchParams({ limit: String(mergeLimit()), focus: workKey })
   const data = await api(`/api/library/merge-candidates?${params}`)
   if (!data.focusFound) {
     // 索引没重建时媒体库和合并页会短暂不一致，这时候得说清楚，不能静默落到第 1 页
@@ -2393,7 +2395,7 @@ async function loadMergeCandidates() {
   try {
     const data = await api(mergeCandidatesQuery())
     const groups = data.items || []
-    mergeTotalPages = Math.max(1, Math.ceil((data.total || 0) / MERGE_PAGE_SIZE))
+    mergeTotalPages = Math.max(1, Math.ceil((data.total || 0) / mergeLimit()))
     if (els.mergePage && document.activeElement !== els.mergePage) {
       els.mergePage.value = String(mergePage)
     }
@@ -6040,6 +6042,11 @@ els.mergeNext?.addEventListener('click', () => {
 els.mergeJump?.addEventListener('click', jumpMergePage)
 els.mergePage?.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') jumpMergePage()
+})
+els.mergeLimit?.addEventListener('change', () => {
+  mergePage = 1
+  resetMergePosition()
+  loadMergeCandidates().catch(() => {})
 })
 els.mergeDumpRefresh?.addEventListener('click', async () => {
   const button = els.mergeDumpRefresh
