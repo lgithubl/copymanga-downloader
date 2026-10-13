@@ -4921,6 +4921,7 @@ let epubTtsPlaying = false
 let epubTtsAutoResume = false
 let epubTtsCurrentAudio = null
 let epubTtsToggleBtn = null
+let epubTtsSelectionBtn = null
 
 function epubTtsConfigured() {
   return Boolean(appConfig?.epubTtsSpeakerAudio && appConfig?.epubTtsPromptAudio)
@@ -4943,6 +4944,7 @@ function stopEpubTts() {
   }
   clearEpubTtsHighlight()
   epubTtsToggleBtn?.classList.remove('active')
+  epubTtsSelectionBtn?.classList.remove('active')
 }
 
 // 从当前可视列范围里找第一个句子——"从当前页开始读"不是从全书第一句开始。
@@ -5055,11 +5057,54 @@ async function playEpubTtsFrom(startIndex, content) {
 }
 
 function toggleEpubTts(btn, content) {
+  const wasPlaying = epubTtsPlaying
   epubTtsToggleBtn = btn
-  if (epubTtsPlaying) { epubTtsAutoResume = false; stopEpubTts(); return }
+  stopEpubTts() // 不管之前是连续朗读还是读选中文本，先停干净，不会叠两路音频
+  if (wasPlaying) { epubTtsAutoResume = false; return } // 原本在读 = 这次点击是暂停
   const startIndex = findEpubTtsStartIndex(content)
   if (startIndex < 0) return
   playEpubTtsFrom(startIndex, content).catch(() => {})
+}
+
+// 读选中文本：和"朗读"是两件事——这里只管读用户划选的这一段，读完就停，
+// 不接着往下翻页/跳章，也不需要句子级别的高亮（选区本身已经是浏览器原生高亮）。
+// 复用同一套 epubTtsCurrentAudio/stopEpubTts，这样退出沉浸、点常规朗读按钮
+// 都能正确把这路播放也停掉，不会撞车。
+async function playSelectedText(btn) {
+  const text = String(window.getSelection?.() || '').trim()
+  epubTtsSelectionBtn = btn
+  stopEpubTts()
+  if (!text) return
+  const itemId = epubTtsItemId()
+  if (!itemId) return
+  btn.classList.add('active')
+  let audio = null
+  try {
+    const res = await fetch(`/api/epub/${itemId}/tts-chunk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texts: [text] }),
+    })
+    const data = await res.json()
+    const chunk = data.chunks?.[0]
+    if (!chunk || chunk.error) return
+    audio = new Audio(chunk.url)
+    epubTtsCurrentAudio = audio
+    const ended = new Promise((resolve) => {
+      audio.addEventListener('ended', resolve, { once: true })
+      audio.addEventListener('error', resolve, { once: true })
+    })
+    // 又漏了这行：自测直接用 Playwright 真实点击跑了一遍才抓出来——
+    // 跟 playEpubTtsFrom 里那次一模一样的坑，Audio 对象造出来、事件也挂了，
+    // 但从没真的开始播，ended 永远不触发，按钮的 active 状态会卡死。
+    audio.play().catch(() => {})
+    await ended
+  } catch {
+    // 网络错误之类的安静失败就行，不用弹窗打断阅读
+  } finally {
+    btn.classList.remove('active')
+    if (epubTtsCurrentAudio === audio) epubTtsCurrentAudio = null
+  }
 }
 
 function enterEpubImmersive({ remember = false } = {}) {
@@ -5089,8 +5134,10 @@ function enterEpubImmersive({ remember = false } = {}) {
   const widthBtn = mk('epub-width', '宽度', '调整阅读宽度')
   const ttsBtn = mk('epub-tts-toggle', '朗读', epubTtsConfigured() ? '从当前页开始朗读' : '未配置参考音频，去配置页填 speaker_audio/prompt_audio')
   ttsBtn.disabled = !epubTtsConfigured()
+  const selectionBtn = mk('epub-tts-selection', '读选中', epubTtsConfigured() ? '朗读当前选中的文字' : '未配置参考音频，去配置页填 speaker_audio/prompt_audio')
+  selectionBtn.disabled = !epubTtsConfigured()
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, exitBtn)
+  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -5178,6 +5225,7 @@ function enterEpubImmersive({ remember = false } = {}) {
   nextPg.addEventListener('click', () => { goPage(1); setTimeout(syncInfo, 350) })
   widthBtn.addEventListener('click', () => { setVisible(true); clearTimeout(timer); toggleWidthAdjust() })
   ttsBtn.addEventListener('click', () => toggleEpubTts(ttsBtn, content))
+  selectionBtn.addEventListener('click', () => playSelectedText(selectionBtn).catch(() => {}))
   bar.addEventListener('click', (event) => event.stopPropagation())
 
   els.mediaViewerView.classList.add('stream-page-fullscreen')
