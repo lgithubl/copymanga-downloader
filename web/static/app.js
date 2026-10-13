@@ -213,7 +213,7 @@ const els = {
   configEpubTtsSpeakerAudio: document.querySelector('#config-epub-tts-speaker-audio'),
   configEpubTtsPromptAudio: document.querySelector('#config-epub-tts-prompt-audio'),
   configEpubTtsPromptText: document.querySelector('#config-epub-tts-prompt-text'),
-  configEpubTtsMediaType: document.querySelector('#config-epub-tts-media-type'),
+  configEpubTtsMaxConcurrency: document.querySelector('#config-epub-tts-max-concurrency'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
@@ -1204,7 +1204,7 @@ async function loadConfig() {
   els.configEpubTtsSpeakerAudio.value = config.epubTtsSpeakerAudio || ''
   els.configEpubTtsPromptAudio.value = config.epubTtsPromptAudio || ''
   els.configEpubTtsPromptText.value = config.epubTtsPromptText || ''
-  els.configEpubTtsMediaType.value = config.epubTtsMediaType || 'wav'
+  els.configEpubTtsMaxConcurrency.value = config.epubTtsMaxConcurrency || 1
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
@@ -6591,7 +6591,7 @@ els.configSave.addEventListener('click', async () => {
         epubTtsSpeakerAudio: els.configEpubTtsSpeakerAudio.value,
         epubTtsPromptAudio: els.configEpubTtsPromptAudio.value,
         epubTtsPromptText: els.configEpubTtsPromptText.value,
-        epubTtsMediaType: els.configEpubTtsMediaType.value,
+        epubTtsMaxConcurrency: Number(els.configEpubTtsMaxConcurrency.value),
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,

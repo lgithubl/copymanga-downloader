@@ -18,7 +18,12 @@ async function fetchWithTimeout(url, init) {
 // 返回 [{ text, buffer, subtitle, error }]，和入参 texts 一一对应，顺序不变。
 // 单句失败不中断整批——GSV-TTS-Lite 的 batched 接口本身是整批成功或整批报错，
 // 这里统一按整批处理：失败就把这批里每一句都标 error，调用方据此跳过。
-export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, promptText, mediaType, texts }) {
+//
+// 注：/tts/batched 的 TTSBatchedRequest 没有 media_type 字段，接口内部写死
+// filename = f"tts_{uuid}.wav"——media_type 只在 /tts、/tts/stream 的请求模型里
+// 才存在。之前以为三个接口都认这个参数，实测直接查了 GSV-TTS-Lite 源码才发现
+// 传了也没用，一直都是 wav，所以这里干脆不传、也不在上层搞一个假装能选格式的配置项。
+export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, promptText, texts }) {
   if (!texts.length) return []
   if (!speakerAudio || !promptAudio) {
     return texts.map((text) => ({ text, error: '未配置参考音频（speakerAudio/promptAudio）' }))
@@ -35,7 +40,6 @@ export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, pr
         prompt_audio: promptAudio,
         prompt_text: promptText || undefined,
         return_subtitles: true,
-        media_type: mediaType || 'wav',
       }),
     })
   } catch (error) {

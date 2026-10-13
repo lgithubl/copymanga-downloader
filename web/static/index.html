@@ -630,13 +630,7 @@
               <label>参考音频（speaker_audio）<input id="config-epub-tts-speaker-audio" placeholder="examples/speaker.wav 或 URL" /></label>
               <label>提示音频（prompt_audio）<input id="config-epub-tts-prompt-audio" placeholder="examples/prompt.wav 或 URL" /></label>
               <label>提示音频文本（prompt_text，留空自动识别）<input id="config-epub-tts-prompt-text" /></label>
-              <label>音频格式
-                <select id="config-epub-tts-media-type">
-                  <option value="wav">wav</option>
-                  <option value="ogg">ogg</option>
-                  <option value="aac">aac</option>
-                </select>
-              </label>
+              <label>最大并发（同时打到 TTS 服务的请求数，GPU 推理扛不住乱打）<input id="config-epub-tts-max-concurrency" type="number" min="1" max="8" step="1" /></label>
 
               <h3>导出相关</h3>
               <label>导出目录<input id="config-export-dir" /></label>

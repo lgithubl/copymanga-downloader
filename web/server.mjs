@@ -266,11 +266,15 @@ function defaultConfig() {
     mediaImportSourceRoots: '/input',
     // EPUB 朗读：GSV-TTS-Lite 是参考音频克隆音色，不是挑 voice 枚举，
     // speakerAudio/promptAudio 留空时前端直接把朗读按钮置灰。
+    // 没有 mediaType：查过 GSV-TTS-Lite 源码，/tts/batched 的请求模型根本没这个
+    // 字段，接口内部写死存 .wav，传了也不会生效，不做一个假装能选格式的配置项。
     epubTtsApiBase: 'http://127.0.0.1:8000',
     epubTtsSpeakerAudio: '',
     epubTtsPromptAudio: '',
     epubTtsPromptText: '',
-    epubTtsMediaType: 'wav',
+    // 真实 TTS 是 GPU 推理，扛不住并发乱打——分段预加载 + 用户快速翻页都可能
+    // 同时触发好几个请求，默认给 1（排队），愿意的话自己调大。
+    epubTtsMaxConcurrency: 1,
     mediaImportProfiles: {
       'rj-media': {
         maxDepth: 6,
@@ -337,7 +341,7 @@ function normalizeConfig(value) {
     epubTtsSpeakerAudio: String(value?.epubTtsSpeakerAudio || defaults.epubTtsSpeakerAudio).trim(),
     epubTtsPromptAudio: String(value?.epubTtsPromptAudio || defaults.epubTtsPromptAudio).trim(),
     epubTtsPromptText: String(value?.epubTtsPromptText || defaults.epubTtsPromptText),
-    epubTtsMediaType: ['wav', 'ogg', 'aac'].includes(value?.epubTtsMediaType) ? value.epubTtsMediaType : defaults.epubTtsMediaType,
+    epubTtsMaxConcurrency: clampNumber(value?.epubTtsMaxConcurrency, 1, 8, defaults.epubTtsMaxConcurrency),
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
@@ -4664,12 +4668,12 @@ async function route(req, res) {
       const parts = pathname.split('/').filter(Boolean)
       const itemId = parts[2]
       const filename = parts[4] || ''
-      const match = /^([0-9a-f]{40})\.(wav|ogg|aac)$/.exec(filename)
+      const match = /^([0-9a-f]{40})\.wav$/.exec(filename)
       if (!itemId || !match) return json(res, 400, { error: 'invalid chunk filename' })
-      const [, hash, ext] = match
-      const filePath = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId), `${hash}.${ext}`)
+      const [, hash] = match
+      const filePath = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId), `${hash}.wav`)
       if (!(await pathExists(filePath))) return json(res, 404, { error: 'chunk not found' })
-      return streamFile(res, filePath, `audio/${ext === 'wav' ? 'wav' : ext}`)
+      return streamFile(res, filePath, 'audio/wav')
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'DELETE') {
       const parts = pathname.split('/').filter(Boolean)
@@ -4850,43 +4854,45 @@ const epubHandler = createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExis
 registerLibraryHandler(epubHandler)
 registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config, epubSupport: epubHandler }))
 
-// EPUB 朗读：按「文本+参考音频+格式」内容寻址缓存，命中就不用再打 GSV-TTS-Lite。
+// EPUB 朗读：按「文本+参考音频」内容寻址缓存，命中就不用再打 GSV-TTS-Lite。
 // 缺的那些合并成一次 /tts/batched 调用——这也是为什么入参是一批 texts 而不是单句。
+// 文件统一存 .wav：GSV-TTS-Lite 的 /tts/batched 接口没有 media_type 这个字段，
+// 内部写死存 wav，传了也不生效，没必要在这一层假装能选格式。
 async function resolveEpubTtsChunks(itemId, texts) {
   const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
-  const mediaType = config.epubTtsMediaType || 'wav'
   const hashFor = (text) => createHash('sha1')
-    .update(`${text}\n${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}\n${mediaType}`)
+    .update(`${text}\n${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}`)
     .digest('hex')
   const chunks = new Array(texts.length)
   const missing = []
   for (let i = 0; i < texts.length; i++) {
     const hash = hashFor(texts[i])
-    const audioPath = path.join(cacheDir, `${hash}.${mediaType}`)
+    const audioPath = path.join(cacheDir, `${hash}.wav`)
     const subtitlePath = path.join(cacheDir, `${hash}.json`)
     if (await pathExists(audioPath)) {
       const subtitle = await readFile(subtitlePath, 'utf8').then(JSON.parse).catch(() => null)
-      chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.${mediaType}`, subtitle }
+      chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.wav`, subtitle }
     } else {
       missing.push(i)
     }
   }
   if (missing.length) {
-    const results = await callGsvTtsBatched({
+    // GSV-TTS-Lite 是 GPU 推理，扛不住并发乱打——预加载窗口和用户快速翻页都
+    // 可能同时触发好几个 /api/epub/.../tts-chunk 请求，这里排队到配置的上限。
+    const results = await withEpubTtsConcurrencyLimit(() => callGsvTtsBatched({
       apiBase: config.epubTtsApiBase,
       speakerAudio: config.epubTtsSpeakerAudio,
       promptAudio: config.epubTtsPromptAudio,
       promptText: config.epubTtsPromptText,
-      mediaType,
       texts: missing.map((i) => texts[i]),
-    })
+    }))
     await mkdir(cacheDir, { recursive: true })
     for (let j = 0; j < missing.length; j++) {
       const i = missing[j]
       const result = results[j]
       if (result.error) { chunks[i] = { index: i, error: result.error }; continue }
       const hash = hashFor(texts[i])
-      const audioPath = path.join(cacheDir, `${hash}.${mediaType}`)
+      const audioPath = path.join(cacheDir, `${hash}.wav`)
       const subtitlePath = path.join(cacheDir, `${hash}.json`)
       await withLock(fileLocks, audioPath, async () => {
         if (await pathExists(audioPath)) return // 并发请求已经写过了
@@ -4897,10 +4903,29 @@ async function resolveEpubTtsChunks(itemId, texts) {
         await writeFile(subtitleTmp, JSON.stringify(result.subtitle || null))
         await rename(subtitleTmp, subtitlePath)
       })
-      chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.${mediaType}`, subtitle: result.subtitle || null }
+      chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.wav`, subtitle: result.subtitle || null }
     }
   }
   return chunks
+}
+
+// 简单的并发限制队列：max 每次都现读 config，运行时调配置能立刻生效，
+// 不用重建这个队列。只包住真正打 GSV-TTS-Lite 的那一步，缓存命中/磁盘写入
+// 不受影响——那些本来就不是瓶颈，没必要跟着排队。
+let epubTtsActive = 0
+const epubTtsWaiters = []
+async function withEpubTtsConcurrencyLimit(fn) {
+  const max = Math.max(1, Number(config.epubTtsMaxConcurrency) || 1)
+  if (epubTtsActive >= max) {
+    await new Promise((resolve) => epubTtsWaiters.push(resolve))
+  }
+  epubTtsActive++
+  try {
+    return await fn()
+  } finally {
+    epubTtsActive--
+    epubTtsWaiters.shift()?.()
+  }
 }
 
 await mkdir(DOWNLOAD_DIR, { recursive: true })
