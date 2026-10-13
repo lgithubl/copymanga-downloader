@@ -1,0 +1,277 @@
+name: EPUB Real TTS Interactive Demo
+
+# 和 interactive-web-image.yml 分开一个新文件：之前想把"真实 GSV-TTS-Lite +
+# 隧道"都塞进那个已经很大的文件，结果 ${{ }} 表达式总长度撑过了 GitHub
+# Actions 21000 字符的硬限制，dispatch 直接 422。这个文件只做一件事：真实
+# TTS + copymanga-web 一起起来，自测通过后再把可访问 URL 交出去。
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: copymanga-downloader 镜像
+        required: true
+        default: ghcr.io/lgithubl/copymanga-downloader:web
+      minutes:
+        description: 保持在线的分钟数
+        required: true
+        default: "60"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  demo:
+    name: Real TTS + copymanga-web interactive demo
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull copymanga-web image
+        run: docker pull "${{ inputs.image }}"
+
+      # disable-auto-download 分支的 docker/web_app.py 才是用户实际 Docker
+      # 部署真正跑的那份代码（Dockerfile.web 的 CMD 是
+      # uvicorn docker.web_app:app），不是 API/personal_api.py——两者接口形状
+      # 现在看起来一致，但为了真正验证"用户的真实部署能不能用"，这里原样照
+      # Dockerfile.web 的装法来，只是把 CUDA 轮子换成 CPU 轮子（runner 没有 GPU）。
+      - name: Set up real GSV-TTS-Lite (disable-auto-download branch)
+        run: |
+          set -e
+          git clone --depth 1 --branch disable-auto-download https://github.com/lgithubl/GSV-TTS-Lite.git "$RUNNER_TEMP/gsv-tts-lite"
+          cd "$RUNNER_TEMP/gsv-tts-lite"
+          pip install --quiet torch torchaudio
+          pip install --quiet fastapi "uvicorn[standard]"
+          pip install --quiet .
+          mkdir -p "$RUNNER_TEMP/gsv-models" "$RUNNER_TEMP/gsv-refs" "$RUNNER_TEMP/gsv-outputs"
+          PORT=9880 \
+          MODELS_DIR="$RUNNER_TEMP/gsv-models" \
+          REFS_DIR="$RUNNER_TEMP/gsv-refs" \
+          OUTPUTS_DIR="$RUNNER_TEMP/gsv-outputs" \
+          GSV_TTS_AUTO_DOWNLOAD=true \
+          GSV_TTS_USE_BERT=false \
+          GSV_TTS_USE_FLASH_ATTN=false \
+          nohup python3 -m uvicorn docker.web_app:app --host 0.0.0.0 --port 9880 \
+            > "$RUNNER_TEMP/gsv-tts-lite.log" 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:9880/health >/dev/null 2>&1 && exit 0
+            sleep 5
+          done
+          echo "GSV-TTS-Lite 没在 5 分钟内就绪，看日志："
+          cat "$RUNNER_TEMP/gsv-tts-lite.log" || true
+          exit 1
+
+      - name: Start copymanga-web pointed at real TTS
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          # speaker/prompt 用仓库自带的 examples/laffey.mp3 当参考音频，
+          # prompt_text 是占位文本——只验证链路通不通、能不能拿到真实音频，
+          # 不评测音色还原度。
+          cat > "$RUNNER_TEMP/data/config.json" <<JSON
+          {
+            "epubTtsApiBase": "http://host.docker.internal:9880",
+            "epubTtsSpeakerAudio": "$RUNNER_TEMP/gsv-tts-lite/examples/laffey.mp3",
+            "epubTtsPromptAudio": "$RUNNER_TEMP/gsv-tts-lite/examples/laffey.mp3",
+            "epubTtsPromptText": "参考音频占位文本，仅用于验证朗读链路",
+            "epubTtsMaxConcurrency": 1
+          }
+          JSON
+          docker run -d --name copymanga-web \
+            --add-host host.docker.internal:host-gateway \
+            -p 8080:8080 \
+            -v "$RUNNER_TEMP/data:/data" \
+            "${{ inputs.image }}"
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker logs copymanga-web || true
+          exit 1
+
+      # CPU 推理很慢，超时给够 10 分钟，测试文本尽量短。这步过不了就直接
+      # 失败退出，不会把一个连 TTS 都跑不通的 URL 交给用户。
+      - name: Real TTS smoke test before handing over the URL
+        run: |
+          ITEM_ID="$(curl -fsS -X POST 'http://127.0.0.1:8080/api/library/items/sample?type=epub' | python3 -c 'import json,sys; print(json.load(sys.stdin)["itemId"])')"
+          echo "sample itemId=$ITEM_ID"
+          START=$(date +%s)
+          RESP="$(curl -fsS --max-time 600 -X POST "http://127.0.0.1:8080/api/epub/$ITEM_ID/tts-chunk" \
+            -H "Content-Type: application/json" \
+            -d '{"texts":["你好"]}')"
+          END=$(date +%s)
+          echo "耗时 $((END - START)) 秒：$RESP"
+          URL="$(echo "$RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["chunks"][0].get("url",""))')"
+          if [ -z "$URL" ]; then
+            echo "真实 TTS 测试失败，没拿到音频 url"
+            exit 1
+          fi
+          curl -fsS "http://127.0.0.1:8080$URL" -o "$RUNNER_TEMP/real-tts-chunk.wav"
+          SIZE="$(stat -c %s "$RUNNER_TEMP/real-tts-chunk.wav")"
+          file "$RUNNER_TEMP/real-tts-chunk.wav"
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "音频文件太小（$SIZE 字节），不像真的生成了"
+            exit 1
+          fi
+          {
+            echo "## 真实 TTS 自测：通过"
+            echo
+            echo "耗时 $((END - START)) 秒，音频大小 $SIZE 字节"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start authenticated proxy
+        id: auth
+        shell: bash
+        run: |
+          USERNAME="copymanga"
+          PASSWORD="$(openssl rand -base64 18 | tr -d '=+/')"
+          {
+            echo "username=$USERNAME"
+            echo "password=$PASSWORD"
+          } >> "$GITHUB_OUTPUT"
+          cat >/tmp/basic_proxy.py <<'PY'
+          import base64
+          import http.server
+          import os
+          import urllib.error
+          import urllib.request
+
+          TARGET = "http://127.0.0.1:8080"
+          USERNAME = os.environ["BASIC_USER"]
+          PASSWORD = os.environ["BASIC_PASS"]
+          EXPECTED = "Basic " + base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
+          HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
+
+          class Proxy(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+
+              def _unauthorized(self):
+                  body = b"Authentication required\n"
+                  self.send_response(401)
+                  self.send_header("WWW-Authenticate", 'Basic realm="copymanga-web"')
+                  self.send_header("Content-Type", "text/plain")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def _proxy(self):
+                  if self.headers.get("Authorization") != EXPECTED:
+                      self._unauthorized()
+                      return
+                  length = int(self.headers.get("Content-Length") or 0)
+                  body = self.rfile.read(length) if length else None
+                  headers = {
+                      k: v for k, v in self.headers.items()
+                      if k.lower() not in HOP_BY_HOP and k.lower() != "host"
+                  }
+                  headers.pop("Authorization", None)
+                  req = urllib.request.Request(
+                      TARGET + self.path,
+                      data=body,
+                      headers=headers,
+                      method=self.command,
+                  )
+                  try:
+                      with urllib.request.urlopen(req, timeout=600) as resp:
+                          self.send_response(resp.status)
+                          payload = resp.read()
+                          for k, v in resp.headers.items():
+                              if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                                  self.send_header(k, v)
+                          self.send_header("Content-Length", str(len(payload)))
+                          self.end_headers()
+                          self.wfile.write(payload)
+                  except urllib.error.HTTPError as exc:
+                      payload = exc.read()
+                      self.send_response(exc.code)
+                      for k, v in exc.headers.items():
+                          if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                              self.send_header(k, v)
+                      self.send_header("Content-Length", str(len(payload)))
+                      self.end_headers()
+                      self.wfile.write(payload)
+
+              def do_GET(self): self._proxy()
+              def do_HEAD(self): self._proxy()
+              def do_POST(self): self._proxy()
+              def do_PUT(self): self._proxy()
+              def do_PATCH(self): self._proxy()
+              def do_DELETE(self): self._proxy()
+
+          http.server.ThreadingHTTPServer(("127.0.0.1", 8090), Proxy).serve_forever()
+          PY
+          BASIC_USER="$USERNAME" BASIC_PASS="$PASSWORD" python /tmp/basic_proxy.py >/tmp/basic_proxy.log 2>&1 &
+          echo $! >/tmp/basic_proxy.pid
+          sleep 1
+          curl -fsS -u "$USERNAME:$PASSWORD" http://127.0.0.1:8090/health >/dev/null
+
+      - name: Start Cloudflare quick tunnel
+        id: tunnel
+        shell: bash
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          /tmp/cloudflared tunnel --url http://127.0.0.1:8090 --no-autoupdate >/tmp/cloudflared.log 2>&1 &
+          echo $! >/tmp/cloudflared.pid
+          for i in $(seq 1 60); do
+            URL="$(grep -oE 'https://[-a-zA-Z0-9.]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)"
+            if [ -n "$URL" ]; then
+              MINUTES="${{ inputs.minutes }}"
+              if [ -z "$MINUTES" ]; then MINUTES="60"; fi
+              echo "url=$URL" >> "$GITHUB_OUTPUT"
+              {
+                echo "## 真实 TTS + copymanga-web 临时访问地址"
+                echo
+                echo "URL: $URL"
+                echo
+                echo "Username: \`${{ steps.auth.outputs.username }}\`"
+                echo
+                echo "Password: \`${{ steps.auth.outputs.password }}\`"
+                echo
+                echo "这个 runner 会保持在线 ${MINUTES} 分钟（除非手动取消）。"
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::notice title=Temporary URL::$URL"
+              exit 0
+            fi
+            cat /tmp/cloudflared.log || true
+            sleep 2
+          done
+          cat /tmp/cloudflared.log || true
+          exit 1
+
+      - name: Keep session alive
+        run: |
+          MINUTES="${{ inputs.minutes }}"
+          if [ -z "$MINUTES" ]; then MINUTES="60"; fi
+          echo "URL: ${{ steps.tunnel.outputs.url }}"
+          echo "Username: ${{ steps.auth.outputs.username }}"
+          echo "Password: ${{ steps.auth.outputs.password }}"
+          echo "Keeping session alive for ${MINUTES} minutes..."
+          sleep "$(( MINUTES * 60 ))"
+
+      - name: Collect logs
+        if: always()
+        run: |
+          docker logs copymanga-web >/tmp/copymanga-web-container.log 2>&1 || true
+          cp "$RUNNER_TEMP/gsv-tts-lite.log" /tmp/gsv-tts-lite.log.copy 2>/dev/null || true
+          cp /tmp/basic_proxy.log /tmp/basic_proxy.log.copy 2>/dev/null || true
+          cp /tmp/cloudflared.log /tmp/cloudflared.log.copy 2>/dev/null || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: epub-tts-interactive-demo-logs
+          path: |
+            /tmp/copymanga-web-container.log
+            /tmp/gsv-tts-lite.log.copy
+            /tmp/basic_proxy.log.copy
+            /tmp/cloudflared.log.copy
+          if-no-files-found: warn
+          retention-days: 1
