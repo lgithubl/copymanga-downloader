@@ -1647,7 +1647,13 @@ function renderTagManager() {
     `
     card.addEventListener('click', () => {
       showView('library-view')
-      els.libraryTagSearch.value = `tag:${tag.name}`
+      // 不加引号的话，tag 名里带空格会被搜索解析器（tag-store.mjs 的
+      // parseTagQuery）在空格处截断——正则是 tag:\S+，遇到空格就停，
+      // 剩下那半截会被当成一个无关的普通关键词，搜出来的结果就不对了。
+      // 加引号走 tag:"[^"]+" 那条分支，整个值（含空格、冒号）原样当一个 token。
+      // 转义写法和下面 tag-pill 点击那处（约 6510 行）保持一致，tag 名里
+      // 万一真带双引号也不会把这个 token 提前截断。
+      els.libraryTagSearch.value = `tag:"${String(tag.name || '').replace(/"/g, '\\"')}"`
       loadLibraryItems().catch((error) => alert(error.message))
     })
     els.tagManagerTags.append(card)
