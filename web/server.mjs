@@ -13,7 +13,7 @@ import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems 
 import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
-import { callGsvTtsBatched } from './library/epub-tts.mjs'
+import { callGsvTts } from './library/epub-tts.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -4855,9 +4855,10 @@ registerLibraryHandler(epubHandler)
 registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config, epubSupport: epubHandler }))
 
 // EPUB 朗读：按「文本+参考音频」内容寻址缓存，命中就不用再打 GSV-TTS-Lite。
-// 缺的那些合并成一次 /tts/batched 调用——这也是为什么入参是一批 texts 而不是单句。
-// 文件统一存 .wav：GSV-TTS-Lite 的 /tts/batched 接口没有 media_type 这个字段，
-// 内部写死存 wav，传了也不生效，没必要在这一层假装能选格式。
+// GSV-TTS-Lite 的 Docker 部署（docker/web_app.py，Dockerfile.web 唯一真实跑的
+// 入口）没有批量接口，/api/tts 一次只认一句 text——所以这里缺的句子是各自
+// 单独发请求，靠下面的并发限制排队，不是合并成一次批量调用。
+// 文件统一存 .wav：接口本身也是写死返回 wav。
 async function resolveEpubTtsChunks(itemId, texts) {
   const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
   const hashFor = (text) => createHash('sha1')
@@ -4877,20 +4878,18 @@ async function resolveEpubTtsChunks(itemId, texts) {
     }
   }
   if (missing.length) {
-    // GSV-TTS-Lite 是 GPU 推理，扛不住并发乱打——预加载窗口和用户快速翻页都
-    // 可能同时触发好几个 /api/epub/.../tts-chunk 请求，这里排队到配置的上限。
-    const results = await withEpubTtsConcurrencyLimit(() => callGsvTtsBatched({
-      apiBase: config.epubTtsApiBase,
-      speakerAudio: config.epubTtsSpeakerAudio,
-      promptAudio: config.epubTtsPromptAudio,
-      promptText: config.epubTtsPromptText,
-      texts: missing.map((i) => texts[i]),
-    }))
     await mkdir(cacheDir, { recursive: true })
-    for (let j = 0; j < missing.length; j++) {
-      const i = missing[j]
-      const result = results[j]
-      if (result.error) { chunks[i] = { index: i, error: result.error }; continue }
+    // 每句各自一次请求，排队到配置的并发上限——预加载窗口和用户快速翻页都
+    // 可能同时触发好几个 /api/epub/.../tts-chunk 请求，GSV-TTS-Lite 扛不住乱打。
+    await Promise.all(missing.map((i) => withEpubTtsConcurrencyLimit(async () => {
+      const result = await callGsvTts({
+        apiBase: config.epubTtsApiBase,
+        speakerAudio: config.epubTtsSpeakerAudio,
+        promptAudio: config.epubTtsPromptAudio,
+        promptText: config.epubTtsPromptText,
+        text: texts[i],
+      })
+      if (result.error) { chunks[i] = { index: i, error: result.error }; return }
       const hash = hashFor(texts[i])
       const audioPath = path.join(cacheDir, `${hash}.wav`)
       const subtitlePath = path.join(cacheDir, `${hash}.json`)
@@ -4904,10 +4903,11 @@ async function resolveEpubTtsChunks(itemId, texts) {
         await rename(subtitleTmp, subtitlePath)
       })
       chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.wav`, subtitle: result.subtitle || null }
-    }
+    })))
   }
   return chunks
 }
+
 
 // 简单的并发限制队列：max 每次都现读 config，运行时调配置能立刻生效，
 // 不用重建这个队列。只包住真正打 GSV-TTS-Lite 的那一步，缓存命中/磁盘写入
