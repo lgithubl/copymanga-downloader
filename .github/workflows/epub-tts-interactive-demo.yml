@@ -47,19 +47,26 @@ jobs:
           set -e
           git clone --depth 1 --branch disable-auto-download https://github.com/lgithubl/GSV-TTS-Lite.git "$RUNNER_TEMP/gsv-tts-lite"
           cd "$RUNNER_TEMP/gsv-tts-lite"
-          # 之前连续两次用裸的 `pip install ...`，结果装完之后缺东西（先是缺
-          # av，补上之后又缺 numpy）——`pip install` 报成功、但 `python3 -c`
-          # 真的 import 时却找不到，典型就是 runner 上 `pip` 和 `python3` 这
-          # 两个命令实际绑定的不是同一个解释器/环境。统一换成
-          # `python3 -m pip install`，强制装到后面真正会拿来跑 uvicorn 的
-          # 那个 python 里，不会再出现"装了但找不到"。
           python3 -m pip --version
           which python3
           which pip
           python3 -m pip install --quiet torch torchaudio
           python3 -m pip install --quiet fastapi "uvicorn[standard]"
-          python3 -m pip install --quiet --only-binary=:all: av
-          python3 -m pip install --quiet .
+          # 排查记录：先是 pip install . 报成功但 av 实际装不上
+          # （ModuleNotFoundError: No module named 'av'），补装 av 后又变成
+          # numpy 同样的情况——确认 pip 和 python3 是绑定同一个解释器
+          # （/usr/bin/pip 和 /usr/bin/python3，都是 python 3.10，不是环境
+          # 不一致的问题）。说明 pip install . 解析 pyproject.toml 里的
+          # dependencies 时，会把其中一部分"判断成已满足"从而跳过真正安装
+          # （Ubuntu 这台 runner 上大概率是被某些 apt 自带的同名包的 egg-info
+          # 影响了判断）。干脆把 pyproject.toml 列出的运行时依赖全部显式
+          # --force-reinstall 装一遍，不依赖 pip install . 自己去解析。
+          python3 -m pip install --quiet --force-reinstall --no-deps \
+            einops tqdm transformers sounddevice safetensors numpy \
+            py3langid pysbd onnxruntime soundfile requests nltk future \
+            inflect wordsegment pypinyin jieba pyopenjtalk-plus
+          python3 -m pip install --quiet --force-reinstall --no-deps --only-binary=:all: av
+          python3 -m pip install --quiet --no-deps .
           # 上次跑的时候，/tts/batched 请求返回了 500，FastAPI 把真实的导入异常
           # 吞成了一句写死的提示（"Unable to import gsv_tts..."），看不到根因。
           # 这里装完包立刻单独验证一次 import，失败就直接把完整 traceback 打出来
