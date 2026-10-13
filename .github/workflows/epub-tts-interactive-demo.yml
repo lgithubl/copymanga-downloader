@@ -47,14 +47,19 @@ jobs:
           set -e
           git clone --depth 1 --branch disable-auto-download https://github.com/lgithubl/GSV-TTS-Lite.git "$RUNNER_TEMP/gsv-tts-lite"
           cd "$RUNNER_TEMP/gsv-tts-lite"
-          pip install --quiet torch torchaudio
-          pip install --quiet fastapi "uvicorn[standard]"
-          # pyproject.toml 里 av 是必需运行时依赖，但上次跑 pip install . 时
-          # av 没真的装上（ModuleNotFoundError: No module named 'av'，exit 0
-          # 却没装成功——大概率是源码编译失败被安静跳过）。这里强制用预编译
-          # wheel 单独显式装一遍，装不上就直接在这一步报错，不再是哑巴失败。
-          pip install --quiet --only-binary=:all: av
-          pip install --quiet .
+          # 之前连续两次用裸的 `pip install ...`，结果装完之后缺东西（先是缺
+          # av，补上之后又缺 numpy）——`pip install` 报成功、但 `python3 -c`
+          # 真的 import 时却找不到，典型就是 runner 上 `pip` 和 `python3` 这
+          # 两个命令实际绑定的不是同一个解释器/环境。统一换成
+          # `python3 -m pip install`，强制装到后面真正会拿来跑 uvicorn 的
+          # 那个 python 里，不会再出现"装了但找不到"。
+          python3 -m pip --version
+          which python3
+          which pip
+          python3 -m pip install --quiet torch torchaudio
+          python3 -m pip install --quiet fastapi "uvicorn[standard]"
+          python3 -m pip install --quiet --only-binary=:all: av
+          python3 -m pip install --quiet .
           # 上次跑的时候，/tts/batched 请求返回了 500，FastAPI 把真实的导入异常
           # 吞成了一句写死的提示（"Unable to import gsv_tts..."），看不到根因。
           # 这里装完包立刻单独验证一次 import，失败就直接把完整 traceback 打出来
