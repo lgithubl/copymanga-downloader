@@ -49,6 +49,11 @@ jobs:
           cd "$RUNNER_TEMP/gsv-tts-lite"
           pip install --quiet torch torchaudio
           pip install --quiet fastapi "uvicorn[standard]"
+          # pyproject.toml 里 av 是必需运行时依赖，但上次跑 pip install . 时
+          # av 没真的装上（ModuleNotFoundError: No module named 'av'，exit 0
+          # 却没装成功——大概率是源码编译失败被安静跳过）。这里强制用预编译
+          # wheel 单独显式装一遍，装不上就直接在这一步报错，不再是哑巴失败。
+          pip install --quiet --only-binary=:all: av
           pip install --quiet .
           # 上次跑的时候，/tts/batched 请求返回了 500，FastAPI 把真实的导入异常
           # 吞成了一句写死的提示（"Unable to import gsv_tts..."），看不到根因。
