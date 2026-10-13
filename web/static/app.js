@@ -5224,6 +5224,13 @@ function ensureEpubTtsSentenceVisible(element, content) {
 async function playEpubTtsFrom(startIndex, content) {
   epubTtsPlaying = true
   epubTtsToggleBtn?.classList.add('active')
+  // 开口第一句必须先占到坑位，再起预加载泵——泵自己也会抢一次坑位占着排队。
+  // 如果反过来先起泵，泵的 epubTtsAcquireSlot() 会在主循环走到下面的
+  // await ensureEpubTtsChunks 之前，靠微任务调度的时间差把唯一的坑位抢走
+  // 去发它自己第一批（覆盖 startIndex+1）的请求，开口第一句反而要排到
+  // 这批后面——实测确认过：并发=1 时请求日志里"第二句"先于"第一句"发出，
+  // 朗读启动明显变慢，不是网络时序巧合，是这里调用顺序决定的。
+  const firstClaim = ensureEpubTtsChunks([startIndex])
   runEpubTtsPrefetchPump(startIndex).catch(() => {})
   let index = startIndex
   while (epubTtsPlaying) {
@@ -5233,7 +5240,7 @@ async function playEpubTtsFrom(startIndex, content) {
       if (next) { epubTtsAutoResume = true; next(); return }
       break
     }
-    await ensureEpubTtsChunks([index])
+    await (index === startIndex ? firstClaim : ensureEpubTtsChunks([index]))
     if (!epubTtsPlaying) return
     const entry = epubTtsSentences[index]
     const chunk = entry.chunk
