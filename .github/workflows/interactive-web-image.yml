@@ -24,6 +24,14 @@ on:
         description: 上传 zip 里文件名的编码（utf-8 / gbk / gb18030 / shift_jis / euc-jp / big5）
         required: false
         default: utf-8
+      real_tts:
+        description: 用真实 GSV-TTS-Lite 替代朗读 mock（现装 torch+下模型，CPU 推理很慢，纯验证用，别拿来正常用）
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: write
@@ -52,6 +60,30 @@ jobs:
           MEDIA_IMAGE="${{ inputs.media_stream_image }}"
           if [ -z "$MEDIA_IMAGE" ]; then MEDIA_IMAGE="ghcr.io/lgithubl/media-stream-widget:latest"; fi
           docker pull "$MEDIA_IMAGE"
+
+      # 只在 real_tts=true 时跑：装真实 GSV-TTS-Lite，纯验证朗读链路能不能真的出音频，
+      # 不是给这个 demo 会话长期配一个能用的 TTS 后端——CPU 推理很慢，GitHub Actions
+      # runner 没有 GPU，一句话可能要等好几分钟。跑在 runner 主机上（不进 docker），
+      # copymanga-web 容器已经有 --add-host host.docker.internal:host-gateway，
+      # 用这个地址就能连回来。
+      - name: Set up real GSV-TTS-Lite
+        if: ${{ inputs.real_tts == 'true' }}
+        run: |
+          git clone --depth 1 https://github.com/lgithubl/GSV-TTS-Lite.git "$RUNNER_TEMP/gsv-tts-lite"
+          pip install --quiet torch torchvision torchaudio
+          pip install --quiet -r "$RUNNER_TEMP/gsv-tts-lite/API/requirements.txt"
+          (cd "$RUNNER_TEMP/gsv-tts-lite/API" && nohup python3 personal_api.py > "$RUNNER_TEMP/gsv-tts-lite.log" 2>&1 &)
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9880/docs >/dev/null 2>&1; then
+              echo "GSV-TTS-Lite 就绪"
+              exit 0
+            fi
+            tail -n 5 "$RUNNER_TEMP/gsv-tts-lite.log" || true
+            sleep 5
+          done
+          echo "GSV-TTS-Lite 60*5s 内没起来，看日志："
+          cat "$RUNNER_TEMP/gsv-tts-lite.log" || true
+          exit 1
 
       - name: Start copymanga web
         run: |
@@ -125,17 +157,31 @@ jobs:
             }
           }
           JSON
-          cat >"$RUNNER_TEMP/copymanga-data/config.json" <<'JSON'
+          if [ "${{ inputs.real_tts }}" = "true" ]; then
+            TTS_API_BASE="http://host.docker.internal:9880"
+            # speaker/prompt 用同一份参考音频——没找 ASR 能用的环境，就不依赖自动识别
+            # prompt_text，直接给一句和音频内容对不对得上无所谓的占位文本：这里只验证
+            # "请求能不能走通、有没有真的生成音频"，不是评测音色还原度。
+            TTS_SPEAKER_AUDIO="$RUNNER_TEMP/gsv-tts-lite/examples/laffey.mp3"
+            TTS_PROMPT_AUDIO="$RUNNER_TEMP/gsv-tts-lite/examples/laffey.mp3"
+            TTS_PROMPT_TEXT="参考音频占位文本，仅用于验证朗读链路"
+          else
+            TTS_API_BASE="http://mock-gsv-tts:8000"
+            TTS_SPEAKER_AUDIO="examples/speaker.wav"
+            TTS_PROMPT_AUDIO="examples/prompt.wav"
+            TTS_PROMPT_TEXT="这是一段用于测试的提示音频文本"
+          fi
+          cat >"$RUNNER_TEMP/copymanga-data/config.json" <<JSON
           {
             "mediaStreamApiBase": "/media-stream",
             "mediaManagedBasePath": "/data/library/media",
             "mediaStreamBasePath": "/media",
             "mediaImportSourceRoots": "/input",
-            "epubTtsApiBase": "http://mock-gsv-tts:8000",
-            "epubTtsSpeakerAudio": "examples/speaker.wav",
-            "epubTtsPromptAudio": "examples/prompt.wav",
-            "epubTtsPromptText": "这是一段用于测试的提示音频文本",
-            "epubTtsMediaType": "wav"
+            "epubTtsApiBase": "$TTS_API_BASE",
+            "epubTtsSpeakerAudio": "$TTS_SPEAKER_AUDIO",
+            "epubTtsPromptAudio": "$TTS_PROMPT_AUDIO",
+            "epubTtsPromptText": "$TTS_PROMPT_TEXT",
+            "epubTtsMaxConcurrency": 1
           }
           JSON
           IMAGE="${{ inputs.image }}"
@@ -525,10 +571,12 @@ jobs:
             -v "$RUNNER_TEMP/copymanga-data:/data" \
             -v /tmp/mock_asr.py:/mock_asr.py:ro \
             python:3-alpine python /mock_asr.py
-          docker run -d --name mock-gsv-tts \
-            --network copymanga-action-net \
-            -v /tmp/mock_gsv_tts.py:/mock_gsv_tts.py:ro \
-            python:3-alpine python /mock_gsv_tts.py
+          if [ "${{ inputs.real_tts }}" != "true" ]; then
+            docker run -d --name mock-gsv-tts \
+              --network copymanga-action-net \
+              -v /tmp/mock_gsv_tts.py:/mock_gsv_tts.py:ro \
+              python:3-alpine python /mock_gsv_tts.py
+          fi
           docker run -d --name mock-llm \
             --network copymanga-action-net \
             -p 11595:11595 \
@@ -599,6 +647,51 @@ jobs:
           check "jobs api" sh -c "curl -fsS http://127.0.0.1:8080/api/jobs | grep -q '^\['"
           check "downloaded api" sh -c "curl -fsS http://127.0.0.1:8080/api/downloaded | grep -q '^\['"
           check "config api" sh -c "curl -fsS http://127.0.0.1:8080/api/config | grep -q '\"/media-stream\"'"
+
+      # 只在 real_tts=true 时跑：建一个示例 EPUB，发一句尽量短的文本过去，验证
+      # 从 copymanga-web 经 host.docker.internal 打到真实 GSV-TTS-Lite 这条链路
+      # 真的能拿到音频文件，不只是接口形状对得上。CPU 推理慢，超时给够 10 分钟。
+      - name: Real TTS smoke test
+        if: ${{ inputs.real_tts == 'true' }}
+        run: |
+          ITEM_ID="$(curl -fsS -X POST http://127.0.0.1:8080/api/library/items/sample?type=epub | python3 -c 'import json,sys; print(json.load(sys.stdin)["itemId"])')"
+          echo "sample itemId=$ITEM_ID"
+          START=$(date +%s)
+          RESP="$(curl -fsS --max-time 600 -X POST "http://127.0.0.1:8080/api/epub/$ITEM_ID/tts-chunk" \
+            -H "Content-Type: application/json" \
+            -d '{"texts":["你好"]}')"
+          END=$(date +%s)
+          echo "耗时 $((END - START)) 秒"
+          echo "$RESP"
+          URL="$(echo "$RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["chunks"][0].get("url",""))')"
+          if [ -z "$URL" ]; then
+            echo "没拿到 url，看来是失败了："
+            echo "$RESP"
+            {
+              echo "## 真实 TTS 测试：失败"
+              echo
+              echo '```'
+              echo "$RESP"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          curl -fsS "http://127.0.0.1:8080$URL" -o /tmp/real-tts-chunk.wav
+          SIZE="$(stat -c %s /tmp/real-tts-chunk.wav)"
+          echo "音频文件大小: $SIZE 字节"
+          file /tmp/real-tts-chunk.wav
+          {
+            echo "## 真实 TTS 测试：成功"
+            echo
+            echo "耗时：$((END - START)) 秒"
+            echo
+            echo "音频文件大小：$SIZE 字节"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # wav 头部至少要有，太小基本就是个空文件/错误页面，不是真音频
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "文件小得不像真的音频，可能生成失败了"
+            exit 1
+          fi
 
       - name: Start authenticated proxy
         id: auth
