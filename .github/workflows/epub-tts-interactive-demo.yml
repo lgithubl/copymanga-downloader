@@ -81,16 +81,23 @@ jobs:
           # speaker_audio not found: /refs/speaker.wav——因为这里从没配过
           # DEFAULT_SPEAKER_AUDIO/DEFAULT_PROMPT_AUDIO，docker/web_app.py
           # 落回去用的是它自己硬编码的 /refs/speaker.wav，这台 runner 上根本
-          # 没这个文件。参考 GSV-TTS-Lite 自己 build-model-artifacts.yml 的
-          # 参考音频，这里也配上。
+          # 没这个文件。
+          # 这次补上之后又踩了另一个坑：DEFAULT_PROMPT_AUDIO 用的是
+          # examples/AnAn.ogg（跟 speaker_audio 不是同一个文件），配的
+          # DEFAULT_PROMPT_TEXT 是个随手写的中文占位文本——跟 AnAn.ogg 实际
+          # 说的内容对不上，GPT-SoVITS 这类声音克隆模型靠 prompt_text 和
+          # prompt_audio 做音素/时长对齐，文本音频对不上会在对齐环节退化出
+          # 异常张量（500：Input and output sizes should be greater than 0,
+          # but got input (W: 0) and output (W: 0)），单条请求不需要并发就能
+          # 触发。之前第一次跑成功的配置里 speaker_audio/prompt_audio 用的是
+          # 同一个文件（laffey.mp3），这里改回同一个文件，不引入新的不匹配。
           cp "$RUNNER_TEMP/gsv-tts-lite/examples/laffey.mp3" "$RUNNER_TEMP/gsv-refs/speaker.mp3"
-          cp "$RUNNER_TEMP/gsv-tts-lite/examples/AnAn.ogg" "$RUNNER_TEMP/gsv-refs/prompt.ogg"
           PORT=9880 \
           MODELS_DIR="$RUNNER_TEMP/gsv-models" \
           REFS_DIR="$RUNNER_TEMP/gsv-refs" \
           OUTPUTS_DIR="$RUNNER_TEMP/gsv-outputs" \
           DEFAULT_SPEAKER_AUDIO="$RUNNER_TEMP/gsv-refs/speaker.mp3" \
-          DEFAULT_PROMPT_AUDIO="$RUNNER_TEMP/gsv-refs/prompt.ogg" \
+          DEFAULT_PROMPT_AUDIO="$RUNNER_TEMP/gsv-refs/speaker.mp3" \
           DEFAULT_PROMPT_TEXT="参考音频占位文本，仅用于验证朗读链路" \
           GSV_TTS_AUTO_DOWNLOAD=true \
           GSV_TTS_USE_BERT=false \
