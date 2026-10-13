@@ -1,10 +1,12 @@
 // GSV-TTS-Lite 是参考音频克隆音色（speaker_audio/prompt_audio），不是挑 voice 枚举。
 // 用的是 docker/web_app.py（Dockerfile.web 唯一真实跑的入口，CMD 写死
-// uvicorn docker.web_app:app）。disable-auto-download 分支给它加回了
-// /tts/batched（之前只有单句 /api/tts，没有批量接口，这里走过一次弯路）。
-// 两个都留着：单句走 /api/tts，批量走 /tts/batched，用在哪由 resolveEpubTtsChunks
-// 按一次请求里缺几句来选——见那边的注释。
-// 参考：GSV-TTS-Lite 仓库 docker/web_app.py（disable-auto-download 分支）
+// uvicorn docker.web_app:app）的 /tts/batched（disable-auto-download 分支
+// 新加的）。统一走这一个接口，单句也传长度为 1 的 texts：查过底层 infer_batched
+// 的实现，单条场景就是把文本包成长度 1 的 list 走同一套流程，没有会被拖慢的
+// 结构性原因，不必为了"可能更快"去维护单句 /api/tts 这另一条路径——而且统一
+// 用批量还白捡一个好处：所有句子（包括当前正在读的这句）都能拿到 subtitle
+// 时间戳，不用退化成 currentTime/duration 的百分比估算。
+// 参考：GSV-TTS-Lite 仓库 docker/web_app.py + gsv_tts/TTS.py（disable-auto-download 分支）
 
 const REQUEST_TIMEOUT_MS = 60000
 
@@ -16,37 +18,6 @@ async function fetchWithTimeout(url, init) {
   } finally {
     clearTimeout(timer)
   }
-}
-
-// 返回 { text, buffer, subtitle, error }。单句一次请求，失败只影响这一句，
-// 调用方据此跳过、不中断整体朗读。subtitle 恒为 null——/api/tts 没有这个数据，
-// 前端的高亮逻辑本来就准备了「没有 subtitle 就退化成 currentTime/duration」的分支。
-export async function callGsvTts({ apiBase, speakerAudio, promptAudio, promptText, text }) {
-  if (!speakerAudio || !promptAudio) {
-    return { text, error: '未配置参考音频（speakerAudio/promptAudio）' }
-  }
-  const base = String(apiBase || '').replace(/\/+$/, '')
-  let response
-  try {
-    response = await fetchWithTimeout(`${base}/api/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        speaker_audio: speakerAudio,
-        prompt_audio: promptAudio,
-        prompt_text: promptText || undefined,
-      }),
-    })
-  } catch (error) {
-    return { text, error: `GSV-TTS-Lite 请求失败: ${error.message}` }
-  }
-  if (!response.ok) {
-    const raw = await response.text().catch(() => '')
-    return { text, error: `GSV-TTS-Lite 返回 ${response.status}: ${raw.slice(0, 200)}` }
-  }
-  const buffer = Buffer.from(await response.arrayBuffer())
-  return { text, buffer, subtitle: null }
 }
 
 // 返回 [{ text, buffer, subtitle, error }]，和入参 texts 一一对应，顺序不变。
@@ -102,5 +73,6 @@ export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, pr
   }
   return results
 }
+
 
 

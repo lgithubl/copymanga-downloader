@@ -13,7 +13,7 @@ import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems 
 import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
-import { callGsvTts, callGsvTtsBatched } from './library/epub-tts.mjs'
+import { callGsvTtsBatched } from './library/epub-tts.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -4856,15 +4856,13 @@ registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_D
 
 // EPUB 朗读：按「文本+参考音频」内容寻址缓存，命中就不用再打 GSV-TTS-Lite。
 // GSV-TTS-Lite 的 Docker 部署（docker/web_app.py，Dockerfile.web 唯一真实跑的
-// 入口）在 disable-auto-download 分支上把 /tts/batched 加回来了，和单句的
-// /api/tts 并存。这里按一次调用里缺几句来选用哪个：
-//   缺 1 句 → 单句 /api/tts：这通常是"当前要读的这句，播放器在等它"
-//            （playEpubTtsFrom 里 await ensureEpubTtsChunks([index]) 就是
-//            单独一句），批量接口要等一整批合成完才返回，首句去凑批反而更慢。
-//   缺 2+ 句 → /tts/batched：这通常是预加载窗口（ensureEpubTtsChunks 一次
-//             塞 [index+1, index+2]），不着急要，批量合成能减少请求数、
-//             让 GPU 吃到更大的 batch，效率更高。
-// 文件统一存 .wav：两个接口都是写死返回 wav。
+// 入口）在 disable-auto-download 分支上加了 /tts/batched。统一走这一个接口，
+// 不管缺几句——之前按"缺 1 句走单句 /api/tts、缺 2+ 句走批量"分过两条路，
+// 理由是"单句批量接口要等整批合成完，首句去凑批更慢"，但查了 infer_batched
+// 的底层实现，单条场景就是包成长度 1 的 list 走同一套流程，没有结构性的
+// 拖慢原因，纯属没验证过的主观判断。统一成一条路径更简单，还白捡一个好处：
+// 所有句子（含当前正在读的这句）都能拿到 subtitle 时间戳。
+// 文件统一存 .wav：接口本身写死返回 wav。
 async function resolveEpubTtsChunks(itemId, texts) {
   const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
   const hashFor = (text) => createHash('sha1')
@@ -4886,49 +4884,37 @@ async function resolveEpubTtsChunks(itemId, texts) {
   if (!missing.length) return chunks
   await mkdir(cacheDir, { recursive: true })
 
-  const writeResult = async (i, result) => {
-    if (result.error) { chunks[i] = { index: i, error: result.error }; return }
-    const hash = hashFor(texts[i])
-    const audioPath = path.join(cacheDir, `${hash}.wav`)
-    const subtitlePath = path.join(cacheDir, `${hash}.json`)
-    await withLock(fileLocks, audioPath, async () => {
-      if (await pathExists(audioPath)) return // 并发请求已经写过了
-      const audioTmp = `${audioPath}.${process.pid}.${Date.now()}.tmp`
-      await writeFile(audioTmp, result.buffer)
-      await rename(audioTmp, audioPath)
-      const subtitleTmp = `${subtitlePath}.${process.pid}.${Date.now()}.tmp`
-      await writeFile(subtitleTmp, JSON.stringify(result.subtitle || null))
-      await rename(subtitleTmp, subtitlePath)
+  // GSV-TTS-Lite 是 GPU 推理，扛不住并发乱打——预加载窗口和用户快速翻页都
+  // 可能同时触发好几个 /api/epub/.../tts-chunk 请求，这里排队到配置的上限。
+  await withEpubTtsConcurrencyLimit(async () => {
+    const results = await callGsvTtsBatched({
+      apiBase: config.epubTtsApiBase,
+      speakerAudio: config.epubTtsSpeakerAudio,
+      promptAudio: config.epubTtsPromptAudio,
+      promptText: config.epubTtsPromptText,
+      texts: missing.map((i) => texts[i]),
     })
-    chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.wav`, subtitle: result.subtitle || null }
-  }
-
-  if (missing.length === 1) {
-    const i = missing[0]
-    await withEpubTtsConcurrencyLimit(async () => {
-      const result = await callGsvTts({
-        apiBase: config.epubTtsApiBase,
-        speakerAudio: config.epubTtsSpeakerAudio,
-        promptAudio: config.epubTtsPromptAudio,
-        promptText: config.epubTtsPromptText,
-        text: texts[i],
+    await Promise.all(missing.map(async (i, j) => {
+      const result = results[j]
+      if (result.error) { chunks[i] = { index: i, error: result.error }; return }
+      const hash = hashFor(texts[i])
+      const audioPath = path.join(cacheDir, `${hash}.wav`)
+      const subtitlePath = path.join(cacheDir, `${hash}.json`)
+      await withLock(fileLocks, audioPath, async () => {
+        if (await pathExists(audioPath)) return // 并发请求已经写过了
+        const audioTmp = `${audioPath}.${process.pid}.${Date.now()}.tmp`
+        await writeFile(audioTmp, result.buffer)
+        await rename(audioTmp, audioPath)
+        const subtitleTmp = `${subtitlePath}.${process.pid}.${Date.now()}.tmp`
+        await writeFile(subtitleTmp, JSON.stringify(result.subtitle || null))
+        await rename(subtitleTmp, subtitlePath)
       })
-      await writeResult(i, result)
-    })
-  } else {
-    await withEpubTtsConcurrencyLimit(async () => {
-      const results = await callGsvTtsBatched({
-        apiBase: config.epubTtsApiBase,
-        speakerAudio: config.epubTtsSpeakerAudio,
-        promptAudio: config.epubTtsPromptAudio,
-        promptText: config.epubTtsPromptText,
-        texts: missing.map((i) => texts[i]),
-      })
-      await Promise.all(missing.map((i, j) => writeResult(i, results[j])))
-    })
-  }
+      chunks[i] = { index: i, url: `/api/epub/${itemId}/tts-chunk/${hash}.wav`, subtitle: result.subtitle || null }
+    }))
+  })
   return chunks
 }
+
 
 
 // 简单的并发限制队列：max 每次都现读 config，运行时调配置能立刻生效，
