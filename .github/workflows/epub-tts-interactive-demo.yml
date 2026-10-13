@@ -50,6 +50,11 @@ jobs:
           pip install --quiet torch torchaudio
           pip install --quiet fastapi "uvicorn[standard]"
           pip install --quiet .
+          # 上次跑的时候，/tts/batched 请求返回了 500，FastAPI 把真实的导入异常
+          # 吞成了一句写死的提示（"Unable to import gsv_tts..."），看不到根因。
+          # 这里装完包立刻单独验证一次 import，失败就直接把完整 traceback 打出来
+          # 并让这一步 fail，而不是等到真的发 TTS 请求时才发现、还看不清原因。
+          python3 -c "from gsv_tts import TTS; print('gsv_tts import OK')"
           mkdir -p "$RUNNER_TEMP/gsv-models" "$RUNNER_TEMP/gsv-refs" "$RUNNER_TEMP/gsv-outputs"
           PORT=9880 \
           MODELS_DIR="$RUNNER_TEMP/gsv-models" \
@@ -255,23 +260,22 @@ jobs:
           echo "Keeping session alive for ${MINUTES} minutes..."
           sleep "$(( MINUTES * 60 ))"
 
-      - name: Collect logs
+      # 直接打印到 job 日志里，不走 actions/upload-artifact——这个仓库的 Actions
+      # 存储配额已经被 Actions artifacts + ghcr 镜像一起吃满过一次（上次 build
+      # image 那边改成发 Release 解决的），这个 workflow 只是临时调试用，没必要
+      # 占用同一份配额，直接 cat 到日志里反而更方便看、也不用等上传。
+      - name: Print logs
         if: always()
         run: |
-          docker logs copymanga-web >/tmp/copymanga-web-container.log 2>&1 || true
-          cp "$RUNNER_TEMP/gsv-tts-lite.log" /tmp/gsv-tts-lite.log.copy 2>/dev/null || true
-          cp /tmp/basic_proxy.log /tmp/basic_proxy.log.copy 2>/dev/null || true
-          cp /tmp/cloudflared.log /tmp/cloudflared.log.copy 2>/dev/null || true
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: epub-tts-interactive-demo-logs
-          path: |
-            /tmp/copymanga-web-container.log
-            /tmp/gsv-tts-lite.log.copy
-            /tmp/basic_proxy.log.copy
-            /tmp/cloudflared.log.copy
-          if-no-files-found: warn
-          retention-days: 1
+          echo "::group::gsv-tts-lite.log"
+          tail -c 20000 "$RUNNER_TEMP/gsv-tts-lite.log" 2>/dev/null || echo "(无)"
+          echo "::endgroup::"
+          echo "::group::copymanga-web container log"
+          docker logs --tail 300 copymanga-web 2>&1 || echo "(无)"
+          echo "::endgroup::"
+          echo "::group::basic_proxy.log"
+          tail -c 5000 /tmp/basic_proxy.log 2>/dev/null || echo "(无)"
+          echo "::endgroup::"
+          echo "::group::cloudflared.log"
+          tail -c 5000 /tmp/cloudflared.log 2>/dev/null || echo "(无)"
+          echo "::endgroup::"
