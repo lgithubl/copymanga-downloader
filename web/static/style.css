@@ -1341,16 +1341,24 @@ h2 {
   max-width: 260px;
 }
 
-.chapter-actions input:not([type="file"]) {
+/* .merge-toolbar 复用这几条：合并页的搜索框/页码框/每页条数下拉框之前
+   没有这些规则，全局 input/select { width: 100% } 在 flex 行里互相抢
+   宽度，按钮也跟着被压窄导致文字换行（"上一页"挤成三行），和这里的
+   .chapter-actions 是完全一样的问题、完全一样的修法，合并选择器而不是
+   另抄一份，以后改一处两边都生效。 */
+.chapter-actions input:not([type="file"]),
+.merge-toolbar input:not([type="file"]) {
   width: auto;
 }
 
-.chapter-actions select {
+.chapter-actions select,
+.merge-toolbar select {
   min-width: 132px;
   width: auto;
 }
 
-.chapter-actions .page-jump input {
+.chapter-actions .page-jump input,
+.merge-toolbar .page-jump input {
   width: 64px;
 }
 
@@ -3421,6 +3429,7 @@ h2 {
 .merge-toolbar {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
 }
