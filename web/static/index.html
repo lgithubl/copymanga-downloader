@@ -387,8 +387,14 @@
               <input id="merge-keyword" type="search" class="merge-keyword" placeholder="按成员标题或 workKey 搜索，回车生效" />
               <button id="merge-search" class="secondary">搜索</button>
               <button id="merge-prev" class="secondary">上一页</button>
-              <span id="merge-page-info" class="muted">第 1 / 1 页</span>
+              <label class="page-jump">
+                <span>第</span>
+                <input id="merge-page" type="number" min="1" value="1" />
+                <span id="merge-page-total">/ 1 页</span>
+              </label>
+              <button id="merge-jump" class="secondary">跳转</button>
               <button id="merge-next" class="secondary">下一页</button>
+              <span id="merge-page-info" class="muted">共 0 组</span>
             </div>
             <div id="merge-groups" class="merge-groups"></div>
           </section>

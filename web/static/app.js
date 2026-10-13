@@ -89,6 +89,9 @@ const els = {
   mergeRunPage: document.querySelector('#merge-run-page'),
   mergePrev: document.querySelector('#merge-prev'),
   mergeNext: document.querySelector('#merge-next'),
+  mergePage: document.querySelector('#merge-page'),
+  mergePageTotal: document.querySelector('#merge-page-total'),
+  mergeJump: document.querySelector('#merge-jump'),
   mergePageInfo: document.querySelector('#merge-page-info'),
   mergeKeyword: document.querySelector('#merge-keyword'),
   mergeSearch: document.querySelector('#merge-search'),
@@ -2391,8 +2394,13 @@ async function loadMergeCandidates() {
     const data = await api(mergeCandidatesQuery())
     const groups = data.items || []
     mergeTotalPages = Math.max(1, Math.ceil((data.total || 0) / MERGE_PAGE_SIZE))
+    if (els.mergePage && document.activeElement !== els.mergePage) {
+      els.mergePage.value = String(mergePage)
+    }
+    if (els.mergePage) els.mergePage.max = String(mergeTotalPages)
+    if (els.mergePageTotal) els.mergePageTotal.textContent = `/ ${mergeTotalPages} 页`
     if (els.mergePageInfo) {
-      els.mergePageInfo.textContent = `第 ${mergePage} / ${mergeTotalPages} 页 · 共 ${data.total || 0} 组`
+      els.mergePageInfo.textContent = `共 ${data.total || 0} 组`
         + (mergeKeyword ? `（搜索 "${mergeKeyword}"）` : '')
         + (data.indexStatus !== 'ready' ? `（索引 ${data.indexStatus}）` : '')
     }
@@ -2645,6 +2653,12 @@ async function rebuildLibraryIndex() {
 function jumpLibraryPage() {
   libraryPage = Math.max(1, Math.min(libraryTotalPages, Math.floor(Number(els.libraryPage?.value || 1))))
   loadLibraryItems().catch((error) => alert(error.message))
+}
+
+function jumpMergePage() {
+  mergePage = Math.max(1, Math.min(mergeTotalPages, Math.floor(Number(els.mergePage?.value || 1))))
+  resetMergePosition()
+  loadMergeCandidates().catch((error) => alert(error.message))
 }
 
 async function selectLibraryItem(type, itemId) {
@@ -5429,6 +5443,14 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
       if (scrollDir) scheduleJump()
       return
     }
+    // 速度拉到最大时，间隔已经卡在"一跳 + 最小静止"的下限，180ms 的渐变动画
+    // 反而显得拖沓——跳过渐变直接到位，手感更接近滚轮快速滑动时的"唰"一下。
+    if (speed >= SPEED_MAX) {
+      pos = jumpTo
+      content.scrollTop = pos
+      if (scrollDir) scheduleJump()
+      return
+    }
     jumpStart = 0
     raf = requestAnimationFrame(stepJump)
   }
@@ -6014,6 +6036,10 @@ els.mergePrev?.addEventListener('click', () => {
 })
 els.mergeNext?.addEventListener('click', () => {
   if (mergePage < mergeTotalPages) { mergePage += 1; resetMergePosition(); loadMergeCandidates().catch(() => {}) }
+})
+els.mergeJump?.addEventListener('click', jumpMergePage)
+els.mergePage?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') jumpMergePage()
 })
 els.mergeDumpRefresh?.addEventListener('click', async () => {
   const button = els.mergeDumpRefresh
