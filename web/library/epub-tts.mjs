@@ -25,9 +25,6 @@ async function fetchWithTimeout(url, init) {
 // 失败就把这批里每一句都标 error，调用方据此逐句跳过，不中断整体朗读。
 export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, promptText, texts }) {
   if (!texts.length) return []
-  if (!speakerAudio || !promptAudio) {
-    return texts.map((text) => ({ text, error: '未配置参考音频（speakerAudio/promptAudio）' }))
-  }
   const base = String(apiBase || '').replace(/\/+$/, '')
   let response
   try {
@@ -36,8 +33,16 @@ export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, pr
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         texts,
-        speaker_audio: speakerAudio,
-        prompt_audio: promptAudio,
+        // speaker_audio/prompt_audio/prompt_text 都允许留空——GSV-TTS-Lite
+        // 的 /tts/batched（docker/web_app.py）本来就支持这三个留空时落回
+        // 它自己的 DEFAULT_SPEAKER_AUDIO/DEFAULT_PROMPT_AUDIO/
+        // DEFAULT_PROMPT_TEXT 环境变量。之前这里对 speakerAudio/
+        // promptAudio 做了硬性拦截，哪怕服务端已经配好了默认参考音频也会
+        // 被挡在请求之前，现在统一成和 promptText 一样"留空就不传这个
+        // 字段"，具体能不能用交给服务端自己判断（服务端两边都没配的话
+        // 会返回 400，照样会体现成这批文本的 error）。
+        speaker_audio: speakerAudio || undefined,
+        prompt_audio: promptAudio || undefined,
         prompt_text: promptText || undefined,
         return_subtitles: true,
       }),

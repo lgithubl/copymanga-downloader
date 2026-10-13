@@ -4946,7 +4946,12 @@ let epubTtsToggleBtn = null
 let epubTtsSelectionBtn = null
 
 function epubTtsConfigured() {
-  return Boolean(appConfig?.epubTtsSpeakerAudio && appConfig?.epubTtsPromptAudio)
+  // speaker_audio/prompt_audio 现在允许留空——GSV-TTS-Lite 服务端本来就
+  // 支持这两个留空时落回它自己的 DEFAULT_SPEAKER_AUDIO/
+  // DEFAULT_PROMPT_AUDIO 环境变量（见 web/library/epub-tts.mjs）。这里
+  // 只要求配了 apiBase，具体参考音频能不能用交给服务端判断，不在前端
+  // 这层提前拦死。
+  return Boolean(appConfig?.epubTtsApiBase)
 }
 
 function epubTtsItemId() {
@@ -5154,9 +5159,9 @@ function enterEpubImmersive({ remember = false } = {}) {
   const nextCh = mk('epub-chapter-next', '下章', '下一章')
   const toc = makeImmersiveToc()
   const widthBtn = mk('epub-width', '宽度', '调整阅读宽度')
-  const ttsBtn = mk('epub-tts-toggle', '朗读', epubTtsConfigured() ? '从当前页开始朗读' : '未配置参考音频，去配置页填 speaker_audio/prompt_audio')
+  const ttsBtn = mk('epub-tts-toggle', '朗读', epubTtsConfigured() ? '从当前页开始朗读' : '未配置 TTS 服务地址，去配置页填 apiBase')
   ttsBtn.disabled = !epubTtsConfigured()
-  const selectionBtn = mk('epub-tts-selection', '读选中', epubTtsConfigured() ? '朗读当前选中的文字' : '未配置参考音频，去配置页填 speaker_audio/prompt_audio')
+  const selectionBtn = mk('epub-tts-selection', '读选中', epubTtsConfigured() ? '朗读当前选中的文字' : '未配置 TTS 服务地址，去配置页填 apiBase')
   selectionBtn.disabled = !epubTtsConfigured()
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
   bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, exitBtn)
