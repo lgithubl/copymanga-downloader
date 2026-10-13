@@ -218,6 +218,8 @@ const els = {
   configEpubTtsPromptAudio: document.querySelector('#config-epub-tts-prompt-audio'),
   configEpubTtsPromptText: document.querySelector('#config-epub-tts-prompt-text'),
   configEpubTtsMaxConcurrency: document.querySelector('#config-epub-tts-max-concurrency'),
+  configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
+  configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
@@ -1209,6 +1211,8 @@ async function loadConfig() {
   els.configEpubTtsPromptAudio.value = config.epubTtsPromptAudio || ''
   els.configEpubTtsPromptText.value = config.epubTtsPromptText || ''
   els.configEpubTtsMaxConcurrency.value = config.epubTtsMaxConcurrency || 1
+  els.configEpubTtsBatchMaxSentences.value = config.epubTtsBatchMaxSentences || 5
+  els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
@@ -3327,6 +3331,48 @@ function normalizeEpubGraphics(root) {
 // 定位"当前在读哪句"、高亮、以及"从当前页第一句开始读"。
 const EPUB_TTS_SENTENCE_RE = /[^。！？.!?]+[。！？.!?]*/g
 
+// 次级标点——按主标点切出来的"一句"如果超过 epubTtsBatchMaxChars，在这一层
+// 再切一刀。用逗号/顿号/分号/冒号这些语气停顿更短的标点，比直接硬切更自然。
+const EPUB_TTS_CLAUSE_RE = /[^，,、；;：:]+[，,、；;：:]?/g
+
+function epubTtsBatchMaxChars() {
+  return Math.max(20, Number(appConfig?.epubTtsBatchMaxChars) || 200)
+}
+
+// 把一句过长的文本切成多段，每段尽量不超过 maxChars，返回 [{text,start,end}]
+// （start/end 是相对 raw 的偏移，拼起来正好覆盖整个 raw，给 collectEpubTtsSentences
+// 换算回全文偏移用）。先按次级标点分句再贪心攒段；某个次级分句自己就超长
+// （没有次级标点，或某一段本身巨长）的话直接硬切，不追求好听，只保证能继续播。
+function splitLongEpubTtsText(raw, maxChars) {
+  if (raw.length <= maxChars) return [{ text: raw, start: 0, end: raw.length }]
+  const clauses = []
+  let cursor = 0
+  EPUB_TTS_CLAUSE_RE.lastIndex = 0
+  let match
+  while ((match = EPUB_TTS_CLAUSE_RE.exec(raw))) {
+    clauses.push({ text: match[0], start: cursor, end: cursor + match[0].length })
+    cursor += match[0].length
+  }
+  const pieces = []
+  let group = null
+  const flush = () => { if (group) { pieces.push(group); group = null } }
+  for (const clause of clauses) {
+    if (clause.text.length > maxChars) {
+      flush()
+      for (let i = 0; i < clause.text.length; i += maxChars) {
+        const end = Math.min(i + maxChars, clause.text.length)
+        pieces.push({ text: clause.text.slice(i, end), start: clause.start + i, end: clause.start + end })
+      }
+      continue
+    }
+    if (group && (group.end - group.start) + clause.text.length > maxChars) flush()
+    if (!group) group = { text: clause.text, start: clause.start, end: clause.end }
+    else { group.text += clause.text; group.end = clause.end }
+  }
+  flush()
+  return pieces
+}
+
 // 块级元素之间不能被当成连续文本直接拼起来分句——实测"第一章 入口"这种没有
 // 终止标点的标题会直接和下一段正文粘成一句，朗读内容对不上、高亮也跟着跨块乱跳。
 // 按最近的块级祖先把文本节点分组，组与组之间强制断句，组内部再按标点正常切。
@@ -3370,9 +3416,28 @@ function collectEpubTtsSentences(root) {
     let match
     EPUB_TTS_SENTENCE_RE.lastIndex = 0
     while ((match = EPUB_TTS_SENTENCE_RE.exec(run.fullText))) {
-      const text = match[0].trim()
+      const raw = match[0]
+      const text = raw.trim()
       if (!text) continue
-      sentences.push({ text, start: match.index, end: match.index + match[0].length, nodes: run.nodes })
+      const maxChars = epubTtsBatchMaxChars()
+      if (text.length <= maxChars) {
+        sentences.push({ text, start: match.index, end: match.index + raw.length, nodes: run.nodes })
+        continue
+      }
+      // 这一整句超过单批上限——不能直接整句发给 TTS，按次级标点（必要时硬切）
+      // 拆成几个独立的句子单元，各自有自己的高亮 span 和 TTS 请求，不是在发请求
+      // 那一层才拆：那样会导致一个高亮 span 背后对应好几段音频，进度条、
+      // "播完翻下一句"这些逻辑都要跟着感知"这句其实是拼出来的"，复杂很多。
+      for (const piece of splitLongEpubTtsText(raw, maxChars)) {
+        const pieceText = piece.text.trim()
+        if (!pieceText) continue
+        sentences.push({
+          text: pieceText,
+          start: match.index + piece.start,
+          end: match.index + piece.end,
+          nodes: run.nodes,
+        })
+      }
     }
   }
   return sentences
@@ -4945,6 +5010,38 @@ let epubTtsCurrentAudio = null
 let epubTtsToggleBtn = null
 let epubTtsSelectionBtn = null
 
+// 客户端自己维护在途请求数，跟服务端 epubTtsMaxConcurrency 对齐——服务端的
+// withEpubTtsConcurrencyLimit 只保证真正打到 TTS 的请求不超量，但如果客户端
+// 这边不管不顾地疯狂发 /api/epub/.../tts-chunk，预加载泵会把一整章剩下的句子
+// 瞬间全排进服务端队列，等于没有"预读多远"这个限制了。这里在请求真正发出去
+// 之前先占一个坑位，没有空位就排队等，直接决定了预加载泵能跑多快多远。
+let epubTtsInFlight = 0
+const epubTtsSlotWaiters = []
+
+function epubTtsMaxConcurrencyClient() {
+  return Math.max(1, Number(appConfig?.epubTtsMaxConcurrency) || 1)
+}
+
+async function epubTtsAcquireSlot() {
+  if (epubTtsInFlight >= epubTtsMaxConcurrencyClient()) {
+    await new Promise((resolve) => epubTtsSlotWaiters.push(resolve))
+  }
+  epubTtsInFlight++
+}
+
+function epubTtsReleaseSlot() {
+  epubTtsInFlight--
+  epubTtsSlotWaiters.shift()?.()
+}
+
+function epubTtsMaxBatchSentences() {
+  return Math.max(1, Number(appConfig?.epubTtsBatchMaxSentences) || 5)
+}
+
+// 预加载泵每轮递增一次批次序号，用来控制这一轮朗读会话是否还有效——暂停/
+// 切换朗读目标时让旧的泵自然退出，不会跟新一轮朗读抢坑位、抢句子。
+let epubTtsPrefetchToken = 0
+
 function epubTtsConfigured() {
   // speaker_audio/prompt_audio 现在允许留空——GSV-TTS-Lite 服务端本来就
   // 支持这两个留空时落回它自己的 DEFAULT_SPEAKER_AUDIO/
@@ -4964,6 +5061,7 @@ function clearEpubTtsHighlight() {
 
 function stopEpubTts() {
   epubTtsPlaying = false
+  epubTtsPrefetchToken++ // 让还在跑/排队的预加载泵发现自己过期了，尽快退出
   if (epubTtsCurrentAudio) {
     epubTtsCurrentAudio.pause()
     epubTtsCurrentAudio.src = ''
@@ -4985,28 +5083,109 @@ function findEpubTtsStartIndex(content) {
   return epubTtsSentences.findIndex(Boolean)
 }
 
-// 一次请求带上当前句+预加载窗口，命中缓存的句子后端几乎零延迟返回。
-// 用 chunkPromise 去重：同一句子不会被并发请求两次。
-async function ensureEpubTtsChunks(indexes) {
-  const itemId = epubTtsItemId()
-  const need = [...new Set(indexes)].filter((i) => epubTtsSentences[i] && !epubTtsSentences[i].chunk && !epubTtsSentences[i].chunkPromise)
-  if (!need.length || !itemId) return
-  const promise = fetch(`/api/epub/${itemId}/tts-chunk`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ texts: need.map((i) => epubTtsSentences[i].text) }),
-  }).then((res) => res.json()).then((data) => {
+// 纯粹发一次 /tts-chunk 请求、把结果落到 epubTtsSentences 上，不处理并发坑位——
+// 调用前必须确保已经拿到了一个坑位，调用完（无论成败）由调用方自己释放。
+// 拆成这一层单独的原因：泵和"紧急认领单句"两条路径都要发请求，但“谁来占坑位”
+// 不一样（泵自己占、紧急路径临时占），如果这层自己占坑位，两条路径叠加调用
+// 就会变成重复占用——占了两次却只释放一次，坑位会一路漏下去，占满之后所有
+// 后续请求永远卡在排队，表现成朗读放到某一句就彻底卡死不动了（排查这个问题
+// 花了好一阵，复现方式是用慢一点的 mock TTS + 多句朗读，前一两句正常，
+// 后面突然再也不请求了）。
+async function requestEpubTtsChunks(itemId, indexes) {
+  try {
+    const res = await fetch(`/api/epub/${itemId}/tts-chunk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texts: indexes.map((i) => epubTtsSentences[i].text) }),
+    })
+    const data = await res.json()
     for (const chunk of data.chunks || []) {
-      const i = need[chunk.index]
+      const i = indexes[chunk.index]
       if (epubTtsSentences[i]) { epubTtsSentences[i].chunk = chunk; epubTtsSentences[i].chunkPromise = null }
     }
-  }).catch((error) => {
-    for (const i of need) {
+  } catch (error) {
+    for (const i of indexes) {
       if (epubTtsSentences[i]) { epubTtsSentences[i].chunk = { error: error.message }; epubTtsSentences[i].chunkPromise = null }
     }
-  })
-  for (const i of need) epubTtsSentences[i].chunkPromise = promise
-  await promise
+  }
+}
+
+// 紧急认领一批句子：自己占坑位、自己发、自己释放，一条龙不假手旁人。用在
+// "这句现在就要播，还没人认领过"的场景（典型是朗读开口的第一句，此时预加载
+// 泵才刚起步）——不用等泵攒批次的节奏，立刻单独发出去。
+function claimEpubTtsBatch(indexes) {
+  const itemId = epubTtsItemId()
+  if (!itemId) return null
+  const promise = (async () => {
+    await epubTtsAcquireSlot()
+    try {
+      await requestEpubTtsChunks(itemId, indexes)
+    } finally {
+      epubTtsReleaseSlot()
+    }
+  })()
+  for (const i of indexes) epubTtsSentences[i].chunkPromise = promise
+  return promise
+}
+
+// 主播放循环播到某句之前调用：这句如果已经有 chunk/chunkPromise（预加载泵
+// 已经在处理或处理完了）就只是等；谁都没碰过的话（泵还没追上来，或者是
+// 一开始播放的第一句——此时泵才刚起步，ramp 还在 1），立刻单独发一个只有
+// 它自己的请求，不用排在泵攒的批次后面干等，不然开口第一句就要等一轮
+// 攒批次逻辑跑完才有声音。
+// 之前这里 need 为空就直接 return，不等已经存在的 chunkPromise——如果那个
+// chunkPromise 还没 resolve，entry.chunk 这时候还是 undefined，播放循环会
+// 把"还没返回"误判成"失败"直接跳过。这里改成不管 need 是不是空，最后都老实
+// 等一遍所有相关的 chunkPromise。
+async function ensureEpubTtsChunks(indexes) {
+  const unique = [...new Set(indexes)].filter((i) => epubTtsSentences[i])
+  const need = unique.filter((i) => !epubTtsSentences[i].chunk && !epubTtsSentences[i].chunkPromise)
+  if (need.length) claimEpubTtsBatch(need)
+  await Promise.all(unique.map((i) => epubTtsSentences[i].chunkPromise).filter(Boolean))
+}
+
+// 预加载泵：从 startIndex 往后一直攒批次往外发，直到追上这一章末尾、或者
+// 朗读被停掉/换了目标。批次句数从 1 开始逐批递增，封顶 epubTtsBatchMaxSentences
+// （对应"第一句单独发，后面批量变大"），同时不能超过 epubTtsBatchMaxChars
+// 这个累计字符数上限——装不下的句子留给下一批，不会丢。每构建一批之前都要
+// 先抢到一个并发坑位，坑位占满时这里会卡住等，天然限制了"最多往前预读多远"，
+// 不会无限制地把一整章都排进请求队列。
+async function runEpubTtsPrefetchPump(startIndex) {
+  const token = epubTtsPrefetchToken
+  let cursor = startIndex
+  let batchSeq = 0
+  while (epubTtsPlaying && token === epubTtsPrefetchToken) {
+    while (epubTtsSentences[cursor] && (epubTtsSentences[cursor].chunk || epubTtsSentences[cursor].chunkPromise)) cursor++
+    if (!epubTtsSentences[cursor]) return // 这一章能攒的都攒完了，等翻到下一章再起新的泵
+    await epubTtsAcquireSlot()
+    if (!epubTtsPlaying || token !== epubTtsPrefetchToken) { epubTtsReleaseSlot(); return }
+    // 拿到坑位这段等待期间，cursor 指向的句子可能已经被主循环的
+    // ensureEpubTtsChunks 抢先认领了（比如用户手速很快追上来），重新跳过。
+    while (epubTtsSentences[cursor] && (epubTtsSentences[cursor].chunk || epubTtsSentences[cursor].chunkPromise)) cursor++
+    if (!epubTtsSentences[cursor]) { epubTtsReleaseSlot(); return }
+    batchSeq++
+    const targetCount = Math.min(batchSeq, epubTtsMaxBatchSentences())
+    const maxChars = epubTtsBatchMaxChars()
+    const batch = []
+    let total = 0
+    while (epubTtsSentences[cursor] && batch.length < targetCount) {
+      const text = epubTtsSentences[cursor].text
+      if (batch.length && total + text.length > maxChars) break // 装不下了，留给下一批
+      batch.push(cursor)
+      total += text.length
+      cursor++
+    }
+    const itemId = epubTtsItemId()
+    if (!itemId) { epubTtsReleaseSlot(); return }
+    // 坑位是泵自己在循环开头占的（上面那次 epubTtsAcquireSlot），这里只用
+    // 不占坑位的 requestEpubTtsChunks，结束后自己 release——不能再调用
+    // claimEpubTtsBatch/会内部占坑位的版本，否则又是同一批坑位被占两次、
+    // 只释放一次的老问题。
+    const promise = requestEpubTtsChunks(itemId, batch).finally(() => epubTtsReleaseSlot())
+    for (const i of batch) epubTtsSentences[i].chunkPromise = promise
+    // 不等这批结束就继续攒下一批（下一轮循环开头的 epubTtsAcquireSlot 会在坑位
+    // 占满时自然卡住，不会无限制地往前冲）。
+  }
 }
 
 // 有 subtitle 时间戳就按时间戳估，没有就退化成 currentTime/duration——
@@ -5045,6 +5224,7 @@ function ensureEpubTtsSentenceVisible(element, content) {
 async function playEpubTtsFrom(startIndex, content) {
   epubTtsPlaying = true
   epubTtsToggleBtn?.classList.add('active')
+  runEpubTtsPrefetchPump(startIndex).catch(() => {})
   let index = startIndex
   while (epubTtsPlaying) {
     if (!epubTtsSentences[index]) {
@@ -5058,7 +5238,6 @@ async function playEpubTtsFrom(startIndex, content) {
     const entry = epubTtsSentences[index]
     const chunk = entry.chunk
     if (!chunk || chunk.error) { index++; continue }   // 单句失败不中断整体朗读，跳过
-    ensureEpubTtsChunks([index + 1, index + 2].filter((i) => epubTtsSentences[i]))
     clearEpubTtsHighlight()
     entry.element.classList.add('epub-tts-current')
     entry.element.style.setProperty('--tts-progress', '0%')
@@ -6684,6 +6863,8 @@ els.configSave.addEventListener('click', async () => {
         epubTtsPromptAudio: els.configEpubTtsPromptAudio.value,
         epubTtsPromptText: els.configEpubTtsPromptText.value,
         epubTtsMaxConcurrency: Number(els.configEpubTtsMaxConcurrency.value),
+        epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
+        epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,

@@ -275,6 +275,15 @@ function defaultConfig() {
     // 真实 TTS 是 GPU 推理，扛不住并发乱打——分段预加载 + 用户快速翻页都可能
     // 同时触发好几个请求，默认给 1（排队），愿意的话自己调大。
     epubTtsMaxConcurrency: 1,
+    // 预加载从 1 句开始逐批往上加，封顶这个数；配合下面的字符数上限一起限制
+    // 单次 /tts/batched 请求的大小——批次越大效率越高，但 GSV-TTS-Lite 的
+    // 批量接口是整批成功或整批失败，批次越大一次报错连带坑掉的句子也越多，
+    // 默认给个不大不小的值。
+    epubTtsBatchMaxSentences: 5,
+    // 单批文本总长度上限；单句本身超过这个数会在分句阶段先按次级标点
+    // （逗号顿号分号等）拆开，还超就硬切——拆分逻辑见 web/static/app.js 的
+    // splitLongEpubTtsText。
+    epubTtsBatchMaxChars: 200,
     mediaImportProfiles: {
       'rj-media': {
         maxDepth: 6,
@@ -342,6 +351,8 @@ function normalizeConfig(value) {
     epubTtsPromptAudio: String(value?.epubTtsPromptAudio || defaults.epubTtsPromptAudio).trim(),
     epubTtsPromptText: String(value?.epubTtsPromptText || defaults.epubTtsPromptText),
     epubTtsMaxConcurrency: clampNumber(value?.epubTtsMaxConcurrency, 1, 8, defaults.epubTtsMaxConcurrency),
+    epubTtsBatchMaxSentences: clampNumber(value?.epubTtsBatchMaxSentences, 1, 20, defaults.epubTtsBatchMaxSentences),
+    epubTtsBatchMaxChars: clampNumber(value?.epubTtsBatchMaxChars, 20, 2000, defaults.epubTtsBatchMaxChars),
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,

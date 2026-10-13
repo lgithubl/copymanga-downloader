@@ -644,6 +644,8 @@
               <label>提示音频（prompt_audio）<input id="config-epub-tts-prompt-audio" placeholder="examples/prompt.wav 或 URL" /></label>
               <label>提示音频文本（prompt_text，留空自动识别）<input id="config-epub-tts-prompt-text" /></label>
               <label>最大并发（同时打到 TTS 服务的请求数，GPU 推理扛不住乱打）<input id="config-epub-tts-max-concurrency" type="number" min="1" max="8" step="1" /></label>
+              <label>每批最大句数（预加载从 1 句开始逐批递增，封顶这个数）<input id="config-epub-tts-batch-max-sentences" type="number" min="1" max="20" step="1" /></label>
+              <label>每批最大字符数（累计超了就少装几句；单句本身超了会先按次级标点/硬切拆开）<input id="config-epub-tts-batch-max-chars" type="number" min="20" max="2000" step="1" /></label>
 
               <h3>导出相关</h3>
               <label>导出目录<input id="config-export-dir" /></label>
