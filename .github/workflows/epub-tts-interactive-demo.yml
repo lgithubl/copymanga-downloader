@@ -270,6 +270,23 @@ jobs:
           cat /tmp/cloudflared.log || true
           exit 1
 
+      # 这一步存在的理由：Keep session alive 那一步要 sleep 几十分钟，整个
+      # job 在这期间一直是 in_progress 状态，而 GitHub 只有 job 真正结束后
+      # 才会把日志打包开放下载（gh run view --log 对 in_progress 的 run
+      # 直接拒绝："logs will be available when it is complete"）。不把 URL/
+      # 账号密码单独发出来，我在隧道还活着的这几十分钟里根本没法拿到它们。
+      - name: Post connection info as a commit comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY="Run: ${{ github.run_id }}
+          URL: ${{ steps.tunnel.outputs.url }}
+          Username: ${{ steps.auth.outputs.username }}
+          Password: ${{ steps.auth.outputs.password }}
+          Expires: runner stops after ${{ inputs.minutes }} minutes"
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body="$BODY" || true
+
       - name: Keep session alive
         run: |
           MINUTES="${{ inputs.minutes }}"
