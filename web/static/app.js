@@ -126,6 +126,7 @@ const els = {
   libraryThumbnails: document.querySelector('#library-thumbnails'),
   libraryUnits: document.querySelector('#library-units'),
   libraryTagScripts: document.querySelector('#library-tag-scripts'),
+  mergeTagScripts: document.querySelector('#merge-tag-scripts'),
   libraryRunTagScripts: document.querySelector('#library-run-tag-scripts'),
   libraryRunPageTagScripts: document.querySelector('#library-run-page-tag-scripts'),
   libraryRunAllTagScripts: document.querySelector('#library-run-all-tag-scripts'),
@@ -1279,6 +1280,11 @@ els.tabs.forEach((tab) => {
     if (tab.dataset.view === 'merge-view') {
       // 这里故意不重置 mergePage：从成员卡片点进视频会切走，再点回合并 tab 就是
       // 这条路径。重置的话每次回来都落到第 1 页，翻到第 3 页看的那组就找不着了。
+      // tagScripts 是懒加载的——之前只有进媒体库 tab 才会拉，如果用户会话里
+      // 从没点过媒体库、直接先点了合并，这里的 tag 脚本复选框会显示"暂无元数据
+      // 脚本"（哪怕服务端其实有脚本，只是没人触发过那次请求）。跟媒体导入页
+      // 用的是同一个防御性写法。
+      if (!tagScripts.length) loadTagScripts().catch(() => {})
       Promise.all([loadMergeCandidates(), refreshAnidbDumpStatus()]).catch(() => {})
     }
     if (tab.dataset.view === 'media-import-view') loadMediaImportItems()
@@ -1528,6 +1534,7 @@ async function loadTagScripts({ reload = false } = {}) {
 function renderTagScriptPickers() {
   renderTagScriptCheckboxes(els.mediaImportTagScripts, 'media-import-tag-script')
   renderTagScriptCheckboxes(els.libraryTagScripts, 'library-tag-script')
+  renderTagScriptCheckboxes(els.mergeTagScripts, 'merge-tag-script')
   applyMediaImportProfile()
   updateLibraryMetadataActionButtons()
 }
@@ -2584,14 +2591,24 @@ async function loadMergeMemberCards(group) {
 async function runMergeGroup(group) {
   const sourceItemIds = group.members.slice(1).map((m) => m.itemId)
   if (!sourceItemIds.length) return null
-  return api('/api/library/merge', {
+  const type = group.members[0].type || 'media'
+  const result = await api('/api/library/merge', {
     method: 'POST',
-    body: JSON.stringify({
-      type: group.members[0].type || 'media',
-      targetItemId: group.targetItemId,
-      sourceItemIds,
-    }),
+    body: JSON.stringify({ type, targetItemId: group.targetItemId, sourceItemIds }),
   })
+  // 合并本身不保留源条目的 tag（见合并页面自己的提示文案），这里给个补救：
+  // 勾了脚本就对合并后的条目重跑一遍，跟库存那边"执行全量"是同一个接口。
+  // 不 await——这个接口是扔进后台队列就返回，不是跑完脚本才返回；"合并当前页
+  // 全部"是逐组 await runMergeGroup 的循环，这里要是 await 到脚本跑完，等于
+  // 把本该并行的脚本执行硬串成了合并一组等一组，没必要也没理由这么慢。
+  const actionIds = checkedTagScriptIds('merge-tag-script')
+  if (actionIds.length && result?.item?.itemId) {
+    api(`/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(result.item.itemId)}/metadata-actions`, {
+      method: 'POST',
+      body: JSON.stringify({ actionIds, force: true }),
+    }).catch(() => {})
+  }
+  return result
 }
 
 async function refreshAnidbDumpStatus() {
