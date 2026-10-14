@@ -2425,6 +2425,29 @@ h2 {
   display: none;
 }
 
+/* 鼠标后退/前进键快进快退时的提示——只是个一闪而过的反馈，不需要跟字幕抢
+   位置，放画面正中间，参考常见播放器"双击快进"那种居中大字提示的位置。 */
+.stream-seek-indicator {
+  background: rgba(15, 20, 25, 0.55);
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 700;
+  left: 50%;
+  padding: 10px 22px;
+  pointer-events: none;
+  position: absolute;
+  text-shadow: 0 2px 5px #000000;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.15s ease;
+  z-index: 4;
+}
+
+.stream-seek-indicator.hidden {
+  display: none;
+}
+
 .stream-subtitle-line + .stream-subtitle-line {
   margin-top: 0.32em;
 }
@@ -2625,6 +2648,24 @@ h2 {
 .stream-vr-layout,
 .stream-vr-eye {
   min-width: 82px;
+}
+
+.stream-seek-seconds-label {
+  align-items: center;
+  color: #f8fafc;
+  display: flex;
+  font-size: 13px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.stream-seek-seconds {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f8fafc;
+  min-height: 32px;
+  padding: 5px 8px;
+  width: 64px;
 }
 
 .stream-vr-controls {

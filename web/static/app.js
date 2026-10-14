@@ -293,6 +293,8 @@ let mediaMaxScrollLeft = 0
 let libraryProgressTimer = null
 let currentStreamCleanup = null
 let currentStreamImmersiveToggle = null
+let currentStreamSeekBy = null
+let galleryImmersiveJumpOnce = null
 const JOB_POLL_KEY = 'copymanga.jobPollEnabled'
 let jobPollIntervalMs = 5000
 let jobPollTimer = null
@@ -3823,6 +3825,39 @@ function renderStreamMedia(reader, options = {}) {
     player.defaultPlaybackRate = rate
     localStorage.setItem('copymanga.mediaPlaybackRate', String(rate))
   })
+  // 快进快退秒数——鼠标后退/前进键（见全局 mousedown 路由）专用，日常用不到
+  // 放进"更多"面板，跟倍速/字幕放一块。跟音量/倍速一样走 localStorage，不是
+  // 服务端配置：这个面板里其它几个设置全是这个套路，没必要为这一个新开一套。
+  const seekSecondsLabel = document.createElement('label')
+  seekSecondsLabel.className = 'stream-seek-seconds-label'
+  seekSecondsLabel.textContent = '快进快退秒数'
+  const seekSecondsInput = document.createElement('input')
+  seekSecondsInput.type = 'number'
+  seekSecondsInput.className = 'stream-seek-seconds'
+  seekSecondsInput.min = '1'
+  seekSecondsInput.max = '120'
+  seekSecondsInput.step = '1'
+  seekSecondsInput.value = localStorage.getItem('copymanga.mediaSeekSeconds') || '10'
+  seekSecondsInput.title = '鼠标后退/前进键快进快退的秒数'
+  seekSecondsInput.addEventListener('change', () => {
+    const seconds = Math.max(1, Math.min(120, Math.round(Number(seekSecondsInput.value)) || 10))
+    seekSecondsInput.value = String(seconds)
+    localStorage.setItem('copymanga.mediaSeekSeconds', String(seconds))
+  })
+  seekSecondsLabel.append(seekSecondsInput)
+  const seekIndicator = document.createElement('div')
+  seekIndicator.className = 'stream-seek-indicator hidden'
+  let seekIndicatorTimer = null
+  // 跳过去的瞬间会触发 player 自己的 timeupdate，进度条（setProgress，下面定义）
+  // 跟着联动更新，不用在这里手动再同步一遍。
+  const seekBy = (deltaSeconds) => {
+    if (!Number.isFinite(player.duration) || player.duration <= 0) return
+    player.currentTime = Math.max(0, Math.min(player.duration, player.currentTime + deltaSeconds))
+    seekIndicator.textContent = deltaSeconds > 0 ? `+${deltaSeconds}s ▶▶` : `◀◀ ${deltaSeconds}s`
+    seekIndicator.classList.remove('hidden')
+    clearTimeout(seekIndicatorTimer)
+    seekIndicatorTimer = setTimeout(() => seekIndicator.classList.add('hidden'), 600)
+  }
   const subtitleSmaller = document.createElement('button')
   subtitleSmaller.type = 'button'
   subtitleSmaller.className = 'stream-icon-button stream-subtitle-size'
@@ -4049,7 +4084,7 @@ function renderStreamMedia(reader, options = {}) {
   const morePanel = document.createElement('div')
   morePanel.className = 'stream-more-panel hidden'
   morePanel.append(rateSelect, subtitleSelect, secondarySubtitleSelect, subtitleSmaller,
-    subtitleLarger, loopToggle, nextToggle, vrControls.element, vrControls.presetNote)
+    subtitleLarger, loopToggle, nextToggle, seekSecondsLabel, vrControls.element, vrControls.presetNote)
   const setMoreOpen = (open) => {
     morePanel.classList.toggle('hidden', !open)
     more.classList.toggle('active', open)
@@ -4161,7 +4196,7 @@ function renderStreamMedia(reader, options = {}) {
     player.addEventListener('dblclick', () => setImmersive(!inFullscreen()))
   }
 
-  frame.append(player, subtitleOverlay, morePanel, controls)
+  frame.append(player, subtitleOverlay, seekIndicator, morePanel, controls)
   shell.append(title, frame, playbackWarning, meta)
   els.mediaReaderContent.replaceChildren(shell)
   // 只在播放视图仍然在前台时恢复：后台续播（用户已经切去媒体库）时
@@ -4170,12 +4205,15 @@ function renderStreamMedia(reader, options = {}) {
   const inForeground = els.mediaViewerView.classList.contains('active')
   if ((wasImmersive || immersivePref(reader.type)) && inForeground) setImmersive(true)
   setTimeout(attemptAutoPlay, 0)
+  currentStreamSeekBy = seekBy
   currentStreamCleanup = () => {
     document.removeEventListener('mousemove', onPointerMove)
     document.removeEventListener('keydown', onKeyDown)
     subtitleResizeObserver.disconnect()
     clearTimeout(chromeTimer)
+    clearTimeout(seekIndicatorTimer)
     currentStreamImmersiveToggle = null
+    currentStreamSeekBy = null
     els.mediaViewerView.classList.remove('stream-page-fullscreen')
     els.app.classList.remove('stream-immersive', 'stream-chrome-visible')
     els.mediaImmersive?.classList.remove('active')
@@ -4974,6 +5012,16 @@ function mediaPageScrollLeft(pageIndex) {
   return Math.max(0, Math.min(mediaMaxScrollLeft, pageIndex * mediaPageStep))
 }
 
+// 原来是 enterEpubImmersive 里的局部闭包，挪到模块级——它只依赖模块级状态
+// （mediaPageIndex/mediaPageCount）和模块级函数（setMediaPage/mediaStepTarget），
+// 没有任何真正需要闭包的东西。挪出来是因为鼠标后退/前进键的全局路由需要
+// 在沉浸阅读器之外也能调用翻页，不想为了复用这几行再重新实现一遍。
+function goPage(delta) {
+  const next = mediaPageIndex + delta
+  if (next >= 0 && next <= mediaPageCount - 1) { setMediaPage(next); return }
+  mediaStepTarget(delta > 0 ? 'next' : 'prev')?.()
+}
+
 // EPUB 沉浸阅读。隐藏顶栏/头部那套直接复用视频的 stream-immersive +
 // stream-page-fullscreen —— 那些规则里针对 .stream-player / media-stream 的部分
 // 对 epub 是空操作，而「隐藏 chapter-head、section 单行、顶栏 fixed」正好就是要的。
@@ -5392,12 +5440,8 @@ function enterEpubImmersive({ remember = false } = {}) {
     if (widthAdjustCleanup) return
     downAt = { x: event.clientX, y: event.clientY }
   }
-  // 本章翻完了就续到下一章节/下一单元，而不是在最后一页上卡死
-  const goPage = (delta) => {
-    const next = mediaPageIndex + delta
-    if (next >= 0 && next <= mediaPageCount - 1) { setMediaPage(next); return }
-    mediaStepTarget(delta > 0 ? 'next' : 'prev')?.()
-  }
+  // 翻页逻辑已经挪到模块级的 goPage() 了（这样鼠标后退/前进键能复用），
+  // 这里不再重复定义，直接用那个。
   const onUp = (event) => {
     const start = downAt
     downAt = null
@@ -5489,6 +5533,7 @@ function exitGalleryImmersive({ remember = false } = {}) {
   galleryImmersiveSync = null
   galleryImmersiveView = ''
   galleryImmersiveKind = ''
+  galleryImmersiveJumpOnce = null
   finish()
 }
 
@@ -5652,6 +5697,18 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     }
     jumpStart = 0
     raf = requestAnimationFrame(stepJump)
+  }
+
+  // 鼠标后退/前进键（全局 mousedown 路由）专用：点一下跳一次，不是按住连续滚。
+  // 复用分段模式的 beginJump/jumpDistance——不管当前 UI 上选的是"连续"还是
+  // "分段"模式，这两个函数本来就不受模式开关门控，点按的语义本来就该是离散的
+  // 一下一下跳，不该去复刻"连续"模式那种按住累加速度的手感（鼠标侧键也通常
+  // 不会被长按）。借用 scrollDir 这个字段只是为了复用 beginJump 内部的方向判断，
+  // 跳完立刻归零，不触发 scheduleJump 进入连续跳页。
+  function jumpOnce(direction) {
+    scrollDir = direction
+    beginJump()
+    scrollDir = 0
   }
 
   // 松手：只是把目标速度归零，让 step 自己减速收尾；分段模式下让当前这一跳走完
@@ -5852,6 +5909,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   els.app.classList.add('stream-immersive')
   galleryImmersiveView = view.id
   galleryImmersiveKind = kind
+  galleryImmersiveJumpOnce = jumpOnce
   toggle?.classList.add('active')
   toggle?.blur()
   syncInfo()
@@ -6308,6 +6366,32 @@ els.seriesModalClose?.addEventListener('click', closeSeriesModal)
 els.seriesModal?.querySelector('.series-modal-backdrop')?.addEventListener('click', closeSeriesModal)
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !els.seriesModal?.classList.contains('hidden')) closeSeriesModal()
+})
+// 鼠标后退/前进键（button 3/4）在媒体浏览里改派去做内容相关的动作，不走
+// 浏览器默认的页面历史后退/前进——这个应用内部切 tab/视图不依赖浏览器历史，
+// 拦掉不会丢失任何"真正的"后退前进需求。必须在 mousedown 上 preventDefault
+// （不是 click）：部分浏览器在 mousedown 这一步就已经触发了原生导航，
+// 等到 click 再拦已经晚了。
+// 这几个按钮不是任何浏览器一定会可靠发出来的——有驱动软件的鼠标可能在
+// 操作系统层面直接把侧键模拟成 Alt+方向键或者直接调浏览器命令，网页这层
+// 完全看不到事件，这种情况没法在代码里处理。
+document.addEventListener('mousedown', (event) => {
+  if (event.button !== 3 && event.button !== 4) return
+  if (!els.mediaViewerView?.classList.contains('active')) return
+  const delta = event.button === 3 ? -1 : 1
+  const contentClass = els.mediaReaderContent?.classList
+  if (contentClass?.contains('media-html')) {
+    event.preventDefault()
+    goPage(delta)
+  } else if (contentClass?.contains('media-stream')) {
+    if (!currentStreamSeekBy) return
+    event.preventDefault()
+    const seconds = Math.max(1, Math.min(120, Math.round(Number(localStorage.getItem('copymanga.mediaSeekSeconds'))) || 10))
+    currentStreamSeekBy(delta * seconds)
+  } else if (contentClass?.contains('media-images') && galleryImmersiveJumpOnce) {
+    event.preventDefault()
+    galleryImmersiveJumpOnce(delta)
+  }
 })
 els.libraryRunTagScripts.addEventListener('click', async () => {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
