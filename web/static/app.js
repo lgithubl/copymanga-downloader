@@ -113,6 +113,11 @@ const els = {
   libraryLimit: document.querySelector('#library-limit'),
   librarySort: document.querySelector('#library-sort'),
   librarySample: document.querySelector('#library-sample'),
+  librarySearchPresetSelect: document.querySelector('#library-search-preset-select'),
+  librarySearchPresetName: document.querySelector('#library-search-preset-name'),
+  librarySearchPresetLoad: document.querySelector('#library-search-preset-load'),
+  librarySearchPresetSave: document.querySelector('#library-search-preset-save'),
+  librarySearchPresetDelete: document.querySelector('#library-search-preset-delete'),
   librarySearch: document.querySelector('#library-search'),
   libraryRefresh: document.querySelector('#library-refresh'),
   libraryIndexRebuild: document.querySelector('#library-index-rebuild'),
@@ -2341,6 +2346,68 @@ function syncLibrarySourceProfileOptions() {
     select.append(option)
   }
   select.value = [...select.options].some((o) => o.value === current) ? current : ''
+}
+
+// —— 媒体库搜索条件预设 ——
+// 常用筛选条件存成一条条命名预设，方便来回切换，不用每次手动把 tag 搜索框 +
+// 类型/导入方案/系列字幕/排序/每页 这几项重新摆一遍。跟这个应用里其它个人
+// 偏好（播放速度、字幕缩放……）一样走 localStorage，不进服务端 config——
+// 换浏览器会丢，但实现成本低很多，这类个人速查条件本来也不需要跨设备同步。
+const LIBRARY_SEARCH_PRESETS_KEY = 'copymanga.librarySearchPresets'
+const LIBRARY_SEARCH_PRESETS_MAX = 50
+
+function loadLibrarySearchPresets() {
+  try {
+    const list = JSON.parse(localStorage.getItem(LIBRARY_SEARCH_PRESETS_KEY) || '[]')
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+function saveLibrarySearchPresets(list) {
+  localStorage.setItem(LIBRARY_SEARCH_PRESETS_KEY, JSON.stringify(list))
+}
+
+function renderLibrarySearchPresetOptions() {
+  const select = els.librarySearchPresetSelect
+  if (!select) return
+  const current = select.value
+  select.innerHTML = '<option value="">选择预设…</option>'
+  for (const preset of loadLibrarySearchPresets()) {
+    const option = document.createElement('option')
+    option.value = preset.name
+    option.textContent = preset.name
+    select.append(option)
+  }
+  select.value = [...select.options].some((o) => o.value === current) ? current : ''
+}
+
+// 读「现在界面上」这 6 项的值，保存时用。
+function currentLibrarySearchPresetFields() {
+  return {
+    tagSearch: els.libraryTagSearch?.value || '',
+    type: els.libraryType?.value || 'all',
+    sourceProfile: els.librarySourceProfile?.value || '',
+    seriesSubtitle: els.librarySeriesSubtitle?.value || 'any',
+    sort: els.librarySort?.value || 'imported_desc',
+    limit: els.libraryLimit?.value || '20',
+  }
+}
+
+// 把预设的 6 项值填回界面控件——只填值，不管 select 里有没有这个 option
+// （比如导入方案预设保存之后又被删了），填不进去的保持控件原来的值，不报错。
+function applyLibrarySearchPresetFields(fields) {
+  if (els.libraryTagSearch) els.libraryTagSearch.value = fields.tagSearch || ''
+  const trySet = (select, value) => {
+    if (!select || value === undefined) return
+    if ([...select.options].some((o) => o.value === value)) select.value = value
+  }
+  trySet(els.libraryType, fields.type)
+  trySet(els.librarySourceProfile, fields.sourceProfile)
+  trySet(els.librarySeriesSubtitle, fields.seriesSubtitle)
+  trySet(els.librarySort, fields.sort)
+  trySet(els.libraryLimit, fields.limit)
 }
 
 // —— 合并 ——
@@ -6287,6 +6354,50 @@ els.librarySort?.addEventListener('change', () => {
   loadLibraryItems().catch((error) => alert(error.message))
 })
 syncLibrarySourceProfileOptions()
+renderLibrarySearchPresetOptions()
+// 下拉框选中只是选中，不自动应用——按你的要求，点"加载"才真的把这个预设的
+// 6 项值填回控件并触发搜索。选中时顺手把名称输入框也填上，方便直接点"保存"
+// 就地更新这条预设，不用重新手打一遍名字。
+els.librarySearchPresetSelect?.addEventListener('change', () => {
+  if (els.librarySearchPresetSelect.value && els.librarySearchPresetName) {
+    els.librarySearchPresetName.value = els.librarySearchPresetSelect.value
+  }
+})
+els.librarySearchPresetLoad?.addEventListener('click', () => {
+  const name = els.librarySearchPresetSelect?.value
+  if (!name) return alert('请先在下拉框里选一个预设')
+  const preset = loadLibrarySearchPresets().find((p) => p.name === name)
+  if (!preset) return alert('这个预设已经不存在了，刷新一下列表')
+  applyLibrarySearchPresetFields(preset)
+  libraryPage = 1
+  loadLibraryItems().catch((error) => alert(error.message))
+})
+els.librarySearchPresetSave?.addEventListener('click', () => {
+  const name = (els.librarySearchPresetName?.value || '').trim()
+  if (!name) return alert('请先填一个预设名称')
+  const presets = loadLibrarySearchPresets()
+  const fields = currentLibrarySearchPresetFields()
+  const existingIndex = presets.findIndex((p) => p.name === name)
+  if (existingIndex >= 0) {
+    presets[existingIndex] = { name, ...fields }
+  } else {
+    if (presets.length >= LIBRARY_SEARCH_PRESETS_MAX) {
+      return alert(`最多保存 ${LIBRARY_SEARCH_PRESETS_MAX} 条预设，先删几条再存`)
+    }
+    presets.push({ name, ...fields })
+  }
+  saveLibrarySearchPresets(presets)
+  renderLibrarySearchPresetOptions()
+  els.librarySearchPresetSelect.value = name
+})
+els.librarySearchPresetDelete?.addEventListener('click', () => {
+  const name = els.librarySearchPresetSelect?.value
+  if (!name) return alert('请先在下拉框里选一个要删除的预设')
+  if (!confirm(`删除预设"${name}"？`)) return
+  saveLibrarySearchPresets(loadLibrarySearchPresets().filter((p) => p.name !== name))
+  renderLibrarySearchPresetOptions()
+  if (els.librarySearchPresetName) els.librarySearchPresetName.value = ''
+})
 els.mergeRefresh?.addEventListener('click', () => {
   refreshMergeCandidates().catch((error) => alert(error.message))
   refreshAnidbDumpStatus().catch(() => {})

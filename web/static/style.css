@@ -541,6 +541,18 @@ h2 {
   min-width: 120px;
 }
 
+.library-search-presets {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.library-search-presets input {
+  min-width: 120px;
+  width: auto;
+}
+
 @media (max-width: 700px) {
   .library-more-controls > div {
     top: 136px;

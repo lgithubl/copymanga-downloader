@@ -336,6 +336,15 @@
                       <option value="random">随机排序</option>
                     </select>
                     <button id="library-sample" class="secondary">生成示例</button>
+                    <span class="library-search-presets">
+                      <select id="library-search-preset-select" title="常用搜索条件预设">
+                        <option value="">选择预设…</option>
+                      </select>
+                      <input id="library-search-preset-name" placeholder="预设名称" title="保存时用这个名字，跟已有预设重名就是覆盖更新" />
+                      <button id="library-search-preset-load" class="secondary" title="把左边下拉框选中的预设应用到上面的搜索条件并立即搜索">加载</button>
+                      <button id="library-search-preset-save" class="secondary" title="把当前的 tag 搜索框 + 类型/导入方案/系列字幕/排序/每页 这几项存成一条预设">保存</button>
+                      <button id="library-search-preset-delete" class="danger" title="删除左边下拉框选中的预设">删除</button>
+                    </span>
                   </div>
                 </details>
               </div>
