@@ -227,6 +227,7 @@ const els = {
   configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
+  configMediaOpenInNewTab: document.querySelector('#config-media-open-in-new-tab'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
   configMergePdfFmt: document.querySelector('#config-merge-pdf-fmt'),
@@ -301,6 +302,63 @@ let currentStreamCleanup = null
 let currentStreamImmersiveToggle = null
 let currentStreamSeekBy = null
 let galleryImmersiveJumpOnce = null
+
+// —— 媒体浏览的 URL 深链 / 多标签页 ——
+// 每个浏览器标签页是独立的 JS 环境，阅读器那二十多个模块级单例互不干扰，所以"多标签页"
+// 不用改阅读器本身，只要让一个标签页能靠 URL 直接落到某个条目/章节上：
+//   #/media/{type}/{itemId}                                  按历史记录续读（和点"继续"一样）
+//   #/media/{type}/{itemId}/{unitId}[?section={sectionId}]   打开指定章节
+// 用 hash 而不是路径：服务端不用加路由，静态文件原样返回。
+// 这些放在文件靠前的位置：下面的 bootMediaRoute 在模块加载时就要用，放后面会踩 const 的 TDZ。
+const MEDIA_ROUTE_PREFIX = '#/media/'
+let currentMediaRoute = null   // 当前阅读器对应的路由，openMediaUnit 成功后写入
+let backgroundSyncStarted = false
+
+function parseMediaRoute(hash = location.hash) {
+  if (!hash.startsWith(MEDIA_ROUTE_PREFIX)) return null
+  try {
+    const [pathPart, queryPart = ''] = hash.slice(MEDIA_ROUTE_PREFIX.length).split('?')
+    const [type, itemId, unitId = ''] = pathPart.split('/').map((part) => decodeURIComponent(part))
+    if (!type || !itemId) return null
+    return { type, itemId, unitId, sectionId: new URLSearchParams(queryPart).get('section') || '' }
+  } catch {
+    return null   // 手敲的 URL 里有非法的 % 转义
+  }
+}
+
+function mediaRouteHash({ type, itemId, unitId = '', sectionId = '' }) {
+  let hash = `${MEDIA_ROUTE_PREFIX}${encodeURIComponent(type)}/${encodeURIComponent(itemId)}`
+  if (unitId) hash += `/${encodeURIComponent(unitId)}`
+  if (unitId && sectionId) hash += `?section=${encodeURIComponent(sectionId)}`
+  return hash
+}
+
+// URL 只在"媒体浏览是当前视图、并且有阅读器"时反映它，其余时候清掉：否则从阅读器切去
+// 别的页再刷新，会被拽回阅读器。用 replaceState：既不往历史栈里塞记录，也不会触发
+// hashchange（不然自己改 URL 会让自己再打开一遍）。
+function syncMediaHash() {
+  const route = currentMediaRoute
+  const showing = Boolean(route && els.mediaViewerView?.classList.contains('active'))
+  if (showing) {
+    const want = mediaRouteHash(route)
+    if (location.hash !== want) history.replaceState(null, '', `${location.pathname}${location.search}${want}`)
+  } else if (parseMediaRoute()) {
+    history.replaceState(null, '', `${location.pathname}${location.search}`)
+  }
+}
+
+function openMediaRouteInNewTab(route) {
+  // 必须在点击处理器里同步调用（前面不能有 await），否则会被浏览器当成弹窗拦掉
+  window.open(`${location.origin}${location.pathname}${location.search}${mediaRouteHash(route)}`, '_blank', 'noopener')
+}
+
+// Ctrl/⌘ 点击永远开新标签页（和浏览器里点链接的习惯一致）；普通点击看配置开关。
+function shouldOpenMediaInNewTab(event) {
+  return Boolean(event?.ctrlKey || event?.metaKey || appConfig?.mediaOpenInNewTab)
+}
+
+// 从 URL 启动的标签页：落在阅读器上，不是默认的搜索页。
+const bootMediaRoute = parseMediaRoute()
 const JOB_POLL_KEY = 'copymanga.jobPollEnabled'
 let jobPollIntervalMs = 5000
 let jobPollTimer = null
@@ -668,6 +726,11 @@ function showView(id) {
   els.app.classList.toggle('media-viewer-focused', id === 'media-viewer-view')
   // 顶栏的「返回」只在两个阅读视图里有意义，别的页没有「上一处」可回
   if (els.globalBack) els.globalBack.hidden = !['media-viewer-view', 'viewer-view'].includes(id)
+  // 从 URL 直接落在阅读器上的标签页不建 EventSource、不轮询（阅读器用不上，见
+  // startBackgroundSync）；一旦离开阅读器去别的页，那些页面要实时更新，这时才启动。
+  // 普通标签页启动时已经启动过了，这里是空操作。
+  if (id !== 'media-viewer-view') startBackgroundSync()
+  syncMediaHash()
 }
 
 function renderComic(data, target = 'search') {
@@ -1223,6 +1286,7 @@ async function loadConfig() {
   els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
+  els.configMediaOpenInNewTab.checked = Boolean(config.mediaOpenInNewTab)
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
@@ -2307,9 +2371,9 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
         <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
       </div>
     `
-  card.addEventListener('click', () => {
+  card.addEventListener('click', (event) => {
     // continueLibraryItem 只用到 {type,itemId}，精简的 member 就够，不必取完整条目
-    if (libraryCardOpensViewer(target)) continueLibraryItem(target).catch((error) => alert(error.message))
+    if (libraryCardOpensViewer(target)) continueLibraryItem(target, event).catch((error) => alert(error.message))
     else selectLibraryItem(target.type, target.itemId)
   })
   card.querySelector('.library-units-go')?.addEventListener('click', (event) => {
@@ -2326,7 +2390,7 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   })
   card.querySelector('.library-continue')?.addEventListener('click', (event) => {
     event.stopPropagation()
-    continueLibraryItem(item).catch((error) => alert(error.message))
+    continueLibraryItem(item, event).catch((error) => alert(error.message))
   })
   return card
 }
@@ -2858,6 +2922,10 @@ function renderLibraryUnits() {
     row.addEventListener('click', (event) => {
       if (event.target.closest('button,input')) return
       if (unit.mediaKind === 'subtitle') return
+      if (shouldOpenMediaInNewTab(event) && currentLibraryItem) {
+        openMediaRouteInNewTab({ type: currentLibraryItem.type, itemId: currentLibraryItem.itemId, unitId: unit.unitId })
+        return
+      }
       openMediaUnit(unit.unitId)
     })
     row.querySelector('.unit-tags')?.addEventListener('click', (event) => {
@@ -2993,9 +3061,18 @@ function historyProgressText(history) {
   return ''
 }
 
-async function continueLibraryItem(itemOrHistory) {
-  const type = itemOrHistory.type
-  const itemId = itemOrHistory.itemId
+// 入口外壳：决定在哪打开。必须在任何 await 之前就 window.open，否则会被当成弹窗拦截。
+async function continueLibraryItem(itemOrHistory, event) {
+  if (shouldOpenMediaInNewTab(event)) {
+    openMediaRouteInNewTab({ type: itemOrHistory.type, itemId: itemOrHistory.itemId })
+    return
+  }
+  return resumeLibraryItem(itemOrHistory.type, itemOrHistory.itemId)
+}
+
+// 在当前标签页里按历史记录续读。新标签页启动时（URL 里没带章节）也走这里，
+// 所以续读的位置和"点继续"完全一致。
+async function resumeLibraryItem(type, itemId) {
   let history = libraryHistoryByKey.get(libraryKey(type, itemId))
   if (!history) {
     history = await api(`/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/history`)
@@ -3047,7 +3124,7 @@ function renderLibraryHistory() {
         </div>
       </div>
     `
-    card.querySelector('.history-continue')?.addEventListener('click', () => continueLibraryItem(history).catch((error) => alert(error.message)))
+    card.querySelector('.history-continue')?.addEventListener('click', (event) => continueLibraryItem(history, event).catch((error) => alert(error.message)))
     card.querySelector('.history-open')?.addEventListener('click', async () => {
       showView('library-view')
       await loadLibraryTypes()
@@ -3270,6 +3347,7 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
   }
   try {
     currentMediaReader = null
+    currentMediaRoute = null
     mediaPageIndex = 0
     mediaPageCount = 1
     els.mediaReaderBack.disabled = false
@@ -3289,11 +3367,15 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     const suffix = params.toString() ? `?${params}` : ''
     const reader = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)
     currentMediaReader = reader
+    // 记下这个阅读器对应的路由，并把 URL 同步过去：刷新能回到同一章，链接能直接发给别的标签页。
+    // 后台续播（自动连播）也更新路由，但只有媒体浏览是当前视图时才会真的写进 URL。
+    currentMediaRoute = { type: owner.type, itemId: owner.itemId, unitId, sectionId: reader.section?.sectionId || sectionId || '' }
     els.mediaReaderTitle.textContent = reader.section?.title || reader.unit?.title || unitId
     els.mediaReaderPrev.disabled = !reader.navigation?.prev
     els.mediaReaderNext.disabled = !reader.navigation?.next
     renderMediaSectionSelect(reader)
     renderMediaReader(reader, options)
+    syncMediaHash()
     const resumeRatio = isLibraryPageOwner(owner) && reader.section?.sectionId === currentLibraryProgress?.lastSectionId
       ? currentLibraryProgress.lastScrollRatio
       : 0
@@ -3308,6 +3390,7 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     setMediaViewerMode('empty')
     els.mediaReaderContent.className = 'media-reader-content empty-panel'
     els.mediaReaderContent.textContent = error.message
+    syncMediaHash()   // 路由已经清空，把 URL 上残留的旧章节也清掉，免得刷新又拽回去
   }
 }
 
@@ -6902,8 +6985,18 @@ els.mediaImmersive?.addEventListener('click', () => {
   enterEpubImmersive({ remember: true })
 })
 els.mediaWidthAdjust?.addEventListener('click', toggleWidthAdjust)
+// 从 URL 直接落在阅读器上的标签页，媒体库页从没加载过（列表是空的）。第一次"返回"借用
+// 目标 tab 自己的点击处理器把它加载出来，效果和用户手点那个 tab 完全一样。普通标签页
+// 不走这条：它的媒体库页早就加载好了，重载会丢掉滚动位置。
+let readerTabNeedsLibraryLoad = Boolean(bootMediaRoute)
 els.mediaReaderBack.addEventListener('click', () => {
-  showView(mediaReturnView || 'library-view')
+  const target = mediaReturnView || 'library-view'
+  if (readerTabNeedsLibraryLoad) {
+    readerTabNeedsLibraryLoad = false
+    const tab = els.tabs.find((candidate) => candidate.dataset.view === target)
+    if (tab) { tab.click(); return }
+  }
+  showView(target)
 })
 // 阅读器导航（上一章/下一章/目录/翻页）作用在当前会话上，归属必须跟着会话走
 function openUnitInSession(unitId, sectionId = '') {
@@ -7122,6 +7215,7 @@ els.configSave.addEventListener('click', async () => {
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
+        mediaOpenInNewTab: els.configMediaOpenInNewTab.checked,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,
         mergePdfFmt: els.configMergePdfFmt.value,
@@ -7280,47 +7374,58 @@ async function syncJobs() {
   }
 }
 
-const events = new EventSource('/api/events')
-events.addEventListener('open', () => { syncJobs().catch(() => {}) })
-events.addEventListener('job', (event) => {
-  const job = JSON.parse(event.data)
-  jobs = [job, ...jobs.filter((item) => item.id !== job.id)]
-  renderJobs()
-  if (job.status === 'completed') {
-    refreshDownloadedState().then(() => {
-      if (currentComicPathWord === job.comicPathWord) loadComic(currentComicPathWord, currentComicTarget)
-      scheduleDownloadedRefreshIfActive()
-    })
-  }
-})
-events.addEventListener('jobDelete', (event) => {
-  const { id } = JSON.parse(event.data)
-  jobs = jobs.filter((job) => job.id !== id)
-  renderJobs()
-})
-events.addEventListener('imageCheck', (event) => {
-  const job = JSON.parse(event.data)
-  if (job.status === 'completed' || job.status === 'failed') {
-    refreshDownloadedState().then(() => {
-      scheduleDownloadedRefreshIfActive()
-      if (currentDownloadedComicPathWord === job.comicPathWord) {
-        loadDownloadedComic(job.comicPathWord).catch(() => {})
-      }
-    }).catch(() => {})
-  }
-})
-events.addEventListener('inventoryUpdate', (event) => {
-  const update = JSON.parse(event.data)
-  renderInventoryUpdate(update)
-  if (update.status === 'completed') {
-    scheduleDownloadedRefreshIfActive(0)
-  }
-})
+// 后台同步 = 实时事件流（EventSource /api/events）+ 任务兜底轮询 + 首屏用的几个全局状态。
+// 它们只服务于漫画下载那一侧：/api/events 推的是 job/jobDelete（下载任务进度）、
+// imageCheck（本地漫画图片检查）、inventoryUpdate（本地库存更新），媒体库阅读器一个都用不上。
+// 原来是模块加载时无条件执行；改成函数，从 URL 直接落在阅读器上的标签页（见 bootMediaRoute）
+// 启动时不跑，等它离开阅读器去别的页面时（showView）才启动。开很多个阅读器标签页时，
+// 每个都开一条 SSE 长连接 + 5 秒轮询纯属浪费，而且 HTTP/1.1 下浏览器对同一主机只给约 6 个
+// 并发连接，长连接占满会拖慢别的请求。幂等：重复调用是空操作。
+function startBackgroundSync() {
+  if (backgroundSyncStarted) return
+  backgroundSyncStarted = true
+  const events = new EventSource('/api/events')
+  events.addEventListener('open', () => { syncJobs().catch(() => {}) })
+  events.addEventListener('job', (event) => {
+    const job = JSON.parse(event.data)
+    jobs = [job, ...jobs.filter((item) => item.id !== job.id)]
+    renderJobs()
+    if (job.status === 'completed') {
+      refreshDownloadedState().then(() => {
+        if (currentComicPathWord === job.comicPathWord) loadComic(currentComicPathWord, currentComicTarget)
+        scheduleDownloadedRefreshIfActive()
+      })
+    }
+  })
+  events.addEventListener('jobDelete', (event) => {
+    const { id } = JSON.parse(event.data)
+    jobs = jobs.filter((job) => job.id !== id)
+    renderJobs()
+  })
+  events.addEventListener('imageCheck', (event) => {
+    const job = JSON.parse(event.data)
+    if (job.status === 'completed' || job.status === 'failed') {
+      refreshDownloadedState().then(() => {
+        scheduleDownloadedRefreshIfActive()
+        if (currentDownloadedComicPathWord === job.comicPathWord) {
+          loadDownloadedComic(job.comicPathWord).catch(() => {})
+        }
+      }).catch(() => {})
+    }
+  })
+  events.addEventListener('inventoryUpdate', (event) => {
+    const update = JSON.parse(event.data)
+    renderInventoryUpdate(update)
+    if (update.status === 'completed') {
+      scheduleDownloadedRefreshIfActive(0)
+    }
+  })
 
-refreshDownloadedState().catch(() => {})
-loadReadingProgress().catch(() => {})
-loadConfig().catch(() => {})
-api('/api/inventory-update').then(renderInventoryUpdate).catch(() => {})
+  refreshDownloadedState().catch(() => {})
+  loadReadingProgress().catch(() => {})
+  api('/api/inventory-update').then(renderInventoryUpdate).catch(() => {})
+  applyJobPolling()
+}
 // 任务的实时更新本来就走 SSE（/api/events），这里的轮询只是兜底：
 // emit() 没写 id 字段，EventSource 重连拿不到 Last-Event-ID，断线期间的事件补不回来。
 // 侧栏那个 ⟳ 按钮控制开关，状态存 localStorage，刷新页面后保持。
@@ -7339,7 +7444,10 @@ function applyJobPolling() {
     els.toggleJobPoll.setAttribute('aria-pressed', enabled ? 'true' : 'false')
     els.toggleJobPoll.title = enabled ? `任务兜底轮询：开（每 ${Math.round(jobPollIntervalMs / 1000)} 秒）` : '任务兜底轮询：关'
   }
-  if (!enabled) return
+  // 后台同步还没启动（阅读器标签页）时只更新上面的按钮状态，不起定时器：loadConfig 读到
+  // 轮询间隔配置也会调到这里，不拦的话阅读器标签页照样每 5 秒轮询一次。
+  // startBackgroundSync 会在启动时再调一次，那时才真正开始。
+  if (!enabled || !backgroundSyncStarted) return
   jobPollTimer = setInterval(() => {
     syncJobs().catch(() => {})
   }, Math.max(1000, jobPollIntervalMs))
@@ -7352,4 +7460,38 @@ els.toggleJobPoll?.addEventListener('click', () => {
   if (next) syncJobs().catch(() => {})   // 刚打开立刻对齐一次，不干等一个周期
 })
 
-applyJobPolling()
+// 打开一条媒体路由：深链启动和 hashchange（在已开着的标签页里改 URL）共用。
+async function openMediaRoute({ type, itemId, unitId, sectionId }) {
+  // 先切到阅读器视图再加载：openMediaUnit 靠"打开前是哪个视图"来记 mediaReturnView，
+  // 深链启动时当前视图是默认的搜索页，不先切的话"返回"会回到漫画搜索而不是媒体库。
+  showView('media-viewer-view')
+  // URL 里没带章节：和点"继续"一样按历史记录续读，续读位置完全一致
+  if (!unitId) return resumeLibraryItem(type, itemId)
+  // 带了章节：先选中条目（填好目录/阅读进度），再开章节，这样 EPUB 能从上次滚动位置接着读。
+  // 这个顺序和"历史页打开"是同一套（见 resumeLibraryItem）。
+  await selectLibraryItem(type, itemId)
+  return openMediaUnit(unitId, sectionId)
+}
+
+// 在一个已经开着的标签页里改 URL（比如粘贴了别人发的链接）不会重新加载页面，只触发
+// hashchange。自己 replaceState 写 URL 不会触发它，所以不会自己打开自己；这里再比对一次
+// 当前路由，相同就不重复打开。
+window.addEventListener('hashchange', () => {
+  const route = parseMediaRoute()
+  if (!route) return
+  const cur = currentMediaRoute
+  if (cur && cur.type === route.type && cur.itemId === route.itemId
+    && cur.unitId === route.unitId && cur.sectionId === route.sectionId) return
+  openMediaRoute(route).catch((error) => alert(error.message))
+})
+
+// —— 启动 ——
+loadConfig().catch(() => {})
+if (bootMediaRoute) {
+  // 阅读器标签页：直接落在阅读器上，不启动后台同步。侧栏的任务列表靠模块顶层那次
+  // api('/api/jobs') 拿到一次快照（所有标签页启动时都会跑），之后它不会实时更新，直到
+  // 这个标签页离开阅读器去别的页面（showView 会启动后台同步）。
+  openMediaRoute(bootMediaRoute).catch((error) => alert(error.message))
+} else {
+  startBackgroundSync()
+}

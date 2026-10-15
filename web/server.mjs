@@ -296,6 +296,9 @@ function defaultConfig() {
       },
     },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
+    // 从媒体库/历史里打开媒体时，是否用新的浏览器标签页。默认关，保持原来"在当前页打开"
+    // 的行为；Ctrl/⌘ 点击不受这个开关限制，永远开新标签页。
+    mediaOpenInNewTab: false,
     // AniDB 标题 dump 的存放目录和下载地址。anidb-v1 脚本从这个目录读 dump，
     // 刷新接口往这里写。脚本自己的 dumpDir 必须和这里一致（脚本不读全局配置）。
     anidbDumpDir: path.join(DATA_DIR, 'cache', 'anidb'),
@@ -355,6 +358,7 @@ function normalizeConfig(value) {
     epubTtsBatchMaxChars: clampNumber(value?.epubTtsBatchMaxChars, 20, 2000, defaults.epubTtsBatchMaxChars),
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
+    mediaOpenInNewTab: Boolean(value?.mediaOpenInNewTab ?? defaults.mediaOpenInNewTab),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
     anidbDumpUrl: String(value?.anidbDumpUrl || defaults.anidbDumpUrl).trim() || defaults.anidbDumpUrl,
     mediaTagDisplayKeys: normalizeStringList(value?.mediaTagDisplayKeys, defaults.mediaTagDisplayKeys),
