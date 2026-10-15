@@ -5520,13 +5520,19 @@ function enterEpubImmersive({ remember = false } = {}) {
   // epub 正文是可选中的，不能用裸 click：想选一段话时按下拖动会被当成翻页。
   // 只认「位移小 + 没有选区 + 没点在链接上」的点击。
   let downAt = null
+  // 只认主键（左键/触摸/笔）。侧键（后退 3/前进 4）、中键、右键按下时浏览器也会
+  // 派发 pointerdown/pointerup，不过滤的话它们会被当成"在光标当前位置点了一下"：
+  // 侧键翻页（全局 mousedown 路由）之后 onUp 又按光标位置再翻一次，一下就跳好几页
+  // 甚至互相抵消。
   const onDown = (event) => {
+    if (event.button !== 0) return
     if (widthAdjustCleanup) return
     downAt = { x: event.clientX, y: event.clientY }
   }
   // 翻页逻辑已经挪到模块级的 goPage() 了（这样鼠标后退/前进键能复用），
   // 这里不再重复定义，直接用那个。
   const onUp = (event) => {
+    if (event.button !== 0) return
     const start = downAt
     downAt = null
     if (!start || widthAdjustCleanup) return
@@ -5945,8 +5951,14 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   // 滚动看图时手会在图上拖，不能用裸 click：只认「位移小 + 没有选区 +
   // 没点在可交互元素上」的点击。.viewer-sentinel 是「加载更多」，点它只该加载。
   let downAt = null
-  const onDown = (event) => { downAt = { x: event.clientX, y: event.clientY } }
+  // 只认主键，原因同 EPUB 沉浸态：侧键也会派发 pointerdown/pointerup，不过滤就会
+  // 被当成一次点击，在左/右 30% 区域直接触发「上一章/下一章」。
+  const onDown = (event) => {
+    if (event.button !== 0) return
+    downAt = { x: event.clientX, y: event.clientY }
+  }
   const onUp = (event) => {
+    if (event.button !== 0) return
     const start = downAt
     downAt = null
     if (!start) return
@@ -6495,32 +6507,57 @@ els.seriesModal?.querySelector('.series-modal-backdrop')?.addEventListener('clic
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !els.seriesModal?.classList.contains('hidden')) closeSeriesModal()
 })
-// 鼠标后退/前进键（button 3/4）在媒体浏览里改派去做内容相关的动作，不走
-// 浏览器默认的页面历史后退/前进——这个应用内部切 tab/视图不依赖浏览器历史，
-// 拦掉不会丢失任何"真正的"后退前进需求。必须在 mousedown 上 preventDefault
-// （不是 click）：部分浏览器在 mousedown 这一步就已经触发了原生导航，
-// 等到 click 再拦已经晚了。
+// 鼠标后退/前进键（button 3/4）在媒体浏览/图片浏览里改派去做内容相关的动作，
+// 不走浏览器默认的页面历史后退/前进——这个应用内部切 tab/视图不依赖浏览器历史。
 // 这几个按钮不是任何浏览器一定会可靠发出来的——有驱动软件的鼠标可能在
 // 操作系统层面直接把侧键模拟成 Alt+方向键或者直接调浏览器命令，网页这层
 // 完全看不到事件，这种情况没法在代码里处理。
+// 注意：侧键按下时浏览器除了 mousedown 还会派发 pointerdown/pointerup，沉浸态里
+// 原有的"点击翻页/切章"处理器必须只认主键（event.button === 0），否则会把侧键
+// 当成一次点击，跟这里的动作叠加（见 enterEpubImmersive/enterGalleryImmersive）。
+// 还有一点实测出来的：浏览器原生的后退/前进导航是在 mouseup 时触发的，只在
+// mousedown 里 preventDefault 拦不住（实测按一下后退键页面直接被导航到上一条历史），
+// 实测只有 mouseup / pointerup 的 preventDefault 能拦住，mousedown / pointerdown /
+// auxclick 都不行。所以 mousedown 里接管了这次按键就记一笔，对应的 mouseup 再拦。
+// 没接管的场景（没在沉浸态、不是媒体浏览）不拦，浏览器的后退前进照常工作。
+let sideButtonHandled = false
 document.addEventListener('mousedown', (event) => {
   if (event.button !== 3 && event.button !== 4) return
-  if (!els.mediaViewerView?.classList.contains('active')) return
+  sideButtonHandled = false
   const delta = event.button === 3 ? -1 : 1
+  // 图集沉浸态：「媒体浏览」里的图集和「图片浏览」tab 共用同一个
+  // enterGalleryImmersive，不管当前在哪个视图，侧键都等价于分段模式的上下
+  // 虚拟键点一下（跳一屏），所以放在 mediaViewerView 判断之前。
+  if (galleryImmersiveJumpOnce) {
+    event.preventDefault()
+    sideButtonHandled = true
+    galleryImmersiveJumpOnce(delta)
+    return
+  }
+  if (!els.mediaViewerView?.classList.contains('active')) return
   const contentClass = els.mediaReaderContent?.classList
   if (contentClass?.contains('media-html')) {
     event.preventDefault()
+    sideButtonHandled = true
     goPage(delta)
+    // 沉浸条上的"n / m"页码要自己刷新：原来点击翻页的 onUp 翻完会 setTimeout(syncInfo)，
+    // 这里没走那条路径就得补上，不然页面翻了、标签一直停在旧页码。
+    // （跨章时整页重渲染会再同步一次，这里只管章内翻页。）
+    syncEpubImmersive()
   } else if (contentClass?.contains('media-stream')) {
     if (!currentStreamSeekBy) return
     event.preventDefault()
+    sideButtonHandled = true
     const seconds = Math.max(1, Math.min(120, Math.round(Number(localStorage.getItem('copymanga.mediaSeekSeconds'))) || 10))
     currentStreamSeekBy(delta * seconds)
-  } else if (contentClass?.contains('media-images') && galleryImmersiveJumpOnce) {
-    event.preventDefault()
-    galleryImmersiveJumpOnce(delta)
   }
 })
+document.addEventListener('mouseup', (event) => {
+  if (event.button !== 3 && event.button !== 4) return
+  if (!sideButtonHandled) return
+  sideButtonHandled = false
+  event.preventDefault()
+}, true)
 els.libraryRunTagScripts.addEventListener('click', async () => {
   if (!currentLibraryItem?.type || !currentLibraryItem?.itemId) return
   const actionIds = checkedTagScriptIds('library-tag-script')
