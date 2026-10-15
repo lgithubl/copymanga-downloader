@@ -34,6 +34,7 @@ export async function generateTags(ctx) {
   }
 
   const jobs = options.fastMode ? groupFastModeUnits(units, options, logs) : units.map((unit) => [unit])
+  if (options.dryRun) return await dryRunResult({ ctx, options, fullRun, allPlayableUnits, units, jobs, logs })
   const unitTags = []
   const unitPatches = []
   const processed = []
@@ -94,6 +95,112 @@ export async function generateTags(ctx) {
       failedUnitIds: failed,
       fastMode: options.fastMode,
     },
+  }
+}
+
+const DRY_RUN_TAG_GROUPS = ['字幕v1', 'AI字幕', VERSION_TAG_GROUP]
+
+function tagText(tag) {
+  return typeof tag === 'string' ? tag : String(tag?.name ?? tag?.tag ?? tag ?? '')
+}
+
+function tagGroup(tag) {
+  const index = tag.indexOf(':')
+  return index < 0 ? '' : tag.slice(0, index).trim()
+}
+
+// 服务端会先删掉本脚本上次生成的 tag 再写这次返回的，返回空等于清掉。
+// 脚本读不到上次的运行记录，所以只能把当前已有的本脚本 tag 原样回传，保证「什么都不变」。
+// 只有带「AI字幕」tag 才认为是本脚本生成的，此时才连带回传共享组「字幕v1」，
+// 避免把内置字幕/人工字幕的「字幕v1」误认领成本脚本的。
+function keepOwnTags(rawTags) {
+  const tags = (Array.isArray(rawTags) ? rawTags : []).map(tagText).map((tag) => tag.trim()).filter(Boolean)
+  const owned = tags.some((tag) => tagGroup(tag) === 'AI字幕')
+  return tags.filter((tag) => {
+    const group = tagGroup(tag)
+    if (group === 'AI字幕' || group === VERSION_TAG_GROUP) return true
+    return group === '字幕v1' && owned
+  })
+}
+
+async function dryRunResult({ ctx, options, fullRun, allPlayableUnits, units, jobs, logs }) {
+  const merged = jobs.filter((group) => group.length > 1)
+  const saved = units.length - jobs.length
+  const itemReceived = (Array.isArray(ctx.item?.tags) ? ctx.item.tags : []).map(tagText)
+  const itemKeep = fullRun ? keepOwnTags(itemReceived) : []
+  const unitTags = []
+  const receivedUnits = []
+  for (const unit of allPlayableUnits) {
+    const received = (Array.isArray(unit.tags) ? unit.tags : []).map(tagText)
+    const keep = keepOwnTags(received)
+    if (received.length) receivedUnits.push({ unit, received })
+    if (fullRun && keep.length) unitTags.push({ unitId: unit.unitId, tags: keep })
+  }
+
+  const report = [
+    '# AI 字幕 dryRun 报告（未调用 ASR 接口，未改字幕映射）',
+    `合集  ${ctx.item?.title || ctx.item?.itemId || ''} (${ctx.item?.itemId || ''})`,
+    `配置  fastMode=${options.fastMode}${fullRun ? '（整合集运行，强制开启）' : ''} crossGroup=${options.fastModeCrossGroup} language=${options.language} segmenter=${options.segmenter} overwriteExisting=${options.overwriteExisting}`,
+    `关键词  ${options.fastModeKeywords.join(' / ')}`,
+    `可播放 ${allPlayableUnits.length} 个，候选 ${units.length} 个（已有字幕跳过 ${allPlayableUnits.length - units.length} 个）`,
+    options.fastMode
+      ? `归一化结果  ${units.length} 个候选 → ${jobs.length} 组，其中 ${merged.length} 组合并，真实运行将省 ${saved} 次 ASR 调用`
+      : `非快速模式  ${units.length} 个候选 → ${jobs.length} 次 ASR 调用`,
+    '',
+    `## 分组明细 ${jobs.length} 组`,
+  ]
+  jobs.forEach((group, index) => {
+    const rep = group[0]
+    report.push(`[${index + 1}] ${group.length > 1 ? `合并 ${group.length} 个` : '单独'}  key="${fastModeKey(stem(rep.relativePath || rep.fileName || rep.title || rep.unitId), options.fastModeKeywords)}"`)
+    group.forEach((unit, i) => {
+      report.push(`    ${i === 0 ? '★代表' : '  共用'} ${unit.title || unit.unitId}  [${unit.groupPath || '-'}]  ${unit.relativePath || unit.fileName || ''}`)
+    })
+    try {
+      const { request } = buildSubtitleRequest({ ctx, options, unit: rep })
+      report.push(`    将请求  input_path=${request.input_path}  output_dir=${request.output_dir}`)
+    } catch (error) {
+      report.push(`    构造请求失败：${error.message}`)
+    }
+  })
+  report.push('', '## 脚本收到的 tag（若 tag 被改坏，可按此人工恢复）')
+  report.push(`合集 tag: ${itemReceived.join(' | ') || '(无)'}`)
+  for (const { unit, received } of receivedUnits) {
+    report.push(`unit ${unit.title || unit.unitId} (${unit.unitId}): ${received.join(' | ')}`)
+  }
+  report.push('', '## 本次回传给服务端的 tag（原样保留，应当无变化）')
+  report.push(`合集 tag: ${itemKeep.join(' | ') || '(无)'}`)
+  report.push(`unit 数: ${unitTags.length}`)
+  report.push('', '## 后续', '- 确认归一化无误后，把脚本选项 dryRun 关掉再运行；dryRun 是持久选项，忘关则之后每次都是空跑')
+
+  logs.unshift('【dryRun】未调用 ASR 接口，仅检查归一化；用完请关闭 dryRun 选项')
+  logs.push(`归一化：${units.length} 个候选 → ${jobs.length} 组，合并 ${merged.length} 组，真实运行省 ${saved} 次调用`)
+  jobs.forEach((group, index) => {
+    logs.push(`  [${index + 1}] ${group.length > 1 ? `合并 ${group.length}` : '单独'}：${group.map((u) => u.title || u.unitId).join(' / ')}`)
+  })
+  logs.push(`收到合集 tag: ${itemReceived.join(' | ') || '(无)'}`)
+  for (const { unit, received } of receivedUnits) {
+    logs.push(`收到 unit tag ${unit.title || unit.unitId}: ${received.join(' | ')}`)
+  }
+
+  const filesRoot = filesRootForUnit(allPlayableUnits.find((unit) => filesRootForUnit(unit)) || {})
+  if (options.reportMode !== 'never' && filesRoot) {
+    const relative = `${options.logDir}/asr-dryrun-${timeStamp()}-${randomToken()}.log`
+    try {
+      const targetPath = path.join(filesRoot, relative)
+      await mkdir(path.dirname(targetPath), { recursive: true })
+      await writeFile(targetPath, `${report.join('\n')}\n`, 'utf8')
+      logs.push(`dryRun 报告 ${relative}`)
+    } catch (error) {
+      logs.push(`dryRun 报告写入失败（${error.message}）`)
+    }
+  }
+
+  return {
+    itemTags: itemKeep,
+    unitTags,
+    unitPatches: [],
+    logs,
+    details: { dryRun: true, candidates: units.length, groups: jobs.length, mergedGroups: merged.length },
   }
 }
 
@@ -168,6 +275,7 @@ function normalizeOptions(raw = {}) {
     segmenter: String(raw.segmenter || 'asmr-onnx'),
     vadFilter: raw.vadFilter === null || raw.vadFilter === undefined || raw.vadFilter === '' ? null : Boolean(raw.vadFilter),
     fastMode: raw.fastMode !== false,
+    dryRun: raw.dryRun === true,
     fastModeKeywords: fastModeKeywords(raw.fastModeKeywords),
     fastModeCrossGroup: raw.fastModeCrossGroup !== false,
     overwriteExisting: raw.force === true || raw.overwriteExisting === true,
