@@ -1,8 +1,8 @@
 {
   "id": "rj-dlsite-v1",
   "name": "RJ / DLsite v1",
-  "version": "1.0.8",
-  "description": "从媒体文件名、目录和标题提取 RJ/VJ/BJ/EJ 编号，并尝试从 DLsite 获取作品 tag。",
+  "version": "1.0.9",
+  "description": "从媒体文件名、目录和标题提取 RJ/VJ/BJ/EJ 编号，并尝试从 DLsite 获取作品 tag；同时生成「系列」关联键（有原档用原档 ID，否则用自身 ID）。",
   "scope": ["item"],
   "libraryTypes": ["media"],
   "exclusiveTagGroups": [
@@ -13,7 +13,8 @@
     "DL脚本",
     "DL年龄",
     "DL类型",
-    "DL发售日"
+    "DL发售日",
+    "系列"
   ],
   "defaultEnabled": false,
   "main": "main.js",

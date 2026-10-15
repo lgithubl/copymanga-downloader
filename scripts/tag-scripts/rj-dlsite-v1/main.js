@@ -33,12 +33,48 @@ export async function generateTags(ctx) {
   itemCandidates.unshift(tag('rj_generation', `RJ生成: ${generationStatus(allProductIds, [...detailsById.values()])}`))
   const patchDetail = firstPatchableDetail([...detailsById.values()])
 
+  // 系列关联键：和 rj-series-v1 同一套规则，所以新导入的条目一次跑完就带 系列: tag，
+  // 不用再单独跑一遍补系列脚本（那个脚本留着做历史数据回填，它不联网）。
+  const series = pickSeriesKey({ patchDetail, persisted: ctx.item?.dlsite, importedId: ctx.item?.productId })
+  if (series.key) {
+    itemCandidates.push(tag('series_key', `系列: ${series.key}`))
+    logs.push(`系列键来源 ${series.from}：${series.key}`)
+  } else {
+    logs.push('系列键：未找到可用编号，不产出 系列 tag')
+  }
+
   return {
     itemTags: filterTags(itemCandidates, options),
     unitTags: [],
     itemPatch: patchDetail ? detailToItemPatch(patchDetail) : null,
     logs,
   }
+}
+
+// 系列关联键：有原档用原档 ID，没有就用自己的 ID，这样原档和它的各语言版本落到同一个键下。
+// 规则和 rj-series-v1 一致，区别只在数据来源：
+//   1. 优先用本次运行刚拿到的 patchDetail。ctx.item.dlsite 是上一次运行落盘的值，新条目首次
+//      运行时还是空的，只读它的话首次总会退到导入编号，译版要跑第二遍才对。
+//   2. DLsite 整体查不到（patchDetail 为空）时用 ctx.item.dlsite，也就是上次成功时落盘的值：
+//      这种运行 itemPatch 为 null，不会覆盖它，所以键保持不变，和单独跑 rj-series-v1 的结果一致。
+//   3. 都没有才用导入时从目录名提取的 ctx.item.productId。
+function pickSeriesKey({ patchDetail, persisted, importedId }) {
+  const pick = (source, from) => {
+    const original = cleanId(source?.originalProductId)
+    if (original) return { key: original, from: `${from}原档` }
+    const own = cleanId(source?.productId)
+    if (own) return { key: own, from: `${from}自身` }
+    return null
+  }
+  const persistedDlsite = persisted && typeof persisted === 'object' ? persisted : null
+  const imported = cleanId(importedId)
+  return pick(patchDetail, '本次')
+    || pick(persistedDlsite, '上次落盘')
+    || (imported ? { key: imported, from: '导入编号' } : { key: '', from: '无' })
+}
+
+function cleanId(value) {
+  return String(value || '').trim().toUpperCase()
 }
 
 function normalizeOptions(value = {}) {
