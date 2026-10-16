@@ -1,0 +1,17 @@
+{
+  "id": "epub-tts-cache-v1",
+  "name": "EPUB 朗读缓存 v1",
+  "version": "1.0.0",
+  "description": "为 EPUB 预生成朗读音频缓存（与阅读器朗读同一份分句、同一套缓存键、同一个并发队列），并打上缓存完成度 tag。命中缓存的句子自动跳过，可中断后续跑；dryRun 只统计不调用 TTS。",
+  "scope": ["item", "units"],
+  "libraryTypes": ["epub", "media"],
+  "exclusiveTagGroups": ["朗读缓存", "朗读缓存version", "朗读缓存音色"],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "dryRun": false,
+    "maxSentences": 0,
+    "maxConsecutiveFailures": 3,
+    "scriptTimeoutMs": 21600000
+  }
+}
