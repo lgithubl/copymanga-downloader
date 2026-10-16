@@ -3496,167 +3496,43 @@ function normalizeEpubGraphics(root) {
   }
 }
 
-// EPUB 朗读分句：按中/英标点切句，每句包成 <span data-tts-index>，供朗读播放器
-// 定位"当前在读哪句"、高亮、以及"从当前页第一句开始读"。
-const EPUB_TTS_SENTENCE_RE = /[^。！？.!?]+[。！？.!?]*/g
-
-// 次级标点——按主标点切出来的"一句"如果超过 epubTtsBatchMaxChars，在这一层
-// 再切一刀。用逗号/顿号/分号/冒号这些语气停顿更短的标点，比直接硬切更自然。
-const EPUB_TTS_CLAUSE_RE = /[^，,、；;：:]+[，,、；;：:]?/g
-
+// EPUB 朗读分句在服务端做（web/library/epub-tts-sentences.mjs），阅读器接口返回的 html 里
+// 每句已经包好 <span class="epub-tts-sentence" data-tts-index>，reader.sentences 是句子文本。
+// 前端只负责把 span 收集起来：一句话横跨 <b>/<ruby> 等元素边界时会有多个同序号的 span。
+// 朗读预生成脚本用的是同一份分句结果，所以这里绝不能再自己切——切法一变缓存就对不上。
 function epubTtsBatchMaxChars() {
   return Math.max(20, Number(appConfig?.epubTtsBatchMaxChars) || 200)
 }
 
-// 把一句过长的文本切成多段，每段尽量不超过 maxChars，返回 [{text,start,end}]
-// （start/end 是相对 raw 的偏移，拼起来正好覆盖整个 raw，给 collectEpubTtsSentences
-// 换算回全文偏移用）。先按次级标点分句再贪心攒段；某个次级分句自己就超长
-// （没有次级标点，或某一段本身巨长）的话直接硬切，不追求好听，只保证能继续播。
-function splitLongEpubTtsText(raw, maxChars) {
-  if (raw.length <= maxChars) return [{ text: raw, start: 0, end: raw.length }]
-  const clauses = []
-  let cursor = 0
-  EPUB_TTS_CLAUSE_RE.lastIndex = 0
-  let match
-  while ((match = EPUB_TTS_CLAUSE_RE.exec(raw))) {
-    clauses.push({ text: match[0], start: cursor, end: cursor + match[0].length })
-    cursor += match[0].length
+function bindEpubTtsSentences(root, sentences) {
+  const byIndex = new Map()
+  for (const el of root.querySelectorAll('.epub-tts-sentence[data-tts-index]')) {
+    const index = Number(el.dataset.ttsIndex)
+    const list = byIndex.get(index) || []
+    list.push(el)
+    byIndex.set(index, list)
   }
-  const pieces = []
-  let group = null
-  const flush = () => { if (group) { pieces.push(group); group = null } }
-  for (const clause of clauses) {
-    if (clause.text.length > maxChars) {
-      flush()
-      for (let i = 0; i < clause.text.length; i += maxChars) {
-        const end = Math.min(i + maxChars, clause.text.length)
-        pieces.push({ text: clause.text.slice(i, end), start: clause.start + i, end: clause.start + end })
-      }
-      continue
-    }
-    if (group && (group.end - group.start) + clause.text.length > maxChars) flush()
-    if (!group) group = { text: clause.text, start: clause.start, end: clause.end }
-    else { group.text += clause.text; group.end = clause.end }
+  const bound = []
+  for (const sentence of Array.isArray(sentences) ? sentences : []) {
+    const elements = byIndex.get(sentence.index)
+    if (!elements?.length) continue
+    // index 要等于数组下标：播放循环和预加载泵都拿它当下标用
+    bound.push({ text: sentence.text, index: bound.length, element: elements[0], elements })
   }
-  flush()
-  return pieces
+  return bound
 }
 
-// 块级元素之间不能被当成连续文本直接拼起来分句——实测"第一章 入口"这种没有
-// 终止标点的标题会直接和下一段正文粘成一句，朗读内容对不上、高亮也跟着跨块乱跳。
-// 按最近的块级祖先把文本节点分组，组与组之间强制断句，组内部再按标点正常切。
-const EPUB_TTS_BLOCK_SELECTOR = 'p, div, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, dt, dd, figcaption, pre, tr, section, article, header, footer, aside, caption'
-
-function nearestEpubTtsBlock(node, root) {
-  let el = node.parentElement
-  while (el && el !== root) {
-    if (el.matches(EPUB_TTS_BLOCK_SELECTOR)) return el
-    el = el.parentElement
+// 一句话的多个 span 按各自文字长度分摊进度：整句进度 40% 就是前面的 span 满、后面的 span 空，
+// 而不是每个 span 都各自填 40%
+function setEpubTtsProgress(entry, ratio) {
+  const total = entry.elements.reduce((sum, el) => sum + el.textContent.length, 0) || 1
+  let done = 0
+  for (const el of entry.elements) {
+    const length = el.textContent.length || 1
+    const local = Math.max(0, Math.min(1, (ratio * total - done) / length))
+    el.style.setProperty('--tts-progress', `${Math.round(local * 100)}%`)
+    done += length
   }
-  return root
-}
-
-function collectEpubTtsSentences(root) {
-  // 之前排除了 a/button 里的文字，想法是"不包它们免得影响点击"，结果是整段文字
-  // 从句子里丢了——链接文字既不发音也不计入朗读内容。实测 surroundContents
-  // 在句子完整覆盖一个 <a> 时不会出问题（只有切到元素内部才会抛），
-  // 真出问题也有下面的 catch 兜底，所以这里全收，不按标签过滤。
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => (node.nodeValue && node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
-  })
-  // 按块分组：同一组内的文本节点才拼成"全文"一起分句，换组就强制断句，
-  // 不管上一组最后一句有没有终止标点。
-  const runs = []
-  let currentBlock = null
-  let currentRun = null
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const block = nearestEpubTtsBlock(node, root)
-    if (block !== currentBlock) {
-      currentBlock = block
-      currentRun = { nodes: [], fullText: '' }
-      runs.push(currentRun)
-    }
-    currentRun.nodes.push({ node, start: currentRun.fullText.length })
-    currentRun.fullText += node.nodeValue
-  }
-  const sentences = []
-  for (const run of runs) {
-    if (!run.fullText.trim()) continue
-    let match
-    EPUB_TTS_SENTENCE_RE.lastIndex = 0
-    while ((match = EPUB_TTS_SENTENCE_RE.exec(run.fullText))) {
-      const raw = match[0]
-      const text = raw.trim()
-      if (!text) continue
-      const maxChars = epubTtsBatchMaxChars()
-      if (text.length <= maxChars) {
-        sentences.push({ text, start: match.index, end: match.index + raw.length, nodes: run.nodes })
-        continue
-      }
-      // 这一整句超过单批上限——不能直接整句发给 TTS，按次级标点（必要时硬切）
-      // 拆成几个独立的句子单元，各自有自己的高亮 span 和 TTS 请求，不是在发请求
-      // 那一层才拆：那样会导致一个高亮 span 背后对应好几段音频，进度条、
-      // "播完翻下一句"这些逻辑都要跟着感知"这句其实是拼出来的"，复杂很多。
-      for (const piece of splitLongEpubTtsText(raw, maxChars)) {
-        const pieceText = piece.text.trim()
-        if (!pieceText) continue
-        sentences.push({
-          text: pieceText,
-          start: match.index + piece.start,
-          end: match.index + piece.end,
-          nodes: run.nodes,
-        })
-      }
-    }
-  }
-  return sentences
-}
-
-
-// 把 [start, end) 这段全文偏移转成一个真实 DOM Range。nodes 按 start 升序排列，
-// 用二分也行，句子数量通常不多，线性扫一遍足够。
-function rangeForOffsets(nodes, start, end) {
-  const range = document.createRange()
-  let started = false
-  for (const { node, start: nodeStart } of nodes) {
-    const nodeEnd = nodeStart + node.nodeValue.length
-    if (!started && start >= nodeStart && start < nodeEnd) {
-      range.setStart(node, start - nodeStart)
-      started = true
-    }
-    if (started && end <= nodeEnd) {
-      range.setEnd(node, end - nodeStart)
-      return range
-    }
-  }
-  return null
-}
-
-function splitEpubTtsSentences(root) {
-  const sentences = collectEpubTtsSentences(root)
-  if (!sentences.length) return []
-  const wrapped = []
-  // 从后往前包：Range.surroundContents 会修改 DOM，前面句子的偏移对后面还有效，
-  // 但反过来不行——从后往前就不用管前面已经包过的 span 会不会污染偏移。
-  for (let i = sentences.length - 1; i >= 0; i--) {
-    const { text, start, end, nodes } = sentences[i]
-    const range = rangeForOffsets(nodes, start, end)
-    if (!range) continue
-    const span = document.createElement('span')
-    span.className = 'epub-tts-sentence'
-    span.dataset.ttsIndex = String(i)
-    try {
-      range.surroundContents(span)
-    } catch {
-      // 句子横跨了多个元素边界（比如 <b>加粗</b>跨进普通文本），surroundContents
-      // 吃不了"选区不是单个节点内的部分内容"这种情况，退化成手动搬运节点。
-      const content = range.extractContents()
-      span.append(content)
-      range.insertNode(span)
-    }
-    wrapped[i] = { text, index: i, element: span }
-  }
-  return wrapped
 }
 
 function renderMediaHtml(reader) {
@@ -3674,7 +3550,7 @@ function renderMediaHtml(reader) {
   pages.className = 'media-html-pages'
   pages.innerHTML = reader.content || ''
   normalizeEpubGraphics(pages)
-  epubTtsSentences = splitEpubTtsSentences(pages)
+  epubTtsSentences = bindEpubTtsSentences(pages, reader.sentences)
   els.mediaReaderContent.replaceChildren(pages)
   requestAnimationFrame(() => {
     layoutMediaPages()
@@ -5214,11 +5090,19 @@ function exitEpubImmersive({ remember = false } = {}) {
 }
 
 // —— EPUB 朗读播放控制器 ——
-// epubTtsSentences 由 renderMediaHtml 在每次换章节/切书时重新赋值（splitEpubTtsSentences）。
+// epubTtsSentences 由 renderMediaHtml 在每次换章节/切书时重新赋值（bindEpubTtsSentences）。
 // epubTtsAutoResume 是跨章节续读的信号：读到本章末尾时先把它置 true 再触发翻章，
 // renderMediaHtml 里读到这个信号就跳过"停"直接从新章节第 0 句继续播，不然
 // 每次翻页都会被 renderMediaHtml 开头的 stopEpubTts() 打断。
 let epubTtsSentences = []
+// 朗读倍速是浏览器端的 audio.playbackRate，缓存的音频本身不变；单独存一个 key，不和视频倍速互相影响
+const EPUB_TTS_RATE_KEY = 'copymanga.epubTtsRate'
+let epubTtsRate = normalizePlaybackRate(localStorage.getItem(EPUB_TTS_RATE_KEY) || '1')
+
+function applyEpubTtsRate(audio) {
+  audio.defaultPlaybackRate = epubTtsRate
+  audio.playbackRate = epubTtsRate
+}
 let epubTtsPlaying = false
 let epubTtsAutoResume = false
 let epubTtsCurrentAudio = null
@@ -5271,7 +5155,7 @@ function epubTtsItemId() {
 }
 
 function clearEpubTtsHighlight() {
-  document.querySelector('.epub-tts-sentence.epub-tts-current')?.classList.remove('epub-tts-current')
+  for (const el of document.querySelectorAll('.epub-tts-sentence.epub-tts-current')) el.classList.remove('epub-tts-current')
 }
 
 function stopEpubTts() {
@@ -5461,14 +5345,15 @@ async function playEpubTtsFrom(startIndex, content) {
     const chunk = entry.chunk
     if (!chunk || chunk.error) { index++; continue }   // 单句失败不中断整体朗读，跳过
     clearEpubTtsHighlight()
-    entry.element.classList.add('epub-tts-current')
-    entry.element.style.setProperty('--tts-progress', '0%')
+    for (const el of entry.elements) el.classList.add('epub-tts-current')
+    setEpubTtsProgress(entry, 0)
     ensureEpubTtsSentenceVisible(entry.element, content)
     const audio = new Audio(chunk.url)
+    applyEpubTtsRate(audio)
     epubTtsCurrentAudio = audio
     audio.addEventListener('timeupdate', () => {
       const ratio = computeEpubTtsRatio(chunk.subtitle, audio.currentTime, audio.duration)
-      entry.element.style.setProperty('--tts-progress', `${Math.round(ratio * 100)}%`)
+      setEpubTtsProgress(entry, ratio)
     })
     const ended = new Promise((resolve) => {
       audio.addEventListener('ended', resolve, { once: true })
@@ -5517,6 +5402,7 @@ async function playSelectedText(btn) {
     const chunk = data.chunks?.[0]
     if (!chunk || chunk.error) return
     audio = new Audio(chunk.url)
+    applyEpubTtsRate(audio)
     epubTtsCurrentAudio = audio
     const ended = new Promise((resolve) => {
       audio.addEventListener('ended', resolve, { once: true })
@@ -5564,8 +5450,25 @@ function enterEpubImmersive({ remember = false } = {}) {
   ttsBtn.disabled = !epubTtsConfigured()
   const selectionBtn = mk('epub-tts-selection', '读选中', epubTtsConfigured() ? '朗读当前选中的文字' : '未配置 TTS 服务地址，去配置页填 apiBase')
   selectionBtn.disabled = !epubTtsConfigured()
+  const rateSelect = document.createElement('select')
+  rateSelect.className = 'stream-rate-select epub-tts-rate'
+  rateSelect.title = '朗读倍速'
+  for (const rate of mediaPlaybackRates) {
+    const option = document.createElement('option')
+    option.value = String(rate)
+    option.textContent = `${rate}x`
+    rateSelect.append(option)
+  }
+  rateSelect.value = String(epubTtsRate)
+  rateSelect.addEventListener('change', () => {
+    epubTtsRate = normalizePlaybackRate(rateSelect.value)
+    localStorage.setItem(EPUB_TTS_RATE_KEY, String(epubTtsRate))
+    // 正在读的这句立刻变速，不用等下一句
+    if (epubTtsCurrentAudio) applyEpubTtsRate(epubTtsCurrentAudio)
+    rateSelect.blur()
+  })
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, exitBtn)
+  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, rateSelect, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {

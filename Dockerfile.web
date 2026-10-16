@@ -11,6 +11,10 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg imagemagick unzip unar \
   && rm -rf /var/lib/apt/lists/*
 
+# parse5 是 web/ 下唯一的 npm 依赖（EPUB 朗读分句用），先单独装，改业务代码不会让这层缓存失效
+COPY web/package.json web/package-lock.json ./web/
+RUN cd web && npm ci --omit=dev --no-audit --no-fund
+
 COPY web ./web
 COPY scripts/tag-scripts /opt/copymanga/tag-scripts
 

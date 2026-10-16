@@ -1,0 +1,8 @@
+{
+  "name": "copymanga-web",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "parse5": "^7.3.0"
+  }
+}

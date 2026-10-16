@@ -14,6 +14,7 @@ import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
+import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -3948,6 +3949,7 @@ async function executeTagScript(script, { type, item, units, selectedUnitIds = [
       version: script.version,
       options: script.options || {},
     },
+    services: { epubTts: epubTtsScriptServices({ type, itemId: item?.itemId }) },
     config,
   }
   const timeoutMs = Number.isFinite(Number(script.options?.scriptTimeoutMs)) ? Number(script.options.scriptTimeoutMs) : 60000
@@ -4581,9 +4583,9 @@ async function route(req, res) {
       if (action === 'units') return json(res, 200, await handler.listUnits(itemId))
       if (action === 'history') return json(res, 200, await readLibraryHistory(type, itemId) || null)
       if (action === 'reader') {
-        return json(res, 200, await handler.getReaderContent(itemId, unitId, {
+        return json(res, 200, annotateReaderForTts(await handler.getReaderContent(itemId, unitId, {
           sectionId: url.searchParams.get('sectionId') || '',
-        }))
+        })))
       }
       if (action === 'thumbnail') {
         if (!handler.getThumbnail) return json(res, 400, { error: 'This library type does not support thumbnails' })
@@ -4869,6 +4871,84 @@ const epubHandler = createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExis
 registerLibraryHandler(epubHandler)
 registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config, epubSupport: epubHandler }))
 
+// EPUB 朗读分句只在这里做：阅读器返回的 html 已经把每句包成 <span data-tts-index>，
+// 同时带上 sentences（句子文本，下标即 data-tts-index）。前端不再自己切句，
+// 预生成脚本用的也是同一个函数，缓存键因此天然一致。
+// 句子切法受 epubTtsBatchMaxChars 影响，缓存键里带上它，改配置后下一次请求自然重算。
+const EPUB_TTS_ANNOTATE_CACHE_MAX = 48
+const epubTtsAnnotateCache = new Map()
+
+function annotateEpubHtml(content) {
+  const maxChars = config.epubTtsBatchMaxChars
+  const key = `${maxChars}\u0000${createHash('sha1').update(content).digest('hex')}`
+  const hit = epubTtsAnnotateCache.get(key)
+  if (hit) {
+    epubTtsAnnotateCache.delete(key)
+    epubTtsAnnotateCache.set(key, hit)
+    return hit
+  }
+  const result = annotateEpubSentences(content, { maxChars })
+  epubTtsAnnotateCache.set(key, result)
+  while (epubTtsAnnotateCache.size > EPUB_TTS_ANNOTATE_CACHE_MAX) {
+    epubTtsAnnotateCache.delete(epubTtsAnnotateCache.keys().next().value)
+  }
+  return result
+}
+
+function annotateReaderForTts(reader) {
+  if (reader?.type !== 'html' || typeof reader.content !== 'string') return reader
+  const { content, sentences } = annotateEpubHtml(reader.content)
+  return { ...reader, content, sentences }
+}
+
+// 预生成脚本用：返回 [{ unitId, sectionId, title, texts }]，一个 unit 的每个 html 章节一项。
+async function epubTtsSectionSentences({ type, itemId, unit }) {
+  const handler = libraryHandler(type)
+  const sections = (unit.sections || []).filter((section) => section.type !== 'gallery')
+  const out = []
+  for (const section of sections) {
+    const reader = await handler.getReaderContent(itemId, unit.unitId, { sectionId: section.sectionId })
+    if (reader?.type !== 'html') continue
+    const { sentences } = annotateEpubHtml(reader.content || '')
+    out.push({ unitId: unit.unitId, sectionId: section.sectionId, title: section.title || '', texts: sentences.map((entry) => entry.text) })
+  }
+  return out
+}
+
+function epubTtsHash(text) {
+  return createHash('sha1')
+    .update(`${text}\n${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}`)
+    .digest('hex')
+}
+
+// 参考音频一变缓存键就全变，旧缓存等于作废；tag 里带这个短指纹，换音色后一眼能看出来
+function epubTtsFingerprint() {
+  return createHash('sha1').update(`${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}`).digest('hex').slice(0, 6)
+}
+
+async function epubTtsCachedFlags(itemId, texts) {
+  const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
+  return await Promise.all(texts.map((text) => pathExists(path.join(cacheDir, `${epubTtsHash(text)}.wav`))))
+}
+
+// 给 tag 脚本的服务：脚本可能放在 DATA_DIR/tag-scripts 下，没法 import 仓库里的模块，
+// 也不该自己拼 HTTP 去打本机，所以由服务端经 ctx.services 递过去。
+function epubTtsScriptServices({ type, itemId }) {
+  return {
+    configured: Boolean(config.epubTtsApiBase),
+    fingerprint: epubTtsFingerprint(),
+    batchMaxSentences: config.epubTtsBatchMaxSentences,
+    batchMaxChars: config.epubTtsBatchMaxChars,
+    sections: (unit) => epubTtsSectionSentences({ type, itemId, unit }),
+    cached: (texts) => epubTtsCachedFlags(itemId, texts),
+    // 生成缺的句子（走和听书同一个并发队列/批量/缓存）。返回每句 { ok, error? }
+    generate: async (texts) => {
+      const chunks = await resolveEpubTtsChunks(itemId, texts)
+      return chunks.map((chunk) => (chunk?.error ? { ok: false, error: String(chunk.error) } : { ok: true }))
+    },
+  }
+}
+
 // EPUB 朗读：按「文本+参考音频」内容寻址缓存，命中就不用再打 GSV-TTS-Lite。
 // GSV-TTS-Lite 的 Docker 部署（docker/web_app.py，Dockerfile.web 唯一真实跑的
 // 入口）在 disable-auto-download 分支上加了 /tts/batched。统一走这一个接口，
@@ -4880,9 +4960,7 @@ registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_D
 // 文件统一存 .wav：接口本身写死返回 wav。
 async function resolveEpubTtsChunks(itemId, texts) {
   const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
-  const hashFor = (text) => createHash('sha1')
-    .update(`${text}\n${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}`)
-    .digest('hex')
+  const hashFor = epubTtsHash
   const chunks = new Array(texts.length)
   const missing = []
   for (let i = 0; i < texts.length; i++) {
