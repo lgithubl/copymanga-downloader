@@ -23,7 +23,7 @@ async function fetchWithTimeout(url, init) {
 // 返回 [{ text, buffer, subtitle, error }]，和入参 texts 一一对应，顺序不变。
 // /tts/batched 是整批成功或整批报错（没有"这批里哪句失败了"的细粒度信息），
 // 失败就把这批里每一句都标 error，调用方据此逐句跳过，不中断整体朗读。
-export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, promptText, texts }) {
+export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, promptText, textLanguage, promptLanguage, texts }) {
   if (!texts.length) return []
   const base = String(apiBase || '').replace(/\/+$/, '')
   let response
@@ -44,6 +44,9 @@ export async function callGsvTtsBatched({ apiBase, speakerAudio, promptAudio, pr
         speaker_audio: speakerAudio || undefined,
         prompt_audio: promptAudio || undefined,
         prompt_text: promptText || undefined,
+        // 留空 = 不传，GSV 自己 auto（DEFAULT_TEXT_LANGUAGE）；传了就是 ja/zh/en
+        text_language: textLanguage || undefined,
+        prompt_language: promptLanguage || undefined,
         return_subtitles: true,
       }),
     })

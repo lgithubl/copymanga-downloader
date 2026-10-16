@@ -273,6 +273,10 @@ function defaultConfig() {
     epubTtsSpeakerAudio: '',
     epubTtsPromptAudio: '',
     epubTtsPromptText: '',
+    // 文本/参考音频文本的语言：'' = 不传，GSV 自己 auto；ja/zh/en = 传给 /tts/batched。
+    // 全局配置，不分书。
+    epubTtsTextLanguage: '',
+    epubTtsPromptLanguage: '',
     // 真实 TTS 是 GPU 推理，扛不住并发乱打——分段预加载 + 用户快速翻页都可能
     // 同时触发好几个请求，默认给 1（排队），愿意的话自己调大。
     epubTtsMaxConcurrency: 1,
@@ -331,6 +335,12 @@ function defaultConfig() {
   }
 }
 
+// auto 和留空等价（GSV 不传就是 auto），统一成空，缓存键也就不会因为"显式 auto"和"没配"分成两份
+function normalizeEpubTtsLanguage(value) {
+  const language = String(value || '').trim().toLowerCase()
+  return ['ja', 'zh', 'en'].includes(language) ? language : ''
+}
+
 function normalizeConfig(value) {
   const defaults = defaultConfig()
   const apiDomainMode = value?.apiDomainMode === 'Custom' ? 'Custom' : 'Default'
@@ -354,6 +364,8 @@ function normalizeConfig(value) {
     epubTtsSpeakerAudio: String(value?.epubTtsSpeakerAudio || defaults.epubTtsSpeakerAudio).trim(),
     epubTtsPromptAudio: String(value?.epubTtsPromptAudio || defaults.epubTtsPromptAudio).trim(),
     epubTtsPromptText: String(value?.epubTtsPromptText || defaults.epubTtsPromptText),
+    epubTtsTextLanguage: normalizeEpubTtsLanguage(value?.epubTtsTextLanguage),
+    epubTtsPromptLanguage: normalizeEpubTtsLanguage(value?.epubTtsPromptLanguage),
     epubTtsMaxConcurrency: clampNumber(value?.epubTtsMaxConcurrency, 1, 8, defaults.epubTtsMaxConcurrency),
     epubTtsBatchMaxSentences: clampNumber(value?.epubTtsBatchMaxSentences, 1, 20, defaults.epubTtsBatchMaxSentences),
     epubTtsBatchMaxChars: clampNumber(value?.epubTtsBatchMaxChars, 20, 2000, defaults.epubTtsBatchMaxChars),
@@ -4915,15 +4927,21 @@ async function epubTtsSectionSentences({ type, itemId, unit }) {
   return out
 }
 
-function epubTtsHash(text) {
-  return createHash('sha1')
-    .update(`${text}\n${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}`)
-    .digest('hex')
+// 语言会影响合成结果所以要进缓存键；两个都没配时追加串为空，哈希和加语言之前完全一样，已有缓存继续命中
+function epubTtsVoiceKey() {
+  const language = config.epubTtsTextLanguage || config.epubTtsPromptLanguage
+    ? `\n${config.epubTtsTextLanguage}|${config.epubTtsPromptLanguage}`
+    : ''
+  return `${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}${language}`
 }
 
-// 参考音频一变缓存键就全变，旧缓存等于作废；tag 里带这个短指纹，换音色后一眼能看出来
+function epubTtsHash(text) {
+  return createHash('sha1').update(`${text}\n${epubTtsVoiceKey()}`).digest('hex')
+}
+
+// 参考音频或语言一变缓存键就全变，旧缓存等于作废；tag 里带这个短指纹，换设置后一眼能看出来
 function epubTtsFingerprint() {
-  return createHash('sha1').update(`${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}`).digest('hex').slice(0, 6)
+  return createHash('sha1').update(epubTtsVoiceKey()).digest('hex').slice(0, 6)
 }
 
 async function epubTtsCachedFlags(itemId, texts) {
@@ -4985,6 +5003,8 @@ async function resolveEpubTtsChunks(itemId, texts) {
       speakerAudio: config.epubTtsSpeakerAudio,
       promptAudio: config.epubTtsPromptAudio,
       promptText: config.epubTtsPromptText,
+      textLanguage: config.epubTtsTextLanguage,
+      promptLanguage: config.epubTtsPromptLanguage,
       texts: missing.map((i) => texts[i]),
     })
     await Promise.all(missing.map(async (i, j) => {

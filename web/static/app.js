@@ -223,6 +223,8 @@ const els = {
   configEpubTtsSpeakerAudio: document.querySelector('#config-epub-tts-speaker-audio'),
   configEpubTtsPromptAudio: document.querySelector('#config-epub-tts-prompt-audio'),
   configEpubTtsPromptText: document.querySelector('#config-epub-tts-prompt-text'),
+  configEpubTtsTextLanguage: document.querySelector('#config-epub-tts-text-language'),
+  configEpubTtsPromptLanguage: document.querySelector('#config-epub-tts-prompt-language'),
   configEpubTtsMaxConcurrency: document.querySelector('#config-epub-tts-max-concurrency'),
   configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
@@ -1281,6 +1283,8 @@ async function loadConfig() {
   els.configEpubTtsSpeakerAudio.value = config.epubTtsSpeakerAudio || ''
   els.configEpubTtsPromptAudio.value = config.epubTtsPromptAudio || ''
   els.configEpubTtsPromptText.value = config.epubTtsPromptText || ''
+  els.configEpubTtsTextLanguage.value = config.epubTtsTextLanguage || ''
+  els.configEpubTtsPromptLanguage.value = config.epubTtsPromptLanguage || ''
   els.configEpubTtsMaxConcurrency.value = config.epubTtsMaxConcurrency || 1
   els.configEpubTtsBatchMaxSentences.value = config.epubTtsBatchMaxSentences || 5
   els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
@@ -7114,6 +7118,8 @@ els.configSave.addEventListener('click', async () => {
         epubTtsSpeakerAudio: els.configEpubTtsSpeakerAudio.value,
         epubTtsPromptAudio: els.configEpubTtsPromptAudio.value,
         epubTtsPromptText: els.configEpubTtsPromptText.value,
+        epubTtsTextLanguage: els.configEpubTtsTextLanguage.value,
+        epubTtsPromptLanguage: els.configEpubTtsPromptLanguage.value,
         epubTtsMaxConcurrency: Number(els.configEpubTtsMaxConcurrency.value),
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
