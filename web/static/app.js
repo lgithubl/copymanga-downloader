@@ -410,19 +410,20 @@ const mediaImportProfiles = {
   'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video' },
   // batch: true —— 一个来源目录会产出多个合集（每个视频一个），和 rj-media 同类
   'monthly-ani': { label: '月度 ANI', type: 'media', sourcePlaceholder: '/input/ani', batch: true },
-  // EPUB 作为媒体类型导入：一次导入的多个 EPUB 放进同一个合集（和旧的 EPUB 导入一致），
-  // 不带任何默认脚本——扫描和缩略图对 EPUB 都是空操作（缩略图只处理音视频，EPUB 封面导入时已经取好）。
-  'epub-media': {
-    label: 'EPUB 媒体',
+  // 文本（EPUB / TXT）作为媒体类型导入：一次导入的多个文件放进同一个合集（和旧 EPUB 导入一致）。
+  // 不带任何默认脚本——扫描和缩略图对文本都是空操作（缩略图只处理音视频，EPUB 封面导入时已经取好）。
+  // 只有用这个方案导入的合集才会把 .txt 当文本章节识别（RJ 音声等合集里的 README.txt 不受影响）。
+  'text-media': {
+    label: '文本媒体',
     type: 'media',
     sourcePlaceholder: '/input/books',
-    accept: '.epub,application/epub+zip',
-    filesLabel: 'EPUB',
+    accept: '.epub,application/epub+zip,.txt,text/plain',
+    filesLabel: '文本',
     noDefaultScripts: true,
   },
   epub: { label: 'EPUB（已废弃）', type: 'epub', sourcePlaceholder: '', deprecated: true },
 }
-const DEPRECATED_EPUB_IMPORT_NOTICE = '「EPUB」导入已废弃，新导入请选「EPUB 媒体」方案（已有的 EPUB 合集不受影响）。'
+const DEPRECATED_EPUB_IMPORT_NOTICE = '「EPUB」导入已废弃，新导入请选「文本媒体」方案（支持 EPUB 和 TXT，已有的 EPUB 合集不受影响）。'
 const mediaPlaybackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 const defaultMediaSubtitleExtensions = 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub'
 const stageLabels = {
@@ -3031,6 +3032,7 @@ function renderLibraryDetailSummary(item, units, readUnits = {}) {
     ['音频', counts.audio],
     ['图片集', counts.imageGallery],
     ['EPUB', counts.epub],
+    ['文本', counts.text],
     ['未匹配字幕', counts.subtitle],
   ]
   return `
@@ -3055,9 +3057,10 @@ function libraryUnitCounts(units = []) {
     else if (kind === 'image-gallery') counts.imageGallery += 1
     else if (kind === 'subtitle') counts.subtitle += 1
     else if (kind === 'epub' || unit.type === 'epub') counts.epub += 1
+    else if (kind === 'text') counts.text += 1
     else counts.other += 1
     return counts
-  }, { video: 0, audio: 0, imageGallery: 0, subtitle: 0, epub: 0, other: 0 })
+  }, { video: 0, audio: 0, imageGallery: 0, subtitle: 0, epub: 0, text: 0, other: 0 })
 }
 
 function mediaKindLabel(kind) {
@@ -3066,6 +3069,7 @@ function mediaKindLabel(kind) {
     video: '视频',
     'image-gallery': '图片',
     epub: 'EPUB',
+    text: '文本',
     subtitle: '字幕',
   }
   return labels[kind] || kind

@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { atomicWriteJson, withFileLock } from '../atomic-json-store.mjs'
+import { decodeTextFile, textToHtml } from '../text-decode.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -20,6 +21,13 @@ const COVER_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'jpe', 'jfif', 'png', 'webp', 'gi
 // 扫描单元时显式跳过它。walkFiles 不跳隐藏目录，光靠 . 前缀没用。
 const COVER_DIR = '.cover'
 const EPUB_EXTENSIONS = ['epub']
+// TXT 不放进通用的 extensions：RJ 音声这类合集里常带「読んでね.txt」「README.txt」，
+// 通用识别会让它们在下次扫描时凭空多出一堆文本章节。只有用「文本媒体」方案导入的合集
+// （item.sourceProfile === 'text-media'）才识别 .txt。
+const TEXT_EXTENSIONS = ['txt']
+const TEXT_MEDIA_PROFILE = 'text-media'
+// 单个 TXT 读进内存转 HTML，设个上限防止误传一个几百 MB 的日志文件把服务拖死
+const MAX_TEXT_BYTES = 30 * 1024 * 1024
 const DEFAULT_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'crt', 'ass', 'ssa', 'lrc', 'sbv', 'smi', 'sami', 'ttml', 'dfxp', 'xml', 'sub']
 const ITEM_COVER_UNIT_ID = '__cover'
 
@@ -169,10 +177,13 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const importProfile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
     const fileInputs = files.filter((file) => file.buffer?.length)
     if (!sourcePath && !fileInputs.length) throw new Error('sourcePath or file is required')
-    // 「EPUB 媒体」方案：就是普通的媒体导入，只是上传限定 .epub，传了别的直接报错而不是悄悄导成一堆杂项
-    if (importProfile === 'epub-media') {
-      const notEpub = fileInputs.filter((file) => !EPUB_EXTENSIONS.includes(path.extname(file.filename || '').slice(1).toLowerCase()))
-      if (notEpub.length) throw new Error(`EPUB 媒体方案只支持 .epub 文件：${notEpub.map((file) => file.filename).join('、')}`)
+    // 「文本媒体」方案：普通的媒体导入，上传限定 .epub / .txt，传了别的直接报错而不是悄悄导成一堆杂项
+    if (importProfile === TEXT_MEDIA_PROFILE) {
+      const notText = fileInputs.filter((file) => {
+        const ext = path.extname(file.filename || '').slice(1).toLowerCase()
+        return !EPUB_EXTENSIONS.includes(ext) && !TEXT_EXTENSIONS.includes(ext)
+      })
+      if (notText.length) throw new Error(`文本媒体方案只支持 .epub / .txt 文件：${notText.map((file) => file.filename).join('、')}`)
     }
     if (importProfile === 'rj-media') {
       if (sourcePath && !fileInputs.length) return importRjDirectoryBatch({ sourcePath, inputTags })
@@ -199,30 +210,33 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         updatedAt: new Date().toISOString(),
       })
 
+    // 追加到已有的文本媒体合集时也要继续识别 .txt
+    const includeText = importProfile === TEXT_MEDIA_PROFILE || existing.sourceProfile === TEXT_MEDIA_PROFILE
     await mkdir(itemPath(itemId), { recursive: true })
     if (sourcePath) {
       const source = path.resolve(sourcePath)
       await assertAllowedSource(source)
-      await assertMediaRoot(source)
+      await assertMediaRoot(source, { includeText })
       await importSourceRoot({ itemId, source, preferredName: path.basename(source) })
     }
     for (const file of fileInputs) {
       if (isZipName(file.filename)) {
         const source = await extractZipUpload(file)
-        await assertMediaRoot(source)
+        await assertMediaRoot(source, { includeText })
         await importSourceRoot({ itemId, source, preferredName: path.basename(file.filename, path.extname(file.filename)) })
-      } else if (isSupportedName(file.filename) || isSubtitleName(file.filename)) {
+      } else if (isSupportedFor(includeText)(file.filename) || isSubtitleName(file.filename)) {
         await writeUploadIntoItem({ itemId, file })
       }
     }
 
-    const units = await scanMediaUnits(itemId, mediaUnitsForItem(existing))
+    const units = await scanMediaUnits(itemId, mediaUnitsForItem(existing), { includeText })
     if (!units.length) throw new Error(`没有找到支持的${label}文件`)
     units.sort(compareMediaUnits)
     const next = normalizeItem({
       ...existing,
       title: collectionTitle || existing.title || seedTitle,
       tags: inputTags.length ? inputTags : existing.tags || [],
+      sourceProfile: includeText ? TEXT_MEDIA_PROFILE : existing.sourceProfile,
       cover: existing.cover || units.find((unit) => unit.cover)?.cover || '',
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
@@ -479,6 +493,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         })),
       }
     }
+    if (unit.mediaKind === 'text') return textReaderContent({ item, itemId, unit, units, index })
     if (unit.mediaKind === 'epub' && epubSupport?.getReaderContentFromItem) {
       return epubSupport.getReaderContentFromItem({
         item,
@@ -831,11 +846,11 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     })
   }
 
-  async function assertMediaRoot(source) {
+  async function assertMediaRoot(source, { includeText = false } = {}) {
     const info = await stat(source)
     const root = info.isDirectory() ? source : path.dirname(source)
     const candidates = info.isDirectory() ? await walkFiles(source) : [source]
-    const mediaFiles = candidates.filter(isSupportedName)
+    const mediaFiles = candidates.filter(isSupportedFor(includeText))
     if (!mediaFiles.length) throw new Error(`没有找到支持的${label}文件`)
     return { root, mediaFiles }
   }
@@ -1251,8 +1266,12 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
   }
 
-  async function scanMediaUnits(itemId, previousUnits = []) {
+  async function scanMediaUnits(itemId, previousUnits = [], { includeText } = {}) {
     if (!await pathExists(filesPath(itemId))) return []
+    // 没显式指定就看合集自己的标记（重新扫描、合并目标走这条路）
+    if (includeText === undefined) {
+      includeText = (await readMetadata(itemId).catch(() => null))?.sourceProfile === TEXT_MEDIA_PROFILE
+    }
     const allFiles = await walkFiles(filesPath(itemId))
     const subtitleFiles = allFiles.filter(isSubtitleName)
     const subtitlesByKey = subtitlesByMediaKey(itemId, subtitleFiles)
@@ -1260,7 +1279,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       .filter((unit) => unit.relativePath)
       .map((unit) => [unit.relativePath, unit]))
     const files = allFiles
-      .filter(isSupportedName)
+      .filter(isSupportedFor(includeText))
       // .cover/ 是封面图的保留目录，不参与单元构造。不排除的话这些图会被按目录
       // 分组成一个多余的 image-gallery 单元，条目凭空多出一章（实测 unitCount 1→2）。
       // 判「任意一段等于 .cover」而不是 startsWith：合并撞名时整个源组会被塞进
@@ -1290,6 +1309,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         const list = imagesByDir.get(key) || []
         list.push(filePath)
         imagesByDir.set(key, list)
+      } else if (kind === 'text') {
+        units.push(await textUnitFromFile({ itemId, filePath, previous: previousByPath.get(relativePath(itemId, filePath)) }))
       } else if (kind === 'epub') {
         const unit = await epubUnitFromFile({
           itemId,
@@ -1626,6 +1647,56 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     })
   }
 
+  // TXT：一个文件一个 unit、一个 section（不做章节识别）。unit 形状和 EPUB 一致（sections / mediaKind），
+  // 所以阅读器、朗读、朗读缓存脚本整条通路都能直接复用。
+  async function textUnitFromFile({ itemId, filePath, previous = null }) {
+    const info = await stat(filePath)
+    const fileName = relativePath(itemId, filePath)
+    const title = path.basename(fileName, path.extname(fileName))
+    return normalizeMediaUnit({
+      type,
+      unitId: uniqueUnitId(fileName),
+      title,
+      fileName,
+      relativePath: fileName,
+      groupPath: groupPathOf(fileName),
+      mediaKind: 'text',
+      tags: previous?.tags?.length ? previous.tags : ['TXT'],
+      managedPath: filePath,
+      size: info.size,
+      contentType: 'text/plain',
+      sectionCount: 1,
+      chapterCount: 1,
+      sections: [{ sectionId: 'text', title, index: 0, type: 'chapter' }],
+      updatedAt: info.mtime.toISOString(),
+      createdAt: previous?.createdAt || new Date().toISOString(),
+    })
+  }
+
+  async function textReaderContent({ item, itemId, unit, units, index }) {
+    const root = path.resolve(filesPath(itemId))
+    const target = path.resolve(unit.managedPath || '')
+    // managedPath 是导入时记下的绝对路径，读之前再确认一次还在合集自己的 files/ 里
+    if (!target.startsWith(`${root}${path.sep}`)) throw new Error('文本文件不在合集目录内')
+    const info = await stat(target)
+    if (info.size > MAX_TEXT_BYTES) throw new Error(`文本文件过大（${Math.round(info.size / 1024 / 1024)}MB，上限 ${MAX_TEXT_BYTES / 1024 / 1024}MB）`)
+    const { text, encoding } = decodeTextFile(await readFile(target))
+    const section = unit.sections[0]
+    return {
+      type: 'html',
+      item: pickPublicItem(item),
+      unit,
+      section,
+      sections: unit.sections,
+      navigation: {
+        prev: units[index - 1] || null,
+        next: units[index + 1] || null,
+      },
+      encoding,
+      content: textToHtml(text),
+    }
+  }
+
   async function epubUnitFromFile({ itemId, filePath, previous = null, existingUnits = [] }) {
     if (!epubSupport?.importUnitIntoItem) throw new Error('EPUB support is not configured')
     const info = await stat(filePath)
@@ -1747,6 +1818,15 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   function isSupportedName(filePath) {
     const ext = path.extname(filePath).slice(1).toLowerCase()
     return extensions.includes(ext)
+  }
+
+  function isTextName(filePath) {
+    return TEXT_EXTENSIONS.includes(path.extname(filePath).slice(1).toLowerCase())
+  }
+
+  // includeText：这个合集是否按文本媒体处理（见 TEXT_EXTENSIONS 的说明）
+  function isSupportedFor(includeText) {
+    return (filePath) => isSupportedName(filePath) || (includeText && isTextName(filePath))
   }
 
   function isSubtitleName(filePath) {
@@ -2121,6 +2201,7 @@ function mediaKind(filePath) {
   if (VIDEO_EXTENSIONS.includes(ext)) return 'video'
   if (IMAGE_EXTENSIONS.includes(ext)) return 'image'
   if (EPUB_EXTENSIONS.includes(ext)) return 'epub'
+  if (TEXT_EXTENSIONS.includes(ext)) return 'text'
   return 'unknown'
 }
 
