@@ -80,12 +80,77 @@ export function decodeTextFile(buffer) {
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;' }
 
 // 一行一个段落；空行不产生空段落。行首的全角空格（　　）是中文小说常见的段首缩进，保留。
-export function textToHtml(text) {
+export function textParagraphs(text) {
   return String(text || '')
     .replace(/^﻿/, '')
     .split(/\r\n|\r|\n/)
     .map((line) => line.replace(/\s+$/, ''))
     .filter((line) => line.trim())
-    .map((line) => `<p>${line.replace(/[&<>]/g, (char) => ESCAPES[char])}</p>`)
-    .join('\n')
+}
+
+export function paragraphsToHtml(paragraphs) {
+  return paragraphs.map((line) => `<p>${line.replace(/[&<>]/g, (char) => ESCAPES[char])}</p>`).join('\n')
+}
+
+export function textToHtml(text) {
+  return paragraphsToHtml(textParagraphs(text))
+}
+
+// 句末标点（含紧跟的收尾引号/括号）。单个段落比分段上限还长时，在句末切，句子保持完整。
+const SENTENCE_PIECE = /[^。！？!?…]+[。！？!?…]*[」』）)”’"']*/g
+
+function breakLongParagraph(paragraph, limit) {
+  const pieces = []
+  let current = ''
+  const flush = () => { if (current) { pieces.push(current); current = '' } }
+  for (const sentence of paragraph.match(SENTENCE_PIECE) || [paragraph]) {
+    if (sentence.length > limit) {
+      // 一个句子自己就超过上限（没有标点的长文本）：只能硬切，保证能继续读
+      flush()
+      for (let i = 0; i < sentence.length; i += limit) pieces.push(sentence.slice(i, i + limit))
+      continue
+    }
+    if (current && current.length + sentence.length > limit) flush()
+    current += sentence
+  }
+  flush()
+  return pieces
+}
+
+// 把段落按字数切成若干段，每段是一个段落数组。在段落边界切，不劈开句子：
+// 朗读缓存的键是句子文本，句子不变缓存就继续有效。最后一段太短（< 上限的 20%）并进上一段。
+export function splitParagraphsBySize(paragraphs, maxChars) {
+  const limit = Math.max(1, Math.floor(maxChars) || 1)
+  const pieces = []
+  for (const paragraph of paragraphs) {
+    if (paragraph.length <= limit) pieces.push(paragraph)
+    else pieces.push(...breakLongParagraph(paragraph, limit))
+  }
+  const sections = []
+  let current = []
+  let length = 0
+  for (const piece of pieces) {
+    if (current.length && length + piece.length > limit) {
+      sections.push(current)
+      current = []
+      length = 0
+    }
+    current.push(piece)
+    length += piece.length
+  }
+  if (current.length) sections.push(current)
+  if (sections.length > 1 && length < limit * 0.2) {
+    const tail = sections.pop()
+    sections[sections.length - 1].push(...tail)
+  }
+  return sections
+}
+
+export function textSectionList(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    sectionId: `p${index + 1}`,
+    title: `第 ${index + 1} 段`,
+    index,
+    type: 'chapter',
+  }))
 }

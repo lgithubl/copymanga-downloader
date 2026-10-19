@@ -266,6 +266,9 @@ function defaultConfig() {
     mediaManagedBasePath: path.join(DATA_DIR, 'library', 'media'),
     mediaStreamBasePath: '/media',
     mediaImportSourceRoots: '/input',
+    // TXT 按多少字切成一段（第 1 段、第 2 段…）。0 / 不配置 = 不切，一个文件一个 section。
+    // 只影响之后导入/重新扫描的文本合集。
+    textSectionChars: 0,
     // EPUB 朗读：GSV-TTS-Lite 是参考音频克隆音色，不是挑 voice 枚举，
     // speakerAudio/promptAudio 留空时前端直接把朗读按钮置灰。
     // 没有 mediaType：查过 GSV-TTS-Lite 源码，/tts/batched 的请求模型根本没这个
@@ -338,6 +341,13 @@ function defaultConfig() {
   }
 }
 
+// 0 / 空 / 非法 = 不切；配了就不能小于 1000 字（再小每段几十行，翻章比翻页还勤）
+function normalizeTextSectionChars(value) {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.min(1000000, Math.max(1000, n))
+}
+
 // auto 和留空等价（GSV 不传就是 auto），统一成空，缓存键也就不会因为"显式 auto"和"没配"分成两份
 function normalizeEpubTtsLanguage(value) {
   const language = String(value || '').trim().toLowerCase()
@@ -363,6 +373,7 @@ function normalizeConfig(value) {
     mediaManagedBasePath: String(value?.mediaManagedBasePath || defaults.mediaManagedBasePath).trim() || defaults.mediaManagedBasePath,
     mediaStreamBasePath: String(value?.mediaStreamBasePath || defaults.mediaStreamBasePath).trim() || defaults.mediaStreamBasePath,
     mediaImportSourceRoots: String(value?.mediaImportSourceRoots || defaults.mediaImportSourceRoots).trim() || defaults.mediaImportSourceRoots,
+    textSectionChars: normalizeTextSectionChars(value?.textSectionChars),
     epubTtsApiBase: String(value?.epubTtsApiBase || defaults.epubTtsApiBase).trim() || defaults.epubTtsApiBase,
     epubTtsSpeakerAudio: String(value?.epubTtsSpeakerAudio || defaults.epubTtsSpeakerAudio).trim(),
     epubTtsPromptAudio: String(value?.epubTtsPromptAudio || defaults.epubTtsPromptAudio).trim(),

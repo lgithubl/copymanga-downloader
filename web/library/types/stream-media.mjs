@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { atomicWriteJson, withFileLock } from '../atomic-json-store.mjs'
-import { decodeTextFile, textToHtml } from '../text-decode.mjs'
+import { decodeTextFile, paragraphsToHtml, splitParagraphsBySize, textParagraphs, textSectionList } from '../text-decode.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -493,7 +493,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         })),
       }
     }
-    if (unit.mediaKind === 'text') return textReaderContent({ item, itemId, unit, units, index })
+    if (unit.mediaKind === 'text') return textReaderContent({ item, itemId, unit, units, index, sectionId: options.sectionId || '' })
     if (unit.mediaKind === 'epub' && epubSupport?.getReaderContentFromItem) {
       return epubSupport.getReaderContentFromItem({
         item,
@@ -1647,12 +1647,44 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     })
   }
 
-  // TXT：一个文件一个 unit、一个 section（不做章节识别）。unit 形状和 EPUB 一致（sections / mediaKind），
-  // 所以阅读器、朗读、朗读缓存脚本整条通路都能直接复用。
+  // TXT：一个文件一个 unit。配置了 textSectionChars（>0）且文件够长就按字数切成多个 section
+  // （第 1 段、第 2 段…），没配置就是一个 section。unit 形状和 EPUB 一致（sections / mediaKind），
+  // 所以阅读器、目录、翻章、朗读、朗读缓存脚本整条通路都能直接复用。
+  // 切分用的字数记在 unit.splitChars 上：阅读时按它切，不看当前配置，改了配置要重新扫描才生效，
+  // 这样一个 unit 的段编号和内容始终对得上。
+  const textSplitCache = new Map()   // 读一个 section 要整份文件切一遍，缓存几份，避免预生成脚本逐段读时 O(N²)
+
+  async function textSections({ target, info, splitChars }) {
+    const key = `${target}|${info.mtimeMs}|${info.size}|${splitChars}`
+    const hit = textSplitCache.get(key)
+    if (hit) {
+      textSplitCache.delete(key)
+      textSplitCache.set(key, hit)
+      return hit
+    }
+    const { text, encoding } = decodeTextFile(await readFile(target))
+    const paragraphs = textParagraphs(text)
+    const result = { encoding, sections: splitChars > 0 ? splitParagraphsBySize(paragraphs, splitChars) : [paragraphs] }
+    textSplitCache.set(key, result)
+    while (textSplitCache.size > 3) textSplitCache.delete(textSplitCache.keys().next().value)
+    return result
+  }
+
   async function textUnitFromFile({ itemId, filePath, previous = null }) {
     const info = await stat(filePath)
     const fileName = relativePath(itemId, filePath)
     const title = path.basename(fileName, path.extname(fileName))
+    const configured = Math.floor(Number(getConfig().textSectionChars) || 0)
+    let splitChars = 0
+    let sections = [{ sectionId: 'text', title, index: 0, type: 'chapter' }]
+    // 字符数 <= 字节数：文件字节数不超过上限就一定不用切，省得白白解码
+    if (configured > 0 && info.size > configured && info.size <= MAX_TEXT_BYTES) {
+      const split = await textSections({ target: filePath, info, splitChars: configured })
+      if (split.sections.length > 1) {
+        splitChars = configured
+        sections = textSectionList(split.sections.length)
+      }
+    }
     return normalizeMediaUnit({
       type,
       unitId: uniqueUnitId(fileName),
@@ -1665,35 +1697,43 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       managedPath: filePath,
       size: info.size,
       contentType: 'text/plain',
-      sectionCount: 1,
-      chapterCount: 1,
-      sections: [{ sectionId: 'text', title, index: 0, type: 'chapter' }],
+      splitChars,
+      sectionCount: sections.length,
+      chapterCount: sections.length,
+      sections,
       updatedAt: info.mtime.toISOString(),
       createdAt: previous?.createdAt || new Date().toISOString(),
     })
   }
 
-  async function textReaderContent({ item, itemId, unit, units, index }) {
+  async function textReaderContent({ item, itemId, unit, units, index, sectionId = '' }) {
     const root = path.resolve(filesPath(itemId))
     const target = path.resolve(unit.managedPath || '')
     // managedPath 是导入时记下的绝对路径，读之前再确认一次还在合集自己的 files/ 里
     if (!target.startsWith(`${root}${path.sep}`)) throw new Error('文本文件不在合集目录内')
     const info = await stat(target)
     if (info.size > MAX_TEXT_BYTES) throw new Error(`文本文件过大（${Math.round(info.size / 1024 / 1024)}MB，上限 ${MAX_TEXT_BYTES / 1024 / 1024}MB）`)
-    const { text, encoding } = decodeTextFile(await readFile(target))
-    const section = unit.sections[0]
+    const split = await textSections({ target, info, splitChars: unit.splitChars || 0 })
+    // 文件在扫描之后被改过，段数可能变了：以实际切出来的为准，不能按 unit 里记的旧列表去取
+    const sections = split.sections.length > 1 ? textSectionList(split.sections.length) : unit.sections
+    const found = sections.findIndex((section) => section.sectionId === sectionId)
+    const at = found >= 0 ? found : 0
     return {
       type: 'html',
       item: pickPublicItem(item),
       unit,
-      section,
-      sections: unit.sections,
+      section: sections[at],
+      sections,
       navigation: {
         prev: units[index - 1] || null,
         next: units[index + 1] || null,
       },
-      encoding,
-      content: textToHtml(text),
+      sectionNavigation: {
+        prev: at > 0 ? sections[at - 1] : null,
+        next: at < sections.length - 1 ? sections[at + 1] : null,
+      },
+      encoding: split.encoding,
+      content: paragraphsToHtml(split.sections[Math.min(at, split.sections.length - 1)] || []),
     }
   }
 
@@ -2100,6 +2140,7 @@ function normalizeMediaUnit(unit) {
     images: Array.isArray(unit?.images) ? unit.images : [],
     sectionCount: Number(unit?.sectionCount || 0),
     chapterCount: Number(unit?.chapterCount || 0),
+    splitChars: Number(unit?.splitChars || 0),
     sections: Array.isArray(unit?.sections) ? unit.sections : [],
     imageResources: Array.isArray(unit?.imageResources) ? unit.imageResources : [],
     subtitles: Array.isArray(unit?.subtitles) ? unit.subtitles.map(normalizeSubtitle) : [],

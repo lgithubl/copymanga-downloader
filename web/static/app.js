@@ -220,6 +220,7 @@ const els = {
   configMediaManagedBasePath: document.querySelector('#config-media-managed-base-path'),
   configMediaStreamBasePath: document.querySelector('#config-media-stream-base-path'),
   configMediaImportSourceRoots: document.querySelector('#config-media-import-source-roots'),
+  configTextSectionChars: document.querySelector('#config-text-section-chars'),
   configEpubTtsApiBase: document.querySelector('#config-epub-tts-api-base'),
   configEpubTtsSpeakerAudio: document.querySelector('#config-epub-tts-speaker-audio'),
   configEpubTtsPromptAudio: document.querySelector('#config-epub-tts-prompt-audio'),
@@ -1313,6 +1314,7 @@ async function loadConfig() {
   els.configEpubTtsBatchMaxSentences.value = config.epubTtsBatchMaxSentences || 5
   els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
+  els.configTextSectionChars.value = config.textSectionChars > 0 ? String(config.textSectionChars) : ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   els.configMediaOpenInNewTab.checked = Boolean(config.mediaOpenInNewTab)
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
@@ -7296,6 +7298,7 @@ els.configSave.addEventListener('click', async () => {
         mediaManagedBasePath: els.configMediaManagedBasePath.value,
         mediaStreamBasePath: els.configMediaStreamBasePath.value,
         mediaImportSourceRoots: els.configMediaImportSourceRoots.value,
+        textSectionChars: Number(els.configTextSectionChars.value) || 0,
         epubTtsApiBase: els.configEpubTtsApiBase.value,
         epubTtsSpeakerAudio: els.configEpubTtsSpeakerAudio.value,
         epubTtsPromptAudio: els.configEpubTtsPromptAudio.value,
