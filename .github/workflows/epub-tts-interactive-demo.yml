@@ -15,6 +15,10 @@ on:
         description: 保持在线的分钟数
         required: true
         default: "60"
+      gsv_lang_map:
+        description: GSV 的 GSV_TTS_LANG_MAP（检测语言码映射，如 wuu=zh,yue=zh；留空 = 不映射）
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -43,6 +47,8 @@ jobs:
       # 现在看起来一致，但为了真正验证"用户的真实部署能不能用"，这里原样照
       # Dockerfile.web 的装法来，只是把 CUDA 轮子换成 CPU 轮子（runner 没有 GPU）。
       - name: Set up real GSV-TTS-Lite (disable-auto-download branch)
+        env:
+          GSV_TTS_LANG_MAP: ${{ inputs.gsv_lang_map }}
         run: |
           set -e
           git clone --depth 1 --branch disable-auto-download https://github.com/lgithubl/GSV-TTS-Lite.git "$RUNNER_TEMP/gsv-tts-lite"
