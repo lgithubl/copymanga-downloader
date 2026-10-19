@@ -72,6 +72,7 @@ const els = {
   globalBack: document.querySelector('#global-back'),
   viewerView: document.querySelector('#viewer-view'),
   viewerImmersive: document.querySelector('#viewer-immersive'),
+  viewerWidthAdjust: document.querySelector('#viewer-width-adjust'),
   viewerPrev: document.querySelector('#viewer-prev'),
   viewerNext: document.querySelector('#viewer-next'),
   viewerRefresh: document.querySelector('#viewer-refresh'),
@@ -864,11 +865,14 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
   els.viewerNext.disabled = true
   els.viewerRefresh.disabled = false
   els.viewerImmersive.disabled = true
+  if (els.viewerWidthAdjust) els.viewerWidthAdjust.disabled = true
   els.viewerTitle.textContent = title || chapterUuid
   els.viewerMeta.textContent = '加载图片中...'
+  exitWidthAdjust({ apply: false })
   els.viewerImages.className = 'viewer-grid'
   els.viewerImages.innerHTML = ''
   els.viewerImages.classList.remove('long-strip-viewer')
+  applyStoredImageWidth(els.viewerImages)
   retireImageBatch(viewerBatch)   // 上一章的兜底定时器不能再往这个容器里塞图
   viewerBatch = createImageBatch({
     container: els.viewerImages,
@@ -896,6 +900,7 @@ async function openChapterViewer({ comicPathWord, chapterUuid, title, comicTitle
     viewerBatch.images = data.images || []
     appendImageBatch(viewerBatch)
     els.viewerImmersive.disabled = !viewerBatch.images.length
+    if (els.viewerWidthAdjust) els.viewerWidthAdjust.disabled = !viewerBatch.images.length
     // 沉浸态下切章是异步重渲染的，控制条上的章节信息要跟着走
     syncGalleryImmersive()
     if (viewerBatch.images.length && !galleryImmersive && immersivePref('viewer')) {
@@ -3572,6 +3577,7 @@ function renderMediaHtml(reader) {
 }
 
 function renderMediaImages(reader) {
+  exitWidthAdjust({ apply: false })   // 换章节时参考线不能留着
   exitEpubImmersive()   // epub 的分页沉浸态在图集上没有意义
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-images ${themeClass}`
@@ -3582,6 +3588,7 @@ function renderMediaImages(reader) {
   } else {
     const list = document.createElement('div')
     list.className = 'media-image-list'
+    applyStoredImageWidth(list)
     els.mediaReaderContent.replaceChildren(list)
     const prefix = `${reader.item?.title || currentLibraryItem?.title || ''} · ${Number(reader.unit?.index || 0) + 1}/${currentLibraryUnits.length}`
     galleryBatch = createImageBatch({
@@ -5653,6 +5660,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   info.className = 'epub-page-info gallery-info'
   const nextCh = mk('gallery-chapter-next', '下章', '下一章')
   const toc = makeImmersiveToc()
+  const widthBtn = mk('gallery-width', '宽度', '拖动调整图片宽度（Enter 确认，Esc 取消）')
   const exitBtn = mk('gallery-exit', '退出', '退出沉浸')
 
   // —— 长按滚动：右侧贴着滚动条的一对箭头 + 栏里的调速滑块 ——
@@ -5913,7 +5921,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
 
   syncMode()
 
-  bar.append(back, prevCh, info, nextCh, toc, modeBtn, speedWrap, stepRatioWrap, exitBtn)
+  bar.append(back, prevCh, info, nextCh, toc, widthBtn, modeBtn, speedWrap, stepRatioWrap, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -5930,7 +5938,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const HIDE_DELAY = 2400
   let timer = null
   // 目录下拉展开时焦点在 select 上，这时收起控制条会直接把下拉关掉
-  const held = () => bar.matches(':hover') || document.activeElement?.tagName === 'SELECT'
+  const held = () => widthAdjustCleanup || bar.matches(':hover') || document.activeElement?.tagName === 'SELECT'
   const setVisible = (v) => els.app.classList.toggle('stream-chrome-visible', v)
   const schedule = () => {
     clearTimeout(timer)
@@ -5941,6 +5949,11 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     if (event.clientY <= EDGE || event.clientY >= window.innerHeight - EDGE) reveal()
   }
   document.addEventListener('mousemove', onPointerMove)
+  widthBtn.addEventListener('click', () => {
+    setVisible(true)
+    clearTimeout(timer)
+    toggleImageWidthAdjust({ scroller: content, buttons: [widthBtn] })
+  })
 
   // —— 左右点击切章 ——
   // 滚动看图时手会在图上拖，不能用裸 click：只认「位移小 + 没有选区 +
@@ -5978,6 +5991,8 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   content.addEventListener('pointerup', onUp)
 
   const onKey = (event) => {
+    // 调宽度期间 Esc/Enter/左右键归参考线层管：Esc 是取消调整，不是退出沉浸，左右键也不能翻章
+    if (widthAdjustCleanup) return
     if (event.key === 'Escape') {
       event.preventDefault()
       exitGalleryImmersive({ remember: true })
@@ -6007,6 +6022,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   reveal()
 
   galleryImmersive = () => {
+    exitWidthAdjust({ apply: false })
     clearTimeout(timer)
     stopScroll()
     clearTimeout(dimTimer)
@@ -6026,6 +6042,8 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
 // 拖动调宽度：全程只移动参考线，一个字都不重排。
 // 改 --media-page-width 会让浏览器立刻重排多列，拖动时每帧都重排整章会卡，
 // 所以宽度只在"确认退出"那一刻写入，整本只重排一次。
+// EPUB 和图片共用这套交互（openWidthAdjust），各自只提供「宽度范围、怎么应用」，
+// 宽度各存各的：文字适合的栏宽和看图适合的宽度不是一回事。
 let widthAdjustCleanup = null
 
 function exitWidthAdjust({ apply = false, width = 0 } = {}) {
@@ -6035,11 +6053,11 @@ function exitWidthAdjust({ apply = false, width = 0 } = {}) {
   finish(apply, width)
 }
 
-function toggleWidthAdjust() {
-  if (widthAdjustCleanup) { exitWidthAdjust({ apply: false }); return }
-  const content = els.mediaReaderContent
-  if (!content.querySelector('.media-html-pages')) return
-
+// host：水平范围和居中基准（取内容盒，不含滚动条/边框）；vertical：垂直范围跟谁走；
+// available：能调到的最大宽度，拉到它就是「铺满」；current：当前宽度；
+// onApply(width)：确认时调用，width 为数字(px)、'full'(铺满) 或 null(重置默认，仅 reset 存在时)；
+// reset：{ label }，有就在提示条里多一个「重置」按钮
+function openWidthAdjust({ host, vertical, min, available, current, onApply, reset = null, buttons = [], adjustingEl = null }) {
   const layer = document.createElement('div')
   layer.className = 'media-width-layer'
   const left = document.createElement('div')
@@ -6048,35 +6066,47 @@ function toggleWidthAdjust() {
   right.className = 'media-width-edge media-width-edge-right'
   const label = document.createElement('div')
   label.className = 'media-width-label'
+  const labelText = document.createElement('span')
+  label.append(labelText)
+  let resetBtn = null
+  if (reset) {
+    resetBtn = document.createElement('button')
+    resetBtn.type = 'button'
+    resetBtn.className = 'media-width-reset'
+    resetBtn.textContent = reset.label || '重置'
+    resetBtn.title = '恢复默认宽度并退出'
+    label.append(resetBtn)
+  }
   layer.append(left, right, label)
   document.body.append(layer)
 
-  // 水平范围必须按父容器量：正文容器自己被 max-width 收到了一页宽，
-  // 拿它算 available 会让宽度只能越调越窄、再也拉不回铺满。
-  const host = content.parentElement || content
-  const available = Math.max(320, host.clientWidth - 56)
-  const limit = loadEpubPageWidth()
-  let width = limit > 0 ? Math.min(limit, available) : available
+  let width = Math.max(min, Math.min(available, Math.round(current || available)))
 
+  // 内容盒的水平位置：.media-reader-content / .viewer-grid 自己是滚动容器，右边可能有滚动条、
+  // 左右有边框，居中基准必须是内容盒（clientLeft/clientWidth），否则参考线和图实际居中的位置对不上。
+  const box = () => {
+    const rect = host.getBoundingClientRect()
+    return { left: rect.left + host.clientLeft, width: host.clientWidth, outerLeft: rect.left, outerWidth: rect.width }
+  }
   const paint = () => {
     // 参考线层必须用 fixed 按屏幕矩形定位：.media-reader-content 是横向
     // 滚动容器，absolute 相对的是 padding box，不随 scrollLeft 走 —— 翻过页
     // 之后（scrollLeft 几千）参考线会被甩出视口左边。
     // 垂直范围跟正文走，水平范围跟整块阅读区走。
-    const rect = content.getBoundingClientRect()
-    const hostRect = host.getBoundingClientRect()
-    layer.style.left = `${hostRect.left}px`
+    const rect = vertical.getBoundingClientRect()
+    const b = box()
+    layer.style.left = `${b.outerLeft}px`
     layer.style.top = `${rect.top}px`
-    layer.style.width = `${hostRect.width}px`
+    layer.style.width = `${b.outerWidth}px`
     layer.style.height = `${rect.height}px`
-    const pad = Math.max(0, (hostRect.width - width) / 2)
+    const pad = Math.max(0, (b.left - b.outerLeft) + (b.width - width) / 2)
     left.style.left = `${pad}px`
     right.style.left = `${pad + width}px`
-    label.textContent = `${Math.round(width)} px${width >= available ? '（铺满）' : ''}`
+    labelText.textContent = `${Math.round(width)} px${width >= available ? '（铺满）' : ''}`
   }
   paint()
 
-  // 列是居中的，必须对称：拖右边时左边同步内移，否则确认后文字重新居中，
+  // 列是居中的，必须对称：拖右边时左边同步内移，否则确认后内容重新居中，
   // 和拖的时候看到的位置对不上。
   let dragging = null
   let moved = false
@@ -6088,10 +6118,10 @@ function toggleWidthAdjust() {
   }
   const onMove = (event) => {
     if (!dragging) return
-    const hostRect = host.getBoundingClientRect()
-    const centre = hostRect.left + hostRect.width / 2
+    const b = box()
+    const centre = b.left + b.width / 2
     const half = dragging === 'left' ? centre - event.clientX : event.clientX - centre
-    width = Math.max(320, Math.min(available, Math.round(half * 2)))
+    width = Math.max(min, Math.min(available, Math.round(half * 2)))
     moved = true
     paint()
   }
@@ -6117,10 +6147,16 @@ function toggleWidthAdjust() {
     if (event.target !== layer || moved) { moved = false; return }
     exitWidthAdjust({ apply: true, width })
   })
+  let resetRequested = false
+  resetBtn?.addEventListener('pointerdown', (event) => event.stopPropagation())
+  resetBtn?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    resetRequested = true
+    exitWidthAdjust({ apply: true, width })
+  })
 
-  els.mediaWidthAdjust?.blur()
-  els.mediaWidthAdjust?.classList.add('active')
-  els.mediaReaderContent.classList.add('width-adjusting')
+  for (const button of buttons) { button?.blur(); button?.classList.add('active') }
+  adjustingEl?.classList.add('width-adjusting')
 
   widthAdjustCleanup = (apply, finalWidth) => {
     document.removeEventListener('pointermove', onMove)
@@ -6128,15 +6164,116 @@ function toggleWidthAdjust() {
     window.removeEventListener('resize', paint)
     document.removeEventListener('keydown', onKey)
     layer.remove()
-    els.mediaWidthAdjust?.classList.remove('active')
-    els.mediaReaderContent.classList.remove('width-adjusting')
+    for (const button of buttons) button?.classList.remove('active')
+    adjustingEl?.classList.remove('width-adjusting')
     if (!apply) return
-    // 到这一刻才真正改宽度并重排，整本只重排一次
-    const anchor = mediaPageAnchor()
-    saveEpubPageWidth(finalWidth >= available ? 0 : finalWidth)
-    layoutMediaPages({ anchor })
-    scheduleLibraryProgressSave()
+    // 到这一刻才真正改宽度，拖动过程中一个字/一张图都没动
+    if (resetRequested) { onApply(null); return }
+    onApply(finalWidth >= available ? 'full' : finalWidth)
   }
+}
+
+function toggleWidthAdjust() {
+  if (widthAdjustCleanup) { exitWidthAdjust({ apply: false }); return }
+  const content = els.mediaReaderContent
+  if (content.querySelector('.media-image-list')) { toggleImageWidthAdjust({ scroller: content }); return }
+  if (!content.querySelector('.media-html-pages')) return
+
+  // 水平范围必须按父容器量：正文容器自己被 max-width 收到了一页宽，
+  // 拿它算 available 会让宽度只能越调越窄、再也拉不回铺满。
+  const host = content.parentElement || content
+  const available = Math.max(320, host.clientWidth - 56)
+  const limit = loadEpubPageWidth()
+  openWidthAdjust({
+    host,
+    vertical: content,
+    min: 320,
+    available,
+    current: limit > 0 ? Math.min(limit, available) : available,
+    buttons: [els.mediaWidthAdjust],
+    adjustingEl: els.mediaReaderContent,
+    onApply: (width) => {
+      const anchor = mediaPageAnchor()
+      saveEpubPageWidth(width === 'full' || width === null ? 0 : width)
+      layoutMediaPages({ anchor })
+      scheduleLibraryProgressSave()
+    },
+  })
+}
+
+// —— 图片宽度（媒体浏览的图集 / 图片浏览 tab / 两处沉浸态共用一份）——
+// 存浏览器本地，和 EPUB 的阅读宽度分开。没存过 = 保持原来的默认（普通图封顶 980px、长条图 690px），
+// 存了之后图片真正按这个宽度缩放：比它窄的图会被放大、比它宽的会被缩小，长条图也一样。
+const IMAGE_WIDTH_KEY = 'copymanga.imageWidth'
+const IMAGE_WIDTH_MIN = 240
+
+function loadImageWidth() {
+  const raw = localStorage.getItem(IMAGE_WIDTH_KEY)
+  if (raw === 'full') return 'full'
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= IMAGE_WIDTH_MIN ? n : 0   // 0 = 默认
+}
+
+function saveImageWidth(value) {
+  if (value === 'full' || value > 0) localStorage.setItem(IMAGE_WIDTH_KEY, String(value === 'full' ? 'full' : Math.round(value)))
+  else localStorage.removeItem(IMAGE_WIDTH_KEY)
+}
+
+// 图片列表容器（.media-image-list / .viewer-grid）上套用已存的宽度。className 会在换章节时被整个重写，
+// 所以每次渲染完都要调一次；变量写在 style 上，类用来切换 CSS 规则。
+function applyStoredImageWidth(list) {
+  if (!list) return
+  const saved = loadImageWidth()
+  list.classList.toggle('custom-image-width', saved !== 0)
+  if (saved === 0) list.style.removeProperty('--image-width')
+  else list.style.setProperty('--image-width', saved === 'full' ? '100%' : `${saved}px`)
+}
+
+// 当前看的位置：第一张还露在视口里的图，以及视口顶边落在它的哪个比例上。
+// 宽度一变每张图的高度都变，不记下来滚动位置会"跳走"。
+function imageScrollAnchor(scroller, list) {
+  const top = scroller.getBoundingClientRect().top
+  for (const img of list.querySelectorAll('img')) {
+    const rect = img.getBoundingClientRect()
+    if (rect.height > 0 && rect.bottom > top + 1) return { img, ratio: (top - rect.top) / rect.height }
+  }
+  return null
+}
+
+function restoreImageScrollAnchor(scroller, anchor) {
+  if (!anchor?.img?.isConnected) return
+  const top = scroller.getBoundingClientRect().top
+  const rect = anchor.img.getBoundingClientRect()
+  scroller.scrollTop += rect.top - (top - anchor.ratio * rect.height)
+}
+
+function toggleImageWidthAdjust({ scroller, buttons = [] }) {
+  if (widthAdjustCleanup) { exitWidthAdjust({ apply: false }); return }
+  const list = scroller?.querySelector?.('.media-image-list') || (scroller?.classList?.contains('viewer-grid') ? scroller : null)
+  if (!list || !list.querySelector('img')) return
+  const cs = getComputedStyle(scroller)
+  const available = Math.max(IMAGE_WIDTH_MIN, Math.floor(scroller.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)))
+  const saved = loadImageWidth()
+  // 没存过时用第一张图现在的实际显示宽度当起点（普通图 980、长条图 690，或窄屏下的容器宽度）
+  const firstWidth = Math.round(list.querySelector('img')?.getBoundingClientRect().width || 0)
+  openWidthAdjust({
+    host: scroller,
+    vertical: scroller,
+    min: IMAGE_WIDTH_MIN,
+    available,
+    current: saved === 'full' ? available : (saved || firstWidth || Math.min(980, available)),
+    reset: { label: '重置默认' },
+    buttons,
+    adjustingEl: scroller,
+    onApply: (value) => {
+      const anchor = imageScrollAnchor(scroller, list)
+      saveImageWidth(value === null ? 0 : value)
+      applyStoredImageWidth(list)
+      restoreImageScrollAnchor(scroller, anchor)
+      // 图片是异步解码、按 height:auto 排版，下一帧才稳定，再对一次
+      requestAnimationFrame(() => restoreImageScrollAnchor(scroller, anchor))
+    },
+  })
 }
 
 function mediaScrollRatio() {
@@ -6145,8 +6282,8 @@ function mediaScrollRatio() {
 }
 
 function updateMediaPageControls() {
-  // 只有 epub(html) 才有可调的阅读宽度
-  if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = currentMediaReader?.type !== 'html'
+  // epub(html) 调阅读宽度，图集(images) 调图片宽度
+  if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = !['html', 'images'].includes(currentMediaReader?.type)
   // 沉浸四种内容都支持：epub 分页翻、图集滚动看、音视频铺满播
   if (els.mediaImmersive) {
     els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video'].includes(currentMediaReader?.type)
@@ -7042,6 +7179,9 @@ function viewerImmersiveOptions(remember) {
   }
 }
 
+els.viewerWidthAdjust?.addEventListener('click', () => {
+  toggleImageWidthAdjust({ scroller: els.viewerImages, buttons: [els.viewerWidthAdjust] })
+})
 els.viewerImmersive?.addEventListener('click', () => {
   enterGalleryImmersive(viewerImmersiveOptions(true))
 })

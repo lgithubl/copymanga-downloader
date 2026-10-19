@@ -1920,6 +1920,19 @@ h2 {
   border-radius: 0;
 }
 
+/* 用户拖过宽度之后：图片真正按这个宽度缩放（窄图放大、宽图缩小），长条图一样。
+   --image-width 写在容器 style 上（px 或 100%），没拖过不会有 custom-image-width 这个类，
+   完全沿用上面原来的 980px / 690px。 */
+/* 必须 !important：applyImageBatchLayout 在每张图加载完时会往 img 上写内联的
+   max-width / width（封顶自然宽度和 980px），内联样式比任何选择器都高 */
+.viewer-grid.custom-image-width img,
+.media-image-list.custom-image-width img,
+.viewer-grid.custom-image-width.long-strip-viewer img,
+.media-image-list.custom-image-width.long-strip-viewer img {
+  max-width: none !important;
+  width: min(100%, var(--image-width)) !important;
+}
+
 .viewer-sentinel {
   color: #667085;
   font-size: 13px;
@@ -3336,6 +3349,32 @@ h2 {
 .media-reader-content.width-adjusting {
   position: relative;
   user-select: none;
+}
+
+.media-width-label {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.media-width-reset {
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+.media-width-reset:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+#viewer-width-adjust.active,
+.gallery-width.active {
+  background: var(--site-primary, #1f6feb);
+  color: #ffffff;
 }
 
 #media-width-adjust.active {
