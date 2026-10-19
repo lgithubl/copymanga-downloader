@@ -225,6 +225,10 @@ const els = {
   configEpubTtsPromptText: document.querySelector('#config-epub-tts-prompt-text'),
   configEpubTtsTextLanguage: document.querySelector('#config-epub-tts-text-language'),
   configEpubTtsPromptLanguage: document.querySelector('#config-epub-tts-prompt-language'),
+  configEpubTtsReplacements: document.querySelector('#config-epub-tts-replacements'),
+  configEpubTtsPreviewInput: document.querySelector('#config-epub-tts-preview-input'),
+  configEpubTtsPreviewRun: document.querySelector('#config-epub-tts-preview-run'),
+  configEpubTtsPreviewResult: document.querySelector('#config-epub-tts-preview-result'),
   configEpubTtsMaxConcurrency: document.querySelector('#config-epub-tts-max-concurrency'),
   configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
@@ -1285,6 +1289,7 @@ async function loadConfig() {
   els.configEpubTtsPromptText.value = config.epubTtsPromptText || ''
   els.configEpubTtsTextLanguage.value = config.epubTtsTextLanguage || ''
   els.configEpubTtsPromptLanguage.value = config.epubTtsPromptLanguage || ''
+  els.configEpubTtsReplacements.value = config.epubTtsTextReplacements || ''
   els.configEpubTtsMaxConcurrency.value = config.epubTtsMaxConcurrency || 1
   els.configEpubTtsBatchMaxSentences.value = config.epubTtsBatchMaxSentences || 5
   els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
@@ -5347,7 +5352,7 @@ async function playEpubTtsFrom(startIndex, content) {
     if (!epubTtsPlaying) return
     const entry = epubTtsSentences[index]
     const chunk = entry.chunk
-    if (!chunk || chunk.error) { index++; continue }   // 单句失败不中断整体朗读，跳过
+    if (!chunk || chunk.error || chunk.skipped) { index++; continue }   // 单句失败、或没有可读内容（分隔线/省略号）不中断整体朗读，跳过
     clearEpubTtsHighlight()
     for (const el of entry.elements) el.classList.add('epub-tts-current')
     setEpubTtsProgress(entry, 0)
@@ -5404,7 +5409,7 @@ async function playSelectedText(btn) {
     })
     const data = await res.json()
     const chunk = data.chunks?.[0]
-    if (!chunk || chunk.error) return
+    if (!chunk || chunk.error || chunk.skipped) return
     audio = new Audio(chunk.url)
     applyEpubTtsRate(audio)
     epubTtsCurrentAudio = audio
@@ -7083,6 +7088,25 @@ els.sidebarToggle.addEventListener('click', () => {
   els.sidebarToggle.title = collapsed ? '展开任务栏' : '收缩任务栏'
   localStorage.setItem('copymanga.sidebarCollapsed', collapsed ? '1' : '0')
 })
+// 「试一试」：用文本框里还没保存的规则，看一句话实际会发给 TTS 什么（—— = 没有可读内容，会被跳过）
+els.configEpubTtsPreviewRun.addEventListener('click', async () => {
+  const text = els.configEpubTtsPreviewInput.value
+  const out = els.configEpubTtsPreviewResult
+  if (!text.trim()) { out.textContent = ''; return }
+  try {
+    const res = await fetch('/api/epub/tts-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texts: text.split(/\r?\n/).filter((line) => line.length), rules: els.configEpubTtsReplacements.value }),
+    })
+    const data = await res.json()
+    const lines = (data.items || []).map((item) => `${item.text}  →  ${item.spoken === null ? '（没有可读内容，跳过）' : item.spoken}`)
+    for (const error of data.errors || []) lines.push(`规则第 ${error.line} 行无效，已忽略：${error.error}`)
+    out.textContent = lines.join('\n')
+  } catch (error) {
+    out.textContent = `预览失败：${error.message}`
+  }
+})
 els.configSave.addEventListener('click', async () => {
   try {
     setLoading(els.configSave, true)
@@ -7120,6 +7144,7 @@ els.configSave.addEventListener('click', async () => {
         epubTtsPromptText: els.configEpubTtsPromptText.value,
         epubTtsTextLanguage: els.configEpubTtsTextLanguage.value,
         epubTtsPromptLanguage: els.configEpubTtsPromptLanguage.value,
+        epubTtsTextReplacements: els.configEpubTtsReplacements.value,
         epubTtsMaxConcurrency: Number(els.configEpubTtsMaxConcurrency.value),
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),

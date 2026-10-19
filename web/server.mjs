@@ -15,6 +15,7 @@ import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
+import { parseReplacements, toSpokenText } from './library/epub-tts-text.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -277,6 +278,8 @@ function defaultConfig() {
     // 全局配置，不分书。
     epubTtsTextLanguage: '',
     epubTtsPromptLanguage: '',
+    // 朗读前的文本替换规则，一行一条 `/正则/标志 => 替换`，见 library/epub-tts-text.mjs
+    epubTtsTextReplacements: '',
     // 真实 TTS 是 GPU 推理，扛不住并发乱打——分段预加载 + 用户快速翻页都可能
     // 同时触发好几个请求，默认给 1（排队），愿意的话自己调大。
     epubTtsMaxConcurrency: 1,
@@ -366,6 +369,7 @@ function normalizeConfig(value) {
     epubTtsPromptText: String(value?.epubTtsPromptText || defaults.epubTtsPromptText),
     epubTtsTextLanguage: normalizeEpubTtsLanguage(value?.epubTtsTextLanguage),
     epubTtsPromptLanguage: normalizeEpubTtsLanguage(value?.epubTtsPromptLanguage),
+    epubTtsTextReplacements: String(value?.epubTtsTextReplacements || '').slice(0, 20000),
     epubTtsMaxConcurrency: clampNumber(value?.epubTtsMaxConcurrency, 1, 8, defaults.epubTtsMaxConcurrency),
     epubTtsBatchMaxSentences: clampNumber(value?.epubTtsBatchMaxSentences, 1, 20, defaults.epubTtsBatchMaxSentences),
     epubTtsBatchMaxChars: clampNumber(value?.epubTtsBatchMaxChars, 20, 2000, defaults.epubTtsBatchMaxChars),
@@ -4683,6 +4687,18 @@ async function route(req, res) {
         return json(res, 200, unit)
       }
     }
+    // 配置页「试一试」：看一句话经过替换规则后实际会发给 TTS 什么；rules 可选，传了就用它试（还没保存的草稿）
+    if (pathname === '/api/epub/tts-preview' && req.method === 'POST') {
+      const body = await readJson(req)
+      const draft = typeof body.rules === 'string' ? parseReplacements(body.rules) : null
+      const { rules, errors } = draft || epubTtsReplacementRules()
+      const texts = Array.isArray(body.texts) ? body.texts.map((text) => String(text ?? '')).slice(0, 50) : []
+      return json(res, 200, {
+        items: texts.map((text) => ({ text, spoken: toSpokenText(text, rules) })),
+        ruleCount: rules.length,
+        errors: errors.map(({ line, error }) => ({ line, error })),
+      })
+    }
     if (pathname.startsWith('/api/epub/') && pathname.endsWith('/tts-chunk') && req.method === 'POST') {
       const parts = pathname.split('/').filter(Boolean)
       const itemId = parts[2]
@@ -4935,8 +4951,10 @@ function epubTtsVoiceKey() {
   return `${config.epubTtsSpeakerAudio}\n${config.epubTtsPromptAudio}${language}`
 }
 
-function epubTtsHash(text) {
-  return createHash('sha1').update(`${text}\n${epubTtsVoiceKey()}`).digest('hex')
+// 缓存键 = 哈希(真正发给 TTS 的文本 + 音色)。文本替换规则不单独进键：规则让句子文本变了键就变了，
+// 没被规则碰到的句子键不变，缓存继续有效；没有规则时和以前完全一样。
+function epubTtsHash(spokenText) {
+  return createHash('sha1').update(`${spokenText}\n${epubTtsVoiceKey()}`).digest('hex')
 }
 
 // 参考音频或语言一变缓存键就全变，旧缓存等于作废；tag 里带这个短指纹，换设置后一眼能看出来
@@ -4944,9 +4962,31 @@ function epubTtsFingerprint() {
   return createHash('sha1').update(epubTtsVoiceKey()).digest('hex').slice(0, 6)
 }
 
-async function epubTtsCachedFlags(itemId, texts) {
+// 替换规则按配置原文缓存编译结果；配置没变就不重复编译。解析错误只在第一次编译时告警一次。
+let epubTtsRulesCache = { source: null, rules: [], errors: [] }
+function epubTtsReplacementRules() {
+  const source = config.epubTtsTextReplacements || ''
+  if (epubTtsRulesCache.source !== source) {
+    const parsed = parseReplacements(source)
+    for (const error of parsed.errors) console.warn(`[epub-tts] 忽略朗读替换规则第 ${error.line} 行：${error.error}：${error.text}`)
+    epubTtsRulesCache = { source, ...parsed }
+  }
+  return epubTtsRulesCache
+}
+
+// 发给 TTS 的文本；null = 没有可读内容（分隔线、省略号、只有数字、被规则删空），不合成也不算失败
+function epubTtsSpoken(text) {
+  return toSpokenText(text, epubTtsReplacementRules().rules)
+}
+
+// 每个句子：{ spoken, cached }。spoken 为 null = 跳过（没有可读内容）；缓存只看 spoken 对应的文件
+async function epubTtsPlan(itemId, texts) {
   const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
-  return await Promise.all(texts.map((text) => pathExists(path.join(cacheDir, `${epubTtsHash(text)}.wav`))))
+  return await Promise.all(texts.map(async (text) => {
+    const spoken = epubTtsSpoken(text)
+    if (spoken === null) return { spoken: null, cached: false }
+    return { spoken, cached: await pathExists(path.join(cacheDir, `${epubTtsHash(spoken)}.wav`)) }
+  }))
 }
 
 // 给 tag 脚本的服务：脚本可能放在 DATA_DIR/tag-scripts 下，没法 import 仓库里的模块，
@@ -4958,11 +4998,11 @@ function epubTtsScriptServices({ type, itemId }) {
     batchMaxSentences: config.epubTtsBatchMaxSentences,
     batchMaxChars: config.epubTtsBatchMaxChars,
     sections: (unit) => epubTtsSectionSentences({ type, itemId, unit }),
-    cached: (texts) => epubTtsCachedFlags(itemId, texts),
-    // 生成缺的句子（走和听书同一个并发队列/批量/缓存）。返回每句 { ok, error? }
+    plan: (texts) => epubTtsPlan(itemId, texts),
+    // 生成缺的句子（走和听书同一个并发队列/批量/缓存/替换规则）。返回每句 { ok, skipped?, error? }
     generate: async (texts) => {
       const chunks = await resolveEpubTtsChunks(itemId, texts)
-      return chunks.map((chunk) => (chunk?.error ? { ok: false, error: String(chunk.error) } : { ok: true }))
+      return chunks.map((chunk) => (chunk?.skipped ? { ok: true, skipped: true } : chunk?.error ? { ok: false, error: String(chunk.error) } : { ok: true }))
     },
   }
 }
@@ -4976,13 +5016,19 @@ function epubTtsScriptServices({ type, itemId }) {
 // 拖慢原因，纯属没验证过的主观判断。统一成一条路径更简单，还白捡一个好处：
 // 所有句子（含当前正在读的这句）都能拿到 subtitle 时间戳。
 // 文件统一存 .wav：接口本身写死返回 wav。
+// GSV 返回 4xx/500 说明是内容本身的问题（比如这句话它切不出可读段）；连接失败/502/503/超时是服务问题，
+// 逐句重试只会把同样的失败再来 N 遍。
+const EPUB_TTS_CONTENT_ERROR = /GSV-TTS-Lite 返回 (?:400|422|500)\b/
+
 async function resolveEpubTtsChunks(itemId, texts) {
   const cacheDir = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId))
-  const hashFor = epubTtsHash
   const chunks = new Array(texts.length)
+  const spokenTexts = texts.map(epubTtsSpoken)
   const missing = []
   for (let i = 0; i < texts.length; i++) {
-    const hash = hashFor(texts[i])
+    // 没有可读内容的句子不发给 GSV：它一定失败，而且 /tts/batched 整批成败，会连累同批的正常句子
+    if (spokenTexts[i] === null) { chunks[i] = { index: i, skipped: true }; continue }
+    const hash = epubTtsHash(spokenTexts[i])
     const audioPath = path.join(cacheDir, `${hash}.wav`)
     const subtitlePath = path.join(cacheDir, `${hash}.json`)
     if (await pathExists(audioPath)) {
@@ -4995,22 +5041,30 @@ async function resolveEpubTtsChunks(itemId, texts) {
   if (!missing.length) return chunks
   await mkdir(cacheDir, { recursive: true })
 
+  const synth = (indexes) => callGsvTtsBatched({
+    apiBase: config.epubTtsApiBase,
+    speakerAudio: config.epubTtsSpeakerAudio,
+    promptAudio: config.epubTtsPromptAudio,
+    promptText: config.epubTtsPromptText,
+    textLanguage: config.epubTtsTextLanguage,
+    promptLanguage: config.epubTtsPromptLanguage,
+    texts: indexes.map((i) => spokenTexts[i]),
+  })
+
   // GSV-TTS-Lite 是 GPU 推理，扛不住并发乱打——预加载窗口和用户快速翻页都
   // 可能同时触发好几个 /api/epub/.../tts-chunk 请求，这里排队到配置的上限。
   await withEpubTtsConcurrencyLimit(async () => {
-    const results = await callGsvTtsBatched({
-      apiBase: config.epubTtsApiBase,
-      speakerAudio: config.epubTtsSpeakerAudio,
-      promptAudio: config.epubTtsPromptAudio,
-      promptText: config.epubTtsPromptText,
-      textLanguage: config.epubTtsTextLanguage,
-      promptLanguage: config.epubTtsPromptLanguage,
-      texts: missing.map((i) => texts[i]),
-    })
+    let results = await synth(missing)
+    // /tts/batched 整批成败：同批里一句话出内容问题，其余正常的句子也一起失败。
+    // 批里不止一句、且是内容类错误时，逐句重试一遍，把失败收窄到真正有问题的那一句。
+    if (missing.length > 1 && results.some((result) => result.error && EPUB_TTS_CONTENT_ERROR.test(result.error))) {
+      results = []
+      for (const i of missing) results.push((await synth([i]))[0])
+    }
     await Promise.all(missing.map(async (i, j) => {
       const result = results[j]
       if (result.error) { chunks[i] = { index: i, error: result.error }; return }
-      const hash = hashFor(texts[i])
+      const hash = epubTtsHash(spokenTexts[i])
       const audioPath = path.join(cacheDir, `${hash}.wav`)
       const subtitlePath = path.join(cacheDir, `${hash}.json`)
       await withLock(fileLocks, audioPath, async () => {
@@ -5027,8 +5081,6 @@ async function resolveEpubTtsChunks(itemId, texts) {
   })
   return chunks
 }
-
-
 
 // 简单的并发限制队列：max 每次都现读 config，运行时调配置能立刻生效，
 // 不用重建这个队列。只包住真正打 GSV-TTS-Lite 的那一步，缓存命中/磁盘写入

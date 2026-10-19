@@ -673,6 +673,15 @@
                   <option value="en">英语 en</option>
                 </select>
               </label>
+              <label>朗读文本替换规则（一行一条「/正则/标志 =&gt; 替换」；替换留空 = 删除；# 开头为注释；标志省略默认 gu）
+                <textarea id="config-epub-tts-replacements" rows="5" spellcheck="false" placeholder="# 例：去掉不该读出来的符号&#10;/[★☆♪]/ =>&#10;# 例：给英文词指定读法&#10;/EPUB/ => イーパブ"></textarea>
+              </label>
+              <div class="muted">规则作用在发给 TTS 的文本上，显示的文字不变；缓存按替换后的文本存，改规则只会重新生成受影响的句子。没有任何字母/汉字/假名的句子（＊＊＊、省略号、纯数字）会自动跳过，不用写规则。</div>
+              <label>试一试（每行一句，用上面还没保存的规则预览）
+                <textarea id="config-epub-tts-preview-input" rows="2" spellcheck="false" placeholder="这是一本 EPUB。"></textarea>
+              </label>
+              <button id="config-epub-tts-preview-run" type="button" class="secondary">预览</button>
+              <pre id="config-epub-tts-preview-result" class="muted"></pre>
               <label>最大并发（同时打到 TTS 服务的请求数，GPU 推理扛不住乱打）<input id="config-epub-tts-max-concurrency" type="number" min="1" max="8" step="1" /></label>
               <label>每批最大句数（预加载从 1 句开始逐批递增，封顶这个数）<input id="config-epub-tts-batch-max-sentences" type="number" min="1" max="20" step="1" /></label>
               <label>每批最大字符数（累计超了就少装几句；单句本身超了会先按次级标点/硬切拆开）<input id="config-epub-tts-batch-max-chars" type="number" min="20" max="2000" step="1" /></label>

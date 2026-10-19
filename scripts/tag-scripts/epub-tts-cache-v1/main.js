@@ -25,37 +25,56 @@ export async function generateTags(ctx) {
     return keepOwn(ctx, fullRun, logs)
   }
 
-  // 1) 分句 + 查缓存（unit 内、全合集内都按文本去重：缓存键只看文本，重复句子只需要一份）
+  // 1) 分句 + 查缓存。身份用「真正发给 TTS 的文本」(spoken)：服务端会先过替换规则、并剔除没有可读内容的句子
+  //    （分隔线、省略号、纯数字…，spoken 为 null，不合成也不算失败），缓存键也是 spoken 的哈希。
+  //    不同原文替换后变成同一句，只生成一份。
+  const info = new Map()      // 原文 -> { spoken, cached }
   const plans = []
-  const seen = new Map()   // text -> 是否已缓存（全合集去重）
   for (const unit of units) {
     const sections = await svc.sections(unit)
-    const texts = [...new Set(sections.flatMap((section) => section.texts))]
-    const fresh = texts.filter((text) => !seen.has(text))
+    const originals = [...new Set(sections.flatMap((section) => section.texts))]
+    const fresh = originals.filter((text) => !info.has(text))
     if (fresh.length) {
-      const flags = await svc.cached(fresh)
-      fresh.forEach((text, i) => seen.set(text, flags[i]))
+      const planned = await svc.plan(fresh)
+      fresh.forEach((text, i) => info.set(text, planned[i]))
     }
-    plans.push({ unit, sections, texts, sentenceCount: sections.reduce((sum, section) => sum + section.texts.length, 0) })
+    const spokenOf = new Map()   // spoken -> 该 unit 里的第一个原文
+    let skipped = 0
+    for (const text of originals) {
+      const { spoken } = info.get(text)
+      if (spoken === null) { skipped++; continue }
+      if (!spokenOf.has(spoken)) spokenOf.set(spoken, text)
+    }
+    plans.push({ unit, sections, sentenceCount: sections.reduce((sum, section) => sum + section.texts.length, 0), spokenOf, skipped })
   }
-  const missing = [...seen.entries()].filter(([, cached]) => !cached).map(([text]) => text)
-  const missingChars = missing.reduce((sum, text) => sum + text.length, 0)
+  const cachedSpoken = new Set()
+  const missing = []           // [{ spoken, original }]，全合集按 spoken 去重
+  const missingSeen = new Set()
+  for (const plan of plans) {
+    for (const [spoken, original] of plan.spokenOf) {
+      if (info.get(original).cached) cachedSpoken.add(spoken)
+      else if (!missingSeen.has(spoken)) { missingSeen.add(spoken); missing.push({ spoken, original }) }
+    }
+  }
+  const missingChars = missing.reduce((sum, entry) => sum + entry.spoken.length, 0)
+  const skippedTotal = plans.reduce((sum, plan) => sum + plan.skipped, 0)
 
   if (options.dryRun) {
     for (const plan of plans) {
-      const todo = plan.texts.filter((text) => !seen.get(text)).length
-      logs.push(`${plan.unit.title || plan.unit.unitId}: ${plan.sections.length} 章 ${plan.sentenceCount} 句（去重 ${plan.texts.length}），未缓存 ${todo}`)
+      const todo = [...plan.spokenOf.keys()].filter((spoken) => !cachedSpoken.has(spoken)).length
+      logs.push(`${plan.unit.title || plan.unit.unitId}: ${plan.sections.length} 章 ${plan.sentenceCount} 句（可读 ${plan.spokenOf.size}，跳过 ${plan.skipped}），未缓存 ${todo}`)
     }
     logs.push(`合计未缓存 ${missing.length} 句 / ${missingChars} 字，约需生成 ${Math.ceil(missing.length / Math.max(1, svc.batchMaxSentences))}+ 批`
       + `（音频体积粗估 ${Math.round(missingChars * 14 / 1024)} MB，按每字约 14KB，实际取决于采样率与语速）`)
+    if (skippedTotal) logs.push(`另有 ${skippedTotal} 句没有可读内容（分隔线、省略号、纯数字或被替换规则删空），不会合成`)
     for (const plan of plans) {
       for (const section of plan.sections) {
-        const todo = [...new Set(section.texts)].filter((text) => !seen.get(text)).length
+        const todo = new Set(section.texts.map((text) => info.get(text)).filter((entry) => entry && entry.spoken !== null && !entry.cached).map((entry) => entry.spoken)).size
         if (todo) logs.push(`  · ${plan.unit.title || plan.unit.unitId} / ${section.title || section.sectionId}: ${section.texts.length} 句，未缓存 ${todo}`)
       }
     }
     const out = keepOwn(ctx, fullRun, logs)
-    out.details = { dryRun: true, missingSentences: missing.length, missingChars }
+    out.details = { dryRun: true, missingSentences: missing.length, missingChars, skippedSentences: skippedTotal }
     return out
   }
 
@@ -64,7 +83,7 @@ export async function generateTags(ctx) {
   const batchMaxChars = Math.max(20, Number(svc.batchMaxChars) || 200)
   const budget = options.maxSentences > 0 ? options.maxSentences : Infinity
   const ok = new Set()
-  const failed = new Map()   // text -> error
+  const failed = new Map()   // spoken -> error
   let cursor = 0
   let consecutiveFailures = 0
   let stopped = ''
@@ -73,17 +92,18 @@ export async function generateTags(ctx) {
     const batch = []
     let chars = 0
     while (cursor < missing.length && batch.length < batchMaxSentences && ok.size + failed.size + batch.length < budget) {
-      const text = missing[cursor]
-      if (batch.length && chars + text.length > batchMaxChars) break
-      batch.push(text)
-      chars += text.length
+      const entry = missing[cursor]
+      if (batch.length && chars + entry.spoken.length > batchMaxChars) break
+      batch.push(entry)
+      chars += entry.spoken.length
       cursor++
     }
-    const results = await svc.generate(batch)
+    // 服务端对内容类错误已经逐句重试过，所以这里「整批都失败」才说明是服务本身的问题
+    const results = await svc.generate(batch.map((entry) => entry.original))
     let batchFailed = 0
-    batch.forEach((text, i) => {
-      if (results[i]?.ok) ok.add(text)
-      else { failed.set(text, results[i]?.error || '未知错误'); batchFailed++ }
+    batch.forEach((entry, i) => {
+      if (results[i]?.ok) ok.add(entry.spoken)
+      else { failed.set(entry.spoken, results[i]?.error || '未知错误'); batchFailed++ }
     })
     consecutiveFailures = batchFailed === batch.length ? consecutiveFailures + 1 : 0
     if (options.maxConsecutiveFailures > 0 && consecutiveFailures >= options.maxConsecutiveFailures) {
@@ -93,24 +113,25 @@ export async function generateTags(ctx) {
   }
   if (stopped) logs.push(stopped)
 
-  // 3) 汇总状态
-  const isCached = (text) => seen.get(text) || ok.has(text)
+  // 3) 汇总状态（只看可读句子；跳过的不算缺）
+  const isCached = (spoken) => cachedSpoken.has(spoken) || ok.has(spoken)
   const unitTags = []
   let total = 0
   let done = 0
   for (const plan of plans) {
-    if (!plan.texts.length) continue
-    const cachedCount = plan.texts.filter(isCached).length
-    const failCount = plan.texts.filter((text) => failed.has(text)).length
-    total += plan.texts.length
+    const spokenList = [...plan.spokenOf.keys()]
+    if (!spokenList.length) continue
+    const cachedCount = spokenList.filter(isCached).length
+    const failCount = spokenList.filter((spoken) => failed.has(spoken)).length
+    total += spokenList.length
     done += cachedCount
-    const state = cachedCount === plan.texts.length ? '全' : (cachedCount > 0 ? '部分' : (failCount > 0 ? '失败' : '无'))
+    const state = cachedCount === spokenList.length ? '全' : (cachedCount > 0 ? '部分' : (failCount > 0 ? '失败' : '无'))
     unitTags.push({ unitId: plan.unit.unitId, tags: [`朗读缓存: ${state}`] })
-    logs.push(`${plan.unit.title || plan.unit.unitId}: ${plan.texts.length} 句，已缓存 ${cachedCount}，失败 ${failCount} → ${state}`)
+    logs.push(`${plan.unit.title || plan.unit.unitId}: ${spokenList.length} 句可读${plan.skipped ? `（另跳过 ${plan.skipped} 句无可读内容）` : ''}，已缓存 ${cachedCount}，失败 ${failCount} → ${state}`)
   }
-  logs.push(`本次生成 ${ok.size} 句，失败 ${failed.size} 句，剩余未缓存 ${total - done} 句`)
+  logs.push(`本次生成 ${ok.size} 句，失败 ${failed.size} 句，剩余未缓存 ${total - done} 句${skippedTotal ? `，跳过 ${skippedTotal} 句无可读内容` : ''}`)
   if (failed.size) {
-    for (const [text, error] of [...failed].slice(0, 5)) logs.push(`  失败：${text.slice(0, 30)} → ${error}`)
+    for (const [spoken, error] of [...failed].slice(0, 5)) logs.push(`  失败：${spoken.slice(0, 30)} → ${error}`)
   }
   const itemState = total && done === total ? '全' : (done > 0 ? '部分' : '无')
   return {
@@ -120,7 +141,7 @@ export async function generateTags(ctx) {
     unitTags,
     unitPatches: [],
     logs,
-    details: { generated: ok.size, failed: failed.size, remaining: total - done, stopped: stopped || null },
+    details: { generated: ok.size, failed: failed.size, remaining: total - done, skipped: skippedTotal, stopped: stopped || null },
   }
 }
 
