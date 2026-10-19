@@ -169,6 +169,11 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const importProfile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
     const fileInputs = files.filter((file) => file.buffer?.length)
     if (!sourcePath && !fileInputs.length) throw new Error('sourcePath or file is required')
+    // 「EPUB 媒体」方案：就是普通的媒体导入，只是上传限定 .epub，传了别的直接报错而不是悄悄导成一堆杂项
+    if (importProfile === 'epub-media') {
+      const notEpub = fileInputs.filter((file) => !EPUB_EXTENSIONS.includes(path.extname(file.filename || '').slice(1).toLowerCase()))
+      if (notEpub.length) throw new Error(`EPUB 媒体方案只支持 .epub 文件：${notEpub.map((file) => file.filename).join('、')}`)
+    }
     if (importProfile === 'rj-media') {
       if (sourcePath && !fileInputs.length) return importRjDirectoryBatch({ sourcePath, inputTags })
       if (fileInputs.length) return importRjUploadBatch({ files: fileInputs, inputTags })

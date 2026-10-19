@@ -399,7 +399,9 @@ const defaultMediaImportProfiles = {
   },
 }
 const mediaImportTypeInfo = {
-  epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false },
+  // deprecated：旧的 EPUB 库类型导入，只能上传、没有目录来源/导入方案。新导入请用「EPUB 媒体」方案（媒体类型）。
+  // 类型本身继续注册，已经导入的合集照常能读。
+  epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false, deprecated: true },
   media: { label: '媒体', unit: '个媒体项', accept: '.zip,.epub,application/epub+zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
 }
 const mediaImportProfiles = {
@@ -408,8 +410,19 @@ const mediaImportProfiles = {
   'normal-video': { label: '普通视频', type: 'media', sourcePlaceholder: '/input/video' },
   // batch: true —— 一个来源目录会产出多个合集（每个视频一个），和 rj-media 同类
   'monthly-ani': { label: '月度 ANI', type: 'media', sourcePlaceholder: '/input/ani', batch: true },
-  epub: { label: 'EPUB', type: 'epub', sourcePlaceholder: '' },
+  // EPUB 作为媒体类型导入：一次导入的多个 EPUB 放进同一个合集（和旧的 EPUB 导入一致），
+  // 不带任何默认脚本——扫描和缩略图对 EPUB 都是空操作（缩略图只处理音视频，EPUB 封面导入时已经取好）。
+  'epub-media': {
+    label: 'EPUB 媒体',
+    type: 'media',
+    sourcePlaceholder: '/input/books',
+    accept: '.epub,application/epub+zip',
+    filesLabel: 'EPUB',
+    noDefaultScripts: true,
+  },
+  epub: { label: 'EPUB（已废弃）', type: 'epub', sourcePlaceholder: '', deprecated: true },
 }
+const DEPRECATED_EPUB_IMPORT_NOTICE = '「EPUB」导入已废弃，新导入请选「EPUB 媒体」方案（已有的 EPUB 合集不受影响）。'
 const mediaPlaybackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 const defaultMediaSubtitleExtensions = 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub'
 const stageLabels = {
@@ -1501,7 +1514,7 @@ async function loadLibraryTypes() {
   libraryTypes = await api('/api/library/types')
   const current = els.libraryType.value || 'all'
   const currentHistory = els.historyType?.value || 'all'
-  const currentImport = els.mediaImportType.value || 'epub'
+  const currentImport = els.mediaImportType.value || 'media'
   els.libraryType.innerHTML = '<option value="all">全部类型</option>'
   els.historyType.innerHTML = '<option value="all">全部类型</option>'
   els.mediaImportType.innerHTML = ''
@@ -1515,13 +1528,13 @@ async function loadLibraryTypes() {
     if (type.importable) {
       const importOption = document.createElement('option')
       importOption.value = type.type
-      importOption.textContent = type.label || mediaImportTypeInfo[type.type]?.label || type.type
+      importOption.textContent = `${type.label || mediaImportTypeInfo[type.type]?.label || type.type}${mediaImportTypeInfo[type.type]?.deprecated ? '（已废弃）' : ''}`
       els.mediaImportType.append(importOption)
     }
   }
   els.libraryType.value = [...els.libraryType.options].some((option) => option.value === current) ? current : 'all'
   els.historyType.value = [...els.historyType.options].some((option) => option.value === currentHistory) ? currentHistory : 'all'
-  els.mediaImportType.value = [...els.mediaImportType.options].some((option) => option.value === currentImport) ? currentImport : 'epub'
+  els.mediaImportType.value = [...els.mediaImportType.options].some((option) => option.value === currentImport) ? currentImport : 'media'
   restoreLibraryState()
   updateMediaImportControls()
 }
@@ -2096,22 +2109,23 @@ function updateMediaImportMeta() {
   } else {
     els.mediaImportMeta.textContent = els.mediaImportTitle.value.trim()
       ? `本次导入会新建合集：${els.mediaImportTitle.value.trim()}`
-      : `未选择已有合集时，会用合集名称新建一套 ${info.label}`
+      : `未选择已有合集时，会用合集名称新建一套 ${profile.filesLabel ? profile.label : info.label}`
   }
   if (info.source && els.mediaImportSourcePath.value.trim()) {
     els.mediaImportMeta.textContent += ` · 来源：${els.mediaImportSourcePath.value.trim()}`
   }
+  if (info.deprecated || profile.deprecated) els.mediaImportMeta.textContent = `${DEPRECATED_EPUB_IMPORT_NOTICE} ${els.mediaImportMeta.textContent}`
 }
 
 function updateMediaImportControls() {
   const type = els.mediaImportType.value || 'epub'
   const info = mediaImportTypeInfo[type] || { label: type, accept: '', source: false }
   const profile = mediaImportProfiles[els.mediaImportProfile.value] || mediaImportProfiles.custom
-  els.mediaImportFiles.accept = info.accept || ''
-  els.mediaImportFilesLabel.firstChild.textContent = `${info.label} 文件`
-  els.mediaImportSubmit.textContent = profile.batch ? `批量导入 ${profile.label}` : `导入 ${info.label}`
+  els.mediaImportFiles.accept = profile.accept || info.accept || ''
+  els.mediaImportFilesLabel.firstChild.textContent = `${profile.filesLabel || info.label} 文件`
+  els.mediaImportSubmit.textContent = profile.batch ? `批量导入 ${profile.label}` : `导入 ${profile.filesLabel ? profile.label : info.label}`
   els.mediaImportSourcePath.disabled = !info.source
-  els.mediaImportSourcePath.placeholder = info.source ? '/input/album 或 /input/movie.mp4' : 'EPUB 暂不支持路径导入'
+  els.mediaImportSourcePath.placeholder = info.source ? (profile.sourcePlaceholder || '/input/album 或 /input/movie.mp4') : 'EPUB 暂不支持路径导入'
   if (!info.source) els.mediaImportSourcePath.value = ''
   els.mediaImportItem.disabled = Boolean(profile.batch)
   els.mediaImportTitle.disabled = Boolean(profile.batch)
@@ -2136,7 +2150,7 @@ function applyMediaImportProfile() {
     // 只认两个明确来源：脚本自己的 defaultEnabled，和方案里列出的 defaultMetadataActions。
     // 原先还有一套 scriptHints 子串模糊匹配，'subtitle' 会连 ai-subtitle-v1 /
     // ai-translate-subtitle-v1 一起勾上——这两个要调外部 ASR/LLM，必须用户自己勾。
-    input.checked = Boolean(script?.defaultEnabled || defaultScriptIds.has(input.value))
+    input.checked = profile.noDefaultScripts ? false : Boolean(script?.defaultEnabled || defaultScriptIds.has(input.value))
   }
 }
 
