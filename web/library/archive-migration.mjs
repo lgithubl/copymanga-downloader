@@ -60,11 +60,14 @@ export async function runLrrMigration({
   onProgress = null,
   shouldStop = () => false,
 }) {
-  const { dryRun = false, overwrite = false, concurrency = 16 } = options
+  const { dryRun = false, overwrite = false, concurrency = 16, limit = 0, zipFilenameEncoding = '' } = options
   const internals = handler.internals
   const report = {
     dryRun,
     overwrite,
+    limit,
+    limited: false,
+    zipFilenameEncoding,
     startedAt: new Date().toISOString(),
     redisKeys: 0,
     archives: 0,
@@ -128,17 +131,11 @@ export async function runLrrMigration({
           }
           const name = redisDecode(hash.name)
           const title = redisDecode(hash.title).trim() || name
-          if (!title) report.noTitle += 1
           const tags = parseLrrTags(redisDecode(hash.tags))
-          if (!tags.length) report.noTags += 1
           const dateAdded = Number((tags.find((tag) => tag.toLowerCase().startsWith('date_added:')) || '').split(':')[1])
           const createdAt = new Date(Number.isFinite(dateAdded) && dateAdded > 0 ? dateAdded * 1000 : info.mtimeMs).toISOString()
           const thumb = path.join(config.lrrThumbDir, key.slice(0, 2), `${key}.jpg`)
           const hasThumb = await stat(thumb).then(() => true, () => false)
-          if (!hasThumb) {
-            report.noCover += 1
-            pushExample(report.examples.noCover, key)
-          }
           const num = (field) => Number(hash[field]?.toString('utf8')) || 0
           const item = internals.buildItem({
             itemId: key,
@@ -164,20 +161,35 @@ export async function runLrrMigration({
             },
             createdAt,
             cover: hasThumb ? internals.thumbnailUrl(key) : '',
+            filenameEncoding: zipFilenameEncoding,
           })
-          prepared.push({ item, thumb: hasThumb ? thumb : '' })
-          report.totalTags += tags.length
-          sampleSeen += 1
-          if (sampleKeep.length < SAMPLE_VERIFY) sampleKeep.push({ key, zipPath })
-          else {
-            const slot = Math.floor(Math.random() * sampleSeen)
-            if (slot < SAMPLE_VERIFY) sampleKeep[slot] = { key, zipPath }
-          }
+          prepared.push({ item, thumb: hasThumb ? thumb : '', zipPath, noTitle: !title })
         } catch (error) {
           report.failed += 1
           pushExample(report.examples.failed, `${key}: ${error.message}`)
         }
       })
+      // 限量：每批并发处理后按配置的 limit 精确截断（已存在跳过的、缺文件的都不占名额）
+      if (limit > 0) {
+        const room = Math.max(0, limit - report.imported)
+        if (prepared.length >= room) report.limited = true
+        prepared.length = Math.min(prepared.length, room)
+      }
+      for (const entry of prepared) {
+        if (entry.noTitle) report.noTitle += 1
+        if (!entry.item.tags.length) report.noTags += 1
+        if (!entry.thumb) {
+          report.noCover += 1
+          pushExample(report.examples.noCover, entry.item.itemId)
+        }
+        report.totalTags += entry.item.tags.length
+        sampleSeen += 1
+        if (sampleKeep.length < SAMPLE_VERIFY) sampleKeep.push({ key: entry.item.itemId, zipPath: entry.zipPath })
+        else {
+          const slot = Math.floor(Math.random() * sampleSeen)
+          if (slot < SAMPLE_VERIFY) sampleKeep[slot] = { key: entry.item.itemId, zipPath: entry.zipPath }
+        }
+      }
       if (!dryRun && prepared.length) {
         // 提交顺序：标签库（可重复写）→ 封面 → 最后写 json（提交点）
         await beforeWrite?.(prepared.map((entry) => entry.item))
@@ -198,6 +210,7 @@ export async function runLrrMigration({
         report.imported += prepared.length   // 试运行里表示「将会导入」
       }
       onProgress?.({ ...report })
+      if (report.limited) break
     } while (cursor !== '0')
   } finally {
     client.close()

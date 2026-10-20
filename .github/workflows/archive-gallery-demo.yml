@@ -6,6 +6,7 @@ name: Archive Gallery Interactive Demo
 #   2. 先在一个临时的 web 容器里把迁移和导入的整套自测跑一遍（scripts/dev/archive-selftest.mjs）；
 #   3. 自测通过后，用一份全新的数据目录起对外的 web 容器：LRR 内容/封面目录只读挂载，/input 里放着待导入的新 zip，
 #      迁移、导入都还没做，URL 交给你自己在页面里点。
+# zip 文件名编码、试运行、限量等参数在导入页「导入方案配置」JSON 里（自测脚本也是这样传的）。
 # 配置全部走默认值（容器名 lrr-redis、/data/library/lrr/{content,thumb}、路径前缀 /home/koyomi/lanraragi/content），
 # 这样顺便验证默认配置零改动就能用。
 on:
@@ -85,7 +86,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/data-test" "$RUNNER_TEMP/input-test"
           docker run -d --name web-test --network lrrnet \
             -p 8081:8080 \
-            -e ZIP_FILENAME_ENCODING=gbk \
             -e TAG_SCRIPTS_DIR=/opt/copymanga/tag-scripts \
             -v "$RUNNER_TEMP/data-test:/data" \
             -v "$RUNNER_TEMP/lrr-fx/content:/data/library/lrr/content:ro" \
@@ -98,7 +98,6 @@ jobs:
           done
           BASE=http://127.0.0.1:8081 FIXTURE="$RUNNER_TEMP/lrr-fx" \
             DATA_DIR="$RUNNER_TEMP/data-test" INPUT_DIR="$RUNNER_TEMP/input-test" INPUT_IN_SERVER=/input \
-            ZIP_FILENAME_ENCODING=gbk \
             node scripts/dev/archive-selftest.mjs 2>&1 | tee "$RUNNER_TEMP/selftest.log"
           test "${PIPESTATUS[0]}" -eq 0
           {
@@ -143,7 +142,6 @@ jobs:
           PY
           docker run -d --name copymanga-web --network lrrnet \
             -p 8080:8080 \
-            -e ZIP_FILENAME_ENCODING=gbk \
             -e TAG_SCRIPTS_DIR=/opt/copymanga/tag-scripts \
             -v "$RUNNER_TEMP/data:/data" \
             -v "$RUNNER_TEMP/lrr-fx/content:/data/library/lrr/content:ro" \

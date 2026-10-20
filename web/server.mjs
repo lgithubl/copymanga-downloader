@@ -309,6 +309,21 @@ function defaultConfig() {
         dlsiteRequestMinIntervalMs: 1500,
         dlsiteRequestJitterMs: 800,
       },
+      // 压缩包图集（路径导入）的参数；导入页的「导入方案配置」JSON 里改，提交时随请求生效
+      'archive-gallery': {
+        limit: 0,
+        dryRun: false,
+        zipFilenameEncoding: 'utf-8',
+        defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
+      },
+      // 初始化压缩包图集（LANraragi 迁移）。dryRun 默认开着：先出报告，确认后改成 false 才真的写
+      'lrr-init': {
+        dryRun: true,
+        overwrite: false,
+        limit: 0,
+        concurrency: 16,
+        zipFilenameEncoding: 'utf-8',
+      },
     },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
     // 从媒体库/历史里打开媒体时，哪些媒体类型用新的浏览器标签页。默认都不开，保持原来"在当前页打开"
@@ -447,6 +462,17 @@ function normalizeConfig(value) {
   }
 }
 
+function normalizeArchiveImportOptions(raw, fallback) {
+  const value = raw && typeof raw === 'object' ? raw : {}
+  return {
+    dryRun: Boolean(value.dryRun ?? fallback.dryRun),
+    overwrite: Boolean(value.overwrite ?? fallback.overwrite),
+    limit: clampNumber(value.limit, 0, 100000000, fallback.limit),
+    concurrency: clampNumber(value.concurrency, 1, 64, fallback.concurrency),
+    zipFilenameEncoding: String(value.zipFilenameEncoding || fallback.zipFilenameEncoding).trim().toLowerCase() || fallback.zipFilenameEncoding,
+  }
+}
+
 function normalizeMediaImportProfiles(value, defaults) {
   const source = value && typeof value === 'object' ? value : {}
   const rj = source['rj-media'] && typeof source['rj-media'] === 'object' ? source['rj-media'] : {}
@@ -461,6 +487,11 @@ function normalizeMediaImportProfiles(value, defaults) {
       dlsiteRequestMinIntervalMs: clampNumber(rj.dlsiteRequestMinIntervalMs, 0, 60000, fallback.dlsiteRequestMinIntervalMs),
       dlsiteRequestJitterMs: clampNumber(rj.dlsiteRequestJitterMs, 0, 60000, fallback.dlsiteRequestJitterMs),
     },
+    'archive-gallery': {
+      ...normalizeArchiveImportOptions(source['archive-gallery'], defaults['archive-gallery']),
+      defaultMetadataActions: parseTags(source['archive-gallery']?.defaultMetadataActions || defaults['archive-gallery'].defaultMetadataActions),
+    },
+    'lrr-init': normalizeArchiveImportOptions(source['lrr-init'], defaults['lrr-init']),
   }
 }
 
@@ -3888,6 +3919,24 @@ function truthyField(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase())
 }
 
+// 参数来自导入方案的 JSON 配置：已保存的 config.mediaImportProfiles[方案]，再被本次提交带来的 profileOptions 覆盖
+// （页面提交时把输入框里的 JSON 一起发过来，不用先点保存）。
+function archiveJobOptions(profile, fields) {
+  const saved = config.mediaImportProfiles?.[profile] || {}
+  let override = {}
+  try {
+    const parsed = JSON.parse(String(fields.profileOptions || '{}'))
+    if (parsed && typeof parsed === 'object') override = parsed
+  } catch {
+    throw new Error('导入方案配置不是合法的 JSON')
+  }
+  const fallback = defaultConfig().mediaImportProfiles[profile] || {}
+  const options = normalizeArchiveImportOptions({ ...saved, ...override }, { ...fallback, ...saved })
+  return profile === LRR_INIT_PROFILE
+    ? options
+    : { ...options, sourcePath: String(fields.sourcePath || fields.path || '').trim() }
+}
+
 function startArchiveJob(fields = {}) {
   if (archiveJob?.status === 'running') throw new Error('已有一个压缩包图集导入/迁移任务在运行，请等它结束或先取消')
   const profile = String(fields.importProfile || fields.mediaImportProfile || ARCHIVE_PROFILE).trim()
@@ -3899,9 +3948,7 @@ function startArchiveJob(fields = {}) {
     status: 'running',
     startedAt: new Date().toISOString(),
     finishedAt: '',
-    options: migration
-      ? { dryRun: truthyField(fields.dryRun), overwrite: truthyField(fields.overwrite) }
-      : { sourcePath: String(fields.sourcePath || fields.path || '').trim() },
+    options: archiveJobOptions(profile, fields),
     progress: null,
     report: null,
     error: '',
@@ -3939,6 +3986,7 @@ function startArchiveJob(fields = {}) {
           sourcePath: job.options.sourcePath,
           tags: parseTags(fields.tags || ''),
           profile,
+          options: job.options,
           onItems: afterBatch,
           onProgress: (progress) => { job.progress = progress },
           shouldStop: () => job.cancel,
@@ -3951,7 +3999,7 @@ function startArchiveJob(fields = {}) {
     } finally {
       job.finishedAt = new Date().toISOString()
       libraryIndexRefreshSuspended = Math.max(0, libraryIndexRefreshSuspended - 1)
-      const wrote = !(migration && job.options.dryRun)
+      const wrote = !job.options.dryRun
       if (wrote) markLibraryIndexDirty()
       if (libraryIndexRefreshSuspended === 0 && (wrote || libraryIndexRefreshDeferred)) {
         libraryIndexRefreshDeferred = false

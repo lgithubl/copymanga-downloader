@@ -534,11 +534,7 @@
                 <button id="media-import-profile-config-reset" class="secondary" type="button">恢复默认</button>
               </div>
               <div id="archive-job-panel" hidden>
-                <div id="archive-migration-options" hidden>
-                  <label class="checkbox-line"><input id="archive-migration-dry-run" type="checkbox" checked />试运行（只统计和出报告，不写任何东西）</label>
-                  <label class="checkbox-line"><input id="archive-migration-overwrite" type="checkbox" />已存在的条目用 LANraragi 里的内容覆盖（默认跳过；覆盖会替换这些条目的标题和标签）</label>
-                  <div class="muted">Redis 地址、LRR 内容/封面目录、路径前缀都在「配置」页的压缩包图集部分。</div>
-                </div>
+                <div class="muted">试运行、限量、覆盖、zip 文件名编码都在上面的「导入方案配置」JSON 里改（dryRun / limit / overwrite / zipFilenameEncoding），提交时直接生效，不用先保存。Redis 地址、LRR 目录、路径前缀在「配置」页。</div>
                 <pre id="archive-job-status" class="muted">暂无任务</pre>
                 <button id="archive-job-cancel" class="secondary" type="button" disabled>取消任务</button>
               </div>

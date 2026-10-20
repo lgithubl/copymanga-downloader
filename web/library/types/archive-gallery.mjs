@@ -29,7 +29,10 @@ const ARCHIVE_EXTENSIONS = new Set(['zip', 'cbz'])
 const ID_SAMPLE_BYTES = 512000
 const MAX_CONCURRENT_EXTRACTIONS = 4
 
+// zip 里文件名的编码：导入方案的 JSON 配置（zipFilenameEncoding）会写进每个条目，读取时按条目自己的来；
+// 条目没记（老数据）时才退回环境变量 ZIP_FILENAME_ENCODING，再退回 utf-8。
 const ENCODING = String(process.env.ZIP_FILENAME_ENCODING || 'utf-8').trim().toLowerCase()
+const encodingOf = (item) => String(item?.zip?.filenameEncoding || ENCODING).trim().toLowerCase()
 
 export async function computeArchiveId(filePath) {
   const handle = await open(filePath, 'r')
@@ -119,6 +122,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
         external: Boolean(raw?.zip?.external),
         size: Number(raw?.zip?.size || 0),
         mtimeMs: Number(raw?.zip?.mtimeMs || 0),
+        filenameEncoding: String(raw?.zip?.filenameEncoding || ''),
       },
       origin: raw?.origin && typeof raw.origin === 'object' ? raw.origin : null,
       createdAt: String(raw?.createdAt || now),
@@ -131,7 +135,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     return item
   }
 
-  function buildItem({ itemId, title, tags = [], zipPath, external, size, mtimeMs, pageCount = 0, sourceProfile = ARCHIVE_PROFILE, origin = null, createdAt = '', cover = '' }) {
+  function buildItem({ itemId, title, tags = [], zipPath, external, size, mtimeMs, pageCount = 0, sourceProfile = ARCHIVE_PROFILE, origin = null, createdAt = '', cover = '', filenameEncoding = '' }) {
     const now = new Date().toISOString()
     return normalizeItem({
       itemId,
@@ -141,7 +145,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
       sourceProfile,
       fileName: path.basename(zipPath),
       pageCount,
-      zip: { path: zipPath, external, size, mtimeMs },
+      zip: { path: zipPath, external, size, mtimeMs, filenameEncoding },
       origin,
       createdAt: createdAt || now,
       updatedAt: now,
@@ -246,7 +250,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     await mkdir(path.dirname(dir), { recursive: true })
     const temp = await mkdtemp(path.join(path.dirname(dir), `.${itemId}.tmp-`))
     try {
-      const pages = await extractPages(zipFile, path.join(temp, 'pages'))
+      const pages = await extractPages(zipFile, path.join(temp, 'pages'), encodingOf(item))
       await writeFile(path.join(temp, 'pages.json'), JSON.stringify({ size: stamp.size, mtimeMs: stamp.mtimeMs, pages }))
       await rm(dir, { recursive: true, force: true })
       await rename(temp, dir)
@@ -260,10 +264,10 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
 
   // 页面一律改名成 000001.jpg 这种顺序名：压缩包里的原始文件名编码、特殊字符、目录层级都不再影响读取，
   // 原名只作为标题记在 pages.json 里
-  async function extractPages(zipFile, pagesDir) {
+  async function extractPages(zipFile, pagesDir, encoding) {
     await mkdir(pagesDir, { recursive: true })
     try {
-      const zip = await openZip(zipFile, { filenameEncoding: ENCODING })
+      const zip = await openZip(zipFile, { filenameEncoding: encoding })
       try {
         const entries = zip.imageEntries()
         if (!entries.length) throw new Error('压缩包里没有图片')
@@ -394,7 +398,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
   async function generateCover(itemId, { force = false } = {}) {
     if (!force && await hasCover(itemId)) return { status: 'exists' }
     const item = await readItem(itemId)
-    const zip = await openZip(item.zip.path, { filenameEncoding: ENCODING })
+    const zip = await openZip(item.zip.path, { filenameEncoding: encodingOf(item) })
     let first
     try {
       const entries = zip.imageEntries()
@@ -435,7 +439,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
   // 给标签脚本用：页数和文件名（不解压）。用完必须 close()。
   async function inspect(itemId) {
     const item = await readItem(itemId)
-    const zip = await openZip(item.zip.path, { filenameEncoding: ENCODING })
+    const zip = await openZip(item.zip.path, { filenameEncoding: encodingOf(item) })
     const entries = zip.imageEntries()
     return {
       item,
@@ -567,8 +571,8 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     }
   }
 
-  async function pageCountOf(zipFile) {
-    const zip = await openZip(zipFile, { filenameEncoding: ENCODING })
+  async function pageCountOf(zipFile, encoding = ENCODING) {
+    const zip = await openZip(zipFile, { filenameEncoding: encoding })
     try {
       return zip.imageEntries().length
     } finally {
@@ -578,10 +582,14 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
 
   // 从目录（或单个压缩包）导入：每个压缩包 mv 进受管目录并建一个条目。
   // onItems(batch) 每攒一批调用一次（服务端用它批量写标签库）；返回统计。
-  async function importFromSource({ sourcePath, tags = [], profile = ARCHIVE_PROFILE, onItems = null, onProgress = null, shouldStop = () => false }) {
+  // options：limit（最多新导入几个，0 = 不限）、dryRun（只统计，不 mv、不写）、zipFilenameEncoding（写进条目，读取时用）
+  async function importFromSource({ sourcePath, tags = [], profile = ARCHIVE_PROFILE, options = {}, onItems = null, onProgress = null, shouldStop = () => false }) {
+    const limit = Math.max(0, Number(options.limit) || 0)
+    const dryRun = Boolean(options.dryRun)
+    const encoding = String(options.zipFilenameEncoding || ENCODING).trim().toLowerCase()
     const source = path.resolve(String(sourcePath || ''))
     assertAllowedSource(source)
-    const stats = { scanned: 0, imported: 0, skipped: 0, failed: 0, errors: [] }
+    const stats = { scanned: 0, imported: 0, skipped: 0, failed: 0, errors: [], dryRun, limit, limited: false }
     let batch = []
     const flush = async () => {
       if (!batch.length) return
@@ -591,14 +599,17 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     }
     for await (const file of walkArchives(source)) {
       if (shouldStop()) break
+      if (limit && stats.imported >= limit) { stats.limited = true; break }
       stats.scanned += 1
       try {
         const itemId = await computeArchiveId(file)
         if (await itemExists(itemId)) {
           stats.skipped += 1
+        } else if (dryRun) {
+          stats.imported += 1   // 试运行里表示「将会导入」
         } else {
           const info = await stat(file)
-          const pageCount = await pageCountOf(file)
+          const pageCount = await pageCountOf(file, encoding)
           const target = managedZipPath(itemId)
           await movePath(file, target)
           const moved = await stat(target)
@@ -612,6 +623,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
             mtimeMs: Math.floor(moved.mtimeMs),
             pageCount,
             sourceProfile: profile,
+            filenameEncoding: encoding,
           }))
           batch.push(item)
           stats.imported += 1
@@ -644,7 +656,8 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
           continue
         }
         const info = await stat(tempFile)
-        const pageCount = await pageCountOf(tempFile)
+        const encoding = String(cfg().mediaImportProfiles?.['archive-gallery']?.zipFilenameEncoding || ENCODING).trim().toLowerCase()
+        const pageCount = await pageCountOf(tempFile, encoding)
         const target = managedZipPath(itemId)
         await movePath(tempFile, target)
         const moved = await stat(target)
@@ -658,6 +671,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
           mtimeMs: Math.floor(moved.mtimeMs),
           pageCount,
           sourceProfile: profile,
+          filenameEncoding: encoding,
         })))
       } finally {
         await rm(temp, { recursive: true, force: true }).catch(() => {})

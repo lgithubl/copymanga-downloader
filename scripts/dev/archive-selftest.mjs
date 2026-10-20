@@ -4,6 +4,7 @@
 //     [LRR_CONTENT=/data/library/lrr/content] [LRR_THUMB=/data/library/lrr/thumb] [REDIS_URL=redis://host:6379] \
 //     node archive-selftest.mjs
 // FIXTURE 是 make_lrr_fixture.py 的输出目录（用它的 expect.json 做断言）。
+// zip 文件名编码、试运行、限量、覆盖都通过导入方案的 JSON 配置（profileOptions）传，和页面一致。
 // DATA_DIR / INPUT_DIR 是服务端看到的目录在**本机**上的路径，给了才会检查分片文件和 mv 之后源文件是否消失。
 
 import { execFile } from 'node:child_process'
@@ -37,6 +38,8 @@ async function request(pathname, init = {}) {
 }
 const getJson = async (pathname) => (await request(pathname)).body
 const postJson = (pathname, value) => request(pathname, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) })
+
+const opts = (value) => JSON.stringify(value)
 
 async function startJob(fields, files = []) {
   const form = new FormData()
@@ -89,7 +92,7 @@ const types = await getJson('/api/library/types')
 check('库类型里有「压缩包图集」', types.some((t) => t.type === 'archive' && t.importable), JSON.stringify(types))
 
 // 1. 试运行
-let res = await startJob({ importProfile: 'lrr-init', dryRun: 'true' })
+let res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: true, zipFilenameEncoding: 'gbk' }) })
 check('迁移任务以后台任务启动（202 + job）', res.status === 202 && res.body.job?.status === 'running', JSON.stringify(res.body).slice(0, 200))
 let job = await waitJob()
 let report = job.report
@@ -103,12 +106,28 @@ check('试运行：ID 抽样一致', report.idCheck.sampled > 0 && report.idChec
 check('试运行：没有标签库/元数据副作用', (await archivePage()).items?.length === 0 || (await archivePage()).total === 0)
 if (DATA_DIR) check('试运行：没有写任何元数据文件', !existsSync(path.join(DATA_DIR, 'library-meta', 'archive')) || readdirSync(path.join(DATA_DIR, 'library-meta', 'archive')).length === 0)
 
-// 2. 正式迁移
-res = await startJob({ importProfile: 'lrr-init', dryRun: 'false' })
+// 1b. 限量：先迁 3 个，再迁下一批 3 个（已存在的不占名额）
+res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: true, limit: 3 }) })
+job = await waitJob()
+check('限量试运行：只统计 3 个且标记已达上限', job.report.imported === 3 && job.report.limited === true && job.report.limit === 3, JSON.stringify([job.report.imported, job.report.limited]))
+check('限量试运行：提前结束，没有扫完全库', job.report.archives < expect.total_hashes, String(job.report.archives))
+res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, limit: 3, zipFilenameEncoding: 'gbk' }) })
+job = await waitJob()
+check('限量迁移：刚好迁 3 个', job.status === 'completed' && job.report.imported === 3 && job.report.limited === true && job.report.failed === 0, JSON.stringify(job.report).slice(0, 300))
+if (DATA_DIR) {
+  const count = (() => { let n = 0; const root = path.join(DATA_DIR, 'library-meta', 'archive'); const walk = (dir) => { for (const e of readdirSync(dir, { withFileTypes: true })) { if (e.isDirectory()) walk(path.join(dir, e.name)); else if (e.name.endsWith('.json')) n++ } }; walk(root); return n })()
+  check('限量迁移：磁盘上只有 3 个元数据文件', count === 3, String(count))
+}
+res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, limit: 3, zipFilenameEncoding: 'gbk' }) })
+job = await waitJob()
+check('再限量 3：迁下一批 3 个，前面的已存在跳过且不占名额', job.report.imported === 3 && job.report.skippedExisting >= 3, JSON.stringify([job.report.imported, job.report.skippedExisting]))
+
+// 2. 正式迁移（不限量）：剩下的全部迁完
+res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 report = job.report
 check('迁移完成', job.status === 'completed', job.error)
-check('迁移：导入数', report.imported === expect.importable && report.failed === 0, `${report.imported} failed=${report.failed} ${JSON.stringify(report.examples.failed)}`)
+check('迁移：导入剩余的', report.imported === expect.importable - 6 && report.failed === 0 && report.limited === false, `${report.imported} failed=${report.failed} ${JSON.stringify(report.examples.failed)}`)
 check('迁移：封面已复制', report.coverCopied > 0, String(report.coverCopied))
 if (DATA_DIR) {
   const metaRoot = path.join(DATA_DIR, 'library-meta', 'archive')
@@ -120,7 +139,7 @@ if (DATA_DIR) {
 }
 
 // 3. 重跑：跳过
-res = await startJob({ importProfile: 'lrr-init', dryRun: 'false' })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 check('重跑：全部已存在跳过', job.report.imported === 0 && job.report.skippedExisting === expect.importable, `${job.report.imported}/${job.report.skippedExisting}`)
 
@@ -145,10 +164,9 @@ const noCover = await request(`/api/library/items/archive/${expect.nothumb.id}/t
 check('没有封面的条目：封面接口 4xx/5xx 而不是挂起', noCover.status >= 400, String(noCover.status))
 
 // 5. 阅读（解压到缓存，GBK 文件名 + 自然序）
-const gbkEncodingNote = process.env.ZIP_FILENAME_ENCODING || '(服务端未设 ZIP_FILENAME_ENCODING)'
 const reader = await request(`/api/library/items/archive/${expect.gbk.id}/reader/zip`)
 check('阅读：返回 images 类型', reader.body.type === 'images' && reader.body.images?.length === 3, JSON.stringify(reader.body).slice(0, 200))
-if (process.env.ZIP_FILENAME_ENCODING) check(`阅读：GBK 文件名按 ${gbkEncodingNote} 解码且页序自然`, reader.body.images?.map((img) => img.title).join() === expect.gbk.order.join(), reader.body.images?.map((img) => img.title).join())
+check('阅读：GBK 文件名按导入方案配置的 zipFilenameEncoding 解码且页序自然', reader.body.images?.map((img) => img.title).join() === expect.gbk.order.join(), reader.body.images?.map((img) => img.title).join())
 const pageResp = await request(reader.body.images[0].url)
 check('阅读：页面图片可取', pageResp.status === 200 && /image\//.test(pageResp.res.headers.get('content-type') || ''), String(pageResp.status))
 const nested = await request(`/api/library/items/archive/${expect.nested.id}/reader/zip`)
@@ -194,7 +212,7 @@ const preserved = await request(`/api/library/items/archive/${first.id}/thumbnai
 check('封面脚本不覆盖迁移带来的封面（未 force）', preserved.status === 200)
 
 // 7. 覆盖模式
-res = await startJob({ importProfile: 'lrr-init', dryRun: 'false', overwrite: 'true' })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, overwrite: true, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 check('覆盖模式：全部重新导入', job.report.imported === expect.importable && job.report.skippedExisting === 0, `${job.report.imported}/${job.report.skippedExisting}`)
 
@@ -217,10 +235,17 @@ for i,rel in enumerate(['fresh1.zip','sub/[社团 (作者)] 新书 (某原作) [
 `
   await execFileAsync('python3', ['-c', code, INPUT_DIR])
   newZips.push(path.join(INPUT_DIR, 'fresh1.zip'), path.join(INPUT_DIR, 'sub', '[社团 (作者)] 新书 (某原作) [中国翻訳].zip'))
-  res = await startJob({ importProfile: 'archive-gallery', sourcePath: process.env.INPUT_IN_SERVER || '/input', tags: '测试批次', metadataActionIds: 'archive-gallery-thumbnail-v1,archive-gallery-tags-v1' })
+  const source = process.env.INPUT_IN_SERVER || '/input'
+  res = await startJob({ importProfile: 'archive-gallery', sourcePath: source, profileOptions: opts({ dryRun: true }) })
+  job = await waitJob()
+  check('路径导入试运行：只统计 2 个，源文件没动', job.report.imported === 2 && job.report.dryRun === true && newZips.every((file) => existsSync(file)), JSON.stringify(job.report).slice(0, 200))
+  res = await startJob({ importProfile: 'archive-gallery', sourcePath: source, tags: '测试批次', metadataActionIds: 'archive-gallery-thumbnail-v1,archive-gallery-tags-v1', profileOptions: opts({ limit: 1, zipFilenameEncoding: 'gbk' }) })
   check('路径导入：后台任务', res.status === 202, JSON.stringify(res.body).slice(0, 200))
   job = await waitJob()
-  check('路径导入：完成且导入 2 个', job.status === 'completed' && job.report.imported === 2 && job.report.failed === 0, JSON.stringify(job).slice(0, 300))
+  check('路径导入限量 1：只导入并 mv 走 1 个', job.status === 'completed' && job.report.imported === 1 && job.report.limited === true && newZips.filter((file) => existsSync(file)).length === 1, JSON.stringify(job.report).slice(0, 300))
+  res = await startJob({ importProfile: 'archive-gallery', sourcePath: source, tags: '测试批次', metadataActionIds: 'archive-gallery-thumbnail-v1,archive-gallery-tags-v1', profileOptions: opts({ zipFilenameEncoding: 'gbk' }) })
+  job = await waitJob()
+  check('路径导入：再导入剩下的 1 个', job.status === 'completed' && job.report.imported === 1 && job.report.failed === 0, JSON.stringify(job).slice(0, 300))
   check('路径导入：源文件已被 mv 走', newZips.every((file) => !existsSync(file)))
   const refreshed = await waitIndex(expect.importable + 2)
   const fresh = refreshed.items.find((item) => item.title === 'fresh1')
@@ -239,7 +264,7 @@ for i,rel in enumerate(['fresh1.zip','sub/[社团 (作者)] 新书 (某原作) [
   const parsed = refreshed.items.find((item) => item.title.includes('新书'))
   const parsedDetail = parsed ? await getJson(`/api/library/items/archive/${parsed.itemId}`) : null
   check('路径导入：文件名约定解析出 circle/artist/parody/language', !!parsedDetail && ['circle:社团', 'artist:作者', 'parody:某原作', 'language:chinese'].every((t) => parsedDetail.tags.includes(t)), JSON.stringify(parsedDetail?.tags))
-  res = await startJob({ importProfile: 'archive-gallery', sourcePath: '/etc' })
+  res = await startJob({ importProfile: 'archive-gallery', sourcePath: '/etc', profileOptions: '{}' })
   check('路径导入：不在允许目录内的路径被拒绝（任务失败）', res.status >= 400 || (await waitJob()).status === 'failed')
 }
 const uploadZip = path.join(FIXTURE, 'content', 'comic.cbz')

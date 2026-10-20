@@ -180,9 +180,6 @@ const els = {
   mediaImportProfileConfigReset: document.querySelector('#media-import-profile-config-reset'),
   mediaImportSubmit: document.querySelector('#media-import-submit'),
   archiveJobPanel: document.querySelector('#archive-job-panel'),
-  archiveMigrationOptions: document.querySelector('#archive-migration-options'),
-  archiveMigrationDryRun: document.querySelector('#archive-migration-dry-run'),
-  archiveMigrationOverwrite: document.querySelector('#archive-migration-overwrite'),
   archiveJobStatus: document.querySelector('#archive-job-status'),
   archiveJobCancel: document.querySelector('#archive-job-cancel'),
   configArchiveManagedBasePath: document.querySelector('#config-archive-managed-base-path'),
@@ -433,8 +430,20 @@ const defaultMediaImportProfiles = {
     defaultMetadataActions: ['builtin-subtitles', 'anidb-v1', 'anidb-udp-v1', 'media-info-v1', 'builtin-thumbnails'],
   },
   // 压缩包图集：封面 + 页数/文件名标签
+  // 路径导入的参数（导入页「导入方案配置」JSON 里改；limit 0 = 不限；dryRun 只统计；zipFilenameEncoding 写进每个条目）
   'archive-gallery': {
+    limit: 0,
+    dryRun: false,
+    zipFilenameEncoding: 'utf-8',
     defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
+  },
+  // 迁移 LANraragi：dryRun 默认 true（只出报告），确认后改 false 才写；limit 限量；overwrite 用 LRR 内容覆盖已存在的
+  'lrr-init': {
+    dryRun: true,
+    overwrite: false,
+    limit: 0,
+    concurrency: 16,
+    zipFilenameEncoding: 'utf-8',
   },
 }
 const mediaImportTypeInfo = {
@@ -2202,8 +2211,7 @@ function updateMediaImportControls() {
   if (!info.source || profile.noSource) els.mediaImportSourcePath.value = ''
   els.mediaImportFiles.disabled = Boolean(profile.noSource)
   els.archiveJobPanel.hidden = !profile.archiveJob
-  els.archiveMigrationOptions.hidden = !profile.migration
-  if (profile.migration) els.mediaImportSubmit.textContent = '开始迁移（先勾选「试运行」看报告）'
+  if (profile.migration) els.mediaImportSubmit.textContent = '开始迁移（dryRun 为 true 时只出报告）'
   els.mediaImportItem.disabled = Boolean(profile.batch)
   els.mediaImportTitle.disabled = Boolean(profile.batch)
   if (profile.batch) {
@@ -2239,10 +2247,12 @@ function currentMediaImportProfileConfig() {
   }
 }
 
+const JSON_CONFIG_PROFILES = new Set(['rj-media', 'archive-gallery', 'lrr-init'])
+
 function renderMediaImportProfileConfig() {
   if (!els.mediaImportProfileConfig) return
   const key = els.mediaImportProfile.value
-  const supported = key === 'rj-media'
+  const supported = JSON_CONFIG_PROFILES.has(key)
   els.mediaImportProfileConfig.closest('label').hidden = !supported
   els.mediaImportProfileConfigSave.hidden = !supported
   els.mediaImportProfileConfigReset.hidden = !supported
@@ -2255,7 +2265,7 @@ function renderMediaImportProfileConfig() {
 
 async function saveMediaImportProfileConfig(value) {
   const key = els.mediaImportProfile.value
-  if (key !== 'rj-media') return
+  if (!JSON_CONFIG_PROFILES.has(key)) return
   const nextProfiles = {
     ...(appConfig?.mediaImportProfiles || {}),
     [key]: value,
@@ -7195,7 +7205,7 @@ let archiveJobTimer = null
 function formatArchiveJob(job) {
   if (!job) return '没有任务'
   const p = job.report || job.progress || {}
-  const lines = [`${job.kind === 'lrr-init' ? '迁移' : '导入'}任务：${job.status}${job.cancelRequested ? '（已请求取消）' : ''}${job.options?.dryRun ? ' · 试运行' : ''}${job.options?.overwrite ? ' · 覆盖' : ''}`]
+  const lines = [`${job.kind === 'lrr-init' ? '迁移' : '导入'}任务：${job.status}${job.cancelRequested ? '（已请求取消）' : ''}${job.options?.dryRun ? ' · 试运行（dryRun）' : ''}${job.options?.overwrite ? ' · 覆盖' : ''}${job.options?.limit ? ` · 限量 ${job.options.limit}${(job.report || job.progress)?.limited ? '（已达上限）' : ''}` : ''}`]
   if (job.error) lines.push(`错误：${job.error}`)
   if (job.kind === 'lrr-init') {
     const skippedExt = Object.entries(p.skippedExtension || {}).map(([ext, n]) => `${ext}:${n}`).join(' ') || '无'
@@ -7271,9 +7281,14 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     // 服务端优先用它，只有字段缺失时才退回方案默认。
     if (metadataActionIds.length) form.set('metadataActionIds', metadataActionIds.join(','))
     for (const file of files) form.append('file', file)
-    if (profile.migration) {
-      form.set('dryRun', els.archiveMigrationDryRun.checked ? 'true' : 'false')
-      form.set('overwrite', els.archiveMigrationOverwrite.checked ? 'true' : 'false')
+    // 压缩包图集 / 迁移的参数在「导入方案配置」JSON 里：提交时把输入框当前内容一起发过去，不用先点保存
+    if (profile.archiveJob) {
+      try {
+        JSON.parse(els.mediaImportProfileConfig.value || '{}')
+      } catch (error) {
+        return alert(`导入方案配置不是合法的 JSON：${error.message}`)
+      }
+      form.set('profileOptions', els.mediaImportProfileConfig.value || '{}')
     }
     const result = await apiForm(`/api/library/items?type=${encodeURIComponent(type)}`, form)
     // 后台任务（路径导入 / 迁移）：只返回任务，进度在面板里看
