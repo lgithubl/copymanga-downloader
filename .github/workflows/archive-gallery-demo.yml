@@ -86,6 +86,7 @@ jobs:
           docker run -d --name web-test --network lrrnet \
             -p 8081:8080 \
             -e ZIP_FILENAME_ENCODING=gbk \
+            -e TAG_SCRIPTS_DIR=/opt/copymanga/tag-scripts \
             -v "$RUNNER_TEMP/data-test:/data" \
             -v "$RUNNER_TEMP/lrr-fx/content:/data/library/lrr/content:ro" \
             -v "$RUNNER_TEMP/lrr-fx/thumb:/data/library/lrr/thumb:ro" \
@@ -143,6 +144,7 @@ jobs:
           docker run -d --name copymanga-web --network lrrnet \
             -p 8080:8080 \
             -e ZIP_FILENAME_ENCODING=gbk \
+            -e TAG_SCRIPTS_DIR=/opt/copymanga/tag-scripts \
             -v "$RUNNER_TEMP/data:/data" \
             -v "$RUNNER_TEMP/lrr-fx/content:/data/library/lrr/content:ro" \
             -v "$RUNNER_TEMP/lrr-fx/thumb:/data/library/lrr/thumb:ro" \
