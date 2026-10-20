@@ -3807,3 +3807,15 @@ h2 {
   align-items: center;
   grid-template-columns: minmax(0, 1fr) auto;
 }
+
+.epub-tts-volume-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.epub-tts-volume-wrap input[type="range"] {
+  width: 90px;
+  padding: 0;
+}

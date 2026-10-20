@@ -5152,8 +5152,13 @@ function applyEpubTtsRate(audio) {
 // createMediaElementSource 对同一个 audio 只能调一次、调了就改走 Web Audio，所以只在需要放大时才接；
 // 已经接过的 audio 之后一律用增益控制（包括调回 <=100）。每句都是新建的 Audio，下一句自然回到 volume 路径。
 const EPUB_TTS_VOLUME_KEY = 'copymanga.epubTtsVolume'
-const EPUB_TTS_VOLUMES = [50, 75, 100, 150, 200, 300]
-let epubTtsVolume = EPUB_TTS_VOLUMES.includes(Number(localStorage.getItem(EPUB_TTS_VOLUME_KEY))) ? Number(localStorage.getItem(EPUB_TTS_VOLUME_KEY)) : 100
+const EPUB_TTS_VOLUME_MIN = 50
+const EPUB_TTS_VOLUME_MAX = 300
+const normalizeEpubTtsVolume = (value) => {
+  const number = Math.round(Number(value))
+  return Number.isFinite(number) ? Math.min(EPUB_TTS_VOLUME_MAX, Math.max(EPUB_TTS_VOLUME_MIN, number)) : 100
+}
+let epubTtsVolume = normalizeEpubTtsVolume(localStorage.getItem(EPUB_TTS_VOLUME_KEY) || 100)
 let epubTtsAudioContext = null
 
 function applyEpubTtsVolume(audio) {
@@ -5584,22 +5589,30 @@ function enterEpubImmersive({ remember = false } = {}) {
     if (epubTtsCurrentAudio) applyEpubTtsRate(epubTtsCurrentAudio)
     rateSelect.blur()
   })
-  const volumeSelect = document.createElement('select')
-  volumeSelect.className = 'stream-rate-select epub-tts-volume'
-  volumeSelect.title = '朗读音量（超过 100% 为软件放大，过大可能失真）'
-  for (const volume of EPUB_TTS_VOLUMES) {
-    const option = document.createElement('option')
-    option.value = String(volume)
-    option.textContent = `音量 ${volume}%`
-    volumeSelect.append(option)
+  // 滑块：50%~300%，步长 10；>100% 为软件放大
+  const volumeWrap = document.createElement('label')
+  volumeWrap.className = 'epub-tts-volume-wrap'
+  volumeWrap.title = '朗读音量（超过 100% 为软件放大，过大可能失真）'
+  const volumeText = document.createElement('span')
+  const volumeSlider = document.createElement('input')
+  volumeSlider.type = 'range'
+  volumeSlider.className = 'epub-tts-volume'
+  volumeSlider.min = String(EPUB_TTS_VOLUME_MIN)
+  volumeSlider.max = String(EPUB_TTS_VOLUME_MAX)
+  volumeSlider.step = '10'
+  const showVolume = () => {
+    volumeSlider.value = String(epubTtsVolume)
+    volumeText.textContent = `音量 ${epubTtsVolume}%`
   }
-  volumeSelect.value = String(epubTtsVolume)
-  volumeSelect.addEventListener('change', () => {
-    epubTtsVolume = Number(volumeSelect.value)
+  showVolume()
+  volumeSlider.addEventListener('input', () => {
+    epubTtsVolume = normalizeEpubTtsVolume(volumeSlider.value)
     localStorage.setItem(EPUB_TTS_VOLUME_KEY, String(epubTtsVolume))
-    if (epubTtsCurrentAudio) applyEpubTtsVolume(epubTtsCurrentAudio)   // 当前这句立刻生效
-    volumeSelect.blur()
+    volumeText.textContent = `音量 ${epubTtsVolume}%`
+    if (epubTtsCurrentAudio) applyEpubTtsVolume(epubTtsCurrentAudio)   // 拖动时当前这句实时变化
   })
+  volumeSlider.addEventListener('change', () => volumeSlider.blur())
+  volumeWrap.append(volumeText, volumeSlider)
   // 朗读范围：只有这一章里有带 flag 的句子（配置了「朗读 flag 规则」且命中）才显示
   const flagSelect = document.createElement('select')
   flagSelect.className = 'stream-rate-select epub-tts-flag'
@@ -5635,7 +5648,7 @@ function enterEpubImmersive({ remember = false } = {}) {
     }
   })
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, rateSelect, volumeSelect, exitBtn)
+  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, rateSelect, volumeWrap, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
