@@ -73,10 +73,16 @@ jobs:
           docker pull "${{ steps.image.outputs.image }}"
           docker run -d --name copymanga-web-smoke -p 8080:8080 "${{ steps.image.outputs.image }}"
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8080/health | grep -q '"ok":true'; then
-              curl -fsS http://127.0.0.1:8080/ | grep -q '拷贝漫画下载器'
-              curl -fsS http://127.0.0.1:8080/api/jobs | grep -q '^\['
-              curl -fsS http://127.0.0.1:8080/api/downloaded | grep -q '^\['
+            HEALTH="$(curl -fsS http://127.0.0.1:8080/health 2>/dev/null || true)"
+            if grep -q '"ok":true' <<<"$HEALTH"; then
+              # 先落到变量/文件再 grep：`curl | grep -q` 里 grep 匹配到就提前退出，curl 还在写时会报 23（Failure writing output），
+              # 在 pipefail 下整步失败。首页变大（超过管道缓冲）之后这是必现的坑。
+              INDEX="$(curl -fsS http://127.0.0.1:8080/)"
+              grep -q '拷贝漫画下载器' <<<"$INDEX"
+              JOBS="$(curl -fsS http://127.0.0.1:8080/api/jobs)"
+              grep -q '^\[' <<<"$JOBS"
+              DOWNLOADED="$(curl -fsS http://127.0.0.1:8080/api/downloaded)"
+              grep -q '^\[' <<<"$DOWNLOADED"
               docker rm -f copymanga-web-smoke
               exit 0
             fi
