@@ -183,11 +183,13 @@ jobs:
         run: |
           USERNAME="copymanga"
           PASSWORD="$DEMO_PASSWORD"
-          if [ -z "$PASSWORD" ]; then
-            echo "::error::仓库是 public，演示站点的密码必须来自仓库 secret DEMO_PASSWORD（Settings → Secrets and variables → Actions）。没有配置，不启动对外站点。"
-            exit 1
+          # 可选密码：配了仓库 secret DEMO_PASSWORD 就要密码（并屏蔽日志）；没配就不设密码——
+          # 站点只用于没有真实数据的测试，任何拿到 URL 的人都能访问。
+          if [ -n "$PASSWORD" ]; then
+            echo "::add-mask::$PASSWORD"
+          else
+            echo "未配置 DEMO_PASSWORD：演示站点不设密码（仅用于没有真实数据的测试）"
           fi
-          echo "::add-mask::$PASSWORD"
           {
             echo "username=$USERNAME"
           } >> "$GITHUB_OUTPUT"
@@ -200,7 +202,7 @@ jobs:
 
           TARGET = "http://127.0.0.1:8080"
           USERNAME = os.environ["BASIC_USER"]
-          PASSWORD = os.environ["BASIC_PASS"]
+          PASSWORD = os.environ.get("BASIC_PASS", "")
           EXPECTED = "Basic " + base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
           HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
 
@@ -217,7 +219,7 @@ jobs:
                   self.wfile.write(body)
 
               def _proxy(self):
-                  if self.headers.get("Authorization") != EXPECTED:
+                  if PASSWORD and self.headers.get("Authorization") != EXPECTED:
                       self._unauthorized()
                       return
                   length = int(self.headers.get("Content-Length") or 0)
