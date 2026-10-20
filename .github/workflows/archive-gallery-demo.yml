@@ -98,13 +98,16 @@ jobs:
             wait_ping "$1"
             docker run --rm -i --network "container:$1" "$IMG" redis-cli --pipe < "$RUNNER_TEMP/lrr-fx/redis.resp" >/dev/null
           }
+          # 复制：属主是容器里的 redis 用户、权限 600，宿主机上要 sudo cp -a；再 chown 成当前用户，
+          # 之后临时 Redis 用 --user 当前用户 跑——官方镜像以 root 启动时会去 chown /data，只读挂载或别人的文件会直接启动失败
+          copy_dir() { sudo cp -a "$1" "$2"; sudo chown -R "$(id -u):$(id -g)" "$2"; }
           late() { docker exec "$1" redis-cli hset 0000000000000000000000000000000000000001 name late title late tags "" file /x.zip >/dev/null; }
           load_rdb_only() {  # 做法 2：拷贝只读挂载，--appendonly no
-            docker run -d --name "$1" -v "$2:/data:ro" "$IMG" redis-server --appendonly no --save "" --dir /data --dbfilename database.rdb >/dev/null
+            docker run -d --name "$1" --user "$(id -u):$(id -g)" -v "$2:/data:ro" "$IMG" redis-server --appendonly no --save "" --dir /data --dbfilename database.rdb >/dev/null
             wait_ping "$1"; dbsize "$1"; docker rm -f "$1" >/dev/null
           }
           load_aof() {       # 做法 1：拷贝可写，--appendonly yes 重放 AOF
-            docker run -d --name "$1" -v "$2:/data" "$IMG" redis-server --appendonly yes --appenddirname appendonlydir --appendfilename appendonly.aof --save "" --dir /data >/dev/null
+            docker run -d --name "$1" --user "$(id -u):$(id -g)" -v "$2:/data" "$IMG" redis-server --appendonly yes --appenddirname appendonlydir --appendfilename appendonly.aof --save "" --dir /data >/dev/null
             wait_ping "$1"; dbsize "$1"; docker rm -f "$1" >/dev/null
           }
           # ---- 场景 A：优雅停机
@@ -112,8 +115,8 @@ jobs:
           BASE_N="$(dbsize aof-a)"
           late aof-a
           docker stop -t 60 aof-a >/dev/null
-          echo "== 场景 A 的目录："; ls -la --time-style=full-iso "$RUNNER_TEMP/aof-a" "$RUNNER_TEMP/aof-a/appendonlydir" || true
-          cp -a "$RUNNER_TEMP/aof-a" "$RUNNER_TEMP/aof-a-copy"
+          echo "== 场景 A 的目录（文件属主是容器里的 redis 用户、权限 600，宿主机上要 sudo 才读得了）："; sudo ls -la --time-style=full-iso "$RUNNER_TEMP/aof-a" "$RUNNER_TEMP/aof-a/appendonlydir" || true
+          copy_dir "$RUNNER_TEMP/aof-a" "$RUNNER_TEMP/aof-a-copy"
           A_RDB="$(load_rdb_only chk-a1 "$RUNNER_TEMP/aof-a-copy")"
           A_AOF="$(load_aof chk-a2 "$RUNNER_TEMP/aof-a-copy")"
           # ---- 场景 B：先落一次盘（模拟旧快照），再写一个 key，然后直接 kill（SIGKILL）
@@ -122,7 +125,7 @@ jobs:
           late aof-b
           sleep 2    # appendfsync everysec
           docker kill aof-b >/dev/null
-          cp -a "$RUNNER_TEMP/aof-b" "$RUNNER_TEMP/aof-b-copy"
+          copy_dir "$RUNNER_TEMP/aof-b" "$RUNNER_TEMP/aof-b-copy"
           B_RDB="$(load_rdb_only chk-b1 "$RUNNER_TEMP/aof-b-copy")"
           B_AOF="$(load_aof chk-b2 "$RUNNER_TEMP/aof-b-copy")"
           echo "基础 key 数 $BASE_N；场景A rdb-only=$A_RDB aof=$A_AOF；场景B rdb-only=$B_RDB aof=$B_AOF"
