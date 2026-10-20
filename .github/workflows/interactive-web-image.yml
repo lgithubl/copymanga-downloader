@@ -1,11 +1,6 @@
 name: Interactive Web Image
 
 on:
-  workflow_run:
-    workflows:
-      - Build Web Docker Image
-    types:
-      - completed
   workflow_dispatch:
     inputs:
       image:
@@ -24,7 +19,6 @@ permissions:
 jobs:
   interactive:
     name: Start temporary web session
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 75
 
@@ -74,12 +68,18 @@ jobs:
       - name: Start authenticated proxy
         id: auth
         shell: bash
+        env:
+          DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
         run: |
           USERNAME="copymanga"
-          PASSWORD="$(openssl rand -base64 18 | tr -d '=+/')"
+          PASSWORD="$DEMO_PASSWORD"
+          if [ -z "$PASSWORD" ]; then
+            echo "::error::仓库是 public，演示站点的密码必须来自仓库 secret DEMO_PASSWORD（Settings → Secrets and variables → Actions）。没有配置，不启动对外站点。"
+            exit 1
+          fi
+          echo "::add-mask::$PASSWORD"
           {
             echo "username=$USERNAME"
-            echo "password=$PASSWORD"
           } >> "$GITHUB_OUTPUT"
           cat >/tmp/basic_proxy.py <<'PY'
           import base64
@@ -192,7 +192,6 @@ jobs:
                 echo
                 echo "Username: \`${{ steps.auth.outputs.username }}\`"
                 echo
-                echo "Password: \`${{ steps.auth.outputs.password }}\`"
                 echo
                 MINUTES="${{ inputs.minutes }}"
                 if [ -z "$MINUTES" ]; then MINUTES="60"; fi
@@ -202,7 +201,6 @@ jobs:
               {
                 echo "URL=$URL"
                 echo "USERNAME=${{ steps.auth.outputs.username }}"
-                echo "PASSWORD=${{ steps.auth.outputs.password }}"
               } > "$RUNNER_TEMP/copymanga-web-connection-info.txt"
               exit 0
             fi
@@ -228,7 +226,6 @@ jobs:
           echo "${{ steps.tunnel.outputs.url }}"
           echo
           echo "Basic Auth username: ${{ steps.auth.outputs.username }}"
-          echo "Basic Auth password: ${{ steps.auth.outputs.password }}"
           echo
           echo "Keeping session alive for ${MINUTES} minutes..."
           sleep "$(( MINUTES * 60 ))"
