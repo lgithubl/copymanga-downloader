@@ -4,7 +4,7 @@
 //     [LRR_CONTENT=/data/library/lrr/content] [LRR_THUMB=/data/library/lrr/thumb] [REDIS_URL=redis://host:6379] \
 //     node archive-selftest.mjs
 // FIXTURE 是 make_lrr_fixture.py 的输出目录（用它的 expect.json 做断言）。
-// zip 文件名编码、试运行、限量、覆盖都通过导入方案的 JSON 配置（profileOptions）传，和页面一致。
+// zip 文件名编码、试运行、限量、覆盖、Redis 地址、目录、路径前缀都通过导入方案的 JSON 配置（profileOptions）传，和页面一致。
 // DATA_DIR / INPUT_DIR 是服务端看到的目录在**本机**上的路径，给了才会检查分片文件和 mv 之后源文件是否消失。
 
 import { execFile } from 'node:child_process'
@@ -77,22 +77,25 @@ const archivePage = async (query = '') => getJson(`/api/library/items?type=archi
 // ---------------------------------------------------------------------------
 console.log(`== 目标 ${BASE}，fixture ${FIXTURE}`)
 
-// 0. 配置
+// 0. 导入方案的 JSON 配置：迁移用的 Redis 地址、目录、路径前缀都在 lrr-init 的 JSON 里（页面上同一个框）
 const cfgBefore = await getJson('/api/config')
-const config = {
-  lrrContentDir: process.env.LRR_CONTENT || cfgBefore.lrrContentDir,
-  lrrThumbDir: process.env.LRR_THUMB || cfgBefore.lrrThumbDir,
-  lrrRedisUrl: process.env.REDIS_URL || cfgBefore.lrrRedisUrl,
-  lrrPathFrom: expect.prefix,
-  ...(process.env.INPUT_IN_SERVER ? { mediaImportSourceRoots: process.env.INPUT_IN_SERVER } : {}),
+const lrrDefaults = cfgBefore.mediaImportProfiles?.['lrr-init'] || {}
+check('lrr-init 默认 JSON 带 Redis 地址/目录/前缀，且 dryRun 默认开着', lrrDefaults.dryRun === true && !!lrrDefaults.redisUrl && !!lrrDefaults.contentDir && !!lrrDefaults.thumbDir && !!lrrDefaults.pathFrom, JSON.stringify(lrrDefaults))
+check('archive-gallery 默认 JSON 带 managedDir', !!cfgBefore.mediaImportProfiles?.['archive-gallery']?.managedDir, JSON.stringify(cfgBefore.mediaImportProfiles?.['archive-gallery']))
+const lrrBase = {
+  redisUrl: process.env.REDIS_URL || lrrDefaults.redisUrl,
+  contentDir: process.env.LRR_CONTENT || lrrDefaults.contentDir,
+  thumbDir: process.env.LRR_THUMB || lrrDefaults.thumbDir,
+  pathFrom: expect.prefix,
+  zipFilenameEncoding: 'gbk',
 }
-const saved = await postJson('/api/config', config)
-check('配置保存：LRR 参数生效', saved.body.lrrPathFrom === expect.prefix && saved.body.lrrContentDir === config.lrrContentDir, JSON.stringify(saved.body).slice(0, 200))
+const lrr = (value) => JSON.stringify({ ...lrrBase, ...value })
+if (process.env.INPUT_IN_SERVER) await postJson('/api/config', { mediaImportSourceRoots: process.env.INPUT_IN_SERVER })
 const types = await getJson('/api/library/types')
 check('库类型里有「压缩包图集」', types.some((t) => t.type === 'archive' && t.importable), JSON.stringify(types))
 
 // 1. 试运行
-let res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: true, zipFilenameEncoding: 'gbk' }) })
+let res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: true, zipFilenameEncoding: 'gbk' }) })
 check('迁移任务以后台任务启动（202 + job）', res.status === 202 && res.body.job?.status === 'running', JSON.stringify(res.body).slice(0, 200))
 let job = await waitJob()
 let report = job.report
@@ -107,23 +110,23 @@ check('试运行：没有标签库/元数据副作用', (await archivePage()).it
 if (DATA_DIR) check('试运行：没有写任何元数据文件', !existsSync(path.join(DATA_DIR, 'library-meta', 'archive')) || readdirSync(path.join(DATA_DIR, 'library-meta', 'archive')).length === 0)
 
 // 1b. 限量：先迁 3 个，再迁下一批 3 个（已存在的不占名额）
-res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: true, limit: 3 }) })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: true, limit: 3 }) })
 job = await waitJob()
 check('限量试运行：只统计 3 个且标记已达上限', job.report.imported === 3 && job.report.limited === true && job.report.limit === 3, JSON.stringify([job.report.imported, job.report.limited]))
 check('限量试运行：提前结束，没有扫完全库', job.report.archives < expect.total_hashes, String(job.report.archives))
-res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, limit: 3, zipFilenameEncoding: 'gbk' }) })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, limit: 3, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 check('限量迁移：刚好迁 3 个', job.status === 'completed' && job.report.imported === 3 && job.report.limited === true && job.report.failed === 0, JSON.stringify(job.report).slice(0, 300))
 if (DATA_DIR) {
   const count = (() => { let n = 0; const root = path.join(DATA_DIR, 'library-meta', 'archive'); const walk = (dir) => { for (const e of readdirSync(dir, { withFileTypes: true })) { if (e.isDirectory()) walk(path.join(dir, e.name)); else if (e.name.endsWith('.json')) n++ } }; walk(root); return n })()
   check('限量迁移：磁盘上只有 3 个元数据文件', count === 3, String(count))
 }
-res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, limit: 3, zipFilenameEncoding: 'gbk' }) })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, limit: 3, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 check('再限量 3：迁下一批 3 个，前面的已存在跳过且不占名额', job.report.imported === 3 && job.report.skippedExisting >= 3, JSON.stringify([job.report.imported, job.report.skippedExisting]))
 
 // 2. 正式迁移（不限量）：剩下的全部迁完
-res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, zipFilenameEncoding: 'gbk' }) })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 report = job.report
 check('迁移完成', job.status === 'completed', job.error)
@@ -134,12 +137,12 @@ if (DATA_DIR) {
   const sample = expect.archives[0].id
   check('元数据按 ab/cd 分片落盘', existsSync(path.join(metaRoot, sample.slice(0, 2), sample.slice(2, 4), `${sample}.json`)))
   const stored = JSON.parse(readFileSync(path.join(metaRoot, sample.slice(0, 2), sample.slice(2, 4), `${sample}.json`), 'utf8'))
-  check('元数据：zip 外部引用且路径已映射到挂载目录', stored.zip.external === true && stored.zip.path.startsWith(config.lrrContentDir), JSON.stringify(stored.zip))
+  check('元数据：zip 外部引用且路径已映射到挂载目录', stored.zip.external === true && stored.zip.path.startsWith(lrrBase.contentDir), JSON.stringify(stored.zip))
   check('元数据：保留 LRR 原始字段', stored.origin?.lrr?.id === sample && stored.origin.lrr.file.startsWith(expect.prefix), JSON.stringify(stored.origin))
 }
 
 // 3. 重跑：跳过
-res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, zipFilenameEncoding: 'gbk' }) })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 check('重跑：全部已存在跳过', job.report.imported === 0 && job.report.skippedExisting === expect.importable, `${job.report.imported}/${job.report.skippedExisting}`)
 
@@ -212,7 +215,7 @@ const preserved = await request(`/api/library/items/archive/${first.id}/thumbnai
 check('封面脚本不覆盖迁移带来的封面（未 force）', preserved.status === 200)
 
 // 7. 覆盖模式
-res = await startJob({ importProfile: 'lrr-init', profileOptions: opts({ dryRun: false, overwrite: true, zipFilenameEncoding: 'gbk' }) })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, overwrite: true, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 check('覆盖模式：全部重新导入', job.report.imported === expect.importable && job.report.skippedExisting === 0, `${job.report.imported}/${job.report.skippedExisting}`)
 

@@ -182,12 +182,7 @@ const els = {
   archiveJobPanel: document.querySelector('#archive-job-panel'),
   archiveJobStatus: document.querySelector('#archive-job-status'),
   archiveJobCancel: document.querySelector('#archive-job-cancel'),
-  configArchiveManagedBasePath: document.querySelector('#config-archive-managed-base-path'),
   configArchiveCacheDir: document.querySelector('#config-archive-cache-dir'),
-  configLrrRedisUrl: document.querySelector('#config-lrr-redis-url'),
-  configLrrContentDir: document.querySelector('#config-lrr-content-dir'),
-  configLrrThumbDir: document.querySelector('#config-lrr-thumb-dir'),
-  configLrrPathFrom: document.querySelector('#config-lrr-path-from'),
   mediaImportMeta: document.querySelector('#media-import-meta'),
   mediaImportItems: document.querySelector('#media-import-items'),
   mediaReaderTitle: document.querySelector('#media-reader-title'),
@@ -1390,12 +1385,7 @@ async function loadConfig() {
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   for (const box of els.configMediaOpenInNewTabKinds) box.checked = (config.mediaOpenInNewTabKinds || []).includes(box.value)
   els.configMediaCloseNewTabOnBack.checked = config.mediaCloseNewTabOnBack !== false
-  els.configArchiveManagedBasePath.value = config.archiveManagedBasePath || ''
   els.configArchiveCacheDir.value = config.archiveCacheDir || ''
-  els.configLrrRedisUrl.value = config.lrrRedisUrl || ''
-  els.configLrrContentDir.value = config.lrrContentDir || ''
-  els.configLrrThumbDir.value = config.lrrThumbDir || ''
-  els.configLrrPathFrom.value = config.lrrPathFrom || ''
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
@@ -7640,12 +7630,7 @@ els.configSave.addEventListener('click', async () => {
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         mediaOpenInNewTabKinds: els.configMediaOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
         mediaCloseNewTabOnBack: els.configMediaCloseNewTabOnBack.checked,
-        archiveManagedBasePath: els.configArchiveManagedBasePath.value,
         archiveCacheDir: els.configArchiveCacheDir.value,
-        lrrRedisUrl: els.configLrrRedisUrl.value,
-        lrrContentDir: els.configLrrContentDir.value,
-        lrrThumbDir: els.configLrrThumbDir.value,
-        lrrPathFrom: els.configLrrPathFrom.value,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,
         mergePdfFmt: els.configMergePdfFmt.value,

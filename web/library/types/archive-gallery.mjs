@@ -1,7 +1,7 @@
 // 压缩包图集：一个压缩包（现在只有 zip）就是一个条目，一个条目一个「图集」单元。
 // 和「媒体」类型分开写成独立的库类型，不碰媒体处理里那套以 files/ 目录为中心的逻辑：
 //   - 元数据：<data>/library-meta/archive/ab/cd/<id>.json（分片，和老的 metadata.json 完全分开）
-//   - 压缩包：新导入的 mv 到 <archiveManagedBasePath>/ab/cd/<id>.zip；
+//   - 压缩包：新导入的 mv 到 <导入方案 JSON 里的 managedDir>/ab/cd/<id>.zip；
 //             迁移（LANraragi）的只读挂载，原地引用（zip.external = true），我们永远不改、不删它
 //   - 阅读：第一次打开才解压到 <archiveCacheDir>/ab/cd/<id>/pages/，有缓存就直接用；缓存目录的淘汰由部署方自己管
 //   - 封面：<data>/cache/library-thumbnails/archive/ab/cd/<id>.jpg
@@ -64,7 +64,8 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
   const extractionWaiters = []
 
   const cfg = () => getConfig()
-  const managedRoot = () => path.resolve(cfg().archiveManagedBasePath)
+  // 新导入压缩包的存放目录来自「压缩包图集」导入方案的 JSON（managedDir）；本次路径导入用提交时带来的，上传用已保存的
+  const managedRoot = (override = '') => path.resolve(override || cfg().mediaImportProfiles?.['archive-gallery']?.managedDir)
   const cacheRoot = () => path.resolve(cfg().archiveCacheDir)
 
   function assertId(itemId) {
@@ -76,7 +77,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
   const metaPath = (itemId) => shardedPath(metaRoot, assertId(itemId))
   const thumbPath = (itemId) => shardedPath(thumbRoot, assertId(itemId), '.jpg')
   const progressPath = (itemId) => shardedPath(progressRoot, assertId(itemId))
-  const managedZipPath = (itemId) => shardedPath(managedRoot(), assertId(itemId), '.zip')
+  const managedZipPath = (itemId, root = '') => shardedPath(managedRoot(root), assertId(itemId), '.zip')
   function cacheDirFor(itemId) {
     const [a, b] = shardOf(assertId(itemId))
     return path.join(cacheRoot(), a, b, itemId)
@@ -610,7 +611,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
         } else {
           const info = await stat(file)
           const pageCount = await pageCountOf(file, encoding)
-          const target = managedZipPath(itemId)
+          const target = managedZipPath(itemId, options.managedDir)
           await movePath(file, target)
           const moved = await stat(target)
           const item = await writeItem(buildItem({

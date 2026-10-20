@@ -54,13 +54,12 @@ function pushExample(list, value, limit = 20) {
 
 export async function runLrrMigration({
   handler,
-  config,
   options = {},
   beforeWrite = null,
   onProgress = null,
   shouldStop = () => false,
 }) {
-  const { dryRun = false, overwrite = false, concurrency = 16, limit = 0, zipFilenameEncoding = '' } = options
+  const { dryRun = false, overwrite = false, concurrency = 16, limit = 0, zipFilenameEncoding = '', redisUrl, contentDir, thumbDir, pathFrom } = options
   const internals = handler.internals
   const report = {
     dryRun,
@@ -86,7 +85,7 @@ export async function runLrrMigration({
     idCheck: { sampled: 0, mismatched: 0, mismatches: [] },
     cancelled: false,
   }
-  const client = await RespClient.connect(config.lrrRedisUrl)
+  const client = await RespClient.connect(redisUrl)
   const sampleKeep = []   // 蓄水池抽样：之后校验 id 算法
   let sampleSeen = 0
   try {
@@ -112,7 +111,7 @@ export async function runLrrMigration({
             pushExample(report.examples.skippedExtension, rawFile)
             return
           }
-          const zipPath = mapPath(rawFile, config.lrrPathFrom, config.lrrContentDir)
+          const zipPath = mapPath(rawFile, pathFrom, contentDir)
           if (!zipPath) {
             report.pathMismatch += 1
             pushExample(report.examples.pathMismatch, rawFile)
@@ -135,7 +134,7 @@ export async function runLrrMigration({
           const tags = parseLrrTags(redisDecode(hash.tags))
           const dateAdded = Number((tags.find((tag) => tag.toLowerCase().startsWith('date_added:')) || '').split(':')[1])
           const createdAt = new Date(Number.isFinite(dateAdded) && dateAdded > 0 ? dateAdded * 1000 : info.mtimeMs).toISOString()
-          const thumb = path.join(config.lrrThumbDir, key.slice(0, 2), `${key}.jpg`)
+          const thumb = path.join(thumbDir, key.slice(0, 2), `${key}.jpg`)
           const hasThumb = await stat(thumb).then(() => true, () => false)
           const num = (field) => Number(hash[field]?.toString('utf8')) || 0
           const item = internals.buildItem({

@@ -314,6 +314,7 @@ function defaultConfig() {
         limit: 0,
         dryRun: false,
         zipFilenameEncoding: 'utf-8',
+        managedDir: path.join(DATA_DIR, 'library', 'archive'),   // 新导入的压缩包 mv 到这里（按哈希分片）
         defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
       },
       // 初始化压缩包图集（LANraragi 迁移）。dryRun 默认开着：先出报告，确认后改成 false 才真的写
@@ -323,6 +324,10 @@ function defaultConfig() {
         limit: 0,
         concurrency: 16,
         zipFilenameEncoding: 'utf-8',
+        redisUrl: 'redis://lrr-redis:6379',                          // 临时 Redis（加载 LRR 的 database.rdb）
+        contentDir: path.join(DATA_DIR, 'library', 'lrr', 'content'), // LRR 的 zip 目录（只读挂载进来的路径）
+        thumbDir: path.join(DATA_DIR, 'library', 'lrr', 'thumb'),     // LRR 的封面目录（只读挂载进来的路径）
+        pathFrom: '/home/koyomi/lanraragi/content',                  // LRR 里 file 字段的路径前缀（容器内路径），迁移时换成 contentDir
       },
     },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
@@ -330,15 +335,9 @@ function defaultConfig() {
     // 的行为；Ctrl/⌘ 点击不受这个限制，永远开新标签页。
     // 旧版本是一个总开关 mediaOpenInNewTab（布尔），读到旧配置时开着就等于全部类型都开。
     mediaOpenInNewTabKinds: [],
-    // 压缩包图集：新导入的压缩包 mv 到这里（分片）；解压缓存放这里（淘汰由部署方自己管）。
-    archiveManagedBasePath: path.join(DATA_DIR, 'library', 'archive'),
+    // 压缩包图集阅读用的解压缓存目录（有缓存就不再解压；淘汰由部署方自己管）。
+    // 导入/迁移相关的目录、Redis 地址等都在导入页的「导入方案配置」JSON 里，不在这里。
     archiveCacheDir: path.join(DATA_DIR, 'cache', 'archive-gallery'),
-    // 「初始化压缩包图集（待废弃）」迁移 LANraragi 用：临时 Redis 地址、只读挂载进来的 LRR 内容/缩略图目录，
-    // 以及 LRR 里 file 字段的路径前缀（容器内路径）——迁移时把这个前缀换成 lrrContentDir。
-    lrrRedisUrl: 'redis://lrr-redis:6379',
-    lrrContentDir: path.join(DATA_DIR, 'library', 'lrr', 'content'),
-    lrrThumbDir: path.join(DATA_DIR, 'library', 'lrr', 'thumb'),
-    lrrPathFrom: '/home/koyomi/lanraragi/content',
     // 新标签页里点「返回」（含沉浸里的返回）：直接关闭这个标签页，而不是回到媒体库页。
     mediaCloseNewTabOnBack: true,
     // AniDB 标题 dump 的存放目录和下载地址。anidb-v1 脚本从这个目录读 dump，
@@ -419,12 +418,7 @@ function normalizeConfig(value) {
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     mediaOpenInNewTabKinds: normalizeNewTabKinds(value),
-    archiveManagedBasePath: String(value?.archiveManagedBasePath || defaults.archiveManagedBasePath).trim() || defaults.archiveManagedBasePath,
     archiveCacheDir: String(value?.archiveCacheDir || defaults.archiveCacheDir).trim() || defaults.archiveCacheDir,
-    lrrRedisUrl: String(value?.lrrRedisUrl || defaults.lrrRedisUrl).trim() || defaults.lrrRedisUrl,
-    lrrContentDir: String(value?.lrrContentDir || defaults.lrrContentDir).trim() || defaults.lrrContentDir,
-    lrrThumbDir: String(value?.lrrThumbDir || defaults.lrrThumbDir).trim() || defaults.lrrThumbDir,
-    lrrPathFrom: String(value?.lrrPathFrom || defaults.lrrPathFrom).trim() || defaults.lrrPathFrom,
     mediaCloseNewTabOnBack: Boolean(value?.mediaCloseNewTabOnBack ?? defaults.mediaCloseNewTabOnBack),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
     anidbDumpUrl: String(value?.anidbDumpUrl || defaults.anidbDumpUrl).trim() || defaults.anidbDumpUrl,
@@ -470,6 +464,10 @@ function normalizeArchiveImportOptions(raw, fallback) {
     limit: clampNumber(value.limit, 0, 100000000, fallback.limit),
     concurrency: clampNumber(value.concurrency, 1, 64, fallback.concurrency),
     zipFilenameEncoding: String(value.zipFilenameEncoding || fallback.zipFilenameEncoding).trim().toLowerCase() || fallback.zipFilenameEncoding,
+    // 只有该方案的默认里有这个键才带上（迁移才有 redisUrl 等，路径导入才有 managedDir）
+    ...Object.fromEntries(['redisUrl', 'contentDir', 'thumbDir', 'pathFrom', 'managedDir']
+      .filter((key) => typeof fallback[key] === 'string')
+      .map((key) => [key, String(value[key] || fallback[key]).trim() || fallback[key]])),
   }
 }
 
@@ -3973,7 +3971,6 @@ function startArchiveJob(fields = {}) {
       if (migration) {
         const report = await runLrrMigration({
           handler: archiveHandler,
-          config,
           options: job.options,
           beforeWrite: afterBatch,
           onProgress: (progress) => { job.progress = progress },

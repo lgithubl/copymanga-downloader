@@ -534,7 +534,7 @@
                 <button id="media-import-profile-config-reset" class="secondary" type="button">恢复默认</button>
               </div>
               <div id="archive-job-panel" hidden>
-                <div class="muted">试运行、限量、覆盖、zip 文件名编码都在上面的「导入方案配置」JSON 里改（dryRun / limit / overwrite / zipFilenameEncoding），提交时直接生效，不用先保存。Redis 地址、LRR 目录、路径前缀在「配置」页。</div>
+                <div class="muted">试运行、限量、覆盖、zip 文件名编码、Redis 地址、LRR 目录、路径前缀等都在上面的「导入方案配置」JSON 里改（dryRun / limit / overwrite / zipFilenameEncoding / redisUrl / contentDir / thumbDir / pathFrom / managedDir），提交时直接生效，不用先保存。</div>
                 <pre id="archive-job-status" class="muted">暂无任务</pre>
                 <button id="archive-job-cancel" class="secondary" type="button" disabled>取消任务</button>
               </div>
@@ -672,13 +672,8 @@
               <label class="checkbox-line"><input id="config-media-close-new-tab-on-back" type="checkbox" />新标签页里点「返回」（含沉浸里的返回）时直接关闭这个标签页，而不是回到媒体库页</label>
 
               <h3>压缩包图集</h3>
-              <label>新导入压缩包存放目录（mv 进来，按哈希分片）<input id="config-archive-managed-base-path" placeholder="/data/library/archive" /></label>
               <label>阅读解压缓存目录（有缓存就不再解压；淘汰自己管）<input id="config-archive-cache-dir" placeholder="/data/cache/archive-gallery" /></label>
-              <div class="muted">以下是「初始化压缩包图集（待废弃）」迁移 LANraragi 用的参数；zip 和封面目录请只读挂载进来。</div>
-              <label>临时 Redis 地址<input id="config-lrr-redis-url" placeholder="redis://lrr-redis:6379" /></label>
-              <label>LRR 内容目录（挂载进来的路径）<input id="config-lrr-content-dir" placeholder="/data/library/lrr/content" /></label>
-              <label>LRR 封面目录（挂载进来的路径）<input id="config-lrr-thumb-dir" placeholder="/data/library/lrr/thumb" /></label>
-              <label>LRR 里 file 字段的路径前缀（容器内路径，迁移时换成上面的内容目录）<input id="config-lrr-path-from" placeholder="/home/koyomi/lanraragi/content" /></label>
+              <div class="muted">导入/迁移相关的目录、Redis 地址、路径前缀、zip 文件名编码、试运行/限量/覆盖，都在「媒体导入」页的「导入方案配置」JSON 里改。</div>
 
               <h3>朗读（TTS）</h3>
               <label>TTS 服务地址<input id="config-epub-tts-api-base" placeholder="http://127.0.0.1:8000" /></label>
