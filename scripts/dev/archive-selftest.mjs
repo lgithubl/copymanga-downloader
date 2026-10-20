@@ -175,14 +175,14 @@ async function runScript(itemId, scriptId, options) {
   return { error: '脚本超时' }
 }
 let result = await runScript(expect.info.id, 'archive-gallery-tags-v1')
-check('标签脚本：完成', result.status === 'completed', JSON.stringify(result).slice(0, 300))
+check('标签脚本：完成', result.status === 'completed', JSON.stringify(result.results || result).slice(0, 1500))
 const infoItem = await getJson(`/api/library/items/archive/${expect.info.id}`)
 for (const tag of ['页数: 2', 'artist:作者乙', 'circle:社团甲', 'parody:某原作', 'language:chinese', 'artist:作者甲', 'series:某系列', 'genre:冒险']) {
   check(`标签脚本产出 ${tag}`, infoItem.tags.includes(tag), JSON.stringify(infoItem.tags))
 }
 check('标签脚本回写页数', infoItem.pageCount === 2 && infoItem.mediaUnits?.[0]?.imageCount === 2, JSON.stringify([infoItem.pageCount, infoItem.mediaUnits?.[0]?.imageCount]))
 result = await runScript(expect.nothumb.id, 'archive-gallery-thumbnail-v1')
-check('封面脚本：给没有封面的条目生成封面', result.status === 'completed', JSON.stringify(result).slice(0, 300))
+check('封面脚本：给没有封面的条目生成封面', result.status === 'completed', JSON.stringify(result.results || result).slice(0, 1500))
 const nothumbItem = await getJson(`/api/library/items/archive/${expect.nothumb.id}`)
 const newCover = await request(`/api/library/items/archive/${expect.nothumb.id}/thumbnail/zip/cover`)
 check('封面脚本：封面接口可取、条目 cover 已设置', newCover.status === 200 && /thumbnail\/zip\/cover$/.test(nothumbItem.cover), `${newCover.status} ${nothumbItem.cover}`)
