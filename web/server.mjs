@@ -16,6 +16,7 @@ import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, se
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
 import { parseReplacements, toSpokenText } from './library/epub-tts-text.mjs'
+import { parseFlagRules } from './library/epub-tts-flags.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -283,6 +284,8 @@ function defaultConfig() {
     epubTtsPromptLanguage: '',
     // 朗读前的文本替换规则，一行一条 `/正则/标志 => 替换`，见 library/epub-tts-text.mjs
     epubTtsTextReplacements: '',
+    // 朗读 flag 规则，一行一条 `选择器 => flag`，见 library/epub-tts-flags.mjs。空 = 不打 flag，行为与之前完全一致。
+    epubTtsFlagRules: '',
     // 真实 TTS 是 GPU 推理，扛不住并发乱打——分段预加载 + 用户快速翻页都可能
     // 同时触发好几个请求，默认给 1（排队），愿意的话自己调大。
     epubTtsMaxConcurrency: 1,
@@ -381,6 +384,7 @@ function normalizeConfig(value) {
     epubTtsTextLanguage: normalizeEpubTtsLanguage(value?.epubTtsTextLanguage),
     epubTtsPromptLanguage: normalizeEpubTtsLanguage(value?.epubTtsPromptLanguage),
     epubTtsTextReplacements: String(value?.epubTtsTextReplacements || '').slice(0, 20000),
+    epubTtsFlagRules: String(value?.epubTtsFlagRules || '').slice(0, 20000),
     epubTtsMaxConcurrency: clampNumber(value?.epubTtsMaxConcurrency, 1, 8, defaults.epubTtsMaxConcurrency),
     epubTtsBatchMaxSentences: clampNumber(value?.epubTtsBatchMaxSentences, 1, 20, defaults.epubTtsBatchMaxSentences),
     epubTtsBatchMaxChars: clampNumber(value?.epubTtsBatchMaxChars, 20, 2000, defaults.epubTtsBatchMaxChars),
@@ -4704,10 +4708,17 @@ async function route(req, res) {
       const draft = typeof body.rules === 'string' ? parseReplacements(body.rules) : null
       const { rules, errors } = draft || epubTtsReplacementRules()
       const texts = Array.isArray(body.texts) ? body.texts.map((text) => String(text ?? '')).slice(0, 50) : []
+      const flagDraft = typeof body.flagRules === 'string' ? parseFlagRules(body.flagRules) : null
       return json(res, 200, {
         items: texts.map((text) => ({ text, spoken: toSpokenText(text, rules) })),
         ruleCount: rules.length,
         errors: errors.map(({ line, error }) => ({ line, error })),
+        // flag 规则的检查结果（只在传了 flagRules 时返回）：有效规则数、兜底 flag、错误行
+        flag: flagDraft ? {
+          ruleCount: flagDraft.rules.length,
+          fallback: flagDraft.fallback?.flag || '',
+          errors: flagDraft.errors.map(({ line, error }) => ({ line, error })),
+        } : null,
       })
     }
     if (pathname.startsWith('/api/epub/') && pathname.endsWith('/tts-chunk') && req.method === 'POST') {
@@ -4917,16 +4928,30 @@ registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_D
 const EPUB_TTS_ANNOTATE_CACHE_MAX = 48
 const epubTtsAnnotateCache = new Map()
 
+// flag 规则按配置原文缓存编译结果，解析错误只在第一次编译时告警一次
+let epubTtsFlagRulesCache = { source: null, parsed: null }
+function epubTtsFlagRules() {
+  const source = config.epubTtsFlagRules || ''
+  if (epubTtsFlagRulesCache.source !== source) {
+    const parsed = parseFlagRules(source)
+    for (const error of parsed.errors) console.warn(`[epub-tts] 忽略朗读 flag 规则第 ${error.line} 行：${error.error}：${error.text}`)
+    epubTtsFlagRulesCache = { source, parsed }
+  }
+  return epubTtsFlagRulesCache.parsed
+}
+
 function annotateEpubHtml(content) {
   const maxChars = config.epubTtsBatchMaxChars
-  const key = `${maxChars}\u0000${createHash('sha1').update(content).digest('hex')}`
+  // 切句结果同时取决于分句上限和 flag 规则（flag 变了会在那里断句），两者都要进缓存键
+  const rulesKey = createHash('sha1').update(config.epubTtsFlagRules || '').digest('hex').slice(0, 12)
+  const key = `${maxChars}\u0000${rulesKey}\u0000${createHash('sha1').update(content).digest('hex')}`
   const hit = epubTtsAnnotateCache.get(key)
   if (hit) {
     epubTtsAnnotateCache.delete(key)
     epubTtsAnnotateCache.set(key, hit)
     return hit
   }
-  const result = annotateEpubSentences(content, { maxChars })
+  const result = annotateEpubSentences(content, { maxChars, flagRules: epubTtsFlagRules() })
   epubTtsAnnotateCache.set(key, result)
   while (epubTtsAnnotateCache.size > EPUB_TTS_ANNOTATE_CACHE_MAX) {
     epubTtsAnnotateCache.delete(epubTtsAnnotateCache.keys().next().value)
@@ -4949,7 +4974,7 @@ async function epubTtsSectionSentences({ type, itemId, unit }) {
     const reader = await handler.getReaderContent(itemId, unit.unitId, { sectionId: section.sectionId })
     if (reader?.type !== 'html') continue
     const { sentences } = annotateEpubHtml(reader.content || '')
-    out.push({ unitId: unit.unitId, sectionId: section.sectionId, title: section.title || '', texts: sentences.map((entry) => entry.text) })
+    out.push({ unitId: unit.unitId, sectionId: section.sectionId, title: section.title || '', texts: sentences.map((entry) => entry.text), flags: sentences.map((entry) => entry.flag || '') })
   }
   return out
 }

@@ -11,6 +11,7 @@
 // 输出里一句话可能对应多个 span：句子横跨 <b>/<ruby> 等元素边界时，每个文本节点里的那一段
 // 各包一个同序号的 span，元素结构保持原样（不像浏览器 Range 那样把元素劈开）。
 import { parseFragment, serialize, defaultTreeAdapter as adapter, html as parse5Html } from 'parse5'
+import { assignFlags } from './epub-tts-flags.mjs'
 
 const SENTENCE_RE = /[^。！？.!?]+[。！？.!?]*/g
 // 每个字符都必须落进某个分句：「；：」「，、」这种连续次级标点要整串挂在前一段后面。
@@ -77,21 +78,27 @@ function* textNodes(node) {
   }
 }
 
-// 返回 { sentences: [{ index, text, runIndex, start, end }], runs }，不改 DOM
-function collectSentences(root, maxChars) {
+// 返回 { sentences: [{ index, text, flag, runIndex, start, end }], runs }，不改 DOM。
+// 同一个块里相邻文字的 flag 不同就在那里断开成两段（和块级元素之间强制断句同理）：
+// 一个句子只会有一个 flag，朗读时才不会半句中文半句日文。
+function collectSentences(root, maxChars, flagRules = null) {
+  const collected = []
+  for (const node of textNodes(root)) collected.push({ node, block: nearestBlock(node, root) })
+  const flags = assignFlags(collected, flagRules, root)
   const runs = []
   let currentBlock = null
+  let currentFlag = null
   let currentRun = null
-  for (const node of textNodes(root)) {
-    const block = nearestBlock(node, root)
-    if (block !== currentBlock) {
+  collected.forEach(({ node, block }, i) => {
+    if (block !== currentBlock || flags[i] !== currentFlag) {
       currentBlock = block
-      currentRun = { nodes: [], fullText: '' }
+      currentFlag = flags[i]
+      currentRun = { nodes: [], fullText: '', flag: flags[i] }
       runs.push(currentRun)
     }
     currentRun.nodes.push({ node, start: currentRun.fullText.length })
     currentRun.fullText += node.value
-  }
+  })
   const sentences = []
   runs.forEach((run, runIndex) => {
     if (!run.fullText.trim()) return
@@ -104,7 +111,7 @@ function collectSentences(root, maxChars) {
         if (!pieceText) return
         const lead = pieceRaw.length - pieceRaw.trimStart().length
         const start = match.index + offset + lead
-        sentences.push({ index: sentences.length, text: pieceText, runIndex, start, end: start + pieceText.length })
+        sentences.push({ index: sentences.length, text: pieceText, flag: run.flag, runIndex, start, end: start + pieceText.length })
       }
       if (text.length <= maxChars) { push(raw, 0); continue }
       for (const piece of splitLongText(raw, maxChars)) push(piece.text, piece.start)
@@ -113,11 +120,13 @@ function collectSentences(root, maxChars) {
   return { sentences, runs }
 }
 
-function createSpan(index) {
-  return adapter.createElement('span', parse5Html.NS.HTML, [
+function createSpan(index, flag = '') {
+  const attrs = [
     { name: 'class', value: EPUB_TTS_SENTENCE_CLASS },
     { name: 'data-tts-index', value: String(index) },
-  ])
+  ]
+  if (flag) attrs.push({ name: 'data-tts-flag', value: flag })
+  return adapter.createElement('span', parse5Html.NS.HTML, attrs)
 }
 
 // 把每个文本节点按"落在它里面的句子片段"重建：[前缀文本][span(片段)][间隔文本]…[尾部文本]
@@ -131,7 +140,7 @@ function wrapSentences(runs, sentences) {
       const to = Math.min(sentence.end, nodeEnd)
       if (from >= to) continue
       const list = byNode.get(node) || []
-      list.push({ index: sentence.index, from: from - start, to: to - start })
+      list.push({ index: sentence.index, flag: sentence.flag, from: from - start, to: to - start })
       byNode.set(node, list)
     }
   }
@@ -142,7 +151,7 @@ function wrapSentences(runs, sentences) {
     const pieces = []
     for (const seg of segments) {
       if (seg.from > cursor) pieces.push(adapter.createTextNode(node.value.slice(cursor, seg.from)))
-      const span = createSpan(seg.index)
+      const span = createSpan(seg.index, seg.flag)
       adapter.insertText(span, node.value.slice(seg.from, seg.to))
       pieces.push(span)
       cursor = seg.to
@@ -154,23 +163,23 @@ function wrapSentences(runs, sentences) {
 }
 
 // html 是 sanitizeHtml 的输出（body 内部片段）。按 div 上下文解析，
-// 和前端 `div.innerHTML = html` 的解析行为一致。
-export function annotateEpubSentences(htmlText, { maxChars = 200 } = {}) {
+// 和前端 `div.innerHTML = html` 的解析行为一致。flagRules 是 parseFlagRules 的结果，可空。
+export function annotateEpubSentences(htmlText, { maxChars = 200, flagRules = null } = {}) {
   const limit = Math.max(20, Number(maxChars) || 200)
   const context = adapter.createElement('div', parse5Html.NS.HTML, [])
   const fragment = parseFragment(context, String(htmlText || ''))
-  const { sentences, runs } = collectSentences(fragment, limit)
+  const { sentences, runs } = collectSentences(fragment, limit, flagRules)
   wrapSentences(runs, sentences)
   return {
     content: serialize(fragment),
-    sentences: sentences.map(({ index, text }) => ({ index, text })),
+    sentences: sentences.map(({ index, text, flag }) => ({ index, text, flag })),
   }
 }
 
-// 只要句子文本（脚本预生成用），不需要序列化
-export function epubSentenceTexts(htmlText, { maxChars = 200 } = {}) {
+// 只要句子（脚本预生成用），不需要序列化
+export function epubSentenceTexts(htmlText, { maxChars = 200, flagRules = null } = {}) {
   const limit = Math.max(20, Number(maxChars) || 200)
   const context = adapter.createElement('div', parse5Html.NS.HTML, [])
   const fragment = parseFragment(context, String(htmlText || ''))
-  return collectSentences(fragment, limit).sentences.map((entry) => entry.text)
+  return collectSentences(fragment, limit, flagRules).sentences.map((entry) => entry.text)
 }

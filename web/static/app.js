@@ -228,6 +228,9 @@ const els = {
   configEpubTtsTextLanguage: document.querySelector('#config-epub-tts-text-language'),
   configEpubTtsPromptLanguage: document.querySelector('#config-epub-tts-prompt-language'),
   configEpubTtsReplacements: document.querySelector('#config-epub-tts-replacements'),
+  configEpubTtsFlagRules: document.querySelector('#config-epub-tts-flag-rules'),
+  configEpubTtsFlagCheck: document.querySelector('#config-epub-tts-flag-check'),
+  configEpubTtsFlagResult: document.querySelector('#config-epub-tts-flag-result'),
   configEpubTtsPreviewInput: document.querySelector('#config-epub-tts-preview-input'),
   configEpubTtsPreviewRun: document.querySelector('#config-epub-tts-preview-run'),
   configEpubTtsPreviewResult: document.querySelector('#config-epub-tts-preview-result'),
@@ -1310,6 +1313,7 @@ async function loadConfig() {
   els.configEpubTtsTextLanguage.value = config.epubTtsTextLanguage || ''
   els.configEpubTtsPromptLanguage.value = config.epubTtsPromptLanguage || ''
   els.configEpubTtsReplacements.value = config.epubTtsTextReplacements || ''
+  els.configEpubTtsFlagRules.value = config.epubTtsFlagRules || ''
   els.configEpubTtsMaxConcurrency.value = config.epubTtsMaxConcurrency || 1
   els.configEpubTtsBatchMaxSentences.value = config.epubTtsBatchMaxSentences || 5
   els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
@@ -3551,7 +3555,7 @@ function bindEpubTtsSentences(root, sentences) {
     const elements = byIndex.get(sentence.index)
     if (!elements?.length) continue
     // index 要等于数组下标：播放循环和预加载泵都拿它当下标用
-    bound.push({ text: sentence.text, index: bound.length, element: elements[0], elements })
+    bound.push({ text: sentence.text, flag: sentence.flag || '', index: bound.length, element: elements[0], elements })
   }
   return bound
 }
@@ -3585,6 +3589,8 @@ function renderMediaHtml(reader) {
   pages.innerHTML = reader.content || ''
   normalizeEpubGraphics(pages)
   epubTtsSentences = bindEpubTtsSentences(pages, reader.sentences)
+  loadEpubTtsFlagMode(reader)   // 此时 currentMediaReader 可能还是上一章的，必须用传进来的 reader
+  epubTtsFlagSelectSync?.()
   els.mediaReaderContent.replaceChildren(pages)
   requestAnimationFrame(() => {
     layoutMediaPages()
@@ -5122,6 +5128,7 @@ function exitEpubImmersive({ remember = false } = {}) {
   const finish = epubImmersive
   epubImmersive = null
   epubImmersiveSync = null
+  epubTtsFlagSelectSync = null
   finish()
 }
 
@@ -5138,6 +5145,35 @@ let epubTtsRate = normalizePlaybackRate(localStorage.getItem(EPUB_TTS_RATE_KEY) 
 function applyEpubTtsRate(audio) {
   audio.defaultPlaybackRate = epubTtsRate
   audio.playbackRate = epubTtsRate
+}
+
+// 朗读范围：服务端按配置的「flag 规则」给每个句子打了 flag（比如对照本的 ja / zh），页面显示不看 flag，
+// 这里只决定读哪些。'all' = 全部；否则只读 flag 等于所选值的句子。按书分别记在浏览器里。
+// 这一章里一个带 flag 的句子都没有（规则没命中，普通的书）就当没有分类，全部照读。
+let epubTtsFlagMode = 'all'
+let epubTtsCurrentIndex = 0
+let epubTtsRunToken = 0
+let epubTtsFlagSelectSync = null
+
+function epubTtsFlagKey(reader = currentMediaReader) {
+  const item = reader?.item
+  return item ? `copymanga.epubTtsFlag:${item.type || ''}:${item.itemId || ''}` : ''
+}
+
+function epubTtsSectionFlags() {
+  return [...new Set(epubTtsSentences.map((entry) => entry?.flag).filter(Boolean))]
+}
+
+function loadEpubTtsFlagMode(reader) {
+  const key = epubTtsFlagKey(reader)
+  epubTtsFlagMode = (key && localStorage.getItem(key)) || 'all'
+}
+
+function epubTtsSpeaks(entry) {
+  if (!entry) return false
+  if (epubTtsFlagMode === 'all') return true
+  if (!epubTtsSentences.some((item) => item?.flag)) return true
+  return entry.flag === epubTtsFlagMode
 }
 let epubTtsPlaying = false
 let epubTtsAutoResume = false
@@ -5196,6 +5232,7 @@ function clearEpubTtsHighlight() {
 
 function stopEpubTts() {
   epubTtsPlaying = false
+  epubTtsRunToken++
   epubTtsPrefetchToken++ // 让还在跑/排队的预加载泵发现自己过期了，尽快退出
   if (epubTtsCurrentAudio) {
     epubTtsCurrentAudio.pause()
@@ -5211,11 +5248,11 @@ function stopEpubTts() {
 function findEpubTtsStartIndex(content) {
   const rect = content.getBoundingClientRect()
   for (const entry of epubTtsSentences) {
-    if (!entry) continue
+    if (!entry || !epubTtsSpeaks(entry)) continue
     const r = entry.element.getBoundingClientRect()
     if (r.width > 0 && r.right > rect.left + 1 && r.left < rect.left + content.clientWidth - 1) return entry.index
   }
-  return epubTtsSentences.findIndex(Boolean)
+  return epubTtsSentences.findIndex((entry) => entry && epubTtsSpeaks(entry))
 }
 
 // 纯粹发一次 /tts-chunk 请求、把结果落到 epubTtsSentences 上，不处理并发坑位——
@@ -5273,7 +5310,7 @@ function claimEpubTtsBatch(indexes) {
 // 把"还没返回"误判成"失败"直接跳过。这里改成不管 need 是不是空，最后都老实
 // 等一遍所有相关的 chunkPromise。
 async function ensureEpubTtsChunks(indexes) {
-  const unique = [...new Set(indexes)].filter((i) => epubTtsSentences[i])
+  const unique = [...new Set(indexes)].filter((i) => epubTtsSentences[i] && epubTtsSpeaks(epubTtsSentences[i]))
   const need = unique.filter((i) => !epubTtsSentences[i].chunk && !epubTtsSentences[i].chunkPromise)
   if (need.length) claimEpubTtsBatch(need)
   await Promise.all(unique.map((i) => epubTtsSentences[i].chunkPromise).filter(Boolean))
@@ -5290,13 +5327,13 @@ async function runEpubTtsPrefetchPump(startIndex) {
   let cursor = startIndex
   let batchSeq = 0
   while (epubTtsPlaying && token === epubTtsPrefetchToken) {
-    while (epubTtsSentences[cursor] && (epubTtsSentences[cursor].chunk || epubTtsSentences[cursor].chunkPromise)) cursor++
+    while (epubTtsSentences[cursor] && (!epubTtsSpeaks(epubTtsSentences[cursor]) || epubTtsSentences[cursor].chunk || epubTtsSentences[cursor].chunkPromise)) cursor++
     if (!epubTtsSentences[cursor]) return // 这一章能攒的都攒完了，等翻到下一章再起新的泵
     await epubTtsAcquireSlot()
     if (!epubTtsPlaying || token !== epubTtsPrefetchToken) { epubTtsReleaseSlot(); return }
     // 拿到坑位这段等待期间，cursor 指向的句子可能已经被主循环的
     // ensureEpubTtsChunks 抢先认领了（比如用户手速很快追上来），重新跳过。
-    while (epubTtsSentences[cursor] && (epubTtsSentences[cursor].chunk || epubTtsSentences[cursor].chunkPromise)) cursor++
+    while (epubTtsSentences[cursor] && (!epubTtsSpeaks(epubTtsSentences[cursor]) || epubTtsSentences[cursor].chunk || epubTtsSentences[cursor].chunkPromise)) cursor++
     if (!epubTtsSentences[cursor]) { epubTtsReleaseSlot(); return }
     batchSeq++
     const targetCount = Math.min(batchSeq, epubTtsMaxBatchSentences())
@@ -5304,6 +5341,7 @@ async function runEpubTtsPrefetchPump(startIndex) {
     const batch = []
     let total = 0
     while (epubTtsSentences[cursor] && batch.length < targetCount) {
+      if (!epubTtsSpeaks(epubTtsSentences[cursor])) { cursor++; continue }   // 不在朗读范围内的句子不请求音频
       const text = epubTtsSentences[cursor].text
       if (batch.length && total + text.length > maxChars) break // 装不下了，留给下一批
       batch.push(cursor)
@@ -5351,12 +5389,19 @@ function ensureEpubTtsSentenceVisible(element, content) {
   while (guard++ < mediaPageCount + 1) {
     const rect = content.getBoundingClientRect()
     const er = element.getBoundingClientRect()
-    if (er.left >= rect.left - 1 && er.left < rect.left + content.clientWidth - 1) return
-    if (!epubTtsAdvancePage(1)) return
+    const right = rect.left + content.clientWidth
+    // 句子横跨两栏时，外接矩形的 left 在上一栏、right 在这一栏：只要和当前这一栏有交集就算看得见。
+    // 原来只比 left，从「上一栏开头、延伸到这一栏」的句子起读（比如翻页后在新页顶部点朗读）会被当成
+    // 「还没翻到」，一路翻到最后一页。句子整个在当前栏之前时要往回翻，不能只会往前翻。
+    if (er.right > rect.left + 1 && er.left < right - 1) return
+    if (!epubTtsAdvancePage(er.left >= right - 1 ? 1 : -1)) return
   }
 }
 
 async function playEpubTtsFrom(startIndex, content) {
+  // 每次起播换一个令牌：stop 后紧接着 start（比如切朗读范围时重新起播）时，旧循环还停在某个 await 上，
+  // 醒来看到 epubTtsPlaying 又是 true 会继续跑，变成两个循环同时读。令牌对不上就必须退出。
+  const runToken = ++epubTtsRunToken
   epubTtsPlaying = true
   epubTtsToggleBtn?.classList.add('active')
   // 开口第一句必须先占到坑位，再起预加载泵——泵自己也会抢一次坑位占着排队。
@@ -5368,15 +5413,17 @@ async function playEpubTtsFrom(startIndex, content) {
   const firstClaim = ensureEpubTtsChunks([startIndex])
   runEpubTtsPrefetchPump(startIndex).catch(() => {})
   let index = startIndex
-  while (epubTtsPlaying) {
+  while (epubTtsPlaying && runToken === epubTtsRunToken) {
     if (!epubTtsSentences[index]) {
       // 本节读完了，接到下一章继续——不能直接 stop，交给 renderMediaHtml 续播
       const next = mediaStepTarget('next')
       if (next) { epubTtsAutoResume = true; next(); return }
       break
     }
+    if (!epubTtsSpeaks(epubTtsSentences[index])) { index++; continue }   // 不在朗读范围内：页面照常显示，只是不读
+    epubTtsCurrentIndex = index
     await (index === startIndex ? firstClaim : ensureEpubTtsChunks([index]))
-    if (!epubTtsPlaying) return
+    if (!epubTtsPlaying || runToken !== epubTtsRunToken) return
     const entry = epubTtsSentences[index]
     const chunk = entry.chunk
     if (!chunk || chunk.error || chunk.skipped) { index++; continue }   // 单句失败、或没有可读内容（分隔线/省略号）不中断整体朗读，跳过
@@ -5399,7 +5446,7 @@ async function playEpubTtsFrom(startIndex, content) {
     // ended 永远不触发，--tts-progress 就定在刚设的初始值上不会再动。
     audio.play().catch(() => {})
     await ended
-    if (!epubTtsPlaying || epubTtsCurrentAudio !== audio) return   // 被打断（暂停/切章/退出）
+    if (!epubTtsPlaying || runToken !== epubTtsRunToken || epubTtsCurrentAudio !== audio) return   // 被打断（暂停/切章/退出/重新起播）
     index++
   }
   stopEpubTts()
@@ -5503,8 +5550,42 @@ function enterEpubImmersive({ remember = false } = {}) {
     if (epubTtsCurrentAudio) applyEpubTtsRate(epubTtsCurrentAudio)
     rateSelect.blur()
   })
+  // 朗读范围：只有这一章里有带 flag 的句子（配置了「朗读 flag 规则」且命中）才显示
+  const flagSelect = document.createElement('select')
+  flagSelect.className = 'stream-rate-select epub-tts-flag'
+  flagSelect.title = '朗读范围：页面照常显示全部内容，只朗读选中的部分'
+  const syncFlagSelect = () => {
+    const flags = epubTtsSectionFlags()
+    flagSelect.hidden = !flags.length
+    flagSelect.replaceChildren(...[['all', '朗读：全部'], ...flags.map((flag) => [flag, `朗读：${flag}`])].map(([value, text]) => {
+      const option = document.createElement('option')
+      option.value = value
+      option.textContent = text
+      return option
+    }))
+    if (epubTtsFlagMode !== 'all' && !flags.includes(epubTtsFlagMode)) epubTtsFlagMode = 'all'
+    flagSelect.value = epubTtsFlagMode
+  }
+  epubTtsFlagSelectSync = syncFlagSelect
+  syncFlagSelect()
+  flagSelect.addEventListener('change', () => {
+    epubTtsFlagMode = flagSelect.value
+    const key = epubTtsFlagKey()
+    if (key) {
+      if (epubTtsFlagMode === 'all') localStorage.removeItem(key)
+      else localStorage.setItem(key, epubTtsFlagMode)
+    }
+    flagSelect.blur()
+    // 正在读的话立刻按新范围从当前这句往后读，不用手动停了再开
+    if (epubTtsPlaying) {
+      const from = epubTtsCurrentIndex
+      stopEpubTts()
+      const next = epubTtsSentences.findIndex((entry, i) => i >= from && entry && epubTtsSpeaks(entry))
+      if (next >= 0) playEpubTtsFrom(next, els.mediaReaderContent).catch(() => {})
+    }
+  })
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, rateSelect, exitBtn)
+  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, rateSelect, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -7248,6 +7329,23 @@ els.sidebarToggle.addEventListener('click', () => {
   els.sidebarToggle.title = collapsed ? '展开任务栏' : '收缩任务栏'
   localStorage.setItem('copymanga.sidebarCollapsed', collapsed ? '1' : '0')
 })
+// 「检查规则」：只看语法，不用挑书——有效几条、有没有兜底、哪一行写错了
+els.configEpubTtsFlagCheck?.addEventListener('click', async () => {
+  const out = els.configEpubTtsFlagResult
+  try {
+    const res = await fetch('/api/epub/tts-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texts: [], flagRules: els.configEpubTtsFlagRules.value }),
+    })
+    const flag = (await res.json()).flag
+    const lines = [`有效规则 ${flag.ruleCount} 条${flag.fallback ? `，兜底 flag：${flag.fallback}` : '，没有兜底规则'}`]
+    for (const error of flag.errors) lines.push(`第 ${error.line} 行无效，已忽略：${error.error}`)
+    out.textContent = lines.join('\n')
+  } catch (error) {
+    out.textContent = `检查失败：${error.message}`
+  }
+})
 // 「试一试」：用文本框里还没保存的规则，看一句话实际会发给 TTS 什么（—— = 没有可读内容，会被跳过）
 els.configEpubTtsPreviewRun.addEventListener('click', async () => {
   const text = els.configEpubTtsPreviewInput.value
@@ -7306,6 +7404,7 @@ els.configSave.addEventListener('click', async () => {
         epubTtsTextLanguage: els.configEpubTtsTextLanguage.value,
         epubTtsPromptLanguage: els.configEpubTtsPromptLanguage.value,
         epubTtsTextReplacements: els.configEpubTtsReplacements.value,
+        epubTtsFlagRules: els.configEpubTtsFlagRules.value,
         epubTtsMaxConcurrency: Number(els.configEpubTtsMaxConcurrency.value),
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),

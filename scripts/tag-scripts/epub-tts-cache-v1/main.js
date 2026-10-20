@@ -3,11 +3,12 @@
 //
 // 状态 tag：
 //   合集  朗读缓存: 全 / 部分 / 无      朗读缓存version: <脚本版本>      朗读缓存音色: <参考音频短指纹>
+//         朗读缓存范围: 全部 / ja / ja+zh（脚本选项 flags 选的范围；「全」只表示这个范围内的句子都缓存完了）
 //   unit  朗读缓存: 全 / 部分 / 无 / 失败
 // tag 只代表「这次运行结束时」的缓存完成度：缓存目录被清、参考音频换了（键变了），tag 不会自动变，
 // 重跑一次才会刷新；「朗读缓存音色」就是用来一眼看出这批缓存是不是用当前音色生成的。
 
-const TAG_GROUPS = ['朗读缓存', '朗读缓存version', '朗读缓存音色']
+const TAG_GROUPS = ['朗读缓存', '朗读缓存version', '朗读缓存音色', '朗读缓存范围']
 
 export async function generateTags(ctx) {
   const options = normalizeOptions(ctx.script?.options || {})
@@ -20,6 +21,7 @@ export async function generateTags(ctx) {
   const logs = [options.dryRun
     ? '【dryRun】只统计，不调用 TTS，不改缓存；用完请关闭 dryRun 选项'
     : `预生成朗读缓存：${units.length} 个 unit${options.maxSentences ? `，本次最多生成 ${options.maxSentences} 句` : ''}`]
+  if (options.flags.length) logs.push(`只处理 flag：${options.flags.join('、')}`)
   if (!units.length) {
     logs.push('没有带章节的 EPUB unit')
     return keepOwn(ctx, fullRun, logs)
@@ -29,9 +31,18 @@ export async function generateTags(ctx) {
   //    （分隔线、省略号、纯数字…，spoken 为 null，不合成也不算失败），缓存键也是 spoken 的哈希。
   //    不同原文替换后变成同一句，只生成一份。
   const info = new Map()      // 原文 -> { spoken, cached }
+  let skippedByFlag = 0
   const plans = []
   for (const unit of units) {
-    const sections = await svc.sections(unit)
+    // 按 flag 筛选：只处理选中 flag 的句子（缓存键是句子文本，和阅读页选同一个 flag 朗读时命中的是同一批）。
+    // 和阅读页的规则一致：这一章里一个带 flag 的句子都没有（规则没命中），就当没有分类，整章都处理。
+    const sections = (await svc.sections(unit)).map((section) => {
+      const flags = Array.isArray(section.flags) ? section.flags : []
+      if (!options.flags.length || !flags.some(Boolean)) return section
+      const keep = section.texts.map((_, i) => options.flags.includes(flags[i]))
+      skippedByFlag += keep.filter((k) => !k).length
+      return { ...section, texts: section.texts.filter((_, i) => keep[i]) }
+    })
     const originals = [...new Set(sections.flatMap((section) => section.texts))]
     const fresh = originals.filter((text) => !info.has(text))
     if (fresh.length) {
@@ -58,6 +69,7 @@ export async function generateTags(ctx) {
   }
   const missingChars = missing.reduce((sum, entry) => sum + entry.spoken.length, 0)
   const skippedTotal = plans.reduce((sum, plan) => sum + plan.skipped, 0)
+  if (options.flags.length) logs.push(`按 flag 筛选：不在范围内的 ${skippedByFlag} 句不处理`)
 
   if (options.dryRun) {
     for (const plan of plans) {
@@ -136,12 +148,12 @@ export async function generateTags(ctx) {
   const itemState = total && done === total ? '全' : (done > 0 ? '部分' : '无')
   return {
     itemTags: fullRun
-      ? [`朗读缓存: ${itemState}`, `朗读缓存version: ${ctx.script?.version || 'unknown'}`, `朗读缓存音色: ${svc.fingerprint}`]
+      ? [`朗读缓存: ${itemState}`, `朗读缓存version: ${ctx.script?.version || 'unknown'}`, `朗读缓存音色: ${svc.fingerprint}`, `朗读缓存范围: ${options.flags.length ? options.flags.join('+') : '全部'}`]
       : [],
     unitTags,
     unitPatches: [],
     logs,
-    details: { generated: ok.size, failed: failed.size, remaining: total - done, skipped: skippedTotal, stopped: stopped || null },
+    details: { generated: ok.size, failed: failed.size, remaining: total - done, skipped: skippedTotal, skippedByFlag, flags: options.flags, stopped: stopped || null },
   }
 }
 
@@ -163,8 +175,15 @@ function keepOwn(ctx, fullRun, logs) {
   return { itemTags, unitTags, unitPatches: [], logs }
 }
 
+// flags 可以是数组，也可以是逗号分隔的字符串；空 = 不筛选
+function normalizeFlags(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(/[,，\s]+/)
+  return [...new Set(list.map((item) => String(item).trim()).filter(Boolean))]
+}
+
 function normalizeOptions(raw = {}) {
   return {
+    flags: normalizeFlags(raw.flags),
     dryRun: raw.dryRun === true,
     maxSentences: Math.max(0, Math.floor(Number(raw.maxSentences) || 0)),
     maxConsecutiveFailures: Math.max(0, Math.floor(Number(raw.maxConsecutiveFailures ?? 3))),
