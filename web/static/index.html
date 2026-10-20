@@ -653,7 +653,15 @@
               <label>允许导入来源<input id="config-media-import-source-roots" placeholder="/input,/downloads" /></label>
               <label>TXT 分段字数（每段多少字；0 或留空 = 不分段，一个文件一个章节；改动后要对合集重新扫描才生效）<input id="config-text-section-chars" type="number" min="0" step="1000" placeholder="0" /></label>
               <label>字幕后缀<input id="config-media-subtitle-extensions" placeholder="srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub" /></label>
-              <label class="checkbox-line"><input id="config-media-open-in-new-tab" type="checkbox" />从媒体库/历史打开媒体时用新的浏览器标签页（Ctrl/⌘ 点击始终新标签页）</label>
+              <div class="muted">从媒体库/历史打开下面这些类型的媒体时，用新的浏览器标签页（Ctrl/⌘ 点击任何类型都会用新标签页）</div>
+              <div class="checkbox-row">
+                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="epub" />EPUB</label>
+                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="text" />TXT 文本</label>
+                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="video" />视频</label>
+                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="audio" />音频</label>
+                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="image-gallery" />图集</label>
+              </div>
+              <label class="checkbox-line"><input id="config-media-close-new-tab-on-back" type="checkbox" />新标签页里点「返回」（含沉浸里的返回）时直接关闭这个标签页，而不是回到媒体库页</label>
 
               <h3>朗读（TTS）</h3>
               <label>TTS 服务地址<input id="config-epub-tts-api-base" placeholder="http://127.0.0.1:8000" /></label>

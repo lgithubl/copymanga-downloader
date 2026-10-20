@@ -238,7 +238,8 @@ const els = {
   configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
-  configMediaOpenInNewTab: document.querySelector('#config-media-open-in-new-tab'),
+  configMediaOpenInNewTabKinds: [...document.querySelectorAll('.config-media-new-tab-kind')],
+  configMediaCloseNewTabOnBack: document.querySelector('#config-media-close-new-tab-on-back'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
   configMergePdfFmt: document.querySelector('#config-merge-pdf-fmt'),
@@ -331,16 +332,22 @@ function parseMediaRoute(hash = location.hash) {
     const [pathPart, queryPart = ''] = hash.slice(MEDIA_ROUTE_PREFIX.length).split('?')
     const [type, itemId, unitId = ''] = pathPart.split('/').map((part) => decodeURIComponent(part))
     if (!type || !itemId) return null
-    return { type, itemId, unitId, sectionId: new URLSearchParams(queryPart).get('section') || '' }
+    const query = new URLSearchParams(queryPart)
+    return { type, itemId, unitId, sectionId: query.get('section') || '', newTab: query.get('tab') === 'new' }
   } catch {
     return null   // 手敲的 URL 里有非法的 % 转义
   }
 }
 
-function mediaRouteHash({ type, itemId, unitId = '', sectionId = '' }) {
+// newTab：这个标签页是「从媒体库/历史用新标签页打开」的。标记只放在 URL 里（刷新后还在，不用 session）：
+// 当前标签页的 URL 带着它，syncMediaHash 重写 URL 时也要原样带上（mediaTabIsNew）。
+function mediaRouteHash({ type, itemId, unitId = '', sectionId = '', newTab = false }) {
   let hash = `${MEDIA_ROUTE_PREFIX}${encodeURIComponent(type)}/${encodeURIComponent(itemId)}`
   if (unitId) hash += `/${encodeURIComponent(unitId)}`
-  if (unitId && sectionId) hash += `?section=${encodeURIComponent(sectionId)}`
+  const query = []
+  if (unitId && sectionId) query.push(`section=${encodeURIComponent(sectionId)}`)
+  if (newTab) query.push('tab=new')
+  if (query.length) hash += `?${query.join('&')}`
   return hash
 }
 
@@ -351,21 +358,33 @@ function syncMediaHash() {
   const route = currentMediaRoute
   const showing = Boolean(route && els.mediaViewerView?.classList.contains('active'))
   if (showing) {
-    const want = mediaRouteHash(route)
+    const want = mediaRouteHash({ ...route, newTab: mediaTabIsNew })
     if (location.hash !== want) history.replaceState(null, '', `${location.pathname}${location.search}${want}`)
   } else if (parseMediaRoute()) {
     history.replaceState(null, '', `${location.pathname}${location.search}`)
   }
 }
 
+// 这个标签页是不是被「新标签页打开」开出来的（URL 带 tab=new 启动）。决定「返回」是关标签页还是回媒体库页。
+const mediaTabIsNew = Boolean(parseMediaRoute()?.newTab)
+
 function openMediaRouteInNewTab(route) {
   // 必须在点击处理器里同步调用（前面不能有 await），否则会被浏览器当成弹窗拦掉
-  window.open(`${location.origin}${location.pathname}${location.search}${mediaRouteHash(route)}`, '_blank', 'noopener')
+  window.open(`${location.origin}${location.pathname}${location.search}${mediaRouteHash({ ...route, newTab: true })}`, '_blank', 'noopener')
 }
 
 // Ctrl/⌘ 点击永远开新标签页（和浏览器里点链接的习惯一致）；普通点击看配置开关。
-function shouldOpenMediaInNewTab(event) {
-  return Boolean(event?.ctrlKey || event?.metaKey || appConfig?.mediaOpenInNewTab)
+// kind 是要打开的媒体类型（epub / text / video / audio / image-gallery），按配置里勾选的类型决定；
+// 认不出类型（旧历史记录没记过）时只看 Ctrl/⌘。
+function shouldOpenMediaInNewTab(event, kind = '') {
+  if (event?.ctrlKey || event?.metaKey) return true
+  return Boolean(kind && (appConfig?.mediaOpenInNewTabKinds || []).includes(kind))
+}
+
+// 条目级入口（卡片「继续/打开」、历史「继续」）拿不到具体章节，用历史里记的上次章节类型，
+// 没有就用条目的主要类型（索引里的 primaryKind；旧 EPUB 库类型本身就是 epub）。
+function libraryEntryKind(entry) {
+  return entry?.lastUnitKind || entry?.primaryKind || (entry?.type === 'epub' ? 'epub' : '')
 }
 
 // 从 URL 启动的标签页：落在阅读器上，不是默认的搜索页。
@@ -1320,7 +1339,8 @@ async function loadConfig() {
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
   els.configTextSectionChars.value = config.textSectionChars > 0 ? String(config.textSectionChars) : ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
-  els.configMediaOpenInNewTab.checked = Boolean(config.mediaOpenInNewTab)
+  for (const box of els.configMediaOpenInNewTabKinds) box.checked = (config.mediaOpenInNewTabKinds || []).includes(box.value)
+  els.configMediaCloseNewTabOnBack.checked = config.mediaCloseNewTabOnBack !== false
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
@@ -2957,7 +2977,7 @@ function renderLibraryUnits() {
     row.addEventListener('click', (event) => {
       if (event.target.closest('button,input')) return
       if (unit.mediaKind === 'subtitle') return
-      if (shouldOpenMediaInNewTab(event) && currentLibraryItem) {
+      if (shouldOpenMediaInNewTab(event, unit.mediaKind || (currentLibraryItem?.type === 'epub' ? 'epub' : '')) && currentLibraryItem) {
         openMediaRouteInNewTab({ type: currentLibraryItem.type, itemId: currentLibraryItem.itemId, unitId: unit.unitId })
         return
       }
@@ -3101,7 +3121,7 @@ function historyProgressText(history) {
 
 // 入口外壳：决定在哪打开。必须在任何 await 之前就 window.open，否则会被当成弹窗拦截。
 async function continueLibraryItem(itemOrHistory, event) {
-  if (shouldOpenMediaInNewTab(event)) {
+  if (shouldOpenMediaInNewTab(event, libraryEntryKind(itemOrHistory))) {
     openMediaRouteInNewTab({ type: itemOrHistory.type, itemId: itemOrHistory.itemId })
     return
   }
@@ -3201,6 +3221,7 @@ async function recordCurrentLibraryHistory({ flush = false, visit = false, posit
     cover: owner.cover || unit.thumbnail?.coverUrl || unit.cover || '',
     tags: owner.tags || [],
     lastUnitId: unit.unitId,
+    lastUnitKind: unit.mediaKind || (owner.type === 'epub' ? 'epub' : ''),
     lastUnitTitle: unit.title || unit.fileName || unit.unitId,
     lastSectionId: reader.section?.sectionId || '',
     lastSectionTitle: reader.section?.title || '',
@@ -7203,6 +7224,17 @@ els.mediaWidthAdjust?.addEventListener('click', toggleWidthAdjust)
 // 不走这条：它的媒体库页早就加载好了，重载会丢掉滚动位置。
 let readerTabNeedsLibraryLoad = Boolean(bootMediaRoute)
 els.mediaReaderBack.addEventListener('click', () => {
+  // 新标签页打开的阅读器：返回 = 关掉这个标签页（沉浸里的返回最终也走这里）。
+  // window.close() 只对脚本开的标签页有效，被浏览器拒绝时标签页还在，退回下面「回到媒体库页」的老行为。
+  if (mediaTabIsNew && appConfig?.mediaCloseNewTabOnBack !== false) {
+    window.close()
+    setTimeout(goBackToLibrary, 200)   // 能关的话这行根本跑不到
+    return
+  }
+  goBackToLibrary()
+})
+
+function goBackToLibrary() {
   const target = mediaReturnView || 'library-view'
   if (readerTabNeedsLibraryLoad) {
     readerTabNeedsLibraryLoad = false
@@ -7210,7 +7242,7 @@ els.mediaReaderBack.addEventListener('click', () => {
     if (tab) { tab.click(); return }
   }
   showView(target)
-})
+}
 // 阅读器导航（上一章/下一章/目录/翻页）作用在当前会话上，归属必须跟着会话走
 function openUnitInSession(unitId, sectionId = '') {
   return openMediaUnit(unitId, sectionId, { owner: readerOwner(currentMediaReader) })
@@ -7472,7 +7504,8 @@ els.configSave.addEventListener('click', async () => {
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
-        mediaOpenInNewTab: els.configMediaOpenInNewTab.checked,
+        mediaOpenInNewTabKinds: els.configMediaOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
+        mediaCloseNewTabOnBack: els.configMediaCloseNewTabOnBack.checked,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,
         mergePdfFmt: els.configMergePdfFmt.value,

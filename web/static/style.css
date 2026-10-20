@@ -3819,3 +3819,16 @@ h2 {
   width: 90px;
   padding: 0;
 }
+
+.epub-tts-volume-wrap {
+  color: #e8edf2;
+  font-size: 13px;
+}
+.epub-bar .epub-tts-flag {
+  min-width: 112px;
+}
+.checkbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+}

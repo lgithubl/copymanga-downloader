@@ -310,9 +310,12 @@ function defaultConfig() {
       },
     },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
-    // 从媒体库/历史里打开媒体时，是否用新的浏览器标签页。默认关，保持原来"在当前页打开"
-    // 的行为；Ctrl/⌘ 点击不受这个开关限制，永远开新标签页。
-    mediaOpenInNewTab: false,
+    // 从媒体库/历史里打开媒体时，哪些媒体类型用新的浏览器标签页。默认都不开，保持原来"在当前页打开"
+    // 的行为；Ctrl/⌘ 点击不受这个限制，永远开新标签页。
+    // 旧版本是一个总开关 mediaOpenInNewTab（布尔），读到旧配置时开着就等于全部类型都开。
+    mediaOpenInNewTabKinds: [],
+    // 新标签页里点「返回」（含沉浸里的返回）：直接关闭这个标签页，而不是回到媒体库页。
+    mediaCloseNewTabOnBack: true,
     // AniDB 标题 dump 的存放目录和下载地址。anidb-v1 脚本从这个目录读 dump，
     // 刷新接口往这里写。脚本自己的 dumpDir 必须和这里一致（脚本不读全局配置）。
     anidbDumpDir: path.join(DATA_DIR, 'cache', 'anidb'),
@@ -390,7 +393,8 @@ function normalizeConfig(value) {
     epubTtsBatchMaxChars: clampNumber(value?.epubTtsBatchMaxChars, 20, 2000, defaults.epubTtsBatchMaxChars),
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
-    mediaOpenInNewTab: Boolean(value?.mediaOpenInNewTab ?? defaults.mediaOpenInNewTab),
+    mediaOpenInNewTabKinds: normalizeNewTabKinds(value),
+    mediaCloseNewTabOnBack: Boolean(value?.mediaCloseNewTabOnBack ?? defaults.mediaCloseNewTabOnBack),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
     anidbDumpUrl: String(value?.anidbDumpUrl || defaults.anidbDumpUrl).trim() || defaults.anidbDumpUrl,
     mediaTagDisplayKeys: normalizeStringList(value?.mediaTagDisplayKeys, defaults.mediaTagDisplayKeys),
@@ -2943,6 +2947,7 @@ function libraryIndexItemFromMetadata(item = {}) {
     workKey: String(item.workKey || ''),
     productId,
     unitCount: item.unitCount || units.length || 0,
+    primaryKind: item.type === 'epub' ? 'epub' : String(units.find((unit) => unit.mediaKind && unit.mediaKind !== 'subtitle')?.mediaKind || ''),
     tags,
     unitTags,
     dlsite: {
@@ -2977,6 +2982,7 @@ function normalizeLibraryIndexItem(item = {}) {
     sourceProfile: String(item.sourceProfile || ''),
     productId: String(item.productId || ''),
     unitCount: Number(item.unitCount || 0),
+    primaryKind: String(item.primaryKind || ''),
     tags: parseTags(item.tags || []),
     unitTags: parseTags(item.unitTags || []),
     dlsite: {
@@ -3057,6 +3063,7 @@ function publicLibraryIndexItem(item) {
     workKey: item.workKey || '',
     productId: item.productId,
     unitCount: item.unitCount,
+    primaryKind: item.primaryKind || '',
     tags: item.tags,
     dlsite: item.dlsite,
     createdAt: item.createdAt,
@@ -3175,6 +3182,15 @@ function libraryHistoryPath(type, itemId) {
   return path.join(LIBRARY_HISTORY_DIR, safeSegment(type), `${safeSegment(itemId)}.json`)
 }
 
+const NEW_TAB_MEDIA_KINDS = ['epub', 'text', 'video', 'audio', 'image-gallery']
+
+function normalizeNewTabKinds(value) {
+  if (Array.isArray(value?.mediaOpenInNewTabKinds)) {
+    return NEW_TAB_MEDIA_KINDS.filter((kind) => value.mediaOpenInNewTabKinds.includes(kind))
+  }
+  return value?.mediaOpenInNewTab ? [...NEW_TAB_MEDIA_KINDS] : []   // 旧配置的总开关
+}
+
 function normalizeLibraryHistory(value) {
   const now = new Date().toISOString()
   const type = String(value?.type || '')
@@ -3187,6 +3203,7 @@ function normalizeLibraryHistory(value) {
     cover: String(value?.cover || ''),
     tags: Array.isArray(value?.tags) ? value.tags.map(String).filter(Boolean) : [],
     lastUnitId: String(value?.lastUnitId || ''),
+    lastUnitKind: String(value?.lastUnitKind || ''),
     lastUnitTitle: String(value?.lastUnitTitle || ''),
     lastSectionId: String(value?.lastSectionId || ''),
     lastSectionTitle: String(value?.lastSectionTitle || ''),
