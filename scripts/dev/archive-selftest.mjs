@@ -8,7 +8,7 @@
 // DATA_DIR / INPUT_DIR 是服务端看到的目录在**本机**上的路径，给了才会检查分片文件和 mv 之后源文件是否消失。
 
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -147,6 +147,12 @@ if (DATA_DIR) {
   check('元数据按 ab/cd 分片落盘', existsSync(path.join(metaRoot, sample.slice(0, 2), sample.slice(2, 4), `${sample}.json`)))
   const stored = JSON.parse(readFileSync(path.join(metaRoot, sample.slice(0, 2), sample.slice(2, 4), `${sample}.json`), 'utf8'))
   check('元数据：zip 外部引用且路径已映射到挂载目录', stored.zip.external === true && stored.zip.path.startsWith(lrrBase.contentDir), JSON.stringify(stored.zip))
+  // 早期迁移写过 sourceProfile=lrr-init：读取时统一成 archive-gallery（不用重写文件）
+  const aliasFile = path.join(metaRoot, sample.slice(0, 2), sample.slice(2, 4), `${sample}.json`)
+  const aliasJson = JSON.parse(readFileSync(aliasFile, 'utf8'))
+  aliasJson.sourceProfile = 'lrr-init'
+  writeFileSync(aliasFile, JSON.stringify(aliasJson))
+  check('老条目 sourceProfile=lrr-init 读取时统一成 archive-gallery', (await getJson(`/api/library/items/archive/${sample}`)).sourceProfile === 'archive-gallery')
   check('元数据：保留 LRR 原始字段', stored.origin?.lrr?.id === sample && stored.origin.lrr.file.startsWith(expect.prefix), JSON.stringify(stored.origin))
 }
 
@@ -186,6 +192,11 @@ check('搜「没有 tag:/group: 命名空间标签」的条目：-tag:"tag:*" -t
 
 const first = expect.archives[0]
 check('列表：标题和 primaryKind', byId.get(first.id)?.title === first.title && byId.get(first.id)?.primaryKind === 'image-gallery', JSON.stringify(byId.get(first.id)))
+check('迁移来的条目和新导入的用同一个 sourceProfile（archive-gallery），迁移方案本身不是条目的方案值', byId.get(first.id)?.sourceProfile === 'archive-gallery' && [...byId.values()].every((item) => item.sourceProfile === 'archive-gallery'), JSON.stringify([...new Set([...byId.values()].map((item) => item.sourceProfile))]))
+const bySource = await archivePage('&sourceProfile=archive-gallery')
+check('按导入方案 archive-gallery 筛选：迁移来的全部在内（算一种）', bySource.total === page.total && bySource.total >= expect.importable, `${bySource.total} vs ${page.total}`)
+const byOldSource = await archivePage('&sourceProfile=lrr-init')
+check('lrr-init 不再是任何条目的方案值', byOldSource.total === 0, String(byOldSource.total))
 check('列表：封面 URL 指向缩略图接口', /thumbnail\/zip\/cover$/.test(byId.get(first.id)?.cover || ''), byId.get(first.id)?.cover)
 check('双重编码的标题被解开', byId.get(expect.double.id)?.title === expect.double.title, byId.get(expect.double.id)?.title)
 check('空标题退回 name', byId.get(expect.notitle.id)?.title === expect.notitle.title, byId.get(expect.notitle.id)?.title)

@@ -121,7 +121,8 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
       tags: parseTags(raw?.tags || []),
       cover: String(raw?.cover || ''),
       productId: '',
-      sourceProfile: String(raw?.sourceProfile || ARCHIVE_PROFILE),
+      // 早期迁移写的是 lrr-init：读取时统一成 archive-gallery（不用重写文件，重建索引后筛选里就算一种）
+      sourceProfile: (!raw?.sourceProfile || raw.sourceProfile === LRR_INIT_PROFILE) ? ARCHIVE_PROFILE : String(raw.sourceProfile),
       workKey: String(raw?.workKey || ''),
       dlsite: null,
       fileName: String(raw?.fileName || ''),

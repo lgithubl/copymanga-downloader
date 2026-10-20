@@ -9,7 +9,7 @@
 
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
-import { computeArchiveId, LRR_INIT_PROFILE } from './types/archive-gallery.mjs'
+import { ARCHIVE_PROFILE, computeArchiveId } from './types/archive-gallery.mjs'
 import { pairsToObject, RespClient } from './resp-client.mjs'
 import { applyTagMap, DEFAULT_FILENAME_ENCODINGS, displayPath, extensionOfBytes, isValidUtf8, looksMojibake, mapPathBytes } from './legacy-path.mjs'
 
@@ -187,7 +187,9 @@ export async function runLrrMigration({
             size: info.size,
             mtimeMs: Math.floor(info.mtimeMs),
             pageCount: num('pagecount'),
-            sourceProfile: LRR_INIT_PROFILE,
+            // 和新导入的压缩包图集用同一个 sourceProfile（媒体库的「导入方案」筛选里算一种）；
+            // 是不是迁移来的看 origin.lrr
+            sourceProfile: ARCHIVE_PROFILE,
             origin: {
               lrr: {
                 id: key,

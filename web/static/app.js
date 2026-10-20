@@ -2418,7 +2418,8 @@ function closeSeriesModal() {
 // 点卡片是直接进播放器还是进目录。只认 sourceProfile——它是导入时写死的结构化
 // 字段，用户在详情页改不到；用 tag 驱动导航行为的话，手滑删一个 tag 就会静默改掉交互。
 // 将来要加新方案或做成每条目可覆盖（item.openMode），只改这个函数。
-const VIEWER_FIRST_IMPORT_PROFILES = new Set(['monthly-ani'])
+// 压缩包图集（含迁移来的）一个条目就是一个压缩包，点卡片直接进阅读器
+const VIEWER_FIRST_IMPORT_PROFILES = new Set(['monthly-ani', 'archive-gallery'])
 
 // 点卡片要操作哪一项：有系列就是系列里优先级最高的那个，否则就是自己。
 // 「系列选哪一项」和「进目录还是直接播」是两件事——后者仍由 libraryCardOpensViewer
@@ -2533,7 +2534,8 @@ function syncLibrarySourceProfileOptions() {
   const current = select.value
   select.innerHTML = '<option value="">导入方案：全部</option>'
   for (const [value, info] of Object.entries(mediaImportProfiles)) {
-    if (value === 'custom') continue
+    // 迁移方案只是个「怎么导入」的动作，迁移来的条目和新导入的用同一个方案值，下拉里不单列
+    if (value === 'custom' || info.migration) continue
     const option = document.createElement('option')
     option.value = value
     option.textContent = `方案：${info.label}`
