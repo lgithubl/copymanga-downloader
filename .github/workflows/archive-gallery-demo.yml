@@ -138,7 +138,7 @@ jobs:
               os.makedirs(os.path.dirname(path), exist_ok=True)
               with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
                   for p in range(1, 6 + i):
-                      z.writestr('%03d.png' % p, png(120 + p * 4, 160, (40 * i + 30 * p % 255, 90 + 20 * p % 255, 160 - 15 * p % 255)))
+                      z.writestr('%03d.png' % p, png(120 + p * 4, 160, ((40 * i + 30 * p) % 256, (90 + 20 * p) % 256, (160 - 15 * p) % 256)))
                   z.writestr('uniq.txt', 'demo-%d' % i)
           PY
           docker run -d --name copymanga-web --network lrrnet \
