@@ -328,6 +328,11 @@ function defaultConfig() {
         contentDir: path.join(DATA_DIR, 'library', 'lrr', 'content'), // LRR 的 zip 目录（只读挂载进来的路径）
         thumbDir: path.join(DATA_DIR, 'library', 'lrr', 'thumb'),     // LRR 的封面目录（只读挂载进来的路径）
         pathFrom: '/home/koyomi/lanraragi/content',                  // LRR 里 file 字段的路径前缀（容器内路径），迁移时换成 contentDir
+        // 标签命名空间映射：LRR 标签 "ns:值" 按第一个冒号拆开，ns（不区分大小写）换成右边的名字，空字符串 = 去掉前缀只留值。
+        // 例：{ "group": "circle", "tag": "" } → group:X 变成 circle:X，tag:Y 变成 Y。没命中的原样保留。要和标签脚本的 namespaces 保持一致。
+        tagMap: {},
+        // 磁盘上文件名不是 UTF-8 时（EUC-JP / Shift-JIS …），按这个顺序严格解码出可读的显示名（第一个能完整解出的就用）
+        fileNameEncodings: ['euc-jp', 'shift_jis', 'gbk'],
       },
     },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
@@ -456,6 +461,31 @@ function normalizeConfig(value) {
   }
 }
 
+function normalizeTagMap(value, fallback = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : fallback
+  const out = {}
+  for (const [from, to] of Object.entries(source).slice(0, 200)) {
+    const key = String(from).trim().toLowerCase()
+    if (key) out[key] = String(to ?? '').trim()
+  }
+  return out
+}
+
+// 只保留 TextDecoder 认识的编码名，写错的忽略；一个都没有就用默认
+function normalizeFileNameEncodings(value, fallback) {
+  const list = Array.isArray(value) ? value : fallback
+  const valid = []
+  for (const label of list.slice(0, 10)) {
+    try {
+      new TextDecoder(String(label).trim().toLowerCase())
+      valid.push(String(label).trim().toLowerCase())
+    } catch {
+      // 不认识的编码名，忽略
+    }
+  }
+  return valid.length ? valid : fallback
+}
+
 function normalizeArchiveImportOptions(raw, fallback) {
   const value = raw && typeof raw === 'object' ? raw : {}
   return {
@@ -464,6 +494,8 @@ function normalizeArchiveImportOptions(raw, fallback) {
     limit: clampNumber(value.limit, 0, 100000000, fallback.limit),
     concurrency: clampNumber(value.concurrency, 1, 64, fallback.concurrency),
     zipFilenameEncoding: String(value.zipFilenameEncoding || fallback.zipFilenameEncoding).trim().toLowerCase() || fallback.zipFilenameEncoding,
+    ...(fallback.tagMap && typeof fallback.tagMap === 'object' ? { tagMap: normalizeTagMap(value.tagMap, fallback.tagMap) } : {}),
+    ...(Array.isArray(fallback.fileNameEncodings) ? { fileNameEncodings: normalizeFileNameEncodings(value.fileNameEncodings, fallback.fileNameEncodings) } : {}),
     // 只有该方案的默认里有这个键才带上（迁移才有 redisUrl 等，路径导入才有 managedDir）
     ...Object.fromEntries(['redisUrl', 'contentDir', 'thumbDir', 'pathFrom', 'managedDir']
       .filter((key) => typeof fallback[key] === 'string')
@@ -4024,6 +4056,8 @@ function archiveGalleryScriptServices(itemId) {
     generateCover: (options = {}) => internals.generateCover(itemId, options),
     // 预览动图：第一页 + 随机/均匀的 count 页，拼成动图 WebP；count 为 0 不生成
     generatePreview: (options = {}) => internals.generatePreview(itemId, options),
+    // 清掉条目上某些互斥标签组里已有的标签（脚本要写新值之前调用，否则旧值会被当成手动设定挡住新值）
+    clearTagGroups: (groups) => internals.clearTagGroups(itemId, groups),
     // { pageCount, names, allNames, readText(name), close() }：不解压，用完必须 close()
     inspect: () => internals.inspect(itemId),
     setPageCount: (count) => internals.updateItem(itemId, (item) => ({

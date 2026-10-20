@@ -49,5 +49,7 @@ export async function generateTags(ctx) {
     }
   }
 
+  // 迁移时按 LRR 数据写过「压缩包封面: 有/无」：互斥组里不是脚本产出的标签会挡住新值，所以先清掉再返回
+  await service.clearTagGroups(['压缩包封面'])
   return { itemTags, logs, details }
 }

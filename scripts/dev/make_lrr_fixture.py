@@ -88,10 +88,10 @@ def main():
     entries = []   # (id, fields, expect-extra)
 
     def add(path, name, title, tags, pagecount, thumb_color=None, tag_override=None, file_override=None, raw_fields=None, note=''):
-        archive_id = lrr_id(path) if os.path.exists(path) else hashlib.sha1(path.encode()).hexdigest()
-        rel = os.path.relpath(path, content)
+        archive_id = lrr_id(path) if os.path.exists(path) else hashlib.sha1(os.fsencode(path)).hexdigest()
+        rel = os.path.relpath(path, os.fsencode(content) if isinstance(path, bytes) else content)
         fields = {
-            'name': name, 'title': title, 'tags': tags, 'file': file_override or f'{PREFIX}/{rel}',
+            'name': name, 'title': title, 'tags': tags, 'file': file_override or (os.fsencode(PREFIX) + b'/' + rel if isinstance(rel, bytes) else f'{PREFIX}/{rel}'),
             'pagecount': str(pagecount), 'isnew': 'false', 'arcsize': str(os.path.getsize(path)) if os.path.exists(path) else '0',
             'progress': '0', 'lastreadtime': '0',
         }
@@ -196,6 +196,36 @@ def main():
     nothumb_id = add(nothumb, 'nothumb', '没有封面', 'artist:nothumb', 2)
     expect['nothumb'] = {'id': nothumb_id}
 
+    # 12) 非 UTF-8 的文件名（磁盘上是 EUC-JP / Shift-JIS 的原始字节；目录名是正常的 UTF-8）。
+    #     LRR 的 title/name 是把这些字节当 latin-1 字符存的，所以是乱码；file 字段是原始字节。
+    legacy_dir = os.path.join(content, '日本語ディレクトリ')
+    os.makedirs(legacy_dir, exist_ok=True)
+
+    def legacy_zip(name_bytes, pages=2):
+        tmp = os.path.join(content, '.legacy-tmp.zip')
+        write_zip(tmp, pages, extra={'who.txt': name_bytes.hex()})   # 内容要不同，否则 ID（文件头哈希）相同
+        final = os.path.join(os.fsencode(legacy_dir), name_bytes)
+        os.rename(tmp, final)
+        return final
+
+    eucjp_name = '(C101) [フルーツジャム] 鈴谷とどうする'
+    eucjp_path = legacy_zip((eucjp_name + '.zip').encode('euc-jp'))
+    eucjp_id = add(eucjp_path, (eucjp_name).encode('euc-jp').decode('latin-1'), (eucjp_name).encode('euc-jp').decode('latin-1'), 'artist:eucjp', 2, thumb_color=(30, 90, 150))
+    sjis_name = 'ふぇちこれ画集'
+    sjis_path = legacy_zip((sjis_name + '.zip').encode('shift_jis'))
+    sjis_id = add(sjis_path, sjis_name.encode('shift_jis').decode('latin-1'), sjis_name.encode('shift_jis').decode('latin-1'), 'artist:sjis', 2, thumb_color=(150, 90, 30))
+    bad_path = legacy_zip(b'\xff\xfe\xfd.zip')                       # 任何编码都解不出来
+    bad_id = add(bad_path, 'bad', 'bad', 'artist:bad', 2)
+    missing_legacy = os.path.join(os.fsencode(legacy_dir), '不存在的文件'.encode('euc-jp') + b'.zip')   # 非 UTF-8 且确实不存在
+    add(missing_legacy, 'x', 'x', 'artist:missing-legacy', 0)
+    expect['legacy'] = {
+        'eucjp': {'id': eucjp_id, 'title': eucjp_name},
+        'sjis': {'id': sjis_id, 'title': sjis_name},
+        'bad': {'id': bad_id},
+        'nonUtf8Total': 4, 'nonUtf8Found': 3, 'nonUtf8StillMissing': 1, 'undecodable': 1,
+        'byEncoding': {'euc-jp': 1, 'shift_jis': 1},
+    }
+
     # Redis：db0 里放档案 hash，另外放几个非档案的 key（迁移必须忽略）
     for archive_id, fields in entries:
         args = ['HSET', archive_id]
@@ -209,7 +239,8 @@ def main():
         handle.write(b''.join(commands))
 
     expect['total_hashes'] = len(entries)
-    expect['importable'] = len(entries) - 1 - 1 - 1   # 去掉 rar、缺失、前缀不对
+    expect['missing'] = 2                               # missing.zip + 非 UTF-8 且不存在的那个
+    expect['importable'] = len(entries) - 1 - 2 - 1     # 去掉 rar、缺失（2）、前缀不对
     with open(os.path.join(out, 'expect.json'), 'w', encoding='utf-8') as handle:
         json.dump(expect, handle, ensure_ascii=False, indent=2)
     print(f'fixture: {len(entries)} hashes, importable {expect["importable"]} -> {out}')

@@ -7231,6 +7231,14 @@ function formatArchiveJob(job) {
       `封面：已复制 ${p.coverCopied ?? 0} · 没有 ${p.noCover ?? 0} · 无标题 ${p.noTitle ?? 0} · 无标签 ${p.noTags ?? 0} · 标签总数 ${p.totalTags ?? 0}`,
       `ID 抽样校验：${p.idCheck?.sampled ?? 0} 个，不一致 ${p.idCheck?.mismatched ?? 0}`,
     )
+    const nu = p.nonUtf8
+    if (nu?.total) {
+      const enc = Object.entries(nu.byEncoding || {}).map(([k, n]) => `${k}:${n}`).join(' ') || '无'
+      lines.push(`非 UTF-8 文件名（按字节访问）：共 ${nu.total} · 能找到 ${nu.found} · 仍缺失 ${nu.stillMissing} · 解码 ${enc} · 解不出 ${nu.undecodable} · 标题已替换 ${nu.titleReplaced}`)
+      for (const e of (nu.examples || []).slice(0, 6)) lines.push(`  [${e.encoding}] ${e.exists ? '存在' : '缺失'} ${e.display}`)
+    }
+    if (p.namespaces?.length) lines.push(`标签命名空间分布：${p.namespaces.slice(0, 10).map((n) => `${n.namespace}:${n.count}`).join(' · ')}`)
+    if (p.tagMapExamples?.length) lines.push(`tagMap 效果：`, ...p.tagMapExamples.slice(0, 6).map((e) => `  ${e.from}  →  ${e.to}`))
     for (const [name, list] of Object.entries(p.examples || {})) {
       if (list?.length) lines.push(`${name} 示例：`, ...list.slice(0, 5).map((entry) => `  ${entry}`))
     }

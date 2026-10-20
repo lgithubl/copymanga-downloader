@@ -4,19 +4,17 @@
 // 可以反复运行：条目 id 就是 LRR 的档案 ID；元数据 json 是「提交点」——一个条目先写标签库、复制封面，
 // 最后才原子地写 json。崩溃后要么 json 在（整条完成），要么不在（下次整条重做）。
 //   skip（默认）：json 已存在就跳过；overwrite：用 LRR 里的内容重新生成并覆盖。
+// 路径按字节处理：LRR 的 file 字段原样存着磁盘上的文件名字节，有些是 EUC-JP / Shift-JIS（不是 UTF-8）。
+// 合法 UTF-8 的路径行为不变；非法的用字节访问，存进条目 zip.pathB64，显示名按 fileNameEncodings 严格解码。
 
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { computeArchiveId, LRR_INIT_PROFILE } from './types/archive-gallery.mjs'
 import { pairsToObject, RespClient } from './resp-client.mjs'
-import { extensionOf } from './zip-reader.mjs'
+import { applyTagMap, DEFAULT_FILENAME_ENCODINGS, displayPath, extensionOfBytes, isValidUtf8, looksMojibake, mapPathBytes } from './legacy-path.mjs'
 
 const ARCHIVE_ID = /^[0-9a-f]{40}$/
 const SAMPLE_VERIFY = 200
-
-function isValidUtf8(buf) {
-  return Buffer.compare(Buffer.from(buf.toString('utf8'), 'utf8'), buf) === 0
-}
 
 // LRR 的 redis_decode：UTF-8 解两次（有些数据被双重编码过）。每次只在合法时才采用。
 export function redisDecode(value) {
@@ -41,13 +39,6 @@ export function parseLrrTags(value) {
   return tags
 }
 
-function mapPath(file, from, to) {
-  const source = String(file || '')
-  const prefix = String(from || '').replace(/\/+$/, '')
-  if (!prefix || !(source === prefix || source.startsWith(`${prefix}/`))) return null
-  return path.join(to, source.slice(prefix.length))
-}
-
 function pushExample(list, value, limit = 20) {
   if (list.length < limit) list.push(value)
 }
@@ -59,7 +50,8 @@ export async function runLrrMigration({
   onProgress = null,
   shouldStop = () => false,
 }) {
-  const { dryRun = false, overwrite = false, concurrency = 16, limit = 0, zipFilenameEncoding = '', redisUrl, contentDir, thumbDir, pathFrom } = options
+  const { dryRun = false, overwrite = false, concurrency = 16, limit = 0, zipFilenameEncoding = '', redisUrl, contentDir, thumbDir, pathFrom, tagMap = {}, fileNameEncodings = DEFAULT_FILENAME_ENCODINGS } = options
+  const namespaceCounts = new Map()
   const internals = handler.internals
   const report = {
     dryRun,
@@ -67,6 +59,8 @@ export async function runLrrMigration({
     limit,
     limited: false,
     zipFilenameEncoding,
+    tagMap,
+    fileNameEncodings,
     startedAt: new Date().toISOString(),
     redisKeys: 0,
     archives: 0,
@@ -81,6 +75,10 @@ export async function runLrrMigration({
     noCover: 0,
     failed: 0,
     totalTags: 0,
+    // 非 UTF-8 的文件名（EUC-JP / Shift-JIS …）：按字节访问，能不能解出可读的显示名
+    nonUtf8: { total: 0, found: 0, stillMissing: 0, byEncoding: {}, undecodable: 0, titleReplaced: 0, examples: [] },
+    namespaces: [],          // 迁移前的标签命名空间分布（前 20），用来设计 tagMap
+    tagMapExamples: [],      // tagMap 生效后的前后对比
     examples: { missingFile: [], pathMismatch: [], noCover: [], failed: [], skippedExtension: [] },
     idCheck: { sampled: 0, mismatched: 0, mismatches: [] },
     cancelled: false,
@@ -104,44 +102,78 @@ export async function runLrrMigration({
       const handleEntry = async ({ key, hash }) => {
         report.archives += 1
         try {
-          const rawFile = hash.file ? hash.file.toString('utf8') : ''
-          const ext = extensionOf(rawFile)
+          const rawBytes = hash.file ? Buffer.from(hash.file) : Buffer.alloc(0)
+          const ext = extensionOfBytes(rawBytes)
+          const rawDisplay = displayPath(rawBytes, fileNameEncodings).text
           if (ext !== 'zip' && ext !== 'cbz') {
             report.skippedExtension[ext || '(无)'] = (report.skippedExtension[ext || '(无)'] || 0) + 1
-            pushExample(report.examples.skippedExtension, rawFile)
+            pushExample(report.examples.skippedExtension, rawDisplay)
             return
           }
-          const zipPath = mapPath(rawFile, pathFrom, contentDir)
-          if (!zipPath) {
+          const mappedBytes = mapPathBytes(rawBytes, pathFrom, contentDir)
+          if (!mappedBytes) {
             report.pathMismatch += 1
-            pushExample(report.examples.pathMismatch, rawFile)
+            pushExample(report.examples.pathMismatch, rawDisplay)
             return
+          }
+          // 合法 UTF-8 → 字符串路径（和以前完全一样）；否则 → Buffer 路径，按字节访问
+          const legacy = !isValidUtf8(mappedBytes)
+          const zipPathArg = legacy ? mappedBytes : mappedBytes.toString('utf8')
+          const shown = displayPath(mappedBytes, fileNameEncodings)
+          let legacyNote = null
+          if (legacy) {
+            report.nonUtf8.total += 1
+            const encoding = shown.undecodable ? '' : (shown.encodings[0] || '')
+            if (shown.undecodable) report.nonUtf8.undecodable += 1
+            else for (const used of shown.encodings) report.nonUtf8.byEncoding[used] = (report.nonUtf8.byEncoding[used] || 0) + 1
+            legacyNote = { display: shown.text, encoding: encoding || '(无法解码)', bytesHex: mappedBytes.subarray(Math.max(0, mappedBytes.lastIndexOf(0x2f) + 1)).toString('hex').slice(0, 60) }
           }
           let info
           try {
-            info = await stat(zipPath)
+            info = await stat(zipPathArg)
           } catch {
             report.missingFile += 1
-            pushExample(report.examples.missingFile, zipPath)
+            if (legacy) {
+              report.nonUtf8.stillMissing += 1
+              if (report.nonUtf8.examples.length < 10) report.nonUtf8.examples.push({ ...legacyNote, exists: false })
+            }
+            pushExample(report.examples.missingFile, shown.text)
             return
+          }
+          if (legacy) {
+            report.nonUtf8.found += 1
+            if (report.nonUtf8.examples.length < 10) report.nonUtf8.examples.push({ ...legacyNote, exists: true })
           }
           if (!overwrite && await handler.internals.itemExists(key)) {
             report.skippedExisting += 1
             return
           }
           const name = redisDecode(hash.name)
-          const title = redisDecode(hash.title).trim() || name
-          const tags = parseLrrTags(redisDecode(hash.tags))
+          let title = redisDecode(hash.title).trim() || name
+          // 路径不是 UTF-8 时，LRR 里的标题大概率是乱码（字节被当成 latin-1 存的）：能按编码列表解出可读文件名就用它
+          let titleReplaced = false
+          if (legacy && !shown.undecodable && looksMojibake(title)) {
+            const base = shown.text.slice(shown.text.lastIndexOf('/') + 1).replace(/\.[^.]*$/, '').trim()
+            if (base) {
+              title = base
+              titleReplaced = true
+            }
+          }
+          const lrrTags = parseLrrTags(redisDecode(hash.tags))
+          const tags = applyTagMap(lrrTags, tagMap)
           const dateAdded = Number((tags.find((tag) => tag.toLowerCase().startsWith('date_added:')) || '').split(':')[1])
           const createdAt = new Date(Number.isFinite(dateAdded) && dateAdded > 0 ? dateAdded * 1000 : info.mtimeMs).toISOString()
           const thumb = path.join(thumbDir, key.slice(0, 2), `${key}.jpg`)
           const hasThumb = await stat(thumb).then(() => true, () => false)
           const num = (field) => Number(hash[field]?.toString('utf8')) || 0
+          // 状态标签和脚本对齐：封面（缩略图脚本管理的「压缩包封面」组）、页数（标签脚本管理的「页数」组）；不经过 tagMap
+          const statusTags = [`压缩包封面: ${hasThumb ? '有' : '无'}`, ...(num('pagecount') > 0 ? [`页数: ${num('pagecount')}`] : [])]
           const item = internals.buildItem({
             itemId: key,
             title: title || key,
-            tags,
-            zipPath,
+            tags: [...tags, ...statusTags],
+            zipPath: legacy ? shown.text : zipPathArg,
+            zipPathBytes: legacy ? mappedBytes : null,
             external: true,
             size: info.size,
             mtimeMs: Math.floor(info.mtimeMs),
@@ -151,7 +183,8 @@ export async function runLrrMigration({
               lrr: {
                 id: key,
                 name,
-                file: rawFile,
+                file: rawDisplay,
+                ...(legacy ? { fileB64: rawBytes.toString('base64'), fileEncoding: shown.encodings.join(',') } : {}),
                 isnew: hash.isnew ? hash.isnew.toString('utf8') : '',
                 progress: num('progress'),
                 pagecount: num('pagecount'),
@@ -163,7 +196,7 @@ export async function runLrrMigration({
             cover: hasThumb ? internals.thumbnailUrl(key) : '',
             filenameEncoding: zipFilenameEncoding,
           })
-          prepared.push({ item, thumb: hasThumb ? thumb : '', zipPath, noTitle: !title })
+          prepared.push({ item, thumb: hasThumb ? thumb : '', zipPath: zipPathArg, noTitle: !title, noLrrTags: lrrTags.length === 0, lrrTags, titleReplaced })
         } catch (error) {
           report.failed += 1
           pushExample(report.examples.failed, `${key}: ${error.message}`)
@@ -184,7 +217,19 @@ export async function runLrrMigration({
       }
       for (const entry of prepared) {
         if (entry.noTitle) report.noTitle += 1
-        if (!entry.item.tags.length) report.noTags += 1
+        if (entry.noLrrTags) report.noTags += 1
+        if (entry.titleReplaced) report.nonUtf8.titleReplaced += 1
+        for (const tag of entry.lrrTags) {
+          const colon = tag.indexOf(':')
+          const key = colon > 0 ? tag.slice(0, colon).toLowerCase() : '(无命名空间)'
+          namespaceCounts.set(key, (namespaceCounts.get(key) || 0) + 1)
+        }
+        if (Object.keys(tagMap).length && report.tagMapExamples.length < 8) {
+          for (const from of entry.lrrTags) {
+            const to = applyTagMap([from], tagMap)[0]
+            if (to !== undefined && to !== from && report.tagMapExamples.length < 8 && !report.tagMapExamples.some((e) => e.from === from)) report.tagMapExamples.push({ from, to })
+          }
+        }
         if (!entry.thumb) {
           report.noCover += 1
           pushExample(report.examples.noCover, entry.item.itemId)
@@ -237,6 +282,7 @@ export async function runLrrMigration({
       pushExample(report.idCheck.mismatches, `${key}: ${error.message}`)
     }
   }
+  report.namespaces = [...namespaceCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([namespace, count]) => ({ namespace, count }))
   report.finishedAt = new Date().toISOString()
   onProgress?.({ ...report })
   return report

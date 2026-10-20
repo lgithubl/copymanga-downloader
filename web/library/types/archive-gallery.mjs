@@ -10,7 +10,7 @@
 
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -33,6 +33,9 @@ const MAX_CONCURRENT_EXTRACTIONS = 4
 // zip 里文件名的编码：导入方案的 JSON 配置（zipFilenameEncoding）会写进每个条目，读取时按条目自己的来；
 // 条目没记（老数据）时才退回环境变量 ZIP_FILENAME_ENCODING，再退回 utf-8。
 const ENCODING = String(process.env.ZIP_FILENAME_ENCODING || 'utf-8').trim().toLowerCase()
+// 压缩包的真实路径：文件名不是合法 UTF-8 的（EUC-JP / Shift-JIS 的原始字节）存的是 zip.pathB64，用字节访问；
+// 其余都是 zip.path 字符串，和以前完全一样。zip.path 对前者只是个可读的显示名。
+const zipFileOf = (item) => (item?.zip?.pathB64 ? Buffer.from(item.zip.pathB64, 'base64') : item?.zip?.path || '')
 const encodingOf = (item) => String(item?.zip?.filenameEncoding || ENCODING).trim().toLowerCase()
 
 export async function computeArchiveId(filePath) {
@@ -129,6 +132,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
         size: Number(raw?.zip?.size || 0),
         mtimeMs: Number(raw?.zip?.mtimeMs || 0),
         filenameEncoding: String(raw?.zip?.filenameEncoding || ''),
+        pathB64: String(raw?.zip?.pathB64 || ''),
       },
       origin: raw?.origin && typeof raw.origin === 'object' ? raw.origin : null,
       createdAt: String(raw?.createdAt || now),
@@ -141,7 +145,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     return item
   }
 
-  function buildItem({ itemId, title, tags = [], zipPath, external, size, mtimeMs, pageCount = 0, sourceProfile = ARCHIVE_PROFILE, origin = null, createdAt = '', cover = '', filenameEncoding = '' }) {
+  function buildItem({ itemId, title, tags = [], zipPath, external, size, mtimeMs, pageCount = 0, sourceProfile = ARCHIVE_PROFILE, origin = null, createdAt = '', cover = '', filenameEncoding = '', zipPathBytes = null }) {
     const now = new Date().toISOString()
     return normalizeItem({
       itemId,
@@ -151,7 +155,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
       sourceProfile,
       fileName: path.basename(zipPath),
       pageCount,
-      zip: { path: zipPath, external, size, mtimeMs, filenameEncoding },
+      zip: { path: zipPath, external, size, mtimeMs, filenameEncoding, pathB64: zipPathBytes ? Buffer.from(zipPathBytes).toString('base64') : '' },
       origin,
       createdAt: createdAt || now,
       updatedAt: now,
@@ -222,7 +226,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
   }
 
   async function zipStamp(item) {
-    const info = await stat(item.zip.path)
+    const info = await stat(zipFileOf(item))
     return { size: info.size, mtimeMs: Math.floor(info.mtimeMs) }
   }
 
@@ -246,8 +250,8 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
 
   async function extractItem(itemId) {
     const item = await readItem(itemId)
-    const zipFile = item.zip.path
-    if (!zipFile || !await pathExists(zipFile)) throw new Error(`压缩包不存在：${zipFile || '(未记录路径)'}`)
+    const zipFile = zipFileOf(item)
+    if (!zipFile.length || !await pathExists(zipFile)) throw new Error(`压缩包不存在：${item.zip.path || '(未记录路径)'}`)
     const stamp = await zipStamp(item)
     const dir = cacheDirFor(itemId)
     const cached = await readCachedPages(dir, stamp)
@@ -299,7 +303,13 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
   async function extractPagesWithUnar(zipFile, pagesDir) {
     const temp = await mkdtemp(path.join(os.tmpdir(), 'archive-unar-'))
     try {
-      await execFileAsync('unar', ['-quiet', '-no-directory', '-force-overwrite', '-o', temp, zipFile], { timeout: 10 * 60 * 1000, maxBuffer: 16 * 1024 * 1024 })
+      // 命令行参数只能是字符串：字节路径先建一个 ASCII 名字的软链再交给 unar
+      let archiveArg = zipFile
+      if (Buffer.isBuffer(zipFile)) {
+        archiveArg = path.join(temp, 'source.zip')
+        await symlink(zipFile, archiveArg)
+      }
+      await execFileAsync('unar', ['-quiet', '-no-directory', '-force-overwrite', '-o', path.join(temp, 'out'), archiveArg], { timeout: 10 * 60 * 1000, maxBuffer: 16 * 1024 * 1024 })
       const files = []
       const walk = async (dir, prefix) => {
         for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -408,7 +418,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
   async function generateCover(itemId, { force = false } = {}) {
     if (!force && await hasCover(itemId)) return { status: 'exists' }
     const item = await readItem(itemId)
-    const zip = await openZip(item.zip.path, { filenameEncoding: encodingOf(item) })
+    const zip = await openZip(zipFileOf(item), { filenameEncoding: encodingOf(item) })
     let first
     try {
       const entries = zip.imageEntries()
@@ -431,7 +441,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     if (!frameCount) return { status: 'disabled' }
     if (!force && await hasPreview(itemId)) return { status: 'exists' }
     const item = await readItem(itemId)
-    const zip = await openZip(item.zip.path, { filenameEncoding: encodingOf(item) })
+    const zip = await openZip(zipFileOf(item), { filenameEncoding: encodingOf(item) })
     let pages
     let buffers
     try {
@@ -487,10 +497,19 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     return { status: 'created', frames: pages }
   }
 
+  // 标签脚本用：清掉条目上某些「互斥标签组」里已有的标签（比如迁移时按 LRR 数据写的 `压缩包封面: 无`、`页数: 3`）。
+  // 原因：互斥组里「不是脚本自己上次产出」的标签会被当成手动设定保留，并且挡住脚本这次要写的新值；
+  // 脚本在返回新标签之前先把旧的清掉，脚本的结果才能替换它。手动覆盖（标签编辑里改的）另有记录，不受影响。
+  const escapeRegExp = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  function clearTagGroups(itemId, groups = []) {
+    const patterns = groups.map((group) => new RegExp(`^\\s*${escapeRegExp(group)}\\s*[:：]`))
+    return updateItem(itemId, (item) => ({ ...item, tags: item.tags.filter((tag) => !patterns.some((pattern) => pattern.test(tag))) }))
+  }
+
   // 给标签脚本用：页数和文件名（不解压）。用完必须 close()。
   async function inspect(itemId) {
     const item = await readItem(itemId)
-    const zip = await openZip(item.zip.path, { filenameEncoding: encodingOf(item) })
+    const zip = await openZip(zipFileOf(item), { filenameEncoding: encodingOf(item) })
     const entries = zip.imageEntries()
     return {
       item,
@@ -763,6 +782,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
       itemExists,
       hasCover,
       hasPreview,
+      clearTagGroups,
       generatePreview,
       copyCoverFile,
       markItemCover,

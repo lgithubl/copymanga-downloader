@@ -157,6 +157,8 @@ export async function generateTags(ctx) {
     }
   }
 
+  // 迁移时按 LRR 的 pagecount 写过「页数: N」：先清掉，脚本算出的真实页数才能替换它
+  if (options.pageCountTag) await service.clearTagGroups(['页数'])
   const seen = new Set()
   const itemTags = tags.filter((tag) => {
     const key = tag.toLowerCase()

@@ -103,7 +103,13 @@ check('试运行完成', job.status === 'completed', job.error)
 check('试运行：档案总数', report.archives === expect.total_hashes, `${report.archives} vs ${expect.total_hashes}`)
 check('试运行：将导入数', report.imported === expect.importable, `${report.imported} vs ${expect.importable}`)
 check('试运行：非 zip 跳过 rar', report.skippedExtension.rar === 1, JSON.stringify(report.skippedExtension))
-check('试运行：缺失文件 1', report.missingFile === 1, String(report.missingFile))
+check('试运行：缺失文件（missing.zip + 非 UTF-8 且确实不存在的 1 个）', report.missingFile === expect.missing, String(report.missingFile))
+const nu = report.nonUtf8 || {}
+check('试运行：识别出非 UTF-8 文件名（总数/能找到/仍缺失）', nu.total === expect.legacy.nonUtf8Total && nu.found === expect.legacy.nonUtf8Found && nu.stillMissing === expect.legacy.nonUtf8StillMissing, JSON.stringify(nu))
+check('试运行：按编码统计（euc-jp 2：含那个不存在的、shift_jis 1），1 个任何编码都解不出', nu.byEncoding?.['euc-jp'] === 2 && nu.byEncoding?.shift_jis === 1 && nu.undecodable === expect.legacy.undecodable, JSON.stringify(nu))
+check('试运行：给出非 UTF-8 文件名的例子（解出的显示名、编码、存在与否）', (nu.examples || []).some((e) => e.encoding === 'euc-jp' && e.exists && e.display.includes('フルーツジャム')) && (nu.examples || []).some((e) => e.encoding === 'shift_jis' && e.display.includes('ふぇちこれ画集')) && (nu.examples || []).some((e) => !e.exists), JSON.stringify(nu.examples))
+check('试运行：LRR 里是乱码的标题会被替换（2 个能解码的，解不出的不动）', nu.titleReplaced === 2, String(nu.titleReplaced))
+check('试运行：给出标签命名空间分布（用来设计 tagMap）', (report.namespaces || []).some((n) => n.namespace === 'artist') && (report.namespaces || []).some((n) => n.namespace === 'date_added'), JSON.stringify(report.namespaces))
 check('试运行：前缀不匹配 1', report.pathMismatch === 1, String(report.pathMismatch))
 check('试运行：ID 抽样一致', report.idCheck.sampled > 0 && report.idCheck.mismatched === 0, JSON.stringify(report.idCheck))
 check('试运行：没有标签库/元数据副作用', (await archivePage()).items?.length === 0 || (await archivePage()).total === 0)
@@ -114,6 +120,9 @@ res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: 
 job = await waitJob()
 check('限量试运行：只统计 3 个且标记已达上限', job.report.imported === 3 && job.report.limited === true && job.report.limit === 3, JSON.stringify([job.report.imported, job.report.limited]))
 check('限量试运行：提前结束，没有扫完全库', job.report.archives < expect.total_hashes, String(job.report.archives))
+res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: true, limit: 20, tagMap: { artist: '作者', language: '' } }) })
+job = await waitJob()
+check('试运行：tagMap 效果示例（artist:x → 作者:x，language:chinese → chinese）', (job.report.tagMapExamples || []).some((e) => /^artist:/.test(e.from) && e.to === `作者:${e.from.slice(7)}`) && (job.report.tagMapExamples || []).some((e) => e.from === 'language:chinese' && e.to === 'chinese'), JSON.stringify(job.report.tagMapExamples))
 res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, limit: 3, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
 check('限量迁移：刚好迁 3 个', job.status === 'completed' && job.report.imported === 3 && job.report.limited === true && job.report.failed === 0, JSON.stringify(job.report).slice(0, 300))
@@ -141,6 +150,26 @@ if (DATA_DIR) {
   check('元数据：保留 LRR 原始字段', stored.origin?.lrr?.id === sample && stored.origin.lrr.file.startsWith(expect.prefix), JSON.stringify(stored.origin))
 }
 
+// 2b. 非 UTF-8 文件名的条目：按字节找到文件、标题换成解出的文件名、能阅读
+const legacyEuc = await getJson(`/api/library/items/archive/${expect.legacy.eucjp.id}`)
+const legacySjis = await getJson(`/api/library/items/archive/${expect.legacy.sjis.id}`)
+const legacyBad = await getJson(`/api/library/items/archive/${expect.legacy.bad.id}`)
+check('EUC-JP 文件名：标题换成解码后的文件名（LRR 里是乱码）', legacyEuc.title === expect.legacy.eucjp.title, legacyEuc.title)
+check('Shift-JIS 文件名：标题换成解码后的文件名', legacySjis.title === expect.legacy.sjis.title, legacySjis.title)
+check('任何编码都解不出的文件名：仍然迁移（按字节访问），标题保持 LRR 里的', !!legacyBad.zip?.pathB64 && legacyBad.title === 'bad', JSON.stringify(legacyBad.zip))
+check('非 UTF-8 条目记了字节路径 zip.pathB64；正常条目没有', !!legacyEuc.zip?.pathB64 && !(await getJson(`/api/library/items/archive/${expect.archives[0].id}`)).zip?.pathB64)
+for (const [label, id] of [['EUC-JP', expect.legacy.eucjp.id], ['Shift-JIS', expect.legacy.sjis.id], ['无法解码', expect.legacy.bad.id]]) {
+  const legacyReader = await request(`/api/library/items/archive/${id}/reader/zip`)
+  const legacyPage = legacyReader.body.images?.[0] ? await request(legacyReader.body.images[0].url) : { status: 0 }
+  check(`${label} 文件名的压缩包能阅读（按字节路径打开 zip、解压到缓存）`, legacyReader.body.type === 'images' && legacyReader.body.images?.length === 2 && legacyPage.status === 200, JSON.stringify(legacyReader.body).slice(0, 160))
+}
+const legacyCover = await request(`/api/library/items/archive/${expect.legacy.eucjp.id}/thumbnail/zip/cover`)
+check('非 UTF-8 条目的封面也复制了（封面按 ID 找，和文件名无关）', legacyCover.status === 200, String(legacyCover.status))
+// 状态标签和脚本对齐：封面有/无、页数
+const statusBook = await getJson(`/api/library/items/archive/${expect.archives[0].id}`)
+const statusNoThumb = await getJson(`/api/library/items/archive/${expect.nothumb.id}`)
+check('迁移产出状态标签：有封面 → 压缩包封面: 有，页数: 3（来自 Redis pagecount）', statusBook.tags.includes('压缩包封面: 有') && statusBook.tags.includes('页数: 3'), JSON.stringify(statusBook.tags))
+check('迁移产出状态标签：没有封面 → 压缩包封面: 无', statusNoThumb.tags.includes('压缩包封面: 无') && !statusNoThumb.tags.includes('压缩包封面: 有'), JSON.stringify(statusNoThumb.tags))
 // 3. 重跑：跳过
 res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()
@@ -150,6 +179,11 @@ check('重跑：全部已存在跳过', job.report.imported === 0 && job.report.
 const page = await waitIndex(expect.importable)
 check('索引：条目数', page.total === expect.importable, `${page.total}`)
 const byId = new Map(page.items.map((item) => [item.itemId, item]))
+const noCoverSearch = await archivePage('&tag=' + encodeURIComponent('tag:"压缩包封面: 无"'))
+check('能按「压缩包封面: 无」搜出没有封面的条目（之后批量跑缩略图脚本）', noCoverSearch.total >= 1 && noCoverSearch.items.some((i) => i.itemId === expect.nothumb.id), String(noCoverSearch.total))
+const notTagged = await archivePage('&tag=' + encodeURIComponent('-tag:"tag:*" -tag:"group:*"'))
+check('搜「没有 tag:/group: 命名空间标签」的条目：-tag:"tag:*" -tag:"group:*" 可用（迁移来的这批没有 tag:/group:，所以全部命中）', notTagged.total >= expect.importable - 6, String(notTagged.total))
+
 const first = expect.archives[0]
 check('列表：标题和 primaryKind', byId.get(first.id)?.title === first.title && byId.get(first.id)?.primaryKind === 'image-gallery', JSON.stringify(byId.get(first.id)))
 check('列表：封面 URL 指向缩略图接口', /thumbnail\/zip\/cover$/.test(byId.get(first.id)?.cover || ''), byId.get(first.id)?.cover)
@@ -208,7 +242,7 @@ check('封面脚本：给没有封面的条目生成封面', result.status === '
 const nothumbItem = await getJson(`/api/library/items/archive/${expect.nothumb.id}`)
 const newCover = await request(`/api/library/items/archive/${expect.nothumb.id}/thumbnail/zip/cover`)
 check('封面脚本：封面接口可取、条目 cover 已设置', newCover.status === 200 && /thumbnail\/zip\/cover$/.test(nothumbItem.cover), `${newCover.status} ${nothumbItem.cover}`)
-check('封面脚本：状态标签', nothumbItem.tags.includes('压缩包封面: 有'), JSON.stringify(nothumbItem.tags))
+check('封面脚本：状态标签 有 替换了迁移时的 无（互斥标签组）', nothumbItem.tags.includes('压缩包封面: 有') && !nothumbItem.tags.includes('压缩包封面: 无'), JSON.stringify(nothumbItem.tags))
 result = await runScript(expect.noimages.id, 'archive-gallery-thumbnail-v1')
 const noImgItem = await getJson(`/api/library/items/archive/${expect.noimages.id}`)
 check('封面脚本：没有图片的包标记失败而不是整体崩溃', noImgItem.tags.includes('压缩包封面: 失败'), JSON.stringify([result.status, noImgItem.tags]))
@@ -243,9 +277,12 @@ check('没有图片的包：封面和预览都标记失败，任务不崩', (awa
 await postJson('/api/tag-scripts/archive-gallery-thumbnail-v1/config', { options: { previewCount: 0, previewMode: 'random', previewWidth: 320, force: false } })
 
 // 7. 覆盖模式
-res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, overwrite: true, zipFilenameEncoding: 'gbk' }) })
+res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, overwrite: true, zipFilenameEncoding: 'gbk', tagMap: { artist: '作者', language: '' } }) })
 job = await waitJob()
 check('覆盖模式：全部重新导入', job.report.imported === expect.importable && job.report.skippedExisting === 0, `${job.report.imported}/${job.report.skippedExisting}`)
+const mapped = await getJson(`/api/library/items/archive/${expect.archives[0].id}`)
+check('tagMap 生效（覆盖模式重写）：artist:artist0 → 作者:artist0，language:chinese → chinese', mapped.tags.includes('作者:artist0') && !mapped.tags.includes('artist:artist0') && mapped.tags.includes('chinese') && !mapped.tags.includes('language:chinese'), JSON.stringify(mapped.tags))
+check('tagMap 不影响其它命名空间（parody、date_added）和状态标签', mapped.tags.some((t) => t.startsWith('parody:')) && mapped.tags.some((t) => t.startsWith('date_added:')) && mapped.tags.includes('压缩包封面: 有') && mapped.tags.includes('页数: 3'), JSON.stringify(mapped.tags))
 
 // 8. 新导入：路径导入（mv）+ 上传
 const newZips = []
