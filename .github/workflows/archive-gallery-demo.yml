@@ -1,0 +1,323 @@
+name: Archive Gallery Interactive Demo
+
+# 压缩包图集 + LANraragi 迁移的完整演示：
+#   1. 生成一份仿 LANraragi 的数据（zip 内容目录、封面目录、Redis 命令），启动官方 redis 容器加载进去，
+#      和 web 容器放在同一个 docker 网络里——和实际迁移时「临时 Redis 容器 + 只读挂载」的部署方式一致；
+#   2. 先在一个临时的 web 容器里把迁移和导入的整套自测跑一遍（scripts/dev/archive-selftest.mjs）；
+#   3. 自测通过后，用一份全新的数据目录起对外的 web 容器：LRR 内容/封面目录只读挂载，/input 里放着待导入的新 zip，
+#      迁移、导入都还没做，URL 交给你自己在页面里点。
+# 配置全部走默认值（容器名 lrr-redis、/data/library/lrr/{content,thumb}、路径前缀 /home/koyomi/lanraragi/content），
+# 这样顺便验证默认配置零改动就能用。
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: copymanga-downloader 镜像
+        required: true
+        default: ghcr.io/lgithubl/copymanga-downloader:web
+      redis_image:
+        description: Redis 镜像（官方镜像，演示里用来承载仿 LRR 数据）
+        required: true
+        default: redis:7-alpine
+      archives:
+        description: 仿 LANraragi 数据里的压缩包数量
+        required: true
+        default: "300"
+      minutes:
+        description: 保持在线的分钟数
+        required: true
+        default: "60"
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  demo:
+    name: Archive gallery + LANraragi migration demo
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout (fixtures + selftest scripts)
+        uses: actions/checkout@v5
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images
+        run: |
+          docker pull "${{ inputs.image }}"
+          docker pull "${{ inputs.redis_image }}"
+
+      - name: Generate fake LANraragi data and load it into Redis
+        run: |
+          set -e
+          python3 scripts/dev/make_lrr_fixture.py "$RUNNER_TEMP/lrr-fx" "${{ inputs.archives }}"
+          docker network create lrrnet
+          # 先造一份和 LANraragi 一样的 database.rdb：写入命令 → SAVE → 停掉
+          mkdir -p "$RUNNER_TEMP/rdb"
+          docker run -d --name lrr-seed -v "$RUNNER_TEMP/rdb:/data" "${{ inputs.redis_image }}" redis-server --dir /data --dbfilename database.rdb --appendonly no
+          for i in $(seq 1 30); do
+            docker exec lrr-seed redis-cli ping 2>/dev/null | grep -q PONG && break
+            sleep 1
+          done
+          docker run --rm -i --network container:lrr-seed "${{ inputs.redis_image }}" redis-cli --pipe < "$RUNNER_TEMP/lrr-fx/redis.resp"
+          docker exec lrr-seed redis-cli save
+          docker rm -f lrr-seed
+          ls -l "$RUNNER_TEMP/rdb"
+          # 实际迁移的做法：rdb 只读挂载进一个临时 Redis，--appendonly no --save ""，只读不写
+          docker run -d --name lrr-redis --network lrrnet -v "$RUNNER_TEMP/rdb:/data:ro" "${{ inputs.redis_image }}" \
+            redis-server --appendonly no --save "" --dir /data --dbfilename database.rdb
+          for i in $(seq 1 30); do
+            docker exec lrr-redis redis-cli ping 2>/dev/null | grep -q PONG && break
+            sleep 1
+          done
+          COUNT="$(docker exec lrr-redis redis-cli dbsize)"; echo "redis dbsize=$COUNT"; test "$COUNT" -gt 0
+
+      - name: Selftest in a throwaway web container (full migration + import flow)
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/data-test" "$RUNNER_TEMP/input-test"
+          docker run -d --name web-test --network lrrnet \
+            -p 8081:8080 \
+            -e ZIP_FILENAME_ENCODING=gbk \
+            -v "$RUNNER_TEMP/data-test:/data" \
+            -v "$RUNNER_TEMP/lrr-fx/content:/data/library/lrr/content:ro" \
+            -v "$RUNNER_TEMP/lrr-fx/thumb:/data/library/lrr/thumb:ro" \
+            -v "$RUNNER_TEMP/input-test:/input" \
+            "${{ inputs.image }}"
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8081/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          BASE=http://127.0.0.1:8081 FIXTURE="$RUNNER_TEMP/lrr-fx" \
+            DATA_DIR="$RUNNER_TEMP/data-test" INPUT_DIR="$RUNNER_TEMP/input-test" INPUT_IN_SERVER=/input \
+            ZIP_FILENAME_ENCODING=gbk \
+            node scripts/dev/archive-selftest.mjs 2>&1 | tee "$RUNNER_TEMP/selftest.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          {
+            echo "## 压缩包图集 / LANraragi 迁移自测：通过"
+            echo
+            echo '```'
+            grep -E "passed|failed" "$RUNNER_TEMP/selftest.log" | tail -3
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          NODE_NO_WARNINGS: "1"
+
+      - name: Dump web-test logs on failure
+        if: failure()
+        run: |
+          docker logs --tail 200 web-test 2>&1 || true
+          docker logs --tail 50 lrr-redis 2>&1 || true
+
+      - name: Start the public web container with fresh data
+        run: |
+          set -e
+          docker rm -f web-test
+          mkdir -p "$RUNNER_TEMP/data" "$RUNNER_TEMP/input"
+          # /input 里放几个待导入的新 zip：在页面里选「压缩包图集」方案、来源路径填 /input 就能试 mv 导入
+          python3 - "$RUNNER_TEMP/input" <<'PY'
+          import os, struct, sys, zipfile, zlib
+          def png(w, h, c):
+              raw = b''.join(b'\x00' + bytes(c) * w for _ in range(h))
+              def ch(k, d):
+                  b = k + d
+                  return struct.pack('>I', len(d)) + b + struct.pack('>I', zlib.crc32(b) & 0xffffffff)
+              return b'\x89PNG\r\n\x1a\n' + ch(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + ch(b'IDAT', zlib.compress(raw)) + ch(b'IEND', b'')
+          base = sys.argv[1]
+          names = ['(Demo 1) [示例社团 (示例作者)] 新导入的一本 (示例原作) [中国翻訳].zip', '另一本 普通文件名.zip', 'sub/子目录里的.zip']
+          for i, name in enumerate(names):
+              path = os.path.join(base, name)
+              os.makedirs(os.path.dirname(path), exist_ok=True)
+              with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+                  for p in range(1, 6 + i):
+                      z.writestr('%03d.png' % p, png(120 + p * 4, 160, (40 * i + 30 * p % 255, 90 + 20 * p % 255, 160 - 15 * p % 255)))
+                  z.writestr('uniq.txt', 'demo-%d' % i)
+          PY
+          docker run -d --name copymanga-web --network lrrnet \
+            -p 8080:8080 \
+            -e ZIP_FILENAME_ENCODING=gbk \
+            -v "$RUNNER_TEMP/data:/data" \
+            -v "$RUNNER_TEMP/lrr-fx/content:/data/library/lrr/content:ro" \
+            -v "$RUNNER_TEMP/lrr-fx/thumb:/data/library/lrr/thumb:ro" \
+            -v "$RUNNER_TEMP/input:/input" \
+            "${{ inputs.image }}"
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker logs copymanga-web || true
+          exit 1
+
+      - name: Start authenticated proxy
+        id: auth
+        shell: bash
+        run: |
+          USERNAME="copymanga"
+          PASSWORD="$(openssl rand -base64 18 | tr -d '=+/')"
+          {
+            echo "username=$USERNAME"
+            echo "password=$PASSWORD"
+          } >> "$GITHUB_OUTPUT"
+          cat >/tmp/basic_proxy.py <<'PY'
+          import base64
+          import http.server
+          import os
+          import urllib.error
+          import urllib.request
+
+          TARGET = "http://127.0.0.1:8080"
+          USERNAME = os.environ["BASIC_USER"]
+          PASSWORD = os.environ["BASIC_PASS"]
+          EXPECTED = "Basic " + base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
+          HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
+
+          class Proxy(http.server.BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+
+              def _unauthorized(self):
+                  body = b"Authentication required\n"
+                  self.send_response(401)
+                  self.send_header("WWW-Authenticate", 'Basic realm="copymanga-web"')
+                  self.send_header("Content-Type", "text/plain")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def _proxy(self):
+                  if self.headers.get("Authorization") != EXPECTED:
+                      self._unauthorized()
+                      return
+                  length = int(self.headers.get("Content-Length") or 0)
+                  body = self.rfile.read(length) if length else None
+                  headers = {
+                      k: v for k, v in self.headers.items()
+                      if k.lower() not in HOP_BY_HOP and k.lower() != "host"
+                  }
+                  headers.pop("Authorization", None)
+                  req = urllib.request.Request(
+                      TARGET + self.path,
+                      data=body,
+                      headers=headers,
+                      method=self.command,
+                  )
+                  try:
+                      with urllib.request.urlopen(req, timeout=600) as resp:
+                          self.send_response(resp.status)
+                          payload = resp.read()
+                          for k, v in resp.headers.items():
+                              if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                                  self.send_header(k, v)
+                          self.send_header("Content-Length", str(len(payload)))
+                          self.end_headers()
+                          self.wfile.write(payload)
+                  except urllib.error.HTTPError as exc:
+                      payload = exc.read()
+                      self.send_response(exc.code)
+                      for k, v in exc.headers.items():
+                          if k.lower() not in HOP_BY_HOP and k.lower() != "content-length":
+                              self.send_header(k, v)
+                      self.send_header("Content-Length", str(len(payload)))
+                      self.end_headers()
+                      self.wfile.write(payload)
+
+              def do_GET(self): self._proxy()
+              def do_HEAD(self): self._proxy()
+              def do_POST(self): self._proxy()
+              def do_PUT(self): self._proxy()
+              def do_PATCH(self): self._proxy()
+              def do_DELETE(self): self._proxy()
+
+          http.server.ThreadingHTTPServer(("127.0.0.1", 8090), Proxy).serve_forever()
+          PY
+          BASIC_USER="$USERNAME" BASIC_PASS="$PASSWORD" python /tmp/basic_proxy.py >/tmp/basic_proxy.log 2>&1 &
+          echo $! >/tmp/basic_proxy.pid
+          sleep 1
+          curl -fsS -u "$USERNAME:$PASSWORD" http://127.0.0.1:8090/health >/dev/null
+
+      - name: Start Cloudflare quick tunnel
+        id: tunnel
+        shell: bash
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          /tmp/cloudflared tunnel --url http://127.0.0.1:8090 --no-autoupdate >/tmp/cloudflared.log 2>&1 &
+          echo $! >/tmp/cloudflared.pid
+          for i in $(seq 1 60); do
+            URL="$(grep -oE 'https://[-a-zA-Z0-9.]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)"
+            if [ -n "$URL" ]; then
+              MINUTES="${{ inputs.minutes }}"
+              if [ -z "$MINUTES" ]; then MINUTES="60"; fi
+              echo "url=$URL" >> "$GITHUB_OUTPUT"
+              {
+                echo "## 压缩包图集 + LANraragi 迁移 临时访问地址"
+                echo
+                echo "URL: $URL"
+                echo
+                echo "Username: \`${{ steps.auth.outputs.username }}\`"
+                echo
+                echo "Password: \`${{ steps.auth.outputs.password }}\`"
+                echo
+                echo "这个 runner 会保持在线 ${MINUTES} 分钟（除非手动取消）。"
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::notice title=Temporary URL::$URL"
+              exit 0
+            fi
+            cat /tmp/cloudflared.log || true
+            sleep 2
+          done
+          cat /tmp/cloudflared.log || true
+          exit 1
+
+      # 这一步存在的理由：Keep session alive 那一步要 sleep 几十分钟，整个
+      # job 在这期间一直是 in_progress 状态，而 GitHub 只有 job 真正结束后
+      # 才会把日志打包开放下载（gh run view --log 对 in_progress 的 run
+      # 直接拒绝："logs will be available when it is complete"）。不把 URL/
+      # 账号密码单独发出来，我在隧道还活着的这几十分钟里根本没法拿到它们。
+      - name: Post connection info as a commit comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY="Run: ${{ github.run_id }}
+          URL: ${{ steps.tunnel.outputs.url }}
+          Username: ${{ steps.auth.outputs.username }}
+          Password: ${{ steps.auth.outputs.password }}
+          Expires: runner stops after ${{ inputs.minutes }} minutes"
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body="$BODY" || true
+
+      - name: Keep session alive
+        run: |
+          MINUTES="${{ inputs.minutes }}"
+          if [ -z "$MINUTES" ]; then MINUTES="60"; fi
+          echo "URL: ${{ steps.tunnel.outputs.url }}"
+          echo "Username: ${{ steps.auth.outputs.username }}"
+          echo "Password: ${{ steps.auth.outputs.password }}"
+          echo "Keeping session alive for ${MINUTES} minutes..."
+          sleep "$(( MINUTES * 60 ))"
+
+      # 直接打印到 job 日志里，不走 actions/upload-artifact——这个仓库的 Actions
+      # 存储配额已经被 Actions artifacts + ghcr 镜像一起吃满过一次（上次 build
+      # image 那边改成发 Release 解决的），这个 workflow 只是临时调试用，没必要
+      # 占用同一份配额，直接 cat 到日志里反而更方便看、也不用等上传。
+      - name: Print logs
+        if: always()
+        run: |
+          echo "::group::copymanga-web container log"
+          docker logs --tail 300 copymanga-web 2>&1 || echo "(无)"
+          echo "::endgroup::"
+          echo "::group::lrr-redis container log"
+          docker logs --tail 100 lrr-redis 2>&1 || echo "(无)"
+          echo "::endgroup::"
+          echo "::group::basic_proxy.log"
+          tail -c 5000 /tmp/basic_proxy.log 2>/dev/null || echo "(无)"
+          echo "::endgroup::"
+          echo "::group::cloudflared.log"
+          tail -c 5000 /tmp/cloudflared.log 2>/dev/null || echo "(无)"
+          echo "::endgroup::"
