@@ -214,6 +214,33 @@ check('封面脚本：没有图片的包标记失败而不是整体崩溃', noIm
 const preserved = await request(`/api/library/items/archive/${first.id}/thumbnail/zip/cover`)
 check('封面脚本不覆盖迁移带来的封面（未 force）', preserved.status === 200)
 
+// 6c. 预览动图：第一页 + 随机/均匀 N 页（以条目 ID 为种子），配置全在脚本的 JSON 选项里
+const seven = expect.archives[4]            // book0004：3 + 4 = 7 页
+const detailsOf = (job) => job.results?.[0]?.details || {}
+result = await runScript(seven.id, 'archive-gallery-thumbnail-v1', { previewCount: 3, previewMode: 'random', previewWidth: 200, force: true })
+check('预览脚本：完成并标记「压缩包预览: 有」', result.status === 'completed' && (await getJson(`/api/library/items/archive/${seven.id}`)).tags.includes('压缩包预览: 有'), JSON.stringify(result.results || result).slice(0, 600))
+const frames1 = detailsOf(result).frames || []
+check('预览：第一页 + 3 个其余页，升序且不重复', frames1.length === 4 && frames1[0] === 0 && frames1.every((n, i) => i === 0 || n > frames1[i - 1]) && frames1.at(-1) <= 6, JSON.stringify(frames1))
+const prev = await fetch(`${BASE}/api/library/items/archive/${seven.id}/thumbnail/zip/preview`, { headers })
+const prevBuf = Buffer.from(await prev.arrayBuffer())
+check('预览接口返回动图 WebP', prev.status === 200 && /image\/webp/.test(prev.headers.get('content-type') || '') && prevBuf.toString('latin1', 0, 4) === 'RIFF' && prevBuf.includes(Buffer.from('ANIM')), `${prev.status} ${prevBuf.length}`)
+const sevenItem = await getJson(`/api/library/items/archive/${seven.id}`)
+check('章节单元带 thumbnail.previewUrl（章节列表悬停用）', /thumbnail\/zip\/preview$/.test(sevenItem.mediaUnits?.[0]?.thumbnail?.previewUrl || ''), JSON.stringify(sevenItem.mediaUnits?.[0]?.thumbnail))
+result = await runScript(seven.id, 'archive-gallery-thumbnail-v1', { previewCount: 3, previewMode: 'random', previewWidth: 200, force: true })
+check('随机选页以条目 ID 为种子：重跑选的页一样', JSON.stringify(detailsOf(result).frames) === JSON.stringify(frames1), JSON.stringify([detailsOf(result).frames, frames1]))
+result = await runScript(seven.id, 'archive-gallery-thumbnail-v1', { previewCount: 3, previewMode: 'even', previewWidth: 200, force: true })
+check('均匀模式：7 页取 3 个 → 第 1、3、5、6 页（下标 0,2,4,5）', JSON.stringify(detailsOf(result).frames) === JSON.stringify([0, 2, 4, 5]), JSON.stringify(detailsOf(result).frames))
+const three = expect.archives[0]            // book0000：3 页
+result = await runScript(three.id, 'archive-gallery-thumbnail-v1', { previewCount: 10, previewMode: 'random', previewWidth: 200, force: true })
+check('N 超过页数：全部页都进预览', JSON.stringify(detailsOf(result).frames) === JSON.stringify([0, 1, 2]), JSON.stringify(detailsOf(result).frames))
+result = await runScript(expect.single.id, 'archive-gallery-thumbnail-v1', { previewCount: 3, force: true })
+const singleItem = await getJson(`/api/library/items/archive/${expect.single.id}`)
+const singlePrev = await request(`/api/library/items/archive/${expect.single.id}/thumbnail/zip/preview`)
+check('单页压缩包：不生成预览，标记「压缩包预览: 无」，预览接口 4xx/5xx', singleItem.tags.includes('压缩包预览: 无') && singlePrev.status >= 400, JSON.stringify([singleItem.tags, singlePrev.status]))
+result = await runScript(expect.noimages.id, 'archive-gallery-thumbnail-v1', { previewCount: 3, force: true })
+check('没有图片的包：封面和预览都标记失败，任务不崩', (await getJson(`/api/library/items/archive/${expect.noimages.id}`)).tags.filter((t) => /^压缩包(封面|预览): 失败$/.test(t)).length === 2, JSON.stringify(result.results || result).slice(0, 400))
+await postJson('/api/tag-scripts/archive-gallery-thumbnail-v1/config', { options: { previewCount: 0, previewMode: 'random', previewWidth: 320, force: false } })
+
 // 7. 覆盖模式
 res = await startJob({ importProfile: 'lrr-init', profileOptions: lrr({ dryRun: false, overwrite: true, zipFilenameEncoding: 'gbk' }) })
 job = await waitJob()

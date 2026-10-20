@@ -9,12 +9,13 @@
 // 迁移过来的和新导入的 id 体系一致。
 
 import { createHash } from 'node:crypto'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { withFileLock } from '../atomic-json-store.mjs'
+import { isAnimatedWebp, normalizeFrames, pickPreviewPages, runMagick } from '../archive-preview.mjs'
 import { shardedPath, shardOf, walkShardedFiles, writeJsonAtomic } from '../meta-shard.mjs'
 import { parseTags } from '../tag-store.mjs'
 import { comparePageNames, extensionOf, IMAGE_EXTENSIONS, openZip } from '../zip-reader.mjs'
@@ -76,13 +77,14 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
 
   const metaPath = (itemId) => shardedPath(metaRoot, assertId(itemId))
   const thumbPath = (itemId) => shardedPath(thumbRoot, assertId(itemId), '.jpg')
+  const previewPath = (itemId) => shardedPath(thumbRoot, assertId(itemId), '.preview.webp')
   const progressPath = (itemId) => shardedPath(progressRoot, assertId(itemId))
   const managedZipPath = (itemId, root = '') => shardedPath(managedRoot(root), assertId(itemId), '.zip')
   function cacheDirFor(itemId) {
     const [a, b] = shardOf(assertId(itemId))
     return path.join(cacheRoot(), a, b, itemId)
   }
-  const thumbnailUrl = (itemId) => `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/thumbnail/${ARCHIVE_UNIT_ID}/cover`
+  const thumbnailUrl = (itemId, kind = 'cover') => `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/thumbnail/${ARCHIVE_UNIT_ID}/${kind}`
 
   // ---------- 元数据 ----------
 
@@ -97,6 +99,9 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
       imageCount: Number(unit?.imageCount ?? item.pageCount ?? 0),
       size: Number(unit?.size ?? item.zip?.size ?? 0),
       tags: parseTags(unit?.tags || []),
+      thumbnail: unit?.thumbnail && typeof unit.thumbnail === 'object'
+        ? { status: String(unit.thumbnail.status || 'ready'), coverUrl: String(unit.thumbnail.coverUrl || ''), previewUrl: String(unit.thumbnail.previewUrl || '') }
+        : undefined,
       index: 0,
       createdAt: String(unit?.createdAt || item.createdAt || ''),
       updatedAt: String(unit?.updatedAt || item.updatedAt || ''),
@@ -364,13 +369,17 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
 
   // ---------- 封面 ----------
 
-  async function getThumbnail(itemId) {
+  async function getThumbnail(itemId, unitId, kind = 'cover') {
     try {
-      return { body: await readFile(thumbPath(itemId)), contentType: 'image/jpeg' }
+      return kind === 'preview'
+        ? { body: await readFile(previewPath(itemId)), contentType: 'image/webp' }
+        : { body: await readFile(thumbPath(itemId)), contentType: 'image/jpeg' }
     } catch {
       throw new Error('缩略图不存在')
     }
   }
+
+  const hasPreview = (itemId) => pathExists(previewPath(itemId))
 
   async function hasCover(itemId) {
     return pathExists(thumbPath(itemId))
@@ -413,28 +422,69 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     return { status: 'created' }
   }
 
-  async function resizeToJpeg(buffer) {
-    const errors = []
-    for (const command of ['magick', 'convert']) {
-      try {
-        return await new Promise((resolve, reject) => {
-          const child = spawn(command, ['-', '-auto-orient', '-resize', '360x>', '-quality', '82', 'jpg:-'])
-          const chunks = []
-          const errChunks = []
-          child.stdout.on('data', (chunk) => chunks.push(chunk))
-          child.stderr.on('data', (chunk) => errChunks.push(chunk))
-          child.on('error', reject)
-          child.on('close', (code) => code === 0 && chunks.length
-            ? resolve(Buffer.concat(chunks))
-            : reject(new Error(Buffer.concat(errChunks).toString().slice(0, 300) || `exit ${code}`)))
-          child.stdin.on('error', () => {})
-          child.stdin.end(buffer)
-        })
-      } catch (error) {
-        errors.push(`${command}: ${error.message}`)
-      }
+  const resizeToJpeg = (buffer) => runMagick(['-', '-auto-orient', '-resize', '360x>', '-quality', '82', 'jpg:-'], buffer)
+
+  // 预览动图：第一页 + 随机/均匀挑的 count 页（以条目 ID 为种子，同一个条目每次选的页都一样）。
+  // 只读中央目录和这几页，不解压整个包。页数不足 2 页时没有预览（status: skipped）。
+  async function generatePreview(itemId, { count = 0, mode = 'random', width = 320, force = false } = {}) {
+    const frameCount = Math.max(0, Math.min(30, Math.floor(Number(count) || 0)))
+    if (!frameCount) return { status: 'disabled' }
+    if (!force && await hasPreview(itemId)) return { status: 'exists' }
+    const item = await readItem(itemId)
+    const zip = await openZip(item.zip.path, { filenameEncoding: encodingOf(item) })
+    let pages
+    let buffers
+    try {
+      const entries = zip.imageEntries()
+      if (!entries.length) throw new Error('压缩包里没有图片')
+      pages = pickPreviewPages(entries.length, frameCount, mode, itemId)
+      if (pages.length < 2) return { status: 'skipped', reason: '页数不足，没有预览' }
+      buffers = []
+      for (const index of pages) buffers.push(await zip.read(entries[index]))
+    } finally {
+      await zip.close()
     }
-    throw new Error(`缩略图编码失败：${errors.join('；')}`)
+    const frames = await normalizeFrames(buffers, Math.max(80, Math.min(1000, Math.floor(Number(width) || 320))))
+    const temp = await mkdtemp(path.join(os.tmpdir(), 'archive-preview-'))
+    try {
+      for (let i = 0; i < frames.length; i++) await writeFile(path.join(temp, `frame-${String(i + 1).padStart(3, '0')}.jpg`), frames[i])
+      const out = path.join(temp, 'preview.webp')
+      let encoded = false
+      try {
+        await execFileAsync('ffmpeg', ['-y', '-framerate', '2', '-i', path.join(temp, 'frame-%03d.jpg'), '-loop', '0', '-c:v', 'libwebp', '-q:v', '70', out], { timeout: 60000 })
+        encoded = isAnimatedWebp(await readFile(out))
+      } catch {
+        encoded = false
+      }
+      if (!encoded) {
+        // ffmpeg 不行（没有 libwebp，或只编出了静态图）就退回 ImageMagick
+        const files = frames.map((_, i) => path.join(temp, `frame-${String(i + 1).padStart(3, '0')}.jpg`))
+        let lastError = null
+        for (const command of ['magick', 'convert']) {
+          try {
+            await execFileAsync(command, ['-delay', '50', '-loop', '0', ...files, out], { timeout: 60000 })
+            encoded = isAnimatedWebp(await readFile(out))
+            if (encoded) break
+          } catch (error) {
+            lastError = error
+          }
+        }
+        if (!encoded) throw new Error(`预览动图编码失败：${lastError?.message || '输出不是动图 WebP'}`)
+      }
+      const target = previewPath(itemId)
+      await mkdir(path.dirname(target), { recursive: true })
+      const staged = `${target}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`
+      await copyFile(out, staged)
+      await rename(staged, target)
+    } finally {
+      await rm(temp, { recursive: true, force: true }).catch(() => {})
+    }
+    // 章节列表悬停预览靠 unit.thumbnail.previewUrl
+    await updateItem(itemId, (current) => ({
+      ...current,
+      mediaUnits: [{ ...current.mediaUnits[0], thumbnail: { status: 'ready', coverUrl: thumbnailUrl(itemId), previewUrl: thumbnailUrl(itemId, 'preview') } }],
+    }))
+    return { status: 'created', frames: pages }
   }
 
   // 给标签脚本用：页数和文件名（不解压）。用完必须 close()。
@@ -709,13 +759,15 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
       updateItem,
       itemExists,
       hasCover,
+      hasPreview,
+      generatePreview,
       copyCoverFile,
       markItemCover,
       generateCover,
       inspect,
       thumbnailUrl,
       ensureExtracted,
-      paths: { metaPath, thumbPath, cacheDirFor, managedZipPath },
+      paths: { metaPath, thumbPath, previewPath, cacheDirFor, managedZipPath },
     },
   }
 }

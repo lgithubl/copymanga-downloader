@@ -159,6 +159,12 @@ def main():
     empty_id = add(empty, 'noimages', '没有图片', '', 0)
     expect['noimages'] = {'id': empty_id}
 
+    # 6b) 只有 1 页的 zip（没有预览动图：页数不足）
+    single = os.path.join(content, 'single.zip')
+    write_zip(single, 1)
+    single_id = add(single, 'single', '单页', 'artist:single', 1, thumb_color=(120, 60, 60))
+    expect['single'] = {'id': single_id}
+
     # 7) 双重编码的标题（LRR 的 redis_decode 要解两次）+ 空标签
     dbl = os.path.join(content, 'double.zip')
     write_zip(dbl, 2)

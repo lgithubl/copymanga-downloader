@@ -1,15 +1,18 @@
 {
   "id": "archive-gallery-thumbnail-v1",
   "name": "压缩包图集缩略图 v1",
-  "version": "1.0.0",
-  "description": "从压缩包里取第一张图生成封面缩略图：只读 zip 的目录和这一张图，不解压整个包。封面已存在时跳过（迁移带来的 LANraragi 封面不会被覆盖），force 选项强制重新生成。",
+  "version": "1.1.0",
+  "description": "从压缩包里取第一张图生成封面缩略图：只读 zip 的目录和这一张图，不解压整个包。封面已存在时跳过（迁移带来的 LANraragi 封面不会被覆盖），force 选项强制重新生成。previewCount > 0 时再生成一张预览动图（第一页 + 随机/均匀 N 页，章节列表和媒体库卡片悬停时显示），选页以条目 ID 为种子、重跑结果不变；默认 0 = 只要封面。",
   "scope": ["item"],
   "libraryTypes": ["archive"],
-  "exclusiveTagGroups": ["压缩包封面"],
+  "exclusiveTagGroups": ["压缩包封面", "压缩包预览"],
   "defaultEnabled": false,
   "main": "main.js",
   "options": {
     "force": false,
+    "previewCount": 0,
+    "previewMode": "random",
+    "previewWidth": 320,
     "scriptTimeoutMs": 120000
   }
 }

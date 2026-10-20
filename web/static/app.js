@@ -2497,7 +2497,32 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
     event.stopPropagation()
     continueLibraryItem(item, event).catch((error) => alert(error.message))
   })
+  attachArchivePreviewHover(card, item)
   return card
+}
+
+// 压缩包图集：鼠标移到卡片封面上显示预览动图（缩略图脚本的 previewCount > 0 时才有）。
+// 预览地址就是封面地址把末尾的 /cover 换成 /preview，不用改索引；没有预览（404/500）就还原封面，并记住，不再重复请求。
+const archivePreviewMissing = new Set()
+
+function attachArchivePreviewHover(card, item) {
+  const cover = String(item?.cover || '')
+  if (item?.type !== 'archive' || !/\/thumbnail\/[^/]+\/cover$/.test(cover)) return
+  const img = card.querySelector('img.cover')
+  if (!img) return
+  const preview = cover.replace(/\/cover$/, '/preview')
+  img.addEventListener('mouseenter', () => {
+    if (!archivePreviewMissing.has(preview)) img.src = preview
+  })
+  img.addEventListener('mouseleave', () => {
+    if (img.getAttribute('src') !== cover) img.src = cover
+  })
+  img.addEventListener('error', () => {
+    if (img.getAttribute('src') === preview) {
+      archivePreviewMissing.add(preview)
+      img.src = cover
+    }
+  })
 }
 
 // 导入方案筛选的选项直接取自 mediaImportProfiles，和导入页同一份定义，

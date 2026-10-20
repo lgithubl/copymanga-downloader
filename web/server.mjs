@@ -4022,6 +4022,8 @@ function archiveGalleryScriptServices(itemId) {
   return {
     // 只读中央目录和第一张图，生成封面
     generateCover: (options = {}) => internals.generateCover(itemId, options),
+    // 预览动图：第一页 + 随机/均匀的 count 页，拼成动图 WebP；count 为 0 不生成
+    generatePreview: (options = {}) => internals.generatePreview(itemId, options),
     // { pageCount, names, allNames, readText(name), close() }：不解压，用完必须 close()
     inspect: () => internals.inspect(itemId),
     setPageCount: (count) => internals.updateItem(itemId, (item) => ({
