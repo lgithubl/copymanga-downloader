@@ -101,7 +101,8 @@ export async function runLrrMigration({
       if (!keys.length) continue
       const hashes = await client.pipeline(keys.map((key) => ['HGETALL', key]))
       const prepared = []
-      await mapPool(keys.map((key, index) => ({ key, hash: pairsToObject(hashes[index]) })), concurrency, async ({ key, hash }) => {
+      const entries = keys.map((key, index) => ({ key, hash: pairsToObject(hashes[index]) }))
+      const handleEntry = async ({ key, hash }) => {
         report.archives += 1
         try {
           const rawFile = hash.file ? hash.file.toString('utf8') : ''
@@ -168,8 +169,15 @@ export async function runLrrMigration({
           report.failed += 1
           pushExample(report.examples.failed, `${key}: ${error.message}`)
         }
-      })
-      // 限量：每批并发处理后按配置的 limit 精确截断（已存在跳过的、缺文件的都不占名额）
+      }
+      // 分小块处理：限量时凑够名额就立刻停，不会把一整批（几千个）都 stat 一遍
+      const chunk = Math.max(1, concurrency) * 4
+      for (let at = 0; at < entries.length; at += chunk) {
+        if (shouldStop()) break
+        await mapPool(entries.slice(at, at + chunk), concurrency, handleEntry)
+        if (limit > 0 && prepared.length >= Math.max(0, limit - report.imported)) break
+      }
+      // 限量：处理完后按配置的 limit 精确截断（已存在跳过的、缺文件的都不占名额）
       if (limit > 0) {
         const room = Math.max(0, limit - report.imported)
         if (prepared.length >= room) report.limited = true
