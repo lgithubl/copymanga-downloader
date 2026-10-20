@@ -25,4 +25,5 @@ EXPOSE 8080
 VOLUME ["/data"]
 
 # Node 默认老生代堆上限约 4GB，和机器内存无关；几十万条的媒体库索引要把它调大（环境变量 NODE_HEAP_MB，单位 MB）
-CMD ["sh", "-c", "exec node --max-old-space-size=${NODE_HEAP_MB} web/server.mjs"]
+# 只取数字：环境变量里手滑多打的空格、引号（比如 "24576 "）不会让 node 因为非法参数起不来；清洗后为空就不带这个参数
+CMD ["sh", "-c", "H=$(printf %s \"$NODE_HEAP_MB\" | tr -dc 0-9); exec node ${H:+--max-old-space-size=$H} web/server.mjs"]
