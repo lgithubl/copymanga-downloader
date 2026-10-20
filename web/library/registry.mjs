@@ -24,7 +24,8 @@ export async function scanLibraryItems({ type = 'all' } = {}) {
   const selected = type === 'all' ? [...handlers.values()] : [libraryHandler(type)]
   const items = []
   for (const handler of selected) {
-    items.push(...await handler.scanItems())
+    // 不能 push(...list)：V8 一次调用的参数个数上限约 12 万，42 万条的库展开即 RangeError
+    for (const item of await handler.scanItems()) items.push(item)
   }
   return items.sort(compareLibraryImportOrder)
 }

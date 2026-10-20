@@ -1113,7 +1113,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name)
-      if (entry.isDirectory()) result.push(...await walkFiles(fullPath))
+      // 同 registry：子树文件数可能超过 V8 单次调用的参数上限，不能展开成参数
+      if (entry.isDirectory()) for (const file of await walkFiles(fullPath)) result.push(file)
       else if (entry.isFile()) result.push(fullPath)
     }
     return result

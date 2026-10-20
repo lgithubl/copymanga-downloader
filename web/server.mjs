@@ -1057,7 +1057,7 @@ async function walk(dir) {
   const files = []
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name)
-    if (entry.isDirectory()) files.push(...await walk(fullPath))
+    if (entry.isDirectory()) for (const file of await walk(fullPath)) files.push(file)
     else files.push(fullPath)
   }
   return files
@@ -1073,7 +1073,7 @@ async function walkMatchingFiles(dir, predicate) {
   const files = []
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name)
-    if (entry.isDirectory()) files.push(...await walkMatchingFiles(fullPath, predicate))
+    if (entry.isDirectory()) for (const file of await walkMatchingFiles(fullPath, predicate)) files.push(file)
     else if (predicate(fullPath, entry.name)) files.push(fullPath)
   }
   return files
