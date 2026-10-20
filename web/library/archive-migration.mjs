@@ -52,6 +52,15 @@ export async function runLrrMigration({
 }) {
   const { dryRun = false, overwrite = false, concurrency = 16, limit = 0, zipFilenameEncoding = '', redisUrl, contentDir, thumbDir, pathFrom, tagMap = {}, fileNameEncodings = DEFAULT_FILENAME_ENCODINGS } = options
   const namespaceCounts = new Map()
+  // 非 UTF-8 文件名的例子：每种编码（以及「缺失」「解不出」）各留前 6 个，方便逐个编码人工核对解码质量
+  const legacyExampleCounts = new Map()
+  const pushLegacyExample = (example) => {
+    const key = example.exists ? example.encoding : `${example.encoding}/缺失`
+    const count = legacyExampleCounts.get(key) || 0
+    if (count >= 6) return
+    legacyExampleCounts.set(key, count + 1)
+    report.nonUtf8.examples.push(example)
+  }
   const internals = handler.internals
   const report = {
     dryRun,
@@ -135,14 +144,14 @@ export async function runLrrMigration({
             report.missingFile += 1
             if (legacy) {
               report.nonUtf8.stillMissing += 1
-              if (report.nonUtf8.examples.length < 10) report.nonUtf8.examples.push({ ...legacyNote, exists: false })
+              pushLegacyExample({ ...legacyNote, exists: false })
             }
             pushExample(report.examples.missingFile, shown.text)
             return
           }
           if (legacy) {
             report.nonUtf8.found += 1
-            if (report.nonUtf8.examples.length < 10) report.nonUtf8.examples.push({ ...legacyNote, exists: true })
+            pushLegacyExample({ ...legacyNote, exists: true })
           }
           if (!overwrite && await handler.internals.itemExists(key)) {
             report.skippedExisting += 1

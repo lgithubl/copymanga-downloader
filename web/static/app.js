@@ -7235,7 +7235,8 @@ function formatArchiveJob(job) {
     if (nu?.total) {
       const enc = Object.entries(nu.byEncoding || {}).map(([k, n]) => `${k}:${n}`).join(' ') || '无'
       lines.push(`非 UTF-8 文件名（按字节访问）：共 ${nu.total} · 能找到 ${nu.found} · 仍缺失 ${nu.stillMissing} · 解码 ${enc} · 解不出 ${nu.undecodable} · 标题已替换 ${nu.titleReplaced}`)
-      for (const e of (nu.examples || []).slice(0, 6)) lines.push(`  [${e.encoding}] ${e.exists ? '存在' : '缺失'} ${e.display}`)
+      const order = (e) => `${e.encoding}${e.exists ? '' : '~'}`
+      for (const e of [...(nu.examples || [])].sort((x, y) => order(x).localeCompare(order(y))).slice(0, 30)) lines.push(`  [${e.encoding}] ${e.exists ? '存在' : '缺失'} ${e.display}`)
     }
     if (p.namespaces?.length) lines.push(`标签命名空间分布：${p.namespaces.slice(0, 10).map((n) => `${n.namespace}:${n.count}`).join(' · ')}`)
     if (p.tagMapExamples?.length) lines.push(`tagMap 效果：`, ...p.tagMapExamples.slice(0, 6).map((e) => `  ${e.from}  →  ${e.to}`))
