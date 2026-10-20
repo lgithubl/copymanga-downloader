@@ -80,6 +80,66 @@ jobs:
           done
           COUNT="$(docker exec lrr-redis redis-cli dbsize)"; echo "redis dbsize=$COUNT"; test "$COUNT" -gt 0
 
+      # 迁移文档里「只停服务、复制数据」的几种情况，用真实 Redis 实测一遍，数字写进摘要：
+      #   A. 优雅停机（docker stop）：停机时 Redis 做最终保存，rdb 就是最新的
+      #   B. 被 kill（来不及最终保存）：rdb 是旧的，AOF 目录里才有最后的写入
+      #      B1. 只用 rdb（做法 2）→ 看不到最后写入    B2. 拷贝整个目录 + --appendonly yes 重放（做法 1）→ 完整
+      - name: Verify the stop-and-copy scenarios with real Redis (rdb vs AOF replay)
+        run: |
+          set -e
+          IMG="${{ inputs.redis_image }}"
+          wait_ping() { for i in $(seq 1 30); do docker exec "$1" redis-cli ping 2>/dev/null | grep -q PONG && return 0; sleep 1; done; docker logs "$1" | tail -20; return 1; }
+          dbsize() { docker exec "$1" redis-cli dbsize | tr -d '\r'; }
+          seed() {   # $1 = 容器名, $2 = 数据目录；起一个和 LRR 一样配置的 Redis 并装入仿 LRR 数据
+            mkdir -p "$2"
+            docker run -d --name "$1" -v "$2:/data" "$IMG" redis-server --appendonly yes --appendfsync everysec \
+              --auto-aof-rewrite-percentage 100 --auto-aof-rewrite-min-size 64mb \
+              --save 900 1 --save 60 500 --dir /data --dbfilename database.rdb
+            wait_ping "$1"
+            docker run --rm -i --network "container:$1" "$IMG" redis-cli --pipe < "$RUNNER_TEMP/lrr-fx/redis.resp" >/dev/null
+          }
+          late() { docker exec "$1" redis-cli hset 0000000000000000000000000000000000000001 name late title late tags "" file /x.zip >/dev/null; }
+          load_rdb_only() {  # 做法 2：拷贝只读挂载，--appendonly no
+            docker run -d --name "$1" -v "$2:/data:ro" "$IMG" redis-server --appendonly no --save "" --dir /data --dbfilename database.rdb >/dev/null
+            wait_ping "$1"; dbsize "$1"; docker rm -f "$1" >/dev/null
+          }
+          load_aof() {       # 做法 1：拷贝可写，--appendonly yes 重放 AOF
+            docker run -d --name "$1" -v "$2:/data" "$IMG" redis-server --appendonly yes --appenddirname appendonlydir --appendfilename appendonly.aof --save "" --dir /data >/dev/null
+            wait_ping "$1"; dbsize "$1"; docker rm -f "$1" >/dev/null
+          }
+          # ---- 场景 A：优雅停机
+          seed aof-a "$RUNNER_TEMP/aof-a"
+          BASE_N="$(dbsize aof-a)"
+          late aof-a
+          docker stop -t 60 aof-a >/dev/null
+          echo "== 场景 A 的目录："; ls -la --time-style=full-iso "$RUNNER_TEMP/aof-a" "$RUNNER_TEMP/aof-a/appendonlydir" || true
+          cp -a "$RUNNER_TEMP/aof-a" "$RUNNER_TEMP/aof-a-copy"
+          A_RDB="$(load_rdb_only chk-a1 "$RUNNER_TEMP/aof-a-copy")"
+          A_AOF="$(load_aof chk-a2 "$RUNNER_TEMP/aof-a-copy")"
+          # ---- 场景 B：先落一次盘（模拟旧快照），再写一个 key，然后直接 kill（SIGKILL）
+          seed aof-b "$RUNNER_TEMP/aof-b"
+          docker exec aof-b redis-cli save >/dev/null
+          late aof-b
+          sleep 2    # appendfsync everysec
+          docker kill aof-b >/dev/null
+          cp -a "$RUNNER_TEMP/aof-b" "$RUNNER_TEMP/aof-b-copy"
+          B_RDB="$(load_rdb_only chk-b1 "$RUNNER_TEMP/aof-b-copy")"
+          B_AOF="$(load_aof chk-b2 "$RUNNER_TEMP/aof-b-copy")"
+          echo "基础 key 数 $BASE_N；场景A rdb-only=$A_RDB aof=$A_AOF；场景B rdb-only=$B_RDB aof=$B_AOF"
+          {
+            echo "## 停机复制场景实测（真实 Redis）"
+            echo
+            echo "| 场景 | 只用 rdb（做法 2） | 重放 AOF（做法 1） |"
+            echo "|---|---|---|"
+            echo "| A 优雅停机 docker stop（基础 $BASE_N，+1 个最后写入） | $A_RDB | $A_AOF |"
+            echo "| B 被 kill（rdb 是旧快照） | $B_RDB | $B_AOF |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          EXPECT=$((BASE_N + 1))
+          test "$A_AOF" = "$EXPECT"       # 优雅停机后 AOF 重放必须完整
+          test "$B_AOF" = "$EXPECT"       # 被 kill 后 AOF 重放也必须完整
+          test "$B_RDB" = "$BASE_N"       # 被 kill 后只用 rdb 会漏掉最后的写入（文档里要求用做法 1 的原因）
+          echo "A 场景的 rdb-only 结果（信息项，不做断言）：$A_RDB"
+
       - name: Selftest in a throwaway web container (full migration + import flow)
         run: |
           set -e
