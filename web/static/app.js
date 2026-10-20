@@ -5147,6 +5147,38 @@ function applyEpubTtsRate(audio) {
   audio.playbackRate = epubTtsRate
 }
 
+// 朗读音量（百分比）。<=100 走 audio.volume，和以前完全一样；>100 浏览器的 volume 上限是 1，
+// 只能走 Web Audio 的 GainNode 放大（可能削波，所以上限 300）。
+// createMediaElementSource 对同一个 audio 只能调一次、调了就改走 Web Audio，所以只在需要放大时才接；
+// 已经接过的 audio 之后一律用增益控制（包括调回 <=100）。每句都是新建的 Audio，下一句自然回到 volume 路径。
+const EPUB_TTS_VOLUME_KEY = 'copymanga.epubTtsVolume'
+const EPUB_TTS_VOLUMES = [50, 75, 100, 150, 200, 300]
+let epubTtsVolume = EPUB_TTS_VOLUMES.includes(Number(localStorage.getItem(EPUB_TTS_VOLUME_KEY))) ? Number(localStorage.getItem(EPUB_TTS_VOLUME_KEY)) : 100
+let epubTtsAudioContext = null
+
+function applyEpubTtsVolume(audio) {
+  const ratio = epubTtsVolume / 100
+  if (!audio._ttsGain && ratio <= 1) {
+    audio.volume = ratio
+    return
+  }
+  try {
+    if (!audio._ttsGain) {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      if (!Ctx) { audio.volume = 1; return }
+      if (!epubTtsAudioContext) epubTtsAudioContext = new Ctx()
+      const gain = epubTtsAudioContext.createGain()
+      epubTtsAudioContext.createMediaElementSource(audio).connect(gain).connect(epubTtsAudioContext.destination)
+      audio._ttsGain = gain
+      audio.volume = 1
+    }
+    if (epubTtsAudioContext.state === 'suspended') epubTtsAudioContext.resume().catch(() => {})
+    audio._ttsGain.gain.value = ratio
+  } catch {
+    audio.volume = 1   // Web Audio 不可用就退回原音量，不影响朗读
+  }
+}
+
 // 朗读范围：服务端按配置的「flag 规则」给每个句子打了 flag（比如对照本的 ja / zh），页面显示不看 flag，
 // 这里只决定读哪些。'all' = 全部；否则只读 flag 等于所选值的句子。按书分别记在浏览器里。
 // 这一章里一个带 flag 的句子都没有（规则没命中，普通的书）就当没有分类，全部照读。
@@ -5433,6 +5465,7 @@ async function playEpubTtsFrom(startIndex, content) {
     ensureEpubTtsSentenceVisible(entry.element, content)
     const audio = new Audio(chunk.url)
     applyEpubTtsRate(audio)
+    applyEpubTtsVolume(audio)
     epubTtsCurrentAudio = audio
     audio.addEventListener('timeupdate', () => {
       const ratio = computeEpubTtsRatio(chunk.subtitle, audio.currentTime, audio.duration)
@@ -5486,6 +5519,7 @@ async function playSelectedText(btn) {
     if (!chunk || chunk.error || chunk.skipped) return
     audio = new Audio(chunk.url)
     applyEpubTtsRate(audio)
+    applyEpubTtsVolume(audio)
     epubTtsCurrentAudio = audio
     const ended = new Promise((resolve) => {
       audio.addEventListener('ended', resolve, { once: true })
@@ -5550,6 +5584,22 @@ function enterEpubImmersive({ remember = false } = {}) {
     if (epubTtsCurrentAudio) applyEpubTtsRate(epubTtsCurrentAudio)
     rateSelect.blur()
   })
+  const volumeSelect = document.createElement('select')
+  volumeSelect.className = 'stream-rate-select epub-tts-volume'
+  volumeSelect.title = '朗读音量（超过 100% 为软件放大，过大可能失真）'
+  for (const volume of EPUB_TTS_VOLUMES) {
+    const option = document.createElement('option')
+    option.value = String(volume)
+    option.textContent = `音量 ${volume}%`
+    volumeSelect.append(option)
+  }
+  volumeSelect.value = String(epubTtsVolume)
+  volumeSelect.addEventListener('change', () => {
+    epubTtsVolume = Number(volumeSelect.value)
+    localStorage.setItem(EPUB_TTS_VOLUME_KEY, String(epubTtsVolume))
+    if (epubTtsCurrentAudio) applyEpubTtsVolume(epubTtsCurrentAudio)   // 当前这句立刻生效
+    volumeSelect.blur()
+  })
   // 朗读范围：只有这一章里有带 flag 的句子（配置了「朗读 flag 规则」且命中）才显示
   const flagSelect = document.createElement('select')
   flagSelect.className = 'stream-rate-select epub-tts-flag'
@@ -5585,7 +5635,7 @@ function enterEpubImmersive({ remember = false } = {}) {
     }
   })
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, rateSelect, exitBtn)
+  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, rateSelect, volumeSelect, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
