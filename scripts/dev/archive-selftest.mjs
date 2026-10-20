@@ -198,9 +198,10 @@ async function runScript(itemId, scriptId, options) {
 let result = await runScript(expect.info.id, 'archive-gallery-tags-v1')
 check('标签脚本：完成', result.status === 'completed', JSON.stringify(result.results || result).slice(0, 1500))
 const infoItem = await getJson(`/api/library/items/archive/${expect.info.id}`)
-for (const tag of ['页数: 2', 'artist:作者乙', 'circle:社团甲', 'parody:某原作', 'language:chinese', 'artist:作者甲', 'series:某系列', 'genre:冒险']) {
+for (const tag of ['页数: 2', 'artist:作者甲', 'series:某系列', 'genre:冒险']) {
   check(`标签脚本产出 ${tag}`, infoItem.tags.includes(tag), JSON.stringify(infoItem.tags))
 }
+check('迁移来的条目：文件名解析只用 LRR 里的原始路径（info.zip 没有括号），不再从标题猜标签', !infoItem.tags.some((t) => /^(group|tag):/.test(t)), JSON.stringify(infoItem.tags))
 check('标签脚本回写页数', infoItem.pageCount === 2 && infoItem.mediaUnits?.[0]?.imageCount === 2, JSON.stringify([infoItem.pageCount, infoItem.mediaUnits?.[0]?.imageCount]))
 result = await runScript(expect.nothumb.id, 'archive-gallery-thumbnail-v1')
 check('封面脚本：给没有封面的条目生成封面', result.status === 'completed', JSON.stringify(result.results || result).slice(0, 1500))
@@ -257,14 +258,14 @@ def png(w,h,c):
         b=k+d; return struct.pack('>I',len(d))+b+struct.pack('>I',zlib.crc32(b)&0xffffffff)
     return b'\\x89PNG\\r\\n\\x1a\\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b'')
 base=sys.argv[1]
-os.makedirs(base+'/sub',exist_ok=True)
-for i,rel in enumerate(['fresh1.zip','sub/[社团 (作者)] 新书 (某原作) [中国翻訳].zip']):
+os.makedirs(base+'/[目录作者]',exist_ok=True)
+for i,rel in enumerate(['fresh1.zip','[目录作者]/[社团 (作者)] 新书 (某原作) [中国翻訳].zip']):
     with zipfile.ZipFile(base+'/'+rel,'w',zipfile.ZIP_DEFLATED) as z:
         for p in range(1,4): z.writestr('%03d.png'%p, png(30+p+i,40,(i*90,p*60,40)))
         z.writestr('uniq.txt','new-%d'%i)
 `
   await execFileAsync('python3', ['-c', code, INPUT_DIR])
-  newZips.push(path.join(INPUT_DIR, 'fresh1.zip'), path.join(INPUT_DIR, 'sub', '[社团 (作者)] 新书 (某原作) [中国翻訳].zip'))
+  newZips.push(path.join(INPUT_DIR, 'fresh1.zip'), path.join(INPUT_DIR, '[目录作者]', '[社团 (作者)] 新书 (某原作) [中国翻訳].zip'))
   const source = process.env.INPUT_IN_SERVER || '/input'
   res = await startJob({ importProfile: 'archive-gallery', sourcePath: source, profileOptions: opts({ dryRun: true }) })
   job = await waitJob()
@@ -293,7 +294,16 @@ for i,rel in enumerate(['fresh1.zip','sub/[社团 (作者)] 新书 (某原作) [
   check('路径导入：导入时勾选的脚本自动跑了（页数 + 封面）', freshDetail.tags.includes('页数: 3') && /thumbnail/.test(freshDetail.cover), JSON.stringify([freshDetail.tags, freshDetail.cover]))
   const parsed = refreshed.items.find((item) => item.title.includes('新书'))
   const parsedDetail = parsed ? await getJson(`/api/library/items/archive/${parsed.itemId}`) : null
-  check('路径导入：文件名约定解析出 circle/artist/parody/language', !!parsedDetail && ['circle:社团', 'artist:作者', 'parody:某原作', 'language:chinese'].every((t) => parsedDetail.tags.includes(t)), JSON.stringify(parsedDetail?.tags))
+  check('路径导入：记下了导入前的完整路径（目录 + 文件名）', !!parsedDetail && parsedDetail.origin?.sourceFile?.endsWith('/[目录作者]/[社团 (作者)] 新书 (某原作) [中国翻訳].zip'), JSON.stringify(parsedDetail?.origin))
+  check('路径导入：按 ARegexParse 规则解析目录 + 文件名 → tag:目录作者、group:社团、tag:作者、tag:中国翻訳、tag:某原作', !!parsedDetail && ['tag:目录作者', 'group:社团', 'tag:作者', 'tag:中国翻訳', 'tag:某原作'].every((t) => parsedDetail.tags.includes(t)), JSON.stringify(parsedDetail?.tags))
+  check('路径导入：标题保持原文件名（saveTitle 默认关）', parsedDetail?.title === '[社团 (作者)] 新书 (某原作) [中国翻訳]', parsedDetail?.title)
+  // 命名空间映射 + saveTitle：都是脚本 JSON 选项
+  result = await runScript(parsed.itemId, 'archive-gallery-tags-v1', { saveTitle: true, namespaces: { group: 'circle', tag: 'artist' } })
+  const remapped = await getJson(`/api/library/items/archive/${parsed.itemId}`)
+  check('namespaces 选项：group/tag 换成 circle/artist', ['artist:目录作者', 'circle:社团', 'artist:作者', 'artist:中国翻訳', 'artist:某原作'].every((t) => remapped.tags.includes(t)), JSON.stringify([result.status, remapped.tags]))
+  check('namespaces 选项：脚本上次产出而这次没产出的 group:/tag: 标签被替换掉', !remapped.tags.some((t) => /^(group|tag):/.test(t)), JSON.stringify(remapped.tags))
+  check('saveTitle：标题改成去掉括号后的文件名', remapped.title === '新书', remapped.title)
+  await postJson('/api/tag-scripts/archive-gallery-tags-v1/config', { options: { parseFilename: true, usePath: true, saveTitle: false, namespaces: { group: 'group', tag: 'tag' }, readComicInfo: true, pageCountTag: true } })
   res = await startJob({ importProfile: 'archive-gallery', sourcePath: '/etc', profileOptions: '{}' })
   check('路径导入：不在允许目录内的路径被拒绝（任务失败）', res.status >= 400 || (await waitJob()).status === 'failed')
 }

@@ -675,6 +675,8 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
             pageCount,
             sourceProfile: profile,
             filenameEncoding: encoding,
+            // 导入前的完整路径（目录 + 文件名）：压缩包 mv 进受管目录后文件名变成 <id>.zip，标签脚本要靠它解析 [..] (..)
+            origin: { sourceFile: file },
           }))
           batch.push(item)
           stats.imported += 1
@@ -723,6 +725,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
           pageCount,
           sourceProfile: profile,
           filenameEncoding: encoding,
+          origin: { sourceFile: String(file.filename || '') },
         })))
       } finally {
         await rm(temp, { recursive: true, force: true }).catch(() => {})

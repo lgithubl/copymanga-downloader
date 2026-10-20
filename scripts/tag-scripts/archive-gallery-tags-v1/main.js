@@ -1,57 +1,84 @@
-// 压缩包图集：生成标签。只读 zip 的目录（和 ComicInfo.xml 这一个小文件），不解压。
+// 压缩包图集：生成标签。
+//   1) 文件名/目录解析 —— 照搬自定义 LANraragi 插件 ARegexParse（"My Filename Parsing" v2.5）的逻辑：
+//        - 先后对「目录路径」和「文件名（去扩展名，下划线换空格）」做同样的处理：
+//          反复取出每个 [...]：内容形如 "X (Y)" → group:X、tag:Y，否则 → tag:内容；
+//          再反复取出每个 (...) → tag:内容；
+//        - 整体按先后顺序去重（保留第一次出现）；
+//        - saveTitle 为真时，用去掉所有 [...] 和 (...) 之后剩下的文件名当条目标题。
+//      "group" / "tag" 这两个名字可以在 namespaces 选项里改成别的（比如 circle / artist，空字符串 = 不加前缀）。
+//      原始路径来自导入时记下的 origin.sourceFile（压缩包 mv 进受管目录后文件名会变成 <id>.zip，原名只留在这里）。
+//   2) 页数（页数: N，同时回写条目页数）、包内 ComicInfo.xml（Writer、Penciller、Series、Genre、Tags、LanguageISO）。
 // 本脚本产出的标签由服务端管理：下次运行没产出的会被移除，所以每次都完整产出一遍。
 
-const LANGUAGES = [
-  [/中国翻訳|中國翻譯|中文|汉化|漢化|chinese/i, 'chinese'],
-  [/英訳|english/i, 'english'],
-  [/日本語|japanese/i, 'japanese'],
-  [/韓国翻訳|korean/i, 'korean'],
-]
+// LANraragi 的 redis_decode：UTF-8 解两次（文件名可能被双重编码过）。只在合法时采用。
+function isValidUtf8(buf) {
+  return Buffer.compare(Buffer.from(buf.toString('utf8'), 'utf8'), buf) === 0
+}
+
+export function redisDecode(text) {
+  let value = String(text || '')
+  if ([...value].every((ch) => ch.codePointAt(0) <= 255) && /[\u0080-ÿ]/.test(value)) {
+    const bytes = Buffer.from(value, 'latin1')
+    if (isValidUtf8(bytes)) value = bytes.toString('utf8')
+  }
+  return value.normalize('NFC')
+}
+
+// Perl 的 fileparse($file, qr/\.[^.]*/)：目录（带结尾斜杠）、文件名（去掉最后一个扩展名）
+export function splitPath(file) {
+  const slash = file.lastIndexOf('/')
+  const dir = slash >= 0 ? file.slice(0, slash + 1) : ''
+  const base = slash >= 0 ? file.slice(slash + 1) : file
+  return { dir, name: base.replace(/\.[^.]*$/, '') }
+}
+
+// 对一段文本：先取出所有 [...]，再取出所有 (...)。返回 { tags, rest }，rest 是取完之后剩下的文本。
+// 正则和 Perl 的 s/\[([^\]]+)\]// 一一对应：最左匹配、每次只替换第一个、循环到没有为止。
+export function extract(text, names) {
+  const tag = (value) => (names.tag ? `${names.tag}:${value}` : value)
+  const group = (value) => (names.group ? `${names.group}:${value}` : value)
+  const tags = []
+  let rest = text
+  for (;;) {
+    const match = rest.match(/\[([^\]]+)\]/)
+    if (!match) break
+    rest = rest.replace(/\[([^\]]+)\]/, '')
+    const inner = match[1]
+    if (inner === '') continue
+    const split = inner.match(/(.*) \((.*)\)/)
+    if (split) {
+      tags.push(group(split[1]))
+      tags.push(tag(split[2]))
+    } else {
+      tags.push(tag(inner))
+    }
+  }
+  for (;;) {
+    const match = rest.match(/\(([^)]+)\)/)
+    if (!match) break
+    rest = rest.replace(/\(([^)]+)\)/, '')
+    if (match[1] !== '') tags.push(tag(match[1]))
+  }
+  return { tags, rest }
+}
+
+// file：原始完整路径（或只有文件名）。返回 { tags, title }，title 是去掉所有 [...] 和 (...) 之后的文件名（已整理空格）。
+export function parseFilenameTags(file, { usePath = true, namespaces = {} } = {}) {
+  const names = { group: 'group', tag: 'tag', ...namespaces }
+  const { dir, name } = splitPath(redisDecode(file))
+  const tags = []
+  if (usePath && dir) tags.push(...extract(dir, names).tags)
+  const fromName = extract(name.replace(/_/g, ' '), names)
+  tags.push(...fromName.tags)
+  const seen = new Set()
+  return {
+    tags: tags.filter((value) => (seen.has(value) ? false : (seen.add(value), true))),
+    title: fromName.rest.replace(/\s+/g, ' ').trim(),
+  }
+}
 
 function splitList(value) {
   return String(value || '').split(/[、,，;；]/).map((part) => part.trim()).filter(Boolean)
-}
-
-// (Comiket 99) [社团 (作者)] 标题 (原作) [中国翻訳] [DL版]
-export function parseFilename(rawName) {
-  let text = String(rawName || '').replace(/\.[^./]+$/, '').trim()
-  const tags = []
-  const event = text.match(/^\(([^()]+)\)\s*/)
-  if (event) {
-    tags.push(`event:${event[1].trim()}`)
-    text = text.slice(event[0].length)
-  }
-  const head = text.match(/^\[([^\]]+)\]\s*/)
-  if (head) {
-    const inner = head[1].trim()
-    const circle = inner.match(/^(.+?)\s*\((.+)\)$/)
-    if (circle) {
-      tags.push(`circle:${circle[1].trim()}`)
-      for (const artist of splitList(circle[2])) tags.push(`artist:${artist}`)
-    } else {
-      for (const artist of splitList(inner)) tags.push(`artist:${artist}`)
-    }
-    text = text.slice(head[0].length)
-  }
-  // 末尾连续的 [..] 是修饰（语言、DL 版…），只认语言
-  const trailing = []
-  for (;;) {
-    const match = text.match(/\s*\[([^\]]+)\]\s*$/)
-    if (!match) break
-    trailing.unshift(match[1])
-    text = text.slice(0, match.index)
-  }
-  for (const label of trailing) {
-    for (const [pattern, language] of LANGUAGES) {
-      if (pattern.test(label)) { tags.push(`language:${language}`); break }
-    }
-  }
-  const parody = text.match(/\(([^()]+)\)\s*$/)
-  if (parody) {
-    const value = parody[1].trim()
-    tags.push(`parody:${/^(オリジナル|original)$/i.test(value) ? 'original' : value}`)
-  }
-  return tags
 }
 
 function xmlValue(xml, name) {
@@ -74,39 +101,62 @@ export function parseComicInfo(xml) {
   return tags
 }
 
+// 原始路径：导入时记下的 sourceFile；迁移来的条目退回 LRR 里的路径；都没有就用标题当文件名（没有目录部分）
+function originalFile(item) {
+  return item?.origin?.sourceFile || item?.origin?.lrr?.file || item?.title || ''
+}
+
 export async function generateTags(ctx) {
   const service = ctx.services?.archiveGallery
   if (!service) throw new Error('这个脚本只能用在压缩包图集条目上')
-  const options = { parseFilename: true, readComicInfo: true, pageCountTag: true, ...(ctx.script?.options || {}) }
+  const options = {
+    parseFilename: true,
+    usePath: true,
+    saveTitle: false,
+    namespaces: { group: 'group', tag: 'tag' },
+    readComicInfo: true,
+    pageCountTag: true,
+    ...(ctx.script?.options || {}),
+  }
   const logs = []
   const tags = []
-  const info = await service.inspect()
-  try {
-    if (options.pageCountTag) {
-      tags.push(`页数: ${info.pageCount}`)
-      await service.setPageCount(info.pageCount)
-      logs.push(`页数 ${info.pageCount}`)
+  let itemPatch
+
+  if (options.parseFilename) {
+    const parsed = parseFilenameTags(originalFile(ctx.item), { usePath: options.usePath !== false, namespaces: options.namespaces })
+    tags.push(...parsed.tags)
+    logs.push(`文件名/目录解析出 ${parsed.tags.length} 个标签`)
+    if (options.saveTitle && parsed.title) {
+      itemPatch = { title: parsed.title }
+      logs.push(`标题改为：${parsed.title}`)
     }
-    if (options.parseFilename) {
-      // 条目的标题就是导入时的原文件名（压缩包 mv 进受管目录后文件名变成 <id>.zip，原名只留在标题里）；
-      // 迁移来的条目标题是 LRR 里的标题。标题和（不是哈希名的）文件名都解析，取并集。
-      const candidates = [ctx.item?.title, /^[0-9a-f]{40}\./i.test(ctx.item?.fileName || '') ? '' : ctx.item?.fileName].filter(Boolean)
-      const parsed = [...new Set(candidates.flatMap((name) => parseFilename(name)))]
-      tags.push(...parsed)
-      logs.push(`文件名解析出 ${parsed.length} 个标签`)
-    }
-    if (options.readComicInfo) {
-      const name = info.allNames.find((candidate) => candidate.split('/').pop().toLowerCase() === 'comicinfo.xml')
-      if (name) {
-        const xml = await info.readText(name)
-        const parsed = xml ? parseComicInfo(xml) : []
-        tags.push(...parsed)
-        logs.push(`ComicInfo.xml 解析出 ${parsed.length} 个标签`)
-      }
-    }
-  } finally {
-    await info.close()
   }
+
+  // 页数和 ComicInfo 才需要打开压缩包；都关掉时只做字符串处理，不碰磁盘
+  let pageCount
+  if (options.pageCountTag || options.readComicInfo) {
+    const info = await service.inspect()
+    try {
+      pageCount = info.pageCount
+      if (options.pageCountTag) {
+        tags.push(`页数: ${info.pageCount}`)
+        await service.setPageCount(info.pageCount)
+        logs.push(`页数 ${info.pageCount}`)
+      }
+      if (options.readComicInfo) {
+        const name = info.allNames.find((candidate) => candidate.split('/').pop().toLowerCase() === 'comicinfo.xml')
+        if (name) {
+          const xml = await info.readText(name)
+          const parsed = xml ? parseComicInfo(xml) : []
+          tags.push(...parsed)
+          logs.push(`ComicInfo.xml 解析出 ${parsed.length} 个标签`)
+        }
+      }
+    } finally {
+      await info.close()
+    }
+  }
+
   const seen = new Set()
   const itemTags = tags.filter((tag) => {
     const key = tag.toLowerCase()
@@ -114,5 +164,5 @@ export async function generateTags(ctx) {
     seen.add(key)
     return true
   })
-  return { itemTags, logs, details: { pageCount: info.pageCount, tags: itemTags.length } }
+  return { itemTags, ...(itemPatch ? { itemPatch } : {}), logs, details: { pageCount, tags: itemTags.length } }
 }

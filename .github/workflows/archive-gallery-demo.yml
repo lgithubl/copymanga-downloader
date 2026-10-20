@@ -184,7 +184,8 @@ jobs:
           set -e
           docker rm -f web-test
           mkdir -p "$RUNNER_TEMP/data" "$RUNNER_TEMP/input"
-          # /input 里放几个待导入的新 zip：在页面里选「压缩包图集」方案、来源路径填 /input 就能试 mv 导入
+          # /input 里放几个待导入的新 zip（含带 [..] 的目录名）：在页面里选「压缩包图集」方案、来源路径填 /input 就能试 mv 导入；
+          # 标签脚本会按 ARegexParse 规则解析目录 + 文件名
           python3 - "$RUNNER_TEMP/input" <<'PY'
           import os, struct, sys, zipfile, zlib
           def png(w, h, c):
@@ -194,7 +195,7 @@ jobs:
                   return struct.pack('>I', len(d)) + b + struct.pack('>I', zlib.crc32(b) & 0xffffffff)
               return b'\x89PNG\r\n\x1a\n' + ch(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + ch(b'IDAT', zlib.compress(raw)) + ch(b'IEND', b'')
           base = sys.argv[1]
-          names = ['(Demo 1) [示例社团 (示例作者)] 新导入的一本 (示例原作) [中国翻訳].zip', '另一本 普通文件名.zip', 'sub/子目录里的.zip']
+          names = ['(Demo 1) [示例社团 (示例作者)] 新导入的一本 (示例原作) [中国翻訳].zip', '另一本 普通文件名.zip', '[演示目录作者]/子目录里的.zip']
           for i, name in enumerate(names):
               path = os.path.join(base, name)
               os.makedirs(os.path.dirname(path), exist_ok=True)

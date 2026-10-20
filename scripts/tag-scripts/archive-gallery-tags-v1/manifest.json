@@ -1,8 +1,8 @@
 {
   "id": "archive-gallery-tags-v1",
   "name": "压缩包图集标签 v1",
-  "version": "1.0.0",
-  "description": "不解压，读压缩包的目录生成标签：页数（页数: N，同时回写条目页数）、按文件名约定 (活动) [社团 (作者)] 标题 (原作) [语言] 解析出 event / circle / artist / parody / language，以及读取包内 ComicInfo.xml（Writer、Penciller、Series、Genre、Tags、LanguageISO）。每一项都可以在选项里关掉。",
+  "version": "2.0.0",
+  "description": "按自定义 LANraragi 插件 ARegexParse 的规则，从导入时的原始路径（目录 + 文件名）生成标签：每个 [X (Y)] → group:X + tag:Y，其它 [..] 和所有 (..) → tag:内容，去重；saveTitle 可把去掉括号后的文件名当标题。group / tag 这两个名字可在 namespaces 里改。另有页数标签（页数: N，同时回写条目页数）和包内 ComicInfo.xml。迁移来的条目标签直接来自 Redis，一般不需要跑这个脚本；页数和 ComicInfo 都关掉时不会打开压缩包。",
   "scope": ["item"],
   "libraryTypes": ["archive"],
   "exclusiveTagGroups": ["页数"],
@@ -10,6 +10,9 @@
   "main": "main.js",
   "options": {
     "parseFilename": true,
+    "usePath": true,
+    "saveTitle": false,
+    "namespaces": { "group": "group", "tag": "tag" },
     "readComicInfo": true,
     "pageCountTag": true,
     "scriptTimeoutMs": 120000
