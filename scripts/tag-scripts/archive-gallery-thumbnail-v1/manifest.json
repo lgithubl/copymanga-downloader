@@ -1,0 +1,15 @@
+{
+  "id": "archive-gallery-thumbnail-v1",
+  "name": "压缩包图集缩略图 v1",
+  "version": "1.0.0",
+  "description": "从压缩包里取第一张图生成封面缩略图：只读 zip 的目录和这一张图，不解压整个包。封面已存在时跳过（迁移带来的 LANraragi 封面不会被覆盖），force 选项强制重新生成。",
+  "scope": ["item"],
+  "libraryTypes": ["archive"],
+  "exclusiveTagGroups": ["压缩包封面"],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "force": false,
+    "scriptTimeoutMs": 120000
+  }
+}

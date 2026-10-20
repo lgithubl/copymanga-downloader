@@ -1,0 +1,234 @@
+// LANraragi → 压缩包图集 迁移。数据来源是 LANraragi 的 Redis db0（每个档案一个 hash，key 是档案 ID）：
+//   name / title / tags(逗号分隔) / file(LRR 容器里的绝对路径) / pagecount / progress / lastreadtime / isnew / arcsize
+// zip 本身只读挂载，不动它：条目 json 里记原路径（zip.external = true）。
+// 可以反复运行：条目 id 就是 LRR 的档案 ID；元数据 json 是「提交点」——一个条目先写标签库、复制封面，
+// 最后才原子地写 json。崩溃后要么 json 在（整条完成），要么不在（下次整条重做）。
+//   skip（默认）：json 已存在就跳过；overwrite：用 LRR 里的内容重新生成并覆盖。
+
+import { stat } from 'node:fs/promises'
+import path from 'node:path'
+import { computeArchiveId, LRR_INIT_PROFILE } from './types/archive-gallery.mjs'
+import { pairsToObject, RespClient } from './resp-client.mjs'
+import { extensionOf } from './zip-reader.mjs'
+
+const ARCHIVE_ID = /^[0-9a-f]{40}$/
+const SAMPLE_VERIFY = 200
+
+function isValidUtf8(buf) {
+  return Buffer.compare(Buffer.from(buf.toString('utf8'), 'utf8'), buf) === 0
+}
+
+// LRR 的 redis_decode：UTF-8 解两次（有些数据被双重编码过）。每次只在合法时才采用。
+export function redisDecode(value) {
+  if (value === null || value === undefined) return ''
+  let text = Buffer.isBuffer(value) ? (isValidUtf8(value) ? value.toString('utf8') : value.toString('latin1')) : String(value)
+  if ([...text].every((ch) => ch.codePointAt(0) <= 255) && /[\u0080-ÿ]/.test(text)) {
+    const bytes = Buffer.from(text, 'latin1')
+    if (isValidUtf8(bytes)) text = bytes.toString('utf8')
+  }
+  return text.normalize('NFC')
+}
+
+export function parseLrrTags(value) {
+  const seen = new Set()
+  const tags = []
+  for (const part of String(value || '').split(/,\s?/)) {
+    const tag = part.trim()
+    if (!tag || seen.has(tag.toLowerCase())) continue
+    seen.add(tag.toLowerCase())
+    tags.push(tag)
+  }
+  return tags
+}
+
+function mapPath(file, from, to) {
+  const source = String(file || '')
+  const prefix = String(from || '').replace(/\/+$/, '')
+  if (!prefix || !(source === prefix || source.startsWith(`${prefix}/`))) return null
+  return path.join(to, source.slice(prefix.length))
+}
+
+function pushExample(list, value, limit = 20) {
+  if (list.length < limit) list.push(value)
+}
+
+export async function runLrrMigration({
+  handler,
+  config,
+  options = {},
+  beforeWrite = null,
+  onProgress = null,
+  shouldStop = () => false,
+}) {
+  const { dryRun = false, overwrite = false, concurrency = 16 } = options
+  const internals = handler.internals
+  const report = {
+    dryRun,
+    overwrite,
+    startedAt: new Date().toISOString(),
+    redisKeys: 0,
+    archives: 0,
+    imported: 0,
+    skippedExisting: 0,
+    skippedExtension: {},
+    missingFile: 0,
+    pathMismatch: 0,
+    noTitle: 0,
+    noTags: 0,
+    coverCopied: 0,
+    noCover: 0,
+    failed: 0,
+    totalTags: 0,
+    examples: { missingFile: [], pathMismatch: [], noCover: [], failed: [], skippedExtension: [] },
+    idCheck: { sampled: 0, mismatched: 0, mismatches: [] },
+    cancelled: false,
+  }
+  const client = await RespClient.connect(config.lrrRedisUrl)
+  const sampleKeep = []   // 蓄水池抽样：之后校验 id 算法
+  let sampleSeen = 0
+  try {
+    report.redisKeys = Number(await client.command('DBSIZE')) || 0
+    onProgress?.({ ...report })
+    let cursor = '0'
+    do {
+      if (shouldStop()) { report.cancelled = true; break }
+      const reply = await client.command('SCAN', cursor, 'COUNT', 2000)
+      cursor = reply[0].toString('utf8')
+      const keys = reply[1].map((key) => key.toString('utf8')).filter((key) => ARCHIVE_ID.test(key))
+      if (!keys.length) continue
+      const hashes = await client.pipeline(keys.map((key) => ['HGETALL', key]))
+      const prepared = []
+      await mapPool(keys.map((key, index) => ({ key, hash: pairsToObject(hashes[index]) })), concurrency, async ({ key, hash }) => {
+        report.archives += 1
+        try {
+          const rawFile = hash.file ? hash.file.toString('utf8') : ''
+          const ext = extensionOf(rawFile)
+          if (ext !== 'zip' && ext !== 'cbz') {
+            report.skippedExtension[ext || '(无)'] = (report.skippedExtension[ext || '(无)'] || 0) + 1
+            pushExample(report.examples.skippedExtension, rawFile)
+            return
+          }
+          const zipPath = mapPath(rawFile, config.lrrPathFrom, config.lrrContentDir)
+          if (!zipPath) {
+            report.pathMismatch += 1
+            pushExample(report.examples.pathMismatch, rawFile)
+            return
+          }
+          let info
+          try {
+            info = await stat(zipPath)
+          } catch {
+            report.missingFile += 1
+            pushExample(report.examples.missingFile, zipPath)
+            return
+          }
+          if (!overwrite && await handler.internals.itemExists(key)) {
+            report.skippedExisting += 1
+            return
+          }
+          const name = redisDecode(hash.name)
+          const title = redisDecode(hash.title).trim() || name
+          if (!title) report.noTitle += 1
+          const tags = parseLrrTags(redisDecode(hash.tags))
+          if (!tags.length) report.noTags += 1
+          const dateAdded = Number((tags.find((tag) => tag.toLowerCase().startsWith('date_added:')) || '').split(':')[1])
+          const createdAt = new Date(Number.isFinite(dateAdded) && dateAdded > 0 ? dateAdded * 1000 : info.mtimeMs).toISOString()
+          const thumb = path.join(config.lrrThumbDir, key.slice(0, 2), `${key}.jpg`)
+          const hasThumb = await stat(thumb).then(() => true, () => false)
+          if (!hasThumb) {
+            report.noCover += 1
+            pushExample(report.examples.noCover, key)
+          }
+          const num = (field) => Number(hash[field]?.toString('utf8')) || 0
+          const item = internals.buildItem({
+            itemId: key,
+            title: title || key,
+            tags,
+            zipPath,
+            external: true,
+            size: info.size,
+            mtimeMs: Math.floor(info.mtimeMs),
+            pageCount: num('pagecount'),
+            sourceProfile: LRR_INIT_PROFILE,
+            origin: {
+              lrr: {
+                id: key,
+                name,
+                file: rawFile,
+                isnew: hash.isnew ? hash.isnew.toString('utf8') : '',
+                progress: num('progress'),
+                pagecount: num('pagecount'),
+                lastreadtime: num('lastreadtime'),
+                arcsize: num('arcsize'),
+              },
+            },
+            createdAt,
+            cover: hasThumb ? internals.thumbnailUrl(key) : '',
+          })
+          prepared.push({ item, thumb: hasThumb ? thumb : '' })
+          report.totalTags += tags.length
+          sampleSeen += 1
+          if (sampleKeep.length < SAMPLE_VERIFY) sampleKeep.push({ key, zipPath })
+          else {
+            const slot = Math.floor(Math.random() * sampleSeen)
+            if (slot < SAMPLE_VERIFY) sampleKeep[slot] = { key, zipPath }
+          }
+        } catch (error) {
+          report.failed += 1
+          pushExample(report.examples.failed, `${key}: ${error.message}`)
+        }
+      })
+      if (!dryRun && prepared.length) {
+        // 提交顺序：标签库（可重复写）→ 封面 → 最后写 json（提交点）
+        await beforeWrite?.(prepared.map((entry) => entry.item))
+        await mapPool(prepared, concurrency, async ({ item, thumb }) => {
+          try {
+            if (thumb) {
+              await internals.copyCoverFile(item.itemId, thumb)
+              report.coverCopied += 1
+            }
+            await internals.writeItem(item)
+            report.imported += 1
+          } catch (error) {
+            report.failed += 1
+            pushExample(report.examples.failed, `${item.itemId}: ${error.message}`)
+          }
+        })
+      } else if (dryRun) {
+        report.imported += prepared.length   // 试运行里表示「将会导入」
+      }
+      onProgress?.({ ...report })
+    } while (cursor !== '0')
+  } finally {
+    client.close()
+  }
+  // 抽样校验 id：全量校验要读约 250GB，抽样足够确认算法一致
+  for (const { key, zipPath } of sampleKeep) {
+    try {
+      const actual = await computeArchiveId(zipPath)
+      report.idCheck.sampled += 1
+      if (actual !== key) {
+        report.idCheck.mismatched += 1
+        pushExample(report.idCheck.mismatches, `${key} ≠ ${actual}`)
+      }
+    } catch (error) {
+      report.idCheck.sampled += 1
+      report.idCheck.mismatched += 1
+      pushExample(report.idCheck.mismatches, `${key}: ${error.message}`)
+    }
+  }
+  report.finishedAt = new Date().toISOString()
+  onProgress?.({ ...report })
+  return report
+}
+
+async function mapPool(list, concurrency, work) {
+  let next = 0
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, list.length)) }, async () => {
+    while (next < list.length) {
+      const index = next++
+      await work(list[index], index)
+    }
+  })
+  await Promise.all(workers)
+}

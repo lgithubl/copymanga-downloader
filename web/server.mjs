@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { open, readFile, readdir, stat, writeFile, mkdir, rename, rm, mkdtemp } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
+import readline from 'node:readline'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import os from 'node:os'
@@ -12,7 +13,9 @@ import { promisify } from 'node:util'
 import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems } from './library/registry.mjs'
 import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
-import { initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
+import { ARCHIVE_PROFILE, ARCHIVE_TYPE, createArchiveGalleryHandler, LRR_INIT_PROFILE } from './library/types/archive-gallery.mjs'
+import { runLrrMigration } from './library/archive-migration.mjs'
+import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
 import { parseReplacements, toSpokenText } from './library/epub-tts-text.mjs'
@@ -65,10 +68,6 @@ const SERIES_TAG_PREFIX = normalizeTagName('系列:')
 const SERIES_PRIORITY_TAG_PREFIX = normalizeTagName('系列priority:')
 // 默认脚本列表里自带 builtin-thumbnails 的导入方案，导入后不再自动排一次缩略图
 const SELF_THUMBNAIL_IMPORT_PROFILES = new Set(['rj-media', 'monthly-ani'])
-// 超过这个条目数，JSON.stringify 的产出会逼近 V8 的 512MB 字符串上限，
-// 届时重建是直接抛 Invalid string length，而不是变慢。
-const LIBRARY_INDEX_SIZE_WARN = 250000
-
 const libraryIndexState = {
   items: [],
   seriesMap: new Map(),
@@ -83,6 +82,8 @@ const libraryIndexState = {
   sourceCount: 0,
   itemCount: 0,
 }
+// 排序结果缓存：每次请求都对全量条目排序，50 万条时太慢。按排序方式缓存全量有序数组，索引一换就清空。
+const libraryIndexSortedCache = new Map()
 let libraryIndexRebuildPromise = null
 let libraryIndexRebuildRequested = false
 let tagScriptsCache = null
@@ -314,6 +315,15 @@ function defaultConfig() {
     // 的行为；Ctrl/⌘ 点击不受这个限制，永远开新标签页。
     // 旧版本是一个总开关 mediaOpenInNewTab（布尔），读到旧配置时开着就等于全部类型都开。
     mediaOpenInNewTabKinds: [],
+    // 压缩包图集：新导入的压缩包 mv 到这里（分片）；解压缓存放这里（淘汰由部署方自己管）。
+    archiveManagedBasePath: path.join(DATA_DIR, 'library', 'archive'),
+    archiveCacheDir: path.join(DATA_DIR, 'cache', 'archive-gallery'),
+    // 「初始化压缩包图集（待废弃）」迁移 LANraragi 用：临时 Redis 地址、只读挂载进来的 LRR 内容/缩略图目录，
+    // 以及 LRR 里 file 字段的路径前缀（容器内路径）——迁移时把这个前缀换成 lrrContentDir。
+    lrrRedisUrl: 'redis://lrr-redis:6379',
+    lrrContentDir: path.join(DATA_DIR, 'library', 'lrr', 'content'),
+    lrrThumbDir: path.join(DATA_DIR, 'library', 'lrr', 'thumb'),
+    lrrPathFrom: '/home/koyomi/lanraragi/content',
     // 新标签页里点「返回」（含沉浸里的返回）：直接关闭这个标签页，而不是回到媒体库页。
     mediaCloseNewTabOnBack: true,
     // AniDB 标题 dump 的存放目录和下载地址。anidb-v1 脚本从这个目录读 dump，
@@ -394,6 +404,12 @@ function normalizeConfig(value) {
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     mediaOpenInNewTabKinds: normalizeNewTabKinds(value),
+    archiveManagedBasePath: String(value?.archiveManagedBasePath || defaults.archiveManagedBasePath).trim() || defaults.archiveManagedBasePath,
+    archiveCacheDir: String(value?.archiveCacheDir || defaults.archiveCacheDir).trim() || defaults.archiveCacheDir,
+    lrrRedisUrl: String(value?.lrrRedisUrl || defaults.lrrRedisUrl).trim() || defaults.lrrRedisUrl,
+    lrrContentDir: String(value?.lrrContentDir || defaults.lrrContentDir).trim() || defaults.lrrContentDir,
+    lrrThumbDir: String(value?.lrrThumbDir || defaults.lrrThumbDir).trim() || defaults.lrrThumbDir,
+    lrrPathFrom: String(value?.lrrPathFrom || defaults.lrrPathFrom).trim() || defaults.lrrPathFrom,
     mediaCloseNewTabOnBack: Boolean(value?.mediaCloseNewTabOnBack ?? defaults.mediaCloseNewTabOnBack),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
     anidbDumpUrl: String(value?.anidbDumpUrl || defaults.anidbDumpUrl).trim() || defaults.anidbDumpUrl,
@@ -2572,28 +2588,101 @@ function libraryIndexPath(version = 0) {
   return `${LIBRARY_INDEX_BASE}.${version}.json`
 }
 
+// 缓存是 NDJSON（一行一条）：条目数上来后整体 JSON.stringify 会撞上 V8 单个字符串约 512MB 的上限，
+// 而这和机器内存多大无关。逐行写、逐行读，内存里只有解析好的对象。
+// 第一行是头（schema 4），之后每行 {"k":"i"|"s"|"w","v":...}：条目 / 系列 / 合并候选分组。
+const LIBRARY_INDEX_SCHEMA = 4
+
+function libraryIndexNdjsonPath(version = 0) {
+  return `${LIBRARY_INDEX_BASE}.${version}.ndjson`
+}
+
+async function readLibraryIndexNdjson(filePath) {
+  const stream = createReadStream(filePath, { encoding: 'utf8' })
+  const lines = readline.createInterface({ input: stream, crlfDelay: Infinity })
+  let header = null
+  const items = []
+  const series = []
+  const workGroups = []
+  try {
+    for await (const line of lines) {
+      if (!line) continue
+      const row = JSON.parse(line)
+      if (!header) {
+        if (row?.schema !== LIBRARY_INDEX_SCHEMA) throw new Error('unsupported library index schema')
+        header = row
+      } else if (row.k === 'i') items.push(row.v)
+      else if (row.k === 's') series.push(row.v)
+      else if (row.k === 'w') workGroups.push(row.v)
+    }
+  } finally {
+    lines.close()
+    stream.destroy()
+  }
+  if (!header) throw new Error('empty library index')
+  if (items.length !== Number(header.itemCount)) throw new Error('library index is truncated')
+  return { ...header, items, series, workGroups }
+}
+
+async function writeLibraryIndexNdjson(filePath, payload) {
+  const stream = createWriteStream(filePath, { encoding: 'utf8' })
+  let failure = null
+  stream.on('error', (error) => { failure = error })
+  const write = async (value) => {
+    if (failure) throw failure
+    if (!stream.write(`${JSON.stringify(value)}\n`)) {
+      await new Promise((resolve) => stream.once('drain', resolve))
+    }
+  }
+  const { items, series, workGroups, ...header } = payload
+  await write({ ...header, schema: LIBRARY_INDEX_SCHEMA })
+  for (const item of items) await write({ k: 'i', v: item })
+  for (const entry of series) await write({ k: 's', v: entry })
+  for (const group of workGroups) await write({ k: 'w', v: group })
+  await new Promise((resolve, reject) => {
+    stream.once('error', reject)
+    stream.end(resolve)
+  })
+  if (failure) throw failure
+}
+
+function applyLibraryIndexPayload(payload, filePath) {
+  libraryIndexState.items = payload.items.map(normalizeLibraryIndexItem)
+  libraryIndexSortedCache.clear()
+  libraryIndexState.seriesMap = Array.isArray(payload.series) && payload.series.length
+    ? new Map(payload.series.map((entry) => [entry.key, entry]))
+    : buildSeriesMap(libraryIndexState.items)
+  // 旧版缓存没有 workGroups 字段，现算一次，不强迫用户先重建
+  libraryIndexState.workGroups = Array.isArray(payload.workGroups)
+    ? payload.workGroups
+    : buildWorkGroups(libraryIndexState.items)
+  libraryIndexState.builtAt = String(payload.builtAt || '')
+  libraryIndexState.loadedFrom = filePath
+  libraryIndexState.status = 'ready'
+  libraryIndexState.dirty = false
+  libraryIndexState.error = ''
+  libraryIndexState.sourceCount = Number(payload.sourceCount || payload.items.length || 0)
+  libraryIndexState.itemCount = libraryIndexState.items.length
+}
+
 async function loadLibraryIndexCache() {
   await mkdir(LIBRARY_INDEX_DIR, { recursive: true })
+  for (const version of [0, 1, 2]) {
+    const filePath = libraryIndexNdjsonPath(version)
+    try {
+      applyLibraryIndexPayload(await readLibraryIndexNdjson(filePath), filePath)
+      return libraryIndexPublicStatus()
+    } catch {
+      // Try the next cache generation.
+    }
+  }
+  // 老版本（schema 3，整体一个 JSON）的缓存：读得进就用，下次重建自然换成 NDJSON
   for (const version of [0, 1, 2]) {
     const filePath = libraryIndexPath(version)
     try {
       const payload = JSON.parse(await readFile(filePath, 'utf8'))
       if (payload?.schema !== 3 || !Array.isArray(payload.items)) continue
-      libraryIndexState.items = payload.items.map(normalizeLibraryIndexItem)
-      libraryIndexState.seriesMap = Array.isArray(payload.series) && payload.series.length
-        ? new Map(payload.series.map((entry) => [entry.key, entry]))
-        : buildSeriesMap(libraryIndexState.items)
-      // 旧版缓存没有 workGroups 字段，现算一次，不强迫用户先重建
-      libraryIndexState.workGroups = Array.isArray(payload.workGroups)
-        ? payload.workGroups
-        : buildWorkGroups(libraryIndexState.items)
-      libraryIndexState.builtAt = String(payload.builtAt || '')
-      libraryIndexState.loadedFrom = filePath
-      libraryIndexState.status = 'ready'
-      libraryIndexState.dirty = false
-      libraryIndexState.error = ''
-      libraryIndexState.sourceCount = Number(payload.sourceCount || payload.items.length || 0)
-      libraryIndexState.itemCount = libraryIndexState.items.length
+      applyLibraryIndexPayload(payload, filePath)
       return libraryIndexPublicStatus()
     } catch {
       // Try the next cache generation.
@@ -2635,11 +2724,7 @@ async function rebuildLibraryIndex() {
     }
     const summaries = items.map(libraryIndexItemFromMetadata).sort(compareLibraryIndexItems)
     const seriesMap = buildSeriesMap(summaries)
-    if (summaries.length >= LIBRARY_INDEX_SIZE_WARN) {
-      console.warn(`library index has ${summaries.length} items; approaching the V8 512MB string limit for JSON.stringify — consider sharding the cache`)
-    }
     const payload = {
-      schema: 3,
       builtAt: new Date().toISOString(),
       startedAt,
       sourceCount: items.length,
@@ -2648,11 +2733,12 @@ async function rebuildLibraryIndex() {
       series: [...seriesMap.values()],
       workGroups: buildWorkGroups(summaries),
     }
-    await writeLibraryIndexPayload(payload, buildId)
+    await writeLibraryIndexPayload(payload)
     if (libraryIndexState.buildId !== buildId) {
       return { ...libraryIndexPublicStatus(), status: 'cancelled' }
     }
     libraryIndexState.items = summaries
+    libraryIndexSortedCache.clear()
     libraryIndexState.seriesMap = seriesMap
     libraryIndexState.workGroups = payload.workGroups
     libraryIndexState.builtAt = payload.builtAt
@@ -2697,21 +2783,15 @@ async function runLibraryIndexRebuildLoop() {
   }
 }
 
-async function writeLibraryIndexPayload(payload, buildId) {
+async function writeLibraryIndexPayload(payload) {
   await mkdir(LIBRARY_INDEX_DIR, { recursive: true })
-  const nextPath = `${LIBRARY_INDEX_BASE}.next.json`
-  await atomicWriteJson(nextPath, payload, {
-    jobId: `library-index-${buildId}`,
-    compact: true,
-    verify: (value) => {
-      if (value?.schema !== 3 || !Array.isArray(value.items)) throw new Error('library index cache verify failed')
-    },
-  })
+  const nextPath = `${LIBRARY_INDEX_BASE}.next.ndjson`
+  await writeLibraryIndexNdjson(nextPath, payload)
   for (const [from, to] of [[1, 2], [0, 1]]) {
-    const source = libraryIndexPath(from)
-    if (await pathExists(source)) await renameOrMove(source, libraryIndexPath(to))
+    const source = libraryIndexNdjsonPath(from)
+    if (await pathExists(source)) await renameOrMove(source, libraryIndexNdjsonPath(to))
   }
-  await renameOrMove(nextPath, libraryIndexPath(0))
+  await renameOrMove(nextPath, libraryIndexNdjsonPath(0))
 }
 
 // 没有 系列: tag 的条目按「单成员系列」处理，筛选和展示就不必写特例。
@@ -3025,7 +3105,7 @@ function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfil
   const normalizedSourceProfile = String(sourceProfile || '').trim()
   const normalizedSeriesKey = String(seriesKey || '').trim()
   const tagTokens = parseLibraryIndexTagQuery(tag)
-  let items = libraryIndexState.items.filter((item) => normalizedType === 'all' || item.type === normalizedType)
+  let items = sortedLibraryIndexItems(sort).filter((item) => normalizedType === 'all' || item.type === normalizedType)
   if (normalizedSourceProfile) items = items.filter((item) => item.sourceProfile === normalizedSourceProfile)
   if (normalizedSeriesKey) items = items.filter((item) => seriesKeyOf(item) === normalizedSeriesKey)
   if (normalizedKeyword) items = items.filter((item) => item.searchText.includes(normalizedKeyword))
@@ -3036,7 +3116,7 @@ function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfil
   if (tagTokens.length) {
     items = items.filter((item) => libraryIndexTagTokensMatch(item, tagTokens))
   }
-  items = sortLibraryIndexItems(items, sort)
+  if (String(sort || '') === 'random') items = sortLibraryIndexItems(items, 'random')
   const safeLimit = Math.max(0, Math.min(1000, Math.floor(Number(limit) || 50)))
   const safePage = Math.max(1, Math.floor(Number(page) || 1))
   const total = items.length
@@ -3140,14 +3220,31 @@ function mergeGroupOfItem(item) {
   return group ? { key, count: group.count } : null
 }
 
+const libraryNumericCollator = new Intl.Collator(undefined, { numeric: true })
+
+// 全量有序数组按排序方式缓存（random 不缓存）；Array.sort 是稳定的，先排后筛和先筛后排结果一致
+function sortedLibraryIndexItems(sort) {
+  const mode = String(sort || 'imported_desc')
+  if (mode === 'random') return libraryIndexState.items
+  let sorted = libraryIndexSortedCache.get(mode)
+  if (!sorted) {
+    sorted = sortLibraryIndexItems(libraryIndexState.items, mode)
+    libraryIndexSortedCache.set(mode, sorted)
+  }
+  return sorted
+}
+
 function sortLibraryIndexItems(items, sort) {
   const list = [...items]
   const mode = String(sort || 'imported_desc')
   if (mode === 'random') return shuffleLibraryIndexItems(list)
-  const byTitle = (a, b) => String(a.sortTitle || '').localeCompare(String(b.sortTitle || ''), undefined, { numeric: true })
-  const byImported = (a, b) => String(a.sortImportedAt || '').localeCompare(String(b.sortImportedAt || ''))
-  const byPublished = (a, b) => String(a.sortPublishedAt || '').localeCompare(String(b.sortPublishedAt || ''))
-  const byProductId = (a, b) => String(a.sortProductId || '').localeCompare(String(b.sortProductId || ''), undefined, { numeric: true })
+  // 复用同一个 Collator：每次比较都 localeCompare(..., {numeric:true}) 会反复建 collator，50 万条时慢几个数量级。
+  // 时间是 ISO 字符串，直接按字典序比，结果和 localeCompare 一致。
+  const byTitle = (a, b) => libraryNumericCollator.compare(String(a.sortTitle || ''), String(b.sortTitle || ''))
+  const byIso = (x, y) => (x < y ? -1 : x > y ? 1 : 0)
+  const byImported = (a, b) => byIso(String(a.sortImportedAt || ''), String(b.sortImportedAt || ''))
+  const byPublished = (a, b) => byIso(String(a.sortPublishedAt || ''), String(b.sortPublishedAt || ''))
+  const byProductId = (a, b) => libraryNumericCollator.compare(String(a.sortProductId || ''), String(b.sortProductId || ''))
   const byUnitCount = (a, b) => Number(a.unitCount || 0) - Number(b.unitCount || 0)
   const comparators = {
     imported_asc: byImported,
@@ -3736,7 +3833,15 @@ function enqueueMetadataActions({ type, itemId, actionIds = [], unitIds = [], re
   return job
 }
 
+// 批量导入 / 迁移期间不触发索引重建（每导入一批就重建一次，几十万条时会连续重建下去），结束后只触发一次。
+let libraryIndexRefreshSuspended = 0
+let libraryIndexRefreshDeferred = false
+
 function enqueueLibraryIndexRefreshTrigger({ reason = 'import', delaySeconds = 3 } = {}) {
+  if (libraryIndexRefreshSuspended > 0) {
+    libraryIndexRefreshDeferred = true
+    return null
+  }
   const existingId = tagQueue.find((id) => {
     const queued = tagJobs.get(id)
     return queued?.type === 'library-index-refresh' && queued.status === 'queued'
@@ -3764,6 +3869,122 @@ function enqueueLibraryIndexRefreshTrigger({ reason = 'import', delaySeconds = 3
   emit('tagJob', publicTagJob(job))
   scheduleTagWorker()
   return job
+}
+
+
+// ---------- 压缩包图集：后台导入 / LANraragi 迁移任务 ----------
+// 同一时间只跑一个：导入和迁移都是整库级的长任务，并发跑只会互相抢磁盘和标签库的写锁。
+const ARCHIVE_REPORT_PATH = path.join(DATA_DIR, 'cache', 'archive-migration', 'last-report.json')
+const ARCHIVE_SCRIPT_ENQUEUE_LIMIT = 20000
+let archiveJob = null
+
+function publicArchiveJob(job) {
+  if (!job) return null
+  const { cancel, ...rest } = job
+  return { ...rest, cancelRequested: Boolean(cancel) }
+}
+
+function truthyField(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase())
+}
+
+function startArchiveJob(fields = {}) {
+  if (archiveJob?.status === 'running') throw new Error('已有一个压缩包图集导入/迁移任务在运行，请等它结束或先取消')
+  const profile = String(fields.importProfile || fields.mediaImportProfile || ARCHIVE_PROFILE).trim()
+  const migration = profile === LRR_INIT_PROFILE
+  const job = {
+    id: `archive-${Date.now()}`,
+    kind: migration ? 'lrr-init' : 'import',
+    profile,
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    finishedAt: '',
+    options: migration
+      ? { dryRun: truthyField(fields.dryRun), overwrite: truthyField(fields.overwrite) }
+      : { sourcePath: String(fields.sourcePath || fields.path || '').trim() },
+    progress: null,
+    report: null,
+    error: '',
+    cancel: false,
+  }
+  archiveJob = job
+  libraryIndexRefreshSuspended += 1
+  const actionIds = importTagScriptIds(fields)
+  let enqueued = 0
+  const afterBatch = async (items) => {
+    await bulkSetItemTags(items.map((item) => ({ type: item.type, itemId: item.itemId, tags: item.tags })))
+    if (!migration && actionIds.length) {
+      for (const item of items) {
+        if (enqueued >= ARCHIVE_SCRIPT_ENQUEUE_LIMIT) break
+        enqueueMetadataActions({ type: ARCHIVE_TYPE, itemId: item.itemId, actionIds, reason: 'import' })
+        enqueued += 1
+      }
+    }
+  }
+  ;(async () => {
+    try {
+      if (migration) {
+        const report = await runLrrMigration({
+          handler: archiveHandler,
+          config,
+          options: job.options,
+          beforeWrite: afterBatch,
+          onProgress: (progress) => { job.progress = progress },
+          shouldStop: () => job.cancel,
+        })
+        job.report = report
+        await atomicWriteJson(ARCHIVE_REPORT_PATH, report).catch(() => {})
+      } else {
+        job.report = await archiveHandler.importFromSource({
+          sourcePath: job.options.sourcePath,
+          tags: parseTags(fields.tags || ''),
+          profile,
+          onItems: afterBatch,
+          onProgress: (progress) => { job.progress = progress },
+          shouldStop: () => job.cancel,
+        })
+      }
+      job.status = job.cancel ? 'cancelled' : 'completed'
+    } catch (error) {
+      job.status = 'failed'
+      job.error = String(error?.message || error)
+    } finally {
+      job.finishedAt = new Date().toISOString()
+      libraryIndexRefreshSuspended = Math.max(0, libraryIndexRefreshSuspended - 1)
+      const wrote = !(migration && job.options.dryRun)
+      if (wrote) markLibraryIndexDirty()
+      if (libraryIndexRefreshSuspended === 0 && (wrote || libraryIndexRefreshDeferred)) {
+        libraryIndexRefreshDeferred = false
+        enqueueLibraryIndexRefreshTrigger({ reason: 'import', delaySeconds: 1 })
+      }
+    }
+  })()
+  return publicArchiveJob(job)
+}
+
+async function latestArchiveJob() {
+  if (archiveJob) return publicArchiveJob(archiveJob)
+  try {
+    const report = JSON.parse(await readFile(ARCHIVE_REPORT_PATH, 'utf8'))
+    return { id: 'last-report', kind: 'lrr-init', status: 'completed', startedAt: report.startedAt, finishedAt: report.finishedAt, options: {}, progress: report, report, error: '' }
+  } catch {
+    return null
+  }
+}
+
+function archiveGalleryScriptServices(itemId) {
+  const internals = archiveHandler.internals
+  return {
+    // 只读中央目录和第一张图，生成封面
+    generateCover: (options = {}) => internals.generateCover(itemId, options),
+    // { pageCount, names, allNames, readText(name), close() }：不解压，用完必须 close()
+    inspect: () => internals.inspect(itemId),
+    setPageCount: (count) => internals.updateItem(itemId, (item) => ({
+      ...item,
+      pageCount: Number(count) || 0,
+      mediaUnits: [{ ...item.mediaUnits[0], imageCount: Number(count) || 0 }],
+    })),
+  }
 }
 
 function scheduleTagWorker() {
@@ -3997,7 +4218,10 @@ async function executeTagScript(script, { type, item, units, selectedUnitIds = [
       version: script.version,
       options: script.options || {},
     },
-    services: { epubTts: epubTtsScriptServices({ type, itemId: item?.itemId }) },
+    services: {
+      epubTts: epubTtsScriptServices({ type, itemId: item?.itemId }),
+      archiveGallery: type === ARCHIVE_TYPE ? archiveGalleryScriptServices(item?.itemId) : null,
+    },
     config,
   }
   const timeoutMs = Number.isFinite(Number(script.options?.scriptTimeoutMs)) ? Number(script.options.scriptTimeoutMs) : 60000
@@ -4595,11 +4819,22 @@ async function route(req, res) {
       markLibraryIndexDirty()
       return json(res, 201, item)
     }
+    if (pathname === '/api/archive-gallery/job' && req.method === 'GET') {
+      return json(res, 200, { job: await latestArchiveJob() })
+    }
+    if (pathname === '/api/archive-gallery/job/cancel' && req.method === 'POST') {
+      if (archiveJob?.status === 'running') archiveJob.cancel = true
+      return json(res, 200, { job: publicArchiveJob(archiveJob) })
+    }
     if (pathname === '/api/library/items' && req.method === 'POST') {
       const type = url.searchParams.get('type') || 'epub'
       const handler = libraryHandler(type)
       if (!handler.importItem) return json(res, 400, { error: 'This library type is not importable' })
       const form = await readMultipart(req)
+      // 压缩包图集的路径导入和 LANraragi 迁移是后台任务：几十万条不可能塞进一个 HTTP 请求
+      if (type === ARCHIVE_TYPE && (String(form.fields.importProfile || '') === LRR_INIT_PROFILE || String(form.fields.sourcePath || form.fields.path || '').trim())) {
+        return json(res, 202, { job: startArchiveJob(form.fields) })
+      }
       const files = form.files.filter((item) => item.buffer?.length)
       const file = files.find((item) => item.name === 'file') || files[0]
       const item = await handler.importItem({
@@ -4937,6 +5172,8 @@ async function route(req, res) {
 const epubHandler = createEpubHandler({ dataDir: DATA_DIR, safeSegment, pathExists, moveAside })
 registerLibraryHandler(epubHandler)
 registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config, epubSupport: epubHandler }))
+const archiveHandler = createArchiveGalleryHandler({ type: ARCHIVE_TYPE, dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config })
+registerLibraryHandler(archiveHandler)
 
 // EPUB 朗读分句只在这里做：阅读器返回的 html 已经把每句包成 <span data-tts-index>，
 // 同时带上 sentences（句子文本，下标即 data-tts-index）。前端不再自己切句，

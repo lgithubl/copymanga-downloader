@@ -1,0 +1,17 @@
+{
+  "id": "archive-gallery-tags-v1",
+  "name": "压缩包图集标签 v1",
+  "version": "1.0.0",
+  "description": "不解压，读压缩包的目录生成标签：页数（页数: N，同时回写条目页数）、按文件名约定 (活动) [社团 (作者)] 标题 (原作) [语言] 解析出 event / circle / artist / parody / language，以及读取包内 ComicInfo.xml（Writer、Penciller、Series、Genre、Tags、LanguageISO）。每一项都可以在选项里关掉。",
+  "scope": ["item"],
+  "libraryTypes": ["archive"],
+  "exclusiveTagGroups": ["页数"],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "parseFilename": true,
+    "readComicInfo": true,
+    "pageCountTag": true,
+    "scriptTimeoutMs": 120000
+  }
+}

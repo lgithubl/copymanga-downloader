@@ -179,6 +179,18 @@ const els = {
   mediaImportProfileConfigSave: document.querySelector('#media-import-profile-config-save'),
   mediaImportProfileConfigReset: document.querySelector('#media-import-profile-config-reset'),
   mediaImportSubmit: document.querySelector('#media-import-submit'),
+  archiveJobPanel: document.querySelector('#archive-job-panel'),
+  archiveMigrationOptions: document.querySelector('#archive-migration-options'),
+  archiveMigrationDryRun: document.querySelector('#archive-migration-dry-run'),
+  archiveMigrationOverwrite: document.querySelector('#archive-migration-overwrite'),
+  archiveJobStatus: document.querySelector('#archive-job-status'),
+  archiveJobCancel: document.querySelector('#archive-job-cancel'),
+  configArchiveManagedBasePath: document.querySelector('#config-archive-managed-base-path'),
+  configArchiveCacheDir: document.querySelector('#config-archive-cache-dir'),
+  configLrrRedisUrl: document.querySelector('#config-lrr-redis-url'),
+  configLrrContentDir: document.querySelector('#config-lrr-content-dir'),
+  configLrrThumbDir: document.querySelector('#config-lrr-thumb-dir'),
+  configLrrPathFrom: document.querySelector('#config-lrr-path-from'),
   mediaImportMeta: document.querySelector('#media-import-meta'),
   mediaImportItems: document.querySelector('#media-import-items'),
   mediaReaderTitle: document.querySelector('#media-reader-title'),
@@ -420,13 +432,19 @@ const defaultMediaImportProfiles = {
   'monthly-ani': {
     defaultMetadataActions: ['builtin-subtitles', 'anidb-v1', 'anidb-udp-v1', 'media-info-v1', 'builtin-thumbnails'],
   },
+  // 压缩包图集：封面 + 页数/文件名标签
+  'archive-gallery': {
+    defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
+  },
 }
 const mediaImportTypeInfo = {
+  archive: { label: '压缩包图集', unit: '个压缩包', accept: '.zip,application/zip', source: true },
   // deprecated：旧的 EPUB 库类型导入，只能上传、没有目录来源/导入方案。新导入请用「EPUB 媒体」方案（媒体类型）。
   // 类型本身继续注册，已经导入的合集照常能读。
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false, deprecated: true },
   media: { label: '媒体', unit: '个媒体项', accept: '.zip,.epub,application/epub+zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
 }
+const LRR_INIT_PROFILE_KEY = 'lrr-init'
 const mediaImportProfiles = {
   custom: { label: '自定义', type: 'media', sourcePlaceholder: '/input/album' },
   'rj-media': { label: 'RJ 媒体', type: 'media', sourcePlaceholder: '/input/rj', batch: true },
@@ -443,6 +461,28 @@ const mediaImportProfiles = {
     accept: '.epub,application/epub+zip,.txt,text/plain',
     filesLabel: '文本',
     noDefaultScripts: true,
+  },
+  // 压缩包图集：一个压缩包一个条目（现在只有 zip）。路径导入（目录里递归找 zip，mv 进受管目录）是后台任务；
+  // 也可以直接上传。
+  'archive-gallery': {
+    label: '压缩包图集',
+    type: 'archive',
+    sourcePlaceholder: '/input/zips',
+    accept: '.zip,application/zip',
+    filesLabel: '压缩包',
+    batch: true,
+    archiveJob: true,
+  },
+  // 迁移 LANraragi：读临时 Redis + 只读挂载的内容目录，原地引用 zip；可反复运行。参数都在配置页。
+  [LRR_INIT_PROFILE_KEY]: {
+    label: '初始化压缩包图集（待废弃）',
+    type: 'archive',
+    batch: true,
+    deprecated: true,
+    noSource: true,
+    noDefaultScripts: true,
+    archiveJob: true,
+    migration: true,
   },
   epub: { label: 'EPUB（已废弃）', type: 'epub', sourcePlaceholder: '', deprecated: true },
 }
@@ -1341,6 +1381,12 @@ async function loadConfig() {
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   for (const box of els.configMediaOpenInNewTabKinds) box.checked = (config.mediaOpenInNewTabKinds || []).includes(box.value)
   els.configMediaCloseNewTabOnBack.checked = config.mediaCloseNewTabOnBack !== false
+  els.configArchiveManagedBasePath.value = config.archiveManagedBasePath || ''
+  els.configArchiveCacheDir.value = config.archiveCacheDir || ''
+  els.configLrrRedisUrl.value = config.lrrRedisUrl || ''
+  els.configLrrContentDir.value = config.lrrContentDir || ''
+  els.configLrrThumbDir.value = config.lrrThumbDir || ''
+  els.configLrrPathFrom.value = config.lrrPathFrom || ''
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
   els.configExportDir.value = config.exportDir
   els.configExportDirFmt.value = config.exportDirFmt
@@ -2151,9 +2197,13 @@ function updateMediaImportControls() {
   els.mediaImportFiles.accept = profile.accept || info.accept || ''
   els.mediaImportFilesLabel.firstChild.textContent = `${profile.filesLabel || info.label} 文件`
   els.mediaImportSubmit.textContent = profile.batch ? `批量导入 ${profile.label}` : `导入 ${profile.filesLabel ? profile.label : info.label}`
-  els.mediaImportSourcePath.disabled = !info.source
+  els.mediaImportSourcePath.disabled = !info.source || Boolean(profile.noSource)
   els.mediaImportSourcePath.placeholder = info.source ? (profile.sourcePlaceholder || '/input/album 或 /input/movie.mp4') : 'EPUB 暂不支持路径导入'
-  if (!info.source) els.mediaImportSourcePath.value = ''
+  if (!info.source || profile.noSource) els.mediaImportSourcePath.value = ''
+  els.mediaImportFiles.disabled = Boolean(profile.noSource)
+  els.archiveJobPanel.hidden = !profile.archiveJob
+  els.archiveMigrationOptions.hidden = !profile.migration
+  if (profile.migration) els.mediaImportSubmit.textContent = '开始迁移（先勾选「试运行」看报告）'
   els.mediaImportItem.disabled = Boolean(profile.batch)
   els.mediaImportTitle.disabled = Boolean(profile.batch)
   if (profile.batch) {
@@ -7141,13 +7191,73 @@ els.mediaImportItem.addEventListener('change', () => {
 })
 els.mediaImportTitle.addEventListener('input', updateMediaImportMeta)
 els.mediaImportSourcePath.addEventListener('input', updateMediaImportMeta)
+let archiveJobTimer = null
+function formatArchiveJob(job) {
+  if (!job) return '没有任务'
+  const p = job.report || job.progress || {}
+  const lines = [`${job.kind === 'lrr-init' ? '迁移' : '导入'}任务：${job.status}${job.cancelRequested ? '（已请求取消）' : ''}${job.options?.dryRun ? ' · 试运行' : ''}${job.options?.overwrite ? ' · 覆盖' : ''}`]
+  if (job.error) lines.push(`错误：${job.error}`)
+  if (job.kind === 'lrr-init') {
+    const skippedExt = Object.entries(p.skippedExtension || {}).map(([ext, n]) => `${ext}:${n}`).join(' ') || '无'
+    lines.push(
+      `Redis 键 ${p.redisKeys ?? 0} · 已处理档案 ${p.archives ?? 0}`,
+      `${job.options?.dryRun ? '将导入' : '已导入'} ${p.imported ?? 0} · 已存在跳过 ${p.skippedExisting ?? 0} · 失败 ${p.failed ?? 0}`,
+      `文件缺失 ${p.missingFile ?? 0} · 路径前缀不匹配 ${p.pathMismatch ?? 0} · 非 zip 跳过 ${skippedExt}`,
+      `封面：已复制 ${p.coverCopied ?? 0} · 没有 ${p.noCover ?? 0} · 无标题 ${p.noTitle ?? 0} · 无标签 ${p.noTags ?? 0} · 标签总数 ${p.totalTags ?? 0}`,
+      `ID 抽样校验：${p.idCheck?.sampled ?? 0} 个，不一致 ${p.idCheck?.mismatched ?? 0}`,
+    )
+    for (const [name, list] of Object.entries(p.examples || {})) {
+      if (list?.length) lines.push(`${name} 示例：`, ...list.slice(0, 5).map((entry) => `  ${entry}`))
+    }
+    for (const entry of p.idCheck?.mismatches || []) lines.push(`  ID 不一致：${entry}`)
+  } else {
+    lines.push(`扫描 ${p.scanned ?? 0} · 导入 ${p.imported ?? 0} · 已存在跳过 ${p.skipped ?? 0} · 失败 ${p.failed ?? 0}`)
+    for (const entry of (p.errors || []).slice(0, 5)) lines.push(`  失败：${entry.file}：${entry.error}`)
+  }
+  return lines.join('\n')
+}
+
+async function refreshArchiveJob() {
+  const { job } = await api('/api/archive-gallery/job')
+  els.archiveJobStatus.textContent = formatArchiveJob(job)
+  els.archiveJobCancel.disabled = job?.status !== 'running'
+  return job
+}
+
+function watchArchiveJob() {
+  clearTimeout(archiveJobTimer)
+  const tick = async () => {
+    try {
+      const job = await refreshArchiveJob()
+      if (job?.status === 'running') {
+        archiveJobTimer = setTimeout(tick, 2000)
+      } else {
+        await loadMediaImportItems().catch(() => {})
+        await loadLibraryItems().catch(() => {})
+      }
+    } catch (error) {
+      els.archiveJobStatus.textContent = `读取任务状态失败：${error.message}`
+    }
+  }
+  tick()
+}
+
+els.archiveJobCancel?.addEventListener('click', async () => {
+  try {
+    await api('/api/archive-gallery/job/cancel', { method: 'POST' })
+    await refreshArchiveJob()
+  } catch (error) {
+    alert(error.message)
+  }
+})
+
 els.mediaImportSubmit.addEventListener('click', async () => {
   const type = els.mediaImportType.value || 'epub'
   const info = mediaImportTypeInfo[type] || { label: type, source: false }
   const profile = mediaImportProfiles[els.mediaImportProfile.value] || mediaImportProfiles.custom
   const files = [...(els.mediaImportFiles.files || [])]
   const sourcePath = els.mediaImportSourcePath.value.trim()
-  if (!files.length && (!info.source || !sourcePath)) return alert(`请选择 ${info.label} 文件${info.source ? '或填写来源路径' : ''}`)
+  if (!profile.noSource && !files.length && (!info.source || !sourcePath)) return alert(`请选择 ${info.label} 文件${info.source ? '或填写来源路径' : ''}`)
   if (!profile.batch && !els.mediaImportItem.value && !els.mediaImportTitle.value.trim()) return alert('请输入合集名称')
   try {
     setLoading(els.mediaImportSubmit, true)
@@ -7161,7 +7271,16 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     // 服务端优先用它，只有字段缺失时才退回方案默认。
     if (metadataActionIds.length) form.set('metadataActionIds', metadataActionIds.join(','))
     for (const file of files) form.append('file', file)
+    if (profile.migration) {
+      form.set('dryRun', els.archiveMigrationDryRun.checked ? 'true' : 'false')
+      form.set('overwrite', els.archiveMigrationOverwrite.checked ? 'true' : 'false')
+    }
     const result = await apiForm(`/api/library/items?type=${encodeURIComponent(type)}`, form)
+    // 后台任务（路径导入 / 迁移）：只返回任务，进度在面板里看
+    if (result.job) {
+      watchArchiveJob()
+      return
+    }
     const importedItems = Array.isArray(result.items) ? result.items : [result]
     const item = importedItems[0]
     els.mediaImportFiles.value = ''
@@ -7176,7 +7295,7 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     await loadLibraryItems()
     if (item) await selectLibraryItem(item.type, item.itemId)
     showView('library-view')
-    if (profile.batch) alert(`已导入 ${importedItems.length} 个 RJ 媒体`)
+    if (profile.batch) alert(`已导入 ${importedItems.length} 个${profile.type === 'archive' ? '压缩包图集' : ' RJ 媒体'}`)
   } catch (error) {
     alert(error.message)
   } finally {
@@ -7506,6 +7625,12 @@ els.configSave.addEventListener('click', async () => {
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         mediaOpenInNewTabKinds: els.configMediaOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
         mediaCloseNewTabOnBack: els.configMediaCloseNewTabOnBack.checked,
+        archiveManagedBasePath: els.configArchiveManagedBasePath.value,
+        archiveCacheDir: els.configArchiveCacheDir.value,
+        lrrRedisUrl: els.configLrrRedisUrl.value,
+        lrrContentDir: els.configLrrContentDir.value,
+        lrrThumbDir: els.configLrrThumbDir.value,
+        lrrPathFrom: els.configLrrPathFrom.value,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,
         mergePdfFmt: els.configMergePdfFmt.value,

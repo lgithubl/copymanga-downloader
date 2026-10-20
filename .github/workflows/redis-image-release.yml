@@ -1,0 +1,61 @@
+name: Redis image release
+
+# 把官方 Redis 镜像打成 docker save 的 tar.gz 发到 Release：目标机器拉不了 Docker Hub、或者想固定一个版本时，
+# 下载后 `gunzip -c redis-<tag>.tar.gz | docker load` 就能用。迁移 LANraragi 时用它起临时 Redis。
+# 发 Release 而不是 Actions artifact：这个仓库的 Actions 存储配额吃紧过一次（见 build-web-image 的说明）。
+on:
+  workflow_dispatch:
+    inputs:
+      redis_tag:
+        description: 官方 Redis 镜像 tag（alpine 版很小）
+        required: true
+        default: 7-alpine
+      platform:
+        description: 镜像平台
+        required: true
+        default: linux/amd64
+      release_tag:
+        description: Release 的 tag 名
+        required: true
+        default: redis-image
+
+permissions:
+  contents: write
+
+jobs:
+  redis-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull and save the image
+        id: save
+        run: |
+          set -e
+          TAG="${{ inputs.redis_tag }}"
+          docker pull --platform "${{ inputs.platform }}" "redis:${TAG}"
+          docker image inspect "redis:${TAG}" --format '{{.Id}} {{.Os}}/{{.Architecture}} {{.Size}}'
+          ARCH="${{ inputs.platform }}"; ARCH="${ARCH#*/}"
+          FILE="redis-${TAG}-${ARCH}.tar.gz"
+          docker save "redis:${TAG}" | gzip -9 > "$FILE"
+          sha256sum "$FILE" | tee "$FILE.sha256"
+          ls -lh "$FILE"
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          RELEASE="${{ inputs.release_tag }}"
+          FILE="${{ steps.save.outputs.file }}"
+          if ! gh release view "$RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$RELEASE" --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+              --title "Redis image (offline docker load)" \
+              --notes "官方 Redis 镜像的 docker save 包，用于迁移 LANraragi 时起临时 Redis。
+          用法：
+          \`\`\`bash
+          gunzip -c ${FILE} | docker load
+          docker run -d --name lrr-redis --network <和 web 容器同一个网络> -v /path/to/rdb-copy:/data:ro redis:${{ inputs.redis_tag }} redis-server --appendonly no --save \"\" --dir /data --dbfilename database.rdb
+          \`\`\`"
+          fi
+          gh release upload "$RELEASE" "$FILE" "$FILE.sha256" --repo "${{ github.repository }}" --clobber
+          gh release view "$RELEASE" --repo "${{ github.repository }}" --json assets --jq '.assets[] | "\(.name) \(.size) \(.url)"'

@@ -102,6 +102,39 @@ export async function setItemTags({ type, itemId, tags }) {
   })
 }
 
+// 批量写条目标签：一个事务、复用预编译语句和标签 id 缓存。迁移几十万条时，逐条走 setItemTags
+// （每条一个事务、每个标签两次查询）会慢几个数量级。语义和 setItemTags 一致（替换该条目的全部标签）。
+export async function bulkSetItemTags(entries) {
+  return enqueueWrite(() => {
+    const now = new Date().toISOString()
+    const idCache = new Map()
+    const upsert = db.prepare(`
+      INSERT INTO tags (name, normalized_name, color, created_at, updated_at)
+      VALUES (?, ?, '', ?, ?)
+      ON CONFLICT(normalized_name) DO UPDATE SET updated_at = excluded.updated_at
+    `)
+    const lookup = db.prepare('SELECT id FROM tags WHERE normalized_name = ?')
+    const clear = db.prepare('DELETE FROM item_tags WHERE type = ? AND item_id = ?')
+    const link = db.prepare('INSERT OR IGNORE INTO item_tags (type, item_id, tag_id) VALUES (?, ?, ?)')
+    runTransaction(() => {
+      for (const { type, itemId, tags } of entries) {
+        clear.run(type, itemId)
+        for (const tag of parseTags(tags)) {
+          const normalized = normalizeTagName(tag)
+          let tagId = idCache.get(normalized)
+          if (tagId === undefined) {
+            upsert.run(tag, normalized, now, now)
+            tagId = lookup.get(normalized).id
+            idCache.set(normalized, tagId)
+          }
+          link.run(type, itemId, tagId)
+        }
+      }
+    })
+    return entries.length
+  })
+}
+
 export async function setUnitTags({ type, itemId, unitId, tags }) {
   return enqueueWrite(() => {
     const normalizedTags = parseTags(tags)
