@@ -2125,6 +2125,12 @@ async function loadMediaImportItems() {
     setLoading(els.mediaImportRefresh, true)
     if (!tagScripts.length) await loadTagScripts().catch(() => {})
     const type = els.mediaImportType.value || 'epub'
+    // 压缩包图集：一个压缩包就是一个条目，没有「追加到已有合集」，不需要这个列表。
+    // 更重要的是不能请求它：库有几十万条时，这个不分页的请求在索引没就绪时会扫描全库（服务无响应、响应体超限）。
+    if (type === 'archive') {
+      renderMediaImportItems([], { note: '压缩包图集：一个压缩包就是一个条目，导入时按文件自动建条目，没有「追加到已有合集」，这里不列出。去「媒体库」页查看。' })
+      return
+    }
     const items = await api(`/api/library/items?type=${encodeURIComponent(type)}`)
     renderMediaImportItems(items)
   } catch (error) {
@@ -2134,7 +2140,7 @@ async function loadMediaImportItems() {
   }
 }
 
-function renderMediaImportItems(items) {
+function renderMediaImportItems(items, { note = '' } = {}) {
   const type = els.mediaImportType.value || 'epub'
   const info = mediaImportTypeInfo[type] || { label: type, unit: '个目录项', source: false }
   els.mediaImportItem.innerHTML = '<option value="">新建合集</option>'
@@ -2162,7 +2168,7 @@ function renderMediaImportItems(items) {
     })
     els.mediaImportItems.append(card)
   }
-  if (items.length === 0) els.mediaImportItems.innerHTML = `<p class="muted">暂无 ${escapeHtml(info.label)} 合集</p>`
+  if (items.length === 0) els.mediaImportItems.innerHTML = `<p class="muted">${note ? escapeHtml(note) : `暂无 ${escapeHtml(info.label)} 合集`}</p>`
   updateMediaImportMeta()
 }
 

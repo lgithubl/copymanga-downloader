@@ -2613,6 +2613,9 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
+// 导入页的「已有合集」列表只取最新的这些条目（以前写的是 limit: 0，实际效果也是 50）
+const IMPORT_LIST_LIMIT = 50
+
 async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
   const indexed = searchLibraryIndex({
     type,
@@ -2620,7 +2623,7 @@ async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
     keyword: '',
     sourceProfile: '',
     page: 1,
-    limit: 0,
+    limit: IMPORT_LIST_LIMIT,
     sort: 'imported_desc',
   })
   if (indexed.index.status === 'ready') return indexed.items
@@ -3178,13 +3181,17 @@ function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfil
     items = items.filter((item) => libraryIndexTagTokensMatch(item, tagTokens))
   }
   if (String(sort || '') === 'random') items = sortLibraryIndexItems(items, 'random')
-  const safeLimit = Math.max(0, Math.min(1000, Math.floor(Number(limit) || 50)))
+  // 每页 1~1000 条，没有「limit 0 = 全部」：几十万条的库一次返回全部会撑爆响应（V8 单个字符串约 536MB 上限）和浏览器。
+  // 以前这里 `Number(limit) || 50` 把 0 当成 50，「全部」分支其实只有负数才能走到，而唯一传 0 的调用方（见 IMPORT_LIST_LIMIT）
+  // 拿到的也一直是 50 条——等于一个从没生效过的分支，直接去掉。
+  const requestedLimit = Math.floor(Number(limit))
+  const safeLimit = Math.max(1, Math.min(1000, Number.isFinite(requestedLimit) && requestedLimit >= 1 ? requestedLimit : 50))
   const safePage = Math.max(1, Math.floor(Number(page) || 1))
   const total = items.length
-  const totalPages = Math.max(1, safeLimit ? Math.ceil(total / safeLimit) : 1)
-  const offset = safeLimit ? (safePage - 1) * safeLimit : 0
+  const totalPages = Math.max(1, Math.ceil(total / safeLimit))
+  const offset = (safePage - 1) * safeLimit
   return {
-    items: (safeLimit ? items.slice(offset, offset + safeLimit) : items).map(decorateWithSeries),
+    items: items.slice(offset, offset + safeLimit).map(decorateWithSeries),
     page: safePage,
     limit: safeLimit,
     total,
