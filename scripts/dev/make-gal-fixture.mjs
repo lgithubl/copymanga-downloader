@@ -8,9 +8,31 @@ import path from 'node:path'
 const run = (cmd, args) => execFileSync(cmd, args, { stdio: ['ignore', 'ignore', 'inherit'] })
 // ImageMagick 7 是 magick，6 是 convert（GitHub runner 上是 6）
 const magick = (() => { try { execFileSync('magick', ['-version'], { stdio: 'ignore' }); return ['magick'] } catch { return ['convert'] } })()
+// 背景图上的文字用哪个字体：不能不指定——ImageMagick 默认找 helvetica，GitHub runner 上没装，convert 直接报错退出。
+// 从 -list font 里挑一个（优先中日文字体，其次 DejaVu，再随便一个）；一个字体都没有就不画文字，
+// 文字这一步万一仍然失败（字体文件坏了之类）就退回「只有渐变和边框」重画一次——背景图本身才是夹具要的东西。
+const pickFont = () => {
+  try {
+    const out = execFileSync(magick[0], ['-list', 'font'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const names = [...out.matchAll(/^\s*Font:\s*(\S+)/gm)].map((m) => m[1])
+    return names.find((n) => /CJK|WenQuanYi|Noto.*(SC|JP|Sans)/i.test(n)) || names.find((n) => /^DejaVu-Sans$/i.test(n)) || names.find((n) => /DejaVu/i.test(n)) || names[0] || ''
+  } catch {
+    return ''
+  }
+}
+const font = pickFont()
 const bgImage = async (file, label, [c1, c2], w = 1280, h = 720) => {
   await mkdir(path.dirname(file), { recursive: true })
-  run(magick[0], ['-size', `${w}x${h}`, `gradient:${c1}-${c2}`, '-fill', 'white', '-gravity', 'center', '-pointsize', '64', '-annotate', '0', label, '-fill', 'none', '-stroke', 'white', '-strokewidth', '3', '-draw', `rectangle 4,4 ${w - 5},${h - 5}`, '-quality', '80', file])
+  const frame = ['-fill', 'none', '-stroke', 'white', '-strokewidth', '3', '-draw', `rectangle 4,4 ${w - 5},${h - 5}`, '-quality', '80', file]
+  const base = ['-size', `${w}x${h}`, `gradient:${c1}-${c2}`]
+  const text = font ? ['-font', font, '-fill', 'white', '-gravity', 'center', '-pointsize', '64', '-annotate', '0', label] : []
+  try {
+    run(magick[0], [...base, ...text, ...frame])
+  } catch (error) {
+    if (!text.length) throw error
+    console.warn(`背景图文字渲染失败（字体 ${font}），退回无文字：${path.basename(file)}`)
+    run(magick[0], [...base, ...frame])
+  }
 }
 const tone = async (file, hz, seconds) => {
   await mkdir(path.dirname(file), { recursive: true })
