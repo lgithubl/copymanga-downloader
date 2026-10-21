@@ -1,3 +1,5 @@
+import { createGalPlayer } from '/gal-player.js'
+import { ratioOfStep } from '/gal-engine.js'
 import { HOVER_DELAY_MS, HOVER_MAX_COVER_RATIO, fitPreview, placeExpanded, worthExpanding } from '/hover-preview.js'
 import { libraryRouteHash, parseLibraryRoute } from '/library-route.js'
 const els = {
@@ -416,7 +418,8 @@ let jobPollIntervalMs = 5000
 let jobPollTimer = null
 let appConfig = null
 const mediaReaderThemeClasses = ['reader-theme-light', 'reader-theme-dark', 'reader-theme-warm', 'reader-theme-sepia']
-const mediaModeClasses = ['media-mode-empty', 'media-mode-html', 'media-mode-images', 'media-mode-audio', 'media-mode-video']
+let galPlayer = null
+const mediaModeClasses = ['media-mode-empty', 'media-mode-html', 'media-mode-images', 'media-mode-gal', 'media-mode-audio', 'media-mode-video']
 const siteThemeClasses = ['site-theme-light', 'site-theme-dark', 'site-theme-warm', 'site-theme-sepia']
 const defaultMediaImportProfiles = {
   'rj-media': {
@@ -450,6 +453,15 @@ const defaultMediaImportProfiles = {
     zipFilenameEncoding: 'utf-8',
     defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
   },
+  // Gal 导入：rootDir 下每个子目录一个作品，目录本身就是数据（不 mv、不拷贝），只建元数据
+  'gal-import': {
+    rootDir: '/data/gal',
+    maxDepth: 6,
+    scriptExtensions: ['txt', 'csv'],
+    adapters: ['uviewer-csv'],
+    limit: 0,
+    dryRun: false,
+  },
   // 迁移 LANraragi：dryRun 默认 true（只出报告），确认后改 false 才写；limit 限量；overwrite 用 LRR 内容覆盖已存在的
   'lrr-init': {
     dryRun: true,
@@ -465,6 +477,8 @@ const mediaImportTypeInfo = {
   // 类型本身继续注册，已经导入的合集照常能读。
   epub: { label: 'EPUB', unit: '个 EPUB', accept: '.epub,application/epub+zip', source: false, deprecated: true },
   media: { label: '媒体', unit: '个媒体项', accept: '.zip,.epub,application/epub+zip,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.m4v,.mkv,.mov,.mp4,.jpg,.jpeg,.png,.gif,.srt,.vtt,.crt,.ass,.ssa,.lrc,.sbv,.smi,.sami,.ttml,.dfxp,.xml,.sub,image/*,audio/*,video/*', source: true },
+  // Gal：作品是整个目录，不上传、不填路径；根目录在「导入方案配置」JSON 的 rootDir 里（默认 <data>/gal）
+  gal: { label: 'Gal', unit: '个剧情脚本', accept: '', source: false },
 }
 const LRR_INIT_PROFILE_KEY = 'lrr-init'
 const mediaImportProfiles = {
@@ -494,6 +508,15 @@ const mediaImportProfiles = {
     filesLabel: '压缩包',
     batch: true,
     archiveJob: true,
+  },
+  // Gal 导入：不上传、不填来源路径；扫根目录（导入方案 JSON 的 rootDir）里每个子目录建一个条目
+  'gal-import': {
+    label: 'Gal 导入',
+    type: 'gal',
+    batch: true,
+    noSource: true,
+    noDefaultScripts: true,
+    configJson: true,
   },
   // 迁移 LANraragi：读临时 Redis + 只读挂载的内容目录，原地引用 zip；可反复运行。参数都在配置页。
   [LRR_INIT_PROFILE_KEY]: {
@@ -2242,7 +2265,7 @@ function updateMediaImportControls() {
   els.mediaImportFilesLabel.firstChild.textContent = `${profile.filesLabel || info.label} 文件`
   els.mediaImportSubmit.textContent = profile.batch ? `批量导入 ${profile.label}` : `导入 ${profile.filesLabel ? profile.label : info.label}`
   els.mediaImportSourcePath.disabled = !info.source || Boolean(profile.noSource)
-  els.mediaImportSourcePath.placeholder = info.source ? (profile.sourcePlaceholder || '/input/album 或 /input/movie.mp4') : 'EPUB 暂不支持路径导入'
+  els.mediaImportSourcePath.placeholder = info.source ? (profile.sourcePlaceholder || '/input/album 或 /input/movie.mp4') : (profile.noSource ? '' : 'EPUB 暂不支持路径导入')
   if (!info.source || profile.noSource) els.mediaImportSourcePath.value = ''
   els.mediaImportFiles.disabled = Boolean(profile.noSource)
   els.archiveJobPanel.hidden = !profile.archiveJob
@@ -2282,7 +2305,7 @@ function currentMediaImportProfileConfig() {
   }
 }
 
-const JSON_CONFIG_PROFILES = new Set(['rj-media', 'archive-gallery', 'lrr-init'])
+const JSON_CONFIG_PROFILES = new Set(['rj-media', 'archive-gallery', 'lrr-init', 'gal-import'])
 
 function renderMediaImportProfileConfig() {
   if (!els.mediaImportProfileConfig) return
@@ -2464,7 +2487,7 @@ function closeSeriesModal() {
 // 字段，用户在详情页改不到；用 tag 驱动导航行为的话，手滑删一个 tag 就会静默改掉交互。
 // 将来要加新方案或做成每条目可覆盖（item.openMode），只改这个函数。
 // 压缩包图集（含迁移来的）一个条目就是一个压缩包，点卡片直接进阅读器
-const VIEWER_FIRST_IMPORT_PROFILES = new Set(['monthly-ani', 'archive-gallery'])
+const VIEWER_FIRST_IMPORT_PROFILES = new Set(['monthly-ani', 'archive-gallery', 'gal-import'])
 
 // 点卡片要操作哪一项：有系列就是系列里优先级最高的那个，否则就是自己。
 // 「系列选哪一项」和「进目录还是直接播」是两件事——后者仍由 libraryCardOpensViewer
@@ -3156,6 +3179,7 @@ function renderLibraryUnits() {
       isRead ? '已读' : '未读',
       unit.subtitles?.length ? `字幕${unit.subtitles.length}` : '',
       unit.imageCount ? `${unit.imageCount}图` : '',
+      unit.mediaKind === 'gal' && unit.stepCount ? `${unit.stepCount}步` : '',
     ].filter(Boolean)
     row.innerHTML = `
       <input class="unit-metadata-select" type="checkbox" value="${escapeHtml(unit.unitId)}" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'disabled'} aria-label="选择章节" />
@@ -3305,6 +3329,7 @@ function mediaKindLabel(kind) {
     epub: 'EPUB',
     text: '文本',
     subtitle: '字幕',
+    gal: 'Gal',
   }
   return labels[kind] || kind
 }
@@ -3676,12 +3701,15 @@ function renderMediaReader(reader, options = {}) {
   els.mediaReaderMeta.textContent = `${reader.item?.title || currentLibraryItem?.title || ''} · ${index + 1}/${currentLibraryUnits.length}${sectionText} · ${typeLabel}`
   // 上一章的分批批次到这里就作废了，不然它的兜底定时器会继续往信息栏写字
   retireImageBatch(galleryBatch)
+  if (galPlayer && reader.type !== 'gal') { galPlayer.destroy(); galPlayer = null }
   if (reader.type === 'html') {
     renderMediaHtml(reader)
   } else if (reader.type === 'images') {
     renderMediaImages(reader)
   } else if (reader.type === 'audio' || reader.type === 'video') {
     renderStreamMedia(reader, options)
+  } else if (reader.type === 'gal') {
+    renderGal(reader)
   } else {
     els.mediaReaderContent.className = 'media-reader-content empty-panel'
     els.mediaReaderContent.textContent = `暂不支持的阅读内容类型：${reader.type}`
@@ -3693,6 +3721,37 @@ function renderMediaReader(reader, options = {}) {
   if (reader.type === 'images' && !galleryImmersive && immersivePref('images')) {
     enterGalleryImmersive(galleryImmersiveOptions(false))
   }
+}
+
+// Gal 剧情播放：场景由服务端按适配器转好（规范场景 gal-scene/1），这里只管渲染。
+// 续播：进度按「第几步 / 总步数」存成 scrollRatio，和别的类型共用同一套进度接口。
+let galRatio = 0
+function renderGal(reader) {
+  exitWidthAdjust({ apply: false })
+  exitEpubImmersive()
+  retireImageBatch(galleryBatch)
+  galleryBatch = null
+  if (galPlayer) { galPlayer.destroy(); galPlayer = null }
+  const themeClass = applyMediaReaderTheme()
+  els.mediaReaderContent.className = `media-reader-content media-gal ${themeClass}`
+  const owner = readerOwner(reader)
+  const resume = owner && currentLibraryProgress?.itemId === owner.itemId && currentLibraryProgress?.lastUnitId === reader.unit?.unitId
+    ? Number(currentLibraryProgress.lastScrollRatio || 0)
+    : 0
+  galRatio = resume
+  galPlayer = createGalPlayer({
+    container: els.mediaReaderContent,
+    reader,
+    startRatio: resume >= 0.98 ? 0 : resume,   // 上次已经看完就从头来
+    onStep: (step, total) => {
+      galRatio = ratioOfStep(step, total)
+      scheduleLibraryProgressSave()
+    },
+  })
+  mediaPageIndex = 0
+  mediaPageCount = 1
+  mediaPageStep = 1
+  updateMediaPageControls()
 }
 
 function syncMediaReaderThemeControl(type) {
@@ -3712,8 +3771,8 @@ function setMediaViewerMode(type) {
   els.mediaViewerView.classList.remove(...mediaModeClasses)
   const mode = type === 'html'
     ? 'html'
-    : type === 'images'
-      ? 'images'
+    : type === 'images' || type === 'gal'
+      ? type
       : type === 'audio' || type === 'video'
         ? type
         : 'empty'
@@ -5140,6 +5199,7 @@ function formatMediaTime(seconds) {
 
 function mediaReaderTypeLabel(reader) {
   if (reader.type === 'images') return `${reader.images?.length || 0} 张图`
+  if (reader.type === 'gal') return `Gal · ${reader.scene?.steps?.length || 0} 步`
   if (reader.type === 'audio') return `音频${reader.unit?.size ? ` · ${formatBytes(reader.unit.size)}` : ''}`
   if (reader.type === 'video') return `视频${reader.unit?.size ? ` · ${formatBytes(reader.unit.size)}` : ''}`
   return '文本'
@@ -6671,6 +6731,7 @@ function toggleImageWidthAdjust({ scroller, buttons = [] }) {
 }
 
 function mediaScrollRatio() {
+  if (currentMediaReader?.type === 'gal') return galRatio
   if (currentMediaReader?.type !== 'html') return currentMediaReader?.type === 'images' ? 1 : 0.1
   return mediaPageCount <= 1 ? 1 : Math.max(0, Math.min(1, mediaPageIndex / (mediaPageCount - 1)))
 }
@@ -7440,7 +7501,7 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     if (metadataActionIds.length) form.set('metadataActionIds', metadataActionIds.join(','))
     for (const file of files) form.append('file', file)
     // 压缩包图集 / 迁移的参数在「导入方案配置」JSON 里：提交时把输入框当前内容一起发过去，不用先点保存
-    if (profile.archiveJob) {
+    if (profile.archiveJob || profile.configJson) {
       try {
         JSON.parse(els.mediaImportProfileConfig.value || '{}')
       } catch (error) {
@@ -7468,7 +7529,10 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     await loadLibraryItems()
     if (item) await selectLibraryItem(item.type, item.itemId)
     showView('library-view')
-    if (profile.batch) alert(`已导入 ${importedItems.length} 个${profile.type === 'archive' ? '压缩包图集' : ' RJ 媒体'}`)
+    if (result.report && profile.type === 'gal') {
+      const r = result.report
+      alert(`Gal 导入完成：新建 ${r.imported}，更新 ${r.updated}，没有脚本 ${r.skippedNoScript}，失败 ${r.failed}（共 ${r.scripts} 个脚本）${r.errors?.length ? `\n${r.errors.map((e) => `${e.dir}: ${e.error}`).join('\n')}` : ''}`)
+    } else if (profile.batch) alert(`已导入 ${importedItems.length} 个${profile.type === 'archive' ? '压缩包图集' : ' RJ 媒体'}`)
   } catch (error) {
     alert(error.message)
   } finally {

@@ -14,6 +14,7 @@ import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems 
 import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { ARCHIVE_PROFILE, ARCHIVE_TYPE, createArchiveGalleryHandler, LRR_INIT_PROFILE } from './library/types/archive-gallery.mjs'
+import { createGalHandler, GAL_DEFAULT_OPTIONS, GAL_PROFILE, GAL_TYPE, normalizeGalOptions } from './library/types/gal.mjs'
 import { runLrrMigration } from './library/archive-migration.mjs'
 import { hasGeneratedPreview } from './library/index-flags.mjs'
 import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
@@ -318,6 +319,16 @@ function defaultConfig() {
         managedDir: path.join(DATA_DIR, 'library', 'archive'),   // 新导入的压缩包 mv 到这里（按哈希分片）
         defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
       },
+      // Gal 导入：rootDir 下每个子目录是一个作品，目录本身就是数据（不 mv、不拷贝），导入只建元数据；
+      // scriptExtensions/adapters 决定哪些文件算剧情脚本、用哪种适配器解析；目录约定（资源前缀、共享资源）写在每个条目的元数据 layout 里
+      'gal-import': {
+        rootDir: path.join(DATA_DIR, 'gal'),
+        maxDepth: GAL_DEFAULT_OPTIONS.maxDepth,
+        scriptExtensions: GAL_DEFAULT_OPTIONS.scriptExtensions,
+        adapters: GAL_DEFAULT_OPTIONS.adapters,
+        limit: 0,
+        dryRun: false,
+      },
       // 初始化压缩包图集（LANraragi 迁移）。dryRun 默认开着：先出报告，确认后改成 false 才真的写
       'lrr-init': {
         dryRun: true,
@@ -528,6 +539,7 @@ function normalizeMediaImportProfiles(value, defaults) {
       defaultMetadataActions: parseTags(source['archive-gallery']?.defaultMetadataActions || defaults['archive-gallery'].defaultMetadataActions),
     },
     'lrr-init': normalizeArchiveImportOptions(source['lrr-init'], defaults['lrr-init']),
+    [GAL_PROFILE]: { ...normalizeGalOptions({ ...defaults[GAL_PROFILE], ...(source[GAL_PROFILE] || {}) }), rootDir: String(source[GAL_PROFILE]?.rootDir || defaults[GAL_PROFILE].rootDir) },
   }
 }
 
@@ -5263,6 +5275,7 @@ registerLibraryHandler(epubHandler)
 registerLibraryHandler(createStreamMediaHandler({ type: 'media', dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config, epubSupport: epubHandler }))
 const archiveHandler = createArchiveGalleryHandler({ type: ARCHIVE_TYPE, dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config })
 registerLibraryHandler(archiveHandler)
+registerLibraryHandler(createGalHandler({ type: GAL_TYPE, dataDir: DATA_DIR, safeSegment, pathExists, getConfig: () => config }))
 
 // EPUB 朗读分句只在这里做：阅读器返回的 html 已经把每句包成 <span data-tts-index>，
 // 同时带上 sentences（句子文本，下标即 data-tts-index）。前端不再自己切句，
