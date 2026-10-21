@@ -49,6 +49,8 @@ const specs = [
   ['样式-单页压缩包（无预览）', [800, 1132], 1, ['作者:甲']],
 ]
 const colors = ['#2b6cb0', '#2f855a', '#c05621', '#6b46c1', '#b83280', '#2c7a7b', '#975a16', '#744210']
+// 文件名最多 255 字节（CJK 一个字 3 字节），超了就按字节截断
+const clipName = (name, max = 200) => { let out = ''; for (const ch of name) { if (Buffer.byteLength(out + ch) > max) break; out += ch } return out }
 const makeZip = (name, [w, h], pages, idx) => {
   const dir = path.join(work, `z${idx}`)
   execFileSync('mkdir', ['-p', dir])
@@ -70,7 +72,7 @@ console.log((await postJson('/api/tag-scripts/archive-gallery-thumbnail-v1/confi
 
 const uploaded = []
 for (const [i, [name, size, pages, tags]] of specs.entries()) {
-  const zip = makeZip(name.slice(0, 200), size, pages, i)
+  const zip = makeZip(clipName(name), size, pages, i)
   const form = new FormData()
   form.set('importProfile', 'archive-gallery')
   form.set('metadataActionIds', 'archive-gallery-thumbnail-v1,archive-gallery-tags-v1')
@@ -94,7 +96,7 @@ const byTitle = new Map((list.items || []).map((it) => [it.title, it]))
 console.log(`站点上找到 ${byTitle.size} 个「样式-」条目（期望 ${specs.length}）`)
 // 补 tag（与已有 tag 合并）；再跑一遍缩略图脚本确保封面/预览都在
 for (const { name, tags } of uploaded) {
-  const it = [...byTitle.values()].find((x) => x.title === name || x.title === name.slice(0, 200))
+  const it = [...byTitle.values()].find((x) => x.title === name || x.title === clipName(name))
   if (!it) { console.log('找不到条目', name.slice(0, 30)); continue }
   if (tags.length) {
     const full = (await api(`/api/library/items/archive/${it.itemId}`)).body
