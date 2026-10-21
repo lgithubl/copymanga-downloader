@@ -46,7 +46,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 }
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
-//   chapter: { canPrev(), canNext(), prev(), next(), back() }
+//   chapter: { canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传） }
 export function createGalPlayer({ container, reader, startRatio = 0, onStep = () => {}, onToggleImmersive = null, onEscape = null, chapter = null }) {
   const scene = reader.scene
   const total = scene.steps.length
@@ -79,6 +79,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     b.title = title
     return b
   }
+  const upBtn = btn('↑ 列表', '回到上一级列表（选其它脚本）', 'gal-up')
   const prevBtn = btn('◀ 上一句', '上一句（← / Backspace）', 'gal-prev')
   const count = el('span', 'gal-count', '')
   const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →）', 'gal-next-btn')
@@ -89,9 +90,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   const chNextBtn = btn('下话', '下一话', 'gal-ch-next gal-imm-only')
   const immBtn = btn('沉浸', '沉浸模式（I）', 'gal-imm')
   const fsBtn = btn('全屏', '全屏（F）', 'gal-fs')
-  const backBtn = btn('返回', '退出沉浸并返回', 'gal-back gal-imm-only')
+  const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const note = el('span', 'muted gal-note', '')
-  bar.append(prevBtn, count, nextBtn, autoBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, immBtn, fsBtn, backBtn, note)
+  bar.append(upBtn, prevBtn, count, nextBtn, autoBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, immBtn, fsBtn, backBtn, note)
 
   // 设置弹层：文本框透明度 / 音量 / 自动播放等待时间
   const settings = el('div', 'gal-settings')
@@ -371,6 +372,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     chNextBtn.disabled = !(chapter?.canNext?.())
     chPrevBtn.hidden = chNextBtn.hidden = !chapter
     backBtn.hidden = !chapter
+    upBtn.hidden = !chapter?.up
     immBtn.hidden = !onToggleImmersive
   }
   function setImmersive(active) {
@@ -471,6 +473,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   chPrevBtn.addEventListener('click', () => chapter?.prev?.())
   chNextBtn.addEventListener('click', () => chapter?.next?.())
   backBtn.addEventListener('click', () => chapter?.back?.())
+  upBtn.addEventListener('click', () => chapter?.up?.())
   opacityRange.addEventListener('input', () => {
     boxOpacity = Math.max(0, Math.min(1, Number(opacityRange.value) / 100))
     localStorage.setItem(GAL_SETTINGS.boxOpacityKey, String(boxOpacity))

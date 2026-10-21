@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 浏览器自测：Gal 导入（导入页 UI）→ 媒体库卡片 → 单元列表 → 播放器（步进/后退/键盘/自动/记录/续播/缺资源/多视口）。
+// 浏览器自测：Gal 导入（导入页 UI）→ 媒体库卡片 → 单元 → 浏览层（首页/分类/角色/翻页/变体/返回/刷新恢复）→ 播放器（步进/后退/键盘/自动/记录/续播/缺资源/沉浸/多视口）。
 //   PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-selftest.mjs     截图在 SHOT_DIR（默认 /tmp/gal-shots）
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
@@ -30,8 +30,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const work = await mkdtemp(path.join(os.tmpdir(), 'fe-gal-'))
 const dataDir = path.join(work, 'data')
-await mkdir(path.join(dataDir, 'gal'), { recursive: true })
-await buildGalFixture(path.join(dataDir, 'gal'), { exampleScript: process.env.GAL_EXAMPLE || '' })
+const mediaDir = path.join(dataDir, 'gal', 'UViewer演示')   // 一个目录 = 一个 Gal 媒体
+await mkdir(mediaDir, { recursive: true })
+await buildGalFixture(mediaDir, { exampleScript: process.env.GAL_EXAMPLE || '' })
+const DPATH = process.env.GAL_EXAMPLE ? 'character/10580/example.txt' : 'character/10580/long.txt'
+const sec = (rel) => `s:${rel}`
 const port = 8102
 const base = `http://127.0.0.1:${port}`
 try { await fetch(`${base}/health`); console.error(`端口 ${port} 已被占用（上次测试没清理干净？）`); process.exit(2) } catch {}
@@ -68,12 +71,12 @@ const ui = await page.evaluate(() => ({
 check('选方案后媒体类型自动变 gal', ui.type === 'gal' && ui.typeOptions.includes('gal'), JSON.stringify(ui))
 check('不用选文件、不用填来源路径', ui.sourceDisabled === true && ui.filesDisabled === true, JSON.stringify(ui))
 check('JSON 配置可见：含 rootDir/maxDepth/scriptExtensions/adapters', /"rootDir"/.test(ui.config) && /"scriptExtensions"/.test(ui.config) && /"adapters"/.test(ui.config) && /uviewer-csv/.test(ui.config), ui.config)
-// 把 rootDir 指到临时数据目录里的 gal（默认值是 /data/gal，测试机上不存在）
-await page.fill('#media-import-profile-config', JSON.stringify({ rootDir: path.join(dataDir, 'gal'), maxDepth: 6, scriptExtensions: ['txt', 'csv'], adapters: ['uviewer-csv'] }))
+// 把 rootDir 指到要导入的目录（默认值是 /data/gal，测试机上不存在）
+await page.fill('#media-import-profile-config', JSON.stringify({ rootDir: mediaDir, maxDepth: 6, scriptExtensions: ['txt', 'csv'], adapters: ['uviewer-csv'] }))
 await page.click('#media-import-submit')
 await page.waitForFunction(() => document.querySelector('#library-view:not(.hidden)') || true, null, { timeout: 15000 })
 await page.waitForTimeout(2500)
-check('导入完成有汇总提示（新建、没有脚本 1）', dialogs.some((d) => /Gal 导入完成/.test(d) && /新建 4/.test(d) && /没有脚本 1/.test(d)), JSON.stringify(dialogs))
+check('导入完成有汇总提示（一个目录 = 新建 1 个媒体，共 38 个脚本）', dialogs.some((d) => /Gal 导入完成/.test(d) && /新建 1/.test(d) && /共 38 个脚本/.test(d)), JSON.stringify(dialogs))
 errors.length = 0
 
 // ---- 2. 媒体库 ----
@@ -85,25 +88,85 @@ await page.waitForSelector('#library-items .card')
 await page.selectOption('#library-type', 'gal').catch(() => {})
 await page.waitForTimeout(1200)
 const cards = await page.$$eval('#library-items .library-card', (cs) => cs.map((c) => ({ title: c.querySelector('.card-title')?.textContent, typePill: c.querySelector('.library-type-pill')?.textContent, img: c.querySelector('img.cover')?.getAttribute('src') || '', ph: Boolean(c.querySelector('.cover.placeholder')), natural: c.querySelector('img.cover')?.naturalWidth || 0 })))
-const expectWorks = 4
-check(`类型筛选里有 Gal，列表是 ${expectWorks} 个作品`, cards.length === expectWorks, JSON.stringify(cards.map((c) => c.title)))
-const cardA = cards.find((c) => c.title?.startsWith('演示作品A'))
-check('A 卡片：类型胶囊「Gal」、封面图加载成功（背景图当封面）', cardA?.typePill === 'Gal' && cardA.natural > 0 && /thumbnail\/script\/cover$/.test(cardA.img), JSON.stringify(cardA))
-check('B 卡片（没封面）：占位', cards.find((c) => c.title?.startsWith('演示作品B'))?.ph === true)
+check('类型筛选里有 Gal，列表只有 1 个媒体（整个目录）', cards.length === 1, JSON.stringify(cards.map((c) => c.title)))
+const cardA = cards[0]
+check('卡片：标题是目录名、类型胶囊「Gal」、封面图加载成功（第一张背景图当封面）', cardA?.title === 'UViewer演示' && cardA.typePill === 'Gal' && cardA.natural > 0 && /thumbnail\/script\/cover$/.test(cardA.img), JSON.stringify(cardA))
 await page.screenshot({ path: path.join(shotDir, 'library.png') })
-
-// ---- 3. 打开 A：详情单元列表 → 播放器 ----
-await page.locator('#library-items .library-card', { hasText: '演示作品A' }).first().click()
-await page.waitForSelector('#library-units .library-unit')
-const units = await page.$$eval('#library-units .library-unit', (rs) => rs.map((r) => ({ title: r.querySelector('.chapter-title')?.textContent, meta: r.querySelector('.library-unit-path')?.textContent, status: r.querySelector('.library-unit-status')?.textContent })))
-check('单元列表：2 个脚本，显示步数', units.length === 2 && /6步/.test(units[0].status) && /2步/.test(units[1].status), JSON.stringify(units))
-await page.screenshot({ path: path.join(shotDir, 'units.png') })
-await page.locator('#library-units .library-unit').first().click()
-await page.waitForSelector('.gal-player .gal-stage')
+const M = (await (await fetch(`${base}/api/library/items?type=gal&page=1&limit=50`)).json()).items[0]
+const link = (nodeId = '') => `${base}/#/media/gal/${M.itemId}/main${nodeId ? `?section=${encodeURIComponent(nodeId)}` : ''}`
 const t = (sel) => page.$eval(sel, (e) => e.textContent).catch(() => null)
 const textNow = () => page.$eval('.gal-text', (e) => e.textContent)
 const nameNow = () => page.$eval('.gal-name', (e) => (e.hidden ? '' : e.textContent))
 const countNow = () => t('.gal-count')
+const crumbs = () => page.$$eval('.gal-browse-crumb', (es) => es.map((e) => e.textContent).join('>'))
+const rowTitles = () => page.$$eval('.gal-row-title, .gal-card-title', (es) => es.map((e) => e.textContent))
+const hashSection = () => page.evaluate(() => decodeURIComponent((location.hash.split('section=')[1] || '').split('&')[0]))
+const imagesLoaded = () => page.$$eval('.gal-browse img', (is) => is.length && is.every((i) => i.complete && i.naturalWidth > 0))
+
+// ---- 3. 打开媒体：详情里只有 1 个单元 → 进浏览层（首页），不是直接进播放器 ----
+await page.locator('#library-items .library-card', { hasText: 'UViewer演示' }).first().click()
+await page.waitForSelector('.gal-browse')   // 只有 1 个单元：点卡片直接进它（和别的单卷类型一样）
+const apiUnits = await (await fetch(`${base}/api/library/items/gal/${M.itemId}/units`)).json()
+check('详情：只有 1 个单元（main），记着脚本数 38', apiUnits.length === 1 && apiUnits[0].unitId === 'main' && apiUnits[0].stepCount === 38, JSON.stringify(apiUnits))
+check('点卡片：进的是首页（浏览层），没有播放器', !(await page.$('.gal-player')) && (await crumbs()) === '首页' && (await page.$$('.gal-card')).length === 4, await crumbs())
+check('首页：4 张分类卡片（纪念馆/角色/家具/复刻），上一级按钮隐藏，沉浸按钮禁用', JSON.stringify(await rowTitles()) === JSON.stringify(['纪念馆', '角色', '家具', '复刻']) && await page.$eval('.gal-browse-up', (b) => b.hidden) && await page.$eval('#media-immersive', (b) => b.disabled), JSON.stringify(await rowTitles()))
+await page.screenshot({ path: path.join(shotDir, 'browse-home.png') })
+check('首页：URL 里没有 section（首页就是单元的默认节点）', (await hashSection()) === '', await hashSection())
+
+await page.click('.gal-card[data-node="c:cabin"]')
+await page.waitForSelector('.gal-row')
+await page.waitForFunction(() => [...document.querySelectorAll('.gal-browse img')].every((i) => i.complete), null, { timeout: 5000 })
+check('点「纪念馆」：列表 2 项（README.txt 不算）；面包屑；上一级出现；URL 带节点', JSON.stringify(await rowTitles()) === JSON.stringify(['ep01 序章', 'ep02 终章']) && (await crumbs()) === '首页>纪念馆' && !(await page.$eval('.gal-browse-up', (b) => b.hidden)) && (await hashSection()) === 'c:cabin#1', JSON.stringify([await rowTitles(), await crumbs(), await hashSection()]))
+check('纪念馆：每行有缩略图（脚本里的背景图）且加载成功', await imagesLoaded())
+await page.screenshot({ path: path.join(shotDir, 'browse-cabin.png') })
+await page.click('.gal-browse-up')
+await page.waitForSelector('.gal-card')
+check('点「↑ 上一级」：回到首页', (await crumbs()) === '首页' && (await page.$$('.gal-card')).length === 4)
+await page.click('.gal-card[data-node="c:character"]')
+await page.waitForSelector('.gal-card[data-node="ch:1010"]')
+await page.waitForFunction(() => [...document.querySelectorAll('.gal-browse img')].every((i) => i.complete), null, { timeout: 5000 })
+check('点「角色」：3 个角色卡片（显示名；没名字的用 id），小夜的头像加载成功', JSON.stringify(await rowTitles()) === JSON.stringify(['小夜', '2001', '阿梓']) && (await page.$eval('.gal-card[data-node="ch:1010"] img', (i) => i.naturalWidth)) > 0, JSON.stringify(await rowTitles()))
+await page.screenshot({ path: path.join(shotDir, 'browse-characters.png') })
+await page.click('.gal-card[data-node="ch:1010"]')
+await page.waitForSelector('.gal-row')
+const variantBtns = await page.$$eval('.gal-variant', (bs) => bs.map((b) => [b.textContent, b.dataset.node]))
+check('点「小夜」：脚本分组；story01 有「图片/视频」两个按钮，story02 只有一个版本（整行可点）', JSON.stringify(variantBtns) === JSON.stringify([['图片', 's:character/1010/story01_image.txt'], ['视频', 's:character/1010/story01_video.txt']]) && (await crumbs()) === '首页>角色>小夜' && (await page.$$('.gal-row-main[data-node="s:character/1010/story02.txt"]')).length === 1, JSON.stringify([variantBtns, await crumbs()]))
+await page.screenshot({ path: path.join(shotDir, 'browse-groups.png') })
+await page.click('.gal-variant[data-node="s:character/1010/story01_video.txt"]')
+await page.waitForSelector('.gal-player .gal-stage')
+check('点「视频」变体：进播放页；标题带版本；URL 带节点；视频文件不存在不崩', (await page.$eval('#media-reader-title', (e) => e.textContent)) === 'story01 · 视频' && (await hashSection()) === 's:character/1010/story01_video.txt')
+check('播放页：浏览层已移除；沉浸按钮可用；顶部「下一章」= 同一级的下一个脚本（story02）', !(await page.$('.gal-browse')) && !(await page.$eval('#media-immersive', (b) => b.disabled)) && !(await page.$eval('#media-reader-next', (b) => b.disabled)) && await page.$eval('#media-reader-prev', (b) => b.disabled))
+await page.click('.gal-up')
+await page.waitForSelector('.gal-row')
+check('播放页点「↑ 列表」：回到角色页（小夜）', (await crumbs()) === '首页>角色>小夜' && !(await page.$('.gal-player')), await crumbs())
+await page.reload()
+await page.waitForSelector('.gal-row')
+check('刷新：停在同一个节点（角色页），不会跳回首页', (await crumbs()) === '首页>角色>小夜' && (await hashSection()) === 'ch:1010#1', JSON.stringify([await crumbs(), await hashSection()]))
+// 家具：翻页
+await page.goto(link('c:room#1')); await page.waitForSelector('.gal-browse[data-node="c:room#1"]')
+const pager1 = await page.$eval('.gal-pager-info', (e) => e.textContent)
+check('家具：每页 25，页码「1 / 2 · 共 30 项」，上一页禁用', (await page.$$('.gal-row')).length === 25 && /1 \/ 2/.test(pager1) && /30/.test(pager1) && await page.$eval('.gal-pager-btn:first-child', (b) => b.disabled), pager1)
+await page.click('.gal-pager-btn:last-child')
+await page.waitForFunction(() => /2 \/ 2/.test(document.querySelector('.gal-pager-info')?.textContent || ''))
+check('点「下一页」：第 2 页 5 项；URL 带页码；下一页禁用', (await page.$$('.gal-row')).length === 5 && (await hashSection()) === 'c:room#2' && await page.$eval('.gal-pager-btn:last-child', (b) => b.disabled), await hashSection())
+check('缺资源的脚本在列表里没有缩略图（占位），其它的有', await page.$eval('.gal-row[data-title="缺资源"] .gal-row-thumb', (e) => e.classList.contains('empty')))
+await page.screenshot({ path: path.join(shotDir, 'browse-room2.png') })
+await page.click('.gal-row[data-title="缺资源"] .gal-row-main')
+await page.waitForSelector('.gal-player .gal-stage')
+await page.click('.gal-up')
+await page.waitForSelector('.gal-row')
+check('从第 2 页点进脚本再「列表」：回到第 2 页（不是第 1 页）', (await hashSection()) === 'c:room#2' && /2 \/ 2/.test(await page.$eval('.gal-pager-info', (e) => e.textContent)), await hashSection())
+// 头部返回：离开媒体回到媒体库
+await page.click('#media-reader-back')
+await page.waitForSelector('#library-items .library-card')
+check('头部「返回」：离开这个媒体回到媒体库', await page.$eval('#library-view', (v) => v.classList.contains('active')))
+errors.length = 0
+
+// ---- 3b. 播放：从浏览层点进纪念馆 ep01 ----
+await page.goto(link('')); await page.waitForSelector('.gal-browse[data-node=""]')
+await page.click('.gal-card[data-node="c:cabin"]'); await page.waitForSelector('.gal-row')
+await page.click('.gal-row[data-title="ep01 序章"] .gal-row-main')
+await page.waitForSelector('.gal-player .gal-stage')
 await page.waitForFunction(() => document.querySelector('.gal-text')?.textContent.includes('早上好'), null, { timeout: 5000 })
 check('第 1 步：说话人 + 台词（<outline> 标记没有当文字显示）', (await nameNow()) === '小夜' && (await textNow()) === '「早上好，今天也是个好天气呢。」' && (await countNow()) === '1 / 6', `${await nameNow()} | ${await textNow()} | ${await countNow()}`)
 const outlineStyle = await page.$eval('.gal-text span', (e) => getComputedStyle(e).webkitTextStrokeWidth)
@@ -150,7 +213,7 @@ const mid = await page.evaluate(() => ({ count: document.querySelector('.gal-cou
 await page.keyboard.press('Enter')   // 动画中再点：直接完成这一步
 await page.waitForFunction(() => document.querySelector('.gal-count')?.textContent.startsWith('4 / 6') && document.querySelector('.gal-text')?.textContent.includes('纯色背景'), null, { timeout: 3000 })
 const s4 = await page.evaluate(() => ({ black: getComputedStyle(document.querySelector('.gal-black')).opacity, bg: [...document.querySelectorAll('.gal-bg')].map((l) => [getComputedStyle(l).opacity, l.style.backgroundColor]) }))
-check('第 4 步（wait + 变黑 + 换纯色 + 出黑场）：点击能跳过动画，最终状态正确（黑场已退、纯色背景）', s4.black === '0' && s4.bg.some(([o, c]) => o === '1' && c === 'rgb(20, 60, 40)'), JSON.stringify(s4))
+check('第 4 步（wait + 变黑 + 换纯色 + 出黑场）：点击能跳过动画，最终状态正确（黑场已退、纯色背景）', parseFloat(s4.black) < 0.01 && s4.bg.some(([o, c]) => o === '1' && c === 'rgb(20, 60, 40)'), JSON.stringify(s4))
 check('（动画中点击没有多前进一步）', mid.count === '4 / 6' || mid.count === '3 / 6')
 // 后退到第 1 步（instant），再前进验证开头的状态不是残留
 for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowLeft')
@@ -166,7 +229,7 @@ await page.keyboard.press('Escape')
 // 前进到末尾
 for (let i = 0; i < 5; i++) { await page.keyboard.press('ArrowRight'); await sleep(150); await page.keyboard.press('Space'); await sleep(50) }
 await page.waitForFunction(() => document.querySelector('.gal-count')?.textContent === '6 / 6', null, { timeout: 15000 })
-check('走到末步：下一句按钮禁用，▼ 提示消失', (await page.$eval('.gal-bar button:nth-of-type(2)', (b) => b.disabled)) && (await page.$eval('.gal-next', (e) => e.hidden)))
+check('走到末步：下一句按钮禁用，▼ 提示消失', (await page.$eval('.gal-next-btn', (b) => b.disabled)) && (await page.$eval('.gal-next', (e) => e.hidden)))
 const endState = await page.evaluate(() => ({ boxHidden: document.querySelector('.gal-box').hidden, text: document.querySelector('.gal-text').textContent }))
 check('末步台词（背景被撤掉后）', /最后一句/.test(endState.text), JSON.stringify(endState))
 await page.keyboard.press('l')
@@ -186,27 +249,34 @@ const frozen = await countNow()
 await sleep(2500)
 check('再按 A 关闭自动：不再前进', (await countNow()) === frozen)
 
-// ---- 4. 续播 ----
+// ---- 4. 续播：每个脚本各记各的；列表里标出看到哪 ----
 await page.keyboard.press('ArrowRight'); await page.waitForFunction(() => /^3 \/ 6/.test(document.querySelector('.gal-count').textContent))
 await sleep(1500)   // 等进度保存的防抖
-const prog = await (await fetch(`${base}/api/library/items/gal/${apiItems.items?.[0]?.itemId || ''}/progress`)).json().catch(() => null)
-await page.click('[data-view="library-view"]')
-await page.waitForSelector('#library-units .library-unit')
-await sleep(600)
-await page.locator('#library-units .library-unit').first().click()
+const prog = await (await fetch(`${base}/api/library/items/gal/${M.itemId}/progress`)).json()
+check('进度：记在这个脚本的节点上（第 3/6 步 = 40%），「上次看到」指向它', prog.lastSectionId === sec('cabin/ep01 序章.txt') && Math.abs(prog.nodes[sec('cabin/ep01 序章.txt')]?.ratio - 0.4) < 0.01, JSON.stringify(prog))
+await page.click('.gal-up')
+await page.waitForSelector('.gal-row')
+check('回到列表：ep01 标「看到 40%」，ep02 没有标记', /看到 40%/.test(await page.$eval('.gal-row[data-title="ep01 序章"]', (e) => e.textContent)) && !/看到|已看完/.test(await page.$eval('.gal-row[data-title="ep02 终章"]', (e) => e.textContent)))
+await page.click('.gal-row[data-title="ep01 序章"] .gal-row-main')
 await page.waitForSelector('.gal-player .gal-stage')
 await page.waitForFunction(() => document.querySelector('.gal-count')?.textContent.length > 0)
 const resumed = await countNow()
-check('续播：重新打开同一脚本，回到上次的步数', /^[23] \/ 6/.test(resumed), `${resumed} progress=${JSON.stringify(prog)}`)
+check('续播：重新点进同一脚本，回到上次的步数', /^3 \/ 6/.test(resumed), `${resumed} progress=${JSON.stringify(prog)}`)
+// 在列表里逛不会冲掉「上次看到」
+await page.click('.gal-up'); await page.waitForSelector('.gal-row'); await page.click('.gal-browse-up'); await page.waitForSelector('.gal-card')
+await sleep(900)
+check('在列表里逛：上次看到的位置不变（「继续」仍落在播放页）', (await (await fetch(`${base}/api/library/items/gal/${M.itemId}/progress`)).json()).lastSectionId === sec('cabin/ep01 序章.txt'))
 
-// ---- 5. 第二个脚本（上/下一单元） ----
-await page.click('#media-reader-next').catch(() => {})
+// ---- 5. 同一级的下一个脚本（头部「下一章」）----
+await page.goto(link(sec('cabin/ep01 序章.txt'))); await sleep(500)
+await page.waitForSelector('.gal-player .gal-stage')
+await page.click('#media-reader-next')
 await page.waitForFunction(() => /\/ 2$/.test(document.querySelector('.gal-count')?.textContent || ''), null, { timeout: 5000 }).catch(() => {})
-check('下一单元：切到第 2 个脚本（2 步）', /\/ 2$/.test((await countNow()) || ''), await countNow())
+check('下一章：切到同一级的下一个脚本 ep02（2 步）', /\/ 2$/.test((await countNow()) || '') && (await hashSection()) === sec('cabin/ep02 终章.txt'), await countNow())
+check('最后一个脚本：「下一章」禁用', await page.$eval('#media-reader-next', (b) => b.disabled) && !(await page.$eval('#media-reader-prev', (b) => b.disabled)))
 
 // ---- 6. 缺资源的作品 ----
-await page.click('[data-view="library-view"]')
-await page.locator('#library-items .library-card', { hasText: '演示作品B' }).first().click()   // 只有 1 个脚本：点卡片直接进播放器
+await page.goto(link(sec('room/缺资源.txt'))); await sleep(500)
 await page.waitForSelector('.gal-player .gal-stage')
 await page.waitForFunction(() => /缺少资源/.test(document.querySelector('.gal-note')?.textContent || ''), null, { timeout: 8000 }).catch(() => {})
 check('缺资源：提示「缺少资源 N 个」，播放器不崩', /缺少资源 \d+ 个/.test((await t('.gal-note')) || ''), await t('.gal-note'))
@@ -215,9 +285,7 @@ await page.keyboard.press('Space'); await sleep(300)
 check('缺资源：仍能继续下一步（含不存在的视频）', /^2 \/ 2/.test(await countNow()), await countNow())
 await page.screenshot({ path: path.join(shotDir, 'player-missing.png') })
 // ---- 6b. 长脚本 D（立绘/遮罩/Spine 指令暂未渲染但不影响播放；伪 mp3 实为 wav，浏览器要能解码）----
-await page.click('[data-view="library-view"]')
-await page.waitForSelector('#library-items .library-card')
-await page.locator('#library-items .library-card', { hasText: '演示作品D' }).first().click()
+await page.goto(link(sec(DPATH))); await sleep(500)
 await page.waitForSelector('.gal-player .gal-stage')
 await page.waitForFunction(() => /^1 \/ \d+/.test(document.querySelector('.gal-count')?.textContent || ''))
 await sleep(1500)
@@ -233,11 +301,9 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
 
 // ---- 6c. 新功能：沉浸 / 工具栏在文本框底部 / 文本框透明度 / 自动播放等语音 ----
 {
-  const listed2 = await (await fetch(`${base}/api/library/items?type=gal&page=1&limit=50`)).json()
-  const A2 = listed2.items.find((i) => i.title.startsWith('演示作品A'))
-  const D2 = listed2.items.find((i) => i.title.startsWith('演示作品D'))
-  const unitsA = await (await fetch(`${base}/api/library/items/gal/${A2.itemId}/units`)).json()
-  const resetA = async () => { for (const u of unitsA) await fetch(`${base}/api/library/items/gal/${A2.itemId}/progress`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unitId: u.unitId, scrollRatio: 0 }) }) }
+  const EP1 = sec('cabin/ep01 序章.txt')
+  const resetNodes = async (...nodes) => { for (const n of nodes) await fetch(`${base}/api/library/items/gal/${M.itemId}/progress`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unitId: 'main', sectionId: n, scrollRatio: 0 }) }) }
+  const resetA = () => resetNodes(EP1, sec('cabin/ep02 终章.txt'))
   await resetA()
   const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 } })
   // 记录语音的开始/播完时间，和台词计数器变化的时间，用来量「语音播完后等 N 秒」
@@ -254,7 +320,6 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   const errs2 = []
   pg.on('pageerror', (e) => errs2.push(e.message))
   pg.on('dialog', (d) => d.dismiss().catch(() => {}))
-  const link = (item, unit) => `${base}/#/media/gal/${item.itemId}/${encodeURIComponent(unit.unitId)}`
   const cnt = () => pg.$eval('.gal-count', (e) => e.textContent).catch(() => '')
   const press = async (key, n = 1) => { for (let i = 0; i < n; i++) { await pg.keyboard.press(key); await sleep(220) } }
   const goStep = async (n, total) => { for (let i = 0; i < 40 && (await cnt()) !== `${n} / ${total}`; i++) { await pg.keyboard.press('Space'); await sleep(260) } }
@@ -268,7 +333,7 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   }))
 
   // ---- 沉浸：默认开（和别的类型一致），顶栏/头部收起 ----
-  await pg.goto(link(A2, unitsA[0]))
+  await pg.goto(link(EP1))
   await pg.waitForSelector('.gal-stage')
   await pg.waitForFunction(() => document.querySelector('.gal-text')?.textContent.includes('早上好'), null, { timeout: 8000 })
   let st = await immState()
@@ -296,9 +361,8 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   await pg.screenshot({ path: path.join(shotDir, 'toolbar.png') })
 
   // 没有台词时（文本框收起）工具栏仍在底部：长脚本 D 的最后一步台词是空的
-  const unitsD = await (await fetch(`${base}/api/library/items/gal/${D2.itemId}/units`)).json()
-  await fetch(`${base}/api/library/items/gal/${D2.itemId}/progress`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unitId: unitsD[0].unitId, scrollRatio: 0 }) })
-  await pg.goto(link(D2, unitsD[0]))
+  await resetNodes(sec(DPATH))
+  await pg.goto(link(sec(DPATH)))
   await pg.waitForSelector('.gal-stage')
   await pg.waitForFunction(() => /^1 \/ \d+/.test(document.querySelector('.gal-count')?.textContent || ''))
   const dN = Number((await cnt()).split('/')[1])
@@ -309,7 +373,7 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
 
   // ---- 点工具栏上的按钮不会顺带翻页；设置弹层 ----
   await resetA()
-  await pg.goto(link(A2, unitsA[0]))
+  await pg.goto(link(EP1))
   await pg.waitForFunction(() => document.querySelector('.gal-text')?.textContent.includes('早上好'), null, { timeout: 8000 })
   await sleep(800)
   const before = await cnt()
@@ -353,7 +417,7 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   await pg.click('.gal-cfg')   // 关掉设置面板
   // 第 3 步有语音（v_1.wav，0.6 秒）。从第 2 步开始自动播放：到第 3 步语音响完后，再等 2.5 秒才进第 4 步
   await resetA()
-  await pg.goto(link(A2, unitsA[0])); await pg.waitForFunction(() => document.querySelector('.gal-text')?.textContent.includes('早上好'), null, { timeout: 8000 })
+  await pg.goto(link(EP1)); await pg.waitForFunction(() => document.querySelector('.gal-text')?.textContent.includes('早上好'), null, { timeout: 8000 })
   await sleep(600)
   await goStep(2, 6); await sleep(500)
   await pg.evaluate(() => { window.__t.voiceEnd = []; window.__t.count = [] })
@@ -396,7 +460,7 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   // ---- 上话/下话/返回（沉浸里的按钮）、F 全屏、退出沉浸并记住 ----
   await pg.unroute(/\/resource\?path=.*voice.*v_1\.wav/i).catch(() => {})
   await sleep(1500); await resetA()   // 等进度保存的防抖落盘后清零
-  await pg.goto(link(A2, unitsA[0])); await pg.reload()   // 同一个 URL（只差 hash）goto 不会重新加载，所以补一次 reload 从头开始
+  await pg.goto(link(EP1)); await pg.reload()   // 同一个 URL：goto 不会重新加载，补一次 reload 从头开始（进度已清零）
   await pg.waitForFunction(() => document.querySelector('.gal-text')?.textContent.includes('早上好'), null, { timeout: 8000 }); await sleep(500)
   check('第 1 个脚本：上话禁用、下话可用', await pg.$eval('.gal-ch-prev', (b) => b.disabled) && !(await pg.$eval('.gal-ch-next', (b) => b.disabled)))
   await pg.click('.gal-ch-next')
@@ -437,15 +501,43 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   await ctx2.close()
 }
 
+// ---- 6d. 浏览层补充：窄屏、沉浸与列表的切换、接口层的非法节点 ----
+{
+  const ctx3 = await browser.newContext({ viewport: { width: 390, height: 800 } })   // 没存沉浸偏好：默认沉浸
+  const pg = await ctx3.newPage()
+  const errs3 = []
+  pg.on('pageerror', (e) => errs3.push(e.message))
+  pg.on('dialog', (d) => d.dismiss().catch(() => {}))
+  const overflow = () => pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+  const imm = () => pg.evaluate(() => ({ app: document.querySelector('#app').classList.contains('stream-immersive'), head: getComputedStyle(document.querySelector('#media-viewer-view .chapter-head')).display }))
+  await pg.goto(link('')); await pg.waitForSelector('.gal-browse[data-node=""]')
+  check('[390x800] 首页：卡片排得下，没有横向滚动条；浏览层里不进沉浸（头部还在）', (await overflow()) <= 1 && (await pg.$$('.gal-card')).length === 4 && !(await imm()).app && (await imm()).head !== 'none', JSON.stringify([await overflow(), await imm()]))
+  await pg.screenshot({ path: path.join(shotDir, 'browse-390.png') })
+  await pg.click('.gal-card[data-node="c:cabin"]'); await pg.waitForSelector('.gal-row')
+  check('[390x800] 列表：没有横向滚动条', (await overflow()) <= 1)
+  await pg.screenshot({ path: path.join(shotDir, 'browse-390-list.png') })
+  await pg.click('.gal-row[data-title="ep01 序章"] .gal-row-main'); await pg.waitForSelector('.gal-player .gal-stage')
+  await sleep(500)
+  check('点进脚本：自动进沉浸（和别的类型一致）', (await imm()).app && (await imm()).head === 'none', JSON.stringify(await imm()))
+  await pg.click('.gal-up'); await pg.waitForSelector('.gal-browse'); await sleep(300)
+  check('沉浸里点「↑ 列表」：回到列表，沉浸自动退出（头部、顶栏回来）；没有改沉浸偏好', !(await imm()).app && (await imm()).head !== 'none' && await pg.evaluate(() => JSON.parse(localStorage.getItem('copymanga.immersivePref') || '{}').gal !== false))
+  await pg.click('.gal-row[data-title="ep02 终章"] .gal-row-main'); await pg.waitForSelector('.gal-player .gal-stage'); await sleep(400)
+  check('再点进脚本：又自动进沉浸', (await imm()).app)
+  check('[390x800] 沉浸里工具栏没超出舞台宽度', await pg.evaluate(() => { const b = document.querySelector('.gal-bar').getBoundingClientRect(); const p = document.querySelector('.gal-player').getBoundingClientRect(); return b.width <= p.width + 1 && b.left >= p.left - 1 }))
+  check('[390x800] 没有页面错误', errs3.length === 0, errs3.join('|'))
+  await ctx3.close()
+  // 接口层：reader 的 sectionId 就是节点 id；非法的在接口上就挡掉
+  const get = async (section, unit = 'main') => { const r = await fetch(`${base}/api/library/items/gal/${M.itemId}/reader/${unit}?sectionId=${encodeURIComponent(section)}`); return { status: r.status, body: await r.json().catch(() => ({})) } }
+  const ok = await get('c:cabin#1')
+  check('接口：reader?sectionId=c:cabin#1 返回列表节点', ok.status === 200 && ok.body.node.kind === 'list' && ok.body.scene === null && ok.body.node.items.length === 2)
+  check('接口：脚本节点返回规范场景', (await get(sec('cabin/ep01 序章.txt'))).body.scene?.format === 'gal-scene/1')
+  const bad = await Promise.all([get('s:../../etc/passwd'), get('s:cabin/README.txt'), get('c:nope'), get('ch:..'), get('', 'other-unit'), get(`s:${'a/'.repeat(300)}x.txt`)])
+  check('接口：穿越/非脚本/未知分类/非法角色/未知单元/超长路径 都是 4xx/5xx 错误（不是 200）', bad.every((r) => r.status >= 400) && bad.slice(0, 4).map((r) => r.status).join() === '400,400,404,400', JSON.stringify(bad.map((r) => r.status)))
+}
+
 // ---- 7. 多视口：舞台比例、台词框、控制条 ----
 // 续播会把进度存在服务端：每个视口都要从头看，先把 A 的进度清零
-const listed = await (await fetch(`${base}/api/library/items?type=gal&page=1&limit=50`)).json()
-const aItem = listed.items.find((i) => i.title.startsWith('演示作品A'))
-const resetProgress = async () => {
-  for (const u of (await (await fetch(`${base}/api/library/items/gal/${aItem.itemId}/units`)).json())) {
-    await fetch(`${base}/api/library/items/gal/${aItem.itemId}/progress`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unitId: u.unitId, scrollRatio: 0 }) })
-  }
-}
+const resetProgress = async () => { for (const n of ['cabin/ep01 序章.txt', 'cabin/ep02 终章.txt']) await fetch(`${base}/api/library/items/gal/${M.itemId}/progress`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unitId: 'main', sectionId: sec(n), scrollRatio: 0 }) }) }
 for (const vp of [{ w: 1920, h: 1080 }, { w: 1024, h: 700 }, { w: 800, h: 900 }, { w: 390, h: 800 }]) {
   await resetProgress()
   const ctx = await browser.newContext({ viewport: { width: vp.w, height: vp.h } })
@@ -453,12 +545,7 @@ for (const vp of [{ w: 1920, h: 1080 }, { w: 1024, h: 700 }, { w: 800, h: 900 },
   const errs = []
   pg.on('pageerror', (e) => errs.push(e.message))
   pg.on('dialog', (d) => d.dismiss().catch(() => {}))
-  await pg.goto(`${base}/`)
-  await pg.click('[data-view="library-view"]')
-  await pg.waitForSelector('#library-items .card')
-  await pg.locator('#library-items .library-card', { hasText: '演示作品A' }).first().click()
-  await pg.waitForSelector('#library-units .library-unit')
-  await pg.locator('#library-units .library-unit').first().click()
+  await pg.goto(link(sec('cabin/ep01 序章.txt')))
   await pg.waitForSelector('.gal-stage')
   await pg.waitForFunction(() => document.querySelector('.gal-text')?.textContent.includes('早上好'), null, { timeout: 8000 })
   for (let i = 0; i < 4; i++) { await pg.keyboard.press('Space'); await sleep(250) }

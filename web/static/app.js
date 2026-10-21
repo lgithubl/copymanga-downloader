@@ -1,3 +1,4 @@
+import { createGalBrowser } from '/gal-browse.js'
 import { createGalPlayer } from '/gal-player.js'
 import { ratioOfStep } from '/gal-engine.js'
 import { HOVER_DELAY_MS, HOVER_MAX_COVER_RATIO, fitPreview, placeExpanded, worthExpanding } from '/hover-preview.js'
@@ -3180,7 +3181,7 @@ function renderLibraryUnits() {
       isRead ? '已读' : '未读',
       unit.subtitles?.length ? `字幕${unit.subtitles.length}` : '',
       unit.imageCount ? `${unit.imageCount}图` : '',
-      unit.mediaKind === 'gal' && unit.stepCount ? `${unit.stepCount}步` : '',
+      unit.mediaKind === 'gal' && unit.stepCount ? `${unit.stepCount}个脚本` : '',
     ].filter(Boolean)
     row.innerHTML = `
       <input class="unit-metadata-select" type="checkbox" value="${escapeHtml(unit.unitId)}" ${unit.mediaKind === 'audio' || unit.mediaKind === 'video' ? '' : 'disabled'} aria-label="选择章节" />
@@ -3665,14 +3666,19 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     // 后台续播（自动连播）也更新路由，但只有媒体浏览是当前视图时才会真的写进 URL。
     currentMediaRoute = { type: owner.type, itemId: owner.itemId, unitId, sectionId: reader.section?.sectionId || sectionId || '' }
     els.mediaReaderTitle.textContent = reader.section?.title || reader.unit?.title || unitId
-    els.mediaReaderPrev.disabled = !reader.navigation?.prev
-    els.mediaReaderNext.disabled = !reader.navigation?.next
+    // Gal：整个媒体只有一个单元，上一章/下一章是播放页在同一级列表里的上一个/下一个脚本
+    const galSteps = reader.type === 'gal' && !galIsBrowsing(reader) ? reader.sectionNavigation : null
+    els.mediaReaderPrev.disabled = !(reader.navigation?.prev || galSteps?.prev)
+    els.mediaReaderNext.disabled = !(reader.navigation?.next || galSteps?.next)
     renderMediaSectionSelect(reader)
     renderMediaReader(reader, options)
     syncMediaHash()
-    const resumeRatio = isLibraryPageOwner(owner) && reader.section?.sectionId === currentLibraryProgress?.lastSectionId
-      ? currentLibraryProgress.lastScrollRatio
-      : 0
+    const galNodeRatio = reader.type === 'gal' && isLibraryPageOwner(owner) ? currentLibraryProgress?.nodes?.[reader.section?.sectionId]?.ratio : undefined
+    const resumeRatio = galNodeRatio !== undefined
+      ? galNodeRatio
+      : isLibraryPageOwner(owner) && reader.section?.sectionId === currentLibraryProgress?.lastSectionId
+        ? currentLibraryProgress.lastScrollRatio
+        : 0
     await saveLibraryProgress(resumeRatio, reader)
     await recordCurrentLibraryHistory({ visit: true, reader, position: options.position || historyPositionForReader(reader) }).catch(() => {})
     if (isLibraryPageOwner(owner)) {
@@ -3703,7 +3709,7 @@ function renderMediaReader(reader, options = {}) {
   // 上一章的分批批次到这里就作废了，不然它的兜底定时器会继续往信息栏写字
   retireImageBatch(galleryBatch)
   if (galPlayer && reader.type !== 'gal') { galPlayer.destroy(); galPlayer = null }
-  if (reader.type !== 'gal') exitGalImmersive()
+  if (reader.type !== 'gal') { exitGalImmersive(); galBrowser?.destroy(); galBrowser = null }
   if (reader.type === 'html') {
     renderMediaHtml(reader)
   } else if (reader.type === 'images') {
@@ -3728,8 +3734,10 @@ function renderMediaReader(reader, options = {}) {
 // Gal 沉浸：和别的类型同一套约定——头部由 stream-page-fullscreen 隐掉、顶栏由 stream-immersive 收起并在贴顶边时滑出，
 // Esc / 退出按钮会记住「不要沉浸」的选择（remember），「返回」不改偏好。
 let galImmersive = null
+// 首页/分类/角色这些浏览节点（kind != player）里没有播放器，也就没有沉浸
+const galIsBrowsing = (reader) => reader?.type === 'gal' && Boolean(reader.node) && reader.node.kind !== 'player'
 function enterGalImmersive({ remember = false } = {}) {
-  if (galImmersive || currentMediaReader?.type !== 'gal') return
+  if (galImmersive || currentMediaReader?.type !== 'gal' || galIsBrowsing(currentMediaReader)) return
   if (remember) saveImmersivePref('gal', true)
   const EDGE = 6
   const HIDE_DELAY = 1800
@@ -3776,7 +3784,37 @@ function toggleGalImmersive() {
 // Gal 剧情播放：场景由服务端按适配器转好（规范场景 gal-scene/1），这里只管渲染。
 // 续播：进度按「第几步 / 总步数」存成 scrollRatio，和别的类型共用同一套进度接口。
 let galRatio = 0
+let galBrowser = null
+// 首页/分类/角色这些浏览节点：只有选项，没有播放器。点选项 = 再取一次 reader（sectionId = 节点 id）
+function renderGalBrowse(reader) {
+  exitWidthAdjust({ apply: false })
+  exitEpubImmersive()
+  retireImageBatch(galleryBatch)
+  galleryBatch = null
+  if (galPlayer) { galPlayer.destroy(); galPlayer = null }
+  exitGalImmersive()
+  galBrowser?.destroy()
+  const themeClass = applyMediaReaderTheme()
+  els.mediaReaderContent.className = `media-reader-content media-gal media-gal-browse ${themeClass}`
+  const owner = readerOwner(reader)
+  const nodes = owner && currentLibraryProgress?.itemId === owner.itemId ? currentLibraryProgress.nodes || {} : {}
+  galBrowser = createGalBrowser({
+    container: els.mediaReaderContent,
+    reader,
+    progress: Object.fromEntries(Object.entries(nodes).map(([id, entry]) => [id, { ratio: Number(entry?.ratio) || 0, completedAt: entry?.completedAt || '' }])),
+    onOpen: (nodeId) => { openUnitInSession(reader.unit.unitId, nodeId).catch((error) => alert(error.message)) },
+  })
+  els.mediaReaderContent.scrollTop = 0
+  mediaPageIndex = 0
+  mediaPageCount = 1
+  mediaPageStep = 1
+  updateMediaPageControls()
+}
+
 function renderGal(reader) {
+  if (reader.node && reader.node.kind !== 'player') { renderGalBrowse(reader); return }
+  galBrowser?.destroy()
+  galBrowser = null
   exitWidthAdjust({ apply: false })
   exitEpubImmersive()
   retireImageBatch(galleryBatch)
@@ -3785,8 +3823,11 @@ function renderGal(reader) {
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-gal ${themeClass}`
   const owner = readerOwner(reader)
-  const resume = owner && currentLibraryProgress?.itemId === owner.itemId && currentLibraryProgress?.lastUnitId === reader.unit?.unitId
-    ? Number(currentLibraryProgress.lastScrollRatio || 0)
+  // 每个脚本各记各的进度（progress.nodes[节点 id]）；老数据没有就退回「上次看的那个」
+  const sectionId = reader.section?.sectionId || ''
+  const mine = owner && currentLibraryProgress?.itemId === owner.itemId ? currentLibraryProgress : null
+  const resume = mine
+    ? Number(mine.nodes?.[sectionId]?.ratio ?? (mine.lastSectionId === sectionId ? mine.lastScrollRatio : 0)) || 0
     : 0
   galRatio = resume
   galPlayer = createGalPlayer({
@@ -3806,6 +3847,10 @@ function renderGal(reader) {
       prev: () => { mediaStepTarget('prev')?.() },
       next: () => { mediaStepTarget('next')?.() },
       back: () => { exitGalImmersive(); els.mediaReaderBack?.click() },
+      // 「列表」回到它的上一级（首页/分类/角色），从那里选别的脚本；沉浸状态保留，进列表时自动退出
+      up: reader.node?.parent != null
+        ? () => { openUnitInSession(reader.unit.unitId, reader.node.parent).catch((error) => alert(error.message)) }
+        : null,
     },
   })
   // 默认沉浸（和别的类型一样：没存过偏好就是开；Esc/退出会记住）。切到下一话时沿用当前沉浸状态
@@ -5262,7 +5307,7 @@ function formatMediaTime(seconds) {
 
 function mediaReaderTypeLabel(reader) {
   if (reader.type === 'images') return `${reader.images?.length || 0} 张图`
-  if (reader.type === 'gal') return `Gal · ${reader.scene?.steps?.length || 0} 步`
+  if (reader.type === 'gal') return reader.node && reader.node.kind !== 'player' ? `Gal · ${reader.node.title}` : `Gal · ${reader.scene?.steps?.length || 0} 步`
   if (reader.type === 'audio') return `音频${reader.unit?.size ? ` · ${formatBytes(reader.unit.size)}` : ''}`
   if (reader.type === 'video') return `视频${reader.unit?.size ? ` · ${formatBytes(reader.unit.size)}` : ''}`
   return '文本'
@@ -6804,7 +6849,7 @@ function updateMediaPageControls() {
   if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = !['html', 'images'].includes(currentMediaReader?.type)
   // 沉浸五种内容都支持：epub 分页翻、图集滚动看、音视频铺满播、Gal 剧情播放
   if (els.mediaImmersive) {
-    els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video', 'gal'].includes(currentMediaReader?.type)
+    els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video', 'gal'].includes(currentMediaReader?.type) || galIsBrowsing(currentMediaReader)
   }
   const isHtml = currentMediaReader?.type === 'html'
   els.mediaPagePrev.disabled = !isHtml || mediaPageIndex <= 0
@@ -7673,11 +7718,13 @@ function openUnitInSession(unitId, sectionId = '') {
 
 els.mediaReaderPrev.addEventListener('click', () => {
   const target = currentMediaReader?.navigation?.prev
-  if (target) openUnitInSession(target.unitId)
+  if (target) { openUnitInSession(target.unitId); return }
+  if (currentMediaReader?.type === 'gal') mediaStepTarget('prev')?.()
 })
 els.mediaReaderNext.addEventListener('click', () => {
   const target = currentMediaReader?.navigation?.next
-  if (target) openUnitInSession(target.unitId)
+  if (target) { openUnitInSession(target.unitId); return }
+  if (currentMediaReader?.type === 'gal') mediaStepTarget('next')?.()
 })
 els.mediaSectionSelect.addEventListener('change', () => {
   if (currentMediaReader?.unit?.unitId && els.mediaSectionSelect.value) {

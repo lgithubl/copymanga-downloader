@@ -39,18 +39,29 @@ const tone = async (file, hz, seconds) => {
   run('python3', ['-I', '-c', 'import sys,wave,struct,math\nf,hz,sec=sys.argv[1],float(sys.argv[2]),float(sys.argv[3])\nw=wave.open(f,"wb");w.setnchannels(1);w.setsampwidth(2);w.setframerate(22050)\nw.writeframes(b"".join(struct.pack("<h",int(9000*math.sin(2*math.pi*hz*i/22050))) for i in range(int(22050*sec))));w.close()', file, String(hz), String(seconds)])
 }
 
-export async function buildGalFixture(root, { exampleScript = '' } = {}) {
-  // —— 作品 A：资源齐全，两个脚本，覆盖基础指令 ——
-  const a = path.join(root, '演示作品A')
-  await bgImage(path.join(a, 'download/bg/bg_school.jpg'), '教室', ['#2b6cb0', '#1a365d'])
-  await bgImage(path.join(a, 'download/bg/bg_night.jpg'), '夜晚', ['#553c9a', '#1a202c'])
-  await bgImage(path.join(a, 'download/bg/bg_tall.jpg'), '竖图 600x1000', ['#2f855a', '#1c4532'], 600, 1000)
-  await tone(path.join(a, 'download/sound/bgm/bgm_a.wav'), 220, 2)
-  await tone(path.join(a, 'download/sound/bgm/bgm_b.wav'), 330, 2)
-  await tone(path.join(a, 'download/sound/se/se_1.wav'), 880, 0.3)
-  await tone(path.join(a, 'download/sound/voice/v_1.wav'), 440, 0.6)
-  await mkdir(path.join(a, 'scenario'), { recursive: true })
-  await writeFile(path.join(a, 'scenario/ep01 序章.txt'), [
+// 目录约定见 web/library/gal/browse.mjs：<根>/{cabin,character/<id>,room,other}/*.txt，资源在 <根>/download/…
+// 整个根目录 = 一个 Gal 媒体。many：room 下再造 N 个小脚本，用来测翻页（默认 28，超过一页 25 条）
+export async function buildGalFixture(root, { exampleScript = '', many = 28 } = {}) {
+  const d = (...p) => path.join(root, ...p)
+  // —— 资源（所有脚本共用 download/） ——
+  await bgImage(d('download/bg/bg_school.jpg'), '教室', ['#2b6cb0', '#1a365d'])
+  await bgImage(d('download/bg/bg_night.jpg'), '夜晚', ['#553c9a', '#1a202c'])
+  await bgImage(d('download/bg/bg_tall.jpg'), '竖图 600x1000', ['#2f855a', '#1c4532'], 600, 1000)
+  await bgImage(d('download/bg/bg_wide.jpg'), 'wide 1600x400', ['#c05621', '#7b341e'], 1600, 400)
+  await bgImage(d('download/bg/bg_10060200.jpg'), 'bg_10060200 (占位)', ['#744210', '#1a202c'])
+  await tone(d('download/sound/bgm/bgm_a.wav'), 220, 2)
+  await tone(d('download/sound/bgm/bgm_b.wav'), 330, 2)
+  await tone(d('download/sound/bgm/bgm192.mp3'), 262, 3)
+  await tone(d('download/sound/bgm/bgm163.mp3'), 392, 3)
+  await tone(d('download/sound/se/se_1.wav'), 880, 0.3)
+  await tone(d('download/sound/se/se_055.mp3'), 988, 0.4)
+  await tone(d('download/sound/voice/v_1.wav'), 440, 0.6)
+  await mkdir(d('cabin'), { recursive: true })
+  await mkdir(d('room'), { recursive: true })
+  await mkdir(d('other'), { recursive: true })
+
+  // —— 纪念馆：资源齐全，覆盖基础指令（A）+ 带 BOM 的第二个脚本 ——
+  await writeFile(d('cabin/ep01 序章.txt'), [
     'stopbgm,,,,,,,,,,,',
     'fadeinblack,0,,,,,,,,,,',
     'bg,download/bg/bg_school.jpg,0,,,,,,,,',
@@ -96,34 +107,32 @@ export async function buildGalFixture(root, { exampleScript = '' } = {}) {
     'clickwait,,,,,,,,,,,',
     '',
   ].join('\n'))
-  await writeFile(path.join(a, 'scenario/ep02 终章.txt'), '﻿bg,download/bg/bg_night.jpg,0\nname,小夜,\nmsg,0,第二个脚本（带 BOM）。,,,\nclickwait\nmsg,0,结束。\nclickwait\n')
-  await writeFile(path.join(a, 'README.txt'), '这不是剧情脚本，不应该被识别成单元。\n第二行\n第三行\n')
+  await writeFile(d('cabin/ep02 终章.txt'), '﻿bg,download/bg/bg_night.jpg,0\nname,小夜,\nmsg,0,第二个脚本（带 BOM）。,,,\nclickwait\nmsg,0,结束。\nclickwait\n')
+  await writeFile(d('cabin/README.txt'), '这不是剧情脚本，不应该出现在列表里。\n第二行\n第三行\n')
 
-  // —— 作品 B：资源缺失（没封面，播放器要提示缺资源，不能崩） ——
-  const b = path.join(root, '演示作品B 缺资源')
-  await mkdir(path.join(b, 'script'), { recursive: true })
-  await writeFile(path.join(b, 'script/only.txt'), 'bg,download/bg/missing.jpg,0.2\nplaybgm,/download/sound/bgm/none.mp3,0\nname,谁,\nmsg,0,背景和 BGM 都不存在。,,,\nclickwait\nmovie,download/mov/none.mp4,0,1\nmsg,0,视频也不存在。\nclickwait\n')
+  // —— 家具：资源缺失（播放器要提示缺资源，不能崩）+ 超宽背景 + 很多小脚本（翻页） ——
+  await writeFile(d('room/缺资源.txt'), 'bg,download/bg/missing.jpg,0.2\nplaybgm,/download/sound/bgm/none.mp3,0\nname,谁,\nmsg,0,背景和 BGM 都不存在。,,,\nclickwait\nmovie,download/mov/none.mp4,0,1\nmsg,0,视频也不存在。\nclickwait\n')
+  await writeFile(d('room/超宽背景.txt'), 'bg,download/bg/bg_wide.jpg,0\nname,甲,\nmsg,0,超宽背景 1600x400。\nclickwait\n')
+  for (let i = 1; i <= many; i++) {
+    const n = String(i).padStart(2, '0')
+    await writeFile(d(`room/家具${n}.txt`), `bg,download/bg/bg_${i % 2 ? 'school' : 'night'}.jpg,0\nname,家具,\nmsg,0,第 ${n} 个家具脚本。\nclickwait\nmsg,0,第 ${n} 个的第二句。\nclickwait\n`)
+  }
 
-  // —— 作品 C：超长目录名（卡片/详情的标题处理） ——
-  const longName = `演示作品C-${'这是一个非常非常长的作品名'.repeat(3)}-Extraordinarily-Long-Unbroken-${'x'.repeat(40)}`
-  const c = path.join(root, longName)
-  await mkdir(c, { recursive: true })
-  await bgImage(path.join(c, 'bg.jpg'), 'long title', ['#c05621', '#7b341e'], 1600, 400)
-  await writeFile(path.join(c, 'a.txt'), 'bg,bg.jpg,0\nname,甲,\nmsg,0,超宽背景 1600x400。\nclickwait\n')
+  // —— 复刻：超长文件名（卡片/列表标题处理） ——
+  const longName = `超长标题-${'这是一个非常非常长的脚本名'.repeat(3)}-Extraordinarily-Long-Unbroken-${'x'.repeat(40)}`
+  await writeFile(d('other', `${longName}.txt`), 'bg,download/bg/bg_wide.jpg,0\nname,甲,\nmsg,0,超长文件名。\nclickwait\n')
 
-  // —— 无脚本目录：应该被跳过；非脚本内容的 txt 不能被当脚本 ——
-  await mkdir(path.join(root, '空目录无脚本'), { recursive: true })
-  await writeFile(path.join(root, '空目录无脚本', 'notes.txt'), 'hello\nworld\nthis is not a script\n')
-  await mkdir(path.join(root, '.hidden'), { recursive: true })
-
-  // —— 作品 D：带立绘/遮罩/Spine 等「暂未渲染」指令的长脚本（真实示例脚本给了就用它，资源都是占位） ——
-  const d = path.join(root, exampleScript ? '演示作品D 真实示例脚本' : '演示作品D 模拟长脚本')
-  await mkdir(path.join(d, 'scripts'), { recursive: true })
-  await bgImage(path.join(d, 'download/bg/bg_10060200.jpg'), 'bg_10060200 (占位)', ['#744210', '#1a202c'])
-  await tone(path.join(d, 'download/sound/bgm/bgm192.mp3'), 262, 3)
-  await tone(path.join(d, 'download/sound/bgm/bgm163.mp3'), 392, 3)
-  await tone(path.join(d, 'download/sound/se/se_055.mp3'), 988, 0.4)
-  if (exampleScript) await copyFile(exampleScript, path.join(d, 'scripts/example.txt'))
+  // —— 角色：1010（有头像、有图片/视频两个变体、有单变体）、10580（立绘/特效等长脚本）、2001（没头像没名字） ——
+  await writeFile(d('character_names.json'), JSON.stringify({ 1010: '小夜', 10580: '阿梓' }))
+  await mkdir(d('character/1010'), { recursive: true })
+  run(magick[0], ['-size', '256x256', 'gradient:#d53f8c-#702459', '-quality', '80', d('character/1010/icon.png')])
+  await writeFile(d('character/1010/story01_image.txt'), 'bg,download/bg/bg_school.jpg,0\nname,小夜,\nmsg,0,故事一·图片版。\nclickwait\nmsg,0,图片版第二句。\nclickwait\n')
+  await writeFile(d('character/1010/story01_video.txt'), 'movie,download/mov/story01.mp4,0,0\nname,小夜,\nmsg,0,故事一·视频版（视频文件不存在，应该提示而不是崩）。\nclickwait\n')
+  await writeFile(d('character/1010/story02.txt'), 'bg,download/bg/bg_night.jpg,0\nname,小夜,\nmsg,0,故事二（只有一个版本）。\nclickwait\n')
+  await mkdir(d('character/2001'), { recursive: true })
+  await writeFile(d('character/2001/only.txt'), 'bg,download/bg/bg_tall.jpg,0\nmsg,0,没有头像、没有名字的角色。\nclickwait\n')
+  await mkdir(d('character/10580/adv'), { recursive: true })
+  if (exampleScript) await copyFile(exampleScript, d('character/10580/example.txt'))
   else {
     const lines = ['stopbgm,,,,,,,,,,,', 'fadeinblack,0,,,,,,,,,,', 'bg,download/bg/bg_10060200.jpg,0,,,,,,,,', 'endwait,,,,,,,,,,,', 'fadeoutblack,1.5,,,,,,,,,,', 'endwait,,,,,,,,,,,', 'playbgm,/download/sound/bgm/bgm192.mp3,0,', 'endwait,,,,,,,,,,,', '']
     const talk = [['阿梓', '「喂，你以为我会容忍你这种人吗？」'], ['小蓟', '「黑、蔷薇……你是……」'], ['诺恩', '「喂，你是笨蛋吗！」'], ['阿梓', '「不要啦，被打很痛的，\\n而且身上留下痕迹的话怎么办？」'], ['诺恩', '「要是怕被打就别开这种恶劣的玩笑！」']]
@@ -138,7 +147,7 @@ export async function buildGalFixture(root, { exampleScript = '' } = {}) {
       lines.push('endwait,,,,,,,,,,,', `name,<outline width=2 color=black>${who}</outline>,`, `msg,0,<outline width=2 color=black>${text}</outline>,,,,,,,,,`, 'clickwait,,,,,,,,,,,', '')
     }
     lines.push('fadeinblack,0.5,,,,,,,,,,', 'endwait,,,,,,,,,,,', 'name,,,,,,,,,,,', 'msg,0,,,,,,,,,,,', 'spriteoff,all,0.5,,,,,,,,,', 'bgoff,1.0,,,,,,,,,,', 'endwait,,,,,,,,,,,')
-    await writeFile(path.join(d, 'scripts/long.txt'), lines.join('\n'))
+    await writeFile(d('character/10580/long.txt'), lines.join('\n'))
   }
 }
 

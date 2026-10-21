@@ -208,13 +208,13 @@ jobs:
                       z.writestr('%03d.png' % p, png(120 + p * 4, 160, ((40 * i + 30 * p) % 256, (90 + 20 * p) % 256, (160 - 15 * p) % 256)))
                   z.writestr('uniq.txt', 'demo-%d' % i)
           PY
-          # Gal 演示数据：/data/gal 下每个子目录一个作品，页面里选「Gal 导入」方案直接导入（目录原地使用，不 mv）
+          # Gal 演示数据：一个目录 = 一个 Gal 媒体（目录原地使用，不 mv）；服务起来后下面直接把它导入进媒体库
           GAL_EX_ARGS=""
           if [ -n "${{ inputs.gal_example_gzb64 }}" ]; then
             echo '${{ inputs.gal_example_gzb64 }}' | base64 -d | gunzip > "$RUNNER_TEMP/gal-example.txt"
             GAL_EX_ARGS="--example $RUNNER_TEMP/gal-example.txt"
           fi
-          node scripts/dev/make-gal-fixture.mjs "$RUNNER_TEMP/data/gal" $GAL_EX_ARGS
+          node scripts/dev/make-gal-fixture.mjs "$RUNNER_TEMP/data/gal/UViewer演示" $GAL_EX_ARGS
           docker run -d --name copymanga-web --network lrrnet \
             -p 8080:8080 \
             -e TAG_SCRIPTS_DIR=/opt/copymanga/tag-scripts \
@@ -224,7 +224,13 @@ jobs:
             -v "$RUNNER_TEMP/input:/input" \
             "${{ inputs.image }}"
           for i in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && exit 0
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              # 把 Gal 演示媒体导入进媒体库（不用手点导入页）；失败不影响演示的其它部分
+              curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/UViewer演示' -F 'profileOptions={}' | head -c 300 || echo "gal import failed"
+              echo
+              curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null || true
+              exit 0
+            fi
             sleep 2
           done
           docker logs copymanga-web || true

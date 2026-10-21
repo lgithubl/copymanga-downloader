@@ -1,19 +1,17 @@
-// Gal（视觉小说 / 剧情脚本）：一个作品目录 = 一个条目，目录里每个剧情脚本 = 一个单元（章节）。
-// 和别的库类型的区别：目录本身就是数据，不 mv、不拷贝、不改——导入只是给它建一份元数据 JSON；
-// 阅读时现读脚本 → 适配器转成规范场景（web/library/gal/scene.mjs）→ 前端播放器渲染。场景不落地、不缓存。
-//   - 根目录：「Gal 导入」方案 JSON 里的 rootDir（默认 <data>/gal），下面每个子目录是一个作品
-//   - 元数据：<data>/library-meta/gal/ab/cd/<id>.json（分片）；条目 id = sha1('gal:' + 作品目录名)，重复导入原地更新
-//   - 脚本：作品目录下（深度 ≤ maxDepth）扩展名在 scriptExtensions 里、且被某个适配器认得的文件；一个文件一个单元
-//   - 资源：脚本里的相对路径（如 download/bg/x.jpg）先按作品目录解析；找不到再去掉 layout.stripPrefixes 里的前缀重试，
-//     再找 rootDir 下的共享资源（layout.sharedRoot）。目录结构还没定死，这些约定都写在元数据 layout 里，改约定只改这里
-//   - 封面：脚本里出现的第一张背景图（导入时挑，存 coverPath；取的时候原样返回，不缩放）
+// Gal（视觉小说 / 剧情脚本）：一个目录 = 一个媒体条目，条目只有一个单元（'main'）；单元里是一棵由后端按需给出的「浏览节点」树
+//   首页 → 分类 → （角色 →）脚本列表 → 播放页，节点怎么来见 web/library/gal/browse.mjs。前端走通用的 reader?sectionId=<节点 id>。
+// 目录本身就是数据，不 mv、不拷贝、不改——导入只是给它建一份元数据 JSON（source.path 指向传进来的目录）。
+//   - 来源目录：导入时传的 sourcePath；不传就用「Gal 导入」方案的 rootDir（默认 <data>/gal）
+//   - 元数据：<data>/library-meta/gal/ab/cd/<id>.json（分片）；条目 id = sha1('gal:' + 目录真实路径)，重复导入原地更新
+//   - 资源：脚本里的相对路径（如 download/bg/x.jpg）按媒体目录解析；找不到再去掉 layout.stripPrefixes 里的前缀重试
+//   - 封面：目录下的 cover.(jpg|png|webp)，没有就取前几个脚本里第一张存在的背景图（存 coverPath；取的时候原样返回，不缩放）
 
 import { createHash } from 'node:crypto'
-import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { withFileLock } from '../atomic-json-store.mjs'
-import { galAdapterIds, sniffGalAdapter } from '../gal/adapters/index.mjs'
-import { buildScene, firstBackgroundSrc } from '../gal/scene.mjs'
+import { galAdapterIds } from '../gal/adapters/index.mjs'
+import { createBrowseProvider, normalizeBrowseLayout } from '../gal/browse.mjs'
 import { shardedPath, walkShardedFiles, writeJsonAtomic } from '../meta-shard.mjs'
 import { parseTags } from '../tag-store.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
@@ -27,7 +25,9 @@ export const GAL_DEFAULT_OPTIONS = {
   maxScriptBytes: 4 * 1024 * 1024,
   adapters: ['uviewer-csv'],
 }
-export const GAL_DEFAULT_LAYOUT = { stripPrefixes: ['download/'], sharedRoot: true }
+export const GAL_DEFAULT_LAYOUT = { stripPrefixes: ['download/'] }
+export const GAL_MAIN_UNIT = 'main'
+const COVER_NAMES = ['cover.jpg', 'cover.jpeg', 'cover.png', 'cover.webp']
 
 const MIME = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml',
@@ -37,7 +37,6 @@ const MIME = {
 const extOf = (file) => path.extname(file).slice(1).toLowerCase()
 const contentTypeOf = (file) => MIME[extOf(file)] || 'application/octet-stream'
 const sha1 = (value) => createHash('sha1').update(value).digest('hex')
-const naturalCompare = (a, b) => a.localeCompare(b, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' })
 
 export function normalizeGalOptions(value = {}) {
   const v = value && typeof value === 'object' ? value : {}
@@ -106,14 +105,21 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       workKey: String(raw?.workKey || ''),
       dlsite: null,
       adapter: String(raw?.adapter || 'uviewer-csv'),
-      source: { dir: String(raw?.source?.dir || '') },
-      layout: { ...GAL_DEFAULT_LAYOUT, ...(raw?.layout && typeof raw.layout === 'object' ? raw.layout : {}) },
+      source: { path: String(raw?.source?.path || '') },
+      layout: {
+        ...GAL_DEFAULT_LAYOUT,
+        ...(raw?.layout && typeof raw.layout === 'object' ? raw.layout : {}),
+        browse: normalizeBrowseLayout(raw?.layout?.browse),
+      },
+      scriptCount: Math.max(0, Number(raw?.scriptCount) || 0),
       createdAt: String(raw?.createdAt || now),
       publishedAt: String(raw?.publishedAt || raw?.createdAt || now),
       updatedAt: String(raw?.updatedAt || now),
     }
-    item.mediaUnits = (Array.isArray(raw?.mediaUnits) ? raw.mediaUnits : []).map((unit, index) => normalizeUnit(unit, item, index))
-    item.unitCount = item.mediaUnits.length
+    // 一个媒体只有一个单元：浏览、选脚本都在这个单元里面（节点树）
+    const prevTags = Array.isArray(raw?.mediaUnits) ? raw.mediaUnits.find((unit) => unit?.unitId === GAL_MAIN_UNIT)?.tags : []
+    item.mediaUnits = [normalizeUnit({ unitId: GAL_MAIN_UNIT, title: item.title, fileName: path.basename(item.source.path), tags: prevTags, stepCount: item.scriptCount }, item, 0)]
+    item.unitCount = 1
     return item
   }
 
@@ -150,24 +156,22 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   // ---------- 目录约定 ----------
 
   const workDirOf = (item) => {
-    if (!item.source.dir || item.source.dir !== path.basename(item.source.dir)) throw new Error('条目的作品目录无效')
-    return path.join(rootDir(), item.source.dir)
+    if (!item.source.path) throw new Error('条目没有记录来源目录')
+    return path.resolve(item.source.path)
   }
 
-  // 把脚本里的相对路径解析成磁盘上的真实文件。只认 root 之内的真实路径（realpath），目录穿越和符号链接逃逸都挡掉。
+  // 把脚本里的相对路径解析成磁盘上的真实文件。只认媒体目录之内的真实路径（realpath），目录穿越和符号链接逃逸都挡掉。
   async function resolveAsset(item, resourcePath) {
     const rel = String(resourcePath || '').replace(/\\/g, '/').replace(/^\/+/, '')
     if (!rel || rel.split('/').some((part) => part === '..' || part === '')) throw Object.assign(new Error('资源路径无效'), { statusCode: 400 })
-    const root = rootDir()
     const work = workDirOf(item)
     const candidates = [path.join(work, rel)]
     for (const prefix of item.layout.stripPrefixes || []) if (rel.startsWith(prefix)) candidates.push(path.join(work, rel.slice(prefix.length)))
-    if (item.layout.sharedRoot) candidates.push(path.join(root, rel))
-    const realRoot = await realpath(root).catch(() => root)
+    const realWork = await realpath(work).catch(() => work)
     for (const candidate of candidates) {
       try {
         const real = await realpath(candidate)
-        if (real !== realRoot && !real.startsWith(realRoot + path.sep)) continue
+        if (!real.startsWith(realWork + path.sep)) continue
         if ((await stat(real)).isFile()) return real
       } catch {
         // 下一个候选
@@ -193,32 +197,36 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     }
   }
 
-  // ---------- 阅读 ----------
-
-  async function readScriptText(item, unit) {
-    const work = workDirOf(item)
-    const file = path.resolve(work, unit.relativePath)
-    if (file !== work && !file.startsWith(work + path.sep)) throw new Error('脚本路径无效')
-    const real = await realpath(file)
-    const realWork = await realpath(work)
-    if (!real.startsWith(realWork + path.sep)) throw new Error('脚本路径无效')
-    return decodeTextFile(await readFile(real)).text
+  function providerOf(item, opts = options()) {
+    return createBrowseProvider({
+      mediaDir: workDirOf(item),
+      layout: item.layout.browse,
+      adapters: opts.adapters,
+      scriptExtensions: opts.scriptExtensions,
+      maxScriptBytes: opts.maxScriptBytes,
+      maxDepth: opts.maxDepth,
+      resolveAsset: (rel) => resolveAsset(item, rel),
+    })
   }
 
-  async function getReaderContent(itemId, unitId) {
+  // ---------- 阅读 ----------
+
+  // sectionId = 浏览节点 id（见 gal/browse.mjs）：空 = 首页；播放页节点带规范场景，其余节点只有选项列表
+  async function getReaderContent(itemId, unitId, { sectionId = '' } = {}) {
     const item = await readItem(itemId)
-    const index = unitId ? item.mediaUnits.findIndex((unit) => unit.unitId === unitId) : 0
-    const unit = item.mediaUnits[index]
-    if (!unit) throw new Error(`Unit not found: ${unitId}`)
-    const scene = buildScene(item.adapter, await readScriptText(item, unit))
+    if (unitId && unitId !== GAL_MAIN_UNIT) throw new Error(`Unit not found: ${unitId}`)
+    const unit = item.mediaUnits[0]
+    const { node, scene = null, sectionNavigation = { prev: null, next: null } } = await providerOf(item).getNode(sectionId)
     const { mediaUnits, ...publicItem } = item
     return {
       type: 'gal',
       item: publicItem,
       unit,
       sections: [],
-      section: null,
-      navigation: { prev: item.mediaUnits[index - 1] || null, next: item.mediaUnits[index + 1] || null },
+      section: { sectionId: node.id, title: node.title, index: 0 },
+      navigation: { prev: null, next: null },
+      sectionNavigation,
+      node,
       scene,
       resourceBase: resourceBase(itemId),
     }
@@ -226,120 +234,56 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
 
   // ---------- 导入（只建元数据） ----------
 
-  // 在作品目录里找脚本：深度 ≤ maxDepth，扩展名匹配，大小有上限，内容被某个适配器认得
-  async function findScripts(workDir, opts) {
-    const found = []
-    const walk = async (dir, depth) => {
-      let entries
-      try { entries = await readdir(dir, { withFileTypes: true }) } catch { return }
-      entries.sort((a, b) => naturalCompare(a.name, b.name))
-      for (const entry of entries) {
-        const full = path.join(dir, entry.name)
-        if (entry.isDirectory()) { if (depth < opts.maxDepth) await walk(full, depth + 1); continue }
-        if (!entry.isFile() || !opts.scriptExtensions.includes(extOf(entry.name))) continue
-        const info = await stat(full)
-        if (!info.size || info.size > opts.maxScriptBytes) continue
-        const handle = await open(full, 'r')
-        let head
-        try {
-          const buffer = Buffer.alloc(Math.min(8192, info.size))
-          await handle.read(buffer, 0, buffer.length, 0)
-          head = decodeTextFile(buffer).text
-        } finally { await handle.close() }
-        const adapter = sniffGalAdapter(head, opts.adapters)
-        if (adapter) found.push({ full, adapter, size: info.size, mtimeMs: info.mtimeMs })
-      }
+  // 一个目录 = 一个媒体。dryRun 只统计不写。返回 { items, report }
+  async function importFromSource({ sourcePath = '', tags = [], options: override = {}, onProgress = null } = {}) {
+    const opts = options(override)
+    const dir = path.resolve(String(sourcePath || '').trim() || rootDir(opts.rootDir))
+    let real
+    try {
+      real = await realpath(dir)
+      if (!(await stat(real)).isDirectory()) throw new Error('not a directory')
+    } catch {
+      throw new Error(`Gal 目录不存在或不可读：${dir}`)
     }
-    await walk(workDir, 0)
-    return found
-  }
-
-  async function importWork(root, dirName, opts, tags) {
-    const workDir = path.join(root, dirName)
-    const scripts = await findScripts(workDir, opts)
-    if (!scripts.length) return null
-    const itemId = sha1(`gal:${dirName.normalize('NFC')}`)
+    const report = { root: dir, dryRun: opts.dryRun, scanned: 1, imported: 0, updated: 0, skippedNoScript: 0, failed: 0, scripts: 0, limited: false, errors: [] }
+    const itemId = sha1(`gal:${real.normalize('NFC')}`)
     const existing = (await itemExists(itemId)) ? await readItem(itemId) : null
-    const now = new Date().toISOString()
-    const adapter = scripts[0].adapter
-    const units = []
+    const layout = { ...GAL_DEFAULT_LAYOUT, ...(existing?.layout || {}) }
+    const draft = normalizeItem({ itemId, title: existing?.title || path.basename(real).normalize('NFC'), source: { path: real }, layout })
+    const summary = await providerOf(draft, opts).summarize()
+    report.scripts = summary.scripts
+    if (!summary.scripts) {
+      report.skippedNoScript = 1
+      onProgress?.({ done: 1, total: 1 })
+      return { items: [], report }
+    }
+    // 封面：目录下显式的 cover.* 优先，其次脚本里第一张存在的背景图
     let coverPath = ''
-    for (const script of scripts) {
-      const relativePath = path.relative(workDir, script.full).split(path.sep).join('/')
-      const unitId = `u${sha1(relativePath).slice(0, 12)}`
-      let scene = null
-      try { scene = buildScene(script.adapter, decodeTextFile(await readFile(script.full)).text) } catch { /* 解析失败的脚本仍然列出来，打开时再报错 */ }
-      if (!coverPath && scene) coverPath = firstBackgroundSrc(scene)
-      const prev = existing?.mediaUnits.find((unit) => unit.unitId === unitId)
-      units.push({
-        unitId,
-        title: path.basename(script.full, path.extname(script.full)),
-        fileName: path.basename(script.full),
-        relativePath,
-        stepCount: scene?.steps.length || 0,
-        size: script.size,
-        tags: prev?.tags || [],
-        createdAt: prev?.createdAt || now,
-        updatedAt: now,
-      })
+    for (const name of COVER_NAMES) {
+      try { await resolveAsset(draft, name); coverPath = name; break } catch { /* 下一个 */ }
     }
-    units.sort((a, b) => naturalCompare(a.relativePath, b.relativePath))
-    // 封面只认能在磁盘上找到的背景图
-    const draft = normalizeItem({ itemId, title: dirName.normalize('NFC'), source: { dir: dirName }, mediaUnits: units })
-    if (coverPath) {
-      try { await resolveAsset({ ...draft, source: { dir: dirName } }, coverPath) } catch { coverPath = '' }
-    }
+    coverPath ||= summary.cover
+    const now = new Date().toISOString()
     const item = normalizeItem({
       ...(existing || {}),
       itemId,
-      title: existing?.title || dirName.normalize('NFC'),
-      tags: [...new Set([...(existing?.tags || []), ...tags])],
+      title: draft.title,
+      tags: [...new Set([...(existing?.tags || []), ...parseTags(tags)])],
       sourceProfile: GAL_PROFILE,
-      adapter,
-      source: { dir: dirName },
-      layout: existing?.layout || GAL_DEFAULT_LAYOUT,
+      adapter: opts.adapters[0],
+      source: { path: real },
+      layout,
+      scriptCount: summary.scripts,
       coverPath,
       cover: coverPath ? coverUrl(itemId) : '',
-      mediaUnits: units,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     })
-    return { item, isNew: !existing }
-  }
-
-  // 扫根目录下的每个子目录。dryRun 只统计不写。返回 { items, report }
-  async function importFromSource({ sourcePath = '', tags = [], options: override = {}, onProgress = null, shouldStop = null } = {}) {
-    const opts = options(override)
-    const root = rootDir(opts.rootDir)
-    // 来源只能是根目录（在「Gal 导入」方案 JSON 的 rootDir 里配）：不让页面指定任意路径去读
-    if (sourcePath && path.resolve(sourcePath) !== root) throw new Error(`来源目录必须是 Gal 根目录：${root}`)
-    let entries
-    try {
-      entries = (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-    } catch {
-      throw new Error(`Gal 根目录不存在或不可读：${root}`)
-    }
-    entries.sort((a, b) => naturalCompare(a.name, b.name))
-    const report = { root, dryRun: opts.dryRun, scanned: entries.length, imported: 0, updated: 0, skippedNoScript: 0, failed: 0, scripts: 0, limited: false, errors: [] }
-    const items = []
-    for (const entry of entries) {
-      if (shouldStop?.()) break
-      if (opts.limit && items.length >= opts.limit) { report.limited = true; break }
-      try {
-        const result = await importWork(root, entry.name, opts, parseTags(tags))
-        if (!result) { report.skippedNoScript += 1; continue }
-        report.scripts += result.item.unitCount
-        if (result.isNew) report.imported += 1
-        else report.updated += 1
-        if (!opts.dryRun) await writeItem(result.item)
-        items.push(result.item)
-      } catch (error) {
-        report.failed += 1
-        if (report.errors.length < 20) report.errors.push({ dir: entry.name, error: String(error?.message || error) })
-      }
-      onProgress?.({ done: report.imported + report.updated + report.skippedNoScript + report.failed, total: entries.length })
-    }
-    return { items: opts.dryRun ? [] : items, report }
+    if (existing) report.updated = 1
+    else report.imported = 1
+    if (!opts.dryRun) await writeItem(item)
+    onProgress?.({ done: 1, total: 1 })
+    return { items: opts.dryRun ? [] : [item], report }
   }
 
   // ---------- 标签 / 进度 ----------
@@ -366,11 +310,15 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   const patchUnitMetadata = async (itemId, unitId) => (await readItem(itemId)).mediaUnits.find((unit) => unit.unitId === unitId)
 
   const clamp = (value) => Math.max(0, Math.min(1, Number.isFinite(Number(value)) ? Number(value) : 0))
+  const MAX_NODE_PROGRESS = 3000
   const normalizeProgress = (value, itemId) => ({
     itemId,
     lastUnitId: String(value?.lastUnitId || ''),
+    lastSectionId: String(value?.lastSectionId || ''),
     lastScrollRatio: clamp(value?.lastScrollRatio || 0),
     readUnits: value?.readUnits && typeof value.readUnits === 'object' ? value.readUnits : {},
+    // 每个脚本（播放页节点）各自的进度：重新进某个脚本接着看，列表里也能标已读
+    nodes: value?.nodes && typeof value.nodes === 'object' ? value.nodes : {},
     updatedAt: String(value?.updatedAt || ''),
   })
   async function getProgress(itemId) {
@@ -380,21 +328,26 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       return normalizeProgress(null, itemId)
     }
   }
+  // 只有播放页（s:…）算进度；在首页/分类里逛不改「上次看到哪」，不然「继续」会落到一个列表页上
   async function saveProgress(itemId, patch = {}) {
     const current = await getProgress(itemId)
     const now = new Date().toISOString()
     const unitId = String(patch.unitId || patch.lastUnitId || '').trim()
-    if (unitId) {
+    const sectionId = String(patch.sectionId || '')
+    if (unitId && sectionId.startsWith('s:')) {
+      const ratio = clamp(patch.scrollRatio ?? patch.lastScrollRatio ?? current.lastScrollRatio)
       current.lastUnitId = unitId
-      current.lastScrollRatio = clamp(patch.scrollRatio ?? patch.lastScrollRatio ?? current.lastScrollRatio)
-      current.readUnits[unitId] = {
-        ...(current.readUnits[unitId] || {}),
-        unitId,
-        title: String(patch.title || current.readUnits[unitId]?.title || unitId),
-        enteredAt: current.readUnits[unitId]?.enteredAt || now,
-        updatedAt: now,
+      current.lastSectionId = sectionId
+      current.lastScrollRatio = ratio
+      const entry = current.readUnits[unitId] || {}
+      current.readUnits[unitId] = { ...entry, unitId, title: String(patch.title || entry.title || unitId), enteredAt: entry.enteredAt || now, updatedAt: now }
+      current.nodes[sectionId] = { ratio, title: String(patch.sectionTitle || current.nodes[sectionId]?.title || ''), updatedAt: now, ...(ratio >= 0.98 ? { completedAt: current.nodes[sectionId]?.completedAt || now } : {}) }
+      const keys = Object.keys(current.nodes)
+      if (keys.length > MAX_NODE_PROGRESS) {
+        for (const key of keys.sort((a, b) => String(current.nodes[a].updatedAt).localeCompare(String(current.nodes[b].updatedAt))).slice(0, keys.length - MAX_NODE_PROGRESS)) delete current.nodes[key]
       }
-      if (current.lastScrollRatio >= 0.98) current.readUnits[unitId].completedAt ||= now
+    } else if (unitId && !current.lastUnitId) {
+      current.lastUnitId = unitId
     }
     current.updatedAt = now
     await writeJsonAtomic(progressPath(itemId), current)
@@ -424,6 +377,6 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       return { items, report }
     },
     importFromSource,
-    internals: { normalizeItem, writeItem, readItem, updateItem, resolveAsset, rootDir, findScripts, metaPath, coverUrl },
+    internals: { normalizeItem, writeItem, readItem, updateItem, resolveAsset, rootDir, metaPath, coverUrl, providerOf },
   }
 }

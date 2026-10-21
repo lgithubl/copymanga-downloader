@@ -319,7 +319,7 @@ function defaultConfig() {
         managedDir: path.join(DATA_DIR, 'library', 'archive'),   // 新导入的压缩包 mv 到这里（按哈希分片）
         defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
       },
-      // Gal 导入：rootDir 下每个子目录是一个作品，目录本身就是数据（不 mv、不拷贝），导入只建元数据；
+      // Gal 导入：一个目录 = 一个媒体（来源目录不传就用 rootDir），目录本身就是数据（不 mv、不拷贝），导入只建元数据；
       // scriptExtensions/adapters 决定哪些文件算剧情脚本、用哪种适配器解析；目录约定（资源前缀、共享资源）写在每个条目的元数据 layout 里
       'gal-import': {
         rootDir: path.join(DATA_DIR, 'gal'),
