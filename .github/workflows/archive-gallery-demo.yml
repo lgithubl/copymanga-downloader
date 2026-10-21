@@ -147,7 +147,7 @@ jobs:
         run: |
           set -e
           mkdir -p "$RUNNER_TEMP/data-test" "$RUNNER_TEMP/input-test"
-          docker run -d --name web-test --network lrrnet \
+          docker run -d --name web-test --user "$(id -u):$(id -g)" --network lrrnet \
             -p 8081:8080 \
             -e TAG_SCRIPTS_DIR=/opt/copymanga/tag-scripts \
             -v "$RUNNER_TEMP/data-test:/data" \
