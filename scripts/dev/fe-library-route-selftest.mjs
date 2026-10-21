@@ -4,6 +4,7 @@
 // 自己起临时服务、造几个压缩包图集条目，不需要任何外部依赖。
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import zlib from 'node:zlib'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import os from 'node:os'
@@ -40,12 +41,21 @@ for (const [i, name] of ['A有预览', 'B迁移封面', 'C普通', 'D预览文�
   ids[name[0]] = id
   await internals.writeItem(internals.buildItem({ itemId: id, title: name, tags: [`标签:共用`, `社团:社团${i % 2}`], zipPath: `/x/${name}.zip`, external: true, size: 1, mtimeMs: 1, pageCount: 3, sourceProfile: 'archive-gallery', createdAt: new Date(1.7e12 + i * 1000).toISOString(), cover: name[0] === 'C' || name[0] === 'E' || name[0] === 'F' ? '' : internals.thumbnailUrl(id) }))
 }
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+// 纯色 PNG（不依赖外部工具）。要足够大：展开层只在整图比封面框大时才弹
+const solidPng = (w, h) => {
+  const crc = (buf) => { let c, t = []; for (let n = 0; n < 256; n++) { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0 } let r = 0xffffffff; for (const b of buf) r = t[(r ^ b) & 255] ^ (r >>> 8); return (r ^ 0xffffffff) >>> 0 }
+  const chunk = (type, data) => { const out = Buffer.alloc(12 + data.length); out.writeUInt32BE(data.length, 0); out.write(type, 4, 'latin1'); data.copy(out, 8); out.writeUInt32BE(crc(out.subarray(4, 8 + data.length)), 8 + data.length); return out }
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 0
+  const raw = Buffer.alloc((w + 1) * h, 0x80)
+  for (let y = 0; y < h; y++) raw[y * (w + 1)] = 0
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
+}
+const png = solidPng(400, 566)
 for (const key of ['A', 'B', 'D']) {
   await mkdir(path.dirname(internals.paths.thumbPath(ids[key])), { recursive: true })
   await writeFile(internals.paths.thumbPath(ids[key]), png)
 }
-await writeFile(internals.paths.previewPath(ids.A), png)   // A 的预览文件在（内容是个 1x1 图，浏览器能解出来）
+await writeFile(internals.paths.previewPath(ids.A), png)   // A 的预览文件在（内容是个 400x566 的纯色图）
 for (const key of ['A', 'D']) {
   await internals.updateItem(ids[key], (item) => ({ ...item, mediaUnits: [{ ...item.mediaUnits[0], thumbnail: { status: 'ready', coverUrl: internals.thumbnailUrl(ids[key]), previewUrl: internals.thumbnailUrl(ids[key], 'preview') } }] }))
 }

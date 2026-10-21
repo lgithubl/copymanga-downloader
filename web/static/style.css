@@ -607,7 +607,7 @@ h2 {
 .library-workspace #library-items {
   align-content: start;
   grid-auto-rows: max-content;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   overflow: auto;
 }
 
@@ -630,6 +630,7 @@ h2 {
 .library-card-cover {
   align-items: center;
   background: #111827;
+  position: relative;
   border-bottom: 1px solid var(--site-border);
   display: grid;
   overflow: hidden;
@@ -664,9 +665,13 @@ h2 {
   display: none;
 }
 
+/* 展开层的框从封面框(3:4)过渡到整图比例，cover 让被裁掉的部分随展开逐渐露出；
+   动画结束时框比例 == 图片比例，cover 与 contain 等价（整图、不裁） */
 .cover-hover-image {
   display: block;
-  object-fit: contain;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
 }
 
 .library-card .card-body {
@@ -677,13 +682,6 @@ h2 {
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   padding: 10px 12px 12px;
-}
-
-.library-card-top {
-  align-items: start;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .library-card .card-title {
@@ -735,8 +733,32 @@ h2 {
   overflow: auto;
 }
 
-.library-card .library-continue {
+/* 「打开」和「目录」同排；类型/合并/系列徽标叠在封面左上角，标题独占一整行 */
+.library-card-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
   margin-top: 2px;
+}
+
+.library-card-actions .library-units-go {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.library-card .library-card-badges {
+  flex-wrap: wrap;
+  left: 6px;
+  pointer-events: none;
+  position: absolute;
+  right: 6px;
+  top: 6px;
+}
+
+.library-card .library-card-badges > * {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
 }
 
 .library-card-history,
@@ -3279,7 +3301,7 @@ h2 {
   display: grid;
   gap: 12px;
   grid-auto-rows: max-content;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   overflow-y: auto;
   padding: 12px;
 }
@@ -3681,7 +3703,7 @@ h2 {
   border-top: 1px solid var(--site-border);
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   margin-top: 10px;
   padding-top: 10px;
 }

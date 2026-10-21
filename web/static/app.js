@@ -1,4 +1,4 @@
-import { HOVER_DELAY_MS, fitPreview, placePopover, sideRoom } from '/hover-preview.js'
+import { HOVER_DELAY_MS, HOVER_MAX_COVER_RATIO, fitPreview, placeExpanded, worthExpanding } from '/hover-preview.js'
 import { libraryRouteHash, parseLibraryRoute } from '/library-route.js'
 const els = {
   token: document.querySelector('#token'),
@@ -2502,17 +2502,16 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   card.dataset.kind = libraryEntryKind(item)   // 点卡片里的标签用新标签页时，按这个类型查配置
   card.title = fullTitle
   card.innerHTML = `
-      <div class="library-card-cover">${renderCover(item.cover, displayTitle)}</div>
-      <div class="card-body">
-        <div class="library-card-top">
-          <div class="card-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
-          <div class="library-card-badges">
-            ${showUnitsGo ? `<button class="library-units-go" type="button" title="${escapeHtml(targetIsSelf ? '点卡片直接播放；这里进目录' : '点卡片进入系列中优先级最高的一项；这里进本项目录')}">目录</button>` : ''}
-            <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
-            ${renderMergeBadge(item)}
-            ${seriesBadges ? renderSeriesBadges(item) : ''}
-          </div>
+      <div class="library-card-cover">
+        ${renderCover(item.cover, displayTitle)}
+        <div class="library-card-badges">
+          <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
+          ${renderMergeBadge(item)}
+          ${seriesBadges ? renderSeriesBadges(item) : ''}
         </div>
+      </div>
+      <div class="card-body">
+        <div class="card-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
         <div class="library-card-primary">
           <span class="library-card-meta" title="${escapeHtml(summary.primary)}">${escapeHtml(summary.primary)}</span>
           ${renderMediaInfoLine(item.tags || [])}
@@ -2520,7 +2519,10 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
         <div class="library-card-meta" title="${escapeHtml(summary.secondary)}">${escapeHtml(summary.secondary)}</div>
         ${history ? `<div class="library-card-history">继续：${escapeHtml(history.lastUnitTitle || history.lastUnitId || item.title)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''}</div>` : ''}
         ${renderTagList(item.tags || [])}
-        <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
+        <div class="library-card-actions">
+          <button class="library-continue secondary" type="button">${history ? '继续' : '打开'}</button>
+          ${showUnitsGo ? `<button class="library-units-go" type="button" title="${escapeHtml(targetIsSelf ? '点卡片直接播放；这里进目录' : '点卡片进入系列中优先级最高的一项；这里进本项目录')}">目录</button>` : ''}
+        </div>
       </div>
     `
   card.addEventListener('click', (event) => {
@@ -2590,7 +2592,7 @@ function loadHoverImage(src) {
   })
 }
 
-async function showHoverPopover(card, item, token) {
+async function showHoverPopover(box, item, token) {
   const cover = String(item.cover || '')
   const preview = item.hasPreview && /\/thumbnail\/[^/]+\/cover$/.test(cover) ? cover.replace(/\/cover$/, '/preview') : ''
   let img = null
@@ -2602,32 +2604,38 @@ async function showHoverPopover(card, item, token) {
   }
   if (!img) img = await loadHoverImage(cover).catch(() => null)
   if (!img || token !== hoverToken) return
-  const cardRect = card.getBoundingClientRect()
+  const start = box.getBoundingClientRect()
   const size = fitPreview({
     naturalWidth: img.naturalWidth,
     naturalHeight: img.naturalHeight,
     viewportWidth: window.innerWidth,
     viewportHeight: window.innerHeight,
-    maxWidth: sideRoom({ cardRect, viewportWidth: window.innerWidth })
+    maxWidth: start.width * HOVER_MAX_COVER_RATIO
   })
-  if (!size) return
+  if (!size || !worthExpanding(size, start)) return
+  const end = { ...size, ...placeExpanded({ coverRect: start, ...size, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight }) }
   const pop = ensureHoverPopover()
-  const pos = placePopover({
-    cardRect,
-    width: size.width,
-    height: size.height,
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight
-  })
   img.className = 'cover-hover-image'
   img.alt = ''
-  img.style.width = `${size.width}px`
-  img.style.height = `${size.height}px`
   pop.replaceChildren(img)
-  pop.dataset.side = pos.side
-  pop.style.left = `${pos.left}px`
-  pop.style.top = `${pos.top}px`
+  const px = (r) => ({ left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` })
+  Object.assign(pop.style, px(end))
   pop.hidden = false
+  pop.getAnimations().forEach((animation) => animation.cancel())
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  // 从封面框原位出发：先「提」一下（略放大 + 投影），再长到整图大小。
+  // 起点是封面框本身，图用 object-fit: cover，所以第一帧和卡片上看到的一样；
+  // 框的比例逐渐过渡到整图比例，被裁掉的部分随展开慢慢露出来。
+  const shadowOff = '0 0 0 1px rgba(0,0,0,0), 0 0 0 rgba(0,0,0,0)'
+  const shadowOn = '0 0 0 1px var(--site-border), 0 10px 30px rgba(0,0,0,0.45)'
+  pop.animate(
+    [
+      { ...px(start), transform: 'scale(1)', boxShadow: shadowOff, offset: 0 },
+      { ...px(start), transform: 'scale(1.05)', boxShadow: shadowOn, offset: 0.3, easing: 'cubic-bezier(.2,.8,.2,1)' },
+      { ...px(end), transform: 'scale(1)', boxShadow: shadowOn, offset: 1 }
+    ],
+    { duration: 300, easing: 'ease-out' }
+  )
 }
 
 function attachCardPreviewHover(card, item) {
@@ -2637,7 +2645,7 @@ function attachCardPreviewHover(card, item) {
   box.addEventListener('mouseenter', () => {
     hideHoverPopover()
     const token = hoverToken
-    hoverTimer = setTimeout(() => showHoverPopover(card, item, token), HOVER_DELAY_MS)
+    hoverTimer = setTimeout(() => showHoverPopover(box, item, token), HOVER_DELAY_MS)
   })
   box.addEventListener('mouseleave', hideHoverPopover)
 }

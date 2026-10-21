@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 悬停放大层的尺寸/位置纯函数单测：node scripts/dev/hover-preview-selftest.mjs
-import { fitPreview, placePopover, sideRoom, HOVER_GAP, HOVER_MARGIN } from '../../web/static/hover-preview.js'
+import { fitPreview, placeExpanded, worthExpanding, HOVER_MARGIN, HOVER_MAX_COVER_RATIO } from '../../web/static/hover-preview.js'
 
 let pass = 0
 let fail = 0
@@ -24,30 +24,28 @@ r = fitPreview({ naturalWidth: 400, naturalHeight: 566, viewportWidth: 1280, vie
 check('矮视口 300：高度封顶 240', r.height === 240, JSON.stringify(r))
 check('无效尺寸 → null', fitPreview({ naturalWidth: 0, naturalHeight: 10, ...vp }) === null && fitPreview({ naturalWidth: NaN, naturalHeight: 10, ...vp }) === null)
 
-const card = (left, top, w = 250, h = 480) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h })
-let p = placePopover({ cardRect: card(100, 100), width: 400, height: 500, ...vp })
-check('右侧放得下 → 右侧，紧挨卡片（间隔 GAP）', p.side === 'right' && p.left === 350 + HOVER_GAP, JSON.stringify(p))
-p = placePopover({ cardRect: card(900, 100), width: 400, height: 500, ...vp })
-check('右侧放不下 → 左侧', p.side === 'left' && p.left === 900 - HOVER_GAP - 400, JSON.stringify(p))
-p = placePopover({ cardRect: card(100, 100), width: 400, height: 500, ...vp })
-check('垂直居中对齐卡片中线', p.top === Math.round(100 + 240 - 250), JSON.stringify(p))
-p = placePopover({ cardRect: card(100, -200), width: 400, height: 500, ...vp })
-check('卡片顶部被滚出视口 → 夹到顶部边距', p.top === HOVER_MARGIN, JSON.stringify(p))
-p = placePopover({ cardRect: card(100, 700), width: 400, height: 500, ...vp })
-check('卡片靠底 → 夹到底部边距', p.top === 800 - 500 - HOVER_MARGIN, JSON.stringify(p))
-p = placePopover({ cardRect: card(200, 100, 700, 480), width: 500, height: 500, ...vp })
-check('两侧都放不下 → 取空间大的一侧，且整体仍在视口内', p.left >= HOVER_MARGIN && p.left + 500 <= 1280 - HOVER_MARGIN, JSON.stringify(p))
-p = placePopover({ cardRect: card(0, 0, 1280, 800), width: 500, height: 500, ...vp })
-check('卡片占满视口：仍夹在视口内', p.left >= HOVER_MARGIN && p.top >= HOVER_MARGIN && p.left + 500 <= 1280, JSON.stringify(p))
+const cover = (left, top, w = 160, h = 213) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h })
+let p = placeExpanded({ coverRect: cover(500, 300), width: 400, height: 560, ...vp })
+check('以封面中心为锚点居中展开', p.left === 380 && Math.abs(p.top - 127) <= 1, JSON.stringify(p))
+p = placeExpanded({ coverRect: cover(10, 300), width: 400, height: 560, ...vp })
+check('靠左：夹到左边距', p.left === HOVER_MARGIN, JSON.stringify(p))
+p = placeExpanded({ coverRect: cover(1200, 300), width: 400, height: 560, ...vp })
+check('靠右：夹到右边距，整体在视口内', p.left + 400 === 1280 - HOVER_MARGIN, JSON.stringify(p))
+p = placeExpanded({ coverRect: cover(500, -100), width: 400, height: 560, ...vp })
+check('封面被滚出视口顶部：夹到顶边距', p.top === HOVER_MARGIN, JSON.stringify(p))
+p = placeExpanded({ coverRect: cover(500, 700), width: 400, height: 560, ...vp })
+check('靠底：夹到底边距', p.top + 560 === 800 - HOVER_MARGIN, JSON.stringify(p))
+p = placeExpanded({ coverRect: cover(0, 0, 1280, 800), width: 500, height: 500, ...vp })
+check('封面占满视口：仍在视口内', p.left >= HOVER_MARGIN && p.top >= HOVER_MARGIN && p.left + 500 <= 1280 && p.top + 500 <= 800, JSON.stringify(p))
 
-r = fitPreview({ naturalWidth: 1200, naturalHeight: 400, ...vp, maxWidth: 300 })
-check('maxWidth 限制：超宽图缩到 300x100', r.width === 300 && r.height === 100, JSON.stringify(r))
-const cr = card(616, 100, 253, 480)
-const room = sideRoom({ cardRect: cr, viewportWidth: 1280 })
-check('sideRoom：取左右较宽一侧并扣掉间隔/边距', room === Math.max(1280 - 869 - HOVER_GAP - HOVER_MARGIN, 616 - HOVER_GAP - HOVER_MARGIN), String(room))
-r = fitPreview({ naturalWidth: 1200, naturalHeight: 400, ...vp, maxWidth: room })
-p = placePopover({ cardRect: cr, width: r.width, height: r.height, ...vp })
-check('用 sideRoom 限宽后放得下一侧，不压卡片', p.side === 'left' && p.left + r.width <= 616 - HOVER_GAP + 1, JSON.stringify([r, p]))
+// 卡宽 160 → 封面框 160x213：maxWidth = 160 * 2.5 = 400
+r = fitPreview({ naturalWidth: 400, naturalHeight: 566, ...vp, maxWidth: 160 * HOVER_MAX_COVER_RATIO })
+check('卡宽 160：漫画 400x566 展开到 ≤400 宽（不超过封面的 2.5 倍），比例不变', r.width <= 400 && Math.abs(r.width / r.height - 400 / 566) < 0.01, JSON.stringify(r))
+r = fitPreview({ naturalWidth: 1200, naturalHeight: 400, ...vp, maxWidth: 160 * HOVER_MAX_COVER_RATIO })
+check('卡宽 160：超宽 3:1 展开到 400x133', r.width === 400 && r.height === 133, JSON.stringify(r))
+check('worthExpanding：40x40 的小图（展开后 50x50 < 封面框）不展开', !worthExpanding({ width: 50, height: 50 }, cover(0, 0)))
+check('worthExpanding：400x133 比封面框宽 → 展开', worthExpanding({ width: 400, height: 133 }, cover(0, 0)))
+check('worthExpanding：和封面框一样大 → 不展开', !worthExpanding({ width: 160, height: 213 }, cover(0, 0)))
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

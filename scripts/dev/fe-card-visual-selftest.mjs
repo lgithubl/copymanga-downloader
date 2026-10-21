@@ -149,7 +149,7 @@ for (const vp of [{ w: 1280, h: 800 }, { w: 1920, h: 1080 }, { w: 1024, h: 700 }
   check(`[${tag}] 卡片内容没有横向溢出`, rows.every((r) => !r.overflowing.length && !r.titleOut), JSON.stringify(rows.filter((r) => r.overflowing.length || r.titleOut).map((r) => [r.title, r.overflowing])))
   check(`[${tag}] 标签区没被卡片切掉`, rows.every((r) => !r.tagBottomClipped), JSON.stringify(rows.filter((r) => r.tagBottomClipped).map((r) => r.title)))
   const colW = rows.map((r) => r.w)
-  check(`[${tag}] 卡片宽度 ≥ 200（窄屏单列除外按视口）`, Math.min(...colW) >= Math.min(200, vp.w - 60), `min=${Math.min(...colW)}`)
+  check(`[${tag}] 卡片宽度 ≥ 160（窄屏单列除外按视口）`, Math.min(...colW) >= Math.min(160, vp.w - 60), `min=${Math.min(...colW)}`)
   const hscroll = await page.evaluate(() => { const el = document.querySelector('#library-items'); return { list: el.scrollWidth - el.clientWidth, doc: document.documentElement.scrollWidth - document.documentElement.clientWidth } })
   check(`[${tag}] 列表和页面没有横向滚动条`, hscroll.list <= 1 && hscroll.doc <= 1, JSON.stringify(hscroll))
   const heights = rows.map((r) => Math.round(r.h))
@@ -166,88 +166,116 @@ for (const vp of [{ w: 1280, h: 800 }, { w: 1920, h: 1080 }, { w: 1024, h: 700 }
   await context.close()
 }
 
-// ---- 悬停放大层（1280x800）
+// ---- 悬停原位展开（1280x800）
 {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
   const page = await context.newPage()
   page.on('pageerror', (e) => errors.push(`hover: ${e.message}`))
   page.on('request', (r) => { if (/\/thumbnail\//.test(r.url())) requests.push(r.url()) })
   await openLibrary(page)
+  // 记录每次弹出时「第一帧」的位置：应该就是封面框本身（从原位出发）
+  await page.evaluate(() => {
+    window.__firstRect = null
+    new MutationObserver(() => {
+      const p = document.querySelector('.cover-hover-popover')
+      if (!p || p.hidden) { window.__firstRect = null; return }
+      if (!window.__firstRect) { const r = p.getBoundingClientRect(); window.__firstRect = { left: r.left, top: r.top, width: r.width, height: r.height } }
+    }).observe(document.body, { subtree: true, attributes: true, childList: true })
+  })
   const pop = () => page.evaluate(() => {
     const p = document.querySelector('.cover-hover-popover')
     if (!p || p.hidden) return null
     const img = p.querySelector('img'); const r = p.getBoundingClientRect()
-    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, w: r.width, h: r.height, nw: img.naturalWidth, nh: img.naturalHeight, src: img.getAttribute('src'), pe: getComputedStyle(p).pointerEvents, count: document.querySelectorAll('.cover-hover-popover').length, fit: getComputedStyle(img).objectFit }
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, w: r.width, h: r.height, nw: img.naturalWidth, nh: img.naturalHeight, src: img.getAttribute('src'), pe: getComputedStyle(p).pointerEvents, count: document.querySelectorAll('.cover-hover-popover').length, first: window.__firstRect, anim: p.getAnimations().length }
   })
-  const hoverCover = async (key) => { const c = cardOf(page, specs.find((s) => s.key === key).title).locator('.library-card-cover'); await c.scrollIntoViewIfNeeded(); await c.hover() }
+  const coverBox = (key) => cardOf(page, specs.find((s) => s.key === key).title).locator('.library-card-cover')
+  const hoverCover = async (key) => { const c = coverBox(key); await c.scrollIntoViewIfNeeded(); await sleep(150); await c.hover() }
+  const near = (a, b, t = 2) => Math.abs(a - b) <= t
 
   await hoverCover('tall')
   await sleep(150)
   check('悬停 150ms：还没弹（有延迟）', (await pop()) === null)
   await sleep(500)
   let p = await pop()
-  check('悬停 650ms：弹出，pointer-events:none，只有一个', p && p.pe === 'none' && p.count === 1, JSON.stringify(p))
-  check('超高图 400x800：放大层整图不裁（宽高比与原图一致），高 ≤ 视口 80%，≤1.25 倍', p && Math.abs(p.w / p.h - 0.5) < 0.02 && p.h <= 640.5 && p.h <= 800 * 1.25 && p.fit === 'contain', JSON.stringify(p))
-  const cardRect = await cardOf(page, '超高封面').boundingBox()
-  check('放大层不压住卡片（左右贴着卡片）', p && (p.left >= cardRect.x + cardRect.width || p.right <= cardRect.x), JSON.stringify([p, cardRect]))
-  check('放大层在视口内', p && p.left >= 0 && p.top >= 0 && p.right <= 1280 && p.bottom <= 800, JSON.stringify(p))
+  const cb = await coverBox('tall').boundingBox()
+  check('弹出后 pointer-events:none，且只有一个', p && p.pe === 'none' && p.count === 1, JSON.stringify(p))
+  check('第一帧就是封面框本身（原位出发，位置和大小一致）', p && p.first && near(p.first.left, cb.x) && near(p.first.top, cb.y) && near(p.first.width, cb.width) && near(p.first.height, cb.height), JSON.stringify([p?.first, cb]))
+  await sleep(500)
+  p = await pop()
+  check('动画结束后：整图比例与原图一致（400x800 → 1:2），高 ≤ 视口 80%，宽 ≤ 封面框 2.5 倍', p && near(p.w / p.h, 0.5, 0.02) && p.h <= 640.5 && p.w <= cb.width * 2.5 + 1, JSON.stringify([p, cb.width]))
+  check('展开层以封面框中心为锚点（没被视口夹住时中心重合）', p && near((p.left + p.right) / 2, cb.x + cb.width / 2, 3) || p.left <= 9 || p.right >= 1271, JSON.stringify([p, cb]))
+  check('展开层在视口内', p && p.left >= 0 && p.top >= 0 && p.right <= 1280 && p.bottom <= 800, JSON.stringify(p))
+  check('展开层比封面框大', p && p.w > cb.width && p.h > cb.height, JSON.stringify([p, cb]))
   await page.screenshot({ path: path.join(shotDir, 'hover-tall.png') })
   await page.mouse.move(2, 2); await sleep(150)
   check('移开：隐藏', (await pop()) === null)
 
-  await hoverCover('wide3'); await sleep(900); p = await pop()
-  check('超宽图 1200x400：整图、比例 3:1、宽 ≤ 视口一半(640)', p && Math.abs(p.w / p.h - 3) < 0.05 && p.w <= 640.5, JSON.stringify(p))
+  await hoverCover('wide3'); await sleep(1000); p = await pop()
+  check('超宽图 1200x400：整图、比例 3:1', p && near(p.w / p.h, 3, 0.08), JSON.stringify(p))
   await page.screenshot({ path: path.join(shotDir, 'hover-wide.png') })
-  await hoverCover('tiny'); await sleep(900); p = await pop()
-  check('极小图 40x40：最多放大到 50x50（不硬拉）', p && p.w <= 50.5 && p.h <= 50.5, JSON.stringify(p))
-  await hoverCover('huge'); await sleep(900); p = await pop()
-  check('超大图 1600x2400：高度封顶 640', p && Math.abs(p.h - 640) <= 1 && Math.abs(p.w / p.h - 2 / 3) < 0.02, JSON.stringify(p))
-
-  // 靠右列的卡片：应放到左侧
-  const lastCol = await page.evaluate(() => { const cards = [...document.querySelectorAll('#library-items .library-card')]; const maxLeft = Math.max(...cards.map((c) => c.getBoundingClientRect().left)); const c = cards.find((x) => x.getBoundingClientRect().left === maxLeft); return cards.indexOf(c) })
-  const lastCard = page.locator('#library-items .library-card').nth(lastCol).locator('.library-card-cover')
-  await lastCard.scrollIntoViewIfNeeded(); await lastCard.hover(); await sleep(900); p = await pop()
-  const lcr = await page.locator('#library-items .library-card').nth(lastCol).boundingBox()
-  check('最右列卡片：放大层放左侧且在视口内', p && p.right <= lcr.x + 1 && p.left >= 0, JSON.stringify([p, lcr]))
+  await page.mouse.move(2, 2)
+  await hoverCover('tiny'); await sleep(900)
+  check('极小图 40x40：展开后还没封面框大 → 不展开', (await pop()) === null)
+  await page.mouse.move(2, 2)
+  await hoverCover('huge'); await sleep(1000); p = await pop()
+  check('超大图 1600x2400：比例 2:3，高 ≤ 640', p && near(p.w / p.h, 2 / 3, 0.02) && p.h <= 640.5, JSON.stringify(p))
   await page.mouse.move(2, 2)
 
-  // 预览卡：用 preview 图（400x300），且只请求一次 preview；封面本身不被替换
+  // 最左 / 最右列、最上 / 最下行的卡片：都夹在视口内
+  const edge = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('#library-items .library-card')]
+    const lefts = cards.map((c) => c.getBoundingClientRect().left)
+    return { right: lefts.indexOf(Math.max(...lefts)), left: lefts.indexOf(Math.min(...lefts)) }
+  })
+  for (const [name, idx] of [['最右列', edge.right], ['最左列', edge.left]]) {
+    const c = page.locator('#library-items .library-card').nth(idx).locator('.library-card-cover')
+    await c.scrollIntoViewIfNeeded(); await sleep(150); await c.hover(); await sleep(1000); p = await pop()
+    check(`${name}卡片：展开层在视口内`, p === null || (p.left >= 0 && p.right <= 1280 && p.top >= 0 && p.bottom <= 800), JSON.stringify(p))
+    await page.mouse.move(2, 2); await sleep(100)
+  }
+
+  // 预览卡：用 preview 图（400x300 → 4:3），卡片内封面 src 不被替换
   requests.length = 0
-  await hoverCover('previewA'); await sleep(900); p = await pop()
-  check('有预览：放大层显示 /preview（400x300 → 500x375）', p && /\/preview$/.test(p.src) && Math.abs(p.w - 500) <= 1 && Math.abs(p.h - 375) <= 1, JSON.stringify(p))
+  await hoverCover('previewA'); await sleep(1000); p = await pop()
+  check('有预览：展开层显示 /preview（4:3）', p && /\/preview$/.test(p.src) && near(p.w / p.h, 4 / 3, 0.03), JSON.stringify(p))
   check('有预览：卡片内封面 src 不被替换', /\/cover$/.test(await cardOf(page, '有预览').locator('img.cover').getAttribute('src')))
   await page.mouse.move(2, 2)
-  // 无预览卡悬停不请求 preview
   requests.length = 0
   await hoverCover('manga'); await sleep(900)
   check('无预览：不请求 /preview', !requests.some((u) => /\/preview/.test(u)), JSON.stringify(requests))
   await page.mouse.move(2, 2)
-  // 占位 / 破图：不弹或不留破图
   await hoverCover('none'); await sleep(800)
   check('占位卡（没封面）：不弹', (await pop()) === null)
   await page.mouse.move(2, 2)
   await hoverCover('broken'); await sleep(800)
-  check('破图卡：不弹放大层（封面加载失败）', (await pop()) === null)
+  check('破图卡：不弹', (await pop()) === null)
   await page.mouse.move(2, 2)
 
-  // 关闭方式：滚动 / 点击 / Esc / resize
-  await hoverCover('manga'); await sleep(800)
+  await hoverCover('manga'); await sleep(900)
   check('（前置）manga 弹出', (await pop()) !== null)
   await page.evaluate(() => { document.querySelector('#library-items').scrollBy(0, 40) }); await sleep(150)
   check('滚动：隐藏', (await pop()) === null)
-  await hoverCover('manga'); await sleep(800); await page.keyboard.press('Escape'); await sleep(100)
+  await hoverCover('manga'); await sleep(900); await page.keyboard.press('Escape'); await sleep(100)
   check('Esc：隐藏', (await pop()) === null)
-  await hoverCover('manga'); await sleep(800); await page.setViewportSize({ width: 1200, height: 760 }); await sleep(150)
+  await hoverCover('manga'); await sleep(900); await page.setViewportSize({ width: 1200, height: 760 }); await sleep(150)
   check('窗口 resize：隐藏', (await pop()) === null)
   await page.setViewportSize({ width: 1280, height: 800 })
-  // 快速掠过：不应在移开后才弹出
   await hoverCover('manga'); await sleep(100); await page.mouse.move(2, 2); await sleep(700)
   check('快速掠过（<300ms 就移开）：不弹', (await pop()) === null)
-  // 单实例：连续悬停多张
   for (const k of ['manga', 'tall', 'wide169']) { await hoverCover(k); await sleep(700) }
   p = await pop()
-  check('连续悬停多张：始终只有一个放大层', p && p.count === 1, JSON.stringify(p))
-  // 点击卡片：放大层隐藏（点击会进入阅读器/选中，不应残留浮层）
+  check('连续悬停多张：始终只有一个展开层', p && p.count === 1, JSON.stringify(p))
+  await page.mouse.move(2, 2)
+  // 动画过程截几帧（不断言，给人眼看「提一下再展开」）
+  await hoverCover('wide169'); await sleep(305)
+  for (const i of [0, 1, 2]) { await page.screenshot({ path: path.join(shotDir, `hover-frame-${i}.png`), clip: { x: 60, y: 150, width: 1100, height: 650 } }); await sleep(60) }
+  await page.mouse.move(2, 2)
+  // 徽标在封面左上角、点徽标/按钮不触发卡片点击以外的问题：徽标都在封面框内
+  const badgeBox = await page.evaluate(() => [...document.querySelectorAll('#library-items .library-card')].every((c) => {
+    const cr = c.querySelector('.library-card-cover').getBoundingClientRect()
+    return [...c.querySelectorAll('.library-card-badges > *')].every((b) => { const r = b.getBoundingClientRect(); return r.left >= cr.left - 1 && r.right <= cr.right + 1 && r.top >= cr.top - 1 && r.bottom <= cr.bottom + 1 })
+  }))
+  check('类型/合并/系列徽标都落在封面框内', badgeBox)
   await context.close()
 }
 
