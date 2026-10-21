@@ -3888,9 +3888,8 @@ h2 {
 
 .gal-player {
   display: grid;
-  gap: 8px;
-  /* 舞台 16:9，高度不超过可用视口：宽度同时被 (100vh - 栏位) * 16/9 封顶 */
-  max-width: min(100%, calc((100vh - 250px) * 16 / 9));
+  /* 舞台 16:9，高度不超过可用视口：宽度同时被 (100vh - 头部) * 16/9 封顶。按钮栏现在在舞台里面，不再占舞台外的高度 */
+  max-width: min(100%, calc((100vh - 190px) * 16 / 9));
   min-width: 0;
   position: relative;
   width: 100%;
@@ -3941,25 +3940,38 @@ h2 {
   z-index: 3;
 }
 
-.gal-box {
-  background: rgba(8, 12, 24, 0.74);
+/* 文本框 + 工具栏是同一块半透明背景（--gal-box-alpha 由设置里的「文本框透明度」控制，默认 0.74）。
+   没有台词时文本框收起，工具栏仍然留在底部。 */
+.gal-hud {
+  background: rgba(8, 12, 24, var(--gal-box-alpha, 0.74));
   border-radius: 8px;
-  bottom: 4%;
+  bottom: 3%;
   box-sizing: border-box;
   color: #fff;
   font-size: clamp(12px, 2.1cqw, 26px);
   left: 3%;
-  line-height: 1.7;
-  min-height: 12cqw;
-  padding: 1.4cqw 2.4cqw 1.8cqw;
   position: absolute;
   right: 3%;
   z-index: 4;
 }
 
+.gal-box {
+  box-sizing: border-box;
+  line-height: 1.7;
+  min-height: 8cqw;
+  padding: 1.4cqw 2.4cqw 0.6cqw;
+  position: relative;
+}
+
 .gal-box[hidden],
 .gal-name[hidden] {
   display: none;
+}
+
+/* 背景很透明时文字直接压在画面上：加深色字影保证能读 */
+.gal-clear .gal-text,
+.gal-clear .gal-name {
+  text-shadow: 0 0 3px #000, 0 1px 2px #000, 0 0 8px rgba(0, 0, 0, 0.8);
 }
 
 .gal-name {
@@ -3975,7 +3987,7 @@ h2 {
 
 .gal-next {
   animation: gal-blink 1.2s ease-in-out infinite;
-  bottom: 0.5cqw;
+  bottom: 0.2cqw;
   color: #ffd479;
   font-size: 0.8em;
   position: absolute;
@@ -3998,52 +4010,160 @@ h2 {
   display: grid;
 }
 
+/* 工具栏：小号按钮，贴在文本框底部 */
 .gal-bar {
   align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  box-sizing: border-box;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  font-size: clamp(10px, 1.45cqw, 13px);
+  gap: 0.35em;
+  padding: 0.3em 0.8em 0.45em;
 }
 
-.gal-bar button.active {
+.gal-box[hidden] + .gal-bar {
+  border-top: 0;
+}
+
+.gal-bar .gal-btn {
+  background: rgba(255, 255, 255, 0.14);
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: inherit;
+  height: auto;
+  line-height: 1.5;
+  min-height: 0;
+  padding: 0.05em 0.6em;
+  white-space: nowrap;
+  width: auto;
+}
+
+.gal-bar .gal-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.gal-bar .gal-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.gal-bar .gal-btn.active {
   background: var(--site-primary);
   color: #fff;
 }
 
+.gal-bar .gal-btn[hidden] {
+  display: none;
+}
+
+/* 上一话/下一话/返回只在沉浸里需要（头部藏起来了） */
+.gal-imm-only {
+  display: none !important;
+}
+
+.gal-player.is-immersive .gal-imm-only:not([hidden]) {
+  display: inline-block !important;
+}
+
+/* 缺资源时在 ⚙ 上点个红点：工具栏很小，别让提示被忽略 */
+.gal-bar .gal-cfg.warn::after {
+  background: #ff5a5a;
+  border-radius: 50%;
+  content: '';
+  display: inline-block;
+  height: 0.45em;
+  margin-left: 0.3em;
+  vertical-align: middle;
+  width: 0.45em;
+}
+
 .gal-count {
-  color: var(--site-muted);
+  color: rgba(255, 255, 255, 0.78);
   font-variant-numeric: tabular-nums;
-  min-width: 64px;
+  min-width: 4.5em;
   text-align: center;
 }
 
-.gal-vol {
+.gal-bar .gal-note {
+  color: #cbd5e1;
+  flex: 1 1 8em;
+  font-size: 0.92em;
+  margin-left: auto;
+  min-width: 0;
+  opacity: 0.75;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 设置弹层：文本框透明度 / 音量 / 自动播放等待时间 */
+.gal-settings {
+  background: rgba(8, 12, 24, 0.95);
+  border-radius: 8px;
+  bottom: calc(100% + 6px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+  display: grid;
+  font-size: clamp(11px, 1.6cqw, 14px);
+  gap: 0.55em;
+  padding: 0.75em 0.95em;
+  position: absolute;
+  right: 0;
+  width: min(100%, 24em);
+  z-index: 7;
+}
+
+.gal-settings[hidden] {
+  display: none;
+}
+
+.gal-set-row {
   align-items: center;
-  color: var(--site-muted);
-  display: inline-flex;
-  font-size: 12px;
-  gap: 4px;
+  display: grid;
+  gap: 0.6em;
+  grid-template-columns: auto minmax(0, 1fr) 3.2em;
 }
 
-.gal-vol input {
-  width: 80px;
+.gal-set-label {
+  color: #cbd5e1;
+  white-space: nowrap;
 }
 
-.gal-note {
-  font-size: 12px;
+.gal-set-value {
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+}
+
+.gal-set-row input[type='range'] {
+  min-width: 0;
+  width: 100%;
+}
+
+.gal-set-number {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: #fff;
+  font-size: inherit;
+  padding: 0.1em 0.4em;
+  width: 5em;
 }
 
 .gal-log {
-  aspect-ratio: 16 / 9;
   background: rgba(8, 12, 24, 0.93);
   border-radius: 6px;
   box-sizing: border-box;
   color: #fff;
-  inset: 0 0 auto 0;
+  inset: 0;
   overflow: auto;
   padding: 10px 14px;
   position: absolute;
-  z-index: 6;
+  z-index: 8;
 }
 
 .gal-log[hidden] {
@@ -4070,6 +4190,49 @@ h2 {
 .gal-log-text {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+/* 沉浸：头部由 stream-page-fullscreen 隐掉，这里把阅读容器铺满整屏、舞台居中、背景全黑。
+   视图自己还有 12px 18px 18px 的内边距（别的类型各自收掉了），不收的话舞台四周会留白、也撑不满。
+   选择器要比 `#app.media-viewer-focused .media-mode-gal`（1,2,0，也是 12px 18px 18px）更高，否则同级时写在后面的那条赢 */
+#app.media-viewer-focused #media-viewer-view.media-mode-gal.stream-page-fullscreen {
+  background: #000;
+  padding: 0;
+}
+
+#media-viewer-view.stream-page-fullscreen .media-reader-content.media-gal,
+.media-viewer-view.stream-page-fullscreen .media-reader-content.media-gal {
+  align-items: center;
+  background: #000;
+  border: 0;
+  border-radius: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.media-viewer-view.stream-page-fullscreen .gal-player {
+  max-width: min(100%, calc(100vh * 16 / 9));
+}
+
+.media-viewer-view.stream-page-fullscreen .gal-stage {
+  border-radius: 0;
+}
+
+/* 浏览器全屏（F）：全屏的是整个播放器，工具栏/弹层都在里面，舞台在中间留黑边 */
+.gal-player:fullscreen {
+  background: #000;
+  display: grid;
+  height: 100%;
+  max-width: none;
+  place-items: center;
+  width: 100%;
+}
+
+.gal-player:fullscreen .gal-stage {
+  border-radius: 0;
+  width: min(100vw, calc(100vh * 16 / 9));
 }
 
 /* Gal 播放模式：版式照图集（留边距），但标题栏不用 sticky——

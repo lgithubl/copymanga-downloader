@@ -849,6 +849,7 @@ function showView(id) {
   // 切章也走 showView('viewer-view')，所以只在「换了视图」时才收。
   if (galleryImmersiveView && galleryImmersiveView !== id) exitGalleryImmersive()
   if (epubImmersive && id !== 'media-viewer-view') exitEpubImmersive()
+  if (galImmersive && id !== 'media-viewer-view') exitGalImmersive()
   for (const view of els.views) view.classList.toggle('active', view.id === id)
   for (const tab of els.tabs) tab.classList.toggle('active', tab.dataset.view === id)
   els.searchToolbar.classList.toggle('hidden', id !== 'search-view')
@@ -3702,6 +3703,7 @@ function renderMediaReader(reader, options = {}) {
   // 上一章的分批批次到这里就作废了，不然它的兜底定时器会继续往信息栏写字
   retireImageBatch(galleryBatch)
   if (galPlayer && reader.type !== 'gal') { galPlayer.destroy(); galPlayer = null }
+  if (reader.type !== 'gal') exitGalImmersive()
   if (reader.type === 'html') {
     renderMediaHtml(reader)
   } else if (reader.type === 'images') {
@@ -3721,6 +3723,54 @@ function renderMediaReader(reader, options = {}) {
   if (reader.type === 'images' && !galleryImmersive && immersivePref('images')) {
     enterGalleryImmersive(galleryImmersiveOptions(false))
   }
+}
+
+// Gal 沉浸：和别的类型同一套约定——头部由 stream-page-fullscreen 隐掉、顶栏由 stream-immersive 收起并在贴顶边时滑出，
+// Esc / 退出按钮会记住「不要沉浸」的选择（remember），「返回」不改偏好。
+let galImmersive = null
+function enterGalImmersive({ remember = false } = {}) {
+  if (galImmersive || currentMediaReader?.type !== 'gal') return
+  if (remember) saveImmersivePref('gal', true)
+  const EDGE = 6
+  const HIDE_DELAY = 1800
+  let timer = null
+  const setVisible = (visible) => els.app.classList.toggle('stream-chrome-visible', visible)
+  const reveal = () => {
+    setVisible(true)
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (els.app.querySelector('.tabs:hover')) { reveal(); return }   // 鼠标还在顶栏上就别收
+      setVisible(false)
+    }, HIDE_DELAY)
+  }
+  const onPointerMove = (event) => { if (event.clientY <= EDGE) reveal() }
+  document.addEventListener('mousemove', onPointerMove)
+  els.mediaViewerView.classList.add('stream-page-fullscreen')
+  els.app.classList.add('stream-immersive')
+  els.mediaImmersive?.classList.add('active')
+  els.mediaImmersive?.blur()
+  galPlayer?.setImmersive(true)
+  galImmersive = () => {
+    clearTimeout(timer)
+    document.removeEventListener('mousemove', onPointerMove)
+    els.mediaViewerView.classList.remove('stream-page-fullscreen')
+    els.app.classList.remove('stream-immersive', 'stream-chrome-visible')
+    els.mediaImmersive?.classList.remove('active')
+    galPlayer?.setImmersive(false)
+  }
+}
+
+function exitGalImmersive({ remember = false } = {}) {
+  if (!galImmersive) return
+  if (remember) saveImmersivePref('gal', false)
+  const finish = galImmersive
+  galImmersive = null
+  finish()
+}
+
+function toggleGalImmersive() {
+  if (galImmersive) exitGalImmersive({ remember: true })
+  else enterGalImmersive({ remember: true })
 }
 
 // Gal 剧情播放：场景由服务端按适配器转好（规范场景 gal-scene/1），这里只管渲染。
@@ -3747,7 +3797,20 @@ function renderGal(reader) {
       galRatio = ratioOfStep(step, total)
       scheduleLibraryProgressSave()
     },
+    // 沉浸/上一话/下一话/返回属于页面层：播放器只放按钮、调这些回调
+    onToggleImmersive: toggleGalImmersive,
+    onEscape: () => exitGalImmersive({ remember: true }),
+    chapter: {
+      canPrev: () => Boolean(mediaStepTarget('prev')),
+      canNext: () => Boolean(mediaStepTarget('next')),
+      prev: () => { mediaStepTarget('prev')?.() },
+      next: () => { mediaStepTarget('next')?.() },
+      back: () => { exitGalImmersive(); els.mediaReaderBack?.click() },
+    },
   })
+  // 默认沉浸（和别的类型一样：没存过偏好就是开；Esc/退出会记住）。切到下一话时沿用当前沉浸状态
+  if (galImmersive) galPlayer.setImmersive(true)
+  else if (immersivePref('gal')) enterGalImmersive()
   mediaPageIndex = 0
   mediaPageCount = 1
   mediaPageStep = 1
@@ -6739,9 +6802,9 @@ function mediaScrollRatio() {
 function updateMediaPageControls() {
   // epub(html) 调阅读宽度，图集(images) 调图片宽度
   if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = !['html', 'images'].includes(currentMediaReader?.type)
-  // 沉浸四种内容都支持：epub 分页翻、图集滚动看、音视频铺满播
+  // 沉浸五种内容都支持：epub 分页翻、图集滚动看、音视频铺满播、Gal 剧情播放
   if (els.mediaImmersive) {
-    els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video'].includes(currentMediaReader?.type)
+    els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video', 'gal'].includes(currentMediaReader?.type)
   }
   const isHtml = currentMediaReader?.type === 'html'
   els.mediaPagePrev.disabled = !isHtml || mediaPageIndex <= 0
@@ -7570,6 +7633,10 @@ els.mediaImmersive?.addEventListener('click', () => {
   }
   if (type === 'images') {
     enterGalleryImmersive(galleryImmersiveOptions(true))
+    return
+  }
+  if (type === 'gal') {
+    toggleGalImmersive()
     return
   }
   enterEpubImmersive({ remember: true })

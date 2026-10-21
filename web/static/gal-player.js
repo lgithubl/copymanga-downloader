@@ -9,6 +9,20 @@ const loadVolume = (key, fallback) => {
   return Number.isFinite(n) && localStorage.getItem(VOL_KEY[key]) !== null ? Math.max(0, Math.min(1, n)) : fallback
 }
 
+// 其它界面设置，都按浏览器存（和音量、阅读速度这些一样，不进服务端配置）
+export const GAL_SETTINGS = {
+  boxOpacityKey: 'copymanga.gal.boxOpacity',        // 文本框背景不透明度 0..1
+  boxOpacityDefault: 0.74,                          // 原来写死的值
+  autoVoiceDelayKey: 'copymanga.gal.autoVoiceDelay', // 自动播放：语音播完后再等多少秒下一句
+  autoVoiceDelayDefault: 1,
+  autoVoiceDelayMax: 30,
+}
+const loadNumber = (key, fallback, min, max) => {
+  const raw = localStorage.getItem(key)
+  const n = Number(raw)
+  return raw !== null && raw !== '' && Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag)
   if (className) node.className = className
@@ -31,7 +45,9 @@ export function renderSegments(target, segments, { plain = false } = {}) {
   }
 }
 
-export function createGalPlayer({ container, reader, startRatio = 0, onStep = () => {} }) {
+// onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
+//   chapter: { canPrev(), canNext(), prev(), next(), back() }
+export function createGalPlayer({ container, reader, startRatio = 0, onStep = () => {}, onToggleImmersive = null, onEscape = null, chapter = null }) {
   const scene = reader.scene
   const total = scene.steps.length
   const base = reader.resourceBase
@@ -48,29 +64,64 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   movie.hidden = true
   movie.playsInline = true
   const black = el('div', 'gal-black')
+  const hud = el('div', 'gal-hud')
   const box = el('div', 'gal-box')
   const nameplate = el('div', 'gal-name')
   const textEl = el('div', 'gal-text')
   const marker = el('div', 'gal-next', '▼')
   box.append(nameplate, textEl, marker)
   const empty = el('div', 'gal-empty', '没有可播放的内容')
-  stage.append(...layers, movie, black, box)
+  // 工具栏在文本框底部（同一块半透明背景里），按钮都是小号的；没有台词时文本框收起，工具栏仍留在原位
   const bar = el('div', 'gal-bar')
-  const prevBtn = el('button', 'secondary', '◀ 上一句')
-  const nextBtn = el('button', 'secondary', '下一句 ▶')
+  const btn = (text, title, extra = '') => {
+    const b = el('button', `gal-btn ${extra}`.trim(), text)
+    b.type = 'button'
+    b.title = title
+    return b
+  }
+  const prevBtn = btn('◀ 上一句', '上一句（← / Backspace）', 'gal-prev')
   const count = el('span', 'gal-count', '')
-  const autoBtn = el('button', 'secondary', '自动')
-  const logBtn = el('button', 'secondary', '记录')
-  const fsBtn = el('button', 'secondary', '全屏')
-  const bgmRange = el('input'); bgmRange.type = 'range'; bgmRange.min = '0'; bgmRange.max = '1'; bgmRange.step = '0.05'; bgmRange.title = 'BGM 音量'
-  const seRange = el('input'); seRange.type = 'range'; seRange.min = '0'; seRange.max = '1'; seRange.step = '0.05'; seRange.title = '语音/音效音量'
-  const bgmLabel = el('label', 'gal-vol', 'BGM '); bgmLabel.append(bgmRange)
-  const seLabel = el('label', 'gal-vol', '语音 '); seLabel.append(seRange)
+  const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →）', 'gal-next-btn')
+  const autoBtn = btn('自动', '自动播放（A）', 'gal-auto')
+  const logBtn = btn('记录', '台词记录（L）', 'gal-log-btn')
+  const cfgBtn = btn('⚙', '设置：文本框透明度、音量、自动播放等待时间', 'gal-cfg')
+  const chPrevBtn = btn('上话', '上一话', 'gal-ch-prev gal-imm-only')
+  const chNextBtn = btn('下话', '下一话', 'gal-ch-next gal-imm-only')
+  const immBtn = btn('沉浸', '沉浸模式（I）', 'gal-imm')
+  const fsBtn = btn('全屏', '全屏（F）', 'gal-fs')
+  const backBtn = btn('返回', '退出沉浸并返回', 'gal-back gal-imm-only')
   const note = el('span', 'muted gal-note', '')
-  bar.append(prevBtn, count, nextBtn, autoBtn, logBtn, bgmLabel, seLabel, fsBtn, note)
+  bar.append(prevBtn, count, nextBtn, autoBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, immBtn, fsBtn, backBtn, note)
+
+  // 设置弹层：文本框透明度 / 音量 / 自动播放等待时间
+  const settings = el('div', 'gal-settings')
+  settings.hidden = true
+  const range = (min, max, step, title) => { const r = el('input'); r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.title = title; return r }
+  const row = (label, control, valueEl) => { const r = el('label', 'gal-set-row'); r.append(el('span', 'gal-set-label', label), control); if (valueEl) r.append(valueEl); return r }
+  const opacityRange = range(0, 100, 5, '文本框背景不透明度')
+  const opacityValue = el('span', 'gal-set-value', '')
+  const bgmRange = range(0, 1, 0.05, 'BGM 音量')
+  const seRange = range(0, 1, 0.05, '语音/音效音量')
+  const delayInput = el('input')
+  delayInput.type = 'number'
+  delayInput.min = '0'
+  delayInput.max = String(GAL_SETTINGS.autoVoiceDelayMax)
+  delayInput.step = '0.5'
+  delayInput.title = '自动播放时，语音播完后再等多少秒进入下一句（没有语音的句子按台词长度估算）'
+  delayInput.className = 'gal-set-number'
+  const delayUnit = el('span', 'gal-set-value', '秒')
+  settings.append(
+    row('文本框透明度', opacityRange, opacityValue),
+    row('BGM 音量', bgmRange),
+    row('语音/音效', seRange),
+    row('自动：语音播完后等', delayInput, delayUnit),
+  )
+  hud.append(box, bar, settings)
+  stage.append(...layers, movie, black, hud)
   const logPanel = el('div', 'gal-log')
   logPanel.hidden = true
-  root.append(stage, bar, logPanel)
+  stage.append(logPanel)
+  root.append(stage)
   container.replaceChildren(root)
   if (!total) stage.append(empty)
 
@@ -79,6 +130,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   let seVolume = loadVolume('se', 1)
   bgmRange.value = String(bgmVolume)
   seRange.value = String(seVolume)
+  let boxOpacity = loadNumber(GAL_SETTINGS.boxOpacityKey, GAL_SETTINGS.boxOpacityDefault, 0, 1)
+  let voiceDelay = loadNumber(GAL_SETTINGS.autoVoiceDelayKey, GAL_SETTINGS.autoVoiceDelayDefault, 0, GAL_SETTINGS.autoVoiceDelayMax)
+  opacityRange.value = String(Math.round(boxOpacity * 100))
+  delayInput.value = String(voiceDelay)
+  const applyOpacity = () => {
+    root.style.setProperty('--gal-box-alpha', String(boxOpacity))
+    opacityValue.textContent = `${Math.round(boxOpacity * 100)}%`
+    // 背景很透明时文字直接压在画面上：加一层深色字影保证能读
+    root.classList.toggle('gal-clear', boxOpacity < 0.45)
+  }
+  applyOpacity()
   let bgmAudio = null
   let bgmSrc = ''
   let voiceAudio = null
@@ -111,12 +173,22 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     }
     tick()
   }
+  // 这一步触发的语音。自动播放要等它播完（再多等 voiceDelay 秒）；放不出来（缺文件 / 浏览器拒绝自动播放）就按没有语音处理
+  let stepVoice = null   // { step, endedAt, failed }
   function playOnce(src, kind) {
     const audio = new Audio(url(src))
     audio.volume = seVolume
     audio.addEventListener('error', () => markMissing(src))
-    if (kind === 'voice') { voiceAudio?.pause(); voiceAudio = audio }
-    audio.play().catch(() => {})
+    let record = null
+    if (kind === 'voice') {
+      voiceAudio?.pause()
+      voiceAudio = audio
+      record = { step: gen, endedAt: 0, failed: false }
+      stepVoice = record
+      audio.addEventListener('ended', () => { record.endedAt = performance.now(); if (stepVoice === record) scheduleAuto() })
+      audio.addEventListener('error', () => { record.failed = true; if (stepVoice === record) scheduleAuto() })
+    }
+    audio.play().catch(() => { if (record) { record.failed = true; if (stepVoice === record) scheduleAuto() } })
   }
 
   // ---------- 画面 ----------
@@ -292,6 +364,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     if (missing.size) parts.push(`缺少资源 ${missing.size} 个`)
     note.textContent = parts.join(' · ')
     note.title = [...missing].slice(0, 30).join('\n')
+    cfgBtn.classList.toggle('warn', missing.size > 0)   // 工具栏很小，缺资源时在 ⚙ 上点个红点，别被忽略
+  }
+  function updateChapterButtons() {
+    chPrevBtn.disabled = !(chapter?.canPrev?.())
+    chNextBtn.disabled = !(chapter?.canNext?.())
+    chPrevBtn.hidden = chNextBtn.hidden = !chapter
+    backBtn.hidden = !chapter
+    immBtn.hidden = !onToggleImmersive
+  }
+  function setImmersive(active) {
+    root.classList.toggle('is-immersive', Boolean(active))
+    immBtn.textContent = active ? '退出沉浸' : '沉浸'
+    immBtn.classList.toggle('active', Boolean(active))
+    updateChapterButtons()
   }
   function afterStep() {
     updateCount()
@@ -305,13 +391,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   function scheduleAuto() {
     stopAuto()
     if (!auto || running || index >= total - 1 || destroyed) return
+    // 这一步有语音：等它播完，再多等 voiceDelay 秒。语音还在放时直接返回，播完（ended）会再调用本函数
+    const voice = stepVoice && stepVoice.step === gen && !stepVoice.failed ? stepVoice : null
+    if (voice) {
+      if (!voice.endedAt) return
+      const remaining = Math.max(0, voiceDelay * 1000 - (performance.now() - voice.endedAt))
+      autoTimer = setTimeout(next, remaining)
+      return
+    }
+    // 没有语音（或语音放不出来）：按台词长度估一个阅读时间
     const chars = segmentsText(state.text).length
     const wait = Math.max(1.2, Math.min(8, 0.8 + chars * 0.12))
-    autoTimer = setTimeout(() => {
-      // 语音还在放就等它放完
-      if (voiceAudio && !voiceAudio.paused && !voiceAudio.ended) { scheduleAuto(); return }
-      next()
-    }, wait * 1000)
+    autoTimer = setTimeout(next, wait * 1000)
   }
   async function next() {
     if (destroyed || !total) return
@@ -351,23 +442,55 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     logPanel.hidden = !logPanel.hidden
     if (!logPanel.hidden) renderLog()
   }
+  // 全屏的是整个播放器（root）而不是舞台：这样工具栏、设置弹层在全屏里也在，16:9 的舞台在里面居中留黑边
   const toggleFullscreen = () => {
     if (document.fullscreenElement) document.exitFullscreen?.()
-    else stage.requestFullscreen?.().catch(() => {})
+    else root.requestFullscreen?.().catch(() => {})
+  }
+  const toggleSettings = (open = settings.hidden) => {
+    settings.hidden = !open
+    cfgBtn.classList.toggle('active', open)
   }
 
-  stage.addEventListener('click', () => { logPanel.hidden = true; next() })
+  // 点舞台 = 下一句；设置弹层开着时，第一下只收弹层（不前进）
+  stage.addEventListener('click', () => {
+    if (!settings.hidden) { toggleSettings(false); return }
+    logPanel.hidden = true
+    next()
+  })
+  // 工具栏和设置弹层上的点击不能冒泡到舞台（否则点个按钮就翻页）
+  // 记录面板也在舞台里：点记录里的一行（跳转）不能顺带触发舞台的「下一句」
+  for (const part of [bar, settings, logPanel]) part.addEventListener('click', (event) => event.stopPropagation())
   nextBtn.addEventListener('click', next)
   prevBtn.addEventListener('click', prev)
   autoBtn.addEventListener('click', toggleAuto)
   logBtn.addEventListener('click', toggleLog)
+  cfgBtn.addEventListener('click', () => toggleSettings())
   fsBtn.addEventListener('click', toggleFullscreen)
+  immBtn.addEventListener('click', () => onToggleImmersive?.())
+  chPrevBtn.addEventListener('click', () => chapter?.prev?.())
+  chNextBtn.addEventListener('click', () => chapter?.next?.())
+  backBtn.addEventListener('click', () => chapter?.back?.())
+  opacityRange.addEventListener('input', () => {
+    boxOpacity = Math.max(0, Math.min(1, Number(opacityRange.value) / 100))
+    localStorage.setItem(GAL_SETTINGS.boxOpacityKey, String(boxOpacity))
+    applyOpacity()
+  })
+  delayInput.addEventListener('input', () => {
+    const n = Number(delayInput.value)
+    if (!Number.isFinite(n) || delayInput.value === '') return   // 输入到一半（空/负号）先不动
+    voiceDelay = Math.max(0, Math.min(GAL_SETTINGS.autoVoiceDelayMax, n))
+    localStorage.setItem(GAL_SETTINGS.autoVoiceDelayKey, String(voiceDelay))
+    scheduleAuto()   // 正在等的话按新的时间重新算
+  })
+  delayInput.addEventListener('change', () => { delayInput.value = String(voiceDelay) })   // 越界/空的值收回到有效值
   bgmRange.addEventListener('input', () => { bgmVolume = Number(bgmRange.value); localStorage.setItem(VOL_KEY.bgm, String(bgmVolume)); if (bgmAudio) bgmAudio.volume = bgmVolume })
   seRange.addEventListener('input', () => { seVolume = Number(seRange.value); localStorage.setItem(VOL_KEY.se, String(seVolume)); movie.volume = seVolume })
 
   const onKey = (event) => {
     if (destroyed || !root.isConnected || event.ctrlKey || event.metaKey || event.altKey) return
-    if (root.offsetParent === null) return   // 播放器不可见（切到别的页了）
+    // 播放器不可见（切到别的页了）才忽略按键。不能用 offsetParent：全屏时根节点是 position:fixed，offsetParent 恒为 null，会把全屏里的按键全吞掉
+    if (!root.getClientRects().length) return
     const tag = event.target?.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable) return
     const key = event.key
@@ -376,8 +499,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     else if (key === 'a' || key === 'A') toggleAuto()
     else if (key === 'l' || key === 'L') toggleLog()
     else if (key === 'f' || key === 'F') toggleFullscreen()
-    else if (key === 'Escape' && !logPanel.hidden) logPanel.hidden = true
-    else return
+    else if (key === 'i' || key === 'I') onToggleImmersive?.()
+    else if (key === 'Escape') {
+      // 先收面板；都没开才交给页面（退出沉浸）。全屏下的 Esc 浏览器自己会退全屏，不会到这里
+      if (!settings.hidden) toggleSettings(false)
+      else if (!logPanel.hidden) logPanel.hidden = true
+      else if (onEscape) onEscape()
+      else return
+    } else return
     event.preventDefault()
   }
   document.addEventListener('keydown', onKey)
@@ -386,7 +515,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   const visibility = new IntersectionObserver((entries) => {
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
-    if (visible) { bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}) }
+    if (visible) { bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
     else { bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
   })
   visibility.observe(stage)
@@ -400,16 +529,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     voiceAudio?.pause()
     movie.pause()
     movie.removeAttribute('src')
-    if (document.fullscreenElement === stage) document.exitFullscreen?.()
+    if (document.fullscreenElement === root) document.exitFullscreen?.()
   }
 
   // ---------- 启动 ----------
   const start = stepOfRatio(startRatio, total)
   updateCount()
   updateNote()
+  updateChapterButtons()
   if (total) {
     if (start > 0) { renderInstant(start); onStep(start, total) }
     else runStep(0)
   }
-  return { destroy, next, prev, get index() { return index }, get total() { return total }, ratio: () => ratioOfStep(Math.max(0, index), total) }
+  return { destroy, next, prev, setImmersive, get index() { return index }, get total() { return total }, ratio: () => ratioOfStep(Math.max(0, index), total) }
 }
