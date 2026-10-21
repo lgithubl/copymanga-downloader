@@ -15,6 +15,7 @@ import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { ARCHIVE_PROFILE, ARCHIVE_TYPE, createArchiveGalleryHandler, LRR_INIT_PROFILE } from './library/types/archive-gallery.mjs'
 import { runLrrMigration } from './library/archive-migration.mjs'
+import { hasGeneratedPreview } from './library/index-flags.mjs'
 import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
@@ -340,6 +341,8 @@ function defaultConfig() {
     // 的行为；Ctrl/⌘ 点击不受这个限制，永远开新标签页。
     // 旧版本是一个总开关 mediaOpenInNewTab（布尔），读到旧配置时开着就等于全部类型都开。
     mediaOpenInNewTabKinds: [],
+    // 点标签（搜索）时用新的浏览器标签页：按标签所在条目的媒体类型勾选，和上面「打开媒体」分开；Ctrl/⌘ 点击不受限制
+    tagSearchOpenInNewTabKinds: [],
     // 压缩包图集阅读用的解压缓存目录（有缓存就不再解压；淘汰由部署方自己管）。
     // 导入/迁移相关的目录、Redis 地址等都在导入页的「导入方案配置」JSON 里，不在这里。
     archiveCacheDir: path.join(DATA_DIR, 'cache', 'archive-gallery'),
@@ -423,6 +426,9 @@ function normalizeConfig(value) {
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     mediaOpenInNewTabKinds: normalizeNewTabKinds(value),
+    tagSearchOpenInNewTabKinds: Array.isArray(value?.tagSearchOpenInNewTabKinds)
+      ? NEW_TAB_MEDIA_KINDS.filter((kind) => value.tagSearchOpenInNewTabKinds.includes(kind))
+      : [],
     archiveCacheDir: String(value?.archiveCacheDir || defaults.archiveCacheDir).trim() || defaults.archiveCacheDir,
     mediaCloseNewTabOnBack: Boolean(value?.mediaCloseNewTabOnBack ?? defaults.mediaCloseNewTabOnBack),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
@@ -3076,6 +3082,8 @@ function libraryIndexItemFromMetadata(item = {}) {
     workKey: String(item.workKey || ''),
     productId,
     unitCount: item.unitCount || units.length || 0,
+    // 卡片悬停预览：见 index-flags.mjs。旧的磁盘缓存没有这个字段，读进来按 false，重建一次索引后才有
+    hasPreview: hasGeneratedPreview(item),
     primaryKind: item.type === 'epub' ? 'epub' : String(units.find((unit) => unit.mediaKind && unit.mediaKind !== 'subtitle')?.mediaKind || ''),
     tags,
     unitTags,
@@ -3112,6 +3120,7 @@ function normalizeLibraryIndexItem(item = {}) {
     productId: String(item.productId || ''),
     unitCount: Number(item.unitCount || 0),
     primaryKind: String(item.primaryKind || ''),
+    hasPreview: Boolean(item.hasPreview),
     tags: parseTags(item.tags || []),
     unitTags: parseTags(item.unitTags || []),
     dlsite: {
@@ -3197,6 +3206,7 @@ function publicLibraryIndexItem(item) {
     productId: item.productId,
     unitCount: item.unitCount,
     primaryKind: item.primaryKind || '',
+    hasPreview: Boolean(item.hasPreview),
     tags: item.tags,
     dlsite: item.dlsite,
     createdAt: item.createdAt,
@@ -5237,6 +5247,12 @@ async function route(req, res) {
 
     return await serveStatic(req, res, pathname)
   } catch (error) {
+    // 预期内的 4xx（比如缩略图/预览不存在）：回对应状态码，只打一行日志，不打堆栈
+    const status = Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 0
+    if (status) {
+      console.warn(`[http ${status}] ${req.method} ${req.url} ${error.message}`)
+      return json(res, status, { error: error.message })
+    }
     console.error(error)
     return json(res, 500, { error: error.message })
   }

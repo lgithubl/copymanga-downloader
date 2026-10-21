@@ -1,3 +1,4 @@
+import { libraryRouteHash, parseLibraryRoute } from '/library-route.js'
 const els = {
   token: document.querySelector('#token'),
   app: document.querySelector('#app'),
@@ -243,6 +244,7 @@ const els = {
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
   configMediaOpenInNewTabKinds: [...document.querySelectorAll('.config-media-new-tab-kind')],
+  configTagSearchOpenInNewTabKinds: [...document.querySelectorAll('.config-tag-search-new-tab-kind')],
   configMediaCloseNewTabOnBack: document.querySelector('#config-media-close-new-tab-on-back'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
@@ -372,6 +374,17 @@ function syncMediaHash() {
 // 这个标签页是不是被「新标签页打开」开出来的（URL 带 tab=new 启动）。决定「返回」是关标签页还是回媒体库页。
 const mediaTabIsNew = Boolean(parseMediaRoute()?.newTab)
 
+// 点标签搜索用新标签页的判断：和「打开媒体」那份配置分开（tagSearchOpenInNewTabKinds）。
+// kind 取自标签所在容器的 data-kind（卡片/章节行/详情/历史）；认不出（比如标签管理页）时只看 Ctrl/⌘。
+function shouldOpenTagSearchInNewTab(event, kind = '') {
+  if (event?.ctrlKey || event?.metaKey) return true
+  return Boolean(kind && (appConfig?.tagSearchOpenInNewTabKinds || []).includes(kind))
+}
+
+function openLibraryRouteInNewTab(fields) {
+  window.open(`${location.origin}${location.pathname}${location.search}${libraryRouteHash(fields, { page: 1, newTab: true })}`, '_blank', 'noopener')
+}
+
 function openMediaRouteInNewTab(route) {
   // 必须在点击处理器里同步调用（前面不能有 await），否则会被浏览器当成弹窗拦掉
   window.open(`${location.origin}${location.pathname}${location.search}${mediaRouteHash({ ...route, newTab: true })}`, '_blank', 'noopener')
@@ -393,6 +406,10 @@ function libraryEntryKind(entry) {
 
 // 从 URL 启动的标签页：落在阅读器上，不是默认的搜索页。
 const bootMediaRoute = parseMediaRoute()
+
+const bootLibraryRoute = bootMediaRoute ? null : parseLibraryRoute()
+// 由「点标签用新标签页」开出来的标签页：不读也不写 localStorage 里的搜索状态
+const libraryTabIsNew = Boolean(bootLibraryRoute?.newTab)
 const JOB_POLL_KEY = 'copymanga.jobPollEnabled'
 let jobPollIntervalMs = 5000
 let jobPollTimer = null
@@ -1384,6 +1401,7 @@ async function loadConfig() {
   els.configTextSectionChars.value = config.textSectionChars > 0 ? String(config.textSectionChars) : ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   for (const box of els.configMediaOpenInNewTabKinds) box.checked = (config.mediaOpenInNewTabKinds || []).includes(box.value)
+  for (const box of els.configTagSearchOpenInNewTabKinds) box.checked = (config.tagSearchOpenInNewTabKinds || []).includes(box.value)
   els.configMediaCloseNewTabOnBack.checked = config.mediaCloseNewTabOnBack !== false
   els.configArchiveCacheDir.value = config.archiveCacheDir || ''
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
@@ -1614,6 +1632,19 @@ async function loadLibraryTypes() {
 function restoreLibraryState() {
   if (libraryStateRestored) return
   libraryStateRestored = true
+  // 从 #/library?… 路由启动：用路由里的条件（缺省 = 缺省值），不读 localStorage
+  if (bootLibraryRoute) {
+    const f = bootLibraryRoute.fields
+    const trySet = (select, value) => { if (select && [...select.options].some((o) => o.value === value)) select.value = value }
+    trySet(els.libraryType, f.type)
+    trySet(els.libraryLimit, f.limit)
+    trySet(els.librarySort, f.sort)
+    trySet(els.librarySeriesSubtitle, f.seriesSubtitle)
+    trySet(els.librarySourceProfile, f.sourceProfile)
+    if (els.libraryTagSearch) els.libraryTagSearch.value = f.tag
+    libraryPage = Math.max(1, Math.floor(Number(f.page)) || 1)
+    return
+  }
   let state = null
   try {
     state = JSON.parse(localStorage.getItem(LIBRARY_STATE_KEY) || 'null')
@@ -1634,6 +1665,8 @@ function restoreLibraryState() {
 }
 
 function saveLibraryState() {
+  // 点标签开出来的新标签页不保存：localStorage 是所有标签页共享的，保存会冲掉主标签页的搜索状态
+  if (libraryTabIsNew) return
   const state = {
     type: els.libraryType?.value || 'all',
     limit: Number(els.libraryLimit?.value || 10),
@@ -1826,7 +1859,12 @@ function renderTagManager() {
         <div class="library-card-meta">合集 ${tag.itemCount || 0} · 章节 ${tag.unitCount || 0}</div>
       </div>
     `
-    card.addEventListener('click', () => {
+    card.addEventListener('click', (event) => {
+      // 标签管理页的标签没有「所在条目的类型」（一个标签可能跨多种条目），只响应 Ctrl/⌘ 点击开新标签页
+      if (event.ctrlKey || event.metaKey) {
+        openLibraryRouteInNewTab({ ...currentLibrarySearchPresetFields(), tagSearch: `tag:"${String(tag.name || '').replace(/"/g, '\\"')}"` })
+        return
+      }
       showView('library-view')
       // 不加引号的话，tag 名里带空格会被搜索解析器（tag-store.mjs 的
       // parseTagQuery）在空格处截断——正则是 tag:\S+，遇到空格就停，
@@ -2460,6 +2498,7 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   const showUnitsGo = viewerFirst || !targetIsSelf
   const card = document.createElement('article')
   card.className = `card library-card${selected ? ' selected' : ''}`
+  card.dataset.kind = libraryEntryKind(item)   // 点卡片里的标签用新标签页时，按这个类型查配置
   card.title = fullTitle
   card.innerHTML = `
       <div class="library-card-cover">${renderCover(item.cover, displayTitle)}</div>
@@ -2504,29 +2543,31 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
     event.stopPropagation()
     continueLibraryItem(item, event).catch((error) => alert(error.message))
   })
-  attachArchivePreviewHover(card, item)
+  attachCardPreviewHover(card, item)
   return card
 }
 
-// 压缩包图集：鼠标移到卡片封面上显示预览动图（缩略图脚本的 previewCount > 0 时才有）。
-// 预览地址就是封面地址把末尾的 /cover 换成 /preview，不用改索引；没有预览（404/500）就还原封面，并记住，不再重复请求。
-const archivePreviewMissing = new Set()
+// 卡片封面悬停：显示预览（视频是动图，压缩包图集是脚本生成的动图）。
+// 只在索引摘要的 hasPreview 为真时才挂：它是从元数据结构推出来的（封面是某章节生成的缩略图、且该章节缩略图 ready 带 previewUrl），
+// 没有预览的条目（比如只有迁移带来的 LANraragi 封面）根本不会发这次请求。
+// 预览地址就是封面地址把末尾的 /cover 换成 /preview；万一文件被删了（404），还原封面并记住，不再重复请求。
+const cardPreviewMissing = new Set()
 
-function attachArchivePreviewHover(card, item) {
+function attachCardPreviewHover(card, item) {
   const cover = String(item?.cover || '')
-  if (item?.type !== 'archive' || !/\/thumbnail\/[^/]+\/cover$/.test(cover)) return
+  if (!item?.hasPreview || !/\/thumbnail\/[^/]+\/cover$/.test(cover)) return
   const img = card.querySelector('img.cover')
   if (!img) return
   const preview = cover.replace(/\/cover$/, '/preview')
   img.addEventListener('mouseenter', () => {
-    if (!archivePreviewMissing.has(preview)) img.src = preview
+    if (!cardPreviewMissing.has(preview)) img.src = preview
   })
   img.addEventListener('mouseleave', () => {
     if (img.getAttribute('src') !== cover) img.src = cover
   })
   img.addEventListener('error', () => {
     if (img.getAttribute('src') === preview) {
-      archivePreviewMissing.add(preview)
+      cardPreviewMissing.add(preview)
       img.src = cover
     }
   })
@@ -3023,6 +3064,7 @@ function renderLibraryUnits() {
     const isRead = Boolean(readUnits[unit.unitId]?.enteredAt)
     const row = document.createElement('div')
     row.className = `chapter library-unit${isRead ? ' read-chapter' : ' unread-chapter'}${unit.mediaKind === 'subtitle' ? ' subtitle-unit' : ''}`
+    row.dataset.kind = unit.mediaKind || (currentLibraryItem?.type === 'epub' ? 'epub' : '')
     row.title = [unit.title, unit.relativePath, unit.managedPath].filter(Boolean).join('\n')
     const subtitleText = unit.subtitles?.length
       ? ` · 字幕 ${unit.subtitles.length}: ${unit.subtitles.map((subtitle) => subtitle.title || subtitle.relativePath).join(', ')}`
@@ -3127,6 +3169,12 @@ function libraryDetailMeta(item, units) {
   return parts.join(' · ')
 }
 
+// 详情页里标签的媒体类型：第一个非字幕章节的类型；旧 EPUB 库类型本身就是 epub
+function libraryDetailKind(item, units = []) {
+  if (item?.type === 'epub') return 'epub'
+  return units.find((unit) => unit.mediaKind && unit.mediaKind !== 'subtitle')?.mediaKind || ''
+}
+
 function renderLibraryDetailSummary(item, units, readUnits = {}) {
   const counts = libraryUnitCounts(units)
   const readCount = units.filter((unit) => readUnits[unit.unitId]?.enteredAt).length
@@ -3146,7 +3194,7 @@ function renderLibraryDetailSummary(item, units, readUnits = {}) {
   ]
   return `
     <div class="library-detail-cover">${renderCover(item?.cover, displayTitle)}</div>
-    <div class="library-detail-main">
+    <div class="library-detail-main" data-kind="${escapeHtml(libraryDetailKind(item, units))}">
       <div class="library-detail-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
       <div class="library-detail-subtitle" title="${escapeHtml(fullTitle)}">${escapeHtml([item?.itemId, item?.title && item.title !== displayTitle ? item.title : '', item?.updatedAt ? `更新 ${formatShortDate(item.updatedAt)}` : ''].filter(Boolean).join(' · '))}</div>
       ${history ? `<div class="library-detail-history">最近：${escapeHtml(history.lastUnitTitle || history.lastUnitId)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''} · ${escapeHtml(formatShortDate(history.updatedAt))}</div>` : ''}
@@ -3250,6 +3298,7 @@ function renderLibraryHistory() {
   for (const history of libraryHistory) {
     const card = document.createElement('article')
     card.className = 'card history-card'
+    card.dataset.kind = libraryEntryKind(history)
     card.innerHTML = `
       ${renderCover(history.cover, history.title)}
       <div class="card-body">
@@ -7452,8 +7501,15 @@ document.addEventListener('click', (event) => {
   const pill = event.target.closest?.('.tag-pill[data-tag]')
   if (!pill) return
   event.stopPropagation()
+  const tagQuery = `tag:"${String(pill.dataset.tag || '').replace(/"/g, '\\"')}"`
+  // 点标签（搜索）用新标签页：Ctrl/⌘ 点击一律；否则看配置里按「标签所在条目的媒体类型」勾选的那份。
+  // window.open 必须在点击处理器里同步调用，所以决定和打开都在这里。
+  if (shouldOpenTagSearchInNewTab(event, pill.closest('[data-kind]')?.dataset.kind || '')) {
+    openLibraryRouteInNewTab({ ...currentLibrarySearchPresetFields(), tagSearch: tagQuery })
+    return
+  }
   showView('library-view')
-  els.libraryTagSearch.value = `tag:"${String(pill.dataset.tag || '').replace(/"/g, '\\"')}"`
+  els.libraryTagSearch.value = tagQuery
   libraryPage = 1
   loadLibraryItems().catch((error) => alert(error.message))
 }, true)
@@ -7671,6 +7727,7 @@ els.configSave.addEventListener('click', async () => {
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         mediaOpenInNewTabKinds: els.configMediaOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
+        tagSearchOpenInNewTabKinds: els.configTagSearchOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
         mediaCloseNewTabOnBack: els.configMediaCloseNewTabOnBack.checked,
         archiveCacheDir: els.configArchiveCacheDir.value,
         exportDir: els.configExportDir.value,
@@ -7949,6 +8006,10 @@ if (bootMediaRoute) {
   // api('/api/jobs') 拿到一次快照（所有标签页启动时都会跑），之后它不会实时更新，直到
   // 这个标签页离开阅读器去别的页面（showView 会启动后台同步）。
   openMediaRoute(bootMediaRoute).catch((error) => alert(error.message))
+} else if (bootLibraryRoute) {
+  // 媒体库搜索标签页：落在媒体库页，条件来自 URL（restoreLibraryState 里应用）。走和点「媒体库」标签同一条加载流程
+  startBackgroundSync()
+  document.querySelector('.tab[data-view="library-view"]')?.click()
 } else {
   startBackgroundSync()
 }

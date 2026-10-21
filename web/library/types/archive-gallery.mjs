@@ -386,7 +386,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
         ? { body: await readFile(previewPath(itemId)), contentType: 'image/webp' }
         : { body: await readFile(thumbPath(itemId)), contentType: 'image/jpeg' }
     } catch {
-      throw new Error('缩略图不存在')
+      throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
     }
   }
 

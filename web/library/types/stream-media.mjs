@@ -546,7 +546,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
 
   async function getThumbnail(itemId, unitId, kind = 'cover') {
     const name = await existingThumbnailName(itemId, unitId, kind === 'preview' ? 'preview' : 'cover')
-    if (!name) throw new Error('缩略图不存在')
+    if (!name) throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
     return {
       body: await readFile(thumbnailPath(itemId, unitId, name)),
       contentType: contentType(name),
