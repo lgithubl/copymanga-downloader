@@ -15,7 +15,7 @@ import { createEpubHandler } from './library/types/epub.mjs'
 import { createStreamMediaHandler } from './library/types/stream-media.mjs'
 import { ARCHIVE_PROFILE, ARCHIVE_TYPE, createArchiveGalleryHandler, LRR_INIT_PROFILE } from './library/types/archive-gallery.mjs'
 import { runLrrMigration } from './library/archive-migration.mjs'
-import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, searchItemKeys, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
+import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
 import { parseReplacements, toSpokenText } from './library/epub-tts-text.mjs'
@@ -2616,8 +2616,13 @@ async function serveStatic(req, res, pathname) {
 // 导入页的「已有合集」列表只取最新的这些条目（以前写的是 limit: 0，实际效果也是 50）
 const IMPORT_LIST_LIMIT = 50
 
+// 导入页的「已有合集」候选：只读内存索引，不看索引状态。
+// 重建中（building）、重建失败（failed）时内存里仍是上一份完整索引（重建完成才整体替换），
+// 候选列表旧几分钟无所谓——这里绝不能为了「新」去扫描全库：库有几十万条时，那条回退路径
+// 会让服务长时间无响应（事件循环被逐条写标签库卡住）、响应体超过 V8 单个字符串上限。
+// 索引还没建过（items 为空）就返回空数组，和媒体库主列表一致，建好索引再看。
 async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
-  const indexed = searchLibraryIndex({
+  return searchLibraryIndex({
     type,
     tag,
     keyword: '',
@@ -2625,27 +2630,7 @@ async function scanLibraryItemsWithTags({ type = 'all', tag = '' } = {}) {
     page: 1,
     limit: IMPORT_LIST_LIMIT,
     sort: 'imported_desc',
-  })
-  if (indexed.index.status === 'ready') return indexed.items
-  if (!String(tag || '').trim()) {
-    const items = await scanLibraryItems({ type })
-    for (const item of items) syncItemTagIndex(item).catch(() => {})
-    return items
-  }
-  const keys = searchItemKeys(tag, { type })
-  const items = []
-  for (const key of keys) {
-    try {
-      items.push(await libraryHandler(key.type).getItem(key.itemId))
-    } catch {
-      // Ignore stale tag index rows; future tag edits or imports will refresh them.
-    }
-  }
-  return items.sort(compareLibraryImportOrder)
-}
-
-function compareLibraryImportOrder(a, b) {
-  return String(b.createdAt || b.updatedAt || '').localeCompare(String(a.createdAt || a.updatedAt || ''))
+  }).items
 }
 
 function libraryIndexPath(version = 0) {
