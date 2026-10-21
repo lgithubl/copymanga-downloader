@@ -433,11 +433,11 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     return { status: 'created' }
   }
 
-  const resizeToJpeg = (buffer) => runMagick(['-', '-auto-orient', '-resize', '360x>', '-quality', '82', 'jpg:-'], buffer)
+  const resizeToJpeg = (buffer) => runMagick(['-', '-auto-orient', '-resize', '400x>', '-quality', '82', 'jpg:-'], buffer)
 
   // 预览动图：第一页 + 随机/均匀挑的 count 页（以条目 ID 为种子，同一个条目每次选的页都一样）。
   // 只读中央目录和这几页，不解压整个包。页数不足 2 页时没有预览（status: skipped）。
-  async function generatePreview(itemId, { count = 0, mode = 'random', width = 320, force = false } = {}) {
+  async function generatePreview(itemId, { count = 0, mode = 'random', width = 400, force = false } = {}) {
     const frameCount = Math.max(0, Math.min(30, Math.floor(Number(count) || 0)))
     if (!frameCount) return { status: 'disabled' }
     if (!force && await hasPreview(itemId)) return { status: 'exists' }
@@ -455,7 +455,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     } finally {
       await zip.close()
     }
-    const frames = await normalizeFrames(buffers, Math.max(80, Math.min(1000, Math.floor(Number(width) || 320))))
+    const frames = await normalizeFrames(buffers, Math.max(80, Math.min(1000, Math.floor(Number(width) || 400))))
     const temp = await mkdtemp(path.join(os.tmpdir(), 'archive-preview-'))
     try {
       for (let i = 0; i < frames.length; i++) await writeFile(path.join(temp, `frame-${String(i + 1).padStart(3, '0')}.jpg`), frames[i])

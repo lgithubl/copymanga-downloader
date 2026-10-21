@@ -1,3 +1,4 @@
+import { HOVER_DELAY_MS, fitPreview, placePopover, sideRoom } from '/hover-preview.js'
 import { libraryRouteHash, parseLibraryRoute } from '/library-route.js'
 const els = {
   token: document.querySelector('#token'),
@@ -2547,30 +2548,98 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   return card
 }
 
-// 卡片封面悬停：显示预览（视频是动图，压缩包图集是脚本生成的动图）。
-// 只在索引摘要的 hasPreview 为真时才挂：它是从元数据结构推出来的（封面是某章节生成的缩略图、且该章节缩略图 ready 带 previewUrl），
-// 没有预览的条目（比如只有迁移带来的 LANraragi 封面）根本不会发这次请求。
-// 预览地址就是封面地址把末尾的 /cover 换成 /preview；万一文件被删了（404），还原封面并记住，不再重复请求。
+// 卡片封面悬停：停留 300ms 后在卡片旁弹出一个浮层，显示不裁剪的整图（contain）。
+// 内容：索引摘要 hasPreview 为真 → 预览动图（地址是封面地址末尾 /cover 换成 /preview）；否则就是封面本身（已缓存，不多发请求）。
+// hasPreview 是从元数据结构推出来的，没有预览的条目（如只有迁移带来的 LANraragi 封面）根本不会请求 /preview。
+// 预览 404（文件被删）→ 回退封面并记住，不再重复请求。浮层全局只有一个，pointer-events:none，不挡鼠标。
 const cardPreviewMissing = new Set()
+let hoverPopover = null
+let hoverTimer = 0
+let hoverToken = 0
+
+function hideHoverPopover() {
+  clearTimeout(hoverTimer)
+  hoverToken += 1
+  if (hoverPopover) hoverPopover.hidden = true
+}
+
+function ensureHoverPopover() {
+  if (!hoverPopover) {
+    hoverPopover = document.createElement('div')
+    hoverPopover.className = 'cover-hover-popover'
+    hoverPopover.hidden = true
+    hoverPopover.setAttribute('aria-hidden', 'true')
+    document.body.append(hoverPopover)
+    window.addEventListener('scroll', hideHoverPopover, true)
+    window.addEventListener('resize', hideHoverPopover)
+    window.addEventListener('blur', hideHoverPopover)
+    document.addEventListener('click', hideHoverPopover, true)
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') hideHoverPopover()
+    })
+  }
+  return hoverPopover
+}
+
+function loadHoverImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('load failed'))
+    img.src = src
+  })
+}
+
+async function showHoverPopover(card, item, token) {
+  const cover = String(item.cover || '')
+  const preview = item.hasPreview && /\/thumbnail\/[^/]+\/cover$/.test(cover) ? cover.replace(/\/cover$/, '/preview') : ''
+  let img = null
+  if (preview && !cardPreviewMissing.has(preview)) {
+    img = await loadHoverImage(preview).catch(() => {
+      cardPreviewMissing.add(preview)
+      return null
+    })
+  }
+  if (!img) img = await loadHoverImage(cover).catch(() => null)
+  if (!img || token !== hoverToken) return
+  const cardRect = card.getBoundingClientRect()
+  const size = fitPreview({
+    naturalWidth: img.naturalWidth,
+    naturalHeight: img.naturalHeight,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    maxWidth: sideRoom({ cardRect, viewportWidth: window.innerWidth })
+  })
+  if (!size) return
+  const pop = ensureHoverPopover()
+  const pos = placePopover({
+    cardRect,
+    width: size.width,
+    height: size.height,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight
+  })
+  img.className = 'cover-hover-image'
+  img.alt = ''
+  img.style.width = `${size.width}px`
+  img.style.height = `${size.height}px`
+  pop.replaceChildren(img)
+  pop.dataset.side = pos.side
+  pop.style.left = `${pos.left}px`
+  pop.style.top = `${pos.top}px`
+  pop.hidden = false
+}
 
 function attachCardPreviewHover(card, item) {
-  const cover = String(item?.cover || '')
-  if (!item?.hasPreview || !/\/thumbnail\/[^/]+\/cover$/.test(cover)) return
-  const img = card.querySelector('img.cover')
-  if (!img) return
-  const preview = cover.replace(/\/cover$/, '/preview')
-  img.addEventListener('mouseenter', () => {
-    if (!cardPreviewMissing.has(preview)) img.src = preview
+  const box = card.querySelector('.library-card-cover')
+  // 没封面（占位）没得放大
+  if (!box || !item?.cover || !box.querySelector('img.cover:not(.placeholder)')) return
+  box.addEventListener('mouseenter', () => {
+    hideHoverPopover()
+    const token = hoverToken
+    hoverTimer = setTimeout(() => showHoverPopover(card, item, token), HOVER_DELAY_MS)
   })
-  img.addEventListener('mouseleave', () => {
-    if (img.getAttribute('src') !== cover) img.src = cover
-  })
-  img.addEventListener('error', () => {
-    if (img.getAttribute('src') === preview) {
-      cardPreviewMissing.add(preview)
-      img.src = cover
-    }
-  })
+  box.addEventListener('mouseleave', hideHoverPopover)
 }
 
 // 导入方案筛选的选项直接取自 mediaImportProfiles，和导入页同一份定义，
