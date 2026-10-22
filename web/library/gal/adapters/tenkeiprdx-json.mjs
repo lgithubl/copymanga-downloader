@@ -10,6 +10,10 @@
 //   phraseVoice / backgroundMusic / soundEffect   AdventureVoice/<场景id>/<名>.ogg · BGM/<名>.ogg（没有就找 <名>_loop.ogg）· Se/<名>.ogg
 //   speakerName（%username% → Masterdata/username.txt） / phraseContents（\n 换行）   speaker / text
 // 对象形里没有「谁在说话」的站位字段，所以不做说话人高亮（数组形才有，暂不支持）；frameEffect 的取值不明，原样记在 stats.frameEffects 里。
+// 列表（adapter.catalog，照原查看器的三个列表页）：活动 = EpisodeThumbnails/event（新的在前，剧情 id = '2'+文件名第 3、4 段）、
+// 附加 = EpisodeThumbnails/extra（同上，id 以 1 结尾的末位换成 2；标题查 Masterdata/masterdata_32.json）、
+// 角色 = CharacterIcons/<8 位角色号>*.png（名字、称号查 masterdata_4.json）→ 点进去是这个角色的 EX 剧情（masterdata_32.json 里按 <角色号>_01|02_still 找，
+// 缩略图 Backgrounds/still/<key>.png）、全部剧情 = scenes/ 下所有剧情 JSON。列表都是每次从文件现读的：数据文件更新了，列表跟着变。
 // 资源目录来自 config.adapterOptions['tenkeiprdx-json']：{ root（Imported 目录，相对媒体目录，默认 ''）, positionX（站位 → 横向位置 0..1）, unknownName（%username% 的默认值） }
 
 export const ADAPTER_ID = 'tenkeiprdx-json'
@@ -23,8 +27,8 @@ export function sniff(text) {
 }
 
 // ---------- 上下文：资源目录索引 + username ----------
-export const contextFiles = (options) => [joinPath(rootOf(options), 'Masterdata/username.txt')]
-export const contextDirs = (options) => ['Spines', 'Stills', 'Backgrounds', 'BGM'].map((dir) => joinPath(rootOf(options), dir))
+export const contextFiles = (options) => ['username.txt', 'masterdata_4.json', 'masterdata_32.json'].map((name) => joinPath(rootOf(options), 'Masterdata', name))
+export const contextDirs = (options) => ['Spines', 'Stills', 'Backgrounds', 'BGM', 'scenes', 'CharacterIcons', 'EpisodeThumbnails'].map((dir) => joinPath(rootOf(options), dir))
 
 const numericPrefix = (name) => { const m = /^(\d+)/.exec(name); return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER }
 
@@ -33,8 +37,17 @@ export function prepare({ options, texts, files, toResourcePath }) {
   const spines = new Map()   // 'Spines/<id>' / 'Stills/<名>' → [基名…]
   const backgrounds = new Map()
   const bgm = new Set()
+  const scenes = new Map()   // 剧情 id → 相对媒体目录的路径
+  const thumbs = { event: [], extra: [] }
+  const icons = []
   for (const rel of files || []) {
     const res = toRes(rel)
+    let t = /^scenes\/([^/]+)\.json$/i.exec(res)
+    if (t) { scenes.set(t[1], rel); continue }
+    t = /^EpisodeThumbnails\/(event|extra)\/(ep_eventstill_[^/]+)\.png$/i.exec(res)
+    if (t) { thumbs[t[1].toLowerCase()].push({ name: t[2], res }); continue }
+    t = /^CharacterIcons\/([^/]+)\.png$/i.exec(res)
+    if (t) { icons.push({ name: t[1], res }); continue }
     let m = /^(Spines|Stills)\/([^/]+)\/(.+)\.skel\.bytes$/i.exec(res)
     if (m) {
       const key = `${m[1]}/${m[2]}`
@@ -48,9 +61,98 @@ export function prepare({ options, texts, files, toResourcePath }) {
     if (m) bgm.add(m[1])
   }
   for (const list of spines.values()) list.sort((a, b) => numericPrefix(a) - numericPrefix(b) || a.localeCompare(b))
-  const username = Object.values(texts || {})[0]?.trim() || ''
-  return { spines, backgrounds, bgm, username, hasIndex: Boolean(files?.length), positionX: options?.positionX, unknownName: options?.unknownName }
+  const textOf = (name) => Object.entries(texts || {}).find(([key]) => key.endsWith(`/${name}`) || key === name)?.[1] || ''
+  const username = textOf('username.txt').trim()
+  const master = readMasterdata(textOf('masterdata_4.json'), textOf('masterdata_32.json'))
+  const ctx = { spines, backgrounds, bgm, username, hasIndex: Boolean(files?.length), positionX: options?.positionX, unknownName: options?.unknownName, scenes, thumbs, icons, master }
+  ctx.catalogTree = buildCatalog(ctx)
+  return ctx
 }
+
+// ---------- 名称表 / 列表 ----------
+const jsonArray = (text) => { try { const v = JSON.parse(String(text || '').replace(/^﻿/, '')); return Array.isArray(v) ? v : [] } catch { return [] } }
+// masterdata_4：[ ?, [角色号, ?, ?, 名字, 称号, …, 第 10 项分组号] ]；masterdata_32：[ ?, [?, ?, 标题, …, 第 9 项 [剧情 id…], 第 10 项 [still 键…]] ]
+function readMasterdata(text4, text32) {
+  const chars = new Map()
+  for (const row of jsonArray(text4)) {
+    const data = Array.isArray(row) ? row[1] : null
+    if (!Array.isArray(data) || data.length < 4) continue
+    const id = Number(data[0])
+    if (Number.isFinite(id) && !chars.has(id)) chars.set(id, { name: str(data[3]), title: str(data[4]) })
+  }
+  const scenarios = []
+  const byStill = new Map()
+  for (const row of jsonArray(text32)) {
+    const data = Array.isArray(row) ? row[1] : null
+    if (!Array.isArray(data) || data.length < 11) continue
+    const stills = Array.isArray(data[10]) ? data[10].map(str).filter(Boolean) : []
+    const entry = { title: str(data[2]), jsonId: Array.isArray(data[9]) ? str(data[9][0]) : '', stills }
+    scenarios.push(entry)
+    for (const key of stills) if (!byStill.has(key)) byStill.set(key, entry)
+  }
+  return { chars, scenarios, byStill }
+}
+
+const natDesc = (a, b) => b.localeCompare(a, 'en', { numeric: true })
+const natAsc = (a, b) => a.localeCompare(b, 'en', { numeric: true })
+
+function buildCatalog(ctx) {
+  const { scenes, thumbs, icons, master } = ctx
+  if (!scenes.size) return null
+  const info = new Map()   // 剧情 id → { title, thumb, badge }（先收到的为准）
+  const note = (id, entry) => { if (!info.has(id)) info.set(id, entry) }
+  const lists = []
+  const stillThumb = (key) => {
+    const res = `Backgrounds/still/${key}.png`
+    return ctx.backgrounds.get(key.toLowerCase()) || (ctx.hasIndex ? '' : res)
+  }
+
+  for (const [kind, label] of [['event', '活动'], ['extra', '附加']]) {
+    const children = []
+    for (const thumb of [...thumbs[kind]].sort((a, b) => natDesc(a.name, b.name))) {
+      const parts = thumb.name.split('_')
+      if (parts.length < 4) continue
+      let id = `2${parts[2]}${parts[3]}`
+      if (kind === 'extra' && id.endsWith('1')) id = `${id.slice(0, -1)}2`
+      const script = scenes.get(id)
+      if (!script) continue
+      const title = master.byStill.get(`${thumb.name.replace(/^ep_eventstill_/, '')}_still_01`)?.title || ''
+      note(id, { title: title || id, thumb: thumb.res, badge: kind })
+      children.push({ id: `${kind}/${id}`, title: title || id, subtitle: title ? id : '', thumb: thumb.res, badge: kind, script })
+    }
+    if (children.length) lists.push({ id: kind, title: label, children })
+  }
+
+  const people = []
+  for (const icon of [...icons].sort((a, b) => natDesc(a.name, b.name))) {
+    const code = /^\d{8}/.exec(icon.name)?.[0]
+    const id = code ? Number(code) : -1
+    const person = master.chars.get(id)
+    const children = []
+    for (const row of master.scenarios) {
+      if (!row.jsonId || !row.stills.some((key) => key.startsWith(`${id}_01_still`) || key.startsWith(`${id}_02_still`))) continue
+      const script = scenes.get(row.jsonId)
+      if (!script) continue
+      const key = row.stills.find((k) => k.includes('_still_01')) || row.stills[0]
+      const thumb = stillThumb(key)
+      const title = row.title || row.jsonId
+      note(row.jsonId, { title, thumb, badge: '' })
+      children.push({ id: `chars/${code || icon.name}/${row.jsonId}`, title, thumb, script })
+    }
+    people.push({ id: `chars/${code || icon.name}`, title: person?.name || '???', subtitle: [person?.title, `${children.length} 项`].filter(Boolean).join(' · '), thumb: icon.res, children })
+  }
+  if (people.length) lists.push({ id: 'chars', title: '角色', children: people })
+
+  const all = [...scenes.keys()].sort(natAsc).map((id) => {
+    const known = info.get(id)
+    return { id: `all/${id}`, title: known?.title || id, subtitle: known && known.title !== id ? id : '', thumb: known?.thumb || '', badge: known?.badge || '', script: scenes.get(id) }
+  })
+  lists.push({ id: 'all', title: '全部剧情', children: all })
+  return { children: lists }
+}
+
+// 适配器的列表（见 ../browse.mjs 的 catalog）：没有可用的数据（没有剧情文件）就返回 null，浏览退回按目录
+export const catalog = (ctx) => ctx?.catalogTree || null
 
 // ---------- 解析 ----------
 const str = (value) => (value === null || value === undefined ? '' : String(value))
@@ -196,4 +298,4 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps, stats }
 }
 
-export const tenkeiprdxJsonAdapter = { id: ADAPTER_ID, label: 'Tenkeiprdx 剧情 JSON', sniff, parse, contextFiles, contextDirs, prepare }
+export const tenkeiprdxJsonAdapter = { id: ADAPTER_ID, label: 'Tenkeiprdx 剧情 JSON', sniff, parse, contextFiles, contextDirs, prepare, catalog }

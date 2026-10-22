@@ -38,11 +38,16 @@ tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构�
 所有路径都是相对媒体目录、不许绝对路径和 `..`；模板只做占位符替换，读文件前仍要通过存在性检查和「只认媒体目录内的真实路径」——
 脚本写进去的 config 再坏，也读不到媒体目录以外。
 
+### 适配器的列表（catalog）
+
+适配器可以实现 `catalog(ctx) → { children: [节点] }`，节点 = `{ id, title, subtitle?, thumb?, badge?, children? | script? }`（`script` = 相对媒体目录的脚本路径）。有它时首页和所有列表都由它给（节点 id `v:<编码后的 id>[#页码]`），
+脚本卡片仍是 `s:<路径>`；`ctx` 来自 `prepare`，所以列表数据（名称表、缩略图目录…）和脚本解析用同一套「上下文」，文件变了就跟着变。没有 catalog 的适配器仍按真实目录树浏览（UViewer / monmusu）。
+
 ### 适配器的媒体上下文（context）
 
 适配器本身只做 `text → scene`。有些格式的脚本里只写别名（Ren'Py 的 `scene 10001A1-10` 要查 `script/movie.rpy` 才知道是哪个 webm），
 适配器可以声明 `contextFiles(options)`（要读的文本）/ `contextDirs(options)`（要递归列文件名的目录）/ `prepare(…) → ctx`，引擎读好后把 `ctx` 传给 `parse(text, ctx)`
-（`gal/context.mjs`）：按文本文件 mtime+size 缓存，目录列表最多缓存 5 分钟；路径在 `config.adapterOptions[适配器 id]` 里配（相对媒体目录）。
+（`gal/context.mjs`）：按文本文件 mtime+size、目录（自己和下一层子目录）mtime 缓存，目录里新增/删除文件马上生效，更深层的最多缓存 5 分钟；路径在 `config.adapterOptions[适配器 id]` 里配（相对媒体目录）。
 
 ### 适配器 renpy-monmusu 与脚本 gal-layout-monmusu
 
@@ -61,6 +66,10 @@ tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构�
   站位立绘（`Spines/<角色id>/`，表情 0..6 → idle_normal/joy/sad/angry/surprise/shy/unique，站位 1 左 / 2 右 / 其余居中，动作 1 跳 / 2 抖 / 3 沉，空数组 = 全隐藏）；
   静态画面（`Stills/<名>/` 下所有骨架按数字前缀叠起来，animation2/3/4 联动背景音效 Hse2/3/4，animation4 闪白两次，animation5 白屏渐退，animation3 倍速 1.5）；镜头（起止位置 + Z 缩放千分比 + 毫秒时长）。
   只做对象形；`frameEffect` 的取值不明，原样记在 `scene.stats.frameEffects`；对象形里没有「谁在说话」的站位字段，所以不做说话人高亮。
+- **列表（adapter.catalog）**：照原查看器的三个列表页，由适配器每次从数据文件现读（上下文按文件 / 目录 mtime 失效，所以新增剧情、缩略图、改名称表马上生效，不用重跑脚本、不用重新导入）：
+  活动 = `EpisodeThumbnails/event`（新的在前，剧情 id = `2`+文件名第 3、4 段）；附加 = `EpisodeThumbnails/extra`（同上，id 以 1 结尾的末位换成 2，标题查 `Masterdata/masterdata_32.json`）；
+  角色 = `CharacterIcons/<8 位角色号>*.png`（名字、称号查 `masterdata_4.json`）→ 点进去是这个角色的 EX 剧情（`masterdata_32.json` 里按 `<角色号>_01|02_still` 找，缩略图 `Backgrounds/still/<key>.png`）；
+  全部剧情 = `scenes/` 下所有 JSON。点剧情卡片 = 进播放页，标题、面包屑、「↑ 列表」、上一话/下一话都按收它的那个列表来；进度仍按剧情路径记（和从哪个列表进来无关）。
 - 适配器参数 `adapterOptions['tenkeiprdx-json']`：`root`（Imported 目录，相对媒体目录）、`positionX`（站位 → 横向位置 0..1）、`unknownName`（`%username%` 没有 username.txt 时的名字）。
 - 脚本探测 `scenes/` + `Backgrounds|Spines|Stills|Masterdata`（外面多套几层目录自动带前缀），写：脚本根 `<素材根>/scenes`、资源根 `<素材根>`、扩展名 `json`、
   `scriptIndex`（`EpisodeThumbnails/event|extra` 的 `ep_eventstill_<a>_<b>…` → 剧情 id `2<a><b>`，缩略图 + 角标 event / extra）、适配器参数、封面、脚本数。只处理 `game.id = tenkeiprdx`（或没有 game 且认出结构）的媒体。

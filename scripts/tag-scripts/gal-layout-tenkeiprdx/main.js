@@ -2,7 +2,7 @@
 // 谁归它管：config.game.id === 'tenkeiprdx'；或者还没有 game 且目录里探测到 scenes/ + Backgrounds|Spines|Stills|Masterdata（素材根 = 放这些目录的那一层，一般是 Imported/）。
 // 写入的 config：
 //   game {id:'tenkeiprdx'}   scriptRoots [{dir:'<素材根>/scenes'}]   resourceRoots ['<素材根>']   scriptExtensions ['json']
-//   scriptIndex：EpisodeThumbnails/event、extra 里 ep_eventstill_<a>_<b>… → 剧情 id '2'+a+b，缩略图 + 角标 event / extra
+//   （列表——活动 / 附加 / 角色 / 全部剧情——由适配器每次从 EpisodeThumbnails、CharacterIcons、Masterdata、scenes/ 现读，不写进 config）
 //   adapterOptions['tenkeiprdx-json'] { root }（适配器要的资源目录索引、username.txt 都从它出发）
 // 选项：dryRun / replace / countCap / overrides（同 gal-layout-v1：[{ path, config?, cover?, title? }]）
 // 状态 tag：Gal配置: tenkeiprdx / 自定义    Gal配置version: <脚本版本>    Gal游戏: tenkeiprdx
@@ -13,7 +13,7 @@ import path from 'node:path'
 const GAME_ID = 'tenkeiprdx'
 const TAG_GROUPS = ['Gal配置', 'Gal配置version', 'Gal游戏']
 const SIBLINGS = ['Backgrounds', 'Spines', 'Stills', 'Masterdata']
-const THUMB_RULES = [['event', 'event'], ['extra', 'extra']]
+const THUMB_RULES = [['event'], ['extra']]
 const THUMB_RE = /^ep_eventstill_([^_]+)_([^_]+)/
 
 export async function generateTags(ctx) {
@@ -52,20 +52,18 @@ export async function generateTags(ctx) {
     groups: [],
     dirThumbs: [],
     scriptThumbs: [],
-    scriptIndex: [],
     adapterOptions: { 'tenkeiprdx-json': { root } },
   }
 
+  // 列表（活动 / 附加 / 角色 / 全部剧情）由适配器每次从数据文件现读（EpisodeThumbnails、CharacterIcons、Masterdata、scenes/），这里不写列表
   let cover = ''
-  for (const [dirName, badge] of THUMB_RULES) {
+  for (const [dirName] of THUMB_RULES) {
     const dir = join('EpisodeThumbnails', dirName)
-    const names = await listNames(abs(dir))
-    const thumbs = names.filter((name) => THUMB_RE.test(name))
-    if (!thumbs.length) { logs.push(`没有 ${dir}/ep_eventstill_*：这一类剧情没有缩略图`); continue }
-    config.scriptIndex.push({ dir: join(root, dir), pattern: '^ep_eventstill_([^_]+)_([^_]+)', key: '2{1}{2}', badge })
-    logs.push(`缩略图 ${dir}：${thumbs.length} 个，角标 ${badge}`)
-    if (!cover) cover = `${dir}/${thumbs[0]}`
+    const thumbs = (await listNames(abs(dir))).filter((name) => THUMB_RE.test(name))
+    logs.push(thumbs.length ? `缩略图 ${dir}：${thumbs.length} 个` : `没有 ${dir}/ep_eventstill_*：这一类剧情没有缩略图`)
+    if (!cover && thumbs.length) cover = `${dir}/${thumbs[thumbs.length - 1]}`
   }
+  for (const name of ['CharacterIcons', 'Masterdata']) logs.push((await isDir(abs(name))) ? `${name}/ 在：角色列表${name === 'Masterdata' ? '的名字、标题、EX 剧情' : '的头像'}可用` : `提示：没有 ${name}/（角色列表会缺${name === 'Masterdata' ? '名字和 EX 剧情' : '头像'}）`)
   for (const missing of ['Backgrounds', 'Spines', 'Stills', 'BGM', 'AdventureVoice']) {
     if (!(await isDir(abs(missing)))) logs.push(`提示：没有 ${missing}/（用到它的剧情会缺资源）`)
   }

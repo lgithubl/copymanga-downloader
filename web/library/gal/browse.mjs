@@ -14,6 +14,7 @@
 //   ''                          默认脚本根（首页）
 //   d:<相对路径>[#页码]          目录                s:<相对路径>   脚本（播放页）
 //   g:<编码后的分组键>:<相对路径>[#页码]   虚拟目录（config.groups：脚本名按正则分组，比如同一角色的几个脚本）
+//   v:<编码后的目录 id>[#页码]            适配器给的「目录」（adapter.catalog：从数据文件里读出来的列表，比如活动 / 角色 / 他们的剧情）；有 catalog 时首页就是它
 //   @<脚本根 id>|d:…  /  @<脚本根 id>|s:…  /  @<脚本根 id>|g:…   非默认的脚本根（比如另一种语言的文本）
 // 路径都相对「脚本根」。合并目录（config.merge）：列某个目录时，把它指定的几个子目录的内容合进同一个列表，
 // 这几个子目录本身不再出现；脚本节点 id 仍是真实路径，所以进度/历史不受影响。
@@ -102,6 +103,12 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const colon = body.indexOf(':')
     const tag = colon < 0 ? body : body.slice(0, colon)
     const arg = colon < 0 ? '' : body.slice(colon + 1)
+    if (tag === 'v') {
+      let id = ''
+      try { id = decodeURIComponent(arg) } catch { /* 无效 */ }
+      if (!id || id.length > 200) throw fail(`无效的节点：${textId.slice(0, 80)}`)
+      return { set, kind: 'virtual', key: id, rel: '', page }
+    }
     if (tag === 'g') {
       const split = arg.indexOf(':')
       let key = ''
@@ -122,6 +129,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return `${set === defaultSet ? '' : `@${set.id}|`}d:${rel}${page > 1 ? `#${page}` : ''}`
   }
 
+  const virtualNodeId = (id, page) => `v:${encodeURIComponent(id)}${page > 1 ? `#${page}` : ''}`
   const groupNodeId = (set, dirRel, key, page) => `${set === defaultSet ? '' : `@${set.id}|`}g:${encodeURIComponent(key)}:${dirRel}${page > 1 ? `#${page}` : ''}`
 
   // ---------- 读目录 / 脚本 ----------
@@ -163,6 +171,85 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     }
     scriptIndexCache = map
     return map
+  }
+
+  // 适配器的 catalog：适配器从数据文件（名称表、缩略图目录…）里读出一棵「目录树」{ id, title, subtitle?, thumb?, badge?, children? | script? }，
+  // 有它时首页和列表都由它给；脚本卡片点进去还是 s:<路径>（进度按路径记，和从哪个列表进来无关）。每次请求现取（上下文按文件变化失效），数据文件更新了列表跟着变。
+  const catalogAdapter = (adapters || []).map((id) => { try { return galAdapter(id) } catch { return null } }).find((a) => typeof a?.catalog === 'function')
+  let catalogCache
+  async function getCatalog() {
+    if (catalogCache !== undefined) return catalogCache
+    catalogCache = null
+    const ctx = catalogAdapter ? await contextOf(catalogAdapter.id) : null
+    // 适配器给的脚本路径是相对媒体目录的；节点 id 里的路径相对脚本根（和目录浏览一致），不在脚本根下的丢掉
+    const prefix = defaultSet.dir ? `${defaultSet.dir}/` : ''
+    const localize = (node) => ({
+      ...node,
+      ...(node.children ? { children: node.children.map(localize).filter((c) => c.children || c.script) } : {}),
+      ...(node.script !== undefined ? { script: node.script.startsWith(prefix) ? node.script.slice(prefix.length) : '' } : {}),
+    })
+    const raw = ctx ? catalogAdapter.catalog(ctx) : null
+    const tree = raw ? localize(raw) : null
+    if (tree?.children?.length) {
+      const byId = new Map()
+      const parentOfId = new Map()     // 目录 id → 父目录 id（顶层 = ''）
+      const scriptParent = new Map()   // 脚本路径 → 第一个收了它的目录 id
+      const scriptEntry = new Map()
+      const walk = (node, nodeId) => {
+        for (const child of node.children || []) {
+          if (!child?.id) continue
+          if (child.script) {
+            if (!scriptParent.has(child.script)) { scriptParent.set(child.script, nodeId); scriptEntry.set(child.script, child) }
+          } else if (!byId.has(child.id)) {
+            byId.set(child.id, child)
+            parentOfId.set(child.id, nodeId)
+            walk(child, child.id)
+          }
+        }
+      }
+      walk(tree, '')
+      catalogCache = { tree, byId, parentOfId, scriptParent, scriptEntry }
+    }
+    return catalogCache
+  }
+  const catalogChildren = (catalog, id) => (id ? catalog.byId.get(id)?.children : catalog.tree.children) || []
+  const catalogAncestors = (catalog, id) => {   // 从顶层到 id（含）
+    const chain = []
+    for (let cur = id; cur; cur = catalog.parentOfId.get(cur)) chain.unshift({ id: cur, title: catalog.byId.get(cur)?.title || cur })
+    return chain
+  }
+  const catalogPageOf = (catalog, parentId, childId) => {
+    const index = catalogChildren(catalog, parentId).findIndex((c) => c.id === childId)
+    return Math.floor(Math.max(0, index) / pageSize) + 1
+  }
+  const catalogNodeRef = (parentId, page) => (parentId ? virtualNodeId(parentId, page) : dirNodeId(defaultSet, '', page))
+  const catalogCrumbs = (catalog, id, tail) => [{ id: dirNodeId(defaultSet, '', 1), title: '首页' }, ...catalogAncestors(catalog, id).map((c) => ({ id: virtualNodeId(c.id, 1), title: c.title })), ...(tail ? [tail] : [])]
+  const catalogItem = (child) => (child.children
+    ? { type: 'dir', id: child.id, title: child.title, subtitle: child.subtitle ?? `${child.children.length} 项`, thumb: child.thumb || '', badge: child.badge || '', node: virtualNodeId(child.id, 1) }
+    : { type: 'script', id: child.script, title: child.title, subtitle: child.subtitle || '', thumb: child.thumb || '', badge: child.badge || '', node: idOf(defaultSet, 'script', child.script) })
+
+  function catalogNode(catalog, id, page) {
+    const holder = id ? catalog.byId.get(id) : catalog.tree
+    if (!holder?.children) throw fail('目录不存在', 404)
+    const total = holder.children.length
+    const pageCount = Math.max(1, Math.ceil(total / pageSize))
+    const current = Math.min(page, pageCount)
+    const parentId = id ? catalog.parentOfId.get(id) : null
+    return {
+      node: {
+        id: id ? virtualNodeId(id, current) : dirNodeId(defaultSet, '', current),
+        kind: 'cards',
+        title: id ? holder.title : '首页',
+        parent: id ? catalogNodeRef(parentId, catalogPageOf(catalog, parentId, id)) : null,
+        breadcrumb: catalogCrumbs(catalog, id),
+        sets: setChoices(defaultSet),
+        pageSize,
+        page: current,
+        pageCount,
+        total,
+        items: holder.children.slice((current - 1) * pageSize, current * pageSize).map(catalogItem),
+      },
+    }
   }
 
   const adapterContexts = new Map()   // 适配器 id → ctx（本次请求内）
@@ -349,9 +436,23 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // ---------- 取节点 ----------
   async function getNode(nodeId) {
     const { set, kind, rel, page, key: nodeKey = '' } = parseNodeId(nodeId)
+    const catalog = set === defaultSet ? await getCatalog() : null
+    if (kind === 'virtual') {
+      if (!catalog) throw fail('目录不存在', 404)
+      return catalogNode(catalog, nodeKey, page)
+    }
+    if (catalog && kind === 'dir' && !rel) return catalogNode(catalog, '', page)
     const key = kind === 'group' ? nodeKey : kind === 'script' ? scriptGroupKey(rel) : ''
-    const breadcrumb = await breadcrumbOf(set, kind, rel, key)
-    const base = { parent: await parentOf(set, kind, rel, key).catch(() => null), breadcrumb, sets: setChoices(set), pageSize }
+    // 脚本在 catalog 里：上一级、面包屑、上一话/下一话都按 catalog 里收它的那个目录来
+    const entry = catalog && kind === 'script' ? catalog.scriptEntry.get(rel) : null
+    const holderId = entry ? catalog.scriptParent.get(rel) : ''
+    const breadcrumb = entry ? catalogCrumbs(catalog, holderId, { id: idOf(set, 'script', rel), title: entry.title }) : await breadcrumbOf(set, kind, rel, key)
+    const base = {
+      parent: entry ? catalogNodeRef(holderId, holderId ? catalogPageOf(catalog, holderId, entry.id) : catalogPageOf(catalog, '', entry.id)) : await parentOf(set, kind, rel, key).catch(() => null),
+      breadcrumb,
+      sets: setChoices(set),
+      pageSize,
+    }
 
     if (kind === 'group') {
       const rule = groupRuleAt(rel)
@@ -412,6 +513,16 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     if (!adapterId) throw fail('不是可识别的脚本', 400)
     const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel, stem: stemOf(rel) })
 
+    if (entry) {
+      const siblings = catalogChildren(catalog, holderId).filter((c) => c.script)
+      const at = siblings.findIndex((c) => c.script === rel)
+      const neighbour = (c) => (c ? { sectionId: idOf(set, 'script', c.script), title: c.title } : null)
+      return {
+        node: { id: idOf(set, 'script', rel), kind: 'player', title: entry.title, ...base, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
+        scene,
+        sectionNavigation: { prev: at > 0 ? neighbour(siblings[at - 1]) : null, next: at >= 0 && at < siblings.length - 1 ? neighbour(siblings[at + 1]) : null },
+      }
+    }
     // 上一话/下一话：同一个列表里（合并目录时跨来源）相邻的脚本
     const dir = effectiveParentDir(rel)
     const listed = await listDir(set, dir).catch(() => ({ scripts: [], allScripts: [] }))
@@ -426,5 +537,5 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     }
   }
 
-  return { config, getNode, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, groupNodeId, effectiveParentDir } }
+  return { config, getNode, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, groupNodeId, virtualNodeId, effectiveParentDir } }
 }

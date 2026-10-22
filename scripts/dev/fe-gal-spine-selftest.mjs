@@ -146,12 +146,35 @@ await page.keyboard.press('ArrowLeft')
 await waitCount('3 / 4')
 check('后退回静态画面：骨架一步到位恢复', (await waitPixel(0.5, 0.75, SKY)).ok)
 
-// ---- 3. 浏览：event / extra 角标 + 缩略图 ----
+// ---- 3. 浏览：列表（活动 / 附加 / 角色 / 全部剧情）、名字、缩略图、角标、上一级 ----
 await page.goto(`${base}/#/media/gal/${itemId}/main`)
 await page.waitForSelector('.gal-browse')
-const cards = await page.$$eval('.gal-card', (es) => es.map((e) => [e.querySelector('.gal-card-title')?.textContent, e.querySelector('.gal-card-badge')?.textContent || '']))
-check('浏览：三个剧情卡片，event / extra 角标', J(cards) === J([['10010101', ''], ['20010001', 'event'], ['23010001', 'extra']]), J(cards))
-check('浏览：缩略图都加载出来了', await page.$$eval('.gal-browse img', (is) => is.length === 3 && is.every((i) => i.complete && i.naturalWidth > 0)))
+const titles = () => page.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))
+const loadedImgs = async () => { for (let i = 0; i < 40; i++) { if (await page.$$eval('.gal-browse img', (is) => is.length > 0 && is.every((x) => x.complete && x.naturalWidth > 0))) return true; await sleep(150) } return false }
+check('浏览首页 = 适配器的列表：活动 / 附加 / 角色 / 全部剧情', J(await titles()) === J(['活动', '附加', '角色', '全部剧情']), J(await titles()))
+await page.click('.gal-card[data-node="v:event"]')
+await page.waitForSelector('.gal-card.is-script')
+const ev = await page.$$eval('.gal-card', (es) => es.map((e) => [e.querySelector('.gal-card-title')?.textContent, e.querySelector('.gal-card-badge')?.textContent || '', e.querySelector('img')?.naturalWidth > 0]))
+check('活动：标题来自名称表、角标 event、缩略图加载出来了；面包屑 首页›活动', J(ev) === J([['The First Event', 'event', true]]) && (await page.$$eval('.gal-browse-crumb', (es) => es.map((e) => e.textContent).join('>'))) === '首页>活动', J(ev))
+await page.click('.gal-browse-up')
+await page.waitForSelector('.gal-card[data-node="v:chars"]')
+await page.click('.gal-card[data-node="v:chars"]')
+await page.waitForSelector('.gal-card[data-node="v:chars%2F10010001"]')
+check('角色列表：名字 + 称号 + EX 剧情数，头像加载出来了（Bob 在前：新的在前）', J(await titles()) === J(['Bob', 'Alice']) && (await page.$$eval('.gal-card-sub', (es) => es.map((e) => e.textContent))).join() === 'Rival · 0 项,Heroine · 1 项' && (await loadedImgs()), J([await titles(), await page.$$eval('.gal-card-sub', (es) => es.map((e) => e.textContent))]))
+await page.screenshot({ path: path.join(shotDir, '4-chars.png') })
+await page.click('.gal-card[data-node="v:chars%2F10010001"]')
+await page.waitForSelector('.gal-card.is-script')
+check('角色页：这个角色的 EX 剧情 + 缩略图；面包屑 首页›角色›Alice', J(await titles()) === J(['Alice EX']) && (await loadedImgs()) && (await page.$$eval('.gal-browse-crumb', (es) => es.map((e) => e.textContent).join('>'))) === '首页>角色>Alice')
+await page.click('.gal-card[data-title="Alice EX"]')
+await page.waitForSelector('.gal-player .gal-stage')
+await page.waitForFunction(() => /\/ 4$/.test(document.querySelector('.gal-count')?.textContent || ''))   // 前面看过这个剧情：可能从上次的位置续播
+check('点进剧情：标题是列表里的名字；「↑ 列表」回到角色页（不是目录）', (await page.$eval('#media-reader-title', (e) => e.textContent)) === 'Alice EX' && (await page.$eval('.gal-up', (b) => !b.hidden)))
+await page.click('.gal-up')
+await page.waitForSelector('.gal-browse')
+check('「↑ 列表」：回到收它的角色页', (await page.$$eval('.gal-browse-crumb', (es) => es.map((e) => e.textContent).join('>'))) === '首页>角色>Alice')
+await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent('v:all')}`)
+await page.waitForFunction(() => document.querySelectorAll('.gal-card.is-script').length === 3)
+check('全部剧情：scenes/ 下三个，已知的用名字、角标', J(await titles()) === J(['Alice EX', 'The First Event', 'An Extra Story']) && (await page.$$eval('.gal-card-badge', (es) => es.map((e) => e.textContent))).join() === 'event,extra')
 
 // ---- 4. 没有运行时：降级 ----
 const page2 = await context.newPage()
@@ -167,7 +190,7 @@ await page2.close()
 check('没有页面错误', errors.length === 0, J(errors))
 } catch (error) {
   fail++
-  console.log(`FAIL 测试中断：${error.message}`)
+  console.log(`FAIL 测试中断：${error.message.split('\n')[0]} @ ${(error.stack || '').split('\n').find((l) => l.includes('fe-gal-spine-selftest')) || ''}`)
 } finally {
   await browser?.close()
   server.kill()

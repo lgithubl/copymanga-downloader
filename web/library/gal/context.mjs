@@ -4,13 +4,13 @@
 //   contextDirs(options)  → [相对媒体目录的目录]   要递归列文件名的目录
 //   prepare({ options, texts, files, toResourcePath }) → ctx    texts = { 相对路径: 文本 }，files = 目录里的文件相对路径数组
 // parse(text, ctx) 拿到 ctx。options 来自 config.adapterOptions[适配器 id]，路径类参数在这里统一过 safeRelPath。
-// 上下文按（文本文件 mtime+size）缓存；目录列表最多缓存 5 分钟（目录里新增文件几分钟内会被发现）。
+// 上下文按（文本文件 mtime+size）缓存；目录：自己和下一层子目录的 mtime 一变就重建（新增文件马上能看到），更深的最多缓存 5 分钟。
 import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { safeRelPath } from './paths.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 
-const MAX_CONTEXT_TEXT = 8 * 1024 * 1024
+const MAX_CONTEXT_TEXT = 32 * 1024 * 1024
 const MAX_WALK_FILES = 60000
 const MAX_WALK_DEPTH = 6
 const DIR_TTL_MS = 5 * 60 * 1000
@@ -43,6 +43,16 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
       const info = await stat(path.join(mediaDir, ...rel.split('/')))
       parts.push(`${rel}:${info.mtimeMs}:${info.size}`)
     } catch { parts.push(`${rel}:-`) }
+  }
+  // 目录：自己和下一层子目录的 mtime（里面新增/删除文件、子目录就会变），所以新增剧情、缩略图、立绘马上能看到；更深层的靠 TTL
+  for (const rel of dirRels) {
+    try {
+      const abs = path.join(mediaDir, ...rel.split('/'))
+      parts.push(`${rel}/:${(await stat(abs)).mtimeMs}`)
+      for (const entry of (await readdir(abs, { withFileTypes: true })).slice(0, 5000)) {
+        if (entry.isDirectory()) parts.push(`${rel}/${entry.name}/:${(await stat(path.join(abs, entry.name))).mtimeMs}`)
+      }
+    } catch { parts.push(`${rel}/:-`) }
   }
   const fileKey = parts.join('|')
   const cached = cache.get(key)

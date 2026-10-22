@@ -1,8 +1,8 @@
 {
   "id": "gal-layout-tenkeiprdx",
   "name": "Gal 布局配置：tenkeiprdx（Unity 剧情查看器）",
-  "version": "1.0.0",
-  "description": "给 tenkeiprdx 剧情查看器的素材目录（StreamingAssets/Tenkeiprdx X/Imported）调 config：探测 scenes/（剧情 JSON）、Backgrounds / Spines / Stills / BGM 等资源目录，写入脚本根、资源根、扩展名 json、脚本索引（用 EpisodeThumbnails/event|extra 的缩略图文件名推出对应剧情 id，给卡片配缩略图和 event / extra 角标）、适配器参数、封面和脚本数。config.game.id 为 tenkeiprdx（或还没有 game 且探测到这套结构）才会处理，别的游戏的媒体原样跳过。脚本版本和运行时间写进 config.script，打「Gal配置」「Gal配置version」「Gal游戏」标签。在选项里可以按路径给某个媒体单独覆盖任何配置。",
+  "version": "1.1.0",
+  "description": "给 tenkeiprdx 剧情查看器的素材目录（StreamingAssets/Tenkeiprdx X/Imported）调 config：探测 scenes/（剧情 JSON）、Backgrounds / Spines / Stills / BGM 等资源目录，写入脚本根、资源根、扩展名 json、封面、适配器参数和脚本数（活动 / 附加 / 角色 / 全部剧情这些列表由适配器每次从数据文件现读，数据更新后不用重跑脚本）。config.game.id 为 tenkeiprdx（或还没有 game 且探测到这套结构）才会处理，别的游戏的媒体原样跳过。脚本版本和运行时间写进 config.script，打「Gal配置」「Gal配置version」「Gal游戏」标签。在选项里可以按路径给某个媒体单独覆盖任何配置。",
   "scope": ["item"],
   "libraryTypes": ["gal"],
   "mediaKinds": [],
