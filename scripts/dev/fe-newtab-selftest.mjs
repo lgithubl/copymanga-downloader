@@ -47,7 +47,7 @@ const api = async (p, init = {}) => {
 }
 const postJson = (p, v) => api(p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) })
 // 服务端保存配置是合并式的：每次先清掉这几项再套上本次要的，测试之间才互不影响
-const CLEAN = { mediaOpenInNewTabKinds: [], mediaOpenInNewTabProfiles: {}, tagSearchOpenInNewTabKinds: [], tagSearchOpenInNewTabProfiles: {}, mediaCloseNewTabOnBack: true }
+const CLEAN = { mediaOpenInNewTabRules: [], tagSearchOpenInNewTabRules: [], mediaCloseNewTabOnBack: true }
 const setConfig = (patch = {}) => postJson('/api/config', { ...CLEAN, ...patch })
 
 // ---- 造数据：三种导入方案各一个条目 ----
@@ -76,15 +76,19 @@ for (const [it, tag] of [[G, '标签G'], [A, '标签A'], [T, '标签T']]) await 
 await api('/api/library/index/rebuild', { method: 'POST' })
 await sleep(1500)
 
-// ---- 配置接口：归一化 ----
+// ---- 配置接口：归一化 + 旧配置迁移 ----
 {
-  await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true, 'text-media': false, 'bad name!': true, 'x': 'yes', 'archive-gallery': 1, '../etc': true }, tagSearchOpenInNewTabProfiles: [true], mediaOpenInNewTabKinds: ['text', 'nope'] })
+  await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }, { kind: 'text' }, { profile: 'rj-media', kind: 'video' }, { profile: 'gal-import' }, {}, { profile: 'bad name!' }, { profile: 'ok', kind: '../x' }, { kind: 5 }, 'x', null, [1]], tagSearchOpenInNewTabRules: 'nope' })
   const c = (await api('/api/config')).body
-  check('配置：按导入方案的映射只收「安全方案名 → 布尔」；非法名/非布尔/数组都丢', J(c.mediaOpenInNewTabProfiles) === J({ 'gal-import': true, 'text-media': false }) && J(c.tagSearchOpenInNewTabProfiles) === J({}), J([c.mediaOpenInNewTabProfiles, c.tagSearchOpenInNewTabProfiles]))
-  check('配置：按类型的勾选原样保留（非法类型丢）', J(c.mediaOpenInNewTabKinds) === J(['text']))
-  await setConfig({})
+  check('规则：只收「安全字符的 profile/kind」；重复、空规则、非法字段（整条丢，不会悄悄变宽）、非对象都丢', J(c.mediaOpenInNewTabRules) === J([{ profile: 'gal-import' }, { kind: 'text' }, { profile: 'rj-media', kind: 'video' }]), J(c.mediaOpenInNewTabRules))
+  check('规则不是数组 → 当成没设置（空）', J(c.tagSearchOpenInNewTabRules) === '[]')
+  await setConfig({ mediaOpenInNewTabRules: null, mediaOpenInNewTabKinds: ['text', 'epub'], mediaOpenInNewTabProfiles: { 'gal-import': true, 'rj-media': false }, tagSearchOpenInNewTabRules: null, tagSearchOpenInNewTabKinds: ['video'], tagSearchOpenInNewTabProfiles: { 'archive-gallery': true } })
+  const m = (await api('/api/config')).body
+  check('旧配置迁移：勾选的类型 → { kind }，按方案设成新页面的 → { profile }（旧的「当前页」没有对应规则，丢掉）', J(m.mediaOpenInNewTabRules) === J([{ kind: 'text' }, { kind: 'epub' }, { profile: 'gal-import' }]) && J(m.tagSearchOpenInNewTabRules) === J([{ kind: 'video' }, { profile: 'archive-gallery' }]), J([m.mediaOpenInNewTabRules, m.tagSearchOpenInNewTabRules]))
+  check('保存后旧字段不再输出（只留新的规则字段）', !('mediaOpenInNewTabKinds' in m) && !('mediaOpenInNewTabProfiles' in m) && !('tagSearchOpenInNewTabKinds' in m))
+  await setConfig()
   const d = (await api('/api/config')).body
-  check('默认：两个映射都是空（= 全部跟随类型），统一开关默认开（新页里返回=关闭标签页）', J(d.mediaOpenInNewTabProfiles) === '{}' && J(d.tagSearchOpenInNewTabProfiles) === '{}' && d.mediaCloseNewTabOnBack === true)
+  check('默认：两组规则都是空（= 都在当前页），统一开关默认开（新页里返回=关闭标签页）', J(d.mediaOpenInNewTabRules) === '[]' && J(d.tagSearchOpenInNewTabRules) === '[]' && d.mediaCloseNewTabOnBack === true)
 }
 
 const browser = await chromium.launch()
@@ -125,63 +129,54 @@ const attemptOpen = async (title, { ctrl = false } = {}) => {
 const outcome = (r) => (r.popup ? 'new' : r.same ? 'same' : 'none')
 
 // ---- 默认：全部当前页 ----
-await openLibrary()
-{
-  const out = {}
-  for (const [title, key] of [['演示Gal', 'gal'], ['压缩包图集', 'archive'], ['文本媒体', 'text']]) {
-    await openLibrary()
-    out[key] = outcome(await attemptOpen(title))
-  }
-  check('默认（什么都没勾）：三种都在当前页打开', J(out) === J({ gal: 'same', archive: 'same', text: 'same' }), J(out))
-}
-
-// ---- 只按类型：text 勾了 → 只有 text 开新页（Gal/压缩包图集没有对应类型可勾） ----
-await setConfig({ mediaOpenInNewTabKinds: ['text'] })
-{
+const outcomes = async () => {
   const out = {}
   for (const [title, key] of [['演示Gal', 'gal'], ['压缩包图集', 'archive'], ['文本媒体', 'text']]) { await openLibrary(); out[key] = outcome(await attemptOpen(title)) }
-  check('只勾类型 text：文本媒体开新页，另外两种仍在当前页', J(out) === J({ gal: 'same', archive: 'same', text: 'new' }), J(out))
+  return out
 }
+await openLibrary()
+check('默认（规则为空）：三种都在当前页打开', J(await outcomes()) === J({ gal: 'same', archive: 'same', text: 'same' }))
 
-// ---- 按导入方案：Gal 开新页（类型里本来没法勾 gal）----
-await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true } })
+// ---- 只写类型：{kind:text}（不分方案）----
+await setConfig({ mediaOpenInNewTabRules: [{ kind: 'text' }] })
+check('规则 {kind:text}：文本媒体开新页，另外两种仍在当前页', J(await outcomes()) === J({ gal: 'same', archive: 'same', text: 'new' }))
+
+// ---- 只写方案：{profile:gal-import}（Gal 的类型 gal 以前没法勾，现在按方案或类型都行）----
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }] })
 {
   await openLibrary()
   const r = await attemptOpen('演示Gal')
-  check('按方案 gal-import=新页面：Gal 媒体开新页；URL 是媒体路由并带 tab=new', outcome(r) === 'new' && /#\/media\/gal\//.test(r.url) && /tab=new/.test(r.url), J([outcome(r), r.url]))
+  check('规则 {profile:gal-import}：Gal 媒体开新页；URL 是媒体路由并带 tab=new；当前页留在媒体库', outcome(r) === 'new' && /#\/media\/gal\//.test(r.url) && /tab=new/.test(r.url), J([outcome(r), r.url]))
   await openLibrary()
   check('当前页没有被带走（还在媒体库页）', Boolean(await page.$('#library-view.active')) && !(await page.$('#media-viewer-view.active')))
   await openLibrary()
   check('其它方案不受影响：压缩包图集仍在当前页', outcome(await attemptOpen('压缩包图集')) === 'same')
 }
-// ---- 方案比类型优先：类型勾了 text，但 text-media 方案设成当前页 → 当前页 ----
-await setConfig({ mediaOpenInNewTabKinds: ['text'], mediaOpenInNewTabProfiles: { 'text-media': false } })
+await setConfig({ mediaOpenInNewTabRules: [{ kind: 'gal' }] })
+check('规则 {kind:gal}：按类型也能让 Gal 开新页', outcome(await (async () => { await openLibrary(); return attemptOpen('演示Gal') })()) === 'new')
+
+// ---- 方案 && 类型（AND）：两个都要匹配 ----
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'text-media', kind: 'video' }] })
+check('规则 {profile:text-media, kind:video}：类型对不上（文本媒体的单元是 text）→ 不开新页（AND，不是 OR）', J(await outcomes()) === J({ gal: 'same', archive: 'same', text: 'same' }))
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'archive-gallery', kind: 'text' }] })
+check('规则 {profile:archive-gallery, kind:text}：方案对但类型不对 → 不开', J(await outcomes()) === J({ gal: 'same', archive: 'same', text: 'same' }))
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'archive-gallery', kind: 'image-gallery' }, { profile: 'text-media', kind: 'text' }] })
+check('规则 {archive-gallery & image-gallery}、{text-media & text}：两个都匹配 → 压缩包图集和文本媒体开新页；Gal 不开', J(await outcomes()) === J({ gal: 'same', archive: 'new', text: 'new' }))
+
+// ---- 多条规则：任意一条命中（OR）----
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }, { kind: 'text' }] })
+check('规则 [{profile:gal-import},{kind:text}]：任意一条命中就开新页（Gal 和文本开，压缩包图集不开）', J(await outcomes()) === J({ gal: 'new', archive: 'same', text: 'new' }))
+
+// ---- Ctrl/⌘ 点击永远新页 ----
+await setConfig()
 {
   await openLibrary()
-  check('方案 text-media=当前页 优先于类型 text=新页面：在当前页打开', outcome(await attemptOpen('文本媒体')) === 'same')
-}
-// ---- 方案 = 新页面，类型没勾 ----
-await setConfig({ mediaOpenInNewTabProfiles: { 'archive-gallery': true, 'text-media': true } })
-{
+  check('规则为空时 Ctrl 点击：也开新页', outcome(await attemptOpen('演示Gal', { ctrl: true })) === 'new')
   await openLibrary()
-  const a = await attemptOpen('压缩包图集')
-  await openLibrary()
-  const t = await attemptOpen('文本媒体')
-  check('压缩包图集 / 文本媒体 方案=新页面：都开新页；Gal 回到当前页（没设）', outcome(a) === 'new' && outcome(t) === 'new', J([outcome(a), outcome(t)]))
-  await openLibrary()
-  check('没设方案的 Gal 回到「跟随类型」：当前页', outcome(await attemptOpen('演示Gal')) === 'same')
-}
-// ---- Ctrl/⌘ 点击永远新页，哪怕方案说当前页 ----
-await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': false } })
-{
-  await openLibrary()
-  check('Ctrl 点击：方案=当前页 也开新页', outcome(await attemptOpen('演示Gal', { ctrl: true })) === 'new')
-  await openLibrary()
-  check('不按 Ctrl：方案=当前页 就是当前页', outcome(await attemptOpen('演示Gal')) === 'same')
+  check('不按 Ctrl：当前页', outcome(await attemptOpen('演示Gal')) === 'same')
 }
 
-// ---- 历史里点「继续」：服务端记了方案，按方案判断 ----
-await setConfig({ mediaOpenInNewTabProfiles: {} })
+// ---- 历史里点「继续」：服务端记了方案，按规则判断 ----
 {
   await openLibrary()
   await attemptOpen('演示Gal'); await sleep(900)
@@ -189,17 +184,17 @@ await setConfig({ mediaOpenInNewTabProfiles: {} })
   const list = Array.isArray(hist) ? hist : hist.items || []
   const rec = list.find((h) => h.type === 'gal')
   check('历史记录里带上了 sourceProfile（服务端从条目补的）', rec?.sourceProfile === 'gal-import', J(rec))
-  await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true } })
+  await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }] })
   await openLibrary()
   await page.click('[data-view="history-view"]')
   await page.waitForSelector('#history-list .history-card')
   const popupP = context.waitForEvent('page', { timeout: 2500 }).catch(() => null)
   await page.locator('#history-list .history-card', { hasText: '演示Gal' }).first().locator('.history-continue').click()
   const popup = await popupP
-  check('历史里点 Gal 的「继续」：按方案 gal-import=新页面 开新页', Boolean(popup) && /tab=new/.test(popup?.url() || ''), popup?.url() || '无')
+  check('历史里点 Gal 的「继续」：规则 {profile:gal-import} 命中 → 开新页', Boolean(popup) && /tab=new/.test(popup?.url() || ''), popup?.url() || '无')
 }
 
-// ---- 点标签（搜索）：同样按方案；和打开媒体的设置分开 ----
+// ---- 点标签（搜索）：同样的规则格式，但和「打开媒体」分开 ----
 const tagOutcome = async (title, tag) => {
   await openLibrary()
   const popupP = context.waitForEvent('page', { timeout: 2200 }).catch(() => null)
@@ -208,26 +203,27 @@ const tagOutcome = async (title, tag) => {
   await sleep(400)
   return { popup, url: popup?.url() || '', same: (await page.inputValue('#library-tag-search').catch(() => '')).includes(tag) }
 }
-await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true } })   // 打开媒体的设置不影响点标签
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }] })   // 只设了打开媒体
 {
   const r = await tagOutcome('演示Gal', '标签G')
-  check('点标签与「打开媒体」分开：只设了打开媒体，点标签仍在当前页（搜索框填入标签）', !r.popup && r.same, J([r.url, r.same]))
+  check('点标签与「打开媒体」分开：只设了打开媒体的规则，点标签仍在当前页（搜索框填入标签）', !r.popup && r.same, J([r.url, r.same]))
 }
-await setConfig({ tagSearchOpenInNewTabProfiles: { 'archive-gallery': true }, tagSearchOpenInNewTabKinds: ['text'] })
+await setConfig({ tagSearchOpenInNewTabRules: [{ profile: 'archive-gallery' }, { kind: 'text' }] })
 {
   const a = await tagOutcome('压缩包图集', '标签A')
   const g = await tagOutcome('演示Gal', '标签G')
   const t = await tagOutcome('文本媒体', '标签T')
-  check('点标签：压缩包图集（方案=新页面）开新页，URL 是媒体库路由；Gal 当前页；文本（类型勾了）新页', Boolean(a.popup) && /tab=new/.test(a.url) && !g.popup && g.same && Boolean(t.popup), J([!!a.popup, a.url, !!g.popup, !!t.popup]))
+  check('点标签规则 [{profile:archive-gallery},{kind:text}]：压缩包图集、文本开新页（URL 是媒体库路由）；Gal 当前页', Boolean(a.popup) && /tab=new/.test(a.url) && !g.popup && g.same && Boolean(t.popup), J([!!a.popup, a.url, !!g.popup, !!t.popup]))
 }
-await setConfig({ tagSearchOpenInNewTabProfiles: { 'text-media': false }, tagSearchOpenInNewTabKinds: ['text'] })
+await setConfig({ tagSearchOpenInNewTabRules: [{ profile: 'text-media', kind: 'video' }, { profile: 'gal-import', kind: 'gal' }] })
 {
   const t = await tagOutcome('文本媒体', '标签T')
-  check('点标签：方案 text-media=当前页 优先于类型 text=新页面', !t.popup && t.same)
+  const g = await tagOutcome('演示Gal', '标签G')
+  check('点标签的 AND：{text-media & video} 对文本媒体不匹配 → 当前页；{gal-import & gal} 匹配 Gal → 新页', !t.popup && t.same && Boolean(g.popup))
 }
 
 // ---- 新页面里「返回」：统一开关 ----
-await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true }, mediaCloseNewTabOnBack: true })
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }], mediaCloseNewTabOnBack: true })
 {
   await openLibrary()
   const r = await attemptOpen('演示Gal')
@@ -238,7 +234,7 @@ await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true }, mediaCloseN
   const didClose = await Promise.race([closed, sleep(2500).then(() => false)])
   check('统一开关=开：新页面里点「返回」→ 关闭这个标签页', didClose === true, J(didClose))
 }
-await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true }, mediaCloseNewTabOnBack: false })
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }], mediaCloseNewTabOnBack: false })
 {
   await openLibrary()
   const r = await attemptOpen('演示Gal')
@@ -249,7 +245,7 @@ await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true }, mediaCloseN
   const state = await popup.evaluate(() => ({ lib: document.querySelector('#library-view')?.classList.contains('active'), reader: document.querySelector('#media-viewer-view')?.classList.contains('active') })).catch(() => null)
   check('统一开关=关：新页面里点「返回」→ 留在这个标签页，回到媒体库页', state && state.lib && !state.reader, J(state))
 }
-await setConfig({ mediaOpenInNewTabProfiles: { 'archive-gallery': true }, mediaCloseNewTabOnBack: true })
+await setConfig({ mediaOpenInNewTabRules: [{ profile: 'archive-gallery' }], mediaCloseNewTabOnBack: true })
 {
   await openLibrary()
   const r = await attemptOpen('压缩包图集')
@@ -260,27 +256,61 @@ await setConfig({ mediaOpenInNewTabProfiles: { 'archive-gallery': true }, mediaC
   check('统一开关对所有方案一样：压缩包图集新页里「返回」也关闭标签页', (await Promise.race([closed, sleep(2500).then(() => false)])) === true)
 }
 
-// ---- 配置页：按导入方案的下拉（跟随类型 / 新页面 / 当前页）----
-await setConfig({ mediaOpenInNewTabProfiles: { 'gal-import': true, 'text-media': false }, tagSearchOpenInNewTabProfiles: { 'archive-gallery': true }, mediaCloseNewTabOnBack: true })
+// ---- 配置页：JSON 数组 + 下拉「添加规则」 ----
 {
+  const dialogs = []
+  page.removeAllListeners('dialog')
+  page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss().catch(() => {}) })
+  await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }, { profile: 'rj-media', kind: 'video' }], tagSearchOpenInNewTabRules: [{ kind: 'text' }], mediaCloseNewTabOnBack: true })
   await page.goto(`${base}/`); await page.reload()
   await page.click('[data-view="settings-view"]')
-  await page.waitForSelector('.config-media-new-tab-profile')
-  await page.locator('.config-media-new-tab-profile').first().scrollIntoViewIfNeeded()
+  await page.waitForSelector('#config-media-new-tab-rules')
+  const shown = await page.inputValue('#config-media-new-tab-rules')
+  check('配置页：规则以 JSON 数组显示，一条一行', shown === '[\n  {"profile":"gal-import"},\n  {"profile":"rj-media","kind":"video"}\n]' && (await page.inputValue('#config-tag-search-new-tab-rules')) === '[\n  {"kind":"text"}\n]', shown)
+  check('下拉：方案 6 个 + 「任意」，类型 6 个 + 「任意」', (await page.$$eval('#config-media-new-tab-pick-profile option', (o) => o.length)) === 7 && (await page.$$eval('#config-media-new-tab-pick-kind option', (o) => o.length)) === 7)
+  await page.locator('#config-media-new-tab-rules').scrollIntoViewIfNeeded()
   await page.screenshot({ path: path.join(process.env.SHOT_DIR || '/tmp/gal-shots', 'config-newtab.png') })
-  const vals = await page.$$eval('.config-media-new-tab-profile', (ss) => Object.fromEntries(ss.map((s) => [s.dataset.profile, s.value])))
-  const tvals = await page.$$eval('.config-tag-search-new-tab-profile', (ss) => Object.fromEntries(ss.map((s) => [s.dataset.profile, s.value])))
-  check('配置页：6 个导入方案各一个下拉（打开媒体 / 点标签各一组），显示已存的值', Object.keys(vals).length === 6 && vals['gal-import'] === 'new' && vals['text-media'] === 'same' && vals['archive-gallery'] === '' && tvals['archive-gallery'] === 'new' && tvals['gal-import'] === '', J([vals, tvals]))
-  await page.selectOption('.config-media-new-tab-profile[data-profile="rj-media"]', 'new')
-  await page.selectOption('.config-media-new-tab-profile[data-profile="gal-import"]', '')
-  await page.selectOption('.config-tag-search-new-tab-profile[data-profile="normal-video"]', 'same')
-  await page.click('#config-save')
-  await sleep(1200)
+  await page.selectOption('#config-media-new-tab-pick-profile', 'monthly-ani')
+  await page.click('#config-media-new-tab-add')
+  check('选方案点「添加规则」：往数组里加一条 {profile}', (await page.inputValue('#config-media-new-tab-rules')).includes('{"profile":"monthly-ani"}'))
+  await page.selectOption('#config-media-new-tab-pick-profile', 'text-media'); await page.selectOption('#config-media-new-tab-pick-kind', 'text')
+  await page.click('#config-media-new-tab-add')
+  await page.selectOption('#config-media-new-tab-pick-profile', 'text-media'); await page.selectOption('#config-media-new-tab-pick-kind', 'text')
+  await page.click('#config-media-new-tab-add')
+  const afterAdd = JSON.parse(await page.inputValue('#config-media-new-tab-rules'))
+  check('方案 + 类型都选：加一条 {profile, kind}；同样的再加一次不重复', J(afterAdd) === J([{ profile: 'gal-import' }, { profile: 'rj-media', kind: 'video' }, { profile: 'monthly-ani' }, { profile: 'text-media', kind: 'text' }]), J(afterAdd))
+  await page.selectOption('#config-media-new-tab-pick-profile', ''); await page.selectOption('#config-media-new-tab-pick-kind', 'audio')
+  await page.click('#config-media-new-tab-add')
+  check('只选类型：加一条 {kind}', JSON.parse(await page.inputValue('#config-media-new-tab-rules')).some((r) => r.kind === 'audio' && !r.profile))
+  await page.selectOption('#config-media-new-tab-pick-profile', ''); await page.selectOption('#config-media-new-tab-pick-kind', '')
+  const before = await page.inputValue('#config-media-new-tab-rules')
+  await page.click('#config-media-new-tab-add')
+  check('方案和类型都选「任意」：提示至少选一个，不加', dialogs.some((d) => /至少选一个/.test(d)) && (await page.inputValue('#config-media-new-tab-rules')) === before, J(dialogs))
+  await page.selectOption('#config-tag-search-new-tab-pick-profile', 'archive-gallery')
+  await page.click('#config-tag-search-new-tab-add')
+  check('点标签那一组独立：加到它自己的数组里，不影响打开媒体', JSON.parse(await page.inputValue('#config-tag-search-new-tab-rules')).some((r) => r.profile === 'archive-gallery') && !(await page.inputValue('#config-media-new-tab-rules')).includes('archive-gallery'))
+  await page.click('#config-save'); await sleep(1200)
   const saved = (await api('/api/config')).body
-  const sorted = (o) => J(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)))
-  check('配置页保存：新页面=true、当前页=false、跟随类型=不写', sorted(saved.mediaOpenInNewTabProfiles) === sorted({ 'text-media': false, 'rj-media': true }) && sorted(saved.tagSearchOpenInNewTabProfiles) === sorted({ 'archive-gallery': true, 'normal-video': false }), J([saved.mediaOpenInNewTabProfiles, saved.tagSearchOpenInNewTabProfiles]))
-  await page.reload(); await page.click('[data-view="settings-view"]'); await page.waitForSelector('.config-media-new-tab-profile')
-  check('刷新后配置页还显示保存的值', (await page.$eval('.config-media-new-tab-profile[data-profile="rj-media"]', (s) => s.value)) === 'new' && (await page.$eval('.config-media-new-tab-profile[data-profile="gal-import"]', (s) => s.value)) === '')
+  check('保存：规则写进配置（点标签、打开媒体各一组）', J(saved.mediaOpenInNewTabRules) === J([{ profile: 'gal-import' }, { profile: 'rj-media', kind: 'video' }, { profile: 'monthly-ani' }, { profile: 'text-media', kind: 'text' }, { kind: 'audio' }]) && J(saved.tagSearchOpenInNewTabRules) === J([{ kind: 'text' }, { profile: 'archive-gallery' }]), J([saved.mediaOpenInNewTabRules, saved.tagSearchOpenInNewTabRules]))
+  // 删规则 = 直接改 JSON
+  await page.fill('#config-media-new-tab-rules', '[{"profile":"gal-import"}]')
+  await page.click('#config-save'); await sleep(1200)
+  check('删规则：直接改 JSON 保存（手写的紧凑格式也行）', J((await api('/api/config')).body.mediaOpenInNewTabRules) === J([{ profile: 'gal-import' }]))
+  await page.reload(); await page.click('[data-view="settings-view"]'); await page.waitForSelector('#config-media-new-tab-rules')
+  check('刷新后配置页显示保存的规则（统一格式）', (await page.inputValue('#config-media-new-tab-rules')) === '[\n  {"profile":"gal-import"}\n]')
+  // JSON 写错：明确报错，不保存，也不把已有规则清掉
+  dialogs.length = 0
+  await page.fill('#config-media-new-tab-rules', '[{"profile":"gal-import"},')
+  await page.click('#config-save'); await sleep(900)
+  check('JSON 写错：弹出明确的错误、不保存，已存的规则还在', dialogs.some((d) => /不是合法的 JSON/.test(d) && /打开媒体/.test(d)) && J((await api('/api/config')).body.mediaOpenInNewTabRules) === J([{ profile: 'gal-import' }]), J(dialogs))
+  dialogs.length = 0
+  await page.fill('#config-media-new-tab-rules', '{"profile":"gal-import"}')
+  await page.click('#config-save'); await sleep(900)
+  check('不是数组（是对象）：报错、不保存', dialogs.some((d) => /必须是 JSON 数组/.test(d)) && J((await api('/api/config')).body.mediaOpenInNewTabRules) === J([{ profile: 'gal-import' }]))
+  dialogs.length = 0
+  await page.fill('#config-media-new-tab-rules', '[]')
+  await page.click('#config-save'); await sleep(1200)
+  check('清空成 []：保存成功，都回到当前页', J((await api('/api/config')).body.mediaOpenInNewTabRules) === '[]' && dialogs.length === 0)
   check('统一开关的说明写清楚了：开 = 关闭标签页、关 = 回到媒体库页', /开 = 关闭这个标签页；关 = 回到媒体库页/.test(await page.$eval('label:has(#config-media-close-new-tab-on-back)', (l) => l.textContent)))
 }
 

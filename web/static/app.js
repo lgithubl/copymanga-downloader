@@ -247,10 +247,10 @@ const els = {
   configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
-  configMediaOpenInNewTabKinds: [...document.querySelectorAll('.config-media-new-tab-kind')],
-  configTagSearchOpenInNewTabKinds: [...document.querySelectorAll('.config-tag-search-new-tab-kind')],
-  configMediaOpenInNewTabProfiles: [...document.querySelectorAll('.config-media-new-tab-profile')],
-  configTagSearchOpenInNewTabProfiles: [...document.querySelectorAll('.config-tag-search-new-tab-profile')],
+  configMediaNewTabRules: document.querySelector('#config-media-new-tab-rules'),
+  configMediaNewTabAdd: document.querySelector('#config-media-new-tab-add'),
+  configTagSearchNewTabRules: document.querySelector('#config-tag-search-new-tab-rules'),
+  configTagSearchNewTabAdd: document.querySelector('#config-tag-search-new-tab-add'),
   configMediaCloseNewTabOnBack: document.querySelector('#config-media-close-new-tab-on-back'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
@@ -380,31 +380,47 @@ function syncMediaHash() {
 // 这个标签页是不是被「新标签页打开」开出来的（URL 带 tab=new 启动）。决定「返回」是关标签页还是回媒体库页。
 const mediaTabIsNew = Boolean(parseMediaRoute()?.newTab)
 
-// 点标签搜索用新标签页的判断：和「打开媒体」那份配置分开（tagSearchOpenInNewTabKinds）。
-// kind 取自标签所在容器的 data-kind（卡片/章节行/详情/历史）；认不出（比如标签管理页）时只看 Ctrl/⌘。
+// 点标签搜索用新标签页的判断：和「打开媒体」那份配置分开（tagSearchOpenInNewTabRules）。
+// kind / profile 取自标签所在容器的 data-kind / data-profile（卡片/章节行/详情/历史）；认不出（比如标签管理页）时只看 Ctrl/⌘。
 function shouldOpenTagSearchInNewTab(event, kind = '', profile = '') {
   if (event?.ctrlKey || event?.metaKey) return true
-  const byProfile = newTabByProfile(appConfig?.tagSearchOpenInNewTabProfiles, profile)
-  if (byProfile !== null) return byProfile
-  return Boolean(kind && (appConfig?.tagSearchOpenInNewTabKinds || []).includes(kind))
+  return newTabRulesMatch(appConfig?.tagSearchOpenInNewTabRules, kind, profile)
+}
+
+// 规则 = [{ profile?, kind? }]：命中任意一条就开新页；一条规则里写了的字段都要匹配（AND）。
+//   { profile } 这个导入方案；{ kind } 这种类型；{ profile, kind } 这个方案里的这种类型
+function newTabRulesMatch(rules, kind = '', profile = '') {
+  return (Array.isArray(rules) ? rules : []).some((rule) => (rule?.profile || rule?.kind)
+    && (!rule.profile || rule.profile === profile) && (!rule.kind || rule.kind === kind))
 }
 
 // 条目的导入方案（sourceProfile）。普通视频没有 sourceProfile（空），统一叫 normal-video，和导入页的方案名一致。
 function libraryProfileOf(entry) {
   return entry?.sourceProfile || (entry?.type === 'media' ? 'normal-video' : '')
 }
-// 按导入方案单独设置过（true=新页面 / false=当前页）就用它，没设置过返回 null = 跟随按类型的勾选
-function newTabByProfile(map, profile) {
-  return profile && typeof map?.[profile] === 'boolean' ? map[profile] : null
-}
 
-function profileMapFromSelects(selects) {
-  const map = {}
-  for (const select of selects) {
-    if (select.value === 'new') map[select.dataset.profile] = true
-    else if (select.value === 'same') map[select.dataset.profile] = false
-  }
-  return map
+// 规则文本框（JSON 数组）⇄ 规则：一条规则一行；解析失败要明确报错，不能悄悄当成空（会把用户写的规则清掉）
+function formatNewTabRules(rules) {
+  const list = Array.isArray(rules) ? rules : []
+  return list.length ? `[\n${list.map((rule) => `  ${JSON.stringify(rule)}`).join(',\n')}\n]` : '[]'
+}
+function parseNewTabRules(text, label) {
+  const raw = String(text || '').trim()
+  if (!raw) return []
+  let parsed
+  try { parsed = JSON.parse(raw) } catch (error) { throw new Error(`「${label}」的规则不是合法的 JSON：${error.message}`) }
+  if (!Array.isArray(parsed)) throw new Error(`「${label}」的规则必须是 JSON 数组，例如 [{"profile":"gal-import"}]`)
+  return parsed
+}
+// 「添加」：把下拉里选的方案/类型作为一条规则加到文本框的数组里（已有就不重复）
+function addNewTabRule(textarea, profileSelect, kindSelect, label) {
+  const rules = parseNewTabRules(textarea.value, label)
+  const rule = {}
+  if (profileSelect.value) rule.profile = profileSelect.value
+  if (kindSelect.value) rule.kind = kindSelect.value
+  if (!rule.profile && !rule.kind) { alert('请至少选一个导入方案或一个类型'); return }
+  if (!rules.some((r) => r && r.profile === rule.profile && r.kind === rule.kind)) rules.push(rule)
+  textarea.value = formatNewTabRules(rules)
 }
 
 function openLibraryRouteInNewTab(fields) {
@@ -416,14 +432,12 @@ function openMediaRouteInNewTab(route) {
   window.open(`${location.origin}${location.pathname}${location.search}${mediaRouteHash({ ...route, newTab: true })}`, '_blank', 'noopener')
 }
 
-// Ctrl/⌘ 点击永远开新标签页（和浏览器里点链接的习惯一致）；普通点击：先看按导入方案的设置，没设置再看按类型的勾选。
+// Ctrl/⌘ 点击永远开新标签页（和浏览器里点链接的习惯一致）；普通点击：命中配置里任意一条规则才开新页。
 // kind 是要打开的媒体类型（epub / text / video / audio / image-gallery），按配置里勾选的类型决定；
 // 认不出类型（旧历史记录没记过）时只看 Ctrl/⌘。
 function shouldOpenMediaInNewTab(event, kind = '', profile = '') {
   if (event?.ctrlKey || event?.metaKey) return true
-  const byProfile = newTabByProfile(appConfig?.mediaOpenInNewTabProfiles, profile)   // 方案比类型更具体，优先
-  if (byProfile !== null) return byProfile
-  return Boolean(kind && (appConfig?.mediaOpenInNewTabKinds || []).includes(kind))
+  return newTabRulesMatch(appConfig?.mediaOpenInNewTabRules, kind, profile)
 }
 
 // 条目级入口（卡片「继续/打开」、历史「继续」）拿不到具体章节，用历史里记的上次章节类型，
@@ -1450,12 +1464,8 @@ async function loadConfig() {
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
   els.configTextSectionChars.value = config.textSectionChars > 0 ? String(config.textSectionChars) : ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
-  for (const box of els.configMediaOpenInNewTabKinds) box.checked = (config.mediaOpenInNewTabKinds || []).includes(box.value)
-  for (const box of els.configTagSearchOpenInNewTabKinds) box.checked = (config.tagSearchOpenInNewTabKinds || []).includes(box.value)
-  // 按导入方案：'' = 跟随类型，new = 新页面，same = 当前页
-  const profileValue = (map, profile) => (typeof map?.[profile] === 'boolean' ? (map[profile] ? 'new' : 'same') : '')
-  for (const select of els.configMediaOpenInNewTabProfiles) select.value = profileValue(config.mediaOpenInNewTabProfiles, select.dataset.profile)
-  for (const select of els.configTagSearchOpenInNewTabProfiles) select.value = profileValue(config.tagSearchOpenInNewTabProfiles, select.dataset.profile)
+  els.configMediaNewTabRules.value = formatNewTabRules(config.mediaOpenInNewTabRules)
+  els.configTagSearchNewTabRules.value = formatNewTabRules(config.tagSearchOpenInNewTabRules)
   els.configMediaCloseNewTabOnBack.checked = config.mediaCloseNewTabOnBack !== false
   els.configArchiveCacheDir.value = config.archiveCacheDir || ''
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
@@ -7981,8 +7991,16 @@ els.configEpubTtsPreviewRun.addEventListener('click', async () => {
     out.textContent = `预览失败：${error.message}`
   }
 })
+els.configMediaNewTabAdd.addEventListener('click', () => {
+  try { addNewTabRule(els.configMediaNewTabRules, document.querySelector('#config-media-new-tab-pick-profile'), document.querySelector('#config-media-new-tab-pick-kind'), '打开媒体') } catch (error) { alert(error.message) }
+})
+els.configTagSearchNewTabAdd.addEventListener('click', () => {
+  try { addNewTabRule(els.configTagSearchNewTabRules, document.querySelector('#config-tag-search-new-tab-pick-profile'), document.querySelector('#config-tag-search-new-tab-pick-kind'), '点标签') } catch (error) { alert(error.message) }
+})
 els.configSave.addEventListener('click', async () => {
   try {
+    // 规则 JSON 写错了就明确报错、不保存（不能悄悄当成空，把已有的规则清掉）
+    const newTabRules = { media: parseNewTabRules(els.configMediaNewTabRules.value, '打开媒体'), tagSearch: parseNewTabRules(els.configTagSearchNewTabRules.value, '点标签') }
     setLoading(els.configSave, true)
     els.token.value = els.configToken.value.trim()
     localStorage.setItem('copymanga.token', els.token.value)
@@ -8025,10 +8043,8 @@ els.configSave.addEventListener('click', async () => {
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
-        mediaOpenInNewTabKinds: els.configMediaOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
-        tagSearchOpenInNewTabKinds: els.configTagSearchOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
-        mediaOpenInNewTabProfiles: profileMapFromSelects(els.configMediaOpenInNewTabProfiles),
-        tagSearchOpenInNewTabProfiles: profileMapFromSelects(els.configTagSearchOpenInNewTabProfiles),
+        mediaOpenInNewTabRules: newTabRules.media,
+        tagSearchOpenInNewTabRules: newTabRules.tagSearch,
         mediaCloseNewTabOnBack: els.configMediaCloseNewTabOnBack.checked,
         archiveCacheDir: els.configArchiveCacheDir.value,
         exportDir: els.configExportDir.value,

@@ -663,40 +663,20 @@
               <label>允许导入来源<input id="config-media-import-source-roots" placeholder="/input,/downloads" /></label>
               <label>TXT 分段字数（每段多少字；0 或留空 = 不分段，一个文件一个章节；改动后要对合集重新扫描才生效）<input id="config-text-section-chars" type="number" min="0" step="1000" placeholder="0" /></label>
               <label>字幕后缀<input id="config-media-subtitle-extensions" placeholder="srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub" /></label>
-              <div class="muted">从媒体库/历史打开下面这些类型的媒体时，用新的浏览器标签页（Ctrl/⌘ 点击任何类型都会用新标签页）</div>
-              <div class="checkbox-row">
-                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="epub" />EPUB</label>
-                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="text" />TXT 文本</label>
-                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="video" />视频</label>
-                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="audio" />音频</label>
-                <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="image-gallery" />图集</label>
-              </div>
-              <div class="muted">按导入方案单独设置（比上面按类型的勾选优先；「跟随类型」= 不单独设置）</div>
-              <div class="config-profile-grid">
-                <label class="config-profile-row">RJ 媒体<select class="config-media-new-tab-profile" data-profile="rj-media"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">普通视频<select class="config-media-new-tab-profile" data-profile="normal-video"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">月度 ANI<select class="config-media-new-tab-profile" data-profile="monthly-ani"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">文本媒体<select class="config-media-new-tab-profile" data-profile="text-media"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">压缩包图集<select class="config-media-new-tab-profile" data-profile="archive-gallery"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">Gal 导入<select class="config-media-new-tab-profile" data-profile="gal-import"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+              <div class="muted">从媒体库/历史打开媒体时用新的浏览器标签页：下面的规则（JSON 数组）命中<b>任意一条</b>才开新页，一条规则里写了的字段要<b>同时</b>匹配。<code>{"profile":"gal-import"}</code> = 这个导入方案的媒体；<code>{"kind":"text"}</code> = 这种类型；<code>{"profile":"rj-media","kind":"video"}</code> = 该方案里的该类型。空 = 都在当前页。用下拉选好点「添加规则」会加一条，要删就直接改 JSON。Ctrl/⌘ 点击任何媒体都会用新标签页。</div>
+              <textarea id="config-media-new-tab-rules" class="config-rules-json" rows="5" spellcheck="false" placeholder='[&#10;  {"profile":"gal-import"},&#10;  {"profile":"rj-media","kind":"video"}&#10;]'></textarea>
+              <div class="config-rules-add">
+                <select id="config-media-new-tab-pick-profile" title="导入方案"><option value="">方案：任意</option><option value="rj-media">RJ 媒体</option><option value="normal-video">普通视频</option><option value="monthly-ani">月度 ANI</option><option value="text-media">文本媒体</option><option value="archive-gallery">压缩包图集</option><option value="gal-import">Gal 导入</option></select>
+                <select id="config-media-new-tab-pick-kind" title="媒体类型"><option value="">类型：任意</option><option value="epub">EPUB</option><option value="text">TXT 文本</option><option value="video">视频</option><option value="audio">音频</option><option value="image-gallery">图集</option><option value="gal">Gal</option></select>
+                <button id="config-media-new-tab-add" type="button" class="secondary">添加规则</button>
               </div>
               <label class="checkbox-line"><input id="config-media-close-new-tab-on-back" type="checkbox" />新页面里点「返回」（含沉浸里的返回）：开 = 关闭这个标签页；关 = 回到媒体库页（所有方案统一）</label>
-              <div class="muted">点标签（搜索）时用新的浏览器标签页：按标签所在条目的媒体类型勾选（和上面「打开媒体」分开；Ctrl/⌘ 点击任何类型都会用新标签页；「标签管理」页的标签只响应 Ctrl/⌘ 点击）。新标签页不保存搜索状态。</div>
-              <div class="checkbox-row">
-                <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="epub" />EPUB</label>
-                <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="text" />TXT 文本</label>
-                <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="video" />视频</label>
-                <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="audio" />音频</label>
-                <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="image-gallery" />图集</label>
-              </div>
-              <div class="muted">点标签时按导入方案单独设置（比上面按类型的勾选优先）</div>
-              <div class="config-profile-grid">
-                <label class="config-profile-row">RJ 媒体<select class="config-tag-search-new-tab-profile" data-profile="rj-media"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">普通视频<select class="config-tag-search-new-tab-profile" data-profile="normal-video"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">月度 ANI<select class="config-tag-search-new-tab-profile" data-profile="monthly-ani"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">文本媒体<select class="config-tag-search-new-tab-profile" data-profile="text-media"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">压缩包图集<select class="config-tag-search-new-tab-profile" data-profile="archive-gallery"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
-                <label class="config-profile-row">Gal 导入<select class="config-tag-search-new-tab-profile" data-profile="gal-import"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+              <div class="muted">点标签（搜索）时用新的浏览器标签页：规则格式和上面一样，按标签所在条目的导入方案/类型判断，和「打开媒体」分开；Ctrl/⌘ 点击任何标签都会用新标签页，「标签管理」页的标签只响应 Ctrl/⌘ 点击。新标签页不保存搜索状态。</div>
+              <textarea id="config-tag-search-new-tab-rules" class="config-rules-json" rows="5" spellcheck="false" placeholder='[&#10;  {"profile":"gal-import"},&#10;  {"profile":"rj-media","kind":"video"}&#10;]'></textarea>
+              <div class="config-rules-add">
+                <select id="config-tag-search-new-tab-pick-profile" title="导入方案"><option value="">方案：任意</option><option value="rj-media">RJ 媒体</option><option value="normal-video">普通视频</option><option value="monthly-ani">月度 ANI</option><option value="text-media">文本媒体</option><option value="archive-gallery">压缩包图集</option><option value="gal-import">Gal 导入</option></select>
+                <select id="config-tag-search-new-tab-pick-kind" title="媒体类型"><option value="">类型：任意</option><option value="epub">EPUB</option><option value="text">TXT 文本</option><option value="video">视频</option><option value="audio">音频</option><option value="image-gallery">图集</option><option value="gal">Gal</option></select>
+                <button id="config-tag-search-new-tab-add" type="button" class="secondary">添加规则</button>
               </div>
 
               <h3>压缩包图集</h3>

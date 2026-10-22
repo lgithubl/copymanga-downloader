@@ -132,13 +132,13 @@ await fresh.waitForSelector('#library-items .card'); await fresh.waitForTimeout(
 check('路由缺省的字段用缺省值，不读 localStorage 里存的 archive/排序等状态（类型 all、排序 imported_desc、每页 20）', (await evalVal(fresh, '#library-type')) === 'all' && (await evalVal(fresh, '#library-sort')) === 'imported_desc' && (await evalVal(fresh, '#library-limit')) === '20', `${await evalVal(fresh, '#library-type')} ${await evalVal(fresh, '#library-sort')} ${await evalVal(fresh, '#library-limit')}`)
 await fresh.close()
 // ---- 4. 按类型配置
-await setConfig({ tagSearchOpenInNewTabKinds: ['video'] })
+await setConfig({ tagSearchOpenInNewTabRules: [{ kind: 'video' }] })
 await page.reload(); await openLibrary(page)
 await page.evaluate(() => { const s = document.querySelector('#library-type'); s.value = 'archive'; s.dispatchEvent(new Event('change')) }); await page.waitForTimeout(800)
 await page.fill('#library-tag-search', '')
 popup = await clickPillAndWaitNewPage()
 check('只勾了「视频」：图集条目里的标签普通点击仍在当前标签页', !popup)
-await setConfig({ tagSearchOpenInNewTabKinds: ['image-gallery'] })
+await setConfig({ tagSearchOpenInNewTabRules: [{ kind: 'image-gallery' }] })
 await page.reload(); await openLibrary(page)
 await page.evaluate(() => { const s = document.querySelector('#library-type'); s.value = 'archive'; s.dispatchEvent(new Event('change')) }); await page.waitForTimeout(800)
 await page.fill('#library-tag-search', '')
@@ -166,7 +166,7 @@ check('标签管理页：Ctrl 点击开新标签页', !!tmPopup && tmPopup.url()
 await tmPopup?.close()
 
 // ---- 7. 悬停预览：只有 hasPreview 的卡片才请求预览
-await setConfig({ tagSearchOpenInNewTabKinds: [] })
+await setConfig({ tagSearchOpenInNewTabRules: [] })
 await page.goto(`${base}/`); await page.click('[data-view="library-view"]'); await page.waitForSelector('#library-items .card'); await page.waitForTimeout(600)
 await page.evaluate(() => { const s = document.querySelector('#library-limit'); s.value = '50'; s.dispatchEvent(new Event('change')) }); await page.waitForTimeout(800)
 requested.length = 0

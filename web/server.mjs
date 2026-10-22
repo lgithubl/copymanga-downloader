@@ -348,16 +348,17 @@ function defaultConfig() {
       },
     },
     mediaSubtitleExtensions: 'srt,vtt,crt,ass,ssa,lrc,sbv,smi,sami,ttml,dfxp,xml,sub',
-    // 从媒体库/历史里打开媒体时，哪些媒体类型用新的浏览器标签页。默认都不开，保持原来"在当前页打开"
-    // 的行为；Ctrl/⌘ 点击不受这个限制，永远开新标签页。
-    // 旧版本是一个总开关 mediaOpenInNewTab（布尔），读到旧配置时开着就等于全部类型都开。
-    mediaOpenInNewTabKinds: [],
-    // 按导入方案（条目的 sourceProfile：rj-media / normal-video / monthly-ani / text-media / archive-gallery / gal-import）单独设置，
-    // { 方案: true|false }：true = 新页面，false = 当前页；没写 = 跟随上面按类型的勾选。方案比类型更具体，所以优先。
-    mediaOpenInNewTabProfiles: {},
-    // 点标签（搜索）时用新的浏览器标签页：按标签所在条目的媒体类型勾选，和上面「打开媒体」分开；Ctrl/⌘ 点击不受限制
-    tagSearchOpenInNewTabKinds: [],
-    tagSearchOpenInNewTabProfiles: {},
+    // 从媒体库/历史里打开媒体时，哪些媒体用新的浏览器标签页：一组规则，命中任意一条就开新页。默认空 = 都在当前页打开；
+    // Ctrl/⌘ 点击不受限制，永远开新标签页。规则 = { profile?: 导入方案, kind?: 媒体类型 }，写了的字段都要匹配（AND），至少写一个：
+    //   { profile: 'gal-import' }                    这个导入方案的媒体
+    //   { kind: 'text' }                             这种类型的媒体（不分方案）
+    //   { profile: 'rj-media', kind: 'video' }       这个方案里的这种类型
+    // profile = 条目的 sourceProfile（rj-media / normal-video / monthly-ani / text-media / archive-gallery / gal-import），
+    // kind = 单元类型（epub / text / video / audio / image-gallery / gal）。
+    // 旧版本的 mediaOpenInNewTab（总开关）/ mediaOpenInNewTabKinds / mediaOpenInNewTabProfiles 读到时自动转成规则。
+    mediaOpenInNewTabRules: [],
+    // 点标签（搜索）时用新的浏览器标签页：同样的规则格式，和上面「打开媒体」分开；Ctrl/⌘ 点击不受限制
+    tagSearchOpenInNewTabRules: [],
     // 压缩包图集阅读用的解压缓存目录（有缓存就不再解压；淘汰由部署方自己管）。
     // 导入/迁移相关的目录、Redis 地址等都在导入页的「导入方案配置」JSON 里，不在这里。
     archiveCacheDir: path.join(DATA_DIR, 'cache', 'archive-gallery'),
@@ -440,13 +441,13 @@ function normalizeConfig(value) {
     epubTtsBatchMaxChars: clampNumber(value?.epubTtsBatchMaxChars, 20, 2000, defaults.epubTtsBatchMaxChars),
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
-    mediaOpenInNewTabKinds: normalizeNewTabKinds(value),
-    tagSearchOpenInNewTabKinds: Array.isArray(value?.tagSearchOpenInNewTabKinds)
-      ? NEW_TAB_MEDIA_KINDS.filter((kind) => value.tagSearchOpenInNewTabKinds.includes(kind))
-      : [],
+    mediaOpenInNewTabRules: Array.isArray(value?.mediaOpenInNewTabRules)
+      ? normalizeNewTabRules(value.mediaOpenInNewTabRules)
+      : legacyNewTabRules(legacyMediaKinds(value), value?.mediaOpenInNewTabProfiles),
+    tagSearchOpenInNewTabRules: Array.isArray(value?.tagSearchOpenInNewTabRules)
+      ? normalizeNewTabRules(value.tagSearchOpenInNewTabRules)
+      : legacyNewTabRules(value?.tagSearchOpenInNewTabKinds, value?.tagSearchOpenInNewTabProfiles),
     archiveCacheDir: String(value?.archiveCacheDir || defaults.archiveCacheDir).trim() || defaults.archiveCacheDir,
-    mediaOpenInNewTabProfiles: normalizeNewTabProfiles(value?.mediaOpenInNewTabProfiles),
-    tagSearchOpenInNewTabProfiles: normalizeNewTabProfiles(value?.tagSearchOpenInNewTabProfiles),
     mediaCloseNewTabOnBack: Boolean(value?.mediaCloseNewTabOnBack ?? defaults.mediaCloseNewTabOnBack),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
     anidbDumpUrl: String(value?.anidbDumpUrl || defaults.anidbDumpUrl).trim() || defaults.anidbDumpUrl,
@@ -3360,23 +3361,44 @@ function libraryHistoryPath(type, itemId) {
   return path.join(LIBRARY_HISTORY_DIR, safeSegment(type), `${safeSegment(itemId)}.json`)
 }
 
-const NEW_TAB_MEDIA_KINDS = ['epub', 'text', 'video', 'audio', 'image-gallery']
+const NEW_TAB_MEDIA_KINDS = ['epub', 'text', 'video', 'audio', 'image-gallery', 'gal']
+const NEW_TAB_ID_RE = /^[a-z0-9][a-z0-9_-]{0,40}$/
 
-// { 导入方案: true|false }：只收布尔值、方案名只收安全字符、数量有上限（配置文件/页面传来的东西不能信）
-function normalizeNewTabProfiles(value) {
-  const out = {}
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return out
-  for (const [profile, flag] of Object.entries(value).slice(0, 50)) {
-    if (/^[a-z0-9][a-z0-9_-]{0,40}$/.test(profile) && typeof flag === 'boolean') out[profile] = flag
+// 新页面规则：[{ profile?, kind? }]。页面/配置文件传来的东西不能信：只收安全字符、数量有上限、去重。
+// 写了但不合法的字段 = 整条丢掉（不能悄悄去掉它变成更宽的规则）；一个字段都没有的空规则也丢掉。
+function normalizeNewTabRules(value) {
+  const out = []
+  const seen = new Set()
+  if (!Array.isArray(value)) return out
+  for (const raw of value.slice(0, 100)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const rule = {}
+    let ok = true
+    for (const field of ['profile', 'kind']) {
+      if (raw[field] === undefined || raw[field] === null || raw[field] === '') continue
+      if (typeof raw[field] === 'string' && NEW_TAB_ID_RE.test(raw[field])) rule[field] = raw[field]
+      else ok = false
+    }
+    if (!ok || (!rule.profile && !rule.kind)) continue
+    const key = `${rule.profile || ''}|${rule.kind || ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(rule)
   }
   return out
 }
 
-function normalizeNewTabKinds(value) {
-  if (Array.isArray(value?.mediaOpenInNewTabKinds)) {
-    return NEW_TAB_MEDIA_KINDS.filter((kind) => value.mediaOpenInNewTabKinds.includes(kind))
+// 旧配置 → 规则：勾选的类型各一条 { kind }；按方案设成「新页面」的各一条 { profile }（「当前页」旧语义没有对应的规则，丢掉）
+function legacyNewTabRules(kinds, profiles) {
+  const rules = (Array.isArray(kinds) ? kinds : []).filter((k) => typeof k === 'string').map((kind) => ({ kind }))
+  if (profiles && typeof profiles === 'object' && !Array.isArray(profiles)) {
+    for (const [profile, flag] of Object.entries(profiles)) if (flag === true) rules.push({ profile })
   }
-  return value?.mediaOpenInNewTab ? [...NEW_TAB_MEDIA_KINDS] : []   // 旧配置的总开关
+  return normalizeNewTabRules(rules)
+}
+function legacyMediaKinds(value) {
+  if (Array.isArray(value?.mediaOpenInNewTabKinds)) return value.mediaOpenInNewTabKinds
+  return value?.mediaOpenInNewTab ? [...NEW_TAB_MEDIA_KINDS] : []   // 更早的总开关
 }
 
 function normalizeLibraryHistory(value) {
