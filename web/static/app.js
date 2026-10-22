@@ -249,6 +249,8 @@ const els = {
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
   configMediaOpenInNewTabKinds: [...document.querySelectorAll('.config-media-new-tab-kind')],
   configTagSearchOpenInNewTabKinds: [...document.querySelectorAll('.config-tag-search-new-tab-kind')],
+  configMediaOpenInNewTabProfiles: [...document.querySelectorAll('.config-media-new-tab-profile')],
+  configTagSearchOpenInNewTabProfiles: [...document.querySelectorAll('.config-tag-search-new-tab-profile')],
   configMediaCloseNewTabOnBack: document.querySelector('#config-media-close-new-tab-on-back'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
@@ -380,9 +382,29 @@ const mediaTabIsNew = Boolean(parseMediaRoute()?.newTab)
 
 // 点标签搜索用新标签页的判断：和「打开媒体」那份配置分开（tagSearchOpenInNewTabKinds）。
 // kind 取自标签所在容器的 data-kind（卡片/章节行/详情/历史）；认不出（比如标签管理页）时只看 Ctrl/⌘。
-function shouldOpenTagSearchInNewTab(event, kind = '') {
+function shouldOpenTagSearchInNewTab(event, kind = '', profile = '') {
   if (event?.ctrlKey || event?.metaKey) return true
+  const byProfile = newTabByProfile(appConfig?.tagSearchOpenInNewTabProfiles, profile)
+  if (byProfile !== null) return byProfile
   return Boolean(kind && (appConfig?.tagSearchOpenInNewTabKinds || []).includes(kind))
+}
+
+// 条目的导入方案（sourceProfile）。普通视频没有 sourceProfile（空），统一叫 normal-video，和导入页的方案名一致。
+function libraryProfileOf(entry) {
+  return entry?.sourceProfile || (entry?.type === 'media' ? 'normal-video' : '')
+}
+// 按导入方案单独设置过（true=新页面 / false=当前页）就用它，没设置过返回 null = 跟随按类型的勾选
+function newTabByProfile(map, profile) {
+  return profile && typeof map?.[profile] === 'boolean' ? map[profile] : null
+}
+
+function profileMapFromSelects(selects) {
+  const map = {}
+  for (const select of selects) {
+    if (select.value === 'new') map[select.dataset.profile] = true
+    else if (select.value === 'same') map[select.dataset.profile] = false
+  }
+  return map
 }
 
 function openLibraryRouteInNewTab(fields) {
@@ -394,11 +416,13 @@ function openMediaRouteInNewTab(route) {
   window.open(`${location.origin}${location.pathname}${location.search}${mediaRouteHash({ ...route, newTab: true })}`, '_blank', 'noopener')
 }
 
-// Ctrl/⌘ 点击永远开新标签页（和浏览器里点链接的习惯一致）；普通点击看配置开关。
+// Ctrl/⌘ 点击永远开新标签页（和浏览器里点链接的习惯一致）；普通点击：先看按导入方案的设置，没设置再看按类型的勾选。
 // kind 是要打开的媒体类型（epub / text / video / audio / image-gallery），按配置里勾选的类型决定；
 // 认不出类型（旧历史记录没记过）时只看 Ctrl/⌘。
-function shouldOpenMediaInNewTab(event, kind = '') {
+function shouldOpenMediaInNewTab(event, kind = '', profile = '') {
   if (event?.ctrlKey || event?.metaKey) return true
+  const byProfile = newTabByProfile(appConfig?.mediaOpenInNewTabProfiles, profile)   // 方案比类型更具体，优先
+  if (byProfile !== null) return byProfile
   return Boolean(kind && (appConfig?.mediaOpenInNewTabKinds || []).includes(kind))
 }
 
@@ -1428,6 +1452,10 @@ async function loadConfig() {
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   for (const box of els.configMediaOpenInNewTabKinds) box.checked = (config.mediaOpenInNewTabKinds || []).includes(box.value)
   for (const box of els.configTagSearchOpenInNewTabKinds) box.checked = (config.tagSearchOpenInNewTabKinds || []).includes(box.value)
+  // 按导入方案：'' = 跟随类型，new = 新页面，same = 当前页
+  const profileValue = (map, profile) => (typeof map?.[profile] === 'boolean' ? (map[profile] ? 'new' : 'same') : '')
+  for (const select of els.configMediaOpenInNewTabProfiles) select.value = profileValue(config.mediaOpenInNewTabProfiles, select.dataset.profile)
+  for (const select of els.configTagSearchOpenInNewTabProfiles) select.value = profileValue(config.tagSearchOpenInNewTabProfiles, select.dataset.profile)
   els.configMediaCloseNewTabOnBack.checked = config.mediaCloseNewTabOnBack !== false
   els.configArchiveCacheDir.value = config.archiveCacheDir || ''
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
@@ -2524,7 +2552,8 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   const showUnitsGo = viewerFirst || !targetIsSelf
   const card = document.createElement('article')
   card.className = `card library-card${selected ? ' selected' : ''}`
-  card.dataset.kind = libraryEntryKind(item)   // 点卡片里的标签用新标签页时，按这个类型查配置
+  card.dataset.kind = libraryEntryKind(item)   // 点卡片里的标签用新标签页时，按这个类型/导入方案查配置
+  card.dataset.profile = libraryProfileOf(item)
   card.title = fullTitle
   card.innerHTML = `
       <div class="library-card-cover">
@@ -3167,6 +3196,7 @@ function renderLibraryUnits() {
     const row = document.createElement('div')
     row.className = `chapter library-unit${isRead ? ' read-chapter' : ' unread-chapter'}${unit.mediaKind === 'subtitle' ? ' subtitle-unit' : ''}`
     row.dataset.kind = unit.mediaKind || (currentLibraryItem?.type === 'epub' ? 'epub' : '')
+    row.dataset.profile = libraryProfileOf(currentLibraryItem)
     row.title = [unit.title, unit.relativePath, unit.managedPath].filter(Boolean).join('\n')
     const subtitleText = unit.subtitles?.length
       ? ` · 字幕 ${unit.subtitles.length}: ${unit.subtitles.map((subtitle) => subtitle.title || subtitle.relativePath).join(', ')}`
@@ -3205,7 +3235,7 @@ function renderLibraryUnits() {
     row.addEventListener('click', (event) => {
       if (event.target.closest('button,input')) return
       if (unit.mediaKind === 'subtitle') return
-      if (shouldOpenMediaInNewTab(event, unit.mediaKind || (currentLibraryItem?.type === 'epub' ? 'epub' : '')) && currentLibraryItem) {
+      if (shouldOpenMediaInNewTab(event, unit.mediaKind || (currentLibraryItem?.type === 'epub' ? 'epub' : ''), libraryProfileOf(currentLibraryItem)) && currentLibraryItem) {
         openMediaRouteInNewTab({ type: currentLibraryItem.type, itemId: currentLibraryItem.itemId, unitId: unit.unitId })
         return
       }
@@ -3297,7 +3327,7 @@ function renderLibraryDetailSummary(item, units, readUnits = {}) {
   ]
   return `
     <div class="library-detail-cover">${renderCover(item?.cover, displayTitle)}</div>
-    <div class="library-detail-main" data-kind="${escapeHtml(libraryDetailKind(item, units))}">
+    <div class="library-detail-main" data-kind="${escapeHtml(libraryDetailKind(item, units))}" data-profile="${escapeHtml(libraryProfileOf(item))}">
       <div class="library-detail-title" title="${escapeHtml(fullTitle)}">${escapeHtml(displayTitle)}</div>
       <div class="library-detail-subtitle" title="${escapeHtml(fullTitle)}">${escapeHtml([item?.itemId, item?.title && item.title !== displayTitle ? item.title : '', item?.updatedAt ? `更新 ${formatShortDate(item.updatedAt)}` : ''].filter(Boolean).join(' · '))}</div>
       ${history ? `<div class="library-detail-history">最近：${escapeHtml(history.lastUnitTitle || history.lastUnitId)}${historyProgressText(history) ? ` · ${escapeHtml(historyProgressText(history))}` : ''} · ${escapeHtml(formatShortDate(history.updatedAt))}</div>` : ''}
@@ -3356,7 +3386,7 @@ function historyProgressText(history) {
 
 // 入口外壳：决定在哪打开。必须在任何 await 之前就 window.open，否则会被当成弹窗拦截。
 async function continueLibraryItem(itemOrHistory, event) {
-  if (shouldOpenMediaInNewTab(event, libraryEntryKind(itemOrHistory))) {
+  if (shouldOpenMediaInNewTab(event, libraryEntryKind(itemOrHistory), libraryProfileOf(itemOrHistory))) {
     openMediaRouteInNewTab({ type: itemOrHistory.type, itemId: itemOrHistory.itemId })
     return
   }
@@ -3403,6 +3433,7 @@ function renderLibraryHistory() {
     const card = document.createElement('article')
     card.className = 'card history-card'
     card.dataset.kind = libraryEntryKind(history)
+    card.dataset.profile = libraryProfileOf(history)
     card.innerHTML = `
       ${renderCover(history.cover, history.title)}
       <div class="card-body">
@@ -7772,7 +7803,7 @@ document.addEventListener('click', (event) => {
   const tagQuery = `tag:"${String(pill.dataset.tag || '').replace(/"/g, '\\"')}"`
   // 点标签（搜索）用新标签页：Ctrl/⌘ 点击一律；否则看配置里按「标签所在条目的媒体类型」勾选的那份。
   // window.open 必须在点击处理器里同步调用，所以决定和打开都在这里。
-  if (shouldOpenTagSearchInNewTab(event, pill.closest('[data-kind]')?.dataset.kind || '')) {
+  if (shouldOpenTagSearchInNewTab(event, pill.closest('[data-kind]')?.dataset.kind || '', pill.closest('[data-profile]')?.dataset.profile || '')) {
     openLibraryRouteInNewTab({ ...currentLibrarySearchPresetFields(), tagSearch: tagQuery })
     return
   }
@@ -7996,6 +8027,8 @@ els.configSave.addEventListener('click', async () => {
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         mediaOpenInNewTabKinds: els.configMediaOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
         tagSearchOpenInNewTabKinds: els.configTagSearchOpenInNewTabKinds.filter((box) => box.checked).map((box) => box.value),
+        mediaOpenInNewTabProfiles: profileMapFromSelects(els.configMediaOpenInNewTabProfiles),
+        tagSearchOpenInNewTabProfiles: profileMapFromSelects(els.configTagSearchOpenInNewTabProfiles),
         mediaCloseNewTabOnBack: els.configMediaCloseNewTabOnBack.checked,
         archiveCacheDir: els.configArchiveCacheDir.value,
         exportDir: els.configExportDir.value,

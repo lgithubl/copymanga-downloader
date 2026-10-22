@@ -4362,3 +4362,8 @@ h2 {
   justify-content: center;
 }
 .gal-row.is-dir .gal-row-title::before { content: '📁 '; }
+
+/* 配置页：按导入方案的「新页面/当前页」设置 */
+.config-profile-grid { display: grid; gap: 6px 14px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+#settings-view .config-profile-grid .config-profile-row { align-items: center; display: flex; font-weight: 600; gap: 8px; justify-content: space-between; }
+#settings-view .config-profile-grid .config-profile-row select { flex: 0 0 auto; width: auto; }

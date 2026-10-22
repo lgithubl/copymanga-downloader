@@ -352,8 +352,12 @@ function defaultConfig() {
     // 的行为；Ctrl/⌘ 点击不受这个限制，永远开新标签页。
     // 旧版本是一个总开关 mediaOpenInNewTab（布尔），读到旧配置时开着就等于全部类型都开。
     mediaOpenInNewTabKinds: [],
+    // 按导入方案（条目的 sourceProfile：rj-media / normal-video / monthly-ani / text-media / archive-gallery / gal-import）单独设置，
+    // { 方案: true|false }：true = 新页面，false = 当前页；没写 = 跟随上面按类型的勾选。方案比类型更具体，所以优先。
+    mediaOpenInNewTabProfiles: {},
     // 点标签（搜索）时用新的浏览器标签页：按标签所在条目的媒体类型勾选，和上面「打开媒体」分开；Ctrl/⌘ 点击不受限制
     tagSearchOpenInNewTabKinds: [],
+    tagSearchOpenInNewTabProfiles: {},
     // 压缩包图集阅读用的解压缓存目录（有缓存就不再解压；淘汰由部署方自己管）。
     // 导入/迁移相关的目录、Redis 地址等都在导入页的「导入方案配置」JSON 里，不在这里。
     archiveCacheDir: path.join(DATA_DIR, 'cache', 'archive-gallery'),
@@ -441,6 +445,8 @@ function normalizeConfig(value) {
       ? NEW_TAB_MEDIA_KINDS.filter((kind) => value.tagSearchOpenInNewTabKinds.includes(kind))
       : [],
     archiveCacheDir: String(value?.archiveCacheDir || defaults.archiveCacheDir).trim() || defaults.archiveCacheDir,
+    mediaOpenInNewTabProfiles: normalizeNewTabProfiles(value?.mediaOpenInNewTabProfiles),
+    tagSearchOpenInNewTabProfiles: normalizeNewTabProfiles(value?.tagSearchOpenInNewTabProfiles),
     mediaCloseNewTabOnBack: Boolean(value?.mediaCloseNewTabOnBack ?? defaults.mediaCloseNewTabOnBack),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
     anidbDumpUrl: String(value?.anidbDumpUrl || defaults.anidbDumpUrl).trim() || defaults.anidbDumpUrl,
@@ -3356,6 +3362,16 @@ function libraryHistoryPath(type, itemId) {
 
 const NEW_TAB_MEDIA_KINDS = ['epub', 'text', 'video', 'audio', 'image-gallery']
 
+// { 导入方案: true|false }：只收布尔值、方案名只收安全字符、数量有上限（配置文件/页面传来的东西不能信）
+function normalizeNewTabProfiles(value) {
+  const out = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out
+  for (const [profile, flag] of Object.entries(value).slice(0, 50)) {
+    if (/^[a-z0-9][a-z0-9_-]{0,40}$/.test(profile) && typeof flag === 'boolean') out[profile] = flag
+  }
+  return out
+}
+
 function normalizeNewTabKinds(value) {
   if (Array.isArray(value?.mediaOpenInNewTabKinds)) {
     return NEW_TAB_MEDIA_KINDS.filter((kind) => value.mediaOpenInNewTabKinds.includes(kind))
@@ -3374,6 +3390,8 @@ function normalizeLibraryHistory(value) {
     title: String(value?.title || itemId || 'Untitled'),
     cover: String(value?.cover || ''),
     tags: Array.isArray(value?.tags) ? value.tags.map(String).filter(Boolean) : [],
+    // 条目的导入方案（点「继续」时按方案决定是否开新页）；记录时由服务端从条目补，页面传来的不信
+    sourceProfile: String(value?.sourceProfile || '').slice(0, 41),
     lastUnitId: String(value?.lastUnitId || ''),
     lastUnitKind: String(value?.lastUnitKind || ''),
     lastUnitTitle: String(value?.lastUnitTitle || ''),
@@ -3490,9 +3508,14 @@ async function flushLibraryHistory(type, itemId) {
 async function recordLibraryHistory(type, itemId, patch, { flush = false } = {}) {
   const now = new Date().toISOString()
   const current = await readLibraryHistory(type, itemId)
+  let sourceProfile = current?.sourceProfile || ''
+  if (!sourceProfile) {
+    try { sourceProfile = String((await libraryHandler(type).getItem(itemId))?.sourceProfile || '') } catch { /* 条目没了：留空，页面退回按类型判断 */ }
+  }
   const merged = normalizeLibraryHistory({
     ...(current || {}),
     ...patch,
+    sourceProfile,
     type,
     itemId,
     position: {

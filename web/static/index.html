@@ -671,7 +671,16 @@
                 <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="audio" />音频</label>
                 <label class="checkbox-line"><input class="config-media-new-tab-kind" type="checkbox" value="image-gallery" />图集</label>
               </div>
-              <label class="checkbox-line"><input id="config-media-close-new-tab-on-back" type="checkbox" />新标签页里点「返回」（含沉浸里的返回）时直接关闭这个标签页，而不是回到媒体库页</label>
+              <div class="muted">按导入方案单独设置（比上面按类型的勾选优先；「跟随类型」= 不单独设置）</div>
+              <div class="config-profile-grid">
+                <label class="config-profile-row">RJ 媒体<select class="config-media-new-tab-profile" data-profile="rj-media"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">普通视频<select class="config-media-new-tab-profile" data-profile="normal-video"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">月度 ANI<select class="config-media-new-tab-profile" data-profile="monthly-ani"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">文本媒体<select class="config-media-new-tab-profile" data-profile="text-media"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">压缩包图集<select class="config-media-new-tab-profile" data-profile="archive-gallery"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">Gal 导入<select class="config-media-new-tab-profile" data-profile="gal-import"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+              </div>
+              <label class="checkbox-line"><input id="config-media-close-new-tab-on-back" type="checkbox" />新页面里点「返回」（含沉浸里的返回）：开 = 关闭这个标签页；关 = 回到媒体库页（所有方案统一）</label>
               <div class="muted">点标签（搜索）时用新的浏览器标签页：按标签所在条目的媒体类型勾选（和上面「打开媒体」分开；Ctrl/⌘ 点击任何类型都会用新标签页；「标签管理」页的标签只响应 Ctrl/⌘ 点击）。新标签页不保存搜索状态。</div>
               <div class="checkbox-row">
                 <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="epub" />EPUB</label>
@@ -679,6 +688,15 @@
                 <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="video" />视频</label>
                 <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="audio" />音频</label>
                 <label class="checkbox-line"><input class="config-tag-search-new-tab-kind" type="checkbox" value="image-gallery" />图集</label>
+              </div>
+              <div class="muted">点标签时按导入方案单独设置（比上面按类型的勾选优先）</div>
+              <div class="config-profile-grid">
+                <label class="config-profile-row">RJ 媒体<select class="config-tag-search-new-tab-profile" data-profile="rj-media"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">普通视频<select class="config-tag-search-new-tab-profile" data-profile="normal-video"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">月度 ANI<select class="config-tag-search-new-tab-profile" data-profile="monthly-ani"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">文本媒体<select class="config-tag-search-new-tab-profile" data-profile="text-media"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">压缩包图集<select class="config-tag-search-new-tab-profile" data-profile="archive-gallery"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
+                <label class="config-profile-row">Gal 导入<select class="config-tag-search-new-tab-profile" data-profile="gal-import"><option value="">跟随类型</option><option value="new">新页面</option><option value="same">当前页</option></select></label>
               </div>
 
               <h3>压缩包图集</h3>
