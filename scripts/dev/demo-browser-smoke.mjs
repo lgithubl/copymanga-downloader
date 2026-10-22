@@ -193,7 +193,7 @@ check('卡片带导入方案（data-profile）', (await page.$$eval('#library-it
     check('tenkeiprdx 首页 = 列表：活动 / 附加 / 角色 / 全部剧情', J(await t.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))) === J(['活动', '附加', '角色', '全部剧情']))
     await t.click('.gal-card[data-node="v:chars"]')
     await t.waitForSelector('.gal-card[data-node="v:chars%2F10010001"]')
-    check('角色列表：名字（名称表）+ 头像', J(await t.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))) === J(['Bob', 'Alice']) && await t.$$eval('.gal-browse img', (is) => is.length === 2 && is.every((i) => i.complete && i.naturalWidth > 0)))
+    check('角色列表：名字（名称表）+ 头像', J(await t.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))) === J(['Bob', 'Alice']) && await t.waitForFunction(() => { const is = [...document.querySelectorAll('.gal-browse img')]; return is.length === 2 && is.every((i) => i.complete && i.naturalWidth > 0) }, null, { timeout: 15000 }).then(() => true, () => false))
     await t.goto(`${BASE}/#/media/gal/${TK.itemId}/main?section=${encodeURIComponent('s:10010101.json')}`)
     await t.waitForSelector('.gal-player .gal-stage', { timeout: 15000 })
     const left = await waitPixel(t, 0.3, 0.8, [220, 20, 60])
