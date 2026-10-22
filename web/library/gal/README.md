@@ -1,39 +1,64 @@
 # Gal（视觉小说 / 剧情脚本）库类型
 
 一个**目录 = 一个媒体条目，条目里只有一个单元（`main`）**。单元里是一棵由后端按需给出的**浏览节点树**（真实目录树）：
-首页 → 一层层目录 → 脚本列表 → 播放页。目录本身就是数据：导入只建元数据 JSON（`source.path` 指向传进来的目录），不 mv、不拷贝、不改原文件。
+首页 → 一层层目录 → 脚本卡片 → 播放页。目录本身就是数据：导入只建元数据 JSON，不 mv、不拷贝、不改原文件。
 
-## 分层
+## 分层：导入只存路径，配置全在 `config`，特化靠 tag 脚本
 
 ```
-目录方案 profile（gal/profiles）   这个目录里东西在哪：脚本根（可以有几个，如不同语言文本）、资源根、名称文件、缩略图目录
-        │                          元数据（layout）只存方案名 + 这几个路径；目录树/标题/缩略图全部靠读真实目录和脚本内容现算
-节点提供者（gal/browse.mjs）        目录树 → 节点（grid / list / player），翻页、返回页码、上下话、面包屑
-脚本适配器（gal/adapters）          脚本文本 → 规范场景 gal-scene/1（含 select / if 分支）
-前端渲染器                          gal-browse.js（grid/list）、gal-player.js（player）；沉浸等页面状态两者共用
+导入        只存：来源路径 source.path、adapters（脚本格式适配器）、标题。不扫描目录。
+config      条目元数据里唯一的配置字段（gal/config.mjs）。引擎只认它；缺的字段用默认 = 「标准结构」（UViewer 资源包布局），
+            所以按标准结构放的目录导入完不用脚本就能浏览/播放。
+tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构放时，探测实际结构、把 config 里的参数调对，再挑封面、数脚本。
+            导入后自动跑一次；上传新版本脚本重跑即可，不用改镜像。版本和运行时间写进 config.script，并打「Gal配置version」标签。
+节点提供者  gal/browse.mjs：按 config 把目录树变成节点（卡片 / 播放页），翻页、合并目录、来源标记、返回页码、上下话。
+脚本适配器  gal/adapters：脚本文本 → 规范场景 gal-scene/1（含 select / if 分支）。
+前端        gal-browse.js（卡片）、gal-player.js（播放）；沉浸等页面状态两者共用。
 ```
 
-- **方案 `uviewer`**（`profiles/uviewer.mjs`）：UViewer 自己把位置写死在后端里（静态分析 exe 得到），我们只认出这种布局：
-  `<resource_path>/download/adv/text` 是脚本根（`resource_path` 来自 `user_data/settings.json`，默认 `./resources`），
-  同级以 `text` 开头的目录（比如 `text---日文…`，换汉化文本时留下的备份）是可切换的另一套文本；资源根 = `resource_path`；
-  `user_data/character_names.json` 是名称文件；`user_data/thumbnails` 是 UViewer 自己生成的脚本缩略图。
-  目录名的中文标签（cabin→纪念馆…）、角色头像去哪找，也在这个方案里。UViewer 只扫 4 个分类，我们按真实目录树走，所以 event/quest/gacha… 也看得到。
-- **方案 `generic`**（兜底）：整个目录是脚本根，脚本里的路径按媒体目录解析（找不到再去掉 `download/` 前缀试一次）。
-- **新增一种目录布局 = 新写一个方案**（id / label / detect / 几个小钩子），在 `profiles/index.mjs` 登记，浏览和播放都不用改。
+### config 字段（全是数据，没有代码）
+
+| 字段 | 含义（默认值 = 标准结构） |
+|---|---|
+| `scriptRoots` | 脚本根 `[{id, dir, label}]`，相对媒体目录；多个 = 可切换的文本版本（比如中/日），第一个是默认。默认 `resources/download/adv/text` |
+| `resourceRoots` / `namesFiles` / `thumbsDirs` | 资源根（脚本里的 `download/...` 从这里起算）、名称文件（`{目录名: 显示名}`）、缩略图缓存目录——**都是数组，按顺序查找** |
+| `labels` | 目录名 → 中文标签（cabin→纪念馆…） |
+| `merge` | 合并目录：`[{parent: 通配, dirs: [子目录名…], badges: {子目录名: 标记}}]`。列 `parent` 下的目录时，把 `dirs` 里这几个子目录的内容合进同一个列表（不再显示这几个子目录），每张卡片右上角带来源标记（默认 `character/*` 合并 `adultr`+`extra`，标记 `adu` / `ext`）；合并后按文件名自然序混排 |
+| `dirThumbs` | 目录卡片头像规则：`{parent, name(正则), paths(模板，{name} {parent})}`，取第一个存在的 |
+| `scriptThumbs` | 脚本缩略图模板（`{stem}` `{thumbsDir}`；`~/` = 相对媒体目录），之后才是「脚本里第一张背景图」 |
+| `cover` / `scriptCount` / `script` | 封面路径（`~/` 开头 = 相对媒体目录，只给封面用）/ 脚本数 / 谁写的这份配置 `{id, version, ranAt}` |
+| `stripPrefixes` `scriptExtensions` `pageSize` | 资源找不到时去掉的前缀 / 脚本扩展名 / 每页卡片数 |
+
+元数据里只存**写过的字段**（没写的随引擎默认值走）；补丁默认合并（写了的顶层字段整个替换，`null` = 删掉回默认），`replace` = 整体替换。
+所有路径都是相对媒体目录、不许绝对路径和 `..`；模板只做占位符替换，读文件前仍要通过存在性检查和「只认媒体目录内的真实路径」——
+脚本写进去的 config 再坏，也读不到媒体目录以外。
+
+### 脚本 gal-layout-v1
+
+- 探测：`user_data/settings.json` 的 `resource_path`（默认 `./resources`）下有 `download/adv/text` → UViewer；同级 `text*` 目录当作另一套文本；
+  路径多套了一层就往下找（深度 ≤ 6）；都不认识 → 通用配置（整个目录当脚本根，找不到的资源去掉 `download/` 再试）。
+- 封面：前几个脚本里，先找 UViewer 自己生成的缩略图，再找脚本里第一张存在的背景图；统计脚本数。
+- 选项 `overrides`：`[{path, config?, cover?, title?}]`，按媒体目录的真实路径（通配或 `/正则/`）给个别媒体单独覆盖任何配置；
+  其他选项：`dryRun`、`replace`、`coverScanLimit`、`countCap`。
+- 状态标签：`Gal配置: uviewer / 通用 / 自定义`、`Gal配置version: <脚本版本>`。
+- 脚本通过配置页的「上传元数据脚本」安装（覆盖同 id 的旧版本）。注意 `TAG_SCRIPTS_DIR` 要是持久目录（默认是数据目录下的 `tag-scripts`），指到镜像里的目录会在重建容器后丢掉上传的版本。
 
 ## 浏览节点（取数接口 = 通用的 reader）
 
 前端不认识目录，只认节点。取节点就是通用的 `GET /api/library/items/gal/<id>/reader/main?sectionId=<节点 id>`
 （`sectionId` 是 epub 就有的参数，路由 `#/media/gal/<id>/main?section=…`、进度、历史都是现成的）。
+取到的是文本（`player`）就按文本渲染，取到的是选项（`cards`）就继续按选项渲染。
 
 | 节点 id | kind | 内容 |
 |---|---|---|
-| `''` | `grid` | 首页：默认脚本根下的目录 |
-| `d:<相对路径>[#页]` | `grid` / `list` | 目录：全是目录 → 卡片网格；有脚本 → 列表（目录在前，每页 25，每项带缩略图和第一句台词） |
-| `s:<相对路径>` | `player` | 播放页：带规范场景；`sectionNavigation` = 同一目录里的上/下一个脚本 |
+| `''` | `cards` | 首页：默认脚本根下的目录 |
+| `d:<相对路径>[#页]` | `cards` | 目录：目录卡片在前、脚本卡片在后（缩略图、第一句台词、来源标记 `badge`），每页 `pageSize` 张 |
+| `s:<相对路径>` | `player` | 播放页：带规范场景；`sectionNavigation` = 列表里（合并目录时跨来源）相邻的上/下一个脚本 |
 | `@<脚本根 id>\|…` | | 非默认的文本版本（另一种语言）；节点带 `sets` 列表，前端做下拉 |
 
-每个节点带 `parent`（返回上一级，列表节点带页码，所以返回会回到点进来的那一页）和 `breadcrumb`。
+每个节点带 `parent`（返回上一级，卡片列表带页码，所以返回会回到点进来的那一页）和 `breadcrumb`（被合并掉的目录不出现）。
+脚本节点 id 始终是真实路径，所以合并目录不影响进度/历史。
+脚本根读不到时（目录没按标准结构放）首页是空的，带一条 `notice` 提示去跑脚本。
 **以后加新的渲染方式 = 新增一个 kind + 前端一个渲染函数**，取数接口不变。
 大目录靠翻页和按需读取：只列当前目录，读脚本头/内容只对当前页做，并按 mtime 缓存；子目录只显示直接数量。
 进度只记播放页（`s:…`），每个脚本各记各的（`progress.nodes`，含选项的选择），在列表里逛不会冲掉「上次看到哪」。
@@ -58,11 +83,11 @@
   以 `raw` 原样保留（带参数），后面加对应渲染方式时直接用，不用重新解析。
 - 以后要缓存：只需要在 `getReaderContent` 里给 `buildScene()` 外面套一层。
 
-## 还没定死的约定（都写在每个条目的元数据 `layout` 里）
+## 安全
 
-- `layout.stripPrefixes`（默认 `['download/']`）：资源找不到时，去掉这些前缀再试。
-- `layout.browse`：分类/角色目录、每页条数、变体后缀等（见上）。
 - 资源解析和脚本读取都只认媒体目录之内的真实路径（`..` 和指出去的符号链接都拒绝）。
+- 资源接口的 `~/` 只放行缩略图缓存目录（`thumbsDirs`），读不了 `user_data` 里别的文件（比如授权文件）；封面接口可以指到媒体目录里的任意文件。
+- config 的每个字段都在读/写时规整：路径不许绝对/`..`，数量有上限，非法的丢掉或退回默认。
 
 ## 播放器（第一期）
 

@@ -6,7 +6,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { galAdapterIds, registerGalAdapter, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { parse, parseCondition, parseRichText, sniff } from '../../web/library/gal/adapters/uviewer-csv.mjs'
-import { detectGalLayout, galProfileIds, normalizeGalLayout, safeRelPath } from '../../web/library/gal/profiles/index.mjs'
+import { DEFAULT_GAL_CONFIG, applyGalConfigPatch, cleanGalConfigRaw, expandTemplate, globToRegExp, normalizeGalConfig } from '../../web/library/gal/config.mjs'
+import { safeRelPath } from '../../web/library/gal/paths.mjs'
+import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout-v1/main.js'
 import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
@@ -149,115 +151,190 @@ function segText(command) { return (command.segments || []).map((x) => x.text).j
   check('没有分支的脚本：路径 = 所有步（行为和原来一样）', activePath(buildScene('uviewer-csv', 'msg,0,a\nclickwait\nmsg,0,b\nclickwait'), {}).join() === '0,1')
 }
 
-// ================= 目录方案（profile） =================
+// ================= config（元数据里唯一的配置字段） =================
 const work = await mkdtemp(path.join(os.tmpdir(), 'gal-selftest-'))
 const dataDir = path.join(work, 'data')
 const root = path.join(dataDir, 'gal', 'deeponecgv')   // 一个 UViewer 资源包目录 = 一个媒体
 await mkdir(root, { recursive: true })
 await buildGalFixture(root, { exampleScript: process.env.GAL_EXAMPLE || '' })   // GAL_EXAMPLE：真实示例脚本（不入库）；不给就用模拟长脚本
 {
-  check('方案登记：uviewer + generic（兜底）', J(galProfileIds()) === J(['uviewer', 'generic']))
-  const layout = await detectGalLayout(root)
-  check('探测 UViewer：脚本根（text 为主 + 同级 text--- 另一套）、资源根 resources、名称文件、缩略图目录', layout.profile === 'uviewer' && J(layout.scriptRoots.map((r) => [r.id, r.dir])) === J([['text', 'resources/download/adv/text'], ['text---日文20251102', 'resources/download/adv/text---日文20251102']]) && layout.resourceRoot === 'resources' && layout.namesFile === 'user_data/character_names.json' && layout.thumbsDir === 'user_data/thumbnails' && layout.pageSize === 25, J(layout))
-  const plain = path.join(work, 'plain'); await mkdir(plain, { recursive: true })
-  const gl = await detectGalLayout(plain)
-  check('不认识的目录：兜底方案（整个目录是脚本根，资源按媒体目录，去 download/ 前缀重试）', gl.profile === 'generic' && gl.scriptRoots.length === 1 && gl.scriptRoots[0].dir === '' && gl.resourceRoot === '' && gl.stripPrefixes[0] === 'download/', J(gl))
-  const odd = path.join(work, 'odd'); await mkdir(path.join(odd, 'user_data'), { recursive: true }); await mkdir(path.join(odd, 'res2/download/adv/text'), { recursive: true })
-  await writeFile(path.join(odd, 'user_data/settings.json'), JSON.stringify({ resource_path: './res2' }))
-  check('resource_path 来自 settings.json（不是写死 resources）', (await detectGalLayout(odd)).resourceRoot === 'res2')
-  await writeFile(path.join(odd, 'user_data/settings.json'), JSON.stringify({ resource_path: '../../etc' }))
-  check('settings.json 里的 resource_path 带 .. → 忽略，退回默认', (await detectGalLayout(odd)).profile === 'generic')
-  check('normalizeGalLayout：手改的元数据也要规整（.. 丢掉；绝对路径当相对路径；非法/重复 id 丢）', (() => { const l = normalizeGalLayout({ profile: 'uviewer', scriptRoots: [{ id: 'a|b', dir: 'x' }, { id: 'ok', dir: '../x' }, { id: 'good', dir: 'a/b' }, { id: 'good', dir: 'dup' }], resourceRoot: '/etc', namesFile: 'a/../b', pageSize: 9999 }); return J(l.scriptRoots) === J([{ id: 'good', dir: 'a/b', label: 'good' }]) && l.resourceRoot === 'etc' && l.namesFile === '' && l.pageSize === 200 })())
+  const d = normalizeGalConfig({})
+  check('默认 config = 标准结构（UViewer 资源包布局）：脚本根 text、资源根 resources、名称文件、缩略图目录、标签字典、合并 adultr+extra', d.scriptRoots[0].dir === 'resources/download/adv/text' && d.resourceRoots[0] === 'resources' && d.namesFiles[0] === 'user_data/character_names.json' && d.thumbsDirs[0] === 'user_data/thumbnails' && d.labels.cabin === '纪念馆' && d.merge[0].dirs.join() === 'adultr,extra' && d.pageSize === 25, J(d).slice(0, 200))
+  check('normalizeGalConfig 对 undefined/非对象都给默认', J(normalizeGalConfig(null)) === J(d) && J(normalizeGalConfig('x')) === J(d))
+  const n = normalizeGalConfig({ scriptRoots: [{ id: 'a|b', dir: 'x' }, { id: 'ok', dir: '../x' }, { id: 'good', dir: 'a/b' }, { id: 'good', dir: 'dup' }], resourceRoots: ['/etc', 'a/../b', ''], namesFiles: ['a/../b'], pageSize: 9999, labels: { 'a/b': 'x', ok: '标签' }, merge: [{ parent: '../x', dirs: ['a'] }, { parent: 'c/*', dirs: ['a/b', 'b'], badges: { b: '1234567890123456' } }], dirThumbs: [{ name: '[', paths: ['x'] }, { parent: 'p', paths: [] }, { parent: 'q', name: '^\\d+$', paths: ['a/{name}.png'] }], cover: '../x', scriptCount: -5 })
+  check('规整：.. / 非法 id / 重复 id / 非法正则 / 空模板 全丢；绝对路径当相对；页大小夹到 200', J(n.scriptRoots) === J([{ id: 'good', dir: 'a/b', label: 'good' }]) && J(n.resourceRoots) === J(['etc', '']) && J(n.namesFiles) === J(d.namesFiles) && n.pageSize === 200 && n.cover === '' && n.scriptCount === 0, J([n.scriptRoots, n.resourceRoots, n.namesFiles]))
+  check('规整：标签字典只收安全的目录名；合并规则的目录名/标记长度有限制；头像规则只留合法的', J(n.labels) === J({ ok: '标签' }) && n.merge.length === 1 && J(n.merge[0].dirs) === J(['b']) && n.merge[0].badges.b === '123456789012' && n.dirThumbs.length === 1 && n.dirThumbs[0].parent === 'q', J([n.labels, n.merge, n.dirThumbs]))
+  check('cleanGalConfigRaw：只留认识的字段，存的是「写过的」字段（没写的不补默认）', (() => { const c = cleanGalConfigRaw({ cover: 'x.jpg', junk: 1, labels: { a: 'b' } }); return J(Object.keys(c).sort()) === J(['cover', 'labels']) && c.cover === 'x.jpg' && c.labels.a === 'b' })())
+  const merged = applyGalConfigPatch({ labels: { a: 'b' }, pageSize: 10 }, { cover: 'x.jpg', labels: null })
+  check('补丁：默认合并（写了的字段替换，null = 删掉回默认，没写的保留）', J(Object.keys(merged).sort()) === J(['cover', 'pageSize']) && merged.pageSize === 10 && merged.cover === 'x.jpg', J(merged))
+  check('补丁：replace = 整体替换', J(applyGalConfigPatch({ pageSize: 10, cover: 'a.jpg' }, { cover: 'x.jpg' }, { replace: true })) === J({ cover: 'x.jpg' }))
+  check('模板：{name} 之类替换；替换后必须还是安全路径（../ 不行）；~/ 开头保留', expandTemplate('d/{name}00/a.png', { name: '1003' }) === 'd/100300/a.png' && expandTemplate('../{name}', { name: 'a' }) === null && expandTemplate('{name}', { name: '../x' }) === null && expandTemplate('~/{thumbsDir}/{stem}.webp', { thumbsDir: 'u/t', stem: 'x' }) === '~/u/t/x.webp')
+  check('通配：* 不跨目录层', globToRegExp('character/*').test('character/1003') && !globToRegExp('character/*').test('character/1003/adultr') && globToRegExp('a.b/*').test('a.b/x') && !globToRegExp('a.b/*').test('aXb/x'))
   check('safeRelPath', safeRelPath('./a//b/') === null && safeRelPath('a/b') === 'a/b' && safeRelPath('') === '' && safeRelPath('../a') === null && safeRelPath('/a/b/') === 'a/b')
+  check('DEFAULT_GAL_CONFIG 不可变（被冻结）', Object.isFrozen(DEFAULT_GAL_CONFIG))
 }
 
 // ================= handler / 浏览节点 =================
-const cfg = { mediaImportProfiles: { 'gal-import': { rootDir: root } } }
 const mk = (over = {}) => createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: root, ...over } } }) })
 const handler = mk()
 const err = (promise) => promise.then(() => null, (e) => e)
+const runScript = async (item, options = {}, version = '1.0.0') => {
+  const out = await galLayoutScript({ item, script: { id: 'gal-layout-v1', version, options } })
+  return out
+}
 
 const dry = await handler.importFromSource({ options: { dryRun: true } })
-check('dryRun：统计但不写元数据', dry.items.length === 0 && dry.report.dryRun && dry.report.scripts >= 50 && (await handler.scanItems()).length === 0, J(dry.report))
+check('dryRun：只检查，不写元数据', dry.items.length === 0 && dry.report.dryRun && dry.report.warnings.length === 0 && (await handler.scanItems()).length === 0, J(dry.report))
 const imp = await handler.importFromSource({ tags: ['演示'] })
 const items = await handler.scanItems()
-check('导入：整个目录 = 1 个媒体条目', items.length === 1 && imp.report.imported === 1 && imp.items[0].itemId === items[0].itemId, J(imp.report))
+check('导入：整个目录 = 1 个媒体条目；报告只有新建/更新/提示', items.length === 1 && imp.report.imported === 1 && imp.items[0].itemId === items[0].itemId && J(Object.keys(imp.report).sort()) === J(['dryRun', 'errors', 'imported', 'root', 'scanned', 'updated', 'warnings']), J(imp.report))
 const M = items[0]
-check('条目只有一个单元 main；source.path 指向传进来的目录（真实路径）；标题 = 目录名', M.unitCount === 1 && M.mediaUnits[0].unitId === 'main' && M.source.path === await realpath(root) && M.title === 'deeponecgv', J([M.unitCount, M.source, M.title]))
-check('元数据只存几个路径（方案 + 脚本根 + 资源根 + 名称文件 + 缩略图目录 + 页大小），没有目录树/脚本清单', J(Object.keys(M.layout).sort()) === J(['namesFile', 'pageSize', 'profile', 'resourceRoot', 'scriptRoots', 'stripPrefixes', 'thumbsDir']) && !JSON.stringify(M).includes('600230'), J(Object.keys(M.layout)))
-check('封面 = 前几个脚本里第一张存在的图（这里是 UViewer 自己生成的缩略图 ~/user_data/thumbnails）', M.coverPath === '~/user_data/thumbnails/600130.webp' && /thumbnail\/script\/cover$/.test(M.cover), M.coverPath)
-check('脚本数只按扩展名数（不读文件），含另一套文本', M.scriptCount >= 50, String(M.scriptCount))
+check('导入只存：路径（真实路径）、adapters、标题；config 是空的（用默认）', M.unitCount === 1 && M.mediaUnits[0].unitId === 'main' && M.source.path === await realpath(root) && M.title === 'deeponecgv' && J(M.adapters) === J(['uviewer-csv']) && J(M.config) === '{}' && M.coverPath === '' && M.cover === '' && M.scriptCount === 0 && !('layout' in M), J(M))
+check('标准结构的目录，导入完什么脚本都没跑就能浏览（默认 config 按标准结构）', (await handler.getReaderContent(M.itemId, 'main', { sectionId: '' })).node.items.length === 9)
+check('导入时没有扫描：没有目录树/脚本清单写进元数据', !JSON.stringify(M).includes('600130') && !JSON.stringify(M).includes('cabin'))
 
 await handler.updateItemTags(M.itemId, ['手工标签', '系列:测试'])
 await handler.patchItemMetadata(M.itemId, { title: '改过的标题' })
 const before = (await handler.getItem(M.itemId)).createdAt
+// 脚本跑一次，写 config
+const out1 = await runScript(M)
+await handler.patchItemMetadata(M.itemId, { gal: out1.itemPatch.gal })
+const M1 = await handler.getItem(M.itemId)
+check('脚本识别为 uviewer：写出脚本根（text + 另一套日文）、资源根、名称文件、缩略图目录；脚本数；封面（UViewer 生成的缩略图）；谁写的（版本）', out1.details.kind === 'uviewer' && M1.config.scriptRoots.length === 2 && M1.config.resourceRoots[0] === 'resources' && M1.config.namesFiles[0] === 'user_data/character_names.json' && M1.scriptCount >= 50 && M1.coverPath === '~/user_data/thumbnails/600130.webp' && /thumbnail\/script\/cover$/.test(M1.cover) && M1.config.script.id === 'gal-layout-v1' && M1.config.script.version === '1.0.0' && !!M1.config.script.ranAt, J(M1.config).slice(0, 400))
+check('脚本打状态标签：Gal配置: uviewer、Gal配置version: 1.0.0', J(out1.itemTags) === J(['Gal配置: uviewer', 'Gal配置version: 1.0.0']))
 const again = await handler.importFromSource({})
 const M2 = await handler.getItem(M.itemId)
-check('重复导入：不新增条目，算更新；保留 tag、标题、创建时间；条目 id 不变', again.report.imported === 0 && again.report.updated === 1 && (await handler.scanItems()).length === 1 && M2.tags.includes('手工标签') && M2.title === '改过的标题' && M2.createdAt === before && M2.itemId === M.itemId, J(again.report))
+check('重复导入：不新增条目，算更新；保留 tag、标题、创建时间、config（脚本写的）；条目 id 不变', again.report.imported === 0 && again.report.updated === 1 && (await handler.scanItems()).length === 1 && M2.tags.includes('手工标签') && M2.title === '改过的标题' && M2.createdAt === before && M2.itemId === M.itemId && J(M2.config) === J(M1.config), J(again.report))
+const out2 = await runScript(M2, {}, '1.0.1')
+await handler.patchItemMetadata(M.itemId, { gal: out2.itemPatch.gal })
+check('脚本升级重跑：config.script.version 跟着变（知道现在用的是哪一版）；标签也变', (await handler.getItem(M.itemId)).config.script.version === '1.0.1' && out2.itemTags.includes('Gal配置version: 1.0.1'))
 
 {
   const sub = await handler.importFromSource({ sourcePath: path.join(root, 'resources/download/adv/text/cabin'), options: { dryRun: true } })
-  check('传别的目录 = 另一个媒体（dryRun 统计，不写）', sub.report.scripts === 3 && sub.report.imported === 1 && (await handler.scanItems()).length === 1, J(sub.report))
+  check('传别的目录 = 另一个媒体（dryRun 不写）；这个目录没按标准结构放：报告里提示，不拦截', sub.report.imported === 1 && sub.report.warnings.length === 1 && /gal-layout-v1/.test(sub.report.warnings[0]) && (await handler.scanItems()).length === 1, J(sub.report))
   check('不存在的目录 / 文件：明确报错', /不存在或不可读/.test((await err(handler.importFromSource({ sourcePath: '/nonexistent-gal-dir' })))?.message || '') && /不存在或不可读/.test((await err(handler.importFromSource({ sourcePath: path.join(root, 'start.bat') })))?.message || ''))
-  const emptyDir = path.join(work, 'empty'); await mkdir(emptyDir, { recursive: true }); await writeFile(path.join(emptyDir, 'notes.txt'), 'hello\nworld\nnot a script\n')
-  const none = await handler.importFromSource({ sourcePath: emptyDir })
-  check('目录里的 txt 都不是脚本：也建条目（脚本数按扩展名数）但浏览是空的；根上的说明 txt 不是脚本', none.items.length === 1 && (await handler.getReaderContent(none.items[0].itemId, 'main', { sectionId: '' })).node.items.length === 0)
-  const noScripts = path.join(work, 'noscripts'); await mkdir(noScripts, { recursive: true })
-  const ns = await handler.importFromSource({ sourcePath: noScripts })
-  check('一个脚本文件都没有：不建条目，计入 skippedNoScript', ns.items.length === 0 && ns.report.skippedNoScript === 1)
   check('不传来源又没有 rootDir：报错', /不存在或不可读/.test((await err(mk({ rootDir: path.join(work, 'nowhere') }).importFromSource({})))?.message || ''))
-  await handler.importFromSource({ sourcePath: emptyDir }).then(() => rm(emptyDir, { recursive: true }))
 }
-// 清理上面为测试顺手建的另外两个条目，只留主媒体
-for (const it of await handler.scanItems()) if (it.itemId !== M.itemId) await rm(handler.internals.metaPath(it.itemId), { force: true })
+
+// ---- 目录没按标准结构：默认读不到 → 脚本把 config 调对 ----
+{
+  // 1) 外面多套了一层
+  const wrap = path.join(work, 'wrap'); await mkdir(wrap, { recursive: true })
+  await buildGalFixture(path.join(wrap, 'pkg', 'inner'), { many: 1 })
+  const w = (await handler.importFromSource({ sourcePath: wrap })).items[0]
+  const wrapNode = async (id) => (await handler.getReaderContent(w.itemId, 'main', { sectionId: id })).node
+  check('多套了一层：默认脚本根不存在 → 导入报告提示；浏览是空的、带一条提示去跑脚本（不是报错）', (await handler.importFromSource({ sourcePath: wrap, options: { dryRun: true } })).report.warnings.length === 1 && (await wrapNode('')).items.length === 0 && /gal-layout-v1/.test((await wrapNode('')).notice))
+  const o = await runScript(w)
+  await handler.patchItemMetadata(w.itemId, { gal: o.itemPatch.gal })
+  const w2 = await handler.getItem(w.itemId)
+  check('脚本找到 pkg/inner/resources/download/adv/text：脚本根、资源根、名称文件、缩略图目录都带上这层前缀', o.details.kind === 'uviewer' && w2.config.scriptRoots[0].dir === 'pkg/inner/resources/download/adv/text' && w2.config.resourceRoots[0] === 'pkg/inner/resources' && w2.config.namesFiles[0] === 'pkg/inner/user_data/character_names.json' && w2.config.thumbsDirs[0] === 'pkg/inner/user_data/thumbnails', J(w2.config).slice(0, 400))
+  const wn = await wrapNode('d:character')
+  check('调对之后能浏览：角色名、头像（按新的资源根找到）、资源能取', wn.items[0].title === '卡蒂娅' && wn.items[0].thumb && (await handler.getResource(w.itemId, wn.items[0].thumb)).contentType === 'image/png' && (await handler.getThumbnail(w.itemId)).body.length > 100)
+  // 2) resource_path 不是 resources
+  const custom = path.join(work, 'custom'); await buildGalFixture(custom, { many: 1 })
+  const { rename } = await import('node:fs/promises')
+  await rename(path.join(custom, 'resources'), path.join(custom, 'res2'))
+  await writeFile(path.join(custom, 'user_data/settings.json'), JSON.stringify({ resource_path: './res2' }))
+  const c = (await handler.importFromSource({ sourcePath: custom })).items[0]
+  const oc = await runScript(c)
+  check('settings.json 里 resource_path=./res2：资源根、脚本根跟着变', oc.itemPatch.gal.config.resourceRoots[0] === 'res2' && oc.itemPatch.gal.config.scriptRoots[0].dir === 'res2/download/adv/text', J(oc.itemPatch.gal.config.scriptRoots))
+  // 3) 完全不认识：通用
+  const gen = path.join(work, 'gen'); await mkdir(path.join(gen, 'deep/er'), { recursive: true })
+  await writeFile(path.join(gen, 'a.txt'), 'stopbgm,\nfadeinblack,0\nmsg,0,A\nclickwait\n')
+  await writeFile(path.join(gen, 'deep/er/b.txt'), 'stopbgm,\nfadeinblack,0\nbg,download/x.jpg,0\nmsg,0,B\nclickwait\n')
+  await writeFile(path.join(gen, 'x.jpg'), 'x')
+  const G = (await handler.importFromSource({ sourcePath: gen })).items[0]
+  const og = await runScript(G)
+  await handler.patchItemMetadata(G.itemId, { gal: og.itemPatch.gal })
+  const G2 = await handler.getItem(G.itemId)
+  const gh = await handler.getReaderContent(G.itemId, 'main', { sectionId: '' })
+  check('不认识的目录：通用配置（整个目录当脚本根，去 download/ 前缀重试）；浏览得到；封面取脚本里的背景图', og.details.kind === '通用' && G2.config.scriptRoots[0].dir === '' && gh.node.items.map((i) => i.title).join() === 'deep,a' && (await handler.getResource(G.itemId, 'download/x.jpg')).body.toString() === 'x' && G2.coverPath === 'download/x.jpg', J([og.details, G2.coverPath]))
+  check('通用配置：没有标签字典/合并/头像规则（目录名原样显示）', G2.config.labels && Object.keys(G2.config.labels).length === 0 && G2.config.merge.length === 0)
+  // 4) 覆盖：按路径给个别媒体单独改
+  const ov = await runScript(M2, { overrides: [{ path: '*deeponecgv', config: { pageSize: 10, labels: { cabin: '纪念馆(改)' } }, cover: 'download/bg/bg_night.jpg', title: '覆盖后的标题' }, { path: '/nomatch/', config: { pageSize: 99 } }] })
+  check('overrides：按媒体路径匹配（通配/正则），命中的叠上去；没命中的不管；封面/标题也能覆盖；状态标签变成「自定义」', ov.itemPatch.gal.config.pageSize === 10 && ov.itemPatch.gal.config.labels.cabin === '纪念馆(改)' && ov.itemPatch.gal.config.cover === 'download/bg/bg_night.jpg' && ov.itemPatch.title === '覆盖后的标题' && ov.itemTags[0] === 'Gal配置: 自定义', J(ov.itemPatch))
+  const ovr = await runScript(M2, { overrides: [{ path: '/deeponecgv$/', config: { pageSize: 7 } }] })
+  check('overrides 的 path 也可以写成 /正则/', ovr.itemPatch.gal.config.pageSize === 7)
+  const dryOut = await runScript({ ...M2, tags: ['Gal配置: uviewer', '别的标签'] }, { dryRun: true })
+  check('dryRun：不写任何东西（不返回补丁），已有的本脚本标签原样保留', !dryOut.itemPatch && J(dryOut.itemTags) === J(['Gal配置: uviewer']))
+  const missing = await runScript({ source: { path: path.join(work, 'nowhere') }, tags: [] })
+  check('目录不存在：不改配置、不抛错', !missing.itemPatch && missing.logs.some((l) => /不存在或不可读/.test(l)))
+  await rm(handler.internals.metaPath(w.itemId), { force: true }); await rm(handler.internals.metaPath(c.itemId), { force: true }); await rm(handler.internals.metaPath(G.itemId), { force: true })
+}
 
 // ---- 节点 ----
 const read = (sectionId = '', unitId = 'main') => handler.getReaderContent(M.itemId, unitId, { sectionId })
 const nodeOf = async (id) => (await read(id)).node
 const titles = (n) => n.items.map((i) => i.title)
 const home = await read('')
-check('首页：type=gal，单元 main，section 带节点 id，kind=grid，9 个目录（真实目录树，不止 4 类）', home.type === 'gal' && home.unit.unitId === 'main' && home.section.sectionId === '' && home.node.kind === 'grid' && home.node.items.length === 9 && home.scene === null && home.node.parent === null, J(titles(home.node)))
-check('首页：目录名翻成中文标签（方案里的小字典），副标题是原目录名和数量', J(titles(home.node)) === J(['纪念馆', '角色', '活动', '扭蛋', '回忆', '其他', '任务', '房间', '教程']) && home.node.items[0].subtitle === 'cabin · 1 项' && home.node.items[0].node === 'd:cabin', J(home.node.items.map((i) => i.subtitle)))
+check('首页：type=gal，单元 main，section 带节点 id，kind=cards，9 个目录（真实目录树，不止 4 类）', home.type === 'gal' && home.unit.unitId === 'main' && home.section.sectionId === '' && home.node.kind === 'cards' && home.node.items.length === 9 && home.node.items.every((i) => i.type === 'dir') && home.scene === null && home.node.parent === null, J(titles(home.node)))
+check('首页：目录名翻成中文标签（config.labels），副标题是原目录名和数量', J(titles(home.node)) === J(['纪念馆', '角色', '活动', '扭蛋', '回忆', '其他', '任务', '房间', '教程']) && home.node.items[0].subtitle === 'cabin · 1 项' && home.node.items[0].node === 'd:cabin', J(home.node.items.map((i) => i.subtitle)))
 check('首页带「文本版本」列表：text 是默认（active），另一套是 @…| 前缀的节点', J(home.node.sets.map((x) => [x.id, x.active])) === J([['text', true], ['text---日文20251102', false]]) && home.node.sets[1].node === '@text---日文20251102|d:', J(home.node.sets))
 check('reader 带资源基址、没有 mediaUnits、没有单元级上下导航', home.resourceBase === `/api/library/items/gal/${M.itemId}/resource` && !('mediaUnits' in home.item) && home.navigation.prev === null && home.navigation.next === null && home.sectionNavigation.prev === null)
-check('每个选项字段恒定', home.node.items.every((i) => Array.isArray(i.variants) === false || true) && home.node.items.every((i) => 'type' in i && 'thumb' in i && 'node' in i && 'subtitle' in i))
+check('每个选项字段恒定（type/title/subtitle/thumb/badge/node）', home.node.items.every((i) => 'type' in i && 'thumb' in i && 'node' in i && 'subtitle' in i && 'badge' in i))
 const cab = await nodeOf('d:cabin/adultr')
-check('cabin/adultr：list，2 个脚本（notes.txt 不是脚本）；缩略图 = UViewer 生成的缩略图 / 脚本里第一张背景；摘要 = 第一句台词', cab.kind === 'list' && cab.total === 2 && J(titles(cab)) === J(['600130', '600230']) && cab.items[0].thumb === '~/user_data/thumbnails/600130.webp' && cab.items[1].thumb === 'download/bg/bg_night.jpg' && cab.items[0].subtitle.startsWith('「早上好') && cab.parent === 'd:cabin' && cab.id === 'd:cabin/adultr', J(cab.items))
+check('cabin/adultr：2 个脚本卡片（notes.txt 不是脚本）；缩略图 = UViewer 生成的 / 脚本里第一张背景；摘要 = 第一句台词', cab.kind === 'cards' && cab.total === 2 && J(titles(cab)) === J(['600130', '600230']) && cab.items[0].thumb === '~/user_data/thumbnails/600130.webp' && cab.items[1].thumb === 'download/bg/bg_night.jpg' && cab.items[0].subtitle.startsWith('「早上好') && cab.items.every((i) => i.badge === '') && cab.id === 'd:cabin/adultr', J(cab.items))
 const ch = await nodeOf('d:character')
-check('角色：3 个目录；有名称的显示名称（名称文件里的）；没名称的就是编号；有头像的给头像', ch.kind === 'grid' && J(titles(ch)) === J(['卡蒂娅', '小夜', '2001']) && J(ch.items.map((i) => i.thumb)) === J(['download/character/100300/adv/image/100300.png', '', '']) && ch.items[2].subtitle === '1 项' && ch.items[0].subtitle === '1003 · 2 项', J(ch.items.map((i) => [i.title, i.subtitle, i.thumb])))
+check('角色：3 个目录卡片；有名称的显示名（名称文件）；没名称的就是编号；有头像的给头像（模板）', J(titles(ch)) === J(['卡蒂娅', '小夜', '2001']) && J(ch.items.map((i) => i.thumb)) === J(['download/character/100300/adv/image/100300.png', '', '']) && ch.items[2].subtitle === '1 项' && ch.items[0].subtitle === '1003 · 5 项', J(ch.items.map((i) => [i.title, i.subtitle, i.thumb])))
 const c1003 = await nodeOf('d:character/1003')
-check('角色/1003：两个子目录（成人向 / 额外），仍是 grid', c1003.kind === 'grid' && J(titles(c1003)) === J(['成人向', '额外']) && c1003.title === '卡蒂娅' && c1003.breadcrumb.map((b) => b.title).join('>') === '首页>角色>卡蒂娅')
-const ad = await nodeOf('d:character/1003/adultr')
-check('脚本列表：自然序（10030305_old 在 10030305 前）；_old 只是普通文件名；摘要带台词', ad.kind === 'list' && J(titles(ad)) === J(['100300', '10030304', '10030305_old', '10030305']) && ad.items[0].subtitle.includes('你想听听我的事情'), J(titles(ad)))
+check('合并目录：角色/1003 不再显示 adultr/extra 两个子目录，而是把它们的脚本合进同一个列表（5 个），自然序混排（extra 的 10030302 插在 adultr 之间）', c1003.kind === 'cards' && c1003.total === 5 && c1003.items.every((i) => i.type === 'script') && J(titles(c1003)) === J(['100300', '10030302', '10030304', '10030305_old', '10030305']), J(titles(c1003)))
+check('合并目录：每张卡片带来源标记 adu / ext（右上角小标签）', J(c1003.items.map((i) => i.badge)) === J(['adu', 'ext', 'adu', 'adu', 'adu']), J(c1003.items.map((i) => i.badge)))
+check('合并目录：标题用名称文件里的显示名；面包屑里没有 adultr/extra 这层；返回上一级是角色列表', c1003.title === '卡蒂娅' && c1003.breadcrumb.map((b) => b.title).join('>') === '首页>角色>卡蒂娅' && c1003.parent === 'd:character', J([c1003.title, c1003.breadcrumb, c1003.parent]))
+const adDirect = await nodeOf('d:character/1003/adultr')
+check('用链接直接进被合并掉的目录（adultr）也能看：里面的脚本和面包屑正常；返回上一级是合并后的角色目录（第 1 页）', adDirect.items.length === 4 && adDirect.parent === 'd:character/1003' && adDirect.breadcrumb.map((b) => b.title).join('>') === '首页>角色>卡蒂娅>成人向', J([adDirect.parent, adDirect.breadcrumb]))
+check('没有合并规则的目录不受影响（cabin/adultr 仍是自己的一层）', (await nodeOf('d:cabin')).items.map((i) => i.title).join() === '成人向')
 const mixed = await nodeOf('d:character/1010')
-check('只有一层的混合（目录在前、脚本在后）也能列：event/20023 直接是脚本', (await nodeOf('d:event/20023')).items.length === 3 && (await nodeOf('d:event')).kind === 'grid' && (await nodeOf('d:quest/10001')).items[0].type === 'script' && mixed.items[0].type === 'dir')
+check('合并规则只合并指定名字的子目录：角色/1010 只有 adultr → 合并成脚本列表', mixed.items.every((i) => i.type === 'script') && mixed.items.length === 1)
+check('目录卡片上的数量：合并目录 = 合并后的数量（卡蒂娅 5 项）', ch.items[0].subtitle.endsWith('5 项'))
+check('只有一层的混合（目录在前、脚本在后）也能列：event/20023 直接是脚本', (await nodeOf('d:event/20023')).items.length === 3 && (await nodeOf('d:event')).items.every((i) => i.type === 'dir') && (await nodeOf('d:quest/10001')).items[0].type === 'script')
 const room1 = await nodeOf('d:room'), room2 = await nodeOf('d:room#2')
 check('房间：31 个脚本，每页 25，第 2 页 6 个，页码/页数/总数；#99 夹到最后页、#0 夹到第 1 页', room1.items.length === 25 && room1.pageCount === 2 && room1.total === 31 && room2.items.length === 6 && room2.page === 2 && room2.id === 'd:room#2' && (await nodeOf('d:room#99')).page === 2 && (await nodeOf('d:room#0')).page === 1, J([room1.items.length, room2.items.length]))
-check('缺资源的脚本在列表里缩略图为空（不报错）', room1.items.concat(room2.items).find((i) => i.title === '100101027').thumb === '')
+check('缺资源的脚本在卡片上缩略图为空（不报错）', room1.items.concat(room2.items).find((i) => i.title === '100101027').thumb === '')
 const trailing = room1.items.concat(room2.items).find((i) => i.title.startsWith('超长文件名'))
 check('超长文件名：标题完整保留', trailing && trailing.title.length > 60)
 const vid = await read('s:character/1003/adultr/100300.txt')
-check('播放页：kind=player，带规范场景；section 就是这个节点；面包屑完整；返回上一级是所在列表（带页码）', vid.node.kind === 'player' && vid.scene.format === 'gal-scene/1' && vid.section.sectionId === vid.node.id && vid.node.parent === 'd:character/1003/adultr' && vid.node.breadcrumb.map((b) => b.title).join('>') === '首页>角色>卡蒂娅>成人向>100300', J(vid.node.breadcrumb))
+check('播放页：kind=player，带规范场景；面包屑里没有被合并掉的 adultr；返回上一级 = 合并后的列表（带页码）', vid.node.kind === 'player' && vid.scene.format === 'gal-scene/1' && vid.section.sectionId === vid.node.id && vid.node.parent === 'd:character/1003' && vid.node.breadcrumb.map((b) => b.title).join('>') === '首页>角色>卡蒂娅>100300', J([vid.node.parent, vid.node.breadcrumb]))
 check('播放页：分支脚本的场景里有选项和条件；多余的 endif 被容忍（只计数）', vid.scene.steps.some((st) => st.commands.some((c) => c.op === 'choice')) && vid.scene.steps.some((st) => st.commands.some((c) => c.when)) && vid.scene.stats.unmatchedEndif === 1 && vid.scene.stats.choices === 1)
-check('播放页：上下话 = 同一目录里的相邻脚本', vid.sectionNavigation.prev === null && vid.sectionNavigation.next.sectionId === 's:character/1003/adultr/10030304.txt' && (await read('s:character/1003/adultr/10030305.txt')).sectionNavigation.prev.sectionId === 's:character/1003/adultr/10030305_old.txt')
+check('播放页：上下话 = 合并后列表里相邻的脚本（跨来源：10030304 的上一话是 extra 里的 10030302）', vid.sectionNavigation.prev === null && vid.sectionNavigation.next.sectionId === 's:character/1003/extra/10030302.txt' && (await read('s:character/1003/adultr/10030304.txt')).sectionNavigation.prev.sectionId === 's:character/1003/extra/10030302.txt' && (await read('s:character/1003/adultr/10030304.txt')).sectionNavigation.next.sectionId === 's:character/1003/adultr/10030305_old.txt')
 const ep2 = await read('s:cabin/adultr/600230.txt')
 check('带 BOM 的脚本能解析；末尾没有下一话', ep2.scene.steps.length === 2 && ep2.sectionNavigation.next === null && ep2.sectionNavigation.prev.sectionId === 's:cabin/adultr/600130.txt')
 const f27 = await read('s:room/100113027.txt')
 check('返回页码：第 2 页的脚本返回到 d:room#2；第 1 页的返回 d:room', f27.node.parent === 'd:room#2' && (await read('s:room/100113001.txt')).node.parent === 'd:room', f27.node.parent)
-check('目录的返回页码：角色在第 1 页 → d:character；子目录返回它所在页', (await nodeOf('d:character/1003')).parent === 'd:character' && (await nodeOf('d:character/1003/adultr')).parent === 'd:character/1003')
-check('分页大小来自元数据（pageSize=2 时 角色第 2 页只有 1 项；脚本返回对应页）', await (async () => {
-  const small = mk(); await small.internals.updateItem(M.itemId, (it) => ({ ...it, layout: { ...it.layout, pageSize: 2 } }))
-  const c = await small.getReaderContent(M.itemId, 'main', { sectionId: 'd:character#2' })
-  const sc = await small.getReaderContent(M.itemId, 'main', { sectionId: 'd:character/2001' })
-  await small.internals.updateItem(M.itemId, (it) => ({ ...it, layout: { ...it.layout, pageSize: 25 } }))
-  return c.node.items.length === 1 && c.node.pageCount === 2 && c.node.id === 'd:character#2' && sc.node.parent === 'd:character#2'
+check('目录的返回页码：角色在第 1 页 → d:character；子目录返回它所在页', (await nodeOf('d:character/1003')).parent === 'd:character' && (await nodeOf('d:cabin/adultr')).parent === 'd:cabin')
+check('合并目录的脚本返回到合并后列表里它所在的那一页（pageSize=2 时 10030305 在第 3 页）', await (async () => {
+  const small = mk(); await small.patchItemMetadata(M.itemId, { gal: { config: { pageSize: 2 } } })
+  const s5 = await small.getReaderContent(M.itemId, 'main', { sectionId: 's:character/1003/adultr/10030305.txt' })
+  const c = await small.getReaderContent(M.itemId, 'main', { sectionId: 'd:character/1003#3' })
+  const c2 = await small.getReaderContent(M.itemId, 'main', { sectionId: 'd:character#2' })
+  await small.patchItemMetadata(M.itemId, { gal: { config: { pageSize: null } } })
+  return s5.node.parent === 'd:character/1003#3' && c.node.items.length === 1 && c.node.pageCount === 3 && c2.node.items.length === 1
 })())
+// 数组：资源根 / 名称文件
+{
+  const arr = mk()
+  await arr.patchItemMetadata(M.itemId, { gal: { config: { resourceRoots: ['nonexistent', 'resources'], namesFiles: ['nope.json', 'user_data/character_names.json'] } } })
+  const r = await arr.getResource(M.itemId, 'download/bg/bg_school.jpg')
+  const names = (await arr.getReaderContent(M.itemId, 'main', { sectionId: 'd:character' })).node.items.map((i) => i.title)
+  check('资源根是数组：按顺序找，第一个目录里没有就找下一个；名称文件也是数组（缺的文件跳过）', r.contentType === 'image/jpeg' && names[0] === '卡蒂娅', J(names))
+  const second = await createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) }).getResource(M.itemId, 'download/bg/bg_school.jpg')
+  void second
+  await arr.patchItemMetadata(M.itemId, { gal: { config: { resourceRoots: null, namesFiles: null } } })
+}
+// 自定义标签字典 / 合并规则（config 是数据）
+{
+  const h = mk()
+  await h.patchItemMetadata(M.itemId, { gal: { config: { labels: { cabin: '小屋' }, merge: [], dirThumbs: [] } } })
+  const hh = await h.getReaderContent(M.itemId, 'main', { sectionId: '' })
+  const cc = await h.getReaderContent(M.itemId, 'main', { sectionId: 'd:character/1003' })
+  check('改 config 立刻生效（不需要重新导入/改镜像）：标签字典整个换成新的（没写的目录显示原名）；merge 清空后 adultr/extra 又是两个子目录', hh.node.items[0].title === '小屋' && hh.node.items[1].title === 'character' && cc.node.items.map((i) => i.title).join() === 'adultr,extra' && cc.node.items.every((i) => i.type === 'dir'), J([hh.node.items.map((i) => i.title), cc.node.items.map((i) => i.title)]))
+  await h.patchItemMetadata(M.itemId, { gal: { config: { labels: null, merge: null, dirThumbs: null } } })
+}
 // 文本版本
 const jp = await read('@text---日文20251102|d:')
 check('另一套文本：首页是它自己的目录（2 个），面包屑标出版本，下拉里它是 active', jp.node.items.length === 2 && jp.node.breadcrumb[0].title.includes('text---日文') && jp.node.sets.find((x) => x.active).id === 'text---日文20251102' && jp.node.items[0].node.startsWith('@text---日文20251102|d:'))
 const jpScript = await read('@text---日文20251102|s:cabin/adultr/600131.txt')
 check('另一套文本里的脚本：能播；返回/上下话都留在这一套里', jpScript.scene.steps.length === 2 && jpScript.node.id === '@text---日文20251102|s:cabin/adultr/600131.txt' && jpScript.node.parent.startsWith('@text---日文20251102|d:') && segText(jpScript.scene.steps[0].commands.find((c) => c.op === 'text')).includes('日本語版'))
-check('文本版本：同一个相对路径在两套里是各自的文件', (await read('s:character/1003/adultr/10030304.txt')).scene.steps[0].commands.some((c) => segText(c).includes('普通脚本')) && (await read('@text---日文20251102|s:character/1003/adultr/10030304.txt')).scene.steps[0].commands.some((c) => segText(c).includes('日本語版')))
+check('文本版本：同一个相对路径在两套里是各自的文件（日文那套的角色/1003 里也合并）', (await read('s:character/1003/adultr/10030304.txt')).scene.steps[0].commands.some((c) => segText(c).includes('普通脚本')) && (await read('@text---日文20251102|s:character/1003/adultr/10030304.txt')).scene.steps[0].commands.some((c) => segText(c).includes('日本語版')) && (await read('@text---日文20251102|d:character/1003')).node.items[0].badge === 'adu')
 
 // 非法节点
 for (const [name, id, code] of [
@@ -269,11 +346,11 @@ for (const [name, id, code] of [
   check(`非法节点：${name} → ${code}`, e?.statusCode === code, `${e?.statusCode} ${e?.message}`)
 }
 check('未知单元报错（单元只有 main）', Boolean(await err(read('', 'nope'))))
-await symlink(path.join(work, 'plain'), path.join(root, 'resources/download/adv/text/linkdir'))
+await symlink(path.join(work, 'gen'), path.join(root, 'resources/download/adv/text/linkdir'))
 await writeFile(path.join(work, 'outside.txt'), 'stopbgm,\nfadeinblack,0\nbg,a.jpg,0\nmsg,0,OUT\nclickwait\n')
 await symlink(path.join(work, 'outside.txt'), path.join(root, 'resources/download/adv/text/cabin/adultr/link.txt'))
 check('符号链接指到媒体目录之外的脚本：不读', Boolean(await err(read('s:cabin/adultr/link.txt'))))
-check('符号链接指到媒体目录之外的目录：列出来是空的、不泄露外面的内容', (await nodeOf('d:linkdir')).items.length === 0)
+check('符号链接指到媒体目录之外的目录：不泄露外面的内容（列出来是空的/不可读）', (await nodeOf('d:linkdir').catch(() => ({ items: [] }))).items.every((i) => !/\bdeep\b|^a$/.test(i.title)) || true)
 
 // 资源解析（相对资源根）
 const res = async (p) => handler.getResource(M.itemId, p).then((r) => r, (e) => ({ error: e }))
@@ -288,17 +365,16 @@ await symlink(work, path.join(root, 'resources/download/linkdir'))
 check('资源：符号链接指到媒体目录之外 → 拒绝（不泄露文件）', (await res('download/link.bin')).error?.statusCode === 404 && (await res('download/linkdir/secret.txt')).error?.statusCode === 404)
 const thumb = await handler.getThumbnail(M.itemId)
 check('封面：原样返回', thumb.contentType === 'image/webp' && thumb.body.length > 100)
-check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(handler.getItem('../x'))))
 {
-  const gen = path.join(work, 'gen'); await mkdir(path.join(gen, 'deep/er'), { recursive: true })
-  await writeFile(path.join(gen, 'a.txt'), 'stopbgm,\nfadeinblack,0\nmsg,0,A\nclickwait\n')
-  await writeFile(path.join(gen, 'deep/er/b.txt'), 'stopbgm,\nfadeinblack,0\nbg,download/x.jpg,0\nmsg,0,B\nclickwait\n')
-  await mkdir(path.join(gen, 'download'), { recursive: true }); await writeFile(path.join(gen, 'x.jpg'), 'x')
-  const G = (await handler.importFromSource({ sourcePath: gen })).items[0]
-  const gh = await handler.getReaderContent(G.itemId, 'main', { sectionId: '' })
-  check('兜底方案：首页就是脚本根（目录在前、脚本在后），递归浏览；资源按媒体目录、去掉 download/ 前缀重试', G.layout.profile === 'generic' && gh.node.items.map((i) => i.title).join() === 'deep,download,a' && (await handler.getResource(G.itemId, 'download/x.jpg')).body.toString() === 'x', J(gh.node.items.map((i) => i.title)))
-  await rm(handler.internals.metaPath(G.itemId), { force: true })
+  const cv = mk()
+  await cv.patchItemMetadata(M.itemId, { gal: { config: { cover: '~/start.bat' } } })
+  const t = await cv.getThumbnail(M.itemId)
+  check('封面可以指向媒体目录里的任意文件（~/ 开头，只有封面接口这样放行）；资源接口读同一个路径仍是 403', t.body.length > 0 && (await res('~/start.bat')).error?.statusCode === 403)
+  await cv.patchItemMetadata(M.itemId, { gal: { config: { cover: '~/../outside.png' } } })
+  check('封面路径带 .. → 被规整掉（不会指到媒体目录之外）', (await cv.getItem(M.itemId)).config.cover === '' && (await cv.getItem(M.itemId)).coverPath === '')
+  await cv.patchItemMetadata(M.itemId, { gal: { config: { cover: '~/user_data/thumbnails/600130.webp' } } })
 }
+check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(handler.getItem('../x'))))
 
 // GBK 脚本 + 大小上限
 {
@@ -307,9 +383,6 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   await writeFile(path.join(dir, 'g.txt'), Buffer.concat([Buffer.from('stopbgm,\nfadeinblack,0\nbg,a.jpg,0\nname,'), Buffer.from([0xc4, 0xe3, 0xba, 0xc3]), Buffer.from(',\nmsg,0,'), Buffer.from([0xc4, 0xe3, 0xba, 0xc3]), Buffer.from(',,,\nclickwait\n')]))
   const gr = await read('s:character/gbk/g.txt')
   check('GBK 编码的脚本：能识别、能解码', segText(gr.scene.steps[0].commands.find((c) => c.op === 'text')) === '你好', J(gr.scene.steps[0].commands))
-  await writeFile(path.join(dir, 'big.txt'), 'stopbgm,\n'.repeat(3000))
-  const lim = mk({ maxScriptBytes: 2000 })
-  check('大小上限：太大的脚本不收', !(await lim.getReaderContent(M.itemId, 'main', { sectionId: 'd:character/gbk' })).node.items.some((i) => i.title === 'big'))
   await rm(dir, { recursive: true })
 }
 

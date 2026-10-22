@@ -41,23 +41,29 @@ if (EXPECT_ARCHIVE) check('媒体库里有压缩包图集条目（点标签新�
 
 // ---- Gal：目录方案 + 浏览节点 + 分支 ----
 if (G) {
-  check('Gal 条目：一个目录 = 一个媒体，只有 1 个单元（main）；方案是 uviewer', G.unitCount === 1 && G.mediaUnits?.[0]?.unitId === 'main' || G.unitCount === 1, J([G.unitCount, G.layout]))
-  const full = (await get(`/api/library/items/gal/${G.itemId}`)).body
-  check('元数据只存几个路径（方案、脚本根、资源根、名称文件、缩略图目录）', full.layout?.profile === 'uviewer' && full.layout.resourceRoot === 'resources' && full.layout.namesFile === 'user_data/character_names.json' && full.layout.scriptRoots?.length >= 2, J(full.layout))
+  check('Gal 条目：一个目录 = 一个媒体，只有 1 个单元', G.unitCount === 1, J(G.unitCount))
+  // 导入后自动排了元数据脚本 gal-layout-v1：等它把 config 写好（config.script.version）
+  let full = null
+  for (let i = 0; i < 60; i++) { full = (await get(`/api/library/items/gal/${G.itemId}`)).body; if (full?.config?.script?.version) break; await new Promise((r) => setTimeout(r, 1000)) }
+  check('导入后元数据脚本 gal-layout-v1 自动跑过：config.script 记着脚本 id 和版本；状态标签「Gal配置version」', full?.config?.script?.id === 'gal-layout-v1' && /^\d+\.\d+/.test(full.config.script.version) && (full.tags || []).some((t) => t.startsWith('Gal配置version:')), J([full?.config?.script, full?.tags]))
+  check('config 里是脚本探测出的结构：脚本根（text + 日文）、资源根 resources、名称文件、缩略图目录；脚本数；封面', full.config.scriptRoots?.length >= 2 && full.config.resourceRoots?.[0] === 'resources' && full.config.namesFiles?.[0] === 'user_data/character_names.json' && full.config.thumbsDirs?.[0] === 'user_data/thumbnails' && full.scriptCount >= 50 && Boolean(full.coverPath), J(full.config).slice(0, 300))
+  check('元数据里没有目录树/脚本清单；只有路径、adapters、标题、config', !('layout' in full) && J(full.adapters) === J(['uviewer-csv']) && !J(full).includes('600130.txt'))
   const node = async (id) => (await get(`/api/library/items/gal/${G.itemId}/reader/main?sectionId=${encodeURIComponent(id)}`)).body
   const home = await node('')
-  check('Gal 首页：grid，真实目录树（9 个目录），有文本版本下拉（text + 另一套）', home.node.kind === 'grid' && home.node.items.length === 9 && home.node.sets.length === 2, J(home.node.items.map((i) => i.title)))
+  check('Gal 首页：卡片，真实目录树（9 个目录），有文本版本下拉（text + 另一套）', home.node.kind === 'cards' && home.node.items.length === 9 && home.node.sets.length === 2, J(home.node.items.map((i) => i.title)))
   const chars = await node('d:character')
   check('角色页：名称文件里的名字（卡蒂娅/小夜）+ 没名字的编号 + 头像', chars.node.items.map((i) => i.title).join() === '卡蒂娅,小夜,2001' && chars.node.items[0].thumb, J(chars.node.items.map((i) => i.title)))
   const avatar = await get(`/api/library/items/gal/${G.itemId}/resource?path=${encodeURIComponent(chars.node.items[0].thumb)}`)
   check('头像资源能取到（相对资源根解析）', avatar.status === 200 && avatar.type.startsWith('image/'), String(avatar.status))
+  const merged = await node('d:character/1003')
+  check('角色目录合并：卡蒂娅这一层直接是脚本（adultr + extra 合并，5 个），每个带来源标记 adu / ext', merged.node.items.length === 5 && merged.node.items.every((i) => i.type === 'script') && merged.node.items.map((i) => i.badge).join() === 'adu,ext,adu,adu,adu', J(merged.node.items.map((i) => [i.title, i.badge])))
   const cab = await node('d:cabin/adultr')
   const thumb = cab.node.items.find((i) => i.thumb.startsWith('~/'))
   check('UViewer 自己生成的缩略图（user_data/thumbnails）也能用', thumb && (await get(`/api/library/items/gal/${G.itemId}/resource?path=${encodeURIComponent(thumb.thumb)}`)).status === 200)
   check('不能通过资源接口读 user_data 里别的文件（license.dat）', (await get(`/api/library/items/gal/${G.itemId}/resource?path=${encodeURIComponent('~/user_data/license.dat')}`)).status >= 400)
   const branch = await node('s:character/1003/adultr/100300.txt')
   check('分支脚本：场景里有 choice 和条件；多余的 endif 被容忍', branch.scene.steps.some((s) => s.commands.some((c) => c.op === 'choice')) && branch.scene.steps.some((s) => s.commands.some((c) => c.when)) && branch.scene.stats.unmatchedEndif === 1)
-  check('分支脚本：返回上一级是所在列表，上下话是同目录的相邻脚本', branch.node.parent === 'd:character/1003/adultr' && branch.sectionNavigation.next?.sectionId.endsWith('10030304.txt'))
+  check('分支脚本：返回上一级是合并后的卡蒂娅列表，上下话是列表里相邻的脚本（跨来源）', branch.node.parent === 'd:character/1003' && branch.sectionNavigation.next?.sectionId.endsWith('10030302.txt'))
   const room2 = await node('d:room#2')
   check('房间列表翻页：第 2 页有内容、带页码', room2.node.page === 2 && room2.node.items.length > 0)
   const jp = await node('@text---日文20251102|d:')

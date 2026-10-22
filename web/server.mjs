@@ -321,14 +321,13 @@ function defaultConfig() {
         managedDir: path.join(DATA_DIR, 'library', 'archive'),   // 新导入的压缩包 mv 到这里（按哈希分片）
         defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
       },
-      // Gal 导入：一个目录 = 一个媒体（来源目录不传就用 rootDir），目录本身就是数据（不 mv、不拷贝），导入只建元数据；
-      // scriptExtensions/adapters 决定哪些文件算剧情脚本、用哪种适配器解析；目录约定（资源前缀、共享资源）写在每个条目的元数据 layout 里
+      // Gal 导入：一个目录 = 一个媒体（来源目录不传就用 rootDir），目录本身就是数据（不 mv、不拷贝）；导入只记路径 + adapters + 标题，
+      // 不扫描目录。adapters = 脚本格式适配器；defaultMetadataActions = 导入后自动跑的元数据脚本（gal-layout-v1 探测目录结构、
+      // 把条目的 config 调对、挑封面；脚本可以在配置页上传新版本，不用改镜像）
       'gal-import': {
         rootDir: path.join(DATA_DIR, 'gal'),
-        maxDepth: GAL_DEFAULT_OPTIONS.maxDepth,
-        scriptExtensions: GAL_DEFAULT_OPTIONS.scriptExtensions,
         adapters: GAL_DEFAULT_OPTIONS.adapters,
-        limit: 0,
+        defaultMetadataActions: GAL_DEFAULT_OPTIONS.defaultMetadataActions,
         dryRun: false,
       },
       // 初始化压缩包图集（LANraragi 迁移）。dryRun 默认开着：先出报告，确认后改成 false 才真的写
@@ -3914,6 +3913,11 @@ function paginationFromSearchParams(params, defaultLimit = 200, maxLimit = 1000)
 function importTagScriptIds(fields = {}) {
   const explicit = parseTags(fields.metadataActionIds || fields.actionIds || fields.tagScriptIds || fields.tagScripts || '')
   const profile = String(fields.importProfile || fields.mediaImportProfile || '').trim()
+  if (profile === 'gal-import') {
+    // 页面勾了什么就跑什么；没带字段（脚本/接口直接调）才退回方案默认
+    if (explicit.length) return explicit
+    return parseTags(config.mediaImportProfiles?.['gal-import']?.defaultMetadataActions || GAL_DEFAULT_OPTIONS.defaultMetadataActions)
+  }
   if (profile === 'rj-media') {
     // 页面勾了什么就跑什么；没带字段（老客户端、脚本直接调接口）才退回方案默认
     if (explicit.length) return explicit
@@ -4524,6 +4528,10 @@ function normalizeScriptItemPatch(value) {
   }
   const publishedAt = normalizeIsoDateTime(value.publishedAt)
   if (publishedAt) patch.publishedAt = publishedAt
+  // Gal 的 config 补丁（gal-layout-v1 写）：这里只确认是个对象，字段的合法性由 Gal 的元数据更新逻辑严格校验
+  if (value.gal && typeof value.gal === 'object' && !Array.isArray(value.gal) && value.gal.config && typeof value.gal.config === 'object' && !Array.isArray(value.gal.config)) {
+    patch.gal = { config: value.gal.config, replace: value.gal.replace === true }
+  }
   if (value.dlsite && typeof value.dlsite === 'object' && !Array.isArray(value.dlsite)) {
     const dlsite = {}
     for (const key of ['productId', 'originalProductId', 'status', 'site', 'originalSite', 'title', 'circle', 'cover', 'releaseDate', 'error', 'fetchedAt']) {

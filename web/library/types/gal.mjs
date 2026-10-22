@@ -1,11 +1,12 @@
 // Gal（视觉小说 / 剧情脚本）：一个目录 = 一个媒体条目，条目只有一个单元（'main'）；单元里是一棵由后端按需给出的「浏览节点」树
-//   首页 → 分类 → （角色 →）脚本列表 → 播放页，节点怎么来见 web/library/gal/browse.mjs。前端走通用的 reader?sectionId=<节点 id>。
-// 目录本身就是数据，不 mv、不拷贝、不改——导入只是给它建一份元数据 JSON（source.path 指向传进来的目录）。
-//   - 来源目录：导入时传的 sourcePath；不传就用「Gal 导入」方案的 rootDir（默认 <data>/gal）
-//   - 元数据：<data>/library-meta/gal/ab/cd/<id>.json（分片）；条目 id = sha1('gal:' + 目录真实路径)，重复导入原地更新
-//   - 资源：脚本里的相对路径（如 download/bg/x.jpg）按「资源根」解析（layout.resourceRoot，UViewer 是 resources/）
-//   - 目录方案（gal/profiles）：认出布局、给出脚本根/资源根/名称文件/缩略图目录；元数据 layout 只存这几个路径
-//   - 封面：前几个脚本里第一张存在的背景图（存 coverPath；取的时候原样返回，不缩放）
+//   首页 → 一层层目录 → 脚本列表 → 播放页，节点怎么来见 web/library/gal/browse.mjs。前端走通用的 reader?sectionId=<节点 id>。
+// 目录本身就是数据，不 mv、不拷贝、不改——导入只是给它建一份元数据 JSON：来源路径 source.path + adapters（脚本格式适配器）+ 标题。
+//   - 元数据里的 config（见 gal/config.mjs）是引擎和 tag 脚本（gal-layout-v1）之间唯一的配置字段：脚本根、资源根、名称文件、
+//     缩略图目录、目录标签、合并目录、头像/缩略图模板、封面……缺的用默认（= 标准结构：UViewer 资源包的布局），所以标准结构的目录导入完就能用；
+//     目录没按标准结构放时，由脚本探测实际结构、把 config 里的参数调对。
+//   - 元数据：<data>/library-meta/gal/ab/cd/<id>.json（分片）；条目 id = sha1('gal:' + 目录真实路径)，重复导入原地更新（config 保留）
+//   - 资源：脚本里的相对路径（如 download/bg/x.jpg）按 config.resourceRoots 依次查找
+//   - 封面：config.cover（脚本写；取的时候原样返回，不缩放）
 
 import { createHash } from 'node:crypto'
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -13,22 +14,20 @@ import path from 'node:path'
 import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider } from '../gal/browse.mjs'
-import { detectGalLayout, normalizeGalLayout } from '../gal/profiles/index.mjs'
+import { applyGalConfigPatch, cleanGalConfigRaw, normalizeGalConfig } from '../gal/config.mjs'
 import { shardedPath, walkShardedFiles, writeJsonAtomic } from '../meta-shard.mjs'
 import { parseTags } from '../tag-store.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 
 export const GAL_TYPE = 'gal'
 export const GAL_PROFILE = 'gal-import'
+export const GAL_MAIN_UNIT = 'main'   // 一个媒体只有一个单元
 
+// 导入方案「gal-import」的参数：来源目录（不传来源时用的默认目录）、脚本格式适配器、导入后自动跑的元数据脚本
 export const GAL_DEFAULT_OPTIONS = {
-  maxDepth: 6,
-  scriptExtensions: ['txt', 'csv'],
-  maxScriptBytes: 4 * 1024 * 1024,
   adapters: ['uviewer-csv'],
+  defaultMetadataActions: ['gal-layout-v1'],
 }
-export const GAL_MAIN_UNIT = 'main'
-
 const MIME = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml',
   mp3: 'audio/mpeg', ogg: 'audio/ogg', opus: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac',
@@ -40,16 +39,12 @@ const sha1 = (value) => createHash('sha1').update(value).digest('hex')
 
 export function normalizeGalOptions(value = {}) {
   const v = value && typeof value === 'object' ? value : {}
-  const exts = (Array.isArray(v.scriptExtensions) ? v.scriptExtensions : GAL_DEFAULT_OPTIONS.scriptExtensions)
-    .map((e) => String(e).trim().replace(/^\./, '').toLowerCase()).filter(Boolean)
   const adapters = (Array.isArray(v.adapters) ? v.adapters : GAL_DEFAULT_OPTIONS.adapters).map(String).filter((id) => galAdapterIds().includes(id))
+  const actions = Array.isArray(v.defaultMetadataActions) ? v.defaultMetadataActions : parseTags(v.defaultMetadataActions ?? GAL_DEFAULT_OPTIONS.defaultMetadataActions)
   return {
     rootDir: String(v.rootDir || '').trim(),
-    maxDepth: Math.max(1, Math.min(20, Math.floor(Number(v.maxDepth)) || GAL_DEFAULT_OPTIONS.maxDepth)),
-    scriptExtensions: exts.length ? exts : GAL_DEFAULT_OPTIONS.scriptExtensions,
-    maxScriptBytes: Math.max(1024, Math.floor(Number(v.maxScriptBytes)) || GAL_DEFAULT_OPTIONS.maxScriptBytes),
     adapters: adapters.length ? adapters : GAL_DEFAULT_OPTIONS.adapters,
-    limit: Math.max(0, Math.floor(Number(v.limit)) || 0),
+    defaultMetadataActions: [...new Set(actions.map((id) => String(id).trim()).filter(Boolean))],
     dryRun: Boolean(v.dryRun),
   }
 }
@@ -98,21 +93,27 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       title: String(raw?.title || raw?.itemId || 'Untitled'),
       author: Array.isArray(raw?.author) ? raw.author : [],
       tags: parseTags(raw?.tags || []),
-      cover: String(raw?.cover || ''),
-      coverPath: String(raw?.coverPath || ''),
+      cover: '',
+      coverPath: '',
       productId: '',
       sourceProfile: String(raw?.sourceProfile || GAL_PROFILE),
       workKey: String(raw?.workKey || ''),
       dlsite: null,
-      adapter: String(raw?.adapter || 'uviewer-csv'),
+      // 脚本格式适配器（可以有几个，按顺序试）
+      adapters: (Array.isArray(raw?.adapters) ? raw.adapters.map(String) : []).filter((id) => galAdapterIds().includes(id)).slice(0, 5),
       source: { path: String(raw?.source?.path || '') },
-      // 元数据只存几个路径（目录方案 + 脚本根 + 资源根 + 名称文件 + 缩略图目录），其余全靠读目录/脚本内容现算
-      layout: normalizeGalLayout(raw?.layout),
-      scriptCount: Math.max(0, Number(raw?.scriptCount) || 0),
+      // 唯一的配置字段：只存写过的字段（缺的在读的时候用默认补），见 gal/config.mjs
+      config: cleanGalConfigRaw(raw?.config),
+      scriptCount: 0,
       createdAt: String(raw?.createdAt || now),
       publishedAt: String(raw?.publishedAt || raw?.createdAt || now),
       updatedAt: String(raw?.updatedAt || now),
     }
+    if (!item.adapters.length) item.adapters = [...GAL_DEFAULT_OPTIONS.adapters]
+    // 封面、脚本数来自 config（卡片/索引读的是 item.cover / item.scriptCount，这里同步出来）
+    item.coverPath = item.config.cover || ''
+    item.cover = item.coverPath ? coverUrl(item.itemId) : ''
+    item.scriptCount = Math.max(0, Number(item.config.scriptCount) || 0)
     // 一个媒体只有一个单元：浏览、选脚本都在这个单元里面（节点树）
     const prevTags = Array.isArray(raw?.mediaUnits) ? raw.mediaUnits.find((unit) => unit?.unitId === GAL_MAIN_UNIT)?.tags : []
     item.mediaUnits = [normalizeUnit({ unitId: GAL_MAIN_UNIT, title: item.title, fileName: path.basename(item.source.path), tags: prevTags, stepCount: item.scriptCount }, item, 0)]
@@ -157,11 +158,12 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     return path.resolve(item.source.path)
   }
 
-  // 把脚本里的相对路径解析成磁盘上的真实文件。路径相对「资源根」（layout.resourceRoot）；
-  // `~/` 开头 = 相对媒体目录，只放行缩略图缓存目录（layout.thumbsDir），别的拒绝。
+  // 把脚本里的相对路径解析成磁盘上的真实文件。路径相对「资源根」（config.resourceRoots，按顺序找，取第一个存在的）；
+  // `~/` 开头 = 相对媒体目录：资源接口只放行缩略图缓存目录（config.thumbsDirs），封面（allowMedia）可以是媒体目录里的任意文件，别的拒绝。
   // 只认媒体目录之内的真实路径（realpath），目录穿越和符号链接逃逸都挡掉。
-  async function resolveAsset(item, resourcePath) {
+  async function resolveAsset(item, resourcePath, { allowMedia = false } = {}) {
     const bad = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode })
+    const config = normalizeGalConfig(item.config)
     let rel = String(resourcePath || '').replace(/\\/g, '/').replace(/^\/+/, '')
     const fromMedia = rel.startsWith('~/')
     if (fromMedia) rel = rel.slice(2)
@@ -169,13 +171,14 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const work = workDirOf(item)
     const candidates = []
     if (fromMedia) {
-      const thumbs = item.layout.thumbsDir
-      if (!thumbs || !(rel === thumbs || rel.startsWith(`${thumbs}/`))) throw bad('不允许的路径', 403)
+      if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
       candidates.push(path.join(work, rel))
     } else {
-      const rootDir = path.join(work, ...(item.layout.resourceRoot ? item.layout.resourceRoot.split('/') : []))
-      candidates.push(path.join(rootDir, rel))
-      for (const prefix of item.layout.stripPrefixes || []) if (rel.startsWith(prefix)) candidates.push(path.join(rootDir, rel.slice(prefix.length)))
+      for (const root of config.resourceRoots) {
+        const rootDir = path.join(work, ...(root ? root.split('/') : []))
+        candidates.push(path.join(rootDir, rel))
+        for (const prefix of config.stripPrefixes) if (rel.startsWith(prefix)) candidates.push(path.join(rootDir, rel.slice(prefix.length)))
+      }
     }
     const realWork = await realpath(work).catch(() => work)
     for (const candidate of candidates) {
@@ -200,21 +203,18 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const item = await readItem(itemId)
     if (!item.coverPath) throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
     try {
-      const file = await resolveAsset(item, item.coverPath)
+      const file = await resolveAsset(item, item.coverPath, { allowMedia: true })
       return { body: await readFile(file), contentType: contentTypeOf(file) }
     } catch {
       throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
     }
   }
 
-  function providerOf(item, opts = options()) {
+  function providerOf(item) {
     return createBrowseProvider({
       mediaDir: workDirOf(item),
-      layout: item.layout,
-      adapters: opts.adapters,
-      scriptExtensions: opts.scriptExtensions,
-      maxScriptBytes: opts.maxScriptBytes,
-      maxDepth: opts.maxDepth,
+      config: item.config,
+      adapters: item.adapters,
       resolveAsset: (rel) => resolveAsset(item, rel),
     })
   }
@@ -244,7 +244,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
 
   // ---------- 导入（只建元数据） ----------
 
-  // 一个目录 = 一个媒体。dryRun 只统计不写。返回 { items, report }
+  // 一个目录 = 一个媒体：只记路径、adapters、标题，不扫描、不探测——配置按标准结构取默认，结构不对的由 gal-layout-v1 脚本调。
+  // 重复导入 = 原地更新（config、标签、标题都保留）。dryRun 只检查不写。返回 { items, report }
   async function importFromSource({ sourcePath = '', tags = [], options: override = {}, onProgress = null } = {}) {
     const opts = options(override)
     const dir = path.resolve(String(sourcePath || '').trim() || rootDir(opts.rootDir))
@@ -255,37 +256,29 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     } catch {
       throw new Error(`Gal 目录不存在或不可读：${dir}`)
     }
-    const report = { root: dir, dryRun: opts.dryRun, scanned: 1, imported: 0, updated: 0, skippedNoScript: 0, failed: 0, scripts: 0, limited: false, errors: [] }
+    const report = { root: dir, dryRun: opts.dryRun, scanned: 1, imported: 0, updated: 0, warnings: [], errors: [] }
     const itemId = sha1(`gal:${real.normalize('NFC')}`)
     const existing = (await itemExists(itemId)) ? await readItem(itemId) : null
-    // 每次导入重新探测目录方案（新出现的文本版本之类会被带上）
-    const layout = await detectGalLayout(real)
-    const draft = normalizeItem({ itemId, title: existing?.title || path.basename(real).normalize('NFC'), source: { path: real }, layout })
-    const summary = await providerOf(draft, opts).summarize()
-    report.scripts = summary.scripts
-    if (!summary.scripts) {
-      report.skippedNoScript = 1
-      onProgress?.({ done: 1, total: 1 })
-      return { items: [], report }
-    }
-    // 封面：前几个脚本里第一张存在的背景图
-    const coverPath = summary.cover
     const now = new Date().toISOString()
     const item = normalizeItem({
       ...(existing || {}),
       itemId,
-      title: draft.title,
+      title: existing?.title || path.basename(real).normalize('NFC'),
       tags: [...new Set([...(existing?.tags || []), ...parseTags(tags)])],
       sourceProfile: GAL_PROFILE,
-      adapter: opts.adapters[0],
+      adapters: opts.adapters,
       source: { path: real },
-      layout,
-      scriptCount: summary.scripts,
-      coverPath,
-      cover: coverPath ? coverUrl(itemId) : '',
+      config: existing?.config || {},
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     })
+    // 只做一次很轻的检查：默认（或已有配置里的）脚本根在不在——不在也照样建，报告里提示，由脚本去调
+    const firstRoot = normalizeGalConfig(item.config).scriptRoots[0]
+    try {
+      if (!(await stat(path.join(real, ...(firstRoot.dir ? firstRoot.dir.split('/') : [])))).isDirectory()) throw new Error('x')
+    } catch {
+      report.warnings.push(`脚本根「${firstRoot.dir || '.'}」不存在：这个目录没有按标准结构放，需要运行元数据脚本 gal-layout-v1（或手动改 config）来调整`)
+    }
     if (existing) report.updated = 1
     else report.imported = 1
     if (!opts.dryRun) await writeItem(item)
@@ -312,6 +305,10 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     if (patch.title !== undefined && String(patch.title || '').trim()) next.title = String(patch.title).trim()
     const published = Date.parse(String(patch.publishedAt || ''))
     if (Number.isFinite(published)) next.publishedAt = new Date(published).toISOString()
+    // gal.config：tag 脚本（gal-layout-v1）写的配置补丁。默认合并（补丁里写了的字段替换原来的，值为 null = 删掉回默认），replace = 整体替换
+    if (patch.gal && typeof patch.gal === 'object' && !Array.isArray(patch.gal) && patch.gal.config !== undefined) {
+      next.config = applyGalConfigPatch(item.config, patch.gal.config, { replace: patch.gal.replace === true })
+    }
     return { ...next, updatedAt: new Date().toISOString() }
   })
   const patchUnitMetadata = async (itemId, unitId) => (await readItem(itemId)).mediaUnits.find((unit) => unit.unitId === unitId)

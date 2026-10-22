@@ -16,7 +16,7 @@ const el = (tag, className = '', text = '') => {
 //   onEscape()           沉浸时按 Esc
 export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null }) {
   const node = reader.node
-  const root = el('div', `gal-browse gal-browse-${node.kind}`)
+  const root = el('div', 'gal-browse')
   root.dataset.node = node.id
 
   // 顶部：面包屑（每一级都能点）+ 上一级
@@ -104,53 +104,26 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     return box
   }
 
-  const body = el('div', `gal-browse-body gal-browse-${node.kind}-body`)
+  // 一律卡片：目录卡片（头像/文件夹图标、中文标签、数量）和脚本卡片（缩略图、台词摘要）混排，右上角的小标签是来源（合并目录时用来分辨来自哪个目录）
+  const body = el('div', 'gal-browse-body gal-browse-cards')
+  if (node.notice) body.append(el('div', 'gal-browse-notice', node.notice))
   if (!node.items.length) body.append(el('div', 'gal-browse-empty', '这里还没有内容'))
-
-  if (node.kind === 'grid') {
-    for (const item of node.items) {
-      const card = el('button', 'gal-card')
-      card.type = 'button'
-      card.dataset.node = item.node
-      card.append(thumbOf(item, 'gal-card-thumb'), el('div', 'gal-card-title', item.title))
-      if (item.subtitle) card.append(el('div', 'gal-card-sub', item.subtitle))
-      card.addEventListener('click', () => onOpen(item.node))
-      body.append(card)
+  for (const item of node.items) {
+    const card = el('button', `gal-card ${item.type === 'dir' ? 'is-dir' : 'is-script'}`)
+    card.type = 'button'
+    card.dataset.node = item.node
+    card.dataset.title = item.title
+    card.title = item.title
+    const thumb = thumbOf(item, 'gal-card-thumb')
+    if (item.badge) thumb.append(el('span', 'gal-card-badge', item.badge))
+    if (item.type === 'script') {
+      const progressTag = progressBadge(item.node)
+      if (progressTag) { progressTag.classList.add('gal-card-progress'); thumb.append(progressTag) }
     }
-  } else {
-    for (const item of node.items) {
-      const variants = item.variants || []   // 节点可以给一项挂多个入口（比如图片版/视频版）；目录方案没给就是空
-      const row = el('div', `gal-row${item.type === 'dir' ? ' is-dir' : ''}`)
-      row.dataset.title = item.title
-      const main = el(variants.length ? 'div' : 'button', 'gal-row-main')
-      if (!variants.length) {
-        main.type = 'button'
-        main.dataset.node = item.node
-        main.addEventListener('click', () => onOpen(item.node))
-      }
-      const text = el('div', 'gal-row-text')
-      text.append(el('div', 'gal-row-title', item.title))
-      if (item.subtitle) text.append(el('div', 'gal-row-sub', item.subtitle))
-      main.append(thumbOf(item, 'gal-row-thumb'), text)
-      row.append(main)
-      const side = el('div', 'gal-row-side')
-      if (variants.length) {
-        for (const variant of variants) {
-          const button = el('button', 'gal-variant', variant.label || '播放')
-          button.type = 'button'
-          button.dataset.node = variant.node
-          button.addEventListener('click', () => onOpen(variant.node))
-          const badge = progressBadge(variant.node)
-          if (badge) button.append(badge)
-          side.append(button)
-        }
-      } else {
-        const badge = progressBadge(item.node)
-        if (badge) side.append(badge)
-      }
-      row.append(side)
-      body.append(row)
-    }
+    card.append(thumb, el('div', 'gal-card-title', item.title))
+    if (item.subtitle) card.append(el('div', 'gal-card-sub', item.subtitle))
+    card.addEventListener('click', () => onOpen(item.node))
+    body.append(card)
   }
   root.append(body)
 

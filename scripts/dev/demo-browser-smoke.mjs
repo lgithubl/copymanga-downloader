@@ -113,9 +113,9 @@ check('卡片带导入方案（data-profile）', (await page.$$eval('#library-it
   check('Gal 首页：真实目录树 9 个目录（中文标签）；默认沉浸；有「文本版本」下拉', st.cards.length === 9 && st.cards[0] === '纪念馆' && st.imm && st.sets.length === 2, J(st))
   await g.click('.gal-card[data-node="d:character"]'); await g.waitForSelector('.gal-card[data-node="d:character/1003"]')
   check('角色页：名称文件里的名字', J(await g.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))) === J(['卡蒂娅', '小夜', '2001']))
-  await g.click('.gal-card[data-node="d:character/1003"]'); await g.waitForSelector('.gal-card[data-node="d:character/1003/adultr"]')
-  await g.click('.gal-card[data-node="d:character/1003/adultr"]'); await g.waitForSelector('.gal-row[data-title="100300"]')
-  await g.click('.gal-row[data-title="100300"] .gal-row-main'); await g.waitForSelector('.gal-player .gal-stage')
+  await g.click('.gal-card[data-node="d:character/1003"]'); await g.waitForSelector('.gal-card[data-title="100300"]')
+  check('卡蒂娅这一层：adultr 和 extra 合并成一个卡片列表，右上角来源标签 adu / ext', (await g.$$eval('.gal-card-badge', (es) => es.map((e) => e.textContent))).join() === 'adu,ext,adu,adu,adu' && (await g.$$('.gal-card.is-script')).length === 5)
+  await g.click('.gal-card[data-title="100300"]'); await g.waitForSelector('.gal-player .gal-stage')
   check('点进分支脚本：沉浸保持（头部仍收起）；总步数先不含分支（1 / 5）', (await g.evaluate(() => document.querySelector('#app').classList.contains('stream-immersive'))) && (await g.$eval('.gal-count', (e) => e.textContent)) === '1 / 5')
   // 打开设置：字体大小 / 自动选择
   await g.click('.gal-cfg'); await sleep(200)
@@ -137,7 +137,7 @@ check('卡片带导入方案（data-profile）', (await page.$$eval('#library-it
   await g.click('.gal-cfg')
   await sleep(1500)   // 等进度保存（防抖）
   await g.click('.gal-up'); await g.waitForSelector('.gal-browse')
-  check('「↑ 列表」回到脚本列表，沉浸保持，列表上标出看到哪', (await g.evaluate(() => document.querySelector('#app').classList.contains('stream-immersive'))) && /看到|已看完/.test(await g.$eval('.gal-row[data-title="100300"]', (e) => e.textContent)))
+  check('「↑ 列表」回到脚本列表，沉浸保持，列表上标出看到哪', (await g.evaluate(() => document.querySelector('#app').classList.contains('stream-immersive'))) && /看到|已看完/.test(await g.$eval('.gal-card[data-title="100300"]', (e) => e.textContent)))
   await g.keyboard.press('Escape'); await sleep(400)
   check('浏览层按 Esc 退出沉浸（头部回来）', !(await g.evaluate(() => document.querySelector('#app').classList.contains('stream-immersive'))))
   await g.close()

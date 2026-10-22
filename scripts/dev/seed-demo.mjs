@@ -87,10 +87,24 @@ try {
     }
   }
   await rebuild()
-  if (epub.body?.itemId) await postJson(`/api/library/items/epub/${epub.body.itemId}/tags`, { tags: ['演示:朗读规则', '语言:中日对照'] })
-  if (txt.body?.itemId) await postJson(`/api/library/items/media/${txt.body.itemId}/tags`, { tags: ['演示:文本媒体'] })
+  // 打标签接口是「整体设置」：先读出现有标签（含脚本生成的状态标签），加上演示标签再写回，别把它们冲掉
+  const addTags = async (type, itemId, extra) => {
+    if (!itemId) return
+    const current = (await api(`/api/library/items/${type}/${itemId}`)).body?.tags || []
+    await postJson(`/api/library/items/${type}/${itemId}/tags`, { tags: [...new Set([...current, ...extra])] })
+  }
+  await addTags('epub', epub.body?.itemId, ['演示:朗读规则', '语言:中日对照'])
+  await addTags('media', txt.body?.itemId, ['演示:文本媒体'])
   const gal = (await api('/api/library/items?type=gal&page=1&limit=5')).body?.items?.[0]
-  if (gal) await postJson(`/api/library/items/gal/${gal.itemId}/tags`, { tags: ['演示:Gal'] })
+  if (gal) {
+    // 等 gal-layout-v1 跑完（它会写 config.script 和状态标签），再加演示标签
+    for (let i = 0; i < 60; i++) {
+      const full = (await api(`/api/library/items/gal/${gal.itemId}`)).body
+      if (full?.config?.script?.version) break
+      await sleep(1000)
+    }
+    await addTags('gal', gal.itemId, ['演示:Gal'])
+  }
   await rebuild()
   console.log(`seed done: gal=${gal ? gal.itemId : '（没有）'} epub=${epub.body?.itemId || '-'} txt=${txt.body?.itemId || '-'}`)
 } finally {

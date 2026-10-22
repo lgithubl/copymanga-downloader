@@ -7697,7 +7697,7 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     showView('library-view')
     if (result.report && profile.type === 'gal') {
       const r = result.report
-      alert(`Gal 导入完成：新建 ${r.imported}，更新 ${r.updated}，没有脚本 ${r.skippedNoScript}，失败 ${r.failed}（共 ${r.scripts} 个脚本）${r.errors?.length ? `\n${r.errors.map((e) => `${e.dir}: ${e.error}`).join('\n')}` : ''}`)
+      alert(`Gal 导入完成：新建 ${r.imported}，更新 ${r.updated}。${r.warnings?.length ? `\n提示：${r.warnings.join('\n')}` : '\n导入后会自动运行元数据脚本 gal-layout-v1 探测目录结构、挑封面（在任务列表/元数据脚本里能看到）。'}${r.errors?.length ? `\n${r.errors.map((e) => `${e.dir || ''}: ${e.error}`).join('\n')}` : ''}`)
     } else if (profile.batch) alert(`已导入 ${importedItems.length} 个${profile.type === 'archive' ? '压缩包图集' : ' RJ 媒体'}`)
   } catch (error) {
     alert(error.message)
