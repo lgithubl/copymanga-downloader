@@ -713,10 +713,10 @@
               </label>
               <button id="config-epub-tts-preview-run" type="button" class="secondary">预览</button>
               <pre id="config-epub-tts-preview-result" class="muted"></pre>
-              <label>朗读 flag 规则（一行一条「选择器 =&gt; flag」；给内容分类，阅读页的「朗读：…」下拉按 flag 选读哪部分，页面始终显示全部内容；# 开头为注释）
-                <textarea id="config-epub-tts-flag-rules" rows="4" spellcheck="false" placeholder="# 例：中日对照本，淡色的是日文&#10;p[style*=&quot;opacity&quot;] => ja&#10;* => zh"></textarea>
+              <label>朗读规则（JSON 数组；给内容分类并让每个类别有自己的 TTS 参数。阅读页的「朗读：…」下拉按 flag 选读哪部分，页面始终显示全部内容）
+                <textarea id="config-epub-tts-rules" class="config-rules-json" rows="6" spellcheck="false" placeholder='[&#10;  {"match":"p[style*=\"opacity\"]","flag":"ja","text_language":"ja","prompt_language":"ja","prompt_audio":"/refs/ja.wav","prompt_text":"…"},&#10;  {"match":"*","flag":"zh","text_language":"zh"}&#10;]'></textarea>
               </label>
-              <div class="muted">选择器支持：标签、.类、#id、[属性]、[属性=值]、[属性*=值]、:not(…)、空格（后代）、&gt;（子元素）、逗号。「@kana =&gt; ja」表示所在段落有假名就打 ja。「* =&gt; zh」是兜底，只有这一章里至少有一条其它规则命中时才生效（普通的书不会被全打上 zh）。</div>
+              <div class="muted">每条规则：<code>match</code>（选择器；<code>@kana</code> = 所在段落有假名；<code>*</code> = 兜底，只在这一章至少有一条别的规则命中时才生效）、<code>flag</code>（你起的名字，比如 ja / zh），以及可选的这个 flag 自己的 TTS 参数：<code>speaker_audio</code>、<code>prompt_audio</code>、<code>prompt_text</code>、<code>text_language</code>、<code>prompt_language</code>（名字和 GSV-TTS-Lite 接口一致）。没写的参数用上面的「默认」；参考音频三件套（speaker_audio / prompt_audio / prompt_text）只要写了其中一个就整组用规则里的，两个语言各自单独回落。同一个 flag 写在多条规则里只取第一条的参数；没命中任何规则的句子用默认。选择器支持：标签、.类、#id、[属性]、[属性=值]、[属性*=值]、:not(…)、空格（后代）、&gt;（子元素）、逗号。空 = 不分类，全部用默认。</div>
               <button id="config-epub-tts-flag-check" type="button" class="secondary">检查规则</button>
               <pre id="config-epub-tts-flag-result" class="muted"></pre>
               <label>最大并发（同时打到 TTS 服务的请求数，GPU 推理扛不住乱打）<input id="config-epub-tts-max-concurrency" type="number" min="1" max="8" step="1" /></label>

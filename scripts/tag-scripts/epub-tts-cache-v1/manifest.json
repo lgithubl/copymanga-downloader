@@ -1,8 +1,8 @@
 {
   "id": "epub-tts-cache-v1",
   "name": "EPUB 朗读缓存 v1",
-  "version": "1.2.0",
-  "description": "为 EPUB / TXT 预生成朗读音频缓存（与阅读器朗读同一份分句、同一套缓存键、同一个并发队列），并打上缓存完成度 tag。可用 flags 选项只处理指定 flag 的句子（flag 由配置页的「朗读 flag 规则」打上）；命中缓存的句子自动跳过，可中断后续跑；没有可读内容的句子（分隔线、省略号等）不合成也不算失败；dryRun 只统计不调用 TTS。",
+  "version": "1.3.0",
+  "description": "为 EPUB / TXT 预生成朗读音频缓存（与阅读器朗读同一份分句、同一套缓存键、同一个并发队列），并打上缓存完成度 tag。可用 flags 选项只处理指定 flag 的句子（flag 由配置页的「朗读规则」打上，每个 flag 可以有自己的 TTS 参数，缓存按「文本 + 该 flag 的音色」区分）；命中缓存的句子自动跳过，可中断后续跑；没有可读内容的句子（分隔线、省略号等）不合成也不算失败；dryRun 只统计不调用 TTS。",
   "scope": ["item", "units"],
   "libraryTypes": ["epub", "media"],
   "exclusiveTagGroups": ["朗读缓存", "朗读缓存version", "朗读缓存音色", "朗读缓存范围"],

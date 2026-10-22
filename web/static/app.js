@@ -237,7 +237,7 @@ const els = {
   configEpubTtsTextLanguage: document.querySelector('#config-epub-tts-text-language'),
   configEpubTtsPromptLanguage: document.querySelector('#config-epub-tts-prompt-language'),
   configEpubTtsReplacements: document.querySelector('#config-epub-tts-replacements'),
-  configEpubTtsFlagRules: document.querySelector('#config-epub-tts-flag-rules'),
+  configEpubTtsRules: document.querySelector('#config-epub-tts-rules'),
   configEpubTtsFlagCheck: document.querySelector('#config-epub-tts-flag-check'),
   configEpubTtsFlagResult: document.querySelector('#config-epub-tts-flag-result'),
   configEpubTtsPreviewInput: document.querySelector('#config-epub-tts-preview-input'),
@@ -1457,7 +1457,7 @@ async function loadConfig() {
   els.configEpubTtsTextLanguage.value = config.epubTtsTextLanguage || ''
   els.configEpubTtsPromptLanguage.value = config.epubTtsPromptLanguage || ''
   els.configEpubTtsReplacements.value = config.epubTtsTextReplacements || ''
-  els.configEpubTtsFlagRules.value = config.epubTtsFlagRules || ''
+  els.configEpubTtsRules.value = formatEpubTtsRules(config.epubTtsRules)
   els.configEpubTtsMaxConcurrency.value = config.epubTtsMaxConcurrency || 1
   els.configEpubTtsBatchMaxSentences.value = config.epubTtsBatchMaxSentences || 5
   els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
@@ -5756,7 +5756,8 @@ async function requestEpubTtsChunks(itemId, indexes) {
     const res = await fetch(`/api/epub/${itemId}/tts-chunk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texts: indexes.map((i) => epubTtsSentences[i].text) }),
+      // flags 和 texts 一一对应：服务端按每句 flag 的规则取 TTS 参数（音色、语言），没有 flag 的用默认
+      body: JSON.stringify({ texts: indexes.map((i) => epubTtsSentences[i].text), flags: indexes.map((i) => epubTtsSentences[i].flag || '') }),
     })
     const data = await res.json()
     for (const chunk of data.chunks || []) {
@@ -5957,6 +5958,9 @@ function toggleEpubTts(btn, content) {
 // 都能正确把这路播放也停掉，不会撞车。
 async function playSelectedText(btn) {
   const text = String(window.getSelection?.() || '').trim()
+  // 选中的文字属于哪个 flag：看选区起点所在句子的 data-tts-flag（没有 = 默认音色）
+  const anchor = window.getSelection?.()?.anchorNode
+  const selectionFlag = (anchor?.nodeType === 1 ? anchor : anchor?.parentElement)?.closest?.('[data-tts-flag]')?.dataset?.ttsFlag || ''
   epubTtsSelectionBtn = btn
   stopEpubTts()
   if (!text) return
@@ -5968,7 +5972,7 @@ async function playSelectedText(btn) {
     const res = await fetch(`/api/epub/${itemId}/tts-chunk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texts: [text] }),
+      body: JSON.stringify({ texts: [text], flags: [selectionFlag] }),
     })
     const data = await res.json()
     const chunk = data.chunks?.[0]
@@ -7959,14 +7963,19 @@ els.sidebarToggle.addEventListener('click', () => {
 els.configEpubTtsFlagCheck?.addEventListener('click', async () => {
   const out = els.configEpubTtsFlagResult
   try {
+    const rules = parseEpubTtsRules(els.configEpubTtsRules.value)
     const res = await fetch('/api/epub/tts-preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texts: [], flagRules: els.configEpubTtsFlagRules.value }),
+      body: JSON.stringify({ texts: [], ttsRules: rules }),
     })
     const flag = (await res.json()).flag
     const lines = [`有效规则 ${flag.ruleCount} 条${flag.fallback ? `，兜底 flag：${flag.fallback}` : '，没有兜底规则'}`]
-    for (const error of flag.errors) lines.push(`第 ${error.line} 行无效，已忽略：${error.error}`)
+    for (const entry of flag.flags) {
+      const p = entry.params
+      lines.push(`  ${entry.flag}：参考音频 ${p.promptAudio || '（默认）'}，文字稿 ${p.promptText ? '有' : '无'}，语言 ${p.textLanguage || 'auto'}/${p.promptLanguage || 'auto'}`)
+    }
+    for (const error of flag.errors) lines.push(`第 ${error.index} 条无效，已忽略：${error.error}`)
     out.textContent = lines.join('\n')
   } catch (error) {
     out.textContent = `检查失败：${error.message}`
@@ -7991,6 +8000,19 @@ els.configEpubTtsPreviewRun.addEventListener('click', async () => {
     out.textContent = `预览失败：${error.message}`
   }
 })
+// 朗读规则文本框（JSON 数组）：一条规则一行；写错了明确报错，不保存
+function formatEpubTtsRules(rules) {
+  const list = Array.isArray(rules) ? rules : []
+  return list.length ? `[\n${list.map((rule) => `  ${JSON.stringify(rule)}`).join(',\n')}\n]` : '[]'
+}
+function parseEpubTtsRules(text) {
+  const raw = String(text || '').trim()
+  if (!raw) return []
+  let parsed
+  try { parsed = JSON.parse(raw) } catch (error) { throw new Error(`「朗读规则」不是合法的 JSON：${error.message}`) }
+  if (!Array.isArray(parsed)) throw new Error('「朗读规则」必须是 JSON 数组，例如 [{"match":"@kana","flag":"ja"}]')
+  return parsed
+}
 els.configMediaNewTabAdd.addEventListener('click', () => {
   try { addNewTabRule(els.configMediaNewTabRules, document.querySelector('#config-media-new-tab-pick-profile'), document.querySelector('#config-media-new-tab-pick-kind'), '打开媒体') } catch (error) { alert(error.message) }
 })
@@ -8001,6 +8023,7 @@ els.configSave.addEventListener('click', async () => {
   try {
     // 规则 JSON 写错了就明确报错、不保存（不能悄悄当成空，把已有的规则清掉）
     const newTabRules = { media: parseNewTabRules(els.configMediaNewTabRules.value, '打开媒体'), tagSearch: parseNewTabRules(els.configTagSearchNewTabRules.value, '点标签') }
+    const epubTtsRules = parseEpubTtsRules(els.configEpubTtsRules.value)
     setLoading(els.configSave, true)
     els.token.value = els.configToken.value.trim()
     localStorage.setItem('copymanga.token', els.token.value)
@@ -8038,7 +8061,7 @@ els.configSave.addEventListener('click', async () => {
         epubTtsTextLanguage: els.configEpubTtsTextLanguage.value,
         epubTtsPromptLanguage: els.configEpubTtsPromptLanguage.value,
         epubTtsTextReplacements: els.configEpubTtsReplacements.value,
-        epubTtsFlagRules: els.configEpubTtsFlagRules.value,
+        epubTtsRules: epubTtsRules,
         epubTtsMaxConcurrency: Number(els.configEpubTtsMaxConcurrency.value),
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
