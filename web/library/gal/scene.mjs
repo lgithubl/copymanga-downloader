@@ -13,8 +13,9 @@ import { galAdapter } from './adapters/index.mjs'
 
 export const SCENE_FORMAT = 'gal-scene/1'
 
-export function buildScene(adapterId, text) {
-  const { steps, stats } = galAdapter(adapterId).parse(text)
+// ctx：适配器的媒体上下文（见 context.mjs；没有就不传）
+export function buildScene(adapterId, text, ctx = null) {
+  const { steps, stats } = galAdapter(adapterId).parse(text, ctx)
   return { format: SCENE_FORMAT, adapter: adapterId, steps, stats }
 }
 

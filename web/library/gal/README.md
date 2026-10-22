@@ -27,11 +27,31 @@ tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构�
 | `dirThumbs` | 目录卡片头像规则：`{parent, name(正则), paths(模板，{name} {parent})}`，取第一个存在的 |
 | `scriptThumbs` | 脚本缩略图模板（`{stem}` `{thumbsDir}`；`~/` = 相对媒体目录），之后才是「脚本里第一张背景图」 |
 | `cover` / `scriptCount` / `script` | 封面路径（`~/` 开头 = 相对媒体目录，只给封面用）/ 脚本数 / 谁写的这份配置 `{id, version, ranAt}` |
+| `groups` | 分组：`[{parent: 通配或 '.', pattern}]`。列 `parent` 下的目录时，脚本名（无扩展名）匹配 `pattern` 的按**第 1 个捕获组**归进虚拟目录（一个键一张卡片，节点 id `g:<键>:<路径>`），不匹配的照常列出；名字/头像和真实目录一样查 `labels` / `namesFiles` / `dirThumbs`。`parent: '.'` = 脚本根本身（`merge` 也认） |
+| `game` | `{id, title}`：这个媒体是哪个游戏/资源包（`id` 只含字母数字 `_-`）。**导入时在 config 里写**，tag 脚本按它分发——同一个 adapter、配置不同的两个媒体靠它区分；脚本同时打 `Gal游戏: <id>` 标签方便搜索（以 config 为准） |
+| `adapterOptions` | `{<adapter id>: {…}}`，原样交给适配器（≤ 8KB）；需要查别的文件的适配器用它指路径，见下 |
+| `hiddenDirs` | 列目录时不显示的目录名（任意层级，精确匹配） |
 | `stripPrefixes` `scriptExtensions` `pageSize` | 资源找不到时去掉的前缀 / 脚本扩展名 / 每页卡片数 |
 
 元数据里只存**写过的字段**（没写的随引擎默认值走）；补丁默认合并（写了的顶层字段整个替换，`null` = 删掉回默认），`replace` = 整体替换。
 所有路径都是相对媒体目录、不许绝对路径和 `..`；模板只做占位符替换，读文件前仍要通过存在性检查和「只认媒体目录内的真实路径」——
 脚本写进去的 config 再坏，也读不到媒体目录以外。
+
+### 适配器的媒体上下文（context）
+
+适配器本身只做 `text → scene`。有些格式的脚本里只写别名（Ren'Py 的 `scene 10001A1-10` 要查 `script/movie.rpy` 才知道是哪个 webm），
+适配器可以声明 `contextFiles(options)`（要读的文本）/ `contextDirs(options)`（要递归列文件名的目录）/ `prepare(…) → ctx`，引擎读好后把 `ctx` 传给 `parse(text, ctx)`
+（`gal/context.mjs`）：按文本文件 mtime+size 缓存，目录列表最多缓存 5 分钟；路径在 `config.adapterOptions[适配器 id]` 里配（相对媒体目录）。
+
+### 适配器 renpy-monmusu 与脚本 gal-layout-monmusu
+
+- 适配器认：`scene black|<视频别名>|<图片名> [with 转场]`、`play music/sound`、`stop music`、`voice`、`"名字" "台词"`、`pause 秒`；一句台词一步。
+  视频别名来自 `image X = Movie(play=…)`，图片名来自 `images/` 下的文件名（或 `image X = "文件"`）；查不到的 `scene` 保留成 raw。翻译叠加（`tl/*`）暂不处理。
+- 导入时自己填：`adapters: ['renpy-monmusu']`、路径、`config: {"game": {"id": "monmusu"}}`、`defaultMetadataActions: ['gal-layout-monmusu']`。
+- 脚本探测 `script/hscene`（+ `script/movie.rpy`），多一层目录（如 `game/`）自动带前缀；写：脚本根 `<游戏根>/script`、资源根 `<游戏根>`、
+  合并 `hscene`+`hscene_still`（角标 `anim`/`still`）、按文件名前 5 位角色编号分组、隐藏 `sub_nav`/`tl`、`adapterOptions`（别名表、图片目录）、
+  头像模板（`images` 里找 `icon_<编号>_0_idle.*`）、封面、脚本数。只处理 `config.game.id` 为 `monmusu`（或没有 game 且认出结构）的媒体；
+  `gal-layout-v1` 同理只处理 `uviewer`/没有 game 的媒体，两个脚本互不覆盖。
 
 ### 脚本 gal-layout-v1
 

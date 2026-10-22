@@ -16,7 +16,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 
-const TAG_GROUPS = ['Gal配置', 'Gal配置version']
+const TAG_GROUPS = ['Gal配置', 'Gal配置version', 'Gal游戏']
 const SCRIPT_EXT = 'txt'
 const SAFE_SEGMENT = /^[^/\\\0]+$/
 
@@ -25,6 +25,11 @@ export async function generateTags(ctx) {
   const media = String(ctx.item?.source?.path || '')
   if (!media) throw new Error('条目没有记录来源目录（source.path）')
   const logs = [`探测 Gal 目录：${media}`]
+  const game = ctx.item?.config?.game
+  if (game?.id && game.id !== 'uviewer') {
+    logs.push(`这个媒体的 config.game.id 是「${game.id}」，不归本脚本（UViewer 布局）管：跳过`)
+    return keepOwn(ctx, logs)
+  }
   if (!(await isDir(media))) {
     logs.push('目录不存在或不可读：不改任何配置')
     return keepOwn(ctx, logs)
@@ -62,6 +67,7 @@ export async function generateTags(ctx) {
   // 4) 记下是谁写的
   const version = String(ctx.script?.version || 'unknown')
   config.script = { id: ctx.script?.id || 'gal-layout-v1', version, ranAt: new Date().toISOString() }
+  if (found.kind === 'uviewer') config.game = { id: 'uviewer', title: game?.title || '' }
 
   if (options.dryRun) {
     logs.push('【dryRun】只探测，不写配置；用完请关闭 dryRun 选项')
@@ -70,7 +76,7 @@ export async function generateTags(ctx) {
   }
   const state = applied.length ? '自定义' : found.kind
   return {
-    itemTags: [`Gal配置: ${state}`, `Gal配置version: ${version}`],
+    itemTags: [`Gal配置: ${state}`, `Gal配置version: ${version}`, ...(found.kind === 'uviewer' ? ['Gal游戏: uviewer'] : [])],
     unitTags: [],
     unitPatches: [],
     itemPatch: { gal: { config, replace: options.replace }, ...(title ? { title } : {}) },

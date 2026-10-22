@@ -1,12 +1,12 @@
 {
   "id": "gal-layout-v1",
   "name": "Gal 布局配置 v1",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "探测 Gal 媒体目录的实际结构，把条目的 config（脚本根、资源根、名称文件、缩略图目录、目录标签、合并目录、头像/缩略图规则）调到能正确读取，并挑封面、统计脚本数。导入时自动跑一次；目录没按标准结构放（路径多了一层、资源不在默认位置…）就靠它修正。在选项里可以按路径给某个媒体单独覆盖任何配置；脚本版本和运行时间会写进 config.script，并打上「Gal配置version」标签。改了脚本直接上传新版本重跑，不用改镜像。",
   "scope": ["item"],
   "libraryTypes": ["gal"],
   "mediaKinds": [],
-  "exclusiveTagGroups": ["Gal配置", "Gal配置version"],
+  "exclusiveTagGroups": ["Gal配置", "Gal配置version", "Gal游戏"],
   "defaultEnabled": true,
   "main": "main.js",
   "options": {

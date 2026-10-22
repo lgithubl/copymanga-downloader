@@ -13,14 +13,16 @@
 // 节点 id（不透明字符串，前端原样传回）：
 //   ''                          默认脚本根（首页）
 //   d:<相对路径>[#页码]          目录                s:<相对路径>   脚本（播放页）
-//   @<脚本根 id>|d:…  /  @<脚本根 id>|s:…            非默认的脚本根（比如另一种语言的文本）
+//   g:<编码后的分组键>:<相对路径>[#页码]   虚拟目录（config.groups：脚本名按正则分组，比如同一角色的几个脚本）
+//   @<脚本根 id>|d:…  /  @<脚本根 id>|s:…  /  @<脚本根 id>|g:…   非默认的脚本根（比如另一种语言的文本）
 // 路径都相对「脚本根」。合并目录（config.merge）：列某个目录时，把它指定的几个子目录的内容合进同一个列表，
 // 这几个子目录本身不再出现；脚本节点 id 仍是真实路径，所以进度/历史不受影响。
 // 大目录靠翻页和按需读取：只列当前目录，读脚本头/内容只对当前页做，并按 mtime 缓存。
 import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { sniffGalAdapter } from './adapters/index.mjs'
-import { expandTemplate, globToRegExp, normalizeGalConfig } from './config.mjs'
+import { galAdapter, sniffGalAdapter } from './adapters/index.mjs'
+import { expandTemplate, normalizeGalConfig, parentRegExp } from './config.mjs'
+import { loadAdapterContext } from './context.mjs'
 import { safeRelPath } from './paths.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
@@ -55,13 +57,21 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const sets = config.scriptRoots
   const defaultSet = sets[0]
   const setById = (id) => sets.find((s) => s.id === id)
-  const mergeRules = config.merge.map((rule) => ({ ...rule, test: globToRegExp(rule.parent) }))
+  const mergeRules = config.merge.map((rule) => ({ ...rule, test: parentRegExp(rule.parent) }))
+  const groupRules = config.groups.map((rule) => ({ ...rule, test: parentRegExp(rule.parent), re: new RegExp(rule.pattern) }))
   const dirThumbRules = config.dirThumbs.map((rule) => ({ ...rule, nameRe: rule.name ? new RegExp(rule.name) : null }))
   const infoCache = new Map()   // 脚本 → { adapterId, thumb, excerpt, hasMovie }，按 mtime+size 失效
   let namesCache = null
 
   const absOf = (set, rel) => path.join(mediaDir, ...(set.dir ? set.dir.split('/') : []), ...(rel ? rel.split('/') : []))
   const mergeRuleAt = (dirRel) => mergeRules.find((rule) => rule.test.test(dirRel)) || null
+  const groupRuleAt = (dirRel) => groupRules.find((rule) => rule.test.test(dirRel)) || null
+  const groupKeyOf = (rule, stem) => {
+    const key = rule ? rule.re.exec(stem)?.[1] : ''
+    return key && key.length <= 100 ? key : ''
+  }
+  // 脚本所在列表（合并后的父目录）的分组键；不在分组规则下 = ''
+  const scriptGroupKey = (rel) => groupKeyOf(groupRuleAt(effectiveParentDir(rel)), stemOf(rel))
   // d 是不是某个合并规则里被合并掉的子目录（返回规则；不是返回 null）
   const mergedSourceRule = (dirRel) => {
     if (!dirRel) return null
@@ -92,6 +102,14 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const colon = body.indexOf(':')
     const tag = colon < 0 ? body : body.slice(0, colon)
     const arg = colon < 0 ? '' : body.slice(colon + 1)
+    if (tag === 'g') {
+      const split = arg.indexOf(':')
+      let key = ''
+      try { key = split < 0 ? '' : decodeURIComponent(arg.slice(0, split)) } catch { /* 无效 */ }
+      const groupRel = split < 0 ? null : safeRelPath(arg.slice(split + 1))
+      if (!key || groupRel === null) throw fail(`无效的节点：${textId.slice(0, 80)}`)
+      return { set, kind: 'group', key, rel: groupRel, page }
+    }
     if (tag !== 'd' && tag !== 's') throw fail(`无效的节点：${textId.slice(0, 80)}`)
     const rel = safeRelPath(arg)
     if (rel === null) throw fail('无效的路径', 400)
@@ -103,6 +121,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     if (!rel && set === defaultSet) return page > 1 ? `#${page}` : ''
     return `${set === defaultSet ? '' : `@${set.id}|`}d:${rel}${page > 1 ? `#${page}` : ''}`
   }
+
+  const groupNodeId = (set, dirRel, key, page) => `${set === defaultSet ? '' : `@${set.id}|`}g:${encodeURIComponent(key)}:${dirRel}${page > 1 ? `#${page}` : ''}`
 
   // ---------- 读目录 / 脚本 ----------
   async function readNames() {
@@ -120,6 +140,15 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return merged
   }
   const labelOf = async (name) => config.labels[name] || String((await readNames())[name] || '') || name
+
+  const adapterContexts = new Map()   // 适配器 id → ctx（本次请求内）
+  async function contextOf(adapterId) {
+    if (!adapterId) return null
+    if (!adapterContexts.has(adapterId)) {
+      adapterContexts.set(adapterId, await loadAdapterContext({ adapter: galAdapter(adapterId), mediaDir, config }).catch(() => null))
+    }
+    return adapterContexts.get(adapterId)
+  }
 
   async function scriptAdapterOf(abs) {
     let info
@@ -148,8 +177,10 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     for (const entry of entries) {
       if (hidden(entry.name) || entry.name.includes('|') || entry.name.includes('#')) continue
       const childRel = rel ? `${rel}/${entry.name}` : entry.name
-      if (entry.isDirectory()) dirs.push({ type: 'dir', name: entry.name, rel: childRel, origin })
-      else if (entry.isFile() && scriptExtensions.includes(extOf(entry.name)) && (await scriptAdapterOf(absOf(set, childRel)))) scripts.push({ type: 'script', name: entry.name, stem: stemOf(entry.name), rel: childRel, origin })
+      if (entry.isDirectory()) {
+        if (config.hiddenDirs.includes(entry.name)) continue
+        dirs.push({ type: 'dir', name: entry.name, rel: childRel, origin })
+      } else if (entry.isFile() && scriptExtensions.includes(extOf(entry.name)) && (await scriptAdapterOf(absOf(set, childRel)))) scripts.push({ type: 'script', name: entry.name, stem: stemOf(entry.name), rel: childRel, origin })
     }
     return { dirs, scripts }
   }
@@ -174,7 +205,23 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     }
     dirs.sort((a, b) => naturalCompare(a.name, b.name))
     scripts.sort((a, b) => naturalCompare(a.name, b.name))
-    return { dirs, scripts, all: [...dirs, ...scripts] }
+    // 分组：能匹配分组规则的脚本收进虚拟目录（一个键一张卡片），其余照常列出
+    const groupRule = groupRuleAt(rel)
+    const groups = []
+    let rest = scripts
+    if (groupRule) {
+      const byKey = new Map()
+      rest = []
+      for (const script of scripts) {
+        const key = groupKeyOf(groupRule, script.stem)
+        if (!key) { rest.push(script); continue }
+        if (!byKey.has(key)) byKey.set(key, [])
+        byKey.get(key).push(script)
+      }
+      for (const [key, members] of byKey) groups.push({ type: 'group', name: key, key, rel: `g:${key}`, members })
+      groups.sort((a, b) => naturalCompare(a.key, b.key))
+    }
+    return { dirs, groups, scripts: rest, allScripts: scripts, all: [...dirs, ...groups, ...rest] }
   }
 
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
@@ -190,7 +237,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     let hasMovie = false
     let scene = null
     try {
-      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text)
+      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId))
       excerpt = excerptOf(scene)
       hasMovie = scene.steps.some((step) => step.commands.some((c) => c.op === 'movie'))
     } catch { /* 解析失败：照样列出来，打开时再报错 */ }
@@ -211,7 +258,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   }
 
   async function dirThumb(entry) {
-    const parentName = entry.rel.includes('/') ? entry.rel.split('/').slice(-2, -1)[0] : ''
+    const parentName = entry.parentName ?? (entry.rel.includes('/') ? entry.rel.split('/').slice(-2, -1)[0] : '')
     for (const rule of dirThumbRules) {
       if (rule.parent !== '*' && rule.parent !== parentName) continue
       if (rule.nameRe && !rule.nameRe.test(entry.name)) continue
@@ -242,14 +289,21 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const index = all.findIndex((e) => e.rel === childRel)
     return Math.floor(Math.max(0, index) / pageSize) + 1
   }
-  async function parentOf(set, kind, rel) {
+  async function parentOf(set, kind, rel, key = '') {
     if (kind === 'dir' && !rel) return null
+    if (kind === 'group') return dirNodeId(set, rel, await pageOfChild(set, rel, `g:${key}`))
     const dir = effectiveParentDir(rel)
+    const groupKey = kind === 'script' ? scriptGroupKey(rel) : ''
+    if (groupKey) {
+      const { allScripts } = await listDir(set, dir)
+      const index = allScripts.filter((s) => groupKeyOf(groupRuleAt(dir), s.stem) === groupKey).findIndex((s) => s.rel === rel)
+      return groupNodeId(set, dir, groupKey, Math.floor(Math.max(0, index) / pageSize) + 1)
+    }
     // 被合并掉的子目录本身（用链接直接进来的）不在父目录的列表里，回到父目录第 1 页
     const page = mergedSourceRule(rel) ? 1 : await pageOfChild(set, dir, rel)
     return dirNodeId(set, dir, page)
   }
-  async function breadcrumbOf(set, kind, rel) {
+  async function breadcrumbOf(set, kind, rel, key = '') {
     const crumbs = [{ id: dirNodeId(set, '', 1), title: sets.length > 1 && set !== defaultSet ? `首页（${set.label || set.id}）` : '首页' }]
     const parts = rel ? rel.split('/') : []
     let acc = ''
@@ -258,17 +312,35 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const last = i === parts.length - 1
       const isScript = kind === 'script' && last
       if (!isScript && !last && mergedSourceRule(acc)) continue   // 被合并掉的目录不出现在路径里
+      if (isScript && key) crumbs.push({ id: groupNodeId(set, effectiveParentDir(rel), key, 1), title: await labelOf(key) })
       crumbs.push({ id: isScript ? idOf(set, 'script', acc) : dirNodeId(set, acc, 1), title: isScript ? stemOf(parts[i]) : await labelOf(parts[i]) })
     }
+    if (kind === 'group') crumbs.push({ id: groupNodeId(set, rel, key, 1), title: await labelOf(key) })
     return crumbs
   }
   const setChoices = (active) => (sets.length > 1 ? sets.map((s) => ({ id: s.id, label: s.label || s.id || '默认', node: dirNodeId(s, '', 1), active: s === active })) : [])
 
   // ---------- 取节点 ----------
   async function getNode(nodeId) {
-    const { set, kind, rel, page } = parseNodeId(nodeId)
-    const breadcrumb = await breadcrumbOf(set, kind, rel)
-    const base = { parent: await parentOf(set, kind, rel).catch(() => null), breadcrumb, sets: setChoices(set), pageSize }
+    const { set, kind, rel, page, key: nodeKey = '' } = parseNodeId(nodeId)
+    const key = kind === 'group' ? nodeKey : kind === 'script' ? scriptGroupKey(rel) : ''
+    const breadcrumb = await breadcrumbOf(set, kind, rel, key)
+    const base = { parent: await parentOf(set, kind, rel, key).catch(() => null), breadcrumb, sets: setChoices(set), pageSize }
+
+    if (kind === 'group') {
+      const rule = groupRuleAt(rel)
+      const { allScripts } = await listDir(set, rel).catch(() => { throw fail('目录不存在', 404) })
+      const members = rule ? allScripts.filter((s) => groupKeyOf(rule, s.stem) === key) : []
+      if (!members.length) throw fail('分组不存在', 404)
+      const pageCount = Math.max(1, Math.ceil(members.length / pageSize))
+      const current = Math.min(page, pageCount)
+      const items = []
+      for (const entry of members.slice((current - 1) * pageSize, current * pageSize)) {
+        const info = await scriptInfo(set, entry.rel)
+        items.push({ type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin, node: idOf(set, 'script', entry.rel) })
+      }
+      return { node: { id: groupNodeId(set, rel, key, current), kind: 'cards', title: await labelOf(key), ...base, page: current, pageCount, total: members.length, items } }
+    }
 
     if (kind === 'dir') {
       // 脚本根本身读不到（目录没按标准结构放、config 还没调对）：不报错，给一个空的首页 + 提示，让人知道该去跑脚本/改 config
@@ -284,7 +356,10 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const slice = all.slice((current - 1) * pageSize, current * pageSize)
       const items = []
       for (const entry of slice) {
-        if (entry.type === 'dir') {
+        if (entry.type === 'group') {
+          const label = await labelOf(entry.key)
+          items.push({ type: 'dir', id: entry.rel, title: label, subtitle: `${label !== entry.key ? `${entry.key} · ` : ''}${entry.members.length} 项`, thumb: await dirThumb({ name: entry.key, parentName: rel ? baseName(rel) : '' }), badge: '', node: groupNodeId(set, rel, entry.key, 1) })
+        } else if (entry.type === 'dir') {
           const label = await labelOf(entry.name)
           const n = await countChildren(set, entry.rel)
           items.push({ type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, thumb: await dirThumb(entry), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) })
@@ -309,11 +384,13 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     } catch { throw fail('脚本不存在', 404) }
     const adapterId = await scriptAdapterOf(abs)
     if (!adapterId) throw fail('不是可识别的脚本', 400)
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text)
+    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId))
 
     // 上一话/下一话：同一个列表里（合并目录时跨来源）相邻的脚本
     const dir = effectiveParentDir(rel)
-    const { scripts } = await listDir(set, dir).catch(() => ({ scripts: [] }))
+    const listed = await listDir(set, dir).catch(() => ({ scripts: [], allScripts: [] }))
+    const rule = groupRuleAt(dir)
+    const scripts = key ? listed.allScripts.filter((s) => groupKeyOf(rule, s.stem) === key) : listed.scripts
     const at = scripts.findIndex((s) => s.rel === rel)
     const neighbour = (entry) => (entry ? { sectionId: idOf(set, 'script', entry.rel), title: entry.stem } : null)
     return {
@@ -323,5 +400,5 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     }
   }
 
-  return { config, getNode, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, effectiveParentDir } }
+  return { config, getNode, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, groupNodeId, effectiveParentDir } }
 }

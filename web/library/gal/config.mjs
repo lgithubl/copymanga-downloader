@@ -18,6 +18,7 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   thumbsDirs: ['user_data/thumbnails'],
   stripPrefixes: [],
   scriptExtensions: ['txt'],
+  hiddenDirs: [],     // 列目录时不显示的目录名（任意层级，按目录名精确匹配；比如导航界面、翻译目录）
   pageSize: DEFAULT_PAGE_SIZE,
   // 目录名 → 中文标签（缺的显示原目录名）
   labels: {
@@ -31,6 +32,13 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   dirThumbs: [{ parent: 'character', name: '^\\d{4}$', paths: ['download/character/{name}00/adv/image/{name}00.png', 'download/character/{name}00/adv/image/{name}00_100.png'] }],
   // 脚本卡片的缩略图（先于「脚本里第一张背景图」）：{stem} 是脚本文件名（无扩展名），{thumbsDir} 对每个缩略图目录各试一次；~/ = 相对媒体目录
   scriptThumbs: ['~/{thumbsDir}/{stem}.webp', '~/{thumbsDir}/scripts/{stem}.webp'],
+  // 分组：列 parent（通配；'.' = 脚本根本身）下的目录时，脚本文件名（无扩展名）能匹配 pattern 的，按第 1 个捕获组分成虚拟目录
+  // （比如 ^(\\d{5}) 把 10001A1、10001B1 归到「10001」一张卡片里）；不匹配的脚本照常列出。虚拟目录的名字/头像和真实目录一样查 labels / namesFiles / dirThumbs
+  groups: [],
+  // 谁：{ id, title }。id 是游戏/资源包的标识（用户在 config 里写，脚本按它分发，不同游戏即使用同一个 adapter 也能区分）
+  game: null,
+  // 适配器参数：{ <adapter id>: {…} }，原样交给适配器（适配器自己校验；路径类参数相对媒体目录）
+  adapterOptions: {},
   cover: '',          // 封面：相对资源根的路径；~/ 开头 = 相对媒体目录（只给封面用）
   scriptCount: 0,     // 脚本数（脚本统计后写；0 = 不知道）
   script: null,       // 谁写的这份配置：{ id, version, ranAt }（脚本自己写，用来知道当前配置是哪一版脚本生成的）
@@ -58,8 +66,11 @@ export function globToRegExp(glob) {
 
 const safeGlob = (value) => {
   const glob = text(value, 200).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  if (glob === '.') return glob   // '.' = 脚本根本身
   return glob && !glob.split('/').some((part) => part === '..' || part === '.') ? glob : ''
 }
+// 规则里的 parent → 匹配「脚本根下的相对目录」的正则（'.' 只匹配根）
+export const parentRegExp = (parent) => (parent === '.' ? /^$/ : globToRegExp(parent))
 const safeName = (value) => (typeof value === 'string' && /^[^/\\\0|#]{1,100}$/.test(value) && value !== '.' && value !== '..' ? value : '')
 
 // raw（元数据里存的）→ 规整后的完整 config（缺的字段用默认；非法的丢掉或退回默认）。没有 raw 的字段取默认值，不是「空」
@@ -103,6 +114,30 @@ export function normalizeGalConfig(raw) {
     dirThumbs.push({ parent: text(rule.parent, 100) || '*', name, paths })
   }
 
+  const groups = []
+  for (const rule of Array.isArray(v.groups) ? v.groups.slice(0, MAX_LIST) : []) {
+    const parent = safeGlob(rule?.parent)
+    const pattern = text(rule?.pattern, 200)
+    if (!parent || !pattern) continue
+    try { if (new RegExp(`${pattern}|`).exec('').length < 2) continue } catch { continue }
+    groups.push({ parent, pattern })
+  }
+
+  const game = v.game && typeof v.game === 'object' && !Array.isArray(v.game) && /^[A-Za-z0-9_-]{1,40}$/.test(String(v.game.id ?? ''))
+    ? { id: String(v.game.id), title: text(v.game.title, 100) }
+    : null
+
+  const adapterOptions = {}
+  if (v.adapterOptions && typeof v.adapterOptions === 'object' && !Array.isArray(v.adapterOptions)) {
+    for (const [id, options] of Object.entries(v.adapterOptions).slice(0, 10)) {
+      if (!/^[a-z0-9-]{1,40}$/.test(id) || !options || typeof options !== 'object' || Array.isArray(options)) continue
+      try {
+        const json = JSON.stringify(options)
+        if (json.length <= 8000) adapterOptions[id] = JSON.parse(json)
+      } catch { /* 丢掉 */ }
+    }
+  }
+
   const cover = text(v.cover, 400)
   const coverRel = cover.startsWith('~/') ? safeRelPath(cover.slice(2)) : safeRelPath(cover)
   const script = v.script && typeof v.script === 'object' && !Array.isArray(v.script)
@@ -116,11 +151,15 @@ export function normalizeGalConfig(raw) {
     thumbsDirs: relList(v.thumbsDirs, d.thumbsDirs),
     stripPrefixes: (Array.isArray(v.stripPrefixes) ? v.stripPrefixes : d.stripPrefixes).map((p) => text(p, 60)).filter((p) => p && !p.includes('..')).slice(0, 10),
     scriptExtensions: (Array.isArray(v.scriptExtensions) ? v.scriptExtensions : d.scriptExtensions).map((e) => String(e).trim().replace(/^\./, '').toLowerCase()).filter((e) => /^[a-z0-9]{1,10}$/.test(e)).slice(0, 10).filter((e, i, all) => all.indexOf(e) === i),
+    hiddenDirs: (Array.isArray(v.hiddenDirs) ? v.hiddenDirs : d.hiddenDirs).map(safeName).filter(Boolean).slice(0, 50),
     pageSize: Math.max(1, Math.min(200, Math.floor(Number(v.pageSize)) || d.pageSize)),
     labels: v.labels === undefined ? { ...d.labels } : labels,
     merge: v.merge === undefined ? d.merge.map((r) => ({ ...r, dirs: [...r.dirs], badges: { ...r.badges } })) : merge,
     dirThumbs: v.dirThumbs === undefined ? d.dirThumbs.map((r) => ({ ...r, paths: [...r.paths] })) : dirThumbs,
     scriptThumbs: v.scriptThumbs === undefined ? d.scriptThumbs.slice() : (Array.isArray(v.scriptThumbs) ? v.scriptThumbs : []).map((t) => text(t, 300)).filter(Boolean).slice(0, 10),
+    groups: v.groups === undefined ? [] : groups,
+    game,
+    adapterOptions,
     cover: coverRel === null ? '' : cover,
     scriptCount: Math.max(0, Math.floor(Number(v.scriptCount)) || 0),
     script: script && (script.id || script.version) ? script : null,

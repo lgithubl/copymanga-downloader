@@ -9,6 +9,9 @@ import { parse, parseCondition, parseRichText, sniff } from '../../web/library/g
 import { DEFAULT_GAL_CONFIG, applyGalConfigPatch, cleanGalConfigRaw, expandTemplate, globToRegExp, normalizeGalConfig } from '../../web/library/gal/config.mjs'
 import { safeRelPath } from '../../web/library/gal/paths.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout-v1/main.js'
+import { generateTags as monmusuScript } from '../../scripts/tag-scripts/gal-layout-monmusu/main.js'
+import { parse as renpyParse, prepare as renpyPrepare, renpyText, sniff as renpySniff } from '../../web/library/gal/adapters/renpy-monmusu.mjs'
+import { execFileSync } from 'node:child_process'
 import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
@@ -201,7 +204,7 @@ const out1 = await runScript(M)
 await handler.patchItemMetadata(M.itemId, { gal: out1.itemPatch.gal })
 const M1 = await handler.getItem(M.itemId)
 check('脚本识别为 uviewer：写出脚本根（text + 另一套日文）、资源根、名称文件、缩略图目录；脚本数；封面（UViewer 生成的缩略图）；谁写的（版本）', out1.details.kind === 'uviewer' && M1.config.scriptRoots.length === 2 && M1.config.resourceRoots[0] === 'resources' && M1.config.namesFiles[0] === 'user_data/character_names.json' && M1.scriptCount >= 50 && M1.coverPath === '~/user_data/thumbnails/600130.webp' && /thumbnail\/script\/cover$/.test(M1.cover) && M1.config.script.id === 'gal-layout-v1' && M1.config.script.version === '1.0.0' && !!M1.config.script.ranAt, J(M1.config).slice(0, 400))
-check('脚本打状态标签：Gal配置: uviewer、Gal配置version: 1.0.0', J(out1.itemTags) === J(['Gal配置: uviewer', 'Gal配置version: 1.0.0']))
+check('脚本打状态标签：Gal配置: uviewer、Gal配置version: 1.0.0、Gal游戏: uviewer（config.game 同步写入）', J(out1.itemTags) === J(['Gal配置: uviewer', 'Gal配置version: 1.0.0', 'Gal游戏: uviewer']) && M1.config.game.id === 'uviewer')
 const again = await handler.importFromSource({})
 const M2 = await handler.getItem(M.itemId)
 check('重复导入：不新增条目，算更新；保留 tag、标题、创建时间、config（脚本写的）；条目 id 不变', again.report.imported === 0 && again.report.updated === 1 && (await handler.scanItems()).length === 1 && M2.tags.includes('手工标签') && M2.title === '改过的标题' && M2.createdAt === before && M2.itemId === M.itemId && J(M2.config) === J(M1.config), J(again.report))
@@ -412,6 +415,89 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   check('单元标签', t.tags[0] === '章节标签' && (await handler.listUnits(M.itemId))[0].tags[0] === '章节标签')
   check('单元标签：不存在的单元报错', Boolean(await err(handler.updateUnitTags(M.itemId, 'nope', []))))
   check('重新导入后单元标签还在', (await handler.importFromSource({})).items[0].mediaUnits[0].tags[0] === '章节标签')
+}
+
+// ================= monmusu（Ren'Py）：adapter + 上下文 + 分组 + 脚本 =================
+{
+  check('renpyText：去掉文字标记、{p} 换行、转义还原、[变量] 保留', renpyText('a {i}b{/i}{p}c \\"q\\" [name] {{x}') === 'a b\nc "q" [name] {x}', J(renpyText('a {i}b{/i}{p}c \\"q\\" [name] {{x}')))
+  check('sniff：label + 剧情语句才算；UViewer csv / 普通文本 / 界面脚本不算', renpySniff('label h1:\n    scene black\n') && !renpySniff('bg,a.jpg,0\nclickwait\n') && !renpySniff('screen x():\n    add "bg"\n') && !renpySniff('label start:\n    return\n'))
+  const ctx = renpyPrepare({ texts: { a: "image 10001A1-10 = Movie(play = 'images/webm/10001/rev10001_01_10.webm',size = (1920,1080),loop = True)\nimage X Y = Movie(play='a/b.webm', loop=False)\nimage logo = \"images/logo.png\"" }, files: ['game/images/bg/r18_10001_stla1.png', 'game/images/bg/readme.txt'], toResourcePath: (rel) => rel.replace(/^game\//, '') })
+  check('prepare：视频别名（含 loop=False、带空格的别名）、image X = "文件"、图片目录按文件名定义（资源路径去掉资源根）', ctx.movies.get('10001a1-10').src === 'images/webm/10001/rev10001_01_10.webm' && ctx.movies.get('10001a1-10').loop === true && ctx.movies.get('x y').loop === false && ctx.images.get('logo') === 'images/logo.png' && ctx.images.get('r18_10001_stla1') === 'images/bg/r18_10001_stla1.png' && !ctx.images.has('readme'), J([...ctx.images]))
+  const text = 'label h1:\n    scene black\n    play music "audio/bgm/b.mp3" fadein 1.0 fadeout 1.0\n    voice "audio/voice/1/a.mp3"\n    scene 10001A1-10 with Dissolve(0.4)\n    "Ann" "hi {i}there{/i}"\n    "narration"\n    scene r18_10001_stla1 with Dissolve(0.5)\n    pause 2.0\n    "Ann" "x"\n    scene nowhere\n    stop music fadeout 1.0\n    window hide dissolve\n    jump hanim\n'
+  const r = renpyParse(text, ctx)
+  const ops = (i) => r.steps[i].commands.map((c) => c.op).join(',')
+  check('一句台词一步：背景/bgm/voice/视频都归到它前面的步里；说话人变了才发 speaker（旁白清掉说话人）', r.steps.length === 4 && ops(0) === 'bg,bgm,voice,movie,speaker,text' && ops(1) === 'speaker,text' && r.steps[1].commands[0].segments.length === 0, J(r.steps.map((_, i) => ops(i))))
+  check('视频别名 → movie（循环）；切回静图/黑场先 movieOff；Dissolve 秒数 → 渐变', J(r.steps[0].commands[3]) === J({ op: 'movie', srcs: ['images/webm/10001/rev10001_01_10.webm'], loop: true }) && ops(2) === 'movieOff,bg,wait,speaker,text' && r.steps[2].commands[1].fade === 0.5 && r.steps[2].commands[1].src === 'images/bg/r18_10001_stla1.png')
+  check('pause 带秒数 → wait；stop music fadeout → bgmStop；查不到的 scene → raw 并计数；window/jump/label 忽略', r.steps[2].commands[2].seconds === 2 && J(r.steps[3].commands.map((c) => c.op)) === J(['raw', 'bgmStop']) && r.stats.unresolved.nowhere === 1 && r.steps[3].commands[1].fade === 1)
+  const noCtx = renpyParse('label a:\n    scene 10001A1-10\n    "x"\n')
+  check('没有上下文（没配别名表）：scene 别名按 raw 保留，不崩', noCtx.steps[0].commands[0].op === 'raw' && noCtx.stats.unresolved['10001A1-10'] === 1)
+}
+{
+  const mm = path.join(work, 'mm-pack')
+  const game = path.join(mm, 'game')
+  const put = async (rel, content) => { await mkdir(path.dirname(path.join(game, rel)), { recursive: true }); await writeFile(path.join(game, rel), content) }
+  const png = async (rel, color = 'red') => { await mkdir(path.dirname(path.join(game, rel)), { recursive: true }); execFileSync('convert', ['-size', '8x8', `xc:${color}`, path.join(game, rel)]) }
+  const scene = (id, lines) => `label h${id}:\n    scene black\n${lines}    jump hanim\n`
+  await put('script/movie.rpy', "image 10001A1-10 = Movie(play = 'images/webm/10001/rev10001_01_10.webm',size = (1920,1080),loop = True)\nimage 10001B1-10 = Movie(play = 'images/webm/10001/rev10001_02_10.webm',size = (1920,1080),loop = True)\nimage 10004A1-10 = Movie(play = 'images/webm/10004/rev10004_01_10.webm',size = (1920,1080),loop = True)\n")
+  await put('script/hscene/10001A1.rpy', scene('10001A1', '    play music "audio/bgm/b.mp3" fadein 1.0 fadeout 1.0\n    voice "audio/voice/10001/a1.mp3"\n    scene 10001A1-10 with Dissolve(0.4)\n    "Ann" "first line"\n    "Ann" "second line"\n'))
+  await put('script/hscene/10001B1.rpy', scene('10001B1', '    scene 10001B1-10 with Dissolve(0.4)\n    "Ann" "b line"\n'))
+  await put('script/hscene/10004A1.rpy', scene('10004A1', '    scene 10004A1-10\n    "Bob" "hello"\n'))
+  await put('script/hscene_still/10001C1.rpy', scene('10001C1', '    scene r18_10001_stla1 with Dissolve(0.5)\n    "Ann" "still line"\n    scene missing_image\n    "Ann" "more"\n'))
+  await put('script/hscene_still/readme.txt', 'not a script')
+  await put('script/sub_nav/sub_10001.rpy', 'screen sub_10001():\n    add "bg"\n')
+  await put('script/main_nav.rpy', 'screen vpgrid_test():\n    add "bg_01_0"\n')
+  await put('script/viewmode.rpy', 'label hanim:\n    call screen vpgrid_test\n    return\n')
+  await png('images/icon/icon_10001_0_idle.png', 'blue')
+  await png('images/icon/icon_10001_0_hover.png', 'green')
+  await png('images/icon/icon_10004_0_idle.png', 'yellow')
+  await png('images/bg/r18_10001_stla1.png', 'red')
+  await put('audio/bgm/b.mp3', 'mp3')
+
+  // 导入：adapter id、路径、game.id 都是用户输入
+  const imp = await handler.importFromSource({ sourcePath: mm, options: { adapters: ['renpy-monmusu'], config: { game: { id: 'monmusu', title: 'Mon Test' } }, defaultMetadataActions: ['gal-layout-monmusu'] } })
+  const item0 = imp.items[0]
+  check('导入：adapters / config.game 由导入参数写入；别的字段不存、不扫描', J(item0.adapters) === J(['renpy-monmusu']) && J(item0.config) === J({ game: { id: 'monmusu', title: 'Mon Test' } }), J(item0.config))
+  check('config.game.id 不合法（空格/空）= 没有 game；adapterOptions 只收对象、过大的丢弃；groups 的 pattern 必须有捕获组、必须是合法正则', normalizeGalConfig({ game: { id: 'a b' } }).game === null && normalizeGalConfig({ game: {} }).game === null && J(normalizeGalConfig({ adapterOptions: { 'renpy-monmusu': { a: 1 }, bad: 5, 'X Y': {}, big: { s: 'x'.repeat(9000) } } }).adapterOptions) === J({ 'renpy-monmusu': { a: 1 } }) && J(normalizeGalConfig({ groups: [{ parent: '.', pattern: '^\\d+' }, { parent: '.', pattern: '(' }, { parent: '.', pattern: '^(\\d{5})' }, { parent: '..', pattern: '(a)' }] }).groups) === J([{ parent: '.', pattern: '^(\\d{5})' }]))
+
+  // 脚本：不归它管的跳过
+  const skipUv = await monmusuScript({ item: M2, script: { id: 'gal-layout-monmusu', version: '1.0.0', options: {} } })
+  const skipV1 = await galLayoutScript({ item: item0, script: { id: 'gal-layout-v1', version: '1.1.0', options: {} } })
+  check('不归它管的跳过：uviewer 的媒体不被 monmusu 脚本动；monmusu 的媒体不被 gal-layout-v1 动（都不返回 itemPatch）', !skipUv.itemPatch && !skipV1.itemPatch && /不归本脚本/.test(skipV1.logs.join('\n')) && /不归本脚本/.test(skipUv.logs.join('\n')), J([skipUv.logs, skipV1.logs]))
+  const nothing = await monmusuScript({ item: { ...M2, config: {}, source: { path: root } }, script: { id: 'gal-layout-monmusu', version: '1.0.0', options: {} } })
+  check('没有 game.id 又认不出结构：不认领', !nothing.itemPatch && /没找到 script\/hscene/.test(nothing.logs.join('\n')))
+
+  const out = await monmusuScript({ item: item0, script: { id: 'gal-layout-monmusu', version: '1.0.0', options: {} } })
+  const cfg = out.itemPatch.gal.config
+  check('monmusu 脚本：游戏根（多一层 game/）、脚本根、资源根、合并 hscene+hscene_still（anim/still）、按编号分组、隐藏导航目录、适配器参数（别名表/图片目录）', cfg.game.id === 'monmusu' && cfg.game.title === 'Mon Test' && cfg.scriptRoots[0].dir === 'game/script' && J(cfg.resourceRoots) === J(['game']) && J(cfg.scriptExtensions) === J(['rpy']) && J(cfg.merge) === J([{ parent: '.', dirs: ['hscene', 'hscene_still'], badges: { hscene: 'anim', hscene_still: 'still' } }]) && cfg.groups[0].pattern === '^(\\d{5})[A-Za-z]\\d' && cfg.hiddenDirs.includes('sub_nav') && J(cfg.adapterOptions['renpy-monmusu']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }), J(cfg))
+  check('头像模板来自 images 里找到的 icon；封面 = 第一个头像；脚本数；谁写的；标签 Gal游戏: monmusu', J(cfg.dirThumbs) === J([{ parent: '*', name: '^\\d{3,8}$', paths: ['images/icon/icon_{name}_0_idle.png'] }]) && cfg.cover === 'images/icon/icon_10001_0_idle.png' && cfg.scriptCount === 4 && cfg.script.id === 'gal-layout-monmusu' && J(out.itemTags) === J(['Gal配置: monmusu', 'Gal配置version: 1.0.0', 'Gal游戏: monmusu']), J([cfg.dirThumbs, cfg.cover, cfg.scriptCount, out.itemTags]))
+  await handler.patchItemMetadata(item0.itemId, { gal: out.itemPatch.gal })
+  const it = await handler.getItem(item0.itemId)
+  check('写回后：封面接口、脚本数、adapters 都在', /thumbnail\/script\/cover$/.test(it.cover) && it.scriptCount === 4 && J(it.adapters) === J(['renpy-monmusu']) && (await handler.getThumbnail(item0.itemId)).contentType === 'image/png')
+
+  const read = (sectionId) => handler.getReaderContent(it.itemId, 'main', { sectionId })
+  const home = (await read('')).node
+  check('首页：按角色编号分组成卡片（10001 三个脚本、10004 一个）；导航界面目录/非剧情脚本不出现；头像来自模板', home.kind === 'cards' && J(home.items.map((i) => [i.title, i.subtitle])) === J([['10001', '3 项'], ['10004', '1 项']]) && home.items.every((i) => i.type === 'dir' && i.thumb === 'images/icon/icon_' + i.title + '_0_idle.png' && !i.badge), J(home.items))
+  const group = (await read(home.items[0].node)).node
+  check('分组页：动画 + 静图混排，来源角标 anim / still；返回 = 首页；面包屑 首页 › 10001', J(group.items.map((i) => [i.title, i.badge])) === J([['10001A1', 'anim'], ['10001B1', 'anim'], ['10001C1', 'still']]) && group.parent === '' && J(group.breadcrumb.map((c) => c.title)) === J(['首页', '10001']) && group.total === 3, J(group))
+  check('分组页：静图脚本有缩略图（脚本里第一张存在的背景图）；动画脚本带「含视频」', group.items[2].thumb === 'images/bg/r18_10001_stla1.png' && /含视频/.test(group.items[0].subtitle), J(group.items))
+  const a1 = await read(group.items[0].node)
+  const cmds = a1.scene.steps.flatMap((s) => s.commands)
+  check('播放页：视频别名查表成 movie（路径相对游戏根）；bgm / voice / 台词都在；上一话/下一话只在这个角色的分组里', a1.node.kind === 'player' && cmds.some((c) => c.op === 'movie' && c.srcs[0] === 'images/webm/10001/rev10001_01_10.webm') && cmds.some((c) => c.op === 'bgm' && c.src === 'audio/bgm/b.mp3') && cmds.some((c) => c.op === 'voice') && a1.scene.steps.length === 2 && a1.sectionNavigation.prev === null && a1.sectionNavigation.next.title === '10001B1', J(a1.sectionNavigation))
+  check('播放页：父节点 = 所在分组；面包屑 首页 › 10001 › 10001A1', a1.node.parent === group.items[0].node.replace(/^.*$/, group.node?.id || group.id) && J(a1.node.breadcrumb.map((c) => c.title)) === J(['首页', '10001', '10001A1']), J([a1.node.parent, group.id, a1.node.breadcrumb]))
+  const c1 = await read(group.items[2].node)
+  check('静图脚本：图片按文件名查到（资源路径去掉资源根）；查不到的 raw；分组里最后一个没有下一话；10004 的上一话不会跳到 10001', c1.scene.steps[0].commands.some((c) => c.op === 'bg' && c.src === 'images/bg/r18_10001_stla1.png') && c1.scene.steps[1].commands[0].op === 'raw' && c1.sectionNavigation.next === null && c1.sectionNavigation.prev.title === '10001B1' && (await read(home.items[1].node)).node.items.length === 1)
+  check('资源：语音/背景/视频路径相对游戏根能取到；目录穿越被拒', (await handler.getResource(it.itemId, 'audio/bgm/b.mp3')).contentType === 'audio/mpeg' && (await handler.getResource(it.itemId, 'images/bg/r18_10001_stla1.png')).contentType === 'image/png' && Boolean(await err(handler.getResource(it.itemId, '../script/movie.rpy'))))
+  check('节点 id：分组键编码；格式不对/不存在的分组报错', (await err(read('g:%E0%A4%A:'))) !== null && /分组不存在/.test((await err(read('g:99999:')))?.message || '') && /无效/.test((await err(read('g::')))?.message || ''), '')
+  const lastHome = await read(`g:${encodeURIComponent('10001')}:`)
+  check('分组 id 带页码也能解析（超页取最后一页）', lastHome.node.page === 1)
+
+  // 改了别名表（没改脚本）：上下文跟着文件变
+  await put('script/movie.rpy', "image 10001A1-10 = Movie(play = 'images/webm/10001/NEW.webm',loop = True)\n")
+  const a1b = await read(group.items[0].node)
+  check('别名表改了：下次读脚本用新的（上下文按文件 mtime/size 失效）', a1b.scene.steps[0].commands.some((c) => c.op === 'movie' && c.srcs[0] === 'images/webm/10001/NEW.webm'), J(a1b.scene.steps[0].commands))
+  // 用户自己的覆盖：脚本 overrides 能改任何字段
+  const ovr = await monmusuScript({ item: it, script: { id: 'gal-layout-monmusu', version: '1.0.1', options: { overrides: [{ path: '*mm-pack', config: { pageSize: 1 }, title: 'Renamed' }] } } })
+  check('overrides：按路径命中、覆盖 config、改标题；状态标签变「自定义」', ovr.itemPatch.gal.config.pageSize === 1 && ovr.itemPatch.title === 'Renamed' && ovr.itemTags[0] === 'Gal配置: 自定义')
 }
 
 await rm(work, { recursive: true, force: true })

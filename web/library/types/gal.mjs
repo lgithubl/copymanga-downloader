@@ -45,6 +45,8 @@ export function normalizeGalOptions(value = {}) {
     rootDir: String(v.rootDir || '').trim(),
     adapters: adapters.length ? adapters : GAL_DEFAULT_OPTIONS.adapters,
     defaultMetadataActions: [...new Set(actions.map((id) => String(id).trim()).filter(Boolean))],
+    // 导入时直接写进条目的初始 config（比如 {"game":{"id":"monmusu"}}）：新条目 = 这份 config；已有条目 = 作为补丁合并
+    config: v.config && typeof v.config === 'object' && !Array.isArray(v.config) ? v.config : null,
     dryRun: Boolean(v.dryRun),
   }
 }
@@ -268,7 +270,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       sourceProfile: GAL_PROFILE,
       adapters: opts.adapters,
       source: { path: real },
-      config: existing?.config || {},
+      config: opts.config ? applyGalConfigPatch(existing?.config || {}, opts.config) : existing?.config || {},
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     })
