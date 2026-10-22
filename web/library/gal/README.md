@@ -9,7 +9,7 @@
 导入        只存：来源路径 source.path、adapters（脚本格式适配器）、标题。不扫描目录。
 config      条目元数据里唯一的配置字段（gal/config.mjs）。引擎只认它；缺的字段用默认 = 「标准结构」（UViewer 资源包布局），
             所以按标准结构放的目录导入完不用脚本就能浏览/播放。
-tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构放时，探测实际结构、把 config 里的参数调对，再挑封面、数脚本。
+tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config.game.id 分发）：目录没按标准结构放时，探测实际结构、把 config 里的参数调对，再挑封面、数脚本。
             导入后自动跑一次；上传新版本脚本重跑即可，不用改镜像。版本和运行时间写进 config.script，并打「Gal配置version」标签。
 节点提供者  gal/browse.mjs：按 config 把目录树变成节点（卡片 / 播放页），翻页、合并目录、来源标记、返回页码、上下话。
 脚本适配器  gal/adapters：脚本文本 → 规范场景 gal-scene/1（含 select / if 分支）。
@@ -49,17 +49,17 @@ tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构�
 适配器可以声明 `contextFiles(options)`（要读的文本）/ `contextDirs(options)`（要递归列文件名的目录）/ `prepare(…) → ctx`，引擎读好后把 `ctx` 传给 `parse(text, ctx)`
 （`gal/context.mjs`）：按文本文件 mtime+size、目录（自己和下一层子目录）mtime 缓存，目录里新增/删除文件马上生效，更深层的最多缓存 5 分钟；路径在 `config.adapterOptions[适配器 id]` 里配（相对媒体目录）。
 
-### 适配器 renpy-monmusu 与脚本 gal-layout-monmusu
+### 适配器 renpy-monmusu-monmusu
 
 - 适配器认：`scene black|<视频别名>|<图片名> [with 转场]`、`play music/sound`、`stop music`、`voice`、`"名字" "台词"`、`pause 秒`；一句台词一步。
   视频别名来自 `image X = Movie(play=…)`，图片名来自 `images/` 下的文件名（或 `image X = "文件"`）；查不到的 `scene` 保留成 raw。翻译叠加（`tl/*`）暂不处理。
-- 导入时自己填：`adapters: ['renpy-monmusu']`、路径、`config: {"game": {"id": "monmusu"}}`、`defaultMetadataActions: ['gal-layout-monmusu']`。
+- 导入时自己填：`adapters: ['renpy-monmusu']`、路径、`config: {"game": {"id": "monmusu"}}`、导入页勾元数据脚本 `gal-layout`。
 - 脚本探测 `script/hscene`（+ `script/movie.rpy`），多一层目录（如 `game/`）自动带前缀；写：脚本根 `<游戏根>/script`、资源根 `<游戏根>`、
   合并 `hscene`+`hscene_still`（角标 `anim`/`still`）、按文件名前 5 位角色编号分组、隐藏 `sub_nav`/`tl`、`adapterOptions`（别名表、图片目录）、
   头像模板（`images` 里找 `icon_<编号>_0_idle.*`）、封面、脚本数。只处理 `config.game.id` 为 `monmusu`（或没有 game 且认出结构）的媒体；
-  `gal-layout-v1` 同理只处理 `uviewer`/没有 game 的媒体，两个脚本互不覆盖。
+  （探测逻辑在合一的 `gal-layout` 脚本里，见下。）
 
-### 适配器 tenkeiprdx-json 与脚本 gal-layout-tenkeiprdx
+### 适配器 tenkeiprdx-json-tenkeiprdx
 
 - 输入是 Unity 剧情查看器素材（`StreamingAssets/Tenkeiprdx X/Imported`）里的剧情 JSON（对象形 `result.sceneDetails[].sceneFrameDetails[]`，取 `assetId` = 文件名那一项）。一帧 = 一步。
   背景（`Backgrounds/adventure|still|eventstill`）、BGM（`BGM/<名>.ogg`，没有就找 `_loop`）、音效、语音（`AdventureVoice/<场景id>/`）、说话人（`%username%` ← `Masterdata/username.txt`）、台词；
@@ -82,7 +82,12 @@ tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构�
 - **运行时不在仓库里**（Spine Runtimes License 限制）：`Dockerfile.web` 构建时跑 `scripts/fetch-spine-runtime.sh`（固定提交 + sha256 校验）下载到 `web/static/vendor/`；本地开发手动跑一次。没有运行时：播放器栏里提示「Spine 运行时缺失」，其余照常。
 - 版本必须和骨骼导出版本一致：运行时是 3.8，4.x 导出的骨骼读不了。
 
-### 脚本 gal-layout-v1
+### 脚本 gal-layout（UViewer / monmusu / tenkeiprdx 合一）
+
+- **分发**：`config.game.id` 填了（导入时写的）就只走那个游戏的探测（`uviewer` / `monmusu` / `tenkeiprdx`）；认不出结构：uviewer 退回通用配置，别的跳过（不乱改）；不认识的 id 跳过。
+  没填 `game.id`：按 monmusu → tenkeiprdx → uviewer 的顺序探测，谁认出来谁认领（把 `game.id` 写回 config，并打 `Gal游戏: <id>` 标签）；都认不出 → 通用配置，不认领。
+- 加新游戏 = 在脚本里加一个探测函数 + 在 `GAMES` 里登记；不用新建脚本、不用多勾一个。
+- 下面是 UViewer 的探测细节（别的游戏见上面各自的小节）。
 
 - 探测：`user_data/settings.json` 的 `resource_path`（默认 `./resources`）下有 `download/adv/text` → UViewer；同级 `text*` 目录当作另一套文本；
   路径多套了一层就往下找（深度 ≤ 6）；都不认识 → 通用配置（整个目录当脚本根，找不到的资源去掉 `download/` 再试）。

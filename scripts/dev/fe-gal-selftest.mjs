@@ -77,8 +77,8 @@ await page.fill('#media-import-profile-config', JSON.stringify({ rootDir: mediaD
 await page.click('#media-import-submit')
 await page.waitForFunction(() => document.querySelector('#library-view:not(.hidden)') || true, null, { timeout: 15000 })
 await page.waitForTimeout(2500)
-check('导入完成有汇总提示（一个目录 = 新建 1 个媒体；导入不扫描，提示会自动跑元数据脚本）', dialogs.some((d) => /Gal 导入完成/.test(d) && /新建 1/.test(d) && /gal-layout-v1/.test(d)), JSON.stringify(dialogs))
-// 导入后自动排了元数据脚本 gal-layout-v1：它把 config 调对、挑封面、数脚本。等它跑完（config.script 里有版本）
+check('导入完成有汇总提示（一个目录 = 新建 1 个媒体；导入不扫描，提示会自动跑元数据脚本）', dialogs.some((d) => /Gal 导入完成/.test(d) && /新建 1/.test(d) && /gal-layout/.test(d)), JSON.stringify(dialogs))
+// 导入后自动排了元数据脚本 gal-layout：它把 config 调对、挑封面、数脚本。等它跑完（config.script 里有版本）
 for (let i = 0; i < 80; i++) {
   const it = (await (await fetch(`${base}/api/library/items?type=gal&page=1&limit=5`)).json()).items?.[0]
   const full = it ? await (await fetch(`${base}/api/library/items/gal/${it.itemId}`)).json() : null

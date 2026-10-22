@@ -474,7 +474,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       let listing
       try { listing = await listDir(set, rel) } catch (error) {
         if (rel || error.statusCode !== 404) throw error
-        return { node: { id: dirNodeId(set, '', 1), kind: 'cards', title: '首页', ...base, page: 1, pageCount: 1, total: 0, items: [], notice: `脚本根「${set.dir || '.'}」读不到：这个目录没有按标准结构放，请运行元数据脚本 gal-layout-v1 探测并调整配置（或手动改 config）。` } }
+        return { node: { id: dirNodeId(set, '', 1), kind: 'cards', title: '首页', ...base, page: 1, pageCount: 1, total: 0, items: [], notice: `脚本根「${set.dir || '.'}」读不到：这个目录没有按标准结构放，请运行元数据脚本 gal-layout 探测并调整配置（或手动改 config）。` } }
       }
       const { all } = listing
       const total = all.length

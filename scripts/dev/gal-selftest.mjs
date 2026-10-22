@@ -8,11 +8,11 @@ import { galAdapterIds, registerGalAdapter, sniffGalAdapter } from '../../web/li
 import { parse, parseCondition, parseRichText, sniff } from '../../web/library/gal/adapters/uviewer-csv.mjs'
 import { DEFAULT_GAL_CONFIG, applyGalConfigPatch, cleanGalConfigRaw, expandTemplate, globToRegExp, normalizeGalConfig } from '../../web/library/gal/config.mjs'
 import { safeRelPath } from '../../web/library/gal/paths.mjs'
-import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout-v1/main.js'
-import { generateTags as monmusuScript } from '../../scripts/tag-scripts/gal-layout-monmusu/main.js'
+import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { parse as renpyParse, prepare as renpyPrepare, renpyText, sniff as renpySniff } from '../../web/library/gal/adapters/renpy-monmusu.mjs'
 import { execFileSync } from 'node:child_process'
-import { generateTags as tenkeiScript } from '../../scripts/tag-scripts/gal-layout-tenkeiprdx/main.js'
+const monmusuScript = galLayoutScript
+const tenkeiScript = galLayoutScript
 import { parse as tenkeiParse, prepare as tenkeiPrepare, sniff as tenkeiSniff } from '../../web/library/gal/adapters/tenkeiprdx-json.mjs'
 import { buildMonmusuFixture, buildTenkeiFixture } from './make-gal-games-fixture.mjs'
 import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
@@ -185,7 +185,7 @@ const mk = (over = {}) => createGalHandler({ dataDir, safeSegment: (v) => String
 const handler = mk()
 const err = (promise) => promise.then(() => null, (e) => e)
 const runScript = async (item, options = {}, version = '1.0.0') => {
-  const out = await galLayoutScript({ item, script: { id: 'gal-layout-v1', version, options } })
+  const out = await galLayoutScript({ item, script: { id: 'gal-layout', version, options } })
   return out
 }
 
@@ -206,7 +206,7 @@ const before = (await handler.getItem(M.itemId)).createdAt
 const out1 = await runScript(M)
 await handler.patchItemMetadata(M.itemId, { gal: out1.itemPatch.gal })
 const M1 = await handler.getItem(M.itemId)
-check('脚本识别为 uviewer：写出脚本根（text + 另一套日文）、资源根、名称文件、缩略图目录；脚本数；封面（UViewer 生成的缩略图）；谁写的（版本）', out1.details.kind === 'uviewer' && M1.config.scriptRoots.length === 2 && M1.config.resourceRoots[0] === 'resources' && M1.config.namesFiles[0] === 'user_data/character_names.json' && M1.scriptCount >= 50 && M1.coverPath === '~/user_data/thumbnails/600130.webp' && /thumbnail\/script\/cover$/.test(M1.cover) && M1.config.script.id === 'gal-layout-v1' && M1.config.script.version === '1.0.0' && !!M1.config.script.ranAt, J(M1.config).slice(0, 400))
+check('脚本识别为 uviewer：写出脚本根（text + 另一套日文）、资源根、名称文件、缩略图目录；脚本数；封面（UViewer 生成的缩略图）；谁写的（版本）', out1.details.kind === 'uviewer' && M1.config.scriptRoots.length === 2 && M1.config.resourceRoots[0] === 'resources' && M1.config.namesFiles[0] === 'user_data/character_names.json' && M1.scriptCount >= 50 && M1.coverPath === '~/user_data/thumbnails/600130.webp' && /thumbnail\/script\/cover$/.test(M1.cover) && M1.config.script.id === 'gal-layout' && M1.config.script.version === '1.0.0' && !!M1.config.script.ranAt, J(M1.config).slice(0, 400))
 check('脚本打状态标签：Gal配置: uviewer、Gal配置version: 1.0.0、Gal游戏: uviewer（config.game 同步写入）', J(out1.itemTags) === J(['Gal配置: uviewer', 'Gal配置version: 1.0.0', 'Gal游戏: uviewer']) && M1.config.game.id === 'uviewer')
 const again = await handler.importFromSource({})
 const M2 = await handler.getItem(M.itemId)
@@ -217,7 +217,7 @@ check('脚本升级重跑：config.script.version 跟着变（知道现在用的
 
 {
   const sub = await handler.importFromSource({ sourcePath: path.join(root, 'resources/download/adv/text/cabin'), options: { dryRun: true } })
-  check('传别的目录 = 另一个媒体（dryRun 不写）；这个目录没按标准结构放：报告里提示，不拦截', sub.report.imported === 1 && sub.report.warnings.length === 1 && /gal-layout-v1/.test(sub.report.warnings[0]) && (await handler.scanItems()).length === 1, J(sub.report))
+  check('传别的目录 = 另一个媒体（dryRun 不写）；这个目录没按标准结构放：报告里提示，不拦截', sub.report.imported === 1 && sub.report.warnings.length === 1 && /gal-layout/.test(sub.report.warnings[0]) && (await handler.scanItems()).length === 1, J(sub.report))
   check('不存在的目录 / 文件：明确报错', /不存在或不可读/.test((await err(handler.importFromSource({ sourcePath: '/nonexistent-gal-dir' })))?.message || '') && /不存在或不可读/.test((await err(handler.importFromSource({ sourcePath: path.join(root, 'start.bat') })))?.message || ''))
   check('不传来源又没有 rootDir：报错', /不存在或不可读/.test((await err(mk({ rootDir: path.join(work, 'nowhere') }).importFromSource({})))?.message || ''))
 }
@@ -229,7 +229,7 @@ check('脚本升级重跑：config.script.version 跟着变（知道现在用的
   await buildGalFixture(path.join(wrap, 'pkg', 'inner'), { many: 1 })
   const w = (await handler.importFromSource({ sourcePath: wrap })).items[0]
   const wrapNode = async (id) => (await handler.getReaderContent(w.itemId, 'main', { sectionId: id })).node
-  check('多套了一层：默认脚本根不存在 → 导入报告提示；浏览是空的、带一条提示去跑脚本（不是报错）', (await handler.importFromSource({ sourcePath: wrap, options: { dryRun: true } })).report.warnings.length === 1 && (await wrapNode('')).items.length === 0 && /gal-layout-v1/.test((await wrapNode('')).notice))
+  check('多套了一层：默认脚本根不存在 → 导入报告提示；浏览是空的、带一条提示去跑脚本（不是报错）', (await handler.importFromSource({ sourcePath: wrap, options: { dryRun: true } })).report.warnings.length === 1 && (await wrapNode('')).items.length === 0 && /gal-layout/.test((await wrapNode('')).notice))
   const o = await runScript(w)
   await handler.patchItemMetadata(w.itemId, { gal: o.itemPatch.gal })
   const w2 = await handler.getItem(w.itemId)
@@ -441,22 +441,21 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const put = (rel, content) => writeFile(path.join(mm, 'game', rel), content)
 
   // 导入：adapter id、路径、game.id 都是用户输入
-  const imp = await handler.importFromSource({ sourcePath: mm, options: { adapters: ['renpy-monmusu'], config: { game: { id: 'monmusu', title: 'Mon Test' } }, defaultMetadataActions: ['gal-layout-monmusu'] } })
+  const imp = await handler.importFromSource({ sourcePath: mm, options: { adapters: ['renpy-monmusu'], config: { game: { id: 'monmusu', title: 'Mon Test' } }, defaultMetadataActions: ['gal-layout'] } })
   const item0 = imp.items[0]
   check('导入：adapters / config.game 由导入参数写入；别的字段不存、不扫描', J(item0.adapters) === J(['renpy-monmusu']) && J(item0.config) === J({ game: { id: 'monmusu', title: 'Mon Test' } }), J(item0.config))
   check('config.game.id 不合法（空格/空）= 没有 game；adapterOptions 只收对象、过大的丢弃；groups 的 pattern 必须有捕获组、必须是合法正则', normalizeGalConfig({ game: { id: 'a b' } }).game === null && normalizeGalConfig({ game: {} }).game === null && J(normalizeGalConfig({ adapterOptions: { 'renpy-monmusu': { a: 1 }, bad: 5, 'X Y': {}, big: { s: 'x'.repeat(9000) } } }).adapterOptions) === J({ 'renpy-monmusu': { a: 1 } }) && J(normalizeGalConfig({ groups: [{ parent: '.', pattern: '^\\d+' }, { parent: '.', pattern: '(' }, { parent: '.', pattern: '^(\\d{5})' }, { parent: '..', pattern: '(a)' }] }).groups) === J([{ parent: '.', pattern: '^(\\d{5})' }]))
 
   // 脚本：不归它管的跳过
-  const skipUv = await monmusuScript({ item: M2, script: { id: 'gal-layout-monmusu', version: '1.0.0', options: {} } })
-  const skipV1 = await galLayoutScript({ item: item0, script: { id: 'gal-layout-v1', version: '1.1.0', options: {} } })
-  check('不归它管的跳过：uviewer 的媒体不被 monmusu 脚本动；monmusu 的媒体不被 gal-layout-v1 动（都不返回 itemPatch）', !skipUv.itemPatch && !skipV1.itemPatch && /不归本脚本/.test(skipV1.logs.join('\n')) && /不归本脚本/.test(skipUv.logs.join('\n')), J([skipUv.logs, skipV1.logs]))
-  const nothing = await monmusuScript({ item: { ...M2, config: {}, source: { path: root } }, script: { id: 'gal-layout-monmusu', version: '1.0.0', options: {} } })
-  check('没有 game.id 又认不出结构：不认领', !nothing.itemPatch && /没找到 script\/hscene/.test(nothing.logs.join('\n')))
+  const unknown = await galLayoutScript({ item: { ...item0, config: { game: { id: 'nope' } } }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
+  const wrong = await galLayoutScript({ item: { ...M2, config: { game: { id: 'monmusu' } } }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
+  const auto = await galLayoutScript({ item: { ...item0, config: {} }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
+  check('分发：不认识的 game.id 跳过；声明了 monmusu 但目录里没有它的结构（这里是 UViewer 的目录）也跳过、不乱改；没填 game.id 就按探测认领（monmusu 的目录认成 monmusu，game.id 写回 config）', !unknown.itemPatch && /不认识/.test(unknown.logs.join('\n')) && !wrong.itemPatch && /没认出/.test(wrong.logs.join('\n')) && auto.itemPatch.gal.config.game.id === 'monmusu' && J(auto.itemTags) === J(['Gal配置: monmusu', 'Gal配置version: 2.0.0', 'Gal游戏: monmusu']), J([unknown.logs, wrong.logs, auto.itemTags]))
 
-  const out = await monmusuScript({ item: item0, script: { id: 'gal-layout-monmusu', version: '1.0.0', options: {} } })
+  const out = await monmusuScript({ item: item0, script: { id: 'gal-layout', version: '1.0.0', options: {} } })
   const cfg = out.itemPatch.gal.config
   check('monmusu 脚本：游戏根（多一层 game/）、脚本根、资源根、合并 hscene+hscene_still（anim/still）、按编号分组、隐藏导航目录、适配器参数（别名表/图片目录）', cfg.game.id === 'monmusu' && cfg.game.title === 'Mon Test' && cfg.scriptRoots[0].dir === 'game/script' && J(cfg.resourceRoots) === J(['game']) && J(cfg.scriptExtensions) === J(['rpy']) && J(cfg.merge) === J([{ parent: '.', dirs: ['hscene', 'hscene_still'], badges: { hscene: 'anim', hscene_still: 'still' } }]) && cfg.groups[0].pattern === '^(\\d{5})[A-Za-z]\\d' && cfg.hiddenDirs.includes('sub_nav') && J(cfg.adapterOptions['renpy-monmusu']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }), J(cfg))
-  check('头像模板来自 images 里找到的 icon；封面 = 第一个头像；脚本数；谁写的；标签 Gal游戏: monmusu', J(cfg.dirThumbs) === J([{ parent: '*', name: '^\\d{3,8}$', paths: ['images/icon/icon_{name}_0_idle.png'] }]) && cfg.cover === 'images/icon/icon_10001_0_idle.png' && cfg.scriptCount === 4 && cfg.script.id === 'gal-layout-monmusu' && J(out.itemTags) === J(['Gal配置: monmusu', 'Gal配置version: 1.0.0', 'Gal游戏: monmusu']), J([cfg.dirThumbs, cfg.cover, cfg.scriptCount, out.itemTags]))
+  check('头像模板来自 images 里找到的 icon；封面 = 第一个头像；脚本数；谁写的；标签 Gal游戏: monmusu', J(cfg.dirThumbs) === J([{ parent: '*', name: '^\\d{3,8}$', paths: ['images/icon/icon_{name}_0_idle.png'] }]) && cfg.cover === 'images/icon/icon_10001_0_idle.png' && cfg.scriptCount === 4 && cfg.script.id === 'gal-layout' && J(out.itemTags) === J(['Gal配置: monmusu', 'Gal配置version: 1.0.0', 'Gal游戏: monmusu']), J([cfg.dirThumbs, cfg.cover, cfg.scriptCount, out.itemTags]))
   await handler.patchItemMetadata(item0.itemId, { gal: out.itemPatch.gal })
   const it = await handler.getItem(item0.itemId)
   check('写回后：封面接口、脚本数、adapters 都在', /thumbnail\/script\/cover$/.test(it.cover) && it.scriptCount === 4 && J(it.adapters) === J(['renpy-monmusu']) && (await handler.getThumbnail(item0.itemId)).contentType === 'image/png')
@@ -483,7 +482,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const a1b = await read(group.items[0].node)
   check('别名表改了：下次读脚本用新的（上下文按文件 mtime/size 失效）', a1b.scene.steps[0].commands.some((c) => c.op === 'movie' && c.srcs[0] === 'images/webm/10001/NEW.webm'), J(a1b.scene.steps[0].commands))
   // 用户自己的覆盖：脚本 overrides 能改任何字段
-  const ovr = await monmusuScript({ item: it, script: { id: 'gal-layout-monmusu', version: '1.0.1', options: { overrides: [{ path: '*mm-pack', config: { pageSize: 1 }, title: 'Renamed' }] } } })
+  const ovr = await monmusuScript({ item: it, script: { id: 'gal-layout', version: '1.0.1', options: { overrides: [{ path: '*mm-pack', config: { pageSize: 1 }, title: 'Renamed' }] } } })
   check('overrides：按路径命中、覆盖 config、改标题；状态标签变「自定义」', ovr.itemPatch.gal.config.pageSize === 1 && ovr.itemPatch.title === 'Renamed' && ovr.itemTags[0] === 'Gal配置: 自定义')
 }
 
@@ -538,14 +537,16 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
 {
   const tk = path.join(work, 'tenkei-pack')
   const { imported } = await buildTenkeiFixture(tk)
-  const imp = await handler.importFromSource({ sourcePath: tk, options: { adapters: ['tenkeiprdx-json'], config: { game: { id: 'tenkeiprdx' } }, defaultMetadataActions: ['gal-layout-tenkeiprdx'] } })
+  const imp = await handler.importFromSource({ sourcePath: tk, options: { adapters: ['tenkeiprdx-json'], config: { game: { id: 'tenkeiprdx' } }, defaultMetadataActions: ['gal-layout'] } })
   const item0 = imp.items[0]
-  const skipV1 = await galLayoutScript({ item: item0, script: { id: 'gal-layout-v1', version: '1.1.0', options: {} } })
-  const skipMm = await monmusuScript({ item: item0, script: { id: 'gal-layout-monmusu', version: '1.0.0', options: {} } })
-  const skipTk = await tenkeiScript({ item: M2, script: { id: 'gal-layout-tenkeiprdx', version: '1.0.0', options: {} } })
-  const none = await tenkeiScript({ item: { ...M2, config: {}, source: { path: root } }, script: { id: 'gal-layout-tenkeiprdx', version: '1.0.0', options: {} } })
-  check('不归它管的跳过：v1 / monmusu 脚本不动 tenkeiprdx 的媒体；tenkeiprdx 脚本不动 uviewer 的；没有 game 又认不出结构不认领', !skipV1.itemPatch && !skipMm.itemPatch && !skipTk.itemPatch && !none.itemPatch && /没找到 scenes/.test(none.logs.join('\n')))
-  const out = await tenkeiScript({ item: item0, script: { id: 'gal-layout-tenkeiprdx', version: '1.0.0', options: {} } })
+  const autoTk = await galLayoutScript({ item: { ...item0, config: {} }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
+  const autoUv = await galLayoutScript({ item: { ...M2, config: {} }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
+  const emptyDir = path.join(work, 'empty-dir')
+  await mkdir(emptyDir, { recursive: true })
+  const autoNone = await galLayoutScript({ item: { ...M2, config: {}, source: { path: emptyDir } }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
+  const wrongTk = await galLayoutScript({ item: { ...M2, config: { game: { id: 'tenkeiprdx' } } }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
+  check('分发（没填 game.id）：tenkeiprdx 的目录认成 tenkeiprdx、UViewer 的认成 uviewer、空目录走通用配置且不认领（没有 Gal游戏 标签）；声明了 tenkeiprdx 却是 UViewer 目录 → 跳过', autoTk.itemPatch.gal.config.game.id === 'tenkeiprdx' && autoUv.itemPatch.gal.config.game.id === 'uviewer' && !('game' in autoNone.itemPatch.gal.config) && J(autoNone.itemTags) === J(['Gal配置: 通用', 'Gal配置version: 2.0.0']) && !wrongTk.itemPatch, J([autoTk.itemTags, autoUv.itemTags, autoNone.itemTags]))
+  const out = await tenkeiScript({ item: item0, script: { id: 'gal-layout', version: '1.0.0', options: {} } })
   const cfg = out.itemPatch.gal.config
   check('脚本：素材根（外面套了 StreamingAssets/Tenkeiprdx X/）、脚本根 scenes、资源根、扩展名 json、适配器参数 root；列表不写进 config；封面；脚本数；标签', cfg.game.id === 'tenkeiprdx' && cfg.scriptRoots[0].dir === 'StreamingAssets/Tenkeiprdx X/Imported/scenes' && J(cfg.resourceRoots) === J(['StreamingAssets/Tenkeiprdx X/Imported']) && J(cfg.scriptExtensions) === J(['json']) && cfg.adapterOptions['tenkeiprdx-json'].root === 'StreamingAssets/Tenkeiprdx X/Imported' && !('scriptIndex' in cfg) && cfg.scriptCount === 3 && cfg.cover === 'EpisodeThumbnails/event/ep_eventstill_001_0001.png' && J(out.itemTags) === J(['Gal配置: tenkeiprdx', 'Gal配置version: 1.0.0', 'Gal游戏: tenkeiprdx']), J(cfg))
   await handler.patchItemMetadata(item0.itemId, { gal: out.itemPatch.gal })

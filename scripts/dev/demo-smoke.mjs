@@ -43,10 +43,10 @@ if (EXPECT_ARCHIVE) check('媒体库里有压缩包图集条目（点标签新�
 // ---- Gal：目录方案 + 浏览节点 + 分支 ----
 if (G) {
   check('Gal 条目：一个目录 = 一个媒体，只有 1 个单元', G.unitCount === 1, J(G.unitCount))
-  // 导入后自动排了元数据脚本 gal-layout-v1：等它把 config 写好（config.script.version）
+  // 导入后自动排了元数据脚本 gal-layout：等它把 config 写好（config.script.version）
   let full = null
   for (let i = 0; i < 60; i++) { full = (await get(`/api/library/items/gal/${G.itemId}`)).body; if (full?.config?.script?.version) break; await new Promise((r) => setTimeout(r, 1000)) }
-  check('导入后元数据脚本 gal-layout-v1 自动跑过：config.script 记着脚本 id 和版本；状态标签「Gal配置version」', full?.config?.script?.id === 'gal-layout-v1' && /^\d+\.\d+/.test(full.config.script.version) && (full.tags || []).some((t) => t.startsWith('Gal配置version:')), J([full?.config?.script, full?.tags]))
+  check('导入后元数据脚本 gal-layout 自动跑过：config.script 记着脚本 id 和版本；状态标签「Gal配置version」', full?.config?.script?.id === 'gal-layout' && /^\d+\.\d+/.test(full.config.script.version) && (full.tags || []).some((t) => t.startsWith('Gal配置version:')), J([full?.config?.script, full?.tags]))
   check('config 里是脚本探测出的结构：脚本根（text + 日文）、资源根 resources、名称文件、缩略图目录；脚本数；封面', full.config.scriptRoots?.length >= 2 && full.config.resourceRoots?.[0] === 'resources' && full.config.namesFiles?.[0] === 'user_data/character_names.json' && full.config.thumbsDirs?.[0] === 'user_data/thumbnails' && full.scriptCount >= 50 && Boolean(full.coverPath), J(full.config).slice(0, 300))
   check('元数据里没有目录树/脚本清单；只有路径、adapters、标题、config', !('layout' in full) && J(full.adapters) === J(['uviewer-csv']) && !J(full).includes('600130.txt'))
   const node = async (id) => (await get(`/api/library/items/gal/${G.itemId}/reader/main?sectionId=${encodeURIComponent(id)}`)).body
@@ -110,7 +110,7 @@ if (E) {
   check('媒体库里有 monmusu 演示媒体', Boolean(MM))
   if (MM) {
     const full = await waitScript(MM)
-    check('monmusu：导入时填的 adapter / game.id 在；脚本 gal-layout-monmusu 跑过（游戏根 game/）；标签 Gal游戏: monmusu', J(full.adapters) === J(['renpy-monmusu']) && full.config.game?.id === 'monmusu' && full.config.script?.id === 'gal-layout-monmusu' && full.config.resourceRoots?.[0] === 'game' && (full.tags || []).includes('Gal游戏: monmusu'), J([full.adapters, full.config.game, full.config.script, full.tags]))
+    check('monmusu：导入时填的 adapter / game.id 在；脚本 gal-layout 跑过（游戏根 game/）；标签 Gal游戏: monmusu', J(full.adapters) === J(['renpy-monmusu']) && full.config.game?.id === 'monmusu' && full.config.script?.id === 'gal-layout' && full.config.resourceRoots?.[0] === 'game' && (full.tags || []).includes('Gal游戏: monmusu'), J([full.adapters, full.config.game, full.config.script, full.tags]))
     const home = await readerNode(MM, '')
     check('monmusu 首页：按角色编号分组成卡片（10001 三个、10004 一个），有头像', J(home.node.items.map((i) => [i.title, i.subtitle])) === J([['10001', '3 项'], ['10004', '1 项']]) && home.node.items.every((i) => i.thumb), J(home.node.items))
     const group = await readerNode(MM, home.node.items[0].node)
@@ -126,7 +126,7 @@ if (E) {
   check('媒体库里有 tenkeiprdx 演示媒体', Boolean(TK))
   if (TK) {
     const full = await waitScript(TK)
-    check('tenkeiprdx：adapter / game.id 在；脚本 gal-layout-tenkeiprdx 跑过（素材根在 StreamingAssets/…/Imported）', J(full.adapters) === J(['tenkeiprdx-json']) && full.config.game?.id === 'tenkeiprdx' && full.config.script?.id === 'gal-layout-tenkeiprdx' && /Imported$/.test(full.config.resourceRoots?.[0] || '') && full.scriptCount === 3, J([full.config.game, full.config.script, full.scriptCount]))
+    check('tenkeiprdx：adapter / game.id 在；脚本 gal-layout 跑过（素材根在 StreamingAssets/…/Imported）', J(full.adapters) === J(['tenkeiprdx-json']) && full.config.game?.id === 'tenkeiprdx' && full.config.script?.id === 'gal-layout' && /Imported$/.test(full.config.resourceRoots?.[0] || '') && full.scriptCount === 3, J([full.config.game, full.config.script, full.scriptCount]))
     const home = await readerNode(TK, '')
     check('tenkeiprdx 首页 = 列表：活动 / 附加 / 角色 / 全部剧情', J(home.node.items.map((i) => [i.title, i.subtitle])) === J([['活动', '1 项'], ['附加', '1 项'], ['角色', '2 项'], ['全部剧情', '3 项']]), J(home.node.items))
     const events = await readerNode(TK, home.node.items[0].node)

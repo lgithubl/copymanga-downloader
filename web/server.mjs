@@ -322,7 +322,7 @@ function defaultConfig() {
         defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
       },
       // Gal 导入：一个目录 = 一个媒体（来源目录不传就用 rootDir），目录本身就是数据（不 mv、不拷贝）；导入只记路径 + adapters + 标题，
-      // 不扫描目录。adapters = 脚本格式适配器；defaultMetadataActions = 导入后自动跑的元数据脚本（gal-layout-v1 探测目录结构、
+      // 不扫描目录。adapters = 脚本格式适配器；defaultMetadataActions = 导入后自动跑的元数据脚本（gal-layout 探测目录结构、
       // 把条目的 config 调对、挑封面；脚本可以在配置页上传新版本，不用改镜像）
       'gal-import': {
         rootDir: path.join(DATA_DIR, 'gal'),
@@ -4528,7 +4528,7 @@ function normalizeScriptItemPatch(value) {
   }
   const publishedAt = normalizeIsoDateTime(value.publishedAt)
   if (publishedAt) patch.publishedAt = publishedAt
-  // Gal 的 config 补丁（gal-layout-v1 写）：这里只确认是个对象，字段的合法性由 Gal 的元数据更新逻辑严格校验
+  // Gal 的 config 补丁（gal-layout 写）：这里只确认是个对象，字段的合法性由 Gal 的元数据更新逻辑严格校验
   if (value.gal && typeof value.gal === 'object' && !Array.isArray(value.gal) && value.gal.config && typeof value.gal.config === 'object' && !Array.isArray(value.gal.config)) {
     patch.gal = { config: value.gal.config, replace: value.gal.replace === true }
   }

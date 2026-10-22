@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
-import { generateTags as tenkeiScript } from '../tag-scripts/gal-layout-tenkeiprdx/main.js'
+import { generateTags as tenkeiScript } from '../tag-scripts/gal-layout/main.js'
 import { buildTenkeiFixture } from './make-spine-fixture.mjs'
 
 const require = createRequire(import.meta.url)
@@ -36,7 +36,7 @@ await buildTenkeiFixture(media)
 // 先在数据目录里建好条目（导入 + 脚本写 config），再起服务
 const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media } } }) })
 const imp = await handler.importFromSource({ sourcePath: media, options: { adapters: ['tenkeiprdx-json'], config: { game: { id: 'tenkeiprdx' } } } })
-const out = await tenkeiScript({ item: imp.items[0], script: { id: 'gal-layout-tenkeiprdx', version: '1.0.0', options: {} } })
+const out = await tenkeiScript({ item: imp.items[0], script: { id: 'gal-layout', version: '1.0.0', options: {} } })
 await handler.patchItemMetadata(imp.items[0].itemId, { gal: out.itemPatch.gal })
 const itemId = imp.items[0].itemId
 

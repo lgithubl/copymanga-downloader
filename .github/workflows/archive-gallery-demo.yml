@@ -234,9 +234,9 @@ jobs:
               curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/UViewer演示' -F 'profileOptions={}' | head -c 300 || echo "gal import failed"
               echo
               # adapter、路径、game.id 都是导入时自己填的；各自的元数据脚本（metadataActionIds）按 game.id 调 config
-              curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/monmusu演示' -F 'profileOptions={"adapters":["renpy-monmusu"],"config":{"game":{"id":"monmusu"}}}' -F metadataActionIds=gal-layout-monmusu | head -c 300 || echo "monmusu import failed"
+              curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/monmusu演示' -F 'profileOptions={"adapters":["renpy-monmusu"],"config":{"game":{"id":"monmusu"}}}' -F metadataActionIds=gal-layout | head -c 300 || echo "monmusu import failed"
               echo
-              curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/tenkeiprdx演示' -F 'profileOptions={"adapters":["tenkeiprdx-json"],"config":{"game":{"id":"tenkeiprdx"}}}' -F metadataActionIds=gal-layout-tenkeiprdx | head -c 300 || echo "tenkeiprdx import failed"
+              curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/tenkeiprdx演示' -F 'profileOptions={"adapters":["tenkeiprdx-json"],"config":{"game":{"id":"tenkeiprdx"}}}' -F metadataActionIds=gal-layout | head -c 300 || echo "tenkeiprdx import failed"
               echo
               curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null || true
               # 灌今天几个改动要试的数据和配置（中日对照 EPUB + 朗读规则 + 新页面规则 + 文本媒体 + 标签），再跑一遍接口冒烟；冒烟不过就让这一步失败

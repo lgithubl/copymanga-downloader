@@ -1,7 +1,7 @@
 // Gal（视觉小说 / 剧情脚本）：一个目录 = 一个媒体条目，条目只有一个单元（'main'）；单元里是一棵由后端按需给出的「浏览节点」树
 //   首页 → 一层层目录 → 脚本列表 → 播放页，节点怎么来见 web/library/gal/browse.mjs。前端走通用的 reader?sectionId=<节点 id>。
 // 目录本身就是数据，不 mv、不拷贝、不改——导入只是给它建一份元数据 JSON：来源路径 source.path + adapters（脚本格式适配器）+ 标题。
-//   - 元数据里的 config（见 gal/config.mjs）是引擎和 tag 脚本（gal-layout-v1）之间唯一的配置字段：脚本根、资源根、名称文件、
+//   - 元数据里的 config（见 gal/config.mjs）是引擎和 tag 脚本（gal-layout）之间唯一的配置字段：脚本根、资源根、名称文件、
 //     缩略图目录、目录标签、合并目录、头像/缩略图模板、封面……缺的用默认（= 标准结构：UViewer 资源包的布局），所以标准结构的目录导入完就能用；
 //     目录没按标准结构放时，由脚本探测实际结构、把 config 里的参数调对。
 //   - 元数据：<data>/library-meta/gal/ab/cd/<id>.json（分片）；条目 id = sha1('gal:' + 目录真实路径)，重复导入原地更新（config 保留）
@@ -26,7 +26,7 @@ export const GAL_MAIN_UNIT = 'main'   // 一个媒体只有一个单元
 // 导入方案「gal-import」的参数：来源目录（不传来源时用的默认目录）、脚本格式适配器、导入后自动跑的元数据脚本
 export const GAL_DEFAULT_OPTIONS = {
   adapters: ['uviewer-csv'],
-  defaultMetadataActions: ['gal-layout-v1'],
+  defaultMetadataActions: ['gal-layout'],
 }
 const MIME = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml',
@@ -246,7 +246,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
 
   // ---------- 导入（只建元数据） ----------
 
-  // 一个目录 = 一个媒体：只记路径、adapters、标题，不扫描、不探测——配置按标准结构取默认，结构不对的由 gal-layout-v1 脚本调。
+  // 一个目录 = 一个媒体：只记路径、adapters、标题，不扫描、不探测——配置按标准结构取默认，结构不对的由 gal-layout 脚本调。
   // 重复导入 = 原地更新（config、标签、标题都保留）。dryRun 只检查不写。返回 { items, report }
   async function importFromSource({ sourcePath = '', tags = [], options: override = {}, onProgress = null } = {}) {
     const opts = options(override)
@@ -279,7 +279,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     try {
       if (!(await stat(path.join(real, ...(firstRoot.dir ? firstRoot.dir.split('/') : [])))).isDirectory()) throw new Error('x')
     } catch {
-      report.warnings.push(`脚本根「${firstRoot.dir || '.'}」不存在：这个目录没有按标准结构放，需要运行元数据脚本 gal-layout-v1（或手动改 config）来调整`)
+      report.warnings.push(`脚本根「${firstRoot.dir || '.'}」不存在：这个目录没有按标准结构放，需要运行元数据脚本 gal-layout（或手动改 config）来调整`)
     }
     if (existing) report.updated = 1
     else report.imported = 1
@@ -307,7 +307,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     if (patch.title !== undefined && String(patch.title || '').trim()) next.title = String(patch.title).trim()
     const published = Date.parse(String(patch.publishedAt || ''))
     if (Number.isFinite(published)) next.publishedAt = new Date(published).toISOString()
-    // gal.config：tag 脚本（gal-layout-v1）写的配置补丁。默认合并（补丁里写了的字段替换原来的，值为 null = 删掉回默认），replace = 整体替换
+    // gal.config：tag 脚本（gal-layout）写的配置补丁。默认合并（补丁里写了的字段替换原来的，值为 null = 删掉回默认），replace = 整体替换
     if (patch.gal && typeof patch.gal === 'object' && !Array.isArray(patch.gal) && patch.gal.config !== undefined) {
       next.config = applyGalConfigPatch(item.config, patch.gal.config, { replace: patch.gal.replace === true })
     }
