@@ -215,7 +215,10 @@ jobs:
             GAL_EX_ARGS="--example $RUNNER_TEMP/gal-example.txt"
           fi
           node scripts/dev/make-gal-fixture.mjs "$RUNNER_TEMP/data/gal/UViewer演示" $GAL_EX_ARGS
+          # 模拟的 GSV-TTS-Lite（不同参数合成不同音高），给朗读规则试用；容器经 host.docker.internal 访问它
+          nohup python3 scripts/dev/mock-gsv.py 8196 > "$RUNNER_TEMP/mock-gsv.log" 2>&1 &
           docker run -d --name copymanga-web --network lrrnet \
+            --add-host=host.docker.internal:host-gateway \
             -p 8080:8080 \
             -e TAG_SCRIPTS_DIR=/opt/copymanga/tag-scripts \
             -v "$RUNNER_TEMP/data:/data" \
@@ -229,6 +232,9 @@ jobs:
               curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/UViewer演示' -F 'profileOptions={}' | head -c 300 || echo "gal import failed"
               echo
               curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null || true
+              # 灌今天几个改动要试的数据和配置（中日对照 EPUB + 朗读规则 + 新页面规则 + 文本媒体 + 标签），再跑一遍接口冒烟；冒烟不过就让这一步失败
+              node scripts/dev/seed-demo.mjs http://127.0.0.1:8080
+              node scripts/dev/demo-smoke.mjs http://127.0.0.1:8080
               exit 0
             fi
             sleep 2
