@@ -39,6 +39,9 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   game: null,
   // 适配器参数：{ <adapter id>: {…} }，原样交给适配器（适配器自己校验；路径类参数相对媒体目录）
   adapterOptions: {},
+  // 脚本索引（给脚本配缩略图 + 来源角标）：[{ dir, pattern, key, badge }]。dir（相对媒体目录）里的文件名匹配 pattern 时，按 key 模板（{1}{2}… = 捕获组）
+  // 算出它对应哪个脚本（脚本文件名，无扩展名），这个文件就是那个脚本的缩略图；badge 是卡片右上角的标记（比如 event / extra）
+  scriptIndex: [],
   cover: '',          // 封面：相对资源根的路径；~/ 开头 = 相对媒体目录（只给封面用）
   scriptCount: 0,     // 脚本数（脚本统计后写；0 = 不知道）
   script: null,       // 谁写的这份配置：{ id, version, ranAt }（脚本自己写，用来知道当前配置是哪一版脚本生成的）
@@ -138,6 +141,15 @@ export function normalizeGalConfig(raw) {
     }
   }
 
+  const scriptIndex = []
+  for (const rule of Array.isArray(v.scriptIndex) ? v.scriptIndex.slice(0, MAX_LIST) : []) {
+    const dir = safeRelPath(rule?.dir)
+    const pattern = text(rule?.pattern, 200)
+    if (!dir || !pattern) continue
+    try { new RegExp(pattern) } catch { continue }
+    scriptIndex.push({ dir, pattern, key: text(rule?.key, 100) || '{1}', badge: text(rule?.badge, 12) })
+  }
+
   const cover = text(v.cover, 400)
   const coverRel = cover.startsWith('~/') ? safeRelPath(cover.slice(2)) : safeRelPath(cover)
   const script = v.script && typeof v.script === 'object' && !Array.isArray(v.script)
@@ -158,6 +170,7 @@ export function normalizeGalConfig(raw) {
     dirThumbs: v.dirThumbs === undefined ? d.dirThumbs.map((r) => ({ ...r, paths: [...r.paths] })) : dirThumbs,
     scriptThumbs: v.scriptThumbs === undefined ? d.scriptThumbs.slice() : (Array.isArray(v.scriptThumbs) ? v.scriptThumbs : []).map((t) => text(t, 300)).filter(Boolean).slice(0, 10),
     groups: v.groups === undefined ? [] : groups,
+    scriptIndex: v.scriptIndex === undefined ? [] : scriptIndex,
     game,
     adapterOptions,
     cover: coverRel === null ? '' : cover,

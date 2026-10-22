@@ -1,6 +1,8 @@
 // Gal 播放器（DOM + 音频）。纯逻辑在 gal-engine.js。输入是服务端给的规范场景（见 web/library/gal/scene.mjs）。
 // 目前渲染：背景（渐变/纯色）、说话人和台词（含描边/颜色等样式片段）、BGM/语音/音效、黑场、wait、视频。
-// 立绘 / 遮罩 / Spine 等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
+// 另外：Spine 骨骼动画（站位立绘、整幅静态画面，gal-spine.js）、镜头（整个画面一起平移/缩放）、背景音效声道、闪屏。
+// 立绘 / 遮罩等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
+import { createSpineLayer } from '/gal-spine.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, segmentsText, stateAt, stepOfRatio } from '/gal-engine.js'
 
 const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
@@ -81,7 +83,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const movie = el('video', 'gal-movie')
   movie.hidden = true
   movie.playsInline = true
+  const world = el('div', 'gal-world')   // 背景 + 视频 + Spine：镜头（平移/缩放）作用在它上面
   const black = el('div', 'gal-black')
+  const flashEl = el('div', 'gal-flash')
   const hud = el('div', 'gal-hud')
   const box = el('div', 'gal-box')
   const nameplate = el('div', 'gal-name')
@@ -148,7 +152,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput),
   )
   hud.append(box, bar, settings)
-  stage.append(...layers, movie, black, hud)
+  world.append(...layers, movie)
+  stage.append(world, black, flashEl, hud)
   const logPanel = el('div', 'gal-log')
   logPanel.hidden = true
   const choiceBox = el('div', 'gal-choices')   // 选项：画面正中，竖排
@@ -195,6 +200,22 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   let wantBgm = true   // 播放器不可见时暂停，可见了再恢复
 
   const markMissing = (src) => { missing.add(src); updateNote() }
+  let bgseAudio = null
+  let bgseSrc = ''
+  function setBgse(spec) {
+    const src = spec?.src || ''
+    if (src === bgseSrc && (!spec || bgseAudio?.loop === Boolean(spec.loop))) return
+    bgseAudio?.pause()
+    bgseAudio = null
+    bgseSrc = src
+    if (!src) return
+    const audio = new Audio(url(src))
+    audio.loop = Boolean(spec.loop)
+    audio.volume = seVolume
+    audio.addEventListener('error', () => markMissing(src))
+    bgseAudio = audio
+    if (wantBgm) audio.play().catch(() => {})
+  }
   function setBgm(src, fade = 0) {
     if (src === bgmSrc) return
     const old = bgmAudio
@@ -311,6 +332,44 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     movie.play().catch(() => {})
   }
 
+  // Spine：第一次要画骨骼时才建 canvas / 加载运行时；运行时不在就提示，不影响别的
+  let spineLayer = null
+  let spineUnavailable = false
+  function paintSpines(live) {
+    const any = Object.keys(state.spines).length > 0
+    if (!spineLayer && !any) return
+    if (!spineLayer) {
+      spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: () => { spineUnavailable = true; updateNote() } })
+      if (!wantBgm) spineLayer.setPaused(true)
+    }
+    spineLayer.set(state.spines, { live })
+  }
+  // 镜头：位置（x,y 取反，按舞台高度换算）+ 缩放（z 是千分比，放大系数 1.3）。live 且有时长：从 from 平滑移到 to
+  const zoomOf = (z) => (z ? 1 + (z / 1000) * 1.3 : 1)
+  const cameraTransform = (pos) => {
+    const unit = stage.clientHeight * 0.00165
+    return `translate(${(-(pos?.[0] || 0) * unit).toFixed(2)}px, ${((pos?.[1] || 0) * unit).toFixed(2)}px) scale(${zoomOf(pos?.[2]).toFixed(4)})`
+  }
+  function paintCamera(live) {
+    const cam = state.camera
+    world.dataset.camera = cam ? JSON.stringify(cam.to) : ''
+    if (live && cam?.seconds > 0 && cam.from) {
+      world.style.transition = 'none'
+      world.style.transform = cameraTransform(cam.from)
+      void world.offsetWidth
+      world.style.transition = `transform ${cam.seconds}s linear`
+    } else world.style.transition = 'none'
+    world.style.transform = cam ? cameraTransform(cam.to) : 'none'
+  }
+  // 闪屏 / 整屏纯色渐退：纯装饰，不进状态
+  function playFlash(command) {
+    if (typeof flashEl.animate !== 'function') return
+    flashEl.style.backgroundColor = /^[a-z]{3,20}$|^#[0-9a-f]{3,8}$/i.test(command.color || '') ? command.color : 'white'
+    const ms = Math.max(50, Math.min(10000, (command.seconds || 0.3) * 1000))
+    if (command.op === 'wash') flashEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'linear' })
+    else flashEl.animate([{ opacity: 0 }, { opacity: 0.9 }, { opacity: 0 }], { duration: ms, iterations: Math.max(1, Math.min(5, command.count || 1)) })
+  }
+
   // 一步到位渲染第 i 步之后的状态（后退 / 续播 / 开头）。不播语音和音效——那是一次性的
   function renderInstant(i) {
     gen += 1
@@ -323,7 +382,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     paintText()
     paintBlack(true)
     paintMovie(true)
+    paintSpines(false)
+    paintCamera(false)
     setBgm(state.bgm)
+    setBgse(state.bgse)
     afterStep()
   }
 
@@ -398,6 +460,21 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         case 'movieOff':
           paintMovie(false)
           break
+        case 'spine':
+        case 'spineOff':
+          paintSpines(true)
+          break
+        case 'camera':
+          paintCamera(!skipping)
+          break
+        case 'bgse':
+        case 'bgseStop':
+          setBgse(state.bgse)
+          break
+        case 'flash':
+        case 'wash':
+          if (!skipping) playFlash(command)
+          break
         default:
       }
     }
@@ -406,6 +483,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (skipping) {
       paintBg(state.bg, 0, true)
       paintBlack(true)
+      paintCamera(false)
     }
     running = false
     skipping = false
@@ -432,6 +510,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   function updateNote() {
     const parts = []
     if (rawIgnored) parts.push(`立绘/特效等 ${rawIgnored} 条指令暂未渲染`)
+    if (spineUnavailable) parts.push('Spine 运行时缺失：立绘/动画未渲染')
     if (missing.size) parts.push(`缺少资源 ${missing.size} 个`)
     note.textContent = parts.join(' · ')
     note.title = [...missing].slice(0, 30).join('\n')
@@ -648,7 +727,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   autoChoiceInput.addEventListener('change', () => { autoChoiceInput.value = String(autoChoice) })
   autoSelBtn.addEventListener('click', () => setAutoChoice(autoChoice >= 0 ? -1 : autoChoiceLast))   // 越界/空的值收回到有效值
   bgmRange.addEventListener('input', () => { bgmVolume = Number(bgmRange.value); localStorage.setItem(VOL_KEY.bgm, String(bgmVolume)); if (bgmAudio) bgmAudio.volume = bgmVolume })
-  seRange.addEventListener('input', () => { seVolume = Number(seRange.value); localStorage.setItem(VOL_KEY.se, String(seVolume)); movie.volume = seVolume })
+  seRange.addEventListener('input', () => { seVolume = Number(seRange.value); localStorage.setItem(VOL_KEY.se, String(seVolume)); movie.volume = seVolume; if (bgseAudio) bgseAudio.volume = seVolume })
 
   const onKey = (event) => {
     if (destroyed || !root.isConnected || event.ctrlKey || event.metaKey || event.altKey) return
@@ -683,8 +762,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const visibility = new IntersectionObserver((entries) => {
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
-    if (visible) { bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
-    else { bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
+    if (visible) { spineLayer?.setPaused(false); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
+    else { spineLayer?.setPaused(true); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
   })
   visibility.observe(stage)
 
@@ -695,9 +774,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     document.removeEventListener('keydown', onKey)
     visibility.disconnect()
     bgmAudio?.pause()
+    bgseAudio?.pause()
     voiceAudio?.pause()
     movie.pause()
     movie.removeAttribute('src')
+    spineLayer?.destroy()
     if (document.fullscreenElement === root) document.exitFullscreen?.()
   }
 

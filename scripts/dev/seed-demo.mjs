@@ -95,9 +95,9 @@ try {
   }
   await addTags('epub', epub.body?.itemId, ['演示:朗读规则', '语言:中日对照'])
   await addTags('media', txt.body?.itemId, ['演示:文本媒体'])
-  const gal = (await api('/api/library/items?type=gal&page=1&limit=5')).body?.items?.[0]
-  if (gal) {
-    // 等 gal-layout-v1 跑完（它会写 config.script 和状态标签），再加演示标签
+  // Gal 演示媒体不止一个（UViewer / monmusu / tenkeiprdx，各自的元数据脚本）：都等脚本跑完（写了 config.script），再加演示标签
+  const galItems = (await api('/api/library/items?type=gal&page=1&limit=20')).body?.items || []
+  for (const gal of galItems) {
     for (let i = 0; i < 60; i++) {
       const full = (await api(`/api/library/items/gal/${gal.itemId}`)).body
       if (full?.config?.script?.version) break
@@ -105,8 +105,9 @@ try {
     }
     await addTags('gal', gal.itemId, ['演示:Gal'])
   }
+  const gal = galItems.find((i) => i.title === 'UViewer演示') || galItems[0]
   await rebuild()
-  console.log(`seed done: gal=${gal ? gal.itemId : '（没有）'} epub=${epub.body?.itemId || '-'} txt=${txt.body?.itemId || '-'}`)
+  console.log(`seed done: gal=${galItems.length}个${gal ? `(${gal.itemId})` : ''} epub=${epub.body?.itemId || '-'} txt=${txt.body?.itemId || '-'}`)
 } finally {
   await rm(work, { recursive: true, force: true }).catch(() => {})
 }

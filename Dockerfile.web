@@ -17,6 +17,11 @@ COPY web/package.json web/package-lock.json ./web/
 RUN cd web && npm ci --omit=dev --no-audit --no-fund
 
 COPY web ./web
+# Spine 3.8 官方 Web 运行时（Gal 播放器渲染 Spine 用；许可证限制，不进仓库，构建时按固定提交下载并校验）
+COPY scripts/fetch-spine-runtime.sh /tmp/fetch-spine-runtime.sh
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+  && sh /tmp/fetch-spine-runtime.sh /app/web/static/vendor \
+  && rm -rf /var/lib/apt/lists/* /tmp/fetch-spine-runtime.sh
 COPY scripts/tag-scripts /opt/copymanga/tag-scripts
 
 RUN mkdir -p /data/downloads

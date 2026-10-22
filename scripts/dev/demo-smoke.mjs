@@ -33,7 +33,8 @@ check('配置：统一的「新页里返回=关闭标签页」开关存在', typ
 
 const items = (await get('/api/library/items?page=1&limit=200')).body.items || []
 const byProfile = (p) => items.find((i) => i.sourceProfile === p)
-const G = byProfile('gal-import')
+const galItems = items.filter((i) => i.type === 'gal')
+const G = galItems.find((i) => i.title === 'UViewer演示') || byProfile('gal-import')
 const T = byProfile('text-media')
 const E = items.find((i) => i.type === 'epub')
 check('媒体库里有：Gal 媒体、文本媒体、EPUB', Boolean(G && T && E), J(items.map((i) => [i.type, i.sourceProfile, i.title]).slice(0, 12)))
@@ -93,6 +94,53 @@ if (E) {
     const hash = createHash('sha1').update('x').digest('hex')
     void hash
   }
+}
+
+// ---- Gal：monmusu（Ren'Py）和 tenkeiprdx（Unity 剧情 JSON + Spine）----
+{
+  const waitScript = async (item) => {
+    let full = null
+    for (let i = 0; i < 60; i++) { full = (await get(`/api/library/items/gal/${item.itemId}`)).body; if (full?.config?.script?.version) break; await new Promise((r) => setTimeout(r, 1000)) }
+    return full
+  }
+  const resource = (item, p) => get(`/api/library/items/gal/${item.itemId}/resource?path=${encodeURIComponent(p)}`)
+  const readerNode = async (item, id) => (await get(`/api/library/items/gal/${item.itemId}/reader/main?sectionId=${encodeURIComponent(id)}`)).body
+
+  const MM = galItems.find((i) => i.title === 'monmusu演示')
+  check('媒体库里有 monmusu 演示媒体', Boolean(MM))
+  if (MM) {
+    const full = await waitScript(MM)
+    check('monmusu：导入时填的 adapter / game.id 在；脚本 gal-layout-monmusu 跑过（游戏根 game/）；标签 Gal游戏: monmusu', J(full.adapters) === J(['renpy-monmusu']) && full.config.game?.id === 'monmusu' && full.config.script?.id === 'gal-layout-monmusu' && full.config.resourceRoots?.[0] === 'game' && (full.tags || []).includes('Gal游戏: monmusu'), J([full.adapters, full.config.game, full.config.script, full.tags]))
+    const home = await readerNode(MM, '')
+    check('monmusu 首页：按角色编号分组成卡片（10001 三个、10004 一个），有头像', J(home.node.items.map((i) => [i.title, i.subtitle])) === J([['10001', '3 项'], ['10004', '1 项']]) && home.node.items.every((i) => i.thumb), J(home.node.items))
+    const group = await readerNode(MM, home.node.items[0].node)
+    check('monmusu 分组页：动画 + 静图混排，角标 anim / still', group.node.items.map((i) => i.badge).join() === 'anim,anim,still', J(group.node.items))
+    const play = await readerNode(MM, group.node.items[0].node)
+    const movie = play.scene.steps.flatMap((s) => s.commands).find((c) => c.op === 'movie')
+    check('monmusu 播放页：视频别名查表成 movie；资源路径相对游戏根', movie?.srcs?.[0] === 'images/webm/10001/rev10001_01_10.webm' && play.scene.steps.length === 2, J(movie))
+    const still = await readerNode(MM, group.node.items[2].node)
+    check('monmusu 静图：scene 图片名按文件名查到（头像/背景图能取）', still.scene.steps[0].commands.some((c) => c.op === 'bg' && c.src === 'images/bg/r18_10001_stla1.png') && (await resource(MM, home.node.items[0].thumb)).status === 200, J(still.scene.steps[0].commands))
+  }
+
+  const TK = galItems.find((i) => i.title === 'tenkeiprdx演示')
+  check('媒体库里有 tenkeiprdx 演示媒体', Boolean(TK))
+  if (TK) {
+    const full = await waitScript(TK)
+    check('tenkeiprdx：adapter / game.id 在；脚本 gal-layout-tenkeiprdx 跑过（素材根在 StreamingAssets/…/Imported）；脚本索引 event / extra', J(full.adapters) === J(['tenkeiprdx-json']) && full.config.game?.id === 'tenkeiprdx' && full.config.script?.id === 'gal-layout-tenkeiprdx' && /Imported$/.test(full.config.resourceRoots?.[0] || '') && full.config.scriptIndex?.length === 2 && full.scriptCount === 3, J([full.config.game, full.config.script, full.config.scriptIndex, full.scriptCount]))
+    const home = await readerNode(TK, '')
+    check('tenkeiprdx 首页：三个剧情，event / extra 角标 + 缩略图', J(home.node.items.map((i) => [i.title, i.badge])) === J([['10010101', ''], ['20010001', 'event'], ['23010001', 'extra']]) && home.node.items.every((i) => i.thumb), J(home.node.items))
+    const story = await readerNode(TK, home.node.items[0].node)
+    const ops = story.scene.steps.flatMap((s) => s.commands)
+    check('tenkeiprdx 剧情：立绘（二进制 + JSON 骨骼）、语音（场景 id 目录）、BGM（_loop 版）、说话人（username.txt）', ops.some((c) => c.op === 'spine' && c.skel === 'Spines/1001/1001_01.skel.bytes') && ops.some((c) => c.op === 'spine' && c.skel === 'Spines/1002/1002_01.skel.bytes') && ops.some((c) => c.op === 'voice' && c.src === 'AdventureVoice/10010101/v002.ogg') && ops.some((c) => c.op === 'bgm' && c.src === 'BGM/bgm_a_loop.ogg') && ops.some((c) => c.op === 'speaker' && c.segments[0]?.text === 'Tester') && Object.keys(story.scene.stats.unresolved).length === 0, J(story.scene.stats))
+    const still = await readerNode(TK, home.node.items[1].node)
+    const sops = still.scene.steps.flatMap((s) => s.commands)
+    check('tenkeiprdx 静态画面：两层骨架、镜头、联动背景音效、闪屏', sops.filter((c) => c.op === 'spine' && c.slot.startsWith('still')).length >= 2 && sops.some((c) => c.op === 'camera') && sops.some((c) => c.op === 'bgse') && sops.some((c) => c.op === 'flash'))
+    const skel = await resource(TK, 'Spines/1001/1001_01.skel.bytes')
+    check('tenkeiprdx 资源：骨骼 / atlas / 图集 / 缩略图都能取', skel.status === 200 && (await resource(TK, 'Spines/1001/1001_01.atlas.txt')).status === 200 && (await resource(TK, 'Spines/1001/1001_01.png')).status === 200 && (await resource(TK, home.node.items[1].thumb)).status === 200)
+  }
+
+  const runtime = await get('/vendor/spine-webgl.js')
+  check('Spine 运行时（官方 3.8 spine-webgl）已随镜像下载好，能被页面取到', runtime.status === 200 && runtime.buf.length > 300000 && /javascript/.test(runtime.type) && runtime.buf.toString('utf8', 0, 20000).includes('spine'), J([runtime.status, runtime.buf.length, runtime.type]))
 }
 // ---- 文本媒体 ----
 if (T) check('文本媒体条目：1 个单元，类型 text', T.unitCount === 1)

@@ -1,6 +1,7 @@
-// 适配器注册表。新增原始格式：写一个 { id, label, sniff(text), parse(text, ctx) → { steps, stats } }，在这里登记即可。
+// 适配器注册表。新增原始格式：写一个 { id, label, sniff(text), parse(text, ctx, meta) → { steps, stats }（meta = { rel, stem }：这份脚本的路径和文件名） }，在这里登记即可。
 // 需要查别的文件才能解析的格式（别名表、图片目录…）再实现 contextFiles / contextDirs / prepare，见 ../context.mjs。
 import { renpyMonmusuAdapter } from './renpy-monmusu.mjs'
+import { tenkeiprdxJsonAdapter } from './tenkeiprdx-json.mjs'
 import { uviewerCsvAdapter } from './uviewer-csv.mjs'
 
 const adapters = new Map()
@@ -10,6 +11,7 @@ export function registerGalAdapter(adapter) {
 }
 registerGalAdapter(uviewerCsvAdapter)
 registerGalAdapter(renpyMonmusuAdapter)
+registerGalAdapter(tenkeiprdxJsonAdapter)
 
 export const galAdapterIds = () => [...adapters.keys()]
 export function galAdapter(id) {

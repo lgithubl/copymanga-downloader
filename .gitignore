@@ -23,3 +23,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Spine 运行时（许可证限制，构建时下载，见 scripts/fetch-spine-runtime.sh）
+web/static/vendor/

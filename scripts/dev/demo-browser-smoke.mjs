@@ -17,7 +17,7 @@ const check = (name, ok, detail = '') => { ok ? pass++ : fail++; console.log(`${
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const J = JSON.stringify
 
-const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] })
 const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, extraHTTPHeaders: extra })
 const errors = []
 const popups = []
@@ -99,7 +99,7 @@ check('卡片带导入方案（data-profile）', (await page.$$eval('#library-it
 // ================= Gal：浏览 → 沉浸 → 分支 → 自动选择 → 字体 =================
 {
   // 按路由直接进首页（点卡片会「继续」上次看到的脚本，这里要从首页开始走）
-  const galItem = (await (await context.request.get(`${BASE}/api/library/items?type=gal&page=1&limit=5`)).json()).items[0]
+  const galItem = (await (await context.request.get(`${BASE}/api/library/items?type=gal&page=1&limit=20`)).json()).items.find((i) => i.title === 'UViewer演示')
   // 重复跑时先把这个脚本的进度（含选项的选择）清零，保证每次都从头走
   await context.request.post(`${BASE}/api/library/items/gal/${galItem.itemId}/progress`, { data: { unitId: 'main', sectionId: 's:character/1003/adultr/100300.txt', scrollRatio: 0, choices: {} } })
   const g = await context.newPage()
@@ -164,6 +164,66 @@ check('卡片带导入方案（data-profile）', (await page.$$eval('#library-it
   const playing = await page.evaluate(() => [...document.querySelectorAll('audio')].length >= 0)
   check('朗读起来了（按钮是激活态或有声音请求）', playing && chunkBodies.length >= 1)
   await page.click('.epub-tts-toggle'); await sleep(300)
+}
+
+
+
+// ================= Gal：tenkeiprdx（Spine 立绘 / 静态画面，真实 WebGL）和 monmusu（视频背景 + 分组）=================
+{
+  const items = (await (await context.request.get(`${BASE}/api/library/items?type=gal&page=1&limit=20`)).json()).items
+  const TK = items.find((i) => i.title === 'tenkeiprdx演示')
+  const MM = items.find((i) => i.title === 'monmusu演示')
+  check('媒体库里有 tenkeiprdx / monmusu 演示媒体', Boolean(TK && MM), J(items.map((i) => i.title)))
+  const pixel = (pg, fx, fy) => pg.evaluate(([x, y]) => {
+    const c = document.querySelector('.gal-spine')
+    const g = document.createElement('canvas'); g.width = c.width; g.height = c.height
+    const ctx = g.getContext('2d'); ctx.drawImage(c, 0, 0)
+    return [...ctx.getImageData(Math.round(x * c.width), Math.round(y * c.height), 1, 1).data]
+  }, [fx, fy])
+  const near = (rgba, [r, g, b], tol = 30) => rgba[3] > 200 && Math.abs(rgba[0] - r) <= tol && Math.abs(rgba[1] - g) <= tol && Math.abs(rgba[2] - b) <= tol
+  const waitPixel = async (pg, fx, fy, want, ms = 10000) => { const end = Date.now() + ms; let last = []; while (Date.now() < end) { last = await pixel(pg, fx, fy).catch(() => []); if (near(last, want)) return { ok: true, last }; await sleep(200) } return { ok: false, last } }
+  if (TK) {
+    const t = await context.newPage()
+    t.on('pageerror', (e) => errors.push(e.message))
+    t.on('dialog', (d) => d.dismiss().catch(() => {}))
+    // 先清进度，保证从头看
+    for (const sec of ['s:10010101.json', 's:20010001.json']) await context.request.post(`${BASE}/api/library/items/gal/${TK.itemId}/progress`, { data: { unitId: 'main', sectionId: sec, scrollRatio: 0, choices: {} } })
+    await t.goto(`${BASE}/#/media/gal/${TK.itemId}/main`)
+    await t.waitForSelector('.gal-browse', { timeout: 15000 })
+    const cards = await t.$$eval('.gal-card', (es) => es.map((e) => [e.querySelector('.gal-card-title')?.textContent, e.querySelector('.gal-card-badge')?.textContent || '']))
+    check('tenkeiprdx 首页：三个剧情，event / extra 角标', J(cards) === J([['10010101', ''], ['20010001', 'event'], ['23010001', 'extra']]), J(cards))
+    await t.goto(`${BASE}/#/media/gal/${TK.itemId}/main?section=${encodeURIComponent('s:10010101.json')}`)
+    await t.waitForSelector('.gal-player .gal-stage', { timeout: 15000 })
+    const left = await waitPixel(t, 0.3, 0.8, [220, 20, 60])
+    check('Spine 立绘（二进制骨骼）在线上站点真的画出来了：站位 1 左侧，素材颜色', left.ok, J(left.last))
+    await t.keyboard.press('Space')
+    await t.waitForFunction(() => document.querySelector('.gal-count')?.textContent === '2 / 4')
+    const right = await waitPixel(t, 0.7, 0.8, [46, 139, 87])
+    check('第 2 句：JSON 骨骼的立绘出现在右侧，左边仍在', right.ok && near(await pixel(t, 0.3, 0.8), [220, 20, 60]), J(right.last))
+    await t.screenshot({ path: '/tmp/demo-tenkei-chara.png' })
+    await t.goto(`${BASE}/#/media/gal/${TK.itemId}/main?section=${encodeURIComponent('s:20010001.json')}`)
+    await t.waitForSelector('.gal-player .gal-stage', { timeout: 15000 })
+    const still = await waitPixel(t, 0.5, 0.75, [0, 191, 255])
+    check('静态画面：两层骨架叠起来（上层的颜色），镜头在动', still.ok && /matrix/.test(await t.$eval('.gal-world', (e) => getComputedStyle(e).transform)), J(still.last))
+    await t.screenshot({ path: '/tmp/demo-tenkei-still.png' })
+    await t.close()
+  }
+  if (MM) {
+    const m = await context.newPage()
+    m.on('pageerror', (e) => errors.push(e.message))
+    m.on('dialog', (d) => d.dismiss().catch(() => {}))
+    await m.goto(`${BASE}/#/media/gal/${MM.itemId}/main`)
+    await m.waitForSelector('.gal-browse', { timeout: 15000 })
+    check('monmusu 首页：按角色编号分组的卡片（10001 / 10004）', J(await m.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))) === J(['10001', '10004']))
+    await m.click('.gal-card[data-title="10001"]')
+    await m.waitForSelector('.gal-card.is-script')
+    check('monmusu 分组：动画 + 静图混排，角标 anim / anim / still', (await m.$$eval('.gal-card-badge', (es) => es.map((e) => e.textContent))).join() === 'anim,anim,still')
+    await m.click('.gal-card[data-title="10001A1"]')
+    await m.waitForSelector('.gal-player .gal-stage', { timeout: 15000 })
+    await sleep(800)
+    check('monmusu 播放页：台词出来；视频背景元素在（没有 ffmpeg 造的 webm 时会提示缺资源，不算错）', (await m.$eval('.gal-text', (e) => e.textContent)).length > 0 && (await m.$$('.gal-movie')).length === 1)
+    await m.close()
+  }
 }
 
 // ================= 配置页：朗读规则 JSON + 新页面规则 JSON =================

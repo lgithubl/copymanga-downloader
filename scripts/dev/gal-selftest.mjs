@@ -12,6 +12,9 @@ import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-l
 import { generateTags as monmusuScript } from '../../scripts/tag-scripts/gal-layout-monmusu/main.js'
 import { parse as renpyParse, prepare as renpyPrepare, renpyText, sniff as renpySniff } from '../../web/library/gal/adapters/renpy-monmusu.mjs'
 import { execFileSync } from 'node:child_process'
+import { generateTags as tenkeiScript } from '../../scripts/tag-scripts/gal-layout-tenkeiprdx/main.js'
+import { parse as tenkeiParse, prepare as tenkeiPrepare, sniff as tenkeiSniff } from '../../web/library/gal/adapters/tenkeiprdx-json.mjs'
+import { buildMonmusuFixture, buildTenkeiFixture } from './make-gal-games-fixture.mjs'
 import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
@@ -434,24 +437,8 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
 }
 {
   const mm = path.join(work, 'mm-pack')
-  const game = path.join(mm, 'game')
-  const put = async (rel, content) => { await mkdir(path.dirname(path.join(game, rel)), { recursive: true }); await writeFile(path.join(game, rel), content) }
-  const png = async (rel, color = 'red') => { await mkdir(path.dirname(path.join(game, rel)), { recursive: true }); execFileSync('convert', ['-size', '8x8', `xc:${color}`, path.join(game, rel)]) }
-  const scene = (id, lines) => `label h${id}:\n    scene black\n${lines}    jump hanim\n`
-  await put('script/movie.rpy', "image 10001A1-10 = Movie(play = 'images/webm/10001/rev10001_01_10.webm',size = (1920,1080),loop = True)\nimage 10001B1-10 = Movie(play = 'images/webm/10001/rev10001_02_10.webm',size = (1920,1080),loop = True)\nimage 10004A1-10 = Movie(play = 'images/webm/10004/rev10004_01_10.webm',size = (1920,1080),loop = True)\n")
-  await put('script/hscene/10001A1.rpy', scene('10001A1', '    play music "audio/bgm/b.mp3" fadein 1.0 fadeout 1.0\n    voice "audio/voice/10001/a1.mp3"\n    scene 10001A1-10 with Dissolve(0.4)\n    "Ann" "first line"\n    "Ann" "second line"\n'))
-  await put('script/hscene/10001B1.rpy', scene('10001B1', '    scene 10001B1-10 with Dissolve(0.4)\n    "Ann" "b line"\n'))
-  await put('script/hscene/10004A1.rpy', scene('10004A1', '    scene 10004A1-10\n    "Bob" "hello"\n'))
-  await put('script/hscene_still/10001C1.rpy', scene('10001C1', '    scene r18_10001_stla1 with Dissolve(0.5)\n    "Ann" "still line"\n    scene missing_image\n    "Ann" "more"\n'))
-  await put('script/hscene_still/readme.txt', 'not a script')
-  await put('script/sub_nav/sub_10001.rpy', 'screen sub_10001():\n    add "bg"\n')
-  await put('script/main_nav.rpy', 'screen vpgrid_test():\n    add "bg_01_0"\n')
-  await put('script/viewmode.rpy', 'label hanim:\n    call screen vpgrid_test\n    return\n')
-  await png('images/icon/icon_10001_0_idle.png', 'blue')
-  await png('images/icon/icon_10001_0_hover.png', 'green')
-  await png('images/icon/icon_10004_0_idle.png', 'yellow')
-  await png('images/bg/r18_10001_stla1.png', 'red')
-  await put('audio/bgm/b.mp3', 'mp3')
+  await buildMonmusuFixture(mm)
+  const put = (rel, content) => writeFile(path.join(mm, 'game', rel), content)
 
   // 导入：adapter id、路径、game.id 都是用户输入
   const imp = await handler.importFromSource({ sourcePath: mm, options: { adapters: ['renpy-monmusu'], config: { game: { id: 'monmusu', title: 'Mon Test' } }, defaultMetadataActions: ['gal-layout-monmusu'] } })
@@ -498,6 +485,84 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   // 用户自己的覆盖：脚本 overrides 能改任何字段
   const ovr = await monmusuScript({ item: it, script: { id: 'gal-layout-monmusu', version: '1.0.1', options: { overrides: [{ path: '*mm-pack', config: { pageSize: 1 }, title: 'Renamed' }] } } })
   check('overrides：按路径命中、覆盖 config、改标题；状态标签变「自定义」', ovr.itemPatch.gal.config.pageSize === 1 && ovr.itemPatch.title === 'Renamed' && ovr.itemTags[0] === 'Gal配置: 自定义')
+}
+
+// ================= tenkeiprdx：adapter + 新指令 + 脚本索引 + 脚本 =================
+{
+  check('sniff：对象形剧情 JSON 才算；别的 JSON / CSV / 文本不算', tenkeiSniff('{"result":{"sceneDetails":[]}}') && tenkeiSniff('  {"x":1,"sceneFrameDetails":[]}') && !tenkeiSniff('{"a":1}') && !tenkeiSniff('bg,a.jpg,0'))
+  const ctx = tenkeiPrepare({ options: { positionX: { 3: 0.9 }, unknownName: 'P' }, texts: { 'Masterdata/username.txt': 'Tester\n' }, files: ['Spines/1001/1001_01.skel.bytes', 'Spines/1001/1001_02.skel.bytes', 'Stills/s/10_b.skel.bytes', 'Stills/s/2_a.skel.bytes', 'Backgrounds/adventure/bg_a.png', 'Backgrounds/still/bg_still_02.png', 'BGM/m_loop.ogg', 'BGM/n.ogg', 'BGM/n_loop.ogg'], toResourcePath: (rel) => rel })
+  check('prepare：站位立绘文件、静态画面（按数字前缀排序：2 在 10 前）、背景、BGM 索引；username 去空白', J(ctx.spines.get('Spines/1001')) === J(['1001_01', '1001_02']) && J(ctx.spines.get('Stills/s')) === J(['2_a', '10_b']) && ctx.backgrounds.get('bg_still_02') === 'Backgrounds/still/bg_still_02.png' && ctx.bgm.has('m_loop') && ctx.username === 'Tester')
+  const mk = (frames, id = '5') => J({ result: { sceneDetails: [{ assetId: 'other', sceneFrameDetails: [] }, { assetId: id, sceneFrameDetails: frames }] } })
+  const r = tenkeiParse(mk([
+    { speakerName: '%username%', phraseContents: 'a\\nb', phraseVoice: 'v1', backgroundImage: 'bg_a', backgroundMusic: 'm', soundEffect: 'click', adventureCharacters: [{ characterMasterId: 1001, characterAppearance: 2, characterPosition: 1, characterAction: 3, characterFacialExpression: 4 }] },
+    { speakerName: '%username%', phraseContents: 'b', backgroundMusic: 'm', adventureCharacters: [{ characterMasterId: 1001, characterAppearance: 2, characterPosition: 3, characterFacialExpression: 0 }] },
+    { adventureCharacters: [], backgroundImage: 'bg_still_02' },
+  ]), ctx, { stem: '5' })
+  const c0 = r.steps[0].commands
+  check('选的是 assetId = 文件名 那一项（不是第一项）；一帧一步；%username% 换成 username.txt；\\n 变换行', r.steps.length === 3 && c0.find((c) => c.op === 'speaker').segments[0].text === 'Tester' && c0.find((c) => c.op === 'text').segments[0].text === 'a\nb', J(c0))
+  check('背景查索引（Backgrounds/adventure）；BGM 没有 m.ogg 但有 m_loop.ogg → 用 _loop；语音按场景 id 分目录；音效 Se/', c0.find((c) => c.op === 'bg').src === 'Backgrounds/adventure/bg_a.png' && c0.find((c) => c.op === 'bgm').src === 'BGM/m_loop.ogg' && c0.find((c) => c.op === 'voice').src === 'AdventureVoice/5/v1.ogg' && c0.find((c) => c.op === 'se').src === 'Se/click.ogg')
+  const sp = c0.find((c) => c.op === 'spine')
+  check('站位立绘：骨架取 <角色id>_<外观两位>（1001_02），站位 1 → 左 0.3，表情 4 → idle_surprise，动作 3 记在这一帧；atlas 同名', sp.skel === 'Spines/1001/1001_02.skel.bytes' && sp.atlas === 'Spines/1001/1001_02.atlas.txt' && sp.x === 0.3 && sp.anim === 'idle_surprise' && sp.action === 3 && sp.kind === 'chara', J(sp))
+  const sp1 = r.steps[1].commands.find((c) => c.op === 'spine' && c.slot === 'Chara3')
+  check('下一帧：动作只做一次（action 归 0）；站位 3 取自 positionX 选项 0.9；bgm 没变不重复发；同一说话人不重复发 speaker', sp1.slot === 'Chara3' && r.steps[1].commands.filter((c) => c.op === 'spine').length === 2 && r.steps[1].commands.filter((c) => c.op === 'spine').find((c) => c.slot === 'Chara1').action === 0 && sp1.x === 0.9 && !r.steps[1].commands.some((c) => c.op === 'bgm' || c.op === 'speaker'), J(r.steps[1].commands.map((c) => [c.op, c.slot, c.action])))
+  const c2 = r.steps[2].commands
+  check('空的 adventureCharacters = 立绘全隐藏；背景名带 still_02 → 背景音效 Hse5（不循环）', c2.some((c) => c.op === 'spineOff' && c.prefix === 'Chara') && c2.find((c) => c.op === 'bgse')?.src === 'BgSe/Hse5.ogg' && c2.find((c) => c.op === 'bgse').loop === false, J(c2))
+  const st = tenkeiParse(mk([
+    { still: 's', stillAnimation: 'animation1', animationSpeed: 1000, sceneCameraStartPositionX: 1, sceneCameraEndPositionX: 5, sceneCameraEndPositionZ: 300, sceneCameraActionDuration: 1500, phraseContents: 'x' },
+    { stillAnimation: 'animation3', phraseContents: 'y' },
+    { stillAnimation: 'animation4', animationSpeed: 500, phraseContents: 'z' },
+    { stillAnimation: 'animation5', phraseContents: 'w' },
+    { backgroundImage: 'bg_a', phraseContents: 'v' },
+  ]), ctx, { stem: '5' })
+  const s0 = st.steps[0].commands
+  check('静态画面：先 bgoff + 清旧层；多个骨架按数字前缀叠（order 0,1）；动画/速度（>100 当千分比 → 1）；animation1 循环', s0[0].op === 'bgoff' && s0[1].op === 'spineOff' && s0[1].prefix === 'still' && J(s0.filter((c) => c.op === 'spine').map((c) => [c.slot, c.skel, c.order, c.anim, c.speed, c.loop])) === J([['still0', 'Stills/s/2_a.skel.bytes', 0, 'animation1', 1, true], ['still1', 'Stills/s/10_b.skel.bytes', 1, 'animation1', 1, true]]), J(s0))
+  check('镜头：起点缺的补 0、终点缺的取起点、时长毫秒 → 秒', J(s0.find((c) => c.op === 'camera')) === J({ op: 'camera', from: [1, 0, 0], to: [5, 0, 300], seconds: 1.5 }), J(s0.find((c) => c.op === 'camera')))
+  const sc = (i, op) => st.steps[i].commands.find((c) => c.op === op)
+  check('animation3：倍速 1.5 + 联动 Hse3 循环；animation4：不循环 + Hse4 + 闪白两次；animation5：白屏渐退；离开静态画面 → 清层 + 镜头归零', st.steps[1].commands.find((c) => c.op === 'spine').speed === 1.5 && sc(1, 'bgse').src === 'BgSe/Hse3.ogg' && sc(1, 'bgse').loop === true && st.steps[2].commands.find((c) => c.op === 'spine').loop === false && st.steps[2].commands.find((c) => c.op === 'spine').speed === 0.5 && sc(2, 'bgse').src === 'BgSe/Hse4.ogg' && J(sc(2, 'flash')) === J({ op: 'flash', color: 'white', count: 2, seconds: 0.3 }) && J(sc(3, 'wash')) === J({ op: 'wash', color: 'white', seconds: 1.5 }) && sc(4, 'spineOff').prefix === 'still' && J(sc(4, 'camera').to) === J([0, 0, 0]) && st.steps[3].commands.some((c) => c.op === 'bgseStop'), J(st.steps.map((x) => x.commands.map((c) => c.op))))
+  check('文件名对不上 / JSON 坏了 / 没有 sceneDetails：明确报错；没有上下文（没配资源目录）照默认路径出，不崩', (() => { try { tenkeiParse('nope', ctx, {}); return false } catch (e) { return /JSON/.test(e.message) } })() && (() => { try { tenkeiParse('{"a":1}', ctx, {}); return false } catch (e) { return /sceneDetails/.test(e.message) } })() && tenkeiParse(mk([{ backgroundImage: 'bg_a', phraseVoice: 'q', phraseContents: 't' }]), null, { stem: '5' }).steps[0].commands.some((c) => c.op === 'bg' && c.src === 'Backgrounds/adventure/bg_a.png'))
+  // 引擎：新指令进状态
+  const eng = { op: 'x' }
+  const scn = { format: 'gal-scene/1', adapter: 'tenkeiprdx-json', stats: {}, steps: [
+    { index: 0, commands: [{ op: 'spine', slot: 'Chara1', kind: 'chara', skel: 'a', atlas: 'b', anim: 'idle_joy' }, { op: 'spine', slot: 'still0', kind: 'still', skel: 'c', atlas: 'd', anim: 'animation1', order: 0 }, { op: 'camera', from: [0, 0, 0], to: [1, 2, 300], seconds: 2 }, { op: 'bgse', src: 'BgSe/Hse2.ogg', loop: true }] },
+    { index: 1, commands: [{ op: 'spineOff', prefix: 'still' }, { op: 'bgseStop' }] },
+    { index: 2, commands: [{ op: 'spineOff', slot: 'Chara1' }] },
+    { index: 3, commands: [{ op: 'spine', slot: 'Chara1', skel: 'a', atlas: 'b' }, { op: 'spine', slot: 'Chara2', skel: 'a', atlas: 'b' }, { op: 'spineOff' }] },
+  ] }
+  const s_0 = stateAt(scn, 0)
+  check('引擎：spine 按 slot 进状态（不带 op）；camera 记终点；bgse 记音效', J(Object.keys(s_0.spines).sort()) === J(['Chara1', 'still0']) && s_0.spines.Chara1.anim === 'idle_joy' && !('op' in s_0.spines.Chara1) && J(s_0.camera.to) === J([1, 2, 300]) && s_0.camera.seconds === 2 && s_0.bgse.loop === true && s_0.bgse.src === 'BgSe/Hse2.ogg')
+  const s_1 = stateAt(scn, 1)
+  check('引擎：spineOff prefix 只清前缀的；bgseStop 清掉背景音效；按 slot 清；不带参数 = 全清', J(Object.keys(s_1.spines)) === J(['Chara1']) && s_1.bgse === null && J(Object.keys(stateAt(scn, 2).spines)) === '[]' && J(Object.keys(stateAt(scn, 3).spines)) === '[]')
+  check('引擎：新指令不占时长（不阻塞点击）', commandDuration({ op: 'spine' }) === 0 && commandDuration({ op: 'camera', seconds: 5 }) === 0 && commandDuration({ op: 'flash', seconds: 1 }) === 0)
+  void eng
+}
+{
+  const tk = path.join(work, 'tenkei-pack')
+  const { imported } = await buildTenkeiFixture(tk)
+  const imp = await handler.importFromSource({ sourcePath: tk, options: { adapters: ['tenkeiprdx-json'], config: { game: { id: 'tenkeiprdx' } }, defaultMetadataActions: ['gal-layout-tenkeiprdx'] } })
+  const item0 = imp.items[0]
+  const skipV1 = await galLayoutScript({ item: item0, script: { id: 'gal-layout-v1', version: '1.1.0', options: {} } })
+  const skipMm = await monmusuScript({ item: item0, script: { id: 'gal-layout-monmusu', version: '1.0.0', options: {} } })
+  const skipTk = await tenkeiScript({ item: M2, script: { id: 'gal-layout-tenkeiprdx', version: '1.0.0', options: {} } })
+  const none = await tenkeiScript({ item: { ...M2, config: {}, source: { path: root } }, script: { id: 'gal-layout-tenkeiprdx', version: '1.0.0', options: {} } })
+  check('不归它管的跳过：v1 / monmusu 脚本不动 tenkeiprdx 的媒体；tenkeiprdx 脚本不动 uviewer 的；没有 game 又认不出结构不认领', !skipV1.itemPatch && !skipMm.itemPatch && !skipTk.itemPatch && !none.itemPatch && /没找到 scenes/.test(none.logs.join('\n')))
+  const out = await tenkeiScript({ item: item0, script: { id: 'gal-layout-tenkeiprdx', version: '1.0.0', options: {} } })
+  const cfg = out.itemPatch.gal.config
+  check('脚本：素材根（外面套了 StreamingAssets/Tenkeiprdx X/）、脚本根 scenes、资源根、扩展名 json、适配器参数 root、脚本索引（event / extra，键 2{1}{2}）', cfg.game.id === 'tenkeiprdx' && cfg.scriptRoots[0].dir === 'StreamingAssets/Tenkeiprdx X/Imported/scenes' && J(cfg.resourceRoots) === J(['StreamingAssets/Tenkeiprdx X/Imported']) && J(cfg.scriptExtensions) === J(['json']) && cfg.adapterOptions['tenkeiprdx-json'].root === 'StreamingAssets/Tenkeiprdx X/Imported' && J(cfg.scriptIndex.map((r) => [r.dir.split('/').pop(), r.key, r.badge])) === J([['event', '2{1}{2}', 'event'], ['extra', '2{1}{2}', 'extra']]) && cfg.scriptCount === 3 && cfg.cover === 'EpisodeThumbnails/event/ep_eventstill_001_0001_thumb.png' && J(out.itemTags) === J(['Gal配置: tenkeiprdx', 'Gal配置version: 1.0.0', 'Gal游戏: tenkeiprdx']), J(cfg))
+  await handler.patchItemMetadata(item0.itemId, { gal: out.itemPatch.gal })
+  const it = await handler.getItem(item0.itemId)
+  const read = (sectionId) => handler.getReaderContent(it.itemId, 'main', { sectionId })
+  const home = (await read('')).node
+  check('首页：三个剧情（自然序）；event / extra 角标和缩略图来自文件名推出的剧情 id（2+a+b）；没有缩略图的剧情没有角标（缩略图退回到脚本里第一张背景）', J(home.items.map((i) => [i.title, i.badge])) === J([['10010101', ''], ['20010001', 'event'], ['23010001', 'extra']]) && home.items[0].thumb === 'Backgrounds/adventure/bg_adventure_001.png' && home.items[1].thumb === 'EpisodeThumbnails/event/ep_eventstill_001_0001_thumb.png', J(home.items))
+  const story = await read(home.items[0].node)
+  const cmds = story.scene.steps.flatMap((x) => x.commands)
+  check('剧情播放页：资源路径相对素材根；立绘两种骨骼格式的路径都查到；语音目录用文件名当场景 id；username 来自 Masterdata', story.scene.steps.length === 4 && cmds.find((c) => c.op === 'bgm').src === 'BGM/bgm_a_loop.ogg' && cmds.find((c) => c.op === 'voice').src === 'AdventureVoice/10010101/v002.ogg' && cmds.some((c) => c.op === 'spine' && c.skel === 'Spines/1002/1002_01.skel.bytes') && cmds.some((c) => c.op === 'speaker' && c.segments[0]?.text === 'Tester') && Object.keys(story.scene.stats.unresolved).length === 0 && story.sectionNavigation.next.title === '20010001', J(story.scene.stats))
+  const still = await read(home.items[1].node)
+  check('静态画面剧情：两层骨架（按数字前缀）、镜头、联动音效、闪白都在', still.scene.steps[0].commands.filter((c) => c.op === 'spine').map((c) => c.skel).join() === 'Stills/h_still_01/1_base.skel.bytes,Stills/h_still_01/2_over.skel.bytes' && still.scene.steps[0].commands.some((c) => c.op === 'camera') && still.scene.steps[1].commands.some((c) => c.op === 'bgse' && c.src === 'BgSe/Hse2.ogg') && still.scene.steps[2].commands.some((c) => c.op === 'flash'))
+  const extra = await read(home.items[2].node)
+  check('extra 剧情：背景名带 still_ 的在 Backgrounds/still 里找到；frameEffect 原样记在 stats', extra.scene.steps[0].commands.find((c) => c.op === 'bg').src === 'Backgrounds/still/bg_still_03.png' && extra.scene.stats.frameEffects.shake === 1, J(extra.scene.stats))
+  check('资源：骨骼 / atlas / 图集 png / ogg 都能取；目录穿越被拒', (await handler.getResource(it.itemId, 'Spines/1001/1001_01.skel.bytes')).body.length > 20 && (await handler.getResource(it.itemId, 'Spines/1001/1001_01.atlas.txt')).body.toString().includes('size: 64,64') && (await handler.getResource(it.itemId, 'Spines/1001/1001_01.png')).contentType === 'image/png' && (await handler.getResource(it.itemId, 'AdventureVoice/10010101/v002.ogg')).contentType === 'audio/ogg' && Boolean(await err(handler.getResource(it.itemId, '../x'))) && (await handler.getThumbnail(it.itemId)).contentType === 'image/png')
+  check('config.scriptIndex 规整：目录必须安全、pattern 必须是合法正则、key 默认 {1}', J(normalizeGalConfig({ scriptIndex: [{ dir: 'a/b', pattern: '^x(\\d)' }, { dir: '../a', pattern: 'x' }, { dir: 'a', pattern: '(' }, { dir: '', pattern: 'x' }] }).scriptIndex) === J([{ dir: 'a/b', pattern: '^x(\\d)', key: '{1}', badge: '' }]))
+  void imported
 }
 
 await rm(work, { recursive: true, force: true })

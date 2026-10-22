@@ -141,6 +141,30 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   }
   const labelOf = async (name) => config.labels[name] || String((await readNames())[name] || '') || name
 
+  // 脚本索引：{ 脚本名 → { thumb, badge } }（config.scriptIndex；读一次目录，本次请求内缓存）
+  const indexRules = config.scriptIndex.map((rule) => ({ ...rule, re: new RegExp(rule.pattern) }))
+  let scriptIndexCache = null
+  const resourceRelOf = (rel) => {
+    for (const root of [...config.resourceRoots].filter(Boolean).sort((a, b) => b.length - a.length)) if (rel.startsWith(`${root}/`)) return rel.slice(root.length + 1)
+    return rel
+  }
+  async function readScriptIndex() {
+    if (scriptIndexCache) return scriptIndexCache
+    const map = new Map()
+    for (const rule of indexRules) {
+      let names = []
+      try { names = (await readdir(path.join(mediaDir, ...rule.dir.split('/')))).sort(naturalCompare) } catch { /* 没有这个目录 */ }
+      for (const name of names) {
+        const m = rule.re.exec(name)
+        if (!m || hidden(name)) continue
+        const key = rule.key.replace(/\{(\d)\}/g, (_, n) => m[Number(n)] ?? '')
+        if (key && !map.has(key)) map.set(key, { thumb: resourceRelOf(`${rule.dir}/${name}`), badge: rule.badge })
+      }
+    }
+    scriptIndexCache = map
+    return map
+  }
+
   const adapterContexts = new Map()   // 适配器 id → ctx（本次请求内）
   async function contextOf(adapterId) {
     if (!adapterId) return null
@@ -237,7 +261,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     let hasMovie = false
     let scene = null
     try {
-      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId))
+      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId), { rel, stem: stemOf(rel) })
       excerpt = excerptOf(scene)
       hasMovie = scene.steps.some((step) => step.commands.some((c) => c.op === 'movie'))
     } catch { /* 解析失败：照样列出来，打开时再报错 */ }
@@ -247,12 +271,14 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         for (const thumbsDir of config.thumbsDirs) candidates.push(expandTemplate(template, { stem: stemOf(rel), thumbsDir }))
       } else candidates.push(expandTemplate(template, { stem: stemOf(rel) }))
     }
+    const indexed = indexRules.length ? (await readScriptIndex()).get(stemOf(rel)) : null
+    if (indexed?.thumb) candidates.push(indexed.thumb)
     if (scene) { const bg = firstBackgroundSrc(scene); if (bg) candidates.push(bg) }
     for (const candidate of candidates) {
       if (!candidate) continue
       try { await resolveAsset(candidate); thumb = candidate; break } catch { /* 下一个 */ }
     }
-    const result = { adapterId, thumb, excerpt, hasMovie }
+    const result = { adapterId, thumb, excerpt, hasMovie, badge: indexed?.badge || '' }
     infoCache.set(key, result)
     return result
   }
@@ -337,7 +363,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const items = []
       for (const entry of members.slice((current - 1) * pageSize, current * pageSize)) {
         const info = await scriptInfo(set, entry.rel)
-        items.push({ type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin, node: idOf(set, 'script', entry.rel) })
+        items.push({ type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) })
       }
       return { node: { id: groupNodeId(set, rel, key, current), kind: 'cards', title: await labelOf(key), ...base, page: current, pageCount, total: members.length, items } }
     }
@@ -365,7 +391,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
           items.push({ type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, thumb: await dirThumb(entry), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) })
         } else {
           const info = await scriptInfo(set, entry.rel)
-          items.push({ type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin, node: idOf(set, 'script', entry.rel) })
+          items.push({ type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) })
         }
       }
       const id = dirNodeId(set, rel, current)
@@ -384,7 +410,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     } catch { throw fail('脚本不存在', 404) }
     const adapterId = await scriptAdapterOf(abs)
     if (!adapterId) throw fail('不是可识别的脚本', 400)
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId))
+    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel, stem: stemOf(rel) })
 
     // 上一话/下一话：同一个列表里（合并目录时跨来源）相邻的脚本
     const dir = effectiveParentDir(rel)

@@ -3931,6 +3931,34 @@ h2 {
   z-index: 2;
 }
 
+.gal-world {
+  inset: 0;
+  position: absolute;
+  transform-origin: center;
+  z-index: 1;
+}
+
+.gal-world > .gal-bg {
+  z-index: 1;
+}
+
+.gal-spine {
+  height: 100%;
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+  z-index: 3;
+}
+
+.gal-flash {
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 4;
+}
+
 .gal-black {
   background: #000;
   inset: 0;

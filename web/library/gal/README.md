@@ -30,6 +30,7 @@ tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构�
 | `groups` | 分组：`[{parent: 通配或 '.', pattern}]`。列 `parent` 下的目录时，脚本名（无扩展名）匹配 `pattern` 的按**第 1 个捕获组**归进虚拟目录（一个键一张卡片，节点 id `g:<键>:<路径>`），不匹配的照常列出；名字/头像和真实目录一样查 `labels` / `namesFiles` / `dirThumbs`。`parent: '.'` = 脚本根本身（`merge` 也认） |
 | `game` | `{id, title}`：这个媒体是哪个游戏/资源包（`id` 只含字母数字 `_-`）。**导入时在 config 里写**，tag 脚本按它分发——同一个 adapter、配置不同的两个媒体靠它区分；脚本同时打 `Gal游戏: <id>` 标签方便搜索（以 config 为准） |
 | `adapterOptions` | `{<adapter id>: {…}}`，原样交给适配器（≤ 8KB）；需要查别的文件的适配器用它指路径，见下 |
+| `scriptIndex` | 脚本索引（给脚本配缩略图 + 来源角标）：`[{dir, pattern, key, badge}]`。`dir`（相对媒体目录）里的文件名匹配 `pattern` 时，按 `key` 模板（`{1}{2}…` = 捕获组）算出它对应哪个脚本（脚本名，无扩展名），这个文件就是那个脚本的缩略图，`badge` 显示在卡片右上角 |
 | `hiddenDirs` | 列目录时不显示的目录名（任意层级，精确匹配） |
 | `stripPrefixes` `scriptExtensions` `pageSize` | 资源找不到时去掉的前缀 / 脚本扩展名 / 每页卡片数 |
 
@@ -52,6 +53,25 @@ tag 脚本    gal-layout-v1（scripts/tag-scripts）：目录没按标准结构�
   合并 `hscene`+`hscene_still`（角标 `anim`/`still`）、按文件名前 5 位角色编号分组、隐藏 `sub_nav`/`tl`、`adapterOptions`（别名表、图片目录）、
   头像模板（`images` 里找 `icon_<编号>_0_idle.*`）、封面、脚本数。只处理 `config.game.id` 为 `monmusu`（或没有 game 且认出结构）的媒体；
   `gal-layout-v1` 同理只处理 `uviewer`/没有 game 的媒体，两个脚本互不覆盖。
+
+### 适配器 tenkeiprdx-json 与脚本 gal-layout-tenkeiprdx
+
+- 输入是 Unity 剧情查看器素材（`StreamingAssets/Tenkeiprdx X/Imported`）里的剧情 JSON（对象形 `result.sceneDetails[].sceneFrameDetails[]`，取 `assetId` = 文件名那一项）。一帧 = 一步。
+  背景（`Backgrounds/adventure|still|eventstill`）、BGM（`BGM/<名>.ogg`，没有就找 `_loop`）、音效、语音（`AdventureVoice/<场景id>/`）、说话人（`%username%` ← `Masterdata/username.txt`）、台词；
+  站位立绘（`Spines/<角色id>/`，表情 0..6 → idle_normal/joy/sad/angry/surprise/shy/unique，站位 1 左 / 2 右 / 其余居中，动作 1 跳 / 2 抖 / 3 沉，空数组 = 全隐藏）；
+  静态画面（`Stills/<名>/` 下所有骨架按数字前缀叠起来，animation2/3/4 联动背景音效 Hse2/3/4，animation4 闪白两次，animation5 白屏渐退，animation3 倍速 1.5）；镜头（起止位置 + Z 缩放千分比 + 毫秒时长）。
+  只做对象形；`frameEffect` 的取值不明，原样记在 `scene.stats.frameEffects`；对象形里没有「谁在说话」的站位字段，所以不做说话人高亮。
+- 适配器参数 `adapterOptions['tenkeiprdx-json']`：`root`（Imported 目录，相对媒体目录）、`positionX`（站位 → 横向位置 0..1）、`unknownName`（`%username%` 没有 username.txt 时的名字）。
+- 脚本探测 `scenes/` + `Backgrounds|Spines|Stills|Masterdata`（外面多套几层目录自动带前缀），写：脚本根 `<素材根>/scenes`、资源根 `<素材根>`、扩展名 `json`、
+  `scriptIndex`（`EpisodeThumbnails/event|extra` 的 `ep_eventstill_<a>_<b>…` → 剧情 id `2<a><b>`，缩略图 + 角标 event / extra）、适配器参数、封面、脚本数。只处理 `game.id = tenkeiprdx`（或没有 game 且认出结构）的媒体。
+
+### Spine 骨骼动画（播放器 `web/static/gal-spine.js`）
+
+- 规范场景新增指令：`spine`（slot / kind: chara|still / skel / atlas / anim / loop / speed / x / dim / action / order）、`spineOff`（slot 或 prefix 或全部）、`camera`（from / to / seconds）、`bgse` / `bgseStop`（背景音效声道）、`flash` / `wash`（闪屏 / 整屏渐退）。
+  `spine` 按 slot 进状态（同 slot 再来一条 = 更新动画/颜色/位置，同一个骨架不重新加载）；后退/续播一步到位恢复。
+- 渲染：一个叠在背景上的 WebGL canvas，官方 spine-webgl 3.8 运行时，骨骼文件二进制（`.skel.bytes`）和 JSON 都认；站位立绘按舞台高度 95% 底部对齐，静态画面 contain 居中；镜头作用在整个画面（背景 + 视频 + Spine）上。
+- **运行时不在仓库里**（Spine Runtimes License 限制）：`Dockerfile.web` 构建时跑 `scripts/fetch-spine-runtime.sh`（固定提交 + sha256 校验）下载到 `web/static/vendor/`；本地开发手动跑一次。没有运行时：播放器栏里提示「Spine 运行时缺失」，其余照常。
+- 版本必须和骨骼导出版本一致：运行时是 3.8，4.x 导出的骨骼读不了。
 
 ### 脚本 gal-layout-v1
 
