@@ -27,7 +27,7 @@ page.on('pageerror', (e) => errors.push(e.message))
 page.on('dialog', (d) => d.dismiss().catch(() => {}))
 const chunkBodies = []
 page.on('request', (r) => { if (r.method() === 'POST' && /\/tts-chunk$/.test(r.url())) { try { chunkBodies.push(JSON.parse(r.postData() || '{}')) } catch { /* ignore */ } } })
-const openLibrary = async () => {
+const openLibrary = async (type = 'all') => {
   for (const p of context.pages()) if (p !== page) await p.close().catch(() => {})
   popups.length = 0
   await page.goto(`${BASE}/`)
@@ -35,55 +35,58 @@ const openLibrary = async () => {
   await page.reload()
   await page.click('[data-view="library-view"]')
   await page.waitForSelector('#library-items .library-card', { timeout: 20000 })
-  await sleep(800)
+  // 演示里条目多（样式测试数据），按类型筛一下才找得到想点的卡片
+  if (type !== 'all') { await page.click('.library-more-controls summary'); await page.selectOption('#library-type', type); await sleep(1500); await page.waitForSelector('#library-items .library-card', { timeout: 20000 }) }
+  await sleep(600)
 }
 const card = (title) => page.locator('#library-items .library-card', { hasText: title }).first()
 
 // ================= 媒体库：三种导入方案都在 =================
-await openLibrary()
-const titles = await page.$$eval('#library-items .library-card', (cs) => cs.map((c) => [c.querySelector('.card-title')?.textContent, c.dataset.profile]))
-check('媒体库里有 Gal / 文本媒体 / EPUB 的卡片（卡片带导入方案）', ['UViewer演示', '文本媒体演示', '朗读规则演示'].every((t) => titles.some(([x]) => x?.includes(t))) && titles.some(([, p]) => p === 'gal-import') && titles.some(([, p]) => p === 'text-media'), J(titles.slice(0, 10)))
+const allItems = (await (await context.request.get(`${BASE}/api/library/items?page=1&limit=200`)).json()).items
+check('媒体库里有 Gal / 文本媒体 / EPUB（导入方案各一）', ['gal-import', 'text-media'].every((p) => allItems.some((i) => i.sourceProfile === p)) && allItems.some((i) => i.type === 'epub'), J(allItems.map((i) => [i.type, i.sourceProfile]).slice(0, 8)))
+await openLibrary('gal')
+check('卡片带导入方案（data-profile）', (await page.$$eval('#library-items .library-card', (cs) => cs.map((c) => c.dataset.profile))).includes('gal-import'))
 
 // ================= 新页面规则（预置：Gal、文本媒体开新页；压缩包图集的标签开新页）=================
 {
-  await openLibrary()
+  await openLibrary('gal')
   const popupP = context.waitForEvent('page', { timeout: 4000 }).catch(() => null)
   await card('UViewer演示').click()
   const gp = await popupP
   check('点 Gal 卡片：按规则 {profile:gal-import} 开新页（URL 带 tab=new）；当前页留在媒体库', Boolean(gp) && /tab=new/.test(gp.url()) && /\/media\/gal\//.test(gp.url()) && Boolean(await page.$('#library-view.active')), gp?.url() || '无')
-  await openLibrary()
+  await openLibrary('media')
   const textP = context.waitForEvent('page', { timeout: 4000 }).catch(() => null)
   await card('文本媒体演示').click()
   await page.locator('#library-units .library-unit').first().click().catch(() => {})
   const tp = await textP
   check('点文本媒体的章节：按规则 {profile:text-media} 开新页', Boolean(tp) && /tab=new/.test(tp.url()), tp?.url() || '无')
-  await openLibrary()
+  await openLibrary('epub')
   const epubP = context.waitForEvent('page', { timeout: 2500 }).catch(() => null)
   await card('朗读规则演示').click()
   await sleep(500)
   const ep = await epubP
   check('EPUB 没有规则：点它不开新页（在当前页打开或选中）', !ep, ep?.url())
   // 点标签：EPUB 的标签（没规则）当前页搜索；Ctrl 点击永远新页
-  await openLibrary()
+  await openLibrary('epub')
   const tagPill = card('朗读规则演示').locator('.tag-pill').first()
   const tagP = context.waitForEvent('page', { timeout: 2500 }).catch(() => null)
   await tagPill.click()
   check('点 EPUB 卡片上的标签：没有规则 → 当前页搜索（搜索框填入标签）', !(await tagP) && (await page.inputValue('#library-tag-search')).includes('演示'))
-  await openLibrary()
+  await openLibrary('epub')
   const ctrlP = context.waitForEvent('page', { timeout: 4000 }).catch(() => null)
   await card('朗读规则演示').locator('.tag-pill').first().click({ modifiers: ['Control'] })
   const cp = await ctrlP
   check('Ctrl 点击标签：永远开新页', Boolean(cp) && /tab=new/.test(cp.url()), cp?.url() || '无')
-  const archive = await page.$$eval('#library-items .library-card', (cs) => cs.filter((c) => c.dataset.profile === 'archive-gallery').length)
+  const archive = allItems.filter((i) => i.sourceProfile === 'archive-gallery').length
   if (archive) {
-    await openLibrary()
+    await openLibrary('archive')
     const aP = context.waitForEvent('page', { timeout: 4000 }).catch(() => null)
     await page.locator('#library-items .library-card[data-profile="archive-gallery"] .tag-pill').first().click()
     const ap = await aP
     check('点压缩包图集卡片上的标签：规则 {profile:archive-gallery} 命中 → 开新页', Boolean(ap) && /tab=new/.test(ap.url()), ap?.url() || '无')
   } else console.log('（演示里没有压缩包图集条目，跳过「点它的标签开新页」）')
   // 新页里「返回」：统一开关（默认开 = 关闭标签页）
-  await openLibrary()
+  await openLibrary('gal')
   const bp = context.waitForEvent('page', { timeout: 4000 }).catch(() => null)
   await card('UViewer演示').click()
   const gal = await bp
@@ -142,7 +145,7 @@ check('媒体库里有 Gal / 文本媒体 / EPUB 的卡片（卡片带导入方�
 
 // ================= EPUB：朗读规则（ja / zh 各用各的参数）=================
 {
-  await openLibrary()
+  await openLibrary('epub')
   await card('朗读规则演示').click()
   await page.waitForSelector('#library-units .library-unit', { timeout: 10000 }).catch(() => {})
   await page.locator('#library-units .library-unit').first().click().catch(() => {})
@@ -168,6 +171,7 @@ check('媒体库里有 Gal / 文本媒体 / EPUB 的卡片（卡片带导入方�
   await page.goto(`${BASE}/`)
   await page.click('[data-view="settings-view"]')
   await page.waitForSelector('#config-epub-tts-rules')
+  await page.waitForFunction(() => document.querySelector('#config-epub-tts-rules')?.value.length > 2 && document.querySelector('#config-media-new-tab-rules')?.value.length > 2, null, { timeout: 10000 })
   const tts = JSON.parse(await page.inputValue('#config-epub-tts-rules'))
   const open = JSON.parse(await page.inputValue('#config-media-new-tab-rules'))
   check('配置页：朗读规则、新页面规则都是 JSON 数组（预置了演示规则）', tts.length === 2 && tts[0].flag === 'ja' && open.some((r) => r.profile === 'gal-import'), J([tts, open]))
