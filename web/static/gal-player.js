@@ -1,7 +1,7 @@
 // Gal 播放器（DOM + 音频）。纯逻辑在 gal-engine.js。输入是服务端给的规范场景（见 web/library/gal/scene.mjs）。
 // 目前渲染：背景（渐变/纯色）、说话人和台词（含描边/颜色等样式片段）、BGM/语音/音效、黑场、wait、视频。
 // 立绘 / 遮罩 / Spine 等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
-import { assetUrl, backlog, commandDuration, applyCommand, ratioOfStep, segmentsText, stateAt, stepOfRatio } from '/gal-engine.js'
+import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, segmentsText, stateAt, stepOfRatio } from '/gal-engine.js'
 
 const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
 const loadVolume = (key, fallback) => {
@@ -16,6 +16,14 @@ export const GAL_SETTINGS = {
   autoVoiceDelayKey: 'copymanga.gal.autoVoiceDelay', // 自动播放：语音播完后再等多少秒下一句
   autoVoiceDelayDefault: 1,
   autoVoiceDelayMax: 30,
+  fontScaleKey: 'copymanga.gal.fontScale',          // 台词字体大小倍数（脚本里 <size=N> 的相对大小跟着一起缩放）
+  fontScaleDefault: 1,
+  fontScaleMin: 0.6,
+  fontScaleMax: 2,
+  autoChoiceKey: 'copymanga.gal.autoChoice',        // 自动选择：-1 关；0 随机；1/2/3… 选对应项（没有该项就随机）
+  autoChoiceDefault: -1,
+  autoChoiceMax: 9,
+  autoChoiceDelayMs: 700,                           // 选项出现后等一下再自动选，别闪过去
 }
 const loadNumber = (key, fallback, min, max) => {
   const raw = localStorage.getItem(key)
@@ -34,8 +42,15 @@ function el(tag, className, text) {
 export function renderSegments(target, segments, { plain = false } = {}) {
   target.replaceChildren()
   for (const segment of segments || []) {
-    const span = el('span', '', segment.text)
+    // 注音：<ruby>基字<rt>读音</rt></ruby>
+    let span
+    if (segment.ruby) {
+      span = el('ruby', '')
+      span.append(document.createTextNode(segment.text), el('rt', '', segment.ruby))
+    } else span = el('span', '', segment.text)
     const style = segment.style || {}
+    // <size=N>：N 以正文 30 为基准按比例缩放，再乘上界面里的字体大小设置（用 em，所以跟着一起变）
+    if (style.size && !plain) span.style.fontSize = `${Math.max(0.6, Math.min(1.8, style.size / 30))}em`
     if (style.color && !plain) span.style.color = style.color
     if (style.bold) span.style.fontWeight = '700'
     if (style.italic) span.style.fontStyle = 'italic'
@@ -47,9 +62,12 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
 //   chapter: { canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传） }
-export function createGalPlayer({ container, reader, startRatio = 0, onStep = () => {}, onToggleImmersive = null, onEscape = null, chapter = null }) {
+export function createGalPlayer({ container, reader, startRatio = 0, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null }) {
   const scene = reader.scene
-  const total = scene.steps.length
+  // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
+  let choices = { ...(startChoices || {}) }
+  let path = activePath(scene, choices)
+  const hasSteps = scene.steps.length > 0
   const base = reader.resourceBase
   const url = (src) => assetUrl(base, src)
   const rawIgnored = Object.values(scene.stats?.raw || {}).reduce((a, b) => a + b, 0)
@@ -85,14 +103,15 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →）', 'gal-next-btn')
   const autoBtn = btn('自动', '自动播放（A）', 'gal-auto')
   const logBtn = btn('记录', '台词记录（L）', 'gal-log-btn')
-  const cfgBtn = btn('⚙', '设置：文本框透明度、音量、自动播放等待时间', 'gal-cfg')
+  const autoSelBtn = btn('自选', '自动选择选项开关（具体选第几个在 ⚙ 里设置）', 'gal-autosel')
+  const cfgBtn = btn('⚙', '设置：字体大小、文本框透明度、音量、自动播放、自动选择', 'gal-cfg')
   const chPrevBtn = btn('上话', '上一话', 'gal-ch-prev gal-imm-only')
   const chNextBtn = btn('下话', '下一话', 'gal-ch-next gal-imm-only')
   const immBtn = btn('沉浸', '沉浸模式（I）', 'gal-imm')
   const fsBtn = btn('全屏', '全屏（F）', 'gal-fs')
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const note = el('span', 'muted gal-note', '')
-  bar.append(upBtn, prevBtn, count, nextBtn, autoBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, immBtn, fsBtn, backBtn, note)
+  bar.append(upBtn, prevBtn, count, nextBtn, autoBtn, autoSelBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, immBtn, fsBtn, backBtn, note)
 
   // 设置弹层：文本框透明度 / 音量 / 自动播放等待时间
   const settings = el('div', 'gal-settings')
@@ -111,20 +130,33 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   delayInput.title = '自动播放时，语音播完后再等多少秒进入下一句（没有语音的句子按台词长度估算）'
   delayInput.className = 'gal-set-number'
   const delayUnit = el('span', 'gal-set-value', '秒')
+  const fontRange = range(Math.round(GAL_SETTINGS.fontScaleMin * 100), Math.round(GAL_SETTINGS.fontScaleMax * 100), 5, '台词字体大小')
+  const fontValue = el('span', 'gal-set-value', '')
+  const autoChoiceInput = el('input')
+  autoChoiceInput.type = 'number'
+  autoChoiceInput.min = '-1'
+  autoChoiceInput.max = String(GAL_SETTINGS.autoChoiceMax)
+  autoChoiceInput.step = '1'
+  autoChoiceInput.title = '遇到选项时自动选：-1 不开启；0 随机选一个；1/2/3… 选对应的项（没有这一项就随机）'
+  autoChoiceInput.className = 'gal-set-number gal-set-autochoice'
   settings.append(
+    row('字体大小', fontRange, fontValue),
     row('文本框透明度', opacityRange, opacityValue),
     row('BGM 音量', bgmRange),
     row('语音/音效', seRange),
     row('自动：语音播完后等', delayInput, delayUnit),
+    row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput),
   )
   hud.append(box, bar, settings)
   stage.append(...layers, movie, black, hud)
   const logPanel = el('div', 'gal-log')
   logPanel.hidden = true
-  stage.append(logPanel)
+  const choiceBox = el('div', 'gal-choices')   // 选项：画面正中，竖排
+  choiceBox.hidden = true
+  stage.append(logPanel, choiceBox)
   root.append(stage)
   container.replaceChildren(root)
-  if (!total) stage.append(empty)
+  if (!hasSteps) stage.append(empty)
 
   // ---------- 音频 ----------
   let bgmVolume = loadVolume('bgm', 0.5)
@@ -133,8 +165,23 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   seRange.value = String(seVolume)
   let boxOpacity = loadNumber(GAL_SETTINGS.boxOpacityKey, GAL_SETTINGS.boxOpacityDefault, 0, 1)
   let voiceDelay = loadNumber(GAL_SETTINGS.autoVoiceDelayKey, GAL_SETTINGS.autoVoiceDelayDefault, 0, GAL_SETTINGS.autoVoiceDelayMax)
+  let fontScale = loadNumber(GAL_SETTINGS.fontScaleKey, GAL_SETTINGS.fontScaleDefault, GAL_SETTINGS.fontScaleMin, GAL_SETTINGS.fontScaleMax)
+  let autoChoice = Math.round(loadNumber(GAL_SETTINGS.autoChoiceKey, GAL_SETTINGS.autoChoiceDefault, -1, GAL_SETTINGS.autoChoiceMax))
+  let autoChoiceLast = autoChoice >= 0 ? autoChoice : 0
   opacityRange.value = String(Math.round(boxOpacity * 100))
   delayInput.value = String(voiceDelay)
+  autoChoiceInput.value = String(autoChoice)
+  fontRange.value = String(Math.round(fontScale * 100))
+  const applyFont = () => {
+    root.style.setProperty('--gal-font-scale', String(fontScale))
+    fontValue.textContent = `${Math.round(fontScale * 100)}%`
+  }
+  applyFont()
+  const applyAutoChoiceButton = () => {
+    autoSelBtn.classList.toggle('active', autoChoice >= 0)
+    autoSelBtn.textContent = autoChoice < 0 ? '自选' : autoChoice === 0 ? '自选:随机' : `自选:${autoChoice}`
+  }
+  applyAutoChoiceButton()
   const applyOpacity = () => {
     root.style.setProperty('--gal-box-alpha', String(boxOpacity))
     opacityValue.textContent = `${Math.round(boxOpacity * 100)}%`
@@ -193,7 +240,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   }
 
   // ---------- 画面 ----------
-  let state = stateAt(scene, -1)
+  let state = stateAt(scene, -1, choices)
   let frontLayer = 0
   let skipping = false
   let running = false
@@ -267,9 +314,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   // 一步到位渲染第 i 步之后的状态（后退 / 续播 / 开头）。不播语音和音效——那是一次性的
   function renderInstant(i) {
     gen += 1
+    cancelChoice()
     running = false
     skipping = false
-    state = stateAt(scene, i)
+    state = stateAt(scene, i, choices)
     index = i
     paintBg(state.bg, 0, true)
     paintText()
@@ -291,14 +339,32 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     running = true
     skipping = false
     const mine = ++gen
+    stopAuto()
+    cancelChoice()
     index = i
-    onStep(i, total)
+    reportStep()
     updateCount()
     const step = scene.steps[i]
     for (const command of step.commands) {
       if (destroyed || mine !== gen) return
+      if (!condMet(command.when, state.vars)) continue   // 没选中的分支：整条跳过
+      if (command.op === 'choice') {
+        let picked = choices[command.id]
+        if (picked === undefined) {
+          skipping = false
+          picked = await askChoice(command)
+          if (destroyed || mine !== gen || picked == null) return   // 等选择的时候用户后退/跳走了
+          choices = { ...choices, [command.id]: picked }
+          path = activePath(scene, choices)
+          onChoices({ ...choices })
+          reportStep()
+          updateCount()
+        }
+        applyCommand(state, command, choices)
+        continue
+      }
       const seconds = skipping ? 0 : commandDuration(command)
-      applyCommand(state, command)
+      applyCommand(state, command, choices)
       switch (command.op) {
         case 'bg':
         case 'bgoff':
@@ -344,7 +410,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     running = false
     skipping = false
     afterStep()
-    preloadNext(i + 1)
+    preloadNext(path[path.indexOf(i) + 1])
   }
 
   function preloadNext(i) {
@@ -353,10 +419,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     for (const command of step.commands) if (command.op === 'bg' && command.src) new Image().src = url(command.src)
   }
 
+  const posNow = () => path.indexOf(index)
+  // 进度按「第几步 / 当前会走到的总步数」报给页面（存成 scrollRatio）
+  function reportStep() { onStep(Math.max(0, posNow()), path.length) }
   function updateCount() {
-    count.textContent = total ? `${Math.max(0, index) + 1} / ${total}` : '0 / 0'
-    prevBtn.disabled = index <= 0
-    nextBtn.disabled = !total || (index >= total - 1 && !running)
+    const pos = posNow()
+    count.textContent = path.length ? `${Math.max(0, pos) + 1} / ${path.length}` : '0 / 0'
+    prevBtn.disabled = pos <= 0
+    nextBtn.disabled = !path.length || (pos >= path.length - 1 && !running)
     if (!logPanel.hidden) renderLog()
   }
   function updateNote() {
@@ -384,7 +454,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   function afterStep() {
     updateCount()
     updateNote()
-    marker.hidden = index >= total - 1
+    marker.hidden = posNow() >= path.length - 1
     scheduleAuto()
   }
 
@@ -392,7 +462,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   function stopAuto() { clearTimeout(autoTimer); autoTimer = 0 }
   function scheduleAuto() {
     stopAuto()
-    if (!auto || running || index >= total - 1 || destroyed) return
+    if (!auto || running || choiceState || posNow() >= path.length - 1 || destroyed) return
     // 这一步有语音：等它播完，再多等 voiceDelay 秒。语音还在放时直接返回，播完（ended）会再调用本函数
     const voice = stepVoice && stepVoice.step === gen && !stepVoice.failed ? stepVoice : null
     if (voice) {
@@ -407,16 +477,81 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     autoTimer = setTimeout(next, wait * 1000)
   }
   async function next() {
-    if (destroyed || !total) return
+    if (destroyed || !hasSteps || choiceState) return   // 选项开着：只能选，不能翻页
     if (running) { skipping = true; return }
-    if (index >= total - 1) return
-    await runStep(index + 1)
+    const target = path[posNow() + 1]
+    if (target === undefined) return
+    await runStep(target)
+  }
+  // 跳到某一步（后退 / 回看记录 / 续播）。回到一个已经选过的选项那一步 = 重选：这一步起的选择全部作废，从选项开始重新走
+  function enterStep(target, { backward = false } = {}) {
+    if (target === undefined) return
+    const pending = choiceIn(scene, target)
+    if (pending && backward && choices[pending.id] !== undefined) {
+      choices = dropChoicesFrom(choices, target)
+      path = activePath(scene, choices)
+      onChoices({ ...choices })
+    }
+    if (pending && choices[pending.id] === undefined) {
+      const k = path.indexOf(target)
+      renderInstant(k > 0 ? path[k - 1] : -1)
+      runStep(target)
+    } else renderInstant(target)
+    reportStep()
   }
   function prev() {
-    if (destroyed || !total) return
-    const target = Math.max(0, index - 1)
-    renderInstant(target)
-    onStep(target, total)
+    if (destroyed || !hasSteps) return
+    enterStep(path[Math.max(0, posNow() - 1)], { backward: true })
+  }
+
+  // ---------- 选项（画面正中、竖排；可以自动选） ----------
+  let choiceState = null   // { resolve, command }
+  let autoChoiceTimer = 0
+  function askChoice(command) {
+    return new Promise((resolve) => {
+      cancelChoice()
+      choiceBox.replaceChildren()
+      for (const option of command.options) {
+        const button = el('button', 'gal-choice')
+        button.type = 'button'
+        button.dataset.value = String(option.value)
+        const text = el('span', 'gal-choice-text')
+        renderSegments(text, option.segments)
+        button.append(el('span', 'gal-choice-num', String(option.value)), text)
+        button.addEventListener('click', () => pickChoice(option.value))
+        choiceBox.append(button)
+      }
+      choiceBox.hidden = false
+      choiceState = { resolve, command }
+      maybeAutoChoose()
+    })
+  }
+  function pickChoice(value) {
+    if (!choiceState) return
+    const state_ = choiceState
+    choiceState = null
+    clearTimeout(autoChoiceTimer)
+    choiceBox.hidden = true
+    state_.resolve(value)
+  }
+  function cancelChoice() {
+    if (!choiceState) return
+    const state_ = choiceState
+    choiceState = null
+    clearTimeout(autoChoiceTimer)
+    choiceBox.hidden = true
+    state_.resolve(null)
+  }
+  // 自动选择：-1 关；0 随机；n 选第 n 项（没有就随机）。选项出现后稍等一下再选
+  function maybeAutoChoose() {
+    clearTimeout(autoChoiceTimer)
+    if (!choiceState || autoChoice < 0) return
+    autoChoiceTimer = setTimeout(() => {
+      if (!choiceState) return
+      const options = choiceState.command.options
+      const chosen = options.find((option) => option.value === autoChoice) || options[Math.floor(Math.random() * options.length)]
+      pickChoice(chosen.value)
+    }, GAL_SETTINGS.autoChoiceDelayMs)
   }
   function toggleAuto() {
     auto = !auto
@@ -426,7 +561,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   }
   function renderLog() {
     logPanel.replaceChildren()
-    const lines = backlog(scene, Math.max(0, index))
+    const lines = backlog(scene, Math.max(0, index), choices)
     if (!lines.length) logPanel.append(el('div', 'muted', '还没有台词'))
     for (const line of lines) {
       const row = el('div', 'gal-log-row')
@@ -435,7 +570,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
       const what = el('span', 'gal-log-text')
       renderSegments(what, line.text, { plain: true })
       row.append(who, what)
-      row.addEventListener('click', () => { logPanel.hidden = true; renderInstant(line.step); onStep(line.step, total) })
+      row.addEventListener('click', () => { logPanel.hidden = true; enterStep(line.step, { backward: true }) })
       logPanel.append(row)
     }
     logPanel.scrollTop = logPanel.scrollHeight
@@ -456,13 +591,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
 
   // 点舞台 = 下一句；设置弹层开着时，第一下只收弹层（不前进）
   stage.addEventListener('click', () => {
+    if (choiceState) return
     if (!settings.hidden) { toggleSettings(false); return }
     logPanel.hidden = true
     next()
   })
   // 工具栏和设置弹层上的点击不能冒泡到舞台（否则点个按钮就翻页）
   // 记录面板也在舞台里：点记录里的一行（跳转）不能顺带触发舞台的「下一句」
-  for (const part of [bar, settings, logPanel]) part.addEventListener('click', (event) => event.stopPropagation())
+  for (const part of [bar, settings, logPanel, choiceBox]) part.addEventListener('click', (event) => event.stopPropagation())
   nextBtn.addEventListener('click', next)
   prevBtn.addEventListener('click', prev)
   autoBtn.addEventListener('click', toggleAuto)
@@ -486,7 +622,31 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     localStorage.setItem(GAL_SETTINGS.autoVoiceDelayKey, String(voiceDelay))
     scheduleAuto()   // 正在等的话按新的时间重新算
   })
-  delayInput.addEventListener('change', () => { delayInput.value = String(voiceDelay) })   // 越界/空的值收回到有效值
+  delayInput.addEventListener('change', () => { delayInput.value = String(voiceDelay) })
+  fontRange.addEventListener('input', () => {
+    fontScale = Math.max(GAL_SETTINGS.fontScaleMin, Math.min(GAL_SETTINGS.fontScaleMax, Number(fontRange.value) / 100))
+    localStorage.setItem(GAL_SETTINGS.fontScaleKey, String(fontScale))
+    applyFont()
+  })
+  const setAutoChoice = (value) => {
+    autoChoice = Math.max(-1, Math.min(GAL_SETTINGS.autoChoiceMax, Math.round(value)))
+    if (autoChoice >= 0) autoChoiceLast = autoChoice
+    localStorage.setItem(GAL_SETTINGS.autoChoiceKey, String(autoChoice))
+    autoChoiceInput.value = String(autoChoice)
+    applyAutoChoiceButton()
+    maybeAutoChoose()   // 选项正开着的话，按新的设置立刻生效
+  }
+  autoChoiceInput.addEventListener('input', () => {
+    const n = Number(autoChoiceInput.value)
+    if (!Number.isFinite(n) || autoChoiceInput.value === '' || autoChoiceInput.value === '-') return
+    autoChoice = Math.max(-1, Math.min(GAL_SETTINGS.autoChoiceMax, Math.round(n)))
+    if (autoChoice >= 0) autoChoiceLast = autoChoice
+    localStorage.setItem(GAL_SETTINGS.autoChoiceKey, String(autoChoice))
+    applyAutoChoiceButton()
+    maybeAutoChoose()
+  })
+  autoChoiceInput.addEventListener('change', () => { autoChoiceInput.value = String(autoChoice) })
+  autoSelBtn.addEventListener('click', () => setAutoChoice(autoChoice >= 0 ? -1 : autoChoiceLast))   // 越界/空的值收回到有效值
   bgmRange.addEventListener('input', () => { bgmVolume = Number(bgmRange.value); localStorage.setItem(VOL_KEY.bgm, String(bgmVolume)); if (bgmAudio) bgmAudio.volume = bgmVolume })
   seRange.addEventListener('input', () => { seVolume = Number(seRange.value); localStorage.setItem(VOL_KEY.se, String(seVolume)); movie.volume = seVolume })
 
@@ -497,6 +657,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
     const tag = event.target?.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable) return
     const key = event.key
+    if (choiceState && /^[1-9]$/.test(key)) {
+      const option = choiceState.command.options.find((o) => o.value === Number(key))
+      if (option) { pickChoice(option.value); event.preventDefault() }
+      return
+    }
     if (key === ' ' || key === 'Enter' || key === 'ArrowRight' || key === 'PageDown') next()
     else if (key === 'ArrowLeft' || key === 'PageUp' || key === 'Backspace') prev()
     else if (key === 'a' || key === 'A') toggleAuto()
@@ -526,6 +691,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   function destroy() {
     destroyed = true
     stopAuto()
+    cancelChoice()
     document.removeEventListener('keydown', onKey)
     visibility.disconnect()
     bgmAudio?.pause()
@@ -536,13 +702,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, onStep = ()
   }
 
   // ---------- 启动 ----------
-  const start = stepOfRatio(startRatio, total)
+  const startPos = stepOfRatio(startRatio, path.length)
   updateCount()
   updateNote()
   updateChapterButtons()
-  if (total) {
-    if (start > 0) { renderInstant(start); onStep(start, total) }
-    else runStep(0)
+  if (hasSteps && path.length) {
+    if (startPos > 0) enterStep(path[startPos])
+    else runStep(path[0])
   }
-  return { destroy, next, prev, setImmersive, get index() { return index }, get total() { return total }, ratio: () => ratioOfStep(Math.max(0, index), total) }
+  return { destroy, next, prev, setImmersive, get index() { return index }, get total() { return path.length }, get choices() { return { ...choices } }, ratio: () => ratioOfStep(Math.max(0, posNow()), path.length) }
 }

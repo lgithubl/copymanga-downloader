@@ -11,7 +11,10 @@ const el = (tag, className = '', text = '') => {
 }
 
 // progress：{ [节点 id]: { ratio, completedAt } }，用来在列表里标「看到 x%」/「已看完」
-export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {} }) {
+// 沉浸是整个页面的状态（和播放页共用同一套：页面层隐藏头部/顶栏），这里只在顶栏里放按钮：
+//   onToggleImmersive()  进入/退出沉浸      onLeave()  离开这个媒体（沉浸里头部藏起来了，所以这里也要有）
+//   onEscape()           沉浸时按 Esc
+export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null }) {
   const node = reader.node
   const root = el('div', `gal-browse gal-browse-${node.kind}`)
   root.dataset.node = node.id
@@ -35,7 +38,47 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     crumbs.append(item)
   })
   head.append(up, crumbs)
+  // 文本版本（不同语言/备份的文本）：切换 = 打开那一套的首页
+  if (node.sets?.length > 1) {
+    const select = el('select', 'gal-browse-sets')
+    select.title = '文本版本'
+    for (const set of node.sets) {
+      const option = el('option', '', set.label)
+      option.value = set.node
+      option.selected = Boolean(set.active)
+      select.append(option)
+    }
+    select.addEventListener('change', () => onOpen(select.value))
+    head.append(select)
+  }
+  const immBtn = el('button', 'gal-browse-imm', '沉浸')
+  immBtn.type = 'button'
+  immBtn.title = '沉浸模式（I）'
+  immBtn.hidden = !onToggleImmersive
+  immBtn.addEventListener('click', () => onToggleImmersive?.())
+  const leaveBtn = el('button', 'gal-browse-leave', '返回')
+  leaveBtn.type = 'button'
+  leaveBtn.title = '退出沉浸并离开这个媒体'
+  leaveBtn.hidden = !onLeave
+  leaveBtn.addEventListener('click', () => onLeave?.())
+  head.append(immBtn, leaveBtn)
   root.append(head)
+  function setImmersive(active) {
+    root.classList.toggle('is-immersive', Boolean(active))
+    immBtn.textContent = active ? '退出沉浸' : '沉浸'
+    immBtn.classList.toggle('active', Boolean(active))
+  }
+  const onKey = (event) => {
+    if (!root.isConnected || event.ctrlKey || event.metaKey || event.altKey) return
+    if (!root.getClientRects().length) return
+    const tag = event.target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable) return
+    if ((event.key === 'i' || event.key === 'I') && onToggleImmersive) onToggleImmersive()
+    else if (event.key === 'Escape' && root.classList.contains('is-immersive') && onEscape) onEscape()
+    else return
+    event.preventDefault()
+  }
+  document.addEventListener('keydown', onKey)
 
   const progressOf = (id) => progress[id] || null
   const progressBadge = (id) => {
@@ -47,6 +90,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   }
   const thumbOf = (item, className) => {
     const box = el('div', className)
+    if (!item.thumb && item.type === 'dir') box.dataset.icon = '📁'
     if (item.thumb) {
       const img = el('img')
       img.loading = 'lazy'
@@ -75,10 +119,11 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     }
   } else {
     for (const item of node.items) {
-      const row = el('div', 'gal-row')
+      const variants = item.variants || []   // 节点可以给一项挂多个入口（比如图片版/视频版）；目录方案没给就是空
+      const row = el('div', `gal-row${item.type === 'dir' ? ' is-dir' : ''}`)
       row.dataset.title = item.title
-      const main = el(item.variants.length ? 'div' : 'button', 'gal-row-main')
-      if (!item.variants.length) {
+      const main = el(variants.length ? 'div' : 'button', 'gal-row-main')
+      if (!variants.length) {
         main.type = 'button'
         main.dataset.node = item.node
         main.addEventListener('click', () => onOpen(item.node))
@@ -89,8 +134,8 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       main.append(thumbOf(item, 'gal-row-thumb'), text)
       row.append(main)
       const side = el('div', 'gal-row-side')
-      if (item.variants.length) {
-        for (const variant of item.variants) {
+      if (variants.length) {
+        for (const variant of variants) {
           const button = el('button', 'gal-variant', variant.label || '播放')
           button.type = 'button'
           button.dataset.node = variant.node
@@ -127,5 +172,5 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   }
 
   container.replaceChildren(root)
-  return { destroy: () => root.remove(), root }
+  return { destroy: () => { document.removeEventListener('keydown', onKey); root.remove() }, setImmersive, root }
 }

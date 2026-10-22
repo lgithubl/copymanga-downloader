@@ -3,12 +3,86 @@
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, vars: {} }
+}
+
+// ---------- 分支：选项 + 条件 ----------
+// 指令可以带 when: [{ var, op, value, not? }]（全部成立才执行）；choice 指令让玩家选，选的序号（1 起）记进变量。
+// 变量没设过（还没选）时，带这个变量条件的指令一律不执行（包括 else / 取反）。
+// 选了哪个按 choice.id 存在 choices 里（{ [id]: 序号 }），所以回看 / 续播 / 重选都能重放出同一条路。
+const numeric = (v) => v !== '' && v !== null && Number.isFinite(Number(v))
+export function condMet(when, vars = {}) {
+  for (const cond of when || []) {
+    // 变量还没设过（选项还没选）：所有条件都不成立——分支只有在选了之后才出现
+    if (vars[cond.var] === undefined) return false
+    const left = String(vars[cond.var])
+    const right = String(cond.value)
+    const both = numeric(left) && numeric(right)
+    let ok
+    switch (cond.op) {
+      case '===': case '==': ok = both ? Number(left) === Number(right) : left === right; break
+      case '!==': case '!=': ok = both ? Number(left) !== Number(right) : left !== right; break
+      case '>': ok = both && Number(left) > Number(right); break
+      case '<': ok = both && Number(left) < Number(right); break
+      case '>=': ok = both && Number(left) >= Number(right); break
+      case '<=': ok = both && Number(left) <= Number(right); break
+      default: ok = true
+    }
+    if (cond.not ? ok : !ok) return false
+  }
+  return true
+}
+
+const recordChoice = (vars, command, choices) => {
+  const picked = choices?.[command.id]
+  if (picked !== undefined && picked !== null) vars[command.var] = String(picked)
+}
+
+// 按当前选择走一遍：visit(step, command, active, vars)；返回每一步是否有指令会执行
+function walk(scene, last, choices, visit) {
+  const vars = {}
+  const active = []
+  const end = Math.min(last, (scene?.steps?.length || 0) - 1)
+  for (let i = 0; i <= end; i++) {
+    let any = false
+    for (const command of scene.steps[i].commands) {
+      const on = condMet(command.when, vars)
+      if (on) {
+        any = true
+        if (command.op === 'choice') recordChoice(vars, command, choices)
+      }
+      visit?.(i, command, on, vars)
+    }
+    active[i] = any
+  }
+  return active
+}
+
+// 当前选择下实际会走到的步（下标升序）。没选过的分支（条件不成立）不在里面
+export function activePath(scene, choices = {}) {
+  const active = walk(scene, Infinity, choices)
+  const path = []
+  active.forEach((on, i) => { if (on) path.push(i) })
+  return path
+}
+
+// 这一步里的选项（没有就是 null）
+export const choiceIn = (scene, stepIndex) => scene?.steps?.[stepIndex]?.commands.find((c) => c.op === 'choice') || null
+
+// 从第 fromStep 步起（含）的所有选择作废——回到选项那一步重选时用
+export function dropChoicesFrom(choices, fromStep) {
+  const next = {}
+  for (const [id, value] of Object.entries(choices || {})) if (Number(id.split(':')[0]) < fromStep) next[id] = value
+  return next
 }
 
 // 把一条指令作用到状态上（不含时长/动画）。voice / se 是一次性事件，不进状态。
-export function applyCommand(state, command) {
+export function applyCommand(state, command, choices = null) {
+  if (command.when && !condMet(command.when, state.vars)) return state
   switch (command.op) {
+    case 'choice':
+      recordChoice(state.vars, command, choices)
+      break
     case 'bg':
       state.bg = command.src ? { src: command.src } : { color: command.color }
       break
@@ -42,10 +116,10 @@ export function applyCommand(state, command) {
 }
 
 // 播放完 0..index 步之后的状态
-export function stateAt(scene, index) {
+export function stateAt(scene, index, choices = {}) {
   const state = initialState()
   const last = Math.min(index, (scene?.steps?.length || 0) - 1)
-  for (let i = 0; i <= last; i++) for (const command of scene.steps[i].commands) applyCommand(state, command)
+  for (let i = 0; i <= last; i++) for (const command of scene.steps[i].commands) applyCommand(state, command, choices)
   return state
 }
 
@@ -60,15 +134,14 @@ export function commandDuration(command) {
 export const segmentsText = (segments) => (segments || []).map((segment) => segment.text).join('')
 
 // 回看记录：到某一步为止出现过的台词（说话人 + 内容）
-export function backlog(scene, index) {
+export function backlog(scene, index, choices = {}) {
   const lines = []
   let speaker = []
-  for (let i = 0; i <= Math.min(index, (scene?.steps?.length || 0) - 1); i++) {
-    for (const command of scene.steps[i].commands) {
-      if (command.op === 'speaker') speaker = command.segments || []
-      else if (command.op === 'text' && segmentsText(command.segments).trim()) lines.push({ step: i, speaker, text: command.segments })
-    }
-  }
+  walk(scene, index, choices, (i, command, on) => {
+    if (!on) return
+    if (command.op === 'speaker') speaker = command.segments || []
+    else if (command.op === 'text' && segmentsText(command.segments).trim()) lines.push({ step: i, speaker, text: command.segments })
+  })
   return lines
 }
 

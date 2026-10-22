@@ -2,10 +2,12 @@
 //   { format: 'gal-scene/1', adapter, steps: [{ index, commands: [command] }], stats }
 // 一步（step）= 玩家点一下之前要执行的全部指令。指令（op）：
 //   bg {src|color:[r,g,b], fade}   bgoff {fade}
-//   speaker {segments}             text {segments}        （片段 { text, style?: { outline?, color?, bold?, italic? } }）
+//   speaker {segments}             text {segments}        （片段 { text, ruby?, style?: { outline?, color?, size?, bold?, italic? } }）
+//   choice {id, var, options: [{ value, segments }]}   弹选项（选的序号记进变量 var）；id = 步序号:指令序号，进度里按它存选择
 //   bgm {src}  bgmStop {fade}      se {src}   voice {src}
 //   movie {srcs[], loop}           movieOff {}
 //   fade {to: 'black'|'clear', seconds}     wait {seconds}
+//   任何指令都可以带 when: [{ var, op, value, not? }]（全部成立才执行；变量没设过时一律不成立）——if/elseif/else 分支编译成它
 //   raw {cmd, args}                适配器认得、播放器暂未实现的指令（立绘/特效等）
 import { galAdapter } from './adapters/index.mjs'
 

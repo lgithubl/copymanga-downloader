@@ -2,371 +2,282 @@
 // 前端不知道目录长什么样，只认节点：每个节点是 { id, kind, title, parent, breadcrumb, items… }，
 // 选项自带下一个节点的 id；点了就用那个 id 再取一次（走通用的 reader?sectionId=<节点 id>）。
 //
+// 节点就是真实目录树（脚本根下的每个目录一个节点，目录里的脚本是叶子），不写死分类/层级——
+// 目录名的中文标签、头像、缩略图去哪找由「目录方案」(profiles/*.mjs) 给；元数据里只存几个路径（layout）。
+//
 // 节点 kind：
-//   grid    卡片网格（分类、角色头像）
-//   list    带缩略图的列表（脚本；一项可以带多个「变体」按钮，比如图片版/视频版）
+//   grid    卡片网格（这一层全是目录：分类、角色…）
+//   list    列表（有脚本，目录和脚本混排：目录在前）；每项带缩略图和一行摘要
 //   player  播放页（叶子，带规范场景）
 // 以后要「文本+图片」「文本+视频」之类，新增 kind 和一个前端渲染函数即可，取数接口不变。
 //
 // 节点 id（不透明字符串，前端原样传回）：
-//   ''            首页          c:<分类id>      分类页       ch:<角色id>   角色页（脚本分组）
-//   s:<相对路径>  播放页        列表节点可带 #<页码>
-//
-// 目录约定（没有真实样本，先编一套；全部写在 DEFAULT_BROWSE_LAYOUT 里，存进条目元数据 layout.browse，改约定只改这里/元数据）：
-//   <媒体目录>/cabin|room|other/*.txt           各分类下直接是脚本
-//   <媒体目录>/character/<角色id>/*.txt         角色下的脚本；文件名以 _image / _video 结尾的算同一组的两个变体
-//   <媒体目录>/character/<角色id>/icon.png      可选，角色头像
-//   <媒体目录>/character_names.json             可选，{ 角色id: 显示名 }
-//   <媒体目录>/download/…                       脚本引用的资源（背景/BGM/语音…），见 gal.mjs 的 resolveAsset
-//   一个分类目录都没有时，首页退化成「递归找到的所有脚本」的列表。
+//   ''                          默认脚本根（首页）
+//   d:<相对路径>[#页码]          目录                s:<相对路径>   脚本（播放页）
+//   @<脚本根 id>|d:…  /  @<脚本根 id>|s:…            非默认的脚本根（比如另一种语言的文本）
+// 路径都相对「脚本根」。大目录靠翻页和按需读取：只列当前目录，读脚本头/内容只对当前页做，并按 mtime 缓存。
 import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { sniffGalAdapter } from './adapters/index.mjs'
+import { galProfile, safeRelPath } from './profiles/index.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 
-export const DEFAULT_BROWSE_LAYOUT = {
-  pageSize: 25,
-  categories: [
-    { id: 'cabin', label: '纪念馆', dir: 'cabin', kind: 'scripts' },
-    { id: 'character', label: '角色', dir: 'character', kind: 'characters' },
-    { id: 'room', label: '家具', dir: 'room', kind: 'scripts' },
-    { id: 'other', label: '复刻', dir: 'other', kind: 'scripts' },
-  ],
-  variants: [{ label: '图片', suffix: '_image' }, { label: '视频', suffix: '_video' }],
-  namesFile: 'character_names.json',
-  iconNames: ['icon.png', 'icon.jpg', 'icon.webp'],
-}
-
-const safeName = (value) => typeof value === 'string' && /^[^/\\\0]+$/.test(value) && value !== '.' && value !== '..'
 const naturalCompare = (a, b) => a.localeCompare(b, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' })
 const extOf = (file) => path.extname(file).slice(1).toLowerCase()
 const stemOf = (file) => path.basename(file, path.extname(file))
-
-export function normalizeBrowseLayout(raw) {
-  const v = raw && typeof raw === 'object' ? raw : {}
-  const d = DEFAULT_BROWSE_LAYOUT
-  const categories = (Array.isArray(v.categories) ? v.categories : d.categories)
-    .map((c) => ({ id: String(c?.id || ''), label: String(c?.label || c?.id || ''), dir: String(c?.dir || c?.id || ''), kind: c?.kind === 'characters' ? 'characters' : 'scripts' }))
-    .filter((c) => safeName(c.id) && safeName(c.dir))
-  const variants = (Array.isArray(v.variants) ? v.variants : d.variants)
-    .map((x) => ({ label: String(x?.label || ''), suffix: String(x?.suffix || '') })).filter((x) => x.label && x.suffix)
-  return {
-    pageSize: Math.max(1, Math.min(200, Math.floor(Number(v.pageSize)) || d.pageSize)),
-    categories: categories.length ? categories : d.categories,
-    variants,
-    namesFile: safeName(v.namesFile) ? v.namesFile : d.namesFile,
-    iconNames: (Array.isArray(v.iconNames) ? v.iconNames : d.iconNames).map(String).filter(safeName),
-  }
-}
-
 const fail = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode })
+const hidden = (name) => name.startsWith('.')
 
-function parseNodeId(raw) {
-  const text = String(raw || '')
-  const m = /^(.*?)(?:#(\d{1,6}))?$/s.exec(text)
-  const body = m[1]
-  const page = Math.max(1, Number(m[2]) || 1)
-  if (!body) return { kind: 'home', arg: '', page }
-  const colon = body.indexOf(':')
-  const tag = colon < 0 ? body : body.slice(0, colon)
-  const arg = colon < 0 ? '' : body.slice(colon + 1)
-  if (tag === 'c') return { kind: 'cat', arg, page }
-  if (tag === 'ch') return { kind: 'char', arg, page }
-  if (tag === 's') return { kind: 'script', arg, page: 1 }
-  throw fail(`无效的节点：${text.slice(0, 80)}`)
+// 台词摘要：第一句有字的台词，去掉标记，截断
+const excerptOf = (scene) => {
+  for (const step of scene.steps) {
+    for (const command of step.commands) {
+      if (command.op !== 'text') continue
+      const text = (command.segments || []).map((s) => s.text).join('').replace(/\s+/g, ' ').trim()
+      if (text) return text.length > 40 ? `${text.slice(0, 40)}…` : text
+    }
+  }
+  return ''
 }
 
-// mediaDir：媒体目录（绝对路径）。layout/options 来自条目元数据。resolveAsset(rel) → 磁盘真实路径（找不到抛错）。
-export function createBrowseProvider({ mediaDir, layout: rawLayout, adapters, scriptExtensions, maxScriptBytes, maxDepth = 6, resolveAsset }) {
-  const layout = normalizeBrowseLayout(rawLayout)
-  const exts = scriptExtensions
-  const headCache = new Map()   // 文件 → 适配器 id（按 mtime+size 失效）
-  const coverCache = new Map()
+// mediaDir：媒体目录（绝对路径）。layout：条目元数据里的 layout（见 profiles/index.mjs normalizeGalLayout）。
+// resolveAsset(rel) → 磁盘真实路径（找不到抛错）；用来确认缩略图存在。
+export function createBrowseProvider({ mediaDir, layout, adapters, scriptExtensions, maxScriptBytes, maxDepth = 12, resolveAsset }) {
+  const profile = galProfile(layout.profile)
+  const pageSize = layout.pageSize
+  const sets = layout.scriptRoots
+  const defaultSet = sets[0]
+  const setById = (id) => sets.find((s) => s.id === id)
+  const infoCache = new Map()   // 脚本 → { adapterId, thumb, excerpt, hasMovie }，按 mtime+size 失效
+  let namesCache = null
 
-  const abs = (rel) => path.join(mediaDir, ...rel.split('/'))
-  const catById = (id) => layout.categories.find((c) => c.id === id)
+  const absOf = (set, rel) => path.join(mediaDir, ...(set.dir ? set.dir.split('/') : []), ...(rel ? rel.split('/') : []))
 
-  async function readDirSafe(rel) {
-    try { return await readdir(abs(rel), { withFileTypes: true }) } catch { return [] }
+  // ---------- 节点 id ----------
+  function parseNodeId(raw) {
+    const text = String(raw ?? '')
+    const m = /^(.*?)(?:#(\d{1,6}))?$/s.exec(text)
+    let body = m[1]
+    const page = Math.max(1, Number(m[2]) || 1)
+    let set = defaultSet
+    if (body.startsWith('@')) {
+      const bar = body.indexOf('|')
+      if (bar < 0) throw fail(`无效的节点：${text.slice(0, 80)}`)
+      set = setById(body.slice(1, bar))
+      if (!set) throw fail('没有这个文本版本', 404)
+      body = body.slice(bar + 1)
+    }
+    if (!body) return { set, kind: 'dir', rel: '', page }
+    const colon = body.indexOf(':')
+    const tag = colon < 0 ? body : body.slice(0, colon)
+    const arg = colon < 0 ? '' : body.slice(colon + 1)
+    if (tag !== 'd' && tag !== 's') throw fail(`无效的节点：${text.slice(0, 80)}`)
+    const rel = safeRelPath(arg)
+    if (rel === null) throw fail('无效的路径', 400)
+    return { set, kind: tag === 'd' ? 'dir' : 'script', rel, page: tag === 'd' ? page : 1 }
+  }
+  const idOf = (set, _kind, rel) => `${set === defaultSet ? '' : `@${set.id}|`}s:${rel}`
+  // 页码总是写出来（列表节点的 id 固定带 #页码），好和「回到第几页」对得上
+  const dirNodeId = (set, rel, page) => {
+    if (!rel && set === defaultSet) return page > 1 ? `#${page}` : ''
+    return `${set === defaultSet ? '' : `@${set.id}|`}d:${rel}${page > 1 ? `#${page}` : ''}`
   }
 
-  // 一个文件是不是（被适配器认得的）脚本。结果按 mtime+size 缓存
-  async function scriptAdapterOf(rel) {
-    const file = abs(rel)
+  // ---------- 读目录 / 脚本 ----------
+  async function readNames() {
+    if (namesCache) return namesCache
+    let data = {}
+    if (layout.namesFile) {
+      try {
+        const file = path.join(mediaDir, ...layout.namesFile.split('/'))
+        if ((await stat(file)).size <= 1024 * 1024) data = JSON.parse(decodeTextFile(await readFile(file)).text)
+      } catch { data = {} }
+    }
+    namesCache = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
+    return namesCache
+  }
+  const labelOf = async (name) => profile.dirLabel(name) || String((await readNames())[name] || '') || name
+
+  async function scriptAdapterOf(abs) {
     let info
-    try { info = await stat(file) } catch { return '' }
-    if (!info.isFile() || !info.size || info.size > maxScriptBytes || !exts.includes(extOf(file))) return ''
-    const key = `${file}|${info.mtimeMs}|${info.size}`
-    if (headCache.has(key)) return headCache.get(key)
+    try { info = await stat(abs) } catch { return '' }
+    if (!info.isFile() || !info.size || info.size > maxScriptBytes || !scriptExtensions.includes(extOf(abs))) return ''
+    const key = `${abs}|${info.mtimeMs}|${info.size}`
+    const cached = infoCache.get(key)
+    if (cached) return cached.adapterId
     let id = ''
-    const handle = await open(file, 'r')
+    const handle = await open(abs, 'r')
     try {
       const buffer = Buffer.alloc(Math.min(8192, info.size))
       await handle.read(buffer, 0, buffer.length, 0)
       id = sniffGalAdapter(decodeTextFile(buffer).text, adapters)
     } finally { await handle.close() }
-    if (headCache.size > 20000) headCache.clear()
-    headCache.set(key, id)
+    if (infoCache.size > 30000) infoCache.clear()
+    infoCache.set(key, { adapterId: id })
     return id
   }
 
-  async function scriptsIn(dirRel) {
-    const out = []
-    for (const entry of (await readDirSafe(dirRel)).sort((a, b) => naturalCompare(a.name, b.name))) {
-      if (!entry.isFile() || entry.name.startsWith('.')) continue
-      const rel = dirRel ? `${dirRel}/${entry.name}` : entry.name
-      if (await scriptAdapterOf(rel)) out.push(rel)
+  // 一个目录里的内容：目录在前、脚本在后，自然序。脚本要被适配器认得才算（读 8KB 头，缓存）
+  async function listDir(set, rel) {
+    let entries
+    try { entries = await readdir(absOf(set, rel), { withFileTypes: true }) } catch { throw fail('目录不存在', 404) }
+    entries.sort((a, b) => naturalCompare(a.name, b.name))
+    const dirs = []
+    const scripts = []
+    for (const entry of entries) {
+      if (hidden(entry.name) || entry.name.includes('|') || entry.name.includes('#')) continue
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name
+      if (entry.isDirectory()) dirs.push({ type: 'dir', name: entry.name, rel: childRel })
+      else if (entry.isFile() && scriptExtensions.includes(extOf(entry.name)) && (await scriptAdapterOf(absOf(set, childRel)))) scripts.push({ type: 'script', name: entry.name, stem: stemOf(entry.name), rel: childRel })
     }
-    return out
+    return { dirs, scripts, all: [...dirs, ...scripts] }
   }
 
-  async function scriptsRecursive(dirRel = '', depth = 0, out = []) {
-    for (const entry of (await readDirSafe(dirRel)).sort((a, b) => naturalCompare(a.name, b.name))) {
-      if (entry.name.startsWith('.')) continue
-      const rel = dirRel ? `${dirRel}/${entry.name}` : entry.name
-      if (entry.isDirectory()) { if (depth < maxDepth) await scriptsRecursive(rel, depth + 1, out); continue }
-      if (entry.isFile() && await scriptAdapterOf(rel)) out.push(rel)
-    }
-    return out
-  }
-
-  async function readNames() {
+  // 脚本摘要：缩略图候选（方案给的 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
+  async function scriptInfo(set, rel) {
+    const abs = absOf(set, rel)
+    const info = await stat(abs)
+    const key = `${abs}|${info.mtimeMs}|${info.size}`
+    const cached = infoCache.get(key)
+    if (cached?.excerpt !== undefined) return cached
+    const adapterId = await scriptAdapterOf(abs)
+    let thumb = ''
+    let excerpt = ''
+    let hasMovie = false
+    let scene = null
     try {
-      const file = abs(layout.namesFile)
-      if ((await stat(file)).size > 1024 * 1024) return {}
-      const data = JSON.parse(decodeTextFile(await readFile(file)).text)
-      return data && typeof data === 'object' && !Array.isArray(data) ? data : {}
-    } catch { return {} }
-  }
-
-  async function thumbOf(rel) {
-    const file = abs(rel)
-    let info
-    try { info = await stat(file) } catch { return '' }
-    const key = `${file}|${info.mtimeMs}|${info.size}`
-    if (coverCache.has(key)) return coverCache.get(key)
-    let src = ''
-    try {
-      const adapterId = await scriptAdapterOf(rel)
-      const scene = buildScene(adapterId, decodeTextFile(await readFile(file)).text)
-      const candidate = firstBackgroundSrc(scene)
-      if (candidate) { await resolveAsset(candidate); src = candidate }
-    } catch { src = '' }
-    if (coverCache.size > 20000) coverCache.clear()
-    coverCache.set(key, src)
-    return src
-  }
-
-  // ---------- 各级「条目序列」：节点页面、上下话、返回页码都从这里来 ----------
-
-  const scriptEntry = (rel) => ({ key: rel, title: stemOf(rel), variants: [{ label: '', rel }] })
-
-  async function categoryEntries(cat) {
-    if (cat.kind === 'characters') {
-      const names = await readNames()
-      const out = []
-      for (const entry of (await readDirSafe(cat.dir)).sort((a, b) => naturalCompare(a.name, b.name))) {
-        if (!entry.isDirectory() || entry.name.startsWith('.') || !safeName(entry.name)) continue
-        out.push({ key: entry.name, title: String(names[entry.name] || entry.name), id: entry.name })
-      }
-      return out
+      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text)
+      excerpt = excerptOf(scene)
+      hasMovie = scene.steps.some((step) => step.commands.some((c) => c.op === 'movie'))
+    } catch { /* 解析失败：照样列出来，打开时再报错 */ }
+    const candidates = profile.scriptThumbs({ stem: stemOf(rel), thumbsDir: layout.thumbsDir })
+    if (scene) { const bg = firstBackgroundSrc(scene); if (bg) candidates.push(bg) }
+    for (const candidate of candidates) {
+      try { await resolveAsset(candidate); thumb = candidate; break } catch { /* 下一个 */ }
     }
-    return (await scriptsIn(cat.dir)).map(scriptEntry)
-  }
-
-  async function groupEntries(charId) {
-    const dirRel = `${charDir()}/${charId}`
-    const groups = new Map()
-    for (const rel of await scriptsIn(dirRel)) {
-      const stem = stemOf(rel)
-      const variant = layout.variants.find((v) => stem.endsWith(v.suffix) && stem.length > v.suffix.length)
-      const key = variant ? stem.slice(0, -variant.suffix.length) : stem
-      if (!groups.has(key)) groups.set(key, { key, title: key, variants: [] })
-      groups.get(key).variants.push({ label: variant?.label || '', rel })
-    }
-    return [...groups.values()]
-  }
-
-  const characterCat = () => layout.categories.find((c) => c.kind === 'characters')
-  const charDir = () => characterCat()?.dir || 'character'
-
-  async function presentCategories() {
-    const out = []
-    for (const cat of layout.categories) {
-      let isDir = false
-      try { isDir = (await stat(abs(cat.dir))).isDirectory() } catch { /* 没有这个分类 */ }
-      if (isDir) out.push(cat)
-    }
-    return out
-  }
-
-  async function homeEntries() {
-    const cats = await presentCategories()
-    return cats.length ? { mode: 'cats', cats } : { mode: 'flat', entries: (await scriptsRecursive()).map(scriptEntry) }
-  }
-
-  // 脚本属于哪一级：决定「返回」去哪、上下话在谁的序列里
-  async function locate(rel) {
-    const first = rel.split('/')[0]
-    const second = rel.split('/')[1]
-    const chars = characterCat()
-    if (chars && first === chars.dir && rel.split('/').length >= 3 && safeName(second)) {
-      return { parentBase: `ch:${second}`, entries: await groupEntries(second) }
-    }
-    const cat = layout.categories.find((c) => c.kind === 'scripts' && c.dir === first)
-    if (cat && rel.split('/').length === 2) return { parentBase: `c:${cat.id}`, entries: await categoryEntries(cat) }
-    return { parentBase: '', entries: (await homeEntries()).entries || [] }
-  }
-
-  const indexOfRel = (entries, rel) => entries.findIndex((e) => (e.variants || []).some((v) => v.rel === rel))
-  const pageNode = (base, index) => {
-    const page = Math.floor(Math.max(0, index) / layout.pageSize) + 1
-    return base || page > 1 ? `${base}#${page}` : ''
-  }
-
-  async function parentOf(parsed) {
-    if (parsed.kind === 'home') return null
-    if (parsed.kind === 'cat') return ''
-    if (parsed.kind === 'char') {
-      const chars = characterCat()
-      if (!chars) return ''
-      const index = (await categoryEntries(chars)).findIndex((e) => e.key === parsed.arg)
-      return pageNode(`c:${chars.id}`, index)
-    }
-    const { parentBase, entries } = await locate(parsed.arg)
-    return pageNode(parentBase, indexOfRel(entries, parsed.arg))
-  }
-
-  async function breadcrumbOf(parsed) {
-    const crumbs = [{ id: '', title: '首页' }]
-    if (parsed.kind === 'home') return crumbs
-    if (parsed.kind === 'cat') { crumbs.push({ id: `c:${parsed.arg}`, title: catById(parsed.arg)?.label || parsed.arg }); return crumbs }
-    const chars = characterCat()
-    const addChar = async (id) => {
-      if (chars) crumbs.push({ id: `c:${chars.id}`, title: chars.label })
-      const names = await readNames()
-      crumbs.push({ id: `ch:${id}`, title: String(names[id] || id) })
-    }
-    if (parsed.kind === 'char') { await addChar(parsed.arg); return crumbs }
-    const { parentBase } = await locate(parsed.arg)
-    if (parentBase.startsWith('ch:')) await addChar(parentBase.slice(3))
-    else if (parentBase.startsWith('c:')) crumbs.push({ id: parentBase, title: catById(parentBase.slice(2))?.label || parentBase })
-    crumbs.push({ id: `s:${parsed.arg}`, title: stemOf(parsed.arg) })
-    return crumbs
-  }
-
-  function paginate(entries, page) {
-    const total = entries.length
-    const pageCount = Math.max(1, Math.ceil(total / layout.pageSize))
-    const current = Math.min(page, pageCount)
-    return { total, pageCount, page: current, slice: entries.slice((current - 1) * layout.pageSize, current * layout.pageSize) }
-  }
-
-  async function scriptItem(entry) {
-    const variants = entry.variants.map((v) => ({ label: v.label, node: `s:${v.rel}` }))
-    return { id: entry.key, title: entry.title, thumb: await thumbOf(entry.variants[0].rel), node: variants.length === 1 ? variants[0].node : '', variants: variants.length > 1 ? variants : [] }
-  }
-
-  // ---------- 取节点 ----------
-
-  async function getNodeRaw(nodeId) {
-    const parsed = parseNodeId(nodeId)
-    const parent = await parentOf(parsed).catch(() => '')
-    const base = { parent, breadcrumb: await breadcrumbOf(parsed).catch(() => [{ id: '', title: '首页' }]) }
-
-    if (parsed.kind === 'home') {
-      const home = await homeEntries()
-      if (home.mode === 'cats') {
-        const items = []
-        for (const cat of home.cats) {
-          const entries = await categoryEntries(cat)
-          items.push({ id: cat.id, title: cat.label, subtitle: `${entries.length} ${cat.kind === 'characters' ? '个角色' : '个脚本'}`, thumb: '', node: `c:${cat.id}` })
-        }
-        return { node: { id: '', kind: 'grid', title: '首页', ...base, page: 1, pageCount: 1, pageSize: layout.pageSize, total: items.length, items } }
-      }
-      const pg = paginate(home.entries, parsed.page)
-      return { node: { id: pg.page > 1 ? `#${pg.page}` : '', kind: 'list', title: '首页', ...base, page: pg.page, pageCount: pg.pageCount, pageSize: layout.pageSize, total: pg.total, items: await Promise.all(pg.slice.map(scriptItem)) } }
-    }
-
-    if (parsed.kind === 'cat') {
-      const cat = catById(parsed.arg)
-      if (!cat) throw fail(`没有这个分类：${parsed.arg}`, 404)
-      const entries = await categoryEntries(cat)
-      const pg = paginate(entries, parsed.page)
-      const id = `c:${cat.id}#${pg.page}`
-      if (cat.kind === 'characters') {
-        const items = []
-        for (const e of pg.slice) {
-          let thumb = ''
-          for (const name of layout.iconNames) {
-            try { await resolveAsset(`${cat.dir}/${e.id}/${name}`); thumb = `${cat.dir}/${e.id}/${name}`; break } catch { /* 下一个 */ }
-          }
-          items.push({ id: e.key, title: e.title, subtitle: e.title === e.key ? '' : e.key, thumb, node: `ch:${e.id}` })
-        }
-        return { node: { id, kind: 'grid', title: cat.label, ...base, page: pg.page, pageCount: pg.pageCount, pageSize: layout.pageSize, total: pg.total, items } }
-      }
-      return { node: { id, kind: 'list', title: cat.label, ...base, page: pg.page, pageCount: pg.pageCount, pageSize: layout.pageSize, total: pg.total, items: await Promise.all(pg.slice.map(scriptItem)) } }
-    }
-
-    if (parsed.kind === 'char') {
-      if (!safeName(parsed.arg)) throw fail('无效的角色', 400)
-      try { if (!(await stat(abs(`${charDir()}/${parsed.arg}`))).isDirectory()) throw new Error('x') } catch { throw fail(`没有这个角色：${parsed.arg}`, 404) }
-      const names = await readNames()
-      const pg = paginate(await groupEntries(parsed.arg), parsed.page)
-      return { node: { id: `ch:${parsed.arg}#${pg.page}`, kind: 'list', title: String(names[parsed.arg] || parsed.arg), ...base, page: pg.page, pageCount: pg.pageCount, pageSize: layout.pageSize, total: pg.total, items: await Promise.all(pg.slice.map(scriptItem)) } }
-    }
-
-    // script
-    const rel = parsed.arg.replace(/\\/g, '/')
-    if (!rel || rel.split('/').some((part) => part === '' || part === '..' || part === '.') || !exts.includes(extOf(rel))) throw fail('无效的脚本路径', 400)
-    const file = abs(rel)
-    let real
-    try {
-      real = await realpath(file)
-      const realRoot = await realpath(mediaDir)
-      if (!real.startsWith(realRoot + path.sep) || !(await stat(real)).isFile()) throw new Error('x')
-    } catch { throw fail('脚本不存在', 404) }
-    const adapterId = await scriptAdapterOf(rel)
-    if (!adapterId) throw fail('不是可识别的脚本', 400)
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text)
-
-    // 上一话/下一话：在它所在的那一级序列里找邻居（变体优先同一种，没有就取第一个）
-    const { entries } = await locate(rel)
-    const at = indexOfRel(entries, rel)
-    const label = at >= 0 ? entries[at].variants.find((v) => v.rel === rel)?.label || '' : ''
-    const neighbour = (entry) => {
-      if (!entry) return null
-      const variant = entry.variants.find((v) => v.label === label) || entry.variants[0]
-      return { sectionId: `s:${variant.rel}`, title: entry.title }
-    }
-    const entry = at >= 0 ? entries[at] : null
-    const title = entry ? entry.title + (label ? ` · ${label}` : '') : stemOf(rel)
-    base.breadcrumb[base.breadcrumb.length - 1].title = title
-    return {
-      node: { id: `s:${rel}`, kind: 'player', title, ...base, page: 1, pageCount: 1, pageSize: layout.pageSize, total: scene.steps.length, items: [] },
-      scene,
-      sectionNavigation: { prev: at > 0 ? neighbour(entries[at - 1]) : null, next: at >= 0 && at < entries.length - 1 ? neighbour(entries[at + 1]) : null },
-    }
-  }
-
-  async function getNode(nodeId) {
-    const result = await getNodeRaw(nodeId)
-    // 选项字段对前端恒定：variants 恒为数组
-    result.node.items = result.node.items.map((item) => ({ subtitle: '', thumb: '', node: '', variants: [], ...item }))
+    const result = { adapterId, thumb, excerpt, hasMovie }
+    infoCache.set(key, result)
     return result
   }
 
-  // 导入时用：媒体里一共有多少脚本、第一张能用的背景图（封面候选）
-  async function summarize({ coverScanLimit = 30 } = {}) {
-    const scripts = await scriptsRecursive()
-    let cover = ''
-    for (const rel of scripts.slice(0, coverScanLimit)) {
-      cover = await thumbOf(rel)
-      if (cover) break
+  async function dirThumb(set, entry) {
+    const parentName = entry.rel.includes('/') ? entry.rel.split('/').slice(-2, -1)[0] : ''
+    for (const candidate of profile.dirThumbs({ name: entry.name, parentName, rel: entry.rel })) {
+      try { await resolveAsset(candidate); return candidate } catch { /* 下一个 */ }
     }
-    return { scripts: scripts.length, cover }
+    return ''
   }
 
-  return { layout, getNode, summarize, internals: { parseNodeId, scriptsRecursive, categoryEntries, groupEntries, locate } }
+  async function countChildren(set, rel) {
+    try { return (await readdir(absOf(set, rel))).filter((n) => !hidden(n)).length } catch { return 0 }
+  }
+
+  // ---------- 父级 / 面包屑 ----------
+  const parentRel = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '')
+  async function pageOfChild(set, parentDir, childRel) {
+    const { all } = await listDir(set, parentDir)
+    const index = all.findIndex((e) => e.rel === childRel)
+    return Math.floor(Math.max(0, index) / pageSize) + 1
+  }
+  async function parentOf(set, kind, rel) {
+    if (kind === 'dir' && !rel) return null
+    const dir = parentRel(rel)
+    return dirNodeId(set, dir, await pageOfChild(set, dir, rel))
+  }
+  async function breadcrumbOf(set, kind, rel) {
+    const crumbs = [{ id: dirNodeId(set, '', 1), title: sets.length > 1 && set !== defaultSet ? `首页（${set.label || set.id}）` : '首页' }]
+    const parts = rel ? rel.split('/') : []
+    let acc = ''
+    for (let i = 0; i < parts.length; i++) {
+      acc = acc ? `${acc}/${parts[i]}` : parts[i]
+      const last = i === parts.length - 1
+      const isScript = kind === 'script' && last
+      crumbs.push({ id: isScript ? idOf(set, 'script', acc) : dirNodeId(set, acc, 1), title: isScript ? stemOf(parts[i]) : await labelOf(parts[i]) })
+    }
+    return crumbs
+  }
+  const setChoices = (active) => (sets.length > 1 ? sets.map((s) => ({ id: s.id, label: s.label || s.id || '默认', node: dirNodeId(s, '', 1), active: s === active })) : [])
+
+  // ---------- 取节点 ----------
+  async function getNode(nodeId) {
+    const { set, kind, rel, page } = parseNodeId(nodeId)
+    const breadcrumb = await breadcrumbOf(set, kind, rel)
+    const base = { parent: await parentOf(set, kind, rel).catch(() => null), breadcrumb, sets: setChoices(set), pageSize }
+
+    if (kind === 'dir') {
+      const { all } = await listDir(set, rel)
+      const total = all.length
+      const pageCount = Math.max(1, Math.ceil(total / pageSize))
+      const current = Math.min(page, pageCount)
+      const slice = all.slice((current - 1) * pageSize, current * pageSize)
+      const items = []
+      for (const entry of slice) {
+        if (entry.type === 'dir') {
+          const label = await labelOf(entry.name)
+          const n = await countChildren(set, entry.rel)
+          items.push({ type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, thumb: await dirThumb(set, entry), node: dirNodeId(set, entry.rel, 1) })
+        } else {
+          const info = await scriptInfo(set, entry.rel)
+          items.push({ type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, node: idOf(set, 'script', entry.rel) })
+        }
+      }
+      const id = dirNodeId(set, rel, current)
+      const title = rel ? await labelOf(rel.split('/').pop()) : '首页'
+      return { node: { id, kind: items.length && items.every((i) => i.type === 'dir') ? 'grid' : 'list', title, ...base, page: current, pageCount, total, items } }
+    }
+
+    // script
+    if (!scriptExtensions.includes(extOf(rel))) throw fail('无效的脚本路径', 400)
+    const abs = absOf(set, rel)
+    let real
+    try {
+      real = await realpath(abs)
+      const realMedia = await realpath(mediaDir)
+      if (!real.startsWith(realMedia + path.sep) || !(await stat(real)).isFile()) throw new Error('x')
+    } catch { throw fail('脚本不存在', 404) }
+    const adapterId = await scriptAdapterOf(abs)
+    if (!adapterId) throw fail('不是可识别的脚本', 400)
+    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text)
+
+    // 上一话/下一话：同一目录里的相邻脚本
+    const dir = parentRel(rel)
+    const { scripts } = await listDir(set, dir)
+    const at = scripts.findIndex((s) => s.rel === rel)
+    const neighbour = (entry) => (entry ? { sectionId: idOf(set, 'script', entry.rel), title: entry.stem } : null)
+    return {
+      node: { id: idOf(set, 'script', rel), kind: 'player', title: stemOf(rel), ...base, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
+      scene,
+      sectionNavigation: { prev: at > 0 ? neighbour(scripts[at - 1]) : null, next: at >= 0 && at < scripts.length - 1 ? neighbour(scripts[at + 1]) : null },
+    }
+  }
+
+  // 导入时用：默认脚本根下一共多少脚本（只按扩展名数，不读文件）、第一张能用的背景图（封面候选）
+  async function summarize({ coverScanLimit = 40, countCap = 200000 } = {}) {
+    let scripts = 0
+    const found = []
+    const walk = async (rel, depth) => {
+      let entries
+      try { entries = await readdir(absOf(defaultSet, rel), { withFileTypes: true }) } catch { return }
+      entries.sort((a, b) => naturalCompare(a.name, b.name))
+      for (const entry of entries) {
+        if (hidden(entry.name) || scripts >= countCap) continue
+        const childRel = rel ? `${rel}/${entry.name}` : entry.name
+        if (entry.isDirectory()) { if (depth < maxDepth) await walk(childRel, depth + 1) } else if (entry.isFile() && scriptExtensions.includes(extOf(entry.name))) {
+          scripts += 1
+          if (found.length < coverScanLimit) found.push(childRel)
+        }
+      }
+    }
+    await walk('', 0)
+    let cover = ''
+    for (const rel of found) {
+      if (!(await scriptAdapterOf(absOf(defaultSet, rel)))) continue
+      cover = (await scriptInfo(defaultSet, rel)).thumb
+      if (cover) break
+    }
+    return { scripts, cover }
+  }
+
+  return { layout, getNode, summarize, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId } }
 }

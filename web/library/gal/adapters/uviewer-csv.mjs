@@ -12,6 +12,8 @@
 //   fadeinblack,<秒> / fadeoutblack,<秒>      渐入黑场（画面变黑）/ 从黑场渐出（画面出现）
 //   wait,<秒>                                 等待
 //   movie,<路径1:路径2:…>,<?>,<是否循环>        视频，多段连播
+//   select,<选项1>,<选项2>,…                   弹选项（选项文字常带「選項1　」前缀，会去掉）；选的序号（1 起）记进变量 select
+//   if,<变量>_<运算符>_<值> / elseif,… / else / endif   条件块（如 if,select_===_1）；块里每条指令带上 when 条件，播放时按变量判断；不配对的 endif 忽略
 //   clickwait                                 等点击——一步（step）的结尾
 //   endwait                                   等动画结束——规范场景里按顺序执行，不单独保留
 // 其余指令（spriteatlas / sprite / anm / mask / imgconf / spine …）原样以 raw 指令保留，等对应渲染方式实现后再用。
@@ -20,7 +22,7 @@ export const ADAPTER_ID = 'uviewer-csv'
 
 const KNOWN = new Set([
   'bg', 'bgoff', 'name', 'msg', 'playvoice', 'playse', 'playbgm', 'stopbgm', 'fadeinblack', 'fadeoutblack',
-  'wait', 'movie', 'movieoff', 'clickwait', 'endwait',
+  'wait', 'movie', 'movieoff', 'clickwait', 'endwait', 'select', 'if', 'elseif', 'else', 'endif',
 ])
 
 // 第一条有意义的指令必须是已知指令名；用来在导入时判断一个 txt/csv 是不是这种脚本
@@ -55,7 +57,7 @@ const safeColor = (value) => {
 }
 
 // 台词标记 → 样式片段。不生成 HTML：前端只用 textContent + 内联样式渲染，不存在注入面。
-// 认得的标记：<outline width=2 color=black> <color=red>/<color value=red> <b> <i> <br>；其余标记丢掉，文字保留。
+// 认得的标记：<outline width=2 color=black> <color=red>/<color value=red> <size=27> <b> <i> <br> <ruby>漢|かん</ruby>；其余标记丢掉，文字保留。
 export function parseRichText(raw) {
   const text = String(raw ?? '').replace(/\\n/g, '\n')
   const out = []
@@ -65,7 +67,7 @@ export function parseRichText(raw) {
     const style = {}
     for (const entry of stack) Object.assign(style, entry.style)
     const last = out[out.length - 1]
-    if (last && JSON.stringify(last.style || {}) === JSON.stringify(style)) last.text += chunk
+    if (last && !last.ruby && JSON.stringify(last.style || {}) === JSON.stringify(style)) last.text += chunk
     else out.push(Object.keys(style).length ? { text: chunk, style } : { text: chunk })
   }
   const tagRe = /<(\/?)([a-zA-Z]+)([^>]*)>/g
@@ -77,6 +79,18 @@ export function parseRichText(raw) {
     const [, closing, nameRaw, attrText] = match
     const name = nameRaw.toLowerCase()
     if (name === 'br') { push('\n'); continue }
+    if (name === 'ruby' && !closing) {
+      // <ruby>基字|注音</ruby>：整段取走，不走样式栈
+      const close = text.toLowerCase().indexOf('</ruby>', tagRe.lastIndex)
+      if (close >= 0) {
+        const [baseText, reading = ''] = text.slice(tagRe.lastIndex, close).split('|')
+        const style = {}
+        for (const entry of stack) Object.assign(style, entry.style)
+        if (baseText) out.push({ text: baseText, ...(reading ? { ruby: reading } : {}), ...(Object.keys(style).length ? { style } : {}) })
+        last = tagRe.lastIndex = close + '</ruby>'.length
+        continue
+      }
+    }
     if (closing) {
       for (let i = stack.length - 1; i >= 0; i--) if (stack[i].name === name) { stack.splice(i, 1); break }
       continue
@@ -92,6 +106,9 @@ export function parseRichText(raw) {
     } else if (name === 'color') {
       const color = safeColor(attrs.value ?? attrs.color)
       if (color) stack.push({ name, style: { color } })
+    } else if (name === 'size') {
+      const size = Math.round(Number.parseFloat(attrs.value ?? attrs.size ?? ''))
+      if (Number.isFinite(size) && size > 0) stack.push({ name, style: { size: Math.max(8, Math.min(96, size)) } })
     } else if (name === 'b') stack.push({ name, style: { bold: true } })
     else if (name === 'i') stack.push({ name, style: { italic: true } })
     // 其它标记：忽略标记本身
@@ -109,10 +126,26 @@ function splitLine(line) {
 }
 const stripTrailingCommas = (value) => value.replace(/,+\s*$/, '')
 
+// 条件：<变量>_<运算符>_<值>，例如 select_===_1。认不出来就当没有条件（宁可多显示也不吞内容）
+const COND_RE = /^\s*([A-Za-z_][\w]*?)_(===|!==|==|!=|>=|<=|>|<)_(.+?)\s*$/
+export function parseCondition(text) {
+  const m = COND_RE.exec(String(text ?? ''))
+  return m ? { var: m[1], op: m[2], value: m[3] } : null
+}
+const negate = (cond) => ({ ...cond, not: true })
+const OPTION_PREFIX = /^(?:選項|选项|選擇|选择|Option)\s*\d+[\s\u3000:：.、-]*/i
+
 export function parse(text) {
   const steps = []
   let current = []
-  const stats = { commands: 0, raw: {} }
+  const stats = { commands: 0, raw: {}, choices: 0, unmatchedEndif: 0 }
+  const ifStack = []   // { branches: [cond|null], cur: [cond] }
+  const whenNow = () => ifStack.flatMap((frame) => frame.cur)
+  const emit = (command) => {
+    const when = whenNow()
+    if (when.length) command.when = when
+    current.push(command)
+  }
   const flush = () => {
     if (current.length) steps.push({ index: steps.length, commands: current })
     current = []
@@ -134,63 +167,95 @@ export function parse(text) {
       case 'bg': {
         const src = args[0] || ''
         const fade = seconds(args[1])
-        if (!src) current.push({ op: 'bgoff', fade })
+        if (!src) emit({ op: 'bgoff', fade })
         else if (/^color_/i.test(src)) {
           const [r, g, b] = src.split('_').slice(1).map((n) => Math.max(0, Math.min(255, Number.parseInt(n, 10) || 0)))
-          current.push({ op: 'bg', color: [r || 0, g || 0, b || 0], fade })
-        } else current.push({ op: 'bg', src: normalizeAssetPath(src), fade })
+          emit({ op: 'bg', color: [r || 0, g || 0, b || 0], fade })
+        } else emit({ op: 'bg', src: normalizeAssetPath(src), fade })
         break
       }
       case 'bgoff':
-        current.push({ op: 'bgoff', fade: seconds(args[0]) })
+        emit({ op: 'bgoff', fade: seconds(args[0]) })
         break
       case 'name':
-        current.push({ op: 'speaker', segments: parseRichText(stripTrailingCommas(rest)) })
+        emit({ op: 'speaker', segments: parseRichText(stripTrailingCommas(rest)) })
         break
       case 'msg': {
         const comma = rest.indexOf(',')
         const body = comma < 0 ? '' : stripTrailingCommas(rest.slice(comma + 1))
-        current.push({ op: 'text', segments: parseRichText(body) })
+        emit({ op: 'text', segments: parseRichText(body) })
         break
       }
       case 'playvoice': {
         const src = normalizeAssetPath(args.length >= 2 ? args[1] : args[0])
-        if (src) current.push({ op: 'voice', src })
+        if (src) emit({ op: 'voice', src })
         break
       }
       case 'playse': {
         const src = normalizeAssetPath(args[0])
-        if (src) current.push({ op: 'se', src })
+        if (src) emit({ op: 'se', src })
         break
       }
       case 'playbgm': {
         const src = normalizeAssetPath(args[0])
-        if (src) current.push({ op: 'bgm', src })
+        if (src) emit({ op: 'bgm', src })
         break
       }
       case 'stopbgm':
-        current.push({ op: 'bgmStop', fade: seconds(args[0]) })
+        emit({ op: 'bgmStop', fade: seconds(args[0]) })
         break
       case 'fadeinblack':
-        current.push({ op: 'fade', to: 'black', seconds: seconds(args[0], 1) })
+        emit({ op: 'fade', to: 'black', seconds: seconds(args[0], 1) })
         break
       case 'fadeoutblack':
-        current.push({ op: 'fade', to: 'clear', seconds: seconds(args[0], 1) })
+        emit({ op: 'fade', to: 'clear', seconds: seconds(args[0], 1) })
         break
       case 'wait':
-        current.push({ op: 'wait', seconds: seconds(args[0]) })
+        emit({ op: 'wait', seconds: seconds(args[0]) })
         break
       case 'movie': {
         const srcs = String(args[0] || '').split(':').map(normalizeAssetPath).filter(Boolean)
-        if (srcs.length) current.push({ op: 'movie', srcs, loop: args[2] === '1' })
+        if (srcs.length) emit({ op: 'movie', srcs, loop: args[2] === '1' })
         break
       }
       case 'movieoff':
-        current.push({ op: 'movieOff' })
+        emit({ op: 'movieOff' })
+        break
+      case 'select': {
+        const options = args.map((arg, i) => ({ value: i + 1, segments: parseRichText(arg.replace(OPTION_PREFIX, '')) })).filter((o) => o.segments.length)
+        if (options.length) {
+          // id = 步序号:步内指令序号，同一份脚本每次解析都一样，用来记「这个选项选了哪个」
+          emit({ op: 'choice', id: `${steps.length}:${current.length}`, var: 'select', options })
+          stats.choices += 1
+        }
+        break
+      }
+      case 'if': {
+        const cond = parseCondition(args[0])
+        ifStack.push({ branches: [cond], cur: cond ? [cond] : [] })
+        break
+      }
+      case 'elseif': {
+        const frame = ifStack[ifStack.length - 1]
+        if (!frame) break
+        const cond = parseCondition(args[0])
+        const before = frame.branches.filter(Boolean).map(negate)
+        frame.branches.push(cond)
+        frame.cur = cond ? [...before, cond] : before
+        break
+      }
+      case 'else': {
+        const frame = ifStack[ifStack.length - 1]
+        if (frame) frame.cur = frame.branches.filter(Boolean).map(negate)
+        break
+      }
+      case 'endif':
+        if (ifStack.length) ifStack.pop()
+        else stats.unmatchedEndif += 1
         break
       default:
         stats.raw[cmd] = (stats.raw[cmd] || 0) + 1
-        current.push({ op: 'raw', cmd, args })
+        emit({ op: 'raw', cmd, args })
     }
   }
   flush()

@@ -3,15 +3,17 @@
 // 目录本身就是数据，不 mv、不拷贝、不改——导入只是给它建一份元数据 JSON（source.path 指向传进来的目录）。
 //   - 来源目录：导入时传的 sourcePath；不传就用「Gal 导入」方案的 rootDir（默认 <data>/gal）
 //   - 元数据：<data>/library-meta/gal/ab/cd/<id>.json（分片）；条目 id = sha1('gal:' + 目录真实路径)，重复导入原地更新
-//   - 资源：脚本里的相对路径（如 download/bg/x.jpg）按媒体目录解析；找不到再去掉 layout.stripPrefixes 里的前缀重试
-//   - 封面：目录下的 cover.(jpg|png|webp)，没有就取前几个脚本里第一张存在的背景图（存 coverPath；取的时候原样返回，不缩放）
+//   - 资源：脚本里的相对路径（如 download/bg/x.jpg）按「资源根」解析（layout.resourceRoot，UViewer 是 resources/）
+//   - 目录方案（gal/profiles）：认出布局、给出脚本根/资源根/名称文件/缩略图目录；元数据 layout 只存这几个路径
+//   - 封面：前几个脚本里第一张存在的背景图（存 coverPath；取的时候原样返回，不缩放）
 
 import { createHash } from 'node:crypto'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
-import { createBrowseProvider, normalizeBrowseLayout } from '../gal/browse.mjs'
+import { createBrowseProvider } from '../gal/browse.mjs'
+import { detectGalLayout, normalizeGalLayout } from '../gal/profiles/index.mjs'
 import { shardedPath, walkShardedFiles, writeJsonAtomic } from '../meta-shard.mjs'
 import { parseTags } from '../tag-store.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
@@ -25,9 +27,7 @@ export const GAL_DEFAULT_OPTIONS = {
   maxScriptBytes: 4 * 1024 * 1024,
   adapters: ['uviewer-csv'],
 }
-export const GAL_DEFAULT_LAYOUT = { stripPrefixes: ['download/'] }
 export const GAL_MAIN_UNIT = 'main'
-const COVER_NAMES = ['cover.jpg', 'cover.jpeg', 'cover.png', 'cover.webp']
 
 const MIME = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml',
@@ -106,11 +106,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       dlsite: null,
       adapter: String(raw?.adapter || 'uviewer-csv'),
       source: { path: String(raw?.source?.path || '') },
-      layout: {
-        ...GAL_DEFAULT_LAYOUT,
-        ...(raw?.layout && typeof raw.layout === 'object' ? raw.layout : {}),
-        browse: normalizeBrowseLayout(raw?.layout?.browse),
-      },
+      // 元数据只存几个路径（目录方案 + 脚本根 + 资源根 + 名称文件 + 缩略图目录），其余全靠读目录/脚本内容现算
+      layout: normalizeGalLayout(raw?.layout),
       scriptCount: Math.max(0, Number(raw?.scriptCount) || 0),
       createdAt: String(raw?.createdAt || now),
       publishedAt: String(raw?.publishedAt || raw?.createdAt || now),
@@ -160,13 +157,26 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     return path.resolve(item.source.path)
   }
 
-  // 把脚本里的相对路径解析成磁盘上的真实文件。只认媒体目录之内的真实路径（realpath），目录穿越和符号链接逃逸都挡掉。
+  // 把脚本里的相对路径解析成磁盘上的真实文件。路径相对「资源根」（layout.resourceRoot）；
+  // `~/` 开头 = 相对媒体目录，只放行缩略图缓存目录（layout.thumbsDir），别的拒绝。
+  // 只认媒体目录之内的真实路径（realpath），目录穿越和符号链接逃逸都挡掉。
   async function resolveAsset(item, resourcePath) {
-    const rel = String(resourcePath || '').replace(/\\/g, '/').replace(/^\/+/, '')
-    if (!rel || rel.split('/').some((part) => part === '..' || part === '')) throw Object.assign(new Error('资源路径无效'), { statusCode: 400 })
+    const bad = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode })
+    let rel = String(resourcePath || '').replace(/\\/g, '/').replace(/^\/+/, '')
+    const fromMedia = rel.startsWith('~/')
+    if (fromMedia) rel = rel.slice(2)
+    if (!rel || rel.split('/').some((part) => part === '..' || part === '')) throw bad('资源路径无效')
     const work = workDirOf(item)
-    const candidates = [path.join(work, rel)]
-    for (const prefix of item.layout.stripPrefixes || []) if (rel.startsWith(prefix)) candidates.push(path.join(work, rel.slice(prefix.length)))
+    const candidates = []
+    if (fromMedia) {
+      const thumbs = item.layout.thumbsDir
+      if (!thumbs || !(rel === thumbs || rel.startsWith(`${thumbs}/`))) throw bad('不允许的路径', 403)
+      candidates.push(path.join(work, rel))
+    } else {
+      const rootDir = path.join(work, ...(item.layout.resourceRoot ? item.layout.resourceRoot.split('/') : []))
+      candidates.push(path.join(rootDir, rel))
+      for (const prefix of item.layout.stripPrefixes || []) if (rel.startsWith(prefix)) candidates.push(path.join(rootDir, rel.slice(prefix.length)))
+    }
     const realWork = await realpath(work).catch(() => work)
     for (const candidate of candidates) {
       try {
@@ -177,7 +187,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
         // 下一个候选
       }
     }
-    throw Object.assign(new Error('资源不存在'), { statusCode: 404 })
+    throw bad('资源不存在', 404)
   }
 
   async function getResource(itemId, resourcePath) {
@@ -200,7 +210,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   function providerOf(item, opts = options()) {
     return createBrowseProvider({
       mediaDir: workDirOf(item),
-      layout: item.layout.browse,
+      layout: item.layout,
       adapters: opts.adapters,
       scriptExtensions: opts.scriptExtensions,
       maxScriptBytes: opts.maxScriptBytes,
@@ -248,7 +258,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const report = { root: dir, dryRun: opts.dryRun, scanned: 1, imported: 0, updated: 0, skippedNoScript: 0, failed: 0, scripts: 0, limited: false, errors: [] }
     const itemId = sha1(`gal:${real.normalize('NFC')}`)
     const existing = (await itemExists(itemId)) ? await readItem(itemId) : null
-    const layout = { ...GAL_DEFAULT_LAYOUT, ...(existing?.layout || {}) }
+    // 每次导入重新探测目录方案（新出现的文本版本之类会被带上）
+    const layout = await detectGalLayout(real)
     const draft = normalizeItem({ itemId, title: existing?.title || path.basename(real).normalize('NFC'), source: { path: real }, layout })
     const summary = await providerOf(draft, opts).summarize()
     report.scripts = summary.scripts
@@ -257,12 +268,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       onProgress?.({ done: 1, total: 1 })
       return { items: [], report }
     }
-    // 封面：目录下显式的 cover.* 优先，其次脚本里第一张存在的背景图
-    let coverPath = ''
-    for (const name of COVER_NAMES) {
-      try { await resolveAsset(draft, name); coverPath = name; break } catch { /* 下一个 */ }
-    }
-    coverPath ||= summary.cover
+    // 封面：前几个脚本里第一张存在的背景图
+    const coverPath = summary.cover
     const now = new Date().toISOString()
     const item = normalizeItem({
       ...(existing || {}),
@@ -311,6 +318,16 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
 
   const clamp = (value) => Math.max(0, Math.min(1, Number.isFinite(Number(value)) ? Number(value) : 0))
   const MAX_NODE_PROGRESS = 3000
+  // 选项的选择：{ '步序号:指令序号': 选了第几个 }。只收格式对的、数量有上限，不信任页面传来的任意内容
+  const cleanChoices = (value) => {
+    const out = {}
+    if (!value || typeof value !== 'object') return out
+    for (const [id, picked] of Object.entries(value).slice(0, 200)) {
+      const n = Math.floor(Number(picked))
+      if (/^\d{1,6}:\d{1,6}$/.test(id) && Number.isFinite(n) && n >= 1 && n <= 99) out[id] = n
+    }
+    return out
+  }
   const normalizeProgress = (value, itemId) => ({
     itemId,
     lastUnitId: String(value?.lastUnitId || ''),
@@ -341,7 +358,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       current.lastScrollRatio = ratio
       const entry = current.readUnits[unitId] || {}
       current.readUnits[unitId] = { ...entry, unitId, title: String(patch.title || entry.title || unitId), enteredAt: entry.enteredAt || now, updatedAt: now }
-      current.nodes[sectionId] = { ratio, title: String(patch.sectionTitle || current.nodes[sectionId]?.title || ''), updatedAt: now, ...(ratio >= 0.98 ? { completedAt: current.nodes[sectionId]?.completedAt || now } : {}) }
+      const choices = patch.choices !== undefined ? cleanChoices(patch.choices) : current.nodes[sectionId]?.choices || {}
+      current.nodes[sectionId] = { ratio, title: String(patch.sectionTitle || current.nodes[sectionId]?.title || ''), updatedAt: now, ...(Object.keys(choices).length ? { choices } : {}), ...(ratio >= 0.98 ? { completedAt: current.nodes[sectionId]?.completedAt || now } : {}) }
       const keys = Object.keys(current.nodes)
       if (keys.length > MAX_NODE_PROGRESS) {
         for (const key of keys.sort((a, b) => String(current.nodes[a].updatedAt).localeCompare(String(current.nodes[b].updatedAt))).slice(0, keys.length - MAX_NODE_PROGRESS)) delete current.nodes[key]

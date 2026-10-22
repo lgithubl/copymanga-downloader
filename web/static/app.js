@@ -3737,7 +3737,7 @@ let galImmersive = null
 // 首页/分类/角色这些浏览节点（kind != player）里没有播放器，也就没有沉浸
 const galIsBrowsing = (reader) => reader?.type === 'gal' && Boolean(reader.node) && reader.node.kind !== 'player'
 function enterGalImmersive({ remember = false } = {}) {
-  if (galImmersive || currentMediaReader?.type !== 'gal' || galIsBrowsing(currentMediaReader)) return
+  if (galImmersive || currentMediaReader?.type !== 'gal') return
   if (remember) saveImmersivePref('gal', true)
   const EDGE = 6
   const HIDE_DELAY = 1800
@@ -3758,6 +3758,7 @@ function enterGalImmersive({ remember = false } = {}) {
   els.mediaImmersive?.classList.add('active')
   els.mediaImmersive?.blur()
   galPlayer?.setImmersive(true)
+  galBrowser?.setImmersive(true)
   galImmersive = () => {
     clearTimeout(timer)
     document.removeEventListener('mousemove', onPointerMove)
@@ -3765,6 +3766,7 @@ function enterGalImmersive({ remember = false } = {}) {
     els.app.classList.remove('stream-immersive', 'stream-chrome-visible')
     els.mediaImmersive?.classList.remove('active')
     galPlayer?.setImmersive(false)
+    galBrowser?.setImmersive(false)
   }
 }
 
@@ -3784,6 +3786,7 @@ function toggleGalImmersive() {
 // Gal 剧情播放：场景由服务端按适配器转好（规范场景 gal-scene/1），这里只管渲染。
 // 续播：进度按「第几步 / 总步数」存成 scrollRatio，和别的类型共用同一套进度接口。
 let galRatio = 0
+let galChoices = {}   // 当前脚本里选项的选择，跟进度一起存（回看/续播要重放同一条分支）
 let galBrowser = null
 // 首页/分类/角色这些浏览节点：只有选项，没有播放器。点选项 = 再取一次 reader（sectionId = 节点 id）
 function renderGalBrowse(reader) {
@@ -3792,7 +3795,6 @@ function renderGalBrowse(reader) {
   retireImageBatch(galleryBatch)
   galleryBatch = null
   if (galPlayer) { galPlayer.destroy(); galPlayer = null }
-  exitGalImmersive()
   galBrowser?.destroy()
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-gal media-gal-browse ${themeClass}`
@@ -3803,7 +3805,13 @@ function renderGalBrowse(reader) {
     reader,
     progress: Object.fromEntries(Object.entries(nodes).map(([id, entry]) => [id, { ratio: Number(entry?.ratio) || 0, completedAt: entry?.completedAt || '' }])),
     onOpen: (nodeId) => { openUnitInSession(reader.unit.unitId, nodeId).catch((error) => alert(error.message)) },
+    // 沉浸和播放页是同一套页面状态：浏览层也能进/退，切到播放页、再回列表都保持
+    onToggleImmersive: toggleGalImmersive,
+    onEscape: () => exitGalImmersive({ remember: true }),
+    onLeave: () => { exitGalImmersive(); els.mediaReaderBack?.click() },
   })
+  if (galImmersive) galBrowser.setImmersive(true)
+  else if (immersivePref('gal')) enterGalImmersive()
   els.mediaReaderContent.scrollTop = 0
   mediaPageIndex = 0
   mediaPageCount = 1
@@ -3830,14 +3838,18 @@ function renderGal(reader) {
     ? Number(mine.nodes?.[sectionId]?.ratio ?? (mine.lastSectionId === sectionId ? mine.lastScrollRatio : 0)) || 0
     : 0
   galRatio = resume
+  const savedChoices = mine?.nodes?.[sectionId]?.choices || {}
+  galChoices = resume >= 0.98 ? {} : { ...savedChoices }
   galPlayer = createGalPlayer({
     container: els.mediaReaderContent,
     reader,
     startRatio: resume >= 0.98 ? 0 : resume,   // 上次已经看完就从头来
+    startChoices: resume >= 0.98 ? {} : savedChoices,
     onStep: (step, total) => {
       galRatio = ratioOfStep(step, total)
       scheduleLibraryProgressSave()
     },
+    onChoices: (choices) => { galChoices = choices; scheduleLibraryProgressSave() },
     // 沉浸/上一话/下一话/返回属于页面层：播放器只放按钮、调这些回调
     onToggleImmersive: toggleGalImmersive,
     onEscape: () => exitGalImmersive({ remember: true }),
@@ -6849,7 +6861,7 @@ function updateMediaPageControls() {
   if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = !['html', 'images'].includes(currentMediaReader?.type)
   // 沉浸五种内容都支持：epub 分页翻、图集滚动看、音视频铺满播、Gal 剧情播放
   if (els.mediaImmersive) {
-    els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video', 'gal'].includes(currentMediaReader?.type) || galIsBrowsing(currentMediaReader)
+    els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video', 'gal'].includes(currentMediaReader?.type)
   }
   const isHtml = currentMediaReader?.type === 'html'
   els.mediaPagePrev.disabled = !isHtml || mediaPageIndex <= 0
@@ -6890,6 +6902,7 @@ async function saveLibraryProgress(scrollRatio = mediaScrollRatio(), reader = cu
       sectionId: reader.section?.sectionId || '',
       sectionTitle: reader.section?.title || '',
       scrollRatio,
+      ...(reader.type === 'gal' && !galIsBrowsing(reader) ? { choices: galChoices } : {}),
     }),
   })
   // 后台续播写的是别的合集，不能拿它覆盖媒体库页正在用的进度

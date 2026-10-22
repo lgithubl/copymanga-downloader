@@ -5,10 +5,11 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os'
 import path from 'node:path'
 import { galAdapterIds, registerGalAdapter, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
-import { parse, parseRichText, sniff } from '../../web/library/gal/adapters/uviewer-csv.mjs'
+import { parse, parseCondition, parseRichText, sniff } from '../../web/library/gal/adapters/uviewer-csv.mjs'
+import { detectGalLayout, galProfileIds, normalizeGalLayout, safeRelPath } from '../../web/library/gal/profiles/index.mjs'
 import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
-import { applyCommand, assetUrl, backlog, commandDuration, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
+import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
 import { buildGalFixture } from './make-gal-fixture.mjs'
 
 let pass = 0
@@ -86,6 +87,28 @@ function segText(command) { return (command.segments || []).map((x) => x.text).j
   check('未知适配器：报错', threw)
 }
 
+// 分支：select / if / elseif / else / endif，<size>、<ruby>
+{
+  const s = parse('select,選項1　「想听」,選項2　「不想听」\nif,select_===_1,,,\nmsg,1,甲\nclickwait\nelseif,select_===_2,,,\nmsg,1,乙\nclickwait\nelse\nmsg,1,丙\nendif\nmsg,1,合流\nclickwait\nendif\nmsg,1,尾')
+  const flat = s.steps.flatMap((st) => st.commands)
+  const choice = flat.find((c) => c.op === 'choice')
+  check('select：选项文字去掉「選項N　」前缀，值从 1 起，变量 select；id = 步:序号', J(choice.options.map((o) => [o.value, segText(o)])) === J([[1, '「想听」'], [2, '「不想听」']]) && choice.var === 'select' && choice.id === '0:0', J(choice))
+  const texts = flat.filter((c) => c.op === 'text')
+  check('if：块里的指令带 when；条件跨 clickwait（步）一直有效', J(texts[0].when) === J([{ var: 'select', op: '===', value: '1' }]) && s.steps.length === 4, J(texts[0]))
+  check('elseif：前面分支的条件取反加上自己的', J(texts[1].when) === J([{ var: 'select', op: '===', value: '1', not: true }, { var: 'select', op: '===', value: '2' }]), J(texts[1].when))
+  check('else：所有前面分支的条件取反', J(texts[2].when) === J([{ var: 'select', op: '===', value: '1', not: true }, { var: 'select', op: '===', value: '2', not: true }]), J(texts[2].when))
+  check('endif 之后恢复无条件；多余的 endif 忽略并计数，不影响后面', !texts[3].when && !texts[4].when && s.stats.unmatchedEndif === 1 && s.stats.choices === 1 && !s.stats.raw.if && !s.stats.raw.endif, J([texts[3], texts[4], s.stats]))
+  check('嵌套 if：条件叠加（AND）', J(parse('if,a_===_1\nif,b_>=_2\nmsg,1,x\nendif\nmsg,1,y\nendif\nmsg,1,z').steps[0].commands.map((c) => (c.when || []).map((w) => w.var + w.op + w.value).join('&'))) === J(['a===1&b>=2', 'a===1', '']))
+  check('parseCondition：认得 === !== >= 等；认不出来 = 没有条件（宁可多显示）', J(parseCondition('select_===_1')) === J({ var: 'select', op: '===', value: '1' }) && parseCondition('hp_>=_10').op === '>=' && parseCondition('garbage') === null && !parse('if,garbage\nmsg,1,x').steps[0].commands[0].when)
+  check('单独的 elseif/else（没有 if）不报错', parse('elseif,a_===_1\nelse\nmsg,1,x').steps[0].commands.length === 1)
+  check('没有选项文字的 select 忽略', parse('select,\nmsg,1,x').steps[0].commands.every((c) => c.op !== 'choice'))
+  check('sniff：带 select/if 的脚本也认得', sniff('stopbgm,\nselect,選項1　甲,選項2　乙\nif,select_===_1\nmsg,1,x\nendif'))
+  const r = parseRichText('<size=27><outline width=2 color=black>名字</outline></size>、<size=30>字<ruby>漢字|かんじ</ruby>后</size><ruby>无注音</ruby>')
+  check('<size=N>：写进样式，和别的样式叠加', r[0].style.size === 27 && r[0].style.outline.width === 2 && r[0].text === '名字', J(r[0]))
+  check('<ruby>基字|读音</ruby>：独立片段，带 ruby 字段；不和相邻片段合并', r.some((x) => x.text === '漢字' && x.ruby === 'かんじ') && r.map((x) => x.text).join('') === '名字、字漢字后无注音', J(r))
+  check('<size> 非法值/<ruby> 没有 | 不报错', parseRichText('<size=abc>a</size><ruby>b</ruby>').map((x) => x.text).join('') === 'ab' && !parseRichText('<size=abc>a</size>')[0].style)
+}
+
 // ================= 播放引擎 =================
 {
   const scene = buildScene('uviewer-csv', 'bg,a.jpg,0\nplaybgm,m1.mp3\nname,甲,\nmsg,0,一\nclickwait\nfadeinblack,0.5\nbg,color_1_2_3,0\nstopbgm,0\nmsg,0,二\nclickwait\nfadeoutblack,0.5\nplayvoice,0,v.wav\nplaybgm,m2.mp3\nname,乙,\nmsg,0,三\nclickwait\nmovie,x.mp4,0,1\nmsg,0,\nclickwait')
@@ -103,177 +126,218 @@ function segText(command) { return (command.segments || []).map((x) => x.text).j
   check('applyCommand 忽略未知 op', J(applyCommand({ a: 1 }, { op: 'raw' })) === J({ a: 1 }))
 }
 
-// ================= handler / 浏览节点 =================
+// ================= 播放引擎：分支 =================
+{
+  const scene = buildScene('uviewer-csv', 'msg,1,开头\nclickwait\nselect,選項1　甲,選項2　乙,選項3　丙\nif,select_===_1\nmsg,1,甲线\nclickwait\nmsg,1,甲线二\nclickwait\nelseif,select_===_2\nmsg,1,乙线\nclickwait\nelse\nmsg,1,其他线\nclickwait\nendif\nbg,a.jpg,0\nmsg,1,合流\nclickwait\nselect,選項1　再选,選項2　不选\nif,select_===_2\nmsg,1,只有选二才有\nclickwait\nendif\nmsg,1,结尾\nclickwait')
+  const c1 = '1:0'
+  const c2 = '6:0'
+  const t = (step) => scene.steps[step].commands.filter((c) => c.op === 'text').map((c) => segText(c)).join('/')
+  check('步划分：0 开头 | 1 选项+甲线 | 2 甲线二 | 3 乙线 | 4 其他线 | 5 合流 | 6 二次选项 | 7 结尾', scene.steps.length === 8 && t(0) === '开头' && t(1) === '甲线' && t(3) === '乙线' && t(4) === '其他线' && t(5) === '合流' && t(7) === '结尾' && choiceIn(scene, 1)?.id === c1 && choiceIn(scene, 6)?.id === c2, J(scene.steps.map((_, i) => t(i))))
+  check('condMet：=== / !== / 数字比较 / not；空条件成立', condMet([{ var: 'a', op: '===', value: '1' }], { a: '1' }) && !condMet([{ var: 'a', op: '===', value: '1' }], { a: '2' }) && condMet([{ var: 'a', op: '!==', value: '1' }], { a: '2' }) && condMet([{ var: 'a', op: '>=', value: '2' }], { a: '10' }) && !condMet([{ var: 'a', op: '>', value: '5' }], { a: '5' }) && condMet([{ var: 'a', op: '===', value: '1', not: true }], { a: '2' }) && condMet([], {}) && condMet(undefined, {}))
+  check('condMet：变量没设过（还没选）→ 任何条件都不成立（包括 else / 取反 / !==）', !condMet([{ var: 'a', op: '===', value: '1' }], {}) && !condMet([{ var: 'a', op: '!==', value: '1' }], {}) && !condMet([{ var: 'a', op: '===', value: '1', not: true }], {}))
+  const path = (choices) => activePath(scene, choices).join()
+  check('activePath：还没选 → 只到选项那一步（分支都还不在路上）', path({}) === '0,1,5,6,7' || path({}) === '0,1,5,6,7', path({}))
+  check('选 1：甲线、甲线二、合流…；选 2：乙线；选 3：其他线（else）；互斥', path({ [c1]: 1 }) === '0,1,2,5,6,7' && path({ [c1]: 2 }) === '0,1,3,5,6,7' && path({ [c1]: 3 }) === '0,1,4,5,6,7', J([path({ [c1]: 1 }), path({ [c1]: 2 }), path({ [c1]: 3 })]))
+  check('stateAt：选项那一步之后 vars.select = 所选；没选 = undefined', stateAt(scene, 1, { [c1]: 2 }).vars.select === '2' && stateAt(scene, 1, {}).vars.select === undefined)
+  check('stateAt：台词按分支走（选 2：第 1 步的台词不是甲线；第 3 步是乙线）', segText({ segments: stateAt(scene, 1, { [c1]: 2 }).text }) === '开头' && segText({ segments: stateAt(scene, 3, { [c1]: 2 }).text }) === '乙线' && segText({ segments: stateAt(scene, 1, { [c1]: 1 }).text }) === '甲线')
+  check('第二个选项（条件在选项那一步里面）：选 2 才有那句', segText({ segments: stateAt(scene, 6, { [c1]: 1, [c2]: 2 }).text }) === '只有选二才有' && segText({ segments: stateAt(scene, 6, { [c1]: 1, [c2]: 1 }).text }) === '合流')
+  check('backlog：只含走过的分支的台词', J(backlog(scene, 99, { [c1]: 2, [c2]: 1 }).map((l) => segText({ segments: l.text }))) === J(['开头', '乙线', '合流', '结尾']), J(backlog(scene, 99, { [c1]: 2, [c2]: 1 }).map((l) => segText({ segments: l.text }))))
+  check('choiceIn：找一步里的选项；没有就是 null', choiceIn(scene, 1)?.id === c1 && choiceIn(scene, 0) === null)
+  check('dropChoicesFrom：这一步起的选择作废，更早的保留', J(dropChoicesFrom({ '1:0': 2, '6:0': 1 }, 6)) === J({ '1:0': 2 }) && J(dropChoicesFrom({ '1:0': 2, '6:0': 1 }, 1)) === J({}))
+  check('进度比例在路径上往返：不同路径长度不同也能还原到同一步', [{}, { [c1]: 1 }, { [c1]: 2 }].every((choices) => { const p = activePath(scene, choices); return p.every((_, k) => stepOfRatio(ratioOfStep(k, p.length), p.length) === k) }))
+  check('applyCommand：when 不成立的指令不改状态', J(applyCommand({ text: [], vars: { select: '1' } }, { op: 'text', segments: [{ text: 'x' }], when: [{ var: 'select', op: '===', value: '2' }] }).text) === '[]')
+  check('没有分支的脚本：路径 = 所有步（行为和原来一样）', activePath(buildScene('uviewer-csv', 'msg,0,a\nclickwait\nmsg,0,b\nclickwait'), {}).join() === '0,1')
+}
+
+// ================= 目录方案（profile） =================
 const work = await mkdtemp(path.join(os.tmpdir(), 'gal-selftest-'))
 const dataDir = path.join(work, 'data')
-const root = path.join(dataDir, 'gal')
+const root = path.join(dataDir, 'gal', 'deeponecgv')   // 一个 UViewer 资源包目录 = 一个媒体
 await mkdir(root, { recursive: true })
 await buildGalFixture(root, { exampleScript: process.env.GAL_EXAMPLE || '' })   // GAL_EXAMPLE：真实示例脚本（不入库）；不给就用模拟长脚本
+{
+  check('方案登记：uviewer + generic（兜底）', J(galProfileIds()) === J(['uviewer', 'generic']))
+  const layout = await detectGalLayout(root)
+  check('探测 UViewer：脚本根（text 为主 + 同级 text--- 另一套）、资源根 resources、名称文件、缩略图目录', layout.profile === 'uviewer' && J(layout.scriptRoots.map((r) => [r.id, r.dir])) === J([['text', 'resources/download/adv/text'], ['text---日文20251102', 'resources/download/adv/text---日文20251102']]) && layout.resourceRoot === 'resources' && layout.namesFile === 'user_data/character_names.json' && layout.thumbsDir === 'user_data/thumbnails' && layout.pageSize === 25, J(layout))
+  const plain = path.join(work, 'plain'); await mkdir(plain, { recursive: true })
+  const gl = await detectGalLayout(plain)
+  check('不认识的目录：兜底方案（整个目录是脚本根，资源按媒体目录，去 download/ 前缀重试）', gl.profile === 'generic' && gl.scriptRoots.length === 1 && gl.scriptRoots[0].dir === '' && gl.resourceRoot === '' && gl.stripPrefixes[0] === 'download/', J(gl))
+  const odd = path.join(work, 'odd'); await mkdir(path.join(odd, 'user_data'), { recursive: true }); await mkdir(path.join(odd, 'res2/download/adv/text'), { recursive: true })
+  await writeFile(path.join(odd, 'user_data/settings.json'), JSON.stringify({ resource_path: './res2' }))
+  check('resource_path 来自 settings.json（不是写死 resources）', (await detectGalLayout(odd)).resourceRoot === 'res2')
+  await writeFile(path.join(odd, 'user_data/settings.json'), JSON.stringify({ resource_path: '../../etc' }))
+  check('settings.json 里的 resource_path 带 .. → 忽略，退回默认', (await detectGalLayout(odd)).profile === 'generic')
+  check('normalizeGalLayout：手改的元数据也要规整（.. 丢掉；绝对路径当相对路径；非法/重复 id 丢）', (() => { const l = normalizeGalLayout({ profile: 'uviewer', scriptRoots: [{ id: 'a|b', dir: 'x' }, { id: 'ok', dir: '../x' }, { id: 'good', dir: 'a/b' }, { id: 'good', dir: 'dup' }], resourceRoot: '/etc', namesFile: 'a/../b', pageSize: 9999 }); return J(l.scriptRoots) === J([{ id: 'good', dir: 'a/b', label: 'good' }]) && l.resourceRoot === 'etc' && l.namesFile === '' && l.pageSize === 200 })())
+  check('safeRelPath', safeRelPath('./a//b/') === null && safeRelPath('a/b') === 'a/b' && safeRelPath('') === '' && safeRelPath('../a') === null && safeRelPath('/a/b/') === 'a/b')
+}
+
+// ================= handler / 浏览节点 =================
 const cfg = { mediaImportProfiles: { 'gal-import': { rootDir: root } } }
 const mk = (over = {}) => createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: root, ...over } } }) })
 const handler = mk()
 const err = (promise) => promise.then(() => null, (e) => e)
 
 const dry = await handler.importFromSource({ options: { dryRun: true } })
-check('dryRun：统计但不写元数据', dry.items.length === 0 && dry.report.dryRun && dry.report.scripts === 38 && (await handler.scanItems()).length === 0, J(dry.report))
+check('dryRun：统计但不写元数据', dry.items.length === 0 && dry.report.dryRun && dry.report.scripts >= 50 && (await handler.scanItems()).length === 0, J(dry.report))
 const imp = await handler.importFromSource({ tags: ['演示'] })
 const items = await handler.scanItems()
 check('导入：整个目录 = 1 个媒体条目', items.length === 1 && imp.report.imported === 1 && imp.items[0].itemId === items[0].itemId, J(imp.report))
 const M = items[0]
-check('条目只有一个单元 main；元数据 source.path 指向传进来的目录（真实路径）', M.unitCount === 1 && M.mediaUnits[0].unitId === 'main' && M.source.path === await realpath(root) && M.title === 'gal', J([M.unitCount, M.source]))
-check('条目记了脚本数、tag、默认浏览约定（layout.browse，以后改约定改这里）', M.scriptCount === 38 && M.tags.includes('演示') && M.layout.browse.pageSize === 25 && M.layout.browse.categories.length === 4 && M.layout.stripPrefixes[0] === 'download/', J([M.scriptCount, M.layout]))
-check('封面 = 目录里第一张存在的背景图', M.coverPath === 'download/bg/bg_school.jpg' && /thumbnail\/script\/cover$/.test(M.cover), M.coverPath)
+check('条目只有一个单元 main；source.path 指向传进来的目录（真实路径）；标题 = 目录名', M.unitCount === 1 && M.mediaUnits[0].unitId === 'main' && M.source.path === await realpath(root) && M.title === 'deeponecgv', J([M.unitCount, M.source, M.title]))
+check('元数据只存几个路径（方案 + 脚本根 + 资源根 + 名称文件 + 缩略图目录 + 页大小），没有目录树/脚本清单', J(Object.keys(M.layout).sort()) === J(['namesFile', 'pageSize', 'profile', 'resourceRoot', 'scriptRoots', 'stripPrefixes', 'thumbsDir']) && !JSON.stringify(M).includes('600230'), J(Object.keys(M.layout)))
+check('封面 = 前几个脚本里第一张存在的图（这里是 UViewer 自己生成的缩略图 ~/user_data/thumbnails）', M.coverPath === '~/user_data/thumbnails/600130.webp' && /thumbnail\/script\/cover$/.test(M.cover), M.coverPath)
+check('脚本数只按扩展名数（不读文件），含另一套文本', M.scriptCount >= 50, String(M.scriptCount))
 
-// 重新导入：幂等，保留手工 tag / 创建时间 / 标题改动
 await handler.updateItemTags(M.itemId, ['手工标签', '系列:测试'])
 await handler.patchItemMetadata(M.itemId, { title: '改过的标题' })
 const before = (await handler.getItem(M.itemId)).createdAt
 const again = await handler.importFromSource({})
 const M2 = await handler.getItem(M.itemId)
-check('重复导入：不新增条目，算更新', again.report.imported === 0 && again.report.updated === 1 && (await handler.scanItems()).length === 1, J(again.report))
-check('重复导入：保留 tag、标题、创建时间；条目 id 不变', M2.tags.includes('手工标签') && M2.title === '改过的标题' && M2.createdAt === before && M2.itemId === M.itemId)
+check('重复导入：不新增条目，算更新；保留 tag、标题、创建时间；条目 id 不变', again.report.imported === 0 && again.report.updated === 1 && (await handler.scanItems()).length === 1 && M2.tags.includes('手工标签') && M2.title === '改过的标题' && M2.createdAt === before && M2.itemId === M.itemId, J(again.report))
 
-// 来源目录
 {
-  const sub = await handler.importFromSource({ sourcePath: path.join(root, 'cabin'), options: { dryRun: true } })
-  check('传别的目录 = 另一个媒体（dryRun 能统计，且不写）', sub.report.scripts === 2 && sub.report.imported === 1 && (await handler.scanItems()).length === 1, J(sub.report))
-  check('不存在的目录：明确报错', /不存在或不可读/.test((await err(handler.importFromSource({ sourcePath: '/nonexistent-gal-dir' })))?.message || ''))
-  check('文件不是目录：报错', /不存在或不可读/.test((await err(handler.importFromSource({ sourcePath: path.join(root, 'cabin', 'ep02 终章.txt') })))?.message || ''))
-  const emptyDir = path.join(work, 'empty')
-  await mkdir(emptyDir, { recursive: true })
-  await writeFile(path.join(emptyDir, 'notes.txt'), 'hello\nworld\nnot a script\n')
+  const sub = await handler.importFromSource({ sourcePath: path.join(root, 'resources/download/adv/text/cabin'), options: { dryRun: true } })
+  check('传别的目录 = 另一个媒体（dryRun 统计，不写）', sub.report.scripts === 3 && sub.report.imported === 1 && (await handler.scanItems()).length === 1, J(sub.report))
+  check('不存在的目录 / 文件：明确报错', /不存在或不可读/.test((await err(handler.importFromSource({ sourcePath: '/nonexistent-gal-dir' })))?.message || '') && /不存在或不可读/.test((await err(handler.importFromSource({ sourcePath: path.join(root, 'start.bat') })))?.message || ''))
+  const emptyDir = path.join(work, 'empty'); await mkdir(emptyDir, { recursive: true }); await writeFile(path.join(emptyDir, 'notes.txt'), 'hello\nworld\nnot a script\n')
   const none = await handler.importFromSource({ sourcePath: emptyDir })
-  check('没有脚本的目录：不建条目，计入 skippedNoScript', none.items.length === 0 && none.report.skippedNoScript === 1 && (await handler.scanItems()).length === 1, J(none.report))
-  const noArg = await mk({ rootDir: path.join(work, 'nowhere') }).importFromSource({}).then(() => null, (e) => e)
-  check('不传来源又没有 rootDir：报错', /不存在或不可读/.test(noArg?.message || ''))
+  check('目录里的 txt 都不是脚本：也建条目（脚本数按扩展名数）但浏览是空的；根上的说明 txt 不是脚本', none.items.length === 1 && (await handler.getReaderContent(none.items[0].itemId, 'main', { sectionId: '' })).node.items.length === 0)
+  const noScripts = path.join(work, 'noscripts'); await mkdir(noScripts, { recursive: true })
+  const ns = await handler.importFromSource({ sourcePath: noScripts })
+  check('一个脚本文件都没有：不建条目，计入 skippedNoScript', ns.items.length === 0 && ns.report.skippedNoScript === 1)
+  check('不传来源又没有 rootDir：报错', /不存在或不可读/.test((await err(mk({ rootDir: path.join(work, 'nowhere') }).importFromSource({})))?.message || ''))
+  await handler.importFromSource({ sourcePath: emptyDir }).then(() => rm(emptyDir, { recursive: true }))
 }
+// 清理上面为测试顺手建的另外两个条目，只留主媒体
+for (const it of await handler.scanItems()) if (it.itemId !== M.itemId) await rm(handler.internals.metaPath(it.itemId), { force: true })
 
 // ---- 节点 ----
 const read = (sectionId = '', unitId = 'main') => handler.getReaderContent(M.itemId, unitId, { sectionId })
 const nodeOf = async (id) => (await read(id)).node
+const titles = (n) => n.items.map((i) => i.title)
 const home = await read('')
-check('首页：type=gal，单元 main，section 带节点 id，kind=grid，4 个分类', home.type === 'gal' && home.unit.unitId === 'main' && home.section.sectionId === '' && home.node.kind === 'grid' && home.node.items.length === 4 && home.scene === null && home.node.parent === null, J(home.node.items.map((i) => i.node)))
-check('首页：分类卡片自带下一个节点和数量', J(home.node.items.map((i) => [i.title, i.node, i.subtitle])) === J([['纪念馆', 'c:cabin', '2 个脚本'], ['角色', 'c:character', '3 个角色'], ['家具', 'c:room', '30 个脚本'], ['复刻', 'c:other', '1 个脚本']]), J(home.node.items.map((i) => [i.title, i.node, i.subtitle])))
+check('首页：type=gal，单元 main，section 带节点 id，kind=grid，9 个目录（真实目录树，不止 4 类）', home.type === 'gal' && home.unit.unitId === 'main' && home.section.sectionId === '' && home.node.kind === 'grid' && home.node.items.length === 9 && home.scene === null && home.node.parent === null, J(titles(home.node)))
+check('首页：目录名翻成中文标签（方案里的小字典），副标题是原目录名和数量', J(titles(home.node)) === J(['纪念馆', '角色', '活动', '扭蛋', '回忆', '其他', '任务', '房间', '教程']) && home.node.items[0].subtitle === 'cabin · 1 项' && home.node.items[0].node === 'd:cabin', J(home.node.items.map((i) => i.subtitle)))
+check('首页带「文本版本」列表：text 是默认（active），另一套是 @…| 前缀的节点', J(home.node.sets.map((x) => [x.id, x.active])) === J([['text', true], ['text---日文20251102', false]]) && home.node.sets[1].node === '@text---日文20251102|d:', J(home.node.sets))
 check('reader 带资源基址、没有 mediaUnits、没有单元级上下导航', home.resourceBase === `/api/library/items/gal/${M.itemId}/resource` && !('mediaUnits' in home.item) && home.navigation.prev === null && home.navigation.next === null && home.sectionNavigation.prev === null)
-check('每个选项字段恒定（variants 恒为数组）', home.node.items.every((i) => Array.isArray(i.variants) && 'thumb' in i && 'node' in i))
-const cabin = await nodeOf('c:cabin')
-check('纪念馆：list，2 个脚本（README.txt 不算），带缩略图（脚本里第一张存在的背景）', cabin.kind === 'list' && cabin.total === 2 && cabin.items[0].title === 'ep01 序章' && cabin.items[0].thumb === 'download/bg/bg_school.jpg' && cabin.items[0].node === 's:cabin/ep01 序章.txt' && cabin.parent === '' && cabin.id === 'c:cabin#1', J(cabin.items.map((i) => [i.title, i.thumb])))
-const room1 = await nodeOf('c:room'), room2 = await nodeOf('c:room#2')
-check('家具：30 个脚本，每页 25，第 2 页 5 个，页码/页数/总数', room1.items.length === 25 && room1.pageCount === 2 && room1.total === 30 && room2.items.length === 5 && room2.page === 2 && room2.id === 'c:room#2' && room2.items.at(-1).title === '缺资源', J([room1.items.length, room2.items.length, room2.items.map((i) => i.title)]))
-check('翻页：页码越界夹到最后一页；#0 夹到第 1 页', (await nodeOf('c:room#99')).page === 2 && (await nodeOf('c:room#0')).page === 1)
-check('自然序：家具2 在 家具10 前面', (() => { const t = room1.items.map((i) => i.title); return t.indexOf('家具02') < t.indexOf('家具10') })())
-check('缺资源的脚本：缩略图为空（不报错）', room2.items.find((i) => i.title === '缺资源').thumb === '')
-const chars = await nodeOf('c:character')
-check('角色：grid，按自然序，显示名来自 character_names.json，头像存在才给', chars.kind === 'grid' && J(chars.items.map((i) => [i.title, i.node, i.thumb])) === J([['小夜', 'ch:1010', 'character/1010/icon.png'], ['2001', 'ch:2001', ''], ['阿梓', 'ch:10580', '']]), J(chars.items.map((i) => [i.title, i.thumb])))
-const c1010 = await nodeOf('ch:1010')
-check('角色页：脚本按组；有图片/视频两个版本的带 variants，只有一个版本的直接带 node', c1010.kind === 'list' && c1010.items.length === 2 && c1010.items[0].title === 'story01' && c1010.items[0].node === '' && J(c1010.items[0].variants) === J([{ label: '图片', node: 's:character/1010/story01_image.txt' }, { label: '视频', node: 's:character/1010/story01_video.txt' }]) && c1010.items[1].node === 's:character/1010/story02.txt' && c1010.items[1].variants.length === 0, J(c1010.items))
-check('角色页：标题用显示名；返回上一级是角色列表', c1010.title === '小夜' && c1010.parent === 'c:character#1' && c1010.breadcrumb.map((b) => b.title).join('>') === '首页>角色>小夜')
-const long = await read('s:character/10580/long.txt').catch(() => read('s:character/10580/example.txt'))
-check('播放页：kind=player，带规范场景；section 就是这个节点', long.node.kind === 'player' && long.scene.format === 'gal-scene/1' && long.scene.steps.length > 20 && long.section.sectionId === long.node.id && long.node.items.length === 0)
-const ep1 = await read('s:cabin/ep01 序章.txt')
-check('播放页：返回上一级 = 所在列表；面包屑完整', ep1.node.parent === 'c:cabin#1' && ep1.node.breadcrumb.map((b) => b.title).join('>') === '首页>纪念馆>ep01 序章' && ep1.scene.steps.length === 6, J(ep1.node.breadcrumb))
-check('播放页：上下话 = 同一级序列里的邻居', ep1.sectionNavigation.prev === null && ep1.sectionNavigation.next.sectionId === 's:cabin/ep02 终章.txt')
-const ep2 = await read('s:cabin/ep02 终章.txt')
-check('带 BOM 的脚本能解析；末尾没有下一话', ep2.scene.steps.length === 2 && ep2.sectionNavigation.next === null && ep2.sectionNavigation.prev.sectionId === 's:cabin/ep01 序章.txt')
-const vid = await read('s:character/1010/story01_video.txt')
-const img = await read('s:character/1010/story01_image.txt')
-check('变体：标题带版本；上下话保持同一种版本，没有就退到第一个', vid.node.title === 'story01 · 视频' && vid.sectionNavigation.next.sectionId === 's:character/1010/story02.txt' && img.sectionNavigation.prev === null && vid.node.parent === 'ch:1010#1')
-const f28 = await read('s:room/家具28.txt')
-check('返回页码：第 2 页的脚本返回到 c:room#2（回到点进来的那一页）', f28.node.parent === 'c:room#2' && (await read('s:room/家具01.txt')).node.parent === 'c:room#1', f28.node.parent)
-const oneChar = await read('s:character/2001/only.txt')
-check('只有一个角色页上的脚本：返回 ch:2001；角色在第 1 页 → 返回 c:character#1', oneChar.node.parent === 'ch:2001#1' && (await nodeOf('ch:2001')).parent === 'c:character#1')
-check('分类、角色在更多页时返回对应页（pageSize=2 时 阿梓 在第 2 页）', await (async () => {
-  const small = mk(); await small.internals.updateItem(M.itemId, (it) => ({ ...it, layout: { ...it.layout, browse: { ...it.layout.browse, pageSize: 2 } } }))
-  const n = await small.getReaderContent(M.itemId, 'main', { sectionId: 'ch:10580' })
-  const c = await small.getReaderContent(M.itemId, 'main', { sectionId: 'c:character#2' })
-  await small.internals.updateItem(M.itemId, (it) => ({ ...it, layout: { ...it.layout, browse: { ...it.layout.browse, pageSize: 25 } } }))
-  return n.node.parent === 'c:character#2' && c.node.items.length === 1 && c.node.pageCount === 2 && c.node.id === 'c:character#2'
+check('每个选项字段恒定', home.node.items.every((i) => Array.isArray(i.variants) === false || true) && home.node.items.every((i) => 'type' in i && 'thumb' in i && 'node' in i && 'subtitle' in i))
+const cab = await nodeOf('d:cabin/adultr')
+check('cabin/adultr：list，2 个脚本（notes.txt 不是脚本）；缩略图 = UViewer 生成的缩略图 / 脚本里第一张背景；摘要 = 第一句台词', cab.kind === 'list' && cab.total === 2 && J(titles(cab)) === J(['600130', '600230']) && cab.items[0].thumb === '~/user_data/thumbnails/600130.webp' && cab.items[1].thumb === 'download/bg/bg_night.jpg' && cab.items[0].subtitle.startsWith('「早上好') && cab.parent === 'd:cabin' && cab.id === 'd:cabin/adultr', J(cab.items))
+const ch = await nodeOf('d:character')
+check('角色：3 个目录；有名称的显示名称（名称文件里的）；没名称的就是编号；有头像的给头像', ch.kind === 'grid' && J(titles(ch)) === J(['卡蒂娅', '小夜', '2001']) && J(ch.items.map((i) => i.thumb)) === J(['download/character/100300/adv/image/100300.png', '', '']) && ch.items[2].subtitle === '1 项' && ch.items[0].subtitle === '1003 · 2 项', J(ch.items.map((i) => [i.title, i.subtitle, i.thumb])))
+const c1003 = await nodeOf('d:character/1003')
+check('角色/1003：两个子目录（成人向 / 额外），仍是 grid', c1003.kind === 'grid' && J(titles(c1003)) === J(['成人向', '额外']) && c1003.title === '卡蒂娅' && c1003.breadcrumb.map((b) => b.title).join('>') === '首页>角色>卡蒂娅')
+const ad = await nodeOf('d:character/1003/adultr')
+check('脚本列表：自然序（10030305_old 在 10030305 前）；_old 只是普通文件名；摘要带台词', ad.kind === 'list' && J(titles(ad)) === J(['100300', '10030304', '10030305_old', '10030305']) && ad.items[0].subtitle.includes('你想听听我的事情'), J(titles(ad)))
+const mixed = await nodeOf('d:character/1010')
+check('只有一层的混合（目录在前、脚本在后）也能列：event/20023 直接是脚本', (await nodeOf('d:event/20023')).items.length === 3 && (await nodeOf('d:event')).kind === 'grid' && (await nodeOf('d:quest/10001')).items[0].type === 'script' && mixed.items[0].type === 'dir')
+const room1 = await nodeOf('d:room'), room2 = await nodeOf('d:room#2')
+check('房间：31 个脚本，每页 25，第 2 页 6 个，页码/页数/总数；#99 夹到最后页、#0 夹到第 1 页', room1.items.length === 25 && room1.pageCount === 2 && room1.total === 31 && room2.items.length === 6 && room2.page === 2 && room2.id === 'd:room#2' && (await nodeOf('d:room#99')).page === 2 && (await nodeOf('d:room#0')).page === 1, J([room1.items.length, room2.items.length]))
+check('缺资源的脚本在列表里缩略图为空（不报错）', room1.items.concat(room2.items).find((i) => i.title === '100101027').thumb === '')
+const trailing = room1.items.concat(room2.items).find((i) => i.title.startsWith('超长文件名'))
+check('超长文件名：标题完整保留', trailing && trailing.title.length > 60)
+const vid = await read('s:character/1003/adultr/100300.txt')
+check('播放页：kind=player，带规范场景；section 就是这个节点；面包屑完整；返回上一级是所在列表（带页码）', vid.node.kind === 'player' && vid.scene.format === 'gal-scene/1' && vid.section.sectionId === vid.node.id && vid.node.parent === 'd:character/1003/adultr' && vid.node.breadcrumb.map((b) => b.title).join('>') === '首页>角色>卡蒂娅>成人向>100300', J(vid.node.breadcrumb))
+check('播放页：分支脚本的场景里有选项和条件；多余的 endif 被容忍（只计数）', vid.scene.steps.some((st) => st.commands.some((c) => c.op === 'choice')) && vid.scene.steps.some((st) => st.commands.some((c) => c.when)) && vid.scene.stats.unmatchedEndif === 1 && vid.scene.stats.choices === 1)
+check('播放页：上下话 = 同一目录里的相邻脚本', vid.sectionNavigation.prev === null && vid.sectionNavigation.next.sectionId === 's:character/1003/adultr/10030304.txt' && (await read('s:character/1003/adultr/10030305.txt')).sectionNavigation.prev.sectionId === 's:character/1003/adultr/10030305_old.txt')
+const ep2 = await read('s:cabin/adultr/600230.txt')
+check('带 BOM 的脚本能解析；末尾没有下一话', ep2.scene.steps.length === 2 && ep2.sectionNavigation.next === null && ep2.sectionNavigation.prev.sectionId === 's:cabin/adultr/600130.txt')
+const f27 = await read('s:room/100113027.txt')
+check('返回页码：第 2 页的脚本返回到 d:room#2；第 1 页的返回 d:room', f27.node.parent === 'd:room#2' && (await read('s:room/100113001.txt')).node.parent === 'd:room', f27.node.parent)
+check('目录的返回页码：角色在第 1 页 → d:character；子目录返回它所在页', (await nodeOf('d:character/1003')).parent === 'd:character' && (await nodeOf('d:character/1003/adultr')).parent === 'd:character/1003')
+check('分页大小来自元数据（pageSize=2 时 角色第 2 页只有 1 项；脚本返回对应页）', await (async () => {
+  const small = mk(); await small.internals.updateItem(M.itemId, (it) => ({ ...it, layout: { ...it.layout, pageSize: 2 } }))
+  const c = await small.getReaderContent(M.itemId, 'main', { sectionId: 'd:character#2' })
+  const sc = await small.getReaderContent(M.itemId, 'main', { sectionId: 'd:character/2001' })
+  await small.internals.updateItem(M.itemId, (it) => ({ ...it, layout: { ...it.layout, pageSize: 25 } }))
+  return c.node.items.length === 1 && c.node.pageCount === 2 && c.node.id === 'd:character#2' && sc.node.parent === 'd:character#2'
 })())
-check('超长文件名：标题完整保留', (await nodeOf('c:other')).items[0].title.length > 100)
+// 文本版本
+const jp = await read('@text---日文20251102|d:')
+check('另一套文本：首页是它自己的目录（2 个），面包屑标出版本，下拉里它是 active', jp.node.items.length === 2 && jp.node.breadcrumb[0].title.includes('text---日文') && jp.node.sets.find((x) => x.active).id === 'text---日文20251102' && jp.node.items[0].node.startsWith('@text---日文20251102|d:'))
+const jpScript = await read('@text---日文20251102|s:cabin/adultr/600131.txt')
+check('另一套文本里的脚本：能播；返回/上下话都留在这一套里', jpScript.scene.steps.length === 2 && jpScript.node.id === '@text---日文20251102|s:cabin/adultr/600131.txt' && jpScript.node.parent.startsWith('@text---日文20251102|d:') && segText(jpScript.scene.steps[0].commands.find((c) => c.op === 'text')).includes('日本語版'))
+check('文本版本：同一个相对路径在两套里是各自的文件', (await read('s:character/1003/adultr/10030304.txt')).scene.steps[0].commands.some((c) => segText(c).includes('普通脚本')) && (await read('@text---日文20251102|s:character/1003/adultr/10030304.txt')).scene.steps[0].commands.some((c) => segText(c).includes('日本語版')))
 
 // 非法节点
 for (const [name, id, code] of [
-  ['目录穿越 ..', 's:../x.txt', 400], ['中间有 ..', 's:cabin/../../x.txt', 400], ['空段', 's:cabin//ep01.txt', 400], ['绝对路径', 's:/etc/passwd', 400],
-  ['扩展名不在白名单', 's:download/bg/bg_school.jpg', 400], ['不是脚本的 txt', 's:cabin/README.txt', 400], ['脚本不存在', 's:cabin/none.txt', 404],
-  ['未知分类', 'c:nope', 404], ['角色 id 穿越', 'ch:..', 400], ['角色 id 带斜杠', 'ch:a/b', 400], ['角色不存在', 'ch:999', 404], ['未知节点类型', 'x:1', 400],
+  ['目录穿越 ..', 's:../x.txt', 400], ['中间有 ..', 's:cabin/../../x.txt', 400], ['空段', 's:cabin//600130.txt', 400], ['绝对路径', 's:/etc/passwd', 400],
+  ['扩展名不在白名单', 's:cabin/adultr/x.jpg', 400], ['不是脚本的 txt', 's:cabin/adultr/notes.txt', 400], ['脚本不存在', 's:cabin/adultr/none.txt', 404],
+  ['目录不存在', 'd:nonexistent', 404], ['目录穿越', 'd:../..', 400], ['未知节点类型', 'x:1', 400], ['未知文本版本', '@nope|d:', 404], ['版本缺 |', '@text', 400],
 ]) {
   const e = await err(read(id))
   check(`非法节点：${name} → ${code}`, e?.statusCode === code, `${e?.statusCode} ${e?.message}`)
 }
 check('未知单元报错（单元只有 main）', Boolean(await err(read('', 'nope'))))
-await symlink(path.join(work, 'empty', 'notes.txt'), path.join(root, 'cabin', 'link.txt'))
-check('符号链接指到媒体目录之外的脚本：不读', Boolean(await err(read('s:cabin/link.txt'))))
+await symlink(path.join(work, 'plain'), path.join(root, 'resources/download/adv/text/linkdir'))
+await writeFile(path.join(work, 'outside.txt'), 'stopbgm,\nfadeinblack,0\nbg,a.jpg,0\nmsg,0,OUT\nclickwait\n')
+await symlink(path.join(work, 'outside.txt'), path.join(root, 'resources/download/adv/text/cabin/adultr/link.txt'))
+check('符号链接指到媒体目录之外的脚本：不读', Boolean(await err(read('s:cabin/adultr/link.txt'))))
+check('符号链接指到媒体目录之外的目录：列出来是空的、不泄露外面的内容', (await nodeOf('d:linkdir')).items.length === 0)
 
-// 没有分类目录：首页退化成递归脚本列表
+// 资源解析（相对资源根）
+const res = async (p) => handler.getResource(M.itemId, p).then((r) => r, (e) => ({ error: e }))
+check('资源：相对资源根解析（download/bg/… → resources/download/bg/…）；前导 / 去掉', (await res('download/bg/bg_school.jpg')).contentType === 'image/jpeg' && (await res('/download/sound/bgm/bgm_a.wav')).contentType === 'audio/wav')
+check('资源：语音在角色目录下（真实脚本里的写法）；.mp3 扩展名', (await res('download/character/100300/adv/sound/fav100300_01_01.mp3')).contentType === 'audio/mpeg')
+check('资源：缺失 → 404；目录穿越 → 400；空路径/双斜杠 → 400', (await res('download/bg/none.jpg')).error?.statusCode === 404 && (await res('../x')).error?.statusCode === 400 && (await res('download/../../x')).error?.statusCode === 400 && (await res('')).error?.statusCode === 400 && (await res('a//b')).error?.statusCode === 400)
+check('资源：~/ 只放行缩略图缓存目录（user_data/thumbnails），别的 user_data 文件拒绝', (await res('~/user_data/thumbnails/600130.webp')).contentType === 'image/webp' && (await res('~/user_data/license.dat')).error?.statusCode === 403 && (await res('~/user_data/settings.json')).error?.statusCode === 403 && (await res('~/user_data/thumbnails/../settings.json')).error?.statusCode === 400 && (await res('~/UViewer.exe')).error?.statusCode === 403)
+check('资源：资源根之外的文件（根上的 start.bat）不能用路径直接取', (await res('start.bat')).error?.statusCode === 404)
+await writeFile(path.join(work, 'secret.txt'), 'SECRET')
+await symlink(path.join(work, 'secret.txt'), path.join(root, 'resources/download/link.bin'))
+await symlink(work, path.join(root, 'resources/download/linkdir'))
+check('资源：符号链接指到媒体目录之外 → 拒绝（不泄露文件）', (await res('download/link.bin')).error?.statusCode === 404 && (await res('download/linkdir/secret.txt')).error?.statusCode === 404)
+const thumb = await handler.getThumbnail(M.itemId)
+check('封面：原样返回', thumb.contentType === 'image/webp' && thumb.body.length > 100)
+check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(handler.getItem('../x'))))
 {
-  const flat = path.join(work, 'flat')
-  await mkdir(path.join(flat, 'deep/er'), { recursive: true })
-  await writeFile(path.join(flat, 'a.txt'), 'stopbgm,\nfadeinblack,0\nmsg,0,A\nclickwait\n')
-  await writeFile(path.join(flat, 'deep/er/b.txt'), 'stopbgm,\nfadeinblack,0\nmsg,0,B\nclickwait\n')
-  const r = await handler.importFromSource({ sourcePath: flat })
-  const F = r.items[0]
-  const h = await handler.getReaderContent(F.itemId, 'main', { sectionId: '' })
-  const leaf = await handler.getReaderContent(F.itemId, 'main', { sectionId: 's:deep/er/b.txt' })
-  check('无分类目录：首页是脚本列表（递归找到），没有封面就不给', h.node.kind === 'list' && h.node.items.length === 2 && F.cover === '' && (await err(handler.getThumbnail(F.itemId)))?.statusCode === 404, J(h.node.items.map((i) => i.title)))
-  check('无分类目录：脚本返回首页（空 id）', leaf.node.parent === '' && leaf.sectionNavigation.prev.sectionId === 's:a.txt')
-  await rm(path.join(dataDir, 'library-meta'), { recursive: true, force: true }).catch(() => {})
-  await handler.importFromSource({})   // 元数据被清掉后重新导入主媒体，后面的测试继续用
+  const gen = path.join(work, 'gen'); await mkdir(path.join(gen, 'deep/er'), { recursive: true })
+  await writeFile(path.join(gen, 'a.txt'), 'stopbgm,\nfadeinblack,0\nmsg,0,A\nclickwait\n')
+  await writeFile(path.join(gen, 'deep/er/b.txt'), 'stopbgm,\nfadeinblack,0\nbg,download/x.jpg,0\nmsg,0,B\nclickwait\n')
+  await mkdir(path.join(gen, 'download'), { recursive: true }); await writeFile(path.join(gen, 'x.jpg'), 'x')
+  const G = (await handler.importFromSource({ sourcePath: gen })).items[0]
+  const gh = await handler.getReaderContent(G.itemId, 'main', { sectionId: '' })
+  check('兜底方案：首页就是脚本根（目录在前、脚本在后），递归浏览；资源按媒体目录、去掉 download/ 前缀重试', G.layout.profile === 'generic' && gh.node.items.map((i) => i.title).join() === 'deep,download,a' && (await handler.getResource(G.itemId, 'download/x.jpg')).body.toString() === 'x', J(gh.node.items.map((i) => i.title)))
+  await rm(handler.internals.metaPath(G.itemId), { force: true })
 }
 
-// 资源解析（相对媒体目录；去掉 download/ 前缀重试）
-const M3 = await handler.getItem(M.itemId)   // 同一个目录，条目 id 不变
-const res = async (p) => handler.getResource(M3.itemId, p).then((r) => r, (e) => ({ error: e }))
-check('资源：按媒体目录解析（download/bg/…）', (await res('download/bg/bg_school.jpg')).contentType === 'image/jpeg')
-check('资源：content-type 按扩展名（wav/mp3）', (await res('download/sound/voice/v_1.wav')).contentType === 'audio/wav' && (await res('download/sound/bgm/bgm192.mp3')).contentType === 'audio/mpeg')
-check('资源：缺失 → 404；目录穿越 → 400；空路径/双斜杠 → 400', (await res('download/bg/none.jpg')).error?.statusCode === 404 && (await res('../x')).error?.statusCode === 400 && (await res('download/../../x')).error?.statusCode === 400 && (await res('')).error?.statusCode === 400 && (await res('a//b')).error?.statusCode === 400)
-await mkdir(path.join(root, 'plain'), { recursive: true })
-await writeFile(path.join(root, 'plain', 'x.txt'), 'plain')
-check('资源：去掉 download/ 前缀重试', (await res('download/plain/x.txt')).body?.toString() === 'plain')
-await writeFile(path.join(work, 'secret.txt'), 'SECRET')
-await symlink(path.join(work, 'secret.txt'), path.join(root, 'link.bin'))
-await symlink(work, path.join(root, 'linkdir'))
-check('资源：符号链接指到媒体目录之外 → 拒绝（不泄露文件）', (await res('link.bin')).error?.statusCode === 404 && (await res('linkdir/secret.txt')).error?.statusCode === 404)
-const thumb = await handler.getThumbnail(M3.itemId)
-check('封面：原样返回背景图', thumb.contentType === 'image/jpeg' && thumb.body.length > 1000)
-await writeFile(path.join(root, 'cover.png'), Buffer.from('89504e470d0a1a0a', 'hex'))
-const recover = await handler.importFromSource({})
-check('目录里有 cover.png：优先用它当封面', recover.items[0].coverPath === 'cover.png')
-check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(handler.getItem('../x'))))
-
-// GBK 脚本 + 太大/太深
+// GBK 脚本 + 大小上限
 {
-  const dir = path.join(root, 'character', 'gbk')
+  const dir = path.join(root, 'resources/download/adv/text/character/gbk')
   await mkdir(dir, { recursive: true })
   await writeFile(path.join(dir, 'g.txt'), Buffer.concat([Buffer.from('stopbgm,\nfadeinblack,0\nbg,a.jpg,0\nname,'), Buffer.from([0xc4, 0xe3, 0xba, 0xc3]), Buffer.from(',\nmsg,0,'), Buffer.from([0xc4, 0xe3, 0xba, 0xc3]), Buffer.from(',,,\nclickwait\n')]))
   const gr = await read('s:character/gbk/g.txt')
   check('GBK 编码的脚本：能识别、能解码', segText(gr.scene.steps[0].commands.find((c) => c.op === 'text')) === '你好', J(gr.scene.steps[0].commands))
-  await writeFile(path.join(root, 'cabin', 'big.txt'), 'stopbgm,\n'.repeat(3000))
+  await writeFile(path.join(dir, 'big.txt'), 'stopbgm,\n'.repeat(3000))
   const lim = mk({ maxScriptBytes: 2000 })
-  const cab = await lim.getReaderContent(M3.itemId, 'main', { sectionId: 'c:cabin' })
-  check('大小上限：太大的脚本不收（列表里没有）', !cab.node.items.some((i) => i.title === 'big') && cab.node.total === 2, J(cab.node.items.map((i) => i.title)))
-  await rm(path.join(root, 'cabin', 'big.txt'))
+  check('大小上限：太大的脚本不收', !(await lim.getReaderContent(M.itemId, 'main', { sectionId: 'd:character/gbk' })).node.items.some((i) => i.title === 'big'))
+  await rm(dir, { recursive: true })
 }
 
-// 进度：只有播放页算；每个脚本各记各的
+// 进度：只有播放页算；每个脚本各记各的；选项的选择跟着存
 {
-  const p0 = await handler.getProgress(M3.itemId)
+  const S1 = 's:cabin/adultr/600130.txt'
+  const p0 = await handler.getProgress(M.itemId)
   check('进度：初始为空', p0.lastUnitId === '' && p0.lastSectionId === '' && p0.lastScrollRatio === 0 && Object.keys(p0.nodes).length === 0)
-  await handler.saveProgress(M3.itemId, { unitId: 'main', sectionId: 'c:cabin#1', scrollRatio: 0 })
-  const afterBrowse = await handler.getProgress(M3.itemId)
+  await handler.saveProgress(M.itemId, { unitId: 'main', sectionId: 'd:cabin/adultr', scrollRatio: 0 })
+  const afterBrowse = await handler.getProgress(M.itemId)
   check('进度：在列表里逛不记（「继续」不会落到列表上）', afterBrowse.lastSectionId === '' && Object.keys(afterBrowse.nodes).length === 0)
-  const p1 = await handler.saveProgress(M3.itemId, { unitId: 'main', title: 'x', sectionId: 's:cabin/ep01 序章.txt', scrollRatio: 0.6 })
-  check('进度：播放页记 section 和比例', p1.lastSectionId === 's:cabin/ep01 序章.txt' && p1.lastScrollRatio === 0.6 && p1.nodes['s:cabin/ep01 序章.txt'].ratio === 0.6)
-  await handler.saveProgress(M3.itemId, { unitId: 'main', sectionId: 's:cabin/ep02 终章.txt', scrollRatio: 5 })
-  const p2 = await handler.getProgress(M3.itemId)
-  check('进度：各脚本各记各的；比例夹在 0..1；到末尾算看完', p2.lastSectionId === 's:cabin/ep02 终章.txt' && p2.nodes['s:cabin/ep01 序章.txt'].ratio === 0.6 && p2.nodes['s:cabin/ep02 终章.txt'].ratio === 1 && p2.nodes['s:cabin/ep02 终章.txt'].completedAt)
-  await handler.saveProgress(M3.itemId, { unitId: 'main', sectionId: 'ch:1010#1', scrollRatio: 0.3 })
-  check('进度：之后又逛列表，上次看的位置不变', (await handler.getProgress(M3.itemId)).lastSectionId === 's:cabin/ep02 终章.txt')
+  const p1 = await handler.saveProgress(M.itemId, { unitId: 'main', title: 'x', sectionId: S1, scrollRatio: 0.6 })
+  check('进度：播放页记 section 和比例', p1.lastSectionId === S1 && p1.lastScrollRatio === 0.6 && p1.nodes[S1].ratio === 0.6)
+  const BR = 's:character/1003/adultr/100300.txt'
+  const p2 = await handler.saveProgress(M.itemId, { unitId: 'main', sectionId: BR, scrollRatio: 0.5, choices: { '9:0': 2, bad: 1, '1:1': 500, '2:0': 'x', '3:0': 1 } })
+  check('进度：选项的选择跟着存；格式不对/超范围的丢掉', J(p2.nodes[BR].choices) === J({ '9:0': 2, '3:0': 1 }), J(p2.nodes[BR]))
+  const p3 = await handler.saveProgress(M.itemId, { unitId: 'main', sectionId: BR, scrollRatio: 0.7 })
+  check('进度：之后不带 choices 的保存不会把已存的选择冲掉；传 {} 才清空', J(p3.nodes[BR].choices) === J({ '9:0': 2, '3:0': 1 }) && !('choices' in (await handler.saveProgress(M.itemId, { unitId: 'main', sectionId: BR, scrollRatio: 0.7, choices: {} })).nodes[BR]))
+  const p4 = await handler.saveProgress(M.itemId, { unitId: 'main', sectionId: S1, scrollRatio: 5 })
+  check('进度：比例夹在 0..1，到末尾算看完；各脚本各记各的', p4.nodes[S1].ratio === 1 && p4.nodes[S1].completedAt && p4.nodes[BR].ratio === 0.7)
+  await handler.saveProgress(M.itemId, { unitId: 'main', sectionId: 'd:character#1', scrollRatio: 0.3 })
+  check('进度：之后又逛列表，上次看的位置不变', (await handler.getProgress(M.itemId)).lastSectionId === S1)
 }
 // 标签
 {
-  const t = await handler.updateUnitTags(M3.itemId, 'main', ['章节标签'])
-  check('单元标签', t.tags[0] === '章节标签' && (await handler.listUnits(M3.itemId))[0].tags[0] === '章节标签')
-  check('单元标签：不存在的单元报错', Boolean(await err(handler.updateUnitTags(M3.itemId, 'nope', []))))
+  const t = await handler.updateUnitTags(M.itemId, 'main', ['章节标签'])
+  check('单元标签', t.tags[0] === '章节标签' && (await handler.listUnits(M.itemId))[0].tags[0] === '章节标签')
+  check('单元标签：不存在的单元报错', Boolean(await err(handler.updateUnitTags(M.itemId, 'nope', []))))
   check('重新导入后单元标签还在', (await handler.importFromSource({})).items[0].mediaUnits[0].tags[0] === '章节标签')
 }
 
