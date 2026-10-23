@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildMinashigoFixture } from './make-minashigo-fixture.mjs'
 import { buildTenkeiFixture } from './make-spine-fixture.mjs'
 
 export { buildTenkeiFixture }
@@ -59,5 +60,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   await buildMonmusuFixture(path.join(out, 'monmusu演示'))
   const tenkei = await buildTenkeiFixture(path.join(out, 'tenkeiprdx演示'))
   await addArrayScene(tenkei.imported || path.join(out, 'tenkeiprdx演示'))
-  console.log(`done: ${out}/monmusu演示, ${out}/tenkeiprdx演示`)
+  await buildMinashigoFixture(path.join(out, 'minashigo演示'))
+  console.log(`done: ${out}/monmusu演示, ${out}/tenkeiprdx演示, ${out}/minashigo演示`)
 }

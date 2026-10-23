@@ -161,3 +161,12 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 - **回退轨迹**（`app.js` 的 `galNavigate`）：从列表点进下一层时记下当前列表的完整节点 id（含页码、筛选、排序、每页条数），往上走（上一级 / 面包屑 / 播放页的「列表」）回到记下的那个 id，而不是服务端算的默认第 1 页。存在 sessionStorage，每个单元一份。
 - **config.rawIgnore**：正则字符串列表（不分大小写，最多 50 条，非法的丢掉）。播放器里「N 条指令暂未渲染」不计入匹配的指令（匹配指令名和 `指令名,参数…`）；节点 `rawIgnore` 带给前端。`gal-layout` 脚本有同名选项（全局值），某个媒体要单独的用 `overrides[].config.rawIgnore`。点右下角的提示可展开诊断面板（按指令名汇总 + 样例 + 缺资源 + Spine 状态），可一键复制。
 - **「更多」菜单**：沉浸 / 全屏收在「更多」里（浏览层和播放器都是，快捷键 I / F 不变）；沉浸按钮不再高亮。播放到最后一步且有下一章时，工具栏出现「继续下一章 ▶」。
+
+## minashigo（Ren'Py，MinashigoViewer）
+
+- **独立的 adapter `renpy-minashigo`**（`adapters/renpy-minashigo.mjs`），和 `renpy-monmusu` 互不影响：sniff 要求这个格式独有的写法（`$ name= "…"` 或 `xyz "…"`），monmusu 的脚本不会被它认走；两个都允许时 minashigo 的脚本归 minashigo、monmusu 的脚本归 monmusu。导入时填 `adapters: ['renpy-minashigo']` + `config.game.id: 'minashigo'`，`gal-layout` 脚本按 `game.id` 或目录结构（`game/scripts/` + `game/script.rpy` 里的 `DynamicCharacter("name")`）认出它。
+- **写法**：说话人来自 `$ name= "…"`（空 = 旁白），台词是 `xyz "…"`（一句一步）；`play music / voice2 / queue sound '…'` → bgm / voice / se；`scene <图片名>`（先查 `movie.rpy` 里的 Movie 别名，再查图片目录；`black1` 这类没有图就是黑底）；`show black` / `hide black` 黑场；`with flash…` 闪屏；`stop music`。
+- **立绘**：`script.rpy` 里的 `layeredimage standimage`，每个 `attribute` = 立绘图集上裁出的一块（`im.Crop("images/stand/…png",(x,y,w,h))` + `zoom` / `xpos` / `ypos`）。脚本里 `show standimage <属性…>` 逐个攒，到下一句台词前合成一条 `stand`（parts 按定义顺序）；`hide standimage` / `scene` → `standOff`。播放器用 canvas（`gal-stand.js`，1920×1080 设计坐标）按 Ren'Py 默认摆法（底边对齐、水平居中）画出来。
+- **适配器参数**（`config.adapterOptions['renpy-minashigo']`，路径相对媒体目录）：`{ aliasFiles: ['game/movie.rpy'], standFiles: ['game/script.rpy'], imageDirs: ['game/images'] }`。路径和实际不一样时用 `gal-layout` 的 `overrides` 改（资源根 `resourceRoots` 默认 `game/`，音频 / 图片路径相对它）。
+- **分组**：`scene_<1 位类别><6 位角色编号><2 位序号>` 按角色编号归成一张卡片，主线（`scene_2100002`）/ 活动（`scene_ev059_00_02`）照常列出；改规则用 `groups`。
+- **暂未渲染**：别的特效图（`show slash_1` 之类）只记在 `stats.raw`，播放器提示里能看到，可用 `rawIgnore` 允许。

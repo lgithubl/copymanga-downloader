@@ -3,6 +3,7 @@
 // 另外：Spine 骨骼动画（站位立绘、整幅静态画面，gal-spine.js）、镜头（整个画面一起平移/缩放）、背景音效声道、闪屏。
 // 立绘 / 遮罩等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
 import { createSpineLayer } from '/gal-spine.js'
+import { createStandLayer } from '/gal-stand.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, segmentsText, stateAt, stepOfRatio } from '/gal-engine.js'
 
 const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
@@ -373,6 +374,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     }
     spineLayer.set(state.spines, { live })
   }
+  // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
+  let standLayer = null
+  function paintStand() {
+    if (!standLayer && !state.stand) return
+    if (!standLayer) standLayer = createStandLayer({ parent: world, url, onMissing: markMissing })
+    standLayer.set(state.stand)
+  }
   // 镜头：位置（x,y 取反，按舞台高度换算）+ 缩放（z 是千分比，放大系数 1.3）。live 且有时长：从 from 平滑移到 to
   const zoomOf = (z) => (z ? 1 + (z / 1000) * 1.3 : 1)
   const cameraTransform = (pos) => {
@@ -412,6 +420,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     paintBlack(true)
     paintMovie(true)
     paintSpines(false)
+    paintStand()
     paintCamera(false)
     setBgm(state.bgm)
     setBgse(state.bgse)
@@ -492,6 +501,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         case 'spine':
         case 'spineOff':
           paintSpines(true)
+          break
+        case 'stand':
+        case 'standOff':
+          paintStand()
           break
         case 'camera':
           paintCamera(!skipping)
@@ -869,6 +882,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     movie.pause()
     movie.removeAttribute('src')
     spineLayer?.destroy()
+    standLayer?.destroy()
     if (document.fullscreenElement === root) document.exitFullscreen?.()
   }
 

@@ -1,13 +1,14 @@
-// Gal 布局配置脚本（三种游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
+// Gal 布局配置脚本（四种游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里只写「实际探测到的 / 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
 //
 // 分发：
-//   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测：uviewer / monmusu / tenkeiprdx。认不出结构：uviewer 退回通用配置，别的跳过；不认识的 id 跳过
-//   没填 game.id                          → 按 monmusu → tenkeiprdx → uviewer 的顺序探测，谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领
+//   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测：uviewer / monmusu / tenkeiprdx / minashigo。认不出结构：uviewer 退回通用配置，别的跳过；不认识的 id 跳过
+//   没填 game.id                          → 按 monmusu → tenkeiprdx → minashigo → uviewer 的顺序探测，谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领
 // 各游戏写什么：
 //   uviewer     脚本根（text + 同级 text* 另一套）、资源根、名称文件、缩略图目录；封面 = UViewer 自己生成的缩略图 / 脚本里第一张存在的背景
 //   monmusu     脚本根 <游戏根>/script、资源根 <游戏根>、合并 hscene + hscene_still（角标 anim / still）、按角色编号分组、隐藏 sub_nav / tl、适配器参数（别名表、图片目录）、头像模板（images 里的 icon_<编号>_0_idle.*）
+//   minashigo   脚本根 <游戏根>/game/scripts、资源根 <游戏根>/game、扩展名 rpy、按角色编号分组（scene_<类别><6 位角色><序号>）、适配器参数（别名表 game/movie.rpy、立绘定义 game/script.rpy、图片目录 game/images）
 //   tenkeiprdx  脚本根 <素材根>/scenes、资源根 <素材根>、扩展名 json、适配器参数 root（活动 / 附加 / 角色 / 全部剧情这些列表由适配器每次从数据文件现读，不写进 config）
 // 选项：
 //   dryRun          只探测和打日志，不写任何东西
@@ -19,7 +20,7 @@
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
-// 状态 tag：Gal配置: uviewer / monmusu / tenkeiprdx / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: uviewer / monmusu / tenkeiprdx / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -166,6 +167,51 @@ async function detectMonmusu(media, { declared, game, logs }) {
 // tenkeiprdx（Unity 剧情查看器素材）
 // ======================================================================
 const TENKEI_SIBLINGS = ['Backgrounds', 'Spines', 'Stills', 'Masterdata']
+
+// ======================================================================
+// minashigo（Ren'Py，MinashigoViewer：game/scripts/scene_*.rpy）
+// ======================================================================
+async function detectMinashigo(media, { declared, logs }) {
+  const hit = await findDir(media, ['game', 'scripts'], 6)
+  if (!hit) {
+    if (declared) logs.push('没找到 game/scripts')
+    return null
+  }
+  const gameRel = hit.split('/').slice(0, -1).join('/')   // …/game
+  const mainScript = path.join(media, ...splitRel(join(gameRel, 'script.rpy')))
+  // 没声明时靠 script.rpy 开头的 DynamicCharacter("name") 认（monmusu 没有 game/scripts，也没有它）
+  let marker = false
+  try { marker = /DynamicCharacter\s*\(\s*["']name["']/.test((await readFile(mainScript)).subarray(0, 16384).toString('utf8')) } catch { /* 没有 script.rpy */ }
+  if (!declared && !marker) return null
+  const config = {
+    scriptRoots: [{ id: 'scripts', dir: hit, label: '日文' }],
+    resourceRoots: [gameRel],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['rpy'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    // scene_<1 位类别><6 位角色编号><2 位序号>：同一个角色的归成一张卡片；主线 / 活动（scene_2100002、scene_ev059_00_02）不匹配，照常列出
+    groups: [{ parent: '.', pattern: '^scene_\\d(\\d{6})\\d{2}$' }],
+    dirThumbs: [],
+    scriptThumbs: [],
+    adapterOptions: { 'renpy-minashigo': { aliasFiles: [join(gameRel, 'movie.rpy')], standFiles: [join(gameRel, 'script.rpy')], imageDirs: [join(gameRel, 'images')] } },
+  }
+  logs.push(`minashigo 游戏根：${gameRel || '.'}；脚本 ${hit}${marker ? '' : '（没有认出 script.rpy 里的 DynamicCharacter("name")）'}`)
+  logs.push('按角色编号分组（scene_<类别><6 位角色><序号>）；立绘定义读 game/script.rpy；路径不对用 overrides 覆盖 adapterOptions / resourceRoots')
+  return {
+    id: 'minashigo',
+    kind: 'minashigo',
+    note: '',
+    config,
+    async finish(m, _config, options) {
+      const count = await countFiles(path.join(m, ...splitRel(hit)), '.rpy', options.countCap, 3)
+      logs.push(`脚本 ${count} 个${count ? '' : '——结构可能不对，可以用 overrides 覆盖 scriptRoots'}`)
+      return { count, cover: '' }
+    },
+  }
+}
 
 async function detectTenkeiprdx(media, { declared, logs }) {
   const root = await findTenkeiRoot(media, 6)
@@ -359,10 +405,11 @@ async function pickCover(media, config, files) {
   return ''
 }
 
-// 探测顺序：monmusu → tenkeiprdx → uviewer（没填 game.id 时按这个顺序认领）
+// 探测顺序：monmusu → tenkeiprdx → minashigo → uviewer（没填 game.id 时按这个顺序认领）
 const GAMES = [
   { id: 'monmusu', detect: detectMonmusu },
   { id: 'tenkeiprdx', detect: detectTenkeiprdx },
+  { id: 'minashigo', detect: detectMinashigo },
   { id: 'uviewer', detect: detectUviewerGame },
 ]
 

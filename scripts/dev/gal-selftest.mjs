@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Gal 自测（不需要浏览器）：适配器 / 播放引擎 / 库类型 handler。需要 ImageMagick 和 python3（造测试数据）。
 //   node scripts/dev/gal-selftest.mjs
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { galAdapterIds, registerGalAdapter, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
@@ -9,6 +9,8 @@ import { parse, parseCondition, parseRichText, sniff } from '../../web/library/g
 import { DEFAULT_GAL_CONFIG, applyGalConfigPatch, cleanGalConfigRaw, expandTemplate, globToRegExp, normalizeGalConfig } from '../../web/library/gal/config.mjs'
 import { safeRelPath } from '../../web/library/gal/paths.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
+import { parse as minashigoParse, prepare as minashigoPrepare, sniff as minashigoSniff } from '../../web/library/gal/adapters/renpy-minashigo.mjs'
+import { buildMinashigoFixture } from './make-minashigo-fixture.mjs'
 import { parse as renpyParse, prepare as renpyPrepare, renpyText, sniff as renpySniff } from '../../web/library/gal/adapters/renpy-monmusu.mjs'
 import { execFileSync } from 'node:child_process'
 const monmusuScript = galLayoutScript
@@ -524,6 +526,51 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   // 用户自己的覆盖：脚本 overrides 能改任何字段
   const ovr = await monmusuScript({ item: it, script: { id: 'gal-layout', version: '1.0.1', options: { overrides: [{ path: '*mm-pack', config: { pageSize: 1 }, title: 'Renamed' }] } } })
   check('overrides：按路径命中、覆盖 config、改标题；状态标签变「自定义」', ovr.itemPatch.gal.config.pageSize === 1 && ovr.itemPatch.title === 'Renamed' && ovr.itemTags[0] === 'Gal配置: 自定义')
+}
+
+// ================= minashigo（Ren'Py，MinashigoViewer）：独立 adapter + 立绘 + 脚本，不影响 monmusu =================
+{
+  const mg = path.join(work, 'mg-pack')
+  await buildMinashigoFixture(mg)
+  const mgSample = "label scene_130220102:\n    $ name= \"\"\n    scene bg5000604 with Dissolve(0.5)\n    play voice2 'audio/voices/a.mp3'\n    xyz \"台词\"\n"
+  const mmSample = 'label h10001A1:\n    scene black\n    voice "audio/voice/10001/a1.mp3"\n    "Ann" "first line"\n    jump hanim\n'
+  // 两个适配器互不认对方的脚本：minashigo 要独有写法（$ name= / xyz "…"）；monmusu 的脚本没有它们
+  check('sniff 隔离：minashigo 认 $ name= / xyz 写法；monmusu 的脚本 minashigo 不认；两个都允许时 minashigo 的脚本归 minashigo、monmusu 的脚本归 monmusu', minashigoSniff(mgSample) && !minashigoSniff(mmSample) && sniffGalAdapter(mgSample, ['renpy-minashigo', 'renpy-monmusu']) === 'renpy-minashigo' && sniffGalAdapter(mmSample, ['renpy-minashigo', 'renpy-monmusu']) === 'renpy-monmusu' && sniffGalAdapter(mgSample, ['renpy-monmusu']) === 'renpy-monmusu' && !minashigoSniff('xyz "x"') && galAdapterIds().includes('renpy-minashigo'))
+  // 解析
+  const texts = { 'game/script.rpy': await readFile(path.join(mg, 'MinashigoViewer-1.2/game/script.rpy'), 'utf8'), 'game/movie.rpy': await readFile(path.join(mg, 'MinashigoViewer-1.2/game/movie.rpy'), 'utf8') }
+  const ctx = minashigoPrepare({ texts, files: ['game/images/bg/bg5000604.jpg', 'game/images/black1.png', 'game/images/bg/bg0000701.jpg'], toResourcePath: (rel) => rel.replace(/^game\//, '') })
+  check('立绘定义：layeredimage standimage 的 attribute → 图集裁剪 + zoom + 位置（5 个属性）；movie.rpy 别名', ctx.stands.get('standimage').size === 5 && J(ctx.stands.get('standimage').get('302201a001')) === J({ src: 'images/stand/302201stand_a.png', crop: [1, 902, 100, 95], zoom: 0.9, x: 350, y: 100, order: 1 }) && ctx.movies.get('700401_01').src === 'images/ani/700401/700401_01.webm')
+  const parsed = minashigoParse(await readFile(path.join(mg, 'MinashigoViewer-1.2/game/scripts/scene_130220102.rpy'), 'utf8'), ctx)
+  const ops = parsed.steps.flatMap((st) => st.commands)
+  check('解析：说话人来自 $ name=；xyz 台词一句一步（\\n 换行）；voice2 → voice、queue sound → se、play music → bgm、stop music → bgmStop', parsed.steps.length === 5 && J(parsed.steps[0].commands.map((c) => c.op)) === J(['bg', 'bgm', 'voice', 'speaker', 'text']) && parsed.steps[0].commands[4].segments[0].text === '旁白第一句。\n第二行。' && ops.some((c) => c.op === 'speaker' && c.segments[0]?.text === 'ワーテルロー') && ops.some((c) => c.op === 'se' && c.src === 'audio/se/slash_1.mp3') && ops.filter((c) => c.op === 'bgm').length === 2 && ops.some((c) => c.op === 'bgmStop'), J(parsed.steps.map((st) => st.commands.map((c) => c.op))))
+  const stands = ops.filter((c) => c.op === 'stand')
+  check('立绘：show 逐个属性攒着，到下一句台词前合成一条 stand（身体 + 表情，按定义顺序）；scene 清掉立绘（standOff）；hide standimage 再 show 换人', stands.length === 3 && stands[0].parts.length === 2 && stands[0].parts[0].crop[3] === 900 && stands[1].parts[0].src === 'images/stand/200801stand_a.png' && ops.some((c) => c.op === 'standOff') && parsed.stats.stands === 3, J(stands.map((c) => c.parts.map((p) => p.src))))
+  check('特效：with flash → flash；show black / hide black → 黑场渐入 / 去掉；scene black1 没有图也是黑底；别的特效图（slash_1）记在 stats.raw 里不报错；没有未解析项', ops.some((c) => c.op === 'flash' && c.count === 1) && ops.some((c) => c.op === 'fade' && c.to === 'black') && ops.some((c) => c.op === 'bg' && c.color?.join() === '0,0,0') === false && parsed.stats.raw['show slash_1'] === 1 && Object.keys(parsed.stats.unresolved).length === 0, J(parsed.stats))
+  const bare = minashigoParse("label x:\n    scene black1\n    xyz \"a\"\n    show standimage nope\n    xyz \"b\"\n", { images: new Map(), movies: new Map(), stands: new Map() })
+  check('没有图片索引时：black1 = 黑底；立绘属性查不到记 unresolved:stand:…，不发空 stand', bare.steps[0].commands.some((c) => c.op === 'bg' && c.color?.join() === '0,0,0') && bare.stats.unresolved['stand:nope'] === 1 && !bare.steps.flatMap((st) => st.commands).some((c) => c.op === 'stand'), J(bare.stats))
+
+  // 导入 + gal-layout（四种游戏的探测互不抢）
+  const imp = await handler.importFromSource({ sourcePath: mg, options: { adapters: ['renpy-minashigo'], config: { game: { id: 'minashigo' } }, defaultMetadataActions: ['gal-layout'] } })
+  const item = imp.items[0]
+  const out = await galLayoutScript({ item, script: { id: 'gal-layout', version: '2.2.0', options: {} } })
+  const cfg = out.itemPatch.gal.config
+  check('gal-layout 认出 minashigo：脚本根 game/scripts、资源根 game、扩展名 rpy、按角色编号分组、适配器参数（别名表 / 立绘定义 / 图片目录）、脚本数 5、标签 Gal游戏: minashigo', cfg.game.id === 'minashigo' && cfg.scriptRoots[0].dir === 'MinashigoViewer-1.2/game/scripts' && J(cfg.resourceRoots) === J(['MinashigoViewer-1.2/game']) && J(cfg.scriptExtensions) === J(['rpy']) && cfg.groups[0].pattern === '^scene_\\d(\\d{6})\\d{2}$' && J(cfg.adapterOptions['renpy-minashigo']) === J({ aliasFiles: ['MinashigoViewer-1.2/game/movie.rpy'], standFiles: ['MinashigoViewer-1.2/game/script.rpy'], imageDirs: ['MinashigoViewer-1.2/game/images'] }) && cfg.scriptCount === 5 && out.itemTags.includes('Gal游戏: minashigo'), J(cfg))
+  const auto = await galLayoutScript({ item: { ...item, config: {} }, script: { id: 'gal-layout', version: '2.2.0', options: {} } })
+  const asMonmusu = await galLayoutScript({ item: { ...item, config: { game: { id: 'monmusu' } } }, script: { id: 'gal-layout', version: '2.2.0', options: {} } })
+  const asTenkei = await galLayoutScript({ item: { ...item, config: { game: { id: 'tenkeiprdx' } } }, script: { id: 'gal-layout', version: '2.2.0', options: {} } })
+  check('探测互不抢：没填 game.id 时 minashigo 的目录认成 minashigo；声明成 monmusu / tenkeiprdx 的话它们认不出这个目录，跳过、不乱改', auto.itemPatch?.gal.config.game.id === 'minashigo' && !asMonmusu.itemPatch && !asTenkei.itemPatch, J([auto.itemPatch?.gal.config.game, asMonmusu.logs, asTenkei.logs]))
+  await handler.patchItemMetadata(item.itemId, { gal: out.itemPatch.gal })
+  const it = await handler.getItem(item.itemId)
+  const read = (sectionId) => handler.getReaderContent(it.itemId, 'main', { sectionId })
+  const home = (await read('')).node
+  check('首页：同一角色的归成一张卡片（302201 两个、100101 一个）；主线 / 活动不匹配分组规则，照常列出；不是脚本的 txt 不出现', home.items.length === 4 && home.items.filter((i) => i.type === 'dir').map((i) => `${i.title}:${i.subtitle}`).sort().join() === '100101:1 项,302201:2 项' && home.items.filter((i) => i.type === 'script').map((i) => i.title).sort().join() === 'scene_2100002,scene_ev059_00_02', J(home.items.map((i) => [i.title, i.subtitle, i.type])))
+  const group = (await read(home.items.find((i) => i.title === '302201').node)).node
+  check('分组页：两个脚本（自然序）；返回 = 首页', J(group.items.map((i) => i.title)) === J(['scene_130220101', 'scene_130220102']) && group.parent === '', J([group.items.map((i) => i.title), group.parent]))
+  const play = await read(group.items[1].node)
+  check('播放页：来自 adapter renpy-minashigo；背景 / 立绘部件路径相对游戏根（images/…）；上一话 = 同角色的 130220101、没有下一话', play.scene.adapter === 'renpy-minashigo' && play.scene.steps[0].commands[0].src === 'images/bg/bg5000604.jpg' && play.scene.steps.flatMap((st) => st.commands).some((c) => c.op === 'stand') && play.sectionNavigation.prev?.title === 'scene_130220101' && play.sectionNavigation.next === null, J(play.sectionNavigation))
+  check('资源：背景 / 立绘图集 / 语音 / bgm 相对游戏根能取；目录穿越被拒', (await handler.getResource(it.itemId, 'images/bg/bg5000604.jpg')).contentType === 'image/jpeg' && (await handler.getResource(it.itemId, 'images/stand/302201stand_a.png')).contentType === 'image/png' && (await handler.getResource(it.itemId, 'audio/voices/fav302201/fav302201_02_01.mp3')).contentType === 'audio/mpeg' && Boolean(await err(handler.getResource(it.itemId, '../x'))), '')
+  const ev = await read(home.items.find((i) => i.title === 'scene_ev059_00_02').node)
+  check('图片查不到的 scene：raw + unresolved，不崩', ev.scene.stats.unresolved.missing_image === 1 && ev.scene.steps.length === 2, J(ev.scene.stats))
 }
 
 // ================= tenkeiprdx：adapter + 新指令 + 脚本索引 + 脚本 =================

@@ -142,6 +142,19 @@ if (E) {
     check('monmusu 静图：scene 图片名按文件名查到（头像/背景图能取）', still.scene.steps[0].commands.some((c) => c.op === 'bg' && c.src === 'images/bg/r18_10001_stla1.png') && (await resource(MM, home.node.items[0].thumb)).status === 200, J(still.scene.steps[0].commands))
   }
 
+  const MG = galItems.find((i) => i.title === 'minashigo演示')
+  check('媒体库里有 minashigo 演示媒体', Boolean(MG))
+  if (MG) {
+    const full = await waitScript(MG)
+    check('minashigo：adapter renpy-minashigo / game.id minashigo；脚本 gal-layout 跑过（游戏根 MinashigoViewer-1.2/game）；脚本数 5；标签 Gal游戏: minashigo', J(full.adapters) === J(['renpy-minashigo']) && full.config.game?.id === 'minashigo' && full.config.script?.id === 'gal-layout' && full.config.resourceRoots?.[0] === 'MinashigoViewer-1.2/game' && full.scriptCount === 5 && (full.tags || []).includes('Gal游戏: minashigo'), J([full.adapters, full.config.game, full.config.resourceRoots, full.scriptCount, full.tags]))
+    const home = await readerNode(MG, '')
+    check('minashigo 首页：按角色编号分组（302201 两个脚本、100101 一个）+ 主线 / 活动脚本', home.node.items.filter((i) => i.type === 'dir').map((i) => `${i.title}:${i.subtitle}`).sort().join() === '100101:1 项,302201:2 项' && home.node.items.filter((i) => i.type === 'script').length === 2, J(home.node.items.map((i) => [i.title, i.subtitle])))
+    const group = await readerNode(MG, home.node.items.find((i) => i.title === '302201').node)
+    const play = await readerNode(MG, group.node.items.find((i) => i.title === 'scene_130220102').node)
+    const ops = play.scene.steps.flatMap((s) => s.commands)
+    check('minashigo 播放页：立绘（图集裁剪部件）/ 说话人（$ name=）/ 语音（voice2）/ 背景；立绘图集能取', play.scene.adapter === 'renpy-minashigo' && ops.some((c) => c.op === 'stand' && c.parts.length === 2 && c.parts[0].crop) && ops.some((c) => c.op === 'speaker' && c.segments[0]?.text === 'ワーテルロー') && ops.some((c) => c.op === 'voice') && ops.some((c) => c.op === 'bg' && c.src === 'images/bg/bg5000604.jpg') && (await resource(MG, 'images/stand/302201stand_a.png')).status === 200, J(play.scene.stats))
+  }
+
   const TK = galItems.find((i) => i.title === 'tenkeiprdx演示')
   check('媒体库里有 tenkeiprdx 演示媒体', Boolean(TK))
   if (TK) {

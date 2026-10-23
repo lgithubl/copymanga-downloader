@@ -3,7 +3,7 @@
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, camera: null, bgse: null, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, camera: null, bgse: null, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -119,6 +119,12 @@ export function applyCommand(state, command, choices = null) {
       if (command.slot) delete state.spines[command.slot]
       else if (command.prefix) { for (const slot of Object.keys(state.spines)) if (slot.startsWith(command.prefix)) delete state.spines[slot] }
       else state.spines = {}
+      break
+    case 'stand':
+      state.stand = { parts: command.parts || [] }
+      break
+    case 'standOff':
+      state.stand = null
       break
     case 'camera':
       state.camera = { to: command.to, from: command.from || null, seconds: command.seconds || 0 }
