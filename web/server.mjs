@@ -2738,6 +2738,7 @@ function applyLibraryIndexPayload(payload, filePath) {
   libraryIndexState.error = ''
   libraryIndexState.sourceCount = Number(payload.sourceCount || payload.items.length || 0)
   libraryIndexState.itemCount = libraryIndexState.items.length
+  warmLibraryIndexTagCache()
 }
 
 async function loadLibraryIndexCache() {
@@ -2823,6 +2824,7 @@ async function rebuildLibraryIndex() {
     libraryIndexState.error = ''
     libraryIndexState.sourceCount = items.length
     libraryIndexState.itemCount = summaries.length
+    warmLibraryIndexTagCache()
     return libraryIndexPublicStatus()
   } catch (error) {
     if (libraryIndexState.buildId === buildId) {
@@ -3183,7 +3185,8 @@ function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfil
   const normalizedSourceProfile = String(sourceProfile || '').trim()
   const normalizedSeriesKey = String(seriesKey || '').trim()
   const tagTokens = parseLibraryIndexTagQuery(tag)
-  let items = sortedLibraryIndexItems(sort).filter((item) => normalizedType === 'all' || item.type === normalizedType)
+  let items = sortedLibraryIndexItems(sort)
+  if (normalizedType !== 'all') items = items.filter((item) => item.type === normalizedType)   // 'all' 不用复制一份几十万条的数组
   if (normalizedSourceProfile) items = items.filter((item) => item.sourceProfile === normalizedSourceProfile)
   if (normalizedSeriesKey) items = items.filter((item) => seriesKeyOf(item) === normalizedSeriesKey)
   if (normalizedKeyword) items = items.filter((item) => item.searchText.includes(normalizedKeyword))
@@ -3255,19 +3258,46 @@ function parseLibraryIndexTagQuery(query = '') {
     .filter((item) => item.name)
 }
 
+// 条目的「规整后的标签」缓存（每个条目第一次被 tag 过滤时算一次，之后重用）。
+// 以前每次搜索都对整库每个条目重新 trim/lowercase 全部标签、再建两个 Set：30 万条、每条 8 个标签时一次搜索要 ~0.7 秒的同步 CPU，
+// Node 是单线程，几个页面同时点标签搜索就把事件循环占满，所有请求（包括新开页面的首屏）都排在后面。
+// 用 Symbol 做键：JSON.stringify（写索引缓存）不会带上它；索引重建后条目对象是新的，缓存自然失效。
+const LIBRARY_INDEX_TAGS_NORM = Symbol('tagsNorm')
+function normalizedTagsOf(item) {
+  let cached = item[LIBRARY_INDEX_TAGS_NORM]
+  if (!cached) {
+    const itemTags = (item.tags || []).map(normalizeTagName)
+    const unitTags = (item.unitTags || []).map(normalizeTagName)
+    cached = { itemTags, unitTags }
+    item[LIBRARY_INDEX_TAGS_NORM] = cached
+  }
+  return cached
+}
+
+// 索引装好 / 重建好之后，分批（每批 3000 条、批间让出事件循环）把规整后的标签预先算好，
+// 这样第一次 tag 搜索也不用一次性付全库的代价。条目对象被换掉（又重建了）就停。
+function warmLibraryIndexTagCache() {
+  const items = libraryIndexState.items
+  let index = 0
+  const step = () => {
+    if (libraryIndexState.items !== items) return
+    const end = Math.min(items.length, index + 3000)
+    for (; index < end; index++) normalizedTagsOf(items[index])
+    if (index < items.length) setImmediate(step)
+  }
+  setImmediate(step)
+}
+
 function libraryIndexTagTokensMatch(item, tokens) {
-  const itemTags = (item.tags || []).map(normalizeTagName)
-  const unitTags = (item.unitTags || []).map(normalizeTagName)
-  const itemSet = new Set(itemTags)
-  const unitSet = new Set(unitTags)
+  const { itemTags, unitTags } = normalizedTagsOf(item)
   for (const token of tokens) {
     let matched
     if (token.prefix) {
       // 前缀只能线性扫；带 * 的 token 一般就一两个，整库过一遍可接受
-      const list = token.unitOnly ? unitTags : itemTags.concat(unitTags)
-      matched = list.some((tag) => tag.startsWith(token.name))
+      matched = (!token.unitOnly && itemTags.some((tag) => tag.startsWith(token.name))) || unitTags.some((tag) => tag.startsWith(token.name))
     } else {
-      matched = token.unitOnly ? unitSet.has(token.name) : (itemSet.has(token.name) || unitSet.has(token.name))
+      // 每个条目标签个位数到几十个：数组 includes 比建 Set 快
+      matched = (!token.unitOnly && itemTags.includes(token.name)) || unitTags.includes(token.name)
     }
     if (token.exclude ? matched : !matched) return false
   }

@@ -8234,13 +8234,11 @@ async function syncJobs() {
 // 启动时不跑，等它离开阅读器去别的页面时（showView）才启动。开很多个阅读器标签页时，
 // 每个都开一条 SSE 长连接 + 5 秒轮询纯属浪费，而且 HTTP/1.1 下浏览器对同一主机只给约 6 个
 // 并发连接，长连接占满会拖慢别的请求。幂等：重复调用是空操作。
-function startBackgroundSync() {
-  if (backgroundSyncStarted) return
-  backgroundSyncStarted = true
-  const events = new EventSource('/api/events')
-  events.addEventListener('open', () => { syncJobs().catch(() => {}) })
-  events.addEventListener('job', (event) => {
-    const job = JSON.parse(event.data)
+// 服务端推过来的事件（SSE 里的 job / jobDelete / imageCheck / inventoryUpdate）怎么处理。
+// 拿到事件的可能是自己开的 SSE，也可能是别的标签页转发过来的（见 startEventStream）。
+function handleServerEvent(type, data) {
+  if (type === 'job') {
+    const job = data
     jobs = [job, ...jobs.filter((item) => item.id !== job.id)]
     renderJobs()
     if (job.status === 'completed') {
@@ -8249,14 +8247,11 @@ function startBackgroundSync() {
         scheduleDownloadedRefreshIfActive()
       })
     }
-  })
-  events.addEventListener('jobDelete', (event) => {
-    const { id } = JSON.parse(event.data)
-    jobs = jobs.filter((job) => job.id !== id)
+  } else if (type === 'jobDelete') {
+    jobs = jobs.filter((job) => job.id !== data.id)
     renderJobs()
-  })
-  events.addEventListener('imageCheck', (event) => {
-    const job = JSON.parse(event.data)
+  } else if (type === 'imageCheck') {
+    const job = data
     if (job.status === 'completed' || job.status === 'failed') {
       refreshDownloadedState().then(() => {
         scheduleDownloadedRefreshIfActive()
@@ -8265,14 +8260,64 @@ function startBackgroundSync() {
         }
       }).catch(() => {})
     }
-  })
-  events.addEventListener('inventoryUpdate', (event) => {
-    const update = JSON.parse(event.data)
-    renderInventoryUpdate(update)
-    if (update.status === 'completed') {
+  } else if (type === 'inventoryUpdate') {
+    renderInventoryUpdate(data)
+    if (data.status === 'completed') {
       scheduleDownloadedRefreshIfActive(0)
     }
-  })
+  }
+}
+
+// 一个浏览器只开一条 SSE：同一个浏览器里开的所有标签页共用。
+// 为什么：HTTP/1.1 下浏览器对同一个主机最多同时 6 个连接，而 SSE 是永远不结束的长连接——每个标签页各开一条，
+// 开到第 6 个页面时 6 个名额全被 SSE 占满，所有页面的所有请求（包括第 6 个页面自己的首屏数据、点标签搜索）都排不上队，表现就是整体卡死。
+// 做法：用 Web Locks 选一个「组长」标签页，只有它开 SSE，收到的事件用 BroadcastChannel 转发给别的标签页；组长标签页关了，锁释放，下一个标签页自动接班。
+// 浏览器不支持 Web Locks / BroadcastChannel 时退回「每个标签页各开一条，但标签页在后台时关掉」。
+const SSE_EVENT_TYPES = ['job', 'jobDelete', 'imageCheck', 'inventoryUpdate']
+function startEventStream() {
+  const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('copymanga-server-events') : null
+  const connect = () => {
+    const events = new EventSource('/api/events')
+    events.addEventListener('open', () => {
+      syncJobs().catch(() => {})
+      channel?.postMessage({ kind: 'open' })
+    })
+    for (const type of SSE_EVENT_TYPES) {
+      events.addEventListener(type, (event) => {
+        const data = JSON.parse(event.data)
+        handleServerEvent(type, data)
+        channel?.postMessage({ kind: 'event', type, data })
+      })
+    }
+    return events
+  }
+  if (channel && navigator.locks?.request) {
+    channel.addEventListener('message', (message) => {
+      if (message.data?.kind === 'event') handleServerEvent(message.data.type, message.data.data)
+      else if (message.data?.kind === 'open') syncJobs().catch(() => {})
+    })
+    // 拿到锁的就是组长；回调返回的 Promise 永不结束 = 一直持有，直到这个标签页关闭
+    navigator.locks.request('copymanga-server-events-stream', () => {
+      connect()
+      return new Promise(() => {})
+    }).catch(() => {})
+    return
+  }
+  let events = null
+  const sync = () => {
+    if (document.hidden) {
+      events?.close()
+      events = null
+    } else if (!events) events = connect()
+  }
+  document.addEventListener('visibilitychange', sync)
+  sync()
+}
+
+function startBackgroundSync() {
+  if (backgroundSyncStarted) return
+  backgroundSyncStarted = true
+  startEventStream()
 
   refreshDownloadedState().catch(() => {})
   loadReadingProgress().catch(() => {})
@@ -8301,10 +8346,18 @@ function applyJobPolling() {
   // 轮询间隔配置也会调到这里，不拦的话阅读器标签页照样每 5 秒轮询一次。
   // startBackgroundSync 会在启动时再调一次，那时才真正开始。
   if (!enabled || !backgroundSyncStarted) return
+  // 后台标签页不轮询（开很多标签页时每个都定时请求纯属浪费连接和服务端 CPU）；切回来时 visibilitychange 里立刻对齐一次并恢复
+  if (document.hidden) return
   jobPollTimer = setInterval(() => {
     syncJobs().catch(() => {})
   }, Math.max(1000, jobPollIntervalMs))
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (!backgroundSyncStarted) return
+  applyJobPolling()
+  if (!document.hidden && jobPollEnabled()) syncJobs().catch(() => {})
+})
 
 els.toggleJobPoll?.addEventListener('click', () => {
   const next = !jobPollEnabled()
