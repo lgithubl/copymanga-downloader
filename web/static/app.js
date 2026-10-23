@@ -8112,6 +8112,12 @@ function openLibraryFloat() {
   setLeft(load('copymanga.sidebarHidden', '1') === '1')
   setFloat(load('copymanga.detailFloat', '0') === '1')
   document.querySelector('#library-detail-close')?.addEventListener('click', () => panel.classList.remove('float-open'))
+  // 浮动详情开着时，点它外面的任何地方就收回（不拦截这次点击：点的是被盖住的卡片就照常点到它）；点箭头不算，它自己会切换模式
+  document.addEventListener('pointerdown', (event) => {
+    if (!panel?.classList.contains('float-open')) return
+    if (event.target.closest?.('#library-detail-panel, .edge-handle')) return
+    panel.classList.remove('float-open')
+  }, true)
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && panel?.classList.contains('float-open') && !event.target.closest?.('input, textarea, select')) panel.classList.remove('float-open')
   })
