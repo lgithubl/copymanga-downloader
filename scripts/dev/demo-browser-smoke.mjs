@@ -228,6 +228,20 @@ check('卡片带导入方案（data-profile）', (await page.$$eval('#library-it
   }
 }
 
+// ================= 点标签开出来的搜索页（tab=new）：只读页，只发一个启动请求 =================
+{
+  const t = await context.newPage()
+  t.on('pageerror', (e) => errors.push(e.message))
+  const calls = []
+  t.on('request', (r) => { const u = r.url().replace(BASE, ''); if (u.startsWith('/api/') && !u.includes('/thumbnail/')) calls.push(u.split('?')[0]) })
+  await t.goto(`${BASE}/#/library?tab=new&limit=20`)
+  await t.waitForSelector('#library-items .library-card', { timeout: 20000 })
+  await sleep(1200)
+  check('搜索页（tab=new）：只发 1 个 API 请求（/api/library/boot），没有 SSE / jobs / downloaded / history / config / types', J(calls) === J(['/api/library/boot']), J(calls))
+  check('搜索页：卡片缩略图按批请求（第一批马上、其余滚动时）', await t.$$eval('#library-items img.cover[data-src]', (is) => is.length > 0 && is.some((i) => i.getAttribute('src'))))
+  await t.close()
+}
+
 // ================= 配置页：朗读规则 JSON + 新页面规则 JSON =================
 {
   await page.goto(`${BASE}/`)

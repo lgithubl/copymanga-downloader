@@ -31,6 +31,26 @@ check('配置：新页面规则（打开媒体、点标签）是数组', Array.i
 check('配置：朗读规则 ja / zh（各自的参数），模拟 TTS 地址已配', Array.isArray(cfg.epubTtsRules) && cfg.epubTtsRules.some((r) => r.flag === 'ja' && r.prompt_audio) && cfg.epubTtsRules.some((r) => r.match === '*' && r.flag === 'zh') && Boolean(cfg.epubTtsApiBase), J(cfg.epubTtsRules))
 check('配置：统一的「新页里返回=关闭标签页」开关存在', typeof cfg.mediaCloseNewTabOnBack === 'boolean')
 
+// ---- 媒体库性能相关：启动接口 / ETag / 压缩 / 缩略图缓存 ----
+{
+  const raw = async (p, extra = {}) => { const r = await fetch(BASE + p, { headers: { ...headers, ...extra } }); return { status: r.status, headers: r.headers, buf: Buffer.from(await r.arrayBuffer()) } }
+  const boot = (await get('/api/library/boot?type=all&page=1&limit=5')).body
+  check('启动接口 /api/library/boot：配置 + 类型 + 列表（带进度）+ 元数据脚本一次取回', Boolean(boot?.config) && Array.isArray(boot.types) && Array.isArray(boot.items?.items) && Array.isArray(boot.tagScripts?.items), J(Object.keys(boot || {})))
+  check('配置里有缩略图分批 / 线程池设置', typeof cfg.libraryThumbFirstBatch === 'number' && typeof cfg.libraryThumbBatch === 'number' && typeof cfg.libraryThumbConcurrency === 'number' && typeof cfg.threadPoolSize === 'number', J(cfg))
+  const list = await raw('/api/library/items?type=all&page=1&limit=5')
+  const etag = list.headers.get('etag')
+  check('列表接口带 ETag；带 If-None-Match 再取是 304', Boolean(etag) && (await raw('/api/library/items?type=all&page=1&limit=5', { 'if-none-match': etag })).status === 304)
+  const staticBr = await raw('/app.js', { 'accept-encoding': 'br' })
+  check('静态文件：br 压缩 + ETag，If-None-Match 命中 304', staticBr.headers.get('content-encoding') === 'br' && Boolean(staticBr.headers.get('etag')) && (await raw('/app.js', { 'if-none-match': staticBr.headers.get('etag') })).status === 304)
+  const first = (boot?.items?.items || []).find((i) => i.cover)
+  if (first) {
+    const t = await raw(first.cover)
+    check('缩略图：ETag + Last-Modified + 长缓存，带 If-None-Match 是 304', t.status === 200 && Boolean(t.headers.get('etag')) && /max-age=86400/.test(t.headers.get('cache-control') || '') && (await raw(first.cover, { 'if-none-match': t.headers.get('etag') })).status === 304, J([...t.headers.entries()].slice(0, 8)))
+  }
+  const withSeries = (boot?.items?.items || []).find((i) => i.series)
+  check('列表项里系列只带摘要（series.primary），不带 members', !withSeries || (!('members' in withSeries.series) && Boolean(withSeries.series.primary)))
+}
+
 const items = (await get('/api/library/items?page=1&limit=200')).body.items || []
 const byProfile = (p) => items.find((i) => i.sourceProfile === p)
 const galItems = items.filter((i) => i.type === 'gal')
