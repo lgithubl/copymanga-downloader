@@ -440,6 +440,14 @@ function defaultConfig() {
     mediaOpenInNewTabRules: [],
     // 点标签（搜索）时用新的浏览器标签页：同样的规则格式，和上面「打开媒体」分开；Ctrl/⌘ 点击不受限制
     tagSearchOpenInNewTabRules: [],
+    // 点媒体库卡片时「直接进浏览」还是「进目录」：一组规则，命中任意一条、且条目的单元数在 [1, unitsBelow) 里，就直接去浏览（接着上次的单元，没看过就是第一个单元）。
+    // 规则 = { profile?: 导入方案, kind?: 媒体类型, unitsBelow: 单元数上限（不含；2 = 只有 1 个单元时直接进） }，profile / kind 写了的都要匹配（可以都不写 = 任何条目）。
+    // 空数组 = 一律进目录。默认：这几种「一个条目就是一份作品」的导入方案，只有 1 个单元时直接进。
+    libraryDirectOpenRules: [
+      { profile: 'monthly-ani', unitsBelow: 2 },
+      { profile: 'archive-gallery', unitsBelow: 2 },
+      { profile: 'gal-import', unitsBelow: 2 },
+    ],
     // 压缩包图集阅读用的解压缓存目录（有缓存就不再解压；淘汰由部署方自己管）。
     // 导入/迁移相关的目录、Redis 地址等都在导入页的「导入方案配置」JSON 里，不在这里。
     archiveCacheDir: path.join(DATA_DIR, 'cache', 'archive-gallery'),
@@ -531,6 +539,7 @@ function normalizeConfig(value) {
     mediaOpenInNewTabRules: Array.isArray(value?.mediaOpenInNewTabRules)
       ? normalizeNewTabRules(value.mediaOpenInNewTabRules)
       : legacyNewTabRules(legacyMediaKinds(value), value?.mediaOpenInNewTabProfiles),
+    libraryDirectOpenRules: Array.isArray(value?.libraryDirectOpenRules) ? normalizeDirectOpenRules(value.libraryDirectOpenRules) : defaults.libraryDirectOpenRules.map((rule) => ({ ...rule })),
     tagSearchOpenInNewTabRules: Array.isArray(value?.tagSearchOpenInNewTabRules)
       ? normalizeNewTabRules(value.tagSearchOpenInNewTabRules)
       : legacyNewTabRules(value?.tagSearchOpenInNewTabKinds, value?.tagSearchOpenInNewTabProfiles),
@@ -3613,6 +3622,31 @@ function normalizeNewTabRules(value) {
     }
     if (!ok || (!rule.profile && !rule.kind)) continue
     const key = `${rule.profile || ''}|${rule.kind || ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(rule)
+  }
+  return out
+}
+
+// 直接进浏览的规则：[{ profile?, kind?, unitsBelow }]。同样不信任输入：字段只收安全字符，unitsBelow 必须是 1..100000 的整数，数量有上限、去重。
+function normalizeDirectOpenRules(value) {
+  const out = []
+  const seen = new Set()
+  if (!Array.isArray(value)) return out
+  for (const raw of value.slice(0, 100)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const rule = {}
+    let ok = true
+    for (const field of ['profile', 'kind']) {
+      if (raw[field] === undefined || raw[field] === null || raw[field] === '') continue
+      if (typeof raw[field] === 'string' && NEW_TAB_ID_RE.test(raw[field])) rule[field] = raw[field]
+      else ok = false
+    }
+    const below = Number(raw.unitsBelow)
+    if (!ok || !Number.isInteger(below) || below < 1 || below > 100000) continue   // 写错的整条丢掉，不能悄悄变成更宽的规则
+    rule.unitsBelow = below
+    const key = `${rule.profile || ''}|${rule.kind || ''}|${below}`
     if (seen.has(key)) continue
     seen.add(key)
     out.push(rule)

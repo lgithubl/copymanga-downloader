@@ -248,6 +248,7 @@ const els = {
   configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
+  configLibraryDirectOpenRules: document.querySelector('#config-library-direct-open-rules'),
   configMediaNewTabRules: document.querySelector('#config-media-new-tab-rules'),
   configMediaNewTabAdd: document.querySelector('#config-media-new-tab-add'),
   configTagSearchNewTabRules: document.querySelector('#config-tag-search-new-tab-rules'),
@@ -1475,6 +1476,7 @@ function applyConfig(config) {
   els.configTextSectionChars.value = config.textSectionChars > 0 ? String(config.textSectionChars) : ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
   els.configMediaNewTabRules.value = formatNewTabRules(config.mediaOpenInNewTabRules)
+  els.configLibraryDirectOpenRules.value = formatNewTabRules(config.libraryDirectOpenRules)
   els.configTagSearchNewTabRules.value = formatNewTabRules(config.tagSearchOpenInNewTabRules)
   els.configMediaCloseNewTabOnBack.checked = config.mediaCloseNewTabOnBack !== false
   if (els.configLibraryThumbFirstBatch) {
@@ -2584,12 +2586,9 @@ function closeSeriesModal() {
   els.seriesModal?.classList.add('hidden')
 }
 
-// 点卡片是直接进播放器还是进目录。只认 sourceProfile——它是导入时写死的结构化
-// 字段，用户在详情页改不到；用 tag 驱动导航行为的话，手滑删一个 tag 就会静默改掉交互。
-// 将来要加新方案或做成每条目可覆盖（item.openMode），只改这个函数。
-// 压缩包图集（含迁移来的）一个条目就是一个压缩包，点卡片直接进阅读器
-const VIEWER_FIRST_IMPORT_PROFILES = new Set(['monthly-ani', 'archive-gallery', 'gal-import'])
-
+// 点卡片是直接进浏览还是进目录：由配置 libraryDirectOpenRules 决定（规则见 server.mjs 的默认值说明）。
+// 条目的导入方案（sourceProfile，导入时写死的结构化字段）、类型和单元数都是结构事实，用 tag 驱动导航行为的话手滑删一个 tag 就会静默改掉交互，所以不用 tag。
+// 单元数必须 ≥ 1（没有单元没东西可浏览）且 < 规则的 unitsBelow：合并把多集并进一个条目后单元数变多，自然就不再直接跳了。
 // 点卡片要操作哪一项：有系列就是系列里优先级最高的那个，否则就是自己。
 // 「系列选哪一项」和「进目录还是直接播」是两件事——后者仍由 libraryCardOpensViewer
 // 按目标项自己的 sourceProfile/unitCount 决定，这里只负责选目标。
@@ -2601,9 +2600,12 @@ function libraryCardTarget(item) {
   return series.primary || item
 }
 function libraryCardOpensViewer(item) {
-  // 必须同时看单元数：合并把多集并进一个条目后，直接跳播放器就不对了，
-  // 这时候应该进目录。单元数是结构事实，不需要额外维护。
-  return VIEWER_FIRST_IMPORT_PROFILES.has(item?.sourceProfile) && item?.unitCount === 1
+  const units = Number(item?.unitCount) || 0
+  if (units < 1) return false
+  const profile = libraryProfileOf(item)
+  const kind = libraryEntryKind(item)
+  return (Array.isArray(appConfig?.libraryDirectOpenRules) ? appConfig.libraryDirectOpenRules : []).some((rule) => rule
+    && units < Number(rule.unitsBelow) && (!rule.profile || rule.profile === profile) && (!rule.kind || rule.kind === kind))
 }
 
 // 媒体库卡片的唯一构造处。系列弹框复用它，这样两边的外观和交互不会各走各的。
@@ -8183,6 +8185,21 @@ function parseEpubTtsRules(text) {
   if (!Array.isArray(parsed)) throw new Error('「朗读规则」必须是 JSON 数组，例如 [{"match":"@kana","flag":"ja"}]')
   return parsed
 }
+document.querySelector('#config-direct-open-add').addEventListener('click', () => {
+  try {
+    const rules = parseNewTabRules(els.configLibraryDirectOpenRules.value, '直接进浏览')
+    const rule = {}
+    const profile = document.querySelector('#config-direct-open-pick-profile').value
+    const kind = document.querySelector('#config-direct-open-pick-kind').value
+    const below = Math.floor(Number(document.querySelector('#config-direct-open-pick-below').value))
+    if (profile) rule.profile = profile
+    if (kind) rule.kind = kind
+    if (!Number.isFinite(below) || below < 1) { alert('单元数上限要填 ≥ 1 的整数'); return }
+    rule.unitsBelow = below
+    if (!rules.some((r) => r && r.profile === rule.profile && r.kind === rule.kind && r.unitsBelow === rule.unitsBelow)) rules.push(rule)
+    els.configLibraryDirectOpenRules.value = formatNewTabRules(rules)
+  } catch (error) { alert(error.message) }
+})
 els.configMediaNewTabAdd.addEventListener('click', () => {
   try { addNewTabRule(els.configMediaNewTabRules, document.querySelector('#config-media-new-tab-pick-profile'), document.querySelector('#config-media-new-tab-pick-kind'), '打开媒体') } catch (error) { alert(error.message) }
 })
@@ -8192,6 +8209,7 @@ els.configTagSearchNewTabAdd.addEventListener('click', () => {
 els.configSave.addEventListener('click', async () => {
   try {
     // 规则 JSON 写错了就明确报错、不保存（不能悄悄当成空，把已有的规则清掉）
+    const directOpenRules = parseNewTabRules(els.configLibraryDirectOpenRules.value, '直接进浏览')
     const newTabRules = { media: parseNewTabRules(els.configMediaNewTabRules.value, '打开媒体'), tagSearch: parseNewTabRules(els.configTagSearchNewTabRules.value, '点标签') }
     const epubTtsRules = parseEpubTtsRules(els.configEpubTtsRules.value)
     setLoading(els.configSave, true)
@@ -8236,6 +8254,7 @@ els.configSave.addEventListener('click', async () => {
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
+        libraryDirectOpenRules: directOpenRules,
         mediaOpenInNewTabRules: newTabRules.media,
         tagSearchOpenInNewTabRules: newTabRules.tagSearch,
         mediaCloseNewTabOnBack: els.configMediaCloseNewTabOnBack.checked,
