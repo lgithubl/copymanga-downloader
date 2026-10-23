@@ -493,12 +493,12 @@ const defaultMediaImportProfiles = {
     defaultMetadataActions: ['archive-gallery-thumbnail-v1', 'archive-gallery-tags-v1'],
   },
   // Gal 导入：rootDir 下每个子目录一个作品，目录本身就是数据（不 mv、不拷贝），只建元数据
+  // （和服务端 GAL_DEFAULT_OPTIONS 对齐：adapters = 脚本格式适配器；defaultMetadataActions = 导入时默认勾的元数据脚本；
+  //  可选 config = 新条目的初始 config，比如 {"game":{"id":"monmusu"}}，见 web/library/gal/README.md）
   'gal-import': {
     rootDir: '/data/gal',
-    maxDepth: 6,
-    scriptExtensions: ['txt', 'csv'],
     adapters: ['uviewer-csv'],
-    limit: 0,
+    defaultMetadataActions: ['gal-layout'],
     dryRun: false,
   },
   // 迁移 LANraragi：dryRun 默认 true（只出报告），确认后改 false 才写；limit 限量；overwrite 用 LRR 内容覆盖已存在的
@@ -554,8 +554,7 @@ const mediaImportProfiles = {
     type: 'gal',
     batch: true,
     noSource: true,
-    noDefaultScripts: true,
-    configJson: true,
+    configJson: true,   // 默认勾哪些元数据脚本：脚本自己的 defaultEnabled + 方案 JSON 里的 defaultMetadataActions（和别的方案一样）
   },
   // 迁移 LANraragi：读临时 Redis + 只读挂载的内容目录，原地引用 zip；可反复运行。参数都在配置页。
   [LRR_INIT_PROFILE_KEY]: {
@@ -7697,7 +7696,7 @@ els.mediaImportSubmit.addEventListener('click', async () => {
     showView('library-view')
     if (result.report && profile.type === 'gal') {
       const r = result.report
-      alert(`Gal 导入完成：新建 ${r.imported}，更新 ${r.updated}。${r.warnings?.length ? `\n提示：${r.warnings.join('\n')}` : '\n导入后会自动运行元数据脚本 gal-layout-v1 探测目录结构、挑封面（在任务列表/元数据脚本里能看到）。'}${r.errors?.length ? `\n${r.errors.map((e) => `${e.dir || ''}: ${e.error}`).join('\n')}` : ''}`)
+      alert(`Gal 导入完成：新建 ${r.imported}，更新 ${r.updated}。${r.warnings?.length ? `\n提示：${r.warnings.join('\n')}` : '\n导入后会自动运行页面上勾的元数据脚本（默认 gal-layout）探测目录结构、挑封面（在任务列表/元数据脚本里能看到）。'}${r.errors?.length ? `\n${r.errors.map((e) => `${e.dir || ''}: ${e.error}`).join('\n')}` : ''}`)
     } else if (profile.batch) alert(`已导入 ${importedItems.length} 个${profile.type === 'archive' ? '压缩包图集' : ' RJ 媒体'}`)
   } catch (error) {
     alert(error.message)

@@ -71,7 +71,9 @@ const ui = await page.evaluate(() => ({
 }))
 check('选方案后媒体类型自动变 gal', ui.type === 'gal' && ui.typeOptions.includes('gal'), JSON.stringify(ui))
 check('不用选文件、不用填来源路径', ui.sourceDisabled === true && ui.filesDisabled === true, JSON.stringify(ui))
-check('JSON 配置可见：含 rootDir/maxDepth/scriptExtensions/adapters', /"rootDir"/.test(ui.config) && /"scriptExtensions"/.test(ui.config) && /"adapters"/.test(ui.config) && /uviewer-csv/.test(ui.config), ui.config)
+check('JSON 配置可见：含 rootDir / adapters / defaultMetadataActions（默认勾的元数据脚本）', /"rootDir"/.test(ui.config) && /"adapters"/.test(ui.config) && /uviewer-csv/.test(ui.config) && /"defaultMetadataActions": \[\s*"gal-layout"/.test(ui.config), ui.config)
+const ticks = await page.$$eval('input[name="media-import-tag-script"]', (is) => is.filter((i) => i.checked).map((i) => i.value))
+check('导入页：元数据脚本 gal-layout 默认勾上（来自方案的 defaultMetadataActions），别的脚本不乱勾', ticks.join() === 'gal-layout', JSON.stringify(ticks))
 // 把 rootDir 指到要导入的目录（默认值是 /data/gal，测试机上不存在）
 await page.fill('#media-import-profile-config', JSON.stringify({ rootDir: mediaDir, maxDepth: 6, scriptExtensions: ['txt', 'csv'], adapters: ['uviewer-csv'] }))
 await page.click('#media-import-submit')

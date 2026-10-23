@@ -46,7 +46,7 @@ export function normalizeGalOptions(value = {}) {
     adapters: adapters.length ? adapters : GAL_DEFAULT_OPTIONS.adapters,
     defaultMetadataActions: [...new Set(actions.map((id) => String(id).trim()).filter(Boolean))],
     // 导入时直接写进条目的初始 config（比如 {"game":{"id":"monmusu"}}）：新条目 = 这份 config；已有条目 = 作为补丁合并
-    config: v.config && typeof v.config === 'object' && !Array.isArray(v.config) ? v.config : null,
+    ...(v.config && typeof v.config === 'object' && !Array.isArray(v.config) ? { config: v.config } : {}),
     dryRun: Boolean(v.dryRun),
   }
 }
