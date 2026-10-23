@@ -8056,6 +8056,14 @@ els.libraryDetailToggle?.addEventListener('click', () => {
 function openLibraryFloat() {
   if (document.querySelector('#library-view')?.classList.contains('detail-float')) els.libraryDetailPanel?.classList.add('float-open')
 }
+// Gal 页面级头部（标题 + 沉浸 / 上一章 / 返回…）在底部：窄屏整页滚动时它粘在视口底部，列表的固定条要让出它的高度，量出来放进 --gal-foot
+{
+  const mediaView = document.querySelector('#media-viewer-view')
+  const mediaHead = mediaView?.querySelector('.chapter-head')
+  if (mediaHead && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => mediaView.style.setProperty('--gal-foot', `${Math.ceil(mediaHead.getBoundingClientRect().height)}px`)).observe(mediaHead)
+  }
+}
 // ---- 左右边沿的收缩箭头 ----
 // 左：完全隐藏左侧任务栏（再点显示回原来的收缩/展开状态）；右（只在媒体库里）：详情停靠 ↔ 浮动，浮动时点媒体才弹出。箭头沿边沿上下拖动，位置记在 localStorage
 {

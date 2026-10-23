@@ -570,7 +570,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     chNextBtn.disabled = !(chapter?.canNext?.())
     chPrevBtn.hidden = chNextBtn.hidden = !chapter
     backBtn.hidden = !chapter
-    upBtn.hidden = !chapter?.up
+    upBtn.hidden = false   // 位置固定：没有上一级时禁用，不消失（别的按钮不会跟着左移）
+    upBtn.disabled = !chapter?.up
     immBtn.hidden = !onToggleImmersive
     updateContinue()
   }

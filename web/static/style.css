@@ -4294,7 +4294,6 @@ h2 {
   padding: 12px 14px 16px;
 }
 .gal-browse { display: grid; gap: 12px; margin: 0 auto; max-width: 1100px; width: 100%; }
-.gal-browse-head { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 12px; }
 .gal-browse-up { min-height: 28px; padding: 0 10px; font-size: 13px; background: var(--site-secondary); }
 .gal-browse-crumbs { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; font-size: 14px; gap: 4px 6px; min-width: 0; }
 .gal-browse-crumb { background: transparent; color: var(--site-primary-text); min-height: 24px; padding: 0 4px; }
@@ -4371,12 +4370,10 @@ h2 {
 .gal-browse-more-menu { background: var(--site-panel); border: 1px solid var(--site-border); border-radius: 8px; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3); display: grid; gap: 4px; padding: 6px; position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; }
 .gal-browse-more-menu[hidden] { display: none; }
 .gal-browse-more-menu button { text-align: left; white-space: nowrap; }
-.gal-browse-tools { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .gal-browse-search { flex: 1 1 180px; max-width: 320px; min-height: 30px; }
 .gal-browse-sort, .gal-browse-size { min-height: 30px; padding: 3px 8px; width: auto; }
 .gal-browse-range { color: var(--site-muted); font-size: 13px; }
 .gal-pager-jump { min-height: 30px; text-align: center; width: 4.5em; }
-.gal-browse-pager.compact { justify-content: flex-start; }
 .gal-browse-leave { display: none; }
 .gal-browse.is-immersive .gal-browse-leave:not([hidden]) { display: inline-block; }
 #media-viewer-view.stream-page-fullscreen .media-reader-content.media-gal.media-gal-browse {
@@ -4467,26 +4464,67 @@ h2 {
 .gal-browse-pager { gap: 6px; }
 
 /* Gal 列表：搜索 / 排序 / 分页固定在顶上（滚动容器是 .media-reader-content） */
-.gal-browse-sticky { background: var(--site-panel, #fff); display: grid; gap: 8px; padding: 6px 0; position: sticky; top: 0; z-index: 5; }
-.gal-browse-pager.compact { justify-content: flex-start; }
-@media (max-width: 640px) {
-  /* 窄屏：固定条要薄——隐藏「第 a–b 项」说明和首页 / 末页，搜索占满一行，排序和每页条数一行，翻页一行 */
-  .gal-browse-sticky { gap: 6px; padding: 4px 0; }
-  .gal-browse-range { display: none; }
-  .gal-browse-pager .gal-pager-btn[title="第一页"], .gal-browse-pager .gal-pager-btn[title="最后一页"] { display: none; }
-  .gal-browse-pager { justify-content: center; }
-}
 /* 窄屏整页滚动（body 在滚）：浏览层自己不能是 overflow:auto 的容器，否则固定条会粘在它（不滚动的容器）上、跟着页面滚走 */
 @media (max-width: 900px) {
   #media-viewer-view .media-reader-content.media-gal.media-gal-browse { overflow: visible; }
 }
-/* 固定条上沿的遮挡：容器有 12px 内边距，往下滚时卡片会从条上面的缝里露出来；条往上多伸 12px 盖住它 */
-.gal-browse-sticky { margin-top: -12px; padding-top: 18px; top: -12px; }
 /* 窄屏：body 自己是 overflow:auto（虽然不滚，视口在滚），sticky 会把它当成滚动祖先而粘不住。Gal 列表显示时让 body 不当滚动容器 */
 @media (max-width: 900px) {
   body:has(#media-viewer-view.active #media-reader-content.media-gal-browse) { overflow: visible; }
 }
-@media (max-width: 900px) { .gal-browse-sticky { top: 0; } }
-
 /* 立绘层（gal-stand.js）：1920x1080 的 canvas 铺满舞台，不挡点击 */
 .gal-stand { height: 100%; inset: 0; pointer-events: none; position: absolute; width: 100%; z-index: 3; }
+
+/* ===== Gal：导航统一放底部、一直显示 =====
+   · 列表页：位置 + 上一级 + 翻页 + 更多 在底部固定条（.gal-browse-bar，粘在滚动容器底部）
+   · 页面级头部（标题 + 沉浸 / 上一章 / 目录 / 下一章 / 返回）在 Gal 里挪到最下面；窄屏整页滚动时它粘在视口底部，
+     列表的固定条再往上让出它的高度（--gal-foot，由 app.js 量出来） */
+#media-viewer-view.media-mode-gal > section { grid-template-rows: minmax(0, 1fr) auto; }
+#media-viewer-view.media-mode-gal > section > #media-reader-content { grid-row: 1; }
+#media-viewer-view.media-mode-gal > section > .chapter-head { align-items: center; background: var(--site-bg); grid-row: 2; }
+#media-viewer-view.media-mode-gal #media-width-adjust,
+#media-viewer-view.media-mode-gal #media-page-prev,
+#media-viewer-view.media-mode-gal #media-page-next { display: none; }   /* Gal 里没有这几个功能（宽度调节 / 按页翻） */
+.gal-browse-bar { background: var(--site-panel, #fff); border-top: 1px solid var(--site-border); bottom: -16px; display: grid; gap: 6px; margin-bottom: -16px; padding: 8px 0 22px; position: sticky; z-index: 6; }
+.gal-browse-where { align-items: center; display: flex; gap: 10px; justify-content: space-between; min-width: 0; }
+.gal-browse-where .gal-browse-crumbs { flex: 1 1 auto; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
+.gal-browse-count { color: var(--site-muted); flex: 0 0 auto; font-size: 12px; }
+.gal-browse-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 8px; }
+.gal-browse-actions .gal-browse-up, .gal-browse-actions .gal-browse-more-btn, .gal-browse-actions .gal-browse-leave { font-size: 13px; min-height: 28px; padding: 0 10px; }
+.gal-browse-actions .gal-browse-up:disabled { opacity: 0.4; }
+.gal-browse-spacer { flex: 1 1 0; }
+.gal-browse-more-menu { bottom: calc(100% + 6px); top: auto; min-width: min(22em, 86vw); }
+.gal-more-row { align-items: center; display: grid; gap: 8px; grid-template-columns: 5em minmax(0, 1fr); }
+.gal-more-label { color: var(--site-muted); font-size: 12px; }
+.gal-more-row input, .gal-more-row select { font-size: 13px; min-height: 28px; padding: 3px 8px; width: 100%; }
+.gal-browse-more-menu .gal-browse-range { color: var(--site-muted); font-size: 12px; }
+@media (max-width: 640px) {
+  .gal-browse-pager .gal-pager-btn[title="第一页"], .gal-browse-pager .gal-pager-btn[title="最后一页"] { display: none; }
+  .gal-browse-count { display: none; }
+}
+@media (max-width: 900px) {
+  /* 窄屏整页滚动：页面头部粘在视口底部，列表固定条在它上面 */
+  #media-viewer-view.media-mode-gal > section > .chapter-head { bottom: 0; position: sticky; z-index: 30; }
+  .gal-browse-bar { bottom: var(--gal-foot, 0px); margin-bottom: 0; padding-bottom: 8px; }
+}
+@media (max-width: 640px) {
+  /* 窄屏：第 1 行 [↑ 上一级 …… 更多 返回]，第 2 行翻页（居中）——两行，位置固定 */
+  .gal-browse-actions .gal-browse-up { order: 0; }
+  .gal-browse-actions .gal-browse-spacer { order: 1; }
+  .gal-browse-actions .gal-browse-more { order: 2; }
+  .gal-browse-actions .gal-browse-leave { order: 3; }
+  .gal-browse-actions .gal-browse-pager { flex: 1 1 100%; justify-content: center; order: 4; }
+  .gal-browse-actions .gal-pager-go { display: none; }   /* 页码框回车就能跳 */
+}
+@media (max-width: 900px) {
+  /* 页面头部在底部、窄屏：标题一行（省略），按钮在下面一行，不再把标题挤成竖排 */
+  #media-viewer-view.media-mode-gal > section > .chapter-head { display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr); padding: 6px 8px; }
+  #media-viewer-view.media-mode-gal .chapter-head > div:first-child { min-width: 0; }
+  #media-viewer-view.media-mode-gal #media-reader-title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #media-viewer-view.media-mode-gal #media-reader-meta { display: none; }
+  #media-viewer-view.media-mode-gal #media-section-select { display: none; }
+  #media-viewer-view.media-mode-gal .chapter-head .chapter-actions { flex-wrap: wrap; justify-content: flex-start; }
+}
+/* 沉浸：页面头部收起（要比上面 Gal 的头部规则优先），只剩一行内容 */
+#media-viewer-view.media-mode-gal.stream-page-fullscreen > section { grid-template-rows: minmax(0, 1fr); }
+#media-viewer-view.media-mode-gal.stream-page-fullscreen > section > .chapter-head { display: none; }
