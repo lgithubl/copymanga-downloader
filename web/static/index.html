@@ -679,6 +679,14 @@
                 <button id="config-tag-search-new-tab-add" type="button" class="secondary">添加规则</button>
               </div>
 
+              <h3>媒体库性能</h3>
+              <div class="muted">卡片缩略图在浏览器里分批、限并发地请求（开很多搜索页时不会把连接占满）；改完点保存，下一次渲染列表时生效。</div>
+              <label>第一批（张，页面列表一到就请求；0 = 页面第一次可见才开始）<input id="config-library-thumb-first-batch" type="number" min="0" max="500" step="1" /></label>
+              <label>之后每批（张，滚动到附近且页面可见时才请求下一批）<input id="config-library-thumb-batch" type="number" min="1" max="500" step="1" /></label>
+              <label>前台页面同时请求数<input id="config-library-thumb-concurrency" type="number" min="1" max="32" step="1" /></label>
+              <label>后台标签页同时请求数<input id="config-library-thumb-concurrency-hidden" type="number" min="1" max="32" step="1" /></label>
+              <label>服务端线程池大小（fs / 压缩共用，4~128；<b>改了要重启服务</b>）<input id="config-thread-pool-size" type="number" min="4" max="128" step="1" /></label>
+
               <h3>压缩包图集</h3>
               <label>阅读解压缓存目录（有缓存就不再解压；淘汰自己管）<input id="config-archive-cache-dir" placeholder="/data/cache/archive-gallery" /></label>
               <div class="muted">导入/迁移相关的目录、Redis 地址、路径前缀、zip 文件名编码、试运行/限量/覆盖，都在「媒体导入」页的「导入方案配置」JSON 里改。</div>

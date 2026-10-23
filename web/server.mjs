@@ -211,7 +211,8 @@ async function sendCachedFile(req, res, filePath, contentType) {
     info = await stat(filePath)
     if (!info.isFile()) throw new Error('not a file')
   } catch {
-    return json(res, 404, { error: '缩略图不存在' })
+    // 抛出去：和别的 404 一样由路由统一回 JSON 错误并只打一行日志（不打堆栈）
+    throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
   }
   const etag = `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`
   const modified = new Date(Math.floor(info.mtimeMs / 1000) * 1000).toUTCString()
@@ -5272,7 +5273,7 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
         // 有 getThumbnailFile 的类型：给出磁盘文件，这里统一做 ETag / 304 / 流式发送
         if (handler.getThumbnailFile) {
           const thumb = await handler.getThumbnailFile(itemId, unitId, parts[7] || 'cover')
-          return sendCachedFile(req, res, thumb.file, thumb.contentType)
+          return await sendCachedFile(req, res, thumb.file, thumb.contentType)
         }
         if (!handler.getThumbnail) return json(res, 400, { error: 'This library type does not support thumbnails' })
         const thumb = await handler.getThumbnail(itemId, unitId, parts[7] || 'cover')

@@ -13,7 +13,7 @@ export async function makeBigIndex(dataDir, count = 300000) {
   for (let i = 0; i < count; i++) {
     const tags = [`作者:作者${i % 5000}`, `社团:社团${i % 3000}`, '原作:原作X', '语言:中文', `页数:${i % 50}`, '标签:汉化', `系列:S${i % 20000}`, `标题:${i}`]
     const at = new Date(1.7e12 + i * 1000).toISOString()
-    await write({ k: 'i', v: { type: 'archive', itemId: `a${i}`, title: `标题 ${i}`, displayTitle: `标题 ${i}`, sourceProfile: 'archive-gallery', productId: '', unitCount: 1, tags, unitTags: [], dlsite: {}, createdAt: at, importedAt: at, publishedAt: at, searchText: `archive a${i} 标题 ${i} ${tags.join(' ')}` } })
+    await write({ k: 'i', v: { type: 'archive', itemId: `a${i}`, title: `标题 ${i}`, displayTitle: `标题 ${i}`, cover: `/api/library/items/archive/a${i}/thumbnail/cover`, sourceProfile: 'archive-gallery', productId: '', unitCount: 1, tags, unitTags: [], dlsite: {}, createdAt: at, importedAt: at, publishedAt: at, searchText: `archive a${i} 标题 ${i} ${tags.join(' ')}` } })
   }
   await new Promise((resolve) => out.end(resolve))
 }

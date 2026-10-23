@@ -1,3 +1,4 @@
+import { createThumbLoader, thumbSettingsFromConfig } from '/thumb-loader.js'
 import { createGalBrowser } from '/gal-browse.js'
 import { createGalPlayer } from '/gal-player.js'
 import { ratioOfStep } from '/gal-engine.js'
@@ -252,6 +253,11 @@ const els = {
   configTagSearchNewTabRules: document.querySelector('#config-tag-search-new-tab-rules'),
   configTagSearchNewTabAdd: document.querySelector('#config-tag-search-new-tab-add'),
   configMediaCloseNewTabOnBack: document.querySelector('#config-media-close-new-tab-on-back'),
+  configLibraryThumbFirstBatch: document.querySelector('#config-library-thumb-first-batch'),
+  configLibraryThumbBatch: document.querySelector('#config-library-thumb-batch'),
+  configLibraryThumbConcurrency: document.querySelector('#config-library-thumb-concurrency'),
+  configLibraryThumbConcurrencyHidden: document.querySelector('#config-library-thumb-concurrency-hidden'),
+  configThreadPoolSize: document.querySelector('#config-thread-pool-size'),
   configExportDir: document.querySelector('#config-export-dir'),
   configExportDirFmt: document.querySelector('#config-export-dir-fmt'),
   configMergePdfFmt: document.querySelector('#config-merge-pdf-fmt'),
@@ -897,7 +903,8 @@ function showView(id) {
   // 从 URL 直接落在阅读器上的标签页不建 EventSource、不轮询（阅读器用不上，见
   // startBackgroundSync）；一旦离开阅读器去别的页，那些页面要实时更新，这时才启动。
   // 普通标签页启动时已经启动过了，这里是空操作。
-  if (id !== 'media-viewer-view') startBackgroundSync()
+  // 点标签开出来的搜索页（tab=new）也是只读页：它的第一个视图（媒体库）不启动；去别的视图时才启动。
+  if (id !== 'media-viewer-view' && !(libraryTabIsNew && id === 'library-view')) startBackgroundSync()
   syncMediaHash()
 }
 
@@ -1414,7 +1421,11 @@ async function refreshDownloadedState() {
 }
 
 async function loadConfig() {
-  const config = await api('/api/config')
+  applyConfig(await api('/api/config'))
+}
+
+// 把服务端配置应用到页面（启动接口 /api/library/boot 也带着配置，不用再单独取一次）
+function applyConfig(config) {
   appConfig = config
   els.configToken.value = config.token || els.token.value.trim() || ''
   if (config.token && !els.token.value) {
@@ -1466,6 +1477,13 @@ async function loadConfig() {
   els.configMediaNewTabRules.value = formatNewTabRules(config.mediaOpenInNewTabRules)
   els.configTagSearchNewTabRules.value = formatNewTabRules(config.tagSearchOpenInNewTabRules)
   els.configMediaCloseNewTabOnBack.checked = config.mediaCloseNewTabOnBack !== false
+  if (els.configLibraryThumbFirstBatch) {
+    els.configLibraryThumbFirstBatch.value = config.libraryThumbFirstBatch ?? 30
+    els.configLibraryThumbBatch.value = config.libraryThumbBatch ?? 60
+    els.configLibraryThumbConcurrency.value = config.libraryThumbConcurrency ?? 6
+    els.configLibraryThumbConcurrencyHidden.value = config.libraryThumbConcurrencyHidden ?? 2
+    els.configThreadPoolSize.value = config.threadPoolSize ?? 16
+  }
   els.configArchiveCacheDir.value = config.archiveCacheDir || ''
   mediaTagDisplayKeys = Array.isArray(config.mediaTagDisplayKeys) ? config.mediaTagDisplayKeys : []
   els.configExportDir.value = config.exportDir
@@ -1516,9 +1534,15 @@ els.tabs.forEach((tab) => {
     if (tab.dataset.view === 'favorite-view') loadFavorite()
     if (tab.dataset.view === 'downloaded-view') loadDownloaded()
     if (tab.dataset.view === 'library-view') {
-      loadLibraryTypes()
-        .then(() => Promise.all([loadLibraryItems(), loadTagScripts()]))
-        .catch((error) => alert(error.message))
+      // 点标签开出来的搜索页第一次进媒体库：一个启动请求取回配置 + 类型 + 列表（带进度）+ 元数据脚本，不再各取一次
+      if (libraryTabIsNew && !libraryBooted) {
+        libraryBooted = true
+        loadLibraryBoot().catch((error) => alert(error.message))
+      } else {
+        loadLibraryTypes()
+          .then(() => Promise.all([loadLibraryItems(), loadTagScripts()]))
+          .catch((error) => alert(error.message))
+      }
     }
     if (tab.dataset.view === 'history-view') {
       loadLibraryTypes().then(loadLibraryHistory).catch((error) => alert(error.message))
@@ -1664,7 +1688,11 @@ function renderDownloadedComic(data, sourceText) {
 }
 
 async function loadLibraryTypes() {
-  libraryTypes = await api('/api/library/types')
+  applyLibraryTypes(await api('/api/library/types'))
+}
+
+function applyLibraryTypes(types) {
+  libraryTypes = types
   const current = els.libraryType.value || 'all'
   const currentHistory = els.historyType?.value || 'all'
   const currentImport = els.mediaImportType.value || 'media'
@@ -1759,26 +1787,61 @@ function libraryQueryParams(page, limit) {
   return params
 }
 
+// 列表接口返回之后的处理：条目、分页、索引状态、每条附带的进度。启动接口（tab=new）和普通加载共用
+function applyLibraryPayload(payload, limit) {
+  libraryItems = pageItems(payload)
+  const meta = pageMeta(payload, libraryPage, limit)
+  libraryPage = meta.page
+  libraryTotalPages = meta.totalPages
+  libraryTotalItems = meta.total
+  libraryIndexStatus = payload?.index || null
+  // 卡片上的「继续：…」来自服务端按当前页条目附带的 history（以前页面要单独取 1000 条历史再按 key 对）
+  for (const item of libraryItems) {
+    const key = libraryKey(item.type, item.itemId)
+    if (item.history) libraryHistoryByKey.set(key, { ...item.history, type: item.type, itemId: item.itemId })
+    else libraryHistoryByKey.delete(key)
+  }
+  saveLibraryState()
+  renderLibraryItems()
+}
+
+let libraryBooted = false
+
+// 搜索页（tab=new）的启动：条件直接来自 URL（和 restoreLibraryState 用同一份），一个请求取回所有首屏要的东西。
+// 控件上的选项要等类型列表到了才有，所以这里按 HTML 里写死的选项校验 limit / sort 等，不认识的用默认值（和 restoreLibraryState 的 trySet 一致）。
+async function loadLibraryBoot() {
+  const f = bootLibraryRoute.fields
+  const valid = (select, value, fallback) => (select && [...select.options].some((option) => option.value === value) ? value : fallback)
+  const limit = Number(valid(els.libraryLimit, f.limit, els.libraryLimit?.value || '10')) || 10
+  const params = new URLSearchParams({
+    type: f.type || 'all',
+    page: String(Math.max(1, Math.floor(Number(f.page)) || 1)),
+    limit: String(limit),
+    sort: valid(els.librarySort, f.sort, 'imported_desc'),
+  })
+  if (f.tag.trim()) params.set('tag', f.tag.trim())
+  const seriesSubtitle = valid(els.librarySeriesSubtitle, f.seriesSubtitle, 'any')
+  if (seriesSubtitle !== 'any') params.set('seriesSubtitle', seriesSubtitle)
+  if (f.sourceProfile) params.set('sourceProfile', f.sourceProfile)
+  try {
+    setLoading(els.libraryRefresh, true)
+    const boot = await api(`/api/library/boot?${params}`)
+    applyConfig(boot.config)
+    applyLibraryTypes(boot.types)    // 里面会 restoreLibraryState：按 URL 把控件填好
+    applyTagScripts(boot.tagScripts)
+    libraryPage = Math.max(1, Math.floor(Number(f.page)) || 1)
+    applyLibraryPayload(boot.items, Math.max(1, Number(els.libraryLimit?.value || limit)))
+  } finally {
+    setLoading(els.libraryRefresh, false)
+  }
+}
+
 async function loadLibraryItems() {
   try {
     setLoading(els.libraryRefresh, true)
     const limit = Math.max(1, Number(els.libraryLimit?.value || 10))
-    const type = els.libraryType.value || 'all'
     const params = libraryQueryParams(libraryPage, limit)
-    const historyParams = new URLSearchParams({ type, limit: '1000' })
-    const [payload, histories] = await Promise.all([
-      api(`/api/library/items?${params}`),
-      api(`/api/library/history?${historyParams}`),
-    ])
-    libraryItems = pageItems(payload)
-    const meta = pageMeta(payload, libraryPage, limit)
-    libraryPage = meta.page
-    libraryTotalPages = meta.totalPages
-    libraryTotalItems = meta.total
-    libraryIndexStatus = payload?.index || null
-    setLibraryHistory(histories)
-    saveLibraryState()
-    renderLibraryItems()
+    applyLibraryPayload(await api(`/api/library/items?${params}`), limit)
   } catch (error) {
     alert(error.message)
   } finally {
@@ -1789,7 +1852,10 @@ async function loadLibraryItems() {
 async function loadTagScripts({ reload = false } = {}) {
   const params = new URLSearchParams({ page: '1', limit: '1000' })
   if (reload) params.set('reload', '1')
-  const payload = await api(`/api/metadata-actions?${params}`)
+  return applyTagScripts(await api(`/api/metadata-actions?${params}`))
+}
+
+function applyTagScripts(payload) {
   tagScripts = pageItems(payload)
   renderTagScriptPickers()
   return tagScripts
@@ -2494,14 +2560,10 @@ async function openSeriesModal(item) {
   els.seriesModalList.innerHTML = '<p class="muted">加载中…</p>'
   els.seriesModal.classList.remove('hidden')
   try {
-    // 列表接口只给当前页挂了精简的 series.members（没有 tag 等字段），
-    // 要按媒体库卡片的样子展示就得把整个系列的完整条目取回来。
-    const data = await api(`/api/library/items?seriesKey=${encodeURIComponent(series.key)}&limit=1000`)
-    // members 已按「有字幕优先」排好序，按它对齐，别让列表的默认排序把顺序打乱。
-    const order = new Map((series.members || []).map((member, index) => [libraryKey(member.type, member.itemId), index]))
-    const list = (data.items || []).slice().sort((a, b) =>
-      (order.get(libraryKey(a.type, a.itemId)) ?? Number.MAX_SAFE_INTEGER)
-      - (order.get(libraryKey(b.type, b.itemId)) ?? Number.MAX_SAFE_INTEGER))
+    // 列表接口只给每条挂系列摘要（不带成员），要按媒体库卡片的样子展示就得把整个系列的完整条目取回来。
+    // sort=series：服务端按系列里的优先级排好（第一个就是卡片「快速进入」的主条目）。
+    const data = await api(`/api/library/items?seriesKey=${encodeURIComponent(series.key)}&sort=series&limit=1000`)
+    const list = data.items || []
     els.seriesModalList.innerHTML = ''
     for (const member of list) {
       const card = createLibraryCard(member, { seriesBadges: false })
@@ -2535,9 +2597,8 @@ function libraryCardTarget(item) {
   const series = item?.series
   if (!series || series.count < 2 || !series.primaryItemId) return item
   if (series.primaryItemId === item.itemId) return item
-  const primary = (series.members || []).find((member) => member.itemId === series.primaryItemId)
-  // members 是列表接口附带的精简结构；拿不到就退回自己，别把点击变成空操作
-  return primary || item
+  // series.primary 是列表接口附带的主条目摘要（type / itemId / sourceProfile / unitCount）；拿不到就退回自己，别把点击变成空操作
+  return series.primary || item
 }
 function libraryCardOpensViewer(item) {
   // 必须同时看单元数：合并把多集并进一个条目后，直接跳播放器就不对了，
@@ -2547,7 +2608,7 @@ function libraryCardOpensViewer(item) {
 
 // 媒体库卡片的唯一构造处。系列弹框复用它，这样两边的外观和交互不会各走各的。
 // seriesBadges=false 用于弹框：框里本来就是同一个系列，再挂红点和「进入」没有意义。
-function createLibraryCard(item, { seriesBadges = true } = {}) {
+function createLibraryCard(item, { seriesBadges = true, deferThumb = false } = {}) {
   const summary = libraryItemSummary(item)
   const history = libraryHistoryByKey.get(libraryKey(item.type, item.itemId))
   const selected = currentLibraryItem?.type === item.type && currentLibraryItem?.itemId === item.itemId
@@ -2566,7 +2627,7 @@ function createLibraryCard(item, { seriesBadges = true } = {}) {
   card.title = fullTitle
   card.innerHTML = `
       <div class="library-card-cover">
-        ${renderCover(item.cover, displayTitle)}
+        ${renderCover(item.cover, displayTitle, { deferred: deferThumb })}
         <div class="library-card-badges">
           <span class="library-type-pill">${escapeHtml(summary.typeLabel)}</span>
           ${renderMergeBadge(item)}
@@ -3073,6 +3134,8 @@ async function refreshAnidbDumpStatus() {
   }
 }
 
+const libraryThumbLoader = createThumbLoader({ getSettings: () => thumbSettingsFromConfig(appConfig || {}) })
+
 function renderLibraryItems() {
   els.libraryItems.innerHTML = ''
   libraryPage = Math.max(1, Math.min(libraryTotalPages, libraryPage))
@@ -3086,8 +3149,10 @@ function renderLibraryItems() {
   if (els.libraryNext) els.libraryNext.disabled = libraryPage >= libraryTotalPages
   renderLibraryIndexStatus()
   for (const item of libraryItems) {
-    els.libraryItems.append(createLibraryCard(item))
+    els.libraryItems.append(createLibraryCard(item, { deferThumb: true }))
   }
+  // 缩略图分批 / 限并发地请求（第一批马上、其余滚动到附近且页面可见时），见 thumb-loader.js
+  libraryThumbLoader.attach(els.libraryItems.querySelectorAll('img.cover[data-src]'), { root: els.libraryItems })   // 卡片列表自己是带滚动条的容器
   if (libraryItems.length === 0) {
     els.libraryItems.innerHTML = libraryIndexStatus && libraryIndexStatus.status !== 'ready'
       ? '<p class="muted">媒体缓存未就绪，请点击重建缓存</p>'
@@ -8068,6 +8133,11 @@ els.configSave.addEventListener('click', async () => {
         mediaOpenInNewTabRules: newTabRules.media,
         tagSearchOpenInNewTabRules: newTabRules.tagSearch,
         mediaCloseNewTabOnBack: els.configMediaCloseNewTabOnBack.checked,
+        libraryThumbFirstBatch: els.configLibraryThumbFirstBatch.value,
+        libraryThumbBatch: els.configLibraryThumbBatch.value,
+        libraryThumbConcurrency: els.configLibraryThumbConcurrency.value,
+        libraryThumbConcurrencyHidden: els.configLibraryThumbConcurrencyHidden.value,
+        threadPoolSize: els.configThreadPoolSize.value,
         archiveCacheDir: els.configArchiveCacheDir.value,
         exportDir: els.configExportDir.value,
         exportDirFmt: els.configExportDirFmt.value,
@@ -8200,8 +8270,10 @@ function formatMinuteDate(value) {
   return `${year}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-function renderCover(src, alt) {
+// deferred：图片地址放在 data-src，由 ThumbLoader 分批 / 限并发地请求（媒体库列表页用；别处照旧 loading=lazy）
+function renderCover(src, alt, { deferred = false } = {}) {
   if (!src) return '<div class="cover placeholder"></div>'
+  if (deferred) return `<img class="cover" data-src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" />`
   return `<img class="cover" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" />`
 }
 
@@ -8210,10 +8282,13 @@ function renderUnitThumb(src, alt) {
   return `<img class="unit-thumb" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" />`
 }
 
-api('/api/jobs').then((data) => {
-  jobs = data
-  renderJobs()
-})
+// 任务快照：侧栏的任务列表用。点标签开出来的媒体库搜索页（tab=new）是只读页，不要（离开媒体库去别的视图时才启动后台同步，那时会补）
+if (!libraryTabIsNew) {
+  api('/api/jobs').then((data) => {
+    jobs = data
+    renderJobs()
+  })
+}
 
 async function syncJobs() {
   const previousCompleted = new Set(jobs.filter((job) => job.status === 'completed').map((job) => job.id))
@@ -8319,6 +8394,7 @@ function startBackgroundSync() {
   backgroundSyncStarted = true
   startEventStream()
 
+  if (libraryTabIsNew) syncJobs().catch(() => {})   // tab=new 启动时没取任务快照，第一次启动后台同步时补上
   refreshDownloadedState().catch(() => {})
   loadReadingProgress().catch(() => {})
   api('/api/inventory-update').then(renderInventoryUpdate).catch(() => {})
@@ -8392,15 +8468,18 @@ window.addEventListener('hashchange', () => {
 })
 
 // —— 启动 ——
-loadConfig().catch(() => {})
+// tab=new 的搜索页：配置随启动接口一起来（loadLibraryBoot），不单独取
+if (!libraryTabIsNew) loadConfig().catch(() => {})
 if (bootMediaRoute) {
   // 阅读器标签页：直接落在阅读器上，不启动后台同步。侧栏的任务列表靠模块顶层那次
   // api('/api/jobs') 拿到一次快照（所有标签页启动时都会跑），之后它不会实时更新，直到
   // 这个标签页离开阅读器去别的页面（showView 会启动后台同步）。
   openMediaRoute(bootMediaRoute).catch((error) => alert(error.message))
 } else if (bootLibraryRoute) {
-  // 媒体库搜索标签页：落在媒体库页，条件来自 URL（restoreLibraryState 里应用）。走和点「媒体库」标签同一条加载流程
-  startBackgroundSync()
+  // 媒体库搜索标签页：落在媒体库页，条件来自 URL（restoreLibraryState 里应用）。走和点「媒体库」标签同一条加载流程。
+  // 点标签开出来的（tab=new）是只读页：不开 SSE、不轮询、不取 downloaded / reading-progress / inventory-update / jobs；
+  // 用户在这个页里切到别的视图时（showView）才启动后台同步。从 URL 手输的 #/library（没有 tab=new）照旧。
+  if (!libraryTabIsNew) startBackgroundSync()
   document.querySelector('.tab[data-view="library-view"]')?.click()
 } else {
   startBackgroundSync()
