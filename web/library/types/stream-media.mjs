@@ -553,6 +553,12 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
   }
 
+  async function getThumbnailFile(itemId, unitId, kind = 'cover') {
+    const name = await existingThumbnailName(itemId, unitId, kind === 'preview' ? 'preview' : 'cover')
+    if (!name) throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
+    return { file: thumbnailPath(itemId, unitId, name), contentType: contentType(name) }
+  }
+
   async function updateItemTags(itemId, tags = []) {
     return updateMetadata(itemId, (item) => ({
       ...item,
@@ -2011,6 +2017,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     patchItemMetadata,
     patchUnitMetadata,
     getThumbnail,
+    getThumbnailFile,
     enqueueThumbnail,
     enqueueThumbnails,
     refreshExternalCover,

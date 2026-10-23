@@ -212,6 +212,17 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     }
   }
 
+  async function getThumbnailFile(itemId) {
+    const item = await readItem(itemId)
+    if (!item.coverPath) throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
+    try {
+      const file = await resolveAsset(item, item.coverPath, { allowMedia: true })
+      return { file, contentType: contentTypeOf(file) }
+    } catch {
+      throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
+    }
+  }
+
   function providerOf(item) {
     return createBrowseProvider({
       mediaDir: workDirOf(item),
@@ -380,6 +391,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     getReaderContent,
     getResource,
     getThumbnail,
+    getThumbnailFile,
     getProgress,
     saveProgress,
     updateItemTags,

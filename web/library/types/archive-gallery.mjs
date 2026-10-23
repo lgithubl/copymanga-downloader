@@ -390,6 +390,13 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     }
   }
 
+  // 磁盘文件版本：服务端用它做 ETag / 304 / 流式发送（不先把整个文件读进内存）。文件存不存在由服务端 stat 判断
+  async function getThumbnailFile(itemId, unitId, kind = 'cover') {
+    return kind === 'preview'
+      ? { file: previewPath(itemId), contentType: 'image/webp' }
+      : { file: thumbPath(itemId), contentType: 'image/jpeg' }
+  }
+
   const hasPreview = (itemId) => pathExists(previewPath(itemId))
 
   async function hasCover(itemId) {
@@ -763,6 +770,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     getReaderContent,
     getResource,
     getThumbnail,
+    getThumbnailFile,
     getProgress,
     saveProgress,
     updateItemTags,

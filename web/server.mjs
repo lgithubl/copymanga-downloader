@@ -1,3 +1,4 @@
+import { clampThreadPoolSize, THREAD_POOL_DEFAULT } from './threadpool.mjs'   // 必须是第一个 import：它在线程池第一次被用到之前设好大小
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { open, readFile, readdir, stat, writeFile, mkdir, rename, rm, mkdtemp } from 'node:fs/promises'
@@ -8,7 +9,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Buffer } from 'node:buffer'
-import { gunzipSync } from 'node:zlib'
+import { brotliCompress, constants as zlibConstants, gunzipSync, gzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { registerLibraryHandler, libraryHandler, libraryTypes, scanLibraryItems } from './library/registry.mjs'
 import { createEpubHandler } from './library/types/epub.mjs'
@@ -22,6 +23,7 @@ import { callGsvTtsBatched } from './library/epub-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
 import { parseReplacements, toSpokenText } from './library/epub-tts-text.mjs'
 import { cleanTtsRules, parseTtsRules, ttsParamsFor, ttsVoiceKey } from './library/epub-tts-flags.mjs'
+import { INDEX_POS, TagIndex, linearTagMatch, parseTagQuery } from './library/tag-search.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STATIC_DIR = path.join(__dirname, 'static')
@@ -63,6 +65,8 @@ const libraryHistoryCache = new Map()
 const libraryHistoryDirty = new Set()
 const libraryHistoryTimers = new Map()
 let libraryHistoryIndex = null
+let libraryHistoryVersion = 0         // 历史每变一次 +1（给列表响应的 ETag 用）
+let libraryHistoryMapCache = null     // type+itemId → 记录，随 libraryHistoryIndex 失效
 let libraryHistoryIndexTimer = null
 const SUBTITLE_PRESENT_TAG = normalizeTagName('字幕v1: 有')
 const SERIES_TAG_PREFIX = normalizeTagName('系列:')
@@ -86,6 +90,8 @@ const libraryIndexState = {
 }
 // 排序结果缓存：每次请求都对全量条目排序，50 万条时太慢。按排序方式缓存全量有序数组，索引一换就清空。
 const libraryIndexSortedCache = new Map()
+const libraryIndexRankCache = new Map()   // 排序方式 → 位置到名次的 Uint32Array（标签倒排索引的结果按它排序）
+let libraryIndexVersion = 0                // 条目数组每被换一次 +1（给列表响应的 ETag 用）
 let libraryIndexRebuildPromise = null
 let libraryIndexRebuildRequested = false
 let tagScriptsCache = null
@@ -114,12 +120,44 @@ function webHeaders(headers = {}) {
   }
 }
 
-function json(res, status, payload) {
-  const body = JSON.stringify(payload)
-  res.writeHead(status, webHeaders({
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-  }))
+// 客户端接受哪些压缩（Accept-Encoding）
+function acceptedEncodings(req) {
+  const header = String(req?.headers?.['accept-encoding'] || '')
+  return { br: /(^|[,\s])br(;|,|$)/i.test(header), gzip: /(^|[,\s])gzip(;|,|$)/i.test(header) }
+}
+
+// 条件请求：If-None-Match 里有这个 ETag（可以是逗号分隔的多个，弱校验）就算命中
+function etagMatches(req, etag) {
+  if (!etag) return false
+  const header = String(req?.headers?.['if-none-match'] || '')
+  if (!header) return false
+  const strip = (value) => value.trim().replace(/^W\//, '')
+  return header.split(',').some((candidate) => candidate.trim() === '*' || strip(candidate) === strip(etag))
+}
+
+function sendNotModified(res, etag, extra = {}) {
+  res.writeHead(304, webHeaders({ ETag: etag, 'Cache-Control': 'no-cache', ...extra }))
+  res.end()
+}
+
+// JSON 响应：≥1KB 且客户端接受 gzip 时压缩（走 libuv 线程池，不占事件循环；一页 500 条 370KB 压成 ~26KB）。
+// etag 给了就带上 ETag + Cache-Control: no-cache（浏览器每次带 If-None-Match 来校验，没变就 304，不用重新算也不用传）
+function json(res, status, payload, { etag = '' } = {}) {
+  const body = Buffer.from(JSON.stringify(payload))
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', Vary: 'Accept-Encoding' }
+  if (etag) { headers.ETag = etag; headers['Cache-Control'] = 'no-cache' }
+  if (body.length >= 1024 && acceptedEncodings(res.req).gzip) {
+    gzip(body, { level: 4 }, (error, compressed) => {
+      if (error || res.destroyed) {
+        if (!res.destroyed) { res.writeHead(status, webHeaders({ ...headers, 'Content-Length': body.length })); res.end(body) }
+        return
+      }
+      res.writeHead(status, webHeaders({ ...headers, 'Content-Encoding': 'gzip', 'Content-Length': compressed.length }))
+      res.end(compressed)
+    })
+    return
+  }
+  res.writeHead(status, webHeaders({ ...headers, 'Content-Length': body.length }))
   res.end(body)
 }
 
@@ -161,6 +199,36 @@ function streamFile(res, filePath, contentType) {
     'Content-Type': contentType,
     'Cache-Control': 'public, max-age=3600',
   }))
+  stream.pipe(res)
+}
+
+// 带校验头的文件响应（缩略图用）：ETag（大小 + mtime）+ Last-Modified，If-None-Match / If-Modified-Since 命中就 304，
+// 否则流式发送（不把整个文件先读进内存）。缓存一天，过期后先用旧的、后台悄悄校验（stale-while-revalidate），
+// 封面被重新生成时靠 ETag 变化及时更新。文件不存在 → 404。
+async function sendCachedFile(req, res, filePath, contentType) {
+  let info
+  try {
+    info = await stat(filePath)
+    if (!info.isFile()) throw new Error('not a file')
+  } catch {
+    return json(res, 404, { error: '缩略图不存在' })
+  }
+  const etag = `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`
+  const modified = new Date(Math.floor(info.mtimeMs / 1000) * 1000).toUTCString()
+  const cacheHeaders = { ETag: etag, 'Last-Modified': modified, 'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800' }
+  const since = Date.parse(String(req.headers['if-modified-since'] || ''))
+  if (etagMatches(req, etag) || (!req.headers['if-none-match'] && Number.isFinite(since) && since >= Math.floor(info.mtimeMs / 1000) * 1000)) {
+    res.writeHead(304, webHeaders(cacheHeaders))
+    return res.end()
+  }
+  const stream = createReadStream(filePath)
+  stream.on('error', (error) => {
+    console.error(`[thumbnail] 读取失败 ${filePath}: ${error.message}`)
+    res.destroy()
+  })
+  res.on('error', () => stream.destroy())
+  res.on('close', () => stream.destroy())
+  res.writeHead(200, webHeaders({ 'Content-Type': contentType, 'Content-Length': info.size, ...cacheHeaders }))
   stream.pipe(res)
 }
 
@@ -273,6 +341,17 @@ function defaultConfig() {
     // TXT 按多少字切成一段（第 1 段、第 2 段…）。0 / 不配置 = 不切，一个文件一个 section。
     // 只影响之后导入/重新扫描的文本合集。
     textSectionChars: 0,
+    // 媒体库卡片缩略图（浏览器端分批加载，见 web/static/app.js 的 ThumbLoader）：
+    //   libraryThumbFirstBatch  页面列表一到就立刻请求的第一批数量（0 = 页面第一次可见才开始）
+    //   libraryThumbBatch       之后每批的数量（滚动到附近 / 页面可见时才请求下一批）
+    //   libraryThumbConcurrency 前台页面同时在飞的缩略图请求数；libraryThumbConcurrencyHidden 后台标签页的
+    libraryThumbFirstBatch: 30,
+    libraryThumbBatch: 60,
+    libraryThumbConcurrency: 6,
+    libraryThumbConcurrencyHidden: 2,
+    // libuv 线程池大小（fs / zlib / crypto 的异步操作共用）。改了要重启服务才生效，见 web/threadpool.mjs。
+    threadPoolSize: THREAD_POOL_DEFAULT,
+    
     // EPUB 朗读：GSV-TTS-Lite 是参考音频克隆音色，不是挑 voice 枚举，
     // speakerAudio/promptAudio 留空时前端直接把朗读按钮置灰。
     // 没有 mediaType：查过 GSV-TTS-Lite 源码，/tts/batched 的请求模型根本没这个
@@ -409,6 +488,12 @@ function normalizeEpubTtsLanguage(value) {
   return ['ja', 'zh', 'en'].includes(language) ? language : ''
 }
 
+// 配置里的整数：不是数字用默认值，超出范围就夹到范围里
+function intInRange(value, min, max, fallback) {
+  const n = Math.floor(Number(value))
+  return Number.isFinite(n) && value !== '' && value !== null ? Math.max(min, Math.min(max, n)) : fallback
+}
+
 function normalizeConfig(value) {
   const defaults = defaultConfig()
   const apiDomainMode = value?.apiDomainMode === 'Custom' ? 'Custom' : 'Default'
@@ -450,6 +535,11 @@ function normalizeConfig(value) {
       : legacyNewTabRules(value?.tagSearchOpenInNewTabKinds, value?.tagSearchOpenInNewTabProfiles),
     archiveCacheDir: String(value?.archiveCacheDir || defaults.archiveCacheDir).trim() || defaults.archiveCacheDir,
     mediaCloseNewTabOnBack: Boolean(value?.mediaCloseNewTabOnBack ?? defaults.mediaCloseNewTabOnBack),
+    libraryThumbFirstBatch: intInRange(value?.libraryThumbFirstBatch, 0, 500, defaults.libraryThumbFirstBatch),
+    libraryThumbBatch: intInRange(value?.libraryThumbBatch, 1, 500, defaults.libraryThumbBatch),
+    libraryThumbConcurrency: intInRange(value?.libraryThumbConcurrency, 1, 32, defaults.libraryThumbConcurrency),
+    libraryThumbConcurrencyHidden: intInRange(value?.libraryThumbConcurrencyHidden, 1, 32, defaults.libraryThumbConcurrencyHidden),
+    threadPoolSize: clampThreadPoolSize(value?.threadPoolSize, defaults.threadPoolSize),
     anidbDumpDir: String(value?.anidbDumpDir || defaults.anidbDumpDir).trim() || defaults.anidbDumpDir,
     anidbDumpUrl: String(value?.anidbDumpUrl || defaults.anidbDumpUrl).trim() || defaults.anidbDumpUrl,
     mediaTagDisplayKeys: normalizeStringList(value?.mediaTagDisplayKeys, defaults.mediaTagDisplayKeys),
@@ -2617,6 +2707,36 @@ async function runJob(job, { comicPathWord, chapterUuids, token, force = false }
   }
 }
 
+// 静态文件：ETag（内容哈希）+ Cache-Control: no-cache（每次带 If-None-Match 校验，没变就 304，改了立刻生效）+ 预压缩（br / gzip）。
+// 以前每个标签页都完整下载 index.html / app.js / style.css（~525KB，没有压缩也没有校验头），一百个页面就是 52MB，而且浏览器也没法缓存编译结果。
+// 每个文件按 mtime+大小缓存一份「内容 + ETag + 压缩版」，文件变了自动重算。
+const staticCache = new Map()   // filePath → { mtimeMs, size, etag, type, raw, br, gzip }
+const STATIC_TYPES = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.svg': 'image/svg+xml', '.json': 'application/json' }
+const COMPRESSIBLE_STATIC = new Set(['.css', '.html', '.js', '.mjs', '.svg', '.json'])
+
+async function loadStaticEntry(filePath, info) {
+  const cached = staticCache.get(filePath)
+  if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached
+  const raw = await readFile(filePath)
+  const ext = path.extname(filePath)
+  const entry = {
+    mtimeMs: info.mtimeMs,
+    size: info.size,
+    etag: `"${createHash('sha1').update(raw).digest('hex').slice(0, 20)}"`,
+    type: `${STATIC_TYPES[ext] || 'application/octet-stream'}${STATIC_TYPES[ext] ? '; charset=utf-8' : ''}`,
+    raw,
+    br: null,
+    gzip: null,
+  }
+  if (COMPRESSIBLE_STATIC.has(ext) && raw.length >= 1024) {
+    // 一次性压好（这个文件没变就一直用）：br 质量 6，体积比 gzip 小一截、压一次也就一百来毫秒
+    entry.br = await new Promise((resolve) => brotliCompress(raw, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 6, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: raw.length } }, (error, out) => resolve(error ? null : out)))
+    entry.gzip = await new Promise((resolve) => gzip(raw, { level: 9 }, (error, out) => resolve(error ? null : out)))
+  }
+  staticCache.set(filePath, entry)
+  return entry
+}
+
 async function serveStatic(req, res, pathname) {
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1)
   const filePath = path.normalize(path.join(STATIC_DIR, relative))
@@ -2624,15 +2744,19 @@ async function serveStatic(req, res, pathname) {
   try {
     const info = await stat(filePath)
     if (!info.isFile()) return text(res, 404, 'Not found')
-    const body = await readFile(filePath)
-    const ext = path.extname(filePath)
-    const type = ({
-      '.css': 'text/css',
-      '.html': 'text/html',
-      '.js': 'text/javascript',
-      '.svg': 'image/svg+xml',
-    })[ext] || 'application/octet-stream'
-    res.writeHead(200, webHeaders({ 'Content-Type': `${type}; charset=utf-8`, 'Content-Length': body.length }))
+    const entry = await loadStaticEntry(filePath, info)
+    if (etagMatches(req, entry.etag)) return sendNotModified(res, entry.etag, { Vary: 'Accept-Encoding' })
+    const accepts = acceptedEncodings(req)
+    const encoding = accepts.br && entry.br ? 'br' : accepts.gzip && entry.gzip ? 'gzip' : ''
+    const body = encoding === 'br' ? entry.br : encoding === 'gzip' ? entry.gzip : entry.raw
+    res.writeHead(200, webHeaders({
+      'Content-Type': entry.type,
+      'Content-Length': body.length,
+      ETag: entry.etag,
+      'Cache-Control': 'no-cache',
+      Vary: 'Accept-Encoding',
+      ...(encoding ? { 'Content-Encoding': encoding } : {}),
+    }))
     res.end(body)
   } catch {
     text(res, 404, 'Not found')
@@ -2738,7 +2862,7 @@ function applyLibraryIndexPayload(payload, filePath) {
   libraryIndexState.error = ''
   libraryIndexState.sourceCount = Number(payload.sourceCount || payload.items.length || 0)
   libraryIndexState.itemCount = libraryIndexState.items.length
-  warmLibraryIndexTagCache()
+  onLibraryIndexItemsReplaced()
 }
 
 async function loadLibraryIndexCache() {
@@ -2780,6 +2904,8 @@ function libraryIndexPublicStatus() {
     error: libraryIndexState.error,
     buildId: libraryIndexState.buildId,
     rebuildQueued: Boolean(libraryIndexRebuildRequested),
+    // 标签倒排索引建好了没（没建好时标签搜索走线性扫描，结果一样）
+    tagIndex: Boolean(libraryIndexState.tagIndex && libraryIndexState.tagIndex.items === libraryIndexState.items),
   }
 }
 
@@ -2824,7 +2950,7 @@ async function rebuildLibraryIndex() {
     libraryIndexState.error = ''
     libraryIndexState.sourceCount = items.length
     libraryIndexState.itemCount = summaries.length
-    warmLibraryIndexTagCache()
+    onLibraryIndexItemsReplaced()
     return libraryIndexPublicStatus()
   } catch (error) {
     if (libraryIndexState.buildId === buildId) {
@@ -2872,15 +2998,23 @@ async function writeLibraryIndexPayload(payload) {
 }
 
 // 没有 系列: tag 的条目按「单成员系列」处理，筛选和展示就不必写特例。
+const SERIES_KEY_CACHE = Symbol('seriesKey')
 function seriesKeyOf(item) {
+  // 每个条目只算一次（以前每次都遍历全部标签并逐个规整：带「有无字幕」/ 系列过滤的搜索对 30 万条要 ~0.6 秒）。
+  // 索引条目的标签是不会被原地改的（重建索引时是全新的对象），所以缓存在对象上安全。
+  const cached = item[SERIES_KEY_CACHE]
+  if (cached !== undefined) return cached
+  let key = null
   for (const tag of item.tags || []) {
     const normalized = normalizeTagName(tag)
     if (normalized.startsWith(SERIES_TAG_PREFIX)) {
       const value = normalized.slice(SERIES_TAG_PREFIX.length).trim()
-      if (value) return value
+      if (value) { key = value; break }
     }
   }
-  return `\u0000${item.type}\u001f${item.itemId}`
+  if (key === null) key = `\u0000${item.type}\u001f${item.itemId}`
+  item[SERIES_KEY_CACHE] = key
+  return key
 }
 
 // 手动置顶用：系列priority 大的排前面。没打这个 tag 的返回 null，
@@ -3169,7 +3303,65 @@ function compareLibraryIndexItems(a, b) {
     String(a.itemId || '').localeCompare(String(b.itemId || ''))
 }
 
-function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfile = '', seriesSubtitle = 'any', seriesKey = '', page = 1, limit = 50, sort = 'imported_desc' } = {}) {
+// 媒体库列表的查询参数 → searchLibraryIndex 的参数（列表接口和启动接口共用）
+function libraryListQuery(params) {
+  const pagination = paginationFromSearchParams(params, 50, 1000) || { page: 1, limit: 50, offset: 0, keyword: '' }
+  return {
+    type: params.get('type') || 'all',
+    tag: params.get('tag') || '',
+    keyword: pagination.keyword,
+    sourceProfile: params.get('sourceProfile') || '',
+    seriesSubtitle: params.get('seriesSubtitle') || 'any',
+    seriesKey: params.get('seriesKey') || '',
+    page: pagination.page,
+    limit: pagination.limit,
+    sort: params.get('sort') || 'imported_desc',
+    // 诊断用：tagIndex=off 强制走线性扫描（和倒排索引结果一定一样，自测里拿它对照）
+    useTagIndex: params.get('tagIndex') !== 'off',
+  }
+}
+
+// 列表响应的 ETag：索引版本 + 索引状态（响应里带 index 状态）+ 历史版本 + 查询串。随机排序每次都不一样，不给 ETag。
+function libraryListEtag(search) {
+  const params = new URLSearchParams(search)
+  if (params.get('sort') === 'random') return ''
+  const state = `${libraryIndexVersion}.${libraryIndexState.status}.${libraryIndexState.dirty ? 1 : 0}.${libraryIndexRebuildRequested ? 1 : 0}.${libraryIndexState.tagIndex ? 1 : 0}.${libraryHistoryVersion}`
+  params.sort()
+  return `W/"${state}.${createHash('sha1').update(params.toString()).digest('hex').slice(0, 16)}"`
+}
+
+// 排序方式只认这些；别的值（包括乱写的）都按默认排序，别让每个陌生的 sort 值都在缓存里放一份几十万条的数组
+const LIBRARY_SORT_MODES = new Set(['imported_asc', 'imported_desc', 'published_asc', 'published_desc', 'product_id_asc', 'product_id_desc', 'title_asc', 'title_desc', 'unit_count_asc', 'unit_count_desc'])
+const normalizeLibrarySort = (sort) => (LIBRARY_SORT_MODES.has(String(sort || '')) ? String(sort) : 'imported_desc')
+
+// 位置 → 在某种排序里的名次。倒排索引命中的是位置集合，按名次排一下就是这种排序下的结果
+function libraryIndexRank(mode) {
+  let rank = libraryIndexRankCache.get(mode)
+  if (!rank) {
+    const sorted = sortedLibraryIndexItems(mode)
+    rank = new Uint32Array(sorted.length)
+    for (let k = 0; k < sorted.length; k++) rank[sorted[k][INDEX_POS]] = k
+    libraryIndexRankCache.set(mode, rank)
+  }
+  return rank
+}
+
+// 命中的位置（升序）→ 按 mode 排好序的条目数组。命中很多时（超过全库的 1/8）不如直接顺着排好序的全库走一遍
+function orderLibraryPositions(positions, mode) {
+  const all = libraryIndexState.items
+  if (positions.length * 8 > all.length) {
+    const marks = new Uint8Array(all.length)
+    for (let i = 0; i < positions.length; i++) marks[positions[i]] = 1
+    return sortedLibraryIndexItems(mode).filter((item) => marks[item[INDEX_POS]] === 1)
+  }
+  const rank = libraryIndexRank(mode)
+  const sorted = Uint32Array.from(positions).sort((x, y) => rank[x] - rank[y])
+  const out = new Array(sorted.length)
+  for (let i = 0; i < sorted.length; i++) out[i] = all[sorted[i]]
+  return out
+}
+
+function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfile = '', seriesSubtitle = 'any', seriesKey = '', page = 1, limit = 50, sort = 'imported_desc', useTagIndex = true } = {}) {
   if (!libraryIndexState.items.length) {
     return {
       items: [],
@@ -3184,20 +3376,49 @@ function searchLibraryIndex({ type = 'all', tag = '', keyword = '', sourceProfil
   const normalizedKeyword = normalizeTagName(keyword)
   const normalizedSourceProfile = String(sourceProfile || '').trim()
   const normalizedSeriesKey = String(seriesKey || '').trim()
-  const tagTokens = parseLibraryIndexTagQuery(tag)
-  let items = sortedLibraryIndexItems(sort)
-  if (normalizedType !== 'all') items = items.filter((item) => item.type === normalizedType)   // 'all' 不用复制一份几十万条的数组
-  if (normalizedSourceProfile) items = items.filter((item) => item.sourceProfile === normalizedSourceProfile)
-  if (normalizedSeriesKey) items = items.filter((item) => seriesKeyOf(item) === normalizedSeriesKey)
-  if (normalizedKeyword) items = items.filter((item) => item.searchText.includes(normalizedKeyword))
+  const tagTokens = parseTagQuery(tag, normalizeTagName)
+  const requestedSort = String(sort || '')
+  const randomOrder = requestedSort === 'random'
+  const mode = normalizeLibrarySort(requestedSort)   // 'series'（系列弹窗按系列内优先级排）和 random 之外的都落到这里
+  // 除标签外的筛选条件：都是对单个条目的判断，和排序无关
+  const predicates = []
+  if (normalizedType !== 'all') predicates.push((item) => item.type === normalizedType)
+  if (normalizedSourceProfile) predicates.push((item) => item.sourceProfile === normalizedSourceProfile)
+  if (normalizedSeriesKey) predicates.push((item) => seriesKeyOf(item) === normalizedSeriesKey)
+  if (normalizedKeyword) predicates.push((item) => item.searchText.includes(normalizedKeyword))
   if (seriesSubtitle === 'has' || seriesSubtitle === 'none') {
     const want = seriesSubtitle === 'has'
-    items = items.filter((item) => Boolean(seriesOfItem(item)?.hasSubtitle) === want)
+    predicates.push((item) => Boolean(seriesOfItem(item)?.hasSubtitle) === want)
   }
-  if (tagTokens.length) {
-    items = items.filter((item) => libraryIndexTagTokensMatch(item, tagTokens))
+  const passes = (item) => { for (const predicate of predicates) if (!predicate(item)) return false; return true }
+
+  let items
+  const tagIndex = useTagIndex ? libraryIndexState.tagIndex : null
+  if (tagTokens.length && tagIndex && tagIndex.items === libraryIndexState.items) {
+    // 倒排索引：先拿到命中标签的位置，再套其余条件，最后排序——代价只和命中数有关
+    const hits = tagIndex.match(tagTokens)
+    let positions = hits
+    if (predicates.length) {
+      const kept = []
+      for (let i = 0; i < hits.length; i++) if (passes(libraryIndexState.items[hits[i]])) kept.push(hits[i])
+      positions = kept
+    }
+    items = randomOrder
+      ? shuffleLibraryIndexItems(Array.from(positions, (pos) => libraryIndexState.items[pos]))
+      : orderLibraryPositions(positions, mode)
+  } else {
+    // 没有标签条件，或者索引还没建好（刚启动 / 刚重建，分批建的过程中）：线性扫描
+    items = randomOrder ? libraryIndexState.items : sortedLibraryIndexItems(mode)
+    if (predicates.length) items = items.filter(passes)
+    if (tagTokens.length) items = items.filter((item) => linearTagMatch(item, tagTokens, normalizeTagName, LIBRARY_INDEX_TAGS_NORM))
+    if (randomOrder) items = shuffleLibraryIndexItems([...items])
   }
-  if (String(sort || '') === 'random') items = sortLibraryIndexItems(items, 'random')
+  // 系列弹窗：按系列里的优先级排（和卡片「快速进入」选的主条目同一套顺序）
+  if (requestedSort === 'series' && normalizedSeriesKey) {
+    const members = libraryIndexState.seriesMap.get(normalizedSeriesKey)?.members || []
+    const order = new Map(members.map((member, index) => [libraryHistoryKey(member.type, member.itemId), index]))
+    items = [...items].sort((a, b) => (order.get(libraryHistoryKey(a.type, a.itemId)) ?? 1e9) - (order.get(libraryHistoryKey(b.type, b.itemId)) ?? 1e9))
+  }
   // 每页 1~1000 条，没有「limit 0 = 全部」：几十万条的库一次返回全部会撑爆响应（V8 单个字符串约 536MB 上限）和浏览器。
   // 以前这里 `Number(limit) || 50` 把 0 当成 50，「全部」分支其实只有负数才能走到，而唯一传 0 的调用方（见 IMPORT_LIST_LIMIT）
   // 拿到的也一直是 50 条——等于一个从没生效过的分支，直接去掉。
@@ -3238,98 +3459,77 @@ function publicLibraryIndexItem(item) {
   }
 }
 
-function parseLibraryIndexTagQuery(query = '') {
-  const input = String(query || '').trim()
-  if (!input) return []
-  return [...input.matchAll(/-?(?:tag|unitTag):"[^"]+"|-?(?:tag|unitTag):\S+|-\S+|\S+/gi)]
-    .map((match) => match[0])
-    .map((raw) => {
-      const exclude = raw.startsWith('-')
-      let body = exclude ? raw.slice(1) : raw
-      const unitOnly = /^unitTag:/i.test(body)
-      body = body.replace(/^(?:tag|unitTag):/i, '').replace(/^"|"$/g, '')
-      const name = normalizeTagName(body)
-      // 结尾的 * 表示按前缀匹配。没有它就没法问「有没有任何系列」——
-      // 精确匹配下 -系列 排除的是「字面就叫『系列』的 tag」，而实际 tag 是
-      // 「系列: RJxxxx」，于是一条都排不掉，等于没过滤。
-      const prefix = name.endsWith('*')
-      return { exclude, unitOnly, prefix, name: prefix ? name.slice(0, -1).trim() : name }
-    })
-    .filter((item) => item.name)
-}
-
-// 条目的「规整后的标签」缓存（每个条目第一次被 tag 过滤时算一次，之后重用）。
-// 以前每次搜索都对整库每个条目重新 trim/lowercase 全部标签、再建两个 Set：30 万条、每条 8 个标签时一次搜索要 ~0.7 秒的同步 CPU，
-// Node 是单线程，几个页面同时点标签搜索就把事件循环占满，所有请求（包括新开页面的首屏）都排在后面。
-// 用 Symbol 做键：JSON.stringify（写索引缓存）不会带上它；索引重建后条目对象是新的，缓存自然失效。
+// 线性扫描（回退路径）用的「规整后的标签」缓存键；倒排索引没建好时用，见 web/library/tag-search.mjs
 const LIBRARY_INDEX_TAGS_NORM = Symbol('tagsNorm')
-function normalizedTagsOf(item) {
-  let cached = item[LIBRARY_INDEX_TAGS_NORM]
-  if (!cached) {
-    const itemTags = (item.tags || []).map(normalizeTagName)
-    const unitTags = (item.unitTags || []).map(normalizeTagName)
-    cached = { itemTags, unitTags }
-    item[LIBRARY_INDEX_TAGS_NORM] = cached
-  }
-  return cached
-}
 
-// 索引装好 / 重建好之后，分批（每批 3000 条、批间让出事件循环）把规整后的标签预先算好，
-// 这样第一次 tag 搜索也不用一次性付全库的代价。条目对象被换掉（又重建了）就停。
-function warmLibraryIndexTagCache() {
+// 条目数组换了（启动读缓存 / 重建完成）：清掉所有按旧条目算出来的东西，给新条目标位置，然后分批在后台建标签倒排索引。
+// 建的过程中搜索走线性扫描（结果一样，只是慢一点）；建完且条目数组没再换，才切到倒排索引。
+function onLibraryIndexItemsReplaced() {
   const items = libraryIndexState.items
-  let index = 0
-  const step = () => {
-    if (libraryIndexState.items !== items) return
-    const end = Math.min(items.length, index + 3000)
-    for (; index < end; index++) normalizedTagsOf(items[index])
-    if (index < items.length) setImmediate(step)
-  }
-  setImmediate(step)
-}
-
-function libraryIndexTagTokensMatch(item, tokens) {
-  const { itemTags, unitTags } = normalizedTagsOf(item)
-  for (const token of tokens) {
-    let matched
-    if (token.prefix) {
-      // 前缀只能线性扫；带 * 的 token 一般就一两个，整库过一遍可接受
-      matched = (!token.unitOnly && itemTags.some((tag) => tag.startsWith(token.name))) || unitTags.some((tag) => tag.startsWith(token.name))
-    } else {
-      // 每个条目标签个位数到几十个：数组 includes 比建 Set 快
-      matched = (!token.unitOnly && itemTags.includes(token.name)) || unitTags.includes(token.name)
-    }
-    if (token.exclude ? matched : !matched) return false
-  }
-  return true
+  libraryIndexVersion += 1
+  libraryIndexSortedCache.clear()
+  libraryIndexRankCache.clear()
+  libraryIndexState.tagIndex = null
+  for (let index = 0; index < items.length; index++) items[index][INDEX_POS] = index
+  TagIndex.build(items, normalizeTagName, { isStale: () => libraryIndexState.items !== items })
+    .then((tagIndex) => { if (tagIndex && libraryIndexState.items === items) libraryIndexState.tagIndex = tagIndex })
+    .catch((error) => console.error(`[library-index] 标签倒排索引构建失败（搜索退回线性扫描）：${error.message}`))
 }
 
 // 只给当前页挂系列信息：整库挂一遍没必要，而且会把 payload 撑大几倍。
+// 系列只带摘要（主条目的几个字段），不带成员列表：以前每条都夹着整个系列的成员（一个 15 个成员的系列每条 ~3.5KB，500 条一页 2MB）。
+// 前端要成员时（点系列弹窗）自己按 seriesKey + sort=series 取，顺序和这里的「主条目」是同一套（见 searchLibraryIndex）。
 function decorateWithSeries(item) {
   const entry = seriesOfItem(item)
   const base = publicLibraryIndexItem(item)
   const merge = mergeGroupOfItem(item)
   const withMerge = merge ? { ...base, mergeGroup: merge } : base
-  if (!entry || entry.members.length < 2) return withMerge
+  const history = libraryHistoryBrief(item.type, item.itemId)
+  const withHistory = history ? { ...withMerge, history } : withMerge
+  if (!entry || entry.members.length < 2) return withHistory
+  const primary = entry.members[0]   // members 已按优先级排好，第一个就是主条目（primaryItemId）
   return {
-    ...withMerge,
+    ...withHistory,
     series: {
       key: entry.key,
       count: entry.members.length,
       hasSubtitle: entry.hasSubtitle,
       primaryItemId: entry.primaryItemId,
       selfHasSubtitle: Boolean(item.hasSubtitle),
-      members: entry.members,
+      // 点卡片「快速进入」要按目标项自己决定是进目录还是直接播（看 sourceProfile + unitCount），所以主条目要带这几个
+      primary: { type: primary.type, itemId: primary.itemId, sourceProfile: primary.sourceProfile, unitCount: primary.unitCount },
     },
+  }
+}
+
+// 卡片上「继续：…」要的那几个字段（没有 title / cover / tags：卡片自己就有）
+function libraryHistoryBrief(type, itemId) {
+  const record = libraryHistoryMap().get(libraryHistoryKey(type, itemId))
+  if (!record) return null
+  return {
+    lastUnitId: record.lastUnitId,
+    lastUnitKind: record.lastUnitKind,
+    lastUnitTitle: record.lastUnitTitle,
+    lastSectionId: record.lastSectionId,
+    lastSectionTitle: record.lastSectionTitle,
+    position: record.position,
+    updatedAt: record.updatedAt,
   }
 }
 
 // 条目所属的可合并分组。媒体库那边挂这个角标，点一下直接跳到合并页对应的组，
 // 省得人工记住 workKey 再去翻页找。只给计数，成员明细合并页展开时自己拉。
+// （按 key 建 Map：分组几万个时，每页几百条逐个线性 find 会累出几十毫秒）
+let workGroupMapSource = null
+let workGroupMap = new Map()
 function mergeGroupOfItem(item) {
   const key = String(item.workKey || '')
   if (!key) return null
-  const group = (libraryIndexState.workGroups || []).find((entry) => entry.key === key)
+  if (workGroupMapSource !== libraryIndexState.workGroups) {
+    workGroupMapSource = libraryIndexState.workGroups
+    workGroupMap = new Map((workGroupMapSource || []).map((entry) => [entry.key, entry]))
+  }
+  const group = workGroupMap.get(key)
   return group ? { key, count: group.count } : null
 }
 
@@ -3337,8 +3537,8 @@ const libraryNumericCollator = new Intl.Collator(undefined, { numeric: true })
 
 // 全量有序数组按排序方式缓存（random 不缓存）；Array.sort 是稳定的，先排后筛和先筛后排结果一致
 function sortedLibraryIndexItems(sort) {
-  const mode = String(sort || 'imported_desc')
-  if (mode === 'random') return libraryIndexState.items
+  const mode = normalizeLibrarySort(sort)
+  if (String(sort || '') === 'random') return libraryIndexState.items
   let sorted = libraryIndexSortedCache.get(mode)
   if (!sorted) {
     sorted = sortLibraryIndexItems(libraryIndexState.items, mode)
@@ -3462,13 +3662,25 @@ function normalizeLibraryHistory(value) {
   }
 }
 
+// 历史索引（内存里最多 1000 条）只能通过这个函数换：同时让「按 key 查」的 Map 失效、版本号 +1
+function setLibraryHistoryIndex(next) {
+  libraryHistoryIndex = next
+  libraryHistoryMapCache = null
+  libraryHistoryVersion += 1
+}
+
+function libraryHistoryMap() {
+  if (!libraryHistoryMapCache) libraryHistoryMapCache = new Map((libraryHistoryIndex || []).map((record) => [libraryHistoryKey(record.type, record.itemId), record]))
+  return libraryHistoryMapCache
+}
+
 async function ensureLibraryHistoryIndex() {
   if (libraryHistoryIndex) return libraryHistoryIndex
   try {
     const records = JSON.parse(await readFile(LIBRARY_HISTORY_INDEX, 'utf8'))
-    libraryHistoryIndex = Array.isArray(records) ? records.map(normalizeLibraryHistory) : []
+    setLibraryHistoryIndex(Array.isArray(records) ? records.map(normalizeLibraryHistory) : [])
   } catch {
-    libraryHistoryIndex = []
+    setLibraryHistoryIndex([])
   }
   return libraryHistoryIndex
 }
@@ -3512,9 +3724,9 @@ function updateLibraryHistoryIndex(record) {
   const index = libraryHistoryIndex || []
   const filtered = index.filter((item) => libraryHistoryKey(item.type, item.itemId) !== key)
   filtered.unshift(next)
-  libraryHistoryIndex = filtered
+  setLibraryHistoryIndex(filtered
     .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
-    .slice(0, 1000)
+    .slice(0, 1000))
   scheduleLibraryHistoryIndexFlush()
 }
 
@@ -3598,7 +3810,7 @@ async function deleteLibraryHistory(type, itemId) {
   libraryHistoryDirty.delete(key)
   await rm(libraryHistoryPath(type, itemId), { force: true })
   await ensureLibraryHistoryIndex()
-  libraryHistoryIndex = libraryHistoryIndex.filter((item) => libraryHistoryKey(item.type, item.itemId) !== key)
+  setLibraryHistoryIndex(libraryHistoryIndex.filter((item) => libraryHistoryKey(item.type, item.itemId) !== key))
   await flushLibraryHistoryIndex()
 }
 
@@ -4973,25 +5185,31 @@ async function route(req, res) {
     if (pathname === '/api/library/items' && req.method === 'GET') {
       const hasPagedQuery = url.searchParams.has('page') || url.searchParams.has('limit') || url.searchParams.has('keyword') || url.searchParams.has('sort') || url.searchParams.has('sourceProfile') || url.searchParams.has('seriesSubtitle') || url.searchParams.has('seriesKey')
       if (hasPagedQuery) {
-        const pagination = paginationFromSearchParams(url.searchParams, 50, 1000) || { page: 1, limit: 50, offset: 0, keyword: '' }
-        return json(res, 200, searchLibraryIndex({
-          type: url.searchParams.get('type') || 'all',
-          tag: url.searchParams.get('tag') || '',
-          keyword: pagination.keyword,
-          sourceProfile: url.searchParams.get('sourceProfile') || '',
-          seriesSubtitle: url.searchParams.get('seriesSubtitle') || 'any',
-          seriesKey: url.searchParams.get('seriesKey') || '',
-          page: pagination.page,
-          limit: pagination.limit,
-          sort: url.searchParams.get('sort') || 'imported_desc',
-        }))
+        // 先装好历史索引（卡片上的「继续：…」由服务端按当前页条目附带，不再让页面单独取 1000 条历史）
+        await ensureLibraryHistoryIndex()
+        // 版本没变（索引 / 历史都没换）+ 同一个查询 = 结果一定一样：直接 304，不搜索、不序列化、不传
+        const etag = libraryListEtag(url.search)
+        if (etagMatches(req, etag)) return sendNotModified(res, etag, { Vary: 'Accept-Encoding' })
+        return json(res, 200, searchLibraryIndex(libraryListQuery(url.searchParams)), { etag })
       }
       return json(res, 200, await scanLibraryItemsWithTags({
         type: url.searchParams.get('type') || 'all',
         tag: url.searchParams.get('tag') || '',
       }))
     }
-    if (pathname === '/api/library/items/sample' && req.method === 'POST') {
+    // 媒体库搜索页（#/library?tab=new…）的启动请求：配置 + 类型 + 列表（带进度）+ 元数据脚本，一次取回。
+    // 开很多个搜索页时每页的请求数才是瓶颈（浏览器对同一主机最多 6 个连接，所有标签页共用），所以合成一个。
+    if (pathname === '/api/library/boot' && req.method === 'GET') {
+      await ensureLibraryHistoryIndex()
+      const actions = await scanMetadataActions({ force: false })
+      return json(res, 200, {
+        config,
+        types: libraryTypes(),
+        items: searchLibraryIndex(libraryListQuery(url.searchParams)),
+        tagScripts: paginatedResponse(actions.slice(0, 1000), { page: 1, limit: 1000, total: actions.length }),
+      })
+    }
+if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       const handler = libraryHandler(url.searchParams.get('type') || 'epub')
       if (!handler.createSampleItem) return json(res, 400, { error: 'This library type has no sample generator' })
       const item = await handler.createSampleItem()
@@ -5051,6 +5269,11 @@ async function route(req, res) {
         })))
       }
       if (action === 'thumbnail') {
+        // 有 getThumbnailFile 的类型：给出磁盘文件，这里统一做 ETag / 304 / 流式发送
+        if (handler.getThumbnailFile) {
+          const thumb = await handler.getThumbnailFile(itemId, unitId, parts[7] || 'cover')
+          return sendCachedFile(req, res, thumb.file, thumb.contentType)
+        }
         if (!handler.getThumbnail) return json(res, 400, { error: 'This library type does not support thumbnails' })
         const thumb = await handler.getThumbnail(itemId, unitId, parts[7] || 'cover')
         return binary(res, 200, thumb.body, thumb.contentType)
@@ -5631,7 +5854,7 @@ process.on('uncaughtException', (error) => {
 // 既进不了那个 catch，也没人接——只能掉到进程级兜底，结果是进程活下来了，
 // res 却从没被 end，这个请求挂到客户端超时为止。
 // 在这里收口，让最后一道防线留在请求级：该失败的请求拿到 500，别的请求不受影响。
-createServer((req, res) => {
+const httpServer = createServer((req, res) => {
   route(req, res).catch((error) => {
     console.error('[request-guard] 请求未捕获异常：', error?.stack || error)
     if (res.writableEnded) return
@@ -5643,7 +5866,11 @@ createServer((req, res) => {
     // 头已经发出去了（多半是流式响应中途炸的），改不了状态码，只能断掉
     res.destroy()
   })
-}).listen(PORT, HOST, () => {
+})
+// Node 默认空闲 5 秒就关连接：开很多标签页、请求稀稀拉拉时，浏览器老得重新建连接。放宽到 65 秒（比常见反代的 60 秒空闲略长）
+httpServer.keepAliveTimeout = 65_000
+httpServer.headersTimeout = 66_000
+httpServer.listen(PORT, HOST, () => {
   console.log(`copymanga web listening on http://${HOST}:${PORT}`)
   console.log(`download dir: ${DOWNLOAD_DIR}`)
 })
