@@ -3208,6 +3208,7 @@ function jumpMergePage() {
 }
 
 async function selectLibraryItem(type, itemId) {
+  openLibraryFloat()
   try {
     els.libraryItemTitle.textContent = itemId
     els.libraryItemMeta.textContent = '读取目录中...'
@@ -8049,6 +8050,72 @@ els.libraryDetailToggle?.addEventListener('click', () => {
   localStorage.setItem('copymanga.libraryDetailCollapsed', collapsed ? '1' : '0')
 })
 
+// 详情浮动模式下，选中媒体（点卡片 / 点「目录」）就把浮动框弹出来；停靠模式什么都不做
+function openLibraryFloat() {
+  if (document.querySelector('#library-view')?.classList.contains('detail-float')) els.libraryDetailPanel?.classList.add('float-open')
+}
+// ---- 左右边沿的收缩箭头 ----
+// 左：完全隐藏左侧任务栏（再点显示回原来的收缩/展开状态）；右（只在媒体库里）：详情停靠 ↔ 浮动，浮动时点媒体才弹出。箭头沿边沿上下拖动，位置记在 localStorage
+{
+  const edgeLeft = document.querySelector('#edge-left')
+  const edgeRight = document.querySelector('#edge-right')
+  const libraryView = document.querySelector('#library-view')
+  const panel = els.libraryDetailPanel
+  const store = (key, value) => { try { localStorage.setItem(key, value) } catch { /* 存不了就算了 */ } }
+  const load = (key, fallback) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v } catch { return fallback } }
+  const setLeft = (hidden) => {
+    els.app.classList.toggle('sidebar-hidden', hidden)
+    if (edgeLeft) { edgeLeft.textContent = hidden ? '›' : '‹'; edgeLeft.title = hidden ? '显示左侧任务栏' : '隐藏左侧任务栏（可上下拖动位置）' }
+    store('copymanga.sidebarHidden', hidden ? '1' : '0')
+  }
+  const setFloat = (floating) => {
+    libraryView?.classList.toggle('detail-float', floating)
+    if (!floating) panel?.classList.remove('float-open')
+    if (edgeRight) { edgeRight.textContent = floating ? '‹' : '›'; edgeRight.title = floating ? '右侧详情：恢复停靠' : '右侧详情：改成浮动（点媒体才弹出）' }
+    store('copymanga.detailFloat', floating ? '1' : '0')
+  }
+  const draggable = (handle, key, onClick) => {
+    if (!handle) return
+    const top = Math.max(2, Math.min(95, Number(load(key, '45')) || 45))
+    handle.style.top = `${top}%`
+    let startY = 0
+    let startTop = 0
+    let moved = false
+    handle.addEventListener('pointerdown', (event) => {
+      handle.setPointerCapture(event.pointerId)
+      startY = event.clientY
+      startTop = handle.getBoundingClientRect().top
+      moved = false
+    })
+    handle.addEventListener('pointermove', (event) => {
+      if (!handle.hasPointerCapture(event.pointerId)) return
+      if (Math.abs(event.clientY - startY) > 4) moved = true
+      if (!moved) return
+      handle.classList.add('dragging')
+      const y = Math.max(0, Math.min(window.innerHeight - handle.offsetHeight, startTop + event.clientY - startY))
+      handle.style.top = `${(y / window.innerHeight) * 100}%`
+    })
+    const end = (event) => {
+      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId)
+      handle.classList.remove('dragging')
+      if (moved) store(key, String(parseFloat(handle.style.top)))
+      else if (event.type === 'pointerup') onClick()
+      moved = false
+    }
+    handle.addEventListener('pointerup', end)
+    handle.addEventListener('pointercancel', end)
+    // 键盘：回车 / 空格触发 click（pointer 事件不管键盘）
+    handle.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick() } })
+  }
+  draggable(edgeLeft, 'copymanga.edgeLeftTop', () => setLeft(!els.app.classList.contains('sidebar-hidden')))
+  draggable(edgeRight, 'copymanga.edgeRightTop', () => setFloat(!libraryView.classList.contains('detail-float')))
+  setLeft(load('copymanga.sidebarHidden', '1') === '1')
+  setFloat(load('copymanga.detailFloat', '0') === '1')
+  document.querySelector('#library-detail-close')?.addEventListener('click', () => panel.classList.remove('float-open'))
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && panel?.classList.contains('float-open') && !event.target.closest?.('input, textarea, select')) panel.classList.remove('float-open')
+  })
+}
 els.sidebarToggle.addEventListener('click', () => {
   const collapsed = !els.app.classList.contains('sidebar-collapsed')
   els.app.classList.toggle('sidebar-collapsed', collapsed)

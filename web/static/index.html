@@ -9,6 +9,7 @@
   </head>
   <body>
     <main id="app">
+      <button id="edge-left" class="edge-handle edge-left" type="button" title="显示 / 隐藏左侧任务栏（可上下拖动位置）" aria-label="显示或隐藏左侧任务栏">›</button>
       <aside class="sidebar">
         <div class="sidebar-head">
           <h1>拷贝漫画下载器</h1>
@@ -281,6 +282,7 @@
           </section>
         </div>
         <div id="library-view" class="library-workspace view">
+          <button id="edge-right" class="edge-handle edge-right" type="button" title="右侧详情：停靠 / 浮动（浮动时点媒体才弹出；可上下拖动位置）" aria-label="切换右侧详情的停靠或浮动模式">›</button>
           <section>
             <div class="chapter-head">
               <h2>媒体库</h2>
@@ -359,6 +361,7 @@
                 <div id="library-item-meta" class="muted">请选择媒体库条目</div>
               </div>
               <div class="chapter-actions">
+                <button id="library-detail-close" class="secondary icon-button" type="button" title="关闭浮动详情（Esc）" aria-label="关闭浮动详情">×</button>
                 <button id="library-detail-toggle" class="secondary icon-button" title="收起上方操作区，只看章节列表" aria-label="收起上方操作区" aria-expanded="true">⌃</button>
                 <input id="library-item-tags" placeholder="合集标签，逗号分隔" />
                 <button id="library-save-tags" class="secondary" disabled>保存标签</button>

@@ -187,12 +187,17 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     jump.value = String(node.page)
     jump.title = '输入页码回车跳转'
     jump.setAttribute('aria-label', '跳到第几页')
-    jump.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return
+    const doJump = () => {
       const page = Math.max(1, Math.min(node.pageCount, Math.floor(Number(jump.value)) || node.page))
       if (page !== node.page) go(view ? viewId({}, page) : `${node.id.split('#')[0]}#${page}`)
-    })
-    bar.append(jump, el('span', 'gal-pager-info', `/ ${node.pageCount} 页`), mk('下一页 ›', '下一页', node.page + 1, node.page >= node.pageCount), mk('»', '最后一页', node.pageCount, node.page >= node.pageCount))
+      else jump.value = String(node.page)
+    }
+    jump.addEventListener('keydown', (event) => { if (event.key === 'Enter') doJump() })
+    const jumpBtn = el('button', 'gal-pager-btn gal-pager-go', '跳转')
+    jumpBtn.type = 'button'
+    jumpBtn.title = '跳到输入的页码'
+    jumpBtn.addEventListener('click', doJump)
+    bar.append(jump, el('span', 'gal-pager-info', `/ ${node.pageCount} 页`), jumpBtn, mk('下一页 ›', '下一页', node.page + 1, node.page >= node.pageCount), mk('»', '最后一页', node.pageCount, node.page >= node.pageCount))
     return bar
   }
 
