@@ -153,3 +153,11 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 
 自测：`scripts/dev/gal-selftest.mjs`（适配器/引擎/handler）、`scripts/dev/fe-gal-selftest.mjs`（浏览器）；
 测试数据：`scripts/dev/make-gal-fixture.mjs <目录>`。
+
+## 列表视图、回退轨迹、渲染诊断
+
+- **列表视图**：筛选 / 排序 / 每页条数写在节点 id 里：`<基础 id>|q=…&s=name|name_desc&n=25|50|100|200|500[#页码]`（只写和默认不同的；脚本节点 id 不带视图参数，进度按 `s:` id 记）。节点返回 `viewBase`（不带视图和页码的基础 id）和 `view{q,sort,size,defaultSize,sizes,sorts,unfiltered}`，前端只拼 id。筛选 / 排序在整张名单上做（只有名字，便宜），读脚本摘要 / 缩略图 / 数量只对当前页做。浏览器端搜索框 400ms 防抖，每页条数、跳页输入框、首页/末页都在工具栏和翻页条里。
+- **读目录的缓存**：浏览 provider 在进程内缓存 sniff / 目录列表 / 脚本摘要 / 数量（目录 mtime 变了就失效，脚本摘要 5 分钟 TTL），sniff 并发 16。1000 个脚本的目录热请求约 13ms。
+- **回退轨迹**（`app.js` 的 `galNavigate`）：从列表点进下一层时记下当前列表的完整节点 id（含页码、筛选、排序、每页条数），往上走（上一级 / 面包屑 / 播放页的「列表」）回到记下的那个 id，而不是服务端算的默认第 1 页。存在 sessionStorage，每个单元一份。
+- **config.rawIgnore**：正则字符串列表（不分大小写，最多 50 条，非法的丢掉）。播放器里「N 条指令暂未渲染」不计入匹配的指令（匹配指令名和 `指令名,参数…`）；节点 `rawIgnore` 带给前端。`gal-layout` 脚本有同名选项（全局值），某个媒体要单独的用 `overrides[].config.rawIgnore`。点右下角的提示可展开诊断面板（按指令名汇总 + 样例 + 缺资源 + Spine 状态），可一键复制。
+- **「更多」菜单**：沉浸 / 全屏收在「更多」里（浏览层和播放器都是，快捷键 I / F 不变）；沉浸按钮不再高亮。播放到最后一步且有下一章时，工具栏出现「继续下一章 ▶」。

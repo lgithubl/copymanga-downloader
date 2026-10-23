@@ -285,12 +285,20 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     })
-    // 只做一次很轻的检查：默认（或已有配置里的）脚本根在不在——不在也照样建，报告里提示，由脚本去调
-    const firstRoot = normalizeGalConfig(item.config).scriptRoots[0]
-    try {
-      if (!(await stat(path.join(real, ...(firstRoot.dir ? firstRoot.dir.split('/') : [])))).isDirectory()) throw new Error('x')
-    } catch {
-      report.warnings.push(`脚本根「${firstRoot.dir || '.'}」不存在：这个目录没有按标准结构放，需要运行元数据脚本 gal-layout（或手动改 config）来调整`)
+    // 只做一次很轻的检查：脚本根在不在——不在也照样建，报告里提示，由元数据脚本去调。
+    // 只有「靠默认脚本根（UViewer 的 resources/download/adv/text）」时才有意义：config 里还没写 scriptRoots、用的是 UViewer 适配器、
+    // 也没声明成别的游戏。别的游戏（tenkeiprdx / monmusu…）的目录结构本来就不是这个，它们的脚本根由 gal-layout 脚本写，
+    // 在这里提示「没有按标准结构放」只会误导（实际导入完脚本一跑就对了）。
+    const cfg = normalizeGalConfig(item.config)
+    const explicitRoots = item.config.scriptRoots !== undefined   // 脚本 / 用户写过脚本根：它不存在就是真问题
+    const relyOnDefaultRoot = !explicitRoots && item.adapters.includes('uviewer-csv') && (!cfg.game || cfg.game.id === 'uviewer')
+    if (explicitRoots || relyOnDefaultRoot) {
+      const firstRoot = cfg.scriptRoots[0]
+      try {
+        if (!(await stat(path.join(real, ...(firstRoot.dir ? firstRoot.dir.split('/') : [])))).isDirectory()) throw new Error('x')
+      } catch {
+        report.warnings.push(`脚本根「${firstRoot.dir || '.'}」不存在：这个目录没有按标准结构放，需要运行元数据脚本 gal-layout（或手动改 config）来调整`)
+      }
     }
     if (existing) report.updated = 1
     else report.imported = 1

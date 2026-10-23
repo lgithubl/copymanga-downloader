@@ -14,6 +14,8 @@
 //   replace         true = 整体替换 config（默认 false = 合并：只改写了的字段，别的保留）
 //   coverScanLimit  挑封面最多看几个脚本（uviewer / 通用，默认 40）
 //   countCap        数脚本数的上限（默认 200000）
+//   rawIgnore       正则字符串列表：播放器里「N 条指令暂未渲染」跳过匹配的指令（匹配指令名和「指令名,参数…」，不分大小写；匹配 = 我允许了）。
+//                   写进每个被认领媒体的 config.rawIgnore；某个媒体要单独的，在 overrides 里写 config: { rawIgnore: [...] }（覆盖这里的全局值）
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
@@ -73,6 +75,8 @@ export async function generateTags(ctx) {
     if (typeof rule.title === 'string' && rule.title.trim()) title = rule.title.trim()
   })
   if (applied.length) logs.push(`命中覆盖项：第 ${applied.join('、')} 条`)
+
+  if (options.rawIgnore.length && config.rawIgnore === undefined) config.rawIgnore = options.rawIgnore.slice()
 
   // 3) 脚本数、封面
   const result = await (found.finish ? found.finish(media, config, options, logs) : { count: 0, cover: '' })
@@ -459,6 +463,7 @@ function normalizeOptions(raw = {}) {
     replace: raw.replace === true,
     coverScanLimit: Math.max(1, Math.min(400, Math.floor(Number(raw.coverScanLimit) || 40))),
     countCap: Math.max(1, Math.floor(Number(raw.countCap) || 200000)),
+    rawIgnore: (Array.isArray(raw.rawIgnore) ? raw.rawIgnore : []).map((p) => String(p ?? '').trim()).filter((p) => { if (!p) return false; try { new RegExp(p, 'i'); return true } catch { return false } }).slice(0, 50),
     overrides: (Array.isArray(raw.overrides) ? raw.overrides : []).filter((r) => r && typeof r === 'object' && typeof r.path === 'string'),
   }
 }

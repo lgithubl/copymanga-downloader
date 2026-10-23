@@ -3893,6 +3893,38 @@ function toggleGalImmersive() {
 let galRatio = 0
 let galChoices = {}   // 当前脚本里选项的选择，跟进度一起存（回看/续播要重放同一条分支）
 let galBrowser = null
+// 回退轨迹：从列表点进下一层（child）时，把「当前列表的完整节点 id」（含页码、筛选、排序、每页条数）记下来；
+// 往上走（up：上一级 / 面包屑 / 播放页的「列表」）时，如果要去的那一层记过，就回到记下的那个完整 id，而不是服务端算的默认第 1 页。
+// 同一层里换页、换筛选/排序（self）不动轨迹。按单元存在 sessionStorage（刷新页面还在，关掉标签页就没了）
+const galBase = (id) => String(id || '').split('#')[0].replace(/\|[qsn]=[^|]*$/, '')
+const galTrailKey = (unitId) => `copymanga.galTrail.${unitId}`
+function galTrailLoad(unitId) {
+  try {
+    const list = JSON.parse(sessionStorage.getItem(galTrailKey(unitId)) || '[]')
+    return Array.isArray(list) ? list.filter((id) => typeof id === 'string') : []
+  } catch { return [] }
+}
+function galTrailSave(unitId, list) {
+  try { sessionStorage.setItem(galTrailKey(unitId), JSON.stringify(list.slice(-30))) } catch { /* 存不了就算了：退回默认的上一级 */ }
+}
+function galNavigate(reader, nodeId, kind = 'self') {
+  const unitId = reader.unit.unitId
+  const current = reader.node?.id ?? reader.section?.sectionId ?? ''
+  let target = nodeId
+  if (kind === 'child' || kind === 'up') {
+    let trail = galTrailLoad(unitId)
+    if (kind === 'child') {
+      trail = trail.filter((id) => galBase(id) !== galBase(current))
+      trail.push(current)
+    } else {
+      const at = trail.map(galBase).lastIndexOf(galBase(nodeId))
+      if (at >= 0) { target = trail[at]; trail = trail.slice(0, at) }
+    }
+    galTrailSave(unitId, trail)
+  }
+  return openUnitInSession(unitId, target)
+}
+const galThumbLoader = createThumbLoader({ getSettings: () => thumbSettingsFromConfig(appConfig || {}) })
 // 首页/分类/角色这些浏览节点：只有选项，没有播放器。点选项 = 再取一次 reader（sectionId = 节点 id）
 function renderGalBrowse(reader) {
   exitWidthAdjust({ apply: false })
@@ -3909,7 +3941,8 @@ function renderGalBrowse(reader) {
     container: els.mediaReaderContent,
     reader,
     progress: Object.fromEntries(Object.entries(nodes).map(([id, entry]) => [id, { ratio: Number(entry?.ratio) || 0, completedAt: entry?.completedAt || '' }])),
-    onOpen: (nodeId) => { openUnitInSession(reader.unit.unitId, nodeId).catch((error) => alert(error.message)) },
+    thumbLoader: galThumbLoader,
+    onOpen: (nodeId, kind) => { galNavigate(reader, nodeId, kind).catch((error) => alert(error.message)) },
     // 沉浸和播放页是同一套页面状态：浏览层也能进/退，切到播放页、再回列表都保持
     onToggleImmersive: toggleGalImmersive,
     onEscape: () => exitGalImmersive({ remember: true }),
@@ -3966,7 +3999,7 @@ function renderGal(reader) {
       back: () => { exitGalImmersive(); els.mediaReaderBack?.click() },
       // 「列表」回到它的上一级（首页/分类/角色），从那里选别的脚本；沉浸状态保留，进列表时自动退出
       up: reader.node?.parent != null
-        ? () => { openUnitInSession(reader.unit.unitId, reader.node.parent).catch((error) => alert(error.message)) }
+        ? () => { galNavigate(reader, reader.node.parent, 'up').catch((error) => alert(error.message)) }
         : null,
     },
   })

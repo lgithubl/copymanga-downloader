@@ -43,6 +43,9 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 算出它对应哪个脚本（脚本文件名，无扩展名），这个文件就是那个脚本的缩略图；badge 是卡片右上角的标记（比如 event / extra）
   scriptIndex: [],
   cover: '',          // 封面：相对资源根的路径；~/ 开头 = 相对媒体目录（只给封面用）
+  // 允许忽略的未渲染指令（正则字符串列表，不分大小写）：播放器里「N 条指令暂未渲染」的统计会跳过匹配的指令。
+  // 匹配对象是指令名（如 spriteatlas）和「指令名,参数1,参数2…」（如 anm,foo,bar），任一匹配就算「我允许了」
+  rawIgnore: [],
   scriptCount: 0,     // 脚本数（脚本统计后写；0 = 不知道）
   script: null,       // 谁写的这份配置：{ id, version, ranAt }（脚本自己写，用来知道当前配置是哪一版脚本生成的）
 })
@@ -150,6 +153,14 @@ export function normalizeGalConfig(raw) {
     scriptIndex.push({ dir, pattern, key: text(rule?.key, 100) || '{1}', badge: text(rule?.badge, 12) })
   }
 
+  const rawIgnore = []
+  for (const source of (Array.isArray(v.rawIgnore) ? v.rawIgnore : []).slice(0, 50)) {
+    const pattern = text(source, 200)
+    if (!pattern || rawIgnore.includes(pattern)) continue
+    try { new RegExp(pattern, 'i') } catch { continue }
+    rawIgnore.push(pattern)
+  }
+
   const cover = text(v.cover, 400)
   const coverRel = cover.startsWith('~/') ? safeRelPath(cover.slice(2)) : safeRelPath(cover)
   const script = v.script && typeof v.script === 'object' && !Array.isArray(v.script)
@@ -173,6 +184,7 @@ export function normalizeGalConfig(raw) {
     scriptIndex: v.scriptIndex === undefined ? [] : scriptIndex,
     game,
     adapterOptions,
+    rawIgnore: v.rawIgnore === undefined ? [] : rawIgnore,
     cover: coverRel === null ? '' : cover,
     scriptCount: Math.max(0, Math.floor(Number(v.scriptCount)) || 0),
     script: script && (script.id || script.version) ? script : null,

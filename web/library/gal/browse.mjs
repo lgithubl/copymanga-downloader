@@ -16,9 +16,14 @@
 //   g:<编码后的分组键>:<相对路径>[#页码]   虚拟目录（config.groups：脚本名按正则分组，比如同一角色的几个脚本）
 //   v:<编码后的目录 id>[#页码]            适配器给的「目录」（adapter.catalog：从数据文件里读出来的列表，比如活动 / 角色 / 他们的剧情）；有 catalog 时首页就是它
 //   @<脚本根 id>|d:…  /  @<脚本根 id>|s:…  /  @<脚本根 id>|g:…   非默认的脚本根（比如另一种语言的文本）
+// 列表节点（d: / g: / v: / 首页）的 id 还能带「视图参数」：`<基础 id>|q=<筛选词>&s=<排序>&n=<每页条数>[#页码]`（只写和默认不同的）。
+//   q 筛选（名称 / 标题 / 编号，不分大小写的子串）；s 排序 default | name | name_desc；n 每页条数（25 / 50 / 100 / 200 / 500）。
+//   参数在 id 里，所以刷新页面 / 分享链接 / 前端「返回上一层」都能原样还原（目录和脚本的名字里不会有 | 和 #，见 readEntries）。
+//   脚本节点 s:… 不带视图参数（进度按它的 id 记）。
 // 路径都相对「脚本根」。合并目录（config.merge）：列某个目录时，把它指定的几个子目录的内容合进同一个列表，
 // 这几个子目录本身不再出现；脚本节点 id 仍是真实路径，所以进度/历史不受影响。
 // 大目录靠翻页和按需读取：只列当前目录，读脚本头/内容只对当前页做，并按 mtime 缓存。
+import { createHash } from 'node:crypto'
 import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { galAdapter, sniffGalAdapter } from './adapters/index.mjs'
@@ -27,6 +32,67 @@ import { loadAdapterContext } from './context.mjs'
 import { safeRelPath } from './paths.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
+
+// ---------- 跨请求缓存（进程内）----------
+// 浏览每次请求都会新建一个 provider，所以会反复读的东西必须缓存在模块级：
+//   · 脚本是不是这种格式（读 8KB 头嗅探）：按 文件 mtime+size 缓存——不缓存的话，一个目录里 1000 个脚本，每翻一页都要 1000 次 stat + open + read
+//   · 目录里有什么（目录 / 通过嗅探的脚本）：按 目录 mtime 缓存（里面增删改名 mtime 就变）
+//   · 脚本摘要（缩略图 / 台词摘要 / 是否带视频）：按 文件 mtime+size + 配置指纹缓存，另有 5 分钟 TTL（缩略图文件可能后来才生成）
+//   · 目录卡片上的数量：按 目录 mtime 缓存
+// 都是 LRU，有上限。
+const CACHE_TTL_MS = 5 * 60 * 1000
+const sniffCache = new Map()
+const entriesCache = new Map()
+const scriptInfoCache = new Map()
+const countCache = new Map()
+function cacheGet(map, key, ttl = 0) {
+  const hit = map.get(key)
+  if (hit === undefined) return undefined
+  if (ttl && Date.now() - hit.at > ttl) { map.delete(key); return undefined }
+  map.delete(key)
+  map.set(key, hit)   // 最近用过 = 放到最后
+  return hit.value
+}
+function cacheSet(map, key, value, max) {
+  map.delete(key)
+  map.set(key, { value, at: Date.now() })
+  if (map.size > max) map.delete(map.keys().next().value)
+}
+// 并发上限地 map（读文件 / stat 这类 IO，一个个 await 太慢，全放出去又会占满线程池）
+async function mapLimit(list, limit, fn) {
+  const out = new Array(list.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, list.length) }, async () => {
+    while (next < list.length) { const i = next++; out[i] = await fn(list[i], i) }
+  })
+  await Promise.all(workers)
+  return out
+}
+const IO_CONCURRENCY = 16
+
+// ---------- 列表视图（筛选 / 排序 / 每页条数）----------
+export const GAL_PAGE_SIZES = [25, 50, 100, 200, 500]
+export const GAL_SORTS = [{ id: 'default', label: '默认（目录在前）' }, { id: 'name', label: '名称 ↑' }, { id: 'name_desc', label: '名称 ↓' }]
+export function parseGalView(optionText = '') {
+  let params
+  try { params = new URLSearchParams(optionText) } catch { params = new URLSearchParams() }
+  const size = Math.floor(Number(params.get('n')))
+  const sort = params.get('s') || 'default'
+  return {
+    q: String(params.get('q') || '').trim().slice(0, 100),
+    sort: GAL_SORTS.some((entry) => entry.id === sort) ? sort : 'default',
+    size: GAL_PAGE_SIZES.includes(size) ? size : 0,   // 0 = 用配置里的默认
+  }
+}
+// 只写和默认不同的；没有就是空串
+export function galViewSuffix(view = {}) {
+  const params = new URLSearchParams()
+  if (view.q) params.set('q', view.q)
+  if (view.sort && view.sort !== 'default') params.set('s', view.sort)
+  if (view.size) params.set('n', String(view.size))
+  const text = params.toString()
+  return text ? `|${text}` : ''
+}
 
 const naturalCompare = (a, b) => a.localeCompare(b, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' })
 const extOf = (file) => path.extname(file).slice(1).toLowerCase()
@@ -61,7 +127,9 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const mergeRules = config.merge.map((rule) => ({ ...rule, test: parentRegExp(rule.parent) }))
   const groupRules = config.groups.map((rule) => ({ ...rule, test: parentRegExp(rule.parent), re: new RegExp(rule.pattern) }))
   const dirThumbRules = config.dirThumbs.map((rule) => ({ ...rule, nameRe: rule.name ? new RegExp(rule.name) : null }))
-  const infoCache = new Map()   // 脚本 → { adapterId, thumb, excerpt, hasMovie }，按 mtime+size 失效
+  // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
+  const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}`
+  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, adapters])).digest('hex').slice(0, 16)
   let namesCache = null
 
   const absOf = (set, rel) => path.join(mediaDir, ...(set.dir ? set.dir.split('/') : []), ...(rel ? rel.split('/') : []))
@@ -99,7 +167,14 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       if (!set) throw fail('没有这个文本版本', 404)
       body = body.slice(bar + 1)
     }
-    if (!body) return { set, kind: 'dir', rel: '', page }
+    // 视图参数：基础 id 后面第一个 |（目录 / 脚本名里不会有 |）
+    let view = parseGalView('')
+    const optionsAt = body.indexOf('|')
+    if (optionsAt >= 0) {
+      view = parseGalView(body.slice(optionsAt + 1))
+      body = body.slice(0, optionsAt)
+    }
+    if (!body) return { set, kind: 'dir', rel: '', page, view }
     const colon = body.indexOf(':')
     const tag = colon < 0 ? body : body.slice(0, colon)
     const arg = colon < 0 ? '' : body.slice(colon + 1)
@@ -107,7 +182,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       let id = ''
       try { id = decodeURIComponent(arg) } catch { /* 无效 */ }
       if (!id || id.length > 200) throw fail(`无效的节点：${textId.slice(0, 80)}`)
-      return { set, kind: 'virtual', key: id, rel: '', page }
+      return { set, kind: 'virtual', key: id, rel: '', page, view }
     }
     if (tag === 'g') {
       const split = arg.indexOf(':')
@@ -115,22 +190,51 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       try { key = split < 0 ? '' : decodeURIComponent(arg.slice(0, split)) } catch { /* 无效 */ }
       const groupRel = split < 0 ? null : safeRelPath(arg.slice(split + 1))
       if (!key || groupRel === null) throw fail(`无效的节点：${textId.slice(0, 80)}`)
-      return { set, kind: 'group', key, rel: groupRel, page }
+      return { set, kind: 'group', key, rel: groupRel, page, view }
     }
     if (tag !== 'd' && tag !== 's') throw fail(`无效的节点：${textId.slice(0, 80)}`)
     const rel = safeRelPath(arg)
     if (rel === null) throw fail('无效的路径', 400)
-    return { set, kind: tag === 'd' ? 'dir' : 'script', rel, page: tag === 'd' ? page : 1 }
+    return { set, kind: tag === 'd' ? 'dir' : 'script', rel, page: tag === 'd' ? page : 1, view }
   }
   const idOf = (set, _kind, rel) => `${set === defaultSet ? '' : `@${set.id}|`}s:${rel}`
   // 页码总是写出来（列表节点的 id 固定带 #页码），好和「回到第几页」对得上
-  const dirNodeId = (set, rel, page) => {
-    if (!rel && set === defaultSet) return page > 1 ? `#${page}` : ''
-    return `${set === defaultSet ? '' : `@${set.id}|`}d:${rel}${page > 1 ? `#${page}` : ''}`
+  const dirNodeId = (set, rel, page, view = null) => {
+    const options = galViewSuffix(view || {})
+    if (!rel && set === defaultSet) return `${options}${page > 1 ? `#${page}` : ''}`
+    return `${set === defaultSet ? '' : `@${set.id}|`}d:${rel}${options}${page > 1 ? `#${page}` : ''}`
   }
 
-  const virtualNodeId = (id, page) => `v:${encodeURIComponent(id)}${page > 1 ? `#${page}` : ''}`
-  const groupNodeId = (set, dirRel, key, page) => `${set === defaultSet ? '' : `@${set.id}|`}g:${encodeURIComponent(key)}:${dirRel}${page > 1 ? `#${page}` : ''}`
+  const virtualNodeId = (id, page, view = null) => `v:${encodeURIComponent(id)}${galViewSuffix(view || {})}${page > 1 ? `#${page}` : ''}`
+  const groupNodeId = (set, dirRel, key, page, view = null) => `${set === defaultSet ? '' : `@${set.id}|`}g:${encodeURIComponent(key)}:${dirRel}${galViewSuffix(view || {})}${page > 1 ? `#${page}` : ''}`
+
+  // ---------- 列表视图：筛选 → 排序 → 分页 ----------
+  // describe(entry) → { title, extra }：用来筛选（title + extra 里包含 q，不分大小写）和按名称排序（按 title 的自然序）。
+  // 筛选 / 排序在整张列表（只有名字，便宜）上做，读脚本摘要 / 缩略图 / 数量只对当前页做。
+  async function pageOfView(entries, view, page, describe) {
+    const size = view.size || pageSize
+    let list = entries
+    if (view.q || view.sort === 'name' || view.sort === 'name_desc') {
+      const described = await Promise.all(entries.map(async (entry) => ({ entry, ...(await describe(entry)) })))
+      let rows = described
+      if (view.q) {
+        const needle = view.q.toLowerCase()
+        rows = rows.filter((row) => `${row.title}\n${row.extra || ''}`.toLowerCase().includes(needle))
+      }
+      if (view.sort === 'name') rows = [...rows].sort((a, b) => naturalCompare(a.title, b.title))
+      else if (view.sort === 'name_desc') rows = [...rows].sort((a, b) => naturalCompare(b.title, a.title))
+      list = rows.map((row) => row.entry)
+    }
+    const total = list.length
+    const pageCount = Math.max(1, Math.ceil(total / size))
+    const current = Math.min(page, pageCount)
+    return { slice: list.slice((current - 1) * size, current * size), total, pageCount, current, size, unfiltered: entries.length }
+  }
+  // 节点上给前端的视图信息：当前筛选 / 排序 / 每页条数，和可选项；viewBase = 不带视图参数和页码的基础 id（前端拼新 id 用）
+  const viewInfo = (view, paged, viewBase) => ({
+    viewBase,
+    view: { q: view.q, sort: view.sort, size: paged.size, defaultSize: pageSize, sizes: GAL_PAGE_SIZES, sorts: GAL_SORTS, unfiltered: paged.unfiltered },
+  })
 
   // ---------- 读目录 / 脚本 ----------
   async function readNames() {
@@ -228,26 +332,25 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     ? { type: 'dir', id: child.id, title: child.title, subtitle: child.subtitle ?? `${child.children.length} 项`, thumb: child.thumb || '', badge: child.badge || '', node: virtualNodeId(child.id, 1) }
     : { type: 'script', id: child.script, title: child.title, subtitle: child.subtitle || '', thumb: child.thumb || '', badge: child.badge || '', node: idOf(defaultSet, 'script', child.script) })
 
-  function catalogNode(catalog, id, page) {
+  async function catalogNode(catalog, id, page, view) {
     const holder = id ? catalog.byId.get(id) : catalog.tree
     if (!holder?.children) throw fail('目录不存在', 404)
-    const total = holder.children.length
-    const pageCount = Math.max(1, Math.ceil(total / pageSize))
-    const current = Math.min(page, pageCount)
+    const paged = await pageOfView(holder.children, view, page, (child) => ({ title: child.title, extra: `${child.subtitle || ''} ${child.script ? stemOf(child.script) : child.id}` }))
     const parentId = id ? catalog.parentOfId.get(id) : null
     return {
       node: {
-        id: id ? virtualNodeId(id, current) : dirNodeId(defaultSet, '', current),
+        id: id ? virtualNodeId(id, paged.current, view) : dirNodeId(defaultSet, '', paged.current, view),
         kind: 'cards',
         title: id ? holder.title : '首页',
         parent: id ? catalogNodeRef(parentId, catalogPageOf(catalog, parentId, id)) : null,
         breadcrumb: catalogCrumbs(catalog, id),
         sets: setChoices(defaultSet),
-        pageSize,
-        page: current,
-        pageCount,
-        total,
-        items: holder.children.slice((current - 1) * pageSize, current * pageSize).map(catalogItem),
+        pageSize: paged.size,
+        page: paged.current,
+        pageCount: paged.pageCount,
+        total: paged.total,
+        items: paged.slice.map(catalogItem),
+        ...viewInfo(view, paged, id ? virtualNodeId(id, 1) : ''),
       },
     }
   }
@@ -265,9 +368,9 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     let info
     try { info = await stat(abs) } catch { return '' }
     if (!info.isFile() || !info.size || info.size > maxScriptBytes || !scriptExtensions.includes(extOf(abs))) return ''
-    const key = `${abs}|${info.mtimeMs}|${info.size}`
-    const cached = infoCache.get(key)
-    if (cached) return cached.adapterId
+    const key = `${abs}|${info.mtimeMs}|${info.size}|${(adapters || []).join(',')}`
+    const cached = cacheGet(sniffCache, key)
+    if (cached !== undefined) return cached
     let id = ''
     const handle = await open(abs, 'r')
     try {
@@ -275,25 +378,36 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       await handle.read(buffer, 0, buffer.length, 0)
       id = sniffGalAdapter(decodeTextFile(buffer).text, adapters)
     } finally { await handle.close() }
-    if (infoCache.size > 30000) infoCache.clear()
-    infoCache.set(key, { adapterId: id })
+    cacheSet(sniffCache, key, id, 100000)
     return id
   }
 
+  // 一个目录里直接有什么：目录 + 通过嗅探的脚本。按目录 mtime 缓存（见文件开头），嗅探并发读头
   async function readEntries(set, rel, origin = '') {
-    let entries
-    try { entries = await readdir(absOf(set, rel), { withFileTypes: true }) } catch { return null }
-    const dirs = []
-    const scripts = []
-    for (const entry of entries) {
-      if (hidden(entry.name) || entry.name.includes('|') || entry.name.includes('#')) continue
-      const childRel = rel ? `${rel}/${entry.name}` : entry.name
-      if (entry.isDirectory()) {
-        if (config.hiddenDirs.includes(entry.name)) continue
-        dirs.push({ type: 'dir', name: entry.name, rel: childRel, origin })
-      } else if (entry.isFile() && scriptExtensions.includes(extOf(entry.name)) && (await scriptAdapterOf(absOf(set, childRel)))) scripts.push({ type: 'script', name: entry.name, stem: stemOf(entry.name), rel: childRel, origin })
+    const dirAbs = absOf(set, rel)
+    let dirInfo
+    try { dirInfo = await stat(dirAbs) } catch { return null }
+    const cacheKey = `${dirAbs}|${dirInfo.mtimeMs}|${entriesCfgKey}`
+    let base = cacheGet(entriesCache, cacheKey, CACHE_TTL_MS)
+    if (!base) {
+      let entries
+      try { entries = await readdir(dirAbs, { withFileTypes: true }) } catch { return null }
+      const dirs = []
+      const files = []
+      for (const entry of entries) {
+        if (hidden(entry.name) || entry.name.includes('|') || entry.name.includes('#')) continue
+        const childRel = rel ? `${rel}/${entry.name}` : entry.name
+        if (entry.isDirectory()) {
+          if (config.hiddenDirs.includes(entry.name)) continue
+          dirs.push({ type: 'dir', name: entry.name, rel: childRel })
+        } else if (entry.isFile() && scriptExtensions.includes(extOf(entry.name))) files.push({ name: entry.name, rel: childRel })
+      }
+      const sniffed = await mapLimit(files, IO_CONCURRENCY, async (file) => ((await scriptAdapterOf(absOf(set, file.rel))) ? file : null))
+      const scripts = sniffed.filter(Boolean).map((file) => ({ type: 'script', name: file.name, stem: stemOf(file.name), rel: file.rel }))
+      base = { dirs, scripts }
+      cacheSet(entriesCache, cacheKey, base, 3000)
     }
-    return { dirs, scripts }
+    return { dirs: base.dirs.map((entry) => ({ ...entry, origin })), scripts: base.scripts.map((entry) => ({ ...entry, origin })) }
   }
 
   // 一个目录里的内容：目录在前、脚本在后，自然序（合并目录时，几个来源的内容混在一起排）。
@@ -339,9 +453,9 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   async function scriptInfo(set, rel) {
     const abs = absOf(set, rel)
     const info = await stat(abs)
-    const key = `${abs}|${info.mtimeMs}|${info.size}`
-    const cached = infoCache.get(key)
-    if (cached?.excerpt !== undefined) return cached
+    const key = `${abs}|${info.mtimeMs}|${info.size}|${infoCfgKey}`
+    const cached = cacheGet(scriptInfoCache, key, CACHE_TTL_MS)
+    if (cached) return cached
     const adapterId = await scriptAdapterOf(abs)
     let thumb = ''
     let excerpt = ''
@@ -366,7 +480,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       try { await resolveAsset(candidate); thumb = candidate; break } catch { /* 下一个 */ }
     }
     const result = { adapterId, thumb, excerpt, hasMovie, badge: indexed?.badge || '' }
-    infoCache.set(key, result)
+    cacheSet(scriptInfoCache, key, result, 30000)
     return result
   }
 
@@ -384,16 +498,30 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return ''
   }
 
-  // 目录卡片上的数量：直接子项数（合并目录时 = 合并后的数量），不递归
+  // 目录卡片上的数量：直接子项数（合并目录时 = 合并后的数量），不递归。每个目录按 mtime 缓存读出来的数量
+  async function countEntries(abs) {
+    let info
+    try { info = await stat(abs) } catch { return 0 }
+    const key = `${abs}|${info.mtimeMs}`
+    const cached = cacheGet(countCache, key, CACHE_TTL_MS)
+    if (cached !== undefined) return cached
+    let count = 0
+    try { count = (await readdir(abs)).filter((name) => !hidden(name)).length } catch { count = 0 }
+    cacheSet(countCache, key, count, 20000)
+    return count
+  }
   async function countChildren(set, rel) {
-    const names = async (r) => { try { return (await readdir(absOf(set, r))).filter((n) => !hidden(n)) } catch { return [] } }
     const rule = mergeRuleAt(rel)
-    let all = await names(rel)
+    let total = await countEntries(absOf(set, rel))
     if (rule) {
-      all = all.filter((n) => !rule.dirs.includes(n))
-      for (const sourceName of rule.dirs) all = all.concat(await names(rel ? `${rel}/${sourceName}` : sourceName))
+      for (const sourceName of rule.dirs) {
+        const sourceAbs = absOf(set, rel ? `${rel}/${sourceName}` : sourceName)
+        const inner = await countEntries(sourceAbs)
+        const exists = inner > 0 || await stat(sourceAbs).then((i) => i.isDirectory(), () => false)
+        if (exists) total = total - 1 + inner   // 被合并掉的子目录本身不算一项，换成它里面的东西
+      }
     }
-    return all.length
+    return Math.max(0, total)
   }
 
   // ---------- 父级 / 面包屑 ----------
@@ -435,13 +563,13 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
 
   // ---------- 取节点 ----------
   async function getNode(nodeId) {
-    const { set, kind, rel, page, key: nodeKey = '' } = parseNodeId(nodeId)
+    const { set, kind, rel, page, view, key: nodeKey = '' } = parseNodeId(nodeId)
     const catalog = set === defaultSet ? await getCatalog() : null
     if (kind === 'virtual') {
       if (!catalog) throw fail('目录不存在', 404)
-      return catalogNode(catalog, nodeKey, page)
+      return catalogNode(catalog, nodeKey, page, view)
     }
-    if (catalog && kind === 'dir' && !rel) return catalogNode(catalog, '', page)
+    if (catalog && kind === 'dir' && !rel) return catalogNode(catalog, '', page, view)
     const key = kind === 'group' ? nodeKey : kind === 'script' ? scriptGroupKey(rel) : ''
     // 脚本在 catalog 里：上一级、面包屑、上一话/下一话都按 catalog 里收它的那个目录来
     const entry = catalog && kind === 'script' ? catalog.scriptEntry.get(rel) : null
@@ -459,14 +587,12 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const { allScripts } = await listDir(set, rel).catch(() => { throw fail('目录不存在', 404) })
       const members = rule ? allScripts.filter((s) => groupKeyOf(rule, s.stem) === key) : []
       if (!members.length) throw fail('分组不存在', 404)
-      const pageCount = Math.max(1, Math.ceil(members.length / pageSize))
-      const current = Math.min(page, pageCount)
-      const items = []
-      for (const entry of members.slice((current - 1) * pageSize, current * pageSize)) {
+      const paged = await pageOfView(members, view, page, (entry) => ({ title: entry.stem, extra: entry.name }))
+      const items = await mapLimit(paged.slice, IO_CONCURRENCY, async (entry) => {
         const info = await scriptInfo(set, entry.rel)
-        items.push({ type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) })
-      }
-      return { node: { id: groupNodeId(set, rel, key, current), kind: 'cards', title: await labelOf(key), ...base, page: current, pageCount, total: members.length, items } }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
+      })
+      return { node: { id: groupNodeId(set, rel, key, paged.current, view), kind: 'cards', title: await labelOf(key), ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, groupNodeId(set, rel, key, 1)) } }
     }
 
     if (kind === 'dir') {
@@ -474,30 +600,29 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       let listing
       try { listing = await listDir(set, rel) } catch (error) {
         if (rel || error.statusCode !== 404) throw error
-        return { node: { id: dirNodeId(set, '', 1), kind: 'cards', title: '首页', ...base, page: 1, pageCount: 1, total: 0, items: [], notice: `脚本根「${set.dir || '.'}」读不到：这个目录没有按标准结构放，请运行元数据脚本 gal-layout 探测并调整配置（或手动改 config）。` } }
+        return { node: { id: dirNodeId(set, '', 1), kind: 'cards', title: '首页', ...base, page: 1, pageCount: 1, total: 0, items: [], notice: `脚本根「${set.dir || '.'}」读不到：这个目录没有按标准结构放，请运行元数据脚本 gal-layout 探测并调整配置（或手动改 config）。`, ...viewInfo(view, { size: pageSize, unfiltered: 0 }, dirNodeId(set, '', 1)) } }
       }
-      const { all } = listing
-      const total = all.length
-      const pageCount = Math.max(1, Math.ceil(total / pageSize))
-      const current = Math.min(page, pageCount)
-      const slice = all.slice((current - 1) * pageSize, current * pageSize)
-      const items = []
-      for (const entry of slice) {
+      const describe = async (entry) => {
+        if (entry.type === 'group') return { title: await labelOf(entry.key), extra: entry.key }
+        if (entry.type === 'dir') return { title: await labelOf(entry.name), extra: entry.name }
+        return { title: entry.stem, extra: entry.name }
+      }
+      const paged = await pageOfView(listing.all, view, page, describe)
+      const items = await mapLimit(paged.slice, IO_CONCURRENCY, async (entry) => {
         if (entry.type === 'group') {
           const label = await labelOf(entry.key)
-          items.push({ type: 'dir', id: entry.rel, title: label, subtitle: `${label !== entry.key ? `${entry.key} · ` : ''}${entry.members.length} 项`, thumb: await dirThumb({ name: entry.key, parentName: rel ? baseName(rel) : '' }), badge: '', node: groupNodeId(set, rel, entry.key, 1) })
-        } else if (entry.type === 'dir') {
+          return { type: 'dir', id: entry.rel, title: label, subtitle: `${label !== entry.key ? `${entry.key} · ` : ''}${entry.members.length} 项`, thumb: await dirThumb({ name: entry.key, parentName: rel ? baseName(rel) : '' }), badge: '', node: groupNodeId(set, rel, entry.key, 1) }
+        }
+        if (entry.type === 'dir') {
           const label = await labelOf(entry.name)
           const n = await countChildren(set, entry.rel)
-          items.push({ type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, thumb: await dirThumb(entry), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) })
-        } else {
-          const info = await scriptInfo(set, entry.rel)
-          items.push({ type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) })
+          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, thumb: await dirThumb(entry), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
         }
-      }
-      const id = dirNodeId(set, rel, current)
+        const info = await scriptInfo(set, entry.rel)
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
+      })
       const title = rel ? await labelOf(baseName(rel)) : '首页'
-      return { node: { id, kind: 'cards', title, ...base, page: current, pageCount, total, items } }
+      return { node: { id: dirNodeId(set, rel, paged.current, view), kind: 'cards', title, ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, dirNodeId(set, rel, 1)) } }
     }
 
     // script
@@ -518,7 +643,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const at = siblings.findIndex((c) => c.script === rel)
       const neighbour = (c) => (c ? { sectionId: idOf(set, 'script', c.script), title: c.title } : null)
       return {
-        node: { id: idOf(set, 'script', rel), kind: 'player', title: entry.title, ...base, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
+        node: { id: idOf(set, 'script', rel), kind: 'player', title: entry.title, ...base, rawIgnore: config.rawIgnore, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
         scene,
         sectionNavigation: { prev: at > 0 ? neighbour(siblings[at - 1]) : null, next: at >= 0 && at < siblings.length - 1 ? neighbour(siblings[at + 1]) : null },
       }
@@ -531,7 +656,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const at = scripts.findIndex((s) => s.rel === rel)
     const neighbour = (entry) => (entry ? { sectionId: idOf(set, 'script', entry.rel), title: entry.stem } : null)
     return {
-      node: { id: idOf(set, 'script', rel), kind: 'player', title: stemOf(rel), ...base, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
+      node: { id: idOf(set, 'script', rel), kind: 'player', title: stemOf(rel), ...base, rawIgnore: config.rawIgnore, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
       scene,
       sectionNavigation: { prev: at > 0 ? neighbour(scripts[at - 1]) : null, next: at >= 0 && at < scripts.length - 1 ? neighbour(scripts[at + 1]) : null },
     }

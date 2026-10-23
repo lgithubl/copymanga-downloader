@@ -169,17 +169,20 @@ await page.waitForSelector('.gal-card.is-script')
 check('刷新：停在同一个节点，不会跳回首页', (await crumbs()) === '首页>角色>卡蒂娅' && (await hashSection()) === 'd:character/1003', JSON.stringify([await crumbs(), await hashSection()]))
 // 房间：翻页
 await page.goto(link('d:room')); await page.waitForSelector('.gal-browse[data-node="d:room"]')
-const pager1 = await page.$eval('.gal-pager-info', (e) => e.textContent)
-check('房间：每页 25，页码「1 / 2 · 共 31 项」，上一页禁用', (await page.$$('.gal-card')).length === 25 && /1 \/ 2/.test(pager1) && /31/.test(pager1) && await page.$eval('.gal-pager-btn:first-child', (b) => b.disabled), pager1)
-await page.click('.gal-pager-btn:last-child')
-await page.waitForFunction(() => /2 \/ 2/.test(document.querySelector('.gal-pager-info')?.textContent || ''))
-check('点「下一页」：第 2 页 6 项；URL 带页码；下一页禁用', (await page.$$('.gal-card')).length === 6 && (await hashSection()) === 'd:room#2' && await page.$eval('.gal-pager-btn:last-child', (b) => b.disabled), await hashSection())
+const PG = '.gal-browse-pager:not(.compact)'
+const pagerState = () => page.evaluate((sel) => ({ page: document.querySelector(`${sel} .gal-pager-jump`)?.value, info: document.querySelector(`${sel} .gal-pager-info`)?.textContent, range: document.querySelector('.gal-browse-range')?.textContent || '', prevOff: document.querySelector(`${sel} .gal-pager-btn[title="上一页"]`)?.disabled, nextOff: document.querySelector(`${sel} .gal-pager-btn[title="下一页"]`)?.disabled }), PG)
+const pager1 = await pagerState()
+check('房间：每页 25，页码 1 / 2 页，共 31 项，上一页禁用', (await page.$$('.gal-card')).length === 25 && pager1.page === '1' && /2 页/.test(pager1.info) && /31/.test(pager1.range) && pager1.prevOff, JSON.stringify(pager1))
+await page.click(`${PG} .gal-pager-btn[title="下一页"]`)
+await page.waitForFunction(() => document.querySelector('.gal-browse-pager .gal-pager-jump')?.value === '2')
+const pager2 = await pagerState()
+check('点「下一页」：第 2 页 6 项；URL 带页码；下一页禁用', (await page.$$('.gal-card')).length === 6 && (await hashSection()) === 'd:room#2' && pager2.nextOff, await hashSection())
 await page.screenshot({ path: path.join(shotDir, 'browse-room2.png') })
 await page.click('.gal-card[data-title="100113027"]')
 await page.waitForSelector('.gal-player .gal-stage')
 await page.click('.gal-up')
 await page.waitForSelector('.gal-card.is-script')
-check('从第 2 页点进脚本再「列表」：回到第 2 页（不是第 1 页）', (await hashSection()) === 'd:room#2' && /2 \/ 2/.test(await page.$eval('.gal-pager-info', (e) => e.textContent)), await hashSection())
+check('从第 2 页点进脚本再「列表」：回到第 2 页（不是第 1 页）', (await hashSection()) === 'd:room#2' && (await pagerState()).page === '2', await hashSection())
 await page.goto(link('d:room')); await page.waitForSelector('.gal-browse[data-node="d:room"]')
 check('缺资源的脚本在列表里是占位缩略图；其它有图', await page.$eval('.gal-card[data-title="100101027"]  .gal-card-thumb', (e) => e.classList.contains('empty')) && !(await page.$eval('.gal-card[data-title="100113001"]  .gal-card-thumb', (e) => e.classList.contains('empty'))))
 // 头部返回：离开媒体回到媒体库
@@ -324,6 +327,101 @@ await sleep(800)
 check('D：一路点到最后一步', (await countNow()) === `${dTotal} / ${dTotal}`, await countNow())
 check('D：没有「缺少资源」（含 se/第二首 BGM）', !/缺少资源/.test((await t('.gal-note')) || ''), await t('.gal-note'))
 await page.screenshot({ path: path.join(shotDir, 'player-long.png') })
+
+// ---- 6c. 更多菜单（沉浸 / 全屏）、渲染诊断面板、rawIgnore ----
+{
+  const vis = (sel) => page.$eval(sel, (e) => !e.hidden && getComputedStyle(e).display !== 'none').catch(() => false)
+  check('播放器：沉浸 / 全屏不在工具栏外面，收在「更多」菜单里（默认收起）', !(await vis('.gal-more')) && await page.$eval('.gal-bar .gal-more-btn', (b) => b.textContent.includes('更多')) && !(await page.$('.gal-bar > .gal-imm')) && !(await page.$('.gal-bar > .gal-fs')))
+  await page.click('.gal-more-btn')
+  check('点「更多」：菜单里有「沉浸」「全屏」', (await vis('.gal-more')) && (await vis('.gal-more .gal-imm')) && (await vis('.gal-more .gal-fs')))
+  await page.click('.gal-more .gal-imm'); await sleep(400)
+  check('点「沉浸」：进入沉浸，菜单收起，按钮写「退出沉浸」且不高亮', (await page.$eval('#app', (a) => a.classList.contains('stream-immersive'))) && !(await vis('.gal-more')) && (await t('.gal-imm')) === '退出沉浸' && !(await page.$eval('.gal-imm', (b) => b.classList.contains('active'))))
+  await page.click('.gal-more-btn'); await page.click('.gal-more .gal-imm'); await sleep(400)
+  check('再从菜单点「退出沉浸」：退出', !(await page.$eval('#app', (a) => a.classList.contains('stream-immersive'))) && (await t('.gal-imm')) === '沉浸')
+  // 诊断面板：点右下角提示
+  check('提示可点击（有样式标记）', await page.$eval('.gal-note', (n) => n.classList.contains('clickable')))
+  await page.click('.gal-note')
+  check('点提示：展开诊断面板，列出未渲染的指令（指令名、数量、样例）和复制按钮', (await vis('.gal-diag')) && /spriteatlas ×\d+/.test(await t('.gal-diag-text')) && /步 \d+：spriteatlas,/.test(await t('.gal-diag-text')) && await vis('.gal-diag-copy'), (await t('.gal-diag-text')) || '')
+  await page.click('.gal-diag-copy'); await sleep(200)
+  check('「复制日志」点了不报错（按钮变「已复制」）', (await t('.gal-diag-copy')) === '已复制')
+  await page.click('.gal-diag button:has-text("关闭")')
+  check('关闭诊断面板', !(await vis('.gal-diag')))
+  // rawIgnore：node.rawIgnore 里匹配的指令不计入提示（用请求拦截把 rawIgnore 塞进节点，等价于 config.rawIgnore）
+  const ignoreAll = ['.']   // 匹配任意指令名
+  await page.route(/\/reader\/[^?]+/, async (route) => {
+    const response = await route.fetch()
+    const body = await response.json()
+    if (body?.node?.kind === 'player') body.node.rawIgnore = ignoreAll
+    await route.fulfill({ response, json: body })
+  })
+    await page.goto(link(sec('cabin/adultr/600230.txt'))); await sleep(800)
+  await page.goto(link(sec(DPATH)))
+  await page.waitForSelector('.gal-player .gal-stage'); await page.waitForFunction(() => /^1 \/ \d+/.test(document.querySelector('.gal-count')?.textContent || '')); await sleep(800)
+  const noteAfter = (await t('.gal-note')) || ''
+  const rawLeft = Number((noteAfter.match(/(\d+) 条指令暂未渲染/) || [])[1] || 0)
+  await page.click('.gal-note').catch(() => {})
+  const diagAfter = (await t('.gal-diag-text')) || ''
+  check('rawIgnore 全部命中：不再提示「N 条暂未渲染」', !/暂未渲染/.test(noteAfter) && rawLeft === 0, `${noteAfter} | ${diagAfter.slice(0, 200)}`)
+  await page.unroute(/\/reader\/[^?]+/)
+}
+
+// ---- 6d. 继续下一章 ----
+{
+  const vis = (sel) => page.$eval(sel, (e) => !e.hidden && getComputedStyle(e).display !== 'none').catch(() => false)
+  await page.goto(link(sec('cabin/adultr/600130.txt')))
+  await page.waitForSelector('.gal-player .gal-stage'); await sleep(800)
+  check('还没看到最后一步：没有「继续下一章」', !(await vis('.gal-continue')))
+  const total = Number((await countNow()).split('/')[1])
+  for (let i = 0; i < total * 3 && (await countNow()) !== `${total} / ${total}`; i++) { await page.keyboard.press('Space'); await sleep(120) }
+  await sleep(500)
+  check('看到最后一步且有下一章：出现「继续下一章 ▶」（不进沉浸也有）', await vis('.gal-continue'), `${await countNow()} chNextDisabled=${await page.$eval('.gal-ch-next', (b) => b.disabled)} hash=${await hashSection()}`)
+  await page.click('.gal-continue')
+  await page.waitForFunction(() => decodeURIComponent(location.hash).includes('600230'), null, { timeout: 6000 })
+  await page.waitForSelector('.gal-player .gal-stage'); await sleep(500)
+  check('点「继续下一章」：进入下一个脚本；它是最后一个所以不再显示按钮', (await hashSection()).includes('600230') && !(await vis('.gal-continue')))
+}
+
+// ---- 6e. 列表：筛选 / 排序 / 每页条数 / 跳页 / 返回时保留 ----
+{
+  const cards = () => page.$$eval('.gal-card', (list) => list.map((c) => c.dataset.title))
+  await page.goto(link('d:room'))
+  await page.waitForSelector('.gal-browse[data-node="d:room"]')
+  check('列表工具栏：搜索框、排序、每页条数', !!(await page.$('.gal-browse-search')) && !!(await page.$('.gal-browse-sort')) && !!(await page.$('.gal-browse-size')))
+  await page.fill('.gal-browse-search', '10011')
+  await page.waitForFunction(() => decodeURIComponent(location.hash).includes('q=10011'), null, { timeout: 5000 })
+  await page.waitForSelector('.gal-browse-range')
+  const filtered = await cards()
+  check('搜索「10011」：只剩匹配的卡片，范围提示带「筛选…N / 总数」，节点 id 带 q', filtered.length > 0 && filtered.length < 31 && filtered.every((n) => n.includes('10011')) && /筛选「10011」/.test(await t('.gal-browse-range')) && /\/ 31/.test(await t('.gal-browse-range')), `${filtered.length} ${await t('.gal-browse-range')}`)
+  check('搜索后焦点回到搜索框，可以接着输入', await page.evaluate(() => document.activeElement?.classList.contains('gal-browse-search')))
+  await page.selectOption('.gal-browse-sort', 'name_desc')
+  await page.waitForFunction(() => decodeURIComponent(location.hash).includes('s=name_desc'))
+  await page.waitForSelector('.gal-card')
+  const desc = await cards()
+  const sortedDesc = [...desc].sort((a, b) => b.localeCompare(a, 'zh-Hans-CN', { numeric: true }))
+  check('排序「名称 ↓」：卡片按名称倒序', J(desc) === J(sortedDesc), J(desc))
+  await page.click('.gal-card.is-script >> nth=0')
+  await page.waitForSelector('.gal-player .gal-stage')
+  await page.click('.gal-up')
+  await page.waitForSelector('.gal-browse-search')
+  const back = await hashSection()
+  check('从筛选后的列表点进脚本再「列表」：筛选 / 排序都还在（不是回到默认第 1 页）', /q=10011/.test(back) && /s=name_desc/.test(back) && (await page.$eval('.gal-browse-search', (i) => i.value)) === '10011', back)
+  await page.click('.gal-browse-tools button:has-text("清除筛选")')
+  await page.waitForFunction(() => !decodeURIComponent(location.hash).includes('q='))
+  await page.waitForSelector('.gal-card')
+  await page.selectOption('.gal-browse-size', '50')
+  await page.waitForFunction(() => decodeURIComponent(location.hash).includes('n=50'))
+  await page.waitForSelector('.gal-card')
+  check('每页 50：31 项一页放得下，没有翻页条', (await page.$$('.gal-card')).length === 31 && !(await page.$('.gal-browse-pager')))
+  await page.selectOption('.gal-browse-size', '25')
+  await page.waitForFunction(() => /\|/.test(decodeURIComponent(location.hash).split('section=')[1] || '') || !decodeURIComponent(location.hash).includes('n=50'))
+  await page.waitForSelector('.gal-browse-pager')
+  await page.fill('.gal-browse-pager:not(.compact) .gal-pager-jump', '2'); await page.press('.gal-browse-pager:not(.compact) .gal-pager-jump', 'Enter')
+  await page.waitForFunction(() => document.querySelector('.gal-pager-jump')?.value === '2')
+  check('跳页输入框：输入 2 回车到第 2 页', (await page.$$('.gal-card')).length > 0 && /#2$/.test(await hashSection()), await hashSection())
+  await page.click('.gal-browse-pager:not(.compact) .gal-pager-btn[title="第一页"]')
+  await page.waitForFunction(() => document.querySelector('.gal-pager-jump')?.value === '1')
+  check('「«」回第一页', (await page.$$('.gal-card')).length === 25)
+}
 check('没有页面错误', errors.length === 0, errors.join(' | '))
 
 // ---- 6c. 新功能：沉浸 / 工具栏在文本框底部 / 文本框透明度 / 自动播放等语音 ----

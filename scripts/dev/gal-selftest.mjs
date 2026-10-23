@@ -261,6 +261,10 @@ check('脚本升级重跑：config.script.version 跟着变（知道现在用的
   check('overrides：按媒体路径匹配（通配/正则），命中的叠上去；没命中的不管；封面/标题也能覆盖；状态标签变成「自定义」', ov.itemPatch.gal.config.pageSize === 10 && ov.itemPatch.gal.config.labels.cabin === '纪念馆(改)' && ov.itemPatch.gal.config.cover === 'download/bg/bg_night.jpg' && ov.itemPatch.title === '覆盖后的标题' && ov.itemTags[0] === 'Gal配置: 自定义', J(ov.itemPatch))
   const ovr = await runScript(M2, { overrides: [{ path: '/deeponecgv$/', config: { pageSize: 7 } }] })
   check('overrides 的 path 也可以写成 /正则/', ovr.itemPatch.gal.config.pageSize === 7)
+  const rawOpt = await runScript(M2, { rawIgnore: ['^spine$', '(', 'anm,tint'] })
+  const rawOvr = await runScript(M2, { rawIgnore: ['^spine$'], overrides: [{ path: '*deeponecgv', config: { rawIgnore: ['^mask$'] } }] })
+  const rawNone = await runScript(M2)
+  check('gal-layout 的 rawIgnore 选项：非法正则丢掉，写进 config；overrides 里的 config.rawIgnore 覆盖全局值；不配就不写这个字段', J(rawOpt.itemPatch.gal.config.rawIgnore) === J(['^spine$', 'anm,tint']) && J(rawOvr.itemPatch.gal.config.rawIgnore) === J(['^mask$']) && rawNone.itemPatch.gal.config.rawIgnore === undefined, J([rawOpt.itemPatch.gal.config.rawIgnore, rawOvr.itemPatch.gal.config.rawIgnore, rawNone.itemPatch.gal.config.rawIgnore]))
   const dryOut = await runScript({ ...M2, tags: ['Gal配置: uviewer', '别的标签'] }, { dryRun: true })
   check('dryRun：不写任何东西（不返回补丁），已有的本脚本标签原样保留', !dryOut.itemPatch && J(dryOut.itemTags) === J(['Gal配置: uviewer']))
   const missing = await runScript({ source: { path: path.join(work, 'nowhere') }, tags: [] })
@@ -296,6 +300,41 @@ check('只有一层的混合（目录在前、脚本在后）也能列：event/2
 const room1 = await nodeOf('d:room'), room2 = await nodeOf('d:room#2')
 check('房间：31 个脚本，每页 25，第 2 页 6 个，页码/页数/总数；#99 夹到最后页、#0 夹到第 1 页', room1.items.length === 25 && room1.pageCount === 2 && room1.total === 31 && room2.items.length === 6 && room2.page === 2 && room2.id === 'd:room#2' && (await nodeOf('d:room#99')).page === 2 && (await nodeOf('d:room#0')).page === 1, J([room1.items.length, room2.items.length]))
 check('缺资源的脚本在卡片上缩略图为空（不报错）', room1.items.concat(room2.items).find((i) => i.title === '100101027').thumb === '')
+// ---- 列表视图：筛选 / 排序 / 每页条数（参数在节点 id 里：`<基础 id>|q=…&s=…&n=…#页码`）----
+{
+  const q1 = await nodeOf('d:room|q=100101027')
+  check('筛选：q 命中名称的子串；总数是筛选后的、unfiltered 是筛选前的；节点 id 带视图参数；viewBase 是不带参数的基础 id', q1.total === 1 && q1.items[0].title === '100101027' && q1.id === 'd:room|q=100101027' && q1.view.q === '100101027' && q1.view.unfiltered === 31 && q1.viewBase === 'd:room', J([q1.total, q1.id, q1.view, q1.viewBase]))
+  check('筛选：中文文件名子串', (await nodeOf('d:room|q=超长')).total === 1)
+  const none = await nodeOf('d:room|q=不存在的东西#3')
+  check('筛选无结果：空列表、总数 0、页码夹到 1、没有翻页', none.items.length === 0 && none.total === 0 && none.page === 1 && none.pageCount === 1 && none.view.unfiltered === 31, J([none.total, none.page]))
+  const ch = await nodeOf('d:character|q=卡蒂')
+  check('筛选目录卡片：按显示名（名称文件里的「卡蒂娅」）和目录名（1003）都能筛', ch.total === 1 && ch.items[0].title === '卡蒂娅' && (await nodeOf('d:character|q=1003')).total === 1)
+  const full = (await nodeOf('d:room')).items.map((i) => i.title)
+  const size50 = await nodeOf('d:room|n=50')
+  check('每页条数：n=50 → 31 个一页放下；节点 id 带 n；view.size / pageSize 是 50；可选项里有 25/50/100/200/500', size50.items.length === 31 && size50.pageCount === 1 && size50.id === 'd:room|n=50' && size50.view.size === 50 && size50.pageSize === 50 && J(size50.view.sizes) === J([25, 50, 100, 200, 500]), J([size50.items.length, size50.id, size50.view]))
+  check('每页条数：不在可选项里的值（n=999）忽略，用默认（25）；视图参数里的垃圾也忽略', (await nodeOf('d:room|n=999')).items.length === 25 && (await nodeOf('d:room|n=999')).id === 'd:room' && (await nodeOf('d:room|zzz=1&s=乱写')).items.length === 25)
+  const asc = await nodeOf('d:character|s=name')
+  const desc = await nodeOf('d:character|s=name_desc')
+  const def = await nodeOf('d:character')
+  check('排序：名称 ↑ / 名称 ↓ 按显示名自然序，互为倒序；默认保持「目录在前、目录里按名字」', J(asc.items.map((i) => i.title)) === J([...desc.items.map((i) => i.title)].reverse()) && asc.items.length === def.items.length && asc.id === 'd:character|s=name' && desc.view.sort === 'name_desc', J([asc.items.map((i) => i.title), desc.items.map((i) => i.title)]))
+  const mixed = await nodeOf('d:event/20023|s=name_desc')
+  check('名称排序不分目录 / 脚本（混排）；默认排序目录在前', mixed.items.length === 3 && J(mixed.items.map((i) => i.title)) === J([...mixed.items.map((i) => i.title)].sort((a, b) => b.localeCompare(a, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' }))))
+  const paged = await nodeOf('d:room|n=25#2')
+  check('视图参数和页码一起：d:room|n=25#2 第 2 页 6 个，id 原样保留参数', paged.items.length === 6 && paged.page === 2 && paged.id === 'd:room|n=25#2' && paged.viewBase === 'd:room')
+  const filteredPaged = await nodeOf('d:room|q=100101#2')
+  check('筛选后再翻页：页数按筛选后的总数算', filteredPaged.total === (await nodeOf('d:room|q=100101')).total && filteredPaged.page === 1, J([filteredPaged.total, filteredPaged.page]))
+  const root = await nodeOf('|q=纪念')
+  check('首页也能带视图参数：|q=纪念 只剩「纪念馆」；id 里的参数是 URL 编码的', root.total === 1 && root.items[0].title === '纪念馆' && decodeURIComponent(root.id) === '|q=纪念' && root.viewBase === '', J([root.total, root.id, root.viewBase]))
+  const script = await read('s:room/100101027.txt|q=abc&n=50')
+  check('脚本节点不带视图参数（进度按它的 id 记）：带了也忽略，节点 id 还是 s:…', script.node.kind === 'player' && script.node.id === 's:room/100101027.txt')
+  check('播放节点带 rawIgnore（默认空数组，给播放器过滤「未渲染」提示用）', Array.isArray(script.node.rawIgnore) && script.node.rawIgnore.length === 0)
+  check('视图参数里的筛选词有长度上限（100 字）；乱码 % 不崩', (await nodeOf(`d:room|q=${'x'.repeat(300)}`)).view.q.length === 100 && (await nodeOf('d:room|q=%E0%A4%A')).total >= 0)
+  check('返回上一层（parent）不带视图参数（由前端按走过的路还原），页码还是按默认视图算', (await read('s:room/100113001.txt')).node.parent === 'd:room')
+  // 视图参数不影响 id 的互相对应：列表里每张卡片的 node 点进去都能取到
+  const cardsOk = []
+  for (const card of (await nodeOf('d:character|s=name_desc')).items) cardsOk.push((await nodeOf(card.node)).title === card.title)
+  check('筛选 / 排序后的列表：每张卡片的 node 都能打开，标题对得上', cardsOk.length > 0 && cardsOk.every(Boolean))
+}
 const trailing = room1.items.concat(room2.items).find((i) => i.title.startsWith('超长文件名'))
 check('超长文件名：标题完整保留', trailing && trailing.title.length > 60)
 const vid = await read('s:character/1003/adultr/100300.txt')
@@ -443,6 +482,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   // 导入：adapter id、路径、game.id 都是用户输入
   const imp = await handler.importFromSource({ sourcePath: mm, options: { adapters: ['renpy-monmusu'], config: { game: { id: 'monmusu', title: 'Mon Test' } }, defaultMetadataActions: ['gal-layout'] } })
   const item0 = imp.items[0]
+  check('导入 monmusu：不再提示「默认脚本根（UViewer 的 resources/…）不存在」（它的脚本根由 gal-layout 写，提示只会误导）', imp.report.warnings.length === 0, J(imp.report.warnings))
   check('导入：adapters / config.game 由导入参数写入；别的字段不存、不扫描', J(item0.adapters) === J(['renpy-monmusu']) && J(item0.config) === J({ game: { id: 'monmusu', title: 'Mon Test' } }), J(item0.config))
   check('config.game.id 不合法（空格/空）= 没有 game；adapterOptions 只收对象、过大的丢弃；groups 的 pattern 必须有捕获组、必须是合法正则', normalizeGalConfig({ game: { id: 'a b' } }).game === null && normalizeGalConfig({ game: {} }).game === null && J(normalizeGalConfig({ adapterOptions: { 'renpy-monmusu': { a: 1 }, bad: 5, 'X Y': {}, big: { s: 'x'.repeat(9000) } } }).adapterOptions) === J({ 'renpy-monmusu': { a: 1 } }) && J(normalizeGalConfig({ groups: [{ parent: '.', pattern: '^\\d+' }, { parent: '.', pattern: '(' }, { parent: '.', pattern: '^(\\d{5})' }, { parent: '..', pattern: '(a)' }] }).groups) === J([{ parent: '.', pattern: '^(\\d{5})' }]))
 
@@ -539,6 +579,9 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const { imported } = await buildTenkeiFixture(tk)
   const imp = await handler.importFromSource({ sourcePath: tk, options: { adapters: ['tenkeiprdx-json'], config: { game: { id: 'tenkeiprdx' } }, defaultMetadataActions: ['gal-layout'] } })
   const item0 = imp.items[0]
+  check('导入 tenkeiprdx：同样不提示 UViewer 的脚本根不存在；导入前后实际能浏览（脚本一跑就对）', imp.report.warnings.length === 0, J(imp.report.warnings))
+  const explicit = await handler.importFromSource({ sourcePath: tk, options: { dryRun: true, adapters: ['tenkeiprdx-json'], config: { scriptRoots: [{ id: 's', dir: 'nope/scenes' }] } } })
+  check('配置里写了脚本根但目录不存在：照样提示（这是真问题）', explicit.report.warnings.length === 1 && /nope\/scenes/.test(explicit.report.warnings[0]), J(explicit.report.warnings))
   const autoTk = await galLayoutScript({ item: { ...item0, config: {} }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
   const autoUv = await galLayoutScript({ item: { ...M2, config: {} }, script: { id: 'gal-layout', version: '2.0.0', options: {} } })
   const emptyDir = path.join(work, 'empty-dir')
@@ -586,6 +629,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   }
   check('资源：骨骼 / atlas / 图集 png / ogg 都能取；目录穿越被拒', (await handler.getResource(it.itemId, 'Spines/1001/1001_01.skel.bytes')).body.length > 20 && (await handler.getResource(it.itemId, 'Spines/1001/1001_01.atlas.txt')).body.toString().includes('size: 64,128') && (await handler.getResource(it.itemId, 'Spines/1001/1001_01.png')).contentType === 'image/png' && (await handler.getResource(it.itemId, 'AdventureVoice/10010101/v002.ogg')).contentType === 'audio/ogg' && Boolean(await err(handler.getResource(it.itemId, '../x'))) && (await handler.getThumbnail(it.itemId)).contentType === 'image/png')
   check('config.scriptIndex 规整：目录必须安全、pattern 必须是合法正则、key 默认 {1}', J(normalizeGalConfig({ scriptIndex: [{ dir: 'a/b', pattern: '^x(\\d)' }, { dir: '../a', pattern: 'x' }, { dir: 'a', pattern: '(' }, { dir: '', pattern: 'x' }] }).scriptIndex) === J([{ dir: 'a/b', pattern: '^x(\\d)', key: '{1}', badge: '' }]))
+  check('config.rawIgnore 规整：非法正则 / 空串 / 重复丢掉，最多 50 条；补丁能写能清', J(normalizeGalConfig({ rawIgnore: ['^spine$', '(', '', '^spine$', 'anm,.*'] }).rawIgnore) === J(['^spine$', 'anm,.*']) && normalizeGalConfig({ rawIgnore: Array.from({ length: 80 }, (_, k) => `x${k}`) }).rawIgnore.length === 50 && J(applyGalConfigPatch({}, { rawIgnore: ['a'] }).rawIgnore) === J(['a']) && applyGalConfigPatch({ rawIgnore: ['a'] }, { rawIgnore: null }).rawIgnore === undefined && J(normalizeGalConfig({}).rawIgnore) === '[]')
   void imported
 }
 

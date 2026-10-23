@@ -72,7 +72,26 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const hasSteps = scene.steps.length > 0
   const base = reader.resourceBase
   const url = (src) => assetUrl(base, src)
-  const rawIgnored = Object.values(scene.stats?.raw || {}).reduce((a, b) => a + b, 0)
+  // 暂未渲染的指令：按指令名汇总（数量、样例参数）；config.rawIgnore（node.rawIgnore，正则列表）里匹配的算「已允许」，不计入提示
+  const rawAllow = (Array.isArray(reader.node?.rawIgnore) ? reader.node.rawIgnore : []).map((source) => { try { return new RegExp(source, 'i') } catch { return null } }).filter(Boolean)
+  const rawGroups = new Map()   // cmd -> { cmd, count, allowed, samples: [{ step, args }] }
+  const rawKey = (cmd, args) => `${cmd}${(Array.isArray(args) ? args : args == null ? [] : [args]).map((a) => `,${a}`).join('')}`
+  for (const step of scene.steps) {
+    for (const command of step.commands || []) {
+      if (command?.op !== 'raw') continue
+      const group = rawGroups.get(command.cmd) || { cmd: command.cmd, count: 0, allowed: 0, samples: [] }
+      group.count += 1
+      const key = rawKey(command.cmd, command.args)
+      if (rawAllow.some((re) => re.test(command.cmd) || re.test(key))) group.allowed += 1
+      else if (group.samples.length < 3) group.samples.push({ step: step.index, args: key })
+      rawGroups.set(command.cmd, group)
+    }
+  }
+  if (!rawGroups.size) {   // 没扫到（指令藏在别处）：退回适配器的统计，只能按指令名判断
+    for (const [cmd, count] of Object.entries(scene.stats?.raw || {})) rawGroups.set(cmd, { cmd, count, allowed: rawAllow.some((re) => re.test(cmd)) ? count : 0, samples: [] })
+  }
+  const rawTotal = [...rawGroups.values()].reduce((sum, g) => sum + g.count, 0)
+  const rawIgnored = [...rawGroups.values()].reduce((sum, g) => sum + g.count - g.allowed, 0)
   const missing = new Set()
 
   // ---------- DOM ----------
@@ -111,11 +130,19 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const cfgBtn = btn('⚙', '设置：字体大小、文本框透明度、音量、自动播放、自动选择', 'gal-cfg')
   const chPrevBtn = btn('上话', '上一话', 'gal-ch-prev gal-imm-only')
   const chNextBtn = btn('下话', '下一话', 'gal-ch-next gal-imm-only')
+  const contBtn = btn('继续下一章 ▶', '这一章看完了，继续下一章', 'gal-continue')
+  contBtn.hidden = true
+  const moreBtn = btn('更多 ▾', '沉浸 / 全屏', 'gal-more-btn')
   const immBtn = btn('沉浸', '沉浸模式（I）', 'gal-imm')
   const fsBtn = btn('全屏', '全屏（F）', 'gal-fs')
+  const moreMenu = el('div', 'gal-more')
+  moreMenu.hidden = true
+  moreMenu.append(immBtn, fsBtn)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const note = el('span', 'muted gal-note', '')
-  bar.append(upBtn, prevBtn, count, nextBtn, autoBtn, autoSelBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, immBtn, fsBtn, backBtn, note)
+  note.setAttribute('role', 'button')
+  note.tabIndex = 0
+  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, moreBtn, backBtn, note)
 
   // 设置弹层：文本框透明度 / 音量 / 自动播放等待时间
   const settings = el('div', 'gal-settings')
@@ -151,14 +178,16 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     row('自动：语音播完后等', delayInput, delayUnit),
     row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput),
   )
-  hud.append(box, bar, settings)
+  hud.append(box, bar, settings, moreMenu)
   world.append(...layers, movie)
   stage.append(world, black, flashEl, hud)
   const logPanel = el('div', 'gal-log')
   logPanel.hidden = true
   const choiceBox = el('div', 'gal-choices')   // 选项：画面正中，竖排
   choiceBox.hidden = true
-  stage.append(logPanel, choiceBox)
+  const diagPanel = el('div', 'gal-log gal-diag')   // 点右下角提示展开：未渲染的指令 / 缺资源 / Spine 状态，可复制
+  diagPanel.hidden = true
+  stage.append(logPanel, diagPanel, choiceBox)
   root.append(stage)
   container.replaceChildren(root)
   if (!hasSteps) stage.append(empty)
@@ -504,6 +533,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     const pos = posNow()
     count.textContent = path.length ? `${Math.max(0, pos) + 1} / ${path.length}` : '0 / 0'
     prevBtn.disabled = pos <= 0
+    updateContinue()
     nextBtn.disabled = !path.length || (pos >= path.length - 1 && !running)
     if (!logPanel.hidden) renderLog()
   }
@@ -513,8 +543,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (spineUnavailable) parts.push('Spine 运行时缺失：立绘/动画未渲染')
     if (missing.size) parts.push(`缺少资源 ${missing.size} 个`)
     note.textContent = parts.join(' · ')
-    note.title = [...missing].slice(0, 30).join('\n')
+    note.title = parts.length ? '点击查看详情 / 复制日志' : ''
+    note.classList.toggle('clickable', parts.length > 0)
+    if (!diagPanel.hidden) renderDiag()
     cfgBtn.classList.toggle('warn', missing.size > 0)   // 工具栏很小，缺资源时在 ⚙ 上点个红点，别被忽略
+  }
+  // 看到这一章最后一句且有下一章：工具栏出现「继续下一章」（不管沉浸与否）
+  function updateContinue() {
+    contBtn.hidden = !(chapter?.canNext?.() && path.length && posNow() >= path.length - 1)
   }
   function updateChapterButtons() {
     chPrevBtn.disabled = !(chapter?.canPrev?.())
@@ -523,17 +559,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     backBtn.hidden = !chapter
     upBtn.hidden = !chapter?.up
     immBtn.hidden = !onToggleImmersive
+    updateContinue()
   }
   function setImmersive(active) {
     root.classList.toggle('is-immersive', Boolean(active))
     immBtn.textContent = active ? '退出沉浸' : '沉浸'
-    immBtn.classList.toggle('active', Boolean(active))
     updateChapterButtons()
   }
   function afterStep() {
     updateCount()
     updateNote()
     marker.hidden = posNow() >= path.length - 1
+    updateContinue()
     scheduleAuto()
   }
 
@@ -654,6 +691,51 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     }
     logPanel.scrollTop = logPanel.scrollHeight
   }
+  // 诊断文本：面板里显示的就是它，「复制日志」复制的也是它
+  function diagText() {
+    const lines = [`脚本：${reader.node?.title || ''}（${reader.node?.id || ''}）`, `适配器：${scene.adapter || ''}，${scene.steps.length} 步`]
+    lines.push(`未渲染指令：共 ${rawTotal} 条，其中 ${rawTotal - rawIgnored} 条已被 rawIgnore 允许，${rawIgnored} 条计入提示`)
+    for (const g of [...rawGroups.values()].sort((a, b) => b.count - a.count)) {
+      lines.push(`  ${g.cmd} ×${g.count}${g.allowed ? `（允许 ${g.allowed}）` : ''}`)
+      for (const sample of g.samples) lines.push(`    步 ${sample.step}：${sample.args}`)
+    }
+    if (rawAllow.length) lines.push(`rawIgnore：${(reader.node.rawIgnore || []).join('  |  ')}`)
+    if (spineUnavailable) lines.push('Spine 运行时缺失：立绘/动画未渲染')
+    if (missing.size) { lines.push(`缺少资源 ${missing.size} 个：`); for (const src of [...missing].slice(0, 100)) lines.push(`  ${src}`) }
+    return lines.join('\n')
+  }
+  function renderDiag() {
+    diagPanel.replaceChildren()
+    const head = el('div', 'gal-diag-head')
+    const copyBtn = el('button', 'gal-btn gal-diag-copy', '复制日志')
+    copyBtn.type = 'button'
+    copyBtn.addEventListener('click', async () => {
+      const text = diagText()
+      try { await navigator.clipboard.writeText(text) } catch {
+        const area = el('textarea')
+        area.value = text
+        area.style.cssText = 'position:fixed;opacity:0'
+        document.body.append(area)
+        area.select()
+        try { document.execCommand('copy') } catch { /* 剪贴板不可用：面板里的文字还能手动选 */ }
+        area.remove()
+      }
+      copyBtn.textContent = '已复制'
+      setTimeout(() => { copyBtn.textContent = '复制日志' }, 1500)
+    })
+    const closeBtn = el('button', 'gal-btn', '关闭')
+    closeBtn.type = 'button'
+    closeBtn.addEventListener('click', () => { diagPanel.hidden = true })
+    head.append(el('strong', '', '渲染诊断'), copyBtn, closeBtn)
+    const pre = el('pre', 'gal-diag-text', diagText())
+    diagPanel.append(head, pre)
+  }
+  function toggleDiag() {
+    if (!note.classList.contains('clickable') && diagPanel.hidden) return
+    diagPanel.hidden = !diagPanel.hidden
+    if (!diagPanel.hidden) { logPanel.hidden = true; renderDiag() }
+  }
+  const toggleMore = (open = moreMenu.hidden) => { moreMenu.hidden = !open }
   function toggleLog() {
     logPanel.hidden = !logPanel.hidden
     if (!logPanel.hidden) renderLog()
@@ -672,19 +754,25 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   stage.addEventListener('click', () => {
     if (choiceState) return
     if (!settings.hidden) { toggleSettings(false); return }
+    if (!moreMenu.hidden) { toggleMore(false); return }
+    if (!diagPanel.hidden) { diagPanel.hidden = true; return }
     logPanel.hidden = true
     next()
   })
   // 工具栏和设置弹层上的点击不能冒泡到舞台（否则点个按钮就翻页）
   // 记录面板也在舞台里：点记录里的一行（跳转）不能顺带触发舞台的「下一句」
-  for (const part of [bar, settings, logPanel, choiceBox]) part.addEventListener('click', (event) => event.stopPropagation())
+  for (const part of [bar, settings, moreMenu, logPanel, diagPanel, choiceBox]) part.addEventListener('click', (event) => event.stopPropagation())
   nextBtn.addEventListener('click', next)
   prevBtn.addEventListener('click', prev)
   autoBtn.addEventListener('click', toggleAuto)
   logBtn.addEventListener('click', toggleLog)
   cfgBtn.addEventListener('click', () => toggleSettings())
-  fsBtn.addEventListener('click', toggleFullscreen)
-  immBtn.addEventListener('click', () => onToggleImmersive?.())
+  fsBtn.addEventListener('click', () => { toggleMore(false); toggleFullscreen() })
+  immBtn.addEventListener('click', () => { toggleMore(false); onToggleImmersive?.() })
+  moreBtn.addEventListener('click', () => toggleMore())
+  contBtn.addEventListener('click', () => chapter?.next?.())
+  note.addEventListener('click', toggleDiag)
+  note.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); toggleDiag() } })
   chPrevBtn.addEventListener('click', () => chapter?.prev?.())
   chNextBtn.addEventListener('click', () => chapter?.next?.())
   backBtn.addEventListener('click', () => chapter?.back?.())
@@ -750,6 +838,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     else if (key === 'Escape') {
       // 先收面板；都没开才交给页面（退出沉浸）。全屏下的 Esc 浏览器自己会退全屏，不会到这里
       if (!settings.hidden) toggleSettings(false)
+      else if (!moreMenu.hidden) toggleMore(false)
+      else if (!diagPanel.hidden) diagPanel.hidden = true
       else if (!logPanel.hidden) logPanel.hidden = true
       else if (onEscape) onEscape()
       else return
