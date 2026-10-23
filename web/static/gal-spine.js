@@ -26,6 +26,27 @@ const ACTIONS = {
 }
 const ACTION_SECONDS = { 1: 0.4, 2: 0.3, 3: 1.3 }
 
+// 选动画：指定的有就用；没有（名字对不上）→ 站位立绘退到 idle_normal → 名字以 idle 开头的 → 名字里带 idle 的 → 第一个。
+// 对不上名字又什么都不播的话，骨架停在「初始姿势」——通常是各个部件散开的样子，看起来完全不是人
+export function pickSpineAnimation(data, wanted, kind) {
+  const names = (data.animations || []).map((animation) => animation.name)
+  if (wanted && data.findAnimation(wanted)) return wanted
+  if (kind === 'chara') {
+    if (data.findAnimation('idle_normal')) return 'idle_normal'
+    const idle = names.find((name) => /^idle/i.test(name)) || names.find((name) => /idle/i.test(name))
+    if (idle) return idle
+  }
+  return names[0] || ''
+}
+
+// 皮肤：默认皮肤里一个附件都没有、却有别的皮肤（有的骨架把整套造型放在命名皮肤里）→ 用第一个有内容的命名皮肤，否则初始姿势下什么都画不出来
+const skinSize = (skin) => (skin?.attachments || []).reduce((sum, bucket) => sum + Object.keys(bucket || {}).length, 0)
+export function pickSpineSkin(data) {
+  const skins = data.skins || []
+  if (skinSize(data.defaultSkin) > 0 || skins.length < 2) return null
+  return skins.find((skin) => skin !== data.defaultSkin && skinSize(skin) > 0) || null
+}
+
 // 一个骨架数据只加载一次（按 skel 路径缓存）。onMissing(src)：文件取不到
 export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavailable = () => {} }) {
   const canvas = document.createElement('canvas')
@@ -106,9 +127,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   }
 
   function pickAnimation(data, wanted, kind) {
-    if (wanted && data.findAnimation(wanted)) return wanted
-    if (kind === 'chara') return data.findAnimation('idle_normal') ? 'idle_normal' : data.animations[0]?.name || ''
-    return data.animations[0]?.name || ''
+    return pickSpineAnimation(data, wanted, kind)
   }
 
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
@@ -136,13 +155,15 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const current = instances.get(slot)
       if (!current || current.token !== token) return   // 已经被新的指令取代
       const skeleton = new spine.Skeleton(loaded.data)
+      const skin = pickSpineSkin(loaded.data)
+      if (skin) skeleton.setSkin(skin)
       skeleton.setToSetupPose()
       skeleton.updateWorldTransform()
       const offset = new spine.Vector2()
       const size = new spine.Vector2()
       skeleton.getBounds(offset, size, [])
       const state = new spine.AnimationState(new spine.AnimationStateData(loaded.data))
-      Object.assign(current, { data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
+      Object.assign(current, { skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
       applySpec(current, spec, live)
       state.update(0)
       state.apply(skeleton)
@@ -231,6 +252,14 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     set,
     ready,
     setPaused(value) { paused = Boolean(value); if (paused) { cancelAnimationFrame(raf); raf = 0; last = 0 } else kick() },
+    // 每个站位 / 静图的骨架信息（诊断面板用）：路径、要的动画 / 实际播的动画、骨架里有哪些动画和皮肤、边界、版本
+    info: () => [...instances].map(([slot, inst]) => ({
+      slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
+      requested: inst.spec.anim || '', used: inst.anim || '', loaded: Boolean(inst.skeleton),
+      animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
+      skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
+      version: inst.data?.version || '', bounds: inst.bounds ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,
+    })),
     // 已经加载好的骨架数（测试 / 提示用）
     loadedCount: () => [...instances.values()].filter((inst) => inst.skeleton).length,
     destroy() {

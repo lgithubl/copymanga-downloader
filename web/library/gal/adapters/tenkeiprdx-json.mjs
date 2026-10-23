@@ -33,7 +33,8 @@ export function sniff(text) {
 // 数组形 → 对象形（之后复用同一套解析）。位置来自样本对照：
 //   场景  [0] 场景 id  [4] 帧数组
 //   帧    [3] backgroundImage  [10] speakerName  [12] phraseContents  [27] backgroundMusic  [29] phraseVoice  [31] adventureCharacters
-//   角色  [0] characterMasterId  [1] characterPosition  [2] characterAppearance  [3] characterFacialExpression  [4] characterAction（后四项是按样本值猜的，stats.arrayGuess 里标明）
+//   角色  [0] characterMasterId  [1] characterAppearance  [2] characterPosition  [3] characterAction  [4] characterEmotionIcon  [5] characterFacialExpression
+//         （顺序 = 对象形里这几个键的声明顺序，样本里 [3] 在有语音的那句从 0 变成 4（像是说话动作）、[5] 恒为 2；没有对照样本，stats.arrayGuess 里标明）
 // 其余位置没有样本：字符串值按内容认——名字是 Stills 目录里的 → still；animationN → stillAnimation（认不出的记在 stats.arrayUnknown）
 const ARRAY_KNOWN = new Set([0, 3, 10, 12, 27, 29, 30, 31])
 function arrayFrameToObject(frame, ctx) {
@@ -41,7 +42,7 @@ function arrayFrameToObject(frame, ctx) {
   const out = {
     backgroundImage: at(3), speakerName: at(10), phraseContents: at(12), backgroundMusic: at(27), phraseVoice: at(29),
     adventureCharacters: Array.isArray(frame[31]) ? frame[31].map((c) => (Array.isArray(c)
-      ? { characterMasterId: c[0], characterPosition: c[1], characterAppearance: c[2], characterFacialExpression: c[3], characterAction: c[4] }
+      ? { characterMasterId: c[0], characterAppearance: c[1], characterPosition: c[2], characterAction: c[3], characterEmotionIcon: c[4], characterFacialExpression: c[5] }
       : null)).filter(Boolean) : null,
   }
   const unknown = []
@@ -224,7 +225,7 @@ export function parse(text, ctx = null, meta = {}) {
   }
   const positionX = { ...DEFAULT_POSITION_X, ...(ctx?.positionX || {}) }
   const stats = { frames: frames.length, commands: 0, raw: {}, unresolved: {}, frameEffects: {}, spines: 0 }
-  if (arrayForm) { stats.form = 'array'; stats.arrayGuess = '角色项的站位 / 外观 / 表情 / 动作位置是按样本猜的'; if (Object.keys(arrayForm.unknown).length) stats.arrayUnknown = arrayForm.unknown }
+  if (arrayForm) { stats.form = 'array'; stats.arrayGuess = '角色项各位置（外观 [1] / 站位 [2] / 动作 [3] / 表情图标 [4] / 表情 [5]）是按对象形的键顺序推的，没有对照样本'; if (Object.keys(arrayForm.unknown).length) stats.arrayUnknown = arrayForm.unknown }
   const miss = (kind, name) => { const key = `${kind}:${name}`; stats.unresolved[key] = (stats.unresolved[key] || 0) + 1 }
 
   const username = ctx?.username || str(ctx?.unknownName) || '플레이어'

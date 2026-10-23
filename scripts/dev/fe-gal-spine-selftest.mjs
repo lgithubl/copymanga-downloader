@@ -92,6 +92,32 @@ check('第 1 句：站位 1（左 0.3）画出了二进制骨骼的立绘（颜�
 check('第 1 句：表情 1 → idle_joy；canvas 在背景之上、不挡点击', J(await spines()) === J({ Chara1: 'idle_joy' }) && (await page.$eval('.gal-spine', (c) => getComputedStyle(c).pointerEvents)) === 'none')
 check('台词/说话人正常', (await page.$eval('.gal-text', (e) => e.textContent)) === 'Hello there' && (await page.$eval('.gal-name', (e) => e.textContent)) === 'Alice')
 await page.screenshot({ path: path.join(shotDir, '1-chara.png') })
+// 诊断面板：骨骼明细（路径、要的 / 实际的动画、骨架里有哪些动画和皮肤），名字对不上时看得出来
+await page.waitForFunction(() => /骨骼 \d+ 个|暂未渲染/.test(document.querySelector('.gal-note')?.textContent || ''), null, { timeout: 5000 }).catch(() => {})
+await page.click('.gal-note')
+const diag = await page.$eval('.gal-diag-text', (e) => e.textContent)
+check('诊断面板列出 Spine 骨架明细：骨架路径、要的 → 实际动画、动画列表、皮肤、版本', /Spine 骨架 \d+ 个/.test(diag) && /Spines\/1001\/1001_01\.skel\.bytes/.test(diag) && /动画：要 idle_joy → 实际 idle_joy/.test(diag) && /骨架里的动画/.test(diag) && /皮肤：/.test(diag), diag.slice(0, 500))
+await page.click('.gal-diag button:has-text("关闭")')
+// 动画名对不上时：退到 idle*，再退到第一个（不能停在「初始姿势」——部件散开，看起来不是人）；默认皮肤是空的就改用有内容的皮肤
+const picks = await page.evaluate(async () => {
+  const { pickSpineAnimation, pickSpineSkin } = await import('/gal-spine.js')
+  const data = (names) => ({ animations: names.map((name) => ({ name })), findAnimation: (n) => names.includes(n) ? { name: n } : null })
+  const skin = (n, count) => ({ name: n, attachments: count ? [{ a: 1 }] : [{}] })
+  const empty = skin('default', 0); const full = skin('costume', 1)
+  return [
+    pickSpineAnimation(data(['idle_normal', 'idle_joy']), 'idle_joy', 'chara'),
+    pickSpineAnimation(data(['idle_normal', 'idle_joy']), 'idle_unknown', 'chara'),
+    pickSpineAnimation(data(['Idle', 'talk']), 'idle_joy', 'chara'),
+    pickSpineAnimation(data(['stand_idle_01', 'talk']), 'idle_joy', 'chara'),
+    pickSpineAnimation(data(['talk', 'wave']), 'idle_joy', 'chara'),
+    pickSpineAnimation(data(['animation1', 'animation2']), 'animation9', 'still'),
+    pickSpineAnimation(data([]), 'x', 'chara'),
+    pickSpineSkin({ defaultSkin: empty, skins: [empty, full] })?.name || null,
+    pickSpineSkin({ defaultSkin: full, skins: [full, empty] })?.name || null,
+    pickSpineSkin({ defaultSkin: empty, skins: [empty] })?.name || null,
+  ]
+})
+check('选动画 / 皮肤的兜底：指定的有就用；没有 → idle_normal → idle* → 名字里带 idle → 第一个；默认皮肤为空才换皮肤', J(picks) === J(['idle_joy', 'idle_normal', 'Idle', 'stand_idle_01', 'talk', 'animation1', '', 'costume', null, null]), J(picks))
 
 await page.keyboard.press('Space')
 await waitCount('2 / 4')

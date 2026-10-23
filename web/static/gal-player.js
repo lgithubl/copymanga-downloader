@@ -124,8 +124,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const upBtn = btn('↑ 列表', '回到上一级列表（选其它脚本）', 'gal-up')
   const prevBtn = btn('◀ 上一句', '上一句（← / Backspace）', 'gal-prev')
   const count = el('span', 'gal-count', '')
-  const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →）', 'gal-next-btn')
-  const autoBtn = btn('自动', '自动播放（A）', 'gal-auto')
+  const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →；按住 Ctrl 快进）', 'gal-next-btn')
+  const autoBtn = btn('自动', '自动播放（A / 单按 Alt）', 'gal-auto')
   const logBtn = btn('记录', '台词记录（L）', 'gal-log-btn')
   const autoSelBtn = btn('自选', '自动选择选项开关（具体选第几个在 ⚙ 里设置）', 'gal-autosel')
   const cfgBtn = btn('⚙', '设置：字体大小、文本框透明度、音量、自动播放、自动选择', 'gal-cfg')
@@ -192,7 +192,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const diagPanel = el('div', 'gal-log gal-diag')   // 点右下角提示展开：未渲染的指令 / 缺资源 / Spine 状态，可复制
   diagPanel.hidden = true
   stage.append(logPanel, diagPanel, choiceBox)
-  root.append(stage, barWrap)
+  // 舞台外面包一层：沉浸 / 全屏时靠它按「去掉底栏后剩下的高度」定舞台大小（舞台 16:9，宽高都不超过这一层），底栏永远不会被挤出屏幕
+  const stageArea = el('div', 'gal-stage-area')
+  stageArea.append(stage)
+  root.append(stageArea, barWrap)
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => root.style.setProperty('--gal-bar-h', `${Math.ceil(barWrap.getBoundingClientRect().height)}px`)).observe(barWrap)
   container.replaceChildren(root)
   if (!hasSteps) stage.append(empty)
 
@@ -375,7 +379,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: () => { spineUnavailable = true; updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
-    spineLayer.set(state.spines, { live })
+    spineLayer.set(state.spines, { live }).then(() => { if (!destroyed) updateNote() })
   }
   // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   let standLayer = null
@@ -440,7 +444,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // 前进一步：指令按顺序执行，渐变/黑场/wait 会等够时间；点击（skipping）则直接跳到这一步结束
   async function runStep(i) {
     running = true
-    skipping = false
+    skipping = fast   // 快进时每一步都按「已点击跳过」处理：渐变 / 等待 / 语音 / 音效都跳过
     const mine = ++gen
     stopAuto()
     cancelChoice()
@@ -558,6 +562,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (rawIgnored) parts.push(`立绘/特效等 ${rawIgnored} 条指令暂未渲染`)
     if (spineUnavailable) parts.push('Spine 运行时缺失：立绘/动画未渲染')
     if (missing.size) parts.push(`缺少资源 ${missing.size} 个`)
+    if (!parts.length && spineLayer?.info?.().length) parts.push(`骨骼 ${spineLayer.info().length} 个（点开看明细 / 复制日志）`)
     note.textContent = parts.join(' · ')
     note.title = parts.length ? '点击查看详情 / 复制日志' : ''
     note.classList.toggle('clickable', parts.length > 0)
@@ -608,6 +613,34 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     const chars = segmentsText(state.text).length
     const wait = Math.max(1.2, Math.min(8, 0.8 + chars * 0.12))
     autoTimer = setTimeout(next, wait * 1000)
+  }
+  // 快进：按住 Ctrl（约 0.25 秒后进入，避免 Ctrl+F / Ctrl+C 误触）连续翻页——动画和语音 / 音效都跳过；遇到选项暂停（选完接着快进），到最后一步或松开 Ctrl 就停
+  let fast = false
+  let fastTimer = 0
+  let fastLoop = 0
+  const fastBadge = el('div', 'gal-fast-badge', '⏩ 快进中')
+  fastBadge.hidden = true
+  stage.append(fastBadge)
+  function setFast(on) {
+    if (on === fast || destroyed) return
+    fast = on
+    fastBadge.hidden = !on
+    root.classList.toggle('is-fast', on)
+    if (on) {
+      stopAuto()
+      voiceAudio?.pause()
+      fastLoop = setInterval(fastTick, 70)
+    } else {
+      clearInterval(fastLoop)
+      fastLoop = 0
+      scheduleAuto()
+    }
+  }
+  function fastTick() {
+    if (destroyed || choiceState) return
+    if (posNow() >= path.length - 1 && !running) { setFast(false); return }
+    if (running) { skipping = true; return }
+    next()
   }
   async function next() {
     if (destroyed || !hasSteps || choiceState) return   // 选项开着：只能选，不能翻页
@@ -718,6 +751,22 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     }
     if (rawAllow.length) lines.push(`rawIgnore：${(reader.node.rawIgnore || []).join('  |  ')}`)
     if (spineUnavailable) lines.push('Spine 运行时缺失：立绘/动画未渲染')
+    const spineInfo = spineLayer?.info?.() || []
+    if (spineInfo.length) {
+      lines.push(`Spine 骨架 ${spineInfo.length} 个（当前画面）：`)
+      for (const item of spineInfo) {
+        lines.push(`  [${item.slot}] ${item.kind} ${item.skel}${item.loaded ? '' : '（还没加载好 / 加载失败）'}`)
+        if (item.loaded) {
+          lines.push(`    动画：要 ${item.requested || '（未指定）'} → 实际 ${item.used || '（无）'}${item.requested && item.requested !== item.used ? '  ← 名字对不上，退到了别的' : ''}`)
+          lines.push(`    骨架里的动画（${item.animations.length}）：${item.animations.slice(0, 40).join(', ')}${item.animations.length > 40 ? ' …' : ''}`)
+          lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? item.bounds.join(' ') : '?'}`)
+        }
+      }
+    }
+    const extra = scene.stats || {}
+    if (extra.arrayGuess) lines.push(`数组形剧情：${extra.arrayGuess}`)
+    if (extra.arrayUnknown) lines.push(`数组形里认不出的字符串位置：${JSON.stringify(extra.arrayUnknown).slice(0, 600)}`)
+    if (extra.unresolved && Object.keys(extra.unresolved).length) lines.push(`没查到的资源名：${JSON.stringify(extra.unresolved).slice(0, 800)}`)
     if (missing.size) { lines.push(`缺少资源 ${missing.size} 个：`); for (const src of [...missing].slice(0, 100)) lines.push(`  ${src}`) }
     return lines.join('\n')
   }
@@ -864,6 +913,30 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     event.preventDefault()
   }
   document.addEventListener('keydown', onKey)
+  // 修饰键：Ctrl 按住 = 快进；Alt（单按一下）= 切换自动播放。onKey 对带修饰键的组合键一律忽略，所以单独处理
+  let altPure = false
+  const typing = (event) => { const tag = event.target?.tagName; return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable }
+  const onModDown = (event) => {
+    if (destroyed || !root.isConnected || !root.getClientRects().length || typing(event)) return
+    if (event.key === 'Control') {
+      if (!event.repeat) { clearTimeout(fastTimer); fastTimer = setTimeout(() => setFast(true), 250) }
+    } else {
+      clearTimeout(fastTimer)   // Ctrl + 别的键（查找 / 复制…）：不是快进
+      if (event.key === 'Alt') { if (!event.repeat) altPure = true } else altPure = false
+    }
+  }
+  const onModUp = (event) => {
+    if (event.key === 'Control') { clearTimeout(fastTimer); setFast(false) }
+    else if (event.key === 'Alt') {
+      if (altPure && !destroyed && root.isConnected && root.getClientRects().length && !typing(event)) toggleAuto()
+      altPure = false
+      event.preventDefault()   // Windows 上单按 Alt 会把焦点给浏览器菜单栏
+    }
+  }
+  const onBlur = () => { clearTimeout(fastTimer); setFast(false); altPure = false }
+  document.addEventListener('keydown', onModDown)
+  document.addEventListener('keyup', onModUp)
+  window.addEventListener('blur', onBlur)
 
   // 播放器不在屏幕上（切走了 / 被隐藏）：BGM 和视频先停，回来再继续
   const visibility = new IntersectionObserver((entries) => {
@@ -879,6 +952,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     stopAuto()
     cancelChoice()
     document.removeEventListener('keydown', onKey)
+    document.removeEventListener('keydown', onModDown)
+    document.removeEventListener('keyup', onModUp)
+    window.removeEventListener('blur', onBlur)
+    clearTimeout(fastTimer)
+    clearInterval(fastLoop)
     visibility.disconnect()
     bgmAudio?.pause()
     bgseAudio?.pause()

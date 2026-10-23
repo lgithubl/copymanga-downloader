@@ -4568,3 +4568,23 @@ h2 {
   .gal-player { height: auto; grid-template-rows: auto auto; }
   .gal-bar-wrap { grid-row: 2; }
 }
+
+/* 舞台外面的一层（.gal-stage-area）：沉浸 / 全屏时舞台宽度 = min(100%, (视口高度 − 底栏高度) × 16/9)，底栏高度由 gal-player.js 量出来放进 --gal-bar-h。
+   以前按整个视口高度算，底栏挪到舞台外面后会被挤出屏幕（宽屏、矮视口时「下面的按钮全没了」） */
+.gal-stage-area { display: grid; min-height: 0; min-width: 0; place-items: start center; }
+.media-viewer-view.stream-page-fullscreen .gal-player { max-width: none; width: 100%; }
+.media-viewer-view.stream-page-fullscreen .gal-stage-area,
+.gal-player:fullscreen .gal-stage-area { place-items: center; }
+.media-viewer-view.stream-page-fullscreen .gal-stage-area .gal-stage,
+.gal-player:fullscreen .gal-stage-area .gal-stage { width: min(100%, calc((100dvh - var(--gal-bar-h, 56px)) * 16 / 9)); }
+.gal-player:fullscreen { align-content: stretch; grid-template-rows: minmax(0, 1fr) auto; max-width: none; }
+.gal-player:fullscreen .gal-bar-wrap { grid-row: 2; justify-self: stretch; padding: 8px 12px; width: auto; }
+.media-viewer-view.stream-page-fullscreen .gal-player { grid-template-rows: minmax(0, 1fr) auto; }
+.media-viewer-view.stream-page-fullscreen .gal-bar-wrap { grid-row: 2; }
+.media-viewer-view.stream-page-fullscreen .gal-stage-area,
+.gal-player:fullscreen .gal-stage-area { align-self: stretch; justify-self: stretch; }
+.media-viewer-view.stream-page-fullscreen .gal-player { height: 100%; }
+
+/* 快进中的提示 */
+.gal-fast-badge { background: rgba(0, 0, 0, 0.6); border-radius: 6px; color: #ffd479; font-size: 13px; padding: 3px 10px; pointer-events: none; position: absolute; right: 10px; top: 10px; z-index: 9; }
+.gal-fast-badge[hidden] { display: none; }

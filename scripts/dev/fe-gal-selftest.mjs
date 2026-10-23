@@ -464,6 +464,41 @@ await page.screenshot({ path: path.join(shotDir, 'player-long.png') })
 }
 check('没有页面错误', errors.length === 0, errors.join(' | '))
 
+// ---- 6b2. Ctrl 快进 / Alt 切换自动 ----
+{
+  await page.goto(link(sec('cabin/adultr/600230.txt'))); await sleep(800)
+  await page.goto(link(sec(DPATH)))
+  await page.waitForSelector('.gal-player .gal-stage')
+  await page.waitForFunction(() => /^1 \/ \d+/.test(document.querySelector('.gal-count')?.textContent || ''))
+  await sleep(800)
+  const total = Number((await countNow()).split('/')[1])
+  const at = async () => Number((await countNow()).split('/')[0])
+  const fastShown = () => page.$eval('.gal-fast-badge', (e) => !e.hidden).catch(() => false)
+  await page.keyboard.press('Control+KeyF'); await sleep(500)
+  check('Ctrl+F（组合键）不会触发快进', (await at()) === 1 && !(await fastShown()), String(await at()))
+  await page.keyboard.down('Control'); await sleep(200)
+  check('刚按下 Ctrl（不到 0.25 秒）还没进入快进', !(await fastShown()))
+  await sleep(700)
+  const during = await at()
+  check('按住 Ctrl：进入快进（有「快进中」提示），1 秒内翻了好几步', (await fastShown()) && during >= 4, `${during}/${total}`)
+  await page.keyboard.up('Control'); await sleep(250)
+  const stopped = await at()
+  await sleep(600)
+  check('松开 Ctrl：立刻停止快进，提示消失，不再继续翻', !(await fastShown()) && (await at()) === stopped, `${stopped} → ${await at()}`)
+  await page.keyboard.down('Control')
+  await page.waitForFunction((n) => new RegExp(`^${n} / ${n}`).test(document.querySelector('.gal-count')?.textContent || ''), total, { timeout: 15000 }).catch(() => {})
+  await sleep(300)
+  check('一直按着 Ctrl：快进到最后一步自动停下', (await at()) === total && !(await fastShown()), `${await at()}/${total}`)
+  await page.keyboard.up('Control')
+  const autoOn = () => page.$eval('.gal-auto', (b) => b.classList.contains('active'))
+  await page.keyboard.press('Alt'); await sleep(200)
+  const on1 = await autoOn()
+  await page.keyboard.press('Alt'); await sleep(200)
+  check('单按 Alt：切换自动播放（再按一下关掉）', on1 === true && (await autoOn()) === false, String([on1, await autoOn()]))
+  await page.keyboard.down('Alt'); await page.keyboard.press('KeyX'); await page.keyboard.up('Alt'); await sleep(200)
+  check('Alt + 别的键（组合键）不切换自动', (await autoOn()) === false)
+}
+
 // ---- 6c. 新功能：沉浸 / 工具栏在文本框底部 / 文本框透明度 / 自动播放等语音 ----
 {
   const EP1 = sec('cabin/adultr/600130.txt')
@@ -842,7 +877,7 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
 // ---- 7. 多视口：舞台比例、台词框、控制条 ----
 // 续播会把进度存在服务端：每个视口都要从头看，先把 A 的进度清零
 const resetProgress = async () => { for (const n of ['cabin/adultr/600130.txt', 'cabin/adultr/600230.txt']) await fetch(`${base}/api/library/items/gal/${M.itemId}/progress`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unitId: 'main', sectionId: sec(n), scrollRatio: 0 }) }) }
-for (const vp of [{ w: 1920, h: 1080 }, { w: 1024, h: 700 }, { w: 800, h: 900 }, { w: 390, h: 800 }]) {
+for (const vp of [{ w: 1920, h: 1080 }, { w: 1920, h: 900 }, { w: 2560, h: 900 }, { w: 1280, h: 600 }, { w: 1024, h: 700 }, { w: 800, h: 900 }, { w: 390, h: 800 }]) {
   await resetProgress()
   const ctx = await browser.newContext({ viewport: { width: vp.w, height: vp.h } })
   const pg = await ctx.newPage()
@@ -864,6 +899,8 @@ for (const vp of [{ w: 1920, h: 1080 }, { w: 1024, h: 700 }, { w: 800, h: 900 },
   check(`[${vp.w}x${vp.h}] 舞台 16:9、没有横向滚动条`, Math.abs(g.ratio - 16 / 9) < 0.03 && g.docOverflow <= 1, JSON.stringify(g))
   check(`[${vp.w}x${vp.h}] 超长台词：台词框没有超出舞台`, g.boxInside, JSON.stringify(g))
   check(`[${vp.w}x${vp.h}] 控制条没超出播放器宽度`, g.barW <= g.playerW + 1)
+  const geoBar = await pg.evaluate(() => { const bar = document.querySelector('.gal-bar-wrap').getBoundingClientRect(); const st = document.querySelector('.gal-stage').getBoundingClientRect(); return { barTop: Math.round(bar.top), barBottom: Math.round(bar.bottom), barH: Math.round(bar.height), stageBottom: Math.round(st.bottom), ih: innerHeight, stageRatio: +(st.width / st.height).toFixed(3) } })
+  check(`[${vp.w}x${vp.h}] 底栏一定在屏幕里（没被舞台挤出去），舞台在底栏上面、仍是 16:9`, geoBar.barH > 20 && geoBar.barBottom <= geoBar.ih + 1 && geoBar.stageBottom <= geoBar.barTop + 1 && Math.abs(geoBar.stageRatio - 16 / 9) < 0.03, JSON.stringify(geoBar))
   await pg.screenshot({ path: path.join(shotDir, `player-${vp.w}.png`) })
   check(`[${vp.w}x${vp.h}] 没有页面错误`, errs.length === 0, errs.join('|'))
   await ctx.close()

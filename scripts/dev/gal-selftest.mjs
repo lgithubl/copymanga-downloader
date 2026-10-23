@@ -690,7 +690,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     const ops = a.scene.steps.flatMap((st) => st.commands)
     check('tenkeiprdx 位置数组形：能识别并转成 4 步场景（背景 / 台词 / 说话人 / 换行）', a.node.kind === 'player' && a.scene.steps.length === 4 && ops.some((c) => c.op === 'bg' && /bg_adventure_1005402/.test(c.src)) && ops.some((c) => c.op === 'text' && c.segments[0]?.text === '「どうした？」\n続き') && ops.some((c) => c.op === 'speaker' && c.segments[0]?.text === 'メラーニア') && a.scene.stats.form === 'array', J(a.scene.stats))
     check('数组形：BGM 只在变化时发；noBGM{Fade_0.5,…} = bgmStop 淡出 0.5 秒；语音路径按场景 id；立绘站位', ops.filter((c) => c.op === 'bgm').length === 1 && ops.some((c) => c.op === 'bgmStop' && c.fade === 0.5) && ops.some((c) => c.op === 'voice' && c.src === 'AdventureVoice/22000003201/c_22000003201_004.ogg') && ops.some((c) => c.op === 'spine' && c.kind === 'chara'), J(ops.map((c) => c.op)))
-    check('数组形：猜测的字段在 stats 里有说明（arrayGuess）', /猜/.test(a.scene.stats.arrayGuess || ''))
+    check('数组形：推测的字段在 stats 里有说明（arrayGuess）', /对照样本/.test(a.scene.stats.arrayGuess || ''))
     const bad = await err(read('s:nope.json'))
     check('位置数组形以外的数组不被误认', !(await import('../../web/library/gal/adapters/tenkeiprdx-json.mjs')).sniff('[[1,2,3]]') && !(await import('../../web/library/gal/adapters/tenkeiprdx-json.mjs')).sniff('[["a"]]') && Boolean(bad))
   }
