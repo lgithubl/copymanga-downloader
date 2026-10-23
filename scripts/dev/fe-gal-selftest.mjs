@@ -174,6 +174,21 @@ check('播放页点「↑ 列表」：回到合并后的卡蒂娅列表', (await
 await page.reload()
 await page.waitForSelector('.gal-card.is-script')
 check('刷新：停在同一个节点，不会跳回首页', (await crumbs()) === '首页>角色>卡蒂娅' && (await hashSection()) === 'd:character/1003', JSON.stringify([await crumbs(), await hashSection()]))
+// 列表和播放器的底部栏：位置几乎统一（数据少时列表的栏也贴底；「↑ 上一级」和「↑ 列表」在差不多的位置）
+{
+  await page.goto(link('d:cabin/adultr')); await page.waitForSelector('.gal-browse[data-node="d:cabin/adultr"]'); await sleep(500)
+  const rectOf = (sel) => page.$eval(sel, (e) => { const r = e.getBoundingClientRect(); return { x: Math.round(r.left), y: Math.round(r.top), b: Math.round(r.bottom) } })
+  const frame = () => page.$eval('#media-reader-content', (e) => { const r = e.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom) } })
+  const listUp = await rectOf('.gal-browse-up')
+  const listBar = await rectOf('.gal-browse-bar')
+  const f1 = await frame()
+  check('数据少（2 个脚本）时列表底部栏也贴着阅读区最下沿（不是跟在卡片后面）', f1.bottom - listBar.b <= 12 && listBar.y > f1.top + 200, JSON.stringify({ f1, listBar }))
+  await page.click('.gal-card.is-script >> nth=0'); await page.waitForSelector('.gal-player .gal-stage'); await sleep(700)
+  const playUp = await rectOf('.gal-up')
+  const playBar = await rectOf('.gal-bar-wrap')
+  check('播放页的工具栏在舞台下面、也贴着阅读区最下沿；舞台没有被挤出阅读区', (await frame()).bottom - playBar.b <= 12 && await page.$eval('.gal-stage', (s) => s.getBoundingClientRect().bottom <= document.querySelector('.gal-bar-wrap').getBoundingClientRect().top + 1))
+  check('列表的「↑ 上一级」和播放页的「↑ 列表」位置几乎统一（水平 / 垂直都差不到 16px）', Math.abs(listUp.x - playUp.x) <= 16 && Math.abs(listUp.y - playUp.y) <= 16, JSON.stringify({ listUp, playUp }))
+}
 // 房间：翻页
 await page.goto(link('d:room')); await page.waitForSelector('.gal-browse[data-node="d:room"]')
 const PG = '.gal-browse-pager'
@@ -504,9 +519,9 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
     const box = document.querySelector('.gal-box').getBoundingClientRect()
     const bar = document.querySelector('.gal-bar').getBoundingClientRect()
     const btns = [...document.querySelectorAll('.gal-bar .gal-btn')].filter((b) => getComputedStyle(b).display !== 'none')
-    return { barInHud: bar.top >= box.bottom - 1 && bar.bottom <= hud.bottom + 1 && bar.left >= hud.left - 1 && bar.right <= hud.right + 1, hudInStage: hud.left >= stage.left && hud.right <= stage.right && hud.bottom <= stage.bottom, boxAboveBar: box.bottom <= bar.top + 1, fonts: [...new Set(btns.map((b) => getComputedStyle(b).fontSize))], maxH: Math.max(...btns.map((b) => b.getBoundingClientRect().height)), n: btns.length, barOutside: !!document.querySelector('.gal-player > .gal-bar') }
+    return { barBelowStage: bar.top >= stage.bottom - 1, sameWidth: Math.abs(bar.left - stage.left) <= 2 && Math.abs(bar.right - stage.right) <= 2, barInHud: bar.top >= box.bottom - 1 && bar.bottom <= hud.bottom + 1 && bar.left >= hud.left - 1 && bar.right <= hud.right + 1, hudInStage: hud.left >= stage.left && hud.right <= stage.right && hud.bottom <= stage.bottom, boxAboveBar: box.bottom <= bar.top + 1, fonts: [...new Set(btns.map((b) => getComputedStyle(b).fontSize))], maxH: Math.max(...btns.map((b) => b.getBoundingClientRect().height)), n: btns.length, barOutside: !!document.querySelector('.gal-player > .gal-bar') }
   })
-  check('工具栏在文本框底部（同一块背景里）、在舞台内，不再在舞台外面', geo2.barInHud && geo2.hudInStage && geo2.boxAboveBar && !geo2.barOutside, JSON.stringify(geo2))
+  check('工具栏在舞台下面（和舞台同宽、不叠在文本框里）、按钮小（13px）', geo2.fonts.length === 1 && geo2.fonts[0] === '13px' && geo2.maxH <= 32 && geo2.barBelowStage && geo2.sameWidth, JSON.stringify(geo2))
   check('按钮是小号的（字号 ≤ 13px，高度 ≤ 28px）', geo2.fonts.every((f) => parseFloat(f) <= 13.01) && geo2.maxH <= 28, JSON.stringify(geo2))
   await pg.screenshot({ path: path.join(shotDir, 'toolbar.png') })
 
@@ -518,8 +533,8 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   const dN = Number((await cnt()).split('/')[1])
   await sleep(1800)
   await goStep(dN, dN); await sleep(1200)
-  const emptyBox = await pg.evaluate(() => { const bar = document.querySelector('.gal-bar').getBoundingClientRect(); const st = document.querySelector('.gal-stage').getBoundingClientRect(); return { boxHidden: document.querySelector('.gal-box').hidden, barVisible: bar.width > 0 && bar.height > 0 && bar.bottom <= st.bottom + 1 && bar.top >= st.top } })
-  check('没有台词（文本框收起）时，工具栏仍然可见、在舞台底部', emptyBox.boxHidden && emptyBox.barVisible, JSON.stringify(emptyBox))
+  const emptyBox = await pg.evaluate(() => { const bar = document.querySelector('.gal-bar').getBoundingClientRect(); const st = document.querySelector('.gal-stage').getBoundingClientRect(); return { boxHidden: document.querySelector('.gal-box').hidden, barVisible: bar.width > 0 && bar.height > 0 && bar.top >= st.bottom - 1 } })
+  check('没有台词（文本框收起）时，工具栏仍然可见、在舞台下面', emptyBox.boxHidden && emptyBox.barVisible, JSON.stringify(emptyBox))
 
   // ---- 点工具栏上的按钮不会顺带翻页；设置弹层 ----
   await resetA()
@@ -528,8 +543,8 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   await sleep(800)
   const before = await cnt()
   await pg.click('.gal-cfg'); await sleep(250)
-  const panel = await pg.evaluate(() => { const p = document.querySelector('.gal-settings').getBoundingClientRect(); const s = document.querySelector('.gal-stage').getBoundingClientRect(); return { hidden: document.querySelector('.gal-settings').hidden, inside: p.left >= s.left - 1 && p.right <= s.right + 1 && p.top >= s.top - 1 && p.bottom <= s.bottom + 1 } })
-  check('点 ⚙：设置弹层打开、在舞台内；这一下没有翻页', !panel.hidden && panel.inside && (await cnt()) === before, JSON.stringify([panel, before, await cnt()]))
+  const panel = await pg.evaluate(() => { const p = document.querySelector('.gal-settings').getBoundingClientRect(); const s = document.querySelector('.gal-stage').getBoundingClientRect(); return { hidden: document.querySelector('.gal-settings').hidden, inside: p.left >= s.left - 1 && p.right <= s.right + 1 && p.top >= s.top - 1 && p.bottom <= innerHeight } })
+  check('点 ⚙：设置弹层向上打开、压在舞台下半部分里；这一下没有翻页', !panel.hidden && panel.inside && (await cnt()) === before, JSON.stringify([panel, before, await cnt()]))
   const alpha = () => pg.evaluate(() => { const m = getComputedStyle(document.querySelector('.gal-hud')).backgroundColor.match(/[\d.]+/g); return { a: m.length > 3 ? Number(m[3]) : 1, clear: document.querySelector('.gal-player').classList.contains('gal-clear'), val: document.querySelector('.gal-settings .gal-set-row:nth-child(2) input').value, label: document.querySelector('.gal-settings .gal-set-row:nth-child(2) .gal-set-value').textContent } })
   const a0 = await alpha()
   check('文本框透明度：默认 74%（原来写死的值）', Math.abs(a0.a - 0.74) < 0.01 && a0.val === '74' || a0.val === '75' && Math.abs(a0.a - 0.74) < 0.01, JSON.stringify(a0))

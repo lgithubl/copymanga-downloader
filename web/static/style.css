@@ -4071,11 +4071,11 @@ h2 {
   width: auto;
 }
 
-.gal-bar .gal-btn, .gal-more .gal-btn, .gal-diag .gal-btn:hover:not(:disabled) {
+.gal-bar .gal-btn:hover:not(:disabled), .gal-more .gal-btn:hover:not(:disabled), .gal-diag .gal-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.28);
 }
 
-.gal-bar .gal-btn, .gal-more .gal-btn, .gal-diag .gal-btn:disabled {
+.gal-bar .gal-btn:disabled, .gal-more .gal-btn:disabled, .gal-diag .gal-btn:disabled {
   cursor: default;
   opacity: 0.4;
 }
@@ -4528,3 +4528,43 @@ h2 {
 /* 沉浸：页面头部收起（要比上面 Gal 的头部规则优先），只剩一行内容 */
 #media-viewer-view.media-mode-gal.stream-page-fullscreen > section { grid-template-rows: minmax(0, 1fr); }
 #media-viewer-view.media-mode-gal.stream-page-fullscreen > section > .chapter-head { display: none; }
+
+/* ===== 播放器工具栏在舞台下面（和列表页底部固定条同一个位置 / 样式）=====
+   播放器撑满阅读区高度：舞台在上，工具栏贴在最底部——和列表页的固定条一样都在阅读区的最下沿，「↑」按钮的位置几乎重合。 */
+.gal-player { align-content: start; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; max-width: min(100%, calc((100vh - 250px) * 16 / 9)); }
+.gal-bar-wrap { background: var(--site-panel); border-top: 1px solid var(--site-border); color: var(--site-text); font-size: 13px; grid-row: 3; padding: 8px 0 8px; position: relative; z-index: 6; }
+.gal-bar-wrap .gal-bar { border-top: 0; font-size: 13px; gap: 6px 8px; padding: 0; }
+.gal-bar-wrap .gal-bar .gal-btn { background: var(--site-secondary); border-radius: 6px; color: #fff; font-size: 13px; line-height: 1.2; min-height: 28px; padding: 0 10px; }
+.gal-bar-wrap .gal-bar .gal-btn:hover:not(:disabled) { filter: brightness(1.18); }
+.gal-bar-wrap .gal-bar .gal-btn.active { background: var(--site-primary); }
+.gal-bar-wrap .gal-bar .gal-btn:disabled { opacity: 0.4; }
+.gal-bar-wrap .gal-bar .gal-autosel.active { background: var(--site-primary); }
+.gal-bar-wrap .gal-count { color: var(--site-text); }
+.gal-bar-wrap .gal-bar .gal-note { color: var(--site-muted); opacity: 1; }
+/* 沉浸 / 全屏：黑底，工具栏也用深色（列表页固定条同理） */
+.media-viewer-view.stream-page-fullscreen .gal-bar-wrap,
+.gal-player:fullscreen .gal-bar-wrap,
+.gal-browse.is-immersive .gal-browse-bar { background: #0b0f17; border-top-color: rgba(255, 255, 255, 0.14); color: #e5e7eb; }
+.media-viewer-view.stream-page-fullscreen .gal-bar-wrap .gal-count,
+.gal-player:fullscreen .gal-bar-wrap .gal-count { color: #e5e7eb; }
+.media-viewer-view.stream-page-fullscreen .gal-bar-wrap .gal-bar .gal-note,
+.gal-player:fullscreen .gal-bar-wrap .gal-bar .gal-note { color: #9ca3af; }
+.gal-player:fullscreen { align-content: stretch; grid-template-rows: minmax(0, 1fr) auto; }
+.gal-player:fullscreen .gal-stage { align-self: center; width: min(100vw, calc((100vh - 56px) * 16 / 9)); }
+.gal-player:fullscreen .gal-bar-wrap { grid-row: 2; justify-self: center; padding: 8px 12px; width: min(100vw, calc((100vh - 56px) * 16 / 9)); box-sizing: border-box; }
+
+/* ===== 列表和播放器的底部栏对齐 =====
+   两边：阅读区撑满高度、底部栏贴最下沿（数据少时也一样）、同样的宽度（同一个公式）、同样的内边距 → 「↑」按钮几乎在同一个位置 */
+#media-viewer-view .media-reader-content.media-gal.media-gal-browse { height: 100%; max-height: none; padding: 8px; }
+.gal-browse { display: flex; flex-direction: column; gap: 12px; margin: 0 auto; max-width: min(100%, max(520px, calc((100vh - 250px) * 16 / 9))); min-height: 100%; width: 100%; }
+.gal-browse-bar { bottom: -8px; margin-bottom: -8px; margin-top: auto; padding: 8px 0 16px; }
+.gal-player { max-width: min(100%, max(520px, calc((100vh - 250px) * 16 / 9))); }
+.gal-browse-body { flex: 0 0 auto; }
+@media (max-width: 900px) {
+  /* 窄屏整页滚动：阅读区不定高，列表至少撑到视口下沿（减去底部的页面头部和上面的标签栏） */
+  #media-viewer-view .media-reader-content.media-gal.media-gal-browse { height: auto; }
+  .gal-browse { min-height: calc(100dvh - var(--gal-foot, 0px) - 130px); }
+  .gal-browse-bar { bottom: var(--gal-foot, 0px); margin-bottom: 0; padding-bottom: 8px; }
+  .gal-player { height: auto; grid-template-rows: auto auto; }
+  .gal-bar-wrap { grid-row: 2; }
+}

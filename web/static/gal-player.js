@@ -179,7 +179,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     row('自动：语音播完后等', delayInput, delayUnit),
     row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput),
   )
-  hud.append(box, bar, settings, moreMenu)
+  hud.append(box)
+  // 工具栏不再叠在舞台里：放在舞台下面、播放器最底部，和列表页底部固定条同一个位置、同一个顺序（↑ 在最左）
+  const barWrap = el('div', 'gal-bar-wrap')
+  barWrap.append(bar, settings, moreMenu)
   world.append(...layers, movie)
   stage.append(world, black, flashEl, hud)
   const logPanel = el('div', 'gal-log')
@@ -189,7 +192,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const diagPanel = el('div', 'gal-log gal-diag')   // 点右下角提示展开：未渲染的指令 / 缺资源 / Spine 状态，可复制
   diagPanel.hidden = true
   stage.append(logPanel, diagPanel, choiceBox)
-  root.append(stage)
+  root.append(stage, barWrap)
   container.replaceChildren(root)
   if (!hasSteps) stage.append(empty)
 
@@ -775,7 +778,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   })
   // 工具栏和设置弹层上的点击不能冒泡到舞台（否则点个按钮就翻页）
   // 记录面板也在舞台里：点记录里的一行（跳转）不能顺带触发舞台的「下一句」
-  for (const part of [bar, settings, moreMenu, logPanel, diagPanel, choiceBox]) part.addEventListener('click', (event) => event.stopPropagation())
+  for (const part of [barWrap, logPanel, diagPanel, choiceBox]) part.addEventListener('click', (event) => event.stopPropagation())
   nextBtn.addEventListener('click', next)
   prevBtn.addEventListener('click', prev)
   autoBtn.addEventListener('click', toggleAuto)
