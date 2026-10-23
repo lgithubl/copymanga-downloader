@@ -1,5 +1,6 @@
 // 适配器：tenkeiprdx（Unity 剧情查看器）的剧情 JSON → 规范场景（gal-scene/1）。语义照反编译出来的查看器（见 private-scripts/tenkeiprdx-x）。
-// 输入形态：对象形 { result: { sceneDetails: [{ assetId, sceneFrameDetails: [帧…] }] } }（取 assetId = 脚本文件名那一项，没有就取第一项）。
+// 输入形态：对象形 { result: { sceneDetails: [{ assetId, sceneFrameDetails: [帧…] }] } }（取 assetId = 脚本文件名那一项，没有就取第一项）；
+// 或位置数组形（游戏原始数据，没有键名：[[ "<场景 id>", n, n, bool, [帧…], … ]]）——先转成对象形再走同一套解析，字段位置见 arrayFrameToObject。
 // 一帧 = 一步（点一下）。每帧的字段 → 指令：
 //   backgroundImage          bg（查 Backgrounds/adventure|still|eventstill）；名字里带 still_02..05 还会触发音效/闪白（照查看器）
 //   still + stillAnimation   整幅静态画面 = Stills/<名>/ 下所有 *.skel.bytes（按数字前缀排序叠起来），播放 stillAnimation；
@@ -22,8 +23,49 @@ const FACIAL = ['idle_normal', 'idle_joy', 'idle_sad', 'idle_angry', 'idle_surpr
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
 const rootOf = (options) => String(options?.root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
 
+// 两种形状：对象形（带键名 sceneDetails / sceneFrameDetails）、位置数组形（游戏原始数据：[[ "<场景 id>", n, n, bool, [帧…], … ]]，没有任何键名）
+const ARRAY_HEAD = /^\s*\[\s*\[\s*"\d{6,}"\s*,\s*-?\d+\s*,\s*-?\d+\s*,\s*(?:true|false)\s*,\s*\[/
 export function sniff(text) {
-  return /"(?:sceneFrameDetails|sceneDetails)"\s*:/.test(String(text || '').slice(0, 16384))
+  const head = String(text || '').replace(/^﻿/, '').slice(0, 16384)
+  return /"(?:sceneFrameDetails|sceneDetails)"\s*:/.test(head) || ARRAY_HEAD.test(head)
+}
+
+// 数组形 → 对象形（之后复用同一套解析）。位置来自样本对照：
+//   场景  [0] 场景 id  [4] 帧数组
+//   帧    [3] backgroundImage  [10] speakerName  [12] phraseContents  [27] backgroundMusic  [29] phraseVoice  [31] adventureCharacters
+//   角色  [0] characterMasterId  [1] characterPosition  [2] characterAppearance  [3] characterFacialExpression  [4] characterAction（后四项是按样本值猜的，stats.arrayGuess 里标明）
+// 其余位置没有样本：字符串值按内容认——名字是 Stills 目录里的 → still；animationN → stillAnimation（认不出的记在 stats.arrayUnknown）
+const ARRAY_KNOWN = new Set([0, 3, 10, 12, 27, 29, 30, 31])
+function arrayFrameToObject(frame, ctx) {
+  const at = (i) => (frame[i] === null || frame[i] === undefined ? '' : frame[i])
+  const out = {
+    backgroundImage: at(3), speakerName: at(10), phraseContents: at(12), backgroundMusic: at(27), phraseVoice: at(29),
+    adventureCharacters: Array.isArray(frame[31]) ? frame[31].map((c) => (Array.isArray(c)
+      ? { characterMasterId: c[0], characterPosition: c[1], characterAppearance: c[2], characterFacialExpression: c[3], characterAction: c[4] }
+      : null)).filter(Boolean) : null,
+  }
+  const unknown = []
+  frame.forEach((value, i) => {
+    if (ARRAY_KNOWN.has(i) || typeof value !== 'string' || !value.trim()) return
+    const v = value.trim()
+    if (/^animation\d+$/i.test(v)) out.stillAnimation = v
+    else if (ctx?.spines?.has(`Stills/${v}`)) out.still = v
+    else unknown.push(`[${i}]=${v.slice(0, 40)}`)
+  })
+  return { frame: out, unknown }
+}
+function readArrayScenes(data, wantedId, ctx) {
+  const scenes = data.filter((item) => Array.isArray(item) && Array.isArray(item[4]))
+  if (!scenes.length) throw new Error('找不到场景（数组形）')
+  const scene = scenes.find((item) => str(item[0]) === str(wantedId)) || scenes[0]
+  const unknown = {}
+  const frames = scene[4].map((frame) => {
+    if (!Array.isArray(frame)) return {}
+    const { frame: obj, unknown: extra } = arrayFrameToObject(frame, ctx)
+    for (const key of extra) unknown[key] = (unknown[key] || 0) + 1
+    return obj
+  })
+  return { assetId: str(scene[0]), frames, unknown }
 }
 
 // ---------- 上下文：资源目录索引 + username ----------
@@ -38,13 +80,13 @@ export function prepare({ options, texts, files, toResourcePath }) {
   const backgrounds = new Map()
   const bgm = new Set()
   const scenes = new Map()   // 剧情 id → 相对媒体目录的路径
-  const thumbs = { event: [], extra: [] }
+  const thumbs = { event: [], extra: [], special: [] }
   const icons = []
   for (const rel of files || []) {
     const res = toRes(rel)
     let t = /^scenes\/([^/]+)\.json$/i.exec(res)
     if (t) { scenes.set(t[1], rel); continue }
-    t = /^EpisodeThumbnails\/(event|extra)\/(ep_eventstill_[^/]+)\.png$/i.exec(res)
+    t = /^EpisodeThumbnails\/(event|extra|special)\/(ep_eventstill_[^/]+)\.png$/i.exec(res)
     if (t) { thumbs[t[1].toLowerCase()].push({ name: t[2], res }); continue }
     t = /^CharacterIcons\/([^/]+)\.png$/i.exec(res)
     if (t) { icons.push({ name: t[1], res }); continue }
@@ -107,13 +149,15 @@ function buildCatalog(ctx) {
     return ctx.backgrounds.get(key.toLowerCase()) || (ctx.hasIndex ? '' : res)
   }
 
-  for (const [kind, label] of [['event', '活动'], ['extra', '附加']]) {
+  for (const [kind, label] of [['event', '活动'], ['extra', '附加'], ['special', '特别']]) {
     const children = []
     for (const thumb of [...thumbs[kind]].sort((a, b) => natDesc(a.name, b.name))) {
       const parts = thumb.name.split('_')
       if (parts.length < 4) continue
       let id = `2${parts[2]}${parts[3]}`
       if (kind === 'extra' && id.endsWith('1')) id = `${id.slice(0, -1)}2`
+      // 特别：没有样本说明编号规则，按「原样 / 末位 2 / 末位 1」依次找第一个存在的剧情
+      if (kind === 'special') id = [id, `${id.slice(0, -1)}2`, `${id.slice(0, -1)}1`].find((candidate) => scenes.has(candidate)) || id
       const script = scenes.get(id)
       if (!script) continue
       const title = master.byStill.get(`${thumb.name.replace(/^ep_eventstill_/, '')}_still_01`)?.title || ''
@@ -164,13 +208,23 @@ const safeSeg = (value) => (/^[^/\\\0]+$/.test(value) && value !== '.' && value 
 export function parse(text, ctx = null, meta = {}) {
   let data
   try { data = JSON.parse(String(text || '').replace(/^﻿/, '')) } catch { throw new Error('不是有效的 JSON') }
-  const details = data?.result?.sceneDetails
-  if (!Array.isArray(details) || !details.length) throw new Error('找不到 sceneDetails')
-  const scene = details.find((item) => str(item?.assetId) === str(meta?.stem)) || details[0]
-  const sceneId = safeSeg(str(scene?.assetId) || str(meta?.stem))
-  const frames = Array.isArray(scene?.sceneFrameDetails) ? scene.sceneFrameDetails : []
+  let sceneId
+  let frames
+  let arrayForm = null
+  if (Array.isArray(data)) {
+    arrayForm = readArrayScenes(data, meta?.stem, ctx)
+    sceneId = safeSeg(arrayForm.assetId || str(meta?.stem))
+    frames = arrayForm.frames
+  } else {
+    const details = data?.result?.sceneDetails
+    if (!Array.isArray(details) || !details.length) throw new Error('找不到 sceneDetails')
+    const scene = details.find((item) => str(item?.assetId) === str(meta?.stem)) || details[0]
+    sceneId = safeSeg(str(scene?.assetId) || str(meta?.stem))
+    frames = Array.isArray(scene?.sceneFrameDetails) ? scene.sceneFrameDetails : []
+  }
   const positionX = { ...DEFAULT_POSITION_X, ...(ctx?.positionX || {}) }
   const stats = { frames: frames.length, commands: 0, raw: {}, unresolved: {}, frameEffects: {}, spines: 0 }
+  if (arrayForm) { stats.form = 'array'; stats.arrayGuess = '角色项的站位 / 外观 / 表情 / 动作位置是按样本猜的'; if (Object.keys(arrayForm.unknown).length) stats.arrayUnknown = arrayForm.unknown }
   const miss = (kind, name) => { const key = `${kind}:${name}`; stats.unresolved[key] = (stats.unresolved[key] || 0) + 1 }
 
   const username = ctx?.username || str(ctx?.unknownName) || '플레이어'
@@ -279,7 +333,11 @@ export function parse(text, ctx = null, meta = {}) {
 
     // --- 声音 ---
     const bgm = cleanName(frame?.backgroundMusic)
-    if (bgm && bgm !== lastBgm) { emit({ op: 'bgm', src: resolveBgm(bgm) }); lastBgm = bgm }
+    // noBGM{Fade_0.5,Delay_0}：停掉 BGM（花括号里是淡出秒数）
+    const stop = /^noBGM(?:\{([^}]*)\})?$/i.exec(bgm)
+    if (stop) {
+      if (lastBgm) { emit({ op: 'bgmStop', fade: numOrNull(/Fade_([\d.]+)/i.exec(stop[1] || '')?.[1]) ?? 0 }); lastBgm = '' }
+    } else if (bgm && bgm !== lastBgm) { emit({ op: 'bgm', src: resolveBgm(bgm) }); lastBgm = bgm }
     const se = cleanName(frame?.soundEffect)
     if (se) emit({ op: 'se', src: `Se/${se}.ogg` })
     const voice = cleanName(frame?.phraseVoice)

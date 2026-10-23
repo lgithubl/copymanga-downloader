@@ -630,6 +630,7 @@ h2 {
 .library-card-cover {
   align-items: center;
   background: #111827;
+  grid-template-columns: minmax(0, 1fr);   /* 轨道不能被图片的固有宽度撑开（2400px 的超宽封面会把卡片撑破、超高的会把卡片撑成几千像素） */
   position: relative;
   border-bottom: 1px solid var(--site-border);
   display: grid;
@@ -641,6 +642,7 @@ h2 {
   aspect-ratio: 3 / 4;
   border-radius: 0;
   height: auto;
+  min-width: 0;
   object-fit: cover;
   width: 100%;
 }
@@ -4457,3 +4459,9 @@ h2 {
   width: min(520px, calc(100vw - 48px));
   z-index: 50;
 }
+
+/* Gal 列表工具栏 / 翻页条：紧凑一点（全局按钮样式偏大，窄屏上会占好几行） */
+.gal-browse-pager .gal-pager-btn, .gal-browse-tools .gal-pager-btn { font-size: 13px; min-height: 28px; padding: 0 10px; }
+.gal-browse-pager .gal-pager-jump { font-size: 13px; min-height: 28px; padding: 2px 6px; width: 3.8em; }
+.gal-browse-tools .gal-browse-search, .gal-browse-tools .gal-browse-sort, .gal-browse-tools .gal-browse-size { font-size: 13px; min-height: 28px; padding: 3px 8px; }
+.gal-browse-pager { gap: 6px; }

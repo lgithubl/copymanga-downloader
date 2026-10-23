@@ -628,6 +628,25 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     check('数据文件更新后列表立刻跟着变：新增的活动出现（新的在前）、标题来自改过的名称表；首页数量也变', J(refreshed.items.map((i) => i.title)) === J(['Brand New', 'Renamed Event']) && (await read('')).node.items[0].subtitle === '2 项' && (await read('')).node.items[3].subtitle === '4 项', J(refreshed.items))
   }
   check('资源：骨骼 / atlas / 图集 png / ogg 都能取；目录穿越被拒', (await handler.getResource(it.itemId, 'Spines/1001/1001_01.skel.bytes')).body.length > 20 && (await handler.getResource(it.itemId, 'Spines/1001/1001_01.atlas.txt')).body.toString().includes('size: 64,128') && (await handler.getResource(it.itemId, 'Spines/1001/1001_01.png')).contentType === 'image/png' && (await handler.getResource(it.itemId, 'AdventureVoice/10010101/v002.ogg')).contentType === 'audio/ogg' && Boolean(await err(handler.getResource(it.itemId, '../x'))) && (await handler.getThumbnail(it.itemId)).contentType === 'image/png')
+  {
+    // 位置数组形（游戏原始数据，没有任何键名）：sniff 认、能转成场景；noBGM{…} 停 BGM；站位 / 台词 / 语音 / 背景都对
+    const imp3 = path.join(tk, 'StreamingAssets', 'Tenkeiprdx X', 'Imported')
+    const fr = (idx, o = {}) => { const a = new Array(33).fill(null); a[0] = idx; a[5] = false; a[15] = false; a[30] = 0; a[31] = []; for (const [k, v] of Object.entries(o)) a[k] = v; return a }
+    const arr = [['22000003201', 2, 1, true, [
+      fr(0, { 3: 'bg_adventure_1005402', 27: 'bgm_2010' }),
+      fr(3, { 12: 'ナレーション', 27: 'bgm_2010' }),
+      fr(10, { 10: '%username%', 12: '「どうした？」\\n続き', 27: 'bgm_2010', 31: [[10010101, 0, 3, 0, 0, 2, false, null]] }),
+      fr(11, { 10: 'メラーニア', 12: '「なんでも」', 27: 'noBGM{Fade_0.5,Delay_0}', 29: 'c_22000003201_004', 30: 4, 31: [[10010101, 0, 3, 4, 0, 2, false, null]] }),
+    ], 22000003201, null, null, null]]
+    await writeFile(path.join(imp3, 'scenes/22000003201.json'), '﻿' + J(arr))
+    const a = await read('s:22000003201.json')
+    const ops = a.scene.steps.flatMap((st) => st.commands)
+    check('tenkeiprdx 位置数组形：能识别并转成 4 步场景（背景 / 台词 / 说话人 / 换行）', a.node.kind === 'player' && a.scene.steps.length === 4 && ops.some((c) => c.op === 'bg' && /bg_adventure_1005402/.test(c.src)) && ops.some((c) => c.op === 'text' && c.segments[0]?.text === '「どうした？」\n続き') && ops.some((c) => c.op === 'speaker' && c.segments[0]?.text === 'メラーニア') && a.scene.stats.form === 'array', J(a.scene.stats))
+    check('数组形：BGM 只在变化时发；noBGM{Fade_0.5,…} = bgmStop 淡出 0.5 秒；语音路径按场景 id；立绘站位', ops.filter((c) => c.op === 'bgm').length === 1 && ops.some((c) => c.op === 'bgmStop' && c.fade === 0.5) && ops.some((c) => c.op === 'voice' && c.src === 'AdventureVoice/22000003201/c_22000003201_004.ogg') && ops.some((c) => c.op === 'spine' && c.kind === 'chara'), J(ops.map((c) => c.op)))
+    check('数组形：猜测的字段在 stats 里有说明（arrayGuess）', /猜/.test(a.scene.stats.arrayGuess || ''))
+    const bad = await err(read('s:nope.json'))
+    check('位置数组形以外的数组不被误认', !(await import('../../web/library/gal/adapters/tenkeiprdx-json.mjs')).sniff('[[1,2,3]]') && !(await import('../../web/library/gal/adapters/tenkeiprdx-json.mjs')).sniff('[["a"]]') && Boolean(bad))
+  }
   check('config.scriptIndex 规整：目录必须安全、pattern 必须是合法正则、key 默认 {1}', J(normalizeGalConfig({ scriptIndex: [{ dir: 'a/b', pattern: '^x(\\d)' }, { dir: '../a', pattern: 'x' }, { dir: 'a', pattern: '(' }, { dir: '', pattern: 'x' }] }).scriptIndex) === J([{ dir: 'a/b', pattern: '^x(\\d)', key: '{1}', badge: '' }]))
   check('config.rawIgnore 规整：非法正则 / 空串 / 重复丢掉，最多 50 条；补丁能写能清', J(normalizeGalConfig({ rawIgnore: ['^spine$', '(', '', '^spine$', 'anm,.*'] }).rawIgnore) === J(['^spine$', 'anm,.*']) && normalizeGalConfig({ rawIgnore: Array.from({ length: 80 }, (_, k) => `x${k}`) }).rawIgnore.length === 50 && J(applyGalConfigPatch({}, { rawIgnore: ['a'] }).rawIgnore) === J(['a']) && applyGalConfigPatch({ rawIgnore: ['a'] }, { rawIgnore: null }).rawIgnore === undefined && J(normalizeGalConfig({}).rawIgnore) === '[]')
   void imported

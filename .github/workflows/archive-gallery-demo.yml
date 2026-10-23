@@ -217,6 +217,9 @@ jobs:
           node scripts/dev/make-gal-fixture.mjs "$RUNNER_TEMP/data/gal/UViewer演示" $GAL_EX_ARGS
           # 另外两种游戏的演示数据（合成的，没有原作内容）：monmusu（Ren'Py）、tenkeiprdx（Unity 剧情 JSON + Spine 骨骼动画）
           node scripts/dev/make-gal-games-fixture.mjs "$RUNNER_TEMP/data/gal"
+          # 样式压力数据：150 个压缩包图集条目（极长标题 / 最多 60 个标签 + 超长标签 / 各种比例的封面 / 没封面），和一个 Gal 大目录（300 个脚本的房间 + 40 个角色），看卡片、详情、标签、分页的极端情况
+          node scripts/dev/make-style-stress-fixture.mjs "$RUNNER_TEMP/data" 150
+          node scripts/dev/make-gal-big-fixture.mjs "$RUNNER_TEMP/data/gal/大目录" 40 8 300
           # 模拟的 GSV-TTS-Lite（不同参数合成不同音高），给朗读规则试用；容器经 host.docker.internal 访问它
           nohup python3 scripts/dev/mock-gsv.py 8196 > "$RUNNER_TEMP/mock-gsv.log" 2>&1 &
           docker run -d --name copymanga-web --network lrrnet \
@@ -237,6 +240,8 @@ jobs:
               curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/monmusu演示' -F 'profileOptions={"adapters":["renpy-monmusu"],"config":{"game":{"id":"monmusu"}}}' -F metadataActionIds=gal-layout | head -c 300 || echo "monmusu import failed"
               echo
               curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/tenkeiprdx演示' -F 'profileOptions={"adapters":["tenkeiprdx-json"],"config":{"game":{"id":"tenkeiprdx"}}}' -F metadataActionIds=gal-layout | head -c 300 || echo "tenkeiprdx import failed"
+              echo
+              curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/大目录' -F 'profileOptions={}' | head -c 300 || echo "gal big import failed"
               echo
               curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null || true
               # 灌今天几个改动要试的数据和配置（中日对照 EPUB + 朗读规则 + 新页面规则 + 文本媒体 + 标签），再跑一遍接口冒烟；冒烟不过就让这一步失败

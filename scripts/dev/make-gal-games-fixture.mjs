@@ -12,6 +12,20 @@ import { buildTenkeiFixture } from './make-spine-fixture.mjs'
 
 export { buildTenkeiFixture }
 
+// 演示用：给 tenkeiprdx 演示再加一份位置数组形（游戏原始数据，没有键名）的剧情；不放进共享 fixture，免得测试里的数量对不上
+async function addArrayScene(media) {
+  const imported = (await import('node:fs')).existsSync(path.join(media, 'scenes')) ? media : path.join(media, 'StreamingAssets', 'Tenkeiprdx X', 'Imported')
+  const at = (rel) => path.join(imported, rel)
+  // 位置数组形（游戏原始数据，没有键名）的剧情：[[ "<场景 id>", n, n, bool, [帧…], … ]]
+  const arrayFrame = (idx, over = {}) => { const f = new Array(33).fill(null); f[0] = idx; f[5] = false; f[15] = false; f[30] = 0; f[31] = []; for (const [k, v] of Object.entries(over)) f[k] = v; return f }
+  await writeFile(at('scenes/22000003201.json'), JSON.stringify([['22000003201', 2, 1, true, [
+    arrayFrame(0, { 3: 'bg_adventure_001', 27: 'bgm_a' }),
+    arrayFrame(3, { 12: '数组形：旁白一句' }),
+    arrayFrame(10, { 10: '%username%', 12: '「数组形的台词」\\n第二行', 27: 'bgm_a', 31: [[1001, 0, 1, 0, 0, 2, false, null]] }),
+    arrayFrame(11, { 10: 'Alice', 12: '「停掉 BGM」', 27: 'noBGM{Fade_0.5,Delay_0}', 31: [[1001, 0, 1, 4, 0, 2, false, null]] }),
+  ], 22000003201, null, null, null]]))
+}
+
 export async function buildMonmusuFixture(mm) {
   const game = path.join(mm, 'game')
   const put = async (rel, content) => { await mkdir(path.dirname(path.join(game, rel)), { recursive: true }); await writeFile(path.join(game, rel), content) }
@@ -43,6 +57,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const out = process.argv[2]
   if (!out) { console.error('用法：node scripts/dev/make-gal-games-fixture.mjs <输出根目录>'); process.exit(2) }
   await buildMonmusuFixture(path.join(out, 'monmusu演示'))
-  await buildTenkeiFixture(path.join(out, 'tenkeiprdx演示'))
+  const tenkei = await buildTenkeiFixture(path.join(out, 'tenkeiprdx演示'))
+  await addArrayScene(tenkei.imported || path.join(out, 'tenkeiprdx演示'))
   console.log(`done: ${out}/monmusu演示, ${out}/tenkeiprdx演示`)
 }
