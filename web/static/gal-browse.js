@@ -168,9 +168,9 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   }
 
   // 工具栏：搜索 / 排序 / 每页条数 + 当前范围；列表不到一页又没筛选时只留搜索（太短的列表不需要排序和页数）
-  const buildPager = (compact) => {
+  const buildPager = () => {
     if (node.pageCount <= 1) return null
-    const bar = el('div', compact ? 'gal-browse-pager compact' : 'gal-browse-pager')
+    const bar = el('div', 'gal-browse-pager')
     const mk = (text, title, page, disabled) => {
       const b = el('button', 'gal-pager-btn', text)
       b.type = 'button'
@@ -201,6 +201,8 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     return bar
   }
 
+  // 筛选 / 排序 / 每页条数 / 翻页放在同一块固定条里：往下滚列表时它贴在顶上（分页只在这里有一个）
+  const sticky = el('div', 'gal-browse-sticky')
   if (view && (view.unfiltered > 8 || view.q)) {
     const tools = el('div', 'gal-browse-tools')
     const search = el('input', 'gal-browse-search')
@@ -250,17 +252,16 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       clear.addEventListener('click', () => go(viewId({ q: '' }, 1)))
       tools.append(clear)
     }
-    root.append(tools)
+    sticky.append(tools)
     if (refocusSearch === node.viewBase) {
       refocusSearch = ''
       queueMicrotask(() => { search.focus(); search.setSelectionRange(search.value.length, search.value.length) })
     }
   }
-  const topPager = buildPager(true)
-  if (topPager) root.append(topPager)
+  const pager = buildPager()
+  if (pager) sticky.append(pager)
+  if (sticky.children.length) root.append(sticky)
   root.append(body)
-  const bottomPager = buildPager(false)
-  if (bottomPager) root.append(bottomPager)
 
   container.replaceChildren(root)
   if (thumbLoader && thumbImages.length) thumbLoader.attach(thumbImages, { root: container })

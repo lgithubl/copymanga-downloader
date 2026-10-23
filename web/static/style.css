@@ -4465,3 +4465,25 @@ h2 {
 .gal-browse-pager .gal-pager-jump { font-size: 13px; min-height: 28px; padding: 2px 6px; width: 3.8em; }
 .gal-browse-tools .gal-browse-search, .gal-browse-tools .gal-browse-sort, .gal-browse-tools .gal-browse-size { font-size: 13px; min-height: 28px; padding: 3px 8px; }
 .gal-browse-pager { gap: 6px; }
+
+/* Gal 列表：搜索 / 排序 / 分页固定在顶上（滚动容器是 .media-reader-content） */
+.gal-browse-sticky { background: var(--site-panel, #fff); display: grid; gap: 8px; padding: 6px 0; position: sticky; top: 0; z-index: 5; }
+.gal-browse-pager.compact { justify-content: flex-start; }
+@media (max-width: 640px) {
+  /* 窄屏：固定条要薄——隐藏「第 a–b 项」说明和首页 / 末页，搜索占满一行，排序和每页条数一行，翻页一行 */
+  .gal-browse-sticky { gap: 6px; padding: 4px 0; }
+  .gal-browse-range { display: none; }
+  .gal-browse-pager .gal-pager-btn[title="第一页"], .gal-browse-pager .gal-pager-btn[title="最后一页"] { display: none; }
+  .gal-browse-pager { justify-content: center; }
+}
+/* 窄屏整页滚动（body 在滚）：浏览层自己不能是 overflow:auto 的容器，否则固定条会粘在它（不滚动的容器）上、跟着页面滚走 */
+@media (max-width: 900px) {
+  #media-viewer-view .media-reader-content.media-gal.media-gal-browse { overflow: visible; }
+}
+/* 固定条上沿的遮挡：容器有 12px 内边距，往下滚时卡片会从条上面的缝里露出来；条往上多伸 12px 盖住它 */
+.gal-browse-sticky { margin-top: -12px; padding-top: 18px; top: -12px; }
+/* 窄屏：body 自己是 overflow:auto（虽然不滚，视口在滚），sticky 会把它当成滚动祖先而粘不住。Gal 列表显示时让 body 不当滚动容器 */
+@media (max-width: 900px) {
+  body:has(#media-viewer-view.active #media-reader-content.media-gal-browse) { overflow: visible; }
+}
+@media (max-width: 900px) { .gal-browse-sticky { top: 0; } }
