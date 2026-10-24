@@ -37,6 +37,8 @@ const script1 = [
   '<SPINE_ACTOR_PLAY>2,joy,0,true',
   '<SPINE_ACTOR_PLAY>2,ex_joy,1,true',
   '<SPINE_ACTOR_PLAY>2,nope_anim,2,true',
+  '<SPINE_ACTOR_TRACK>2,3,joy,true',
+  '<SPINE_ACTOR_SHAKE>2,6,3,6',
   '<SPINE_ACTOR_MOVE>1,0,0,500,FALSE',
   '<SCREEN_SHAKE>0,300',
   '<BG_SCALE>1.5,100,linear',

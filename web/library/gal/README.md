@@ -53,7 +53,7 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 ### Girls Creation 的 FRAME_ANIM
 
 `<FRAME_ANIM>前缀,起始帧,结束帧,速度`：场景自己的 `animations/<前缀>_<帧号>.jpg`，从起始帧到结束帧循环播放，当背景（换背景 / 退出时停）。第 4 项速度不用——速度统一在播放器「更多 → 帧动画速度」里设（帧/秒，默认 30，存在浏览器里）。
-缺的帧跳过并记 `stats.unresolved`。`SPINE_ACTOR_TRACK` 还没做（没见过它的参数格式）。
+缺的帧跳过并记 `stats.unresolved`。`SPINE_ACTOR_TRACK 槽,轨道,动画,循环` 和 `PLAY` 一样给轨道设动画（参数顺序不同）；`SPINE_ACTOR_SHAKE 槽,x,y,时长` 让角色衰减地来回晃（时长按 60 = 1 秒折，单位没有对照样本）。
 
 ### 适配器 misttrain-json（MistTrainGirls X，Unity 剧情查看器）
 

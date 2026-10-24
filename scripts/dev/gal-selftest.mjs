@@ -668,6 +668,13 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const actorCmd = reorder.steps.flatMap((st) => st.commands).find((c) => c.op === 'spine')
   check('先 PLAY 后 ACTOR（槽里还没有角色，常见写法 OUT → PLAY → ACTOR）：动画先记下、角色出现时套用，不再记「没查到槽」', slotErrors.length === 0 && (actorCmd ? actorCmd.tracks.length === 2 : reorder.stats.unresolved['spine:st'] === 1), J(reorder.stats))
   {
+    const trCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', 'pk/scenes/c_1/spines/st.skel', 'pk/scenes/c_1/spines/st.atlas', 'pk/scenes/c_1/spines/st.png'], toResourcePath: (r) => r })
+    const tr = gcMod.parse(['<SPINE_ACTOR_SHAKE>9,1,1,60', '<SPINE_ACTOR>9,st,,,,0,0,x=0|y=0,1,skel', '<SPINE_ACTOR_PLAY>9,ため息,0,true', '<SPINE_ACTOR_TRACK>9,4,cheek/cheek_002,true', '<SPINE_ACTOR_SHAKE>9,15.0,5,60', '<VOICE_PLAY>v1', '<NAME_PLATE>凪', 'a', '<PAUSE>', '<SPINE_ACTOR_PLAY>9,驚き,0,true', '<SPINE_ACTOR_TRACK>9,6,sweat/sweat_none,true', '<SPINE_ACTOR_SHAKE>9,35.0,15,30', '<NAME_PLATE>レイン', 'b', '<PAUSE>', ''].join('\n'), trCtx, { rel: 'c_1/script.txt' })
+    const sp = tr.steps.flatMap((st) => st.commands).filter((c) => c.op === 'spine')
+    check('SPINE_ACTOR_TRACK 槽,轨道,动画,循环：和 PLAY 一样给轨道设动画（参数顺序不同，动画名可带目录）；落在槽 9 的轨道 0 和 4 / 轨道 0 和 6', J(sp[0].tracks) === J([{ track: 0, anim: 'ため息', loop: true }, { track: 4, anim: 'cheek/cheek_002', loop: true }]) && J(sp[1].tracks.map((t) => [t.track, t.anim])) === J([[0, '驚き'], [4, 'cheek/cheek_002'], [6, 'sweat/sweat_none']]), J(sp.map((c) => c.tracks)))
+    check('SPINE_ACTOR_SHAKE 槽,x,y,时长：随角色的 spine 指令带 shake（id 每次不同，时长按 60 = 1 秒折；30 → 0.5 秒）；槽里没角色时记 raw', sp[0].shake.x === 15 && sp[0].shake.y === 5 && sp[0].shake.seconds === 1 && sp[1].shake.seconds === 0.5 && sp[1].shake.id !== sp[0].shake.id && tr.stats.raw['SPINE_ACTOR_SHAKE(槽里没有角色)'] === 1 && !tr.stats.raw.SPINE_ACTOR_TRACK, J(sp.map((c) => c.shake)) + J(tr.stats.raw))
+  }
+  {
     const faCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', ...[3, 4, 5, 7].map((n) => `pk/scenes/c_1/animations/106041_${n}.jpg`)], toResourcePath: (r) => r })
     const fa = gcMod.parse(['<FRAME_ANIM>106041,3,7,33', '<NAME_PLATE>A', 'hi', '<PAUSE>', '<FRAME_ANIM>nope,1,2,33', '<NAME_PLATE>A', 'x', '<PAUSE>', ''].join('\n'), faCtx, { rel: 'c_1/script.txt' })
     const bgs = fa.steps.flatMap((st) => st.commands).filter((c) => c.op === 'bg')

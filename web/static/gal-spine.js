@@ -201,6 +201,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     }
     const shade = spec.dim ? 0.5 : 1
     inst.skeleton.color.set(shade, shade, shade, 1)
+    // 角色抖动（SPINE_ACTOR_SHAKE）：同一个 id 只在播放中抖一次；一步到位（后退 / 续播）只记下 id，不补抖
+    if (spec.shake && spec.shake.id !== inst.shakeId) {
+      inst.shakeId = spec.shake.id
+      inst.shake = live ? { x: Number(spec.shake.x) || 0, y: Number(spec.shake.y) || 0, seconds: Math.max(0.05, Number(spec.shake.seconds) || 1), began: performance.now() } : null
+    }
     if (live && spec.action && ACTIONS[spec.action]) inst.action = { kind: spec.action, began: performance.now() }
     else if (!live) inst.action = null
   }
@@ -280,6 +285,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       scale = fit * (Number(inst.spec.scale) > 0 ? Number(inst.spec.scale) : 1)
       px = width / 2 - (x + w / 2) * fit + pos.x * fit
       py = height / 2 - (y + h / 2) * fit - pos.y * fit
+      if (inst.shake) {   // 衰减的来回晃：每秒 8 个来回，幅度线性衰减到 0（骨骼坐标单位 × fit）
+        const t = (performance.now() - inst.shake.began) / 1000 / inst.shake.seconds
+        if (t >= 1) inst.shake = null
+        else { const o = Math.sin(t * inst.shake.seconds * 8 * Math.PI * 2) * (1 - t); px += o * inst.shake.x * fit; py += o * inst.shake.y * fit }
+      }
     } else {
       scale = (height * 0.95) / h
       px = (inst.spec.x ?? 0.5) * width - (x + w / 2) * scale

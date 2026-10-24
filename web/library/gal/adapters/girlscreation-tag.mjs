@@ -10,7 +10,8 @@
 //   <BGM_PLAY>名,0, / <BGM_STOP>ms     data/audio/bgm      <SE_PLAY>通道,名,TRUE|FALSE,音量,0 / <SE_STOP>通道,ms   data/audio/se（循环的走背景音效声道）
 //   <VOICE_PLAY>名 / <VOICE_SINGLE_PLAY>名    voices/<名>.*     <VIDEO_PLAY>名,loop,通道 / <VIDEO_STOP>   videos/<名>.*
 //   <SPINE_ACTOR>槽,骨架名,,,,0,淡入ms,x=..|y=..,缩放,skel     放一个 Spine 角色（槽 1~4）：spine 指令（kind actor）
-//   <SPINE_ACTOR_PLAY>槽,动画,轨道,循环      轨道 0 身体、轨道 1 表情（ex_<名>）——两条轨道同时播
+//   <SPINE_ACTOR_PLAY>槽,动画,轨道,循环      轨道 0 身体、轨道 1 表情（ex_<名>）——两条轨道同时播；<SPINE_ACTOR_TRACK>槽,轨道,动画,循环 同样给某条轨道设动画（参数顺序不同）
+//   <SPINE_ACTOR_SHAKE>槽,x,y,时长            角色抖动（衰减的来回晃，时长按 60 = 1 秒）
 //   <SPINE_ACTOR_MOVE>槽,x,y,ms,FALSE / <SPINE_ACTOR_OUT>槽,淡出ms
 //   别的（SCREEN_SHAKE、EFFECT_BG_BLUR、BG_SCALE、SE_VOLUME、SPINE_MASK_OPACITY、*_COLOR、UI_DISP …）认得但暂未渲染，记在 stats.raw 里
 // 列表（adapter.catalog）：分类（场景 id 前缀 chmr / chsr …）→ 主要说话人（场景里出现最多的非「館長」的名字）→ 场景（标题取自原始脚本里的 title 行，没有就用 id；封面 = thumbnail.png）。
@@ -178,6 +179,7 @@ export function parse(text, ctx = null, meta = {}) {
   const waiting = new Map() // 槽 → 角色还没出现时先收到的动画
   const actors = new Map()  // 槽 → { skel, x, y, scale, fade, move, tracks: [{ anim, loop }] }
   const dirty = new Set()
+  let shakeId = 0
   const flushActors = () => {
     for (const slot of dirty) {
       const actor = actors.get(slot)
@@ -191,6 +193,7 @@ export function parse(text, ctx = null, meta = {}) {
         op: 'spine', slot: `Actor${slot}`, kind: 'actor', skel: skelRes, atlas: atlasRes,
         x: actor.x, y: actor.y, scale: actor.scale, fade: actor.fade,
         ...(actor.move ? { move: actor.move } : {}),
+        ...(actor.shake ? { shake: actor.shake } : {}),   // 同一个 id 只抖一次（后面同一角色再发 spine 指令不会重抖）
         tracks: actor.tracks.map((t, track) => (t ? { track, anim: t.anim, loop: t.loop } : null)).filter(Boolean),
         order: slot, loop: true, speed: 1,
       })
@@ -285,16 +288,27 @@ export function parse(text, ctx = null, meta = {}) {
           dirty.add(slot)
           break
         }
-        case 'SPINE_ACTOR_PLAY': {
-          const actor = actors.get(Math.trunc(numOf(a[0])))
+        case 'SPINE_ACTOR_PLAY':    // 槽,动画,轨道,循环
+        case 'SPINE_ACTOR_TRACK': {   // 槽,轨道,动画,循环（和 PLAY 一样是给某条轨道设动画，只是参数顺序不同；动画名可以带目录，如 cheek/cheek_002）
+          const slot = Math.trunc(numOf(a[0]))
+          const track = Math.trunc(numOf(tag === 'SPINE_ACTOR_TRACK' ? a[1] : a[2]))
+          const entry = { anim: tag === 'SPINE_ACTOR_TRACK' ? a[2] : a[1], loop: bool(a[3]) }
+          const actor = actors.get(slot)
           if (!actor) {   // 这个槽现在没有角色：先记下，等 SPINE_ACTOR 把它放出来再套用
-            const slot = Math.trunc(numOf(a[0]))
             if (!waiting.has(slot)) waiting.set(slot, [])
-            waiting.get(slot)[Math.trunc(numOf(a[2]))] = { anim: a[1], loop: bool(a[3]) }
+            waiting.get(slot)[track] = entry
             break
           }
-          actor.tracks[Math.trunc(numOf(a[2]))] = { anim: a[1], loop: bool(a[3]) }
-          dirty.add(Math.trunc(numOf(a[0])))
+          actor.tracks[track] = entry
+          dirty.add(slot)
+          break
+        }
+        case 'SPINE_ACTOR_SHAKE': {   // 槽,x 幅度,y 幅度,时长：角色抖动（x / y 是骨骼坐标单位，时长按 60 帧 = 1 秒折，单位没有对照样本）
+          const slot = Math.trunc(numOf(a[0]))
+          const actor = actors.get(slot)
+          if (!actor) { count('raw', 'SPINE_ACTOR_SHAKE(槽里没有角色)'); break }
+          actor.shake = { id: (shakeId += 1), x: numOf(a[1]), y: numOf(a[2]), seconds: Math.max(0.05, Math.min(10, numOf(a[3], 60) / 60)) }
+          dirty.add(slot)
           break
         }
         case 'SPINE_ACTOR_MOVE': {
@@ -336,7 +350,6 @@ export function parse(text, ctx = null, meta = {}) {
         }
         case 'BG_SCALE': emit({ op: 'bgScale', scale: numOf(a[0], 1) || 1, seconds: secs(a[1]), easing: String(a[2] || 'linear').trim() }); break   // BG_SCALE,倍数,毫秒,缓动
         case 'EFFECT_BG_BLUR': emit({ op: 'bgBlur', radius: Math.max(0, numOf(a[0])) }); break   // EFFECT_BG_BLUR,半径（场景像素）
-        case 'SPINE_ACTOR_SHAKE': break   // 原查看器只解析参数、什么也不做
         case 'BG_VOICE': {   // BG_VOICE,槽,文件,音量：循环的背景人声（场景自己的 bgvoices/）
           const src = res('bgvoices', a[1])
           if (src) emit({ op: 'bgvoice', slot: String(Math.trunc(numOf(a[0]))), src, volume: Math.max(0, Math.min(1, numOf(a[2], 1))) }); else count('unresolved', `bgvoice:${a[1]}`)
