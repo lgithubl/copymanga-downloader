@@ -174,6 +174,7 @@ export function parse(text, ctx = null, meta = {}) {
   const stats = { commands: 0, raw: {}, unresolved: {}, movies: 0, spines: 0 }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const emit = (command) => { commands.push(command) }
+  let zoomScale = 1          // 全局 ZOOM：之后放出来的角色缩放 = 角色自己的缩放 × zoomScale；已经在场的角色缩放直接变成 zoomScale（原查看器就是这么做的）
   const waiting = new Map() // 槽 → 角色还没出现时先收到的动画
   const actors = new Map()  // 槽 → { skel, x, y, scale, fade, move, tracks: [{ anim, loop }] }
   const dirty = new Set()
@@ -268,7 +269,7 @@ export function parse(text, ctx = null, meta = {}) {
           // 同一个槽先 PLAY 后 ACTOR（OUT → PLAY → ACTOR 是脚本里的常见写法）：先记下的动画在角色出现时套用
           const tracks = previous?.skel === a[1] ? previous.tracks : (waiting.get(slot) || [])
           waiting.delete(slot)
-          actors.set(slot, { skel: a[1], x: props.x ?? 0, y: props.y ?? 0, scale: numOf(a[8], 1) || 1, fade: secs(a[6]), move: 0, tracks })
+          actors.set(slot, { skel: a[1], x: props.x ?? 0, y: props.y ?? 0, scale: (numOf(a[8], 1) || 1) * zoomScale, fade: secs(a[6]), move: 0, tracks })
           dirty.add(slot)
           break
         }
@@ -288,7 +289,9 @@ export function parse(text, ctx = null, meta = {}) {
           const slot = Math.trunc(numOf(a[0]))
           const actor = actors.get(slot)
           if (!actor) break
-          actor.x = numOf(a[1]); actor.y = numOf(a[2]); actor.move = secs(a[3])
+          // 第 5 个参数 TRUE = 相对位移（在当前位置上加偏移），否则是绝对位置
+          const relative = /^true$/i.test(a[4] || '')
+          actor.x = relative ? actor.x + numOf(a[1]) : numOf(a[1]); actor.y = relative ? actor.y + numOf(a[2]) : numOf(a[2]); actor.move = secs(a[3])
           dirty.add(slot)
           break
         }
@@ -297,6 +300,13 @@ export function parse(text, ctx = null, meta = {}) {
           dirty.delete(slot)
           waiting.delete(slot)
           if (actors.delete(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[1]) })
+          break
+        }
+        case 'ZOOM': {   // ZOOM,缩放,时长,x,y：缩放 / 平移背景（背景暂不渲染，记在 stats.raw），角色缩放按上面的规则
+          const z = numOf(a[0], 1) || 1
+          zoomScale = z
+          for (const [slot, actor] of actors) { actor.scale = z; dirty.add(slot) }
+          count('raw', 'ZOOM(背景缩放/平移)')
           break
         }
         case 'SCENARIO_END': break

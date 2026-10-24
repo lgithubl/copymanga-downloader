@@ -214,6 +214,9 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const current = instances.get(slot)
       if (!current || current.token !== token) return   // 已经被新的指令取代
       const skeleton = new spine.Skeleton(loaded.data)
+      // 画在透明画布上时，叠乘（Multiply）/ 滤色（Screen）的插槽（脸颊腮红、关节阴影这类层）叠在透明像素上会变成黑的（斑点 / 黑线）。
+      // 原查看器的 data/spine.js 里有同样的修正思路：2 = multiply、3 = screen 改成 0 = normal；additive（1）保留
+      for (const slot of loaded.data.slots || []) if (slot.blendMode === 2 || slot.blendMode === 3) slot.blendMode = 0
       const skin = pickSpineSkin(loaded.data)
       if (skin) skeleton.setSkin(skin)
       skeleton.setToSetupPose()
@@ -264,17 +267,19 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       px = width / 2 - (x + w / 2) * scale
       py = height / 2 - (y + h / 2) * scale
     } else if (inst.spec.kind === 'actor') {
-      // 角色（girlscreation）：骨架包围盒先整个放进舞台（和 still 一样），再乘 spec.scale（绕舞台中心放大）；
-      // x / y 是 1920x1080 设计稿里的像素偏移（和 CSS 的 translate 一样：x 向右、y 向下）。单位和锚点是照脚本参数猜的，没有原查看器的对照图
+      // 角色（girlscreation，照原查看器 scene.js 的 setSpineActorPos）：x / y 是骨骼坐标系的单位（skeleton.x = x，skeleton.y = -y：y 为正 = 往下），
+      // 缩放（角色缩放 × 全局 ZOOM）绕骨骼原点，不是绕包围盒中心。骨架包围盒（x, y, w, h）按 still 的方式整个放进舞台得到基准比例 fit，
+      // 原点的位置 = 包围盒中心在舞台中心时原点所在的位置
       let pos = inst.pos || { x: Number(inst.spec.x) || 0, y: Number(inst.spec.y) || 0 }
       if (inst.moving) {
         const t = Math.min(1, (performance.now() - inst.moving.began) / inst.moving.ms)
         pos = { x: inst.moving.from.x + (inst.moving.to.x - inst.moving.from.x) * t, y: inst.moving.from.y + (inst.moving.to.y - inst.moving.from.y) * t }
         if (t >= 1) { inst.pos = inst.moving.to; inst.moving = null }
       }
-      scale = Math.min(width / w, height / h) * (Number(inst.spec.scale) > 0 ? Number(inst.spec.scale) : 1)
-      px = width / 2 + pos.x * (width / 1920) - (x + w / 2) * scale
-      py = height / 2 - pos.y * (height / 1080) - (y + h / 2) * scale
+      const fit = Math.min(width / w, height / h)
+      scale = fit * (Number(inst.spec.scale) > 0 ? Number(inst.spec.scale) : 1)
+      px = width / 2 - (x + w / 2) * fit + pos.x * fit
+      py = height / 2 - (y + h / 2) * fit - pos.y * fit
     } else {
       scale = (height * 0.95) / h
       px = (inst.spec.x ?? 0.5) * width - (x + w / 2) * scale
