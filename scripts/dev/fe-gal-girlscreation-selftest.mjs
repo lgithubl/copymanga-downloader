@@ -110,7 +110,7 @@ try {
   await page.waitForFunction(() => /骨骼 \d+ 个|暂未渲染/.test(document.querySelector('.gal-note')?.textContent || ''), null, { timeout: 5000 }).catch(() => {})
   await page.click('.gal-note')
   const diag = await page.$eval('.gal-diag-text', (e) => e.textContent)
-  check('渲染诊断：列出两个角色、「骨架里没有这些动画：nope_anim」；SCREEN_SHAKE 记在暂未渲染的指令里', /Actor1/.test(diag) && /Actor2/.test(diag) && /没有这些动画（脚本要的）：nope_anim/.test(diag) && /SCREEN_SHAKE/.test(diag), diag.slice(0, 600))
+  check('渲染诊断：列出两个角色、「骨架里没有这些动画：nope_anim」；SCREEN_SHAKE 已渲染（抖动），不再出现在暂未渲染的指令里', /Actor1/.test(diag) && /Actor2/.test(diag) && /没有这些动画（脚本要的）：nope_anim/.test(diag) && !/SCREEN_SHAKE/.test(diag), diag.slice(0, 600))
   await page.click('.gal-diag button:has-text("关闭")')
   await page.screenshot({ path: path.join(shotDir, '3-two-actors.png') })
   await page.keyboard.press('Space'); await waitCount('5 / 5')
@@ -125,6 +125,7 @@ try {
   await waitCount('1 / 3')
   await sleep(2500)   // 第一步有黑场渐入 / 等待共约 1.3 秒：播放中点下一步只是「跳过动画」
   check('视频场景：VIDEO_PLAY → 视频背景元素显示；台词；BGM / 语音按场景自己的目录请求', await page.$eval('.gal-movie', (v) => !v.hidden).catch(() => false) && (await text('.gal-text')) === '"A line over the video."', await text('.gal-text'))
+  check('UI_DISP OFF：文本框隐藏（透明、不挡点击）', await page.$eval('.gal-box', (b) => b.style.opacity === '0' && b.style.pointerEvents === 'none'), await page.$eval('.gal-box', (b) => b.style.cssText))
   await page.keyboard.press('Space'); await waitCount('2 / 3')
   await page.keyboard.press('Space'); await waitCount('3 / 3')
   await sleep(500)

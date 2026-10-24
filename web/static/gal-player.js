@@ -278,6 +278,43 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     bgseAudio = audio
     if (wantBgm) audio.play().catch(() => {})
   }
+  // 背景人声：多个槽同时循环播放（BG_VOICE / BG_VOICE_STOP）；状态里是 { 槽: { src, volume } }，这里让实际在播的和状态一致
+  const bgVoices = new Map()   // 槽 → { src, audio, volume }
+  function setBgVoices(spec = {}) {
+    for (const [slot, voice] of [...bgVoices]) {
+      if (spec[slot]?.src === voice.src) continue
+      voice.audio.pause()
+      bgVoices.delete(slot)
+    }
+    for (const [slot, want] of Object.entries(spec)) {
+      if (bgVoices.has(slot) || !want?.src) continue
+      const audio = new Audio(url(want.src))
+      audio.loop = true
+      audio.volume = Math.max(0, Math.min(1, seVolume * (Number.isFinite(Number(want.volume)) ? Number(want.volume) : 1)))
+      audio.addEventListener('error', () => markMissing(want.src))
+      bgVoices.set(slot, { src: want.src, audio, volume: want.volume })
+      if (wantBgm) audio.play().catch(() => {})
+    }
+  }
+  // 文本框显示 / 隐藏（UI_DISP）：隐藏时文本框透明且不挡点击
+  function paintUi(instant, seconds = 0) {
+    box.style.transition = instant || !seconds ? 'none' : `opacity ${seconds}s linear`
+    box.style.opacity = state.ui ? '' : '0'
+    box.style.pointerEvents = state.ui ? '' : 'none'
+  }
+  // 画面抖动（EFFECT_QUAKE / SCREEN_SHAKE）：纯装饰，不进状态
+  function playShake(command) {
+    if (typeof world.animate !== 'function') return
+    const ms = Math.max(100, Math.min(5000, (command.seconds || 0.5) * 1000))
+    const amp = Math.max(1, Math.min(30, (Number(command.strength) || 0.2) * 40))
+    const axis = command.axis || 'horizontal'
+    const frames = []
+    for (let k = 0; k <= 10; k++) {
+      const d = k === 10 ? 0 : (k % 2 ? -amp : amp) * (1 - k / 10)
+      frames.push({ transform: axis === 'vertical' ? `translateY(${d}px)` : axis === 'overall' ? `translate(${d}px, ${-d}px)` : `translateX(${d}px)` })
+    }
+    world.animate(frames, { duration: ms, easing: 'steps(1)' })
+  }
   function setBgm(src, fade = 0) {
     if (src === bgmSrc) return
     const old = bgmAudio
@@ -456,6 +493,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     paintCamera(false)
     setBgm(state.bgm)
     setBgse(state.bgse)
+    setBgVoices(state.bgvoices)
+    paintUi(true)
     afterStep()
   }
 
@@ -544,6 +583,16 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         case 'bgse':
         case 'bgseStop':
           setBgse(state.bgse)
+          break
+        case 'bgvoice':
+        case 'bgvoiceOff':
+          setBgVoices(state.bgvoices)
+          break
+        case 'ui':
+          paintUi(skipping, command.seconds || 0)
+          break
+        case 'shake':
+          if (!skipping) playShake(command)
           break
         case 'flash':
         case 'wash':
@@ -996,8 +1045,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const visibility = new IntersectionObserver((entries) => {
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
-    if (visible) { spineLayer?.setPaused(false); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
-    else { spineLayer?.setPaused(true); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
+    if (visible) { spineLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
+    else { spineLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
   })
   visibility.observe(stage)
 
@@ -1014,6 +1063,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     visibility.disconnect()
     bgmAudio?.pause()
     bgseAudio?.pause()
+    for (const v of bgVoices.values()) v.audio.pause()
     voiceAudio?.pause()
     movie.pause()
     movie.removeAttribute('src')

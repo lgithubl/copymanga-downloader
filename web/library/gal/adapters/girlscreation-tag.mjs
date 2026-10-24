@@ -309,6 +309,16 @@ export function parse(text, ctx = null, meta = {}) {
           count('raw', 'ZOOM(背景缩放/平移)')
           break
         }
+        case 'BG_VOICE': {   // BG_VOICE,槽,文件,音量：循环的背景人声（场景自己的 bgvoices/）
+          const src = res('bgvoices', a[1])
+          if (src) emit({ op: 'bgvoice', slot: String(Math.trunc(numOf(a[0]))), src, volume: Math.max(0, Math.min(1, numOf(a[2], 1))) }); else count('unresolved', `bgvoice:${a[1]}`)
+          break
+        }
+        case 'BG_VOICE_STOP': emit({ op: 'bgvoiceOff', slot: String(Math.trunc(numOf(a[0]))) }); break
+        case 'UI_DISP': emit({ op: 'ui', visible: /^on$/i.test(a[0] || ''), seconds: secs(a[1]) }); break
+        case 'EFFECT_FLASH': emit({ op: 'wash', color: a[0] || 'white', seconds: secs(a[1], 0.3) }); break   // EFFECT_FLASH,颜色,毫秒：整屏闪色后渐隐
+        case 'EFFECT_QUAKE': emit({ op: 'shake', axis: String(a[0] || '').toLowerCase() === 'vertical' ? 'vertical' : String(a[0] || '').toLowerCase() === 'overall' ? 'overall' : 'horizontal', strength: numOf(a[1], 0.2), seconds: secs(a[2], 0.5) }); break
+        case 'SCREEN_SHAKE': emit({ op: 'shake', axis: 'horizontal', strength: numOf(a[0]) === 1 ? 0.1 : 0.2, seconds: secs(a[1], 0.5) }); break   // SCREEN_SHAKE,类型(0/1),毫秒
         case 'SCENARIO_END': break
         default: count('raw', tag)
       }

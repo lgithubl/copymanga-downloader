@@ -3,7 +3,7 @@
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, camera: null, bgse: null, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, camera: null, bgse: null, bgvoices: {}, ui: true, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -132,6 +132,18 @@ export function applyCommand(state, command, choices = null) {
     case 'bgse':
       state.bgse = command.src ? { src: command.src, loop: Boolean(command.loop) } : null
       break
+    case 'bgvoice':   // 循环的背景人声（多个槽同时播）：{ slot, src, volume }
+      state.bgvoices = { ...state.bgvoices, [command.slot]: { src: command.src, volume: command.volume ?? 1 } }
+      break
+    case 'bgvoiceOff': {
+      const next = { ...state.bgvoices }
+      delete next[command.slot]
+      state.bgvoices = next
+      break
+    }
+    case 'ui':        // 文本框显示 / 隐藏（看 CG 时）
+      state.ui = Boolean(command.visible)
+      break
     case 'bgseStop':
       state.bgse = null
       break
@@ -153,6 +165,7 @@ export function commandDuration(command) {
   if (command.op === 'bg' || command.op === 'bgoff') return command.fade || 0
   if (command.op === 'fade') return command.seconds || 0
   if (command.op === 'wait') return command.seconds || 0
+  if (command.op === 'ui') return 0   // 文本框淡入淡出不等它
   return 0
 }
 
