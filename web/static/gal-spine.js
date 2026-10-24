@@ -158,13 +158,36 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
   function applySpec(inst, spec, live) {
     inst.spec = spec
-    const name = pickAnimation(inst.data, spec.anim, spec.kind)
-    const changed = Boolean(name) && (name !== inst.anim || inst.loop !== (spec.loop !== false))
-    if (changed) {
-      inst.state.setAnimation(0, name, spec.loop !== false)
+    // 多轨道（girlscreation 的角色：轨道 0 身体、轨道 1 表情，同时播）：spec.tracks = [{ track, anim, loop }]；名字对不上的轨道跳过并记下来（诊断面板里看）
+    const tracked = Array.isArray(spec.tracks) && spec.tracks.length > 0
+    const name = tracked ? (spec.tracks.find((t) => inst.data.findAnimation(t.anim))?.anim || '') : pickAnimation(inst.data, spec.anim, spec.kind)
+    let changed = false
+    if (tracked) {
+      inst.trackSig = inst.trackSig || {}
+      inst.missingAnims = []
+      for (const t of spec.tracks) {
+        if (!inst.data.findAnimation(t.anim)) { inst.missingAnims.push(t.anim); continue }
+        const sig = `${t.anim}:${t.loop !== false}`
+        if (inst.trackSig[t.track] === sig) continue
+        inst.state.setAnimation(t.track, t.anim, t.loop !== false)
+        inst.trackSig[t.track] = sig
+        changed = true
+      }
       inst.anim = name
-      inst.loop = spec.loop !== false
+      inst.loop = true
+    } else {
+      changed = Boolean(name) && (name !== inst.anim || inst.loop !== (spec.loop !== false))
+      if (changed) {
+        inst.state.setAnimation(0, name, spec.loop !== false)
+        inst.anim = name
+        inst.loop = spec.loop !== false
+      }
     }
+    // 位置（角色）：x / y 变了且这一步在播放（live）、spec.move > 0 → 从原来的位置平滑移到新位置；否则一步到位
+    const to = { x: Number(spec.x) || 0, y: Number(spec.y) || 0 }
+    if (live && Number(spec.move) > 0 && inst.pos && (inst.pos.x !== to.x || inst.pos.y !== to.y)) inst.moving = { from: { ...inst.pos }, to, began: performance.now(), ms: Number(spec.move) * 1000 }
+    else inst.moving = null
+    inst.pos = inst.moving ? inst.pos : to
     const speed = Number.isFinite(Number(spec.speed)) && Number(spec.speed) > 0 ? Number(spec.speed) : 1
     inst.state.timeScale = speed
     // 降速（animation4）：和原查看器一样，开始播放后 1 秒内把速度从 speed 渐变到 slowTo；一步到位（后退 / 续播）直接停在 slowTo
@@ -201,6 +224,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const state = new spine.AnimationState(new spine.AnimationStateData(loaded.data))
       Object.assign(current, { skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
       applySpec(current, spec, live)
+      if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
       state.apply(skeleton)
       skeleton.updateWorldTransform()
@@ -225,7 +249,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       create(slot, spec, live, token)
     }
     canvas.hidden = instances.size === 0
-    parent.dataset.spines = JSON.stringify(Object.fromEntries([...instances].map(([slot, inst]) => [slot, inst.anim || inst.spec.anim || ''])))
+    parent.dataset.spines = JSON.stringify(Object.fromEntries([...instances].map(([slot, inst]) => [slot, inst.anim || inst.spec.anim || inst.spec.tracks?.[0]?.anim || ''])))
     kick()
     return ready()
   }
@@ -239,6 +263,18 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       scale = Math.min(width / w, height / h)
       px = width / 2 - (x + w / 2) * scale
       py = height / 2 - (y + h / 2) * scale
+    } else if (inst.spec.kind === 'actor') {
+      // 角色（girlscreation）：骨架包围盒先整个放进舞台（和 still 一样），再乘 spec.scale（绕舞台中心放大）；
+      // x / y 是 1920x1080 设计稿里的像素偏移（和 CSS 的 translate 一样：x 向右、y 向下）。单位和锚点是照脚本参数猜的，没有原查看器的对照图
+      let pos = inst.pos || { x: Number(inst.spec.x) || 0, y: Number(inst.spec.y) || 0 }
+      if (inst.moving) {
+        const t = Math.min(1, (performance.now() - inst.moving.began) / inst.moving.ms)
+        pos = { x: inst.moving.from.x + (inst.moving.to.x - inst.moving.from.x) * t, y: inst.moving.from.y + (inst.moving.to.y - inst.moving.from.y) * t }
+        if (t >= 1) { inst.pos = inst.moving.to; inst.moving = null }
+      }
+      scale = Math.min(width / w, height / h) * (Number(inst.spec.scale) > 0 ? Number(inst.spec.scale) : 1)
+      px = width / 2 + pos.x * (width / 1920) - (x + w / 2) * scale
+      py = height / 2 - pos.y * (height / 1080) - (y + h / 2) * scale
     } else {
       scale = (height * 0.95) / h
       px = (inst.spec.x ?? 0.5) * width - (x + w / 2) * scale
@@ -272,6 +308,12 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     renderer.begin()
     const drawn = [...instances.values()].filter((inst) => inst.skeleton).sort((a, b) => (a.spec.kind === b.spec.kind ? (a.spec.order || 0) - (b.spec.order || 0) : a.spec.kind === 'still' ? -1 : 1))
     for (const inst of drawn) {
+      if (inst.fadeIn) {
+        const t = Math.min(1, (performance.now() - inst.fadeIn.began) / inst.fadeIn.ms)
+        const shade = inst.spec.dim ? 0.5 : 1
+        inst.skeleton.color.set(shade, shade, shade, t)
+        if (t >= 1) inst.fadeIn = null
+      }
       if (inst.slow) {
         const t = Math.min(1, (performance.now() - inst.slow.began) / 1000)
         inst.state.timeScale = inst.slow.from + (inst.slow.to - inst.slow.from) * t
@@ -297,7 +339,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     // 每个站位 / 静图的骨架信息（诊断面板用）：路径、要的动画 / 实际播的动画、骨架里有哪些动画和皮肤、边界、版本
     info: () => [...instances].map(([slot, inst]) => ({
       slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
-      requested: inst.spec.anim || '', used: inst.anim || '', loaded: Boolean(inst.skeleton),
+      requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
       animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
       skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
       version: inst.data?.version || '', bounds: inst.bounds ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,

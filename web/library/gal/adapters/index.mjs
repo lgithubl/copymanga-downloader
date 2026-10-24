@@ -1,5 +1,6 @@
 // 适配器注册表。新增原始格式：写一个 { id, label, sniff(text), parse(text, ctx, meta) → { steps, stats }（meta = { rel, stem }：这份脚本的路径和文件名） }，在这里登记即可。
 // 需要查别的文件才能解析的格式（别名表、图片目录…）再实现 contextFiles / contextDirs / prepare，见 ../context.mjs。
+import { girlsCreationTagAdapter } from './girlscreation-tag.mjs'
 import { renpyLegecloAdapter } from './renpy-legeclo.mjs'
 import { renpyMinashigoAdapter } from './renpy-minashigo.mjs'
 import { renpyMonmusuAdapter } from './renpy-monmusu.mjs'
@@ -16,6 +17,7 @@ registerGalAdapter(renpyLegecloAdapter)     // 先于 monmusu：它的 sniff 要
 registerGalAdapter(renpyMinashigoAdapter)   // 先于 monmusu：它的 sniff 要求独有写法（$ name= / xyz "…"），monmusu 的脚本不会被它认走
 registerGalAdapter(renpyMonmusuAdapter)
 registerGalAdapter(tenkeiprdxJsonAdapter)
+registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
 
 export const galAdapterIds = () => [...adapters.keys()]
 export function galAdapter(id) {

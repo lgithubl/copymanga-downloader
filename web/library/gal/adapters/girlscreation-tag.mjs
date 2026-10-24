@@ -1,0 +1,306 @@
+// 适配器：Girls Creation R Viewer（NW.js 查看器）的剧情 → 规范场景（gal-scene/1）。
+// 目录（<root> = package.nw，所在位置记在 config.adapterOptions['girlscreation-tag'].root）：
+//   <root>/scenes/<场景 id>/script.txt            标签式脚本（每个场景都有；本适配器解析它）
+//   <root>/scenes/<场景 id>/{images,videos,voices,spines}/   这个场景自己的背景图 / 视频 / 语音 / Spine 骨骼
+//   <root>/scenes/<场景 id>/script_original.txt 等   游戏原始的逗号式脚本（只有部分场景有，文件名还不统一；不解析，只拿来取标题：title,<标题>,）
+//   <root>/data/audio/{bgm,se}/<名>.m4a            全局 BGM / 音效
+// 标签式脚本：一行一个 <TAG>参数（一行里可以连着几个标签），<NAME_PLATE>说话人 + 下一行起的正文 + <PAUSE> = 一句台词（一步）；正文里 [br] 是换行。
+//   <BG>名,NONE,0,缩放,x,y            背景图（场景自己的 images/<名>.* ；缩放 / 位移暂不渲染，记在 stats.raw 里）   <BG_OUT>ms 去掉背景
+//   <FADE_OUT2>black,ms / <FADE_IN2>black|white,ms   黑场渐入 / 渐出，白场闪    <WAIT2>ms 等待
+//   <BGM_PLAY>名,0, / <BGM_STOP>ms     data/audio/bgm      <SE_PLAY>通道,名,TRUE|FALSE,音量,0 / <SE_STOP>通道,ms   data/audio/se（循环的走背景音效声道）
+//   <VOICE_PLAY>名 / <VOICE_SINGLE_PLAY>名    voices/<名>.*     <VIDEO_PLAY>名,loop,通道 / <VIDEO_STOP>   videos/<名>.*
+//   <SPINE_ACTOR>槽,骨架名,,,,0,淡入ms,x=..|y=..,缩放,skel     放一个 Spine 角色（槽 1~4）：spine 指令（kind actor）
+//   <SPINE_ACTOR_PLAY>槽,动画,轨道,循环      轨道 0 身体、轨道 1 表情（ex_<名>）——两条轨道同时播
+//   <SPINE_ACTOR_MOVE>槽,x,y,ms,FALSE / <SPINE_ACTOR_OUT>槽,淡出ms
+//   别的（SCREEN_SHAKE、EFFECT_BG_BLUR、BG_SCALE、SE_VOLUME、SPINE_MASK_OPACITY、*_COLOR、UI_DISP …）认得但暂未渲染，记在 stats.raw 里
+// 列表（adapter.catalog）：分类（场景 id 前缀 chmr / chsr …）→ 主要说话人（场景里出现最多的非「館長」的名字）→ 场景（标题取自原始脚本里的 title 行，没有就用 id；封面 = thumbnail.png）。
+// 目录树每次从文件现读（上下文按目录变化失效）。
+
+export const ADAPTER_ID = 'girlscreation-tag'
+const DEFAULT_OPTIONS = { root: '', categoryLabels: {}, player: '館長' }
+const IMAGE_EXTS = /\.(?:webp|png|jpe?g|avif|gif)$/i
+const SAMPLE_FILE = /\/(?:script\.txt|script_original\.txt|original_script\.txt|originial_script\.txt|h[ms]r_\d+\.txt)$/i
+
+const joinPath = (...parts) => parts.filter(Boolean).join('/')
+const rootOf = (options) => String(options?.root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+
+// ---------- 上下文：场景索引 + 全局音频索引 + 标题 / 主要说话人 ----------
+export const contextFiles = () => []
+export const contextDirs = (options) => [joinPath(rootOf(options), 'scenes'), joinPath(rootOf(options), 'data/audio')]
+export const contextTextFilter = (options) => {
+  const base = `${joinPath(rootOf(options), 'scenes')}/`
+  return (rel) => rel.startsWith(base) && SAMPLE_FILE.test(rel)
+}
+
+// 标签式脚本：把一行拆成 [{ tag, arg }]（一行里可以连着几个标签）
+const TAG_RE = /<([A-Z][A-Z0-9_]*)>([^<]*)/g
+export function tagsOf(line) {
+  const out = []
+  TAG_RE.lastIndex = 0
+  for (let m = TAG_RE.exec(line); m; m = TAG_RE.exec(line)) out.push({ tag: m[1], arg: m[2].trim() })
+  return out
+}
+
+export function sniff(text) {
+  const head = String(text || '').replace(/^﻿/, '').slice(0, 8192)
+  return /^<NAME_PLATE>/m.test(head) && /^<PAUSE>/m.test(head)
+}
+
+export function prepare({ options, texts, files, toResourcePath }) {
+  const root = rootOf(options)
+  const toRes = toResourcePath || ((rel) => rel)
+  const scenesBase = `${joinPath(root, 'scenes')}/`
+  const audioBase = `${joinPath(root, 'data/audio')}/`
+  const scenes = new Map()   // 场景 id → { id, script, thumb, images: Map(无扩展名文件名 → 资源路径), videos, voices, spines: Map }
+  const audio = { bgm: new Map(), se: new Map() }
+  const sceneOf = (id) => {
+    if (!scenes.has(id)) scenes.set(id, { id, script: '', thumb: '', images: new Map(), videos: new Map(), voices: new Map(), spines: new Map() })
+    return scenes.get(id)
+  }
+  const stem = (name) => name.replace(/\.[^.]+$/, '')
+  for (const rel of files || []) {
+    if (rel.startsWith(scenesBase)) {
+      const parts = rel.slice(scenesBase.length).split('/')
+      if (parts.length < 2) continue
+      const scene = sceneOf(parts[0])
+      if (parts.length === 2) {
+        if (parts[1] === 'script.txt') scene.script = rel
+        else if (/^thumbnail\.(?:png|jpe?g|webp)$/i.test(parts[1])) scene.thumb = toRes(rel)
+      } else if (parts.length === 3) {
+        if (parts[1] === 'spines') {   // 同名同目录的 .skel / .atlas / .png：按扩展名分开记（不然谁先到谁占位）
+          const ext = parts[2].slice(parts[2].lastIndexOf('.') + 1).toLowerCase()
+          if (!scene.spines.has(stem(parts[2]))) scene.spines.set(stem(parts[2]), new Map())
+          scene.spines.get(stem(parts[2])).set(ext, toRes(rel))
+          continue
+        }
+        const bucket = { images: scene.images, videos: scene.videos, voices: scene.voices }[parts[1]]
+        if (bucket && !bucket.has(stem(parts[2]))) bucket.set(stem(parts[2]), toRes(rel))
+      }
+    } else if (rel.startsWith(audioBase)) {
+      const parts = rel.slice(audioBase.length).split('/')
+      if (parts.length === 2 && audio[parts[0]] && !audio[parts[0]].has(stem(parts[1]))) audio[parts[0]].set(stem(parts[1]), toRes(rel))
+    }
+  }
+  for (const [id, scene] of scenes) if (!scene.script) scenes.delete(id)   // 没有脚本的目录（PLACEHOLDER 之类）不是场景
+
+  const player = String(options?.player ?? DEFAULT_OPTIONS.player)
+  const info = new Map()   // 场景 id → { title, speaker }
+  for (const [id, scene] of scenes) {
+    const dir = scene.script.slice(0, scene.script.lastIndexOf('/') + 1)
+    let title = ''
+    for (const [rel, text] of Object.entries(texts || {})) {
+      if (!rel.startsWith(dir) || rel === scene.script) continue
+      const m = /^title,([^,\r\n]+),/m.exec(String(text))
+      if (m) { title = m[1].trim(); break }
+    }
+    const counts = new Map()
+    for (const m of String(texts?.[scene.script] || '').matchAll(/^<NAME_PLATE>([^\r\n<]+)/gm)) {
+      const name = m[1].trim().replace(/（[^）]*）$/, '')   // 去掉「（オルタ）」这类括号后缀，同一个人归一起
+      if (name && name !== player) counts.set(name, (counts.get(name) || 0) + 1)
+    }
+    const speaker = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || ''
+    info.set(id, { title, speaker })
+  }
+  const categoryLabels = { ...(options?.categoryLabels && typeof options.categoryLabels === 'object' ? options.categoryLabels : {}) }
+  return { root, scenes, audio, info, categoryLabels }
+}
+
+// ---------- 列表 ----------
+const natAsc = (a, b) => a.localeCompare(b, 'en', { numeric: true })
+export function catalog(ctx) {
+  if (!ctx?.scenes?.size) return null
+  const categories = new Map()   // 分类 → Map(说话人 → [场景])
+  for (const id of [...ctx.scenes.keys()].sort(natAsc)) {
+    const category = id.includes('_') ? id.slice(0, id.indexOf('_')) : '其他'
+    const who = ctx.info.get(id)?.speaker || '（未识别）'
+    if (!categories.has(category)) categories.set(category, new Map())
+    const groups = categories.get(category)
+    if (!groups.has(who)) groups.set(who, [])
+    groups.get(who).push(id)
+  }
+  const sceneItem = (category, who, id) => {
+    const scene = ctx.scenes.get(id)
+    const title = ctx.info.get(id)?.title || ''
+    return { id: `s/${id}`, title: title || id, subtitle: title ? id : '', thumb: scene.thumb, badge: category, script: scene.script }
+  }
+  const children = [...categories.entries()].sort((a, b) => natAsc(a[0], b[0])).map(([category, groups]) => {
+    const ordered = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || natAsc(a[0], b[0]))
+    const count = ordered.reduce((n, [, ids]) => n + ids.length, 0)
+    return {
+      id: `c/${category}`,
+      title: ctx.categoryLabels[category] || category,
+      subtitle: `${count} 个剧情 · ${ordered.length} 位`,
+      thumb: ctx.scenes.get(ordered[0][1][0])?.thumb || '',
+      children: ordered.map(([who, ids]) => ({
+        id: `c/${category}/${who}`,
+        title: who,
+        subtitle: `${ids.length} 个剧情`,
+        thumb: ctx.scenes.get(ids[0])?.thumb || '',
+        badge: category,
+        children: ids.map((id) => sceneItem(category, who, id)),
+      })),
+    }
+  })
+  return { children }
+}
+
+// ---------- 解析 ----------
+const secs = (ms, fallback = 0) => { const n = Number.parseFloat(ms); return Number.isFinite(n) ? Math.max(0, Math.min(60, n / 1000)) : fallback }
+const numOf = (text, fallback = 0) => { const n = Number.parseFloat(text); return Number.isFinite(n) ? n : fallback }
+const bool = (text) => /^(?:true|1|loop)$/i.test(String(text || '').trim())
+const splitArgs = (arg) => String(arg).split(',').map((s) => s.trim())
+const cleanText = (lines) => lines.join('\n').replace(/\[br\]/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+
+// x=100|y=0 → { x: 100, y: 0 }
+function parseProps(text) {
+  const out = {}
+  for (const part of String(text || '').split('|')) {
+    const m = /^\s*(\w+)\s*=\s*(-?[\d.]+)/.exec(part)
+    if (m) out[m[1]] = Number.parseFloat(m[2])
+  }
+  return out
+}
+
+export function parse(text, ctx = null, meta = {}) {
+  const steps = []
+  let commands = []
+  let lines = []            // 当前这句的正文行
+  let name = null           // <NAME_PLATE> 之后的说话人（null = 这一步还没出现 NAME_PLATE）
+  let speaker = ''
+  let loopSe = false        // 背景音效声道里有没有在循环播的
+  let movieOn = false
+  const sceneId = String(meta?.rel || '').split('/')[0]
+  const scene = ctx?.scenes?.get(sceneId) || null
+  const stats = { commands: 0, raw: {}, unresolved: {}, movies: 0, spines: 0 }
+  const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
+  const emit = (command) => { commands.push(command) }
+  const actors = new Map()  // 槽 → { skel, x, y, scale, fade, move, tracks: [{ anim, loop }] }
+  const dirty = new Set()
+  const flushActors = () => {
+    for (const slot of dirty) {
+      const actor = actors.get(slot)
+      if (!actor) continue
+      const files = scene?.spines?.get(actor.skel)
+      const skelRes = files?.get('skel') || files?.get('bytes') || ''
+      const atlasRes = files?.get('atlas') || files?.get('txt') || ''
+      if (!skelRes || !atlasRes) { count('unresolved', `spine:${actor.skel}`); continue }
+      stats.spines += 1
+      emit({
+        op: 'spine', slot: `Actor${slot}`, kind: 'actor', skel: skelRes, atlas: atlasRes,
+        x: actor.x, y: actor.y, scale: actor.scale, fade: actor.fade,
+        ...(actor.move ? { move: actor.move } : {}),
+        tracks: actor.tracks.map((t, track) => (t ? { track, anim: t.anim, loop: t.loop } : null)).filter(Boolean),
+        order: slot, loop: true, speed: 1,
+      })
+      actor.fade = 0
+      actor.move = 0
+    }
+    dirty.clear()
+  }
+  const flush = (force = false) => {
+    const hasText = lines.length > 0 || name !== null
+    if (!force && !commands.length && !dirty.size && !hasText) return
+    flushActors()
+    if (hasText) {
+      const who = name || ''
+      if (who !== speaker) { emit({ op: 'speaker', segments: who ? [{ text: who }] : [] }); speaker = who }
+      const body = cleanText(lines)
+      emit({ op: 'text', segments: body ? [{ text: body }] : [] })
+    } else {
+      emit({ op: 'text', segments: [] })   // 只有指令、没有台词的点一下（CG 等）：留一个空步，别吞掉
+    }
+    steps.push({ index: steps.length, commands })
+    commands = []
+    lines = []
+    name = null
+  }
+  const res = (bucket, key) => scene?.[bucket]?.get(key) || ''
+  const audio = (kind, key) => ctx?.audio?.[kind]?.get(key) || ''
+
+  for (const rawLine of String(text || '').replace(/^﻿/, '').split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line) continue
+    stats.commands += 1
+    if (!line.startsWith('<')) { if (name !== null) lines.push(line); continue }   // 正文行（跟在 <NAME_PLATE> 后面）
+    for (const { tag, arg } of tagsOf(line)) {
+      const a = splitArgs(arg)
+      switch (tag) {
+        case 'NAME_PLATE': name = arg; lines = []; break
+        case 'PAUSE': flush(true); break   // 光秃秃的 <PAUSE>（真实数据里有一百多个）也是一次「点一下」：留一个空步
+        case 'BG': {
+          const src = res('images', a[0])
+          if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src, fade: 0 }) } else { count('unresolved', `bg:${a[0]}`) }
+          if (numOf(a[3], 1) !== 1 || numOf(a[4]) !== 0 || numOf(a[5]) !== 0) count('raw', 'BG(缩放/位移)')
+          break
+        }
+        case 'BG_OUT': emit({ op: 'bgoff', fade: secs(a[0]) }); break
+        case 'FADE_OUT2': case 'FADE_OUT':
+          if (/^black$/i.test(a[0])) emit({ op: 'fade', to: 'black', seconds: secs(a[1]) }); else count('raw', tag)
+          break
+        case 'FADE_IN2': case 'FADE_IN':
+          if (/^black$/i.test(a[0])) emit({ op: 'fade', to: 'clear', seconds: secs(a[1]) })
+          else if (/^white$/i.test(a[0])) emit({ op: 'wash', color: 'white', seconds: secs(a[1]) })
+          else count('raw', tag)
+          break
+        case 'WAIT2': { const seconds = secs(a[0]); if (seconds > 0) emit({ op: 'wait', seconds }); break }
+        case 'BGM_PLAY': { const src = audio('bgm', a[0]); if (src) emit({ op: 'bgm', src }); else count('unresolved', `bgm:${a[0]}`); break }
+        case 'BGM_STOP': emit({ op: 'bgmStop', fade: secs(a[0]) }); break
+        case 'SE_PLAY': {
+          const src = audio('se', a[1])
+          if (!src) { count('unresolved', `se:${a[1]}`); break }
+          if (bool(a[2])) { emit({ op: 'bgse', src, loop: true }); loopSe = true } else emit({ op: 'se', src })
+          break
+        }
+        case 'SE_STOP': if (loopSe) { emit({ op: 'bgseStop' }); loopSe = false } break
+        case 'VOICE_PLAY': case 'VOICE_SINGLE_PLAY': { const src = res('voices', a[0]); if (src) emit({ op: 'voice', src }); else count('unresolved', `voice:${a[0]}`); break }
+        case 'STOP_VOICE': break
+        case 'VIDEO_PLAY': {
+          const src = res('videos', a[0])
+          if (src) { emit({ op: 'movie', srcs: [src], loop: a[1] === undefined ? true : /^loop$/i.test(a[1]) }); movieOn = true; stats.movies += 1 } else count('unresolved', `video:${a[0]}`)
+          break
+        }
+        case 'VIDEO_STOP': if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } break
+        case 'SPINE_ACTOR': {
+          const slot = Math.trunc(numOf(a[0]))
+          const props = parseProps(a[7])
+          const previous = actors.get(slot)
+          actors.set(slot, { skel: a[1], x: props.x ?? 0, y: props.y ?? 0, scale: numOf(a[8], 1) || 1, fade: secs(a[6]), move: 0, tracks: previous?.skel === a[1] ? previous.tracks : [] })
+          dirty.add(slot)
+          break
+        }
+        case 'SPINE_ACTOR_PLAY': {
+          const actor = actors.get(Math.trunc(numOf(a[0])))
+          if (!actor) { count('unresolved', `spine-slot:${a[0]}`); break }
+          actor.tracks[Math.trunc(numOf(a[2]))] = { anim: a[1], loop: bool(a[3]) }
+          dirty.add(Math.trunc(numOf(a[0])))
+          break
+        }
+        case 'SPINE_ACTOR_MOVE': {
+          const slot = Math.trunc(numOf(a[0]))
+          const actor = actors.get(slot)
+          if (!actor) break
+          actor.x = numOf(a[1]); actor.y = numOf(a[2]); actor.move = secs(a[3])
+          dirty.add(slot)
+          break
+        }
+        case 'SPINE_ACTOR_OUT': {
+          const slot = Math.trunc(numOf(a[0]))
+          dirty.delete(slot)
+          if (actors.delete(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[1]) })
+          break
+        }
+        case 'SCENARIO_END': break
+        default: count('raw', tag)
+      }
+    }
+  }
+  // 最后一个 <PAUSE> 之后剩下的指令（<SCENARIO_END><FADE_OUT2>black 之类）并进最后一步，不单独成一步（否则末尾多一个空白的「点一下」）
+  if (steps.length && lines.length === 0 && name === null) {
+    flushActors()
+    steps[steps.length - 1].commands.push(...commands)
+    commands = []
+  } else flush()
+  return { steps, stats }
+}
+
+export const girlsCreationTagAdapter = { id: ADAPTER_ID, label: 'Girls Creation 查看器（标签式脚本）', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }

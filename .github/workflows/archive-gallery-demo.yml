@@ -247,6 +247,8 @@ jobs:
               echo
               curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/legeclo演示' -F 'profileOptions={"adapters":["renpy-legeclo"],"config":{"game":{"id":"legeclo"}}}' -F metadataActionIds=gal-layout | head -c 300 || echo "legeclo import failed"
               echo
+              curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F 'sourcePath=/data/gal/girlscreation演示' -F 'profileOptions={"adapters":["girlscreation-tag"],"config":{"game":{"id":"girlscreation"}}}' -F metadataActionIds=gal-layout | head -c 300 || echo "girlscreation import failed"
+              echo
               curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null || true
               # 灌今天几个改动要试的数据和配置（中日对照 EPUB + 朗读规则 + 新页面规则 + 文本媒体 + 标签），再跑一遍接口冒烟；冒烟不过就让这一步失败
               node scripts/dev/seed-demo.mjs http://127.0.0.1:8080

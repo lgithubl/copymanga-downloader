@@ -799,6 +799,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         lines.push(`  [${item.slot}] ${item.kind} ${item.skel}${item.loaded ? '' : '（还没加载好 / 加载失败）'}`)
         if (item.loaded) {
           lines.push(`    动画：要 ${item.requested || '（未指定）'} → 实际 ${item.used || '（无）'}${item.requested && item.requested !== item.used ? '  ← 名字对不上，退到了别的' : ''}`)
+          if (item.missingAnimations?.length) lines.push(`    骨架里没有这些动画（脚本要的）：${item.missingAnimations.join(', ')}  ← 这些轨道没播`)
           lines.push(`    骨架里的动画（${item.animations.length}）：${item.animations.slice(0, 40).join(', ')}${item.animations.length > 40 ? ' …' : ''}`)
           lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? item.bounds.join(' ') : '?'}`)
         }

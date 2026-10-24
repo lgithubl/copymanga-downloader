@@ -4,13 +4,15 @@
 import { mkdir, readFile, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { galAdapterIds, registerGalAdapter, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
+import { galAdapter, galAdapterIds, registerGalAdapter, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { parse, parseCondition, parseRichText, sniff } from '../../web/library/gal/adapters/uviewer-csv.mjs'
 import { DEFAULT_GAL_CONFIG, applyGalConfigPatch, cleanGalConfigRaw, expandTemplate, globToRegExp, normalizeGalConfig } from '../../web/library/gal/config.mjs'
 import { safeRelPath } from '../../web/library/gal/paths.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { parse as minashigoParse, prepare as minashigoPrepare, sniff as minashigoSniff } from '../../web/library/gal/adapters/renpy-minashigo.mjs'
+import { buildGirlsCreationFixture } from './make-girlscreation-fixture.mjs'
 import { buildLegecloFixture } from './make-legeclo-fixture.mjs'
+import { sniff as gcSniff, tagsOf as gcTagsOf } from '../../web/library/gal/adapters/girlscreation-tag.mjs'
 import { buildMinashigoFixture } from './make-minashigo-fixture.mjs'
 import { parse as legecloParse, prepare as legecloPrepare, sniff as legecloSniff } from '../../web/library/gal/adapters/renpy-legeclo.mjs'
 import { parse as renpyParse, prepare as renpyPrepare, renpyText, sniff as renpySniff } from '../../web/library/gal/adapters/renpy-monmusu.mjs'
@@ -618,6 +620,50 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   check('分组页：两个脚本（自然序）；封面 = 脚本里第一张真正的背景图（黑图不算）；面包屑 首页 › demo_hero', J(group.items.map((i) => i.title)) === J(['demo_hero_02', 'demo_hero_03']) && group.items[0].thumb === 'images/bg/ab_007_room.jpg' && J(group.breadcrumb.map((c) => c.title)) === J(['首页', 'demo_hero']) && group.parent === '', J(group.items))
   const play = await read(group.items[0].node)
   check('播放页：立绘路径相对游戏根；上一话 / 下一话只在这个角色的分组里；父节点 = 分组', play.node.kind === 'player' && play.scene.adapter === 'renpy-legeclo' && play.scene.steps.flatMap((st) => st.commands).some((c) => c.op === 'stand' && c.parts[0].src === 'images/sprite/demo_hero_smile.png') && play.sectionNavigation.prev === null && play.sectionNavigation.next?.title === 'demo_hero_03' && play.node.parent === group.id, J([play.sectionNavigation, play.node.parent, group.id]))
+}
+
+// ================= Girls Creation R Viewer（标签式脚本，<NAME_PLATE> / <PAUSE>）：每个场景一个目录 + 目录树 + 双轨道 Spine 角色 =================
+{
+  const gc = path.join(work, 'gc-pack')
+  await buildGirlsCreationFixture(gc)
+  const tagScript = await readFile(path.join(gc, 'package.nw/scenes/chmr_40101001/script.txt'), 'utf8')
+  const commaScript = await readFile(path.join(gc, 'package.nw/scenes/chmr_40101001/script_original.txt'), 'utf8')
+  check('sniff 隔离：标签式脚本（<NAME_PLATE> + <PAUSE>）只有它认；逗号式的原始脚本、别的格式的脚本它不认；别的适配器也都不认标签式脚本', gcSniff(tagScript) && !gcSniff(commaScript) && !gcSniff('label H_x:\n    $ enable_skip()\n    "A" "b"\n') && !gcSniff('bg,a.jpg,0\nmsg,0,hi') && sniffGalAdapter(tagScript) === 'girlscreation-tag' && galAdapterIds().filter((id) => id !== 'girlscreation-tag').every((id) => !galAdapter(id).sniff(tagScript)) && sniffGalAdapter(commaScript) !== 'girlscreation-tag')
+  check('一行里连着几个标签要拆开：<SCENARIO_END><FADE_OUT2>black,500', J(gcTagsOf('<SCENARIO_END><FADE_OUT2>black,500')) === J([{ tag: 'SCENARIO_END', arg: '' }, { tag: 'FADE_OUT2', arg: 'black,500' }]) && J(gcTagsOf('<SE_PLAY>0,se1020001,FALSE,1,0')) === J([{ tag: 'SE_PLAY', arg: '0,se1020001,FALSE,1,0' }]))
+
+  // 导入 + 探测（没填 game.id 时按目录结构认出来）
+  const imp = await handler.importFromSource({ sourcePath: gc, options: { adapters: ['girlscreation-tag'], config: { game: { id: 'girlscreation', title: 'GC Test' } }, defaultMetadataActions: ['gal-layout'] } })
+  const item = imp.items[0]
+  const out = await galLayoutScript({ item, script: { id: 'gal-layout', version: '2.6.0', options: {} } })
+  const cfg = out.itemPatch.gal.config
+  check('girlscreation 脚本：根 = package.nw（目录里多了一层）、脚本根 = scenes、资源根 = package.nw、扩展名 txt、适配器参数 root；脚本数只数有 script.txt 的场景（PLACEHOLDER 不算）；封面 = 第一个场景的 thumbnail.png', cfg.game.id === 'girlscreation' && cfg.scriptRoots[0].dir === 'package.nw/scenes' && J(cfg.resourceRoots) === J(['package.nw']) && J(cfg.scriptExtensions) === J(['txt']) && J(cfg.adapterOptions['girlscreation-tag']) === J({ root: 'package.nw' }) && cfg.scriptCount === 4 && cfg.cover === 'scenes/chmr_40101001/thumbnail.png' && /Gal游戏: girlscreation/.test(out.itemTags.join()), J(cfg))
+  const auto = await galLayoutScript({ item: { ...item, config: {} }, script: { id: 'gal-layout', version: '2.6.0', options: {} } })
+  const lgFx = path.join(work, 'gc-vs-legeclo')
+  await buildLegecloFixture(lgFx)
+  const lgAuto = await galLayoutScript({ item: { ...item, config: {}, source: { path: lgFx } }, script: { id: 'gal-layout', version: '2.6.0', options: {} } })
+  check('探测不抢：没填 game.id 时这个目录认成 girlscreation；legeclo 的目录仍然认成 legeclo', auto.itemPatch?.gal.config.game.id === 'girlscreation' && lgAuto.itemPatch?.gal.config.game.id === 'legeclo', J([auto.itemPatch?.gal.config.game, lgAuto.itemPatch?.gal.config.game]))
+
+  await handler.patchItemMetadata(item.itemId, { gal: out.itemPatch.gal })
+  const it = await handler.getItem(item.itemId)
+  const read = (sectionId) => handler.getReaderContent(it.itemId, 'main', { sectionId })
+  const home = (await read('')).node
+  check('首页 = 适配器的目录树：分类（场景 id 前缀 chmr / chsr；没有脚本的 PLACEHOLDER 不算）', J(home.items.map((i) => [i.title, i.subtitle])) === J([['chmr', '3 个剧情 · 2 位'], ['chsr', '1 个剧情 · 1 位']]), J(home.items.map((i) => [i.title, i.subtitle])))
+  const chmr = (await read(home.items[0].node)).node
+  check('分类里按主要说话人分组（场景里出现最多的非「館長」的名字）：Hana 2 个、Rina 1 个；说话人数多的在前', J(chmr.items.map((i) => [i.title, i.subtitle])) === J([['Hana', '2 个剧情'], ['Rina', '1 个剧情']]) && J(chmr.breadcrumb.map((c) => c.title)) === J(['首页', 'chmr']), J(chmr.items))
+  const hana = (await read(chmr.items[0].node)).node
+  check('场景列表：标题取自原始脚本里的 title 行（script_original.txt / original_script.txt），没有就用场景 id；封面 = thumbnail.png；角标 = 分类', J(hana.items.map((i) => [i.title, i.subtitle, i.thumb, i.badge])) === J([['First Meeting', 'chmr_40101001', 'scenes/chmr_40101001/thumbnail.png', 'chmr'], ['chmr_40101002', '', 'scenes/chmr_40101002/thumbnail.png', 'chmr']]) && J(hana.breadcrumb.map((c) => c.title)) === J(['首页', 'chmr', 'Hana']), J(hana.items))
+  const play = await read(hana.items[0].node)
+  const ops = (i) => play.scene.steps[i].commands.map((c) => c.op).join(',')
+  check('解析：<PAUSE> 结束一步（5 步，末尾的 <SCENARIO_END><FADE_OUT2> 并进最后一步）；NAME_PLATE 空 = 旁白；[br] 换行；館長也是说话人', play.scene.adapter === 'girlscreation-tag' && play.scene.steps.length === 5 && ops(0) === 'fade,bg,fade,bgm,se,wait,voice,spine,speaker,text' && play.scene.steps[1].commands[0].segments.length === 0 && play.scene.steps[1].commands[1].segments[0].text === 'A narration line.\nWith a second row.' && play.scene.steps[2].commands[0].segments[0].text === '館長' && ops(4) === 'spineOff,bgoff,speaker,text,fade' && play.scene.steps[4].commands.at(-1).to === 'black', J(play.scene.steps.map((_, i) => ops(i))))
+  const spine0 = play.scene.steps[0].commands.find((c) => c.op === 'spine')
+  check('Spine 角色：槽 1 → Actor1（kind actor）；骨架 / atlas 路径是这个场景自己的 spines/（相对资源根）；位置 x=100|y=0、缩放 1；轨道 0 = 身体、轨道 1 = 表情（ex_）同时播', spine0.slot === 'Actor1' && spine0.kind === 'actor' && spine0.skel === 'scenes/chmr_40101001/spines/st4010101.skel' && spine0.atlas === 'scenes/chmr_40101001/spines/st4010101.atlas' && spine0.x === 100 && spine0.y === 0 && spine0.scale === 1 && J(spine0.tracks) === J([{ track: 0, anim: 'loop', loop: true }, { track: 1, anim: 'ex_loop', loop: true }]), J(spine0))
+  const step3 = play.scene.steps[3].commands.filter((c) => c.op === 'spine')
+  check('第 4 步：槽 2 新建（同一套骨架、x=-100、joy + ex_joy + 一条不存在的第 3 轨道）、槽 1 移动（0.5 秒）；VOICE_SINGLE_PLAY → voice；SCREEN_SHAKE 暂未渲染，记在 stats.raw', step3.length === 2 && step3[0].slot === 'Actor2' && step3[0].x === -100 && step3[0].tracks.length === 3 && step3[1].slot === 'Actor1' && step3[1].move === 0.5 && step3[1].x === 0 && play.scene.steps[3].commands.some((c) => c.op === 'voice' && c.src === 'scenes/chmr_40101001/voices/vma_40101001_100020.m4a') && play.scene.stats.raw.SCREEN_SHAKE === 1 && Object.keys(play.scene.stats.unresolved).length === 0, J([step3, play.scene.stats]))
+  const media = play.scene.steps.flatMap((st) => st.commands)
+  check('资源路径：BGM / 音效在全局 data/audio（相对资源根），语音在场景自己的 voices/，背景图在场景自己的 images/；循环音效走背景音效声道', media.some((c) => c.op === 'bgm' && c.src === 'data/audio/bgm/bgm30010.m4a') && media.some((c) => c.op === 'se' && c.src === 'data/audio/se/se1020001.m4a') && media.some((c) => c.op === 'bg' && c.src === 'scenes/chmr_40101001/images/abg0001.png') && play.sectionNavigation.prev === null && play.sectionNavigation.next?.title === 'chmr_40101002', J(play.sectionNavigation))
+  const video = await read((await read((await read(home.items[1].node)).node.items[0].node)).node.items[0].node)
+  const vops = video.scene.steps.flatMap((st) => st.commands)
+  check('视频场景：VIDEO_PLAY → movie（循环，场景自己的 videos/）、VIDEO_STOP → movieOff；只有指令没有台词的 <PAUSE> 留一个空步；UI_DISP 暂未渲染记在 stats.raw；FADE_IN2 black 先于台词', vops.some((c) => c.op === 'movie' && c.srcs[0] === 'scenes/chsr_40200133/videos/esm_40200133_10.mp4' && c.loop === true) && vops.some((c) => c.op === 'movieOff') && video.scene.steps.length === 3 && video.scene.steps[1].commands.length === 1 && video.scene.steps[1].commands[0].segments.length === 0 && video.scene.stats.raw.UI_DISP === 1 && video.node.title === 'Video Scene', J([video.scene.steps.map((st) => st.commands.map((c) => c.op).join(',')), video.scene.stats]))
 }
 
 // ================= tenkeiprdx：adapter + 新指令 + 脚本索引 + 脚本 =================

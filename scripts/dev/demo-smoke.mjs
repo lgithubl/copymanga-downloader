@@ -173,6 +173,22 @@ if (E) {
     check('legeclo 资源：立绘图、背景图、头像都能取', (await resource(LG, 'images/sprite/demo_hero_smile.png')).status === 200 && (await resource(LG, 'images/bg/ab_007_room.jpg')).status === 200 && (await resource(LG, home.node.items[0].thumb)).status === 200)
   }
 
+  const GC = galItems.find((i) => i.title === 'girlscreation演示')
+  check('媒体库里有 girlscreation 演示媒体', Boolean(GC))
+  if (GC) {
+    const full = await waitScript(GC)
+    check('girlscreation：adapter girlscreation-tag / game.id girlscreation；脚本 gal-layout 跑过（根 package.nw，脚本根 scenes，资源根 package.nw）；场景数 4；标签 Gal游戏: girlscreation', J(full.adapters) === J(['girlscreation-tag']) && full.config.game?.id === 'girlscreation' && full.config.script?.id === 'gal-layout' && full.config.resourceRoots?.[0] === 'package.nw' && full.config.scriptRoots?.[0]?.dir === 'package.nw/scenes' && full.scriptCount === 4 && (full.tags || []).includes('Gal游戏: girlscreation'), J([full.adapters, full.config.game, full.config.scriptRoots, full.scriptCount, full.tags]))
+    const home = await readerNode(GC, '')
+    check('girlscreation 首页 = 目录树：分类 chmr / chsr', J(home.node.items.map((i) => [i.title, i.subtitle])) === J([['chmr', '3 个剧情 · 2 位'], ['chsr', '1 个剧情 · 1 位']]), J(home.node.items.map((i) => [i.title, i.subtitle])))
+    const chmr = await readerNode(GC, home.node.items[0].node)
+    const hana = await readerNode(GC, chmr.node.items[0].node)
+    check('girlscreation 说话人分组 → 场景：标题取自原始脚本的 title 行，封面 = thumbnail.png', chmr.node.items[0].title === 'Hana' && hana.node.items[0].title === 'First Meeting' && hana.node.items[0].thumb === 'scenes/chmr_40101001/thumbnail.png', J(hana.node.items.map((i) => [i.title, i.thumb])))
+    const play = await readerNode(GC, hana.node.items[0].node)
+    const gops = play.scene.steps.flatMap((s) => s.commands)
+    check('girlscreation 播放页：Spine 角色（kind actor，双轨道，路径是场景自己的 spines/）/ 语音 / BGM（全局 data/audio）/ 旁白；两个角色同时在', play.scene.adapter === 'girlscreation-tag' && gops.some((c) => c.op === 'spine' && c.slot === 'Actor1' && c.tracks.length === 2 && c.skel === 'scenes/chmr_40101001/spines/st4010101.skel') && gops.some((c) => c.op === 'spine' && c.slot === 'Actor2') && gops.some((c) => c.op === 'voice') && gops.some((c) => c.op === 'bgm' && c.src === 'data/audio/bgm/bgm30010.m4a'), J(play.scene.stats))
+    check('girlscreation 资源：骨骼 / atlas / 场景图 / 封面都能取', (await resource(GC, 'scenes/chmr_40101001/spines/st4010101.skel')).status === 200 && (await resource(GC, 'scenes/chmr_40101001/spines/st4010101.atlas')).status === 200 && (await resource(GC, 'scenes/chmr_40101001/images/abg0001.png')).status === 200 && (await resource(GC, hana.node.items[0].thumb)).status === 200)
+  }
+
   const TK = galItems.find((i) => i.title === 'tenkeiprdx演示')
   check('媒体库里有 tenkeiprdx 演示媒体', Boolean(TK))
   if (TK) {

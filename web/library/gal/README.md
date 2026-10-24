@@ -176,6 +176,17 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
   - 脚本根直接是 `game/script/hscene`，资源根 `game/`；按 `^(.+)_\d{2}$` 分组（去掉末尾两位编号 = 角色）；头像模板 `images/thumbnail/char/st_{name}_idle.png` 和 `st_{name}.png`（名字不统一，两种都试）；脚本封面 = 脚本里第一张真正的背景图。
   - 导入：`adapters: ['renpy-legeclo']` + `config.game.id: 'legeclo'`。
 
+## Girls Creation R Viewer（标签式脚本）
+
+- **独立的 adapter `girlscreation-tag`**（`adapters/girlscreation-tag.mjs`），解析每个场景目录里的 `script.txt`（标签式：`<TAG>参数`，一行里可以连着几个标签）。同目录里逗号式的 `script_original.txt` / `original_script.txt`（只有部分场景有）不解析，只拿来取标题（`title,<标题>,`）。
+- **目录**（`<root>` = `package.nw`，记在 `config.adapterOptions['girlscreation-tag'].root`）：`<root>/scenes/<场景 id>/{script.txt, thumbnail.png, images/, videos/, voices/, spines/}`，全局 BGM / 音效在 `<root>/data/audio/{bgm,se}/`。场景自己的资源按脚本所在目录拼，所以路径不依赖资源根下的公共目录。
+- **指令**：`<NAME_PLATE>[说话人]` + 下一行起的正文 + `<PAUSE>` = 一句台词（一步），`[br]` 换行，NAME_PLATE 空 = 旁白，光秃秃的 `<PAUSE>` = 一个空步；`<BG>`（`images/<名>.*`）/`<BG_OUT>`、`<FADE_OUT2|FADE_IN2>black|white`、`<WAIT2>`、`<BGM_PLAY|STOP>`、`<SE_PLAY|STOP>`（循环的走背景音效声道）、`<VOICE_PLAY|VOICE_SINGLE_PLAY>`、`<VIDEO_PLAY|VIDEO_STOP>`、`<SCENARIO_END>`。最后一个 `<PAUSE>` 之后的收尾指令并进最后一步。
+- **Spine 角色**（3.8 二进制，`.skel` / `.atlas` / `.png` 同名放在场景自己的 `spines/`）：`<SPINE_ACTOR>槽,骨架名,,,,0,淡入ms,x=..|y=..,缩放,skel` → `spine` 指令（`kind: 'actor'`、`slot: Actor<槽>`，最多 4 个槽，同一套骨架可以放在两个槽里）；`<SPINE_ACTOR_PLAY>槽,动画,轨道,循环` → `tracks`（轨道 0 = 身体，轨道 1 = 表情 `ex_<名>`，同时播）；`<SPINE_ACTOR_MOVE>` → `move`（秒，平滑移动）；`<SPINE_ACTOR_OUT>` → `spineOff`。脚本要的动画名骨架里没有的，记在 `missingAnimations`，渲染诊断里能看到。**角色的摆放（x / y / 缩放的单位和锚点）是照脚本参数猜的**：骨架包围盒先整个放进舞台，再乘缩放（绕舞台中心），x / y 按 1920×1080 设计稿的像素偏移（x 向右、y 向下）；没有原查看器的对照图。
+- **暂未渲染**（记在 `stats.raw`，渲染诊断里能看到）：`SCREEN_SHAKE`、`EFFECT_BG_BLUR`、`BG_SCALE`、`SE_VOLUME`、`SPINE_MASK_OPACITY`、`FADE_*_COLOR`、`UI_DISP`、`BG` 的缩放 / 位移参数。
+- **列表**（`adapter.catalog`，每次从文件现读）：分类（场景 id 前缀 `chmr` / `chsr` …，可以用 `adapterOptions['girlscreation-tag'].categoryLabels` 起名字）→ 主要说话人（场景里出现最多的、不是 `館長` 的名字；`adapterOptions.player` 可改）→ 场景（标题取自原始脚本的 title 行，没有就用 id；封面 = `thumbnail.png`）。读取场景开头 24KB 来取标题和说话人（`contextTextFilter`，最多 3000 个文件）。
+- **`gal-layout` 探测**：`scenes/<场景>/script.txt` + `data/audio`（或 `sceneData.js`）；声明了 `game.id: girlscreation` 的不要求后者。探测顺序 legeclo → monmusu → girlscreation → tenkeiprdx → …（tenkeiprdx 也有 `scenes/`，但里面是 json 且旁边有 Backgrounds / Spines）。导入：`adapters: ['girlscreation-tag']` + `config.game.id: 'girlscreation'`。
+- **不处理**：中文翻译（`sceneData.js` 里是同一批场景的另一种语言的文本）；行内标记只有 `[br]`。
+
 ## minashigo（Ren'Py，MinashigoViewer）
 
 - **独立的 adapter `renpy-minashigo`**（`adapters/renpy-minashigo.mjs`），和 `renpy-monmusu` 互不影响：sniff 要求这个格式独有的写法（`$ name= "…"` 或 `xyz "…"`），monmusu 的脚本不会被它认走；两个都允许时 minashigo 的脚本归 minashigo、monmusu 的脚本归 monmusu。导入时填 `adapters: ['renpy-minashigo']` + `config.game.id: 'minashigo'`，`gal-layout` 脚本按 `game.id` 或目录结构（`game/scripts/` + `game/script.rpy` 里的 `DynamicCharacter("name")`）认出它。

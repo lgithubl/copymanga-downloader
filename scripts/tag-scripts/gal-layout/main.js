@@ -3,8 +3,8 @@
 // 这里只写「实际探测到的 / 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
 //
 // 分发：
-//   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测：uviewer / legeclo / monmusu / tenkeiprdx / minashigo。认不出结构：uviewer 退回通用配置，别的跳过；不认识的 id 跳过
-//   没填 game.id                          → 按 legeclo → monmusu → tenkeiprdx → minashigo → uviewer 的顺序探测，谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领
+//   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测：uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / minashigo。认不出结构：uviewer 退回通用配置，别的跳过；不认识的 id 跳过
+//   没填 game.id                          → 按 legeclo → monmusu → girlscreation → tenkeiprdx → minashigo → uviewer 的顺序探测，谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领
 // 各游戏写什么：
 //   uviewer     脚本根（text + 同级 text* 另一套）、资源根、名称文件、缩略图目录；封面 = UViewer 自己生成的缩略图 / 脚本里第一张存在的背景
 //   monmusu     脚本根 <游戏根>/script、资源根 <游戏根>、合并 hscene + hscene_still（角标 anim / still）、按角色编号分组、隐藏 sub_nav / tl、适配器参数（别名表、图片目录）、头像模板（images 里的 icon_<编号>_0_idle.*）
@@ -20,7 +20,7 @@
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
-// 状态 tag：Gal配置: uviewer / legeclo / monmusu / tenkeiprdx / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -169,6 +169,64 @@ async function detectLegeclo(media, { declared, logs }) {
       const count = await countFiles(path.join(m, ...splitRel(join(base, 'script/hscene'))), '.rpy', options.countCap, 8)
       logs.push(`脚本 ${count} 个${count ? '' : '——结构可能不对，可以用 overrides 覆盖 scriptRoots'}`)
       return { count, cover }
+    },
+  }
+}
+
+// ======================================================================
+// Girls Creation R Viewer（NW.js 查看器，标签式脚本）：<root>/scenes/<场景 id>/script.txt（每个场景一个目录，资源都在场景目录里）
+// + <root>/data/audio/{bgm,se}。root = package.nw。tenkeiprdx 也有 scenes/ 目录，但里面是 json 且旁边有 Backgrounds / Spines 等，不会混。
+// ======================================================================
+async function detectGirlsCreation(media, { declared, logs }) {
+  const hit = await findDir(media, ['scenes'], 6)
+  if (!hit) {
+    if (declared) logs.push('没找到 scenes/')
+    return null
+  }
+  const root = hit.split('/').slice(0, -1).join('/')   // …/package.nw
+  const scenesAbs = path.join(media, ...splitRel(hit))
+  const names = (await listNames(scenesAbs)).slice(0, 400)
+  let withScript = 0
+  for (const name of names) if (await isFile(path.join(scenesAbs, name, 'script.txt'))) withScript += 1
+  if (!withScript) {
+    if (declared) logs.push('scenes/ 里没有 <场景>/script.txt')
+    return null
+  }
+  const hasAudio = await isDir(path.join(media, ...splitRel(join(root, 'data/audio'))))
+  if (!declared && !hasAudio && !(await isFile(path.join(media, ...splitRel(join(root, 'sceneData.js')))))) return null   // 没声明又没有 data/audio / sceneData.js：不确定是这个游戏
+  const config = {
+    scriptRoots: [{ id: 'scenes', dir: hit, label: 'scenes' }],
+    resourceRoots: [root],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['txt'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    views: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    adapterOptions: { 'girlscreation-tag': { root } },
+  }
+  logs.push(`Girls Creation 根（package.nw）：${root || '.'}${root ? '（目录里多了一层）' : ''}；场景 ${withScript}${names.length >= 400 ? '+' : ''} 个${hasAudio ? '' : '；没有 data/audio（BGM / 音效会缺资源）'}`)
+  logs.push('列表由适配器现读：分类（场景 id 前缀 chmr / chsr …）→ 主要说话人 → 场景；标题取自原始脚本里的 title 行，封面 = thumbnail.png')
+  let cover = ''
+  for (const name of names) {
+    for (const file of ['thumbnail.png', 'thumbnail.jpg', 'thumbnail.webp']) {
+      if (!cover && (await isFile(path.join(scenesAbs, name, file)))) cover = `scenes/${name}/${file}`
+    }
+    if (cover) break
+  }
+  if (!cover) logs.push('没找到场景的 thumbnail.*：列表没有封面')
+  return {
+    id: 'girlscreation',
+    kind: 'girlscreation',
+    note: '',
+    config,
+    async finish() {
+      logs.push(`场景（有 script.txt）${withScript} 个`)
+      return { count: withScript, cover }
     },
   }
 }
@@ -494,10 +552,11 @@ async function pickCover(media, config, files) {
   return ''
 }
 
-// 探测顺序：legeclo → monmusu → tenkeiprdx → minashigo → uviewer（没填 game.id 时按这个顺序认领）
+// 探测顺序：legeclo → monmusu → girlscreation → tenkeiprdx → minashigo → uviewer（没填 game.id 时按这个顺序认领）
 const GAMES = [
   { id: 'legeclo', detect: detectLegeclo },   // 先于 monmusu：目录结构相似，靠 legeclo 的标记区分
   { id: 'monmusu', detect: detectMonmusu },
+  { id: 'girlscreation', detect: detectGirlsCreation },   // 先于 tenkeiprdx：都有 scenes/，这个靠 <场景>/script.txt + data/audio 认
   { id: 'tenkeiprdx', detect: detectTenkeiprdx },
   { id: 'minashigo', detect: detectMinashigo },
   { id: 'uviewer', detect: detectUviewerGame },
