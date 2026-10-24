@@ -4,6 +4,7 @@
 // 立绘 / 遮罩等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
 import { createSpineLayer } from '/gal-spine.js'
 import { createStandLayer } from '/gal-stand.js'
+import { attachBarLock } from '/gal-barlock.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, segmentsText, stateAt, stepOfRatio } from '/gal-engine.js'
 
 const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
@@ -23,6 +24,9 @@ export const GAL_SETTINGS = {
   fontScaleDefault: 1,
   fontScaleMin: 0.6,
   fontScaleMax: 2,
+  slowKey: 'copymanga.gal.slow',                    // 静态画面 animation4 的降速倍率（1 = 不降速）
+  slowDefault: 0.2,                                 // 原查看器写死的值
+  slowMin: 0.05,
   autoChoiceKey: 'copymanga.gal.autoChoice',        // 自动选择：-1 关；0 随机；1/2/3… 选对应项（没有该项就随机）
   autoChoiceDefault: -1,
   autoChoiceMax: 9,
@@ -64,7 +68,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 }
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
-//   chapter: { canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传） }
+//   chapter: { canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
 export function createGalPlayer({ container, reader, startRatio = 0, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null }) {
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
@@ -138,12 +142,22 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const fsBtn = btn('全屏', '全屏（F）', 'gal-fs')
   const moreMenu = el('div', 'gal-more')
   moreMenu.hidden = true
-  moreMenu.append(immBtn, fsBtn)
+  // 静态画面（Spine）的 animation4 播放时会降速，降到原速度的多少在这里改（1 = 不降速）
+  const slowInput = el('input', 'gal-more-number')
+  slowInput.type = 'number'
+  slowInput.min = '0.05'
+  slowInput.max = '1'
+  slowInput.step = '0.05'
+  slowInput.title = '动画 4 开始后 1 秒内降速到原速度的多少倍（1 = 不降速，原查看器是 0.2）'
+  const slowRow = el('label', 'gal-more-field')
+  slowRow.append(el('span', '', '动画4降速'), slowInput, el('span', '', '倍'))
+  moreMenu.append(immBtn, fsBtn, slowRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
+  const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
   note.setAttribute('role', 'button')
   note.tabIndex = 0
-  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, moreBtn, backBtn, note)
+  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, moreBtn, lockBtn, backBtn, note)
 
   // 设置弹层：文本框透明度 / 音量 / 自动播放等待时间
   const settings = el('div', 'gal-settings')
@@ -195,7 +209,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // 舞台外面包一层：沉浸 / 全屏时靠它按「去掉底栏后剩下的高度」定舞台大小（舞台 16:9，宽高都不超过这一层），底栏永远不会被挤出屏幕
   const stageArea = el('div', 'gal-stage-area')
   stageArea.append(stage)
-  root.append(stageArea, barWrap)
+  const barHot = el('div', 'gal-bar-hot')   // 底栏没锁定时：鼠标移到最下沿，底栏滑出来
+  root.append(stageArea, barHot, barWrap)
+  attachBarLock({ root, button: lockBtn })
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => root.style.setProperty('--gal-bar-h', `${Math.ceil(barWrap.getBoundingClientRect().height)}px`)).observe(barWrap)
   container.replaceChildren(root)
   if (!hasSteps) stage.append(empty)
@@ -205,6 +221,15 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   let seVolume = loadVolume('se', 1)
   bgmRange.value = String(bgmVolume)
   seRange.value = String(seVolume)
+  let slowFactor = loadNumber(GAL_SETTINGS.slowKey, GAL_SETTINGS.slowDefault, GAL_SETTINGS.slowMin, 1)
+  slowInput.value = String(slowFactor)
+  slowInput.addEventListener('change', () => {
+    const n = Number(slowInput.value)
+    slowFactor = Number.isFinite(n) ? Math.max(GAL_SETTINGS.slowMin, Math.min(1, n)) : GAL_SETTINGS.slowDefault
+    slowInput.value = String(slowFactor)
+    try { localStorage.setItem(GAL_SETTINGS.slowKey, String(slowFactor)) } catch { /* 存不了就只在这一页生效 */ }
+    if (spineLayer) paintSpines(false)
+  })
   let boxOpacity = loadNumber(GAL_SETTINGS.boxOpacityKey, GAL_SETTINGS.boxOpacityDefault, 0, 1)
   let voiceDelay = loadNumber(GAL_SETTINGS.autoVoiceDelayKey, GAL_SETTINGS.autoVoiceDelayDefault, 0, GAL_SETTINGS.autoVoiceDelayMax)
   let fontScale = loadNumber(GAL_SETTINGS.fontScaleKey, GAL_SETTINGS.fontScaleDefault, GAL_SETTINGS.fontScaleMin, GAL_SETTINGS.fontScaleMax)
@@ -379,7 +404,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: () => { spineUnavailable = true; updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
-    spineLayer.set(state.spines, { live }).then(() => { if (!destroyed) updateNote() })
+    spineLayer.set(state.spines, { live, slow: slowFactor }).then(() => { if (!destroyed) updateNote() })
   }
   // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   let standLayer = null
@@ -600,19 +625,23 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   function stopAuto() { clearTimeout(autoTimer); autoTimer = 0 }
   function scheduleAuto() {
     stopAuto()
-    if (!auto || running || choiceState || posNow() >= path.length - 1 || destroyed) return
+    if (!auto || running || choiceState || destroyed) return
+    // 最后一句：自动播放也要走完——没有下一章就回列表（有下一章就停在「继续下一章」）
+    const atEnd = posNow() >= path.length - 1
+    if (atEnd && (!path.length || chapter?.canNext?.())) return
+    const advance = atEnd ? finish : next
     // 这一步有语音：等它播完，再多等 voiceDelay 秒。语音还在放时直接返回，播完（ended）会再调用本函数
     const voice = stepVoice && stepVoice.step === gen && !stepVoice.failed ? stepVoice : null
     if (voice) {
       if (!voice.endedAt) return
       const remaining = Math.max(0, voiceDelay * 1000 - (performance.now() - voice.endedAt))
-      autoTimer = setTimeout(next, remaining)
+      autoTimer = setTimeout(advance, remaining)
       return
     }
     // 没有语音（或语音放不出来）：按台词长度估一个阅读时间
     const chars = segmentsText(state.text).length
     const wait = Math.max(1.2, Math.min(8, 0.8 + chars * 0.12))
-    autoTimer = setTimeout(next, wait * 1000)
+    autoTimer = setTimeout(advance, wait * 1000)
   }
   // 快进：按住 Ctrl（约 0.25 秒后进入，避免 Ctrl+F / Ctrl+C 误触）连续翻页——动画和语音 / 音效都跳过；遇到选项暂停（选完接着快进），到最后一步或松开 Ctrl 就停
   let fast = false
@@ -646,8 +675,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (destroyed || !hasSteps || choiceState) return   // 选项开着：只能选，不能翻页
     if (running) { skipping = true; return }
     const target = path[posNow() + 1]
-    if (target === undefined) return
+    if (target === undefined) {   // 最后一句之后再「下一句」：没有下一章就回列表，不停在原地
+      if (path.length && !chapter?.canNext?.()) finish()
+      return
+    }
     await runStep(target)
+  }
+  // 整个脚本看完：交给页面层存进度（已看完）并回到上一级列表；没有页面层的 finish 就直接 up()
+  let finishing = false
+  async function finish() {
+    if (destroyed || finishing || running || choiceState) return
+    finishing = true
+    stopAuto()
+    setFast(false)
+    try { await (chapter?.finish ? chapter.finish() : chapter?.up?.()) } finally { finishing = false }
   }
   // 跳到某一步（后退 / 回看记录 / 续播）。回到一个已经选过的选项那一步 = 重选：这一步起的选择全部作废，从选项开始重新走
   function enterStep(target, { backward = false } = {}) {

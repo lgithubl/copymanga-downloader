@@ -71,7 +71,7 @@ async function mapLimit(list, limit, fn) {
 const IO_CONCURRENCY = 16
 
 // ---------- 列表视图（筛选 / 排序 / 每页条数）----------
-export const GAL_PAGE_SIZES = [25, 50, 100, 200, 500]
+export const GAL_PAGE_SIZES = [10, 25, 50, 100, 200, 500]
 export const GAL_SORTS = [{ id: 'default', label: '默认（目录在前）' }, { id: 'name', label: '名称 ↑' }, { id: 'name_desc', label: '名称 ↓' }]
 export function parseGalView(optionText = '') {
   let params

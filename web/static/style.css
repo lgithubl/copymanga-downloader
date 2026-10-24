@@ -4294,7 +4294,6 @@ h2 {
   padding: 12px 14px 16px;
 }
 .gal-browse { display: grid; gap: 12px; margin: 0 auto; max-width: 1100px; width: 100%; }
-.gal-browse-up { min-height: 28px; padding: 0 10px; font-size: 13px; background: var(--site-secondary); }
 .gal-browse-crumbs { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; font-size: 14px; gap: 4px 6px; min-width: 0; }
 .gal-browse-crumb { background: transparent; color: var(--site-primary-text); min-height: 24px; padding: 0 4px; }
 .gal-browse-crumb.current { color: var(--site-text); font-weight: 600; overflow-wrap: anywhere; }
@@ -4486,12 +4485,8 @@ h2 {
 #media-viewer-view.media-mode-gal #media-page-prev,
 #media-viewer-view.media-mode-gal #media-page-next { display: none; }   /* Gal 里没有这几个功能（宽度调节 / 按页翻） */
 .gal-browse-bar { background: var(--site-panel, #fff); border-top: 1px solid var(--site-border); bottom: -16px; display: grid; gap: 6px; margin-bottom: -16px; padding: 8px 0 22px; position: sticky; z-index: 6; }
-.gal-browse-where { align-items: center; display: flex; gap: 10px; justify-content: space-between; min-width: 0; }
-.gal-browse-where .gal-browse-crumbs { flex: 1 1 auto; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
-.gal-browse-count { color: var(--site-muted); flex: 0 0 auto; font-size: 12px; }
+.gal-browse-where { align-items: center; display: grid; gap: 8px; grid-template-columns: 5em minmax(0, 1fr); }
 .gal-browse-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 8px; }
-.gal-browse-actions .gal-browse-up, .gal-browse-actions .gal-browse-more-btn, .gal-browse-actions .gal-browse-leave { font-size: 13px; min-height: 28px; padding: 0 10px; }
-.gal-browse-actions .gal-browse-up:disabled { opacity: 0.4; }
 .gal-browse-spacer { flex: 1 1 0; }
 .gal-browse-more-menu { bottom: calc(100% + 6px); top: auto; min-width: min(22em, 86vw); }
 .gal-more-row { align-items: center; display: grid; gap: 8px; grid-template-columns: 5em minmax(0, 1fr); }
@@ -4500,7 +4495,6 @@ h2 {
 .gal-browse-more-menu .gal-browse-range { color: var(--site-muted); font-size: 12px; }
 @media (max-width: 640px) {
   .gal-browse-pager .gal-pager-btn[title="第一页"], .gal-browse-pager .gal-pager-btn[title="最后一页"] { display: none; }
-  .gal-browse-count { display: none; }
 }
 @media (max-width: 900px) {
   /* 窄屏整页滚动：页面头部粘在视口底部，列表固定条在它上面 */
@@ -4508,12 +4502,6 @@ h2 {
   .gal-browse-bar { bottom: var(--gal-foot, 0px); margin-bottom: 0; padding-bottom: 8px; }
 }
 @media (max-width: 640px) {
-  /* 窄屏：第 1 行 [↑ 上一级 …… 更多 返回]，第 2 行翻页（居中）——两行，位置固定 */
-  .gal-browse-actions .gal-browse-up { order: 0; }
-  .gal-browse-actions .gal-browse-spacer { order: 1; }
-  .gal-browse-actions .gal-browse-more { order: 2; }
-  .gal-browse-actions .gal-browse-leave { order: 3; }
-  .gal-browse-actions .gal-browse-pager { flex: 1 1 100%; justify-content: center; order: 4; }
   .gal-browse-actions .gal-pager-go { display: none; }   /* 页码框回车就能跳 */
 }
 @media (max-width: 900px) {
@@ -4588,3 +4576,46 @@ h2 {
 /* 快进中的提示 */
 .gal-fast-badge { background: rgba(0, 0, 0, 0.6); border-radius: 6px; color: #ffd479; font-size: 13px; padding: 3px 10px; pointer-events: none; position: absolute; right: 10px; top: 10px; z-index: 9; }
 .gal-fast-badge[hidden] { display: none; }
+
+/* ===== 底栏统一：列表页和播放页同一套按钮（.gal-btn）、同一行、同一个锁 =====
+   列表页的底栏壳 .gal-browse-bar 粘在滚动容器底部，里面 .gal-browse-bar-in 装一行按钮（.gal-bar 和播放页同一个类） */
+.gal-browse-bar .gal-bar { border-top: 0; font-size: 13px; gap: 6px 8px; padding: 0; }
+.gal-browse-bar .gal-bar .gal-btn { background: var(--site-secondary); border: 0; border-radius: 6px; color: #fff; cursor: pointer; font-size: 13px; line-height: 1.2; min-height: 28px; padding: 0 10px; width: auto; }
+.gal-browse-bar .gal-bar .gal-btn:hover:not(:disabled) { filter: brightness(1.18); }
+.gal-browse-bar .gal-bar .gal-btn:disabled { cursor: default; opacity: 0.4; }
+.gal-browse-bar .gal-bar .gal-btn[hidden] { display: none; }
+.gal-browse-bar .gal-browse-more-menu .gal-btn { background: var(--site-secondary); }
+.gal-browse-bar .gal-pager-jump { font-size: 13px; min-height: 28px; padding: 2px 6px; width: 3.8em; }
+.gal-browse-bar .gal-pager-info { white-space: nowrap; }
+.gal-browse-actions .gal-browse-pager { flex: 0 1 auto; gap: 6px; }
+.gal-lock { font-size: 13px; padding: 0 8px; }
+
+/* ===== 底栏锁定（gal-barlock.js）=====
+   锁定（默认）：底栏常驻。没锁定（root 上有 .bar-auto）：底栏收起，鼠标移到最下沿的热区才滑出来；
+   收起后底栏不占高度，舞台 / 列表用满整个阅读区（--gal-bar-h 清零，沉浸 / 全屏的舞台宽度按没有底栏算）。
+   底栏收起时 pointer-events 关掉：热区才收得到 hover；滑出来后底栏盖住热区（z-index 比热区高），鼠标留在底栏上就不会收回去 */
+.gal-bar-hot, .gal-browse-bar-hot { display: none; }
+.bar-auto .gal-bar-hot, .bar-auto .gal-browse-bar-hot { bottom: 0; display: block; height: 14px; left: 0; position: absolute; right: 0; z-index: 5; }
+
+.gal-player.bar-auto { --gal-bar-h: 0px !important; overflow: hidden; }
+.gal-player.bar-auto .gal-bar-wrap {
+  bottom: 0; box-sizing: border-box; grid-row: auto; justify-self: stretch; left: 0; opacity: 0; padding: 8px 12px; pointer-events: none;
+  position: absolute; right: 0; transform: translateY(100%); transition: transform 0.18s ease, opacity 0.18s ease; width: auto; z-index: 6;
+}
+.gal-player.bar-auto .gal-bar-hot:hover ~ .gal-bar-wrap,
+.gal-player.bar-auto .gal-bar-wrap:hover,
+.gal-player.bar-auto .gal-bar-wrap:has(:focus-visible) { opacity: 1; pointer-events: auto; transform: none; }
+
+.gal-browse.bar-auto .gal-browse-bar { background: transparent; border-top: 0; height: 0; padding: 0; }
+.gal-browse.bar-auto .gal-browse-bar-in {
+  background: var(--site-panel, #fff); border-top: 1px solid var(--site-border); bottom: 0; box-sizing: border-box; left: 0; opacity: 0; padding: 8px 0;
+  pointer-events: none; position: absolute; right: 0; transform: translateY(100%); transition: transform 0.18s ease, opacity 0.18s ease; z-index: 6;
+}
+.gal-browse.bar-auto .gal-browse-bar-hot:hover ~ .gal-browse-bar-in,
+.gal-browse.bar-auto .gal-browse-bar-in:hover,
+.gal-browse.bar-auto .gal-browse-bar-in:has(:focus-visible) { opacity: 1; pointer-events: auto; transform: none; }
+.gal-browse.is-immersive.bar-auto .gal-browse-bar-in { background: #0b0f17; border-top-color: rgba(255, 255, 255, 0.14); color: #e5e7eb; }
+
+/* 播放器「更多」菜单里的数值项（动画 4 降速） */
+.gal-more-field { align-items: center; color: #e5e7eb; display: flex; gap: 0.5em; white-space: nowrap; }
+.gal-more-field input { background: rgba(255, 255, 255, 0.14); border: 0; border-radius: 4px; color: #fff; font-size: inherit; min-height: 0; padding: 0.1em 0.4em; width: 4.5em; }

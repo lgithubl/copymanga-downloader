@@ -1,6 +1,7 @@
 // Gal 的浏览层：把后端给的「节点」（web/library/gal/browse.mjs）渲染成卡片网格 / 列表，选项自带下一个节点的 id，
 // 点了就 onOpen(节点 id)，由页面层再取一次（reader?sectionId=…）。这里不认识目录结构，只认 kind / items。
 // 全部用 textContent / setAttribute 写入后端给的文字，不拼 innerHTML。
+import { attachBarLock } from './gal-barlock.js'
 import { assetUrl } from './gal-engine.js'
 
 const el = (tag, className = '', text = '') => {
@@ -24,12 +25,14 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   const root = el('div', 'gal-browse')
   root.dataset.node = node.id
 
-  // ---- 底部固定条：和播放页的工具栏同一个位置、同一个顺序 ----
-  //   第 1 行  位置（面包屑，每一级都能点）+ 当前范围
-  //   第 2 行  [↑ 上一级] [◀ 上一页] [页码 / 总页] [下一页 ▶] … [更多 ▾] [返回]
-  //   「更多」里放不常用的：搜索 / 排序 / 每页条数 / 文本版本 / 沉浸 / 全屏
+  // ---- 底部固定条：和播放页的工具栏同一个位置、同一套按钮样式（.gal-btn），只有一行 ----
+  //   [↑ 上一级] [◀ 上一页] [页码 / 总页] [下一页 ▶] … [更多 ▾] [🔒] [返回]
+  //   「更多」里放：位置（面包屑，每一级都能点）/ 搜索 / 排序 / 每页条数 / 文本版本 / 沉浸 / 全屏
+  //   🔒 锁定 = 底栏常驻；没锁定 = 收起，鼠标移到最下沿才出来（gal-barlock.js）
   // 按钮不会因为状态变化消失（只有 disabled），所以位置固定、不会一会儿在这一会儿在那
-  const bar = el('div', 'gal-browse-bar')
+  const bar = el('div', 'gal-browse-bar')       // 粘在滚动容器底部的外壳
+  const barHot = el('div', 'gal-browse-bar-hot') // 没锁定时的底部热区（必须排在 barIn 前面，CSS 用 ~ 选下一个兄弟）
+  const barIn = el('div', 'gal-browse-bar-in')
   const crumbRow = el('div', 'gal-browse-where')
   const crumbs = el('nav', 'gal-browse-crumbs')
   crumbs.setAttribute('aria-label', '位置')
@@ -43,11 +46,10 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     }
     crumbs.append(item)
   })
-  const count = el('span', 'gal-browse-count', node.total != null ? `共 ${node.total} 项` : '')
-  crumbRow.append(crumbs, count)
+  crumbRow.append(el('span', 'gal-more-label', '位置'), crumbs)
 
-  const actions = el('div', 'gal-browse-actions')
-  const up = el('button', 'gal-browse-up', '↑ 上一级')
+  const actions = el('div', 'gal-bar gal-browse-actions')
+  const up = el('button', 'gal-btn gal-up gal-browse-up', '↑ 上一级')
   up.type = 'button'
   up.title = '回到上一级'
   up.disabled = node.parent == null
@@ -71,7 +73,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   // 翻页：一页时也留着（禁用），位置不变
   const pager = el('div', 'gal-browse-pager')
   const pageBtn = (text, title, page, disabled) => {
-    const b = el('button', 'gal-pager-btn', text)
+    const b = el('button', 'gal-btn gal-pager-btn', text)
     b.type = 'button'
     b.title = title
     b.disabled = disabled
@@ -93,7 +95,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     else jump.value = String(node.page)
   }
   jump.addEventListener('keydown', (event) => { if (event.key === 'Enter') doJump() })
-  const jumpBtn = el('button', 'gal-pager-btn gal-pager-go', '跳转')
+  const jumpBtn = el('button', 'gal-btn gal-pager-btn gal-pager-go', '跳转')
   jumpBtn.type = 'button'
   jumpBtn.title = '跳到输入的页码'
   jumpBtn.disabled = single
@@ -107,11 +109,12 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
 
   // 「更多」：向上展开的菜单（底部固定条在屏幕下沿）
   const more = el('div', 'gal-browse-more')
-  const moreBtn = el('button', 'gal-browse-more-btn', '更多 ▾')
+  const moreBtn = el('button', 'gal-btn gal-browse-more-btn', '更多 ▾')
   moreBtn.type = 'button'
   moreBtn.title = '搜索 / 排序 / 每页条数 / 沉浸 / 全屏'
   const moreMenu = el('div', 'gal-browse-more-menu')
   moreMenu.hidden = true
+  moreMenu.append(crumbRow)
   const closeMenu = () => { moreMenu.hidden = true }
   const field = (label, control) => { const row = el('label', 'gal-more-row'); row.append(el('span', 'gal-more-label', label), control); return row }
 
@@ -171,6 +174,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       queueMicrotask(() => { search.focus(); search.setSelectionRange(search.value.length, search.value.length) })
     }
   }
+  if (!(view && (view.unfiltered > 8 || view.q))) moreMenu.append(el('div', 'gal-browse-range', node.total != null ? `共 ${node.total} 项` : ''))
   // 文本版本（不同语言/备份的文本）：切换 = 打开那一套的首页
   if (node.sets?.length > 1) {
     const select = el('select', 'gal-browse-sets')
@@ -204,13 +208,17 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   document.addEventListener('click', onDocClick)
   moreMenu.append(immBtn, fsBtn)
   more.append(moreBtn, moreMenu)
-  const leaveBtn = el('button', 'gal-browse-leave', '返回')
+  const lockBtn = el('button', 'gal-btn gal-lock')
+  lockBtn.type = 'button'
+  const leaveBtn = el('button', 'gal-btn gal-browse-leave', '返回')
   leaveBtn.type = 'button'
   leaveBtn.title = '退出沉浸并离开这个媒体'
   leaveBtn.hidden = !onLeave
   leaveBtn.addEventListener('click', () => onLeave?.())
-  actions.append(more, leaveBtn)
-  bar.append(crumbRow, actions)
+  actions.append(more, lockBtn, leaveBtn)
+  barIn.append(actions)
+  bar.append(barHot, barIn)
+  attachBarLock({ root, button: lockBtn })
   if (keepMenuOpen !== null && keepMenuOpen === node.viewBase) { keepMenuOpen = null; moreMenu.hidden = false }
 
   function setImmersive(active) {

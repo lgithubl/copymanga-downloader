@@ -4004,6 +4004,15 @@ function renderGal(reader) {
       up: reader.node?.parent != null
         ? () => { galNavigate(reader, reader.node.parent, 'up').catch((error) => alert(error.message)) }
         : null,
+      // 最后一句看完（手动点下一句 / 自动播放到头）：先把「已看完」存下来（不能等 500ms 的防抖：马上就换页了，
+      // 到时候 currentMediaReader 已经是列表节点），再回上一级列表；没有上一级就像「返回」一样离开这个媒体
+      finish: async () => {
+        clearTimeout(libraryProgressTimer)
+        galRatio = 1
+        await saveLibraryProgress(1, reader).catch(() => {})
+        if (reader.node?.parent != null) await galNavigate(reader, reader.node.parent, 'up')
+        else { exitGalImmersive(); els.mediaReaderBack?.click() }
+      },
     },
   })
   // 默认沉浸（和别的类型一样：没存过偏好就是开；Esc/退出会记住）。切到下一话时沿用当前沉浸状态

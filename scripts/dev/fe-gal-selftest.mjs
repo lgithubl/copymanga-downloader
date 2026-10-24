@@ -522,7 +522,15 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   pg.on('dialog', (d) => d.dismiss().catch(() => {}))
   const cnt = () => pg.$eval('.gal-count', (e) => e.textContent).catch(() => '')
   const press = async (key, n = 1) => { for (let i = 0; i < n; i++) { await pg.keyboard.press(key); await sleep(220) } }
-  const goStep = async (n, total) => { for (let i = 0; i < 40 && (await cnt()) !== `${n} / ${total}`; i++) { await pg.keyboard.press('Space'); await sleep(260) } }
+  // 每按一下等计数变了再继续：最后一句之后再按「下一句」会回到列表（看完了），多按一下页面就没了
+  const goStep = async (n, total) => {
+    for (let i = 0; i < 40 && (await cnt()) !== `${n} / ${total}`; i++) {
+      const before = await cnt()
+      await pg.keyboard.press('Space')
+      await pg.waitForFunction((t) => document.querySelector('.gal-count')?.textContent !== t, before, { timeout: 3000 }).catch(() => {})
+      await sleep(120)
+    }
+  }
   const immState = () => pg.evaluate(() => ({
     app: document.querySelector('#app').classList.contains('stream-immersive'),
     view: document.querySelector('#media-viewer-view').classList.contains('stream-page-fullscreen'),

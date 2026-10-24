@@ -21,6 +21,7 @@ import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
 import { buildGalFixture } from './make-gal-fixture.mjs'
+import { declaredPageSizes, reportDeclaredSize } from '../../web/static/gal-spine.js'
 
 let pass = 0
 let fail = 0
@@ -313,7 +314,7 @@ check('缺资源的脚本在卡片上缩略图为空（不报错）', room1.item
   check('筛选目录卡片：按显示名（名称文件里的「卡蒂娅」）和目录名（1003）都能筛', ch.total === 1 && ch.items[0].title === '卡蒂娅' && (await nodeOf('d:character|q=1003')).total === 1)
   const full = (await nodeOf('d:room')).items.map((i) => i.title)
   const size50 = await nodeOf('d:room|n=50')
-  check('每页条数：n=50 → 31 个一页放下；节点 id 带 n；view.size / pageSize 是 50；可选项里有 25/50/100/200/500', size50.items.length === 31 && size50.pageCount === 1 && size50.id === 'd:room|n=50' && size50.view.size === 50 && size50.pageSize === 50 && J(size50.view.sizes) === J([25, 50, 100, 200, 500]), J([size50.items.length, size50.id, size50.view]))
+  check('每页条数：n=50 → 31 个一页放下；节点 id 带 n；view.size / pageSize 是 50；可选项里有 10/25/50/100/200/500', size50.items.length === 31 && size50.pageCount === 1 && size50.id === 'd:room|n=50' && size50.view.size === 50 && size50.pageSize === 50 && J(size50.view.sizes) === J([10, 25, 50, 100, 200, 500]), J([size50.items.length, size50.id, size50.view]))
   check('每页条数：不在可选项里的值（n=999）忽略，用默认（25）；视图参数里的垃圾也忽略', (await nodeOf('d:room|n=999')).items.length === 25 && (await nodeOf('d:room|n=999')).id === 'd:room' && (await nodeOf('d:room|zzz=1&s=乱写')).items.length === 25)
   const asc = await nodeOf('d:character|s=name')
   const desc = await nodeOf('d:character|s=name_desc')
@@ -696,6 +697,14 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   }
   check('config.scriptIndex 规整：目录必须安全、pattern 必须是合法正则、key 默认 {1}', J(normalizeGalConfig({ scriptIndex: [{ dir: 'a/b', pattern: '^x(\\d)' }, { dir: '../a', pattern: 'x' }, { dir: 'a', pattern: '(' }, { dir: '', pattern: 'x' }] }).scriptIndex) === J([{ dir: 'a/b', pattern: '^x(\\d)', key: '{1}', badge: '' }]))
   check('config.rawIgnore 规整：非法正则 / 空串 / 重复丢掉，最多 50 条；补丁能写能清', J(normalizeGalConfig({ rawIgnore: ['^spine$', '(', '', '^spine$', 'anm,.*'] }).rawIgnore) === J(['^spine$', 'anm,.*']) && normalizeGalConfig({ rawIgnore: Array.from({ length: 80 }, (_, k) => `x${k}`) }).rawIgnore.length === 50 && J(applyGalConfigPatch({}, { rawIgnore: ['a'] }).rawIgnore) === J(['a']) && applyGalConfigPatch({ rawIgnore: ['a'] }, { rawIgnore: null }).rawIgnore === undefined && J(normalizeGalConfig({}).rawIgnore) === '[]')
+  // Spine 3.8 运行时拿实际图片尺寸当 UV 分母：atlas 声明 4096、PNG 只有 2048 时必须让 getImage() 报声明尺寸，否则立绘散成碎片
+  const sizes = declaredPageSizes('a.png\nsize: 4096,4096\nformat: RGBA8888\nfoo\n  rotate: true\n\nb.png\nsize:2048, 1024\n')
+  const tex = { getImage: () => ({ width: 2048, height: 2048 }) }
+  const same = { getImage: () => ({ width: 64, height: 128 }) }
+  const origSame = same.getImage
+  reportDeclaredSize(tex, sizes.get('a.png'))
+  reportDeclaredSize(same, [64, 128])
+  check('spine atlas：读出每页声明尺寸；贴图实际更小时 getImage() 报声明尺寸，一致时不动', sizes.get('a.png')?.join() === '4096,4096' && sizes.get('b.png')?.join() === '2048,1024' && tex.getImage().width === 4096 && tex.getImage().height === 4096 && same.getImage === origSame)
   void imported
 }
 

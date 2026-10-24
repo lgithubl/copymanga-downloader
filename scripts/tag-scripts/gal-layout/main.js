@@ -149,6 +149,19 @@ async function detectMonmusu(media, { declared, game, logs }) {
     config.dirThumbs = []
     logs.push('没找到 icon_<编号>_0_idle 头像图（images 目录里）：角色卡片没有头像')
   }
+  // 脚本卡片封面：动画（webm）脚本里没有背景图，封面用游戏菜单按钮的图——script/sub_nav 里 `imagebutton auto "<编号>_01_%s"` 跳到 h<编号>A1、`_02_` 跳 B1；
+  // 事件（静图）菜单 event_nav 里 `r18_<编号>_stla1_%s` 跳 C1、stlb1 → D1、stlc1 → E1、stld1 → F1（%s = idle）。图在 images 里（可能再套一层目录）
+  const coverRules = [
+    ['^(\\d{5})_01_idle\\.(?:png|webp|jpe?g)$', '{1}A1'], ['^(\\d{5})_02_idle\\.(?:png|webp|jpe?g)$', '{1}B1'],
+    ['^r18_(\\d{5})_stla1_idle\\.(?:png|webp|jpe?g)$', '{1}C1'], ['^r18_(\\d{5})_stlb1_idle\\.(?:png|webp|jpe?g)$', '{1}D1'],
+    ['^r18_(\\d{5})_stlc1_idle\\.(?:png|webp|jpe?g)$', '{1}E1'], ['^r18_(\\d{5})_stld1_idle\\.(?:png|webp|jpe?g)$', '{1}F1'],
+  ]
+  config.scriptIndex = []
+  for (const [pattern, key] of coverRules) {
+    const hit = await findFirstFile(path.join(media, ...splitRel(join(base, 'images'))), new RegExp(pattern.replace('(?:png|webp|jpe?g)', '(png|webp|jpe?g)')), 30000)
+    if (hit) config.scriptIndex.push({ dir: join(base, 'images', hit.dir), pattern, key, badge: '' })
+  }
+  logs.push(config.scriptIndex.length ? `脚本封面：${config.scriptIndex.length} 条规则（动画 / 静图卡片用菜单按钮图）` : '没找到菜单按钮图（<编号>_01_idle / r18_<编号>_stla1_idle）：动画 / 静图卡片没有封面')
   return {
     id: 'monmusu',
     kind: 'monmusu',

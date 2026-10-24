@@ -47,6 +47,29 @@ export function pickSpineSkin(data) {
   return skins.find((skin) => skin !== data.defaultSkin && skinSize(skin) > 0) || null
 }
 
+// atlas 里每页声明的尺寸（size: w,h）。官方 3.8 运行时有两处拿「实际加载出来的图片尺寸」（texture.getImage().width）当分母：
+// TextureAtlas 解析完覆盖页尺寸再算区域 UV，MeshAttachment.updateUVs 里算偏移 / 宽高。而 atlas 里的区域坐标是按声明尺寸写的——
+// 图被缩小过（声明 4096、实际 PNG 2048，Unity 提取出来的资源常见）时，UV 整体放大一倍，立绘散成碎片、完全不是人。
+// 游戏里的查看器按声明尺寸算，所以让贴图的 getImage() 报声明尺寸：GL 上传仍用真实图片（GLTexture 内部不走 getImage）。
+export function declaredPageSizes(atlasText) {
+  const sizes = new Map()
+  const lines = String(atlasText).split(/\r?\n/).map((line) => line.trim())
+  for (let i = 0; i < lines.length; i++) {
+    if (!/\.(png|jpe?g|webp)$/i.test(lines[i])) continue
+    for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+      const m = /^size:\s*(\d+)\s*,\s*(\d+)/.exec(lines[j])
+      if (m) { sizes.set(lines[i], [Number(m[1]), Number(m[2])]); break }
+    }
+  }
+  return sizes
+}
+export function reportDeclaredSize(texture, size) {
+  if (!size) return texture
+  const image = texture.getImage()
+  if (image && (image.width !== size[0] || image.height !== size[1])) texture.getImage = () => ({ width: size[0], height: size[1] })
+  return texture
+}
+
 // 一个骨架数据只加载一次（按 skel 路径缓存）。onMissing(src)：文件取不到
 export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavailable = () => {} }) {
   const canvas = document.createElement('canvas')
@@ -64,6 +87,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   const dataCache = new Map()   // skel → Promise<{ data, atlas } | null>
   let pending = 0
   let waiters = []
+  let slowTo = 0.2   // animation4 降速后的倍率（1 = 不降速），播放器设置里改；set() 每次传进来
 
   const settle = () => { if (!pending) { const done = waiters; waiters = []; done.forEach((resolve) => resolve()) } }
   const ready = () => (pending ? new Promise((resolve) => waiters.push(resolve)) : Promise.resolve())
@@ -109,7 +133,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         const pages = atlasText.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\.png$/i.test(line))
         const images = new Map()
         for (const page of pages) { stage = dir + page; images.set(page, await loadImage(dir + page)) }
-        const atlas = new spine.TextureAtlas(atlasText, (page) => new spine.webgl.GLTexture(gl, images.get(page) || images.get(page.split('/').pop())))
+        const declared = declaredPageSizes(atlasText)
+        const atlas = new spine.TextureAtlas(atlasText, (page) => reportDeclaredSize(new spine.webgl.GLTexture(gl, images.get(page) || images.get(page.split('/').pop())), declared.get(page)))
         const loader = new spine.AtlasAttachmentLoader(atlas)
         const u8 = new Uint8Array(bytes)
         const firstByte = u8.find((b) => b > 32)
@@ -134,12 +159,23 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   function applySpec(inst, spec, live) {
     inst.spec = spec
     const name = pickAnimation(inst.data, spec.anim, spec.kind)
-    if (name && (name !== inst.anim || inst.loop !== (spec.loop !== false))) {
+    const changed = Boolean(name) && (name !== inst.anim || inst.loop !== (spec.loop !== false))
+    if (changed) {
       inst.state.setAnimation(0, name, spec.loop !== false)
       inst.anim = name
       inst.loop = spec.loop !== false
     }
-    inst.state.timeScale = Number.isFinite(Number(spec.speed)) && Number(spec.speed) > 0 ? Number(spec.speed) : 1
+    const speed = Number.isFinite(Number(spec.speed)) && Number(spec.speed) > 0 ? Number(spec.speed) : 1
+    inst.state.timeScale = speed
+    // 降速（animation4）：和原查看器一样，开始播放后 1 秒内把速度从 speed 渐变到 slowTo；一步到位（后退 / 续播）直接停在 slowTo
+    const prevSlow = inst.slow
+    inst.slow = null
+    if (spec.slow && slowTo < 1) {
+      if (!live) inst.state.timeScale = speed * slowTo
+      else if (changed) inst.slow = { from: speed, to: speed * slowTo, began: performance.now() }
+      else if (prevSlow) inst.slow = prevSlow   // 同一个动画里又来一步：渐变接着走，不重新来
+      else inst.state.timeScale = speed * slowTo
+    }
     const shade = spec.dim ? 0.5 : 1
     inst.skeleton.color.set(shade, shade, shade, 1)
     if (live && spec.action && ACTIONS[spec.action]) inst.action = { kind: spec.action, began: performance.now() }
@@ -176,7 +212,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   }
 
   // specs：{ slot → 指令 }（状态里的 spines）；live = 正在播放这一步（站位动作才会动），false = 一步到位
-  function set(specs, { live = false } = {}) {
+  function set(specs, { live = false, slow = slowTo } = {}) {
+    slowTo = Number.isFinite(Number(slow)) && Number(slow) > 0 ? Math.min(1, Number(slow)) : 0.2
     const wanted = specs || {}
     for (const slot of [...instances.keys()]) if (!wanted[slot]) instances.delete(slot)
     for (const [slot, spec] of Object.entries(wanted)) {
@@ -235,6 +272,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     renderer.begin()
     const drawn = [...instances.values()].filter((inst) => inst.skeleton).sort((a, b) => (a.spec.kind === b.spec.kind ? (a.spec.order || 0) - (b.spec.order || 0) : a.spec.kind === 'still' ? -1 : 1))
     for (const inst of drawn) {
+      if (inst.slow) {
+        const t = Math.min(1, (performance.now() - inst.slow.began) / 1000)
+        inst.state.timeScale = inst.slow.from + (inst.slow.to - inst.slow.from) * t
+        if (t >= 1) inst.slow = null
+      }
       inst.state.update(dt)
       inst.state.apply(inst.skeleton)
       layout(inst, width, height)

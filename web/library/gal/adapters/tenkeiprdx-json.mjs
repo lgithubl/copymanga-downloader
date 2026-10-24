@@ -4,7 +4,7 @@
 // 一帧 = 一步（点一下）。每帧的字段 → 指令：
 //   backgroundImage          bg（查 Backgrounds/adventure|still|eventstill）；名字里带 still_02..05 还会触发音效/闪白（照查看器）
 //   still + stillAnimation   整幅静态画面 = Stills/<名>/ 下所有 *.skel.bytes（按数字前缀排序叠起来），播放 stillAnimation；
-//                            animation2/3/4 联动背景音效 Hse2/Hse3/Hse4，animation4 闪白两次，animation5 白屏淡出，animation3 倍速 1.5
+//                            animation2/3/4 联动背景音效 Hse2/Hse3/Hse4，animation4 闪白两次并在 1 秒内降速（spine 指令带 slow:true，降到多少由播放器设置），animation5 白屏淡出，animation3 倍速 1.5
 //   sceneCamera*             camera：起止位置 + Z（缩放，千分比）+ 时长（毫秒）
 //   adventureCharacters[]    站位立绘 = Spines/<角色id>/ 下的 *.skel.bytes；表情 0..6 → idle_normal/joy/sad/angry/surprise/shy/unique；
 //                            站位 1 左 / 2 右 / 其余居中；动作 1 跳两下 / 2 左右抖 / 3 下沉；空数组 = 立绘全部隐藏
@@ -290,7 +290,7 @@ export function parse(text, ctx = null, meta = {}) {
       stillAnim = name
       skelOf('Stills', lastStill).forEach((part, order) => {
         stats.spines += 1
-        emit({ op: 'spine', slot: `still${order}`, kind: 'still', skel: part.skel, atlas: part.atlas, anim: name, loop: name !== 'animation4', speed, order })
+        emit({ op: 'spine', slot: `still${order}`, kind: 'still', skel: part.skel, atlas: part.atlas, anim: name, loop: name !== 'animation4', speed, order, ...(name === 'animation4' ? { slow: true } : {}) })
       })
       const linked = { animation2: ['Hse2', true], animation3: ['Hse3', true], animation4: ['Hse4', false] }[name]
       if (linked) {
