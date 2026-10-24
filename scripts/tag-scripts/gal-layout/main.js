@@ -129,14 +129,16 @@ async function detectMonmusu(media, { declared, game, logs }) {
     thumbsDirs: [],
     scriptExtensions: ['rpy'],
     hiddenDirs: ['sub_nav', 'tl'],
-    labels: { hscene: '动画', hscene_still: '静图' },
-    merge: [{ parent: '.', dirs: mergeDirs, badges: { hscene: 'anim', hscene_still: 'still' } }],
-    groups: [{ parent: '.', pattern: '^(\\d{5})[A-Za-z]\\d' }],
+    // 首页三个入口：动画（hscene，按角色编号分组）/ 事件（hscene_still，一个脚本一个事件，平铺）/ 总览（两个目录合在一起，按角色分组）
+    labels: { hscene: '动画', hscene_still: '事件' },
+    merge: [],
+    views: [{ parent: '.', as: 'overview', label: '总览', dirs: mergeDirs, badges: { hscene: 'anim', hscene_still: 'still' } }],
+    groups: [{ parent: 'hscene', pattern: '^(\\d{5})[A-Za-z]\\d' }, { parent: 'overview', pattern: '^(\\d{5})[A-Za-z]\\d' }],
     scriptThumbs: [],
     adapterOptions: { 'renpy-monmusu': { aliasFiles: hasMovie ? [join(base, 'script/movie.rpy')] : [], imageDirs: [join(base, 'images')] } },
   }
   logs.push(`monmusu 游戏根：${base || '.'}${base ? '（目录里多了一层）' : ''}${hasMovie ? '' : '；没有 script/movie.rpy（视频别名表）'}`)
-  logs.push(`合并目录：${mergeDirs.join(' + ')}；按角色编号分组`)
+  logs.push(`首页入口：动画 / 事件 / 总览（${mergeDirs.join(' + ')} 合并）；动画和总览按角色编号分组`)
   // 头像：images 里找 icon_<编号>_0_idle.*，据此生成模板（路径相对游戏根）
   const icon = await findFirstFile(path.join(media, ...splitRel(join(base, 'images'))), MONMUSU_ICON_RE, 30000)
   let cover = ''
@@ -206,8 +208,14 @@ async function detectMinashigo(media, { declared, logs }) {
     hiddenDirs: [],
     labels: {},
     merge: [],
-    // scene_<1 位类别><6 位角色编号><2 位序号>：同一个角色的归成一张卡片；主线 / 活动（scene_2100002、scene_ev059_00_02）不匹配，照常列出
-    groups: [{ parent: '.', pattern: '^scene_\\d(\\d{6})\\d{2}$' }],
+    // 首页分类：角色（scene_<1 位类别><6 位角色编号><2 位序号>，按角色编号分组）/ 活动（scene_ev<活动号>_…，按活动号分组）/ 主线（scene_<7 位数字>，平铺）；
+    // 不属于这三类的脚本照旧列在首页。视图是独占的：被收走的脚本不再平铺在首页
+    views: [
+      { parent: '.', as: 'chars', label: '角色', match: '^scene_\\d{9}$', exclusive: true },
+      { parent: '.', as: 'events', label: '活动', match: '^scene_ev', exclusive: true },
+      { parent: '.', as: 'main', label: '主线', match: '^scene_\\d{7}$', exclusive: true },
+    ],
+    groups: [{ parent: 'chars', pattern: '^scene_\\d(\\d{6})\\d{2}$' }, { parent: 'events', pattern: '^scene_(ev\\d+)_' }],
     dirThumbs: [],
     scriptThumbs: [],
     adapterOptions: { 'renpy-minashigo': { aliasFiles: [join(gameRel, 'movie.rpy')], standFiles: [join(gameRel, 'script.rpy')], imageDirs: [join(gameRel, 'images')] } },

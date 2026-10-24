@@ -28,6 +28,9 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 合并目录：列 parent（通配）下的目录时，把 dirs 里这几个子目录的内容合进同一个列表（不再显示这几个子目录），
   // 每项带来源标记 badges[目录名]（没写就是目录名）
   merge: [{ parent: 'character/*', dirs: ['adultr', 'extra'], badges: { adultr: 'adu', extra: 'ext' } }],
+  // 虚拟目录（视图）：在 parent 下多出一个叫 as 的目录，内容 = dirs 里这几个子目录（不写 = parent 自己）的脚本，stem 匹配 match 的才算；
+  // exclusive = 被它收走的脚本不再出现在 parent 自己的列表里。分组（groups）、封面（dirThumbs）、标签（labels）都按路径 <parent>/<as> 配
+  views: [],
   // 目录卡片的头像：parent 是父目录名（* = 任意），name 是目录名的正则；paths 是模板，{name} {parent} 会被替换，取第一个存在的
   dirThumbs: [{ parent: 'character', name: '^\\d{4}$', paths: ['download/character/{name}00/adv/image/{name}00.png', 'download/character/{name}00/adv/image/{name}00_100.png'] }],
   // 脚本卡片的缩略图（先于「脚本里第一张背景图」）：{stem} 是脚本文件名（无扩展名），{thumbsDir} 对每个缩略图目录各试一次；~/ = 相对媒体目录
@@ -97,6 +100,22 @@ export function normalizeGalConfig(raw) {
   const labels = {}
   if (v.labels && typeof v.labels === 'object' && !Array.isArray(v.labels)) {
     for (const [name, label] of Object.entries(v.labels).slice(0, 500)) if (safeName(name) && text(label, 40)) labels[name] = text(label, 40)
+  }
+
+  const views = []
+  for (const rule of Array.isArray(v.views) ? v.views.slice(0, MAX_LIST) : []) {
+    const parent = safeGlob(rule?.parent) === '.' || !rule?.parent ? '' : safeRelPath(text(rule.parent, 200))
+    const as = safeName(typeof rule?.as === 'string' ? rule.as : '')
+    if (parent === null || !as) continue
+    const dirs = (Array.isArray(rule?.dirs) ? rule.dirs : []).map(safeName).filter(Boolean).slice(0, 10)
+    const match = text(rule?.match, 200)
+    if (match) { try { new RegExp(match) } catch { continue } }
+    const badges = {}
+    if (rule.badges && typeof rule.badges === 'object' && !Array.isArray(rule.badges)) {
+      for (const [name, badge] of Object.entries(rule.badges).slice(0, 10)) if (safeName(name) && text(badge, 12)) badges[name] = text(badge, 12)
+    }
+    if (views.some((x) => x.parent === parent && x.as === as)) continue
+    views.push({ parent, as, label: text(rule?.label, 40), dirs, match, exclusive: Boolean(rule?.exclusive), badges })
   }
 
   const merge = []
@@ -178,6 +197,7 @@ export function normalizeGalConfig(raw) {
     pageSize: Math.max(1, Math.min(200, Math.floor(Number(v.pageSize)) || d.pageSize)),
     labels: v.labels === undefined ? { ...d.labels } : labels,
     merge: v.merge === undefined ? d.merge.map((r) => ({ ...r, dirs: [...r.dirs], badges: { ...r.badges } })) : merge,
+    views: v.views === undefined ? [] : views,
     dirThumbs: v.dirThumbs === undefined ? d.dirThumbs.map((r) => ({ ...r, paths: [...r.paths] })) : dirThumbs,
     scriptThumbs: v.scriptThumbs === undefined ? d.scriptThumbs.slice() : (Array.isArray(v.scriptThumbs) ? v.scriptThumbs : []).map((t) => text(t, 300)).filter(Boolean).slice(0, 10),
     groups: v.groups === undefined ? [] : groups,

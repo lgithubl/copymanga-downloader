@@ -24,6 +24,7 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 | `resourceRoots` / `namesFiles` / `thumbsDirs` | 资源根（脚本里的 `download/...` 从这里起算）、名称文件（`{目录名: 显示名}`）、缩略图缓存目录——**都是数组，按顺序查找** |
 | `labels` | 目录名 → 中文标签（cabin→纪念馆…） |
 | `merge` | 合并目录：`[{parent: 通配, dirs: [子目录名…], badges: {子目录名: 标记}}]`。列 `parent` 下的目录时，把 `dirs` 里这几个子目录的内容合进同一个列表（不再显示这几个子目录），每张卡片右上角带来源标记（默认 `character/*` 合并 `adultr`+`extra`，标记 `adu` / `ext`）；合并后按文件名自然序混排 |
+| `views` | 虚拟目录（视图）：`[{parent, as, label, dirs, match, exclusive, badges}]`。在 `parent`（`.` = 脚本根）下多出一个叫 `as` 的目录（磁盘上没有，路径 `<parent>/<as>`，有内容才列出）；内容 = `dirs` 里这几个子目录（不写 = `parent` 自己）里 stem 匹配 `match`（正则，不写 = 全部）的脚本，`badges` 按来源目录给角标。`exclusive: true`（只对来源是 `parent` 自己的有效）= 被它收走的脚本不再平铺在 `parent` 的列表里，脚本的「上一级」「上一话/下一话」也算在这个视图里。分组 `groups`、封面 `dirThumbs`、标签 `labels` 都按视图路径配（比如 `groups: [{parent: 'chars', …}]`）。monmusu：首页 动画 / 事件 / 总览（总览 = `hscene` + `hscene_still`）；minashigo：角色 / 活动 / 主线 |
 | `dirThumbs` | 目录卡片头像规则：`{parent, name(正则), paths(模板，{name} {parent})}`，取第一个存在的 |
 | `scriptThumbs` | 脚本缩略图模板（`{stem}` `{thumbsDir}`；`~/` = 相对媒体目录），之后才是「脚本里第一张背景图」 |
 | `cover` / `scriptCount` / `script` | 封面路径（`~/` 开头 = 相对媒体目录，只给封面用）/ 脚本数 / 谁写的这份配置 `{id, version, ranAt}` |

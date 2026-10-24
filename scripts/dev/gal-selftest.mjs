@@ -22,6 +22,7 @@ import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
 import { buildGalFixture } from './make-gal-fixture.mjs'
 import { declaredPageSizes, reportDeclaredSize } from '../../web/static/gal-spine.js'
+import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
 
 let pass = 0
 let fail = 0
@@ -497,27 +498,29 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
 
   const out = await monmusuScript({ item: item0, script: { id: 'gal-layout', version: '1.0.0', options: {} } })
   const cfg = out.itemPatch.gal.config
-  check('monmusu 脚本：游戏根（多一层 game/）、脚本根、资源根、合并 hscene+hscene_still（anim/still）、按编号分组、隐藏导航目录、适配器参数（别名表/图片目录）', cfg.game.id === 'monmusu' && cfg.game.title === 'Mon Test' && cfg.scriptRoots[0].dir === 'game/script' && J(cfg.resourceRoots) === J(['game']) && J(cfg.scriptExtensions) === J(['rpy']) && J(cfg.merge) === J([{ parent: '.', dirs: ['hscene', 'hscene_still'], badges: { hscene: 'anim', hscene_still: 'still' } }]) && cfg.groups[0].pattern === '^(\\d{5})[A-Za-z]\\d' && cfg.hiddenDirs.includes('sub_nav') && J(cfg.adapterOptions['renpy-monmusu']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }), J(cfg))
+  check('monmusu 脚本：游戏根（多一层 game/）、脚本根、资源根、总览视图 = hscene+hscene_still（anim/still）、按编号分组、隐藏导航目录、适配器参数（别名表/图片目录）', cfg.game.id === 'monmusu' && cfg.game.title === 'Mon Test' && cfg.scriptRoots[0].dir === 'game/script' && J(cfg.resourceRoots) === J(['game']) && J(cfg.scriptExtensions) === J(['rpy']) && J(cfg.merge) === '[]' && J(cfg.views) === J([{ parent: '.', as: 'overview', label: '总览', dirs: ['hscene', 'hscene_still'], badges: { hscene: 'anim', hscene_still: 'still' } }]) && cfg.groups[0].pattern === '^(\\d{5})[A-Za-z]\\d' && cfg.hiddenDirs.includes('sub_nav') && J(cfg.adapterOptions['renpy-monmusu']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }), J(cfg))
   check('头像模板来自 images 里找到的 icon；封面 = 第一个头像；脚本数；谁写的；标签 Gal游戏: monmusu', J(cfg.dirThumbs) === J([{ parent: '*', name: '^\\d{3,8}$', paths: ['images/icon/icon_{name}_0_idle.png'] }]) && cfg.cover === 'images/icon/icon_10001_0_idle.png' && cfg.scriptCount === 4 && cfg.script.id === 'gal-layout' && J(out.itemTags) === J(['Gal配置: monmusu', 'Gal配置version: 1.0.0', 'Gal游戏: monmusu']), J([cfg.dirThumbs, cfg.cover, cfg.scriptCount, out.itemTags]))
   await handler.patchItemMetadata(item0.itemId, { gal: out.itemPatch.gal })
   const it = await handler.getItem(item0.itemId)
   check('写回后：封面接口、脚本数、adapters 都在', /thumbnail\/script\/cover$/.test(it.cover) && it.scriptCount === 4 && J(it.adapters) === J(['renpy-monmusu']) && (await handler.getThumbnail(item0.itemId)).contentType === 'image/png')
 
   const read = (sectionId) => handler.getReaderContent(it.itemId, 'main', { sectionId })
-  const home = (await read('')).node
-  check('首页：按角色编号分组成卡片（10001 三个脚本、10004 一个）；导航界面目录/非剧情脚本不出现；头像来自模板', home.kind === 'cards' && J(home.items.map((i) => [i.title, i.subtitle])) === J([['10001', '3 项'], ['10004', '1 项']]) && home.items.every((i) => i.type === 'dir' && i.thumb === 'images/icon/icon_' + i.title + '_0_idle.png' && !i.badge), J(home.items))
+  const root = (await read('')).node
+  check('首页：三个入口 动画 / 事件 / 总览（动画、事件是真实目录，总览是虚拟目录）', root.kind === 'cards' && J(root.items.map((i) => [i.title, i.type, i.node])) === J([['动画', 'dir', 'd:hscene'], ['事件', 'dir', 'd:hscene_still'], ['总览', 'dir', 'd:overview']]), J(root.items))
+  const home = (await read('d:overview')).node
+  check('总览：按角色编号分组成卡片（10001 三个脚本、10004 一个）；导航界面目录/非剧情脚本不出现；头像来自模板', home.kind === 'cards' && J(home.items.map((i) => [i.title, i.subtitle])) === J([['10001', '3 项'], ['10004', '1 项']]) && home.items.every((i) => i.type === 'dir' && i.thumb === 'images/icon/icon_' + i.title + '_0_idle.png' && !i.badge), J(home.items))
   const group = (await read(home.items[0].node)).node
-  check('分组页：动画 + 静图混排，来源角标 anim / still；返回 = 首页；面包屑 首页 › 10001', J(group.items.map((i) => [i.title, i.badge])) === J([['10001A1', 'anim'], ['10001B1', 'anim'], ['10001C1', 'still']]) && group.parent === '' && J(group.breadcrumb.map((c) => c.title)) === J(['首页', '10001']) && group.total === 3, J(group))
+  check('分组页：动画 + 静图混排，来源角标 anim / still；返回 = 总览；面包屑 首页 › 总览 › 10001', J(group.items.map((i) => [i.title, i.badge])) === J([['10001A1', 'anim'], ['10001B1', 'anim'], ['10001C1', 'still']]) && group.parent === 'd:overview' && J(group.breadcrumb.map((c) => c.title)) === J(['首页', '总览', '10001']) && group.total === 3, J(group))
   check('分组页：静图脚本有缩略图（脚本里第一张存在的背景图）；动画脚本带「含视频」', group.items[2].thumb === 'images/bg/r18_10001_stla1.png' && /含视频/.test(group.items[0].subtitle), J(group.items))
   const a1 = await read(group.items[0].node)
   const cmds = a1.scene.steps.flatMap((s) => s.commands)
   check('播放页：视频别名查表成 movie（路径相对游戏根）；bgm / voice / 台词都在；上一话/下一话只在这个角色的分组里', a1.node.kind === 'player' && cmds.some((c) => c.op === 'movie' && c.srcs[0] === 'images/webm/10001/rev10001_01_10.webm') && cmds.some((c) => c.op === 'bgm' && c.src === 'audio/bgm/b.mp3') && cmds.some((c) => c.op === 'voice') && a1.scene.steps.length === 2 && a1.sectionNavigation.prev === null && a1.sectionNavigation.next.title === '10001B1', J(a1.sectionNavigation))
-  check('播放页：父节点 = 所在分组；面包屑 首页 › 10001 › 10001A1', a1.node.parent === group.items[0].node.replace(/^.*$/, group.node?.id || group.id) && J(a1.node.breadcrumb.map((c) => c.title)) === J(['首页', '10001', '10001A1']), J([a1.node.parent, group.id, a1.node.breadcrumb]))
+  check('播放页：父节点 = 它所在真实目录的分组（动画 › 10001）；面包屑 首页 › 动画 › 10001 › 10001A1', a1.node.parent === 'g:10001:hscene' && J(a1.node.breadcrumb.map((c) => c.title)) === J(['首页', '动画', '10001', '10001A1']), J([a1.node.parent, a1.node.breadcrumb]))
   const c1 = await read(group.items[2].node)
-  check('静图脚本：图片按文件名查到（资源路径去掉资源根）；查不到的 raw；分组里最后一个没有下一话；10004 的上一话不会跳到 10001', c1.scene.steps[0].commands.some((c) => c.op === 'bg' && c.src === 'images/bg/r18_10001_stla1.png') && c1.scene.steps[1].commands[0].op === 'raw' && c1.sectionNavigation.next === null && c1.sectionNavigation.prev.title === '10001B1' && (await read(home.items[1].node)).node.items.length === 1)
+  check('静图脚本：图片按文件名查到（资源路径去掉资源根）；查不到的 raw；父节点 = 事件目录（平铺，没有上下话）；10004 的上一话不会跳到 10001', c1.scene.steps[0].commands.some((c) => c.op === 'bg' && c.src === 'images/bg/r18_10001_stla1.png') && c1.scene.steps[1].commands[0].op === 'raw' && c1.sectionNavigation.next === null && c1.sectionNavigation.prev === null && c1.node.parent === 'd:hscene_still' && (await read(home.items[1].node)).node.items.length === 1)
   check('资源：语音/背景/视频路径相对游戏根能取到；目录穿越被拒', (await handler.getResource(it.itemId, 'audio/bgm/b.mp3')).contentType === 'audio/mpeg' && (await handler.getResource(it.itemId, 'images/bg/r18_10001_stla1.png')).contentType === 'image/png' && Boolean(await err(handler.getResource(it.itemId, '../script/movie.rpy'))))
   check('节点 id：分组键编码；格式不对/不存在的分组报错', (await err(read('g:%E0%A4%A:'))) !== null && /分组不存在/.test((await err(read('g:99999:')))?.message || '') && /无效/.test((await err(read('g::')))?.message || ''), '')
-  const lastHome = await read(`g:${encodeURIComponent('10001')}:`)
+  const lastHome = await read(`g:${encodeURIComponent('10001')}:overview`)
   check('分组 id 带页码也能解析（超页取最后一页）', lastHome.node.page === 1)
 
   // 改了别名表（没改脚本）：上下文跟着文件变
@@ -564,13 +567,15 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const it = await handler.getItem(item.itemId)
   const read = (sectionId) => handler.getReaderContent(it.itemId, 'main', { sectionId })
   const home = (await read('')).node
-  check('首页：同一角色的归成一张卡片（302201 两个、100101 一个）；主线 / 活动不匹配分组规则，照常列出；不是脚本的 txt 不出现', home.items.length === 4 && home.items.filter((i) => i.type === 'dir').map((i) => `${i.title}:${i.subtitle}`).sort().join() === '100101:1 项,302201:2 项' && home.items.filter((i) => i.type === 'script').map((i) => i.title).sort().join() === 'scene_2100002,scene_ev059_00_02', J(home.items.map((i) => [i.title, i.subtitle, i.type])))
-  const group = (await read(home.items.find((i) => i.title === '302201').node)).node
-  check('分组页：两个脚本（自然序）；返回 = 首页', J(group.items.map((i) => i.title)) === J(['scene_130220101', 'scene_130220102']) && group.parent === '', J([group.items.map((i) => i.title), group.parent]))
+  check('首页：角色 / 活动 / 主线 三个分类（独占：分类里的脚本不再平铺在首页）；不是脚本的 txt 不出现', J(home.items.map((i) => [i.title, i.type])) === J([['角色', 'dir'], ['活动', 'dir'], ['主线', 'dir']]) && home.items.length === 3, J(home.items.map((i) => [i.title, i.subtitle, i.type])))
+  const chars = (await read(home.items.find((i) => i.title === '角色').node)).node
+  check('角色：同一角色的归成一张卡片（302201 两个、100101 一个）；面包屑 首页 › 角色', chars.items.map((i) => `${i.title}:${i.subtitle}`).sort().join() === '100101:1 项,302201:2 项' && J(chars.breadcrumb.map((c) => c.title)) === J(['首页', '角色']) && chars.parent === '', J(chars.items.map((i) => [i.title, i.subtitle])))
+  const group = (await read(chars.items.find((i) => i.title === '302201').node)).node
+  check('分组页：两个脚本（自然序）；返回 = 角色', J(group.items.map((i) => i.title)) === J(['scene_130220101', 'scene_130220102']) && group.parent === 'd:chars', J([group.items.map((i) => i.title), group.parent]))
   const play = await read(group.items[1].node)
   check('播放页：来自 adapter renpy-minashigo；背景 / 立绘部件路径相对游戏根（images/…）；上一话 = 同角色的 130220101、没有下一话', play.scene.adapter === 'renpy-minashigo' && play.scene.steps[0].commands[0].src === 'images/bg/bg5000604.jpg' && play.scene.steps.flatMap((st) => st.commands).some((c) => c.op === 'stand') && play.sectionNavigation.prev?.title === 'scene_130220101' && play.sectionNavigation.next === null, J(play.sectionNavigation))
   check('资源：背景 / 立绘图集 / 语音 / bgm 相对游戏根能取；目录穿越被拒', (await handler.getResource(it.itemId, 'images/bg/bg5000604.jpg')).contentType === 'image/jpeg' && (await handler.getResource(it.itemId, 'images/stand/302201stand_a.png')).contentType === 'image/png' && (await handler.getResource(it.itemId, 'audio/voices/fav302201/fav302201_02_01.mp3')).contentType === 'audio/mpeg' && Boolean(await err(handler.getResource(it.itemId, '../x'))), '')
-  const ev = await read(home.items.find((i) => i.title === 'scene_ev059_00_02').node)
+  const ev = await read('s:scene_ev059_00_02.rpy')
   check('图片查不到的 scene：raw + unresolved，不崩', ev.scene.stats.unresolved.missing_image === 1 && ev.scene.steps.length === 2, J(ev.scene.stats))
 }
 
@@ -705,6 +710,49 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   reportDeclaredSize(tex, sizes.get('a.png'))
   reportDeclaredSize(same, [64, 128])
   check('spine atlas：读出每页声明尺寸；贴图实际更小时 getImage() 报声明尺寸，一致时不动', sizes.get('a.png')?.join() === '4096,4096' && sizes.get('b.png')?.join() === '2048,1024' && tex.getImage().width === 4096 && tex.getImage().height === 4096 && same.getImage === origSame)
+  // 虚拟目录（config.views）：来源是子目录的（monmusu 总览）/ 来源是 parent 自己且独占的（minashigo 分类）
+  {
+    const root = path.join(work, 'views')
+    const script = (name, body = '    scene black\n    "A" "B"\n') => writeFile(path.join(root, 'script', name), `label h_${name.replace(/\W/g, '_')}:\n${body}`)
+    await mkdir(path.join(root, 'script', 'hscene'), { recursive: true })
+    await mkdir(path.join(root, 'script', 'hscene_still'), { recursive: true })
+    await script('hscene/10001A1.rpy'); await script('hscene/10001B1.rpy'); await script('hscene/10002A1.rpy'); await script('hscene_still/10001C1.rpy')
+    const mm = createBrowseProvider({ mediaDir: root, adapters: ['renpy-monmusu'], resolveAsset: async () => { throw new Error('none') }, config: {
+      scriptRoots: [{ id: 'script', dir: 'script' }], scriptExtensions: ['rpy'], merge: [], labels: { hscene: '动画', hscene_still: '事件' },
+      views: [{ parent: '.', as: 'overview', label: '总览', dirs: ['hscene', 'hscene_still'], badges: { hscene: 'anim', hscene_still: 'still' } }],
+      groups: [{ parent: 'hscene', pattern: '^(\\d{5})[A-Za-z]\\d' }, { parent: 'overview', pattern: '^(\\d{5})[A-Za-z]\\d' }],
+    } })
+    const home = (await mm.getNode('')).node
+    const overview = (await mm.getNode('d:overview')).node
+    const anim = (await mm.getNode('d:hscene')).node
+    const grp = (await mm.getNode(`g:10001:overview`)).node
+    check('views（来源是子目录）：首页 = 动画 / 事件 / 总览 三张目录卡片（标签来自 labels / view.label）；总览 = 合并后按角色分组；动画按角色分组；分组里能看到两个来源的脚本',
+      J(home.items.map((i) => [i.title, i.subtitle])) === J([['动画', 'hscene · 3 项'], ['事件', 'hscene_still · 1 项'], ['总览', 'overview · 4 项']]) && J(overview.items.map((i) => i.title)) === J(['10001', '10002']) && J(anim.items.map((i) => i.title)) === J(['10001', '10002']) && grp.items.length === 3 && J(overview.breadcrumb.map((c) => c.title)) === J(['首页', '总览']), J([home.items.map((i) => i.title + i.subtitle), overview.items.map((i) => i.title), grp.items.length, overview.breadcrumb]))
+
+    const root2 = path.join(work, 'views2')
+    await mkdir(path.join(root2, 'scripts'), { recursive: true })
+    const script2 = (name) => writeFile(path.join(root2, 'scripts', name), `label l_${name.replace(/\W/g, '_')}:\n    $ name= "x"\n    xyz "hi"\n`)
+    for (const n of ['scene_130220101.rpy', 'scene_130220102.rpy', 'scene_110010101.rpy', 'scene_2100002.rpy', 'scene_ev059_00_02.rpy', 'scene_ev059_00_03.rpy', 'other.rpy']) await script2(n)
+    const mi = createBrowseProvider({ mediaDir: root2, adapters: ['renpy-minashigo'], resolveAsset: async () => { throw new Error('none') }, config: {
+      scriptRoots: [{ id: 'scripts', dir: 'scripts' }], scriptExtensions: ['rpy'], merge: [],
+      views: [
+        { parent: '.', as: 'chars', label: '角色', match: '^scene_\\d{9}$', exclusive: true },
+        { parent: '.', as: 'events', label: '活动', match: '^scene_ev', exclusive: true },
+        { parent: '.', as: 'main', label: '主线', match: '^scene_\\d{7}$', exclusive: true },
+      ],
+      groups: [{ parent: 'chars', pattern: '^scene_\\d(\\d{6})\\d{2}$' }, { parent: 'events', pattern: '^scene_(ev\\d+)_' }],
+    } })
+    const home2 = (await mi.getNode('')).node
+    const chars = (await mi.getNode('d:chars')).node
+    const play = await mi.getNode('s:scenes_x')
+      .catch(() => null)
+    const one = (await mi.getNode('s:scene_130220102.rpy'))
+    check('views（独占，来源是 parent 自己）：首页 = 角色 / 活动 / 主线 + 没人认领的脚本；分类里的脚本不再平铺在首页；角色按编号分组、活动按活动号分组',
+      J(home2.items.map((i) => i.title)) === J(['角色', '活动', '主线', 'other']) && J(chars.items.map((i) => i.title)) === J(['100101', '302201']) && J((await mi.getNode('d:events')).node.items.map((i) => i.title)) === J(['ev059']), J([home2.items.map((i) => i.title), chars.items.map((i) => i.title)]))
+    check('views：独占视图里的脚本，路径 = 首页 › 角色 › 分组 › 脚本；上一级 = 它的分组；上一话 / 下一话在分组内', J(one.node.breadcrumb.map((c) => c.title)) === J(['首页', '角色', '302201', 'scene_130220102']) && one.node.parent === 'g:302201:chars' && one.sectionNavigation.prev?.title === 'scene_130220101' && one.sectionNavigation.next === null && play === null, J([one.node.breadcrumb.map((c) => c.title), one.node.parent, one.sectionNavigation]))
+    const cfg = normalizeGalConfig({ views: [{ as: 'a', parent: '.' }, { as: 'a/b' }, { as: 'x', match: '(' }, { as: 'ok', parent: 'd', dirs: ['p', '../q'], exclusive: 1, badges: { p: 'badge' } }, { as: 'ok', parent: 'd' }] })
+    check('views 规整：非法名字 / 正则丢掉、重复丢掉、dirs 只留安全名字', J(cfg.views.map((v) => [v.parent, v.as, v.dirs, v.exclusive])) === J([['', 'a', [], false], ['d', 'ok', ['p'], true]]), J(cfg.views))
+  }
   void imported
 }
 

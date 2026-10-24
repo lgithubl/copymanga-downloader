@@ -126,6 +126,13 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const setById = (id) => sets.find((s) => s.id === id)
   const mergeRules = config.merge.map((rule) => ({ ...rule, test: parentRegExp(rule.parent) }))
   const groupRules = config.groups.map((rule) => ({ ...rule, test: parentRegExp(rule.parent), re: new RegExp(rule.pattern) }))
+  // 虚拟目录（config.views）：<parent>/<as> 这个路径磁盘上没有，列它时把来源目录（dirs，没写 = parent 自己）里 stem 匹配 match 的脚本收进来
+  const viewRules = config.views.map((rule) => ({ ...rule, rel: rule.parent ? `${rule.parent}/${rule.as}` : rule.as, re: rule.match ? new RegExp(rule.match) : null }))
+  const viewAt = (rel) => viewRules.find((rule) => rule.rel === rel) || null
+  const viewsUnder = (dirRel) => viewRules.filter((rule) => rule.parent === dirRel)
+  const viewTakes = (rule, stem) => !rule.re || rule.re.test(stem)
+  // 独占视图（exclusive，来源是 parent 自己）收走的脚本：在 parent 的列表里不再出现，它的「父节点」是这个视图
+  const exclusiveViewOf = (dirRel, stem) => viewsUnder(dirRel).find((rule) => rule.exclusive && !rule.dirs.length && viewTakes(rule, stem)) || null
   const dirThumbRules = config.dirThumbs.map((rule) => ({ ...rule, nameRe: rule.name ? new RegExp(rule.name) : null }))
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
   const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}`
@@ -150,6 +157,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 一个路径（目录或脚本）在界面上的「父节点目录」：在被合并掉的子目录里的，父节点是合并它们的那个目录
   const effectiveParentDir = (rel) => {
     const dir = parentRel(rel)
+    const taken = scriptExtensions.includes(extOf(rel)) ? exclusiveViewOf(dir, stemOf(rel)) : null
+    if (taken) return taken.rel
     return mergedSourceRule(dir) ? parentRel(dir) : dir
   }
 
@@ -251,7 +260,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     namesCache = merged
     return merged
   }
-  const labelOf = async (name) => config.labels[name] || String((await readNames())[name] || '') || name
+  const viewLabels = Object.fromEntries(config.views.filter((rule) => rule.label).map((rule) => [rule.as, rule.label]))
+  const labelOf = async (name) => config.labels[name] || viewLabels[name] || String((await readNames())[name] || '') || name
 
   // 脚本索引：{ 脚本名 → { thumb, badge } }（config.scriptIndex；读一次目录，本次请求内缓存）
   const indexRules = config.scriptIndex.map((rule) => ({ ...rule, re: new RegExp(rule.pattern) }))
@@ -413,11 +423,28 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 一个目录里的内容：目录在前、脚本在后，自然序（合并目录时，几个来源的内容混在一起排）。
   // 脚本要被适配器认得才算（读 8KB 头，缓存）
   async function listDir(set, rel) {
-    const own = await readEntries(set, rel)
+    const view = viewAt(rel)
+    let own
+    if (view) {
+      own = { dirs: [], scripts: [] }
+      for (const sourceName of view.dirs.length ? view.dirs : ['']) {
+        const sourceRel = [view.parent, sourceName].filter(Boolean).join('/')
+        const got = await readEntries(set, sourceRel, view.dirs.length ? (view.badges[sourceName] || sourceName) : '')
+        if (got) own.scripts = own.scripts.concat(got.scripts.filter((script) => viewTakes(view, script.stem)))
+      }
+    } else {
+      own = await readEntries(set, rel)
+    }
     if (!own) throw fail('目录不存在', 404)
-    const rule = mergeRuleAt(rel)
+    const rule = view ? null : mergeRuleAt(rel)
     let dirs = own.dirs
     let scripts = own.scripts
+    // 这个目录下挂着的虚拟目录：独占的收走脚本；有内容的才列出来
+    for (const sub of viewsUnder(rel)) {
+      if (sub.exclusive && !sub.dirs.length) scripts = scripts.filter((script) => !viewTakes(sub, script.stem))
+      const inside = await listDir(set, sub.rel).catch(() => null)
+      if (inside?.allScripts.length) dirs = dirs.concat({ type: 'dir', name: sub.as, rel: sub.rel, origin: '', virtual: true })
+    }
     if (rule) {
       dirs = dirs.filter((d) => !rule.dirs.includes(d.name))
       for (const sourceName of rule.dirs) {
@@ -526,6 +553,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return count
   }
   async function countChildren(set, rel) {
+    if (viewAt(rel)) return (await listDir(set, rel)).allScripts.length
     const rule = mergeRuleAt(rel)
     let total = await countEntries(absOf(set, rel))
     if (rule) {
@@ -568,6 +596,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const last = i === parts.length - 1
       const isScript = kind === 'script' && last
       if (!isScript && !last && mergedSourceRule(acc)) continue   // 被合并掉的目录不出现在路径里
+      const viewParent = isScript ? viewAt(effectiveParentDir(rel)) : null
+      if (viewParent && viewParent.rel !== parentRel(rel)) crumbs.push({ id: dirNodeId(set, viewParent.rel, 1), title: await labelOf(viewParent.as) })   // 被独占视图收走的脚本：路径里补上这个视图
       if (isScript && key) crumbs.push({ id: groupNodeId(set, effectiveParentDir(rel), key, 1), title: await labelOf(key) })
       crumbs.push({ id: isScript ? idOf(set, 'script', acc) : dirNodeId(set, acc, 1), title: isScript ? stemOf(parts[i]) : await labelOf(parts[i]) })
     }
