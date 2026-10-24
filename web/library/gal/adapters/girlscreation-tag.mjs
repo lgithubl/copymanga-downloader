@@ -54,7 +54,7 @@ export function prepare({ options, texts, files, toResourcePath }) {
   const scenes = new Map()   // 场景 id → { id, script, thumb, images: Map(无扩展名文件名 → 资源路径), videos, voices, spines: Map }
   const audio = { bgm: new Map(), se: new Map() }
   const sceneOf = (id) => {
-    if (!scenes.has(id)) scenes.set(id, { id, script: '', thumb: '', images: new Map(), videos: new Map(), voices: new Map(), spines: new Map() })
+    if (!scenes.has(id)) scenes.set(id, { id, script: '', thumb: '', images: new Map(), videos: new Map(), voices: new Map(), bgvoices: new Map(), spines: new Map() })
     return scenes.get(id)
   }
   const stem = (name) => name.replace(/\.[^.]+$/, '')
@@ -73,7 +73,7 @@ export function prepare({ options, texts, files, toResourcePath }) {
           scene.spines.get(stem(parts[2])).set(ext, toRes(rel))
           continue
         }
-        const bucket = { images: scene.images, videos: scene.videos, voices: scene.voices }[parts[1]]
+        const bucket = { images: scene.images, videos: scene.videos, voices: scene.voices, bgvoices: scene.bgvoices }[parts[1]]
         if (bucket && !bucket.has(stem(parts[2]))) bucket.set(stem(parts[2]), toRes(rel))
       }
     } else if (rel.startsWith(audioBase)) {
@@ -111,7 +111,7 @@ export function catalog(ctx) {
   if (!ctx?.scenes?.size) return null
   const categories = new Map()   // 分类 → Map(说话人 → [场景])
   for (const id of [...ctx.scenes.keys()].sort(natAsc)) {
-    const category = id.includes('_') ? id.slice(0, id.indexOf('_')) : '其他'
+    const category = /^[A-Za-z]+/.exec(id)?.[0] || '其他'   // chmr_… / chara_… / story… → 开头的字母；数字开头（10001A5_R18）→ 其他
     const who = ctx.info.get(id)?.speaker || '（未识别）'
     if (!categories.has(category)) categories.set(category, new Map())
     const groups = categories.get(category)
@@ -242,7 +242,7 @@ export function parse(text, ctx = null, meta = {}) {
           else if (/^white$/i.test(a[0])) emit({ op: 'wash', color: 'white', seconds: secs(a[1]) })
           else count('raw', tag)
           break
-        case 'WAIT2': { const seconds = secs(a[0]); if (seconds > 0) emit({ op: 'wait', seconds }); break }
+        case 'WAIT': case 'WAIT2': { const seconds = secs(a[0]); if (seconds > 0) emit({ op: 'wait', seconds }); break }
         case 'BGM_PLAY': { const src = audio('bgm', a[0]); if (src) emit({ op: 'bgm', src }); else count('unresolved', `bgm:${a[0]}`); break }
         case 'BGM_STOP': emit({ op: 'bgmStop', fade: secs(a[0]) }); break
         case 'SE_PLAY': {

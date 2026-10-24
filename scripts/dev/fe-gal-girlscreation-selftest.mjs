@@ -129,6 +129,21 @@ try {
   await page.keyboard.press('Space'); await waitCount('3 / 3')
   await sleep(500)
   check('光秃秃的 <PAUSE> 是一个空步（点一下什么都不变）；VIDEO_STOP 之后视频背景去掉', (await text('.gal-text')) === 'Back to a still.' && await page.$eval('.gal-movie', (v) => v.hidden).catch(() => true), await text('.gal-text'))
+  // 按住 Ctrl 快进到最后：自动回列表（不是停在最后一句、也不是点不动）
+  await page.goto(link(target))
+  await page.waitForSelector('.gal-player .gal-stage')
+  await waitCount('1 / 5')
+  await sleep(2500)
+  await page.keyboard.down('Control')
+  await page.waitForSelector('.gal-browse', { timeout: 12000 }).catch(() => {})
+  await page.keyboard.up('Control')
+  check('Ctrl 快进到最后一步：自动回上一级列表', Boolean(await page.$('.gal-browse')) && !(await page.$('.gal-player')), `${page.url().slice(-50)} count=${await text('.gal-count')}`)
+  // 看完之后再进来，不快进，点到最后一步再点一下：也回列表
+  await page.goto(link(target)); await page.waitForSelector('.gal-player .gal-stage'); await waitCount('1 / 5'); await sleep(2500)
+  for (let i = 0; i < 4; i++) { await page.keyboard.press('Space'); await sleep(900) }
+  await page.keyboard.press('Space')
+  await page.waitForSelector('.gal-browse', { timeout: 8000 }).catch(() => {})
+  check('普通点击到最后一步再点一下：回列表', Boolean(await page.$('.gal-browse')))
   check('没有页面错误', errors.length === 0, J(errors))
 } catch (error) {
   fail++

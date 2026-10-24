@@ -39,7 +39,7 @@ export function sniff(text) {
   }
   return checked >= 3 && known / checked >= 0.6
 }
-const RAW_HINTS = new Set(['spriteatlas', 'sprite', 'spriteoff', 'anm', 'mask', 'imgconf', 'spine', 'spineoff'])
+const RAW_HINTS = new Set(['spriteatlas', 'sprite', 'spriteoff', 'flash', 'endwmsg', 'anm', 'mask', 'imgconf', 'spine', 'spineoff'])
 
 const seconds = (value, fallback = 0) => {
   const n = Number.parseFloat(String(value ?? '').trim())
@@ -252,6 +252,15 @@ export function parse(text) {
       case 'endif':
         if (ifStack.length) ifStack.pop()
         else stats.unmatchedEndif += 1
+        break
+      case 'flash': {   // flash,r,g,b,次数,每次秒数,强度：闪屏（强度暂不用）
+        const c = [args[0], args[1], args[2]].map((v) => Math.max(0, Math.min(255, Math.round(Number.parseFloat(v) || 0))))
+        emit({ op: 'flash', color: `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`, count: Math.max(1, Math.min(10, Math.round(Number.parseFloat(args[3]) || 1))), seconds: seconds(args[4], 0.3) })
+        break
+      }
+      case 'endwmsg':   // 结束文字窗：没有画面效果
+        break
+      case 'spriteoff': // 去掉立绘：立绘（spriteatlas / sprite）还没渲染时没有可去的东西；别的立绘实现后再接
         break
       default:
         stats.raw[cmd] = (stats.raw[cmd] || 0) + 1

@@ -626,9 +626,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   function scheduleAuto() {
     stopAuto()
     if (!auto || running || choiceState || destroyed) return
-    // 最后一句：自动播放也要走完——没有下一章就回列表（有下一章就停在「继续下一章」）
+    // 最后一句：自动播放也要走完——一律回列表（想连着看下一章，在最后一句出现「继续下一章」时点它）
     const atEnd = posNow() >= path.length - 1
-    if (atEnd && (!path.length || chapter?.canNext?.())) return
+    if (atEnd && !path.length) return
     const advance = atEnd ? finish : next
     // 这一步有语音：等它播完，再多等 voiceDelay 秒。语音还在放时直接返回，播完（ended）会再调用本函数
     const voice = stepVoice && stepVoice.step === gen && !stepVoice.failed ? stepVoice : null
@@ -667,16 +667,28 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   }
   function fastTick() {
     if (destroyed || choiceState) return
-    if (posNow() >= path.length - 1 && !running) { setFast(false); return }
+    if (posNow() >= path.length - 1) {   // 快进到头：不是停在最后一句，而是和「看完」一样回列表（有下一章就停在「继续下一章」）
+      setFast(false)
+      if (!running || !fastLastKick) { fastLastKick = true; finishOrWait() }
+      return
+    }
     if (running) { skipping = true; return }
     next()
   }
+  let fastLastKick = false
+  // 在最后一步：这一步还在跑（渐变 / 等待）就先让它跳过，跑完（running 变 false）再收尾；别的情况直接收尾
+  function finishOrWait() {
+    if (!path.length) return
+    if (running) { skipping = true; setTimeout(() => { if (running) { gen += 1; running = false; skipping = false } finish() }, 400); return }
+    finish()
+  }
   async function next() {
     if (destroyed || !hasSteps || choiceState) return   // 选项开着：只能选，不能翻页
+    if (posNow() >= path.length - 1 && path.length) { finishOrWait(); return }   // 最后一步上点击 / 按键 = 看完（running 卡住也不会吞掉）
     if (running) { skipping = true; return }
     const target = path[posNow() + 1]
     if (target === undefined) {   // 最后一句之后再「下一句」：没有下一章就回列表，不停在原地
-      if (path.length && !chapter?.canNext?.()) finish()
+      if (path.length) finish()
       return
     }
     await runStep(target)
@@ -684,7 +696,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // 整个脚本看完：交给页面层存进度（已看完）并回到上一级列表；没有页面层的 finish 就直接 up()
   let finishing = false
   async function finish() {
-    if (destroyed || finishing || running || choiceState) return
+    if (destroyed || finishing || choiceState) return
     finishing = true
     stopAuto()
     setFast(false)
