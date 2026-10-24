@@ -123,13 +123,13 @@ check('首页：9 张卡片（真实目录树，名字用中文标签）；上�
 await page.screenshot({ path: path.join(shotDir, 'browse-home.png') })
 check('首页：URL 里没有 section（首页就是单元的默认节点）', (await hashSection()) === '', await hashSection())
 
-// 图片诊断：「更多」里打开，列出没有图的卡片和原因（后端每个来源试了什么）；有问题时「更多」上有红点
+// 渲染诊断：「更多」里打开，列出没有图的卡片和原因（后端每个来源试了什么）；有问题时「更多」上有红点
 await page.click('.gal-browse-more-btn')
 await page.click('.gal-browse-diag-btn')
 await page.waitForFunction(() => document.querySelector('.gal-browse-diag-text')?.textContent !== '加载中…')
 const diagTxt = await page.$eval('.gal-browse-diag-text', (e) => e.textContent)
 const noImg = (await page.$$('.gal-card-thumb.empty')).length
-check('首页图片诊断：面板列出每张没图的卡片和原因（后端试了哪些规则）', noImg === 0 ? diagTxt.includes('都有图') : (diagTxt.match(/\[没有图\]/g) || []).length >= noImg && /dirThumbs|scriptThumbs|scriptIndex|适配器/.test(diagTxt) && (await page.$eval('.gal-browse-more-btn', (e) => e.classList.contains('warn'))), diagTxt.slice(0, 400))
+check('首页渲染诊断：面板列出每张没图的卡片和原因（后端试了哪些规则）', noImg === 0 ? diagTxt.includes('都有图') : (diagTxt.match(/\[没有图\]/g) || []).length >= noImg && /dirThumbs|scriptThumbs|scriptIndex|适配器/.test(diagTxt) && (await page.$eval('.gal-browse-more-btn', (e) => e.classList.contains('warn'))), diagTxt.slice(0, 400))
 await page.click('.gal-browse-diag-head .gal-btn:nth-of-type(2)')
 
 // 阅读页「更多 › 详情」：标题 / 单元 / 标签，标签是 .tag-pill[data-tag]（点击走和库页卡片一样的全局处理）
@@ -548,6 +548,7 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
     if (!Number.isFinite(n) || !Number.isFinite(total)) throw new Error(`goStep 目标不是数字：${n} / ${total}`)
     for (let i = 0; i < 40 && (await cnt()) !== `${n} / ${total}`; i++) {
       const before = await cnt()
+      if (before === '') throw new Error(`goStep：页面已经不在播放页了（目标 ${n} / ${total}）`)   // 别在列表页上继续按空格
       await pg.keyboard.press('Space')
       await pg.waitForFunction((t) => document.querySelector('.gal-count')?.textContent !== t, before, { timeout: 3000 }).catch(() => {})
       await sleep(120)
@@ -592,6 +593,7 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
 
   // 没有台词时（文本框收起）工具栏仍在底部：长脚本 D 的最后一步台词是空的
   await resetNodes(sec(DPATH))
+  await pg.goto('about:blank')   // 同一个单页应用里换哈希，旧播放器的 DOM 还在，读到的「1 / N」可能是上一个脚本的——从空白页进，保证是新页面
   await pg.goto(link(sec(DPATH)))
   await pg.waitForSelector('.gal-stage')
   // 总步数：等新页面的计数出来再读（hash 切换时旧播放器的计数还在，读到空就是 NaN，goStep 会一直按空格按到看完回列表）

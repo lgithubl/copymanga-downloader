@@ -753,6 +753,17 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     const cfg = normalizeGalConfig({ views: [{ as: 'a', parent: '.' }, { as: 'a/b' }, { as: 'x', match: '(' }, { as: 'ok', parent: 'd', dirs: ['p', '../q'], exclusive: 1, badges: { p: 'badge' } }, { as: 'ok', parent: 'd' }] })
     check('views 规整：非法名字 / 正则丢掉、重复丢掉、dirs 只留安全名字', J(cfg.views.map((v) => [v.parent, v.as, v.dirs, v.exclusive])) === J([['', 'a', [], false], ['d', 'ok', ['p'], true]]), J(cfg.views))
   }
+  // 渲染诊断的后端数据：脚本里暂未渲染的指令、缺资源、解析失败 → 卡片带 issues；没问题的不带
+  {
+    const root = path.join(work, 'issues')
+    await mkdir(path.join(root, 'script'), { recursive: true })
+    await writeFile(path.join(root, 'script', 'a.rpy'), 'label a:\n    scene black\n    show eileen happy\n    show eileen sad\n    "A" "B"\n')
+    await writeFile(path.join(root, 'script', 'b.rpy'), 'label b:\n    scene black\n    "A" "B"\n')
+    const mk = (extra = {}) => createBrowseProvider({ mediaDir: root, adapters: ['renpy-monmusu'], resolveAsset: async () => { throw new Error('none') }, config: { scriptRoots: [{ id: 'script', dir: 'script' }], scriptExtensions: ['rpy'], merge: [], groups: [], ...extra } })
+    const items = (await mk().getNode('')).node.items
+    const ignored = (await mk({ rawIgnore: ['^show$'] }).getNode('')).node.items
+    check('渲染诊断数据：有暂未渲染的指令的脚本卡片带 issues（show×2），没问题的不带；rawIgnore 允许的不算', J(items.find((i) => i.title === 'a').issues) === J(['暂未渲染的指令 2 条：show×2']) && items.find((i) => i.title === 'b').issues === undefined && ignored.find((i) => i.title === 'a').issues === undefined, J([items.map((i) => [i.title, i.issues]), ignored.map((i) => [i.title, i.issues])]))
+  }
   void imported
 }
 

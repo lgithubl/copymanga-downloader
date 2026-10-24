@@ -4656,3 +4656,18 @@ h2 {
 .media-detail-label { color: var(--site-muted); font-size: 12px; }
 .media-detail-value { overflow-wrap: anywhere; }
 .media-detail-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ===== 沉浸 / 全屏：列表页底栏和播放页底栏一样，左右贴满窗口、贴着最下沿 =====
+   播放页的底栏（.gal-bar-wrap）沉浸时是整个窗口宽、贴底；列表页原来是一列居中（max-width）、四周还有 padding，宽屏下就对不上。
+   这里让列表容器铺满，卡片区（.gal-browse-body）仍然按原来的宽度居中，只有底栏横向铺满。 */
+#media-viewer-view.stream-page-fullscreen .media-reader-content.media-gal.media-gal-browse { padding: 0; }
+#media-viewer-view.stream-page-fullscreen .gal-browse { max-width: none; width: 100%; }
+#media-viewer-view.stream-page-fullscreen .gal-browse-body { box-sizing: border-box; margin: 0 auto; max-width: min(100%, max(520px, calc((100vh - 250px) * 16 / 9))); padding: 10px 8px 0; width: 100%; }
+#media-viewer-view.stream-page-fullscreen .gal-browse-bar { bottom: 0; margin-bottom: 0; padding: 8px 0; }
+#media-viewer-view.stream-page-fullscreen .gal-browse.bar-auto .gal-browse-bar { padding: 0; }
+
+/* 图集沉浸控制条里的「更多」菜单（向上展开，里面放详情） */
+.gallery-more { position: relative; }
+.gallery-more-menu { background: rgba(8, 12, 24, 0.95); border-radius: 8px; bottom: calc(100% + 8px); box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5); display: grid; gap: 6px; padding: 6px; position: absolute; right: 0; z-index: 7; }
+.gallery-more-menu[hidden] { display: none; }
+.gallery-more-menu .stream-icon-button { text-align: left; white-space: nowrap; }

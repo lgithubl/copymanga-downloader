@@ -6885,7 +6885,21 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
 
   syncMode()
 
-  bar.append(back, prevCh, info, nextCh, toc, widthBtn, modeBtn, speedWrap, stepRatioWrap, exitBtn)
+  // 「更多」：详情（标题 / 单元 / 标签，标签可点击）。沉浸时页面头部是藏起来的，所以这里也要有入口
+  const moreWrap = document.createElement('div')
+  moreWrap.className = 'gallery-more'
+  const moreBtn = mk('gallery-more-btn', '更多 ▾', '更多')
+  const moreMenu = document.createElement('div')
+  moreMenu.className = 'gallery-more-menu'
+  moreMenu.hidden = true
+  const detailBtn = mk('gallery-detail-btn', '详情', '标题、标签等详情；标签可点击搜索')
+  moreMenu.append(detailBtn)
+  moreWrap.append(moreBtn, moreMenu)
+  moreBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = !moreMenu.hidden })
+  detailBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = true; toggleMediaDetail() })
+  document.addEventListener('click', (event) => { if (!moreMenu.hidden && !moreWrap.contains(event.target)) moreMenu.hidden = true })
+
+  bar.append(back, prevCh, info, nextCh, toc, widthBtn, modeBtn, speedWrap, stepRatioWrap, moreWrap, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -6902,7 +6916,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const HIDE_DELAY = 2400
   let timer = null
   // 目录下拉展开时焦点在 select 上，这时收起控制条会直接把下拉关掉
-  const held = () => widthAdjustCleanup || bar.matches(':hover') || document.activeElement?.tagName === 'SELECT'
+  const held = () => widthAdjustCleanup || bar.matches(':hover') || document.activeElement?.tagName === 'SELECT' || !moreMenu.hidden || (mediaDetailPanel && !mediaDetailPanel.hidden)
   const setVisible = (v) => els.app.classList.toggle('stream-chrome-visible', v)
   const schedule = () => {
     clearTimeout(timer)

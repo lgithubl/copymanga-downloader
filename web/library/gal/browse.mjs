@@ -136,7 +136,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const dirThumbRules = config.dirThumbs.map((rule) => ({ ...rule, nameRe: rule.name ? new RegExp(rule.name) : null }))
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
   const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}`
-  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, adapters])).digest('hex').slice(0, 16)
+  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, adapters])).digest('hex').slice(0, 16)
   let namesCache = null
 
   const absOf = (set, rel) => path.join(mediaDir, ...(set.dir ? set.dir.split('/') : []), ...(rel ? rel.split('/') : []))
@@ -494,6 +494,16 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       excerpt = excerptOf(scene)
       hasMovie = scene.steps.some((step) => step.commands.some((c) => c.op === 'movie'))
     } catch (error) { parseError = error?.message || String(error) /* 解析失败：照样列出来，打开时再报错 */ }
+    // 这个脚本渲染时会遇到的问题（给列表页的渲染诊断看，和播放页的诊断同一类：解析失败 / 缺资源 / 暂未渲染的指令）
+    const issues = []
+    if (parseError) issues.push(`解析失败（适配器 ${adapterId || '未识别'}）：${parseError}`)
+    if (scene) {
+      const unresolved = Object.entries(scene.stats?.unresolved || {})
+      if (unresolved.length) issues.push(`缺少资源 ${unresolved.reduce((n, [, c]) => n + c, 0)} 处：${unresolved.slice(0, 5).map(([k, c]) => `${k}×${c}`).join('、')}${unresolved.length > 5 ? ` 等 ${unresolved.length} 种` : ''}`)
+      const rawAllow = (config.rawIgnore || []).map((source) => { try { return new RegExp(source, 'i') } catch { return null } }).filter(Boolean)
+      const raw = Object.entries(scene.stats?.raw || {}).filter(([cmd]) => !rawAllow.some((re) => re.test(cmd)))
+      if (raw.length) issues.push(`暂未渲染的指令 ${raw.reduce((n, [, c]) => n + c, 0)} 条：${raw.slice(0, 5).map(([k, c]) => `${k}×${c}`).join('、')}${raw.length > 5 ? ` 等 ${raw.length} 种` : ''}`)
+    }
     // 候选缩略图 + 来源（没找到图时给列表页的诊断面板看：每个来源试了什么、为什么没成）
     const candidates = []
     const why = []
@@ -516,7 +526,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       if (!candidate.path) { why.push(`${candidate.from}：路径展开失败（含不安全字符？）`); continue }
       try { await resolveAsset(candidate.path); thumb = candidate.path; break } catch (error) { why.push(`${candidate.from}：${candidate.path} → ${error?.code === 'ENOENT' || /not found|不存在|ENOENT/i.test(error?.message || '') ? '文件不存在' : (error?.message || '读不到')}`) }
     }
-    const result = { adapterId, thumb, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumb ? [] : why }
+    const result = { adapterId, thumb, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumb ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
     return result
   }
@@ -635,7 +645,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const paged = await pageOfView(members, view, page, (entry) => ({ title: entry.stem, extra: entry.name }))
       const items = await mapLimit(paged.slice, IO_CONCURRENCY, async (entry) => {
         const info = await scriptInfo(set, entry.rel)
-        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
       })
       return { node: { id: groupNodeId(set, rel, key, paged.current, view), kind: 'cards', title: await labelOf(key), ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, groupNodeId(set, rel, key, 1)) } }
     }
@@ -664,7 +674,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
           return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry)), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
         }
         const info = await scriptInfo(set, entry.rel)
-        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
       })
       const title = rel ? await labelOf(baseName(rel)) : '首页'
       return { node: { id: dirNodeId(set, rel, paged.current, view), kind: 'cards', title, ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, dirNodeId(set, rel, 1)) } }

@@ -116,15 +116,18 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   moreMenu.hidden = true
   moreMenu.append(crumbRow)
   const closeMenu = () => { moreMenu.hidden = true }
-  // ---- 图片诊断：哪些卡片没有图、为什么（后端每个来源试了什么 + 浏览器里加载失败的图），和播放页的渲染诊断一个思路 ----
-  const problems = []   // { kind: '没有图' | '加载失败', title, node, lines: [..], url? }
+  // ---- 渲染诊断：这一页渲染时出了什么问题，和播放页的渲染诊断一个思路 ----
+  //   卡片没有图（后端每个来源试了什么）/ 图加载失败（浏览器请求的状态）/ 脚本问题（解析失败、缺资源、暂未渲染的指令）/ 节点提示（目录读不到、列表是空的）
+  const problems = []   // { kind: '没有图' | '加载失败' | '脚本问题' | '节点', title, node, lines: [..], url? }
   const diagPanel = el('div', 'gal-browse-diag')
   diagPanel.hidden = true
-  const diagBtn = el('button', 'gal-browse-diag-btn', '图片诊断')
+  const diagBtn = el('button', 'gal-browse-diag-btn', '渲染诊断')
   diagBtn.type = 'button'
-  diagBtn.title = '哪些卡片没有图、为什么（可复制）'
+  diagBtn.title = '这一页渲染出了什么问题：没有图的卡片、加载失败的图、脚本解析 / 缺资源 / 未渲染的指令（可复制）'
   const diagText = async () => {
-    const lines = [`节点 ${node.id}（${node.kind}）· 本页 ${node.items.length} 张卡片 · ${problems.length} 个图片问题`]
+    const kinds = {}
+    for (const item of problems) kinds[item.kind] = (kinds[item.kind] || 0) + 1
+    const lines = [`节点 ${node.id}（${node.kind}）· 本页 ${node.items.length} 张卡片 · ${problems.length} 个问题${problems.length ? `（${Object.entries(kinds).map(([k, n]) => `${k} ${n}`).join('、')}）` : ''}`]
     for (const item of problems) {
       lines.push('', `[${item.kind}] ${item.title}${item.node ? `  (${item.node})` : ''}`)
       for (const line of item.lines) lines.push(`  · ${line}`)
@@ -142,16 +145,16 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     copy.type = 'button'
     const close = el('button', 'gal-btn', '关闭')
     close.type = 'button'
-    head.append(el('strong', '', `图片诊断（${problems.length}）`), copy, close)
+    head.append(el('strong', '', `渲染诊断（${problems.length}）`), copy, close)
     const pre = el('pre', 'gal-browse-diag-text', '加载中…')
     diagPanel.append(head, pre)
     close.addEventListener('click', () => { diagPanel.hidden = true })
     const text = await diagText()
-    pre.textContent = problems.length ? text : '这一页的卡片都有图'
+    pre.textContent = problems.length ? text : `${text}\n\n这一页没有发现渲染问题`
     copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(text); copy.textContent = '已复制' } catch { copy.textContent = '复制失败' } setTimeout(() => { copy.textContent = '复制' }, 1500) })
   }
   const refreshDiag = () => {
-    diagBtn.textContent = problems.length ? `图片诊断（${problems.length}）` : '图片诊断'
+    diagBtn.textContent = problems.length ? `渲染诊断（${problems.length}）` : '渲染诊断'
     moreBtn.classList.toggle('warn', problems.length > 0)   // 工具栏很小，有问题时在「更多」上点个红点
     if (!diagPanel.hidden) renderDiag()
   }
@@ -315,6 +318,8 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   const body = el('div', 'gal-browse-body gal-browse-cards')
   if (node.notice) body.append(el('div', 'gal-browse-notice', node.notice))
   if (!node.items.length) body.append(el('div', 'gal-browse-empty', '这里还没有内容'))
+  if (node.notice) problems.push({ kind: '节点', title: node.title || node.id, node: node.id, lines: [node.notice] })
+  if (!node.items.length && !node.notice) problems.push({ kind: '节点', title: node.title || node.id, node: node.id, lines: ['列表是空的：目录里没有被适配器认出的脚本（检查脚本根 / 扩展名 / 隐藏目录 / 筛选条件）'] })
   for (const item of node.items) {
     const card = el('button', `gal-card ${item.type === 'dir' ? 'is-dir' : 'is-script'}`)
     card.type = 'button'
@@ -327,6 +332,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       const progressTag = progressBadge(item.node)
       if (progressTag) { progressTag.classList.add('gal-card-progress'); thumb.append(progressTag) }
     }
+    if (item.issues?.length) problems.push({ kind: '脚本问题', title: item.title, node: item.node, lines: item.issues })
     card.append(thumb, el('div', 'gal-card-title', item.title))
     if (item.subtitle) card.append(el('div', 'gal-card-sub', item.subtitle))
     card.addEventListener('click', () => onOpen(item.node, 'child'))
