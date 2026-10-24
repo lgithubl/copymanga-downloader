@@ -132,6 +132,18 @@ const noImg = (await page.$$('.gal-card-thumb.empty')).length
 check('首页图片诊断：面板列出每张没图的卡片和原因（后端试了哪些规则）', noImg === 0 ? diagTxt.includes('都有图') : (diagTxt.match(/\[没有图\]/g) || []).length >= noImg && /dirThumbs|scriptThumbs|scriptIndex|适配器/.test(diagTxt) && (await page.$eval('.gal-browse-more-btn', (e) => e.classList.contains('warn'))), diagTxt.slice(0, 400))
 await page.click('.gal-browse-diag-head .gal-btn:nth-of-type(2)')
 
+// 阅读页「更多 › 详情」：标题 / 单元 / 标签，标签是 .tag-pill[data-tag]（点击走和库页卡片一样的全局处理）
+await page.click('#media-more summary')
+check('阅读页「更多」里有「详情」按钮，打开阅读后可用', !(await page.$eval('#media-detail-toggle', (e) => e.disabled)))
+await page.click('#media-detail-toggle')
+const detail = await page.evaluate(() => {
+  const panel = document.querySelector('.media-detail-panel')
+  return { shown: Boolean(panel) && !panel.hidden, text: panel?.textContent || '', pills: [...(panel?.querySelectorAll('.tag-pill[data-tag]') || [])].map((e) => e.dataset.tag), kind: panel?.dataset.kind, moreOpen: document.querySelector('#media-more').open }
+})
+check('详情面板：显示标题和标签（标签是 tag-pill，带 data-tag，面板带 data-kind / data-profile）；点开后「更多」菜单收起', detail.shown && /标题/.test(detail.text) && /标签（\d+）/.test(detail.text) && detail.pills.every((t) => t) && detail.kind !== undefined && !detail.moreOpen, J(detail))
+await page.keyboard.press('Escape')
+check('详情面板：Esc 收起', await page.evaluate(() => document.querySelector('.media-detail-panel').hidden))
+
 await page.click('.gal-card[data-node="d:cabin"]')
 await page.waitForSelector('.gal-card[data-node="d:cabin/adultr"]')
 check('点「纪念馆」：只有一个子目录「成人向」（目录一层层点进去）；面包屑；上一级出现；URL 带节点', JSON.stringify(await rowTitles()) === JSON.stringify(['成人向']) && (await crumbs()) === '首页>纪念馆' && !(await page.$eval('.gal-browse-up', (b) => b.disabled)) && (await hashSection()) === 'd:cabin', JSON.stringify([await rowTitles(), await crumbs(), await hashSection()]))

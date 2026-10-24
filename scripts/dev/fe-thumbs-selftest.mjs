@@ -181,16 +181,25 @@ try {
   await cardsOf()
   await sleep(900)
   const imgInfo = await lib.evaluate(() => ({ cards: document.querySelectorAll('#library-items .library-card').length, withSrc: document.querySelectorAll('#library-items img.cover[src]').length, deferred: document.querySelectorAll('#library-items img.cover[data-src]').length, lazyAttr: document.querySelectorAll('#library-items img.cover[loading]').length }))
-  check('媒体库页：100 张卡片的 DOM 全部渲染（页内查找 / 全选正常），但只有第一批 30 张设了 src', imgInfo.cards === 100 && imgInfo.withSrc === 30 && imgInfo.deferred === 100 && lt.urls.length === 30, J({ imgInfo, requests: lt.urls.length }))
+  check('媒体库页（tab=new）：100 张只先建第一批 40 张 DOM（分批渲染），其中只有第一批 30 张设了 src', imgInfo.cards === 40 && imgInfo.withSrc === 30 && imgInfo.deferred === 40 && lt.urls.length === 30, J({ imgInfo, requests: lt.urls.length }))
   check('媒体库页：缩略图并发不超过前台上限 6', lt.max <= 6, String(lt.max))
-  lt.urls.length = 0
-  await lib.evaluate(() => { const list = document.querySelector('#library-items'); list.scrollTop = list.scrollHeight })   // 卡片列表自己是滚动容器
+  for (let i = 0; i < 8 && (await lib.$$eval('#library-items .library-card', (es) => es.length)) < 100; i++) {   // 一直往下拉：每次到底就再建一批
+    await lib.evaluate(() => { const list = document.querySelector('#library-items'); list.scrollTop = list.scrollHeight })   // 卡片列表自己是滚动容器
+    await sleep(500)
+  }
   await sleep(1500)
-  check('滚到底：只放行进入视口附近的那一批（页面里 30~99 一共 70 张还没放行，不会一次全请求）', lt.urls.length > 0 && lt.urls.length < 70, String(lt.urls.length))
-  lt.urls.length = 0
+  const total = await lib.evaluate(() => ({ cards: document.querySelectorAll('#library-items .library-card').length, sentinel: document.querySelectorAll('.library-lazy-sentinel').length }))
+  check('滚到底：继续分批建 DOM，最终 100 张建完、哨兵消失', total.cards === 100 && total.sentinel === 0, J(total))
+  check('分批之后每张缩略图最多请求一次（重新交给加载器时不会重复请求已经放行的）', new Set(lt.urls).size === lt.urls.length && lt.urls.length <= 100 && lt.max <= 6, J({ n: lt.urls.length, unique: new Set(lt.urls).size, max: lt.max }))
   await lib.evaluate(() => { const list = document.querySelector('#library-items'); list.scrollTop = list.scrollHeight * 0.4 })
-  await sleep(1200)
-  check('滚到中间：中间没放行的（30~）进视口时按批放行（最多一批 60 张）', lt.urls.length > 0 && lt.urls.length <= 60, String(lt.urls.length))
+  await sleep(1500)
+  const mid = await lib.evaluate(() => {
+    const list = document.querySelector('#library-items')
+    const box = list.getBoundingClientRect()
+    const visible = [...list.querySelectorAll('img.cover')].filter((img) => { const r = img.getBoundingClientRect(); return r.bottom > box.top && r.top < box.bottom })
+    return { visible: visible.length, withSrc: visible.filter((img) => img.getAttribute('src')).length }
+  })
+  check('滚到中间：视口里的卡片都放行了（有 src）', mid.visible > 0 && mid.withSrc === mid.visible, J(mid))
 
   // 配置改成首批 10 / 并发 2，重新打开：生效
   await fetch(`${base}/api/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: J({ libraryThumbFirstBatch: 10, libraryThumbConcurrency: 2 }) })

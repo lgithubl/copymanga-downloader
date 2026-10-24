@@ -111,6 +111,15 @@ const els = {
   seriesModalList: document.querySelector('#series-modal-list'),
   seriesModalClose: document.querySelector('#series-modal-close'),
   libraryTagClear: document.querySelector('#library-tag-clear'),
+  libraryFind: document.querySelector('#library-find'),
+  libraryFindCount: document.querySelector('#library-find-count'),
+  libraryFindPrev: document.querySelector('#library-find-prev'),
+  libraryFindNext: document.querySelector('#library-find-next'),
+  libraryCardWidth: document.querySelector('#library-card-width'),
+  libraryPageWidth: document.querySelector('#library-page-width'),
+  libraryHoverRatio: document.querySelector('#library-hover-ratio'),
+  mediaMore: document.querySelector('#media-more'),
+  mediaDetailToggle: document.querySelector('#media-detail-toggle'),
   libraryFirst: document.querySelector('#library-first'),
   libraryPrev: document.querySelector('#library-prev'),
   libraryPage: document.querySelector('#library-page'),
@@ -2736,7 +2745,7 @@ async function showHoverPopover(box, item, token) {
     naturalHeight: img.naturalHeight,
     viewportWidth: window.innerWidth,
     viewportHeight: window.innerHeight,
-    maxWidth: start.width * HOVER_MAX_COVER_RATIO
+    maxWidth: start.width * loadHoverRatio()
   })
   if (!size || !worthExpanding(size, start)) return
   const end = { ...size, ...placeExpanded({ coverRect: start, ...size, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight }) }
@@ -3150,11 +3159,11 @@ function renderLibraryItems() {
   if (els.libraryPrev) els.libraryPrev.disabled = libraryPage <= 1
   if (els.libraryNext) els.libraryNext.disabled = libraryPage >= libraryTotalPages
   renderLibraryIndexStatus()
-  for (const item of libraryItems) {
-    els.libraryItems.append(createLibraryCard(item, { deferThumb: true }))
-  }
-  // 缩略图分批 / 限并发地请求（第一批马上、其余滚动到附近且页面可见时），见 thumb-loader.js
-  libraryThumbLoader.attach(els.libraryItems.querySelectorAll('img.cover[data-src]'), { root: els.libraryItems })   // 卡片列表自己是带滚动条的容器
+  // 点标签开出来的搜索页（tab=new）卡片多（每页 100 / 500）时分批建 DOM：先建一批，滚到底部附近再建下一批；页内匹配跳转到还没建的卡片时按需建到那里。
+  // 普通库页仍然一次建完（浏览器自带的查找 / 全选依赖完整 DOM）
+  resetLibraryChunks()
+  renderLibraryChunk(libraryTabIsNew && libraryItems.length > LIBRARY_LAZY_THRESHOLD ? LIBRARY_CHUNK : libraryItems.length)
+  refreshLibraryFind({ jump: false })
   if (libraryItems.length === 0) {
     els.libraryItems.innerHTML = libraryIndexStatus && libraryIndexStatus.status !== 'ready'
       ? '<p class="muted">媒体缓存未就绪，请点击重建缓存</p>'
@@ -3162,6 +3171,233 @@ function renderLibraryItems() {
   }
   updateLibraryMetadataActionButtons()
 }
+
+// ===== 库页：分批渲染 / 页内匹配 / 卡片宽度 / 页面宽度 / 封面放大 =====
+const LIBRARY_LAZY_THRESHOLD = 60   // tab=new 的搜索页一页超过这么多张才分批
+const LIBRARY_CHUNK = 40
+let libraryRendered = 0
+let libraryChunkObserver = null
+let librarySentinel = null
+
+function resetLibraryChunks() {
+  libraryChunkObserver?.disconnect()
+  libraryChunkObserver = null
+  librarySentinel = null
+  libraryRendered = 0
+}
+
+// 第一批：attach（重置并从头来）；后面几批：append（接在队列后面，不中止在飞的请求）
+function attachLibraryThumbs(first) {
+  const images = els.libraryItems.querySelectorAll('img.cover[data-src]')
+  if (first) libraryThumbLoader.attach(images, { root: els.libraryItems })   // 卡片列表自己是带滚动条的容器
+  else libraryThumbLoader.append(images)
+}
+
+function renderLibraryChunk(upTo) {
+  const end = Math.min(libraryItems.length, Math.max(libraryRendered, upTo))
+  if (end > libraryRendered) {
+    const frag = document.createDocumentFragment()
+    for (let i = libraryRendered; i < end; i++) frag.append(createLibraryCard(libraryItems[i], { deferThumb: true }))
+    const first = libraryRendered === 0
+    libraryRendered = end
+    if (librarySentinel?.isConnected) els.libraryItems.insertBefore(frag, librarySentinel)
+    else els.libraryItems.append(frag)
+    attachLibraryThumbs(first)
+  }
+  if (libraryRendered >= libraryItems.length) {
+    libraryChunkObserver?.disconnect()
+    libraryChunkObserver = null
+    librarySentinel?.remove()
+    librarySentinel = null
+  } else if (!librarySentinel) {
+    librarySentinel = document.createElement('div')
+    librarySentinel.className = 'library-lazy-sentinel'
+    els.libraryItems.append(librarySentinel)
+    if (typeof IntersectionObserver === 'function') {
+      libraryChunkObserver = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) renderLibraryChunk(libraryRendered + LIBRARY_CHUNK)
+      }, { root: els.libraryItems, rootMargin: '800px 0px' })
+      libraryChunkObserver.observe(librarySentinel)
+    } else {
+      renderLibraryChunk(libraryItems.length)   // 没有 IntersectionObserver：不分批，一次建完
+    }
+  }
+  // 哨兵还在（后面还有）：重新观察一次，让「建完这批哨兵仍在视口附近」的情况马上接着建下一批，不用等再滚一下
+  if (librarySentinel && libraryChunkObserver) { libraryChunkObserver.unobserve(librarySentinel); libraryChunkObserver.observe(librarySentinel) }
+  applyLibraryFindClasses()
+}
+
+// —— 页内匹配：只管当前页的卡片。按数据（标题 / 标签 / 摘要）匹配，不看 DOM，所以没建出来的卡片也能命中 ——
+let libraryFindHits = []
+let libraryFindIndex = -1
+
+function libraryFindText(item) {
+  const summary = libraryItemSummary(item)
+  return [libraryFullTitle(item), libraryDisplayTitle(item), ...(item.tags || []), summary.primary, summary.secondary].join('\n').toLowerCase()
+}
+
+function applyLibraryFindClasses() {
+  const cards = els.libraryItems.querySelectorAll(':scope > .library-card')
+  const hits = new Set(libraryFindHits)
+  cards.forEach((card, index) => {
+    card.classList.toggle('library-find-hit', hits.has(index))
+    card.classList.toggle('library-find-current', libraryFindIndex >= 0 && libraryFindHits[libraryFindIndex] === index)
+  })
+}
+
+function updateLibraryFindUi() {
+  const query = els.libraryFind?.value.trim() || ''
+  if (els.libraryFindCount) els.libraryFindCount.textContent = !query ? '' : libraryFindHits.length ? `${libraryFindIndex + 1}/${libraryFindHits.length}` : '无'
+  const none = !libraryFindHits.length
+  if (els.libraryFindPrev) els.libraryFindPrev.disabled = none
+  if (els.libraryFindNext) els.libraryFindNext.disabled = none
+  els.libraryFind?.classList.toggle('library-find-empty', Boolean(query) && none)
+}
+
+function scrollLibraryFindIntoView() {
+  const index = libraryFindHits[libraryFindIndex]
+  if (index === undefined) return
+  renderLibraryChunk(index + 1)   // 还没建出来的先建到这里
+  els.libraryItems.querySelectorAll(':scope > .library-card')[index]?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
+// 重新算匹配（输入变了 / 换页了）；jump：是否跳到第一个命中（换页时不跳）
+function refreshLibraryFind({ jump = true } = {}) {
+  const terms = (els.libraryFind?.value || '').toLowerCase().split(/\s+/).filter(Boolean)
+  libraryFindHits = []
+  libraryFindIndex = -1
+  if (terms.length) {
+    libraryItems.forEach((item, index) => {
+      const text = libraryFindText(item)
+      if (terms.every((term) => text.includes(term))) libraryFindHits.push(index)
+    })
+    if (libraryFindHits.length && jump) libraryFindIndex = 0
+  }
+  applyLibraryFindClasses()
+  updateLibraryFindUi()
+  if (jump) scrollLibraryFindIntoView()
+}
+
+function stepLibraryFind(direction) {
+  if (!libraryFindHits.length) return
+  libraryFindIndex = libraryFindIndex < 0
+    ? (direction > 0 ? 0 : libraryFindHits.length - 1)
+    : (libraryFindIndex + direction + libraryFindHits.length) % libraryFindHits.length
+  applyLibraryFindClasses()
+  updateLibraryFindUi()
+  scrollLibraryFindIntoView()
+}
+
+els.libraryFind?.addEventListener('input', () => refreshLibraryFind())
+els.libraryFind?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') { event.preventDefault(); stepLibraryFind(event.shiftKey ? -1 : 1) }
+  else if (event.key === 'Escape') { els.libraryFind.value = ''; refreshLibraryFind({ jump: false }); els.libraryFind.blur() }
+})
+els.libraryFindPrev?.addEventListener('click', () => stepLibraryFind(-1))
+els.libraryFindNext?.addEventListener('click', () => stepLibraryFind(1))
+// Ctrl / ⌘ + F：在库页里聚焦页内匹配框（浏览器自带的查找看不到还没建出来的卡片）
+document.addEventListener('keydown', (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f') return
+  if (!document.querySelector('#library-view')?.classList.contains('active') || !els.libraryFind) return
+  event.preventDefault()
+  els.libraryFind.focus()
+  els.libraryFind.select()
+})
+
+// —— 卡片宽度 / 页面总宽度 / 封面放大倍率：各存各的（localStorage），拖动的交互复用 openWidthAdjust ——
+const LIBRARY_CARD_W_KEY = 'copymanga.libraryCardWidth'
+const LIBRARY_PAGE_W_KEY = 'copymanga.libraryPageWidth'
+const HOVER_RATIO_KEY = 'copymanga.hoverRatio'
+const LIBRARY_CARD_W_MIN = 120
+const LIBRARY_CARD_W_MAX = 480
+const LIBRARY_PAGE_W_MIN = 640
+const loadStoredNumber = (key, min, max) => {
+  const n = Number(localStorage.getItem(key))
+  return Number.isFinite(n) && n >= min && n <= max ? n : 0   // 0 = 默认
+}
+function storeNumber(key, value) {
+  if (value > 0) localStorage.setItem(key, String(Math.round(value)))
+  else localStorage.removeItem(key)
+}
+function loadHoverRatio() {
+  const n = Number(localStorage.getItem(HOVER_RATIO_KEY))
+  return Number.isFinite(n) && n >= 1 && n <= 3 ? n : HOVER_MAX_COVER_RATIO
+}
+function applyLibraryCardWidth() {
+  const width = loadStoredNumber(LIBRARY_CARD_W_KEY, LIBRARY_CARD_W_MIN, LIBRARY_CARD_W_MAX)
+  els.libraryItems.classList.toggle('library-card-fixed', width > 0)
+  if (width) els.libraryItems.style.setProperty('--library-card-w', `${width}px`)
+  else els.libraryItems.style.removeProperty('--library-card-w')
+}
+function applyLibraryPageWidth() {
+  const view = document.querySelector('#library-view')
+  const width = loadStoredNumber(LIBRARY_PAGE_W_KEY, LIBRARY_PAGE_W_MIN, 100000)
+  view.classList.toggle('library-width-custom', width > 0)
+  if (width) view.style.setProperty('--library-width', `${width}px`)
+  else view.style.removeProperty('--library-width')
+}
+function closeLibraryMoreMenu() {
+  document.querySelector('#library-view .library-more-controls')?.removeAttribute('open')
+}
+function toggleLibraryCardWidth() {
+  if (widthAdjustCleanup) { exitWidthAdjust({ apply: false }); return }
+  const first = els.libraryItems.querySelector(':scope > .library-card')
+  if (!first) return
+  closeLibraryMoreMenu()
+  // 单边模式：左线固定在第一张卡片的左边，只拖右线，宽度 = 一张卡片的宽度
+  openWidthAdjust({
+    host: els.libraryItems,
+    vertical: els.libraryItems,
+    min: LIBRARY_CARD_W_MIN,
+    available: LIBRARY_CARD_W_MAX,
+    current: Math.round(first.getBoundingClientRect().width),
+    anchorLeft: () => first.getBoundingClientRect().left,
+    unit: 'px / 张',
+    noFull: true,
+    reset: { label: '重置默认' },
+    buttons: [els.libraryCardWidth],
+    onApply: (value) => {
+      storeNumber(LIBRARY_CARD_W_KEY, value === null ? 0 : value)
+      applyLibraryCardWidth()
+    },
+  })
+}
+function toggleLibraryPageWidth() {
+  if (widthAdjustCleanup) { exitWidthAdjust({ apply: false }); return }
+  const view = document.querySelector('#library-view')
+  closeLibraryMoreMenu()
+  const available = Math.floor(view.parentElement?.clientWidth || window.innerWidth)
+  const saved = loadStoredNumber(LIBRARY_PAGE_W_KEY, LIBRARY_PAGE_W_MIN, 100000)
+  openWidthAdjust({
+    host: view,
+    vertical: view,
+    min: Math.min(LIBRARY_PAGE_W_MIN, available),
+    available,
+    // 没存过就从比铺满窄一点的位置起步：铺满时两条线正好贴在窗口边上，一半在屏幕外，抓不住
+    current: saved || available - 80,
+    reset: { label: '重置默认' },
+    buttons: [els.libraryPageWidth],
+    adjustingEl: view,
+    onApply: (value) => {
+      // 拖到最大（或离最大不到 24px）= 铺满 = 默认；起步位置没动过也不存（还是默认）
+      storeNumber(LIBRARY_PAGE_W_KEY, value === null || value === 'full' || value >= available - 24 || (!saved && value === available - 80) ? 0 : value)
+      applyLibraryPageWidth()
+    },
+  })
+}
+els.libraryCardWidth?.addEventListener('click', toggleLibraryCardWidth)
+els.libraryPageWidth?.addEventListener('click', toggleLibraryPageWidth)
+if (els.libraryHoverRatio) {
+  els.libraryHoverRatio.value = String(loadHoverRatio())
+  els.libraryHoverRatio.addEventListener('change', () => {
+    const n = Number(els.libraryHoverRatio.value)
+    if (Number.isFinite(n) && n >= 1 && n <= 3) localStorage.setItem(HOVER_RATIO_KEY, String(Math.round(n * 10) / 10))
+    else localStorage.removeItem(HOVER_RATIO_KEY)
+    els.libraryHoverRatio.value = String(loadHoverRatio())
+  })
+}
+applyLibraryCardWidth()
+applyLibraryPageWidth()
 
 function renderLibraryIndexStatus() {
   if (!els.libraryIndexStatus) return
@@ -6674,7 +6910,16 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   }
   const reveal = () => { setVisible(true); schedule() }
   const onPointerMove = (event) => {
-    if (event.clientY <= EDGE || event.clientY >= window.innerHeight - EDGE) reveal()
+    const nearTop = event.clientY <= EDGE
+    const nearBottom = event.clientY >= window.innerHeight - EDGE
+    if (!nearTop && !nearBottom) return
+    // 右边那条是图片区的滚动条（上下拖的框）：鼠标在滚动条上、又在底部时不弹控制条，免得拖到底就被它盖住
+    if (!nearTop) {
+      const rect = content.getBoundingClientRect()
+      const scrollbar = content.offsetWidth - content.clientWidth
+      if (scrollbar > 0 && event.clientX >= rect.right - scrollbar - 12) return
+    }
+    reveal()
   }
   document.addEventListener('mousemove', onPointerMove)
   widthBtn.addEventListener('click', () => {
@@ -6785,7 +7030,9 @@ function exitWidthAdjust({ apply = false, width = 0 } = {}) {
 // available：能调到的最大宽度，拉到它就是「铺满」；current：当前宽度；
 // onApply(width)：确认时调用，width 为数字(px)、'full'(铺满) 或 null(重置默认，仅 reset 存在时)；
 // reset：{ label }，有就在提示条里多一个「重置」按钮
-function openWidthAdjust({ host, vertical, min, available, current, onApply, reset = null, buttons = [], adjustingEl = null }) {
+// anchorLeft：有就是「单边模式」（卡片宽度）：左线固定在 anchorLeft()（屏幕 x），只拖右线，宽度 = 右线 − 左线；没有就是居中对称（阅读 / 图片 / 页面宽度）
+// unit：提示条上数字后面的文字
+function openWidthAdjust({ host, vertical, min, available, current, onApply, reset = null, buttons = [], adjustingEl = null, anchorLeft = null, unit = 'px', noFull = false }) {
   const layer = document.createElement('div')
   layer.className = 'media-width-layer'
   const left = document.createElement('div')
@@ -6827,10 +7074,10 @@ function openWidthAdjust({ host, vertical, min, available, current, onApply, res
     layer.style.top = `${rect.top}px`
     layer.style.width = `${b.outerWidth}px`
     layer.style.height = `${rect.height}px`
-    const pad = Math.max(0, (b.left - b.outerLeft) + (b.width - width) / 2)
+    const pad = anchorLeft ? anchorLeft() - b.outerLeft : Math.max(0, (b.left - b.outerLeft) + (b.width - width) / 2)
     left.style.left = `${pad}px`
     right.style.left = `${pad + width}px`
-    labelText.textContent = `${Math.round(width)} px${width >= available ? '（铺满）' : ''}`
+    labelText.textContent = `${Math.round(width)} ${unit}${width >= available && !noFull ? '（铺满）' : ''}`
   }
   paint()
 
@@ -6849,12 +7096,13 @@ function openWidthAdjust({ host, vertical, min, available, current, onApply, res
     const b = box()
     const centre = b.left + b.width / 2
     const half = dragging === 'left' ? centre - event.clientX : event.clientX - centre
-    width = Math.max(min, Math.min(available, Math.round(half * 2)))
+    width = Math.max(min, Math.min(available, Math.round(anchorLeft ? event.clientX - anchorLeft() : half * 2)))
     moved = true
     paint()
   }
   const onUp = () => { dragging = null }
-  left.addEventListener('pointerdown', (e) => onDown(e, 'left'))
+  if (anchorLeft) left.style.pointerEvents = 'none'   // 单边模式：左线只是参考，不能拖
+  else left.addEventListener('pointerdown', (e) => onDown(e, 'left'))
   right.addEventListener('pointerdown', (e) => onDown(e, 'right'))
   document.addEventListener('pointermove', onMove)
   document.addEventListener('pointerup', onUp)
@@ -6897,7 +7145,7 @@ function openWidthAdjust({ host, vertical, min, available, current, onApply, res
     if (!apply) return
     // 到这一刻才真正改宽度，拖动过程中一个字/一张图都没动
     if (resetRequested) { onApply(null); return }
-    onApply(finalWidth >= available ? 'full' : finalWidth)
+    onApply(finalWidth >= available && !noFull ? 'full' : finalWidth)
   }
 }
 
@@ -7004,6 +7252,48 @@ function toggleImageWidthAdjust({ scroller, buttons = [] }) {
   })
 }
 
+// —— 阅读页「更多 › 详情」：标题 / 单元 / 标签。标签就是 .tag-pill[data-tag]，点击走全局那套（和媒体库卡片上的标签一样，含新标签页规则） ——
+let mediaDetailPanel = null
+function hideMediaDetail() {
+  if (mediaDetailPanel) mediaDetailPanel.hidden = true
+  els.mediaDetailToggle?.classList.remove('active')
+}
+function renderMediaDetail() {
+  const reader = currentMediaReader
+  const item = { ...(currentLibraryItem || {}), ...(reader?.item || {}) }
+  const tags = [...new Set([...(reader?.item?.tags || []), ...(currentLibraryItem?.tags || [])])]
+  if (!mediaDetailPanel) {
+    mediaDetailPanel = document.createElement('div')
+    mediaDetailPanel.className = 'media-detail-panel'
+    mediaDetailPanel.hidden = true
+    document.body.append(mediaDetailPanel)
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !mediaDetailPanel.hidden) hideMediaDetail() })
+    // 点面板和「详情」按钮以外的地方收起；点标签（跳去搜索）时面板也跟着收起
+    document.addEventListener('click', (event) => {
+      if (mediaDetailPanel.hidden || mediaDetailPanel.contains(event.target) || els.mediaDetailToggle?.contains(event.target)) { if (event.target.closest?.('.media-detail-panel .tag-pill')) hideMediaDetail(); return }
+      hideMediaDetail()
+    }, true)
+  }
+  const rows = []
+  const row = (label, value) => { if (value) rows.push(`<div class="media-detail-row"><span class="media-detail-label">${escapeHtml(label)}</span><span class="media-detail-value">${escapeHtml(String(value))}</span></div>`) }
+  row('标题', item.title)
+  row('当前单元', reader?.unit?.title)
+  row('章节', reader?.section?.title)
+  row('类型', libraryItemSummary(item).typeLabel)
+  const pills = tags.map((tag) => `<span class="tag-pill" data-tag="${escapeHtml(tag)}" title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')
+  mediaDetailPanel.dataset.kind = libraryEntryKind(item)   // 点标签用新标签页时，按这个类型/导入方案查配置（和库页卡片一致）
+  mediaDetailPanel.dataset.profile = libraryProfileOf(item)
+  mediaDetailPanel.innerHTML = `${rows.join('')}<div class="media-detail-row"><span class="media-detail-label">标签（${tags.length}）</span><span class="tag-list media-detail-tags">${pills || '<span class="muted">没有标签</span>'}</span></div>`
+}
+function toggleMediaDetail() {
+  if (!currentMediaReader) return
+  renderMediaDetail()
+  mediaDetailPanel.hidden = !mediaDetailPanel.hidden
+  els.mediaDetailToggle.classList.toggle('active', !mediaDetailPanel.hidden)
+  els.mediaMore?.removeAttribute('open')
+}
+els.mediaDetailToggle?.addEventListener('click', toggleMediaDetail)
+
 function mediaScrollRatio() {
   if (currentMediaReader?.type === 'gal') return galRatio
   if (currentMediaReader?.type !== 'html') return currentMediaReader?.type === 'images' ? 1 : 0.1
@@ -7013,6 +7303,7 @@ function mediaScrollRatio() {
 function updateMediaPageControls() {
   // epub(html) 调阅读宽度，图集(images) 调图片宽度
   if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = !['html', 'images'].includes(currentMediaReader?.type)
+  if (els.mediaDetailToggle) els.mediaDetailToggle.disabled = !currentMediaReader
   // 沉浸五种内容都支持：epub 分页翻、图集滚动看、音视频铺满播、Gal 剧情播放
   if (els.mediaImmersive) {
     els.mediaImmersive.disabled = !['html', 'images', 'audio', 'video', 'gal'].includes(currentMediaReader?.type)

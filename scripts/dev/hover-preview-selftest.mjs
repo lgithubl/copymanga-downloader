@@ -38,11 +38,12 @@ check('靠底：夹到底边距', p.top + 560 === 800 - HOVER_MARGIN, JSON.strin
 p = placeExpanded({ coverRect: cover(0, 0, 1280, 800), width: 500, height: 500, ...vp })
 check('封面占满视口：仍在视口内', p.left >= HOVER_MARGIN && p.top >= HOVER_MARGIN && p.left + 500 <= 1280 && p.top + 500 <= 800, JSON.stringify(p))
 
-// 卡宽 160 → 封面框 160x213：maxWidth = 160 * 2.5 = 400
+// 卡宽 160 → 封面框 160x213：maxWidth = 160 * HOVER_MAX_COVER_RATIO
+const MAXW = Math.round(160 * HOVER_MAX_COVER_RATIO)
 r = fitPreview({ naturalWidth: 400, naturalHeight: 566, ...vp, maxWidth: 160 * HOVER_MAX_COVER_RATIO })
-check('卡宽 160：漫画 400x566 展开到 ≤400 宽（不超过封面的 2.5 倍），比例不变', r.width <= 400 && Math.abs(r.width / r.height - 400 / 566) < 0.01, JSON.stringify(r))
+check('卡宽 160：漫画 400x566 展开到 ≤ 封面宽 × 倍率，比例不变', r.width <= MAXW && Math.abs(r.width / r.height - 400 / 566) < 0.01, JSON.stringify(r))
 r = fitPreview({ naturalWidth: 1200, naturalHeight: 400, ...vp, maxWidth: 160 * HOVER_MAX_COVER_RATIO })
-check('卡宽 160：超宽 3:1 展开到 400x133', r.width === 400 && r.height === 133, JSON.stringify(r))
+check('卡宽 160：超宽 3:1 展开到 封面宽 × 倍率（比例 3:1）', r.width === MAXW && r.height === Math.round(MAXW / 3), JSON.stringify(r))
 check('worthExpanding：40x40 的小图（展开后 50x50 < 封面框）不展开', !worthExpanding({ width: 50, height: 50 }, cover(0, 0)))
 check('worthExpanding：400x133 比封面框宽 → 展开', worthExpanding({ width: 400, height: 133 }, cover(0, 0)))
 check('worthExpanding：和封面框一样大 → 不展开', !worthExpanding({ width: 160, height: 213 }, cover(0, 0)))

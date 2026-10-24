@@ -292,6 +292,12 @@
                   <button id="library-tag-clear" class="tag-search-clear" type="button" title="清空">×</button>
                 </span>
                 <button id="library-search" class="secondary">搜索</button>
+                <span class="tag-search-wrap library-find-wrap">
+                  <input id="library-find" type="search" placeholder="页内匹配（Ctrl+F）" title="在当前页的卡片里按标题 / 标签匹配并跳转；Enter 下一个，Shift+Enter 上一个，Esc 清空" autocomplete="off" />
+                  <span id="library-find-count" class="library-find-count muted"></span>
+                  <button id="library-find-prev" class="library-find-btn" type="button" title="上一项（Shift+Enter）" disabled>▲</button>
+                  <button id="library-find-next" class="library-find-btn" type="button" title="下一项（Enter）" disabled>▼</button>
+                </span>
                 <button id="library-prev" class="secondary" disabled>上一页</button>
                 <label class="page-jump">
                   <span>第</span>
@@ -338,6 +344,11 @@
                       <option value="unit_count_asc">章节数正序</option>
                       <option value="random">随机排序</option>
                     </select>
+                    <span class="library-view-settings">
+                      <button id="library-card-width" class="secondary" type="button" title="拖动调整卡片宽度（Esc 取消，Enter / 点空白确认）">卡片宽度</button>
+                      <button id="library-page-width" class="secondary" type="button" title="拖动调整页面总宽度（Esc 取消，Enter / 点空白确认）">页面宽度</button>
+                      <label class="library-hover-ratio" title="封面悬停展开后，最宽是封面框宽度的多少倍（1 = 不放大）">封面放大<input id="library-hover-ratio" type="number" min="1" max="3" step="0.1" /> 倍</label>
+                    </span>
                     <button id="library-sample" class="secondary">生成示例</button>
                     <span class="library-search-presets">
                       <select id="library-search-preset-select" title="常用搜索条件预设">
@@ -583,6 +594,12 @@
                 <button id="media-page-next" class="secondary" disabled>下一页</button>
                 <button id="media-reader-next" class="secondary" disabled>下一章</button>
                 <button id="media-reader-back" class="secondary" disabled>返回</button>
+                <details id="media-more" class="library-more-controls media-more-controls">
+                  <summary>更多</summary>
+                  <div>
+                    <button id="media-detail-toggle" class="secondary" type="button" disabled title="标题、标签等详情；标签可点击搜索">详情</button>
+                  </div>
+                </details>
               </div>
             </div>
             <article id="media-reader-content" class="media-reader-content empty-panel">请选择媒体库目录项</article>

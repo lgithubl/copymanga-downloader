@@ -4,7 +4,7 @@
 export const HOVER_DELAY_MS = 300
 export const HOVER_MAX_HEIGHT_RATIO = 0.8
 export const HOVER_MAX_UPSCALE = 1.25
-export const HOVER_MAX_COVER_RATIO = 2.5   // 展开后宽度最多是封面框宽度的 2.5 倍：卡窄了，浮层也跟着小
+export const HOVER_MAX_COVER_RATIO = 1.8   // 展开后宽度最多是封面框宽度的 1.8 倍（库页「更多」里可以改）：卡窄了，浮层也跟着小
 export const HOVER_MARGIN = 8
 
 // 展开后图片的显示尺寸：整图（不裁）、高度不超过视口 80%、宽度不超过 maxWidth 和视口一半，

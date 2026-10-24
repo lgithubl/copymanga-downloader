@@ -118,6 +118,14 @@ export function createThumbLoader({ getSettings = () => DEFAULTS, doc = document
       release(pending.slice(0, firstBatch))   // 第一批：不等可见，直接放行
       observePending()
     },
+    // 分批渲染时后续几批的卡片：接在已有的队列后面，不重置（attach 会中止在飞的请求、丢掉排队的）。第一批用 attach
+    append(images) {
+      const fresh = [...images].filter((img) => img.dataset.src && !img.dataset.thumb && !pending.includes(img))
+      if (!fresh.length) return
+      pending = pending.concat(fresh)
+      if (observer) for (const img of fresh) observer.observe(img)
+      else observePending()
+    },
     reset,
     destroy() {
       reset()
