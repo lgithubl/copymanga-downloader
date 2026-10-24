@@ -150,11 +150,11 @@ async function detectMonmusu(media, { declared, game, logs }) {
     logs.push('没找到 icon_<编号>_0_idle 头像图（images 目录里）：角色卡片没有头像')
   }
   // 脚本卡片封面：动画（webm）脚本里没有背景图，封面用游戏菜单按钮的图——script/sub_nav 里 `imagebutton auto "<编号>_01_%s"` 跳到 h<编号>A1、`_02_` 跳 B1；
-  // 事件（静图）菜单 event_nav 里 `r18_<编号>_stla1_%s` 跳 C1、stlb1 → D1、stlc1 → E1、stld1 → F1（%s = idle）。图在 images 里（可能再套一层目录）
+  // 事件（静图）菜单 event_nav 里 `r18_<编号>_stla1_%s` 跳 C1、stlb1 → D1、stlc1 → E1、stld1 → F1；实际文件是 images/event/r18_<编号>_stla1.jpg（没有 _idle 后缀，stla1..4 是同一事件的几张图，取第 1 张）。图在 images 里（可能再套一层目录）
   const coverRules = [
     ['^(\\d{5})_01_idle\\.(?:png|webp|jpe?g)$', '{1}A1'], ['^(\\d{5})_02_idle\\.(?:png|webp|jpe?g)$', '{1}B1'],
-    ['^r18_(\\d{5})_stla1_idle\\.(?:png|webp|jpe?g)$', '{1}C1'], ['^r18_(\\d{5})_stlb1_idle\\.(?:png|webp|jpe?g)$', '{1}D1'],
-    ['^r18_(\\d{5})_stlc1_idle\\.(?:png|webp|jpe?g)$', '{1}E1'], ['^r18_(\\d{5})_stld1_idle\\.(?:png|webp|jpe?g)$', '{1}F1'],
+    ['^r18_(\\d{5})_stla1(?:_idle)?\\.(?:png|webp|jpe?g)$', '{1}C1'], ['^r18_(\\d{5})_stlb1(?:_idle)?\\.(?:png|webp|jpe?g)$', '{1}D1'],
+    ['^r18_(\\d{5})_stlc1(?:_idle)?\\.(?:png|webp|jpe?g)$', '{1}E1'], ['^r18_(\\d{5})_stld1(?:_idle)?\\.(?:png|webp|jpe?g)$', '{1}F1'],
   ]
   // 菜单按钮图可能分散在 images 的几个子目录里（icon / thumbnail / event …）：整棵树扫一遍，每条规则对每个含匹配文件的目录各配一条 scriptIndex
   config.scriptIndex = []
