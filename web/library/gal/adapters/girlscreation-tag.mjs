@@ -174,6 +174,7 @@ export function parse(text, ctx = null, meta = {}) {
   const stats = { commands: 0, raw: {}, unresolved: {}, movies: 0, spines: 0 }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const emit = (command) => { commands.push(command) }
+  const waiting = new Map() // 槽 → 角色还没出现时先收到的动画
   const actors = new Map()  // 槽 → { skel, x, y, scale, fade, move, tracks: [{ anim, loop }] }
   const dirty = new Set()
   const flushActors = () => {
@@ -264,13 +265,21 @@ export function parse(text, ctx = null, meta = {}) {
           const slot = Math.trunc(numOf(a[0]))
           const props = parseProps(a[7])
           const previous = actors.get(slot)
-          actors.set(slot, { skel: a[1], x: props.x ?? 0, y: props.y ?? 0, scale: numOf(a[8], 1) || 1, fade: secs(a[6]), move: 0, tracks: previous?.skel === a[1] ? previous.tracks : [] })
+          // 同一个槽先 PLAY 后 ACTOR（OUT → PLAY → ACTOR 是脚本里的常见写法）：先记下的动画在角色出现时套用
+          const tracks = previous?.skel === a[1] ? previous.tracks : (waiting.get(slot) || [])
+          waiting.delete(slot)
+          actors.set(slot, { skel: a[1], x: props.x ?? 0, y: props.y ?? 0, scale: numOf(a[8], 1) || 1, fade: secs(a[6]), move: 0, tracks })
           dirty.add(slot)
           break
         }
         case 'SPINE_ACTOR_PLAY': {
           const actor = actors.get(Math.trunc(numOf(a[0])))
-          if (!actor) { count('unresolved', `spine-slot:${a[0]}`); break }
+          if (!actor) {   // 这个槽现在没有角色：先记下，等 SPINE_ACTOR 把它放出来再套用
+            const slot = Math.trunc(numOf(a[0]))
+            if (!waiting.has(slot)) waiting.set(slot, [])
+            waiting.get(slot)[Math.trunc(numOf(a[2]))] = { anim: a[1], loop: bool(a[3]) }
+            break
+          }
           actor.tracks[Math.trunc(numOf(a[2]))] = { anim: a[1], loop: bool(a[3]) }
           dirty.add(Math.trunc(numOf(a[0])))
           break
@@ -286,6 +295,7 @@ export function parse(text, ctx = null, meta = {}) {
         case 'SPINE_ACTOR_OUT': {
           const slot = Math.trunc(numOf(a[0]))
           dirty.delete(slot)
+          waiting.delete(slot)
           if (actors.delete(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[1]) })
           break
         }
