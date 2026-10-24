@@ -329,8 +329,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const catalogNodeRef = (parentId, page) => (parentId ? virtualNodeId(parentId, page) : dirNodeId(defaultSet, '', page))
   const catalogCrumbs = (catalog, id, tail) => [{ id: dirNodeId(defaultSet, '', 1), title: '首页' }, ...catalogAncestors(catalog, id).map((c) => ({ id: virtualNodeId(c.id, 1), title: c.title })), ...(tail ? [tail] : [])]
   const catalogItem = (child) => (child.children
-    ? { type: 'dir', id: child.id, title: child.title, subtitle: child.subtitle ?? `${child.children.length} 项`, thumb: child.thumb || '', badge: child.badge || '', node: virtualNodeId(child.id, 1) }
-    : { type: 'script', id: child.script, title: child.title, subtitle: child.subtitle || '', thumb: child.thumb || '', badge: child.badge || '', node: idOf(defaultSet, 'script', child.script) })
+    ? { type: 'dir', id: child.id, title: child.title, subtitle: child.subtitle ?? `${child.children.length} 项`, thumb: child.thumb || '', ...(child.thumb ? {} : { thumbWhy: ['适配器目录（catalog）没有给缩略图'] }), badge: child.badge || '', node: virtualNodeId(child.id, 1) }
+    : { type: 'script', id: child.script, title: child.title, subtitle: child.subtitle || '', thumb: child.thumb || '', ...(child.thumb ? {} : { thumbWhy: ['适配器目录（catalog）没有给缩略图'] }), badge: child.badge || '', node: idOf(defaultSet, 'script', child.script) })
 
   async function catalogNode(catalog, id, page, view) {
     const holder = id ? catalog.byId.get(id) : catalog.tree
@@ -461,42 +461,57 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     let excerpt = ''
     let hasMovie = false
     let scene = null
+    let parseError = ''
     try {
       scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId), { rel, stem: stemOf(rel) })
       excerpt = excerptOf(scene)
       hasMovie = scene.steps.some((step) => step.commands.some((c) => c.op === 'movie'))
-    } catch { /* 解析失败：照样列出来，打开时再报错 */ }
+    } catch (error) { parseError = error?.message || String(error) /* 解析失败：照样列出来，打开时再报错 */ }
+    // 候选缩略图 + 来源（没找到图时给列表页的诊断面板看：每个来源试了什么、为什么没成）
     const candidates = []
+    const why = []
     for (const template of config.scriptThumbs) {
       if (template.includes('{thumbsDir}')) {
-        for (const thumbsDir of config.thumbsDirs) candidates.push(expandTemplate(template, { stem: stemOf(rel), thumbsDir }))
-      } else candidates.push(expandTemplate(template, { stem: stemOf(rel) }))
+        if (!config.thumbsDirs.length) why.push(`scriptThumbs「${template}」：thumbsDirs 为空，模板展开不了`)
+        for (const thumbsDir of config.thumbsDirs) candidates.push({ from: 'scriptThumbs', path: expandTemplate(template, { stem: stemOf(rel), thumbsDir }) })
+      } else candidates.push({ from: 'scriptThumbs', path: expandTemplate(template, { stem: stemOf(rel) }) })
     }
+    if (!config.scriptThumbs.length) why.push('scriptThumbs：未配置')
     const indexed = indexRules.length ? (await readScriptIndex()).get(stemOf(rel)) : null
-    if (indexed?.thumb) candidates.push(indexed.thumb)
-    if (scene) { const bg = firstBackgroundSrc(scene); if (bg) candidates.push(bg) }
+    if (indexed?.thumb) candidates.push({ from: 'scriptIndex', path: indexed.thumb })
+    else why.push(indexRules.length ? `scriptIndex：${indexRules.length} 条规则（目录 ${[...new Set(indexRules.map((r) => r.dir))].join(' / ')}），索引里没有「${stemOf(rel)}」（索引了 ${(await readScriptIndex()).size} 个脚本）` : 'scriptIndex：未配置')
+    if (scene) {
+      const bg = firstBackgroundSrc(scene)
+      if (bg) candidates.push({ from: '脚本第一张背景图', path: bg })
+      else why.push(`脚本里没有背景图指令（bg）：${scene.steps.length} 步、${hasMovie ? '只有视频' : '没有画面指令'}`)
+    } else why.push(`脚本没解析成功（适配器 ${adapterId}）：${parseError || '未知原因'}`)
     for (const candidate of candidates) {
-      if (!candidate) continue
-      try { await resolveAsset(candidate); thumb = candidate; break } catch { /* 下一个 */ }
+      if (!candidate.path) { why.push(`${candidate.from}：路径展开失败（含不安全字符？）`); continue }
+      try { await resolveAsset(candidate.path); thumb = candidate.path; break } catch (error) { why.push(`${candidate.from}：${candidate.path} → ${error?.code === 'ENOENT' || /not found|不存在|ENOENT/i.test(error?.message || '') ? '文件不存在' : (error?.message || '读不到')}`) }
     }
-    const result = { adapterId, thumb, excerpt, hasMovie, badge: indexed?.badge || '' }
+    const result = { adapterId, thumb, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumb ? [] : why }
     cacheSet(scriptInfoCache, key, result, 30000)
     return result
   }
 
-  async function dirThumb(entry) {
+  // tried：可选，传一个数组进来，没找到图时把「试了哪些规则 / 路径」写进去（列表页诊断用）
+  async function dirThumb(entry, tried = []) {
     const parentName = entry.parentName ?? (entry.rel.includes('/') ? entry.rel.split('/').slice(-2, -1)[0] : '')
+    let matched = 0
     for (const rule of dirThumbRules) {
       if (rule.parent !== '*' && rule.parent !== parentName) continue
       if (rule.nameRe && !rule.nameRe.test(entry.name)) continue
+      matched += 1
       for (const template of rule.paths) {
         const candidate = expandTemplate(template, { name: entry.name, parent: parentName })
-        if (!candidate) continue
-        try { await resolveAsset(candidate); return candidate } catch { /* 下一个 */ }
+        if (!candidate) { tried.push(`dirThumbs「${template}」：路径展开失败`); continue }
+        try { await resolveAsset(candidate); return candidate } catch { tried.push(`dirThumbs：${candidate} → 文件不存在`) }
       }
     }
+    if (!matched) tried.push(dirThumbRules.length ? `dirThumbs：${dirThumbRules.length} 条规则里没有匹配（父目录「${parentName || '根'}」、名字「${entry.name}」）` : 'dirThumbs：未配置')
     return ''
   }
+  const withWhy = async (entry, extra) => { const tried = []; const thumb = await dirThumb(entry, tried); return { thumb, ...(thumb ? {} : { thumbWhy: tried }), ...extra } }
 
   // 目录卡片上的数量：直接子项数（合并目录时 = 合并后的数量），不递归。每个目录按 mtime 缓存读出来的数量
   async function countEntries(abs) {
@@ -590,7 +605,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const paged = await pageOfView(members, view, page, (entry) => ({ title: entry.stem, extra: entry.name }))
       const items = await mapLimit(paged.slice, IO_CONCURRENCY, async (entry) => {
         const info = await scriptInfo(set, entry.rel)
-        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
       })
       return { node: { id: groupNodeId(set, rel, key, paged.current, view), kind: 'cards', title: await labelOf(key), ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, groupNodeId(set, rel, key, 1)) } }
     }
@@ -611,15 +626,15 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const items = await mapLimit(paged.slice, IO_CONCURRENCY, async (entry) => {
         if (entry.type === 'group') {
           const label = await labelOf(entry.key)
-          return { type: 'dir', id: entry.rel, title: label, subtitle: `${label !== entry.key ? `${entry.key} · ` : ''}${entry.members.length} 项`, thumb: await dirThumb({ name: entry.key, parentName: rel ? baseName(rel) : '' }), badge: '', node: groupNodeId(set, rel, entry.key, 1) }
+          return { type: 'dir', id: entry.rel, title: label, subtitle: `${label !== entry.key ? `${entry.key} · ` : ''}${entry.members.length} 项`, ...(await withWhy({ name: entry.key, parentName: rel ? baseName(rel) : '' })), badge: '', node: groupNodeId(set, rel, entry.key, 1) }
         }
         if (entry.type === 'dir') {
           const label = await labelOf(entry.name)
           const n = await countChildren(set, entry.rel)
-          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, thumb: await dirThumb(entry), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
+          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry)), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
         }
         const info = await scriptInfo(set, entry.rel)
-        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
       })
       const title = rel ? await labelOf(baseName(rel)) : '首页'
       return { node: { id: dirNodeId(set, rel, paged.current, view), kind: 'cards', title, ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, dirNodeId(set, rel, 1)) } }

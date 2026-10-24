@@ -123,6 +123,15 @@ check('首页：9 张卡片（真实目录树，名字用中文标签）；上�
 await page.screenshot({ path: path.join(shotDir, 'browse-home.png') })
 check('首页：URL 里没有 section（首页就是单元的默认节点）', (await hashSection()) === '', await hashSection())
 
+// 图片诊断：「更多」里打开，列出没有图的卡片和原因（后端每个来源试了什么）；有问题时「更多」上有红点
+await page.click('.gal-browse-more-btn')
+await page.click('.gal-browse-diag-btn')
+await page.waitForFunction(() => document.querySelector('.gal-browse-diag-text')?.textContent !== '加载中…')
+const diagTxt = await page.$eval('.gal-browse-diag-text', (e) => e.textContent)
+const noImg = (await page.$$('.gal-card-thumb.empty')).length
+check('首页图片诊断：面板列出每张没图的卡片和原因（后端试了哪些规则）', noImg === 0 ? diagTxt.includes('都有图') : (diagTxt.match(/\[没有图\]/g) || []).length >= noImg && /dirThumbs|scriptThumbs|scriptIndex|适配器/.test(diagTxt) && (await page.$eval('.gal-browse-more-btn', (e) => e.classList.contains('warn'))), diagTxt.slice(0, 400))
+await page.click('.gal-browse-diag-head .gal-btn:nth-of-type(2)')
+
 await page.click('.gal-card[data-node="d:cabin"]')
 await page.waitForSelector('.gal-card[data-node="d:cabin/adultr"]')
 check('点「纪念馆」：只有一个子目录「成人向」（目录一层层点进去）；面包屑；上一级出现；URL 带节点', JSON.stringify(await rowTitles()) === JSON.stringify(['成人向']) && (await crumbs()) === '首页>纪念馆' && !(await page.$eval('.gal-browse-up', (b) => b.disabled)) && (await hashSection()) === 'd:cabin', JSON.stringify([await rowTitles(), await crumbs(), await hashSection()]))
@@ -524,6 +533,7 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   const press = async (key, n = 1) => { for (let i = 0; i < n; i++) { await pg.keyboard.press(key); await sleep(220) } }
   // 每按一下等计数变了再继续：最后一句之后再按「下一句」会回到列表（看完了），多按一下页面就没了
   const goStep = async (n, total) => {
+    if (!Number.isFinite(n) || !Number.isFinite(total)) throw new Error(`goStep 目标不是数字：${n} / ${total}`)
     for (let i = 0; i < 40 && (await cnt()) !== `${n} / ${total}`; i++) {
       const before = await cnt()
       await pg.keyboard.press('Space')
@@ -572,8 +582,8 @@ check('没有页面错误', errors.length === 0, errors.join(' | '))
   await resetNodes(sec(DPATH))
   await pg.goto(link(sec(DPATH)))
   await pg.waitForSelector('.gal-stage')
-  await pg.waitForFunction(() => /^1 \/ \d+/.test(document.querySelector('.gal-count')?.textContent || ''))
-  const dN = Number((await cnt()).split('/')[1])
+  // 总步数：等新页面的计数出来再读（hash 切换时旧播放器的计数还在，读到空就是 NaN，goStep 会一直按空格按到看完回列表）
+  const dN = await (await pg.waitForFunction(() => { const m = /^1 \/ (\d+)/.exec(document.querySelector('.gal-count')?.textContent || ''); return m ? Number(m[1]) : false })).jsonValue()
   await sleep(1800)
   await goStep(dN, dN); await sleep(1200)
   const emptyBox = await pg.evaluate(() => { const bar = document.querySelector('.gal-bar').getBoundingClientRect(); const st = document.querySelector('.gal-stage').getBoundingClientRect(); return { boxHidden: document.querySelector('.gal-box').hidden, barVisible: bar.width > 0 && bar.height > 0 && bar.top >= st.bottom - 1 } })

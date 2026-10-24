@@ -116,6 +116,46 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   moreMenu.hidden = true
   moreMenu.append(crumbRow)
   const closeMenu = () => { moreMenu.hidden = true }
+  // ---- 图片诊断：哪些卡片没有图、为什么（后端每个来源试了什么 + 浏览器里加载失败的图），和播放页的渲染诊断一个思路 ----
+  const problems = []   // { kind: '没有图' | '加载失败', title, node, lines: [..], url? }
+  const diagPanel = el('div', 'gal-browse-diag')
+  diagPanel.hidden = true
+  const diagBtn = el('button', 'gal-browse-diag-btn', '图片诊断')
+  diagBtn.type = 'button'
+  diagBtn.title = '哪些卡片没有图、为什么（可复制）'
+  const diagText = async () => {
+    const lines = [`节点 ${node.id}（${node.kind}）· 本页 ${node.items.length} 张卡片 · ${problems.length} 个图片问题`]
+    for (const item of problems) {
+      lines.push('', `[${item.kind}] ${item.title}${item.node ? `  (${item.node})` : ''}`)
+      for (const line of item.lines) lines.push(`  · ${line}`)
+      if (item.url) {
+        const status = await fetch(item.url, { method: 'HEAD' }).then((r) => `HTTP ${r.status}`, (error) => `请求失败：${error.message}`)
+        lines.push(`  · 浏览器请求 ${status}`)
+      }
+    }
+    return lines.join('\n')
+  }
+  const renderDiag = async () => {
+    diagPanel.replaceChildren()
+    const head = el('div', 'gal-browse-diag-head')
+    const copy = el('button', 'gal-btn', '复制')
+    copy.type = 'button'
+    const close = el('button', 'gal-btn', '关闭')
+    close.type = 'button'
+    head.append(el('strong', '', `图片诊断（${problems.length}）`), copy, close)
+    const pre = el('pre', 'gal-browse-diag-text', '加载中…')
+    diagPanel.append(head, pre)
+    close.addEventListener('click', () => { diagPanel.hidden = true })
+    const text = await diagText()
+    pre.textContent = problems.length ? text : '这一页的卡片都有图'
+    copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(text); copy.textContent = '已复制' } catch { copy.textContent = '复制失败' } setTimeout(() => { copy.textContent = '复制' }, 1500) })
+  }
+  const refreshDiag = () => {
+    diagBtn.textContent = problems.length ? `图片诊断（${problems.length}）` : '图片诊断'
+    moreBtn.classList.toggle('warn', problems.length > 0)   // 工具栏很小，有问题时在「更多」上点个红点
+    if (!diagPanel.hidden) renderDiag()
+  }
+  diagBtn.addEventListener('click', () => { closeMenu(); diagPanel.hidden = !diagPanel.hidden; if (!diagPanel.hidden) renderDiag() })
   const field = (label, control) => { const row = el('label', 'gal-more-row'); row.append(el('span', 'gal-more-label', label), control); return row }
 
   if (view && (view.unfiltered > 8 || view.q)) {
@@ -206,8 +246,8 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   // 菜单里点别处（输入框、下拉框）不关；点菜单外面才关
   const onDocClick = (event) => { if (!more.contains(event.target)) closeMenu() }
   document.addEventListener('click', onDocClick)
-  moreMenu.append(immBtn, fsBtn)
-  more.append(moreBtn, moreMenu)
+  moreMenu.append(immBtn, fsBtn, diagBtn)
+  more.append(moreBtn, moreMenu, diagPanel)
   const lockBtn = el('button', 'gal-btn gal-lock')
   lockBtn.type = 'button'
   const leaveBtn = el('button', 'gal-btn gal-browse-leave', '返回')
@@ -250,6 +290,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   const thumbImages = []
   const thumbOf = (item, className) => {
     const box = el('div', className)
+    if (!item.thumb) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
     if (!item.thumb && item.type === 'dir') box.dataset.icon = '📁'
     if (item.thumb) {
       const img = el('img')
@@ -257,7 +298,12 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       img.decoding = 'async'
       const src = assetUrl(reader.resourceBase, item.thumb)
       if (thumbLoader) { img.dataset.src = src; thumbImages.push(img) } else { img.loading = 'lazy'; img.src = src }
-      img.addEventListener('error', () => { img.remove(); box.classList.add('empty') })
+      img.addEventListener('error', () => {
+        img.remove()
+        box.classList.add('empty')
+        problems.push({ kind: '加载失败', title: item.title, node: item.node, url: src, lines: [`缩略图路径 ${item.thumb}`, `请求地址 ${src}`] })
+        refreshDiag()
+      })
       box.append(img)
     } else {
       box.classList.add('empty')
@@ -288,6 +334,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   }
 
   root.append(body, bar)
+  refreshDiag()
 
   container.replaceChildren(root)
   if (thumbLoader && thumbImages.length) thumbLoader.attach(thumbImages, { root: container })

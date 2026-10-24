@@ -4619,3 +4619,11 @@ h2 {
 /* 播放器「更多」菜单里的数值项（动画 4 降速） */
 .gal-more-field { align-items: center; color: #e5e7eb; display: flex; gap: 0.5em; white-space: nowrap; }
 .gal-more-field input { background: rgba(255, 255, 255, 0.14); border: 0; border-radius: 4px; color: #fff; font-size: inherit; min-height: 0; padding: 0.1em 0.4em; width: 4.5em; }
+
+/* 列表页图片诊断：和播放页的渲染诊断同一个思路（「更多」里打开，面板在底栏上方，可复制） */
+.gal-browse-diag { background: var(--site-panel); border: 1px solid var(--site-border); border-radius: 8px; bottom: calc(100% + 6px); box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3); box-sizing: border-box; max-height: 50vh; overflow: auto; padding: 8px 10px; position: absolute; right: 0; width: min(640px, 92vw); z-index: 21; }
+.gal-browse-diag[hidden] { display: none; }
+.gal-browse-diag-head { align-items: center; display: flex; gap: 8px; margin-bottom: 6px; }
+.gal-browse-diag-head strong { flex: 1 1 auto; }
+.gal-browse-diag-text { font-size: 12px; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.gal-browse-bar .gal-browse-more-btn.warn::after { background: #ff5a5a; border-radius: 50%; content: ''; display: inline-block; height: 0.45em; margin-left: 0.3em; vertical-align: middle; width: 0.45em; }
