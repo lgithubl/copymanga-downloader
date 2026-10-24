@@ -67,6 +67,7 @@ const videoScript = [
   '<PAUSE>',
   '<PAUSE>',
   '<VIDEO_STOP>',
+  '<FRAME_ANIM>106041,3,5,33',
   '<NAME_PLATE>',
   'Back to a still.',
   '<PAUSE>',
@@ -106,6 +107,7 @@ export async function buildGirlsCreationFixture(root) {
       await put(`scenes/${id}/voices/${id.startsWith('chsr') ? 'vsb' : 'vma'}_${num}_100010.m4a`, 'm4a')
       await put(`scenes/${id}/voices/vma_${num}_100020.m4a`, 'm4a')
       if (video) {
+        for (const [n, color] of [[3, 'red'], [4, 'lime'], [5, 'blue']]) await img(`scenes/${id}/animations/106041_${n}.jpg`, '64x36', color)   // FRAME_ANIM,106041,3,5,33
         const mp4 = at(`scenes/${id}/videos/esm_${num}_10.mp4`)
         await mkdir(path.dirname(mp4), { recursive: true })
         try { execFileSync('ffmpeg', ['-v', 'quiet', '-y', '-f', 'lavfi', '-i', 'color=c=crimson:s=320x180:d=2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', mp4]) } catch { await writeFile(mp4, 'mp4') }

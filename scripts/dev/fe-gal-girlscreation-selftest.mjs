@@ -131,6 +131,15 @@ try {
   await page.keyboard.press('Space'); await waitCount('3 / 3')
   await sleep(500)
   check('光秃秃的 <PAUSE> 是一个空步（点一下什么都不变）；VIDEO_STOP 之后视频背景去掉', (await text('.gal-text')) === 'Back to a still.' && await page.$eval('.gal-movie', (v) => v.hidden).catch(() => true), await text('.gal-text'))
+  {
+    const seen = new Set()
+    for (let i = 0; i < 40; i++) { seen.add(await page.evaluate(() => [...document.querySelectorAll('.gal-world > .gal-bg')].map((l) => l.style.backgroundImage).filter((v) => /106041_/.test(v)).join()).catch(() => '')); await sleep(40) }
+    const frames = [...seen].join('|').match(/106041_\d/g) || []
+    check('FRAME_ANIM：animations/106041_3..5.jpg 逐帧循环当背景（至少轮到 3 张不同的图）', new Set(frames).size === 3, J([...seen]))
+    await page.click('.gal-more-btn, [title*="更多"]').catch(() => {})
+    const fps = await page.$eval('.gal-more-number[title*="逐帧"]', (i) => i.value).catch(() => '')
+    check('「更多」里有帧动画速度（默认 30 帧/秒）', fps === '30', fps)
+  }
   // 按住 Ctrl 快进到最后：自动回列表（不是停在最后一句、也不是点不动）
   await page.goto(link(target))
   await page.waitForSelector('.gal-player .gal-stage')

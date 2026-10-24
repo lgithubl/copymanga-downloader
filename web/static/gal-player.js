@@ -24,6 +24,9 @@ export const GAL_SETTINGS = {
   fontScaleDefault: 1,
   fontScaleMin: 0.6,
   fontScaleMax: 2,
+  frameFpsKey: 'copymanga.gal.frameFps',            // 帧动画（FRAME_ANIM）每秒几帧：脚本里的速度参数不用，统一在这里设
+  frameFpsDefault: 30,
+  frameFpsMax: 60,
   slowKey: 'copymanga.gal.slow',                    // 静态画面 animation4 的降速倍率（1 = 不降速）
   slowDefault: 0.2,                                 // 原查看器写死的值
   slowMin: 0.05,
@@ -151,7 +154,15 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   slowInput.title = '动画 4 开始后 1 秒内降速到原速度的多少倍（1 = 不降速，原查看器是 0.2）'
   const slowRow = el('label', 'gal-more-field')
   slowRow.append(el('span', '', '动画4降速'), slowInput, el('span', '', '倍'))
-  moreMenu.append(immBtn, fsBtn, slowRow)
+  const fpsInput = el('input', 'gal-more-number')
+  fpsInput.type = 'number'
+  fpsInput.min = '1'
+  fpsInput.max = String(GAL_SETTINGS.frameFpsMax)
+  fpsInput.step = '1'
+  fpsInput.title = '逐帧动画（FRAME_ANIM）每秒播放几帧，循环播放；脚本里写的速度不用'
+  const fpsRow = el('label', 'gal-more-field')
+  fpsRow.append(el('span', '', '帧动画速度'), fpsInput, el('span', '', '帧/秒'))
+  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
@@ -229,6 +240,15 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     slowInput.value = String(slowFactor)
     try { localStorage.setItem(GAL_SETTINGS.slowKey, String(slowFactor)) } catch { /* 存不了就只在这一页生效 */ }
     if (spineLayer) paintSpines(false)
+  })
+  let frameFps = Math.round(loadNumber(GAL_SETTINGS.frameFpsKey, GAL_SETTINGS.frameFpsDefault, 1, GAL_SETTINGS.frameFpsMax))
+  fpsInput.value = String(frameFps)
+  fpsInput.addEventListener('change', () => {
+    const n = Math.round(Number(fpsInput.value))
+    frameFps = Number.isFinite(n) ? Math.max(1, Math.min(GAL_SETTINGS.frameFpsMax, n)) : GAL_SETTINGS.frameFpsDefault
+    fpsInput.value = String(frameFps)
+    try { localStorage.setItem(GAL_SETTINGS.frameFpsKey, String(frameFps)) } catch { /* 存不了就只在这一页生效 */ }
+    startFrames(state.bg?.frames ? layers[frontLayer] : null)
   })
   let boxOpacity = loadNumber(GAL_SETTINGS.boxOpacityKey, GAL_SETTINGS.boxOpacityDefault, 0, 1)
   let voiceDelay = loadNumber(GAL_SETTINGS.autoVoiceDelayKey, GAL_SETTINGS.autoVoiceDelayDefault, 0, GAL_SETTINGS.autoVoiceDelayMax)
@@ -389,7 +409,22 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       }
     })
   }
+  // 逐帧背景（FRAME_ANIM）：在当前前台层上循环换图，换背景 / 退出时停掉
+  let frameTimer = 0
+  function stopFrames() { clearInterval(frameTimer); frameTimer = 0 }
+  function startFrames(layer) {
+    stopFrames()
+    const frames = state.bg?.frames
+    if (!layer || !frames?.length) return
+    for (const src of frames) { const image = new Image(); image.src = url(src) }   // 预载，播放时不卡
+    let index = 0
+    frameTimer = setInterval(() => {
+      index = (index + 1) % frames.length
+      layer.style.backgroundImage = `url("${url(frames[index])}")`
+    }, 1000 / frameFps)
+  }
   function paintBg(bg, fade, instant) {
+    stopFrames()
     const next = layers[1 - frontLayer]
     const prev = layers[frontLayer]
     const seconds = instant ? 0 : fade
@@ -410,6 +445,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       prev.style.transition = 'none'
       prev.style.opacity = '0'
       frontLayer = 1 - frontLayer
+      if (bg?.frames) startFrames(layers[frontLayer])
       return
     }
     void next.offsetWidth
@@ -420,6 +456,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     // bgoff 时旧层淡出、新层本来就是透明
     else prev.style.opacity = '0'
     frontLayer = 1 - frontLayer
+    if (bg?.frames) startFrames(layers[frontLayer])
   }
 
   function paintText() {
@@ -1088,6 +1125,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     document.removeEventListener('keyup', onModUp)
     window.removeEventListener('blur', onBlur)
     clearTimeout(fastTimer)
+    stopFrames()
     clearInterval(fastLoop)
     visibility.disconnect()
     bgmAudio?.pause()

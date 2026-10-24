@@ -1,7 +1,7 @@
 // 适配器：Girls Creation R Viewer（NW.js 查看器）的剧情 → 规范场景（gal-scene/1）。
 // 目录（<root> = package.nw，所在位置记在 config.adapterOptions['girlscreation-tag'].root）：
 //   <root>/scenes/<场景 id>/script.txt            标签式脚本（每个场景都有；本适配器解析它）
-//   <root>/scenes/<场景 id>/{images,videos,voices,spines}/   这个场景自己的背景图 / 视频 / 语音 / Spine 骨骼
+//   <root>/scenes/<场景 id>/{images,videos,voices,animations,spines}/   这个场景自己的背景图 / 视频 / 语音 / Spine 骨骼
 //   <root>/scenes/<场景 id>/script_original.txt 等   游戏原始的逗号式脚本（只有部分场景有，文件名还不统一；不解析，只拿来取标题：title,<标题>,）
 //   <root>/data/audio/{bgm,se}/<名>.m4a            全局 BGM / 音效
 // 标签式脚本：一行一个 <TAG>参数（一行里可以连着几个标签），<NAME_PLATE>说话人 + 下一行起的正文 + <PAUSE> = 一句台词（一步）；正文里 [br] 是换行。
@@ -54,7 +54,7 @@ export function prepare({ options, texts, files, toResourcePath }) {
   const scenes = new Map()   // 场景 id → { id, script, thumb, images: Map(无扩展名文件名 → 资源路径), videos, voices, spines: Map }
   const audio = { bgm: new Map(), se: new Map() }
   const sceneOf = (id) => {
-    if (!scenes.has(id)) scenes.set(id, { id, script: '', thumb: '', images: new Map(), videos: new Map(), voices: new Map(), bgvoices: new Map(), spines: new Map() })
+    if (!scenes.has(id)) scenes.set(id, { id, script: '', thumb: '', images: new Map(), videos: new Map(), voices: new Map(), bgvoices: new Map(), animations: new Map(), spines: new Map() })
     return scenes.get(id)
   }
   const stem = (name) => name.replace(/\.[^.]+$/, '')
@@ -73,7 +73,7 @@ export function prepare({ options, texts, files, toResourcePath }) {
           scene.spines.get(stem(parts[2])).set(ext, toRes(rel))
           continue
         }
-        const bucket = { images: scene.images, videos: scene.videos, voices: scene.voices, bgvoices: scene.bgvoices }[parts[1]]
+        const bucket = { images: scene.images, videos: scene.videos, voices: scene.voices, bgvoices: scene.bgvoices, animations: scene.animations }[parts[1]]
         if (bucket && !bucket.has(stem(parts[2]))) bucket.set(stem(parts[2]), toRes(rel))
       }
     } else if (rel.startsWith(audioBase)) {
@@ -233,6 +233,18 @@ export function parse(text, ctx = null, meta = {}) {
           const src = res('images', a[0])
           if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src, fade: 0 }) } else { count('unresolved', `bg:${a[0]}`) }
           if (numOf(a[3], 1) !== 1 || numOf(a[4]) !== 0 || numOf(a[5]) !== 0) count('raw', 'BG(缩放/位移)')
+          break
+        }
+        case 'FRAME_ANIM': {   // FRAME_ANIM,前缀,起始帧,结束帧,速度：场景自己的 animations/<前缀>_<帧号>.jpg 逐帧循环（当背景）；第 4 项速度不用，速度在播放器「更多」里设
+          const prefix = String(a[0] || '').trim()
+          const first = Math.trunc(numOf(a[1], 1))
+          const last = Math.min(first + 599, Math.trunc(numOf(a[2], first)))
+          const frames = []
+          for (let n = first; n <= last; n += 1) { const src = res('animations', `${prefix}_${n}`); if (src) frames.push(src) }
+          if (!frames.length) { count('unresolved', `frame-anim:${prefix}`); break }
+          if (frames.length < last - first + 1) count('unresolved', `frame-anim-missing:${prefix}`)
+          if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
+          emit({ op: 'bg', src: frames[0], frames, fade: 0 })
           break
         }
         case 'BG_OUT': emit({ op: 'bgoff', fade: secs(a[0]) }); break

@@ -50,6 +50,11 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 适配器可以声明 `contextFiles(options)`（要读的文本）/ `contextDirs(options)`（要递归列文件名的目录）/ `prepare(…) → ctx`，引擎读好后把 `ctx` 传给 `parse(text, ctx)`
 （`gal/context.mjs`）：按文本文件 mtime+size、目录（自己和下一层子目录）mtime 缓存，目录里新增/删除文件马上生效，更深层的最多缓存 5 分钟；路径在 `config.adapterOptions[适配器 id]` 里配（相对媒体目录）。
 
+### Girls Creation 的 FRAME_ANIM
+
+`<FRAME_ANIM>前缀,起始帧,结束帧,速度`：场景自己的 `animations/<前缀>_<帧号>.jpg`，从起始帧到结束帧循环播放，当背景（换背景 / 退出时停）。第 4 项速度不用——速度统一在播放器「更多 → 帧动画速度」里设（帧/秒，默认 30，存在浏览器里）。
+缺的帧跳过并记 `stats.unresolved`。`SPINE_ACTOR_TRACK` 还没做（没见过它的参数格式）。
+
 ### 适配器 misttrain-json（MistTrainGirls X，Unity 剧情查看器）
 
 - 适配器认：`[null, [<场景 id>, [行…], …]]` 的位置数组（`UScenes/<id>/<id>.json`、`UScenes/Stills/<角色底号>/<id>.json`）。一行 19 项（说话人、台词、语音、背景、BGM、音效、effect、stillDetail…），

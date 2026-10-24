@@ -84,7 +84,7 @@ export function applyCommand(state, command, choices = null) {
       recordChoice(state.vars, command, choices)
       break
     case 'bg':
-      state.bg = command.src ? { src: command.src, ...(command.over ? { over: command.over } : {}) } : { color: command.color }
+      state.bg = command.src ? { src: command.src, ...(command.over ? { over: command.over } : {}), ...(Array.isArray(command.frames) && command.frames.length > 1 ? { frames: command.frames } : {}) } : { color: command.color }
       state.bgfx = null   // 换了背景，缩放 / 模糊跟着旧背景走
       break
     case 'bgoff':

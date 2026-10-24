@@ -668,6 +668,14 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const actorCmd = reorder.steps.flatMap((st) => st.commands).find((c) => c.op === 'spine')
   check('先 PLAY 后 ACTOR（槽里还没有角色，常见写法 OUT → PLAY → ACTOR）：动画先记下、角色出现时套用，不再记「没查到槽」', slotErrors.length === 0 && (actorCmd ? actorCmd.tracks.length === 2 : reorder.stats.unresolved['spine:st'] === 1), J(reorder.stats))
   {
+    const faCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', ...[3, 4, 5, 7].map((n) => `pk/scenes/c_1/animations/106041_${n}.jpg`)], toResourcePath: (r) => r })
+    const fa = gcMod.parse(['<FRAME_ANIM>106041,3,7,33', '<NAME_PLATE>A', 'hi', '<PAUSE>', '<FRAME_ANIM>nope,1,2,33', '<NAME_PLATE>A', 'x', '<PAUSE>', ''].join('\n'), faCtx, { rel: 'c_1/script.txt' })
+    const bgs = fa.steps.flatMap((st) => st.commands).filter((c) => c.op === 'bg')
+    check('FRAME_ANIM：前缀_帧号.jpg 按序取（缺的帧跳过并记 unresolved）当背景，第 4 项速度不用；一张都没有记 unresolved', bgs.length === 1 && bgs[0].frames.length === 4 && bgs[0].frames[0].endsWith('106041_3.jpg') && bgs[0].frames[3].endsWith('106041_7.jpg') && fa.stats.unresolved['frame-anim-missing:106041'] === 1 && fa.stats.unresolved['frame-anim:nope'] === 1, J(bgs) + J(fa.stats.unresolved))
+    const frameState = stateAt({ steps: [{ index: 0, commands: [{ op: 'bg', src: 'a.jpg', frames: ['a.jpg', 'b.jpg'] }] }, { index: 1, commands: [{ op: 'bg', src: 'c.jpg' }] }] }, 0, {})
+    check('引擎：bg 带 frames 记进 state.bg.frames；换背景清掉', J(frameState.bg.frames) === J(['a.jpg', 'b.jpg']) && !stateAt({ steps: [{ index: 0, commands: [{ op: 'bg', src: 'a.jpg', frames: ['a.jpg', 'b.jpg'] }] }, { index: 1, commands: [{ op: 'bg', src: 'c.jpg' }] }] }, 1, {}).bg.frames, J(frameState.bg))
+  }
+  {
     const evCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', 'pk/scenes/c_1/images/cg_a.png', 'pk/scenes/c_1/images/cg_b.png'], toResourcePath: (r) => r })
     const ev = gcMod.parse(['<EV>cg_a,IN,800,cg_b', '<BG_SCALE>1.5,2000,ease-in-out', '<EFFECT_BG_BLUR>6', '<ZOOM>1.4,0,30,-20', '<SPINE_ACTOR_SHAKE>1,0,0,500', '<NAME_PLATE>A', 'hi', '<PAUSE>', '<EV>cg_b,OUT,500,', '<EV>nope,NONE,0,', '<EV>black,NONE,0,', '<NAME_PLATE>A', 'bye', '<PAUSE>', ''].join('\n'), evCtx, { rel: 'c_1/script.txt' })
     const ops = ev.steps.flatMap((st) => st.commands)
