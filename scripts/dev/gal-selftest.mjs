@@ -659,7 +659,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const spine0 = play.scene.steps[0].commands.find((c) => c.op === 'spine')
   check('Spine 角色：槽 1 → Actor1（kind actor）；骨架 / atlas 路径是这个场景自己的 spines/（相对资源根）；位置 x=100|y=0、缩放 1；轨道 0 = 身体、轨道 1 = 表情（ex_）同时播', spine0.slot === 'Actor1' && spine0.kind === 'actor' && spine0.skel === 'scenes/chmr_40101001/spines/st4010101.skel' && spine0.atlas === 'scenes/chmr_40101001/spines/st4010101.atlas' && spine0.x === 100 && spine0.y === 0 && spine0.scale === 1 && J(spine0.tracks) === J([{ track: 0, anim: 'loop', loop: true }, { track: 1, anim: 'ex_loop', loop: true }]), J(spine0))
   const step3 = play.scene.steps[3].commands.filter((c) => c.op === 'spine')
-  check('第 4 步：槽 2 新建（同一套骨架、x=-100、joy + ex_joy + 一条不存在的第 3 轨道）、槽 1 移动（0.5 秒）；VOICE_SINGLE_PLAY → voice；SCREEN_SHAKE → shake 指令（横向，强度 0.2，0.3 秒）', step3.length === 2 && step3[0].slot === 'Actor2' && step3[0].x === -100 && step3[0].tracks.length === 3 && step3[1].slot === 'Actor1' && step3[1].move === 0.5 && step3[1].x === 0 && play.scene.steps[3].commands.some((c) => c.op === 'voice' && c.src === 'scenes/chmr_40101001/voices/vma_40101001_100020.m4a') && play.scene.steps[3].commands.some((c) => c.op === 'shake' && c.axis === 'horizontal' && c.strength === 0.2 && c.seconds === 0.3) && Object.keys(play.scene.stats.unresolved).length === 0, J([step3, play.scene.stats]))
+  check('第 4 步：槽 2 新建（同一套骨架、x=-100、joy + ex_joy + 一条不存在的第 3 轨道 + SPINE_ACTOR_TRACK 的轨道 3、带 SPINE_ACTOR_SHAKE）、槽 1 移动（0.5 秒）；VOICE_SINGLE_PLAY → voice；SCREEN_SHAKE → shake 指令（横向，强度 0.2，0.3 秒）', step3.length === 2 && step3[0].slot === 'Actor2' && step3[0].x === -100 && step3[0].tracks.length === 4 && step3[0].tracks[3].track === 3 && step3[0].tracks[3].anim === 'joy' && step3[0].shake?.x === 6 && step3[0].shake.y === 3 && step3[0].shake.seconds === 0.1 && step3[1].slot === 'Actor1' && step3[1].move === 0.5 && step3[1].x === 0 && play.scene.steps[3].commands.some((c) => c.op === 'voice' && c.src === 'scenes/chmr_40101001/voices/vma_40101001_100020.m4a') && play.scene.steps[3].commands.some((c) => c.op === 'shake' && c.axis === 'horizontal' && c.strength === 0.2 && c.seconds === 0.3) && Object.keys(play.scene.stats.unresolved).length === 0, J([step3, play.scene.stats]))
   // OUT → PLAY → ACTOR（先发播放指令、再把角色放出来）：播放指令先记下，角色出现时套用，不报「没查到槽」
   const gcMod = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
   const gcCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', 'pk/scenes/c_1/spidl.skel', 'pk/scenes/c_1/spines/st.skel'].filter((f) => f.includes('/spines/') || f.endsWith('script.txt')), toResourcePath: (r) => r })
@@ -681,6 +681,13 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     check('FRAME_ANIM：前缀_帧号.jpg 按序取（缺的帧跳过并记 unresolved）当背景，第 4 项速度不用；一张都没有记 unresolved', bgs.length === 1 && bgs[0].frames.length === 4 && bgs[0].frames[0].endsWith('106041_3.jpg') && bgs[0].frames[3].endsWith('106041_7.jpg') && fa.stats.unresolved['frame-anim-missing:106041'] === 1 && fa.stats.unresolved['frame-anim:nope'] === 1, J(bgs) + J(fa.stats.unresolved))
     const frameState = stateAt({ steps: [{ index: 0, commands: [{ op: 'bg', src: 'a.jpg', frames: ['a.jpg', 'b.jpg'] }] }, { index: 1, commands: [{ op: 'bg', src: 'c.jpg' }] }] }, 0, {})
     check('引擎：bg 带 frames 记进 state.bg.frames；换背景清掉', J(frameState.bg.frames) === J(['a.jpg', 'b.jpg']) && !stateAt({ steps: [{ index: 0, commands: [{ op: 'bg', src: 'a.jpg', frames: ['a.jpg', 'b.jpg'] }] }, { index: 1, commands: [{ op: 'bg', src: 'c.jpg' }] }] }, 1, {}).bg.frames, J(frameState.bg))
+  }
+  {
+    const fo = gcMod.parse(['<FADE_OUT2>white,800', '<EV_OUT>500', '<NAME_PLATE>A', 'x', '<PAUSE>', '<FADE_IN2>white,1000', '<FADE_OUT>red,100', '<NAME_PLATE>A', 'y', '<PAUSE>', ''].join('\n'), null, { rel: 'c_1/script.txt' })
+    const fops = fo.steps.flatMap((st) => st.commands)
+    check('FADE_OUT2,white → fade to white（保持）；EV_OUT,ms → bgoff（淡出）；别的颜色仍记 raw；FADE_IN2,white → wash', J(fops.find((c) => c.op === 'fade')) === J({ op: 'fade', to: 'white', seconds: 0.8 }) && J(fops.find((c) => c.op === 'bgoff')) === J({ op: 'bgoff', fade: 0.5 }) && fo.stats.raw.FADE_OUT === 1 && fops.some((c) => c.op === 'wash'), J(fops) + J(fo.stats.raw))
+    const white = (n) => stateAt({ steps: [{ index: 0, commands: [{ op: 'fade', to: 'white', seconds: 1 }] }, { index: 1, commands: [{ op: 'wash', color: 'white', seconds: 1 }] }] }, n, {})
+    check('引擎：fade to white 记 state.white（不动黑场）；wash 把白屏清掉', white(0).white === true && white(0).black === false && white(1).white === false, J([white(0).white, white(1).white]))
   }
   {
     const evCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', 'pk/scenes/c_1/images/cg_a.png', 'pk/scenes/c_1/images/cg_b.png'], toResourcePath: (r) => r })
@@ -889,6 +896,31 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     check('渲染诊断数据：有暂未渲染的指令的脚本卡片带 issues（show×2），没问题的不带；rawIgnore 允许的不算', J(items.find((i) => i.title === 'a').issues) === J(['暂未渲染的指令 2 条：show×2']) && items.find((i) => i.title === 'b').issues === undefined && ignored.find((i) => i.title === 'a').issues === undefined, J([items.map((i) => [i.title, i.issues]), ignored.map((i) => [i.title, i.issues])]))
   }
   void imported
+}
+
+// ================= 预乘 alpha 识别 + 资源路径大小写不敏感 =================
+{
+  const { premultipliedPixels } = await import('../../web/static/gal-spine.js')
+  const px = (n, make) => { const a = new Uint8ClampedArray(n * 4); for (let i = 0; i < n; i++) a.set(make(i), i * 4); return a }
+  // 预乘贴图：半透明像素的 RGB ≤ alpha；直通贴图：半透明边缘的 RGB 常常比 alpha 大
+  const premultiplied = px(400, (i) => (i % 3 === 0 ? [0, 0, 0, 0] : i % 3 === 1 ? [40, 20, 10, 100] : [255, 255, 255, 255]))
+  const straight = px(400, (i) => (i % 3 === 0 ? [0, 0, 0, 0] : i % 3 === 1 ? [240, 200, 180, 100] : [255, 255, 255, 255]))
+  const opaque = px(400, () => [10, 20, 30, 255])
+  const few = px(400, (i) => (i < 10 ? [40, 20, 10, 100] : [0, 0, 0, 0]))
+  check('预乘 alpha 识别：半透明像素 RGB ≤ alpha → 预乘；RGB > alpha 的很多 → 直通；全不透明 / 半透明像素太少 → 当直通（不改画法）', premultipliedPixels(premultiplied) === true && premultipliedPixels(straight) === false && premultipliedPixels(opaque) === false && premultipliedPixels(few) === false, '')
+
+  const caseDir = path.join(work, 'case-pack')
+  await mkdir(path.join(caseDir, 'Scenes', 'S1', 'Spines'), { recursive: true })
+  await writeFile(path.join(caseDir, 'Scenes', 'S1', 'Spines', 'ADV_Chara_01.png'), 'png')
+  const ch = createGalHandler({ dataDir: path.join(work, 'case-data'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) })
+  const ci = await ch.importFromSource({ sourcePath: caseDir, options: { adapters: ['uviewer-csv'], config: { resourceRoots: [''] } } })
+  const cid = ci.items[0].itemId
+  const exact = await ch.getResource(cid, 'Scenes/S1/Spines/ADV_Chara_01.png')
+  const loose = await ch.getResource(cid, 'scenes/s1/spines/adv_chara_01.PNG').catch((e) => e)
+  const none = await ch.getResource(cid, 'Scenes/S1/Spines/other.png').catch((e) => e)
+  check('资源路径大小写不敏感回退（Windows 上做的游戏，atlas 里的大小写和磁盘上不一致）：精确的照常、大小写不同的也能取到、真不存在的仍然 404', exact.body.toString() === 'png' && loose.body?.toString() === 'png' && none.statusCode === 404, J([loose.message, none.statusCode]))
+  const escape = await ch.getResource(cid, 'scenes/../../x.png').catch((e) => e)
+  check('大小写回退不放开目录穿越', escape.statusCode === 400, String(escape.statusCode))
 }
 
 // ================= misttrain：MistTrainGirls X 剧情 JSON =================

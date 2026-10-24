@@ -67,6 +67,11 @@ export function prepare({ options, texts, files, toResourcePath }) {
       if (parts.length === 2) {
         if (parts[1] === 'script.txt') scene.script = rel
         else if (/^thumbnail\.(?:png|jpe?g|webp)$/i.test(parts[1])) scene.thumb = toRes(rel)
+      } else if (parts.length === 4 && parts[1] === 'spines') {   // spines/<目录>/<文件>：骨架名 = <目录>/<文件名>（脚本里写 cast010002/momiji_002）
+        const ext = parts[3].slice(parts[3].lastIndexOf('.') + 1).toLowerCase()
+        const key = `${parts[2]}/${stem(parts[3])}`
+        if (!scene.spines.has(key)) scene.spines.set(key, new Map())
+        scene.spines.get(key).set(ext, toRes(rel))
       } else if (parts.length === 3) {
         if (parts[1] === 'spines') {   // 同名同目录的 .skel / .atlas / .png：按扩展名分开记（不然谁先到谁占位）
           const ext = parts[2].slice(parts[2].lastIndexOf('.') + 1).toLowerCase()
@@ -185,7 +190,7 @@ export function parse(text, ctx = null, meta = {}) {
       const actor = actors.get(slot)
       if (!actor) continue
       const files = scene?.spines?.get(actor.skel)
-      const skelRes = files?.get('skel') || files?.get('bytes') || ''
+      const skelRes = files?.get('skel') || files?.get('bytes') || files?.get('json') || ''
       const atlasRes = files?.get('atlas') || files?.get('txt') || ''
       if (!skelRes || !atlasRes) { count('unresolved', `spine:${actor.skel}`); continue }
       stats.spines += 1
@@ -251,8 +256,11 @@ export function parse(text, ctx = null, meta = {}) {
           break
         }
         case 'BG_OUT': emit({ op: 'bgoff', fade: secs(a[0]) }); break
+        case 'EV_OUT': emit({ op: 'bgoff', fade: secs(a[0]) }); break   // EV_OUT,毫秒：把当前 EV 背景淡出（原查看器就是 fade-out + 清掉）
         case 'FADE_OUT2': case 'FADE_OUT':
-          if (/^black$/i.test(a[0])) emit({ op: 'fade', to: 'black', seconds: secs(a[1]) }); else count('raw', tag)
+          if (/^black$/i.test(a[0])) emit({ op: 'fade', to: 'black', seconds: secs(a[1]) })
+          else if (/^white$/i.test(a[0])) emit({ op: 'fade', to: 'white', seconds: secs(a[1]) })   // 淡到白屏并保持，FADE_IN2,white 再渐退
+          else count('raw', tag)
           break
         case 'FADE_IN2': case 'FADE_IN':
           if (/^black$/i.test(a[0])) emit({ op: 'fade', to: 'clear', seconds: secs(a[1]) })

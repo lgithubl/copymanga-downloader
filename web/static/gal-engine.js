@@ -3,7 +3,7 @@
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, white: false, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -103,8 +103,12 @@ export function applyCommand(state, command, choices = null) {
     case 'bgmStop':
       state.bgm = ''
       break
-    case 'fade':
-      state.black = command.to === 'black'
+    case 'fade':   // to: black（黑场）/ clear（去掉黑场）/ white（淡到白屏并保持，FADE_OUT2,white）
+      if (command.to === 'white') state.white = true
+      else state.black = command.to === 'black'
+      break
+    case 'wash':   // 白屏渐退成透明：白屏没了
+      state.white = false
       break
     case 'movie':
       state.movie = { srcs: command.srcs, loop: Boolean(command.loop) }

@@ -9,7 +9,7 @@
 //   - 封面：config.cover（脚本写；取的时候原样返回，不缩放）
 
 import { createHash } from 'node:crypto'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
@@ -192,7 +192,31 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
         // 下一个候选
       }
     }
+    // 大小写不敏感的回退：游戏多半在 Windows 上做的，脚本 / atlas 里的名字和磁盘上的大小写可能不一致（ADV_x.png / adv_x.png），Linux 上要逐段按名字忽略大小写找
+    if (!fromMedia) {
+      for (const root of config.resourceRoots) {
+        const hit = await caseInsensitive(path.join(work, ...(root ? root.split('/') : [])), rel.split('/'))
+        if (!hit) continue
+        try {
+          const real = await realpath(hit)
+          if (real.startsWith(realWork + path.sep) && (await stat(real)).isFile()) return real
+        } catch { /* 下一个 */ }
+      }
+    }
     throw bad('资源不存在', 404)
+  }
+
+  async function caseInsensitive(base, parts) {
+    let current = base
+    for (const part of parts) {
+      let names
+      try { names = await readdir(current) } catch { return '' }
+      const lower = part.toLowerCase()
+      const name = names.includes(part) ? part : names.find((n) => n.toLowerCase() === lower)
+      if (!name) return ''
+      current = path.join(current, name)
+    }
+    return current
   }
 
   async function getResource(itemId, resourcePath) {

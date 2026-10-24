@@ -35,7 +35,7 @@ const at = (...parts) => path.join(root0, ...parts)
 const ANIMS = ['animation1', 'animation2', 'animation3', 'animation4']
 await writeSpine(at('Spines/Stills/234/223440107'), '1', { format: 'binary', color: 'goldenrod', animations: ANIMS })
 await writeSpine(at('Spines/Stills/234/223440107'), '2', { format: 'binary', color: 'crimson', animations: ANIMS })
-await writeSpine(at('Spines/Stills/234/223440107'), '3', { format: 'binary', color: 'deepskyblue', animations: ANIMS })
+await writeSpine(at('Spines/Stills/234/223440107'), '3', { format: 'json', color: 'deepskyblue', animations: ANIMS, region: { width: 100, height: 200, y: 100 } })   // 比底图小一半的一层：包围盒不一样
 await writeFile(at('Spines/Stills/234/223440107/still_configuration.json'), J({ Parts: [{ IsMosaic: false, Path: '1' }, { IsMosaic: true, Path: '2' }, { IsMosaic: false, Path: '3' }] }))
 for (const dir of ['MasterData', 'Sounds/Bgms/Adv', 'Sounds/BgSe', 'Sounds/Se', 'Sounds/Voices/Scenarios/Stills/234/234101', 'BackGrounds']) await mkdir(at(dir), { recursive: true })
 await writeFile(at('MasterData/MSceneViewModel.json'), J([{ Id: 2234401, Title: '夜の約束' }]))
@@ -102,6 +102,19 @@ await waitRes('Spines/Stills/234/223440107/3.png', 8000)
 await sleep(300)
 check('骨骼 / atlas / 图集请求成功（200），没有请求 mosaic 层 2', ['1', '3'].every((n) => resourceStatus[`Spines/Stills/234/223440107/${n}.skel.bytes`] === 200 && resourceStatus[`Spines/Stills/234/223440107/${n}.png`] === 200) && !resources.some((p) => /\/2\.skel\.bytes$/.test(p)), J(resources.filter((p) => /Spines/.test(p))))
 check('声音：BGM Sounds/Bgms/Adv/adv_03.ogg、语音按文件名在 Sounds/Voices 下找到', (await waitRes('Sounds/Bgms/Adv/adv_03.ogg')) && (await waitRes('Sounds/Voices/Scenarios/Stills/234/234101/s_223440107_001.ogg')), J(resources.filter((p) => /Sounds/.test(p))))
+// 各层共用一套变换（以最大的一层为准）：小的一层只占底图的下半、中间那半宽；不能各按各的包围盒放大到铺满
+await sleep(800)
+const px = (fx, fy) => page.evaluate(([x, y]) => {
+  const c = document.querySelector('.gal-spine')
+  const g = document.createElement('canvas'); g.width = c.width; g.height = c.height
+  const ctx = g.getContext('2d'); ctx.drawImage(c, 0, 0)
+  return [...ctx.getImageData(Math.round(x * c.width), Math.round(y * c.height), 1, 1).data]
+}, [fx, fy])
+const stageRatio = await page.$eval('.gal-spine', (c) => c.width / c.height)
+const nearColor = (rgba, [r, g, b], tol = 40) => rgba[3] > 200 && Math.abs(rgba[0] - r) <= tol && Math.abs(rgba[1] - g) <= tol && Math.abs(rgba[2] - b) <= tol
+const topLeft = await px(0.5 - 0.4 * (0.5 / stageRatio), 0.1)      // 底图的左上角附近：只有底图（金色）
+const lowLeft = await px(0.5 - 0.2 * (0.5 / stageRatio), 0.85)     // 底图的左下附近：小层的范围内，小层在上（天蓝）
+check('静态画面各层共用同一套变换：小层只占下半（上方露出底图的金色，下方是小层的天蓝），没有被放大铺满', nearColor(topLeft, [218, 165, 32]) && nearColor(lowLeft, [0, 191, 255]), J([topLeft, lowLeft]))
 await page.screenshot({ path: path.join(shotDir, '1-still.png') })
 
 await page.keyboard.press('Space')

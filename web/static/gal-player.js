@@ -467,6 +467,12 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     box.hidden = !hasText
   }
 
+  // 白屏（FADE_OUT2,white 淡到白并保持）：用闪屏那一层，保持时 opacity = 1；wash（白屏渐退）开始时先清掉它，让动画接手
+  function paintWhite(instant, seconds = 0) {
+    flashEl.style.backgroundColor = 'white'
+    flashEl.style.transition = instant || !seconds ? 'none' : `opacity ${seconds}s linear`
+    flashEl.style.opacity = state.white ? '1' : '0'
+  }
   function paintBlack(instant, seconds = 0) {
     black.style.transition = instant || !seconds ? 'none' : `opacity ${seconds}s linear`
     black.style.opacity = state.black ? '1' : '0'
@@ -530,6 +536,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (typeof flashEl.animate !== 'function') return
     flashEl.style.backgroundColor = /^[a-z]{3,20}$|^#[0-9a-f]{3,8}$/i.test(command.color || '') ? command.color : 'white'
     const ms = Math.max(50, Math.min(10000, (command.seconds || 0.3) * 1000))
+    if (command.op === 'wash') { flashEl.style.transition = 'none'; flashEl.style.opacity = '0' }
     if (command.op === 'wash') flashEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'linear' })
     else flashEl.animate([{ opacity: 0 }, { opacity: 0.9 }, { opacity: 0 }], { duration: ms, iterations: Math.max(1, Math.min(5, command.count || 1)) })
   }
@@ -546,6 +553,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     paintBgFx(false)
     paintText()
     paintBlack(true)
+    paintWhite(true)
     paintMovie(true)
     paintSpines(false)
     paintStand()
@@ -613,6 +621,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
           break
         case 'fade':
           paintBlack(skipping, seconds)
+          paintWhite(skipping, seconds)
           await sleep(seconds)
           break
         case 'wait':
@@ -672,6 +681,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       paintBg(state.bg, 0, true)
       paintBgFx(false)
       paintBlack(true)
+      paintWhite(true)
       paintCamera(false)
     }
     running = false

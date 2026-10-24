@@ -71,6 +71,31 @@ export function reportDeclaredSize(texture, size) {
 }
 
 // 一个骨架数据只加载一次（按 skel 路径缓存）。onMissing(src)：文件取不到
+// 贴图是不是预乘 alpha（Spine 导出时勾了 Premultiply Alpha）：预乘贴图里半透明像素的 RGB 都不会超过 alpha，普通（直通）贴图的半透明边缘 RGB 常常比 alpha 大。
+// 预乘贴图按普通贴图画，半透明的地方（脸颊腮红的渐变、关节接缝）就会发黑；所以要认出来，画的时候走预乘混合。rgba = ImageData 的 data（浏览器取出来时已还原成直通值，近似即可）
+export function premultipliedPixels(rgba) {
+  let semi = 0
+  let bad = 0
+  for (let i = 0; i < rgba.length; i += 4) {
+    const a = rgba[i + 3]
+    if (a === 0 || a === 255) continue
+    semi += 1
+    if (Math.max(rgba[i], rgba[i + 1], rgba[i + 2]) > a + 16) bad += 1
+  }
+  return semi >= 50 && bad / semi < 0.002
+}
+function detectPremultiplied(image) {
+  try {
+    const k = Math.min(1, 1024 / Math.max(image.naturalWidth || 1, image.naturalHeight || 1))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * k))
+    canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * k))
+    const g = canvas.getContext('2d', { willReadFrequently: true })
+    g.drawImage(image, 0, 0, canvas.width, canvas.height)
+    return premultipliedPixels(g.getImageData(0, 0, canvas.width, canvas.height).data)
+  } catch { return false }
+}
+
 export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavailable = () => {} }) {
   const canvas = document.createElement('canvas')
   canvas.className = 'gal-spine'
@@ -141,7 +166,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         const data = firstByte === 0x7b
           ? new spine.SkeletonJson(loader).readSkeletonData(JSON.parse(new TextDecoder().decode(u8)))
           : new spine.SkeletonBinary(loader).readSkeletonData(u8)
-        return { data, atlas }
+        return { data, atlas, pma: [...images.values()].some(detectPremultiplied) }
       } catch {
         onMissing(stage)
         return null
@@ -230,7 +255,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const size = new spine.Vector2()
       skeleton.getBounds(offset, size, [])
       const state = new spine.AnimationState(new spine.AnimationStateData(loaded.data))
-      Object.assign(current, { skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
+      Object.assign(current, { pma: Boolean(loaded.pma), skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
       applySpec(current, spec, live)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
@@ -268,9 +293,15 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     let px
     let py
     if (inst.spec.kind === 'still') {
-      scale = Math.min(width / w, height / h)
-      px = width / 2 - (x + w / 2) * scale
-      py = height / 2 - (y + h / 2) * scale
+      // 静态画面的各层共用同一套变换（它们在游戏里是同一个原点、同一个缩放叠在一起）：以面积最大的那一层（底图）的包围盒放进舞台，
+      // 其它层（人物、特效，包围盒更小）按同一个缩放和原点画——不能各按各的包围盒缩放居中，不然小的层会被放大、错位
+      let ref = inst.bounds
+      for (const other of instances.values()) {
+        if (other.spec?.kind === 'still' && other.bounds && other.bounds.w * other.bounds.h > ref.w * ref.h) ref = other.bounds
+      }
+      scale = Math.min(width / ref.w, height / ref.h)
+      px = width / 2 - (ref.x + ref.w / 2) * scale
+      py = height / 2 - (ref.y + ref.h / 2) * scale
     } else if (inst.spec.kind === 'actor') {
       // 角色（girlscreation，照原查看器 scene.js 的 setSpineActorPos）：x / y 是骨骼坐标系的单位（skeleton.x = x，skeleton.y = -y：y 为正 = 往下），
       // 缩放（角色缩放 × 全局 ZOOM）绕骨骼原点，不是绕包围盒中心。骨架包围盒（x, y, w, h）按 still 的方式整个放进舞台得到基准比例 fit，
@@ -338,7 +369,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       inst.state.apply(inst.skeleton)
       layout(inst, width, height)
       inst.skeleton.updateWorldTransform()
-      renderer.drawSkeleton(inst.skeleton, false)
+      renderer.drawSkeleton(inst.skeleton, Boolean(inst.pma))
     }
     renderer.end()
     if (drawn.length) kick()
