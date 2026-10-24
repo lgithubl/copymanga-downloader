@@ -106,6 +106,7 @@ try {
   await sleep(700)   // 槽 1 的移动（0.5 秒）完成
   const moved = await waitProbe({ shift: 0, half: 0.9 }, CRIMSON)
   check('第 4 步：槽 1 移动到 x=0（0.5 秒）后，原来 x=100 才碰得到的那一块（右边）不再被槽 1 覆盖', !near(await probe({ shift: 100, half: 0.97 }), CRIMSON) || moved.ok, J(moved.p))
+  check('第 4 步：BG_SCALE 1.5 + EFFECT_BG_BLUR 4：当前背景层放大 1.5 倍、模糊 4 个场景像素（按舞台高度折算）；另一层不受影响', await page.evaluate(() => { const layers = [...document.querySelectorAll('.gal-world > .gal-bg')]; const on = layers.find((l) => l.style.filter); const off = layers.find((l) => l !== on); const m = /scale\(([\d.]+)\)/.exec(on?.style.transform || ''); const h = document.querySelector('.gal-stage')?.clientHeight || 0; return Boolean(on && m && Math.abs(Number(m[1]) - 1.5) < 0.01 && Math.abs(parseFloat(on.style.filter.replace(/[^\d.]/g, '')) - 4 * h / 720) < 0.1 && !off.style.filter) }), await page.evaluate(() => [...document.querySelectorAll('.gal-world > .gal-bg')].map((l) => l.style.cssText).join(' | ')))
   // 诊断：脚本要的第 3 轨道动画骨架里没有
   await page.waitForFunction(() => /骨骼 \d+ 个|暂未渲染/.test(document.querySelector('.gal-note')?.textContent || ''), null, { timeout: 5000 }).catch(() => {})
   await page.click('.gal-note')

@@ -3,7 +3,7 @@
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, camera: null, bgse: null, bgvoices: {}, ui: true, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -84,10 +84,12 @@ export function applyCommand(state, command, choices = null) {
       recordChoice(state.vars, command, choices)
       break
     case 'bg':
-      state.bg = command.src ? { src: command.src } : { color: command.color }
+      state.bg = command.src ? { src: command.src, ...(command.over ? { over: command.over } : {}) } : { color: command.color }
+      state.bgfx = null   // 换了背景，缩放 / 模糊跟着旧背景走
       break
     case 'bgoff':
       state.bg = null
+      state.bgfx = null
       break
     case 'speaker':
       state.speaker = command.segments || []
@@ -132,6 +134,15 @@ export function applyCommand(state, command, choices = null) {
     case 'bgse':
       state.bgse = command.src ? { src: command.src, loop: Boolean(command.loop) } : null
       break
+    case 'bgScale':   // 当前背景缩放（倍数，seconds 渐变，easing 是 CSS 缓动名）
+      state.bgfx = { ...(state.bgfx || {}), scale: command.scale, seconds: command.seconds || 0, easing: command.easing || 'linear' }
+      break
+    case 'bgBlur':    // 当前背景模糊（半径，场景像素）
+      state.bgfx = { ...(state.bgfx || {}), blur: command.radius }
+      break
+    case 'bgZoom':    // 整个背景区域缩放 + 平移（ZOOM）：不跟换背景走；角色缩放另算
+      state.bgZoom = command.scale === 1 && !command.x && !command.y ? null : { scale: command.scale, x: command.x || 0, y: command.y || 0 }
+      break
     case 'bgvoice':   // 循环的背景人声（多个槽同时播）：{ slot, src, volume }
       state.bgvoices = { ...state.bgvoices, [command.slot]: { src: command.src, volume: command.volume ?? 1 } }
       break
@@ -165,7 +176,7 @@ export function commandDuration(command) {
   if (command.op === 'bg' || command.op === 'bgoff') return command.fade || 0
   if (command.op === 'fade') return command.seconds || 0
   if (command.op === 'wait') return command.seconds || 0
-  if (command.op === 'ui') return 0   // 文本框淡入淡出不等它
+  if (command.op === 'ui' || command.op === 'bgScale') return 0   // 文本框淡入淡出、背景缩放都不等它
   return 0
 }
 

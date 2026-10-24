@@ -542,6 +542,20 @@
               <label>元数据脚本
                 <div id="media-import-tag-scripts" class="tag-script-list muted">暂无元数据脚本</div>
               </label>
+              <div id="gal-preset-row" class="tag-script-config-actions" hidden>
+                <label>Gal 游戏
+                  <select id="gal-preset">
+                    <option value="uviewer">UViewer 资源包（通用）</option>
+                    <option value="legeclo">Legeclo</option>
+                    <option value="monmusu">Monmusu</option>
+                    <option value="minashigo">Minashigo</option>
+                    <option value="girlscreation">Girls Creation（maid / jaxin / Aster 等）</option>
+                    <option value="tenkeiprdx">Tenkeiprdx X</option>
+                    <option value="misttrain">MistTrainGirls X</option>
+                  </select>
+                </label>
+                <button id="gal-preset-refresh" class="secondary" type="button" title="只改下面的文本框，不保存、不请求后端；确认后点「提交」正常导入">刷新 json</button>
+              </div>
               <label class="media-import-profile-config">导入方案配置
                 <textarea id="media-import-profile-config" rows="9" spellcheck="false"></textarea>
               </label>

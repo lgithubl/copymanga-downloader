@@ -370,18 +370,38 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   let autoTimer = 0
   let auto = false
 
+  // 背景缩放 / 模糊 / 整体缩放平移（BG_SCALE / EFFECT_BG_BLUR / ZOOM）：缩放平移的单位是场景像素（1280×720），按舞台高度折算
+  function paintBgFx(live) {
+    const k = stage.clientHeight / 720
+    const zoom = state.bgZoom
+    const fx = state.bgfx
+    layers.forEach((layer, index) => {
+      const front = index === frontLayer
+      const scale = (zoom?.scale || 1) * (front && fx?.scale ? fx.scale : 1)
+      const tx = zoom ? zoom.x * k : 0
+      const ty = zoom ? zoom.y * k : 0
+      const before = layer.style.transform || 'none'
+      const after = scale !== 1 || tx || ty ? `translate(${tx.toFixed(2)}px, ${ty.toFixed(2)}px) scale(${scale.toFixed(4)})` : 'none'
+      layer.style.transform = after === 'none' ? '' : after
+      layer.style.filter = front && fx?.blur ? `blur(${(fx.blur * k).toFixed(2)}px)` : ''
+      if (live && front && fx?.scale && fx.seconds > 0 && typeof layer.animate === 'function' && before !== after) {
+        layer.animate([{ transform: before }, { transform: after }], { duration: Math.min(60, fx.seconds) * 1000, easing: /^[a-z-]+$/i.test(fx.easing || '') ? fx.easing : 'linear' })
+      }
+    })
+  }
   function paintBg(bg, fade, instant) {
     const next = layers[1 - frontLayer]
     const prev = layers[frontLayer]
     const seconds = instant ? 0 : fade
     const apply = (layer) => {
-      layer.style.backgroundImage = bg?.src ? `url("${url(bg.src)}")` : 'none'
+      layer.style.backgroundImage = bg?.src ? (bg.over ? `url("${url(bg.over)}"), url("${url(bg.src)}")` : `url("${url(bg.src)}")`) : 'none'
       layer.style.backgroundColor = bg?.color ? `rgb(${bg.color.join(',')})` : bg?.src ? '#0b0f17' : 'transparent'
     }
-    if (bg?.src) {
+    for (const src of [bg?.src, bg?.over]) {
+      if (!src) continue
       const probe = new Image()
-      probe.onerror = () => markMissing(bg.src)
-      probe.src = url(bg.src)
+      probe.onerror = () => markMissing(src)
+      probe.src = url(src)
     }
     apply(next)
     next.style.transition = 'none'
@@ -454,7 +474,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const zoomOf = (z) => (z ? 1 + (z / 1000) * 1.3 : 1)
   const cameraTransform = (pos) => {
     const unit = stage.clientHeight * 0.00165
-    return `translate(${(-(pos?.[0] || 0) * unit).toFixed(2)}px, ${((pos?.[1] || 0) * unit).toFixed(2)}px) scale(${zoomOf(pos?.[2]).toFixed(4)})`
+    const turn = Number(pos?.[3]) ? ` rotate(${(-Number(pos[3])).toFixed(2)}deg)` : ''   // 第 4 项 = 旋转度数（逆时针为正，CSS 顺时针为正所以取反）；没有就不转
+    return `translate(${(-(pos?.[0] || 0) * unit).toFixed(2)}px, ${((pos?.[1] || 0) * unit).toFixed(2)}px) scale(${zoomOf(pos?.[2]).toFixed(4)})${turn}`
   }
   function paintCamera(live) {
     const cam = state.camera
@@ -485,6 +506,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     state = stateAt(scene, i, choices)
     index = i
     paintBg(state.bg, 0, true)
+    paintBgFx(false)
     paintText()
     paintBlack(true)
     paintMovie(true)
@@ -540,7 +562,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         case 'bg':
         case 'bgoff':
           paintBg(state.bg, seconds, false)
+          paintBgFx(false)
           await sleep(seconds)
+          break
+        case 'bgScale':
+        case 'bgBlur':
+        case 'bgZoom':
+          paintBgFx(!skipping)
           break
         case 'speaker':
         case 'text':
@@ -605,6 +633,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     // 跳过时动画被截断，收尾把画面对齐到这一步该有的状态
     if (skipping) {
       paintBg(state.bg, 0, true)
+      paintBgFx(false)
       paintBlack(true)
       paintCamera(false)
     }

@@ -302,13 +302,29 @@ export function parse(text, ctx = null, meta = {}) {
           if (actors.delete(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[1]) })
           break
         }
-        case 'ZOOM': {   // ZOOM,缩放,时长,x,y：缩放 / 平移背景（背景暂不渲染，记在 stats.raw），角色缩放按上面的规则
+        case 'ZOOM': {   // ZOOM,缩放,?,x,y：背景整体缩放 + 平移（x 取反，单位场景像素），角色缩放按上面的规则
           const z = numOf(a[0], 1) || 1
           zoomScale = z
           for (const [slot, actor] of actors) { actor.scale = z; dirty.add(slot) }
-          count('raw', 'ZOOM(背景缩放/平移)')
+          emit({ op: 'bgZoom', scale: z, x: -numOf(a[2]), y: numOf(a[3]) })
           break
         }
+        case 'EV': {   // EV,图,IN|OUT|NONE,毫秒,图2：整屏 CG（图 2 叠在图上面）。IN 淡入、NONE 直接换；OUT（新 CG 淡出露出旧背景）没法用一条背景指令表达，记在 stats.raw
+          const mode = String(a[1] || '').toUpperCase()
+          if (mode === 'OUT') { count('raw', 'EV(OUT)'); break }
+          const color = /^black$/i.test(a[0]) ? [0, 0, 0] : /^white$/i.test(a[0]) ? [255, 255, 255] : null
+          const src = color ? '' : res('images', a[0])
+          const over = a[3] ? res('images', a[3]) : ''
+          if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
+          if (color) emit({ op: 'bg', color, fade: mode === 'IN' ? secs(a[2]) : 0 })
+          else if (src) emit({ op: 'bg', src, ...(over ? { over } : {}), fade: mode === 'IN' ? secs(a[2]) : 0 })
+          else count('unresolved', `ev:${a[0]}`)
+          if (a[3] && !over && !color) count('unresolved', `ev:${a[3]}`)
+          break
+        }
+        case 'BG_SCALE': emit({ op: 'bgScale', scale: numOf(a[0], 1) || 1, seconds: secs(a[1]), easing: String(a[2] || 'linear').trim() }); break   // BG_SCALE,倍数,毫秒,缓动
+        case 'EFFECT_BG_BLUR': emit({ op: 'bgBlur', radius: Math.max(0, numOf(a[0])) }); break   // EFFECT_BG_BLUR,半径（场景像素）
+        case 'SPINE_ACTOR_SHAKE': break   // 原查看器只解析参数、什么也不做
         case 'BG_VOICE': {   // BG_VOICE,槽,文件,音量：循环的背景人声（场景自己的 bgvoices/）
           const src = res('bgvoices', a[1])
           if (src) emit({ op: 'bgvoice', slot: String(Math.trunc(numOf(a[0]))), src, volume: Math.max(0, Math.min(1, numOf(a[2], 1))) }); else count('unresolved', `bgvoice:${a[1]}`)

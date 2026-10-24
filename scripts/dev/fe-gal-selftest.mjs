@@ -74,6 +74,25 @@ check('不用选文件、不用填来源路径', ui.sourceDisabled === true && u
 check('JSON 配置可见：含 rootDir / adapters / defaultMetadataActions（默认勾的元数据脚本）', /"rootDir"/.test(ui.config) && /"adapters"/.test(ui.config) && /uviewer-csv/.test(ui.config) && /"defaultMetadataActions": \[\s*"gal-layout"/.test(ui.config), ui.config)
 const ticks = await page.$$eval('input[name="media-import-tag-script"]', (is) => is.filter((i) => i.checked).map((i) => i.value))
 check('导入页：元数据脚本 gal-layout 默认勾上（来自方案的 defaultMetadataActions），别的脚本不乱勾', ticks.join() === 'gal-layout', JSON.stringify(ticks))
+// 「刷新 json」：选一个游戏 → 只改文本框（adapters + config.game），rootDir 等沿用；不发保存请求
+{
+  const posts = []
+  const onReq = (r) => { if (r.method() === 'POST' && /\/api\/config/.test(r.url())) posts.push(r.url()) }
+  page.on('request', onReq)
+  await page.fill('#media-import-profile-config', JSON.stringify({ rootDir: '/data/keep-me', adapters: ['uviewer-csv'], defaultMetadataActions: ['gal-layout'], dryRun: true }))
+  check('Gal 游戏下拉和「刷新 json」只在 Gal 导入方案里显示', await page.$eval('#gal-preset-row', (e) => !e.hidden))
+  const games = await page.$$eval('#gal-preset option', (os) => os.map((o) => o.value))
+  check('下拉里有全部支持的游戏（含 misttrain）', ['uviewer', 'legeclo', 'monmusu', 'minashigo', 'girlscreation', 'tenkeiprdx', 'misttrain'].every((g) => games.includes(g)), games.join())
+  for (const [game, adapter] of [['girlscreation', 'girlscreation-tag'], ['misttrain', 'misttrain-json'], ['monmusu', 'renpy-monmusu']]) {
+    await page.selectOption('#gal-preset', game)
+    await page.click('#gal-preset-refresh')
+    const json = JSON.parse(await page.$eval('#media-import-profile-config', (e) => e.value))
+    check(`刷新 json（${game}）：adapters / config.game.id 换成它的，rootDir / dryRun / 元数据脚本沿用`,
+      json.adapters.join() === adapter && json.config?.game?.id === game && json.rootDir === '/data/keep-me' && json.dryRun === true && json.defaultMetadataActions.join() === 'gal-layout', JSON.stringify(json))
+  }
+  page.off('request', onReq)
+  check('刷新 json 不发任何保存请求（只改前端文本框）', posts.length === 0, posts.join())
+}
 // 把 rootDir 指到要导入的目录（默认值是 /data/gal，测试机上不存在）
 await page.fill('#media-import-profile-config', JSON.stringify({ rootDir: mediaDir, maxDepth: 6, scriptExtensions: ['txt', 'csv'], adapters: ['uviewer-csv'] }))
 await page.click('#media-import-submit')

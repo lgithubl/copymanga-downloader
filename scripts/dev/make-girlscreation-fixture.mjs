@@ -39,6 +39,8 @@ const script1 = [
   '<SPINE_ACTOR_PLAY>2,nope_anim,2,true',
   '<SPINE_ACTOR_MOVE>1,0,0,500,FALSE',
   '<SCREEN_SHAKE>0,300',
+  '<BG_SCALE>1.5,100,linear',
+  '<EFFECT_BG_BLUR>4',
   '<VOICE_SINGLE_PLAY>vma_40101001_100020',
   '<NAME_PLATE>Hana',
   '"Two actors on screen."',

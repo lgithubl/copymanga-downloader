@@ -21,6 +21,7 @@ const monmusuScript = galLayoutScript
 const tenkeiScript = galLayoutScript
 import { parse as tenkeiParse, prepare as tenkeiPrepare, sniff as tenkeiSniff } from '../../web/library/gal/adapters/tenkeiprdx-json.mjs'
 import { buildMonmusuFixture, buildTenkeiFixture } from './make-gal-games-fixture.mjs'
+import { isOneShot as mtOneShot, linkedBgSe as mtLinked, parse as mtParse, prepare as mtPrepare, sniff as mtSniff, catalog as mtCatalog } from '../../web/library/gal/adapters/misttrain-json.mjs'
 import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
@@ -666,6 +667,20 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const slotErrors = Object.keys(reorder.stats.unresolved).filter((k) => k.startsWith('spine-slot'))
   const actorCmd = reorder.steps.flatMap((st) => st.commands).find((c) => c.op === 'spine')
   check('先 PLAY 后 ACTOR（槽里还没有角色，常见写法 OUT → PLAY → ACTOR）：动画先记下、角色出现时套用，不再记「没查到槽」', slotErrors.length === 0 && (actorCmd ? actorCmd.tracks.length === 2 : reorder.stats.unresolved['spine:st'] === 1), J(reorder.stats))
+  {
+    const evCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', 'pk/scenes/c_1/images/cg_a.png', 'pk/scenes/c_1/images/cg_b.png'], toResourcePath: (r) => r })
+    const ev = gcMod.parse(['<EV>cg_a,IN,800,cg_b', '<BG_SCALE>1.5,2000,ease-in-out', '<EFFECT_BG_BLUR>6', '<ZOOM>1.4,0,30,-20', '<SPINE_ACTOR_SHAKE>1,0,0,500', '<NAME_PLATE>A', 'hi', '<PAUSE>', '<EV>cg_b,OUT,500,', '<EV>nope,NONE,0,', '<EV>black,NONE,0,', '<NAME_PLATE>A', 'bye', '<PAUSE>', ''].join('\n'), evCtx, { rel: 'c_1/script.txt' })
+    const ops = ev.steps.flatMap((st) => st.commands)
+    check('EV：IN → 背景（图 + 叠加的图 2）淡入 0.8 秒；OUT 记 raw；找不到的记 unresolved；black → 纯色背景', ops.find((c) => c.op === 'bg')?.src.endsWith('cg_a.png') && ops.find((c) => c.op === 'bg').over.endsWith('cg_b.png') && ops.find((c) => c.op === 'bg').fade === 0.8 && ev.stats.raw['EV(OUT)'] === 1 && ev.stats.unresolved['ev:nope'] === 1 && ops.some((c) => c.op === 'bg' && J(c.color) === J([0, 0, 0])), J(ops.filter((c) => c.op === 'bg')) + J(ev.stats))
+    check('BG_SCALE / EFFECT_BG_BLUR / ZOOM → bgScale（倍数、秒、缓动）/ bgBlur / bgZoom（x 取反）；SPINE_ACTOR_SHAKE 原查看器什么也不做，不记 raw', J(ops.find((c) => c.op === 'bgScale')) === J({ op: 'bgScale', scale: 1.5, seconds: 2, easing: 'ease-in-out' }) && ops.find((c) => c.op === 'bgBlur').radius === 6 && J(ops.find((c) => c.op === 'bgZoom')) === J({ op: 'bgZoom', scale: 1.4, x: -30, y: -20 }) && !ev.stats.raw.SPINE_ACTOR_SHAKE && !ev.stats.raw.ZOOM, J(ops.filter((c) => /^bg(Scale|Blur|Zoom)$/.test(c.op))) + J(ev.stats.raw))
+    // 引擎：换背景清掉缩放 / 模糊，ZOOM 不跟换背景走；ZOOM 回 1 = 清掉
+    let st = stateAt({ steps: [{ index: 0, commands: [{ op: 'bg', src: 'a.png' }, { op: 'bgScale', scale: 1.5, seconds: 1 }, { op: 'bgBlur', radius: 4 }, { op: 'bgZoom', scale: 1.4, x: 5, y: 6 }] }, { index: 1, commands: [{ op: 'bg', src: 'b.png', over: 'c.png' }] }, { index: 2, commands: [{ op: 'bgZoom', scale: 1, x: 0, y: 0 }] }] }, 0, {})
+    const s0 = J([st.bg, st.bgfx?.scale, st.bgfx?.blur, st.bgZoom])
+    st = stateAt({ steps: [{ index: 0, commands: [{ op: 'bg', src: 'a.png' }, { op: 'bgScale', scale: 1.5, seconds: 1 }, { op: 'bgZoom', scale: 1.4, x: 5, y: 6 }] }, { index: 1, commands: [{ op: 'bg', src: 'b.png', over: 'c.png' }] }, { index: 2, commands: [{ op: 'bgZoom', scale: 1, x: 0, y: 0 }] }] }, 1, {})
+    const s1 = J([st.bg, st.bgfx, st.bgZoom])
+    st = stateAt({ steps: [{ index: 0, commands: [{ op: 'bgZoom', scale: 1.4, x: 5, y: 6 }] }, { index: 1, commands: [{ op: 'bgZoom', scale: 1, x: 0, y: 0 }] }] }, 1, {})
+    check('引擎：bgScale / bgBlur 记在 bgfx、bgZoom 单独记；换背景（含 over）清掉 bgfx 但留 bgZoom；ZOOM 回 1 清掉 bgZoom', s0 === J([{ src: 'a.png' }, 1.5, 4, { scale: 1.4, x: 5, y: 6 }]) && s1 === J([{ src: 'b.png', over: 'c.png' }, null, { scale: 1.4, x: 5, y: 6 }]) && st.bgZoom === null, s0 + s1)
+  }
   const media = play.scene.steps.flatMap((st) => st.commands)
   check('资源路径：BGM / 音效在全局 data/audio（相对资源根），语音在场景自己的 voices/，背景图在场景自己的 images/；循环音效走背景音效声道', media.some((c) => c.op === 'bgm' && c.src === 'data/audio/bgm/bgm30010.m4a') && media.some((c) => c.op === 'se' && c.src === 'data/audio/se/se1020001.m4a') && media.some((c) => c.op === 'bg' && c.src === 'scenes/chmr_40101001/images/abg0001.png') && play.sectionNavigation.prev === null && play.sectionNavigation.next?.title === 'chmr_40101002', J(play.sectionNavigation))
   const video = await read((await read((await read(home.items[1].node)).node.items[0].node)).node.items[0].node)
@@ -859,6 +874,82 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     check('渲染诊断数据：有暂未渲染的指令的脚本卡片带 issues（show×2），没问题的不带；rawIgnore 允许的不算', J(items.find((i) => i.title === 'a').issues) === J(['暂未渲染的指令 2 条：show×2']) && items.find((i) => i.title === 'b').issues === undefined && ignored.find((i) => i.title === 'a').issues === undefined, J([items.map((i) => [i.title, i.issues]), ignored.map((i) => [i.title, i.issues])]))
   }
   void imported
+}
+
+// ================= misttrain：MistTrainGirls X 剧情 JSON =================
+{
+  // 一行 = 位置数组（见 adapter 头注释）；detail = stillDetail
+  const row = (o = {}) => {
+    const r = [1, 1, o.speaker ?? '', o.text ?? '', 2, 3, false, null, 0, 0, o.voice ?? '', o.bg ?? '', o.bgm ?? '', o.se ?? '', '', o.effect ?? null, 0, [], o.detail ?? ['', null, null, null, null, null, null]]
+    return r
+  }
+  const scene = (rows, id = 224920105) => J([null, [id, rows, [[], [], []], false]])
+  check('sniff：[null,[<id>,[ 开头才算；对象形 / 别的 JSON / 文本不算', mtSniff('[\n  null,\n  [\n    55000405,\n    [\n      [\n') && !mtSniff('{"result":{}}') && !mtSniff('[[ "1234567", 1, 2, true, [') && !mtSniff('bg,a.jpg,0'), '')
+  check('适配器登记且 sniffGalAdapter 认得', galAdapterIds().includes('misttrain-json') && sniffGalAdapter(scene([row()])) === 'misttrain-json', J(galAdapterIds()))
+
+  const files = [
+    'UScenes/Stills/249/224920105.json', 'UScenes/55000405/55000405.json',
+    'Spines/Stills/249/224920105/1.skel.bytes', 'Spines/Stills/249/224920105/2.skel.bytes', 'Spines/Stills/249/224920105/3.skel.bytes', 'Spines/Stills/249/224920105/4.skel.bytes', 'Spines/Stills/249/224920105/10.skel.bytes',
+    'Spines/Stills/249/224920105/still_configuration.json',
+    'BackGrounds/bg_white.png', 'Sounds/Voices/Scenarios/Stills/249/249201/s_224920105_023.ogg',
+  ]
+  const texts = {
+    'Spines/Stills/249/224920105/still_configuration.json': J({ Parts: [{ IsMosaic: false, Path: '1' }, { IsMosaic: true, Path: '2' }, { IsMosaic: false, Path: '10' }, { IsMosaic: false, Path: '3' }] }),
+    'MasterData/MSceneViewModel.json': J([{ Id: 2249201, Title: '夜の約束' }, { Id: 55000404, Title: '技能：車掌' }]),
+    'MasterData/MCharacterBaseViewModel.json': J([{ Id: 249, Name: 'エスト' }]),
+  }
+  const ctx = mtPrepare({ options: {}, texts, files })
+  check('prepare：场景（含 Stills 底号）/ 静态画面目录（层数含 mosaic，按数字排序：10 在 3 后）/ 语音按文件名 / 背景索引', ctx.scenes.get('224920105').base === '249' && ctx.scenes.get('55000405').base === '' && ctx.folders.get('224920105').count === 5 && J(ctx.folders.get('224920105').bases) === J(['1', '2', '3', '4', '10']) && ctx.voices.get('s_224920105_023').endsWith('249201/s_224920105_023.ogg') && ctx.backgrounds.has('bg_white'), J([...ctx.folders]))
+
+  const text = scene([
+    row({ text: '「こんにちは<ruby=わ>和</ruby>」\\n<emoji=heart01>', speaker: 'エスト', voice: 's_224920105_023', bgm: 'adv_03', se: 'click', effect: '1', bg: 'bg_white' }),
+    row({ speaker: 'ニッコウ', detail: ['animation2', 2, null, null, null, null, null] }),          // 没台词：并进下一句
+    row({ text: '二句目', speaker: 'ニッコウ', effect: '3', detail: ['animation3', null, 0.5, 100, -50, 2, 15] }),
+    row({ text: '三句目', detail: ['animation3', null, null, null, null, null, null] }),
+    row({ text: '', detail: ['animation1', null, null, null, null, null, null] }),               // 结尾没台词：并进最后一步
+  ])
+  const r = mtParse(text, ctx, { stem: '224920105' })
+  const ops = (i) => r.steps[i].commands.map((c) => c.op)
+  check('只有带台词的行是一步；没台词的行（指令）并进下一句，结尾剩下的并进最后一步', r.steps.length === 3 && r.steps[1].commands.some((c) => c.op === 'spine' && c.anim === 'animation2' && c.speed === 2), J(r.steps.map((s) => s.commands.map((c) => c.op))))
+  const c0 = r.steps[0].commands
+  const t0 = c0.find((c) => c.op === 'text').segments
+  check('台词：\\n 换行、<ruby=读音>字</ruby> → ruby 片段、<emoji=heart01> → ♥；说话人', J(t0) === J([{ text: '「こんにちは' }, { text: '和', ruby: 'わ' }, { text: '」\n♥' }]) && c0.find((c) => c.op === 'speaker').segments[0].text === 'エスト', J(t0))
+  check('声音：BGM Sounds/Bgms/Adv、音效 Sounds/Se、语音查索引（按文件名）；背景查索引', c0.find((c) => c.op === 'bgm').src === 'Sounds/Bgms/Adv/adv_03.ogg' && c0.find((c) => c.op === 'se').src === 'Sounds/Se/click.ogg' && c0.find((c) => c.op === 'voice').src.endsWith('249201/s_224920105_023.ogg') && c0.find((c) => c.op === 'bg').src === 'BackGrounds/bg_white.png' && Object.keys(r.stats.unresolved).length === 0, J(r.stats.unresolved))
+  check('effect 1 → wash white；effect 3 → flash white', c0.some((c) => c.op === 'wash' && c.color === 'white') && r.steps[1].commands.some((c) => c.op === 'flash' && c.color === 'white'), J(c0.map((c) => c.op)))
+  const spines0 = c0.filter((c) => c.op === 'spine')
+  check('静态画面：按 still_configuration.json 的顺序叠（1、10、3；IsMosaic 的 2 默认不叠），默认 animation1 循环、slot still0..；只在第一步建', spines0.length === 3 && spines0.map((c) => c.skel.split('/').pop()).join() === '1.skel.bytes,10.skel.bytes,3.skel.bytes' && spines0.every((c) => c.kind === 'still' && c.anim === 'animation1' && c.loop === true && c.atlas.endsWith('.atlas.txt')) && spines0.map((c) => c.order).join() === '0,1,2' && r.stats.mosaicSkipped === 1, J(spines0));
+  const shown = mtPrepare({ options: { showMosaic: true }, texts, files })
+  check('adapterOptions.showMosaic 打开才叠 IsMosaic 的层', mtParse(text, shown, { stem: '224920105' }).steps[0].commands.filter((c) => c.op === 'spine').length === 4, '')
+  // 总层数 5：animation3 = 一次性 + Hse4（不循环）；animation2 速度 2 → Hse3
+  check('联动背景音效（N=5）：animation2 速度 2 → Hse3，速度 1 → Hse2；animation3 → Hse4（不循环）；animation5 → Hse1', mtLinked(5, 'animation2', 2) === 'Hse3' && mtLinked(5, 'animation2', 1) === 'Hse2' && mtLinked(5, 'animation3', 1) === 'Hse4' && mtLinked(5, 'animation5', 1) === 'Hse1' && mtLinked(5, 'animation1', 1) === '', '')
+  check('联动背景音效（N=8 / 7 / 4）与一次性动画（照 PlaySpineLinkedBgSE / ShouldPlayOneShotWithFade）', mtLinked(8, 'animation7', 1) === 'Hse4' && mtLinked(8, 'animation6', 2) === 'Hse3' && mtLinked(7, 'animation6', 1) === 'Hse4' && mtLinked(7, 'animation5', 1) === 'Hse2' && mtLinked(4, 'animation3', 1) === 'Hse4' && mtLinked(3, 'animation3', 1) === '' && mtOneShot(8, 'animation7') && mtOneShot(7, 'animation6') && mtOneShot(5, 'animation3') && !mtOneShot(8, 'animation6') && !mtOneShot(1, 'animation3'), '')
+  const bgse = (i) => r.steps[i].commands.filter((c) => c.op === 'bgse' || c.op === 'bgseStop')
+  check('N=5 的场景里：animation2 速度 2 → Hse3 循环（没台词那行并进第二步）；接着 animation3 → Hse4 不循环 + slow；结尾 animation1 → 停掉背景音效', J(bgse(1)) === J([{ op: 'bgse', src: 'Sounds/BgSe/Hse3.ogg', loop: true }, { op: 'bgse', src: 'Sounds/BgSe/Hse4.ogg', loop: false }]) && r.steps[1].commands.some((c) => c.op === 'spine' && c.anim === 'animation3' && c.loop === false && c.slow === true) && J(bgse(2)) === J([{ op: 'bgseStop' }]), J(bgse(1)) + J(bgse(2)))
+  const cam = r.steps[1].commands.find((c) => c.op === 'camera')
+  check('镜头：缩放 = 值 + 0.03；位置 ×0.84；旋转第 4 项；时长秒；from 是上一个镜头', cam && Math.abs((1 + (cam.to[2] / 1000) * 1.3) - 0.53) < 1e-9 && cam.to[0] === 84 && cam.to[1] === -42 && cam.to[3] === 15 && cam.seconds === 2 && J(cam.from) === J([0, 0, 0, 0]), J(cam))
+  // 没索引（没有 ctx）：不报错，拼默认路径
+  const bare = mtParse(scene([row({ text: 'x', voice: 'v', bg: 'b' })]), null, { stem: '1' })
+  check('没有上下文也能解析（不查索引，拼默认路径）', bare.steps.length === 1 && bare.steps[0].commands.some((c) => c.op === 'bg' && c.src === 'BackGrounds/b.png'), J(bare))
+  const odd = mtParse(scene([row({ text: 'a', effect: '2' })]), ctx, { stem: '1' })
+  check('不认识的 effect 记进 stats.raw，不乱处理', odd.stats.raw['effect:2'] === 1, J(odd.stats))
+  let bad = ''
+  try { mtParse('{"a":1}', ctx, {}) } catch (error) { bad = error.message }
+  check('不是这种格式：抛出可读的错误', /找不到场景行/.test(bad), bad)
+
+  const tree = mtCatalog(ctx)
+  const chars = tree.children.find((n) => n.id === 'chars')
+  check('列表：角色（名字查 MCharacterBaseViewModel，标题查 MSceneViewModel：场景 id = 文件名去末 2 位）/ 其它剧情（技能场景用 文件名-1）/ 全部剧情', chars.children[0].title === 'エスト' && chars.children[0].children[0].title === '夜の約束' && chars.children[0].children[0].script === 'UScenes/Stills/249/224920105.json' && tree.children.find((n) => n.id === 'other').children[0].title === '技能：車掌' && tree.children.find((n) => n.id === 'all').children.length === 2, J(tree))
+
+  // gal-layout 探测：没填 game.id 时认出 UScenes + Spines/Sounds/MasterData；写 scriptRoots / adapterOptions
+  const mt = path.join(work, 'mt', 'MistTrainGirls X')
+  for (const rel of ['UScenes/Stills/249', 'UScenes/55000405', 'Spines', 'Sounds', 'MasterData']) await mkdir(path.join(mt, rel), { recursive: true })
+  await writeFile(path.join(mt, 'UScenes/Stills/249/224920105.json'), text)
+  await writeFile(path.join(mt, 'UScenes/55000405/55000405.json'), scene([row({ text: 'x' })], 55000405))
+  const layout = await galLayoutScript({ item: { itemId: 'mt', title: 'mt', config: {}, source: { path: path.join(work, 'mt') }, adapters: ['misttrain-json'] }, script: { id: 'gal-layout', version: '2.7.0', options: {} } })
+  const mcfg = layout.itemPatch?.gal.config
+  check('gal-layout 认出 misttrain：game.id、脚本根 UScenes（多一层目录带前缀）、资源根、扩展名 json、适配器参数 root；脚本数 2', mcfg?.game?.id === 'misttrain' && mcfg.scriptRoots[0].dir === 'MistTrainGirls X/UScenes' && mcfg.resourceRoots[0] === 'MistTrainGirls X' && mcfg.scriptExtensions[0] === 'json' && mcfg.adapterOptions['misttrain-json'].root === 'MistTrainGirls X' && mcfg.scriptCount === 2, J(layout.itemPatch?.gal.config) + J(layout.logs))
+  const asTk = await galLayoutScript({ item: { itemId: 'mt', title: 'mt', config: { game: { id: 'tenkeiprdx' } }, source: { path: path.join(work, 'mt') }, adapters: ['tenkeiprdx-json'] }, script: { id: 'gal-layout', version: '2.7.0', options: {} } })
+  check('探测互不抢：声明成 tenkeiprdx 的话认不出这个目录，不乱改', !asTk.itemPatch?.gal?.config?.scriptRoots, J(asTk.itemPatch))
 }
 
 await rm(work, { recursive: true, force: true })

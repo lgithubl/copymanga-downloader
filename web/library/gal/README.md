@@ -50,6 +50,16 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 适配器可以声明 `contextFiles(options)`（要读的文本）/ `contextDirs(options)`（要递归列文件名的目录）/ `prepare(…) → ctx`，引擎读好后把 `ctx` 传给 `parse(text, ctx)`
 （`gal/context.mjs`）：按文本文件 mtime+size、目录（自己和下一层子目录）mtime 缓存，目录里新增/删除文件马上生效，更深层的最多缓存 5 分钟；路径在 `config.adapterOptions[适配器 id]` 里配（相对媒体目录）。
 
+### 适配器 misttrain-json（MistTrainGirls X，Unity 剧情查看器）
+
+- 适配器认：`[null, [<场景 id>, [行…], …]]` 的位置数组（`UScenes/<id>/<id>.json`、`UScenes/Stills/<角色底号>/<id>.json`）。一行 19 项（说话人、台词、语音、背景、BGM、音效、effect、stillDetail…），
+  字段位置和播放规则（没台词的行并进下一句、effect 1 白屏淡入 / 3 白色闪烁、联动背景音效 Hse1~4 的选法、一次性动画降速、镜头缩放 / 平移 / 旋转）都写在 `adapters/misttrain-json.mjs` 的头注释里，来自反编译的 `Assembly-CSharp.dll`。
+- 静态画面 = `Spines/**/<场景 id>/`：按 `still_configuration.json` 的 `Parts` 叠层，`IsMosaic` 的层默认不叠（`adapterOptions['misttrain-json'].showMosaic` 打开才叠）。
+- 导入页选「MistTrainGirls X」点「刷新 json」，或自己写：`adapters: ['misttrain-json']`、`config: {"game": {"id": "misttrain"}}`、勾元数据脚本 `gal-layout`。
+  脚本探测「有 `UScenes/`，同级有 `Spines` / `Sounds` / `MasterData` / `BackGrounds`」的目录（多一层自动带前缀），写：脚本根 `<数据根>/UScenes`、资源根 `<数据根>`、扩展名 `json`、适配器参数 `root`。
+- 列表（`catalog`）：角色（名字查 `MasterData/MCharacterBaseViewModel.json`，剧情标题查 `MSceneViewModel.json`，场景 id = 文件名去掉末 2 位）/ 其它剧情 / 全部剧情，每次从文件现读。
+- 没验证的（没有真机对照）：镜头位置的换算（×0.84）、effect 的时长（1 秒 / 0.3 秒 × 2）、Hse1 / 其余联动音效的循环标志。
+
 ### 适配器 renpy-monmusu-monmusu
 
 - 适配器认：`scene black|<视频别名>|<图片名> [with 转场]`、`play music/sound`、`stop music`、`voice`、`"名字" "台词"`、`pause 秒`；一句台词一步。

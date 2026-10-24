@@ -3,12 +3,13 @@
 // 这里只写「实际探测到的 / 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
 //
 // 分发：
-//   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测：uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / minashigo。认不出结构：uviewer 退回通用配置，别的跳过；不认识的 id 跳过
-//   没填 game.id                          → 按 legeclo → monmusu → girlscreation → tenkeiprdx → minashigo → uviewer 的顺序探测，谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领
+//   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测：uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo。认不出结构：uviewer 退回通用配置，别的跳过；不认识的 id 跳过
+//   没填 game.id                          → 按 legeclo → monmusu → girlscreation → tenkeiprdx → misttrain → minashigo → uviewer 的顺序探测，谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领
 // 各游戏写什么：
 //   uviewer     脚本根（text + 同级 text* 另一套）、资源根、名称文件、缩略图目录；封面 = UViewer 自己生成的缩略图 / 脚本里第一张存在的背景
 //   monmusu     脚本根 <游戏根>/script、资源根 <游戏根>、合并 hscene + hscene_still（角标 anim / still）、按角色编号分组、隐藏 sub_nav / tl、适配器参数（别名表、图片目录）、头像模板（images 里的 icon_<编号>_0_idle.*）
 //   minashigo   脚本根 <游戏根>/game/scripts、资源根 <游戏根>/game、扩展名 rpy、按角色编号分组（scene_<类别><6 位角色><序号>）、适配器参数（别名表 game/movie.rpy、立绘定义 game/script.rpy、图片目录 game/images）
+//   misttrain   脚本根 <数据根>/UScenes、资源根 <数据根>、扩展名 json、适配器参数 root（角色 / 其它剧情 / 全部剧情这些列表由适配器每次从 UScenes 和 MasterData 现读，不写进 config）
 //   tenkeiprdx  脚本根 <素材根>/scenes、资源根 <素材根>、扩展名 json、适配器参数 root（活动 / 附加 / 角色 / 全部剧情这些列表由适配器每次从数据文件现读，不写进 config）
 // 选项：
 //   dryRun          只探测和打日志，不写任何东西
@@ -20,7 +21,7 @@
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
-// 状态 tag：Gal配置: uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -552,12 +553,71 @@ async function pickCover(media, config, files) {
   return ''
 }
 
-// 探测顺序：legeclo → monmusu → girlscreation → tenkeiprdx → minashigo → uviewer（没填 game.id 时按这个顺序认领）
+// ======================================================================
+// misttrain（MistTrainGirls X，Unity 剧情查看器：UScenes/<id>/<id>.json、UScenes/Stills/<底号>/<id>.json）
+// ======================================================================
+async function detectMisttrain(media, { declared, logs }) {
+  const root = await findMisttrainRoot(media, 6)
+  if (root === null) {
+    if (declared) logs.push('没找到 UScenes/ 加 Spines|Sounds|MasterData|BackGrounds')
+    return null
+  }
+  const abs = (...rels) => path.join(media, ...splitRel(join(root, ...rels)))
+  logs.push(`misttrain 数据根：${root || '.'}${root ? '（目录里多了一层）' : ''}`)
+  const config = {
+    scriptRoots: [{ id: 'uscenes', dir: join(root, 'UScenes'), label: 'UScenes' }],
+    resourceRoots: [root],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['json'],
+    labels: {},
+    merge: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    adapterOptions: { 'misttrain-json': { root } },
+  }
+  // 列表（角色 / 其它剧情 / 全部剧情）由适配器每次从 UScenes 和 MasterData 现读，这里不写列表
+  for (const name of ['MasterData', 'Spines', 'Sounds', 'BackGrounds']) {
+    if (!(await isDir(abs(name)))) logs.push(`提示：没有 ${name}/（${{ MasterData: '角色名和剧情标题', Spines: '静态画面', Sounds: '声音', BackGrounds: '背景图' }[name]}会缺）`)
+  }
+  return {
+    id: 'misttrain',
+    kind: 'misttrain',
+    note: '',
+    config,
+    async finish(m, _config, options) {
+      const count = await countFiles(abs('UScenes'), '.json', options.countCap, 4)
+      logs.push(`剧情 JSON ${count} 个${count ? '' : '——结构可能不对，可以用 overrides 覆盖 scriptRoots'}`)
+      return { count, cover: '' }
+    },
+  }
+}
+
+// 广度优先找「有 UScenes/，并且同级有 Spines|Sounds|MasterData|BackGrounds」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
+async function findMisttrainRoot(media, maxDepth) {
+  const queue = [{ rel: '', depth: 0 }]
+  while (queue.length) {
+    const { rel, depth } = queue.shift()
+    let entries
+    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
+    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+    if (dirs.has('UScenes') && ['Spines', 'Sounds', 'MasterData', 'BackGrounds'].some((name) => dirs.has(name))) return rel
+    if (depth >= maxDepth) continue
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
+    }
+  }
+  return null
+}
+
+// 探测顺序：legeclo → monmusu → girlscreation → tenkeiprdx → misttrain → minashigo → uviewer（没填 game.id 时按这个顺序认领）
 const GAMES = [
   { id: 'legeclo', detect: detectLegeclo },   // 先于 monmusu：目录结构相似，靠 legeclo 的标记区分
   { id: 'monmusu', detect: detectMonmusu },
   { id: 'girlscreation', detect: detectGirlsCreation },   // 先于 tenkeiprdx：都有 scenes/，这个靠 <场景>/script.txt + data/audio 认
   { id: 'tenkeiprdx', detect: detectTenkeiprdx },
+  { id: 'misttrain', detect: detectMisttrain },   // UScenes/ 加 Spines|Sounds|MasterData；没有 scenes/，和 tenkeiprdx 不会混
   { id: 'minashigo', detect: detectMinashigo },
   { id: 'uviewer', detect: detectUviewerGame },
 ]

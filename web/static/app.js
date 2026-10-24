@@ -193,6 +193,9 @@ const els = {
   mediaImportProfileConfig: document.querySelector('#media-import-profile-config'),
   mediaImportProfileConfigSave: document.querySelector('#media-import-profile-config-save'),
   mediaImportProfileConfigReset: document.querySelector('#media-import-profile-config-reset'),
+  galPresetRow: document.querySelector('#gal-preset-row'),
+  galPreset: document.querySelector('#gal-preset'),
+  galPresetRefresh: document.querySelector('#gal-preset-refresh'),
   mediaImportSubmit: document.querySelector('#media-import-submit'),
   archiveJobPanel: document.querySelector('#archive-job-panel'),
   archiveJobStatus: document.querySelector('#archive-job-status'),
@@ -2421,6 +2424,27 @@ function currentMediaImportProfileConfig() {
   }
 }
 
+// Gal 导入页的「游戏」预设：选一个游戏点「刷新 json」，把它的 adapters + config.game 填进方案 JSON 文本框（只动前端文本框，
+// rootDir / dryRun / defaultMetadataActions 沿用文本框里现有的）。新增支持的游戏时在这里加一行，并在 index.html 的 #gal-preset 里加 option。
+const GAL_PRESETS = {
+  uviewer: { adapters: ['uviewer-csv'], game: { id: 'uviewer', title: 'UViewer 资源包' } },
+  legeclo: { adapters: ['renpy-legeclo'], game: { id: 'legeclo', title: 'Legeclo' } },
+  monmusu: { adapters: ['renpy-monmusu'], game: { id: 'monmusu', title: 'Monmusu' } },
+  minashigo: { adapters: ['renpy-minashigo'], game: { id: 'minashigo', title: 'Minashigo' } },
+  girlscreation: { adapters: ['girlscreation-tag'], game: { id: 'girlscreation', title: 'Girls Creation' } },
+  tenkeiprdx: { adapters: ['tenkeiprdx-json'], game: { id: 'tenkeiprdx', title: 'Tenkeiprdx X' } },
+  misttrain: { adapters: ['misttrain-json'], game: { id: 'misttrain', title: 'MistTrainGirls X' } },
+}
+function refreshGalPresetJson() {
+  const preset = GAL_PRESETS[els.galPreset.value]
+  if (!preset) return
+  let current
+  try { current = JSON.parse(els.mediaImportProfileConfig.value || '{}') } catch (error) { return alert(`导入方案配置不是合法的 JSON，先改对再刷新：${error.message}`) }
+  const { config: oldConfig, ...rest } = current && typeof current === 'object' ? current : {}
+  const config = { ...(oldConfig && typeof oldConfig === 'object' && !Array.isArray(oldConfig) ? oldConfig : {}), game: { ...preset.game } }
+  els.mediaImportProfileConfig.value = JSON.stringify({ ...rest, adapters: [...preset.adapters], config }, null, 2)
+}
+
 const JSON_CONFIG_PROFILES = new Set(['rj-media', 'archive-gallery', 'lrr-init', 'gal-import'])
 
 function renderMediaImportProfileConfig() {
@@ -2430,6 +2454,7 @@ function renderMediaImportProfileConfig() {
   els.mediaImportProfileConfig.closest('label').hidden = !supported
   els.mediaImportProfileConfigSave.hidden = !supported
   els.mediaImportProfileConfigReset.hidden = !supported
+  els.galPresetRow.hidden = key !== 'gal-import'
   if (!supported) {
     els.mediaImportProfileConfig.value = ''
     return
@@ -7976,6 +8001,7 @@ els.mediaImportProfileConfigSave.addEventListener('click', async () => {
     alert(`导入方案配置无效：${error.message}`)
   }
 })
+els.galPresetRefresh.addEventListener('click', refreshGalPresetJson)
 els.mediaImportProfileConfigReset.addEventListener('click', async () => {
   try {
     const key = els.mediaImportProfile.value
