@@ -159,6 +159,20 @@ if (E) {
     check('minashigo 播放页：立绘（图集裁剪部件）/ 说话人（$ name=）/ 语音（voice2）/ 背景；立绘图集能取', play.scene.adapter === 'renpy-minashigo' && ops.some((c) => c.op === 'stand' && c.parts.length === 2 && c.parts[0].crop) && ops.some((c) => c.op === 'speaker' && c.segments[0]?.text === 'ワーテルロー') && ops.some((c) => c.op === 'voice') && ops.some((c) => c.op === 'bg' && c.src === 'images/bg/bg5000604.jpg') && (await resource(MG, 'images/stand/302201stand_a.png')).status === 200, J(play.scene.stats))
   }
 
+  const LG = galItems.find((i) => i.title === 'legeclo演示')
+  check('媒体库里有 legeclo 演示媒体', Boolean(LG))
+  if (LG) {
+    const full = await waitScript(LG)
+    check('legeclo：adapter renpy-legeclo / game.id legeclo；脚本 gal-layout 跑过（游戏根 game/，脚本根 script/hscene）；脚本数 4；标签 Gal游戏: legeclo', J(full.adapters) === J(['renpy-legeclo']) && full.config.game?.id === 'legeclo' && full.config.script?.id === 'gal-layout' && full.config.resourceRoots?.[0] === 'game' && full.config.scriptRoots?.[0]?.dir === 'game/script/hscene' && full.scriptCount === 4 && (full.tags || []).includes('Gal游戏: legeclo'), J([full.adapters, full.config.game, full.config.scriptRoots, full.scriptCount, full.tags]))
+    const home = await readerNode(LG, '')
+    check('legeclo 首页：按角色分组（demo_hero 两个脚本、other_one 一个、角色 id 带下划线的也能分），有头像', J(home.node.items.map((i) => [i.title, i.subtitle])) === J([['demo_hero', '2 项'], ['long_name_with_parts', '1 项'], ['other_one', '1 项']]) && home.node.items.filter((i) => i.thumb).length === 2, J(home.node.items.map((i) => [i.title, i.thumb])))
+    const group = await readerNode(LG, home.node.items.find((i) => i.title === 'demo_hero').node)
+    const play = await readerNode(LG, group.node.items[0].node)
+    const lops = play.scene.steps.flatMap((s) => s.commands)
+    check('legeclo 播放页：整张立绘（stand，路径相对游戏根）/ 语音 / BGM / 旁白；at left / right 带 align；视频别名在另一个脚本里', play.scene.adapter === 'renpy-legeclo' && lops.some((c) => c.op === 'stand' && c.parts[0].src === 'images/sprite/demo_hero_smile.png') && lops.some((c) => c.op === 'voice') && lops.some((c) => c.op === 'bgm') && lops.some((c) => c.op === 'stand' && c.parts.some((p) => p.align === 'left') && c.parts.some((p) => p.align === 'right')), J(play.scene.stats))
+    check('legeclo 资源：立绘图、背景图、头像都能取', (await resource(LG, 'images/sprite/demo_hero_smile.png')).status === 200 && (await resource(LG, 'images/bg/ab_007_room.jpg')).status === 200 && (await resource(LG, home.node.items[0].thumb)).status === 200)
+  }
+
   const TK = galItems.find((i) => i.title === 'tenkeiprdx演示')
   check('媒体库里有 tenkeiprdx 演示媒体', Boolean(TK))
   if (TK) {

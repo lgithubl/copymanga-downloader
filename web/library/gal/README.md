@@ -163,6 +163,19 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 - **config.rawIgnore**：正则字符串列表（不分大小写，最多 50 条，非法的丢掉）。播放器里「N 条指令暂未渲染」不计入匹配的指令（匹配指令名和 `指令名,参数…`）；节点 `rawIgnore` 带给前端。`gal-layout` 脚本有同名选项（全局值），某个媒体要单独的用 `overrides[].config.rawIgnore`。点右下角的提示可展开诊断面板（按指令名汇总 + 样例 + 缺资源 + Spine 状态），可一键复制。
 - **「更多」菜单**：沉浸 / 全屏收在「更多」里（浏览层和播放器都是，快捷键 I / F 不变）；沉浸按钮不再高亮。播放到最后一步且有下一章时，工具栏出现「继续下一章 ▶」。
 
+## legeclo（Ren'Py，label H_<角色>_<编号>）
+
+- **独立的 adapter `renpy-legeclo`**（`adapters/renpy-legeclo.mjs`），上下文（视频别名表 + 图片目录自动命名）复用 monmusu 的，解析自己写：
+  - sniff：`label H_xxx:`（大写 H + 下划线）+ `$ enable_skip()` 或 `play voice "…"`；monmusu 的 label 是 `h<数字>`，不会被它认走；两个都允许时 legeclo 的脚本归 legeclo。
+  - `scene <图片名> [with 转场]`：先查视频别名 → 图片目录（`images/` 下的文件按无扩展名的文件名自动命名）；名字里带 `black` 的当黑底（那张黑图不当背景图、也不会被拿去当缩略图）。
+  - `show <立绘图名> [at left|right|center]`：立绘 = `images/sprite/` 下的**一整张图**（表情各是一个文件）→ `stand` 指令（单个部件、无裁剪）；不同的图名是不同的 tag，同时显示（和 Ren'Py 一样）；`hide <图名>` 去掉；`scene` 清掉所有立绘。`at left / right / center` → 部件的 `align`，立绘层给每个有 align 的部件各自独立摆放（底边对齐、水平贴左 / 居中 / 贴右）。
+  - `play music / voice / sound`、`stop music fadeout (n)`、`"名字" "台词"` / `"" "旁白"`、`pause`、`with Dissolve(n)` 同 monmusu；`$ …`（python）、`hide screen …`、`stop voice` 忽略。
+  - 不处理：翻译叠加（`tl/jptoen`、`tl/jptocn` 里的 `translate` 块）；只有 `.rpyc` 没有 `.rpy` 的脚本（编译产物，读不了）。
+- **目录**：`game/script/hscene/<角色>_<编号>.rpy`（角色 id 可以带下划线，如 `agnes_boulanger_02`）、`game/script/movie.rpy`（视频别名）、`game/images/{bg,sprite,thumbnail/char,mo}`、`game/audio/{bgm,voice}`。`script/nav/` 里是导航界面，不是剧情。
+- **`gal-layout` 探测**：目录结构和 monmusu 很像（都有 `script/hscene`、`script/movie.rpy`），所以靠名字区分：`options.rpy` 里有 `legeclo`，或游戏根旁边有 `legeclo_py.*`（启动器）；声明了 `game.id: legeclo` 的不要求这个标记。探测顺序 legeclo → monmusu → …。
+  - 脚本根直接是 `game/script/hscene`，资源根 `game/`；按 `^(.+)_\d{2}$` 分组（去掉末尾两位编号 = 角色）；头像模板 `images/thumbnail/char/st_{name}_idle.png` 和 `st_{name}.png`（名字不统一，两种都试）；脚本封面 = 脚本里第一张真正的背景图。
+  - 导入：`adapters: ['renpy-legeclo']` + `config.game.id: 'legeclo'`。
+
 ## minashigo（Ren'Py，MinashigoViewer）
 
 - **独立的 adapter `renpy-minashigo`**（`adapters/renpy-minashigo.mjs`），和 `renpy-monmusu` 互不影响：sniff 要求这个格式独有的写法（`$ name= "…"` 或 `xyz "…"`），monmusu 的脚本不会被它认走；两个都允许时 minashigo 的脚本归 minashigo、monmusu 的脚本归 monmusu。导入时填 `adapters: ['renpy-minashigo']` + `config.game.id: 'minashigo'`，`gal-layout` 脚本按 `game.id` 或目录结构（`game/scripts/` + `game/script.rpy` 里的 `DynamicCharacter("name")`）认出它。

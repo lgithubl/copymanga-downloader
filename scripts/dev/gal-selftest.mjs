@@ -10,7 +10,9 @@ import { DEFAULT_GAL_CONFIG, applyGalConfigPatch, cleanGalConfigRaw, expandTempl
 import { safeRelPath } from '../../web/library/gal/paths.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { parse as minashigoParse, prepare as minashigoPrepare, sniff as minashigoSniff } from '../../web/library/gal/adapters/renpy-minashigo.mjs'
+import { buildLegecloFixture } from './make-legeclo-fixture.mjs'
 import { buildMinashigoFixture } from './make-minashigo-fixture.mjs'
+import { parse as legecloParse, prepare as legecloPrepare, sniff as legecloSniff } from '../../web/library/gal/adapters/renpy-legeclo.mjs'
 import { parse as renpyParse, prepare as renpyPrepare, renpyText, sniff as renpySniff } from '../../web/library/gal/adapters/renpy-monmusu.mjs'
 import { execFileSync } from 'node:child_process'
 const monmusuScript = galLayoutScript
@@ -577,6 +579,45 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   check('资源：背景 / 立绘图集 / 语音 / bgm 相对游戏根能取；目录穿越被拒', (await handler.getResource(it.itemId, 'images/bg/bg5000604.jpg')).contentType === 'image/jpeg' && (await handler.getResource(it.itemId, 'images/stand/302201stand_a.png')).contentType === 'image/png' && (await handler.getResource(it.itemId, 'audio/voices/fav302201/fav302201_02_01.mp3')).contentType === 'audio/mpeg' && Boolean(await err(handler.getResource(it.itemId, '../x'))), '')
   const ev = await read('s:scene_ev059_00_02.rpy')
   check('图片查不到的 scene：raw + unresolved，不崩', ev.scene.stats.unresolved.missing_image === 1 && ev.scene.steps.length === 2, J(ev.scene.stats))
+}
+
+// ================= legeclo（Ren'Py，label H_<角色>_<编号>）：整张立绘 / 黑图 / 旁白 / 探测不抢 monmusu =================
+{
+  const lg = path.join(work, 'lg-pack')
+  await buildLegecloFixture(lg)
+  const sample = await readFile(path.join(lg, 'game/script/hscene/demo_hero_02.rpy'), 'utf8')
+  const monmusuSample = 'label h10001A1:\n    scene black\n    voice "audio/voice/10001/a1.mp3"\n    "Ann" "first line"\n    jump hanim\n'
+  check('sniff 隔离：legeclo 认 label H_xxx + $ enable_skip() / play voice；monmusu 的脚本它不认；两个都允许时 legeclo 的脚本归 legeclo、monmusu 的归 monmusu', legecloSniff(sample) && !legecloSniff(monmusuSample) && !legecloSniff('label H_x:\n    scene black\n') && sniffGalAdapter(sample, ['renpy-legeclo', 'renpy-monmusu']) === 'renpy-legeclo' && sniffGalAdapter(monmusuSample, ['renpy-legeclo', 'renpy-monmusu']) === 'renpy-monmusu' && sniffGalAdapter(sample, ['renpy-monmusu']) === 'renpy-monmusu')
+  const files = ['game/images/bg/ab_997_black.jpg', 'game/images/bg/ab_007_room.jpg', 'game/images/sprite/demo_hero_smile.png', 'game/images/sprite/demo_hero_normal.png', 'game/images/sprite/other_one_normal.png']
+  const ctx = legecloPrepare({ texts: { 'game/script/movie.rpy': await readFile(path.join(lg, 'game/script/movie.rpy'), 'utf8') }, files, toResourcePath: (rel) => rel.replace(/^game\//, '') })
+  const r = legecloParse(sample, ctx)
+  const ops = (i) => r.steps[i].commands.map((c) => c.op).join(',')
+  check('解析：一句台词一步（旁白也算）；black 那张黑图是黑底、不当背景图；$ / hide screen / stop voice 忽略；背景 / bgm / 立绘 / voice 归到它前面的步里', r.steps.length === 4 && ops(0) === 'bgmStop,bg,bg,bgm,voice,stand,speaker,text' && r.steps[0].commands[1].color?.join() === '0,0,0' && r.steps[0].commands[1].fade === 0.5 && r.steps[0].commands[2].src === 'images/bg/ab_007_room.jpg' && r.stats.raw['$'] === undefined && r.stats.raw.hide === undefined && r.stats.raw.stop === undefined, J(r.steps.map((_, i) => ops(i))))
+  check('立绘：show 整张图 → stand（单个部件、没有 crop）；hide 去掉（下一步 standOff）；旁白清掉说话人；\\n 换行', J(r.steps[0].commands[5]) === J({ op: 'stand', parts: [{ src: 'images/sprite/demo_hero_smile.png' }] }) && r.steps[0].commands[7].segments[0].text === 'First line.\nSecond row.' && ops(1) === 'standOff,speaker,text' && r.steps[1].commands[1].segments.length === 0, J(r.steps[1].commands))
+  check('多个立绘：不同的图名是不同的 tag，同时显示；at left / right → align；查不到的立绘记 unresolved、不崩', J(r.steps[2].commands.find((c) => c.op === 'stand')) === J({ op: 'stand', parts: [{ src: 'images/sprite/demo_hero_normal.png', align: 'right' }, { src: 'images/sprite/other_one_normal.png', align: 'left' }] }) && r.stats.unresolved['show missing_sprite'] === 1 && !r.steps[3].commands.some((c) => c.op === 'stand'), J(r.stats))
+  const video = legecloParse('label H_x:\n    $ enable_skip()\n    scene hs_demo_hero_mo_0202 with Dissolve(0.5)\n    "A" "b"\n    scene ab_007_room\n    "A" "c"\n', ctx)
+  check('视频别名 → movie（循环）；之后换回静图先 movieOff', J(video.steps[0].commands[0]) === J({ op: 'movie', srcs: ['images/mo/hs_demo_hero_mo_0202.webm'], loop: true }) && video.steps[1].commands[0].op === 'movieOff', J(video.steps.map((st) => st.commands.map((c) => c.op))))
+
+  // 导入 + 脚本探测：legeclo 和 monmusu 目录结构相似，没声明 game.id 时靠 legeclo 的标记认出来
+  const imp = await handler.importFromSource({ sourcePath: lg, options: { adapters: ['renpy-legeclo'], config: { game: { id: 'legeclo', title: 'Legeclo Test' } }, defaultMetadataActions: ['gal-layout'] } })
+  const item = imp.items[0]
+  const out = await galLayoutScript({ item, script: { id: 'gal-layout', version: '2.5.0', options: {} } })
+  const cfg = out.itemPatch.gal.config
+  check('legeclo 脚本：游戏根（game/）、脚本根 = script/hscene、资源根 = game、按「去掉末尾 _<两位编号>」分组、适配器参数（别名表 / 图片目录）、头像模板（带 _idle 和不带都试）', cfg.game.id === 'legeclo' && cfg.scriptRoots[0].dir === 'game/script/hscene' && J(cfg.resourceRoots) === J(['game']) && cfg.groups[0].pattern === '^(.+)_\\d{2}$' && J(cfg.adapterOptions['renpy-legeclo']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }) && J(cfg.dirThumbs[0].paths) === J(['images/thumbnail/char/st_{name}_idle.png', 'images/thumbnail/char/st_{name}.png']) && cfg.scriptCount === 4 && /Gal游戏: legeclo/.test(out.itemTags.join()), J(cfg))
+  const none = await galLayoutScript({ item: { ...item, config: {} }, script: { id: 'gal-layout', version: '2.5.0', options: {} } })
+  const mmFx = path.join(work, 'lg-vs-mm')
+  await buildMonmusuFixture(mmFx)
+  const mmAuto = await galLayoutScript({ item: { ...item, config: {}, source: { path: mmFx } }, script: { id: 'gal-layout', version: '2.5.0', options: {} } })
+  check('探测不抢：没填 game.id 时 legeclo 的目录认成 legeclo（靠 legeclo_py / options.rpy 里的名字）；monmusu 的目录仍然认成 monmusu', none.itemPatch?.gal.config.game.id === 'legeclo' && mmAuto.itemPatch?.gal.config.game.id === 'monmusu', J([none.itemPatch?.gal.config.game, mmAuto.itemPatch?.gal.config.game]))
+  await handler.patchItemMetadata(item.itemId, { gal: out.itemPatch.gal })
+  const it = await handler.getItem(item.itemId)
+  const read = (sectionId) => handler.getReaderContent(it.itemId, 'main', { sectionId })
+  const home = (await read('')).node
+  check('首页：按角色分组成卡片（demo_hero 两个脚本、other_one 一个、long_name_with_parts 一个——角色 id 带下划线）；只有 .rpyc 的脚本、txt、翻译目录不出现；头像按模板找（带 _idle 的、不带的都行；没有图的角色没头像）', J(home.items.map((i) => [i.title, i.subtitle])) === J([['demo_hero', '2 项'], ['long_name_with_parts', '1 项'], ['other_one', '1 项']]) && home.items.every((i) => i.type === 'dir') && home.items.find((i) => i.title === 'long_name_with_parts').thumb === '' && home.items.find((i) => i.title === 'demo_hero').thumb === 'images/thumbnail/char/st_demo_hero_idle.png' && home.items.find((i) => i.title === 'other_one').thumb === 'images/thumbnail/char/st_other_one.png', J(home.items))
+  const group = (await read(home.items.find((i) => i.title === 'demo_hero').node)).node
+  check('分组页：两个脚本（自然序）；封面 = 脚本里第一张真正的背景图（黑图不算）；面包屑 首页 › demo_hero', J(group.items.map((i) => i.title)) === J(['demo_hero_02', 'demo_hero_03']) && group.items[0].thumb === 'images/bg/ab_007_room.jpg' && J(group.breadcrumb.map((c) => c.title)) === J(['首页', 'demo_hero']) && group.parent === '', J(group.items))
+  const play = await read(group.items[0].node)
+  check('播放页：立绘路径相对游戏根；上一话 / 下一话只在这个角色的分组里；父节点 = 分组', play.node.kind === 'player' && play.scene.adapter === 'renpy-legeclo' && play.scene.steps.flatMap((st) => st.commands).some((c) => c.op === 'stand' && c.parts[0].src === 'images/sprite/demo_hero_smile.png') && play.sectionNavigation.prev === null && play.sectionNavigation.next?.title === 'demo_hero_03' && play.node.parent === group.id, J([play.sectionNavigation, play.node.parent, group.id]))
 }
 
 // ================= tenkeiprdx：adapter + 新指令 + 脚本索引 + 脚本 =================

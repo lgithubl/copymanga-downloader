@@ -44,9 +44,10 @@ for (let i = 0; i < 60; i++) { full = await (await fetch(`${base}/api/library/it
 check('导入 + gal-layout：adapter renpy-minashigo、game.id minashigo、脚本跑过、脚本数 5', full.adapters?.[0] === 'renpy-minashigo' && full.config?.game?.id === 'minashigo' && full.config?.script?.id === 'gal-layout' && full.scriptCount === 5, JSON.stringify([full.adapters, full.config?.game, full.scriptCount]))
 const reader = async (sectionId) => (await (await fetch(`${base}/api/library/items/gal/${itemId}/reader/main?sectionId=${encodeURIComponent(sectionId)}`)).json())
 const home = await reader('')
-const group = await reader(home.node.items.find((i) => i.title === '302201').node)
+const chars = await reader(home.node.items.find((i) => i.title === '角色').node)
+const group = await reader(chars.node.items.find((i) => i.title === '302201').node)
 const target = group.node.items.find((i) => i.title === 'scene_130220102').node
-const evNode = home.node.items.find((i) => i.title === 'scene_ev059_00_02').node
+const evNode = 's:scene_ev059_00_02.rpy'   // 活动分类里（按活动号分组）的脚本，直接用节点 id
 
 const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
@@ -64,7 +65,7 @@ const near = (px, want) => px && want.every((v, i) => Math.abs(px[i] - v) <= 12)
 
 await page.goto(link(''))
 await page.waitForSelector('.gal-browse .gal-card')
-check('首页：同角色归成一张卡片（302201）、主线 / 活动脚本照常列出', (await page.$$('.gal-card.is-dir')).length === 2 && (await page.$$('.gal-card.is-script')).length === 2)
+check('首页：角色 / 活动 / 主线 三个分类，脚本不再平铺在首页', (await page.$$('.gal-card.is-dir')).length === 3 && (await page.$$('.gal-card.is-script')).length === 0)
 await page.screenshot({ path: path.join(shotDir, 'home.png') })
 
 await page.goto(link(target))

@@ -2,12 +2,14 @@
 // 造「别的游戏」的 Gal 演示 / 测试数据（合成的，只有结构，没有原作内容）：
 //   monmusu（Ren'Py 播放器）：<根>/game/script/hscene、hscene_still、movie.rpy、导航界面、images、audio
 //   tenkeiprdx（Unity 剧情查看器素材）：见 make-spine-fixture.mjs
-//   node scripts/dev/make-gal-games-fixture.mjs <输出根目录>     → <根>/monmusu演示、<根>/tenkeiprdx演示
+//   legeclo（Ren'Py 播放器，写法和 monmusu 不同）、minashigo：见 make-legeclo-fixture.mjs / make-minashigo-fixture.mjs
+//   node scripts/dev/make-gal-games-fixture.mjs <输出根目录>     → <根>/monmusu演示、<根>/tenkeiprdx演示、<根>/minashigo演示、<根>/legeclo演示
 // 需要 ImageMagick。
 import { execFileSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildLegecloFixture } from './make-legeclo-fixture.mjs'
 import { buildMinashigoFixture } from './make-minashigo-fixture.mjs'
 import { buildTenkeiFixture } from './make-spine-fixture.mjs'
 
@@ -61,5 +63,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const tenkei = await buildTenkeiFixture(path.join(out, 'tenkeiprdx演示'))
   await addArrayScene(tenkei.imported || path.join(out, 'tenkeiprdx演示'))
   await buildMinashigoFixture(path.join(out, 'minashigo演示'))
-  console.log(`done: ${out}/monmusu演示, ${out}/tenkeiprdx演示, ${out}/minashigo演示`)
+  await buildLegecloFixture(path.join(out, 'legeclo演示'))
+  console.log(`done: ${out}/monmusu演示, ${out}/tenkeiprdx演示, ${out}/minashigo演示, ${out}/legeclo演示`)
 }

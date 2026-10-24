@@ -3,8 +3,8 @@
 // 这里只写「实际探测到的 / 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
 //
 // 分发：
-//   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测：uviewer / monmusu / tenkeiprdx / minashigo。认不出结构：uviewer 退回通用配置，别的跳过；不认识的 id 跳过
-//   没填 game.id                          → 按 monmusu → tenkeiprdx → minashigo → uviewer 的顺序探测，谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领
+//   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测：uviewer / legeclo / monmusu / tenkeiprdx / minashigo。认不出结构：uviewer 退回通用配置，别的跳过；不认识的 id 跳过
+//   没填 game.id                          → 按 legeclo → monmusu → tenkeiprdx → minashigo → uviewer 的顺序探测，谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领
 // 各游戏写什么：
 //   uviewer     脚本根（text + 同级 text* 另一套）、资源根、名称文件、缩略图目录；封面 = UViewer 自己生成的缩略图 / 脚本里第一张存在的背景
 //   monmusu     脚本根 <游戏根>/script、资源根 <游戏根>、合并 hscene + hscene_still（角标 anim / still）、按角色编号分组、隐藏 sub_nav / tl、适配器参数（别名表、图片目录）、头像模板（images 里的 icon_<编号>_0_idle.*）
@@ -20,7 +20,7 @@
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
-// 状态 tag：Gal配置: uviewer / monmusu / tenkeiprdx / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: uviewer / legeclo / monmusu / tenkeiprdx / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -103,6 +103,73 @@ export async function generateTags(ctx) {
     itemPatch: { gal: { config, replace: options.replace }, ...(title ? { title } : {}) },
     logs,
     details: { game: found.id || '', kind: found.kind, scripts: result.count, cover, overrides: applied, version },
+  }
+}
+
+// ======================================================================
+// legeclo（Ren'Py）：game/script/hscene/<角色>_<编号>.rpy，和 monmusu 的目录结构很像（都有 script/hscene、script/movie.rpy），
+// 所以靠名字区分：options.rpy 里写着 legeclo，或者游戏根旁边有 legeclo_py.*（启动器）。声明了 game.id 的不要求这个标记。
+// ======================================================================
+async function hasLegecloMarker(media, base) {
+  try {
+    const text = (await readFile(path.join(media, ...splitRel(join(base, 'options.rpy'))))).subarray(0, 32768).toString('utf8')
+    if (/legeclo/i.test(text)) return true
+  } catch { /* 没有 options.rpy */ }
+  // 游戏根（game 的上一层）里有 legeclo_py.exe / .py / .sh；base 在媒体目录最上层（media 本身就是 game）时看 media 的上一层读不到，所以也看 media 自己
+  for (const dir of [join(base ? base.split('/').slice(0, -1).join('/') : '', ''), '']) {
+    try { if ((await readdir(path.join(media, ...splitRel(dir)))).some((name) => /^legeclo/i.test(name))) return true } catch { /* 下一个 */ }
+  }
+  return false
+}
+
+async function detectLegeclo(media, { declared, logs }) {
+  const hit = await findDir(media, ['script', 'hscene'], 6)
+  if (!hit) {
+    if (declared) logs.push('没找到 script/hscene')
+    return null
+  }
+  const base = hit.split('/').slice(0, -2).join('/')   // …/game
+  if (!declared && !(await hasLegecloMarker(media, base))) return null   // 没声明又没有 legeclo 的标记：多半是 monmusu，让它去认
+  const hasMovie = await isFile(path.join(media, ...splitRel(join(base, 'script/movie.rpy'))))
+  const config = {
+    // 脚本根直接是 script/hscene：首页就是按角色分组的卡片（<角色>_<编号> → 角色）
+    scriptRoots: [{ id: 'hscene', dir: join(base, 'script/hscene'), label: '日文' }],
+    resourceRoots: [base],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['rpy'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    views: [],
+    // 角色 id 可能带下划线（agnes_boulanger、andromeda_and_cassiopeia）：去掉末尾的 _<两位编号>
+    groups: [{ parent: '.', pattern: '^(.+)_\\d{2}$' }],
+    scriptThumbs: [],
+    adapterOptions: { 'renpy-legeclo': { aliasFiles: hasMovie ? [join(base, 'script/movie.rpy')] : [], imageDirs: [join(base, 'images')] } },
+  }
+  logs.push(`legeclo 游戏根：${base || '.'}${base ? '（目录里多了一层）' : ''}${hasMovie ? '' : '；没有 script/movie.rpy（视频别名表）'}`)
+  logs.push('脚本根 script/hscene；按角色分组（<角色>_<编号>）；只读 .rpy（只有 .rpyc 的读不了）；翻译（tl/）暂不叠加')
+  // 角色头像：images/thumbnail/char/st_<角色>_idle.png 或 st_<角色>.png（名字不统一，两种都试）
+  const icon = await findFirstFile(path.join(media, ...splitRel(join(base, 'images/thumbnail/char'))), /^st_.+?(?:_idle)?\.(png)$/i, 30000)
+  let cover = ''
+  if (icon) {
+    config.dirThumbs = [{ parent: '*', name: '^.+$', paths: ['images/thumbnail/char/st_{name}_idle.png', 'images/thumbnail/char/st_{name}.png'] }]   // 相对资源根（游戏根）
+    cover = `images/thumbnail/char/${icon.file}`
+    logs.push(`头像模板：${config.dirThumbs[0].paths.join(' | ')}`)
+  } else {
+    config.dirThumbs = []
+    logs.push('没找到 images/thumbnail/char/st_*.png：角色卡片没有头像')
+  }
+  return {
+    id: 'legeclo',
+    kind: 'legeclo',
+    note: '',
+    config,
+    async finish(m, _config, options) {
+      const count = await countFiles(path.join(m, ...splitRel(join(base, 'script/hscene'))), '.rpy', options.countCap, 8)
+      logs.push(`脚本 ${count} 个${count ? '' : '——结构可能不对，可以用 overrides 覆盖 scriptRoots'}`)
+      return { count, cover }
+    },
   }
 }
 
@@ -427,8 +494,9 @@ async function pickCover(media, config, files) {
   return ''
 }
 
-// 探测顺序：monmusu → tenkeiprdx → minashigo → uviewer（没填 game.id 时按这个顺序认领）
+// 探测顺序：legeclo → monmusu → tenkeiprdx → minashigo → uviewer（没填 game.id 时按这个顺序认领）
 const GAMES = [
+  { id: 'legeclo', detect: detectLegeclo },   // 先于 monmusu：目录结构相似，靠 legeclo 的标记区分
   { id: 'monmusu', detect: detectMonmusu },
   { id: 'tenkeiprdx', detect: detectTenkeiprdx },
   { id: 'minashigo', detect: detectMinashigo },
