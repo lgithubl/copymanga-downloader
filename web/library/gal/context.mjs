@@ -3,7 +3,8 @@
 //   contextFiles(options) → [相对媒体目录的文件]   要读的文本文件（变了就重新生成上下文）
 //   contextDirs(options)  → [相对媒体目录的目录]   要递归列文件名的目录
 //   contextTextFilter(options) → (rel) => boolean   可选：files 里匹配的文件读开头 24KB 放进 texts（最多 3000 个）
-//   prepare({ options, texts, files, toResourcePath }) → ctx    texts = { 相对路径: 文本 }，files = 目录里的文件相对路径数组
+//   contextWalkLimit（数字，适配器属性）  目录索引最多收多少个文件，默认 6 万、封顶 50 万；超了会被截断（truncated = true 传给 prepare，并打日志）
+//   prepare({ options, texts, files, toResourcePath, truncated }) → ctx    texts = { 相对路径: 文本 }，files = 目录里的文件相对路径数组
 // parse(text, ctx) 拿到 ctx。options 来自 config.adapterOptions[适配器 id]，路径类参数在这里统一过 safeRelPath。
 // 上下文按（文本文件 mtime+size）缓存；目录：自己和下一层子目录的 mtime 一变就重建（新增文件马上能看到），更深的最多缓存 5 分钟。
 import { open, readdir, readFile, stat } from 'node:fs/promises'
@@ -13,6 +14,7 @@ import { decodeTextFile } from '../text-decode.mjs'
 
 const MAX_CONTEXT_TEXT = 32 * 1024 * 1024
 const MAX_WALK_FILES = 60000
+const MAX_WALK_FILES_CEILING = 500000   // 适配器用 contextWalkLimit 要更多时的封顶
 const MAX_WALK_DEPTH = 6
 const MAX_SAMPLE_FILES = 3000
 const SAMPLE_BYTES = 24 * 1024
@@ -21,15 +23,17 @@ const cache = new Map()   // key → { fileKey, builtAt, ctx }
 
 const cleanRels = (list) => (Array.isArray(list) ? list : []).map(safeRelPath).filter((rel) => rel).slice(0, 10)
 
-async function walk(mediaDir, rel, depth, out) {
-  if (depth > MAX_WALK_DEPTH || out.length >= MAX_WALK_FILES) return
+// out = 文件数组；limit = 最多收多少个文件；超过的丢掉，并把 out.truncated 置 true（让适配器 / 日志知道索引不全，不是默默少几个场景）
+async function walk(mediaDir, rel, depth, out, limit = MAX_WALK_FILES) {
+  if (depth > MAX_WALK_DEPTH) return
+  if (out.length >= limit) { out.truncated = true; return }
   let entries
   try { entries = await readdir(path.join(mediaDir, ...rel.split('/')), { withFileTypes: true }) } catch { return }
   for (const entry of entries) {
     if (entry.name.startsWith('.') || entry.name.includes('|') || entry.name.includes('#')) continue
     const child = `${rel}/${entry.name}`
-    if (entry.isDirectory()) await walk(mediaDir, child, depth + 1, out)
-    else if (entry.isFile() && out.length < MAX_WALK_FILES) out.push(child)
+    if (entry.isDirectory()) await walk(mediaDir, child, depth + 1, out, limit)
+    else if (entry.isFile()) { if (out.length < limit) out.push(child); else out.truncated = true }
   }
 }
 
@@ -70,7 +74,9 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
     } catch { /* 没有这个文件：适配器按没有处理 */ }
   }
   const files = []
-  for (const rel of dirRels) await walk(mediaDir, rel, 0, files)
+  const walkLimit = Math.min(MAX_WALK_FILES_CEILING, Math.max(MAX_WALK_FILES, Number(adapter.contextWalkLimit) || 0))
+  for (const rel of dirRels) await walk(mediaDir, rel, 0, files, walkLimit)
+  if (files.truncated) console.warn(`[gal] ${adapter.id}：${mediaDir} 的文件索引超过上限 ${walkLimit} 个，被截断（部分场景 / 资源会找不到）`)
   // 磁盘上的相对路径（相对媒体目录）→ 脚本/资源接口认的路径（相对第一个匹配的资源根）
   const roots = [...config.resourceRoots].filter(Boolean).sort((a, b) => b.length - a.length)
   const toResourcePath = (rel) => {
@@ -96,7 +102,7 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
       } catch { /* 读不了就当没有 */ }
     }
   }
-  const ctx = await adapter.prepare({ options, texts, files, toResourcePath })
+  const ctx = await adapter.prepare({ options, texts, files, toResourcePath, truncated: Boolean(files.truncated) })
   if (cache.size > 200) cache.clear()
   cache.set(key, { fileKey, builtAt: Date.now(), ctx })
   return ctx

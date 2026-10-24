@@ -898,6 +898,35 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   void imported
 }
 
+async function gcMod0Prepare({ truncated }) {
+  const mod = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
+  const ctx = mod.prepare({ options: { root: 'pk' }, texts: { 'pk/scenes/chmr_1/script.txt': '<NAME_PLATE>A\nhi\n<PAUSE>\n' }, files: ['pk/scenes/chmr_1/script.txt'], toResourcePath: (r) => r, truncated })
+  return { cat: mod.catalog(ctx), parse: mod.parse('<NAME_PLATE>A\nhi\n<PAUSE>\n', ctx, { rel: 'chmr_1/script.txt' }) }
+}
+
+// ================= 目录索引上限：默认 6 万个文件会截断（并标记），适配器放宽后是完整的 =================
+{
+  const { loadAdapterContext } = await import('../../web/library/gal/context.mjs')
+  const big = path.join(work, 'walk-big')
+  await mkdir(path.join(big, 'd'), { recursive: true })
+  for (let g = 0; g < 61; g++) {
+    await mkdir(path.join(big, 'd', `g${g}`), { recursive: true })
+    await Promise.all(Array.from({ length: 1000 }, (_, i) => writeFile(path.join(big, 'd', `g${g}`, `f${i}.txt`), '')))
+  }
+  const stub = (extra = {}) => ({ id: 'walk-stub', contextDirs: () => ['d'], prepare: ({ files, truncated }) => ({ n: files.length, truncated }), ...extra })
+  const config = { adapterOptions: {}, resourceRoots: [] }
+  const warn = console.warn
+  const warned = []
+  console.warn = (...a) => warned.push(a.join(' '))
+  const cut = await loadAdapterContext({ adapter: stub(), mediaDir: big, config })
+  console.warn = warn
+  const full = await loadAdapterContext({ adapter: stub({ id: 'walk-stub-2', contextWalkLimit: 100000 }), mediaDir: big, config })
+  check('目录索引上限：默认 6 万个文件，61000 个文件被截断（truncated = true、打日志）；适配器 contextWalkLimit 放宽后完整、不截断', cut.n === 60000 && cut.truncated === true && warned.some((m) => /被截断/.test(m)) && full.n === 61000 && full.truncated === false, J([cut, full, warned.length]))
+  check('Girls Creation 适配器放宽了上限（几百个场景 × 几百个文件）', galAdapter('girlscreation-tag').contextWalkLimit >= 300000, String(galAdapter('girlscreation-tag').contextWalkLimit))
+  const gcTrunc = await gcMod0Prepare({ truncated: true })
+  check('索引被截断时：列表分类的副标题带警告、解析时记 unresolved', /截断/.test(JSON.stringify(gcTrunc.cat)) && Object.keys(gcTrunc.parse.stats.unresolved).some((k) => /截断/.test(k)), J(gcTrunc.parse.stats.unresolved))
+}
+
 // ================= 预乘 alpha 识别 + 资源路径大小写不敏感 =================
 {
   const { premultipliedPixels } = await import('../../web/static/gal-spine.js')

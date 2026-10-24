@@ -47,7 +47,7 @@ export function sniff(text) {
   return /^<NAME_PLATE>/m.test(head) && /^<PAUSE>/m.test(head)
 }
 
-export function prepare({ options, texts, files, toResourcePath }) {
+export function prepare({ options, texts, files, toResourcePath, truncated = false }) {
   const root = rootOf(options)
   const toRes = toResourcePath || ((rel) => rel)
   const scenesBase = `${joinPath(root, 'scenes')}/`
@@ -108,7 +108,7 @@ export function prepare({ options, texts, files, toResourcePath }) {
     info.set(id, { title, speaker })
   }
   const categoryLabels = { ...(options?.categoryLabels && typeof options.categoryLabels === 'object' ? options.categoryLabels : {}) }
-  return { root, scenes, audio, info, categoryLabels }
+  return { root, scenes, audio, info, categoryLabels, truncated }
 }
 
 // ---------- 列表 ----------
@@ -135,7 +135,7 @@ export function catalog(ctx) {
     return {
       id: `c/${category}`,
       title: ctx.categoryLabels[category] || category,
-      subtitle: `${count} 个剧情 · ${ordered.length} 位`,
+      subtitle: `${count} 个剧情 · ${ordered.length} 位${ctx.truncated ? ' · ⚠ 文件索引被截断，场景可能不全' : ''}`,
       thumb: ctx.scenes.get(ordered[0][1][0])?.thumb || '',
       children: ordered.map(([who, ids]) => ({
         id: `c/${category}/${who}`,
@@ -179,6 +179,7 @@ export function parse(text, ctx = null, meta = {}) {
   const scene = ctx?.scenes?.get(sceneId) || null
   const stats = { commands: 0, raw: {}, unresolved: {}, movies: 0, spines: 0 }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
+  if (ctx?.truncated) count('unresolved', '文件索引被截断（超过上限）：这个场景的资源可能找不到')
   const emit = (command) => { commands.push(command) }
   let zoomScale = 1          // 全局 ZOOM：之后放出来的角色缩放 = 角色自己的缩放 × zoomScale；已经在场的角色缩放直接变成 zoomScale（原查看器就是这么做的）
   const waiting = new Map() // 槽 → 角色还没出现时先收到的动画
@@ -382,4 +383,6 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps, stats }
 }
 
-export const girlsCreationTagAdapter = { id: ADAPTER_ID, label: 'Girls Creation 查看器（标签式脚本）', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }
+// 一个场景几百个文件（图 / 语音 / 骨骼…），几百个场景轻松超过默认的 6 万；要全部建索引就得放宽上限（见 context.mjs 的 contextWalkLimit）
+export const contextWalkLimit = 400000
+export const girlsCreationTagAdapter = { id: ADAPTER_ID, contextWalkLimit, label: 'Girls Creation 查看器（标签式脚本）', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }
