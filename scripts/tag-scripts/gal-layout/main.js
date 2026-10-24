@@ -156,11 +156,12 @@ async function detectMonmusu(media, { declared, game, logs }) {
     ['^r18_(\\d{5})_stla1_idle\\.(?:png|webp|jpe?g)$', '{1}C1'], ['^r18_(\\d{5})_stlb1_idle\\.(?:png|webp|jpe?g)$', '{1}D1'],
     ['^r18_(\\d{5})_stlc1_idle\\.(?:png|webp|jpe?g)$', '{1}E1'], ['^r18_(\\d{5})_stld1_idle\\.(?:png|webp|jpe?g)$', '{1}F1'],
   ]
+  // 菜单按钮图可能分散在 images 的几个子目录里（icon / thumbnail / event …）：整棵树扫一遍，每条规则对每个含匹配文件的目录各配一条 scriptIndex
   config.scriptIndex = []
-  for (const [pattern, key] of coverRules) {
-    const hit = await findFirstFile(path.join(media, ...splitRel(join(base, 'images'))), new RegExp(pattern.replace('(?:png|webp|jpe?g)', '(png|webp|jpe?g)')), 30000)
-    if (hit) config.scriptIndex.push({ dir: join(base, 'images', hit.dir), pattern, key, badge: '' })
-  }
+  const hits = await findDirsWithFiles(path.join(media, ...splitRel(join(base, 'images'))), coverRules.map(([pattern]) => new RegExp(pattern)), 30000)
+  coverRules.forEach(([pattern, key], i) => {
+    for (const dir of hits[i]) config.scriptIndex.push({ dir: join(base, 'images', dir), pattern, key, badge: '' })
+  })
   logs.push(config.scriptIndex.length ? `脚本封面：${config.scriptIndex.length} 条规则（动画 / 静图卡片用菜单按钮图）` : '没找到菜单按钮图（<编号>_01_idle / r18_<编号>_stla1_idle）：动画 / 静图卡片没有封面')
   return {
     id: 'monmusu',
@@ -485,6 +486,24 @@ async function findFirstFile(rootAbs, re, cap) {
   return walk('', 0)
 }
 const sortName2 = (a, b) => sortName(a.name, b.name)
+
+// 在 rootAbs 下（深度 ≤ 4）扫文件名，返回每个正则各自命中的目录（相对 rootAbs，根 = ''）。最多看 cap 个条目
+async function findDirsWithFiles(rootAbs, regexes, cap) {
+  const hits = regexes.map(() => new Set())
+  let seen = 0
+  async function walk(rel, depth) {
+    if (depth > 4 || seen >= cap) return
+    let entries
+    try { entries = await readdir(path.join(rootAbs, ...splitRel(rel)), { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (++seen > cap) return
+      if (entry.isFile()) regexes.forEach((re, i) => { if (re.test(entry.name)) hits[i].add(rel) })
+      else if (entry.isDirectory() && !entry.name.startsWith('.') && SAFE_SEGMENT.test(entry.name)) await walk(join(rel, entry.name), depth + 1)
+    }
+  }
+  await walk('', 0)
+  return hits.map((set) => [...set].sort())
+}
 
 // 在 root 下（深度 ≤ maxDepth）找依次是 names 的目录链，返回相对 root 的路径
 async function findDir(root, names, maxDepth) {
