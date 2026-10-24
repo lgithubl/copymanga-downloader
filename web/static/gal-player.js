@@ -497,11 +497,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // Spine：第一次要画骨骼时才建 canvas / 加载运行时；运行时不在就提示，不影响别的
   let spineLayer = null
   let spineUnavailable = false
+  const unavailableRuntimes = new Set()   // 缺哪几个版本的运行时
+  const spineErrors = new Map()           // 骨骼路径 → { kind: version|parse, version, runtime, message }（文件都取到了但不能用）
   function paintSpines(live) {
     const any = Object.keys(state.spines).length > 0
     if (!spineLayer && !any) return
     if (!spineLayer) {
-      spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: () => { spineUnavailable = true; updateNote() } })
+      spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
     spineLayer.set(state.spines, { live, slow: slowFactor }).then(() => { if (!destroyed) updateNote() })
@@ -711,6 +713,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     const parts = []
     if (rawIgnored) parts.push(`立绘/特效等 ${rawIgnored} 条指令暂未渲染`)
     if (spineUnavailable) parts.push('Spine 运行时缺失：立绘/动画未渲染')
+    const badVersion = [...spineErrors.values()].filter((e) => e.kind === 'version').length
+    const badParse = [...spineErrors.values()].filter((e) => e.kind === 'parse').length
+    if (badVersion) parts.push(`Spine 版本不支持 ${badVersion} 个`)
+    if (badParse) parts.push(`Spine 骨骼解析失败 ${badParse} 个`)
     if (missing.size) parts.push(`缺少资源 ${missing.size} 个`)
     if (!parts.length && spineLayer?.info?.().length) parts.push(`骨骼 ${spineLayer.info().length} 个（点开看明细 / 复制日志）`)
     note.textContent = parts.join(' · ')
@@ -928,12 +934,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       for (const sample of g.samples) lines.push(`    步 ${sample.step}：${sample.args}`)
     }
     if (rawAllow.length) lines.push(`rawIgnore：${(reader.node.rawIgnore || []).join('  |  ')}`)
-    if (spineUnavailable) lines.push('Spine 运行时缺失：立绘/动画未渲染')
+    if (spineUnavailable) lines.push(`Spine 运行时缺失：立绘/动画未渲染${unavailableRuntimes.size ? `（缺 ${[...unavailableRuntimes].join(' / ')}）` : ''}`)
     const spineInfo = spineLayer?.info?.() || []
     if (spineInfo.length) {
       lines.push(`Spine 骨架 ${spineInfo.length} 个（当前画面）：`)
       for (const item of spineInfo) {
-        lines.push(`  [${item.slot}] ${item.kind} ${item.skel}${item.loaded ? '' : '（还没加载好 / 加载失败）'}`)
+        lines.push(`  [${item.slot}] ${item.kind} ${item.skel}${item.loaded ? '' : item.error ? '（加载失败）' : '（还没加载好）'}`)
+        lines.push(`    识别：Spine ${item.version || '未知版本'} → ${item.runtime ? `运行时 ${item.runtime}` : item.error ? '没有对应的运行时' : '（加载中）'}`)
+        if (item.error) lines.push(`    ${item.errorKind === 'version' ? '版本不对' : item.errorKind === 'parse' ? '解析失败' : '原因'}：${item.error}`)
         if (item.loaded) {
           lines.push(`    动画：要 ${item.requested || '（未指定）'} → 实际 ${item.used || '（无）'}${item.requested && item.requested !== item.used ? '  ← 名字对不上，退到了别的' : ''}`)
           if (item.missingAnimations?.length) lines.push(`    骨架里没有这些动画（脚本要的）：${item.missingAnimations.join(', ')}  ← 这些轨道没播`)

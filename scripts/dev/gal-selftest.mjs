@@ -675,6 +675,11 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     check('SPINE_ACTOR_SHAKE 槽,x,y,时长：随角色的 spine 指令带 shake（id 每次不同，时长按 60 = 1 秒折；30 → 0.5 秒）；槽里没角色时记 raw', sp[0].shake.x === 15 && sp[0].shake.y === 5 && sp[0].shake.seconds === 1 && sp[1].shake.seconds === 0.5 && sp[1].shake.id !== sp[0].shake.id && tr.stats.raw['SPINE_ACTOR_SHAKE(槽里没有角色)'] === 1 && !tr.stats.raw.SPINE_ACTOR_TRACK, J(sp.map((c) => c.shake)) + J(tr.stats.raw))
   }
   {
+    // 新版数据：有的场景没有 script.txt，标签式脚本叫 output_script.txt（同目录还有逗号式的 hmr_<id>.txt，标题取自它）；两个都有时 script.txt 优先
+    const osCtx = gcMod.prepare({ options: { root: 'pk' }, texts: { 'pk/scenes/chmr_2/output_script.txt': '<NAME_PLATE>凪\nhi\n<PAUSE>\n', 'pk/scenes/chmr_2/hmr_2.txt': 'fade,out,black,0.5\ntitle,花火が作る影に,\n' }, files: ['pk/scenes/chmr_1/script.txt', 'pk/scenes/chmr_1/output_script.txt', 'pk/scenes/chmr_2/output_script.txt', 'pk/scenes/chmr_2/hmr_2.txt', 'pk/scenes/chmr_3/hmr_3.txt'], toResourcePath: (r) => r })
+    check('场景脚本：没有 script.txt 的场景用 output_script.txt（script.txt 优先）；两个都没有的目录不算场景；标题取自同目录的 hmr 文件、说话人取自 output_script.txt', osCtx.scenes.get('chmr_1').script === 'pk/scenes/chmr_1/script.txt' && osCtx.scenes.get('chmr_2').script === 'pk/scenes/chmr_2/output_script.txt' && !osCtx.scenes.has('chmr_3') && osCtx.info.get('chmr_2').title === '花火が作る影に' && osCtx.info.get('chmr_2').speaker === '凪', J([...osCtx.scenes.keys()]) + J(osCtx.info.get('chmr_2')))
+  }
+  {
     const faCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', ...[3, 4, 5, 7].map((n) => `pk/scenes/c_1/animations/106041_${n}.jpg`)], toResourcePath: (r) => r })
     const fa = gcMod.parse(['<FRAME_ANIM>106041,3,7,33', '<NAME_PLATE>A', 'hi', '<PAUSE>', '<FRAME_ANIM>nope,1,2,33', '<NAME_PLATE>A', 'x', '<PAUSE>', ''].join('\n'), faCtx, { rel: 'c_1/script.txt' })
     const bgs = fa.steps.flatMap((st) => st.commands).filter((c) => c.op === 'bg')
@@ -902,6 +907,40 @@ async function gcMod0Prepare({ truncated }) {
   const mod = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
   const ctx = mod.prepare({ options: { root: 'pk' }, texts: { 'pk/scenes/chmr_1/script.txt': '<NAME_PLATE>A\nhi\n<PAUSE>\n' }, files: ['pk/scenes/chmr_1/script.txt'], toResourcePath: (r) => r, truncated })
   return { cat: mod.catalog(ctx), parse: mod.parse('<NAME_PLATE>A\nhi\n<PAUSE>\n', ctx, { rel: 'chmr_1/script.txt' }) }
+}
+
+// ================= gal-layout：只有 output_script.txt 的场景也数进去 =================
+{
+  const osMedia = path.join(work, 'gc-output-script')
+  for (const rel of ['package.nw/scenes/s1', 'package.nw/scenes/s2', 'package.nw/scenes/s3', 'package.nw/data/audio/bgm']) await mkdir(path.join(osMedia, rel), { recursive: true })
+  await writeFile(path.join(osMedia, 'package.nw/scenes/s1/script.txt'), '<NAME_PLATE>A\nhi\n<PAUSE>\n')
+  await writeFile(path.join(osMedia, 'package.nw/scenes/s2/output_script.txt'), '<NAME_PLATE>A\nhi\n<PAUSE>\n')
+  await writeFile(path.join(osMedia, 'package.nw/scenes/s3/hmr_3.txt'), 'title,x,\n')   // 都没有：不算
+  const out = await galLayoutScript({ item: { itemId: 'os', title: 'os', config: {}, source: { path: osMedia }, adapters: ['girlscreation-tag'] }, script: { id: 'gal-layout', version: '2.7.0', options: {} } })
+  check('gal-layout（Girls Creation）：script.txt 或 output_script.txt 都算场景（3 个目录里 2 个有），目录没有脚本的不算', out.itemPatch?.gal.config.game.id === 'girlscreation' && out.itemPatch.gal.config.scriptCount === 2, J(out.itemPatch?.gal.config) + J(out.logs))
+}
+
+// ================= Spine 版本识别 =================
+{
+  const { detectSpineVersion, countPremultiplied, isPremultipliedCount, SPINE_RUNTIMES } = await import('../../web/static/gal-spine.js')
+  // 二进制头：3.8 = hash 字符串 + 版本字符串（长度 + 1 的单字节前缀）；4.x = 8 字节 hash + 版本字符串
+  const str = (text) => [text.length + 1, ...Buffer.from(text, 'latin1')]
+  const bin38 = Uint8Array.from([...str('ozJXdzphhw8/Q2CH+oV0ZaZlg6M'), ...str('3.8.99'), 0, 0, 0, 0])
+  const bin40 = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, ...str('4.0.64'), ...str('Chara'), ...str('Cheek')])
+  const bin42 = Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2, ...str('4.2.38'), ...str('./images/'), ...str('./audio')])
+  const bin41 = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, ...str('4.1.55')])
+  const bin37 = Uint8Array.from([...str('abcdef'), ...str('3.7.94')])
+  const json = (v) => Buffer.from(`  {"skeleton":{"hash":"x","spine":"${v}","x":-1,"y":0,"width":2,"height":3},"bones":[]}`)
+  const d = (b) => detectSpineVersion(b)
+  check('版本识别：二进制 3.8（hash 字符串 + 版本）→ 3.8.99 / 运行时 3.8；4.0（8 字节 hash + 版本，后面跟着 Chara / Cheek）→ 4.0.64 / 4.0；4.2 → 4.2.38 / 4.2', J(d(bin38)) === J({ format: 'binary', version: '3.8.99', runtime: '3.8' }) && J(d(bin40)) === J({ format: 'binary', version: '4.0.64', runtime: '4.0' }) && J(d(bin42)) === J({ format: 'binary', version: '4.2.38', runtime: '4.2' }), J([d(bin38), d(bin40), d(bin42)]))
+  check('版本识别：JSON（skeleton.spine）；前面有空白也行', J(d(json('4.2.38'))) === J({ format: 'json', version: '4.2.38', runtime: '4.2' }) && d(json('3.8.75')).runtime === '3.8' && d(json('4.0.12')).runtime === '4.0', J([d(json('4.2.38')), d(json('4.0.12'))]))
+  check('版本识别：不支持的版本（4.1 / 3.7 / 4.3）认出版本号但 runtime 为空；认不出的（乱码 / 没有版本）版本为空', d(bin41).version === '4.1.55' && d(bin41).runtime === '' && d(bin37).version === '3.7.94' && d(bin37).runtime === '' && d(json('4.3.1')).runtime === '' && d(Uint8Array.from([0, 1, 2, 3, 250, 251])).version === '' && d(Uint8Array.from([0, 1, 2, 3, 250, 251])).runtime === '', J([d(bin41), d(bin37), d(json('4.3.1'))]))
+  check('三个运行时文件都登记了（3.8 / 4.0 / 4.2）', J(Object.keys(SPINE_RUNTIMES)) === J(['3.8', '4.0', '4.2']) && Object.values(SPINE_RUNTIMES).every((p) => p.startsWith('/vendor/spine-webgl')), J(SPINE_RUNTIMES))
+  // 预乘计数可以分块累加（每块一个 ImageData）
+  const acc = { semi: 0, bad: 0 }
+  countPremultiplied(Uint8ClampedArray.from(Array.from({ length: 100 }, () => [10, 10, 10, 100]).flat()), acc)
+  countPremultiplied(Uint8ClampedArray.from(Array.from({ length: 100 }, () => [200, 200, 200, 100]).flat()), acc)
+  check('预乘计数按块累加：200 个半透明像素、其中 100 个 RGB > alpha + 16 → 不是预乘', acc.semi === 200 && acc.bad === 100 && isPremultipliedCount(acc) === false, J(acc))
 }
 
 // ================= 目录索引上限：默认 6 万个文件会截断（并标记），适配器放宽后是完整的 =================

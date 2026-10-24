@@ -188,7 +188,7 @@ async function detectGirlsCreation(media, { declared, logs }) {
   const scenesAbs = path.join(media, ...splitRel(hit))
   const names = (await listNames(scenesAbs)).slice(0, 400)
   let withScript = 0
-  for (const name of names) if (await isFile(path.join(scenesAbs, name, 'script.txt'))) withScript += 1
+  for (const name of names) if ((await isFile(path.join(scenesAbs, name, 'script.txt'))) || (await isFile(path.join(scenesAbs, name, 'output_script.txt')))) withScript += 1
   if (!withScript) {
     if (declared) logs.push('scenes/ 里没有 <场景>/script.txt')
     return null
@@ -226,7 +226,7 @@ async function detectGirlsCreation(media, { declared, logs }) {
     note: '',
     config,
     async finish() {
-      logs.push(`场景（有 script.txt）${withScript} 个`)
+      logs.push(`场景（有 script.txt 或 output_script.txt）${withScript} 个`)
       return { count: withScript, cover }
     },
   }

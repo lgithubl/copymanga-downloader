@@ -1,6 +1,6 @@
 // 适配器：Girls Creation R Viewer（NW.js 查看器）的剧情 → 规范场景（gal-scene/1）。
 // 目录（<root> = package.nw，所在位置记在 config.adapterOptions['girlscreation-tag'].root）：
-//   <root>/scenes/<场景 id>/script.txt            标签式脚本（每个场景都有；本适配器解析它）
+//   <root>/scenes/<场景 id>/script.txt            标签式脚本（每个场景都有；本适配器解析它）；新版数据里叫 output_script.txt（没有 script.txt 时用它）
 //   <root>/scenes/<场景 id>/{images,videos,voices,animations,spines}/   这个场景自己的背景图 / 视频 / 语音 / Spine 骨骼
 //   <root>/scenes/<场景 id>/script_original.txt 等   游戏原始的逗号式脚本（只有部分场景有，文件名还不统一；不解析，只拿来取标题：title,<标题>,）
 //   <root>/data/audio/{bgm,se}/<名>.m4a            全局 BGM / 音效
@@ -20,7 +20,7 @@
 export const ADAPTER_ID = 'girlscreation-tag'
 const DEFAULT_OPTIONS = { root: '', categoryLabels: {}, player: '館長' }
 const IMAGE_EXTS = /\.(?:webp|png|jpe?g|avif|gif)$/i
-const SAMPLE_FILE = /\/(?:script\.txt|script_original\.txt|original_script\.txt|originial_script\.txt|h[ms]r_\d+\.txt)$/i
+const SAMPLE_FILE = /\/(?:script\.txt|output_script\.txt|script_original\.txt|original_script\.txt|originial_script\.txt|h[ms]r_\d+\.txt)$/i
 
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
 const rootOf = (options) => String(options?.root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
@@ -66,6 +66,7 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
       const scene = sceneOf(parts[0])
       if (parts.length === 2) {
         if (parts[1] === 'script.txt') scene.script = rel
+        else if (parts[1] === 'output_script.txt') scene.altScript = rel   // 新版数据里的场景没有 script.txt，标签式脚本叫 output_script.txt；script.txt 优先
         else if (/^thumbnail\.(?:png|jpe?g|webp)$/i.test(parts[1])) scene.thumb = toRes(rel)
       } else if (parts.length === 4 && parts[1] === 'spines') {   // spines/<目录>/<文件>：骨架名 = <目录>/<文件名>（脚本里写 cast010002/momiji_002）
         const ext = parts[3].slice(parts[3].lastIndexOf('.') + 1).toLowerCase()
@@ -87,6 +88,7 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
       if (parts.length === 2 && audio[parts[0]] && !audio[parts[0]].has(stem(parts[1]))) audio[parts[0]].set(stem(parts[1]), toRes(rel))
     }
   }
+  for (const scene of scenes.values()) if (!scene.script && scene.altScript) scene.script = scene.altScript
   for (const [id, scene] of scenes) if (!scene.script) scenes.delete(id)   // 没有脚本的目录（PLACEHOLDER 之类）不是场景
 
   const player = String(options?.player ?? DEFAULT_OPTIONS.player)

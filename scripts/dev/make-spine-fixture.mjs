@@ -57,22 +57,23 @@ export function spineBinary({ animations = DEFAULT_ANIMATIONS, hash = 'testhash'
   return w.done()
 }
 
-export function spineJson({ animations = DEFAULT_ANIMATIONS, region = REGION } = {}) {
+export function spineJson({ animations = DEFAULT_ANIMATIONS, region = REGION, version = '3.8.99' } = {}) {
   return Buffer.from(JSON.stringify({
-    skeleton: { hash: 'testjson', spine: '3.8.99', x: -100, y: 0, width: 200, height: 400 },
+    skeleton: { hash: 'testjson', spine: version, x: -100, y: 0, width: 200, height: 400 },
     bones: [{ name: 'root' }],
     slots: [{ name: 'body', bone: 'root', attachment: 'body' }],
     skins: [{ name: 'default', attachments: { body: { body: { x: 0, y: region.y, width: region.width, height: region.height } } } }],
-    animations: Object.fromEntries(animations.map((name) => [name, { bones: { root: { rotate: [{ time: 0, angle: 0 }, { time: 1, angle: 2 }] } } }])),
+    animations: Object.fromEntries(animations.map((name) => [name, { bones: { root: { rotate: [{ time: 0, angle: 0, value: 0 }, { time: 1, angle: 2, value: 2 }] } } }])),
   }))
 }
 
 export const atlasText = (base) => `${base}.png\nsize: 64,128\nformat: RGBA8888\nfilter: Linear,Linear\nrepeat: none\n${REGION.name}\n  rotate: false\n  xy: 0, 0\n  size: 64, 128\n  orig: 64, 128\n  offset: 0, 0\n  index: -1\n`
 
 // region：只对 JSON 骨架有效，换一个比 200×400 小（或大）的附件，用来造「各层包围盒不一样」的静态画面
-export async function writeSpine(dir, base, { format = 'binary', color = 'red', animations = DEFAULT_ANIMATIONS, region = REGION } = {}) {
+// version：只对 JSON 骨架有效（写进 skeleton.spine），用来造 3.8 / 4.0 / 4.2 / 不支持版本的骨架
+export async function writeSpine(dir, base, { format = 'binary', color = 'red', animations = DEFAULT_ANIMATIONS, region = REGION, version = '3.8.99' } = {}) {
   await mkdir(dir, { recursive: true })
-  await writeFile(path.join(dir, `${base}.skel.bytes`), format === 'json' ? spineJson({ animations, region }) : spineBinary({ animations }))
+  await writeFile(path.join(dir, `${base}.skel.bytes`), format === 'json' ? spineJson({ animations, region, version }) : spineBinary({ animations }))
   await writeFile(path.join(dir, `${base}.atlas.txt`), atlasText(base))
   // 64×128（和 200×400 的区域同比例）：底色 + 头（白圆）+ 眼睛两点，方便肉眼看方向有没有反
   execFileSync('convert', ['-size', '64x128', `xc:${color}`, '-fill', 'white', '-draw', 'circle 32,26 32,10', '-fill', 'black', '-draw', 'circle 26,22 26,19', '-draw', 'circle 38,22 38,19', path.join(dir, `${base}.png`)])

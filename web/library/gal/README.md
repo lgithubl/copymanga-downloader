@@ -94,9 +94,15 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 
 - 规范场景新增指令：`spine`（slot / kind: chara|still / skel / atlas / anim / loop / speed / x / dim / action / order）、`spineOff`（slot 或 prefix 或全部）、`camera`（from / to / seconds）、`bgse` / `bgseStop`（背景音效声道）、`flash` / `wash`（闪屏 / 整屏渐退）。
   `spine` 按 slot 进状态（同 slot 再来一条 = 更新动画/颜色/位置，同一个骨架不重新加载）；后退/续播一步到位恢复。
-- 渲染：一个叠在背景上的 WebGL canvas，官方 spine-webgl 3.8 运行时，骨骼文件二进制（`.skel.bytes`）和 JSON 都认；站位立绘按舞台高度 95% 底部对齐，静态画面 contain 居中；镜头作用在整个画面（背景 + 视频 + Spine）上。
+- 渲染：一个叠在背景上的 WebGL canvas，官方 spine-webgl 运行时（3.8 / 4.0 / 4.2，见下），骨骼文件二进制（`.skel.bytes`）和 JSON 都认；站位立绘按舞台高度 95% 底部对齐，静态画面 contain 居中；镜头作用在整个画面（背景 + 视频 + Spine）上。
 - **运行时不在仓库里**（Spine Runtimes License 限制）：`Dockerfile.web` 构建时跑 `scripts/fetch-spine-runtime.sh`（固定提交 + sha256 校验）下载到 `web/static/vendor/`；本地开发手动跑一次。没有运行时：播放器栏里提示「Spine 运行时缺失」，其余照常。
-- 版本必须和骨骼导出版本一致：运行时是 3.8，4.x 导出的骨骼读不了。
+- **三个版本的运行时（3.8 / 4.0 / 4.2）**：`spine-webgl.js`（3.8）、`spine-webgl-4.0.js`（npm 4.0.31）、`spine-webgl-4.2.js`（npm 4.2.100），都由 `scripts/fetch-spine-runtime.sh` 下载并校验。
+  每个骨骼先读文件头认版本（二进制：头里的版本字符串；JSON：`skeleton.spine`）再选运行时；每个版本一块 canvas（`data-runtime` 标了版本），同一幅画面里不同版本的骨骼各画各的、共用同一套变换。
+  4.1 / 3.7 / 4.3 等没有对应运行时的版本，右下角提示「Spine 版本不支持」，诊断面板写「识别：Spine 4.1.55 → 没有对应的运行时」和「版本不对：…」；
+  文件都取到了但解析失败写「骨骼解析失败（Spine x.y.z，运行时 …）」，**不再**冒充成缺 png；浏览器 console 里每个骨骼有一行 `[gal-spine] <路径>：识别为 Spine x.y.z → 运行时 …`。
+- 贴图预乘 alpha（Spine 导出勾了 Premultiply Alpha）：按原始尺寸分块检测（半透明像素的 RGB 都不超过 alpha），预乘的走预乘混合；4.x 的 atlas 带 `pma: true` 也认。按普通贴图画预乘贴图会让半透明处（脸颊渐变、关节接缝）发黑。
+- 静态画面各层共用一套变换，基准是最底下那一层（序号最小）的包围盒。
+- 4.0 / 4.2 只用 JSON 骨骼做过浏览器测试（没有真实 4.x 二进制样本可测）；二进制走同一套官方运行时。
 
 ### 脚本 gal-layout（UViewer / monmusu / tenkeiprdx 合一）
 

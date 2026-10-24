@@ -1,21 +1,47 @@
-// Gal 播放器的 Spine（3.8）渲染层：一个叠在背景上的 WebGL canvas，画规范场景里 spine 指令描述的骨骼动画（站位立绘、整幅静态画面）。
-// 运行时是 Esotericsoftware 官方 spine-webgl 3.8（许可证限制，不进仓库：Dockerfile 构建时按固定提交下载到 /vendor/spine-webgl.js，
-// 本地用 scripts/fetch-spine-runtime.sh）；没有运行时就返回 null，播放器只提示、不渲染立绘。
-// 骨骼文件两种都认：二进制（.skel.bytes，官方 SkeletonBinary）和 JSON（内容以 { 开头，SkeletonJson）。
+// Gal 播放器的 Spine 渲染层：叠在背景上的 WebGL canvas，画规范场景里 spine 指令描述的骨骼动画（站位立绘、整幅静态画面）。
+// 运行时是 Esotericsoftware 官方 spine-webgl，三个版本（许可证限制，不进仓库：Dockerfile 构建时下载到 /vendor/，本地用 scripts/fetch-spine-runtime.sh）：
+//   3.8 → spine-webgl.js    4.0 → spine-webgl-4.0.js    4.2 → spine-webgl-4.2.js
+// 每个骨骼先读文件头认出版本（二进制：头里的版本字符串；JSON：skeleton.spine），再选对应的运行时解析和绘制；认不出 / 不支持的版本如实报「版本不支持」，
+// 不会冒充成缺资源。每个运行时各用一块 canvas（同一帧里不同版本的骨骼不交叉叠层，各自按顺序画）。没有运行时就只提示、不渲染。
+// 骨骼文件两种都认：二进制（.skel / .skel.bytes）和 JSON（内容以 { 开头）。
 
-let runtimePromise = null
-export function loadSpineRuntime() {
-  if (!runtimePromise) {
-    runtimePromise = new Promise((resolve) => {
-      if (globalThis.spine?.webgl) return resolve(globalThis.spine)
-      const script = document.createElement('script')
-      script.src = '/vendor/spine-webgl.js'
-      script.onload = () => resolve(globalThis.spine?.webgl ? globalThis.spine : null)
-      script.onerror = () => resolve(null)
-      document.head.append(script)
-    })
+export const SPINE_RUNTIMES = { '3.8': '/vendor/spine-webgl.js', '4.0': '/vendor/spine-webgl-4.0.js', '4.2': '/vendor/spine-webgl-4.2.js' }
+const runtimePromises = new Map()
+// version：SPINE_RUNTIMES 的键。3.8 沿用 <script>（全局 spine）；4.x 的包也是 `var spine = …`，几个都放全局会互相覆盖，
+// 所以取文本、包进函数里执行，各自拿到自己的 spine 对象
+export function loadSpineRuntime(version = '3.8') {
+  if (!runtimePromises.has(version)) {
+    runtimePromises.set(version, new Promise((resolve) => {
+      const src = SPINE_RUNTIMES[version]
+      if (!src) return resolve(null)
+      if (version === '3.8') {
+        if (globalThis.spine?.webgl) return resolve(globalThis.spine)
+        const script = document.createElement('script')
+        script.src = src
+        script.onload = () => resolve(globalThis.spine?.webgl ? globalThis.spine : null)
+        script.onerror = () => resolve(null)
+        document.head.append(script)
+        return
+      }
+      fetch(src)
+        .then((response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
+        .then((text) => { const sp = new Function(`${text}\nreturn spine`)(); resolve(sp?.SceneRenderer ? sp : null) })
+        .catch(() => resolve(null))
+    }))
   }
-  return runtimePromise
+  return runtimePromises.get(version)
+}
+
+// 从骨骼文件头认版本：二进制 = 头 96 字节里的版本字符串（3.8：先是 hash 字符串再是版本；4.x：8 字节 hash 再是版本）；JSON = skeleton.spine。
+// runtime = 对应的运行时键（'3.8' | '4.0' | '4.2'），不支持的版本（3.7 / 4.1 / 4.3 …）是 ''
+export function detectSpineVersion(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const format = u8.find((b) => b > 32) === 0x7b ? 'json' : 'binary'
+  const head = String.fromCharCode(...u8.subarray(0, format === 'json' ? 2048 : 96))
+  const version = format === 'json' ? /"spine"\s*:\s*"([^"]+)"/.exec(head)?.[1] || '' : /(\d{1,2}\.\d{1,2}\.\d{1,3})/.exec(head)?.[1] || ''
+  const m = /^(\d+)\.(\d+)/.exec(version)
+  const key = m ? `${m[1]}.${m[2]}` : ''
+  return { format, version, runtime: SPINE_RUNTIMES[key] ? key : '' }
 }
 
 // 站位动作（一次性）：位移曲线 → { x, y } 偏移（占舞台高度的比例）
@@ -70,46 +96,64 @@ export function reportDeclaredSize(texture, size) {
   return texture
 }
 
-// 一个骨架数据只加载一次（按 skel 路径缓存）。onMissing(src)：文件取不到
 // 贴图是不是预乘 alpha（Spine 导出时勾了 Premultiply Alpha）：预乘贴图里半透明像素的 RGB 都不会超过 alpha，普通（直通）贴图的半透明边缘 RGB 常常比 alpha 大。
-// 预乘贴图按普通贴图画，半透明的地方（脸颊腮红的渐变、关节接缝）就会发黑；所以要认出来，画的时候走预乘混合。rgba = ImageData 的 data（浏览器取出来时已还原成直通值，近似即可）
-export function premultipliedPixels(rgba) {
-  let semi = 0
-  let bad = 0
+// 预乘贴图按普通贴图画，半透明的地方（脸颊腮红的渐变、关节接缝）就会发黑；所以要认出来，画的时候走预乘混合。
+// 必须按原始尺寸检测：缩小会把边缘像素平均掉，预乘贴图也会出现大量「RGB > alpha」，被误判成直通（真实的 4096 图实测 7.8% 误判）。
+// rgba = ImageData 的 data（浏览器取出来时已还原成直通值，近似即可）
+export function countPremultiplied(rgba, acc = { semi: 0, bad: 0 }) {
   for (let i = 0; i < rgba.length; i += 4) {
     const a = rgba[i + 3]
     if (a === 0 || a === 255) continue
-    semi += 1
-    if (Math.max(rgba[i], rgba[i + 1], rgba[i + 2]) > a + 16) bad += 1
+    acc.semi += 1
+    if (Math.max(rgba[i], rgba[i + 1], rgba[i + 2]) > a + 16) acc.bad += 1
   }
-  return semi >= 50 && bad / semi < 0.002
+  return acc
 }
+export const isPremultipliedCount = ({ semi, bad }) => semi >= 50 && bad / semi < 0.002
+export function premultipliedPixels(rgba) { return isPremultipliedCount(countPremultiplied(rgba)) }
+// 一条一条（每条 ≤ 400 万像素）读，不一次开个 64MB 的 canvas；明显是直通就提前停
+export function detectPremultipliedImage(image) { return detectPremultiplied(image) }   // 给测试用
 function detectPremultiplied(image) {
   try {
-    const k = Math.min(1, 1024 / Math.max(image.naturalWidth || 1, image.naturalHeight || 1))
+    const w = image.naturalWidth || 1
+    const h = image.naturalHeight || 1
+    const band = Math.max(1, Math.min(h, Math.floor(4000000 / w)))
     const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * k))
-    canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * k))
+    canvas.width = w
+    canvas.height = band
     const g = canvas.getContext('2d', { willReadFrequently: true })
-    g.drawImage(image, 0, 0, canvas.width, canvas.height)
-    return premultipliedPixels(g.getImageData(0, 0, canvas.width, canvas.height).data)
+    const acc = { semi: 0, bad: 0 }
+    for (let y = 0; y < h; y += band) {
+      const rows = Math.min(band, h - y)
+      g.clearRect(0, 0, w, band)
+      g.drawImage(image, 0, y, w, rows, 0, 0, w, rows)
+      countPremultiplied(g.getImageData(0, 0, w, rows).data, acc)
+      if (acc.semi > 5000 && acc.bad / acc.semi > 0.05) break
+    }
+    return isPremultipliedCount(acc)
   } catch { return false }
 }
 
-export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavailable = () => {} }) {
-  const canvas = document.createElement('canvas')
-  canvas.className = 'gal-spine'
-  parent.append(canvas)
-  let spine = null
-  let gl = null
-  let renderer = null
+// onMissing(src)：文件取不到（骨骼 / atlas / 图集）；onUnavailable(version)：这个版本的运行时没有；
+// onError({ src, kind, version, runtime, message })：文件都取到了但不能用——kind: 'version'（版本不支持）| 'parse'（解析失败）
+export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavailable = () => {}, onError = () => {} }) {
+  const canvases = []
+  const makeCanvas = () => {
+    const c = document.createElement('canvas')
+    c.className = 'gal-spine'
+    parent.append(c)
+    canvases.push(c)
+    return c
+  }
+  const canvas = makeCanvas()   // 第一块（给第一个用到的运行时）；别的版本的骨骼来了才再建
+  const backends = new Map()    // 运行时版本 → Promise<后端 | null>
+  const readyBackends = []      // 已经建好的后端：{ key, spine, ns, canvas, context, gl, renderer, physics }
   let destroyed = false
   let raf = 0
   let last = 0
   let paused = false
-  let initState = 'idle'   // idle | loading | ready | failed
-  const instances = new Map()   // slot → { spec, key, data, skeleton, state, bounds, anim, dim, action }
-  const dataCache = new Map()   // skel → Promise<{ data, atlas } | null>
+  const instances = new Map()   // slot → { spec, token, backend, data, skeleton, state, bounds, anim, dim, action, version, runtime, error }
+  const dataCache = new Map()   // skel → Promise<{ data, atlas, backend, pma, version, runtime } | { error }>
   let pending = 0
   let waiters = []
   let slowTo = 0.2   // animation4 降速后的倍率（1 = 不降速），播放器设置里改；set() 每次传进来
@@ -117,23 +161,28 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   const settle = () => { if (!pending) { const done = waiters; waiters = []; done.forEach((resolve) => resolve()) } }
   const ready = () => (pending ? new Promise((resolve) => waiters.push(resolve)) : Promise.resolve())
 
-  let initPromise = null
-  const init = () => (initPromise ||= doInit())   // 几条 spine 指令同时来：等同一次初始化
-  async function doInit() {
-    initState = 'loading'
-    spine = await loadSpineRuntime()
-    if (!spine || destroyed) { initState = 'failed'; if (!spine) onUnavailable(); return false }
-    try {
-      const context = new spine.webgl.ManagedWebGLRenderingContext(canvas, { alpha: true, preserveDrawingBuffer: true })
-      gl = context.gl
-      renderer = new spine.webgl.SceneRenderer(canvas, context)
-    } catch {
-      initState = 'failed'
-      onUnavailable()
-      return false
+  // 某个版本的运行时 + 它自己的 canvas / GL 上下文 / 渲染器
+  function backendFor(key) {
+    if (!backends.has(key)) {
+      backends.set(key, (async () => {
+        const spine = await loadSpineRuntime(key)
+        if (destroyed) return null
+        if (!spine) { onUnavailable(key); return null }
+        try {
+          const ns = spine.webgl?.SceneRenderer ? spine.webgl : spine   // 3.8 的类在 spine.webgl 下，4.x 是扁平的
+          const cv = canvases.find((c) => !c.dataset.runtime) || makeCanvas()
+          cv.dataset.runtime = key
+          const context = new ns.ManagedWebGLRenderingContext(cv, { alpha: true, preserveDrawingBuffer: true })
+          const backend = { key, spine, ns, canvas: cv, context, gl: context.gl, renderer: new ns.SceneRenderer(cv, context), physics: spine.Physics?.update }   // 4.2 的 updateWorldTransform 要传物理参数
+          readyBackends.push(backend)
+          return backend
+        } catch {
+          onUnavailable(key)
+          return null
+        }
+      })())
     }
-    initState = 'ready'
-    return true
+    return backends.get(key)
   }
 
   const fetchOk = async (src, as) => {
@@ -148,28 +197,50 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     image.src = url(src)
   })
 
+  // 一个骨架数据只加载一次（按 skel 路径缓存）。顺序：取骨骼 / atlas 文件 → 读版本、选运行时 → 取图集 → 解析。
+  // 每一步失败都报对应的原因：取不到文件 = onMissing（缺资源）；版本不支持 / 解析失败 = onError（带识别出的版本），不再冒充缺资源
   function loadData(spec) {
     if (dataCache.has(spec.skel)) return dataCache.get(spec.skel)
     const promise = (async () => {
-      let stage = spec.skel
+      let bytes
+      let atlasText
+      try { bytes = await fetchOk(spec.skel, 'buffer') } catch { onMissing(spec.skel); return { error: { kind: 'missing', message: `取不到骨骼文件 ${spec.skel}` } } }
+      try { atlasText = await fetchOk(spec.atlas, 'text') } catch { onMissing(spec.atlas); return { error: { kind: 'missing', message: `取不到 atlas 文件 ${spec.atlas}` } } }
+      const u8 = new Uint8Array(bytes)
+      const detected = detectSpineVersion(u8)
+      const base = { version: detected.version, runtime: detected.runtime, format: detected.format }
+      console.info(`[gal-spine] ${spec.skel}：识别为 Spine ${detected.version || '未知版本'}（${detected.format === 'json' ? 'JSON' : '二进制'}）→ ${detected.runtime ? `运行时 ${detected.runtime}` : '没有对应的运行时'}`)
+      const fail = (error) => { onError({ src: spec.skel, ...base, ...error }); return { error: { ...base, ...error } } }
+      if (!detected.runtime) return fail({ kind: 'version', message: `Spine 版本 ${detected.version || '未知'} 不支持（支持 3.8 / 4.0 / 4.2）` })
+      const backend = await backendFor(detected.runtime)
+      if (!backend || destroyed) return { error: { ...base, kind: 'runtime', message: `Spine ${detected.runtime} 运行时不可用` } }   // onUnavailable 已经提示过
+      const { spine, ns } = backend
+      const dir = spec.atlas.includes('/') ? spec.atlas.slice(0, spec.atlas.lastIndexOf('/') + 1) : ''
+      let atlas = null
+      let pageNames
       try {
-        const [bytes, atlasText] = await Promise.all([fetchOk(spec.skel, 'buffer'), (stage = spec.atlas, fetchOk(spec.atlas, 'text'))])
-        const dir = spec.atlas.includes('/') ? spec.atlas.slice(0, spec.atlas.lastIndexOf('/') + 1) : ''
-        const pages = atlasText.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\.png$/i.test(line))
-        const images = new Map()
-        for (const page of pages) { stage = dir + page; images.set(page, await loadImage(dir + page)) }
-        const declared = declaredPageSizes(atlasText)
-        const atlas = new spine.TextureAtlas(atlasText, (page) => reportDeclaredSize(new spine.webgl.GLTexture(gl, images.get(page) || images.get(page.split('/').pop())), declared.get(page)))
+        if (detected.runtime === '3.8') pageNames = atlasText.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\.(png|jpe?g|webp)$/i.test(line))
+        else { atlas = new spine.TextureAtlas(atlasText); pageNames = atlas.pages.map((page) => page.name) }
+      } catch (error) { return fail({ kind: 'parse', message: `atlas 解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` }) }
+      const images = new Map()
+      for (const page of pageNames) {
+        try { images.set(page, await loadImage(dir + page)) } catch { onMissing(dir + page); return { error: { ...base, kind: 'missing', message: `取不到图集图片 ${dir + page}` } } }
+      }
+      try {
+        const imageOf = (page) => images.get(page) || images.get(page.split('/').pop())
+        if (detected.runtime === '3.8') {
+          const declared = declaredPageSizes(atlasText)
+          atlas = new spine.TextureAtlas(atlasText, (page) => reportDeclaredSize(new ns.GLTexture(backend.gl, imageOf(page)), declared.get(page)))
+        } else {
+          for (const page of atlas.pages) page.setTexture(new ns.GLTexture(backend.context, imageOf(page.name)))
+        }
         const loader = new spine.AtlasAttachmentLoader(atlas)
-        const u8 = new Uint8Array(bytes)
-        const firstByte = u8.find((b) => b > 32)
-        const data = firstByte === 0x7b
+        const data = detected.format === 'json'
           ? new spine.SkeletonJson(loader).readSkeletonData(JSON.parse(new TextDecoder().decode(u8)))
           : new spine.SkeletonBinary(loader).readSkeletonData(u8)
-        return { data, atlas, pma: [...images.values()].some(detectPremultiplied) }
-      } catch {
-        onMissing(stage)
-        return null
+        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: Boolean(atlas.pages?.some?.((page) => page.pma)) || [...images.values()].some(detectPremultiplied) }
+      } catch (error) {
+        return fail({ kind: 'parse', message: `骨骼解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` })
       }
     })()
     dataCache.set(spec.skel, promise)
@@ -238,29 +309,31 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   async function create(slot, spec, live, token) {
     pending += 1
     try {
-      if (!(await init())) return
       const loaded = await loadData(spec)
-      if (!loaded || destroyed) return
+      if (destroyed) return
       const current = instances.get(slot)
       if (!current || current.token !== token) return   // 已经被新的指令取代
-      const skeleton = new spine.Skeleton(loaded.data)
-      // 画在透明画布上时，叠乘（Multiply）/ 滤色（Screen）的插槽（脸颊腮红、关节阴影这类层）叠在透明像素上会变成黑的（斑点 / 黑线）。
-      // 原查看器的 data/spine.js 里有同样的修正思路：2 = multiply、3 = screen 改成 0 = normal；additive（1）保留
-      for (const slot of loaded.data.slots || []) if (slot.blendMode === 2 || slot.blendMode === 3) slot.blendMode = 0
+      if (loaded.error) {   // 加载 / 解析失败：留在列表里，诊断面板能看到原因和识别出的版本
+        Object.assign(current, { error: loaded.error, version: loaded.error.version || '', runtime: loaded.error.runtime || '' })
+        return
+      }
+      const { backend } = loaded
+      const sp = backend.spine
+      const skeleton = new sp.Skeleton(loaded.data)
       const skin = pickSpineSkin(loaded.data)
       if (skin) skeleton.setSkin(skin)
       skeleton.setToSetupPose()
-      skeleton.updateWorldTransform()
-      const offset = new spine.Vector2()
-      const size = new spine.Vector2()
+      skeleton.updateWorldTransform(backend.physics)
+      const offset = new sp.Vector2()
+      const size = new sp.Vector2()
       skeleton.getBounds(offset, size, [])
-      const state = new spine.AnimationState(new spine.AnimationStateData(loaded.data))
-      Object.assign(current, { pma: Boolean(loaded.pma), skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
+      const state = new sp.AnimationState(new sp.AnimationStateData(loaded.data))
+      Object.assign(current, { backend, pma: Boolean(loaded.pma), version: loaded.version, runtime: loaded.runtime, error: null, skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
       applySpec(current, spec, live)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
       state.apply(skeleton)
-      skeleton.updateWorldTransform()
+      skeleton.updateWorldTransform(backend.physics)
       kick()
     } finally {
       pending -= 1
@@ -281,7 +354,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       instances.set(slot, { spec, token, skeleton: null })
       create(slot, spec, live, token)
     }
-    canvas.hidden = instances.size === 0
+    for (const cv of canvases) cv.hidden = instances.size === 0
     parent.dataset.spines = JSON.stringify(Object.fromEntries([...instances].map(([slot, inst]) => [slot, inst.anim || inst.spec.anim || inst.spec.tracks?.[0]?.anim || ''])))
     kick()
     return ready()
@@ -293,15 +366,17 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     let px
     let py
     if (inst.spec.kind === 'still') {
-      // 静态画面的各层共用同一套变换（它们在游戏里是同一个原点、同一个缩放叠在一起）：以面积最大的那一层（底图）的包围盒放进舞台，
-      // 其它层（人物、特效，包围盒更小）按同一个缩放和原点画——不能各按各的包围盒缩放居中，不然小的层会被放大、错位
-      let ref = inst.bounds
+      // 静态画面的各层共用同一套变换（它们在游戏里是同一个原点、同一个缩放叠在一起）：以最底下那一层（序号最小，底图）的包围盒放进舞台，
+      // 其它层（人物、特效，包围盒不一样）按同一个缩放和原点画——不能各按各的包围盒缩放居中，不然小的层会被放大、错位；
+      // 也不能按面积最大的层，比底图还大的特效层会把整幅画面缩小
+      let ref = inst
       for (const other of instances.values()) {
-        if (other.spec?.kind === 'still' && other.bounds && other.bounds.w * other.bounds.h > ref.w * ref.h) ref = other.bounds
+        if (other.spec?.kind === 'still' && other.bounds && (other.spec.order || 0) < (ref.spec.order || 0)) ref = other
       }
-      scale = Math.min(width / ref.w, height / ref.h)
-      px = width / 2 - (ref.x + ref.w / 2) * scale
-      py = height / 2 - (ref.y + ref.h / 2) * scale
+      const rb = ref.bounds
+      scale = Math.min(width / rb.w, height / rb.h)
+      px = width / 2 - (rb.x + rb.w / 2) * scale
+      py = height / 2 - (rb.y + rb.h / 2) * scale
     } else if (inst.spec.kind === 'actor') {
       // 角色（girlscreation，照原查看器 scene.js 的 setSpineActorPos）：x / y 是骨骼坐标系的单位（skeleton.x = x，skeleton.y = -y：y 为正 = 往下），
       // 缩放（角色缩放 × 全局 ZOOM）绕骨骼原点，不是绕包围盒中心。骨架包围盒（x, y, w, h）按 still 的方式整个放进舞台得到基准比例 fit，
@@ -339,43 +414,50 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
 
   function frame(now) {
     raf = 0
-    if (destroyed || paused || initState !== 'ready') return
+    if (destroyed || paused || !readyBackends.length) return
     const dt = Math.min(0.1, (now - (last || now)) / 1000)
     last = now
     const dpr = Math.min(2, globalThis.devicePixelRatio || 1)
-    const width = Math.max(1, Math.round(canvas.clientWidth * dpr))
-    const height = Math.max(1, Math.round(canvas.clientHeight * dpr))
-    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height }
-    gl.viewport(0, 0, width, height)
-    gl.clearColor(0, 0, 0, 0)
-    gl.clear(gl.COLOR_BUFFER_BIT)
-    renderer.camera.position.set(width / 2, height / 2, 0)
-    renderer.camera.setViewport(width, height)
-    renderer.begin()
-    const drawn = [...instances.values()].filter((inst) => inst.skeleton).sort((a, b) => (a.spec.kind === b.spec.kind ? (a.spec.order || 0) - (b.spec.order || 0) : a.spec.kind === 'still' ? -1 : 1))
-    for (const inst of drawn) {
-      if (inst.fadeIn) {
-        const t = Math.min(1, (performance.now() - inst.fadeIn.began) / inst.fadeIn.ms)
-        const shade = inst.spec.dim ? 0.5 : 1
-        inst.skeleton.color.set(shade, shade, shade, t)
-        if (t >= 1) inst.fadeIn = null
+    const sorted = [...instances.values()].filter((inst) => inst.skeleton).sort((a, b) => (a.spec.kind === b.spec.kind ? (a.spec.order || 0) - (b.spec.order || 0) : a.spec.kind === 'still' ? -1 : 1))
+    let drawnCount = 0
+    for (const backend of readyBackends) {   // 每个运行时一块 canvas：各画各的
+      const { canvas: cv, gl, renderer } = backend
+      const width = Math.max(1, Math.round(cv.clientWidth * dpr))
+      const height = Math.max(1, Math.round(cv.clientHeight * dpr))
+      if (cv.width !== width || cv.height !== height) { cv.width = width; cv.height = height }
+      gl.viewport(0, 0, width, height)
+      gl.clearColor(0, 0, 0, 0)
+      gl.clear(gl.COLOR_BUFFER_BIT)
+      const mine = sorted.filter((inst) => inst.backend === backend)
+      if (!mine.length) continue
+      renderer.camera.position.set(width / 2, height / 2, 0)
+      renderer.camera.setViewport(width, height)
+      renderer.begin()
+      for (const inst of mine) {
+        if (inst.fadeIn) {
+          const t = Math.min(1, (performance.now() - inst.fadeIn.began) / inst.fadeIn.ms)
+          const shade = inst.spec.dim ? 0.5 : 1
+          inst.skeleton.color.set(shade, shade, shade, t)
+          if (t >= 1) inst.fadeIn = null
+        }
+        if (inst.slow) {
+          const t = Math.min(1, (performance.now() - inst.slow.began) / 1000)
+          inst.state.timeScale = inst.slow.from + (inst.slow.to - inst.slow.from) * t
+          if (t >= 1) inst.slow = null
+        }
+        inst.state.update(dt)
+        inst.state.apply(inst.skeleton)
+        layout(inst, width, height)
+        inst.skeleton.updateWorldTransform(backend.physics)
+        renderer.drawSkeleton(inst.skeleton, Boolean(inst.pma))
+        drawnCount += 1
       }
-      if (inst.slow) {
-        const t = Math.min(1, (performance.now() - inst.slow.began) / 1000)
-        inst.state.timeScale = inst.slow.from + (inst.slow.to - inst.slow.from) * t
-        if (t >= 1) inst.slow = null
-      }
-      inst.state.update(dt)
-      inst.state.apply(inst.skeleton)
-      layout(inst, width, height)
-      inst.skeleton.updateWorldTransform()
-      renderer.drawSkeleton(inst.skeleton, Boolean(inst.pma))
+      renderer.end()
     }
-    renderer.end()
-    if (drawn.length) kick()
+    if (drawnCount) kick()
     else last = 0
   }
-  function kick() { if (!raf && !destroyed && !paused && initState === 'ready' && instances.size) raf = requestAnimationFrame(frame) }
+  function kick() { if (!raf && !destroyed && !paused && readyBackends.length && instances.size) raf = requestAnimationFrame(frame) }
 
   return {
     canvas,
@@ -388,7 +470,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
       animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
       skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
-      version: inst.data?.version || '', bounds: inst.bounds ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,
+      version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', bounds: inst.bounds ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,
     })),
     // 已经加载好的骨架数（测试 / 提示用）
     loadedCount: () => [...instances.values()].filter((inst) => inst.skeleton).length,
@@ -396,8 +478,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       destroyed = true
       cancelAnimationFrame(raf)
       instances.clear()
-      try { renderer?.dispose(); gl?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* 无所谓 */ }
-      canvas.remove()
+      for (const backend of readyBackends) { try { backend.renderer.dispose(); backend.gl.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* 无所谓 */ } }
+      for (const cv of canvases) cv.remove()
     },
   }
 }
