@@ -274,3 +274,10 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - `auto: true` 是 gal-layout 生成的标记：重跑会重新生成（新增分类 / 新增列表就是重跑一次）。**手写的 nodes（home 不带 auto）重跑时原样保留**；`replace` 整体替换时也会带上；适配器没有某个目录时（比如没有 Stills）auto 节点静默跳过，手写节点引用不存在的目录会报 `graph-catalog-missing`。
 - 想改某一项：把那个节点的 `auto` 去掉（或者干脆把 home 的 `auto` 去掉）就变成手写的，重跑不会覆盖。
 - UViewer / monmusu / minashigo / legeclo 本来就是按真实目录 + views / groups / merge 配置的，不生成节点图。
+
+
+### Girls Creation 角色的摆放（照原查看器）与画面放大 / 中心
+- 原查看器（`preloader.js` / `scene.js` / `spine-player.js`）给每个角色一个和舞台一样大的 Spine Player，视口写死 `{ x: 0, y: 900, width: 960, height: 540, padLeft: 100%, padTop: -100% }`，展开后相机看的世界窗口 = **宽 1920 个骨骼单位、中心在 (0, 900)**；
+  脚本里的 `x` / `y` 是 `skeleton.x = x`、`skeleton.y = -y`，缩放是 `skeleton.scale`（× 全局 ZOOM），缩放绕骨骼原点（脚）。所以每个骨骼单位 = 舞台宽 / 1920 个像素，原点落在舞台中心 + (x, 900 + y) 个单位处——**不是**把包围盒放进舞台。
+  （以前按包围盒居中再缩放，高个子骨架会顶出舞台、大骨架会偏小。）预乘 alpha：原查看器写死 `premultipliedAlpha: true`，我们按图集标记 + 像素统计猜，渲染诊断里会列出两个来源和实际用的（白块 / 发黑多半是这里猜错了）和非 normal 混合的槽。
+- 「更多 → 画面放大 / 选择中心」**按媒体（条目）存**（`localStorage` 的 `copymanga.gal.view.<条目 id>` = `{ still: { zoom, cx, cy }, actor: { … } }`），静态画面和角色各一组：当前画面里有静态画面就调静态画面，否则调角色。旧版的全局设置只在这个媒体没存过时当默认值读。

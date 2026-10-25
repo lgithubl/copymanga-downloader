@@ -157,7 +157,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   let pending = 0
   let waiters = []
   let slowTo = 0.2   // animation4 降速后的倍率（1 = 不降速），播放器设置里改；set() 每次传进来
-  let stillView = { zoom: 1, cx: 0.5, cy: 0.5 }   // 静态画面的放大倍率 + 画面里哪一点放在舞台正中（cx / cy = 0..1，左→右、上→下）；播放器「更多」里改
+  // 放大倍率 + 哪一点放在舞台正中（cx / cy = 0..1，左→右、上→下），静态画面（still）和角色（actor）各一份；播放器「更多」里改，按媒体存
+  let views = { still: { zoom: 1, cx: 0.5, cy: 0.5 }, actor: { zoom: 1, cx: 0.5, cy: 0.5 } }
 
   const settle = () => { if (!pending) { const done = waiters; waiters = []; done.forEach((resolve) => resolve()) } }
   const ready = () => (pending ? new Promise((resolve) => waiters.push(resolve)) : Promise.resolve())
@@ -239,7 +240,13 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         const data = detected.format === 'json'
           ? new spine.SkeletonJson(loader).readSkeletonData(JSON.parse(new TextDecoder().decode(u8)))
           : new spine.SkeletonBinary(loader).readSkeletonData(u8)
-        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: Boolean(atlas.pages?.some?.((page) => page.pma)) || [...images.values()].some(detectPremultiplied) }
+        // 预乘 alpha：图集里写了 pma（4.x）或者像素统计认出来就按预乘画。两个来源分开记，渲染诊断里能看到（白块 / 发黑多半是这里猜错了）
+        const atlasPma = Boolean(atlas.pages?.some?.((page) => page.pma))
+        const detectedPma = [...images.values()].some(detectPremultiplied)
+        // 混合模式：非 normal 的槽数（additive / multiply / screen）和 clipping 附件数——白块、发黑常常是这几类槽
+        const blends = { additive: 0, multiply: 0, screen: 0 }
+        for (const slot of data.slots || []) { const mode = slot.blendMode; if (mode === 1) blends.additive += 1; else if (mode === 2) blends.multiply += 1; else if (mode === 3) blends.screen += 1 }
+        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: atlasPma || detectedPma, pmaInfo: { atlas: atlasPma, detected: detectedPma }, blends }
       } catch (error) {
         return fail({ kind: 'parse', message: `骨骼解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` })
       }
@@ -329,7 +336,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const size = new sp.Vector2()
       skeleton.getBounds(offset, size, [])
       const state = new sp.AnimationState(new sp.AnimationStateData(loaded.data))
-      Object.assign(current, { backend, pma: Boolean(loaded.pma), version: loaded.version, runtime: loaded.runtime, error: null, skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
+      Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
       applySpec(current, spec, live)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
@@ -348,8 +355,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     const unit = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : 0.5)
     return { zoom: Number.isFinite(zoom) && zoom > 0 ? Math.min(8, zoom) : 1, cx: unit(view?.cx), cy: unit(view?.cy) }
   }
-  function set(specs, { live = false, slow = slowTo, view = stillView } = {}) {
-    stillView = normalizeView(view)
+  function set(specs, { live = false, slow = slowTo, view = null } = {}) {
+    if (view) views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }
     slowTo = Number.isFinite(Number(slow)) && Number(slow) > 0 ? Math.min(1, Number(slow)) : 0.2
     const wanted = specs || {}
     for (const slot of [...instances.keys()]) if (!wanted[slot]) instances.delete(slot)
@@ -387,27 +394,36 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       // 也不能按面积最大的层，比底图还大的特效层会把整幅画面缩小
       const rb = stillReference(inst).bounds
       // 放大倍率 × 完整放进舞台的比例；cx / cy 指的那一点放在舞台正中（边缘裁掉）。spine 坐标 y 向上，cy 从上往下数，所以取 1 - cy
-      scale = Math.min(width / rb.w, height / rb.h) * stillView.zoom
-      px = width / 2 - (rb.x + rb.w * stillView.cx) * scale
-      py = height / 2 - (rb.y + rb.h * (1 - stillView.cy)) * scale
+      const v = views.still
+      scale = Math.min(width / rb.w, height / rb.h) * v.zoom
+      px = width / 2 - (rb.x + rb.w * v.cx) * scale
+      py = height / 2 - (rb.y + rb.h * (1 - v.cy)) * scale
     } else if (inst.spec.kind === 'actor') {
-      // 角色（girlscreation，照原查看器 scene.js 的 setSpineActorPos）：x / y 是骨骼坐标系的单位（skeleton.x = x，skeleton.y = -y：y 为正 = 往下），
-      // 缩放（角色缩放 × 全局 ZOOM）绕骨骼原点，不是绕包围盒中心。骨架包围盒（x, y, w, h）按 still 的方式整个放进舞台得到基准比例 fit，
-      // 原点的位置 = 包围盒中心在舞台中心时原点所在的位置
+      // 角色（girlscreation，照原查看器 preloader.js / scene.js）：原查看器给每个角色一个和舞台一样大的 Spine Player，视口写死 { x: 0, y: 900, width: 960, height: 540, padLeft: 100%, padTop: -100% }，
+      // 展开后相机看的世界窗口 = 宽 1920 个骨骼单位、中心在 (0, 900)（高度按画布比例）；脚本里的 x / y 是 skeleton.x = x、skeleton.y = −y，缩放是 skeleton.scale（× 全局 ZOOM）。
+      // 所以不是「把包围盒放进舞台」：每个骨骼单位 = 舞台宽 / 1920 个像素；骨骼原点（脚）落在 舞台中心 + (x, 900 + y) 个单位处，缩放绕原点。
+      // y 为正 = 往下（canvas 的 y 向上，所以减）
       let pos = inst.pos || { x: Number(inst.spec.x) || 0, y: Number(inst.spec.y) || 0 }
       if (inst.moving) {
         const t = Math.min(1, (performance.now() - inst.moving.began) / inst.moving.ms)
         pos = { x: inst.moving.from.x + (inst.moving.to.x - inst.moving.from.x) * t, y: inst.moving.from.y + (inst.moving.to.y - inst.moving.from.y) * t }
         if (t >= 1) { inst.pos = inst.moving.to; inst.moving = null }
       }
-      const fit = Math.min(width / w, height / h)
-      scale = fit * (Number(inst.spec.scale) > 0 ? Number(inst.spec.scale) : 1)
-      px = width / 2 - (x + w / 2) * fit + pos.x * fit
-      py = height / 2 - (y + h / 2) * fit - pos.y * fit
-      if (inst.shake) {   // 衰减的来回晃：每秒 8 个来回，幅度线性衰减到 0（骨骼坐标单位 × fit）
+      const unit = width / 1920
+      scale = unit * (Number(inst.spec.scale) > 0 ? Number(inst.spec.scale) : 1)
+      px = width / 2 + pos.x * unit
+      py = height / 2 - (900 + pos.y) * unit
+      if (inst.shake) {   // 衰减的来回晃：每秒 8 个来回，幅度线性衰减到 0（骨骼坐标单位）
         const t = (performance.now() - inst.shake.began) / 1000 / inst.shake.seconds
         if (t >= 1) inst.shake = null
-        else { const o = Math.sin(t * inst.shake.seconds * 8 * Math.PI * 2) * (1 - t); px += o * inst.shake.x * fit; py += o * inst.shake.y * fit }
+        else { const o = Math.sin(t * inst.shake.seconds * 8 * Math.PI * 2) * (1 - t); px += o * inst.shake.x * unit; py += o * inst.shake.y * unit }
+      }
+      // 「更多」里的放大 / 中心：cx / cy 指的那一点放到舞台正中，再整体放大 zoom 倍（和静态画面同一个意思；canvas 的 y 向上，cy 从上往下数）
+      const v = views.actor
+      if (v.zoom !== 1 || v.cx !== 0.5 || v.cy !== 0.5) {
+        px = width / 2 + v.zoom * (px - v.cx * width)
+        py = height / 2 + v.zoom * (py - (1 - v.cy) * height)
+        scale *= v.zoom
       }
     } else {
       scale = (height * 0.95) / h
@@ -476,15 +492,19 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     canvas,
     set,
     ready,
-    // 只改静态画面的放大 / 中心（拖动选择时实时预览）；没有静态画面就什么也不做
-    setStillView(view) { stillView = normalizeView(view); kick() },
-    // 按「完整放进舞台」（放大 1、中心在正中）时静态画面占舞台的矩形（占舞台宽 / 高的比例），选中心时用来画参考框；没有静态画面是 null
-    stillRect() {
+    // 改某一类（'still' 静态画面 / 'actor' 角色）的放大 / 中心（选中心时实时预览）
+    setView(kind, view) { if (views[kind]) { views = { ...views, [kind]: normalizeView(view) }; kick() } },
+    // 当前画面里有哪些类：选中心 / 放大作用在哪一类（有静态画面就是静态画面，否则是角色）
+    hasKind: (kind) => [...instances.values()].some((inst) => inst.spec.kind === kind),
+    // 选中心时画参考框用：静态画面 = 按「完整放进舞台」（放大 1、中心在正中）时占舞台的矩形；角色 = 整个舞台。没有这一类是 null
+    viewRect(kind) {
       const cv = canvases.find((c) => c.clientWidth) || canvas
       const W = cv.clientWidth
       const H = cv.clientHeight
+      if (!W || !H) return null
+      if (kind === 'actor') return [...instances.values()].some((inst) => inst.spec.kind === 'actor') ? { x: 0, y: 0, w: 1, h: 1 } : null
       const first = [...instances.values()].find((inst) => inst.spec.kind === 'still' && inst.bounds)
-      if (!first || !W || !H) return null
+      if (!first) return null
       const rb = stillReference(first).bounds
       const fit = Math.min(W / rb.w, H / rb.h)
       const w = (rb.w * fit) / W
@@ -495,7 +515,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     // 每个站位 / 静图的骨架信息（诊断面板用）：路径、要的动画 / 实际播的动画、骨架里有哪些动画和皮肤、边界、版本
     info: () => [...instances].map(([slot, inst]) => ({
       slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
-      requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
+      requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
+      pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null,
       animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
       skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
       version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', bounds: inst.bounds ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,

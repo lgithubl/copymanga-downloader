@@ -4268,6 +4268,7 @@ function renderGal(reader) {
     reader,
     startRatio: resume >= 0.98 ? 0 : resume,   // 上次已经看完就从头来
     startChoices: resume >= 0.98 ? {} : savedChoices,
+    viewKey: readerOwner(reader)?.itemId || '',   // 画面放大 / 中心按媒体（条目）存
     onStep: (step, total) => {
       galRatio = ratioOfStep(step, total)
       scheduleLibraryProgressSave()

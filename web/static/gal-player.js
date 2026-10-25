@@ -30,11 +30,12 @@ export const GAL_SETTINGS = {
   slowKey: 'copymanga.gal.slow',                    // 静态画面 animation4 的降速倍率（1 = 不降速）
   slowDefault: 0.2,                                 // 原查看器写死的值
   slowMin: 0.05,
-  stillZoomKey: 'copymanga.gal.stillZoom',          // 静态画面（Spine）的放大倍率：1 = 完整放进舞台，大于 1 = 放大、边缘裁掉
-  stillZoomDefault: 1,
-  stillZoomMin: 0.5,
-  stillZoomMax: 4,
-  stillCenterKey: 'copymanga.gal.stillCenter',      // 静态画面里哪一点放在舞台正中：「x,y」，0..1（左→右、上→下），默认 0.5,0.5
+  viewKeyPrefix: 'copymanga.gal.view.',             // 画面放大 / 中心（每个媒体各存一份：copymanga.gal.view.<条目 id> = { still: { zoom, cx, cy }, actor: { … } }）
+  stillZoomKey: 'copymanga.gal.stillZoom',          // 旧版全局设置（只读，当作没有按媒体存过时的默认值）
+  stillCenterKey: 'copymanga.gal.stillCenter',
+  viewZoomDefault: 1,
+  viewZoomMin: 0.5,
+  viewZoomMax: 4,
   autoChoiceKey: 'copymanga.gal.autoChoice',        // 自动选择：-1 关；0 随机；1/2/3… 选对应项（没有该项就随机）
   autoChoiceDefault: -1,
   autoChoiceMax: 9,
@@ -77,7 +78,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
 //   chapter: { canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
-export function createGalPlayer({ container, reader, startRatio = 0, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null }) {
+export function createGalPlayer({ container, reader, startRatio = 0, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '' }) {
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
   let choices = { ...(startChoices || {}) }
@@ -170,16 +171,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // 静态画面放大：倍率 + 中心（拖动选，和库页面的「页面宽度」同一种操作）
   const zoomInput = el('input', 'gal-more-number')
   zoomInput.type = 'number'
-  zoomInput.min = String(GAL_SETTINGS.stillZoomMin)
-  zoomInput.max = String(GAL_SETTINGS.stillZoomMax)
+  zoomInput.min = String(GAL_SETTINGS.viewZoomMin)
+  zoomInput.max = String(GAL_SETTINGS.viewZoomMax)
   zoomInput.step = '0.1'
-  zoomInput.title = '静态画面（Spine）的放大倍率：1 = 完整放进舞台；大于 1 = 放大，边缘裁掉'
+  zoomInput.title = '画面放大倍率（这个媒体自己的设置；当前画面是静态画面就调静态画面，是角色就调角色）：1 = 原样；大于 1 = 放大，边缘裁掉'
   const zoomRow = el('label', 'gal-more-field')
-  zoomRow.append(el('span', '', '静图放大'), zoomInput, el('span', '', '倍'))
-  const centerBtn = btn('选择中心', '在画面上拖动十字线，选放大时放在舞台正中的那一点（Enter / 确定 保存，Esc 取消）', 'gal-center-btn')
+  const zoomLabel = el('span', '', '画面放大')
+  zoomRow.append(zoomLabel, zoomInput, el('span', '', '倍'))
+  const centerBtn = btn('选择中心', '在画面上拖动十字线，选放大时放在舞台正中的那一点（这个媒体自己的设置；Enter / 确定 保存，Esc 取消）', 'gal-center-btn')
   const centerText = el('span', 'gal-more-hint', '')
   const centerRow = el('div', 'gal-more-field')
-  centerRow.append(el('span', '', '静图中心'), centerBtn, centerText)
+  const centerLabel = el('span', '', '画面中心')
+  centerRow.append(centerLabel, centerBtn, centerText)
   moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
@@ -268,28 +271,41 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     try { localStorage.setItem(GAL_SETTINGS.frameFpsKey, String(frameFps)) } catch { /* 存不了就只在这一页生效 */ }
     startFrames(state.bg?.frames ? layers[frontLayer] : null)
   })
-  // 静态画面放大：倍率 + 中心。存的是整个播放器共用一份（所有静图一样），改了马上重画
-  const loadCenter = () => {
-    const [x, y] = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
-    const ok = (n) => Number.isFinite(n) && n >= 0 && n <= 1
-    return ok(x) && ok(y) ? { cx: x, cy: y } : { cx: 0.5, cy: 0.5 }
+  // 画面放大：倍率 + 中心，每个媒体（Gal 条目）各存一份，静态画面（still）和角色（actor）各一组；改了马上重画。
+  // 当前画面里有静态画面就调静态画面，否则调角色。没按媒体存过的时候，静态画面沿用旧版的全局设置（只读）。
+  const viewStorageKey = viewKey ? `${GAL_SETTINGS.viewKeyPrefix}${viewKey}` : ''
+  const cleanView = (view) => {
+    const unit = (value) => (Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 1 ? Number(value) : 0.5)
+    const zoom = Number(view?.zoom)
+    return { zoom: Number.isFinite(zoom) ? Math.max(GAL_SETTINGS.viewZoomMin, Math.min(GAL_SETTINGS.viewZoomMax, zoom)) : GAL_SETTINGS.viewZoomDefault, cx: unit(view?.cx), cy: unit(view?.cy) }
   }
-  let stillView = { zoom: loadNumber(GAL_SETTINGS.stillZoomKey, GAL_SETTINGS.stillZoomDefault, GAL_SETTINGS.stillZoomMin, GAL_SETTINGS.stillZoomMax), ...loadCenter() }
-  const paintCenterText = () => { centerText.textContent = `${Math.round(stillView.cx * 100)}%, ${Math.round(stillView.cy * 100)}%` }
-  zoomInput.value = String(stillView.zoom)
-  paintCenterText()
-  const saveStillView = () => {
-    try {
-      localStorage.setItem(GAL_SETTINGS.stillZoomKey, String(stillView.zoom))
-      localStorage.setItem(GAL_SETTINGS.stillCenterKey, `${stillView.cx},${stillView.cy}`)
-    } catch { /* 存不了就只在这一页生效 */ }
+  const loadViews = () => {
+    let saved = {}
+    try { saved = JSON.parse((viewStorageKey && localStorage.getItem(viewStorageKey)) || '{}') || {} } catch { saved = {} }
+    const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
+    const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
+    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor) }
+  }
+  let views = loadViews()
+  const viewKind = () => (spineLayer?.hasKind?.('still') ? 'still' : spineLayer?.hasKind?.('actor') ? 'actor' : 'still')
+  const syncViewInputs = () => {
+    const kind = viewKind()
+    const view = views[kind]
+    zoomLabel.textContent = kind === 'actor' ? '角色放大' : '静图放大'
+    centerLabel.textContent = kind === 'actor' ? '角色中心' : '静图中心'
+    zoomInput.value = String(Math.round(view.zoom * 100) / 100)
+    centerText.textContent = `${Math.round(view.cx * 100)}%, ${Math.round(view.cy * 100)}%`
+  }
+  const saveViews = () => {
+    if (!viewStorageKey) return
+    try { localStorage.setItem(viewStorageKey, JSON.stringify(views)) } catch { /* 存不了就只在这一页生效 */ }
   }
   zoomInput.addEventListener('change', () => {
-    const n = Number(zoomInput.value)
-    stillView.zoom = Number.isFinite(n) ? Math.max(GAL_SETTINGS.stillZoomMin, Math.min(GAL_SETTINGS.stillZoomMax, Math.round(n * 100) / 100)) : GAL_SETTINGS.stillZoomDefault
-    zoomInput.value = String(stillView.zoom)
-    saveStillView()
-    spineLayer?.setStillView(stillView)
+    const kind = viewKind()
+    views = { ...views, [kind]: cleanView({ ...views[kind], zoom: Math.round(Number(zoomInput.value) * 100) / 100 }) }
+    syncViewInputs()
+    saveViews()
+    spineLayer?.setView(kind, views[kind])
   })
   let boxOpacity = loadNumber(GAL_SETTINGS.boxOpacityKey, GAL_SETTINGS.boxOpacityDefault, 0, 1)
   let voiceDelay = loadNumber(GAL_SETTINGS.autoVoiceDelayKey, GAL_SETTINGS.autoVoiceDelayDefault, 0, GAL_SETTINGS.autoVoiceDelayMax)
@@ -537,6 +553,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
 
   // Spine：第一次要画骨骼时才建 canvas / 加载运行时；运行时不在就提示，不影响别的
   let spineLayer = null
+  syncViewInputs()   // spineLayer 声明在这里，所以到这儿才能第一次刷新放大 / 中心的输入框
   let spineUnavailable = false
   const unavailableRuntimes = new Set()   // 缺哪几个版本的运行时
   const spineErrors = new Map()           // 骨骼路径 → { kind: version|parse, version, runtime, message }（文件都取到了但不能用）
@@ -547,7 +564,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
-    spineLayer.set(state.spines, { live, slow: slowFactor, view: stillView }).then(() => { if (!destroyed) updateNote() })
+    spineLayer.set(state.spines, { live, slow: slowFactor, view: views }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
   }
   // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   let standLayer = null
@@ -984,9 +1001,15 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         lines.push(`    识别：Spine ${item.version || '未知版本'} → ${item.runtime ? `运行时 ${item.runtime}` : item.error ? '没有对应的运行时' : '（加载中）'}`)
         if (item.error) lines.push(`    ${item.errorKind === 'version' ? '版本不对' : item.errorKind === 'parse' ? '解析失败' : '原因'}：${item.error}`)
         if (item.loaded) {
-          lines.push(`    动画：要 ${item.requested || '（未指定）'} → 实际 ${item.used || '（无）'}${item.requested && item.requested !== item.used ? '  ← 名字对不上，退到了别的' : ''}`)
+          // 名字对不上 = 脚本要的名字不在骨架的动画里（以前拿「0:Wait」这种带轨道号的串去比「Wait」，白报警）
+          const absent = (item.requestedNames || []).filter((name) => !item.animations.includes(name))
+          lines.push(`    动画：要 ${item.requested || '（未指定）'} → 实际 ${item.used || '（无）'}${absent.length ? '  ← 名字对不上，退到了别的' : ''}`)
           if (item.missingAnimations?.length) lines.push(`    骨架里没有这些动画（脚本要的）：${item.missingAnimations.join(', ')}  ← 这些轨道没播`)
           lines.push(`    骨架里的动画（${item.animations.length}）：${item.animations.slice(0, 40).join(', ')}${item.animations.length > 40 ? ' …' : ''}`)
+          if (item.pmaInfo) {
+            const blends = item.blends ? Object.entries(item.blends).filter(([, n]) => n > 0).map(([name, n]) => `${name} ${n} 个槽`).join('、') : ''
+            lines.push(`    预乘 alpha：图集标记 ${item.pmaInfo.atlas ? '是' : '无'} · 像素统计 ${item.pmaInfo.detected ? '是' : '否'} → 实际按${item.pma ? '预乘' : '普通'}画${blends ? `；非 normal 混合：${blends}` : '；混合模式都是 normal'}`)
+          }
           lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? item.bounds.join(' ') : '?'}`)
         }
       }
@@ -1049,8 +1072,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   let centerCleanup = null
   function adjustCenter() {
     if (centerCleanup) { centerCleanup(false); return }
-    const rect = spineLayer?.stillRect?.()
-    if (!rect) { note.textContent = '当前画面没有静态画面（Spine），没法选中心'; return }
+    const kind = viewKind()
+    const rect = spineLayer?.viewRect?.(kind)
+    if (!rect) { note.textContent = '当前画面没有 Spine 静态画面 / 角色，没法选中心'; return }
     toggleMore(false)
     const layer = el('div', 'gal-center-layer')
     const frame = el('div', 'gal-center-frame')
@@ -1064,14 +1088,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     tip.append(tipText, okBtn, resetBtn, cancelBtn)
     layer.append(frame, vLine, hLine, tip)
     stage.append(layer)
-    const original = { ...stillView }
-    const pick = { cx: stillView.cx, cy: stillView.cy }
-    spineLayer.setStillView({ zoom: 1, cx: 0.5, cy: 0.5 })
+    const original = { ...views[kind] }
+    const pick = { cx: views[kind].cx, cy: views[kind].cy }
+    spineLayer.setView(kind, { zoom: 1, cx: 0.5, cy: 0.5 })
     const paint = () => {
       frame.style.cssText = `left:${rect.x * 100}%;top:${rect.y * 100}%;width:${rect.w * 100}%;height:${rect.h * 100}%`
       vLine.style.left = `${(rect.x + pick.cx * rect.w) * 100}%`
       hLine.style.top = `${(rect.y + pick.cy * rect.h) * 100}%`
-      tipText.textContent = `中心 ${Math.round(pick.cx * 100)}%, ${Math.round(pick.cy * 100)}%　${stillView.zoom}×`
+      tipText.textContent = `中心 ${Math.round(pick.cx * 100)}%, ${Math.round(pick.cy * 100)}%　${views[kind].zoom}×`
     }
     const move = (event) => {
       const box = stage.getBoundingClientRect()
@@ -1098,9 +1122,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       centerCleanup = null
       document.removeEventListener('keydown', onCenterKey, true)
       layer.remove()
-      if (apply) { stillView.cx = pick.cx; stillView.cy = pick.cy; saveStillView() } else { stillView = { ...original } }
-      paintCenterText()
-      spineLayer?.setStillView(stillView)
+      if (apply) { views = { ...views, [kind]: { ...views[kind], cx: pick.cx, cy: pick.cy } }; saveViews() } else { views = { ...views, [kind]: original } }
+      syncViewInputs()
+      spineLayer?.setView(kind, views[kind])
     }
     const onCenterKey = (event) => {
       if (event.key !== 'Escape' && event.key !== 'Enter') return

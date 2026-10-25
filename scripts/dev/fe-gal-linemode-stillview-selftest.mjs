@@ -46,13 +46,20 @@ await writeSpine(path.join(scene, 'spines'), 'st1', { format: 'binary', color: '
 await rename(path.join(scene, 'spines/st1.skel.bytes'), path.join(scene, 'spines/st1.skel'))
 await rename(path.join(scene, 'spines/st1.atlas.txt'), path.join(scene, 'spines/st1.atlas'))
 await writeFile(path.join(scene, 'hmr_1.txt'), ['fade,out,black,0.2', 'title,行式テスト,', 'bgmplay,bgm1,0', 'window,on,0.25', 'message,,旁白一句,', 'voice,v1', 'message,甲,「第一句」,iab4020078', 'voice,v2',
-  'chara,st1,chara_1,0,0,10,1,1,0,off', 'charamotion,chara_1,loop,on', 'charamotion,chara_1,joy,on', 'charafade,chara_1,in,0.2', 'await', 'msgvoicesync,chara_1,甲,「同步台词」,iab4030908,v2', 'cgmode,on'].join('\n'))
+  'chara,st1,chara_1,0,-700,10,1,1,0,off', 'charamotion,chara_1,loop,on', 'charamotion,chara_1,joy,on', 'charafade,chara_1,in,0.2', 'await', 'msgvoicesync,chara_1,甲,「同步台词」,iab4030908,v2', 'cgmode,on'].join('\n'))
+// 高个子骨架（533 × 1386，和真实的「橋」一样）+ 标签式脚本：y=0、缩放 0.7——原查看器里这个人的头在舞台上 43% 的位置，脚在舞台下面
+const tall = path.join(pk, 'scenes', 'chmr_3')
+await mkdir(path.join(tall, 'spines'), { recursive: true })
+await writeSpine(path.join(tall, 'spines'), 'st2', { format: 'json', color: 'seagreen', animations: ['Wait'], region: { name: 'body', width: 533, height: 1386, y: 693 } })
+await rename(path.join(tall, 'spines/st2.skel.bytes'), path.join(tall, 'spines/st2.json'))
+await rename(path.join(tall, 'spines/st2.atlas.txt'), path.join(tall, 'spines/st2.atlas'))
+await writeFile(path.join(tall, 'script.txt'), ['<SPINE_ACTOR>1,st2,,,,0,0,x=0|y=0,0.7,skel', '<SPINE_ACTOR_PLAY>1,Wait,0,true', '<NAME_PLATE>乙', '你好', '<PAUSE>', ''].join('\n'))
 const gc = importer(gcMedia)
 const gcImp = await gc.importFromSource({ sourcePath: gcMedia, options: { adapters: ['girlscreation-tag'], config: { game: { id: 'girlscreation' } } } })
 const gcOut = await layoutScript({ item: gcImp.items[0], script: { id: 'gal-layout', version: '2.7.0', options: {} } })
 await gc.patchItemMetadata(gcImp.items[0].itemId, { gal: gcOut.itemPatch.gal })
 const gcId = gcImp.items[0].itemId
-check('gal-layout：只有 hmr_<id>.txt 的场景也算场景（脚本数 1）', gcOut.itemPatch.gal.config.scriptCount === 1 && gcOut.itemPatch.gal.config.game.id === 'girlscreation', J(gcOut.itemPatch?.gal?.config))
+check('gal-layout：只有 hmr_<id>.txt 的场景也算场景（hmr_1 + 标签式的 chmr_3，脚本数 2）', gcOut.itemPatch.gal.config.scriptCount === 2 && gcOut.itemPatch.gal.config.game.id === 'girlscreation', J(gcOut.itemPatch?.gal?.config))
 
 // ---- 素材 2：tenkeiprdx（有静态画面） ----
 const ttMedia = path.join(dataDir, 'gal', 'tt-pack')
@@ -100,7 +107,7 @@ try {
   const newPage = async (init) => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
     await context.addInitScript(() => localStorage.setItem('copymanga.immersivePref', JSON.stringify({ gal: false })))
-    if (init) await context.addInitScript(init)
+    if (init) await context.addInitScript(init)   // 函数或脚本文本
     const page = await context.newPage()
     page.setDefaultTimeout(15000)
     page.errors = []
@@ -185,7 +192,8 @@ try {
     await sleep(500)
     const zoomed = await coverage(page)
     check('放大 2 倍后画面铺得更满（不透明占比至少是 1 倍时的 1.8 倍或已满）', zoomed >= Math.min(0.97, base1 * 1.8), J([base1, zoomed]))
-    check('放大倍率存进浏览器', (await page.evaluate(() => localStorage.getItem('copymanga.gal.stillZoom'))) === '2')
+    const savedView = await page.evaluate((id) => JSON.parse(localStorage.getItem(`copymanga.gal.view.${id}`) || 'null'), ttId)
+    check('放大倍率按媒体存进浏览器（copymanga.gal.view.<条目 id>.still），不是全局的', savedView?.still?.zoom === 2 && (await page.evaluate(() => localStorage.getItem('copymanga.gal.stillZoom'))) === null, J(savedView))
     await page.screenshot({ path: path.join(shotDir, 'still-zoom2.png') })
     // 拖动选中心：点「选择中心」→ 点画面框的左上区 → Enter
     await page.click('.gal-center-btn')
@@ -194,19 +202,48 @@ try {
     await page.mouse.click(frame.l + frame.w * 0.25, frame.t + frame.h * 0.25)
     await page.keyboard.press('Enter')
     await page.waitForSelector('.gal-center-layer', { state: 'detached' })
-    const saved = (await page.evaluate(() => localStorage.getItem('copymanga.gal.stillCenter')) || '').split(',').map(Number)
+    const saved2 = await page.evaluate((id) => JSON.parse(localStorage.getItem(`copymanga.gal.view.${id}`) || 'null'), ttId)
+    const saved = [saved2?.still?.cx, saved2?.still?.cy]
     check('选择中心：点画面框 25% / 25% 处，Enter 保存', Math.abs(saved[0] - 0.25) < 0.03 && Math.abs(saved[1] - 0.25) < 0.03, J(saved))
     check('没有页面错误', page.errors.length === 0, J(page.errors))
     await page.context().close()
   }
   {
     // 中心设到左上角 + 放大 2：左上角那一点放在舞台正中 → 舞台左上 1/4 是空的（被裁掉的是画面外），右下 1/4 有画面
-    const page = await newPage(() => { localStorage.setItem('copymanga.gal.stillZoom', '2'); localStorage.setItem('copymanga.gal.stillCenter', '0,0') })
+    const page = await newPage(`localStorage.setItem('copymanga.gal.view.${ttId}', JSON.stringify({ still: { zoom: 2, cx: 0, cy: 0 } }))`)
     await openStill(page)
     const topLeft = await alphaAt(page, 0.2, 0.2)
     const bottomRight = await alphaAt(page, 0.7, 0.7)
     check('放大 2、中心 0,0：舞台左上（画面外）是空的、右下有画面', topLeft < 20 && bottomRight > 200, J([topLeft, bottomRight]))
     await page.screenshot({ path: path.join(shotDir, 'still-center-topleft.png') })
+    check('没有页面错误', page.errors.length === 0, J(page.errors))
+    await page.context().close()
+  }
+
+  // ===== (2b) 角色摆放照原查看器的固定相机 + 角色放大 / 中心（按媒体存）+ 渲染诊断 =====
+  {
+    const page = await newPage()
+    await page.goto(link(gcId, 's:chmr_3/script.txt'))
+    await page.waitForSelector('.gal-player')
+    await page.waitForFunction(() => /Actor1/.test(document.querySelector('.gal-world')?.dataset.spines || ''), null, { timeout: 15000 })
+    await sleep(800)
+    const topFrac = 0.435   // 原查看器：原点在舞台中心 + (0, 900) 个单位（每个单位 = 舞台宽 / 1920），头顶 = 原点 − 1386 × 0.7 个单位
+    const [above, belowHead, body] = [await alphaAt(page, 0.5, 0.2), await alphaAt(page, 0.5, 0.40), await alphaAt(page, 0.5, 0.6)]
+    check(`高个子角色（y=0、缩放 0.7）：头顶在舞台上 ${Math.round(topFrac * 100)}% 的位置（20% 处和 40% 处是空的，60% 处是身体）——不会再顶出舞台上沿`, above < 20 && belowHead < 20 && body > 200, J([above, belowHead, body]))
+    await page.click('.gal-more-btn')
+    check('「更多」里标成「角色放大 / 角色中心」（当前画面是角色，不是静态画面）', (await page.$eval('.gal-more-field span', (e) => e.textContent).catch(() => '')) !== undefined && /角色放大/.test(await page.evaluate(() => document.querySelector('.gal-more')?.innerText || '')))
+    await page.fill('.gal-more input.gal-more-number[max="4"]', '2')
+    await page.dispatchEvent('.gal-more input.gal-more-number[max="4"]', 'change')
+    await sleep(500)
+    const zoomedHead = await alphaAt(page, 0.5, 0.40)
+    check('角色放大 2 倍（中心默认在舞台正中）：原来头顶上面的 40% 处现在是身体', zoomedHead > 200, String(zoomedHead))
+    const mine = await page.evaluate((id) => JSON.parse(localStorage.getItem(`copymanga.gal.view.${id}`) || 'null'), gcId)
+    const others = await page.evaluate((id) => localStorage.getItem(`copymanga.gal.view.${id}`), ttId)
+    check('按媒体存：这个媒体存了 actor.zoom = 2，别的媒体（tt）没有被影响', mine?.actor?.zoom === 2 && others === null, J([mine, others]))
+    await page.click('.gal-note')
+    await sleep(300)
+    const diag = await page.$eval('.gal-diag', (e) => e.innerText)
+    check('渲染诊断：有「预乘 alpha / 混合模式」一行；「要 0:Wait → 实际 Wait」不再误报「名字对不上」', /预乘 alpha：图集标记/.test(diag) && !/名字对不上/.test(diag), diag.slice(0, 600))
     check('没有页面错误', page.errors.length === 0, J(page.errors))
     await page.context().close()
   }
