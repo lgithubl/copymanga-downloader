@@ -2,7 +2,7 @@
 // 目前渲染：背景（渐变/纯色）、说话人和台词（含描边/颜色等样式片段）、BGM/语音/音效、黑场、wait、视频。
 // 另外：Spine 骨骼动画（站位立绘、整幅静态画面，gal-spine.js）、镜头（整个画面一起平移/缩放）、背景音效声道、闪屏。
 // 立绘 / 遮罩等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
-import { createSpineLayer } from '/gal-spine.js'
+import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } from '/gal-spine.js'
 import { createStandLayer } from '/gal-stand.js'
 import { attachBarLock } from '/gal-barlock.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, segmentsText, stateAt, stepOfRatio } from '/gal-engine.js'
@@ -196,6 +196,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const camCy = camNumber('相机中心 Y（骨骼单位，y 向上）：Girls Creation R Viewer 是 900；原点在画面中心的骨架（CG）一般是 0', 10)
   const camRow = el('div', 'gal-more-field gal-cam-row')
   camRow.append(el('span', '', '窗口宽'), camWidth, el('span', '', '中心 X'), camCx, el('span', '', '中心 Y'), camCy)
+  // 角色表情（maid 的分层脸骨架）：脚本里写的是预设名（通常 / 喜 / 照れ …），对应到每个部件第几号的表读不到（加密），所以在这里调；按媒体存，也可以复制成配置
+  const exprBtn = btn('表情…', '分层脸骨架的表情预设：把脚本里的预设名对应到各部件（眼 / 眉 / 嘴 / 腮红…）第几号；按媒体存', 'gal-expr-btn')
+  const exprRow = el('div', 'gal-more-field')
+  exprRow.append(el('span', '', '角色表情'), exprBtn)
+  exprRow.hidden = true
   // 马赛克层（misttrain：still_configuration.json 里 IsMosaic 的层默认不叠）：这个场景有马赛克层时才出现；改了按媒体存，并按新设置重取这份脚本
   const mosaicInput = el('input')
   mosaicInput.type = 'checkbox'
@@ -203,7 +208,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const mosaicRow = el('label', 'gal-more-field')
   mosaicRow.append(el('span', '', '显示马赛克层'), mosaicInput)
   mosaicRow.hidden = !(scene?.stats?.mosaic?.total > 0)
-  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow, camModeRow, camRow, mosaicRow)
+  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow, camModeRow, camRow, exprRow, mosaicRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
@@ -257,7 +262,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   choiceBox.hidden = true
   const diagPanel = el('div', 'gal-log gal-diag')   // 点右下角提示展开：未渲染的指令 / 缺资源 / Spine 状态，可复制
   diagPanel.hidden = true
-  stage.append(logPanel, diagPanel, choiceBox)
+  const exprPanel = el('div', 'gal-log gal-expr')   // 「更多 → 表情…」：表情预设面板
+  exprPanel.hidden = true
+  stage.append(logPanel, diagPanel, exprPanel, choiceBox)
   // 舞台外面包一层：沉浸 / 全屏时靠它按「去掉底栏后剩下的高度」定舞台大小（舞台 16:9，宽高都不超过这一层），底栏永远不会被挤出屏幕
   const stageArea = el('div', 'gal-stage-area')
   stageArea.append(stage)
@@ -308,9 +315,12 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     try { saved = JSON.parse((viewStorageKey && localStorage.getItem(viewStorageKey)) || '{}') || {} } catch { saved = {} }
     const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
     const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
-    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), camera: cleanCamera(saved.camera), showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
+    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), camera: cleanCamera(saved.camera), expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
   }
   let views = loadViews()
+  // 表情预设表：内置初始值（gal-spine.js）← 服务端配置（adapterOptions['girlscreation-tag'].expressions）← 这个媒体自己调的（views.expressions）
+  const configExpressions = reader.item?.config?.adapterOptions?.['girlscreation-tag']?.expressions || {}
+  const expressionTable = (extra = null) => mergeExpressions(configExpressions, views.expressions, extra)
   mosaicInput.checked = views.showMosaic ?? Boolean(scene?.stats?.mosaic?.shown)
   mosaicInput.addEventListener('change', () => {
     views = { ...views, showMosaic: mosaicInput.checked }
@@ -329,6 +339,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     const hasActor = Boolean(spineLayer?.hasKind?.('actor'))
     camModeRow.hidden = !hasActor
     camRow.hidden = !hasActor || views.camera.mode !== 'fixed'
+    exprRow.hidden = !(spineLayer?.info?.() || []).some((item) => item.kind === 'actor' && item.loaded && (item.animations || []).some((name) => /^(?:eye|eyebrow|eyemain|eyepos|mouse|mouth|cheek|highlight)\//.test(name)))
     camModeSelect.value = views.camera.mode
     camWidth.value = String(views.camera.width)
     camCx.value = String(views.camera.cx)
@@ -609,7 +620,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
-    spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
+    spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera, expressions: expressionTable() } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
   }
   // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   let standLayer = null
@@ -1050,7 +1061,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
           const absent = (item.requestedNames || []).filter((name) => !item.animations.includes(name))
           lines.push(`    动画：要 ${item.requested || '（未指定）'} → 实际 ${item.used || '（无）'}${absent.length ? '  ← 名字对不上，退到了别的' : ''}`)
           if (item.missingAnimations?.length) lines.push(`    骨架里没有这些动画（脚本要的）：${item.missingAnimations.join(', ')}  ← 这些轨道没播`)
-          if (item.faceDefaults?.length) lines.push(`    ${item.missingAnimations?.length ? `表情预设没有映射（原游戏用预设表把「${item.missingAnimations.join('、')}」展开成眼 / 眉 / 嘴等分层动画，这张表在加密的 castData 里）` : '分层脸骨架，脚本没给表情'}→ 先用默认脸顶上：${item.faceDefaults.join(', ')}`)
+          if (item.expression?.source === 'table') lines.push(`    表情预设「${item.expression.preset}」→ 预设表（范围 ${item.expression.scope}）：${item.faceDefaults.join(', ')}`)
+          else if (item.faceDefaults?.length) lines.push(`    ${item.missingAnimations?.length ? `表情预设没有映射（原游戏用预设表把「${item.missingAnimations.join('、')}」展开成眼 / 眉 / 嘴等分层动画，这张表在加密的 castData 里）` : '分层脸骨架，脚本没给表情'}→ 先用默认脸顶上：${item.faceDefaults.join(', ')}`)
           lines.push(`    骨架里的动画（${item.animations.length}）：${item.animations.slice(0, 40).join(', ')}${item.animations.length > 40 ? ' …' : ''}`)
           if (item.pmaInfo) {
             const blends = item.blends ? Object.entries(item.blends).filter(([, n]) => n > 0).map(([name, n]) => `${name} ${n} 个槽`).join('、') : ''
@@ -1188,18 +1200,118 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   }
   centerBtn.addEventListener('click', adjustCenter)
 
+  // ---------- 表情预设面板（更多 → 表情…）----------
+  // 选一个角色 + 一个预设名（默认是它现在正在用的），按部件挑第几号，改了马上预览；存到「这个角色」或「所有角色」，按媒体存在浏览器里，也可以复制成配置（adapterOptions['girlscreation-tag'].expressions）
+  const FACE_GROUPS = [['eyemain', '眼珠'], ['eye', '眼'], ['eyebrow', '眉'], ['eyepos', '眼位'], ['mouse', '嘴'], ['cheek', '腮红'], ['highlight', '高光'], ['sweat', '汗'], ['tear', '泪']]
+  const faceActors = () => (spineLayer?.info?.() || []).filter((item) => item.kind === 'actor' && item.loaded && (item.animations || []).some((name) => /^(?:eye|eyebrow|eyemain|eyepos|mouse|mouth|cheek|highlight)\//.test(name)))
+  // 这个场景里脚本给过的、骨架里没有的名字 = 表情预设名
+  const scenePresets = (item) => {
+    const found = new Set()
+    for (const step of scene?.steps || []) for (const command of step.commands) {
+      if (command.op !== 'spine' || command.kind !== 'actor' || `Actor${command.slot?.replace(/^Actor/, '')}` !== item.slot) continue
+      for (const track of command.tracks || []) if (track.anim && !item.animations.includes(track.anim)) found.add(track.anim)
+    }
+    return [...found]
+  }
+  function closeExpr() { exprPanel.hidden = true; spineLayer?.setExpressions(expressionTable()) }
+  function openExpr() {
+    const actors = faceActors()
+    if (!actors.length) return
+    toggleMore(false)
+    exprPanel.hidden = false
+    logPanel.hidden = true
+    diagPanel.hidden = true
+    let actor = actors[0]
+    const render = () => {
+      exprPanel.replaceChildren()
+      const { castKey, skelBase } = castKeysOf(actor.skel)
+      const presets = scenePresets(actor)
+      let preset = actor.expression?.preset || presets[0] || '通常'
+      const head = el('div', 'gal-diag-head')
+      const copy = btn('复制配置', '把这个媒体自己调的表情表复制成 JSON，可以放进服务端配置 adapterOptions[\'girlscreation-tag\'].expressions')
+      const close = btn('关闭', '')
+      head.append(el('strong', '', '表情预设'), copy, close)
+      const body = el('div', 'gal-expr-body')
+      const field = (label, control) => { const row = el('label', 'gal-expr-field'); row.append(el('span', '', label), control); return row }
+      const actorSelect = el('select', 'gal-more-select')
+      for (const item of actors) { const option = el('option', '', `${item.slot} · ${castKeysOf(item.skel).skelBase}`); option.value = item.slot; option.selected = item.slot === actor.slot; actorSelect.append(option) }
+      actorSelect.addEventListener('change', () => { actor = actors.find((item) => item.slot === actorSelect.value) || actor; render() })
+      const presetInput = el('input', 'gal-more-number gal-expr-preset')
+      presetInput.setAttribute('list', 'gal-expr-presets')
+      presetInput.value = preset
+      const list = el('datalist')
+      list.id = 'gal-expr-presets'
+      for (const name of new Set([...presets, ...Object.keys(mergeExpressions(expressionTable()).default || {})])) { const option = el('option'); option.value = name; list.append(option) }
+      const scopeSelect = el('select', 'gal-more-select')
+      for (const [value, label] of [[castKey || skelBase, `这个角色（${castKey || skelBase}）`], ['default', '所有角色']]) { const option = el('option', '', label); option.value = value; scopeSelect.append(option) }
+      const selects = new Map()
+      const current = () => {
+        const hit = resolveExpression({ table: mergeExpressions(expressionTable()), castKey, skelBase, preset: presetInput.value.trim(), names: actor.animations })
+        const out = {}
+        for (const anim of hit?.anims || []) { const [group, name] = anim.split('/'); out[group] = name.slice(group.length + 1) }
+        return out
+      }
+      const values = current()
+      const groupsHere = FACE_GROUPS.filter(([group]) => actor.animations.some((name) => name.startsWith(`${group}/`)))
+      const groupRows = el('div', 'gal-expr-groups')
+      for (const [group, label] of groupsHere) {
+        const select = el('select', 'gal-more-select')
+        const blank = el('option', '', '（默认）')
+        blank.value = ''
+        select.append(blank)
+        for (const name of actor.animations.filter((n) => n.startsWith(`${group}/`))) { const suffix = name.slice(group.length + 1 + group.length + 1 - 1).replace(/^_/, ''); const option = el('option', '', suffix); option.value = suffix; option.selected = suffix === values[group]; select.append(option) }
+        select.addEventListener('change', preview)
+        selects.set(group, select)
+        groupRows.append(field(`${label}（${group}）`, select))
+      }
+      const specOf = () => Object.fromEntries([...selects].filter(([, select]) => select.value).map(([group, select]) => [group, select.value]))
+      function preview() { spineLayer?.setExpressions(expressionTable({ [scopeSelect.value]: { [presetInput.value.trim()]: specOf() } })) }
+      presetInput.addEventListener('change', () => { preset = presetInput.value.trim(); render() })
+      const save = btn('应用并保存', '存到这个媒体（浏览器里），所有用到这个预设名的地方都生效')
+      const clear = btn('清除这个预设', '删掉这个媒体里对这个预设名自己调的部分，回到配置 / 内置初始值')
+      save.addEventListener('click', () => {
+        const name = presetInput.value.trim()
+        if (!name) return
+        const scope = scopeSelect.value
+        views = { ...views, expressions: { ...views.expressions, [scope]: { ...(views.expressions[scope] || {}), [name]: specOf() } } }
+        saveViews()
+        spineLayer?.setExpressions(expressionTable())
+        save.textContent = '已保存'
+        setTimeout(() => { save.textContent = '应用并保存' }, 1200)
+      })
+      clear.addEventListener('click', () => {
+        const name = presetInput.value.trim()
+        const scope = scopeSelect.value
+        if (views.expressions[scope]?.[name]) { const rest = { ...views.expressions[scope] }; delete rest[name]; views = { ...views, expressions: { ...views.expressions, [scope]: rest } }; saveViews() }
+        spineLayer?.setExpressions(expressionTable())
+        render()
+      })
+      scopeSelect.addEventListener('change', preview)
+      copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(JSON.stringify(views.expressions, null, 2)); copy.textContent = '已复制' } catch { copy.textContent = '复制失败' } setTimeout(() => { copy.textContent = '复制配置' }, 1500) })
+      close.addEventListener('click', closeExpr)
+      const hint = el('div', 'gal-expr-hint', `当前这句里 ${actor.slot} 用的预设：${actor.expression?.preset || '（脚本没给）'}${actor.expression ? `（${actor.expression.source === 'table' ? `来自预设表：${actor.expression.scope}` : '预设表里没有，用默认脸'}）` : ''}。改下面的选项马上预览；预设名改成别的是给别的预设建表（要走到用它的那一句才看得到）。`)
+      body.append(hint, field('角色', actorSelect), field('预设名', presetInput), list, field('保存到', scopeSelect), groupRows)
+      const foot = el('div', 'gal-expr-foot')
+      foot.append(save, clear)
+      exprPanel.append(head, body, foot)
+    }
+    render()
+  }
+  exprBtn.addEventListener('click', openExpr)
+
   // 点舞台 = 下一句；设置弹层开着时，第一下只收弹层（不前进）
   stage.addEventListener('click', () => {
     if (choiceState) return
     if (!settings.hidden) { toggleSettings(false); return }
     if (!moreMenu.hidden) { toggleMore(false); return }
     if (!diagPanel.hidden) { diagPanel.hidden = true; return }
+    if (!exprPanel.hidden) { closeExpr(); return }
     logPanel.hidden = true
     next()
   })
   // 工具栏和设置弹层上的点击不能冒泡到舞台（否则点个按钮就翻页）
   // 记录面板也在舞台里：点记录里的一行（跳转）不能顺带触发舞台的「下一句」
-  for (const part of [barWrap, logPanel, diagPanel, choiceBox]) part.addEventListener('click', (event) => event.stopPropagation())
+  for (const part of [barWrap, logPanel, diagPanel, exprPanel, choiceBox]) part.addEventListener('click', (event) => event.stopPropagation())
   nextBtn.addEventListener('click', next)
   prevBtn.addEventListener('click', prev)
   autoBtn.addEventListener('click', toggleAuto)
@@ -1277,6 +1389,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       // 先收面板；都没开才交给页面（退出沉浸）。全屏下的 Esc 浏览器自己会退全屏，不会到这里
       if (!settings.hidden) toggleSettings(false)
       else if (!moreMenu.hidden) toggleMore(false)
+      else if (!exprPanel.hidden) closeExpr()
       else if (!diagPanel.hidden) diagPanel.hidden = true
       else if (!logPanel.hidden) logPanel.hidden = true
       else if (onEscape) onEscape()

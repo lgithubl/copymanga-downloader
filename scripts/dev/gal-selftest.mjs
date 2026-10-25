@@ -26,7 +26,7 @@ import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
 import { buildGalFixture } from './make-gal-fixture.mjs'
-import { declaredPageSizes, faceDefaultsFor, reportDeclaredSize } from '../../web/static/gal-spine.js'
+import { DEFAULT_EXPRESSIONS, castKeysOf, declaredPageSizes, faceDefaultsFor, mergeExpressions, reportDeclaredSize, resolveExpression } from '../../web/static/gal-spine.js'
 import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
 
 let pass = 0
@@ -1262,6 +1262,23 @@ async function gcMod0Prepare({ truncated }) {
   check('SPINE_ACTOR 第 4 项为空：没有初始动画（轨道为空，由播放层决定怎么处理）', none[0].tracks.length === 0, J(none[0].tracks))
   const before = spines('<SPINE_ACTOR_OUT>8,0\n<SPINE_ACTOR_PLAY>8,Wait,0,true\n<SPINE_ACTOR>8,cast009001/nashwa_001,,通常,,0,0,x=0|y=0,1.0,json\n<NAME_PLATE>甲\nhi\n<PAUSE>\n')
   check('先 PLAY 后 ACTOR（OUT → PLAY → ACTOR）：先记下的动画优先于 ACTOR 的初始动画', before[0].tracks[0].anim === 'Wait', J(before.map((c) => c.tracks)))
+}
+
+// ================= maid 的表情预设表（内置初始值 + 可配置）=================
+{
+  const names = ['cheek/cheek_001', 'cheek/cheek_002', 'cheek/cheek_none', 'eye/eye_001', 'eye/eye_002', 'eye/eye_003', 'eyebrow/eyebrow_001', 'eyebrow/eyebrow_002', 'eyemain/eyemain_001', 'eyepos/eyepos_normal', 'eyepos/eyepos_top', 'highlight/highlight_on', 'highlight/highlight_off', 'mouse/mouse_001', 'mouse/mouse_002', 'sweat/sweat_001', 'tear/tear_001']
+  const table = mergeExpressions(DEFAULT_EXPRESSIONS)
+  const calm = resolveExpression({ table, preset: '通常', names })
+  check('预设表（内置）：通常 = 各部件 001 / normal / none / on（eye_001、eyebrow_001、mouse_001、eyemain_001、eyepos_normal、cheek_none、highlight_on），汗和泪不顶', J([...calm.anims].sort()) === J(['cheek/cheek_none', 'eye/eye_001', 'eyebrow/eyebrow_001', 'eyemain/eyemain_001', 'eyepos/eyepos_normal', 'highlight/highlight_on', 'mouse/mouse_001'].sort()) && calm.scope === 'default', J(calm))
+  const shy = resolveExpression({ table, preset: '照れ', names })
+  check('预设表（内置）：照れ = 通常的脸 + 腮红 001；慌て = 通常的脸 + 汗 001', shy.anims.includes('cheek/cheek_001') && !shy.anims.includes('cheek/cheek_none') && shy.anims.includes('eye/eye_001') && resolveExpression({ table, preset: '慌て', names }).anims.includes('sweat/sweat_001'), J(shy))
+  check('预设表：表里没有的预设（喜）返回 null，由播放层用默认脸；castKeysOf 从骨架路径取出角色目录 / 骨架文件名', resolveExpression({ table, preset: '喜', names }) === null && J(castKeysOf('data/spine/cast/cast009001/nashwa_001.json')) === J({ castKey: 'cast009001', skelBase: 'nashwa_001' }))
+  const custom = mergeExpressions(DEFAULT_EXPRESSIONS, { default: { 喜: { eye: 2, mouse: '002' } }, cast009001: { 喜: { eye: 3 }, 通常: { eyebrow: '002' } } })
+  const joyDefault = resolveExpression({ table: custom, castKey: 'cast005001', skelBase: 'scarlet_001', preset: '喜', names })
+  const joyCast = resolveExpression({ table: custom, castKey: 'cast009001', skelBase: 'nashwa_001', preset: '喜', names })
+  check('预设表（配置）：数字后缀（2 → 002）；角色范围比「所有角色」优先；同一范围里没写的部件沿用该范围「通常」的（cast009001 的通常眉毛是 002）', joyDefault.anims.includes('eye/eye_002') && joyDefault.anims.includes('mouse/mouse_002') && joyDefault.anims.includes('eyebrow/eyebrow_001') && joyCast.anims.includes('eye/eye_003') && joyCast.anims.includes('eyebrow/eyebrow_002') && joyCast.scope === 'cast009001', J([joyDefault, joyCast]))
+  const missing = resolveExpression({ table: mergeExpressions(DEFAULT_EXPRESSIONS, { default: { 喜: { eye: 99, mouse: 1 } } }), preset: '喜', names })
+  check('预设表：骨架里没有的号码（eye_099）跳过、改用该部件的默认动画（eye_001）', missing.anims.includes('eye/eye_001') && !missing.anims.some((n) => n.includes('099')) && missing.anims.includes('mouse/mouse_001'), J(missing))
 }
 
 await rm(work, { recursive: true, force: true })

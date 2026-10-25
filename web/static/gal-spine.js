@@ -70,6 +70,53 @@ export function pickSpineAnimation(data, wanted, kind) {
 // 兜底：预设名对不上时，每个还没有动画的脸部分层先用一个中性的默认动画顶上（眼 / 眉 / 嘴 / 眼位 / 腮红 / 高光），至少不是没有眼睛和嘴巴；表情本身不对，拿到预设表再做。
 const FACE_DEFAULTS = { eyemain: 'eyemain_001', eye: 'eye_001', eyebrow: 'eyebrow_001', eyepos: 'eyepos_normal', mouse: 'mouse_001', mouth: 'mouth_001', cheek: 'cheek_none', highlight: 'highlight_on' }
 const FACE_TRACK_BASE = 20   // 默认脸用的轨道号（从 20 起，不和脚本里的轨道撞）
+// 表情预设表（maid：脚本里写的是预设名，原游戏用加密的 castData 把它展开成每个部件第几号；这张表我们读不了，所以做成可配置的）。
+// 形状：{ <范围>: { <预设名>: { <部件>: <后缀> } } }。范围 = 'default'（所有角色）或 角色目录名（cast009001）或 骨架文件名（nashwa_001），越具体越优先。
+// 部件 = eye / eyebrow / mouse / eyemain / eyepos / cheek / highlight / sweat / tear；后缀是数字（3 → 003）或字符串（normal / none / on / off / half），对应动画 <部件>/<部件>_<后缀>，骨架里没有的部件 / 号码跳过（改用该部件的默认动画）。
+// 同一范围里别的预设没写的部件，沿用这个范围里「通常」的。
+// 内置的初始值只放有把握的：通常 = 各部件 001 / normal / none / on；照れ = 腮红 001；慌て / 大慌て / 苦笑い = 汗 001。其余预设先用通常的脸，在「更多 → 表情」里自己调。
+export const DEFAULT_EXPRESSIONS = {
+  default: {
+    '通常': { eye: '001', eyebrow: '001', mouse: '001', eyemain: '001', eyepos: 'normal', cheek: 'none', highlight: 'on' },
+    '照れ': { cheek: '001' },
+    '慌て': { sweat: '001' },
+    '大慌て': { sweat: '001' },
+    '苦笑い': { sweat: '001' },
+  },
+}
+// 合并两张表：范围取并集，同一范围里同一个预设按部件覆盖（后面的优先）
+export function mergeExpressions(...tables) {
+  const out = {}
+  for (const table of tables) {
+    for (const [scope, presets] of Object.entries(table || {})) {
+      if (!presets || typeof presets !== 'object') continue
+      out[scope] = out[scope] || {}
+      for (const [preset, spec] of Object.entries(presets)) if (spec && typeof spec === 'object') out[scope][preset] = { ...(out[scope][preset] || {}), ...spec }
+    }
+  }
+  return out
+}
+const faceSuffix = (token) => (typeof token === 'number' ? String(Math.trunc(token)).padStart(3, '0') : String(token))
+// 预设名 → 要播的动画列表（骨架动画全名）；表里没有这个预设返回 null。castKey / skelBase 决定用哪个范围
+export function resolveExpression({ table, castKey = '', skelBase = '', preset, names }) {
+  const scopes = [castKey, skelBase, 'default'].filter((key, i, list) => key && list.indexOf(key) === i && table?.[key])
+  const scope = scopes.find((key) => table[key][preset])
+  if (!scope) return null
+  const base = preset === '通常' ? {} : (scopes.map((key) => table[key]['通常']).find(Boolean) || {})
+  const merged = { ...base, ...table[scope][preset] }
+  const anims = []
+  for (const [group, token] of Object.entries(merged)) {
+    const full = `${group}/${group}_${faceSuffix(token)}`
+    if (names.includes(full)) anims.push(full)
+  }
+  return { anims: [...anims, ...faceDefaultsFor(names, anims)], scope }   // 表里没写 / 骨架里没有的部件用该部件的默认动画
+}
+// 脚本里的骨架路径 → 角色目录名（cast009001）和骨架文件名（nashwa_001）
+export function castKeysOf(skel) {
+  const text = String(skel || '')
+  return { castKey: /(?:^|\/)(cast\d+)\//.exec(text)?.[1] || '', skelBase: text.split('/').pop().replace(/\.[^.]+$/, '') }
+}
+
 // 是不是分层脸骨架（动画名是 eye/eye_001、mouse/… 这样一组一组的）
 export const layeredFace = (data) => (data?.animations || []).some((animation) => /^(?:eye|eyebrow|eyemain|eyepos|mouse|mouth|cheek|highlight)\//.test(animation.name))
 export function faceDefaultsFor(names, played) {
@@ -183,6 +230,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // 'fixed' = 固定相机（Girls Creation R Viewer 的做法：世界窗口宽 width 个骨骼单位、中心在 (cx, cy)，每个单位 = 舞台宽 / width 个像素，原点落在 舞台中心 + (x − cx, −(y + cy)) 个单位，缩放绕原点）。
   // 不同游戏的查看器相机常数不一样（只有 Girls Creation R Viewer 的读过源码：1920 / 0 / 900），所以做成「更多」里可调的，按媒体存
   let camera = { mode: 'fit', width: 1920, cx: 0, cy: 900 }
+  let expressionTable = mergeExpressions(DEFAULT_EXPRESSIONS)   // 内置初始值 + 配置 + 这个媒体自己调的（播放器合并好传进来）
 
   const settle = () => { if (!pending) { const done = waiters; waiters = []; done.forEach((resolve) => resolve()) } }
   const ready = () => (pending ? new Promise((resolve) => waiters.push(resolve)) : Promise.resolve())
@@ -283,6 +331,34 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     return pickSpineAnimation(data, wanted, kind)
   }
 
+  // 脸部分层的动画（预设表展开 / 默认脸）：每个动画一条轨道（20 起）；比上次少的轨道清掉。返回有没有变化
+  function applyFace(inst, anims, expression) {
+    inst.trackSig = inst.trackSig || {}
+    inst.faceDefaults = anims
+    inst.expression = expression
+    let changed = false
+    anims.forEach((anim, i) => {
+      const sig = `${anim}:true`
+      if (inst.trackSig[FACE_TRACK_BASE + i] === sig) return
+      inst.state.setAnimation(FACE_TRACK_BASE + i, anim, true)
+      inst.trackSig[FACE_TRACK_BASE + i] = sig
+      changed = true
+    })
+    for (let i = anims.length; i < (inst.faceTracks || 0); i++) { inst.state.clearTrack(FACE_TRACK_BASE + i); delete inst.trackSig[FACE_TRACK_BASE + i]; changed = true }
+    inst.faceTracks = anims.length
+    return changed
+  }
+  // 预设名 → 脸：先查预设表（角色 / 骨架 / 所有角色），没有就用默认脸。missing = 脚本要的、骨架里没有的名字
+  function expressionFor(inst, missing) {
+    const names = inst.data.animations.map((animation) => animation.name)
+    const { castKey, skelBase } = castKeysOf(inst.spec.skel)
+    for (const preset of missing) {
+      const hit = resolveExpression({ table: expressionTable, castKey, skelBase, preset, names })
+      if (hit) return { anims: hit.anims, expression: { preset, scope: hit.scope, source: 'table' } }
+    }
+    return { anims: faceDefaultsFor(names, []), expression: { preset: missing[0] || '', scope: '', source: 'default' } }
+  }
+
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
   function applySpec(inst, spec, live) {
     inst.spec = spec
@@ -303,36 +379,20 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       }
       inst.anim = name
       inst.loop = true
-      // 脚本要的动画骨架里没有（表情预设名）：脸部分层用默认动画顶上（见 faceDefaultsFor）
+      // 脚本要的动画骨架里没有（表情预设名）：先查预设表，没有就用默认脸（见 expressionFor / faceDefaultsFor）
       inst.faceDefaults = []
-      if (inst.missingAnims.length) {
-        const names = inst.data.animations.map((animation) => animation.name)
-        const played = spec.tracks.map((t) => t.anim).filter((anim) => names.includes(anim))
-        faceDefaultsFor(names, played).forEach((anim, i) => {
-          inst.faceDefaults.push(anim)
-          const sig = `${anim}:true`
-          if (inst.trackSig[FACE_TRACK_BASE + i] === sig) return
-          inst.state.setAnimation(FACE_TRACK_BASE + i, anim, true)
-          inst.trackSig[FACE_TRACK_BASE + i] = sig
-          changed = true
-        })
+      inst.expression = null
+      if (inst.missingAnims.length && layeredFace(inst.data)) {
+        const { anims, expression } = expressionFor(inst, inst.missingAnims)
+        if (applyFace(inst, anims, expression)) changed = true
       }
     } else if (spec.kind === 'actor' && layeredFace(inst.data) && !(spec.anim && inst.data.findAnimation(spec.anim))) {
-      // 分层脸骨架、脚本没给（或给的名字骨架里没有）任何能播的动画：不能退到「第一个动画」（那只是某个部件的一条动画，脸还是空的），直接用默认脸
-      inst.trackSig = inst.trackSig || {}
+      // 分层脸骨架、脚本没给（或给的名字骨架里没有）任何能播的动画：不能退到「第一个动画」（那只是某个部件的一条动画，脸还是空的），查预设表 / 用默认脸
       inst.missingAnims = spec.anim ? [spec.anim] : []
       inst.anim = ''
       inst.loop = true
-      inst.faceDefaults = []
-      const names = inst.data.animations.map((animation) => animation.name)
-      faceDefaultsFor(names, []).forEach((anim, i) => {
-        inst.faceDefaults.push(anim)
-        const sig = `${anim}:true`
-        if (inst.trackSig[FACE_TRACK_BASE + i] === sig) return
-        inst.state.setAnimation(FACE_TRACK_BASE + i, anim, true)
-        inst.trackSig[FACE_TRACK_BASE + i] = sig
-        changed = true
-      })
+      const { anims, expression } = expressionFor(inst, inst.missingAnims)
+      if (applyFace(inst, anims, expression)) changed = true
     } else {
       changed = Boolean(name) && (name !== inst.anim || inst.loop !== (spec.loop !== false))
       if (changed) {
@@ -416,7 +476,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     return { mode: value?.mode === 'fixed' ? 'fixed' : 'fit', width: Math.max(100, Math.min(20000, num(value?.width, 1920))), cx: Math.max(-20000, Math.min(20000, num(value?.cx, 0))), cy: Math.max(-20000, Math.min(20000, num(value?.cy, 900))) }
   }
   function set(specs, { live = false, slow = slowTo, view = null } = {}) {
-    if (view) { views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }; if (view.camera) camera = normalizeCamera(view.camera) }
+    if (view) { views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }; if (view.camera) camera = normalizeCamera(view.camera); if (view.expressions) expressionTable = mergeExpressions(DEFAULT_EXPRESSIONS, view.expressions) }
     slowTo = Number.isFinite(Number(slow)) && Number(slow) > 0 ? Math.min(1, Number(slow)) : 0.2
     const wanted = specs || {}
     for (const slot of [...instances.keys()]) if (!wanted[slot]) instances.delete(slot)
@@ -564,6 +624,12 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     set,
     ready,
     // 改某一类（'still' 静态画面 / 'actor' 角色）的放大 / 中心（选中心时实时预览）
+    // 表情预设表（配置 + 这个媒体自己调的）：改了马上用新表重新套一遍当前角色的脸
+    setExpressions(table) {
+      expressionTable = mergeExpressions(DEFAULT_EXPRESSIONS, table)
+      for (const inst of instances.values()) if (inst.skeleton && inst.spec?.kind === 'actor' && inst.faceDefaults?.length) applySpec(inst, inst.spec, false)
+      kick()
+    },
     // 角色摆放方式（见 camera）；改了马上重画
     setCamera(value) { camera = normalizeCamera(value); kick() },
     setView(kind, view) { if (views[kind]) { views = { ...views, [kind]: normalizeView(view) }; kick() } },
@@ -589,7 +655,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     info: () => [...instances].map(([slot, inst]) => ({
       slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
       requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
-      faceDefaults: inst.faceDefaults || [], missingRequested: inst.missingAnims || [],
+      faceDefaults: inst.faceDefaults || [], expression: inst.expression || null, missingRequested: inst.missingAnims || [],
       pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null,
       animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
       skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
