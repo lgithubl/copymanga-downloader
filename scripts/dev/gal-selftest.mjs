@@ -1235,6 +1235,21 @@ async function gcMod0Prepare({ truncated }) {
   check('默认脸：首选名不存在时取该分层第一个不是 none / off 的', J(faceDefaultsFor(['mouse/mouse_none', 'mouse/mouse_005'], [])) === J(['mouse/mouse_005']))
 }
 
+// ================= misttrain：马赛克层（IsMosaic）默认不叠，诊断里写明；按请求的开关（meta.showMosaic）叠 =================
+{
+  const files = ['UScenes/Stills/9/100.json', ...['1', '2', '3', '4'].map((n) => `Spines/Stills/9/100/${n}.skel.bytes`), ...['1', '2', '3', '4'].map((n) => `Spines/Stills/9/100/${n}.atlas.txt`), 'Spines/Stills/9/100/still_configuration.json']
+  const texts = { 'Spines/Stills/9/100/still_configuration.json': J({ Parts: [{ Path: '1', IsMosaic: false }, { Path: '2', IsMosaic: true }, { Path: '3', IsMosaic: false }] }) }
+  const ctx = mtPrepare({ options: {}, texts, files, toResourcePath: (r) => r })
+  const scene = J([null, [100, [[1, 1, '甲', 'hi', 2, 3, false, null, 0, 0, '', '', '', '', '', null, 0, [], ['animation1', null, null, null, null, null, null]]]]])
+  const skels = (result) => result.steps.flatMap((st) => st.commands).filter((c) => c.op === 'spine').map((c) => c.skel.split('/').pop())
+  const dflt = mtParse(scene, ctx, { stem: '100' })
+  const shown = mtParse(scene, ctx, { stem: '100', showMosaic: true })
+  check('马赛克层：默认不叠（只叠 1、3），stats.mosaic 记总数 / 是否显示，stats.notes 写明哪个层被跳过、哪个文件不在 Parts 里（4）', J(skels(dflt)) === J(['1.skel.bytes', '3.skel.bytes']) && dflt.stats.mosaic?.total === 1 && dflt.stats.mosaic.shown === false && dflt.stats.notes.some((n) => /马赛克层.*2/.test(n)) && dflt.stats.notes.some((n) => /不在 still_configuration\.json 的 Parts 里.*4/.test(n)), J([skels(dflt), dflt.stats]))
+  check('马赛克层：请求里带 showMosaic（播放器「更多 → 显示马赛克层」）→ 叠上 2；跳过马赛克的提示没了，Parts 之外的 4 仍然提示', J(skels(shown)) === J(['1.skel.bytes', '2.skel.bytes', '3.skel.bytes']) && shown.stats.mosaic.shown === true && !shown.stats.notes.some((n) => /马赛克/.test(n)) && shown.stats.notes.some((n) => /4/.test(n)), J([skels(shown), shown.stats.notes]))
+  const optionOn = mtPrepare({ options: { showMosaic: true }, texts, files, toResourcePath: (r) => r })
+  check('马赛克层：adapterOptions.showMosaic 打开 = 默认叠；请求里 showMosaic=false 可以盖掉它', skels(mtParse(scene, optionOn, { stem: '100' })).length === 3 && skels(mtParse(scene, optionOn, { stem: '100', showMosaic: false })).length === 2)
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

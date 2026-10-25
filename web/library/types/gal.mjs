@@ -267,11 +267,11 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   // ---------- 阅读 ----------
 
   // sectionId = 浏览节点 id（见 gal/browse.mjs）：空 = 首页；播放页节点带规范场景，其余节点只有选项列表
-  async function getReaderContent(itemId, unitId, { sectionId = '' } = {}) {
+  async function getReaderContent(itemId, unitId, { sectionId = '', showMosaic } = {}) {
     const item = await readItem(itemId)
     if (unitId && unitId !== GAL_MAIN_UNIT) throw new Error(`Unit not found: ${unitId}`)
     const unit = item.mediaUnits[0]
-    const { node, scene = null, sectionNavigation = { prev: null, next: null } } = await providerOf(item).getNode(sectionId)
+    const { node, scene = null, sectionNavigation = { prev: null, next: null } } = await providerOf(item).getNode(sectionId, showMosaic === undefined ? {} : { showMosaic })
     const { mediaUnits, ...publicItem } = item
     return {
       type: 'gal',

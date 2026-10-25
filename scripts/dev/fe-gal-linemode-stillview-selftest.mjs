@@ -5,7 +5,7 @@
 //   PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-linemode-stillview-selftest.mjs     截图在 SHOT_DIR（默认 /tmp/gal-linemode-shots）
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
@@ -100,6 +100,28 @@ const ngImp = await ng.importFromSource({ sourcePath: ngMedia, options: { adapte
   },
 } } })
 const ngId = ngImp.items[0].itemId
+
+// ---- 素材 4：misttrain，最底下的层初始姿势里没有可见附件（包围盒 Infinity，附件由动画打开）——不能拿它当参照层 ----
+const meMedia = path.join(dataDir, 'gal', 'mt-empty')
+const meRoot = path.join(meMedia, 'MistTrainGirls X')
+await mkdir(path.join(meRoot, 'UScenes/Stills/9'), { recursive: true })
+await writeSpine(path.join(meRoot, 'Spines/Stills/9/2940207'), '1', { format: 'json', color: 'goldenrod', animations: ['animation1'] })
+await writeSpine(path.join(meRoot, 'Spines/Stills/9/2940207'), '3', { format: 'json', color: 'deepskyblue', animations: ['animation1'] })
+{
+  const file = path.join(meRoot, 'Spines/Stills/9/2940207/1.skel.bytes')
+  const json = JSON.parse(await readFile(file, 'utf8'))
+  delete json.slots[0].attachment   // 初始姿势没有附件 → 包围盒是空的
+  json.animations.animation1.slots = { body: { attachment: [{ time: 0, name: 'body' }] } }   // 动画把附件打开
+  await writeFile(file, JSON.stringify(json))
+}
+await writeFile(path.join(meRoot, 'Spines/Stills/9/2940207/still_configuration.json'), JSON.stringify({ Parts: [{ Path: '1', IsMosaic: false }, { Path: '3', IsMosaic: false }] }))
+await mkdir(path.join(meRoot, 'MasterData'), { recursive: true })
+await writeFile(path.join(meRoot, 'UScenes/Stills/9/2940207.json'), JSON.stringify([null, [2940207, [[1, 1, '甲', '你好', 2, 3, false, null, 0, 0, '', '', '', '', '', null, 0, [], ['animation1', null, null, null, null, null, null]]]]]))
+const me = importer(meMedia)
+const meImp = await me.importFromSource({ sourcePath: meMedia, options: { adapters: ['misttrain-json'], config: { game: { id: 'misttrain' } } } })
+const meOut = await layoutScript({ item: meImp.items[0], script: { id: 'gal-layout', version: '2.8.0', options: {} } })
+await me.patchItemMetadata(meImp.items[0].itemId, { gal: meOut.itemPatch.gal })
+const meId = meImp.items[0].itemId
 
 const port = 8131
 const base = `http://127.0.0.1:${port}`
@@ -265,6 +287,21 @@ try {
     await sleep(300)
     const diag = await page.$eval('.gal-diag', (e) => e.innerText)
     check('分层脸 + 表情预设名「照れ」对不上：诊断里写明用默认脸顶上（eye/eye_001、eyebrow/eyebrow_001、mouse/mouse_001、cheek/cheek_none）', /表情预设没有映射/.test(diag) && /eye\/eye_001/.test(diag) && /mouse\/mouse_001/.test(diag) && /cheek\/cheek_none/.test(diag) && /eyebrow\/eyebrow_001/.test(diag), diag.slice(0, 700))
+    check('没有页面错误', page.errors.length === 0, J(page.errors))
+    await page.context().close()
+  }
+
+  {
+    const page = await newPage()
+    await page.goto(link(meId, 's:Stills/9/2940207.json'))
+    await page.waitForSelector('.gal-player')
+    await page.waitForFunction(() => document.querySelector('.gal-world')?.dataset.spines?.includes('still1'), null, { timeout: 15000 })
+    await sleep(900)
+    check('最底下的层初始姿势没有可见附件（包围盒是 Infinity）：改用有包围盒的层当参照，画面照样画出来（不会整个消失）', (await coverage(page)) > 0.02, String(await coverage(page)))
+    await page.click('.gal-note')
+    await sleep(300)
+    const diag = await page.$eval('.gal-diag', (e) => e.innerText)
+    check('渲染诊断：空包围盒的层写明「无（初始姿势下没有可见附件，由动画打开，不当参照层）」', /边界 无（初始姿势下没有可见附件/.test(diag), diag.slice(0, 600))
     check('没有页面错误', page.errors.length === 0, J(page.errors))
     await page.context().close()
   }

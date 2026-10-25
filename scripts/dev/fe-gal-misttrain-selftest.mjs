@@ -116,6 +116,26 @@ const topLeft = await px(0.5 - 0.4 * (0.5 / stageRatio), 0.1)      // 底图的�
 const lowLeft = await px(0.5 - 0.2 * (0.5 / stageRatio), 0.85)     // 底图的左下附近：小层的范围内，小层在上（天蓝）
 check('静态画面各层共用同一套变换：小层只占下半（上方露出底图的金色，下方是小层的天蓝），没有被放大铺满', nearColor(topLeft, [218, 165, 32]) && nearColor(lowLeft, [0, 191, 255]), J([topLeft, lowLeft]))
 await page.screenshot({ path: path.join(shotDir, '1-still.png') })
+// 马赛克层开关：这个场景有 IsMosaic 的层（2）→「更多」里出现「显示马赛克层」；诊断里写明默认不叠；打开 → 重取脚本、叠上 2；再关掉回到只有 1、3
+await page.click('.gal-more-btn')
+check('「更多」里有「显示马赛克层」（这个场景有马赛克层）', /显示马赛克层/.test(await page.evaluate(() => document.querySelector('.gal-more')?.innerText || '')))
+await page.click('.gal-more-btn')   // 收起菜单
+await page.click('.gal-note')
+await sleep(300)
+const mosaicDiag = await page.$eval('.gal-diag', (e) => e.innerText)
+check('渲染诊断写明：有 1 个马赛克层默认不叠；骨架 4 个层里 3 号（天蓝）正常叠', /马赛克层.*默认不叠/.test(mosaicDiag), mosaicDiag.slice(0, 500))
+await page.click('.gal-diag .gal-btn:last-of-type').catch(() => {})
+await page.click('.gal-more-btn')
+await page.check('.gal-more .gal-more-field input[type="checkbox"]')
+await page.waitForFunction(() => Object.keys(JSON.parse(document.querySelector('.gal-world')?.dataset.spines || '{}')).length === 3, null, { timeout: 15000 })
+check('打开「显示马赛克层」：重取脚本，叠上 2（still0 / still1 / still2）', J(Object.keys(await spines())) === J(['still0', 'still1', 'still2']), J(await spines()))
+const savedMosaic = await page.evaluate(() => Object.entries(localStorage).filter(([k]) => k.startsWith('copymanga.gal.view.')).map(([, v]) => JSON.parse(v).showMosaic))
+check('开关按媒体存在浏览器里（showMosaic = true）', savedMosaic.includes(true), J(savedMosaic))
+await page.click('.gal-more-btn')
+await page.uncheck('.gal-more .gal-more-field input[type="checkbox"]')
+await page.waitForFunction(() => Object.keys(JSON.parse(document.querySelector('.gal-world')?.dataset.spines || '{}')).length === 2, null, { timeout: 15000 })
+check('再关掉：回到只有 1、3 两层', J(Object.keys(await spines())) === J(['still0', 'still1']), J(await spines()))
+await waitCount('1 / 4')
 
 await page.keyboard.press('Space')
 await waitCount('2 / 4')

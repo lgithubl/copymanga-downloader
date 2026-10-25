@@ -78,7 +78,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
 //   chapter: { canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
-export function createGalPlayer({ container, reader, startRatio = 0, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '' }) {
+export function createGalPlayer({ container, reader, startRatio = 0, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null }) {
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
   let choices = { ...(startChoices || {}) }
@@ -183,7 +183,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const centerRow = el('div', 'gal-more-field')
   const centerLabel = el('span', '', '画面中心')
   centerRow.append(centerLabel, centerBtn, centerText)
-  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow)
+  // 马赛克层（misttrain：still_configuration.json 里 IsMosaic 的层默认不叠）：这个场景有马赛克层时才出现；改了按媒体存，并按新设置重取这份脚本
+  const mosaicInput = el('input')
+  mosaicInput.type = 'checkbox'
+  mosaicInput.title = '叠上 still_configuration.json 里标成马赛克（IsMosaic）的层（这个媒体自己的设置）'
+  const mosaicRow = el('label', 'gal-more-field')
+  mosaicRow.append(el('span', '', '显示马赛克层'), mosaicInput)
+  mosaicRow.hidden = !(scene?.stats?.mosaic?.total > 0)
+  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow, mosaicRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
@@ -284,9 +291,15 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     try { saved = JSON.parse((viewStorageKey && localStorage.getItem(viewStorageKey)) || '{}') || {} } catch { saved = {} }
     const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
     const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
-    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor) }
+    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
   }
   let views = loadViews()
+  mosaicInput.checked = views.showMosaic ?? Boolean(scene?.stats?.mosaic?.shown)
+  mosaicInput.addEventListener('change', () => {
+    views = { ...views, showMosaic: mosaicInput.checked }
+    saveViews()
+    onReload?.()
+  })
   const viewKind = () => (spineLayer?.hasKind?.('still') ? 'still' : spineLayer?.hasKind?.('actor') ? 'actor' : 'still')
   const syncViewInputs = () => {
     const kind = viewKind()
@@ -564,7 +577,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
-    spineLayer.set(state.spines, { live, slow: slowFactor, view: views }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
+    spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
   }
   // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   let standLayer = null
@@ -1011,11 +1024,12 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
             const blends = item.blends ? Object.entries(item.blends).filter(([, n]) => n > 0).map(([name, n]) => `${name} ${n} 个槽`).join('、') : ''
             lines.push(`    预乘 alpha：图集标记 ${item.pmaInfo.atlas ? '是' : '无'} · 像素统计 ${item.pmaInfo.detected ? '是' : '否'} → 实际按${item.pma ? '预乘' : '普通'}画${blends ? `；非 normal 混合：${blends}` : '；混合模式都是 normal'}`)
           }
-          lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? item.bounds.join(' ') : '?'}`)
+          lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? item.bounds.join(' ') : item.boundsEmpty ? '无（初始姿势下没有可见附件，由动画打开，不当参照层）' : '?'}`)
         }
       }
     }
     const extra = scene.stats || {}
+    for (const note of extra.notes || []) lines.push(`提示：${note}`)
     if (extra.arrayGuess) lines.push(`数组形剧情：${extra.arrayGuess}`)
     if (extra.arrayUnknown) lines.push(`数组形里认不出的字符串位置：${JSON.stringify(extra.arrayUnknown).slice(0, 600)}`)
     if (extra.unresolved && Object.keys(extra.unresolved).length) lines.push(`没查到的资源名：${JSON.stringify(extra.unresolved).slice(0, 800)}`)

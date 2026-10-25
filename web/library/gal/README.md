@@ -281,3 +281,11 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   脚本里的 `x` / `y` 是 `skeleton.x = x`、`skeleton.y = -y`，缩放是 `skeleton.scale`（× 全局 ZOOM），缩放绕骨骼原点（脚）。所以每个骨骼单位 = 舞台宽 / 1920 个像素，原点落在舞台中心 + (x, 900 + y) 个单位处——**不是**把包围盒放进舞台。
   （以前按包围盒居中再缩放，高个子骨架会顶出舞台、大骨架会偏小。）预乘 alpha：原查看器写死 `premultipliedAlpha: true`，我们按图集标记 + 像素统计猜，渲染诊断里会列出两个来源和实际用的（白块 / 发黑多半是这里猜错了）和非 normal 混合的槽。
 - 「更多 → 画面放大 / 选择中心」**按媒体（条目）存**（`localStorage` 的 `copymanga.gal.view.<条目 id>` = `{ still: { zoom, cx, cy }, actor: { … } }`），静态画面和角色各一组：当前画面里有静态画面就调静态画面，否则调角色。旧版的全局设置只在这个媒体没存过时当默认值读。
+
+
+### misttrain 的马赛克层 / 空包围盒的层 / 渲染时特意不画的东西
+- `still_configuration.json` 的 `Parts` 决定叠哪几层：`IsMosaic: true` 的层默认不叠，不在 `Parts` 里的文件也不叠。两种都会在渲染诊断里写明（`提示：…`）。播放器「更多 → 显示马赛克层」（这个场景有马赛克层时才出现）打开后重取脚本、叠上它们；按媒体存在浏览器里
+  （`copymanga.gal.view.<条目 id>.showMosaic`，经 `reader?mosaic=1|0` 传给适配器，优先于 `adapterOptions['misttrain-json'].showMosaic`）。
+- 初始姿势下没有任何可见附件的层（附件由动画打开）包围盒是 `Infinity`：不能拿它缩放（以前它序号最小时整个画面会消失），布局时跳过它、改用序号最小的有包围盒的层当参照；诊断里写「边界 无（…不当参照层）」。
+- 渲染时特意不画 / 改着画的：multiply 和 screen 混合的槽按 normal 画（原查看器 `spine.js` 的注释：这两种在它那里渲染不对）；不支持的 Spine 版本（3.7 / 4.1 / 4.3）不画并报版本不支持；默认皮肤是空的就改用第一个有内容的命名皮肤；
+  maid 的分层脸骨架在表情预设名对不上时用默认脸顶上（诊断里写明）。除此之外没有忽略别的，包括 additive 和 clipping。

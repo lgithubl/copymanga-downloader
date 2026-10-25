@@ -701,7 +701,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const setChoices = (active) => (sets.length > 1 ? sets.map((s) => ({ id: s.id, label: s.label || s.id || '默认', node: dirNodeId(s, '', 1), active: s === active })) : [])
 
   // ---------- 取节点 ----------
-  async function getNodeInner(nodeId) {
+  async function getNodeInner(nodeId, opts = {}) {
     const { set, kind, rel, page, view, key: nodeKey = '' } = parseNodeId(nodeId)
     const catalog = set === defaultSet ? await getCatalog() : null
     if (kind === 'virtual') {
@@ -779,7 +779,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const head = decodeTextFile((await readFile(real)).subarray(0, 120)).text.replace(/\s+/g, ' ').trim()
       throw fail(`不是可识别的脚本（试过：${(adapters?.length ? adapters : galAdapterIds()).join(' / ')}；文件开头：${head || '空'}）`, 400)
     }
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel, stem: stemOf(rel) })
+    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel, stem: stemOf(rel), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) })
 
     if (entry) {
       const siblings = catalogChildren(catalog, holderId).filter((c) => c.script)
@@ -850,9 +850,9 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return problems
   }
 
-  async function getNode(nodeId) {
+  async function getNode(nodeId, opts = {}) {
     const parsed = parseNodeId(nodeId)
-    const result = await getNodeInner(nodeId)
+    const result = await getNodeInner(nodeId, opts)
     if (result?.node && result.node.kind !== 'player') {
       const status = indexStatus()
       if (status) result.node.index = status

@@ -5301,6 +5301,8 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       if (action === 'reader') {
         return json(res, 200, annotateReaderForTts(await handler.getReaderContent(itemId, unitId, {
           sectionId: url.searchParams.get('sectionId') || '',
+          // Gal：播放器「更多 → 显示马赛克层」（按媒体存在浏览器里）随请求带来；没带 = 按 adapterOptions.showMosaic
+          ...(url.searchParams.has('mosaic') ? { showMosaic: url.searchParams.get('mosaic') === '1' } : {}),
         })))
       }
       if (action === 'thumbnail') {

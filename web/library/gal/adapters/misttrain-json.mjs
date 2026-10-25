@@ -197,13 +197,16 @@ export function parse(text, ctx = null, meta = {}) {
   if (!Array.isArray(scene) || !Array.isArray(scene[1])) throw new Error('找不到场景行（[null, [<id>, [行…]]] 或 {"r":{"MSceneDetailViewModel":[…]}}）')
   const sceneId = str(scene[0]) || str(meta?.stem)
   const rows = scene[1].filter((row) => Array.isArray(row))
-  const stats = { rows: rows.length, commands: 0, raw: {}, unresolved: {}, spines: 0, mosaicSkipped: 0 }
+  const stats = { rows: rows.length, commands: 0, raw: {}, unresolved: {}, spines: 0, mosaicSkipped: 0, notes: [] }
+  // 马赛克层是否叠：播放器「更多」里的开关（按媒体存，经 reader?mosaic=1 传来）优先，没有就看 adapterOptions.showMosaic
+  const showMosaic = meta?.showMosaic ?? ctx?.showMosaic
   for (const key of unknownKeys) stats.raw[`field:${key}`] = 1
   const miss = (kind, name) => { const key = `${kind}:${name}`; stats.unresolved[key] = (stats.unresolved[key] || 0) + 1 }
   const raw = (key) => { stats.raw[key] = (stats.raw[key] || 0) + 1 }
 
   // --- 静态画面的层 ---
   const folder = ctx?.folders?.get(sceneId)
+  const mosaicNames = []
   let parts = []
   if (folder) {
     let order = folder.bases
@@ -214,7 +217,7 @@ export function parse(text, ctx = null, meta = {}) {
         if (Array.isArray(list) && list.length) {
           const wanted = []
           for (const part of list) {
-            if (part?.IsMosaic && !ctx.showMosaic) { stats.mosaicSkipped += 1; continue }
+            if (part?.IsMosaic) { mosaicNames.push(str(part?.Path)); if (!showMosaic) { stats.mosaicSkipped += 1; continue } }
             const name = str(part?.Path)
             if (name && folder.bases.includes(name)) wanted.push(name)
           }
@@ -222,6 +225,12 @@ export function parse(text, ctx = null, meta = {}) {
         }
       } catch { /* 配置坏了就按全部层 */ }
     }
+    // 被配置排除的层要在诊断里说清楚：马赛克层（IsMosaic）默认不叠；不在 Parts 里的文件也不叠
+    const listed = new Set(order.concat(mosaicNames))
+    const unlisted = folder.bases.filter((base) => !listed.has(base))
+    if (mosaicNames.length) stats.mosaic = { total: mosaicNames.length, shown: Boolean(showMosaic) }
+    if (mosaicNames.length && !showMosaic) stats.notes.push(`still_configuration.json 里有 ${mosaicNames.length} 个马赛克层（IsMosaic：${mosaicNames.join('、')}），默认不叠；「更多 → 显示马赛克层」或 adapterOptions['misttrain-json'].showMosaic 打开`)
+    if (unlisted.length && order !== folder.bases) stats.notes.push(`${unlisted.length} 个骨架文件不在 still_configuration.json 的 Parts 里，没有叠：${unlisted.join('、')}`)
     parts = order.map((base) => ({ skel: `${folder.dir}/${base}.skel.bytes`, atlas: `${folder.dir}/${base}.atlas.txt` }))
   } else if (ctx?.folders) miss('spines', sceneId)
   const total = folder?.count || 0

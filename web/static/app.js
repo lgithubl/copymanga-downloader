@@ -4028,6 +4028,10 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     els.mediaReaderContent.textContent = '加载中...'
     const params = new URLSearchParams()
     if (sectionId) params.set('sectionId', sectionId)
+    // Gal：这个媒体在「更多」里打开过「显示马赛克层」就一直带上（按媒体存在 localStorage 的 copymanga.gal.view.<条目 id> 里）
+    if (owner.type === 'gal') {
+      try { const saved = JSON.parse(localStorage.getItem(`copymanga.gal.view.${owner.itemId}`) || 'null'); if (saved?.showMosaic !== undefined) params.set('mosaic', saved.showMosaic ? '1' : '0') } catch { /* 读不了就按适配器配置 */ }
+    }
     const suffix = params.toString() ? `?${params}` : ''
     const reader = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)
     currentMediaReader = reader
@@ -4269,6 +4273,8 @@ function renderGal(reader) {
     startRatio: resume >= 0.98 ? 0 : resume,   // 上次已经看完就从头来
     startChoices: resume >= 0.98 ? {} : savedChoices,
     viewKey: readerOwner(reader)?.itemId || '',   // 画面放大 / 中心按媒体（条目）存
+    // 「更多 → 显示马赛克层」改了之后：按新的设置重取当前这份脚本
+    onReload: () => { galNavigate(reader, reader.node?.id ?? reader.section?.sectionId ?? '', 'self').catch((error) => alert(error.message)) },
     onStep: (step, total) => {
       galRatio = ratioOfStep(step, total)
       scheduleLibraryProgressSave()

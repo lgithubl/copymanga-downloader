@@ -368,7 +368,9 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const size = new sp.Vector2()
       skeleton.getBounds(offset, size, [])
       const state = new sp.AnimationState(new sp.AnimationStateData(loaded.data))
-      Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: skin?.name || '', data: loaded.data, skeleton, state, bounds: { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 }, anim: '', loop: true })
+      // 初始姿势下没有任何可见附件的层（附件由动画打开）包围盒是 Infinity / NaN：不能拿它缩放（会整个画面消失），记下来，布局时不当参照层
+      const boundsOk = [offset.x, offset.y, size.x, size.y].every(Number.isFinite)
+      Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: skin?.name || '', data: loaded.data, skeleton, state, boundsOk, bounds: boundsOk ? { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 } : { x: -960, y: -540, w: 1920, h: 1080 }, anim: '', loop: true })
       applySpec(current, spec, live)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
@@ -410,7 +412,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   function stillReference(inst) {
     let ref = inst
     for (const other of instances.values()) {
-      if (other.spec?.kind === 'still' && other.bounds && (other.spec.order || 0) < (ref.spec.order || 0)) ref = other
+      if (other.spec?.kind === 'still' && other.bounds && other.boundsOk && (other.spec.order || 0) < (ref.spec.order || 0)) ref = other
+    }
+    // 起点本身包围盒是空的、别的层有的话，改用序号最小的有包围盒的层
+    if (!ref.boundsOk) {
+      for (const other of instances.values()) if (other.spec?.kind === 'still' && other.boundsOk && (!ref.boundsOk || (other.spec.order || 0) < (ref.spec.order || 0))) ref = other
     }
     return ref
   }
@@ -552,7 +558,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null,
       animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
       skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
-      version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', bounds: inst.bounds ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,
+      version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', boundsEmpty: Boolean(inst.skeleton) && inst.boundsOk === false, bounds: inst.bounds && inst.boundsOk !== false ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,
     })),
     // 已经加载好的骨架数（测试 / 提示用）
     loadedCount: () => [...instances.values()].filter((inst) => inst.skeleton).length,
