@@ -1205,6 +1205,27 @@ async function gcMod0Prepare({ truncated }) {
   check('默认节点图 + 自己加的节点混用：「精选」收进目录里的脚本，related 指回适配器的「角色」', Boolean(pick) && pickNode.items.length >= 1 && pickNode.related?.[0]?.title === '角色', J([mixedHome.items.map((i) => i.title), pickNode?.items, pickNode?.related]))
 }
 
+// ================= g2.log 对照：maid 的全局骨架（data/spine/cast/<目录>/<文件>）+ 只有编译产物的脚本 =================
+{
+  const gcm = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
+  const files = ['pk/scenes/story_1/script.txt', 'pk/scenes/story_1/images/bg1.png', 'pk/data/spine/cast/cast001001/iroha_001.json', 'pk/data/spine/cast/cast001001/iroha_001.atlas', 'pk/data/spine/cast/cast001001/iroha_001.png', 'pk/data/audio/bgm/b.m4a']
+  const ctx = gcm.prepare({ options: { root: 'pk' }, texts: { 'pk/scenes/story_1/script.txt': '<NAME_PLATE>甲\nhi\n<PAUSE>\n' }, files, toResourcePath: (r) => r.replace(/^pk\//, '') })
+  check('maid：data/spine/cast/<目录>/<文件> 进全局骨架索引（键 = 目录/文件名 和 文件名）；contextDirs 带上 data/spine', ctx.globalSpines.get('cast001001/iroha_001')?.get('json') === 'data/spine/cast/cast001001/iroha_001.json' && ctx.globalSpines.get('iroha_001')?.get('atlas') === 'data/spine/cast/cast001001/iroha_001.atlas' && gcm.contextDirs({ root: 'pk' }).includes('pk/data/spine'), J([...ctx.globalSpines.keys()]))
+  const tag = gcm.parse('<SPINE_ACTOR>1,cast001001/iroha_001,,,,0,300,x=0|y=0,1,skel\n<NAME_PLATE>甲\nhi\n<PAUSE>\n', ctx, { rel: 'story_1/script.txt' })
+  const spine = tag.steps.flatMap((st) => st.commands).find((c) => c.op === 'spine')
+  check('maid：标签式脚本里的 SPINE_ACTOR 在场景自己的 spines/ 里找不到时，退到全局骨架（骨骼 .json + atlas）', spine?.skel === 'data/spine/cast/cast001001/iroha_001.json' && spine.atlas === 'data/spine/cast/cast001001/iroha_001.atlas' && !tag.stats.unresolved['spine:cast001001/iroha_001'], J([spine, tag.stats.unresolved]))
+  const line = gcm.parse('bgmplay,b,0\nchara,cast001001/iroha_001,chara_1,0,0,10,1,1,0,on\nmessage,甲,「你好」,iab1\nmessage,甲,「再见」,iab1\n', ctx, { rel: 'story_1/hmr_1.txt' })
+  check('行式脚本的 chara 也能用全局骨架', line.steps.flatMap((st) => st.commands).some((c) => c.op === 'spine' && c.skel.endsWith('iroha_001.json')), J(line.stats))
+
+  const rp = path.join(work, 'compiled-only')
+  await mkdir(path.join(rp, 'game/scripts'), { recursive: true })
+  for (const name of ['scene_1.rpy', 'scene_1.rpyc', 'scene_2.rpyc', 'scene_3.rpyc']) await writeFile(path.join(rp, 'game/scripts', name), name.endsWith('c') ? 'compiled' : 'label scene_1:\n    scene black\n    "A" "b"\n')
+  const rpp = createBrowseProvider({ mediaDir: rp, adapters: ['renpy-minashigo'], resolveAsset: async () => { throw new Error('none') }, config: { scriptRoots: [{ id: 's', dir: 'game/scripts', label: 's' }], scriptExtensions: ['rpy'], merge: [] } })
+  const rpNode = (await rpp.getNode('')).node
+  const compiled = (rpNode.problems || []).find((x) => x.code === 'compiled-only-scripts')
+  check('只有 .rpyc 没有 .rpy 的脚本：列表页问题里报出来（scene_2 / scene_3），有源文件的 scene_1 不算', Boolean(compiled) && /scene_2\.rpyc/.test(compiled.message) && /scene_3\.rpyc/.test(compiled.message) && !/scene_1/.test(compiled.message), J(rpNode.problems))
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

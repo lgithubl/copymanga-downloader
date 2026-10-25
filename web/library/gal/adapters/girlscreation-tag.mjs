@@ -29,7 +29,7 @@ const rootOf = (options) => String(options?.root || '').replace(/\\/g, '/').repl
 
 // ---------- 上下文：场景索引 + 全局音频索引 + 标题 / 主要说话人 ----------
 export const contextFiles = () => []
-export const contextDirs = (options) => [joinPath(rootOf(options), 'scenes'), joinPath(rootOf(options), 'data/audio')]
+export const contextDirs = (options) => [joinPath(rootOf(options), 'scenes'), joinPath(rootOf(options), 'data/audio'), joinPath(rootOf(options), 'data/spine')]
 export const contextTextFilter = (options) => {
   const base = `${joinPath(rootOf(options), 'scenes')}/`
   return (rel) => rel.startsWith(base) && SAMPLE_FILE.test(rel)
@@ -54,6 +54,8 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
   const toRes = toResourcePath || ((rel) => rel)
   const scenesBase = `${joinPath(root, 'scenes')}/`
   const audioBase = `${joinPath(root, 'data/audio')}/`
+  const spineBase = `${joinPath(root, 'data/spine')}/`
+  const globalSpines = new Map()   // 全局骨架（maid：data/spine/cast/<目录>/<文件>）：键 = <目录>/<文件名> 和 <文件名>，值 = 扩展名 → 资源路径
   const scenes = new Map()   // 场景 id → { id, script, thumb, images: Map(无扩展名文件名 → 资源路径), videos, voices, spines: Map }
   const audio = { bgm: new Map(), se: new Map() }
   const sceneOf = (id) => {
@@ -86,6 +88,15 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
         const bucket = { images: scene.images, videos: scene.videos, voices: scene.voices, bgvoices: scene.bgvoices, animations: scene.animations }[parts[1]]
         if (bucket && !bucket.has(stem(parts[2]))) bucket.set(stem(parts[2]), toRes(rel))
       }
+    } else if (rel.startsWith(spineBase)) {
+      const parts = rel.slice(spineBase.length).split('/')
+      const file = parts[parts.length - 1]
+      const ext = file.slice(file.lastIndexOf('.') + 1).toLowerCase()
+      const base = stem(file)
+      for (const key of new Set([base, parts.length >= 2 ? `${parts[parts.length - 2]}/${base}` : base])) {
+        if (!globalSpines.has(key)) globalSpines.set(key, new Map())
+        globalSpines.get(key).set(ext, toRes(rel))
+      }
     } else if (rel.startsWith(audioBase)) {
       const parts = rel.slice(audioBase.length).split('/')
       if (parts.length === 2 && audio[parts[0]] && !audio[parts[0]].has(stem(parts[1]))) audio[parts[0]].set(stem(parts[1]), toRes(rel))
@@ -116,7 +127,7 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
     info.set(id, { title, speaker })
   }
   const categoryLabels = { ...(options?.categoryLabels && typeof options.categoryLabels === 'object' ? options.categoryLabels : {}) }
-  return { root, scenes, audio, info, categoryLabels, truncated, noScript }
+  return { root, scenes, audio, info, categoryLabels, truncated, noScript, globalSpines }
 }
 
 // ---------- 列表 ----------
@@ -199,7 +210,7 @@ export function parse(text, ctx = null, meta = {}) {
     for (const slot of dirty) {
       const actor = actors.get(slot)
       if (!actor) continue
-      const files = scene?.spines?.get(actor.skel)
+      const files = scene?.spines?.get(actor.skel) || ctx?.globalSpines?.get(actor.skel)   // 场景自己的 spines/ 优先，没有再找全局的（maid 的角色在 data/spine/cast/…）
       const skelRes = files?.get('skel') || files?.get('bytes') || files?.get('json') || ''
       const atlasRes = files?.get('atlas') || files?.get('txt') || ''
       if (!skelRes || !atlasRes) { count('unresolved', `spine:${actor.skel}`); continue }

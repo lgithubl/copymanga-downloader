@@ -479,6 +479,9 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       try { entries = await readdir(dirAbs, { withFileTypes: true }) } catch { return null }
       const dirs = []
       const files = []
+      const names = new Set(entries.map((entry) => entry.name))
+      // 只有编译产物（.rpyc / .xxxc）没有源文件的脚本：解析不了，也不会出现在列表里——记下来，列表页的问题里报
+      const compiledOnly = entries.filter((entry) => entry.isFile() && /c$/i.test(entry.name) && scriptExtensions.includes(extOf(entry.name).slice(0, -1)) && !names.has(entry.name.slice(0, -1))).map((entry) => (rel ? `${rel}/${entry.name}` : entry.name))
       for (const entry of entries) {
         if (hidden(entry.name) || entry.name.includes('|') || entry.name.includes('#')) continue
         const childRel = rel ? `${rel}/${entry.name}` : entry.name
@@ -491,10 +494,10 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const scripts = sniffed.filter(Boolean).map((file) => ({ type: 'script', name: file.name, stem: stemOf(file.name), rel: file.rel }))
       // 扩展名对、但没有适配器认得的文件：以前悄悄丢掉，规则对不上就永远发现不了；现在记下来，列表页的诊断里报
       const rejected = sniffed.map((file, i) => (file ? null : files[i].rel)).filter(Boolean)
-      base = { dirs, scripts, rejected }
+      base = { dirs, scripts, rejected, compiledOnly }
       cacheSet(entriesCache, cacheKey, base, 3000)
     }
-    return { dirs: base.dirs.map((entry) => ({ ...entry, origin })), scripts: base.scripts.map((entry) => ({ ...entry, origin })), rejected: base.rejected || [] }
+    return { dirs: base.dirs.map((entry) => ({ ...entry, origin })), scripts: base.scripts.map((entry) => ({ ...entry, origin })), rejected: base.rejected || [], compiledOnly: base.compiledOnly || [] }
   }
 
   // 一个目录里的内容：目录在前、脚本在后，自然序（合并目录时，几个来源的内容混在一起排）。
@@ -503,6 +506,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const view = viewAt(rel)
     let own
     const rejected = []
+    const compiledOnly = []
     if (view) {
       own = { dirs: [], scripts: [] }
       for (const sourceName of view.dirs.length ? view.dirs : ['']) {
@@ -512,7 +516,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       }
     } else {
       own = await readEntries(set, rel)
-      if (own) rejected.push(...own.rejected)
+      if (own) { rejected.push(...own.rejected); compiledOnly.push(...own.compiledOnly) }
     }
     if (!own) throw fail('目录不存在', 404)
     const rule = view ? null : mergeRuleAt(rel)
@@ -553,7 +557,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       for (const [key, members] of byKey) groups.push({ type: 'group', name: key, key, rel: `g:${key}`, members })
       groups.sort((a, b) => naturalCompare(a.key, b.key))
     }
-    return { dirs, groups, scripts: rest, allScripts: scripts, all: [...dirs, ...groups, ...rest], rejected }
+    return { dirs, groups, scripts: rest, allScripts: scripts, all: [...dirs, ...groups, ...rest], rejected, compiledOnly }
   }
 
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
@@ -841,6 +845,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     if (parsed.kind === 'dir' && !(parsed.set === defaultSet && result.node.kind === 'cards' && (config.nodes || catalogAdapter) && (await getCatalog()))) {
       const listed = await listDir(parsed.set, parsed.rel).catch(() => null)
       if (listed?.rejected?.length) add('warn', 'unrecognized-scripts', `${listed.rejected.length} 个扩展名对的文件没有适配器认得（格式不符），没有显示：${listed.rejected.slice(0, 5).map(baseName).join('、')}${listed.rejected.length > 5 ? ' 等' : ''}（适配器：${(adapters || []).join(' / ') || '未配置'}）`)
+      if (listed?.compiledOnly?.length) add('warn', 'compiled-only-scripts', `${listed.compiledOnly.length} 个脚本只有编译产物（.${scriptExtensions[0] || 'rpy'}c）没有源文件，解析不了，没有显示：${listed.compiledOnly.slice(0, 5).map(baseName).join('、')}${listed.compiledOnly.length > 5 ? ' 等' : ''}（需要反编译出源文件，或把源文件放到同一目录）`)
     }
     return problems
   }

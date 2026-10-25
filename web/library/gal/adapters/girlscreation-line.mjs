@@ -82,10 +82,10 @@ export function parseLine(text, ctx = null, meta = {}) {
 
   const actors = new Map()   // 槽 → { skel, x, y, scale, visible, tracks: [] }
   const skelFiles = (name) => {
-    if (!scene) return null
+    if (!scene) return ctx?.globalSpines?.get(name) || null
     if (scene.spines.has(name)) return scene.spines.get(name)
     for (const [key, files] of scene.spines) if (key.endsWith(`/${name}`)) return files
-    return null
+    return ctx?.globalSpines?.get(name) || null
   }
   const paintActor = (slot, fade = 0) => {
     const actor = actors.get(slot)
