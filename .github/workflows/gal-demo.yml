@@ -5,6 +5,12 @@ name: Gal Interactive Demo
 # 演示里有：UViewer、monmusu、tenkeiprdx、minashigo、legeclo、girlscreation 各一个，和 maid 式的演示（首页「表情」入口 + 混合模式开关）。
 # 镜像默认用 build-web-image 在这个分支上构建的那个标签；要试别的版本就改 image。
 on:
+  # 新工作流文件只在特性分支上时，workflow_dispatch 的 API 会 404（只认默认分支上已有的）：这个分支上改这个文件就直接跑一次（用默认输入）；合并到默认分支后手动触发也可以
+  push:
+    branches:
+      - vibe-test-20261008
+    paths:
+      - ".github/workflows/gal-demo.yml"
   workflow_dispatch:
     inputs:
       image:
@@ -38,7 +44,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull image
-        run: docker pull "${{ inputs.image }}"
+        run: docker pull "${{ inputs.image || 'ghcr.io/lgithubl/copymanga-downloader:vibe-test-20261008' }}"
 
       - name: Generate synthetic Gal demo data
         run: |
@@ -57,7 +63,7 @@ jobs:
             -p 8080:8080 \
             -e TAG_SCRIPTS_DIR=/opt/copymanga/tag-scripts \
             -v "$RUNNER_TEMP/data:/data" \
-            "${{ inputs.image }}"
+            "${{ inputs.image || 'ghcr.io/lgithubl/copymanga-downloader:vibe-test-20261008' }}"
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then break; fi
             sleep 2
@@ -194,7 +200,7 @@ jobs:
           for i in $(seq 1 60); do
             URL="$(grep -oE 'https://[-a-zA-Z0-9.]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)"
             if [ -n "$URL" ]; then
-              MINUTES="${{ inputs.minutes }}"
+              MINUTES="${{ inputs.minutes || '60' }}"
               if [ -z "$MINUTES" ]; then MINUTES="60"; fi
               echo "url=$URL" >> "$GITHUB_OUTPUT"
               {
@@ -204,7 +210,7 @@ jobs:
                 echo
                 echo "Username: \`${{ steps.auth.outputs.username }}\`（没配 DEMO_PASSWORD 就不需要密码）"
                 echo
-                echo "镜像：\`${{ inputs.image }}\`"
+                echo "镜像：\`${{ inputs.image || 'ghcr.io/lgithubl/copymanga-downloader:vibe-test-20261008' }}\`"
                 echo
                 echo "这个 runner 会保持在线 ${MINUTES} 分钟（除非手动取消）。"
                 echo
@@ -228,12 +234,12 @@ jobs:
           BODY="Gal demo run: ${{ github.run_id }}
           URL: ${{ steps.tunnel.outputs.url }}
           Username: ${{ steps.auth.outputs.username }}
-          Expires: runner stops after ${{ inputs.minutes }} minutes"
+          Expires: runner stops after ${{ inputs.minutes || '60' }} minutes"
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -f body="$BODY" || true
 
       - name: Keep session alive
         run: |
-          MINUTES="${{ inputs.minutes }}"
+          MINUTES="${{ inputs.minutes || '60' }}"
           if [ -z "$MINUTES" ]; then MINUTES="60"; fi
           echo "URL: ${{ steps.tunnel.outputs.url }}"
           echo "Keeping session alive for ${MINUTES} minutes..."
