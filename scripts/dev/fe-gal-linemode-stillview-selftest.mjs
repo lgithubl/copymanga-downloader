@@ -46,7 +46,7 @@ await writeSpine(path.join(scene, 'spines'), 'st1', { format: 'binary', color: '
 await rename(path.join(scene, 'spines/st1.skel.bytes'), path.join(scene, 'spines/st1.skel'))
 await rename(path.join(scene, 'spines/st1.atlas.txt'), path.join(scene, 'spines/st1.atlas'))
 await writeFile(path.join(scene, 'hmr_1.txt'), ['fade,out,black,0.2', 'title,行式テスト,', 'bgmplay,bgm1,0', 'window,on,0.25', 'message,,旁白一句,', 'voice,v1', 'message,甲,「第一句」,iab4020078', 'voice,v2',
-  'chara,st1,chara_1,0,-700,10,1,1,0,off', 'charamotion,chara_1,loop,on', 'charamotion,chara_1,joy,on', 'charafade,chara_1,in,0.2', 'await', 'msgvoicesync,chara_1,甲,「同步台词」,iab4030908,v2', 'cgmode,on'].join('\n'))
+  'chara,st1,chara_1,0,0,10,1,1,0,off', 'charamotion,chara_1,loop,on', 'charamotion,chara_1,joy,on', 'charafade,chara_1,in,0.2', 'await', 'msgvoicesync,chara_1,甲,「同步台词」,iab4030908,v2', 'cgmode,on'].join('\n'))
 // 高个子骨架（533 × 1386，和真实的「橋」一样）+ 标签式脚本：y=0、缩放 0.7——原查看器里这个人的头在舞台上 43% 的位置，脚在舞台下面
 const tall = path.join(pk, 'scenes', 'chmr_3')
 await mkdir(path.join(tall, 'spines'), { recursive: true })
@@ -256,16 +256,36 @@ try {
     await page.waitForSelector('.gal-player')
     await page.waitForFunction(() => /Actor1/.test(document.querySelector('.gal-world')?.dataset.spines || ''), null, { timeout: 15000 })
     await sleep(800)
-    const topFrac = 0.435   // 原查看器：原点在舞台中心 + (0, 900) 个单位（每个单位 = 舞台宽 / 1920），头顶 = 原点 − 1386 × 0.7 个单位
+    const openMore = () => page.evaluate(() => { const menu = document.querySelector('.gal-more'); if (menu.hidden) document.querySelector('.gal-more-btn').click() })
+    // 默认（自动）：和以前一样（上个版本的行为）——骨架整个放进舞台，缩放绕骨骼原点（脚）：533×1386 的骨架放进去占满高度，脚本缩放 0.7 → 脚落在舞台底、头顶在 30% 的位置
+    const [aboveAuto, headAuto, bodyAuto, feetAuto] = [await alphaAt(page, 0.5, 0.08), await alphaAt(page, 0.5, 0.2), await alphaAt(page, 0.5, 0.5), await alphaAt(page, 0.5, 0.95)]
+    check('角色摆放默认 = 自动（上个版本的行为）：高个子角色（缩放 0.7）脚在舞台底、头顶在 30% 左右（8% 和 20% 处是空的，50% 和 95% 处是身体）', aboveAuto < 20 && headAuto < 20 && bodyAuto > 200 && feetAuto > 200, J([aboveAuto, headAuto, bodyAuto, feetAuto]))
+    await openMore()
+    check('「更多」里有「角色摆放」（自动 / 固定相机），默认是自动，三个数字先不显示', (await page.$eval('.gal-more select.gal-more-select', (e) => e.value)) === 'fit' && !(await page.$eval('.gal-cam-row', (e) => e.offsetParent !== null)))
+    // 固定相机（Girls Creation R Viewer 的常数 1920 / 0 / 900）：原点在舞台中心偏下 900 个单位——y=0、缩放 0.7 时头顶在舞台 43% 的位置，脚在舞台下面
+    await page.selectOption('.gal-more select.gal-more-select', 'fixed')
+    await sleep(500)
     const [above, belowHead, body] = [await alphaAt(page, 0.5, 0.2), await alphaAt(page, 0.5, 0.40), await alphaAt(page, 0.5, 0.6)]
-    check(`高个子角色（y=0、缩放 0.7）：头顶在舞台上 ${Math.round(topFrac * 100)}% 的位置（20% 处和 40% 处是空的，60% 处是身体）——不会再顶出舞台上沿`, above < 20 && belowHead < 20 && body > 200, J([above, belowHead, body]))
-    await page.click('.gal-more-btn')
+    check('固定相机（1920 / 0 / 900）：头顶在舞台上 43% 的位置（20% 和 40% 处是空的，60% 处是身体）；三个数字出现', above < 20 && belowHead < 20 && body > 200 && !(await page.$eval('.gal-cam-row', (e) => e.hidden)), J([above, belowHead, body]))
+    // 改中心 Y 到 0（原点在画面中心的 CG 类骨架用）：整个人往上移到原点在舞台正中
+    await openMore()
+    await page.fill('.gal-cam-row input:nth-of-type(3)', '0')
+    await page.dispatchEvent('.gal-cam-row input:nth-of-type(3)', 'change')
+    await sleep(500)
+    const [midHead, midAbove] = [await alphaAt(page, 0.5, 0.4), await alphaAt(page, 0.5, 0.9)]
+    check('固定相机改中心 Y = 0：原点在舞台正中（骨架 0..1386 高、缩放 0.7，从中心往上伸出去 → 40% 处是身体，90% 处是空的）', midHead > 200 && midAbove < 20, J([midHead, midAbove]))
+    const savedCam = await page.evaluate((id) => JSON.parse(localStorage.getItem(`copymanga.gal.view.${id}`) || 'null')?.camera, gcId)
+    check('摆放设置按媒体存（camera.mode = fixed、cy = 0），别的媒体不受影响', savedCam?.mode === 'fixed' && savedCam.cy === 0 && (await page.evaluate((id) => localStorage.getItem(`copymanga.gal.view.${id}`), ttId)) === null, J(savedCam))
+    await openMore()
+    await page.selectOption('.gal-more select.gal-more-select', 'fit')
+    await sleep(400)
+    await openMore()
     check('「更多」里标成「角色放大 / 角色中心」（当前画面是角色，不是静态画面）', (await page.$eval('.gal-more-field span', (e) => e.textContent).catch(() => '')) !== undefined && /角色放大/.test(await page.evaluate(() => document.querySelector('.gal-more')?.innerText || '')))
     await page.fill('.gal-more input.gal-more-number[max="4"]', '2')
     await page.dispatchEvent('.gal-more input.gal-more-number[max="4"]', 'change')
     await sleep(500)
-    const zoomedHead = await alphaAt(page, 0.5, 0.40)
-    check('角色放大 2 倍（中心默认在舞台正中）：原来头顶上面的 40% 处现在是身体', zoomedHead > 200, String(zoomedHead))
+    const zoomedHead = await alphaAt(page, 0.5, 0.2)
+    check('角色放大 2 倍（中心默认在舞台正中）：原来头顶上面 20% 处（空的）现在是身体', headAuto < 20 && zoomedHead > 200, String(zoomedHead))
     const mine = await page.evaluate((id) => JSON.parse(localStorage.getItem(`copymanga.gal.view.${id}`) || 'null'), gcId)
     const others = await page.evaluate((id) => localStorage.getItem(`copymanga.gal.view.${id}`), ttId)
     check('按媒体存：这个媒体存了 actor.zoom = 2，别的媒体（tt）没有被影响', mine?.actor?.zoom === 2 && others === null, J([mine, others]))

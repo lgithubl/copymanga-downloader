@@ -58,15 +58,14 @@ try {
   const text = (sel) => page.$eval(sel, (e) => e.textContent).catch(() => '')
   const waitCount = (t) => page.waitForFunction((v) => document.querySelector('.gal-count')?.textContent === v, t)
   const spines = () => page.$eval('.gal-world', (e) => JSON.parse(e.dataset.spines || '{}')).catch(() => ({}))
-  // 舞台 canvas 里按「每个骨骼单位 = 舞台宽 / 1920、骨架原点在舞台中心 + (x, 900 + y) 个单位」算出来的位置取像素（和原查看器的固定相机一致）
+  // 舞台 canvas 里按「骨架包围盒 200x400 放进舞台、再按 x（设计稿 1920 宽的像素）偏移」算出来的位置取像素
   const probe = (dxUnits, dyFrac = 0.5) => page.evaluate(([dx, fy]) => {
     const c = document.querySelector('.gal-spine')
     if (!c) return null
     const g = document.createElement('canvas'); g.width = c.width; g.height = c.height
     const x = g.getContext('2d'); x.drawImage(c, 0, 0)
-    // 原查看器的相机：世界窗口宽 1920 个骨骼单位（每个单位 = 舞台宽 / 1920 个像素）；骨架宽 200 个单位（半宽 100）；脚本里 y=-700 正好把 0..400 高的骨架放在舞台正中
-    const s = c.width / 1920
-    const px = Math.round(c.width / 2 + dx.shift * s + dx.half * 100 * s)
+    const s = c.height / 400
+    const px = Math.round(c.width / 2 + dx.shift * (c.width / 1920) + dx.half * 100 * s)
     return [...x.getImageData(px, Math.round(c.height * fy), 1, 1).data]
   }, [dxUnits, dyFrac])
   const near = (rgba, [r, g, b], tol = 30) => Boolean(rgba) && rgba[3] > 200 && Math.abs(rgba[0] - r) <= tol && Math.abs(rgba[1] - g) <= tol && Math.abs(rgba[2] - b) <= tol

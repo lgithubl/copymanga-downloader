@@ -183,6 +183,19 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const centerRow = el('div', 'gal-more-field')
   const centerLabel = el('span', '', '画面中心')
   centerRow.append(centerLabel, centerBtn, centerText)
+  // 角色摆放（只有当前画面里有角色时才显示）：自动 = 把骨架包围盒放进舞台居中（默认，和以前一样）；固定相机 = 原查看器的做法，窗口宽 / 中心 X / 中心 Y 是「骨骼单位」，
+  // 每个游戏的查看器常数不一样（Girls Creation R Viewer 是 1920 / 0 / 900，别的游戏的没有源码），所以交给你按媒体自己调，存在这个媒体里
+  const camModeSelect = el('select', 'gal-more-select')
+  for (const [value, label] of [['fit', '自动（包围盒居中）'], ['fixed', '固定相机']]) { const option = el('option', '', label); option.value = value; camModeSelect.append(option) }
+  camModeSelect.title = '自动：把骨架整个放进舞台居中；固定相机：世界窗口宽 / 中心点按下面的数字，每个骨骼单位 = 舞台宽 / 窗口宽 个像素，脚本里的 x / y / 缩放按它摆'
+  const camModeRow = el('label', 'gal-more-field')
+  camModeRow.append(el('span', '', '角色摆放'), camModeSelect)
+  const camNumber = (title, step) => { const input = el('input', 'gal-more-number'); input.type = 'number'; input.step = String(step); input.title = title; return input }
+  const camWidth = camNumber('世界窗口宽（骨骼单位）：每个单位 = 舞台宽 / 这个数 个像素；Girls Creation R Viewer 是 1920', 10)
+  const camCx = camNumber('相机中心 X（骨骼单位）：Girls Creation R Viewer 是 0', 10)
+  const camCy = camNumber('相机中心 Y（骨骼单位，y 向上）：Girls Creation R Viewer 是 900；原点在画面中心的骨架（CG）一般是 0', 10)
+  const camRow = el('div', 'gal-more-field gal-cam-row')
+  camRow.append(el('span', '', '窗口宽'), camWidth, el('span', '', '中心 X'), camCx, el('span', '', '中心 Y'), camCy)
   // 马赛克层（misttrain：still_configuration.json 里 IsMosaic 的层默认不叠）：这个场景有马赛克层时才出现；改了按媒体存，并按新设置重取这份脚本
   const mosaicInput = el('input')
   mosaicInput.type = 'checkbox'
@@ -190,7 +203,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const mosaicRow = el('label', 'gal-more-field')
   mosaicRow.append(el('span', '', '显示马赛克层'), mosaicInput)
   mosaicRow.hidden = !(scene?.stats?.mosaic?.total > 0)
-  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow, mosaicRow)
+  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow, camModeRow, camRow, mosaicRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
@@ -286,12 +299,16 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     const zoom = Number(view?.zoom)
     return { zoom: Number.isFinite(zoom) ? Math.max(GAL_SETTINGS.viewZoomMin, Math.min(GAL_SETTINGS.viewZoomMax, zoom)) : GAL_SETTINGS.viewZoomDefault, cx: unit(view?.cx), cy: unit(view?.cy) }
   }
+  const cleanCamera = (camera) => {
+    const num = (value, fallback, min, max) => (Number.isFinite(Number(value)) && value !== '' && value !== null && value !== undefined ? Math.max(min, Math.min(max, Number(value))) : fallback)
+    return { mode: camera?.mode === 'fixed' ? 'fixed' : 'fit', width: num(camera?.width, 1920, 100, 20000), cx: num(camera?.cx, 0, -20000, 20000), cy: num(camera?.cy, 900, -20000, 20000) }
+  }
   const loadViews = () => {
     let saved = {}
     try { saved = JSON.parse((viewStorageKey && localStorage.getItem(viewStorageKey)) || '{}') || {} } catch { saved = {} }
     const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
     const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
-    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
+    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), camera: cleanCamera(saved.camera), showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
   }
   let views = loadViews()
   mosaicInput.checked = views.showMosaic ?? Boolean(scene?.stats?.mosaic?.shown)
@@ -308,7 +325,22 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     centerLabel.textContent = kind === 'actor' ? '角色中心' : '静图中心'
     zoomInput.value = String(Math.round(view.zoom * 100) / 100)
     centerText.textContent = `${Math.round(view.cx * 100)}%, ${Math.round(view.cy * 100)}%`
+    // 角色摆放只在有角色时显示；固定相机才显示三个数字
+    const hasActor = Boolean(spineLayer?.hasKind?.('actor'))
+    camModeRow.hidden = !hasActor
+    camRow.hidden = !hasActor || views.camera.mode !== 'fixed'
+    camModeSelect.value = views.camera.mode
+    camWidth.value = String(views.camera.width)
+    camCx.value = String(views.camera.cx)
+    camCy.value = String(views.camera.cy)
   }
+  const applyCamera = () => {
+    views = { ...views, camera: cleanCamera({ mode: camModeSelect.value, width: camWidth.value, cx: camCx.value, cy: camCy.value }) }
+    syncViewInputs()
+    saveViews()
+    spineLayer?.setCamera(views.camera)
+  }
+  for (const input of [camModeSelect, camWidth, camCx, camCy]) input.addEventListener('change', applyCamera)
   const saveViews = () => {
     if (!viewStorageKey) return
     try { localStorage.setItem(viewStorageKey, JSON.stringify(views)) } catch { /* 存不了就只在这一页生效 */ }
@@ -577,7 +609,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
-    spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
+    spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
   }
   // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   let standLayer = null

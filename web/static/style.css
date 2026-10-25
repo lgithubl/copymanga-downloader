@@ -4715,3 +4715,11 @@ h2 {
 .gal-browse-text { color: var(--site-muted); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .gal-browse-related { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 8px; }
 .gal-browse-related-link { background: var(--site-secondary); border: 0; border-radius: 6px; color: #fff; cursor: pointer; font-size: 13px; min-height: 26px; padding: 0 10px; }
+
+/* 播放器「更多」里的角色摆放：三个数字一行 */
+.gal-cam-row { flex-wrap: wrap; row-gap: 4px; }
+.gal-more-select { background: rgba(255, 255, 255, 0.14); border: 0; border-radius: 4px; color: #fff; font-size: inherit; padding: 0.1em 0.4em; }
+.gal-more-select option { color: #000; }
+
+/* 「更多」里按条件显示的行（马赛克层 / 角色摆放）：.gal-more-field 自己是 display:flex，会盖掉 hidden 属性，要单独写 */
+.gal-more-field[hidden] { display: none; }

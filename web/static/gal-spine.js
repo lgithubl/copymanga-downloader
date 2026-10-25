@@ -177,6 +177,10 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   let slowTo = 0.2   // animation4 降速后的倍率（1 = 不降速），播放器设置里改；set() 每次传进来
   // 放大倍率 + 哪一点放在舞台正中（cx / cy = 0..1，左→右、上→下），静态画面（still）和角色（actor）各一份；播放器「更多」里改，按媒体存
   let views = { still: { zoom: 1, cx: 0.5, cy: 0.5 }, actor: { zoom: 1, cx: 0.5, cy: 0.5 } }
+  // 角色（actor）怎么摆：'fit' = 自动（把骨架包围盒放进舞台居中，脚本里的 x / y / 缩放按这个比例算——默认，和以前一样）；
+  // 'fixed' = 固定相机（Girls Creation R Viewer 的做法：世界窗口宽 width 个骨骼单位、中心在 (cx, cy)，每个单位 = 舞台宽 / width 个像素，原点落在 舞台中心 + (x − cx, −(y + cy)) 个单位，缩放绕原点）。
+  // 不同游戏的查看器相机常数不一样（只有 Girls Creation R Viewer 的读过源码：1920 / 0 / 900），所以做成「更多」里可调的，按媒体存
+  let camera = { mode: 'fit', width: 1920, cx: 0, cy: 900 }
 
   const settle = () => { if (!pending) { const done = waiters; waiters = []; done.forEach((resolve) => resolve()) } }
   const ready = () => (pending ? new Promise((resolve) => waiters.push(resolve)) : Promise.resolve())
@@ -389,8 +393,12 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     const unit = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : 0.5)
     return { zoom: Number.isFinite(zoom) && zoom > 0 ? Math.min(8, zoom) : 1, cx: unit(view?.cx), cy: unit(view?.cy) }
   }
+  const normalizeCamera = (value) => {
+    const num = (n, fallback) => (Number.isFinite(Number(n)) && n !== '' && n !== null ? Number(n) : fallback)
+    return { mode: value?.mode === 'fixed' ? 'fixed' : 'fit', width: Math.max(100, Math.min(20000, num(value?.width, 1920))), cx: Math.max(-20000, Math.min(20000, num(value?.cx, 0))), cy: Math.max(-20000, Math.min(20000, num(value?.cy, 900))) }
+  }
   function set(specs, { live = false, slow = slowTo, view = null } = {}) {
-    if (view) views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }
+    if (view) { views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }; if (view.camera) camera = normalizeCamera(view.camera) }
     slowTo = Number.isFinite(Number(slow)) && Number(slow) > 0 ? Math.min(1, Number(slow)) : 0.2
     const wanted = specs || {}
     for (const slot of [...instances.keys()]) if (!wanted[slot]) instances.delete(slot)
@@ -437,20 +445,27 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       px = width / 2 - (rb.x + rb.w * v.cx) * scale
       py = height / 2 - (rb.y + rb.h * (1 - v.cy)) * scale
     } else if (inst.spec.kind === 'actor') {
-      // 角色（girlscreation，照原查看器 preloader.js / scene.js）：原查看器给每个角色一个和舞台一样大的 Spine Player，视口写死 { x: 0, y: 900, width: 960, height: 540, padLeft: 100%, padTop: -100% }，
-      // 展开后相机看的世界窗口 = 宽 1920 个骨骼单位、中心在 (0, 900)（高度按画布比例）；脚本里的 x / y 是 skeleton.x = x、skeleton.y = −y，缩放是 skeleton.scale（× 全局 ZOOM）。
-      // 所以不是「把包围盒放进舞台」：每个骨骼单位 = 舞台宽 / 1920 个像素；骨骼原点（脚）落在 舞台中心 + (x, 900 + y) 个单位处，缩放绕原点。
-      // y 为正 = 往下（canvas 的 y 向上，所以减）
+      // 角色（girlscreation）：摆放方式见上面的 camera（自动 / 固定相机），y 为正 = 往下（canvas 的 y 向上，所以减）
       let pos = inst.pos || { x: Number(inst.spec.x) || 0, y: Number(inst.spec.y) || 0 }
       if (inst.moving) {
         const t = Math.min(1, (performance.now() - inst.moving.began) / inst.moving.ms)
         pos = { x: inst.moving.from.x + (inst.moving.to.x - inst.moving.from.x) * t, y: inst.moving.from.y + (inst.moving.to.y - inst.moving.from.y) * t }
         if (t >= 1) { inst.pos = inst.moving.to; inst.moving = null }
       }
-      const unit = width / 1920
-      scale = unit * (Number(inst.spec.scale) > 0 ? Number(inst.spec.scale) : 1)
-      px = width / 2 + pos.x * unit
-      py = height / 2 - (900 + pos.y) * unit
+      const specScale = Number(inst.spec.scale) > 0 ? Number(inst.spec.scale) : 1
+      let unit
+      if (camera.mode === 'fixed') {
+        unit = width / camera.width
+        scale = unit * specScale
+        px = width / 2 + (pos.x - camera.cx) * unit
+        py = height / 2 - (pos.y + camera.cy) * unit
+      } else {
+        // 自动：骨架包围盒（x, y, w, h）整个放进舞台得到基准比例 fit，包围盒中心在舞台中心时原点所在的位置 + 脚本的 x / y（按 fit 折）；缩放绕骨骼原点
+        unit = Math.min(width / w, height / h)
+        scale = unit * specScale
+        px = width / 2 - (x + w / 2) * unit + pos.x * unit
+        py = height / 2 - (y + h / 2) * unit - pos.y * unit
+      }
       if (inst.shake) {   // 衰减的来回晃：每秒 8 个来回，幅度线性衰减到 0（骨骼坐标单位）
         const t = (performance.now() - inst.shake.began) / 1000 / inst.shake.seconds
         if (t >= 1) inst.shake = null
@@ -531,6 +546,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     set,
     ready,
     // 改某一类（'still' 静态画面 / 'actor' 角色）的放大 / 中心（选中心时实时预览）
+    // 角色摆放方式（见 camera）；改了马上重画
+    setCamera(value) { camera = normalizeCamera(value); kick() },
     setView(kind, view) { if (views[kind]) { views = { ...views, [kind]: normalizeView(view) }; kick() } },
     // 当前画面里有哪些类：选中心 / 放大作用在哪一类（有静态画面就是静态画面，否则是角色）
     hasKind: (kind) => [...instances.values()].some((inst) => inst.spec.kind === kind),

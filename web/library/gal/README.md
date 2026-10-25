@@ -276,12 +276,13 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - UViewer / monmusu / minashigo / legeclo 本来就是按真实目录 + views / groups / merge 配置的，不生成节点图。
 
 
-### Girls Creation 角色的摆放（照原查看器）与画面放大 / 中心
-- 原查看器（`preloader.js` / `scene.js` / `spine-player.js`）给每个角色一个和舞台一样大的 Spine Player，视口写死 `{ x: 0, y: 900, width: 960, height: 540, padLeft: 100%, padTop: -100% }`，展开后相机看的世界窗口 = **宽 1920 个骨骼单位、中心在 (0, 900)**；
-  脚本里的 `x` / `y` 是 `skeleton.x = x`、`skeleton.y = -y`，缩放是 `skeleton.scale`（× 全局 ZOOM），缩放绕骨骼原点（脚）。所以每个骨骼单位 = 舞台宽 / 1920 个像素，原点落在舞台中心 + (x, 900 + y) 个单位处——**不是**把包围盒放进舞台。
-  （以前按包围盒居中再缩放，高个子骨架会顶出舞台、大骨架会偏小。）预乘 alpha：原查看器写死 `premultipliedAlpha: true`，我们按图集标记 + 像素统计猜，渲染诊断里会列出两个来源和实际用的（白块 / 发黑多半是这里猜错了）和非 normal 混合的槽。
-- 「更多 → 画面放大 / 选择中心」**按媒体（条目）存**（`localStorage` 的 `copymanga.gal.view.<条目 id>` = `{ still: { zoom, cx, cy }, actor: { … } }`），静态画面和角色各一组：当前画面里有静态画面就调静态画面，否则调角色。旧版的全局设置只在这个媒体没存过时当默认值读。
-
+### Girls Creation 系列的角色摆放（「更多 → 角色摆放」）与画面放大 / 中心
+- **默认 = 自动**（和以前一样）：把骨架包围盒整个放进舞台居中，脚本里的 `x` / `y` / 缩放按这个比例算，缩放绕骨骼原点（脚）。不依赖任何游戏的相机常数，所以各个游戏都不会跑出画面。
+- **固定相机**（「更多」里手动选，按媒体存）：Girls Creation R Viewer（读过它的 `preloader.js` / `spine-player.js`）给每个角色一个和舞台一样大的 Spine Player，视口写死 `{ x: 0, y: 900, width: 960, height: 540, padLeft: 100%, padTop: -100% }`，展开后世界窗口 = 宽 **1920** 个骨骼单位、中心在 **(0, 900)**；
+  脚本里的 `x` / `y` 是 `skeleton.x = x`、`skeleton.y = -y`，缩放是 `skeleton.scale`（× 全局 ZOOM）。所以每个骨骼单位 = 舞台宽 / 窗口宽 个像素，原点落在舞台中心 + (x − 中心X, −(y + 中心Y)) 个单位处。「更多」里三个数字：**窗口宽 / 中心 X / 中心 Y**（Girls Creation R Viewer = 1920 / 0 / 900）。
+  只有 Girls Creation R Viewer 的常数是读过源码的；Angelica Aster / jaxin / maid 的查看器脚本是加密的（`.js.enc`），常数没读过——原点在画面正中的 CG 类骨架大概要 中心 Y = 0——所以交给使用者按媒体自己调，别的游戏默认不用固定相机。
+- 预乘 alpha：原查看器写死 `premultipliedAlpha: true`，我们按图集标记 + 像素统计猜，渲染诊断里会列出两个来源和实际用的、非 normal 混合的槽。
+- 「更多 → 画面放大 / 选择中心」**按媒体（条目）存**（`localStorage` 的 `copymanga.gal.view.<条目 id>` = `{ still: { zoom, cx, cy }, actor: { … }, camera: { mode, width, cx, cy }, showMosaic }`）：静态画面和角色各一组，当前画面里有静态画面就调静态画面，否则调角色。旧版的全局设置只在这个媒体没存过时当默认值读。
 
 ### misttrain 的马赛克层 / 空包围盒的层 / 渲染时特意不画的东西
 - `still_configuration.json` 的 `Parts` 决定叠哪几层：`IsMosaic: true` 的层默认不叠，不在 `Parts` 里的文件也不叠。两种都会在渲染诊断里写明（`提示：…`）。播放器「更多 → 显示马赛克层」（这个场景有马赛克层时才出现）打开后重取脚本、叠上它们；按媒体存在浏览器里
