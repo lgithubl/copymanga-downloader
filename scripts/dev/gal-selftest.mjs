@@ -629,7 +629,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   await buildGirlsCreationFixture(gc)
   const tagScript = await readFile(path.join(gc, 'package.nw/scenes/chmr_40101001/script.txt'), 'utf8')
   const commaScript = await readFile(path.join(gc, 'package.nw/scenes/chmr_40101001/script_original.txt'), 'utf8')
-  check('sniff 隔离：标签式脚本（<NAME_PLATE> + <PAUSE>）只有它认；逗号式的原始脚本、别的格式的脚本它不认；别的适配器也都不认标签式脚本', gcSniff(tagScript) && !gcSniff(commaScript) && !gcSniff('label H_x:\n    $ enable_skip()\n    "A" "b"\n') && !gcSniff('bg,a.jpg,0\nmsg,0,hi') && sniffGalAdapter(tagScript) === 'girlscreation-tag' && galAdapterIds().filter((id) => id !== 'girlscreation-tag').every((id) => !galAdapter(id).sniff(tagScript)) && sniffGalAdapter(commaScript) !== 'girlscreation-tag')
+  check('sniff 隔离：标签式脚本（<NAME_PLATE> + <PAUSE>）和行式脚本（hmr_/hsr_，message / chara / playmovie …）它认；别的格式的脚本它不认；别的适配器也都不认标签式脚本', gcSniff(tagScript) && gcSniff(commaScript) && !gcSniff('label H_x:\n    $ enable_skip()\n    "A" "b"\n') && !gcSniff('bg,a.jpg,0\nmsg,0,hi') && sniffGalAdapter(tagScript) === 'girlscreation-tag' && galAdapterIds().filter((id) => id !== 'girlscreation-tag').every((id) => !galAdapter(id).sniff(tagScript)) && sniffGalAdapter(commaScript) === 'girlscreation-tag')
   check('一行里连着几个标签要拆开：<SCENARIO_END><FADE_OUT2>black,500', J(gcTagsOf('<SCENARIO_END><FADE_OUT2>black,500')) === J([{ tag: 'SCENARIO_END', arg: '' }, { tag: 'FADE_OUT2', arg: 'black,500' }]) && J(gcTagsOf('<SE_PLAY>0,se1020001,FALSE,1,0')) === J([{ tag: 'SE_PLAY', arg: '0,se1020001,FALSE,1,0' }]))
 
   // 导入 + 探测（没填 game.id 时按目录结构认出来）
@@ -676,8 +676,18 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   }
   {
     // 新版数据：有的场景没有 script.txt，标签式脚本叫 output_script.txt（同目录还有逗号式的 hmr_<id>.txt，标题取自它）；两个都有时 script.txt 优先
-    const osCtx = gcMod.prepare({ options: { root: 'pk' }, texts: { 'pk/scenes/chmr_2/output_script.txt': '<NAME_PLATE>凪\nhi\n<PAUSE>\n', 'pk/scenes/chmr_2/hmr_2.txt': 'fade,out,black,0.5\ntitle,花火が作る影に,\n' }, files: ['pk/scenes/chmr_1/script.txt', 'pk/scenes/chmr_1/output_script.txt', 'pk/scenes/chmr_2/output_script.txt', 'pk/scenes/chmr_2/hmr_2.txt', 'pk/scenes/chmr_3/hmr_3.txt'], toResourcePath: (r) => r })
-    check('场景脚本：没有 script.txt 的场景用 output_script.txt（script.txt 优先）；两个都没有的目录不算场景；标题取自同目录的 hmr 文件、说话人取自 output_script.txt', osCtx.scenes.get('chmr_1').script === 'pk/scenes/chmr_1/script.txt' && osCtx.scenes.get('chmr_2').script === 'pk/scenes/chmr_2/output_script.txt' && !osCtx.scenes.has('chmr_3') && osCtx.info.get('chmr_2').title === '花火が作る影に' && osCtx.info.get('chmr_2').speaker === '凪', J([...osCtx.scenes.keys()]) + J(osCtx.info.get('chmr_2')))
+    const osCtx = gcMod.prepare({ options: { root: 'pk' }, texts: { 'pk/scenes/chmr_2/output_script.txt': '<NAME_PLATE>凪\nhi\n<PAUSE>\n', 'pk/scenes/chmr_2/hmr_2.txt': 'fade,out,black,0.5\ntitle,花火が作る影に,\n' }, files: ['pk/scenes/chmr_1/script.txt', 'pk/scenes/chmr_1/output_script.txt', 'pk/scenes/chmr_2/output_script.txt', 'pk/scenes/chmr_2/hmr_2.txt', 'pk/scenes/chmr_3/hmr_3.txt', 'pk/scenes/chmr_4/thumbnail.png'], toResourcePath: (r) => r })
+    check('场景脚本：没有 script.txt 的场景用 output_script.txt（script.txt 优先）；只有行式脚本（hmr_ / hsr_）的场景用行式脚本；什么脚本都没有的目录不算场景；标题取自同目录的 hmr 文件、说话人取自 output_script.txt', osCtx.scenes.get('chmr_1').script === 'pk/scenes/chmr_1/script.txt' && osCtx.scenes.get('chmr_2').script === 'pk/scenes/chmr_2/output_script.txt' && osCtx.scenes.get('chmr_3').script === 'pk/scenes/chmr_3/hmr_3.txt' && !osCtx.scenes.has('chmr_4') && osCtx.info.get('chmr_2').title === '花火が作る影に' && osCtx.info.get('chmr_2').speaker === '凪', J([...osCtx.scenes.keys()]) + J(osCtx.info.get('chmr_2')))
+    // 行式脚本（hmr_ / hsr_）：一句台词一步、voice 单独成步、旁白 / 带逗号的台词、角色 / 视频 / 资源解析
+    const lineText = ['fade,out,black,0.5', 'bg,abg1,0,0,1,1', 'title,标题,', 'bgmplay,bgm1,0', 'window,on,0.25', 'message,,旁白,', 'message,,含逗号，, 还有<br>换行,', 'voice,v1', 'message,甲,「台词」,iab4020078', 'voice,v2', 'voice,v3',
+      'chara,st1,chara_2,0,0,20,1,1,0,off', 'charamotion,chara_2,loop,on', 'charafade,chara_2,in,0.5', 'msgvoicesync,chara_2,甲,「同步」,iab4030908,v4', 'playmovie,m1,loop', 'cgmode,on'].join('\n')
+    const lineFiles = ['chmr_1/hmr_1.txt', 'chmr_1/images/abg1.png', 'chmr_1/voices/v1.ogg', 'chmr_1/voices/v2.ogg', 'chmr_1/voices/v3.ogg', 'chmr_1/voices/v4.ogg', 'chmr_1/videos/m1.mp4', 'chmr_1/spines/st1.skel', 'chmr_1/spines/st1.atlas', 'data/audio/bgm/bgm1.m4a']
+    const lineCtx = gcMod.prepare({ options: {}, texts: { 'scenes/chmr_1/hmr_1.txt': lineText }, files: lineFiles.map((f) => (f.startsWith('data/') ? f : `scenes/${f}`)), toResourcePath: (r) => r })
+    const lineScene = gcMod.parse(lineText, lineCtx, { rel: 'chmr_1/hmr_1.txt', stem: 'hmr_1' })
+    const textOf = (step) => step.commands.find((c) => c.op === 'text')?.segments.map((x) => x.text).join('')
+    const opsOf = (step) => step.commands.map((c) => c.op)
+    check('行式脚本：message 一句一步（旁白 / 带逗号的台词 / <br> 换行）；voice 归后面的 message；没有台词的 voice 各自一步；msgvoicesync 带语音和说话人；资源都能找到', lineScene.steps.length === 6 && textOf(lineScene.steps[0]) === '旁白' && textOf(lineScene.steps[1]) === '含逗号，,还有\n换行' && opsOf(lineScene.steps[2]).includes('voice') && textOf(lineScene.steps[2]) === '「台词」' && textOf(lineScene.steps[3]) === '' && textOf(lineScene.steps[4]) === '' && textOf(lineScene.steps[5]) === '「同步」' && lineScene.steps[5].commands.some((c) => c.op === 'movie') && Object.keys(lineScene.stats.unresolved).length === 0 && lineScene.stats.raw.cgmode === 1 && lineCtx.info.get('chmr_1').title === '标题', J(lineScene.steps.map((st) => [textOf(st), opsOf(st)])) + J(lineScene.stats))
+    check('行式脚本：chara + charamotion loop + charafade in → 一个 actor spine 指令（轨道 0 = loop）', (() => { const sp = lineScene.steps.flatMap((st) => st.commands).filter((c) => c.op === 'spine'); return sp.length >= 1 && sp.at(-1).kind === 'actor' && sp.at(-1).slot === 'Actor2' && sp.at(-1).tracks[0]?.anim === 'loop' && sp.at(-1).fade === 0.5 })(), J(lineScene.steps.flatMap((st) => st.commands).filter((c) => c.op === 'spine')))
   }
   {
     const faCtx = gcMod.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c_1/script.txt', ...[3, 4, 5, 7].map((n) => `pk/scenes/c_1/animations/106041_${n}.jpg`)], toResourcePath: (r) => r })
@@ -917,7 +927,7 @@ async function gcMod0Prepare({ truncated }) {
   await writeFile(path.join(osMedia, 'package.nw/scenes/s2/output_script.txt'), '<NAME_PLATE>A\nhi\n<PAUSE>\n')
   await writeFile(path.join(osMedia, 'package.nw/scenes/s3/hmr_3.txt'), 'title,x,\n')   // 都没有：不算
   const out = await galLayoutScript({ item: { itemId: 'os', title: 'os', config: {}, source: { path: osMedia }, adapters: ['girlscreation-tag'] }, script: { id: 'gal-layout', version: '2.7.0', options: {} } })
-  check('gal-layout（Girls Creation）：script.txt 或 output_script.txt 都算场景（3 个目录里 2 个有），目录没有脚本的不算', out.itemPatch?.gal.config.game.id === 'girlscreation' && out.itemPatch.gal.config.scriptCount === 2, J(out.itemPatch?.gal.config) + J(out.logs))
+  check('gal-layout（Girls Creation）：script.txt / output_script.txt / 只有行式脚本（hmr_·hsr_）都算场景（3 个目录里 3 个有）', out.itemPatch?.gal.config.game.id === 'girlscreation' && out.itemPatch.gal.config.scriptCount === 3, J(out.itemPatch?.gal.config) + J(out.logs))
 }
 
 // ================= Spine 版本识别 =================

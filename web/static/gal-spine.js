@@ -157,6 +157,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   let pending = 0
   let waiters = []
   let slowTo = 0.2   // animation4 降速后的倍率（1 = 不降速），播放器设置里改；set() 每次传进来
+  let stillView = { zoom: 1, cx: 0.5, cy: 0.5 }   // 静态画面的放大倍率 + 画面里哪一点放在舞台正中（cx / cy = 0..1，左→右、上→下）；播放器「更多」里改
 
   const settle = () => { if (!pending) { const done = waiters; waiters = []; done.forEach((resolve) => resolve()) } }
   const ready = () => (pending ? new Promise((resolve) => waiters.push(resolve)) : Promise.resolve())
@@ -342,7 +343,13 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   }
 
   // specs：{ slot → 指令 }（状态里的 spines）；live = 正在播放这一步（站位动作才会动），false = 一步到位
-  function set(specs, { live = false, slow = slowTo } = {}) {
+  const normalizeView = (view) => {
+    const zoom = Number(view?.zoom)
+    const unit = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : 0.5)
+    return { zoom: Number.isFinite(zoom) && zoom > 0 ? Math.min(8, zoom) : 1, cx: unit(view?.cx), cy: unit(view?.cy) }
+  }
+  function set(specs, { live = false, slow = slowTo, view = stillView } = {}) {
+    stillView = normalizeView(view)
     slowTo = Number.isFinite(Number(slow)) && Number(slow) > 0 ? Math.min(1, Number(slow)) : 0.2
     const wanted = specs || {}
     for (const slot of [...instances.keys()]) if (!wanted[slot]) instances.delete(slot)
@@ -360,6 +367,15 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     return ready()
   }
 
+  // 静态画面共用的参照层：序号最小的那层（底图）
+  function stillReference(inst) {
+    let ref = inst
+    for (const other of instances.values()) {
+      if (other.spec?.kind === 'still' && other.bounds && (other.spec.order || 0) < (ref.spec.order || 0)) ref = other
+    }
+    return ref
+  }
+
   function layout(inst, width, height) {
     const { x, y, w, h } = inst.bounds
     let scale
@@ -369,14 +385,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       // 静态画面的各层共用同一套变换（它们在游戏里是同一个原点、同一个缩放叠在一起）：以最底下那一层（序号最小，底图）的包围盒放进舞台，
       // 其它层（人物、特效，包围盒不一样）按同一个缩放和原点画——不能各按各的包围盒缩放居中，不然小的层会被放大、错位；
       // 也不能按面积最大的层，比底图还大的特效层会把整幅画面缩小
-      let ref = inst
-      for (const other of instances.values()) {
-        if (other.spec?.kind === 'still' && other.bounds && (other.spec.order || 0) < (ref.spec.order || 0)) ref = other
-      }
-      const rb = ref.bounds
-      scale = Math.min(width / rb.w, height / rb.h)
-      px = width / 2 - (rb.x + rb.w / 2) * scale
-      py = height / 2 - (rb.y + rb.h / 2) * scale
+      const rb = stillReference(inst).bounds
+      // 放大倍率 × 完整放进舞台的比例；cx / cy 指的那一点放在舞台正中（边缘裁掉）。spine 坐标 y 向上，cy 从上往下数，所以取 1 - cy
+      scale = Math.min(width / rb.w, height / rb.h) * stillView.zoom
+      px = width / 2 - (rb.x + rb.w * stillView.cx) * scale
+      py = height / 2 - (rb.y + rb.h * (1 - stillView.cy)) * scale
     } else if (inst.spec.kind === 'actor') {
       // 角色（girlscreation，照原查看器 scene.js 的 setSpineActorPos）：x / y 是骨骼坐标系的单位（skeleton.x = x，skeleton.y = -y：y 为正 = 往下），
       // 缩放（角色缩放 × 全局 ZOOM）绕骨骼原点，不是绕包围盒中心。骨架包围盒（x, y, w, h）按 still 的方式整个放进舞台得到基准比例 fit，
@@ -463,6 +476,21 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     canvas,
     set,
     ready,
+    // 只改静态画面的放大 / 中心（拖动选择时实时预览）；没有静态画面就什么也不做
+    setStillView(view) { stillView = normalizeView(view); kick() },
+    // 按「完整放进舞台」（放大 1、中心在正中）时静态画面占舞台的矩形（占舞台宽 / 高的比例），选中心时用来画参考框；没有静态画面是 null
+    stillRect() {
+      const cv = canvases.find((c) => c.clientWidth) || canvas
+      const W = cv.clientWidth
+      const H = cv.clientHeight
+      const first = [...instances.values()].find((inst) => inst.spec.kind === 'still' && inst.bounds)
+      if (!first || !W || !H) return null
+      const rb = stillReference(first).bounds
+      const fit = Math.min(W / rb.w, H / rb.h)
+      const w = (rb.w * fit) / W
+      const h = (rb.h * fit) / H
+      return { x: (1 - w) / 2, y: (1 - h) / 2, w, h }
+    },
     setPaused(value) { paused = Boolean(value); if (paused) { cancelAnimationFrame(raf); raf = 0; last = 0 } else kick() },
     // 每个站位 / 静图的骨架信息（诊断面板用）：路径、要的动画 / 实际播的动画、骨架里有哪些动画和皮肤、边界、版本
     info: () => [...instances].map(([slot, inst]) => ({

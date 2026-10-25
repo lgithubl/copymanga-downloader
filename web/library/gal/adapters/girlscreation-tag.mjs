@@ -17,6 +17,8 @@
 // 列表（adapter.catalog）：分类（场景 id 前缀 chmr / chsr …）→ 主要说话人（场景里出现最多的非「館長」的名字）→ 场景（标题取自原始脚本里的 title 行，没有就用 id；封面 = thumbnail.png）。
 // 目录树每次从文件现读（上下文按目录变化失效）。
 
+import { lineSpeakers, lineTitle, parseLine, sniffLine } from './girlscreation-line.mjs'
+
 export const ADAPTER_ID = 'girlscreation-tag'
 const DEFAULT_OPTIONS = { root: '', categoryLabels: {}, player: '館長' }
 const IMAGE_EXTS = /\.(?:webp|png|jpe?g|avif|gif)$/i
@@ -44,7 +46,7 @@ export function tagsOf(line) {
 
 export function sniff(text) {
   const head = String(text || '').replace(/^﻿/, '').slice(0, 8192)
-  return /^<NAME_PLATE>/m.test(head) && /^<PAUSE>/m.test(head)
+  return (/^<NAME_PLATE>/m.test(head) && /^<PAUSE>/m.test(head)) || sniffLine(head)   // 标签式（script.txt）或行式（hmr_/hsr_<id>.txt）
 }
 
 export function prepare({ options, texts, files, toResourcePath, truncated = false }) {
@@ -66,6 +68,7 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
       const scene = sceneOf(parts[0])
       if (parts.length === 2) {
         if (parts[1] === 'script.txt') scene.script = rel
+        else if (/^h[ms]r_[^/]+\.txt$/i.test(parts[1])) { if (!scene.lineScript) scene.lineScript = rel }   // 没有标签式脚本的场景只有行式脚本（hmr_<id>.txt / hsr_<id>.txt）
         else if (parts[1] === 'output_script.txt') scene.altScript = rel   // 新版数据里的场景没有 script.txt，标签式脚本叫 output_script.txt；script.txt 优先
         else if (/^thumbnail\.(?:png|jpe?g|webp)$/i.test(parts[1])) scene.thumb = toRes(rel)
       } else if (parts.length === 4 && parts[1] === 'spines') {   // spines/<目录>/<文件>：骨架名 = <目录>/<文件名>（脚本里写 cast010002/momiji_002）
@@ -88,15 +91,16 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
       if (parts.length === 2 && audio[parts[0]] && !audio[parts[0]].has(stem(parts[1]))) audio[parts[0]].set(stem(parts[1]), toRes(rel))
     }
   }
-  for (const scene of scenes.values()) if (!scene.script && scene.altScript) scene.script = scene.altScript
+  for (const scene of scenes.values()) if (!scene.script) scene.script = scene.altScript || scene.lineScript || ''   // 优先级：script.txt > output_script.txt > 行式脚本
   for (const [id, scene] of scenes) if (!scene.script) scenes.delete(id)   // 没有脚本的目录（PLACEHOLDER 之类）不是场景
 
   const player = String(options?.player ?? DEFAULT_OPTIONS.player)
   const info = new Map()   // 场景 id → { title, speaker }
   for (const [id, scene] of scenes) {
     const dir = scene.script.slice(0, scene.script.lastIndexOf('/') + 1)
-    let title = ''
+    let title = scene.script === scene.lineScript ? lineTitle(texts?.[scene.script]) : ''
     for (const [rel, text] of Object.entries(texts || {})) {
+      if (title) break
       if (!rel.startsWith(dir) || rel === scene.script) continue
       const m = /^title,([^,\r\n]+),/m.exec(String(text))
       if (m) { title = m[1].trim(); break }
@@ -106,6 +110,7 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
       const name = m[1].trim().replace(/（[^）]*）$/, '')   // 去掉「（オルタ）」这类括号后缀，同一个人归一起
       if (name && name !== player) counts.set(name, (counts.get(name) || 0) + 1)
     }
+    if (scene.script === scene.lineScript) for (const name of lineSpeakers(texts?.[scene.script])) if (name !== player) counts.set(name.replace(/（[^）]*）$/, ''), (counts.get(name.replace(/（[^）]*）$/, '')) || 0) + 1)
     const speaker = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || ''
     info.set(id, { title, speaker })
   }
@@ -170,6 +175,7 @@ function parseProps(text) {
 }
 
 export function parse(text, ctx = null, meta = {}) {
+  if (!/^<[A-Z]/m.test(String(text || '').slice(0, 8192)) && sniffLine(String(text || '').slice(0, 8192))) return parseLine(text, ctx, meta)   // 行式脚本
   const steps = []
   let commands = []
   let lines = []            // 当前这句的正文行

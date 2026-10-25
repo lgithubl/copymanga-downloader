@@ -260,7 +260,11 @@ export function parse(text, ctx = null, meta = {}) {
     const commands = []
     const emit = (command) => { commands.push(command) }
     const background = cleanName(frame?.backgroundImage)
-    const stillName = safeSeg(cleanName(frame?.still))
+    // 没有 still 字段、但 backgroundImage 的名字正好是 Stills/ 下的骨骼目录：当整幅静态画面播（不然只有写了 still 的那一帧是骨骼，后面几段都退成图片）
+    const explicitStill = safeSeg(cleanName(frame?.still))
+    const stillFromBackground = !explicitStill && background && safeSeg(background) && ctx?.spines?.has(`Stills/${background}`)
+    const stillName = explicitStill || (stillFromBackground ? background : '')
+    if (stillFromBackground) stats.stillFromBackground = (stats.stillFromBackground || 0) + 1
     const anim = str(frame?.stillAnimation).trim()
     const effect = str(frame?.frameEffect).trim()
     if (effect) stats.frameEffects[effect] = (stats.frameEffects[effect] || 0) + 1

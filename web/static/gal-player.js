@@ -30,6 +30,11 @@ export const GAL_SETTINGS = {
   slowKey: 'copymanga.gal.slow',                    // 静态画面 animation4 的降速倍率（1 = 不降速）
   slowDefault: 0.2,                                 // 原查看器写死的值
   slowMin: 0.05,
+  stillZoomKey: 'copymanga.gal.stillZoom',          // 静态画面（Spine）的放大倍率：1 = 完整放进舞台，大于 1 = 放大、边缘裁掉
+  stillZoomDefault: 1,
+  stillZoomMin: 0.5,
+  stillZoomMax: 4,
+  stillCenterKey: 'copymanga.gal.stillCenter',      // 静态画面里哪一点放在舞台正中：「x,y」，0..1（左→右、上→下），默认 0.5,0.5
   autoChoiceKey: 'copymanga.gal.autoChoice',        // 自动选择：-1 关；0 随机；1/2/3… 选对应项（没有该项就随机）
   autoChoiceDefault: -1,
   autoChoiceMax: 9,
@@ -162,7 +167,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   fpsInput.title = '逐帧动画（FRAME_ANIM）每秒播放几帧，循环播放；脚本里写的速度不用'
   const fpsRow = el('label', 'gal-more-field')
   fpsRow.append(el('span', '', '帧动画速度'), fpsInput, el('span', '', '帧/秒'))
-  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow)
+  // 静态画面放大：倍率 + 中心（拖动选，和库页面的「页面宽度」同一种操作）
+  const zoomInput = el('input', 'gal-more-number')
+  zoomInput.type = 'number'
+  zoomInput.min = String(GAL_SETTINGS.stillZoomMin)
+  zoomInput.max = String(GAL_SETTINGS.stillZoomMax)
+  zoomInput.step = '0.1'
+  zoomInput.title = '静态画面（Spine）的放大倍率：1 = 完整放进舞台；大于 1 = 放大，边缘裁掉'
+  const zoomRow = el('label', 'gal-more-field')
+  zoomRow.append(el('span', '', '静图放大'), zoomInput, el('span', '', '倍'))
+  const centerBtn = btn('选择中心', '在画面上拖动十字线，选放大时放在舞台正中的那一点（Enter / 确定 保存，Esc 取消）', 'gal-center-btn')
+  const centerText = el('span', 'gal-more-hint', '')
+  const centerRow = el('div', 'gal-more-field')
+  centerRow.append(el('span', '', '静图中心'), centerBtn, centerText)
+  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
@@ -249,6 +267,29 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     fpsInput.value = String(frameFps)
     try { localStorage.setItem(GAL_SETTINGS.frameFpsKey, String(frameFps)) } catch { /* 存不了就只在这一页生效 */ }
     startFrames(state.bg?.frames ? layers[frontLayer] : null)
+  })
+  // 静态画面放大：倍率 + 中心。存的是整个播放器共用一份（所有静图一样），改了马上重画
+  const loadCenter = () => {
+    const [x, y] = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
+    const ok = (n) => Number.isFinite(n) && n >= 0 && n <= 1
+    return ok(x) && ok(y) ? { cx: x, cy: y } : { cx: 0.5, cy: 0.5 }
+  }
+  let stillView = { zoom: loadNumber(GAL_SETTINGS.stillZoomKey, GAL_SETTINGS.stillZoomDefault, GAL_SETTINGS.stillZoomMin, GAL_SETTINGS.stillZoomMax), ...loadCenter() }
+  const paintCenterText = () => { centerText.textContent = `${Math.round(stillView.cx * 100)}%, ${Math.round(stillView.cy * 100)}%` }
+  zoomInput.value = String(stillView.zoom)
+  paintCenterText()
+  const saveStillView = () => {
+    try {
+      localStorage.setItem(GAL_SETTINGS.stillZoomKey, String(stillView.zoom))
+      localStorage.setItem(GAL_SETTINGS.stillCenterKey, `${stillView.cx},${stillView.cy}`)
+    } catch { /* 存不了就只在这一页生效 */ }
+  }
+  zoomInput.addEventListener('change', () => {
+    const n = Number(zoomInput.value)
+    stillView.zoom = Number.isFinite(n) ? Math.max(GAL_SETTINGS.stillZoomMin, Math.min(GAL_SETTINGS.stillZoomMax, Math.round(n * 100) / 100)) : GAL_SETTINGS.stillZoomDefault
+    zoomInput.value = String(stillView.zoom)
+    saveStillView()
+    spineLayer?.setStillView(stillView)
   })
   let boxOpacity = loadNumber(GAL_SETTINGS.boxOpacityKey, GAL_SETTINGS.boxOpacityDefault, 0, 1)
   let voiceDelay = loadNumber(GAL_SETTINGS.autoVoiceDelayKey, GAL_SETTINGS.autoVoiceDelayDefault, 0, GAL_SETTINGS.autoVoiceDelayMax)
@@ -506,7 +547,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
-    spineLayer.set(state.spines, { live, slow: slowFactor }).then(() => { if (!destroyed) updateNote() })
+    spineLayer.set(state.spines, { live, slow: slowFactor, view: stillView }).then(() => { if (!destroyed) updateNote() })
   }
   // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   let standLayer = null
@@ -1002,6 +1043,79 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     settings.hidden = !open
     cfgBtn.classList.toggle('active', open)
   }
+
+  // 选静图中心：和库页面「页面宽度」同一种操作——舞台上盖一层，拖十字线（点哪儿十字线就跳到哪儿），Enter / 确定 保存，Esc 取消，重置 = 回到正中。
+  // 选的时候画面按「完整放进舞台」显示（放大 1、中心在正中），虚线框 = 整幅画面；确定后按设置的放大倍率显示，十字线指的那一点在舞台正中
+  let centerCleanup = null
+  function adjustCenter() {
+    if (centerCleanup) { centerCleanup(false); return }
+    const rect = spineLayer?.stillRect?.()
+    if (!rect) { note.textContent = '当前画面没有静态画面（Spine），没法选中心'; return }
+    toggleMore(false)
+    const layer = el('div', 'gal-center-layer')
+    const frame = el('div', 'gal-center-frame')
+    const vLine = el('div', 'gal-center-line gal-center-v')
+    const hLine = el('div', 'gal-center-line gal-center-h')
+    const tip = el('div', 'gal-center-tip')
+    const tipText = el('span', '')
+    const okBtn = btn('确定', '保存（Enter）', 'gal-center-ok')
+    const resetBtn = btn('重置', '回到正中', 'gal-center-reset')
+    const cancelBtn = btn('取消', '不保存（Esc）', 'gal-center-cancel')
+    tip.append(tipText, okBtn, resetBtn, cancelBtn)
+    layer.append(frame, vLine, hLine, tip)
+    stage.append(layer)
+    const original = { ...stillView }
+    const pick = { cx: stillView.cx, cy: stillView.cy }
+    spineLayer.setStillView({ zoom: 1, cx: 0.5, cy: 0.5 })
+    const paint = () => {
+      frame.style.cssText = `left:${rect.x * 100}%;top:${rect.y * 100}%;width:${rect.w * 100}%;height:${rect.h * 100}%`
+      vLine.style.left = `${(rect.x + pick.cx * rect.w) * 100}%`
+      hLine.style.top = `${(rect.y + pick.cy * rect.h) * 100}%`
+      tipText.textContent = `中心 ${Math.round(pick.cx * 100)}%, ${Math.round(pick.cy * 100)}%　${stillView.zoom}×`
+    }
+    const move = (event) => {
+      const box = stage.getBoundingClientRect()
+      const fx = (event.clientX - box.left) / box.width
+      const fy = (event.clientY - box.top) / box.height
+      pick.cx = Math.max(0, Math.min(1, Math.round(((fx - rect.x) / rect.w) * 1000) / 1000))
+      pick.cy = Math.max(0, Math.min(1, Math.round(((fy - rect.y) / rect.h) * 1000) / 1000))
+      paint()
+    }
+    let dragging = false
+    layer.addEventListener('pointerdown', (event) => {
+      if (tip.contains(event.target)) return
+      dragging = true
+      layer.setPointerCapture?.(event.pointerId)
+      move(event)
+      event.preventDefault()
+    })
+    layer.addEventListener('pointermove', (event) => { if (dragging) move(event) })
+    const stop = () => { dragging = false }
+    layer.addEventListener('pointerup', stop)
+    layer.addEventListener('pointercancel', stop)
+    layer.addEventListener('click', (event) => event.stopPropagation())   // 不能顺带触发舞台的「下一句」
+    const finish = (apply) => {
+      centerCleanup = null
+      document.removeEventListener('keydown', onCenterKey, true)
+      layer.remove()
+      if (apply) { stillView.cx = pick.cx; stillView.cy = pick.cy; saveStillView() } else { stillView = { ...original } }
+      paintCenterText()
+      spineLayer?.setStillView(stillView)
+    }
+    const onCenterKey = (event) => {
+      if (event.key !== 'Escape' && event.key !== 'Enter') return
+      event.preventDefault()
+      event.stopPropagation()
+      finish(event.key === 'Enter')
+    }
+    document.addEventListener('keydown', onCenterKey, true)
+    okBtn.addEventListener('click', () => finish(true))
+    cancelBtn.addEventListener('click', () => finish(false))
+    resetBtn.addEventListener('click', () => { pick.cx = 0.5; pick.cy = 0.5; paint() })
+    centerCleanup = finish
+    paint()
+  }
+  centerBtn.addEventListener('click', adjustCenter)
 
   // 点舞台 = 下一句；设置弹层开着时，第一下只收弹层（不前进）
   stage.addEventListener('click', () => {

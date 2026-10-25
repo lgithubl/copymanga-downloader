@@ -26,7 +26,7 @@
 import { createHash } from 'node:crypto'
 import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { galAdapter, sniffGalAdapter } from './adapters/index.mjs'
+import { galAdapter, galAdapterIds, sniffGalAdapter } from './adapters/index.mjs'
 import { expandTemplate, normalizeGalConfig, parentRegExp } from './config.mjs'
 import { loadAdapterContext } from './context.mjs'
 import { safeRelPath } from './paths.mjs'
@@ -690,7 +690,11 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       if (!real.startsWith(realMedia + path.sep) || !(await stat(real)).isFile()) throw new Error('x')
     } catch { throw fail('脚本不存在', 404) }
     const adapterId = await scriptAdapterOf(abs)
-    if (!adapterId) throw fail('不是可识别的脚本', 400)
+    if (!adapterId) {
+      // 带上试过哪些适配器 + 文件开头，看一眼就知道是格式不对还是适配器没选
+      const head = decodeTextFile((await readFile(real)).subarray(0, 120)).text.replace(/\s+/g, ' ').trim()
+      throw fail(`不是可识别的脚本（试过：${(adapters?.length ? adapters : galAdapterIds()).join(' / ')}；文件开头：${head || '空'}）`, 400)
+    }
     const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel, stem: stemOf(rel) })
 
     if (entry) {

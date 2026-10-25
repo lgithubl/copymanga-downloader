@@ -30,9 +30,38 @@ const joinPath = (...parts) => parts.filter(Boolean).join('/')
 const rootOf = (options) => String(options?.root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
 
 // 1 = 数组形：[null, [<id>, [[…行], …], …]]
-const HEAD = /^\s*\[\s*null\s*,\s*\[\s*\d{5,}\s*,\s*\[/
+const HEAD = /^\s*\[\s*null\s*,\s*\[\s*"?\d{5,}"?\s*,\s*\[/
+// 2 = 对象形：{"r":{"MSceneId":…,"MSceneDetailViewModel":[{"GroupOrder":…,"Name":…,"Phrase":…}, …]}}（Stills 里有的剧情是这种）
+const OBJECT_HEAD = /^\s*\{\s*"r"\s*:\s*\{\s*"MSceneId"\s*:\s*"?\d{5,}"?\s*,\s*"MSceneDetailViewModel"\s*:\s*\[/
 export function sniff(text) {
-  return HEAD.test(String(text || '').replace(/^﻿/, '').slice(0, 2048))
+  const head = String(text || '').replace(/^﻿/, '').slice(0, 2048)
+  return HEAD.test(head) || OBJECT_HEAD.test(head)
+}
+
+// 对象形的一行 → 位置数组（和数组形同一套字段位置）。键名只有 GroupOrder / ViewOrder / Name / Phrase 有样本，其余按常见写法不分大小写猜；
+// 没认出的键记进 stats.raw（field:<键名>），在「渲染诊断」里能看到，照着补
+const ROW_KEYS = [
+  ['GroupOrder'], ['ViewOrder'], ['Name'], ['Phrase'], ['PhraseFontSize', 'FontSize'], ['PhraseSpeed', 'Speed'], ['IsPhraseCenter', 'IsCenter'], ['SpeechMCharacterId', 'MCharacterId'], ['IsSpeakingFlags', 'SpeakFlag'],
+  ['FrameImage', 'FrameImageName'], ['VoiceFileName', 'Voice', 'VoiceName'], ['BackgroundImage', 'BackGround', 'Background', 'BackgroundName'], ['BGM', 'Bgm', 'BgmName'],
+  ['SE', 'Se', 'SeName'], ['SoundTag'], ['Effect'], ['BackgroundEffectType'], ['StandCharacters'], ['StillDetail'],
+]
+function objectRowToArray(row, unknown) {
+  const lower = new Map(Object.keys(row).map((key) => [key.toLowerCase(), key]))
+  const used = new Set()
+  const out = ROW_KEYS.map((names) => {
+    for (const name of names) { const key = lower.get(name.toLowerCase()); if (key !== undefined) { used.add(key); return row[key] } }
+    return null
+  })
+  for (const key of Object.keys(row)) if (!used.has(key)) unknown.add(key)
+  // stillDetail 写成对象的话按常见键名转成 [动画名, 速度, 缩放, x, y, 时长, 旋转]
+  const detail = out[18]
+  if (detail && !Array.isArray(detail) && typeof detail === 'object') {
+    // 键名（样本确认）：AnimationName / AnimationSpeed / CameraPositionX / CameraPositionY / CameraRotation / CameraWorkDuration / CameraZoomRatio；后面的正则只是兜底
+    const entries = Object.entries(detail)
+    const pick = (...patterns) => { for (const re of patterns) { const hit = entries.find(([key]) => re.test(key)); if (hit) return hit[1] } return null }
+    out[18] = [pick(/^AnimationName$/i, /anim.*name/i), pick(/^AnimationSpeed$/i, /anim.*speed/i), pick(/^CameraZoomRatio$/i, /zoom|scale/i), pick(/^CameraPositionX$/i, /position.*x/i), pick(/^CameraPositionY$/i, /position.*y/i), pick(/^CameraWorkDuration$/i, /duration|second/i), pick(/^CameraRotation$/i, /rotat|angle/i)]
+  }
+  return out
 }
 
 // ---------- 上下文：资源目录索引 + 名称表 ----------
@@ -160,11 +189,16 @@ const zoomCode = (scale) => ((scale - 1) / 1.3) * 1000   // 播放器 zoomOf(z) 
 export function parse(text, ctx = null, meta = {}) {
   let data
   try { data = JSON.parse(String(text || '').replace(/^﻿/, '')) } catch { throw new Error('不是有效的 JSON') }
-  const scene = Array.isArray(data) ? data[1] : null
-  if (!Array.isArray(scene) || !Array.isArray(scene[1])) throw new Error('找不到场景行（[null, [<id>, [行…]]]）')
+  const unknownKeys = new Set()
+  let scene = Array.isArray(data) ? data[1] : null
+  if (!Array.isArray(scene) && data?.r && Array.isArray(data.r.MSceneDetailViewModel)) {   // 对象形
+    scene = [data.r.MSceneId, data.r.MSceneDetailViewModel.filter((row) => row && typeof row === 'object').map((row) => objectRowToArray(row, unknownKeys))]
+  }
+  if (!Array.isArray(scene) || !Array.isArray(scene[1])) throw new Error('找不到场景行（[null, [<id>, [行…]]] 或 {"r":{"MSceneDetailViewModel":[…]}}）')
   const sceneId = str(scene[0]) || str(meta?.stem)
   const rows = scene[1].filter((row) => Array.isArray(row))
   const stats = { rows: rows.length, commands: 0, raw: {}, unresolved: {}, spines: 0, mosaicSkipped: 0 }
+  for (const key of unknownKeys) stats.raw[`field:${key}`] = 1
   const miss = (kind, name) => { const key = `${kind}:${name}`; stats.unresolved[key] = (stats.unresolved[key] || 0) + 1 }
   const raw = (key) => { stats.raw[key] = (stats.raw[key] || 0) + 1 }
 
