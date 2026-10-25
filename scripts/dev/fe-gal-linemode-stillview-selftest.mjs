@@ -139,6 +139,25 @@ const meOut = await layoutScript({ item: meImp.items[0], script: { id: 'gal-layo
 await me.patchItemMetadata(meImp.items[0].itemId, { gal: meOut.itemPatch.gal })
 const meId = meImp.items[0].itemId
 
+// ---- 素材 5：maid 式的全局分层脸骨架（package.nw/data/spine/cast/cast001001/c1_001.*）+ 用了预设名的脚本，给首页「表情」入口用 ----
+const exMedia = path.join(dataDir, 'gal', 'gc-expr')
+const exPk = path.join(exMedia, 'package.nw')
+const exSpine = path.join(exPk, 'data/spine/cast/cast001001')
+await mkdir(exSpine, { recursive: true })
+await mkdir(path.join(exPk, 'data/audio/bgm'), { recursive: true })
+await writeSpine(exSpine, 'c1_001', { format: 'json', color: 'orange', animations: ['eye/eye_001', 'eye/eye_002', 'eyebrow/eyebrow_001', 'mouse/mouse_001', 'mouse/mouse_002', 'cheek/cheek_none', 'cheek/cheek_001'] })
+await rename(path.join(exSpine, 'c1_001.skel.bytes'), path.join(exSpine, 'c1_001.json'))
+await rename(path.join(exSpine, 'c1_001.atlas.txt'), path.join(exSpine, 'c1_001.atlas'))
+for (const [id, preset] of [['story_1', '喜'], ['story_2', '照れ'], ['story_3', '喜']]) {
+  await mkdir(path.join(exPk, 'scenes', id), { recursive: true })
+  await writeFile(path.join(exPk, 'scenes', id, 'script.txt'), ['<SPINE_ACTOR>7,cast001001/c1_001,,通常,,0,0,x=0|y=0,1,json', '<NAME_PLATE>甲', '一', '<PAUSE>', `<SPINE_ACTOR_PLAY>7,${preset},0,true`, '<NAME_PLATE>甲', '二', '<PAUSE>', ''].join('\n'))
+}
+const ex = importer(exMedia)
+const exImp = await ex.importFromSource({ sourcePath: exMedia, options: { adapters: ['girlscreation-tag'], config: { game: { id: 'girlscreation' } } } })
+const exOut = await layoutScript({ item: exImp.items[0], script: { id: 'gal-layout', version: '2.8.0', options: {} } })
+await ex.patchItemMetadata(exImp.items[0].itemId, { gal: exOut.itemPatch.gal })
+const exId = exImp.items[0].itemId
+
 const port = 8131
 const base = `http://127.0.0.1:${port}`
 try { await fetch(`${base}/health`); console.error(`端口 ${port} 已被占用`); process.exit(2) } catch {}
@@ -400,6 +419,62 @@ try {
     await page.context().close()
   }
 
+  // ===== (2c) 首页「表情」入口：角色 + 预设逐个确认；播放页诊断里的 WebGL 信息 =====
+  {
+    const page = await newPage()
+    await page.goto(`${base}/#/media/gal/${exId}/main`)
+    await page.waitForFunction(() => /表情/.test(document.body.innerText), null, { timeout: 15000 })
+    check('首页有「表情」卡片', true)
+    await page.getByText('表情', { exact: true }).first().click()
+    await page.waitForSelector('.gal-expr-review')
+    await page.waitForFunction(() => document.querySelector('.gal-expr-info')?.textContent?.includes('预设'), null, { timeout: 15000 })
+    check('表情页：左边角色列表（c1_001，0 / 3 已确认），右边预设按次数排（通常 3、喜 2、照れ 1），顶部进度「已确认 0 / 3」', /c1_001/.test(await page.$eval('.gal-expr-cast', (e) => e.textContent)) && /0 \/ 3/.test(await page.$eval('.gal-expr-cast', (e) => e.textContent)) && J(await page.$$eval('.gal-expr-preset-btn', (n) => n.map((b) => b.textContent))) === J(['通常', '喜', '照れ']) && /已确认 0 \/ 3/.test(await page.$eval('.gal-expr-progress', (e) => e.textContent)))
+    await page.waitForFunction(() => document.querySelectorAll('.gal-expr-groups select').length >= 3, null, { timeout: 20000 })
+    await sleep(700)
+    if (process.env.SHOT_EXPR) await page.screenshot({ path: process.env.SHOT_EXPR })
+    check('预览：骨架画出来了（预览画布有不透明像素）', await page.evaluate(() => { const c = document.querySelector('.gal-expr-stage .gal-spine'); if (!c || !c.width) return false; const g = document.createElement('canvas'); g.width = c.width; g.height = c.height; const x = g.getContext('2d'); x.drawImage(c, 0, 0); const d = x.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 200) n += 1; return n / (c.width * c.height) > 0.01 }))
+    // 点「喜」：内置表里没有 → 信息写明用默认脸；调眼 = 002、嘴 = 002，保存到这个角色，再确认
+    await page.getByRole('button', { name: '喜', exact: true }).click()
+    await page.waitForFunction(() => /喜/.test(document.querySelector('.gal-expr-info')?.textContent || '') && /默认脸/.test(document.querySelector('.gal-expr-info')?.textContent || ''), null, { timeout: 15000 })
+    check('点「喜」：预设表里没有 → 信息里写明现在用的是默认脸', true)
+    const labels = await page.$$eval('.gal-expr-groups .gal-expr-field > span', (n) => n.map((e) => e.textContent))
+    const selects = await page.$$('.gal-expr-groups select')
+    await selects[labels.findIndex((t) => /\(eye\)|（eye）/.test(t))].selectOption('002')
+    await selects[labels.findIndex((t) => /mouse/.test(t))].selectOption('002')
+    await sleep(300)
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await page.waitForFunction(() => /来自预设表/.test(document.querySelector('.gal-expr-info')?.textContent || ''), null, { timeout: 10000 })
+    const saved = await page.evaluate((id) => JSON.parse(localStorage.getItem(`copymanga.gal.view.${id}`) || '{}'), exId)
+    check('保存：存到这个媒体的 expressions（范围 cast001001：喜 = eye 002 + mouse 002），信息变成「来自预设表」', saved.expressions?.cast001001?.['喜']?.eye === '002' && saved.expressions.cast001001['喜'].mouse === '002', J(saved))
+    await page.getByRole('button', { name: '确认这个预设', exact: true }).click()
+    await page.waitForFunction(() => /已确认 1 \/ 3/.test(document.querySelector('.gal-expr-progress')?.textContent || ''), null, { timeout: 10000 })
+    const afterConfirm = await page.evaluate((id) => JSON.parse(localStorage.getItem(`copymanga.gal.view.${id}`) || '{}'), exId)
+    check('确认：进度「已确认 1 / 3」，「喜」按钮带 ✓，左边变 1 / 3；confirmed 存进去、没把 expressions 弄丢', afterConfirm.confirmed?.cast001001?.['喜'] === true && afterConfirm.expressions?.cast001001?.['喜']?.eye === '002' && /✓ 喜/.test(await page.$$eval('.gal-expr-preset-btn', (n) => n.map((b) => b.textContent).join('|'))) && /1 \/ 3/.test(await page.$eval('.gal-expr-cast', (e) => e.textContent)), J(afterConfirm))
+    await page.getByRole('button', { name: '下一个未确认 ▶' }).click()
+    await sleep(500)
+    check('「下一个未确认」：跳到「喜」后面第一个没确认的预设（照れ），照れ 在内置预设表里（腮红 001）所以信息写「来自预设表」', /照れ/.test(await page.$eval('.gal-expr-info', (e) => e.textContent)) && /来自预设表（范围 default）/.test(await page.$eval('.gal-expr-info', (e) => e.textContent)), await page.$eval('.gal-expr-info', (e) => e.textContent))
+    await page.reload()
+    await page.waitForSelector('.gal-expr-review')
+    await page.waitForFunction(() => /已确认 1 \/ 3/.test(document.querySelector('.gal-expr-progress')?.textContent || ''), null, { timeout: 15000 })
+    check('刷新页面后确认状态还在（已确认 1 / 3）', true)
+    await page.click('.gal-expr-review-head .gal-btn')
+    await page.waitForFunction(() => /表情/.test(document.body.innerText) && !document.querySelector('.gal-expr-review'), null, { timeout: 15000 })
+    check('「↑ 上一级」回到首页', true)
+    // 播放页：用到「喜」的脚本，诊断里写「预设表」+ WebGL 信息
+    await page.goto(`${base}/#/media/gal/${exId}/main?section=${encodeURIComponent('s:story_1/script.txt')}`)
+    await page.waitForSelector('.gal-player')
+    await page.waitForFunction(() => /Actor7/.test(document.querySelector('.gal-world')?.dataset.spines || ''), null, { timeout: 20000 })
+    await goTo(page, '2 / 2')
+    await sleep(600)
+    await page.click('.gal-note')
+    await sleep(300)
+    const diag = await page.$eval('.gal-diag', (e) => e.innerText)
+    check('播放页：「喜」走你刚保存的预设表（eye_002 / mouse_002）', /表情预设「喜」→ 预设表（范围 cast001001）/.test(diag) && /eye\/eye_002/.test(diag) && /mouse\/mouse_002/.test(diag), diag.slice(0, 900))
+    check('渲染诊断有 WebGL 一行：显卡型号 / 上下文状态 / 画布尺寸 / 最大贴图 / 最近 GL 错误', /WebGL（Spine 3\.8）：显卡 .+ · 上下文正常 · 画布 \d+x\d+.+ · 最大贴图 \d+ · 最近 GL 错误 /.test(diag), diag.split('\n').filter((l) => /WebGL/.test(l)).join('|'))
+    check('没有页面错误', page.errors.length === 0, J(page.errors))
+    await page.context().close()
+  }
+
   // ===== (3) 文件索引行 + 刷新、节点图（相关链接）、列表阶段的问题 =====
   {
     // girlscreation 列表：「更多」里有文件索引信息 + 刷新；新增场景后点刷新才出现
@@ -448,7 +523,7 @@ try {
   }
 } catch (error) {
   fail++
-  console.log(`FAIL 测试中断：${String(error?.message || error).split('\n')[0]}`)
+  console.log(`FAIL 测试中断：${String(error?.message || error).split('\n')[0]}`); if (process.env.LM_DEBUG) console.log(String(error?.message || error).slice(0, 900))
   if (process.env.LM_DEBUG && lastPage) { console.log(await lastPage.evaluate(() => document.body.innerText.slice(0, 600)).catch(() => '')); console.log(lastPage.errors) }
 } finally {
   await browser?.close()

@@ -407,6 +407,36 @@ export function parse(text, ctx = null, meta = {}) {
 
 // 一个场景几百个文件（图 / 语音 / 骨骼…），几百个场景轻松超过默认的 6 万；要全部建索引就得放宽上限（见 context.mjs 的 contextWalkLimit）
 export const contextWalkLimit = 400000
+// 表情预设的使用情况（给首页「表情」入口用）：扫一份脚本，模拟槽 → 骨架，收集「哪个骨架用过哪个预设名（轨道 0 的动画）」。纯函数，不碰文件系统。
+// 返回 [[骨架名（脚本里写的，如 cast009001/nashwa_001）, 预设名]]（可重复，数次数用）
+export function scanExpressions(text) {
+  const slots = new Map()
+  const out = []
+  for (const rawLine of String(text || '').replace(/^﻿/, '').split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line.startsWith('<')) continue
+    for (const { tag, arg } of tagsOf(line)) {
+      const a = splitArgs(arg)
+      if (tag === 'SPINE_ACTOR') { slots.set(a[0], a[1]); if (a[3]) out.push([a[1], a[3]]) }
+      else if (tag === 'SPINE_ACTOR_OUT') slots.delete(a[0])
+      else if ((tag === 'SPINE_ACTOR_PLAY' && Number(a[2]) === 0) || (tag === 'SPINE_ACTOR_TRACK' && Number(a[1]) === 0)) {
+        const skel = slots.get(a[0])
+        const preset = tag === 'SPINE_ACTOR_PLAY' ? a[1] : a[2]
+        if (skel && preset) out.push([skel, preset])
+      }
+    }
+  }
+  return out
+}
+// 全局骨架（data/spine/…）的资源路径：骨架名 → { skel, atlas }（给表情页预览用；场景自己的骨架不在这里）
+export function globalSpineFiles(ctx, name) {
+  const files = ctx?.globalSpines?.get(name)
+  if (!files) return null
+  const skel = files.get('skel') || files.get('bytes') || files.get('json') || ''
+  const atlas = files.get('atlas') || files.get('txt') || ''
+  return skel && atlas ? { skel, atlas } : null
+}
+
 // 体检（列表阶段的便宜检查，只看索引）：没有脚本的场景目录 / 没有标题的场景 / 没有封面的场景 / 找不到 data/audio
 export function health(ctx) {
   const out = []
@@ -419,4 +449,4 @@ export function health(ctx) {
   if (!ctx.audio.bgm.size && !ctx.audio.se.size) out.push({ code: 'audio-missing', message: '没有找到 data/audio/{bgm,se}：BGM / 音效会缺资源（检查 adapterOptions.root 是不是 package.nw）' })
   return out
 }
-export const girlsCreationTagAdapter = { id: ADAPTER_ID, health, contextWalkLimit, label: 'Girls Creation 查看器（标签式脚本）', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }
+export const girlsCreationTagAdapter = { id: ADAPTER_ID, scanExpressions, globalSpineFiles, health, contextWalkLimit, label: 'Girls Creation 查看器（标签式脚本）', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }

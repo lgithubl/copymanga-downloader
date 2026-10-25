@@ -46,10 +46,11 @@ const sniffCache = new Map()
 const entriesCache = new Map()
 const scriptInfoCache = new Map()
 const countCache = new Map()
+const expressionCache = new Map()
 // 手动刷新（界面「更多 → 刷新索引」）：丢掉这个媒体目录的全部缓存——适配器上下文（文件索引 + 名称表）、嗅探结果、目录列表、脚本摘要、数量
 export function invalidateBrowseCaches(mediaDir) {
   let n = invalidateContexts(mediaDir)
-  for (const map of [sniffCache, entriesCache, scriptInfoCache, countCache]) {
+  for (const map of [sniffCache, entriesCache, scriptInfoCache, countCache, expressionCache]) {
     for (const key of [...map.keys()]) if (String(key).startsWith(`${mediaDir}${path.sep}`) || String(key).startsWith(`${mediaDir}|`)) { map.delete(key); n += 1 }
   }
   return n
@@ -850,9 +851,54 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return problems
   }
 
+  // ---------- 表情（首页入口）：角色 + 预设名的列表，给「表情预设」一个个过用 ----------
+  // 适配器实现了 scanExpressions(text)（girlscreation）才有。扫整个脚本目录一次（每个脚本读全文，只在这里读），结果按适配器上下文建立时间缓存，「刷新索引」会清掉
+  const expressionAdapter = (adapters || []).map((id) => { try { return galAdapter(id) } catch { return null } }).find((a) => typeof a?.scanExpressions === 'function')
+  async function expressionNode() {
+    const ctx = await contextOf(expressionAdapter.id)
+    const cacheKey = `${mediaDir}|expressions|${contextStats(mediaDir).map((x) => x.builtAt).join(',')}`
+    let casts = cacheGet(expressionCache, cacheKey, CACHE_TTL_MS)
+    if (!casts) {
+      const counts = new Map()   // 骨架名 → Map(预设名 → 次数)
+      const scripts = [...(ctx?.scenes?.values() || [])].map((scene) => scene.script).filter(Boolean)
+      await mapLimit(scripts, IO_CONCURRENCY, async (rel) => {
+        try {
+          const real = await realpath(path.join(mediaDir, ...rel.split('/')))
+          const text = decodeTextFile(await readFile(real)).text
+          for (const [skel, preset] of expressionAdapter.scanExpressions(text)) {
+            if (!counts.has(skel)) counts.set(skel, new Map())
+            counts.get(skel).set(preset, (counts.get(skel).get(preset) || 0) + 1)
+          }
+        } catch { /* 读不了就跳过这个脚本 */ }
+      })
+      casts = []
+      for (const [skel, presets] of counts) {
+        const files = expressionAdapter.globalSpineFiles?.(ctx, skel)   // 只有全局骨架（maid 的 data/spine/…）有分层脸，能在这里预览
+        if (!files) continue
+        casts.push({ skel: files.skel, atlas: files.atlas, name: skel, castKey: /^(cast\d+)\//.exec(skel)?.[1] || '', label: skel.split('/').pop(), presets: [...presets].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ja')).map(([name, count]) => ({ name, count })) })
+      }
+      casts.sort((a, b) => naturalCompare(a.name, b.name))
+      cacheSet(expressionCache, cacheKey, casts, 20)
+    }
+    return { node: { id: 'x:expr', kind: 'expr', title: '表情', parent: '', breadcrumb: [{ id: '', title: '首页' }, { id: 'x:expr', title: '表情' }], sets: [], pageSize, page: 1, pageCount: 1, total: casts.length, items: [], casts, adapter: expressionAdapter.id } }
+  }
+  const expressionCards = async () => {
+    if (!expressionAdapter) return null
+    const ctx = await contextOf(expressionAdapter.id).catch(() => null)
+    return ctx?.globalSpines?.size ? { type: 'dir', id: 'x:expr', title: '表情', subtitle: `${ctx.globalSpines.size} 个角色骨架 · 表情预设逐个确认`, thumb: '', badge: '', node: 'x:expr' } : null
+  }
+
   async function getNode(nodeId, opts = {}) {
+    if (nodeId === 'x:expr') {
+      if (!expressionAdapter) throw fail('这个媒体没有表情预设', 404)
+      return expressionNode()
+    }
     const parsed = parseNodeId(nodeId)
     const result = await getNodeInner(nodeId, opts)
+    if (result?.node && result.node.kind === 'cards' && !result.node.parent && parsed.kind === 'dir' && !parsed.rel && parsed.page === 1 && !parsed.view.q) {
+      const card = await expressionCards()   // 首页第一页多一张「表情」卡片（分层脸骨架才有）
+      if (card) { result.node.items = [...result.node.items, card]; result.node.total += 1 }
+    }
     if (result?.node && result.node.kind !== 'player') {
       const status = indexStatus()
       if (status) result.node.index = status

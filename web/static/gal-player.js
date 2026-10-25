@@ -315,7 +315,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     try { saved = JSON.parse((viewStorageKey && localStorage.getItem(viewStorageKey)) || '{}') || {} } catch { saved = {} }
     const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
     const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
-    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), camera: cleanCamera(saved.camera), expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
+    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), camera: cleanCamera(saved.camera), expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
   }
   let views = loadViews()
   // 表情预设表：内置初始值（gal-spine.js）← 服务端配置（adapterOptions['girlscreation-tag'].expressions）← 这个媒体自己调的（views.expressions）
@@ -1072,6 +1072,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         }
       }
     }
+    for (const info of spineLayer?.glInfo?.() || []) lines.push(`WebGL（Spine ${info.runtime}）：显卡 ${info.renderer} · 上下文${info.lost ? '【已丢失】' : '正常'} · 画布 ${info.canvas} · 最大贴图 ${info.maxTexture} · 最近 GL 错误 ${info.lastError}`)
     const extra = scene.stats || {}
     for (const note of extra.notes || []) lines.push(`提示：${note}`)
     if (extra.arrayGuess) lines.push(`数组形剧情：${extra.arrayGuess}`)

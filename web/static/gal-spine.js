@@ -620,6 +620,9 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         drawnCount += 1
       }
       renderer.end()
+      // GL 错误只在这里读一次最近的（getError 会清掉）；白屏 / 黑屏时诊断里能看到
+      const err = gl.getError()
+      if (err) { backend.lastGlError = err; backend.glErrorCount = (backend.glErrorCount || 0) + 1 }
     }
     if (drawnCount) kick()
     else last = 0
@@ -668,6 +671,16 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
       version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', boundsEmpty: Boolean(inst.skeleton) && inst.boundsOk === false, bounds: inst.bounds && inst.boundsOk !== false ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,
     })),
+    // WebGL 状态（渲染诊断用，白屏 / 黑屏时看这个）：每个运行时一块画布——显卡型号、上下文有没有丢、画布像素尺寸、最大贴图尺寸、最近的 GL 错误
+    glInfo: () => readyBackends.map((backend) => {
+      const gl = backend.gl
+      let renderer = ''
+      try { const ext = gl.getExtension('WEBGL_debug_renderer_info'); renderer = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) } catch { renderer = '读不到' }
+      const names = { 1280: 'INVALID_ENUM', 1281: 'INVALID_VALUE', 1282: 'INVALID_OPERATION', 1285: 'OUT_OF_MEMORY', 1286: 'INVALID_FRAMEBUFFER_OPERATION', 37442: 'CONTEXT_LOST_WEBGL' }
+      let maxTexture = 0
+      try { maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE) } catch { /* 上下文丢了 */ }
+      return { runtime: backend.key, renderer, lost: Boolean(gl.isContextLost?.()), canvas: `${backend.canvas.width}x${backend.canvas.height}（css ${backend.canvas.clientWidth}x${backend.canvas.clientHeight}，dpr ${globalThis.devicePixelRatio || 1}）`, maxTexture, lastError: backend.lastGlError ? `${names[backend.lastGlError] || backend.lastGlError}（共 ${backend.glErrorCount} 次）` : '无' }
+    }),
     // 已经加载好的骨架数（测试 / 提示用）
     loadedCount: () => [...instances.values()].filter((inst) => inst.skeleton).length,
     destroy() {

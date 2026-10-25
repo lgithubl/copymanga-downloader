@@ -1,5 +1,6 @@
 import { createThumbLoader, thumbSettingsFromConfig } from '/thumb-loader.js'
 import { createGalBrowser } from '/gal-browse.js'
+import { createExprReview } from '/gal-expr.js'
 import { createGalPlayer } from '/gal-player.js'
 import { ratioOfStep } from '/gal-engine.js'
 import { HOVER_DELAY_MS, HOVER_MAX_COVER_RATIO, fitPreview, placeExpanded, worthExpanding } from '/hover-preview.js'
@@ -4219,6 +4220,12 @@ function renderGalBrowse(reader) {
   const themeClass = applyMediaReaderTheme()
   els.mediaReaderContent.className = `media-reader-content media-gal media-gal-browse ${themeClass}`
   const owner = readerOwner(reader)
+  // 首页「表情」入口：角色 + 表情预设，一个个过、一个个确认（gal-expr.js）；上一级 = 首页
+  if (reader.node.kind === 'expr') {
+    galBrowser = createExprReview({ container: els.mediaReaderContent, reader, viewKey: owner?.itemId || '', onOpen: (nodeId, kind) => { galNavigate(reader, nodeId, kind).catch((error) => alert(error.message)) } })
+    els.mediaReaderContent.scrollTop = 0
+    return
+  }
   const nodes = owner && currentLibraryProgress?.itemId === owner.itemId ? currentLibraryProgress.nodes || {} : {}
   galBrowser = createGalBrowser({
     container: els.mediaReaderContent,

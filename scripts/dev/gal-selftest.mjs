@@ -1303,6 +1303,35 @@ async function gcMod0Prepare({ truncated }) {
   check('tt：Stills/ 下没有对应骨架目录时 _still_0N 还是普通背景图', ops(noFolder, 2).includes('bg') && !ops(noFolder, 2).some((o) => o.startsWith('spine:')), J(ops(noFolder, 2)))
 }
 
+// ================= 首页「表情」入口：扫脚本里用过的预设（骨架 + 预设名 + 次数）、x:expr 节点、首页卡片 =================
+{
+  const gcm = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
+  const scan = gcm.scanExpressions('<SPINE_ACTOR>8,cast009001/nashwa_001,,通常,,0,100,x=0|y=0,1.0,json\n<NAME_PLATE>甲\nhi\n<PAUSE>\n<SPINE_ACTOR_PLAY>8,喜,0,true\n<SPINE_ACTOR_PLAY>8,smile,1,true\n<SPINE_ACTOR_TRACK>8,0,照れ,true\n<SPINE_ACTOR_OUT>8,0\n<SPINE_ACTOR_PLAY>8,哀,0,true\n<SPINE_ACTOR>7,cast001001/iroha_001,,通常,,0,0,x=0|y=0,1,json\n<SPINE_ACTOR_PLAY>7,喜,0,true\n')
+  check('scanExpressions：初始动画（SPINE_ACTOR 第 4 项）和轨道 0 的 PLAY / TRACK 算预设；轨道 1（表情图标）不算；OUT 之后的槽不再对应骨架（哀 丢掉）', J(scan) === J([['cast009001/nashwa_001', '通常'], ['cast009001/nashwa_001', '喜'], ['cast009001/nashwa_001', '照れ'], ['cast001001/iroha_001', '通常'], ['cast001001/iroha_001', '喜']]), J(scan))
+  const root = path.join(work, 'expr-home')
+  const pk = path.join(root, 'package.nw')
+  for (const [id, text] of [['story_1', '<SPINE_ACTOR>8,cast009001/nashwa_001,,通常,,0,0,x=0|y=0,1,json\n<NAME_PLATE>甲\nhi\n<PAUSE>\n<SPINE_ACTOR_PLAY>8,喜,0,true\n<NAME_PLATE>甲\nhi\n<PAUSE>\n'], ['story_2', '<SPINE_ACTOR>8,cast009001/nashwa_001,,通常,,0,0,x=0|y=0,1,json\n<NAME_PLATE>乙\nhi\n<PAUSE>\n<SPINE_ACTOR>7,scene_only/local_001,,通常,,0,0,x=0|y=0,1,skel\n']]) {
+    await mkdir(path.join(pk, 'scenes', id), { recursive: true })
+    await writeFile(path.join(pk, 'scenes', id, 'script.txt'), text)
+  }
+  await mkdir(path.join(pk, 'data/spine/cast/cast009001'), { recursive: true })
+  for (const ext of ['json', 'atlas', 'png']) await writeFile(path.join(pk, `data/spine/cast/cast009001/nashwa_001.${ext}`), '{}')
+  const prov = createBrowseProvider({ mediaDir: root, adapters: ['girlscreation-tag'], resolveAsset: async () => { throw new Error('none') }, config: { scriptRoots: [{ id: 'scenes', dir: 'package.nw/scenes' }], resourceRoots: ['package.nw'], scriptExtensions: ['txt'], merge: [], adapterOptions: { 'girlscreation-tag': { root: 'package.nw' } } } })
+  const home = (await prov.getNode('')).node
+  const card = home.items.find((i) => i.node === 'x:expr')
+  check('首页多一张「表情」卡片（全局分层脸骨架才有）', Boolean(card) && card.title === '表情' && card.type === 'dir', J(home.items.map((i) => i.title)))
+  const expr = (await prov.getNode('x:expr')).node
+  const nashwa = expr.casts?.[0]
+  check('x:expr 节点：每个全局骨架一项（场景自己的 scene_only/local_001 不算），带预设名和次数（通常 2、喜 1，按次数排）、骨架 / atlas 的资源路径、角色目录名', expr.kind === 'expr' && expr.casts.length === 1 && nashwa.castKey === 'cast009001' && nashwa.label === 'nashwa_001' && J(nashwa.presets) === J([{ name: '通常', count: 2 }, { name: '喜', count: 1 }]) && nashwa.skel === 'data/spine/cast/cast009001/nashwa_001.json' && nashwa.atlas.endsWith('.atlas') && expr.breadcrumb.map((c) => c.title).join('>') === '首页>表情', J(expr))
+  const { invalidateBrowseCaches } = await import('../../web/library/gal/browse.mjs')
+  await writeFile(path.join(pk, 'scenes/story_1/script.txt'), '<SPINE_ACTOR>8,cast009001/nashwa_001,,通常,,0,0,x=0|y=0,1,json\n<SPINE_ACTOR_PLAY>8,楽,0,true\n<NAME_PLATE>甲\nhi\n<PAUSE>\n')
+  invalidateBrowseCaches(root)
+  const again = (await createBrowseProvider({ mediaDir: root, adapters: ['girlscreation-tag'], resolveAsset: async () => { throw new Error('none') }, config: { scriptRoots: [{ id: 'scenes', dir: 'package.nw/scenes' }], resourceRoots: ['package.nw'], scriptExtensions: ['txt'], merge: [], adapterOptions: { 'girlscreation-tag': { root: 'package.nw' } } } }).getNode('x:expr')).node
+  check('刷新索引后重新扫脚本：改了脚本（喜 → 楽）列表跟着变', again.casts[0].presets.some((p) => p.name === '楽') && !again.casts[0].presets.some((p) => p.name === '喜'), J(again.casts[0].presets))
+  const noExpr = createBrowseProvider({ mediaDir: path.join(work, 'gc-pack'), adapters: ['uviewer-csv'], resolveAsset: async () => { throw new Error('none') }, config: { merge: [] } })
+  check('没有 scanExpressions 的适配器：没有「表情」入口，x:expr 返回 404', (await noExpr.getNode('').catch(() => ({ node: { items: [] } }))).node.items.every((i) => i.node !== 'x:expr') && (await noExpr.getNode('x:expr').then(() => 0, (e) => e.statusCode)) === 404)
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

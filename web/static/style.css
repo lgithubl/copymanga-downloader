@@ -4733,3 +4733,28 @@ h2 {
 .gal-expr-field > span { flex: 0 0 8.5em; }
 .gal-expr-hint { color: #9ca3af; font-size: 12px; line-height: 1.5; }
 .gal-expr-foot { display: flex; gap: 8px; margin-top: 8px; }
+
+/* 首页「表情」入口：角色 + 预设逐个确认（gal-expr.js） */
+.gal-expr-review { display: grid; gap: 10px; grid-template-columns: 15em minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100%; margin: 0 auto; max-width: 1400px; width: 100%; }
+.gal-expr-review-head { align-items: center; display: flex; gap: 10px; grid-column: 1 / -1; }
+.gal-expr-review-head .gal-btn, .gal-expr-review .gal-btn { background: var(--site-secondary); border: 0; border-radius: 6px; color: #fff; cursor: pointer; font-size: 13px; min-height: 28px; padding: 0 10px; }
+.gal-expr-progress { color: var(--site-muted); flex: 1; font-size: 13px; }
+.gal-expr-side { display: grid; align-content: start; gap: 4px; min-height: 0; overflow: auto; }
+.gal-expr-cast { align-items: center; background: var(--site-panel); border: 1px solid var(--site-border); border-radius: 6px; color: var(--site-text); cursor: pointer; display: flex; font-size: 13px; gap: 8px; justify-content: space-between; padding: 6px 8px; text-align: left; }
+.gal-expr-cast.active { border-color: var(--site-primary); }
+.gal-expr-cast.all-done .gal-expr-cast-count { color: #2da44e; }
+.gal-expr-cast-count { color: var(--site-muted); font-variant-numeric: tabular-nums; }
+.gal-expr-main { align-content: start; display: grid; gap: 8px; grid-auto-rows: max-content; min-height: 0; overflow: auto; }
+.gal-expr-stage { aspect-ratio: 16 / 9; background: #11161f; border-radius: 6px; flex: none; overflow: hidden; position: relative; width: min(100%, calc(34vh * 16 / 9)); }
+.gal-expr-stage .gal-spine { height: 100%; inset: 0; position: absolute; width: 100%; }
+.gal-expr-info { color: var(--site-muted); font-size: 13px; }
+.gal-expr-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.gal-expr-preset-btn { background: var(--site-panel); border: 1px solid var(--site-border); border-radius: 6px; color: var(--site-text); cursor: pointer; font-size: 13px; padding: 4px 10px; }
+.gal-expr-preset-btn.active { border-color: var(--site-primary); box-shadow: 0 0 0 1px var(--site-primary); }
+.gal-expr-preset-btn.confirmed { color: #2da44e; }
+.gal-expr-editor { display: grid; gap: 8px; }
+.gal-expr-review .gal-expr-field > span { color: var(--site-text); }
+.gal-expr-review .gal-more-select { font-size: 13px; background: var(--site-control); border: 1px solid var(--site-control-border); color: var(--site-text); }
+.gal-expr-review .gal-more-select option { color: #000; }
+@media (max-width: 900px) { .gal-expr-review { grid-template-columns: minmax(0, 1fr); } }
+.gal-expr-review .gal-expr-field > span { font-size: 13px; flex: 0 0 9em; }
