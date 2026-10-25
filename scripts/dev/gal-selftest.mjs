@@ -1145,6 +1145,66 @@ async function gcMod0Prepare({ truncated }) {
   check('适配器体检（girlscreation）：没有 thumbnail 的场景会被报出来', healthCodes.includes('scene-no-thumb'), J(after.problems))
 }
 
+// ================= gal-layout 自动生成的默认节点图 = 适配器目录（效果一致）=================
+{
+  const noAsset = async () => { throw new Error('none') }
+  const mk = (mediaDir, adapters, config) => createBrowseProvider({ mediaDir, adapters, resolveAsset: noAsset, config })
+  const view = (node) => node.items.map((i) => [i.type, i.title, i.subtitle, i.thumb, i.badge, i.type === 'script' ? i.id : ''])
+  // 两边（没有 nodes / 用生成的 nodes）同一个节点往下走几层，每一层的卡片（类型 / 标题 / 副标题 / 缩略图 / 角标 / 脚本路径）都一样
+  async function sameTree(a, b, idA, idB, depth, trail = '') {
+    const [na, nb] = [(await a.getNode(idA)).node, (await b.getNode(idB)).node]
+    if (J(view(na)) !== J(view(nb))) return `${trail || '首页'}：${J(view(na)).slice(0, 200)} ≠ ${J(view(nb)).slice(0, 200)}`
+    if (depth <= 0) return ''
+    for (let i = 0; i < na.items.length; i++) {
+      if (na.items[i].type === 'script') continue
+      const diff = await sameTree(a, b, na.items[i].node, nb.items[i].node, depth - 1, `${trail}/${na.items[i].title}`)
+      if (diff) return diff
+      if (i >= 2) break   // 每层只往下走前几个，够覆盖「分类 → 说话人 → 场景」
+    }
+    return ''
+  }
+  const cases = [
+    ['girlscreation', path.join(work, 'gc-pack'), ['girlscreation-tag'], { game: { id: 'girlscreation' } }],
+    ['misttrain', path.join(work, 'mt'), ['misttrain-json'], { game: { id: 'misttrain' } }],
+  ]
+  const tk = path.join(work, 'tk-eq')
+  await buildTenkeiFixture(tk)
+  cases.push(['tenkeiprdx', tk, ['tenkeiprdx-json'], { game: { id: 'tenkeiprdx' } }])
+  for (const [name, dir, adapters, base] of cases) {
+    const out = await galLayoutScript({ item: { itemId: name, title: name, config: base, source: { path: dir }, adapters }, script: { id: 'gal-layout', version: '2.8.0', options: {} } })
+    const cfg = out.itemPatch?.gal?.config
+    const { nodes, ...plain } = cfg || {}
+    check(`gal-layout（${name}）：生成默认节点图（home.auto、每个节点 auto + catalog 引用）`, Boolean(nodes?.home?.auto) && nodes.home.children.length > 0 && nodes.home.children.every((id) => nodes[id]?.auto && nodes[id].catalog), J(nodes))
+    const diff = await sameTree(mk(dir, adapters, plain), mk(dir, adapters, cfg), '', '', 3)
+    check(`默认节点图和适配器目录一样（${name}）：首页和往下三层的卡片（标题 / 副标题 / 缩略图 / 角标 / 脚本）都一致`, diff === '', diff)
+  }
+
+  // 手写的 nodes 重跑不动；auto 的重跑会重新生成；replace 时手写的也带上
+  const dir = path.join(work, 'mt')
+  const item = (nodes) => ({ itemId: 'mt', title: 'mt', config: { game: { id: 'misttrain' }, ...(nodes ? { nodes } : {}) }, source: { path: dir }, adapters: ['misttrain-json'] })
+  const run = (nodes, options = {}) => galLayoutScript({ item: item(nodes), script: { id: 'gal-layout', version: '2.8.0', options } })
+  const hand = { home: { children: ['x'] }, x: { title: '手写', dirs: ['UScenes'] } }
+  const keep = await run(hand)
+  const keepReplace = await run(hand, { replace: true })
+  const regen = await run({ home: { auto: true, children: ['old'] }, old: { auto: true, catalog: 'nope' } })
+  check('重跑 gal-layout：手写的 nodes（home 不带 auto）原样保留（不写进补丁）；replace 时带上；auto 的会重新生成', keep.itemPatch.gal.config.nodes === undefined && J(keepReplace.itemPatch.gal.config.nodes) === J(hand) && regen.itemPatch.gal.config.nodes.home.children.includes('chars') && !regen.itemPatch.gal.config.nodes.old, J([keep.itemPatch.gal.config.nodes, keepReplace.itemPatch.gal.config.nodes, regen.itemPatch.gal.config.nodes]))
+
+  // auto 节点引用的目录适配器没有 → 静默跳过；手写节点引用不存在的目录 → 报 graph-catalog-missing
+  const base = (await run(null)).itemPatch.gal.config
+  const withGhostAuto = { ...base, nodes: { home: { auto: true, children: ['chars', 'ghost'] }, chars: { auto: true, catalog: 'chars' }, ghost: { auto: true, catalog: 'nope' } } }
+  const withGhostHand = { ...base, nodes: { home: { children: ['ghost'] }, ghost: { catalog: 'nope' } } }
+  const quiet = (await mk(dir, ['misttrain-json'], withGhostAuto).getNode('')).node
+  const loud = (await mk(dir, ['misttrain-json'], withGhostHand).getNode('')).node
+  check('节点图引用适配器目录：auto 节点引用的目录不存在 → 静默跳过；手写的 → 报 graph-catalog-missing', !(quiet.problems || []).some((x) => x.code === 'graph-catalog-missing') && quiet.items.length === 1 && (loud.problems || []).some((x) => x.code === 'graph-catalog-missing'), J([quiet.items.map((i) => i.title), quiet.problems, loud.problems]))
+
+  // 在默认节点图旁边加自己的节点：首页多一个手写的「精选」（目录 + related 指回适配器的「角色」）
+  const mixed = { ...base, nodes: { ...base.nodes, home: { auto: true, children: [...base.nodes.home.children, 'pick'] }, pick: { title: '精选', dirs: ['55000405'], related: ['chars'] } } }
+  const mixedHome = (await mk(dir, ['misttrain-json'], mixed).getNode('')).node
+  const pick = mixedHome.items.find((i) => i.title === '精选')
+  const pickNode = pick ? (await mk(dir, ['misttrain-json'], mixed).getNode(pick.node)).node : null
+  check('默认节点图 + 自己加的节点混用：「精选」收进目录里的脚本，related 指回适配器的「角色」', Boolean(pick) && pickNode.items.length >= 1 && pickNode.related?.[0]?.title === '角色', J([mixedHome.items.map((i) => i.title), pickNode?.items, pickNode?.related]))
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

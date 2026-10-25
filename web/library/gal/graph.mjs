@@ -11,13 +11,23 @@
 const MAX_DEPTH = 6
 const MAX_CHILDREN = 5000
 const natural = (a, b) => String(a).localeCompare(String(b), 'zh-Hans-CN', { numeric: true, sensitivity: 'base' })
+// 适配器目录的节点挂到图里的某个位置：目录节点 id 加位置前缀，脚本节点保持原来的脚本路径
+// 节点 id 尽量沿用适配器原来的（和不用节点图时一样，已有的链接 / 进度不受影响）；整张图里已经被占用了才加位置前缀
+function placeAdapterNode(node, placement, used) {
+  const claim = (id, fallback) => { const pick = used.has(id) ? fallback : id; used.add(pick); return pick }
+  if (node.script !== undefined) return { ...node, id: claim(node.id, `${placement}|${node.script}`) }
+  const id = claim(node.id, `${placement}/${node.id}`)
+  return { ...node, id, children: (node.children || []).map((child) => placeAdapterNode(child, id, used)) }
+}
+const joinPlace = (parent, id) => (parent ? `${parent}/${id}` : id)
 const fill = (template, vars) => String(template || '').replace(/\{(\w+)\}/g, (_, key) => String(vars[key] ?? ''))
 
 // nodes：config.nodes；prefix：脚本根相对媒体目录的前缀（'' 或 'dir/'），catalog 里的脚本路径要带上
 // helpers：
 //   expandGlob(glob) → { dirs: [脚本根下的相对目录], exists }       listScripts(rel) → { scripts: [{ rel, stem }], rejected: [rel], exists }
 //   labelOf(name) → 显示名（名称表 / labels，没有就是 name）        thumbOf(template, vars) → 存在的缩略图路径或 ''      scriptThumb(stem) → 缩略图路径或 ''
-export async function buildGraphCatalog({ nodes, prefix = '', expandGlob, listScripts, labelOf, thumbOf, scriptThumb }) {
+//   adapterCatalog：{ top: [适配器目录的顶层节点], find(id) → 适配器目录里 id 对应的节点 | null }（给 spec.catalog 用；没有适配器目录就是 null）
+export async function buildGraphCatalog({ nodes, prefix = '', expandGlob, listScripts, labelOf, thumbOf, scriptThumb, adapterCatalog = null }) {
   const problems = []
   const problem = (code, message) => { if (problems.length < 200) problems.push({ level: 'warn', code, message }) }
   const home = nodes?.home
@@ -25,6 +35,7 @@ export async function buildGraphCatalog({ nodes, prefix = '', expandGlob, listSc
   const firstPlacement = new Map()   // 节点 id → 第一个位置（related 跳转用）
   const pending = []                 // { node, related: [节点 id] }
   const rejectedSeen = new Set()
+  const used = new Set()             // 已经用过的节点 id（适配器节点沿用原 id，撞了才加前缀）
 
   async function build(specId, placement, vars, trail) {
     const spec = nodes[specId]
@@ -32,13 +43,26 @@ export async function buildGraphCatalog({ nodes, prefix = '', expandGlob, listSc
     if (trail.includes(specId)) { problem('graph-cycle', `节点关系成环：${[...trail, specId].join(' → ')}（「包含」不能成环，要互相跳转请用 related）`); return null }
     if (trail.length >= MAX_DEPTH) { problem('graph-too-deep', `节点嵌套超过 ${MAX_DEPTH} 层：${[...trail, specId].join(' → ')}`); return null }
     const next = [...trail, specId]
-    const node = { id: placement, title: fill(spec.title, vars) || vars.label || specId, subtitle: fill(spec.subtitle, vars), text: fill(spec.text, vars), badge: spec.badge, thumb: '', children: [] }
+    // spec.catalog：引用适配器目录里的节点；适配器没有这个目录：手写的节点报问题，gal-layout 生成的（auto）静默跳过
+    let inherited = null
+    if (spec.catalog) {
+      inherited = spec.catalog === '*' ? { children: adapterCatalog?.top || [] } : adapterCatalog?.find(spec.catalog) || null
+      if (!inherited) {
+        if (!spec.auto) problem('graph-catalog-missing', `节点「${specId}」引用的适配器目录「${spec.catalog}」不存在（适配器${adapterCatalog ? '的目录里没有这一项' : '没有目录 / 没读到数据'}）`)
+        return null
+      }
+    }
+    const own = inherited && spec.catalog !== '*' && !used.has(inherited.id) ? inherited.id : placement
+    used.add(own)
+    const subtitle = fill(spec.subtitle, vars) || (spec.catalog !== '*' ? inherited?.subtitle || '' : '')
+    const node = { id: own, title: fill(spec.title, vars) || inherited?.title || vars.label || specId, ...(subtitle ? { subtitle } : {}), text: fill(spec.text, vars), badge: spec.badge || (spec.catalog !== '*' ? inherited?.badge || '' : ''), thumb: '', children: [] }
     if (!firstPlacement.has(specId)) firstPlacement.set(specId, { placement, title: node.title })
     if (spec.thumb) node.thumb = await thumbOf(fill(spec.thumb, vars), vars)
+    else if (inherited?.thumb && spec.catalog !== '*') node.thumb = inherited.thumb
     if (spec.related.length) pending.push({ node, related: spec.related })
 
     for (const childId of spec.children) {
-      const child = await build(childId, `${placement}/${childId}`, vars, next)
+      const child = await build(childId, joinPlace(placement, childId), vars, next)
       if (child) node.children.push(child)
     }
 
@@ -50,7 +74,7 @@ export async function buildGraphCatalog({ nodes, prefix = '', expandGlob, listSc
         for (const rel of found.dirs.slice(0, MAX_CHILDREN)) {
           const name = rel.slice(rel.lastIndexOf('/') + 1)
           if (re && !re.test(name)) continue
-          const child = await build(spec.expand.as, `${placement}/${name}`, { name, path: rel, label: await labelOf(name) }, next)
+          const child = await build(spec.expand.as, joinPlace(placement, name), { name, path: rel, label: await labelOf(name) }, next)
           if (child) node.children.push(child)
         }
       }
@@ -72,9 +96,11 @@ export async function buildGraphCatalog({ nodes, prefix = '', expandGlob, listSc
     }
     const ordered = [...scripts.values()].sort((a, b) => natural(a.stem, b.stem)).slice(0, MAX_CHILDREN)
     for (const script of ordered) {
-      node.children.push({ id: `${placement}|${script.rel}`, title: await labelOf(script.stem), subtitle: '', thumb: await scriptThumb(script.stem), badge: '', script: `${prefix}${script.rel}` })
+      node.children.push({ id: `${node.id}|${script.rel}`, title: await labelOf(script.stem), subtitle: '', thumb: await scriptThumb(script.stem), badge: '', script: `${prefix}${script.rel}` })
     }
-    if (!node.children.length && (spec.dirs.length || spec.expand || spec.children.length)) problem('graph-empty', `节点「${specId}」${vars.name ? `（${vars.name}）` : ''}没有任何内容`)
+    // 适配器目录的内容原样挂进来（节点 id 加上当前位置做前缀，保证整张图里唯一）
+    if (inherited) for (const child of inherited.children || []) node.children.push(placeAdapterNode(child, node.id, used))
+    if (!node.children.length && (spec.dirs.length || spec.expand || spec.children.length || spec.catalog)) problem('graph-empty', `节点「${specId}」${vars.name ? `（${vars.name}）` : ''}没有任何内容`)
     return node
   }
 

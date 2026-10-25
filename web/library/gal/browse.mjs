@@ -351,7 +351,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   async function getCatalog() {
     if (catalogCache !== undefined) return catalogCache
     catalogCache = null
-    const ctx = catalogAdapter && !config.nodes ? await contextOf(catalogAdapter.id) : null
+    const ctx = catalogAdapter ? await contextOf(catalogAdapter.id) : null
     // 适配器给的脚本路径是相对媒体目录的；节点 id 里的路径相对脚本根（和目录浏览一致），不在脚本根下的丢掉
     const prefix = defaultSet.dir ? `${defaultSet.dir}/` : ''
     const localize = (node) => ({
@@ -363,7 +363,16 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     graphProblems = []
     if (config.nodes) {
       // 节点图（config.nodes）优先于适配器的 catalog：首页和所有列表都由它给
-      const built = await buildGraphCatalog({ nodes: config.nodes, prefix, ...graphHelpers() })
+      const adapterRaw = ctx ? catalogAdapter.catalog(ctx) : null
+      const findAdapterNode = (id, list = adapterRaw?.children || []) => {
+        for (const child of list) {
+          if (child.id === id) return child
+          const hit = child.children ? findAdapterNode(id, child.children) : null
+          if (hit) return hit
+        }
+        return null
+      }
+      const built = await buildGraphCatalog({ nodes: config.nodes, prefix, adapterCatalog: adapterRaw ? { top: adapterRaw.children || [], find: findAdapterNode } : null, ...graphHelpers() })
       raw = built.tree
       graphProblems = built.problems
     } else raw = ctx ? catalogAdapter.catalog(ctx) : null
@@ -820,9 +829,9 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         if (!info?.isDirectory()) add('error', 'script-root-missing', `脚本根目录不存在：${set.dir || '（媒体目录本身）'}（检查 config.scriptRoots）`)
       }
       if (config.nodes) { await getCatalog(); for (const entry of graphProblems) problems.push(entry) }
-      if (catalogAdapter && !config.nodes) {
+      if (catalogAdapter) {
         const catalog = await getCatalog()
-        if (!catalog) add('warn', 'catalog-empty', `适配器 ${catalogAdapter.id} 没有读到可用的数据（场景 / 名称表），已退回按目录浏览——检查目录结构和 adapterOptions.root`)
+        if (!catalog && !config.nodes) add('warn', 'catalog-empty', `适配器 ${catalogAdapter.id} 没有读到可用的数据（场景 / 名称表），已退回按目录浏览——检查目录结构和 adapterOptions.root`)
         else {
           const ctx = await contextOf(catalogAdapter.id)
           if (typeof catalogAdapter.health === 'function' && ctx) for (const entry of catalogAdapter.health(ctx) || []) add(entry.level || 'warn', entry.code || 'adapter', entry.message)

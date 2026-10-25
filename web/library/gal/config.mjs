@@ -48,7 +48,8 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 节点图（可选）：首页（id = home）开始的一张图，节点之间是「包含」（children，浏览用的树）和「关联」（related，只做跳转链接，不当父子）。
   // 节点：{ title, subtitle, text, badge, thumb, children: [节点 id], related: [节点 id], dirs: [目录通配（相对脚本根）], match: 脚本名正则,
   //        expand: { dirs: [目录通配], as: 模板节点 id, match } }。title / subtitle / thumb / dirs 里可以用 {name} {path} {label}（expand 出来的目录）。
-  // dirs = 把这些目录里认得出的脚本收进来；expand = 每个匹配的目录生成一个子节点（用 as 指的节点当模板）。有它的话首页和所有列表都由它给，
+  // catalog = 引用适配器目录里的节点（gal-layout 生成的默认节点图就是这样：和适配器原来给的列表一模一样，但每一项都可以改 / 挪 / 隐藏 / 加相关）。
+// dirs = 把这些目录里认得出的脚本收进来；expand = 每个匹配的目录生成一个子节点（用 as 指的节点当模板）。有它的话首页和所有列表都由它给，
   // 目录对不上 / 没匹配到 / 有文件没人认的地方，列表页的「渲染诊断」里都会报。null = 不用节点图（走适配器 catalog 或真实目录）
   nodes: null,
   cover: '',          // 封面：相对资源根的路径；~/ 开头 = 相对媒体目录（只给封面用）
@@ -104,6 +105,10 @@ export function normalizeNodes(raw) {
     out[id] = {
       title: nodeText(spec.title, 100), subtitle: nodeText(spec.subtitle, 100), text: nodeText(spec.text, 500), badge: nodeText(spec.badge, 12), thumb: nodeText(spec.thumb, 300),
       children: idList(spec.children, 500), related: idList(spec.related, 50),
+      // catalog：引用适配器目录（catalog）里的一个节点（id 如 chars / c/chmr；'*' = 全部顶层），它的内容原样挂进来；空的 title / subtitle / thumb / badge 沿用适配器节点的
+      catalog: nodeText(spec.catalog, 200),
+      // auto：gal-layout 生成的节点（重跑会重新生成；手写的不带它，重跑不会动）。适配器没有这个目录时 auto 节点静默跳过
+      auto: spec.auto === true,
       // dirs 允许 {name} {path} 占位符（模板节点用），所以这里只做长度 / 条数限制，展开后才过 safeRelPath
       dirs: (Array.isArray(spec.dirs) ? spec.dirs : []).map((d) => nodeText(d, 200).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter((d) => d && !d.split('/').some((part) => part === '..')).slice(0, 20),
       match: regexOrEmpty(spec.match), expand,

@@ -266,3 +266,11 @@ nodes: {
 
 ### Girls Creation 行式脚本
 `scenes/<id>/hmr_<id>.txt` / `hsr_<id>.txt`（逗号分隔、一行一条命令）和标签式 `script.txt` 是同一个游戏的两种写法，适配器按内容分发（`adapters/girlscreation-line.mjs`）；一个场景目录里优先级 `script.txt` > `output_script.txt` > 行式脚本。
+
+### gal-layout 自动生成默认节点图
+tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的（`catalog`）。`gal-layout` 现在会顺手生成一份默认的 `config.nodes`：首页下每个适配器目录的顶层项各是一个 `auto` 节点，用 `catalog` 引用适配器原来给的那份内容——
+效果和不用节点图时一模一样（自测逐层对比过卡片的标题 / 副标题 / 缩略图 / 角标 / 脚本路径，节点 id 也沿用适配器原来的，已有的链接和进度不受影响），但每一项都变成了配置：可以改标题、挪顺序、隐藏、加相关（`related`）、旁边再接自己的 `dirs` / `expand` 节点。
+- 引用：`{ catalog: 'chars' }`（适配器目录里的节点 id，如 tenkeiprdx 的 event / extra / special / chars / all，misttrain 的 chars / other / all，girlscreation 的 `c/<分类>`；`'*'` = 全部顶层）。空的 title / subtitle / thumb / badge 沿用适配器节点的。
+- `auto: true` 是 gal-layout 生成的标记：重跑会重新生成（新增分类 / 新增列表就是重跑一次）。**手写的 nodes（home 不带 auto）重跑时原样保留**；`replace` 整体替换时也会带上；适配器没有某个目录时（比如没有 Stills）auto 节点静默跳过，手写节点引用不存在的目录会报 `graph-catalog-missing`。
+- 想改某一项：把那个节点的 `auto` 去掉（或者干脆把 home 的 `auto` 去掉）就变成手写的，重跑不会覆盖。
+- UViewer / monmusu / minashigo / legeclo 本来就是按真实目录 + views / groups / merge 配置的，不生成节点图。

@@ -29,6 +29,15 @@ import path from 'node:path'
 const TAG_GROUPS = ['Gal配置', 'Gal配置version', 'Gal游戏']
 const SAFE_SEGMENT = /^[^/\\\0]+$/
 
+// 默认节点图（config.nodes）：首页下每个适配器目录的顶层项各是一个 auto 节点，用 catalog 引用适配器原来给的那份内容——
+// 效果和不用节点图时一模一样，但每一项都可以改 / 挪 / 隐藏、加相关（related）、再接别的目录（dirs / expand）。
+// auto: true = 本脚本生成的，重跑会重新生成；你手写的 nodes（home 不带 auto）重跑时原样保留。适配器没有某个目录时（比如没有 Stills）auto 节点静默跳过。
+const autoNodes = (entries) => {
+  const nodes = { home: { auto: true, children: entries.map(([id]) => id) } }
+  for (const [id, catalog] of entries) nodes[id] = { auto: true, catalog }
+  return nodes
+}
+
 export async function generateTags(ctx) {
   const options = normalizeOptions(ctx.script?.options || {})
   const media = String(ctx.item?.source?.path || '')
@@ -86,6 +95,19 @@ export async function generateTags(ctx) {
   const cover = coverOverride || result.cover
   if (cover) config.cover = cover
   logs.push(cover ? `封面：${cover}` : '没找到合适的封面')
+
+  // 3.5) 默认节点图：没有手写的 nodes 才生成（手写的 = home 不带 auto）；replace 整体替换时手写的 nodes 也带上，不丢
+  if (found.nodes) {
+    const existing = ctx.item?.config?.nodes
+    const handWritten = existing?.home && !existing.home.auto
+    if (handWritten) {
+      if (options.replace) config.nodes = existing
+      logs.push('config.nodes 是手写的（home 不带 auto）：原样保留，不生成默认节点图')
+    } else {
+      config.nodes = await found.nodes()
+      logs.push(`默认节点图：首页下 ${config.nodes.home.children.length} 个节点（${config.nodes.home.children.map((id) => config.nodes[id].catalog).join(' / ')}），引用适配器目录，内容和原来一样`)
+    }
+  }
 
   // 4) 记下是谁写的
   const version = String(ctx.script?.version || 'unknown')
@@ -228,6 +250,16 @@ async function detectGirlsCreation(media, { declared, logs }) {
     kind: 'girlscreation',
     note: '',
     config,
+    // 分类 = 场景 id 开头的字母（chmr / chsr …，数字开头的是「其他」），和适配器的列表一致；每个分类一个节点
+    async nodes() {
+      const categories = new Set()
+      for (const name of await listNames(scenesAbs)) {
+        const dir = path.join(scenesAbs, name)
+        const has = (await isFile(path.join(dir, 'script.txt'))) || (await isFile(path.join(dir, 'output_script.txt'))) || (await listNames(dir)).some((file) => /^h[ms]r_[^/]+\.txt$/i.test(file))
+        if (has) categories.add(/^[A-Za-z]+/.exec(name)?.[0] || '其他')
+      }
+      return autoNodes([...categories].sort(sortName).map((category, i) => [`cat${i + 1}`, `c/${category}`]))
+    },
     async finish() {
       logs.push(`场景（有 script.txt / output_script.txt / hmr_·hsr_<id>.txt）${withScript} 个`)
       return { count: withScript, cover }
@@ -402,6 +434,8 @@ async function detectTenkeiprdx(media, { declared, logs }) {
     kind: 'tenkeiprdx',
     note: '',
     config,
+    // 适配器的列表：活动 / 附加 / 特别 / 角色 / 全部剧情（缺数据的列表适配器不给，节点就静默跳过）
+    async nodes() { return autoNodes([['event', 'event'], ['extra', 'extra'], ['special', 'special'], ['chars', 'chars'], ['all', 'all']]) },
     async finish(m, _config, options) {
       const count = await countFiles(abs('scenes'), '.json', options.countCap, 4)
       logs.push(`剧情 JSON ${count} 个${count ? '' : '——结构可能不对，可以用 overrides 覆盖 scriptRoots'}`)
@@ -589,6 +623,8 @@ async function detectMisttrain(media, { declared, logs }) {
     kind: 'misttrain',
     note: '',
     config,
+    // 适配器的列表：角色 / 其它剧情 / 全部剧情
+    async nodes() { return autoNodes([['chars', 'chars'], ['other', 'other'], ['all', 'all']]) },
     async finish(m, _config, options) {
       const count = await countFiles(abs('UScenes'), '.json', options.countCap, 4)
       logs.push(`剧情 JSON ${count} 个${count ? '' : '——结构可能不对，可以用 overrides 覆盖 scriptRoots'}`)
