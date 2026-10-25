@@ -327,3 +327,12 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   有的显卡驱动上这几种混合会画成整屏白（软件渲染里复现不了），用它快速验证 / 绕过。
 - `.github/workflows/gal-demo.yml`：手动触发（`Gal Interactive Demo`），起 web 容器（HTTP）→ 生成合成的演示数据（`make-gal-fixture` / `make-gal-games-fixture` / `make-gal-maid-fixture`，没有任何原作内容）→ 把各游戏演示导入媒体库（含 `gal-layout`）→ 冒烟（maid 演示首页必须有「表情」卡片）→ Cloudflare 快速隧道，URL 写在 job 摘要和 commit 评论里。
   可选仓库 secret `DEMO_PASSWORD`（配了就要密码）。看点：maid演示 →「表情」；maid演示 → fx_blend →「更多 → 混合模式」。
+
+
+### 已支持的游戏（结构对照）
+| 游戏 | 家族 / 适配器 | 说明 |
+|---|---|---|
+| Girls Creation R Viewer、Angelica Aster、jaxin、maid、**Aku No Onna Kanbu**、**Fruits Fulcute!** | NW.js（`girlscreation-tag`，game.id `girlscreation`） | `<根>/scenes/<场景>/script.txt`（或 `output_script.txt` / `hmr_·hsr_<id>.txt`）+ `data/audio/{bgm,se}`；根可以是 `package.nw`，也可以没有这层（Fruits：`scenes` 直接在根下，场景里多一个 `img.txt` 不影响） |
+| monmusu | Ren'Py（`renpy-monmusu`） | `game/script/hscene` + `hscene_still` + `script/movie.rpy` |
+| **angelic_py** | Ren'Py（`renpy-monmusu`，game.id `angelic`） | `game/script/hscene/*.rpy`；别名表是 `script/movies.rpy` + `script/stills.rpy`（复数），图片在 `images` + `resources`；菜单脚本 `sub_nav` / `sub_nav_byname` 隐藏；脚本文件名是随机串，没有角色编号，所以不分组、卡片显示脚本名；只有 `.rpyc` 的脚本解析不了（列表页问题里会列出） |
+| legeclo、minashigo（Ren'Py）、tenkeiprdx、misttrain、UViewer | 见各自一节 | |

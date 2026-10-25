@@ -654,12 +654,59 @@ async function findMisttrainRoot(media, maxDepth) {
 const GAMES = [
   { id: 'legeclo', detect: detectLegeclo },   // 先于 monmusu：目录结构相似，靠 legeclo 的标记区分
   { id: 'monmusu', detect: detectMonmusu },
+  { id: 'angelic', detect: detectAngelic },   // monmusu 之后：没有 movie.rpy 但有 movies.rpy / stills.rpy（复数）的才是它；声明了 game.id 就直接走它
   { id: 'girlscreation', detect: detectGirlsCreation },   // 先于 tenkeiprdx：都有 scenes/，这个靠 <场景>/script.txt + data/audio 认
   { id: 'tenkeiprdx', detect: detectTenkeiprdx },
   { id: 'misttrain', detect: detectMisttrain },   // UScenes/ 加 Spines|Sounds|MasterData；没有 scenes/，和 tenkeiprdx 不会混
   { id: 'minashigo', detect: detectMinashigo },
   { id: 'uviewer', detect: detectUviewerGame },
 ]
+
+// ======================================================================
+// angelic_py（Ren'Py 粉丝播放器，和 monmusu 同一类：game/script/hscene/*.rpy，视频 / 静图别名表在 script/movies.rpy、script/stills.rpy——注意是复数）
+// 用 renpy-monmusu 适配器，别名表和图片目录用适配器参数指路。脚本文件名是随机串（008JL955Z8…），没有角色编号，所以不分组、不配头像 / 封面：卡片就是脚本名。
+// ======================================================================
+async function detectAngelic(media, { declared, logs }) {
+  const hit = await findDir(media, ['script', 'hscene'], 6)
+  if (!hit) {
+    if (declared) logs.push('没找到 script/hscene')
+    return null
+  }
+  const base = hit.split('/').slice(0, -2).join('/')
+  const aliasFiles = []
+  for (const name of ['movies.rpy', 'stills.rpy']) if (await isFile(path.join(media, ...splitRel(join(base, 'script', name))))) aliasFiles.push(join(base, 'script', name))
+  if (!declared && !aliasFiles.length) return null   // 没声明又没有 movies.rpy / stills.rpy（复数）：不确定是 angelic（monmusu 的是 movie.rpy，它先认）
+  const imageDirs = []
+  for (const name of ['images', 'resources']) if (await isDir(path.join(media, ...splitRel(join(base, name))))) imageDirs.push(join(base, name))
+  const config = {
+    scriptRoots: [{ id: 'script', dir: join(base, 'script'), label: '日文' }],
+    resourceRoots: [base],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['rpy'],
+    hiddenDirs: ['sub_nav', 'sub_nav_byname', 'tl'],   // 菜单脚本（sub_*.rpy / byname_*.rpy）不是剧情
+    merge: [],
+    views: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    scriptIndex: [],
+    adapterOptions: { 'renpy-monmusu': { aliasFiles, imageDirs } },
+  }
+  logs.push(`angelic 游戏根：${base || '.'}${base ? '（目录里多了一层）' : ''}；别名表：${aliasFiles.length ? aliasFiles.join('、') : '没有 script/movies.rpy / stills.rpy（视频 / 静图会缺资源）'}；图片目录：${imageDirs.join('、') || '没有 images / resources'}`)
+  logs.push('脚本文件名是随机串、没有角色编号：不分组、不配头像 / 封面（卡片显示脚本名）；只有 .rpyc 没有 .rpy 的脚本解析不了，列表页「渲染诊断」里会列出')
+  return {
+    id: 'angelic',
+    kind: 'angelic',
+    note: '',
+    config,
+    async finish(m, _config, options) {
+      const count = await countFiles(path.join(m, ...splitRel(join(base, 'script', 'hscene'))), '.rpy', options.countCap, 8)
+      logs.push(`hscene 脚本 ${count} 个${count ? '' : '——结构可能不对，或者只有 .rpyc（需要 .rpy 源文件）'}`)
+      return { count, cover: '' }
+    },
+  }
+}
 
 // ======================================================================
 // 小工具

@@ -1341,6 +1341,65 @@ async function gcMod0Prepare({ truncated }) {
   check('只有 FADE_OUT2,white：白屏保持（白场闪 / 白屏过场不受影响）；FADE_IN2,white（wash）才关它', apply([{ op: 'fade', to: 'white' }]).white === true && apply([{ op: 'fade', to: 'white' }, { op: 'wash', color: 'white', seconds: 1 }]).white === false)
 }
 
+// ================= 新加的三个游戏：Aku（NW.js，package.nw）/ Fruits Fulcute（NW.js，没有 package.nw 这层、场景里多一个 img.txt）/ angelic_py（Ren'Py）=================
+{
+  const noAsset = async () => { throw new Error('none') }
+  const layout = (dir, config, adapters) => galLayoutScript({ item: { itemId: 'x', title: 'x', config, source: { path: dir }, adapters }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
+  const tag = '<FADE_OUT2>black,0\n<BG>bg1,NONE,0,1,0,0\n<BGM_PLAY>bgm1,0,\n<FADE_IN2>black,300\n<NAME_PLATE>甲\n你好\n<PAUSE>\n<VOICE_PLAY>v1\n<NAME_PLATE>乙\n再见\n<PAUSE>\n'
+  const gcSceneFiles = async (scenes, id, extra = []) => {
+    await mkdir(path.join(scenes, id, 'images'), { recursive: true }); await mkdir(path.join(scenes, id, 'voices'), { recursive: true })
+    await writeFile(path.join(scenes, id, 'script.txt'), tag)
+    await writeFile(path.join(scenes, id, 'images/bg1.png'), 'x'); await writeFile(path.join(scenes, id, 'voices/v1.m4a'), 'x')
+    for (const name of extra) await writeFile(path.join(scenes, id, name), 'extra')
+  }
+  for (const [label, wrapper, extra] of [['Aku（package.nw）', 'package.nw', []], ['Fruits Fulcute（没有 package.nw，场景里有 img.txt / script_original.txt）', '', ['img.txt', 'script_original.txt']]]) {
+    const dir = path.join(work, `gc-new-${wrapper || 'flat'}`)
+    const base = wrapper ? path.join(dir, wrapper) : dir
+    for (const name of ['c_001', 'c_002']) await gcSceneFiles(path.join(base, 'scenes'), name, extra)
+    await mkdir(path.join(base, 'data/audio/bgm'), { recursive: true }); await writeFile(path.join(base, 'data/audio/bgm/bgm1.m4a'), 'x')
+    const out = await layout(dir, { game: { id: 'girlscreation' } }, ['girlscreation-tag'])
+    const cfg = out.itemPatch?.gal?.config
+    check(`${label}：gal-layout 认成 girlscreation（脚本根 ${wrapper ? `${wrapper}/` : ''}scenes、资源根 ${wrapper || '（根目录）'}、2 个场景）`, cfg?.game?.id === 'girlscreation' && cfg.scriptRoots[0].dir === (wrapper ? `${wrapper}/scenes` : 'scenes') && cfg.adapterOptions['girlscreation-tag'].root === wrapper && cfg.scriptCount === 2, J(cfg) + J(out.logs))
+    const prov = createBrowseProvider({ mediaDir: dir, adapters: ['girlscreation-tag'], resolveAsset: noAsset, config: cfg })
+    const home = (await prov.getNode('')).node
+    const category = home.items[0]
+    const who = (await prov.getNode(category.node)).node.items[0]
+    const scenesNode = (await prov.getNode(who.node)).node
+    const played = await prov.getNode(scenesNode.items[0].node)
+    const cmds = played.scene.steps.flatMap((st) => st.commands)
+    check(`${label}：首页 → 分类 → 说话人 → 场景 → 播放：背景图 / BGM / 语音都找到（没有缺资源）、两句台词`, played.node.kind === 'player' && played.scene.steps.length === 2 && cmds.some((c) => c.op === 'bg' && c.src.endsWith('images/bg1.png')) && cmds.some((c) => c.op === 'bgm') && cmds.some((c) => c.op === 'voice') && Object.keys(played.scene.stats.unresolved).length === 0, J([played.scene.stats.unresolved, cmds.map((c) => c.op)]))
+    const auto = await layout(dir, {}, ['girlscreation-tag'])
+    check(`${label}：没写 game.id 也能认出来（有 data/audio）`, auto.itemPatch?.gal?.config?.game?.id === 'girlscreation', J(auto.logs))
+  }
+
+  // angelic_py：game/script/hscene + script/movies.rpy / stills.rpy（复数）+ images；菜单脚本在 sub_nav / sub_nav_byname 里
+  const ang = path.join(work, 'angelic')
+  const rpy = (name) => `label ${name}:\n    scene bg_a\n    voice "audio/v1.ogg"\n    "甲" "你好"\n    scene mv_a with dissolve\n    "乙" "再见"\n    return\n`
+  for (const dir of ['game/script/hscene', 'game/script/sub_nav', 'game/script/sub_nav_byname', 'game/images/bg', 'game/resources/012I']) await mkdir(path.join(ang, dir), { recursive: true })
+  await writeFile(path.join(ang, 'game/script/hscene/008JL955Z8.rpy'), rpy('h_008'))
+  await writeFile(path.join(ang, 'game/script/hscene/016IW9Z0AU.rpy'), rpy('h_016'))
+  await writeFile(path.join(ang, 'game/script/hscene/032S647Z8V.rpyc'), 'compiled')   // 只有编译产物
+  await writeFile(path.join(ang, 'game/script/sub_nav/sub_011RGV.rpy'), rpy('sub_011'))
+  await writeFile(path.join(ang, 'game/script/sub_nav_byname/byname_001iux.rpy'), rpy('byname_001'))
+  await writeFile(path.join(ang, 'game/script/movies.rpy'), 'image mv_a = Movie(play="resources/012I/a.webm", loop=True)\n')
+  await writeFile(path.join(ang, 'game/script/stills.rpy'), 'image still_a = "resources/012I/s.png"\n')
+  await writeFile(path.join(ang, 'game/images/bg/bg_a.png'), 'x')
+  const angOut = await layout(ang, { game: { id: 'angelic' } }, ['renpy-monmusu'])
+  const angCfg = angOut.itemPatch?.gal?.config
+  check('angelic_py：gal-layout 认成 angelic（脚本根 game/script、别名表 movies.rpy + stills.rpy、图片目录 images + resources、隐藏 sub_nav / sub_nav_byname / tl、hscene 里 2 个 .rpy）', angCfg?.game?.id === 'angelic' && angCfg.scriptRoots[0].dir === 'game/script' && J(angCfg.adapterOptions['renpy-monmusu'].aliasFiles) === J(['game/script/movies.rpy', 'game/script/stills.rpy']) && J(angCfg.adapterOptions['renpy-monmusu'].imageDirs) === J(['game/images', 'game/resources']) && angCfg.hiddenDirs.includes('sub_nav_byname') && angCfg.scriptCount === 2, J(angCfg) + J(angOut.logs))
+  const angAuto = await layout(ang, {}, ['renpy-monmusu'])
+  check('angelic_py：没写 game.id 也能认出来（有 movies.rpy / stills.rpy 复数，monmusu 的是 movie.rpy 所以不会被它抢）', angAuto.itemPatch?.gal?.config?.game?.id === 'angelic', J(angAuto.logs))
+  const angProv = createBrowseProvider({ mediaDir: ang, adapters: ['renpy-monmusu'], resolveAsset: noAsset, config: angCfg })
+  const angHome = (await angProv.getNode('')).node
+  const hscene = angHome.items.find((i) => i.title === 'hscene')
+  const angList = (await angProv.getNode(hscene.node)).node
+  check('angelic_py：首页只有 hscene（菜单目录 sub_nav / sub_nav_byname 被隐藏）；hscene 里 2 个脚本能认出来（.rpyc 不算）', angHome.items.map((i) => i.title).join() === 'hscene' && angList.items.map((i) => i.title).sort().join() === '008JL955Z8,016IW9Z0AU', J([angHome.items.map((i) => i.title), angList.items.map((i) => i.title)]))
+  check('angelic_py：只有 .rpyc 没有 .rpy 的脚本在列表页问题里报出来（compiled-only-scripts）', (angList.problems || []).some((x) => x.code === 'compiled-only-scripts' && /032S647Z8V/.test(x.message)), J(angList.problems))
+  const angPlayed = await angProv.getNode(angList.items[0].node)
+  const angCmds = angPlayed.scene.steps.flatMap((st) => st.commands)
+  check('angelic_py：播放：背景图（images/bg/bg_a.png）、语音、视频别名 mv_a（movies.rpy）、两句台词', angPlayed.scene.steps.length === 2 && angCmds.some((c) => c.op === 'bg' && /bg_a\.png$/.test(c.src)) && angCmds.some((c) => c.op === 'voice') && angCmds.some((c) => c.op === 'movie' && /a\.webm$/.test(c.srcs[0])), J([angPlayed.scene.stats, angCmds.map((c) => c.op)]))
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
