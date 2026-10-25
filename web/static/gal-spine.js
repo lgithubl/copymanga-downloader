@@ -65,6 +65,24 @@ export function pickSpineAnimation(data, wanted, kind) {
   return names[0] || ''
 }
 
+// 分层脸部（maid 的角色：动画名是 eye/eye_001、eyebrow/…、mouse/…、cheek/… 这样一组一组的，脸是靠这些动画把附件一层层打开的；初始姿势里没有眼睛和嘴巴）。
+// 脚本里写的是表情预设名（照れ / やれやれ …），原游戏用一张预设表把它展开成每个部件各一条轨道的动画——这张表在加密的 castData 里，我们读不了。
+// 兜底：预设名对不上时，每个还没有动画的脸部分层先用一个中性的默认动画顶上（眼 / 眉 / 嘴 / 眼位 / 腮红 / 高光），至少不是没有眼睛和嘴巴；表情本身不对，拿到预设表再做。
+const FACE_DEFAULTS = { eyemain: 'eyemain_001', eye: 'eye_001', eyebrow: 'eyebrow_001', eyepos: 'eyepos_normal', mouse: 'mouse_001', mouth: 'mouth_001', cheek: 'cheek_none', highlight: 'highlight_on' }
+const FACE_TRACK_BASE = 20   // 默认脸用的轨道号（从 20 起，不和脚本里的轨道撞）
+export function faceDefaultsFor(names, played) {
+  const covered = new Set(played.filter((name) => name.includes('/')).map((name) => name.split('/')[0]))
+  const out = []
+  for (const group of Object.keys(FACE_DEFAULTS)) {
+    if (covered.has(group)) continue
+    const inGroup = names.filter((name) => name.startsWith(`${group}/`))
+    if (!inGroup.length) continue
+    const wanted = `${group}/${FACE_DEFAULTS[group]}`
+    out.push(inGroup.includes(wanted) ? wanted : inGroup.find((name) => !/none|off/i.test(name)) || inGroup[0])
+  }
+  return out
+}
+
 // 皮肤：默认皮肤里一个附件都没有、却有别的皮肤（有的骨架把整套造型放在命名皮肤里）→ 用第一个有内容的命名皮肤，否则初始姿势下什么都画不出来
 const skinSize = (skin) => (skin?.attachments || []).reduce((sum, bucket) => sum + Object.keys(bucket || {}).length, 0)
 export function pickSpineSkin(data) {
@@ -279,6 +297,20 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       }
       inst.anim = name
       inst.loop = true
+      // 脚本要的动画骨架里没有（表情预设名）：脸部分层用默认动画顶上（见 faceDefaultsFor）
+      inst.faceDefaults = []
+      if (inst.missingAnims.length) {
+        const names = inst.data.animations.map((animation) => animation.name)
+        const played = spec.tracks.map((t) => t.anim).filter((anim) => names.includes(anim))
+        faceDefaultsFor(names, played).forEach((anim, i) => {
+          inst.faceDefaults.push(anim)
+          const sig = `${anim}:true`
+          if (inst.trackSig[FACE_TRACK_BASE + i] === sig) return
+          inst.state.setAnimation(FACE_TRACK_BASE + i, anim, true)
+          inst.trackSig[FACE_TRACK_BASE + i] = sig
+          changed = true
+        })
+      }
     } else {
       changed = Boolean(name) && (name !== inst.anim || inst.loop !== (spec.loop !== false))
       if (changed) {
@@ -516,6 +548,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     info: () => [...instances].map(([slot, inst]) => ({
       slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
       requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
+      faceDefaults: inst.faceDefaults || [], missingRequested: inst.missingAnims || [],
       pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null,
       animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
       skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',

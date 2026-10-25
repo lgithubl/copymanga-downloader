@@ -26,7 +26,7 @@ import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
 import { buildGalFixture } from './make-gal-fixture.mjs'
-import { declaredPageSizes, reportDeclaredSize } from '../../web/static/gal-spine.js'
+import { declaredPageSizes, faceDefaultsFor, reportDeclaredSize } from '../../web/static/gal-spine.js'
 import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
 
 let pass = 0
@@ -1224,6 +1224,15 @@ async function gcMod0Prepare({ truncated }) {
   const rpNode = (await rpp.getNode('')).node
   const compiled = (rpNode.problems || []).find((x) => x.code === 'compiled-only-scripts')
   check('只有 .rpyc 没有 .rpy 的脚本：列表页问题里报出来（scene_2 / scene_3），有源文件的 scene_1 不算', Boolean(compiled) && /scene_2\.rpyc/.test(compiled.message) && /scene_3\.rpyc/.test(compiled.message) && !/scene_1/.test(compiled.message), J(rpNode.problems))
+}
+
+// ================= maid 的分层脸：表情预设名对不上时，默认脸顶上 =================
+{
+  const names = ['cheek/cheek_001', 'cheek/cheek_none', 'eye/eye_001', 'eye/eye_002', 'eyebrow/eyebrow_001', 'eyemain/eyemain_001', 'eyemain/eyemain_none', 'eyepos/eyepos_normal', 'eyepos/eyepos_top', 'highlight/highlight_off', 'highlight/highlight_on', 'mouse/mouse_001', 'mouse/mouse_002', 'sweat/sweat_001', 'tear/tear_001']
+  const out = faceDefaultsFor(names, [])
+  check('默认脸：每个脸部分层各取一个中性动画（eyemain_001 / eye_001 / eyebrow_001 / eyepos_normal / mouse_001 / cheek_none / highlight_on），汗和泪不顶', J(out) === J(['eyemain/eyemain_001', 'eye/eye_001', 'eyebrow/eyebrow_001', 'eyepos/eyepos_normal', 'mouse/mouse_001', 'cheek/cheek_none', 'highlight/highlight_on']), J(out))
+  check('默认脸：脚本已经直接用了某个分层的动画（eye/eye_002），这个分层不再顶默认；没有分层动画的骨架（普通 loop / joy）不顶任何东西', !faceDefaultsFor(names, ['eye/eye_002']).includes('eye/eye_001') && faceDefaultsFor(['loop', 'joy', 'ex_joy'], []).length === 0, J(faceDefaultsFor(names, ['eye/eye_002'])))
+  check('默认脸：首选名不存在时取该分层第一个不是 none / off 的', J(faceDefaultsFor(['mouse/mouse_none', 'mouse/mouse_005'], [])) === J(['mouse/mouse_005']))
 }
 
 await rm(work, { recursive: true, force: true })

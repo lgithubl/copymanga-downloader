@@ -54,12 +54,19 @@ await writeSpine(path.join(tall, 'spines'), 'st2', { format: 'json', color: 'sea
 await rename(path.join(tall, 'spines/st2.skel.bytes'), path.join(tall, 'spines/st2.json'))
 await rename(path.join(tall, 'spines/st2.atlas.txt'), path.join(tall, 'spines/st2.atlas'))
 await writeFile(path.join(tall, 'script.txt'), ['<SPINE_ACTOR>1,st2,,,,0,0,x=0|y=0,0.7,skel', '<SPINE_ACTOR_PLAY>1,Wait,0,true', '<NAME_PLATE>乙', '你好', '<PAUSE>', ''].join('\n'))
+// maid 式的分层脸骨架：动画是 eye/eye_001 这样一组一组的，脚本要的是表情预设名「照れ」（骨架里没有）
+const layered = path.join(pk, 'scenes', 'chmr_4')
+await mkdir(path.join(layered, 'spines'), { recursive: true })
+await writeSpine(path.join(layered, 'spines'), 'st3', { format: 'json', color: 'orange', animations: ['eye/eye_001', 'eye/eye_002', 'eyebrow/eyebrow_001', 'mouse/mouse_001', 'cheek/cheek_none', 'cheek/cheek_001'] })
+await rename(path.join(layered, 'spines/st3.skel.bytes'), path.join(layered, 'spines/st3.json'))
+await rename(path.join(layered, 'spines/st3.atlas.txt'), path.join(layered, 'spines/st3.atlas'))
+await writeFile(path.join(layered, 'script.txt'), ['<SPINE_ACTOR>1,st3,,,,0,0,x=0|y=-700,1,skel', '<SPINE_ACTOR_PLAY>1,照れ,0,true', '<NAME_PLATE>丙', '你好', '<PAUSE>', ''].join('\n'))
 const gc = importer(gcMedia)
 const gcImp = await gc.importFromSource({ sourcePath: gcMedia, options: { adapters: ['girlscreation-tag'], config: { game: { id: 'girlscreation' } } } })
 const gcOut = await layoutScript({ item: gcImp.items[0], script: { id: 'gal-layout', version: '2.7.0', options: {} } })
 await gc.patchItemMetadata(gcImp.items[0].itemId, { gal: gcOut.itemPatch.gal })
 const gcId = gcImp.items[0].itemId
-check('gal-layout：只有 hmr_<id>.txt 的场景也算场景（hmr_1 + 标签式的 chmr_3，脚本数 2）', gcOut.itemPatch.gal.config.scriptCount === 2 && gcOut.itemPatch.gal.config.game.id === 'girlscreation', J(gcOut.itemPatch?.gal?.config))
+check('gal-layout：只有 hmr_<id>.txt 的场景也算场景（hmr_1 + 标签式的 chmr_3 / chmr_4，脚本数 3）', gcOut.itemPatch.gal.config.scriptCount === 3 && gcOut.itemPatch.gal.config.game.id === 'girlscreation', J(gcOut.itemPatch?.gal?.config))
 
 // ---- 素材 2：tenkeiprdx（有静态画面） ----
 const ttMedia = path.join(dataDir, 'gal', 'tt-pack')
@@ -248,6 +255,20 @@ try {
     await page.context().close()
   }
 
+  {
+    const page = await newPage()
+    await page.goto(link(gcId, 's:chmr_4/script.txt'))
+    await page.waitForSelector('.gal-player')
+    await page.waitForFunction(() => /Actor1/.test(document.querySelector('.gal-world')?.dataset.spines || ''), null, { timeout: 15000 })
+    await sleep(600)
+    await page.click('.gal-note')
+    await sleep(300)
+    const diag = await page.$eval('.gal-diag', (e) => e.innerText)
+    check('分层脸 + 表情预设名「照れ」对不上：诊断里写明用默认脸顶上（eye/eye_001、eyebrow/eyebrow_001、mouse/mouse_001、cheek/cheek_none）', /表情预设没有映射/.test(diag) && /eye\/eye_001/.test(diag) && /mouse\/mouse_001/.test(diag) && /cheek\/cheek_none/.test(diag) && /eyebrow\/eyebrow_001/.test(diag), diag.slice(0, 700))
+    check('没有页面错误', page.errors.length === 0, J(page.errors))
+    await page.context().close()
+  }
+
   // ===== (3) 文件索引行 + 刷新、节点图（相关链接）、列表阶段的问题 =====
   {
     // girlscreation 列表：「更多」里有文件索引信息 + 刷新；新增场景后点刷新才出现
@@ -260,9 +281,9 @@ try {
     await mkdir(path.join(scene, '..', 'chmr_2'), { recursive: true })
     await writeFile(path.join(scene, '..', 'chmr_2', 'hmr_2.txt'), ['title,新场景,', 'message,乙,「新的」,iab4020078'].join('\n'))
     await page.click('.gal-index-refresh')
-    await page.waitForFunction(() => /2 个剧情 · 2 位/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {})
+    await page.waitForFunction(() => /4 个剧情/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {})
     const after = await page.evaluate(() => document.body.innerText)
-    check('点「刷新」后新增的场景出现在列表里（chmr 分类 2 个剧情 · 2 位）', /2 个剧情 · 2 位/.test(after), J(after.split('\n').filter(Boolean).slice(8, 40)))
+    check('点「刷新」后新增的场景出现在列表里（chmr 分类 3 个剧情变 4 个）', /4 个剧情/.test(after) && !/3 个剧情/.test(after), J(after.split('\n').filter(Boolean).slice(8, 40)))
     check('没有页面错误', page.errors.length === 0, J(page.errors))
     await page.context().close()
   }
