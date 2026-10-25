@@ -343,7 +343,8 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **Aku No Onna Kanbu**（脚本里有 `<GROUP>` / `<EV_DISPLAY>` / `<SPINE_ACTOR_DISPLAY>`）：`<GROUP><FADE_IN>black,0 <EV>… <FADE_OUT>black,500</GROUP>` = 先黑场、换图、再淡出显示，所以 `FADE_IN` = 变黑、`FADE_OUT` = 去掉黑场（和 `FADE_OUT2` / `FADE_IN2` 相反，不处理会一直黑屏）；
   `<SPINE_ACTOR>槽,骨架,动画,纵向,横向,NONE,linear,0` 的动画是第 3 项，要等 `<SPINE_ACTOR_DISPLAY>槽,SHOW` 才显示（`HIDE` 收起）；`<EV_DISPLAY>0,FALSE` 收起 EV 图；`GROUP` / `NAME_DISP` 忽略。
   还没做：`SELECT` / `LABEL` / `JUMP`（分支，现在按顺序一路播下去）、`EV_FADE`、`ANIM_*`、`SPINE_ACTOR_FADE` / `MOVE`、非 CENTER 的位置（LEFT / RIGHT 的偏移是估的）。
-- **Fruits Fulcute!**：`<SE_PLAY>E004`（只有名字）；立绘不是 Spine，是 `<ACTOR>槽,名字,位置…,缩放,…`（图片叠层，还没做，现在是未渲染指令）、`<ACTOR_COLOR_FILTER>`。
+- **Fruits Fulcute!**：`<SE_PLAY>E004`（只有名字）；立绘不是 Spine，是 `<ACTOR>槽,身体图,纵向,横向,NONE,linear,0,缩放,脸名,脸图,脸x,脸y,宽,高,0,0`：身体（`_00`）+ 脸（`_01…`）两张同尺寸的透明图叠成一个 `stand`（横向 LEFT / RIGHT 各自贴边，CENTER 居中）；`<ACTOR_COLOR_FILTER>槽,dark` 压暗（亮度 0.6，stand 部件的 `dim`）、`<ACTOR_OUT>` 收掉。脸图的偏移按第 11、12 项（样本里全是 0）；宽高（1624,1430）没用。
+- Aku 的 `<ANIM_PLAY>槽,前缀,位数,起始,结束(不含),…,速度`：`<前缀><补零帧号>.webp` 逐帧循环当背景（和 FRAME_ANIM 一样，速度在「更多」里设）；LOAD / SPEED / STOP 不处理。
 
 ### 魔法学园（ArtWhirl，`artwhirl-json`）
 - 剧情是 JSON 的**并行数组**：第 i 行 = `texts[i]`（null = 只放指令，并进下一句）、`bgs` / `bgms` / `charas` / `names` / `colors`（整数 = `dic` 的下标）、`voices`、`others`（指令）、`effects`、`waits`。语义照游戏自带的 `json_story_player.rpy`。

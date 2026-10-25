@@ -1468,6 +1468,23 @@ async function gcMod0Prepare({ truncated }) {
   check('SPINE_ACTOR_FADE,槽,OUT,毫秒 → 角色淡出（spineOff 带时长）；EV_FADE,1,OUT,毫秒 → EV 图淡出（bgoff）', fades.steps[1].commands.some((c) => c.op === 'spineOff' && c.fade === 1) && fades.steps[1].commands.some((c) => c.op === 'bgoff' && Math.abs(c.fade - 0.3) < 1e-9), J(fades.steps[1].commands.map((c) => [c.op, c.fade])))
 }
 
+// ================= Fruits 的 <ACTOR>（身体 + 脸两张图叠放）/ ACTOR_COLOR_FILTER / ACTOR_OUT 与 Aku 的 ANIM_PLAY 帧动画 =================
+{
+  const gcm = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
+  const imgs = ['B_00', 'B_01', 'B_03', 'C_00', 'ev01_40b_0000', 'ev01_40b_0001', 'ev01_40b_0002']
+  const files = ['pk/scenes/c1/script.txt', ...imgs.map((n) => `pk/scenes/c1/images/${n}.png`)]
+  const ctx = gcm.prepare({ options: { root: 'pk' }, texts: {}, files, toResourcePath: (r) => r.replace(/^pk\//, '') })
+  const run = (text) => gcm.parse(text, ctx, { rel: 'c1/script.txt' })
+  const say = (n) => ['<NAME_PLATE>甲', `台词${n}`, '<PAUSE>']
+  const r = run(['<ACTOR>1,B_00,CENTER,CENTER,NONE,linear,0,0.65,B_01,B_01,0,0,1624,1430,0,0', '<ACTOR_COLOR_FILTER>1,dark', ...say(1), '<ACTOR>1,B_00,CENTER,CENTER,NONE,linear,0,0.65,B_03,B_03,0,0,1624,1430,0,0', '<ACTOR_COLOR_FILTER>1,normal', ...say(2), '<ACTOR>2,C_00,CENTER,RIGHT,NONE,linear,0,1,,,0,0,0,0,0,0', ...say(3), '<ACTOR_OUT>1,CENTER,linear,0', '<ACTOR_OUT>2,CENTER,linear,0', ...say(4)].join('\n'))
+  const st = (i) => stateAt({ steps: r.steps }, i).stand
+  check('Fruits <ACTOR>：身体 + 脸两张图叠成一个立绘（缩放 0.65），ACTOR_COLOR_FILTER dark = 压暗、normal = 不压暗', st(0)?.parts.length === 2 && st(0).parts[0].zoom === 0.65 && st(0).parts[1].src.endsWith('B_01.png') && st(0).parts.every((p) => p.dim === 0.6) && st(1).parts[1].src.endsWith('B_03.png') && st(1).parts.every((p) => !p.dim), J([st(0), st(1)]))
+  check('Fruits <ACTOR>：第二个槽（RIGHT）一起显示、各自贴右；ACTOR_OUT 两个槽都走掉之后立绘清空；没有未渲染 / 缺资源', st(2).parts.length === 3 && st(2).parts[2].align === 'right' && st(3) === null && Object.keys(r.stats.unresolved).length === 0 && !r.stats.raw.ACTOR && !r.stats.raw.ACTOR_COLOR_FILTER, J([st(2), st(3), r.stats]))
+  const a = run(['<ANIM_LOAD>ev01_40b_,4,0,3,1,1', '<ANIM_PLAY>0,ev01_40b_,4,0,3,1,1,17', '<ANIM_SPEED>0,28', '<NAME_PLATE>甲', 'x', '<PAUSE>', '<ANIM_STOP>0'].join('\n'))
+  const bg = a.steps.flatMap((x) => x.commands).find((c) => c.op === 'bg')
+  check('Aku ANIM_PLAY：<前缀><4 位补零帧号> 逐帧（0000~0002）循环当背景；LOAD / SPEED / STOP 不算未渲染', bg?.frames?.length === 3 && bg.frames[2].endsWith('0002.png') && Object.keys(a.stats.unresolved).length === 0 && !a.stats.raw.ANIM_PLAY, J([bg, a.stats]))
+}
+
 // ---------- 魔法学园（ArtWhirl，JSON 并行数组 + dic）----------
 {
   const root = path.join(work, 'artwhirl')

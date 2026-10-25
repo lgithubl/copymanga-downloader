@@ -195,6 +195,9 @@ export function parse(text, ctx = null, meta = {}) {
   let speaker = ''
   let loopSe = false        // 背景音效声道里有没有在循环播的
   let movieOn = false
+  const fruitActors = new Map()   // 槽 → { parts, dim }
+  const fruitDim = new Map()   // 先 COLOR_FILTER 后 ACTOR 的槽：记下来，ACTOR 出现时套用
+  let fruitStand = false
   const sceneId = String(meta?.rel || '').split('/')[0]
   const scene = ctx?.scenes?.get(sceneId) || null
   const stats = { commands: 0, raw: {}, unresolved: {}, movies: 0, spines: 0 }
@@ -276,6 +279,11 @@ export function parse(text, ctx = null, meta = {}) {
     stats.choices = (stats.choices || 0) + 1
     pendingSelect = []
   }
+  const emitFruitActors = () => {
+    for (const [slot, actor] of fruitActors) if (fruitDim.has(slot)) { actor.dim = fruitDim.get(slot); fruitDim.delete(slot) }
+    const parts = [...fruitActors.values()].flatMap((actor) => actor.parts.map((part) => (actor.dim ? { ...part, dim: actor.dim } : part)))
+    if (parts.length) { commands.push({ op: 'stand', parts }); fruitStand = true; stats.stands = (stats.stands || 0) + 1 } else if (fruitStand) { commands.push({ op: 'standOff' }); fruitStand = false }
+  }
   const res = (bucket, key) => scene?.[bucket]?.get(key) || ''
   const audio = (kind, key) => ctx?.audio?.[kind]?.get(key) || ''
 
@@ -329,6 +337,34 @@ export function parse(text, ctx = null, meta = {}) {
         }
         case 'NAME_PLATE': name = arg; lines = []; break
         case 'PAUSE': flush(true); break   // 光秃秃的 <PAUSE>（真实数据里有一百多个）也是一次「点一下」：留一个空步
+        case 'ACTOR': {   // Fruits：ACTOR,槽,身体图,纵向,横向,NONE,linear,0,缩放,脸名,脸图,脸x,脸y,宽,高,0,0；身体 + 脸是两张同尺寸的透明图叠在一起（身体 _00，脸 _01 …），横向 CENTER / LEFT / RIGHT
+          const slot = Math.trunc(numOf(a[0]))
+          const body = res('images', a[1])
+          if (!body) { count('unresolved', `actor:${a[1]}`); break }
+          const horizontal = String(a[3] || 'CENTER').trim().toUpperCase()
+          const align = horizontal === 'LEFT' ? 'left' : horizontal === 'RIGHT' ? 'right' : ''
+          const zoom = numOf(a[7], 1) || 1
+          const parts = [{ src: body, zoom, x: 0, y: 0, ...(align ? { align } : {}) }]
+          const face = a[9] ? res('images', a[9]) : ''
+          if (a[9] && !face) count('unresolved', `actor-face:${a[9]}`)
+          if (face) parts.push({ src: face, zoom, x: numOf(a[10]), y: numOf(a[11]), ...(align ? { align } : {}) })
+          fruitActors.set(slot, { parts, dim: fruitActors.get(slot)?.dim || 0 })
+          emitFruitActors()
+          break
+        }
+        case 'ACTOR_COLOR_FILTER': {   // ACTOR_COLOR_FILTER,槽,normal|dark|light：dark = 压暗（不说话的人），light 当正常
+          const slot = Math.trunc(numOf(a[0]))
+          const actor = fruitActors.get(slot)
+          const dim = /^dark$/i.test(a[1] || '') ? 0.6 : 0
+          if (actor) { if (actor.dim !== dim) { actor.dim = dim; emitFruitActors() } } else fruitDim.set(slot, dim)
+          break
+        }
+        case 'ACTOR_OUT': {   // ACTOR_OUT,槽,位置,缓动,毫秒
+          const slot = Math.trunc(numOf(a[0]))
+          fruitActors.delete(slot); fruitDim.delete(slot)
+          emitFruitActors()
+          break
+        }
         case 'BG': {
           const src = res('images', a[0])
           if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src, fade: 0 }) } else { count('unresolved', `bg:${a[0]}`) }
@@ -343,6 +379,20 @@ export function parse(text, ctx = null, meta = {}) {
           for (let n = first; n <= last; n += 1) { const src = res('animations', `${prefix}_${n}`); if (src) frames.push(src) }
           if (!frames.length) { count('unresolved', `frame-anim:${prefix}`); break }
           if (frames.length < last - first + 1) count('unresolved', `frame-anim-missing:${prefix}`)
+          if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
+          emit({ op: 'bg', src: frames[0], frames, fade: 0 })
+          break
+        }
+        case 'ANIM_LOAD': case 'ANIM_SPEED': case 'ANIM_STOP': break   // Aku 帧动画：LOAD 只是预载，速度在播放器「更多」里设；STOP 之后脚本会换 EV 图，不用处理
+        case 'ANIM_PLAY': {   // ANIM_PLAY,槽,前缀,位数,起始,结束(不含),?,?,速度：<前缀><补零帧号>.webp 逐帧循环（当背景，和 FRAME_ANIM 一样）
+          const prefix = String(a[1] || '').trim()
+          const digits = Math.max(1, Math.trunc(numOf(a[2], 4)))
+          const first = Math.trunc(numOf(a[3]))
+          const end = Math.min(first + 600, Math.trunc(numOf(a[4], first + 1)))
+          const frames = []
+          for (let n = first; n < end; n += 1) { const src = res('images', `${prefix}${String(n).padStart(digits, '0')}`); if (src) frames.push(src) }
+          if (!frames.length) { count('unresolved', `anim:${prefix}`); break }
+          if (frames.length < end - first) count('unresolved', `anim-missing:${prefix}`)
           if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
           emit({ op: 'bg', src: frames[0], frames, fade: 0 })
           break
