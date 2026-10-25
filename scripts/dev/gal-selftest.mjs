@@ -1250,6 +1250,20 @@ async function gcMod0Prepare({ truncated }) {
   check('马赛克层：adapterOptions.showMosaic 打开 = 默认叠；请求里 showMosaic=false 可以盖掉它', skels(mtParse(scene, optionOn, { stem: '100' })).length === 3 && skels(mtParse(scene, optionOn, { stem: '100', showMosaic: false })).length === 2)
 }
 
+// ================= SPINE_ACTOR 的第 4 项 = 出场时的初始动画（轨道 0）=================
+{
+  const gcm = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
+  const files = ['pk/scenes/story_1/script.txt', 'pk/data/spine/cast/cast009001/nashwa_001.json', 'pk/data/spine/cast/cast009001/nashwa_001.atlas']
+  const ctx = gcm.prepare({ options: { root: 'pk' }, texts: {}, files, toResourcePath: (r) => r.replace(/^pk\//, '') })
+  const spines = (text) => gcm.parse(text, ctx, { rel: 'story_1/script.txt' }).steps.flatMap((st) => st.commands).filter((c) => c.op === 'spine')
+  const first = spines('<SPINE_ACTOR>8,cast009001/nashwa_001,,通常,,0,100,x=-280|y=-315,1.0,json\n<NAME_PLATE>甲\nhi\n<PAUSE>\n<SPINE_ACTOR_PLAY>8,喜,0,true\n<NAME_PLATE>乙\nhi\n<PAUSE>\n')
+  check('SPINE_ACTOR 第 4 项（「通常」）= 出场时的初始动画：第一条 spine 指令的轨道 0 就是它（循环）；后面的 SPINE_ACTOR_PLAY 把它换成「喜」', J(first[0].tracks) === J([{ track: 0, anim: '通常', loop: true }]) && first.at(-1).tracks[0].anim === '喜', J(first.map((c) => c.tracks)))
+  const none = spines('<SPINE_ACTOR>8,cast009001/nashwa_001,,,,0,100,x=0|y=0,1.0,json\n<NAME_PLATE>甲\nhi\n<PAUSE>\n')
+  check('SPINE_ACTOR 第 4 项为空：没有初始动画（轨道为空，由播放层决定怎么处理）', none[0].tracks.length === 0, J(none[0].tracks))
+  const before = spines('<SPINE_ACTOR_OUT>8,0\n<SPINE_ACTOR_PLAY>8,Wait,0,true\n<SPINE_ACTOR>8,cast009001/nashwa_001,,通常,,0,0,x=0|y=0,1.0,json\n<NAME_PLATE>甲\nhi\n<PAUSE>\n')
+  check('先 PLAY 后 ACTOR（OUT → PLAY → ACTOR）：先记下的动画优先于 ACTOR 的初始动画', before[0].tracks[0].anim === 'Wait', J(before.map((c) => c.tracks)))
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

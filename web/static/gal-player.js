@@ -1050,7 +1050,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
           const absent = (item.requestedNames || []).filter((name) => !item.animations.includes(name))
           lines.push(`    动画：要 ${item.requested || '（未指定）'} → 实际 ${item.used || '（无）'}${absent.length ? '  ← 名字对不上，退到了别的' : ''}`)
           if (item.missingAnimations?.length) lines.push(`    骨架里没有这些动画（脚本要的）：${item.missingAnimations.join(', ')}  ← 这些轨道没播`)
-          if (item.faceDefaults?.length) lines.push(`    表情预设没有映射（原游戏用预设表把「${item.missingAnimations.join('、')}」展开成眼 / 眉 / 嘴等分层动画，这张表在加密的 castData 里）→ 先用默认脸顶上：${item.faceDefaults.join(', ')}`)
+          if (item.faceDefaults?.length) lines.push(`    ${item.missingAnimations?.length ? `表情预设没有映射（原游戏用预设表把「${item.missingAnimations.join('、')}」展开成眼 / 眉 / 嘴等分层动画，这张表在加密的 castData 里）` : '分层脸骨架，脚本没给表情'}→ 先用默认脸顶上：${item.faceDefaults.join(', ')}`)
           lines.push(`    骨架里的动画（${item.animations.length}）：${item.animations.slice(0, 40).join(', ')}${item.animations.length > 40 ? ' …' : ''}`)
           if (item.pmaInfo) {
             const blends = item.blends ? Object.entries(item.blends).filter(([, n]) => n > 0).map(([name, n]) => `${name} ${n} 个槽`).join('、') : ''

@@ -70,6 +70,8 @@ export function pickSpineAnimation(data, wanted, kind) {
 // 兜底：预设名对不上时，每个还没有动画的脸部分层先用一个中性的默认动画顶上（眼 / 眉 / 嘴 / 眼位 / 腮红 / 高光），至少不是没有眼睛和嘴巴；表情本身不对，拿到预设表再做。
 const FACE_DEFAULTS = { eyemain: 'eyemain_001', eye: 'eye_001', eyebrow: 'eyebrow_001', eyepos: 'eyepos_normal', mouse: 'mouse_001', mouth: 'mouth_001', cheek: 'cheek_none', highlight: 'highlight_on' }
 const FACE_TRACK_BASE = 20   // 默认脸用的轨道号（从 20 起，不和脚本里的轨道撞）
+// 是不是分层脸骨架（动画名是 eye/eye_001、mouse/… 这样一组一组的）
+export const layeredFace = (data) => (data?.animations || []).some((animation) => /^(?:eye|eyebrow|eyemain|eyepos|mouse|mouth|cheek|highlight)\//.test(animation.name))
 export function faceDefaultsFor(names, played) {
   const covered = new Set(played.filter((name) => name.includes('/')).map((name) => name.split('/')[0]))
   const out = []
@@ -315,6 +317,22 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
           changed = true
         })
       }
+    } else if (spec.kind === 'actor' && layeredFace(inst.data) && !(spec.anim && inst.data.findAnimation(spec.anim))) {
+      // 分层脸骨架、脚本没给（或给的名字骨架里没有）任何能播的动画：不能退到「第一个动画」（那只是某个部件的一条动画，脸还是空的），直接用默认脸
+      inst.trackSig = inst.trackSig || {}
+      inst.missingAnims = spec.anim ? [spec.anim] : []
+      inst.anim = ''
+      inst.loop = true
+      inst.faceDefaults = []
+      const names = inst.data.animations.map((animation) => animation.name)
+      faceDefaultsFor(names, []).forEach((anim, i) => {
+        inst.faceDefaults.push(anim)
+        const sig = `${anim}:true`
+        if (inst.trackSig[FACE_TRACK_BASE + i] === sig) return
+        inst.state.setAnimation(FACE_TRACK_BASE + i, anim, true)
+        inst.trackSig[FACE_TRACK_BASE + i] = sig
+        changed = true
+      })
     } else {
       changed = Boolean(name) && (name !== inst.anim || inst.loop !== (spec.loop !== false))
       if (changed) {

@@ -9,7 +9,7 @@
 //   <FADE_OUT2>black,ms / <FADE_IN2>black|white,ms   黑场渐入 / 渐出，白场闪    <WAIT2>ms 等待
 //   <BGM_PLAY>名,0, / <BGM_STOP>ms     data/audio/bgm      <SE_PLAY>通道,名,TRUE|FALSE,音量,0 / <SE_STOP>通道,ms   data/audio/se（循环的走背景音效声道）
 //   <VOICE_PLAY>名 / <VOICE_SINGLE_PLAY>名    voices/<名>.*     <VIDEO_PLAY>名,loop,通道 / <VIDEO_STOP>   videos/<名>.*
-//   <SPINE_ACTOR>槽,骨架名,,,,0,淡入ms,x=..|y=..,缩放,skel     放一个 Spine 角色（槽 1~4）：spine 指令（kind actor）
+//   <SPINE_ACTOR>槽,骨架名,,初始动画,,0,淡入ms,x=..|y=..,缩放,skel     放一个 Spine 角色（槽 1~4）：spine 指令（kind actor）；第 4 项是出场时播的动画（轨道 0，循环；maid 里写的是表情预设名，如「通常」）
 //   <SPINE_ACTOR_PLAY>槽,动画,轨道,循环      轨道 0 身体、轨道 1 表情（ex_<名>）——两条轨道同时播；<SPINE_ACTOR_TRACK>槽,轨道,动画,循环 同样给某条轨道设动画（参数顺序不同）
 //   <SPINE_ACTOR_SHAKE>槽,x,y,时长            角色抖动（衰减的来回晃，时长按 60 = 1 秒）
 //   <SPINE_ACTOR_MOVE>槽,x,y,ms,FALSE / <SPINE_ACTOR_OUT>槽,淡出ms
@@ -313,6 +313,8 @@ export function parse(text, ctx = null, meta = {}) {
           // 同一个槽先 PLAY 后 ACTOR（OUT → PLAY → ACTOR 是脚本里的常见写法）：先记下的动画在角色出现时套用
           const tracks = previous?.skel === a[1] ? previous.tracks : (waiting.get(slot) || [])
           waiting.delete(slot)
+          // 第 4 项 = 出场时的初始动画（原查看器：不为空就 setAnimation(名字, 循环)，即轨道 0）；已经有人给轨道 0 设过（先 PLAY 后 ACTOR）就让那个优先
+          if (a[3] && !tracks[0]) tracks[0] = { anim: a[3], loop: true }
           actors.set(slot, { skel: a[1], x: props.x ?? 0, y: props.y ?? 0, scale: (numOf(a[8], 1) || 1) * zoomScale, fade: secs(a[6]), move: 0, tracks })
           dirty.add(slot)
           break
