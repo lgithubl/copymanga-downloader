@@ -336,3 +336,11 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | monmusu | Ren'Py（`renpy-monmusu`） | `game/script/hscene` + `hscene_still` + `script/movie.rpy` |
 | **angelic_py** | Ren'Py（`renpy-monmusu`，game.id `angelic`） | `game/script/hscene/*.rpy`；别名表是 `script/movies.rpy` + `script/stills.rpy`（复数），图片在 `images` + `resources`；菜单脚本 `sub_nav` / `sub_nav_byname` 隐藏；脚本文件名是随机串，没有角色编号，所以不分组、卡片显示脚本名；只有 `.rpyc` 的脚本解析不了（列表页问题里会列出） |
 | legeclo、minashigo（Ren'Py）、tenkeiprdx、misttrain、UViewer | 见各自一节 | |
+
+
+### Aku / Fruits 的写法差异（Girls Creation 家族的两种方言）
+目录结构一样（`scenes/<场景>/script.txt` + `data/audio`），脚本的标签语义有差别，适配器按内容识别：
+- **Aku No Onna Kanbu**（脚本里有 `<GROUP>` / `<EV_DISPLAY>` / `<SPINE_ACTOR_DISPLAY>`）：`<GROUP><FADE_IN>black,0 <EV>… <FADE_OUT>black,500</GROUP>` = 先黑场、换图、再淡出显示，所以 `FADE_IN` = 变黑、`FADE_OUT` = 去掉黑场（和 `FADE_OUT2` / `FADE_IN2` 相反，不处理会一直黑屏）；
+  `<SPINE_ACTOR>槽,骨架,动画,纵向,横向,NONE,linear,0` 的动画是第 3 项，要等 `<SPINE_ACTOR_DISPLAY>槽,SHOW` 才显示（`HIDE` 收起）；`<EV_DISPLAY>0,FALSE` 收起 EV 图；`GROUP` / `NAME_DISP` 忽略。
+  还没做：`SELECT` / `LABEL` / `JUMP`（分支，现在按顺序一路播下去）、`EV_FADE`、`ANIM_*`、`SPINE_ACTOR_FADE` / `MOVE`、非 CENTER 的位置（LEFT / RIGHT 的偏移是估的）。
+- **Fruits Fulcute!**：`<SE_PLAY>E004`（只有名字）；立绘不是 Spine，是 `<ACTOR>槽,名字,位置…,缩放,…`（图片叠层，还没做，现在是未渲染指令）、`<ACTOR_COLOR_FILTER>`。

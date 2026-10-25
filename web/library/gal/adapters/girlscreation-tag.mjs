@@ -198,6 +198,12 @@ export function parse(text, ctx = null, meta = {}) {
   const sceneId = String(meta?.rel || '').split('/')[0]
   const scene = ctx?.scenes?.get(sceneId) || null
   const stats = { commands: 0, raw: {}, unresolved: {}, movies: 0, spines: 0 }
+  // Aku No Onna Kanbu 一派的写法（有 <GROUP> / <EV_DISPLAY> / <SPINE_ACTOR_DISPLAY>）：<GROUP><FADE_IN>black,0 <EV>… <FADE_OUT>black,500</GROUP> = 先黑场、换图、再淡出显示，
+  // 所以 FADE_IN = 变黑、FADE_OUT = 去掉黑场（和 FADE_OUT2 / FADE_IN2 正好相反）；<SPINE_ACTOR>槽,骨架,动画,纵向,横向,… 的参数含义也不一样，要等 <SPINE_ACTOR_DISPLAY>槽,SHOW 才显示
+  const akuStyle = /^<(?:GROUP|EV_DISPLAY|SPINE_ACTOR_DISPLAY)>/m.test(String(text || '').slice(0, 200000))
+  if (akuStyle) stats.dialect = 'aku'
+  const shownActors = new Set()   // Aku 写法：已经 SHOW 过的槽
+  const hasDisplayTags = /^<SPINE_ACTOR_DISPLAY>/m.test(String(text || '').slice(0, 200000))   // 脚本里根本没有 SPINE_ACTOR_DISPLAY 的话，SPINE_ACTOR 直接显示
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   if (ctx?.truncated) count('unresolved', '文件索引被截断（超过上限）：这个场景的资源可能找不到')
   const emit = (command) => { commands.push(command) }
@@ -253,9 +259,22 @@ export function parse(text, ctx = null, meta = {}) {
     if (!line) continue
     stats.commands += 1
     if (!line.startsWith('<')) { if (name !== null) lines.push(line); continue }   // 正文行（跟在 <NAME_PLATE> 后面）
-    for (const { tag, arg } of tagsOf(line)) {
+    for (const entry of tagsOf(line)) {
+      let { tag } = entry
+      const { arg } = entry
       const a = splitArgs(arg)
+      if (akuStyle && tag === 'FADE_IN') tag = 'FADE_OUT2'    // 变黑
+      else if (akuStyle && tag === 'FADE_OUT') tag = 'FADE_IN2'   // 去掉黑场
       switch (tag) {
+        case 'GROUP': break   // 一组指令一起执行：这里按顺序执行就行
+        case 'NAME_DISP': break   // 名字框开关：没有对应的指令，忽略
+        case 'EV_DISPLAY': if (akuStyle && /^false$/i.test(a[1] || '')) emit({ op: 'bgoff', fade: 0 }); break   // EV_DISPLAY,0,FALSE = 收起 EV 图；TRUE = 显示（EV 已经按 EV 指令显示了）
+        case 'SPINE_ACTOR_DISPLAY': {   // Aku 写法：槽,SHOW | HIDE
+          const slot = Math.trunc(numOf(a[0]))
+          if (/^show$/i.test(a[1] || '')) { shownActors.add(slot); if (actors.has(slot)) dirty.add(slot) }
+          else if (/^hide$/i.test(a[1] || '')) { shownActors.delete(slot); dirty.delete(slot); if (actors.has(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 }) }
+          break
+        }
         case 'NAME_PLATE': name = arg; lines = []; break
         case 'PAUSE': flush(true); break   // 光秃秃的 <PAUSE>（真实数据里有一百多个）也是一次「点一下」：留一个空步
         case 'BG': {
@@ -292,8 +311,9 @@ export function parse(text, ctx = null, meta = {}) {
         case 'BGM_PLAY': { const src = audio('bgm', a[0]); if (src) emit({ op: 'bgm', src }); else count('unresolved', `bgm:${a[0]}`); break }
         case 'BGM_STOP': emit({ op: 'bgmStop', fade: secs(a[0]) }); break
         case 'SE_PLAY': {
-          const src = audio('se', a[1])
-          if (!src) { count('unresolved', `se:${a[1]}`); break }
+          const seName = a.length === 1 ? a[0] : a[1]   // <SE_PLAY>E004（只有名字，Fruits 一派）/ <SE_PLAY>通道,名字,循环,音量,0
+          const src = audio('se', seName)
+          if (!src) { count('unresolved', `se:${seName}`); break }
           if (bool(a[2])) { emit({ op: 'bgse', src, loop: true }); loopSe = true } else emit({ op: 'se', src })
           break
         }
@@ -307,6 +327,16 @@ export function parse(text, ctx = null, meta = {}) {
         }
         case 'VIDEO_STOP': if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } break
         case 'SPINE_ACTOR': {
+          if (akuStyle) {   // 槽,骨架,动画,纵向(TOP…),横向(CENTER / LEFT / RIGHT…),NONE,linear,0：动画是第 3 项；位置的非 CENTER 取值没有样本，横向按 LEFT / RIGHT 估一个偏移并记在 stats.raw
+            const aSlot = Math.trunc(numOf(a[0]))
+            const horizontal = String(a[4] || '').toUpperCase()
+            const x = horizontal === 'LEFT' ? -450 : horizontal === 'RIGHT' ? 450 : 0
+            if (horizontal && !['CENTER', 'LEFT', 'RIGHT'].includes(horizontal)) count('raw', `SPINE_ACTOR(横向 ${horizontal})`)
+            if (horizontal === 'LEFT' || horizontal === 'RIGHT') count('raw', `SPINE_ACTOR(横向 ${horizontal} 的偏移是估的)`)
+            actors.set(aSlot, { skel: a[1], x, y: 0, scale: zoomScale, fade: 0, move: 0, tracks: a[2] ? [{ anim: a[2], loop: true }] : [] })
+            if (shownActors.has(aSlot) || !hasDisplayTags) dirty.add(aSlot)   // 已经 SHOW 过的槽换表情 / 骨架直接生效；第一次要等 SPINE_ACTOR_DISPLAY,SHOW
+            break
+          }
           const slot = Math.trunc(numOf(a[0]))
           const props = parseProps(a[7])
           const previous = actors.get(slot)

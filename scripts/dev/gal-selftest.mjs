@@ -1400,6 +1400,26 @@ async function gcMod0Prepare({ truncated }) {
   check('angelic_py：播放：背景图（images/bg/bg_a.png）、语音、视频别名 mv_a（movies.rpy）、两句台词', angPlayed.scene.steps.length === 2 && angCmds.some((c) => c.op === 'bg' && /bg_a\.png$/.test(c.src)) && angCmds.some((c) => c.op === 'voice') && angCmds.some((c) => c.op === 'movie' && /a\.webm$/.test(c.srcs[0])), J([angPlayed.scene.stats, angCmds.map((c) => c.op)]))
 }
 
+// ================= Aku 一派的写法（GROUP / FADE_IN = 变黑 / EV_DISPLAY / SPINE_ACTOR_DISPLAY）与 Fruits 的单参数 SE_PLAY =================
+{
+  const gcm = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
+  const files = ['pk/scenes/c1/script.txt', 'pk/scenes/c1/images/bg_0004.png', 'pk/scenes/c1/images/still_01.png', 'pk/scenes/c1/voices/001_0103101.m4a', 'pk/scenes/c1/spines/char_00000101_01.skel', 'pk/scenes/c1/spines/char_00000101_01.atlas', 'pk/data/audio/bgm/BGM_015.m4a', 'pk/data/audio/se/E004.m4a']
+  const ctx = gcm.prepare({ options: { root: 'pk' }, texts: {}, files, toResourcePath: (r) => r.replace(/^pk\//, '') })
+  const run = (text) => gcm.parse(text, ctx, { rel: 'c1/script.txt' })
+  const finalState = (r) => stateAt({ steps: r.steps }, r.steps.length - 1)
+  const aku = run(['<GROUP>', '<FADE_IN>black,0', '<EV>bg_0004,0', '<EV_DISPLAY>0,TRUE', '<FADE_OUT>black,500', '<BGM_PLAY>BGM_015,1', '<VOICE_PLAY>001_0103101', '<NAME_PLATE>甲', '<SPINE_ACTOR>0,char_00000101_01,Em02,TOP, CENTER, NONE, linear, 0', '<SPINE_ACTOR_DISPLAY>0,SHOW', '<NAME_DISP>ON', '<UI_DISP>ON, 0', '</GROUP>', '<PAUSE>', '<VOICE_PLAY>001_0103101', '<NAME_PLATE>甲', '<SPINE_ACTOR>0,char_00000101_01,Em07,TOP, CENTER, NONE, linear, 0', '<PAUSE>', '<SPINE_ACTOR_DISPLAY>0,HIDE', '<GROUP>', '<FADE_IN>black,0', '<EV>still_01,0', '<FADE_OUT>black,500', '</GROUP>', '<EV_DISPLAY>0,FALSE', '<PAUSE>'].join('\n'))
+  const order = aku.steps.flatMap((st) => st.commands).filter((c) => c.op === 'fade').map((c) => c.to)
+  const spines = aku.steps.flatMap((st) => st.commands).filter((c) => c.op === 'spine')
+  check('Aku 写法：FADE_IN = 变黑、FADE_OUT = 去掉黑场（先黑场、换图、再淡出），最后不是黑屏（以前反过来，画面一直是黑的）', J(order) === J(['black', 'clear', 'black', 'clear']) && finalState(aku).black === false, J([order, finalState(aku).black]))
+  check('Aku 写法：EV 的图（bg_0004）当背景、SPINE_ACTOR 的第 3 项是动画（Em02 → 换成 Em07）、等 SPINE_ACTOR_DISPLAY,SHOW 才出现、HIDE 收起；GROUP / NAME_DISP 不算未渲染', spines.length >= 2 && spines[0].tracks[0].anim === 'Em02' && spines.at(-1).tracks[0].anim === 'Em07' && spines[0].skel.endsWith('char_00000101_01.skel') && aku.steps.flatMap((st) => st.commands).some((c) => c.op === 'bg' && /bg_0004\.png$/.test(c.src)) && aku.steps.flatMap((st) => st.commands).some((c) => c.op === 'spineOff') && aku.steps.flatMap((st) => st.commands).some((c) => c.op === 'bgoff') && Object.keys(aku.stats.raw).length === 0 && aku.stats.dialect === 'aku', J([spines.map((c) => c.tracks), aku.stats]))
+  const beforeShow = run(['<SPINE_ACTOR>0,char_00000101_01,Em02,TOP, CENTER, NONE, linear, 0', '<NAME_PLATE>甲', 'x', '<PAUSE>', '<SPINE_ACTOR_DISPLAY>0,SHOW', '<NAME_PLATE>甲', 'y', '<PAUSE>'].join('\n'))
+  check('Aku 写法：SHOW 之前（第 1 步）角色还不显示，SHOW 之后（第 2 步）才出现', !beforeShow.steps[0].commands.some((c) => c.op === 'spine') && beforeShow.steps[1].commands.some((c) => c.op === 'spine'), J(beforeShow.steps.map((st) => st.commands.map((c) => c.op))))
+  const old = run(['<FADE_OUT2>black,500', '<BG>bg_0004,NONE,0,1,0,0', '<FADE_IN2>black,500', '<NAME_PLATE>甲', 'x', '<PAUSE>', '<FADE_OUT>black,500', '<NAME_PLATE>甲', 'y', '<PAUSE>'].join('\n'))
+  check('别的写法（没有 GROUP / EV_DISPLAY）：FADE_OUT 仍然是变黑，不受 Aku 写法影响', J(old.steps.flatMap((st) => st.commands).filter((c) => c.op === 'fade').map((c) => c.to)) === J(['black', 'clear', 'black']) && !old.stats.dialect, J(old.stats))
+  const se = run(['<SE_PLAY>E004', '<SE_PLAY>0,E004,FALSE,1,0', '<NAME_PLATE>甲', 'x', '<PAUSE>'].join('\n'))
+  check('Fruits 写法：<SE_PLAY>E004（只有名字）和 <SE_PLAY>通道,名字,… 都能找到音效', se.steps[0].commands.filter((c) => c.op === 'se').length === 2 && Object.keys(se.stats.unresolved).length === 0, J([se.steps[0].commands.map((c) => c.op), se.stats.unresolved]))
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
