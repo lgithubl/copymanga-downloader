@@ -92,7 +92,8 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
     }
   }
   for (const scene of scenes.values()) if (!scene.script) scene.script = scene.altScript || scene.lineScript || ''   // 优先级：script.txt > output_script.txt > 行式脚本
-  for (const [id, scene] of scenes) if (!scene.script) scenes.delete(id)   // 没有脚本的目录（PLACEHOLDER 之类）不是场景
+  const noScript = []
+  for (const [id, scene] of scenes) if (!scene.script) { noScript.push(id); scenes.delete(id) }   // 没有脚本的目录（PLACEHOLDER 之类）不是场景；记下来给体检报
 
   const player = String(options?.player ?? DEFAULT_OPTIONS.player)
   const info = new Map()   // 场景 id → { title, speaker }
@@ -115,7 +116,7 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
     info.set(id, { title, speaker })
   }
   const categoryLabels = { ...(options?.categoryLabels && typeof options.categoryLabels === 'object' ? options.categoryLabels : {}) }
-  return { root, scenes, audio, info, categoryLabels, truncated }
+  return { root, scenes, audio, info, categoryLabels, truncated, noScript }
 }
 
 // ---------- 列表 ----------
@@ -393,4 +394,16 @@ export function parse(text, ctx = null, meta = {}) {
 
 // 一个场景几百个文件（图 / 语音 / 骨骼…），几百个场景轻松超过默认的 6 万；要全部建索引就得放宽上限（见 context.mjs 的 contextWalkLimit）
 export const contextWalkLimit = 400000
-export const girlsCreationTagAdapter = { id: ADAPTER_ID, contextWalkLimit, label: 'Girls Creation 查看器（标签式脚本）', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }
+// 体检（列表阶段的便宜检查，只看索引）：没有脚本的场景目录 / 没有标题的场景 / 没有封面的场景 / 找不到 data/audio
+export function health(ctx) {
+  const out = []
+  const sample = (list) => `${list.slice(0, 5).join('、')}${list.length > 5 ? ' 等' : ''}`
+  if (ctx.noScript?.length) out.push({ code: 'scene-no-script', message: `${ctx.noScript.length} 个 scenes/ 下的目录没有脚本（script.txt / output_script.txt / hmr_·hsr_<id>.txt），没有当成场景：${sample(ctx.noScript)}` })
+  const untitled = [...ctx.scenes.keys()].filter((id) => !ctx.info.get(id)?.title)
+  if (untitled.length) out.push({ code: 'scene-no-title', message: `${untitled.length} 个场景没有标题（原始脚本里没有 title 行），卡片显示场景 id：${sample(untitled)}` })
+  const noThumb = [...ctx.scenes.values()].filter((scene) => !scene.thumb).map((scene) => scene.id)
+  if (noThumb.length) out.push({ code: 'scene-no-thumb', message: `${noThumb.length} 个场景目录没有 thumbnail.*：${sample(noThumb)}` })
+  if (!ctx.audio.bgm.size && !ctx.audio.se.size) out.push({ code: 'audio-missing', message: '没有找到 data/audio/{bgm,se}：BGM / 音效会缺资源（检查 adapterOptions.root 是不是 package.nw）' })
+  return out
+}
+export const girlsCreationTagAdapter = { id: ADAPTER_ID, health, contextWalkLimit, label: 'Girls Creation 查看器（标签式脚本）', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }

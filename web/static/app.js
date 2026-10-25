@@ -4171,17 +4171,32 @@ function galTrailLoad(unitId) {
 function galTrailSave(unitId, list) {
   try { sessionStorage.setItem(galTrailKey(unitId), JSON.stringify(list.slice(-30))) } catch { /* 存不了就算了：退回默认的上一级 */ }
 }
+// 「相关」跳转（节点图的 related：关联，不是父子）：上一级本来是服务端算的父节点，但从相关节点点「上一级」应该回到来路——
+// 跳过去时记一笔「目标 → 来路」，之后在目标节点点「上一级」（只认 reader.node.parent，面包屑不受影响）就回到来路
+const galBackKey = (unitId) => `copymanga.galBack.${unitId}`
+function galBackLoad(unitId) {
+  try { const map = JSON.parse(sessionStorage.getItem(galBackKey(unitId)) || '{}'); return map && typeof map === 'object' ? map : {} } catch { return {} }
+}
+function galBackSave(unitId, map) {
+  try { sessionStorage.setItem(galBackKey(unitId), JSON.stringify(Object.fromEntries(Object.entries(map).slice(-30)))) } catch { /* 存不了就退回服务端的上一级 */ }
+}
 function galNavigate(reader, nodeId, kind = 'self') {
   const unitId = reader.unit.unitId
   const current = reader.node?.id ?? reader.section?.sectionId ?? ''
   let target = nodeId
-  if (kind === 'child' || kind === 'up') {
+  if (kind === 'child' || kind === 'related' || kind === 'up') {
     let trail = galTrailLoad(unitId)
-    if (kind === 'child') {
+    if (kind === 'child' || kind === 'related') {
       trail = trail.filter((id) => galBase(id) !== galBase(current))
       trail.push(current)
+      if (kind === 'related') galBackSave(unitId, { ...galBackLoad(unitId), [galBase(nodeId)]: current })
     } else {
-      const at = trail.map(galBase).lastIndexOf(galBase(nodeId))
+      const back = galBackLoad(unitId)
+      const from = nodeId === reader.node?.parent ? back[galBase(current)] : ''
+      const wanted = from || nodeId
+      if (from) { delete back[galBase(current)]; galBackSave(unitId, back) }
+      const at = trail.map(galBase).lastIndexOf(galBase(wanted))
+      target = wanted
       if (at >= 0) { target = trail[at]; trail = trail.slice(0, at) }
     }
     galTrailSave(unitId, trail)
@@ -4211,6 +4226,12 @@ function renderGalBrowse(reader) {
     onToggleImmersive: toggleGalImmersive,
     onEscape: () => exitGalImmersive({ remember: true }),
     onLeave: () => { exitGalImmersive(); els.mediaReaderBack?.click() },
+    // 「更多 → 刷新」：丢掉这个条目的文件索引 / 名称表等缓存，按磁盘现状重建，然后重取当前节点
+    onRefreshIndex: async () => {
+      if (!owner?.itemId) return
+      await api(`/api/library/items/gal/${encodeURIComponent(owner.itemId)}/index-refresh`, { method: 'POST', body: '{}' })
+      await galNavigate(reader, reader.node.id, 'self')
+    },
   })
   if (galImmersive) galBrowser.setImmersive(true)
   else if (immersivePref('gal')) enterGalImmersive()

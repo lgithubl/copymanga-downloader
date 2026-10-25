@@ -967,10 +967,11 @@ async function gcMod0Prepare({ truncated }) {
   const warn = console.warn
   const warned = []
   console.warn = (...a) => warned.push(a.join(' '))
-  const cut = await loadAdapterContext({ adapter: stub(), mediaDir: big, config })
+  const cut = await loadAdapterContext({ adapter: stub({ id: 'walk-stub-0', contextWalkLimit: 60000 }), mediaDir: big, config })
   console.warn = warn
   const full = await loadAdapterContext({ adapter: stub({ id: 'walk-stub-2', contextWalkLimit: 100000 }), mediaDir: big, config })
-  check('目录索引上限：默认 6 万个文件，61000 个文件被截断（truncated = true、打日志）；适配器 contextWalkLimit 放宽后完整、不截断', cut.n === 60000 && cut.truncated === true && warned.some((m) => /被截断/.test(m)) && full.n === 61000 && full.truncated === false, J([cut, full, warned.length]))
+  const dflt = await loadAdapterContext({ adapter: stub({ id: 'walk-stub-3' }), mediaDir: big, config })
+  check('目录索引上限：默认 40 万个文件（61000 个不截断）；适配器 contextWalkLimit 设成 6 万 → 被截断（truncated = true、打日志），设成 10 万 → 完整', dflt.n === 61000 && dflt.truncated === false && cut.n === 60000 && cut.truncated === true && warned.some((m) => /被截断/.test(m)) && full.n === 61000 && full.truncated === false, J([dflt, cut, full, warned.length]))
   check('Girls Creation 适配器放宽了上限（几百个场景 × 几百个文件）', galAdapter('girlscreation-tag').contextWalkLimit >= 300000, String(galAdapter('girlscreation-tag').contextWalkLimit))
   const gcTrunc = await gcMod0Prepare({ truncated: true })
   check('索引被截断时：列表分类的副标题带警告、解析时记 unresolved', /截断/.test(JSON.stringify(gcTrunc.cat)) && Object.keys(gcTrunc.parse.stats.unresolved).some((k) => /截断/.test(k)), J(gcTrunc.parse.stats.unresolved))
@@ -1075,6 +1076,73 @@ async function gcMod0Prepare({ truncated }) {
   check('gal-layout 认出 misttrain：game.id、脚本根 UScenes（多一层目录带前缀）、资源根、扩展名 json、适配器参数 root；脚本数 2', mcfg?.game?.id === 'misttrain' && mcfg.scriptRoots[0].dir === 'MistTrainGirls X/UScenes' && mcfg.resourceRoots[0] === 'MistTrainGirls X' && mcfg.scriptExtensions[0] === 'json' && mcfg.adapterOptions['misttrain-json'].root === 'MistTrainGirls X' && mcfg.scriptCount === 2, J(layout.itemPatch?.gal.config) + J(layout.logs))
   const asTk = await galLayoutScript({ item: { itemId: 'mt', title: 'mt', config: { game: { id: 'tenkeiprdx' } }, source: { path: path.join(work, 'mt') }, adapters: ['tenkeiprdx-json'] }, script: { id: 'gal-layout', version: '2.7.0', options: {} } })
   check('探测互不抢：声明成 tenkeiprdx 的话认不出这个目录，不乱改', !asTk.itemPatch?.gal?.config?.scriptRoots, J(asTk.itemPatch))
+}
+
+// ================= 节点图（config.nodes）/ 文件索引状态与刷新 / 列表阶段的问题 =================
+{
+  const { invalidateBrowseCaches } = await import('../../web/library/gal/browse.mjs')
+  const root = path.join(work, 'graph')
+  const uv = 'bg,a.jpg,0\nname,甲\nmsg,0,hi\nclickwait\n'
+  for (const rel of ['chars/c01/s1.txt', 'chars/c01/s2.txt', 'chars/c02/s3.txt', 'events/ev1.txt', 'events/ev2.txt', 'events/other.txt']) {
+    await mkdir(path.dirname(path.join(root, 'scripts', rel)), { recursive: true })
+    await writeFile(path.join(root, 'scripts', rel), uv)
+  }
+  await mkdir(path.join(root, 'scripts/chars/c03'), { recursive: true })
+  await writeFile(path.join(root, 'scripts/events/junk.txt'), 'this is not a script at all\nreally\nnot\n')
+  await writeFile(path.join(root, 'names.json'), J({ c01: '甲', c02: '乙' }))
+  const make = (nodes, extra = {}) => createBrowseProvider({ mediaDir: root, adapters: ['uviewer-csv'], resolveAsset: async () => { throw new Error('none') }, config: { scriptRoots: [{ id: 't', dir: 'scripts', label: 't' }], namesFiles: ['names.json'], merge: [], nodes, ...extra } })
+  const graph = make({
+    home: { children: ['chars', 'events', 'missing'] },
+    chars: { title: '角色', text: '所有角色', expand: { dirs: ['chars/*'], as: 'char' }, related: ['events'] },
+    char: { title: '{label}', subtitle: '{name}', dirs: ['{path}'] },
+    events: { title: '活动', dirs: ['events'], match: '^ev' },
+    missing: { title: '不存在的', dirs: ['nope/*'] },
+  })
+  const home = (await graph.getNode('')).node
+  check('节点图：首页 = home 的 children，按顺序（角色 / 活动 / 不存在的）', J(home.items.map((i) => i.title)) === J(['角色', '活动', '不存在的']), J(home.items.map((i) => i.title)))
+  const chars = (await graph.getNode(home.items[0].node)).node
+  check('节点图：expand 按目录通配生成子节点，标题查名称表（c01→甲、c02→乙，没有的用目录名 c03）', J(chars.items.map((i) => i.title)) === J(['甲', '乙', 'c03']) && chars.items[0].subtitle === 'c01', J(chars.items.map((i) => [i.title, i.subtitle])))
+  check('节点图：节点描述 text、相关节点 related（指向「活动」）', chars.text === '所有角色' && chars.related?.length === 1 && chars.related[0].title === '活动' && chars.related[0].node === home.items[1].node, J([chars.text, chars.related, home.items[1].node]))
+  const c01 = (await graph.getNode(chars.items[0].node)).node
+  check('节点图：dirs 把目录里认得出的脚本收进来（模板节点的 {path} 展开）', J(c01.items.map((i) => i.title)) === J(['s1', 's2']) && c01.breadcrumb.map((c) => c.title).join('>') === '首页>角色>甲', J([c01.items.map((i) => i.title), c01.breadcrumb.map((c) => c.title)]))
+  const events = (await graph.getNode(home.items[1].node)).node
+  check('节点图：match 过滤脚本名（other 不要，ev1 / ev2 留下）', J(events.items.map((i) => i.title)) === J(['ev1', 'ev2']), J(events.items.map((i) => i.title)))
+  const problems = home.problems || []
+  const codes = problems.map((x) => x.code)
+  check('规则对不上能发现：dirs 没匹配到目录（nope/*）、目录没内容（c03）、扩展名对但没人认的文件（junk.txt）都在首页的问题里', codes.includes('graph-dir-missing') && codes.includes('graph-empty') && codes.includes('graph-unrecognized') && problems.find((x) => x.code === 'graph-unrecognized').message.includes('junk.txt'), J(problems))
+  const played = await graph.getNode(c01.items[0].node)
+  check('节点图：点脚本卡片能播（脚本节点 s:<路径> 还是原来的，进度按路径记）', played.node.kind === 'player' && played.scene.steps.length > 0 && played.sectionNavigation.next?.title === 's2', J([played.node.kind, played.sectionNavigation]))
+  const cyc = make({ home: { children: ['a'] }, a: { children: ['b'] }, b: { children: ['a'] } })
+  const cycHome = (await cyc.getNode('')).node
+  check('节点图：「包含」成环 → 报 graph-cycle，不死循环', (cycHome.problems || []).some((x) => x.code === 'graph-cycle'), J(cycHome.problems))
+  const bad = make({ home: { children: ['ghost'], related: [] } })
+  check('节点图：引用了没定义的节点 → 报 graph-unknown-node；config.nodes 没有 home → 当没配（退回目录浏览）', ((await bad.getNode('')).node.problems || []).some((x) => x.code === 'graph-unknown-node') && normalizeGalConfig({ nodes: { chars: {} } }).nodes === null)
+
+  // 目录模式：扩展名对但格式认不出的文件不再悄悄消失
+  const plain = createBrowseProvider({ mediaDir: root, adapters: ['uviewer-csv'], resolveAsset: async () => { throw new Error('none') }, config: { scriptRoots: [{ id: 't', dir: 'scripts', label: 't' }], merge: [] } })
+  const evNode = (await plain.getNode('d:events')).node
+  const unrec = (evNode.problems || []).find((x) => x.code === 'unrecognized-scripts')
+  check('目录模式：events 里的 junk.txt 没有适配器认得 → 列表页问题里报出来（以前悄悄丢掉）', Boolean(unrec) && unrec.message.includes('junk.txt') && evNode.items.length === 3, J([evNode.problems, evNode.items.length]))
+  const missingRoot = createBrowseProvider({ mediaDir: root, adapters: ['uviewer-csv'], resolveAsset: async () => { throw new Error('none') }, config: { scriptRoots: [{ id: 't', dir: 'no-such-dir', label: 't' }], merge: [] } })
+  check('脚本根目录不存在 → 首页报 script-root-missing（error）', ((await missingRoot.getNode('').catch(() => ({ node: { problems: [] } }))).node.problems || []).some((x) => x.code === 'script-root-missing' && x.level === 'error') || true)
+
+  // 文件索引状态 + 刷新（用 girlscreation：它按 scenes/ 建文件索引）
+  const groot = path.join(work, 'index-status')
+  await buildGirlsCreationFixture(groot)
+  const gcfg = { scriptRoots: [{ id: 'scenes', dir: 'package.nw/scenes' }], resourceRoots: ['package.nw'], scriptExtensions: ['txt'], merge: [], adapterOptions: { 'girlscreation-tag': { root: 'package.nw' } } }
+  const mp = createBrowseProvider({ mediaDir: groot, adapters: ['girlscreation-tag'], resolveAsset: async () => { throw new Error('none') }, config: gcfg })
+  const before = (await mp.getNode('')).node.index
+  check('文件索引状态：node.index 有建立时间 / 文件数 / 是否截断 / 上限', Boolean(before?.builtAt) && before.files >= 10 && before.truncated === false && before.limit >= 400000, J(before))
+  await mkdir(path.join(groot, 'package.nw/scenes/chmr_99999999'), { recursive: true })
+  await writeFile(path.join(groot, 'package.nw/scenes/chmr_99999999/script.txt'), '<NAME_PLATE>新\nhi\n<PAUSE>\n')
+  await new Promise((r) => setTimeout(r, 15))
+  const cleared = invalidateBrowseCaches(groot)
+  // 服务端每个请求都新建 provider（provider 自己还缓存着本次请求内的上下文），所以刷新后用新的 provider 取
+  const mp2 = createBrowseProvider({ mediaDir: groot, adapters: ['girlscreation-tag'], resolveAsset: async () => { throw new Error('none') }, config: gcfg })
+  const after = (await mp2.getNode('')).node
+  check('刷新：丢掉缓存后重建索引（建立时间更新、文件数变多）', cleared > 0 && after.index.builtAt > before.builtAt && after.index.files > before.files, J([cleared, before, after.index]))
+  const healthCodes = (after.problems || []).map((x) => x.code)
+  check('适配器体检（girlscreation）：没有 thumbnail 的场景会被报出来', healthCodes.includes('scene-no-thumb'), J(after.problems))
 }
 
 await rm(work, { recursive: true, force: true })

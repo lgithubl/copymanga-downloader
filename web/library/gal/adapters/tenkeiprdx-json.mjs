@@ -361,4 +361,12 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps, stats }
 }
 
-export const tenkeiprdxJsonAdapter = { id: ADAPTER_ID, label: 'Tenkeiprdx 剧情 JSON', sniff, parse, contextFiles, contextDirs, prepare, catalog }
+// 体检：没读到名称表（角色名 / 标题会缺）/ 剧情没有缩略图关联
+export function health(ctx) {
+  const out = []
+  if (!ctx.master.chars.size) out.push({ code: 'master-chars-missing', message: '没读到 Masterdata/masterdata_4.json：角色名显示 ???（检查 adapterOptions.root 是不是 Imported 目录）' })
+  if (!ctx.master.scenarios.length) out.push({ code: 'master-scenes-missing', message: '没读到 Masterdata/masterdata_32.json：剧情标题显示剧情 id' })
+  if (!ctx.scenes.size) out.push({ code: 'no-scenes', message: 'scenes/ 下没有剧情 JSON' })
+  return out
+}
+export const tenkeiprdxJsonAdapter = { id: ADAPTER_ID, health, label: 'Tenkeiprdx 剧情 JSON', sniff, parse, contextFiles, contextDirs, prepare, catalog }

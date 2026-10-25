@@ -4704,3 +4704,14 @@ h2 {
   --scrollbar-thumb: rgba(255, 255, 255, 0.35);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.6);
 }
+
+/* 列表页「更多」里的文件索引行 + 列表上方的错误提示 */
+.gal-index-row { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 8px; grid-template-columns: none; }
+.gal-index-text { color: var(--site-muted); flex: 1 1 14em; font-size: 12px; }
+.gal-browse-error { border-color: #d1242f; color: #d1242f; }
+.gal-browse.is-immersive .gal-browse-error { color: #ff8b8b; }
+
+/* 节点图：节点描述 + 相关节点 */
+.gal-browse-text { color: var(--site-muted); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.gal-browse-related { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 8px; }
+.gal-browse-related-link { background: var(--site-secondary); border: 0; border-radius: 6px; color: #fff; cursor: pointer; font-size: 13px; min-height: 26px; padding: 0 10px; }

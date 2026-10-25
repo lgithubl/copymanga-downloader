@@ -13,7 +13,7 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
-import { createBrowseProvider } from '../gal/browse.mjs'
+import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatch, cleanGalConfigRaw, normalizeGalConfig } from '../gal/config.mjs'
 import { shardedPath, walkShardedFiles, writeJsonAtomic } from '../meta-shard.mjs'
 import { parseTags } from '../tag-store.mjs'
@@ -256,6 +256,14 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     })
   }
 
+  // 手动刷新文件索引：丢掉这个条目的全部浏览缓存（适配器上下文 = 文件索引 + 名称表、嗅探、目录列表、脚本摘要），马上按磁盘现状重建首页，返回新的索引状态
+  async function refreshIndex(itemId) {
+    const item = await readItem(itemId)
+    const cleared = invalidateBrowseCaches(workDirOf(item))
+    const { node } = await providerOf(item).getNode('')
+    return { cleared, index: node.index || null, problems: node.problems || [] }
+  }
+
   // ---------- 阅读 ----------
 
   // sectionId = 浏览节点 id（见 gal/browse.mjs）：空 = 首页；播放页节点带规范场景，其余节点只有选项列表
@@ -421,6 +429,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     getItem,
     listUnits,
     getReaderContent,
+    refreshIndex,
     getResource,
     getThumbnail,
     getThumbnailFile,

@@ -20,7 +20,7 @@ const el = (tag, className = '', text = '') => {
 // 列表很长（100/1000 张卡片）时：筛选 / 排序 / 每页条数 / 翻页都是服务端按节点 id 里的视图参数做的（node.view / node.viewBase），这里只拼 id
 let refocusSearch = null   // 搜索框触发的重绘后，把焦点还给新的搜索框（重绘是整页换节点）
 let keepMenuOpen = null    // 在「更多」里改了搜索 / 排序 / 每页条数 → 重绘后把菜单重新打开（还要接着改别的）
-export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, thumbLoader = null }) {
+export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, thumbLoader = null, onRefreshIndex = null }) {
   const node = reader.node
   const root = el('div', 'gal-browse')
   root.dataset.node = node.id
@@ -249,6 +249,25 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   // 菜单里点别处（输入框、下拉框）不关；点菜单外面才关
   const onDocClick = (event) => { if (!more.contains(event.target)) closeMenu() }
   document.addEventListener('click', onDocClick)
+  // 文件索引（适配器要遍历资源目录建的索引）：什么时候建的、多少个文件、有没有被截断；「刷新」= 丢掉缓存按磁盘现状重建（新增 / 改名的文件马上能看到）
+  if (node.index) {
+    const row = el('div', 'gal-more-row gal-index-row')
+    const info = node.index
+    const when = info.builtAt ? new Date(info.builtAt).toLocaleString() : '未知'
+    const text = el('span', 'gal-index-text', `文件索引：${info.files} 个文件 · 建立于 ${when}${info.truncated ? ` · ⚠ 超过上限 ${info.limit} 已截断` : ''}`)
+    text.title = `适配器：${(info.adapters || []).join(' / ')} · 耗时 ${info.ms} ms`
+    const refresh = el('button', 'gal-btn gal-index-refresh', '刷新')
+    refresh.type = 'button'
+    refresh.title = '重新遍历资源目录、重新读名称表（改了文件 / 目录后点一下）'
+    refresh.hidden = !onRefreshIndex
+    refresh.addEventListener('click', async () => {
+      refresh.disabled = true
+      refresh.textContent = '刷新中…'
+      try { await onRefreshIndex() } catch (error) { refresh.textContent = '刷新失败'; refresh.title = String(error?.message || error); refresh.disabled = false }
+    })
+    row.append(text, refresh)
+    moreMenu.append(row)
+  }
   moreMenu.append(immBtn, fsBtn, diagBtn)
   more.append(moreBtn, moreMenu, diagPanel)
   const lockBtn = el('button', 'gal-btn gal-lock')
@@ -317,8 +336,27 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   // 一律卡片：目录卡片（头像/文件夹图标、中文标签、数量）和脚本卡片（缩略图、台词摘要）混排，右上角的小标签是来源（合并目录时用来分辨来自哪个目录）
   const body = el('div', 'gal-browse-body gal-browse-cards')
   if (node.notice) body.append(el('div', 'gal-browse-notice', node.notice))
+  // 节点图：节点的描述文字 + 「相关」节点（关联，不是父子；点了和进子节点一样往下走，返回上一级仍回到这里）
+  if (node.text) body.append(el('div', 'gal-browse-text', node.text))
+  if (node.related?.length) {
+    const related = el('div', 'gal-browse-related')
+    related.append(el('span', 'gal-more-label', '相关'))
+    for (const entry of node.related) {
+      const link = el('button', 'gal-btn gal-browse-related-link', entry.title)
+      link.type = 'button'
+      link.addEventListener('click', () => onOpen(entry.node, 'related'))
+      related.append(link)
+    }
+    body.append(related)
+  }
   if (!node.items.length) body.append(el('div', 'gal-browse-empty', '这里还没有内容'))
   if (node.notice) problems.push({ kind: '节点', title: node.title || node.id, node: node.id, lines: [node.notice] })
+  // 后端的列表阶段检查（索引被截断 / 脚本根不存在 / 没有适配器认得的文件 / 适配器没读到数据 / 适配器体检）：error 直接在列表上方标出来，全部进渲染诊断
+  const nodeProblems = Array.isArray(node.problems) ? node.problems : []
+  for (const item of nodeProblems) {
+    problems.push({ kind: '节点', title: `${item.level === 'error' ? '错误' : '提示'} · ${item.code}`, node: node.id, lines: [item.message] })
+    if (item.level === 'error') body.append(el('div', 'gal-browse-notice gal-browse-error', item.message))
+  }
   if (!node.items.length && !node.notice) problems.push({ kind: '节点', title: node.title || node.id, node: node.id, lines: ['列表是空的：目录里没有被适配器认出的脚本（检查脚本根 / 扩展名 / 隐藏目录 / 筛选条件）'] })
   for (const item of node.items) {
     const card = el('button', `gal-card ${item.type === 'dir' ? 'is-dir' : 'is-script'}`)

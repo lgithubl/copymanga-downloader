@@ -233,3 +233,36 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 
 - **Ctrl**（按住约 0.25 秒）：快进——连续翻页，动画 / 语音 / 音效都跳过；遇到选项暂停（选完接着快进），到最后一步或松开就停。Ctrl+其他键（查找 / 复制）不触发。
 - **Alt**（单按一下）：切换自动播放；Alt+其他键不触发。
+
+
+## 文件索引 / 列表阶段的问题 / 节点图（config.nodes）
+
+### 文件索引与刷新
+有 `prepare` 的适配器（tenkeiprdx / misttrain / girlscreation / monmusu …）要先遍历资源目录建一份文件索引（`gal/context.mjs`）。索引放在内存里：默认最多 40 万个文件（约 76MB），适配器可用 `contextWalkLimit` 调（封顶 200 万），超了会被截断并在界面上提示。
+缓存失效：文本文件按 mtime+size，目录自己和下一层子目录按 mtime，更深的最多缓存 5 分钟。列表页「更多」里有一行「文件索引：N 个文件 · 建立于 … 〔刷新〕」，点刷新 = `POST /api/library/items/gal/<id>/index-refresh`：丢掉这个条目的全部浏览缓存（上下文、嗅探结果、目录列表、脚本摘要、数量），按磁盘现状重建，然后重取当前节点。
+
+### 列表阶段的问题（node.problems）
+列表节点上带 `problems: [{ level, code, message }]`，进「渲染诊断」（error 级的还直接显示在列表上方）。都是便宜的检查，不解析脚本：
+索引被截断 `index-truncated` · 脚本根不存在 `script-root-missing` · 目录里扩展名对但没有适配器认得的文件 `unrecognized-scripts`（以前悄悄丢掉，规则对不上就永远发现不了）· 适配器没读到可用数据已退回目录浏览 `catalog-empty` ·
+适配器自己的体检 `health(ctx)`（girlscreation：没有脚本的场景目录 / 没有标题 / 没有封面 / 没有 data/audio；misttrain：没读到名称表 / 没有标题 / 没有 Spines 目录；tenkeiprdx：没读到名称表 / 没有剧情）· 节点图的 `graph-*`（见下）。
+缺什么资源、哪些指令没渲染仍然是打开脚本时才完整检查（播放页的渲染诊断）。
+
+### 节点图 config.nodes
+`config.nodes` 是从 `home` 开始的一张图；有它时首页和所有列表都由它给（优先于适配器 catalog 和真实目录），翻页 / 筛选 / 面包屑 / 上一话下一话沿用 catalog 那一套。节点之间有两种边：
+`children`（包含，浏览用的树，返回上一级沿着它）和 `related`（关联，只做「相关」跳转链接，不当父子；从相关节点点「上一级」回到来路）。
+
+```
+nodes: {
+  home:   { children: ['chars', 'events'] },
+  chars:  { title: '角色', text: '描述文字', expand: { dirs: ['chars/*'], as: 'char' }, related: ['events'] },
+  char:   { title: '{label}', subtitle: '{name}', dirs: ['{path}'] },        // 模板节点：{name} 目录名 · {path} 脚本根下的相对路径 · {label} 名称表里的显示名
+  events: { title: '活动', dirs: ['events', 'events2'], match: '^ev' },      // 多个目录合在一起；match 过滤脚本名
+}
+```
+字段：`title / subtitle / text / badge / thumb(模板) / children / related / dirs(目录通配，相对脚本根，* 只匹配一段) / match(脚本名正则) / expand { dirs, as, match }`。
+`dirs` = 把这些目录里认得出的脚本收进来；`expand` = 每个匹配的目录生成一个子节点（用 `as` 指的节点当模板）——新增角色目录不用改配置。
+规则对不上的地方记进 problems：`graph-dir-missing`（dirs 没匹配到目录）· `graph-glob-empty`（expand 没匹配到）· `graph-unrecognized`（目录里有文件没人认）· `graph-empty`（节点没内容）· `graph-cycle`（「包含」成环）· `graph-unknown-node` · `graph-related-missing` · `graph-too-deep`。
+没有 `home` 节点就当没配。要加新的节点类型 / 解析器时才需要改代码，平常改配置就是多写几个目录。
+
+### Girls Creation 行式脚本
+`scenes/<id>/hmr_<id>.txt` / `hsr_<id>.txt`（逗号分隔、一行一条命令）和标签式 `script.txt` 是同一个游戏的两种写法，适配器按内容分发（`adapters/girlscreation-line.mjs`）；一个场景目录里优先级 `script.txt` > `output_script.txt` > 行式脚本。

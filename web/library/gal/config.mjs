@@ -45,6 +45,12 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 脚本索引（给脚本配缩略图 + 来源角标）：[{ dir, pattern, key, badge }]。dir（相对媒体目录）里的文件名匹配 pattern 时，按 key 模板（{1}{2}… = 捕获组）
   // 算出它对应哪个脚本（脚本文件名，无扩展名），这个文件就是那个脚本的缩略图；badge 是卡片右上角的标记（比如 event / extra）
   scriptIndex: [],
+  // 节点图（可选）：首页（id = home）开始的一张图，节点之间是「包含」（children，浏览用的树）和「关联」（related，只做跳转链接，不当父子）。
+  // 节点：{ title, subtitle, text, badge, thumb, children: [节点 id], related: [节点 id], dirs: [目录通配（相对脚本根）], match: 脚本名正则,
+  //        expand: { dirs: [目录通配], as: 模板节点 id, match } }。title / subtitle / thumb / dirs 里可以用 {name} {path} {label}（expand 出来的目录）。
+  // dirs = 把这些目录里认得出的脚本收进来；expand = 每个匹配的目录生成一个子节点（用 as 指的节点当模板）。有它的话首页和所有列表都由它给，
+  // 目录对不上 / 没匹配到 / 有文件没人认的地方，列表页的「渲染诊断」里都会报。null = 不用节点图（走适配器 catalog 或真实目录）
+  nodes: null,
   cover: '',          // 封面：相对资源根的路径；~/ 开头 = 相对媒体目录（只给封面用）
   // 允许忽略的未渲染指令（正则字符串列表，不分大小写）：播放器里「N 条指令暂未渲染」的统计会跳过匹配的指令。
   // 匹配对象是指令名（如 spriteatlas）和「指令名,参数1,参数2…」（如 anm,foo,bar），任一匹配就算「我允许了」
@@ -82,6 +88,30 @@ const safeGlob = (value) => {
 export const parentRegExp = (parent) => (parent === '.' ? /^$/ : globToRegExp(parent))
 const safeName = (value) => (typeof value === 'string' && /^[^/\\\0|#]{1,100}$/.test(value) && value !== '.' && value !== '..' ? value : '')
 
+// 节点图（config.nodes）：{ <节点 id>: spec }。非法的节点 / 字段丢掉；没有 home 就当没配
+const NODE_ID = /^[\w.-]{1,40}$/
+const nodeText = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '')
+const regexOrEmpty = (value) => { const t = nodeText(value, 200); if (!t) return ''; try { new RegExp(t); return t } catch { return '' } }
+const idList = (value, max) => (Array.isArray(value) ? value : []).filter((id) => typeof id === 'string' && NODE_ID.test(id)).slice(0, max)
+const globList = (value) => (Array.isArray(value) ? value : []).map((g) => (g === '.' ? '.' : safeGlob(typeof g === 'string' ? g.replace(/\{(\w+)\}/g, '$1') : ''))).filter(Boolean).slice(0, 20)
+export function normalizeNodes(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out = {}
+  for (const [id, spec] of Object.entries(raw).slice(0, 500)) {
+    if (!NODE_ID.test(id) || !spec || typeof spec !== 'object' || Array.isArray(spec)) continue
+    const expand = spec.expand && typeof spec.expand === 'object' && Array.isArray(spec.expand.dirs) && typeof spec.expand.as === 'string' && NODE_ID.test(spec.expand.as)
+      ? { dirs: globList(spec.expand.dirs), as: spec.expand.as, match: regexOrEmpty(spec.expand.match) } : null
+    out[id] = {
+      title: nodeText(spec.title, 100), subtitle: nodeText(spec.subtitle, 100), text: nodeText(spec.text, 500), badge: nodeText(spec.badge, 12), thumb: nodeText(spec.thumb, 300),
+      children: idList(spec.children, 500), related: idList(spec.related, 50),
+      // dirs 允许 {name} {path} 占位符（模板节点用），所以这里只做长度 / 条数限制，展开后才过 safeRelPath
+      dirs: (Array.isArray(spec.dirs) ? spec.dirs : []).map((d) => nodeText(d, 200).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter((d) => d && !d.split('/').some((part) => part === '..')).slice(0, 20),
+      match: regexOrEmpty(spec.match), expand,
+    }
+  }
+  return out.home ? out : null
+}
+
 // raw（元数据里存的）→ 规整后的完整 config（缺的字段用默认；非法的丢掉或退回默认）。没有 raw 的字段取默认值，不是「空」
 export function normalizeGalConfig(raw) {
   const v = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
@@ -117,6 +147,8 @@ export function normalizeGalConfig(raw) {
     if (views.some((x) => x.parent === parent && x.as === as)) continue
     views.push({ parent, as, label: text(rule?.label, 40), dirs, match, exclusive: Boolean(rule?.exclusive), badges })
   }
+
+  const nodes = normalizeNodes(v.nodes)
 
   const merge = []
   for (const rule of Array.isArray(v.merge) ? v.merge.slice(0, MAX_LIST) : []) {
@@ -205,6 +237,7 @@ export function normalizeGalConfig(raw) {
     game,
     adapterOptions,
     rawIgnore: v.rawIgnore === undefined ? [] : rawIgnore,
+    nodes,
     cover: coverRel === null ? '' : cover,
     scriptCount: Math.max(0, Math.floor(Number(v.scriptCount)) || 0),
     script: script && (script.id || script.version) ? script : null,

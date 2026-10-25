@@ -325,4 +325,16 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps, stats }
 }
 
-export const misttrainJsonAdapter = { id: ADAPTER_ID, label: 'MistTrainGirls X 剧情 JSON', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }
+// 体检：没有标题的剧情（卡片显示文件名）/ 没有 Spines 目录的剧情（按文件名当场景 id 查）/ 没读到名称表
+export function health(ctx) {
+  const out = []
+  const sample = (list) => `${list.slice(0, 5).join('、')}${list.length > 5 ? ' 等' : ''}`
+  if (!ctx.master.titles.size) out.push({ code: 'master-missing', message: '没读到 MasterData/MSceneViewModel.json：剧情标题都显示文件名（检查 adapterOptions.root）' })
+  if (!ctx.master.bases.size) out.push({ code: 'master-chars-missing', message: '没读到 MasterData/MCharacterBaseViewModel.json：角色名都显示「角色 <底号>」' })
+  const untitled = [...ctx.scenes.keys()].filter((stem) => !titleOf(ctx.master, stem))
+  if (ctx.master.titles.size && untitled.length) out.push({ code: 'scene-no-title', message: `${untitled.length} 个剧情在 MSceneViewModel 里查不到标题（卡片显示文件名）：${sample(untitled)}` })
+  const noSpine = [...ctx.scenes.keys()].filter((stem) => !ctx.folders.has(stem))
+  if (noSpine.length) out.push({ code: 'scene-no-spine', message: `${noSpine.length} 个剧情在 Spines/ 下没有以文件名命名的目录（没有静态画面，或场景 id 和文件名不一致）：${sample(noSpine)}` })
+  return out
+}
+export const misttrainJsonAdapter = { id: ADAPTER_ID, health, label: 'MistTrainGirls X 剧情 JSON', sniff, parse, contextFiles, contextDirs, contextTextFilter, prepare, catalog }

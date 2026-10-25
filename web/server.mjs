@@ -5327,6 +5327,10 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       const handler = libraryHandler(type)
       if (!itemId) return json(res, 400, { error: 'itemId is required' })
       if (action === 'progress') return json(res, 200, await handler.saveProgress(itemId, await readJson(req)))
+      if (action === 'index-refresh') {
+        if (!handler.refreshIndex) return json(res, 400, { error: 'This library type has no file index' })
+        return json(res, 200, await handler.refreshIndex(itemId))
+      }
       if (action === 'history') {
         const body = await readJson(req)
         return json(res, 200, await recordLibraryHistory(type, itemId, body, { flush: Boolean(body.flush) }))

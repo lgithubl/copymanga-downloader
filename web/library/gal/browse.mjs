@@ -27,8 +27,9 @@ import { createHash } from 'node:crypto'
 import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { galAdapter, galAdapterIds, sniffGalAdapter } from './adapters/index.mjs'
-import { expandTemplate, normalizeGalConfig, parentRegExp } from './config.mjs'
-import { loadAdapterContext } from './context.mjs'
+import { expandTemplate, globToRegExp, normalizeGalConfig, parentRegExp } from './config.mjs'
+import { buildGraphCatalog } from './graph.mjs'
+import { contextStats, invalidateContexts, loadAdapterContext } from './context.mjs'
 import { safeRelPath } from './paths.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
@@ -45,6 +46,14 @@ const sniffCache = new Map()
 const entriesCache = new Map()
 const scriptInfoCache = new Map()
 const countCache = new Map()
+// 手动刷新（界面「更多 → 刷新索引」）：丢掉这个媒体目录的全部缓存——适配器上下文（文件索引 + 名称表）、嗅探结果、目录列表、脚本摘要、数量
+export function invalidateBrowseCaches(mediaDir) {
+  let n = invalidateContexts(mediaDir)
+  for (const map of [sniffCache, entriesCache, scriptInfoCache, countCache]) {
+    for (const key of [...map.keys()]) if (String(key).startsWith(`${mediaDir}${path.sep}`) || String(key).startsWith(`${mediaDir}|`)) { map.delete(key); n += 1 }
+  }
+  return n
+}
 function cacheGet(map, key, ttl = 0) {
   const hit = map.get(key)
   if (hit === undefined) return undefined
@@ -291,10 +300,58 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 有它时首页和列表都由它给；脚本卡片点进去还是 s:<路径>（进度按路径记，和从哪个列表进来无关）。每次请求现取（上下文按文件变化失效），数据文件更新了列表跟着变。
   const catalogAdapter = (adapters || []).map((id) => { try { return galAdapter(id) } catch { return null } }).find((a) => typeof a?.catalog === 'function')
   let catalogCache
+  let graphProblems = []
+  // 节点图要用的几个能力：目录通配展开 / 列目录里的脚本（含「扩展名对但没人认」的文件）/ 名称 / 缩略图
+  const graphHelpers = () => ({
+    async expandGlob(glob) {
+      const segments = glob === '.' || glob === '' ? [] : glob.split('/')
+      let current = ['']
+      let exists = true
+      for (const segment of segments) {
+        const next = []
+        for (const dir of current) {
+          if (segment.includes('*')) {
+            const got = await readEntries(defaultSet, dir)
+            if (!got) { exists = false; continue }
+            const re = globToRegExp(segment)
+            for (const entry of got.dirs) if (re.test(entry.name)) next.push(entry.rel)
+          } else {
+            const rel = dir ? `${dir}/${segment}` : segment
+            const info = await stat(absOf(defaultSet, rel)).catch(() => null)
+            if (info?.isDirectory()) next.push(rel)
+            else if (!dir || current.length === 1) exists = Boolean(info) || exists
+          }
+        }
+        current = next
+      }
+      return { dirs: [...new Set(current)].sort(naturalCompare), exists: exists || segments.length === 0 }
+    },
+    async listScripts(rel) {
+      const got = await readEntries(defaultSet, safeRelPath(rel) ?? '')
+      if (!got) return { scripts: [], rejected: [], exists: false }
+      return { scripts: got.scripts.map((script) => ({ rel: script.rel, stem: script.stem })), rejected: got.rejected, exists: true }
+    },
+    labelOf,
+    async thumbOf(template, vars) {
+      const candidate = expandTemplate(template, vars)
+      if (!candidate) return ''
+      try { await resolveAsset(candidate); return candidate } catch { return '' }
+    },
+    async scriptThumb(stem) {
+      for (const template of config.scriptThumbs) {
+        const paths = template.includes('{thumbsDir}') ? config.thumbsDirs.map((thumbsDir) => expandTemplate(template, { stem, thumbsDir })) : [expandTemplate(template, { stem })]
+        for (const candidate of paths) {
+          if (!candidate) continue
+          try { await resolveAsset(candidate); return candidate } catch { /* 下一个 */ }
+        }
+      }
+      return ''
+    },
+  })
   async function getCatalog() {
     if (catalogCache !== undefined) return catalogCache
     catalogCache = null
-    const ctx = catalogAdapter ? await contextOf(catalogAdapter.id) : null
+    const ctx = catalogAdapter && !config.nodes ? await contextOf(catalogAdapter.id) : null
     // 适配器给的脚本路径是相对媒体目录的；节点 id 里的路径相对脚本根（和目录浏览一致），不在脚本根下的丢掉
     const prefix = defaultSet.dir ? `${defaultSet.dir}/` : ''
     const localize = (node) => ({
@@ -302,7 +359,14 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       ...(node.children ? { children: node.children.map(localize).filter((c) => c.children || c.script) } : {}),
       ...(node.script !== undefined ? { script: node.script.startsWith(prefix) ? node.script.slice(prefix.length) : '' } : {}),
     })
-    const raw = ctx ? catalogAdapter.catalog(ctx) : null
+    let raw = null
+    graphProblems = []
+    if (config.nodes) {
+      // 节点图（config.nodes）优先于适配器的 catalog：首页和所有列表都由它给
+      const built = await buildGraphCatalog({ nodes: config.nodes, prefix, ...graphHelpers() })
+      raw = built.tree
+      graphProblems = built.problems
+    } else raw = ctx ? catalogAdapter.catalog(ctx) : null
     const tree = raw ? localize(raw) : null
     if (tree?.children?.length) {
       const byId = new Map()
@@ -360,6 +424,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         pageCount: paged.pageCount,
         total: paged.total,
         items: paged.slice.map(catalogItem),
+        ...(holder.text ? { text: holder.text } : {}),
+        ...(holder.related?.length ? { related: holder.related.map((rel) => ({ title: rel.title, node: virtualNodeId(rel.id, 1) })) } : {}),
         ...viewInfo(view, paged, id ? virtualNodeId(id, 1) : ''),
       },
     }
@@ -414,10 +480,12 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       }
       const sniffed = await mapLimit(files, IO_CONCURRENCY, async (file) => ((await scriptAdapterOf(absOf(set, file.rel))) ? file : null))
       const scripts = sniffed.filter(Boolean).map((file) => ({ type: 'script', name: file.name, stem: stemOf(file.name), rel: file.rel }))
-      base = { dirs, scripts }
+      // 扩展名对、但没有适配器认得的文件：以前悄悄丢掉，规则对不上就永远发现不了；现在记下来，列表页的诊断里报
+      const rejected = sniffed.map((file, i) => (file ? null : files[i].rel)).filter(Boolean)
+      base = { dirs, scripts, rejected }
       cacheSet(entriesCache, cacheKey, base, 3000)
     }
-    return { dirs: base.dirs.map((entry) => ({ ...entry, origin })), scripts: base.scripts.map((entry) => ({ ...entry, origin })) }
+    return { dirs: base.dirs.map((entry) => ({ ...entry, origin })), scripts: base.scripts.map((entry) => ({ ...entry, origin })), rejected: base.rejected || [] }
   }
 
   // 一个目录里的内容：目录在前、脚本在后，自然序（合并目录时，几个来源的内容混在一起排）。
@@ -425,15 +493,17 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   async function listDir(set, rel) {
     const view = viewAt(rel)
     let own
+    const rejected = []
     if (view) {
       own = { dirs: [], scripts: [] }
       for (const sourceName of view.dirs.length ? view.dirs : ['']) {
         const sourceRel = [view.parent, sourceName].filter(Boolean).join('/')
         const got = await readEntries(set, sourceRel, view.dirs.length ? (view.badges[sourceName] || sourceName) : '')
-        if (got) own.scripts = own.scripts.concat(got.scripts.filter((script) => viewTakes(view, script.stem)))
+        if (got) { own.scripts = own.scripts.concat(got.scripts.filter((script) => viewTakes(view, script.stem))); rejected.push(...got.rejected) }
       }
     } else {
       own = await readEntries(set, rel)
+      if (own) rejected.push(...own.rejected)
     }
     if (!own) throw fail('目录不存在', 404)
     const rule = view ? null : mergeRuleAt(rel)
@@ -451,6 +521,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         const sourceRel = rel ? `${rel}/${sourceName}` : sourceName
         const got = await readEntries(set, sourceRel, rule.badges[sourceName] || sourceName)
         if (!got) continue
+        rejected.push(...got.rejected)
         dirs = dirs.concat(got.dirs)
         scripts = scripts.concat(got.scripts)
       }
@@ -473,7 +544,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       for (const [key, members] of byKey) groups.push({ type: 'group', name: key, key, rel: `g:${key}`, members })
       groups.sort((a, b) => naturalCompare(a.key, b.key))
     }
-    return { dirs, groups, scripts: rest, allScripts: scripts, all: [...dirs, ...groups, ...rest] }
+    return { dirs, groups, scripts: rest, allScripts: scripts, all: [...dirs, ...groups, ...rest], rejected }
   }
 
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
@@ -617,7 +688,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const setChoices = (active) => (sets.length > 1 ? sets.map((s) => ({ id: s.id, label: s.label || s.id || '默认', node: dirNodeId(s, '', 1), active: s === active })) : [])
 
   // ---------- 取节点 ----------
-  async function getNode(nodeId) {
+  async function getNodeInner(nodeId) {
     const { set, kind, rel, page, view, key: nodeKey = '' } = parseNodeId(nodeId)
     const catalog = set === defaultSet ? await getCatalog() : null
     if (kind === 'virtual') {
@@ -719,6 +790,62 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       scene,
       sectionNavigation: { prev: at > 0 ? neighbour(scripts[at - 1]) : null, next: at >= 0 && at < scripts.length - 1 ? neighbour(scripts[at + 1]) : null },
     }
+  }
+
+  // 文件索引的状态（适配器上下文的建立时间 / 文件数 / 是否被截断）：给界面「更多」里的索引信息和刷新按钮用
+  function indexStatus() {
+    const stats = contextStats(mediaDir)
+    if (!stats.length) return null
+    return {
+      builtAt: stats.map((x) => x.builtAt).sort().at(-1),
+      files: stats.reduce((n, x) => n + x.files, 0),
+      truncated: stats.some((x) => x.truncated),
+      limit: Math.max(...stats.map((x) => x.limit)),
+      ms: stats.reduce((n, x) => n + x.ms, 0),
+      adapters: stats.map((x) => x.adapter),
+    }
+  }
+
+  // 列表阶段的问题（便宜的检查，不解析脚本）：索引被截断 / 脚本根不存在 / 扩展名对但没有适配器认得的文件 / 适配器没读到数据 / 适配器自己的体检（health）。
+  // 规则和目录结构对不上的时候，这里能直接看到，不会「列表是空的却不知道为什么」
+  async function problemsOf(parsed, result) {
+    const problems = []
+    const add = (level, code, message) => problems.push({ level, code, message })
+    const status = indexStatus()
+    if (status?.truncated) add('warn', 'index-truncated', `文件索引超过上限 ${status.limit} 个被截断，部分场景 / 资源会找不到（现有 ${status.files} 个）`)
+    const home = parsed.kind === 'dir' && !parsed.rel
+    if (home) {
+      for (const set of sets) {
+        const info = await stat(absOf(set, '')).catch(() => null)
+        if (!info?.isDirectory()) add('error', 'script-root-missing', `脚本根目录不存在：${set.dir || '（媒体目录本身）'}（检查 config.scriptRoots）`)
+      }
+      if (config.nodes) { await getCatalog(); for (const entry of graphProblems) problems.push(entry) }
+      if (catalogAdapter && !config.nodes) {
+        const catalog = await getCatalog()
+        if (!catalog) add('warn', 'catalog-empty', `适配器 ${catalogAdapter.id} 没有读到可用的数据（场景 / 名称表），已退回按目录浏览——检查目录结构和 adapterOptions.root`)
+        else {
+          const ctx = await contextOf(catalogAdapter.id)
+          if (typeof catalogAdapter.health === 'function' && ctx) for (const entry of catalogAdapter.health(ctx) || []) add(entry.level || 'warn', entry.code || 'adapter', entry.message)
+        }
+      }
+    }
+    if (parsed.kind === 'dir' && !(parsed.set === defaultSet && result.node.kind === 'cards' && (config.nodes || catalogAdapter) && (await getCatalog()))) {
+      const listed = await listDir(parsed.set, parsed.rel).catch(() => null)
+      if (listed?.rejected?.length) add('warn', 'unrecognized-scripts', `${listed.rejected.length} 个扩展名对的文件没有适配器认得（格式不符），没有显示：${listed.rejected.slice(0, 5).map(baseName).join('、')}${listed.rejected.length > 5 ? ' 等' : ''}（适配器：${(adapters || []).join(' / ') || '未配置'}）`)
+    }
+    return problems
+  }
+
+  async function getNode(nodeId) {
+    const parsed = parseNodeId(nodeId)
+    const result = await getNodeInner(nodeId)
+    if (result?.node && result.node.kind !== 'player') {
+      const status = indexStatus()
+      if (status) result.node.index = status
+      const problems = await problemsOf(parsed, result).catch(() => [])
+      if (problems.length) result.node.problems = problems
+    }
+    return result
   }
 
   return { config, getNode, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, groupNodeId, virtualNodeId, effectiveParentDir } }

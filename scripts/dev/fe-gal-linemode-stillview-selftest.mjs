@@ -64,6 +64,29 @@ const ttOut = await layoutScript({ item: ttImp.items[0], script: { id: 'gal-layo
 await tt.patchItemMetadata(ttImp.items[0].itemId, { gal: ttOut.itemPatch.gal })
 const ttId = ttImp.items[0].itemId
 
+
+// ---- 素材 3：节点图（config.nodes），UViewer 风格脚本 ----
+const ngMedia = path.join(dataDir, 'gal', 'node-graph')
+const uvText = 'bg,a.jpg,0\nname,甲\nmsg,0,hi\nclickwait\n'
+for (const rel of ['chars/c01/s1.txt', 'chars/c01/s2.txt', 'chars/c02/s3.txt', 'events/ev1.txt', 'events/ev2.txt', 'events/other.txt']) {
+  await mkdir(path.dirname(path.join(ngMedia, 'scripts', rel)), { recursive: true })
+  await writeFile(path.join(ngMedia, 'scripts', rel), uvText)
+}
+await writeFile(path.join(ngMedia, 'scripts/events/junk.txt'), 'this is not a script at all\nreally\nnot\n')
+await writeFile(path.join(ngMedia, 'names.json'), JSON.stringify({ c01: '甲', c02: '乙' }))
+const ng = importer(ngMedia)
+const ngImp = await ng.importFromSource({ sourcePath: ngMedia, options: { adapters: ['uviewer-csv'], config: {
+  scriptRoots: [{ id: 't', dir: 'scripts', label: 't' }], namesFiles: ['names.json'], merge: [], resourceRoots: [],
+  nodes: {
+    home: { children: ['chars', 'events', 'missing'] },
+    chars: { title: '角色', text: '所有角色', expand: { dirs: ['chars/*'], as: 'char' }, related: ['events'] },
+    char: { title: '{label}', subtitle: '{name}', dirs: ['{path}'] },
+    events: { title: '活动', dirs: ['events'], match: '^ev' },
+    missing: { title: '不存在的', dirs: ['nope/*'] },
+  },
+} } })
+const ngId = ngImp.items[0].itemId
+
 const port = 8131
 const base = `http://127.0.0.1:${port}`
 try { await fetch(`${base}/health`); console.error(`端口 ${port} 已被占用`); process.exit(2) } catch {}
@@ -184,6 +207,53 @@ try {
     const bottomRight = await alphaAt(page, 0.7, 0.7)
     check('放大 2、中心 0,0：舞台左上（画面外）是空的、右下有画面', topLeft < 20 && bottomRight > 200, J([topLeft, bottomRight]))
     await page.screenshot({ path: path.join(shotDir, 'still-center-topleft.png') })
+    check('没有页面错误', page.errors.length === 0, J(page.errors))
+    await page.context().close()
+  }
+
+  // ===== (3) 文件索引行 + 刷新、节点图（相关链接）、列表阶段的问题 =====
+  {
+    // girlscreation 列表：「更多」里有文件索引信息 + 刷新；新增场景后点刷新才出现
+    const page = await newPage()
+    await page.goto(`${base}/#/media/gal/${gcId}/main`)
+    await page.waitForFunction(() => /chmr/.test(document.body.innerText))
+    await page.click('.gal-browse-more-btn')
+    const infoText = await page.$eval('.gal-index-text', (e) => e.textContent)
+    check('「更多」里有文件索引：个数 + 建立时间 + 刷新按钮', /文件索引：\d+ 个文件 · 建立于/.test(infoText) && Boolean(await page.$('.gal-index-refresh')), infoText)
+    await mkdir(path.join(scene, '..', 'chmr_2'), { recursive: true })
+    await writeFile(path.join(scene, '..', 'chmr_2', 'hmr_2.txt'), ['title,新场景,', 'message,乙,「新的」,iab4020078'].join('\n'))
+    await page.click('.gal-index-refresh')
+    await page.waitForFunction(() => /2 个剧情 · 2 位/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {})
+    const after = await page.evaluate(() => document.body.innerText)
+    check('点「刷新」后新增的场景出现在列表里（chmr 分类 2 个剧情 · 2 位）', /2 个剧情 · 2 位/.test(after), J(after.split('\n').filter(Boolean).slice(8, 40)))
+    check('没有页面错误', page.errors.length === 0, J(page.errors))
+    await page.context().close()
+  }
+  {
+    // 节点图：config.nodes（首页 → 角色 / 活动，角色 related 活动）
+    const page = await newPage()
+    await page.goto(`${base}/#/media/gal/${ngId}/main`)
+    await page.waitForFunction(() => /角色/.test(document.body.innerText))
+    const homeText = await page.evaluate(() => document.body.innerText)
+    check('节点图：首页按 children 顺序列出「角色」「活动」', /角色/.test(homeText) && /活动/.test(homeText))
+    check('节点图：首页的问题里有「没有匹配到任何目录」的错误提示（nope/*）', await page.evaluate(() => (document.querySelector('.gal-browse-diag-btn')?.textContent || '') !== '' ), '')
+    await page.getByText('角色', { exact: true }).first().click()
+    await page.waitForSelector('.gal-browse-related')
+    check('节点图：节点有描述文字和「相关」链接（角色 → 活动）', (await page.$eval('.gal-browse-text', (e) => e.textContent)) === '所有角色' && (await page.$eval('.gal-browse-related-link', (e) => e.textContent)) === '活动')
+    await page.click('.gal-browse-related-link')
+    await page.waitForFunction(() => /ev1/.test(document.body.innerText))
+    check('点相关链接进入「活动」节点（ev1 / ev2；other 被 match 过滤）', /ev2/.test(await page.evaluate(() => document.body.innerText)) && !/other/.test(await page.evaluate(() => document.body.innerText)))
+    await page.click('.gal-browse-up')
+    await page.waitForSelector('.gal-browse-related')
+    check('返回上一级回到「角色」（沿着走过的路）', /甲/.test(await page.evaluate(() => document.body.innerText)))
+    // 渲染诊断里能看到规则对不上的问题
+    await page.goto(`${base}/#/media/gal/${ngId}/main`)
+    await page.waitForSelector('.gal-browse-more-btn')
+    await page.click('.gal-browse-more-btn')
+    await page.click('.gal-browse-diag-btn')
+    await page.waitForFunction(() => /graph-/.test(document.querySelector('.gal-browse-diag-text')?.textContent || ''))
+    const diag = await page.$eval('.gal-browse-diag-text', (e) => e.textContent)
+    check('渲染诊断：列出 graph-dir-missing（nope/*）和 graph-unrecognized（junk.txt）', /graph-dir-missing/.test(diag) && /junk\.txt/.test(diag), diag.slice(0, 500))
     check('没有页面错误', page.errors.length === 0, J(page.errors))
     await page.context().close()
   }
