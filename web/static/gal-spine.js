@@ -302,23 +302,30 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       }
       try {
         const imageOf = (page) => images.get(page) || images.get(page.split('/').pop())
-        if (detected.runtime === '3.8') {
-          const declared = declaredPageSizes(atlasText)
-          atlas = new spine.TextureAtlas(atlasText, (page) => reportDeclaredSize(new ns.GLTexture(backend.gl, imageOf(page)), declared.get(page)))
-        } else {
-          for (const page of atlas.pages) page.setTexture(new ns.GLTexture(backend.context, imageOf(page.name)))
-        }
+        // 预乘：图集标记（4.1+ 才有 pma 行）或像素统计认出已经预乘的，原样上传；直通 alpha 的贴图（透明处还带着颜色）让浏览器上传时预乘一次。
+        // 之后一律按预乘方式画——Screen / Multiply 这类混合直接用 RGB 不看 alpha，直通贴图透明处的颜色会被加上去（整幅白块 / 紫色罩子 / 脸上一块白），预乘之后透明处是 0，不再有这个问题
+        const atlasPma = Boolean(atlas?.pages?.some?.((page) => page.pma))
+        const detectedPma = [...images.values()].some(detectPremultiplied)
+        const premultiplyOnUpload = !atlasPma && !detectedPma
+        const gl = backend.gl
+        if (premultiplyOnUpload) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
+        try {
+          if (detected.runtime === '3.8') {
+            const declared = declaredPageSizes(atlasText)
+            atlas = new spine.TextureAtlas(atlasText, (page) => reportDeclaredSize(new ns.GLTexture(backend.gl, imageOf(page)), declared.get(page)))
+          } else {
+            for (const page of atlas.pages) page.setTexture(new ns.GLTexture(backend.context, imageOf(page.name)))
+          }
+        } finally { if (premultiplyOnUpload) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false) }
         const loader = new spine.AtlasAttachmentLoader(atlas)
         const data = detected.format === 'json'
           ? new spine.SkeletonJson(loader).readSkeletonData(JSON.parse(new TextDecoder().decode(u8)))
           : new spine.SkeletonBinary(loader).readSkeletonData(u8)
         // 预乘 alpha：图集里写了 pma（4.x）或者像素统计认出来就按预乘画。两个来源分开记，渲染诊断里能看到（白块 / 发黑多半是这里猜错了）
-        const atlasPma = Boolean(atlas.pages?.some?.((page) => page.pma))
-        const detectedPma = [...images.values()].some(detectPremultiplied)
         // 混合模式：非 normal 的槽数（additive / multiply / screen）和 clipping 附件数——白块、发黑常常是这几类槽
         const blends = { additive: 0, multiply: 0, screen: 0 }
         for (const slot of data.slots || []) { const mode = slot.blendMode; if (mode === 1) blends.additive += 1; else if (mode === 2) blends.multiply += 1; else if (mode === 3) blends.screen += 1 }
-        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: atlasPma || detectedPma, pmaInfo: { atlas: atlasPma, detected: detectedPma }, blends }
+        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: true, pmaInfo: { atlas: atlasPma, detected: detectedPma, premultipliedOnUpload: premultiplyOnUpload }, blends }
       } catch (error) {
         return fail({ kind: 'parse', message: `骨骼解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` })
       }

@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { generateTags as layoutScript } from '../tag-scripts/gal-layout/main.js'
 import { GC_ANIMATIONS } from './make-girlscreation-fixture.mjs'
+import { execFileSync } from 'node:child_process'
 import { buildTenkeiFixture, writeSpine } from './make-spine-fixture.mjs'
 
 const require = createRequire(import.meta.url)
@@ -62,12 +63,26 @@ await rename(path.join(layered, 'spines/st3.skel.bytes'), path.join(layered, 'sp
 await rename(path.join(layered, 'spines/st3.atlas.txt'), path.join(layered, 'spines/st3.atlas'))
 // 第一步：出场时初始动画是不存在的预设名「通常」（SPINE_ACTOR 第 4 项）、还没有任何 SPINE_ACTOR_PLAY；第二步：PLAY 另一个不存在的预设名「照れ」
 await writeFile(path.join(layered, 'script.txt'), ['<SPINE_ACTOR>1,st3,,通常,,0,0,x=0|y=0,1,skel', '<NAME_PLATE>丙', '一', '<PAUSE>', '<SPINE_ACTOR_PLAY>1,照れ,0,true', '<NAME_PLATE>丙', '二', '<PAUSE>', '<SPINE_ACTOR_PLAY>1,驚き,0,true', '<NAME_PLATE>丙', '三', '<PAUSE>', ''].join('\n'))
+// Screen 混合的槽 + 「完全透明但带白色 RGB」的贴图（直通 alpha 的特效层，像 chara_0125 的 Eff）：按预乘画时透明处必须还是透明，不能被加成白块
+const fx = path.join(pk, 'scenes', 'chmr_5')
+await mkdir(path.join(fx, 'spines'), { recursive: true })
+await writeSpine(path.join(fx, 'spines'), 'st4', { format: 'json', color: 'red', animations: ['Wait'] })
+{
+  const file = path.join(fx, 'spines/st4.skel.bytes')
+  const json = JSON.parse(await readFile(file, 'utf8'))
+  json.slots[0].blend = 'screen'
+  await writeFile(file, JSON.stringify(json))
+  execFileSync('convert', ['-size', '64x128', 'xc:rgba(255,255,255,0)', path.join(fx, 'spines/st4.png')])
+  await rename(file, path.join(fx, 'spines/st4.json'))
+  await rename(path.join(fx, 'spines/st4.atlas.txt'), path.join(fx, 'spines/st4.atlas'))
+}
+await writeFile(path.join(fx, 'script.txt'), ['<SPINE_ACTOR>1,st4,,Wait,,0,0,x=0|y=0,1,skel', '<NAME_PLATE>丁', 'hi', '<PAUSE>', ''].join('\n'))
 const gc = importer(gcMedia)
 const gcImp = await gc.importFromSource({ sourcePath: gcMedia, options: { adapters: ['girlscreation-tag'], config: { game: { id: 'girlscreation' } } } })
 const gcOut = await layoutScript({ item: gcImp.items[0], script: { id: 'gal-layout', version: '2.7.0', options: {} } })
 await gc.patchItemMetadata(gcImp.items[0].itemId, { gal: gcOut.itemPatch.gal })
 const gcId = gcImp.items[0].itemId
-check('gal-layout：只有 hmr_<id>.txt 的场景也算场景（hmr_1 + 标签式的 chmr_3 / chmr_4，脚本数 3）', gcOut.itemPatch.gal.config.scriptCount === 3 && gcOut.itemPatch.gal.config.game.id === 'girlscreation', J(gcOut.itemPatch?.gal?.config))
+check('gal-layout：只有 hmr_<id>.txt 的场景也算场景（hmr_1 + 标签式的 chmr_3 / chmr_4 / chmr_5，脚本数 4）', gcOut.itemPatch.gal.config.scriptCount === 4 && gcOut.itemPatch.gal.config.game.id === 'girlscreation', J(gcOut.itemPatch?.gal?.config))
 
 // ---- 素材 2：tenkeiprdx（有静态画面） ----
 const ttMedia = path.join(dataDir, 'gal', 'tt-pack')
@@ -364,6 +379,27 @@ try {
     await page.context().close()
   }
 
+  {
+    const page = await newPage()
+    await page.goto(link(gcId, 's:chmr_5/script.txt'))
+    await page.waitForSelector('.gal-player')
+    await page.waitForFunction(() => /Actor1/.test(document.querySelector('.gal-world')?.dataset.spines || ''), null, { timeout: 15000 })
+    await sleep(900)
+    // 舞台垫一块绿底，对舞台截图取中心几点的颜色：透明的特效层不该改变绿色（以前会被加成白）
+    await page.evaluate(() => { document.querySelector('.gal-stage').style.background = 'rgb(42, 106, 58)'; document.querySelector('.gal-hud').style.display = 'none' })
+    const shot = path.join(work, 'fx-shot.png')
+    await page.locator('.gal-stage').screenshot({ path: shot })
+    const pixel = (x, y) => execFileSync('convert', [shot, '-format', `%[fx:int(255*p{${x},${y}}.r)],%[fx:int(255*p{${x},${y}}.g)],%[fx:int(255*p{${x},${y}}.b)]`, 'info:'], { encoding: 'utf8' }).split(',').map(Number)
+    const dims = execFileSync('identify', ['-format', '%w,%h', shot], { encoding: 'utf8' }).split(',').map(Number)
+    const samples = [[0.5, 0.5], [0.5, 0.3], [0.45, 0.7]].map(([fx, fy]) => pixel(Math.round(dims[0] * fx), Math.round(dims[1] * fy)))
+    check('Screen 混合 + 透明处带白色 RGB 的直通贴图：画出来后绿底还是绿的（不会被加成白块）——上传时预乘、按预乘画', samples.every(([r, g, b]) => Math.abs(r - 42) < 12 && Math.abs(g - 106) < 12 && Math.abs(b - 58) < 12), J(samples))
+    await page.click('.gal-note')
+    await sleep(300)
+    check('渲染诊断写明「直通贴图，上传时预乘」和 screen 槽数', /直通贴图，上传时预乘/.test(await page.$eval('.gal-diag', (e) => e.innerText)))
+    check('没有页面错误', page.errors.length === 0, J(page.errors))
+    await page.context().close()
+  }
+
   // ===== (3) 文件索引行 + 刷新、节点图（相关链接）、列表阶段的问题 =====
   {
     // girlscreation 列表：「更多」里有文件索引信息 + 刷新；新增场景后点刷新才出现
@@ -376,9 +412,9 @@ try {
     await mkdir(path.join(scene, '..', 'chmr_2'), { recursive: true })
     await writeFile(path.join(scene, '..', 'chmr_2', 'hmr_2.txt'), ['title,新场景,', 'message,乙,「新的」,iab4020078'].join('\n'))
     await page.click('.gal-index-refresh')
-    await page.waitForFunction(() => /4 个剧情/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {})
+    await page.waitForFunction(() => /5 个剧情/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {})
     const after = await page.evaluate(() => document.body.innerText)
-    check('点「刷新」后新增的场景出现在列表里（chmr 分类 3 个剧情变 4 个）', /4 个剧情/.test(after) && !/3 个剧情/.test(after), J(after.split('\n').filter(Boolean).slice(8, 40)))
+    check('点「刷新」后新增的场景出现在列表里（chmr 分类 4 个剧情变 5 个）', /5 个剧情/.test(after) && !/4 个剧情/.test(after), J(after.split('\n').filter(Boolean).slice(8, 40)))
     check('没有页面错误', page.errors.length === 0, J(page.errors))
     await page.context().close()
   }

@@ -1066,7 +1066,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
           lines.push(`    骨架里的动画（${item.animations.length}）：${item.animations.slice(0, 40).join(', ')}${item.animations.length > 40 ? ' …' : ''}`)
           if (item.pmaInfo) {
             const blends = item.blends ? Object.entries(item.blends).filter(([, n]) => n > 0).map(([name, n]) => `${name} ${n} 个槽`).join('、') : ''
-            lines.push(`    预乘 alpha：图集标记 ${item.pmaInfo.atlas ? '是' : '无'} · 像素统计 ${item.pmaInfo.detected ? '是' : '否'} → 实际按${item.pma ? '预乘' : '普通'}画${blends ? `；非 normal 混合：${blends}` : '；混合模式都是 normal'}`)
+            lines.push(`    预乘 alpha：图集标记 ${item.pmaInfo.atlas ? '是' : '无'} · 像素统计 ${item.pmaInfo.detected ? '是' : '否'} → ${item.pmaInfo.premultipliedOnUpload ? '直通贴图，上传时预乘' : '已经是预乘，原样上传'}，按预乘方式画${blends ? `；非 normal 混合：${blends}` : '；混合模式都是 normal'}`)
           }
           lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? item.bounds.join(' ') : item.boundsEmpty ? '无（初始姿势下没有可见附件，由动画打开，不当参照层）' : '?'}`)
         }

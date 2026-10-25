@@ -306,3 +306,9 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 `Stills/<名字>/` 是静态画面的 Spine 骨架（层按数字前缀叠），`Backgrounds/still/<名字>_still_01..05.png` 是同名的五张静态图，对应骨架的 animation1..5。剧情里只有第一帧写了 `still`，后面几帧常常只写 `backgroundImage: "<名字>_still_0N"`——
 适配器把它当成静态画面继续播骨架的 `animationN`（`_still_02` → animation2，`_still_04` → animation4 降速 + 闪白，`_still_05` → animation5 白屏淡出），不再退成不动的背景图。`Stills/` 下没有对应目录时仍然是普通背景图。
 关掉：`config.adapterOptions['tenkeiprdx-json'].stillPng = 'image'`（`_still_0N` 当普通背景图，带原来的音效 / 闪白）。统计里 `stats.stillFromBackground` 记了这样的帧数。
+
+
+### 预乘 alpha / Screen、Multiply 混合（chara_0125 的白块 / 紫色罩子 / 脸上一块白）
+直通 alpha 的图集（透明处还带着颜色；Spine 4.0 的 atlas 没有 pma 行，所以认不出来）以前按普通方式画，Screen / Multiply 这类混合直接用 RGB、不看 alpha，透明处的颜色被加上去：
+`Eff`（整幅紫色渐变，Screen）→ 整体紫色 + 两大块白，`Sunlight` / `Particle`（Screen）→ 白色光斑，`Cheek`（Multiply）→ 脸中间一块白。现在：图集标记或像素统计认出已经预乘的原样上传；其余的（直通贴图）**上传时让浏览器预乘一次**，之后**一律按预乘方式画**，
+透明处是 0，不再有这个问题；Normal 混合的结果不变。渲染诊断里写「直通贴图，上传时预乘 / 已经是预乘，原样上传」和非 normal 混合的槽数。
