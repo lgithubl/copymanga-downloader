@@ -39,6 +39,12 @@ export async function buildMaidFixture(root) {
     await mkdir(path.join(scenes, id), { recursive: true })
     await writeFile(path.join(scenes, id, 'script.txt'), text)
   }
+  // 白色淡出之后接黑场再淡入（FADE_OUT2,white → FADE_OUT2,black → FADE_IN2,black）：白屏要被取代，骨骼要能看见（以前整个画面一直是白的）
+  await mkdir(path.join(scenes, 'fade_white'), { recursive: true })
+  await writeFile(path.join(scenes, 'fade_white', 'script.txt'), script([
+    '<SPINE_ACTOR>7,cast001001/c1_001,,通常,,0,0,x=0|y=0,1,json', '<NAME_PLATE>主人公', '先出现角色。', '<PAUSE>',
+    '<FADE_OUT2>white,400', '<FADE_OUT2>black,800', '<FADE_IN2>black,1300', '<NAME_PLATE>主人公', '白色淡出 → 黑场 → 淡入之后，角色应该还在，画面不是白的。', '<PAUSE>',
+  ]))
   // 混合模式：场景自己的骨架，三个槽分别是 additive / screen / multiply（骨架里有非 normal 混合才会出现「更多 → 混合模式」）
   const fx = path.join(scenes, 'fx_blend')
   await mkdir(path.join(fx, 'spines'), { recursive: true })

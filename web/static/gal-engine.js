@@ -104,8 +104,10 @@ export function applyCommand(state, command, choices = null) {
       state.bgm = ''
       break
     case 'fade':   // to: black（黑场）/ clear（去掉黑场）/ white（淡到白屏并保持，FADE_OUT2,white）
+      // 原查看器里黑场和白屏是同一层遮罩：FADE_OUT2,white 之后接 FADE_OUT2,black / FADE_IN2,black，白屏就被取代了（换成黑场、再淡出），
+      // 不会再有「FADE_IN2,white」来关它。所以淡到黑 / 去掉黑场时要把白屏一起关掉——以前只关黑场，白屏永远留着，整个画面（包括骨骼）被白色盖住
       if (command.to === 'white') state.white = true
-      else state.black = command.to === 'black'
+      else { state.black = command.to === 'black'; state.white = false }
       break
     case 'wash':   // 白屏渐退成透明：白屏没了
       state.white = false

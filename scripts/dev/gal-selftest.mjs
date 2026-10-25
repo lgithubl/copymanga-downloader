@@ -1332,6 +1332,15 @@ async function gcMod0Prepare({ truncated }) {
   check('没有 scanExpressions 的适配器：没有「表情」入口，x:expr 返回 404', (await noExpr.getNode('').catch(() => ({ node: { items: [] } }))).node.items.every((i) => i.node !== 'x:expr') && (await noExpr.getNode('x:expr').then(() => 0, (e) => e.statusCode)) === 404)
 }
 
+// ================= 淡入淡出：白屏 → 黑场 → 去掉黑场，白屏要一起关掉（jaxin：FADE_OUT2,white 之后没有 FADE_IN2,white，整个画面一直白）=================
+{
+  const apply = (commands) => { const st = {}; for (const command of commands) applyCommand(st, command); return st }
+  const seq = apply([{ op: 'fade', to: 'white', seconds: 0.4 }, { op: 'fade', to: 'black', seconds: 0.8 }, { op: 'fade', to: 'clear', seconds: 1.3 }])
+  check('FADE_OUT2,white → FADE_OUT2,black → FADE_IN2,black：最后白屏和黑场都没了（以前白屏一直留着，整个画面被盖住）', seq.white === false && seq.black === false, J(seq))
+  check('FADE_OUT2,white 之后接 FADE_OUT2,black：白屏换成黑场（white 关、black 开）', (() => { const st = apply([{ op: 'fade', to: 'white' }, { op: 'fade', to: 'black' }]); return st.white === false && st.black === true })())
+  check('只有 FADE_OUT2,white：白屏保持（白场闪 / 白屏过场不受影响）；FADE_IN2,white（wash）才关它', apply([{ op: 'fade', to: 'white' }]).white === true && apply([{ op: 'fade', to: 'white' }, { op: 'wash', color: 'white', seconds: 1 }]).white === false)
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
