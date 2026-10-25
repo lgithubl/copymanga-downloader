@@ -885,7 +885,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const expressionCards = async () => {
     if (!expressionAdapter) return null
     const ctx = await contextOf(expressionAdapter.id).catch(() => null)
-    return ctx?.globalSpines?.size ? { type: 'dir', id: 'x:expr', title: '表情', subtitle: `${ctx.globalSpines.size} 个角色骨架 · 表情预设逐个确认`, thumb: '', badge: '', node: 'x:expr' } : null
+    const skeletons = [...(ctx?.globalSpines?.keys() || [])].filter((key) => !key.includes('/')).length   // 每个骨架登记了「文件名」和「目录/文件名」两个键，只数前一种
+    return skeletons ? { type: 'dir', id: 'x:expr', title: '表情', subtitle: `${skeletons} 个角色骨架 · 表情预设逐个确认`, thumb: '', badge: '', node: 'x:expr' } : null
   }
 
   async function getNode(nodeId, opts = {}) {

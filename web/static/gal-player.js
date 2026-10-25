@@ -196,6 +196,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const camCy = camNumber('相机中心 Y（骨骼单位，y 向上）：Girls Creation R Viewer 是 900；原点在画面中心的骨架（CG）一般是 0', 10)
   const camRow = el('div', 'gal-more-field gal-cam-row')
   camRow.append(el('span', '', '窗口宽'), camWidth, el('span', '', '中心 X'), camCx, el('span', '', '中心 Y'), camCy)
+  // 混合模式（骨骼里有 additive / multiply / screen 的槽才显示）：有的显卡驱动上这几种混合会画成白屏——换成「加色改普通」或「全部按普通」试试；按媒体存
+  const blendSelect = el('select', 'gal-more-select')
+  for (const [value, label] of [['native', '原样'], ['noAdditive', '加色(additive)改按普通'], ['allNormal', '全部按普通']]) { const option = el('option', '', label); option.value = value; blendSelect.append(option) }
+  blendSelect.title = '骨骼里的 additive / multiply / screen 槽怎么画：原样；加色改按普通；全部按普通。画面发白 / 全白时试试后两个'
+  const blendRow = el('label', 'gal-more-field')
+  blendRow.append(el('span', '', '混合模式'), blendSelect)
+  blendRow.hidden = true
   // 角色表情（maid 的分层脸骨架）：脚本里写的是预设名（通常 / 喜 / 照れ …），对应到每个部件第几号的表读不到（加密），所以在这里调；按媒体存，也可以复制成配置
   const exprBtn = btn('表情…', '分层脸骨架的表情预设：把脚本里的预设名对应到各部件（眼 / 眉 / 嘴 / 腮红…）第几号；按媒体存', 'gal-expr-btn')
   const exprRow = el('div', 'gal-more-field')
@@ -208,7 +215,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const mosaicRow = el('label', 'gal-more-field')
   mosaicRow.append(el('span', '', '显示马赛克层'), mosaicInput)
   mosaicRow.hidden = !(scene?.stats?.mosaic?.total > 0)
-  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow, camModeRow, camRow, exprRow, mosaicRow)
+  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
@@ -315,7 +322,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     try { saved = JSON.parse((viewStorageKey && localStorage.getItem(viewStorageKey)) || '{}') || {} } catch { saved = {} }
     const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
     const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
-    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), camera: cleanCamera(saved.camera), expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
+    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), camera: cleanCamera(saved.camera), blend: ['noAdditive', 'allNormal'].includes(saved.blend) ? saved.blend : 'native', expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
   }
   let views = loadViews()
   // 表情预设表：内置初始值（gal-spine.js）← 服务端配置（adapterOptions['girlscreation-tag'].expressions）← 这个媒体自己调的（views.expressions）
@@ -341,6 +348,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     camRow.hidden = !hasActor || views.camera.mode !== 'fixed'
     exprRow.hidden = !(spineLayer?.info?.() || []).some((item) => item.kind === 'actor' && item.loaded && (item.animations || []).some((name) => /^(?:eye|eyebrow|eyemain|eyepos|mouse|mouth|cheek|highlight)\//.test(name)))
     camModeSelect.value = views.camera.mode
+    blendRow.hidden = !(spineLayer?.info?.() || []).some((item) => item.blends && Object.values(item.blends).some((n) => n > 0))
+    blendSelect.value = views.blend
     camWidth.value = String(views.camera.width)
     camCx.value = String(views.camera.cx)
     camCy.value = String(views.camera.cy)
@@ -352,6 +361,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     spineLayer?.setCamera(views.camera)
   }
   for (const input of [camModeSelect, camWidth, camCx, camCy]) input.addEventListener('change', applyCamera)
+  blendSelect.addEventListener('change', () => { views = { ...views, blend: blendSelect.value }; saveViews(); spineLayer?.setBlend(views.blend); syncViewInputs(); if (!diagPanel.hidden) renderDiag() })
   const saveViews = () => {
     if (!viewStorageKey) return
     try { localStorage.setItem(viewStorageKey, JSON.stringify(views)) } catch { /* 存不了就只在这一页生效 */ }
@@ -620,7 +630,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
-    spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera, expressions: expressionTable() } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
+    spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera, blend: views.blend, expressions: expressionTable() } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
   }
   // 立绘（stand 指令，renpy-minashigo）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   let standLayer = null
@@ -1066,6 +1076,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
           lines.push(`    骨架里的动画（${item.animations.length}）：${item.animations.slice(0, 40).join(', ')}${item.animations.length > 40 ? ' …' : ''}`)
           if (item.pmaInfo) {
             const blends = item.blends ? Object.entries(item.blends).filter(([, n]) => n > 0).map(([name, n]) => `${name} ${n} 个槽`).join('、') : ''
+            if (item.blendOverride && item.blendOverride !== 'native') lines.push(`    混合模式覆盖：${item.blendOverride === 'allNormal' ? '全部按普通画' : 'additive 改按普通画'}（「更多 → 混合模式」）`)
             lines.push(`    预乘 alpha：图集标记 ${item.pmaInfo.atlas ? '是' : '无'} · 像素统计 ${item.pmaInfo.detected ? '是' : '否'} → ${item.pmaInfo.premultipliedOnUpload ? '直通贴图，上传时预乘' : '已经是预乘，原样上传'}，按预乘方式画${blends ? `；非 normal 混合：${blends}` : '；混合模式都是 normal'}`)
           }
           lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? item.bounds.join(' ') : item.boundsEmpty ? '无（初始姿势下没有可见附件，由动画打开，不当参照层）' : '?'}`)

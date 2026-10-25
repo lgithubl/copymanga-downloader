@@ -320,3 +320,10 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 前端（`gal-expr.js`）：左边角色列表（带「已确认 n / m」），右边是预览（和播放同一个 Spine 层）、该角色的预设按钮（按次数排，确认过的带 ✓）、各部件下拉（改了立即预览）、「保存到 这个角色 / 所有角色」、「保存」、「确认这个预设」、「下一个未确认 ▶」，顶部总进度「已确认 x / y」和「复制配置」。
   存法和播放器「更多 → 表情…」是同一份：`localStorage` 的 `copymanga.gal.view.<条目 id>` 里的 `expressions`（预设表）和 `confirmed`（`{ 范围: { 预设名: true } }`），播放器改别的设置不会弄丢它们。预设表的合并顺序和播放时一样：内置初始值 ← 服务端配置 ← 你调的。
 - 渲染诊断多一行 WebGL：`显卡 … · 上下文正常 / 已丢失 · 画布 宽x高（css …，dpr …）· 最大贴图 … · 最近 GL 错误 …`，白屏 / 黑屏时贴出来能看出是驱动、上下文丢失还是 GL 报错。
+
+
+### 混合模式开关（「更多 → 混合模式」）与 Gal 演示工作流
+- 骨骼里有 additive / multiply / screen 的槽时，「更多」里出现「混合模式」：**原样**（默认）/ **加色(additive)改按普通** / **全部按普通**，按媒体存（`copymanga.gal.view.<条目 id>.blend`），改了马上重画，渲染诊断写明「混合模式覆盖」。
+  有的显卡驱动上这几种混合会画成整屏白（软件渲染里复现不了），用它快速验证 / 绕过。
+- `.github/workflows/gal-demo.yml`：手动触发（`Gal Interactive Demo`），起 web 容器（HTTP）→ 生成合成的演示数据（`make-gal-fixture` / `make-gal-games-fixture` / `make-gal-maid-fixture`，没有任何原作内容）→ 把各游戏演示导入媒体库（含 `gal-layout`）→ 冒烟（maid 演示首页必须有「表情」卡片）→ Cloudflare 快速隧道，URL 写在 job 摘要和 commit 评论里。
+  可选仓库 secret `DEMO_PASSWORD`（配了就要密码）。看点：maid演示 →「表情」；maid演示 → fx_blend →「更多 → 混合模式」。

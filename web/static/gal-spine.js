@@ -230,6 +230,16 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // 'fixed' = 固定相机（Girls Creation R Viewer 的做法：世界窗口宽 width 个骨骼单位、中心在 (cx, cy)，每个单位 = 舞台宽 / width 个像素，原点落在 舞台中心 + (x − cx, −(y + cy)) 个单位，缩放绕原点）。
   // 不同游戏的查看器相机常数不一样（只有 Girls Creation R Viewer 的读过源码：1920 / 0 / 900），所以做成「更多」里可调的，按媒体存
   let camera = { mode: 'fit', width: 1920, cx: 0, cy: 900 }
+  // 混合模式覆盖（有的显卡驱动上 additive / multiply / screen 会画成白屏，见渲染诊断的 WebGL 一行）：
+  // 'native' = 骨骼原样（默认）；'noAdditive' = additive 改按普通画（光效变成普通叠加）；'allNormal' = additive / multiply / screen 全按普通画
+  let blendOverride = 'native'
+  const applyBlendOverride = (data) => {
+    for (const slot of data?.slots || []) {
+      if (slot.originalBlendMode === undefined) slot.originalBlendMode = slot.blendMode
+      const original = slot.originalBlendMode
+      slot.blendMode = blendOverride === 'allNormal' && original !== 0 ? 0 : blendOverride === 'noAdditive' && original === 1 ? 0 : original
+    }
+  }
   let expressionTable = mergeExpressions(DEFAULT_EXPRESSIONS)   // 内置初始值 + 配置 + 这个媒体自己调的（播放器合并好传进来）
 
   const settle = () => { if (!pending) { const done = waiters; waiters = []; done.forEach((resolve) => resolve()) } }
@@ -448,6 +458,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       }
       const { backend } = loaded
       const sp = backend.spine
+      applyBlendOverride(loaded.data)
       const skeleton = new sp.Skeleton(loaded.data)
       const skin = pickSpineSkin(loaded.data)
       if (skin) skeleton.setSkin(skin)
@@ -483,7 +494,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     return { mode: value?.mode === 'fixed' ? 'fixed' : 'fit', width: Math.max(100, Math.min(20000, num(value?.width, 1920))), cx: Math.max(-20000, Math.min(20000, num(value?.cx, 0))), cy: Math.max(-20000, Math.min(20000, num(value?.cy, 900))) }
   }
   function set(specs, { live = false, slow = slowTo, view = null } = {}) {
-    if (view) { views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }; if (view.camera) camera = normalizeCamera(view.camera); if (view.expressions) expressionTable = mergeExpressions(DEFAULT_EXPRESSIONS, view.expressions) }
+    if (view) { views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }; if (view.camera) camera = normalizeCamera(view.camera); if (view.expressions) expressionTable = mergeExpressions(DEFAULT_EXPRESSIONS, view.expressions); if (view.blend && view.blend !== blendOverride) { blendOverride = ['noAdditive', 'allNormal'].includes(view.blend) ? view.blend : 'native'; for (const inst of instances.values()) applyBlendOverride(inst.data) } }
     slowTo = Number.isFinite(Number(slow)) && Number(slow) > 0 ? Math.min(1, Number(slow)) : 0.2
     const wanted = specs || {}
     for (const slot of [...instances.keys()]) if (!wanted[slot]) instances.delete(slot)
@@ -640,6 +651,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       for (const inst of instances.values()) if (inst.skeleton && inst.spec?.kind === 'actor' && inst.faceDefaults?.length) applySpec(inst, inst.spec, false)
       kick()
     },
+    // 混合模式覆盖（见 blendOverride）；改了马上重画
+    setBlend(mode) { blendOverride = ['noAdditive', 'allNormal'].includes(mode) ? mode : 'native'; for (const inst of instances.values()) applyBlendOverride(inst.data); kick() },
     // 角色摆放方式（见 camera）；改了马上重画
     setCamera(value) { camera = normalizeCamera(value); kick() },
     setView(kind, view) { if (views[kind]) { views = { ...views, [kind]: normalizeView(view) }; kick() } },
@@ -666,7 +679,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
       requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
       faceDefaults: inst.faceDefaults || [], expression: inst.expression || null, missingRequested: inst.missingAnims || [],
-      pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null,
+      pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null, blendOverride,
       animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
       skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
       version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', boundsEmpty: Boolean(inst.skeleton) && inst.boundsOk === false, bounds: inst.bounds && inst.boundsOk !== false ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,

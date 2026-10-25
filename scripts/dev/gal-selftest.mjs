@@ -1319,7 +1319,7 @@ async function gcMod0Prepare({ truncated }) {
   const prov = createBrowseProvider({ mediaDir: root, adapters: ['girlscreation-tag'], resolveAsset: async () => { throw new Error('none') }, config: { scriptRoots: [{ id: 'scenes', dir: 'package.nw/scenes' }], resourceRoots: ['package.nw'], scriptExtensions: ['txt'], merge: [], adapterOptions: { 'girlscreation-tag': { root: 'package.nw' } } } })
   const home = (await prov.getNode('')).node
   const card = home.items.find((i) => i.node === 'x:expr')
-  check('首页多一张「表情」卡片（全局分层脸骨架才有）', Boolean(card) && card.title === '表情' && card.type === 'dir', J(home.items.map((i) => i.title)))
+  check('首页多一张「表情」卡片（全局分层脸骨架才有），副标题数的是骨架个数（1 个，不是索引键的 2 个）', Boolean(card) && card.title === '表情' && card.type === 'dir' && /^1 个角色骨架/.test(card.subtitle), J(home.items.map((i) => [i.title, i.subtitle])))
   const expr = (await prov.getNode('x:expr')).node
   const nashwa = expr.casts?.[0]
   check('x:expr 节点：每个全局骨架一项（场景自己的 scene_only/local_001 不算），带预设名和次数（通常 2、喜 1，按次数排）、骨架 / atlas 的资源路径、角色目录名', expr.kind === 'expr' && expr.casts.length === 1 && nashwa.castKey === 'cast009001' && nashwa.label === 'nashwa_001' && J(nashwa.presets) === J([{ name: '通常', count: 2 }, { name: '喜', count: 1 }]) && nashwa.skel === 'data/spine/cast/cast009001/nashwa_001.json' && nashwa.atlas.endsWith('.atlas') && expr.breadcrumb.map((c) => c.title).join('>') === '首页>表情', J(expr))
