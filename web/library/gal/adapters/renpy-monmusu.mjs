@@ -1,6 +1,7 @@
 // 适配器：Ren'Py 脚本（.rpy，monmusu 这类粉丝播放器的 script/hscene*/）→ 规范场景（gal-scene/1）。
 // 只认剧情场景里用到的那一小撮语句，别的（界面、python、init）一律不碰：
 //   scene black / scene <名字> [with 转场]   背景：名字先查视频别名（image X = Movie(play=…)）→ movie，再查图片目录 → bg；都查不到 → raw
+//   show <单个名字> [with 转场]                angelic 的背景写法：名字查得到图片 / 视频别名就当背景（带属性 / at 的立绘不处理）
 //   play music "路径" [fadein n] [fadeout n]  bgm（play sound → se）；stop music [fadeout n] → bgmStop
 //   voice "路径"                              voice（对应下一句台词）
 //   "名字" "台词" / "台词"                     speaker + text，一句台词 = 一步（点一下）
@@ -138,6 +139,25 @@ export function parse(text, ctx = null) {
           count('unresolved', rest)
           emit({ op: 'raw', cmd: 'scene', args: [rest] })
         }
+        break
+      }
+      case 'show': {
+        // angelic：背景用 `show ba013`（单个名字，没有属性 / at）。名字能查到图片 / 视频别名才当背景；带属性或 at / behind 的是立绘，仍然记 raw
+        let rest = line.slice(4).trim()
+        let fade = 0
+        const withAt = rest.search(/\s+with\s+/)
+        if (withAt >= 0) { fade = transitionSeconds(rest.slice(withAt).replace(/^\s+with\s+/, '')); rest = rest.slice(0, withAt).trim() }
+        const key = aliasKey(rest)
+        if (/\s/.test(key) || !key) { count('raw', 'show'); break }
+        if (ctx?.movies?.has(key)) {
+          const movie = ctx.movies.get(key)
+          emit({ op: 'movie', srcs: [movie.src], loop: movie.loop })
+          inMovie = true
+          stats.movies += 1
+        } else if (ctx?.images?.has(key)) {
+          if (inMovie) { emit({ op: 'movieOff' }); inMovie = false }
+          emit({ op: 'bg', src: clean(ctx.images.get(key)), fade })
+        } else count('raw', 'show')
         break
       }
       case 'play':

@@ -1500,6 +1500,14 @@ async function gcMod0Prepare({ truncated }) {
   check('魔法学园：gal-layout 没写 game.id 也认出 artwhirl（脚本根 episode_scripts / hscripts、资源根 game、扩展名 json）', cfg?.game?.id === 'artwhirl' && J(cfg.resourceRoots) === J(['game']) && J(cfg.scriptExtensions) === J(['json']) && cfg.scriptRoots.length === 2, J(cfg) + J(layout.logs))
 }
 
+// ---------- angelic：show baNNN 当背景 ----------
+{
+  const ctx = renpyPrepare({ texts: {}, files: ['images/ba013.jpg', 'images/girl_a.png'], toResourcePath: (r) => r })
+  const out = renpyParse(['label x:', '    show ba013 with dissolve', '    show girl_a happy at left', '    show girl_a', '    "旁白"'].join('\n'), ctx)
+  const cmds = out.steps.flatMap((st) => st.commands)
+  check('angelic：show ba013（单个名字，查得到图片）→ bg，带 with dissolve 渐变 0.5；带属性 / at 的立绘仍是 raw；单名的 girl_a 也会当背景（无法区分，靠 at 区分立绘）', cmds.filter((c) => c.op === 'bg').length === 2 && cmds[0].fade === 0.5 && out.stats.raw.show === 1, J(cmds) + J(out.stats))
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
