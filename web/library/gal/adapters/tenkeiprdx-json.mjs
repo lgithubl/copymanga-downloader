@@ -107,7 +107,8 @@ export function prepare({ options, texts, files, toResourcePath }) {
   const textOf = (name) => Object.entries(texts || {}).find(([key]) => key.endsWith(`/${name}`) || key === name)?.[1] || ''
   const username = textOf('username.txt').trim()
   const master = readMasterdata(textOf('masterdata_4.json'), textOf('masterdata_32.json'))
-  const ctx = { spines, backgrounds, bgm, username, hasIndex: Boolean(files?.length), positionX: options?.positionX, unknownName: options?.unknownName, scenes, thumbs, icons, master }
+  // stillPng：背景名是 <Stills 目录名>_still_0N 时怎么办——'spine'（默认）= 播那个骨架的 animationN；'image' = 当普通背景图（静止）
+  const ctx = { spines, backgrounds, bgm, username, hasIndex: Boolean(files?.length), stillAsSpine: options?.stillPng !== 'image', positionX: options?.positionX, unknownName: options?.unknownName, scenes, thumbs, icons, master }
   ctx.catalogTree = buildCatalog(ctx)
   return ctx
 }
@@ -260,12 +261,18 @@ export function parse(text, ctx = null, meta = {}) {
     const commands = []
     const emit = (command) => { commands.push(command) }
     const background = cleanName(frame?.backgroundImage)
-    // 没有 still 字段、但 backgroundImage 的名字正好是 Stills/ 下的骨骼目录：当整幅静态画面播（不然只有写了 still 的那一帧是骨骼，后面几段都退成图片）
+    // 没有 still 字段、但 backgroundImage 指的是某个静态画面：当整幅静态画面播（不然只有写了 still 的那一帧是骨骼，后面几段都退成不动的图片）。
+    // 两种写法：名字正好是 Stills/ 下的骨骼目录；或者 <Stills 目录名>_still_0N（Backgrounds/still 里每个静态画面有 _still_01..05 五张图，对应骨架的 animation1..5）→ 播那个骨架的 animationN。
+    // adapterOptions.stillPng = 'image' 可以关掉（当普通背景图）
     const explicitStill = safeSeg(cleanName(frame?.still))
-    const stillFromBackground = !explicitStill && background && safeSeg(background) && ctx?.spines?.has(`Stills/${background}`)
-    const stillName = explicitStill || (stillFromBackground ? background : '')
+    const exactFolder = !explicitStill && background && safeSeg(background) && ctx?.spines?.has(`Stills/${background}`) ? background : ''
+    const pngMatch = !explicitStill && !exactFolder && background && ctx?.stillAsSpine !== false ? /^(.+)_still_0*(\d+)$/i.exec(background) : null
+    const pngFolder = pngMatch && safeSeg(pngMatch[1]) && ctx?.spines?.has(`Stills/${pngMatch[1]}`) ? pngMatch[1] : ''
+    const stillFromBackground = Boolean(exactFolder || pngFolder)
+    const stillName = explicitStill || exactFolder || pngFolder
+    const pngAnim = pngFolder ? `animation${Number(pngMatch[2])}` : ''
     if (stillFromBackground) stats.stillFromBackground = (stats.stillFromBackground || 0) + 1
-    const anim = str(frame?.stillAnimation).trim()
+    const anim = str(frame?.stillAnimation).trim() || pngAnim
     const effect = str(frame?.frameEffect).trim()
     if (effect) stats.frameEffects[effect] = (stats.frameEffects[effect] || 0) + 1
 

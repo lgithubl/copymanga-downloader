@@ -1281,6 +1281,28 @@ async function gcMod0Prepare({ truncated }) {
   check('预设表：骨架里没有的号码（eye_099）跳过、改用该部件的默认动画（eye_001）', missing.anims.includes('eye/eye_001') && !missing.anims.some((n) => n.includes('099')) && missing.anims.includes('mouse/mouse_001'), J(missing))
 }
 
+// ================= tenkeiprdx：<Stills 目录名>_still_0N 的背景 = 播那个骨架的 animationN（不再退成不动的图片）=================
+{
+  const files = ['Stills/10001401_01/1_base.skel.bytes', 'Stills/10001401_01/1_base.atlas.txt', 'Backgrounds/still/10001401_01_still_02.png', 'Backgrounds/adventure/bg_adventure_1001401.png', 'Backgrounds/still/10001401_01_still_05.png']
+  const frame = (o = {}) => ({ phraseContents: 'x', ...o })
+  const scene = J({ result: { sceneDetails: [{ assetId: 's1', sceneFrameDetails: [
+    frame({ backgroundImage: 'bg_adventure_1001401' }),
+    frame({ still: '10001401_01', stillAnimation: 'animation1' }),
+    frame({ backgroundImage: '10001401_01_still_02' }),
+    frame({ backgroundImage: '10001401_01_still_04' }),
+    frame({ backgroundImage: '10001401_01_still_05' }),
+    frame({ backgroundImage: 'bg_adventure_1001401' }),
+  ] }] } })
+  const ops = (r, i) => r.steps[i].commands.map((c) => c.op + (c.anim ? `:${c.anim}` : '') + (c.slow ? '(slow)' : ''))
+  const asSpine = tenkeiParse(scene, tenkeiPrepare({ options: {}, texts: {}, files, toResourcePath: (r) => r }), { stem: 's1' })
+  check('tt：Backgrounds/still 里的 <骨架目录>_still_0N 当静态画面播骨架的 animationN（_still_02 → animation2，_still_04 → animation4 降速 + 闪白，_still_05 → animation5 白屏），不再是不动的背景图', /spine:animation2/.test(ops(asSpine, 2).join()) && !ops(asSpine, 2).includes('bg') && /spine:animation4\(slow\)/.test(ops(asSpine, 3).join()) && ops(asSpine, 3).includes('flash') && /spine:animation5/.test(ops(asSpine, 4).join()) && ops(asSpine, 4).includes('wash') && asSpine.stats.stillFromBackground === 3, J([0, 1, 2, 3, 4, 5].map((i) => ops(asSpine, i))))
+  check('tt：回到普通背景图（bg_adventure_…）时静态画面撤掉（spineOff）再换背景', ops(asSpine, 5).includes('spineOff') && ops(asSpine, 5).includes('bg'), J(ops(asSpine, 5)))
+  const asImage = tenkeiParse(scene, tenkeiPrepare({ options: { stillPng: 'image' }, texts: {}, files, toResourcePath: (r) => r }), { stem: 's1' })
+  check('tt：adapterOptions.stillPng = "image" 关掉这个推断，_still_0N 仍然当普通背景图（带原来的音效 / 闪白）', ops(asImage, 2).includes('bg') && !ops(asImage, 2).some((o) => o.startsWith('spine:')) && !asImage.stats.stillFromBackground, J(ops(asImage, 2)))
+  const noFolder = tenkeiParse(scene, tenkeiPrepare({ options: {}, texts: {}, files: ['Backgrounds/still/10001401_01_still_02.png'], toResourcePath: (r) => r }), { stem: 's1' })
+  check('tt：Stills/ 下没有对应骨架目录时 _still_0N 还是普通背景图', ops(noFolder, 2).includes('bg') && !ops(noFolder, 2).some((o) => o.startsWith('spine:')), J(ops(noFolder, 2)))
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

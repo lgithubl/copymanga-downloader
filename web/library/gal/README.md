@@ -300,3 +300,9 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 三层合并（后面的盖前面的）：**内置初始值**（`gal-spine.js` 的 `DEFAULT_EXPRESSIONS`：通常 = 各部件 001；照れ = 通常 + 腮红 001；慌て / 大慌て / 苦笑い = 通常 + 汗 001——只放有把握的）← **服务端配置**（`config.adapterOptions['girlscreation-tag'].expressions`）← **这个媒体自己调的**（播放器「更多 → 表情…」，按媒体存在浏览器里）。
 - 「更多 → 角色表情 → 表情…」：选角色 + 预设名（默认是正在用的），每个部件一个下拉，改了马上预览，「应用并保存」存到「这个角色」或「所有角色」，「清除这个预设」回到配置 / 内置值，「复制配置」把自己调的表复制成 JSON（可以放进服务端配置）。
 - 脚本里 `SPINE_ACTOR` 的第 4 项（初始动画，如 `通常`）和 `SPINE_ACTOR_PLAY` 的动画名都走这张表；渲染诊断里写明用的是哪个预设、哪个范围、哪几个动画。
+
+
+### tenkeiprdx 的静态画面：`Backgrounds/still/<骨架目录>_still_0N.png` = 骨架的 animationN
+`Stills/<名字>/` 是静态画面的 Spine 骨架（层按数字前缀叠），`Backgrounds/still/<名字>_still_01..05.png` 是同名的五张静态图，对应骨架的 animation1..5。剧情里只有第一帧写了 `still`，后面几帧常常只写 `backgroundImage: "<名字>_still_0N"`——
+适配器把它当成静态画面继续播骨架的 `animationN`（`_still_02` → animation2，`_still_04` → animation4 降速 + 闪白，`_still_05` → animation5 白屏淡出），不再退成不动的背景图。`Stills/` 下没有对应目录时仍然是普通背景图。
+关掉：`config.adapterOptions['tenkeiprdx-json'].stillPng = 'image'`（`_still_0N` 当普通背景图，带原来的音效 / 闪白）。统计里 `stats.stillFromBackground` 记了这样的帧数。
