@@ -344,3 +344,9 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   `<SPINE_ACTOR>槽,骨架,动画,纵向,横向,NONE,linear,0` 的动画是第 3 项，要等 `<SPINE_ACTOR_DISPLAY>槽,SHOW` 才显示（`HIDE` 收起）；`<EV_DISPLAY>0,FALSE` 收起 EV 图；`GROUP` / `NAME_DISP` 忽略。
   还没做：`SELECT` / `LABEL` / `JUMP`（分支，现在按顺序一路播下去）、`EV_FADE`、`ANIM_*`、`SPINE_ACTOR_FADE` / `MOVE`、非 CENTER 的位置（LEFT / RIGHT 的偏移是估的）。
 - **Fruits Fulcute!**：`<SE_PLAY>E004`（只有名字）；立绘不是 Spine，是 `<ACTOR>槽,名字,位置…,缩放,…`（图片叠层，还没做，现在是未渲染指令）、`<ACTOR_COLOR_FILTER>`。
+
+### 魔法学园（ArtWhirl，`artwhirl-json`）
+- 剧情是 JSON 的**并行数组**：第 i 行 = `texts[i]`（null = 只放指令，并进下一句）、`bgs` / `bgms` / `charas` / `names` / `colors`（整数 = `dic` 的下标）、`voices`、`others`（指令）、`effects`、`waits`。语义照游戏自带的 `json_story_player.rpy`。
+- 资源路径：`bg/x` → `images/bg/x`；`chara/<角色>/<文件>`（3 段）→ `images/bg/<角色>_<文件>`；`chara/<角色>/<资源>/<帧>`（4 段）→ `images/hcg/…`，有同名 `.webm` 就当视频播（帧名 1 / 4 不循环）；bgm `.mp3` 优先找同名 `.ogg`；语音按**文件名**在整个索引里找（有的剧情复用别的剧情组的语音）。立绘 `images/stands/<key>/<body>/<key>_<body>_<brow>_<eye>_<lip>[_h].png`，找不到按 brow→b、eye→e、h→不带 h 的顺序退。
+- gal-layout：`game/episode_scripts` + `game/hscripts` 当脚本根（扩展名 json），资源根 = `game`；没写 game.id 时要求同时有 `images/stands` 和 `audio`。导入页预设「魔法学园的少女们」。
+- 未渲染：`others` 里的 action / emotion、`effects`、`waits`；统计里（`stats.raw`）会列出次数。

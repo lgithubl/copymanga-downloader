@@ -10,6 +10,7 @@ import { DEFAULT_GAL_CONFIG, applyGalConfigPatch, cleanGalConfigRaw, expandTempl
 import { safeRelPath } from '../../web/library/gal/paths.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { parse as minashigoParse, prepare as minashigoPrepare, sniff as minashigoSniff } from '../../web/library/gal/adapters/renpy-minashigo.mjs'
+import { parse as awParse, prepare as awPrepare, sniff as awSniff } from '../../web/library/gal/adapters/artwhirl-json.mjs'
 import { buildGirlsCreationFixture } from './make-girlscreation-fixture.mjs'
 import { buildLegecloFixture } from './make-legeclo-fixture.mjs'
 import { sniff as gcSniff, tagsOf as gcTagsOf } from '../../web/library/gal/adapters/girlscreation-tag.mjs'
@@ -1465,6 +1466,38 @@ async function gcMod0Prepare({ truncated }) {
   check('同一份脚本里有两组选项（标签名重复 LABEL1 / LABEL2）：各用自己的变量 sel1 / sel2，互不影响', choices2.length === 2 && choices2[0].var === 'sel1' && choices2[1].var === 'sel2' && twice.steps.filter((st) => st.commands.some((c) => c.when?.[0]?.var === 'sel2')).length === 2, J(twice.steps.map((st) => st.commands.map((c) => c.op + (c.when ? '?' + c.when[0].var : '')))))
   const fades = run(['<SPINE_ACTOR>0,x,Em00,TOP, CENTER, NONE, linear, 0', '<SPINE_ACTOR_DISPLAY>0,SHOW', '<EV>bg_1,0', '<NAME_PLATE>甲', '1', '<PAUSE>', '<SPINE_ACTOR_FADE>0,OUT,1000', '<EV_FADE>1,OUT,300', '<NAME_PLATE>甲', '2', '<PAUSE>'].join('\n'))
   check('SPINE_ACTOR_FADE,槽,OUT,毫秒 → 角色淡出（spineOff 带时长）；EV_FADE,1,OUT,毫秒 → EV 图淡出（bgoff）', fades.steps[1].commands.some((c) => c.op === 'spineOff' && c.fade === 1) && fades.steps[1].commands.some((c) => c.op === 'bgoff' && Math.abs(c.fade - 0.3) < 1e-9), J(fades.steps[1].commands.map((c) => [c.op, c.fade])))
+}
+
+// ---------- 魔法学园（ArtWhirl，JSON 并行数组 + dic）----------
+{
+  const root = path.join(work, 'artwhirl')
+  const game = path.join(root, 'game')
+  const rels = ['images/bg/school.jpg', 'images/hcg/ABC/h1/2.webm', 'images/hcg/ABC/h1/2.png', 'images/stands/ABC/b1/ABC_b1_b_e_r.png', 'images/stands/ABC/b1/ABC_b1_b_e_r_h.png', 'audio/bgm/theme.ogg', 'audio/voice/other_group/ABC_01.ogg', 'episode_scripts/g1/ep1.json']
+  for (const rel of rels) { await mkdir(path.dirname(path.join(game, rel)), { recursive: true }); await writeFile(path.join(game, rel), 'x') }
+  await mkdir(path.join(game, 'hscripts/g1'), { recursive: true }); await mkdir(path.join(game, 'images/stands'), { recursive: true })
+  const story = {
+    bgms: [null, 0, 0, 0], bgs: [1, 1, 2, 2], voices: [null, 'ABC_01.mp3', null, null], texts: [null, '{n1}你好{w=0.5}', '{n1}', 'H 场景'], names: [null, 3, null, 4], colors: [null, 5, null, null],
+    charas: [null, [6], null, [7]], others: [[], [], [{ cmd: 'bg_change' }, { cmd: 'action', who: 'x' }], []], effects: [null, null, 'shake', null], waits: [null, null, null, null], chara_keys: ['ABC'],
+    dic: [null, 'bgm/theme.mp3', 'bg/school.jpg', 'chara/ABC/h1/2', '{n1}', '#ff8800', { key: 'ABC', body: 'b1', brow: 'b', eye: 'e', lip: 'r', pos: 0.3 }, { key: 'ABC', body: 'b1', brow: 'x', eye: 'y', lip: 'r', h: true }],
+  }
+  // dic[0] = null；bgms[1]=0 → null（整数是 dic 下标），所以这里用 1 表示 theme；下面单独构造
+  story.bgms = [null, 1, 1, 1]; story.bgs = [2, 2, 3, 3]; story.names = [null, null, null, 4]
+  const text = JSON.stringify(story)
+  check('魔法学园：sniff 认得剧情 JSON（bgms + chara_keys），不认别的 JSON', awSniff(text) && !awSniff('{"a":1}') && sniffGalAdapter(text) === 'artwhirl-json', '')
+  const ctx = awPrepare({ options: {}, files: rels.map((r) => `game/${r}`), toResourcePath: (r) => r.replace(/^game\//, '') })
+  const out = awParse(text, ctx, { stem: 'ep1' })
+  const cmds = out.steps.flatMap((st) => st.commands)
+  check('魔法学园：台词 {n1}/{w=0.5} 被去掉；背景 bg/school.jpg → images/bg/school.jpg；bgm .mp3 → 同名 .ogg', out.steps.length === 3 && cmds.some((c) => c.op === 'text' && c.segments[0]?.text === '你好') && cmds.some((c) => c.op === 'bg' && c.src === 'images/bg/school.jpg') && cmds.some((c) => c.op === 'bgm' && c.src === 'audio/bgm/theme.ogg'), J(cmds))
+  check('魔法学园：语音按文件名在整个索引里找（别的剧情组的目录也行）', cmds.some((c) => c.op === 'voice' && c.src === 'audio/voice/other_group/ABC_01.ogg'), J(cmds.filter((c) => c.op === 'voice')))
+  const stand = cmds.find((c) => c.op === 'stand')
+  check('魔法学园：立绘 images/stands/<key>/<body>/…，pos=0.3 → xalign 0.3', stand?.parts[0]?.src === 'images/stands/ABC/b1/ABC_b1_b_e_r.png' && stand.parts[0].xalign === 0.3, J(stand))
+  check('魔法学园：HCG（4 段路径 chara/ABC/h1/2）有同名 .webm 就当视频；眉 / 眼找不到按官方顺序退回 b / e，带 h 的找 _h', cmds.some((c) => c.op === 'movie' && c.srcs[0] === 'images/hcg/ABC/h1/2.webm' && c.loop === true) && cmds.some((c) => c.op === 'movie' && c.srcs[0] === 'images/hcg/ABC/h1/2.webm') && cmds.filter((c) => c.op === 'stand').some((c) => c.parts[0].src.endsWith('_r_h.png')), J(cmds.filter((c) => c.op === 'movie' || c.op === 'stand')))
+  check('魔法学园：未实现的 others / effects 记进 stats.raw，不丢也不炸', out.stats.raw['others:action'] === 1 && out.stats.raw.effects === 1, J(out.stats))
+  const noIndex = awParse(text, awPrepare({ options: {}, files: [], toResourcePath: (r) => r }), { stem: 'ep1' })
+  check('魔法学园：没有文件索引时不过滤、语音按 audio/voice/<剧情名>/ 拼', noIndex.steps.flatMap((st) => st.commands).some((c) => c.op === 'voice' && c.src === 'audio/voice/ep1/ABC_01.ogg'), '')
+  const layout = await galLayoutScript({ item: { itemId: 'aw', title: 'aw', config: {}, source: { path: root }, adapters: ['artwhirl-json'] }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
+  const cfg = layout.itemPatch?.gal?.config
+  check('魔法学园：gal-layout 没写 game.id 也认出 artwhirl（脚本根 episode_scripts / hscripts、资源根 game、扩展名 json）', cfg?.game?.id === 'artwhirl' && J(cfg.resourceRoots) === J(['game']) && J(cfg.scriptExtensions) === J(['json']) && cfg.scriptRoots.length === 2, J(cfg) + J(layout.logs))
 }
 
 await rm(work, { recursive: true, force: true })

@@ -709,6 +709,7 @@ const GAMES = [
   { id: 'misttrain', detect: detectMisttrain },   // UScenes/ 加 Spines|Sounds|MasterData；没有 scenes/，和 tenkeiprdx 不会混
   { id: 'minashigo', detect: detectMinashigo },
   { id: 'minashigo_r', detect: detectMinashigoR },   // data/adv/textfiles/story（uviewer-csv 格式）；要求同时有 adv/image 和 adv/sound，放在通用 uviewer 之前
+  { id: 'artwhirl', detect: detectArtwhirl },   // game/episode_scripts + game/images/stands（Ren'Py + JSON 剧情）
   { id: 'uviewer', detect: detectUviewerGame },
 ]
 
@@ -753,6 +754,57 @@ async function detectAngelic(media, { declared, logs }) {
     async finish(m, _config, options) {
       const count = await countFiles(path.join(m, ...splitRel(join(base, 'script', 'hscene'))), '.rpy', options.countCap, 8)
       logs.push(`hscene 脚本 ${count} 个${count ? '' : '——结构可能不对，或者只有 .rpyc（需要 .rpy 源文件）'}`)
+      return { count, cover: '' }
+    },
+  }
+}
+
+// ======================================================================
+// 魔法学园的少女们（ArtWhirl，Ren'Py + JSON 剧情）：<根>/game/episode_scripts/<组>/*.json（主线 / 角色剧情）和 game/hscripts/<组>/*.json（H 场景），
+// 资源在 game/images（bg / hcg / stands / effect）和 game/audio（bgm / voice/<剧情名>/…）。用 artwhirl-json 适配器；资源根 = game。
+// ======================================================================
+async function detectArtwhirl(media, { declared, logs }) {
+  const hit = await findDir(media, ['game', 'episode_scripts'], 6)
+  if (!hit) {
+    if (declared) logs.push('没找到 game/episode_scripts')
+    return null
+  }
+  const gameDir = hit.split('/').slice(0, -1).join('/')
+  const hasStands = await isDir(path.join(media, ...splitRel(join(gameDir, 'images/stands'))))
+  const hasAudio = await isDir(path.join(media, ...splitRel(join(gameDir, 'audio'))))
+  if (!declared && !(hasStands && hasAudio)) return null   // 没声明：要求有 images/stands 和 audio（免得认走别的 episode_scripts）
+  const roots = []
+  for (const [id, name, label] of [['episode', 'episode_scripts', '剧情'], ['hscene', 'hscripts', 'H 场景']]) {
+    if (await isDir(path.join(media, ...splitRel(join(gameDir, name))))) roots.push({ id, dir: join(gameDir, name), label })
+  }
+  const config = {
+    scriptRoots: roots,
+    resourceRoots: [gameDir],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['json'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    views: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    scriptIndex: [],
+    pageSize: 100,
+    adapterOptions: { 'artwhirl-json': { root: gameDir } },
+  }
+  logs.push(`魔法学园 游戏根：${gameDir || '.'}；脚本根：${roots.map((r) => r.dir).join('、')}；立绘目录${hasStands ? '有' : '没有'}，音频目录${hasAudio ? '有' : '没有'}`)
+  logs.push('剧情 JSON 按 官方 json_story_player 的语义解析（背景 / HCG 视频 / BGM / 语音 / 立绘组合）；立绘动作与表情特效（others 的 action / emotion）暂未渲染，统计里会列出')
+  return {
+    id: 'artwhirl',
+    kind: 'artwhirl',
+    note: '',
+    config,
+    async finish(m, _config, options) {
+      let count = 0
+      for (const root of roots) count += await countFiles(path.join(m, ...splitRel(root.dir)), '.json', options.countCap, 3)
+      logs.push(`剧情 JSON ${count} 个${count ? '' : '——结构可能不对'}`)
       return { count, cover: '' }
     },
   }
