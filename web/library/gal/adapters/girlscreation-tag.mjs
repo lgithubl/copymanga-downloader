@@ -206,7 +206,16 @@ export function parse(text, ctx = null, meta = {}) {
   const hasDisplayTags = /^<SPINE_ACTOR_DISPLAY>/m.test(String(text || '').slice(0, 200000))   // 脚本里根本没有 SPINE_ACTOR_DISPLAY 的话，SPINE_ACTOR 直接显示
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   if (ctx?.truncated) count('unresolved', '文件索引被截断（超过上限）：这个场景的资源可能找不到')
-  const emit = (command) => { commands.push(command) }
+  // 分支（Aku 写法）：连续的 <SELECT>选项文字,LABELn 是一组选项；<LABEL>LABELn 开始对应的分支（里面的每条指令带 when：选了第 n 个才执行）；<JUMP>END 跳过后面的分支直到下一个 <LABEL>；
+  // <LABEL>END（没在选项里出现过的标签）= 各分支汇合，后面的指令不再带条件。选的序号记进变量 sel<第几组选项>，和 UViewer 的 select / if 是同一套表达（choice + when）
+  const branchy = akuStyle || /^<LABEL>/m.test(String(text || '').slice(0, 200000))
+  let currentWhen = null
+  let pendingSelect = []
+  let labelValue = new Map()
+  let choiceVar = ''
+  let choiceCount = 0
+  let dead = false
+  const emit = (command) => { if (currentWhen) command.when = currentWhen; commands.push(command) }
   let zoomScale = 1          // 全局 ZOOM：之后放出来的角色缩放 = 角色自己的缩放 × zoomScale；已经在场的角色缩放直接变成 zoomScale（原查看器就是这么做的）
   const waiting = new Map() // 槽 → 角色还没出现时先收到的动画
   const actors = new Map()  // 槽 → { skel, x, y, scale, fade, move, tracks: [{ anim, loop }] }
@@ -251,6 +260,22 @@ export function parse(text, ctx = null, meta = {}) {
     lines = []
     name = null
   }
+  // 攒着的 <SELECT> 变成一个 choice（自己一步，里面带之前积压的指令），选的序号记进变量 sel<n>
+  const flushChoice = () => {
+    if (!pendingSelect.length) return
+    choiceCount += 1
+    choiceVar = `sel${choiceCount}`
+    labelValue = new Map(pendingSelect.map((option, i) => [option.label, i + 1]))
+    flushActors()
+    emit({ op: 'choice', id: `${steps.length}:${commands.length}`, var: choiceVar, options: pendingSelect.map((option, i) => ({ value: i + 1, segments: [{ text: option.text }] })) })
+    emit({ op: 'text', segments: [] })
+    steps.push({ index: steps.length, commands })
+    commands = []
+    lines = []
+    name = null
+    stats.choices = (stats.choices || 0) + 1
+    pendingSelect = []
+  }
   const res = (bucket, key) => scene?.[bucket]?.get(key) || ''
   const audio = (kind, key) => ctx?.audio?.[kind]?.get(key) || ''
 
@@ -258,14 +283,41 @@ export function parse(text, ctx = null, meta = {}) {
     const line = rawLine.trim()
     if (!line) continue
     stats.commands += 1
-    if (!line.startsWith('<')) { if (name !== null) lines.push(line); continue }   // 正文行（跟在 <NAME_PLATE> 后面）
+    if (!line.startsWith('<')) { if (name !== null && !dead) lines.push(line); continue }   // 正文行（跟在 <NAME_PLATE> 后面）；<JUMP> 之后到下一个 <LABEL> 之间的内容走不到，丢掉
     for (const entry of tagsOf(line)) {
       let { tag } = entry
       const { arg } = entry
       const a = splitArgs(arg)
+      if (branchy && pendingSelect.length && tag !== 'SELECT') flushChoice()
+      if (branchy && dead && tag !== 'LABEL') continue
       if (akuStyle && tag === 'FADE_IN') tag = 'FADE_OUT2'    // 变黑
       else if (akuStyle && tag === 'FADE_OUT') tag = 'FADE_IN2'   // 去掉黑场
       switch (tag) {
+        case 'SELECT': {
+          if (!branchy) { count('raw', tag); break }
+          const labelName = a[a.length - 1]
+          pendingSelect.push({ label: labelName, text: a.slice(0, -1).join(',').trim() || labelName })
+          break
+        }
+        case 'LABEL': {
+          if (!branchy) { count('raw', tag); break }
+          dead = false
+          speaker = ''   // 每个分支第一句台词都重新带上说话人（分支之间不是线性的）
+          currentWhen = labelValue.has(a[0]) ? [{ var: choiceVar, op: '===', value: String(labelValue.get(a[0])) }] : null
+          break
+        }
+        case 'JUMP': {
+          if (!branchy) { count('raw', tag); break }
+          if (currentWhen) dead = true; else count('raw', 'JUMP(主线，没有处理)')
+          break
+        }
+        case 'EV_FADE': if (akuStyle && /^out$/i.test(a[1] || '')) emit({ op: 'bgoff', fade: secs(a[2]) }); break   // EV_FADE,1,IN|OUT,毫秒：OUT = EV 图淡出；IN 不用处理（EV 指令已经显示）
+        case 'SPINE_ACTOR_FADE': {   // 槽,IN|OUT,毫秒：OUT = 角色淡出（并从显示集合里拿掉）；IN = 淡入（下一次发 spine 指令时带上淡入时长）
+          const slot = Math.trunc(numOf(a[0]))
+          if (/^out$/i.test(a[1] || '')) { shownActors.delete(slot); dirty.delete(slot); if (actors.has(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[2]) }) }
+          else if (/^in$/i.test(a[1] || '') && actors.has(slot)) { actors.get(slot).fade = secs(a[2]); shownActors.add(slot); dirty.add(slot) }
+          break
+        }
         case 'GROUP': break   // 一组指令一起执行：这里按顺序执行就行
         case 'NAME_DISP': break   // 名字框开关：没有对应的指令，忽略
         case 'EV_DISPLAY': if (akuStyle && /^false$/i.test(a[1] || '')) emit({ op: 'bgoff', fade: 0 }); break   // EV_DISPLAY,0,FALSE = 收起 EV 图；TRUE = 显示（EV 已经按 EV 指令显示了）
@@ -432,6 +484,7 @@ export function parse(text, ctx = null, meta = {}) {
     steps[steps.length - 1].commands.push(...commands)
     commands = []
   } else flush()
+  if (pendingSelect.length) flushChoice()
   return { steps, stats }
 }
 

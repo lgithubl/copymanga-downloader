@@ -1420,6 +1420,53 @@ async function gcMod0Prepare({ truncated }) {
   check('Fruits 写法：<SE_PLAY>E004（只有名字）和 <SE_PLAY>通道,名字,… 都能找到音效', se.steps[0].commands.filter((c) => c.op === 'se').length === 2 && Object.keys(se.stats.unresolved).length === 0, J([se.steps[0].commands.map((c) => c.op), se.stats.unresolved]))
 }
 
+// ================= ミナシゴノシゴトR：data/adv/textfiles/story/*.txt（uviewer-csv 格式）=================
+{
+  const noAsset = async () => { throw new Error('none') }
+  const root = path.join(work, 'minashigo-r')
+  const story = path.join(root, 'data/adv/textfiles/story')
+  for (const dir of ['data/adv/textfiles/story', 'data/adv/image/bg', 'data/adv/image/character/100104/atlas', 'data/adv/sound/bgm', 'data/adv/sound/voice', 'data/adv/sound/se', 'data/adv/movie', 'story_json']) await mkdir(path.join(root, dir), { recursive: true })
+  for (const rel of ['data/adv/image/bg/bg0000702.jpg', 'data/adv/sound/bgm/bgm_065.mp3', 'data/adv/sound/voice/adu100104_02_01.mp3', 'data/adv/sound/voice/adu100104_02_02.mp3', 'data/adv/sound/se/door_2.mp3']) await writeFile(path.join(root, rel), 'x')
+  const script = ['name,', 'stopbgm,,,,,,,,,,,', 'fadeinblack,0,,,,,,,,,,', 'bg,adv/image/bg/bg0000702.jpg,0,,,,,,,,', 'endwait,,,,,,,,,,,', 'fadeoutblack,1.5,,,,,,,,,,', 'endwait,,,,,,,,,,,', 'playbgm,/adv/sound/bgm/bgm_065.mp3,0,', 'endwait,,,,,,,,,,,', 'name, ', 'playvoice,1,adv/sound/voice/adu100104_02_01.mp3', 'msg,1,<size=32>こんにちは。</size>,,,,,,,,,', 'clickwait,,,,,,,,,,,', '', '', 'playse,/adv/sound/se/door_2.mp3', 'endwait', 'wait,0.5', 'endwait,,,,,,,,,,,', 'spriteatlas,adv/image/character/100104/atlas/stand_b,body:007,rei,0,-220,0.8,0.5,,,,', 'endwait,,,,,,,,,,,', 'name,<size=32>レイ</size>,', 'playvoice,1,adv/sound/voice/adu100104_02_02.mp3', 'msg,1,<size=32>「ただいま」</size>,,,,,,,,,', 'clickwait,,,,,,,,,,,', 'spriteoff,all,0.2', 'endwait,,,,,,,,,,,'].join('\n')
+  for (const name of ['110010412', '110010413', '100042']) await writeFile(path.join(story, `${name}.txt`), script)
+  await writeFile(path.join(root, 'story_json/110070221.json'), '{"resources":[{"path":"adv/sound/voice/x.mp3"}]}')   // API 响应：不是剧情，不能被当成脚本
+  const out = await galLayoutScript({ item: { itemId: 'mr', title: 'mr', config: { game: { id: 'minashigo_r' } }, source: { path: root }, adapters: ['uviewer-csv'] }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
+  const cfg = out.itemPatch?.gal?.config
+  check('ミナシゴノシゴトR：gal-layout 认成 minashigo_r（脚本根 data/adv/textfiles/story、资源根 data、扩展名 txt、3 个脚本）', cfg?.game?.id === 'minashigo_r' && cfg.scriptRoots[0].dir === 'data/adv/textfiles/story' && J(cfg.resourceRoots) === J(['data']) && J(cfg.scriptExtensions) === J(['txt']) && cfg.scriptCount === 3, J(cfg) + J(out.logs))
+  const auto = await galLayoutScript({ item: { itemId: 'mr', title: 'mr', config: {}, source: { path: root }, adapters: ['uviewer-csv'] }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
+  check('ミナシゴノシゴトR：没写 game.id 也能认出来（data 下有 adv/image 和 adv/sound）', auto.itemPatch?.gal?.config?.game?.id === 'minashigo_r', J(auto.logs))
+  const prov = createBrowseProvider({ mediaDir: root, adapters: ['uviewer-csv'], resolveAsset: noAsset, config: cfg })
+  const home = (await prov.getNode('')).node
+  check('ミナシゴノシゴトR：首页直接列出 3 个剧情脚本（story_json 的 API 响应不在脚本根里）', home.items.length === 3 && home.items.every((i) => i.type === 'script'), J(home.items.map((i) => i.title)))
+  const played = await prov.getNode(home.items[0].node)
+  const cmds = played.scene.steps.flatMap((st) => st.commands)
+  const st = stateAt(played.scene, played.scene.steps.length - 1)
+  check('ミナシゴノシゴトR：播放：背景（bg0000702.jpg）、BGM（前面有 / 也能找到）、语音、音效、两句台词；先黑场再淡出，最后不是黑屏', played.scene.steps.length === 2 && cmds.some((c) => c.op === 'bg' && /bg0000702\.jpg$/.test(c.src)) && cmds.some((c) => c.op === 'bgm' && /bgm_065\.mp3$/.test(c.src)) && cmds.filter((c) => c.op === 'voice').length === 2 && cmds.some((c) => c.op === 'se') && st.black === false, J([played.scene.stats, cmds.map((c) => c.op), st.black]))
+}
+
+// ================= Aku 的分支：<SELECT>文字,LABELn / <LABEL> / <JUMP>END → choice + when =================
+{
+  const gcm = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
+  const ctx = gcm.prepare({ options: { root: 'pk' }, texts: {}, files: ['pk/scenes/c1/script.txt'], toResourcePath: (r) => r.replace(/^pk\//, '') })
+  const run = (t) => gcm.parse(t, ctx, { rel: 'c1/script.txt' })
+  const text = (st) => st.commands.find((c) => c.op === 'text')?.segments.map((x) => x.text).join('') ?? ''
+  const branch = run(['<GROUP>', '<FADE_IN>black,0', '<FADE_OUT>black,500', '</GROUP>', '<NAME_PLATE>甲', '序', '<PAUSE>', '<SELECT>選択A,LABEL1', '<SELECT>選択B,LABEL2', '<LABEL>LABEL1', '<NAME_PLATE>乙', '一', '<PAUSE>', '<JUMP>END', '<LABEL>LABEL2', '<NAME_PLATE>乙', '二', '<PAUSE>', '<LABEL>END', '<NAME_PLATE>丙', '三', '<PAUSE>'].join('\n'))
+  const scene = { steps: branch.steps }
+  const choice = choiceIn(scene, 1)
+  check('分支：连续的 SELECT 变成一个 choice（自己一步，两个选项，值 1 / 2）', branch.steps.length === 5 && choice?.options.length === 2 && choice.options[1].value === 2 && choice.var === 'sel1' && text(branch.steps[0]) === '序', J(branch.steps.map((st) => [text(st), st.commands.map((c) => c.op)])))
+  check('分支：LABEL1 里的内容带 when（sel1 = 1），LABEL2 里的带 when（sel1 = 2），LABEL END 之后的汇合（没有 when）；每个分支第一句都带说话人', J(branch.steps[2].commands.find((c) => c.op === 'text').when) === J([{ var: 'sel1', op: '===', value: '1' }]) && J(branch.steps[3].commands.find((c) => c.op === 'text').when) === J([{ var: 'sel1', op: '===', value: '2' }]) && !branch.steps[4].commands.some((c) => c.when) && branch.steps[3].commands.some((c) => c.op === 'speaker'), J(branch.steps.map((st) => st.commands.map((c) => c.op + (c.when ? '?' : '')))))
+  const path1 = activePath(scene, { [choice.id]: 1 })
+  const path2 = activePath(scene, { [choice.id]: 2 })
+  check('分支：选 1 走 序 → 选项 → 一 → 三；选 2 走 序 → 选项 → 二 → 三（互相不串）', J(path1) === J([0, 1, 2, 4]) && J(path2) === J([0, 1, 3, 4]), J([path1, path2]))
+  const noJump = run(['<NAME_PLATE>甲', '序', '<PAUSE>', '<JUMP>END', '<NAME_PLATE>乙', '后', '<PAUSE>'].join('\n'))
+  check('不在分支里的 JUMP（没有 LABEL / SELECT 的脚本）不会吞掉后面的内容', noJump.steps.length === 2 && text(noJump.steps[1]) === '后', J(noJump.steps.map(text)))
+  const twice = run(['<SELECT>甲1,LABEL1', '<SELECT>甲2,LABEL2', '<LABEL>LABEL1', '<NAME_PLATE>a', '1', '<PAUSE>', '<JUMP>END', '<LABEL>LABEL2', '<NAME_PLATE>a', '2', '<PAUSE>', '<LABEL>END', '<SELECT>乙1,LABEL1', '<SELECT>乙2,LABEL2', '<LABEL>LABEL1', '<NAME_PLATE>b', '3', '<PAUSE>', '<JUMP>END', '<LABEL>LABEL2', '<NAME_PLATE>b', '4', '<PAUSE>', '<LABEL>END', '<NAME_PLATE>c', '5', '<PAUSE>'].join('\n'))
+  const choices2 = twice.steps.flatMap((st) => st.commands).filter((c) => c.op === 'choice')
+  check('同一份脚本里有两组选项（标签名重复 LABEL1 / LABEL2）：各用自己的变量 sel1 / sel2，互不影响', choices2.length === 2 && choices2[0].var === 'sel1' && choices2[1].var === 'sel2' && twice.steps.filter((st) => st.commands.some((c) => c.when?.[0]?.var === 'sel2')).length === 2, J(twice.steps.map((st) => st.commands.map((c) => c.op + (c.when ? '?' + c.when[0].var : '')))))
+  const fades = run(['<SPINE_ACTOR>0,x,Em00,TOP, CENTER, NONE, linear, 0', '<SPINE_ACTOR_DISPLAY>0,SHOW', '<EV>bg_1,0', '<NAME_PLATE>甲', '1', '<PAUSE>', '<SPINE_ACTOR_FADE>0,OUT,1000', '<EV_FADE>1,OUT,300', '<NAME_PLATE>甲', '2', '<PAUSE>'].join('\n'))
+  check('SPINE_ACTOR_FADE,槽,OUT,毫秒 → 角色淡出（spineOff 带时长）；EV_FADE,1,OUT,毫秒 → EV 图淡出（bgoff）', fades.steps[1].commands.some((c) => c.op === 'spineOff' && c.fade === 1) && fades.steps[1].commands.some((c) => c.op === 'bgoff' && Math.abs(c.fade - 0.3) < 1e-9), J(fades.steps[1].commands.map((c) => [c.op, c.fade])))
+}
+
 await rm(work, { recursive: true, force: true })
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

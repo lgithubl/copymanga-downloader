@@ -2436,6 +2436,7 @@ const GAL_PRESETS = {
   tenkeiprdx: { adapters: ['tenkeiprdx-json'], game: { id: 'tenkeiprdx', title: 'Tenkeiprdx X' } },
   misttrain: { adapters: ['misttrain-json'], game: { id: 'misttrain', title: 'MistTrainGirls X' } },
   angelic: { adapters: ['renpy-monmusu'], game: { id: 'angelic', title: 'Angelic' } },
+  minashigo_r: { adapters: ['uviewer-csv'], game: { id: 'minashigo_r', title: 'ミナシゴノシゴトR' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]

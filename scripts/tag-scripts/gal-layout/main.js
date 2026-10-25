@@ -522,6 +522,55 @@ async function uviewerConfig(media, prefix, resourceRootRel, note) {
   }
 }
 
+// ミナシゴノシゴトR（cocos2d 网页版，官方客户端数据）：剧情脚本就是 UViewer 的 CSV 格式（name / msg / bg / playbgm / playvoice / fadeinblack / clickwait / spriteatlas …），
+// 只是目录不同：<根>/data/adv/textfiles/story/*.txt（扁平，几千个数字名），资源在 <根>/data/adv/{image,sound,movie}，脚本里写的是 adv/image/bg/….jpg（相对 data/）。
+// 用 uviewer-csv 适配器；资源根 = data；不分组（文件名是数字编号），列表翻页 + 页内搜索。
+async function detectMinashigoR(media, { declared, logs }) {
+  const hit = await findDir(media, ['adv', 'textfiles', 'story'], 6)
+  if (!hit) {
+    if (declared) logs.push('没找到 adv/textfiles/story')
+    return null
+  }
+  const parts = hit.split('/')
+  const dataRoot = parts.slice(0, -3).join('/')   // …/data
+  const storyDir = join(...parts)
+  if (!declared) {
+    // 没声明：要求 data 下还有 adv/image 和 adv/sound（官方客户端数据的样子），免得把别的 adv/textfiles/story 认走
+    const okImage = await isDir(path.join(media, ...splitRel(join(dataRoot, 'adv/image'))))
+    const okSound = await isDir(path.join(media, ...splitRel(join(dataRoot, 'adv/sound'))))
+    if (!okImage || !okSound) return null
+  }
+  const config = {
+    scriptRoots: [{ id: 'story', dir: storyDir, label: 'story' }],
+    resourceRoots: [dataRoot],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['txt'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    views: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    scriptIndex: [],
+    pageSize: 100,
+  }
+  logs.push(`ミナシゴノシゴトR 数据根：${dataRoot || '.'}${dataRoot ? '（目录里多了一层）' : ''}；剧情 ${storyDir}（uviewer-csv 格式，资源相对 ${dataRoot || '.'}）`)
+  logs.push('文件名是数字编号，不分组：列表每页 100 个，用「更多」里的搜索按编号筛；角色立绘（spriteatlas / sprite）暂未渲染')
+  return {
+    id: 'minashigo_r',
+    kind: 'minashigo_r',
+    note: '',
+    config,
+    finish: async (m, _config, options) => {
+      const count = await countFiles(path.join(m, ...splitRel(storyDir)), '.txt', options.countCap, 2)
+      logs.push(`剧情脚本 ${count} 个${count ? '' : '——结构可能不对'}`)
+      return { count, cover: '' }
+    },
+  }
+}
+
 // 认不出的目录：整个目录当脚本根，脚本里的路径按媒体目录解析（再试一次去掉 download/ 前缀）；不认领（不写 game.id）
 function genericLayout() {
   return {
@@ -659,6 +708,7 @@ const GAMES = [
   { id: 'tenkeiprdx', detect: detectTenkeiprdx },
   { id: 'misttrain', detect: detectMisttrain },   // UScenes/ 加 Spines|Sounds|MasterData；没有 scenes/，和 tenkeiprdx 不会混
   { id: 'minashigo', detect: detectMinashigo },
+  { id: 'minashigo_r', detect: detectMinashigoR },   // data/adv/textfiles/story（uviewer-csv 格式）；要求同时有 adv/image 和 adv/sound，放在通用 uviewer 之前
   { id: 'uviewer', detect: detectUviewerGame },
 ]
 
