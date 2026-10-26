@@ -2453,6 +2453,7 @@ const GAL_PRESETS = {
   bokusen: { adapters: ['bokusen-json'], game: { id: 'bokusen', title: 'ぼくらの放課後戦争' } },
   grenze: { adapters: ['grenze-xml'], game: { id: 'grenze', title: 'Grenze' } },
   tsk: { adapters: ['utage-book'], game: { id: 'tsk', title: 'Twinkle Star Knights X' } },
+  otogi: { adapters: ['otogi-json'], game: { id: 'otogi', title: 'Otogi Frontier R' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]

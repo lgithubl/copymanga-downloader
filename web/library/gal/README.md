@@ -37,7 +37,7 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 | `scriptIndex` | 脚本索引（给脚本配缩略图 + 来源角标）：`[{dir, pattern, key, badge}]`。`dir`（相对媒体目录）里的文件名匹配 `pattern` 时，按 `key` 模板（`{1}{2}…` = 捕获组）算出它对应哪个脚本（脚本名，无扩展名），这个文件就是那个脚本的缩略图，`badge` 显示在卡片右上角 |
 | `hiddenDirs` | 列目录时不显示的目录名（任意层级，精确匹配） |
 | `classify` / `resourceResolve` / `indexSkip` / `limits` / `player` | 引擎层的通用能力（只读配置、按配置匹配；脏知识由元数据脚本写进来）：音频指令重分类 / 资源路径解析规则 / 文件索引跳过的名字 / 上限 / 播放器默认值，见下「引擎层通用配置」 |
-| `stripPrefixes` `scriptExtensions` `pageSize` | 资源找不到时去掉的前缀 / 脚本扩展名 / 每页卡片数 |
+| `stripPrefixes` `scriptExtensions` `pageSize` | 资源找不到时去掉的前缀 / 脚本扩展名（`''` = 没有扩展名的文件，`['']` 只认无扩展名的、`['', 'json']` 两种都认；Otogi 的剧情文件是 `typeadv/MScenes/10001` 这样的）/ 每页卡片数 |
 
 元数据里只存**写过的字段**（没写的随引擎默认值走）；补丁默认合并（写了的顶层字段整个替换，`null` = 删掉回默认），`replace` = 整体替换。
 所有路径都是相对媒体目录、不许绝对路径和 `..`；模板只做占位符替换，读文件前仍要通过存在性检查和「只认媒体目录内的真实路径」——
@@ -207,6 +207,7 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
   - **合并顺序**（后者覆盖前者；对象逐键递归，数组 / 标量整个替换）：`ADAPTER_RULES[适配器]` < 游戏的 `ruleOverrides[适配器]` < 探测函数写的值（`root` / `aliasFiles` / `imageDirs` 等，真实目录里认出来的永远赢）。每张表 ≤ 16 KB、合计 ≤ 64 KB（引擎上限）；超了脚本在日志里警告「会被整张丢掉」。
   - **`layouts` / `overrides` 选项怎么和它们互动**：选项 `layouts.<id>` 里写的字段整个替换表里同名字段（`ruleTables` / `ruleOverrides` / `engine` 也是）。只想改一个适配器的一个子键：`{"layouts": {"bokusen": {"ruleOverrides": {"bokusen-json": {"bgm": {"index": 3}}}}}}`（深度合并，`bgm.patterns` 等别的子键保留）。`overrides[].config` 是写完之后对**顶层字段**的整个替换：写 `adapterOptions` 会换掉整张（含规则表），写 `limits` 换掉整个 `limits`。
   - **目前每个游戏写了什么**（全部和适配器默认值逐字节一致；`ruleOverrides` 都是空的——ミナシゴノシゴトR 例外，见「ミナシゴノシゴトR」一节）：uviewer / deepone / minashigo_r → `uviewer-csv`；legeclo → `renpy-legeclo`；monmusu / angelic → `renpy-monmusu`；minashigo → `renpy-minashigo`；girlscreation 家族 → `girlscreation-tag` + `girlscreation-line`；tenkeiprdx / misttrain / tsk / artwhirl / kamihime / bokusen / grenze → 各自的适配器（`tenkeiprdx-json` / `misttrain-json` / `utage-book` / `artwhirl-json` / `tyrano-ks` / `bokusen-json` / `grenze-xml`）。`classify` 全部 `[]`（没有可证明的声道规则）。`limits`：bokusen `walkFiles 1000000`、kamihime `walkFiles 800000 / sampleFiles 20000`、grenze `walkFiles 2000000`、tsk `walkFiles 800000`、girlscreation 家族 `walkFiles 400000 / sampleFiles 20000`（这些抄的是适配器自己的 `contextWalkLimit` / `contextSampleLimit`；girlscreation 的 `sampleFiles 20000` 是未验证的猜测，比适配器默认 3000 宽，防止场景多时脚本抽样悄悄截断）。`resourceResolve`：bokusen `extensionFallbacks {'.m4a': ['.wav']}`（磁盘上是 `.wav`、列表写 `.m4a`，适配器的 `sound.ext` 已经先试 `.wav`，这是冗余的保险）。没有写 `player`（只有 Girls Creation R Viewer 的相机常数读过源码，而且那是浏览器里按媒体存的设置，不是 `config.player`）。minashigo / misttrain 缩略图、legeclo `voice ×39` 仍等真实数据，只以 `pending` 占位记录（见 `scripts/dev/gal-pending-plan.md`），不启用任何猜测。
+  - **目前每个游戏写了什么**（全部和适配器默认值逐字节一致；`ruleOverrides` 都是空的）：uviewer / deepone / minashigo_r → `uviewer-csv`；legeclo → `renpy-legeclo`；monmusu / angelic → `renpy-monmusu`；minashigo → `renpy-minashigo`；girlscreation 家族 → `girlscreation-tag` + `girlscreation-line`；tenkeiprdx / misttrain / tsk / artwhirl / kamihime / bokusen / grenze / otogi → 各自的适配器（`tenkeiprdx-json` / `misttrain-json` / `utage-book` / `artwhirl-json` / `tyrano-ks` / `bokusen-json` / `grenze-xml` / `otogi-json`）。`classify` 全部 `[]`（没有可证明的声道规则）。`limits`：bokusen `walkFiles 1000000`、kamihime `walkFiles 800000 / sampleFiles 20000`、grenze `walkFiles 2000000`、otogi `walkFiles 800000 / sampleFiles 20000`、tsk `walkFiles 800000`、girlscreation 家族 `walkFiles 400000 / sampleFiles 20000`（这些抄的是适配器自己的 `contextWalkLimit` / `contextSampleLimit`；girlscreation 的 `sampleFiles 20000` 是未验证的猜测，比适配器默认 3000 宽，防止场景多时脚本抽样悄悄截断）。`resourceResolve`：bokusen `extensionFallbacks {'.m4a': ['.wav']}`（磁盘上是 `.wav`、列表写 `.m4a`，适配器的 `sound.ext` 已经先试 `.wav`，这是冗余的保险）。没有写 `player`（只有 Girls Creation R Viewer 的相机常数读过源码，而且那是浏览器里按媒体存的设置，不是 `config.player`）。minashigo / misttrain 缩略图、legeclo `voice ×39` 仍等真实数据，只以 `pending` 占位记录（见 `scripts/dev/gal-pending-plan.md`），不启用任何猜测。
   - **漂移守卫**：`node scripts/dev/gal-layout-rules-selftest.mjs`（纯 node）。对表里每个适配器 import 它的 `DEFAULT_OPTIONS` 和 `ADAPTER_RULES` 深度比较；每个游戏的有效表和默认值的差异必须声明在它的 `ruleOverrides`（或全局的 `RULE_DEVIATIONS`，点路径）里；`RULE_DEVIATIONS` 里过期的豁免也会报错。适配器改了默认值而脚本没跟上 → 测试红。
 - **这次运行的改动情况**：返回的日志里有一段（汇总行在前，如 `本次改动：新增 3 项 / 修改 2 项 / 删除 0 项 / 未变 9 项（共 14 个字段）`，完全一样就是 `没有改动`；dryRun 前面加 `【dryRun】将要产生的改动`，仍然不写）。逐字段和条目现有 config 对比（合并语义：本次写了的顶层字段整个替换、没写的「保留」；`replace: true` 时没写的是「删除」；补丁里的 `null` = 删除）：数组列出增删的项（深度 JSON 相等比较）、标量 旧 → 新、对象列出改了的键；`adapterOptions` 按适配器 id 汇总、不倾倒整张表（新增 → `+ adapterOptions['bokusen-json']（新增）：10 个键（root、resourceDir、paths、image、sound、slotMap…）`；修改 → `~ adapterOptions['bokusen-json']（修改）：2 个键变了：bgm、animation；bgm.index：7 → 0；animation：新增`，结构化版本在 `details.changes.adapterOptions = { added: {id: 键数}, changed: {id: [键…]}, removed: [id…] }`）；`config.script`（版本 / 运行时间）不算改动；另有标签增删、`game.id` 是否写回 / 变化、命中的覆盖项改了哪些字段。长值截断（约 200 字，写明总字数），改动段 ≤ 8 KB 且不超过服务端对日志的限额（80 行 / 每行 500 字），放不下写「… 另有 N 项」。结构化版本在 `details.changes = { summary, added, changed, removed, unchanged, kept, tags, game, overrides, … }`（`added` / `changed` / `removed` 是 `{field, info}`，`unchanged` / `kept` 是字段名）。没识别 / 跳过的路径输出 `没有改动（未识别 / 已跳过）`。
 - 改动报告示例（bokusen，空条目第一次运行，节选）：
@@ -604,6 +605,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | **Kamihime Player** | TyranoScript（`tyrano-ks`，game.id `kamihime`） | `game/dmm/raw_scenario/<类别>/<目录>/<id>_script.ks` + 同目录 `<id>.json`；资源 `game/dmm/assets`（带 hash 的平铺 + `<resource_directory>/` 里的语音）；见「Kamihime Player」一节 |
 | **Grenze**（GrenzeViewer） | Unity 导出（`grenze-xml`，game.id `grenze`） | `TextAsset/easy_dialog-N.xml`（一个文件几百个场景）+ `assets/resources/patchres/{bg/battlebg,bgm,sound,voice,merc/pic}`；见「Grenze」一节 |
 | legeclo、minashigo（Ren'Py）、tenkeiprdx、misttrain、UViewer | 见各自一节 | |
+| **Otogi Frontier R**（离线网页版） | 无扩展名的剧情 JSON（`otogi-json`，game.id `otogi`） | `list.json` + `typeadv/MScenes/<id>`（普通剧情）+ `json/<id>`（成人剧情，Spine 静态画面）+ `Episode/Main` / `VieableEpisodeList` / `MasterData`（列表）；见「Otogi Frontier R」一节 |
 | **Twinkle Star Knights X** | Unity + Utage（`utage-book`，game.id `tsk`） | `<数据根>/Adventure/<剧情文件夹>/*.book.json` + `Adventure/Master.chapter.json`；数据根 = `…_Data/StreamingAssets/<游戏名>`，见「Twinkle Star Knights X」一节 |
 
 
@@ -756,6 +758,37 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   `paths { characters, stills, bg, voice, bgvoice, se, bgse, bgm, bgmIntro, bgmFallback, skeletonSuffixStrip, charIdStrip }`（候选路径模板数组，占位符 `{name}` `{file:png}` `{intro:ogg}` `{dir}` `{base}` `{charId}` `{id}`，`**/` = 任意层目录按文件名找，stills 的 `*` = 骨架基名通配）。
   查文件走 `createIndexResolver`（经 `adapters/path-templates.mjs`：扩展名后备 / 改写 / unicode / `preferDirs` / 大小写来自 `config.resourceResolve`，在 `parse` 时按 `meta.config` 查，所以改配置不用重建上下文）。测试：`node scripts/dev/gal-adapter-options-selftest.mjs`。
 
+### Otogi Frontier R（离线网页版，`otogi-json`）
+用户本地的离线网页播放器（`启动离线版.html` + `000.js`），剧情数据是**没有扩展名**的 JSON。播放语义照游戏自带的 `000.js` / `spine-player.html` 读出来，位置 / 摆放里没对照的部分标「猜」。
+- **没有扩展名**：`config.scriptExtensions` 写 `['']`（空串 = 没有扩展名，引擎层通用支持：`config.mjs` 放行空串，`browse.mjs` 的 `extOf` 本来就返回 `''`；`.rpyc` 那种「只有编译产物」的检查只对有扩展名的文件生效）。真正的格式判断靠适配器的嗅探，不靠扩展名。
+  `['']` 时目录浏览会列出该目录里所有无扩展名的文件，被嗅探挡掉的进「未认出的脚本」诊断（`typeadv/MScenes/notes` 这种）。
+- **sniff / `explainSniff(text, options)`**：开头 8KB 里 `{"Id":N,"Title":…,"MSceneDetails":[`（普通）/ `{"Id":N,"Description":…,"MAdultDetails":[`（成人），容忍 BOM / 缩进 / 换行；顶层不是剧情对象的 JSON（数字、字符串、没有行数组头的对象、`[1,2]`）不认。
+  `MScenes_TW` 里有的文件顶层是数组（`[ {场景}, {场景} ]`）：开头是 `[` + 剧情对象的也认；`parse` 默认只播第一个场景（原页面非「主线」模式的做法），`arrayScenes: 'all'` 依次全播。`explainSniff` 返回 `{ ok, kind: 'normal' | 'adult' | '', array, reason }`。
+- **普通剧情**（`{Id, Title, MSceneDetails: [20 个键的行]}`，一行 = 一步）：`BackgroundImage` → `bg`（`typeadv/bg/adventure/<名>.png`，磁盘上也可能平铺在 `typeadv/bg/`，两个候选都试）；`BGM` → `bgm`（`bgm/<名>.m4a`，保持到换）；`SE` / `VoiceFileName` → `se` / `voice`
+  （`typeadv/voice/adventure/voice_adventure_<MSceneId>/<名>.m4a`）；`Effect` Flash / Damage → `wash` 白 / 红（1.04 秒，= 原页面 26 步 × 40ms 从实色淡出）；`Phrase`（`%user_name` → `protagonist`，默认 `人間`；`<br>` → 换行）→ `speaker` + `text`：Position 1 = 旁白（说话人空）、2 / 3 = `Name` 说话。
+  `Phrase` 为空的行（只换背景 / 立绘 / 声音）并进下一句。`SpeechBalloon` / `FrameImage` / `HintImageName` / `PhraseFontSize` / `IsPhraseCenter` 是界面皮肤，不渲染（`text.sizeMap` 可把 `PhraseFontSize` 映射成 `style.size`）。`MRichSceneDetails`（原页面的另一种剧情，没有样本）→ `raw`。
+- **立绘**：`MMonsterId` 非空且 Position 2 / 3 → `stand` 指令：`typeadv/CharaStand/Adventure/<MMonsterId>/body.png`（底）+ 表情叠层（`EmotionId`：1 idle、2 sad、3 surprise、4 angry、5 shy、6 joy、7 idle、8 violent），**先 `<表情>_c.png` 再 `<表情>.png`**（原页面的 CSS 写的是 `url(emo.png), url(emo_c.png)`，前一层在上）；
+  Position 2 = 左（`align: left`）、3 = 右；两边都在时说话的一边最后画；同一个角色已经在另一边 → 另一边收掉；`IsBackgroundOnly` → 两边都收掉；EmotionId 为空 / 不认识 = 沿用这个位置同一角色的上一个表情。图缺了不发该部件（不会请求 404），记 `stats.missing`。
+  **猜**：Position 2 / 3 → 左 / 右（`000.css` 不在手上）；表情叠层和 `body` 同尺寸（部件都带 `align`，按整张图左下角对齐）；旁白行是否收立绘：原页面的 JS 对 Position 1 只收文本框、不收立绘，所以 `stand.narration` 默认 `keep`（`hide` = 旁白行收掉两边，下一个说话的行只带回自己那一边）。
+- **成人剧情**（`{Id, Description, MAdultDetails: [{Order, Name, Serif, Motion, Voice, StillPath, BGM, CharaAnimation, SE, Effect}]}`，`json/<Id>` 日文、`jsoncn/<Id>` 中文，一行 = 一步）：画面 = Spine 静态画面 `chara/still/<Id>/<Id>.json` + `.atlas.txt`（Spine 3.6 JSON）→ `spine`（kind `still`，slot `still1`，`order 1`）；
+  `CharaAnimation` 1 / 2 / 3 / 4 → `animation1`（循环）/ `animation2`（循环）/ `animation3`（播一次，速度 0.5，同时白闪 `flash` 3 秒，近似原页面的 `eftesst(3,'f')`）/ `animation4`（循环），null = 不变；`Motion` → `speed`（> 1 乘 0.75，和原页面的 `SpinePlay_2` 一样；0 → `motion.zero` 0.01，因为 `spine` 指令不认 0；`Motion` 和上一个值一样就不动，`CharaAnimation` 3 的行不看 `Motion`）；
+  `Effect "2"` → `wash` 黑 0.52 秒（原页面 `eftesst(0.5,'black','in')`）；`Effect "1"` 原页面没处理（认得，没有指令）；`BGM` → `bgm`；`Voice` → `voice`（`othersounds/still/<Id>/<Voice>.m4a`）；`Name` / `Serif` → `speaker` / `text`（`Serif` null = 不动文字，`""` = 清空）；`SE` 非空原页面不处理 → `raw`；`StillPath` 原页面不用，忽略（`stats.ignored`）。
+  `list.json` 的 `data[<Id>]["1"] = {X, Y, Z}`（原页面传给 `SpinePlay_0(Id, x, y, z)`）→ `spine` 指令的 `x` / `y` / `scale`；**静态画面层（`gal-spine.js` 的 kind `still`）目前不应用 x / y / scale**（只有 `actor` 用），所以这三个值现在只是随指令带着，没有画面效果。
+  `animation3` 播完接 `animation4` 循环在 `spine` 指令里没有对应（没有「接续」）：现在 `animation3` 播完停在最后一帧。少数骨架的 `skeleton.spine` 是 `"0.0.0"`（原页面当成 3.8 的 `skeleton_list` 多骨架，用另一个播放器）：`gal-spine.js` 没有 3.6 回退，这种骨架会在渲染诊断里报「Spine 版本不支持」，台词照常。
+- **语音大多不在本地**（脚本里引用 33340 个语音名，用户那份只有 85 个）：找不到的语音 / SE 不发指令（不会请求 404、不触发「缺少资源」），计入 `stats.missing.voice` / `stats.missing.se` 和 `stats.voices { total, found, missing }`；背景 / BGM / 骨架找不到记 `stats.unresolved`（渲染诊断里报）。
+- **语言**：`lang`（`jp` 默认 / `cn` / `tw`）按 `langs` 表选目录：`cn` / `tw` → 普通剧情 `typeadv/MScenes_TW`、成人剧情 `jsoncn`，表里没有的文件退回日文。选择发生在列表（catalog）里：每个节点的脚本路径就是选好的那个文件（打开脚本只认路径；直接打开日文路径永远是日文）。`cn` / `tw` 的划分是猜的（`jsoncn` 是简体还是繁体没有样本）。
+- **列表（catalog，节点 id 稳定）**：`main` 主线（`main/<章 id>` 每章一个目录，章名 = `list.json` worldmap 里同 `Id` 的名字，没有就用章 id；场景 = `Episode/Main/<章 id>` 里 `MStoryId` 对应的文件，标题 = 数组里的 `Title`，副标题 = `RequireCondition`）、
+  `chars` 角色（`c/<MMonsterId>`：`VieableEpisodeList/*` 的条目按 `MMonsterId` 分组，名字 = `MasterData/MMonsters.json` 的 `n`、没有就取 `list.json` `chara[floor(id/10)].name[0]`；有 `icon/chara/icon/png/<id>.png` 就当缩略图；子项 = 普通剧情 `MSceneId` + 成人剧情 `MAdultId`（角标 R18），标题 = 条目的 `Title`）、
+  `all` 全部普通剧情（`typeadv/MScenes` 里每个 id 文件，标题 = 文件开头的 `Title`）、`adult` 全部成人剧情（`json/` 里每个，标题 = VieableEpisodeList 的 `Title`，没有就是 id，角标 R18）。指到不存在文件的条目不列；文件名要匹配 `idPattern`（默认 `^\d+$`）才算剧情。
+  标题靠读剧情文件开头（`contextSampleLimit` 20000：3395 个普通剧情 + 1418 个 `VieableEpisodeList`；`VieableEpisodeList` 超过 24KB 被截断时容忍，取前面完整的条目）。`MasterData/MMonsters.json`（6887 项）和 `list.json` 由 `contextFiles` 读一次。
+- **文件索引**：`typeadv`（含 10 万个语音、立绘、背景、两套 MScenes）、`chara/still`、`othersounds`、`bgm`、`json`、`jsoncn`、`VieableEpisodeList`、`Episode/Main`、`icon/chara/icon/png`（9 个目录，引擎上限 10 个）；`contextWalkLimit` 80 万，gal-layout 写 `limits { walkFiles: 800000, sampleFiles: 20000 }`。
+- **gal-layout**：脚本根 = 游戏目录本身（`dir: '.'`，catalog 的脚本路径相对它；脚本根不同的话 catalog 只认第一个脚本根，所以普通 / 成人剧情共用一个根）、资源根同、`scriptExtensions ['']`、适配器参数 `root`（多一层目录也找得到）、封面 `typeadv/bg/adventure` 或平铺 `typeadv/bg` 的第一张 `bg_adventure_*.png`（再退 `title/*.png`）；
+  没写 game.id 时要求 `list.json` + `typeadv/MScenes` + `json`，同级有 `typeadv/CharaStand` 和 `VieableEpisodeList`，且 `MScenes` 里有 `MSceneDetails` 开头的文件；探测顺序在 tsk 之后、UViewer 之前。默认节点图 `main` / `chars` / `all` / `adult`。导入页预设「Otogi Frontier R」。
+- **适配器选项（`adapterOptions['otogi-json']`，完整 schema 和默认值见 `adapters/otogi-json.mjs` 的 `DEFAULT_OPTIONS`，gal-layout 的 `ADAPTER_RULES['otogi-json']` 抄一份；对象逐层合并，数组 / 标量整个替换；`langs` / `positions` / `emotions` / `anim` / `effects` 逐项覆盖 / 追加）**：
+  `root`、`lang` / `langs`、`protagonist`、`idPattern`、`data { list, monsters, episodes, main }`、`index { dirs, ext }`、`paths { bg, bgm, voice, se, adultVoice, stand, skel, atlas, icon }`（占位符 `{name}` `{scene}` `{monster}` `{ext}`）、`exts { image, audio }`、
+  `positions`（`1: narration` / `2: left` / `3: right`）、`emotions`（1~8）、`stand { body, layers, fit, narration, duplicate, dim }`、`anim`（CharaAnimation → `{ anim, loop, speed, effect }`）、`motion { fastAbove, fastFactor, zero }`、`effects`（Effect 的值 → 要发的指令数组，op 只能是 `wash` / `flash` / `fade` / `shake`；`[]` = 认得没有画面）、`text { sizeMap, breakPattern }`、`arrayScenes`、`sniff { bytes, normal, adult }`。
+- **自测**：`node scripts/dev/make-otogi-fixture.mjs <目录>` 造合成数据（无扩展名剧情、TW 数组、Spine 3.6 JSON 静态画面…）；`node scripts/dev/gal-otogi-selftest.mjs`（纯 node：sniff / 参数 / 普通 + 成人剧情的指令 / 列表 / 语言回退 / 引擎无扩展名 / gal-layout）；`PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-otogi-selftest.mjs`（端口 8195：导入 / 列表 / 播放 / 立绘像素 / Spine 动画名）。
+
 ## 随机语音（列表上的 🎲，不打开脚本）
 
 卡片（脚本 / 目录）右下角和底栏的「随机语音」按钮：随机放一条属于这个脚本 / 目录 / 当前这一层列表的语音。**完全按需**：列表接口不算任何语音，点了才算。
@@ -808,6 +841,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | ぼくらの放課後戦争 | `bokusen` | `bokusen-json` |
 | Grenze | `grenze` | `grenze-xml` |
 | Twinkle Star Knights X | `tsk` | `utage-book` |
+| Otogi Frontier R（离线网页版，无扩展名 JSON） | `otogi` | `otogi-json` |
 
 - 同一套探测的游戏（Girls Creation 家族、UViewer 系）在 gal-layout 里是「别名 id」：声明了 `game.id` 才走，探测和原 id 完全一样，**声明什么 id 就原样写回 `config.game.id` 和状态 tag**（`Gal游戏: aku` 等）。
 - 没填 `game.id` 时自动探测不区分别名：Girls Creation 家族的目录认成 `girlscreation`，UViewer 系认成 `uviewer`——想要唯一 id 就在导入方案里选对应的游戏。

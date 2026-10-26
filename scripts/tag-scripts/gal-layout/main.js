@@ -17,7 +17,7 @@
 //
 // 分发：
 //   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测（id 见 LAYOUTS）。认不出结构：uviewer / deepone 退回通用配置，别的跳过；不认识的 id 跳过
-//   没填 game.id                          → 按 LAYOUTS 里的 autoOrder 顺序探测（legeclo → monmusu → angelic → girlscreation → tenkeiprdx → misttrain → minashigo → minashigo_r → artwhirl → kamihime → bokusen → grenze → tsk → uviewer），
+//   没填 game.id                          → 按 LAYOUTS 里的 autoOrder 顺序探测（legeclo → monmusu → angelic → girlscreation → tenkeiprdx → misttrain → minashigo → minashigo_r → artwhirl → kamihime → bokusen → grenze → tsk → otogi → uviewer），
 //                                           谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领。声明了 game.id 就不看 markers（标记 / 门槛）
 // 各游戏怎么找目录（解析顺序）：
 //   ① 表里的 bases 候选（相对条目目录，可带 * 通配 / 正则段；只 stat，不遍历）依次试，anchors 全在、siblings 至少一个在 = 命中 → 日志「已知布局命中：…」
@@ -36,7 +36,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -746,6 +746,85 @@ export const ADAPTER_RULES = {
     backVoice: { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' },
     scene: { split: 'chains', forkPolicy: 'merge' },
   },
+  'otogi-json': {
+    root: '',
+    lang: 'jp',
+    langs: {
+      jp: { normal: ['typeadv/MScenes'], adult: ['json'] },
+      cn: { normal: ['typeadv/MScenes_TW'], adult: ['jsoncn'] },
+      tw: { normal: ['typeadv/MScenes_TW'], adult: ['jsoncn'] },
+    },
+    protagonist: '人間',
+    idPattern: '^\\d+$',
+    data: {
+      list: 'list.json',
+      monsters: 'MasterData/MMonsters.json',
+      episodes: 'VieableEpisodeList',
+      main: 'Episode/Main',
+    },
+    index: {
+      dirs: [
+        'typeadv',
+        'chara/still',
+        'othersounds',
+        'bgm',
+        'json',
+        'jsoncn',
+        'VieableEpisodeList',
+        'Episode/Main',
+        'icon/chara/icon/png',
+      ],
+      ext: '\\.(?:png|jpe?g|webp|m4a|mp3|ogg|wav|json|atlas\\.txt)$',
+    },
+    paths: {
+      bg: ['typeadv/bg/adventure/{name}.{ext}', 'typeadv/bg/{name}.{ext}'],
+      bgm: ['bgm/{name}.{ext}'],
+      voice: ['typeadv/voice/adventure/voice_adventure_{scene}/{name}.{ext}'],
+      se: ['typeadv/voice/adventure/voice_adventure_{scene}/{name}.{ext}'],
+      adultVoice: ['othersounds/still/{scene}/{name}.{ext}'],
+      stand: ['typeadv/CharaStand/Adventure/{monster}/{name}.{ext}'],
+      skel: ['chara/still/{scene}/{scene}.json'],
+      atlas: ['chara/still/{scene}/{scene}.atlas.txt'],
+      icon: ['icon/chara/icon/png/{monster}.{ext}'],
+    },
+    exts: { image: ['png', 'webp', 'jpg'], audio: ['m4a', 'mp3', 'ogg', 'wav'] },
+    positions: { '1': 'narration', '2': 'left', '3': 'right' },
+    emotions: {
+      '1': 'idle',
+      '2': 'sad',
+      '3': 'surprise',
+      '4': 'angry',
+      '5': 'shy',
+      '6': 'joy',
+      '7': 'idle',
+      '8': 'violent',
+    },
+    stand: {
+      body: 'body',
+      layers: ['{emotion}_c', '{emotion}'],
+      fit: 1,
+      narration: 'keep',
+      duplicate: 'hideOther',
+      dim: 0,
+    },
+    anim: {
+      '1': { anim: 'animation1', loop: true },
+      '2': { anim: 'animation2', loop: true },
+      '3': { anim: 'animation3', loop: false, speed: 0.5, effect: 'climax' },
+      '4': { anim: 'animation4', loop: true },
+    },
+    motion: { fastAbove: 1, fastFactor: 0.75, zero: 0.01 },
+    effects: {
+      '1': [],
+      '2': [{ op: 'wash', color: 'black', seconds: 0.52 }],
+      Flash: [{ op: 'wash', color: 'white', seconds: 1.04 }],
+      Damage: [{ op: 'wash', color: 'red', seconds: 1.04 }],
+      climax: [{ op: 'flash', color: 'white', count: 1, seconds: 3 }],
+    },
+    text: { sizeMap: {}, breakPattern: '<br\\s*/?>' },
+    arrayScenes: 'first',
+    sniff: { bytes: 8192, normal: 'MSceneDetails', adult: 'MAdultDetails' },
+  },
 }
 // 有意和适配器 DEFAULT_OPTIONS 不一致的键：{ <适配器 id>: ['a.b.c', …] }（点路径；整棵子树不一致就写子树的路径）。现在没有——表和默认值逐字节一致。
 export const RULE_DEVIATIONS = {}
@@ -1148,6 +1227,34 @@ export const LAYOUTS = {
     avatars: [], expectedDirs: ['assets/resources/patchres'],
     notes: ['按 next_id 链拆场景（每个文件几百个）；立绘 = merc/pic/<hero_group_id>/body.webp|png 整张；screen_effect / pic_action / effect 含义未知，记为未渲染指令（stats.raw）'],
   },
+  otogi: {
+    title: 'Otogi Frontier R（离线网页版）', kind: 'otogi', detector: 'otogi', autoOrder: 135,   // <根>/list.json + typeadv/MScenes/<id>（没有扩展名的 JSON）+ json/<id>（成人剧情）
+    bases: [''], searchDepth: 4,
+    anchors: ['list.json', 'typeadv/MScenes', 'json'], siblings: [], markers: ['typeadv/CharaStand', 'VieableEpisodeList'],   // 没声明：还要有立绘和 VieableEpisodeList，并且 MScenes 里有 MSceneDetails 开头的文件（detectOtogi）
+    scriptRoots: [{ id: 'game', dir: '.', label: '游戏目录' }],   // 脚本根 = 游戏目录本身：普通剧情在 typeadv/MScenes、成人剧情在 json，列表（catalog）里的脚本路径相对它（脚本根不同的话 catalog 只认第一个脚本根）
+    resourceRoots: ['.'],
+    adapters: ['otogi-json'],
+    adapterOptions: { 'otogi-json': { root: { path: ['.'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：otogi-json 全表。已验证（游戏自带的 000.js / spine-player.html / list.json + 真实数据样本）：剧情格式和路径（typeadv/MScenes、json、voice_adventure_<MSceneId>、othersounds/still/<Id>、bgm/<名>.m4a、CharaStand/Adventure/<角色>/body.png + 表情）、
+    //   CharaAnimation → animation1..4、Motion 的速度公式（> 1 乘 0.75）、Effect Flash / Damage / "2"、list.json data[<Id>]["1"] = {X, Y, Z}、剧情文件没有扩展名（config.scriptExtensions ['']）。
+    // 未验证（猜的）：Position 2 / 3 = 左 / 右（000.css 不在手上）、表情叠层和 body 同尺寸、_c 在下 / 表情在上、typeadv/bg 下背景是 adventure/ 子目录还是平铺（两个都试）、旁白行是否收立绘（stand.narration 默认 keep = 原页面的 JS）、
+    //   still 的 X / Y / Z 怎么用（spine 指令带 x / y / scale，静态画面层目前不应用）、animation3 → animation4 的接续（spine 指令没有「接续」）、jsoncn / MScenes_TW 对应 cn / tw 的划分。
+    ruleTables: ['otogi-json'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      // 真实数据：typeadv/voice 下约 10 万个语音文件、chara/still 几万个、剧情 3395 + 3474 个 MScenes（含 TW）+ 2277 + 2257 个 json / jsoncn；
+      // 标题要读 3395 个普通剧情的开头 + 1418 个 VieableEpisodeList，超过引擎默认的 3000（抄的是 otogi-json 自己的 contextWalkLimit / contextSampleLimit）
+      limits: { walkFiles: 800000, sampleFiles: 20000 },
+    },
+    // scriptExtensions ['']：剧情文件没有扩展名；真正的格式判断靠适配器的嗅探（只认 {"Id":N,"Title|Description":…,"MSceneDetails|MAdultDetails":[ 开头）
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: [''], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    count: [],   // 数 typeadv/MScenes 和 json 里的剧情文件（detectOtogi）
+    cover: [{ dir: 'typeadv/bg/adventure', match: '\\.png$', flags: 'i', pick: 'first' }, { dir: 'typeadv/bg', match: '^bg_adventure_.*\\.png$', flags: 'i', pick: 'first' }, { dir: 'title', match: '\\.png$', flags: 'i', pick: 'first' }],
+    avatars: [], expectedDirs: ['typeadv/CharaStand', 'chara/still', 'VieableEpisodeList', 'MasterData'],
+    nodes: [['main', 'main'], ['chars', 'chars'], ['all', 'all'], ['adult', 'adult']],
+    notes: ['剧情文件没有扩展名（typeadv/MScenes/<id>、json/<id>）；列表（主线 / 角色 / 全部普通 / 全部成人）由 otogi-json 适配器读 list.json / Episode/Main / VieableEpisodeList / MasterData 现建', '语音只有一小部分在本地：找不到的语音不发指令，计入 stats.missing.voice（不算「缺少资源」）；语言切换用 adapterOptions[\'otogi-json\'].lang（jp / cn / tw）'],
+  },
 }
 
 // 认不出的目录：整个目录当脚本根，脚本里的路径按媒体目录解析（再试一次去掉 download/ 前缀）；不认领（不写 game.id）。不是某个游戏，所以不在 LAYOUTS 里
@@ -1518,6 +1625,7 @@ const DETECTORS = {
   kamihime: (scope) => detectKamihime(scope),
   bokusen: (scope) => detectBokusen(scope),
   grenze: (scope) => detectGrenze(scope),
+  otogi: (scope) => detectOtogi(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2166,6 +2274,39 @@ async function detectKamihime(scope) {
   logs.push(`Kamihime 数据根：${join(base, 'dmm') || '.'}；脚本根：${join(base, 'dmm/raw_scenario')}；assets 目录${hasAssets ? '有' : '没有（背景 / 立绘 / 语音都会缺资源）'}`)
   for (const line of entry.notes) logs.push(line)
   return makeFound(scope, entry, loc, config)
+}
+
+// ---- Otogi Frontier R：<根>/list.json + typeadv/MScenes/<id> + json/<id>（都没有扩展名）；列表由 otogi-json 适配器的 catalog 现读
+async function detectOtogi(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  const dirOf = (rel) => path.join(media, ...splitRel(join(base, rel)))
+  const idsIn = async (rel) => (await listNames(dirOf(rel))).filter((name) => /^\d+$/.test(name))
+  const normal = await idsIn('typeadv/MScenes')
+  if (!declared) {
+    // 没声明：要求有立绘和 VieableEpisodeList，并且 MScenes 里至少一个文件开头是 {"Id":N,…"MSceneDetails"（只读开头 8KB，最多看 3 个）
+    let hits = 0
+    for (const name of normal.slice(0, 3)) {
+      try {
+        const head = (await readFile(path.join(dirOf('typeadv/MScenes'), name))).subarray(0, 8192).toString('utf8').replace(/^\uFEFF/, '')
+        if (/^\s*\{\s*"Id"\s*:\s*\d+\s*,[\s\S]*?"MSceneDetails"\s*:\s*\[/.test(head)) hits++
+      } catch { /* 读不了就当不是 */ }
+    }
+    if (!hits || !(await markersOk(media, entry, base, declared))) return null
+  }
+  announce(logs, scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  const adult = await idsIn('json')
+  logs.push(`Otogi 游戏根：${base || '.'}；普通剧情 ${normal.length} 个（typeadv/MScenes）、成人剧情 ${adult.length} 个（json）、TW ${(await idsIn('typeadv/MScenes_TW')).length} 个、jsoncn ${(await idsIn('jsoncn')).length} 个`)
+  await warnMissing(media, entry, base, logs)
+  for (const line of entry.notes) logs.push(line)
+  const cover = await coverFromRules(media, entry, base)
+  return makeFound(scope, entry, loc, config, {
+    cover,
+    count: async () => { logs.push(`剧情文件 ${normal.length + adult.length} 个${normal.length + adult.length ? '' : '——结构可能不对'}`); return normal.length + adult.length },
+  })
 }
 
 // ---- UViewer（txt 脚本）和通用布局

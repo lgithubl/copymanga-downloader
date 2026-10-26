@@ -488,7 +488,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const files = []
       const names = new Set(entries.map((entry) => entry.name))
       // 只有编译产物（.rpyc / .xxxc）没有源文件的脚本：解析不了，也不会出现在列表里——记下来，列表页的问题里报
-      const compiledOnly = entries.filter((entry) => entry.isFile() && /c$/i.test(entry.name) && scriptExtensions.includes(extOf(entry.name).slice(0, -1)) && !names.has(entry.name.slice(0, -1))).map((entry) => (rel ? `${rel}/${entry.name}` : entry.name))
+      const compiledOnly = entries.filter((entry) => entry.isFile() && /c$/i.test(entry.name) && extOf(entry.name) && scriptExtensions.includes(extOf(entry.name).slice(0, -1)) && !names.has(entry.name.slice(0, -1))).map((entry) => (rel ? `${rel}/${entry.name}` : entry.name))
       for (const entry of entries) {
         if (hidden(entry.name) || entry.name.includes('|') || entry.name.includes('#')) continue
         const childRel = rel ? `${rel}/${entry.name}` : entry.name
