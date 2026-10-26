@@ -4758,3 +4758,25 @@ h2 {
 .gal-expr-review .gal-more-select option { color: #000; }
 @media (max-width: 900px) { .gal-expr-review { grid-template-columns: minmax(0, 1fr); } }
 .gal-expr-review .gal-expr-field > span { font-size: 13px; flex: 0 0 9em; }
+
+/* ---- Gal 随机语音（gal-voice.js）：卡片上的 🎲、工具栏按钮 + 过滤弹层、提示条 ---- */
+.gal-card-voice { align-items: center; background: rgba(8, 12, 24, 0.78); border-radius: 50%; bottom: 6px; color: #fff; cursor: pointer; display: inline-flex; font-size: 14px; height: 26px; justify-content: center; line-height: 1; opacity: 0; position: absolute; right: 6px; user-select: none; width: 26px; z-index: 2; }
+.gal-card:hover .gal-card-voice, .gal-card:focus-within .gal-card-voice, .gal-card-voice:focus-visible, .gal-card-voice.is-playing, .gal-card-voice.is-loading { opacity: 1; }
+.gal-card-voice:hover { background: var(--site-primary); }
+.gal-card-voice:focus-visible { outline: 2px solid var(--site-primary); outline-offset: 2px; }
+.gal-card-voice.is-playing { background: var(--site-primary); }
+.gal-card-voice.is-loading { animation: gal-voice-pulse 0.9s ease-in-out infinite; }
+@keyframes gal-voice-pulse { 50% { opacity: 0.45; } }
+@media (hover: none) { .gal-card-voice { opacity: 0.9; } }   /* 触屏没有悬停：一直显示 */
+.gal-voice-wrap { align-items: center; display: inline-flex; gap: 4px; position: relative; }
+.gal-voice-list-btn.is-playing { background: var(--site-primary); }
+.gal-voice-filter { background: var(--site-panel); border: 1px solid var(--site-border); border-radius: 8px; bottom: calc(100% + 6px); box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3); color: var(--site-text); display: grid; gap: 6px; left: 0; min-width: min(24em, 86vw); padding: 8px; position: absolute; z-index: 20; }
+.gal-voice-filter[hidden] { display: none; }
+.gal-voice-input, .gal-voice-target { background: var(--site-control); border: 1px solid var(--site-control-border); border-radius: 6px; color: var(--site-text); flex: 1; font-size: 13px; min-height: 28px; min-width: 0; padding: 2px 8px; }
+.gal-voice-input.is-invalid { border-color: #ff5a5a; }
+.gal-voice-status { color: var(--site-muted); font-size: 12px; min-height: 1.2em; }
+.gal-voice-hint { color: var(--site-muted); font-size: 12px; }
+.gal-voice-status.is-error { color: #ff5a5a; }
+.gal-voice-toast { background: rgba(8, 12, 24, 0.9); border-radius: 8px; bottom: 64px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35); color: #fff; font-size: 13px; left: 50%; max-width: min(36em, 92vw); overflow-wrap: anywhere; padding: 8px 14px; pointer-events: none; position: fixed; text-align: center; transform: translateX(-50%); z-index: 60; }
+.gal-voice-toast[hidden] { display: none; }
+.gal-voice-toast.is-error { background: rgba(120, 24, 24, 0.94); }

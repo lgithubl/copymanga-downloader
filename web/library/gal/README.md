@@ -450,3 +450,29 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **`gal-layout` 探测**（`game.id: tsk`）：往下找（深度 ≤ 6）「有 `Adventure/Master.chapter.json`，同级有 `Characters` / `Stills` / `Sound`」的目录（= 数据根 `…_Data/StreamingAssets/<游戏名>`；媒体目录可以是游戏根、`_Data`、`StreamingAssets` 或数据根本身），写：脚本根 `<数据根>/Adventure`、资源根 `<数据根>`、扩展名 `json`（只认 `*.book.json` 靠适配器的嗅探，不靠扩展名）、隐藏目录 `BackGrounds` / `Effects` / `Spine` / `Textures`、适配器参数 `root`、封面 = `Adventure/BackGrounds` 里第一张图、脚本数、默认节点图（每个剧情文件夹一个 `c/<文件夹>` 节点 + `all`）。探测顺序在 artwhirl 之后、uviewer 之前。
   导入页预设「Twinkle Star Knights X（Utage）」，或自己写：`adapters: ['utage-book']` + `config.game.id: 'tsk'` + 勾元数据脚本 `gal-layout`。
 - 自测：`scripts/dev/gal-selftest.mjs` 里的 TSK 一节（适配器 / 分支 / gal-layout / 浏览节点）；浏览器 `PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-tsk-selftest.mjs`（真实 WebGL + Spine 4.0 运行时，需要先 `sh scripts/fetch-spine-runtime.sh`）；合成数据 `node scripts/dev/make-tsk-fixture.mjs <目录>`（`gal-demo` 工作流也会导入它）。
+
+## 随机语音（列表上的 🎲，不打开脚本）
+
+卡片（脚本 / 目录）右下角和底栏的「随机语音」按钮：随机放一条属于这个脚本 / 目录 / 当前这一层列表的语音。**完全按需**：列表接口不算任何语音，点了才算。
+
+**接口**：`GET /api/library/items/gal/<条目 id>/random-voice?node=<节点 id>&include=<正则>&exclude=<正则>&target=path|speaker|text&bgvoice=1&tries=8`（和 `reader` / `resource` 同一层，同样的鉴权）
+
+- `node`：卡片上的 `node`（`s:` 脚本 / `d:` 目录 / `g:` 分组 / `v:` 适配器目录 / `@<根>|…` / 空 = 首页；带视图参数 `|q=…` 时只在筛出来的项里取，页码忽略）。也可以直接写脚本路径。
+- `include` / `exclude`：**JS 正则源码**（不分大小写），白名单 / 黑名单，先白后黑；默认匹配语音的**资源路径**（`voice` 指令的 `src`）。`target` 可换成 `speaker`（说话人）/ `text`（台词），也可逗号连写（`path,speaker`，任一个匹配即算）。不传时用 `config.voiceInclude` / `config.voiceExclude`（见下），传了就覆盖。
+- `bgvoice=1`：把循环的背景人声（`bgvoice` 指令）也算候选，默认只有 `voice`（一次性语音）。`tries`：目录 / 列表节点最多试几个脚本，默认 8，封顶 30。
+- 成功 200：`{ src（可直接播的资源地址）, resource（资源路径）, scriptId（脚本节点 id）, scriptTitle, step, speaker?, text?（语音所在步的台词，≤80 字）, kind, index / total（这条在「过滤后的候选」里的序号 / 个数）, adapter, cached（语音表是否来自缓存）, scripts（候选脚本数）, tried（试了几个）, ms }`。
+- 没有可放的 404：`{ error: 'no-voice' | 'all-filtered', reason, scripts, tried, ms }`（`no-voice` = 没有语音 / 文件都找不到；`all-filtered` = 有语音但都被过滤掉了）。参数不合格 400：`{ error: 'invalid-regex' | 'invalid-target', reason }`。
+
+**怎么取**：
+- 脚本 = 和打开它同一条路（嗅探适配器 → 适配器上下文 → `buildScene`，所以 adapterOptions / resourceRoots / 覆盖都照常生效，大文件里的 `<文件>::<场景>` 也一样），收 `voice` 指令（同一个 `src` 去重），过滤后**均匀随机**取一条，再确认文件真的在（不在的丢掉再取）。
+- 目录 / 分组 / 适配器目录 / 当前列表 = 用已缓存的列表（`listDir` / catalog）收脚本：先收这一层的，再随机展开子目录（最多展开 40 个），脚本最多 500 个，打乱后最多试 `tries` 个，第一个过滤后还有语音的脚本里随机取。所以目录很大、语音稀少时可能 `no-voice`（`reason` 里写了试了几个，再点一次会换一批）。
+- 每个脚本的语音表缓存在进程内 LRU（200 条，键 = 脚本路径 + mtime + size + 配置指纹 + 适配器上下文建立时间；「刷新索引」会清）。同一脚本再点 = 不再解析，换过滤条件也不用重新解析。`voiceStats.parses / hits`（`web/library/gal/voice.mjs`）是命中 / 解析计数，测试靠它。
+- 成本（合成 fixture，本机）：一个脚本冷调用 ≈ 打开它的解析成本；10MB / 60000 行的单个 grenze xml 里点一个场景，冷约 270 ms（读 + 解析整个文件），热（缓存）1–2 ms；目录节点 = 试 1–8 个脚本的解析（大文件的几百个场景同理，最坏 8 × 冷）。
+
+**正则的安全**（用户填的正则，防灾难性回溯）：≤ 200 字符；编译失败直接报原因；拒绝量词套量词（`(a+)+` / `(\w*)*` / `(a{1,9}){1,9}`，`{n}` 固定次数不算）和反向引用（`\1` / `\k<名>`）；被匹配的文本截到 300 字符；只对每脚本 ≤ 5000 条的候选表逐条匹配。这是启发式，不是证明（交替重叠如 `(a|aa)+` 不拦，靠输入长度上限兜底）。前端有同一套校验（`static/gal-voice.js`，测试里和后端对拍），发请求前先提示。
+
+**配置**：`config.voiceInclude` / `config.voiceExclude`：默认白 / 黑名单（正则源码，同样的限制，不合格的读取时置空），例如把 `voiceExclude` 设成 `breath|moan` 就默认不放喘息声。界面里填了的（`localStorage`：`copymanga.gal.voiceInclude` / `voiceExclude` / `voiceTarget`）随请求带上、覆盖配置里的；界面留空 = 用配置默认。
+
+**前端**（`static/gal-voice.js` + `gal-browse.js`）：整页只有一个 `Audio`（放新的先停旧的；再点正在放的按钮 = 停止；放完复位）；音量取播放器存的 `copymanga.gal.seVolume`，感知曲线增益 = p²（本地一份，不引 gal-player.js）；提示条显示「脚本标题 · 说话人：台词 · x / total」，错误是红色非阻塞提示；底栏「随机语音」旁的「过滤 ▾」是白 / 黑名单弹层（输入时即时校验，非法的不保存）。卡片上的 🎲 是 `role=button` 的 `span`（卡片本身是 `<button>`，不能嵌套），回车 / 空格可触发，悬停 / 聚焦时显示，触屏常显。
+
+测试：`scripts/dev/gal-voice-selftest.mjs`（纯 node：各适配器的语音收集 / 正则拒绝 / LRU / 目录多脚本 / 错误）、`scripts/dev/fe-gal-voice-selftest.mjs`（浏览器，端口 8163）。

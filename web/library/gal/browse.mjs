@@ -33,6 +33,7 @@ import { contextStats, invalidateContexts, loadAdapterContext } from './context.
 import { safeRelPath } from './paths.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
+import { collectVoices, compileVoiceRegex, filterVoices, parseVoiceTargets, pickRandom, shuffled, voiceCacheClear, voiceCacheGet, voiceCacheSet, voiceStats } from './voice.mjs'
 
 // ---------- 跨请求缓存（进程内）----------
 // 浏览每次请求都会新建一个 provider，所以会反复读的东西必须缓存在模块级：
@@ -53,6 +54,7 @@ export function invalidateBrowseCaches(mediaDir) {
   for (const map of [sniffCache, entriesCache, scriptInfoCache, countCache, expressionCache]) {
     for (const key of [...map.keys()]) if (String(key).startsWith(`${mediaDir}${path.sep}`) || String(key).startsWith(`${mediaDir}|`)) { map.delete(key); n += 1 }
   }
+  n += voiceCacheClear(`${mediaDir}${path.sep}`)   // 随机语音的每脚本语音表（voice.mjs）
   return n
 }
 function cacheGet(map, key, ttl = 0) {
@@ -702,6 +704,32 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   }
   const setChoices = (active) => (sets.length > 1 ? sets.map((s) => ({ id: s.id, label: s.label || s.id || '默认', node: dirNodeId(s, '', 1), active: s === active })) : [])
 
+  // 脚本路径 → { fileRel, sceneKey, real, info, adapterId }：校验扩展名 / 在媒体目录之内 / 有适配器认得（读 8KB 头嗅探，缓存）。打开脚本和随机语音共用
+  async function resolveScript(set, rel) {
+    // 一个文件里有多个场景的格式（grenze-xml）：脚本路径 = <文件>::<场景号>，磁盘上还是那个文件，场景号交给适配器（meta.scene）
+    const sceneAt = rel.indexOf('::')
+    const fileRel = sceneAt >= 0 ? rel.slice(0, sceneAt) : rel
+    const sceneKey = sceneAt >= 0 ? rel.slice(sceneAt + 2) : ''
+    if (!scriptExtensions.includes(extOf(fileRel))) throw fail('无效的脚本路径', 400)
+    const abs = absOf(set, fileRel)
+    let real
+    let info
+    try {
+      real = await realpath(abs)
+      const realMedia = await realpath(mediaDir)
+      info = await stat(real)
+      if (!real.startsWith(realMedia + path.sep) || !info.isFile()) throw new Error('x')
+    } catch { throw fail('脚本不存在', 404) }
+    const adapterId = await scriptAdapterOf(abs, Boolean(sceneKey))
+    if (!adapterId) {
+      // 带上试过哪些适配器 + 文件开头，看一眼就知道是格式不对还是适配器没选
+      const head = decodeTextFile((await readFile(real)).subarray(0, 120)).text.replace(/\s+/g, ' ').trim()
+      throw fail(`不是可识别的脚本（试过：${(adapters?.length ? adapters : galAdapterIds()).join(' / ')}；文件开头：${head || '空'}）`, 400)
+    }
+    if (sceneKey && !galAdapter(adapterId).sceneInPath) throw fail('这种脚本不支持 <文件>::<场景> 的路径', 400)
+    return { fileRel, sceneKey, real, info, adapterId }
+  }
+
   // ---------- 取节点 ----------
   async function getNodeInner(nodeId, opts = {}) {
     const { set, kind, rel, page, view, key: nodeKey = '' } = parseNodeId(nodeId)
@@ -767,25 +795,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     }
 
     // script
-    // 一个文件里有多个场景的格式（grenze-xml）：脚本路径 = <文件>::<场景号>，磁盘上还是那个文件，场景号交给适配器（meta.scene）
-    const sceneAt = rel.indexOf('::')
-    const fileRel = sceneAt >= 0 ? rel.slice(0, sceneAt) : rel
-    const sceneKey = sceneAt >= 0 ? rel.slice(sceneAt + 2) : ''
-    if (!scriptExtensions.includes(extOf(fileRel))) throw fail('无效的脚本路径', 400)
-    const abs = absOf(set, fileRel)
-    let real
-    try {
-      real = await realpath(abs)
-      const realMedia = await realpath(mediaDir)
-      if (!real.startsWith(realMedia + path.sep) || !(await stat(real)).isFile()) throw new Error('x')
-    } catch { throw fail('脚本不存在', 404) }
-    const adapterId = await scriptAdapterOf(abs, Boolean(sceneKey))
-    if (!adapterId) {
-      // 带上试过哪些适配器 + 文件开头，看一眼就知道是格式不对还是适配器没选
-      const head = decodeTextFile((await readFile(real)).subarray(0, 120)).text.replace(/\s+/g, ' ').trim()
-      throw fail(`不是可识别的脚本（试过：${(adapters?.length ? adapters : galAdapterIds()).join(' / ')}；文件开头：${head || '空'}）`, 400)
-    }
-    if (sceneKey && !galAdapter(adapterId).sceneInPath) throw fail('这种脚本不支持 <文件>::<场景> 的路径', 400)
+    const { fileRel, sceneKey, real, adapterId } = await resolveScript(set, rel)
     const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) })
 
     if (entry) {
@@ -895,6 +905,134 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return skeletons ? { type: 'dir', id: 'x:expr', title: '表情', subtitle: `${skeletons} 个角色骨架 · 表情预设逐个确认`, thumb: '', badge: '', node: 'x:expr' } : null
   }
 
+  // ---------- 随机语音：从一个脚本 / 目录 / 当前列表里随机取一条语音，不打开它 ----------
+  // 全部按需（点按钮才算），列表接口不碰。脚本 = 和打开它同一条路（resolveScript + 适配器上下文 + buildScene），收 voice 指令，语音表按
+  // （脚本路径 mtime size 配置指纹 上下文建立时间）缓存在 voice.mjs 的 LRU 里；目录 / 虚拟目录 / 分组 / 整个列表 = 先用已缓存的列表（listDir / catalog，
+  // 不新遍历）收脚本（最多 MAX_VOICE_SCRIPTS 个、最多展开 MAX_VOICE_DIRS 个子目录），打乱后最多试 tries 个，第一个过滤后还有语音的就在它里面均匀随机。
+  const MAX_VOICE_SCRIPTS = 500
+  const MAX_VOICE_DIRS = 40
+  const DEFAULT_VOICE_TRIES = 8
+  const MAX_VOICE_TRIES = 30
+  // 一个脚本的语音表 { voices, adapterId, cached }（缓存命中不再解析）
+  async function voicesOfScript(set, rel) {
+    const { fileRel, sceneKey, real, info, adapterId } = await resolveScript(set, rel)
+    const ctx = await contextOf(adapterId)
+    const built = contextStats(mediaDir).find((x) => x.adapter === adapterId)?.builtAt || ''
+    const key = `${real}|${info.mtimeMs}|${info.size}|${infoCfgKey}|${sceneKey}|${built}`
+    const hit = voiceCacheGet(key)
+    if (hit) return { ...hit, cached: true }
+    voiceStats.parses += 1
+    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, ctx, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}) })
+    const value = { voices: collectVoices(scene, { withBg: true }), adapterId }
+    voiceCacheSet(key, value)
+    return { ...value, cached: false }
+  }
+  // 节点 id（卡片上的 node）或脚本路径 → 解析后的节点；'' / 只有视图参数 = 当前默认列表的首页
+  function parseVoiceNode(raw) {
+    const text = String(raw ?? '')
+    return parseNodeId(/^(?:@[^|]*\||[sdgvx]:|\||#|$)/.test(text) ? text : `s:${text}`)
+  }
+  // 节点下的脚本 [{ set, rel, title }]（去重、不超过 MAX_VOICE_SCRIPTS 个）。目录会往子目录展开，但展开次数有上限；列表只要名字，不读脚本
+  async function scriptsUnder(parsed) {
+    const { set, kind, rel, view, key } = parsed
+    if (kind === 'script') return [{ set, rel, title: stemOf(rel) }]
+    const seen = new Set()
+    const pool = []
+    const add = (entry) => { if (pool.length < MAX_VOICE_SCRIPTS * 4 && !seen.has(entry.rel)) { seen.add(entry.rel); pool.push({ set, rel: entry.rel, title: entry.title }) } }
+    const catalog = set === defaultSet ? await getCatalog() : null
+    if (catalog && (kind === 'virtual' || (kind === 'dir' && !rel))) {
+      const holder = kind === 'virtual' ? catalog.byId.get(key) : catalog.tree
+      if (!holder?.children) throw fail('目录不存在', 404)
+      const top = (await pageOfView(holder.children, { ...view, sort: 'default', size: 1e6 }, 1, (child) => ({ title: child.title, extra: `${child.subtitle || ''} ${child.script ? stemOf(child.script) : child.id}` }))).slice
+      const walk = (children) => { for (const child of children) { if (child.script) add({ rel: child.script, title: child.title }); else if (child.children) walk(child.children) } }
+      walk(top)
+      return shuffled(pool).slice(0, MAX_VOICE_SCRIPTS)
+    }
+    const describe = async (entry) => (entry.type === 'script' ? { title: entry.stem, extra: entry.name } : { title: await labelOf(entry.key || entry.name), extra: entry.key || entry.name })
+    if (kind === 'group') {
+      const rule = groupRuleAt(rel)
+      const { allScripts } = await listDir(set, rel).catch(() => { throw fail('目录不存在', 404) })
+      for (const entry of allScripts) if (rule && groupKeyOf(rule, entry.stem) === key) add({ rel: entry.rel, title: entry.stem })
+      if (!pool.length) throw fail('分组不存在', 404)
+      return shuffled(pool).slice(0, MAX_VOICE_SCRIPTS)
+    }
+    const first = await listDir(set, rel)
+    const top = (await pageOfView(first.all, { ...view, sort: 'default', size: 1e6 }, 1, describe)).slice
+    const queue = []
+    for (const entry of top) {
+      if (entry.type === 'script') add({ rel: entry.rel, title: entry.stem })
+      else if (entry.type === 'group') for (const member of entry.members) add({ rel: member.rel, title: member.stem })
+      else queue.push(entry.rel)
+    }
+    // 子目录：随机一个个展开，直到脚本够多 / 展开次数用完
+    let queued = shuffled(queue)
+    for (let expanded = 0; queued.length && expanded < MAX_VOICE_DIRS && pool.length < MAX_VOICE_SCRIPTS; expanded += 1) {
+      const next = queued.shift()
+      const listing = await listDir(set, next).catch(() => null)
+      if (!listing) continue
+      for (const entry of listing.allScripts) add({ rel: entry.rel, title: entry.stem })
+      queued = queued.concat(shuffled(listing.dirs.map((d) => d.rel)))
+    }
+    return shuffled(pool).slice(0, MAX_VOICE_SCRIPTS)
+  }
+
+  // params：{ node, include, exclude, target, bgvoice, tries, resourceBase, rand }。成功返回 { ok: true, ...结果 }；
+  // 没有可放的语音返回 { ok: false, status: 404, error: 'no-voice' | 'all-filtered', reason, tried, ms }；参数不合格抛 400（code: invalid-regex / invalid-target）
+  async function randomVoice({ node = '', include = '', exclude = '', target = 'path', bgvoice = false, tries = DEFAULT_VOICE_TRIES, resourceBase = '', rand = Math.random } = {}) {
+    const startedAt = Date.now()
+    const includeRe = compileVoiceRegex(include || config.voiceInclude, '白名单')
+    const excludeRe = compileVoiceRegex(exclude || config.voiceExclude, '黑名单')
+    const targets = parseVoiceTargets(target)
+    const parsed = parseVoiceNode(node)
+    const limit = Math.max(1, Math.min(MAX_VOICE_TRIES, Math.floor(Number(tries)) || DEFAULT_VOICE_TRIES))
+    const scripts = await scriptsUnder(parsed)
+    const single = parsed.kind === 'script'
+    const stats = { tried: 0, withVoice: 0, missing: 0, failed: 0 }
+    const done = (extra) => ({ scripts: scripts.length, tried: stats.tried, ms: Date.now() - startedAt, ...extra })
+    for (const script of single ? scripts : shuffled(scripts, rand)) {
+      if (stats.tried >= limit) break
+      stats.tried += 1
+      let got
+      try { got = await voicesOfScript(script.set, script.rel) } catch (error) {
+        if (single) throw error   // 点的就是这个脚本：打不开就如实报错
+        stats.failed += 1
+        continue
+      }
+      const all = bgvoice ? got.voices : got.voices.filter((voice) => voice.kind === 'voice')
+      if (all.length) stats.withVoice += 1
+      const list = filterVoices(all, { include: includeRe, exclude: excludeRe, targets })
+      // 随机取一条并确认文件在；不在的丢掉再取（有上限，避免整个脚本的资源都缺时空转）
+      const left = list.slice()
+      for (let attempt = 0; left.length && attempt < 12; attempt += 1) {
+        const voice = pickRandom(left, rand)
+        left.splice(left.indexOf(voice), 1)
+        try { await resolveAsset(voice.src) } catch { stats.missing += 1; continue }
+        return {
+          ok: true,
+          src: `${resourceBase}?path=${encodeURIComponent(voice.src)}`,
+          resource: voice.src,
+          scriptId: idOf(script.set, 'script', script.rel),
+          scriptTitle: script.title,
+          step: voice.step,
+          ...(voice.speaker ? { speaker: voice.speaker } : {}),
+          ...(voice.text ? { text: voice.text } : {}),
+          kind: voice.kind,
+          index: list.indexOf(voice) + 1,
+          total: list.length,
+          adapter: got.adapterId,
+          cached: got.cached,
+          ...done({}),
+        }
+      }
+    }
+    const filtered = stats.withVoice > 0 && !stats.missing
+    const where = single ? '这个脚本' : `试了 ${stats.tried} / ${scripts.length} 个脚本`
+    if (!scripts.length) return { ok: false, status: 404, error: 'no-voice', reason: '这里面没有脚本', ...done({}) }
+    if (stats.missing && !filtered && stats.withVoice) return { ok: false, status: 404, error: 'no-voice', reason: `${where}里的语音文件都找不到（缺 ${stats.missing} 个）`, ...done({}) }
+    if (filtered) return { ok: false, status: 404, error: 'all-filtered', reason: `${where}有语音，但都被白名单 / 黑名单过滤掉了`, ...done({}) }
+    return { ok: false, status: 404, error: 'no-voice', reason: single ? '这个脚本里没有语音' : `${where}，都没有语音${scripts.length > stats.tried ? '（再点一次会换一批脚本）' : ''}`, ...done({}) }
+  }
+
   async function getNode(nodeId, opts = {}) {
     if (nodeId === 'x:expr') {
       if (!expressionAdapter) throw fail('这个媒体没有表情预设', 404)
@@ -915,5 +1053,5 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return result
   }
 
-  return { config, getNode, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, groupNodeId, virtualNodeId, effectiveParentDir } }
+  return { config, getNode, randomVoice, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, groupNodeId, virtualNodeId, effectiveParentDir } }
 }

@@ -5,6 +5,7 @@
 // config 全是数据（路径、字典、模板），不含代码：模板只做占位符替换，之后仍要通过存在性检查和「只认媒体目录内的真实路径」才会被读。
 
 import { safeRelPath } from './paths.mjs'
+import { isValidVoiceRegex } from './voice.mjs'
 
 export const DEFAULT_PAGE_SIZE = 25
 export const MAX_SCRIPT_BYTES = 4 * 1024 * 1024
@@ -56,6 +57,9 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 允许忽略的未渲染指令（正则字符串列表，不分大小写）：播放器里「N 条指令暂未渲染」的统计会跳过匹配的指令。
   // 匹配对象是指令名（如 spriteatlas）和「指令名,参数1,参数2…」（如 anm,foo,bar），任一匹配就算「我允许了」
   rawIgnore: [],
+  // 随机语音的默认白名单 / 黑名单（JS 正则源码，不分大小写，≤200 字符，匹配语音的资源路径；不合格的置空）。界面 / 请求里填了的覆盖它，见 README「随机语音」
+  voiceInclude: '',
+  voiceExclude: '',
   scriptCount: 0,     // 脚本数（脚本统计后写；0 = 不知道）
   script: null,       // 谁写的这份配置：{ id, version, ranAt }（脚本自己写，用来知道当前配置是哪一版脚本生成的）
 })
@@ -242,6 +246,8 @@ export function normalizeGalConfig(raw) {
     game,
     adapterOptions,
     rawIgnore: v.rawIgnore === undefined ? [] : rawIgnore,
+    voiceInclude: isValidVoiceRegex(v.voiceInclude) ? text(v.voiceInclude, 200) : '',
+    voiceExclude: isValidVoiceRegex(v.voiceExclude) ? text(v.voiceExclude, 200) : '',
     nodes,
     cover: coverRel === null ? '' : cover,
     scriptCount: Math.max(0, Math.floor(Number(v.scriptCount)) || 0),

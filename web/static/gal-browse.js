@@ -3,6 +3,7 @@
 // 全部用 textContent / setAttribute 写入后端给的文字，不拼 innerHTML。
 import { attachBarLock } from './gal-barlock.js'
 import { assetUrl } from './gal-engine.js'
+import { createGalVoice } from './gal-voice.js'
 
 const el = (tag, className = '', text = '') => {
   const node = document.createElement(tag)
@@ -24,6 +25,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   const node = reader.node
   const root = el('div', 'gal-browse')
   root.dataset.node = node.id
+  const voice = createGalVoice({ reader, host: root })   // 随机语音：卡片 / 工具栏上的 🎲（gal-voice.js）
 
   // ---- 底部固定条：和播放页的工具栏同一个位置、同一套按钮样式（.gal-btn），只有一行 ----
   //   [↑ 上一级] [◀ 上一页] [页码 / 总页] [下一页 ▶] … [更多 ▾] [🔒] [返回]
@@ -277,7 +279,17 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   leaveBtn.title = '退出沉浸并离开这个媒体'
   leaveBtn.hidden = !onLeave
   leaveBtn.addEventListener('click', () => onLeave?.())
-  actions.append(more, lockBtn, leaveBtn)
+  // 随机语音（当前这一层列表）：🎲 随机语音 + 过滤设置弹层（白 / 黑名单正则，存 localStorage）
+  const voiceWrap = el('div', 'gal-voice-wrap')
+  const voiceFilterBtn = el('button', 'gal-btn gal-voice-filter-btn', '过滤 ▾')
+  voiceFilterBtn.type = 'button'
+  voiceFilterBtn.title = '随机语音的白名单 / 黑名单（正则）'
+  const voicePop = voice.filterPopover()
+  voiceFilterBtn.addEventListener('click', (event) => { event.stopPropagation(); voicePop.hidden = !voicePop.hidden })
+  const onVoiceDocClick = (event) => { if (!voicePop.hidden && !voiceWrap.contains(event.target)) voicePop.hidden = true }
+  document.addEventListener('click', onVoiceDocClick)
+  voiceWrap.append(voice.attach(':list', node.id, { title: '从这一层列表里随机放一条语音（不打开脚本）', className: 'gal-btn gal-voice-list-btn', text: '随机语音' }), voiceFilterBtn, voicePop)
+  actions.append(voiceWrap, more, lockBtn, leaveBtn)
   barIn.append(actions)
   bar.append(barHot, barIn)
   attachBarLock({ root, button: lockBtn })
@@ -371,6 +383,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       if (progressTag) { progressTag.classList.add('gal-card-progress'); thumb.append(progressTag) }
     }
     if (item.issues?.length) problems.push({ kind: '脚本问题', title: item.title, node: item.node, lines: item.issues })
+    if (item.node !== 'x:expr') thumb.append(voice.attach(item.node, item.node, { title: `随机放一条「${item.title}」里的语音（不打开）` }))
     card.append(thumb, el('div', 'gal-card-title', item.title))
     if (item.subtitle) card.append(el('div', 'gal-card-sub', item.subtitle))
     card.addEventListener('click', () => onOpen(item.node, 'child'))
@@ -382,5 +395,5 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
 
   container.replaceChildren(root)
   if (thumbLoader && thumbImages.length) thumbLoader.attach(thumbImages, { root: container })
-  return { destroy: () => { document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); thumbLoader?.reset(); root.remove() }, setImmersive, root }
+  return { destroy: () => { voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); thumbLoader?.reset(); root.remove() }, setImmersive, root }
 }

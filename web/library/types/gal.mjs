@@ -287,6 +287,13 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     }
   }
 
+  // ---------- 随机语音 ----------
+  // params：{ node, include, exclude, target, bgvoice, tries }（见 gal/browse.mjs 的 randomVoice）；结果里的 src 已是可直接播的资源地址
+  async function getRandomVoice(itemId, params = {}) {
+    const item = await readItem(itemId)
+    return providerOf(item).randomVoice({ ...params, resourceBase: resourceBase(itemId) })
+  }
+
   // ---------- 导入（只建元数据） ----------
 
   // 一个目录 = 一个媒体：只记路径、adapters、标题，不扫描、不探测——配置按标准结构取默认，结构不对的由 gal-layout 脚本调。
@@ -430,6 +437,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     listUnits,
     getReaderContent,
     refreshIndex,
+    getRandomVoice,
     getResource,
     getThumbnail,
     getThumbnailFile,

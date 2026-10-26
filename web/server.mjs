@@ -5315,6 +5315,19 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
         const thumb = await handler.getThumbnail(itemId, unitId, parts[7] || 'cover')
         return binary(res, 200, thumb.body, thumb.contentType)
       }
+      // Gal 随机语音：GET …/random-voice?node=<节点 id>&include=&exclude=&target=path|speaker|text&bgvoice=1&tries=8（见 library/gal/README.md「随机语音」）
+      if (action === 'random-voice' && handler.getRandomVoice) {
+        const q = url.searchParams
+        try {
+          const result = await handler.getRandomVoice(itemId, { node: q.get('node') || '', include: q.get('include') || '', exclude: q.get('exclude') || '', target: q.get('target') || 'path', bgvoice: q.get('bgvoice') === '1', tries: q.get('tries') || '' })
+          const { ok, status, ...body } = result
+          return json(res, ok ? 200 : status, body)
+        } catch (error) {
+          // 参数不合格（正则 / target）：{ error: 代码, reason: 说明 }，前端按 error 分类显示
+          if (error?.code === 'invalid-regex' || error?.code === 'invalid-target') return json(res, 400, { error: error.code, reason: error.message })
+          throw error
+        }
+      }
       if (action === 'resource') {
         const resource = await handler.getResource(itemId, url.searchParams.get('path') || '', {
           subtitle: url.searchParams.get('subtitle') === '1',
