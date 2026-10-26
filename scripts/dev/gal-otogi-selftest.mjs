@@ -74,6 +74,18 @@ let ctx
   check('立绘：同一个角色（10021）又出现在 Position 2 → 右边那个收掉，只剩左边', J(standOf(3)) === J([stand(10021, 'body', 'left'), stand(10021, 'angry_c', 'left'), stand(10021, 'angry', 'left')]), J(standOf(3)))
   check('立绘：Position 1 的旁白行默认不动立绘（stand.narration = keep，原页面的 JS 只收文本框）', !s3.steps[4].commands.some((c) => c.op === 'stand' || c.op === 'standOff'), J(s3.steps[4].commands))
   check('立绘：表情文件不存在（violent）→ 只剩 body，记 stats.missing（face:…），不进 unresolved；IsBackgroundOnly → standOff', J(standOf(5)) === J([stand(10011, 'body', 'left')]) && s3.stats.missing['face:10011/violent'] === 1 && s3.stats.missing['face:10011/violent_c'] === 1 && s3.steps[6].commands[0].op === 'standOff' && s3.stats.stands === 4, J([standOf(5), s3.stats.missing]))
+  // 换背景 / CG = 进了下一个画面：上一幕的立绘要收掉（用户反馈：到了下一张 CG 立绘还留着，明显不对）
+  const bgChangeText = JSON.stringify({ Id: 77, Title: 't', MSceneDetails: [
+    { Id: 1, MSceneId: 77, Position: 2, Name: 'A', Phrase: 'one', MMonsterId: 10011, EmotionId: 1, BackgroundImage: 'bg_adventure_0001' },
+    { Id: 2, MSceneId: 77, Position: 1, Name: '', Phrase: 'two', BackgroundImage: 'bg_adventure_0002' },
+    { Id: 3, MSceneId: 77, Position: 3, Name: 'B', Phrase: 'three', MMonsterId: 10021, EmotionId: 1, BackgroundImage: 'bg_adventure_0002' },
+  ] })
+  const cleared = play(bgChangeText, '77', ctx)
+  const opsOf = (scene, step) => scene.steps[step].commands.map((c) => c.op)
+  check('换背景 / CG：旁白行换了背景 → bg 之后紧跟 standOff（上一幕的立绘收掉）；背景没变的行不动立绘', J(opsOf(cleared, 1).filter((o) => ['bg', 'standOff'].includes(o))) === J(['bg', 'standOff']) && !opsOf(cleared, 2).includes('standOff'), J(cleared.steps.map((s) => s.commands.map((c) => c.op))))
+  check('换背景 / CG：这一行自己带角色（MMonsterId）时，只摆这一行的立绘，不残留上一幕的', J(cleared.steps[2].commands.find((c) => c.op === 'stand')?.parts.map((p) => p.src.split('/')[3]).filter((v, i, a) => a.indexOf(v) === i)) === J(['10021']), J(cleared.steps[2].commands))
+  const kept = play(bgChangeText, '77', ctx, { options: { stand: { clearOnBgChange: false } } })
+  check('stand.clearOnBgChange = false：回到旧行为（换背景不收立绘）', !opsOf(kept, 1).includes('standOff'), J(opsOf(kept, 1)))
   const hideNarration = play(normalText, '3', ctx, { options: { stand: { narration: 'hide' } } })
   check('stand.narration = hide：旁白行收掉两边的立绘（下一个说话的行只带回自己那一边）', hideNarration.steps[4].commands[0].op === 'standOff' && hideNarration.steps[5].commands.find((c) => c.op === 'stand').parts.length === 1, J(hideNarration.steps[4].commands))
   const dimmed = play(normalText, '3', ctx, { options: { stand: { dim: 0.5 } } })

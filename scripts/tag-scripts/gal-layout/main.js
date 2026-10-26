@@ -804,7 +804,7 @@ export const ADAPTER_RULES = {
       layers: ['{emotion}_c', '{emotion}'],
       fit: 1,
       narration: 'keep',
-      duplicate: 'hideOther',
+      duplicate: 'hideOther', clearOnBgChange: true,
       dim: 0,
     },
     anim: {

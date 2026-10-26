@@ -36,7 +36,8 @@
 //   exts { image: [png, webp, jpg], audio: [m4a, mp3, ogg, wav] }          {ext} 的顺序 = 同名文件的优先级
 //   positions { '1': 'narration', '2': 'left', '3': 'right' }               Position → narration / left / center / right（不在表里的 Position 当旁白）
 //   emotions { '1': 'idle', … '8': 'violent' }                              EmotionId → 表情文件名（不在表里 / null = 沿用这个位置上同一角色的上一个表情，没有就只有 body）
-//   stand { body: 'body', layers: ['{emotion}_c', '{emotion}'], fit: 1, narration: 'keep', duplicate: 'hideOther', dim: 0 }
+//   stand { body: 'body', layers: ['{emotion}_c', '{emotion}'], fit: 1, narration: 'keep', duplicate: 'hideOther', clearOnBgChange: true, dim: 0 }
+//        clearOnBgChange = 换了背景 / CG 就把上一幕的立绘收掉（用户反馈：到了下一张 CG 立绘还留着，明显不对；false = 只在被新角色顶替 / IsBackgroundOnly 时才收）
 //        body = 底图名；layers = 叠层（从下到上，{emotion} = 表情名）；fit = 立绘部件的 fit（图比画面高就缩到画面高度，0 = 不带）；narration = keep / hide；duplicate = hideOther（同一角色在另一边已出现就收掉另一边）/ keep；dim = 0..1 不说话的一边的亮度（0 = 不压暗）
 //   anim { '1': { anim: 'animation1', loop: true }, '2': …, '3': { anim: 'animation3', loop: false, speed: 0.5, effect: 'climax' }, '4': … }    CharaAnimation → spine 动画；speed = 这个动画自己的速度（有就覆盖 Motion）；effect = 进 effects 表的名字（每遇到一行都发）
 //   motion { fastAbove: 1, fastFactor: 0.75, zero: 0.01 }                   Motion > fastAbove 时 speed = Motion × fastFactor；Motion 0 → zero（spine 指令不认 0）
@@ -84,7 +85,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
   exts: { image: IMAGE, audio: AUDIO },
   positions: { 1: 'narration', 2: 'left', 3: 'right' },
   emotions: { 1: 'idle', 2: 'sad', 3: 'surprise', 4: 'angry', 5: 'shy', 6: 'joy', 7: 'idle', 8: 'violent' },
-  stand: { body: 'body', layers: ['{emotion}_c', '{emotion}'], fit: 1, narration: 'keep', duplicate: 'hideOther', dim: 0 },
+  stand: { body: 'body', layers: ['{emotion}_c', '{emotion}'], fit: 1, narration: 'keep', duplicate: 'hideOther', clearOnBgChange: true, dim: 0 },
   anim: {
     1: { anim: 'animation1', loop: true },
     2: { anim: 'animation2', loop: true },
@@ -140,6 +141,7 @@ export function resolveOptions(options) {
   o.stand.layers = list(o.stand.layers, DEFAULT_OPTIONS.stand.layers)
   o.stand.narration = o.stand.narration === 'hide' ? 'hide' : 'keep'
   o.stand.duplicate = o.stand.duplicate === 'keep' ? 'keep' : 'hideOther'
+  o.stand.clearOnBgChange = o.stand.clearOnBgChange !== false
   o.stand.dim = Number(o.stand.dim) > 0 && Number(o.stand.dim) < 1 ? Number(o.stand.dim) : 0
   o.anim = Object.fromEntries(Object.entries(o.anim).filter(([, v]) => isObj(v) && typeof v.anim === 'string' && v.anim).map(([k, v]) => [String(k), { anim: v.anim, loop: v.loop !== false, speed: Number(v.speed) > 0 ? Number(v.speed) : 0, effect: typeof v.effect === 'string' ? v.effect : '' }]))
   const num = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback)
@@ -466,7 +468,11 @@ export function parse(text, ctx = null, meta = {}) {
       // 背景 / 音乐 / 音效 / 语音 / 特效
       if (present(row.BackgroundImage) && String(row.BackgroundImage) !== curBg) {
         const src = resolve('bg', { name: String(row.BackgroundImage) }, 'image')
-        if (src) { emit({ op: 'bg', src, fade: 0 }); curBg = String(row.BackgroundImage) } else count('unresolved', `bg:${row.BackgroundImage}`)
+        if (src) {
+          emit({ op: 'bg', src, fade: 0 }); curBg = String(row.BackgroundImage)
+          // 换了背景 / CG = 进了下一个画面：上一幕的立绘不留着（这一行自己带 MMonsterId 的会在下面重新摆）
+          if (o.stand.clearOnBgChange) { slots.clear(); hidden.clear(); active = null }
+        } else count('unresolved', `bg:${row.BackgroundImage}`)
       }
       bgm(row.BGM, emit)
       const mscene = String(row.MSceneId ?? sceneId)
