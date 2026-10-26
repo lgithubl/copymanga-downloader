@@ -34,6 +34,14 @@
 //   tween { kinds: { MoveBy: { returns: 'action', else: 'moveBy' }, MoveTo: 'moveTo', PunchPosition: 'action', ShakePosition: 'action', ColorTo: 'raw', ScaleTo: 'raw', RotateTo: 'raw' }, actions: { x: 2, up: 1, down: 3 }, returnWhen: 'pingpong' }
 //        kinds 的值：action = 折成立绘动作（x → actions.x，y<0 → actions.down，y>0 → actions.up）/ moveBy · moveTo = 改槽位横向位置 / raw = 记 raw；对象 { returns, else } = Arg5 匹配 returnWhen（不分大小写）时用 returns；不在表里的 Tween 种类记 raw。Shake 角色的动作也用 actions（x → actions.x，否则 actions.up）
 //   selection { groupSuffix: '-\\d+$', adjacentGroups: true }   Selection 标签（去掉开头 *）匹配 groupSuffix 的，去掉后缀相同的算一组；不匹配的：adjacentGroups = 连续的 Selection 行算一组，否则一行一组
+//   nameOnlyRow ('show')         只有角色名（Arg1）、没有站位槽（Arg3）、也不是 <Off> 的行，而这个角色不在场：show = 把它摆出来（槽 = 它上次用过的槽，没有就取第一个空槽；横向位置 = 上次的，没有就居中）/ faceOnly = 不摆（以前的行为，只在已在场时更新表情）
+//                                真实数据：CharacterOff 之后、Selection 标签之后常有这样的行，后面的 Tween / Shake 就指着这个名字；<Off> 行不受影响
+//   tween.targetSlots (true)     Tween / Shake 的 Arg1 可以是站位槽名（Chara1 / Chara2…，按 slots 表映射）：指现在站在这个槽里的角色；false = 只认角色名（以前的行为）
+//   catalog { groups: [{ folder: '^CharaScenario$', idRe: '^CharaScenario(\\d{4})\\d{3}$', nameFrom: 'masterCharacter', charFile: '(?:^|/)ch_{id}', fallback: '特别 / 其他' }] }
+//        列表分组（数组，按顺序第一条 folder 匹配文件夹名的生效；没匹配的文件夹不变，平铺）：这个文件夹里的剧情按 idRe 的第 1 组（角色 id = 剧情号前 4 位）分组，每组一个目录节点（组内按剧情号排，组按 id 排）；
+//        nameFrom：masterCharacter = 组名取 Master Character 表里 FileName 匹配 charFile（{id} = 角色 id）的第一行的 NameText（行在但 NameText 为空 = 用 id）/ id = 直接用 id；
+//        表里没有这个角色（TSK 的 9xxx 号段：9010 / 9019 / 9020 / 9029 / 9030 / 9040 在 Character 表里都没有）或剧情号不匹配 idRe（比如 6 位的 907011）的统一进 fallback 这一组（排最后）；fallback 写 '' = 不设这一组，这些剧情直接平铺在文件夹下（排在各组后面）。
+//        Master 表里一个角色都没读到时没法判断「有没有这个角色」，全部按 id 分组、组名 = id。节点 id：组 = <文件夹节点 id>/@<角色 id>（其它 = /@other），剧情节点 id 不变。9xxx 是不是「活动剧情」：样本里只有文件名（没有剧情内容 / 名字），没有依据，所以只做成可配置的 fallback 组。
 //   folderLabels [['^MainScenario$', '主线'], …]   目录名 → 中文名（按顺序第一条匹配；列表里也按这个顺序排，没匹配的排最后）
 //   index { dirs: ['Adventure', 'Characters', 'Stills', 'Sound'], master: 'Adventure/Master.chapter.json', ext: '\\.(?:skel\\.bytes|png|jpe?g|ogg)$', books: ['^Adventure/(?:(?<category>[^/]+)/)?(?:.*/)?(?<stem>[^/]+)\\.book\\.json$'] }
 //        扫哪些目录（相对 root）/ 名称表文件 / 进索引的扩展名 / 剧情文件的路径正则（命名组 category = 文件夹、stem = 剧情名）
@@ -44,7 +52,7 @@
 //        bg ['{file:png}', 'Adventure/BackGrounds/{name}.png', 'Adventure/BackGrounds/{name}.jpg']、voice ['Sound/Voice/**/{name}.ogg', 'Sound/BgVoice/**/{name}.ogg']、bgvoice（顺序反过来）、
 //        se ['{file:ogg}', 'Sound/Se/{name}.ogg', 'Sound/BgSe/{name}.ogg']、bgse（Se / BgSe 反过来）、bgm ['{file:ogg}']、bgmIntro ['{intro:ogg}']、bgmFallback ['Sound/Bgm/{name}.ogg']（Master 表里没有 / 文件不在时才用）
 //   没有文件索引时不查，按每个列表的第一条模板猜（**/ 去掉）。
-// 列表（adapter.catalog）：Adventure/ 下每个剧情文件夹（MainScenario / CharaScenario …）→ 剧情文件（一个文件 = 一个场景）+ 全部剧情；每次从文件索引现读。
+// 列表（adapter.catalog）：Adventure/ 下每个剧情文件夹（MainScenario / CharaScenario …）→ 剧情文件（一个文件 = 一个场景）+ 全部剧情；每次从文件索引现读。CharaScenario 再按角色分组（catalog.groups，见上）。
 import { parseRichText } from './uviewer-csv.mjs'
 import { expandTemplate, guessTemplate, lookupFor, mergeOptions, safeRegex } from './path-templates.mjs'
 
@@ -65,10 +73,14 @@ export const DEFAULT_OPTIONS = Object.freeze({
     kinds: { MoveBy: { returns: 'action', else: 'moveBy' }, MoveTo: 'moveTo', PunchPosition: 'action', ShakePosition: 'action', ColorTo: 'raw', ScaleTo: 'raw', RotateTo: 'raw' },
     actions: { x: 2, up: 1, down: 3 },
     returnWhen: 'pingpong',
+    targetSlots: true,
   },
+  nameOnlyRow: 'show',
   selection: { groupSuffix: '-\\d+$', adjacentGroups: true },
   // 文件夹 → 中文名（猜的，卡片副标题里同时写着文件夹名）；顺序 = 列表顺序
   folderLabels: [['^MainScenario$', '主线'], ['^CharaScenario$', '角色剧情'], ['^StoryEventScenario$', '活动剧情'], ['^BossrushEventScenario$', 'Bossrush 活动'], ['^HomeEventScenario$', '家园事件'], ['^ItemEventScenario$', '道具事件'], ['^SpEventScenario$', '特别活动'], ['^SubjugationEventScenario$', '讨伐活动']],
+  // 列表分组（见头部 catalog）：角色剧情按角色 id（剧情号前 4 位）分组
+  catalog: { groups: [{ folder: '^CharaScenario$', idRe: '^CharaScenario(\\d{4})\\d{3}$', nameFrom: 'masterCharacter', charFile: '(?:^|/)ch_{id}', fallback: '特别 / 其他' }] },
   index: {
     dirs: ['Adventure', 'Characters', 'Stills', 'Sound'],
     master: 'Adventure/Master.chapter.json',
@@ -102,6 +114,8 @@ export function resolveOptions(options) {
   const num = (value, fallback) => (Number.isFinite(Number(value)) && value !== '' && value !== null ? Number(value) : fallback)
   o.standX = { slotBase: num(o.standX.slotBase, 0.5), argIndex: Math.round(num(o.standX.argIndex, 4)) }
   const list = (value, fallback) => (Array.isArray(value) ? value.map(String) : fallback)
+  o.nameOnlyRow = o.nameOnlyRow === 'faceOnly' ? 'faceOnly' : 'show'
+  o.tween.targetSlots = o.tween.targetSlots !== false
   o.speaker.source = list(o.speaker.source, DEFAULT_OPTIONS.speaker.source)
   for (const key of ['dirs', 'books']) o.index[key] = list(o.index[key], DEFAULT_OPTIONS.index[key])
   for (const key of Object.keys(DEFAULT_OPTIONS.paths)) if (Array.isArray(DEFAULT_OPTIONS.paths[key])) o.paths[key] = Array.isArray(o.paths[key]) ? o.paths[key] : DEFAULT_OPTIONS.paths[key]
@@ -113,6 +127,10 @@ export function resolveOptions(options) {
     ext: safeRegex(o.index.ext, 'i'),
     books: o.index.books.map((source) => safeRegex(source, 'i')).filter(Boolean),
     charId: safeRegex(o.paths.charIdStrip, ''),
+    groups: (Array.isArray(o.catalog?.groups) ? o.catalog.groups : DEFAULT_OPTIONS.catalog.groups).filter((rule) => rule && typeof rule === 'object').map((rule) => ({
+      folder: safeRegex(rule.folder, ''), id: safeRegex(rule.idRe, ''), nameFrom: rule.nameFrom === 'id' ? 'id' : 'masterCharacter',
+      charFile: typeof rule.charFile === 'string' ? rule.charFile : DEFAULT_OPTIONS.catalog.groups[0].charFile, fallback: typeof rule.fallback === 'string' ? rule.fallback : '',
+    })).filter((rule) => rule.folder && rule.id),
     labels: (Array.isArray(o.folderLabels) ? o.folderLabels : []).map((rule) => [safeRegex(Array.isArray(rule) ? rule[0] : '', ''), Array.isArray(rule) ? String(rule[1] ?? '') : '']).filter(([re]) => re),
   }
   if (source) resolved.set(source, o)
@@ -203,6 +221,35 @@ export function prepare({ options, texts, files, toResourcePath }) {
 }
 
 // ---------- 列表 ----------
+// 一个文件夹里的剧情按 rule.id 的第 1 组分组（见头部 catalog.groups）；books 已经按剧情号排好
+function groupBooks(ctx, rule, folderId, books, node) {
+  const chars = ctx.master?.chars
+  const names = new Map()   // 角色 id → 组名（找不到 = null）
+  const nameOf = (key) => {
+    if (names.has(key)) return names.get(key)
+    let name = null
+    if (rule.nameFrom === 'id' || !chars?.size) name = key
+    else {
+      const re = rule.charFile.includes('{id}') ? safeRegex(rule.charFile.replace(/\{id\}/g, () => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'i') : null
+      if (re) for (const info of chars.values()) if (re.test(info.file)) { name = info.name || key; break }
+    }
+    names.set(key, name)
+    return name
+  }
+  const groups = new Map()   // 角色 id → [book]
+  const rest = []
+  for (const book of books) {
+    const key = rule.id.exec(book.stem)?.[1]
+    if (key && nameOf(key) !== null) { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(book) } else rest.push(book)
+  }
+  const out = [...groups].sort((a, b) => natAsc(a[0], b[0])).map(([key, list]) => {
+    const gid = `${folderId}/@${key}`
+    return { id: gid, title: nameOf(key), subtitle: `${key} · ${list.length} 个`, children: list.map((book) => node(folderId, book)) }
+  })
+  if (rest.length && rule.fallback) out.push({ id: `${folderId}/@other`, title: rule.fallback, subtitle: `${rest.length} 个`, children: rest.map((book) => node(folderId, book)) })
+  else out.push(...rest.map((book) => node(folderId, book)))
+  return out
+}
 function buildCatalog(ctx, o) {
   if (!ctx.books.length) return null
   const ruleOf = (category) => o.re.labels.findIndex(([re]) => re.test(category))
@@ -215,12 +262,17 @@ function buildCatalog(ctx, o) {
     const ib = ruleOf(b[0])
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || natAsc(a[0], b[0])
   })
-  const lists = categories.map(([category, list]) => ({
-    id: `c/${category || '-'}`,
-    title: labelOf(category) || category || '其它',
-    subtitle: `${category ? `${category} · ` : ''}${list.length} 个`,
-    children: [...list].sort((a, b) => natAsc(a.stem, b.stem)).map((book) => node(`c/${category || '-'}`, book)),
-  }))
+  const lists = categories.map(([category, list]) => {
+    const id = `c/${category || '-'}`
+    const sorted = [...list].sort((a, b) => natAsc(a.stem, b.stem))
+    const rule = o.re.groups.find((r) => r.folder.test(category))
+    return {
+      id,
+      title: labelOf(category) || category || '其它',
+      subtitle: `${category ? `${category} · ` : ''}${list.length} 个`,
+      children: rule ? groupBooks(ctx, rule, id, sorted, node) : sorted.map((book) => node(id, book)),
+    }
+  })
   lists.push({ id: 'all', title: '全部剧情', children: [...ctx.books].sort((a, b) => natAsc(a.rel, b.rel)).map((book) => node('all', book)) })
   return { children: lists }
 }
@@ -369,6 +421,9 @@ export function parse(text, ctx = null, meta = {}) {
   // --- 舞台状态（编译时的近似：分支开始时从弹选项那一刻的状态重来）---
   let stage = new Map()       // 槽 → { key, skel, atlas, anim, skin, sub, x }
   let slotOf = new Map()      // 角色名 → 槽
+  const lastStand = new Map() // 角色名 → { slot, x }：上次摆过的槽和横向位置（只有角色名的行再把它摆出来时用；不随分支回滚）
+  let voiceRows = 0           // 带 Voice 的台词行数 / 其中找到文件的行数（一条都没找到 = 这个剧情没有语音目录）
+  let voiceFound = 0
   let stillId = ''
   let bgvoiceOn = false
   const snapshot = () => ({ stage: new Map([...stage].map(([slot, entry]) => [slot, { ...entry }])), slotOf: new Map(slotOf), stillId })
@@ -378,21 +433,32 @@ export function parse(text, ctx = null, meta = {}) {
     ...(entry.skin ? { skin: entry.skin } : {}), ...(entry.sub ? { sub: entry.sub } : {}), ...extra,
   })
   const slotName = (utageSlot) => { const mapped = Object.hasOwn(o.slots, utageSlot) ? o.slots[utageSlot] : utageSlot; return mapped ? String(mapped) : '' }
-  const showStand = (row) => {
-    const slot = slotName(row.a3)
+  // forcedSlot / defaultX：只有角色名的行（nameOnlyRow）指定的槽和默认横向位置；平常槽取 Arg3、横向位置取 Arg4
+  const showStand = (row, forcedSlot = '', defaultX = null) => {
+    const slot = forcedSlot || slotName(row.a3)
     const files = standFiles(row.a1)
-    if (!files || !/^[A-Za-z0-9_]+$/.test(slot)) return
+    if (!files) return
+    if (!/^[A-Za-z0-9_]+$/.test(slot)) { lastStand.set(row.a1, { slot: '', x: null }); return }   // 这个槽被 slots 映射成 ''（丢掉）：只有角色名的行也别再把它摆到别的槽
     const before = slotOf.get(row.a1)
     if (before && before !== slot) { emit({ op: 'spineOff', slot: before }); stage.delete(before) }
     const offset = numOrNull(row[`a${o.standX.argIndex}`])
     const old = stage.get(slot)
-    const entry = { key: row.a1, ...files, anim: row.anim || (old?.key === row.a1 ? old.anim : ''), skin: row.skin || (old?.key === row.a1 ? old.skin : ''), sub: row.sub, x: offset !== null ? o.standX.slotBase + offset / screenWidth : old?.x ?? o.standX.slotBase }
+    const entry = { key: row.a1, ...files, anim: row.anim || (old?.key === row.a1 ? old.anim : ''), skin: row.skin || (old?.key === row.a1 ? old.skin : ''), sub: row.sub, x: offset !== null ? o.standX.slotBase + offset / screenWidth : old?.x ?? defaultX ?? o.standX.slotBase }
     if (old && old.key !== row.a1) slotOf.delete(old.key)
     stage.set(slot, entry)
     slotOf.set(row.a1, slot)
+    lastStand.set(row.a1, { slot, x: entry.x })
     stats.spines += 1
     const fade = secOf(row.a6)
     emit(standOp(slot, entry, fade ? { fade } : {}))
+  }
+  // 只有角色名（没有站位槽、不是 <Off>）而角色不在场：摆出来（槽 = 上次用的槽、被别人占了 / 没有就取第一个空槽；位置 = 上次的）
+  const showNameOnly = (row) => {
+    const last = lastStand.get(row.a1)
+    if (last?.slot === '') return
+    const slots = [...new Set(Object.values(o.slots).map(String).filter((name) => /^[A-Za-z0-9_]+$/.test(name)))]
+    const slot = last && !stage.has(last.slot) ? last.slot : slots.find((name) => !stage.has(name))
+    if (slot) showStand(row, slot, last?.x ?? null)
   }
   // 说话的角色已经在场：只在表情 / 动画变了时更新
   const updateStand = (row) => {
@@ -415,6 +481,13 @@ export function parse(text, ctx = null, meta = {}) {
       stats.spines += 1
       emit({ op: 'spine', slot: `still${order}`, kind: 'still', skel: file.skel, atlas: file.atlas, anim, loop: /_loop$/i.test(anim), speed: speed && speed > 0 ? speed : 1, order })
     })
+  }
+  // Tween / Shake 的目标：Arg1 是角色名（在场）或站位槽名（Chara1…，tween.targetSlots）→ 槽；不在场 = ''
+  const targetSlot = (a1) => {
+    const slot = slotOf.get(a1)
+    if (slot) return slot
+    const named = o.tween.targetSlots ? slotName(a1) : ''
+    return named && stage.has(named) ? named : ''
   }
   const hideStand = (key) => { const slot = slotOf.get(key); if (slot) { emit({ op: 'spineOff', slot }); stage.delete(slot); slotOf.delete(key) } }
   const stillOff = () => { if (stillId) { emit({ op: 'spineOff', prefix: 'still' }); stillId = '' } }
@@ -491,13 +564,14 @@ export function parse(text, ctx = null, meta = {}) {
         case '': {
           const asChar = o.re.characterArg?.exec(row.a2)
           const off = Boolean(o.re.off?.test(row.a2))
-          if (row.a1 && !off) { if (row.a3) showStand(row); else updateStand(row) }
+          if (row.a1 && !off) { if (row.a3) showStand(row); else if (!slotOf.has(row.a1) && o.nameOnlyRow === 'show') showNameOnly(row); else updateStand(row) }
           else if (row.a1 && o.off.mode === 'hide') hideStand(row.a1)
           if (!row.text) { if (!row.a1 && !row.voice) ignore('空行'); break }
           const voice = row.voice
           if (voice) {
             const src = resolveWith(paths.voice, { name: voice, ...charVars(row.a1) })
-            if (src) emit({ op: 'voice', src }); else miss('voice', voice)
+            voiceRows += 1
+            if (src) { emit({ op: 'voice', src }); voiceFound += 1 } else miss('voice', voice)
           }
           const who = row.a1 ? (asChar ? nameOf(str(asChar[1]).trim()) : nameOf(row.a1)) : ''
           if (who !== speaker) { emit({ op: 'speaker', segments: who ? [{ text: who }] : [] }); speaker = who }
@@ -558,7 +632,7 @@ export function parse(text, ctx = null, meta = {}) {
           const y = Math.abs(numOrNull(kv.y) ?? 0)
           const seconds = secOf(kv.time, 0.5)
           if (/^graphics$/i.test(row.a1)) emit({ op: 'shake', axis: x && y ? 'overall' : y ? 'vertical' : 'horizontal', strength: Math.max(x, y) / 40, seconds })
-          else if (slotOf.has(row.a1)) emitAction(slotOf.get(row.a1), x ? o.tween.actions.x : o.tween.actions.up)
+          else if (targetSlot(row.a1)) emitAction(targetSlot(row.a1), x ? o.tween.actions.x : o.tween.actions.up)
           else raw(`Shake:${row.a1 ? '角色不在场' : '无目标'}`)
           break
         }
@@ -599,7 +673,7 @@ export function parse(text, ctx = null, meta = {}) {
   }
   function tween(row) {
     const kv = keyValues(row.a3)
-    const slot = slotOf.get(row.a1)
+    const slot = targetSlot(row.a1)
     const mode = row.a2
     if (!slot) { raw(`Tween:${mode || '(空)'}（角色不在场）`); return }
     const x = numOrNull(kv.x)
@@ -614,12 +688,18 @@ export function parse(text, ctx = null, meta = {}) {
       const entry = stage.get(slot)
       const next = { ...entry, x: form === 'moveTo' ? o.standX.slotBase + x / screenWidth : entry.x + x / screenWidth }
       stage.set(slot, next)
+      lastStand.set(entry.key, { slot, x: next.x })
       stats.spines += 1
       emit(standOp(slot, next, secOf(kv.time) ? { move: secOf(kv.time) } : {}))
     } else raw(`Tween:${mode || '(空)'}`)
   }
 
   grids.forEach((grid, gridIndex) => compileGrid(bookRows(grid), gridIndex))
+  // 整个剧情的语音一条都没找到：逐条记「找不到」没有意义（TSK 的 9xxxxxx 角色剧情在磁盘上没有语音目录），合成一条说明
+  if (hasIndex && voiceRows > 0 && voiceFound === 0) {
+    for (const key of Object.keys(stats.unresolved)) if (key.startsWith('voice:')) delete stats.unresolved[key]
+    stats.unresolved[`voice:该剧情没有语音目录（${voiceRows} 条语音一条也没找到）`] = voiceRows
+  }
   if (pending.length) {
     if (steps.length) { steps[steps.length - 1].commands.push(...pending); stats.commands += pending.length; pending = [] }
     else { pending.push({ op: 'text', segments: [] }); pushStep() }

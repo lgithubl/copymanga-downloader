@@ -477,6 +477,15 @@ nodes: {
 ### Girls Creation 行式脚本
 `scenes/<id>/hmr_<id>.txt` / `hsr_<id>.txt`（逗号分隔、一行一条命令）和标签式 `script.txt` 是同一个游戏的两种写法，适配器按内容分发（`adapters/girlscreation-line.mjs`）；一个场景目录里优先级 `script.txt` > `output_script.txt` > 行式脚本。
 
+#### 行式脚本的命令映射（`commands` / `line.*`，`adapterOptions['girlscreation-tag']`，标签式和行式共用，完整 schema 见 `adapters/girlscreation-line.mjs` 头部）
+| 命令 | 默认（`commands.<名>`） | `'raw'` |
+|---|---|---|
+| `cgmode,on｜off` | `ui` 隐藏 / 显示文本框（`commands.cgmode = 'ui'`） | 记 raw（以前的行为） |
+| `asyncjump,character,chara_N,dy,秒,次数` | `hop`：该角色的 `spine` 指令带 `action = line.jumpAction`（默认 1 = 跳两下，固定 0.4 秒；dy / 秒 / 次数忽略） | 记 raw |
+| `asyncmoveobject,character,chara_N,秒,dx,dy,n,缓动` | `move`（旧名 `x` 也认）：`spine` 指令的 `x` / `y` + `move` 秒（播放器线性渐移，缓动 / n 忽略）；`line.moveBase = 'offset'`（默认，相对 `chara` 摆放位置）或 `'relative'`（在当前位置上累加） | 记 raw |
+| `CrossFade` / `TransitionCrossFade`（+ 各自的 `…Ready`） | `bg`：换背景 + 渐变秒（过渡名 `traNa` 忽略）；缩放 ≠ 1 跟一条 `bgScale`（`line.crossfadeScale = 'bgScale' \| 'ignore'`），x / y 位移记 raw | CrossFade 照旧（缩放 / 位移记 raw），TransitionCrossFade 记 raw |
+没有真机对照的：`cgmode` 是不是「隐藏文本框」（也可能只是换 CG 版式；`cgmode,on` 之后没有 `off` 的脚本里台词会一直看不见，`window,on` 能再显示）、`asyncmoveobject` 的 dx / dy 单位（按和 `chara` 的 x / y 一样）与「相对摆放位置」的解读（依据：数据里 `0,-40`（linear）之后常跟 `0,0`（easeoutcubic）回位）、`asyncjump` 的 dy 符号、CrossFade 的缩放 1.3 是不是真的放大。`subimage` / `subimagedelete`（叠加图片）这一轮不做，仍记 raw。测试：`node scripts/dev/gal-utage-gc-selftest.mjs`。
+
 ### gal-layout 自动生成默认节点图
 tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的（`catalog`）。`gal-layout` 现在会顺手生成一份默认的 `config.nodes`：首页下每个适配器目录的顶层项各是一个 `auto` 节点，用 `catalog` 引用适配器原来给的那份内容——
 效果和不用节点图时一模一样（自测逐层对比过卡片的标题 / 副标题 / 缩略图 / 角标 / 脚本路径，节点 id 也沿用适配器原来的，已有的链接和进度不受影响），但每一项都变成了配置：可以改标题、挪顺序、隐藏、加相关（`related`）、旁边再接自己的 `dirs` / `expand` 节点。
@@ -693,9 +702,11 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   导入页预设「Twinkle Star Knights X（Utage）」，或自己写：`adapters: ['utage-book']` + `config.game.id: 'tsk'` + 勾元数据脚本 `gal-layout`。
 - 自测：`scripts/dev/gal-selftest.mjs` 里的 TSK 一节（适配器 / 分支 / gal-layout / 浏览节点）；浏览器 `PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-tsk-selftest.mjs`（真实 WebGL + Spine 4.0 运行时，需要先 `sh scripts/fetch-spine-runtime.sh`）；合成数据 `node scripts/dev/make-tsk-fixture.mjs <目录>`（`gal-demo` 工作流也会导入它）。
 
+- **角色剧情按角色分组（`catalog.groups`）**：`Adventure/CharaScenario/` 下的剧情文件（`CharaScenario<7 位>.book.json`，前 4 位 = 角色 id）原来平铺在一个桶里，现在目录里这个文件夹的子节点是「角色」：组名 = Master `Character` 表里 `FileName` 匹配 `ch_<4 位 id>…` 的第一行的 `NameText`（NameText 空 = 用 id；样本里被遮罩的 `<N字>` 原样当组名），组按 id 排、组内按剧情号排。Master 里没有这个角色的（真实数据：`9010` / `9019` / `9020` / `9029` / `9030` / `9040` 的 137 个 9 开头剧情）和文件名不是 `CharaScenario` + 7 位的（目录树里还有 6 位的 `CharaScenario907011` 之类）统一进一个「特别 / 其他」组。节点 id 稳定：剧情 `c/CharaScenario/<剧情名>` 不变，组 = `c/CharaScenario/@<角色 id>`（其他 = `c/CharaScenario/@other`），文件夹节点 `c/CharaScenario` 不变（默认节点图引用的就是它）。规则是数组、可配（`folder` 匹配文件夹名、`idRe` 第 1 组 = 角色 id、`nameFrom: 'masterCharacter' | 'id'`、`charFile` = 匹配 Master FileName 的正则模板（`{id}`）、`fallback` = 兜底组名，写 `''` = 不设兜底组，直接平铺）；`groups: []` = 回到平铺。9xxx 是否属于「活动剧情」：样本里只有文件名（没有名字 / 内容），没有依据，所以只做成可配置的兜底组，没有猜。
+- **只有角色名的行 / Tween 的槽名目标（真实数据，round 9）**：Tween / Shake 的 Arg1 可以是站位槽名（`Chara1`），指现在站在这个槽里的角色（`tween.targetSlots`，默认开）；`CharacterOff` 之后、Selection 标签之后常有一行只有 Arg1 = 角色名（没有 Arg3、不是 `<Off>`），后面的 Tween 就指着这个名字——默认（`nameOnlyRow: 'show'`）把不在场的角色摆回来（槽 = 上次用的槽，没有就取第一个空槽；横向位置 = 上次的，没有就居中）；`'faceOnly'` = 以前的行为。`<Off>` 的处理没变。整个剧情的语音都找不到（9xxxxxx 的角色剧情在磁盘上没有语音目录）时，`stats.unresolved` 只记一条「该剧情没有语音目录」，不再逐条列。
 - **适配器选项（`adapterOptions['utage-book']`，完整 schema 和默认值见 `adapters/utage-book.mjs` 头部注释和 `DEFAULT_OPTIONS`；对象逐层合并、数组 / 标量整个替换；不写 = 内置默认 = 以前的行为）**：
   `root` / `screenWidth` / `standX { slotBase, argIndex }` / `slots`（Utage 站位槽 → spine slot）/ `slotPrefix`；`off { mode: 'speakerOnly' | 'hide', arg }`；`speaker { source: ['NameText','key'|'raw'], splitOn, pick: 'beforeLast' | 'first' | 'last', characterArg }`；`bgm { play: 'loop' | 'intro' | 'intro+loop' }`；
-  `tween { kinds: { 种类: 'action' | 'moveBy' | 'moveTo' | 'raw' | { returns, else } }, actions: { x, up, down }, returnWhen }`；`selection { groupSuffix, adjacentGroups }`；`folderLabels [[正则, 名]]`；`index { dirs, master, ext, books }`；
+  `tween { kinds: { 种类: 'action' | 'moveBy' | 'moveTo' | 'raw' | { returns, else } }, actions: { x, up, down }, returnWhen, targetSlots }`；`nameOnlyRow: 'show' | 'faceOnly'`；`selection { groupSuffix, adjacentGroups }`；`catalog { groups: [{ folder, idRe, nameFrom, charFile, fallback }] }`；`folderLabels [[正则, 名]]`；`index { dirs, master, ext, books }`；
   `paths { characters, stills, bg, voice, bgvoice, se, bgse, bgm, bgmIntro, bgmFallback, skeletonSuffixStrip, charIdStrip }`（候选路径模板数组，占位符 `{name}` `{file:png}` `{intro:ogg}` `{dir}` `{base}` `{charId}` `{id}`，`**/` = 任意层目录按文件名找，stills 的 `*` = 骨架基名通配）。
   查文件走 `createIndexResolver`（经 `adapters/path-templates.mjs`：扩展名后备 / 改写 / unicode / `preferDirs` / 大小写来自 `config.resourceResolve`，在 `parse` 时按 `meta.config` 查，所以改配置不用重建上下文）。测试：`node scripts/dev/gal-adapter-options-selftest.mjs`。
 
