@@ -217,9 +217,9 @@ registerGalAdapter({ id: 'test-fallback', label: '测试：JSON 步骤', sniff: 
   check('maskHeadSnippet：最多 160 个字符（加省略号）；超长的 CJK 只剩 <N字>（先截到 640 个字符再处理）', [...long].length === 161 && long.endsWith('…') && maskHeadSnippet('あ'.repeat(5000)) === '<640字>', `${[...long].length}`)
   check('maskHeadSnippet：空 / undefined / null', maskHeadSnippet('') === '' && maskHeadSnippet(undefined) === '' && maskHeadSnippet(null) === '', '')
 
-  const real = '{"error":{"code":0,"msg":""},"data":{"user":{"name":"ぼくら","level":12,"items":[1,2,3]},"code":{"images":{}}},"server_time":1}'
+  const real = '{"error":{"code":0,"msg":""},"data":{"user":{"name":"ぼくら","level":12,"items":[1,2,3]}},"server_time":1}'   // 有 data、没有 "code"：bokusen 的 sniff 现在认真实结构（code 在 user 后面），所以这里用缺 code 的
   const sniffed = explainSniffGalAdapters(real, ['bokusen-json', 'uviewer-csv'], null)
-  check('explainSniffGalAdapters：只列 sniff 没认的适配器；实现了 explainSniff 的用它的说明（bokusen：看到 data 但后面紧跟的不是 code），没实现的 = 「没有匹配 sniff」；说明里只有键名没有内容', sniffed.length === 2 && /"data" 后面紧跟的不是 "code".*error, code, msg, data, user/.test(sniffed.find((x) => x.id === 'bokusen-json').reason) && sniffed.find((x) => x.id === 'uviewer-csv').reason === '没有匹配 sniff' && !/ぼくら/.test(J(sniffed)), J(sniffed))
+  check('explainSniffGalAdapters：只列 sniff 没认的适配器；实现了 explainSniff 的用它的说明（bokusen：有 data 但没有 code），没实现的 = 「没有匹配 sniff」；说明里只有键名没有内容', sniffed.length === 2 && /没有 "data":\{…"code":\{/.test(sniffed.find((x) => x.id === 'bokusen-json').reason) && sniffed.find((x) => x.id === 'uviewer-csv').reason === '没有匹配 sniff' && !/ぼくら/.test(J(sniffed)), J(sniffed))
   registerGalAdapter({ id: 'test-thrower', label: 't', sniff: () => false, explainSniff: () => { throw new Error('boom') }, parse: () => ({ steps: [], stats: {} }) })
   registerGalAdapter({ id: 'test-numeric', label: 't', sniff: () => false, explainSniff: () => 42, parse: () => ({ steps: [], stats: {} }) })
   check('explainSniff 抛错 / 返回不是字符串 → 退回通用说明，不影响别的适配器', J(explainSniffGalAdapters('x', ['test-thrower', 'test-numeric'], null)) === J([{ id: 'test-thrower', reason: '没有匹配 sniff' }, { id: 'test-numeric', reason: '没有匹配 sniff' }]), '')
@@ -232,7 +232,7 @@ registerGalAdapter({ id: 'test-fallback', label: '测试：JSON 步骤', sniff: 
   const node = await nodeOf({ scriptRoots: [{ id: 'text', dir: 'resources/diag' }] }, '', ['bokusen-json', 'uviewer-csv'])
   const problem = node.problems?.find((p) => p.code === 'unrecognized-scripts')
   const text = (problem?.details || []).join('\n')
-  check('unrecognized-scripts：消息里是个数 + 文件名；details 最多 3 个样例（每个：文件名 + 大小 + 头部片段 + 每个适配器为什么没认）', Boolean(problem) && /6 个扩展名对的文件没有适配器认得/.test(problem.message) && problem.details.filter((l) => l.startsWith('样例 ')).length === 3 && /样例 a_real\.txt（\d+ 字节），开头：\{"error"/.test(text) && /bokusen-json: .*"data" 后面紧跟的不是 "code"/.test(text) && /uviewer-csv: 没有匹配 sniff/.test(text), J(problem))
+  check('unrecognized-scripts：消息里是个数 + 文件名；details 最多 3 个样例（每个：文件名 + 大小 + 头部片段 + 每个适配器为什么没认）', Boolean(problem) && /6 个扩展名对的文件没有适配器认得/.test(problem.message) && problem.details.filter((l) => l.startsWith('样例 ')).length === 3 && /样例 a_real\.txt（\d+ 字节），开头：\{"error"/.test(text) && /bokusen-json: .*没有 "data":\{…"code":\{/.test(text) && /uviewer-csv: 没有匹配 sniff/.test(text), J(problem))
   check('unrecognized-scripts：头部片段脱敏（CJK 连续 3 个以上 = <N字>，控制字符去掉），头部片段里没有 3 个以上连续的汉字 / 假名；空文件说「文件是空的」；不会带出长文本（每行 ≤ 400 字符，总共 ≤ 3000）', /<\d+字>/.test(text) && !/开头：.*[\u3040-\u30ff\u4e00-\u9fff]{3,}/.test(text) && !/\u0003/.test(text) && /样例 c_empty\.txt（0 字节）\n\s+文件是空的/.test(text) && problem.details.every((l) => l.length < 400) && text.length < 3000, text.slice(0, 600))
   check('unrecognized-scripts：d_long 这种长文本只出现 160 个字符 + …', problem.details.some((l) => /开头：z{100,}/.test(l) && !/z{200,}/.test(l)) || !problem.details.some((l) => l.includes('d_long')), J(problem.details))
 
