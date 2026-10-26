@@ -19,7 +19,7 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   namesFiles: ['user_data/character_names.json'],
   thumbsDirs: ['user_data/thumbnails'],
   stripPrefixes: [],
-  scriptExtensions: ['txt'],
+  scriptExtensions: ['txt'],   // 脚本扩展名（不带点，不分大小写）；'' = 没有扩展名的文件（['']，只认没有扩展名的；['', 'json'] = 两种都认）
   hiddenDirs: [],     // 列目录时不显示的目录名（任意层级，按目录名精确匹配；比如导航界面、翻译目录）
   pageSize: DEFAULT_PAGE_SIZE,
   // 目录名 → 中文标签（缺的显示原目录名）
@@ -495,7 +495,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     namesFiles: relListOf('namesFiles', v.namesFiles, d.namesFiles),
     thumbsDirs: relListOf('thumbsDirs', v.thumbsDirs, d.thumbsDirs),
     stripPrefixes: (Array.isArray(v.stripPrefixes) ? v.stripPrefixes : d.stripPrefixes).map((p) => text(p, 60)).filter((p) => p && !p.includes('..')).slice(0, 10),
-    scriptExtensions: (Array.isArray(v.scriptExtensions) ? v.scriptExtensions : d.scriptExtensions).map((e) => String(e).trim().replace(/^\./, '').toLowerCase()).filter((e) => /^[a-z0-9]{1,10}$/.test(e)).slice(0, 10).filter((e, i, all) => all.indexOf(e) === i),
+    scriptExtensions: (Array.isArray(v.scriptExtensions) ? v.scriptExtensions : d.scriptExtensions).map((e) => String(e).trim().replace(/^\./, '').toLowerCase()).filter((e) => /^[a-z0-9]{0,10}$/.test(e)).slice(0, 10).filter((e, i, all) => all.indexOf(e) === i),   // 空串 '' = 「没有扩展名」的文件（Otogi 的 typeadv/MScenes/<id>）
     hiddenDirs: (Array.isArray(v.hiddenDirs) ? v.hiddenDirs : d.hiddenDirs).map(safeName).filter(Boolean).slice(0, 50),
     pageSize: Math.max(1, Math.min(200, Math.floor(Number(v.pageSize)) || d.pageSize)),
     labels: v.labels === undefined ? { ...d.labels } : labels,

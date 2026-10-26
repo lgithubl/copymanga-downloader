@@ -175,13 +175,13 @@ if (process.argv.includes('--update-golden')) {
 }
 
 
-const ALL_IDS = ['uviewer', 'deepone', 'legeclo', 'monmusu', 'angelic', 'minashigo', 'minashigo_r', 'girlscreation', 'aster', 'jaxin', 'maid', 'aku', 'fruits', 'tenkeiprdx', 'misttrain', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk']
+const ALL_IDS = ['uviewer', 'deepone', 'legeclo', 'monmusu', 'angelic', 'minashigo', 'minashigo_r', 'girlscreation', 'aster', 'jaxin', 'maid', 'aku', 'fruits', 'tenkeiprdx', 'misttrain', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi']
 const logText = (out) => (out.logs || []).join('\n')
 const withLayouts = (layouts) => ({ layouts })
 
-// ================= 表：20 个 id 全在、extends 都解析得到、所有列表字段都是数组 =================
+// ================= 表：21 个 id 全在、extends 都解析得到、所有列表字段都是数组 =================
 {
-  check('LAYOUTS 导出了、含全部 20 个 id（不多不少）', LAYOUTS && J(Object.keys(LAYOUTS).sort()) === J([...ALL_IDS].sort()), J(Object.keys(LAYOUTS || {})))
+  check('LAYOUTS 导出了、含全部 21 个 id（不多不少）', LAYOUTS && J(Object.keys(LAYOUTS).sort()) === J([...ALL_IDS].sort()), J(Object.keys(LAYOUTS || {})))
   const unresolved = []
   for (const id of ALL_IDS) {
     const problems = []
@@ -196,7 +196,7 @@ const withLayouts = (layouts) => ({ layouts })
   const girls = mod.resolveLayout('girlscreation')
   check('别名解析出来的数据 = 父项的数据（只有 title 不同）', ALL_IDS.filter((id) => LAYOUTS[id].extends === 'girlscreation').every((id) => J({ ...mod.resolveLayout(id), title: '' }) === J({ ...girls, title: '' })))
   const handlers = ALL_IDS.map((id) => [id, LAYOUTS[id].autoOrder])
-  check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'uviewer']), J(handlers))
+  check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'uviewer']), J(handlers))
 }
 {
   // schema：遍历表里每一项（未解析 extends 的原始写法），所有「列表」字段必须是数组，哪怕现在只有一个元素

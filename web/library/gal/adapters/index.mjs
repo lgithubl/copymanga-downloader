@@ -5,6 +5,7 @@ import { bokusenJsonAdapter } from './bokusen-json.mjs'
 import { girlsCreationTagAdapter } from './girlscreation-tag.mjs'
 import { grenzeXmlAdapter } from './grenze-xml.mjs'
 import { misttrainJsonAdapter } from './misttrain-json.mjs'
+import { otogiJsonAdapter } from './otogi-json.mjs'
 import { renpyLegecloAdapter } from './renpy-legeclo.mjs'
 import { renpyMinashigoAdapter } from './renpy-minashigo.mjs'
 import { renpyMonmusuAdapter } from './renpy-monmusu.mjs'
@@ -30,6 +31,7 @@ registerGalAdapter(tyranoKsAdapter)           // TyranoScript .ks（*start + [ch
 registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
 registerGalAdapter(grenzeXmlAdapter)          // <easy_dialog-N id= next_id= …/> 行，独有写法，不会和别的格式抢
 registerGalAdapter(utageBookAdapter)          // Utage 工作簿 JSON（importGridList + Command/Arg1 表头），独有写法
+registerGalAdapter(otogiJsonAdapter)          // Otogi Frontier R：{"Id":N,"Title":…,"MSceneDetails":[ / {"Id":N,"Description":…,"MAdultDetails":[（无扩展名的 JSON），独有写法
 
 export const galAdapterIds = () => [...adapters.keys()]
 export function galAdapter(id) {
