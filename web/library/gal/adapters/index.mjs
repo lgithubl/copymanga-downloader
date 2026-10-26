@@ -7,6 +7,7 @@ import { renpyLegecloAdapter } from './renpy-legeclo.mjs'
 import { renpyMinashigoAdapter } from './renpy-minashigo.mjs'
 import { renpyMonmusuAdapter } from './renpy-monmusu.mjs'
 import { tenkeiprdxJsonAdapter } from './tenkeiprdx-json.mjs'
+import { utageBookAdapter } from './utage-book.mjs'
 import { uviewerCsvAdapter } from './uviewer-csv.mjs'
 
 const adapters = new Map()
@@ -22,6 +23,7 @@ registerGalAdapter(tenkeiprdxJsonAdapter)
 registerGalAdapter(misttrainJsonAdapter)     // [null,[<场景 id>,[行…]]] 位置数组，独有写法
 registerGalAdapter(artwhirlJsonAdapter)       // {"bgms":[…],…,"chara_keys":…} 并行数组 JSON，独有写法
 registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
+registerGalAdapter(utageBookAdapter)          // Utage 工作簿 JSON（importGridList + Command/Arg1 表头），独有写法
 
 export const galAdapterIds = () => [...adapters.keys()]
 export function galAdapter(id) {

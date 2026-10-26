@@ -11,6 +11,7 @@
 //   minashigo   脚本根 <游戏根>/game/scripts、资源根 <游戏根>/game、扩展名 rpy、按角色编号分组（scene_<类别><6 位角色><序号>）、适配器参数（别名表 game/movie.rpy、立绘定义 game/script.rpy、图片目录 game/images）
 //   misttrain   脚本根 <数据根>/UScenes、资源根 <数据根>、扩展名 json、适配器参数 root（角色 / 其它剧情 / 全部剧情这些列表由适配器每次从 UScenes 和 MasterData 现读，不写进 config）
 //   tenkeiprdx  脚本根 <素材根>/scenes、资源根 <素材根>、扩展名 json、适配器参数 root（活动 / 附加 / 角色 / 全部剧情这些列表由适配器每次从数据文件现读，不写进 config）
+//   tsk         Twinkle Star Knights X（Utage）：脚本根 <数据根>/Adventure、资源根 <数据根>（= StreamingAssets/<游戏名>）、扩展名 json（Master.chapter.json 等非剧情文件被适配器的嗅探挡掉）、适配器参数 root、隐藏图片目录；列表由适配器现读
 // 选项：
 //   dryRun          只探测和打日志，不写任何东西
 //   replace         true = 整体替换 config（默认 false = 合并：只改写了的字段，别的保留）
@@ -710,6 +711,7 @@ const GAMES = [
   { id: 'minashigo', detect: detectMinashigo },
   { id: 'minashigo_r', detect: detectMinashigoR },   // data/adv/textfiles/story（uviewer-csv 格式）；要求同时有 adv/image 和 adv/sound，放在通用 uviewer 之前
   { id: 'artwhirl', detect: detectArtwhirl },   // game/episode_scripts + game/images/stands（Ren'Py + JSON 剧情）
+  { id: 'tsk', detect: detectTsk },   // Twinkle Star Knights X：<StreamingAssets/游戏名>/Adventure/{Master.chapter.json, *.book.json}（Utage）
   { id: 'uviewer', detect: detectUviewerGame },
 ]
 
@@ -808,6 +810,80 @@ async function detectArtwhirl(media, { declared, logs }) {
       return { count, cover: '' }
     },
   }
+}
+
+// ======================================================================
+// Twinkle Star Knights X（Unity + Utage）：<数据根>/Adventure/<剧情文件夹>/*.book.json + Adventure/Master.chapter.json（角色 / 背景 / 声音名称表），
+// 数据根 = Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X，资源（Characters / Stills / Sound / Adventure/BackGrounds）都在数据根下。
+// 脚本根 = <数据根>/Adventure，资源根 = <数据根>，扩展名 json；Adventure 下的 Master.chapter.json 和图片目录不是剧情，适配器的嗅探（importGridList）把它们挡掉，
+// 所以「只认 *.book.json」靠适配器，不靠扩展名。列表（剧情文件夹 → 剧情 / 全部剧情）由适配器每次从文件索引现读。用 utage-book 适配器。
+// ======================================================================
+async function detectTsk(media, { declared, logs }) {
+  const root = await findTskRoot(media, 6)
+  if (root === null) {
+    if (declared) logs.push('没找到 Adventure/Master.chapter.json（加 Characters|Stills|Sound）')
+    return null
+  }
+  const abs = (...rels) => path.join(media, ...splitRel(join(root, ...rels)))
+  logs.push(`TSK 数据根：${root || '.'}${root ? '（目录里多了一层）' : ''}`)
+  const config = {
+    scriptRoots: [{ id: 'adventure', dir: join(root, 'Adventure'), label: 'Adventure' }],
+    resourceRoots: [root],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['json'],
+    hiddenDirs: ['BackGrounds', 'Effects', 'Spine', 'Textures'],
+    labels: {},
+    merge: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    adapterOptions: { 'utage-book': { root } },
+  }
+  for (const name of ['Characters', 'Stills', 'Sound']) {
+    if (!(await isDir(abs(name)))) logs.push(`提示：没有 ${name}/（${{ Characters: '立绘', Stills: 'BgEvent 静态画面', Sound: '声音' }[name]}会缺）`)
+  }
+  let cover = ''
+  const backgrounds = (await listNames(abs('Adventure', 'BackGrounds'))).filter((name) => /\.(png|jpe?g)$/i.test(name))
+  if (backgrounds.length) cover = `Adventure/BackGrounds/${backgrounds[0]}`
+  else logs.push('没找到 Adventure/BackGrounds/*：没有封面')
+  return {
+    id: 'tsk',
+    kind: 'tsk',
+    note: '',
+    config,
+    // 适配器的列表：每个含 *.book.json 的剧情文件夹一个节点 + 全部剧情
+    async nodes() {
+      const categories = []
+      for (const name of await listNames(abs('Adventure'))) {
+        if (!(await isDir(abs('Adventure', name)))) continue
+        if ((await listNames(abs('Adventure', name))).some((file) => /\.book\.json$/i.test(file))) categories.push(name)
+      }
+      return autoNodes([...categories.map((name, i) => [`cat${i + 1}`, `c/${name}`]), ['all', 'all']])
+    },
+    async finish(m, _config, options) {
+      const count = await countFiles(abs('Adventure'), '.book.json', options.countCap, 3)
+      logs.push(`剧情 ${count} 个（*.book.json）${count ? '' : '——结构可能不对，可以用 overrides 覆盖 scriptRoots'}`)
+      return { count, cover }
+    },
+  }
+}
+
+// 广度优先找「有 Adventure/Master.chapter.json，并且同级有 Characters|Stills|Sound」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
+async function findTskRoot(media, maxDepth) {
+  const queue = [{ rel: '', depth: 0 }]
+  while (queue.length) {
+    const { rel, depth } = queue.shift()
+    let entries
+    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
+    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+    if (dirs.has('Adventure') && ['Characters', 'Stills', 'Sound'].some((name) => dirs.has(name)) && (await isFile(path.join(media, ...splitRel(join(rel, 'Adventure', 'Master.chapter.json')))))) return rel
+    if (depth >= maxDepth) continue
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
+    }
+  }
+  return null
 }
 
 // ======================================================================

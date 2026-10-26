@@ -2438,6 +2438,7 @@ const GAL_PRESETS = {
   angelic: { adapters: ['renpy-monmusu'], game: { id: 'angelic', title: 'Angelic' } },
   artwhirl: { adapters: ['artwhirl-json'], game: { id: 'artwhirl', title: '魔法学园的少女们' } },
   minashigo_r: { adapters: ['uviewer-csv'], game: { id: 'minashigo_r', title: 'ミナシゴノシゴトR' } },
+  tsk: { adapters: ['utage-book'], game: { id: 'tsk', title: 'Twinkle Star Knights X' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]

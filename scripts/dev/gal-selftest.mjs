@@ -22,6 +22,8 @@ const monmusuScript = galLayoutScript
 const tenkeiScript = galLayoutScript
 import { parse as tenkeiParse, prepare as tenkeiPrepare, sniff as tenkeiSniff } from '../../web/library/gal/adapters/tenkeiprdx-json.mjs'
 import { buildMonmusuFixture, buildTenkeiFixture } from './make-gal-games-fixture.mjs'
+import { buildTskFixture, TSK_SA } from './make-tsk-fixture.mjs'
+import { loadAdapterContext as loadCtx } from '../../web/library/gal/context.mjs'
 import { isOneShot as mtOneShot, linkedBgSe as mtLinked, parse as mtParse, prepare as mtPrepare, sniff as mtSniff, catalog as mtCatalog } from '../../web/library/gal/adapters/misttrain-json.mjs'
 import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
@@ -1523,6 +1525,83 @@ async function gcMod0Prepare({ truncated }) {
   const out = renpyParse(['label x:', '    show ba013 with dissolve', '    show girl_a happy at left', '    show girl_a', '    "旁白"'].join('\n'), ctx)
   const cmds = out.steps.flatMap((st) => st.commands)
   check('angelic：show ba013（单个名字，查得到图片）→ bg，带 with dissolve 渐变 0.5；带属性 / at 的立绘仍是 raw；单名的 girl_a 也会当背景（无法区分，靠 at 区分立绘）', cmds.filter((c) => c.op === 'bg').length === 2 && cmds[0].fade === 0.5 && out.stats.raw.show === 1, J(cmds) + J(out.stats))
+}
+
+// ================= TSK：Utage *.book.json（utage-book）=================
+{
+  const dir = path.join(work, 'tsk')
+  await buildTskFixture(dir)
+  const adapter = galAdapter('utage-book')
+  const sa = path.join(dir, TSK_SA)
+  const book = (name) => readFile(path.join(sa, 'Adventure', `${name}.book.json`), 'utf8')
+  const ctx = await loadCtx({ adapter, mediaDir: dir, config: { adapterOptions: { 'utage-book': { root: TSK_SA } }, resourceRoots: [TSK_SA] } })
+  const text1 = await book('MainScenario/MainScenario0001')
+  check('TSK：登记；sniff 认 book.json（importGridList + Command/Arg1），不认 Master.chapter.json / 别的格式；别的适配器也不认它', galAdapterIds().includes('utage-book') && adapter.sniff(text1) && sniffGalAdapter(text1) === 'utage-book' && !adapter.sniff(await readFile(path.join(sa, 'Adventure/Master.chapter.json'), 'utf8')) && !adapter.sniff('bg,a.jpg,0\nmsg,0,x') && !adapter.sniff('{"result":{"sceneDetails":[]}}') && galAdapterIds().filter((id) => id !== 'utage-book').every((id) => !galAdapter(id).sniff?.(text1)), '')
+  check('TSK：Master 的 Character 表（表头第 0 列空，列名按表头找）→ 文件名去掉 _SkeletonData.asset；Texture / Sound 表读到；Layer / Param 表（第 0 列有字）不影响', ctx.master.chars.get('ミナ-制服')?.dir === 'Characters/ch_1001001' && ctx.master.chars.get('ミナ-制服').base === 'ch_1001001_m0' && ctx.master.chars.size === 5 && ctx.master.textures.get('bg_adv_001_1').file === 'Adventure/BackGrounds/bg_adv_001_1.png' && ctx.master.sounds.get('BGM_A001').intro === 'Sound/Bgm/BGM_A001_intro.ogg', J([...ctx.master.chars.keys()]))
+  const out = adapter.parse(text1, ctx, { rel: 'x', stem: 'x.book' })
+  const ops = out.steps.flatMap((st) => st.commands)
+  const stepOf = (re) => out.steps.find((st) => st.commands.some((c) => c.op === 'text' && re.test(segText(c))))
+  const spines = (st) => st.commands.filter((c) => c.op === 'spine')
+  const speakerOf = (st) => segText(st.commands.find((c) => c.op === 'speaker') || {})
+  check('TSK：两个 grid 接成一个场景；表头行 / 注释行 / 空行不算；旁白（没有 Arg1）说话人为空', out.stats.grids === 2 && speakerOf(out.steps[0]) === '' && segText(out.steps[0].commands.find((c) => c.op === 'text')) === '雨の音だけが聞こえる。' && !ops.some((c) => c.op === 'bg' && c.src.includes('bg_adv_003_1') && c.fade === 0.5), J(out.steps[0]))
+  const s1 = stepOf(/こんにちは/)
+  check('TSK：立绘行（Arg3 = 站位槽，Arg6 淡入）在下一句台词的步里；台词说话人取 Master NameText；Skin → skin，SpineAnim → anim，骨架 = Characters/<目录>/<基名>', J(spines(s1)) === J([{ op: 'spine', slot: 'Chara1', kind: 'chara', skel: 'Characters/ch_1001001/ch_1001001_m0.skel.bytes', atlas: 'Characters/ch_1001001/ch_1001001_m0.atlas.txt', anim: 'wait', loop: true, speed: 1, x: 0.5, skin: 'face3', fade: 0.5 }]) && speakerOf(s1) === 'ミナ', J(s1))
+  check('TSK：台词的 Voice 按文件名在索引里找（Sound/Voice/ImportChara/<角色号>/…，不推角色目录）', s1.commands.some((c) => c.op === 'voice' && c.src === 'Sound/Voice/ImportChara/1001001/a001_002_0277.ogg'), J(s1))
+  const s2 = stepOf(/心の声/)
+  check('TSK：Arg4 偏移 → x = 0.5 + 偏移 / 1280（右 250 → 0.695，左 -250 → 0.305）；表情变了才再发 spine（槽 2 的 face5）', spines(s2).find((c) => c.slot === 'Chara2' && c.skin === 'face2')?.x === 0.5 + 250 / 1280 && spines(s2).find((c) => c.slot === 'Chara3')?.x === 0.5 - 250 / 1280 && spines(s2).filter((c) => c.slot === 'Chara2').pop().skin === 'face5' && speakerOf(s2) === 'ルカ', J(s2))
+  const sOff = stepOf(/画面の外から/)
+  check('TSK：Arg2 = <Off>：只有说话人 + 台词，不（重新）摆立绘（即使带了 Arg3 / Arg4，骨架也不存在）；NameText 空的取 "-" 前面的', spines(sOff).length === 0 && speakerOf(sOff) === 'ゼロ' && speakerOf(stepOf(/名前は/)) === 'ノア' && !out.stats.unresolved['character:ゼロ-制服'] && !out.stats.unresolved['character-file:Characters/ch_9999999/ch_9999999_m0'], J(sOff))
+  check('TSK：Arg2 = <Character=名字>：说话人显示成括号里的名字', speakerOf(stepOf(/名前だけルカ/)) === 'ルカ')
+  const sTween = out.steps.find((st) => st.commands.some((c) => c.op === 'shake'))
+  const act = (slot) => spines(sTween).filter((c) => c.slot === slot && c.action).map((c) => c.action)
+  check('TSK：Tween MoveBy y<0 + pingPong → 动作 3（下沉）；MoveBy x + pingPong / Shake 角色 → 动作 2；MoveTo x → 改槽位 x（带 move 秒）；ColorTo → raw', J(act('Chara1')) === J([3, 2]) && J(act('Chara2')) === J([2]) && spines(sTween).some((c) => c.slot === 'Chara2' && c.x === 0.5 - 250 / 1280 && c.move === 1) && out.stats.raw['Tween:ColorTo'] === 1, J(sTween.commands.filter((c) => c.op === 'spine').map((c) => [c.slot, c.x, c.action, c.move])))
+  check('TSK：Shake Graphics → shake 指令（x、y 都有 = overall，强度 = 像素 / 40，时长 = time）；ZoomCamera 模式 2 + Arg4 200% → camera z = 769；模式 1 → 回 0', J(sTween.commands.find((c) => c.op === 'shake')) === J({ op: 'shake', axis: 'overall', strength: 0.75, seconds: 1 }) && J(sTween.commands.filter((c) => c.op === 'camera').map((c) => c.to)) === J([[0, 0, ((2 - 1) / 1.3) * 1000]]) && J(ops.filter((c) => c.op === 'camera').map((c) => c.to)) === J([[0, 0, ((2 - 1) / 1.3) * 1000], [0, 0, 0]]), J(sTween.commands.filter((c) => c.op === 'camera')))
+  check('TSK：Bgm 用 Master Sound 的 loop 文件（播放器的 bgm 指令不能接续 intro，intro 记在 intro 字段）；Se / BgSe 查表；BgVoice 查 Sound/BgVoice；StopBgSe / StopBgVoice', J(ops.find((c) => c.op === 'bgm')) === J({ op: 'bgm', src: 'Sound/Bgm/BGM_A001_loop.ogg', intro: 'Sound/Bgm/BGM_A001_intro.ogg' }) && ops.some((c) => c.op === 'se' && c.src === 'Sound/Se/SE_0001.ogg') && ops.some((c) => c.op === 'bgse' && c.src === 'Sound/BgSe/SE_3022.ogg' && c.loop === true) && ops.some((c) => c.op === 'bgvoice' && c.src === 'Sound/BgVoice/b001_002_0068.ogg') && ops.some((c) => c.op === 'bgseStop') && ops.some((c) => c.op === 'bgvoiceOff'), '')
+  check('TSK：FadeOut / FadeIn / Wait / CharacterOff / HideMessageWindow 对应 fade / wait / spineOff / ui；Bg 用 Texture 表的文件', J(ops.filter((c) => c.op === 'fade').map((c) => [c.to, c.seconds])) === J([['black', 0.7], ['clear', 1]]) && ops.some((c) => c.op === 'wait' && c.seconds === 0.5) && ops.some((c) => c.op === 'spineOff' && c.prefix === 'Chara') && ops.some((c) => c.op === 'ui' && c.visible === false) && ops.some((c) => c.op === 'bg' && c.src === 'Adventure/BackGrounds/bg_adv_003_1.png'), '')
+  const sStill = stepOf(/一枚絵の上で/)
+  const sStill2 = stepOf(/次の絵/)
+  check('TSK：BgEvent → Stills/<id>/ 的 spine（kind still）；_loop 结尾循环、否则播一次；同一幅换动画不重发 bgoff；BgEventOff / Bg → spineOff still', J(spines(sStill).map((c) => [c.slot, c.kind, c.anim, c.loop, c.skel])) === J([['still0', 'still', 'cut_2_loop', true, 'Stills/st_1001001/st_1001001.skel.bytes']]) && J(spines(sStill2).map((c) => [c.anim, c.loop])) === J([['cut_1', false]]) && !sStill2.commands.some((c) => c.op === 'bgoff') && sStill.commands.some((c) => c.op === 'bgoff') && out.steps.find((st) => st.commands.some((c) => c.op === 'spineOff' && c.prefix === 'still' && st !== sStill)), '')
+  check('TSK：缺资源（语音 / 背景）记进 stats.unresolved，不崩；不认识的命令 / Sprite / Param … 记 raw；WaitCustom 忽略；WaitType 手滑（NoWiat 等）不影响', out.stats.unresolved['voice:zz_missing_voice'] === 1 && out.stats.unresolved['background:bg_adv_099_1'] === 1 && out.stats.raw.FooBar === 1 && out.stats.raw.Sprite === 1 && out.stats.raw.Param === 1 && out.stats.ignored.WaitCustom === 1 && !out.steps.some((st) => st.commands.some((c) => c.op === 'bg' && !c.src)), J(out.stats))
+  check('TSK：Utage 的 <ruby=读音>字</ruby> 和 <color> 标记变成注音 / 颜色片段', J(stepOf(/と/).commands.find((c) => c.op === 'text').segments.slice(1, 4)) === J([{ text: '声', ruby: 'こえ' }, { text: 'と' }, { text: '色', style: { color: 'red' } }]), J(stepOf(/と/)))
+  const sGrid2 = stepOf(/二つ目の grid/)
+  check('TSK：下一个 grid 开头清场（spineOff 全部 / bgseStop / bgvoiceOff）', sGrid2.commands[0].op === 'spineOff' && !sGrid2.commands[0].prefix && sGrid2.commands.some((c) => c.op === 'bgseStop'), J(sGrid2))
+  // 分支
+  const whenOf = (c) => J(c.when || null)
+  const c1 = adapter.parse(await book('CharaScenario/CharaScenario1002001'), ctx, { stem: 'x.book' })
+  const choice1 = c1.steps.flatMap((st) => st.commands).find((c) => c.op === 'choice')
+  const textStep = (r, re) => r.steps.find((st) => st.commands.some((c) => c.op === 'text' && re.test(segText(c))))
+  const w = (n, v = 'sel1') => J([{ var: v, op: '===', value: String(n) }])
+  check('TSK：Selection（交错写法：选项 / 标签 / 分支）→ 一个 choice（选项文字、序号）；分支里的指令带 when（选了才执行）；Jump 汇合标签后不再带条件', J(choice1.options.map((o) => [o.value, segText(o)])) === J([[1, '一番'], [2, '二番']]) && choice1.var === 'sel1' && whenOf(textStep(c1, /一番の答え/).commands.find((c) => c.op === 'text')) === w(1) && whenOf(textStep(c1, /二番の答え/).commands.find((c) => c.op === 'text')) === w(2) && !textStep(c1, /合流/).commands.some((c) => c.when), J(c1.steps))
+  check('TSK：带 Arg2（flag）的 Jump 没有运行时变量：记 raw 并当作没跳（后面的行照常在分支里）；EndScenario 前的分支收尾', c1.stats.raw['Jump:带条件（flag，没有运行时变量，当作没跳）'] === 1 && whenOf(textStep(c1, /二番の続き/).commands.find((c) => c.op === 'text')) === w(2), J(c1.stats.raw))
+  const c2 = adapter.parse(await book('CharaScenario/CharaScenario1002002'), ctx, { stem: 'x.book' })
+  const choice2 = c2.steps.flatMap((st) => st.commands).find((c) => c.op === 'choice')
+  check('TSK：连续的 Selection（相邻写法）→ 一个 3 选项的 choice；每个分支只在自己的序号下出现；汇合标签 *S-xxx-0 之后不带条件', choice2.options.length === 3 && c2.stats.choices === 1 && ['甲', '乙', '丙'].every((t, i) => whenOf(textStep(c2, new RegExp(`^${t}。`)).commands.find((c) => c.op === 'text')) === w(i + 1)) && !textStep(c2, /全員の後/).commands.some((c) => c.when), J(c2.steps))
+  const c3 = adapter.parse(await book('MainScenario/MainScenario0002'), ctx, { stem: 'x.book' })
+  check('TSK：最后一个分支一直到 grid 末尾没有结束标记：不加条件（别把后面的剧情藏掉），并在 stats.notes 里说明；前面的分支照常带条件', !textStep(c3, /左の答え/).commands.some((c) => c.when) && whenOf(textStep(c3, /右の答え/).commands.find((c) => c.op === 'text')) === w(1) && c3.stats.notes.length === 1, J(c3.stats))
+  // 容错：没有上下文 / 坏数据
+  const bare = adapter.parse(text1, null, { stem: 'x.book' })
+  check('TSK：没有上下文（没读到 Master / 索引）也不崩：说话人退回 "-" 前面的部分、没有立绘、背景按 Adventure/BackGrounds/<名>.png 猜', bare.steps.length === out.steps.length && speakerOf(bare.steps.find((st) => st.commands.some((c) => c.op === 'text' && /こんにちは/.test(segText(c))))) === 'ミナ' && !bare.steps.some((st) => spines(st).some((c) => c.kind === 'chara')) && bare.steps.flatMap((st) => st.commands).some((c) => c.op === 'bg' && c.src === 'Adventure/BackGrounds/bg_adv_001_1.png'), '')
+  let bad = ''
+  try { adapter.parse('{"a":1}', ctx, {}) } catch (error) { bad = error.message }
+  let bad2 = ''
+  try { adapter.parse('nope', ctx, {}) } catch (error) { bad2 = error.message }
+  check('TSK：不是 Utage 工作簿 / 不是 JSON → 抛出清楚的错误', /importGridList/.test(bad) && /JSON/.test(bad2), `${bad} | ${bad2}`)
+  const tree = adapter.catalog(ctx)
+  check('TSK：列表（catalog）：剧情文件夹（主线 / 角色剧情）→ 剧情文件；全部剧情；脚本路径相对媒体目录；没有体检问题', J(tree.children.map((n) => [n.id, n.children.length])) === J([['c/MainScenario', 2], ['c/CharaScenario', 2], ['all', 4]]) && tree.children[0].children[0].script === `${TSK_SA}/Adventure/MainScenario/MainScenario0001.book.json` && adapter.health(ctx).length === 0, J(tree))
+  // gal-layout：认出结构（没写 game.id，也写 adapters）
+  const layout = await galLayoutScript({ item: { itemId: 'tsk', title: 'tsk', config: {}, source: { path: dir }, adapters: ['utage-book'] }, script: { id: 'gal-layout', version: '2.8.0', options: {} } })
+  const cfg = layout.itemPatch?.gal?.config
+  check('TSK：gal-layout 没写 game.id 也认出 tsk（数据根多了好几层目录）：脚本根 <数据根>/Adventure、资源根 <数据根>、扩展名 json、适配器参数 root；脚本数 4；封面 = 第一张背景；默认节点图引用适配器的目录', cfg?.game?.id === 'tsk' && cfg.scriptRoots[0].dir === `${TSK_SA}/Adventure` && J(cfg.resourceRoots) === J([TSK_SA]) && J(cfg.scriptExtensions) === J(['json']) && cfg.adapterOptions['utage-book'].root === TSK_SA && cfg.scriptCount === 4 && cfg.cover === 'Adventure/BackGrounds/bg_adv_001_1.png' && J(cfg.nodes.home.children.map((id) => cfg.nodes[id].catalog)) === J(['c/CharaScenario', 'c/MainScenario', 'all']), J(cfg) + J(layout.logs))
+  const declared = await galLayoutScript({ item: { itemId: 'tsk2', title: 'tsk2', config: { game: { id: 'tsk' } }, source: { path: path.join(dir, 'Twinkle Star Knights X', 'Twinkle Star Knights X_Data') }, adapters: ['utage-book'] }, script: { id: 'gal-layout', version: '2.8.0', options: {} } })
+  await mkdir(path.join(work, 'tsk-empty'), { recursive: true })
+  const skipped = await galLayoutScript({ item: { itemId: 'x', title: 'x', config: { game: { id: 'tsk' } }, source: { path: path.join(work, 'tsk-empty') }, adapters: ['utage-book'] }, script: { id: 'gal-layout', version: '2.8.0', options: {} } })
+  check('TSK：声明了 game.id: tsk、媒体目录是 _Data 目录（数据根在里面）也找得到；声明了但没有这个结构的目录不乱改（跳过）', declared.itemPatch?.gal?.config?.adapterOptions?.['utage-book']?.root === `StreamingAssets/Twinkle Star Knights X` && !skipped.itemPatch?.gal, J(declared.itemPatch?.gal?.config?.adapterOptions) + J(declared.logs))
+  // 浏览：首页（剧情文件夹）→ 剧情 → 播放页；Master.chapter.json 不出现在列表里
+  const provider = createBrowseProvider({ mediaDir: dir, adapters: ['utage-book'], resolveAsset: async () => { throw new Error('none') }, config: cfg })
+  const home = (await provider.getNode('')).node
+  check('TSK：浏览首页 = 剧情文件夹（角色剧情 / 主线 / 全部剧情，不含 BackGrounds / Effects）；点进去是剧情卡片，不含 Master.chapter.json', J(home.items.map((i) => i.title)) === J(['角色剧情', '主线', '全部剧情']) && J((await provider.getNode(home.items[1].node)).node.items.map((i) => i.title)) === J(['MainScenario0001', 'MainScenario0002']), J(home.items))
+  const played = await provider.getNode((await provider.getNode(home.items[1].node)).node.items[0].node)
+  check('TSK：播放页：scene.adapter = utage-book，步数 = 解析结果；上一话 / 下一话沿用列表', played.scene?.adapter === 'utage-book' && played.scene.steps.length === out.steps.length && played.sectionNavigation.next?.title === 'MainScenario0002', J(played.sectionNavigation))
 }
 
 await rm(work, { recursive: true, force: true })

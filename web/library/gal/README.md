@@ -336,6 +336,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | monmusu | Ren'Py（`renpy-monmusu`） | `game/script/hscene` + `hscene_still` + `script/movie.rpy` |
 | **angelic_py** | Ren'Py（`renpy-monmusu`，game.id `angelic`） | `game/script/hscene/*.rpy`；别名表是 `script/movies.rpy` + `script/stills.rpy`（复数），图片在 `images` + `resources`；菜单脚本 `sub_nav` / `sub_nav_byname` 隐藏；脚本文件名是随机串，没有角色编号，所以不分组、卡片显示脚本名；只有 `.rpyc` 的脚本解析不了（列表页问题里会列出） |
 | legeclo、minashigo（Ren'Py）、tenkeiprdx、misttrain、UViewer | 见各自一节 | |
+| **Twinkle Star Knights X** | Unity + Utage（`utage-book`，game.id `tsk`） | `<数据根>/Adventure/<剧情文件夹>/*.book.json` + `Adventure/Master.chapter.json`；数据根 = `…_Data/StreamingAssets/<游戏名>`，见「Twinkle Star Knights X」一节 |
 
 
 ### Aku / Fruits 的写法差异（Girls Creation 家族的两种方言）
@@ -351,3 +352,31 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 资源路径：`bg/x` → `images/bg/x`；`chara/<角色>/<文件>`（3 段）→ `images/bg/<角色>_<文件>`；`chara/<角色>/<资源>/<帧>`（4 段）→ `images/hcg/…`，有同名 `.webm` 就当视频播（帧名 1 / 4 不循环）；bgm `.mp3` 优先找同名 `.ogg`；语音按**文件名**在整个索引里找（有的剧情复用别的剧情组的语音）。立绘 `images/stands/<key>/<body>/<key>_<body>_<brow>_<eye>_<lip>[_h].png`，找不到按 brow→b、eye→e、h→不带 h 的顺序退。
 - gal-layout：`game/episode_scripts` + `game/hscripts` 当脚本根（扩展名 json），资源根 = `game`；没写 game.id 时要求同时有 `images/stands` 和 `audio`。导入页预设「魔法学园的少女们」。
 - 未渲染：`others` 里的 action / emotion、`effects`、`waits`；统计里（`stats.raw`）会列出次数。
+
+
+### Twinkle Star Knights X（Utage 工作簿，`utage-book`）
+- **独立的 adapter `utage-book`**（`adapters/utage-book.mjs`）：认 Unity 导出的 Utage 工作簿 `*.book.json`（顶层 `importGridList`，每个 grid = 一张剧情表 `{ name, headerRow, rows: [{ rowIndex, strings[], isEmpty, isCommentOut }] }`）。sniff 要求头 8KB 里有 `importGridList` 和表头行的 `Command` / `Arg1`，所以同目录的 `Master.chapter.json`（`settingList`）、`NAME.txt` 都不会被认走。
+  列按表头行的列名找（没有就按 `Command Arg1…Arg6 Skin SpineAnim SpineSubAnim AnimCompType AnimSpd WaitType Text PageCtrl Voice WindowType` 的顺序），所以表头重复出现、列错位都不影响；注释行 / 空行 / `//` 开头的行跳过；`WaitType` 的手滑（`NoWiat` / `NoWite` / `NoWati`）和 `WindowType` 里的表格公式（`IF(COUNTA(…))`）一律不看。
+- **一个文件 = 一个场景**：脚本节点是文件路径（`s:<路径>`），播放页里没法再指到某个 grid，所以一个 book.json 的所有 grid 按顺序接成一个场景；每个 grid 开头清掉立绘 / 静态画面 / 背景人声 / 背景音效（Utage 里它们是各自独立启动的剧情），标签（`*xxx`）只在本 grid 里查。
+  列表（`catalog`）因此是「剧情文件夹（`Adventure/` 下的 MainScenario / CharaScenario / StoryEventScenario …，中文名是猜的，副标题里同时写着文件夹名）→ 剧情文件」+「全部剧情」；剧情没有标题表，卡片标题就是文件名（不带 `.book`）。
+- **Master.chapter.json**（`contextFiles`）：`settingList[]` 里名字以 `:Character` / `:Texture` / `:Sound` 结尾的表（`:Layer` / `:Param` / `:Particle` 不用）。有的表第 0 列是空的（Character / Texture / Sound），有的不是（Layer / Param），所以列名一律按各表自己的表头行找。
+  Character：`CharacterName` → `NameText`（显示名）+ `FileName`（`Characters/ch_1001001/ch_1001001_m0_SkeletonData.asset` 去掉 `_SkeletonData.asset` = 真实文件的基名，`.skel.bytes` / `.atlas.txt` / `.png`）；Texture：Bg 标签 → `Adventure/BackGrounds/<名>.png`；Sound：`Bgm`（`IntroFileName` + `FileName`）/ `Se` 标签 → `Sound/…ogg`。文件索引（`contextDirs`）= `Adventure` / `Characters` / `Stills` / `Sound`，文件上限调到 80 万（语音很多）。
+- **行 → 指令**：
+  - 台词（Command 空 + Text）：Arg1 = 角色名；说话人显示名取 Master 的 `NameText`，没有就取角色名里**最后一个 `-` 之前**的部分（`名字-制服` → `名字`）；没有 Arg1 = 旁白（说话人清空）。台词原样保留（`“…”` 是说话、`‘…’` 是心里话），`<ruby=读音>字</ruby>` / `<color=…>` / `<b>` / `<i>` / `<br>` 变成注音 / 样式片段，其余标记去掉。`Voice` 按文件名在 `Sound/Voice/**`、`Sound/BgVoice/*` 的索引里找（不去推角色目录）。
+  - 立绘行（Command 空 + 没有 Text + Arg3）：`spine` 指令，`slot` = Arg3（`Chara1|2|3`），`kind: 'chara'`，`x = 0.5 + Arg4 / 屏宽`（Arg4 是像素偏移，右为正；屏宽默认 1280，`adapterOptions['utage-book'].screenWidth` 可改），`fade` = Arg6，`anim` = SpineAnim，`skin` = Skin（`face1…`）、`sub` = SpineSubAnim。同一个角色换槽位先 `spineOff` 旧槽；说话的角色已经在场（没写 Arg3）只在表情 / 动画变了时更新。
+  - `Bg` / `BgOff` / `BgEvent`（Stills 的 Spine，`kind: 'still'`，动画名 `cut_N`，`_loop` 结尾循环）/ `BgEventOff` / `Bgm`（见下）/ `StopBgm` / `Se` / `BgSe`（循环）/ `StopBgSe` / `BgVoice`（循环）/ `StopBgVoice` / `Wait` / `FadeOut`（变黑）/ `FadeIn` / `CharacterOff` / `HideMessageWindow` / `ShowMessageWindow` 都有对应的规范指令。
+  - `Tween`（Utage 的 iTween）：`PunchPosition` / `ShakePosition` / 带 `pingPong` 的 `MoveBy` 是来回的动作 → 立绘动作（y < 0 = 下沉 3，y > 0 = 跳 1，x = 左右抖 2；时长、次数用播放器固定的）；`MoveTo x=…` / 不带 pingPong 的 `MoveBy x=…` 改槽位的横向位置；`ColorTo` / `ScaleTo` / `RotateTo` / y 方向的搬家没有对应的字段，记 raw。`Shake`：目标 `Graphics` = 整屏 `shake`（x、y 都有 = overall，强度 = 像素 / 40），角色 = 立绘动作。`ZoomCamera`：模式 1 = 回原位，其它模式 + Arg4 = 缩放百分比 → `camera`（z = (倍数 − 1) / 1.3 × 1000），Arg6 = 秒。
+  - 记 raw（`stats.raw`，渲染诊断里能看到，可用 `rawIgnore` 允许）：`Sprite` / `SpriteOff`（特效图、表情气泡）、`Param`、`ChangeSoundVolume`、`ImageEffectOff`、`StopSe`、不认识的命令；`WaitCustom` / `WaitInput` 不处理（记在 `stats.ignored`）。不会崩。
+- **分支**（Selection / 标签 / Jump / EndScenario）：`Selection` 的 Arg1 是跳转标签（`*S-<剧情>-<序号>`），Text 是选项文字。标签前缀相同（去掉末尾 `-数字`）的 Selection 算一组（没有这种后缀的，连续的 Selection 算一组）→ 在这一组**第一个** Selection 的位置弹一次 `choice`（序号 = 组里出现的顺序，记进 `sel<n>`）。
+  每个选项的分支 = 从它的标签行到下一个 Selection / 同组标签 / 别的标签 / `Jump` / `EndScenario`，分支里每条指令带 `when`，结束后汇合；每个分支从弹选项那一刻的立绘状态重新开始。两种写法都认：交错（`Selection` → 标签 → 分支内容，样本里就是这样）和相邻（一串 `Selection` 之后才是各个标签）。
+  `Jump`（没有 Arg2）向后跳 = 中间的行不会走到、到目标标签恢复；跳回前面的标签（循环）没法表示，当作这一段结束；带 Arg2（flag）的 `Jump` 没有运行时变量，记 raw 并当作没跳。`EndScenario` = 到下一个标签前的行不会走到。最后一个分支一直到 grid 末尾都没有结束标记时**不加条件**（宁可多放一段，也别把后面的剧情藏掉），在 `stats.notes` 里说明。
+- **没有真机对照 / 没验证的**（样本里只有列含义和命令直方图，没有完整的行序列）：
+  1. `<Off>`（Arg2）：按「只显示名字和台词、不（重新）摆立绘、不动已有的立绘」处理；Utage 里它可能还有「把这个角色的立绘收掉」的意思。
+  2. 说话人显示名：`NameText`，没有就取最后一个 `-` 之前；`<Character=名字>` 当作「说话人显示成这个名字」（立绘仍按 Arg1）。
+  3. BGM 的 intro / loop：播放器的 `bgm` 指令不能接续，只放 loop 文件（只有 intro 时放 intro），intro 记在指令的 `intro` 字段里（播放器不认）。
+  4. 立绘位置：Arg4 的参照屏宽（默认 1280）、y 方向（Master 的 `Y` / `Scale` 列没用）都是猜的；`Skin`（表情 face1…）和 `SpineSubAnim` 带在 `spine` 指令的 `skin` / `sub` 字段里，**播放器暂时不认**（还没有「按名字换 Spine 皮肤」的渲染，不知道 face 是皮肤还是附件）。
+  5. 分支的整套结构（交错写法下选项之间怎么汇合、最后一个分支怎么结束）是照标签命名和样本里的顺序推的；`Tween` → 立绘动作的对应（尤其 y 方向）、`ZoomCamera` 的参数含义（模式 1 / 2 + Arg4 百分比）、`BgEvent` 的 `AnimSpd`（0 / 1，当 1 倍速处理）、`Sprite` 的 `EffectF` / `BE_*`（转场遮罩？）都没有对照。
+  6. 骨架是 Spine 4.0.37 的二进制（`.skel.bytes`），播放器用 4.0 运行时；合成素材只能造 JSON 骨架，二进制没有真实样本测过。`*.book.json` 超过 4MB 会被浏览层的 `MAX_SCRIPT_BYTES` 拒绝（真实最大的文件多大没统计）。
+- **`gal-layout` 探测**（`game.id: tsk`）：往下找（深度 ≤ 6）「有 `Adventure/Master.chapter.json`，同级有 `Characters` / `Stills` / `Sound`」的目录（= 数据根 `…_Data/StreamingAssets/<游戏名>`；媒体目录可以是游戏根、`_Data`、`StreamingAssets` 或数据根本身），写：脚本根 `<数据根>/Adventure`、资源根 `<数据根>`、扩展名 `json`（只认 `*.book.json` 靠适配器的嗅探，不靠扩展名）、隐藏目录 `BackGrounds` / `Effects` / `Spine` / `Textures`、适配器参数 `root`、封面 = `Adventure/BackGrounds` 里第一张图、脚本数、默认节点图（每个剧情文件夹一个 `c/<文件夹>` 节点 + `all`）。探测顺序在 artwhirl 之后、uviewer 之前。
+  导入页预设「Twinkle Star Knights X（Utage）」，或自己写：`adapters: ['utage-book']` + `config.game.id: 'tsk'` + 勾元数据脚本 `gal-layout`。
+- 自测：`scripts/dev/gal-selftest.mjs` 里的 TSK 一节（适配器 / 分支 / gal-layout / 浏览节点）；浏览器 `PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-tsk-selftest.mjs`（真实 WebGL + Spine 4.0 运行时，需要先 `sh scripts/fetch-spine-runtime.sh`）；合成数据 `node scripts/dev/make-tsk-fixture.mjs <目录>`（`gal-demo` 工作流也会导入它）。
