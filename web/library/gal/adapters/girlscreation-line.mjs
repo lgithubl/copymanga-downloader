@@ -17,6 +17,77 @@
 //   charaexpression,<槽>,<表情> → 轨道 1 的 ex_<表情>（单独改表情）    charafade|asynccharafade,<槽>,in|out,<秒>    charadelete,<槽>
 // 认得但暂不渲染（记在 stats.raw）：cgmode / jump / asyncjump / shake / asyncshake / shakeall / emote / subimage / asyncmoveobject / bgblur / bgcolor / textsize / prefab …
 // title,<标题>, / endof 不是步骤：标题给列表用。
+//
+// ---------- 参数（config.adapterOptions['girlscreation-tag']，标签式和行式共用；全部可选，没写 = DEFAULT_OPTIONS = 以前的行为）----------
+// 适配器只读参数、按参数匹配；数组整体替换、对象逐项合并：
+//   root（package.nw 目录，相对媒体目录）  categoryLabels { 分类前缀: 显示名 }
+//   player          { names: [主角名…] }（列表里不当「主要说话人」；旧写法 player: '館長' / ['館長'] 也认）
+//   dialect         { window: 查方言标记看脚本开头多少字符, headWindow: 区分标签式 / 行式看多少字符,
+//                     markers: { aku: [出现任一个 = Aku 写法], display: [有这些标签才需要 SPINE_ACTOR_DISPLAY 才显示角色], branch: [有这些标签 = 有分支] } }
+//   stand           { akuOffset: Aku 写法 LEFT / RIGHT 的横向偏移（估的）, akuDirections { 横向取值: -1 | 0 | 1 }, fruitsDim: ACTOR_COLOR_FILTER dark 的压暗值 }
+//   animation       { maxFrames: FRAME_ANIM / ANIM_PLAY 最多收多少帧 }
+//   line            { expressionPrefix: charamotion / charaexpression 的表情动画前缀, imageIdRe: message 末尾的头像 id }
+//   category        { re: 场景 id → 分类的正则（取匹配到的部分）, other: 没匹配时的分类名, unknownSpeaker: 没认出说话人的分组名 }
+//   titleLines      [正则…]：原始脚本里取标题的行（第 1 组 = 标题，多行模式）    speaker { suffixRe } 说话人去掉的后缀（括号别名）
+//   dirs            { scenes, audio, spine }（相对 root）  sceneDirs { 场景目录里各类资源的子目录名 }  audioKinds [data/audio 下的子目录]
+//   scenes          { script: [脚本文件名，按优先级], lineScript: 行式脚本文件名正则, thumb: 封面文件名正则 }
+//   sample          { files: [正则…] }：哪些文件的开头要读进来取标题 / 说话人（抽样字节数在引擎 limits.sampleBytes）
+import { createOptionsReader, escapeRegex, safeRegex, safeRegexList } from './options-merge.mjs'
+
+export const DEFAULT_OPTIONS = {
+  root: '',
+  categoryLabels: {},
+  player: { names: ['館長'] },
+  dialect: { window: 200000, headWindow: 8192, markers: { aku: ['<GROUP>', '<EV_DISPLAY>', '<SPINE_ACTOR_DISPLAY>'], display: ['<SPINE_ACTOR_DISPLAY>'], branch: ['<LABEL>'] } },
+  stand: { akuOffset: 450, akuDirections: { LEFT: -1, RIGHT: 1, CENTER: 0 }, fruitsDim: 0.6 },
+  animation: { maxFrames: 600 },
+  line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$' },
+  category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
+  titleLines: ['^title,([^,\\r\\n]+),'],
+  speaker: { suffixRe: '（[^）]*）$' },
+  dirs: { scenes: 'scenes', audio: 'data/audio', spine: 'data/spine' },
+  sceneDirs: { images: 'images', videos: 'videos', voices: 'voices', bgvoices: 'bgvoices', animations: 'animations', spines: 'spines' },
+  audioKinds: ['bgm', 'se'],
+  scenes: { script: ['script.txt', 'output_script.txt'], lineScript: '^h[ms]r_[^/]+\\.txt$', thumb: '^thumbnail\\.(?:png|jpe?g|webp)$' },
+  sample: { files: ['/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$'] },
+}
+// 旧写法 player: '館長' / ['館長'] → { names }（同一个原始对象只转一次）
+const legacy = new WeakMap()
+const reader = createOptionsReader(DEFAULT_OPTIONS)
+export function girlsOptions(options) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) return reader(options)
+  if (typeof options.player === 'string' || Array.isArray(options.player)) {
+    if (!legacy.has(options)) legacy.set(options, { ...options, player: { names: [].concat(options.player).map(String) } })
+    return reader(legacy.get(options))
+  }
+  return reader(options)
+}
+// 标记列表（'<GROUP>'…）→ 多行正则：脚本里任一行以其中一个开头
+const markerCache = new WeakMap()
+export function markerRegex(markers) {
+  const list = Array.isArray(markers) ? markers : []
+  if (!markerCache.has(list)) markerCache.set(list, list.length ? safeRegex(`^(?:${list.map((m) => escapeRegex(m)).join('|')})`, 'm') : null)
+  return markerCache.get(list)
+}
+const compiledCache = new WeakMap()
+// 规整后的参数 → 编译好的正则（同一份参数只编译一次）
+export function girlsCompiled(opt) {
+  if (!compiledCache.has(opt)) {
+    compiledCache.set(opt, {
+      imageId: safeRegex(opt.line.imageIdRe),
+      titles: safeRegexList(opt.titleLines, 'm'),
+      suffix: safeRegex(opt.speaker.suffixRe),
+      category: safeRegex(opt.category.re, ''),
+      lineScript: safeRegex(opt.scenes.lineScript),
+      thumb: safeRegex(opt.scenes.thumb),
+      sample: safeRegexList(opt.sample.files),
+      aku: markerRegex(opt.dialect.markers.aku),
+      display: markerRegex(opt.dialect.markers.display),
+      branch: markerRegex(opt.dialect.markers.branch),
+    })
+  }
+  return compiledCache.get(opt)
+}
 
 const LINE_COMMANDS = new Set([
   'message', 'msgvoicesync', 'voice', 'window', 'fade', 'transitionfade', 'bg', 'crossfade', 'crossfadeready', 'bgmplay', 'bgmstop', 'seplay', 'sestop',
@@ -44,7 +115,11 @@ export function sniffLine(text) {
 }
 
 // 行式脚本里的标题（title,<标题>,）
-export const lineTitle = (text) => /^title,([^,\r\n]+),/m.exec(String(text || '').replace(/^﻿/, ''))?.[1]?.trim() || ''
+export function lineTitle(text, patterns = girlsCompiled(girlsOptions()).titles) {
+  const clean = String(text || '').replace(/^﻿/, '')
+  for (const re of patterns) { const title = re.exec(clean)?.[1]?.trim(); if (title) return title }
+  return ''
+}
 
 // 行式脚本里出现的说话人（message / msgvoicesync 的说话人字段），给列表分组用
 export function lineSpeakers(text) {
@@ -62,9 +137,11 @@ const numOf = (text, fallback = 0) => { const n = Number.parseFloat(text); retur
 const secOf = (text, fallback = 0) => Math.max(0, Math.min(60, numOf(text, fallback)))
 const isOn = (text) => /^(?:on|true|1|loop)$/i.test(String(text || '').trim())
 const slotOf = (text) => { const m = /(\d+)\s*$/.exec(String(text || '')); return m ? Number(m[1]) : 0 }
-const IMAGE_ID = /^[a-z]{2,4}\d+$/i   // 头像 id（iab4020078）
 
 export function parseLine(text, ctx = null, meta = {}) {
+  const opt = ctx?.opts || girlsOptions(meta?.options)
+  const imageId = girlsCompiled(opt).imageId   // 头像 id（iab4020078）
+  const exPrefix = opt.line.expressionPrefix
   const steps = []
   let commands = []
   let speaker = ''
@@ -125,7 +202,7 @@ export function parseLine(text, ctx = null, meta = {}) {
       case 'message': {
         // message,说话人,台词(可能含逗号),头像id；最后一项是头像 id 或空，去掉
         let end = f.length
-        if (end > 3 && (f[end - 1] === '' || IMAGE_ID.test(f[end - 1]))) end -= 1
+        if (end > 3 && (f[end - 1] === '' || imageId?.test(f[end - 1]))) end -= 1
         const body = f.slice(2, end).join(',').replace(/<br>/gi, '\n').trim()
         flush(f[1] || '', body)
         break
@@ -196,14 +273,14 @@ export function parseLine(text, ctx = null, meta = {}) {
         if (!actor) { count('raw', 'charamotion(槽里没有角色)'); break }
         const loop = isOn(f[3] === undefined ? 'on' : f[3])
         actor.tracks[0] = { anim: f[2], loop }
-        actor.tracks[1] = { anim: `ex_${f[2]}`, loop: true }   // 动作带着同名表情；后面的 charaexpression 会单独改它
+        actor.tracks[1] = { anim: `${exPrefix}${f[2]}`, loop: true }   // 动作带着同名表情；后面的 charaexpression 会单独改它
         paintActor(slotOf(f[1]), 0)
         break
       }
       case 'charaexpression': {
         const actor = actors.get(slotOf(f[1]))
         if (!actor) { count('raw', 'charaexpression(槽里没有角色)'); break }
-        actor.tracks[1] = { anim: `ex_${f[2]}`, loop: true }
+        actor.tracks[1] = { anim: `${exPrefix}${f[2]}`, loop: true }
         paintActor(slotOf(f[1]), 0)
         break
       }

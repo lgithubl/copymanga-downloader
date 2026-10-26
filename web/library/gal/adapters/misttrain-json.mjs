@@ -23,11 +23,60 @@
 //     目录层级里的数字不是行里能直接看出来的，所以靠索引按文件名找；索引超过 6 万个文件会漏）。
 // 列表（adapter.catalog）：角色（Stills/<底号>/ 下的剧情，名字查 MasterData/MCharacterBaseViewModel.json、剧情标题查 MSceneViewModel.json，场景 id = 文件名去掉末 2 位）/
 // 其它剧情（UScenes/<id>/）/ 全部剧情。列表每次从文件现读。
-// 资源目录来自 config.adapterOptions['misttrain-json']：{ root（游戏数据目录，相对媒体目录，默认 ''）, showMosaic（默认 false） }
+//
+// ---------- 参数（config.adapterOptions['misttrain-json']；全部可选，没写 = DEFAULT_OPTIONS = 以前的行为）----------
+// 适配器只读参数、按参数匹配；猜出来的数字 / 规则都在 DEFAULT_OPTIONS 里，数组整体替换、对象逐项合并：
+//   root（游戏数据目录，相对媒体目录）  showMosaic（IsMosaic 的层叠不叠；播放器「更多」里的开关优先）
+//   dirs            { spines, backgrounds, sounds, masterData } 索引的目录名      master { scenes, characters, idKey, titleKey, nameKey } 名称表文件 / 键
+//   scenes          { dirs: [剧情脚本目录…], stillsDir: 角色底号目录名, collision: 'last'（同名剧情后收到的赢，以前的行为）| 'first' }
+//   fieldMap        row { 行内各字段的位置 }、detail { stillDetail 内各项的位置 }
+//   backgrounds     { ext: [背景图扩展名…] }（行里写的名字带这些扩展名会先去掉）
+//   paths           { bgm, se, bgse, background, voiceFallback } 路径模板（{name}）；没有索引时 / 索引里没有时按它拼
+//   voice           { dir 语音目录, ext 扩展名（按顺序试）, preferDirs 同名语音挑哪个目录（resolveByName），duplicates: 'first' 取第一个 | 'skip' 同名不止一个就不播（记未解析） }
+//   titleLookup     { trim: 场景 id = 文件名去掉末几位（0 = 不试）, tryAsIs, tryMinusOne }
+//   still           { defaultAnimation, configFile }
+//   camera          { positionScale: 位置换算（猜的）, zoomAdd: 缩放加数, zoomEpsilon, zoomUnit, maxSeconds }
+//   effects         { fadeSeconds, flashSeconds, flashCount（这三个是查看器里没读到的估值）, map { effect 取值: 'wash' | 'flash' }（其它取值 / 空串记 stats.raw）,
+//                     oneShotRule { 总层数: [动画名…] } 一次性动画（不循环 + 降速）, linkedBgSe { 总层数: { 动画名: [普通速度的音效, 速度 = fastSpeed 时的音效] } }（要关掉某一项写 ['', '']）, fastSpeed, loopExcept [不循环的背景音效] }
+//   emoji           { <emoji=名字> → 符号 }
+import { createIndexResolver } from '../resolve.mjs'
+import { cleanDir, createOptionsReader, escapeRegex, fillTemplate, safeRegex } from './options-merge.mjs'
 
 export const ADAPTER_ID = 'misttrain-json'
+export const DEFAULT_OPTIONS = {
+  root: '',
+  showMosaic: false,
+  dirs: { spines: 'Spines', backgrounds: 'BackGrounds', sounds: 'Sounds', masterData: 'MasterData' },
+  master: { scenes: 'MSceneViewModel.json', characters: 'MCharacterBaseViewModel.json', idKey: 'Id', titleKey: 'Title', nameKey: 'Name' },
+  scenes: { dirs: ['UScenes'], stillsDir: 'Stills', collision: 'last' },
+  fieldMap: {
+    row: { speaker: 2, text: 3, frameImage: 9, voice: 10, background: 11, bgm: 12, se: 13, soundTag: 14, effect: 15, backgroundEffectType: 16, stand: 17, detail: 18 },
+    detail: { animation: 0, speed: 1, zoom: 2, x: 3, y: 4, seconds: 5, rotation: 6 },
+  },
+  paths: { bgm: 'Sounds/Bgms/Adv/{name}.ogg', se: 'Sounds/Se/{name}.ogg', bgse: 'Sounds/BgSe/{name}.ogg', background: 'BackGrounds/{name}.png', voiceFallback: 'Sounds/Voices/Scenarios/Stills/{name}.ogg' },
+  backgrounds: { ext: ['png', 'jpg'] },
+  voice: { dir: 'Sounds/Voices', ext: ['ogg'], preferDirs: [], duplicates: 'first' },
+  titleLookup: { trim: 2, tryAsIs: true, tryMinusOne: true },
+  still: { defaultAnimation: 'animation1', configFile: 'still_configuration.json' },
+  camera: { positionScale: 0.84, zoomAdd: 0.03, zoomEpsilon: 1e-4, zoomUnit: 1.3, maxSeconds: 60 },
+  effects: {
+    fadeSeconds: 1, flashSeconds: 0.3, flashCount: 2,
+    map: { 1: 'wash', 3: 'flash' },
+    oneShotRule: { 8: ['animation3', 'animation7'], 7: ['animation3', 'animation6'], 5: ['animation3'], 4: ['animation3'] },
+    linkedBgSe: {
+      8: { animation3: ['Hse4', 'Hse4'], animation7: ['Hse4', 'Hse4'], animation2: ['Hse2', 'Hse3'], animation6: ['Hse2', 'Hse3'] },
+      7: { animation3: ['Hse4', 'Hse4'], animation6: ['Hse4', 'Hse4'], animation2: ['Hse2', 'Hse3'], animation5: ['Hse2', 'Hse3'] },
+      5: { animation5: ['Hse1', 'Hse1'], animation3: ['Hse4', 'Hse4'], animation2: ['Hse2', 'Hse3'] },
+      4: { animation3: ['Hse4', 'Hse4'], animation2: ['Hse2', 'Hse3'] },
+    },
+    fastSpeed: 2,
+    loopExcept: ['Hse4'],
+  },
+  emoji: { heart01: '♥', heart02: '♥', heart03: '♥', heart04: '♥', smile: '☺', star: '★' },
+}
+const optionsOf = createOptionsReader(DEFAULT_OPTIONS)
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
-const rootOf = (options) => String(options?.root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+const rootOf = (options) => cleanDir(optionsOf(options).root)
 
 // 1 = 数组形：[null, [<id>, [[…行], …], …]]
 const HEAD = /^\s*\[\s*null\s*,\s*\[\s*"?\d{5,}"?\s*,\s*\[/
@@ -65,61 +114,93 @@ function objectRowToArray(row, unknown) {
 }
 
 // ---------- 上下文：资源目录索引 + 名称表 ----------
-export const contextFiles = (options) => ['MSceneViewModel.json', 'MCharacterBaseViewModel.json'].map((name) => joinPath(rootOf(options), 'MasterData', name))
-export const contextDirs = (options) => ['UScenes', 'Spines', 'BackGrounds', 'Sounds'].map((dir) => joinPath(rootOf(options), dir))
-export const contextTextFilter = () => (rel) => /\/still_configuration\.json$/i.test(rel)
+export const contextFiles = (options) => {
+  const opt = optionsOf(options)
+  return [opt.master.scenes, opt.master.characters].map((name) => joinPath(rootOf(options), cleanDir(opt.dirs.masterData), name))
+}
+export const contextDirs = (options) => {
+  const opt = optionsOf(options)
+  return [...opt.scenes.dirs, opt.dirs.spines, opt.dirs.backgrounds, opt.dirs.sounds].map((dir) => joinPath(rootOf(options), cleanDir(dir)))
+}
+export const contextTextFilter = (options) => {
+  const re = safeRegex(`/${escapeRegex(optionsOf(options).still.configFile)}$`)
+  return (rel) => Boolean(re?.test(rel))
+}
 
 const numericPrefix = (name) => { const m = /^(\d+)/.exec(name); return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER }
 const natAsc = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true })
 const jsonArray = (text) => { try { const v = JSON.parse(String(text || '').replace(/^﻿/, '')); return Array.isArray(v) ? v : [] } catch { return [] } }
 
-export function prepare({ options, texts, files, toResourcePath }) {
+export function prepare({ options, texts, files, toResourcePath, resourceResolve }) {
+  const opt = optionsOf(options)
   const toRes = toResourcePath || ((rel) => rel)
   const scenes = new Map()    // 剧情 id → { rel, base }（base = Stills 下的角色底号，其它 ''）
   const folders = new Map()   // 场景 id → { dir, count, bases: [<基名>…按数字排序] }（含 *.skel.bytes 的目录，目录名 = 场景 id）
   const backgrounds = new Map()
-  const voices = new Map()    // 语音名（无扩展名）→ 相对资源根的路径
+  const voiceIndex = new Set()   // 语音路径（相对资源根）；按文件名找见 voiceOf
+  const voiceCount = new Map()   // 语音文件名 → 个数（voice.duplicates = 'skip' 用）
+  const sceneRes = opt.scenes.dirs.map((dir) => safeRegex(`^${escapeRegex(cleanDir(dir))}/(?:${escapeRegex(cleanDir(opt.scenes.stillsDir))}/([^/]+)/)?(?:[^/]+/)?([^/]+)\\.json$`)).filter(Boolean)
+  const spineRe = safeRegex(`^${escapeRegex(cleanDir(opt.dirs.spines))}/(.+)/([^/]+)/([^/]+)\\.skel\\.bytes$`)
+  const exts = (list) => (Array.isArray(list) ? list : []).map((e) => escapeRegex(String(e).replace(/^\./, ''))).filter(Boolean).join('|') || '(?!)'
+  const bgRe = safeRegex(`^${escapeRegex(cleanDir(opt.dirs.backgrounds))}/(.+)\\.(?:${exts(opt.backgrounds.ext)})$`)
+  const voiceRe = safeRegex(`^${escapeRegex(cleanDir(opt.voice.dir))}/(.+/)?([^/]+)\\.(?:${exts(opt.voice.ext)})$`)
   for (const rel of files || []) {
     const res = toRes(rel)
-    let m = /^UScenes\/(?:Stills\/([^/]+)\/)?(?:[^/]+\/)?([^/]+)\.json$/i.exec(res)
-    if (m) { scenes.set(m[2], { rel, base: m[1] || '' }); continue }
-    m = /^Spines\/(.+)\/([^/]+)\/([^/]+)\.skel\.bytes$/i.exec(res)
+    let m = null
+    for (const re of sceneRes) { m = re.exec(res); if (m) break }
+    if (m) { if (!(opt.scenes.collision === 'first' && scenes.has(m[2]))) scenes.set(m[2], { rel, base: m[1] || '' }); continue }
+    m = spineRe?.exec(res)
     if (m) {
       const key = m[2]
-      const dir = `Spines/${m[1]}/${m[2]}`
+      const dir = `${cleanDir(opt.dirs.spines)}/${m[1]}/${m[2]}`
       if (!folders.has(key)) folders.set(key, { dir, bases: [] })
       folders.get(key).bases.push(m[3])
       continue
     }
-    m = /^BackGrounds\/(.+)\.(?:png|jpg)$/i.exec(res)
+    m = bgRe?.exec(res)
     if (m) { backgrounds.set(m[1].toLowerCase(), res); continue }
-    m = /^Sounds\/Voices\/(.+\/)?([^/]+)\.ogg$/i.exec(res)
-    if (m && !voices.has(m[2])) voices.set(m[2], res)
+    m = voiceRe?.exec(res)
+    if (m) { voiceIndex.add(res); voiceCount.set(m[2], (voiceCount.get(m[2]) || 0) + 1) }
   }
   for (const folder of folders.values()) { folder.bases.sort((a, b) => numericPrefix(a) - numericPrefix(b) || a.localeCompare(b)); folder.count = folder.bases.length }
   const textOf = (name) => Object.entries(texts || {}).find(([key]) => key.endsWith(`/${name}`) || key === name)?.[1] || ''
   const stillConfigs = new Map()
+  const configRe = safeRegex(`(?:^|/)([^/]+)/${escapeRegex(opt.still.configFile)}$`)
   for (const [key, value] of Object.entries(texts || {})) {
-    const m = /(?:^|\/)([^/]+)\/still_configuration\.json$/i.exec(toRes(key))
+    const m = configRe?.exec(toRes(key))
     if (m) stillConfigs.set(m[1], value)
   }
-  const master = readMasterdata(textOf('MSceneViewModel.json'), textOf('MCharacterBaseViewModel.json'))
-  const ctx = { scenes, folders, backgrounds, voices, stillConfigs, master, hasIndex: Boolean(files?.length), showMosaic: Boolean(options?.showMosaic) }
+  const master = readMasterdata(textOf(opt.master.scenes), textOf(opt.master.characters), opt.master)
+  // 语音只知道文件名：按 voice.preferDirs 的顺序在索引里挑（不再是「文件顺序里第一个」），voice.ext 依次试
+  const resolver = createIndexResolver({ index: voiceIndex, cfg: resourceResolve, preferDirs: opt.voice.preferDirs.length ? opt.voice.preferDirs : null })
+  const voiceOf = (name) => {
+    if (opt.voice.duplicates === 'skip' && (voiceCount.get(name) || 0) > 1) return ''
+    for (const ext of opt.voice.ext) {
+      const file = `${name}.${String(ext).replace(/^\./, '')}`
+      const hit = resolver.resolveByName(file)
+      if (hit) return hit
+    }
+    return ''
+  }
+  const ctx = { opts: opt, scenes, folders, backgrounds, voiceOf, stillConfigs, master, hasIndex: Boolean(files?.length), showMosaic: Boolean(opt.showMosaic) }
   ctx.catalogTree = buildCatalog(ctx)
   return ctx
 }
 
-function readMasterdata(sceneText, baseText) {
+function readMasterdata(sceneText, baseText, keys) {
   const titles = new Map()
-  for (const row of jsonArray(sceneText)) if (row && row.Id !== undefined) titles.set(String(row.Id), str(row.Title))
+  for (const row of jsonArray(sceneText)) if (row && row[keys.idKey] !== undefined) titles.set(String(row[keys.idKey]), str(row[keys.titleKey]))
   const bases = new Map()
-  for (const row of jsonArray(baseText)) if (row && row.Id !== undefined) bases.set(String(row.Id), str(row.Name))
+  for (const row of jsonArray(baseText)) if (row && row[keys.idKey] !== undefined) bases.set(String(row[keys.idKey]), str(row[keys.nameKey]))
   return { titles, bases }
 }
 
-// 剧情文件名 → 标题：场景 id = 文件名去掉末 2 位；找不到再试原样、末位减 1（技能场景 55000405 对应 55000404）
-function titleOf(master, stem) {
-  const tries = [stem.slice(0, -2), stem, String(Number(stem) - 1)]
+// 剧情文件名 → 标题（titleLookup）：场景 id = 文件名去掉末 2 位；找不到再试原样、末位减 1（技能场景 55000405 对应 55000404）
+function titleOf(master, stem, lookup = DEFAULT_OPTIONS.titleLookup) {
+  const tries = []
+  if (lookup.trim > 0) tries.push(stem.slice(0, -lookup.trim))
+  if (lookup.tryAsIs) tries.push(stem)
+  if (lookup.tryMinusOne) tries.push(String(Number(stem) - 1))
   for (const key of tries) { const title = master.titles.get(key); if (title) return title }
   return ''
 }
@@ -128,7 +209,7 @@ function buildCatalog(ctx) {
   const { scenes, master } = ctx
   if (!scenes.size) return null
   const node = (id, stem, entry, prefix) => {
-    const title = titleOf(master, stem)
+    const title = titleOf(master, stem, ctx.opts.titleLookup)
     return { id: `${prefix}/${id}`, title: title || stem, subtitle: title ? stem : '', script: entry.rel }
   }
   const lists = []
@@ -155,11 +236,10 @@ export const catalog = (ctx) => ctx?.catalogTree || null
 const str = (value) => (value === null || value === undefined ? '' : String(value))
 const numOrNull = (value) => { if (value === null || value === undefined || value === '') return null; const n = Number(value); return Number.isFinite(n) ? n : null }
 const cleanName = (value) => str(value).trim().replace(/\\/g, '/').replace(/^\/+/, '')
-const EMOJI = { heart01: '♥', heart02: '♥', heart03: '♥', heart04: '♥', smile: '☺', star: '★' }
 
 // 一句台词的片段：<ruby=读音>字</ruby> → { text, ruby }；<emoji=名字> → 一个符号；其余原样
-function segmentsOf(raw) {
-  const text = str(raw).replace(/\\n/g, '\n').replace(/<emoji=(.*?)>/g, (_all, name) => EMOJI[name] || '')
+function segmentsOf(raw, emoji = DEFAULT_OPTIONS.emoji) {
+  const text = str(raw).replace(/\\n/g, '\n').replace(/<emoji=(.*?)>/g, (_all, name) => emoji[name] || '')
   const segments = []
   let last = 0
   for (const m of text.matchAll(/<ruby=(.*?)>(.*?)<\/ruby>/g)) {
@@ -171,22 +251,19 @@ function segmentsOf(raw) {
   return segments.filter((segment) => segment.text)
 }
 
-// 总层数 N + 动画名 + 速度 → 联动背景音效（照 PlaySpineLinkedBgSE）
-export function linkedBgSe(n, anim, speed) {
-  const fast = Math.abs(speed - 2) < 1e-6
-  const slow23 = fast ? 'Hse3' : 'Hse2'
-  if (n === 8) return anim === 'animation3' || anim === 'animation7' ? 'Hse4' : anim === 'animation2' || anim === 'animation6' ? slow23 : ''
-  if (n === 7) return anim === 'animation3' || anim === 'animation6' ? 'Hse4' : anim === 'animation2' || anim === 'animation5' ? slow23 : ''
-  if (n === 5) return anim === 'animation5' ? 'Hse1' : anim === 'animation3' ? 'Hse4' : anim === 'animation2' ? slow23 : ''
-  if (n === 4) return anim === 'animation3' ? 'Hse4' : anim === 'animation2' ? slow23 : ''
-  return ''
+// 总层数 N + 动画名 + 速度 → 联动背景音效（照 PlaySpineLinkedBgSE；表在 effects.linkedBgSe：值是名字，或 [慢速, 快速]）
+export function linkedBgSe(n, anim, speed, effects = DEFAULT_OPTIONS.effects) {
+  const entry = effects.linkedBgSe?.[n]?.[anim]
+  if (Array.isArray(entry)) return (Math.abs(speed - effects.fastSpeed) < 1e-6 ? entry[1] : entry[0]) || ''
+  return typeof entry === 'string' ? entry : ''   // 写成单个名字 = 快慢一样
 }
-export const isOneShot = (n, anim) => (n === 8 ? anim === 'animation3' || anim === 'animation7' : n === 7 ? anim === 'animation3' || anim === 'animation6' : n === 4 || n === 5 ? anim === 'animation3' : false)
-
-const CAMERA_POS_UNIT = 0.84
-const zoomCode = (scale) => ((scale - 1) / 1.3) * 1000   // 播放器 zoomOf(z) = 1 + z/1000×1.3 的反函数
+export const isOneShot = (n, anim, effects = DEFAULT_OPTIONS.effects) => Boolean(effects.oneShotRule?.[n]?.includes(anim))
 
 export function parse(text, ctx = null, meta = {}) {
+  const opt = ctx?.opts || optionsOf(meta?.options)
+  const { row: F, detail: D } = opt.fieldMap
+  const zoomCode = (scale) => ((scale - 1) / opt.camera.zoomUnit) * 1000   // 播放器 zoomOf(z) = 1 + z/1000×zoomUnit 的反函数
+  const bgExt = safeRegex(`\\.(?:${(opt.backgrounds.ext || []).map((e) => escapeRegex(String(e).replace(/^\\./, ''))).join('|') || '(?!)'})$`)
   let data
   try { data = JSON.parse(String(text || '').replace(/^﻿/, '')) } catch { throw new Error('不是有效的 JSON') }
   const unknownKeys = new Set()
@@ -235,11 +312,12 @@ export function parse(text, ctx = null, meta = {}) {
   } else if (ctx?.folders) miss('spines', sceneId)
   const total = folder?.count || 0
 
+  const stripExt = (name) => (bgExt ? name.replace(bgExt, '') : name)
   const resolveBg = (name) => {
-    const key = name.toLowerCase().replace(/\.(png|jpg)$/, '')
+    const key = stripExt(name.toLowerCase())
     if (ctx?.backgrounds?.has(key)) return ctx.backgrounds.get(key)
     if (ctx?.hasIndex) miss('background', name)
-    return `BackGrounds/${name.replace(/\.(png|jpg)$/i, '')}.png`
+    return fillTemplate(opt.paths.background, { name: stripExt(name) })
   }
 
   const steps = []
@@ -254,16 +332,16 @@ export function parse(text, ctx = null, meta = {}) {
   let scale = 1
 
   const playStill = (command, animName) => {
-    const name = animName || anim || 'animation1'
-    const oneShot = isOneShot(total, name)
+    const name = animName || anim || opt.still.defaultAnimation
+    const oneShot = isOneShot(total, name, opt.effects)
     anim = name
     parts.forEach((part, order) => {
       stats.spines += 1
       command({ op: 'spine', slot: `still${order}`, kind: 'still', skel: part.skel, atlas: part.atlas, anim: name, loop: !oneShot, speed, order, ...(oneShot ? { slow: true } : {}) })
     })
-    const linked = linkedBgSe(total, name, speed)
+    const linked = linkedBgSe(total, name, speed, opt.effects)
     if (linked) {
-      if (bgSeNow !== linked) { command({ op: 'bgse', src: `Sounds/BgSe/${linked}.ogg`, loop: linked !== 'Hse4' }); bgSeNow = linked }
+      if (bgSeNow !== linked) { command({ op: 'bgse', src: fillTemplate(opt.paths.bgse, { name: linked }), loop: !opt.effects.loopExcept.includes(linked) }); bgSeNow = linked }
     } else if (bgSeNow) { command({ op: 'bgseStop' }); bgSeNow = '' }
   }
 
@@ -271,57 +349,59 @@ export function parse(text, ctx = null, meta = {}) {
     const commands = pending
     pending = []
     const emit = (command) => { commands.push(command) }
-    const background = cleanName(row[11])
-    const detail = Array.isArray(row[18]) ? row[18] : []
-    const animName = str(detail[0]).trim()
-    const effect = str(row[15]).trim()
+    const background = cleanName(row[F.background])
+    const detail = Array.isArray(row[F.detail]) ? row[F.detail] : []
+    const animName = str(detail[D.animation]).trim()
+    const effect = str(row[F.effect]).trim()
 
     if (background) emit({ op: 'bg', src: resolveBg(background), fade: 0.5 })
-    if (row[9]) raw('frameImage')
-    if (str(row[14]).trim()) raw('soundTag')
-    if (Array.isArray(row[17]) && row[17].length) raw('standCharacters')
-    if (numOrNull(row[16])) raw('backgroundEffectType')
+    if (row[F.frameImage]) raw('frameImage')
+    if (str(row[F.soundTag]).trim()) raw('soundTag')
+    if (Array.isArray(row[F.stand]) && row[F.stand].length) raw('standCharacters')
+    if (numOrNull(row[F.backgroundEffectType])) raw('backgroundEffectType')
 
     // --- 静态画面 + 动画 + 镜头 ---
-    const nextSpeed = numOrNull(detail[1])
+    const nextSpeed = numOrNull(detail[D.speed])
     if (nextSpeed !== null && nextSpeed > 0) speed = nextSpeed
     if (parts.length && (!stillOn || animName)) {
       stillOn = true
       playStill(emit, animName)
     }
-    const camValues = detail.slice(2, 7).map(numOrNull)
+    const camValues = [D.zoom, D.x, D.y, D.seconds, D.rotation].map((i) => numOrNull(detail[i]))
     if (camValues.some((v) => v !== null)) {
       const [zoom, px, py, seconds, rotation] = camValues
       const from = [...camera]
-      if (zoom !== null && Math.abs(zoom) > 1e-4) scale = zoom + 0.03
-      const next = [px !== null ? px * CAMERA_POS_UNIT : camera[0], py !== null ? py * CAMERA_POS_UNIT : camera[1], zoom !== null && Math.abs(zoom) > 1e-4 ? zoomCode(scale) : camera[2], rotation !== null ? rotation : camera[3]]
+      const zoomed = zoom !== null && Math.abs(zoom) > opt.camera.zoomEpsilon
+      if (zoomed) scale = zoom + opt.camera.zoomAdd
+      const next = [px !== null ? px * opt.camera.positionScale : camera[0], py !== null ? py * opt.camera.positionScale : camera[1], zoomed ? zoomCode(scale) : camera[2], rotation !== null ? rotation : camera[3]]
       camera = next
-      emit({ op: 'camera', from, to: [...next], seconds: Math.max(0, Math.min(60, seconds && seconds > 0 ? seconds : 0)) })
+      emit({ op: 'camera', from, to: [...next], seconds: Math.max(0, Math.min(opt.camera.maxSeconds, seconds && seconds > 0 ? seconds : 0)) })
     }
 
     // --- 屏幕效果 ---
-    if (effect === '1') emit({ op: 'wash', color: 'white', seconds: 1 })
-    else if (effect === '3') emit({ op: 'flash', color: 'white', count: 2, seconds: 0.3 })
+    const kind = opt.effects.map[effect]
+    if (kind === 'wash') emit({ op: 'wash', color: 'white', seconds: opt.effects.fadeSeconds })
+    else if (kind === 'flash') emit({ op: 'flash', color: 'white', count: opt.effects.flashCount, seconds: opt.effects.flashSeconds })
     else if (effect && effect !== '0') raw(`effect:${effect}`)
 
     // --- 声音 ---
-    const bgm = cleanName(row[12])
-    if (bgm && bgm !== lastBgm) { emit({ op: 'bgm', src: `Sounds/Bgms/Adv/${bgm}.ogg` }); lastBgm = bgm }
-    const se = cleanName(row[13])
-    if (se) emit({ op: 'se', src: `Sounds/Se/${se}.ogg` })
-    const voice = cleanName(row[10])
+    const bgm = cleanName(row[F.bgm])
+    if (bgm && bgm !== lastBgm) { emit({ op: 'bgm', src: fillTemplate(opt.paths.bgm, { name: bgm }) }); lastBgm = bgm }
+    const se = cleanName(row[F.se])
+    if (se) emit({ op: 'se', src: fillTemplate(opt.paths.se, { name: se }) })
+    const voice = cleanName(row[F.voice])
     if (voice) {
-      const src = ctx?.voices?.get(voice)
+      const src = ctx?.voiceOf?.(voice)
       if (src) emit({ op: 'voice', src })
       else if (ctx?.hasIndex) miss('voice', voice)
-      else emit({ op: 'voice', src: `Sounds/Voices/Scenarios/Stills/${voice}.ogg` })
+      else emit({ op: 'voice', src: fillTemplate(opt.paths.voiceFallback, { name: voice }) })
     }
 
     // --- 台词：没有台词的行不停（指令并进下一句） ---
-    const segments = segmentsOf(row[3])
+    const segments = segmentsOf(row[F.text], opt.emoji)
     const hasText = segments.some((segment) => segment.text.trim())
     if (!hasText) { pending = commands; return }
-    const name = str(row[2]).trim()
+    const name = str(row[F.speaker]).trim()
     if (name !== speaker) { emit({ op: 'speaker', segments: name ? [{ text: name }] : [] }); speaker = name }
     emit({ op: 'text', segments })
     stats.commands += commands.length
@@ -340,7 +420,7 @@ export function health(ctx) {
   const sample = (list) => `${list.slice(0, 5).join('、')}${list.length > 5 ? ' 等' : ''}`
   if (!ctx.master.titles.size) out.push({ code: 'master-missing', message: '没读到 MasterData/MSceneViewModel.json：剧情标题都显示文件名（检查 adapterOptions.root）' })
   if (!ctx.master.bases.size) out.push({ code: 'master-chars-missing', message: '没读到 MasterData/MCharacterBaseViewModel.json：角色名都显示「角色 <底号>」' })
-  const untitled = [...ctx.scenes.keys()].filter((stem) => !titleOf(ctx.master, stem))
+  const untitled = [...ctx.scenes.keys()].filter((stem) => !titleOf(ctx.master, stem, ctx.opts.titleLookup))
   if (ctx.master.titles.size && untitled.length) out.push({ code: 'scene-no-title', message: `${untitled.length} 个剧情在 MSceneViewModel 里查不到标题（卡片显示文件名）：${sample(untitled)}` })
   const noSpine = [...ctx.scenes.keys()].filter((stem) => !ctx.folders.has(stem))
   if (noSpine.length) out.push({ code: 'scene-no-spine', message: `${noSpine.length} 个剧情在 Spines/ 下没有以文件名命名的目录（没有静态画面，或场景 id 和文件名不一致）：${sample(noSpine)}` })

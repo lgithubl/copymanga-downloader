@@ -1,252 +1,345 @@
 #!/usr/bin/env node
-// 自测（纯 node，不需要浏览器）：utage-book / grenze-xml 的 adapterOptions —— 每个选项各一条：
-//   默认值（不给选项 / 给空对象）的结果和以前一样，覆盖之后的结果按文档变化；最后各有一条端到端（loadAdapterContext + config.adapterOptions + meta.config）。
+// Gal 适配器参数自测（只用 node，不要浏览器）：tenkeiprdx-json / misttrain-json / artwhirl-json / girlscreation-tag(+line) 的 adapterOptions。
+// 每个参数：不写 = 以前的行为（默认值整份显式写出来结果也不变）、改了 = 结果按文档变；每个适配器再走一条完整链路
+// （config.adapterOptions → loadAdapterContext（文件索引 + prepare）→ buildScene（meta.options / meta.config））。
 //   node scripts/dev/gal-adapter-options-selftest.mjs
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { galAdapter } from '../../web/library/gal/adapters/index.mjs'
-import * as utage from '../../web/library/gal/adapters/utage-book.mjs'
-import * as grenze from '../../web/library/gal/adapters/grenze-xml.mjs'
-import { expandTemplate, mergeOptions } from '../../web/library/gal/adapters/path-templates.mjs'
-import { normalizeGalConfig } from '../../web/library/gal/config.mjs'
+import * as aw from '../../web/library/gal/adapters/artwhirl-json.mjs'
+import * as gc from '../../web/library/gal/adapters/girlscreation-tag.mjs'
+import { girlsOptions } from '../../web/library/gal/adapters/girlscreation-line.mjs'
+import * as mt from '../../web/library/gal/adapters/misttrain-json.mjs'
+import { mergeOptions } from '../../web/library/gal/adapters/options-merge.mjs'
+import * as tk from '../../web/library/gal/adapters/tenkeiprdx-json.mjs'
+import { galConfigView, normalizeGalConfig } from '../../web/library/gal/config.mjs'
 import { loadAdapterContext } from '../../web/library/gal/context.mjs'
-import { R, T } from './make-tsk-fixture.mjs'
+import { buildScene } from '../../web/library/gal/scene.mjs'
 
 let pass = 0
 let fail = 0
 const check = (name, ok, detail = '') => { ok ? pass++ : fail++; console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : `  <-- ${detail}`}`) }
 const J = JSON.stringify
-const same = (a, b) => J(a) === J(b)
+const work = await realpath(await mkdtemp(path.join(os.tmpdir(), 'gal-adapter-opts-')))
+let seq = 0
 
-// ================= 共用模板 =================
-check('路径模板：{x} / {x:ext} / 多值 {ext} 按数组顺序展开；缺值的候选整条丢掉；mergeOptions 对象逐层合并、数组整个替换、free 表逐条覆盖',
-  same(expandTemplate('a/{n}.{ext}', { n: 'x', ext: ['webp', 'png'] }), ['a/x.webp', 'a/x.png']) && same(expandTemplate('{f:png}', { f: 'a/b' }), ['a/b.png']) && same(expandTemplate('{f:png}', { f: 'a/b.jpg' }), ['a/b.jpg']) && expandTemplate('{n}', {}).length === 0
-  && same(mergeOptions({ a: { b: 1, c: [1] }, t: { x: 1 } }, { a: { c: [2] }, t: { y: 'z' } }, ['t']), { a: { b: 1, c: [2] }, t: { x: 1, y: 'z' } }), '')
+// 完整链路：磁盘上造文件 → config.adapterOptions → loadAdapterContext → buildScene
+async function e2e(adapterId, tree, adapterOptions, scriptRel, extraConfig = {}, metaRel = scriptRel) {
+  const dir = path.join(work, `e${seq += 1}`)
+  for (const [rel, content] of Object.entries(tree)) { await mkdir(path.dirname(path.join(dir, rel)), { recursive: true }); await writeFile(path.join(dir, rel), content) }
+  const config = normalizeGalConfig({ adapterOptions: { [adapterId]: adapterOptions }, ...extraConfig })
+  const ctx = await loadAdapterContext({ adapter: galAdapter(adapterId), mediaDir: dir, config })
+  const meta = { rel: metaRel, stem: path.basename(scriptRel).replace(/\.[^.]+$/, ''), options: config.adapterOptions[adapterId] || {}, config: galConfigView(config) }
+  return { scene: buildScene(adapterId, tree[scriptRel], ctx, meta), ctx, config }
+}
+const cmds = (scene) => scene.steps.flatMap((s) => s.commands)
+const ofOp = (scene, op) => cmds(scene).filter((c) => c.op === op)
 
-// ================= utage-book =================
-const B = (rows) => JSON.stringify({ importGridList: [{ name: 'g', rows: [{ strings: ['Command', 'Arg1', 'Arg2', 'Arg3', 'Arg4', 'Arg5', 'Arg6', 'Skin', 'SpineAnim', 'SpineSubAnim', 'AnimCompType', 'AnimSpd', 'WaitType', 'Text', 'PageCtrl', 'Voice', 'WindowType'] }, ...rows].map((row, i) => ({ rowIndex: i, isEmpty: 0, isCommentOut: 0, ...row })) }] })
-const table = (name, header, rows) => ({ name, rows: [{ strings: header }, ...rows.map((strings) => ({ strings }))] })
-const MASTER = JSON.stringify({ settingList: [
-  table('Master.chapter:Character', ['', 'CharacterName', 'NameText', 'FileName', 'FileType'], [['', 'ミナ-制服', 'ミナ', 'Characters/ch_100/ch_100_m0_SkeletonData.asset', 'Spine'], ['', 'ルカ-私服-春', '', 'Characters/ch_200/ch_200_m0_SkeletonData.asset', 'Spine'], ['', 'ノア-制服', '', 'Characters/ch_300/ch_300_m0.asset', 'Spine']]),
-  table('Master.chapter:Texture', ['', 'Label', 'Type', 'FileName'], [['', 'bgA', 'Bg', 'Adventure/BackGrounds/bgA_file']]),
-  table('Master.chapter:Sound', ['', 'Label', 'Type', 'IntroFileName', 'FileName'], [['', 'BGM1', 'Bgm', 'Sound/Bgm/b1_intro.ogg', 'Sound/Bgm/b1_loop.ogg'], ['', 'SE1', 'Se', '', 'Sound/Se/se1_file.ogg']]),
-] })
-const FILES = [
-  'Adventure/MainScenario/M1.book.json', 'Adventure/CharaScenario/C1.book.json', 'Adventure/OtherScenario/O1.book.json', 'Adventure/Master.chapter.json',
-  'Adventure/BackGrounds/bgA_file.png', 'Adventure/BackGrounds/bgB.jpg', 'Adventure/Custom/bgC.png',
-  'Characters/ch_100/ch_100_m0.skel.bytes', 'Characters/ch_200/ch_200_m0.skel.bytes', 'Characters/ch_300/ch_300_m0.skel.bytes', 'Characters/ch_300/ch_300_m0.atlas.txt', 'Characters/ch_300/ch_300_m0.alt.skel.bytes',
-  'Stills/st_1/st_1_a.skel.bytes', 'Stills/st_1/st_1_b.skel.bytes', 'Stills/st_1/other.skel.bytes',
-  'Sound/Voice/ImportChara/100/v1.ogg', 'Sound/BgVoice/v1.ogg', 'Sound/BgVoice/bv1.ogg', 'Sound/Voice/ImportChara/200/dup.ogg', 'Sound/Voice/Zeta/dup.ogg', 'Sound/Voice/Alpha/dup2.ogg', 'Sound/Voice/Beta/dup2.ogg',
-  'Sound/Se/se1_file.ogg', 'Sound/Se/se2.ogg', 'Sound/BgSe/se3.ogg', 'Sound/Bgm/b1_intro.ogg', 'Sound/Bgm/b1_loop.ogg', 'Sound/Bgm/BGM9.ogg', 'Extra/x.ogg',
-]
-const uPrep = (options, files = FILES) => utage.prepare({ options, texts: { 'Adventure/Master.chapter.json': MASTER }, files })
-const uRun = (rows, options = {}, config = undefined, files = FILES) => utage.parse(B(rows), uPrep(options, files), { options, config: config && { resourceResolve: config } })
-const flat = (out) => out.steps.flatMap((s) => s.commands)
-const opsOf = (out, op) => flat(out).filter((c) => c.op === op)
-const seg = (c) => (c.segments || []).map((s) => s.text).join('')
-const speakerOf = (out) => seg(opsOf(out, 'speaker')[0] || {})
-const stand = (a1, a3, a4 = '', extra = {}) => T({ a1, a3, a4, anim: 'wait', ...extra })
-
+// ================= 0. mergeOptions =================
 {
-  const dflt = utage.resolveOptions({})
-  check('utage 默认选项 = 文档里的默认值（schema）；未知字段保留、类型不对的丢掉用默认', dflt.screenWidth === 1280 && same(dflt.standX, { slotBase: 0.5, argIndex: 4 }) && dflt.off.mode === 'speakerOnly' && utage.resolveOptions({ screenWidth: 'x', standX: { argIndex: 'q' }, speaker: 5 }).screenWidth === 1280 && utage.resolveOptions({ screenWidth: 'x', standX: { argIndex: 'q' }, speaker: 5 }).standX.argIndex === 4 && utage.resolveOptions({ foo: 1 }).foo === 1, J(dflt.standX))
-
-  // standX / screenWidth
-  const standRows = [stand('ミナ-制服', 'Chara1', '250', { a5: '100' }), T({ a1: 'ミナ-制服', text: 'x' })]
-  const x0 = opsOf(uRun(standRows), 'spine')[0].x
-  check('utage standX / screenWidth：默认 x = 0.5 + Arg4 / 1280；slotBase / argIndex / screenWidth 覆盖后按新的算', x0 === 0.5 + 250 / 1280 && opsOf(uRun(standRows, { standX: { slotBase: 0.25, argIndex: 5 }, screenWidth: 1000 }), 'spine')[0].x === 0.25 + 100 / 1000, String(x0))
-
-  // slots / slotPrefix
-  const slotOf = (options) => opsOf(uRun(standRows, options), 'spine')[0]?.slot
-  check('utage slots：默认 Chara1 → Chara1；表里改名；映射成空 = 丢掉这个槽；表外的槽原样用；slotPrefix 管 CharacterOff 的整批前缀',
-    slotOf({}) === 'Chara1' && slotOf({ slots: { Chara1: 'Left' } }) === 'Left' && slotOf({ slots: { Chara1: '' } }) === undefined && opsOf(uRun([stand('ミナ-制服', 'Chara9'), R('CharacterOff'), T({ text: 'x' })]), 'spine')[0].slot === 'Chara9'
-    && opsOf(uRun([stand('ミナ-制服', 'Chara1'), R('CharacterOff'), T({ text: 'x' })]), 'spineOff')[0].prefix === 'Chara' && opsOf(uRun([stand('ミナ-制服', 'Chara1'), R('CharacterOff'), T({ text: 'x' })], { slotPrefix: 'Slot' }), 'spineOff')[0].prefix === 'Slot', '')
-
-  // off
-  const offRows = [stand('ミナ-制服', 'Chara1'), T({ a1: 'ミナ-制服', a2: '<Off>', text: 'x' })]
-  const offHide = { off: { mode: 'hide' } }
-  check('utage off：默认 <Off> = 只出名字和台词、立绘不动；mode hide = 同时 spineOff 这个角色的槽；off.arg 换成别的标记',
-    opsOf(uRun(offRows), 'spineOff').length === 0 && same(opsOf(uRun(offRows, offHide), 'spineOff'), [{ op: 'spineOff', slot: 'Chara1' }])
-    && opsOf(uRun([stand('ミナ-制服', 'Chara1'), T({ a1: 'ミナ-制服', a2: '<Hide>', a3: 'Chara1', text: 'x' })], { off: { mode: 'hide', arg: '^<Hide>$' } }), 'spineOff').length === 1
-    && opsOf(uRun([T({ a1: 'ミナ-制服', a2: '<Off>', a3: 'Chara1', text: 'x' })], { off: { arg: '^<Other>$' } }), 'spine').length === 1, '')
-
-  // speaker
-  const who = (key, options, a2 = '') => speakerOf(uRun([T({ a1: key, a2, text: 'x' })], options))
-  check('utage speaker：默认 NameText → 名字里最后一个 - 之前；source / splitOn / pick 改变取法；characterArg 的正则可换',
-    who('ミナ-制服') === 'ミナ' && who('ルカ-私服-春') === 'ルカ-私服' && who('ルカ-私服-春', { speaker: { pick: 'first' } }) === 'ルカ' && who('ルカ-私服-春', { speaker: { pick: 'last' } }) === '春'
-    && who('ミナ-制服', { speaker: { source: ['key'] } }) === 'ミナ' && who('ミナ-制服', { speaker: { source: ['raw'] } }) === 'ミナ-制服' && who('ルカ-私服-春', { speaker: { splitOn: '_' } }) === 'ルカ-私服-春' && who('ミナ-制服', { speaker: { source: [] } }) === '', '')
-  check('utage speaker.characterArg：默认 <Character=名字> 改说话人（走同样的取名规则）；换正则后 [名字] 才算',
-    who('ミナ-制服', {}, '<Character=ルカ-私服-春>') === 'ルカ-私服' && who('ミナ-制服', {}, '[ルカ-私服-春]') === 'ミナ' && who('ミナ-制服', { speaker: { characterArg: '^\\[(.*)\\]$' } }, '[ルカ-私服-春]') === 'ルカ-私服', '')
-
-  // bgm
-  const bgm = (options) => opsOf(uRun([R('Bgm', { a1: 'BGM1' }), T({ text: 'x' })], options), 'bgm')[0]
-  check('utage bgm.play：默认 loop（intro 记在 intro 字段）；intro = 放 intro；intro+loop = 放 intro、loop 记在 loop 字段',
-    same(bgm({}), { op: 'bgm', src: 'Sound/Bgm/b1_loop.ogg', intro: 'Sound/Bgm/b1_intro.ogg' }) && same(bgm({ bgm: { play: 'intro' } }), { op: 'bgm', src: 'Sound/Bgm/b1_intro.ogg' }) && same(bgm({ bgm: { play: 'intro+loop' } }), { op: 'bgm', src: 'Sound/Bgm/b1_intro.ogg', loop: 'Sound/Bgm/b1_loop.ogg' })
-    && opsOf(uRun([R('Bgm', { a1: 'BGM9' }), T({ text: 'x' })]), 'bgm')[0].src === 'Sound/Bgm/BGM9.ogg', J(bgm({})))
-
-  // tween
-  const tweenRows = [stand('ミナ-制服', 'Chara1'), R('Tween', { a1: 'ミナ-制服', a2: 'MoveBy', a3: 'y=-30', a5: 'pingPong' }), R('Tween', { a1: 'ミナ-制服', a2: 'MoveBy', a3: 'x=128 time=1' }), R('Tween', { a1: 'ミナ-制服', a2: 'MoveTo', a3: 'x=-128' }), R('Tween', { a1: 'ミナ-制服', a2: 'ColorTo', a3: 'x=1' }), T({ text: 'x' })]
-  const tw = (options) => { const out = uRun(tweenRows, options); return { actions: opsOf(out, 'spine').map((c) => c.action).filter(Boolean), xs: opsOf(out, 'spine').slice(1).filter((c) => !c.action).map((c) => c.x), raw: out.stats.raw } }
-  check('utage tween：默认 MoveBy+pingPong → 动作 3、MoveBy → 改 x、MoveTo → 改 x、ColorTo → raw；kinds / actions / returnWhen 覆盖后改变',
-    same(tw({}), { actions: [3], xs: [0.5 + 128 / 1280, 0.5 - 128 / 1280], raw: { 'Tween:ColorTo': 1 } })
-    && same(tw({ tween: { kinds: { MoveBy: 'raw' } } }).raw, { 'Tween:MoveBy': 2, 'Tween:ColorTo': 1 }) && tw({ tween: { kinds: { MoveBy: 'raw' } } }).actions.length === 0
-    && same(tw({ tween: { actions: { down: 9 } } }).actions, [9]) && tw({ tween: { returnWhen: 'never' } }).actions.length === 0 && tw({ tween: { kinds: { MoveBy: { returns: 'moveBy', else: 'action' } } } }).actions.length === 1 && tw({ tween: { kinds: { ColorTo: 'moveTo' } } }).xs.length === 3, J(tw({})))
-  const shakeOut = (options) => opsOf(uRun([stand('ミナ-制服', 'Chara1'), R('Shake', { a1: 'ミナ-制服', a3: 'x=5' }), R('Shake', { a1: 'ミナ-制服', a3: 'y=5' }), T({ text: 'x' })], options), 'spine').map((c) => c.action).filter(Boolean)
-  check('utage tween.actions 同样管 Shake 角色：默认 x → 2、y → 1', same(shakeOut({}), [2, 1]) && same(shakeOut({ tween: { actions: { x: 7, up: 8 } } }), [7, 8]), J(shakeOut({})))
-
-  // selection
-  const selRows = [R('Selection', { a1: '*S-a-1', text: 'A' }), R('Selection', { a1: '*S-a-2', text: 'B' }), R('Selection', { a1: '*plain', text: 'C' }), R('Selection', { a1: '*other', text: 'D' }), R('*S-a-1'), T({ text: '1' }), R('*S-a-2'), T({ text: '2' }), R('*plain'), T({ text: '3' }), R('*other'), T({ text: '4' })]
-  const sel = (options) => opsOf(uRun(selRows, options), 'choice').map((c) => c.options.map((o) => seg(o)).join('|'))
-  check('utage selection：默认按去掉 -数字 分组、没有后缀的相邻行算一组（A|B 和 C|D 两个 choice）；groupSuffix 换了 / adjacentGroups=false 后分组改变',
-    same(sel({}), ['A|B', 'C|D']) && same(sel({ selection: { groupSuffix: '-x$' } }), ['A|B|C|D']) && same(sel({ selection: { adjacentGroups: false } }), ['A|B', 'C', 'D']), J(sel({})))
-
-  // folderLabels
-  const tree = (options) => uPrep(options).catalogTree.children.map((n) => [n.title, n.subtitle])
-  check('utage folderLabels：默认 MainScenario → 主线 / CharaScenario → 角色剧情（按规则顺序排，没匹配的排最后；副标题带文件夹名）',
-    same(tree({}).map((x) => x[0]), ['主线', '角色剧情', 'OtherScenario', '全部剧情']) && tree({})[0][1] === 'MainScenario · 1 个', J(tree({})))
-  check('utage folderLabels（续）：覆盖后换名、换序、其它没匹配的保持原名',
-    same(tree({ folderLabels: [['^Other', 'Other!'], ['^Main', 'Main!']] }).map((x) => x[0]), ['Other!', 'Main!', 'CharaScenario', '全部剧情']) && same(tree({ folderLabels: [] }).map((x) => x[0]), ['CharaScenario', 'MainScenario', 'OtherScenario', '全部剧情']), J(tree({ folderLabels: [['^Other', 'Other!'], ['^Main', 'Main!']] })))
-
-  // paths
-  const voiceOf = (options, config, key = 'ミナ-制服', name = 'v1') => opsOf(uRun([T({ a1: key, text: 'x', voice: name })], options, config), 'voice')[0]?.src
-  check('utage paths.voice：默认按文件名找（Sound/Voice 优先于 BgVoice）；换模板 = 只认 BgVoice / 带 {charId} 的角色目录（charIdStrip 去掉 ch_）；找不到记 unresolved',
-    voiceOf({}) === 'Sound/Voice/ImportChara/100/v1.ogg' && voiceOf({ paths: { voice: ['Sound/BgVoice/**/{name}.ogg'] } }) === 'Sound/BgVoice/v1.ogg'
-    && voiceOf({ paths: { voice: ['Sound/Voice/ImportChara/{charId}/{name}.ogg'] } }) === 'Sound/Voice/ImportChara/100/v1.ogg' && voiceOf({ paths: { voice: ['Sound/Voice/ImportChara/{charId}/{name}.ogg'] } }, undefined, 'ルカ-私服-春') === undefined
-    && voiceOf({ paths: { voice: ['Sound/Voice/{charId}/{name}.ogg'], charIdStrip: '' } }) === undefined && uRun([T({ a1: 'ミナ-制服', text: 'x', voice: 'nope' })]).stats.unresolved['voice:nope'] === 1, voiceOf({}))
-  check('utage 同名语音 + config.resourceResolve.preferDirs：默认取字典序第一个；preferDirs 挑指定目录；extensionFallbacks 也生效（模板写 .wav，实际是 .ogg）',
-    voiceOf({}, undefined, 'ミナ-制服', 'dup') === 'Sound/Voice/ImportChara/200/dup.ogg' && voiceOf({}, { preferDirs: ['Sound/Voice/Zeta'] }, 'ミナ-制服', 'dup') === 'Sound/Voice/Zeta/dup.ogg'
-    && voiceOf({ paths: { voice: ['Sound/Voice/**/{name}.wav'] } }, { extensionFallbacks: { '.wav': ['.ogg'] } }) === 'Sound/Voice/ImportChara/100/v1.ogg' && voiceOf({ paths: { voice: ['Sound/Voice/**/{name}.wav'] } }) === undefined, String(voiceOf({}, { preferDirs: ['Sound/Voice/Zeta'] }, 'ミナ-制服', 'dup')))
-  const bgOf = (options, label) => opsOf(uRun([R('Bg', { a1: label }), T({ text: 'x' })], options), 'bg')[0]?.src
-  check('utage paths.bg：默认 Master 表的 FileName（补 .png）→ BackGrounds/<名>.png|jpg；模板换了就按新的找',
-    bgOf({}, 'bgA') === 'Adventure/BackGrounds/bgA_file.png' && bgOf({}, 'bgB') === 'Adventure/BackGrounds/bgB.jpg' && bgOf({ paths: { bg: ['Adventure/Custom/{name}.png'] } }, 'bgC') === 'Adventure/Custom/bgC.png' && bgOf({ paths: { bg: ['Adventure/Custom/{name}.png'] } }, 'bgB') === undefined, '')
-  const seOf = (op, options, label) => opsOf(uRun([R(op, { a1: label }), T({ text: 'x' })], options), op === 'Se' ? 'se' : 'bgse')[0]?.src
-  check('utage paths.se / bgse：默认 Master 文件 → Se → BgSe（BgSe 反过来）；换模板',
-    seOf('Se', {}, 'SE1') === 'Sound/Se/se1_file.ogg' && seOf('Se', {}, 'se3') === 'Sound/BgSe/se3.ogg' && seOf('BgSe', {}, 'se3') === 'Sound/BgSe/se3.ogg' && seOf('Se', { paths: { se: ['Extra/{name}.ogg'] } }, 'x') === 'Extra/x.ogg' && seOf('Se', { paths: { se: ['Extra/{name}.ogg'] } }, 'se2') === undefined, '')
-  const bgvoiceOf = (options) => opsOf(uRun([R('BgVoice', { a1: 'v1' }), T({ text: 'x' })], options), 'bgvoice')[0]?.src
-  check('utage paths.bgvoice：默认 BgVoice 优先；换成 Voice 优先', bgvoiceOf({}) === 'Sound/BgVoice/v1.ogg' && bgvoiceOf({ paths: { bgvoice: ['Sound/Voice/**/{name}.ogg'] } }) === 'Sound/Voice/ImportChara/100/v1.ogg', '')
-  const charOf = (options, key = 'ミナ-制服') => { const out = uRun([stand(key, 'Chara1'), T({ text: 'x' })], options); return { skel: opsOf(out, 'spine')[0]?.skel, unresolved: out.stats.unresolved } }
-  check('utage paths.characters / skeletonSuffixStrip：默认 FileName 去掉 .asset / _SkeletonData → <目录>/<基名>.skel.bytes；strip 改成别的后缀就找不到文件（记 character-file）；模板可换（.alt.skel.bytes）',
-    charOf({}).skel === 'Characters/ch_100/ch_100_m0.skel.bytes' && charOf({}, 'ノア-制服').skel === 'Characters/ch_300/ch_300_m0.skel.bytes'
-    && charOf({ paths: { skeletonSuffixStrip: ['_SkeletonData.asset'] } }, 'ノア-制服').skel === undefined && J(charOf({ paths: { skeletonSuffixStrip: ['_SkeletonData.asset'] } }, 'ノア-制服').unresolved).includes('character-file') && charOf({ paths: { skeletonSuffixStrip: ['_SkeletonData.asset'] } }).skel === 'Characters/ch_100/ch_100_m0.skel.bytes'
-    && charOf({ paths: { characters: [{ skel: '{dir}/{base}.alt.skel.bytes', atlas: '{dir}/{base}.alt.atlas.txt' }] } }, 'ノア-制服').skel === 'Characters/ch_300/ch_300_m0.alt.skel.bytes', J(charOf({})))
-  const stillOf = (options, id = 'st_1') => opsOf(uRun([R('BgEvent', { a1: id, a2: '', a3: '', anim: 'cut_1' }), T({ text: 'x' })], options), 'spine').map((c) => c.skel)
-  check('utage paths.stills：默认 Stills/<id>/*.skel.bytes 全放出来（自然序）；模板里的 * 可换成固定名；atlas 跟着 {base}',
-    same(stillOf({}), ['Stills/st_1/other.skel.bytes', 'Stills/st_1/st_1_a.skel.bytes', 'Stills/st_1/st_1_b.skel.bytes']) && same(stillOf({ paths: { stills: [{ skel: 'Stills/{id}/{id}_a.skel.bytes', atlas: 'Stills/{id}/{id}_a.atlas.txt' }] } }), ['Stills/st_1/st_1_a.skel.bytes']) && same(stillOf({ paths: { stills: [{ skel: 'Stills/{id}/st_1_*.skel.bytes', atlas: 'x/{base}.atlas' }] } }), ['Stills/st_1/st_1_a.skel.bytes', 'Stills/st_1/st_1_b.skel.bytes']) && stillOf({}, 'st_none').length === 0, J(stillOf({})))
-  // index
-  const prepared = (options) => uPrep(options)
-  check('utage index：dirs / master / ext / books 可改（contextDirs / contextFiles 跟着变；ext 只收 png 时 ogg 不进索引；books 换正则）',
-    same(utage.contextDirs({ root: 'R' }), ['R/Adventure', 'R/Characters', 'R/Stills', 'R/Sound']) && same(utage.contextDirs({ index: { dirs: ['A'] } }), ['A']) && same(utage.contextFiles({ root: 'R' }), ['R/Adventure/Master.chapter.json']) && same(utage.contextFiles({ index: { master: 'M/m.json' } }), ['M/m.json'])
-    && prepared({}).index.has('Sound/Se/se2.ogg') && !prepared({ index: { ext: '\\.png$' } }).index.has('Sound/Se/se2.ogg') && prepared({ index: { books: ['^Adventure/(?<category>Main)Scenario/(?<stem>[^/]+)\\.book\\.json$'] } }).books.length === 1, '')
-  const health = utage.health(prepared({}))
-  check('utage health 不受影响', health.length === 0, J(health))
+  const defaults = { a: 1, s: 'x', b: true, list: [1, 2], o: { k: 1 }, free: null, map: { 0: 0.5 } }
+  const m = mergeOptions(defaults, { a: 'bad', s: 5, b: 'no', list: [9], o: { k: 2, extra: 3 }, free: { any: 1 }, map: { 1: 0.1 }, unknown: 7 })
+  check('mergeOptions：类型不符用默认值；数组整体替换；对象逐项合并并保留新键；null 默认值（可选项）给什么收什么；未知键保留', J(m) === J({ a: 1, s: 'x', b: true, list: [9], o: { k: 2, extra: 3 }, free: { any: 1 }, map: { 0: 0.5, 1: 0.1 }, unknown: 7 }), J(m))
+  check('mergeOptions：不改默认表；给 undefined / 非对象 = 默认', J(mergeOptions(defaults, undefined)) === J(defaults) && J(mergeOptions(defaults, 5)) === J(defaults) && defaults.list.length === 2)
 }
 
-// ---- utage 端到端：loadAdapterContext + config.adapterOptions + meta.config
+// ================= 1. tenkeiprdx-json =================
 {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'opt-utage-'))
-  const write = async (rel, text) => { await mkdir(path.dirname(path.join(dir, rel)), { recursive: true }); await writeFile(path.join(dir, rel), text) }
-  await write('Data/Adventure/Master.chapter.json', MASTER)
-  for (const rel of FILES) if (!rel.startsWith('Adventure/')) await write(`Data/${rel}`, 'x')
-  await write('Data/Adventure/MainScenario/M1.book.json', B([stand('ミナ-制服', 'Chara1', '250'), T({ a1: 'ミナ-制服', text: 'こんにちは', voice: 'dup' })]))
-  const adapter = galAdapter('utage-book')
-  const run = async (adapterOptions, resourceResolve) => {
-    const config = normalizeGalConfig({ resourceRoots: ['Data'], adapterOptions: { 'utage-book': { root: 'Data', ...adapterOptions } }, ...(resourceResolve ? { resourceResolve } : {}) })
-    const ctx = await loadAdapterContext({ adapter, mediaDir: dir, config })
-    const meta = { stem: 'M1.book', options: config.adapterOptions['utage-book'], config }
-    return adapter.parse(await (await import('node:fs/promises')).readFile(path.join(dir, 'Data/Adventure/MainScenario/M1.book.json'), 'utf8'), ctx, meta)
+  const D = tk.DEFAULT_OPTIONS
+  const files = [
+    'Spines/1001/1001_01.skel.bytes', 'Stills/s/1_a.skel.bytes', 'Stills/s/2_b.skel.bytes',
+    'Backgrounds/adventure/bg_a.png', 'Backgrounds/still/bg_a.png', 'Backgrounds/still/s_still_02.png', 'BGM/m_loop.ogg', 'BGM/n.ogg', 'BGM/n_loop.ogg',
+  ]
+  const mk = (options = {}, f = files) => tk.prepare({ options, texts: { 'Masterdata/username.txt': 'U' }, files: f, toResourcePath: (r) => r })
+  const J2 = (frames, id = '5') => J({ result: { sceneDetails: [{ assetId: id, sceneFrameDetails: frames }] } })
+  const run = (frames, options, f) => tk.parse(J2(frames), mk(options, f), { stem: '5' })
+  const frames = [
+    { speakerName: '%username%', phraseContents: 'a', phraseVoice: 'v1', backgroundImage: 'bg_a', backgroundMusic: 'm', soundEffect: 'click', adventureCharacters: [{ characterMasterId: 1001, characterAppearance: 1, characterPosition: 1, characterFacialExpression: 1 }] },
+    { backgroundImage: 'bg_x_still_02', backgroundMusic: 'n' },
+    { still: 's', stillAnimation: 'animation3', phraseContents: 'b' }, { stillAnimation: 'animation4', animationSpeed: 500, phraseContents: 'c' }, { stillAnimation: 'animation5', phraseContents: 'd' },
+    { sceneCameraEndPositionX: 5, phraseContents: 'cam' },
+  ]
+  const base = run(frames, {})
+  check('tenkeiprdx 默认：默认值表整份显式写出来，结果不变', J(run(frames, D)) === J(base))
+  check('tenkeiprdx 默认：背景 adventure 优先于 still、BGM 退到 _loop、站位 1 → 0.3、语音按场景 id', cmds(base).find((c) => c.op === 'bg').src === 'Backgrounds/adventure/bg_a.png' && cmds(base).find((c) => c.op === 'bgm').src === 'BGM/m_loop.ogg' && cmds(base).find((c) => c.op === 'spine').x === 0.3 && cmds(base).find((c) => c.op === 'voice').src === 'AdventureVoice/5/v1.ogg')
+
+  // paths：模板数组
+  const pathsOpt = run(frames, { paths: { background: ['Backgrounds/still/{name}.png', 'Backgrounds/adventure/{name}.png'], bgm: ['BGM/{name}.mp3'], se: ['Audio/{name}.wav'], voice: ['V/{scene}-{name}.ogg'] } })
+  check('tenkeiprdx paths：背景模板顺序（still 先）、bgm / se / voice 模板', cmds(pathsOpt).find((c) => c.op === 'bg').src === 'Backgrounds/still/bg_a.png' && cmds(pathsOpt).find((c) => c.op === 'bgm').src === 'BGM/m.mp3' && cmds(pathsOpt).find((c) => c.op === 'se').src === 'Audio/click.wav' && cmds(pathsOpt).find((c) => c.op === 'voice').src === 'V/5-v1.ogg')
+  check('tenkeiprdx paths.backgroundMissing：索引里没有的背景按规则拼（_still_ → still，其余 adventure；可改）', run([{ backgroundImage: 'zz_still_9' }, { backgroundImage: 'zz' }]).steps.map((s) => s.commands.find((c) => c.op === 'bg').src).join() === 'Backgrounds/still/zz_still_9.png,Backgrounds/adventure/zz.png' && run([{ backgroundImage: 'zz_still_9' }], { paths: { backgroundMissing: [{ path: 'Other/{name}.png' }] } }).steps[0].commands.find((c) => c.op === 'bg').src === 'Other/zz_still_9.png')
+
+  // positions / facial
+  const posOpt = run(frames, { positions: { 1: 0.11 }, facial: ['a', 'b'] })
+  check('tenkeiprdx positions / facial：站位 1 → 0.11；表情 1 → b', cmds(posOpt).find((c) => c.op === 'spine').x === 0.11 && cmds(posOpt).find((c) => c.op === 'spine').anim === 'b')
+  check('tenkeiprdx positionX（旧名）仍合并进 positions', run(frames, { positionX: { 1: 0.22 } }).steps[0].commands.find((c) => c.op === 'spine').x === 0.22)
+
+  // hse：背景名触发的效果
+  const hseOpt = run(frames, { hse: { stillRe: 'still_0([2-5])', effects: { 2: [{ op: 'bgse', src: 'BgSe/Custom.ogg', loop: true }] } } })
+  check('tenkeiprdx hse：_still_02 默认 Hse5 不循环，覆盖后用自定义指令', cmds(base).find((c) => c.op === 'bgse').src === 'BgSe/Hse5.ogg' && cmds(hseOpt).find((c) => c.op === 'bgse').src === 'BgSe/Custom.ogg' && cmds(hseOpt).find((c) => c.op === 'bgse').loop === true)
+  const hseOff = run(frames, { hse: { stillRe: 'never-matches-(\\d)' } })
+  check('tenkeiprdx hse.stillRe 不匹配 = 不触发背景音效', !cmds(hseOff).some((c) => c.op === 'bgse' && c.src === 'BgSe/Hse5.ogg'))
+
+  // animations / animationSpeed
+  const sp = (r, i) => r.steps[i].commands.find((c) => c.op === 'spine')
+  check('tenkeiprdx animations 默认：animation3 倍速 1.5 + Hse3；animation4 不循环 + slow + 闪白；animation5 白屏 1.5', sp(base, 2).speed === 1.5 && sp(base, 3).loop === false && sp(base, 3).slow === true && base.steps[3].commands.some((c) => c.op === 'flash' && c.count === 2) && base.steps[4].commands.find((c) => c.op === 'wash').seconds === 1.5)
+  const animOpt = run(frames, { animations: { speed: { animation3: 2 }, noLoop: [], slow: [], flash: { color: 'white', count: 5, seconds: 0.1 }, wash: { animation5: { color: 'black', seconds: 9 } } } })
+  check('tenkeiprdx animations 覆盖：倍速 / noLoop / slow / flash / wash 都按表走', sp(animOpt, 2).speed === 2 && sp(animOpt, 3).loop === true && !('slow' in sp(animOpt, 3)) && animOpt.steps[3].commands.find((c) => c.op === 'flash').count === 5 && animOpt.steps[4].commands.find((c) => c.op === 'wash').color === 'black')
+  check('tenkeiprdx animationSpeed.msThreshold：500 默认当千分比 → 0.5；阈值 1000 时当原值 500', sp(base, 3).speed === 0.5 && sp(run(frames, { animationSpeed: { msThreshold: 1000 } }), 3).speed === 500)
+  check('tenkeiprdx camera.durationMs：没写时长默认 2.5 秒；可改', base.steps[5].commands.find((c) => c.op === 'camera').seconds === 2.5 && run(frames, { camera: { durationMs: 1000 } }).steps[5].commands.find((c) => c.op === 'camera').seconds === 1)
+
+  // fieldMap（数组形）
+  const arr = (extra) => { const f = new Array(33).fill(null); f[3] = 'bg_a'; f[12] = 'hello'; for (const [k, v] of Object.entries(extra)) f[k] = v; return J([['2200000320', 1, 1, true, [f]]]) }
+  const arrDefault = tk.parse(arr({}), mk(), { stem: 'x' })
+  check('tenkeiprdx fieldMap 默认：位置 3 = 背景、12 = 台词', arrDefault.steps[0].commands.find((c) => c.op === 'bg').src === 'Backgrounds/adventure/bg_a.png' && arrDefault.steps[0].commands.find((c) => c.op === 'text').segments[0].text === 'hello')
+  const moved = arr({ 3: null, 12: null, 5: 'bg_a', 7: 'hello' })
+  const movedDefault = tk.parse(moved, mk(), { stem: 'x' })
+  const movedOpt = tk.parse(moved, mk({ fieldMap: { frame: { backgroundImage: 5, phraseContents: 7 } } }), { stem: 'x' })
+  check('tenkeiprdx fieldMap：版本变了、字段挪了位置，只改配置：默认下认不出（记 arrayUnknown），改位置后背景 / 台词正确', !movedDefault.steps[0].commands.some((c) => c.op === 'bg') && Boolean(movedDefault.stats.arrayUnknown) && movedOpt.steps[0].commands.find((c) => c.op === 'bg').src === 'Backgrounds/adventure/bg_a.png' && movedOpt.steps[0].commands.find((c) => c.op === 'text').segments[0].text === 'hello', J(movedDefault.stats))
+  const charArr = (pos) => { const f = new Array(33).fill(null); const c = [10010101, 0, 3, 0, 0, 2]; const o = new Array(8).fill(null); c.forEach((v, i) => { o[pos[i]] = v }); f[31] = [o]; return J([['2200000320', 1, 1, true, [f]]]) }
+  const swapped = charArr([1, 0, 2, 3, 4, 5])   // 角色号在 [1]、外观在 [0]
+  const swappedOpt = tk.parse(swapped, mk({ fieldMap: { character: { characterMasterId: 1, characterAppearance: 0 } } }, ['Spines/10010101/10010101_00.skel.bytes']), { stem: 'x' })
+  check('tenkeiprdx fieldMap.character：角色字段位置可改（角色号 [1]）', swappedOpt.steps[0].commands.find((c) => c.op === 'spine')?.skel === 'Spines/10010101/10010101_00.skel.bytes', J(swappedOpt.steps[0].commands))
+  const withSe = tk.parse(arr({ 20: 'sfx' }), mk({ fieldMap: { frame: { soundEffect: 20 } } }), { stem: 'x' })
+  check('tenkeiprdx fieldMap：默认没有位置的字段（soundEffect）可以补上', withSe.steps[0].commands.find((c) => c.op === 'se')?.src === 'Se/sfx.ogg' && !arrDefault.steps[0].commands.some((c) => c.op === 'se'))
+
+  // idRules / kinds / catalog
+  const cf = ['scenes/21234.json', 'scenes/21232.json', 'scenes/21231.json', 'scenes/31234.json', 'EpisodeThumbnails/event/ep_eventstill_12_34.png', 'EpisodeThumbnails/extra/ep_eventstill_12_31.png', 'EpisodeThumbnails/special/ep_eventstill_12_33.png']
+  const cat = (options) => tk.catalog(mk(options, cf))
+  const ids = (tree, kind) => tree.children.find((n) => n.id === kind)?.children.map((c) => c.id)
+  const defTree = cat({})
+  check('tenkeiprdx idRules 默认：event = 2+第 3、4 段；extra 末位 1 → 2；special 依次试 原样 / 末位 2 / 末位 1（21233 没有 → 21232）', J(ids(defTree, 'event')) === J(['event/21234']) && J(ids(defTree, 'extra')) === J(['extra/21232']) && J(ids(defTree, 'special')) === J(['special/21232']), J(defTree.children.map((n) => [n.id, n.children.map((c) => c.id)])))
+  const ruleOpt = cat({ idRules: [{ kind: 'event', segments: [2, 3], prefix: '3' }, { kind: 'extra', segments: [2, 3], prefix: '2', lastDigit: {} }, { kind: 'special', segments: [2, 3], prefix: '2', forms: ['1'] }] })
+  check('tenkeiprdx idRules 覆盖：前缀 3 → 31234；extra 不换末位 → 21231；special 只试末位 1 → 21231', J(ids(ruleOpt, 'event')) === J(['event/31234']) && J(ids(ruleOpt, 'extra')) === J(['extra/21231']) && J(ids(ruleOpt, 'special')) === J(['special/21231']), J(ruleOpt.children.map((n) => [n.id, n.children.map((c) => c.id)])))
+  const kindOpt = cat({ kinds: [{ id: 'event', label: 'EV', dir: 'event' }] })
+  check('tenkeiprdx kinds：只列配置里的分类、标题可改（没列的 extra / special 不出现）', kindOpt.children[0].title === 'EV' && !kindOpt.children.some((n) => n.id === 'extra' || n.id === 'special'), J(kindOpt.children.map((n) => n.id)))
+  const labelOpt = cat({ catalog: { labels: { all: 'ALL' } } })
+  check('tenkeiprdx catalog.labels：「全部剧情」标题可改', labelOpt.children.at(-1).title === 'ALL' && defTree.children.at(-1).title === '全部剧情')
+
+  // 完整链路
+  const tree = {
+    'X/scenes/5.json': J2([{ backgroundImage: 'bg_a', backgroundMusic: 'm', phraseContents: 'hi', phraseVoice: 'v' }]),
+    'X/Backgrounds/adventure/bg_a.png': 'x', 'X/Backgrounds/still/bg_a.png': 'x', 'X/BGM/m_loop.ogg': 'x', 'X/BGM/m.mp3': 'x',
   }
-  const base = await run({})
-  const over = await run({ standX: { slotBase: 0.2 }, slots: { Chara1: 'Left' }, speaker: { source: ['raw'] }, paths: { voice: ['Sound/Voice/Zeta/{name}.ogg'] } })
-  const pref = await run({}, { preferDirs: ['Sound/Voice/Zeta'] })
-  check('utage 端到端（引擎读 config.adapterOptions / resourceResolve）：默认行为不变；slotBase / slots / speaker.source / paths.voice 覆盖后改变；preferDirs 影响同名语音',
-    opsOf(base, 'spine')[0].slot === 'Chara1' && opsOf(base, 'spine')[0].x === 0.5 + 250 / 1280 && speakerOf(base) === 'ミナ' && opsOf(base, 'voice')[0].src === 'Sound/Voice/ImportChara/200/dup.ogg'
-    && opsOf(over, 'spine')[0].slot === 'Left' && opsOf(over, 'spine')[0].x === 0.2 + 250 / 1280 && speakerOf(over) === 'ミナ-制服' && opsOf(over, 'voice')[0].src === 'Sound/Voice/Zeta/dup.ogg' && opsOf(pref, 'voice')[0].src === 'Sound/Voice/Zeta/dup.ogg', J([opsOf(base, 'spine'), opsOf(over, 'voice'), opsOf(pref, 'voice')]))
+  const plain = await e2e('tenkeiprdx-json', tree, { root: 'X' }, 'X/scenes/5.json', { resourceRoots: ['X'] })
+  const custom = await e2e('tenkeiprdx-json', tree, { root: 'X', paths: { background: ['Backgrounds/still/{name}.png'], bgm: ['BGM/{name}.mp3'], voice: ['AV/{scene}/{name}.ogg'] } }, 'X/scenes/5.json', { resourceRoots: ['X'] })
+  check('tenkeiprdx 端到端（config.adapterOptions → 文件索引 → buildScene）：默认 adventure + _loop；覆盖路径模板后 still + .mp3 + 自定义语音目录', ofOp(plain.scene, 'bg')[0].src === 'Backgrounds/adventure/bg_a.png' && ofOp(plain.scene, 'bgm')[0].src === 'BGM/m_loop.ogg' && ofOp(custom.scene, 'bg')[0].src === 'Backgrounds/still/bg_a.png' && ofOp(custom.scene, 'bgm')[0].src === 'BGM/m.mp3' && ofOp(custom.scene, 'voice')[0].src === 'AV/5/v.ogg', J([ofOp(plain.scene, 'bg'), ofOp(custom.scene, 'bgm')]))
+  // resourceResolve 现在传给 prepare：背景名大小写不一致也能在索引里找到
+  const ci = await e2e('tenkeiprdx-json', { 'scenes/5.json': J2([{ backgroundImage: 'BG_A', phraseContents: 'x' }]), 'Backgrounds/adventure/bg_a.png': 'x' }, {}, 'scenes/5.json')
+  const cs = await e2e('tenkeiprdx-json', { 'scenes/5.json': J2([{ backgroundImage: 'BG_A', phraseContents: 'x' }]), 'Backgrounds/adventure/bg_a.png': 'x' }, {}, 'scenes/5.json', { resourceResolve: { caseInsensitive: false } })
+  check('tenkeiprdx 用 createIndexResolver：背景名大小写不同也找得到（以前精确匹配），resourceResolve.caseInsensitive=false 回到精确匹配', ofOp(ci.scene, 'bg')[0].src === 'Backgrounds/adventure/bg_a.png' && ofOp(cs.scene, 'bg')[0].src === 'Backgrounds/adventure/BG_A.png' && cs.scene.stats.unresolved['background:BG_A'] === 1, J([ofOp(ci.scene, 'bg'), ofOp(cs.scene, 'bg'), cs.scene.stats]))
 }
 
-// ================= grenze-xml =================
-const X = (rows) => rows.map((row, i) => `<easy_dialog-1 ${Object.entries({ id: String(i + 1), ...(i + 1 < rows.length && !row._end ? { next_id: String(i + 2) } : {}), ...row }).filter(([k]) => k !== '_end').map(([k, v]) => `${k}="${v}"`).join(' ')}/>`).join('\n')
-const GFILES = [
-  'bg/battlebg/a/a.webp', 'bg/battlebg/p/p.png', 'bg/other/c/c.jpg', 'bg/extra/q.webp',
-  'bgm/m1/M1.m4a', 'bgm/zz/M2.mp3', 'sound/s1/s1.m4a', 'sound/loose/s2.m4a',
-  'voice/pk/v1.m4a', 'voice/pk/v3.mp3', 'voice/other/v2.m4a', 'voice/A/dup.m4a', 'voice/B/dup.m4a', 'voice/A/dup2.m4a', 'voice/A/v4.m4a',
-  'merc/pic/7/body.webp', 'merc/pic/8/body.png', 'merc/pic/7/7.webp', 'merc/pic/9/full.png',
-].map((f) => `assets/resources/patchres/${f}`)
-const gPrep = (options, files = GFILES) => grenze.prepare({ options, files, toResourcePath: (rel) => rel.replace(/^assets\/resources\/patchres\//, 'R/'), mediaDir: '' })
-const gRun = async (rows, options = {}, config = undefined, extra = {}) => grenze.parse(X(rows), await gPrep(options), { options, config: config && { resourceResolve: config }, ...extra })
-const GC = (out) => out.steps.flatMap((s) => s.commands)
+// ================= 2. misttrain-json =================
 {
-  const d = grenze.resolveOptions({})
-  check('grenze 默认选项 = 文档里的默认值（schema）；textDir / resourceDir 跟着 root 走', d.standKeep === 'untilNewHero' && d.scene.forkPolicy === 'merge' && d.duplicates.voice === 'skip' && same(d.standFiles, ['body.webp', 'body.png']) && grenze.resolveOptions({ root: 'G' }).textDir === 'G/TextAsset' && same(grenze.contextDirs({ root: 'G' }), ['G/TextAsset', ...['bg', 'bgm', 'sound', 'voice', 'merc/pic'].map((x) => `G/assets/resources/patchres/${x}`)]) && same(grenze.contextDirs({ resourceDirs: ['bg'] }).slice(1), ['assets/resources/patchres/bg']), '')
+  const row = (o = {}) => [1, 1, o.speaker ?? '', o.text ?? '', 2, 3, false, null, 0, 0, o.voice ?? '', o.bg ?? '', o.bgm ?? '', o.se ?? '', '', o.effect ?? null, 0, [], o.detail ?? ['', null, null, null, null, null, null]]
+  const scene = (rows, id = 224920105) => J([null, [id, rows, [[], [], []], false]])
+  const spineFiles = (n, id = '224920105') => Array.from({ length: n }, (_, i) => `Spines/Stills/249/${id}/${i + 1}.skel.bytes`)
+  const prep = (options, files, texts = {}) => mt.prepare({ options, texts, files, toResourcePath: (r) => r })
+  const run = (rows, options = {}, files = [...spineFiles(5), 'Sounds/Voices/a/v1.ogg', 'Sounds/Voices/b/v1.ogg', 'BackGrounds/bg.png']) => mt.parse(scene(rows), prep(options, files), { stem: '224920105' })
+  const rows = [
+    row({ text: 'a', effect: '1', voice: 'v1', bg: 'bg.png' }),
+    row({ text: 'b', effect: '3', detail: ['animation3', null, 0.5, 100, -50, 2, 15] }),
+    row({ text: 'c', effect: '2', detail: ['animation2', 2, null, null, null, null, null] }),
+  ]
+  const base = run(rows)
+  check('misttrain 默认：默认值表整份显式写出来，结果不变', J(run(rows, mt.DEFAULT_OPTIONS)) === J(base))
+  const cam = (r) => r.steps[1].commands.find((c) => c.op === 'camera')
+  check('misttrain camera 默认：位置 ×0.84、缩放 = 值 + 0.03', cam(base).to[0] === 84 && Math.abs(1 + (cam(base).to[2] / 1000) * 1.3 - 0.53) < 1e-9)
+  const camOpt = run(rows, { camera: { positionScale: 1, zoomAdd: 0, zoomUnit: 1, maxSeconds: 1 } })
+  check('misttrain camera 覆盖：positionScale 1 → 100；zoomAdd 0 / zoomUnit 1 → 缩放码 -500；maxSeconds 1 → 时长夹到 1', cam(camOpt).to[0] === 100 && cam(camOpt).to[2] === -500 && cam(camOpt).seconds === 1, J(cam(camOpt)))
+  const fx = (r, i, op) => r.steps[i].commands.find((c) => c.op === op)
+  check('misttrain effects 默认：effect 1 → wash 1 秒；effect 3 → flash 两次 0.3 秒；effect 2 记 stats.raw', fx(base, 0, 'wash').seconds === 1 && fx(base, 1, 'flash').count === 2 && fx(base, 1, 'flash').seconds === 0.3 && base.stats.raw['effect:2'] === 1)
+  const fxOpt = run(rows, { effects: { fadeSeconds: 4, flashSeconds: 0.9, flashCount: 5, map: { 1: '', 2: 'wash' } } })
+  check('misttrain effects 覆盖：fade / flash 时长和次数；map 里加上 effect 2 → wash；effect 1 写成 \'\' = 关掉（记 raw）', fx(fxOpt, 0, 'wash') === undefined && fxOpt.stats.raw['effect:1'] === 1 && fx(fxOpt, 1, 'flash').count === 5 && fx(fxOpt, 1, 'flash').seconds === 0.9 && fx(fxOpt, 2, 'wash').seconds === 4 && !fxOpt.stats.raw['effect:2'])
+  const shot = (r) => r.steps[1].commands.find((c) => c.op === 'spine' && c.anim === 'animation3')
+  check('misttrain effects.oneShotRule 默认：总层数 5 的 animation3 = 不循环 + slow；覆盖成空后循环', shot(base).loop === false && shot(base).slow === true && shot(run(rows, { effects: { oneShotRule: { 5: [] } } })).loop === true)
+  const bgseOf = (r, i) => r.steps[i].commands.filter((c) => c.op === 'bgse').map((c) => `${c.src.split('/').pop()}:${c.loop}`).join()
+  check('misttrain effects.linkedBgSe / loopExcept / fastSpeed：默认 animation3 → Hse4 不循环、animation2 速度 2 → Hse3', bgseOf(base, 1) === 'Hse4.ogg:false' && bgseOf(base, 2) === 'Hse3.ogg:true', bgseOf(base, 1))
+  const linkOpt = run(rows, { effects: { linkedBgSe: { 5: { animation3: ['Hse9', 'Hse9'], animation2: ['', ''] } }, loopExcept: [], fastSpeed: 3 } })
+  check('misttrain effects 覆盖：animation3 → Hse9、animation2 写成两个空串关掉联动（停掉）、loopExcept 空 → 循环', bgseOf(linkOpt, 1) === 'Hse9.ogg:true' && linkOpt.steps[2].commands.some((c) => c.op === 'bgseStop'), bgseOf(linkOpt, 1))
+  check('misttrain 导出的 isOneShot / linkedBgSe 默认行为不变，可传表覆盖', mt.isOneShot(8, 'animation7') && !mt.isOneShot(3, 'animation3') && mt.linkedBgSe(5, 'animation2', 2) === 'Hse3' && mt.linkedBgSe(5, 'animation2', 1, { linkedBgSe: { 5: { animation2: ['A', 'B'] } }, fastSpeed: 1 }) === 'B')
 
-  const bgOf = async (name, options, config) => GC(await gRun([{ background: name, text: 't' }], options, config)).find((c) => c.op === 'bg')
-  check('grenze paths.bg：默认模板 bg/battlebg/<名>/<名>.webp → png → 再按文件名在 bg/ 下找；模板换了就只认新的（去掉后备 = 找不到）；没有索引按第一条模板猜',
-    (await bgOf('a')).src === 'R/bg/battlebg/a/a.webp' && (await bgOf('p')).src === 'R/bg/battlebg/p/p.png' && (await bgOf('c')).src === 'R/bg/other/c/c.jpg' && (await bgOf('q')).src === 'R/bg/extra/q.webp'
-    && (await bgOf('q', { paths: { bg: ['bg/battlebg/{name}/{name}.{ext}'] } })) === undefined && (await bgOf('q', { paths: { bg: ['bg/extra/{name}.webp'] } })).src === 'R/bg/extra/q.webp' && (await bgOf('a', { exts: { bg: ['png'] } })) === undefined
-    && GC(grenze.parse(X([{ background: 'zz', text: 't' }]), null, {})).find((c) => c.op === 'bg').src === 'bg/battlebg/zz/zz.webp' && GC(grenze.parse(X([{ background: 'zz', text: 't' }]), null, { options: { paths: { bg: ['x/{name}.png'] } } })).find((c) => c.op === 'bg').src === 'x/zz.png', '')
-  const bgb = async (options) => GC(await gRun([{ background: 'bg_b', text: 't' }], options)).find((c) => c.op === 'bg')
-  check('grenze bgBlack：默认 bg_b 没有文件 = 黑底；改名单后 bg_b 记 unresolved、别的名字变黑；none 里的背景值不处理',
-    same((await bgb({})).color, [0, 0, 0]) && (await bgb({ bgBlack: [] })) === undefined && same((await bgb({ bgBlack: ['bg_b'] })).color, [0, 0, 0]) && same(GC(await gRun([{ background: 'BG_X', text: 't' }], { bgBlack: ['bg_x'] })).find((c) => c.op === 'bg').color, [0, 0, 0])
-    && GC(await gRun([{ background: 'none', text: 't' }], { none: ['none'] })).every((c) => c.op !== 'bg') && (await gRun([{ background: 'non', text: 't' }], { none: ['x'] })).stats.unresolved['bg:non'] === 1, '')
-  const bgmRows = [{ bgm: 'M1' }, { bgm: 'non', text: 't' }]
-  check('grenze none / paths.bgm：默认 non = 停（正在放才发）、bgm/<小写>/<名>.m4a；none 换了值就停；exts 顺序决定同名不同扩展名的优先；paths 换模板',
-    same(GC(await gRun(bgmRows)).filter((c) => c.op.startsWith('bgm')).map((c) => c.op), ['bgm', 'bgmStop']) && GC(await gRun(bgmRows)).find((c) => c.op === 'bgm').src === 'R/bgm/m1/M1.m4a'
-    && same(GC(await gRun([{ bgm: 'M1' }, { bgm: 'stop', text: 't' }], { none: ['stop'] })).filter((c) => c.op.startsWith('bgm')).map((c) => c.op), ['bgm', 'bgmStop']) && GC(await gRun([{ bgm: 'M2', text: 't' }])).find((c) => c.op === 'bgm').src === 'R/bgm/zz/M2.mp3'
-    && (await gRun([{ bgm: 'M2', text: 't' }], { exts: { bgm: ['m4a'] } })).stats.unresolved['bgm:M2'] === 1 && GC(await gRun([{ bgm: 'M1', text: 't' }], { paths: { bgm: ['bgm/**/{name}.m4a'] } })).find((c) => c.op === 'bgm').src === 'R/bgm/m1/M1.m4a', '')
-  const sounds = async (options, row = { sound1: 's1', bg_sound2: 's2', sound3: 'non', text: 't' }) => GC(await gRun([row], options)).filter((c) => c.op === 'se' || c.op === 'bgse')
-  check('grenze bgSound / soundAttrs：默认 bg_sound 和 sound 都是一次性 se（bg_sound 先）；mode bgse → bg_sound 发循环 bgse；soundAttrs / attrs 改了属性名',
-    same(await sounds({}), [{ op: 'se', src: 'R/sound/loose/s2.m4a' }, { op: 'se', src: 'R/sound/s1/s1.m4a' }]) && same(await sounds({ bgSound: { mode: 'bgse' } }), [{ op: 'bgse', src: 'R/sound/loose/s2.m4a', loop: true }, { op: 'se', src: 'R/sound/s1/s1.m4a' }])
-    && same(await sounds({ soundAttrs: ['sound3'] }), [{ op: 'se', src: 'R/sound/loose/s2.m4a' }]) && same(await sounds({ bgSound: { attrs: ['ambient'] } }, { ambient: 's2', text: 't' }), [{ op: 'se', src: 'R/sound/loose/s2.m4a' }]), J(await sounds({})))
-  const voices = async (options, config, row = { voice_pack: 'PK', voice: 'v1', text: 't' }) => GC(await gRun([row], options, config)).find((c) => c.op === 'voice')?.src
-  check('grenze paths.voice：默认 voice/<包小写>/<语音名>.m4a，扩展名按 exts（v3 = mp3）；包里没有 → 按文件名在 voice/ 下找（唯一才取）；模板可换',
-    await voices({}) === 'R/voice/pk/v1.m4a' && await voices({}, undefined, { voice_pack: 'PK', voice: 'v3', text: 't' }) === 'R/voice/pk/v3.mp3' && await voices({}, undefined, { voice_pack: 'PK', voice: 'v2', text: 't' }) === 'R/voice/other/v2.m4a'
-    && await voices({ paths: { voice: ['voice/{pack}/{voice}.{ext}'] } }, undefined, { voice_pack: 'PK', voice: 'v2', text: 't' }) === undefined && await voices({ paths: { voice: ['voice/other/{voice}.m4a'] } }, undefined, { voice: 'v2', text: 't' }) === 'R/voice/other/v2.m4a', String(await voices({})))
-  const dupRow = { voice_pack: 'ZZ', voice: 'dup', text: 't' }
-  check('grenze duplicates：同名语音默认 skip（不猜，记 unresolved）；first = 字典序第一个；preferDirs = 按 config.resourceResolve.preferDirs 挑；包里能精确定位的不算重名',
-    await voices({}, undefined, dupRow) === undefined && await voices({ duplicates: { voice: 'first' } }, undefined, dupRow) === 'R/voice/A/dup.m4a' && await voices({ duplicates: { voice: 'preferDirs' } }, { preferDirs: ['voice/B'] }, dupRow) === 'R/voice/B/dup.m4a'
-    && await voices({ duplicates: { voice: 'preferDirs' } }, undefined, dupRow) === 'R/voice/A/dup.m4a' && await voices({}, undefined, { voice_pack: 'B', voice: 'dup', text: 't' }) === 'R/voice/B/dup.m4a' && (await gRun([dupRow], {})).stats.unresolved['voice:ZZ/dup'] === 1, String(await voices({ duplicates: { voice: 'preferDirs' } }, { preferDirs: ['voice/B'] }, dupRow)))
-  const stands = async (rows, options) => GC(await gRun(rows, options)).filter((c) => c.op === 'stand' || c.op === 'standOff')
-  const standRows = [{ hero_group_id: '7', pic_pos: '3', text: 'a' }, { text: 'b' }, { hero_group_id: '8', pic_pos: '9', text: 'c' }]
-  check('grenze standFiles / standPos / standFit：默认 body.webp 优先、pic_pos 1/2/3 = 左/中/右（别的 = 中）、fit 1；standFiles 换顺序 / standPos 换名 / standFit 0 去掉 fit',
-    same((await stands(standRows, {})).map((c) => c.op === 'stand' ? [c.parts[0].src, c.parts[0].align, c.parts[0].fit] : c.op), [['R/merc/pic/7/body.webp', 'right', 1], ['R/merc/pic/8/body.png', 'center', 1]])
-    && (await stands([{ hero_group_id: '9', text: 'a' }], { standFiles: ['full.png'] }))[0].parts[0].src === 'R/merc/pic/9/full.png' && (await stands([{ hero_group_id: '7', text: 'a' }], { standFiles: ['7.webp', 'body.webp'] }))[0].parts[0].src === 'R/merc/pic/7/7.webp'
-    && (await stands(standRows, { standPos: { 3: 'R', default: 'C' } })).map((c) => c.parts?.[0].align).filter(Boolean).join() === 'R,C' && !('fit' in (await stands(standRows, { standFit: 0 }))[0].parts[0]), J(await stands(standRows, {})))
-  check('grenze standKeep：默认 untilNewHero = 旁白行沿用立绘（不重发）；perRow = 没有 hero_group_id 的行清掉立绘',
-    same((await stands(standRows, {})).map((c) => c.op), ['stand', 'stand']) && same((await stands(standRows, { standKeep: 'perRow' })).map((c) => c.op), ['stand', 'standOff', 'stand']), J(await stands(standRows, { standKeep: 'perRow' })))
-  const rawRow = [{ screen_effect: '8', pic_action: '1', effect: '3', effect_pos: '2', new_attr: 'x', text: 't' }]
-  const raws = async (options) => GC(await gRun(rawRow, options)).filter((c) => c.op === 'raw').map((c) => [c.cmd, c.args])
-  check('grenze rawAttrs：默认 screen_effect / pic_action / effect+effect_pos 记 raw（effect 带 effect_pos）；拿掉的属性不再记；新属性加进来就记；a+b 都有才带 b 的值',
-    same(await raws({}), [['screen_effect', ['8']], ['pic_action', ['1']], ['effect', ['3', '2']]]) && same(await raws({ rawAttrs: ['pic_action'] }), [['pic_action', ['1']]]) && same(await raws({ rawAttrs: ['new_attr', 'effect'] }), [['new_attr', ['x']], ['effect', ['3']]]) && (await gRun(rawRow, { rawAttrs: [] })).stats.raw.screen_effect === undefined, J(await raws({})))
-  // scene
-  const forkRows = [{ id: '1', next_id: '3', text: 'a' }, { id: '2', next_id: '3', text: 'b' }, { id: '3', text: 'c' }]
-  const forkXml = X(forkRows)
-  const rowsF = grenze.readRows(forkXml)
-  const sc = (policy) => grenze.splitScenes(rowsF, { forkPolicy: policy }).scenes.map((s) => s.rows.length)
-  const playScene = async (start, options) => (await grenze.parse(forkXml, await gPrep(options), { options, scene: start })).steps.length
-  check('grenze scene.forkPolicy：默认 merge = 每个场景各自走到底（2 + 2 行，共用的 c 两边都有）；first = 共用部分只属于最靠前的链（2 + 1 行）；打开场景也一致；split 只有 chains',
-    same(sc('merge'), [2, 2]) && same(sc('first'), [2, 1]) && same(sc(undefined), [2, 2]) && await playScene('2', {}) === 2 && await playScene('2', { scene: { forkPolicy: 'first' } }) === 1 && await playScene('1', { scene: { forkPolicy: 'first' } }) === 2, J([sc('merge'), sc('first')]))
-}
+  // voice
+  const voiceSrc = (r) => r.steps[0].commands.find((c) => c.op === 'voice')?.src
+  check('misttrain voice 默认：同名语音取字典序第一个（a/）；preferDirs 指定目录优先（b/）', voiceSrc(base) === 'Sounds/Voices/a/v1.ogg' && voiceSrc(run(rows, { voice: { preferDirs: ['Sounds/Voices/b'] } })) === 'Sounds/Voices/b/v1.ogg', voiceSrc(base))
+  const skip = run(rows, { voice: { duplicates: 'skip' } })
+  check('misttrain voice.duplicates = skip：同名不止一个就不播（记未解析）；只有一个时照常', voiceSrc(skip) === undefined && skip.stats.unresolved['voice:v1'] === 1 && voiceSrc(run(rows, { voice: { duplicates: 'skip' } }, [...spineFiles(5), 'Sounds/Voices/a/v1.ogg'])) === 'Sounds/Voices/a/v1.ogg')
+  check('misttrain voice.ext / voice.dir：扩展名与目录可改', voiceSrc(run(rows, { voice: { ext: ['wav'] } }, [...spineFiles(5), 'Sounds/Voices/a/v1.wav'])) === 'Sounds/Voices/a/v1.wav' && voiceSrc(run(rows, { voice: { dir: 'Snd' } }, [...spineFiles(5), 'Snd/x/v1.ogg'])) === 'Snd/x/v1.ogg')
+  check('misttrain paths：bgm / se / background / 没有索引时的语音路径可改', (() => {
+    const r = mt.parse(scene([row({ text: 'x', bgm: 'b1', se: 's1', voice: 'v9', bg: 'bgx' })]), null, { stem: '1' })
+    const o = mt.parse(scene([row({ text: 'x', bgm: 'b1', se: 's1', voice: 'v9', bg: 'bgx' })]), prep({ paths: { bgm: 'B/{name}.mp3', se: 'S/{name}.mp3', background: 'G/{name}.jpg', voiceFallback: 'V/{name}.mp3' } }, []), { stem: '1' })
+    const g = (x, op) => x.steps[0].commands.find((c) => c.op === op)
+    return g(r, 'bgm').src === 'Sounds/Bgms/Adv/b1.ogg' && g(r, 'se').src === 'Sounds/Se/s1.ogg' && g(r, 'bg').src === 'BackGrounds/bgx.png' && g(o, 'bgm').src === 'B/b1.mp3' && g(o, 'se').src === 'S/s1.mp3' && g(o, 'bg').src === 'G/bgx.jpg' && g(o, 'voice').src === 'V/v9.mp3'
+  })())
 
-// ---- grenze 端到端
-{
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'opt-grenze-'))
-  const write = async (rel, text) => { await mkdir(path.dirname(path.join(dir, rel)), { recursive: true }); await writeFile(path.join(dir, rel), text) }
-  for (const f of GFILES) await write(`G/${f}`, 'x')
-  const xml = X([{ background: 'a', hero_group_id: '7', pic_pos: '1', voice_pack: 'ZZ', voice: 'dup', screen_effect: '3', text: 'hi' }, { text: 'narr' }])
-  await write('G/TextAsset/easy_dialog-1.xml', xml)
-  const adapter = galAdapter('grenze-xml')
-  const run = async (adapterOptions, resourceResolve) => {
-    const config = normalizeGalConfig({ resourceRoots: ['G/assets/resources/patchres'], adapterOptions: { 'grenze-xml': { root: 'G', ...adapterOptions } }, ...(resourceResolve ? { resourceResolve } : {}) })
-    const ctx = await loadAdapterContext({ adapter, mediaDir: dir, config })
-    return { ctx, out: adapter.parse(xml, ctx, { stem: 'easy_dialog-1', options: config.adapterOptions['grenze-xml'], config }) }
+  // titleLookup / scenes
+  const sceneFiles = ['UScenes/Stills/249/224920105.json', 'UScenes/55000405/55000405.json']
+  const texts = { 'MasterData/MSceneViewModel.json': J([{ Id: 2249201, Title: 'T1' }, { Id: 55000404, Title: 'T2' }]) }
+  const titles = (options) => { const tree = mt.catalog(prep(options, sceneFiles, texts)); const all = tree.children.find((n) => n.id === 'all').children; return all.map((c) => c.title).join() }
+  check('misttrain titleLookup 默认：去末 2 位 / 原样 / 末位减 1 都试', titles({}) === 'T2,T1', titles({}))
+  check('misttrain titleLookup 覆盖：tryMinusOne 关 → 技能场景没有标题；trim 0 → 第一个没有标题', titles({ titleLookup: { tryMinusOne: false } }) === '55000405,T1' && titles({ titleLookup: { trim: 0 } }) === 'T2,224920105', titles({ titleLookup: { trim: 0 } }))
+  const dup = ['UScenes/Stills/1/500.json', 'UScenes/500/500.json']
+  const baseOf = (options) => prep(options, dup).scenes.get('500').base
+  check('misttrain scenes.collision：默认后收到的赢（UScenes/500 → base 空），first 先收到的赢（Stills/1 → base 1）', baseOf({}) === '' && baseOf({ scenes: { collision: 'first' } }) === '1')
+  check('misttrain scenes.dirs / stillsDir：目录名可改、可多个（只认列出的）', prep({ scenes: { dirs: ['Scn', 'More'], stillsDir: 'S' } }, ['Scn/S/7/70.json', 'More/80.json', 'UScenes/90.json']).scenes.size === 2 && prep({ scenes: { dirs: ['Scn'], stillsDir: 'S' } }, ['Scn/S/7/70.json']).scenes.get('70').base === '7' && mt.contextDirs({ scenes: { dirs: ['Scn', 'More'] } }).slice(0, 2).join() === 'Scn,More')
+  check('misttrain fieldMap.row：行内字段位置可改（text 挪到 [4]）', (() => {
+    const r = row({ text: 'moved' }); r[4] = r[3]; r[3] = ''
+    const out = mt.parse(scene([r]), prep({ fieldMap: { row: { text: 4 } } }, []), { stem: '1' })
+    return out.steps[0]?.commands.find((c) => c.op === 'text').segments[0].text === 'moved' && mt.parse(scene([r]), prep({}, []), { stem: '1' }).steps.length === 0
+  })())
+  check('misttrain still.defaultAnimation / emoji：可改', run([row({ text: 'x<emoji=heart01>' })], { still: { defaultAnimation: 'animation9' }, emoji: { heart01: '❤' } }).steps[0].commands.some((c) => c.op === 'spine' && c.anim === 'animation9') && run([row({ text: 'x<emoji=heart01>' })], { emoji: { heart01: '❤' } }).steps[0].commands.find((c) => c.op === 'text').segments[0].text === 'x❤')
+
+  // 完整链路
+  const tree = {
+    'G/UScenes/Stills/249/224920105.json': scene(rows),
+    ...Object.fromEntries(spineFiles(5).map((f) => [`G/${f}`, 'x'])),
+    'G/Sounds/Voices/a/v1.ogg': 'x', 'G/Sounds/Voices/b/v1.ogg': 'x', 'G/BackGrounds/bg.png': 'x',
   }
-  const base = await run({})
-  const over = await run({ standKeep: 'perRow', rawAttrs: [], standFit: 0, paths: { bg: ['bg/other/c/{name}.jpg'] }, duplicates: { voice: 'preferDirs' } }, { preferDirs: ['voice/B'] })
-  const ops = (r) => GC(r.out)
-  check('grenze 端到端（引擎读 config.adapterOptions / resourceResolve + 目录索引）：默认行为不变；paths.bg / standKeep / standFit / rawAttrs / duplicates 覆盖后改变',
-    ops(base).find((c) => c.op === 'bg').src === 'bg/battlebg/a/a.webp' && !ops(base).some((c) => c.op === 'voice') && ops(base).some((c) => c.op === 'raw') && ops(base).filter((c) => c.op === 'stand' || c.op === 'standOff').length === 1 && ops(base).find((c) => c.op === 'stand').parts[0].fit === 1
-    && over.out.stats.unresolved['bg:a'] === 1 && ops(over).find((c) => c.op === 'voice').src === 'voice/B/dup.m4a' && !ops(over).some((c) => c.op === 'raw') && same(ops(over).filter((c) => c.op === 'stand' || c.op === 'standOff').map((c) => c.op), ['stand', 'standOff']) && !('fit' in ops(over).find((c) => c.op === 'stand').parts[0]), J([ops(base), ops(over)]).slice(0, 600))
+  const plain = await e2e('misttrain-json', tree, { root: 'G' }, 'G/UScenes/Stills/249/224920105.json', { resourceRoots: ['G'] })
+  const custom = await e2e('misttrain-json', tree, { root: 'G', voice: { preferDirs: ['Sounds/Voices/b'] }, camera: { positionScale: 2 }, effects: { flashCount: 7 } }, 'G/UScenes/Stills/249/224920105.json', { resourceRoots: ['G'] })
+  check('misttrain 端到端：默认语音 a/、镜头 ×0.84、闪两次；adapterOptions 覆盖 → 语音 b/、镜头 ×2、闪 7 次', ofOp(plain.scene, 'voice')[0].src === 'Sounds/Voices/a/v1.ogg' && ofOp(custom.scene, 'voice')[0].src === 'Sounds/Voices/b/v1.ogg' && ofOp(plain.scene, 'camera')[0].to[0] === 84 && ofOp(custom.scene, 'camera')[0].to[0] === 200 && ofOp(plain.scene, 'flash')[0].count === 2 && ofOp(custom.scene, 'flash')[0].count === 7, J(ofOp(custom.scene, 'camera')))
+  const cfgVoice = await e2e('misttrain-json', tree, { root: 'G' }, 'G/UScenes/Stills/249/224920105.json', { resourceRoots: ['G'], resourceResolve: { preferDirs: ['Sounds/Voices/b'] } })
+  check('misttrain 语音走 createIndexResolver：config.resourceResolve.preferDirs 也能挑目录（voice.preferDirs 没写时）', ofOp(cfgVoice.scene, 'voice')[0].src === 'Sounds/Voices/b/v1.ogg', J(ofOp(cfgVoice.scene, 'voice')))
 }
 
-console.log(`${pass} passed, ${fail} failed`)
+// ================= 3. artwhirl-json =================
+{
+  const rels = ['images/bg/school.jpg', 'images/hcg/ABC/h1/2.webm', 'images/hcg/ABC/h1/2.png', 'images/hcg/ABC/h1/1.mp4', 'images/hcg/ABC/h1/1.png', 'images/stands/ABC/b1/ABC_b1_b_e_r.png', 'images/stands/ABC/b1/ABC_b1_b_e_r_h.png', 'audio/bgm/theme.ogg', 'audio/bgm/theme.mp3', 'audio/voice/g1/ABC_01.ogg', 'audio/voice/g2/ABC_01.ogg']
+  const prep = (options, files = rels) => aw.prepare({ options, files: files.map((r) => `game/${r}`), toResourcePath: (r) => r.replace(/^game\//, '') })
+  const story = {
+    bgms: [null, 1, 1], bgs: [2, 2, 3], voices: [null, 'ABC_01.mp3', null], texts: [null, 'hello', 'h'], names: [null, 4, null], colors: [null, null, null], charas: [null, [5], [6]],
+    others: [[], [], []], effects: [null, null, null], waits: [null, null, null], chara_keys: ['ABC'],
+    dic: [null, 'bgm/theme.mp3', 'bg/school.jpg', 'chara/ABC/h1/2', 'Alice', { key: 'ABC', body: 'b1', brow: 'x', eye: 'y', lip: 'r', h: true, pos: 0.3 }, { key: 'ABC', body: 'b1', pos: 0 }],
+  }
+  const text = J(story)
+  const run = (options, s = text) => aw.parse(s, prep(options), { stem: 'ep1' })
+  const base = run({})
+  check('artwhirl 默认：默认值表整份显式写出来，结果不变', J(run(aw.DEFAULT_OPTIONS)) === J(base))
+  check('artwhirl 默认：bg/ → images/bg/、bgm .mp3 → .ogg、立绘退回 b/e + 带 h、语音按文件名（g1 字典序第一）、dic 名字、pos 0 保留', cmds(base).find((c) => c.op === 'bg').src === 'images/bg/school.jpg' && cmds(base).find((c) => c.op === 'bgm').src === 'audio/bgm/theme.ogg' && cmds(base).find((c) => c.op === 'stand').parts[0].src === 'images/stands/ABC/b1/ABC_b1_b_e_r_h.png' && cmds(base).find((c) => c.op === 'voice').src === 'audio/voice/g1/ABC_01.ogg' && cmds(base).find((c) => c.op === 'speaker').segments[0].text === 'Alice' && cmds(base).filter((c) => c.op === 'stand')[1].parts[0].xalign === 0, J(cmds(base)))
+
+  // dic.indexFields
+  const noNames = run({ dic: { indexFields: ['bgs', 'bgms', 'charas', 'colors'] } })
+  check('artwhirl dic.indexFields：names 不再当 dic 下标（名字是整数 4 本身）', cmds(noNames).find((c) => c.op === 'speaker').segments[0].text === '4')
+  const noBgs = run({ dic: { indexFields: ['bgms', 'charas', 'names', 'colors'] } })
+  check('artwhirl dic.indexFields：bgs 不解 dic → 背景是整数、找不到资源，记 unresolved', !cmds(noBgs).some((c) => c.op === 'bg') && Object.keys(noBgs.stats.unresolved).some((k) => k.startsWith('bg:')), J(noBgs.stats.unresolved))
+
+  // stand.fallback / path / fields
+  const noFallback = run({ stand: { fallback: [] } })
+  check('artwhirl stand.fallback：清空后 brow/eye 不对就找不到立绘（unresolved）；默认会退回', !cmds(noFallback).some((c) => c.op === 'stand' && c.parts.some((p) => p.src.includes('_h'))) && Object.keys(noFallback.stats.unresolved).some((k) => k.startsWith('stand:')) && base.stats.stands === 2)
+  const noH = run({ stand: { fallback: [['brow->b', 'eye->e']] } })
+  check('artwhirl stand.fallback：自定义顺序（只退 brow/eye 并保留 h）→ 仍找到 _h', cmds(noH).find((c) => c.op === 'stand').parts[0].src.endsWith('_r_h.png'))
+  const pathOpt = run({ stand: { path: 'S/{key}-{body}-{brow}{h}.png' } }, text)
+  check('artwhirl stand.path / hSuffix：模板可改', Object.keys(pathOpt.stats.unresolved).some((k) => k.startsWith('stand:')) && aw.parse(text, aw.prepare({ options: { stand: { path: 'S/{key}-{body}-{brow}{h}.png', hSuffix: '+' } }, files: ['game/S/ABC-b1-x+.png', 'game/S/ABC-b1-b.png'], toResourcePath: (r) => r.replace(/^game\//, '') }), { stem: 'e' }).steps.flatMap((s) => s.commands).find((c) => c.op === 'stand').parts[0].src === 'S/ABC-b1-x+.png')
+  const fieldOpt = aw.parse(J({ ...story, dic: [null, null, null, null, null, { id: 'ABC', body_x: 'b1', pos: 0.6 }, null] }), prep({ stand: { fields: { key: ['id'], body: ['body_x'] } } }), { stem: 'e' })
+  check('artwhirl stand.fields：立绘字典的键名可改（id / body_x）', cmds(fieldOpt).find((c) => c.op === 'stand')?.parts[0].src === 'images/stands/ABC/b1/ABC_b1_b_e_r.png' && cmds(fieldOpt).find((c) => c.op === 'stand').parts[0].xalign === 0.6, J(cmds(fieldOpt)))
+
+  // assets / extPrefer
+  const assetsOpt = run({ assets: [{ match: '^bg/(.*)$', replace: 'images/bg/pre_$1' }, ...aw.DEFAULT_OPTIONS.assets] })
+  check('artwhirl assets：规则表第一条命中的生效（bg/x → images/bg/pre_x，索引里没有 → unresolved）；默认不变', Object.keys(assetsOpt.stats.unresolved).includes('bg:bg/school.jpg') && cmds(base).some((c) => c.op === 'bg'))
+  check('artwhirl extPrefer：.mp3 的偏好写成空数组后 不换 .ogg；默认 .mp3 → 同名 .ogg', cmds(run({ extPrefer: { '.mp3': [] } })).find((c) => c.op === 'bgm').src === 'audio/bgm/theme.mp3' && cmds(base).find((c) => c.op === 'bgm').src === 'audio/bgm/theme.ogg')
+  const flip = run({ extPrefer: { '.mp3': ['.flac', '.ogg'] } })
+  check('artwhirl extPrefer：偏好列表按顺序试（.flac 没有 → .ogg）', cmds(flip).find((c) => c.op === 'bgm').src === 'audio/bgm/theme.ogg')
+
+  // hcg / video
+  const hcgStory = (frame) => J({ ...story, dic: [null, null, null, `chara/ABC/h1/${frame}`], bgs: [3], bgms: [null], voices: [null], texts: ['x'], names: [null], colors: [null], charas: [null], others: [[]], effects: [null], waits: [null] })
+  const movie = (options, frame = '2') => cmds(aw.parse(hcgStory(frame), prep(options), { stem: 'e' })).find((c) => c.op === 'movie')
+  check('artwhirl video 默认：HCG 同名 .webm → movie 循环；帧名 1 / 4 不循环', movie({}).srcs[0] === 'images/hcg/ABC/h1/2.webm' && movie({}).loop === true && movie({}, '1') === undefined)
+  check('artwhirl video.ext / noLoopFrames：.mp4 当视频（帧 1 → 不循环）；noLoopFrames 改成 ["2"] → 帧 2 不循环', movie({ video: { ext: ['mp4'] } }, '1').srcs[0] === 'images/hcg/ABC/h1/1.mp4' && movie({ video: { ext: ['mp4'] } }, '1').loop === false && movie({ video: { noLoopFrames: ['2'] } }).loop === false && movie({ video: { ext: ['webm', 'mp4'] } }).srcs.length === 1)
+  const hcgMatch = cmds(aw.parse(hcgStory('2'), prep({ hcg: { match: '^never$' } }), { stem: 'e' }))
+  check('artwhirl hcg.match：不当 HCG 时走普通资源规则（不查视频）', !hcgMatch.some((c) => c.op === 'movie'))
+
+  // voice
+  const voiceOf = (options) => cmds(run(options)).find((c) => c.op === 'voice')?.src
+  check('artwhirl voice.preferDirs：同名语音挑目录（g2 优先）；voice.ext 的 .mp3 写成空串后名字不换扩展名、找不到（unresolved）；voice.dir 可改', voiceOf({ voice: { preferDirs: ['audio/voice/g2'] } }) === 'audio/voice/g2/ABC_01.ogg' && voiceOf({ voice: { ext: { '.mp3': '' } } }) === undefined && voiceOf({ voice: { dir: 'audio/other' } }) === undefined)
+  const bare = aw.parse(text, aw.prepare({ options: { voice: { fallback: 'v/{stem}/{name}' } }, files: [], toResourcePath: (r) => r }), { stem: 'ep1' })
+  check('artwhirl voice.fallback：没有索引时的路径模板', cmds(bare).find((c) => c.op === 'voice').src === 'v/ep1/ABC_01.ogg')
+  check('artwhirl standZoom / root / dirs', cmds(run({ standZoom: 2 })).find((c) => c.op === 'stand').parts[0].zoom === 2 && aw.contextDirs({}).join() === 'game/images,game/audio' && aw.contextDirs({ root: 'R', dirs: ['pics'] }).join() === 'R/pics' && aw.contextDirs({ root: '' }).join() === 'images,audio')
+
+  // 完整链路
+  const tree = Object.fromEntries([...rels.map((r) => [`game/${r}`, 'x']), ['game/story/ep1.json', text]])
+  const plain = await e2e('artwhirl-json', tree, {}, 'game/story/ep1.json', { resourceRoots: ['game'] })
+  const custom = await e2e('artwhirl-json', tree, { voice: { preferDirs: ['audio/voice/g2'] }, extPrefer: { '.mp3': [] }, dic: { indexFields: ['bgs', 'bgms', 'charas', 'colors'] } }, 'game/story/ep1.json', { resourceRoots: ['game'] })
+  check('artwhirl 端到端：默认 g1 语音 + .ogg + 名字 Alice；adapterOptions 覆盖 → g2 语音、.mp3、名字 4', ofOp(plain.scene, 'voice')[0].src === 'audio/voice/g1/ABC_01.ogg' && ofOp(plain.scene, 'bgm')[0].src === 'audio/bgm/theme.ogg' && ofOp(plain.scene, 'speaker')[0].segments[0].text === 'Alice' && ofOp(custom.scene, 'voice')[0].src === 'audio/voice/g2/ABC_01.ogg' && ofOp(custom.scene, 'bgm')[0].src === 'audio/bgm/theme.mp3' && ofOp(custom.scene, 'speaker')[0].segments[0].text === '4', J(ofOp(custom.scene, 'voice')))
+  const ciTree = { ...tree, 'game/story/ep1.json': text.replace('theme.mp3', 'THEME.mp3') }
+  const ci = await e2e('artwhirl-json', ciTree, {}, 'game/story/ep1.json', { resourceRoots: ['game'] })
+  const cs = await e2e('artwhirl-json', ciTree, {}, 'game/story/ep1.json', { resourceRoots: ['game'], resourceResolve: { caseInsensitive: false } })
+  check('artwhirl 用 createIndexResolver：bgm 名大小写不同也找得到（以前精确匹配）；resourceResolve.caseInsensitive=false 回到精确匹配（记 unresolved）', ofOp(ci.scene, 'bgm')[0]?.src === 'audio/bgm/theme.ogg' && ofOp(cs.scene, 'bgm').length === 0 && Object.keys(cs.scene.stats.unresolved).some((k) => k.startsWith('bgm:')), J([ofOp(ci.scene, 'bgm'), cs.scene.stats.unresolved]))
+}
+
+// ================= 4. girlscreation-tag（+ line）=================
+{
+  const files = ['pk/scenes/c1/script.txt', 'pk/scenes/c1/output_script.txt', 'pk/scenes/c1/script_original.txt', 'pk/scenes/c1/thumbnail.png', 'pk/scenes/c1/images/bg1.png', 'pk/scenes/c1/images/f_0000.webp', 'pk/scenes/c1/images/f_0001.webp', 'pk/scenes/c1/images/f_0002.webp', 'pk/scenes/c1/animations/f_0.jpg', 'pk/scenes/c1/animations/f_1.jpg', 'pk/scenes/c1/animations/f_2.jpg', 'pk/scenes/c1/spines/cast1/x.skel', 'pk/scenes/c1/spines/cast1/x.atlas',
+    'pk/scenes/9z/output_script.txt', 'pk/scenes/ab_2/hmr_ab_2.txt', 'pk/data/audio/bgm/b1.m4a']
+  const texts = {
+    'pk/scenes/c1/script.txt': '<NAME_PLATE>館長\nhi\n<PAUSE>\n<NAME_PLATE>アリス（オルタ）\nyo\n<PAUSE>\n<NAME_PLATE>アリス\nyo2\n<PAUSE>\n<NAME_PLATE>ボブ\nx\n<PAUSE>\n',
+    'pk/scenes/c1/script_original.txt': 'title,第一話,\n', 'pk/scenes/9z/output_script.txt': '<NAME_PLATE>館長\nhi\n<PAUSE>\n', 'pk/scenes/ab_2/hmr_ab_2.txt': 'title,行式の題,\nmessage,甲,こんにちは,\n',
+  }
+  const prep = (options, f = files, t = texts) => gc.prepare({ options: { root: 'pk', ...options }, texts: t, files: f, toResourcePath: (r) => r.replace(/^pk\//, '') })
+  const speakers = (options) => { const ctx = prep(options); return [...ctx.info].map(([id, i]) => `${id}:${i.speaker}`).join() }
+  const base = speakers({})
+  check('girlscreation 默认：館長不当主要说话人、（オルタ）后缀合并（アリス 2 次）、行式脚本的说话人也统计', base === 'c1:アリス,9z:,ab_2:甲', base)
+  check('girlscreation 默认：默认值表整份显式写出来，结果不变', speakers({ ...gc.DEFAULT_OPTIONS, root: 'pk' }) === base)
+  check('girlscreation player：旧写法字符串 / 新写法数组 / { names }；館長改成别人后館長算说话人', speakers({ player: '館長' }) === base && speakers({ player: { names: ['館長', 'アリス'] } }) === 'c1:ボブ,9z:,ab_2:甲' && speakers({ player: ['館長', 'アリス'] }) === 'c1:ボブ,9z:,ab_2:甲' && speakers({ player: { names: ['x'] } }).includes('9z:館長'), speakers({ player: { names: ['x'] } }))
+  check('girlscreation speaker.suffixRe：清空后「アリス（オルタ）」单独算一人（1 次对 1 次，字典序/次数先到先得）', prep({ speaker: { suffixRe: '(?!)' } }).info.get('c1').speaker !== '' && girlsOptions({ speaker: { suffixRe: 'x' } }).speaker.suffixRe === 'x')
+  check('girlscreation titleLines：标题来自原始脚本的 title 行；改正则后取别的行', prep({}).info.get('c1').title === '第一話' && prep({ titleLines: ['^題,([^,]+),'] }).info.get('c1').title === '' && prep({ titleLines: ['^title,([^,\\r\\n]+),', '^題,([^,]+),'] }, files, { ...texts, 'pk/scenes/9z/script_original.txt': '題,別名,\n' }).info.get('9z').title === '別名')
+  const scriptOf = (options) => prep(options).scenes.get('c1').script
+  check('girlscreation scenes.script：script.txt > output_script.txt > 行式脚本（可改优先级）；lineScript 正则可改', scriptOf({}) === 'pk/scenes/c1/script.txt' && scriptOf({ scenes: { script: ['output_script.txt', 'script.txt'] } }) === 'pk/scenes/c1/output_script.txt' && prep({}).scenes.get('ab_2').script.endsWith('hmr_ab_2.txt') && !prep({ scenes: { lineScript: '^nothing$' } }).scenes.has('ab_2'))
+  check('girlscreation scenes.thumb / dirs / sceneDirs / audioKinds', prep({}).scenes.get('c1').thumb === 'scenes/c1/thumbnail.png' && prep({ scenes: { thumb: '^cover' } }).scenes.get('c1').thumb === '' && prep({ sceneDirs: { images: 'pics' } }, files.map((f) => f.replace('/images/', '/pics/'))).scenes.get('c1').images.has('bg1') && prep({ audioKinds: ['se'] }).audio.bgm === undefined && gc.contextDirs({ root: 'pk', dirs: { scenes: 'sc' } }).join() === 'pk/sc,pk/data/audio,pk/data/spine')
+  const sampled = (options, rel) => gc.contextTextFilter({ root: 'pk', ...options })(rel)
+  check('girlscreation sample.files：哪些文件开头要读进来（默认 script / output_script / script_original / hmr_…）可改', sampled({}, 'pk/scenes/c1/script_original.txt') && !sampled({}, 'pk/scenes/c1/notes.txt') && sampled({ sample: { files: ['/notes\\.txt$'] } }, 'pk/scenes/c1/notes.txt') && !sampled({ sample: { files: ['/notes\\.txt$'] } }, 'pk/scenes/c1/script.txt'))
+  const catOf = (options) => gc.catalog(prep(options)).children.map((n) => `${n.id}[${n.children.map((c) => c.title).join('|')}]`).join()
+  check('girlscreation category：默认分类 = 开头字母（c / ab / 数字开头 → 其他）；未识别说话人分组；re / other / unknownSpeaker 可改', catOf({}) === 'c/ab[甲],c/c[アリス],c/其他[（未识别）]' && catOf({ category: { re: '^[a-z]', other: 'OTHER', unknownSpeaker: '?' } }) === 'c/a[甲],c/c[アリス],c/OTHER[?]', catOf({ category: { re: '^[a-z]', other: 'OTHER', unknownSpeaker: '?' } }))
+
+  // 解析：方言 / 站位 / 帧数
+  const ctx = prep({})
+  const run = (text, options = {}, rel = 'c1/script.txt') => gc.parse(text, prep(options), { rel })
+  const aku = ['<GROUP><FADE_IN>black,0', '<SPINE_ACTOR>1,cast1/x,,CENTER,LEFT,NONE,linear,0', '<SPINE_ACTOR_DISPLAY>1,SHOW', '<NAME_PLATE>甲', 'x', '<PAUSE>'].join('\n')
+  const akuOut = run(aku)
+  check('girlscreation dialect 默认：出现 <GROUP> 等标记 = Aku 写法（stats.dialect = aku；横向 LEFT → -450）', akuOut.stats.dialect === 'aku' && akuOut.steps.flatMap((s) => s.commands).find((c) => c.op === 'spine').x === -450, J(akuOut.stats))
+  const akuAlt = run(aku, { dialect: { markers: { aku: ['<NEVER>'] } } })
+  check('girlscreation dialect.markers.aku：改标记后这份脚本不再按 Aku 处理（FADE_IN 按标签式含义）', akuAlt.stats.dialect === undefined)
+  check('girlscreation dialect.window：只看开头这么多字符（标记在窗口外 = 认不出）', run(`${'\n'.repeat(50)}${aku}`, { dialect: { window: 20 } }).stats.dialect === undefined && run(`${'\n'.repeat(50)}${aku}`).stats.dialect === 'aku')
+  const akuOffset = run(aku, { stand: { akuOffset: 100 } })
+  check('girlscreation stand.akuOffset / akuDirections：偏移 100 → -100；LEFT 方向改成 1 → +450', akuOffset.steps.flatMap((s) => s.commands).find((c) => c.op === 'spine').x === -100 && run(aku, { stand: { akuDirections: { LEFT: 1 } } }).steps.flatMap((s) => s.commands).find((c) => c.op === 'spine').x === 450)
+  const far = aku.replace('LEFT', 'FAR')
+  check('girlscreation stand.akuDirections：没列出的横向取值（FAR）记 raw、x = 0；加上 FAR: 1 → +450 且不再记 raw', run(far).stats.raw['SPINE_ACTOR(横向 FAR)'] === 1 && run(far).steps.flatMap((s) => s.commands).find((c) => c.op === 'spine').x === 0 && run(far, { stand: { akuDirections: { FAR: 1 } } }).steps.flatMap((s) => s.commands).find((c) => c.op === 'spine').x === 450 && !run(far, { stand: { akuDirections: { FAR: 1 } } }).stats.raw['SPINE_ACTOR(横向 FAR)'])
+  const fruit = ['<ACTOR>1,B_00,CENTER,CENTER,NONE,linear,0,1,,,0,0,0,0,0,0', '<ACTOR_COLOR_FILTER>1,dark', '<NAME_PLATE>甲', 'x', '<PAUSE>'].join('\n')
+  const fruitFiles = [...files, 'pk/scenes/c1/images/B_00.png']
+  const fruitDim = (options) => gc.parse(fruit, gc.prepare({ options: { root: 'pk', ...options }, texts, files: fruitFiles, toResourcePath: (r) => r.replace(/^pk\//, '') }), { rel: 'c1/script.txt' }).steps.flatMap((s) => s.commands).filter((c) => c.op === 'stand').at(-1).parts[0].dim
+  check('girlscreation stand.fruitsDim：ACTOR_COLOR_FILTER dark 的压暗值 0.6 → 可改', fruitDim({}) === 0.6 && fruitDim({ stand: { fruitsDim: 0.3 } }) === 0.3)
+  const anim = '<ANIM_PLAY>0,f_,4,0,3,1,1,17\n<NAME_PLATE>甲\nx\n<PAUSE>'
+  const frames = (options) => run(anim, options).steps.flatMap((s) => s.commands).find((c) => c.op === 'bg')?.frames?.length
+  check('girlscreation animation.maxFrames：ANIM_PLAY 最多收 600 帧 → 改成 2 只收 2 帧', frames({}) === 3 && frames({ animation: { maxFrames: 2 } }) === 2)
+  const fa = (options) => run('<FRAME_ANIM>f,0,2,1\n<NAME_PLATE>甲\nx\n<PAUSE>', options).steps.flatMap((s) => s.commands).find((c) => c.op === 'bg')?.frames?.length
+  check('girlscreation animation.maxFrames：FRAME_ANIM 同一个上限', fa({}) === 3 && fa({ animation: { maxFrames: 2 } }) === 2)
+  const dialect = run('<LABEL>A\n<NAME_PLATE>甲\nx\n<PAUSE>', { dialect: { markers: { branch: ['<NOPE>'] } } })
+  check('girlscreation dialect.markers.branch：没有这些标签时 <LABEL> 不当分支（记 raw）', dialect.stats.raw.LABEL === 1 && !run('<LABEL>A\n<NAME_PLATE>甲\nx\n<PAUSE>').stats.raw.LABEL)
+  const lineHead = 'message,甲,こんにちは,\nmessage,甲,二,\nchara,cast1/x,chara_1,0,0,0,1,1,0,on\nwait,1'
+  check('girlscreation dialect.headWindow：标签式 / 行式的区分只看开头这么多字符；默认认出行式，窗口太小就认不出（按标签式解析）', run(lineHead, {}, 'ab_2/hmr_ab_2.txt').stats.form === 'line' && run(lineHead, { dialect: { headWindow: 5 } }, 'ab_2/hmr_ab_2.txt').stats.form === undefined)
+  const lineText = ['chara,cast1/x,chara_1,0,0,0,1,1,0,on', 'charamotion,1,joy,on', 'message,甲,台词,iab4020078', 'message,乙,台词2,xyz'].join('\n')
+  const lineRun = (options) => gc.parse(lineText, prep(options), { rel: 'c1/hmr_c1.txt' })
+  const track1 = (r) => r.steps.flatMap((s) => s.commands).filter((c) => c.op === 'spine').at(-1).tracks.find((t) => t.track === 1)?.anim
+  check('girlscreation line.expressionPrefix：charamotion 的表情动画 ex_joy → 可改', track1(lineRun({})) === 'ex_joy' && track1(lineRun({ line: { expressionPrefix: 'face_' } })) === 'face_joy', track1(lineRun({})))
+  const texts2 = (r) => r.steps.map((s) => s.commands.find((c) => c.op === 'text').segments[0]?.text)
+  check('girlscreation line.imageIdRe：message 末尾头像 id 的写法可改（默认 iab4020078 被去掉，xyz 不是头像 id 留在台词里）', J(texts2(lineRun({}))) === J(['台词', '台词2,xyz']) && J(texts2(lineRun({ line: { imageIdRe: '^xyz$' } }))) === J(['台词,iab4020078', '台词2']), J(texts2(lineRun({}))))
+  void ctx
+
+  // 完整链路
+  const tree = {
+    'pk/scenes/c1/script.txt': texts['pk/scenes/c1/script.txt'], 'pk/scenes/c1/script_original.txt': texts['pk/scenes/c1/script_original.txt'], 'pk/scenes/c1/thumbnail.png': 'x',
+    'pk/scenes/c1/images/f_0000.webp': 'x', 'pk/scenes/c1/images/f_0001.webp': 'x', 'pk/scenes/c1/images/f_0002.webp': 'x',
+    'pk/scenes/c1/spines/cast1/x.skel': 'x', 'pk/scenes/c1/spines/cast1/x.atlas': 'x',
+  }
+  const akuTree = { ...tree, 'pk/scenes/c1/script.txt': aku }
+  const g = (t, options) => e2e('girlscreation-tag', t, { root: 'pk', ...options }, 'pk/scenes/c1/script.txt', { resourceRoots: ['pk'] }, 'c1/script.txt')
+  const plain = await g(akuTree, {})
+  const custom = await g(akuTree, { stand: { akuOffset: 200 }, player: { names: ['x'] } })
+  const off = await g(akuTree, { dialect: { markers: { aku: ['<NEVER>'] } } })
+  check('girlscreation 端到端（config.adapterOptions → 文件索引 → buildScene）：Aku 偏移 -450 / -200；换掉 aku 标记后不再是 Aku 写法', ofOp(plain.scene, 'spine')[0].x === -450 && ofOp(custom.scene, 'spine')[0].x === -200 && plain.scene.stats.dialect === 'aku' && off.scene.stats.dialect === undefined, J(plain.scene.stats))
+  const who = async (options) => gc.catalog((await g(tree, options)).ctx).children[0].children[0].title
+  check('girlscreation 端到端：目录树里的主要说话人受 player.names 影响（默认 アリス；把アリス当主角后换成 ボブ）', (await who({})) === 'アリス' && (await who({ player: { names: ['館長', 'アリス'] } })) === 'ボブ', `${await who({})} ${await who({ player: { names: ['館長', 'アリス'] } })}`)
+}
+
+console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
