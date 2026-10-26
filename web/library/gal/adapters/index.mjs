@@ -8,6 +8,7 @@ import { renpyLegecloAdapter } from './renpy-legeclo.mjs'
 import { renpyMinashigoAdapter } from './renpy-minashigo.mjs'
 import { renpyMonmusuAdapter } from './renpy-monmusu.mjs'
 import { tenkeiprdxJsonAdapter } from './tenkeiprdx-json.mjs'
+import { tyranoKsAdapter } from './tyrano-ks.mjs'
 import { uviewerCsvAdapter } from './uviewer-csv.mjs'
 
 const adapters = new Map()
@@ -23,6 +24,7 @@ registerGalAdapter(tenkeiprdxJsonAdapter)
 registerGalAdapter(misttrainJsonAdapter)     // [null,[<场景 id>,[行…]]] 位置数组，独有写法
 registerGalAdapter(artwhirlJsonAdapter)       // {"bgms":[…],…,"chara_keys":…} 并行数组 JSON，独有写法
 registerGalAdapter(bokusenJsonAdapter)        // {"data":{"code":{…images/sounds/articles/tags/commands…}}} 编译脚本表，独有写法（只认开头，不读全文）
+registerGalAdapter(tyranoKsAdapter)           // TyranoScript .ks（*start + [chara_new] / [call … tyrano.ks]），独有写法；先于 girlscreation 登记
 registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
 
 export const galAdapterIds = () => [...adapters.keys()]

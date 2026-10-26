@@ -3,6 +3,7 @@
 //   contextFiles(options) → [相对媒体目录的文件]   要读的文本文件（变了就重新生成上下文）
 //   contextDirs(options)  → [相对媒体目录的目录]   要递归列文件名的目录
 //   contextTextFilter(options) → (rel) => boolean   可选：files 里匹配的文件读开头 24KB 放进 texts（最多 3000 个）
+//   contextSampleLimit（数字，适配器属性）  contextTextFilter 最多读多少个文件，默认 3000、封顶 20000（一个剧情一个 json 的格式要超过 3000）
 //   contextWalkLimit（数字，适配器属性）  目录索引最多收多少个文件，默认 40 万、封顶 200 万；超了会被截断（truncated = true 传给 prepare，并打日志）
 //   prepare({ options, texts, files, toResourcePath, truncated }) → ctx    texts = { 相对路径: 文本 }，files = 目录里的文件相对路径数组
 // parse(text, ctx) 拿到 ctx。options 来自 config.adapterOptions[适配器 id]，路径类参数在这里统一过 safeRelPath。
@@ -17,6 +18,7 @@ const MAX_WALK_FILES = 400000            // 40 万个文件的索引约 76MB 内
 const MAX_WALK_FILES_CEILING = 2000000   // 适配器用 contextWalkLimit 要更多时的封顶
 const MAX_WALK_DEPTH = 6
 const MAX_SAMPLE_FILES = 3000
+const MAX_SAMPLE_FILES_CEILING = 20000   // 适配器用 contextSampleLimit 要更多时的封顶
 const SAMPLE_BYTES = 24 * 1024
 const DIR_TTL_MS = 5 * 60 * 1000
 const cache = new Map()   // key → { fileKey, builtAt, ctx, stats }
@@ -101,9 +103,10 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
   // contextTextFilter(options) → (相对媒体目录的路径) => boolean；最多读 MAX_SAMPLE_FILES 个，每个只读开头 SAMPLE_BYTES 字节，放进 texts（键 = 相对路径）
   const sampleFilter = adapter.contextTextFilter?.(options)
   if (typeof sampleFilter === 'function') {
+    const sampleLimit = Number(adapter.contextSampleLimit) > 0 ? Math.min(MAX_SAMPLE_FILES_CEILING, Number(adapter.contextSampleLimit)) : MAX_SAMPLE_FILES
     let n = 0
     for (const rel of files) {
-      if (n >= MAX_SAMPLE_FILES) break
+      if (n >= sampleLimit) break
       if (!sampleFilter(rel)) continue
       n += 1
       try {

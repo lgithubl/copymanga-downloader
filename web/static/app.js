@@ -2437,6 +2437,7 @@ const GAL_PRESETS = {
   misttrain: { adapters: ['misttrain-json'], game: { id: 'misttrain', title: 'MistTrainGirls X' } },
   angelic: { adapters: ['renpy-monmusu'], game: { id: 'angelic', title: 'Angelic' } },
   artwhirl: { adapters: ['artwhirl-json'], game: { id: 'artwhirl', title: '魔法学园的少女们' } },
+  kamihime: { adapters: ['tyrano-ks'], game: { id: 'kamihime', title: 'Kamihime Player' } },
   minashigo_r: { adapters: ['uviewer-csv'], game: { id: 'minashigo_r', title: 'ミナシゴノシゴトR' } },
   bokusen: { adapters: ['bokusen-json'], game: { id: 'bokusen', title: 'ぼくらの放課後戦争' } },
 }

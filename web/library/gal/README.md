@@ -342,6 +342,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | monmusu | Ren'Py（`renpy-monmusu`） | `game/script/hscene` + `hscene_still` + `script/movie.rpy` |
 | **angelic_py** | Ren'Py（`renpy-monmusu`，game.id `angelic`） | `game/script/hscene/*.rpy`；别名表是 `script/movies.rpy` + `script/stills.rpy`（复数），图片在 `images` + `resources`；菜单脚本 `sub_nav` / `sub_nav_byname` 隐藏；脚本文件名是随机串，没有角色编号，所以不分组、卡片显示脚本名；只有 `.rpyc` 的脚本解析不了（列表页问题里会列出） |
 | **ぼくらの放課後戦争** | 编译脚本 JSON（`bokusen-json`，game.id `bokusen`） | `<根>/json/<脚本名>.json` + `<根>/resource/<脚本名>/{images,sounds}`（只有一部分脚本有资源目录），见「ぼくらの放課後戦争」一节 |
+| **Kamihime Player** | TyranoScript（`tyrano-ks`，game.id `kamihime`） | `game/dmm/raw_scenario/<类别>/<目录>/<id>_script.ks` + 同目录 `<id>.json`；资源 `game/dmm/assets`（带 hash 的平铺 + `<resource_directory>/` 里的语音）；见「Kamihime Player」一节 |
 | legeclo、minashigo（Ren'Py）、tenkeiprdx、misttrain、UViewer | 见各自一节 | |
 
 
@@ -385,3 +386,18 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 表达不了的（`raw` 指令 + `stats.raw`）：数字层的多帧动画（只显示第一帧）、淡到非 0 音量的 `fadese`、非 `cross` 的 `trans`、`move` 到没有显示的层、`images[]` 下标越界的 `image`、没见过的标签（只计入 `stats.raw`）。`move` 的补间、`bgmopt` / `seopt` 的音量、`animstop` 对 `base` 层帧动画（不停，换背景才停）没做。
 - `gal-layout`：`<根>/json` 当脚本根、`<根>/resource` 当资源根（扩展名 json）；没写 game.id 时要求 `json/` 里前几个脚本开头是 `{"data":{"code":{` 并且同级有 `resource/`。导入页预设「ぼくらの放課後戦争（bokusen）」。
 - 自测：`node scripts/dev/fe-gal-bokusen-selftest.mjs`（不需要浏览器；造数据 `scripts/dev/make-bokusen-fixture.mjs <输出根目录>`，合成脚本含开场交叉淡入、立绘层 + move、多帧动画、playse → wav、缺资源、被截断的 JSON）。
+
+### Kamihime Player（TyranoScript .ks，`tyrano-ks`）
+- **独立的 adapter `tyrano-ks`**（`adapters/tyrano-ks.mjs`），sniff：`*start` 开头 + Tyrano 标签（`[chara_new` / `[call target=*start storage="tyrano.ks"]` / `[position` …）。**目录**（`<根>` = `game/dmm`，记在 `config.adapterOptions['tyrano-ks'].root`）：`<根>/raw_scenario/<类别>/<目录>/<id>_script.ks` + 同目录 `<id>.json`（`{ is_r18, resource_directory, scenario_path, summary, title }`），资源 `<根>/assets/`。
+- **写法**：`#<角色 key>` = 说话人（key → `[chara_new … jname=]` 的显示名，没声明的 key 原样当名字，单独的 `#` = 旁白）；非标签、非 `#` 的行是台词，行内 `[r]` 换行、`[l]` 等点击（结束一步）、`[cm]` 清文本框；`[l]` 之后文本框里累加到下一个 `[cm]` 之前的全部文字，没有 `[l]` 的残余文字在 `[cm]` / 结尾处也算一步。
+- **立绘** = 每个表情一整张图：`[chara_new]` 的 `storage` 是基础图，`[chara_face name face storage]` 登记表情，`[chara_mod face=]` 换表情，`[chara_show]` / `[chara_hide]` 出场 / 退场 → `stand` 指令（部件带 `align`，和 legeclo 一样）。摆放是**猜的**：在场 1 个居中，2 个左 / 右，3 个以上 左 / 中 / 右（按出场顺序），脚本里的 `left=` / `top=` 不用（没有对照图，也不知道原舞台尺寸）。
+- **资源查找**（相对资源根 `game/dmm/assets`）：带 hash 的（`<stem>-<sha1>.<ext>`）整名在平铺层找，找不到再按 stem 找；不带 hash 的图按 `stem + 扩展名` 找平铺层的 `<stem>-<sha1>.<ext>`；不带 hash 的语音 / 音效先查本剧情的 `assets/<resource_directory>/<文件名>`（resource_directory 来自同目录 json，**不带 `_script`**），再按文件名在所有 resource_directory 里找第一个。
+  文件索引走 `contextDirs`（`assets` + `raw_scenario`）：真实规模是 1.1 万个平铺文件 + 5000 多个 resource_directory 子目录（约 10 万个文件），适配器的 `contextWalkLimit` 设为 80 万；3000 多个 json 靠 `contextSampleLimit`（新增的适配器属性，默认 3000、封顶 2 万，`context.mjs`）全部读到。合成数据上建一次索引约 1 秒、命中缓存约 0.13 秒。
+- **缺文件不致命**：真实数据里不少文件磁盘上就没有（表情图 / 带 hash 的 png 都有缺）。表情缺 → 退回这个角色的基础立绘（`stats.fallbacks`）；背景 / BGM / 基础立绘缺 → `stats.unresolved`（渲染诊断里能看到）；表情 / 语音 / 音效 / 滤镜缺 → 只记 `stats.missing`，不提示、不出指令。
+- **指令对应**：`[bg]` → `bg`（`black-<hash>.png` / `white-<hash>.png` 直接当纯色，`time` → 渐变秒数）；`[playbgm]` / `[stopbgm]` / `[fadeoutbgm]` → `bgm` / `bgmStop`；`[playse]`：`loop=true` → `bgse`（`[stopse]` 停它），否则在 resource_directory 里的 → `voice`、别的 → `se`；`[wait time=]` → `wait`；`[quake hmax|vmax]` → `shake`（幅度 1 像素 = 1/40）；
+  连着的 `[anim name= top|left=]`（角色跳 / 抖）合成一个 `shake`（**整个画面抖**，没有单个立绘的动作指令）；`[image storage="sepia_filter-…" layer=4]` → 当前背景的 `over`（再发一条 `bg`，换背景时带着走），`[freeimage layer=4]` / `[layopt layer=4 visible=]` 去掉 / 隐藏它。
+- **暂未渲染**（`raw` 指令 + `stats.raw`）：`[anim layer=…]` 的滑入 / 滑出（`left="±=640"`）、layer 3 的 `layopt` / `freeimage`（layer 3 里是什么没有样本，所以不敢猜成立绘滑动）、`[kanim]` / `[keyframe]` / `[frame]`、`[iscript]` 块、`[mem_img]` / `[mem_voice]` / `[memorial]`、没见过的标签；流程标签（`[if]` / `[jump]` / `[glink]` …）也只记 raw、脚本按顺序一路播下去（样本里没有分支）。点右下角的提示看明细，要允许就用 `rawIgnore`。
+- **列表**（`adapter.catalog`，每次从索引现读、按 ctx 缓存）：类别 → 目录 → 剧情，剧情标题取 json 的 `title`（没有 json 就用脚本名），`is_r18` 的卡片带 `R18` 角标；体检 `health`：没读到 assets / 没读到 json。
+- **`gal-layout` 探测**：`dmm/raw_scenario`（多套几层目录自动带前缀）；没声明 `game.id` 时还要求有 `dmm/assets` 和至少一个 `.ks`。写：脚本根 `<…>/dmm/raw_scenario`、资源根 `<…>/dmm/assets`、扩展名 `ks`、`adapterOptions['tyrano-ks'].root`、脚本数。探测顺序在 artwhirl 之后、uviewer 之前。导入：`adapters: ['tyrano-ks']` + `config.game.id: 'kamihime'`，导入页预设「Kamihime Player」。
+- **自测**：`scripts/dev/fe-gal-kamihime-selftest.mjs`（适配器 / 索引 / gal-layout 不需要浏览器；有 `PLAYWRIGHT_PATH` 且 `web/node_modules` 装好时再起服务做导入、列表、资源接口、立绘像素）；合成数据 `scripts/dev/make-kamihime-fixture.mjs <目录>`，`gal-demo` 工作流里会生成并导入。
+- **没验证的**：立绘摆放（上面）；`[quake time=]` 当总时长；`[anim layer=3]` 的含义；`[l]` 之后文字累加的规则是按 Tyrano 的 `[l]` / `[cm]` 语义推的，没有逐字对照原播放器。
