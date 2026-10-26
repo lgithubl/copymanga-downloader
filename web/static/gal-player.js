@@ -5,7 +5,7 @@
 import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } from '/gal-spine.js'
 import { createStandLayer } from '/gal-stand.js'
 import { attachBarLock } from '/gal-barlock.js'
-import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
+import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, galPlayerDefaults, ratioOfStep, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
 const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
 // 音量：滑块位置 p（0..1，存进浏览器的就是它）→ 实际增益 volumeGain(p) = p²（感知曲线）。旧版存的是线性值，按滑块位置解释，听起来会比以前小
@@ -89,6 +89,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const base = reader.resourceBase
   const url = (src) => assetUrl(base, src)
   // 暂未渲染的指令：按指令名汇总（数量、样例参数）；config.rawIgnore（node.rawIgnore，正则列表）里匹配的算「已允许」，不计入提示
+  const pd = galPlayerDefaults(reader.node?.player)   // 这个游戏的默认值；浏览器里存过的设置优先
   const rawAllow = (Array.isArray(reader.node?.rawIgnore) ? reader.node.rawIgnore : []).map((source) => { try { return new RegExp(source, 'i') } catch { return null } }).filter(Boolean)
   const rawGroups = new Map()   // cmd -> { cmd, count, allowed, samples: [{ step, args }] }
   const rawKey = (cmd, args) => `${cmd}${(Array.isArray(args) ? args : args == null ? [] : [args]).map((a) => `,${a}`).join('')}`
@@ -289,7 +290,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // 文本区高度在 CSS 里固定 = 2 行（按当前字体大小设置），名牌也是固定位置，所以文本框的矩形在任何一步都不变。
   // 台词放不下时只缩台词字号（--gal-fit，相对用户设置的字号，二分查找，最小 FIT_MIN）；到最小还放不下就保持最小并允许滚动（完整台词在记录里）。
   // 只在换台词 / 舞台尺寸变化 / 改字体大小时量一次（二分是对一个小元素读 scrollHeight，不会每帧重排）
-  const FIT_MIN = GAL_SETTINGS.fitMin
+  const FIT_MIN = pd.minFitScale ?? GAL_SETTINGS.fitMin
   let fitRaf = 0
   const overflows = () => textEl.scrollHeight > textEl.clientHeight + 1
   function fitText() {
@@ -357,7 +358,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     try { saved = JSON.parse((viewStorageKey && localStorage.getItem(viewStorageKey)) || '{}') || {} } catch { saved = {} }
     const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
     const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
-    return { still: cleanView(saved.still || legacy), actor: cleanView(saved.actor), camera: cleanCamera(saved.camera), blend: ['noAdditive', 'allNormal'].includes(saved.blend) ? saved.blend : 'native', expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
+    const zoomDefault = pd.zoom !== undefined ? { zoom: pd.zoom } : undefined
+    return { still: cleanView(saved.still || legacy || zoomDefault), actor: cleanView(saved.actor || zoomDefault), camera: cleanCamera(saved.camera || (pd.cameraMode ? { mode: pd.cameraMode } : undefined)), blend: ['noAdditive', 'allNormal'].includes(saved.blend) ? saved.blend : 'native', expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
   }
   let views = loadViews()
   // 表情预设表：内置初始值（gal-spine.js）← 服务端配置（adapterOptions['girlscreation-tag'].expressions）← 这个媒体自己调的（views.expressions）
@@ -408,9 +410,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     saveViews()
     spineLayer?.setView(kind, views[kind])
   })
-  let boxOpacity = loadNumber(GAL_SETTINGS.boxOpacityKey, GAL_SETTINGS.boxOpacityDefault, 0, 1)
-  let voiceDelay = loadNumber(GAL_SETTINGS.autoVoiceDelayKey, GAL_SETTINGS.autoVoiceDelayDefault, 0, GAL_SETTINGS.autoVoiceDelayMax)
-  let fontScale = loadNumber(GAL_SETTINGS.fontScaleKey, GAL_SETTINGS.fontScaleDefault, GAL_SETTINGS.fontScaleMin, GAL_SETTINGS.fontScaleMax)
+  let boxOpacity = loadNumber(GAL_SETTINGS.boxOpacityKey, pd.textOpacity ?? GAL_SETTINGS.boxOpacityDefault, 0, 1)
+  let voiceDelay = loadNumber(GAL_SETTINGS.autoVoiceDelayKey, pd.autoDelay ?? GAL_SETTINGS.autoVoiceDelayDefault, 0, GAL_SETTINGS.autoVoiceDelayMax)
+  let fontScale = loadNumber(GAL_SETTINGS.fontScaleKey, pd.fontScale ?? GAL_SETTINGS.fontScaleDefault, GAL_SETTINGS.fontScaleMin, GAL_SETTINGS.fontScaleMax)
   let autoChoice = Math.round(loadNumber(GAL_SETTINGS.autoChoiceKey, GAL_SETTINGS.autoChoiceDefault, -1, GAL_SETTINGS.autoChoiceMax))
   let autoChoiceLast = autoChoice >= 0 ? autoChoice : 0
   opacityRange.value = String(Math.round(boxOpacity * 100))
@@ -955,7 +957,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (on) {
       stopAuto()
       voiceAudio?.pause()
-      fastLoop = setInterval(fastTick, 70)
+      fastLoop = setInterval(fastTick, pd.fastInterval ?? 70)
     } else {
       clearInterval(fastLoop)
       fastLoop = 0

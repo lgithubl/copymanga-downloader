@@ -9,12 +9,13 @@
 //   - 封面：config.cover（脚本写；取的时候原样返回，不缩放）
 
 import { createHash } from 'node:crypto'
-import { readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
-import { applyGalConfigPatch, cleanGalConfigRaw, normalizeGalConfig } from '../gal/config.mjs'
+import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
+import { resolveOnDisk } from '../gal/resolve.mjs'
 import { isVideoPath } from '../gal/thumbs.mjs'
 import { createFrameCache } from '../gal/video-thumb.mjs'
 import { shardedPath, walkShardedFiles, writeJsonAtomic } from '../meta-shard.mjs'
@@ -90,8 +91,15 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     }
   }
 
+  // config 被丢掉 / 夹住的内容（{ field, reason, snippet }）：上次写 config（导入 / 元数据脚本的补丁）时记下来的 + 这次读出来又丢掉的，≤ 20 条，去重；
+  // 浏览层把它们报进列表页的「渲染诊断」（code: config-dropped）。没有就不写这个字段（条目 JSON 和以前一样）
+  const cleanWarnings = (list) => (Array.isArray(list) ? list : []).filter((w) => w && typeof w.field === 'string').map((w) => ({ field: String(w.field).slice(0, 80), reason: String(w.reason || '').slice(0, 200), snippet: String(w.snippet || '').slice(0, 80) }))
+
   function normalizeItem(raw) {
     const now = new Date().toISOString()
+    const cleaned = cleanGalConfigRawWithWarnings(raw?.config)
+    const warnings = []
+    for (const w of [...cleanWarnings(raw?.configWarnings), ...cleaned.warnings]) if (!warnings.some((x) => x.field === w.field && x.reason === w.reason && x.snippet === w.snippet)) warnings.push(w)
     const item = {
       type,
       itemId: String(raw?.itemId || ''),
@@ -108,14 +116,26 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       adapters: (Array.isArray(raw?.adapters) ? raw.adapters.map(String) : []).filter((id) => galAdapterIds().includes(id)).slice(0, 5),
       source: { path: String(raw?.source?.path || '') },
       // 唯一的配置字段：只存写过的字段（缺的在读的时候用默认补），见 gal/config.mjs
-      config: cleanGalConfigRaw(raw?.config),
+      config: cleaned.clean,
       scriptCount: 0,
       createdAt: String(raw?.createdAt || now),
       publishedAt: String(raw?.publishedAt || raw?.createdAt || now),
       updatedAt: String(raw?.updatedAt || now),
     }
-    if (!item.adapters.length) item.adapters = [...GAL_DEFAULT_OPTIONS.adapters]
+    // 被丢掉的适配器 id（不认识 / 写坏了 / 超过 5 个）：不可枚举（不写进元数据），给浏览层的诊断（code: config-dropped）报告
+    const known = galAdapterIds()
+    const rawAdapters = Array.isArray(raw?.adapters) ? raw.adapters.map(String) : []
+    const adapterWarnings = [
+      ...rawAdapters.filter((id) => !known.includes(id)).map((id) => ({ field: 'adapters', reason: '不认识的适配器 id，已丢掉', snippet: id.slice(0, 80) })),
+      ...rawAdapters.filter((id) => known.includes(id)).slice(5).map((id) => ({ field: 'adapters', reason: '最多 5 个适配器，多出的丢掉', snippet: id })),
+    ]
+    if (!item.adapters.length) {
+      item.adapters = [...GAL_DEFAULT_OPTIONS.adapters]
+      if (rawAdapters.length) adapterWarnings.push({ field: 'adapters', reason: `没有可用的适配器，退回默认 ${item.adapters.join(' / ')}`, snippet: rawAdapters.join(',').slice(0, 80) })
+    }
+    Object.defineProperty(item, 'adapterWarnings', { value: adapterWarnings, enumerable: false })
     // 封面、脚本数来自 config（卡片/索引读的是 item.cover / item.scriptCount，这里同步出来）
+    if (warnings.length) item.configWarnings = warnings.slice(0, 20)
     item.coverPath = item.config.cover || ''
     item.cover = item.coverPath ? coverUrl(item.itemId) : ''
     item.scriptCount = Math.max(0, Number(item.config.scriptCount) || 0)
@@ -174,52 +194,18 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     if (fromMedia) rel = rel.slice(2)
     if (!rel || rel.split('/').some((part) => part === '..' || part === '')) throw bad('资源路径无效')
     const work = workDirOf(item)
-    const candidates = []
+    // 解析顺序（规则全在 gal/resolve.mjs，config.resourceResolve 配）：原路径（资源根依次 + stripPrefixes 去前缀）→ rewrites → extensionFallbacks → normalizeUnicode → 按路径段忽略大小写；
+    // 找到的真实路径（realpath）必须在媒体目录内，或在管理员写的 resourceResolve.allowedRoots 内——目录穿越和符号链接逃逸都挡掉。
     if (fromMedia) {
       if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
-      candidates.push(path.join(work, rel))
-    } else {
-      for (const root of config.resourceRoots) {
-        const rootDir = path.join(work, ...(root ? root.split('/') : []))
-        candidates.push(path.join(rootDir, rel))
-        for (const prefix of config.stripPrefixes) if (rel.startsWith(prefix)) candidates.push(path.join(rootDir, rel.slice(prefix.length)))
-      }
+      const hit = await resolveOnDisk({ work, rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: false })   // ~/ 路径：只认媒体目录内的原路径，不套任何解析规则 / allowedRoots
+      if (hit) return hit
+      throw bad('资源不存在', 404)
     }
-    const realWork = await realpath(work).catch(() => work)
-    for (const candidate of candidates) {
-      try {
-        const real = await realpath(candidate)
-        if (!real.startsWith(realWork + path.sep)) continue
-        if ((await stat(real)).isFile()) return real
-      } catch {
-        // 下一个候选
-      }
-    }
-    // 大小写不敏感的回退：游戏多半在 Windows 上做的，脚本 / atlas 里的名字和磁盘上的大小写可能不一致（ADV_x.png / adv_x.png），Linux 上要逐段按名字忽略大小写找
-    if (!fromMedia) {
-      for (const root of config.resourceRoots) {
-        const hit = await caseInsensitive(path.join(work, ...(root ? root.split('/') : [])), rel.split('/'))
-        if (!hit) continue
-        try {
-          const real = await realpath(hit)
-          if (real.startsWith(realWork + path.sep) && (await stat(real)).isFile()) return real
-        } catch { /* 下一个 */ }
-      }
-    }
+    const variants = [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))]
+    const hit = await resolveOnDisk({ work, rootRels: config.resourceRoots, variants, cfg: config.resourceResolve })
+    if (hit) return hit
     throw bad('资源不存在', 404)
-  }
-
-  async function caseInsensitive(base, parts) {
-    let current = base
-    for (const part of parts) {
-      let names
-      try { names = await readdir(current) } catch { return '' }
-      const lower = part.toLowerCase()
-      const name = names.includes(part) ? part : names.find((n) => n.toLowerCase() === lower)
-      if (!name) return ''
-      current = path.join(current, name)
-    }
-    return current
   }
 
   // frame：视频 → 一帧 JPEG（卡片缩略图）。resolveAsset 已经把路径限制在媒体目录内，截出来的图缓存在 cache/gal-thumbs，返回 { file, contentType } 让路由按文件发（ETag / 长缓存）
@@ -261,6 +247,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       config: item.config,
       adapters: item.adapters,
       resolveAsset: (rel) => resolveAsset(item, rel),
+      extraWarnings: [...(item.configWarnings || []), ...(item.adapterWarnings || [])],
     })
   }
 
@@ -320,6 +307,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const itemId = sha1(`gal:${real.normalize('NFC')}`)
     const existing = (await itemExists(itemId)) ? await readItem(itemId) : null
     const now = new Date().toISOString()
+    const importApplied = opts.config ? applyGalConfigPatchWithWarnings(existing?.config || {}, opts.config) : null
     const item = normalizeItem({
       ...(existing || {}),
       itemId,
@@ -328,7 +316,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       sourceProfile: GAL_PROFILE,
       adapters: opts.adapters,
       source: { path: real },
-      config: opts.config ? applyGalConfigPatch(existing?.config || {}, opts.config) : existing?.config || {},
+      config: importApplied ? importApplied.config : existing?.config || {},
+      ...(importApplied?.warnings.length ? { configWarnings: cleanWarnings(importApplied.warnings).slice(0, 20) } : {}),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     })
@@ -375,7 +364,11 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     if (Number.isFinite(published)) next.publishedAt = new Date(published).toISOString()
     // gal.config：tag 脚本（gal-layout）写的配置补丁。默认合并（补丁里写了的字段替换原来的，值为 null = 删掉回默认），replace = 整体替换
     if (patch.gal && typeof patch.gal === 'object' && !Array.isArray(patch.gal) && patch.gal.config !== undefined) {
-      next.config = applyGalConfigPatch(item.config, patch.gal.config, { replace: patch.gal.replace === true })
+      const applied = applyGalConfigPatchWithWarnings(item.config, patch.gal.config, { replace: patch.gal.replace === true })
+      next.config = applied.config
+      // 这次补丁里被丢掉 / 夹住的内容记在条目上（替换上一次的），列表页的渲染诊断里能看到
+      if (applied.warnings.length) next.configWarnings = cleanWarnings(applied.warnings).slice(0, 20)
+      else delete next.configWarnings
     }
     return { ...next, updatedAt: new Date().toISOString() }
   })

@@ -32,14 +32,69 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 | `cover` / `scriptCount` / `script` | 封面路径（`~/` 开头 = 相对媒体目录，只给封面用）/ 脚本数 / 谁写的这份配置 `{id, version, ranAt}` |
 | `groups` | 分组：`[{parent: 通配或 '.', pattern}]`。列 `parent` 下的目录时，脚本名（无扩展名）匹配 `pattern` 的按**第 1 个捕获组**归进虚拟目录（一个键一张卡片，节点 id `g:<键>:<路径>`），不匹配的照常列出；名字/头像和真实目录一样查 `labels` / `namesFiles` / `dirThumbs`。`parent: '.'` = 脚本根本身（`merge` 也认） |
 | `game` | `{id, title}`：这个媒体是哪个游戏/资源包（`id` 只含字母数字 `_-`）。**导入时在 config 里写**，tag 脚本按它分发——同一个 adapter、配置不同的两个媒体靠它区分；脚本同时打 `Gal游戏: <id>` 标签方便搜索（以 config 为准） |
-| `adapterOptions` | `{<adapter id>: {…}}`，原样交给适配器（≤ 8KB）；需要查别的文件的适配器用它指路径，见下 |
+| `adapterOptions` | `{<adapter id>: {…}}`，原样交给适配器（每个适配器序列化后 ≤ 16 KB，合计 ≤ 64 KB，最多 10 个适配器；规则表会放在这里）；需要查别的文件的适配器用它指路径。适配器从 `prepare({options})` 或 **`parse` 的 `meta.options`** 拿到，见「适配器契约」 |
 | `scriptIndex` | 脚本索引（给脚本配缩略图 + 来源角标）：`[{dir, pattern, key, badge}]`。`dir`（相对媒体目录）里的文件名匹配 `pattern` 时，按 `key` 模板（`{1}{2}…` = 捕获组）算出它对应哪个脚本（脚本名，无扩展名），这个文件就是那个脚本的缩略图，`badge` 显示在卡片右上角 |
 | `hiddenDirs` | 列目录时不显示的目录名（任意层级，精确匹配） |
+| `classify` / `resourceResolve` / `indexSkip` / `limits` / `player` | 引擎层的通用能力（只读配置、按配置匹配；脏知识由元数据脚本写进来）：音频指令重分类 / 资源路径解析规则 / 文件索引跳过的名字 / 上限 / 播放器默认值，见下「引擎层通用配置」 |
 | `stripPrefixes` `scriptExtensions` `pageSize` | 资源找不到时去掉的前缀 / 脚本扩展名 / 每页卡片数 |
 
 元数据里只存**写过的字段**（没写的随引擎默认值走）；补丁默认合并（写了的顶层字段整个替换，`null` = 删掉回默认），`replace` = 整体替换。
 所有路径都是相对媒体目录、不许绝对路径和 `..`；模板只做占位符替换，读文件前仍要通过存在性检查和「只认媒体目录内的真实路径」——
 脚本写进去的 config 再坏，也读不到媒体目录以外。
+
+### 适配器契约：`meta.options` / `meta.config`
+
+`adapter.parse(text, ctx, meta)` 的 `meta`（`buildScene(adapterId, text, ctx, meta)` 的第 4 个参数；浏览、列表摘要、随机语音三处都一样）：
+
+```js
+meta = {
+  rel, stem, scene?,          // 脚本路径 / 文件名（无扩展名）/ <文件>::<场景> 里的场景号
+  options,                    // config.adapterOptions[适配器 id]，没有 = {}（和 prepare({options}) 同一个对象；没有 prepare 的适配器只能从这里拿）
+  config,                     // 引擎配置的只读视图（深度冻结）：{ classify, resourceResolve, player, limits, indexSkip }
+}
+```
+
+适配器只做「读配置、按配置匹配」；脚本（`scripts/tag-scripts/gal-layout`，管理员运行）把路径 / 正则 / 命名规则 / 猜出来的映射写进 `adapterOptions` 和上面这几个字段。
+`prepare({ options, texts, files, toResourcePath, truncated, sampleTruncated, mediaDir })` 不变（多了 `sampleTruncated`）。
+适配器按文件索引查资源时用 `gal/resolve.mjs` 的 `createIndexResolver({ index, cfg: meta.config.resourceResolve, preferDirs })`（见下），不要自己写大小写 / 扩展名 / 重复文件名的逻辑。
+`parse` 之后 `buildScene` 统一过一遍 `meta.config.classify`（适配器不用管）。
+
+### 引擎层通用配置（`config` 的新字段，全部可选；没写 = 原来的行为）
+
+写错的部分**丢掉并报告**：规整时每处被丢掉 / 夹住 / 退回默认的内容都进 `warnings`（`{field, reason, snippet}`；`normalizeGalConfigWithWarnings(raw)` 返回 `{config, warnings}`，`normalizeGalConfig(raw)` 的返回值上有不可枚举的 `warnings`）。
+导入 / 元数据脚本补丁里丢掉的内容记在条目的 `configWarnings`（落盘，下一次干净的补丁清掉）；条目 JSON 里手写坏的也会报；不认识 / 写坏的适配器 id 也报。列表页（所有非播放页节点）的**渲染诊断**里每条一行
+`code: config-dropped`（最多 10 行，多的汇总一行）。
+
+- **`classify`**（数组 ≤ 50）：`[{ match, on?, from?, as }]`。`match` = 正则源码（不分大小写，≤ 200 字符，和随机语音同一套安全检查：量词套量词 / 反向引用 / 编译错误 = 丢掉并报告）；
+  `on` = `src`（默认，指令的资源路径）| `speaker`（当前说话人 = 这一步之前最近一条 speaker 指令，跨步沿用）| `text`（这一步第一句有字的台词，台词在语音之后也行）；
+  `from` = 只处理这些 op，`se` `voice` `bgm` `bgse` `bgvoice` 的子集（默认全部音频 op）；`as` = `voice` `se` `bgm` `bgse` `bgvoice` | `drop`（删掉）。
+  `scene.mjs` 的 `buildScene` 在适配器 `parse` 之后对所有音频指令过一遍，**第一条命中的规则生效**；改类型时字段保持合理：`se` / `voice` / `bgm` = `{src}`（bgm 的 loop / fade 丢掉），`bgse` 要 `loop`（原来没有 = `true`），
+  `bgvoice` 要 `slot`（默认 `classified`）/ `volume`（默认 1）；指令上的 `when` 条件保留。命中但类型没变的不改。改动条数写进 `scene.stats.classified`（有规则才有这个字段）。
+  例：`classify: [{ match: '/voice/', as: 'voice' }, { match: '^narrator$', on: 'speaker', from: ['voice'], as: 'drop' }]`
+- **`resourceResolve`**（对象；资源路径解析规则，`gal/resolve.mjs` 只实现一次，磁盘层 `resolveAsset` 和内存索引层 `createIndexResolver` 共用）：
+  `extensionFallbacks`：`{ '.m4a': ['.wav', '.ogg'] }`（键小写；≤ 30 项、每项 ≤ 10 个）；`rewrites`：`[{ match, replace, flags? }]`（≤ 30 条，`replace` 里 `$1` 引用捕获组，`flags` 只能是 `'i'`，默认区分大小写；**每条规则各自对原路径替换**，按顺序各出一个候选；替换出的 `..` / 绝对路径丢掉）；
+  `normalizeUnicode`：`['NFC', 'NFD']`（对每个候选再试这些形式）；`preferDirs`：`['dir/a', …]`（索引里同名文件不止一个时，按这些目录前缀的顺序挑，没有就取字典序第一个）；
+  `caseInsensitive`：默认 `true`（= 以前的行为），`false` 只认大小写完全一致；`allowedRoots`：`['/abs/dir', …]`（**管理员专用**，绝对目录，≤ 20 个，不许 `..` / `/`；realpath 确认时，目标在媒体目录内**或**这些目录内都放行，默认 `[]` = 只认媒体目录）。
+  **解析顺序**：原路径（资源根依次，`stripPrefixes` 去前缀的变体）→ `rewrites` → `extensionFallbacks`（对前面每个候选）→ `normalizeUnicode`（对前面每个候选）→ 按路径段忽略大小写（`caseInsensitive`）；每一步找到的真实路径都要在媒体目录或 `allowedRoots` 内，目录穿越（`..`）一律 400。`~/` 路径（缩略图 / 封面）不套任何规则。
+  例：`resourceResolve: { extensionFallbacks: { '.m4a': ['.wav'] }, rewrites: [{ match: '^bgm/(.*)\\.mp3$', replace: 'sound/$1.ogg' }], preferDirs: ['voice/jp'], allowedRoots: ['/data/shared-assets'] }`
+- **`indexSkip`**（数组 ≤ 20，正则源码，对**文件 / 目录名**匹配，区分大小写）：文件索引（`context.mjs` 遍历）跳过的名字。**默认（没写）= 以前写死的规则**，写成默认值 `['^\\.', '\\|', '#']`（`.` 开头 / 含 `|` / 含 `#`）；可以覆盖，写 `[]` = 一个都不跳过（索引 `#` 的名字）。浏览列表（节点 id 里不能有 `|` `#`）不受它影响。
+- **`limits`**：`{ walkFiles ≤ 2,000,000（默认 40 万）, sampleFiles ≤ 20,000（默认 3000）, sampleBytes 256..256KB（默认 24KB）, scriptBytes ≤ 64MB（默认 4MB，超过的脚本不被识别）, walkDepth ≤ 12（默认 6） }`。超出范围夹住并报告，不是数字丢掉并报告。适配器自己的 `contextWalkLimit` / `contextSampleLimit` 仍是适配器的默认，`config.limits` 覆盖两者。缓存键含这些值。
+- **索引截断的诊断**：目录遍历超过 walk 上限 → `truncated`（`index-truncated` 问题）；脚本抽样（`contextTextFilter`）超过 sample 上限 → **新的 `sampleTruncated`**（`stats` / 节点的 `index.sampleTruncated` / `sample-truncated` 问题；控制台也打日志；传给 `prepare({ sampleTruncated })`），以前这里是悄悄丢的。
+- **`player`**（这个游戏的播放器**默认值**，只在用户浏览器里没存过对应设置时生效；经节点的 `node.player` 下发，前端白名单 + 夹范围再来一次）：`fontScale` 0.6..2（`copymanga.gal.fontScale`）、`textOpacity` 0..1（`copymanga.gal.boxOpacity`）、`autoDelay` 0..30 秒（`copymanga.gal.autoVoiceDelay`）、
+  `cameraMode` `'auto'` | `'fixed'`（角色摆放；没有按媒体存过时）、`zoom` 0.5..4（静图 / 角色放大，没有按媒体存过时）、`minFitScale` 0.3..1（台词太长最多缩到的倍数，没有浏览器设置项）、`fastInterval` 20..500 毫秒（快进每步间隔，没有浏览器设置项）。例：`player: { fontScale: 1.2, cameraMode: 'fixed' }`。
+
+**适配器用的内存索引解析器**（`web/library/gal/resolve.mjs`）：
+
+```js
+import { createIndexResolver, candidatePaths } from '../resolve.mjs'
+const r = createIndexResolver({ index, cfg: meta.config.resourceResolve, preferDirs })   // index：Map / Set / 数组 / 普通对象 / { has(), keys()? }
+r.resolve('audio/a.m4a')    // → 索引里真实存在的路径（原样的键），没有 ''（精确 → rewrites → 扩展名回退 → unicode → 忽略大小写）
+r.resolveByName('a.m4a')    // → 只知道文件名：索引里 basename 匹配的路径，按 preferDirs（参数覆盖 cfg.preferDirs）的顺序挑，没有 ''
+r.has(path)                 // → resolve(path) !== ''
+candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径，去重，都是安全相对路径）
+```
+
+测试：`node scripts/dev/gal-engine-config-selftest.mjs`（node 即可）；播放器默认值的浏览器检查：`node scripts/dev/fe-gal-player-defaults-selftest.mjs`（端口 8171）。
 
 ### 适配器的列表（catalog）
 

@@ -5,9 +5,10 @@
 // config 全是数据（路径、字典、模板），不含代码：模板只做占位符替换，之后仍要通过存在性检查和「只认媒体目录内的真实路径」才会被读。
 
 import { safeRelPath } from './paths.mjs'
-import { isValidVoiceRegex } from './voice.mjs'
+import { compileSafeRegex, isValidVoiceRegex } from './voice.mjs'
 
 export const DEFAULT_PAGE_SIZE = 25
+export const DEFAULT_INDEX_SKIP = Object.freeze(['^\\.', '\\|', '#'])
 export const MAX_SCRIPT_BYTES = 4 * 1024 * 1024
 
 export const DEFAULT_GAL_CONFIG = Object.freeze({
@@ -75,19 +76,30 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 随机语音的默认白名单 / 黑名单（JS 正则源码，不分大小写，≤200 字符，匹配语音的资源路径；不合格的置空）。界面 / 请求里填了的覆盖它，见 README「随机语音」
   voiceInclude: '',
   voiceExclude: '',
+  // 音频指令重分类（所有适配器的输出统一过一遍，见 scene.mjs applyClassify）：[{ match, on, from, as }]，≤ 50 条，第一条命中的生效
+  classify: [],
+  // 资源路径解析规则（见 resolve.mjs）：{ extensionFallbacks, rewrites, normalizeUnicode, preferDirs, caseInsensitive, allowedRoots }；没写的项 = 原行为
+  resourceResolve: {},
+  // 文件索引（context.mjs 的目录遍历）跳过的名字：正则源码数组，对「文件名 / 目录名」匹配。默认 = 以前写死的规则（. 开头 / 含 | / 含 #），写 [] = 一个都不跳过
+  indexSkip: DEFAULT_INDEX_SKIP,
+  // 上限：{ walkFiles, sampleFiles, sampleBytes, scriptBytes, walkDepth }（没写的用引擎默认 / 适配器自己的 contextWalkLimit / contextSampleLimit）
+  limits: {},
+  // 播放器默认值（只在用户浏览器里没有存过对应设置时生效）：{ fontScale, textOpacity, autoDelay, cameraMode, zoom, minFitScale, fastInterval }
+  player: {},
   scriptCount: 0,     // 脚本数（脚本统计后写；0 = 不知道）
   script: null,       // 谁写的这份配置：{ id, version, ranAt }（脚本自己写，用来知道当前配置是哪一版脚本生成的）
 })
 
 const MAX_LIST = 20
+const MAX_RULE_REGEX = 200
 const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '')
 
-function relList(value, fallback, { allowEmpty = false } = {}) {
+function relList(value, fallback, { allowEmpty = false, onDrop = null } = {}) {
   if (!Array.isArray(value)) return fallback.slice()
   const out = []
   for (const raw of value.slice(0, 10)) {
     const rel = safeRelPath(raw)
-    if (rel === null || (rel === '' && !allowEmpty) || out.includes(rel)) continue
+    if (rel === null || (rel === '' && !allowEmpty) || out.includes(rel)) { if (rel === null || (rel === '' && !allowEmpty)) onDrop?.(raw); continue }
     out.push(rel)
   }
   return out.length ? out : fallback.slice()
@@ -136,74 +148,116 @@ export function normalizeNodes(raw) {
   return out.home ? out : null
 }
 
-// raw（元数据里存的）→ 规整后的完整 config（缺的字段用默认；非法的丢掉或退回默认）。没有 raw 的字段取默认值，不是「空」
-export function normalizeGalConfig(raw) {
-  const v = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+// ---------- 新增字段的上限 ----------
+export const CLASSIFY_MAX = 50
+export const CLASSIFY_FROM = ['se', 'voice', 'bgm', 'bgse', 'bgvoice']
+export const CLASSIFY_ON = ['src', 'speaker', 'text']
+export const CLASSIFY_AS = ['voice', 'se', 'bgm', 'bgse', 'bgvoice', 'drop']
+export const RESOLVE_MAX = { rewrites: 30, extKeys: 30, extTargets: 10, dirs: 20, roots: 20 }
+export const INDEX_SKIP_MAX = 20
+// 数值上限：{ 字段: [最小, 最大] }（超出就夹到范围内并报告；不是数字就丢掉并报告）
+export const LIMIT_RANGES = {
+  walkFiles: [1, 2000000],
+  sampleFiles: [1, 20000],
+  sampleBytes: [256, 256 * 1024],
+  scriptBytes: [1024, 64 * 1024 * 1024],
+  walkDepth: [1, 12],
+}
+// 播放器默认值：{ 字段: [最小, 最大, 是否取整] }，对应 gal-player.js 的 GAL_SETTINGS（cameraMode 另算）
+export const PLAYER_RANGES = {
+  fontScale: [0.6, 2],        // 台词字体倍数（copymanga.gal.fontScale）
+  textOpacity: [0, 1],        // 文本框背景不透明度（copymanga.gal.boxOpacity）
+  autoDelay: [0, 30],         // 自动播放：语音播完再等几秒（copymanga.gal.autoVoiceDelay）
+  zoom: [0.5, 4],             // 画面放大（静图 / 角色，没有按媒体存过时）
+  minFitScale: [0.3, 1],      // 台词太长时最多缩到字体设置的多少倍（没有浏览器设置项，直接用）
+  fastInterval: [20, 500, true], // 快进每步间隔毫秒
+}
+export const ADAPTER_OPTIONS_MAX = { perAdapter: 16 * 1024, total: 64 * 1024, adapters: 10 }
+
+const snippetOf = (value) => { try { const t = typeof value === 'string' ? value : JSON.stringify(value); return String(t ?? '').replace(/\s+/g, ' ').slice(0, 80) } catch { return '' } }
+const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+// raw（元数据里存的）→ { config, warnings }。warnings = [{ field, reason, snippet }]：每一处被丢掉 / 夹住 / 退回默认的内容都报告，不再悄悄丢
+export function normalizeGalConfigWithWarnings(raw) {
+  const v = isPlainObject(raw) ? raw : {}
   const d = DEFAULT_GAL_CONFIG
+  const warnings = []
+  const warn = (field, reason, value) => { if (warnings.length < 200) warnings.push({ field, reason, snippet: snippetOf(value) }) }
+  const overList = (field, value, max) => { if (Array.isArray(value) && value.length > max) warn(field, `超过 ${max} 项，多出的被丢掉`, value.slice(max, max + 1)) }
 
   const roots = []
   const seen = new Set()
+  overList('scriptRoots', v.scriptRoots, MAX_LIST)
   for (const r of Array.isArray(v.scriptRoots) ? v.scriptRoots.slice(0, MAX_LIST) : []) {
     const dir = safeRelPath(r?.dir)
     const id = typeof r?.id === 'string' ? r.id : ''
-    if (dir === null || id.includes('|') || id.includes('#') || seen.has(id)) continue
+    if (dir === null || id.includes('|') || id.includes('#') || seen.has(id)) { warn('scriptRoots', dir === null ? 'dir 不是安全的相对路径' : seen.has(id) ? 'id 重复' : 'id 里不能有 | 或 #', r); continue }
     seen.add(id)
     roots.push({ id, dir, label: text(r?.label, 60) || id })
   }
+  if (v.scriptRoots !== undefined && !Array.isArray(v.scriptRoots)) warn('scriptRoots', '不是数组，用默认值', v.scriptRoots)
 
   const labels = {}
-  if (v.labels && typeof v.labels === 'object' && !Array.isArray(v.labels)) {
-    for (const [name, label] of Object.entries(v.labels).slice(0, 500)) if (safeName(name) && text(label, 40)) labels[name] = text(label, 40)
-  }
+  if (isPlainObject(v.labels)) {
+    for (const [name, label] of Object.entries(v.labels).slice(0, 500)) {
+      if (safeName(name) && text(label, 40)) labels[name] = text(label, 40)
+      else warn('labels', '目录名或标签无效', { [name]: label })
+    }
+  } else if (v.labels !== undefined) warn('labels', '不是对象，已丢掉', v.labels)
 
   const views = []
+  overList('views', v.views, MAX_LIST)
   for (const rule of Array.isArray(v.views) ? v.views.slice(0, MAX_LIST) : []) {
     const parent = safeGlob(rule?.parent) === '.' || !rule?.parent ? '' : safeRelPath(text(rule.parent, 200))
     const as = safeName(typeof rule?.as === 'string' ? rule.as : '')
-    if (parent === null || !as) continue
+    if (parent === null || !as) { warn('views', parent === null ? 'parent 不是安全路径' : 'as 无效', rule); continue }
     const dirs = (Array.isArray(rule?.dirs) ? rule.dirs : []).map(safeName).filter(Boolean).slice(0, 10)
     const match = text(rule?.match, 200)
-    if (match) { try { new RegExp(match) } catch { continue } }
+    if (match) { try { new RegExp(match) } catch { warn('views', 'match 不是合法正则', rule); continue } }
     const badges = {}
-    if (rule.badges && typeof rule.badges === 'object' && !Array.isArray(rule.badges)) {
+    if (isPlainObject(rule.badges)) {
       for (const [name, badge] of Object.entries(rule.badges).slice(0, 10)) if (safeName(name) && text(badge, 12)) badges[name] = text(badge, 12)
     }
-    if (views.some((x) => x.parent === parent && x.as === as)) continue
+    if (views.some((x) => x.parent === parent && x.as === as)) { warn('views', 'parent + as 重复', rule); continue }
     views.push({ parent, as, label: text(rule?.label, 40), dirs, match, exclusive: Boolean(rule?.exclusive), badges })
   }
 
   const nodes = normalizeNodes(v.nodes)
+  if (v.nodes !== undefined && v.nodes !== null && !nodes) warn('nodes', '没有 home 节点或格式不对，当作没配', v.nodes)
 
   const merge = []
+  overList('merge', v.merge, MAX_LIST)
   for (const rule of Array.isArray(v.merge) ? v.merge.slice(0, MAX_LIST) : []) {
     const parent = safeGlob(rule?.parent)
     const dirs = (Array.isArray(rule?.dirs) ? rule.dirs : []).map(safeName).filter(Boolean).slice(0, 10)
-    if (!parent || !dirs.length) continue
+    if (!parent || !dirs.length) { warn('merge', 'parent 或 dirs 无效', rule); continue }
     const badges = {}
-    if (rule.badges && typeof rule.badges === 'object' && !Array.isArray(rule.badges)) {
+    if (isPlainObject(rule.badges)) {
       for (const [name, badge] of Object.entries(rule.badges).slice(0, 10)) if (safeName(name) && text(badge, 12)) badges[name] = text(badge, 12)
     }
     merge.push({ parent, dirs, badges })
   }
 
   const dirThumbs = []
+  overList('dirThumbs', v.dirThumbs, MAX_LIST)
   for (const rule of Array.isArray(v.dirThumbs) ? v.dirThumbs.slice(0, MAX_LIST) : []) {
     const paths = (Array.isArray(rule?.paths) ? rule.paths : []).map((p) => text(p, 300)).filter(Boolean).slice(0, 10)
-    if (!paths.length) continue
+    if (!paths.length) { warn('dirThumbs', 'paths 为空', rule); continue }
     const name = text(rule.name, 100)
-    if (name) { try { new RegExp(name) } catch { continue } }
+    if (name) { try { new RegExp(name) } catch { warn('dirThumbs', 'name 不是合法正则', rule); continue } }
     dirThumbs.push({ parent: text(rule.parent, 100) || '*', name, paths })
   }
 
   const thumbSources = []
+  overList('thumbSources', v.thumbSources, 10)
   for (const rule of Array.isArray(v.thumbSources) ? v.thumbSources.slice(0, 10) : []) {
     const raw = text(rule?.dir, 200).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
     const fromMedia = raw.startsWith('~/')
     const rest = safeRelPath(fromMedia ? raw.slice(2) : raw)
     const match = text(rule?.match, 300)
-    if (rest === null || !match) continue
-    try { new RegExp(match); if (rule.forMatch && !regexOrEmpty(rule.forMatch)) continue } catch { continue }
-    if (!rest) continue
+    if (rest === null || !match) { warn('thumbSources', rest === null ? 'dir 不是安全路径' : 'match 为空', rule); continue }
+    try { new RegExp(match); if (rule.forMatch && !regexOrEmpty(rule.forMatch)) { warn('thumbSources', 'forMatch 不是合法正则', rule); continue } } catch { warn('thumbSources', 'match 不是合法正则', rule); continue }
+    if (!rest) { warn('thumbSources', 'dir 为空', rule); continue }
     thumbSources.push({
       dir: fromMedia ? `~/${rest}` : rest, match, key: text(rule.key, 100) || '{1}',
       for: ['script', 'dir'].includes(rule.for) ? rule.for : 'both', forKey: text(rule.forKey, 100), forMatch: regexOrEmpty(rule.forMatch),
@@ -212,57 +266,234 @@ export function normalizeGalConfig(raw) {
   }
 
   const groups = []
+  overList('groups', v.groups, MAX_LIST)
   for (const rule of Array.isArray(v.groups) ? v.groups.slice(0, MAX_LIST) : []) {
     const parent = safeGlob(rule?.parent)
     const pattern = text(rule?.pattern, 200)
-    if (!parent || !pattern) continue
-    try { if (new RegExp(`${pattern}|`).exec('').length < 2) continue } catch { continue }
+    if (!parent || !pattern) { warn('groups', 'parent 或 pattern 为空', rule); continue }
+    try { if (new RegExp(`${pattern}|`).exec('').length < 2) { warn('groups', 'pattern 没有捕获组', rule); continue } } catch { warn('groups', 'pattern 不是合法正则', rule); continue }
     groups.push({ parent, pattern })
   }
 
-  const game = v.game && typeof v.game === 'object' && !Array.isArray(v.game) && /^[A-Za-z0-9_-]{1,40}$/.test(String(v.game.id ?? ''))
+  const game = isPlainObject(v.game) && /^[A-Za-z0-9_-]{1,40}$/.test(String(v.game.id ?? ''))
     ? { id: String(v.game.id), title: text(v.game.title, 100) }
     : null
+  if (v.game !== undefined && v.game !== null && !game) warn('game', 'id 必须是 1-40 位字母 / 数字 / _ / -，当作没配', v.game)
 
+  // adapterOptions：每个适配器 ≤ 16 KB，合计 ≤ 64 KB（规则表会放在这里）；id 不合格 / 不是对象 / 太大 / 超出合计 = 丢掉并报告
   const adapterOptions = {}
-  if (v.adapterOptions && typeof v.adapterOptions === 'object' && !Array.isArray(v.adapterOptions)) {
-    for (const [id, options] of Object.entries(v.adapterOptions).slice(0, 10)) {
-      if (!/^[a-z0-9-]{1,40}$/.test(id) || !options || typeof options !== 'object' || Array.isArray(options)) continue
+  if (isPlainObject(v.adapterOptions)) {
+    let total = 0
+    const entries = Object.entries(v.adapterOptions)
+    if (entries.length > ADAPTER_OPTIONS_MAX.adapters) warn('adapterOptions', `适配器超过 ${ADAPTER_OPTIONS_MAX.adapters} 个，多出的被丢掉`, entries[ADAPTER_OPTIONS_MAX.adapters][0])
+    for (const [id, options] of entries.slice(0, ADAPTER_OPTIONS_MAX.adapters)) {
+      if (!/^[a-z0-9-]{1,40}$/.test(id)) { warn('adapterOptions', '适配器 id 不合格（只能是小写字母 / 数字 / -，≤ 40 位），整项被丢掉', id); continue }
+      if (!isPlainObject(options)) { warn(`adapterOptions.${id}`, '不是对象，已丢掉', options); continue }
       try {
         const json = JSON.stringify(options)
-        if (json.length <= 8000) adapterOptions[id] = JSON.parse(json)
-      } catch { /* 丢掉 */ }
+        if (json.length > ADAPTER_OPTIONS_MAX.perAdapter) { warn(`adapterOptions.${id}`, `序列化后 ${json.length} 字符，超过单个适配器上限 ${ADAPTER_OPTIONS_MAX.perAdapter}，已丢掉`, json); continue }
+        if (total + json.length > ADAPTER_OPTIONS_MAX.total) { warn(`adapterOptions.${id}`, `合计超过 ${ADAPTER_OPTIONS_MAX.total} 字符，已丢掉`, json); continue }
+        total += json.length
+        adapterOptions[id] = JSON.parse(json)
+      } catch { warn(`adapterOptions.${id}`, '无法序列化，已丢掉', '') }
     }
-  }
+  } else if (v.adapterOptions !== undefined) warn('adapterOptions', '不是对象，已丢掉', v.adapterOptions)
 
   const scriptIndex = []
+  overList('scriptIndex', v.scriptIndex, MAX_LIST)
   for (const rule of Array.isArray(v.scriptIndex) ? v.scriptIndex.slice(0, MAX_LIST) : []) {
     const dir = safeRelPath(rule?.dir)
     const pattern = text(rule?.pattern, 200)
-    if (!dir || !pattern) continue
-    try { new RegExp(pattern) } catch { continue }
+    if (!dir || !pattern) { warn('scriptIndex', 'dir 或 pattern 无效', rule); continue }
+    try { new RegExp(pattern) } catch { warn('scriptIndex', 'pattern 不是合法正则', rule); continue }
     scriptIndex.push({ dir, pattern, key: text(rule?.key, 100) || '{1}', badge: text(rule?.badge, 12) })
   }
 
   const rawIgnore = []
+  overList('rawIgnore', v.rawIgnore, 50)
   for (const source of (Array.isArray(v.rawIgnore) ? v.rawIgnore : []).slice(0, 50)) {
     const pattern = text(source, 200)
-    if (!pattern || rawIgnore.includes(pattern)) continue
-    try { new RegExp(pattern, 'i') } catch { continue }
+    if (!pattern || rawIgnore.includes(pattern)) { if (!pattern) warn('rawIgnore', '空的或不是字符串', source); continue }
+    try { new RegExp(pattern, 'i') } catch { warn('rawIgnore', '不是合法正则', source); continue }
     rawIgnore.push(pattern)
+  }
+
+  // ---------- classify ----------
+  const classify = []
+  if (v.classify !== undefined && !Array.isArray(v.classify)) warn('classify', '不是数组，已丢掉', v.classify)
+  overList('classify', v.classify, CLASSIFY_MAX)
+  for (const rule of Array.isArray(v.classify) ? v.classify.slice(0, CLASSIFY_MAX) : []) {
+    if (!isPlainObject(rule)) { warn('classify', '规则不是对象', rule); continue }
+    let re = null
+    try { re = compileSafeRegex(rule.match, { flags: 'i', label: 'match' }) } catch (error) { warn('classify', `match：${error.message}`, rule); continue }
+    if (!re) { warn('classify', 'match 为空', rule); continue }
+    const on = rule.on === undefined ? 'src' : rule.on
+    if (!CLASSIFY_ON.includes(on)) { warn('classify', `on 只能是 ${CLASSIFY_ON.join(' / ')}`, rule); continue }
+    if (!CLASSIFY_AS.includes(rule.as)) { warn('classify', `as 只能是 ${CLASSIFY_AS.join(' / ')}`, rule); continue }
+    let from = CLASSIFY_FROM.slice()
+    if (rule.from !== undefined) {
+      const given = Array.isArray(rule.from) ? rule.from : []
+      from = [...new Set(given.filter((op) => CLASSIFY_FROM.includes(op)))]
+      if (from.length !== given.length || !Array.isArray(rule.from)) warn('classify', `from 里有不认识的 op（可选：${CLASSIFY_FROM.join(' / ')}）`, rule)
+      if (!from.length) { warn('classify', 'from 没有合法的 op，规则已丢掉', rule); continue }
+    }
+    classify.push({ match: text(rule.match, MAX_RULE_REGEX), on, from, as: rule.as })
+  }
+
+  // ---------- resourceResolve ----------
+  const resourceResolve = {}
+  if (v.resourceResolve !== undefined && !isPlainObject(v.resourceResolve)) warn('resourceResolve', '不是对象，已丢掉', v.resourceResolve)
+  if (isPlainObject(v.resourceResolve)) {
+    const rr = v.resourceResolve
+    const extOk = (e) => typeof e === 'string' && /^\.[^./\\\0]{1,16}$/.test(e)
+    if (rr.extensionFallbacks !== undefined) {
+      if (!isPlainObject(rr.extensionFallbacks)) warn('resourceResolve.extensionFallbacks', '不是 { 扩展名: [扩展名…] } 对象，已丢掉', rr.extensionFallbacks)
+      else {
+        const out = {}
+        const entries = Object.entries(rr.extensionFallbacks)
+        if (entries.length > RESOLVE_MAX.extKeys) warn('resourceResolve.extensionFallbacks', `超过 ${RESOLVE_MAX.extKeys} 项，多出的被丢掉`, entries[RESOLVE_MAX.extKeys][0])
+        for (const [from, list] of entries.slice(0, RESOLVE_MAX.extKeys)) {
+          const key = from.toLowerCase()
+          const targets = (Array.isArray(list) ? list : []).filter(extOk).slice(0, RESOLVE_MAX.extTargets)
+          if (!extOk(from) || !targets.length || !Array.isArray(list) || targets.length !== list.length) warn('resourceResolve.extensionFallbacks', '扩展名要写成 ".xxx"，值是非空数组', { [from]: list })
+          if (extOk(from) && targets.length) out[key] = targets
+        }
+        if (Object.keys(out).length) resourceResolve.extensionFallbacks = out
+      }
+    }
+    if (rr.rewrites !== undefined) {
+      if (!Array.isArray(rr.rewrites)) warn('resourceResolve.rewrites', '不是数组，已丢掉', rr.rewrites)
+      else {
+        overList('resourceResolve.rewrites', rr.rewrites, RESOLVE_MAX.rewrites)
+        const out = []
+        for (const rule of rr.rewrites.slice(0, RESOLVE_MAX.rewrites)) {
+          if (!isPlainObject(rule) || typeof rule.replace !== 'string' || rule.replace.length > 200) { warn('resourceResolve.rewrites', 'replace 必须是 ≤ 200 字符的字符串', rule); continue }
+          const flags = rule.flags === undefined || rule.flags === '' ? '' : rule.flags === 'i' ? 'i' : null
+          if (flags === null) { warn('resourceResolve.rewrites', "flags 只能是 'i'", rule); continue }
+          try { if (!compileSafeRegex(rule.match, { flags, label: 'match' })) { warn('resourceResolve.rewrites', 'match 为空', rule); continue } } catch (error) { warn('resourceResolve.rewrites', `match：${error.message}`, rule); continue }
+          out.push({ match: text(rule.match, MAX_RULE_REGEX), replace: rule.replace, ...(flags ? { flags } : {}) })
+        }
+        if (out.length) resourceResolve.rewrites = out
+      }
+    }
+    if (rr.normalizeUnicode !== undefined) {
+      const given = Array.isArray(rr.normalizeUnicode) ? rr.normalizeUnicode : []
+      const out = [...new Set(given.filter((f) => f === 'NFC' || f === 'NFD'))]
+      if (!Array.isArray(rr.normalizeUnicode) || out.length !== given.length) warn('resourceResolve.normalizeUnicode', "只能是 ['NFC', 'NFD'] 里的值", rr.normalizeUnicode)
+      if (out.length) resourceResolve.normalizeUnicode = out
+    }
+    if (rr.preferDirs !== undefined) {
+      const given = Array.isArray(rr.preferDirs) ? rr.preferDirs : []
+      overList('resourceResolve.preferDirs', given, RESOLVE_MAX.dirs)
+      const out = []
+      for (const dir of given.slice(0, RESOLVE_MAX.dirs)) {
+        const rel = typeof dir === 'string' ? safeRelPath(dir) : null
+        if (!rel) { warn('resourceResolve.preferDirs', '不是安全的相对目录', dir); continue }
+        if (!out.includes(rel)) out.push(rel)
+      }
+      if (!Array.isArray(rr.preferDirs)) warn('resourceResolve.preferDirs', '不是数组，已丢掉', rr.preferDirs)
+      if (out.length) resourceResolve.preferDirs = out
+    }
+    if (rr.caseInsensitive !== undefined) {
+      if (typeof rr.caseInsensitive === 'boolean') { if (rr.caseInsensitive === false) resourceResolve.caseInsensitive = false }
+      else warn('resourceResolve.caseInsensitive', '必须是 true / false，按默认（true）', rr.caseInsensitive)
+    }
+    if (rr.allowedRoots !== undefined) {
+      const given = Array.isArray(rr.allowedRoots) ? rr.allowedRoots : []
+      overList('resourceResolve.allowedRoots', given, RESOLVE_MAX.roots)
+      const out = []
+      for (const dir of given.slice(0, RESOLVE_MAX.roots)) {
+        const ok = typeof dir === 'string' && dir.length <= 400 && !dir.includes('\0') && (dir.startsWith('/') || /^[A-Za-z]:[\\/]/.test(dir)) && !dir.replace(/\\/g, '/').split('/').includes('..')
+        if (!ok) { warn('resourceResolve.allowedRoots', '必须是不含 .. 的绝对目录', dir); continue }
+        const normalized = dir.length > 1 ? dir.replace(/[\\/]+$/, '') : dir
+        if (normalized === '/' || normalized === '') { warn('resourceResolve.allowedRoots', '不允许放行根目录', dir); continue }
+        if (!out.includes(normalized)) out.push(normalized)
+      }
+      if (!Array.isArray(rr.allowedRoots)) warn('resourceResolve.allowedRoots', '不是数组，已丢掉', rr.allowedRoots)
+      if (out.length) resourceResolve.allowedRoots = out
+    }
+    for (const key of Object.keys(rr)) if (!['extensionFallbacks', 'rewrites', 'normalizeUnicode', 'preferDirs', 'caseInsensitive', 'allowedRoots'].includes(key)) warn('resourceResolve', `不认识的字段 ${key}，已丢掉`, key)
+  }
+
+  // ---------- indexSkip ----------
+  let indexSkip = DEFAULT_INDEX_SKIP.slice()
+  if (v.indexSkip !== undefined) {
+    if (!Array.isArray(v.indexSkip)) warn('indexSkip', '不是数组，用默认规则', v.indexSkip)
+    else {
+      overList('indexSkip', v.indexSkip, INDEX_SKIP_MAX)
+      indexSkip = []
+      for (const source of v.indexSkip.slice(0, INDEX_SKIP_MAX)) {
+        try {
+          const re = compileSafeRegex(source, { flags: '', label: 'indexSkip' })
+          if (!re) { warn('indexSkip', '空的正则', source); continue }
+          if (!indexSkip.includes(text(source, MAX_RULE_REGEX))) indexSkip.push(text(source, MAX_RULE_REGEX))
+        } catch (error) { warn('indexSkip', error.message, source) }
+      }
+    }
+  }
+
+  // ---------- limits ----------
+  const limits = {}
+  if (v.limits !== undefined && !isPlainObject(v.limits)) warn('limits', '不是对象，已丢掉', v.limits)
+  if (isPlainObject(v.limits)) {
+    for (const [key, value] of Object.entries(v.limits)) {
+      const range = LIMIT_RANGES[key]
+      if (!range) { warn('limits', `不认识的字段 ${key}，已丢掉`, key); continue }
+      const n = Math.floor(Number(value))
+      if (value === null || value === '' || typeof value === 'boolean' || !Number.isFinite(n)) { warn(`limits.${key}`, '不是数字，已丢掉', value); continue }
+      const clamped = Math.max(range[0], Math.min(range[1], n))
+      if (clamped !== n) warn(`limits.${key}`, `超出范围 ${range[0]}–${range[1]}，夹到 ${clamped}`, value)
+      limits[key] = clamped
+    }
+  }
+
+  // ---------- player ----------
+  const player = {}
+  if (v.player !== undefined && !isPlainObject(v.player)) warn('player', '不是对象，已丢掉', v.player)
+  if (isPlainObject(v.player)) {
+    for (const [key, value] of Object.entries(v.player)) {
+      if (key === 'cameraMode') {
+        if (value === 'auto' || value === 'fixed') player.cameraMode = value
+        else warn('player.cameraMode', "只能是 'auto' 或 'fixed'，已丢掉", value)
+        continue
+      }
+      const range = PLAYER_RANGES[key]
+      if (!range) { warn('player', `不认识的字段 ${key}，已丢掉`, key); continue }
+      const n = Number(value)
+      if (value === null || value === '' || typeof value === 'boolean' || !Number.isFinite(n)) { warn(`player.${key}`, '不是数字，已丢掉', value); continue }
+      let clamped = Math.max(range[0], Math.min(range[1], n))
+      if (range[2]) clamped = Math.round(clamped)
+      else clamped = Math.round(clamped * 1000) / 1000
+      if (clamped !== n) warn(`player.${key}`, `超出范围 ${range[0]}–${range[1]}，夹到 ${clamped}`, value)
+      player[key] = clamped
+    }
   }
 
   const cover = text(v.cover, 400)
   const coverRel = cover.startsWith('~/') ? safeRelPath(cover.slice(2)) : safeRelPath(cover)
-  const script = v.script && typeof v.script === 'object' && !Array.isArray(v.script)
+  if (cover && coverRel === null) warn('cover', '不是安全的相对路径，已丢掉', cover)
+  const script = isPlainObject(v.script)
     ? { id: text(v.script.id, 60), version: text(v.script.version, 40), ranAt: text(v.script.ranAt, 40) }
     : null
 
-  return {
+  const voiceRegexField = (field) => {
+    if (isValidVoiceRegex(v[field])) return text(v[field], 200)
+    if (v[field] !== undefined && v[field] !== '') warn(field, '不是合格的正则（太长 / 量词套量词 / 反向引用 / 语法错误），已置空', v[field])
+    return ''
+  }
+  const dropped = (field, list, kept) => { if (Array.isArray(list) && list.length > kept) warn(field, `${list.length - kept} 项无效被丢掉`, list) }
+  const relListOf = (field, value, fallback, opts) => {
+    const bad = []
+    const out = relList(value, fallback, { ...opts, onDrop: (raw) => bad.push(raw) })
+    for (const raw of bad) warn(field, '不是安全的相对路径，已丢掉', raw)
+    return out
+  }
+
+  const config = {
     scriptRoots: roots.length ? roots : d.scriptRoots.map((r) => ({ ...r })),
-    resourceRoots: relList(v.resourceRoots, d.resourceRoots, { allowEmpty: true }),
-    namesFiles: relList(v.namesFiles, d.namesFiles),
-    thumbsDirs: relList(v.thumbsDirs, d.thumbsDirs),
+    resourceRoots: relListOf('resourceRoots', v.resourceRoots, d.resourceRoots, { allowEmpty: true }),
+    namesFiles: relListOf('namesFiles', v.namesFiles, d.namesFiles),
+    thumbsDirs: relListOf('thumbsDirs', v.thumbsDirs, d.thumbsDirs),
     stripPrefixes: (Array.isArray(v.stripPrefixes) ? v.stripPrefixes : d.stripPrefixes).map((p) => text(p, 60)).filter((p) => p && !p.includes('..')).slice(0, 10),
     scriptExtensions: (Array.isArray(v.scriptExtensions) ? v.scriptExtensions : d.scriptExtensions).map((e) => String(e).trim().replace(/^\./, '').toLowerCase()).filter((e) => /^[a-z0-9]{1,10}$/.test(e)).slice(0, 10).filter((e, i, all) => all.indexOf(e) === i),
     hiddenDirs: (Array.isArray(v.hiddenDirs) ? v.hiddenDirs : d.hiddenDirs).map(safeName).filter(Boolean).slice(0, 50),
@@ -279,31 +510,66 @@ export function normalizeGalConfig(raw) {
     game,
     adapterOptions,
     rawIgnore: v.rawIgnore === undefined ? [] : rawIgnore,
-    voiceInclude: isValidVoiceRegex(v.voiceInclude) ? text(v.voiceInclude, 200) : '',
-    voiceExclude: isValidVoiceRegex(v.voiceExclude) ? text(v.voiceExclude, 200) : '',
+    voiceInclude: voiceRegexField('voiceInclude'),
+    voiceExclude: voiceRegexField('voiceExclude'),
+    classify,
+    resourceResolve,
+    indexSkip,
+    limits,
+    player,
     nodes,
     cover: coverRel === null ? '' : cover,
     scriptCount: Math.max(0, Math.floor(Number(v.scriptCount)) || 0),
     script: script && (script.id || script.version) ? script : null,
   }
+  if (v.thumbMode !== undefined && !['random', 'first', 'hover'].includes(v.thumbMode)) warn('thumbMode', '只能是 random / first / hover，用默认值', v.thumbMode)
+  if (Array.isArray(v.scriptExtensions)) dropped('scriptExtensions', v.scriptExtensions, config.scriptExtensions.length)
+  if (Array.isArray(v.hiddenDirs)) dropped('hiddenDirs', v.hiddenDirs, config.hiddenDirs.length)
+  if (Array.isArray(v.stripPrefixes)) dropped('stripPrefixes', v.stripPrefixes, config.stripPrefixes.length)
+  return { config, warnings }
+}
+
+// 向后兼容的入口：返回规整后的 config；warnings 挂在一个不可枚举的属性上（不进 JSON / 展开）
+export function normalizeGalConfig(raw) {
+  const { config, warnings } = normalizeGalConfigWithWarnings(raw)
+  Object.defineProperty(config, 'warnings', { value: warnings, enumerable: false })
+  return config
+}
+
+// 给适配器的只读视图（buildScene 的 meta.config）：只含适配器 / 通用后处理需要的几项，深度冻结（拷贝，改不到 provider 自己的 config）
+export function galConfigView(config) {
+  const deepFreeze = (value) => {
+    if (value && typeof value === 'object') { for (const child of Object.values(value)) deepFreeze(child); Object.freeze(value) }
+    return value
+  }
+  const pick = (value) => JSON.parse(JSON.stringify(value ?? null))
+  return Object.freeze({
+    classify: deepFreeze(pick(config.classify) || []),
+    resourceResolve: deepFreeze(pick(config.resourceResolve) || {}),
+    player: deepFreeze(pick(config.player) || {}),
+    limits: deepFreeze(pick(config.limits) || {}),
+    indexSkip: deepFreeze(pick(config.indexSkip) || []),
+  })
 }
 
 // 存进元数据的是「用户/脚本明确写过的字段」（raw），不是补满默认值的完整版：默认值以后改了，没写过的字段跟着变。
 // 只保留认识的字段；每个字段的合法性在 normalizeGalConfig 里查（读的时候），这里只做去掉未知字段和限量
 const KNOWN = Object.keys(DEFAULT_GAL_CONFIG)
-export function cleanGalConfigRaw(raw) {
+export function cleanGalConfigRawWithWarnings(raw) {
   const v = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const out = {}
   for (const key of KNOWN) if (v[key] !== undefined) out[key] = v[key]
-  // 过一遍规整，把不合法的字段丢掉（规整后和原值不一致就说明有问题：用规整后的值）
-  const norm = normalizeGalConfig(out)
+  // 过一遍规整，把不合法的字段丢掉（规整后和原值不一致就说明有问题：用规整后的值）；丢了什么由 warnings 报告
+  const { config, warnings } = normalizeGalConfigWithWarnings(out)
   const clean = {}
-  for (const key of Object.keys(out)) clean[key] = norm[key]
-  return clean
+  for (const key of Object.keys(out)) clean[key] = config[key]
+  return { clean, warnings }
 }
+export const cleanGalConfigRaw = (raw) => cleanGalConfigRawWithWarnings(raw).clean
 
 // 补丁：默认合并（补丁里写了的顶层字段替换原来的，没写的保留）；replace = 整体替换。值为 null 的字段 = 删掉（回到默认）
-export function applyGalConfigPatch(currentRaw, patch, { replace = false } = {}) {
+// WithWarnings：同时返回这次补丁里被丢掉 / 夹住的内容（handler 把它记在条目上，列表页的「渲染诊断」里报 config-dropped）
+export function applyGalConfigPatchWithWarnings(currentRaw, patch, { replace = false } = {}) {
   const base = replace ? {} : { ...cleanGalConfigRaw(currentRaw) }
   const p = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
   for (const key of KNOWN) {
@@ -311,8 +577,10 @@ export function applyGalConfigPatch(currentRaw, patch, { replace = false } = {})
     if (p[key] === null) delete base[key]
     else base[key] = p[key]
   }
-  return cleanGalConfigRaw(base)
+  const { clean, warnings } = cleanGalConfigRawWithWarnings(base)
+  return { config: clean, warnings }
 }
+export const applyGalConfigPatch = (currentRaw, patch, options) => applyGalConfigPatchWithWarnings(currentRaw, patch, options).config
 
 // 模板：{name} 之类的占位符替换；替换后的路径必须仍是安全的相对路径（或 ~/ 开头）
 export function expandTemplate(template, vars) {

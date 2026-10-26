@@ -59,14 +59,16 @@ export function hasNestedQuantifier(pattern) {
 }
 
 // 源码 → RegExp（不分大小写）。空串 = 没有这个过滤（返回 null）；不合格抛 400 { code: 'invalid-regex' }
-export function compileVoiceRegex(source, label = '正则') {
+//   flags：默认 'i'；配置里的规则（classify / resourceResolve.rewrites / indexSkip）和随机语音共用这一套安全检查
+export function compileSafeRegex(source, { flags = 'i', label = '正则' } = {}) {
   const text = String(source ?? '').trim()
   if (!text) return null
   if (text.length > MAX_REGEX_LENGTH) throw failWith(`${label}太长（${text.length} > ${MAX_REGEX_LENGTH} 个字符）`, 'invalid-regex')
   if (/\\[1-9]|\\k</.test(text)) throw failWith(`${label}不允许反向引用（\\1 / \\k<名字>）：容易造成灾难性回溯`, 'invalid-regex')
   if (hasNestedQuantifier(text)) throw failWith(`${label}里有量词套量词（如 (a+)+ / (\\w*)*）：容易造成灾难性回溯，请改写`, 'invalid-regex')
-  try { return new RegExp(text, 'i') } catch (error) { throw failWith(`${label}不是合法的正则：${error.message.replace(/^Invalid regular expression: /, '')}`, 'invalid-regex') }
+  try { return new RegExp(text, flags) } catch (error) { throw failWith(`${label}不是合法的正则：${error.message.replace(/^Invalid regular expression: /, '')}`, 'invalid-regex') }
 }
+export const compileVoiceRegex = (source, label = '正则') => compileSafeRegex(source, { flags: 'i', label })
 // 配置 / 前端预检用：合法返回 true（不抛）
 export const isValidVoiceRegex = (source) => { try { compileVoiceRegex(source); return true } catch { return false } }
 

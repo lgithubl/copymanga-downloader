@@ -19,14 +19,82 @@
 //   bgZoom {scale, x, y}           背景整体缩放 + 平移（ZOOM，场景像素），不跟换背景走
 //   raw {cmd, args}                适配器认得、播放器暂未实现的指令（立绘/特效等）
 import { galAdapter } from './adapters/index.mjs'
+import { CLASSIFY_AS, CLASSIFY_FROM, CLASSIFY_ON } from './config.mjs'
+import { MAX_MATCH_INPUT, compileSafeRegex } from './voice.mjs'
 
 export const SCENE_FORMAT = 'gal-scene/1'
 
 // ctx：适配器的媒体上下文（见 context.mjs；没有就不传）
-// meta：{ rel, stem } 这份脚本的路径和文件名（有的格式里要用，比如语音目录按场景 id 分）
+// meta：{ rel, stem, scene?, options, config } 这份脚本的路径和文件名（有的格式里要用，比如语音目录按场景 id 分）；
+//   options = config.adapterOptions[适配器 id]（没有 = {}），config = 引擎配置的只读视图 { classify, resourceResolve, player, limits, indexSkip }（见 config.mjs galConfigView）。
+//   没有 prepare 的适配器只能从 meta.options 拿到自己的参数。parse 之后统一过一遍 meta.config.classify（见下）。
 export function buildScene(adapterId, text, ctx = null, meta = {}) {
   const { steps, stats } = galAdapter(adapterId).parse(text, ctx, meta)
+  const rules = meta?.config?.classify
+  if (Array.isArray(rules) && rules.length) {
+    const classified = applyClassify(steps, rules)
+    return { format: SCENE_FORMAT, adapter: adapterId, steps, stats: { ...(stats || {}), classified } }
+  }
   return { format: SCENE_FORMAT, adapter: adapterId, steps, stats }
+}
+
+// ---------- 音频指令重分类（config.classify）----------
+// 规则 { match, on?: 'src'|'speaker'|'text', from?: [op…], as: 'voice'|'se'|'bgm'|'bgse'|'bgvoice'|'drop' }：对每条音频指令，第一条命中的规则生效。
+//   on：match 匹配什么——指令的 src（默认）/ 当前说话人（这一步之前最近一条 speaker 指令）/ 这一步第一句有字的台词（台词常在语音之后，所以按整步算）
+//   from：只处理这些 op（默认 = 全部音频 op）；as：改成什么，drop = 删掉这条指令
+//   改类型时字段保持合理：se / voice / bgm = { src }；bgse 要 loop（原来没有就当循环）；bgvoice 要 slot / volume；指令上的 when 条件一律保留
+export const AUDIO_OPS = CLASSIFY_FROM
+const plain = (segments) => (Array.isArray(segments) ? segments : []).map((s) => s?.text ?? '').join('').replace(/\s+/g, ' ').trim().slice(0, MAX_MATCH_INPUT)
+
+const classifyCache = new WeakMap()
+function compileClassify(rules) {
+  if (classifyCache.has(rules)) return classifyCache.get(rules)
+  const out = []
+  for (const rule of rules) {
+    let re = null
+    try { re = compileSafeRegex(rule?.match, { flags: 'i', label: 'classify.match' }) } catch { /* 不合格的规则丢掉 */ }
+    const on = rule?.on === undefined ? 'src' : rule.on
+    if (!re || !CLASSIFY_ON.includes(on) || !CLASSIFY_AS.includes(rule?.as)) continue
+    const from = Array.isArray(rule.from) ? rule.from.filter((op) => AUDIO_OPS.includes(op)) : AUDIO_OPS
+    if (!from.length) continue
+    out.push({ re, on, from, as: rule.as })
+  }
+  classifyCache.set(rules, out)
+  return out
+}
+
+function convert(command, as) {
+  if (command.op === as) return command
+  const base = command.when ? { when: command.when } : {}
+  const src = command.src
+  if (as === 'bgse') return { op: 'bgse', src, loop: command.loop === undefined ? true : Boolean(command.loop), ...base }
+  if (as === 'bgvoice') return { op: 'bgvoice', slot: command.slot ?? 'classified', src, volume: command.volume ?? 1, ...base }
+  return { op: as, src, ...base }
+}
+
+// 原地改 steps；返回改了几条（改类型 + 删除；命中但类型没变的不算）
+export function applyClassify(steps, rules) {
+  const compiledRules = compileClassify(rules)
+  if (!compiledRules.length) return 0
+  let count = 0
+  let speaker = ''
+  for (const step of steps || []) {
+    let stepText = ''
+    for (const command of step.commands || []) if (command.op === 'text') { stepText = plain(command.segments); if (stepText) break }
+    const next = []
+    for (const command of step.commands || []) {
+      if (command.op === 'speaker') speaker = plain(command.segments)
+      if (!AUDIO_OPS.includes(command.op) || typeof command.src !== 'string' || !command.src) { next.push(command); continue }
+      const rule = compiledRules.find((r) => r.from.includes(command.op) && r.re.test(r.on === 'src' ? command.src.slice(0, MAX_MATCH_INPUT) : r.on === 'speaker' ? speaker : stepText))
+      if (!rule) { next.push(command); continue }
+      if (rule.as === 'drop') { count += 1; continue }
+      const converted = convert(command, rule.as)
+      if (converted !== command) count += 1
+      next.push(converted)
+    }
+    step.commands = next
+  }
+  return count
 }
 
 // 脚本里引用到的第一张背景图（导入时拿来当封面候选）

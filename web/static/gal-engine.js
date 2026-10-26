@@ -211,3 +211,23 @@ export function assetUrl(base, src) {
 
 // 音量感知曲线：滑块位置 p（0..1，浏览器里存的就是它）→ 实际增益 p²。左端不会一下子就听不见，右端也不那么吵
 export const volumeGain = (p) => { const n = Number(p); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) ** 2 : 0 }
+
+// 服务端下发的这个游戏的播放器默认值（config.player → node.player）：白名单 + 夹范围（不信下发的值）。
+// 只在浏览器里没存过对应设置时才用（存过的优先）。范围和 gal-player.js 的 GAL_SETTINGS 一致（这里是纯函数，node 里也能测）。键：fontScale textOpacity autoDelay cameraMode('auto'|'fixed') zoom minFitScale fastInterval(ms)
+export function galPlayerDefaults(raw) {
+  const out = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  const num = (key, min, max, round = false) => {
+    const n = Number(raw[key])
+    if (raw[key] === undefined || raw[key] === null || raw[key] === '' || typeof raw[key] === 'boolean' || !Number.isFinite(n)) return
+    out[key] = round ? Math.round(Math.max(min, Math.min(max, n))) : Math.max(min, Math.min(max, n))
+  }
+  num('fontScale', 0.6, 2)
+  num('textOpacity', 0, 1)
+  num('autoDelay', 0, 30)
+  num('zoom', 0.5, 4)
+  num('minFitScale', 0.3, 1)
+  num('fastInterval', 20, 500, true)
+  if (raw.cameraMode === 'auto' || raw.cameraMode === 'fixed') out.cameraMode = raw.cameraMode
+  return out
+}

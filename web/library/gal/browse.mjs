@@ -27,7 +27,7 @@ import { createHash } from 'node:crypto'
 import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { galAdapter, galAdapterIds, sniffGalAdapter } from './adapters/index.mjs'
-import { expandTemplate, globToRegExp, normalizeGalConfig, parentRegExp } from './config.mjs'
+import { expandTemplate, galConfigView, globToRegExp, normalizeGalConfig, parentRegExp } from './config.mjs'
 import { buildGraphCatalog } from './graph.mjs'
 import { contextStats, invalidateContexts, loadAdapterContext } from './context.mjs'
 import { safeRelPath } from './paths.mjs'
@@ -130,8 +130,15 @@ const excerptOf = (scene) => {
 
 // mediaDir：媒体目录（绝对路径）。config：条目元数据里的 config（原样传，这里规整）。
 // resolveAsset(rel) → 磁盘真实路径（找不到抛错）；用来确认缩略图存在。
-export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, maxScriptBytes = MAX_SCRIPT_BYTES, resolveAsset }) {
+// extraWarnings：调用方（handler）在 config 之外发现的、要报给管理员的丢弃项 [{ field, reason, snippet }]（比如不认识的适配器 id）
+export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, maxScriptBytes: defaultMaxScriptBytes = MAX_SCRIPT_BYTES, resolveAsset, extraWarnings = [] }) {
   const config = normalizeGalConfig(rawConfig)
+  const configWarnings = []
+  for (const w of [...config.warnings, ...(Array.isArray(extraWarnings) ? extraWarnings : [])]) if (!configWarnings.some((x) => x.field === w.field && x.reason === w.reason && x.snippet === w.snippet)) configWarnings.push(w)
+  const maxScriptBytes = config.limits.scriptBytes ?? defaultMaxScriptBytes   // config.limits.scriptBytes 覆盖
+  // 给每次 buildScene 的 meta：这个适配器自己的参数（没有 prepare 的适配器只能从这里拿到）+ 引擎配置的只读视图
+  const configView = galConfigView(config)
+  const metaFor = (adapterId, meta) => ({ ...meta, options: config.adapterOptions[adapterId] || {}, config: configView })
   const scriptExtensions = config.scriptExtensions
   const pageSize = config.pageSize
   const sets = config.scriptRoots
@@ -148,8 +155,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const exclusiveViewOf = (dirRel, stem) => viewsUnder(dirRel).find((rule) => rule.exclusive && !rule.dirs.length && viewTakes(rule, stem)) || null
   const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
-  const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}`
-  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, adapters])).digest('hex').slice(0, 16)
+  const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}|${maxScriptBytes}`
+  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)
   let namesCache = null
 
   const absOf = (set, rel) => path.join(mediaDir, ...(set.dir ? set.dir.split('/') : []), ...(rel ? rel.split('/') : []))
@@ -570,7 +577,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     let scene = null
     let parseError = ''
     try {
-      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId), { rel, stem: stemOf(rel) })
+      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId), metaFor(adapterId, { rel, stem: stemOf(rel) }))
       excerpt = excerptOf(scene)
       hasMovie = scene.steps.some((step) => step.commands.some((c) => c.op === 'movie'))
     } catch (error) { parseError = error?.message || String(error) /* 解析失败：照样列出来，打开时再报错 */ }
@@ -722,6 +729,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       sets: setChoices(set),
       pageSize,
       thumbMode: config.thumbMode,
+      ...(Object.keys(config.player).length ? { player: config.player } : {}),   // 播放器默认值（config.player）：浏览器里没存过对应设置时用
     }
 
     if (kind === 'group') {
@@ -769,7 +777,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
 
     // script
     const { fileRel, sceneKey, real, adapterId } = await resolveScript(set, rel)
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) })
+    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), metaFor(adapterId, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) }))
 
     if (entry) {
       const siblings = catalogChildren(catalog, holderId).filter((c) => c.script)
@@ -803,6 +811,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       builtAt: stats.map((x) => x.builtAt).sort().at(-1),
       files: stats.reduce((n, x) => n + x.files, 0),
       truncated: stats.some((x) => x.truncated),
+      sampleTruncated: stats.some((x) => x.sampleTruncated),
       limit: Math.max(...stats.map((x) => x.limit)),
       ms: stats.reduce((n, x) => n + x.ms, 0),
       adapters: stats.map((x) => x.adapter),
@@ -816,6 +825,10 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const add = (level, code, message) => problems.push({ level, code, message })
     const status = indexStatus()
     if (status?.truncated) add('warn', 'index-truncated', `文件索引超过上限 ${status.limit} 个被截断，部分场景 / 资源会找不到（现有 ${status.files} 个）`)
+    if (status?.sampleTruncated) add('warn', 'sample-truncated', `脚本抽样超过上限（config.limits.sampleFiles / 适配器 contextSampleLimit）被截断，列表 / 标题可能不全`)
+    // config 里被丢掉 / 夹住 / 退回默认的内容（以前悄悄丢）：每条一行，最多 10 条
+    for (const w of configWarnings.slice(0, 10)) add('warn', 'config-dropped', `config.${w.field}：${w.reason}${w.snippet ? `（${w.snippet}）` : ''}`)
+    if (configWarnings.length > 10) add('warn', 'config-dropped', `config 里还有 ${configWarnings.length - 10} 处被丢掉 / 调整的内容没有列出`)
     const home = parsed.kind === 'dir' && !parsed.rel
     if (home) {
       for (const set of sets) {
@@ -895,7 +908,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const hit = voiceCacheGet(key)
     if (hit) return { ...hit, cached: true }
     voiceStats.parses += 1
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, ctx, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}) })
+    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, ctx, metaFor(adapterId, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}) }))
     const value = { voices: collectVoices(scene, { withBg: true }), adapterId }
     voiceCacheSet(key, value)
     return { ...value, cached: false }
