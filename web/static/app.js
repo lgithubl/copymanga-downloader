@@ -2441,6 +2441,7 @@ const GAL_PRESETS = {
   minashigo_r: { adapters: ['uviewer-csv'], game: { id: 'minashigo_r', title: 'ミナシゴノシゴトR' } },
   bokusen: { adapters: ['bokusen-json'], game: { id: 'bokusen', title: 'ぼくらの放課後戦争' } },
   grenze: { adapters: ['grenze-xml'], game: { id: 'grenze', title: 'Grenze' } },
+  tsk: { adapters: ['utage-book'], game: { id: 'tsk', title: 'Twinkle Star Knights X' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]

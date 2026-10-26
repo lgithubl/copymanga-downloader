@@ -10,6 +10,7 @@ import { renpyMinashigoAdapter } from './renpy-minashigo.mjs'
 import { renpyMonmusuAdapter } from './renpy-monmusu.mjs'
 import { tenkeiprdxJsonAdapter } from './tenkeiprdx-json.mjs'
 import { tyranoKsAdapter } from './tyrano-ks.mjs'
+import { utageBookAdapter } from './utage-book.mjs'
 import { uviewerCsvAdapter } from './uviewer-csv.mjs'
 
 const adapters = new Map()
@@ -28,6 +29,7 @@ registerGalAdapter(bokusenJsonAdapter)        // {"data":{"code":{…images/soun
 registerGalAdapter(tyranoKsAdapter)           // TyranoScript .ks（*start + [chara_new] / [call … tyrano.ks]），独有写法；先于 girlscreation 登记
 registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
 registerGalAdapter(grenzeXmlAdapter)          // <easy_dialog-N id= next_id= …/> 行，独有写法，不会和别的格式抢
+registerGalAdapter(utageBookAdapter)          // Utage 工作簿 JSON（importGridList + Command/Arg1 表头），独有写法
 
 export const galAdapterIds = () => [...adapters.keys()]
 export function galAdapter(id) {
