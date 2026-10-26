@@ -10,7 +10,8 @@
 //     没有 hero_group_id 的行（旁白 / 只放指令）沿用上一个立绘，直到换了 hero_group_id / pic_pos、或换背景（background）才清掉；一次只显示一个立绘；找不到 body 图的 hero 记 unresolved 并清掉立绘
 //   background → bg（bg/battlebg/<名>/<名>.webp；名字查文件名索引，找不到记 unresolved；bg_b 找不到文件时当黑底——没有对照样本，推测）
 //   bgm（non = 停）→ bgm / bgmStop；sound1..3、bg_sound1..3 → se（一次性；bg_sound 是不是循环没有对照样本，按一次性放；non = 无）；voice_pack + voice → voice
-//   screen_effect / pic_action / pic_action_val / pic_size / effect + effect_pos / back_voice：含义未知 → raw {cmd, args}，记在 stats.raw
+//   back_voice（<名>#<音量>，back_voice_pack = 包）→ bgvoice（slot back，循环的背景人声）/ non = bgvoiceOff；screen_effect / pic_action / effect / pic_size 按下面的映射表（名字 → 现有场景指令）处理；
+//   映射表里没有的 / 映射成 raw 的值 → raw {cmd, args}，stats.raw 里按「属性:值」分开记（screen_effect:8、pic_action:立ち絵全消え …），诊断里能看到有哪些不同的值；pic_action_val 等没有表的属性仍是 raw
 // 资源（相对资源根 assets/resources/patchres/）：bg/battlebg/<名>/<名>.webp、bgm/<名小写>/<名>.m4a、sound/<名>/<名>.m4a、voice/<包小写>/<语音名>.m4a、merc/pic/<id>/body.webp|png；
 //   每种资源先按 paths 里的模板精确找，找不到再按「文件名（无扩展名，不分大小写）」在对应目录里找（contextDirs 的目录递归列出来），不写死目录层级；merc/pic 下的 N.webp / <id>.webp 是头像图标 / 图集，不是立绘
 // 适配器只「读配置、按配置匹配」：所有猜出来的路径 / 名字 / 数字都在 DEFAULT_OPTIONS 里，由 config.adapterOptions['grenze-xml']（管理员脚本 gal-layout 写）逐项覆盖
@@ -25,14 +26,25 @@
 //   standKeep ('untilNewHero')   没有 hero_group_id 的行：untilNewHero = 沿用上一个立绘直到换人 / 换位置 / 换背景；perRow = 每一行自己决定（没有 hero_group_id 就清掉立绘）
 //   none (['non'])   bgm / sound / voice / background 里表示「没有 / 停」的值（不分大小写）；bgBlack (['bg_b'])   找不到文件时变黑底的背景名（推测）
 //   bgSound { mode: 'se', attrs: ['bg_sound1','bg_sound2','bg_sound3'] }   bg_sound 怎么放：se = 一次性 / bgse = 循环背景音；soundAttrs (['sound1','sound2','sound3'])   一次性音效的属性（先放 bgSound.attrs 再放这些）
-//   rawAttrs (['screen_effect','pic_action','pic_action_val','pic_size','back_voice','effect+effect_pos'])   含义未知、记成 raw {cmd, args} 的属性（a+b = 同一条 raw，args = [a 的值, b 的值]；有 a 才发）；要忽略 / 改路由就从这里拿掉
+//   rawAttrs (['screen_effect','pic_action','pic_action_val','pic_size','effect+effect_pos'])   要处理的「特效类」属性（a+b = 同一条，args = [a 的值, b 的值]；有 a 才发）：值在 attrTables 指向的表里有映射就发映射出来的指令，否则记成 raw {cmd, args}；要忽略 / 改路由就从这里拿掉
+//   attrTables ({ screen_effect: 'screenEffects', pic_action: 'picActions', effect: 'effects', pic_size: 'picSize' })   属性 → 映射表（下面几个选项的名字）；没有表的属性只记 raw
+//   映射表（值 → 映射；整张表逐项覆盖 / 追加，值的内容不限类型）：映射 = null / 'raw'（记 raw，什么都不发）/ 'drop'（忽略，不记）/ 场景指令对象 / 指令对象数组（用现有指令，比如 { op: 'shake', axis: 'overall', strength: 0.2, seconds: 0.5 }）。
+//        指令对象可带 at（不进场景）：'start' = 这一行最前面（背景之前，比如淡到黑要先黑再换背景）/ 'stand' = 背景之后、立绘之前（比如先清立绘再出新立绘）/ 'end'（默认）= 这一行立绘之后、语音之前。op 是 standOff 时和立绘状态同步（没有立绘就不发）。
+//        picSize 的映射是立绘部件的覆盖 { zoom?, fit? }（没有 op；一直生效到下一个 pic_size；换了会重发当前立绘）。值取自属性原文（XML 解转义、去首尾空白）。
+//   screenEffects  速い画面揺れ / 画面シェイク → shake（overall）；溶明_黒幕 → fade clear；溶暗_黒幕 → fade black（at start）；フラッシュ / フラッシュ2回 → flash（count 1 / 2）；光エフェクト → wash；数字 id（1–13，含义未知）→ null = raw。秒数 / 强度全是猜的
+//   picActions     立ち絵全消え → standOff（at stand）；溶明溶暗 → 淡到黑再淡回；下から_全身 / 右側現れ消え / 左側現れ消え / マスク / 数字 id → raw（立绘没有进出场指令）
+//   effects        战斗技能特效（ダメージエフェクト / 斬撃1–3 / ハンマー / 波動 / エナジードレイン / 数字 id）：没有渲染器，全部 raw（表是以后填的地方）
+//   effectPos      effect_pos 的值 → left / center / right（中 左 右 / 1 2 3；数字顺序按 pic_pos 的 1 左 2 中 3 右猜）：映射出的指令里的 {pos} 换成它（raw 指令不变，args 仍是 [effect, effect_pos]）
+//   picSize        拡大 / 通常 / 数字 id / 立ち絵全消え：全部 raw；想让「拡大」放大立绘就写 { '拡大': { zoom: 1.2, fit: 0 } }（fit 默认 1 会把比画面高的立绘缩回画面高度，zoom 对它们无效，所以放大要同时 fit: 0）
+//   backVoice { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' }   背景人声：值 = <名>#<音量>（没有 # = volume 默认值），资源按 paths.backVoice（{pack} = 包小写、{voice} = 名）；none（non）= 停；
+//        onMissing：没有这个属性的行 keep = 沿用（和 bgm 一样，默认；non 出现了 161 次，说明停是显式写的）/ stop = 这一行没有就停；只在名字变了时才发 bgvoice
 //   scene { split: 'chains', forkPolicy: 'merge' }   场景划分：chains = next_id 链；几条链汇合时 merge = 每个场景各自走到底（共用的后半段每个场景都有）/ first = 共用部分只属于文件里最靠前的那条链
 // 资源目录来自 config.adapterOptions['grenze-xml']：{ root（游戏根，相对媒体目录，默认 ''）, textDir（默认 <root>/TextAsset）, resourceDir（默认 <root>/assets/resources/patchres）, …上面的选项 }
 
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { decodeTextFile } from '../../text-decode.mjs'
-import { guessTemplate, lookupFor, mergeOptions, safeRegex } from './path-templates.mjs'
+import { guessTemplate, isPlain, lookupFor, mergeOptions, safeRegex } from './path-templates.mjs'
 
 export const ADAPTER_ID = 'grenze-xml'
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
@@ -45,15 +57,16 @@ export const DEFAULT_OPTIONS = Object.freeze({
   resourceDir: '',
   resourceDirs: ['bg', 'bgm', 'sound', 'voice', 'merc/pic'],
   index: { ext: '\\.(?:webp|png|jpe?g|m4a|mp3|ogg|wav)$' },
-  exts: { bg: ['webp', 'png', 'jpg', 'jpeg'], bgm: AUDIO_EXTS, sound: AUDIO_EXTS, voice: AUDIO_EXTS },
+  exts: { bg: ['webp', 'png', 'jpg', 'jpeg'], bgm: AUDIO_EXTS, sound: AUDIO_EXTS, voice: AUDIO_EXTS, backVoice: AUDIO_EXTS },
   paths: {
     bg: ['bg/battlebg/{name}/{name}.{ext}', 'bg/**/{name}.{ext}'],
     bgm: ['bgm/{lower}/{name}.{ext}', 'bgm/**/{name}.{ext}'],
     sound: ['sound/{name}/{name}.{ext}', 'sound/**/{name}.{ext}'],
     voice: ['voice/{pack}/{voice}.{ext}', 'voice/**/{voice}.{ext}'],
+    backVoice: ['voice/{pack}/{voice}.{ext}', 'voice/**/{voice}.{ext}'],
     stand: ['merc/pic/{hero}/{file}'],
   },
-  duplicates: { bg: 'first', bgm: 'first', sound: 'first', voice: 'skip', stand: 'first' },
+  duplicates: { bg: 'first', bgm: 'first', sound: 'first', voice: 'skip', backVoice: 'skip', stand: 'first' },
   standFiles: ['body.webp', 'body.png'],
   standPos: { 1: 'left', 2: 'center', 3: 'right', default: 'center' },
   standKeep: 'untilNewHero',
@@ -62,10 +75,34 @@ export const DEFAULT_OPTIONS = Object.freeze({
   bgBlack: ['bg_b'],
   bgSound: { mode: 'se', attrs: ['bg_sound1', 'bg_sound2', 'bg_sound3'] },
   soundAttrs: ['sound1', 'sound2', 'sound3'],
-  rawAttrs: ['screen_effect', 'pic_action', 'pic_action_val', 'pic_size', 'back_voice', 'effect+effect_pos'],
+  rawAttrs: ['screen_effect', 'pic_action', 'pic_action_val', 'pic_size', 'effect+effect_pos'],
+  attrTables: { screen_effect: 'screenEffects', pic_action: 'picActions', effect: 'effects', pic_size: 'picSize' },
+  screenEffects: {
+    '速い画面揺れ': { op: 'shake', axis: 'overall', strength: 0.15, seconds: 0.4 },
+    '画面シェイク': { op: 'shake', axis: 'overall', strength: 0.25, seconds: 0.6 },
+    '溶明_黒幕': { op: 'fade', to: 'clear', seconds: 1 },
+    '溶暗_黒幕': { op: 'fade', to: 'black', seconds: 1, at: 'start' },
+    'フラッシュ': { op: 'flash', color: 'white', count: 1, seconds: 0.3 },
+    'フラッシュ2回': { op: 'flash', color: 'white', count: 2, seconds: 0.3 },
+    '光エフェクト': { op: 'wash', color: 'white', seconds: 1 },
+    ...Object.fromEntries(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '13'].map((id) => [id, null])),
+  },
+  picActions: {
+    '立ち絵全消え': { op: 'standOff', at: 'stand' },
+    '溶明溶暗': [{ op: 'fade', to: 'black', seconds: 0.4 }, { op: 'fade', to: 'clear', seconds: 0.4 }],
+    '下から_全身': null, '右側現れ消え': null, '左側現れ消え': null, 'マスク': null,
+    ...Object.fromEntries(['1', '2', '3', '4', '5', '8', '9', '10'].map((id) => [id, null])),
+  },
+  effects: {
+    'ダメージエフェクト': null, '斬撃1': null, '斬撃2': null, '斬撃3': null, 'ハンマー': null, '波動': null, 'エナジードレイン': null,
+    ...Object.fromEntries(['17', '18', '20', '21', '22'].map((id) => [id, null])),
+  },
+  effectPos: { '中': 'center', '左': 'left', '右': 'right', 1: 'left', 2: 'center', 3: 'right' },
+  picSize: { '拡大': null, '通常': null, '2': null, '立ち絵全消え': null },
+  backVoice: { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' },
   scene: { split: 'chains', forkPolicy: 'merge' },
 })
-const FREE_TABLES = ['exts', 'duplicates', 'standPos']
+const FREE_TABLES = ['exts', 'duplicates', 'standPos', 'screenEffects', 'picActions', 'effects', 'effectPos', 'picSize']
 const resolved = new WeakMap()
 export function resolveOptions(options) {
   const source = options && typeof options === 'object' ? options : null
@@ -79,6 +116,8 @@ export function resolveOptions(options) {
   o.bgSound.attrs = list(o.bgSound.attrs, DEFAULT_OPTIONS.bgSound.attrs)
   for (const key of Object.keys(DEFAULT_OPTIONS.paths)) o.paths[key] = list(o.paths[key], DEFAULT_OPTIONS.paths[key])
   for (const key of Object.keys(o.exts)) o.exts[key] = list(o.exts[key], AUDIO_EXTS)
+  for (const key of ['screenEffects', 'picActions', 'effects', 'effectPos', 'picSize']) { o[key] = Object.fromEntries(Object.entries(o[key]).filter(([name]) => name !== '__proto__')) }
+  if (!isPlain(o.attrTables)) o.attrTables = DEFAULT_OPTIONS.attrTables
   o.none = o.none.map((v) => v.toLowerCase())
   o.bgBlack = o.bgBlack.map((v) => v.toLowerCase())
   o.ext = safeRegex(o.index.ext, 'i')
@@ -284,7 +323,7 @@ export function parse(text, ctx = null, meta = {}) {
     start = scenes[0]?.start ?? rows[0].id
     chain = scenes[0]?.rows || [0]
   }
-  const stats = { rows: chain.length, scene: start, scenes: scenes.length, commands: 0, raw: {}, unresolved: {}, stands: 0, ...(ctx?.truncated ? { indexTruncated: true } : {}), ...(graph.merges ? { merges: graph.merges } : {}), ...(graph.cycles ? { cycles: graph.cycles } : {}) }
+  const stats = { rows: chain.length, scene: start, scenes: scenes.length, commands: 0, raw: {}, unresolved: {}, mapped: {}, stands: 0, ...(ctx?.truncated ? { indexTruncated: true } : {}), ...(graph.merges ? { merges: graph.merges } : {}), ...(graph.cycles ? { cycles: graph.cycles } : {}) }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const indexed = Boolean(ctx?.hasIndex)
   const lower = (value) => String(value).trim().toLowerCase()
@@ -306,17 +345,60 @@ export function parse(text, ctx = null, meta = {}) {
   const standOf = (id) => resolve('stand', { hero: String(id).trim(), file: o.standFiles })
   const present = (value) => value !== undefined && value !== ''
 
+  const backVoiceOf = (pack, name) => resolve('backVoice', { pack: lower(pack), voice: name })
   const steps = []
   let commands = []
   let speaker = null
   let curBgm = ''
   let pack = ''
+  let backPack = ''
+  let curBackVoice = ''   // 正在放的背景人声（<名>#<音量> 原文）
   let stand = ''        // 当前立绘的 hero_group_id|pic_pos（空 = 没有）
+  let standHero = ''    // 当前立绘的 hero_group_id（pic_size 变了要重发时用）
+  let standAlign = ''
+  let size = null       // 当前 pic_size 的覆盖 { zoom?, fit? }（picSize 表里映射成对象的）
+  let standSrc = ''
+  let standSize = ''    // 当前立绘是按哪个 pic_size 覆盖画的（JSON）
   const emit = (command) => commands.push(command)
-  const standOff = () => { if (stand) { emit({ op: 'standOff' }); stand = '' } }
+  const standOff = () => { if (stand) { emit({ op: 'standOff' }); stand = ''; standHero = ''; standSrc = '' } }
+  const standPart = (src, align) => {
+    const fit = size && size.fit !== undefined ? size.fit : o.standFit
+    return { src, align, ...(fit ? { fit } : {}), ...(size && Number(size.zoom) > 0 && Number(size.zoom) !== 1 ? { zoom: Number(size.zoom) } : {}) }
+  }
+  const attrValue = (value) => unescapeXml(value).trim()
+  const posOf = (value) => (value !== undefined && value !== '' && Object.hasOwn(o.effectPos, attrValue(value)) ? String(o.effectPos[attrValue(value)]) : '')
+  const fill = (op, pos) => (pos ? Object.fromEntries(Object.entries(op).map(([k, v]) => [k, typeof v === 'string' ? v.replaceAll('{pos}', pos) : v])) : op)
+  // 特效类属性 → 映射出来的指令（按 at 分到三个时机）或 raw；返回 false = 不是本函数处理的（没有这个属性）
+  const phases = { start: [], stand: [], end: [], raw: [] }
+  const collectAttr = (spec, row) => {
+    const [cmd, ...more] = spec.split('+')
+    if (!present(row[cmd])) return
+    const value = attrValue(row[cmd])
+    const tableName = Object.hasOwn(o.attrTables, cmd) ? o.attrTables[cmd] : ''
+    const table = tableName && isPlain(o[tableName]) ? o[tableName] : null
+    const mapping = table && Object.hasOwn(table, value) ? table[value] : null
+    const label = `${cmd}:${value}`
+    if (mapping === 'drop') return
+    if (cmd === 'pic_size' && isPlain(mapping) && mapping.op === undefined) { size = mapping; count('mapped', label); return }
+    const pos = more.length ? posOf(row[more[0]]) : ''
+    const ops = (Array.isArray(mapping) ? mapping : isPlain(mapping) ? [mapping] : []).filter((op) => isPlain(op) && typeof op.op === 'string')
+    if (!ops.length) {
+      phases.raw.push({ op: 'raw', cmd, args: [row[cmd], ...more.map((attr) => row[attr] ?? '')] })
+      count('raw', label)
+      return
+    }
+    for (const { at, ...op } of ops) phases[at === 'start' || at === 'stand' ? at : 'end'].push(fill(op, pos))
+    count('mapped', label)
+  }
+  const flushPhase = (name) => {
+    for (const op of phases[name]) { if (op.op === 'standOff') standOff(); else emit(op) }
+    phases[name] = []
+  }
 
   for (const i of chain) {
     const row = rows[i]
+    for (const spec of o.rawAttrs) collectAttr(spec, row)
+    flushPhase('start')
     // --- 背景（换背景 = 换场景，立绘清掉）---
     if (present(row.background) && !isNone(row.background)) {
       const src = bgOf(row.background)
@@ -341,27 +423,44 @@ export function parse(text, ctx = null, meta = {}) {
       else emit(background && o.bgSound.mode === 'bgse' ? { op: 'bgse', src, loop: true } : { op: 'se', src })
     }
     // --- 立绘（没有 hero_group_id 的行按 standKeep：沿用上一个 / 清掉）---
+    flushPhase('stand')
     if (present(row.voice_pack)) pack = row.voice_pack
+    if (present(row.back_voice_pack)) backPack = row.back_voice_pack
+    const sizeKey = size ? JSON.stringify(size) : ''
     if (present(row.hero_group_id)) {
       const align = o.standPos[String(Number(row.pic_pos))] || o.standPos.default || 'center'
-      const key = `${String(row.hero_group_id).trim()}|${align}`
+      const key = `${String(row.hero_group_id).trim()}|${align}|${sizeKey}`
       if (key !== stand) {
         const src = standOf(row.hero_group_id)
-        if (src) { emit({ op: 'stand', parts: [{ src, align, ...(o.standFit ? { fit: o.standFit } : {}) }] }); stand = key; stats.stands += 1 } else { count('unresolved', `stand:${row.hero_group_id}`); standOff() }
+        if (src) { emit({ op: 'stand', parts: [standPart(src, align)] }); stand = key; standHero = String(row.hero_group_id).trim(); standSrc = src; standAlign = align; standSize = sizeKey; stats.stands += 1 } else { count('unresolved', `stand:${row.hero_group_id}`); standOff() }
       }
     } else if (o.standKeep === 'perRow') standOff()
+    else if (stand && standSrc && sizeKey !== standSize) {   // pic_size 变了：用新的大小重发当前立绘
+      emit({ op: 'stand', parts: [standPart(standSrc, standAlign)] })
+      stand = `${standHero}|${standAlign}|${sizeKey}`
+      standSize = sizeKey
+    }
+    flushPhase('end')
     // --- 语音 ---
     if (present(row.voice) && !isNone(row.voice)) {
       const src = voiceOf(row.voice_pack || pack, row.voice)
       if (src) emit({ op: 'voice', src }); else count('unresolved', `voice:${row.voice_pack || pack}/${row.voice}`)
     }
-    // --- 含义未知的：raw（rawAttrs；a+b = 一条 raw，args = [a, b]）---
-    for (const spec of o.rawAttrs) {
-      const [cmd, ...more] = spec.split('+')
-      if (!present(row[cmd])) continue
-      emit({ op: 'raw', cmd, args: [row[cmd], ...more.map((attr) => row[attr] ?? '')] })
-      count('raw', cmd)
+    // --- 背景人声（back_voice = <名>#<音量>；none = 停；没有这个属性按 backVoice.onMissing）---
+    const bv = o.backVoice
+    const bvValue = present(row[bv.attr]) ? attrValue(row[bv.attr]) : undefined
+    if (bvValue !== undefined && isNone(bvValue)) { if (curBackVoice) emit({ op: 'bgvoiceOff', slot: bv.slot }); curBackVoice = '' } else if (bvValue === undefined) {
+      if (bv.onMissing === 'stop' && curBackVoice) { emit({ op: 'bgvoiceOff', slot: bv.slot }); curBackVoice = '' }
+    } else if (bvValue !== curBackVoice) {
+      const cut = bv.sep ? bvValue.lastIndexOf(bv.sep) : -1
+      const name = (cut > 0 ? bvValue.slice(0, cut) : bvValue).trim()
+      const volume = cut > 0 && Number.isFinite(Number.parseFloat(bvValue.slice(cut + bv.sep.length))) ? Math.max(0, Math.min(1, Number.parseFloat(bvValue.slice(cut + bv.sep.length)))) : bv.volume
+      const src = backVoiceOf(backPack || pack, name)
+      if (src) { emit({ op: 'bgvoice', slot: bv.slot, src, volume }); curBackVoice = bvValue } else count('unresolved', `backVoice:${backPack || pack}/${name}`)
     }
+    // --- 含义未知的 / 没有映射的：raw ---
+    for (const op of phases.raw) emit(op)
+    phases.raw = []
 
     // --- 台词：没有 text 的行只放指令（并进下一句）---
     if (row.text === undefined || row.text === '') continue

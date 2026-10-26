@@ -267,13 +267,36 @@
       "replace": "audio/$&"
      }
     ],
+    "audioExtFallback": [
+     ".ogg",
+     ".mp3",
+     ".wav",
+     ".m4a",
+     ".opus",
+     ".flac"
+    ],
+    "bgChange": {
+     "c": {
+      "fade": 0
+     },
+     "default": {
+      "fade": 0
+     },
+     "f": {
+      "fade": 0.5
+     },
+     "s": {
+      "fade": 0.5
+     }
+    },
     "dic": {
      "indexFields": [
       "bgs",
       "bgms",
       "charas",
       "names",
-      "colors"
+      "colors",
+      "voices"
      ]
     },
     "dirs": [
@@ -293,7 +316,70 @@
      ],
      "match": "^chara/[^/]+/[^/]+/[^/]+$"
     },
+    "others": {
+     "action": {
+      "attackD": "raw",
+      "attackL": "raw",
+      "attackR": "raw",
+      "avoid": [
+       {
+        "axis": "horizontal",
+        "op": "shake",
+        "seconds": 0.3,
+        "strength": 0.1
+       }
+      ],
+      "bow": [
+       {
+        "axis": "vertical",
+        "op": "shake",
+        "seconds": 0.5,
+        "strength": 0.08
+       }
+      ],
+      "default": "raw",
+      "jump": [
+       {
+        "axis": "vertical",
+        "op": "shake",
+        "seconds": 0.4,
+        "strength": 0.12
+       }
+      ],
+      "slideinD": "raw",
+      "slideinL": "raw",
+      "slideinR": "raw",
+      "swing": [
+       {
+        "axis": "horizontal",
+        "op": "shake",
+        "seconds": 0.4,
+        "strength": 0.1
+       }
+      ],
+      "vibe": [
+       {
+        "axis": "horizontal",
+        "op": "shake",
+        "seconds": 0.5,
+        "strength": 0.15
+       }
+      ]
+     },
+     "emotion": {
+      "anger": "raw",
+      "default": "raw",
+      "donyori": "raw",
+      "exclamation": "raw",
+      "kirakira": "raw",
+      "paa": "raw",
+      "question": "raw",
+      "shock": "raw",
+      "sweat": "raw"
+     }
+    },
     "stand": {
+     "clearOnBgChange": true,
      "defaults": {
       "brow": "b",
       "eye": "e",
@@ -371,7 +457,13 @@
      "ext": {
       ".mp3": ".ogg"
      },
+     "extFallback": [],
      "fallback": "audio/voice/{stem}/{name}",
+     "nameFields": [
+      "file",
+      "name",
+      "voice"
+     ],
      "preferDirs": []
     }
    }
@@ -1092,6 +1184,20 @@
  "grenze": {
   "adapterOptions": {
    "grenze-xml": {
+    "attrTables": {
+     "effect": "effects",
+     "pic_action": "picActions",
+     "pic_size": "picSize",
+     "screen_effect": "screenEffects"
+    },
+    "backVoice": {
+     "attr": "back_voice",
+     "onMissing": "keep",
+     "packAttr": "back_voice_pack",
+     "sep": "#",
+     "slot": "back",
+     "volume": 1
+    },
     "bgBlack": [
      "bg_b"
     ],
@@ -1104,13 +1210,42 @@
      "mode": "se"
     },
     "duplicates": {
+     "backVoice": "skip",
      "bg": "first",
      "bgm": "first",
      "sound": "first",
      "stand": "first",
      "voice": "skip"
     },
+    "effectPos": {
+     "1": "left",
+     "2": "center",
+     "3": "right",
+     "中": "center",
+     "右": "right",
+     "左": "left"
+    },
+    "effects": {
+     "17": null,
+     "18": null,
+     "20": null,
+     "21": null,
+     "22": null,
+     "エナジードレイン": null,
+     "ダメージエフェクト": null,
+     "ハンマー": null,
+     "斬撃1": null,
+     "斬撃2": null,
+     "斬撃3": null,
+     "波動": null
+    },
     "exts": {
+     "backVoice": [
+      "m4a",
+      "mp3",
+      "ogg",
+      "wav"
+     ],
      "bg": [
       "webp",
       "png",
@@ -1143,6 +1278,10 @@
      "non"
     ],
     "paths": {
+     "backVoice": [
+      "voice/{pack}/{voice}.{ext}",
+      "voice/**/{voice}.{ext}"
+     ],
      "bg": [
       "bg/battlebg/{name}/{name}.{ext}",
       "bg/**/{name}.{ext}"
@@ -1163,12 +1302,47 @@
       "voice/**/{voice}.{ext}"
      ]
     },
+    "picActions": {
+     "1": null,
+     "2": null,
+     "3": null,
+     "4": null,
+     "5": null,
+     "8": null,
+     "9": null,
+     "10": null,
+     "マスク": null,
+     "下から_全身": null,
+     "右側現れ消え": null,
+     "左側現れ消え": null,
+     "溶明溶暗": [
+      {
+       "op": "fade",
+       "seconds": 0.4,
+       "to": "black"
+      },
+      {
+       "op": "fade",
+       "seconds": 0.4,
+       "to": "clear"
+      }
+     ],
+     "立ち絵全消え": {
+      "at": "stand",
+      "op": "standOff"
+     }
+    },
+    "picSize": {
+     "2": null,
+     "拡大": null,
+     "立ち絵全消え": null,
+     "通常": null
+    },
     "rawAttrs": [
      "screen_effect",
      "pic_action",
      "pic_action_val",
      "pic_size",
-     "back_voice",
      "effect+effect_pos"
     ],
     "resourceDir": "",
@@ -1182,6 +1356,60 @@
     "scene": {
      "forkPolicy": "merge",
      "split": "chains"
+    },
+    "screenEffects": {
+     "1": null,
+     "2": null,
+     "3": null,
+     "4": null,
+     "5": null,
+     "6": null,
+     "7": null,
+     "8": null,
+     "9": null,
+     "10": null,
+     "11": null,
+     "13": null,
+     "フラッシュ": {
+      "color": "white",
+      "count": 1,
+      "op": "flash",
+      "seconds": 0.3
+     },
+     "フラッシュ2回": {
+      "color": "white",
+      "count": 2,
+      "op": "flash",
+      "seconds": 0.3
+     },
+     "光エフェクト": {
+      "color": "white",
+      "op": "wash",
+      "seconds": 1
+     },
+     "溶明_黒幕": {
+      "op": "fade",
+      "seconds": 1,
+      "to": "clear"
+     },
+     "溶暗_黒幕": {
+      "at": "start",
+      "op": "fade",
+      "seconds": 1,
+      "to": "black"
+     },
+     "画面シェイク": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.6,
+      "strength": 0.25
+     },
+     "速い画面揺れ": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.4,
+      "strength": 0.15
+     }
     },
     "soundAttrs": [
      "sound1",
