@@ -1,6 +1,7 @@
 // 适配器注册表。新增原始格式：写一个 { id, label, sniff(text), parse(text, ctx, meta) → { steps, stats }（meta = { rel, stem }：这份脚本的路径和文件名） }，在这里登记即可。
 // 需要查别的文件才能解析的格式（别名表、图片目录…）再实现 contextFiles / contextDirs / prepare，见 ../context.mjs。
 import { artwhirlJsonAdapter } from './artwhirl-json.mjs'
+import { bokusenJsonAdapter } from './bokusen-json.mjs'
 import { girlsCreationTagAdapter } from './girlscreation-tag.mjs'
 import { misttrainJsonAdapter } from './misttrain-json.mjs'
 import { renpyLegecloAdapter } from './renpy-legeclo.mjs'
@@ -21,6 +22,7 @@ registerGalAdapter(renpyMonmusuAdapter)
 registerGalAdapter(tenkeiprdxJsonAdapter)
 registerGalAdapter(misttrainJsonAdapter)     // [null,[<场景 id>,[行…]]] 位置数组，独有写法
 registerGalAdapter(artwhirlJsonAdapter)       // {"bgms":[…],…,"chara_keys":…} 并行数组 JSON，独有写法
+registerGalAdapter(bokusenJsonAdapter)        // {"data":{"code":{…images/sounds/articles/tags/commands…}}} 编译脚本表，独有写法（只认开头，不读全文）
 registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
 
 export const galAdapterIds = () => [...adapters.keys()]

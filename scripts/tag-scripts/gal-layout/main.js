@@ -710,6 +710,7 @@ const GAMES = [
   { id: 'minashigo', detect: detectMinashigo },
   { id: 'minashigo_r', detect: detectMinashigoR },   // data/adv/textfiles/story（uviewer-csv 格式）；要求同时有 adv/image 和 adv/sound，放在通用 uviewer 之前
   { id: 'artwhirl', detect: detectArtwhirl },   // game/episode_scripts + game/images/stands（Ren'Py + JSON 剧情）
+  { id: 'bokusen', detect: detectBokusen },   // <根>/json/*.json（data.code 编译脚本）+ <根>/resource/<脚本名>/{images,sounds}
   { id: 'uviewer', detect: detectUviewerGame },
 ]
 
@@ -805,6 +806,62 @@ async function detectArtwhirl(media, { declared, logs }) {
       let count = 0
       for (const root of roots) count += await countFiles(path.join(m, ...splitRel(root.dir)), '.json', options.countCap, 3)
       logs.push(`剧情 JSON ${count} 个${count ? '' : '——结构可能不对'}`)
+      return { count, cover: '' }
+    },
+  }
+}
+
+// ======================================================================
+// ぼくらの放課後戦争（bokusen）：<根>/json/<脚本名>.json（KAG / Tyrano 编译表，{data:{code:{images,sounds,articles,tags,parameters,commands}}}），
+// 资源在 <根>/resource/<脚本名>/images/<序号>.<扩展名> 和 sounds/<序号>.wav——每个脚本一个资源子目录（只有一部分脚本有）。
+// 用 bokusen-json 适配器；资源根 = <根>/resource，脚本里的资源路径就是 <脚本名>/images/…（适配器按 meta.stem 拼，再去文件索引里核对）。
+// ======================================================================
+async function detectBokusen(media, { declared, logs }) {
+  const hit = await findDir(media, ['json'], 4)
+  if (!hit) {
+    if (declared) logs.push('没找到 json/')
+    return null
+  }
+  const gameDir = hit.split('/').slice(0, -1).join('/')
+  const hasResource = await isDir(path.join(media, ...splitRel(join(gameDir, 'resource'))))
+  if (!declared) {
+    // 没声明：要求 json/ 里有脚本开头是 {"data":{"code":{…（只读开头 8KB，最多看 5 个），并且同级有 resource/
+    let hits = 0
+    for (const name of (await listNames(path.join(media, ...splitRel(hit)))).filter((n) => n.toLowerCase().endsWith('.json')).slice(0, 5)) {
+      try {
+        const head = (await readFile(path.join(media, ...splitRel(join(hit, name))))).subarray(0, 8192).toString('utf8').replace(/^\uFEFF/, '')
+        if (/^\s*\{\s*"data"\s*:\s*\{\s*"code"\s*:\s*\{/.test(head)) hits++
+      } catch { /* 读不了就当不是 */ }
+    }
+    if (!hits || !hasResource) return null
+  }
+  const config = {
+    scriptRoots: [{ id: 'json', dir: hit, label: '脚本' }],
+    resourceRoots: [join(gameDir, 'resource')],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['json'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    views: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    scriptIndex: [],
+    pageSize: 100,
+    adapterOptions: { 'bokusen-json': { root: gameDir, resourceDir: 'resource' } },
+  }
+  logs.push(`bokusen 游戏根：${gameDir || '.'}；脚本根：${hit}；资源根：${join(gameDir, 'resource')}${hasResource ? '' : '（目录不存在：图片 / 声音会缺，台词照常）'}`)
+  logs.push('只有一部分脚本有同名资源子目录，没有的脚本只出台词（列表页「渲染诊断」会报缺资源）；打不开的 JSON（解析失败）照样列出来、打开时再报错')
+  return {
+    id: 'bokusen',
+    kind: 'bokusen',
+    note: '',
+    config,
+    async finish(m, _config, options) {
+      const count = await countFiles(path.join(m, ...splitRel(hit)), '.json', options.countCap, 2)
+      logs.push(`脚本 JSON ${count} 个${count ? '' : '——结构可能不对'}`)
       return { count, cover: '' }
     },
   }
