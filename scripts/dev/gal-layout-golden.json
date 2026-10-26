@@ -1,0 +1,4716 @@
+{
+ "uviewer|direct|uviewer": {
+  "config": {
+   "cover": "~/user_data/thumbnails/600130.webp",
+   "game": {
+    "id": "uviewer",
+    "title": ""
+   },
+   "namesFiles": [
+    "user_data/character_names.json"
+   ],
+   "resourceRoots": [
+    "resources"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 27,
+   "scriptRoots": [
+    {
+     "dir": "resources/download/adv/text",
+     "id": "text",
+     "label": "text"
+    },
+    {
+     "dir": "resources/download/adv/text---日文20251102",
+     "id": "text---日文20251102",
+     "label": "text---日文20251102"
+    }
+   ],
+   "thumbsDirs": [
+    "user_data/thumbnails"
+   ]
+  },
+  "itemTags": [
+   "Gal配置: uviewer",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: uviewer"
+  ],
+  "details": {
+   "game": "uviewer",
+   "kind": "uviewer",
+   "scripts": 27,
+   "cover": "~/user_data/thumbnails/600130.webp",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "uviewer|direct|deepone": {
+  "config": {
+   "cover": "~/user_data/thumbnails/600130.webp",
+   "game": {
+    "id": "deepone",
+    "title": ""
+   },
+   "namesFiles": [
+    "user_data/character_names.json"
+   ],
+   "resourceRoots": [
+    "resources"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 27,
+   "scriptRoots": [
+    {
+     "dir": "resources/download/adv/text",
+     "id": "text",
+     "label": "text"
+    },
+    {
+     "dir": "resources/download/adv/text---日文20251102",
+     "id": "text---日文20251102",
+     "label": "text---日文20251102"
+    }
+   ],
+   "thumbsDirs": [
+    "user_data/thumbnails"
+   ]
+  },
+  "itemTags": [
+   "Gal配置: deepone",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: deepone"
+  ],
+  "details": {
+   "game": "deepone",
+   "kind": "uviewer",
+   "scripts": 27,
+   "cover": "~/user_data/thumbnails/600130.webp",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "uviewer|direct|auto": {
+  "config": {
+   "cover": "~/user_data/thumbnails/600130.webp",
+   "game": {
+    "id": "uviewer",
+    "title": ""
+   },
+   "namesFiles": [
+    "user_data/character_names.json"
+   ],
+   "resourceRoots": [
+    "resources"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 27,
+   "scriptRoots": [
+    {
+     "dir": "resources/download/adv/text",
+     "id": "text",
+     "label": "text"
+    },
+    {
+     "dir": "resources/download/adv/text---日文20251102",
+     "id": "text---日文20251102",
+     "label": "text---日文20251102"
+    }
+   ],
+   "thumbsDirs": [
+    "user_data/thumbnails"
+   ]
+  },
+  "itemTags": [
+   "Gal配置: uviewer",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: uviewer"
+  ],
+  "details": {
+   "game": "uviewer",
+   "kind": "uviewer",
+   "scripts": 27,
+   "cover": "~/user_data/thumbnails/600130.webp",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "uviewer|wrapped|uviewer": {
+  "config": {
+   "cover": "~/uviewer/user_data/thumbnails/600130.webp",
+   "game": {
+    "id": "uviewer",
+    "title": ""
+   },
+   "namesFiles": [
+    "uviewer/user_data/character_names.json"
+   ],
+   "resourceRoots": [
+    "uviewer/resources"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 27,
+   "scriptRoots": [
+    {
+     "dir": "uviewer/resources/download/adv/text",
+     "id": "text",
+     "label": "text"
+    },
+    {
+     "dir": "uviewer/resources/download/adv/text---日文20251102",
+     "id": "text---日文20251102",
+     "label": "text---日文20251102"
+    }
+   ],
+   "thumbsDirs": [
+    "uviewer/user_data/thumbnails"
+   ]
+  },
+  "itemTags": [
+   "Gal配置: uviewer",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: uviewer"
+  ],
+  "details": {
+   "game": "uviewer",
+   "kind": "uviewer",
+   "scripts": 27,
+   "cover": "~/uviewer/user_data/thumbnails/600130.webp",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "uviewer|wrapped|deepone": {
+  "config": {
+   "cover": "~/uviewer/user_data/thumbnails/600130.webp",
+   "game": {
+    "id": "deepone",
+    "title": ""
+   },
+   "namesFiles": [
+    "uviewer/user_data/character_names.json"
+   ],
+   "resourceRoots": [
+    "uviewer/resources"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 27,
+   "scriptRoots": [
+    {
+     "dir": "uviewer/resources/download/adv/text",
+     "id": "text",
+     "label": "text"
+    },
+    {
+     "dir": "uviewer/resources/download/adv/text---日文20251102",
+     "id": "text---日文20251102",
+     "label": "text---日文20251102"
+    }
+   ],
+   "thumbsDirs": [
+    "uviewer/user_data/thumbnails"
+   ]
+  },
+  "itemTags": [
+   "Gal配置: deepone",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: deepone"
+  ],
+  "details": {
+   "game": "deepone",
+   "kind": "uviewer",
+   "scripts": 27,
+   "cover": "~/uviewer/user_data/thumbnails/600130.webp",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "uviewer|wrapped|auto": {
+  "config": {
+   "cover": "~/uviewer/user_data/thumbnails/600130.webp",
+   "game": {
+    "id": "uviewer",
+    "title": ""
+   },
+   "namesFiles": [
+    "uviewer/user_data/character_names.json"
+   ],
+   "resourceRoots": [
+    "uviewer/resources"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 27,
+   "scriptRoots": [
+    {
+     "dir": "uviewer/resources/download/adv/text",
+     "id": "text",
+     "label": "text"
+    },
+    {
+     "dir": "uviewer/resources/download/adv/text---日文20251102",
+     "id": "text---日文20251102",
+     "label": "text---日文20251102"
+    }
+   ],
+   "thumbsDirs": [
+    "uviewer/user_data/thumbnails"
+   ]
+  },
+  "itemTags": [
+   "Gal配置: uviewer",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: uviewer"
+  ],
+  "details": {
+   "game": "uviewer",
+   "kind": "uviewer",
+   "scripts": 27,
+   "cover": "~/uviewer/user_data/thumbnails/600130.webp",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "legeclo|direct|legeclo": {
+  "config": {
+   "adapterOptions": {
+    "renpy-legeclo": {
+     "aliasFiles": [
+      "game/script/movie.rpy"
+     ],
+     "imageDirs": [
+      "game/images"
+     ]
+    }
+   },
+   "cover": "images/thumbnail/char/st_demo_hero_idle.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "legeclo",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": ".",
+     "pattern": "^(.+)_\\d{2}$"
+    }
+   ],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "game/script/hscene",
+     "id": "hscene",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "images/thumbnail/st",
+     "for": "script",
+     "key": "{1}_{2}",
+     "match": "^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$"
+    },
+    {
+     "dir": "images/st",
+     "fallback": true,
+     "for": "script",
+     "key": "{1}_{2}",
+     "match": "^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$"
+    },
+    {
+     "dir": "images/thumbnail/char",
+     "for": "dir",
+     "key": "{1}",
+     "match": "^st_(.+?)(?:_(?:idle|hover))?\\.(?:png|webp)$"
+    }
+   ],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: legeclo",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: legeclo"
+  ],
+  "details": {
+   "game": "legeclo",
+   "kind": "legeclo",
+   "scripts": 4,
+   "cover": "images/thumbnail/char/st_demo_hero_idle.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "legeclo|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "renpy-legeclo": {
+     "aliasFiles": [
+      "game/script/movie.rpy"
+     ],
+     "imageDirs": [
+      "game/images"
+     ]
+    }
+   },
+   "cover": "images/thumbnail/char/st_demo_hero_idle.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "legeclo",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": ".",
+     "pattern": "^(.+)_\\d{2}$"
+    }
+   ],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "game/script/hscene",
+     "id": "hscene",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "images/thumbnail/st",
+     "for": "script",
+     "key": "{1}_{2}",
+     "match": "^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$"
+    },
+    {
+     "dir": "images/st",
+     "fallback": true,
+     "for": "script",
+     "key": "{1}_{2}",
+     "match": "^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$"
+    },
+    {
+     "dir": "images/thumbnail/char",
+     "for": "dir",
+     "key": "{1}",
+     "match": "^st_(.+?)(?:_(?:idle|hover))?\\.(?:png|webp)$"
+    }
+   ],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: legeclo",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: legeclo"
+  ],
+  "details": {
+   "game": "legeclo",
+   "kind": "legeclo",
+   "scripts": 4,
+   "cover": "images/thumbnail/char/st_demo_hero_idle.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "legeclo|wrapped|legeclo": {
+  "config": {
+   "adapterOptions": {
+    "renpy-legeclo": {
+     "aliasFiles": [
+      "legeclo/game/script/movie.rpy"
+     ],
+     "imageDirs": [
+      "legeclo/game/images"
+     ]
+    }
+   },
+   "cover": "images/thumbnail/char/st_demo_hero_idle.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "legeclo",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": ".",
+     "pattern": "^(.+)_\\d{2}$"
+    }
+   ],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "legeclo/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "legeclo/game/script/hscene",
+     "id": "hscene",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "images/thumbnail/st",
+     "for": "script",
+     "key": "{1}_{2}",
+     "match": "^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$"
+    },
+    {
+     "dir": "images/st",
+     "fallback": true,
+     "for": "script",
+     "key": "{1}_{2}",
+     "match": "^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$"
+    },
+    {
+     "dir": "images/thumbnail/char",
+     "for": "dir",
+     "key": "{1}",
+     "match": "^st_(.+?)(?:_(?:idle|hover))?\\.(?:png|webp)$"
+    }
+   ],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: legeclo",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: legeclo"
+  ],
+  "details": {
+   "game": "legeclo",
+   "kind": "legeclo",
+   "scripts": 4,
+   "cover": "images/thumbnail/char/st_demo_hero_idle.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "legeclo|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "renpy-legeclo": {
+     "aliasFiles": [
+      "legeclo/game/script/movie.rpy"
+     ],
+     "imageDirs": [
+      "legeclo/game/images"
+     ]
+    }
+   },
+   "cover": "images/thumbnail/char/st_demo_hero_idle.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "legeclo",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": ".",
+     "pattern": "^(.+)_\\d{2}$"
+    }
+   ],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "legeclo/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "legeclo/game/script/hscene",
+     "id": "hscene",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "images/thumbnail/st",
+     "for": "script",
+     "key": "{1}_{2}",
+     "match": "^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$"
+    },
+    {
+     "dir": "images/st",
+     "fallback": true,
+     "for": "script",
+     "key": "{1}_{2}",
+     "match": "^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$"
+    },
+    {
+     "dir": "images/thumbnail/char",
+     "for": "dir",
+     "key": "{1}",
+     "match": "^st_(.+?)(?:_(?:idle|hover))?\\.(?:png|webp)$"
+    }
+   ],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: legeclo",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: legeclo"
+  ],
+  "details": {
+   "game": "legeclo",
+   "kind": "legeclo",
+   "scripts": 4,
+   "cover": "images/thumbnail/char/st_demo_hero_idle.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "monmusu|direct|monmusu": {
+  "config": {
+   "adapterOptions": {
+    "renpy-monmusu": {
+     "aliasFiles": [
+      "game/script/movie.rpy"
+     ],
+     "imageDirs": [
+      "game/images"
+     ]
+    }
+   },
+   "cover": "images/icon/icon_10001_0_idle.png",
+   "dirThumbs": [
+    {
+     "name": "^\\d{3,8}$",
+     "parent": "*",
+     "paths": [
+      "images/icon/icon_{name}_0_idle.png"
+     ]
+    }
+   ],
+   "game": {
+    "id": "monmusu",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": "hscene",
+     "pattern": "^(\\d{5})[A-Za-z]\\d"
+    },
+    {
+     "parent": "overview",
+     "pattern": "^(\\d{5})[A-Za-z]\\d"
+    }
+   ],
+   "hiddenDirs": [
+    "sub_nav",
+    "tl"
+   ],
+   "labels": {
+    "hscene": "动画",
+    "hscene_still": "事件"
+   },
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptIndex": [
+    {
+     "badge": "",
+     "dir": "game/images/bg",
+     "key": "{1}C1",
+     "pattern": "^r18_(\\d{5})_stla1(?:_idle)?\\.(?:png|webp|jpe?g)$"
+    }
+   ],
+   "scriptRoots": [
+    {
+     "dir": "game/script",
+     "id": "script",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": [
+    {
+     "as": "overview",
+     "badges": {
+      "hscene": "anim",
+      "hscene_still": "still"
+     },
+     "dirs": [
+      "hscene",
+      "hscene_still"
+     ],
+     "label": "总览",
+     "parent": "."
+    }
+   ]
+  },
+  "itemTags": [
+   "Gal配置: monmusu",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: monmusu"
+  ],
+  "details": {
+   "game": "monmusu",
+   "kind": "monmusu",
+   "scripts": 4,
+   "cover": "images/icon/icon_10001_0_idle.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "monmusu|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "renpy-monmusu": {
+     "aliasFiles": [
+      "game/script/movie.rpy"
+     ],
+     "imageDirs": [
+      "game/images"
+     ]
+    }
+   },
+   "cover": "images/icon/icon_10001_0_idle.png",
+   "dirThumbs": [
+    {
+     "name": "^\\d{3,8}$",
+     "parent": "*",
+     "paths": [
+      "images/icon/icon_{name}_0_idle.png"
+     ]
+    }
+   ],
+   "game": {
+    "id": "monmusu",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": "hscene",
+     "pattern": "^(\\d{5})[A-Za-z]\\d"
+    },
+    {
+     "parent": "overview",
+     "pattern": "^(\\d{5})[A-Za-z]\\d"
+    }
+   ],
+   "hiddenDirs": [
+    "sub_nav",
+    "tl"
+   ],
+   "labels": {
+    "hscene": "动画",
+    "hscene_still": "事件"
+   },
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptIndex": [
+    {
+     "badge": "",
+     "dir": "game/images/bg",
+     "key": "{1}C1",
+     "pattern": "^r18_(\\d{5})_stla1(?:_idle)?\\.(?:png|webp|jpe?g)$"
+    }
+   ],
+   "scriptRoots": [
+    {
+     "dir": "game/script",
+     "id": "script",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": [
+    {
+     "as": "overview",
+     "badges": {
+      "hscene": "anim",
+      "hscene_still": "still"
+     },
+     "dirs": [
+      "hscene",
+      "hscene_still"
+     ],
+     "label": "总览",
+     "parent": "."
+    }
+   ]
+  },
+  "itemTags": [
+   "Gal配置: monmusu",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: monmusu"
+  ],
+  "details": {
+   "game": "monmusu",
+   "kind": "monmusu",
+   "scripts": 4,
+   "cover": "images/icon/icon_10001_0_idle.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "monmusu|wrapped|monmusu": {
+  "config": {
+   "adapterOptions": {
+    "renpy-monmusu": {
+     "aliasFiles": [
+      "monmusu/game/script/movie.rpy"
+     ],
+     "imageDirs": [
+      "monmusu/game/images"
+     ]
+    }
+   },
+   "cover": "images/icon/icon_10001_0_idle.png",
+   "dirThumbs": [
+    {
+     "name": "^\\d{3,8}$",
+     "parent": "*",
+     "paths": [
+      "images/icon/icon_{name}_0_idle.png"
+     ]
+    }
+   ],
+   "game": {
+    "id": "monmusu",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": "hscene",
+     "pattern": "^(\\d{5})[A-Za-z]\\d"
+    },
+    {
+     "parent": "overview",
+     "pattern": "^(\\d{5})[A-Za-z]\\d"
+    }
+   ],
+   "hiddenDirs": [
+    "sub_nav",
+    "tl"
+   ],
+   "labels": {
+    "hscene": "动画",
+    "hscene_still": "事件"
+   },
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "monmusu/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptIndex": [
+    {
+     "badge": "",
+     "dir": "monmusu/game/images/bg",
+     "key": "{1}C1",
+     "pattern": "^r18_(\\d{5})_stla1(?:_idle)?\\.(?:png|webp|jpe?g)$"
+    }
+   ],
+   "scriptRoots": [
+    {
+     "dir": "monmusu/game/script",
+     "id": "script",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": [
+    {
+     "as": "overview",
+     "badges": {
+      "hscene": "anim",
+      "hscene_still": "still"
+     },
+     "dirs": [
+      "hscene",
+      "hscene_still"
+     ],
+     "label": "总览",
+     "parent": "."
+    }
+   ]
+  },
+  "itemTags": [
+   "Gal配置: monmusu",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: monmusu"
+  ],
+  "details": {
+   "game": "monmusu",
+   "kind": "monmusu",
+   "scripts": 4,
+   "cover": "images/icon/icon_10001_0_idle.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "monmusu|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "renpy-monmusu": {
+     "aliasFiles": [
+      "monmusu/game/script/movie.rpy"
+     ],
+     "imageDirs": [
+      "monmusu/game/images"
+     ]
+    }
+   },
+   "cover": "images/icon/icon_10001_0_idle.png",
+   "dirThumbs": [
+    {
+     "name": "^\\d{3,8}$",
+     "parent": "*",
+     "paths": [
+      "images/icon/icon_{name}_0_idle.png"
+     ]
+    }
+   ],
+   "game": {
+    "id": "monmusu",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": "hscene",
+     "pattern": "^(\\d{5})[A-Za-z]\\d"
+    },
+    {
+     "parent": "overview",
+     "pattern": "^(\\d{5})[A-Za-z]\\d"
+    }
+   ],
+   "hiddenDirs": [
+    "sub_nav",
+    "tl"
+   ],
+   "labels": {
+    "hscene": "动画",
+    "hscene_still": "事件"
+   },
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "monmusu/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptIndex": [
+    {
+     "badge": "",
+     "dir": "monmusu/game/images/bg",
+     "key": "{1}C1",
+     "pattern": "^r18_(\\d{5})_stla1(?:_idle)?\\.(?:png|webp|jpe?g)$"
+    }
+   ],
+   "scriptRoots": [
+    {
+     "dir": "monmusu/game/script",
+     "id": "script",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": [
+    {
+     "as": "overview",
+     "badges": {
+      "hscene": "anim",
+      "hscene_still": "still"
+     },
+     "dirs": [
+      "hscene",
+      "hscene_still"
+     ],
+     "label": "总览",
+     "parent": "."
+    }
+   ]
+  },
+  "itemTags": [
+   "Gal配置: monmusu",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: monmusu"
+  ],
+  "details": {
+   "game": "monmusu",
+   "kind": "monmusu",
+   "scripts": 4,
+   "cover": "images/icon/icon_10001_0_idle.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "minashigo|direct|minashigo": {
+  "config": {
+   "adapterOptions": {
+    "renpy-minashigo": {
+     "aliasFiles": [
+      "MinashigoViewer-1.2/game/movie.rpy"
+     ],
+     "imageDirs": [
+      "MinashigoViewer-1.2/game/images"
+     ],
+     "standFiles": [
+      "MinashigoViewer-1.2/game/script.rpy"
+     ]
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "minashigo",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": "chars",
+     "pattern": "^scene_\\d(\\d{6})\\d{2}$"
+    },
+    {
+     "parent": "events",
+     "pattern": "^scene_(ev\\d+)_"
+    }
+   ],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "MinashigoViewer-1.2/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 5,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "MinashigoViewer-1.2/game/scripts",
+     "id": "scripts",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": [
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "角色",
+     "match": "^scene_\\d{9}$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "^scene_ev",
+     "parent": "."
+    },
+    {
+     "as": "main",
+     "exclusive": true,
+     "label": "主线",
+     "match": "^scene_\\d{7}$",
+     "parent": "."
+    }
+   ]
+  },
+  "itemTags": [
+   "Gal配置: minashigo",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: minashigo"
+  ],
+  "details": {
+   "game": "minashigo",
+   "kind": "minashigo",
+   "scripts": 5,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "minashigo|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "renpy-minashigo": {
+     "aliasFiles": [
+      "MinashigoViewer-1.2/game/movie.rpy"
+     ],
+     "imageDirs": [
+      "MinashigoViewer-1.2/game/images"
+     ],
+     "standFiles": [
+      "MinashigoViewer-1.2/game/script.rpy"
+     ]
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "minashigo",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": "chars",
+     "pattern": "^scene_\\d(\\d{6})\\d{2}$"
+    },
+    {
+     "parent": "events",
+     "pattern": "^scene_(ev\\d+)_"
+    }
+   ],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "MinashigoViewer-1.2/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 5,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "MinashigoViewer-1.2/game/scripts",
+     "id": "scripts",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": [
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "角色",
+     "match": "^scene_\\d{9}$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "^scene_ev",
+     "parent": "."
+    },
+    {
+     "as": "main",
+     "exclusive": true,
+     "label": "主线",
+     "match": "^scene_\\d{7}$",
+     "parent": "."
+    }
+   ]
+  },
+  "itemTags": [
+   "Gal配置: minashigo",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: minashigo"
+  ],
+  "details": {
+   "game": "minashigo",
+   "kind": "minashigo",
+   "scripts": 5,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "minashigo|wrapped|minashigo": {
+  "config": {
+   "adapterOptions": {
+    "renpy-minashigo": {
+     "aliasFiles": [
+      "minashigo/MinashigoViewer-1.2/game/movie.rpy"
+     ],
+     "imageDirs": [
+      "minashigo/MinashigoViewer-1.2/game/images"
+     ],
+     "standFiles": [
+      "minashigo/MinashigoViewer-1.2/game/script.rpy"
+     ]
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "minashigo",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": "chars",
+     "pattern": "^scene_\\d(\\d{6})\\d{2}$"
+    },
+    {
+     "parent": "events",
+     "pattern": "^scene_(ev\\d+)_"
+    }
+   ],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "minashigo/MinashigoViewer-1.2/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 5,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "minashigo/MinashigoViewer-1.2/game/scripts",
+     "id": "scripts",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": [
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "角色",
+     "match": "^scene_\\d{9}$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "^scene_ev",
+     "parent": "."
+    },
+    {
+     "as": "main",
+     "exclusive": true,
+     "label": "主线",
+     "match": "^scene_\\d{7}$",
+     "parent": "."
+    }
+   ]
+  },
+  "itemTags": [
+   "Gal配置: minashigo",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: minashigo"
+  ],
+  "details": {
+   "game": "minashigo",
+   "kind": "minashigo",
+   "scripts": 5,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "minashigo|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "renpy-minashigo": {
+     "aliasFiles": [
+      "minashigo/MinashigoViewer-1.2/game/movie.rpy"
+     ],
+     "imageDirs": [
+      "minashigo/MinashigoViewer-1.2/game/images"
+     ],
+     "standFiles": [
+      "minashigo/MinashigoViewer-1.2/game/script.rpy"
+     ]
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "minashigo",
+    "title": ""
+   },
+   "groups": [
+    {
+     "parent": "chars",
+     "pattern": "^scene_\\d(\\d{6})\\d{2}$"
+    },
+    {
+     "parent": "events",
+     "pattern": "^scene_(ev\\d+)_"
+    }
+   ],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "minashigo/MinashigoViewer-1.2/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 5,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "minashigo/MinashigoViewer-1.2/game/scripts",
+     "id": "scripts",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": [
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "角色",
+     "match": "^scene_\\d{9}$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "^scene_ev",
+     "parent": "."
+    },
+    {
+     "as": "main",
+     "exclusive": true,
+     "label": "主线",
+     "match": "^scene_\\d{7}$",
+     "parent": "."
+    }
+   ]
+  },
+  "itemTags": [
+   "Gal配置: minashigo",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: minashigo"
+  ],
+  "details": {
+   "game": "minashigo",
+   "kind": "minashigo",
+   "scripts": 5,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|direct|girlscreation": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "girlscreation",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: girlscreation",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: girlscreation"
+  ],
+  "details": {
+   "game": "girlscreation",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|direct|aster": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "aster",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: aster",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: aster"
+  ],
+  "details": {
+   "game": "aster",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|direct|jaxin": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "jaxin",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: jaxin",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: jaxin"
+  ],
+  "details": {
+   "game": "jaxin",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|direct|maid": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "maid",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: maid",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: maid"
+  ],
+  "details": {
+   "game": "maid",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|direct|aku": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "aku",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: aku",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: aku"
+  ],
+  "details": {
+   "game": "aku",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|direct|fruits": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "fruits",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: fruits",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: fruits"
+  ],
+  "details": {
+   "game": "fruits",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "girlscreation",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: girlscreation",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: girlscreation"
+  ],
+  "details": {
+   "game": "girlscreation",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|wrapped|girlscreation": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "girlscreation/package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "girlscreation",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "girlscreation/package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "girlscreation/package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: girlscreation",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: girlscreation"
+  ],
+  "details": {
+   "game": "girlscreation",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|wrapped|aster": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "girlscreation/package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "aster",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "girlscreation/package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "girlscreation/package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: aster",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: aster"
+  ],
+  "details": {
+   "game": "aster",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|wrapped|jaxin": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "girlscreation/package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "jaxin",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "girlscreation/package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "girlscreation/package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: jaxin",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: jaxin"
+  ],
+  "details": {
+   "game": "jaxin",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|wrapped|maid": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "girlscreation/package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "maid",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "girlscreation/package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "girlscreation/package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: maid",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: maid"
+  ],
+  "details": {
+   "game": "maid",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|wrapped|aku": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "girlscreation/package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "aku",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "girlscreation/package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "girlscreation/package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: aku",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: aku"
+  ],
+  "details": {
+   "game": "aku",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|wrapped|fruits": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "girlscreation/package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "fruits",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "girlscreation/package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "girlscreation/package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: fruits",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: fruits"
+  ],
+  "details": {
+   "game": "fruits",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "girlscreation/package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "girlscreation",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "girlscreation/package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "girlscreation/package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: girlscreation",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: girlscreation"
+  ],
+  "details": {
+   "game": "girlscreation",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "tenkeiprdx|direct|tenkeiprdx": {
+  "config": {
+   "adapterOptions": {
+    "tenkeiprdx-json": {
+     "root": "StreamingAssets/Tenkeiprdx X/Imported"
+    }
+   },
+   "cover": "EpisodeThumbnails/event/ep_eventstill_001_0001.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "tenkeiprdx",
+    "title": ""
+   },
+   "groups": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "chars": {
+     "auto": true,
+     "catalog": "chars"
+    },
+    "event": {
+     "auto": true,
+     "catalog": "event"
+    },
+    "extra": {
+     "auto": true,
+     "catalog": "extra"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "event",
+      "extra",
+      "special",
+      "chars",
+      "all"
+     ]
+    },
+    "special": {
+     "auto": true,
+     "catalog": "special"
+    }
+   },
+   "resourceRoots": [
+    "StreamingAssets/Tenkeiprdx X/Imported"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "StreamingAssets/Tenkeiprdx X/Imported/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: tenkeiprdx",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: tenkeiprdx"
+  ],
+  "details": {
+   "game": "tenkeiprdx",
+   "kind": "tenkeiprdx",
+   "scripts": 3,
+   "cover": "EpisodeThumbnails/event/ep_eventstill_001_0001.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "tenkeiprdx|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "tenkeiprdx-json": {
+     "root": "StreamingAssets/Tenkeiprdx X/Imported"
+    }
+   },
+   "cover": "EpisodeThumbnails/event/ep_eventstill_001_0001.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "tenkeiprdx",
+    "title": ""
+   },
+   "groups": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "chars": {
+     "auto": true,
+     "catalog": "chars"
+    },
+    "event": {
+     "auto": true,
+     "catalog": "event"
+    },
+    "extra": {
+     "auto": true,
+     "catalog": "extra"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "event",
+      "extra",
+      "special",
+      "chars",
+      "all"
+     ]
+    },
+    "special": {
+     "auto": true,
+     "catalog": "special"
+    }
+   },
+   "resourceRoots": [
+    "StreamingAssets/Tenkeiprdx X/Imported"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "StreamingAssets/Tenkeiprdx X/Imported/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: tenkeiprdx",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: tenkeiprdx"
+  ],
+  "details": {
+   "game": "tenkeiprdx",
+   "kind": "tenkeiprdx",
+   "scripts": 3,
+   "cover": "EpisodeThumbnails/event/ep_eventstill_001_0001.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "tenkeiprdx|wrapped|tenkeiprdx": {
+  "config": {
+   "adapterOptions": {
+    "tenkeiprdx-json": {
+     "root": "tenkeiprdx/StreamingAssets/Tenkeiprdx X/Imported"
+    }
+   },
+   "cover": "EpisodeThumbnails/event/ep_eventstill_001_0001.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "tenkeiprdx",
+    "title": ""
+   },
+   "groups": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "chars": {
+     "auto": true,
+     "catalog": "chars"
+    },
+    "event": {
+     "auto": true,
+     "catalog": "event"
+    },
+    "extra": {
+     "auto": true,
+     "catalog": "extra"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "event",
+      "extra",
+      "special",
+      "chars",
+      "all"
+     ]
+    },
+    "special": {
+     "auto": true,
+     "catalog": "special"
+    }
+   },
+   "resourceRoots": [
+    "tenkeiprdx/StreamingAssets/Tenkeiprdx X/Imported"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "tenkeiprdx/StreamingAssets/Tenkeiprdx X/Imported/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: tenkeiprdx",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: tenkeiprdx"
+  ],
+  "details": {
+   "game": "tenkeiprdx",
+   "kind": "tenkeiprdx",
+   "scripts": 3,
+   "cover": "EpisodeThumbnails/event/ep_eventstill_001_0001.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "tenkeiprdx|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "tenkeiprdx-json": {
+     "root": "tenkeiprdx/StreamingAssets/Tenkeiprdx X/Imported"
+    }
+   },
+   "cover": "EpisodeThumbnails/event/ep_eventstill_001_0001.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "tenkeiprdx",
+    "title": ""
+   },
+   "groups": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "chars": {
+     "auto": true,
+     "catalog": "chars"
+    },
+    "event": {
+     "auto": true,
+     "catalog": "event"
+    },
+    "extra": {
+     "auto": true,
+     "catalog": "extra"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "event",
+      "extra",
+      "special",
+      "chars",
+      "all"
+     ]
+    },
+    "special": {
+     "auto": true,
+     "catalog": "special"
+    }
+   },
+   "resourceRoots": [
+    "tenkeiprdx/StreamingAssets/Tenkeiprdx X/Imported"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "tenkeiprdx/StreamingAssets/Tenkeiprdx X/Imported/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: tenkeiprdx",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: tenkeiprdx"
+  ],
+  "details": {
+   "game": "tenkeiprdx",
+   "kind": "tenkeiprdx",
+   "scripts": 3,
+   "cover": "EpisodeThumbnails/event/ep_eventstill_001_0001.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "tsk|direct|tsk": {
+  "config": {
+   "adapterOptions": {
+    "utage-book": {
+     "root": "Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X"
+    }
+   },
+   "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "tsk",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [
+    "BackGrounds",
+    "Effects",
+    "Spine",
+    "Textures"
+   ],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "cat1": {
+     "auto": true,
+     "catalog": "c/CharaScenario"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/MainScenario"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2",
+      "all"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X/Adventure",
+     "id": "adventure",
+     "label": "Adventure"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: tsk",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: tsk"
+  ],
+  "details": {
+   "game": "tsk",
+   "kind": "tsk",
+   "scripts": 4,
+   "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "tsk|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "utage-book": {
+     "root": "Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X"
+    }
+   },
+   "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "tsk",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [
+    "BackGrounds",
+    "Effects",
+    "Spine",
+    "Textures"
+   ],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "cat1": {
+     "auto": true,
+     "catalog": "c/CharaScenario"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/MainScenario"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2",
+      "all"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X/Adventure",
+     "id": "adventure",
+     "label": "Adventure"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: tsk",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: tsk"
+  ],
+  "details": {
+   "game": "tsk",
+   "kind": "tsk",
+   "scripts": 4,
+   "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "tsk|wrapped|tsk": {
+  "config": {
+   "adapterOptions": {
+    "utage-book": {
+     "root": "tsk/Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X"
+    }
+   },
+   "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "tsk",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [
+    "BackGrounds",
+    "Effects",
+    "Spine",
+    "Textures"
+   ],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "cat1": {
+     "auto": true,
+     "catalog": "c/CharaScenario"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/MainScenario"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2",
+      "all"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "tsk/Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "tsk/Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X/Adventure",
+     "id": "adventure",
+     "label": "Adventure"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: tsk",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: tsk"
+  ],
+  "details": {
+   "game": "tsk",
+   "kind": "tsk",
+   "scripts": 4,
+   "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "tsk|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "utage-book": {
+     "root": "tsk/Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X"
+    }
+   },
+   "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "tsk",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [
+    "BackGrounds",
+    "Effects",
+    "Spine",
+    "Textures"
+   ],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "cat1": {
+     "auto": true,
+     "catalog": "c/CharaScenario"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/MainScenario"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2",
+      "all"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "tsk/Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "tsk/Twinkle Star Knights X/Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X/Adventure",
+     "id": "adventure",
+     "label": "Adventure"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: tsk",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: tsk"
+  ],
+  "details": {
+   "game": "tsk",
+   "kind": "tsk",
+   "scripts": 4,
+   "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "grenze|direct|grenze": {
+  "config": {
+   "adapterOptions": {
+    "grenze-xml": {
+     "root": ""
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "grenze",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "assets/resources/patchres"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "xml"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "TextAsset",
+     "id": "text",
+     "label": "TextAsset"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: grenze",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: grenze"
+  ],
+  "details": {
+   "game": "grenze",
+   "kind": "grenze",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "grenze|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "grenze-xml": {
+     "root": ""
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "grenze",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "assets/resources/patchres"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "xml"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "TextAsset",
+     "id": "text",
+     "label": "TextAsset"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: grenze",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: grenze"
+  ],
+  "details": {
+   "game": "grenze",
+   "kind": "grenze",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "grenze|wrapped|grenze": {
+  "config": {
+   "adapterOptions": {
+    "grenze-xml": {
+     "root": "grenze"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "grenze",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "grenze/assets/resources/patchres"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "xml"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "grenze/TextAsset",
+     "id": "text",
+     "label": "TextAsset"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: grenze",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: grenze"
+  ],
+  "details": {
+   "game": "grenze",
+   "kind": "grenze",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "grenze|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "grenze-xml": {
+     "root": "grenze"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "grenze",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "grenze/assets/resources/patchres"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "xml"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "grenze/TextAsset",
+     "id": "text",
+     "label": "TextAsset"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: grenze",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: grenze"
+  ],
+  "details": {
+   "game": "grenze",
+   "kind": "grenze",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "kamihime|direct|kamihime": {
+  "config": {
+   "adapterOptions": {
+    "tyrano-ks": {
+     "root": "game/dmm"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "kamihime",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "game/dmm/assets"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "ks"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "game/dmm/raw_scenario",
+     "id": "ks",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: kamihime",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: kamihime"
+  ],
+  "details": {
+   "game": "kamihime",
+   "kind": "kamihime",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "kamihime|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "tyrano-ks": {
+     "root": "game/dmm"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "kamihime",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "game/dmm/assets"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "ks"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "game/dmm/raw_scenario",
+     "id": "ks",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: kamihime",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: kamihime"
+  ],
+  "details": {
+   "game": "kamihime",
+   "kind": "kamihime",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "kamihime|wrapped|kamihime": {
+  "config": {
+   "adapterOptions": {
+    "tyrano-ks": {
+     "root": "kamihime/game/dmm"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "kamihime",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "kamihime/game/dmm/assets"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "ks"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "kamihime/game/dmm/raw_scenario",
+     "id": "ks",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: kamihime",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: kamihime"
+  ],
+  "details": {
+   "game": "kamihime",
+   "kind": "kamihime",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "kamihime|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "tyrano-ks": {
+     "root": "kamihime/game/dmm"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "kamihime",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "kamihime/game/dmm/assets"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "ks"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "kamihime/game/dmm/raw_scenario",
+     "id": "ks",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: kamihime",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: kamihime"
+  ],
+  "details": {
+   "game": "kamihime",
+   "kind": "kamihime",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "bokusen|direct|bokusen": {
+  "config": {
+   "adapterOptions": {
+    "bokusen-json": {
+     "resourceDir": "resource",
+     "root": ""
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "bokusen",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "resource"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "json",
+     "id": "json",
+     "label": "脚本"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: bokusen",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: bokusen"
+  ],
+  "details": {
+   "game": "bokusen",
+   "kind": "bokusen",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "bokusen|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "bokusen-json": {
+     "resourceDir": "resource",
+     "root": ""
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "bokusen",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "resource"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "json",
+     "id": "json",
+     "label": "脚本"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: bokusen",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: bokusen"
+  ],
+  "details": {
+   "game": "bokusen",
+   "kind": "bokusen",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "bokusen|wrapped|bokusen": {
+  "config": {
+   "adapterOptions": {
+    "bokusen-json": {
+     "resourceDir": "resource",
+     "root": "bokusen"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "bokusen",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "bokusen/resource"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "bokusen/json",
+     "id": "json",
+     "label": "脚本"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: bokusen",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: bokusen"
+  ],
+  "details": {
+   "game": "bokusen",
+   "kind": "bokusen",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "bokusen|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "bokusen-json": {
+     "resourceDir": "resource",
+     "root": "bokusen"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "bokusen",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "bokusen/resource"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 3,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "bokusen/json",
+     "id": "json",
+     "label": "脚本"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: bokusen",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: bokusen"
+  ],
+  "details": {
+   "game": "bokusen",
+   "kind": "bokusen",
+   "scripts": 3,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "misttrain|direct|misttrain": {
+  "config": {
+   "adapterOptions": {
+    "misttrain-json": {
+     "root": "MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "misttrain",
+    "title": ""
+   },
+   "groups": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "chars": {
+     "auto": true,
+     "catalog": "chars"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "chars",
+      "other",
+      "all"
+     ]
+    },
+    "other": {
+     "auto": true,
+     "catalog": "other"
+    }
+   },
+   "resourceRoots": [
+    "MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X/UScenes",
+     "id": "uscenes",
+     "label": "UScenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: misttrain",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: misttrain"
+  ],
+  "details": {
+   "game": "misttrain",
+   "kind": "misttrain",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "misttrain|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "misttrain-json": {
+     "root": "MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "misttrain",
+    "title": ""
+   },
+   "groups": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "chars": {
+     "auto": true,
+     "catalog": "chars"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "chars",
+      "other",
+      "all"
+     ]
+    },
+    "other": {
+     "auto": true,
+     "catalog": "other"
+    }
+   },
+   "resourceRoots": [
+    "MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X/UScenes",
+     "id": "uscenes",
+     "label": "UScenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: misttrain",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: misttrain"
+  ],
+  "details": {
+   "game": "misttrain",
+   "kind": "misttrain",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "misttrain|wrapped|misttrain": {
+  "config": {
+   "adapterOptions": {
+    "misttrain-json": {
+     "root": "misttrain/MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "misttrain",
+    "title": ""
+   },
+   "groups": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "chars": {
+     "auto": true,
+     "catalog": "chars"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "chars",
+      "other",
+      "all"
+     ]
+    },
+    "other": {
+     "auto": true,
+     "catalog": "other"
+    }
+   },
+   "resourceRoots": [
+    "misttrain/MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "misttrain/MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X/UScenes",
+     "id": "uscenes",
+     "label": "UScenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: misttrain",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: misttrain"
+  ],
+  "details": {
+   "game": "misttrain",
+   "kind": "misttrain",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "misttrain|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "misttrain-json": {
+     "root": "misttrain/MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "misttrain",
+    "title": ""
+   },
+   "groups": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "all": {
+     "auto": true,
+     "catalog": "all"
+    },
+    "chars": {
+     "auto": true,
+     "catalog": "chars"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "chars",
+      "other",
+      "all"
+     ]
+    },
+    "other": {
+     "auto": true,
+     "catalog": "other"
+    }
+   },
+   "resourceRoots": [
+    "misttrain/MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "misttrain/MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X/UScenes",
+     "id": "uscenes",
+     "label": "UScenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": []
+  },
+  "itemTags": [
+   "Gal配置: misttrain",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: misttrain"
+  ],
+  "details": {
+   "game": "misttrain",
+   "kind": "misttrain",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "angelic|direct|angelic": {
+  "config": {
+   "adapterOptions": {
+    "renpy-monmusu": {
+     "aliasFiles": [
+      "game/script/movies.rpy",
+      "game/script/stills.rpy"
+     ],
+     "imageDirs": [
+      "game/images",
+      "game/resources"
+     ]
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "angelic",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [
+    "sub_nav",
+    "sub_nav_byname",
+    "tl"
+   ],
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "game/script",
+     "id": "script",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: angelic",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: angelic"
+  ],
+  "details": {
+   "game": "angelic",
+   "kind": "angelic",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "angelic|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "renpy-monmusu": {
+     "aliasFiles": [
+      "game/script/movies.rpy",
+      "game/script/stills.rpy"
+     ],
+     "imageDirs": [
+      "game/images",
+      "game/resources"
+     ]
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "angelic",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [
+    "sub_nav",
+    "sub_nav_byname",
+    "tl"
+   ],
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "game/script",
+     "id": "script",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: angelic",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: angelic"
+  ],
+  "details": {
+   "game": "angelic",
+   "kind": "angelic",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "angelic|wrapped|angelic": {
+  "config": {
+   "adapterOptions": {
+    "renpy-monmusu": {
+     "aliasFiles": [
+      "angelic/game/script/movies.rpy",
+      "angelic/game/script/stills.rpy"
+     ],
+     "imageDirs": [
+      "angelic/game/images",
+      "angelic/game/resources"
+     ]
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "angelic",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [
+    "sub_nav",
+    "sub_nav_byname",
+    "tl"
+   ],
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "angelic/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "angelic/game/script",
+     "id": "script",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: angelic",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: angelic"
+  ],
+  "details": {
+   "game": "angelic",
+   "kind": "angelic",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "angelic|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "renpy-monmusu": {
+     "aliasFiles": [
+      "angelic/game/script/movies.rpy",
+      "angelic/game/script/stills.rpy"
+     ],
+     "imageDirs": [
+      "angelic/game/images",
+      "angelic/game/resources"
+     ]
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "angelic",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [
+    "sub_nav",
+    "sub_nav_byname",
+    "tl"
+   ],
+   "merge": [],
+   "namesFiles": [],
+   "resourceRoots": [
+    "angelic/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "rpy"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "angelic/game/script",
+     "id": "script",
+     "label": "日文"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: angelic",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: angelic"
+  ],
+  "details": {
+   "game": "angelic",
+   "kind": "angelic",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "artwhirl|direct|artwhirl": {
+  "config": {
+   "adapterOptions": {
+    "artwhirl-json": {
+     "root": "game"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "artwhirl",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "game/episode_scripts",
+     "id": "episode",
+     "label": "剧情"
+    },
+    {
+     "dir": "game/hscripts",
+     "id": "hscene",
+     "label": "H 场景"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: artwhirl",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: artwhirl"
+  ],
+  "details": {
+   "game": "artwhirl",
+   "kind": "artwhirl",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "artwhirl|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "artwhirl-json": {
+     "root": "game"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "artwhirl",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "game/episode_scripts",
+     "id": "episode",
+     "label": "剧情"
+    },
+    {
+     "dir": "game/hscripts",
+     "id": "hscene",
+     "label": "H 场景"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: artwhirl",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: artwhirl"
+  ],
+  "details": {
+   "game": "artwhirl",
+   "kind": "artwhirl",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "artwhirl|wrapped|artwhirl": {
+  "config": {
+   "adapterOptions": {
+    "artwhirl-json": {
+     "root": "artwhirl/game"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "artwhirl",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "artwhirl/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "artwhirl/game/episode_scripts",
+     "id": "episode",
+     "label": "剧情"
+    },
+    {
+     "dir": "artwhirl/game/hscripts",
+     "id": "hscene",
+     "label": "H 场景"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: artwhirl",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: artwhirl"
+  ],
+  "details": {
+   "game": "artwhirl",
+   "kind": "artwhirl",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "artwhirl|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "artwhirl-json": {
+     "root": "artwhirl/game"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "artwhirl",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "artwhirl/game"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "json"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "artwhirl/game/episode_scripts",
+     "id": "episode",
+     "label": "剧情"
+    },
+    {
+     "dir": "artwhirl/game/hscripts",
+     "id": "hscene",
+     "label": "H 场景"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: artwhirl",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: artwhirl"
+  ],
+  "details": {
+   "game": "artwhirl",
+   "kind": "artwhirl",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "minashigo_r|direct|minashigo_r": {
+  "config": {
+   "dirThumbs": [],
+   "game": {
+    "id": "minashigo_r",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "data"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "data/adv/textfiles/story",
+     "id": "story",
+     "label": "story"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: minashigo_r",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: minashigo_r"
+  ],
+  "details": {
+   "game": "minashigo_r",
+   "kind": "minashigo_r",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "minashigo_r|direct|auto": {
+  "config": {
+   "dirThumbs": [],
+   "game": {
+    "id": "minashigo_r",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "data"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "data/adv/textfiles/story",
+     "id": "story",
+     "label": "story"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: minashigo_r",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: minashigo_r"
+  ],
+  "details": {
+   "game": "minashigo_r",
+   "kind": "minashigo_r",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "minashigo_r|wrapped|minashigo_r": {
+  "config": {
+   "dirThumbs": [],
+   "game": {
+    "id": "minashigo_r",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "minashigo_r/data"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "minashigo_r/data/adv/textfiles/story",
+     "id": "story",
+     "label": "story"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: minashigo_r",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: minashigo_r"
+  ],
+  "details": {
+   "game": "minashigo_r",
+   "kind": "minashigo_r",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "minashigo_r|wrapped|auto": {
+  "config": {
+   "dirThumbs": [],
+   "game": {
+    "id": "minashigo_r",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "minashigo_r/data"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 2,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "minashigo_r/data/adv/textfiles/story",
+     "id": "story",
+     "label": "story"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: minashigo_r",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: minashigo_r"
+  ],
+  "details": {
+   "game": "minashigo_r",
+   "kind": "minashigo_r",
+   "scripts": 2,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ }
+}

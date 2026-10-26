@@ -112,11 +112,19 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
   - 已知取舍：转成 JSON 对象后纯整数的名字（动画 / 皮肤叫 `1`、`2`）会被排到最前面，动画列表顺序可能和文件不同。3.7 仍不支持。
   - 测试：`node scripts/dev/fe-gal-spine36-selftest.mjs`（需要 `PLAYWRIGHT_PATH`）。用官方 3.6 示例里成对的 `.skel` / `.json`（测试时下载到临时目录）逐项比对过转换结果；**没有真实的 Grenze 3.6.38 文件测过**（只测过合成骨架和官方 3.6.32 / 3.6.52 示例）。
 
-### 脚本 gal-layout（UViewer / monmusu / tenkeiprdx 合一）
+### 脚本 gal-layout（所有 Gal 游戏合一）
 
 - **分发**：`config.game.id` 填了（导入时写的）就只走那个游戏的探测（`uviewer` / `monmusu` / `tenkeiprdx`）；认不出结构：uviewer 退回通用配置，别的跳过（不乱改）；不认识的 id 跳过。
   没填 `game.id`：按 monmusu → tenkeiprdx → uviewer 的顺序探测，谁认出来谁认领（把 `game.id` 写回 config，并打 `Gal游戏: <id>` 标签）；都认不出 → 通用配置，不认领。
-- 加新游戏 = 在脚本里加一个探测函数 + 在 `GAMES` 里登记；不用新建脚本、不用多勾一个。
+- 加新游戏 = 在 `LAYOUTS` 表里加一项（目录配置）+ 写一个探测函数并在 `DETECTORS` 里登记；不用新建脚本、不用多勾一个。
+- **已知布局表 `LAYOUTS`**（`scripts/tag-scripts/gal-layout/main.js` 开头，单文件，上传一个 main.js 就够）：「游戏 id → 目录配置」只在这一处。发现某个游戏的目录配置不对，改这张表（或者在脚本选项 `layouts` 里按 id 覆盖某几个字段：`{"legeclo": {"bases": ["", "game", "weird/game"]}}`，整个字段替换），上传新版本重跑，不用改镜像。探测函数只做依赖数据的事（数脚本、挑封面、从真实文件里认头像模板 / 菜单按钮图、分类节点、读标记文件内容）。
+  - 每项的字段（**所有列表都是数组**，哪怕现在只有一个元素）：`bases`（相对条目目录的候选 base，`''` = 条目目录本身，如 `['', 'game']`、`['', '*_Data/StreamingAssets/*']`）、`anchors`（base 下必须全在）、`siblings`（至少一个在）、`markers`（没声明 `game.id` 时才查；数组项 = 任选其一）、`scriptRoots`（`[{id, dir, label}]` 候选，存在的都写）、`resourceRoots`（候选，第一个存在的）、`adapters`（默认适配器 id）、`adapterOptions`（适配器参数模板，各适配器的选项形状不变：字符串 / 数组原样，`{path: [候选…]}` = 单个路径，`{paths: ['a', '?b']}` = 路径数组，`?` 开头 = 存在才写）、`config`（固定的引擎字段：`scriptExtensions` / `hiddenDirs` / `labels` / `merge` / `views` / `groups` / `thumbSources` / `namesFiles` / `thumbsDirs` …）、`count`（数脚本：`[{dir, ext, depth}]`）、`cover` / `avatars` / `scriptIndexScan`（封面 / 头像 / 菜单按钮图的规则）、`expectedDirs`、`nodes`、`notes`。
+  - 路径写法：字面量只 stat；`*` 展开一级目录（段内也行，`text*`）；`/re/flags` 正则段（捕获组在 `scriptRoots` 的 `id` / `label` 里写 `{0}` `{1}`），带正则的路径写成数组 `['TextAsset', '/^easy_dialog-\\d+\\.xml$/i']`。
+  - 别名用 `extends`：`aster` / `jaxin` / `maid` / `aku` / `fruits` → `girlscreation`，`deepone` → `uviewer`（只写 `{ extends, title }`，不拷贝）；写回 `config.game.id` 的是条目声明的 id。
+  - 解析顺序：① 先按 `bases` 候选（只 stat，不遍历）依次查，`anchors` 全在、`siblings` 至少一个在就算命中，日志「已知布局命中：…」；② 都没命中才在条目目录下广度优先搜索（深度 `searchDepth`，判据相同），日志「已知布局没命中，改用搜索：…」（所以多套了一层 / 挪了位置的目录照样认）。没填 `game.id` 时按 `autoOrder` 顺序探测、再看 `markers`；声明了 id 就不看 markers。
+  - 表项写坏了（类型不对 / 正则不合法 / 非数组）不会崩：坏的项丢掉、日志说明；整项不可用就退回内置的。
+- **这次运行的改动情况**：返回的日志里有一段（汇总行在前，如 `本次改动：新增 3 项 / 修改 2 项 / 删除 0 项 / 未变 9 项（共 14 个字段）`，完全一样就是 `没有改动`；dryRun 前面加 `【dryRun】将要产生的改动`，仍然不写）。逐字段和条目现有 config 对比（合并语义：本次写了的顶层字段整个替换、没写的「保留」；`replace: true` 时没写的是「删除」；补丁里的 `null` = 删除）：数组列出增删的项（深度 JSON 相等比较）、标量 旧 → 新、对象列出改了的键（`adapterOptions` 按适配器 id）；`config.script`（版本 / 运行时间）不算改动；另有标签增删、`game.id` 是否写回 / 变化、命中的覆盖项改了哪些字段。长值截断（约 200 字，写明总字数），改动段 ≤ 8 KB 且不超过服务端对日志的限额（80 行 / 每行 500 字），放不下写「… 另有 N 项」。结构化版本在 `details.changes = { summary, added, changed, removed, unchanged, kept, tags, game, overrides, … }`（`added` / `changed` / `removed` 是 `{field, info}`，`unchanged` / `kept` 是字段名）。没识别 / 跳过的路径输出 `没有改动（未识别 / 已跳过）`。
+- 测试：`node scripts/dev/gal-layout-selftest.mjs`（表的 schema、20 个 id 都在、别名、各游戏 fixture 的探测结果和 `gal-layout-golden.json` 逐项一致、decoy 目录、搜索回退、改动报告）。探测结果有意改变时用 `--update-golden` 重新生成 golden。
 - 下面是 UViewer 的探测细节（别的游戏见上面各自的小节）。
 
 - 探测：`user_data/settings.json` 的 `resource_path`（默认 `./resources`）下有 `download/adv/text` → UViewer；同级 `text*` 目录当作另一套文本；
