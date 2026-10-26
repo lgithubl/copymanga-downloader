@@ -4520,7 +4520,12 @@
     "id": "minashigo_r",
     "title": ""
    },
-   "groups": [],
+   "groups": [
+    {
+     "parent": ".",
+     "pattern": "^1(\\d{6})\\d{2}$"
+    }
+   ],
    "hiddenDirs": [],
    "labels": {},
    "merge": [],
@@ -4570,7 +4575,12 @@
     "id": "minashigo_r",
     "title": ""
    },
-   "groups": [],
+   "groups": [
+    {
+     "parent": ".",
+     "pattern": "^1(\\d{6})\\d{2}$"
+    }
+   ],
    "hiddenDirs": [],
    "labels": {},
    "merge": [],
@@ -4620,7 +4630,12 @@
     "id": "minashigo_r",
     "title": ""
    },
-   "groups": [],
+   "groups": [
+    {
+     "parent": ".",
+     "pattern": "^1(\\d{6})\\d{2}$"
+    }
+   ],
    "hiddenDirs": [],
    "labels": {},
    "merge": [],
@@ -4670,7 +4685,12 @@
     "id": "minashigo_r",
     "title": ""
    },
-   "groups": [],
+   "groups": [
+    {
+     "parent": ".",
+     "pattern": "^1(\\d{6})\\d{2}$"
+    }
+   ],
    "hiddenDirs": [],
    "labels": {},
    "merge": [],

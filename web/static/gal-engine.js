@@ -3,7 +3,7 @@
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, white: false, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, stands: [], overlays: [], camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, white: false, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -128,11 +128,27 @@ export function applyCommand(state, command, choices = null) {
       else if (command.prefix) { for (const slot of Object.keys(state.spines)) if (slot.startsWith(command.prefix)) delete state.spines[slot] }
       else state.spines = {}
       break
-    case 'stand':
-      state.stand = { parts: command.parts || [] }
+    case 'stand':   // 带 slot = 按槽位的立绘（同 slot 再来一条 = 替换，位置不变）；不带 = 整体立绘（旧行为）
+      if (typeof command.slot === 'string' && command.slot) {
+        const { op: _op, when: _when, ...spec } = command
+        spec.parts = Array.isArray(command.parts) ? command.parts : []
+        const at = state.stands.findIndex((s) => s.slot === command.slot)
+        state.stands = at < 0 ? [...state.stands, spec] : state.stands.map((s, i) => (i === at ? spec : s))
+      } else state.stand = { parts: command.parts || [] }
       break
-    case 'standOff':
-      state.stand = null
+    case 'standOff':   // 带 slot = 去掉这个槽位；不带 = 全部（整体立绘 + 所有槽位）
+      if (typeof command.slot === 'string' && command.slot) state.stands = state.stands.filter((s) => s.slot !== command.slot)
+      else { state.stand = null; state.stands = [] }
+      break
+    case 'overlay': {   // 叠加层（静态图 / 矩形）：同 slot 再来一条 = 合并（后写的字段覆盖，没写的保留；imgconf 这类只改布局的指令靠它；带 src 的 = 换了一张图，整条替换），位置不变
+      if (typeof command.slot !== 'string' || !command.slot) break
+      const { op: _op, when: _when, ...spec } = command
+      const at = state.overlays.findIndex((o) => o.slot === command.slot)
+      state.overlays = at < 0 ? [...state.overlays, spec] : state.overlays.map((o, i) => (i === at ? (command.src ? spec : { ...o, ...spec }) : o))
+      break
+    }
+    case 'overlayOff':   // 带 slot = 去掉这个叠加层；不带 = 全部
+      state.overlays = typeof command.slot === 'string' && command.slot ? state.overlays.filter((o) => o.slot !== command.slot) : []
       break
     case 'camera':
       state.camera = { to: command.to, from: command.from || null, seconds: command.seconds || 0 }

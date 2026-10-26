@@ -206,7 +206,7 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
   - **每个游戏的规则字段**（`LAYOUTS` 里）：`ruleTables`（数组，写哪些适配器的全表；比如 girlscreation 家族写 `girlscreation-tag` + `girlscreation-line`）、`ruleOverrides`（`{ <适配器 id>: { 子键: 值 } }`，只对这个游戏改的差异）、`engine`（`{ classify, resourceResolve, indexSkip, limits, player }`，原样写进 config 顶层；要清掉某个字段写 `[]` / `{}`，引擎合并是顶层字段整个替换）、`pending`（等真实数据的占位，只是文档，从不写进 config）。每个游戏块的注释写明哪些已被真实数据验证、哪些是猜的。别名用 `extends` 继承，只写自己的差异。
   - **合并顺序**（后者覆盖前者；对象逐键递归，数组 / 标量整个替换）：`ADAPTER_RULES[适配器]` < 游戏的 `ruleOverrides[适配器]` < 探测函数写的值（`root` / `aliasFiles` / `imageDirs` 等，真实目录里认出来的永远赢）。每张表 ≤ 16 KB、合计 ≤ 64 KB（引擎上限）；超了脚本在日志里警告「会被整张丢掉」。
   - **`layouts` / `overrides` 选项怎么和它们互动**：选项 `layouts.<id>` 里写的字段整个替换表里同名字段（`ruleTables` / `ruleOverrides` / `engine` 也是）。只想改一个适配器的一个子键：`{"layouts": {"bokusen": {"ruleOverrides": {"bokusen-json": {"bgm": {"index": 3}}}}}}`（深度合并，`bgm.patterns` 等别的子键保留）。`overrides[].config` 是写完之后对**顶层字段**的整个替换：写 `adapterOptions` 会换掉整张（含规则表），写 `limits` 换掉整个 `limits`。
-  - **目前每个游戏写了什么**（全部和适配器默认值逐字节一致；`ruleOverrides` 都是空的）：uviewer / deepone / minashigo_r → `uviewer-csv`；legeclo → `renpy-legeclo`；monmusu / angelic → `renpy-monmusu`；minashigo → `renpy-minashigo`；girlscreation 家族 → `girlscreation-tag` + `girlscreation-line`；tenkeiprdx / misttrain / tsk / artwhirl / kamihime / bokusen / grenze → 各自的适配器（`tenkeiprdx-json` / `misttrain-json` / `utage-book` / `artwhirl-json` / `tyrano-ks` / `bokusen-json` / `grenze-xml`）。`classify` 全部 `[]`（没有可证明的声道规则）。`limits`：bokusen `walkFiles 1000000`、kamihime `walkFiles 800000 / sampleFiles 20000`、grenze `walkFiles 2000000`、tsk `walkFiles 800000`、girlscreation 家族 `walkFiles 400000 / sampleFiles 20000`（这些抄的是适配器自己的 `contextWalkLimit` / `contextSampleLimit`；girlscreation 的 `sampleFiles 20000` 是未验证的猜测，比适配器默认 3000 宽，防止场景多时脚本抽样悄悄截断）。`resourceResolve`：bokusen `extensionFallbacks {'.m4a': ['.wav']}`（磁盘上是 `.wav`、列表写 `.m4a`，适配器的 `sound.ext` 已经先试 `.wav`，这是冗余的保险）。没有写 `player`（只有 Girls Creation R Viewer 的相机常数读过源码，而且那是浏览器里按媒体存的设置，不是 `config.player`）。minashigo / misttrain 缩略图、legeclo `voice ×39` 仍等真实数据，只以 `pending` 占位记录（见 `scripts/dev/gal-pending-plan.md`），不启用任何猜测。
+  - **目前每个游戏写了什么**（全部和适配器默认值逐字节一致；`ruleOverrides` 都是空的——ミナシゴノシゴトR 例外，见「ミナシゴノシゴトR」一节）：uviewer / deepone / minashigo_r → `uviewer-csv`；legeclo → `renpy-legeclo`；monmusu / angelic → `renpy-monmusu`；minashigo → `renpy-minashigo`；girlscreation 家族 → `girlscreation-tag` + `girlscreation-line`；tenkeiprdx / misttrain / tsk / artwhirl / kamihime / bokusen / grenze → 各自的适配器（`tenkeiprdx-json` / `misttrain-json` / `utage-book` / `artwhirl-json` / `tyrano-ks` / `bokusen-json` / `grenze-xml`）。`classify` 全部 `[]`（没有可证明的声道规则）。`limits`：bokusen `walkFiles 1000000`、kamihime `walkFiles 800000 / sampleFiles 20000`、grenze `walkFiles 2000000`、tsk `walkFiles 800000`、girlscreation 家族 `walkFiles 400000 / sampleFiles 20000`（这些抄的是适配器自己的 `contextWalkLimit` / `contextSampleLimit`；girlscreation 的 `sampleFiles 20000` 是未验证的猜测，比适配器默认 3000 宽，防止场景多时脚本抽样悄悄截断）。`resourceResolve`：bokusen `extensionFallbacks {'.m4a': ['.wav']}`（磁盘上是 `.wav`、列表写 `.m4a`，适配器的 `sound.ext` 已经先试 `.wav`，这是冗余的保险）。没有写 `player`（只有 Girls Creation R Viewer 的相机常数读过源码，而且那是浏览器里按媒体存的设置，不是 `config.player`）。minashigo / misttrain 缩略图、legeclo `voice ×39` 仍等真实数据，只以 `pending` 占位记录（见 `scripts/dev/gal-pending-plan.md`），不启用任何猜测。
   - **漂移守卫**：`node scripts/dev/gal-layout-rules-selftest.mjs`（纯 node）。对表里每个适配器 import 它的 `DEFAULT_OPTIONS` 和 `ADAPTER_RULES` 深度比较；每个游戏的有效表和默认值的差异必须声明在它的 `ruleOverrides`（或全局的 `RULE_DEVIATIONS`，点路径）里；`RULE_DEVIATIONS` 里过期的豁免也会报错。适配器改了默认值而脚本没跟上 → 测试红。
 - **这次运行的改动情况**：返回的日志里有一段（汇总行在前，如 `本次改动：新增 3 项 / 修改 2 项 / 删除 0 项 / 未变 9 项（共 14 个字段）`，完全一样就是 `没有改动`；dryRun 前面加 `【dryRun】将要产生的改动`，仍然不写）。逐字段和条目现有 config 对比（合并语义：本次写了的顶层字段整个替换、没写的「保留」；`replace: true` 时没写的是「删除」；补丁里的 `null` = 删除）：数组列出增删的项（深度 JSON 相等比较）、标量 旧 → 新、对象列出改了的键；`adapterOptions` 按适配器 id 汇总、不倾倒整张表（新增 → `+ adapterOptions['bokusen-json']（新增）：10 个键（root、resourceDir、paths、image、sound、slotMap…）`；修改 → `~ adapterOptions['bokusen-json']（修改）：2 个键变了：bgm、animation；bgm.index：7 → 0；animation：新增`，结构化版本在 `details.changes.adapterOptions = { added: {id: 键数}, changed: {id: [键…]}, removed: [id…] }`）；`config.script`（版本 / 运行时间）不算改动；另有标签增删、`game.id` 是否写回 / 变化、命中的覆盖项改了哪些字段。长值截断（约 200 字，写明总字数），改动段 ≤ 8 KB 且不超过服务端对日志的限额（80 行 / 每行 500 字），放不下写「… 另有 N 项」。结构化版本在 `details.changes = { summary, added, changed, removed, unchanged, kept, tags, game, overrides, … }`（`added` / `changed` / `removed` 是 `{field, info}`，`unchanged` / `kept` 是字段名）。没识别 / 跳过的路径输出 `没有改动（未识别 / 已跳过）`。
 - 改动报告示例（bokusen，空条目第一次运行，节选）：
@@ -422,6 +422,52 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 | `select` | `{var:'select', prefixRe:'^(?:選項\|选项\|選擇\|选择\|Option)\\s*\\d+[…]*'}` | 选的序号记进 `var`；选项文字开头匹配 `prefixRe` 的部分去掉（`''` = 不去） |
 | `conditions` | `{vars:{}}` | `{变量: 初始值}`：除 `select` 外一直不变的变量，`if` 条件解析时直接判定（成立 = 去掉 `when`，不成立 = 块里的指令不输出）。没配的变量保持原样（没设过 → 条件不成立 → 块不可见） |
 | `sniff` | `{minKnownRatio:0.6, minLines:3, maxLines:40}` | 看前 `maxLines` 条指令，至少 `minLines` 条且认得比例 ≥ `minKnownRatio` |
+| `sprites` | 见下一节 | 立绘（plist 图集）/ 叠加层 / 抖动的翻译；`enabled: false`（默认）= 这些指令保持 `raw`，和以前一样 |
+
+## ミナシゴノシゴトR（uviewer-csv + `sprites`）：图集立绘、叠加层、按角色分组
+
+`game.id = minashigo_r`，脚本在 `data/adv/textfiles/story/<9 位编号>.txt`（UViewer 的 CSV 格式），5321 个脚本。立绘 / CG / 特效指令（`spriteatlas` 22464、`spriteoff` 19881、`sprite` 10744、`imgconf` 10225、`mask` 9635、`anm` 1937、`flash` 776、`shake` 244、`endwmsg` 1033）过去全是 `raw`、列表也是平铺的。现在：
+
+### 新的场景指令（通用，`web/library/gal/scene.mjs` 文件头里也有）
+
+- **`stand`（带 `slot`）= 按槽位的立绘**（不带 `slot` 的是旧的整体立绘，行为不变）：
+  `{ op: 'stand', slot, stage?: [1280, 720], fade?, parts: [{ atlas | src, x?, y?, scale?, dim? }] }`。同 `slot` 再来一条 = 替换（位置不变），多个槽位同时在场、按出现顺序叠。`x` / `y` = 原图画布（图集里 = `spriteSourceSize` 那块，整张图就是图本身）的中心相对舞台中心的偏移，**舞台像素、y 向下为正**（适配器负责把「y 向上」的游戏换算）；`scale` 默认 1，`<= 0` = 隐藏（不加载）；`fade` = 槽位第一次出现时淡入的秒数（只在实时播放，消失是立即的）。
+  `atlas = { plist, frame | frames, texture?, base? }`：Cocos2d / TexturePacker plist 图集的一帧。`plist` / `texture` 是资源路径（`texture` 缺省 = `plist` 换成 `.png`）；`frames` = 候选帧名数组（取 plist 里第一个存在的），`frame` = 单个帧名；`base` = 底图帧名数组（存在才画、先画；同一图集的帧共用 `spriteSourceSize` 画布，各按 `spriteOffset` 摆放——身体 + 表情就是这样叠的）。播放器（`web/static/gal-atlas.js` + `gal-stand.js`）拉取并解析 plist（自带小 XML 解析：不依赖库、不碰 DOCTYPE / 外部实体、4 MB / 深度 16 / 节点数有上限），按 URL 缓存 plist + 贴图；支持格式 3（`spriteOffset` / `spriteSize` / `spriteSourceSize` / `textureRect` / `textureRotated`）和格式 2（`frame` / `offset` / `sourceSize` / `rotated`）；旋转帧（`textureRotated`）逆时针转回。plist 取不到 / 解析失败 / 找不到帧 / 贴图取不到 = 「缺少资源」提示里列出路径（`plist#帧名` 表示帧找不到），别的照画，不崩。
+- **`standOff { slot?, fade? }`**：去掉一个槽位；不带 `slot` = 整体立绘 + 全部槽位。
+- **`overlay { slot, src?, rect?, color?, alpha?, x?, y?, scaleX?, scaleY?, fit?, fade?, z?, stage? }`**：静态图 / 矩形叠加层（画在立绘之上，单独一个 canvas；TSK 的 `Sprite`、Girls Creation 的 `subimage` 以后复用）。同 `slot` 再来一条 = 合并（写了的字段覆盖，没写的保留——所以只带布局字段的指令就是「改布局」；带 `src` = 换了一张图，整条替换），位置不变。`src` = 图的资源路径，以「舞台中心 + (x, y)」为中心画（y 向下为正），大小 = 原图 × `fit` 系数 × `(scaleX, scaleY)`（默认 1）；`fit` = `none`（默认）/ `contain` / `cover`（先缩放到舞台大小再乘 scale）。`rect = [x, y, w, h]`（舞台像素，左上角、y 向下；再加 `x` / `y` 偏移、宽高乘 `scaleX` / `scaleY`）：没有 `src` 时用 `color`（默认黑）填这块（`rect` 缺省 = 整个舞台）；有 `src` 时 `rect` 是裁剪窗口。`alpha` 0~1（默认 1）；`alpha` / `scaleX` / `scaleY` `<= 0` = 隐藏（不加载）；`z` 越大越靠上（同 `z` 按出现顺序）；`fade` = 第一次出现淡入的秒数。
+- **`overlayOff { slot? }`**：去掉一个叠加层；不带 `slot` = 全部。
+- 引擎状态：`state.stands`（`[{ slot, parts, … }]`）、`state.overlays`（`[{ slot, … }]`）都是数组；`stateAt` 一步到位，回看 / 续播 / 跳转都能重建。
+
+### uviewer-csv 的 `sprites` 选项（`adapterOptions['uviewer-csv'].sprites`；默认值 = 下面的 JSON，`enabled: false` 时整块不生效 = 以前的行为）
+
+```json
+{
+  "enabled": false,
+  "stage": { "width": 1280, "height": 720 },
+  "yUp": true,
+  "numbers": { "x": 0, "y": 1, "scale": 2, "fade": 3 },
+  "atlas": { "plistExt": ".plist", "textureExt": ".png", "frameKeys": ["{n}.png", "{name}:{n}.png", "{n}"], "baseKeys": [] },
+  "fit": "none",
+  "maskColor": "#000000",
+  "offAll": ["stand"],
+  "commands": { "spriteatlas": "stand", "spriteoff": "off", "sprite": "overlay", "mask": "rect", "imgconf": "layout", "anm": "raw", "shake": "shake", "flash": "flash", "endwmsg": "ignore" },
+  "slotRules": []
+}
+```
+
+- `stage`：脚本里 x / y / 矩形所指的舞台大小（写进指令的 `stage`）；`yUp`：脚本 y 向上为正（Cocos2d），输出取反成「y 向下」，矩形的 y 从底边往上数、也相应换算；`numbers`：槽位参数**之后**第几个参数是 x / y / 缩放 / 淡入秒（`spriteatlas` 和 `sprite` 共用；`spriteatlas` 的槽位是第 3 个参数，`sprite` 是第 2 个）。
+- `atlas`：图集路径（脚本里不带扩展名）+ `plistExt` / `textureExt` = plist / 贴图；帧参数 `body:003` 的 `{name}` = `body`、`{n}` = `003`，`frameKeys` 生成候选帧名数组（没有冒号时 `{n}` = 整段、带 `{name}` 的候选跳过）；`baseKeys`（例 `["{name}.png"]`）= 要先画的底图帧。
+- `commands`：每条指令怎么处理。可选值：各指令的默认处理（`spriteatlas`: `stand`、`spriteoff`: `off`、`sprite`: `overlay`、`mask`: `rect`、`imgconf`: `layout`、`shake`: `shake`、`flash`: `flash`）/ `raw`（保留成 `raw` 指令，播放器的「暂未渲染」提示里能看到）/ `ignore`（丢掉）；`anm` 只能 `raw` / `ignore`，`endwmsg` 默认 `ignore`。
+- `slotRules`：`[{ cmds?: [指令名], match: 正则, as: 'raw' | 'ignore' | 该指令的处理名 }]`，`match` 对槽位名（`spriteatlas` / `sprite` / `anm` / `spriteoff` 的槽位、`mask` 的名字、`imgconf` 的目标，不分大小写）；第一条命中的覆盖 `commands` 表。
+- 翻译：`spriteatlas` → `stand`（见上；一个槽位一组）；`sprite` → `overlay`（`src`、`x` / `y`、`scaleX = scaleY` = 缩放参数、`fade`、`fit` 取 `sprites.fit`）；`mask,名,x,y,w,h,alpha` → `overlay` 矩形（`color = maskColor`）；`imgconf,目标,mask 名,x,y,,,旋转,sx,sy,淡入` → `overlay` 布局更新（只对脚本里建过的叠加层，否则保留 `raw`；旋转 / mask 名暂不用）；`spriteoff,槽位` → 按这份脚本里它是怎么建的选 `standOff` / `overlayOff`（没建过 = 不输出）、`spriteoff,all` → `offAll` 列的类（默认只清立绘，CG `still*` 要单独 `spriteoff`）；`flash` → `flash`；`shake,秒,次数,x,y[,槽位]` → `shake`（振幅取 x / y 的大者，`strength` = 振幅 / 40，只有 x = horizontal、只有 y = vertical、都有 = overall；**带槽位的也整屏抖**，次数不用）；`anm,tint,…` 保留 `raw`（染色动画，没有对应渲染）；`endwmsg` 忽略。
+- 帧参数里的 `body:003` → 候选 `003.png` / `body:003.png` / `003`（真实 plist 的帧名是 `000.png`…`010.png` + `body.png`）。
+
+### minashigo_r 的 LAYOUTS 配置（`scripts/tag-scripts/gal-layout/main.js`）
+
+- `config.groups = [{ parent: '.', pattern: '^1(\\d{6})\\d{2}$' }]`：脚本编号 `1<6 位角色编号><2 位序号>`（`120090312` → `200903`）按角色编号分成虚拟目录，卡片标题 = 编号（名称表 `data/resource.json` 是加密的，读不了；以后有了名字表在 `labels` 里加 `{ 角色编号: 名字 }`）；6 开头的 20 个脚本不匹配，照常列在外面。缩略图规则以后单独加。
+- `ruleOverrides['uviewer-csv'].sprites = { enabled: true, fit: 'contain', atlas: { baseKeys: ['{name}.png'] }, commands: { mask: 'raw', imgconf: 'raw' }, slotRules: [{ cmds: ['sprite'], match: '^(?:black|bg)\\d*$', as: 'raw' }] }`：立绘、CG、闪屏、抖动渲染；`mask` / `imgconf` / 黑底图 `sprite black.jpg` / `anm` 保持 `raw`。
+- **没有真实画面核对的猜测**：舞台 1280×720；坐标 y 向上、原图画布中心 = 舞台中心 + (x, y)（旁证：`imgconf,dan2,dan1,0,-1360,…,2,2` 在这个约定下恰好把放大 2 倍的脸放进 `mask,dan1,0,0,1280,200` 的窗口）、画布缩放 = 脚本里的 scale；plist 帧里 `spriteOffset` = 帧中心相对画布中心的偏移（y 向上）；`textureRotated` = 顺时针存放、逆时针还原，`textureRect` 的 w / h 是还原后的大小（旋转帧在贴图里占 h×w）；`body.png` 是所有 `NNN.png`（同大小、同偏移的表情）的底图（`baseKeys`）；`sprite` 第 5、6 个参数 = 缩放 / 淡入秒；`mask` 的 alpha 可能是裁剪阈值而不是不透明度，`mask` / `imgconf` 在游戏里很可能是「裁剪窗口 + 在窗口里放大的脸」，黑底图很可能是对话框背景一类的界面件——所以这几样保持 `raw`，想试渲染：在条目的 `layouts` 覆盖里去掉对应的 `commands` / `slotRules` 项重跑。
+- 测试：`node scripts/dev/gal-sprites-selftest.mjs`（plist 解析 / 指令翻译 / 引擎状态 / 端到端，纯 node）、`node scripts/dev/fe-gal-minashigo-r-selftest.mjs`（浏览器，端口 8194，截图 `/tmp/minashigo-r-shots`：立绘像素、旋转帧、叠加层矩形 / 图 / imgconf / spriteoff、缺图集提示）。
 
 ## Gal 的导航统一放底部
 
