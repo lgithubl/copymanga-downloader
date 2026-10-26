@@ -115,6 +115,7 @@ await writeSpine(fx, 'j38', { format: 'json', color: 'goldenrod', animations: ['
 await writeSpine(fx, 'bad36', { format: 'binary36', color: 'green', animations: ANIMS })
 await writeFile(path.join(fx, 'bad36.skel.bytes'), (await readFile(path.join(fx, 'bad36.skel.bytes'))).subarray(0, 120))   // 截断的 3.6 二进制
 await writeSpine(fx, 'png36', { format: 'binary36', color: 'purple', animations: ANIMS })
+await writeSpine(fx, 'aku36', { format: 'json-emotes', color: 'darkorange', version: '3.6.53' })                      // Aku No Onna Kanbu 的结构：3.6.53 JSON、1 骨骼 + 11 槽、动画 Em00…Em09 只有 slots 时间线（附件由动画切出来），atlas 开头有空行
 const dataDir = path.join(work, 'data')
 await mkdir(dataDir, { recursive: true })
 const port = 8136
@@ -188,6 +189,16 @@ try {
   await sleep(600)
   const back = await pixel('3.6', 0.2, 0.5)
   check('切回 idle 又画出来', near(back, [0, 191, 255]), J(back))
+
+  // 2b. Aku 结构：初始姿势没有任何可见附件，整个身体 / 脸由动画（Em06）的 slots 时间线打开——包围盒要按动画首帧算，不然布局拿到空包围盒、角色整个不画
+  await setSpecs({ E: spec('aku36', 0.5, 'Em06') })
+  await page.waitForFunction(() => window.__layer.loadedCount() >= 1 && window.__layer.info().some((r) => r.slot === 'E' && r.loaded), null, { timeout: 15000 })
+  await sleep(600)
+  const aku = (await info()).find((r) => r.slot === 'E')
+  const akuCenter = await pixel('3.6', 0.5, 0.5)
+  check('3.6.53 JSON（Aku 结构：1 骨骼 11 槽、Em00…Em09 只有 slots 时间线、atlas 开头有空行）：加载成功，识别 3.6.53，初始姿势 0 个可见附件、包围盒按动画首帧算（来源 animation）', aku.loaded && aku.version === '3.6.53' && aku.runtime === '3.6' && aku.animations.length === 10 && aku.slotCount === 11 && aku.attachmentsSetup === 0 && aku.boundsSource === 'animation' && aku.boundsEmpty === false && aku.used === 'Em06', J(aku))
+  check('Aku 结构：Em06 画出非空像素（画面正中是饱和的橙色，不是透明）；诊断写「初始姿势没有可见附件，已按动画首帧计算包围盒」', near(akuCenter, [255, 140, 0]) && aku.problems.includes('初始姿势没有可见附件，已按动画首帧计算包围盒'), J([akuCenter, aku.problems]))
+  await setSpecs({ E: spec('aku36', 0.5, 'Em06') })   // 同一动画再来一次：不重复建、不抛错
 
   // 3. 截断的 3.6 二进制：解析失败（带版本），不冒充缺资源
   await setSpecs({ X: spec('bad36', 0.5, 'idle') })

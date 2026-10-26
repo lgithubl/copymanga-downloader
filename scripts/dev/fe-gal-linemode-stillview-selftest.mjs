@@ -394,7 +394,7 @@ try {
     await page.click('.gal-note')
     await sleep(300)
     const diag = await page.$eval('.gal-diag', (e) => e.innerText)
-    check('渲染诊断：空包围盒的层写明「无（初始姿势下没有可见附件，由动画打开，不当参照层）」', /边界 无（初始姿势下没有可见附件/.test(diag), diag.slice(0, 600))
+    check('渲染诊断：初始姿势没有可见附件的层，包围盒按动画首帧算，并写明「初始姿势没有可见附件，已按动画首帧计算包围盒」', /初始姿势没有可见附件，已按动画首帧计算包围盒/.test(diag) && /边界 -100 0 200 400（按动画首帧算）/.test(diag), diag.slice(0, 600))
     check('没有页面错误', page.errors.length === 0, J(page.errors))
     await page.context().close()
   }

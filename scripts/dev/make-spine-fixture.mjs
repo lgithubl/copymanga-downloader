@@ -114,15 +114,35 @@ export function spineJson({ animations = DEFAULT_ANIMATIONS, region = REGION, ve
   }))
 }
 
+// 「整个身体 / 脸由动画切附件拼出来」的骨架（Aku No Onna Kanbu 的 3.6.53 JSON 那种结构）：1 根骨骼、slots 个槽（初始姿势没有任何可见附件）、
+// 每个槽一个 region 附件（p0 = 身体，p1… = 脸 / 表情部件），动画 Em00…Em<animations-1> 只有 slots 时间线（0 秒把槽 0 和槽 i+1 的附件打开）。
+// 骨骼文件头的 width / height 照真实文件（1830 × 2696）。noAttach：任何动画里都不开附件（包围盒只能靠头里的宽高，或者为空）；header:false 连头里的宽高也去掉
+export function spineJsonEmotes({ version = '3.6.53', slots = 11, animations = 10, width = 1830, height = 2696, header = true, noAttach = false, firstFrameAt = 0 } = {}) {
+  const attachment = (i) => ({ x: 0, y: REGION.y, width: REGION.width, height: REGION.height, ...(i ? { scaleX: 0.6, scaleY: 0.6, y: REGION.y + 120 } : {}) })
+  const slotNames = Array.from({ length: slots }, (_, i) => (i ? `face${i}` : 'body'))
+  const sixSkins = /^3\.6\./.test(version)
+  const attachments = Object.fromEntries(slotNames.map((name, i) => [name, { [`p${i}`]: attachment(i) }]))
+  return Buffer.from(JSON.stringify({
+    skeleton: { hash: 'testemotes', spine: version, ...(header ? { width, height } : {}) },
+    bones: [{ name: 'root' }],
+    slots: slotNames.map((name) => ({ name, bone: 'root' })),   // 没有 attachment 字段：初始姿势什么都不显示
+    skins: sixSkins ? { default: attachments } : [{ name: 'default', attachments }],
+    animations: Object.fromEntries(Array.from({ length: animations }, (_, a) => [`Em${String(a).padStart(2, '0')}`, noAttach ? { bones: { root: { rotate: [{ time: 0, angle: 0 }] } } } : { slots: { body: { attachment: [{ time: firstFrameAt, name: 'p0' }] }, [slotNames[(a + 1) % slots] || 'body']: { attachment: [{ time: firstFrameAt, name: `p${(a + 1) % slots}` }] } } }])),
+  }))
+}
+// 多个 region 的 atlas（每个 region 都指向同一块 64×128 的贴图区域）；leadingBlank：旧格式 atlas 开头有一个空行（3.6 导出的就是这样）
+export const atlasEmotes = (base, { regions = 11, leadingBlank = true } = {}) => `${leadingBlank ? '\n' : ''}${base}.png\nsize: 64,128\nformat: RGBA8888\nfilter: Linear,Linear\nrepeat: none\n${Array.from({ length: regions }, (_, i) => `p${i}\n  rotate: false\n  xy: 0, 0\n  size: 64, 128\n  orig: 64, 128\n  offset: 0, 0\n  index: -1\n`).join('')}`
+
 export const atlasText = (base) => `${base}.png\nsize: 64,128\nformat: RGBA8888\nfilter: Linear,Linear\nrepeat: none\n${REGION.name}\n  rotate: false\n  xy: 0, 0\n  size: 64, 128\n  orig: 64, 128\n  offset: 0, 0\n  index: -1\n`
 
 // region：只对 JSON 骨架有效，换一个比 200×400 小（或大）的附件，用来造「各层包围盒不一样」的静态画面
 // version：只对 JSON 骨架有效（写进 skeleton.spine），用来造 3.8 / 4.0 / 4.2 / 不支持版本的骨架
-export async function writeSpine(dir, base, { format = 'binary', color = 'red', animations = DEFAULT_ANIMATIONS, region = REGION, version = '3.8.99' } = {}) {
+export async function writeSpine(dir, base, { format = 'binary', color = 'red', animations = DEFAULT_ANIMATIONS, region = REGION, version = '3.8.99', emotesOptions = {} } = {}) {
   await mkdir(dir, { recursive: true })
-  // format: 'binary'（3.8）| 'json' | 'binary36'（3.6 二进制，version 默认 3.6.38）
-  await writeFile(path.join(dir, `${base}.skel.bytes`), format === 'json' ? spineJson({ animations, region, version }) : format === 'binary36' ? spineBinary36({ animations, ...(version === '3.8.99' ? {} : { version }) }) : spineBinary({ animations }))
-  await writeFile(path.join(dir, `${base}.atlas.txt`), atlasText(base))
+  // format: 'binary'（3.8）| 'json' | 'binary36'（3.6 二进制，version 默认 3.6.38）| 'json-emotes'（整个身体由动画切附件拼出来，见 spineJsonEmotes；emotesOptions 传给它）
+  const emotes = format === 'json-emotes'
+  await writeFile(path.join(dir, `${base}.skel.bytes`), emotes ? spineJsonEmotes({ ...emotesOptions, version }) : format === 'json' ? spineJson({ animations, region, version }) : format === 'binary36' ? spineBinary36({ animations, ...(version === '3.8.99' ? {} : { version }) }) : spineBinary({ animations }))
+  await writeFile(path.join(dir, `${base}.atlas.txt`), emotes ? atlasEmotes(base, { regions: emotesOptions.slots ?? 11 }) : atlasText(base))
   // 64×128（和 200×400 的区域同比例）：底色 + 头（白圆）+ 眼睛两点，方便肉眼看方向有没有反
   execFileSync('convert', ['-size', '64x128', `xc:${color}`, '-fill', 'white', '-draw', 'circle 32,26 32,10', '-fill', 'black', '-draw', 'circle 26,22 26,19', '-draw', 'circle 38,22 38,19', path.join(dir, `${base}.png`)])
 }

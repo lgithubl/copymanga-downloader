@@ -1,4 +1,4 @@
-// 适配器注册表。新增原始格式：写一个 { id, label, sniff(text), parse(text, ctx, meta) → { steps, stats }（meta = { rel, stem }：这份脚本的路径和文件名） }，在这里登记即可。
+// 适配器注册表。新增原始格式：写一个 { id, label, sniff(text), explainSniff?(text, options) → string（可选：sniff 没认时一句话说明原因）, parse(text, ctx, meta) → { steps, stats }（meta = { rel, stem }：这份脚本的路径和文件名） }，在这里登记即可。
 // 需要查别的文件才能解析的格式（别名表、图片目录…）再实现 contextFiles / contextDirs / prepare，见 ../context.mjs。
 import { artwhirlJsonAdapter } from './artwhirl-json.mjs'
 import { bokusenJsonAdapter } from './bokusen-json.mjs'
@@ -36,6 +36,22 @@ export function galAdapter(id) {
   const adapter = adapters.get(id)
   if (!adapter) throw new Error(`未知的 Gal 脚本适配器：${id}`)
   return adapter
+}
+// 适配器可选的钩子 explainSniff(text, options) → string：sniff 返回 false 时，用一句话说明「为什么不认」（比如「头 8KB 内没有 "data":{"code":…」）；
+// 给列表页的 unrecognized-scripts 诊断用。没实现 = 通用的「没有匹配 sniff」；实现抛错 / 返回非字符串也退回通用说明。返回 [{ id, reason }]（只含 allowed 里的、sniff 确实没认的适配器）
+export const DEFAULT_SNIFF_REASON = '没有匹配 sniff'
+export function explainSniffGalAdapters(text, allowed = null, adapterOptions = null) {
+  const out = []
+  for (const adapter of adapters.values()) {
+    if (allowed && !allowed.includes(adapter.id)) continue
+    let sniffed = false
+    try { sniffed = Boolean(adapter.sniff?.(text, adapterOptions?.[adapter.id])) } catch { sniffed = false }
+    if (sniffed) continue
+    let reason = ''
+    try { reason = typeof adapter.explainSniff === 'function' ? adapter.explainSniff(text, adapterOptions?.[adapter.id]) : '' } catch { reason = '' }
+    out.push({ id: adapter.id, reason: typeof reason === 'string' && reason.trim() ? reason.trim() : DEFAULT_SNIFF_REASON })
+  }
+  return out
 }
 // 给一段文本找适配器：返回第一个认得它的适配器 id，没有就返回 ''
 // adapterOptions（可选）：config.adapterOptions，嗅探规则可配的适配器按自己的 id 取参数（sniff(text, options)）
