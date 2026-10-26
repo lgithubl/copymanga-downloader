@@ -25,8 +25,10 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 | `labels` | 目录名 → 中文标签（cabin→纪念馆…） |
 | `merge` | 合并目录：`[{parent: 通配, dirs: [子目录名…], badges: {子目录名: 标记}}]`。列 `parent` 下的目录时，把 `dirs` 里这几个子目录的内容合进同一个列表（不再显示这几个子目录），每张卡片右上角带来源标记（默认 `character/*` 合并 `adultr`+`extra`，标记 `adu` / `ext`）；合并后按文件名自然序混排 |
 | `views` | 虚拟目录（视图）：`[{parent, as, label, dirs, match, exclusive, badges}]`。在 `parent`（`.` = 脚本根）下多出一个叫 `as` 的目录（磁盘上没有，路径 `<parent>/<as>`，有内容才列出）；内容 = `dirs` 里这几个子目录（不写 = `parent` 自己）里 stem 匹配 `match`（正则，不写 = 全部）的脚本，`badges` 按来源目录给角标。`exclusive: true`（只对来源是 `parent` 自己的有效）= 被它收走的脚本不再平铺在 `parent` 的列表里，脚本的「上一级」「上一话/下一话」也算在这个视图里。分组 `groups`、封面 `dirThumbs`、标签 `labels` 都按视图路径配（比如 `groups: [{parent: 'chars', …}]`）。monmusu：首页 动画 / 事件 / 总览（总览 = `hscene` + `hscene_still`）；minashigo：角色 / 活动 / 主线 |
-| `dirThumbs` | 目录卡片头像规则：`{parent, name(正则), paths(模板，{name} {parent})}`，取第一个存在的 |
-| `scriptThumbs` | 脚本缩略图模板（`{stem}` `{thumbsDir}`；`~/` = 相对媒体目录），之后才是「脚本里第一张背景图」 |
+| `dirThumbs` | 目录卡片头像规则：`{parent, name(正则), paths(模板，{name} {parent})}`；匹配的规则里**所有存在的**路径都进缩略图数组（见「卡片缩略图」），路径的目录 / 文件名段可带通配 `*` `?` |
+| `scriptThumbs` | 脚本缩略图模板（`{stem}` `{thumbsDir}`；`~/` = 相对媒体目录；可带通配），之后才是「脚本里第一张背景图」（前面都没有才用） |
+| `thumbSources` | 按文件名规律提取缩略图的规则列表（接在 `dirThumbs` / `scriptThumbs` 后面），见「卡片缩略图」 |
+| `thumbMode` | 卡片有多张图时怎么显示：`random`（默认）/ `first` / `hover` |
 | `cover` / `scriptCount` / `script` | 封面路径（`~/` 开头 = 相对媒体目录，只给封面用）/ 脚本数 / 谁写的这份配置 `{id, version, ranAt}` |
 | `groups` | 分组：`[{parent: 通配或 '.', pattern}]`。列 `parent` 下的目录时，脚本名（无扩展名）匹配 `pattern` 的按**第 1 个捕获组**归进虚拟目录（一个键一张卡片，节点 id `g:<键>:<路径>`），不匹配的照常列出；名字/头像和真实目录一样查 `labels` / `namesFiles` / `dirThumbs`。`parent: '.'` = 脚本根本身（`merge` 也认） |
 | `game` | `{id, title}`：这个媒体是哪个游戏/资源包（`id` 只含字母数字 `_-`）。**导入时在 config 里写**，tag 脚本按它分发——同一个 adapter、配置不同的两个媒体靠它区分；脚本同时打 `Gal游戏: <id>` 标签方便搜索（以 config 为准） |
@@ -125,6 +127,23 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 - 状态标签：`Gal配置: uviewer / 通用 / 自定义`、`Gal配置version: <脚本版本>`。
 - 脚本通过配置页的「上传元数据脚本」安装（覆盖同 id 的旧版本）。注意 `TAG_SCRIPTS_DIR` 要是持久目录（默认是数据目录下的 `tag-scripts`），指到镜像里的目录会在重建容器后丢掉上传的版本。
 
+## 卡片缩略图：数组、随机封面、悬停轮播、`thumbSources`、视频帧
+
+- **数组模型**：浏览节点里每张卡片带 `thumbs: [路径…]`（所有存在的候选，按真实文件去重，最多 12 张）；`thumb` 仍然 = `thumbs[0]`（旧客户端 / 旧测试照常）。一张图都没有时 `thumbs: []`、`thumb: ''`，`thumbWhy` 写每个来源试了什么（列表页「渲染诊断」里看）。
+  - 脚本卡片的来源顺序：`scriptThumbs` 模板（通配全展开）→ `thumbSources`（`for` 含 script 的）→ `scriptIndex` → 脚本里第一张背景图（**前面都没有才用**）。目录 / 分组卡片：`dirThumbs`（parent、name 匹配的全部规则）→ `thumbSources`（`for` 含 dir 的）。
+  - 通配（`dirThumbs.paths` / `scriptThumbs` 里）：`*` = 段内任意字符，`?` = 单个字符，不跨 `/`；匹配到的全部都算，按自然序；目录列表按目录 mtime 缓存（每个目录最多读 2 万项，一次展开最多 400 个路径）。
+- **前端**（`web/static/gal-browse.js` + `thumb-cycle.js`）：`thumbMode` = `random`（默认）每次渲染随机一张当封面（一次渲染内稳定，刷新才换）；`first` = 永远第一张（旧行为）；`hover` = 封面第一张、悬停才轮播。有多张图的卡片鼠标悬停 → 其余图随机顺序轮播（每张 700–900ms，先预加载下一张再换），移开立刻停并还原封面。不悬停的卡片不做任何事；`prefers-reduced-motion`、触摸、标签页在后台、封面还没加载好都不轮播。封面的首次加载仍走 `thumbLoader`（`data-src` 分批），轮播只在它加载完之后改 `src`；封面加载失败先换同一张卡片的下一张，都失败才报「加载失败」。
+- **`thumbSources`**：`[{ dir, match, key, for, forKey, forMatch, kind, limit, fallback }]`。每条规则只列一次 `dir`（相对资源根；`~/` = 相对媒体目录，只有 `thumbsDirs` 读得到；可带通配），建成 `键 → 文件[]` 的索引（按 mtime 缓存）；卡片用自己的键去查。
+  - `match`：正则，对 `dir` 里的**文件名**（含扩展名）；`key`：文件的键，`{1}{2}` = 捕获组、`{名字}` = 命名捕获组（默认 `{1}`）。
+  - `for`：`script` | `dir` | `both`（默认）；`forKey`：卡片的键，`{stem}`（脚本名）`{name}`（目录名 / 分组键）`{parent}`，默认脚本 `{stem}`、目录 `{name}`；`forMatch`（可选正则）：先对 stem / name 匹配，`{1}`… 也能写进 `forKey`，不匹配 = 规则不适用。
+  - `kind`：`image`（默认，png jpg jpeg webp gif avif bmp）| `video`（mp4 mkv webm mov m4v）；`limit`：每张卡片最多几张（≤12）；`fallback: true`：前面都没找到图时才用。
+  - 例（legeclo，gal-layout 写的）：`{dir:'images/thumbnail/st', match:'^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.png$', key:'{1}_{2}', for:'script'}`——`hs_artemis_halloween_st_0301.png` → 键 `artemis_halloween_03` ↔ 脚本 `artemis_halloween_03.rpy`；同一话的 `0201` / `0202_idle` / `0203_hover` 全进数组；再来一条 `dir: 'images/st'` + `fallback: true` 退回整张场景图；角色卡片 `{dir:'images/thumbnail/char', match:'^st_(.+?)(?:_(?:idle|hover))?\\.(?:png|webp)$', key:'{1}', for:'dir'}`。
+  - deepone / UViewer：默认 `dirThumbs` 的路径是 `download/character/{name}00/adv/image/{name}00.png`、`…_100.png`，再加 `download/character/{name}??/adv/image/{name}??.png` / `…_100.png`——资源目录是 `<4 位编号><2 位变体>`（`100181`、`102307`、`102309`…，几乎没有 `00`），`??` 把每个变体都收进数组，有 `00` 的排最前。
+  - **minashigo / misttrain 暂未实现**（映射没确认）：minashigo 的 `images/thumb/<12 位数字>_360.jpg` ↔ `scene_<9 位数字>`、misttrain 的 `Textures/Characters/Bases/<id>201.png`；映射确认后只要写 `thumbSources`（`match` 取数字、`forMatch` / `forKey` 把脚本名转成键）就行，不用改代码。
+- **视频帧缩略图**：候选（`thumbSources` 的 `kind: 'video'`，或模板解析到 mp4 / mkv / webm / mov 文件）在 `thumbs` 里仍是视频的路径；前端取图时带 `frame=1`（`…/resource?path=…&frame=1`），服务端用 ffmpeg 截一帧 JPEG（视频时长的 10%，最多 30 秒，读不到时长用第 1 秒；宽度 ≤640）缓存到 `<DATA_DIR>/cache/gal-thumbs/<hash 前两位>/<sha1(真实路径, mtime, size, 参数版本)>.jpg`（`gal/video-thumb.mjs`）。路径照常经过 `resolveAsset`（只认媒体目录内的真实路径），非视频 → 415；同时最多 2 个 ffmpeg、20 秒超时、同一视频并发只截一次，失败 30 秒内不重试（422，说明原因：ffmpeg 没装 / 超时 / 视频损坏），卡片显示无图状态并在诊断里报「加载失败」；缓存命中 = 按文件发送（ETag / 304，`max-age=7 天`）。ffmpeg 不在 PATH 里就是上面的失败路径（Dockerfile.web 装了 ffmpeg）。
+  - 扩展点：骨架（spine / live2d）截图暂不做；以后在 `thumbSources` 加 `kind: 'skeleton'`，在 `gal/thumbs.mjs` 的 `collectSources` 里接渲染器、结果同样缓存到 `cache/gal-thumbs`。
+- 测试：`scripts/dev/gal-selftest.mjs`（键提取 / 数组 / 去重封顶 / deepone 变体 / legeclo 映射 / thumbMode / 帧缓存）、`scripts/dev/fe-gal-thumbs-selftest.mjs`（端口 8162：随机封面、悬停轮播、reduced-motion、thumbMode、加载失败、视频帧）。
+
 ## 浏览节点（取数接口 = 通用的 reader）
 
 前端不认识目录，只认节点。取节点就是通用的 `GET /api/library/items/gal/<id>/reader/main?sectionId=<节点 id>`
@@ -208,7 +227,7 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
   - 不处理：翻译叠加（`tl/jptoen`、`tl/jptocn` 里的 `translate` 块）；只有 `.rpyc` 没有 `.rpy` 的脚本（编译产物，读不了）。
 - **目录**：`game/script/hscene/<角色>_<编号>.rpy`（角色 id 可以带下划线，如 `agnes_boulanger_02`）、`game/script/movie.rpy`（视频别名）、`game/images/{bg,sprite,thumbnail/char,mo}`、`game/audio/{bgm,voice}`。`script/nav/` 里是导航界面，不是剧情。
 - **`gal-layout` 探测**：目录结构和 monmusu 很像（都有 `script/hscene`、`script/movie.rpy`），所以靠名字区分：`options.rpy` 里有 `legeclo`，或游戏根旁边有 `legeclo_py.*`（启动器）；声明了 `game.id: legeclo` 的不要求这个标记。探测顺序 legeclo → monmusu → …。
-  - 脚本根直接是 `game/script/hscene`，资源根 `game/`；按 `^(.+)_\d{2}$` 分组（去掉末尾两位编号 = 角色）；头像模板 `images/thumbnail/char/st_{name}_idle.png` 和 `st_{name}.png`（名字不统一，两种都试）；脚本封面 = 脚本里第一张真正的背景图。
+  - 脚本根直接是 `game/script/hscene`，资源根 `game/`；按 `^(.+)_\d{2}$` 分组（去掉末尾两位编号 = 角色）；缩略图走 `thumbSources`（脚本 `images/thumbnail/st/hs_<角色>_st_<话><变体>[_idle|_hover].png`、退回 `images/st/`；角色 `images/thumbnail/char/st_<角色>[_idle|_hover].png`，变体全进数组，见「卡片缩略图」）；这些都没有时，脚本封面 = 脚本里第一张真正的背景图。
   - 导入：`adapters: ['renpy-legeclo']` + `config.game.id: 'legeclo'`。
 
 ## Girls Creation R Viewer（标签式脚本）

@@ -2,7 +2,7 @@
 // 点了就 onOpen(节点 id)，由页面层再取一次（reader?sectionId=…）。这里不认识目录结构，只认 kind / items。
 // 全部用 textContent / setAttribute 写入后端给的文字，不拼 innerHTML。
 import { attachBarLock } from './gal-barlock.js'
-import { assetUrl } from './gal-engine.js'
+import { attachThumbCycle, pickCover, thumbUrl } from './thumb-cycle.js'
 
 const el = (tag, className = '', text = '') => {
   const node = document.createElement(tag)
@@ -312,26 +312,37 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   const thumbImages = []
   const thumbOf = (item, className) => {
     const box = el('div', className)
-    if (!item.thumb) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
-    if (!item.thumb && item.type === 'dir') box.dataset.icon = '📁'
-    if (item.thumb) {
+    // 一张卡片可以有多张图（item.thumbs，thumb = 第一张）；thumbMode：random（默认）随机一张当封面 / first 只第一张 / hover 封面第一张、悬停轮播
+    const thumbs = item.thumbs?.length ? item.thumbs : item.thumb ? [item.thumb] : []
+    const mode = node.thumbMode || 'random'
+    if (!thumbs.length) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
+    if (!thumbs.length && item.type === 'dir') box.dataset.icon = '📁'
+    if (thumbs.length) {
+      const urls = thumbs.map((path) => thumbUrl(reader.resourceBase, path))
+      const coverAt = pickCover(thumbs.length, mode)
       const img = el('img')
       img.alt = ''
       img.decoding = 'async'
-      const src = assetUrl(reader.resourceBase, item.thumb)
+      const src = urls[coverAt]
       if (thumbLoader) { img.dataset.src = src; thumbImages.push(img) } else { img.loading = 'lazy'; img.src = src }
+      // 封面加载失败：还有别的图就换下一张试，都不行才报「加载失败」
+      const untried = urls.map((_, i) => i).filter((i) => i !== coverAt)
       img.addEventListener('error', () => {
+        if (untried.length) { img.src = urls[untried.shift()]; return }
         img.remove()
         box.classList.add('empty')
-        problems.push({ kind: '加载失败', title: item.title, node: item.node, url: src, lines: [`缩略图路径 ${item.thumb}`, `请求地址 ${src}`] })
+        problems.push({ kind: '加载失败', title: item.title, node: item.node, url: src, lines: [`缩略图路径 ${thumbs[coverAt]}`, `请求地址 ${src}`, ...(/\.(mp4|mkv|webm|mov|m4v)$/i.test(thumbs[coverAt]) ? ['这是视频，缩略图由服务端 ffmpeg 截帧生成（ffmpeg 没装 / 视频损坏会失败）'] : [])] })
         refreshDiag()
       })
       box.append(img)
+      if (thumbs.length > 1 && mode !== 'first') cardCycles.push({ box, img, urls, coverAt })
     } else {
       box.classList.add('empty')
     }
     return box
   }
+  const cycles = []
+  const cardCycles = []   // 有多张图的卡片：卡片建好后挂悬停轮播（hover 的目标是整张卡片，不只是图）
 
   // 一律卡片：目录卡片（头像/文件夹图标、中文标签、数量）和脚本卡片（缩略图、台词摘要）混排，右上角的小标签是来源（合并目录时用来分辨来自哪个目录）
   const body = el('div', 'gal-browse-body gal-browse-cards')
@@ -375,6 +386,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     if (item.subtitle) card.append(el('div', 'gal-card-sub', item.subtitle))
     card.addEventListener('click', () => onOpen(item.node, 'child'))
     body.append(card)
+    for (const cycle of cardCycles.splice(0)) cycles.push(attachThumbCycle({ target: card, ...cycle }))
   }
 
   root.append(body, bar)
@@ -382,5 +394,5 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
 
   container.replaceChildren(root)
   if (thumbLoader && thumbImages.length) thumbLoader.attach(thumbImages, { root: container })
-  return { destroy: () => { document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); thumbLoader?.reset(); root.remove() }, setImmersive, root }
+  return { destroy: () => { document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
 }
