@@ -64,6 +64,12 @@ export async function buildLegecloFixture(root) {
   await img('images/sprite/other_one_normal.png', '40x80', 'royalblue')
   await img('images/thumbnail/char/st_demo_hero_idle.png', '24x24', 'crimson')
   await img('images/thumbnail/char/st_other_one.png', '24x24', 'royalblue')   // 名字不统一：有的带 _idle，有的不带
+  // 脚本缩略图（thumbSources）：images/thumbnail/st/hs_<角色>_st_<话 2 位><变体 2 位>[_idle|_hover].png ↔ 脚本 <角色>_<话>；没有缩略图的退回 images/st/ 的整张场景图
+  await img('images/thumbnail/st/hs_other_one_st_0201.png', '64x36', 'royalblue')
+  await img('images/thumbnail/st/hs_other_one_st_0202_idle.png', '64x36', 'navy')
+  await img('images/thumbnail/st/hs_other_one_st_0203_hover.png', '64x36', 'skyblue')
+  await img('images/thumbnail/st/hs_other_one_st_0301.png', '64x36', 'gray')   // 第 03 话：不属于 other_one_02
+  await img('images/st/hs_long_name_with_parts_st_0301.png', '64x36', 'orchid')
   await put('audio/bgm/bgm_demo.mp3', 'mp3')
   await put('audio/voice/demo_hero/voice_demo_0001.mp3', 'mp3')
   await put('audio/voice/demo_hero/voice_demo_0002.mp3', 'mp3')

@@ -174,17 +174,22 @@ async function detectLegeclo(media, { declared, logs }) {
   }
   logs.push(`legeclo 游戏根：${base || '.'}${base ? '（目录里多了一层）' : ''}${hasMovie ? '' : '；没有 script/movie.rpy（视频别名表）'}`)
   logs.push('脚本根 script/hscene；按角色分组（<角色>_<编号>）；只读 .rpy（只有 .rpyc 的读不了）；翻译（tl/）暂不叠加')
-  // 角色头像：images/thumbnail/char/st_<角色>_idle.png 或 st_<角色>.png（名字不统一，两种都试）
+  // 缩略图（thumbSources，相对资源根 = 游戏根）：
+  //   脚本卡片：images/thumbnail/st/hs_<角色>_st_<编号 2 位><变体 2 位>[_idle|_hover].png ↔ 脚本 <角色>_<编号>（0301 = 第 03 话的第 01 个变体，全部收进数组）；
+  //             没有缩略图就退回整张场景图 images/st/hs_<角色>_st_<4 位>.png（fallback）
+  //   角色卡片：images/thumbnail/char/st_<角色>[_idle|_hover].png（名字不统一，idle / hover / 不带的全收）
+  const stills = String.raw`^hs_(.+)_st_(\d\d)\d\d(?:_(?:idle|hover))?\.(?:png|webp|jpg)$`
+  config.thumbSources = [
+    { dir: 'images/thumbnail/st', match: stills, key: '{1}_{2}', for: 'script' },
+    { dir: 'images/st', match: stills, key: '{1}_{2}', for: 'script', fallback: true },
+    { dir: 'images/thumbnail/char', match: String.raw`^st_(.+?)(?:_(?:idle|hover))?\.(?:png|webp)$`, key: '{1}', for: 'dir' },
+  ]
+  config.dirThumbs = []
+  logs.push('缩略图：脚本 images/thumbnail/st/hs_<角色>_st_<话><变体>*.png（退回 images/st/）、角色 images/thumbnail/char/st_<角色>*.png；同一张卡片的全部变体都进缩略图数组')
   const icon = await findFirstFile(path.join(media, ...splitRel(join(base, 'images/thumbnail/char'))), /^st_.+?(?:_idle)?\.(png)$/i, 30000)
   let cover = ''
-  if (icon) {
-    config.dirThumbs = [{ parent: '*', name: '^.+$', paths: ['images/thumbnail/char/st_{name}_idle.png', 'images/thumbnail/char/st_{name}.png'] }]   // 相对资源根（游戏根）
-    cover = `images/thumbnail/char/${icon.file}`
-    logs.push(`头像模板：${config.dirThumbs[0].paths.join(' | ')}`)
-  } else {
-    config.dirThumbs = []
-    logs.push('没找到 images/thumbnail/char/st_*.png：角色卡片没有头像')
-  }
+  if (icon) cover = `images/thumbnail/char/${icon.file}`
+  else logs.push('没找到 images/thumbnail/char/st_*.png：角色卡片没有头像（脚本卡片仍可用 images/thumbnail/st）')
   return {
     id: 'legeclo',
     kind: 'legeclo',

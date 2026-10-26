@@ -31,6 +31,9 @@ import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration,
 import { buildGalFixture } from './make-gal-fixture.mjs'
 import { DEFAULT_EXPRESSIONS, castKeysOf, declaredPageSizes, faceDefaultsFor, mergeExpressions, reportDeclaredSize, resolveExpression } from '../../web/static/gal-spine.js'
 import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
+import { MAX_THUMBS, buildSourceIndex, dedupeCap, fillKey, isVideoPath, segmentRegExp, subjectKey } from '../../web/library/gal/thumbs.mjs'
+import { createFrameCache } from '../../web/library/gal/video-thumb.mjs'
+import { pickCover, shuffled, thumbUrl } from '../../web/static/thumb-cycle.js'
 
 let pass = 0
 let fail = 0
@@ -609,7 +612,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const item = imp.items[0]
   const out = await galLayoutScript({ item, script: { id: 'gal-layout', version: '2.5.0', options: {} } })
   const cfg = out.itemPatch.gal.config
-  check('legeclo 脚本：游戏根（game/）、脚本根 = script/hscene、资源根 = game、按「去掉末尾 _<两位编号>」分组、适配器参数（别名表 / 图片目录）、头像模板（带 _idle 和不带都试）', cfg.game.id === 'legeclo' && cfg.scriptRoots[0].dir === 'game/script/hscene' && J(cfg.resourceRoots) === J(['game']) && cfg.groups[0].pattern === '^(.+)_\\d{2}$' && J(cfg.adapterOptions['renpy-legeclo']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }) && J(cfg.dirThumbs[0].paths) === J(['images/thumbnail/char/st_{name}_idle.png', 'images/thumbnail/char/st_{name}.png']) && cfg.scriptCount === 4 && /Gal游戏: legeclo/.test(out.itemTags.join()), J(cfg))
+  check('legeclo 脚本：游戏根（game/）、脚本根 = script/hscene、资源根 = game、按「去掉末尾 _<两位编号>」分组、适配器参数（别名表 / 图片目录）、缩略图提取（thumbSources：脚本 = images/thumbnail/st、退回 images/st；角色 = images/thumbnail/char）', cfg.game.id === 'legeclo' && cfg.scriptRoots[0].dir === 'game/script/hscene' && J(cfg.resourceRoots) === J(['game']) && cfg.groups[0].pattern === '^(.+)_\\d{2}$' && J(cfg.adapterOptions['renpy-legeclo']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }) && cfg.dirThumbs.length === 0 && cfg.thumbSources.length === 3 && cfg.thumbSources[0].dir === 'images/thumbnail/st' && cfg.thumbSources[2].dir === 'images/thumbnail/char' && cfg.scriptCount === 4 && /Gal游戏: legeclo/.test(out.itemTags.join()), J(cfg))
   const none = await galLayoutScript({ item: { ...item, config: {} }, script: { id: 'gal-layout', version: '2.5.0', options: {} } })
   const mmFx = path.join(work, 'lg-vs-mm')
   await buildMonmusuFixture(mmFx)
@@ -622,6 +625,10 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   check('首页：按角色分组成卡片（demo_hero 两个脚本、other_one 一个、long_name_with_parts 一个——角色 id 带下划线）；只有 .rpyc 的脚本、txt、翻译目录不出现；头像按模板找（带 _idle 的、不带的都行；没有图的角色没头像）', J(home.items.map((i) => [i.title, i.subtitle])) === J([['demo_hero', '2 项'], ['long_name_with_parts', '1 项'], ['other_one', '1 项']]) && home.items.every((i) => i.type === 'dir') && home.items.find((i) => i.title === 'long_name_with_parts').thumb === '' && home.items.find((i) => i.title === 'demo_hero').thumb === 'images/thumbnail/char/st_demo_hero_idle.png' && home.items.find((i) => i.title === 'other_one').thumb === 'images/thumbnail/char/st_other_one.png', J(home.items))
   const group = (await read(home.items.find((i) => i.title === 'demo_hero').node)).node
   check('分组页：两个脚本（自然序）；封面 = 脚本里第一张真正的背景图（黑图不算）；面包屑 首页 › demo_hero', J(group.items.map((i) => i.title)) === J(['demo_hero_02', 'demo_hero_03']) && group.items[0].thumb === 'images/bg/ab_007_room.jpg' && J(group.breadcrumb.map((c) => c.title)) === J(['首页', 'demo_hero']) && group.parent === '', J(group.items))
+  const otherCard = (await read(home.items.find((i) => i.title === 'other_one').node)).node.items[0]
+  const longCard = (await read(home.items.find((i) => i.title === 'long_name_with_parts').node)).node.items[0]
+  check('legeclo 缩略图：other_one_02 = images/thumbnail/st 里 0201 / 0202_idle / 0203_hover 三个变体（第 03 话的 0301 不算）；thumb = 第一张；没有缩略图的 long_name_with_parts_03 退回 images/st 整张图（fallback）', J(otherCard.thumbs) === J(['images/thumbnail/st/hs_other_one_st_0201.png', 'images/thumbnail/st/hs_other_one_st_0202_idle.png', 'images/thumbnail/st/hs_other_one_st_0203_hover.png']) && otherCard.thumb === otherCard.thumbs[0] && J(longCard.thumbs) === J(['images/st/hs_long_name_with_parts_st_0301.png']), J([otherCard.thumbs, longCard.thumbs]))
+  check('legeclo 缩略图：脚本里有背景图的 demo_hero_02 没有 st 缩略图 → 背景图兜底（thumbs 只有一张）；浏览节点带 thumbMode（默认 random）', J(group.items[0].thumbs) === J(['images/bg/ab_007_room.jpg']) && group.thumbMode === 'random' && home.thumbMode === 'random', J([group.items[0].thumbs, group.thumbMode]))
   const play = await read(group.items[0].node)
   check('播放页：立绘路径相对游戏根；上一话 / 下一话只在这个角色的分组里；父节点 = 分组', play.node.kind === 'player' && play.scene.adapter === 'renpy-legeclo' && play.scene.steps.flatMap((st) => st.commands).some((c) => c.op === 'stand' && c.parts[0].src === 'images/sprite/demo_hero_smile.png') && play.sectionNavigation.prev === null && play.sectionNavigation.next?.title === 'demo_hero_03' && play.node.parent === group.id, J([play.sectionNavigation, play.node.parent, group.id]))
 }
@@ -1604,6 +1611,120 @@ async function gcMod0Prepare({ truncated }) {
   check('TSK：浏览首页 = 剧情文件夹（角色剧情 / 主线 / 全部剧情，不含 BackGrounds / Effects）；点进去是剧情卡片，不含 Master.chapter.json', J(home.items.map((i) => i.title)) === J(['角色剧情', '主线', '全部剧情']) && J((await provider.getNode(home.items[1].node)).node.items.map((i) => i.title)) === J(['MainScenario0001', 'MainScenario0002']), J(home.items))
   const played = await provider.getNode((await provider.getNode(home.items[1].node)).node.items[0].node)
   check('TSK：播放页：scene.adapter = utage-book，步数 = 解析结果；上一话 / 下一话沿用列表', played.scene?.adapter === 'utage-book' && played.scene.steps.length === out.steps.length && played.sectionNavigation.next?.title === 'MainScenario0002', J(played.sectionNavigation))
+}
+
+
+// ================= 缩略图数组 / thumbSources / 通配 / 视频帧缓存 / thumbMode =================
+{
+  const tdir = path.join(work, 'thumbs-unit')
+  const mk = async (rel, content = 'x') => { await mkdir(path.dirname(path.join(tdir, rel)), { recursive: true }); await writeFile(path.join(tdir, rel), content) }
+  const resolve = async (rel) => {   // 和 gal.mjs 的 resolveAsset 一样：资源根 resources 下找，找不到抛 ENOENT
+    const clean = rel.startsWith('~/') ? rel.slice(2) : `resources/${rel}`
+    const file = path.join(tdir, clean)
+    try { await readFile(file); return file } catch { throw Object.assign(new Error('资源不存在'), { code: 'ENOENT', statusCode: 404 }) }
+  }
+  // —— 纯函数 ——
+  const stills = '^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.(?:png|webp|jpg)$'
+  const lgRule = { match: stills, key: '{1}_{2}', for: 'script', kind: 'image' }
+  const lgFiles = ['hs_artemis_halloween_st_0301.png', 'hs_aids_st_0201_idle.png', 'hs_aids_st_0202.png', 'hs_apollon_st_0201_hover.png', 'hs_apollon_2nd_st_0202.png', 'hs_aids_st_0301.png', 'readme.txt', 'hs_bad_st_1.png', '.hs_x_st_0101.png', 'hs_vid_st_0101.mp4'].map((name) => ({ dir: 'images/thumbnail/st', name }))
+  const idx = buildSourceIndex(lgRule, lgFiles)
+  check('thumbSources 索引（legeclo 真实文件名）：hs_<角色>_st_<话><变体>[_idle|_hover] → <角色>_<话>；同一话的变体（含 idle / hover）都收进来；不匹配 / 隐藏文件 / 非图片忽略', J([...idx.keys()].sort()) === J(['aids_02', 'aids_03', 'apollon_02', 'apollon_2nd_02'.replace('apollon_2nd_02', 'apollon_2nd_02'), 'artemis_halloween_03'].sort()) && J(idx.get('aids_02')) === J(['images/thumbnail/st/hs_aids_st_0201_idle.png', 'images/thumbnail/st/hs_aids_st_0202.png']) && J(idx.get('artemis_halloween_03')) === J(['images/thumbnail/st/hs_artemis_halloween_st_0301.png']) && J(idx.get('apollon_02')) === J(['images/thumbnail/st/hs_apollon_st_0201_hover.png']), J([...idx.entries()]))
+  const avRule = { match: '^st_(.+?)(?:_(?:idle|hover))?\\.(?:png|webp)$', key: '{1}', for: 'dir', kind: 'image' }
+  const avIdx = buildSourceIndex(avRule, ['st_aids_idle.png', 'st_aids_hover.png', 'st_aids.png', 'st_aids_mizugi.png', 'st_aids_mizugi_idle.png'].map((name) => ({ dir: 'c', name })))
+  check('角色头像索引：st_<角色>[_idle|_hover] 全收；带下划线的角色（aids_mizugi）不会被并进 aids', J(avIdx.get('aids')) === J(['c/st_aids_idle.png', 'c/st_aids_hover.png', 'c/st_aids.png']) && J(avIdx.get('aids_mizugi')) === J(['c/st_aids_mizugi.png', 'c/st_aids_mizugi_idle.png']), J([...avIdx.entries()]))
+  check('卡片的键：script 默认 {stem}、dir 默认 {name}；for 不对 = 不适用；forMatch 先对 stem 匹配再用 {1}；命名捕获组 / {stem} 都能用', subjectKey(lgRule, { kind: 'script', stem: 'aids_02' }) === 'aids_02' && subjectKey(lgRule, { kind: 'dir', name: 'aids' }) === null && subjectKey({ for: 'both', forMatch: '^(\\w+)_(\\d\\d)$', forKey: '{1}-{2}' }, { kind: 'script', stem: 'a_01' }) === 'a-01' && subjectKey({ for: 'both', forMatch: '^x' }, { kind: 'dir', name: 'y' }) === null && fillKey('{who}_{2}', /(a)(b)/.exec('ab'), {}) === '_b' && fillKey('{who}', /(?<who>a)/.exec('a')) === 'a' && fillKey('{stem}!', null, { stem: 's' }) === 's!')
+  check('去重 + 封顶：保持先后顺序、最多 12 张；视频扩展名识别；通配段（* ?）', J(dedupeCap(['a', 'b', 'a', '', 'c'])) === J(['a', 'b', 'c']) && dedupeCap(Array.from({ length: 30 }, (_, i) => `f${i}`)).length === MAX_THUMBS && MAX_THUMBS === 12 && isVideoPath('a/b.MP4') && isVideoPath('x.webm') && !isVideoPath('x.png') && segmentRegExp('1001??').test('100181') && !segmentRegExp('1001??').test('10018') && !segmentRegExp('1001??').test('100181_100') && segmentRegExp('st_*.png').test('st_a_b.png') && !segmentRegExp('a.b').test('axb'))
+  check('前端：thumbUrl 视频带 frame=1；pickCover：random 且多张才随机，first / hover / 只有一张 = 第一张；shuffled 不丢不重', thumbUrl('/r', 'a b.png') === '/r?path=a%20b.png' && thumbUrl('/r', 'v/a.mp4') === '/r?path=v%2Fa.mp4&frame=1' && pickCover(5, 'first', () => 0.9) === 0 && pickCover(5, 'hover', () => 0.9) === 0 && pickCover(1, 'random', () => 0.9) === 0 && pickCover(5, 'random', () => 0.99) === 4 && pickCover(5, 'random', () => 0) === 0 && J(shuffled([1, 2, 3, 4, 5], Math.random).sort()) === J([1, 2, 3, 4, 5]))
+  // —— config 规整 ——
+  const ts = normalizeGalConfig({ thumbMode: 'hover', thumbSources: [
+    { dir: 'a/b/', match: '^(x)', key: '{1}', for: 'dir', kind: 'video', limit: 99, fallback: 1 }, { dir: 'a', match: '(' }, { dir: '../x', match: 'a' }, { dir: 'a', match: '' }, { dir: '~/t/*', match: 'a', forMatch: '(' }, { dir: '~/t/*', match: 'a', for: 'zzz', kind: 'zzz' }, 'junk',
+  ] })
+  check('thumbSources 规整：非法的（坏正则 / .. / 空 match / 坏 forMatch）丢掉；默认 key={1}、for=both、kind=image、limit 12；limit 上限 12；dir 去首尾 /；~/ 保留；thumbMode 只认 random / first / hover', ts.thumbSources.length === 2 && J(ts.thumbSources[0]) === J({ dir: 'a/b', match: '^(x)', key: '{1}', for: 'dir', forKey: '', forMatch: '', kind: 'video', limit: 12, fallback: true }) && ts.thumbSources[1].dir === '~/t/*' && ts.thumbSources[1].for === 'both' && ts.thumbSources[1].kind === 'image' && ts.thumbMode === 'hover' && normalizeGalConfig({ thumbMode: 'x' }).thumbMode === 'random' && normalizeGalConfig({}).thumbMode === 'random' && J(normalizeGalConfig({}).thumbSources) === '[]' && cleanGalConfigRaw({ thumbMode: 'first', thumbSources: [{ dir: 'a', match: 'b' }, { dir: '..', match: 'b' }] }).thumbSources.length === 1, J(ts))
+  check('默认 dirThumbs（UViewer）：{name}00 在前，再是 {name}?? 的 .png / _100.png（任何变体）', J(DEFAULT_GAL_CONFIG.dirThumbs[0].paths) === J(['download/character/{name}00/adv/image/{name}00.png', 'download/character/{name}00/adv/image/{name}00_100.png', 'download/character/{name}??/adv/image/{name}??.png', 'download/character/{name}??/adv/image/{name}??_100.png']))
+
+  // —— 引擎（真实目录）：deepone 变体通配 / 去重 / 封顶 / thumbSources / 兼容 thumb ——
+  const text = (n) => `msg,0,hi ${n}\nclickwait\nmsg,0,again\nclickwait\nmsg,0,end\nclickwait\n`
+  for (const dir of ['100181', '100182', '100404', '101506', '1020']) await mk(`resources/download/character/${dir}/adv/image/${dir}.png`)
+  await mk('resources/download/character/100181/adv/image/100181_100.png')
+  await mk('resources/download/character/100300/adv/image/100300.png')      // 带 00：排最前
+  await mk('resources/download/character/100301/adv/image/100301.png')
+  await mk('resources/download/character/100999/adv/image/note.txt')        // 没图的变体
+  for (const n of ['1001', '1003', '1004', '1015', '1099', '5555']) await mk(`resources/download/adv/text/character/${n}/${n}01.txt`, text(n))
+  await mk('resources/download/adv/text/character/1001/100102.txt', text('b'))
+  const unit = (config) => createBrowseProvider({ mediaDir: tdir, adapters: ['uviewer-csv'], resolveAsset: resolve, config })
+  const chars = (await unit({}).getNode('d:character')).node
+  const byTitle = Object.fromEntries(chars.items.map((i) => [i.title, i]))
+  check('deepone / UViewer：角色目录 {4 位} → 全部 6 位变体（{name}??）：1001 = 100181 / 100182 的 .png + 100181 的 _100.png；只有变体没有 00 的（1004 = 100404、1015 = 101506）也有图；1003 的 00 排最前', J(byTitle['1001'].thumbs) === J(['download/character/100181/adv/image/100181.png', 'download/character/100182/adv/image/100182.png', 'download/character/100181/adv/image/100181_100.png']) && J(byTitle['1004'].thumbs) === J(['download/character/100404/adv/image/100404.png']) && J(byTitle['1015'].thumbs) === J(['download/character/101506/adv/image/101506.png']) && J(byTitle['1003'].thumbs) === J(['download/character/100300/adv/image/100300.png', 'download/character/100301/adv/image/100301.png']), J(chars.items.map((i) => [i.title, i.thumbs])))
+  check('兼容：thumb = thumbs[0]；没有图的卡片 thumbs = []、thumb = \'\'、thumbWhy 说明试了什么；不匹配 name 规则的目录（5555 不是 ^\\d{4}$ 里的变体）也是空', chars.items.every((i) => i.thumb === (i.thumbs[0] || '') && Array.isArray(i.thumbs)) && byTitle['1099'].thumbs.length === 0 && byTitle['1099'].thumb === '' && /没有匹配的文件/.test(byTitle['1099'].thumbWhy.join('|')) && byTitle['1001'].thumbWhy === undefined, J(byTitle['1099']))
+  // 去重 + 封顶：两条 paths 指向同一文件只算一次；15 张图只给 12 张
+  for (let i = 0; i < 15; i++) await mk(`resources/pic/many/m${String(i).padStart(2, '0')}.png`)
+  await mk('resources/pic/dup/a.png')
+  await mk('resources/download/adv/text/pics/many/s.txt', text('m'))
+  await mk('resources/download/adv/text/pics/dup/s.txt', text('d'))
+  const cfgPics = { dirThumbs: [{ parent: 'pics', name: '', paths: ['pic/{name}/*.png', 'pic/{name}/a.png', 'pic/{name}/a.png'] }], thumbSources: [{ dir: 'pic/many', match: '^(m)\\d+\\.png$', key: '{1}', forMatch: '^many$', forKey: 'm', for: 'dir' }] }
+  const pics = (await unit(cfgPics).getNode('d:pics')).node
+  const many = pics.items.find((i) => i.title === 'many')
+  const dup = pics.items.find((i) => i.title === 'dup')
+  check('封顶 + 去重：15 张图的目录只给 12 张（自然序、前 12），thumbSources 再来一遍也不重复；多个模板 / 通配命中同一文件只算一次', many.thumbs.length === 12 && many.thumbs[0] === 'pic/many/m00.png' && many.thumbs[11] === 'pic/many/m11.png' && new Set(many.thumbs).size === 12 && J(dup.thumbs) === J(['pic/dup/a.png']), J([many.thumbs, dup.thumbs]))
+  // thumbSources：键提取（脚本 / 目录）、forKey 模板 + forMatch、kind、limit、fallback、~/ 目录
+  await mk('resources/shots/ep01_a.png'); await mk('resources/shots/ep01_b.jpg'); await mk('resources/shots/ep02_a.webp'); await mk('resources/shots/ep01_clip.mp4'); await mk('resources/shots/ep01_c.txt')
+  await mk('resources/vids/v_ep01.mp4'); await mk('resources/vids/v_ep01x.webm')
+  await mk('resources/late/ep03_full.png')
+  await mk('user_data/thumbnails/ep02.webp')
+  for (const n of ['ep01', 'ep02', 'ep03', 'ep04']) await mk(`resources/download/adv/text/eps/${n}.txt`, text(n))
+  const cfgSrc = { scriptThumbs: [], thumbsDirs: ['user_data/thumbnails'], thumbSources: [
+    { dir: 'shots', match: '^(ep\\d+)_\\w+\\.(?:png|jpg|webp)$', key: '{1}', for: 'script', limit: 2 },
+    { dir: 'vids', match: '^v_(?<ep>ep\\d+)x?\\.(?:mp4|webm)$', key: '{ep}', for: 'script', kind: 'video' },
+    { dir: 'late', match: '^(ep\\d+)_full\\.png$', key: '{1}', for: 'script', fallback: true },
+    { dir: '~/user_data/thumbnails', match: '^(ep\\d+)\\.webp$', key: '{1}', for: 'both' },
+  ] }
+  const eps = (await unit(cfgSrc).getNode('d:eps')).node
+  const ep = Object.fromEntries(eps.items.map((i) => [i.title, i]))
+  check('thumbSources（脚本）：键 {1} 取文件名里的 epNN；limit 2 只取前 2 张；kind image 不收 mp4 / txt；kind video 只收视频（命名组 {ep}）；fallback 只在前面都没有时才用；~/ 目录只读缩略图目录', J(ep.ep01.thumbs) === J(['shots/ep01_a.png', 'shots/ep01_b.jpg', 'vids/v_ep01.mp4', 'vids/v_ep01x.webm']) && J(ep.ep02.thumbs) === J(['shots/ep02_a.webp', '~/user_data/thumbnails/ep02.webp']) && J(ep.ep03.thumbs) === J(['late/ep03_full.png']) && ep.ep04.thumb === '' && /thumbSources\[0\].*没有「ep04」/.test(ep.ep04.thumbWhy.join('|')), J(eps.items.map((i) => [i.title, i.thumbs, i.thumbWhy])))
+  // forKey / forMatch 把脚本名转成键：ep01 → 键 "01"
+  await mk('resources/map/n_01.png')
+  const cfgMap = { scriptThumbs: [], thumbSources: [{ dir: 'map', match: '^n_(\\d+)\\.png$', key: '{1}', for: 'script', forMatch: '^ep(\\d+)$', forKey: '{1}' }] }
+  const eps2 = (await unit(cfgMap).getNode('d:eps')).node
+  check('forMatch + forKey：脚本名 ep01 先匹配 ^ep(\\d+)$ 再用 {1} 当键 → 取 n_01.png；不匹配的脚本规则不适用', J(eps2.items.map((i) => [i.title, i.thumbs])) === J([['ep01', ['map/n_01.png']], ['ep02', []], ['ep03', []], ['ep04', []]]), J(eps2.items.map((i) => [i.title, i.thumbs])))
+  // 旧配置不变：scriptThumbs / thumbsDirs 的模板，thumb 还是第一个存在的
+  const old = (await unit({ thumbsDirs: ['user_data/thumbnails'] }).getNode('d:eps')).node
+  check('兼容：只用 scriptThumbs + thumbsDirs（旧配置）：ep02 的 thumb = ~/user_data/thumbnails/ep02.webp、thumbs 只有它；thumbMode first 带在节点上', old.items.find((i) => i.title === 'ep02').thumb === '~/user_data/thumbnails/ep02.webp' && J(old.items.find((i) => i.title === 'ep02').thumbs) === J(['~/user_data/thumbnails/ep02.webp']) && (await unit({ thumbMode: 'first' }).getNode('d:eps')).node.thumbMode === 'first' && (await unit({ thumbMode: 'hover' }).getNode('d:eps')).node.thumbMode === 'hover', J(old.items))
+
+  // —— 视频帧缓存（不需要 ffmpeg：注入假的执行器）——
+  const cacheDir = path.join(tdir, 'frame-cache')
+  await mk('vid/a.mp4', 'fakevideo')
+  let runs = 0, running = 0, peak = 0
+  const fakeRun = async (cmd, args) => {
+    if (cmd === 'ffprobe') return { stdout: '40\n' }
+    runs += 1; running += 1; peak = Math.max(peak, running)
+    await new Promise((r) => setTimeout(r, 40))
+    running -= 1
+    await writeFile(args.at(-1), 'JPEGDATA')
+    return { stdout: '' }
+  }
+  const fc = createFrameCache({ dir: cacheDir, concurrency: 2, run: fakeRun })
+  const same = await Promise.all([fc.frameOf(path.join(tdir, 'vid/a.mp4')), fc.frameOf(path.join(tdir, 'vid/a.mp4'))])
+  const again = await fc.frameOf(path.join(tdir, 'vid/a.mp4'))
+  check('视频帧：同一视频并发请求只截一次；结果在 cache 目录下（<hash 前两位>/<hash>.jpg）；再取 = 命中缓存、不再运行 ffmpeg', same[0] === same[1] && same[0] === again && runs === 1 && same[0].startsWith(cacheDir + path.sep) && /\/[0-9a-f]{2}\/[0-9a-f]{40}\.jpg$/.test(same[0]) && (await readFile(again, 'utf8')) === 'JPEGDATA', J([runs, same]))
+  await writeFile(path.join(tdir, 'vid/a.mp4'), 'fakevideo-changed-size')
+  const changed = await fc.frameOf(path.join(tdir, 'vid/a.mp4'))
+  for (let i = 0; i < 5; i++) await mk(`vid/c${i}.mp4`, `v${i}`)
+  runs = 0
+  await Promise.all([0, 1, 2, 3, 4].map((i) => fc.frameOf(path.join(tdir, `vid/c${i}.mp4`))))
+  check('视频帧：视频改了（大小 / mtime 变）→ 新缓存文件；并发上限（5 个同时只跑 2 个）', changed !== same[0] && runs === 5 && peak === 2, J([changed, runs, peak]))
+  const bad = createFrameCache({ dir: path.join(tdir, 'frame-cache-bad'), run: async (cmd) => { if (cmd === 'ffprobe') return { stdout: '' }; throw Object.assign(new Error('spawn ffmpeg ENOENT'), { code: 'ENOENT' }) } })
+  let badErr = null
+  try { await bad.frameOf(path.join(tdir, 'vid/c0.mp4')) } catch (error) { badErr = error }
+  let badErr2 = null
+  try { await bad.frameOf(path.join(tdir, 'vid/c0.mp4')) } catch (error) { badErr2 = error }
+  check('视频帧：ffmpeg 不可用 → 清楚的错误（422，说明原因）、短时间内同一视频不再重试（同一个错误对象）', badErr?.statusCode === 422 && /ffmpeg 不可用/.test(badErr.message) && badErr2 === badErr, badErr?.message)
+  // handler.getResource：frame=1 只放行视频；路径仍走 resolveAsset（目录穿越被拒）
+  const gh = createGalHandler({ dataDir: path.join(tdir, 'data'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) })
+  const gitem = (await gh.importFromSource({ sourcePath: tdir, options: { adapters: ['uviewer-csv'], defaultMetadataActions: [] } })).items[0]
+  await mk('resources/pic/dup/a.png', 'PNG')
+  const notVideo = await gh.getResource(gitem.itemId, 'pic/dup/a.png', { frame: true }).then(() => null, (e) => e)
+  const traversal = await gh.getResource(gitem.itemId, '../shots/ep01_a.png', { frame: true }).then(() => null, (e) => e)
+  check('getResource frame=1：不是视频 → 415；路径穿越 → 400；缓存目录 = <data>/cache/gal-thumbs', notVideo?.statusCode === 415 && traversal?.statusCode === 400, J([notVideo?.message, traversal?.message]))
 }
 
 await rm(work, { recursive: true, force: true })

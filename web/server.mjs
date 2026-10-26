@@ -205,7 +205,7 @@ function streamFile(res, filePath, contentType) {
 // 带校验头的文件响应（缩略图用）：ETag（大小 + mtime）+ Last-Modified，If-None-Match / If-Modified-Since 命中就 304，
 // 否则流式发送（不把整个文件先读进内存）。缓存一天，过期后先用旧的、后台悄悄校验（stale-while-revalidate），
 // 封面被重新生成时靠 ETag 变化及时更新。文件不存在 → 404。
-async function sendCachedFile(req, res, filePath, contentType) {
+async function sendCachedFile(req, res, filePath, contentType, cacheControl = 'public, max-age=86400, stale-while-revalidate=604800') {
   let info
   try {
     info = await stat(filePath)
@@ -216,7 +216,7 @@ async function sendCachedFile(req, res, filePath, contentType) {
   }
   const etag = `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`
   const modified = new Date(Math.floor(info.mtimeMs / 1000) * 1000).toUTCString()
-  const cacheHeaders = { ETag: etag, 'Last-Modified': modified, 'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800' }
+  const cacheHeaders = { ETag: etag, 'Last-Modified': modified, 'Cache-Control': cacheControl }
   const since = Date.parse(String(req.headers['if-modified-since'] || ''))
   if (etagMatches(req, etag) || (!req.headers['if-none-match'] && Number.isFinite(since) && since >= Math.floor(info.mtimeMs / 1000) * 1000)) {
     res.writeHead(304, webHeaders(cacheHeaders))
@@ -5318,7 +5318,9 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       if (action === 'resource') {
         const resource = await handler.getResource(itemId, url.searchParams.get('path') || '', {
           subtitle: url.searchParams.get('subtitle') === '1',
+          frame: url.searchParams.get('frame') === '1',   // Gal：视频的一帧（卡片缩略图）
         })
+        if (resource.file) return await sendCachedFile(req, res, resource.file, resource.contentType, resource.cacheControl)
         return binary(res, 200, resource.body, resource.contentType)
       }
       if (action === 'progress') return json(res, 200, await handler.getProgress(itemId))

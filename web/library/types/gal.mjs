@@ -15,6 +15,8 @@ import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatch, cleanGalConfigRaw, normalizeGalConfig } from '../gal/config.mjs'
+import { isVideoPath } from '../gal/thumbs.mjs'
+import { createFrameCache } from '../gal/video-thumb.mjs'
 import { shardedPath, walkShardedFiles, writeJsonAtomic } from '../meta-shard.mjs'
 import { parseTags } from '../tag-store.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
@@ -54,6 +56,7 @@ export function normalizeGalOptions(value = {}) {
 export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathExists, getConfig }) {
   const metaRoot = path.join(dataDir, 'library-meta', type)
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
+  const frames = createFrameCache({ dir: path.join(dataDir, 'cache', 'gal-thumbs') })   // 视频缩略图（一帧 JPEG）的缓存目录
 
   const options = (override = {}) => normalizeGalOptions({ ...(getConfig().mediaImportProfiles?.[GAL_PROFILE] || {}), ...override })
   const rootDir = (override = '') => path.resolve(override || options().rootDir || path.join(dataDir, 'gal'))
@@ -219,9 +222,14 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     return current
   }
 
-  async function getResource(itemId, resourcePath) {
+  // frame：视频 → 一帧 JPEG（卡片缩略图）。resolveAsset 已经把路径限制在媒体目录内，截出来的图缓存在 cache/gal-thumbs，返回 { file, contentType } 让路由按文件发（ETag / 长缓存）
+  async function getResource(itemId, resourcePath, { frame = false } = {}) {
     const item = await readItem(itemId)
     const file = await resolveAsset(item, resourcePath)
+    if (frame) {
+      if (!isVideoPath(file)) throw Object.assign(new Error('不是视频文件'), { statusCode: 415 })
+      return { file: await frames.frameOf(file), contentType: 'image/jpeg', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
+    }
     return { body: await readFile(file), contentType: contentTypeOf(file) }
   }
 

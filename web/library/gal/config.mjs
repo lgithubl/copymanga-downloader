@@ -32,9 +32,24 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // exclusive = 被它收走的脚本不再出现在 parent 自己的列表里。分组（groups）、封面（dirThumbs）、标签（labels）都按路径 <parent>/<as> 配
   views: [],
   // 目录卡片的头像：parent 是父目录名（* = 任意），name 是目录名的正则；paths 是模板，{name} {parent} 会被替换，取第一个存在的
-  dirThumbs: [{ parent: 'character', name: '^\\d{4}$', paths: ['download/character/{name}00/adv/image/{name}00.png', 'download/character/{name}00/adv/image/{name}00_100.png'] }],
+  // paths 里文件名 / 目录名段可以带通配 * ?（* = 段内任意字符，? = 单个字符），匹配到的全部都算（按自然序）；没有通配的模板按原样、存在就算。
+  // 所有存在的路径都进卡片的 thumbs 数组（去重、最多 12 张），第一张 = thumb。UViewer 的资源目录是 <4 位编号><2 位变体>（几乎没有 00），所以 {name}?? 把每个变体都收进来，{name}00 排在最前
+  dirThumbs: [{ parent: 'character', name: '^\\d{4}$', paths: ['download/character/{name}00/adv/image/{name}00.png', 'download/character/{name}00/adv/image/{name}00_100.png', 'download/character/{name}??/adv/image/{name}??.png', 'download/character/{name}??/adv/image/{name}??_100.png'] }],
   // 脚本卡片的缩略图（先于「脚本里第一张背景图」）：{stem} 是脚本文件名（无扩展名），{thumbsDir} 对每个缩略图目录各试一次；~/ = 相对媒体目录
   scriptThumbs: ['~/{thumbsDir}/{stem}.webp', '~/{thumbsDir}/scripts/{stem}.webp'],
+  // 可配置的缩略图提取（按文件名规律给脚本卡片 / 目录卡片配图，和 scriptThumbs / dirThumbs 并存，结果接在它们后面）：
+  //   [{ dir, match, key, for, forKey, forMatch, kind, limit, fallback }]
+  //   dir       目录（相对资源根；~/ 开头 = 相对媒体目录，只有缩略图目录读得到）。可带通配 * ?；每条规则只列一次目录（按目录 mtime 缓存，最多读 2 万项），建成 键 → 文件[] 的索引
+  //   match     正则，对 dir 里的「文件名」（含扩展名）匹配，不匹配的忽略
+  //   key       文件的键：{1}{2}… = 捕获组，{名字} = 命名捕获组；不写 = {1}
+  //   for       给谁用：script（脚本卡片）| dir（目录 / 分组卡片）| both（默认）
+  //   forKey    卡片自己的键：{stem}（脚本名，无扩展名）{name}（目录名 / 分组键）{parent}；不写 = 脚本 {stem}、目录 {name}。卡片用这个键去索引里取文件
+  //   forMatch  可选，正则：对 stem / name 先匹配一次，捕获组 {1}… 也能写进 forKey（不匹配 = 这条规则对这张卡片不适用）
+  //   kind      image（默认，只收图片扩展名）| video（只收 mp4 mkv webm mov m4v，卡片显示视频的一帧）
+  //   limit     每张卡片最多取几张（默认 12）；fallback：true = 前面都没找到图时才用这条
+  thumbSources: [],
+  // 卡片封面怎么选（卡片有多张图时）：random（默认，每次渲染随机一张当封面，悬停时随机顺序轮播）| first（只显示第一张，不轮播 = 旧行为）| hover（封面固定第一张，悬停时轮播）
+  thumbMode: 'random',
   // 分组：列 parent（通配；'.' = 脚本根本身）下的目录时，脚本文件名（无扩展名）能匹配 pattern 的，按第 1 个捕获组分成虚拟目录
   // （比如 ^(\\d{5}) 把 10001A1、10001B1 归到「10001」一张卡片里）；不匹配的脚本照常列出。虚拟目录的名字/头像和真实目录一样查 labels / namesFiles / dirThumbs
   groups: [],
@@ -169,11 +184,27 @@ export function normalizeGalConfig(raw) {
 
   const dirThumbs = []
   for (const rule of Array.isArray(v.dirThumbs) ? v.dirThumbs.slice(0, MAX_LIST) : []) {
-    const paths = (Array.isArray(rule?.paths) ? rule.paths : []).map((p) => text(p, 300)).filter(Boolean).slice(0, 6)
+    const paths = (Array.isArray(rule?.paths) ? rule.paths : []).map((p) => text(p, 300)).filter(Boolean).slice(0, 10)
     if (!paths.length) continue
     const name = text(rule.name, 100)
     if (name) { try { new RegExp(name) } catch { continue } }
     dirThumbs.push({ parent: text(rule.parent, 100) || '*', name, paths })
+  }
+
+  const thumbSources = []
+  for (const rule of Array.isArray(v.thumbSources) ? v.thumbSources.slice(0, 10) : []) {
+    const raw = text(rule?.dir, 200).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+    const fromMedia = raw.startsWith('~/')
+    const rest = safeRelPath(fromMedia ? raw.slice(2) : raw)
+    const match = text(rule?.match, 300)
+    if (rest === null || !match) continue
+    try { new RegExp(match); if (rule.forMatch && !regexOrEmpty(rule.forMatch)) continue } catch { continue }
+    if (!rest) continue
+    thumbSources.push({
+      dir: fromMedia ? `~/${rest}` : rest, match, key: text(rule.key, 100) || '{1}',
+      for: ['script', 'dir'].includes(rule.for) ? rule.for : 'both', forKey: text(rule.forKey, 100), forMatch: regexOrEmpty(rule.forMatch),
+      kind: rule.kind === 'video' ? 'video' : 'image', limit: Math.max(1, Math.min(12, Math.floor(Number(rule.limit)) || 12)), fallback: Boolean(rule.fallback),
+    })
   }
 
   const groups = []
@@ -237,6 +268,8 @@ export function normalizeGalConfig(raw) {
     views: v.views === undefined ? [] : views,
     dirThumbs: v.dirThumbs === undefined ? d.dirThumbs.map((r) => ({ ...r, paths: [...r.paths] })) : dirThumbs,
     scriptThumbs: v.scriptThumbs === undefined ? d.scriptThumbs.slice() : (Array.isArray(v.scriptThumbs) ? v.scriptThumbs : []).map((t) => text(t, 300)).filter(Boolean).slice(0, 10),
+    thumbSources: v.thumbSources === undefined ? [] : thumbSources,
+    thumbMode: ['random', 'first', 'hover'].includes(v.thumbMode) ? v.thumbMode : d.thumbMode,
     groups: v.groups === undefined ? [] : groups,
     scriptIndex: v.scriptIndex === undefined ? [] : scriptIndex,
     game,
