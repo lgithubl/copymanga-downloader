@@ -1,10 +1,15 @@
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
-// 这里只写「实际探测到的 / 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
+// 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
+//
+// 架构原则：系统层和适配器都很简单——只读 config、按 config 匹配；每个游戏那些「脏」的知识（路径 / 正则 / 命名规则 / 猜的映射）全部在这个脚本的数据表里，由脚本写进条目 config。
+//   哪里不对：改这个脚本（管理员跑的、可信）的表，上传新版本重跑；不用重建镜像。表里所有列表都是数组。
 //
 // 结构（从上到下）：
+//   0. ADAPTER_RULES —— 每个适配器的完整参数表（抄自适配器的 DEFAULT_OPTIONS，字面量数据）+ RULE_DEVIATIONS（有意和适配器默认值不一致的键，现在为空）。漂移守卫：scripts/dev/gal-layout-rules-selftest.mjs。
 //   1. LAYOUTS ——「游戏 id → 目录配置」的数据表（只有这一块是每个游戏固定的知识：目录在哪、脚本根 / 资源根是什么、适配器参数模板、分组 / 合并 / 缩略图规则…）。
 //      发现某个游戏的目录配置不对：改这张表（或者在选项 layouts 里按 id 覆盖某几个字段），上传新版本、重跑；不用改探测代码，更不用重建镜像。
+//      每个游戏除了目录配置，还写它的规则配置：ruleTables（写哪些适配器的全表）/ ruleOverrides（只对这个游戏改的子键）/ engine（classify / resourceResolve / indexSkip / limits / player）；每个游戏块的注释写明哪些是真实数据验证过的、哪些是猜的；pending = 等真实数据的占位（只是文档，不写进 config）。
 //      表里所有「列表」都是数组（哪怕现在只有一个元素），以后加候选不用改格式；别名（aster / jaxin / maid / aku / fruits → girlscreation，deepone → uviewer）用 extends，不拷贝。
 //   2. 布局引擎 —— 路径模式（* 通配 / 正则段）展开、按表里的候选位置直接 stat（命中就不搜索），都没命中才退回广度优先搜索；表项写坏了不会崩，记日志、退回内置的。
 //   3. generateTags —— 分发（config.game.id）、覆盖、写 config，以及「这次运行的改动情况」（和条目现有 config 逐字段对比）。
@@ -28,14 +33,628 @@
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
 //   layouts         { <game id>: { <LAYOUTS 里的字段>: … } }：不改脚本就覆盖表里某个游戏的某几个字段（整个字段替换）；写坏了的忽略、记日志、用内置的
-// 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项）；结构化版本在 details.changes。
+//   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
+//                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
+// 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
 // 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 
+const ADAPTER_OPTIONS_BYTES = 16384   // 引擎 config.mjs 的 ADAPTER_OPTIONS_MAX.perAdapter
 const TAG_GROUPS = ['Gal配置', 'Gal配置version', 'Gal游戏']
 const SAFE_SEGMENT = /^[^/\\\0]+$/
+
+// ======================================================================
+// ADAPTER_RULES：每个适配器的「完整参数表」（规则表）。适配器只读 config.adapterOptions[<适配器 id>]、按配置匹配；
+// 所有脏知识（路径模板 / 正则 / 命名规则 / 槽位号 / 猜的摆放）都是这里的数据，写进条目 config 后管理员改这里（或 layouts 选项）、上传新版本、重跑就生效——不用重建镜像。
+//   · 内容 = 创作时从各适配器的 DEFAULT_OPTIONS 原样抄来的（main.js 只加载自己、不能 import 适配器）。适配器按子键在自己的默认值上合并，所以写满整张表和不写行为完全一致；
+//     想改某一项：改下面这张表（所有用这个适配器的游戏都变），或者只改某个游戏：在它的 LAYOUTS 项里写 ruleOverrides（深度合并在这张表之上，见下）。
+//   · 和适配器默认值是否一致由 scripts/dev/gal-layout-rules-selftest.mjs 守着（漂移守卫）：适配器改了默认值而这里没跟上，测试会红；有意不一致的写进 RULE_DEVIATIONS（路径列表）。
+//   · 合并顺序（后者覆盖前者，对象逐键递归、数组整个替换）：ADAPTER_RULES[适配器] < 游戏的 ruleOverrides[适配器] < 探测函数写的值（root / aliasFiles / imageDirs …，真实目录里认出来的永远赢）。
+//   · 每个适配器的表 ≤ 16 KB（引擎的上限，超了整张被丢掉），合计 ≤ 64 KB；测试里有断言。字段含义见各适配器文件头部 / web/library/gal/README.md 的适配器选项章节。
+//   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
+// ======================================================================
+export const ADAPTER_RULES = {
+  'renpy-legeclo': {
+    aliasFiles: ['script/movie.rpy'],
+    imageDirs: ['images'],
+    aliasPatterns: [
+      {
+        kind: 'movie',
+        re: '^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*"(?<path>[^"]+)"[^)]*\\)',
+      },
+      {
+        kind: 'movie',
+        re: '^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*\'(?<path>[^\']+)\'[^)]*\\)',
+      },
+      { kind: 'image', re: '^image\\s+(?<name>.+?)\\s*=\\s*"(?<path>[^"]+)"\\s*$' },
+      { kind: 'image', re: '^image\\s+(?<name>.+?)\\s*=\\s*\'(?<path>[^\']+)\'\\s*$' },
+    ],
+    movieNoLoopRe: '\\bloop\\s*=\\s*False\\b',
+    imageIndex: { preferDirs: [], ext: ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif'], extPriority: false },
+    audioCommands: { music: ['music'], voice: ['voice'], se: ['sound', 'audio'], other: 'raw' },
+    voiceNoQuote: { variables: {} },
+    speakers: {},
+    speakerVars: [],
+    flow: { menu: 'raw', conditionals: 'linear' },
+    transitions: { named: '^(?:dissolve|fade|pixellate|move)', seconds: 0.5 },
+    blackRes: ['^black$', '(?:^|_)black\\d*$'],
+    sniff: {
+      labelRe: '^\\s*label\\s+H_\\w+\\s*:',
+      markerRes: ['^\\s*(?:\\$\\s*enable_skip\\s*\\(|play\\s+voice\\s+")'],
+    },
+    align: { left: 'left', right: 'right', center: 'center', truecenter: 'center' },
+  },
+  'renpy-monmusu': {
+    aliasFiles: ['script/movie.rpy'],
+    imageDirs: ['images'],
+    aliasPatterns: [
+      {
+        kind: 'movie',
+        re: '^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*"(?<path>[^"]+)"[^)]*\\)',
+      },
+      {
+        kind: 'movie',
+        re: '^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*\'(?<path>[^\']+)\'[^)]*\\)',
+      },
+      { kind: 'image', re: '^image\\s+(?<name>.+?)\\s*=\\s*"(?<path>[^"]+)"\\s*$' },
+      { kind: 'image', re: '^image\\s+(?<name>.+?)\\s*=\\s*\'(?<path>[^\']+)\'\\s*$' },
+    ],
+    movieNoLoopRe: '\\bloop\\s*=\\s*False\\b',
+    imageIndex: { preferDirs: [], ext: ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif'], extPriority: false },
+    audioCommands: { music: ['music'], voice: ['voice'], se: ['sound', 'audio'], other: 'raw' },
+    voiceNoQuote: { variables: {} },
+    speakers: {},
+    speakerVars: [],
+    flow: { menu: 'raw', conditionals: 'linear' },
+    transitions: { named: '^(?:dissolve|fade|pixellate|move)', seconds: 0.5 },
+    blackRes: ['^black$'],
+    sniff: {
+      labelRe: '^\\s*label\\s+[A-Za-z_]\\w*\\s*:',
+      markerRes: ['^\\s*(?:voice\\s+"|scene\\s+\\S|play\\s+(?:music|sound)\\s+")'],
+    },
+  },
+  'renpy-minashigo': {
+    aliasFiles: ['game/movie.rpy'],
+    standFiles: ['game/script.rpy'],
+    imageDirs: ['game/images'],
+    aliasPatterns: [
+      {
+        kind: 'movie',
+        re: '^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*"(?<path>[^"]+)"[^)]*\\)',
+      },
+      {
+        kind: 'movie',
+        re: '^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*\'(?<path>[^\']+)\'[^)]*\\)',
+      },
+      { kind: 'image', re: '^image\\s+(?<name>.+?)\\s*=\\s*"(?<path>[^"]+)"\\s*$' },
+      { kind: 'image', re: '^image\\s+(?<name>.+?)\\s*=\\s*\'(?<path>[^\']+)\'\\s*$' },
+    ],
+    movieNoLoopRe: '\\bloop\\s*=\\s*False\\b',
+    imageIndex: { preferDirs: [], ext: ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif'], extPriority: false },
+    standTags: ['standimage'],
+    cropForms: [
+      'im\\.Crop\\(\\s*["\'](?<path>[^"\']+)["\']\\s*,\\s*\\(\\s*(?<x>-?\\d+)\\s*,\\s*(?<y>-?\\d+)\\s*,\\s*(?<w>\\d+)\\s*,\\s*(?<h>\\d+)\\s*\\)\\s*\\)',
+    ],
+    nameVar: 'name',
+    speakers: {},
+    speakerVars: ['^[A-Za-z_]\\w*$'],
+    audioCommands: { music: ['music'], voice: ['voice*'], se: [], other: 'se' },
+    voiceNoQuote: { variables: {} },
+    fadeTags: ['black'],
+    flash: { counts: { flash: 1, flash2: 2, flash3: 3, flash4: 4 }, seconds: 0.3, color: 'white' },
+    flow: { menu: 'raw', conditionals: 'linear' },
+    transitions: { named: '^(?:dissolve|fade|pixellate|move)', seconds: 0.5 },
+    blackRes: ['^black\\d*$'],
+    sniff: { labelRe: '^\\s*label\\s+[A-Za-z_]\\w*\\s*:', markerRes: ['^\\s*(?:\\$\\s*name\\s*=|xyz\\s+["\'])'] },
+  },
+  'uviewer-csv': {
+    commands: {
+      aliases: {},
+      known: [
+        'bg',
+        'bgoff',
+        'name',
+        'msg',
+        'playvoice',
+        'playse',
+        'playbgm',
+        'stopbgm',
+        'fadeinblack',
+        'fadeoutblack',
+        'wait',
+        'movie',
+        'movieoff',
+        'clickwait',
+        'endwait',
+        'select',
+        'if',
+        'elseif',
+        'else',
+        'endif',
+      ],
+      rawHints: [
+        'spriteatlas',
+        'sprite',
+        'spriteoff',
+        'flash',
+        'endwmsg',
+        'anm',
+        'mask',
+        'imgconf',
+        'spine',
+        'spineoff',
+      ],
+    },
+    msg: { textArgIndex: 1, singleArgText: false },
+    playvoice: { pathArgIndex: 1 },
+    bg: { colorPrefix: 'color_' },
+    select: { var: 'select', prefixRe: '^(?:選項|选项|選擇|选择|Option)\\s*\\d+[\\s\\u3000:：.、-]*' },
+    conditions: { vars: {} },
+    sniff: { minKnownRatio: 0.6, minLines: 3, maxLines: 40 },
+  },
+  'girlscreation-tag': {
+    root: '',
+    categoryLabels: {},
+    player: { names: ['館長'] },
+    dialect: {
+      window: 200000,
+      headWindow: 8192,
+      markers: {
+        aku: ['<GROUP>', '<EV_DISPLAY>', '<SPINE_ACTOR_DISPLAY>'],
+        display: ['<SPINE_ACTOR_DISPLAY>'],
+        branch: ['<LABEL>'],
+      },
+    },
+    stand: { akuOffset: 450, akuDirections: { LEFT: -1, RIGHT: 1, CENTER: 0 }, fruitsDim: 0.6 },
+    animation: { maxFrames: 600 },
+    line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$' },
+    category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
+    titleLines: ['^title,([^,\\r\\n]+),'],
+    speaker: { suffixRe: '（[^）]*）$' },
+    dirs: { scenes: 'scenes', audio: 'data/audio', spine: 'data/spine' },
+    sceneDirs: {
+      images: 'images',
+      videos: 'videos',
+      voices: 'voices',
+      bgvoices: 'bgvoices',
+      animations: 'animations',
+      spines: 'spines',
+    },
+    audioKinds: ['bgm', 'se'],
+    scenes: {
+      script: ['script.txt', 'output_script.txt'],
+      lineScript: '^h[ms]r_[^/]+\\.txt$',
+      thumb: '^thumbnail\\.(?:png|jpe?g|webp)$',
+    },
+    sample: {
+      files: [
+        '/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$',
+      ],
+    },
+  },
+  'girlscreation-line': {
+    root: '',
+    categoryLabels: {},
+    player: { names: ['館長'] },
+    dialect: {
+      window: 200000,
+      headWindow: 8192,
+      markers: {
+        aku: ['<GROUP>', '<EV_DISPLAY>', '<SPINE_ACTOR_DISPLAY>'],
+        display: ['<SPINE_ACTOR_DISPLAY>'],
+        branch: ['<LABEL>'],
+      },
+    },
+    stand: { akuOffset: 450, akuDirections: { LEFT: -1, RIGHT: 1, CENTER: 0 }, fruitsDim: 0.6 },
+    animation: { maxFrames: 600 },
+    line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$' },
+    category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
+    titleLines: ['^title,([^,\\r\\n]+),'],
+    speaker: { suffixRe: '（[^）]*）$' },
+    dirs: { scenes: 'scenes', audio: 'data/audio', spine: 'data/spine' },
+    sceneDirs: {
+      images: 'images',
+      videos: 'videos',
+      voices: 'voices',
+      bgvoices: 'bgvoices',
+      animations: 'animations',
+      spines: 'spines',
+    },
+    audioKinds: ['bgm', 'se'],
+    scenes: {
+      script: ['script.txt', 'output_script.txt'],
+      lineScript: '^h[ms]r_[^/]+\\.txt$',
+      thumb: '^thumbnail\\.(?:png|jpe?g|webp)$',
+    },
+    sample: {
+      files: [
+        '/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$',
+      ],
+    },
+  },
+  'tenkeiprdx-json': {
+    root: '',
+    unknownName: '플레이어',
+    stillPng: 'spine',
+    userPlaceholder: '%username%',
+    positions: { '0': 0.5, '1': 0.3, '2': 0.7 },
+    positionX: {},
+    defaultX: 0.5,
+    facial: ['idle_normal', 'idle_joy', 'idle_sad', 'idle_angry', 'idle_surprise', 'idle_shy', 'idle_unique'],
+    fieldMap: {
+      scene: { id: 0, frames: 4 },
+      frame: {
+        backgroundImage: 3,
+        speakerName: 10,
+        phraseContents: 12,
+        backgroundMusic: 27,
+        phraseVoice: 29,
+        adventureCharacters: 31,
+        soundEffect: null,
+        still: null,
+        stillAnimation: null,
+      },
+      character: {
+        characterMasterId: 0,
+        characterAppearance: 1,
+        characterPosition: 2,
+        characterAction: 3,
+        characterEmotionIcon: 4,
+        characterFacialExpression: 5,
+      },
+      skip: [0, 30],
+      master: {
+        row: 1,
+        char: { id: 0, name: 3, title: 4, minLength: 4 },
+        scene: { title: 2, jsonIds: 9, stills: 10, minLength: 11 },
+      },
+    },
+    dirs: {
+      masterdata: 'Masterdata',
+      spines: 'Spines',
+      stills: 'Stills',
+      backgrounds: 'Backgrounds',
+      bgm: 'BGM',
+      scenes: 'scenes',
+      icons: 'CharacterIcons',
+      thumbs: 'EpisodeThumbnails',
+    },
+    files: { username: 'username.txt', characters: 'masterdata_4.json', scenarios: 'masterdata_32.json' },
+    paths: {
+      background: [
+        'Backgrounds/adventure/{name}.png',
+        'Backgrounds/still/{name}.png',
+        'Backgrounds/eventstill/{name}.png',
+      ],
+      backgroundMissing: [
+        { match: '_still_', path: 'Backgrounds/still/{name}.png' },
+        { path: 'Backgrounds/adventure/{name}.png' },
+      ],
+      thumbStill: 'Backgrounds/still/{name}.png',
+      bgm: ['BGM/{name}.ogg', 'BGM/{name}_loop.ogg'],
+      se: ['Se/{name}.ogg'],
+      voice: ['AdventureVoice/{scene}/{name}.ogg'],
+    },
+    still: {
+      backgroundRe: '^(.+)_still_0*(\\d+)$',
+      animationRe: '^animation\\d+$',
+      animationName: 'animation{n}',
+      defaultAnimation: 'animation1',
+    },
+    hse: {
+      stillRe: 'still_0([2-5])',
+      effects: {
+        '2': [{ op: 'bgse', src: 'BgSe/Hse5.ogg', loop: false }],
+        '3': [{ op: 'bgse', src: 'BgSe/Hse2.ogg', loop: true }],
+        '4': [
+          { op: 'flash', color: 'white', count: 2, seconds: 0.3 },
+          { op: 'bgse', src: 'BgSe/Hse4.ogg', loop: false },
+        ],
+        '5': [{ op: 'wash', color: 'white', seconds: 2 }],
+      },
+    },
+    animations: {
+      noLoop: ['animation4'],
+      slow: ['animation4'],
+      speed: { animation3: 1.5 },
+      linked: {
+        animation2: { bgse: 'BgSe/Hse2.ogg', loop: true },
+        animation3: { bgse: 'BgSe/Hse3.ogg', loop: true },
+        animation4: { bgse: 'BgSe/Hse4.ogg', loop: false, flash: true },
+      },
+      flash: { color: 'white', count: 2, seconds: 0.3 },
+      wash: { animation5: { color: 'white', seconds: 1.5 } },
+    },
+    animationSpeed: { msThreshold: 100, msDivisor: 1000 },
+    camera: { durationMs: 2500, maxSeconds: 60 },
+    stand: { preferred: '{id}_{appearance}', appearancePad: 2 },
+    bgm: { stopRe: '^noBGM(?:\\{([^}]*)\\})?$', fadeRe: 'Fade_([\\d.]+)' },
+    kinds: [
+      { id: 'event', label: '活动', dir: 'event' },
+      { id: 'extra', label: '附加', dir: 'extra' },
+      { id: 'special', label: '特别', dir: 'special' },
+    ],
+    idRules: [
+      { kind: 'event', split: '_', segments: [2, 3], prefix: '2', minParts: 4, lastDigit: {}, forms: [''] },
+      {
+        kind: 'extra',
+        split: '_',
+        segments: [2, 3],
+        prefix: '2',
+        minParts: 4,
+        lastDigit: { '1': '2' },
+        forms: [''],
+      },
+      {
+        kind: 'special',
+        split: '_',
+        segments: [2, 3],
+        prefix: '2',
+        minParts: 4,
+        lastDigit: {},
+        forms: ['', '2', '1'],
+      },
+    ],
+    catalog: {
+      thumbPrefix: 'ep_eventstill_',
+      thumbStillSuffix: '_still_01',
+      charCodeRe: '^\\d{8}',
+      charStills: ['{id}_01_still', '{id}_02_still'],
+      labels: { chars: '角色', all: '全部剧情', unknownChar: '???' },
+    },
+  },
+  'misttrain-json': {
+    root: '',
+    showMosaic: false,
+    dirs: { spines: 'Spines', backgrounds: 'BackGrounds', sounds: 'Sounds', masterData: 'MasterData' },
+    master: {
+      scenes: 'MSceneViewModel.json',
+      characters: 'MCharacterBaseViewModel.json',
+      idKey: 'Id',
+      titleKey: 'Title',
+      nameKey: 'Name',
+    },
+    scenes: { dirs: ['UScenes'], stillsDir: 'Stills', collision: 'last' },
+    fieldMap: {
+      row: {
+        speaker: 2,
+        text: 3,
+        frameImage: 9,
+        voice: 10,
+        background: 11,
+        bgm: 12,
+        se: 13,
+        soundTag: 14,
+        effect: 15,
+        backgroundEffectType: 16,
+        stand: 17,
+        detail: 18,
+      },
+      detail: { animation: 0, speed: 1, zoom: 2, x: 3, y: 4, seconds: 5, rotation: 6 },
+    },
+    paths: {
+      bgm: 'Sounds/Bgms/Adv/{name}.ogg',
+      se: 'Sounds/Se/{name}.ogg',
+      bgse: 'Sounds/BgSe/{name}.ogg',
+      background: 'BackGrounds/{name}.png',
+      voiceFallback: 'Sounds/Voices/Scenarios/Stills/{name}.ogg',
+    },
+    backgrounds: { ext: ['png', 'jpg'] },
+    voice: { dir: 'Sounds/Voices', ext: ['ogg'], preferDirs: [], duplicates: 'first' },
+    titleLookup: { trim: 2, tryAsIs: true, tryMinusOne: true },
+    still: { defaultAnimation: 'animation1', configFile: 'still_configuration.json' },
+    camera: { positionScale: 0.84, zoomAdd: 0.03, zoomEpsilon: 0.0001, zoomUnit: 1.3, maxSeconds: 60 },
+    effects: {
+      fadeSeconds: 1,
+      flashSeconds: 0.3,
+      flashCount: 2,
+      map: { '1': 'wash', '3': 'flash' },
+      oneShotRule: {
+        '4': ['animation3'],
+        '5': ['animation3'],
+        '7': ['animation3', 'animation6'],
+        '8': ['animation3', 'animation7'],
+      },
+      linkedBgSe: {
+        '4': { animation3: ['Hse4', 'Hse4'], animation2: ['Hse2', 'Hse3'] },
+        '5': { animation5: ['Hse1', 'Hse1'], animation3: ['Hse4', 'Hse4'], animation2: ['Hse2', 'Hse3'] },
+        '7': {
+          animation3: ['Hse4', 'Hse4'],
+          animation6: ['Hse4', 'Hse4'],
+          animation2: ['Hse2', 'Hse3'],
+          animation5: ['Hse2', 'Hse3'],
+        },
+        '8': {
+          animation3: ['Hse4', 'Hse4'],
+          animation7: ['Hse4', 'Hse4'],
+          animation2: ['Hse2', 'Hse3'],
+          animation6: ['Hse2', 'Hse3'],
+        },
+      },
+      fastSpeed: 2,
+      loopExcept: ['Hse4'],
+    },
+    emoji: { heart01: '♥', heart02: '♥', heart03: '♥', heart04: '♥', smile: '☺', star: '★' },
+  },
+  'utage-book': {
+    root: '',
+    screenWidth: 1280,
+    standX: { slotBase: 0.5, argIndex: 4 },
+    slots: { Chara1: 'Chara1', Chara2: 'Chara2', Chara3: 'Chara3' },
+    slotPrefix: 'Chara',
+    off: { mode: 'speakerOnly', arg: '^<Off>$' },
+    speaker: { source: ['NameText', 'key'], splitOn: '-', pick: 'beforeLast', characterArg: '^<Character=(.*)>$' },
+    bgm: { play: 'loop' },
+    tween: {
+      kinds: {
+        MoveBy: { returns: 'action', else: 'moveBy' },
+        MoveTo: 'moveTo',
+        PunchPosition: 'action',
+        ShakePosition: 'action',
+        ColorTo: 'raw',
+        ScaleTo: 'raw',
+        RotateTo: 'raw',
+      },
+      actions: { x: 2, up: 1, down: 3 },
+      returnWhen: 'pingpong',
+    },
+    selection: { groupSuffix: '-\\d+$', adjacentGroups: true },
+    folderLabels: [
+      ['^MainScenario$', '主线'],
+      ['^CharaScenario$', '角色剧情'],
+      ['^StoryEventScenario$', '活动剧情'],
+      ['^BossrushEventScenario$', 'Bossrush 活动'],
+      ['^HomeEventScenario$', '家园事件'],
+      ['^ItemEventScenario$', '道具事件'],
+      ['^SpEventScenario$', '特别活动'],
+      ['^SubjugationEventScenario$', '讨伐活动'],
+    ],
+    index: {
+      dirs: ['Adventure', 'Characters', 'Stills', 'Sound'],
+      master: 'Adventure/Master.chapter.json',
+      ext: '\\.(?:skel\\.bytes|png|jpe?g|ogg)$',
+      books: ['^Adventure/(?:(?<category>[^/]+)/)?(?:.*/)?(?<stem>[^/]+)\\.book\\.json$'],
+    },
+    paths: {
+      characters: [{ skel: '{dir}/{base}.skel.bytes', atlas: '{dir}/{base}.atlas.txt' }],
+      stills: [{ skel: 'Stills/{id}/*.skel.bytes', atlas: 'Stills/{id}/{base}.atlas.txt' }],
+      bg: ['{file:png}', 'Adventure/BackGrounds/{name}.png', 'Adventure/BackGrounds/{name}.jpg'],
+      voice: ['Sound/Voice/**/{name}.ogg', 'Sound/BgVoice/**/{name}.ogg'],
+      bgvoice: ['Sound/BgVoice/**/{name}.ogg', 'Sound/Voice/**/{name}.ogg'],
+      se: ['{file:ogg}', 'Sound/Se/{name}.ogg', 'Sound/BgSe/{name}.ogg'],
+      bgse: ['{file:ogg}', 'Sound/BgSe/{name}.ogg', 'Sound/Se/{name}.ogg'],
+      bgm: ['{file:ogg}'],
+      bgmIntro: ['{intro:ogg}'],
+      bgmFallback: ['Sound/Bgm/{name}.ogg'],
+      skeletonSuffixStrip: ['.asset', '_SkeletonData'],
+      charIdStrip: '^ch_',
+    },
+  },
+  'artwhirl-json': {
+    root: 'game',
+    dirs: ['images', 'audio'],
+    standZoom: 1,
+    dic: { indexFields: ['bgs', 'bgms', 'charas', 'names', 'colors'] },
+    assets: [
+      { match: '^(?:bg|effect)/', replace: 'images/$&' },
+      { match: '^chara/([^/]+)/([^/]+)/*$', replace: 'images/bg/$1_$2' },
+      { match: '^chara/(.*)$', replace: 'images/hcg/$1' },
+      { match: '^bgm/', replace: 'audio/$&' },
+    ],
+    extPrefer: { '.mp3': ['.ogg'] },
+    stand: {
+      path: 'images/stands/{key}/{body}/{key}_{body}_{brow}_{eye}_{lip}{h}.png',
+      fields: {
+        key: ['key', 'chara_id'],
+        body: ['body', 'body_file'],
+        brow: ['brow'],
+        eye: ['eye'],
+        lip: ['lip'],
+        pos: ['pos'],
+        h: ['h'],
+      },
+      defaults: { brow: 'b', eye: 'e', lip: 'r' },
+      hSuffix: '_h',
+      fallback: [
+        ['h->'],
+        ['brow->b'],
+        ['brow->b', 'h->'],
+        ['eye->e'],
+        ['eye->e', 'h->'],
+        ['brow->b', 'eye->e'],
+        ['brow->b', 'eye->e', 'h->'],
+      ],
+    },
+    hcg: { match: '^chara/[^/]+/[^/]+/[^/]+$', imageExts: ['.png', '.jpg', '.webp'] },
+    video: { ext: ['webm'], noLoopFrames: ['1', '4'], frameSplit: '@' },
+    voice: { dir: 'audio/voice', preferDirs: [], ext: { '.mp3': '.ogg' }, fallback: 'audio/voice/{stem}/{name}' },
+  },
+  'tyrano-ks': {
+    root: 'game/dmm',
+    resourceDirKey: { from: 'json', field: 'resource_directory', segments: 3 },
+    voice: { dirs: ['{rd}'], patterns: [], loopAsBgse: true },
+    stand: { slots: { '1': [0.5], '2': [0.25, 0.75], '3+': [0.2, 0.5, 0.8] }, useScriptCoords: false },
+    layers: { overlay: ['4'], effect: ['3'] },
+    effects: {
+      quakeMap: { hmax: 'horizontal', vmax: 'vertical' },
+      shakeDivisor: 40,
+      animHop: { top: 'vertical', left: 'horizontal' },
+      sepia: { matchImage: 'sepia' },
+      animSlide: 'raw',
+    },
+    fallback: { faceToBase: true },
+    index: { hashPattern: '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$', stemFallback: true },
+    text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] },
+  },
+  'bokusen-json': {
+    root: '',
+    resourceDir: 'resource',
+    paths: { images: ['{stem}/images/{i}{ext}'], sounds: ['{stem}/sounds/{i}{ext}'], anyExt: true },
+    image: { ext: ['{entry}'], defaultExt: '.jpg' },
+    sound: { ext: ['.wav', '{entry}'], defaultExt: '' },
+    slotMap: {
+      articles: { index: 0 },
+      image: { layer: 15, page: 23, index: 28, x: 16, y: 29 },
+      trans: { layer: 2, mode: 3, ms: 6 },
+      move: { layer: 2, target: 4 },
+      animstart: { id: 0, layer: 2, x: 3, page: 8, frames: 9 },
+      animstop: { id: 0 },
+      playse: { buffer: 0, loop: 1, index: 2 },
+      stopse: { buffer: 0 },
+      fadese: { buffer: 0, volume: 2 },
+      playbgm: { index: null },
+      fadeoutbgm: { ms: 0 },
+      wait: { ms: 2 },
+    },
+    bgm: { patterns: ['/bgm/'], index: 0 },
+    voice: { patterns: ['/voice/'], loopAsBgse: true },
+    stand: {
+      layers: [],
+      overlayLayers: [],
+      bgLayers: ['base'],
+      xScale: 1,
+      yScale: 1,
+      origin: { x: 0, y: 0 },
+      moveMode: 'jump',
+    },
+    animation: { singleFrameAsStatic: true, multiFrameLayers: ['base'] },
+  },
+  'grenze-xml': {
+    root: '',
+    textDir: '',
+    resourceDir: '',
+    resourceDirs: ['bg', 'bgm', 'sound', 'voice', 'merc/pic'],
+    index: { ext: '\\.(?:webp|png|jpe?g|m4a|mp3|ogg|wav)$' },
+    exts: {
+      bg: ['webp', 'png', 'jpg', 'jpeg'],
+      bgm: ['m4a', 'mp3', 'ogg', 'wav'],
+      sound: ['m4a', 'mp3', 'ogg', 'wav'],
+      voice: ['m4a', 'mp3', 'ogg', 'wav'],
+    },
+    paths: {
+      bg: ['bg/battlebg/{name}/{name}.{ext}', 'bg/**/{name}.{ext}'],
+      bgm: ['bgm/{lower}/{name}.{ext}', 'bgm/**/{name}.{ext}'],
+      sound: ['sound/{name}/{name}.{ext}', 'sound/**/{name}.{ext}'],
+      voice: ['voice/{pack}/{voice}.{ext}', 'voice/**/{voice}.{ext}'],
+      stand: ['merc/pic/{hero}/{file}'],
+    },
+    duplicates: { bg: 'first', bgm: 'first', sound: 'first', voice: 'skip', stand: 'first' },
+    standFiles: ['body.webp', 'body.png'],
+    standPos: { '1': 'left', '2': 'center', '3': 'right', default: 'center' },
+    standKeep: 'untilNewHero',
+    standFit: 1,
+    none: ['non'],
+    bgBlack: ['bg_b'],
+    bgSound: { mode: 'se', attrs: ['bg_sound1', 'bg_sound2', 'bg_sound3'] },
+    soundAttrs: ['sound1', 'sound2', 'sound3'],
+    rawAttrs: ['screen_effect', 'pic_action', 'pic_action_val', 'pic_size', 'back_voice', 'effect+effect_pos'],
+    scene: { split: 'chains', forkPolicy: 'merge' },
+  },
+}
+// 有意和适配器 DEFAULT_OPTIONS 不一致的键：{ <适配器 id>: ['a.b.c', …] }（点路径；整棵子树不一致就写子树的路径）。现在没有——表和默认值逐字节一致。
+export const RULE_DEVIATIONS = {}
 
 // ======================================================================
 // LAYOUTS：游戏 id → 目录配置（固定的知识都在这里；下面的探测函数只做依赖数据的事）
@@ -58,6 +677,9 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   scriptRoots    脚本根候选 [{ id, dir, label }]：存在的都写（dir 可带通配，一个匹配一个脚本根）；一个都不存在就写第一个
 //   resourceRoots  资源根候选：写第一个存在的，都不存在就写第一个（'.' = base 自己）
 //   adapters       这个游戏默认的适配器 id（导入时用；条目里的适配器和它们没有交集时日志里提醒）
+//   ruleTables     数组：写哪些适配器的完整规则表（ADAPTER_RULES[适配器 id]）；ruleOverrides = { <适配器 id>: { 子键: 值 } }：这个游戏自己的差异（深度合并，对象逐键、数组整个替换）
+//   engine         { classify, resourceResolve, indexSkip, limits, player }：引擎层通用配置，原样写进 config 顶层（要清掉某个字段就写 [] / {}，引擎的合并是顶层字段整个替换）
+//   pending        等真实数据的占位 [{ ref, what, draft }]：只是文档，从不写进 config
 //   adapterOptions 适配器参数模板 { <适配器 id>: { <选项>: 值 } }，选项的形状（适配器的契约）不变：
 //                    字符串 / 数组 / 数字 = 原样；{ path: [候选…] } = 单个路径字符串（第一个存在的，否则第一个）；
 //                    { paths: ['a', '?b'] } = 路径数组（'?' 开头 = 存在才写；不带 ? = 总是写）。路径都相对 base，结果相对条目目录
@@ -84,6 +706,11 @@ export const LAYOUTS = {
     ],
     resourceRoots: ['.'],
     adapters: ['uviewer-csv'], adapterOptions: {},
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：uviewer-csv 全表（脚本格式 = UViewer 的 CSV 行，样本验证）；没有 limits / resourceResolve：默认值够用（真实包没出现过超限或扩展名不符）。
+    // 头像模板 download/character/{name}?? 在引擎的 dirThumbs 默认值里（config.mjs），这里不重复写，deepone 同理；要改在 config.dirThumbs 里写。
+    ruleTables: ['uviewer-csv'], ruleOverrides: {},
+    engine: { classify: [] },
     config: { namesFiles: ['user_data/character_names.json'], thumbsDirs: ['user_data/thumbnails'] },
     notes: [],
   },
@@ -98,6 +725,12 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['renpy-legeclo'],
     adapterOptions: { 'renpy-legeclo': { aliasFiles: { paths: ['?script/movie.rpy'] }, imageDirs: { paths: ['images'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：renpy-legeclo 全表（已验证：label H_<角色>_<编号> / play voice "字面量"）。未验证：voice ×39 的写法（见 pending）。thumbSources 已在上面 config 里（探测器写，真实目录验证过）。
+    ruleTables: ['renpy-legeclo'], ruleOverrides: {},
+    engine: { classify: [] },
+    // PENDING（待真实数据，不写进 config，只是文档）：play voice 的 ×39 种写法（变量 / 无引号 / renpy.play）还没见到真实脚本，不要猜 voiceNoQuote.variables。落地方式见 scripts/dev/gal-pending-plan.md §3。
+    pending: [{ ref: 'gal-pending-plan.md §3', what: 'artemis_halloween_03.rpy 等的 voice ×39（变量 / 无引号写法）', draft: { 'renpy-legeclo': { voiceNoQuote: { variables: '<等 A 段数据：变量名 → 路径>' } } } }],
     config: {
       namesFiles: [], thumbsDirs: [], scriptExtensions: ['rpy'], hiddenDirs: [], labels: {}, merge: [], views: [],
       groups: [{ parent: '.', pattern: '^(.+)_\\d{2}$' }],   // 角色 id 可能带下划线（agnes_boulanger）：去掉末尾的 _<两位编号>
@@ -123,6 +756,10 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['renpy-monmusu'],
     adapterOptions: { 'renpy-monmusu': { aliasFiles: { paths: ['?script/movie.rpy'] }, imageDirs: { paths: ['images'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：renpy-monmusu 全表（已验证：movie.rpy 别名表、hscene / hscene_still 结构）。
+    ruleTables: ['renpy-monmusu'], ruleOverrides: {},
+    engine: { classify: [] },
     config: {
       namesFiles: [], thumbsDirs: [], scriptExtensions: ['rpy'], hiddenDirs: ['sub_nav', 'tl'],
       // 首页三个入口：动画（hscene，按角色编号分组）/ 事件（hscene_still，一个脚本一个事件，平铺）/ 总览（两个目录合在一起，按角色分组）；hscene_still 不存在就不合并它
@@ -156,6 +793,10 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['renpy-monmusu'],
     adapterOptions: { 'renpy-monmusu': { aliasFiles: { paths: ['?script/movies.rpy', '?script/stills.rpy'] }, imageDirs: { paths: ['?images', '?resources'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：和 monmusu 同一个适配器、同一张表（别名表文件名不同由探测器的 aliasFiles 写）；angelic 的真实数据只有结构，没有逐项验证。
+    ruleTables: ['renpy-monmusu'], ruleOverrides: {},
+    engine: { classify: [] },
     config: {
       namesFiles: [], thumbsDirs: [], scriptExtensions: ['rpy'],
       hiddenDirs: ['sub_nav', 'sub_nav_byname', 'tl'],   // 菜单脚本（sub_*.rpy / byname_*.rpy）不是剧情
@@ -173,6 +814,12 @@ export const LAYOUTS = {
     resourceRoots: ['game'],
     adapters: ['renpy-minashigo'],
     adapterOptions: { 'renpy-minashigo': { aliasFiles: { paths: ['game/movie.rpy'] }, standFiles: { paths: ['game/script.rpy'] }, imageDirs: { paths: ['game/images'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：renpy-minashigo 全表（已验证：DynamicCharacter("name")、scene_<编号>.rpy）。缩略图对应关系未知（见 pending）。
+    ruleTables: ['renpy-minashigo'], ruleOverrides: {},
+    engine: { classify: [] },
+    // PENDING（待真实数据，不写进 config，只是文档）：game/images/thumb/<12 位>_360.jpg 和 scene_<9 位> 的编号对应关系还不知道，N 填不出来；确认前不要启用任何 thumbSources。见 scripts/dev/gal-pending-plan.md §1。
+    pending: [{ ref: 'gal-pending-plan.md §1', what: 'minashigo 缩略图 = game/images/thumb/<12 位>_360.jpg', draft: { thumbSources: [{ dir: 'game/images/thumb', match: '^(\\d{N})\\d*_360\\.jpg$', key: '{1}', forKey: '<由 scene 编号截取>', for: 'script' }] } }],
     config: {
       namesFiles: [], thumbsDirs: [], scriptExtensions: ['rpy'], hiddenDirs: [], labels: {}, merge: [],
       // 首页分类：角色（scene_<1 位类别><6 位角色编号><2 位序号>，按角色编号分组）/ 活动（scene_ev<活动号>_…，按活动号分组）/ 主线（scene_<7 位数字>，平铺）；视图是独占的
@@ -197,6 +844,10 @@ export const LAYOUTS = {
     scriptRoots: [{ id: 'story', dir: 'adv/textfiles/story', label: 'story' }],
     resourceRoots: ['.'],
     adapters: ['uviewer-csv'], adapterOptions: {},
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：uviewer-csv 全表（脚本是 UViewer 的 CSV 格式，样本验证）；角色立绘 spriteatlas / sprite 未渲染（没有数据）。
+    ruleTables: ['uviewer-csv'], ruleOverrides: {},
+    engine: { classify: [] },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'adv/textfiles/story', ext: '.txt', depth: 2 }],
     avatars: [], expectedDirs: [],
@@ -212,6 +863,15 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['girlscreation-tag', 'girlscreation-line'],
     adapterOptions: { 'girlscreation-tag': { root: { path: ['.'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：girlscreation-tag / girlscreation-line 两张全表（标签式 / 行式共用同一份 DEFAULT_OPTIONS）。已验证：Girls Creation R Viewer 的相机常数 1920 / 0 / 900（只在 README，是浏览器里按媒体存的设置，不是 config.player，所以这里不写 player）；aster / jaxin / maid 的常数没读过。
+    ruleTables: ['girlscreation-tag', 'girlscreation-line'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      // walkFiles：一个场景几百个文件，适配器自己的上限就是 40 万（girlscreation-tag.contextWalkLimit），这里写同样的值，让它在表里可见、可改。
+      // sampleFiles：未验证的猜测——脚本抽样默认 3000，场景数超过它时索引会截断（渲染诊断报 sample-truncated）；放到 ceiling 20000 保证不会悄悄少读（比适配器默认宽，不是逐字节等价）。
+      limits: { walkFiles: 400000, sampleFiles: 20000 },
+    },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [] },
     count: [],   // 数「有 script.txt / output_script.txt / hmr_·hsr_<id>.txt 的场景」（detectGirlsCreation）
     cover: [{ dir: 'scenes/*', files: ['thumbnail.png', 'thumbnail.jpg', 'thumbnail.webp'] }],
@@ -235,6 +895,10 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['tenkeiprdx-json'],
     adapterOptions: { 'tenkeiprdx-json': { root: { path: ['.'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：tenkeiprdx-json 全表（真实数据验证：scenes json / Masterdata / Spines / Stills）。
+    ruleTables: ['tenkeiprdx-json'], ruleOverrides: {},
+    engine: { classify: [] },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [] },
     count: [{ dir: 'scenes', ext: '.json', depth: 4 }],
     cover: [
@@ -254,6 +918,12 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['misttrain-json'],
     adapterOptions: { 'misttrain-json': { root: { path: ['.'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：misttrain-json 全表（真实数据验证：UScenes / Spines / MasterData）。角色缩略图（Bases/<Id>201.png）未验证（见 pending）。
+    ruleTables: ['misttrain-json'], ruleOverrides: {},
+    engine: { classify: [] },
+    // PENDING（待真实数据，不写进 config，只是文档）：假设「Textures/Characters/Bases/<Id>201.png」= 角色卡片缩略图，还没被数据证实（D 段统计）；确认前不要启用。见 scripts/dev/gal-pending-plan.md §2。
+    pending: [{ ref: 'gal-pending-plan.md §2', what: 'misttrain 角色缩略图 = Textures/Characters/Bases/<Id>201.png', draft: { thumbSources: [{ dir: 'Textures/Characters/Bases', match: '^(\\d+)201\\.png$', key: '{1}', for: 'dir' }] } }],
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [] },
     count: [{ dir: 'UScenes', ext: '.json', depth: 4 }],
     cover: [],
@@ -269,6 +939,14 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['utage-book'],
     adapterOptions: { 'utage-book': { root: { path: ['.'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：utage-book 全表。已验证（真实数据）：语音 Sound/Voice/ImportChara/<charId>/<voice>.ogg、BgVoice 在 Sound/BgVoice/、骨架名去掉 _SkeletonData.asset（paths.skeletonSuffixStrip）、骨架是 Spine 4.0.37（播放器按骨架版本选运行时，不需要配置）。
+    // 未验证：<Off> 的含义、立绘 x 参考宽度 1280（表里 screenWidth / standX）。
+    ruleTables: ['utage-book'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      limits: { walkFiles: 800000 },   // utage-book.contextWalkLimit：Sound/Voice/ImportChara/<角色>/ 下语音很多
+    },
     // Adventure 下的 Master.chapter.json 和图片目录不是剧情，适配器的嗅探把它们挡掉（只认 *.book.json 靠适配器，不靠扩展名）
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: ['BackGrounds', 'Effects', 'Spine', 'Textures'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [] },
     count: [{ dir: 'Adventure', ext: '.book.json', depth: 3 }],
@@ -287,6 +965,10 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['artwhirl-json'],
     adapterOptions: { 'artwhirl-json': { root: { path: ['.'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：artwhirl-json 全表（按官方 json_story_player 的语义写的；立绘动作 / 表情特效未渲染）。
+    ruleTables: ['artwhirl-json'], ruleOverrides: {},
+    engine: { classify: [] },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'episode_scripts', ext: '.json', depth: 3 }, { dir: 'hscripts', ext: '.json', depth: 3 }],
     avatars: [], expectedDirs: ['images/stands', 'audio'],
@@ -300,6 +982,15 @@ export const LAYOUTS = {
     resourceRoots: ['dmm/assets'],
     adapters: ['tyrano-ks'],
     adapterOptions: { 'tyrano-ks': { root: { path: ['dmm'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：tyrano-ks 全表。已验证：hash 命名 / resource_directory 取自同目录 json / 表情缺失退回基础立绘。未验证：anim layer=3 的滑入滑出（raw）、立绘位置只按出场顺序摆（stand.slots 是猜的）。
+    ruleTables: ['tyrano-ks'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      // 真实数据：assets 平铺 1.1 万个带 hash 的文件（game/dmm/assets/<stem>-<sha1>.<ext>）+ 5000 多个 <resource_directory> 子目录（无 hash 的 mp3 在 assets/<resource_directory>/）；
+      // 无 hash 的表情 png 很多在磁盘上不存在 → 适配器退回基础立绘（fallback.faceToBase）。limits 抄的是 tyrano-ks 自己的 contextWalkLimit / contextSampleLimit（3067 个剧情各一个 json）。
+      limits: { walkFiles: 800000, sampleFiles: 20000 },
+    },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'dmm/raw_scenario', ext: '.ks', depth: 6 }],
     avatars: [], expectedDirs: ['dmm/assets'],
@@ -313,6 +1004,15 @@ export const LAYOUTS = {
     resourceRoots: ['resource'],
     adapters: ['bokusen-json'],
     adapterOptions: { 'bokusen-json': { root: { path: ['.'] }, resourceDir: 'resource' } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：bokusen-json 全表。已验证：图片 resource/<脚本名>/images/<i>.<ext>（0 起），声音 resource/<脚本名>/sounds/<i>.wav。未验证：playbgm 曲目选择（bgm.patterns / index 是猜的）、move 不做渐变。
+    ruleTables: ['bokusen-json'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      // 真实数据：磁盘上的声音是 .wav，脚本列表里写 .m4a（adapterOptions.sound.ext 先试 .wav；这里再写一条引擎层的扩展名回退，两处冗余但互不冲突，适配器以外的取资源路径也能用上）。
+      resourceResolve: { extensionFallbacks: { '.m4a': ['.wav'] } },
+      limits: { walkFiles: 1000000 },   // bokusen-json.contextWalkLimit：826 个资源目录 × 几十到几百个文件
+    },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'json', ext: '.json', depth: 2 }],
     avatars: [], expectedDirs: ['resource'],
@@ -326,6 +1026,13 @@ export const LAYOUTS = {
     resourceRoots: ['assets/resources/patchres'],
     adapters: ['grenze-xml'],
     adapterOptions: { 'grenze-xml': { root: { path: ['.'] } } },
+    // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
+    // 规则：grenze-xml 全表。已验证：资源在 assets/resources/patchres、立绘 merc/pic/<hero_group_id>/body.webp|png、声音按 voice_pack、`non` = 没有。未验证：screen_effect / pic_action / effect 的含义（raw）。
+    ruleTables: ['grenze-xml'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      limits: { walkFiles: 2000000 },   // grenze-xml.contextWalkLimit：voice 一个目录十万级文件
+    },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [],   // 数 TextAsset 里的 easy_dialog-N.xml（detectGrenze）
     avatars: [], expectedDirs: ['assets/resources/patchres'],
@@ -438,8 +1145,24 @@ function normalizeLayout(raw, problems, id) {
   out.scriptIndexScan = out.scriptIndexScan.filter((s) => s && typeof s === 'object' && validPattern(s.dir) && Array.isArray(s.rules) && s.rules.every((r) => r && typeof r.pattern === 'string' && regexOk(r.pattern)))
   out.config = raw.config && typeof raw.config === 'object' && !Array.isArray(raw.config) ? raw.config : {}
   out.adapterOptions = raw.adapterOptions && typeof raw.adapterOptions === 'object' && !Array.isArray(raw.adapterOptions) ? raw.adapterOptions : {}
+  // 规则配置：ruleTables = 适配器 id 数组；ruleOverrides = { 适配器 id: 对象 }；engine = { classify / resourceResolve / indexSkip / limits / player }（原样写进 config，写坏的由引擎规整时丢掉并报告）
+  if (out.ruleTables !== undefined && !Array.isArray(out.ruleTables)) { bad('ruleTables 不是数组，忽略这个字段'); out.ruleTables = [] }
+  out.ruleTables = (out.ruleTables || []).filter((a) => { const ok = typeof a === 'string' && /^[a-z0-9-]{1,40}$/.test(a); if (!ok) bad(`ruleTables 里有不合法的适配器 id：${JSON.stringify(a)}，忽略这一项`); return ok })
+  out.ruleOverrides = isPlain(raw.ruleOverrides) ? Object.fromEntries(Object.entries(raw.ruleOverrides).filter(([id, v]) => { const ok = isPlain(v); if (!ok) bad(`ruleOverrides.${id} 不是对象，忽略`); return ok })) : {}
+  if (raw.ruleOverrides !== undefined && !isPlain(raw.ruleOverrides)) bad('ruleOverrides 不是对象，忽略这个字段')
+  out.engine = isPlain(raw.engine) ? Object.fromEntries(Object.entries(raw.engine).filter(([k]) => { const ok = ENGINE_FIELDS.includes(k); if (!ok) bad(`engine 里不认识的字段 ${k}（可用：${ENGINE_FIELDS.join(' / ')}），忽略`); return ok })) : {}
+  if (raw.engine !== undefined && !isPlain(raw.engine)) bad('engine 不是对象，忽略这个字段')
   out.searchDepth = Math.max(0, Math.min(8, Math.floor(Number(raw.searchDepth)) || 6))
   if (!out.bases.length || !out.anchors.length) { bad('没有可用的 bases / anchors，这一项不能用'); return null }
+  return out
+}
+// 引擎层通用配置字段（config.mjs 的 classify / resourceResolve / indexSkip / limits / player）：LAYOUTS 里的 engine 原样写进 config
+const ENGINE_FIELDS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player']
+// 深度合并：对象逐键递归，数组 / 标量整个替换（后者赢）；和适配器自己的 mergeOptions 同一个口径
+function deepMerge(a, b) {
+  if (!isPlain(a) || !isPlain(b)) return b === undefined ? structuredClone(a) : structuredClone(b)
+  const out = structuredClone(a)
+  for (const [k, v] of Object.entries(b)) out[k] = k in out ? deepMerge(out[k], v) : structuredClone(v)
   return out
 }
 function regexOk(source, flags) { try { new RegExp(source, String(flags || '').replace(/[^imsu]/g, '')); return true } catch { return false } }
@@ -583,7 +1306,13 @@ async function buildConfig(media, entry, base, { userBase } = {}) {
     }
     adapterOptions[adapterId] = out
   }
+  // 规则表：ADAPTER_RULES[适配器] < 本游戏的 ruleOverrides < 上面探测出来的值（detector 值赢）
+  for (const adapterId of entry.ruleTables || []) {
+    const table = deepMerge(Object.prototype.hasOwnProperty.call(ADAPTER_RULES, adapterId) ? ADAPTER_RULES[adapterId] : {}, entry.ruleOverrides?.[adapterId] || {})
+    adapterOptions[adapterId] = deepMerge(table, adapterOptions[adapterId] || {})
+  }
   if (Object.keys(adapterOptions).length) config.adapterOptions = adapterOptions
+  for (const key of ENGINE_FIELDS) if (entry.engine && entry.engine[key] !== undefined) config[key] = structuredClone(entry.engine[key])
   return config
 }
 
@@ -741,6 +1470,11 @@ export async function generateTags(ctx) {
     logs.push(`提示：条目的适配器（${itemAdapters.join('、')}）和布局表里这个游戏的默认适配器（${found.adapters.join('、')}）没有交集——确认导入时选对了适配器`)
   }
 
+  for (const [adapterId, table] of Object.entries(config.adapterOptions || {})) {
+    const size = JSON.stringify(table).length
+    if (size > ADAPTER_OPTIONS_BYTES) logs.push(`警告：adapterOptions['${adapterId}'] 序列化后 ${size} 字符，超过引擎的单个适配器上限 ${ADAPTER_OPTIONS_BYTES}，写进去会被整张丢掉——精简 ADAPTER_RULES / ruleOverrides`)
+  }
+
   // 2) 覆盖（按媒体路径匹配）；记下每条覆盖改了哪些字段
   let title = ''
   let coverOverride = ''
@@ -890,6 +1624,32 @@ function deltaParts(a, b, prefix = '', depth = 0, ra = a, rb = b) {
   return [tag(`${showValue(ra)} → ${showValue(rb)}`)]
 }
 
+// adapterOptions 的改动按适配器 id 汇总：新增 → 「N 个键」；修改 → 变了的子键（列几个、每个简短的差别）；删除 → 原 N 个键。返回 { lines, data }
+function adapterOptionsSummary(before, after) {
+  const lines = []
+  const data = { added: {}, changed: {}, removed: [] }
+  const keysOf = (v) => (isPlain(v) ? Object.keys(v) : [])
+  for (const id of [...new Set([...Object.keys(before), ...Object.keys(after)])]) {
+    const label = `adapterOptions['${id}']`
+    if (!(id in before)) {
+      const keys = keysOf(after[id])
+      data.added[id] = keys.length
+      lines.push(`+ ${label}（新增）：${keys.length} 个键（${clip(keys.slice(0, 6).join('、') + (keys.length > 6 ? '…' : ''), 80)}）`)
+    } else if (!(id in after)) {
+      data.removed.push(id)
+      lines.push(`- ${label}（删除）：原 ${keysOf(before[id]).length} 个键`)
+    } else if (canonJson(before[id]) !== canonJson(after[id])) {
+      const a = before[id]
+      const b = after[id]
+      const changed = isPlain(a) && isPlain(b) ? [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => canonJson(a[k]) !== canonJson(b[k])) : []
+      data.changed[id] = changed.slice(0, 20)
+      const detail = changed.slice(0, 3).map((k) => (!(k in a) ? `${k}：新增` : !(k in b) ? `${k}：删除` : deltaParts(a[k], b[k], k, 1).join('；'))).map((t) => clip(t, 150))
+      lines.push(`~ ${label}（修改）：${changed.length} 个键变了：${changed.slice(0, 8).join('、')}${changed.length > 8 ? ` 等 ${changed.length} 个` : ''}${detail.length ? `；${detail.join('；')}` : ''}`)
+    }
+  }
+  return { lines, data }
+}
+
 function briefOf(kind, before, after) {
   const size = (v) => (Array.isArray(v) ? `${v.length} 项` : isPlain(v) ? `${Object.keys(v).length} 个键` : showValue(v, 40))
   if (kind === 'added') return `新增（${size(after)}）`
@@ -930,6 +1690,14 @@ function changeReport({ before, patch, replace, titleBefore, titleAfter, tagsBef
       continue
     }
     const after = canonField(key, patch[key])
+    if (key === 'adapterOptions' && isPlain(after) && (!had || isPlain(existing[key]))) {   // 适配器参数表很大：按适配器 id 汇总，不倾倒整张表
+      const summary = adapterOptionsSummary(had ? existing[key] : {}, after)
+      changes.adapterOptions = summary.data
+      if (!summary.lines.length) { changes.unchanged.push(key); continue }
+      ;(had ? changes.changed : changes.added).push({ field: key, info: briefOf(had ? 'changed' : 'added', had ? existing[key] : undefined, after) })
+      summary.lines.forEach((line, i) => details.push({ rank: had ? 1 : 0, line }))
+      continue
+    }
     if (!had) {
       changes.added.push({ field: key, info: briefOf('added', undefined, after) })
       const raw = patch[key]
@@ -994,6 +1762,7 @@ function fitDetails(details) {
   const infoMap = (fn) => { for (const key of ['added', 'changed', 'removed']) details.changes[key] = details.changes[key].map((item) => fn(item)) }
   if (size() > 3800) infoMap((item) => ({ ...item, info: clip(item.info, 24) }))
   if (size() > 3800) infoMap((item) => ({ field: item.field }))
+  if (size() > 3800 && details.changes.adapterOptions) details.changes.adapterOptions = { added: Object.keys(details.changes.adapterOptions.added || {}), changed: Object.keys(details.changes.adapterOptions.changed || {}), removed: details.changes.adapterOptions.removed || [] }
   if (size() > 3800) { details.changes.overrides = details.changes.overrides.map((o) => ({ rule: o.rule, fields: o.fields.slice(0, 3) })); details.changes.tags = { added: details.changes.tags.added.length, removed: details.changes.tags.removed.length, unchanged: details.changes.tags.unchanged.length } }
   return details
 }

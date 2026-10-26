@@ -89,6 +89,19 @@ const DEFAULT_SLOTS = {
   fadeoutbgm: { ms: 0 },
   wait: { ms: 2 },
 }
+// 完整的默认参数表（= 上面注释里的结构 + 不配时的行为）。gal-layout 的 ADAPTER_RULES 抄一份写进条目 config；scripts/dev/gal-layout-rules-selftest.mjs 保证两边一致
+export const DEFAULT_OPTIONS = {
+  root: '',
+  resourceDir: 'resource',
+  paths: { images: ['{stem}/images/{i}{ext}'], sounds: ['{stem}/sounds/{i}{ext}'], anyExt: true },
+  image: { ext: ['{entry}'], defaultExt: '.jpg' },
+  sound: { ext: ['.wav', '{entry}'], defaultExt: '' },
+  slotMap: structuredClone(DEFAULT_SLOTS),
+  bgm: { patterns: ['/bgm/'], index: 0 },
+  voice: { patterns: ['/voice/'], loopAsBgse: true },
+  stand: { layers: [], overlayLayers: [], bgLayers: ['base'], xScale: 1, yScale: 1, origin: { x: 0, y: 0 }, moveMode: 'jump' },
+  animation: { singleFrameAsStatic: true, multiFrameLayers: ['base'] },
+}
 const isObj = (value) => value && typeof value === 'object' && !Array.isArray(value)
 const strList = (value, fallback) => (Array.isArray(value) ? value.map(String).filter(Boolean) : fallback)
 const regexList = (value, fallback) => {

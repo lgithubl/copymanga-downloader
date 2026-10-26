@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // gal-layout 脚本自测（不需要浏览器）：已知布局表、探测结果回归（golden）、decoy / 搜索回退、别名、改动报告。需要 ImageMagick 和 python3（造 fixture）。
 //   node scripts/dev/gal-layout-selftest.mjs                 跑测试
-//   node scripts/dev/gal-layout-selftest.mjs --update-golden 重新生成 scripts/dev/gal-layout-golden.json（只在「探测结果有意改变」时用）
+//   node scripts/dev/gal-layout-selftest.mjs --update-golden 重新生成 scripts/dev/gal-layout-golden.json（只在「探测结果有意改变」时用；规则表 / engine 字段关掉后的探测结果，即探测函数自己写的字段）
+//   node scripts/dev/gal-layout-selftest.mjs --update-rules-golden 重新生成 scripts/dev/gal-layout-rules-golden.json（只含规则字段：adapterOptions 里探测函数没写的键 + classify / resourceResolve / indexSkip / limits / player；改了 ADAPTER_RULES / engine 后用，看 git diff 审）
 //   GAL_LAYOUT_MAIN=/path/old-main.js …                      用另一份 main.js 跑（比较新旧实现）
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -16,11 +17,15 @@ import { buildKamihimeFixture } from './make-kamihime-fixture.mjs'
 import { buildLegecloFixture } from './make-legeclo-fixture.mjs'
 import { buildMinashigoFixture } from './make-minashigo-fixture.mjs'
 import { buildTskFixture } from './make-tsk-fixture.mjs'
-import { applyGalConfigPatch } from '../../web/library/gal/config.mjs'
+import { galAdapter } from '../../web/library/gal/adapters/index.mjs'
+import { applyGalConfigPatch, normalizeGalConfig, normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
+import { loadAdapterContext } from '../../web/library/gal/context.mjs'
+import { buildScene } from '../../web/library/gal/scene.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const MAIN = process.env.GAL_LAYOUT_MAIN || path.join(here, '../tag-scripts/gal-layout/main.js')
 const GOLDEN = path.join(here, 'gal-layout-golden.json')
+const RULES_GOLDEN = path.join(here, 'gal-layout-rules-golden.json')
 const mod = await import(pathToFileURL(MAIN).href)
 const { generateTags } = mod
 const LAYOUTS = mod.LAYOUTS   // 旧实现没有；新实现导出
@@ -98,12 +103,14 @@ async function buildAll() {
 }
 const MEDIA = await buildAll()
 
-async function snapshot() {
+// legacy = 把规则表和 engine 字段关掉（每个 id 的 ruleTables: [] / engine: {}）：只剩探测函数自己写的字段，和第 2.12 版的产出逐字段对比
+const LEGACY_OPTIONS = () => ({ layouts: Object.fromEntries(Object.keys(LAYOUTS).map((id) => [id, { ruleTables: [], engine: {} }])) })
+async function snapshot(legacy = true) {
   const snap = {}
   for (const c of CASES) {
     for (const variant of ['direct', 'wrapped']) {
       for (const id of [...c.ids, '']) {
-        const out = await run(MEDIA[c.name][variant], id ? { game: { id } } : {})
+        const out = await run(MEDIA[c.name][variant], id ? { game: { id } } : {}, legacy ? LEGACY_OPTIONS() : {})
         snap[`${c.name}|${variant}|${id || 'auto'}`] = {
           config: stable(cfgOf(out)),
           itemTags: out.itemTags,
@@ -114,6 +121,32 @@ async function snapshot() {
     }
   }
   return snap
+}
+
+const ENGINE_KEYS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player']
+// 规则字段快照：每个游戏 id（直接放的目录、声明 id）一份：adapterOptions 里探测函数没写的键（= 规则表贡献的）+ engine 字段
+async function rulesSnapshot() {
+  const snap = {}
+  for (const c of CASES) {
+    for (const id of c.ids) {
+      const full = cfgOf(await run(MEDIA[c.name].direct, { game: { id } }))
+      const legacy = cfgOf(await run(MEDIA[c.name].direct, { game: { id } }, LEGACY_OPTIONS()))
+      const entry = {}
+      for (const [adapter, table] of Object.entries(full.adapterOptions || {})) {
+        const own = legacy.adapterOptions?.[adapter] || {}
+        entry[adapter] = Object.fromEntries(Object.entries(table).filter(([k]) => !(k in own)))
+      }
+      snap[id] = { adapterOptions: entry, ...Object.fromEntries(ENGINE_KEYS.filter((k) => full[k] !== undefined).map((k) => [k, full[k]])) }
+    }
+  }
+  return sortDeep(snap)
+}
+
+if (process.argv.includes('--update-rules-golden')) {
+  await writeFile(RULES_GOLDEN, `${JSON.stringify(await rulesSnapshot(), null, 1)}\n`)
+  console.log(`wrote ${RULES_GOLDEN}`)
+  await rm(work, { recursive: true, force: true })
+  process.exit(0)
 }
 
 if (process.argv.includes('--update-golden')) {
@@ -132,6 +165,12 @@ if (process.argv.includes('--update-golden')) {
   let bad = []
   for (const k of keys) if (J(golden[k]) !== J(snap[k])) bad.push(k)
   check('每一组：config / 标签 / details（游戏、类型、脚本数、封面）和 golden 完全相等', bad.length === 0, bad.slice(0, 3).map((k) => `${k}\n  want ${J(golden[k]).slice(0, 300)}\n  got  ${J(snap[k]).slice(0, 300)}`).join('\n'))
+  const rulesGolden = JSON.parse(await readFile(RULES_GOLDEN, 'utf8'))
+  const rulesNow = await rulesSnapshot()
+  check(`规则 golden（${Object.keys(rulesGolden).length} 个游戏 id）：规则表贡献的 adapterOptions 键 + classify / resourceResolve / limits 和 gal-layout-rules-golden.json 逐字段一致`, J(rulesGolden) === J(rulesNow), Object.keys(rulesGolden).filter((k) => J(rulesGolden[k]) !== J(rulesNow[k])).join())
+  const legacySnap = await snapshot(false)
+  const sameDetector = Object.keys(golden).every((k) => { const a = JSON.parse(J(legacySnap[k].config)); for (const key of ENGINE_KEYS) delete a[key]; for (const [adapter, table] of Object.entries(a.adapterOptions || {})) a.adapterOptions[adapter] = Object.fromEntries(Object.entries(table).filter(([name]) => name in (golden[k].config.adapterOptions?.[adapter] || {}))); for (const adapter of Object.keys(a.adapterOptions || {})) if (!(adapter in (golden[k].config.adapterOptions || {}))) delete a.adapterOptions[adapter]; if (a.adapterOptions && !Object.keys(a.adapterOptions).length) delete a.adapterOptions; return J(sortDeep(a)) === J(golden[k].config) })
+  check('规则表是纯增量：打开规则表后的结果，去掉规则字段（engine 字段 + 探测函数没写的 adapterOptions 键），和旧 golden 逐字段相等（探测函数写的 root / aliasFiles / imageDirs / 布局字段一个没变）', sameDetector)
   check('golden 里至少有一组真的认出了游戏（防止全是空的假通过）', keys.filter((k) => golden[k].config?.game?.id).length >= 40, String(keys.filter((k) => golden[k].config?.game?.id).length))
 }
 
@@ -333,8 +372,8 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
   const eighth = await run(MEDIA.uviewer.direct, cfg4, { overrides: [{ path: '*', config: { pageSize: null } }] }, { tags: stored.tags })
   check('改动报告：overrides 写 null = 删掉字段，列为删除；覆盖项列出改了哪些字段', eighth.details.changes.removed.some((x) => x.field === 'pageSize') && /覆盖项第 1 条改了：config\.pageSize/.test(logText(eighth)) && J(eighth.details.changes.overrides) === J([{ rule: 1, fields: ['config.pageSize'] }]), logText(eighth))
   // 版本变化：标签变
-  const ninth = await generateTags({ item: { itemId: 'x', config: stored.config, source: { path: MEDIA.uviewer.direct }, tags: stored.tags }, script: { id: 'gal-layout', version: '2.13.0', options: {} } })
-  check('改动报告：脚本版本变了 → config 全是未变，但标签 Gal配置version 换了，汇总不会说「没有改动」', summaryOf(ninth) !== '没有改动' && /标签：新增 Gal配置version: 2\.13\.0；删除 Gal配置version: 2\.12\.0/.test(logText(ninth)) && ninth.details.changes.tags.added.length === 1, logText(ninth))
+  const ninth = await generateTags({ item: { itemId: 'x', config: stored.config, source: { path: MEDIA.uviewer.direct }, tags: stored.tags }, script: { id: 'gal-layout', version: '9.9.9', options: {} } })
+  check('改动报告：脚本版本变了 → config 全是未变，但标签 Gal配置version 换了，汇总不会说「没有改动」', summaryOf(ninth) !== '没有改动' && /标签：新增 Gal配置version: 9\.9\.9；删除 Gal配置version: 2\.12\.0/.test(logText(ninth)) && ninth.details.changes.tags.added.length === 1, logText(ninth))
   // 覆盖项（cover / title / config）
   const tenth = await run(MEDIA.uviewer.direct, {}, { overrides: [{ path: '*', config: { pageSize: 10 }, cover: 'x.png', title: 'Renamed' }] }, { title: 'Old' })
   check('改动报告：覆盖项列出改了哪些字段（config.pageSize / cover / title）+ 标题变化', /覆盖项第 1 条改了：config\.pageSize、cover、title/.test(logText(tenth)) && /标题：Old → Renamed/.test(logText(tenth)) && tenth.details.changes.title.to === 'Renamed', logText(tenth))
@@ -380,6 +419,135 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
   check('大量改动：每行 ≤ 500 字、改动段 ≤ 8KB、总行数 ≤ 80；明细放不下时有「… 另有 N 项」', section.every((l) => l.length <= 500) && Buffer.byteLength(section.join('\n')) <= 8192 && out.logs.length <= 80 && JSON.stringify(out.details).length <= 4000, `${out.logs.length} 行 ${Buffer.byteLength(section.join('\n'))} 字节`)
   const many = await run(MEDIA.uviewer.direct, Object.fromEntries(Array.from({ length: 24 }, (_, i) => [['scriptThumbs', 'thumbsDirs', 'namesFiles', 'hiddenDirs', 'rawIgnore', 'merge'][i % 6], []])), { replace: true, overrides: Array.from({ length: 70 }, (_, i) => ({ path: '*', config: { [`z${i}`]: i } })) })
   check('极端：70 条覆盖项也不会把日志撑过 80 行', many.logs.length <= 80, String(many.logs.length))
+}
+
+
+// ================= 规则表（ADAPTER_RULES + engine 字段）：写进 config、体量、端到端等价、和 layouts / overrides 的关系 =================
+{
+  const manifest = JSON.parse(await readFile(path.join(path.dirname(MAIN), 'manifest.json'), 'utf8'))
+  check('manifest：版本 2.13.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.13.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
+
+  // 每个 fixture 的声明 id（别名都跑）：写出来的 config 经过引擎规整一条警告都没有（规则表 / engine 字段都合格），体量在引擎上限内
+  const tooBig = []
+  const warned = []
+  const biggest = { id: '', adapter: '', size: 0 }
+  let nTables = 0
+  for (const c of CASES) {
+    for (const id of c.ids) {
+      const out = await run(MEDIA[c.name].direct, { game: { id } })
+      const cfg = cfgOf(out)
+      const total = JSON.stringify(cfg.adapterOptions || {}).length
+      for (const [adapter, table] of Object.entries(cfg.adapterOptions || {})) {
+        const size = JSON.stringify(table).length
+        nTables++
+        if (size > biggest.size) Object.assign(biggest, { id, adapter, size })
+        if (size > 16 * 1024) tooBig.push(`${id}.${adapter}: ${size}`)
+      }
+      if (total > 64 * 1024) tooBig.push(`${id} 合计 ${total}`)
+      const { warnings } = normalizeGalConfigWithWarnings(cfg)
+      if (warnings.length) warned.push(`${id}: ${warnings.map((w) => `${w.field} ${w.reason}`).join('; ').slice(0, 200)}`)
+      const kept = normalizeGalConfig(applyGalConfigPatch({}, cfg))
+      for (const adapter of Object.keys(cfg.adapterOptions || {})) if (!kept.adapterOptions?.[adapter]) warned.push(`${id}: ${adapter} 被引擎丢掉`)
+      if ('pending' in cfg) warned.push(`${id}: pending 被写进了 config`)
+    }
+  }
+  check(`体量：每个游戏写出的每个适配器表 ≤ 16 KB、合计 ≤ 64 KB（共 ${nTables} 张表，最大 ${biggest.adapter}（${biggest.id}）${biggest.size} 字符）`, !tooBig.length && biggest.size > 1000, tooBig.join(' | '))
+  check('写出的 config（含规则表 / classify / resourceResolve / limits）经引擎规整没有任何警告、适配器表一张不丢；pending 占位只是文档，不写进 config', !warned.length, warned.slice(0, 4).join('\n'))
+
+  // 端到端等价：写满规则表（+ engine 字段）和关掉规则表时，每个脚本解析出来的场景逐字节相同（适配器在自己的默认值上合并，写满 = 没写）
+  const walkScripts = async (root, exts, limit = 60) => {
+    const found = []
+    const walk = async (dir) => {
+      let names = []
+      try { names = await readdir(path.join(MEDIA_ROOT, dir), { withFileTypes: true }) } catch { return }
+      for (const e of names.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (found.length >= limit) return
+        const rel = dir ? `${dir}/${e.name}` : e.name
+        if (e.isDirectory()) await walk(rel)
+        else if (exts.includes(path.extname(e.name).slice(1).toLowerCase())) found.push(rel)
+      }
+    }
+    await walk(root)
+    return found
+  }
+  let MEDIA_ROOT = ''
+  const diffs = []
+  let compared = 0
+  let errored = 0
+  const perGame = {}
+  for (const c of CASES) {
+    const id = c.ids[0]
+    MEDIA_ROOT = MEDIA[c.name].direct
+    const full = normalizeGalConfig(applyGalConfigPatch({}, cfgOf(await run(MEDIA_ROOT, { game: { id } }))))
+    const legacy = normalizeGalConfig(applyGalConfigPatch({}, cfgOf(await run(MEDIA_ROOT, { game: { id } }, LEGACY_OPTIONS()))))
+    const adapterIds = mod.resolveLayout(id).adapters
+    const view = (cfg) => ({ classify: cfg.classify, resourceResolve: cfg.resourceResolve, player: cfg.player, limits: cfg.limits, indexSkip: cfg.indexSkip })
+    for (const adapterId of adapterIds) {
+      let adapter = null
+      try { adapter = galAdapter(adapterId) } catch { continue }   // girlscreation-line 是 girlscreation-tag 内部用的（没有单独注册）
+      const ctxFull = await loadAdapterContext({ adapter, mediaDir: MEDIA_ROOT, config: full })
+      const ctxLegacy = await loadAdapterContext({ adapter, mediaDir: MEDIA_ROOT, config: legacy })
+      const files = []
+      for (const root of full.scriptRoots) files.push(...(await walkScripts(root.dir, full.scriptExtensions, 40)))
+      for (const rel of files) {
+        const text = await readFile(path.join(MEDIA_ROOT, rel), 'utf8').catch(() => '')
+        const stem = path.basename(rel, path.extname(rel))
+        const go = (cfg, ctx) => { try { return J(buildScene(adapterId, text, ctx, { rel, stem, options: cfg.adapterOptions[adapterId] || {}, config: view(cfg) })) } catch (error) { return `ERR ${error.message}` } }
+        const a = go(full, ctxFull)
+        const b = go(legacy, ctxLegacy)
+        compared++
+        if (a.startsWith('ERR')) errored++
+        perGame[id] = (perGame[id] || 0) + 1
+        if (a !== b) diffs.push(`${id}/${adapterId}/${rel}`)
+      }
+    }
+  }
+  check(`端到端等价：${compared} 个脚本（${Object.keys(perGame).length} 个游戏的 fixture × 它的全部适配器）用写满规则表的 config 和关掉规则表的 config 解析，场景逐字节相同（其中解析报错 ${errored} 个，两边报错信息也一致）`, !diffs.length && compared >= 20 && errored < compared / 2 && Object.keys(perGame).length >= 8, `${compared} ${J(perGame)} ${diffs.slice(0, 4).join(' | ')}`)
+
+  // 合并顺序：规则表 < ruleOverrides < 探测值；深度合并（只改一个子键，别的保留）
+  const bk = (extra) => run(MEDIA.bokusen.direct, { game: { id: 'bokusen' } }, extra)
+  const ov = cfgOf(await bk({ layouts: { bokusen: { ruleOverrides: { 'bokusen-json': { root: 'zzz', resourceDir: 'other', bgm: { index: 3 }, stand: { xScale: 2 } } } } } }))
+  const table = ov.adapterOptions['bokusen-json']
+  check('合并顺序：ruleOverrides 深度合并在全表之上（bgm.index 3 / stand.xScale 2 生效，bgm.patterns / stand.layers 等别的子键保留）；探测函数写的 root / resourceDir 永远赢', table.bgm.index === 3 && J(table.bgm.patterns) === J(['/bgm/']) && table.stand.xScale === 2 && table.stand.yScale === 1 && table.root === '' && table.resourceDir === 'resource', J(table).slice(0, 300))
+  const noTables = cfgOf(await bk({ layouts: { bokusen: { ruleTables: [] } } }))
+  check('layouts.<id>.ruleTables: [] = 不写这个适配器的全表，只剩探测函数写的键（root / resourceDir）；engine 字段不受影响', J(Object.keys(noTables.adapterOptions['bokusen-json']).sort()) === J(['resourceDir', 'root']) && noTables.limits?.walkFiles === 1000000, J(noTables.adapterOptions))
+  const noEngine = cfgOf(await bk({ layouts: { bokusen: { engine: { limits: { walkFiles: 5 } } } } }))
+  check('layouts.<id>.engine 整个字段替换（只写 limits → 没有 classify / resourceResolve）；全表照写', noEngine.limits.walkFiles === 5 && noEngine.resourceResolve === undefined && noEngine.classify === undefined && Object.keys(noEngine.adapterOptions['bokusen-json']).length === 10, J(noEngine.limits))
+  const badRule = await bk({ layouts: { bokusen: { ruleTables: 'x', ruleOverrides: [1], engine: { bogus: 1, limits: 5 } } } })
+  check('layouts 里写坏的 ruleTables / ruleOverrides / engine：不崩、日志说明、内置值仍可用', cfgOf(badRule)?.game?.id === 'bokusen' && /ruleTables 不是数组/.test(logText(badRule)) && /ruleOverrides 不是对象/.test(logText(badRule)) && /engine 里不认识的字段 bogus/.test(logText(badRule)), logText(badRule).slice(0, 400))
+  const viaOverrides = cfgOf(await bk({ overrides: [{ path: '*', config: { adapterOptions: { 'bokusen-json': { root: 'q' } } } }] }))
+  check('overrides 的 config 是顶层字段整个替换：写 adapterOptions 会替换掉整张（含规则表）——要改单个子键用 layouts.<id>.ruleOverrides', J(viaOverrides.adapterOptions) === J({ 'bokusen-json': { root: 'q' } }) && viaOverrides.limits.walkFiles === 1000000)
+  const tooHuge = await bk({ layouts: { bokusen: { ruleOverrides: { 'bokusen-json': { huge: 'x'.repeat(17000) } } } } })
+  check('规则表超过 16 KB：日志警告「会被整张丢掉」', /adapterOptions\['bokusen-json'\].*超过引擎的单个适配器上限/.test(logText(tooHuge)), logText(tooHuge).slice(0, 300))
+
+  // 改动报告：adapterOptions 按适配器 id 汇总，不倾倒整张表
+  const first = await run(MEDIA.bokusen.direct, { game: { id: 'bokusen' } }, {}, { tags: [] })
+  const l1 = lineOf(first, /^\+ adapterOptions\['bokusen-json'\]/)
+  const sec1 = first.logs.slice(first.logs.findIndex((l) => /^本次改动/.test(l)))
+  check('改动报告：新增 adapterOptions → 「+ adapterOptions[\'bokusen-json\']（新增）：10 个键（…）」一行，不是整张表的 JSON；classify / limits / resourceResolve 也各一行', /^\+ adapterOptions\['bokusen-json'\]（新增）：10 个键（root、resourceDir、/.test(l1) && l1.length < 160 && /^\+ classify（新增）：（空）/.test(lineOf(first, /^\+ classify/)) && /^\+ limits（新增）/.test(lineOf(first, /^\+ limits/)) && /^\+ resourceResolve（新增）/.test(lineOf(first, /^\+ resourceResolve/)) && J(first.details.changes.adapterOptions.added) === J({ 'bokusen-json': 10 }), l1)
+  check('改动报告：规则表很大时改动段仍 ≤ 8KB / 每行 ≤ 500 字 / 总行数 ≤ 80、details ≤ 4000', Buffer.byteLength(sec1.join('\n')) <= 8192 && sec1.every((l) => l.length <= 500) && first.logs.length <= 80 && JSON.stringify(first.details).length <= 4000, `${Buffer.byteLength(sec1.join('\n'))} / ${JSON.stringify(first.details).length}`)
+  const store1 = storeOf(first)
+  const again = await run(MEDIA.bokusen.direct, store1.config, {}, { tags: store1.tags })
+  check('改动报告：规则表写进去之后再跑一次 = 「没有改动」', summaryOf(again) === '没有改动', logText(again).slice(0, 600))
+  // 管理员改了脚本里的表（模拟：条目里存着旧值）→ 报告点名变了哪个适配器的哪几个键
+  const stale = JSON.parse(J(store1.config))
+  stale.adapterOptions['bokusen-json'].bgm.index = 7
+  stale.adapterOptions['bokusen-json'].sound.defaultExt = '.mp3'
+  delete stale.adapterOptions['bokusen-json'].animation
+  stale.limits = { walkFiles: 1 }
+  const changed = await run(MEDIA.bokusen.direct, stale, {}, { tags: store1.tags })
+  const l2 = lineOf(changed, /^~ adapterOptions\['bokusen-json'\]/)
+  check('改动报告：规则表和条目里存的不一样 → 「~ adapterOptions[\'bokusen-json\']（修改）：3 个键变了：…」，列出变了的子键和简短差别；limits 照常对比', /^~ adapterOptions\['bokusen-json'\]（修改）：3 个键变了：(?=.*bgm)(?=.*sound)(?=.*animation)/.test(l2) && l2.length < 500 && J(changed.details.changes.adapterOptions.changed['bokusen-json'].slice().sort()) === J(['animation', 'bgm', 'sound']) && /~ limits（修改）/.test(logText(changed)), l2)
+  // 每个游戏第一次运行：改动段都在预算内、adapterOptions 一行一个适配器
+  const budget = []
+  for (const c of CASES) for (const id of c.ids) {
+    const out = await run(MEDIA[c.name].direct, { game: { id } }, {}, { tags: [] })
+    const sec = out.logs.slice(out.logs.findIndex((l) => /^本次改动/.test(l)))
+    const adapters = Object.keys(cfgOf(out).adapterOptions || {})
+    const lines = out.logs.filter((l) => /^\+ adapterOptions\[/.test(l))
+    if (Buffer.byteLength(sec.join('\n')) > 8192 || out.logs.length > 80 || lines.length !== adapters.length || sec.some((l) => l.length > 500)) budget.push(`${id}: ${Buffer.byteLength(sec.join('\n'))} 字节 ${out.logs.length} 行 ${lines.length}/${adapters.length}`)
+  }
+  check('改动报告：每个游戏第一次运行（空条目）：adapterOptions 每个适配器一行、改动段 ≤ 8KB、日志 ≤ 80 行', !budget.length, budget.join(' | '))
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

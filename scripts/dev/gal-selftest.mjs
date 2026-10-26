@@ -42,6 +42,8 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : `  <-- ${detail}`}`)
 }
 const J = (v) => JSON.stringify(v)
+// gal-layout 2.13 起 adapterOptions 里还有规则表的全部键：这里只核对探测函数写的那几个键（expected 里列出的）
+const optsOf = (actual, expected) => Object.fromEntries(Object.keys(expected).map((key) => [key, actual?.[key]]))
 
 // ================= 适配器 =================
 {
@@ -512,7 +514,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
 
   const out = await monmusuScript({ item: item0, script: { id: 'gal-layout', version: '1.0.0', options: {} } })
   const cfg = out.itemPatch.gal.config
-  check('monmusu 脚本：游戏根（多一层 game/）、脚本根、资源根、总览视图 = hscene+hscene_still（anim/still）、按编号分组、隐藏导航目录、适配器参数（别名表/图片目录）', cfg.game.id === 'monmusu' && cfg.game.title === 'Mon Test' && cfg.scriptRoots[0].dir === 'game/script' && J(cfg.resourceRoots) === J(['game']) && J(cfg.scriptExtensions) === J(['rpy']) && J(cfg.merge) === '[]' && J(cfg.views) === J([{ parent: '.', as: 'overview', label: '总览', dirs: ['hscene', 'hscene_still'], badges: { hscene: 'anim', hscene_still: 'still' } }]) && cfg.groups[0].pattern === '^(\\d{5})[A-Za-z]\\d' && cfg.hiddenDirs.includes('sub_nav') && J(cfg.adapterOptions['renpy-monmusu']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }), J(cfg))
+  check('monmusu 脚本：游戏根（多一层 game/）、脚本根、资源根、总览视图 = hscene+hscene_still（anim/still）、按编号分组、隐藏导航目录、适配器参数（别名表/图片目录）', cfg.game.id === 'monmusu' && cfg.game.title === 'Mon Test' && cfg.scriptRoots[0].dir === 'game/script' && J(cfg.resourceRoots) === J(['game']) && J(cfg.scriptExtensions) === J(['rpy']) && J(cfg.merge) === '[]' && J(cfg.views) === J([{ parent: '.', as: 'overview', label: '总览', dirs: ['hscene', 'hscene_still'], badges: { hscene: 'anim', hscene_still: 'still' } }]) && cfg.groups[0].pattern === '^(\\d{5})[A-Za-z]\\d' && cfg.hiddenDirs.includes('sub_nav') && J(optsOf(cfg.adapterOptions['renpy-monmusu'], { aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] })) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }), J(cfg))
   check('头像模板来自 images 里找到的 icon；封面 = 第一个头像；脚本数；谁写的；标签 Gal游戏: monmusu', J(cfg.dirThumbs) === J([{ parent: '*', name: '^\\d{3,8}$', paths: ['images/icon/icon_{name}_0_idle.png'] }]) && cfg.cover === 'images/icon/icon_10001_0_idle.png' && cfg.scriptCount === 4 && cfg.script.id === 'gal-layout' && J(out.itemTags) === J(['Gal配置: monmusu', 'Gal配置version: 1.0.0', 'Gal游戏: monmusu']), J([cfg.dirThumbs, cfg.cover, cfg.scriptCount, out.itemTags]))
   await handler.patchItemMetadata(item0.itemId, { gal: out.itemPatch.gal })
   const it = await handler.getItem(item0.itemId)
@@ -572,7 +574,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const item = imp.items[0]
   const out = await galLayoutScript({ item, script: { id: 'gal-layout', version: '2.2.0', options: {} } })
   const cfg = out.itemPatch.gal.config
-  check('gal-layout 认出 minashigo：脚本根 game/scripts、资源根 game、扩展名 rpy、按角色编号分组、适配器参数（别名表 / 立绘定义 / 图片目录）、脚本数 5、标签 Gal游戏: minashigo', cfg.game.id === 'minashigo' && cfg.scriptRoots[0].dir === 'MinashigoViewer-1.2/game/scripts' && J(cfg.resourceRoots) === J(['MinashigoViewer-1.2/game']) && J(cfg.scriptExtensions) === J(['rpy']) && cfg.groups[0].pattern === '^scene_\\d(\\d{6})\\d{2}$' && J(cfg.adapterOptions['renpy-minashigo']) === J({ aliasFiles: ['MinashigoViewer-1.2/game/movie.rpy'], standFiles: ['MinashigoViewer-1.2/game/script.rpy'], imageDirs: ['MinashigoViewer-1.2/game/images'] }) && cfg.scriptCount === 5 && out.itemTags.includes('Gal游戏: minashigo'), J(cfg))
+  check('gal-layout 认出 minashigo：脚本根 game/scripts、资源根 game、扩展名 rpy、按角色编号分组、适配器参数（别名表 / 立绘定义 / 图片目录）、脚本数 5、标签 Gal游戏: minashigo', cfg.game.id === 'minashigo' && cfg.scriptRoots[0].dir === 'MinashigoViewer-1.2/game/scripts' && J(cfg.resourceRoots) === J(['MinashigoViewer-1.2/game']) && J(cfg.scriptExtensions) === J(['rpy']) && cfg.groups[0].pattern === '^scene_\\d(\\d{6})\\d{2}$' && J(optsOf(cfg.adapterOptions['renpy-minashigo'], { aliasFiles: ['MinashigoViewer-1.2/game/movie.rpy'], standFiles: ['MinashigoViewer-1.2/game/script.rpy'], imageDirs: ['MinashigoViewer-1.2/game/images'] })) === J({ aliasFiles: ['MinashigoViewer-1.2/game/movie.rpy'], standFiles: ['MinashigoViewer-1.2/game/script.rpy'], imageDirs: ['MinashigoViewer-1.2/game/images'] }) && cfg.scriptCount === 5 && out.itemTags.includes('Gal游戏: minashigo'), J(cfg))
   const auto = await galLayoutScript({ item: { ...item, config: {} }, script: { id: 'gal-layout', version: '2.2.0', options: {} } })
   const asMonmusu = await galLayoutScript({ item: { ...item, config: { game: { id: 'monmusu' } } }, script: { id: 'gal-layout', version: '2.2.0', options: {} } })
   const asTenkei = await galLayoutScript({ item: { ...item, config: { game: { id: 'tenkeiprdx' } } }, script: { id: 'gal-layout', version: '2.2.0', options: {} } })
@@ -615,7 +617,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const item = imp.items[0]
   const out = await galLayoutScript({ item, script: { id: 'gal-layout', version: '2.5.0', options: {} } })
   const cfg = out.itemPatch.gal.config
-  check('legeclo 脚本：游戏根（game/）、脚本根 = script/hscene、资源根 = game、按「去掉末尾 _<两位编号>」分组、适配器参数（别名表 / 图片目录）、缩略图提取（thumbSources：脚本 = images/thumbnail/st、退回 images/st；角色 = images/thumbnail/char）', cfg.game.id === 'legeclo' && cfg.scriptRoots[0].dir === 'game/script/hscene' && J(cfg.resourceRoots) === J(['game']) && cfg.groups[0].pattern === '^(.+)_\\d{2}$' && J(cfg.adapterOptions['renpy-legeclo']) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }) && cfg.dirThumbs.length === 0 && cfg.thumbSources.length === 3 && cfg.thumbSources[0].dir === 'images/thumbnail/st' && cfg.thumbSources[2].dir === 'images/thumbnail/char' && cfg.scriptCount === 4 && /Gal游戏: legeclo/.test(out.itemTags.join()), J(cfg))
+  check('legeclo 脚本：游戏根（game/）、脚本根 = script/hscene、资源根 = game、按「去掉末尾 _<两位编号>」分组、适配器参数（别名表 / 图片目录）、缩略图提取（thumbSources：脚本 = images/thumbnail/st、退回 images/st；角色 = images/thumbnail/char）', cfg.game.id === 'legeclo' && cfg.scriptRoots[0].dir === 'game/script/hscene' && J(cfg.resourceRoots) === J(['game']) && cfg.groups[0].pattern === '^(.+)_\\d{2}$' && J(optsOf(cfg.adapterOptions['renpy-legeclo'], { aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] })) === J({ aliasFiles: ['game/script/movie.rpy'], imageDirs: ['game/images'] }) && cfg.dirThumbs.length === 0 && cfg.thumbSources.length === 3 && cfg.thumbSources[0].dir === 'images/thumbnail/st' && cfg.thumbSources[2].dir === 'images/thumbnail/char' && cfg.scriptCount === 4 && /Gal游戏: legeclo/.test(out.itemTags.join()), J(cfg))
   const none = await galLayoutScript({ item: { ...item, config: {} }, script: { id: 'gal-layout', version: '2.5.0', options: {} } })
   const mmFx = path.join(work, 'lg-vs-mm')
   await buildMonmusuFixture(mmFx)
@@ -650,7 +652,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const item = imp.items[0]
   const out = await galLayoutScript({ item, script: { id: 'gal-layout', version: '2.6.0', options: {} } })
   const cfg = out.itemPatch.gal.config
-  check('girlscreation 脚本：根 = package.nw（目录里多了一层）、脚本根 = scenes、资源根 = package.nw、扩展名 txt、适配器参数 root；脚本数只数有 script.txt 的场景（PLACEHOLDER 不算）；封面 = 第一个场景的 thumbnail.png', cfg.game.id === 'girlscreation' && cfg.scriptRoots[0].dir === 'package.nw/scenes' && J(cfg.resourceRoots) === J(['package.nw']) && J(cfg.scriptExtensions) === J(['txt']) && J(cfg.adapterOptions['girlscreation-tag']) === J({ root: 'package.nw' }) && cfg.scriptCount === 4 && cfg.cover === 'scenes/chmr_40101001/thumbnail.png' && /Gal游戏: girlscreation/.test(out.itemTags.join()), J(cfg))
+  check('girlscreation 脚本：根 = package.nw（目录里多了一层）、脚本根 = scenes、资源根 = package.nw、扩展名 txt、适配器参数 root；脚本数只数有 script.txt 的场景（PLACEHOLDER 不算）；封面 = 第一个场景的 thumbnail.png', cfg.game.id === 'girlscreation' && cfg.scriptRoots[0].dir === 'package.nw/scenes' && J(cfg.resourceRoots) === J(['package.nw']) && J(cfg.scriptExtensions) === J(['txt']) && J(optsOf(cfg.adapterOptions['girlscreation-tag'], { root: 'package.nw' })) === J({ root: 'package.nw' }) && cfg.scriptCount === 4 && cfg.cover === 'scenes/chmr_40101001/thumbnail.png' && /Gal游戏: girlscreation/.test(out.itemTags.join()), J(cfg))
   const auto = await galLayoutScript({ item: { ...item, config: {} }, script: { id: 'gal-layout', version: '2.6.0', options: {} } })
   // 家族各游戏的唯一 id：声明了 aku / fruits / maid / jaxin / aster 就走同一套探测、并把声明的 id 原样写回；自动探测仍认成 girlscreation
   for (const id of ['aku', 'fruits', 'maid', 'jaxin', 'aster']) {

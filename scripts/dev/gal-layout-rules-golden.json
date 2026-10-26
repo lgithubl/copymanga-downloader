@@ -1,0 +1,2657 @@
+{
+ "aku": {
+  "adapterOptions": {
+   "girlscreation-line": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "root": "",
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   },
+   "girlscreation-tag": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   }
+  },
+  "classify": [],
+  "limits": {
+   "sampleFiles": 20000,
+   "walkFiles": 400000
+  }
+ },
+ "angelic": {
+  "adapterOptions": {
+   "renpy-monmusu": {
+    "aliasPatterns": [
+     {
+      "kind": "movie",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*\"(?<path>[^\"]+)\"[^)]*\\)"
+     },
+     {
+      "kind": "movie",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*'(?<path>[^']+)'[^)]*\\)"
+     },
+     {
+      "kind": "image",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*\"(?<path>[^\"]+)\"\\s*$"
+     },
+     {
+      "kind": "image",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*'(?<path>[^']+)'\\s*$"
+     }
+    ],
+    "audioCommands": {
+     "music": [
+      "music"
+     ],
+     "other": "raw",
+     "se": [
+      "sound",
+      "audio"
+     ],
+     "voice": [
+      "voice"
+     ]
+    },
+    "blackRes": [
+     "^black$"
+    ],
+    "flow": {
+     "conditionals": "linear",
+     "menu": "raw"
+    },
+    "imageIndex": {
+     "ext": [
+      "png",
+      "jpg",
+      "jpeg",
+      "webp",
+      "avif",
+      "gif"
+     ],
+     "extPriority": false,
+     "preferDirs": []
+    },
+    "movieNoLoopRe": "\\bloop\\s*=\\s*False\\b",
+    "sniff": {
+     "labelRe": "^\\s*label\\s+[A-Za-z_]\\w*\\s*:",
+     "markerRes": [
+      "^\\s*(?:voice\\s+\"|scene\\s+\\S|play\\s+(?:music|sound)\\s+\")"
+     ]
+    },
+    "speakerVars": [],
+    "speakers": {},
+    "transitions": {
+     "named": "^(?:dissolve|fade|pixellate|move)",
+     "seconds": 0.5
+    },
+    "voiceNoQuote": {
+     "variables": {}
+    }
+   }
+  },
+  "classify": []
+ },
+ "artwhirl": {
+  "adapterOptions": {
+   "artwhirl-json": {
+    "assets": [
+     {
+      "match": "^(?:bg|effect)/",
+      "replace": "images/$&"
+     },
+     {
+      "match": "^chara/([^/]+)/([^/]+)/*$",
+      "replace": "images/bg/$1_$2"
+     },
+     {
+      "match": "^chara/(.*)$",
+      "replace": "images/hcg/$1"
+     },
+     {
+      "match": "^bgm/",
+      "replace": "audio/$&"
+     }
+    ],
+    "dic": {
+     "indexFields": [
+      "bgs",
+      "bgms",
+      "charas",
+      "names",
+      "colors"
+     ]
+    },
+    "dirs": [
+     "images",
+     "audio"
+    ],
+    "extPrefer": {
+     ".mp3": [
+      ".ogg"
+     ]
+    },
+    "hcg": {
+     "imageExts": [
+      ".png",
+      ".jpg",
+      ".webp"
+     ],
+     "match": "^chara/[^/]+/[^/]+/[^/]+$"
+    },
+    "stand": {
+     "defaults": {
+      "brow": "b",
+      "eye": "e",
+      "lip": "r"
+     },
+     "fallback": [
+      [
+       "h->"
+      ],
+      [
+       "brow->b"
+      ],
+      [
+       "brow->b",
+       "h->"
+      ],
+      [
+       "eye->e"
+      ],
+      [
+       "eye->e",
+       "h->"
+      ],
+      [
+       "brow->b",
+       "eye->e"
+      ],
+      [
+       "brow->b",
+       "eye->e",
+       "h->"
+      ]
+     ],
+     "fields": {
+      "body": [
+       "body",
+       "body_file"
+      ],
+      "brow": [
+       "brow"
+      ],
+      "eye": [
+       "eye"
+      ],
+      "h": [
+       "h"
+      ],
+      "key": [
+       "key",
+       "chara_id"
+      ],
+      "lip": [
+       "lip"
+      ],
+      "pos": [
+       "pos"
+      ]
+     },
+     "hSuffix": "_h",
+     "path": "images/stands/{key}/{body}/{key}_{body}_{brow}_{eye}_{lip}{h}.png"
+    },
+    "standZoom": 1,
+    "video": {
+     "ext": [
+      "webm"
+     ],
+     "frameSplit": "@",
+     "noLoopFrames": [
+      "1",
+      "4"
+     ]
+    },
+    "voice": {
+     "dir": "audio/voice",
+     "ext": {
+      ".mp3": ".ogg"
+     },
+     "fallback": "audio/voice/{stem}/{name}",
+     "preferDirs": []
+    }
+   }
+  },
+  "classify": []
+ },
+ "aster": {
+  "adapterOptions": {
+   "girlscreation-line": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "root": "",
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   },
+   "girlscreation-tag": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   }
+  },
+  "classify": [],
+  "limits": {
+   "sampleFiles": 20000,
+   "walkFiles": 400000
+  }
+ },
+ "bokusen": {
+  "adapterOptions": {
+   "bokusen-json": {
+    "animation": {
+     "multiFrameLayers": [
+      "base"
+     ],
+     "singleFrameAsStatic": true
+    },
+    "bgm": {
+     "index": 0,
+     "patterns": [
+      "/bgm/"
+     ]
+    },
+    "image": {
+     "defaultExt": ".jpg",
+     "ext": [
+      "{entry}"
+     ]
+    },
+    "paths": {
+     "anyExt": true,
+     "images": [
+      "{stem}/images/{i}{ext}"
+     ],
+     "sounds": [
+      "{stem}/sounds/{i}{ext}"
+     ]
+    },
+    "slotMap": {
+     "animstart": {
+      "frames": 9,
+      "id": 0,
+      "layer": 2,
+      "page": 8,
+      "x": 3
+     },
+     "animstop": {
+      "id": 0
+     },
+     "articles": {
+      "index": 0
+     },
+     "fadeoutbgm": {
+      "ms": 0
+     },
+     "fadese": {
+      "buffer": 0,
+      "volume": 2
+     },
+     "image": {
+      "index": 28,
+      "layer": 15,
+      "page": 23,
+      "x": 16,
+      "y": 29
+     },
+     "move": {
+      "layer": 2,
+      "target": 4
+     },
+     "playbgm": {
+      "index": null
+     },
+     "playse": {
+      "buffer": 0,
+      "index": 2,
+      "loop": 1
+     },
+     "stopse": {
+      "buffer": 0
+     },
+     "trans": {
+      "layer": 2,
+      "mode": 3,
+      "ms": 6
+     },
+     "wait": {
+      "ms": 2
+     }
+    },
+    "sound": {
+     "defaultExt": "",
+     "ext": [
+      ".wav",
+      "{entry}"
+     ]
+    },
+    "stand": {
+     "bgLayers": [
+      "base"
+     ],
+     "layers": [],
+     "moveMode": "jump",
+     "origin": {
+      "x": 0,
+      "y": 0
+     },
+     "overlayLayers": [],
+     "xScale": 1,
+     "yScale": 1
+    },
+    "voice": {
+     "loopAsBgse": true,
+     "patterns": [
+      "/voice/"
+     ]
+    }
+   }
+  },
+  "classify": [],
+  "limits": {
+   "walkFiles": 1000000
+  },
+  "resourceResolve": {
+   "extensionFallbacks": {
+    ".m4a": [
+     ".wav"
+    ]
+   }
+  }
+ },
+ "deepone": {
+  "adapterOptions": {
+   "uviewer-csv": {
+    "bg": {
+     "colorPrefix": "color_"
+    },
+    "commands": {
+     "aliases": {},
+     "known": [
+      "bg",
+      "bgoff",
+      "name",
+      "msg",
+      "playvoice",
+      "playse",
+      "playbgm",
+      "stopbgm",
+      "fadeinblack",
+      "fadeoutblack",
+      "wait",
+      "movie",
+      "movieoff",
+      "clickwait",
+      "endwait",
+      "select",
+      "if",
+      "elseif",
+      "else",
+      "endif"
+     ],
+     "rawHints": [
+      "spriteatlas",
+      "sprite",
+      "spriteoff",
+      "flash",
+      "endwmsg",
+      "anm",
+      "mask",
+      "imgconf",
+      "spine",
+      "spineoff"
+     ]
+    },
+    "conditions": {
+     "vars": {}
+    },
+    "msg": {
+     "singleArgText": false,
+     "textArgIndex": 1
+    },
+    "playvoice": {
+     "pathArgIndex": 1
+    },
+    "select": {
+     "prefixRe": "^(?:選項|选项|選擇|选择|Option)\\s*\\d+[\\s\\u3000:：.、-]*",
+     "var": "select"
+    },
+    "sniff": {
+     "maxLines": 40,
+     "minKnownRatio": 0.6,
+     "minLines": 3
+    }
+   }
+  },
+  "classify": []
+ },
+ "fruits": {
+  "adapterOptions": {
+   "girlscreation-line": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "root": "",
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   },
+   "girlscreation-tag": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   }
+  },
+  "classify": [],
+  "limits": {
+   "sampleFiles": 20000,
+   "walkFiles": 400000
+  }
+ },
+ "girlscreation": {
+  "adapterOptions": {
+   "girlscreation-line": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "root": "",
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   },
+   "girlscreation-tag": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   }
+  },
+  "classify": [],
+  "limits": {
+   "sampleFiles": 20000,
+   "walkFiles": 400000
+  }
+ },
+ "grenze": {
+  "adapterOptions": {
+   "grenze-xml": {
+    "bgBlack": [
+     "bg_b"
+    ],
+    "bgSound": {
+     "attrs": [
+      "bg_sound1",
+      "bg_sound2",
+      "bg_sound3"
+     ],
+     "mode": "se"
+    },
+    "duplicates": {
+     "bg": "first",
+     "bgm": "first",
+     "sound": "first",
+     "stand": "first",
+     "voice": "skip"
+    },
+    "exts": {
+     "bg": [
+      "webp",
+      "png",
+      "jpg",
+      "jpeg"
+     ],
+     "bgm": [
+      "m4a",
+      "mp3",
+      "ogg",
+      "wav"
+     ],
+     "sound": [
+      "m4a",
+      "mp3",
+      "ogg",
+      "wav"
+     ],
+     "voice": [
+      "m4a",
+      "mp3",
+      "ogg",
+      "wav"
+     ]
+    },
+    "index": {
+     "ext": "\\.(?:webp|png|jpe?g|m4a|mp3|ogg|wav)$"
+    },
+    "none": [
+     "non"
+    ],
+    "paths": {
+     "bg": [
+      "bg/battlebg/{name}/{name}.{ext}",
+      "bg/**/{name}.{ext}"
+     ],
+     "bgm": [
+      "bgm/{lower}/{name}.{ext}",
+      "bgm/**/{name}.{ext}"
+     ],
+     "sound": [
+      "sound/{name}/{name}.{ext}",
+      "sound/**/{name}.{ext}"
+     ],
+     "stand": [
+      "merc/pic/{hero}/{file}"
+     ],
+     "voice": [
+      "voice/{pack}/{voice}.{ext}",
+      "voice/**/{voice}.{ext}"
+     ]
+    },
+    "rawAttrs": [
+     "screen_effect",
+     "pic_action",
+     "pic_action_val",
+     "pic_size",
+     "back_voice",
+     "effect+effect_pos"
+    ],
+    "resourceDir": "",
+    "resourceDirs": [
+     "bg",
+     "bgm",
+     "sound",
+     "voice",
+     "merc/pic"
+    ],
+    "scene": {
+     "forkPolicy": "merge",
+     "split": "chains"
+    },
+    "soundAttrs": [
+     "sound1",
+     "sound2",
+     "sound3"
+    ],
+    "standFiles": [
+     "body.webp",
+     "body.png"
+    ],
+    "standFit": 1,
+    "standKeep": "untilNewHero",
+    "standPos": {
+     "1": "left",
+     "2": "center",
+     "3": "right",
+     "default": "center"
+    },
+    "textDir": ""
+   }
+  },
+  "classify": [],
+  "limits": {
+   "walkFiles": 2000000
+  }
+ },
+ "jaxin": {
+  "adapterOptions": {
+   "girlscreation-line": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "root": "",
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   },
+   "girlscreation-tag": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   }
+  },
+  "classify": [],
+  "limits": {
+   "sampleFiles": 20000,
+   "walkFiles": 400000
+  }
+ },
+ "kamihime": {
+  "adapterOptions": {
+   "tyrano-ks": {
+    "effects": {
+     "animHop": {
+      "left": "horizontal",
+      "top": "vertical"
+     },
+     "animSlide": "raw",
+     "quakeMap": {
+      "hmax": "horizontal",
+      "vmax": "vertical"
+     },
+     "sepia": {
+      "matchImage": "sepia"
+     },
+     "shakeDivisor": 40
+    },
+    "fallback": {
+     "faceToBase": true
+    },
+    "index": {
+     "hashPattern": "^(.+)-[0-9a-f]{40}(\\.[^.]+)?$",
+     "stemFallback": true
+    },
+    "layers": {
+     "effect": [
+      "3"
+     ],
+     "overlay": [
+      "4"
+     ]
+    },
+    "resourceDirKey": {
+     "field": "resource_directory",
+     "from": "json",
+     "segments": 3
+    },
+    "stand": {
+     "slots": {
+      "1": [
+       0.5
+      ],
+      "2": [
+       0.25,
+       0.75
+      ],
+      "3+": [
+       0.2,
+       0.5,
+       0.8
+      ]
+     },
+     "useScriptCoords": false
+    },
+    "text": {
+     "clearTags": [
+      "cm"
+     ],
+     "clickWaitTags": [
+      "l"
+     ],
+     "lineBreakTags": [
+      "r"
+     ],
+     "pageTags": [
+      "p"
+     ]
+    },
+    "voice": {
+     "dirs": [
+      "{rd}"
+     ],
+     "loopAsBgse": true,
+     "patterns": []
+    }
+   }
+  },
+  "classify": [],
+  "limits": {
+   "sampleFiles": 20000,
+   "walkFiles": 800000
+  }
+ },
+ "legeclo": {
+  "adapterOptions": {
+   "renpy-legeclo": {
+    "aliasPatterns": [
+     {
+      "kind": "movie",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*\"(?<path>[^\"]+)\"[^)]*\\)"
+     },
+     {
+      "kind": "movie",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*'(?<path>[^']+)'[^)]*\\)"
+     },
+     {
+      "kind": "image",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*\"(?<path>[^\"]+)\"\\s*$"
+     },
+     {
+      "kind": "image",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*'(?<path>[^']+)'\\s*$"
+     }
+    ],
+    "align": {
+     "center": "center",
+     "left": "left",
+     "right": "right",
+     "truecenter": "center"
+    },
+    "audioCommands": {
+     "music": [
+      "music"
+     ],
+     "other": "raw",
+     "se": [
+      "sound",
+      "audio"
+     ],
+     "voice": [
+      "voice"
+     ]
+    },
+    "blackRes": [
+     "^black$",
+     "(?:^|_)black\\d*$"
+    ],
+    "flow": {
+     "conditionals": "linear",
+     "menu": "raw"
+    },
+    "imageIndex": {
+     "ext": [
+      "png",
+      "jpg",
+      "jpeg",
+      "webp",
+      "avif",
+      "gif"
+     ],
+     "extPriority": false,
+     "preferDirs": []
+    },
+    "movieNoLoopRe": "\\bloop\\s*=\\s*False\\b",
+    "sniff": {
+     "labelRe": "^\\s*label\\s+H_\\w+\\s*:",
+     "markerRes": [
+      "^\\s*(?:\\$\\s*enable_skip\\s*\\(|play\\s+voice\\s+\")"
+     ]
+    },
+    "speakerVars": [],
+    "speakers": {},
+    "transitions": {
+     "named": "^(?:dissolve|fade|pixellate|move)",
+     "seconds": 0.5
+    },
+    "voiceNoQuote": {
+     "variables": {}
+    }
+   }
+  },
+  "classify": []
+ },
+ "maid": {
+  "adapterOptions": {
+   "girlscreation-line": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "root": "",
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   },
+   "girlscreation-tag": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   }
+  },
+  "classify": [],
+  "limits": {
+   "sampleFiles": 20000,
+   "walkFiles": 400000
+  }
+ },
+ "minashigo": {
+  "adapterOptions": {
+   "renpy-minashigo": {
+    "aliasPatterns": [
+     {
+      "kind": "movie",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*\"(?<path>[^\"]+)\"[^)]*\\)"
+     },
+     {
+      "kind": "movie",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*'(?<path>[^']+)'[^)]*\\)"
+     },
+     {
+      "kind": "image",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*\"(?<path>[^\"]+)\"\\s*$"
+     },
+     {
+      "kind": "image",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*'(?<path>[^']+)'\\s*$"
+     }
+    ],
+    "audioCommands": {
+     "music": [
+      "music"
+     ],
+     "other": "se",
+     "se": [],
+     "voice": [
+      "voice*"
+     ]
+    },
+    "blackRes": [
+     "^black\\d*$"
+    ],
+    "cropForms": [
+     "im\\.Crop\\(\\s*[\"'](?<path>[^\"']+)[\"']\\s*,\\s*\\(\\s*(?<x>-?\\d+)\\s*,\\s*(?<y>-?\\d+)\\s*,\\s*(?<w>\\d+)\\s*,\\s*(?<h>\\d+)\\s*\\)\\s*\\)"
+    ],
+    "fadeTags": [
+     "black"
+    ],
+    "flash": {
+     "color": "white",
+     "counts": {
+      "flash": 1,
+      "flash2": 2,
+      "flash3": 3,
+      "flash4": 4
+     },
+     "seconds": 0.3
+    },
+    "flow": {
+     "conditionals": "linear",
+     "menu": "raw"
+    },
+    "imageIndex": {
+     "ext": [
+      "png",
+      "jpg",
+      "jpeg",
+      "webp",
+      "avif",
+      "gif"
+     ],
+     "extPriority": false,
+     "preferDirs": []
+    },
+    "movieNoLoopRe": "\\bloop\\s*=\\s*False\\b",
+    "nameVar": "name",
+    "sniff": {
+     "labelRe": "^\\s*label\\s+[A-Za-z_]\\w*\\s*:",
+     "markerRes": [
+      "^\\s*(?:\\$\\s*name\\s*=|xyz\\s+[\"'])"
+     ]
+    },
+    "speakerVars": [
+     "^[A-Za-z_]\\w*$"
+    ],
+    "speakers": {},
+    "standTags": [
+     "standimage"
+    ],
+    "transitions": {
+     "named": "^(?:dissolve|fade|pixellate|move)",
+     "seconds": 0.5
+    },
+    "voiceNoQuote": {
+     "variables": {}
+    }
+   }
+  },
+  "classify": []
+ },
+ "minashigo_r": {
+  "adapterOptions": {
+   "uviewer-csv": {
+    "bg": {
+     "colorPrefix": "color_"
+    },
+    "commands": {
+     "aliases": {},
+     "known": [
+      "bg",
+      "bgoff",
+      "name",
+      "msg",
+      "playvoice",
+      "playse",
+      "playbgm",
+      "stopbgm",
+      "fadeinblack",
+      "fadeoutblack",
+      "wait",
+      "movie",
+      "movieoff",
+      "clickwait",
+      "endwait",
+      "select",
+      "if",
+      "elseif",
+      "else",
+      "endif"
+     ],
+     "rawHints": [
+      "spriteatlas",
+      "sprite",
+      "spriteoff",
+      "flash",
+      "endwmsg",
+      "anm",
+      "mask",
+      "imgconf",
+      "spine",
+      "spineoff"
+     ]
+    },
+    "conditions": {
+     "vars": {}
+    },
+    "msg": {
+     "singleArgText": false,
+     "textArgIndex": 1
+    },
+    "playvoice": {
+     "pathArgIndex": 1
+    },
+    "select": {
+     "prefixRe": "^(?:選項|选项|選擇|选择|Option)\\s*\\d+[\\s\\u3000:：.、-]*",
+     "var": "select"
+    },
+    "sniff": {
+     "maxLines": 40,
+     "minKnownRatio": 0.6,
+     "minLines": 3
+    }
+   }
+  },
+  "classify": []
+ },
+ "misttrain": {
+  "adapterOptions": {
+   "misttrain-json": {
+    "backgrounds": {
+     "ext": [
+      "png",
+      "jpg"
+     ]
+    },
+    "camera": {
+     "maxSeconds": 60,
+     "positionScale": 0.84,
+     "zoomAdd": 0.03,
+     "zoomEpsilon": 0.0001,
+     "zoomUnit": 1.3
+    },
+    "dirs": {
+     "backgrounds": "BackGrounds",
+     "masterData": "MasterData",
+     "sounds": "Sounds",
+     "spines": "Spines"
+    },
+    "effects": {
+     "fadeSeconds": 1,
+     "fastSpeed": 2,
+     "flashCount": 2,
+     "flashSeconds": 0.3,
+     "linkedBgSe": {
+      "4": {
+       "animation2": [
+        "Hse2",
+        "Hse3"
+       ],
+       "animation3": [
+        "Hse4",
+        "Hse4"
+       ]
+      },
+      "5": {
+       "animation2": [
+        "Hse2",
+        "Hse3"
+       ],
+       "animation3": [
+        "Hse4",
+        "Hse4"
+       ],
+       "animation5": [
+        "Hse1",
+        "Hse1"
+       ]
+      },
+      "7": {
+       "animation2": [
+        "Hse2",
+        "Hse3"
+       ],
+       "animation3": [
+        "Hse4",
+        "Hse4"
+       ],
+       "animation5": [
+        "Hse2",
+        "Hse3"
+       ],
+       "animation6": [
+        "Hse4",
+        "Hse4"
+       ]
+      },
+      "8": {
+       "animation2": [
+        "Hse2",
+        "Hse3"
+       ],
+       "animation3": [
+        "Hse4",
+        "Hse4"
+       ],
+       "animation6": [
+        "Hse2",
+        "Hse3"
+       ],
+       "animation7": [
+        "Hse4",
+        "Hse4"
+       ]
+      }
+     },
+     "loopExcept": [
+      "Hse4"
+     ],
+     "map": {
+      "1": "wash",
+      "3": "flash"
+     },
+     "oneShotRule": {
+      "4": [
+       "animation3"
+      ],
+      "5": [
+       "animation3"
+      ],
+      "7": [
+       "animation3",
+       "animation6"
+      ],
+      "8": [
+       "animation3",
+       "animation7"
+      ]
+     }
+    },
+    "emoji": {
+     "heart01": "♥",
+     "heart02": "♥",
+     "heart03": "♥",
+     "heart04": "♥",
+     "smile": "☺",
+     "star": "★"
+    },
+    "fieldMap": {
+     "detail": {
+      "animation": 0,
+      "rotation": 6,
+      "seconds": 5,
+      "speed": 1,
+      "x": 3,
+      "y": 4,
+      "zoom": 2
+     },
+     "row": {
+      "background": 11,
+      "backgroundEffectType": 16,
+      "bgm": 12,
+      "detail": 18,
+      "effect": 15,
+      "frameImage": 9,
+      "se": 13,
+      "soundTag": 14,
+      "speaker": 2,
+      "stand": 17,
+      "text": 3,
+      "voice": 10
+     }
+    },
+    "master": {
+     "characters": "MCharacterBaseViewModel.json",
+     "idKey": "Id",
+     "nameKey": "Name",
+     "scenes": "MSceneViewModel.json",
+     "titleKey": "Title"
+    },
+    "paths": {
+     "background": "BackGrounds/{name}.png",
+     "bgm": "Sounds/Bgms/Adv/{name}.ogg",
+     "bgse": "Sounds/BgSe/{name}.ogg",
+     "se": "Sounds/Se/{name}.ogg",
+     "voiceFallback": "Sounds/Voices/Scenarios/Stills/{name}.ogg"
+    },
+    "scenes": {
+     "collision": "last",
+     "dirs": [
+      "UScenes"
+     ],
+     "stillsDir": "Stills"
+    },
+    "showMosaic": false,
+    "still": {
+     "configFile": "still_configuration.json",
+     "defaultAnimation": "animation1"
+    },
+    "titleLookup": {
+     "trim": 2,
+     "tryAsIs": true,
+     "tryMinusOne": true
+    },
+    "voice": {
+     "dir": "Sounds/Voices",
+     "duplicates": "first",
+     "ext": [
+      "ogg"
+     ],
+     "preferDirs": []
+    }
+   }
+  },
+  "classify": []
+ },
+ "monmusu": {
+  "adapterOptions": {
+   "renpy-monmusu": {
+    "aliasPatterns": [
+     {
+      "kind": "movie",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*\"(?<path>[^\"]+)\"[^)]*\\)"
+     },
+     {
+      "kind": "movie",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*Movie\\s*\\([^)]*\\bplay\\s*=\\s*'(?<path>[^']+)'[^)]*\\)"
+     },
+     {
+      "kind": "image",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*\"(?<path>[^\"]+)\"\\s*$"
+     },
+     {
+      "kind": "image",
+      "re": "^image\\s+(?<name>.+?)\\s*=\\s*'(?<path>[^']+)'\\s*$"
+     }
+    ],
+    "audioCommands": {
+     "music": [
+      "music"
+     ],
+     "other": "raw",
+     "se": [
+      "sound",
+      "audio"
+     ],
+     "voice": [
+      "voice"
+     ]
+    },
+    "blackRes": [
+     "^black$"
+    ],
+    "flow": {
+     "conditionals": "linear",
+     "menu": "raw"
+    },
+    "imageIndex": {
+     "ext": [
+      "png",
+      "jpg",
+      "jpeg",
+      "webp",
+      "avif",
+      "gif"
+     ],
+     "extPriority": false,
+     "preferDirs": []
+    },
+    "movieNoLoopRe": "\\bloop\\s*=\\s*False\\b",
+    "sniff": {
+     "labelRe": "^\\s*label\\s+[A-Za-z_]\\w*\\s*:",
+     "markerRes": [
+      "^\\s*(?:voice\\s+\"|scene\\s+\\S|play\\s+(?:music|sound)\\s+\")"
+     ]
+    },
+    "speakerVars": [],
+    "speakers": {},
+    "transitions": {
+     "named": "^(?:dissolve|fade|pixellate|move)",
+     "seconds": 0.5
+    },
+    "voiceNoQuote": {
+     "variables": {}
+    }
+   }
+  },
+  "classify": []
+ },
+ "tenkeiprdx": {
+  "adapterOptions": {
+   "tenkeiprdx-json": {
+    "animationSpeed": {
+     "msDivisor": 1000,
+     "msThreshold": 100
+    },
+    "animations": {
+     "flash": {
+      "color": "white",
+      "count": 2,
+      "seconds": 0.3
+     },
+     "linked": {
+      "animation2": {
+       "bgse": "BgSe/Hse2.ogg",
+       "loop": true
+      },
+      "animation3": {
+       "bgse": "BgSe/Hse3.ogg",
+       "loop": true
+      },
+      "animation4": {
+       "bgse": "BgSe/Hse4.ogg",
+       "flash": true,
+       "loop": false
+      }
+     },
+     "noLoop": [
+      "animation4"
+     ],
+     "slow": [
+      "animation4"
+     ],
+     "speed": {
+      "animation3": 1.5
+     },
+     "wash": {
+      "animation5": {
+       "color": "white",
+       "seconds": 1.5
+      }
+     }
+    },
+    "bgm": {
+     "fadeRe": "Fade_([\\d.]+)",
+     "stopRe": "^noBGM(?:\\{([^}]*)\\})?$"
+    },
+    "camera": {
+     "durationMs": 2500,
+     "maxSeconds": 60
+    },
+    "catalog": {
+     "charCodeRe": "^\\d{8}",
+     "charStills": [
+      "{id}_01_still",
+      "{id}_02_still"
+     ],
+     "labels": {
+      "all": "全部剧情",
+      "chars": "角色",
+      "unknownChar": "???"
+     },
+     "thumbPrefix": "ep_eventstill_",
+     "thumbStillSuffix": "_still_01"
+    },
+    "defaultX": 0.5,
+    "dirs": {
+     "backgrounds": "Backgrounds",
+     "bgm": "BGM",
+     "icons": "CharacterIcons",
+     "masterdata": "Masterdata",
+     "scenes": "scenes",
+     "spines": "Spines",
+     "stills": "Stills",
+     "thumbs": "EpisodeThumbnails"
+    },
+    "facial": [
+     "idle_normal",
+     "idle_joy",
+     "idle_sad",
+     "idle_angry",
+     "idle_surprise",
+     "idle_shy",
+     "idle_unique"
+    ],
+    "fieldMap": {
+     "character": {
+      "characterAction": 3,
+      "characterAppearance": 1,
+      "characterEmotionIcon": 4,
+      "characterFacialExpression": 5,
+      "characterMasterId": 0,
+      "characterPosition": 2
+     },
+     "frame": {
+      "adventureCharacters": 31,
+      "backgroundImage": 3,
+      "backgroundMusic": 27,
+      "phraseContents": 12,
+      "phraseVoice": 29,
+      "soundEffect": null,
+      "speakerName": 10,
+      "still": null,
+      "stillAnimation": null
+     },
+     "master": {
+      "char": {
+       "id": 0,
+       "minLength": 4,
+       "name": 3,
+       "title": 4
+      },
+      "row": 1,
+      "scene": {
+       "jsonIds": 9,
+       "minLength": 11,
+       "stills": 10,
+       "title": 2
+      }
+     },
+     "scene": {
+      "frames": 4,
+      "id": 0
+     },
+     "skip": [
+      0,
+      30
+     ]
+    },
+    "files": {
+     "characters": "masterdata_4.json",
+     "scenarios": "masterdata_32.json",
+     "username": "username.txt"
+    },
+    "hse": {
+     "effects": {
+      "2": [
+       {
+        "loop": false,
+        "op": "bgse",
+        "src": "BgSe/Hse5.ogg"
+       }
+      ],
+      "3": [
+       {
+        "loop": true,
+        "op": "bgse",
+        "src": "BgSe/Hse2.ogg"
+       }
+      ],
+      "4": [
+       {
+        "color": "white",
+        "count": 2,
+        "op": "flash",
+        "seconds": 0.3
+       },
+       {
+        "loop": false,
+        "op": "bgse",
+        "src": "BgSe/Hse4.ogg"
+       }
+      ],
+      "5": [
+       {
+        "color": "white",
+        "op": "wash",
+        "seconds": 2
+       }
+      ]
+     },
+     "stillRe": "still_0([2-5])"
+    },
+    "idRules": [
+     {
+      "forms": [
+       ""
+      ],
+      "kind": "event",
+      "lastDigit": {},
+      "minParts": 4,
+      "prefix": "2",
+      "segments": [
+       2,
+       3
+      ],
+      "split": "_"
+     },
+     {
+      "forms": [
+       ""
+      ],
+      "kind": "extra",
+      "lastDigit": {
+       "1": "2"
+      },
+      "minParts": 4,
+      "prefix": "2",
+      "segments": [
+       2,
+       3
+      ],
+      "split": "_"
+     },
+     {
+      "forms": [
+       "",
+       "2",
+       "1"
+      ],
+      "kind": "special",
+      "lastDigit": {},
+      "minParts": 4,
+      "prefix": "2",
+      "segments": [
+       2,
+       3
+      ],
+      "split": "_"
+     }
+    ],
+    "kinds": [
+     {
+      "dir": "event",
+      "id": "event",
+      "label": "活动"
+     },
+     {
+      "dir": "extra",
+      "id": "extra",
+      "label": "附加"
+     },
+     {
+      "dir": "special",
+      "id": "special",
+      "label": "特别"
+     }
+    ],
+    "paths": {
+     "background": [
+      "Backgrounds/adventure/{name}.png",
+      "Backgrounds/still/{name}.png",
+      "Backgrounds/eventstill/{name}.png"
+     ],
+     "backgroundMissing": [
+      {
+       "match": "_still_",
+       "path": "Backgrounds/still/{name}.png"
+      },
+      {
+       "path": "Backgrounds/adventure/{name}.png"
+      }
+     ],
+     "bgm": [
+      "BGM/{name}.ogg",
+      "BGM/{name}_loop.ogg"
+     ],
+     "se": [
+      "Se/{name}.ogg"
+     ],
+     "thumbStill": "Backgrounds/still/{name}.png",
+     "voice": [
+      "AdventureVoice/{scene}/{name}.ogg"
+     ]
+    },
+    "positionX": {},
+    "positions": {
+     "0": 0.5,
+     "1": 0.3,
+     "2": 0.7
+    },
+    "stand": {
+     "appearancePad": 2,
+     "preferred": "{id}_{appearance}"
+    },
+    "still": {
+     "animationName": "animation{n}",
+     "animationRe": "^animation\\d+$",
+     "backgroundRe": "^(.+)_still_0*(\\d+)$",
+     "defaultAnimation": "animation1"
+    },
+    "stillPng": "spine",
+    "unknownName": "플레이어",
+    "userPlaceholder": "%username%"
+   }
+  },
+  "classify": []
+ },
+ "tsk": {
+  "adapterOptions": {
+   "utage-book": {
+    "bgm": {
+     "play": "loop"
+    },
+    "folderLabels": [
+     [
+      "^MainScenario$",
+      "主线"
+     ],
+     [
+      "^CharaScenario$",
+      "角色剧情"
+     ],
+     [
+      "^StoryEventScenario$",
+      "活动剧情"
+     ],
+     [
+      "^BossrushEventScenario$",
+      "Bossrush 活动"
+     ],
+     [
+      "^HomeEventScenario$",
+      "家园事件"
+     ],
+     [
+      "^ItemEventScenario$",
+      "道具事件"
+     ],
+     [
+      "^SpEventScenario$",
+      "特别活动"
+     ],
+     [
+      "^SubjugationEventScenario$",
+      "讨伐活动"
+     ]
+    ],
+    "index": {
+     "books": [
+      "^Adventure/(?:(?<category>[^/]+)/)?(?:.*/)?(?<stem>[^/]+)\\.book\\.json$"
+     ],
+     "dirs": [
+      "Adventure",
+      "Characters",
+      "Stills",
+      "Sound"
+     ],
+     "ext": "\\.(?:skel\\.bytes|png|jpe?g|ogg)$",
+     "master": "Adventure/Master.chapter.json"
+    },
+    "off": {
+     "arg": "^<Off>$",
+     "mode": "speakerOnly"
+    },
+    "paths": {
+     "bg": [
+      "{file:png}",
+      "Adventure/BackGrounds/{name}.png",
+      "Adventure/BackGrounds/{name}.jpg"
+     ],
+     "bgm": [
+      "{file:ogg}"
+     ],
+     "bgmFallback": [
+      "Sound/Bgm/{name}.ogg"
+     ],
+     "bgmIntro": [
+      "{intro:ogg}"
+     ],
+     "bgse": [
+      "{file:ogg}",
+      "Sound/BgSe/{name}.ogg",
+      "Sound/Se/{name}.ogg"
+     ],
+     "bgvoice": [
+      "Sound/BgVoice/**/{name}.ogg",
+      "Sound/Voice/**/{name}.ogg"
+     ],
+     "charIdStrip": "^ch_",
+     "characters": [
+      {
+       "atlas": "{dir}/{base}.atlas.txt",
+       "skel": "{dir}/{base}.skel.bytes"
+      }
+     ],
+     "se": [
+      "{file:ogg}",
+      "Sound/Se/{name}.ogg",
+      "Sound/BgSe/{name}.ogg"
+     ],
+     "skeletonSuffixStrip": [
+      ".asset",
+      "_SkeletonData"
+     ],
+     "stills": [
+      {
+       "atlas": "Stills/{id}/{base}.atlas.txt",
+       "skel": "Stills/{id}/*.skel.bytes"
+      }
+     ],
+     "voice": [
+      "Sound/Voice/**/{name}.ogg",
+      "Sound/BgVoice/**/{name}.ogg"
+     ]
+    },
+    "screenWidth": 1280,
+    "selection": {
+     "adjacentGroups": true,
+     "groupSuffix": "-\\d+$"
+    },
+    "slotPrefix": "Chara",
+    "slots": {
+     "Chara1": "Chara1",
+     "Chara2": "Chara2",
+     "Chara3": "Chara3"
+    },
+    "speaker": {
+     "characterArg": "^<Character=(.*)>$",
+     "pick": "beforeLast",
+     "source": [
+      "NameText",
+      "key"
+     ],
+     "splitOn": "-"
+    },
+    "standX": {
+     "argIndex": 4,
+     "slotBase": 0.5
+    },
+    "tween": {
+     "actions": {
+      "down": 3,
+      "up": 1,
+      "x": 2
+     },
+     "kinds": {
+      "ColorTo": "raw",
+      "MoveBy": {
+       "else": "moveBy",
+       "returns": "action"
+      },
+      "MoveTo": "moveTo",
+      "PunchPosition": "action",
+      "RotateTo": "raw",
+      "ScaleTo": "raw",
+      "ShakePosition": "action"
+     },
+     "returnWhen": "pingpong"
+    }
+   }
+  },
+  "classify": [],
+  "limits": {
+   "walkFiles": 800000
+  }
+ },
+ "uviewer": {
+  "adapterOptions": {
+   "uviewer-csv": {
+    "bg": {
+     "colorPrefix": "color_"
+    },
+    "commands": {
+     "aliases": {},
+     "known": [
+      "bg",
+      "bgoff",
+      "name",
+      "msg",
+      "playvoice",
+      "playse",
+      "playbgm",
+      "stopbgm",
+      "fadeinblack",
+      "fadeoutblack",
+      "wait",
+      "movie",
+      "movieoff",
+      "clickwait",
+      "endwait",
+      "select",
+      "if",
+      "elseif",
+      "else",
+      "endif"
+     ],
+     "rawHints": [
+      "spriteatlas",
+      "sprite",
+      "spriteoff",
+      "flash",
+      "endwmsg",
+      "anm",
+      "mask",
+      "imgconf",
+      "spine",
+      "spineoff"
+     ]
+    },
+    "conditions": {
+     "vars": {}
+    },
+    "msg": {
+     "singleArgText": false,
+     "textArgIndex": 1
+    },
+    "playvoice": {
+     "pathArgIndex": 1
+    },
+    "select": {
+     "prefixRe": "^(?:選項|选项|選擇|选择|Option)\\s*\\d+[\\s\\u3000:：.、-]*",
+     "var": "select"
+    },
+    "sniff": {
+     "maxLines": 40,
+     "minKnownRatio": 0.6,
+     "minLines": 3
+    }
+   }
+  },
+  "classify": []
+ }
+}

@@ -76,6 +76,18 @@ const tagSet = (value, fallback) => new Set(strList(value, fallback).map((tag) =
 const regexOf = (source, fallback, flags = 'i') => { try { return compileSafeRegex(source, { flags, label: 'tyrano pattern' }) } catch { return fallback } }
 const DEFAULT_HASH = '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$'
 const DEFAULT_SLOTS = { 1: [0.5], 2: [0.25, 0.75], '3+': [0.2, 0.5, 0.8] }
+// 完整的默认参数表（= 上面注释里的结构 + 不配时的行为）。gal-layout 的 ADAPTER_RULES 抄一份写进条目 config；scripts/dev/gal-layout-rules-selftest.mjs 保证两边一致
+export const DEFAULT_OPTIONS = {
+  root: 'game/dmm',
+  resourceDirKey: { from: 'json', field: 'resource_directory', segments: 3 },
+  voice: { dirs: ['{rd}'], patterns: [], loopAsBgse: true },
+  stand: { slots: structuredClone(DEFAULT_SLOTS), useScriptCoords: false },
+  layers: { overlay: ['4'], effect: ['3'] },
+  effects: { quakeMap: { hmax: 'horizontal', vmax: 'vertical' }, shakeDivisor: 40, animHop: { top: 'vertical', left: 'horizontal' }, sepia: { matchImage: 'sepia' }, animSlide: 'raw' },
+  fallback: { faceToBase: true },
+  index: { hashPattern: DEFAULT_HASH, stemFallback: true },
+  text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] },
+}
 const settingsCache = new WeakMap()
 function settingsOf(options) {
   const o = isObj(options) ? options : {}
