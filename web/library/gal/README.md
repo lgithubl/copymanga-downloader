@@ -341,6 +341,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | Girls Creation R Viewer、Angelica Aster、jaxin、maid、**Aku No Onna Kanbu**、**Fruits Fulcute!** | NW.js（`girlscreation-tag`，game.id `girlscreation`） | `<根>/scenes/<场景>/script.txt`（或 `output_script.txt` / `hmr_·hsr_<id>.txt`）+ `data/audio/{bgm,se}`；根可以是 `package.nw`，也可以没有这层（Fruits：`scenes` 直接在根下，场景里多一个 `img.txt` 不影响） |
 | monmusu | Ren'Py（`renpy-monmusu`） | `game/script/hscene` + `hscene_still` + `script/movie.rpy` |
 | **angelic_py** | Ren'Py（`renpy-monmusu`，game.id `angelic`） | `game/script/hscene/*.rpy`；别名表是 `script/movies.rpy` + `script/stills.rpy`（复数），图片在 `images` + `resources`；菜单脚本 `sub_nav` / `sub_nav_byname` 隐藏；脚本文件名是随机串，没有角色编号，所以不分组、卡片显示脚本名；只有 `.rpyc` 的脚本解析不了（列表页问题里会列出） |
+| **ぼくらの放課後戦争** | 编译脚本 JSON（`bokusen-json`，game.id `bokusen`） | `<根>/json/<脚本名>.json` + `<根>/resource/<脚本名>/{images,sounds}`（只有一部分脚本有资源目录），见「ぼくらの放課後戦争」一节 |
 | legeclo、minashigo（Ren'Py）、tenkeiprdx、misttrain、UViewer | 见各自一节 | |
 
 
@@ -357,3 +358,30 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 资源路径：`bg/x` → `images/bg/x`；`chara/<角色>/<文件>`（3 段）→ `images/bg/<角色>_<文件>`；`chara/<角色>/<资源>/<帧>`（4 段）→ `images/hcg/…`，有同名 `.webm` 就当视频播（帧名 1 / 4 不循环）；bgm `.mp3` 优先找同名 `.ogg`；语音按**文件名**在整个索引里找（有的剧情复用别的剧情组的语音）。立绘 `images/stands/<key>/<body>/<key>_<body>_<brow>_<eye>_<lip>[_h].png`，找不到按 brow→b、eye→e、h→不带 h 的顺序退。
 - gal-layout：`game/episode_scripts` + `game/hscripts` 当脚本根（扩展名 json），资源根 = `game`；没写 game.id 时要求同时有 `images/stands` 和 `audio`。导入页预设「魔法学园的少女们」。
 - 未渲染：`others` 里的 action / emotion、`effects`、`waits`；统计里（`stats.raw`）会列出次数。
+
+### ぼくらの放課後戦争（bokusen，`bokusen-json`）
+- 脚本是 KAG / Tyrano 风格脚本编译出来的 JSON 表：`{data:{code:{images, sounds, articles, characters, tags, parameters, commands}}}`（可能有 BOM）。`commands` 每项 `[标签下标, 参数组下标, 顺序]`（顺序 = 源码行号，单调不减）；`parameters` 每组是按槽位排的数组，`'nil'` = 没设。**标签表是每个文件自带的**：永远用 `tags[标签下标]` 取名字，不假定固定下标（21 种标签：bgmopt / playbgm / image / trans / wt / r / articles / p / cm / move / wm / animstart / playse / stopse / animstop / wait / seopt / fadese / wf / fadeoutbgm / wb）。
+- 目录：`<根>/json/<脚本名>.json`（1888 个，其中 10 个解析不了）+ `<根>/resource/<脚本名>/images/<序号>.<扩展名>`、`sounds/<序号>.wav`。**只有 826 个脚本有资源目录**——没有的脚本只出台词，图片 / 声音记进 `stats.unresolved`（列表页「渲染诊断」报缺资源），不是错误。资源对应：`images[i]` ↔ `images/<i><images[i] 的扩展名>`；`sounds[i]` ↔ `sounds/<i>.wav`（列表里写 `.m4a`，磁盘上是 `.wav`：先找 `.wav`，再找列表里的扩展名；扩展名对不上时按序号找）。
+- 解析失败的 JSON：`sniff` 只看开头 8KB 的 `{"data":{"code":{`（`images` / `sounds` / `articles` 在 `tags` 之前，读全文太慢），所以截断的文件也会列在列表里，打开时 `parse` 抛一个明确的 `Error`（不会崩）。
+- 资源怎么定位：脚本里没有路径，靠 `meta.stem`（脚本文件名）拼 `<stem>/images/<i>.<ext>`；`config.resourceRoots = [<根>/resource]`，适配器参数 `adapterOptions['bokusen-json'] = { root: <游戏根，相对媒体目录>, resourceDir: 'resource' }`；文件索引（`contextDirs` = resource 目录）用来核对文件是否存在和找真实扩展名，没有索引时按约定拼路径。
+- 槽位表（样本 1888 个文件里没有反例的；**未证实**的单列）：
+
+| 标签 | 槽位 | 含义 |
+|---|---|---|
+| `articles` | 0 | `articles[]` 下标；文本是 `【说话人】` 标题行和 `「台词」` 行，和 `r`（换行）/ `p`（等点击）/ `cm`（清文本框）交错 |
+| `image` | 15 / 23 / 28 | 层（`base` = 背景，数字 = 立绘 / 叠加层）/ 页（`fore` 立刻显示，`back` 放后台等 `trans`）/ `images[]` 下标 |
+| `image` | 16 / 29 | x / y 偏移（常见 0、±240、±250、±100；y 0 / -10） |
+| `image` | 22 | **未证实**：0 / 100 / 150 / 200 / 255，像不透明度，忽略 |
+| `trans` | 2 / 3 / 6 | 层 / 方式（只见过 `cross`）/ 毫秒：把该层 back 页的图换成前台；背景 = 交叉淡入 |
+| `move` | 2 / 4 / 6 | 层 / 目标 `(x y 不透明度)` / 毫秒；只取终点不做补间，不透明度 0 = 去掉该层 |
+| `animstart` | 0 / 2 / 3 / 5 / 8 / 9 | 动画 id / 层 / x / 循环 / 页 / 帧下标列表（空格分隔，`images[]` 下标） |
+| `animstart` | 1 / 4 / 6 / 7 / 10 / 11 | **未证实**：1 恒为 15（像帧率），4 / 6 / 7 / 10 / 11 的含义不明，都不用 |
+| `animstop` | 0 | 动画 id |
+| `playse` / `stopse` / `fadese` / `seopt` | 见下 | playse：0 声道 · 1 循环 · 2 `sounds[]` 下标；stopse：0 声道；fadese：0 声道 · 1 毫秒 · 2 目标音量；seopt：0 声道 · 3 音量（忽略） |
+| `playbgm` / `bgmopt` / `fadeoutbgm` | 见下 | playbgm：0 循环 · 1 恒为 0（**未证实**）——**没有曲子下标**，取 `sounds[]` 里路径带 `/bgm/` 的第一个，没有就取第 0 个（**未证实**）；bgmopt：1 音量（忽略）；fadeoutbgm：0 毫秒 |
+| `wait` | 2 | 毫秒；`wt` / `wm` / `wf` / `wb` 是等待，忽略 |
+
+- 表达（用现有指令）：`base` 层图 → `bg`；`trans cross` → 带 `fade` 的 `bg`（先 `back` 页放图，`trans` 时才提交）；数字层 → `stand`（每层一个 part，按层号叠放，part 带 `x` / `y`）；`base` 层多帧 `animstart` → `bg` + `frames`（和 Aku 的帧动画一样，速度在播放器「更多」里设）；循环的 `playse` → `bgse`（只有一路，后来的覆盖前面的）/ `stopse` 或淡到 0 的 `fadese` → `bgseStop`，不循环的 → `se`（路径带 `/voice/` 的 → `voice`）；`playbgm` → `bgm`，`fadeoutbgm` → `bgmStop`；`wait` → `wait`；`【名字】` → `speaker`（`cm` 清掉；一页里中途换说话人时，前面的文字先单独出一步），`「…」` 和地の文 → `text`（同一页的多行用 `\n` 连起来）。
+- 表达不了的（`raw` 指令 + `stats.raw`）：数字层的多帧动画（只显示第一帧）、淡到非 0 音量的 `fadese`、非 `cross` 的 `trans`、`move` 到没有显示的层、`images[]` 下标越界的 `image`、没见过的标签（只计入 `stats.raw`）。`move` 的补间、`bgmopt` / `seopt` 的音量、`animstop` 对 `base` 层帧动画（不停，换背景才停）没做。
+- `gal-layout`：`<根>/json` 当脚本根、`<根>/resource` 当资源根（扩展名 json）；没写 game.id 时要求 `json/` 里前几个脚本开头是 `{"data":{"code":{` 并且同级有 `resource/`。导入页预设「ぼくらの放課後戦争（bokusen）」。
+- 自测：`node scripts/dev/fe-gal-bokusen-selftest.mjs`（不需要浏览器；造数据 `scripts/dev/make-bokusen-fixture.mjs <输出根目录>`，合成脚本含开场交叉淡入、立绘层 + move、多帧动画、playse → wav、缺资源、被截断的 JSON）。
