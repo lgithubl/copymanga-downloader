@@ -536,7 +536,7 @@ export const ADAPTER_RULES = {
     root: 'game',
     dirs: ['images', 'audio'],
     standZoom: 1,
-    dic: { indexFields: ['bgs', 'bgms', 'charas', 'names', 'colors'] },
+    dic: { indexFields: ['bgs', 'bgms', 'charas', 'names', 'colors', 'voices'] },
     assets: [
       { match: '^(?:bg|effect)/', replace: 'images/$&' },
       { match: '^chara/([^/]+)/([^/]+)/*$', replace: 'images/bg/$1_$2' },
@@ -544,7 +544,22 @@ export const ADAPTER_RULES = {
       { match: '^bgm/', replace: 'audio/$&' },
     ],
     extPrefer: { '.mp3': ['.ogg'] },
+    others: {
+      action: {
+        bow: [{ op: 'shake', axis: 'vertical', strength: 0.08, seconds: 0.5 }],
+        jump: [{ op: 'shake', axis: 'vertical', strength: 0.12, seconds: 0.4 }],
+        swing: [{ op: 'shake', axis: 'horizontal', strength: 0.1, seconds: 0.4 }],
+        vibe: [{ op: 'shake', axis: 'horizontal', strength: 0.15, seconds: 0.5 }],
+        avoid: [{ op: 'shake', axis: 'horizontal', strength: 0.1, seconds: 0.3 }],
+        slideinR: 'raw', slideinL: 'raw', slideinD: 'raw', attackR: 'raw', attackL: 'raw', attackD: 'raw',
+        default: 'raw',
+      },
+      emotion: { shock: 'raw', sweat: 'raw', question: 'raw', donyori: 'raw', exclamation: 'raw', anger: 'raw', paa: 'raw', kirakira: 'raw', default: 'raw' },
+    },
+    bgChange: { f: { fade: 0.5 }, c: { fade: 0 }, s: { fade: 0.5 }, default: { fade: 0 } },
+    audioExtFallback: ['.ogg', '.mp3', '.wav', '.m4a', '.opus', '.flac'],
     stand: {
+      clearOnBgChange: true,
       path: 'images/stands/{key}/{body}/{key}_{body}_{brow}_{eye}_{lip}{h}.png',
       fields: {
         key: ['key', 'chara_id'],
@@ -569,7 +584,7 @@ export const ADAPTER_RULES = {
     },
     hcg: { match: '^chara/[^/]+/[^/]+/[^/]+$', imageExts: ['.png', '.jpg', '.webp'] },
     video: { ext: ['webm'], noLoopFrames: ['1', '4'], frameSplit: '@' },
-    voice: { dir: 'audio/voice', preferDirs: [], ext: { '.mp3': '.ogg' }, fallback: 'audio/voice/{stem}/{name}' },
+    voice: { dir: 'audio/voice', preferDirs: [], ext: { '.mp3': '.ogg' }, fallback: 'audio/voice/{stem}/{name}', nameFields: ['file', 'name', 'voice'], extFallback: [] },
   },
   'tyrano-ks': {
     root: 'game/dmm',
@@ -632,15 +647,17 @@ export const ADAPTER_RULES = {
       bgm: ['m4a', 'mp3', 'ogg', 'wav'],
       sound: ['m4a', 'mp3', 'ogg', 'wav'],
       voice: ['m4a', 'mp3', 'ogg', 'wav'],
+      backVoice: ['m4a', 'mp3', 'ogg', 'wav'],
     },
     paths: {
       bg: ['bg/battlebg/{name}/{name}.{ext}', 'bg/**/{name}.{ext}'],
       bgm: ['bgm/{lower}/{name}.{ext}', 'bgm/**/{name}.{ext}'],
       sound: ['sound/{name}/{name}.{ext}', 'sound/**/{name}.{ext}'],
       voice: ['voice/{pack}/{voice}.{ext}', 'voice/**/{voice}.{ext}'],
+      backVoice: ['voice/{pack}/{voice}.{ext}', 'voice/**/{voice}.{ext}'],
       stand: ['merc/pic/{hero}/{file}'],
     },
-    duplicates: { bg: 'first', bgm: 'first', sound: 'first', voice: 'skip', stand: 'first' },
+    duplicates: { bg: 'first', bgm: 'first', sound: 'first', voice: 'skip', backVoice: 'skip', stand: 'first' },
     standFiles: ['body.webp', 'body.png'],
     standPos: { '1': 'left', '2': 'center', '3': 'right', default: 'center' },
     standKeep: 'untilNewHero',
@@ -649,7 +666,31 @@ export const ADAPTER_RULES = {
     bgBlack: ['bg_b'],
     bgSound: { mode: 'se', attrs: ['bg_sound1', 'bg_sound2', 'bg_sound3'] },
     soundAttrs: ['sound1', 'sound2', 'sound3'],
-    rawAttrs: ['screen_effect', 'pic_action', 'pic_action_val', 'pic_size', 'back_voice', 'effect+effect_pos'],
+    rawAttrs: ['screen_effect', 'pic_action', 'pic_action_val', 'pic_size', 'effect+effect_pos'],
+    attrTables: { screen_effect: 'screenEffects', pic_action: 'picActions', effect: 'effects', pic_size: 'picSize' },
+    screenEffects: {
+      '速い画面揺れ': { op: 'shake', axis: 'overall', strength: 0.15, seconds: 0.4 },
+      '画面シェイク': { op: 'shake', axis: 'overall', strength: 0.25, seconds: 0.6 },
+      '溶明_黒幕': { op: 'fade', to: 'clear', seconds: 1 },
+      '溶暗_黒幕': { op: 'fade', to: 'black', seconds: 1, at: 'start' },
+      'フラッシュ': { op: 'flash', color: 'white', count: 1, seconds: 0.3 },
+      'フラッシュ2回': { op: 'flash', color: 'white', count: 2, seconds: 0.3 },
+      '光エフェクト': { op: 'wash', color: 'white', seconds: 1 },
+      '1': null, '2': null, '3': null, '4': null, '5': null, '6': null, '7': null, '8': null, '9': null, '10': null, '11': null, '13': null,
+    },
+    picActions: {
+      '立ち絵全消え': { op: 'standOff', at: 'stand' },
+      '溶明溶暗': [{ op: 'fade', to: 'black', seconds: 0.4 }, { op: 'fade', to: 'clear', seconds: 0.4 }],
+      '下から_全身': null, '右側現れ消え': null, '左側現れ消え': null, 'マスク': null,
+      '1': null, '2': null, '3': null, '4': null, '5': null, '8': null, '9': null, '10': null,
+    },
+    effects: {
+      'ダメージエフェクト': null, '斬撃1': null, '斬撃2': null, '斬撃3': null, 'ハンマー': null, '波動': null, 'エナジードレイン': null,
+      '17': null, '18': null, '20': null, '21': null, '22': null,
+    },
+    effectPos: { '中': 'center', '左': 'left', '右': 'right', '1': 'left', '2': 'center', '3': 'right' },
+    picSize: { '拡大': null, '通常': null, '2': null, '立ち絵全消え': null },
+    backVoice: { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' },
     scene: { split: 'chains', forkPolicy: 'merge' },
   },
 }
@@ -966,7 +1007,7 @@ export const LAYOUTS = {
     adapters: ['artwhirl-json'],
     adapterOptions: { 'artwhirl-json': { root: { path: ['.'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
-    // 规则：artwhirl-json 全表（按官方 json_story_player 的语义写的；立绘动作 / 表情特效未渲染）。
+    // 规则：artwhirl-json 全表（按官方 json_story_player 的语义写的；others.action 的 bow / jump / swing / vibe / avoid 近似成轻微整屏抖动，slidein* / attack* 和 emotion.* 记 raw；bg_change.val f / c / s → 渐变秒数（猜的）；音频扩展名对不上时按 audioExtFallback 换；voices 字符串 / dic 下标两种写法都认；换场景时收掉上一个场景的立绘）。
     ruleTables: ['artwhirl-json'], ruleOverrides: {},
     engine: { classify: [] },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
@@ -1027,7 +1068,7 @@ export const LAYOUTS = {
     adapters: ['grenze-xml'],
     adapterOptions: { 'grenze-xml': { root: { path: ['.'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
-    // 规则：grenze-xml 全表。已验证：资源在 assets/resources/patchres、立绘 merc/pic/<hero_group_id>/body.webp|png、声音按 voice_pack、`non` = 没有。未验证：screen_effect / pic_action / effect 的含义（raw）。
+    // 规则：grenze-xml 全表。已验证：资源在 assets/resources/patchres、立绘 merc/pic/<hero_group_id>/body.webp|png、声音按 voice_pack、`non` = 没有。未验证：screen_effect / pic_action / effect 的含义——日文名字的值（速い画面揺れ / 溶明_黒幕 / フラッシュ / 立ち絵全消え …）按名字映射成现有场景指令（秒数 / 强度是猜的），数字 id 和战斗特效名仍是 raw；back_voice（<名>#<音量>）→ bgvoice。
     ruleTables: ['grenze-xml'], ruleOverrides: {},
     engine: {
       classify: [],

@@ -38,5 +38,6 @@
 - Kamihime：`anim layer=3 left="±=640"` 滑入滑出没渲染；立绘位置只按出场顺序摆。
 - TSK：`Skin`（face1…）已写进 `spine` 指令但播放器不认；`<Off>` 的含义是假设；立绘 x 参考宽度 1280 是猜的。
 - ぼくら：`playbgm` 曲目是猜的；`move` 不做渐变；数字层多帧动画只显示第一帧。
-- Grenze：`screen_effect` / `pic_action` / `effect` 含义未知，全部 raw。
+- Grenze：`screen_effect` / `pic_action` 的日文名字已按名字映射成现有指令（shake / fade / flash / wash / standOff，秒数强度是猜的）；数字 id、`effect`（战斗特效）、`pic_size`、`マスク` / 立绘进出场等仍是 raw；`back_voice` → `bgvoice`（循环、缺省沿用是推测）。
+- 魔法学园：`others.action` 的 bow / jump / swing / vibe / avoid 近似成整屏轻抖（立绘没有单部件动作，数值是猜的）；`bg_change.val` f / c / s = fade / cut / slide 是猜的；emotion 全部 raw。
 - 上述各项的处理方式都在 `web/library/gal/README.md` 对应游戏的小节里。
