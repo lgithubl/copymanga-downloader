@@ -658,6 +658,16 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     const dcfg = declared.itemPatch?.gal.config
     check(`唯一 id「${id}」：探测和 girlscreation 一样（脚本根 / 资源根 / 脚本数），game.id 原样写回`, dcfg?.game.id === id && dcfg.game.title === id && J(dcfg.scriptRoots) === J(cfg.scriptRoots) && J(dcfg.resourceRoots) === J(cfg.resourceRoots) && dcfg.scriptCount === cfg.scriptCount, J([dcfg?.game, dcfg?.scriptCount, cfg.scriptCount]))
   }
+  // 已知布局优先：同名的「诱饵」目录（字母序更靠前、但不是真脚本根）不会再被广度优先搜索抢先选中
+  {
+    const { cp, mkdir } = await import('node:fs/promises')
+    const decoy = path.join(work, 'gc-decoy')
+    await cp(gc, decoy, { recursive: true })
+    await mkdir(path.join(decoy, 'aaa', 'scenes', 'empty_scene'), { recursive: true })
+    const withDecoy = await galLayoutScript({ item: { ...item, config: { game: { id: 'aku', title: 'aku' } }, source: { path: decoy } }, script: { id: 'gal-layout', version: '2.11.0', options: {} } })
+    const dcfg = withDecoy.itemPatch?.gal.config
+    check('已知布局优先：有字母序更靠前的同名诱饵 aaa/scenes 时，girlscreation 系仍取 package.nw/scenes（不被广度优先搜索抢先选中）', J(dcfg?.scriptRoots) === J(cfg.scriptRoots) && dcfg?.scriptCount === cfg.scriptCount, J([dcfg?.scriptRoots, dcfg?.scriptCount, cfg.scriptRoots, cfg.scriptCount]))
+  }
   const lgFx = path.join(work, 'gc-vs-legeclo')
   await buildLegecloFixture(lgFx)
   const lgAuto = await galLayoutScript({ item: { ...item, config: {}, source: { path: lgFx } }, script: { id: 'gal-layout', version: '2.6.0', options: {} } })

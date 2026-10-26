@@ -149,7 +149,7 @@ async function hasLegecloMarker(media, base) {
 }
 
 async function detectLegeclo(media, { declared, logs }) {
-  const hit = await findDir(media, ['script', 'hscene'], 6)
+  const hit = await findDir(media, ['script', 'hscene'], 6, ['game'])
   if (!hit) {
     if (declared) logs.push('没找到 script/hscene')
     return null
@@ -209,7 +209,7 @@ async function detectLegeclo(media, { declared, logs }) {
 // + <root>/data/audio/{bgm,se}。root = package.nw。tenkeiprdx 也有 scenes/ 目录，但里面是 json 且旁边有 Backgrounds / Spines 等，不会混。
 // ======================================================================
 async function detectGirlsCreation(media, { declared, game, logs }) {
-  const hit = await findDir(media, ['scenes'], 6)
+  const hit = await findDir(media, ['scenes'], 6, ['package.nw'])
   if (!hit) {
     if (declared) logs.push('没找到 scenes/')
     return null
@@ -281,7 +281,7 @@ async function detectGirlsCreation(media, { declared, game, logs }) {
 const MONMUSU_ICON_RE = /^icon_(\d{3,8})_0_idle\.(png|webp|jpe?g)$/i
 
 async function detectMonmusu(media, { declared, game, logs }) {
-  const hit = await findDir(media, ['script', 'hscene'], 6)
+  const hit = await findDir(media, ['script', 'hscene'], 6, ['game'])
   if (!hit) {
     if (declared) logs.push('没找到 script/hscene')
     return null
@@ -454,19 +454,7 @@ async function detectTenkeiprdx(media, { declared, logs }) {
 
 // 广度优先找「有 scenes/，并且同级有 Backgrounds|Spines|Stills|Masterdata」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
 async function findTenkeiRoot(media, maxDepth) {
-  const queue = [{ rel: '', depth: 0 }]
-  while (queue.length) {
-    const { rel, depth } = queue.shift()
-    let entries
-    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
-    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
-    if (dirs.has('scenes') && TENKEI_SIBLINGS.some((name) => dirs.has(name))) return rel
-    if (depth >= maxDepth) continue
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
-    }
-  }
-  return null
+  return findRoot(media, maxDepth, (rel, dirs) => dirs.has('scenes') && TENKEI_SIBLINGS.some((name) => dirs.has(name)), ['*_Data/StreamingAssets/*/*', '*_Data/StreamingAssets/*'])
 }
 
 // ======================================================================
@@ -497,7 +485,7 @@ async function detectUviewer(media, prefix = '') {
 
 // 路径多了一层（用户传的是外面的目录）：往下找 download/adv/text
 async function searchUviewer(media) {
-  const hit = await findDir(media, ['download', 'adv', 'text'], 6)
+  const hit = await findDir(media, ['download', 'adv', 'text'], 6, ['resources'])
   if (!hit) return null
   // hit = 相对媒体目录的路径，形如 a/b/resources/download/adv/text → 资源根 = a/b/resources
   const parts = hit.split('/')
@@ -535,7 +523,7 @@ async function uviewerConfig(media, prefix, resourceRootRel, note) {
 // 只是目录不同：<根>/data/adv/textfiles/story/*.txt（扁平，几千个数字名），资源在 <根>/data/adv/{image,sound,movie}，脚本里写的是 adv/image/bg/….jpg（相对 data/）。
 // 用 uviewer-csv 适配器；资源根 = data；不分组（文件名是数字编号），列表翻页 + 页内搜索。
 async function detectMinashigoR(media, { declared, logs }) {
-  const hit = await findDir(media, ['adv', 'textfiles', 'story'], 6)
+  const hit = await findDir(media, ['adv', 'textfiles', 'story'], 6, ['data'])
   if (!hit) {
     if (declared) logs.push('没找到 adv/textfiles/story')
     return null
@@ -693,19 +681,7 @@ async function detectMisttrain(media, { declared, logs }) {
 
 // 广度优先找「有 UScenes/，并且同级有 Spines|Sounds|MasterData|BackGrounds」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
 async function findMisttrainRoot(media, maxDepth) {
-  const queue = [{ rel: '', depth: 0 }]
-  while (queue.length) {
-    const { rel, depth } = queue.shift()
-    let entries
-    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
-    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
-    if (dirs.has('UScenes') && ['Spines', 'Sounds', 'MasterData', 'BackGrounds'].some((name) => dirs.has(name))) return rel
-    if (depth >= maxDepth) continue
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
-    }
-  }
-  return null
+  return findRoot(media, maxDepth, (rel, dirs) => dirs.has('UScenes') && ['Spines', 'Sounds', 'MasterData', 'BackGrounds'].some((name) => dirs.has(name)), ['*_Data/StreamingAssets/*'])
 }
 
 // 探测顺序：legeclo → monmusu → girlscreation → tenkeiprdx → misttrain → minashigo → uviewer（没填 game.id 时按这个顺序认领）
@@ -740,7 +716,7 @@ const UVIEWER_IDS = new Set(['uviewer', 'deepone'])   // 探测不到结构时�
 // 用 renpy-monmusu 适配器，别名表和图片目录用适配器参数指路。脚本文件名是随机串（008JL955Z8…），没有角色编号，所以不分组、不配头像 / 封面：卡片就是脚本名。
 // ======================================================================
 async function detectAngelic(media, { declared, logs }) {
-  const hit = await findDir(media, ['script', 'hscene'], 6)
+  const hit = await findDir(media, ['script', 'hscene'], 6, ['game'])
   if (!hit) {
     if (declared) logs.push('没找到 script/hscene')
     return null
@@ -891,19 +867,7 @@ async function detectTsk(media, { declared, logs }) {
 
 // 广度优先找「有 Adventure/Master.chapter.json，并且同级有 Characters|Stills|Sound」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
 async function findTskRoot(media, maxDepth) {
-  const queue = [{ rel: '', depth: 0 }]
-  while (queue.length) {
-    const { rel, depth } = queue.shift()
-    let entries
-    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
-    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
-    if (dirs.has('Adventure') && ['Characters', 'Stills', 'Sound'].some((name) => dirs.has(name)) && (await isFile(path.join(media, ...splitRel(join(rel, 'Adventure', 'Master.chapter.json')))))) return rel
-    if (depth >= maxDepth) continue
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
-    }
-  }
-  return null
+  return findRoot(media, maxDepth, async (rel, dirs) => dirs.has('Adventure') && ['Characters', 'Stills', 'Sound'].some((name) => dirs.has(name)) && (await isFile(path.join(media, ...splitRel(join(rel, 'Adventure', 'Master.chapter.json'))))), ['*_Data/StreamingAssets/*'])
 }
 
 // ======================================================================
@@ -953,22 +917,11 @@ async function detectGrenze(media, { declared, logs }) {
 
 // 广度优先找「有 TextAsset/（里面有 easy_dialog-*.xml）并且同级有 assets/」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
 async function findGrenzeRoot(media, maxDepth) {
-  const queue = [{ rel: '', depth: 0 }]
-  while (queue.length) {
-    const { rel, depth } = queue.shift()
-    let entries
-    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
-    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
-    if (dirs.has('TextAsset') && dirs.has('assets')) {
-      const names = await listNames(path.join(media, ...splitRel(join(rel, 'TextAsset'))))
-      if (names.some((name) => /^easy_dialog-\d+\.xml$/i.test(name))) return rel
-    }
-    if (depth >= maxDepth) continue
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
-    }
-  }
-  return null
+  return findRoot(media, maxDepth, async (rel, dirs) => {
+    if (!(dirs.has('TextAsset') && dirs.has('assets'))) return false
+    const names = await listNames(path.join(media, ...splitRel(join(rel, 'TextAsset'))))
+    return names.some((name) => /^easy_dialog-\d+\.xml$/i.test(name))
+  })
 }
 
 // ======================================================================
@@ -1033,7 +986,7 @@ async function detectBokusen(media, { declared, logs }) {
 // 列表（类别 → 目录 → 剧情，标题取 json 的 title）由适配器的 catalog 每次现读，不写进 config。
 // ======================================================================
 async function detectKamihime(media, { declared, logs }) {
-  const hit = await findDir(media, ['dmm', 'raw_scenario'], 6)
+  const hit = await findDir(media, ['dmm', 'raw_scenario'], 6, ['game'])
   if (!hit) {
     if (declared) logs.push('没找到 dmm/raw_scenario')
     return null
@@ -1152,8 +1105,37 @@ async function findDirsWithFiles(rootAbs, regexes, cap) {
   return hits.map((set) => [...set].sort())
 }
 
-// 在 root 下（深度 ≤ maxDepth）找依次是 names 的目录链，返回相对 root 的路径
-async function findDir(root, names, maxDepth) {
+// 已知布局的候选目录（相对 root）：'' 永远第一个，再是 hints 展开的（hint 里的 * 匹配任意一级目录名，一次 readdir 展开）。
+// 已知游戏的目录结构是固定的（package.nw/scenes、game/script/hscene、*_Data/StreamingAssets/*…），先按这些位置直接查，查得到就不用搜索；
+// 查不到才退回下面的广度优先搜索（重新打包 / 版本变化的目录照样能认）。
+async function hintRels(root, hints) {
+  const out = ['']
+  for (const hint of hints || []) {
+    let level = ['']
+    for (const part of splitRel(hint)) {
+      const next = []
+      for (const rel of level) {
+        if (part === '*') {
+          let entries = []
+          try { entries = await readdir(path.join(root, ...splitRel(rel)), { withFileTypes: true }) } catch { /* 这一级不存在 */ }
+          for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) if (entry.isDirectory() && !entry.name.startsWith('.')) next.push(join(rel, entry.name))
+        } else next.push(join(rel, part))
+      }
+      level = next.slice(0, 50)
+    }
+    for (const rel of level) if (!out.includes(rel)) out.push(rel)
+  }
+  return out.slice(0, 60)
+}
+
+// 在 root 下找依次是 names 的目录链，返回相对 root 的路径：先查已知布局（hints），再在深度 ≤ maxDepth 内广度优先搜索
+async function findDir(root, names, maxDepth, hints = []) {
+  for (const rel of await hintRels(root, hints)) {
+    let chain = path.join(root, ...splitRel(rel))
+    let ok = true
+    for (const name of names) { chain = path.join(chain, name); if (!(await isDir(chain))) { ok = false; break } }
+    if (ok) return [rel, ...names].filter(Boolean).join('/')
+  }
   const queue = [{ rel: '', depth: 0 }]
   while (queue.length) {
     const { rel, depth } = queue.shift()
@@ -1170,6 +1152,27 @@ async function findDir(root, names, maxDepth) {
     }
   }
   return ''
+}
+
+// 找「根目录」：test(rel, dirs) 对某个相对目录成立就返回它（dirs = 该目录下的子目录名集合）。同样先查已知布局，再广度优先搜索
+async function findRoot(media, maxDepth, test, hints = []) {
+  for (const rel of await hintRels(media, hints)) {
+    let entries
+    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
+    if (await test(rel, new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)))) return rel
+  }
+  const queue = [{ rel: '', depth: 0 }]
+  while (queue.length) {
+    const { rel, depth } = queue.shift()
+    let entries
+    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
+    if (await test(rel, new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)))) return rel
+    if (depth >= maxDepth) continue
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
+    }
+  }
+  return null
 }
 
 function matchesPath(pattern, target) {
