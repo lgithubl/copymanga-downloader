@@ -394,9 +394,9 @@ await page.screenshot({ path: path.join(shotDir, 'player-long.png') })
 // ---- 6c. 更多菜单（沉浸 / 全屏）、渲染诊断面板、rawIgnore ----
 {
   const vis = (sel) => page.$eval(sel, (e) => !e.hidden && getComputedStyle(e).display !== 'none').catch(() => false)
-  check('播放器：沉浸 / 全屏不在工具栏外面，收在「更多」菜单里（默认收起）', !(await vis('.gal-more')) && await page.$eval('.gal-bar .gal-more-btn', (b) => b.textContent.includes('更多')) && !(await page.$('.gal-bar > .gal-imm')) && !(await page.$('.gal-bar > .gal-fs')))
+  check('播放器：沉浸 / 全屏不在工具栏外面，收在合并后的「设置」弹层里（默认收起）', !(await vis('.gal-more')) && await page.$eval('.gal-bar .gal-more-btn', (b) => b.textContent.includes('设置')) && !(await page.$('.gal-bar > .gal-imm')) && !(await page.$('.gal-bar > .gal-fs')))
   await page.click('.gal-more-btn')
-  check('点「更多」：菜单里有「沉浸」「全屏」', (await vis('.gal-more')) && (await vis('.gal-more .gal-imm')) && (await vis('.gal-more .gal-fs')))
+  check('点「设置」：弹层里有「沉浸」「全屏」', (await vis('.gal-more')) && (await vis('.gal-more .gal-imm')) && (await vis('.gal-more .gal-fs')))
   await page.click('.gal-more .gal-imm'); await sleep(400)
   check('点「沉浸」：进入沉浸，菜单收起，按钮写「退出沉浸」且不高亮', (await page.$eval('#app', (a) => a.classList.contains('stream-immersive'))) && !(await vis('.gal-more')) && (await t('.gal-imm')) === '退出沉浸' && !(await page.$eval('.gal-imm', (b) => b.classList.contains('active'))))
   await page.click('.gal-more-btn'); await page.click('.gal-more .gal-imm'); await sleep(400)

@@ -208,3 +208,6 @@ export const stepOfRatio = (ratio, total) => (total <= 1 ? 0 : Math.max(0, Math.
 export function assetUrl(base, src) {
   return `${base}?path=${encodeURIComponent(src)}`
 }
+
+// 音量感知曲线：滑块位置 p（0..1，浏览器里存的就是它）→ 实际增益 p²。左端不会一下子就听不见，右端也不那么吵
+export const volumeGain = (p) => { const n = Number(p); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) ** 2 : 0 }
