@@ -44,7 +44,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -138,7 +137,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -401,7 +399,6 @@
      }
     },
     "stand": {
-     "clearOnBgChange": true,
      "defaults": {
       "brow": "b",
       "eye": "e",
@@ -537,7 +534,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -631,7 +627,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -963,7 +958,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1057,7 +1051,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1159,7 +1152,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1253,7 +1245,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1610,7 +1601,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1704,7 +1694,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1983,7 +1972,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -2077,7 +2065,6 @@
      "spine": "data/spine"
     },
     "line": {
-     "clearActorsOnBg": true,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",

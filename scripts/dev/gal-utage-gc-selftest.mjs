@@ -172,14 +172,6 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
 
   // 不碰的命令不变 / sniff
   const base = ['fade,out,black,0.5', 'bg,abg1,0,0,1,1', 'window,on,0.25', 'message,,旁白,', ...ACTOR, 'charamotion,chara_1,loop,on', 'message,甲,x,']
-  // 换背景 = 下一个场景：台上的演员收掉（用户反馈：场景切换了人物没消失）
-  const sceneChange = run([...ACTOR, 'message,甲,a,', 'CrossFadeReady', 'CrossFade,abg1,1,0,0,1,1', 'message,甲,b,', 'bg,abg2,0,0,1', 'message,甲,c,'])
-  const offAt = (out) => out.steps.map((st) => st.commands.filter((c) => c.op === 'spineOff' || c.op === 'bg').map((c) => c.op))
-  check('换背景（CrossFade / bg）：台上的演员 spineOff（先收人再换背景）；背景之前没有演员时不发', same(offAt(sceneChange).flat(), ['spineOff', 'bg', 'bg']) && ofOp(sceneChange, 'spineOff').length === 1, J(offAt(sceneChange)))
-  const keepActors = run([...ACTOR, 'message,甲,a,', 'CrossFade,abg1,1,0,0,1,1', 'message,甲,b,'], { line: { clearActorsOnBg: false } })
-  check('line.clearActorsOnBg = false：回到旧行为（换背景不收演员，只有 charafade out / charadelete 才收）', ofOp(keepActors, 'spineOff').length === 0, J(ofOp(keepActors, 'spineOff')))
-  const reshow = run([...ACTOR, 'message,甲,a,', 'CrossFade,abg1,1,0,0,1,1', 'charafade,chara_1,in,0.3', 'message,甲,b,'])
-  check('收掉之后脚本再 charafade in：演员重新摆出来（演员记录没删）', ofOp(reshow, 'spine').length >= 2 && ofOp(reshow, 'spineOff').length === 1, J(reshow.steps.map((st) => st.commands.map((c) => c.op))))
   check('没有新命令的脚本：默认选项和全部 commands = raw 的结果完全一样（新映射不碰别的命令）', same(run(base).steps, run(base, { commands: { cgmode: 'raw', asyncjump: 'raw', asyncmoveobject: 'raw', crossfade: 'raw' } }).steps), '')
   check('sniffLine：asyncmoveobject / TransitionCrossFade 算行式命令（识别率更高）；标签式脚本仍不认', sniffLine('title,a,\nmessage,甲,x,\nasyncmoveobject,character,chara_1,0.4,0,0,10,linear\nTransitionCrossFade,abg1,tra,1,0,0,1,1\n') && !sniffLine('<NAME_PLATE>a\nx\n'), '')
 }

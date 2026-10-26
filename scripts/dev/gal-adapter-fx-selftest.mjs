@@ -42,26 +42,6 @@ async function e2e(adapterId, tree, adapterOptions, scriptRel, extraConfig = {})
       dic: [null, 'bg/a.jpg', 'bg/b.jpg', { key: 'ABC', body: 'b1', pos: 0.5 }, 'ABC_02.mp3', null, 'bgm/theme.mp3', { file: 'ABC_03.mp3' }] })
   }
   const run = (rows, options = {}, files) => aw.parse(base(rows), prep(options, files), { stem: 'e', options })
-  const bgChange = [{ cmd: 'bg_change', val: 'c' }]
-
-  // --- 换场景清立绘 ---
-  const scene = [
-    { others: bgChange, text: null },                  // 第 0 行：bg_change 但还没有立绘 = 无害
-    { charas: [3] },                                   // 立绘出现
-    { charas: null },                                  // 沿用
-    { bg: 2, others: bgChange, text: null },           // 新场景、charas=null → 清立绘
-    { bg: 2 }, { bg: 2 },                              // 之后不重复清
-  ]
-  const kinds = (out) => ops(out, 'stand', 'standOff', 'bg').map((c) => c.op)
-  const def = run(scene)
-  check('魔法学园 stand.clearOnBgChange 默认 true：第 0 行 bg_change 无害（没有 standOff）；新场景（bg_change + 没有 charas）收掉上一个场景的立绘，只收一次', same(kinds(def), ['bg', 'stand', 'bg', 'standOff']), J(kinds(def)))
-  check('魔法学园 stand.clearOnBgChange false = 以前的行为：立绘一直留着', same(kinds(run(scene, { stand: { clearOnBgChange: false } })), ['bg', 'stand', 'bg']))
-  const noCmd = run([{ charas: [3] }, { bg: 2 }, { bg: 2 }])
-  check('魔法学园 背景换了（没有 bg_change 指令）而没有新 charas 也收立绘', same(kinds(noCmd), ['bg', 'stand', 'bg', 'standOff']), J(kinds(noCmd)))
-  const withNew = run([{ charas: [3] }, { bg: 2, others: bgChange, charas: [3] }])
-  check('魔法学园 新场景的这一行自带 charas：整组替换，不先 standOff', same(kinds(withNew), ['bg', 'stand', 'bg', 'stand']), J(kinds(withNew)))
-  const sameBg = run([{ charas: [3] }, { others: bgChange, bg: 1 }])
-  check('魔法学园 bg_change 但背景值没变（同一张图再来一次）也算换场景：清立绘', same(kinds(sameBg), ['bg', 'stand', 'bg', 'standOff']), J(kinds(sameBg)))
 
   // --- others 表 ---
   const act = (type, extra = {}) => ({ cmd: 'action', val: { type, target: [{ body_file: 'body10', chara_id: 'PAULY' }] }, ...extra })

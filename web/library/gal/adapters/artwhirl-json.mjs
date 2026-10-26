@@ -9,9 +9,6 @@
 //   立绘 charas[i] 里每项是 dic 里的一个字典 { key | chara_id, body | body_file, brow = b, eye = e, lip = r, pos = 0.5, h }：
 //        images/stands/<key>/<body>/<key>_<body>_<brow>_<eye>_<lip>[_h].png，找不到按官方的顺序退（brow→b、eye→e、h→不带 h）；每次 charas 非空就整组替换（空 / null = 沿用上一组）
 // 没做：others 里 action / emotion 的立绘动作 / 表情特效（只有 others 表里列出的类型有近似映射，见下）、effects、waits、colors 以外的台词样式；这些记在 stats.raw。
-// 换场景：一行带 others 里的 bg_change（或背景换了）而这一行没有 charas（= 沿用上一组立绘）时，上一个场景的立绘要收掉（stand.clearOnBgChange，默认 true）。
-//   证据（AMRITA_ep6_h，221 行）：charas 只在立绘集合变化的行非空，其余行 None = 沿用；第 37 行 others=['bg_change']、bgs 换成 39、charas=None 一直到第 45 行（新场景），
-//   以前的实现只在 charas 非空时才换立绘，上一个场景的人物会一直留在新背景上（用户反馈「进入下一个场景的时候人物没有隐藏掉」）。第 0 行 bg_change 时还没有立绘，不发任何东西。
 
 import { createIndexResolver } from '../resolve.mjs'
 import { cleanDir, createOptionsReader, fillTemplate, safeRegex } from './options-merge.mjs'
@@ -29,7 +26,7 @@ import { cleanDir, createOptionsReader, fillTemplate, safeRegex } from './option
 //                   没有 type 的指令（val 不是对象 / 没有 type）记成 `others:<cmd>`（和以前一样）。
 //   bgChange      { f|c|s|…: { fade 秒 }, default }：others 里 bg_change 的 val（bg_change.val：f 4265 / c 1634 / s 250）→ 换背景的渐变秒数。f = fade 0.5、c = cut 0、s = 当 fade 0.5（含义和秒数都是猜的）；没有 val / 表里没有 = default（0 = 以前的行为）
 //   audioExtFallback  [扩展名…]：音频名的扩展名在磁盘上找不到时按顺序换（默认 .ogg .mp3 .wav .m4a .opus .flac；只在原名和 extPrefer 都找不到时才试；[] = 不试）。只对资源名（bgm / se 等）生效，语音另见 voice.extFallback；stats.bgm = { referenced, resolved, unresolved }
-//   stand         { clearOnBgChange（上面「换场景」，默认 true；false = 以前的行为）, path 模板（{key} {body} {brow} {eye} {lip} {h}）, fields { 字段: [候选键名…] }, defaults { brow, eye, lip }, hSuffix,
+//   stand         { path 模板（{key} {body} {brow} {eye} {lip} {h}）, fields { 字段: [候选键名…] }, defaults { brow, eye, lip }, hSuffix,
 //                   fallback [[替换…]…] 找不到时按顺序试：每项是一组 '字段->值' 替换（值空 = 去掉，如 'h->'）同时生效 }
 //   hcg           { match：哪些资源名是 HCG（图 / 视频）, imageExts }          video { ext: [同名视频扩展名], noLoopFrames: [不循环的帧名], frameSplit }
 //   voice         { dir 语音目录, preferDirs 同名语音挑哪个目录, ext { '.mp3': '.ogg' } 语音名扩展名换算（要关掉某一项写空串；换算后的名字在索引里没有时，再试脚本里写的原名）， fallback 没有索引时的路径模板（{stem} {name}）,
@@ -66,7 +63,6 @@ export const DEFAULT_OPTIONS = {
   // 音频文件扩展名不对（名字 .mp3、磁盘上是别的）时按这个顺序换同名文件找；只在原名 / extPrefer / 引擎的 extensionFallbacks 都找不到时才试；清空 = 不试
   audioExtFallback: ['.ogg', '.mp3', '.wav', '.m4a', '.opus', '.flac'],
   stand: {
-    clearOnBgChange: true,
     path: 'images/stands/{key}/{body}/{key}_{body}_{brow}_{eye}_{lip}{h}.png',
     fields: { key: ['key', 'chara_id'], body: ['body', 'body_file'], brow: ['brow'], eye: ['eye'], lip: ['lip'], pos: ['pos'], h: ['h'] },
     defaults: { brow: 'b', eye: 'e', lip: 'r' },
@@ -287,10 +283,6 @@ export function parse(text, ctx = null, meta = {}) {
         parts.push({ src: found, xalign: Number.isFinite(pos) ? Math.max(0, Math.min(1, pos)) : 0.5, ...(ctx?.standZoom && ctx.standZoom !== 1 ? { zoom: ctx.standZoom } : {}) })
       }
       if (parts.length) { emit({ op: 'stand', parts }); standOn = true; stats.stands += 1 } else if (standOn) { emit({ op: 'standOff' }); standOn = false }
-    } else if (opt.stand.clearOnBgChange && standOn && sceneChanged) {
-      // 新场景（bg_change / 背景换了）而这一行没有新的立绘集合：上一个场景的人物收掉
-      emit({ op: 'standOff' })
-      standOn = false
     }
     for (const op of otherOps) emit(op)
 

@@ -238,7 +238,7 @@ export const ADAPTER_RULES = {
       objectKind: '^character$',
       jumpAction: 1,
       moveBase: 'offset',
-      crossfadeScale: 'bgScale', clearActorsOnBg: true,
+      crossfadeScale: 'bgScale',
     },
     commands: { cgmode: 'ui', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' },
     category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
@@ -286,7 +286,7 @@ export const ADAPTER_RULES = {
       objectKind: '^character$',
       jumpAction: 1,
       moveBase: 'offset',
-      crossfadeScale: 'bgScale', clearActorsOnBg: true,
+      crossfadeScale: 'bgScale',
     },
     commands: { cgmode: 'ui', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' },
     category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
@@ -611,7 +611,6 @@ export const ADAPTER_RULES = {
     bgChange: { f: { fade: 0.5 }, c: { fade: 0 }, s: { fade: 0.5 }, default: { fade: 0 } },
     audioExtFallback: ['.ogg', '.mp3', '.wav', '.m4a', '.opus', '.flac'],
     stand: {
-      clearOnBgChange: true,
       path: 'images/stands/{key}/{body}/{key}_{body}_{brow}_{eye}_{lip}{h}.png',
       fields: {
         key: ['key', 'chara_id'],
@@ -803,7 +802,7 @@ export const ADAPTER_RULES = {
       body: 'body',
       layers: ['{emotion}_c', '{emotion}'],
       fit: 1,
-      duplicate: 'hideOther', clearOnBgChange: true,
+      duplicate: 'hideOther',
       dim: 0,
     },
     anim: {
