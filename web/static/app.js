@@ -2434,10 +2434,16 @@ function currentMediaImportProfileConfig() {
 // rootDir / dryRun / defaultMetadataActions 沿用文本框里现有的）。新增支持的游戏时在这里加一行，并在 index.html 的 #gal-preset 里加 option。
 const GAL_PRESETS = {
   uviewer: { adapters: ['uviewer-csv'], game: { id: 'uviewer', title: 'UViewer 资源包' } },
+  deepone: { adapters: ['uviewer-csv'], game: { id: 'deepone', title: 'deepone' } },
   legeclo: { adapters: ['renpy-legeclo'], game: { id: 'legeclo', title: 'Legeclo' } },
   monmusu: { adapters: ['renpy-monmusu'], game: { id: 'monmusu', title: 'Monmusu' } },
   minashigo: { adapters: ['renpy-minashigo'], game: { id: 'minashigo', title: 'Minashigo' } },
   girlscreation: { adapters: ['girlscreation-tag'], game: { id: 'girlscreation', title: 'Girls Creation' } },
+  aster: { adapters: ['girlscreation-tag'], game: { id: 'aster', title: 'Angelica Aster' } },
+  jaxin: { adapters: ['girlscreation-tag'], game: { id: 'jaxin', title: 'jaxin' } },
+  maid: { adapters: ['girlscreation-tag'], game: { id: 'maid', title: 'maid' } },
+  aku: { adapters: ['girlscreation-tag'], game: { id: 'aku', title: 'Aku No Onna Kanbu' } },
+  fruits: { adapters: ['girlscreation-tag'], game: { id: 'fruits', title: 'Fruits Fulcute!' } },
   tenkeiprdx: { adapters: ['tenkeiprdx-json'], game: { id: 'tenkeiprdx', title: 'Tenkeiprdx X' } },
   misttrain: { adapters: ['misttrain-json'], game: { id: 'misttrain', title: 'MistTrainGirls X' } },
   angelic: { adapters: ['renpy-monmusu'], game: { id: 'angelic', title: 'Angelic' } },

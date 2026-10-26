@@ -223,6 +223,9 @@ await handler.patchItemMetadata(M.itemId, { gal: out1.itemPatch.gal })
 const M1 = await handler.getItem(M.itemId)
 check('脚本识别为 uviewer：写出脚本根（text + 另一套日文）、资源根、名称文件、缩略图目录；脚本数；封面（UViewer 生成的缩略图）；谁写的（版本）', out1.details.kind === 'uviewer' && M1.config.scriptRoots.length === 2 && M1.config.resourceRoots[0] === 'resources' && M1.config.namesFiles[0] === 'user_data/character_names.json' && M1.scriptCount >= 50 && M1.coverPath === '~/user_data/thumbnails/600130.webp' && /thumbnail\/script\/cover$/.test(M1.cover) && M1.config.script.id === 'gal-layout' && M1.config.script.version === '1.0.0' && !!M1.config.script.ranAt, J(M1.config).slice(0, 400))
 check('脚本打状态标签：Gal配置: uviewer、Gal配置version: 1.0.0、Gal游戏: uviewer（config.game 同步写入）', J(out1.itemTags) === J(['Gal配置: uviewer', 'Gal配置version: 1.0.0', 'Gal游戏: uviewer']) && M1.config.game.id === 'uviewer')
+// deepone：UViewer 系，声明了自己的 id 就走同一套探测并原样写回；没声明仍认成 uviewer
+const deepOut = await runScript({ ...M, config: { game: { id: 'deepone', title: 'deepone' } } })
+check('唯一 id「deepone」：和 uviewer 同一套探测（脚本根 / 资源根 / 脚本数），game.id 写回 deepone，状态标签 Gal游戏: deepone', deepOut.itemPatch?.gal.config.game.id === 'deepone' && J(deepOut.itemPatch.gal.config.scriptRoots) === J(out1.itemPatch.gal.config.scriptRoots) && J(deepOut.itemPatch.gal.config.resourceRoots) === J(out1.itemPatch.gal.config.resourceRoots) && (deepOut.itemTags || []).includes('Gal游戏: deepone'), J([deepOut.itemPatch?.gal.config.game, deepOut.itemTags]))
 const again = await handler.importFromSource({})
 const M2 = await handler.getItem(M.itemId)
 check('重复导入：不新增条目，算更新；保留 tag、标题、创建时间、config（脚本写的）；条目 id 不变', again.report.imported === 0 && again.report.updated === 1 && (await handler.scanItems()).length === 1 && M2.tags.includes('手工标签') && M2.title === '改过的标题' && M2.createdAt === before && M2.itemId === M.itemId && J(M2.config) === J(M1.config), J(again.report))
@@ -649,6 +652,12 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   const cfg = out.itemPatch.gal.config
   check('girlscreation 脚本：根 = package.nw（目录里多了一层）、脚本根 = scenes、资源根 = package.nw、扩展名 txt、适配器参数 root；脚本数只数有 script.txt 的场景（PLACEHOLDER 不算）；封面 = 第一个场景的 thumbnail.png', cfg.game.id === 'girlscreation' && cfg.scriptRoots[0].dir === 'package.nw/scenes' && J(cfg.resourceRoots) === J(['package.nw']) && J(cfg.scriptExtensions) === J(['txt']) && J(cfg.adapterOptions['girlscreation-tag']) === J({ root: 'package.nw' }) && cfg.scriptCount === 4 && cfg.cover === 'scenes/chmr_40101001/thumbnail.png' && /Gal游戏: girlscreation/.test(out.itemTags.join()), J(cfg))
   const auto = await galLayoutScript({ item: { ...item, config: {} }, script: { id: 'gal-layout', version: '2.6.0', options: {} } })
+  // 家族各游戏的唯一 id：声明了 aku / fruits / maid / jaxin / aster 就走同一套探测、并把声明的 id 原样写回；自动探测仍认成 girlscreation
+  for (const id of ['aku', 'fruits', 'maid', 'jaxin', 'aster']) {
+    const declared = await galLayoutScript({ item: { ...item, config: { game: { id, title: id } } }, script: { id: 'gal-layout', version: '2.11.0', options: {} } })
+    const dcfg = declared.itemPatch?.gal.config
+    check(`唯一 id「${id}」：探测和 girlscreation 一样（脚本根 / 资源根 / 脚本数），game.id 原样写回`, dcfg?.game.id === id && dcfg.game.title === id && J(dcfg.scriptRoots) === J(cfg.scriptRoots) && J(dcfg.resourceRoots) === J(cfg.resourceRoots) && dcfg.scriptCount === cfg.scriptCount, J([dcfg?.game, dcfg?.scriptCount, cfg.scriptCount]))
+  }
   const lgFx = path.join(work, 'gc-vs-legeclo')
   await buildLegecloFixture(lgFx)
   const lgAuto = await galLayoutScript({ item: { ...item, config: {}, source: { path: lgFx } }, script: { id: 'gal-layout', version: '2.6.0', options: {} } })

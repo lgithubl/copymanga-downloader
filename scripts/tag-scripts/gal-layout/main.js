@@ -23,7 +23,7 @@
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
-// 状态 tag：Gal配置: grenze / tsk / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -60,13 +60,14 @@ export async function generateTags(ctx) {
       return keepOwn(ctx, logs)
     }
     found = await handler.detect(media, { declared: true, game, logs })
-    if (!found && game.id === 'uviewer') found = genericLayout()
+    if (!found && UVIEWER_IDS.has(game.id)) found = genericLayout()
     if (!found) {
       logs.push(`config.game.id 是「${game.id}」，但目录里没认出它的结构：不改任何配置（可以用 overrides 指定路径，或检查 rootDir）`)
       return keepOwn(ctx, logs)
     }
   } else {
     for (const handler of GAMES) {
+      if (handler.declaredOnly) continue   // 同一套探测的别名 id：只在声明了 game.id 时才走，自动探测时由原 id 认领
       found = await handler.detect(media, { declared: false, game, logs })
       if (found) break
     }
@@ -207,7 +208,7 @@ async function detectLegeclo(media, { declared, logs }) {
 // Girls Creation R Viewer（NW.js 查看器，标签式脚本）：<root>/scenes/<场景 id>/script.txt（每个场景一个目录，资源都在场景目录里）
 // + <root>/data/audio/{bgm,se}。root = package.nw。tenkeiprdx 也有 scenes/ 目录，但里面是 json 且旁边有 Backgrounds / Spines 等，不会混。
 // ======================================================================
-async function detectGirlsCreation(media, { declared, logs }) {
+async function detectGirlsCreation(media, { declared, game, logs }) {
   const hit = await findDir(media, ['scenes'], 6)
   if (!hit) {
     if (declared) logs.push('没找到 scenes/')
@@ -253,7 +254,7 @@ async function detectGirlsCreation(media, { declared, logs }) {
   }
   if (!cover) logs.push('没找到场景的 thumbnail.*：列表没有封面')
   return {
-    id: 'girlscreation',
+    id: declared && game?.id ? game.id : 'girlscreation',   // 家族各游戏（aku / fruits / maid …）各有自己的 id，声明了什么就写回什么
     kind: 'girlscreation',
     note: '',
     config,
@@ -473,9 +474,10 @@ async function findTenkeiRoot(media, maxDepth) {
 // ======================================================================
 const UV_EXT = 'txt'
 
-async function detectUviewerGame(media, { declared, logs }) {
+async function detectUviewerGame(media, { declared, game, logs }) {
   const found = (await detectUviewer(media)) || (await searchUviewer(media))
   if (!found && declared) logs.push('没找到 download/adv/text')
+  if (found && declared && game?.id) found.id = game.id   // deepone 等 UViewer 系游戏声明了自己的 id 就保留
   return found
 }
 
@@ -712,6 +714,12 @@ const GAMES = [
   { id: 'monmusu', detect: detectMonmusu },
   { id: 'angelic', detect: detectAngelic },   // monmusu 之后：没有 movie.rpy 但有 movies.rpy / stills.rpy（复数）的才是它；声明了 game.id 就直接走它
   { id: 'girlscreation', detect: detectGirlsCreation },   // 先于 tenkeiprdx：都有 scenes/，这个靠 <场景>/script.txt + data/audio 认
+  // Girls Creation 家族每个游戏一个唯一的 id（探测和 girlscreation 完全一样，只是写回 config.game.id 的值不同；自动探测时仍由 girlscreation 认领）
+  { id: 'aster', detect: detectGirlsCreation, declaredOnly: true },       // Angelica Aster R Viewer
+  { id: 'jaxin', detect: detectGirlsCreation, declaredOnly: true },
+  { id: 'maid', detect: detectGirlsCreation, declaredOnly: true },
+  { id: 'aku', detect: detectGirlsCreation, declaredOnly: true },        // Aku No Onna Kanbu
+  { id: 'fruits', detect: detectGirlsCreation, declaredOnly: true },     // Fruits Fulcute!
   { id: 'tenkeiprdx', detect: detectTenkeiprdx },
   { id: 'misttrain', detect: detectMisttrain },   // UScenes/ 加 Spines|Sounds|MasterData；没有 scenes/，和 tenkeiprdx 不会混
   { id: 'minashigo', detect: detectMinashigo },
@@ -722,7 +730,10 @@ const GAMES = [
   { id: 'grenze', detect: detectGrenze },   // TextAsset/easy_dialog-N.xml + assets/resources/patchres（GrenzeViewer）
   { id: 'tsk', detect: detectTsk },   // Twinkle Star Knights X：<StreamingAssets/游戏名>/Adventure/{Master.chapter.json, *.book.json}（Utage）
   { id: 'uviewer', detect: detectUviewerGame },
+  { id: 'deepone', detect: detectUviewerGame, declaredOnly: true },   // deeponecgv（UViewer 系）：和 uviewer 同一套探测，id 独立
 ]
+
+const UVIEWER_IDS = new Set(['uviewer', 'deepone'])   // 探测不到结构时退回通用配置的 id
 
 // ======================================================================
 // angelic_py（Ren'Py 粉丝播放器，和 monmusu 同一类：game/script/hscene/*.rpy，视频 / 静图别名表在 script/movies.rpy、script/stills.rpy——注意是复数）

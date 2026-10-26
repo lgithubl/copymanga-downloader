@@ -366,7 +366,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 ### 已支持的游戏（结构对照）
 | 游戏 | 家族 / 适配器 | 说明 |
 |---|---|---|
-| Girls Creation R Viewer、Angelica Aster、jaxin、maid、**Aku No Onna Kanbu**、**Fruits Fulcute!** | NW.js（`girlscreation-tag`，game.id `girlscreation`） | `<根>/scenes/<场景>/script.txt`（或 `output_script.txt` / `hmr_·hsr_<id>.txt`）+ `data/audio/{bgm,se}`；根可以是 `package.nw`，也可以没有这层（Fruits：`scenes` 直接在根下，场景里多一个 `img.txt` 不影响） |
+| Girls Creation R Viewer、Angelica Aster、jaxin、maid、**Aku No Onna Kanbu**、**Fruits Fulcute!** | NW.js（`girlscreation-tag`，game.id 各自唯一：`girlscreation` / `aster` / `jaxin` / `maid` / `aku` / `fruits`） | `<根>/scenes/<场景>/script.txt`（或 `output_script.txt` / `hmr_·hsr_<id>.txt`）+ `data/audio/{bgm,se}`；根可以是 `package.nw`，也可以没有这层（Fruits：`scenes` 直接在根下，场景里多一个 `img.txt` 不影响） |
 | monmusu | Ren'Py（`renpy-monmusu`） | `game/script/hscene` + `hscene_still` + `script/movie.rpy` |
 | **angelic_py** | Ren'Py（`renpy-monmusu`，game.id `angelic`） | `game/script/hscene/*.rpy`；别名表是 `script/movies.rpy` + `script/stills.rpy`（复数），图片在 `images` + `resources`；菜单脚本 `sub_nav` / `sub_nav_byname` 隐藏；脚本文件名是随机串，没有角色编号，所以不分组、卡片显示脚本名；只有 `.rpyc` 的脚本解析不了（列表页问题里会列出） |
 | **ぼくらの放課後戦争** | 编译脚本 JSON（`bokusen-json`，game.id `bokusen`） | `<根>/json/<脚本名>.json` + `<根>/resource/<脚本名>/{images,sounds}`（只有一部分脚本有资源目录），见「ぼくらの放課後戦争」一节 |
@@ -504,3 +504,34 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 **前端**（`static/gal-voice.js` + `gal-browse.js`）：整页只有一个 `Audio`（放新的先停旧的；再点正在放的按钮 = 停止；放完复位）；音量取播放器存的 `copymanga.gal.seVolume`，感知曲线增益 = p²（本地一份，不引 gal-player.js）；提示条显示「脚本标题 · 说话人：台词 · x / total」，错误是红色非阻塞提示；底栏「随机语音」旁的「过滤 ▾」是白 / 黑名单弹层（输入时即时校验，非法的不保存）。卡片上的 🎲 是 `role=button` 的 `span`（卡片本身是 `<button>`，不能嵌套），回车 / 空格可触发，悬停 / 聚焦时显示，触屏常显。
 
 测试：`scripts/dev/gal-voice-selftest.mjs`（纯 node：各适配器的语音收集 / 正则拒绝 / LRU / 目录多脚本 / 错误）、`scripts/dev/fe-gal-voice-selftest.mjs`（浏览器，端口 8163）。
+
+### 每个游戏一个唯一的 game.id（导入页「Gal 游戏」下拉）
+
+导入页选方案 `gal-import`，在「Gal 游戏」下拉里选游戏、点「刷新 json」，会把 `adapters` 和 `config.game`（id + 标题）填进方案 JSON；再改 `rootDir` 即可。`rootDir`、`dryRun`、`defaultMetadataActions` 保留文本框里现有的值。
+
+| 下拉框 | `game.id` | 适配器 |
+|---|---|---|
+| UViewer 资源包（通用） | `uviewer` | `uviewer-csv` |
+| deepone（UViewer 系） | `deepone` | `uviewer-csv` |
+| Legeclo | `legeclo` | `renpy-legeclo` |
+| Monmusu | `monmusu` | `renpy-monmusu` |
+| Angelic（angelic_py） | `angelic` | `renpy-monmusu` |
+| Minashigo | `minashigo` | `renpy-minashigo` |
+| ミナシゴノシゴトR | `minashigo_r` | `uviewer-csv` |
+| Girls Creation R Viewer | `girlscreation` | `girlscreation-tag` |
+| Angelica Aster R Viewer | `aster` | `girlscreation-tag` |
+| jaxin | `jaxin` | `girlscreation-tag` |
+| maid | `maid` | `girlscreation-tag` |
+| Aku No Onna Kanbu | `aku` | `girlscreation-tag` |
+| Fruits Fulcute! | `fruits` | `girlscreation-tag` |
+| Tenkeiprdx X | `tenkeiprdx` | `tenkeiprdx-json` |
+| MistTrainGirls X | `misttrain` | `misttrain-json` |
+| 魔法学园的少女们 | `artwhirl` | `artwhirl-json` |
+| Kamihime Player | `kamihime` | `tyrano-ks` |
+| ぼくらの放課後戦争 | `bokusen` | `bokusen-json` |
+| Grenze | `grenze` | `grenze-xml` |
+| Twinkle Star Knights X | `tsk` | `utage-book` |
+
+- 同一套探测的游戏（Girls Creation 家族、UViewer 系）在 gal-layout 里是「别名 id」：声明了 `game.id` 才走，探测和原 id 完全一样，**声明什么 id 就原样写回 `config.game.id` 和状态 tag**（`Gal游戏: aku` 等）。
+- 没填 `game.id` 时自动探测不区分别名：Girls Creation 家族的目录认成 `girlscreation`，UViewer 系认成 `uviewer`——想要唯一 id 就在导入方案里选对应的游戏。
+- 适配器本身按脚本内容识别写法（Aku / Fruits 的方言差异在适配器里处理），不看 `game.id`，所以换 id 不影响解析。

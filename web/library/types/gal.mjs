@@ -338,7 +338,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     // 在这里提示「没有按标准结构放」只会误导（实际导入完脚本一跑就对了）。
     const cfg = normalizeGalConfig(item.config)
     const explicitRoots = item.config.scriptRoots !== undefined   // 脚本 / 用户写过脚本根：它不存在就是真问题
-    const relyOnDefaultRoot = !explicitRoots && item.adapters.includes('uviewer-csv') && (!cfg.game || cfg.game.id === 'uviewer')
+    const relyOnDefaultRoot = !explicitRoots && item.adapters.includes('uviewer-csv') && (!cfg.game || cfg.game.id === 'uviewer' || cfg.game.id === 'deepone')
     if (explicitRoots || relyOnDefaultRoot) {
       const firstRoot = cfg.scriptRoots[0]
       try {
