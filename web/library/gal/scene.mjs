@@ -17,6 +17,15 @@
 //   bgvoice {slot, src, volume}    循环的背景人声（多个槽同时播）  bgvoiceOff {slot}
 //   bg 可带 over（叠在 src 上面的第二张图，EV 的图 2）；bgScale {scale, seconds, easing} 当前背景缩放；bgBlur {radius} 当前背景模糊（场景像素）——换背景会清掉这两个；
 //   bgZoom {scale, x, y}           背景整体缩放 + 平移（ZOOM，场景像素），不跟换背景走
+//   stand {parts, slot?, stage?, fade?}   立绘。不带 slot = 整体立绘（旧：part = { src, crop?, zoom, x, y, align?, dim? }，renpy 系用）；带 slot = 按槽位的立绘（同 slot 再来一条 = 替换；多个槽位同时在场，按出现顺序叠）：
+//                                  part = { atlas | src, x?, y?, scale?, dim? }；x / y = 原图画布（图集里 = spriteSourceSize 那块）的中心相对舞台中心的偏移，舞台像素、y 向下为正；scale 默认 1，<= 0 = 隐藏；stage = [宽, 高]（x / y / scale 所指的舞台，默认 [1280, 720]）；fade = 槽位第一次出现时淡入的秒数（只在实时播放）
+//                                  atlas = { plist, frame | frames, texture?, base? }：Cocos2d plist 图集的一帧——plist / texture 是资源路径（texture 缺省 = plist 换成 .png）；frames = 候选帧名数组（取 plist 里第一个存在的）、frame = 单个帧名；base = 底图帧名数组（存在才画、先画；同一图集的帧共用 spriteSourceSize 画布，各按 spriteOffset 摆放）。播放器拉取并解析 plist（web/static/gal-atlas.js），取不到 / 找不到帧 = 「缺少资源」
+//   standOff {slot?, fade?}        去掉某个槽位的立绘；不写 slot = 全部立绘（整体立绘 + 所有槽位）
+//   overlay {slot, src?, rect?, color?, alpha?, x?, y?, scaleX?, scaleY?, fit?, fade?, z?, stage?}   叠加层（静态图 / 矩形；TSK Sprite、Girls Creation subimage 等复用）：同 slot 再来一条 = 合并（写了的字段覆盖，没写的保留——只带布局字段的指令就是「改布局」；带 src = 换图、整条替换）。
+//                                  src = 图的资源路径，以「舞台中心 + (x, y)」为中心（y 向下为正）画，大小 = 原图 × fit 系数 × (scaleX, scaleY)（默认 1），fit = none | contain | cover（先缩放到舞台大小）；
+//                                  rect = [x, y, w, h]（舞台像素、左上角、y 向下；再加 x / y 偏移、宽高乘 scaleX / scaleY）：没有 src 时用 color（默认黑）填这块（rect 缺省 = 整个舞台）；有 src 时 rect 是裁剪窗口；
+//                                  alpha 0~1（默认 1）；alpha / scaleX / scaleY <= 0 = 隐藏；z 越大越靠上（同 z 按出现顺序），叠加层整体画在立绘之上；fade = 第一次出现淡入的秒数（只在实时播放）
+//   overlayOff {slot?}             去掉某个叠加层；不写 slot = 全部
 //   raw {cmd, args}                适配器认得、播放器暂未实现的指令（立绘/特效等）
 import { galAdapter } from './adapters/index.mjs'
 import { CLASSIFY_AS, CLASSIFY_FROM, CLASSIFY_ON } from './config.mjs'

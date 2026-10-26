@@ -1470,11 +1470,13 @@ async function gcMod0Prepare({ truncated }) {
   check('ミナシゴノシゴトR：没写 game.id 也能认出来（data 下有 adv/image 和 adv/sound）', auto.itemPatch?.gal?.config?.game?.id === 'minashigo_r', J(auto.logs))
   const prov = createBrowseProvider({ mediaDir: root, adapters: ['uviewer-csv'], resolveAsset: noAsset, config: cfg })
   const home = (await prov.getNode('')).node
-  check('ミナシゴノシゴトR：首页直接列出 3 个剧情脚本（story_json 的 API 响应不在脚本根里）', home.items.length === 3 && home.items.every((i) => i.type === 'script'), J(home.items.map((i) => i.title)))
-  const played = await prov.getNode(home.items[0].node)
+  check('ミナシゴノシゴトR：首页：编号 1<6 位角色><2 位序号> 的脚本按角色编号分成一张卡片（标题 100104，里面 2 个脚本），不匹配的 100042 照常列出（story_json 的 API 响应不在脚本根里）', home.items.length === 2 && home.items.some((i) => i.title === '100104' && i.type !== 'script') && home.items.some((i) => i.title === '100042' && i.type === 'script'), J(home.items.map((i) => [i.type, i.title])))
+  const group = (await prov.getNode(home.items.find((i) => i.title === '100104').node)).node
+  check('ミナシゴノシゴトR：分组「100104」里是 110010412 / 110010413 两个脚本', J(group.items.map((i) => i.title).sort()) === J(['110010412', '110010413']) && group.items.every((i) => i.type === 'script'), J(group.items.map((i) => [i.type, i.title])))
+  const played = await prov.getNode(group.items[0].node)
   const cmds = played.scene.steps.flatMap((st) => st.commands)
   const st = stateAt(played.scene, played.scene.steps.length - 1)
-  check('ミナシゴノシゴトR：播放：背景（bg0000702.jpg）、BGM（前面有 / 也能找到）、语音、音效、两句台词；先黑场再淡出，最后不是黑屏', played.scene.steps.length === 2 && cmds.some((c) => c.op === 'bg' && /bg0000702\.jpg$/.test(c.src)) && cmds.some((c) => c.op === 'bgm' && /bgm_065\.mp3$/.test(c.src)) && cmds.filter((c) => c.op === 'voice').length === 2 && cmds.some((c) => c.op === 'se') && st.black === false, J([played.scene.stats, cmds.map((c) => c.op), st.black]))
+  check('ミナシゴノシゴトR：播放：背景（bg0000702.jpg）、BGM（前面有 / 也能找到）、语音、音效、两句台词；先黑场再淡出，最后不是黑屏（立绘 spriteatlas → stand、spriteoff,all → standOff 多出第 3 步，最后立绘已清）', played.scene.steps.length === 3 && cmds.some((c) => c.op === 'bg' && /bg0000702\.jpg$/.test(c.src)) && cmds.some((c) => c.op === 'bgm' && /bgm_065\.mp3$/.test(c.src)) && cmds.filter((c) => c.op === 'voice').length === 2 && cmds.some((c) => c.op === 'se') && st.black === false && st.stands.length === 0 && cmds.some((c) => c.op === 'stand' && c.slot === 'rei' && c.parts[0].atlas.plist === 'adv/image/character/100104/atlas/stand_b.plist' && c.parts[0].atlas.base?.[0] === 'body.png'), J([played.scene.stats, cmds.map((c) => c.op), st.black]))
 }
 
 // ================= Aku 的分支：<SELECT>文字,LABELn / <LABEL> / <JUMP>END → choice + when =================

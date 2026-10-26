@@ -193,6 +193,28 @@ export const ADAPTER_RULES = {
     select: { var: 'select', prefixRe: '^(?:選項|选项|選擇|选择|Option)\\s*\\d+[\\s\\u3000:：.、-]*' },
     conditions: { vars: {} },
     sniff: { minKnownRatio: 0.6, minLines: 3, maxLines: 40 },
+    sprites: {
+      enabled: false,
+      stage: { width: 1280, height: 720 },
+      yUp: true,
+      numbers: { x: 0, y: 1, scale: 2, fade: 3 },
+      atlas: { plistExt: '.plist', textureExt: '.png', frameKeys: ['{n}.png', '{name}:{n}.png', '{n}'], baseKeys: [] },
+      fit: 'none',
+      maskColor: '#000000',
+      offAll: ['stand'],
+      commands: {
+        spriteatlas: 'stand',
+        spriteoff: 'off',
+        sprite: 'overlay',
+        mask: 'rect',
+        imgconf: 'layout',
+        anm: 'raw',
+        shake: 'shake',
+        flash: 'flash',
+        endwmsg: 'ignore',
+      },
+      slotRules: [],
+    },
   },
   'girlscreation-tag': {
     root: '',
@@ -845,13 +867,29 @@ export const LAYOUTS = {
     resourceRoots: ['.'],
     adapters: ['uviewer-csv'], adapterOptions: {},
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
-    // 规则：uviewer-csv 全表（脚本是 UViewer 的 CSV 格式，样本验证）；角色立绘 spriteatlas / sprite 未渲染（没有数据）。
-    ruleTables: ['uviewer-csv'], ruleOverrides: {},
+    // 规则：uviewer-csv 全表（脚本是 UViewer 的 CSV 格式，样本验证）+ sprites 立绘 / 叠加层 / 抖动（ruleOverrides 打开）。
+    //   已验证（真实样本）：指令形式和数量；plist 帧名是 000.png…010.png + body.png（脚本 body:000 → 000.png）；脚本编号 1<6 位角色编号><2 位序号>（5 个脚本对照过 spriteatlas 的目录）。
+    //   猜的（没有真实画面核对）：舞台 1280x720；y 向上为正（Cocos2d）且原图画布中心 = 舞台中心 + (x, y)、画布缩放 = 脚本里的 scale；body.png 是底图（所有 NNN.png 帧大小 / 偏移相同，像表情）→ baseKeys ['{name}.png']；
+    //   sprite 的第 5、6 个参数 = 缩放 / 淡入秒；CG（still*）按 contain 铺满。mask / imgconf 在游戏里很可能是「裁剪窗口 + 在窗口里放大的脸」（imgconf 的缩放 2、y -1360 恰好把脸放进 mask 的 1280x200 窗口），画色块会画错 → 保留 raw；
+    //   黑底图（sprite black.jpg 的槽位 black* / bg*）也保留 raw（和 mask 成对出现，几乎每个脚本都有，很可能是对话框背景一类的界面件）。想试：去掉对应的 commands / slotRules 项重跑。
+    ruleTables: ['uviewer-csv'],
+    ruleOverrides: {
+      'uviewer-csv': {
+        sprites: {
+          enabled: true,
+          fit: 'contain',
+          atlas: { baseKeys: ['{name}.png'] },
+          commands: { mask: 'raw', imgconf: 'raw' },
+          slotRules: [{ cmds: ['sprite'], match: '^(?:black|bg)\\d*$', as: 'raw' }],
+        },
+      },
+    },
     engine: { classify: [] },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    // groups：脚本编号 1<6 位角色编号><2 位序号> → 按角色编号分组（卡片标题 = 编号；名称表 data/resource.json 是加密的，读不了——以后有了名字表在 labels 里加 { 角色编号: 名字 } 即可）；6 开头的 20 个脚本不匹配，照常列在外面
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [{ parent: '.', pattern: '^1(\\d{6})\\d{2}$' }], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'adv/textfiles/story', ext: '.txt', depth: 2 }],
     avatars: [], expectedDirs: [],
-    notes: ['文件名是数字编号，不分组：列表每页 100 个，用「更多」里的搜索按编号筛；角色立绘（spriteatlas / sprite）暂未渲染'],
+    notes: ['按角色编号分组（1<6 位角色编号><2 位序号>），标题暂时是编号；立绘（spriteatlas 图集）、CG（sprite）、闪屏 / 抖动已渲染；mask / imgconf / 黑底图 / anm 暂未渲染（见上面的注释）'],
   },
 
   // ---- Girls Creation 家族（NW.js，标签式脚本）：package.nw/scenes/<场景>/script.txt + data/audio。tenkeiprdx 也有 scenes/，但里面是 json 且旁边有 Backgrounds / Spines 等，不会混

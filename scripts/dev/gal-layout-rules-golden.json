@@ -736,6 +736,47 @@
      "maxLines": 40,
      "minKnownRatio": 0.6,
      "minLines": 3
+    },
+    "sprites": {
+     "atlas": {
+      "baseKeys": [],
+      "frameKeys": [
+       "{n}.png",
+       "{name}:{n}.png",
+       "{n}"
+      ],
+      "plistExt": ".plist",
+      "textureExt": ".png"
+     },
+     "commands": {
+      "anm": "raw",
+      "endwmsg": "ignore",
+      "flash": "flash",
+      "imgconf": "layout",
+      "mask": "rect",
+      "shake": "shake",
+      "sprite": "overlay",
+      "spriteatlas": "stand",
+      "spriteoff": "off"
+     },
+     "enabled": false,
+     "fit": "none",
+     "maskColor": "#000000",
+     "numbers": {
+      "fade": 3,
+      "scale": 2,
+      "x": 0,
+      "y": 1
+     },
+     "offAll": [
+      "stand"
+     ],
+     "slotRules": [],
+     "stage": {
+      "height": 720,
+      "width": 1280
+     },
+     "yUp": true
     }
    }
   },
@@ -1873,6 +1914,57 @@
      "maxLines": 40,
      "minKnownRatio": 0.6,
      "minLines": 3
+    },
+    "sprites": {
+     "atlas": {
+      "baseKeys": [
+       "{name}.png"
+      ],
+      "frameKeys": [
+       "{n}.png",
+       "{name}:{n}.png",
+       "{n}"
+      ],
+      "plistExt": ".plist",
+      "textureExt": ".png"
+     },
+     "commands": {
+      "anm": "raw",
+      "endwmsg": "ignore",
+      "flash": "flash",
+      "imgconf": "raw",
+      "mask": "raw",
+      "shake": "shake",
+      "sprite": "overlay",
+      "spriteatlas": "stand",
+      "spriteoff": "off"
+     },
+     "enabled": true,
+     "fit": "contain",
+     "maskColor": "#000000",
+     "numbers": {
+      "fade": 3,
+      "scale": 2,
+      "x": 0,
+      "y": 1
+     },
+     "offAll": [
+      "stand"
+     ],
+     "slotRules": [
+      {
+       "as": "raw",
+       "cmds": [
+        "sprite"
+       ],
+       "match": "^(?:black|bg)\\d*$"
+      }
+     ],
+     "stage": {
+      "height": 720,
+      "width": 1280
+     },
+     "yUp": true
     }
    }
   },
@@ -2649,6 +2741,47 @@
      "maxLines": 40,
      "minKnownRatio": 0.6,
      "minLines": 3
+    },
+    "sprites": {
+     "atlas": {
+      "baseKeys": [],
+      "frameKeys": [
+       "{n}.png",
+       "{name}:{n}.png",
+       "{n}"
+      ],
+      "plistExt": ".plist",
+      "textureExt": ".png"
+     },
+     "commands": {
+      "anm": "raw",
+      "endwmsg": "ignore",
+      "flash": "flash",
+      "imgconf": "layout",
+      "mask": "rect",
+      "shake": "shake",
+      "sprite": "overlay",
+      "spriteatlas": "stand",
+      "spriteoff": "off"
+     },
+     "enabled": false,
+     "fit": "none",
+     "maskColor": "#000000",
+     "numbers": {
+      "fade": 3,
+      "scale": 2,
+      "x": 0,
+      "y": 1
+     },
+     "offAll": [
+      "stand"
+     ],
+     "slotRules": [],
+     "stage": {
+      "height": 720,
+      "width": 1280
+     },
+     "yUp": true
     }
    }
   },
