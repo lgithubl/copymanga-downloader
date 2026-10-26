@@ -21,6 +21,7 @@
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
+// （kamihime：脚本根 <数据根>/raw_scenario、资源根 <数据根>/assets、扩展名 ks、适配器参数 root；<数据根> = 含 dmm/raw_scenario 的 dmm 目录）
 // 状态 tag：Gal配置: uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
@@ -710,6 +711,7 @@ const GAMES = [
   { id: 'minashigo', detect: detectMinashigo },
   { id: 'minashigo_r', detect: detectMinashigoR },   // data/adv/textfiles/story（uviewer-csv 格式）；要求同时有 adv/image 和 adv/sound，放在通用 uviewer 之前
   { id: 'artwhirl', detect: detectArtwhirl },   // game/episode_scripts + game/images/stands（Ren'Py + JSON 剧情）
+  { id: 'kamihime', detect: detectKamihime },   // game/dmm/raw_scenario/*.ks + game/dmm/assets（TyranoScript）；.ks 独有，放在通用 uviewer 之前
   { id: 'uviewer', detect: detectUviewerGame },
 ]
 
@@ -805,6 +807,53 @@ async function detectArtwhirl(media, { declared, logs }) {
       let count = 0
       for (const root of roots) count += await countFiles(path.join(m, ...splitRel(root.dir)), '.json', options.countCap, 3)
       logs.push(`剧情 JSON ${count} 个${count ? '' : '——结构可能不对'}`)
+      return { count, cover: '' }
+    },
+  }
+}
+
+// ======================================================================
+// Kamihime Player（TyranoScript）：<根>/game/dmm/raw_scenario/<类别>/<目录>/<id>_script.ks（旁边 <id>.json = 标题 / resource_directory），
+// 资源在 game/dmm/assets（带 hash 的平铺，语音 / 音效在 assets/<resource_directory>/）。用 tyrano-ks 适配器；资源根 = game/dmm/assets。
+// 列表（类别 → 目录 → 剧情，标题取 json 的 title）由适配器的 catalog 每次现读，不写进 config。
+// ======================================================================
+async function detectKamihime(media, { declared, logs }) {
+  const hit = await findDir(media, ['dmm', 'raw_scenario'], 6)
+  if (!hit) {
+    if (declared) logs.push('没找到 dmm/raw_scenario')
+    return null
+  }
+  const dmmDir = hit.split('/').slice(0, -1).join('/')
+  const hasAssets = await isDir(path.join(media, ...splitRel(join(dmmDir, 'assets'))))
+  const scriptsAbs = path.join(media, ...splitRel(hit))
+  if (!declared && !(hasAssets && (await countFiles(scriptsAbs, '.ks', 1, 6)) > 0)) return null   // 没声明：要求有 assets 和至少一个 .ks（免得认走别的 raw_scenario）
+  const config = {
+    scriptRoots: [{ id: 'ks', dir: hit, label: '日文' }],
+    resourceRoots: [join(dmmDir, 'assets')],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['ks'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    views: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    scriptIndex: [],
+    pageSize: 100,
+    adapterOptions: { 'tyrano-ks': { root: dmmDir } },
+  }
+  logs.push(`Kamihime 数据根：${dmmDir || '.'}；脚本根：${hit}；assets 目录${hasAssets ? '有' : '没有（背景 / 立绘 / 语音都会缺资源）'}`)
+  logs.push('列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；立绘滑入 / 滑出（anim layer）、layer 3 的 layopt / freeimage 暂未渲染，统计里会列出')
+  return {
+    id: 'kamihime',
+    kind: 'kamihime',
+    note: '',
+    config,
+    async finish(m, _config, options) {
+      const count = await countFiles(path.join(m, ...splitRel(hit)), '.ks', options.countCap, 6)
+      logs.push(`剧情脚本 ${count} 个${count ? '' : '——结构可能不对'}`)
       return { count, cover: '' }
     },
   }
