@@ -6,87 +6,54 @@
 //   voice "路径"                              voice（对应下一句台词）
 //   "名字" "台词" / "台词"                     speaker + text，一句台词 = 一步（点一下）
 //   pause [秒] / window hide|show / with / jump / return / label   pause 带秒数 → wait，其余忽略
-// 视频别名表和图片目录由 config.adapterOptions['renpy-monmusu'] 指定（见 ../context.mjs，适配器本身不读文件）：
-//   { aliasFiles: ['script/movie.rpy'], imageDirs: ['images'] }   路径相对媒体目录
 // 翻译叠加（tl/*）暂不处理。
+//
+// 适配器只读配置、按配置匹配：config.adapterOptions['renpy-monmusu']（路径相对媒体目录；适配器本身不读文件）。DEFAULT_OPTIONS = 今天的行为：
+//   aliasFiles ['script/movie.rpy'] / imageDirs ['images']      视频别名表 / 图片目录（给 context.mjs 读）
+//   aliasPatterns [{kind:'movie'|'image', re, scope?:'line'|'text'}]   别名定义写法（命名组 name / path；默认 = image X = Movie(play="…") / image X = "…"，单双引号各一条；scope 'text' = 对整个文件匹配，可写跨行形式）
+//   movieNoLoopRe                  命中视频定义文本 = 不循环（默认 loop=False）
+//   imageIndex {preferDirs:[], ext:[png,jpg,jpeg,webp,avif,gif], extPriority:false}   图片名 → 文件：同名文件按 preferDirs（资源路径前缀，靠前优先）→ extPriority 时按 ext 顺序 → 路径顺序挑；ext 也是别名定义里图片路径的扩展名白名单
+//   audioCommands {music:['music'], voice:['voice'], se:['sound','audio'], other:'raw'}   play/queue 的声道归类（末尾 * 通配；other = 其它声道：raw 记入 stats.raw / se / ignore）；按路径再归类由引擎 config.classify 做
+//   voiceNoQuote {variables:{}}    play voice [变量] / 裸变量名 / "路径含 [变量]" 按表替换成路径；表里没有 = 和以前一样记 raw
+//   speakers {} / speakerVars []   `e "台词"` 这种角色变量写法：变量在 speakers 里（值 = 显示名，'' = 旁白）或匹配 speakerVars 里的正则才认；没配 = 只认字面名字
+//   flow {menu:'raw', conditionals:'linear'}   menu: raw = menu 和选项行记 raw / linear = 静默跳过；conditionals: linear = if/elif/else 各分支按顺序读 / ignore = 整块跳过
+//   transitions {named:'^(?:dissolve|fade|pixellate|move)', seconds:0.5}   命名转场的渐变秒数
+//   blackRes ['^black$']           scene 名字命中 = 黑底
+//   sniff {labelRe, markerRes[]}   sniff(text, options)：头 8KB 里 labelRe 命中且 markerRes 任一命中
+import { DEFAULT_ALIAS, IGNORED_WORDS, aliasKey, buildRenpyContext, clean, flowFilter, isBlackName, isMusicChannel, makeSniff, num, optionsCompiler, readDialogue, readOperand, readPlay, renpyText, segmentsOf, splitWith, transitionSeconds } from './renpy-common.mjs'
+
+export { renpyText }
 
 export const ADAPTER_ID = 'renpy-monmusu'
-const DEFAULT_OPTIONS = { aliasFiles: ['script/movie.rpy'], imageDirs: ['images'] }
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif'])
-
+export const DEFAULT_OPTIONS = {
+  aliasFiles: ['script/movie.rpy'],
+  imageDirs: ['images'],
+  ...DEFAULT_ALIAS,
+  audioCommands: { music: ['music'], voice: ['voice'], se: ['sound', 'audio'], other: 'raw' },
+  voiceNoQuote: { variables: {} },
+  speakers: {},
+  speakerVars: [],
+  flow: { menu: 'raw', conditionals: 'linear' },
+  transitions: { named: '^(?:dissolve|fade|pixellate|move)', seconds: 0.5 },
+  blackRes: ['^black$'],
+  sniff: { labelRe: '^\\s*label\\s+[A-Za-z_]\\w*\\s*:', markerRes: ['^\\s*(?:voice\\s+"|scene\\s+\\S|play\\s+(?:music|sound)\\s+")'] },
+}
+export const opts = optionsCompiler(DEFAULT_OPTIONS)
 const optionList = (options, key) => (Array.isArray(options?.[key]) ? options[key] : DEFAULT_OPTIONS[key]).map(String)
 
-export function sniff(text) {
-  const head = String(text || '').slice(0, 8192)
-  return /^\s*label\s+[A-Za-z_]\w*\s*:/m.test(head) && /^\s*(?:voice\s+"|scene\s+\S|play\s+(?:music|sound)\s+")/m.test(head)
-}
+export const sniff = makeSniff(opts)
 
 // ---------- 上下文：视频别名表 + 图片目录索引 ----------
 export const contextFiles = (options) => optionList(options, 'aliasFiles')
 export const contextDirs = (options) => optionList(options, 'imageDirs')
-
-const MOVIE_RE = /^image\s+(.+?)\s*=\s*Movie\s*\(([^)]*)\)/
-const IMAGE_DEF_RE = /^image\s+(.+?)\s*=\s*(["'])((?:(?!\2).)+)\2\s*$/
-const aliasKey = (name) => String(name).trim().replace(/\s+/g, ' ').toLowerCase()
-
-export function prepare({ texts, files, toResourcePath }) {
-  const movies = new Map()   // 别名 → { src, loop }
-  const images = new Map()   // 别名 → 资源路径
-  for (const text of Object.values(texts || {})) {
-    for (const rawLine of String(text).split(/\r?\n/)) {
-      const line = rawLine.replace(/^\uFEFF/, '').trim()
-      if (!line.startsWith('image')) continue
-      const movie = MOVIE_RE.exec(line)
-      if (movie) {
-        const play = /\bplay\s*=\s*(["'])((?:(?!\1).)+)\1/.exec(movie[2])
-        if (play) movies.set(aliasKey(movie[1]), { src: play[2].replace(/\\/g, '/').replace(/^\/+/, ''), loop: !/\bloop\s*=\s*False\b/.test(movie[2]) })
-        continue
-      }
-      const def = IMAGE_DEF_RE.exec(line)
-      if (def && IMAGE_EXTS.has(def[3].split('.').pop().toLowerCase())) images.set(aliasKey(def[1]), def[3].replace(/\\/g, '/').replace(/^\/+/, ''))
-    }
-  }
-  // 图片目录：Ren'Py 把 images/ 下的文件按「无扩展名的文件名」自动定义成图片名
-  for (const rel of [...(files || [])].sort()) {
-    const name = rel.slice(rel.lastIndexOf('/') + 1)
-    const dot = name.lastIndexOf('.')
-    if (dot <= 0 || !IMAGE_EXTS.has(name.slice(dot + 1).toLowerCase())) continue
-    const key = aliasKey(name.slice(0, dot))
-    if (!images.has(key)) images.set(key, toResourcePath ? toResourcePath(rel) : rel)
-  }
-  return { movies, images }
-}
+export const prepare = (args) => buildRenpyContext(args, opts(args?.options))
 
 // ---------- 语句解析 ----------
-const STR = '"((?:[^"\\\\]|\\\\.)*)"'
-const DIALOGUE_RE = new RegExp(`^${STR}(?:\\s+${STR})?(?:\\s+with\\s+\\S.*)?$`)
-const PATH_RE = /^(?:play|queue)\s+(music|sound|audio|voice)\s+(?:\[[^\]]*\]|"((?:[^"\\]|\\.)*)")/
-const num = (text, fallback = 0) => { const n = Number.parseFloat(text); return Number.isFinite(n) ? Math.max(0, Math.min(60, n)) : fallback }
+const Q = '"'
 
-// 转场 → 渐变秒数：Dissolve(0.4) / Fade(0.5, 0, 0.5) 取第一个数；dissolve / fade 这类命名转场按 0.5；None 或认不出 = 0
-function transitionSeconds(expr) {
-  const text = String(expr ?? '').trim()
-  if (!text || /^none$/i.test(text)) return 0
-  const m = /\(\s*([\d.]+)/.exec(text)
-  if (m) return num(m[1])
-  return /^(?:dissolve|fade|pixellate|move)/i.test(text) ? 0.5 : 0
-}
-
-// 台词文字：去掉 Ren'Py 文字标记（{i} {w} {size=…} …），{p}/{br} 当换行，转义还原；[变量] 原样保留
-export function renpyText(raw) {
-  return String(raw ?? '')
-    .replace(/\{\{/g, '\u0001')
-    .replace(/\{(?:p|br)(?:=[^}]*)?\}/g, '\n')
-    .replace(/\{\/?[a-zA-Z][^}]*\}/g, '')
-    .replace(/\u0001/g, '{')
-    .replace(/\\n/g, '\n')
-    .replace(/\\(["'\\])/g, '$1')
-    .trim()
-}
-const segmentsOf = (text) => (text ? [{ text }] : [])
-const clean = (rel) => String(rel ?? '').replace(/\\/g, '/').replace(/^\/+/, '')
-
-export function parse(text, ctx = null) {
+export function parse(text, ctx = null, meta = null) {
+  const o = opts(meta?.options)
+  const skipFlow = flowFilter(o.flow)
   const steps = []
   let current = []
   let speaker = ''
@@ -98,19 +65,27 @@ export function parse(text, ctx = null) {
     current = []
   }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
+  const playMovie = (key) => {
+    const movie = ctx.movies.get(key)
+    emit({ op: 'movie', srcs: [movie.src], loop: movie.loop })
+    inMovie = true
+    stats.movies += 1
+  }
+  const bgFrom = (key, fade) => {
+    if (inMovie) { emit({ op: 'movieOff' }); inMovie = false }
+    emit({ op: 'bg', src: clean(ctx.images.get(key)), fade })
+  }
 
   for (const rawLine of String(text || '').split(/\r?\n/)) {
     const line = rawLine.replace(/^\uFEFF/, '').trim()
     if (!line || line.startsWith('#')) continue
+    if (skipFlow(rawLine, line, count)) continue
     stats.commands += 1
 
-    const dialogue = DIALOGUE_RE.exec(line)
+    const dialogue = readDialogue(line, o, Q)
     if (dialogue) {
-      const named = dialogue[2] !== undefined
-      const name = named ? renpyText(dialogue[1]) : ''
-      const body = renpyText(named ? dialogue[2] : dialogue[1])
-      if (name !== speaker) { emit({ op: 'speaker', segments: segmentsOf(name) }); speaker = name }
-      emit({ op: 'text', segments: segmentsOf(body) })
+      if (dialogue.name !== speaker) { emit({ op: 'speaker', segments: segmentsOf(dialogue.name) }); speaker = dialogue.name }
+      emit({ op: 'text', segments: segmentsOf(dialogue.body) })
       flush()
       continue
     }
@@ -118,24 +93,15 @@ export function parse(text, ctx = null) {
     const word = /^[$A-Za-z_]\w*|^\$/.exec(line)?.[0] || ''
     switch (word) {
       case 'scene': {
-        let rest = line.slice(5).trim()
-        let fade = 0
-        const withAt = rest.search(/\s+with\s+/)
-        if (withAt >= 0) { fade = transitionSeconds(rest.slice(withAt).replace(/^\s+with\s+/, '')); rest = rest.slice(0, withAt).trim() }
-        rest = rest.replace(/\s+(?:at|onlayer|behind|as)\s.*$/, '').trim()
+        const split = splitWith(line.slice(5), o)
+        const rest = split.rest.replace(/\s+(?:at|onlayer|behind|as)\s.*$/, '').trim()
         const key = aliasKey(rest)
-        if (key === 'black') {
+        if (isBlackName(o, key)) {
           if (inMovie) { emit({ op: 'movieOff' }); inMovie = false }
-          emit({ op: 'bg', color: [0, 0, 0], fade })
-        } else if (ctx?.movies?.has(key)) {
-          const movie = ctx.movies.get(key)
-          emit({ op: 'movie', srcs: [movie.src], loop: movie.loop })
-          inMovie = true
-          stats.movies += 1
-        } else if (ctx?.images?.has(key)) {
-          if (inMovie) { emit({ op: 'movieOff' }); inMovie = false }
-          emit({ op: 'bg', src: clean(ctx.images.get(key)), fade })
-        } else {
+          emit({ op: 'bg', color: [0, 0, 0], fade: split.fade })
+        } else if (ctx?.movies?.has(key)) playMovie(key)
+        else if (ctx?.images?.has(key)) bgFrom(key, split.fade)
+        else {
           count('unresolved', rest)
           emit({ op: 'raw', cmd: 'scene', args: [rest] })
         }
@@ -143,42 +109,29 @@ export function parse(text, ctx = null) {
       }
       case 'show': {
         // angelic：背景用 `show ba013`（单个名字，没有属性 / at）。名字能查到图片 / 视频别名才当背景；带属性或 at / behind 的是立绘，仍然记 raw
-        let rest = line.slice(4).trim()
-        let fade = 0
-        const withAt = rest.search(/\s+with\s+/)
-        if (withAt >= 0) { fade = transitionSeconds(rest.slice(withAt).replace(/^\s+with\s+/, '')); rest = rest.slice(0, withAt).trim() }
-        const key = aliasKey(rest)
+        const split = splitWith(line.slice(4), o)
+        const key = aliasKey(split.rest)
         if (/\s/.test(key) || !key) { count('raw', 'show'); break }
-        if (ctx?.movies?.has(key)) {
-          const movie = ctx.movies.get(key)
-          emit({ op: 'movie', srcs: [movie.src], loop: movie.loop })
-          inMovie = true
-          stats.movies += 1
-        } else if (ctx?.images?.has(key)) {
-          if (inMovie) { emit({ op: 'movieOff' }); inMovie = false }
-          emit({ op: 'bg', src: clean(ctx.images.get(key)), fade })
-        } else count('raw', 'show')
+        if (ctx?.movies?.has(key)) playMovie(key)
+        else if (ctx?.images?.has(key)) bgFrom(key, split.fade)
+        else count('raw', 'show')
         break
       }
       case 'play':
       case 'queue': {
-        const m = PATH_RE.exec(line)
-        if (!m || m[2] === undefined) { count('raw', line.split(/\s+/).slice(0, 2).join(' ')); break }
-        const src = clean(m[2])
-        if (!src) break
-        if (m[1] === 'music') emit({ op: 'bgm', src })
-        else if (m[1] === 'voice') emit({ op: 'voice', src })
-        else emit({ op: 'se', src })
+        const play = readPlay(line, o, Q)
+        if (!play) { count('raw', line.split(/\s+/).slice(0, 2).join(' ')); break }
+        if (!play.src) break
+        emit({ op: play.kind === 'bgm' ? 'bgm' : play.kind === 'voice' ? 'voice' : 'se', src: play.src })
         break
       }
       case 'stop': {
-        const m = /^stop\s+music(?:\s+fadeout\s+([\d.]+))?/.exec(line)
-        if (m) emit({ op: 'bgmStop', fade: num(m[1]) })
+        const m = /^stop\s+(\w+)(?:\s+fadeout\s+([\d.]+))?/.exec(line)
+        if (m && isMusicChannel(o, m[1])) emit({ op: 'bgmStop', fade: num(m[2]) })
         break
       }
       case 'voice': {
-        const m = new RegExp(`^voice\\s+${STR}`).exec(line)
-        const src = clean(m?.[1])
+        const src = readOperand(line.slice(5), o, Q)
         if (src) emit({ op: 'voice', src })
         break
       }
@@ -188,14 +141,12 @@ export function parse(text, ctx = null) {
         break
       }
       case 'with': {
-        const fade = transitionSeconds(line.slice(4))
+        const fade = transitionSeconds(line.slice(4), o)
         if (fade > 0) emit({ op: 'fade', to: 'clear', seconds: fade })
         break
       }
-      case 'label': case 'jump': case 'return': case 'window': case 'call': case 'translate':
-        break
       default:
-        count('raw', word || line.slice(0, 20))
+        if (!IGNORED_WORDS.has(word)) count('raw', word || line.slice(0, 20))
     }
   }
   flush()

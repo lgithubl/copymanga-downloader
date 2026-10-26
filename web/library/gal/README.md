@@ -313,6 +313,45 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 - **分组**：`scene_<1 位类别><6 位角色编号><2 位序号>` 按角色编号归成一张卡片，主线（`scene_2100002`）/ 活动（`scene_ev059_00_02`）照常列出；改规则用 `groups`。
 - **暂未渲染**：别的特效图（`show slash_1` 之类）只记在 `stats.raw`，播放器提示里能看到，可用 `rawIgnore` 允许。
 
+## 适配器选项（Ren'Py 三个 + uviewer-csv）：读配置、按配置匹配
+
+四个适配器里没有写死的猜测：路径 / 正则 / 命名规则 / 映射表都是 `config.adapterOptions['<适配器 id>']` 里的数据（`gal-layout` 脚本的 `LAYOUTS` 表写）。没写的键走各自文件里导出的 `DEFAULT_OPTIONS`（= 引擎接管前的行为）；非法值（坏正则、嵌套量词、未知枚举）丢掉并回到默认，不抛。嵌套对象按子键合并（`flow: {menu: 'linear'}` 不影响 `conditionals`）。完整 schema + 默认值见各适配器文件头注释；自测 `scripts/dev/gal-adapter-options-c-selftest.mjs`（每个选项：默认不变 + 覆盖后按文档变 + 每个适配器一条经 `loadAdapterContext` 的端到端）。
+
+- `sniff(text, options)`：嗅探规则可配的适配器多收一个参数；`sniffGalAdapter(text, allowed, adapterOptions)` 的第 3 个参数把 `config.adapterOptions` 交下去（浏览层已传，缓存键带指纹）。
+- `prepare({ …, resourceResolve })`：多了 `config.resourceResolve`（`loadAdapterContext` 传入，缓存键也带上），适配器用 `createIndexResolver` 核对别名路径（大小写 / `extensionFallbacks` / `rewrites`）。
+
+### renpy-monmusu / renpy-legeclo / renpy-minashigo
+
+三个共用 `adapters/renpy-common.mjs`（选项编译、台词 / play / 流程 / 转场解析、别名表 + 图片名索引）。公共选项：
+
+| 选项 | 形状（默认） | 说明 |
+|---|---|---|
+| `aliasFiles` / `imageDirs`（minashigo 另有 `standFiles`） | 路径数组 | 给 `context.mjs` 读的文件 / 目录（monmusu、legeclo：`['script/movie.rpy']` / `['images']`；minashigo：`['game/movie.rpy']` / `['game/images']`，`['game/script.rpy']`） |
+| `aliasPatterns` | `[{kind:'movie'\|'image', re, scope?:'line'\|'text'}]`（默认 = `image X = Movie(play="…")` / `image X = "…"`，单双引号各一条） | 命名组 `name` / `path`；`scope: 'text'` 对整个文件匹配（跨行 / Composite 形式）；正则走安全检查（不许反向引用 / 嵌套量词） |
+| `movieNoLoopRe` | `'\\bloop\\s*=\\s*False\\b'` | 命中 movie 定义文本 = 不循环 |
+| `imageIndex` | `{preferDirs:[], ext:[png,jpg,jpeg,webp,avif,gif], extPriority:false}` | 图片名 → 文件：同名按 `preferDirs`（资源路径前缀）→ `extPriority` 时按 `ext` 顺序 → 路径顺序；`ext` 也限制别名定义里的图片扩展名 |
+| `audioCommands` | `{music:['music'], voice:['voice'], se:['sound','audio'], other:'raw'}`（minashigo：`voice:['voice*']`、`se:[]`、`other:'se'`） | 声道归类（末尾 `*` 通配）；`other` = 没列的声道：`raw` / `se` / `ignore`；`stop <声道>` 跟 `music`。按路径再归类是引擎 `config.classify` 的事 |
+| `voiceNoQuote` | `{variables:{}}` | `play voice [变量]` / 裸变量名 / 带 `[变量]` 的路径按表替换成路径；表里没有 = 记 raw（`voice` 语句同） |
+| `speakers` / `speakerVars` | `{}` / `[]`（minashigo：`['^[A-Za-z_]\\w*$']`） | 变量写法 `e "台词"`：变量在 `speakers`（值 = 显示名，`''` = 旁白）或匹配 `speakerVars` 才算台词；没在表里时 monmusu / legeclo 用变量名，minashigo 沿用 `$ name` 的说话人 |
+| `flow` | `{menu:'raw', conditionals:'linear'}` | `menu`：`raw` = menu / 选项行记 raw，`linear` = 静默跳过；`conditionals`：`linear` = if / elif / else 各分支按顺序读，`ignore` = 整块跳过（头行记 raw）。正文永远线性读，不做分支 |
+| `transitions` | `{named:'^(?:dissolve\|fade\|pixellate\|move)', seconds:0.5}` | 命名转场的渐变秒数（`Dissolve(n)` 取 n） |
+| `blackRes` | monmusu `['^black$']`；legeclo `['^black$','(?:^\|_)black\\d*$']`；minashigo `['^black\\d*$']` | `scene` 名字命中 = 黑底 |
+| `sniff` | `{labelRe, markerRes:[…]}` | 头 8KB 里 `labelRe` 命中且 `markerRes` 任一命中（monmusu：任意 label + `voice "` / `scene` / `play music\|sound "`；legeclo：`label H_…` + `$ enable_skip(` / `play voice "`；minashigo：任意 label + `$ name=` / `xyz "`） |
+
+独有选项：legeclo `align`（`{left:'left', right:'right', center:'center', truecenter:'center'}`：`show … at <变换名>` → 部件 `align`，表里没有的变换名不写 align，可加 `pos_left: 'left'`）；minashigo `standTags`（`['standimage']`）、`cropForms`（`im.Crop("路径",(x,y,w,h))` 的正则数组，命名组 `path/x/y/w/h`）、`nameVar`（`'name'`，`''` = 不用 `$ name=`）、`fadeTags`（`['black']`）、`flash`（`{counts:{flash:1,flash2:2,flash3:3,flash4:4}, seconds:0.3, color:'white'}`）。
+
+### uviewer-csv
+
+| 选项 | 默认 | 说明 |
+|---|---|---|
+| `commands` | `{aliases:{}, known:[…KNOWN], rawHints:[…RAW_HINTS]}` | `aliases`：别名 → 规范指令名（解析和嗅探都认）；`known` / `rawHints`：嗅探时「认得的指令名」，整体替换 |
+| `msg` | `{textArgIndex:1, singleArgText:false}` | 台词 = 第 `textArgIndex` 个逗号之后的整段；逗号不够时 `singleArgText` 为真取 `msg,` 之后的整段，否则空 |
+| `playvoice` | `{pathArgIndex:1}` | 语音路径所在参数，参数不够取第一个 |
+| `bg` | `{colorPrefix:'color_'}` | 以它开头 = 纯色 `color_R_G_B`；`''` = 没有纯色写法 |
+| `select` | `{var:'select', prefixRe:'^(?:選項\|选项\|選擇\|选择\|Option)\\s*\\d+[…]*'}` | 选的序号记进 `var`；选项文字开头匹配 `prefixRe` 的部分去掉（`''` = 不去） |
+| `conditions` | `{vars:{}}` | `{变量: 初始值}`：除 `select` 外一直不变的变量，`if` 条件解析时直接判定（成立 = 去掉 `when`，不成立 = 块里的指令不输出）。没配的变量保持原样（没设过 → 条件不成立 → 块不可见） |
+| `sniff` | `{minKnownRatio:0.6, minLines:3, maxLines:40}` | 看前 `maxLines` 条指令，至少 `minLines` 条且认得比例 ≥ `minKnownRatio` |
+
 ## Gal 的导航统一放底部
 
 - **页面级头部**（标题 + 沉浸 / 上一章 / 目录 / 主题 / 下一章 / 返回）在 Gal 里挪到了最下面（CSS 重排，只对 `media-mode-gal` 生效，别的媒体类型不变）；Gal 里用不到的「宽度」「上一页 / 下一页」隐藏。窄屏整页滚动时它粘在视口底部，列表固定条再往上让出它的高度（`--gal-foot`，`app.js` 用 ResizeObserver 量）。沉浸时头部收起。
