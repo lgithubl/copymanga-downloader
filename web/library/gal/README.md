@@ -478,6 +478,16 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 表达（用现有指令）：`base` 层图 → `bg`；`trans cross` → 带 `fade` 的 `bg`（先 `back` 页放图，`trans` 时才提交）；数字层 → `stand`（每层一个 part，按层号叠放，part 带 `x` / `y`）；`base` 层多帧 `animstart` → `bg` + `frames`（和 Aku 的帧动画一样，速度在播放器「更多」里设）；循环的 `playse` → `bgse`（只有一路，后来的覆盖前面的）/ `stopse` 或淡到 0 的 `fadese` → `bgseStop`，不循环的 → `se`（路径带 `/voice/` 的 → `voice`）；`playbgm` → `bgm`，`fadeoutbgm` → `bgmStop`；`wait` → `wait`；`【名字】` → `speaker`（`cm` 清掉；一页里中途换说话人时，前面的文字先单独出一步），`「…」` 和地の文 → `text`（同一页的多行用 `\n` 连起来）。
 - 表达不了的（`raw` 指令 + `stats.raw`）：数字层的多帧动画（只显示第一帧）、淡到非 0 音量的 `fadese`、非 `cross` 的 `trans`、`move` 到没有显示的层、`images[]` 下标越界的 `image`、没见过的标签（只计入 `stats.raw`）。`move` 的补间、`bgmopt` / `seopt` 的音量、`animstop` 对 `base` 层帧动画（不停，换背景才停）没做。
 - `gal-layout`：`<根>/json` 当脚本根、`<根>/resource` 当资源根（扩展名 json）；没写 game.id 时要求 `json/` 里前几个脚本开头是 `{"data":{"code":{` 并且同级有 `resource/`。导入页预设「ぼくらの放課後戦争（bokusen）」。
+- **适配器参数**（`adapterOptions['bokusen-json']`，全部可选，默认值 = 样本里的行为；完整结构和说明见 `adapters/bokusen-json.mjs` 头部）：
+  - `root` `''` / `resourceDir` `'resource'`：游戏根、资源目录名。
+  - `paths`：`{ images: ['{stem}/images/{i}{ext}'], sounds: ['{stem}/sounds/{i}{ext}'], anyExt: true }`——资源路径模板数组（`{stem}` 脚本名、`{i}` 下标、`{ext}` 候选扩展名、`{name}` 列表里的文件名），按顺序试，找到的第一个生效；`anyExt`：都没命中时忽略扩展名按序号再找。
+  - `image` `{ ext: ['{entry}'], defaultExt: '.jpg' }` / `sound` `{ ext: ['.wav', '{entry}'], defaultExt: '' }`：候选扩展名（`'{entry}'` = 列表里写的扩展名）。
+  - `slotMap`：`{ <标签>: { <字段>: 槽位号 | null } }`，改槽位号 / 置 null 禁用字段（默认见头部：image `layer 15 / page 23 / index 28 / x 16 / y 29`，trans `layer 2 / mode 3 / ms 6`，move `layer 2 / target 4`，animstart `id 0 / layer 2 / x 3 / page 8 / frames 9`，playse `buffer 0 / loop 1 / index 2`，fadese `buffer 0 / volume 2`，playbgm `index null`，fadeoutbgm `ms 0`，wait `ms 2` …）。
+  - `bgm` `{ patterns: ['/bgm/'], index: 0 }`：`playbgm` 取第一个路径匹配任一正则的 sounds[]，都不匹配取 `index`（`'first'` = 0）。
+  - `voice` `{ patterns: ['/voice/'], loopAsBgse: true }`：不循环的 `playse` 路径匹配 → `voice`，否则 `se`；`loopAsBgse` false = 循环的也当 `se`。
+  - `stand` `{ layers: [], overlayLayers: [], bgLayers: ['base'], xScale: 1, yScale: 1, origin: {x: 0, y: 0}, moveMode: 'jump' }`：`layers` = 哪些数字层是立绘（空 = 除叠加层外全部），叠加层 / 非立绘层记 `raw`；`x / y` = 脚本值 × 缩放 + origin；`moveMode: 'tween'` 目前**不支持**（场景格式没有立绘补间指令，按 jump）。
+  - `animation` `{ singleFrameAsStatic: true, multiFrameLayers: ['base'] }`：哪些层的多帧动画合成 `bg + frames`；单帧是否当静态图。帧率是播放器设置，场景没有 fps 字段。
+  - 文件索引里的查找走 `createIndexResolver`，`config.resourceResolve`（`extensionFallbacks` / `rewrites` / `normalizeUnicode` / `caseInsensitive` / `preferDirs`）直接生效；不合格的正则 / 类型被丢掉、用默认值，不抛错。
 - 自测：`node scripts/dev/fe-gal-bokusen-selftest.mjs`（不需要浏览器；造数据 `scripts/dev/make-bokusen-fixture.mjs <输出根目录>`，合成脚本含开场交叉淡入、立绘层 + move、多帧动画、playse → wav、缺资源、被截断的 JSON）。
 
 ### Kamihime Player（TyranoScript .ks，`tyrano-ks`）
@@ -492,6 +502,15 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **暂未渲染**（`raw` 指令 + `stats.raw`）：`[anim layer=…]` 的滑入 / 滑出（`left="±=640"`）、layer 3 的 `layopt` / `freeimage`（layer 3 里是什么没有样本，所以不敢猜成立绘滑动）、`[kanim]` / `[keyframe]` / `[frame]`、`[iscript]` 块、`[mem_img]` / `[mem_voice]` / `[memorial]`、没见过的标签；流程标签（`[if]` / `[jump]` / `[glink]` …）也只记 raw、脚本按顺序一路播下去（样本里没有分支）。点右下角的提示看明细，要允许就用 `rawIgnore`。
 - **列表**（`adapter.catalog`，每次从索引现读、按 ctx 缓存）：类别 → 目录 → 剧情，剧情标题取 json 的 `title`（没有 json 就用脚本名），`is_r18` 的卡片带 `R18` 角标；体检 `health`：没读到 assets / 没读到 json。
 - **`gal-layout` 探测**：`dmm/raw_scenario`（多套几层目录自动带前缀）；没声明 `game.id` 时还要求有 `dmm/assets` 和至少一个 `.ks`。写：脚本根 `<…>/dmm/raw_scenario`、资源根 `<…>/dmm/assets`、扩展名 `ks`、`adapterOptions['tyrano-ks'].root`、脚本数。探测顺序在 artwhirl 之后、uviewer 之前。导入：`adapters: ['tyrano-ks']` + `config.game.id: 'kamihime'`，导入页预设「Kamihime Player」。
+- **适配器参数**（`adapterOptions['tyrano-ks']`，全部可选，默认值 = 上面描述的行为；完整结构和说明见 `adapters/tyrano-ks.mjs` 头部）：
+  - `root` `'game/dmm'`；`resourceDirKey` `{ from: 'json', field: 'resource_directory', segments: 3 }`：每个剧情的语音目录取自同目录 json 的哪个字段，剧情和 json 用路径最后几段对上。
+  - `voice` `{ dirs: ['{rd}'], patterns: [], loopAsBgse: true }`：`dirs` 里的目录（`{rd}` = 本剧情的 resource_directory）中的 `playse` → `voice`，也是按文件名找语音时的优先目录；`patterns` 路径正则也算 voice；`loopAsBgse` false = 循环的不当 `bgse`。
+  - `stand` `{ slots: { '1': [0.5], '2': [0.25, 0.75], '3+': [0.2, 0.5, 0.8] }, useScriptCoords: false }`：在场 n 个角色的水平位置（`'N'` 按位置取，`'N+'` = [第一个, 中间, 最后一个]；< 1/3 → left，> 2/3 → right，其余 center）；`useScriptCoords` 用 `[chara_show left= top=]` 的 x / y（没有对照图，默认关）。
+  - `layers` `{ overlay: ['4'], effect: ['3'] }`、`effects` `{ quakeMap: { hmax: 'horizontal', vmax: 'vertical' }, shakeDivisor: 40, animHop: { top: 'vertical', left: 'horizontal' }, sepia: { matchImage: 'sepia' }, animSlide: 'raw' }`：整屏滤镜层 / 效果层；`[quake]` 属性 → 抖动轴与幅度；`[anim name=]` 抖动；滤镜图匹配；`animSlide: 'ignore'` 静默丢掉效果层的 `[anim layer=]` / `layopt` / `freeimage`（默认记 `raw`）。没有新增场景指令。
+  - `fallback` `{ faceToBase: true }`：表情缺失退回基础立绘（false = 这次不出图）。
+  - `index` `{ hashPattern: '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$', stemFallback: true }`：平铺层 `<stem>-<sha1>.<ext>` 的拆法 / 是否按去 hash 的 stem 再找；查找走 `createIndexResolver`，`config.resourceResolve`（含 `preferDirs`）生效，同名语音按 `preferDirs` 挑，没配时取路径排序第一个。
+  - `text` `{ lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] }`：换行 / 等点击 / 翻页 / 清文本框的标签名。
+  - 没认出的标签仍是 `raw`。
 - **自测**：`scripts/dev/fe-gal-kamihime-selftest.mjs`（适配器 / 索引 / gal-layout 不需要浏览器；有 `PLAYWRIGHT_PATH` 且 `web/node_modules` 装好时再起服务做导入、列表、资源接口、立绘像素）；合成数据 `scripts/dev/make-kamihime-fixture.mjs <目录>`，`gal-demo` 工作流里会生成并导入。
 - **没验证的**：立绘摆放（上面）；`[quake time=]` 当总时长；`[anim layer=3]` 的含义；`[l]` 之后文字累加的规则是按 Tyrano 的 `[l]` / `[cm]` 语义推的，没有逐字对照原播放器。
 ### Grenze（GrenzeViewer，`grenze-xml`）

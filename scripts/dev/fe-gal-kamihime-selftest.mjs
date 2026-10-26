@@ -12,6 +12,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { galAdapter, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { catalog, parse, prepare, sniff } from '../../web/library/gal/adapters/tyrano-ks.mjs'
+import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { loadAdapterContext } from '../../web/library/gal/context.mjs'
 import { normalizeGalConfig } from '../../web/library/gal/config.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
@@ -86,6 +87,61 @@ const text2 = await readFile(path.join(media, SCRIPT2), 'utf8')
   const titles = flat.filter((c) => c.script).map((c) => c.title)
   check('列表（catalog）：类别 → 目录 → 剧情；标题取同目录 json 的 title（没有 json 的用脚本名）；is_r18 带 R18 角标', J(titles) === J(['花的初次相遇', '花的第二次', '0001_x']) && flat.find((c) => c.title === '花的第二次')?.badge === 'R18' && J(cat.children.map((c) => c.title)) === J(['eidolon', 'soul']), J(titles))
 
+  // ---------- 参数（adapterOptions['tyrano-ks']）：默认不变 + 每项覆盖都按文档改变结果 ----------
+  const META1 = { rel: 'eidolon/MB01_花/9101_harem-summon_script.ks', stem: '9101_harem-summon_script' }
+  const withOpts = (options, extra = {}, input = text1, useCtx = ctx, rel = META1) => parse(input, useCtx, { ...rel, options, ...extra })
+  const cmdsOf = (o) => o.steps.flatMap((s) => s.commands)
+  const same = (options) => J(withOpts(options).steps) === J(out.steps)
+  check('参数：不给 / 空对象 / 写出全部默认值 / 乱七八糟的类型 → 结果和以前一样，也不抛', same(undefined) && same({}) && same(null) && same([1]) && same('x') && same({ resourceDirKey: { from: 'json', field: 'resource_directory', segments: 3 }, voice: { dirs: ['{rd}'], patterns: [], loopAsBgse: true }, stand: { slots: { 1: [0.5], 2: [0.25, 0.75], '3+': [0.2, 0.5, 0.8] }, useScriptCoords: false }, layers: { overlay: ['4'], effect: ['3'] }, effects: { quakeMap: { hmax: 'horizontal', vmax: 'vertical' }, shakeDivisor: 40, animHop: { top: 'vertical', left: 'horizontal' }, sepia: { matchImage: 'sepia' }, animSlide: 'raw' }, fallback: { faceToBase: true }, index: { hashPattern: '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$', stemFallback: true }, text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] } }) && same({ voice: 5, stand: { slots: 'x' }, layers: [], effects: { quakeMap: [], sepia: 3, shakeDivisor: -1 }, index: { hashPattern: '(' }, text: { lineBreakTags: 'r' } }), '')
+
+  // voice
+  const kinds = (o) => cmdsOf(o).filter((c) => ['voice', 'se', 'bgse', 'bgseStop'].map(String).includes(c.op)).map((c) => `${c.op}:${(c.src || '').split('/').pop()}`)
+  const base = kinds(out)
+  check('voice.dirs：默认 [{rd}] → voice_a_01 是 voice；dirs [] → 不再是 voice（se），文件仍按名字找到；dirs [字面目录] 同样判 voice（RD2 里也有同名文件 → 取 RD2）', J(base) === J(['voice:voice_a_01.mp3', 'bgse:bgm_se_heartbeat.mp3', 'bgseStop:']) && J(kinds(withOpts({ voice: { dirs: [] } }))) === J(['se:voice_a_01.mp3', 'bgse:bgm_se_heartbeat.mp3', 'bgseStop:']) && cmdsOf(withOpts({ voice: { dirs: [RD2] } })).find((c) => c.op === 'voice')?.src === `${RD2}/voice_a_01.mp3`, J([base, kinds(withOpts({ voice: { dirs: [] } }))]))
+  check('voice.patterns：dirs [] 时路径匹配正则也算 voice（voice_a_ → voice；不匹配 → se）', J(kinds(withOpts({ voice: { dirs: [], patterns: ['voice_a_'] } }))) === J(base) && kinds(withOpts({ voice: { dirs: [], patterns: ['nomatch'] } }))[0] === 'se:voice_a_01.mp3', '')
+  const noLoop = withOpts({ voice: { loopAsBgse: false } })
+  check('voice.loopAsBgse = false：循环的 playse 不是 bgse（当 se），[stopse] 也就没有 bgseStop', J(kinds(noLoop)) === J(['voice:voice_a_01.mp3', 'se:bgm_se_heartbeat.mp3']), J(kinds(noLoop)))
+  // resourceDirKey：json 里的字段名 / 键的段数
+  const ctxKey = await loadAdapterContext({ adapter, mediaDir: media, config: normalizeGalConfig({ resourceRoots: ['game/dmm/assets'], adapterOptions: { 'tyrano-ks': { root: 'game/dmm', resourceDirKey: { field: 'nope', segments: 1 } } } }) })
+  const keyed = parse(text1, ctxKey, { ...META1, options: { resourceDirKey: { field: 'nope', segments: 1 } } })
+  check('resourceDirKey：field 写成不存在的字段 → 没有 resource_directory（标题照读），语音退成按文件名找（还是找得到，但不再是 voice）；segments 1 也能对上 json', ctxKey.meta.size === 2 && [...ctxKey.meta.keys()][0].split('/').length === 1 && [...ctxKey.meta.values()].every((m) => m.rd === '' && m.title) && kinds(keyed)[0] === 'se:voice_a_01.mp3' && ctxKey.keySegments === 1, J([...ctxKey.meta.keys()]))
+
+  // stand：摆放 / 脚本坐标 / 表情缺失
+  const crowd = (n, extra = '') => ['*start', '[chara_new name=a storage="a.png"]', '[chara_new name=b storage="b.png"]', '[chara_new name=c storage="c.png"]', '[chara_new name=d storage="d.png"]', ...['a', 'b', 'c', 'd'].slice(0, n).map((k, i) => `[chara_show name=${k}${extra && i === 0 ? ` ${extra}` : ''}]`), 'x[l]'].join('\n')
+  const aligns = (n, options, extra) => { const stand = cmdsOf(parse(crowd(n, extra), null, { options })).find((c) => c.op === 'stand'); return stand?.parts.map((p) => p.align || `${p.x},${p.y}`).join() }
+  check('stand.slots：默认 1 个居中 / 2 个左右 / 3 个左中右 / 4 个左中中右；改 {2:[0.5,0.5]} → 两个都居中；{1:[0.1]} → 单个靠左；{3+:[0.1,0.9,0.9]} → 4 个 left,right,right,right；精确 {4:[...]} 按位置取', aligns(1) === 'center' && aligns(2) === 'left,right' && aligns(3) === 'left,center,right' && aligns(4) === 'left,center,center,right' && aligns(2, { stand: { slots: { 2: [0.5, 0.5] } } }) === 'center,center' && aligns(1, { stand: { slots: { 1: [0.1] } } }) === 'left' && aligns(4, { stand: { slots: { '3+': [0.1, 0.9, 0.9] } } }) === 'left,right,right,right' && aligns(4, { stand: { slots: { 4: [0.1, 0.4, 0.6, 0.95] } } }) === 'left,center,center,right', J([aligns(1), aligns(2), aligns(3), aligns(4)]))
+  check('stand.useScriptCoords：默认忽略 [chara_show left= top=]；true → 有 left= 的部件用 x,y（没有 align），没有的仍按 slots', aligns(2, {}, 'left=120 top=30') === 'left,right' && aligns(2, { stand: { useScriptCoords: true } }, 'left=120 top=30') === '120,30,right', aligns(2, { stand: { useScriptCoords: true } }, 'left=120 top=30'))
+  const noFace = withOpts({ fallback: { faceToBase: false } })
+  const stands = cmdsOf(noFace).filter((c) => c.op === 'stand')
+  check('fallback.faceToBase = false：缺的表情不再退回基础立绘（hana 这一次不出图，只剩凛）；默认退回 hana_00', stands[2]?.parts.length === 1 && stands[2].parts[0].src === hashed('rina_00', 'png') && cmdsOf(out).filter((c) => c.op === 'stand')[2].parts[0].src === hashed('hana_00', 'png'), J(stands[2]))
+
+  // layers / effects
+  const rawCount = (o, cmd) => cmdsOf(o).filter((c) => c.op === 'raw' && c.cmd === cmd).length
+  const noOverlay = withOpts({ layers: { overlay: [] } })
+  check('layers.overlay：默认 [4] → sepia 滤镜是 bg.over；overlay [] → 没有 over，layer 4 的 image / freeimage / layopt 都记 raw', cmdsOf(out).some((c) => c.over) && !cmdsOf(noOverlay).some((c) => c.over) && rawCount(noOverlay, 'image') === 1 && rawCount(noOverlay, 'freeimage') === 2, J(noOverlay.stats.raw))
+  check('effects.sepia.matchImage：默认 sepia；改成 nomatch → 滤镜图不匹配，raw image 不出 over；改成 filter 仍然匹配；空串 = overlay 层上的图都算', !cmdsOf(withOpts({ effects: { sepia: { matchImage: 'nomatch' } } })).some((c) => c.over) && cmdsOf(withOpts({ effects: { sepia: { matchImage: 'filter' } } })).some((c) => c.over) && cmdsOf(withOpts({ effects: { sepia: { matchImage: '' } } })).some((c) => c.over), '')
+  const ignored = withOpts({ effects: { animSlide: 'ignore' } })
+  check('effects.animSlide = ignore：layer 3 的 [anim] / layopt / freeimage 不再记 raw（默认 raw：anim 2、layopt 1、freeimage 1）；layers.effect [] 时 ignore 不生效', rawCount(out, 'anim') === 2 && rawCount(ignored, 'anim') === 0 && rawCount(ignored, 'layopt') === 0 && rawCount(out, 'freeimage') === 1 && rawCount(ignored, 'freeimage') === 0 && rawCount(withOpts({ effects: { animSlide: 'ignore' }, layers: { effect: [] } }), 'anim') === 2, J([rawCount(out, 'anim'), rawCount(ignored, 'anim'), rawCount(ignored, 'layopt'), rawCount(ignored, 'freeimage')]))
+  const quake = (options, tag = '[quake hmax=10 vmax=20 time=300]') => cmdsOf(parse(`*start\n${tag}\nx[l]`, null, { options })).find((c) => c.op === 'shake')
+  check('effects.quakeMap：默认 hmax 优先 → 横向 0.25；顺序换成 vmax 优先 → 纵向 0.5；hmax 映射成 vertical → 纵向 0.25；一个都不出现取第一项、幅度最小 0.05；shakeDivisor 20 → 0.5（封顶 1）', quake({}).axis === 'horizontal' && quake({}).strength === 0.25 && quake({ effects: { quakeMap: { vmax: 'vertical', hmax: 'horizontal' } } }).axis === 'vertical' && quake({ effects: { quakeMap: { vmax: 'vertical', hmax: 'horizontal' } } }).strength === 0.5 && quake({ effects: { quakeMap: { hmax: 'vertical' } } }).axis === 'vertical' && quake({}, '[quake time=300]').strength === 0.05 && quake({ effects: { shakeDivisor: 20 } }).strength === 0.5 && quake({ effects: { shakeDivisor: 5 } }).strength === 1, J(quake({})))
+  const hop = (options) => cmdsOf(parse('*start\n[anim name=a left="+=20" time=100]\n[wait time=100]\nx[l]', null, { options })).find((c) => c.op === 'shake')
+  check('effects.animHop：默认 left → 横向抖；改 {left: vertical} → 纵向；{} 不合格 → 默认；top 不在表里时 [anim name= top=] 变 raw', hop({}).axis === 'horizontal' && hop({ effects: { animHop: { left: 'vertical' } } }).axis === 'vertical' && cmdsOf(parse('*start\n[anim name=a top="+=20" time=100]\nx[l]', null, { options: { effects: { animHop: { left: 'vertical' } } } })).some((c) => c.op === 'raw' && c.cmd === 'anim'), '')
+
+  // text
+  const textsOf = (input, options) => cmdsOf(parse(input, null, { options })).filter((c) => c.op === 'text').map((c) => c.segments.map((x) => x.text).join('|'))
+  const inputText = '*start\na[r]b[l][cm]\nc[p]\nd[cm]e[l]'
+  check('text：默认 r 换行 / l 等点击 / p 翻页 / cm 清框；改成 br / click / next / wipe 后用新名字；旧名字这时是 raw（l 不再结束一步）', J(textsOf(inputText)) === J(['a\nb', 'c', 'd', 'e']) && J(textsOf('*start\na[br]b[click][wipe]\nc[next]\nd[wipe]e[click]', { text: { lineBreakTags: ['br'], clickWaitTags: ['click'], pageTags: ['next'], clearTags: ['wipe'] } })) === J(['a\nb', 'c', 'd', 'e']) && parse(inputText, null, { options: { text: { clickWaitTags: ['click'] } } }).stats.raw.l === 2, J(textsOf(inputText)))
+
+  // index：hash 拆法 / stem 退让 / resourceResolve（preferDirs、扩展名回退）
+  const files = ['game/dmm/assets/bg-' + 'ab'.repeat(20) + '.jpg', 'game/dmm/assets/hero--abcd1234.png', `game/dmm/assets/${RD1}/v.mp3`, `game/dmm/assets/${RD2}/v.mp3`, 'game/dmm/assets/x.mp3']
+  const toRes = (rel) => rel.replace(/^game\/dmm\/assets\//, '')
+  const findIn = (options, input, cfg) => { const c = prepare({ options, texts: {}, files, toResourcePath: toRes }); return cmdsOf(parse(input, c, { options, config: cfg })) }
+  const bgSrc = (options, name, cfg) => findIn(options, `*start\n[bg storage="${name}"]\nx[l]`, cfg).find((c) => c.op === 'bg')?.src
+  check('index.hashPattern / stemFallback：默认 bg.jpg → bg-<sha1>.jpg；hero.png 默认找不到；hashPattern 换成 --<8 位> → 找到 hero；stemFallback false → bg.jpg 也找不到', bgSrc({}, 'bg.jpg') === 'bg-' + 'ab'.repeat(20) + '.jpg' && bgSrc({}, 'hero.png') === undefined && bgSrc({ index: { hashPattern: '^(.+)--[0-9a-f]{8}(\\.[^.]+)?$' } }, 'hero.png') === 'hero--abcd1234.png' && bgSrc({ index: { stemFallback: false } }, 'bg.jpg') === undefined, J(bgSrc({}, 'bg.jpg')))
+  const voiceSrc = (options, cfg, name = 'v.mp3') => findIn(options, `*start\n[playse storage="${name}"]\nx[l]`, cfg).find((c) => c.op === 'se' || c.op === 'voice')?.src
+  check('同名语音在多个 resource_directory：默认取排序第一个（RD2，0 开头）；resourceResolve.preferDirs [RD1] → 取 RD1；preferDirs 换成 [RD2] → RD2', voiceSrc({}) === `${RD2}/v.mp3` && voiceSrc({}, { resourceResolve: { preferDirs: [RD1] } }) === `${RD1}/v.mp3` && voiceSrc({}, { resourceResolve: { preferDirs: [RD2] } }) === `${RD2}/v.mp3`, J(voiceSrc({})))
+  check('resourceResolve 接进来：extensionFallbacks {.wav: [.mp3]} → x.wav 找到 x.mp3；大小写：X.MP3 默认（caseInsensitive）找到，关掉就找不到', voiceSrc({}, { resourceResolve: { extensionFallbacks: { '.wav': ['.mp3'] } } }, 'x.wav') === 'x.mp3' && voiceSrc({}, null, 'X.MP3') === 'x.mp3' && voiceSrc({}, { resourceResolve: { caseInsensitive: false } }, 'X.MP3') === undefined, '')
+
   // gal-layout：没写 game.id 也认出 kamihime；写了 game.id 走同一份探测
   for (const declared of [false, true]) {
     const layout = await galLayoutScript({ item: { itemId: 'kh', title: 'kh', config: declared ? { game: { id: 'kamihime' } } : {}, source: { path: media }, adapters: ['tyrano-ks'] }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
@@ -96,6 +152,32 @@ const text2 = await readFile(path.join(media, SCRIPT2), 'utf8')
   await mkdir(path.join(emptyDir, 'game', 'raw_scenario'), { recursive: true })   // 有 raw_scenario 但不在 dmm 下
   const other = await galLayoutScript({ item: { itemId: 'x', title: 'x', config: {}, source: { path: emptyDir }, adapters: [] }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
   check('gal-layout 不会把没有 dmm/raw_scenario 的目录认成 kamihime', other.itemPatch?.gal?.config?.game?.id !== 'kamihime', J(other.itemPatch?.gal?.config?.game))
+}
+
+// ================= 端到端（进程内 handler）：adapterOptions 手写进 config → 导入 → 列表 → 取场景 =================
+{
+  const layout = await galLayoutScript({ item: { itemId: 'kh2', title: 'kh2', config: { game: { id: 'kamihime' } }, source: { path: media }, adapters: ['tyrano-ks'] }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
+  const laid = layout.itemPatch?.gal?.config
+  const handler = createGalHandler({ dataDir: path.join(dataDir, 'e2e'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) })
+  const sceneWith = async (tyranoOptions, resourceResolve) => {
+    const config = { ...laid, game: { id: 'kamihime', title: 'kamihime' }, adapterOptions: { 'tyrano-ks': { ...laid.adapterOptions['tyrano-ks'], ...tyranoOptions } }, ...(resourceResolve ? { resourceResolve } : {}) }
+    const imported = await handler.importFromSource({ sourcePath: media, options: { adapters: ['tyrano-ks'], config } })
+    const itemId = imported.items[0].itemId
+    const node = async (sectionId) => (await handler.getReaderContent(itemId, 'main', { sectionId })).node
+    let cur = await node('')
+    cur = await node(cur.items[0].node)
+    cur = await node(cur.items[0].node)
+    const played = await handler.getReaderContent(itemId, 'main', { sectionId: cur.items[0].node })
+    return played.scene || played.node?.scene
+  }
+  const baseScene = await sceneWith({})
+  const baseCmds = baseScene.steps.flatMap((c) => c.commands)
+  const tuned = await sceneWith({ voice: { dirs: [], patterns: [] }, effects: { animSlide: 'ignore' }, stand: { slots: { 2: [0.5, 0.5] } }, text: { clickWaitTags: ['l'] } })
+  const tunedCmds = tuned.steps.flatMap((c) => c.commands)
+  check('端到端（默认）：adapterOptions 只有 root 时和以前一样——voice 1 个、raw anim 2、两个角色左 / 右、8 步', baseScene.adapter === 'tyrano-ks' && baseCmds.filter((c) => c.op === 'voice').length === 1 && baseScene.stats.raw.anim === 2 && baseCmds.some((c) => c.op === 'stand' && c.parts.map((p) => p.align).join() === 'left,right') && baseScene.steps.length === 8, J(baseScene.stats))
+  check('端到端（覆盖）：voice.dirs [] → 没有 voice（都是 se）；effects.animSlide ignore → 没有 raw anim；stand.slots {2:[0.5,0.5]} → 两个角色都居中；步数不变', tunedCmds.filter((c) => c.op === 'voice').length === 0 && tunedCmds.filter((c) => c.op === 'se').length > baseCmds.filter((c) => c.op === 'se').length && !tuned.stats.raw.anim && tunedCmds.some((c) => c.op === 'stand' && c.parts.map((p) => p.align).join() === 'center,center') && tuned.steps.length === 8, J(tuned.stats))
+  const viaResolve = await sceneWith({ voice: { dirs: [] } }, { preferDirs: [RD2] })
+  check('端到端（resourceResolve.preferDirs 进到适配器）：voice.dirs [] 时按文件名找语音，preferDirs [RD2] → 取 RD2 里的', viaResolve.steps.flatMap((c) => c.commands).some((c) => c.op === 'se' && c.src === `${RD2}/voice_a_01.mp3`), J(viaResolve.steps.flatMap((c) => c.commands).filter((c) => c.op === 'se' || c.op === 'voice')))
 }
 
 // ================= 服务 + 浏览器 =================
