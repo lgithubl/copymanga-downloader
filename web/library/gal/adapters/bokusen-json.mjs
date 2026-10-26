@@ -52,6 +52,16 @@ export function sniff(text) {
   try { return HEAD.test(String(text ?? '').replace(/^﻿/, '').slice(0, 8192)) } catch { return false }
 }
 
+// 可选钩子（列表页 unrecognized-scripts 诊断用）：sniff 没认时一句话说为什么。只说结构（键名），不带内容
+export function explainSniff(text) {
+  const head = String(text ?? '').replace(/^\uFEFF/, '').slice(0, 8192)
+  if (!/^\s*\{/.test(head)) return '头 8KB 不是以 { 开头的 JSON；要求 {"data":{"code":{"images"|"sounds"|"articles"|…'
+  const keys = [...new Set([...head.matchAll(/"([A-Za-z_]\w{0,30})"\s*:/g)].map((m) => m[1]))].slice(0, 8).join(', ')
+  if (!/"data"\s*:/.test(head)) return `头 8KB 内没有 "data":{"code":{…（看到的键：${keys || '无'}）`
+  if (!/"data"\s*:\s*\{\s*"code"\s*:/.test(head)) return `头 8KB 内 "data" 后面紧跟的不是 "code"（看到的键：${keys}）；"code" 在别的键（比如 user）之后、超出头 8KB 时也认不出`
+  return `头 8KB 内有 "data":{"code":，但 code 里第一个键不是 images / sounds / articles / characters / tags / parameters / commands（看到的键：${keys}）`
+}
+
 // ---------- 上下文：resource 目录的文件索引 ----------
 export const contextFiles = () => []
 export const contextDirs = (options) => [joinPath(rootOf(options), resourceDirOf(options))]
@@ -351,4 +361,4 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps, stats }
 }
 
-export const bokusenJsonAdapter = { id: ADAPTER_ID, label: 'ぼくらの放課後戦争（bokusen）编译脚本 JSON', sniff, parse, contextFiles, contextDirs, contextWalkLimit, prepare }
+export const bokusenJsonAdapter = { id: ADAPTER_ID, label: 'ぼくらの放課後戦争（bokusen）编译脚本 JSON', sniff, explainSniff, parse, contextFiles, contextDirs, contextWalkLimit, prepare }

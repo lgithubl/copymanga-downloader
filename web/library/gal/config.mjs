@@ -10,6 +10,14 @@ import { compileSafeRegex, isValidVoiceRegex } from './voice.mjs'
 export const DEFAULT_PAGE_SIZE = 25
 export const DEFAULT_INDEX_SKIP = Object.freeze(['^\\.', '\\|', '#'])
 export const MAX_SCRIPT_BYTES = 4 * 1024 * 1024
+// 脚本卡片的兜底封面（没有任何缩略图规则命中时从脚本里收图，见 fallback-thumbs.mjs）
+export const FALLBACK_PREFER = Object.freeze(['cg', 'stand', 'bg'])
+export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
+export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, scanSteps: 200 })
+// thumbSources 模板里能用的占位符（见 thumbs.mjs 的说明；{1}{2}… 捕获组和命名捕获组另算）
+export const FILE_PLACEHOLDERS = Object.freeze(['file', 'base', 'dirname', 'dir1', 'dir2', 'dir3', 'dirpath'])
+export const CARD_PLACEHOLDERS = Object.freeze(['stem', 'name', 'parent', 'parent2'])
+export const THUMB_FALLBACK_LIMITS = Object.freeze({ max: [1, 12], scanSteps: [10, 2000], skip: 10 })
 
 export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 脚本根（相对媒体目录）：可以有几个——它们是「可切换的文本版本」（比如中/日），首页上有下拉；第一个是默认
@@ -39,17 +47,28 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   dirThumbs: [{ parent: 'character', name: '^\\d{4}$', paths: ['download/character/{name}00/adv/image/{name}00.png', 'download/character/{name}00/adv/image/{name}00_100.png', 'download/character/{name}??/adv/image/{name}??.png', 'download/character/{name}??/adv/image/{name}??_100.png'] }],
   // 脚本卡片的缩略图（先于「脚本里第一张背景图」）：{stem} 是脚本文件名（无扩展名），{thumbsDir} 对每个缩略图目录各试一次；~/ = 相对媒体目录
   scriptThumbs: ['~/{thumbsDir}/{stem}.webp', '~/{thumbsDir}/scripts/{stem}.webp'],
-  // 可配置的缩略图提取（按文件名规律给脚本卡片 / 目录卡片配图，和 scriptThumbs / dirThumbs 并存，结果接在它们后面）：
-  //   [{ dir, match, key, for, forKey, forMatch, kind, limit, fallback }]
-  //   dir       目录（相对资源根；~/ 开头 = 相对媒体目录，只有缩略图目录读得到）。可带通配 * ?；每条规则只列一次目录（按目录 mtime 缓存，最多读 2 万项），建成 键 → 文件[] 的索引
+  // 可配置的缩略图提取（按文件名 / 目录结构给脚本卡片 / 目录卡片配图，和 scriptThumbs / dirThumbs 并存，结果接在它们后面；多条规则、多个文件的结果合并：按规则顺序、真实文件去重、最多 12 张）：
+  //   [{ dir, match, key, for, forKey, forMatch, forStrip, kind, limit, fallback }]
+  //   dir       目录（相对资源根；~/ 开头 = 相对媒体目录，只有缩略图目录读得到）。可带通配 * ?（每段内；比如 scenes/* = 每个场景目录，最多展开 3000 个目录）；每条规则只列一次目录（按目录 mtime 缓存，每个目录最多读 2 万项），建成 键 → 文件[] 的索引
   //   match     正则，对 dir 里的「文件名」（含扩展名）匹配，不匹配的忽略
-  //   key       文件的键：{1}{2}… = 捕获组，{名字} = 命名捕获组；不写 = {1}
+  //   key       文件的键（模板）：{1}{2}… = match 的捕获组，{名字} = 命名捕获组，{dirname}（= {dir1}）= 文件所在目录的名字（通配匹配到的那个目录）、{dir2} / {dir3} = 再上一级 / 两级目录名、{dirpath} = 目录完整路径、
+  //             {file} = 文件名、{base} = 无扩展名的文件名；不写 = {1}。键可以完全来自目录结构（Girls Creation：scenes/<场景>/thumbnail.png → key '{dirname}'）
   //   for       给谁用：script（脚本卡片）| dir（目录 / 分组卡片）| both（默认）
-  //   forKey    卡片自己的键：{stem}（脚本名，无扩展名）{name}（目录名 / 分组键）{parent}；不写 = 脚本 {stem}、目录 {name}。卡片用这个键去索引里取文件
-  //   forMatch  可选，正则：对 stem / name 先匹配一次，捕获组 {1}… 也能写进 forKey（不匹配 = 这条规则对这张卡片不适用）
+  //   forKey    卡片自己的键（模板）：{stem}（脚本名，无扩展名）{name}（目录名 / 分组键；脚本里 = {stem}）{parent}（父目录名：脚本 = 脚本所在目录的名字，相对脚本根；目录 = 上一级目录名）{parent2}（再上一级）；
+  //             不写 = 脚本 {stem}、目录 {name}。卡片用这个键去索引里取文件
+  //   forMatch  可选，正则：对 stem / name 先匹配一次，捕获组 {1}… / 命名组 {名字} 也能写进 forKey（不匹配 = 这条规则对这张卡片不适用）
+  //   forStrip  可选，正则（或正则数组）：forKey 展开后，依次把匹配到的部分删掉再去查索引（去前缀 / 后缀：'^scene_' 把 scene_123456789 变成 123456789）
+  //   切片      任何模板里的 {x:起:止} / {x:起}：取占位符值的 [起, 止)（JS slice：从 0 数、止不含、可为负）。{stem:0:9} = 前 9 个字符，{stem:1:7} = 第 1～6 个字符（120090312 → 200903）
   //   kind      image（默认，只收图片扩展名）| video（只收 mp4 mkv webm mov m4v，卡片显示视频的一帧）
   //   limit     每张卡片最多取几张（默认 12）；fallback：true = 前面都没找到图时才用这条
   thumbSources: [],
+  // 兜底封面：脚本卡片没有任何缩略图规则（scriptThumbs / thumbSources / scriptIndex）命中时，从脚本自己收图（几张，卡片可以悬停轮播）。和适配器无关，只看解析好的场景（只扫前 scanSteps 步）。
+  //   enabled   false = 旧行为（只取脚本里第一张背景图，单图）
+  //   max       最多几张（1～12，默认 6）
+  //   prefer    优先级，数组：cg（事件图：带 over 的 bg、带 cg / still 标记的指令、静态画面的 thumb）→ stand（立绘）→ bg（背景）；默认 ['cg', 'stand', 'bg']（'bgOver' 是 cg 的别名）
+  //   skipBlack true（默认）= 文件名命中 skip 的（纯黑 / 纯白占位图）不要
+  //   skip      正则数组（对无扩展名的文件名，不分大小写），默认 black / white / blank 按单词；scanSteps 最多扫几步（10～2000，默认 200）
+  thumbFallback: { ...DEFAULT_THUMB_FALLBACK, prefer: [...DEFAULT_THUMB_FALLBACK.prefer], skip: [...DEFAULT_THUMB_FALLBACK.skip] },
   // 卡片封面怎么选（卡片有多张图时）：random（默认，每次渲染随机一张当封面，悬停时随机顺序轮播）| first（只显示第一张，不轮播 = 旧行为）| hover（封面固定第一张，悬停时轮播）
   thumbMode: 'random',
   // 分组：列 parent（通配；'.' = 脚本根本身）下的目录时，脚本文件名（无扩展名）能匹配 pattern 的，按第 1 个捕获组分成虚拟目录
@@ -258,11 +277,64 @@ export function normalizeGalConfigWithWarnings(raw) {
     if (rest === null || !match) { warn('thumbSources', rest === null ? 'dir 不是安全路径' : 'match 为空', rule); continue }
     try { new RegExp(match); if (rule.forMatch && !regexOrEmpty(rule.forMatch)) { warn('thumbSources', 'forMatch 不是合法正则', rule); continue } } catch { warn('thumbSources', 'match 不是合法正则', rule); continue }
     if (!rest) { warn('thumbSources', 'dir 为空', rule); continue }
-    thumbSources.push({
+    // forStrip：一个正则或正则数组；不合法的丢掉并报告（规则本身保留）
+    const stripRaw = rule.forStrip === undefined || rule.forStrip === null || rule.forStrip === '' ? [] : Array.isArray(rule.forStrip) ? rule.forStrip : [rule.forStrip]
+    const forStrip = []
+    for (const one of stripRaw.slice(0, 4)) { const source = regexOrEmpty(one); if (source) forStrip.push(source); else warn('thumbSources', 'forStrip 里有不是合法正则的项，已丢掉', one) }
+    if (stripRaw.length > 4) warn('thumbSources', 'forStrip 超过 4 项，多出的被丢掉', stripRaw[4])
+    const entry = {
       dir: fromMedia ? `~/${rest}` : rest, match, key: text(rule.key, 100) || '{1}',
       for: ['script', 'dir'].includes(rule.for) ? rule.for : 'both', forKey: text(rule.forKey, 100), forMatch: regexOrEmpty(rule.forMatch),
       kind: rule.kind === 'video' ? 'video' : 'image', limit: Math.max(1, Math.min(12, Math.floor(Number(rule.limit)) || 12)), fallback: Boolean(rule.fallback),
-    })
+      ...(forStrip.length ? { forStrip } : {}),
+    }
+    // 模板里写了没有的占位符（拼错）：展开成空串，这条规则永远查不到——报出来（规则保留）
+    for (const [field, allowed, source] of [['key', FILE_PLACEHOLDERS, match], ['forKey', CARD_PLACEHOLDERS, entry.forMatch]]) {
+      const named = [...String(source).matchAll(/\(\?<([A-Za-z_]\w*)>/g)].map((m) => m[1])
+      const unknown = [...new Set([...entry[field].matchAll(/\{(\w+)(?::-?\d*)?(?::-?\d*)?\}/g)].map((m) => m[1]).filter((name) => !/^\d+$/.test(name) && !allowed.includes(name) && !named.includes(name)))]
+      if (unknown.length) warn('thumbSources', `${field} 里的占位符 ${unknown.map((n) => `{${n}}`).join(' ')} 不认识（可用：${allowed.map((n) => `{${n}}`).join(' ')}、{1}{2}… 捕获组、命名捕获组），展开成空`, rule)
+    }
+    thumbSources.push(entry)
+  }
+
+  // thumbFallback：兜底封面（见 DEFAULT_GAL_CONFIG 里的说明）。没写 = 默认；写了的字段逐个校验，不合格的退回默认并报告
+  const dtf = DEFAULT_THUMB_FALLBACK
+  const thumbFallback = { ...dtf, prefer: [...dtf.prefer], skip: [...dtf.skip] }
+  if (v.thumbFallback !== undefined && !isPlainObject(v.thumbFallback)) warn('thumbFallback', '不是对象，用默认值', v.thumbFallback)
+  if (isPlainObject(v.thumbFallback)) {
+    const tf = v.thumbFallback
+    for (const key of Object.keys(tf)) if (!(key in dtf)) warn('thumbFallback', `不认识的字段 ${key}，已丢掉`, key)
+    for (const key of ['enabled', 'skipBlack']) {
+      if (tf[key] === undefined) continue
+      if (typeof tf[key] === 'boolean') thumbFallback[key] = tf[key]
+      else warn(`thumbFallback.${key}`, '只能是 true / false，用默认值', tf[key])
+    }
+    for (const key of ['max', 'scanSteps']) {
+      if (tf[key] === undefined) continue
+      const n = Math.floor(Number(tf[key]))
+      const [lo, hi] = THUMB_FALLBACK_LIMITS[key]
+      if (tf[key] === null || tf[key] === '' || typeof tf[key] === 'boolean' || !Number.isFinite(n)) { warn(`thumbFallback.${key}`, '不是数字，用默认值', tf[key]); continue }
+      thumbFallback[key] = Math.max(lo, Math.min(hi, n))
+      if (thumbFallback[key] !== n) warn(`thumbFallback.${key}`, `超出范围 ${lo}–${hi}，夹到 ${thumbFallback[key]}`, tf[key])
+    }
+    if (tf.prefer !== undefined) {
+      const list = Array.isArray(tf.prefer) ? tf.prefer : null
+      const kinds = (list || []).map((k) => (k === 'bgOver' ? 'cg' : k)).filter((k, i, all) => FALLBACK_PREFER.includes(k) && all.indexOf(k) === i)
+      if (!list || !kinds.length) warn('thumbFallback.prefer', '要是 cg / stand / bg 组成的数组（bgOver = cg），用默认值', tf.prefer)
+      else {
+        if (list.length > kinds.length) warn('thumbFallback.prefer', '有不认识 / 重复的项，已丢掉', list)
+        thumbFallback.prefer = kinds
+      }
+    }
+    if (tf.skip !== undefined) {
+      const list = Array.isArray(tf.skip) ? tf.skip : null
+      if (!list) warn('thumbFallback.skip', '不是数组，用默认值', tf.skip)
+      else {
+        const ok = list.slice(0, THUMB_FALLBACK_LIMITS.skip).map((source) => text(source, 120)).filter((source) => { if (!source) return false; try { new RegExp(source, 'i'); return true } catch { return false } })
+        if (ok.length < list.length) warn('thumbFallback.skip', `${list.length - ok.length} 项不是合法正则 / 太长 / 超过 ${THUMB_FALLBACK_LIMITS.skip} 项，已丢掉`, list)
+        thumbFallback.skip = ok
+      }
+    }
   }
 
   const groups = []
@@ -504,6 +576,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     dirThumbs: v.dirThumbs === undefined ? d.dirThumbs.map((r) => ({ ...r, paths: [...r.paths] })) : dirThumbs,
     scriptThumbs: v.scriptThumbs === undefined ? d.scriptThumbs.slice() : (Array.isArray(v.scriptThumbs) ? v.scriptThumbs : []).map((t) => text(t, 300)).filter(Boolean).slice(0, 10),
     thumbSources: v.thumbSources === undefined ? [] : thumbSources,
+    thumbFallback,
     thumbMode: ['random', 'first', 'hover'].includes(v.thumbMode) ? v.thumbMode : d.thumbMode,
     groups: v.groups === undefined ? [] : groups,
     scriptIndex: v.scriptIndex === undefined ? [] : scriptIndex,

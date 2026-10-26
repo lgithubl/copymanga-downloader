@@ -28,6 +28,7 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 | `dirThumbs` | 目录卡片头像规则：`{parent, name(正则), paths(模板，{name} {parent})}`；匹配的规则里**所有存在的**路径都进缩略图数组（见「卡片缩略图」），路径的目录 / 文件名段可带通配 `*` `?` |
 | `scriptThumbs` | 脚本缩略图模板（`{stem}` `{thumbsDir}`；`~/` = 相对媒体目录；可带通配），之后才是「脚本里第一张背景图」（前面都没有才用） |
 | `thumbSources` | 按文件名规律提取缩略图的规则列表（接在 `dirThumbs` / `scriptThumbs` 后面），见「卡片缩略图」 |
+| `thumbFallback` | 兜底封面（没有任何缩略图规则命中时从脚本里收几张图）：`{enabled, max, prefer, skipBlack, skip, scanSteps}`，见「卡片缩略图 → 兜底封面」 |
 | `thumbMode` | 卡片有多张图时怎么显示：`random`（默认）/ `first` / `hover` |
 | `cover` / `scriptCount` / `script` | 封面路径（`~/` 开头 = 相对媒体目录，只给封面用）/ 脚本数 / 谁写的这份配置 `{id, version, ranAt}` |
 | `groups` | 分组：`[{parent: 通配或 '.', pattern}]`。列 `parent` 下的目录时，脚本名（无扩展名）匹配 `pattern` 的按**第 1 个捕获组**归进虚拟目录（一个键一张卡片，节点 id `g:<键>:<路径>`），不匹配的照常列出；名字/头像和真实目录一样查 `labels` / `namesFiles` / `dirThumbs`。`parent: '.'` = 脚本根本身（`merge` 也认） |
@@ -180,6 +181,15 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
   - 已知取舍：转成 JSON 对象后纯整数的名字（动画 / 皮肤叫 `1`、`2`）会被排到最前面，动画列表顺序可能和文件不同。3.7 仍不支持。
   - 测试：`node scripts/dev/fe-gal-spine36-selftest.mjs`（需要 `PLAYWRIGHT_PATH`）。用官方 3.6 示例里成对的 `.skel` / `.json`（测试时下载到临时目录）逐项比对过转换结果；**没有真实的 Grenze 3.6.38 文件测过**（只测过合成骨架和官方 3.6.32 / 3.6.52 示例）。
 
+### 渲染诊断里的 Spine / 渲染问题（以前静默的）
+`createSpineLayer().info()` 每项多了 `problems: [中文行]`（`gal-spine.js` 的纯函数 `spineProblemLines(item)`，播放器渲染诊断在骨架名下以 `⚠ ` 列出；右下角提示多一项「骨骼渲染提示 N 条」）：
+(a) **要的动画骨架里没有**（单动画：「要播的动画「run」骨架里没有，改播「idle」（骨架里有 N 个动画：…）」；多轨道按轨道：「轨道 1 要播的动画「x」骨架里没有，这条轨道没有播」）；
+(b) **要的皮肤没有**（`spec.skin`，utage 的 Skin 列；有就用它，没有退回原来的选择并报「要的皮肤「x」骨架里没有，改用「y」/ 用默认皮肤（骨架里的皮肤：…）」）；
+(c) **多轨道里没应用的轨道**：「多轨道：要 0:a 1:b → 实际应用 0:a；没应用的轨道原因：动画名在骨架里不存在」（分层脸骨架的表情预设名走预设表 / 默认脸，行里写「已按表情预设 / 默认脸处理」）；
+(d) **图集贴图 / atlas 页缺失**：所有缺的页一次报全（「图集贴图缺失：a.png, b.png（atlas 声明 N 页，缺 K 页）——骨架整个没有加载」，`onMissing` 每页都报）；atlas 里没有任何页 = 解析失败「atlas 里没有找到任何图集页」；
+(e) **加载成功但没有可见附件**：「初始姿势没有可见附件，已按动画首帧计算包围盒」/「…按骨骼文件头的宽高估算（x y w h）」/「包围盒为空：骨架加载成功，但初始姿势和动画首帧都没有可见附件（共 N 个槽，附件 0 个可见）…」/「骨架里没有任何槽」。
+同一个渲染诊断里还有：**适配器统计**（`scene.stats` 里除 raw / unresolved / notes 以外的非空字段，所有游戏统一列出）和 **配置 / 索引提示**（`node.problems`，见「列表阶段的问题」）；只有这类信息时右下角也出「适配器诊断（点开查看）」，不再因为没有「未渲染指令」就打不开。测试：`scripts/dev/fe-gal-spine-diag-selftest.mjs`（端口 8181：纯函数 + 3.8 二进制 / 3.8 JSON / 4.0 JSON / 3.6 JSON 图层 + Aku 结构的 Em06 + 整个播放器）、`fe-gal-spine36-selftest.mjs` 的 Aku 结构用例。
+
 ### 脚本 gal-layout（所有 Gal 游戏合一）
 
 - **分发**：`config.game.id` 填了（导入时写的）就只走那个游戏的探测（`uviewer` / `monmusu` / `tenkeiprdx`）；认不出结构：uviewer 退回通用配置，别的跳过（不乱改）；不认识的 id 跳过。
@@ -224,19 +234,48 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 ## 卡片缩略图：数组、随机封面、悬停轮播、`thumbSources`、视频帧
 
 - **数组模型**：浏览节点里每张卡片带 `thumbs: [路径…]`（所有存在的候选，按真实文件去重，最多 12 张）；`thumb` 仍然 = `thumbs[0]`（旧客户端 / 旧测试照常）。一张图都没有时 `thumbs: []`、`thumb: ''`，`thumbWhy` 写每个来源试了什么（列表页「渲染诊断」里看）。
-  - 脚本卡片的来源顺序：`scriptThumbs` 模板（通配全展开）→ `thumbSources`（`for` 含 script 的）→ `scriptIndex` → 脚本里第一张背景图（**前面都没有才用**）。目录 / 分组卡片：`dirThumbs`（parent、name 匹配的全部规则）→ `thumbSources`（`for` 含 dir 的）。
+  - 脚本卡片的来源顺序：`scriptThumbs` 模板（通配全展开）→ `thumbSources`（`for` 含 script 的）→ `scriptIndex` → 兜底封面（`thumbFallback`：脚本里的事件图 / 立绘 / 背景，**前面都没有才用**）。目录 / 分组卡片：`dirThumbs`（parent、name 匹配的全部规则）→ `thumbSources`（`for` 含 dir 的）。
   - 通配（`dirThumbs.paths` / `scriptThumbs` 里）：`*` = 段内任意字符，`?` = 单个字符，不跨 `/`；匹配到的全部都算，按自然序；目录列表按目录 mtime 缓存（每个目录最多读 2 万项，一次展开最多 400 个路径）。
 - **前端**（`web/static/gal-browse.js` + `thumb-cycle.js`）：`thumbMode` = `random`（默认）每次渲染随机一张当封面（一次渲染内稳定，刷新才换）；`first` = 永远第一张（旧行为）；`hover` = 封面第一张、悬停才轮播。有多张图的卡片鼠标悬停 → 其余图随机顺序轮播（每张 700–900ms，先预加载下一张再换），移开立刻停并还原封面。不悬停的卡片不做任何事；`prefers-reduced-motion`、触摸、标签页在后台、封面还没加载好都不轮播。封面的首次加载仍走 `thumbLoader`（`data-src` 分批），轮播只在它加载完之后改 `src`；封面加载失败先换同一张卡片的下一张，都失败才报「加载失败」。
-- **`thumbSources`**：`[{ dir, match, key, for, forKey, forMatch, kind, limit, fallback }]`。每条规则只列一次 `dir`（相对资源根；`~/` = 相对媒体目录，只有 `thumbsDirs` 读得到；可带通配），建成 `键 → 文件[]` 的索引（按 mtime 缓存）；卡片用自己的键去查。
-  - `match`：正则，对 `dir` 里的**文件名**（含扩展名）；`key`：文件的键，`{1}{2}` = 捕获组、`{名字}` = 命名捕获组（默认 `{1}`）。
-  - `for`：`script` | `dir` | `both`（默认）；`forKey`：卡片的键，`{stem}`（脚本名）`{name}`（目录名 / 分组键）`{parent}`，默认脚本 `{stem}`、目录 `{name}`；`forMatch`（可选正则）：先对 stem / name 匹配，`{1}`… 也能写进 `forKey`，不匹配 = 规则不适用。
+- **`thumbSources`**：`[{ dir, match, key, for, forKey, forMatch, forStrip, kind, limit, fallback }]`（最多 10 条）。每条规则只列一次 `dir`（相对资源根；`~/` = 相对媒体目录，只有 `thumbsDirs` 读得到；可带通配 `*` `?`，**最多展开 3000 个目录**，每个目录最多读 2 万项），建成 `键 → 文件[]` 的索引（按目录 mtime 缓存）；卡片用自己的键去查。键可以来自文件名，也可以来自**目录结构**。
+  - `match`：正则，对 `dir` 里的**文件名**（含扩展名）；`key`：文件的键（模板，默认 `{1}`）。
+  - `for`：`script` | `dir` | `both`（默认）；`forKey`：卡片的键（模板）；`forMatch`（可选正则）：先对 stem / name 匹配，不匹配 = 规则不适用；`forStrip`（可选，正则或正则数组）：`forKey` 展开后依次把匹配到的部分删掉再去查索引。
   - `kind`：`image`（默认，png jpg jpeg webp gif avif bmp）| `video`（mp4 mkv webm mov m4v）；`limit`：每张卡片最多几张（≤12）；`fallback: true`：前面都没找到图时才用。
+  - **占位符一览**（`config` 校验时 `key` / `forKey` 里写了不在这张表里的名字会报 `config-dropped` 警告，规则保留、该占位符展开成空）：
+
+    | 位置 | 占位符 | 含义 |
+    |---|---|---|
+    | `key`（文件侧） | `{1}` `{2}`… | `match` 的捕获组 |
+    | | `{名字}` | `match` 里的命名捕获组 `(?<名字>…)` |
+    | | `{file}` / `{base}` | 文件名（含 / 不含扩展名） |
+    | | `{dirname}`（= `{dir1}`） | 文件所在目录的名字（通配 `dir` 匹配到的那一个，比如 `scenes/*` → 场景目录名） |
+    | | `{dir2}` / `{dir3}` | 再上一级 / 两级目录名；`{dirpath}` = 目录完整路径（相对资源根） |
+    | `forKey`（卡片侧） | `{stem}` | 脚本名（无扩展名） |
+    | | `{name}` | 目录卡片名（分组卡片 = 分组键）；脚本卡片里 = `{stem}` |
+    | | `{parent}` | 父目录名：脚本 = 脚本所在目录的名字（相对**脚本根**，直接放在脚本根下 = 空 = 规则不适用）；目录卡片 = 上一级目录名 |
+    | | `{parent2}` | 再上一级目录名 |
+    | | `{1}` `{2}`… / `{名字}` | `forMatch` 的捕获组 |
+
+    **切片**：任何占位符都能写 `{x:起:止}` / `{x:起}`——和 JS 的 `slice` 一样（从 0 数、**止不含**、可为负、可省略）：`{stem:0:9}` = 前 9 个字符，`{stem:1:7}` = 第 1～6 个字符（`120090312` → `200903`），`{stem:3}` = 从第 3 个起，`{stem:-3}` = 末 3 位。
+    **顺序**：`forMatch` → `forKey`（含切片）→ `forStrip`。键为空 = 这张卡片这条规则不适用。
+  - **三条示例**（真实目录结构，工具脚本 `gal-layout` 的 LAYOUTS 表负责写这些，引擎只读配置）：
+    - Girls Creation 家族（Aster / R Viewer / maid / jaxin：`scenes/<场景>/thumbnail.png` + `scenes/<场景>/script.txt`，脚本名永远是 `script`，键只能是父目录名）：
+      `{ dir: 'scenes/*', match: '^thumbnail\\.(png|jpe?g|webp)$', key: '{dirname}', for: 'script', forKey: '{parent}' }`；目录卡片再来一条 `{ …同上…, for: 'dir', forKey: '{name}' }`。
+    - minashigo（`game/images/thumb/<12 位>_360.jpg` ↔ `scene_<9 位>`，前 9 位 = scene 编号；一个场景可以有好几张）：
+      `{ dir: 'game/images/thumb', match: '^(\\d{9})\\d{3}_360\\.jpg$', key: '{1}', for: 'script', forKey: '{stem}', forStrip: '^scene_' }`。
+    - ミナシゴノシゴトR（脚本 `data/adv/textfiles/story/<9 位>.txt`；本集图 `data/image/episode/story/<9 位>.png`；角色头像 `data/image/character/thumb/<6 位>.png`，角色 id = 脚本名第 [1:7] 位，`120090312` → `200903`）：
+      `{ dir: 'data/image/episode/story', match: '^(\\d{9})\\.png$', key: '{1}', for: 'script', forKey: '{stem}' }` + `{ dir: 'data/image/character/thumb', match: '^(\\d{6})\\.png$', key: '{1}', for: 'script', forKey: '{stem:1:7}' }`（等价写法 `forMatch: '^\\d(\\d{6})', forKey: '{1}'`；头像想只在没有本集图时用 → 加 `fallback: true`）。
+  - **多来源合并**：一张卡片的 `thumbs` 来自 `scriptThumbs` 模板 → 每条 `thumbSources`（按数组顺序）→ `scriptIndex` → 兜底封面；全部按**真实文件**去重、保持先后顺序、最多 12 张；每条规则各自的 `limit` 只管自己。
   - 例（legeclo，gal-layout 写的）：`{dir:'images/thumbnail/st', match:'^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.png$', key:'{1}_{2}', for:'script'}`——`hs_artemis_halloween_st_0301.png` → 键 `artemis_halloween_03` ↔ 脚本 `artemis_halloween_03.rpy`；同一话的 `0201` / `0202_idle` / `0203_hover` 全进数组；再来一条 `dir: 'images/st'` + `fallback: true` 退回整张场景图；角色卡片 `{dir:'images/thumbnail/char', match:'^st_(.+?)(?:_(?:idle|hover))?\\.(?:png|webp)$', key:'{1}', for:'dir'}`。
   - deepone / UViewer：默认 `dirThumbs` 的路径是 `download/character/{name}00/adv/image/{name}00.png`、`…_100.png`，再加 `download/character/{name}??/adv/image/{name}??.png` / `…_100.png`——资源目录是 `<4 位编号><2 位变体>`（`100181`、`102307`、`102309`…，几乎没有 `00`），`??` 把每个变体都收进数组，有 `00` 的排最前。
-  - **minashigo / misttrain 暂未实现**（映射没确认）：minashigo 的 `images/thumb/<12 位数字>_360.jpg` ↔ `scene_<9 位数字>`、misttrain 的 `Textures/Characters/Bases/<id>201.png`；映射确认后只要写 `thumbSources`（`match` 取数字、`forMatch` / `forKey` 把脚本名转成键）就行，不用改代码。
+  - misttrain 的 `Textures/Characters/Bases/<id>201.png` 映射还没确认；确认后只要写 `thumbSources` 就行，不用改代码。
+- **兜底封面 `thumbFallback`**：脚本卡片**没有任何规则命中**（`scriptThumbs` / `thumbSources` / `scriptIndex` 都没有图）时，从解析好的场景里收几张图（`gal/fallback-thumbs.mjs`，和适配器无关：只看规范场景里的指令，复用 `scriptInfo` 已经解析的结果、随它缓存，只扫前 `scanSteps` 步，大脚本也只花固定的时间）。
+  - 配置 `thumbFallback: { enabled: true, max: 6, prefer: ['cg', 'stand', 'bg'], skipBlack: true, skip: [正则…], scanSteps: 200 }`，全部可选（没写的字段 = 默认；类型不对 / 越界的字段退回默认或夹住，并报 `config-dropped`）：`enabled: false` = 旧行为（只取脚本里第一张背景图，单图）；`max` 1–12；`prefer`：优先级数组，只收写了的几类（`bgOver` 是 `cg` 的别名）；`skipBlack`：文件名（无扩展名）命中 `skip` 里任一正则（不分大小写）的不要，默认 `black` / `white` / `blank` 按单词（`bg_black`、`white_fade` 跳过，`blackboard` 不跳）；`scanSteps` 10–2000。
+  - 三类图：**cg** = 事件图（`bg` 指令带 `over`：`over` 先、`src` 后；带 `cg: true` / `still: true` / `kind: 'cg'|'still'|'event'` 标记的指令；静态画面 spine 指令上的 `thumb` 字段）→ **stand** = 立绘（每个 `stand` 指令取第一个有图片扩展名的部件）→ **bg** = 背景（纯色背景没有 `src`，自然跳过）。每类按出现顺序、整体去重；候选逐个验证文件存在，凑够 `max` 张为止。视频 / 非图片扩展名不要。
+  - 结果有多张图，卡片可以悬停轮播（以前只有一张背景）。没找到图时 `thumbWhy` 写「扫了前 N 步，事件图 a / 立绘 b / 背景 c 张，k 张是黑白占位图被跳过，…」。
 - **视频帧缩略图**：候选（`thumbSources` 的 `kind: 'video'`，或模板解析到 mp4 / mkv / webm / mov 文件）在 `thumbs` 里仍是视频的路径；前端取图时带 `frame=1`（`…/resource?path=…&frame=1`），服务端用 ffmpeg 截一帧 JPEG（视频时长的 10%，最多 30 秒，读不到时长用第 1 秒；宽度 ≤640）缓存到 `<DATA_DIR>/cache/gal-thumbs/<hash 前两位>/<sha1(真实路径, mtime, size, 参数版本)>.jpg`（`gal/video-thumb.mjs`）。路径照常经过 `resolveAsset`（只认媒体目录内的真实路径），非视频 → 415；同时最多 2 个 ffmpeg、20 秒超时、同一视频并发只截一次，失败 30 秒内不重试（422，说明原因：ffmpeg 没装 / 超时 / 视频损坏），卡片显示无图状态并在诊断里报「加载失败」；缓存命中 = 按文件发送（ETag / 304，`max-age=7 天`）。ffmpeg 不在 PATH 里就是上面的失败路径（Dockerfile.web 装了 ffmpeg）。
   - 扩展点：骨架（spine / live2d）截图暂不做；以后在 `thumbSources` 加 `kind: 'skeleton'`，在 `gal/thumbs.mjs` 的 `collectSources` 里接渲染器、结果同样缓存到 `cache/gal-thumbs`。
-- 测试：`scripts/dev/gal-selftest.mjs`（键提取 / 数组 / 去重封顶 / deepone 变体 / legeclo 映射 / thumbMode / 帧缓存）、`scripts/dev/fe-gal-thumbs-selftest.mjs`（端口 8162：随机封面、悬停轮播、reduced-motion、thumbMode、加载失败、视频帧）。
+- 测试：`scripts/dev/gal-selftest.mjs`（键提取 / 数组 / 去重封顶 / deepone 变体 / legeclo 映射 / thumbMode / 帧缓存）、`scripts/dev/gal-engine-thumbs-diag-selftest.mjs`（占位符 / 切片 / forStrip / 目录当键 / 多来源合并 / 通配超过 50 个目录 / 兜底封面 / 列表诊断，只用 node）、`scripts/dev/fe-gal-thumbs-selftest.mjs`（端口 8162：随机封面、悬停轮播、reduced-motion、thumbMode、加载失败、视频帧）。
 
 ## 浏览节点（取数接口 = 通用的 reader）
 
@@ -273,7 +312,7 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 ```
 
 - 适配器只做「原始文本 → 规范场景」：`web/library/gal/adapters/*.mjs`，在 `adapters/index.mjs` 登记。
-  现在只有 `uviewer-csv`。**接新格式 = 新写一个适配器（id / label / sniff / parse）**，播放器不用改。
+  现在只有 `uviewer-csv`。**接新格式 = 新写一个适配器（id / label / sniff / parse）**，播放器不用改。可选钩子 `explainSniff(text, options) → string`：sniff 没认时一句话说明原因，给列表页 `unrecognized-scripts` 诊断用（见「列表阶段的问题」）。
 - 规范场景的指令集见 `scene.mjs`。适配器认得但播放器还没实现的指令（立绘 `spriteatlas`、`anm`、`mask`、`imgconf`、`spine`…）
   以 `raw` 原样保留（带参数），后面加对应渲染方式时直接用，不用重新解析。
 - 以后要缓存：只需要在 `getReaderContent` 里给 `buildScene()` 外面套一层。
@@ -409,10 +448,13 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 缓存失效：文本文件按 mtime+size，目录自己和下一层子目录按 mtime，更深的最多缓存 5 分钟。列表页「更多」里有一行「文件索引：N 个文件 · 建立于 … 〔刷新〕」，点刷新 = `POST /api/library/items/gal/<id>/index-refresh`：丢掉这个条目的全部浏览缓存（上下文、嗅探结果、目录列表、脚本摘要、数量），按磁盘现状重建，然后重取当前节点。
 
 ### 列表阶段的问题（node.problems）
-列表节点上带 `problems: [{ level, code, message }]`，进「渲染诊断」（error 级的还直接显示在列表上方）。都是便宜的检查，不解析脚本：
+列表节点（和播放页节点）上带 `problems: [{ level, code, message, details? }]`，进「渲染诊断」（error 级的还直接显示在列表上方；`details` = 缩进展开的附加行）。**播放页节点也带**（config 里被丢掉 / 夹住的 `config-dropped`、索引截断），右下角提示里写「配置 / 索引提示 N 条」，展开的渲染诊断末尾有「配置 / 索引提示」一节。都是便宜的检查，不解析脚本：
 索引被截断 `index-truncated` · 脚本根不存在 `script-root-missing` · 目录里扩展名对但没有适配器认得的文件 `unrecognized-scripts`（以前悄悄丢掉，规则对不上就永远发现不了）· 适配器没读到可用数据已退回目录浏览 `catalog-empty` ·
 适配器自己的体检 `health(ctx)`（girlscreation：没有脚本的场景目录 / 没有标题 / 没有封面 / 没有 data/audio；misttrain：没读到名称表 / 没有标题 / 没有 Spines 目录；tenkeiprdx：没读到名称表 / 没有剧情）· 节点图的 `graph-*`（见下）。
 缺什么资源、哪些指令没渲染仍然是打开脚本时才完整检查（播放页的渲染诊断）。
+
+**`unrecognized-scripts` 会说明为什么**：`message` 是个数 + 文件名；`details` 最多 3 个样例，每个 = `样例 <文件名>（<字节数> 字节），开头：<脱敏的头部片段>` + 每个参与嗅探的适配器一行 `<适配器 id>: <为什么没认>`。头部片段（`gal/diagnostics.mjs` 的 `maskHeadSnippet`）最多 160 个字符，控制字符 / BOM 去掉、空白折叠，**连续 3 个以上的 CJK 字符换成 `<N字>`**（台词 / 人名不外露，JSON 结构和 ASCII 关键字留着）；空文件 / 超过 `limits.scriptBytes` 的文件直接说是文件本身的问题。
+**适配器钩子 `explainSniff(text, options) → string`（可选）**：适配器的 `sniff` 没认这段文本时，用一句话（≤ 140 字符，只说结构 / 键名、不要带内容）说明为什么，比如 bokusen-json：`头 8KB 内 "data" 后面紧跟的不是 "code"（看到的键：error, data, user…）`。没实现 = 通用的「没有匹配 sniff」；实现抛错 / 返回非字符串也退回通用说明（`adapters/index.mjs` 的 `explainSniffGalAdapters(text, allowed, adapterOptions)` → `[{ id, reason }]`，只含 sniff 确实没认的适配器）。
 
 ### 节点图 config.nodes
 `config.nodes` 是从 `home` 开始的一张图；有它时首页和所有列表都由它给（优先于适配器 catalog 和真实目录），翻页 / 筛选 / 面包屑 / 上一话下一话沿用 catalog 那一套。节点之间有两种边：
@@ -454,7 +496,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 ### misttrain 的马赛克层 / 空包围盒的层 / 渲染时特意不画的东西
 - `still_configuration.json` 的 `Parts` 决定叠哪几层：`IsMosaic: true` 的层默认不叠，不在 `Parts` 里的文件也不叠。两种都会在渲染诊断里写明（`提示：…`）。播放器「更多 → 显示马赛克层」（这个场景有马赛克层时才出现）打开后重取脚本、叠上它们；按媒体存在浏览器里
   （`copymanga.gal.view.<条目 id>.showMosaic`，经 `reader?mosaic=1|0` 传给适配器，优先于 `adapterOptions['misttrain-json'].showMosaic`）。
-- 初始姿势下没有任何可见附件的层（附件由动画打开）包围盒是 `Infinity`：不能拿它缩放（以前它序号最小时整个画面会消失），布局时跳过它、改用序号最小的有包围盒的层当参照；诊断里写「边界 无（…不当参照层）」。
+- 初始姿势下没有任何可见附件的层（附件由动画打开，比如 Aku 的 3.6.53 JSON：1 骨骼 + 11 槽，动画 `Em00…Em09` 只有 `slots` 时间线切附件）：包围盒**按动画首帧算**——在一副临时骨架上套上要播的动画（不循环，取 0 / 0.05 / 0.25 / 0.75 / 1.75 秒和动画末尾几个时间点，第一个非空的），还是空就用骨骼文件头的 `width` / `height`（`x` 没写 = `-w/2`，`y` 没写 = 0），都没有才是「包围盒为空」。来源（`info().boundsSource`）：`setup` | `animation` | `header` | `none`；换动画时重新量。以前它的包围盒是 `Infinity`，只能跳过它（还会让整个画面消失 / 角色不画）。
 - 渲染时特意不画 / 改着画的：multiply 和 screen 混合的槽按 normal 画（原查看器 `spine.js` 的注释：这两种在它那里渲染不对）；不支持的 Spine 版本（3.7 / 4.1 / 4.3）不画并报版本不支持；默认皮肤是空的就改用第一个有内容的命名皮肤；
   maid 的分层脸骨架在表情预设名对不上时用默认脸顶上（诊断里写明）。除此之外没有忽略别的，包括 additive 和 clipping。
 

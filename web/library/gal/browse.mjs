@@ -33,6 +33,8 @@ import { contextStats, invalidateContexts, loadAdapterContext } from './context.
 import { safeRelPath } from './paths.mjs'
 import { createThumbEngine, invalidateThumbCaches } from './thumbs.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
+import { collectFallbackImages } from './fallback-thumbs.mjs'
+import { explainRejectedFile } from './diagnostics.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 import { collectVoices, compileVoiceRegex, filterVoices, parseVoiceTargets, pickRandom, shuffled, voiceCacheClear, voiceCacheGet, voiceCacheSet, voiceStats } from './voice.mjs'
 
@@ -157,7 +159,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
   const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}|${maxScriptBytes}`
-  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)
+  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbFallback, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)
   let namesCache = null
 
   const absOf = (set, rel) => path.join(mediaDir, ...(set.dir ? set.dir.split('/') : []), ...(rel ? rel.split('/') : []))
@@ -594,16 +596,26 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     }
     // 缩略图：scriptThumbs 模板 + thumbSources（全部存在的）→ scriptIndex → 脚本第一张背景图（前面都没有才用）。没找到图时 why 给列表页的诊断面板：每个来源试了什么、为什么没成
     const why = []
-    const found = await thumbEngine.forScript(stemOf(rel), { why })
+    const found = await thumbEngine.forScript(stemOf(rel), { why, rel })
     const indexed = indexRules.length ? (await readScriptIndex()).get(stemOf(rel)) : null
     if (indexed?.thumb) await thumbEngine.addPaths(found, [indexed.thumb], 'scriptIndex', why)
     else why.push(indexRules.length ? `scriptIndex：${indexRules.length} 条规则（目录 ${[...new Set(indexRules.map((r) => r.dir))].join(' / ')}），索引里没有「${stemOf(rel)}」（索引了 ${(await readScriptIndex()).size} 个脚本）` : 'scriptIndex：未配置')
     if (!found.size) {
-      if (scene) {
+      if (!scene) why.push(`脚本没解析成功（适配器 ${adapterId}）：${parseError || '未知原因'}`)
+      else if (config.thumbFallback.enabled) {
+        // 兜底：从脚本里收几张图（事件图 / CG → 立绘 → 背景，去重、跳过黑白占位图），见 fallback-thumbs.mjs；只扫前 N 步，结果跟着 scriptInfo 一起缓存
+        const got = collectFallbackImages(scene, config.thumbFallback)
+        const max = config.thumbFallback.max
+        for (const { src } of got.images) {
+          if (found.size >= max) break
+          await thumbEngine.addPaths(found, [src], 'thumbFallback', why, max)
+        }
+        if (!found.size) why.push(`thumbFallback：扫了前 ${got.scanned} 步${got.truncated ? `（脚本共 ${scene.steps.length} 步，其余没扫）` : ''}，事件图 ${got.counts.cg} / 立绘 ${got.counts.stand} / 背景 ${got.counts.bg} 张${got.skipped ? `，${got.skipped} 张是黑白占位图被跳过` : ''}${got.images.length ? '，候选文件都不存在' : '，没有可用的图'}`)
+      } else {
         const bg = firstBackgroundSrc(scene)
         if (bg) await thumbEngine.addPaths(found, [bg], '脚本第一张背景图', why)
         else why.push(`脚本里没有背景图指令（bg）：${scene.steps.length} 步、${hasMovie ? '只有视频' : '没有画面指令'}`)
-      } else why.push(`脚本没解析成功（适配器 ${adapterId}）：${parseError || '未知原因'}`)
+      }
     }
     const thumbs = [...found.values()]
     const result = { adapterId, thumb: thumbs[0] || '', thumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumbs.length ? [] : why, issues }
@@ -823,7 +835,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 规则和目录结构对不上的时候，这里能直接看到，不会「列表是空的却不知道为什么」
   async function problemsOf(parsed, result) {
     const problems = []
-    const add = (level, code, message) => problems.push({ level, code, message })
+    const add = (level, code, message, details = null) => problems.push({ level, code, message, ...(details?.length ? { details } : {}) })
     const status = indexStatus()
     if (status?.truncated) add('warn', 'index-truncated', `文件索引超过上限 ${status.limit} 个被截断，部分场景 / 资源会找不到（现有 ${status.files} 个）`)
     if (status?.sampleTruncated) add('warn', 'sample-truncated', `脚本抽样超过上限（config.limits.sampleFiles / 适配器 contextSampleLimit）被截断，列表 / 标题可能不全`)
@@ -848,7 +860,25 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     }
     if (parsed.kind === 'dir' && !(parsed.set === defaultSet && result.node.kind === 'cards' && (config.nodes || catalogAdapter) && (await getCatalog()))) {
       const listed = await listDir(parsed.set, parsed.rel).catch(() => null)
-      if (listed?.rejected?.length) add('warn', 'unrecognized-scripts', `${listed.rejected.length} 个扩展名对的文件没有适配器认得（格式不符），没有显示：${listed.rejected.slice(0, 5).map(baseName).join('、')}${listed.rejected.length > 5 ? ' 等' : ''}（适配器：${(adapters || []).join(' / ') || '未配置'}）`)
+      if (listed?.rejected?.length) {
+        // 最多 3 个样例：头 160 个字符（CJK 连续 3 个以上换成 <N字>、控制字符去掉）+ 每个适配器为什么没认（适配器可实现 explainSniff）；不会带出长文本
+        const details = []
+        for (const file of listed.rejected.slice(0, 3)) {
+          const abs = absOf(parsed.set, file)
+          let size = null
+          let text = ''
+          try {
+            size = (await stat(abs)).size
+            if (size > 0 && size <= maxScriptBytes) {
+              const handle = await open(abs, 'r')
+              try { const buffer = Buffer.alloc(Math.min(8192, size)); await handle.read(buffer, 0, buffer.length, 0); text = decodeTextFile(buffer).text } finally { await handle.close() }
+            }
+          } catch { /* 读不了：只说原因 */ }
+          const why = explainRejectedFile({ text, size, maxBytes: maxScriptBytes, adapterIds: adapters, options: config.adapterOptions })
+          details.push(`样例 ${baseName(file)}（${size ?? '?'} 字节）${why.head ? `，开头：${why.head}` : ''}`, ...why.reasons.map((reason) => `  ${reason}`))
+        }
+        add('warn', 'unrecognized-scripts', `${listed.rejected.length} 个扩展名对的文件没有适配器认得（格式不符），没有显示：${listed.rejected.slice(0, 5).map(baseName).join('、')}${listed.rejected.length > 5 ? ' 等' : ''}（适配器：${(adapters || []).join(' / ') || '未配置'}）`, details)
+      }
       if (listed?.compiledOnly?.length) add('warn', 'compiled-only-scripts', `${listed.compiledOnly.length} 个脚本只有编译产物（.${scriptExtensions[0] || 'rpy'}c）没有源文件，解析不了，没有显示：${listed.compiledOnly.slice(0, 5).map(baseName).join('、')}${listed.compiledOnly.length > 5 ? ' 等' : ''}（需要反编译出源文件，或把源文件放到同一目录）`)
     }
     return problems
@@ -1034,6 +1064,9 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     if (result?.node && result.node.kind !== 'player') {
       const status = indexStatus()
       if (status) result.node.index = status
+    }
+    // 列表页和播放页都带 problems（config 里被丢掉的内容 / 索引截断…）：播放页右下角的渲染诊断也要能看到，不然只有「列表」那一页看得到
+    if (result?.node) {
       const problems = await problemsOf(parsed, result).catch(() => [])
       if (problems.length) result.node.problems = problems
     }

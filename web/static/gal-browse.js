@@ -378,7 +378,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   // 后端的列表阶段检查（索引被截断 / 脚本根不存在 / 没有适配器认得的文件 / 适配器没读到数据 / 适配器体检）：error 直接在列表上方标出来，全部进渲染诊断
   const nodeProblems = Array.isArray(node.problems) ? node.problems : []
   for (const item of nodeProblems) {
-    problems.push({ kind: '节点', title: `${item.level === 'error' ? '错误' : '提示'} · ${item.code}`, node: node.id, lines: [item.message] })
+    problems.push({ kind: '节点', title: `${item.level === 'error' ? '错误' : '提示'} · ${item.code}`, node: node.id, lines: [item.message, ...(Array.isArray(item.details) ? item.details : [])] })
     if (item.level === 'error') body.append(el('div', 'gal-browse-notice gal-browse-error', item.message))
   }
   if (!node.items.length && !node.notice) problems.push({ kind: '节点', title: node.title || node.id, node: node.id, lines: ['列表是空的：目录里没有被适配器认出的脚本（检查脚本根 / 扩展名 / 隐藏目录 / 筛选条件）'] })

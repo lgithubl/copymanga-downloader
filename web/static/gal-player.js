@@ -110,6 +110,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const rawTotal = [...rawGroups.values()].reduce((sum, g) => sum + g.count, 0)
   const rawIgnored = [...rawGroups.values()].reduce((sum, g) => sum + g.count - g.allowed, 0)
   const missing = new Set()
+  // 渲染诊断的「适配器统计」：scene.stats 里除了上面单独处理的（raw / unresolved / notes / arrayGuess / arrayUnknown）之外的字段——所有游戏统一在这里露出来，不再只有认识的几个字段才显示。
+  // 纯结构计数（指令数 / 行数 / 立绘数…）只在诊断文本里列出，不算「有问题」；别的非空字段（missing / fallbacks / ignored / frameEffects / indexTruncated / unmatchedEndif…）会让右下角提示可点
+  const STATS_HANDLED = new Set(['raw', 'unresolved', 'notes', 'arrayGuess', 'arrayUnknown'])
+  const STATS_STRUCTURE = new Set(['commands', 'rows', 'grids', 'frames', 'stands', 'movies', 'spines', 'choices', 'scene', 'scenes', 'form', 'dialect', 'classified'])
+  const emptyStat = (value) => value === 0 || value === '' || value === false || value == null || (typeof value === 'object' && !Object.keys(value).length)
+  const extraStats = Object.entries(scene.stats || {}).filter(([key, value]) => !STATS_HANDLED.has(key) && !emptyStat(value))
+  const nodeProblems = Array.isArray(reader.node?.problems) ? reader.node.problems : []   // 后端的列表阶段检查：config 里被丢掉 / 夹住的内容、索引截断…（播放页也带）
 
   // ---------- DOM ----------
   const root = el('div', 'gal-player')
@@ -881,6 +888,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (badVersion) parts.push(`Spine 版本不支持 ${badVersion} 个`)
     if (badParse) parts.push(`Spine 骨骼解析失败 ${badParse} 个`)
     if (missing.size) parts.push(`缺少资源 ${missing.size} 个`)
+    const spineProblems = (spineLayer?.info?.() || []).reduce((n, item) => n + (item.problems?.length || 0), 0)
+    if (spineProblems) parts.push(`骨骼渲染提示 ${spineProblems} 条`)
+    if (nodeProblems.length) parts.push(`配置 / 索引提示 ${nodeProblems.length} 条`)
+    const hasStatsInfo = Object.keys(scene.stats?.unresolved || {}).length || (scene.stats?.notes || []).length || scene.stats?.arrayGuess || scene.stats?.arrayUnknown || extraStats.some(([key]) => !STATS_STRUCTURE.has(key))
+    if (!parts.length && (hasStatsInfo || rawTotal)) parts.push(hasStatsInfo ? '适配器诊断（点开查看）' : `未渲染指令 ${rawTotal} 条，均已被 rawIgnore 允许（点开查看）`)
     if (!parts.length && spineLayer?.info?.().length) parts.push(`骨骼 ${spineLayer.info().length} 个（点开看明细 / 复制日志）`)
     note.textContent = parts.join(' · ')
     note.title = parts.length ? '点击查看详情 / 复制日志' : ''
@@ -1109,6 +1121,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       lines.push(`Spine 骨架 ${spineInfo.length} 个（当前画面）：`)
       for (const item of spineInfo) {
         lines.push(`  [${item.slot}] ${item.kind} ${item.skel}${item.loaded ? '' : item.error ? '（加载失败）' : '（还没加载好）'}`)
+        for (const line of item.problems || []) lines.push(`    ⚠ ${line}`)   // 静默的问题：动画 / 皮肤 / 轨道 / 贴图页 / 包围盒（gal-spine.js 的 spineProblemLines）
         lines.push(`    识别：Spine ${item.version || '未知版本'} → ${item.runtime ? `运行时 ${item.runtime}` : item.error ? '没有对应的运行时' : '（加载中）'}`)
         if (item.error) lines.push(`    ${item.errorKind === 'version' ? '版本不对' : item.errorKind === 'parse' ? '解析失败' : '原因'}：${item.error}`)
         if (item.loaded) {
@@ -1124,7 +1137,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
             if (item.blendOverride && item.blendOverride !== 'native') lines.push(`    混合模式覆盖：${item.blendOverride === 'allNormal' ? '全部按普通画' : 'additive 改按普通画'}（「更多 → 混合模式」）`)
             lines.push(`    预乘 alpha：图集标记 ${item.pmaInfo.atlas ? '是' : '无'} · 像素统计 ${item.pmaInfo.detected ? '是' : '否'} → ${item.pmaInfo.premultipliedOnUpload ? '直通贴图，上传时预乘' : '已经是预乘，原样上传'}，按预乘方式画${blends ? `；非 normal 混合：${blends}` : '；混合模式都是 normal'}`)
           }
-          lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? item.bounds.join(' ') : item.boundsEmpty ? '无（初始姿势下没有可见附件，由动画打开，不当参照层）' : '?'}`)
+          lines.push(`    皮肤：${item.skins.join(', ') || '（无）'}${item.skin ? `；默认皮肤是空的，改用 ${item.skin}` : ''}；版本 ${item.version || '?'}；边界 ${item.bounds ? `${item.bounds.join(' ')}${item.boundsSource === 'animation' ? '（按动画首帧算）' : item.boundsSource === 'header' ? '（按骨骼头宽高估算）' : ''}` : item.boundsEmpty ? '无（初始姿势下没有可见附件，由动画打开，不当参照层）' : '?'}`)
         }
       }
     }
@@ -1134,6 +1147,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (extra.arrayGuess) lines.push(`数组形剧情：${extra.arrayGuess}`)
     if (extra.arrayUnknown) lines.push(`数组形里认不出的字符串位置：${JSON.stringify(extra.arrayUnknown).slice(0, 600)}`)
     if (extra.unresolved && Object.keys(extra.unresolved).length) lines.push(`没查到的资源名：${JSON.stringify(extra.unresolved).slice(0, 800)}`)
+    if (extraStats.length) {
+      lines.push('适配器统计（scene.stats，其余字段）：')
+      for (const [key, value] of extraStats.slice(0, 40)) lines.push(`  ${key}：${typeof value === 'object' ? JSON.stringify(value).slice(0, 300) : value}`)
+    }
+    if (nodeProblems.length) {
+      lines.push(`配置 / 索引提示（${nodeProblems.length}）：`)
+      for (const item of nodeProblems) {
+        lines.push(`  [${item.level === 'error' ? '错误' : '提示'}] ${item.code}：${item.message}`)
+        for (const detail of item.details || []) lines.push(`    ${detail}`)
+      }
+    }
     if (missing.size) { lines.push(`缺少资源 ${missing.size} 个：`); for (const src of [...missing].slice(0, 100)) lines.push(`  ${src}`) }
     return lines.join('\n')
   }

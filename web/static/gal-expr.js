@@ -48,6 +48,14 @@ export function createExprReview({ container, reader, viewKey, onOpen }) {
   const editor = el('div', 'gal-expr-editor')
   main.append(stage, info, presetBar, editor)
   root.append(head, side, main)
+  // 后端的列表阶段检查（config 里被丢掉的内容 / 索引截断…）：这个页面以前没有渲染诊断，有问题时在底部折叠列出（和列表页「渲染诊断」同一份 node.problems）
+  if (Array.isArray(node.problems) && node.problems.length) {
+    const details = el('details', 'gal-expr-problems')
+    details.append(el('summary', '', `配置 / 索引提示（${node.problems.length}）`))
+    const pre = el('pre', 'gal-browse-diag-text', node.problems.map((item) => [`[${item.level === 'error' ? '错误' : '提示'}] ${item.code}：${item.message}`, ...(item.details || []).map((d) => `  ${d}`)].join('\n')).join('\n'))
+    details.append(pre)
+    root.append(details)
+  }
   container.replaceChildren(root)
   if (!casts.length) { main.replaceChildren(el('div', 'gal-browse-empty', '没有找到用到分层脸骨架的预设（脚本里没有 SPINE_ACTOR，或骨架不在 data/spine/ 下）')); return { destroy() {}, setImmersive() {} } }
 

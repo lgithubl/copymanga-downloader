@@ -204,6 +204,44 @@ function detectPremultiplied(image) {
   } catch { return false }
 }
 
+// ---------- 渲染诊断：骨架「静默」的问题（以前只在控制台或根本没有）----------
+// 包围盒怎么来的：setup = 初始姿势；animation = 初始姿势没有可见附件（附件由动画打开），按动画首帧（及之后几个很短的时间点）算；
+// header = 动画里也没有，用骨骼文件头里的 width / height 估算；none = 都没有（包围盒为空，画不出东西）
+export const BOUNDS_SOURCES = ['setup', 'animation', 'header', 'none']
+const slotAttachment = (slot) => (typeof slot.getAttachment === 'function' ? slot.getAttachment() : slot.attachment)
+const finiteBox = (offset, size) => [offset.x, offset.y, size.x, size.y].every(Number.isFinite) && size.x > 0 && size.y > 0
+const attachedCount = (skeleton) => (skeleton.slots || []).filter((slot) => slotAttachment(slot)).length
+const listNames = (names, max = 12) => `${names.slice(0, max).join(', ')}${names.length > max ? ` 等 ${names.length} 个` : ''}`
+
+// 把 info() 的一项（见 info）变成中文问题行；没有问题 = []。纯函数（测试直接喂对象）。
+// 覆盖：(a) 要的动画骨架里没有（按轨道）(b) 要的皮肤没有 (c) 多轨道里有轨道没播（写明原因）(d) 图集页 / 贴图缺失 (e) 加载成功但没有可见附件 / 包围盒为空
+export function spineProblemLines(item) {
+  const lines = []
+  if (!item) return lines
+  if (item.missingPages?.length) lines.push(`图集贴图缺失：${listNames(item.missingPages)}（atlas 声明 ${item.atlasPages || item.missingPages.length} 页，缺 ${item.missingPages.length} 页）——骨架整个没有加载，画面上没有它`)
+  if (!item.loaded) return lines
+  const names = item.animations || []
+  const tracks = item.requestedTracks || []
+  const multi = tracks.length > 1 || (tracks.length === 1 && tracks[0].track !== 0)
+  for (const t of tracks) {
+    if (t.found) continue
+    const where = multi ? `轨道 ${t.track} 要播的动画「${t.anim}」` : `要播的动画「${t.anim}」`
+    const fallback = item.faceDefaults?.length ? '，已按表情预设 / 默认脸处理（见表情行）' : !multi && item.used ? `，改播「${item.used}」` : multi ? '，这条轨道没有播' : '，没有播任何动画（骨架停在初始姿势）'
+    lines.push(`${where}骨架里没有${fallback}（骨架里有 ${names.length} 个动画：${listNames(names, 8) || '无'}）`)
+  }
+  if (multi) {
+    const applied = tracks.filter((t) => t.found)
+    const missing = tracks.filter((t) => !t.found)
+    if (missing.length) lines.push(`多轨道：要 ${tracks.map((t) => `${t.track}:${t.anim}`).join(' ')} → 实际应用 ${applied.length ? applied.map((t) => `${t.track}:${t.anim}`).join(' ') : '（无）'}；没应用的轨道原因：动画名在骨架里不存在`)
+  }
+  if (item.skinRequested && !item.skinFound) lines.push(`要的皮肤「${item.skinRequested}」骨架里没有${item.skin ? `，改用「${item.skin}」` : '，用默认皮肤'}（骨架里的皮肤：${(item.skins || []).map((s) => s.replace(/\(\d+\)$/, '')).join(', ') || '无'}）`)
+  if (item.boundsSource === 'animation') lines.push('初始姿势没有可见附件，已按动画首帧计算包围盒')
+  else if (item.boundsSource === 'header') lines.push(`初始姿势和动画首帧都没有可见附件，包围盒按骨骼文件头的宽高估算（${item.bounds ? item.bounds.join(' ') : '?'}）——动画 / 皮肤是否选对？可能画不出东西`)
+  else if (item.boundsSource === 'none' || item.boundsEmpty) lines.push(`包围盒为空：骨架加载成功，但初始姿势${item.animationsTried ? '和动画首帧' : ''}都没有可见附件（共 ${item.slotCount ?? '?'} 个槽，附件 ${item.attachmentsSetup ?? 0} 个可见），骨骼文件头也没有宽高——画面上不会有东西（检查动画 / 皮肤 / 贴图区域名）`)
+  else if (item.slotCount === 0) lines.push('骨架里没有任何槽（slots 为空），没有东西可画')
+  return lines
+}
+
 // onMissing(src)：文件取不到（骨骼 / atlas / 图集）；onUnavailable(version)：这个版本的运行时没有；
 // onError({ src, kind, version, runtime, message })：文件都取到了但不能用——kind: 'version'（版本不支持）| 'parse'（解析失败）
 export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavailable = () => {}, onError = () => {} }) {
@@ -310,10 +348,13 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         if (legacy) pageNames = atlasText.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\.(png|jpe?g|webp)$/i.test(line))
         else { atlas = new spine.TextureAtlas(atlasText); pageNames = atlas.pages.map((page) => page.name) }
       } catch (error) { return fail({ kind: 'parse', message: `atlas 解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` }) }
+      if (!pageNames.length) return fail({ kind: 'parse', message: `atlas 里没有找到任何图集页（.png / .jpg / .webp 行）：${spec.atlas}（文件内容不对？）` })
       const images = new Map()
+      const missingPages = []
       for (const page of pageNames) {
-        try { images.set(page, await loadImage(dir + page)) } catch { onMissing(dir + page); return { error: { ...base, kind: 'missing', message: `取不到图集图片 ${dir + page}` } } }
+        try { images.set(page, await loadImage(dir + page)) } catch { onMissing(dir + page); missingPages.push(dir + page) }
       }
+      if (missingPages.length) return { error: { ...base, kind: 'missing', message: `取不到图集图片 ${missingPages.join('、')}（atlas 声明 ${pageNames.length} 页，缺 ${missingPages.length} 页）`, missingPages, atlasPages: pageNames.length } }
       try {
         const imageOf = (page) => images.get(page) || images.get(page.split('/').pop())
         // 预乘：图集标记（4.1+ 才有 pma 行）或像素统计认出已经预乘的，原样上传；直通 alpha 的贴图（透明处还带着颜色）让浏览器上传时预乘一次。
@@ -366,6 +407,69 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     roots.forEach((bone, i) => { [bone.x, bone.y, bone.scaleX, bone.scaleY] = saved[i] })
   }
 
+  // 皮肤：脚本指定了（spec.skin，utage 的 Skin 列）且骨架里有 = 用它；指定了但没有 = 退回 pickSpineSkin 的选择并记下来（渲染诊断报「要的皮肤没有」）
+  function skinFor(data, spec) {
+    const requested = typeof spec?.skin === 'string' ? spec.skin : ''
+    if (requested) {
+      const hit = (data.skins || []).find((skin) => skin.name === requested)
+      if (hit) return { skin: hit, requested, found: true }
+    }
+    return { skin: pickSpineSkin(data), requested, found: !requested }
+  }
+
+  // 包围盒（布局用）：初始姿势有可见附件 = 初始姿势；没有（附件由动画打开，比如整个身体 / 脸由 slots 时间线切附件拼出来）= 在一副「临时骨架」上套上要播的动画，
+  // 取首帧（再往后几个很短的时间点，防止首个关键帧不在 0 秒）的包围盒；还是空 = 骨骼文件头里的 width / height；都没有 = 空。临时骨架不碰正在播放的那一副
+  function measureBounds(inst) {
+    const { backend, data } = inst
+    const sp = backend.spine
+    const make = () => {
+      const skeleton = new sp.Skeleton(data)
+      const skin = skinFor(data, inst.spec).skin
+      if (skin) skeleton.setSkin(skin)
+      skeleton.setToSetupPose()
+      return skeleton
+    }
+    const probe = (skeleton) => {
+      const offset = new sp.Vector2()
+      const size = new sp.Vector2()
+      skeleton.getBounds(offset, size, [])
+      return finiteBox(offset, size) ? { x: offset.x, y: offset.y, w: size.x, h: size.y } : null
+    }
+    const base = make()
+    updateWorld(backend, base)
+    const out = { box: probe(base), source: 'setup', attachmentsSetup: attachedCount(base), slotCount: (data.slots || []).length, animationsTried: false }
+    if (out.box) return out
+    const plays = Array.isArray(inst.spec.tracks) && inst.spec.tracks.length ? inst.spec.tracks.filter((t) => data.findAnimation(t.anim)).map((t) => ({ track: t.track, anim: t.anim })) : inst.anim ? [{ track: 0, anim: inst.anim }] : []
+    if (plays.length) {
+      out.animationsTried = true
+      const skeleton = make()
+      const state = new sp.AnimationState(new sp.AnimationStateData(data))
+      for (const play of plays) state.setAnimation(play.track, play.anim, false)   // 不循环：时间越过动画末尾就停在末尾帧（循环会绕回去，只有一个关键帧的动画永远取不到）
+      for (const dt of [0, 0.05, 0.2, 0.5, 1, 1000]) {
+        state.update(dt)
+        state.apply(skeleton)
+        updateWorld(backend, skeleton)
+        const box = probe(skeleton)
+        if (box) return { ...out, box, source: 'animation' }
+      }
+    }
+    const w = Number(data.width)
+    const h = Number(data.height)
+    if (w > 0 && h > 0) {
+      const x = Number.isFinite(Number(data.x)) && data.x !== undefined ? Number(data.x) : -w / 2
+      const y = Number.isFinite(Number(data.y)) && data.y !== undefined ? Number(data.y) : 0
+      return { ...out, box: { x, y, w, h }, source: 'header' }
+    }
+    return { ...out, box: null, source: 'none' }
+  }
+  function refreshBounds(inst) {
+    let m
+    try { m = measureBounds(inst) } catch { m = { box: null, source: 'none', attachmentsSetup: 0, slotCount: (inst.data.slots || []).length, animationsTried: false } }
+    Object.assign(inst, { boundsOk: Boolean(m.box), boundsSource: m.source, attachmentsSetup: m.attachmentsSetup, slotCount: m.slotCount, animationsTried: m.animationsTried })
+    inst.boundsAnim = inst.anim
+    inst.bounds = m.box ? { x: m.box.x, y: m.box.y, w: m.box.w || 1, h: m.box.h || 1 } : { x: -960, y: -540, w: 1920, h: 1080 }
+  }
+
   function pickAnimation(data, wanted, kind) {
     return pickSpineAnimation(data, wanted, kind)
   }
@@ -401,6 +505,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
   function applySpec(inst, spec, live) {
     inst.spec = spec
+    if ((typeof spec.skin === 'string' ? spec.skin : '') !== (inst.skinRequested || '')) {   // 脚本换了皮肤
+      const pick = skinFor(inst.data, spec)
+      inst.skeleton.setSkin(pick.skin)
+      Object.assign(inst, { skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found })
+    }
     // 多轨道（girlscreation 的角色：轨道 0 身体、轨道 1 表情，同时播）：spec.tracks = [{ track, anim, loop }]；名字对不上的轨道跳过并记下来（诊断面板里看）
     const tracked = Array.isArray(spec.tracks) && spec.tracks.length > 0
     const name = tracked ? (spec.tracks.find((t) => inst.data.findAnimation(t.anim))?.anim || '') : pickAnimation(inst.data, spec.anim, spec.kind)
@@ -465,6 +574,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     }
     if (live && spec.action && ACTIONS[spec.action]) inst.action = { kind: spec.action, began: performance.now() }
     else if (!live) inst.action = null
+    // 包围盒不是从初始姿势来的（附件由动画打开）：换了动画 / 皮肤就重新量一次（第一次在 create 里量）
+    if (inst.boundsSource && inst.boundsSource !== 'setup' && (changed || inst.boundsAnim !== inst.anim)) { inst.boundsAnim = inst.anim; refreshBounds(inst) }
   }
 
   async function create(slot, spec, live, token) {
@@ -482,18 +593,14 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const sp = backend.spine
       applyBlendOverride(loaded.data)
       const skeleton = new sp.Skeleton(loaded.data)
-      const skin = pickSpineSkin(loaded.data)
-      if (skin) skeleton.setSkin(skin)
+      const pick = skinFor(loaded.data, spec)
+      if (pick.skin) skeleton.setSkin(pick.skin)
       skeleton.setToSetupPose()
       updateWorld(backend, skeleton)
-      const offset = new sp.Vector2()
-      const size = new sp.Vector2()
-      skeleton.getBounds(offset, size, [])
       const state = new sp.AnimationState(new sp.AnimationStateData(loaded.data))
-      // 初始姿势下没有任何可见附件的层（附件由动画打开）包围盒是 Infinity / NaN：不能拿它缩放（会整个画面消失），记下来，布局时不当参照层
-      const boundsOk = [offset.x, offset.y, size.x, size.y].every(Number.isFinite)
-      Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: skin?.name || '', data: loaded.data, skeleton, state, boundsOk, bounds: boundsOk ? { x: offset.x, y: offset.y, w: size.x || 1, h: size.y || 1 } : { x: -960, y: -540, w: 1920, h: 1080 }, anim: '', loop: true })
+      Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found, data: loaded.data, skeleton, state, boundsOk: false, bounds: { x: -960, y: -540, w: 1920, h: 1080 }, anim: '', loop: true })
       applySpec(current, spec, live)
+      refreshBounds(current)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
       state.apply(skeleton)
@@ -697,15 +804,23 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     },
     setPaused(value) { paused = Boolean(value); if (paused) { cancelAnimationFrame(raf); raf = 0; last = 0 } else kick() },
     // 每个站位 / 静图的骨架信息（诊断面板用）：路径、要的动画 / 实际播的动画、骨架里有哪些动画和皮肤、边界、版本
-    info: () => [...instances].map(([slot, inst]) => ({
-      slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
-      requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
-      faceDefaults: inst.faceDefaults || [], expression: inst.expression || null, missingRequested: inst.missingAnims || [],
-      pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null, blendOverride,
-      animations: inst.data ? inst.data.animations.map((animation) => animation.name) : [],
-      skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '',
-      version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', boundsEmpty: Boolean(inst.skeleton) && inst.boundsOk === false, bounds: inst.bounds && inst.boundsOk !== false ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,
-    })),
+    info: () => [...instances].map(([slot, inst]) => {
+      const names = inst.data ? inst.data.animations.map((animation) => animation.name) : []
+      const requestedTracks = (inst.spec.tracks?.length ? inst.spec.tracks.map((t) => ({ track: t.track, anim: t.anim })) : inst.spec.anim ? [{ track: 0, anim: inst.spec.anim }] : []).map((t) => ({ ...t, found: Boolean(inst.data) && names.includes(t.anim) }))
+      const item = {
+        slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
+        requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
+        requestedTracks,
+        faceDefaults: inst.faceDefaults || [], expression: inst.expression || null, missingRequested: inst.missingAnims || [],
+        pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null, blendOverride,
+        animations: names,
+        skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '', skinRequested: inst.skinRequested || '', skinFound: inst.skinFound !== false,
+        version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', missingPages: inst.error?.missingPages || [], atlasPages: inst.error?.atlasPages || 0,
+        boundsEmpty: Boolean(inst.skeleton) && (inst.boundsSource ? inst.boundsSource === 'none' : inst.boundsOk === false), boundsSource: inst.boundsSource || '', bounds: inst.bounds && inst.boundsOk !== false ? [inst.bounds.x, inst.bounds.y, inst.bounds.w, inst.bounds.h].map((n) => Math.round(n)) : null,
+        attachmentsSetup: inst.attachmentsSetup ?? null, slotCount: inst.slotCount ?? null, animationsTried: Boolean(inst.animationsTried),
+      }
+      return { ...item, problems: spineProblemLines(item) }
+    }),
     // WebGL 状态（渲染诊断用，白屏 / 黑屏时看这个）：每个运行时一块画布——显卡型号、上下文有没有丢、画布像素尺寸、最大贴图尺寸、最近的 GL 错误
     glInfo: () => readyBackends.map((backend) => {
       const gl = backend.gl
