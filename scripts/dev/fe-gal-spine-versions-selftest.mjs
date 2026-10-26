@@ -106,7 +106,7 @@ const near = (rgba, [r, g, b], tol = 45) => rgba[3] > 200 && Math.abs(rgba[0] - 
   check('4.0 的层没有铺满整个舞台（上方是透明的，不是天蓝）', upper4[3] < 20, J(upper4))
   const diag = await diagOf(page)
   check('诊断面板：每个骨架写出「识别：Spine 版本 → 运行时」', /识别：Spine 3\.8\.99 → 运行时 3\.8/.test(diag) && /识别：Spine 4\.0\.64 → 运行时 4\.0/.test(diag) && /识别：Spine 4\.2\.38 → 运行时 4\.2/.test(diag), diag)
-  check('不支持的版本（4.1.55）：诊断里写「版本不对：Spine 版本 4.1.55 不支持（支持 3.8 / 4.0 / 4.2）」，识别栏是 4.1.55 → 没有对应的运行时', /识别：Spine 4\.1\.55 → 没有对应的运行时/.test(diag) && /版本不对：Spine 版本 4\.1\.55 不支持（支持 3\.8 \/ 4\.0 \/ 4\.2）/.test(diag), diag)
+  check('不支持的版本（4.1.55）：诊断里写「版本不对：Spine 版本 4.1.55 不支持（支持 3.6 / 3.8 / 4.0 / 4.2）」，识别栏是 4.1.55 → 没有对应的运行时', /识别：Spine 4\.1\.55 → 没有对应的运行时/.test(diag) && /版本不对：Spine 版本 4\.1\.55 不支持（支持 3\.6 \/ 3\.8 \/ 4\.0 \/ 4\.2）/.test(diag), diag)
   check('损坏的骨骼（图集 png 都在）：写「解析失败…Spine 3.8.99，运行时 3.8」，不冒充缺资源；缺资源清单里没有 9.png', /解析失败：骨骼解析失败（Spine 3\.8\.99，运行时 3\.8）/.test(diag) && !/9\.png/.test(diag.split('缺少资源')[1] || ''), diag)
   const noteText = await page.$eval('.gal-note', (e) => e.textContent)
   check('右下角提示：「Spine 版本不支持 1 个」「Spine 骨骼解析失败 1 个」，没有「缺少资源」', /Spine 版本不支持 1 个/.test(noteText) && /Spine 骨骼解析失败 1 个/.test(noteText) && !/缺少资源/.test(noteText), noteText)

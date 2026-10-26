@@ -946,7 +946,9 @@ async function gcMod0Prepare({ truncated }) {
   check('版本识别：二进制 3.8（hash 字符串 + 版本）→ 3.8.99 / 运行时 3.8；4.0（8 字节 hash + 版本，后面跟着 Chara / Cheek）→ 4.0.64 / 4.0；4.2 → 4.2.38 / 4.2', J(d(bin38)) === J({ format: 'binary', version: '3.8.99', runtime: '3.8' }) && J(d(bin40)) === J({ format: 'binary', version: '4.0.64', runtime: '4.0' }) && J(d(bin42)) === J({ format: 'binary', version: '4.2.38', runtime: '4.2' }), J([d(bin38), d(bin40), d(bin42)]))
   check('版本识别：JSON（skeleton.spine）；前面有空白也行', J(d(json('4.2.38'))) === J({ format: 'json', version: '4.2.38', runtime: '4.2' }) && d(json('3.8.75')).runtime === '3.8' && d(json('4.0.12')).runtime === '4.0', J([d(json('4.2.38')), d(json('4.0.12'))]))
   check('版本识别：不支持的版本（4.1 / 3.7 / 4.3）认出版本号但 runtime 为空；认不出的（乱码 / 没有版本）版本为空', d(bin41).version === '4.1.55' && d(bin41).runtime === '' && d(bin37).version === '3.7.94' && d(bin37).runtime === '' && d(json('4.3.1')).runtime === '' && d(Uint8Array.from([0, 1, 2, 3, 250, 251])).version === '' && d(Uint8Array.from([0, 1, 2, 3, 250, 251])).runtime === '', J([d(bin41), d(bin37), d(json('4.3.1'))]))
-  check('三个运行时文件都登记了（3.8 / 4.0 / 4.2）', J(Object.keys(SPINE_RUNTIMES)) === J(['3.8', '4.0', '4.2']) && Object.values(SPINE_RUNTIMES).every((p) => p.startsWith('/vendor/spine-webgl')), J(SPINE_RUNTIMES))
+  const bin36 = Uint8Array.from([...str('FrNJhva2RVZ1bbIjdNspNttett4='), ...str('3.6.38'), 0, 0, 0, 0])
+  check('版本识别：二进制 3.6（28 字符 hash + 3.6.38）→ 运行时 3.6；JSON "spine":"3.6.52" → 3.6；3.7 仍不支持', J(d(bin36)) === J({ format: 'binary', version: '3.6.38', runtime: '3.6' }) && J(d(json('3.6.52'))) === J({ format: 'json', version: '3.6.52', runtime: '3.6' }) && d(bin37).runtime === '', J([d(bin36), d(json('3.6.52')), d(bin37)]))
+  check('四个运行时文件都登记了（3.6 / 3.8 / 4.0 / 4.2）', J(Object.keys(SPINE_RUNTIMES).sort()) === J(['3.6', '3.8', '4.0', '4.2']) && Object.values(SPINE_RUNTIMES).every((p) => p.startsWith('/vendor/spine-webgl')), J(SPINE_RUNTIMES))
   // 预乘计数可以分块累加（每块一个 ImageData）
   const acc = { semi: 0, bad: 0 }
   countPremultiplied(Uint8ClampedArray.from(Array.from({ length: 100 }, () => [10, 10, 10, 100]).flat()), acc)

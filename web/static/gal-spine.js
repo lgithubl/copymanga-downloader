@@ -1,13 +1,16 @@
 // Gal 播放器的 Spine 渲染层：叠在背景上的 WebGL canvas，画规范场景里 spine 指令描述的骨骼动画（站位立绘、整幅静态画面）。
-// 运行时是 Esotericsoftware 官方 spine-webgl，三个版本（许可证限制，不进仓库：Dockerfile 构建时下载到 /vendor/，本地用 scripts/fetch-spine-runtime.sh）：
-//   3.8 → spine-webgl.js    4.0 → spine-webgl-4.0.js    4.2 → spine-webgl-4.2.js
+// 运行时是 Esotericsoftware 官方 spine-webgl，四个版本（许可证限制，不进仓库：Dockerfile 构建时下载到 /vendor/，本地用 scripts/fetch-spine-runtime.sh）：
+//   3.6 → spine-webgl-3.6.js    3.8 → spine-webgl.js    4.0 → spine-webgl-4.0.js    4.2 → spine-webgl-4.2.js
+// 3.6 的官方 Web 运行时只有 JSON 加载器、没有二进制加载器：二进制的 3.6 骨骼先由 gal-spine36-binary.js 转成 3.6 JSON 结构，再交给官方 SkeletonJson 建数据。
 // 每个骨骼先读文件头认出版本（二进制：头里的版本字符串；JSON：skeleton.spine），再选对应的运行时解析和绘制；认不出 / 不支持的版本如实报「版本不支持」，
 // 不会冒充成缺资源。每个运行时各用一块 canvas（同一帧里不同版本的骨骼不交叉叠层，各自按顺序画）。没有运行时就只提示、不渲染。
 // 骨骼文件两种都认：二进制（.skel / .skel.bytes）和 JSON（内容以 { 开头）。
 
-export const SPINE_RUNTIMES = { '3.8': '/vendor/spine-webgl.js', '4.0': '/vendor/spine-webgl-4.0.js', '4.2': '/vendor/spine-webgl-4.2.js' }
+import { spine36BinaryToJson } from './gal-spine36-binary.js'
+
+export const SPINE_RUNTIMES = { '3.6': '/vendor/spine-webgl-3.6.js', '3.8': '/vendor/spine-webgl.js', '4.0': '/vendor/spine-webgl-4.0.js', '4.2': '/vendor/spine-webgl-4.2.js' }
 const runtimePromises = new Map()
-// version：SPINE_RUNTIMES 的键。3.8 沿用 <script>（全局 spine）；4.x 的包也是 `var spine = …`，几个都放全局会互相覆盖，
+// version：SPINE_RUNTIMES 的键。3.8 沿用 <script>（全局 spine）；3.6 和 4.x 的包也是 `var spine = …`，几个都放全局会互相覆盖（3.6 和 3.8 要在同一个页面里共存），
 // 所以取文本、包进函数里执行，各自拿到自己的 spine 对象
 export function loadSpineRuntime(version = '3.8') {
   if (!runtimePromises.has(version)) {
@@ -25,15 +28,15 @@ export function loadSpineRuntime(version = '3.8') {
       }
       fetch(src)
         .then((response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
-        .then((text) => { const sp = new Function(`${text}\nreturn spine`)(); resolve(sp?.SceneRenderer ? sp : null) })
+        .then((text) => { const sp = new Function(`${text}\nreturn spine`)(); resolve(sp?.SceneRenderer || sp?.webgl?.SceneRenderer ? sp : null) })
         .catch(() => resolve(null))
     }))
   }
   return runtimePromises.get(version)
 }
 
-// 从骨骼文件头认版本：二进制 = 头 96 字节里的版本字符串（3.8：先是 hash 字符串再是版本；4.x：8 字节 hash 再是版本）；JSON = skeleton.spine。
-// runtime = 对应的运行时键（'3.8' | '4.0' | '4.2'），不支持的版本（3.7 / 4.1 / 4.3 …）是 ''
+// 从骨骼文件头认版本：二进制 = 头 96 字节里的版本字符串（3.6 / 3.8：先是 hash 字符串再是版本；4.x：8 字节 hash 再是版本）；JSON = skeleton.spine。
+// runtime = 对应的运行时键（'3.6' | '3.8' | '4.0' | '4.2'），不支持的版本（3.7 / 4.1 / 4.3 …）是 ''
 export function detectSpineVersion(bytes) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   const format = u8.find((b) => b > 32) === 0x7b ? 'json' : 'binary'
@@ -295,15 +298,16 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const base = { version: detected.version, runtime: detected.runtime, format: detected.format }
       console.info(`[gal-spine] ${spec.skel}：识别为 Spine ${detected.version || '未知版本'}（${detected.format === 'json' ? 'JSON' : '二进制'}）→ ${detected.runtime ? `运行时 ${detected.runtime}` : '没有对应的运行时'}`)
       const fail = (error) => { onError({ src: spec.skel, ...base, ...error }); return { error: { ...base, ...error } } }
-      if (!detected.runtime) return fail({ kind: 'version', message: `Spine 版本 ${detected.version || '未知'} 不支持（支持 3.8 / 4.0 / 4.2）` })
+      if (!detected.runtime) return fail({ kind: 'version', message: `Spine 版本 ${detected.version || '未知'} 不支持（支持 3.6 / 3.8 / 4.0 / 4.2）` })
       const backend = await backendFor(detected.runtime)
       if (!backend || destroyed) return { error: { ...base, kind: 'runtime', message: `Spine ${detected.runtime} 运行时不可用` } }   // onUnavailable 已经提示过
       const { spine, ns } = backend
       const dir = spec.atlas.includes('/') ? spec.atlas.slice(0, spec.atlas.lastIndexOf('/') + 1) : ''
       let atlas = null
       let pageNames
+      const legacy = detected.runtime === '3.6' || detected.runtime === '3.8'   // 3.x：TextureAtlas 构造时就要贴图加载器、类在 spine.webgl 下；4.x 的 atlas 先解析、再给每页设贴图
       try {
-        if (detected.runtime === '3.8') pageNames = atlasText.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\.(png|jpe?g|webp)$/i.test(line))
+        if (legacy) pageNames = atlasText.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\.(png|jpe?g|webp)$/i.test(line))
         else { atlas = new spine.TextureAtlas(atlasText); pageNames = atlas.pages.map((page) => page.name) }
       } catch (error) { return fail({ kind: 'parse', message: `atlas 解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` }) }
       const images = new Map()
@@ -320,7 +324,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         const gl = backend.gl
         if (premultiplyOnUpload) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
         try {
-          if (detected.runtime === '3.8') {
+          if (legacy) {
             const declared = declaredPageSizes(atlasText)
             atlas = new spine.TextureAtlas(atlasText, (page) => reportDeclaredSize(new ns.GLTexture(backend.gl, imageOf(page)), declared.get(page)))
           } else {
@@ -328,9 +332,12 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
           }
         } finally { if (premultiplyOnUpload) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false) }
         const loader = new spine.AtlasAttachmentLoader(atlas)
+        // 3.6 的官方 Web 运行时没有 SkeletonBinary：二进制先转成 3.6 JSON 结构，再由官方 SkeletonJson 建数据（见 gal-spine36-binary.js）
         const data = detected.format === 'json'
           ? new spine.SkeletonJson(loader).readSkeletonData(JSON.parse(new TextDecoder().decode(u8)))
-          : new spine.SkeletonBinary(loader).readSkeletonData(u8)
+          : detected.runtime === '3.6'
+            ? new spine.SkeletonJson(loader).readSkeletonData(spine36BinaryToJson(u8))
+            : new spine.SkeletonBinary(loader).readSkeletonData(u8)
         // 预乘 alpha：图集里写了 pma（4.x）或者像素统计认出来就按预乘画。两个来源分开记，渲染诊断里能看到（白块 / 发黑多半是这里猜错了）
         // 混合模式：非 normal 的槽数（additive / multiply / screen）和 clipping 附件数——白块、发黑常常是这几类槽
         const blends = { additive: 0, multiply: 0, screen: 0 }
@@ -342,6 +349,21 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     })()
     dataCache.set(spec.skel, promise)
     return promise
+  }
+
+  // 更新世界变换。3.6 的 Skeleton 没有 scaleX / scaleY（3.8 起才有；3.6 只有 flipX / flipY，世界坐标 = 骨骼局部值 + skeleton.x / y），
+  // layout() 写进 skeleton.scaleX / scaleY 的缩放在 3.6 里不会生效。所以 3.6 把缩放乘到根骨骼的局部 x / y / scaleX / scaleY 上再更新、更新完还原
+  // （动画只覆盖有时间线的属性，不还原的话没动画的属性每帧会被再乘一次）。子骨骼都继承根的缩放，整个骨架等比放大
+  function updateWorld(backend, skeleton) {
+    if (backend.key !== '3.6') return skeleton.updateWorldTransform(backend.physics)
+    const sx = Number.isFinite(skeleton.scaleX) ? skeleton.scaleX : 1
+    const sy = Number.isFinite(skeleton.scaleY) ? skeleton.scaleY : 1
+    if (sx === 1 && sy === 1) return skeleton.updateWorldTransform()
+    const roots = skeleton.bones.filter((bone) => !bone.parent)
+    const saved = roots.map((bone) => [bone.x, bone.y, bone.scaleX, bone.scaleY])
+    for (const bone of roots) { bone.x *= sx; bone.y *= sy; bone.scaleX *= sx; bone.scaleY *= sy }
+    skeleton.updateWorldTransform()
+    roots.forEach((bone, i) => { [bone.x, bone.y, bone.scaleX, bone.scaleY] = saved[i] })
   }
 
   function pickAnimation(data, wanted, kind) {
@@ -463,7 +485,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const skin = pickSpineSkin(loaded.data)
       if (skin) skeleton.setSkin(skin)
       skeleton.setToSetupPose()
-      skeleton.updateWorldTransform(backend.physics)
+      updateWorld(backend, skeleton)
       const offset = new sp.Vector2()
       const size = new sp.Vector2()
       skeleton.getBounds(offset, size, [])
@@ -475,7 +497,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
       state.apply(skeleton)
-      skeleton.updateWorldTransform(backend.physics)
+      updateWorld(backend, skeleton)
       kick()
     } finally {
       pending -= 1
@@ -626,7 +648,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         inst.state.update(dt)
         inst.state.apply(inst.skeleton)
         layout(inst, width, height)
-        inst.skeleton.updateWorldTransform(backend.physics)
+        updateWorld(backend, inst.skeleton)
         renderer.drawSkeleton(inst.skeleton, Boolean(inst.pma))
         drawnCount += 1
       }

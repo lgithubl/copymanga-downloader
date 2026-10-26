@@ -1,6 +1,7 @@
 // 造 Spine 3.8 测试数据 + tenkeiprdx 素材目录（合成的，不含任何原作内容）。
 //   spineBinary / spineJson：最小骨架（一根骨骼、一个插槽、一张 200×400 的区域附件，每个动画一条骨骼旋转时间线）
-//   writeSpine(dir, base, { format: 'binary' | 'json', color, animations }) 写 <base>.skel.bytes / .atlas.txt / .png
+//   spineBinary36：Spine 3.6 的二进制（见函数上的注释）
+//   writeSpine(dir, base, { format: 'binary' | 'json' | 'binary36', color, animations }) 写 <base>.skel.bytes / .atlas.txt / .png
 //   buildTenkeiFixture(root, { wrapper }) 造出 StreamingAssets/…/Imported 的样子
 // 二进制是照官方 3.8 SkeletonBinary 的读取顺序手写的：selftest 里用官方运行时再读一遍，确认结构对。
 import { execFileSync } from 'node:child_process'
@@ -57,12 +58,58 @@ export function spineBinary({ animations = DEFAULT_ANIMATIONS, hash = 'testhash'
   return w.done()
 }
 
+// Spine 3.6 二进制（GrenzeViewer 那种）：照 3.6 分支 libgdx 版 SkeletonBinary 的读取顺序手写。和 3.8 的区别：字符串是行内的（没有字符串表）、
+// 骨骼没有 skinRequired、插槽颜色后面跟暗色 int（-1 = 没有）、附件类型是 byte 不是 varint、曲线是 byte(0 线性 / 1 阶梯 / 2 贝塞尔 + 4 个浮点)。
+// 头：hash 字符串（~28 字符，Grenze 的真实文件就是这样）+ 版本字符串。
+// animations：名字 → { angle（骨骼固定转角，单帧，设置后立刻生效）} 或 名字（转角 0）；每个动画还带一条带曲线的颜色时间线（线性 + 贝塞尔 + 阶梯各一帧），把曲线分支也走一遍
+export function spineBinary36({ animations = DEFAULT_ANIMATIONS, hash = 'FrNJhva2RVZ1bbIjdNspNttett4=', version = '3.6.38', nonessential = false } = {}) {
+  const w = new Writer()
+  w.string(hash)
+  w.string(version)
+  w.float(200); w.float(400)          // width height（3.6 没有 x / y）
+  w.bool(nonessential)
+  if (nonessential) { w.float(30); w.string('./images/') }
+  w.varint(1)                          // 骨骼
+  w.string('root')
+  for (const v of [0, 0, 0, 1, 1, 0, 0, 0]) w.float(v)   // rotation x y scaleX scaleY shearX shearY length
+  w.varint(0)                          // transformMode
+  if (nonessential) w.int32(-1)
+  w.varint(1)                          // 插槽
+  w.string('body'); w.varint(0); w.int32(-1); w.int32(-1); w.string('body'); w.varint(0)   // 名字、骨骼、颜色、暗色(-1)、附件名、混合模式
+  w.varint(0); w.varint(0); w.varint(0)   // ik / transform / path
+  w.varint(1)                          // 默认皮肤：1 个插槽
+  w.varint(0); w.varint(1)             // 插槽 0，1 个附件
+  w.string('body')                     // 附件名
+  w.string(null); w.byte(0)            // 附件自己的名字（null = 同名）、类型 region
+  w.string(null)                       // path（null = 附件名）
+  for (const v of [0, 0, REGION.y, 1, 1, REGION.width, REGION.height]) w.float(v)   // rotation x y scaleX scaleY width height
+  w.int32(-1)                          // color
+  w.varint(0)                          // 其它皮肤
+  w.varint(0)                          // 事件
+  w.varint(animations.length)
+  for (const entry of animations) {
+    const { name, angle = 0 } = typeof entry === 'string' ? { name: entry } : entry
+    w.string(name)
+    w.varint(1); w.varint(0); w.varint(1)   // 插槽时间线：1 个插槽（0），1 条
+    w.byte(1); w.varint(3)               // SLOT_COLOR，3 帧
+    w.float(0); w.int32(-1); w.byte(2); for (const v of [0.25, 0, 0.75, 1]) w.float(v)   // 帧 0 + 贝塞尔
+    w.float(0.5); w.int32(-1); w.byte(1) // 帧 1 + 阶梯
+    w.float(1); w.int32(-1)              // 帧 2（最后一帧没有曲线）
+    w.varint(1); w.varint(0); w.varint(1)   // 骨骼时间线：1 根骨骼（0），1 条
+    w.byte(0); w.varint(1)               // BONE_ROTATE，1 帧
+    w.float(0); w.float(angle)
+    w.varint(0); w.varint(0); w.varint(0); w.varint(0); w.varint(0); w.varint(0)   // ik transform path deform drawOrder events
+  }
+  return w.done()
+}
+
 export function spineJson({ animations = DEFAULT_ANIMATIONS, region = REGION, version = '3.8.99' } = {}) {
   return Buffer.from(JSON.stringify({
     skeleton: { hash: 'testjson', spine: version, x: -100, y: 0, width: 200, height: 400 },
     bones: [{ name: 'root' }],
     slots: [{ name: 'body', bone: 'root', attachment: 'body' }],
-    skins: [{ name: 'default', attachments: { body: { body: { x: 0, y: region.y, width: region.width, height: region.height } } } }],
+    // 3.6 的 JSON：皮肤是对象 { 皮肤名: { 插槽: { 附件: … } } }；3.8 以后是数组 [{ name, attachments }]
+    skins: /^3\.6\./.test(version) ? { default: { body: { body: { x: 0, y: region.y, width: region.width, height: region.height } } } } : [{ name: 'default', attachments: { body: { body: { x: 0, y: region.y, width: region.width, height: region.height } } } }],
     animations: Object.fromEntries(animations.map((name) => [name, { bones: { root: { rotate: [{ time: 0, angle: 0, value: 0 }, { time: 1, angle: 2, value: 2 }] } } }])),
   }))
 }
@@ -73,7 +120,8 @@ export const atlasText = (base) => `${base}.png\nsize: 64,128\nformat: RGBA8888\
 // version：只对 JSON 骨架有效（写进 skeleton.spine），用来造 3.8 / 4.0 / 4.2 / 不支持版本的骨架
 export async function writeSpine(dir, base, { format = 'binary', color = 'red', animations = DEFAULT_ANIMATIONS, region = REGION, version = '3.8.99' } = {}) {
   await mkdir(dir, { recursive: true })
-  await writeFile(path.join(dir, `${base}.skel.bytes`), format === 'json' ? spineJson({ animations, region, version }) : spineBinary({ animations }))
+  // format: 'binary'（3.8）| 'json' | 'binary36'（3.6 二进制，version 默认 3.6.38）
+  await writeFile(path.join(dir, `${base}.skel.bytes`), format === 'json' ? spineJson({ animations, region, version }) : format === 'binary36' ? spineBinary36({ animations, ...(version === '3.8.99' ? {} : { version }) }) : spineBinary({ animations }))
   await writeFile(path.join(dir, `${base}.atlas.txt`), atlasText(base))
   // 64×128（和 200×400 的区域同比例）：底色 + 头（白圆）+ 眼睛两点，方便肉眼看方向有没有反
   execFileSync('convert', ['-size', '64x128', `xc:${color}`, '-fill', 'white', '-draw', 'circle 32,26 32,10', '-fill', 'black', '-draw', 'circle 26,22 26,19', '-draw', 'circle 38,22 38,19', path.join(dir, `${base}.png`)])
