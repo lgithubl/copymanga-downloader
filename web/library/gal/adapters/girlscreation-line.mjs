@@ -35,6 +35,7 @@
 //   line            { expressionPrefix: charamotion / charaexpression 的表情动画前缀, imageIdRe: message 末尾的头像 id,
 //                     objectKind: asyncjump / asyncmoveobject 第 2 项里「角色」的正则, jumpAction: asyncjump 用的站位动作码, moveBase: 'offset' | 'relative'（asyncmoveobject 的 dx / dy 相对什么）,
 //                     crossfadeScale: 'bgScale' | 'ignore'（CrossFade 的缩放：跟一条 bgScale / 不管）}
+//   line.clearActorsOnBg  换背景（bg / CrossFade / TransitionCrossFade）时把台上的演员收掉（默认 true；false = 只在脚本写了 charafade out / charadelete 时才收）
 //   commands        { cgmode: 'ui' | 'raw', asyncjump: 'hop' | 'raw', asyncmoveobject: 'move' | 'raw'（旧名 'x' 也认）, crossfade: 'bg' | 'raw' }   每条命令的映射方式，默认 = 新映射；'raw' = 以前的行为
 //                     crossfade 'raw'：CrossFade 照旧（换背景 + 渐变，缩放 / 位移记 raw），TransitionCrossFade / TransitionCrossFadeReady 记 raw
 //   category        { re: 场景 id → 分类的正则（取匹配到的部分）, other: 没匹配时的分类名, unknownSpeaker: 没认出说话人的分组名 }
@@ -51,7 +52,7 @@ export const DEFAULT_OPTIONS = {
   dialect: { window: 200000, headWindow: 8192, markers: { aku: ['<GROUP>', '<EV_DISPLAY>', '<SPINE_ACTOR_DISPLAY>'], display: ['<SPINE_ACTOR_DISPLAY>'], branch: ['<LABEL>'] } },
   stand: { akuOffset: 450, akuDirections: { LEFT: -1, RIGHT: 1, CENTER: 0 }, fruitsDim: 0.6 },
   animation: { maxFrames: 600 },
-  line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$', objectKind: '^character$', jumpAction: 1, moveBase: 'offset', crossfadeScale: 'bgScale' },
+  line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$', objectKind: '^character$', jumpAction: 1, moveBase: 'offset', crossfadeScale: 'bgScale', clearActorsOnBg: true },
   commands: { cgmode: 'ui', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' },
   category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
   titleLines: ['^title,([^,\\r\\n]+),'],
@@ -208,11 +209,17 @@ export function parseLine(text, ctx = null, meta = {}) {
     commands = []
     voiceOpen = false
   }
+  // 换背景 = 进了下一个场景：还在台上的演员收掉（用户反馈：场景切换了人物没消失）。slot 里的演员记录留着，后面的 chara / charafade in 照常能再摆出来
+  const clearActors = () => {
+    if (opt.line.clearActorsOnBg === false) return
+    for (const [slot, actor] of actors) if (actor.visible) { actor.visible = false; emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 }) }
+  }
   // CrossFade / TransitionCrossFade：换背景 + 渐变；缩放不是 1 跟一条 bgScale（换背景会清掉上一张的缩放）；x / y 位移没法表示，记 raw
   const crossFade = (image, seconds, x, y, scaleX, label) => {
     const src = res('images', image)
     if (!src) { count('unresolved', `bg:${image}`); return }
     if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
+    clearActors()
     emit({ op: 'bg', src, fade: secOf(seconds) })
     const scale = numOf(scaleX, 1)
     const scaled = scale !== 1 && scale > 0
@@ -266,7 +273,7 @@ export function parseLine(text, ctx = null, meta = {}) {
       }
       case 'bg': {
         const src = res('images', f[1])
-        if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src, fade: 0 }) } else count('unresolved', `bg:${f[1]}`)
+        if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } clearActors(); emit({ op: 'bg', src, fade: 0 }) } else count('unresolved', `bg:${f[1]}`)
         if (numOf(f[4], 1) !== 1 || numOf(f[3]) !== 0 || numOf(f[2]) !== 0) count('raw', 'bg(缩放/位移)')
         break
       }

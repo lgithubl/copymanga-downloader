@@ -9,7 +9,7 @@
 //     Phrase（%user_name → protagonist）→ text；Position 1 = 旁白（说话人空）；Position 2 / 3 = 说话人 Name，同时摆这个位置的立绘（MMonsterId 非空时）
 //     立绘 = typeadv/CharaStand/Adventure/<MMonsterId>/body.png（底）+ 表情叠层（EmotionId → idle / sad / surprise / angry / shy / joy / idle / violent：先 <表情>_c.png 再 <表情>.png 叠上去，
 //       原页面的 CSS 背景层写的是 url(<表情>.png), url(<表情>_c.png)，前一层在上）；Position 2 = 左、3 = 右（positions 表）；同一个角色已经在另一边 → 另一边收掉；说话的一边画在上面；
-//       IsBackgroundOnly → 两边都收掉；Position 1 的旁白行是否收立绘由 stand.narration 决定（默认 keep：原页面的 JS 只收文本框、不收立绘）
+//       IsBackgroundOnly → 两边都收掉；立绘有没有、换不换、收不收完全看脚本怎么写（MMonsterId / IsBackgroundOnly / 换背景），旁白行不做特殊处理
 //     空 Phrase 的行（只换背景 / 立绘 / 声音）：命令并进下一句（原页面里要多点一下，文字不变）。SpeechBalloon / FrameImage / HintImageName / PhraseFontSize / IsPhraseCenter 只是界面皮肤，不渲染（PhraseFontSize 可用 text.sizeMap 映射成字号）
 //   成人剧情 { Id, Description, MAdultDetails: [行] }（json/<Id> 日文；jsoncn/<Id> 中文），一行 = 一步（Order Name Serif Motion Voice StillPath BGM CharaAnimation SE Effect）：
 //     画面 = Spine 静态画面 chara/still/<Id>/<Id>.json + <Id>.atlas.txt（Spine 3.6 JSON）→ spine 指令（kind still，slot still1）；Order 1（或第一行）建它，位置 / 缩放来自 list.json data[<Id>]["1"] = {X, Y, Z}
@@ -36,7 +36,7 @@
 //   exts { image: [png, webp, jpg], audio: [m4a, mp3, ogg, wav] }          {ext} 的顺序 = 同名文件的优先级
 //   positions { '1': 'narration', '2': 'left', '3': 'right' }               Position → narration / left / center / right（不在表里的 Position 当旁白）
 //   emotions { '1': 'idle', … '8': 'violent' }                              EmotionId → 表情文件名（不在表里 / null = 沿用这个位置上同一角色的上一个表情，没有就只有 body）
-//   stand { body: 'body', layers: ['{emotion}_c', '{emotion}'], fit: 1, narration: 'keep', duplicate: 'hideOther', clearOnBgChange: true, dim: 0 }
+//   stand { body: 'body', layers: ['{emotion}_c', '{emotion}'], fit: 1, duplicate: 'hideOther', clearOnBgChange: true, dim: 0 }
 //        clearOnBgChange = 换了背景 / CG 就把上一幕的立绘收掉（用户反馈：到了下一张 CG 立绘还留着，明显不对；false = 只在被新角色顶替 / IsBackgroundOnly 时才收）
 //        body = 底图名；layers = 叠层（从下到上，{emotion} = 表情名）；fit = 立绘部件的 fit（图比画面高就缩到画面高度，0 = 不带）；narration = keep / hide；duplicate = hideOther（同一角色在另一边已出现就收掉另一边）/ keep；dim = 0..1 不说话的一边的亮度（0 = 不压暗）
 //   anim { '1': { anim: 'animation1', loop: true }, '2': …, '3': { anim: 'animation3', loop: false, speed: 0.5, effect: 'climax' }, '4': … }    CharaAnimation → spine 动画；speed = 这个动画自己的速度（有就覆盖 Motion）；effect = 进 effects 表的名字（每遇到一行都发）
@@ -85,7 +85,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
   exts: { image: IMAGE, audio: AUDIO },
   positions: { 1: 'narration', 2: 'left', 3: 'right' },
   emotions: { 1: 'idle', 2: 'sad', 3: 'surprise', 4: 'angry', 5: 'shy', 6: 'joy', 7: 'idle', 8: 'violent' },
-  stand: { body: 'body', layers: ['{emotion}_c', '{emotion}'], fit: 1, narration: 'keep', duplicate: 'hideOther', clearOnBgChange: true, dim: 0 },
+  stand: { body: 'body', layers: ['{emotion}_c', '{emotion}'], fit: 1, duplicate: 'hideOther', clearOnBgChange: true, dim: 0 },
   anim: {
     1: { anim: 'animation1', loop: true },
     2: { anim: 'animation2', loop: true },
@@ -139,7 +139,6 @@ export function resolveOptions(options) {
   o.emotions = Object.fromEntries(Object.entries(o.emotions).filter(([, v]) => typeof v === 'string' && v).map(([k, v]) => [String(k), v]))
   o.stand.body = String(o.stand.body || 'body')
   o.stand.layers = list(o.stand.layers, DEFAULT_OPTIONS.stand.layers)
-  o.stand.narration = o.stand.narration === 'hide' ? 'hide' : 'keep'
   o.stand.duplicate = o.stand.duplicate === 'keep' ? 'keep' : 'hideOther'
   o.stand.clearOnBgChange = o.stand.clearOnBgChange !== false
   o.stand.dim = Number(o.stand.dim) > 0 && Number(o.stand.dim) < 1 ? Number(o.stand.dim) : 0
@@ -493,7 +492,6 @@ export function parse(text, ctx = null, meta = {}) {
         active = position
       }
       if (row.IsBackgroundOnly === true) for (const p of slots.keys()) hidden.add(p)
-      if (kind === 'narration' && phrase !== '' && o.stand.narration === 'hide') for (const p of slots.keys()) hidden.add(p)
       const parts = standParts()
       const sig = JSON.stringify(parts)
       if (sig !== standSig) {
