@@ -758,7 +758,7 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
 {
   check('sniff：对象形剧情 JSON 才算；别的 JSON / CSV / 文本不算', tenkeiSniff('{"result":{"sceneDetails":[]}}') && tenkeiSniff('  {"x":1,"sceneFrameDetails":[]}') && !tenkeiSniff('{"a":1}') && !tenkeiSniff('bg,a.jpg,0'))
   const ctx = tenkeiPrepare({ options: { positionX: { 3: 0.9 }, unknownName: 'P' }, texts: { 'Masterdata/username.txt': 'Tester\n' }, files: ['Spines/1001/1001_01.skel.bytes', 'Spines/1001/1001_02.skel.bytes', 'Stills/s/10_b.skel.bytes', 'Stills/s/2_a.skel.bytes', 'Backgrounds/adventure/bg_a.png', 'Backgrounds/still/bg_still_02.png', 'BGM/m_loop.ogg', 'BGM/n.ogg', 'BGM/n_loop.ogg'], toResourcePath: (rel) => rel })
-  check('prepare：站位立绘文件、静态画面（按数字前缀排序：2 在 10 前）、背景、BGM 索引；username 去空白', J(ctx.spines.get('Spines/1001')) === J(['1001_01', '1001_02']) && J(ctx.spines.get('Stills/s')) === J(['2_a', '10_b']) && ctx.backgrounds.get('bg_still_02') === 'Backgrounds/still/bg_still_02.png' && ctx.bgm.has('m_loop') && ctx.username === 'Tester')
+  check('prepare：站位立绘文件、静态画面（按数字前缀排序：2 在 10 前）、背景、BGM 索引；username 去空白', J(ctx.spines.get('Spines/1001')) === J(['1001_01', '1001_02']) && J(ctx.spines.get('Stills/s')) === J(['2_a', '10_b']) && ctx.found(['Backgrounds/still/{name}.png'], { name: 'bg_still_02' }) === 'Backgrounds/still/bg_still_02.png' && ctx.index.has('BGM/m_loop.ogg') && ctx.username === 'Tester')
   const mk = (frames, id = '5') => J({ result: { sceneDetails: [{ assetId: 'other', sceneFrameDetails: [] }, { assetId: id, sceneFrameDetails: frames }] } })
   const r = tenkeiParse(mk([
     { speakerName: '%username%', phraseContents: 'a\\nb', phraseVoice: 'v1', backgroundImage: 'bg_a', backgroundMusic: 'm', soundEffect: 'click', adventureCharacters: [{ characterMasterId: 1001, characterAppearance: 2, characterPosition: 1, characterAction: 3, characterFacialExpression: 4 }] },
@@ -1056,7 +1056,7 @@ async function gcMod0Prepare({ truncated }) {
     'MasterData/MCharacterBaseViewModel.json': J([{ Id: 249, Name: 'エスト' }]),
   }
   const ctx = mtPrepare({ options: {}, texts, files })
-  check('prepare：场景（含 Stills 底号）/ 静态画面目录（层数含 mosaic，按数字排序：10 在 3 后）/ 语音按文件名 / 背景索引', ctx.scenes.get('224920105').base === '249' && ctx.scenes.get('55000405').base === '' && ctx.folders.get('224920105').count === 5 && J(ctx.folders.get('224920105').bases) === J(['1', '2', '3', '4', '10']) && ctx.voices.get('s_224920105_023').endsWith('249201/s_224920105_023.ogg') && ctx.backgrounds.has('bg_white'), J([...ctx.folders]))
+  check('prepare：场景（含 Stills 底号）/ 静态画面目录（层数含 mosaic，按数字排序：10 在 3 后）/ 语音按文件名 / 背景索引', ctx.scenes.get('224920105').base === '249' && ctx.scenes.get('55000405').base === '' && ctx.folders.get('224920105').count === 5 && J(ctx.folders.get('224920105').bases) === J(['1', '2', '3', '4', '10']) && ctx.voiceOf('s_224920105_023').endsWith('249201/s_224920105_023.ogg') && ctx.backgrounds.has('bg_white'), J([...ctx.folders]))
 
   const text = scene([
     row({ text: '「こんにちは<ruby=わ>和</ruby>」\\n<emoji=heart01>', speaker: 'エスト', voice: 's_224920105_023', bgm: 'adv_03', se: 'click', effect: '1', bg: 'bg_white' }),

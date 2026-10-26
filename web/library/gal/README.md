@@ -59,6 +59,19 @@ meta = {
 适配器按文件索引查资源时用 `gal/resolve.mjs` 的 `createIndexResolver({ index, cfg: meta.config.resourceResolve, preferDirs })`（见下），不要自己写大小写 / 扩展名 / 重复文件名的逻辑。
 `parse` 之后 `buildScene` 统一过一遍 `meta.config.classify`（适配器不用管）。
 
+### 适配器参数（`adapterOptions`）：tenkeiprdx-json / misttrain-json / artwhirl-json / girlscreation-tag
+
+四个适配器（girlscreation 的行式脚本 `girlscreation-line.mjs` 共用 `girlscreation-tag` 的参数）都只做「读参数、按参数匹配」：路径模板、字段位置、命名规则、猜出来的数字全写成 `DEFAULT_OPTIONS`（适配器文件里导出，也是参数的 schema + 默认值，头部注释逐项说明），**不写 = 以前的行为**；`gal-layout` 的 `LAYOUTS` 表把需要的项写进 `adapterOptions[<适配器 id>]`。
+合并规则（`adapters/options-merge.mjs` 的 `mergeOptions`，宽容、不抛错）：对象逐键递归合并（站位表、动画表这类映射可以加项）；**数组整体替换**（要关掉某一项：数组写空 / `['','']`，字符串写 `''`）；数字 / 字符串 / 布尔类型不符就用默认值；`null` 默认值的项是可选项，给什么收什么；不认识的键保留。正则一律走 `compileSafeRegex`（不合格 = 这条规则没有）。
+`prepare` 现在还收到 `resourceResolve`（= `config.resourceResolve`），按文件索引查名字的地方（artwhirl 的资源 / 语音、tenkeiprdx 的背景 / BGM、misttrain 的语音）都走 `createIndexResolver`：大小写忽略、`preferDirs` 挑同名文件、`caseInsensitive: false` 回到精确匹配。
+
+- **tenkeiprdx-json**：`root` / `unknownName` / `stillPng` / `userPlaceholder`；`positions`（站位 → 横向位置，`positionX` 是旧名）+ `defaultX` + `facial`（表情 → 动画名）；`fieldMap`（数组形各字段的位置：`scene` / `frame` / `character` / `skip` / `master`，游戏版本变了只改这里）；`dirs` / `files`；`paths`（`background` / `bgm` / `se` / `voice` 候选模板，`backgroundMissing` 规则，`thumbStill`）；`still`（`backgroundRe` / `animationRe` / `animationName`）；`hse`（`stillRe` + `effects`：背景名触发的音效 / 闪白 / 白屏，指令原样发出）；`animations`（`noLoop` / `slow` / `speed` / `linked` / `flash` / `wash`）；`animationSpeed`（`msThreshold` / `msDivisor`）；`camera`；`stand`；`bgm`（停 BGM 的写法）；列表：`kinds`（分类 + 缩略图目录）、`idRules`（缩略图名 → 剧情 id：`segments` / `prefix` / `lastDigit` / `forms`）、`catalog`（缩略图前缀、角色号、角色 still 前缀、标题）。
+- **misttrain-json**：`root` / `showMosaic`；`dirs` / `master`（名称表文件与键）/ `scenes`（`dirs` 剧情目录、`stillsDir`、`collision: 'last'|'first'` 同名剧情谁赢）；`fieldMap`（`row` 行内位置、`detail` stillDetail 内位置）；`paths`（bgm / se / bgse / background / voiceFallback 模板）；`backgrounds.ext`；`voice`（`dir` / `ext` / `preferDirs` / `duplicates: 'first'|'skip'`）；`titleLookup`（`trim` / `tryAsIs` / `tryMinusOne`）；`still`；`camera`（`positionScale` 0.84、`zoomAdd` 0.03、`zoomUnit` 1.3、…，都是没真机对照的估值）；`effects`（`fadeSeconds` / `flashSeconds` / `flashCount` 估值、`map` effect 取值 → wash / flash、`oneShotRule` 一次性动画、`linkedBgSe` 联动背景音效表、`fastSpeed` / `loopExcept`）；`emoji`。
+- **artwhirl-json**：`root`（默认 `game`）/ `dirs` / `standZoom`；`dic.indexFields`（哪些字段的整数是 dic 下标）；`assets`（资源名 → 路径的规则表：`{ match, replace }`，第一条命中的生效）；`extPrefer`（`.mp3` → `.ogg`）；`stand`（`path` 模板、`fields` 立绘字典的键名、`defaults`、`hSuffix`、`fallback` 有序的替换组 `[['h->'], ['brow->b'], …]`）；`hcg`（`match` / `imageExts`）；`video`（`ext` / `noLoopFrames` / `frameSplit`）；`voice`（`dir` / `preferDirs` / `ext` / `fallback`）。
+- **girlscreation-tag（+line）**：`root` / `categoryLabels` / `player.names`（数组；旧写法 `player: '館長'` 也认）；`dialect`（`window` / `headWindow` / `markers.aku|display|branch`）；`stand`（`akuOffset` 450、`akuDirections`、`fruitsDim` 0.6）；`animation.maxFrames`；`line`（`expressionPrefix` / `imageIdRe`）；`category`（`re` / `other` / `unknownSpeaker`）；`titleLines`、`speaker.suffixRe`；`dirs` / `sceneDirs` / `audioKinds`；`scenes`（`script` 优先级列表 / `lineScript` / `thumb`）；`sample.files`（读开头的文件；字节数由引擎 `limits.sampleBytes` 管）。
+
+测试：`node scripts/dev/gal-adapter-options-selftest.mjs`（node 即可）：每个参数「默认值整份显式写出来结果不变 / 覆盖后结果按上面变」，每个适配器一条 `adapterOptions → loadAdapterContext → buildScene` 的完整链路。
+
 ### 引擎层通用配置（`config` 的新字段，全部可选；没写 = 原来的行为）
 
 写错的部分**丢掉并报告**：规整时每处被丢掉 / 夹住 / 退回默认的内容都进 `warnings`（`{field, reason, snippet}`；`normalizeGalConfigWithWarnings(raw)` 返回 `{config, warnings}`，`normalizeGalConfig(raw)` 的返回值上有不可枚举的 `warnings`）。
@@ -143,7 +156,7 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
   活动 = `EpisodeThumbnails/event`（新的在前，剧情 id = `2`+文件名第 3、4 段）；附加 = `EpisodeThumbnails/extra`（同上，id 以 1 结尾的末位换成 2，标题查 `Masterdata/masterdata_32.json`）；
   角色 = `CharacterIcons/<8 位角色号>*.png`（名字、称号查 `masterdata_4.json`）→ 点进去是这个角色的 EX 剧情（`masterdata_32.json` 里按 `<角色号>_01|02_still` 找，缩略图 `Backgrounds/still/<key>.png`）；
   全部剧情 = `scenes/` 下所有 JSON。点剧情卡片 = 进播放页，标题、面包屑、「↑ 列表」、上一话/下一话都按收它的那个列表来；进度仍按剧情路径记（和从哪个列表进来无关）。
-- 适配器参数 `adapterOptions['tenkeiprdx-json']`：`root`（Imported 目录，相对媒体目录）、`positionX`（站位 → 横向位置 0..1）、`unknownName`（`%username%` 没有 username.txt 时的名字）。
+- 适配器参数 `adapterOptions['tenkeiprdx-json']`（完整列表见上面「适配器参数」）：`root`（Imported 目录，相对媒体目录）、`positionX`（站位 → 横向位置 0..1）、`unknownName`（`%username%` 没有 username.txt 时的名字）。
 - 脚本探测 `scenes/` + `Backgrounds|Spines|Stills|Masterdata`（外面多套几层目录自动带前缀），写：脚本根 `<素材根>/scenes`、资源根 `<素材根>`、扩展名 `json`、
   `scriptIndex`（`EpisodeThumbnails/event|extra` 的 `ep_eventstill_<a>_<b>…` → 剧情 id `2<a><b>`，缩略图 + 角标 event / extra）、适配器参数、封面、脚本数。只处理 `game.id = tenkeiprdx`（或没有 game 且认出结构）的媒体。
 

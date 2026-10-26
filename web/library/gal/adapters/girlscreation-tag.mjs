@@ -16,23 +16,26 @@
 //   别的（SCREEN_SHAKE、EFFECT_BG_BLUR、BG_SCALE、SE_VOLUME、SPINE_MASK_OPACITY、*_COLOR、UI_DISP …）认得但暂未渲染，记在 stats.raw 里
 // 列表（adapter.catalog）：分类（场景 id 前缀 chmr / chsr …）→ 主要说话人（场景里出现最多的非「館長」的名字）→ 场景（标题取自原始脚本里的 title 行，没有就用 id；封面 = thumbnail.png）。
 // 目录树每次从文件现读（上下文按目录变化失效）。
+// 参数 config.adapterOptions['girlscreation-tag']（标签式和行式共用）：schema + 默认值见 girlscreation-line.mjs 头部的 DEFAULT_OPTIONS（player.names / dialect / stand / category / titleLines / scenes / sample …，没写 = 以前的行为）。
 
-import { lineSpeakers, lineTitle, parseLine, sniffLine } from './girlscreation-line.mjs'
+import { DEFAULT_OPTIONS, girlsCompiled, girlsOptions, lineSpeakers, lineTitle, parseLine, sniffLine } from './girlscreation-line.mjs'
+import { cleanDir } from './options-merge.mjs'
+
+export { DEFAULT_OPTIONS }   // 参数的 schema + 默认值见 girlscreation-line.mjs 头部（标签式和行式共用）
 
 export const ADAPTER_ID = 'girlscreation-tag'
-const DEFAULT_OPTIONS = { root: '', categoryLabels: {}, player: '館長' }
-const IMAGE_EXTS = /\.(?:webp|png|jpe?g|avif|gif)$/i
-const SAMPLE_FILE = /\/(?:script\.txt|output_script\.txt|script_original\.txt|original_script\.txt|originial_script\.txt|h[ms]r_\d+\.txt)$/i
 
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
-const rootOf = (options) => String(options?.root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+const rootOf = (options) => cleanDir(girlsOptions(options).root)
 
 // ---------- 上下文：场景索引 + 全局音频索引 + 标题 / 主要说话人 ----------
 export const contextFiles = () => []
-export const contextDirs = (options) => [joinPath(rootOf(options), 'scenes'), joinPath(rootOf(options), 'data/audio'), joinPath(rootOf(options), 'data/spine')]
+export const contextDirs = (options) => Object.values(girlsOptions(options).dirs).map((dir) => joinPath(rootOf(options), cleanDir(dir)))
 export const contextTextFilter = (options) => {
-  const base = `${joinPath(rootOf(options), 'scenes')}/`
-  return (rel) => rel.startsWith(base) && SAMPLE_FILE.test(rel)
+  const opt = girlsOptions(options)
+  const base = `${joinPath(rootOf(options), cleanDir(opt.dirs.scenes))}/`
+  const sample = girlsCompiled(opt).sample
+  return (rel) => rel.startsWith(base) && sample.some((re) => re.test(rel))
 }
 
 // 标签式脚本：把一行拆成 [{ tag, arg }]（一行里可以连着几个标签）
@@ -50,16 +53,19 @@ export function sniff(text) {
 }
 
 export function prepare({ options, texts, files, toResourcePath, truncated = false }) {
+  const opt = girlsOptions(options)
+  const rx = girlsCompiled(opt)
   const root = rootOf(options)
   const toRes = toResourcePath || ((rel) => rel)
-  const scenesBase = `${joinPath(root, 'scenes')}/`
-  const audioBase = `${joinPath(root, 'data/audio')}/`
-  const spineBase = `${joinPath(root, 'data/spine')}/`
+  const scenesBase = `${joinPath(root, cleanDir(opt.dirs.scenes))}/`
+  const audioBase = `${joinPath(root, cleanDir(opt.dirs.audio))}/`
+  const spineBase = `${joinPath(root, cleanDir(opt.dirs.spine))}/`
   const globalSpines = new Map()   // 全局骨架（maid：data/spine/cast/<目录>/<文件>）：键 = <目录>/<文件名> 和 <文件名>，值 = 扩展名 → 资源路径
   const scenes = new Map()   // 场景 id → { id, script, thumb, images: Map(无扩展名文件名 → 资源路径), videos, voices, spines: Map }
-  const audio = { bgm: new Map(), se: new Map() }
+  const audio = Object.fromEntries(opt.audioKinds.map((kind) => [kind, new Map()]))
+  const dirs = opt.sceneDirs
   const sceneOf = (id) => {
-    if (!scenes.has(id)) scenes.set(id, { id, script: '', thumb: '', images: new Map(), videos: new Map(), voices: new Map(), bgvoices: new Map(), animations: new Map(), spines: new Map() })
+    if (!scenes.has(id)) scenes.set(id, { id, script: '', thumb: '', scripts: new Map(), images: new Map(), videos: new Map(), voices: new Map(), bgvoices: new Map(), animations: new Map(), spines: new Map() })
     return scenes.get(id)
   }
   const stem = (name) => name.replace(/\.[^.]+$/, '')
@@ -69,23 +75,22 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
       if (parts.length < 2) continue
       const scene = sceneOf(parts[0])
       if (parts.length === 2) {
-        if (parts[1] === 'script.txt') scene.script = rel
-        else if (/^h[ms]r_[^/]+\.txt$/i.test(parts[1])) { if (!scene.lineScript) scene.lineScript = rel }   // 没有标签式脚本的场景只有行式脚本（hmr_<id>.txt / hsr_<id>.txt）
-        else if (parts[1] === 'output_script.txt') scene.altScript = rel   // 新版数据里的场景没有 script.txt，标签式脚本叫 output_script.txt；script.txt 优先
-        else if (/^thumbnail\.(?:png|jpe?g|webp)$/i.test(parts[1])) scene.thumb = toRes(rel)
-      } else if (parts.length === 4 && parts[1] === 'spines') {   // spines/<目录>/<文件>：骨架名 = <目录>/<文件名>（脚本里写 cast010002/momiji_002）
+        if (opt.scenes.script.includes(parts[1])) scene.scripts.set(parts[1], rel)   // 标签式脚本：按 scenes.script 的顺序取第一个有的
+        else if (rx.lineScript?.test(parts[1])) { if (!scene.lineScript) scene.lineScript = rel }   // 没有标签式脚本的场景只有行式脚本（hmr_<id>.txt / hsr_<id>.txt）
+        else if (rx.thumb?.test(parts[1])) scene.thumb = toRes(rel)
+      } else if (parts.length === 4 && parts[1] === dirs.spines) {   // spines/<目录>/<文件>：骨架名 = <目录>/<文件名>（脚本里写 cast010002/momiji_002）
         const ext = parts[3].slice(parts[3].lastIndexOf('.') + 1).toLowerCase()
         const key = `${parts[2]}/${stem(parts[3])}`
         if (!scene.spines.has(key)) scene.spines.set(key, new Map())
         scene.spines.get(key).set(ext, toRes(rel))
       } else if (parts.length === 3) {
-        if (parts[1] === 'spines') {   // 同名同目录的 .skel / .atlas / .png：按扩展名分开记（不然谁先到谁占位）
+        if (parts[1] === dirs.spines) {   // 同名同目录的 .skel / .atlas / .png：按扩展名分开记（不然谁先到谁占位）
           const ext = parts[2].slice(parts[2].lastIndexOf('.') + 1).toLowerCase()
           if (!scene.spines.has(stem(parts[2]))) scene.spines.set(stem(parts[2]), new Map())
           scene.spines.get(stem(parts[2])).set(ext, toRes(rel))
           continue
         }
-        const bucket = { images: scene.images, videos: scene.videos, voices: scene.voices, bgvoices: scene.bgvoices, animations: scene.animations }[parts[1]]
+        const bucket = { images: scene.images, videos: scene.videos, voices: scene.voices, bgvoices: scene.bgvoices, animations: scene.animations }[Object.keys(dirs).find((name) => dirs[name] === parts[1])]
         if (bucket && !bucket.has(stem(parts[2]))) bucket.set(stem(parts[2]), toRes(rel))
       }
     } else if (rel.startsWith(spineBase)) {
@@ -102,42 +107,45 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
       if (parts.length === 2 && audio[parts[0]] && !audio[parts[0]].has(stem(parts[1]))) audio[parts[0]].set(stem(parts[1]), toRes(rel))
     }
   }
-  for (const scene of scenes.values()) if (!scene.script) scene.script = scene.altScript || scene.lineScript || ''   // 优先级：script.txt > output_script.txt > 行式脚本
+  // 优先级：scenes.script 里靠前的 > 行式脚本
+  for (const scene of scenes.values()) scene.script = opt.scenes.script.map((name) => scene.scripts.get(name)).find(Boolean) || scene.lineScript || ''
   const noScript = []
   for (const [id, scene] of scenes) if (!scene.script) { noScript.push(id); scenes.delete(id) }   // 没有脚本的目录（PLACEHOLDER 之类）不是场景；记下来给体检报
 
-  const player = String(options?.player ?? DEFAULT_OPTIONS.player)
+  const players = new Set(opt.player.names.map(String))
+  const nameOf = (raw) => { const name = raw.trim(); return rx.suffix ? name.replace(rx.suffix, '') : name }   // 去掉「（オルタ）」这类括号后缀，同一个人归一起
   const info = new Map()   // 场景 id → { title, speaker }
   for (const [id, scene] of scenes) {
     const dir = scene.script.slice(0, scene.script.lastIndexOf('/') + 1)
-    let title = scene.script === scene.lineScript ? lineTitle(texts?.[scene.script]) : ''
+    let title = scene.script === scene.lineScript ? lineTitle(texts?.[scene.script], rx.titles) : ''
     for (const [rel, text] of Object.entries(texts || {})) {
       if (title) break
       if (!rel.startsWith(dir) || rel === scene.script) continue
-      const m = /^title,([^,\r\n]+),/m.exec(String(text))
-      if (m) { title = m[1].trim(); break }
+      title = lineTitle(text, rx.titles)
     }
     const counts = new Map()
     for (const m of String(texts?.[scene.script] || '').matchAll(/^<NAME_PLATE>([^\r\n<]+)/gm)) {
-      const name = m[1].trim().replace(/（[^）]*）$/, '')   // 去掉「（オルタ）」这类括号后缀，同一个人归一起
-      if (name && name !== player) counts.set(name, (counts.get(name) || 0) + 1)
+      const name = nameOf(m[1])
+      if (name && !players.has(name)) counts.set(name, (counts.get(name) || 0) + 1)
     }
-    if (scene.script === scene.lineScript) for (const name of lineSpeakers(texts?.[scene.script])) if (name !== player) counts.set(name.replace(/（[^）]*）$/, ''), (counts.get(name.replace(/（[^）]*）$/, '')) || 0) + 1)
+    if (scene.script === scene.lineScript) for (const name of lineSpeakers(texts?.[scene.script])) if (!players.has(name)) counts.set(nameOf(name), (counts.get(nameOf(name)) || 0) + 1)
     const speaker = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || ''
     info.set(id, { title, speaker })
   }
-  const categoryLabels = { ...(options?.categoryLabels && typeof options.categoryLabels === 'object' ? options.categoryLabels : {}) }
-  return { root, scenes, audio, info, categoryLabels, truncated, noScript, globalSpines }
+  const categoryLabels = { ...opt.categoryLabels }
+  return { opts: opt, root, scenes, audio, info, categoryLabels, truncated, noScript, globalSpines }
 }
 
 // ---------- 列表 ----------
 const natAsc = (a, b) => a.localeCompare(b, 'en', { numeric: true })
 export function catalog(ctx) {
   if (!ctx?.scenes?.size) return null
+  const opt = ctx.opts || girlsOptions()
+  const categoryRe = girlsCompiled(opt).category
   const categories = new Map()   // 分类 → Map(说话人 → [场景])
   for (const id of [...ctx.scenes.keys()].sort(natAsc)) {
-    const category = /^[A-Za-z]+/.exec(id)?.[0] || '其他'   // chmr_… / chara_… / story… → 开头的字母；数字开头（10001A5_R18）→ 其他
-    const who = ctx.info.get(id)?.speaker || '（未识别）'
+    const category = categoryRe?.exec(id)?.[0] || opt.category.other   // chmr_… / chara_… / story… → 开头的字母；数字开头（10001A5_R18）→ 其他
+    const who = ctx.info.get(id)?.speaker || opt.category.unknownSpeaker
     if (!categories.has(category)) categories.set(category, new Map())
     const groups = categories.get(category)
     if (!groups.has(who)) groups.set(who, [])
@@ -187,7 +195,10 @@ function parseProps(text) {
 }
 
 export function parse(text, ctx = null, meta = {}) {
-  if (!/^<[A-Z]/m.test(String(text || '').slice(0, 8192)) && sniffLine(String(text || '').slice(0, 8192))) return parseLine(text, ctx, meta)   // 行式脚本
+  const opt = ctx?.opts || girlsOptions(meta?.options)
+  const rx = girlsCompiled(opt)
+  const head = String(text || '').slice(0, opt.dialect.headWindow)
+  if (!/^<[A-Z]/m.test(head) && sniffLine(head)) return parseLine(text, ctx, meta)   // 行式脚本（参数从 ctx.opts / meta.options 取，和这里同一份）
   const steps = []
   let commands = []
   let lines = []            // 当前这句的正文行
@@ -203,15 +214,16 @@ export function parse(text, ctx = null, meta = {}) {
   const stats = { commands: 0, raw: {}, unresolved: {}, movies: 0, spines: 0 }
   // Aku No Onna Kanbu 一派的写法（有 <GROUP> / <EV_DISPLAY> / <SPINE_ACTOR_DISPLAY>）：<GROUP><FADE_IN>black,0 <EV>… <FADE_OUT>black,500</GROUP> = 先黑场、换图、再淡出显示，
   // 所以 FADE_IN = 变黑、FADE_OUT = 去掉黑场（和 FADE_OUT2 / FADE_IN2 正好相反）；<SPINE_ACTOR>槽,骨架,动画,纵向,横向,… 的参数含义也不一样，要等 <SPINE_ACTOR_DISPLAY>槽,SHOW 才显示
-  const akuStyle = /^<(?:GROUP|EV_DISPLAY|SPINE_ACTOR_DISPLAY)>/m.test(String(text || '').slice(0, 200000))
+  const scanText = String(text || '').slice(0, opt.dialect.window)
+  const akuStyle = Boolean(rx.aku?.test(scanText))
   if (akuStyle) stats.dialect = 'aku'
   const shownActors = new Set()   // Aku 写法：已经 SHOW 过的槽
-  const hasDisplayTags = /^<SPINE_ACTOR_DISPLAY>/m.test(String(text || '').slice(0, 200000))   // 脚本里根本没有 SPINE_ACTOR_DISPLAY 的话，SPINE_ACTOR 直接显示
+  const hasDisplayTags = Boolean(rx.display?.test(scanText))   // 脚本里根本没有 SPINE_ACTOR_DISPLAY 的话，SPINE_ACTOR 直接显示
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   if (ctx?.truncated) count('unresolved', '文件索引被截断（超过上限）：这个场景的资源可能找不到')
   // 分支（Aku 写法）：连续的 <SELECT>选项文字,LABELn 是一组选项；<LABEL>LABELn 开始对应的分支（里面的每条指令带 when：选了第 n 个才执行）；<JUMP>END 跳过后面的分支直到下一个 <LABEL>；
   // <LABEL>END（没在选项里出现过的标签）= 各分支汇合，后面的指令不再带条件。选的序号记进变量 sel<第几组选项>，和 UViewer 的 select / if 是同一套表达（choice + when）
-  const branchy = akuStyle || /^<LABEL>/m.test(String(text || '').slice(0, 200000))
+  const branchy = akuStyle || Boolean(rx.branch?.test(scanText))
   let currentWhen = null
   let pendingSelect = []
   let labelValue = new Map()
@@ -355,7 +367,7 @@ export function parse(text, ctx = null, meta = {}) {
         case 'ACTOR_COLOR_FILTER': {   // ACTOR_COLOR_FILTER,槽,normal|dark|light：dark = 压暗（不说话的人），light 当正常
           const slot = Math.trunc(numOf(a[0]))
           const actor = fruitActors.get(slot)
-          const dim = /^dark$/i.test(a[1] || '') ? 0.6 : 0
+          const dim = /^dark$/i.test(a[1] || '') ? opt.stand.fruitsDim : 0
           if (actor) { if (actor.dim !== dim) { actor.dim = dim; emitFruitActors() } } else fruitDim.set(slot, dim)
           break
         }
@@ -374,7 +386,7 @@ export function parse(text, ctx = null, meta = {}) {
         case 'FRAME_ANIM': {   // FRAME_ANIM,前缀,起始帧,结束帧,速度：场景自己的 animations/<前缀>_<帧号>.jpg 逐帧循环（当背景）；第 4 项速度不用，速度在播放器「更多」里设
           const prefix = String(a[0] || '').trim()
           const first = Math.trunc(numOf(a[1], 1))
-          const last = Math.min(first + 599, Math.trunc(numOf(a[2], first)))
+          const last = Math.min(first + opt.animation.maxFrames - 1, Math.trunc(numOf(a[2], first)))
           const frames = []
           for (let n = first; n <= last; n += 1) { const src = res('animations', `${prefix}_${n}`); if (src) frames.push(src) }
           if (!frames.length) { count('unresolved', `frame-anim:${prefix}`); break }
@@ -388,7 +400,7 @@ export function parse(text, ctx = null, meta = {}) {
           const prefix = String(a[1] || '').trim()
           const digits = Math.max(1, Math.trunc(numOf(a[2], 4)))
           const first = Math.trunc(numOf(a[3]))
-          const end = Math.min(first + 600, Math.trunc(numOf(a[4], first + 1)))
+          const end = Math.min(first + opt.animation.maxFrames, Math.trunc(numOf(a[4], first + 1)))
           const frames = []
           for (let n = first; n < end; n += 1) { const src = res('images', `${prefix}${String(n).padStart(digits, '0')}`); if (src) frames.push(src) }
           if (!frames.length) { count('unresolved', `anim:${prefix}`); break }
@@ -432,9 +444,10 @@ export function parse(text, ctx = null, meta = {}) {
           if (akuStyle) {   // 槽,骨架,动画,纵向(TOP…),横向(CENTER / LEFT / RIGHT…),NONE,linear,0：动画是第 3 项；位置的非 CENTER 取值没有样本，横向按 LEFT / RIGHT 估一个偏移并记在 stats.raw
             const aSlot = Math.trunc(numOf(a[0]))
             const horizontal = String(a[4] || '').toUpperCase()
-            const x = horizontal === 'LEFT' ? -450 : horizontal === 'RIGHT' ? 450 : 0
-            if (horizontal && !['CENTER', 'LEFT', 'RIGHT'].includes(horizontal)) count('raw', `SPINE_ACTOR(横向 ${horizontal})`)
-            if (horizontal === 'LEFT' || horizontal === 'RIGHT') count('raw', `SPINE_ACTOR(横向 ${horizontal} 的偏移是估的)`)
+            const direction = Object.hasOwn(opt.stand.akuDirections, horizontal) ? opt.stand.akuDirections[horizontal] : null
+            const x = (direction || 0) * opt.stand.akuOffset
+            if (horizontal && direction === null) count('raw', `SPINE_ACTOR(横向 ${horizontal})`)
+            if (direction) count('raw', `SPINE_ACTOR(横向 ${horizontal} 的偏移是估的)`)
             actors.set(aSlot, { skel: a[1], x, y: 0, scale: zoomScale, fade: 0, move: 0, tracks: a[2] ? [{ anim: a[2], loop: true }] : [] })
             if (shownActors.has(aSlot) || !hasDisplayTags) dirty.add(aSlot)   // 已经 SHOW 过的槽换表情 / 骨架直接生效；第一次要等 SPINE_ACTOR_DISPLAY,SHOW
             break
