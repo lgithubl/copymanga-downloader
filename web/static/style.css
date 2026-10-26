@@ -4758,3 +4758,11 @@ h2 {
 .gal-expr-review .gal-more-select option { color: #000; }
 @media (max-width: 900px) { .gal-expr-review { grid-template-columns: minmax(0, 1fr); } }
 .gal-expr-review .gal-expr-field > span { font-size: 13px; flex: 0 0 9em; }
+
+/* 库页悬浮 ▲▼ 分段滚动（scroll-buttons.js）：fixed，位置由脚本贴着卡片网格右缘；整组只占两个按钮的盒子，不挡别处的点击 */
+.scroll-btns { display: grid; gap: 8px; position: fixed; transform: translateY(-50%); z-index: 40; }
+.scroll-btns[hidden] { display: none; }
+.scroll-btn { background: var(--site-panel); border: 1px solid var(--site-border); border-radius: 50%; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); color: var(--site-text); cursor: pointer; font-size: 14px; height: 36px; line-height: 1; min-height: 0; opacity: 0.35; padding: 0; transition: opacity 0.15s; width: 36px; }
+.scroll-btn:hover, .scroll-btn:focus-visible { opacity: 0.95; }
+.scroll-btn[aria-disabled="true"] { cursor: default; opacity: 0.12; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .scroll-btn { transition: none; } }

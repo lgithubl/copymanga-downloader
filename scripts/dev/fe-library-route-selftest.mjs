@@ -131,6 +131,42 @@ await fresh.goto(`${base}/#/library?tab=new&tag=${encodeURIComponent('tag:"标�
 await fresh.waitForSelector('#library-items .card'); await fresh.waitForTimeout(600)
 check('路由缺省的字段用缺省值，不读 localStorage 里存的 archive/排序等状态（类型 all、排序 imported_desc、每页 20）', (await evalVal(fresh, '#library-type')) === 'all' && (await evalVal(fresh, '#library-sort')) === 'imported_desc' && (await evalVal(fresh, '#library-limit')) === '20', `${await evalVal(fresh, '#library-type')} ${await evalVal(fresh, '#library-sort')} ${await evalVal(fresh, '#library-limit')}`)
 await fresh.close()
+// ---- 3b. 页内匹配框（find）：点标签开新标签页时一并带过去
+await page.fill('#library-find', '普通 C普')   // 带空格：按空白拆词，都要命中
+await page.waitForTimeout(200)
+const findState = await page.evaluate(() => localStorage.getItem('copymanga.library.state'))
+popup = await clickPillAndWaitNewPage(['Control'])
+check('带着页内匹配文字 Ctrl 点标签：开新标签页', !!popup)
+if (popup) {
+  const url = new URL(popup.url())
+  check('新标签页 URL 带 find 参数（URL 编码，解出来原样）', url.hash.includes('find=') && new URLSearchParams(url.hash.split('?')[1]).get('find') === '普通 C普', url.hash)
+  await popup.waitForSelector('#library-items .card'); await popup.waitForTimeout(800)
+  check('新标签页：页内匹配框被填上', (await evalVal(popup, '#library-find')) === '普通 C普')
+  check('新标签页：计数和手敲一致（1/1），命中卡片高亮并是当前项', (await popup.$eval('#library-find-count', (e) => e.textContent)) === '1/1' && (await popup.$$eval('#library-items .library-find-current', (els) => els.map((e) => e.textContent.includes('C普通')))).join() === 'true', await popup.$eval('#library-find-count', (e) => e.textContent))
+  check('新标签页：上一项 / 下一项可用', !(await popup.$eval('#library-find-next', (e) => e.disabled)) && !(await popup.$eval('#library-find-prev', (e) => e.disabled)))
+  await popup.fill('#library-find', '普通')   // 手敲：同样的逻辑，2 个命中
+  check('新标签页：之后手改匹配框照常工作（1/2）', (await popup.$eval('#library-find-count', (e) => e.textContent)) === '1/2')
+  await popup.waitForTimeout(800)
+  check('新标签页带 find：不写主标签页的 localStorage 状态', (await page.evaluate(() => localStorage.getItem('copymanga.library.state'))) === findState)
+  await popup.close()
+}
+// find 为空时不带参数
+await page.fill('#library-find', '')
+popup = await clickPillAndWaitNewPage(['Control'])
+check('页内匹配框为空：新标签页 URL 不带 find', !!popup && !popup.url().includes('find='), popup?.url())
+await popup?.close()
+// 手输 / 普通路由（没有 tab=new）也认 find；坏值（超长、控制字符）按清理后的值用
+const findPage = await context.newPage()
+await findPage.goto(`${base}/#/library?find=${encodeURIComponent('E普通')}`)
+await findPage.waitForSelector('#library-items .card'); await findPage.waitForTimeout(800)
+check('普通路由 #/library?find=… 也填匹配框并匹配（1/1）', (await evalVal(findPage, '#library-find')) === 'E普通' && (await findPage.$eval('#library-find-count', (e) => e.textContent)) === '1/1')
+await findPage.goto(`${base}/#/library?tab=new&find=${encodeURIComponent('不存在的词')}`)
+await findPage.reload(); await findPage.waitForSelector('#library-items .card'); await findPage.waitForTimeout(800)
+check('find 没有命中：计数显示「无」，上一项 / 下一项禁用', (await findPage.$eval('#library-find-count', (e) => e.textContent)) === '无' && (await findPage.$eval('#library-find-next', (e) => e.disabled)))
+await findPage.goto(`${base}/#/library?tab=new&find=%00%0A`)
+await findPage.reload(); await findPage.waitForSelector('#library-items .card'); await findPage.waitForTimeout(500)
+check('find 只剩控制字符：当空处理（框空、无计数）', (await evalVal(findPage, '#library-find')) === '' && (await findPage.$eval('#library-find-count', (e) => e.textContent)) === '')
+await findPage.close()
 // ---- 4. 按类型配置
 await setConfig({ tagSearchOpenInNewTabRules: [{ kind: 'video' }] })
 await page.reload(); await openLibrary(page)

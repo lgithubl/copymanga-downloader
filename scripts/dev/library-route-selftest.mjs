@@ -17,7 +17,7 @@ const tricky = 'tag:"压缩包预览: 有" -tag:"标签:*" 带空格 & 号 # 井
 const full = { tagSearch: tricky, type: 'archive', sourceProfile: 'archive-gallery', seriesSubtitle: 'has', sort: 'title_asc', limit: '100' }
 const hash = libraryRouteHash(full, { page: 3 })
 const parsed = parseLibraryRoute(hash)
-check('往返：所有条件原样回来（含中文、引号、& # % 😀 等特殊字符）', parsed && same(parsed.fields, { tag: tricky, type: 'archive', sourceProfile: 'archive-gallery', seriesSubtitle: 'has', sort: 'title_asc', limit: '100', page: '3' }), JSON.stringify(parsed))
+check('往返：所有条件原样回来（含中文、引号、& # % 😀 等特殊字符）', parsed && same(parsed.fields, { tag: tricky, type: 'archive', sourceProfile: 'archive-gallery', seriesSubtitle: 'has', sort: 'title_asc', limit: '100', page: '3', find: '' }), JSON.stringify(parsed))
 check('tab=new 往返', parsed.newTab === true && hash.includes('tab=new'))
 check('一个条件一个参数（可读）：URL 里能直接看到各字段名', ['tag=', 'type=archive', 'sourceProfile=archive-gallery', 'seriesSubtitle=has', 'sort=title_asc', 'limit=100', 'page=3'].every((part) => hash.includes(part)), hash)
 
@@ -38,6 +38,20 @@ for (const [bad, expected] of [['abc', '1'], ['0', '1'], ['-5', '1'], ['2.9', '2
 }
 check('百分号编码损坏的参数不抛错（按原样当文本）', (() => { try { return typeof parseLibraryRoute('#/library?tag=%E0%A4%A').fields.tag === 'string' } catch { return false } })())
 check('重复参数取第一个', parseLibraryRoute('#/library?type=media&type=epub').fields.type === 'media')
+
+// 4) find（页内匹配文字）：缺省空、非空才写、特殊字符往返、坏值忽略
+check('find 缺省为空串，且在 LIBRARY_ROUTE_DEFAULTS 里', LIBRARY_ROUTE_DEFAULTS.find === '' && bare.fields.find === '')
+check('find 为空时不写进 URL', !libraryRouteHash({ ...defaults, find: '' }).includes('find='))
+for (const text of ['abc', '中文 关键字', '  前后空格  ', 'a&b=c#d%e+f', '"引号" \\ 😀', '%E0%A4%A']) {
+  const h = libraryRouteHash({ ...defaults, tagSearch: 'tag:"x"', find: text })
+  const p = parseLibraryRoute(h)
+  check(`find 往返 ${JSON.stringify(text)}`, p.fields.find === text && p.fields.tag === 'tag:"x"' && p.newTab, `${h} -> ${JSON.stringify(p.fields)}`)
+}
+check('find 只带自己也能生成（其余缺省）', parseLibraryRoute(libraryRouteHash({ ...defaults, find: '甲' }, { newTab: false })).fields.find === '甲' && !libraryRouteHash({ ...defaults, find: '甲' }, { newTab: false }).includes('tab=new'))
+check('find 里的控制字符被去掉', parseLibraryRoute('#/library?find=a%00b%0Ac%7F').fields.find === 'abc')
+check('find 超长截断到上限', parseLibraryRoute(`#/library?find=${'x'.repeat(5000)}`).fields.find.length === 200)
+check('find 生成时也截断；非字符串 / undefined 当空', libraryRouteHash({ ...defaults, find: 'y'.repeat(999) }).length < 400 && !libraryRouteHash({ ...defaults, find: undefined }).includes('find=') && !libraryRouteHash({ ...defaults, find: null }).includes('find='))
+check('find 不影响其它字段解析（含坏页码）', same(parseLibraryRoute('#/library?find=x&page=abc').fields, { ...LIBRARY_ROUTE_DEFAULTS, find: 'x' }))
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

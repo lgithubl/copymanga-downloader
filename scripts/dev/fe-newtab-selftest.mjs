@@ -221,6 +221,24 @@ await setConfig({ tagSearchOpenInNewTabRules: [{ profile: 'text-media', kind: 'v
   const g = await tagOutcome('演示Gal', '标签G')
   check('点标签的 AND：{text-media & video} 对文本媒体不匹配 → 当前页；{gal-import & gal} 匹配 Gal → 新页', !t.popup && t.same && Boolean(g.popup))
 }
+// 配置规则命中开新页时，页内匹配框里的文字也带过去（find 路由参数）；没填就不带
+await setConfig({ tagSearchOpenInNewTabRules: [{ profile: 'archive-gallery' }] })
+{
+  await openLibrary()
+  await page.fill('#library-find', '压缩 图集')
+  const popupP = context.waitForEvent('page', { timeout: 3000 }).catch(() => null)
+  await card('压缩包图集').locator('.tag-pill[data-tag="标签A"]').first().click()
+  const popup = await popupP
+  const find = popup ? new URLSearchParams(popup.url().split('#/library?')[1] || '').get('find') : null
+  check('规则命中开新页：URL 带 find=页内匹配框的文字（含空格 / 中文）', find === '压缩 图集', popup?.url() || '无')
+  if (popup) {
+    await popup.waitForSelector('#library-items .library-card'); await sleep(800)
+    check('新页里匹配框被填上，计数 1/1', (await popup.inputValue('#library-find')) === '压缩 图集' && (await popup.textContent('#library-find-count')) === '1/1', await popup.textContent('#library-find-count'))
+  }
+  check('当前页的匹配框没被动', (await page.inputValue('#library-find')) === '压缩 图集')
+  const none = await tagOutcome('压缩包图集', '标签A')
+  check('匹配框为空：新页 URL 不带 find', Boolean(none.popup) && !/find=/.test(none.url), none.url)
+}
 
 // ---- 新页面里「返回」：统一开关 ----
 await setConfig({ mediaOpenInNewTabRules: [{ profile: 'gal-import' }], mediaCloseNewTabOnBack: true })
