@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 自测（纯 node，不需要浏览器）：utage-book / grenze-xml 的 adapterOptions —— 每个选项各一条：
 //   默认值（不给选项 / 给空对象）的结果和以前一样，覆盖之后的结果按文档变化；最后各有一条端到端（loadAdapterContext + config.adapterOptions + meta.config）。
-//   node scripts/dev/gal-adapter-options-selftest.mjs
+//   node scripts/dev/gal-adapter-options-b-selftest.mjs
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
