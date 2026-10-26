@@ -18,20 +18,107 @@
 //   分支里每条指令带 when（选了才执行），分支结束后汇合（不再带条件）。每个分支从选项出现时的立绘状态重新开始。
 //   Jump（没有 Arg2）：向后跳到后面的标签 → 中间的行不会走到（丢掉），到那个标签恢复；跳回前面的标签（循环）没法表示，当作这一段结束。带 Arg2 条件（flag）的 Jump 没有运行时变量可判断，记 raw 并当作没跳。
 //   EndScenario：到下一个标签之前的行不会走到；分支的最后一个分支没有任何结束标记（碰到 grid 末尾）就不加条件（宁可多放一段，也别把后面的剧情藏掉）。这些都是照数据推的，没有真机对照。
-// 立绘 / 画面（没有真机对照，位置全是推的）：站位槽 → spine 指令的 slot（Chara1…）、kind chara；x = 0.5 + 偏移 / 屏宽（adapterOptions.screenWidth，默认 1280）；Skin / SpineSubAnim 带在指令的 skin / sub 字段里，播放器暂时不认。
-//   角色骨架 = Master Character 的 FileName 去掉 _SkeletonData.asset（Characters/ch_1001001/ch_1001001_m0 → .skel.bytes / .atlas.txt）。
-// 资源目录来自 config.adapterOptions['utage-book']：{ root（StreamingAssets/<游戏名> 目录，相对媒体目录，默认 ''）, screenWidth（Arg4 偏移的参照屏宽，默认 1280） }
+// 立绘 / 画面（没有真机对照，位置全是推的）：站位槽 → spine 指令的 slot（默认 Chara1…）、kind chara；x = standX.slotBase + 偏移 / 屏宽（默认 0.5 + Arg4 / 1280）；Skin / SpineSubAnim 带在指令的 skin / sub 字段里，播放器暂时不认。
+//   角色骨架 = Master Character 的 FileName 去掉 paths.skeletonSuffixStrip（默认 .asset、_SkeletonData：Characters/ch_1001001/ch_1001001_m0 → .skel.bytes / .atlas.txt）。
+// 适配器只「读配置、按配置匹配」：所有猜出来的路径 / 正则 / 命名规则 / 数字都在 DEFAULT_OPTIONS 里，由 config.adapterOptions['utage-book']（管理员脚本 gal-layout 写）逐项覆盖（对象逐层合并，数组 / 标量整个替换）；
+// 没跑过脚本的条目用这份内置默认值，行为和以前完全一样。完整选项（括号里 = 默认值）：
+//   root ('')                    StreamingAssets/<游戏名> 目录，相对媒体目录
+//   screenWidth (1280)           Arg4 偏移的参照屏宽
+//   standX { slotBase: 0.5, argIndex: 4 }       立绘 x = slotBase + Arg<argIndex> / screenWidth（Tween MoveTo / MoveBy 同一个基准）
+//   slots { Chara1: 'Chara1', … }               Utage 站位槽 → spine slot 名；表里没有的槽原样用（合法字符才行）；映射成 '' = 丢掉这个槽的立绘
+//   slotPrefix ('Chara')         CharacterOff 不带角色时按这个前缀整批收立绘（spineOff prefix）
+//   off { mode: 'speakerOnly', arg: '^<Off>$' } Arg2 匹配 arg（不分大小写）时：speakerOnly = 只出名字 + 台词、立绘不动；hide = 同时收掉这个角色的立绘（没有真机对照）
+//   speaker { source: ['NameText', 'key'], splitOn: '-', pick: 'beforeLast', characterArg: '^<Character=(.*)>$' }
+//        显示名按 source 的顺序取第一个非空的：NameText = Master 的 NameText、key = 角色名（Arg1）按 splitOn 切后 pick（beforeLast = 最后一个 splitOn 之前的部分 / first = 第一段 / last = 最后一段 / 没有 splitOn 就是整个名字）、raw = 角色名原样；characterArg 的第 1 组 = 说话人改名
+//   bgm { play: 'loop' }         loop = 放 loop 文件（只有 intro 时放 intro；两个都有时 intro 记在指令的 intro 字段）/ intro = 放 intro 文件（没有再放 loop）/ intro+loop = 放 intro 并把 loop 文件记在指令的 loop 字段（播放器暂不认接续）
+//   tween { kinds: { MoveBy: { returns: 'action', else: 'moveBy' }, MoveTo: 'moveTo', PunchPosition: 'action', ShakePosition: 'action', ColorTo: 'raw', ScaleTo: 'raw', RotateTo: 'raw' }, actions: { x: 2, up: 1, down: 3 }, returnWhen: 'pingpong' }
+//        kinds 的值：action = 折成立绘动作（x → actions.x，y<0 → actions.down，y>0 → actions.up）/ moveBy · moveTo = 改槽位横向位置 / raw = 记 raw；对象 { returns, else } = Arg5 匹配 returnWhen（不分大小写）时用 returns；不在表里的 Tween 种类记 raw。Shake 角色的动作也用 actions（x → actions.x，否则 actions.up）
+//   selection { groupSuffix: '-\\d+$', adjacentGroups: true }   Selection 标签（去掉开头 *）匹配 groupSuffix 的，去掉后缀相同的算一组；不匹配的：adjacentGroups = 连续的 Selection 行算一组，否则一行一组
+//   folderLabels [['^MainScenario$', '主线'], …]   目录名 → 中文名（按顺序第一条匹配；列表里也按这个顺序排，没匹配的排最后）
+//   index { dirs: ['Adventure', 'Characters', 'Stills', 'Sound'], master: 'Adventure/Master.chapter.json', ext: '\\.(?:skel\\.bytes|png|jpe?g|ogg)$', books: ['^Adventure/(?:(?<category>[^/]+)/)?(?:.*/)?(?<stem>[^/]+)\\.book\\.json$'] }
+//        扫哪些目录（相对 root）/ 名称表文件 / 进索引的扩展名 / 剧情文件的路径正则（命名组 category = 文件夹、stem = 剧情名）
+//   paths { characters: [{ skel, atlas }], stills: [{ skel, atlas }], bg, voice, bgvoice, se, bgse, bgm, bgmIntro, bgmFallback, skeletonSuffixStrip, charIdStrip }   候选路径模板（数组，按顺序试，第一个在索引里的为准）：
+//        占位符 {name}（标签 / 语音名）{file:png}（Master 表里的 FileName，没有扩展名补 .png）{intro:ogg}（IntroFileName）{dir} {base}（角色骨架目录 / 基名）{charId}（角色目录名去掉 charIdStrip，默认 ^ch_）{id}（静态画面号）{base}（静态画面骨架基名）
+//        **/ = 中间任意层目录（按文件名找，大小写 / 扩展名后备 / preferDirs 来自 config.resourceResolve）；stills 的 * = 骨架基名通配（按自然序全部放出来）
+//        默认：characters [{ skel: '{dir}/{base}.skel.bytes', atlas: '{dir}/{base}.atlas.txt' }]、stills [{ skel: 'Stills/{id}/*.skel.bytes', atlas: 'Stills/{id}/{base}.atlas.txt' }]、
+//        bg ['{file:png}', 'Adventure/BackGrounds/{name}.png', 'Adventure/BackGrounds/{name}.jpg']、voice ['Sound/Voice/**/{name}.ogg', 'Sound/BgVoice/**/{name}.ogg']、bgvoice（顺序反过来）、
+//        se ['{file:ogg}', 'Sound/Se/{name}.ogg', 'Sound/BgSe/{name}.ogg']、bgse（Se / BgSe 反过来）、bgm ['{file:ogg}']、bgmIntro ['{intro:ogg}']、bgmFallback ['Sound/Bgm/{name}.ogg']（Master 表里没有 / 文件不在时才用）
+//   没有文件索引时不查，按每个列表的第一条模板猜（**/ 去掉）。
 // 列表（adapter.catalog）：Adventure/ 下每个剧情文件夹（MainScenario / CharaScenario …）→ 剧情文件（一个文件 = 一个场景）+ 全部剧情；每次从文件索引现读。
 import { parseRichText } from './uviewer-csv.mjs'
+import { expandTemplate, guessTemplate, lookupFor, mergeOptions, safeRegex } from './path-templates.mjs'
 
 export const ADAPTER_ID = 'utage-book'
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
-const rootOf = (options) => String(options?.root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
-const DEFAULT_SCREEN_WIDTH = 1280
 const COLUMNS = ['Command', 'Arg1', 'Arg2', 'Arg3', 'Arg4', 'Arg5', 'Arg6', 'Skin', 'SpineAnim', 'SpineSubAnim', 'AnimCompType', 'AnimSpd', 'WaitType', 'Text', 'PageCtrl', 'Voice', 'WindowType']
-// 文件夹 → 中文名（猜的，卡片副标题里同时写着文件夹名）
-const CATEGORY_LABELS = { MainScenario: '主线', CharaScenario: '角色剧情', StoryEventScenario: '活动剧情', BossrushEventScenario: 'Bossrush 活动', HomeEventScenario: '家园事件', ItemEventScenario: '道具事件', SpEventScenario: '特别活动', SubjugationEventScenario: '讨伐活动' }
-const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS)
+
+export const DEFAULT_OPTIONS = Object.freeze({
+  root: '',
+  screenWidth: 1280,
+  standX: { slotBase: 0.5, argIndex: 4 },
+  slots: { Chara1: 'Chara1', Chara2: 'Chara2', Chara3: 'Chara3' },
+  slotPrefix: 'Chara',
+  off: { mode: 'speakerOnly', arg: '^<Off>$' },
+  speaker: { source: ['NameText', 'key'], splitOn: '-', pick: 'beforeLast', characterArg: '^<Character=(.*)>$' },
+  bgm: { play: 'loop' },
+  tween: {
+    kinds: { MoveBy: { returns: 'action', else: 'moveBy' }, MoveTo: 'moveTo', PunchPosition: 'action', ShakePosition: 'action', ColorTo: 'raw', ScaleTo: 'raw', RotateTo: 'raw' },
+    actions: { x: 2, up: 1, down: 3 },
+    returnWhen: 'pingpong',
+  },
+  selection: { groupSuffix: '-\\d+$', adjacentGroups: true },
+  // 文件夹 → 中文名（猜的，卡片副标题里同时写着文件夹名）；顺序 = 列表顺序
+  folderLabels: [['^MainScenario$', '主线'], ['^CharaScenario$', '角色剧情'], ['^StoryEventScenario$', '活动剧情'], ['^BossrushEventScenario$', 'Bossrush 活动'], ['^HomeEventScenario$', '家园事件'], ['^ItemEventScenario$', '道具事件'], ['^SpEventScenario$', '特别活动'], ['^SubjugationEventScenario$', '讨伐活动']],
+  index: {
+    dirs: ['Adventure', 'Characters', 'Stills', 'Sound'],
+    master: 'Adventure/Master.chapter.json',
+    ext: '\\.(?:skel\\.bytes|png|jpe?g|ogg)$',
+    books: ['^Adventure/(?:(?<category>[^/]+)/)?(?:.*/)?(?<stem>[^/]+)\\.book\\.json$'],
+  },
+  paths: {
+    characters: [{ skel: '{dir}/{base}.skel.bytes', atlas: '{dir}/{base}.atlas.txt' }],
+    stills: [{ skel: 'Stills/{id}/*.skel.bytes', atlas: 'Stills/{id}/{base}.atlas.txt' }],
+    bg: ['{file:png}', 'Adventure/BackGrounds/{name}.png', 'Adventure/BackGrounds/{name}.jpg'],
+    voice: ['Sound/Voice/**/{name}.ogg', 'Sound/BgVoice/**/{name}.ogg'],
+    bgvoice: ['Sound/BgVoice/**/{name}.ogg', 'Sound/Voice/**/{name}.ogg'],
+    se: ['{file:ogg}', 'Sound/Se/{name}.ogg', 'Sound/BgSe/{name}.ogg'],
+    bgse: ['{file:ogg}', 'Sound/BgSe/{name}.ogg', 'Sound/Se/{name}.ogg'],
+    bgm: ['{file:ogg}'],
+    bgmIntro: ['{intro:ogg}'],
+    bgmFallback: ['Sound/Bgm/{name}.ogg'],
+    skeletonSuffixStrip: ['.asset', '_SkeletonData'],
+    charIdStrip: '^ch_',
+  },
+})
+const FREE_TABLES = ['slots', 'kinds', 'actions']
+// 用户选项 + 默认值（编译好的正则 / 数字校验缓存在 WeakMap 里；同一个 options 对象只算一次）
+const resolved = new WeakMap()
+export function resolveOptions(options) {
+  const source = options && typeof options === 'object' ? options : null
+  if (source && resolved.has(source)) return resolved.get(source)
+  const o = mergeOptions(DEFAULT_OPTIONS, source, FREE_TABLES)
+  o.root = String(o.root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  o.screenWidth = Number(o.screenWidth) > 0 ? Number(o.screenWidth) : DEFAULT_OPTIONS.screenWidth
+  const num = (value, fallback) => (Number.isFinite(Number(value)) && value !== '' && value !== null ? Number(value) : fallback)
+  o.standX = { slotBase: num(o.standX.slotBase, 0.5), argIndex: Math.round(num(o.standX.argIndex, 4)) }
+  const list = (value, fallback) => (Array.isArray(value) ? value.map(String) : fallback)
+  o.speaker.source = list(o.speaker.source, DEFAULT_OPTIONS.speaker.source)
+  for (const key of ['dirs', 'books']) o.index[key] = list(o.index[key], DEFAULT_OPTIONS.index[key])
+  for (const key of Object.keys(DEFAULT_OPTIONS.paths)) if (Array.isArray(DEFAULT_OPTIONS.paths[key])) o.paths[key] = Array.isArray(o.paths[key]) ? o.paths[key] : DEFAULT_OPTIONS.paths[key]
+  o.re = {
+    off: safeRegex(o.off.arg, 'i'),
+    characterArg: safeRegex(o.speaker.characterArg, ''),
+    group: safeRegex(o.selection.groupSuffix, ''),
+    ret: safeRegex(o.tween.returnWhen, 'i'),
+    ext: safeRegex(o.index.ext, 'i'),
+    books: o.index.books.map((source) => safeRegex(source, 'i')).filter(Boolean),
+    charId: safeRegex(o.paths.charIdStrip, ''),
+    labels: (Array.isArray(o.folderLabels) ? o.folderLabels : []).map((rule) => [safeRegex(Array.isArray(rule) ? rule[0] : '', ''), Array.isArray(rule) ? String(rule[1] ?? '') : '']).filter(([re]) => re),
+  }
+  if (source) resolved.set(source, o)
+  return o
+}
+const rootOf = (options) => resolveOptions(options).root
 
 // 头 8KB 里要有 importGridList 和表头行的 Command / Arg1（Master.chapter.json 是 settingList，没有 importGridList，不会被认走）
 export function sniff(text) {
@@ -40,15 +127,14 @@ export function sniff(text) {
 }
 
 // ---------- 上下文：Master.chapter.json + 资源目录索引 ----------
-export const contextFiles = (options) => [joinPath(rootOf(options), 'Adventure', 'Master.chapter.json')]
-export const contextDirs = (options) => ['Adventure', 'Characters', 'Stills', 'Sound'].map((dir) => joinPath(rootOf(options), dir))
+export const contextFiles = (options) => [joinPath(rootOf(options), resolveOptions(options).index.master)]
+export const contextDirs = (options) => resolveOptions(options).index.dirs.map((dir) => joinPath(rootOf(options), dir))
 export const contextWalkLimit = 800000   // 语音文件很多（Sound/Voice/ImportChara/<角色>/…），默认 40 万不一定够
 
 const natAsc = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true })
 const str = (value) => (value === null || value === undefined ? '' : String(value))
 const numOrNull = (value) => { const text = str(value).trim(); if (!text) return null; const n = Number(text); return Number.isFinite(n) ? n : null }
 const secOf = (value, fallback = 0) => { const n = numOrNull(value); return n !== null && n >= 0 ? Math.min(60, n) : fallback }
-const withExt = (file, ext) => (/\.[A-Za-z0-9]{2,4}$/.test(file) ? file : `${file}.${ext}`)
 const cleanPath = (value) => str(value).trim().replace(/\\/g, '/').replace(/^\/+/, '')
 
 // 名称表的一行：strings 按列下标放（有的表第 0 列是空的，所以列名一律按表头行找）
@@ -64,8 +150,16 @@ function readTable(setting) {
   })
 }
 
-export function readMaster(text) {
-  const chars = new Map()    // CharacterName → { name, dir, base, type }
+// FileName → { dir, base }：依次去掉 strip 里每个后缀（有就去），再按最后一个 / 切
+const splitFile = (file, strip) => {
+  let name = file
+  for (const suffix of strip) if (suffix && name.toLowerCase().endsWith(String(suffix).toLowerCase())) name = name.slice(0, -String(suffix).length)
+  const at = name.lastIndexOf('/')
+  return { dir: at > 0 ? name.slice(0, at) : '', base: name.slice(at + 1) }
+}
+
+export function readMaster(text, strip = DEFAULT_OPTIONS.paths.skeletonSuffixStrip) {
+  const chars = new Map()    // CharacterName → { name, file, dir, base, type }（dir / base 按 strip 切好的，parse 按选项重切 file）
   const textures = new Map() // Label → { type, file }
   const sounds = new Map()   // Label → { type, intro, file }
   let data = null
@@ -76,9 +170,8 @@ export function readMaster(text) {
       for (const row of readTable(setting)) {
         const key = row.get('CharacterName')
         if (!key || chars.has(key)) continue
-        const file = cleanPath(row.get('FileName')).replace(/\.asset$/i, '').replace(/_SkeletonData$/i, '')
-        const at = file.lastIndexOf('/')
-        chars.set(key, { name: row.get('NameText'), dir: at > 0 ? file.slice(0, at) : '', base: file.slice(at + 1), type: row.get('FileType') })
+        const file = cleanPath(row.get('FileName'))
+        chars.set(key, { name: row.get('NameText'), file, ...splitFile(file, strip), type: row.get('FileType') })
       }
     } else if (kind === 'Texture') {
       for (const row of readTable(setting)) { const label = row.get('Label'); if (label && !textures.has(label)) textures.set(label, { type: row.get('Type'), file: cleanPath(row.get('FileName')) }) }
@@ -90,60 +183,41 @@ export function readMaster(text) {
 }
 
 export function prepare({ options, texts, files, toResourcePath }) {
+  const o = resolveOptions(options)
   const toRes = toResourcePath || ((rel) => rel)
-  const lower = (map, res, key) => { map.set(String(key).toLowerCase(), res) }
   const books = []                // { rel, category, stem }
-  const images = new Map()        // Adventure/ 下的图片：小写路径 → 路径
-  const sounds = new Map()        // Sound/ 下除 Voice 外的 ogg：小写路径 → 路径
-  const voices = new Map()        // 语音名（无扩展名）→ 路径（Sound/Voice 优先）
-  const bgVoices = new Map()      // 背景语音名 → 路径（Sound/BgVoice 优先）
-  const voiceOwned = new Set()    // 已经是优先目录里的文件的名字（后面的同名文件不再覆盖）
-  const bgVoiceOwned = new Set()
-  const skeletons = new Set()     // 'Characters/<目录>/<基名>'（有 .skel.bytes 的）
-  const stills = new Map()        // 'Stills/<id>' → [基名…]
+  const index = new Set()         // 进索引的资源路径（扩展名 index.ext）；查找在 parse 里按模板做
   for (const rel of files || []) {
     const res = toRes(rel)
-    let m = /^Adventure\/(?:([^/]+)\/)?(?:.*\/)?([^/]+)\.book\.json$/i.exec(res)
-    if (m) { books.push({ rel, category: m[1] || '', stem: `${m[2]}` }); continue }
-    m = /^Characters\/([^/]+)\/(.+)\.skel\.bytes$/i.exec(res)
-    if (m) { skeletons.add(`Characters/${m[1]}/${m[2]}`); continue }
-    m = /^Stills\/([^/]+)\/(.+)\.skel\.bytes$/i.exec(res)
-    if (m) { const key = `Stills/${m[1]}`; if (!stills.has(key)) stills.set(key, []); stills.get(key).push(m[2]); continue }
-    m = /^Adventure\/.+\.(?:png|jpe?g)$/i.exec(res)
-    if (m) { lower(images, res, res); continue }
-    m = /^Sound\/(Voice|BgVoice)\/(?:.+\/)?([^/]+)\.ogg$/i.exec(res)
-    if (m) {
-      const isVoice = m[1].toLowerCase() === 'voice'
-      // 台词语音：Sound/Voice 优先；背景语音：Sound/BgVoice 优先（同名文件两边都有）；同一类里先收到的为准
-      const put = (map, owned, isPreferred, name) => { if (!map.has(name) || (isPreferred && !owned.has(name))) { map.set(name, res); if (isPreferred) owned.add(name) } }
-      put(voices, voiceOwned, isVoice, m[2])
-      put(bgVoices, bgVoiceOwned, !isVoice, m[2])
-      continue
-    }
-    if (/^Sound\/.+\.ogg$/i.test(res)) lower(sounds, res, res)
+    let book = null
+    for (const re of o.re.books) { const m = re.exec(res); if (m) { book = { rel, category: m.groups?.category || '', stem: m.groups?.stem || '' }; break } }
+    if (book) { books.push(book); continue }
+    if (!o.re.ext || o.re.ext.test(res)) index.add(res)
   }
-  for (const bases of stills.values()) bases.sort((a, b) => natAsc(a, b))
+  const masterName = o.index.master.replace(/^.*\//, '')
   const textOf = (name) => Object.entries(texts || {}).find(([key]) => key.endsWith(`/${name}`) || key === name)?.[1] || ''
-  const master = readMaster(textOf('Master.chapter.json'))
-  const ctx = { books, images, sounds, voices, bgVoices, skeletons, stills, master, hasIndex: Boolean(files?.length), screenWidth: Number(options?.screenWidth) > 0 ? Number(options.screenWidth) : DEFAULT_SCREEN_WIDTH }
-  ctx.catalogTree = buildCatalog(ctx)
+  const master = readMaster(textOf(masterName), o.paths.skeletonSuffixStrip)
+  const ctx = { books, index, master, hasIndex: Boolean(files?.length), options }
+  ctx.catalogTree = buildCatalog(ctx, o)
   return ctx
 }
 
 // ---------- 列表 ----------
-function buildCatalog(ctx) {
+function buildCatalog(ctx, o) {
   if (!ctx.books.length) return null
+  const ruleOf = (category) => o.re.labels.findIndex(([re]) => re.test(category))
+  const labelOf = (category) => { const i = ruleOf(category); return i < 0 ? '' : o.re.labels[i][1] }
   const byCategory = new Map()
   for (const book of ctx.books) { if (!byCategory.has(book.category)) byCategory.set(book.category, []); byCategory.get(book.category).push(book) }
-  const node = (prefix, book) => ({ id: `${prefix}/${book.stem}`, title: book.stem, subtitle: CATEGORY_LABELS[book.category] ? `${CATEGORY_LABELS[book.category]} · ${book.category}` : book.category, script: book.rel })
+  const node = (prefix, book) => ({ id: `${prefix}/${book.stem}`, title: book.stem, subtitle: labelOf(book.category) ? `${labelOf(book.category)} · ${book.category}` : book.category, script: book.rel })
   const categories = [...byCategory].sort((a, b) => {
-    const ia = CATEGORY_ORDER.indexOf(a[0])
-    const ib = CATEGORY_ORDER.indexOf(b[0])
+    const ia = ruleOf(a[0])
+    const ib = ruleOf(b[0])
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || natAsc(a[0], b[0])
   })
   const lists = categories.map(([category, list]) => ({
     id: `c/${category || '-'}`,
-    title: CATEGORY_LABELS[category] || category || '其它',
+    title: labelOf(category) || category || '其它',
     subtitle: `${category ? `${category} · ` : ''}${list.length} 个`,
     children: [...list].sort((a, b) => natAsc(a.stem, b.stem)).map((book) => node(`c/${category || '-'}`, book)),
   }))
@@ -178,10 +252,9 @@ const bookRows = (grid) => {
 const keyValues = (text) => { const out = {}; for (const part of str(text).split(/\s+/)) { const m = /^([A-Za-z]+)=(.*)$/.exec(part); if (m) out[m[1].toLowerCase()] = m[2] } return out }
 // Utage 的 <ruby=读音>字</ruby> → 通用富文本的 <ruby>字|读音</ruby>
 const richText = (text) => parseRichText(str(text).replace(/<ruby=([^>]*)>(.*?)<\/ruby>/gs, (_all, reading, base) => `<ruby>${base}|${reading}</ruby>`))
-const nameOfKey = (key) => key.replace(/-[^-]*$/, '')
 const zoomCode = (scale) => ((scale - 1) / 1.3) * 1000   // 播放器 zoomOf(z) = 1 + z/1000×1.3 的反函数
 
-export function parse(text, ctx = null) {
+export function parse(text, ctx = null, meta = {}) {
   let data
   try { data = JSON.parse(String(text || '').replace(/^﻿/, '')) } catch { throw new Error('不是有效的 JSON') }
   const grids = Array.isArray(data?.importGridList) ? data.importGridList : null
@@ -193,48 +266,85 @@ export function parse(text, ctx = null) {
   const ignore = (key) => { stats.ignored[key] = (stats.ignored[key] || 0) + 1 }
   const master = ctx?.master
   const hasIndex = Boolean(ctx?.hasIndex)
-  const screenWidth = ctx?.screenWidth || DEFAULT_SCREEN_WIDTH
+  const o = resolveOptions(meta?.options ?? ctx?.options)
+  const screenWidth = o.screenWidth
+  const { paths } = o
+  const lookup = hasIndex ? lookupFor(ctx, ctx.index, meta?.config?.resourceResolve) : null
+  // 模板 → 资源路径：有索引就在索引里找（没有 = ''），没有索引就按模板猜（第一条）
+  const resolveWith = (templates, vars, dup) => (hasIndex ? lookup.find(templates, vars, dup) : guessTemplate(templates, vars))
 
   // --- 查名称表 / 资源索引 ---
-  const nameOf = (key) => master?.chars.get(key)?.name || nameOfKey(key)
-  const standFiles = (key) => {
-    const info = master?.chars.get(key)
-    if (!info?.dir || !info.base) { if (master) miss('character', key); return null }
-    if (info.type && !/^spine$/i.test(info.type)) { raw(`character:${info.type}`); return null }
-    const base = `${info.dir}/${info.base}`
-    if (hasIndex && !ctx.skeletons.has(base)) { miss('character-file', base); return null }
-    return { skel: `${base}.skel.bytes`, atlas: `${base}.atlas.txt` }
+  const keyName = (key) => {
+    const { splitOn, pick } = o.speaker
+    const parts = splitOn ? key.split(splitOn) : [key]
+    if (parts.length < 2) return key
+    return pick === 'first' ? parts[0] : pick === 'last' ? parts[parts.length - 1] : parts.slice(0, -1).join(splitOn)
   }
-  const findIn = (map, path) => map?.get(path.toLowerCase()) || ''
-  const resolveBg = (label) => {
-    const entry = master?.textures.get(label)
-    const guess = entry?.file ? withExt(entry.file, 'png') : `Adventure/BackGrounds/${label}.png`
-    if (!hasIndex) return guess
-    const hit = findIn(ctx.images, guess) || findIn(ctx.images, `Adventure/BackGrounds/${label}.png`) || findIn(ctx.images, `Adventure/BackGrounds/${label}.jpg`)
-    if (!hit) miss('background', label)
-    return hit
-  }
-  const soundFile = (label, dirs) => {
-    const entry = master?.sounds.get(label)
-    const tried = [entry?.file ? withExt(entry.file, 'ogg') : '', ...dirs.map((dir) => `Sound/${dir}/${label}.ogg`)].filter(Boolean)
-    if (!hasIndex) return tried[0] || ''
-    for (const path of tried) { const hit = findIn(ctx.sounds, path); if (hit) return hit }
+  const nameOf = (key) => {
+    for (const source of o.speaker.source) {
+      const name = source === 'NameText' ? master?.chars.get(key)?.name : source === 'key' ? keyName(key) : source === 'raw' ? key : ''
+      if (name) return name
+    }
     return ''
   }
+  const charVars = (key) => {
+    const info = master?.chars.get(key)
+    if (!info?.file) return null
+    const { dir, base } = splitFile(info.file, paths.skeletonSuffixStrip)
+    const last = dir.slice(dir.lastIndexOf('/') + 1)
+    return { dir, base, charId: o.re.charId ? last.replace(o.re.charId, '') : last }
+  }
+  const standFiles = (key) => {
+    const info = master?.chars.get(key)
+    const vars = charVars(key)
+    if (!vars?.dir || !vars.base) { if (master) miss('character', key); return null }
+    if (info.type && !/^spine$/i.test(info.type)) { raw(`character:${info.type}`); return null }
+    for (const pair of paths.characters) {
+      const guess = expandTemplate(pair?.skel, vars)[0]
+      const skel = hasIndex ? lookup.find([pair?.skel], vars) : guess
+      if (skel) return { skel, atlas: expandTemplate(pair.atlas, vars)[0] || '' }
+    }
+    if (hasIndex) miss('character-file', `${vars.dir}/${vars.base}`)
+    return null
+  }
+  const entryVars = (label, kind) => { const entry = master?.[kind].get(label); return { name: label, file: entry?.file, intro: entry?.intro } }
+  const resolveBg = (label) => {
+    const src = resolveWith(paths.bg, entryVars(label, 'textures'))
+    if (hasIndex && !src) miss('background', label)
+    return src
+  }
+  const soundFile = (label, list) => resolveWith(list, entryVars(label, 'sounds'))
   const resolveBgm = (label) => {
-    const entry = master?.sounds.get(label)
-    const pick = (file) => (file ? (hasIndex ? findIn(ctx.sounds, withExt(file, 'ogg')) : withExt(file, 'ogg')) : '')
-    const loop = pick(entry?.file)
-    const intro = pick(entry?.intro)
-    if (loop || intro) return { src: loop || intro, ...(loop && intro ? { intro } : {}) }
-    const guess = soundFile(label, ['Bgm'])
+    const vars = entryVars(label, 'sounds')
+    const loop = resolveWith(paths.bgm, vars)
+    const intro = resolveWith(paths.bgmIntro, vars)
+    const play = o.bgm.play
+    if (loop || intro) {
+      if (play === 'intro') return { src: intro || loop }
+      if (play === 'intro+loop') return { src: intro || loop, ...(loop && intro ? { loop } : {}) }
+      return { src: loop || intro, ...(loop && intro ? { intro } : {}) }
+    }
+    const guess = resolveWith(paths.bgmFallback, vars)
     return guess ? { src: guess } : null
   }
+  // 静态画面：skel 模板里的 * = 骨架基名（通配，按自然序全放出来；没有索引时 * 当作静态画面号）
   const stillFiles = (id) => {
-    const bases = ctx?.stills?.get(`Stills/${id}`)
-    if (bases?.length) return bases.map((base) => ({ skel: `Stills/${id}/${base}.skel.bytes`, atlas: `Stills/${id}/${base}.atlas.txt` }))
-    if (hasIndex) { miss('still', id); return [] }
-    return [{ skel: `Stills/${id}/${id}.skel.bytes`, atlas: `Stills/${id}/${id}.atlas.txt` }]
+    const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    for (const pair of paths.stills) {
+      const [pattern] = expandTemplate(pair?.skel, { id })
+      if (!pattern) continue
+      const atlasOf = (base) => expandTemplate(pair.atlas, { id, base })[0] || ''
+      if (!hasIndex) return [{ skel: pattern.replace('*', id), atlas: atlasOf(id) }]
+      if (!pattern.includes('*')) { const skel = lookup.find([pattern], {}); if (skel) return [{ skel, atlas: atlasOf(skel.replace(/^.*\//, '').replace(/\..*$/, '')) }]; continue }
+      const at = pattern.lastIndexOf('/')
+      const dir = pattern.slice(0, at)
+      const [pre, post] = pattern.slice(at + 1).split('*')
+      const match = new RegExp(`^${escape(dir)}/${escape(pre)}(.+)${escape(post)}$`, 'i')
+      const found = lookup.under(dir).map((key) => ({ key, base: match.exec(key)?.[1] })).filter((entry) => entry.base).sort((x, y) => natAsc(x.base, y.base))
+      if (found.length) return found.map(({ key, base }) => ({ skel: key, atlas: atlasOf(base) }))
+    }
+    if (hasIndex) miss('still', id)
+    return []
   }
 
   // --- 输出 ---
@@ -267,15 +377,16 @@ export function parse(text, ctx = null) {
     op: 'spine', slot, kind: 'chara', skel: entry.skel, atlas: entry.atlas, anim: entry.anim, loop: true, speed: 1, x: entry.x,
     ...(entry.skin ? { skin: entry.skin } : {}), ...(entry.sub ? { sub: entry.sub } : {}), ...extra,
   })
+  const slotName = (utageSlot) => { const mapped = Object.hasOwn(o.slots, utageSlot) ? o.slots[utageSlot] : utageSlot; return mapped ? String(mapped) : '' }
   const showStand = (row) => {
-    const slot = row.a3
+    const slot = slotName(row.a3)
     const files = standFiles(row.a1)
     if (!files || !/^[A-Za-z0-9_]+$/.test(slot)) return
     const before = slotOf.get(row.a1)
     if (before && before !== slot) { emit({ op: 'spineOff', slot: before }); stage.delete(before) }
-    const offset = numOrNull(row.a4)
+    const offset = numOrNull(row[`a${o.standX.argIndex}`])
     const old = stage.get(slot)
-    const entry = { key: row.a1, ...files, anim: row.anim || (old?.key === row.a1 ? old.anim : ''), skin: row.skin || (old?.key === row.a1 ? old.skin : ''), sub: row.sub, x: offset !== null ? 0.5 + offset / screenWidth : old?.x ?? 0.5 }
+    const entry = { key: row.a1, ...files, anim: row.anim || (old?.key === row.a1 ? old.anim : ''), skin: row.skin || (old?.key === row.a1 ? old.skin : ''), sub: row.sub, x: offset !== null ? o.standX.slotBase + offset / screenWidth : old?.x ?? o.standX.slotBase }
     if (old && old.key !== row.a1) slotOf.delete(old.key)
     stage.set(slot, entry)
     slotOf.set(row.a1, slot)
@@ -305,6 +416,7 @@ export function parse(text, ctx = null) {
       emit({ op: 'spine', slot: `still${order}`, kind: 'still', skel: file.skel, atlas: file.atlas, anim, loop: /_loop$/i.test(anim), speed: speed && speed > 0 ? speed : 1, order })
     })
   }
+  const hideStand = (key) => { const slot = slotOf.get(key); if (slot) { emit({ op: 'spineOff', slot }); stage.delete(slot); slotOf.delete(key) } }
   const stillOff = () => { if (stillId) { emit({ op: 'spineOff', prefix: 'still' }); stillId = '' } }
 
   // --- 一个 grid ---
@@ -316,7 +428,7 @@ export function parse(text, ctx = null) {
     guard = null; openBlock = null; speaker = null
     const labelAt = new Map()     // 标签 → 行号
     rows.forEach((row, i) => { if (row.command.startsWith('*') && !labelAt.has(row.command)) labelAt.set(row.command, i) })
-    // Selection 分组：标签去掉末尾 -数字 相同的是一组；没有这种后缀的，连续的 Selection 行算一组
+    // Selection 分组：标签去掉 selection.groupSuffix 之后相同的是一组；没有这种后缀的，连续的 Selection 行算一组（selection.adjacentGroups）
     const groups = []
     const groupOfRow = new Map()
     const groupOfLabel = new Map()   // 标签 → { group, index }
@@ -324,10 +436,11 @@ export function parse(text, ctx = null) {
     let run = null
     rows.forEach((row, i) => {
       if (row.command !== 'Selection') { run = null; return }
-      const m = /^\*(.*)-\d+$/.exec(row.a1)
+      const m = row.a1.startsWith('*') && o.re.group ? o.re.group.exec(row.a1.slice(1)) : null
+      const key = m ? row.a1.slice(1, 1 + m.index) : null
       let group
-      if (m) group = byKey.get(m[1]) || (byKey.set(m[1], { options: [] }), byKey.get(m[1]))
-      else { if (!run) run = { options: [] }; group = run }
+      if (m) group = byKey.get(key) || (byKey.set(key, { options: [] }), byKey.get(key))
+      else { if (!run || !o.selection.adjacentGroups) run = { options: [] }; group = run }
       if (!groups.includes(group)) groups.push(group)
       groupOfRow.set(i, group)
       if (!groupOfLabel.has(row.a1)) groupOfLabel.set(row.a1, { group, index: group.options.length })
@@ -376,16 +489,17 @@ export function parse(text, ctx = null) {
       const a6 = secOf(row.a6)
       switch (command) {
         case '': {
-          const asChar = /^<Character=(.*)>$/.exec(row.a2)
-          const off = /^<Off>$/i.test(row.a2)
+          const asChar = o.re.characterArg?.exec(row.a2)
+          const off = Boolean(o.re.off?.test(row.a2))
           if (row.a1 && !off) { if (row.a3) showStand(row); else updateStand(row) }
+          else if (row.a1 && o.off.mode === 'hide') hideStand(row.a1)
           if (!row.text) { if (!row.a1 && !row.voice) ignore('空行'); break }
           const voice = row.voice
           if (voice) {
-            const src = hasIndex ? ctx.voices.get(voice) : `Sound/Voice/${voice}.ogg`
+            const src = resolveWith(paths.voice, { name: voice, ...charVars(row.a1) })
             if (src) emit({ op: 'voice', src }); else miss('voice', voice)
           }
-          const who = row.a1 ? (asChar ? nameOf(asChar[1].trim()) : nameOf(row.a1)) : ''
+          const who = row.a1 ? (asChar ? nameOf(str(asChar[1]).trim()) : nameOf(row.a1)) : ''
           if (who !== speaker) { emit({ op: 'speaker', segments: who ? [{ text: who }] : [] }); speaker = who }
           emit({ op: 'text', segments: richText(row.text) })
           pushStep()
@@ -406,11 +520,11 @@ export function parse(text, ctx = null) {
           break
         }
         case 'StopBgm': emit({ op: 'bgmStop', fade: a6 }); break
-        case 'Se': { const src = soundFile(row.a1, ['Se', 'BgSe']); if (src) emit({ op: 'se', src }); else miss('se', row.a1); break }
-        case 'BgSe': { const src = soundFile(row.a1, ['BgSe', 'Se']); if (src) emit({ op: 'bgse', src, loop: true }); else miss('bgse', row.a1); break }
+        case 'Se': { const src = soundFile(row.a1, paths.se); if (src) emit({ op: 'se', src }); else miss('se', row.a1); break }
+        case 'BgSe': { const src = soundFile(row.a1, paths.bgse); if (src) emit({ op: 'bgse', src, loop: true }); else miss('bgse', row.a1); break }
         case 'StopBgSe': emit({ op: 'bgseStop' }); break
         case 'BgVoice': {
-          const src = hasIndex ? ctx.bgVoices.get(row.a1) : `Sound/BgVoice/${row.a1}.ogg`
+          const src = resolveWith(paths.bgvoice, { name: row.a1 })
           if (src) { emit({ op: 'bgvoice', slot: '1', src, volume: 1 }); bgvoiceOn = true } else miss('bgvoice', row.a1)
           break
         }
@@ -422,7 +536,7 @@ export function parse(text, ctx = null) {
           if (row.a1) {
             const slot = slotOf.get(row.a1)
             if (slot) { emit({ op: 'spineOff', slot }); stage.delete(slot); slotOf.delete(row.a1) }
-          } else if (stage.size) { emit({ op: 'spineOff', prefix: 'Chara' }); stage.clear(); slotOf.clear() }
+          } else if (stage.size) { emit({ op: 'spineOff', prefix: o.slotPrefix }); stage.clear(); slotOf.clear() }
           break
         }
         case 'HideMessageWindow': emit({ op: 'ui', visible: false, seconds: 0 }); break
@@ -444,7 +558,7 @@ export function parse(text, ctx = null) {
           const y = Math.abs(numOrNull(kv.y) ?? 0)
           const seconds = secOf(kv.time, 0.5)
           if (/^graphics$/i.test(row.a1)) emit({ op: 'shake', axis: x && y ? 'overall' : y ? 'vertical' : 'horizontal', strength: Math.max(x, y) / 40, seconds })
-          else if (slotOf.has(row.a1)) emitAction(slotOf.get(row.a1), x ? 2 : 1)
+          else if (slotOf.has(row.a1)) emitAction(slotOf.get(row.a1), x ? o.tween.actions.x : o.tween.actions.up)
           else raw(`Shake:${row.a1 ? '角色不在场' : '无目标'}`)
           break
         }
@@ -475,8 +589,8 @@ export function parse(text, ctx = null) {
     }
     openBlock = null
   }
-  // Tween 折成立绘动作：MoveBy / PunchPosition / ShakePosition（带 pingPong = 来回，不是搬家）→ 动作 1 跳 / 2 左右抖 / 3 下沉；
-  // MoveTo x（像素偏移）/ 不带 pingPong 的 MoveBy x → 改横向位置；ColorTo / ScaleTo / RotateTo / y 方向的搬家没有对应的立绘字段，记 raw
+  // Tween 折成立绘动作（种类 → 处理方式见 options.tween.kinds）：action = 来回的动作（立绘动作 x / up / down，时长、次数用播放器固定的）；
+  // moveBy / moveTo = 改横向位置（像素偏移）；raw（含表里没有的种类）= 没有对应的立绘字段，记 raw
   function emitAction(slot, action) {
     const entry = stage.get(slot)
     if (!entry) return
@@ -490,14 +604,15 @@ export function parse(text, ctx = null) {
     if (!slot) { raw(`Tween:${mode || '(空)'}（角色不在场）`); return }
     const x = numOrNull(kv.x)
     const y = numOrNull(kv.y)
-    const returns = /pingpong/i.test(row.a5)
-    if (mode === 'PunchPosition' || mode === 'ShakePosition' || (mode === 'MoveBy' && returns)) {
-      if (x) emitAction(slot, 2)
-      else if (y) emitAction(slot, y < 0 ? 3 : 1)
+    const entryOf = Object.hasOwn(o.tween.kinds, mode) ? o.tween.kinds[mode] : 'raw'
+    const form = entryOf && typeof entryOf === 'object' ? (o.re.ret?.test(row.a5) ? entryOf.returns : entryOf.else) : entryOf
+    if (form === 'action') {
+      if (x) emitAction(slot, o.tween.actions.x)
+      else if (y) emitAction(slot, y < 0 ? o.tween.actions.down : o.tween.actions.up)
       else raw(`Tween:${mode}（没有 x / y）`)
-    } else if ((mode === 'MoveTo' || mode === 'MoveBy') && x !== null) {
+    } else if ((form === 'moveTo' || form === 'moveBy') && x !== null) {
       const entry = stage.get(slot)
-      const next = { ...entry, x: mode === 'MoveTo' ? 0.5 + x / screenWidth : entry.x + x / screenWidth }
+      const next = { ...entry, x: form === 'moveTo' ? o.standX.slotBase + x / screenWidth : entry.x + x / screenWidth }
       stage.set(slot, next)
       stats.spines += 1
       emit(standOp(slot, next, secOf(kv.time) ? { move: secOf(kv.time) } : {}))

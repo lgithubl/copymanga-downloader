@@ -515,6 +515,11 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **gal-layout**：脚本根 `<游戏根>/TextAsset`、资源根 `<游戏根>/assets/resources/patchres`、扩展名 `xml`、适配器参数 `root`（游戏根多一层目录也找得到）；没写 game.id 时要求 `TextAsset` 里有 `easy_dialog-N.xml` 且同级有 `assets/` 和 patchres。探测顺序在 artwhirl 之后、UViewer 之前。导入页预设「Grenze（GrenzeViewer）」。
 - **自测**：`node scripts/dev/make-grenze-fixture.mjs <目录> [大文件行数]` 造合成数据；`PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-grenze-selftest.mjs`（适配器单测 + 导入 / 列表 / 播放 / 立绘像素，含 5 万行的大文件）。
 
+- **适配器选项（`adapterOptions['grenze-xml']`，完整 schema 和默认值见 `adapters/grenze-xml.mjs` 的 `DEFAULT_OPTIONS`；对象逐层合并、数组 / 标量整个替换；不写 = 内置默认 = 以前的行为）**：
+  `root` / `textDir` / `resourceDir` / `resourceDirs`（进索引的子目录）/ `index.ext`；`exts`（`{ext}` 的扩展名优先级）；`paths.{bg,bgm,sound,voice,stand}`（候选路径模板数组，占位符 `{name}` `{lower}` `{pack}` `{voice}` `{hero}` `{ext}` `{file}`，`**/` = 任意层目录按文件名找；默认第一条是原来的约定路径、第二条是「按文件名在目录里找」的后备）；
+  `duplicates`（`**/` 模板里同名文件怎么办：`skip` / `first` / `preferDirs`，默认语音 `skip`、其余 `first`）；`standFiles` / `standPos` / `standFit` / `standKeep`（`untilNewHero` | `perRow`）；`none`（表示「没有 / 停」的值，默认 `['non']`）/ `bgBlack`（默认 `['bg_b']`）/ `bgSound`（`{ mode: 'se' | 'bgse', attrs }`）/ `soundAttrs`；
+  `rawAttrs`（记 raw 的属性，`a+b` = 同一条 raw 带两个值）；`scene { split: 'chains', forkPolicy: 'merge' | 'first' }`。查文件走 `createIndexResolver`（扩展名后备 / 改写 / unicode / `preferDirs` / 大小写来自 `config.resourceResolve`）。测试：`node scripts/dev/gal-adapter-options-selftest.mjs`（纯 node，每个选项：默认不变 + 覆盖后改变 + 端到端）。
+
 ### Twinkle Star Knights X（Utage 工作簿，`utage-book`）
 - **独立的 adapter `utage-book`**（`adapters/utage-book.mjs`）：认 Unity 导出的 Utage 工作簿 `*.book.json`（顶层 `importGridList`，每个 grid = 一张剧情表 `{ name, headerRow, rows: [{ rowIndex, strings[], isEmpty, isCommentOut }] }`）。sniff 要求头 8KB 里有 `importGridList` 和表头行的 `Command` / `Arg1`，所以同目录的 `Master.chapter.json`（`settingList`）、`NAME.txt` 都不会被认走。
   列按表头行的列名找（没有就按 `Command Arg1…Arg6 Skin SpineAnim SpineSubAnim AnimCompType AnimSpd WaitType Text PageCtrl Voice WindowType` 的顺序），所以表头重复出现、列错位都不影响；注释行 / 空行 / `//` 开头的行跳过；`WaitType` 的手滑（`NoWiat` / `NoWite` / `NoWati`）和 `WindowType` 里的表格公式（`IF(COUNTA(…))`）一律不看。
@@ -541,6 +546,12 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **`gal-layout` 探测**（`game.id: tsk`）：往下找（深度 ≤ 6）「有 `Adventure/Master.chapter.json`，同级有 `Characters` / `Stills` / `Sound`」的目录（= 数据根 `…_Data/StreamingAssets/<游戏名>`；媒体目录可以是游戏根、`_Data`、`StreamingAssets` 或数据根本身），写：脚本根 `<数据根>/Adventure`、资源根 `<数据根>`、扩展名 `json`（只认 `*.book.json` 靠适配器的嗅探，不靠扩展名）、隐藏目录 `BackGrounds` / `Effects` / `Spine` / `Textures`、适配器参数 `root`、封面 = `Adventure/BackGrounds` 里第一张图、脚本数、默认节点图（每个剧情文件夹一个 `c/<文件夹>` 节点 + `all`）。探测顺序在 artwhirl 之后、uviewer 之前。
   导入页预设「Twinkle Star Knights X（Utage）」，或自己写：`adapters: ['utage-book']` + `config.game.id: 'tsk'` + 勾元数据脚本 `gal-layout`。
 - 自测：`scripts/dev/gal-selftest.mjs` 里的 TSK 一节（适配器 / 分支 / gal-layout / 浏览节点）；浏览器 `PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-tsk-selftest.mjs`（真实 WebGL + Spine 4.0 运行时，需要先 `sh scripts/fetch-spine-runtime.sh`）；合成数据 `node scripts/dev/make-tsk-fixture.mjs <目录>`（`gal-demo` 工作流也会导入它）。
+
+- **适配器选项（`adapterOptions['utage-book']`，完整 schema 和默认值见 `adapters/utage-book.mjs` 头部注释和 `DEFAULT_OPTIONS`；对象逐层合并、数组 / 标量整个替换；不写 = 内置默认 = 以前的行为）**：
+  `root` / `screenWidth` / `standX { slotBase, argIndex }` / `slots`（Utage 站位槽 → spine slot）/ `slotPrefix`；`off { mode: 'speakerOnly' | 'hide', arg }`；`speaker { source: ['NameText','key'|'raw'], splitOn, pick: 'beforeLast' | 'first' | 'last', characterArg }`；`bgm { play: 'loop' | 'intro' | 'intro+loop' }`；
+  `tween { kinds: { 种类: 'action' | 'moveBy' | 'moveTo' | 'raw' | { returns, else } }, actions: { x, up, down }, returnWhen }`；`selection { groupSuffix, adjacentGroups }`；`folderLabels [[正则, 名]]`；`index { dirs, master, ext, books }`；
+  `paths { characters, stills, bg, voice, bgvoice, se, bgse, bgm, bgmIntro, bgmFallback, skeletonSuffixStrip, charIdStrip }`（候选路径模板数组，占位符 `{name}` `{file:png}` `{intro:ogg}` `{dir}` `{base}` `{charId}` `{id}`，`**/` = 任意层目录按文件名找，stills 的 `*` = 骨架基名通配）。
+  查文件走 `createIndexResolver`（经 `adapters/path-templates.mjs`：扩展名后备 / 改写 / unicode / `preferDirs` / 大小写来自 `config.resourceResolve`，在 `parse` 时按 `meta.config` 查，所以改配置不用重建上下文）。测试：`node scripts/dev/gal-adapter-options-selftest.mjs`。
 
 ## 随机语音（列表上的 🎲，不打开脚本）
 
