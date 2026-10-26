@@ -73,7 +73,7 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
   const dirRels = cleanRels(adapter.contextDirs?.(options))
   const skip = compileSkip(config)
   const limits = config.limits || {}
-  const key = `${mediaDir}|${adapter.id}|${JSON.stringify(options)}|${config.resourceRoots.join(',')}|${JSON.stringify([skip.map((re) => re.source), limits])}`
+  const key = `${mediaDir}|${adapter.id}|${JSON.stringify(options)}|${config.resourceRoots.join(',')}|${JSON.stringify([skip.map((re) => re.source), limits, config.resourceResolve || null])}`
   const parts = []
   for (const rel of fileRels) {
     try {
@@ -140,7 +140,7 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
     }
   }
   if (sampleTruncated) console.warn(`[gal] ${adapter.id}：${mediaDir} 的脚本抽样超过上限 ${sampleLimit} 个，只读了前 ${sampleLimit} 个（列表 / 标题可能不全）`)
-  const ctx = await adapter.prepare({ options, texts, files, toResourcePath, truncated: Boolean(files.truncated), sampleTruncated, mediaDir })
+  const ctx = await adapter.prepare({ options, resourceResolve: config.resourceResolve, texts, files, toResourcePath, truncated: Boolean(files.truncated), sampleTruncated, mediaDir })
   if (cache.size > 200) cache.clear()
   const stats = { adapter: adapter.id, builtAt: new Date().toISOString(), files: files.length, truncated: Boolean(files.truncated), sampleTruncated, sampleLimit, limit: walkLimit, ms: Date.now() - startedAt, dirs: dirRels }
   cache.set(key, { fileKey, builtAt: Date.now(), ctx, stats })

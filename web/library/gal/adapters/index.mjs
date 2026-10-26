@@ -38,10 +38,11 @@ export function galAdapter(id) {
   return adapter
 }
 // 给一段文本找适配器：返回第一个认得它的适配器 id，没有就返回 ''
-export function sniffGalAdapter(text, allowed = null) {
+// adapterOptions（可选）：config.adapterOptions，嗅探规则可配的适配器按自己的 id 取参数（sniff(text, options)）
+export function sniffGalAdapter(text, allowed = null, adapterOptions = null) {
   for (const adapter of adapters.values()) {
     if (allowed && !allowed.includes(adapter.id)) continue
-    if (adapter.sniff?.(text)) return adapter.id
+    if (adapter.sniff?.(text, adapterOptions?.[adapter.id])) return adapter.id
   }
   return ''
 }

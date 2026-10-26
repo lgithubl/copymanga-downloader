@@ -138,6 +138,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const maxScriptBytes = config.limits.scriptBytes ?? defaultMaxScriptBytes   // config.limits.scriptBytes 覆盖
   // 给每次 buildScene 的 meta：这个适配器自己的参数（没有 prepare 的适配器只能从这里拿到）+ 引擎配置的只读视图
   const configView = galConfigView(config)
+  const sniffOptKey = createHash('sha1').update(JSON.stringify(config.adapterOptions)).digest('hex').slice(0, 12)   // sniff 规则可配（adapterOptions），缓存键要带上
   const metaFor = (adapterId, meta) => ({ ...meta, options: config.adapterOptions[adapterId] || {}, config: configView })
   const scriptExtensions = config.scriptExtensions
   const pageSize = config.pageSize
@@ -457,7 +458,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     let info
     try { info = await stat(abs) } catch { return '' }
     if (!info.isFile() || !info.size || (info.size > maxScriptBytes && !allowLarge) || !scriptExtensions.includes(extOf(abs))) return ''
-    const key = `${abs}|${info.mtimeMs}|${info.size}|${(adapters || []).join(',')}|${allowLarge ? 'large' : ''}`
+    const key = `${abs}|${info.mtimeMs}|${info.size}|${(adapters || []).join(',')}|${allowLarge ? 'large' : ''}|${sniffOptKey}`
     const cached = cacheGet(sniffCache, key)
     if (cached !== undefined) return cached
     let id = ''
@@ -465,7 +466,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     try {
       const buffer = Buffer.alloc(Math.min(8192, info.size))
       await handle.read(buffer, 0, buffer.length, 0)
-      id = sniffGalAdapter(decodeTextFile(buffer).text, adapters)
+      id = sniffGalAdapter(decodeTextFile(buffer).text, adapters, config.adapterOptions)
     } finally { await handle.close() }
     cacheSet(sniffCache, key, id, 100000)
     return id
