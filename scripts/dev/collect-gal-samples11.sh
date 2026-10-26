@@ -96,7 +96,7 @@ for n in names[:800]:
     if os.path.isdir(p): continue
     try: d = json.loads(h.read_text(p))
     except Exception: continue
-    key[tuple(sorted(d.keys()))] += 1
+    key[tuple(sorted(d.keys())) if isinstance(d, dict) else ('<' + type(d).__name__ + '>',)] += 1
 print('-- MScenes 顶层键组合（前 5）：', key.most_common(5))
 # voice 目录和场景 id 的对应
 vd = os.path.join(root, 'typeadv', 'voice', 'adventure'); dirs = sorted(os.listdir(vd))
@@ -110,6 +110,7 @@ jn = sorted(os.listdir(os.path.join(root, 'json')))
 for n in jn[:2000]:
     try: d = json.loads(h.read_text(os.path.join(root, 'json', n)))
     except Exception: continue
+    if not isinstance(d, dict): continue
     sid = str(d.get('Id', n))
     for r in d.get('MAdultDetails', []):
         v = r.get('Voice')
