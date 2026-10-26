@@ -11,6 +11,8 @@
 //   minashigo   脚本根 <游戏根>/game/scripts、资源根 <游戏根>/game、扩展名 rpy、按角色编号分组（scene_<类别><6 位角色><序号>）、适配器参数（别名表 game/movie.rpy、立绘定义 game/script.rpy、图片目录 game/images）
 //   misttrain   脚本根 <数据根>/UScenes、资源根 <数据根>、扩展名 json、适配器参数 root（角色 / 其它剧情 / 全部剧情这些列表由适配器每次从 UScenes 和 MasterData 现读，不写进 config）
 //   tenkeiprdx  脚本根 <素材根>/scenes、资源根 <素材根>、扩展名 json、适配器参数 root（活动 / 附加 / 角色 / 全部剧情这些列表由适配器每次从数据文件现读，不写进 config）
+//   tsk         Twinkle Star Knights X（Utage）：脚本根 <数据根>/Adventure、资源根 <数据根>（= StreamingAssets/<游戏名>）、扩展名 json（Master.chapter.json 等非剧情文件被适配器的嗅探挡掉）、适配器参数 root、隐藏图片目录；列表由适配器现读
+//   grenze      脚本根 <游戏根>/TextAsset、资源根 <游戏根>/assets/resources/patchres、扩展名 xml、适配器参数 root（场景列表由适配器从 easy_dialog-N.xml 现读，不写进 config）
 // 选项：
 //   dryRun          只探测和打日志，不写任何东西
 //   replace         true = 整体替换 config（默认 false = 合并：只改写了的字段，别的保留）
@@ -21,7 +23,7 @@
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
-// 状态 tag：Gal配置: uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: grenze / tsk / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -712,6 +714,8 @@ const GAMES = [
   { id: 'artwhirl', detect: detectArtwhirl },   // game/episode_scripts + game/images/stands（Ren'Py + JSON 剧情）
   { id: 'kamihime', detect: detectKamihime },   // game/dmm/raw_scenario/*.ks + game/dmm/assets（TyranoScript）；.ks 独有，放在通用 uviewer 之前
   { id: 'bokusen', detect: detectBokusen },   // <根>/json/*.json（data.code 编译脚本）+ <根>/resource/<脚本名>/{images,sounds}
+  { id: 'grenze', detect: detectGrenze },   // TextAsset/easy_dialog-N.xml + assets/resources/patchres（GrenzeViewer）
+  { id: 'tsk', detect: detectTsk },   // Twinkle Star Knights X：<StreamingAssets/游戏名>/Adventure/{Master.chapter.json, *.book.json}（Utage）
   { id: 'uviewer', detect: detectUviewerGame },
 ]
 
@@ -810,6 +814,145 @@ async function detectArtwhirl(media, { declared, logs }) {
       return { count, cover: '' }
     },
   }
+}
+
+// ======================================================================
+// Twinkle Star Knights X（Unity + Utage）：<数据根>/Adventure/<剧情文件夹>/*.book.json + Adventure/Master.chapter.json（角色 / 背景 / 声音名称表），
+// 数据根 = Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X，资源（Characters / Stills / Sound / Adventure/BackGrounds）都在数据根下。
+// 脚本根 = <数据根>/Adventure，资源根 = <数据根>，扩展名 json；Adventure 下的 Master.chapter.json 和图片目录不是剧情，适配器的嗅探（importGridList）把它们挡掉，
+// 所以「只认 *.book.json」靠适配器，不靠扩展名。列表（剧情文件夹 → 剧情 / 全部剧情）由适配器每次从文件索引现读。用 utage-book 适配器。
+// ======================================================================
+async function detectTsk(media, { declared, logs }) {
+  const root = await findTskRoot(media, 6)
+  if (root === null) {
+    if (declared) logs.push('没找到 Adventure/Master.chapter.json（加 Characters|Stills|Sound）')
+    return null
+  }
+  const abs = (...rels) => path.join(media, ...splitRel(join(root, ...rels)))
+  logs.push(`TSK 数据根：${root || '.'}${root ? '（目录里多了一层）' : ''}`)
+  const config = {
+    scriptRoots: [{ id: 'adventure', dir: join(root, 'Adventure'), label: 'Adventure' }],
+    resourceRoots: [root],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['json'],
+    hiddenDirs: ['BackGrounds', 'Effects', 'Spine', 'Textures'],
+    labels: {},
+    merge: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    adapterOptions: { 'utage-book': { root } },
+  }
+  for (const name of ['Characters', 'Stills', 'Sound']) {
+    if (!(await isDir(abs(name)))) logs.push(`提示：没有 ${name}/（${{ Characters: '立绘', Stills: 'BgEvent 静态画面', Sound: '声音' }[name]}会缺）`)
+  }
+  let cover = ''
+  const backgrounds = (await listNames(abs('Adventure', 'BackGrounds'))).filter((name) => /\.(png|jpe?g)$/i.test(name))
+  if (backgrounds.length) cover = `Adventure/BackGrounds/${backgrounds[0]}`
+  else logs.push('没找到 Adventure/BackGrounds/*：没有封面')
+  return {
+    id: 'tsk',
+    kind: 'tsk',
+    note: '',
+    config,
+    // 适配器的列表：每个含 *.book.json 的剧情文件夹一个节点 + 全部剧情
+    async nodes() {
+      const categories = []
+      for (const name of await listNames(abs('Adventure'))) {
+        if (!(await isDir(abs('Adventure', name)))) continue
+        if ((await listNames(abs('Adventure', name))).some((file) => /\.book\.json$/i.test(file))) categories.push(name)
+      }
+      return autoNodes([...categories.map((name, i) => [`cat${i + 1}`, `c/${name}`]), ['all', 'all']])
+    },
+    async finish(m, _config, options) {
+      const count = await countFiles(abs('Adventure'), '.book.json', options.countCap, 3)
+      logs.push(`剧情 ${count} 个（*.book.json）${count ? '' : '——结构可能不对，可以用 overrides 覆盖 scriptRoots'}`)
+      return { count, cover }
+    },
+  }
+}
+
+// 广度优先找「有 Adventure/Master.chapter.json，并且同级有 Characters|Stills|Sound」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
+async function findTskRoot(media, maxDepth) {
+  const queue = [{ rel: '', depth: 0 }]
+  while (queue.length) {
+    const { rel, depth } = queue.shift()
+    let entries
+    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
+    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+    if (dirs.has('Adventure') && ['Characters', 'Stills', 'Sound'].some((name) => dirs.has(name)) && (await isFile(path.join(media, ...splitRel(join(rel, 'Adventure', 'Master.chapter.json')))))) return rel
+    if (depth >= maxDepth) continue
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
+    }
+  }
+  return null
+}
+
+// ======================================================================
+// Grenze（GrenzeViewer）：<根>/TextAsset/easy_dialog-N.xml（每个文件几百个场景，next_id 串成链），资源在 <根>/assets/resources/patchres（bg/battlebg、bgm、sound、voice、merc/pic/<id>/body.webp）。
+// 用 grenze-xml 适配器：脚本根 = TextAsset、资源根 = patchres、扩展名 xml；场景列表（每个文件一个目录，里面是它的场景）由适配器从 XML 里现读，不写进 config。
+// ======================================================================
+async function detectGrenze(media, { declared, logs }) {
+  const root = await findGrenzeRoot(media, 6)
+  if (root === null) {
+    if (declared) logs.push('没找到 TextAsset/easy_dialog-*.xml（同级要有 assets/resources/patchres）')
+    return null
+  }
+  const resourceRoot = join(root, 'assets/resources/patchres')
+  const hasResources = await isDir(path.join(media, ...splitRel(resourceRoot)))
+  if (!declared && !hasResources) return null   // 没声明：要求同时有 assets/resources/patchres（免得认走别的 TextAsset）
+  const dialogs = (await listNames(path.join(media, ...splitRel(join(root, 'TextAsset'))))).filter((name) => /^easy_dialog-\d+\.xml$/i.test(name))
+  logs.push(`Grenze 游戏根：${root || '.'}；对话 XML ${dialogs.length} 个；资源目录${hasResources ? '有' : '没有（背景 / 声音 / 立绘都会缺）'}`)
+  logs.push('按 next_id 链拆场景（每个文件几百个）；立绘 = merc/pic/<hero_group_id>/body.webp|png 整张；screen_effect / pic_action / effect 含义未知，记为未渲染指令（stats.raw）')
+  const config = {
+    scriptRoots: [{ id: 'text', dir: join(root, 'TextAsset'), label: 'TextAsset' }],
+    resourceRoots: [resourceRoot],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['xml'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    views: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    scriptIndex: [],
+    pageSize: 100,
+    adapterOptions: { 'grenze-xml': { root } },
+  }
+  return {
+    id: 'grenze',
+    kind: 'grenze',
+    note: '',
+    config,
+    async finish() {
+      logs.push(`对话 XML ${dialogs.length} 个${dialogs.length ? '' : '——结构可能不对'}`)
+      return { count: dialogs.length, cover: '' }
+    },
+  }
+}
+
+// 广度优先找「有 TextAsset/（里面有 easy_dialog-*.xml）并且同级有 assets/」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
+async function findGrenzeRoot(media, maxDepth) {
+  const queue = [{ rel: '', depth: 0 }]
+  while (queue.length) {
+    const { rel, depth } = queue.shift()
+    let entries
+    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
+    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+    if (dirs.has('TextAsset') && dirs.has('assets')) {
+      const names = await listNames(path.join(media, ...splitRel(join(rel, 'TextAsset'))))
+      if (names.some((name) => /^easy_dialog-\d+\.xml$/i.test(name))) return rel
+    }
+    if (depth >= maxDepth) continue
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
+    }
+  }
+  return null
 }
 
 // ======================================================================

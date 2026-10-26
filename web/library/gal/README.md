@@ -343,6 +343,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | **angelic_py** | Ren'Py（`renpy-monmusu`，game.id `angelic`） | `game/script/hscene/*.rpy`；别名表是 `script/movies.rpy` + `script/stills.rpy`（复数），图片在 `images` + `resources`；菜单脚本 `sub_nav` / `sub_nav_byname` 隐藏；脚本文件名是随机串，没有角色编号，所以不分组、卡片显示脚本名；只有 `.rpyc` 的脚本解析不了（列表页问题里会列出） |
 | **ぼくらの放課後戦争** | 编译脚本 JSON（`bokusen-json`，game.id `bokusen`） | `<根>/json/<脚本名>.json` + `<根>/resource/<脚本名>/{images,sounds}`（只有一部分脚本有资源目录），见「ぼくらの放課後戦争」一节 |
 | **Kamihime Player** | TyranoScript（`tyrano-ks`，game.id `kamihime`） | `game/dmm/raw_scenario/<类别>/<目录>/<id>_script.ks` + 同目录 `<id>.json`；资源 `game/dmm/assets`（带 hash 的平铺 + `<resource_directory>/` 里的语音）；见「Kamihime Player」一节 |
+| **Grenze**（GrenzeViewer） | Unity 导出（`grenze-xml`，game.id `grenze`） | `TextAsset/easy_dialog-N.xml`（一个文件几百个场景）+ `assets/resources/patchres/{bg/battlebg,bgm,sound,voice,merc/pic}`；见「Grenze」一节 |
 | legeclo、minashigo（Ren'Py）、tenkeiprdx、misttrain、UViewer | 见各自一节 | |
 
 
@@ -401,3 +402,23 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **`gal-layout` 探测**：`dmm/raw_scenario`（多套几层目录自动带前缀）；没声明 `game.id` 时还要求有 `dmm/assets` 和至少一个 `.ks`。写：脚本根 `<…>/dmm/raw_scenario`、资源根 `<…>/dmm/assets`、扩展名 `ks`、`adapterOptions['tyrano-ks'].root`、脚本数。探测顺序在 artwhirl 之后、uviewer 之前。导入：`adapters: ['tyrano-ks']` + `config.game.id: 'kamihime'`，导入页预设「Kamihime Player」。
 - **自测**：`scripts/dev/fe-gal-kamihime-selftest.mjs`（适配器 / 索引 / gal-layout 不需要浏览器；有 `PLAYWRIGHT_PATH` 且 `web/node_modules` 装好时再起服务做导入、列表、资源接口、立绘像素）；合成数据 `scripts/dev/make-kamihime-fixture.mjs <目录>`，`gal-demo` 工作流里会生成并导入。
 - **没验证的**：立绘摆放（上面）；`[quake time=]` 当总时长；`[anim layer=3]` 的含义；`[l]` 之后文字累加的规则是按 Tyrano 的 `[l]` / `[cm]` 语义推的，没有逐字对照原播放器。
+### Grenze（GrenzeViewer，`grenze-xml`）
+- **格式**：`TextAsset/easy_dialog-N.xml`（N ≥ 27，每个 1~10MB、最多约 5 万行），一行一句：`<easy_dialog-N id next_id name text hero_group_id pic_pos pic_face voice_pack voice sound1..3 bg_sound1..3 bgm background screen_effect pic_action effect effect_pos … />`。
+  用正则逐行扫（不建 DOM），属性值里的 `&#xA;`（换行）`&amp;` 等转义还原；`《俺》` 这类心声记号当普通文字保留。`name="-"` 或没有 name = 旁白。sniff 认 `<easy_dialog-N … id="…">` 行。
+- **场景 = next_id 链**：一个文件里没有任何行指向的行是起点，沿 `next_id` 走到底（没有 next_id、指向不存在的 id、绕回走过的行都在那里结束）；行在文件里交错、id 不连续都没关系。
+  几条链汇合到同一行（几行的 `next_id` 相同）时，每个场景各自走到底，共用的后半段在每个场景里都有（没看到过选项属性，所以没有 `choice`）；没人指向的环也算一个场景（从文件里最靠前的行起）。
+- **列表（catalog）**：一个文件装着几百个场景，所以列表由适配器给：首页 = 每个 `easy_dialog-N.xml` 一个目录（按数字排序），里面是它的场景（标题 = 起点行 id，副标题 = `句数 · 前三个说话人 · 首句`）。
+  场景的脚本路径是 `TextAsset/easy_dialog-1.xml::<起点行 id>`：`::` 之后的部分由 `browse.mjs` 拆出来作为 `meta.scene` 交给适配器，磁盘上读的还是那个文件（这种路径不受 4MB 的脚本大小上限限制，只读 8KB 头嗅探；适配器要声明 `sceneInPath: true`）。
+  文件在 `prepare` 里读一次（引擎给 `prepare` 传了 `mediaDir`），场景列表按「文件 mtime+size」缓存；打开一个场景要重新读 + 扫整个文件（8.5MB、5 万行约 0.3 秒）。
+- **资源**（相对资源根 `assets/resources/patchres`）：全部按「文件名（无扩展名，小写）」查文件索引，不写死目录层级——`background` → `bg/**/<名>.webp|png|jpg`（实际 `bg/battlebg/<名>/<名>.webp`，名字带 `#数字` 的重复文件被引擎的索引跳过）、
+  `bgm` → `bgm/<名小写>/<名>.m4a`、`sound1..3` / `bg_sound1..3` → `sound/<名>/<名>.m4a`、`voice_pack` + `voice` → `voice/<包小写>/<语音名>.m4a`（包里没有就按语音名在整个 `voice/` 里找，撞名的不乱猜）。
+  索引的目录：`TextAsset`、`bg`、`bgm`、`sound`、`voice`、`merc/pic`（`voice` 十万级文件、`merc/pic` 近 3000 个目录），适配器把 `contextWalkLimit` 提到引擎封顶的 200 万，索引不会被默认的 40 万悄悄截断（真被截断了会记进 `stats.indexTruncated`）。找不到的名字记 `stats.unresolved`，不致命。
+- **立绘（静态）**：`hero_group_id` → `merc/pic/<id>/body.webp`（没有再 `body.png`）= 一整张图，`pic_pos` 1/2/3 = 左 / 中 / 右（别的值按中间）→ `stand` 指令（单个部件，带 `align`；底边对齐、水平贴左 / 居中 / 贴右）。
+  同目录里的 `N.webp` / `N.png`（72/96px）是头像图标，`<id>.webp`（2048²）是图集，**都不是表情叠层**，所以 `pic_face` 不用来合成；没有 body 的 hero（有一些）记 unresolved、清掉立绘。
+  `stand` 部件多了 `fit: 1`（`gal-stand.js`）：整张图比画面（1080）还高时缩到画面高度（有 1426×1580 的），矮的不放大。
+  **沿用规则（没有对照样本，按推测）**：没有 `hero_group_id` 的行（旁白 / 只放指令）沿用上一个立绘，直到换了 `hero_group_id` / `pic_pos`、或换背景（`background`）才清掉；一次只显示一个立绘（左右两个人轮流说话时只显示当前说话的）。Spine（`merc/ani`、`merc/full_ani`）不在这里，不发 `spine` 指令。
+- **声音**：`bgm="non"` → `bgmStop`（正在放才发）；`sound` / `bg_sound` 的 `non` = 没有（不发）。`bg_sound1..3` 是不是循环的背景音没有对照样本，按一次性 `se` 放。
+- **背景**：`bg_b` 没有对应的图时当黑底（推测，没有对照样本）。
+- **未知，不猜，记成 `raw {cmd, args}`（计入 `stats.raw`，播放页提示「暂未渲染」）**：`screen_effect`（1~13，出现最多的是 8 / 4 / 3）、`pic_action`（1~10，最多的是 5）、`effect` + `effect_pos`（1~22 / 1~3）、`pic_action_val`、`pic_size`、`back_voice`。
+- **gal-layout**：脚本根 `<游戏根>/TextAsset`、资源根 `<游戏根>/assets/resources/patchres`、扩展名 `xml`、适配器参数 `root`（游戏根多一层目录也找得到）；没写 game.id 时要求 `TextAsset` 里有 `easy_dialog-N.xml` 且同级有 `assets/` 和 patchres。探测顺序在 artwhirl 之后、UViewer 之前。导入页预设「Grenze（GrenzeViewer）」。
+- **自测**：`node scripts/dev/make-grenze-fixture.mjs <目录> [大文件行数]` 造合成数据；`PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-grenze-selftest.mjs`（适配器单测 + 导入 / 列表 / 播放 / 立绘像素，含 5 万行的大文件）。

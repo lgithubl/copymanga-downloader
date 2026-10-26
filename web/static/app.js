@@ -2440,6 +2440,7 @@ const GAL_PRESETS = {
   kamihime: { adapters: ['tyrano-ks'], game: { id: 'kamihime', title: 'Kamihime Player' } },
   minashigo_r: { adapters: ['uviewer-csv'], game: { id: 'minashigo_r', title: 'ミナシゴノシゴトR' } },
   bokusen: { adapters: ['bokusen-json'], game: { id: 'bokusen', title: 'ぼくらの放課後戦争' } },
+  grenze: { adapters: ['grenze-xml'], game: { id: 'grenze', title: 'Grenze' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]

@@ -55,6 +55,7 @@ jobs:
           node scripts/dev/make-gal-games-fixture.mjs "$RUNNER_TEMP/data/gal"
           node scripts/dev/make-gal-maid-fixture.mjs "$RUNNER_TEMP/data/gal"
           node scripts/dev/make-kamihime-fixture.mjs "$RUNNER_TEMP/data/gal"
+          node scripts/dev/make-grenze-fixture.mjs "$RUNNER_TEMP/data/gal"
           ls -la "$RUNNER_TEMP/data/gal"
 
       - name: Start web (HTTP) and import the demos
@@ -85,6 +86,7 @@ jobs:
           import_gal 'girlscreation演示' '{"adapters":["girlscreation-tag"],"config":{"game":{"id":"girlscreation"}}}' 1
           import_gal 'maid演示' '{"adapters":["girlscreation-tag"],"config":{"game":{"id":"girlscreation"}}}' 1
           import_gal 'kamihime演示' '{"adapters":["tyrano-ks"],"config":{"game":{"id":"kamihime"}}}' 1
+          import_gal 'Grenze演示' '{"adapters":["grenze-xml"],"config":{"game":{"id":"grenze"}}}' 1
           curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null || true
           sleep 5
           # 冒烟：媒体库里要有这几个 Gal 条目，maid 演示的首页要有「表情」卡片
