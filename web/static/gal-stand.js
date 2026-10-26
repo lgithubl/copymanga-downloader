@@ -3,6 +3,7 @@
 //   minashigo：一组「立绘图集上裁出的一块」叠成一个立绘，part 画在 (x, y)（相对立绘左上角），整体按 Ren'Py 的默认摆法放（底边对齐画面底边、水平居中）。
 //   legeclo：每个部件是一整张立绘图（没有 crop），可以带 align: 'left' | 'center' | 'right'（show xxx at left）——有 align 的部件各自独立摆放，
 //   底边对齐画面底边，水平按 align 贴左 / 居中 / 贴右（和 Ren'Py 的 xalign 0 / 0.5 / 1 一样）；没有 align 的还是上面那种整体摆法。
+//   grenze：同 legeclo（整张图 + align），另带 fit: 1（图比画面高就缩到画面高度）。
 // 图缺了就报 onMissing（顶部提示「缺少资源」），别的部件照画。
 const DESIGN_W = 1920
 const DESIGN_H = 1080
@@ -35,7 +36,7 @@ export function createStandLayer({ parent, url, onMissing = () => {} }) {
       const img = loaded[i]
       if (!img) return null
       const [sx, sy, sw, sh] = part.crop || [0, 0, img.naturalWidth, img.naturalHeight]
-      const zoom = Number(part.zoom) || 1
+      const zoom = part.fit && sh * (Number(part.zoom) || 1) > DESIGN_H ? DESIGN_H / sh : Number(part.zoom) || 1   // fit：比画面还高的整张立绘（grenze 的 body 有 1426×1580）缩到画面高度，矮的不放大
       return { img, sx, sy, sw, sh, dx: Number(part.x) || 0, dy: Number(part.y) || 0, dw: sw * zoom, dh: sh * zoom, align: ['left', 'center', 'right'].includes(part.align) ? part.align : '', dim: Number(part.dim) > 0 && Number(part.dim) < 1 ? Number(part.dim) : 0 }
     }).filter(Boolean)
     const grouped = items.filter((it) => !it.align)

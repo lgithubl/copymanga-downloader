@@ -4,7 +4,7 @@
 //   contextDirs(options)  → [相对媒体目录的目录]   要递归列文件名的目录
 //   contextTextFilter(options) → (rel) => boolean   可选：files 里匹配的文件读开头 24KB 放进 texts（最多 3000 个）
 //   contextWalkLimit（数字，适配器属性）  目录索引最多收多少个文件，默认 40 万、封顶 200 万；超了会被截断（truncated = true 传给 prepare，并打日志）
-//   prepare({ options, texts, files, toResourcePath, truncated }) → ctx    texts = { 相对路径: 文本 }，files = 目录里的文件相对路径数组
+//   prepare({ options, texts, files, toResourcePath, truncated, mediaDir }) → ctx    texts = { 相对路径: 文本 }，files = 目录里的文件相对路径数组，mediaDir = 媒体目录绝对路径（单个文件特别大、不适合整份塞进 texts 时，适配器自己按需读，比如 grenze-xml 的对话 XML）
 // parse(text, ctx) 拿到 ctx。options 来自 config.adapterOptions[适配器 id]，路径类参数在这里统一过 safeRelPath。
 // 上下文按（文本文件 mtime+size）缓存；目录：自己和下一层子目录的 mtime 一变就重建（新增文件马上能看到），更深的最多缓存 5 分钟。
 import { open, readdir, readFile, stat } from 'node:fs/promises'
@@ -116,7 +116,7 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
       } catch { /* 读不了就当没有 */ }
     }
   }
-  const ctx = await adapter.prepare({ options, texts, files, toResourcePath, truncated: Boolean(files.truncated) })
+  const ctx = await adapter.prepare({ options, texts, files, toResourcePath, truncated: Boolean(files.truncated), mediaDir })
   if (cache.size > 200) cache.clear()
   const stats = { adapter: adapter.id, builtAt: new Date().toISOString(), files: files.length, truncated: Boolean(files.truncated), limit: walkLimit, ms: Date.now() - startedAt, dirs: dirRels }
   cache.set(key, { fileKey, builtAt: Date.now(), ctx, stats })

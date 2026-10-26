@@ -2,6 +2,7 @@
 // 需要查别的文件才能解析的格式（别名表、图片目录…）再实现 contextFiles / contextDirs / prepare，见 ../context.mjs。
 import { artwhirlJsonAdapter } from './artwhirl-json.mjs'
 import { girlsCreationTagAdapter } from './girlscreation-tag.mjs'
+import { grenzeXmlAdapter } from './grenze-xml.mjs'
 import { misttrainJsonAdapter } from './misttrain-json.mjs'
 import { renpyLegecloAdapter } from './renpy-legeclo.mjs'
 import { renpyMinashigoAdapter } from './renpy-minashigo.mjs'
@@ -22,6 +23,7 @@ registerGalAdapter(tenkeiprdxJsonAdapter)
 registerGalAdapter(misttrainJsonAdapter)     // [null,[<场景 id>,[行…]]] 位置数组，独有写法
 registerGalAdapter(artwhirlJsonAdapter)       // {"bgms":[…],…,"chara_keys":…} 并行数组 JSON，独有写法
 registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
+registerGalAdapter(grenzeXmlAdapter)          // <easy_dialog-N id= next_id= …/> 行，独有写法，不会和别的格式抢
 
 export const galAdapterIds = () => [...adapters.keys()]
 export function galAdapter(id) {

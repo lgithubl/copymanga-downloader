@@ -450,11 +450,12 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return adapterContexts.get(adapterId)
   }
 
-  async function scriptAdapterOf(abs) {
+  // allowLarge：脚本路径带场景号（<文件>::<场景>，一个文件装很多场景的格式）时不受 maxScriptBytes 限制——只读 8KB 头嗅探
+  async function scriptAdapterOf(abs, allowLarge = false) {
     let info
     try { info = await stat(abs) } catch { return '' }
-    if (!info.isFile() || !info.size || info.size > maxScriptBytes || !scriptExtensions.includes(extOf(abs))) return ''
-    const key = `${abs}|${info.mtimeMs}|${info.size}|${(adapters || []).join(',')}`
+    if (!info.isFile() || !info.size || (info.size > maxScriptBytes && !allowLarge) || !scriptExtensions.includes(extOf(abs))) return ''
+    const key = `${abs}|${info.mtimeMs}|${info.size}|${(adapters || []).join(',')}|${allowLarge ? 'large' : ''}`
     const cached = cacheGet(sniffCache, key)
     if (cached !== undefined) return cached
     let id = ''
@@ -766,21 +767,26 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     }
 
     // script
-    if (!scriptExtensions.includes(extOf(rel))) throw fail('无效的脚本路径', 400)
-    const abs = absOf(set, rel)
+    // 一个文件里有多个场景的格式（grenze-xml）：脚本路径 = <文件>::<场景号>，磁盘上还是那个文件，场景号交给适配器（meta.scene）
+    const sceneAt = rel.indexOf('::')
+    const fileRel = sceneAt >= 0 ? rel.slice(0, sceneAt) : rel
+    const sceneKey = sceneAt >= 0 ? rel.slice(sceneAt + 2) : ''
+    if (!scriptExtensions.includes(extOf(fileRel))) throw fail('无效的脚本路径', 400)
+    const abs = absOf(set, fileRel)
     let real
     try {
       real = await realpath(abs)
       const realMedia = await realpath(mediaDir)
       if (!real.startsWith(realMedia + path.sep) || !(await stat(real)).isFile()) throw new Error('x')
     } catch { throw fail('脚本不存在', 404) }
-    const adapterId = await scriptAdapterOf(abs)
+    const adapterId = await scriptAdapterOf(abs, Boolean(sceneKey))
     if (!adapterId) {
       // 带上试过哪些适配器 + 文件开头，看一眼就知道是格式不对还是适配器没选
       const head = decodeTextFile((await readFile(real)).subarray(0, 120)).text.replace(/\s+/g, ' ').trim()
       throw fail(`不是可识别的脚本（试过：${(adapters?.length ? adapters : galAdapterIds()).join(' / ')}；文件开头：${head || '空'}）`, 400)
     }
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel, stem: stemOf(rel), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) })
+    if (sceneKey && !galAdapter(adapterId).sceneInPath) throw fail('这种脚本不支持 <文件>::<场景> 的路径', 400)
+    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) })
 
     if (entry) {
       const siblings = catalogChildren(catalog, holderId).filter((c) => c.script)

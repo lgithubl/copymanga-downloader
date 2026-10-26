@@ -9,6 +9,7 @@
 //   uviewer     脚本根（text + 同级 text* 另一套）、资源根、名称文件、缩略图目录；封面 = UViewer 自己生成的缩略图 / 脚本里第一张存在的背景
 //   monmusu     脚本根 <游戏根>/script、资源根 <游戏根>、合并 hscene + hscene_still（角标 anim / still）、按角色编号分组、隐藏 sub_nav / tl、适配器参数（别名表、图片目录）、头像模板（images 里的 icon_<编号>_0_idle.*）
 //   minashigo   脚本根 <游戏根>/game/scripts、资源根 <游戏根>/game、扩展名 rpy、按角色编号分组（scene_<类别><6 位角色><序号>）、适配器参数（别名表 game/movie.rpy、立绘定义 game/script.rpy、图片目录 game/images）
+//   grenze      脚本根 <游戏根>/TextAsset、资源根 <游戏根>/assets/resources/patchres、扩展名 xml、适配器参数 root（场景列表由适配器从 easy_dialog-N.xml 现读，不写进 config）
 //   misttrain   脚本根 <数据根>/UScenes、资源根 <数据根>、扩展名 json、适配器参数 root（角色 / 其它剧情 / 全部剧情这些列表由适配器每次从 UScenes 和 MasterData 现读，不写进 config）
 //   tenkeiprdx  脚本根 <素材根>/scenes、资源根 <素材根>、扩展名 json、适配器参数 root（活动 / 附加 / 角色 / 全部剧情这些列表由适配器每次从数据文件现读，不写进 config）
 // 选项：
@@ -21,7 +22,7 @@
 //   overrides       [{ path, config?, cover?, title? }]：按媒体目录的真实路径给个别媒体单独覆盖。
 //                   path 是通配（* 匹配任意字符，包括 /）或 /正则/；按顺序全部命中的依次叠上去（后面的覆盖前面的）。
 //                   config 是要覆盖的字段（和探测结果合并，顶层字段整个替换）；cover 是封面路径（相对资源根；~/ 开头 = 相对媒体目录）。
-// 状态 tag：Gal配置: uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: grenze / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -710,6 +711,7 @@ const GAMES = [
   { id: 'minashigo', detect: detectMinashigo },
   { id: 'minashigo_r', detect: detectMinashigoR },   // data/adv/textfiles/story（uviewer-csv 格式）；要求同时有 adv/image 和 adv/sound，放在通用 uviewer 之前
   { id: 'artwhirl', detect: detectArtwhirl },   // game/episode_scripts + game/images/stands（Ren'Py + JSON 剧情）
+  { id: 'grenze', detect: detectGrenze },   // TextAsset/easy_dialog-N.xml + assets/resources/patchres（GrenzeViewer）
   { id: 'uviewer', detect: detectUviewerGame },
 ]
 
@@ -808,6 +810,71 @@ async function detectArtwhirl(media, { declared, logs }) {
       return { count, cover: '' }
     },
   }
+}
+
+// ======================================================================
+// Grenze（GrenzeViewer）：<根>/TextAsset/easy_dialog-N.xml（每个文件几百个场景，next_id 串成链），资源在 <根>/assets/resources/patchres（bg/battlebg、bgm、sound、voice、merc/pic/<id>/body.webp）。
+// 用 grenze-xml 适配器：脚本根 = TextAsset、资源根 = patchres、扩展名 xml；场景列表（每个文件一个目录，里面是它的场景）由适配器从 XML 里现读，不写进 config。
+// ======================================================================
+async function detectGrenze(media, { declared, logs }) {
+  const root = await findGrenzeRoot(media, 6)
+  if (root === null) {
+    if (declared) logs.push('没找到 TextAsset/easy_dialog-*.xml（同级要有 assets/resources/patchres）')
+    return null
+  }
+  const resourceRoot = join(root, 'assets/resources/patchres')
+  const hasResources = await isDir(path.join(media, ...splitRel(resourceRoot)))
+  if (!declared && !hasResources) return null   // 没声明：要求同时有 assets/resources/patchres（免得认走别的 TextAsset）
+  const dialogs = (await listNames(path.join(media, ...splitRel(join(root, 'TextAsset'))))).filter((name) => /^easy_dialog-\d+\.xml$/i.test(name))
+  logs.push(`Grenze 游戏根：${root || '.'}；对话 XML ${dialogs.length} 个；资源目录${hasResources ? '有' : '没有（背景 / 声音 / 立绘都会缺）'}`)
+  logs.push('按 next_id 链拆场景（每个文件几百个）；立绘 = merc/pic/<hero_group_id>/body.webp|png 整张；screen_effect / pic_action / effect 含义未知，记为未渲染指令（stats.raw）')
+  const config = {
+    scriptRoots: [{ id: 'text', dir: join(root, 'TextAsset'), label: 'TextAsset' }],
+    resourceRoots: [resourceRoot],
+    namesFiles: [],
+    thumbsDirs: [],
+    scriptExtensions: ['xml'],
+    hiddenDirs: [],
+    labels: {},
+    merge: [],
+    views: [],
+    groups: [],
+    dirThumbs: [],
+    scriptThumbs: [],
+    scriptIndex: [],
+    pageSize: 100,
+    adapterOptions: { 'grenze-xml': { root } },
+  }
+  return {
+    id: 'grenze',
+    kind: 'grenze',
+    note: '',
+    config,
+    async finish() {
+      logs.push(`对话 XML ${dialogs.length} 个${dialogs.length ? '' : '——结构可能不对'}`)
+      return { count: dialogs.length, cover: '' }
+    },
+  }
+}
+
+// 广度优先找「有 TextAsset/（里面有 easy_dialog-*.xml）并且同级有 assets/」的目录；返回相对 media 的路径（'' = media 本身），没有返回 null
+async function findGrenzeRoot(media, maxDepth) {
+  const queue = [{ rel: '', depth: 0 }]
+  while (queue.length) {
+    const { rel, depth } = queue.shift()
+    let entries
+    try { entries = await readdir(path.join(media, ...splitRel(rel)), { withFileTypes: true }) } catch { continue }
+    const dirs = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+    if (dirs.has('TextAsset') && dirs.has('assets')) {
+      const names = await listNames(path.join(media, ...splitRel(join(rel, 'TextAsset'))))
+      if (names.some((name) => /^easy_dialog-\d+\.xml$/i.test(name))) return rel
+    }
+    if (depth >= maxDepth) continue
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) queue.push({ rel: join(rel, entry.name), depth: depth + 1 })
+    }
+  }
+  return null
 }
 
 // ======================================================================
