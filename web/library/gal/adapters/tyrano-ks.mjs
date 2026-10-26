@@ -22,7 +22,32 @@
 //   再按文件名在所有 resource_directory 里找（第一个）；都没有就算缺
 //   缺文件都不致命：表情缺 → 退回这个角色的基础立绘；背景 / BGM 缺 → stats.unresolved（渲染诊断里能看到）；表情 / 语音 / 音效 / 滤镜缺 → 只记 stats.missing，不提示
 // 列表（catalog）：raw_scenario 下的 类别 → 目录 → 剧情，剧情标题取同目录 json 的 title，is_r18 的带角标 R18。
-// 资源目录来自 config.adapterOptions['tyrano-ks']：{ root（含 assets / raw_scenario 的目录，相对媒体目录，默认 'game/dmm'） }
+// 参数全部来自 config.adapterOptions['tyrano-ks']（meta.options / prepare 的 options）；下面是完整的结构和默认值（默认 = 上面写的行为，不配就和以前一样）。
+// 适配器只读配置、按配置匹配；路径 / 正则 / 命名规则 / 猜的摆放都放在这里（管理员脚本 gal-layout 的 LAYOUTS 表写这些），猜错了改配置，不改代码：
+//   root: 'game/dmm'                       含 assets / raw_scenario 的目录（相对媒体目录）
+//   resourceDirKey: { from: 'json', field: 'resource_directory', segments: 3 }
+//                                          每个剧情的语音目录从哪取：同目录 json 的 field 字段；剧情和 json 用路径最后 segments 段（类别/目录/文件）对上
+//   voice: { dirs: ['{rd}'], patterns: [], loopAsBgse: true }
+//                                          dirs：这些 assets 下的目录里的 playse = voice（'{rd}' = 本剧情的 resource_directory，别的字符串 = 字面目录名）；也是按文件名找语音时的优先目录；
+//                                          patterns：路径匹配任一正则（不分大小写）也算 voice；loopAsBgse：loop=true → bgse（false = 当普通 se / voice）
+//   stand: { slots: { '1': [0.5], '2': [0.25, 0.75], '3+': [0.2, 0.5, 0.8] }, useScriptCoords: false }
+//                                          slots：在场 n 个角色时每个的水平位置（0..1，按出场顺序；'N' = 恰好 N 个，按位置取；'N+' = N 个及以上，[第一个, 中间的, 最后一个]）；< 1/3 = left，> 2/3 = right，其余 center（部件的 align）
+//                                          useScriptCoords：true = 用 [chara_show left= top=] 当部件的 x / y（没有 left= 的角色仍按 slots）。没有对照图，默认 false
+//   layers: { overlay: ['4'], effect: ['3'] }
+//                                          overlay：整屏滤镜层（[image] / [freeimage] / [layopt visible=] → 当前背景的 over）；effect：滑入滑出之类的效果层（见 effects.animSlide）
+//   effects: { quakeMap: { hmax: 'horizontal', vmax: 'vertical' }, shakeDivisor: 40, animHop: { top: 'vertical', left: 'horizontal' }, sepia: { matchImage: 'sepia' }, animSlide: 'raw' }
+//                                          quakeMap：[quake] 的属性 → shake 轴（按顺序，第一个出现的属性决定；都没有取第一项，幅度 0）；shakeDivisor：幅度像素 / 这个数 = strength（封顶 1）；
+//                                          animHop：[anim name= top|left=] 的属性 → 抖动轴；sepia.matchImage：overlay 层上哪些图当滤镜（正则，空 = 都算）；
+//                                          animSlide：'raw' = [anim layer=…] 和 effect 层的 layopt / freeimage 记 raw；'ignore' = 静默丢掉（只对 effect 层）
+//   fallback: { faceToBase: true }         表情图缺失 → 退回基础立绘（false = 这个角色这一次不出图）
+//   index: { hashPattern: '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$', stemFallback: true }
+//                                          hashPattern：平铺层 <stem>-<sha1>.<ext> 的拆法（第 1 组 stem、第 2 组扩展名）；stemFallback：找不到整名时按 stem（去掉 hash）再找
+//   text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] }
+//                                          换行 / 等点击（结束一步）/ 翻页（结束一步并清框）/ 清文本框 的标签名
+// 文件索引的查找走 createIndexResolver：config.resourceResolve（扩展名回退 / 改写 / unicode / 大小写 / preferDirs）自动生效，同名文件按 preferDirs 挑。
+
+import { createIndexResolver } from '../resolve.mjs'
+import { compileSafeRegex } from '../voice.mjs'
 
 export const ADAPTER_ID = 'tyrano-ks'
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
@@ -44,53 +69,111 @@ export const contextTextFilter = (options) => {
 export const contextWalkLimit = 800000    // assets 平铺 1.1 万个 + 5000 多个 resource_directory 子目录，比默认的 40 万个文件多一点余量
 export const contextSampleLimit = 20000   // 3067 个剧情各一个 json，超过默认的 3000
 
-const HASHED = /^(.+)-[0-9a-f]{40}(\.[^.]+)?$/i
-const lower = (text) => String(text).toLowerCase()
-// 剧情脚本 / json 的键：路径最后 3 段（类别 / 目录 / 文件），去掉 _script 和扩展名——脚本和 json 的前缀不一样（相对脚本根 / 相对媒体目录），只看最后几段
-const scriptKey = (rel) => String(rel || '').replace(/\\/g, '/').split('/').filter(Boolean).slice(-3).join('/').replace(/(?:_script)?\.[^./]+$/, '')
+// ---------- 参数（只读配置，补满默认值；同一个 options 对象只算一次）----------
+const isObj = (value) => value && typeof value === 'object' && !Array.isArray(value)
+const strList = (value, fallback) => (Array.isArray(value) ? value.map(String).filter(Boolean) : fallback)
+const tagSet = (value, fallback) => new Set(strList(value, fallback).map((tag) => tag.toLowerCase()))
+const regexOf = (source, fallback, flags = 'i') => { try { return compileSafeRegex(source, { flags, label: 'tyrano pattern' }) } catch { return fallback } }
+const DEFAULT_HASH = '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$'
+const DEFAULT_SLOTS = { 1: [0.5], 2: [0.25, 0.75], '3+': [0.2, 0.5, 0.8] }
+const settingsCache = new WeakMap()
+function settingsOf(options) {
+  const o = isObj(options) ? options : {}
+  if (settingsCache.has(o)) return settingsCache.get(o)
+  const key = isObj(o.resourceDirKey) ? o.resourceDirKey : {}
+  const slots = {}
+  for (const [name, list] of Object.entries(isObj(o.stand?.slots) ? o.stand.slots : DEFAULT_SLOTS)) {
+    const fractions = Array.isArray(list) ? list.map(Number).filter(Number.isFinite) : []
+    if (/^\d+\+?$/.test(name) && fractions.length) slots[name] = fractions
+  }
+  const quake = isObj(o.effects?.quakeMap) && Object.keys(o.effects.quakeMap).length ? o.effects.quakeMap : { hmax: 'horizontal', vmax: 'vertical' }
+  const hop = isObj(o.effects?.animHop) && Object.keys(o.effects.animHop).length ? o.effects.animHop : { top: 'vertical', left: 'horizontal' }
+  const out = {
+    keyField: String(key.field || 'resource_directory'),
+    keySegments: Math.max(1, Math.min(8, Math.floor(Number(key.segments)) || 3)),
+    voice: { dirs: strList(o.voice?.dirs, ['{rd}']), patterns: strList(o.voice?.patterns, []).map((p) => regexOf(p, null)).filter(Boolean), loopAsBgse: o.voice?.loopAsBgse !== false },
+    slots: Object.keys(slots).length ? slots : DEFAULT_SLOTS,
+    useScriptCoords: o.stand?.useScriptCoords === true,
+    overlayLayers: new Set(strList(o.layers?.overlay, ['4'])),
+    effectLayers: new Set(strList(o.layers?.effect, ['3'])),
+    quakeMap: Object.entries(quake),
+    shakeDivisor: Number(o.effects?.shakeDivisor) > 0 ? Number(o.effects.shakeDivisor) : 40,
+    animHop: hop,
+    sepia: regexOf(o.effects?.sepia?.matchImage ?? 'sepia', /sepia/i) || /(?:)/,   // 空串 = overlay 层上的图都算
+    ignoreSlide: o.effects?.animSlide === 'ignore',
+    faceToBase: o.fallback?.faceToBase !== false,
+    hash: regexOf(o.index?.hashPattern ?? DEFAULT_HASH, regexOf(DEFAULT_HASH, null, 'i'), 'i'),
+    stemFallback: o.index?.stemFallback !== false,
+    lineBreak: tagSet(o.text?.lineBreakTags, ['r']), clickWait: tagSet(o.text?.clickWaitTags, ['l']), page: tagSet(o.text?.pageTags, ['p']), clear: tagSet(o.text?.clearTags, ['cm']),
+  }
+  settingsCache.set(o, out)
+  return out
+}
+// 在场 n 个角色时第 i 个的水平位置（0..1）：'n' 精确（按位置取）→ 最大的 'N+'（N ≤ n；[第一个, 中间的, 最后一个]）
+function slotFraction(slots, n, i) {
+  const exact = slots[String(n)]
+  if (exact) return exact[i] ?? exact[exact.length - 1]
+  const more = Object.keys(slots).filter((k) => k.endsWith('+') && Number.parseInt(k, 10) <= n).sort((x, y) => Number.parseInt(y, 10) - Number.parseInt(x, 10))[0]
+  const list = more ? slots[more] : [0.5]
+  return i === n - 1 ? list[list.length - 1] : list[Math.min(i, Math.max(0, list.length - 2))]
+}
+const alignOf = (fraction) => (fraction < 1 / 3 ? 'left' : fraction > 2 / 3 ? 'right' : 'center')
 
-function readMeta(text) {
+const lower = (text) => String(text).toLowerCase()
+// 剧情脚本 / json 的键：路径最后 N 段（类别 / 目录 / 文件），去掉 _script 和扩展名——脚本和 json 的前缀不一样（相对脚本根 / 相对媒体目录），只看最后几段
+const scriptKey = (rel, segments = 3) => String(rel || '').replace(/\\/g, '/').split('/').filter(Boolean).slice(-segments).join('/').replace(/(?:_script)?\.[^./]+$/, '')
+
+function readMeta(text, field) {
   try {
     const data = JSON.parse(String(text || '').replace(/^﻿/, ''))
-    return { rd: String(data?.resource_directory || ''), title: String(data?.title || ''), r18: Boolean(data?.is_r18), summary: String(data?.summary || '') }
+    return { rd: String(data?.[field] || ''), title: String(data?.title || ''), r18: Boolean(data?.is_r18), summary: String(data?.summary || '') }
   } catch {   // 只读了开头 24KB 被截断：退回用正则取 resource_directory / title
     const t = String(text || '')
-    return { rd: /"resource_directory"\s*:\s*"([^"]*)"/.exec(t)?.[1] || '', title: /"title"\s*:\s*"([^"]*)"/.exec(t)?.[1] || '', r18: /"is_r18"\s*:\s*true/.test(t), summary: '' }
+    const fieldRe = new RegExp(`"${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*:\\s*"([^"]*)"`)
+    return { rd: fieldRe.exec(t)?.[1] || '', title: /"title"\s*:\s*"([^"]*)"/.exec(t)?.[1] || '', r18: /"is_r18"\s*:\s*true/.test(t), summary: '' }
   }
 }
 
 export function prepare({ options, texts, files, toResourcePath }) {
   const toRes = toResourcePath || ((rel) => rel)
+  const st = settingsOf(options)
   const assets = `${joinPath(rootOf(options), 'assets')}/`
   const scenarioDir = `${joinPath(rootOf(options), 'raw_scenario')}/`
-  const flat = new Map()        // 文件名（小写）→ 资源路径（assets 平铺层）
-  const stems = new Map()       // <stem><扩展名>（去掉 -<sha1>，小写）→ 资源路径
+  const flat = new Map()        // 文件名 → 资源路径（assets 平铺层）
+  const stems = new Map()       // <stem><扩展名>（去掉 -<sha1>）→ 资源路径
   const stemsAny = new Map()    // <stem>（不要扩展名）→ 资源路径
-  const rdFiles = new Map()     // <resource_directory>/<文件名>（小写）→ 资源路径
-  const byName = new Map()      // 文件名（小写）→ 第一个在 resource_directory 里的资源路径
+  const rdFiles = new Map()     // <resource_directory>/<文件名> → 资源路径
   const scripts = []            // raw_scenario 下的 .ks（相对媒体目录）
   for (const rel of files || []) {
     if (rel.startsWith(assets)) {
       const rest = rel.slice(assets.length)
       const slash = rest.indexOf('/')
       if (slash < 0) {
-        flat.set(lower(rest), toRes(rel))
-        const m = HASHED.exec(rest)
+        flat.set(rest, toRes(rel))
+        const m = st.hash.exec(rest)
         if (m) {
-          const key = lower(m[1])
-          if (!stemsAny.has(key)) stemsAny.set(key, toRes(rel))
-          if (!stems.has(key + lower(m[2] || ''))) stems.set(key + lower(m[2] || ''), toRes(rel))
+          if (!stemsAny.has(m[1])) stemsAny.set(m[1], toRes(rel))
+          const name = m[1] + (m[2] || '')
+          if (!stems.has(name)) stems.set(name, toRes(rel))
         }
-      } else {
-        const name = lower(rest.slice(rest.lastIndexOf('/') + 1))
-        rdFiles.set(`${lower(rest.slice(0, slash))}/${name}`, toRes(rel))
-        if (!byName.has(name)) byName.set(name, toRes(rel))
-      }
+      } else if (!rdFiles.has(`${rest.slice(0, slash)}/${rest.slice(rest.lastIndexOf('/') + 1)}`)) rdFiles.set(`${rest.slice(0, slash)}/${rest.slice(rest.lastIndexOf('/') + 1)}`, toRes(rel))
     } else if (rel.startsWith(scenarioDir) && /\.ks$/i.test(rel)) scripts.push(rel)
   }
   const meta = new Map()   // 剧情键 → { rd, title, r18, summary }
-  for (const [rel, text] of Object.entries(texts || {})) if (rel.startsWith(scenarioDir)) meta.set(scriptKey(rel), readMeta(text))
-  return { flat, stems, stemsAny, rdFiles, byName, scripts, meta, scenarioDir, hasIndex: Boolean(files?.length) }
+  for (const [rel, text] of Object.entries(texts || {})) if (rel.startsWith(scenarioDir)) meta.set(scriptKey(rel, st.keySegments), readMeta(text, st.keyField))
+  return { flat, stems, stemsAny, rdFiles, scripts, meta, scenarioDir, keySegments: st.keySegments, hash: st.hash, hasIndex: Boolean(files?.length) }
+}
+
+// 内存索引的查找器（ctx 重建 / config.resourceResolve 变了就换新的）
+const resolverCache = new WeakMap()
+function resolversOf(ctx, cfg) {
+  let hit = resolverCache.get(ctx)
+  if (!hit || hit.cfg !== cfg) {
+    const make = (index) => createIndexResolver({ index, cfg })
+    hit = { cfg, flat: make(ctx.flat), stems: make(ctx.stems), stemsAny: make(ctx.stemsAny), rd: make(ctx.rdFiles) }
+    resolverCache.set(ctx, hit)
+  }
+  return hit
 }
 
 // ---------- 列表（catalog）：类别 → 目录 → 剧情 ----------
@@ -115,7 +198,7 @@ function buildCatalog(ctx) {
       if (!node) { node = { id, title: part, children: [] }; dirs.set(id, node); holder.children.push(node) }
       holder = node
     }
-    const info = ctx.meta.get(scriptKey(rel))
+    const info = ctx.meta.get(scriptKey(rel, ctx.keySegments))
     const stem = file.replace(/(?:_script)?\.ks$/i, '')
     holder.children.push({ id: `s:${rel}`, title: info?.title || stem, subtitle: info?.title ? stem : '', badge: info?.r18 ? 'R18' : '', script: rel })
   }
@@ -175,7 +258,6 @@ const secs = (ms, fallback = 0, max = 60) => { const n = Number.parseFloat(ms); 
 const delta = (value) => { const n = Number.parseFloat(String(value ?? '').replace(/^[+-]=/, '')); return Number.isFinite(n) ? n : 0 }
 const baseName = (storage) => String(storage ?? '').replace(/\\/g, '/').split('/').pop().trim()
 const SILENT = new Set(['wa', 'wb', 'ws', 'cm', 'clearfix', 'er', 'nolog', 'endnolog', 'position', 'ptext', 'chara_config', 'call', 'preload', 'resetfont', 'delay', 'font', 'ct', 'trans', 'hidemessage', 'showmessage', 'chara_layer', 'chara_part', 'macro', 'endmacro', ';'])
-const IF_TAGS = new Set(['if', 'elsif', 'else', 'endif', 'jump', 'glink', 'link', 'endlink', 'button', 'clickable', 's'])
 
 export function parse(text, ctx = null, meta = {}) {
   const steps = []
@@ -183,24 +265,32 @@ export function parse(text, ctx = null, meta = {}) {
   const stats = { commands: 0, raw: {}, unresolved: {}, missing: {}, fallbacks: {}, stands: 0 }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const emit = (command) => { current.push(command) }
-  const info = ctx?.meta?.get(scriptKey(meta?.rel || ''))   // 同目录 json：resource_directory / 标题
-  const rd = lower(info?.rd || '')
+  const st = settingsOf(meta?.options)
+  const info = ctx?.meta?.get(scriptKey(meta?.rel || '', ctx.keySegments || st.keySegments))   // 同目录 json：resource_directory / 标题
   const index = Boolean(ctx?.hasIndex)
+  const hashRe = ctx?.hash || st.hash
+  const rdDirs = st.voice.dirs.map((dir) => dir.replace(/\{rd\}/g, info?.rd || '')).map((dir) => dir.replace(/^\/+|\/+$/g, '')).filter(Boolean)   // 语音目录（'{rd}' 没有 json 时为空，被丢掉）
+  const resolvers = index ? resolversOf(ctx, meta?.config?.resourceResolve) : null
+  const via = (resolver, map, key) => { const hit = resolver.resolve(key); return hit ? map.get(hit) : '' }
 
   // ---- 资源查找（返回相对资源根的路径，找不到返回 ''）----
-  // kind：'image'（带 hash 的整名 → stem 退一步；不带的按 stem + 扩展名）/ 'audio'（先查本剧情的 resource_directory，再查所有 resource_directory）
+  // kind：'image'（带 hash 的整名 → stem 退一步；不带的按 stem + 扩展名）/ 'audio'（先查本剧情的语音目录，再按文件名查所有 resource_directory）
   const find = (storage, kind = 'image') => {
     const name = baseName(storage)
     if (!name) return ''
-    if (!index) return rd && kind === 'audio' && !HASHED.test(name) ? `${info.rd}/${name}` : name
-    const key = lower(name)
-    if (ctx.flat.has(key)) return ctx.flat.get(key)
-    const m = HASHED.exec(name)
-    if (m) return ctx.stems.get(lower(m[1]) + lower(m[2] || '')) || ''
-    if (kind === 'audio') return (rd && ctx.rdFiles.get(`${rd}/${key}`)) || ctx.byName.get(key) || ctx.stems.get(key) || ''
-    return ctx.stems.get(key) || ctx.stemsAny.get(key.replace(/\.[^.]+$/, '')) || ''
+    if (!index) return kind === 'audio' && rdDirs.length && !hashRe.test(name) ? `${rdDirs[0]}/${name}` : name
+    const whole = via(resolvers.flat, ctx.flat, name)
+    if (whole) return whole
+    const m = hashRe.exec(name)
+    if (m) return st.stemFallback ? via(resolvers.stems, ctx.stems, m[1] + (m[2] || '')) : ''
+    if (kind === 'audio') {
+      for (const dir of rdDirs) { const hit = via(resolvers.rd, ctx.rdFiles, `${dir}/${name}`); if (hit) return hit }
+      const byName = resolvers.rd.resolveByName(name)
+      return (byName && ctx.rdFiles.get(byName)) || (st.stemFallback ? via(resolvers.stems, ctx.stems, name) : '')
+    }
+    return st.stemFallback ? via(resolvers.stems, ctx.stems, name) || via(resolvers.stemsAny, ctx.stemsAny, name.replace(/\.[^.]+$/, '')) : ''
   }
-  const inRd = (path) => rd && String(path).toLowerCase().startsWith(`${rd}/`)
+  const isVoice = (path) => { const low = lower(path); return rdDirs.some((dir) => low.startsWith(`${lower(dir)}/`)) || st.voice.patterns.some((re) => re.test(path)) }
 
   // ---- 状态 ----
   const chars = new Map()        // key → { jname, base（基础立绘路径或 ''）, faces: Map(face → storage), face（当前表情的路径） }
@@ -229,11 +319,10 @@ export function parse(text, ctx = null, meta = {}) {
     const parts = []
     shown.forEach((key, i) => {
       const c = chars.get(key)
-      const src = c?.face || c?.base
+      const src = st.faceToBase ? c?.face || c?.base : c?.face
       if (!src) return
-      const n = shown.length
-      const align = n === 1 ? 'center' : i === 0 ? 'left' : i === n - 1 ? 'right' : 'center'
-      parts.push({ src, align })
+      const at = st.useScriptCoords ? c.pos : null
+      parts.push(at ? { src, x: at.x, y: at.y } : { src, align: alignOf(slotFraction(st.slots, shown.length, i)) })
     })
     if (parts.length) { emit({ op: 'stand', parts }); standOn = true; stats.stands += 1 } else if (standOn) { emit({ op: 'standOff' }); standOn = false }
   }
@@ -286,6 +375,7 @@ export function parse(text, ctx = null, meta = {}) {
         const key = lower(attrs.name || '')
         if (!key) break
         if (!shown.includes(key)) shown.push(key)
+        if (Number.isFinite(Number.parseFloat(attrs.left))) charOf(key).pos = { x: Number.parseFloat(attrs.left), y: Number.parseFloat(attrs.top) || 0 }
         standDirty = true
         break
       }
@@ -300,8 +390,8 @@ export function parse(text, ctx = null, meta = {}) {
         if (!c || !attrs.face) break
         const storage = c.faces.get(attrs.face)
         let src = storage ? find(storage) : ''
-        if (!src) {   // 表情文件缺（或没声明这个表情）：退回基础立绘
-          src = c.base
+        if (!src) {   // 表情文件缺（或没声明这个表情）：退回基础立绘（fallback.faceToBase）
+          src = st.faceToBase ? c.base : ''
           count('fallbacks', `face:${storage ? baseName(storage) : attrs.face}`)
           if (storage) count('missing', `face:${baseName(storage)}`)
         }
@@ -332,29 +422,29 @@ export function parse(text, ctx = null, meta = {}) {
       case 'playse': {
         const src = find(attrs.storage, 'audio')
         if (!src) { count('missing', `se:${baseName(attrs.storage)}`); break }
-        if (/^true$/i.test(attrs.loop || '')) { emit({ op: 'bgse', src, loop: true }); looping = true } else emit({ op: inRd(src) ? 'voice' : 'se', src })
+        if (st.voice.loopAsBgse && /^true$/i.test(attrs.loop || '')) { emit({ op: 'bgse', src, loop: true }); looping = true } else emit({ op: isVoice(src) ? 'voice' : 'se', src })
         break
       }
       case 'stopse': if (looping) { emit({ op: 'bgseStop' }); looping = false } break
       case 'wait': { const seconds = secs(attrs.time, 0, 30); if (seconds > 0) { flushStand(); emit({ op: 'wait', seconds }) } break }
       case 'quake': {
         flushStand()
-        const vertical = attrs.vmax !== undefined && attrs.hmax === undefined
-        emit({ op: 'shake', axis: vertical ? 'vertical' : 'horizontal', strength: Math.min(1, Math.max(0.05, delta(vertical ? attrs.vmax : attrs.hmax) / 40)), seconds: Math.max(0.1, Math.min(5, secs(attrs.time, 0.3))) })
+        const [attr, axis] = st.quakeMap.find(([name]) => attrs[name] !== undefined) || [st.quakeMap[0][0], st.quakeMap[0][1]]
+        emit({ op: 'shake', axis, strength: Math.min(1, Math.max(0.05, delta(attrs[attr]) / st.shakeDivisor)), seconds: Math.max(0.1, Math.min(5, secs(attrs.time, 0.3))) })
         break
       }
       case 'anim': {
-        const move = attrs.top !== undefined ? 'top' : attrs.left !== undefined ? 'left' : ''
+        const move = Object.keys(st.animHop).find((name) => attrs[name] !== undefined) || ''
         if (attrs.name && !attrs.layer && move) {   // 角色的跳 / 抖：连着的合成一个 shake
           const amp = Math.abs(delta(attrs[move]))
-          if (!hop) hop = { axis: move === 'top' ? 'vertical' : 'horizontal', amp: 0, ms: 0 }
+          if (!hop) hop = { axis: st.animHop[move], amp: 0, ms: 0 }
           hop.amp = Math.max(hop.amp, amp)
           hop.ms += Number.parseFloat(attrs.time) || 0
-        } else { flushHop(); raw('anim', rawText) }   // layer 的滑入 / 滑出等
+        } else { flushHop(); if (!(st.ignoreSlide && st.effectLayers.has(String(attrs.layer)))) raw('anim', rawText) }   // layer 的滑入 / 滑出等
         break
       }
       case 'image': {
-        if (String(attrs.layer) === '4' && /sepia/i.test(attrs.storage || '')) {
+        if (st.overlayLayers.has(String(attrs.layer)) && st.sepia.test(attrs.storage || '')) {
           const src = find(attrs.storage)
           if (!src) { count('missing', `image:${baseName(attrs.storage)}`); break }
           overlay = src
@@ -364,21 +454,20 @@ export function parse(text, ctx = null, meta = {}) {
         break
       }
       case 'freeimage': {
-        if (String(attrs.layer) === '4') { if (overlay) { overlay = ''; flushStand(); emitBg(secs(attrs.time)) } } else raw('freeimage', rawText)
+        if (st.overlayLayers.has(String(attrs.layer))) { if (overlay) { overlay = ''; flushStand(); emitBg(secs(attrs.time)) } } else if (!(st.ignoreSlide && st.effectLayers.has(String(attrs.layer)))) raw('freeimage', rawText)
         break
       }
       case 'layopt': {
-        if (String(attrs.layer) === '4' && attrs.visible !== undefined) {
+        if (st.overlayLayers.has(String(attrs.layer)) && attrs.visible !== undefined) {
           const visible = !/^false$/i.test(attrs.visible)
           if (visible !== overlayVisible) { overlayVisible = visible; if (overlay) emitBg(0) }
-        } else raw('layopt', rawText)
+        } else if (!(st.ignoreSlide && st.effectLayers.has(String(attrs.layer)))) raw('layopt', rawText)
         break
       }
       case 'iscript': inScript = true; raw('iscript', ''); break
       default:
         if (SILENT.has(tag)) break
-        if (IF_TAGS.has(tag)) { raw(tag, rawText); break }
-        raw(tag, rawText)   // kanim / keyframe / frame / mem_* / 没见过的标签：原样保留，不丢也不炸
+        raw(tag, rawText)   // 流程标签（if / jump / glink …）、kanim / keyframe / frame / mem_* / 没见过的标签：原样保留，不丢也不炸
     }
   }
 
@@ -395,14 +484,13 @@ export function parse(text, ctx = null, meta = {}) {
     }
     for (const token of tokenize(line)) {
       if (token.text !== undefined) { windowText += token.text; if (token.text.trim()) unclicked = true; continue }
-      switch (token.tag) {
-        case 'r': windowText += '\n'; break
-        case 'l': clickStep(); break
-        case 'p': clickStep(); windowText = ''; break
-        case 'cm': clearWindow(); break
-        case 'endscript': inScript = false; break
-        default: handleTag(token)
-      }
+      const tag = token.tag
+      if (st.lineBreak.has(tag)) windowText += '\n'
+      else if (st.clickWait.has(tag)) clickStep()
+      else if (st.page.has(tag)) { clickStep(); windowText = '' }
+      else if (st.clear.has(tag)) clearWindow()
+      else if (tag === 'endscript') inScript = false
+      else handleTag(token)
       if (inScript) break
     }
   }

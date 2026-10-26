@@ -17,7 +17,28 @@
 //   循环的 playse → bgse / stopse → bgseStop，不循环的 → se（路径带 /voice/ 的 → voice）；playbgm → bgm；fadeoutbgm → bgmStop；wait → wait。
 //   说不出来的（数字层多帧动画、非 0 目标的 fadese、非 cross 的 trans、move 到没有的层）→ raw 指令 + stats.raw。
 // 没做：move 的补间（直接到终点）、立绘多帧动画、bgmopt / seopt 的音量、animstart 的 4 / 6 / 7 / 10 / 11 槽、animstop 对 base 层帧动画（不停，换背景才停）。
-// 资源目录来自 config.adapterOptions['bokusen-json']：{ root（游戏根，相对媒体目录，默认 ''）, resourceDir（默认 'resource'） }
+// 参数全部来自 config.adapterOptions['bokusen-json']（meta.options / prepare 的 options）；下面是完整的结构和默认值——默认值 = 上面写的「样本里的行为」，不配就和以前一样。
+// 适配器本身只读配置、按配置匹配；所有「猜的」东西（槽位号、路径模板、正则）都在这张表里，猜错了改配置，不改代码（管理员脚本 gal-layout 的 LAYOUTS 表写这些）：
+//   root: ''                         游戏根（相对媒体目录）          resourceDir: 'resource'   资源目录名
+//   paths: {                         资源路径模板（相对资源根），按顺序试，第一个在文件索引里找到的生效；{stem} = 脚本文件名  {i} = 下标  {ext} = 下面的候选扩展名（逐个展开）  {name} = 列表里的文件名
+//     images: ['{stem}/images/{i}{ext}'],   sounds: ['{stem}/sounds/{i}{ext}'],
+//     anyExt: true }                 模板都没命中时，忽略扩展名再按序号找一次（以前的 byBase 行为）
+//   image: { ext: ['{entry}'], defaultExt: '.jpg' }        图的候选扩展名：'{entry}' = 列表里写的扩展名（没写用 defaultExt）
+//   sound: { ext: ['.wav', '{entry}'], defaultExt: '' }    声音的候选扩展名：先 .wav 再列表里的（磁盘上是 .wav，列表里写 .m4a）
+//   slotMap: { <标签>: { <字段>: <槽位号 | null> } }        按位置的参数槽；null = 不读这个字段。只写要改的字段，其余用默认：
+//     articles{index:0}  image{layer:15,page:23,index:28,x:16,y:29}  trans{layer:2,mode:3,ms:6}  move{layer:2,target:4}  animstart{id:0,layer:2,x:3,page:8,frames:9}  animstop{id:0}
+//     playse{buffer:0,loop:1,index:2}  stopse{buffer:0}  fadese{buffer:0,volume:2}  playbgm{index:null}（null = 没有曲子下标，用 bgm.patterns）  fadeoutbgm{ms:0}  wait{ms:2}
+//   bgm: { patterns: ['/bgm/'], index: 0 }       playbgm 选哪个 sounds[]：第一个路径匹配任一正则的；都不匹配取 index（数字；'first' = 0）
+//   voice: { patterns: ['/voice/'], loopAsBgse: true }   不循环的 playse 路径匹配任一正则 → voice，否则 se；loopAsBgse：循环的 playse → bgse / stopse → bgseStop（false = 当普通 se，不管循环）
+//   stand: { layers: [], overlayLayers: [], bgLayers: ['base'], xScale: 1, yScale: 1, origin: { x: 0, y: 0 }, moveMode: 'jump' }
+//     bgLayers：这些层是背景；layers：数字层里哪些是立绘（[] = 除 overlayLayers 外全部）；overlayLayers：叠加层（没有对应的场景指令，记 raw + stats.raw）；
+//     part 的 x / y = 脚本值 × xScale / yScale + origin；moveMode：'jump' = move 直接到终点（默认）；'tween'：场景格式没有立绘补间指令，不支持（按 jump 处理）
+//   animation: { singleFrameAsStatic: true, multiFrameLayers: ['base'] }
+//     multiFrameLayers：多帧动画能表达成 bg + frames 的层（其它层只显示第一帧 + raw）；singleFrameAsStatic：false = 单帧的 animstart 也记 raw（默认当静态图）。帧率是播放器的设置，场景没有 fps 字段。
+// 文件索引里的查找走 createIndexResolver：config.resourceResolve（扩展名回退 / 改写 / unicode / 大小写 / preferDirs）自动生效；没配就是精确匹配 + 忽略大小写兜底。
+
+import { createIndexResolver } from '../resolve.mjs'
+import { compileSafeRegex } from '../voice.mjs'
 
 export const ADAPTER_ID = 'bokusen-json'
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
@@ -53,6 +74,70 @@ export function prepare({ options, files, toResourcePath }) {
   return { resources, byBase, hasIndex: Boolean(files?.length) }
 }
 
+// ---------- 参数（只读配置，补满默认值；同一个 options 对象只算一次）----------
+const DEFAULT_SLOTS = {
+  articles: { index: 0 },
+  image: { layer: 15, page: 23, index: 28, x: 16, y: 29 },
+  trans: { layer: 2, mode: 3, ms: 6 },
+  move: { layer: 2, target: 4 },
+  animstart: { id: 0, layer: 2, x: 3, page: 8, frames: 9 },
+  animstop: { id: 0 },
+  playse: { buffer: 0, loop: 1, index: 2 },
+  stopse: { buffer: 0 },
+  fadese: { buffer: 0, volume: 2 },
+  playbgm: { index: null },
+  fadeoutbgm: { ms: 0 },
+  wait: { ms: 2 },
+}
+const isObj = (value) => value && typeof value === 'object' && !Array.isArray(value)
+const strList = (value, fallback) => (Array.isArray(value) ? value.map(String).filter(Boolean) : fallback)
+const regexList = (value, fallback) => {
+  const out = []
+  for (const source of strList(value, fallback)) { try { const re = compileSafeRegex(source, { flags: 'i', label: 'bokusen pattern' }); if (re) out.push(re) } catch { /* 不合格的丢掉 */ } }
+  return out
+}
+const numOr = (value, fallback) => (Number.isFinite(Number(value)) && value !== null && value !== '' ? Number(value) : fallback)
+const settingsCache = new WeakMap()
+function settingsOf(options) {
+  const o = isObj(options) ? options : {}
+  if (settingsCache.has(o)) return settingsCache.get(o)
+  const slots = {}
+  for (const [tag, fields] of Object.entries(DEFAULT_SLOTS)) {
+    slots[tag] = { ...fields }
+    for (const [field, slot] of Object.entries(isObj(o.slotMap?.[tag]) ? o.slotMap[tag] : {})) if (field in fields && (slot === null || Number.isInteger(slot) || /^\d+$/.test(String(slot)))) slots[tag][field] = slot === null ? null : Number(slot)
+  }
+  const stand = isObj(o.stand) ? o.stand : {}
+  const bgm = isObj(o.bgm) ? o.bgm : {}
+  const voice = isObj(o.voice) ? o.voice : {}
+  const anim = isObj(o.animation) ? o.animation : {}
+  const paths = isObj(o.paths) ? o.paths : {}
+  const out = {
+    slots,
+    paths: { images: strList(paths.images, ['{stem}/images/{i}{ext}']), sounds: strList(paths.sounds, ['{stem}/sounds/{i}{ext}']), anyExt: paths.anyExt !== false },
+    ext: {
+      images: { list: strList(o.image?.ext, ['{entry}']), defaultExt: String(o.image?.defaultExt ?? '.jpg') },
+      sounds: { list: strList(o.sound?.ext, ['.wav', '{entry}']), defaultExt: String(o.sound?.defaultExt ?? '') },
+    },
+    bgm: { patterns: regexList(bgm.patterns, ['/bgm/']), index: bgm.index === 'first' ? 0 : Math.max(0, Math.floor(numOr(bgm.index, 0))) },
+    voice: { patterns: regexList(voice.patterns, ['/voice/']), loopAsBgse: voice.loopAsBgse !== false },
+    stand: {
+      layers: strList(stand.layers, []), overlayLayers: strList(stand.overlayLayers, []), bgLayers: strList(stand.bgLayers, ['base']),
+      xScale: numOr(stand.xScale, 1), yScale: numOr(stand.yScale, 1), originX: numOr(stand.origin?.x, 0), originY: numOr(stand.origin?.y, 0),
+    },
+    animation: { singleFrameAsStatic: anim.singleFrameAsStatic !== false, multiFrameLayers: strList(anim.multiFrameLayers, ['base']) },
+  }
+  settingsCache.set(o, out)
+  return out
+}
+
+// 内存索引的查找器（ctx 重建就换新的；config.resourceResolve 变了也换）
+const resolverCache = new WeakMap()
+function resolverOf(ctx, cfg) {
+  let hit = resolverCache.get(ctx)
+  if (!hit || hit.cfg !== cfg) { hit = { cfg, resolver: createIndexResolver({ index: ctx.resources, cfg }) }; resolverCache.set(ctx, hit) }
+  return hit.resolver
+}
+
 // ---------- 解析 ----------
 const NIL = new Set(['nil', 'null', 'undefined'])
 const num = (value, fallback = 0) => { const n = Number.parseFloat(value); return Number.isFinite(n) ? n : fallback }
@@ -77,25 +162,37 @@ export function parse(text, ctx = null, meta = {}) {
   const stats = { rows: code.commands.length, commands: 0, raw: {}, unresolved: {}, stands: 0 }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
 
+  const st = settingsOf(meta?.options)
+  const resolver = ctx?.hasIndex && stem ? resolverOf(ctx, meta?.config?.resourceResolve) : null
+
   // 参数槽：数组按位置，对象按键；'nil' / null / 缺 = 没设（返回 ''）
   const slotOf = (group, i) => {
+    if (i === null || i === undefined) return ''
     const params = code.parameters[group]
     const value = Array.isArray(params) ? params[i] : params && typeof params === 'object' ? params[i] : undefined
     return value === null || value === undefined || NIL.has(String(value)) ? '' : String(value)
   }
 
-  // images[i] / sounds[i] → 资源路径（相对资源根）；没有文件索引就按约定拼，有索引而找不到就返回 ''
-  const found = (list, i, kind, exts) => {
+  // images[i] / sounds[i] → 资源路径（相对资源根）：按 paths 模板 × 候选扩展名逐个试；没有文件索引就取第一个候选，有索引而找不到就返回 ''
+  const entryName = (value) => String(value ?? '').split('?')[0]
+  const found = (list, i, kind) => {
     const entry = list[i]
     if (entry === undefined || entry === null) return ''
-    const base = `${stem}/${kind}/${i}`
-    if (!ctx?.hasIndex || !stem) return `${base}${exts[0]}`
-    for (const ext of exts) if (ctx.resources.has(`${base}${ext}`)) return `${base}${ext}`
-    return ctx.byBase.get(base) || ''
+    const { list: extList, defaultExt } = st.ext[kind]
+    const own = extOf(entryName(entry)) || defaultExt
+    const exts = [...new Set(extList.map((e) => (e === '{entry}' ? own : e)).filter(Boolean))]
+    const candidates = []
+    for (const template of st.paths[kind]) {
+      const fill = (ext) => template.replace(/\{(stem|i|name|ext)\}/g, (_, key) => ({ stem, i: String(i), name: entryName(entry), ext })[key])
+      for (const candidate of /\{ext\}/.test(template) ? exts.map(fill) : [fill('')]) if (!candidates.includes(candidate)) candidates.push(candidate)
+    }
+    if (!resolver) return candidates[0] || ''
+    for (const candidate of candidates) { const hit = resolver.resolve(candidate); if (hit) return hit }
+    if (st.paths.anyExt) for (const candidate of candidates) { const hit = ctx.byBase.get(noExt(candidate)); if (hit) return hit }
+    return ''
   }
-  const entryName = (value) => String(value ?? '').split('?')[0]
-  const imageOf = (i) => { const ext = extOf(entryName(images[i])) || '.jpg'; return found(images, i, 'images', [ext]) }
-  const soundOf = (i) => { const ext = extOf(entryName(sounds[i])); return found(sounds, i, 'sounds', ext && ext !== '.wav' ? ['.wav', ext] : ['.wav']) }
+  const imageOf = (i) => found(images, i, 'images')
+  const soundOf = (i) => found(sounds, i, 'sounds')
   const indexOf = (value, list) => { const n = Number.parseInt(value, 10); return Number.isInteger(n) && n >= 0 && n < list.length ? n : -1 }
 
   const steps = []
@@ -121,31 +218,38 @@ export function parse(text, ctx = null, meta = {}) {
   }
 
   // ---- 画面：背景 + 数字层立绘 ----
+  const { stand: sc, voice: vc, animation: ac } = st
+  const isBg = (layer) => sc.bgLayers.includes(layer)
+  const isOverlay = (layer) => sc.overlayLayers.includes(layer) || (sc.layers.length > 0 && !sc.layers.includes(layer))
   const pending = new Map()   // 层 → back 页上等 trans 的图 { src, x, y }
-  const layers = new Map()    // 数字层 → { src, x, y, anim }
+  const layers = new Map()    // 立绘层 → { src, x, y, anim }
   const emitStand = () => {
     const ids = [...layers.keys()].sort((a, b) => Number(a) - Number(b))
-    if (ids.length) { emit({ op: 'stand', parts: ids.map((id) => ({ src: layers.get(id).src, x: layers.get(id).x, y: layers.get(id).y })) }); stats.stands += 1 } else emit({ op: 'standOff' })
+    const part = (id) => ({ src: layers.get(id).src, x: layers.get(id).x * sc.xScale + sc.originX, y: layers.get(id).y * sc.yScale + sc.originY })
+    if (ids.length) { emit({ op: 'stand', parts: ids.map(part) }); stats.stands += 1 } else emit({ op: 'standOff' })
   }
   const showLayer = (layer, item) => {
-    if (layer === 'base') emit({ op: 'bg', src: item.src, ...(item.frames ? { frames: item.frames } : {}), fade: item.fade || 0 })
+    if (isBg(layer)) emit({ op: 'bg', src: item.src, ...(item.frames ? { frames: item.frames } : {}), fade: item.fade || 0 })
+    else if (isOverlay(layer)) rawOp('layer', [`叠加层:${layer}`, item.src])
     else { layers.set(layer, { src: item.src, x: item.x || 0, y: item.y || 0, anim: item.anim || '' }); emitStand() }
   }
 
   // ---- 声音 ----
   const loopBuffers = new Set()   // 正在循环的声道（bgse 只有一路）
-  const bgmSource = () => {
-    const i = sounds.findIndex((entry) => /\/bgm\//i.test(String(entry)))
-    return soundOf(i >= 0 ? i : 0)
+  const bgmSource = (pickedIndex) => {
+    let i = indexOf(pickedIndex, sounds)
+    if (i < 0) i = sounds.findIndex((entry) => st.bgm.patterns.some((re) => re.test(String(entry))))
+    return soundOf(i >= 0 ? i : st.bgm.index)
   }
 
   for (const entry of code.commands) {
     const tag = String(code.tags[Array.isArray(entry) ? entry[0] : -1] ?? '').toLowerCase()
     const group = Array.isArray(entry) ? entry[1] : -1
-    const s = (i) => slotOf(group, i)
+    const m = DEFAULT_SLOTS[tag] ? st.slots[tag] : {}
+    const s = (field) => slotOf(group, m[field])   // 标签的命名槽位（slotMap 可改）
     switch (tag) {
       case 'articles': {
-        const text = String(articles[indexOf(s(0), articles)] ?? '')
+        const text = String(articles[indexOf(s('index'), articles)] ?? '')
         const header = HEADER.exec(text.trim())
         if (header) { flush(); speaker = header[1].trim() } else line += text
         break
@@ -154,75 +258,75 @@ export function parse(text, ctx = null, meta = {}) {
       case 'p': flush(); break
       case 'cm': flush(); speaker = ''; break
       case 'image': {
-        const layer = s(15) || 'base'
-        const i = indexOf(s(28), images)
-        if (i < 0) { rawOp('image', [`无效下标:${s(28)}`]); break }
+        const layer = s('layer') || 'base'
+        const i = indexOf(s('index'), images)
+        if (i < 0) { rawOp('image', [`无效下标:${s('index')}`]); break }
         const src = imageOf(i)
-        if (!src) { count('unresolved', `${layer === 'base' ? 'bg' : 'layer'}:${images[i]}`); break }
-        const item = { src, x: num(s(16)), y: num(s(29)) }
-        if (s(23) === 'back') pending.set(layer, item); else showLayer(layer, item)
+        if (!src) { count('unresolved', `${isBg(layer) ? 'bg' : 'layer'}:${images[i]}`); break }
+        const item = { src, x: num(s('x')), y: num(s('y')) }
+        if (s('page') === 'back') pending.set(layer, item); else showLayer(layer, item)
         break
       }
       case 'trans': {
-        const layer = s(2) || 'base'
+        const layer = s('layer') || 'base'
         const item = pending.get(layer)
         if (!item) break
         pending.delete(layer)
-        if (s(3) && s(3) !== 'cross') count('raw', `trans:${s(3)}`)
-        showLayer(layer, { ...item, fade: layer === 'base' ? num(s(6)) / 1000 : 0 })
+        if (s('mode') && s('mode') !== 'cross') count('raw', `trans:${s('mode')}`)
+        showLayer(layer, { ...item, fade: isBg(layer) ? num(s('ms')) / 1000 : 0 })
         break
       }
       case 'move': {
-        const layer = s(2)
-        const m = /\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\)/.exec(s(4))
+        const layer = s('layer')
+        const target = /\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\)/.exec(s('target'))
         const item = layers.get(layer)
-        if (!m || !item) { rawOp('move', [layer, s(4)]); break }
-        if (num(m[3]) <= 0) layers.delete(layer); else { item.x = num(m[1]); item.y = num(m[2]) }
+        if (!target || !item) { rawOp('move', [layer, s('target')]); break }
+        if (num(target[3]) <= 0) layers.delete(layer); else { item.x = num(target[1]); item.y = num(target[2]) }   // moveMode 只有 jump：场景没有立绘补间指令
         emitStand()
         break
       }
       case 'animstart': {
-        const layer = s(2) || 'base'
-        const wanted = s(9).split(/\s+/).filter(Boolean).map((value) => indexOf(value, images)).filter((i) => i >= 0)
+        const layer = s('layer') || 'base'
+        const wanted = s('frames').split(/\s+/).filter(Boolean).map((value) => indexOf(value, images)).filter((i) => i >= 0)
         const frames = wanted.map(imageOf).filter(Boolean)
-        if (!frames.length) { count('unresolved', `anim:${s(0)}`); break }
-        if (frames.length < wanted.length) count('unresolved', `anim-missing:${s(0)}`)
-        if (layer === 'base') showLayer('base', { src: frames[0], ...(frames.length > 1 ? { frames } : {}) })
-        else {
-          showLayer(layer, { src: frames[0], x: num(s(3)), anim: s(0) })
-          if (frames.length > 1) rawOp('animstart', [`多帧立绘:${s(0)}`, `${frames.length}帧`])
-        }
+        if (!frames.length) { count('unresolved', `anim:${s('id')}`); break }
+        if (frames.length < wanted.length) count('unresolved', `anim-missing:${s('id')}`)
+        const multi = frames.length > 1
+        const asFrames = multi && ac.multiFrameLayers.includes(layer) && isBg(layer)
+        if (!multi && !ac.singleFrameAsStatic) { rawOp('animstart', [`单帧动画:${s('id')}`, layer]); break }
+        showLayer(layer, { src: frames[0], ...(asFrames ? { frames } : {}), ...(isBg(layer) ? {} : { x: num(s('x')), anim: s('id') }) })
+        if (multi && !asFrames) rawOp('animstart', [`多帧动画:${s('id')}`, `${frames.length}帧`])
         break
       }
-      case 'animstop': {   // 立绘层的动画停了就去掉那一层；base 层的帧动画不停（换背景才停）
+      case 'animstop': {   // 立绘层的动画停了就去掉那一层；背景层的帧动画不停（换背景才停）
         let changed = false
-        for (const [id, item] of layers) if (s(0) !== '' && item.anim === s(0)) { layers.delete(id); changed = true }
+        for (const [id, item] of layers) if (s('id') !== '' && item.anim === s('id')) { layers.delete(id); changed = true }
         if (changed) emitStand()
         break
       }
       case 'playse': {
-        const i = indexOf(s(2), sounds)
+        const i = indexOf(s('index'), sounds)
         const src = i >= 0 ? soundOf(i) : ''
-        if (!src) { count('unresolved', `se:${s(2)}`); break }
-        if (s(1) === 'true') { emit({ op: 'bgse', src, loop: true }); loopBuffers.add(s(0)) }
-        else if (/\/voice\//i.test(String(sounds[i]))) emit({ op: 'voice', src })
+        if (!src) { count('unresolved', `se:${s('index')}`); break }
+        if (s('loop') === 'true' && vc.loopAsBgse) { emit({ op: 'bgse', src, loop: true }); loopBuffers.add(s('buffer')) }
+        else if (s('loop') !== 'true' && vc.patterns.some((re) => re.test(String(sounds[i])))) emit({ op: 'voice', src })
         else emit({ op: 'se', src })
         break
       }
       case 'stopse':
-        if (loopBuffers.delete(s(0))) emit({ op: 'bgseStop' })
+        if (loopBuffers.delete(s('buffer'))) emit({ op: 'bgseStop' })
         break
       case 'fadese':   // 淡到 0 = 停掉循环声；淡到别的音量播放器没有对应指令
-        if (num(s(2)) <= 0 && loopBuffers.delete(s(0))) emit({ op: 'bgseStop' })
-        else if (num(s(2)) > 0) count('raw', 'fadese')
+        if (num(s('volume')) <= 0 && loopBuffers.delete(s('buffer'))) emit({ op: 'bgseStop' })
+        else if (num(s('volume')) > 0) count('raw', 'fadese')
         break
       case 'playbgm': {
-        const src = bgmSource()
+        const src = bgmSource(s('index'))
         if (src) emit({ op: 'bgm', src }); else count('unresolved', 'bgm')
         break
       }
-      case 'fadeoutbgm': emit({ op: 'bgmStop', fade: num(s(0)) / 1000 }); break
-      case 'wait': if (num(s(2)) > 0) emit({ op: 'wait', seconds: num(s(2)) / 1000 }); break
+      case 'fadeoutbgm': emit({ op: 'bgmStop', fade: num(s('ms')) / 1000 }); break
+      case 'wait': if (num(s('ms')) > 0) emit({ op: 'wait', seconds: num(s('ms')) / 1000 }); break
       case 'bgmopt': case 'seopt': case 'wt': case 'wm': case 'wf': case 'wb': break   // 音量 / 等待：不影响内容
       default: count('raw', `tag:${tag || '?'}`)
     }

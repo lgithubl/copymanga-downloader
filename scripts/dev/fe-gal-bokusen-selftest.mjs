@@ -111,6 +111,78 @@ try {
   const broken = home.items.find((x) => x.title === '1003 壊れた')
   const brokenRes = await handler.getReaderContent(itemId, 'main', { sectionId: broken.node }).then(() => '', (e) => e.message)
   check('打开解析失败的脚本：明确的错误，不是服务崩溃', brokenRes !== '', 'resolved without error')
+
+  // ---------- 参数（adapterOptions['bokusen-json']）：默认不变 + 每项覆盖都按文档改变结果 ----------
+  const withOptions = (options, extra = {}, useCtx = ctx) => parse(text1001, useCtx, { stem: STEM, options, ...extra })
+  let seOpsBad
+  const sameAsDefault = (options) => J(withOptions(options).steps) === J(out.steps)
+  check('参数：不给 / 空对象 / 写出全部默认值 / 乱七八糟的类型 → 结果和以前逐字节一样，也不抛', sameAsDefault(undefined) && sameAsDefault({}) && sameAsDefault({ slotMap: { image: { layer: 15 } }, bgm: { patterns: ['/bgm/'], index: 0 }, voice: { patterns: ['/voice/'], loopAsBgse: true }, stand: { layers: [], overlayLayers: [], bgLayers: ['base'], xScale: 1, yScale: 1, origin: { x: 0, y: 0 }, moveMode: 'jump' }, animation: { singleFrameAsStatic: true, multiFrameLayers: ['base'] }, sound: { ext: ['.wav', '{entry}'] }, image: { ext: ['{entry}'], defaultExt: '.jpg' }, paths: { images: ['{stem}/images/{i}{ext}'], sounds: ['{stem}/sounds/{i}{ext}'], anyExt: true } }) && sameAsDefault(null) && sameAsDefault([1]) && sameAsDefault('x') && sameAsDefault({ slotMap: 5, bgm: 'x', voice: { patterns: 'x' }, stand: { xScale: 'abc', layers: 3 }, paths: { images: 7 } }), '')
+
+  check('不合格的正则（量词套量词 / 语法错）被丢掉、不抛：voice.patterns 全是坏的 → 没有 voice（都当 se）', J(seOpsBad = cmdsOf(withOptions({ voice: { patterns: ['(a+)+', '('] } })).filter((c) => c.op === 'voice')) === '[]', J(seOpsBad))
+  // slotMap：槽位猜错了改配置
+  const slotWait = cmdsOf(withOptions({ slotMap: { wait: { ms: 3 } } })).some((c) => c.op === 'wait')
+  const slotFade = cmdsOf(withOptions({ slotMap: { fadeoutbgm: { ms: null } } })).find((c) => c.op === 'bgmStop')
+  const slotX = cmdsOf(withOptions({ slotMap: { image: { x: 29 } } })).find((c) => c.op === 'stand')
+  const slotNoImage = withOptions({ slotMap: { image: { index: null } } })
+  check('slotMap：wait.ms 改指向没设的槽 → 没有 wait；fadeoutbgm.ms = null → fade 0；image.x 改读 29 号槽 → 立绘 x = -10；image.index = null → 所有 image 记 raw（无效下标）', !slotWait && slotFade?.fade === 0 && slotX?.parts[0]?.x === -10 && slotNoImage.stats.raw.image >= 2, J([slotWait, slotFade, slotX, slotNoImage.stats.raw]))
+  const slotLoop = cmdsOf(withOptions({ slotMap: { playse: { loop: 0 } } }))
+  check('slotMap：playse.loop 改读 0 号槽（声道号，不是 true）→ 没有 bgse，循环声当普通 se；playse.index 同理可改', !slotLoop.some((c) => c.op === 'bgse') && slotLoop.some((c) => c.op === 'se' && c.src === res('sounds', 3, 'wav')) && Object.keys(withOptions({ slotMap: { playse: { index: 0 } } }).stats.unresolved).some((k) => k.startsWith('se:')), '')
+
+  // bgm
+  const bgmOf = (options) => cmdsOf(withOptions(options)).find((c) => c.op === 'bgm')?.src
+  check('bgm：patterns 默认 /bgm/ → sounds/0.wav；patterns 改 /voice/ → sounds/1.wav；patterns [] + index 2 → sounds/2.wav；index 3（没有匹配时的兜底）；index "first" = 0', bgmOf({}) === res('sounds', 0, 'wav') && bgmOf({ bgm: { patterns: ['/voice/'] } }) === res('sounds', 1, 'wav') && bgmOf({ bgm: { patterns: [], index: 2 } }) === res('sounds', 2, 'wav') && bgmOf({ bgm: { patterns: ['nomatch'], index: 3 } }) === res('sounds', 3, 'wav') && bgmOf({ bgm: { patterns: [], index: 'first' } }) === res('sounds', 0, 'wav'), J([bgmOf({}), bgmOf({ bgm: { patterns: ['/voice/'] } })]))
+  check('bgm：slotMap.playbgm.index 指向槽位时优先用槽位里的曲子下标（槽 1 = 0 → sounds/0.wav，槽 0 = true 非法 → 退回 patterns）', bgmOf({ slotMap: { playbgm: { index: 1 } }, bgm: { patterns: ['/voice/'] } }) === res('sounds', 0, 'wav') && bgmOf({ slotMap: { playbgm: { index: 0 } }, bgm: { patterns: ['/voice/'] } }) === res('sounds', 1, 'wav'), '')
+
+  // voice
+  const seOps = (options) => cmdsOf(withOptions(options)).filter((c) => ['voice', 'se', 'bgse'].includes(c.op)).map((c) => `${c.op}:${c.src.split('/').pop()}`)
+  check('voice：默认 /voice/ → voice:1.wav、se:2.wav、bgse:3.wav；patterns 换成不匹配的 → 两个都是 se；patterns 换成 se2 → sounds/2 变 voice，1 变 se', J(seOps({})) === J(['voice:1.wav', 'se:2.wav', 'bgse:3.wav']) && J(seOps({ voice: { patterns: ['nomatch'] } })) === J(['se:1.wav', 'se:2.wav', 'bgse:3.wav']) && J(seOps({ voice: { patterns: ['se2'] } })) === J(['se:1.wav', 'voice:2.wav', 'bgse:3.wav']), J(seOps({})))
+  const noLoop = withOptions({ voice: { loopAsBgse: false } })
+  check('voice.loopAsBgse = false：循环的 playse 当普通 se（没有 bgse，stopse 也就没有 bgseStop）', J(seOps({ voice: { loopAsBgse: false } })) === J(['voice:1.wav', 'se:2.wav', 'se:3.wav']) && !cmdsOf(noLoop).some((c) => c.op === 'bgseStop'), '')
+
+  // stand
+  const standsOf = (options) => cmdsOf(withOptions(options)).filter((c) => c.op === 'stand')
+  const scaled = standsOf({ stand: { xScale: 2, yScale: 0.5, origin: { x: 10, y: -5 } } })[0]?.parts[0]
+  check('stand：xScale 2 / yScale 0.5 / origin (10, -5) → 立绘 x = 240×2+10 = 490，y = -10×0.5-5 = -10', scaled?.x === 490 && scaled?.y === -10, J(scaled))
+  const onlyThree = withOptions({ stand: { layers: [3] } })
+  check('stand.layers [3]：只有 3 层是立绘，层 0 变成叠加层（raw layer，没有 stand 指令里的 2 号图）；overlayLayers [0] 同效', cmdsOf(onlyThree).filter((c) => c.op === 'stand').every((c) => c.parts.every((p) => p.src === res('images', 3, 'png'))) && onlyThree.stats.raw.layer >= 1 && withOptions({ stand: { overlayLayers: [0] } }).stats.raw.layer >= 1 && !standsOf({ stand: { overlayLayers: ['0'] } }).some((c) => c.parts.some((p) => p.src === res('images', 2, 'png'))), J(onlyThree.stats.raw))
+  const bgOff = cmdsOf(withOptions({ stand: { bgLayers: [] } }))
+  check('stand.bgLayers []：base 层不再是背景（没有 bg 指令；base 层当立绘层，叠在 stand 里）', !bgOff.some((c) => c.op === 'bg') && bgOff.some((c) => c.op === 'stand' && c.parts.length > 0), '')
+  check('stand.moveMode "tween"：场景格式没有立绘补间指令，不支持——按 jump 处理，结果和默认一样', J(withOptions({ stand: { moveMode: 'tween' } }).steps) === J(out.steps), '')
+
+  // animation
+  const noMulti = withOptions({ animation: { multiFrameLayers: [] } })
+  const bg4 = cmdsOf(noMulti).filter((c) => c.op === 'bg')
+  check('animation.multiFrameLayers []：base 层多帧不再合成 frames（只显示第一帧）+ raw 多帧动画；默认 [base] 才有 frames', !bg4.some((c) => c.frames) && cmdsOf(noMulti).some((c) => c.op === 'raw' && c.cmd === 'animstart') && cmdsOf(out).some((c) => c.op === 'bg' && c.frames), J(bg4))
+  const noStatic = withOptions({ animation: { singleFrameAsStatic: false } })
+  check('animation.singleFrameAsStatic = false：单帧 animstart 不再当静态图，记 raw（数字层 3 的立绘不出现）；默认出现', !cmdsOf(noStatic).some((c) => c.op === 'stand' && c.parts.some((p) => p.x === 145)) && cmdsOf(noStatic).some((c) => c.op === 'raw' && c.cmd === 'animstart' && /单帧/.test(c.args[0])) && cmdsOf(out).some((c) => c.op === 'stand' && c.parts.some((p) => p.x === 145)), '')
+
+  // 路径模板 / 扩展名 / resourceResolve
+  const unresolvedSounds = (options, cfg) => Object.keys(parse(text1001, ctx, { stem: STEM, options, config: cfg }).stats.unresolved).filter((k) => /^(se|bgm):/.test(k) || k === 'bgm').length
+  check('sound.ext：默认先 .wav 再列表里的；改成 [.mp3] + anyExt:false → 声音全找不到（unresolved）；anyExt 默认 true 时仍按序号找到 .wav', unresolvedSounds({}) === 0 && unresolvedSounds({ sound: { ext: ['.mp3'] }, paths: { anyExt: false } }) >= 3 && unresolvedSounds({ sound: { ext: ['.mp3'] } }) === 0, '')
+  const rr = normalizeGalConfig({ resourceRoots: ['resource'], resourceResolve: { extensionFallbacks: { '.mp3': ['.wav'] } } })
+  check('sound.ext 交给 config.resourceResolve：ext [.mp3] + anyExt:false 找不到；加上 resourceResolve.extensionFallbacks {.mp3: [.wav]} → createIndexResolver 换扩展名找到 .wav', unresolvedSounds({ sound: { ext: ['.mp3'] }, paths: { anyExt: false } }, { resourceResolve: rr.resourceResolve }) === 0, J(rr.resourceResolve))
+  const rrCase = normalizeGalConfig({ resourceRoots: ['resource'], resourceResolve: { caseInsensitive: true } })
+  const upper = parse(text1001, ctx, { stem: STEM, options: { paths: { images: ['{stem}/IMAGES/{i}{ext}'], anyExt: false } }, config: { resourceResolve: rrCase.resourceResolve } })
+  const strict = parse(text1001, ctx, { stem: STEM, options: { paths: { images: ['{stem}/IMAGES/{i}{ext}'], anyExt: false } }, config: { resourceResolve: { caseInsensitive: false } } })
+  check('paths.images 模板 + resourceResolve.caseInsensitive：{stem}/IMAGES/… 在 caseInsensitive 时找到真实的 images/；关掉 → 找不到', cmdsOf(upper).some((c) => c.op === 'bg' && c.src === res('images', 0, 'jpg')) && !cmdsOf(strict).some((c) => c.op === 'bg') && strict.stats.unresolved[`bg:${'bg0000.jpg'}`] === 1, J(strict.stats.unresolved))
+  const noIdx = (options) => cmdsOf(parse(text1001, null, { stem: 'x y', options })).find((c) => c.op === 'bg')?.src
+  check('paths（没有文件索引时取第一个候选）：默认 x y/images/0.jpg；images 改 [{stem}/pics/{i}{ext}] → x y/pics/0.jpg；image.defaultExt / image.ext 改变扩展名；stem 含 $& 也不会被当替换符', noIdx({}) === 'x y/images/0.jpg' && noIdx({ paths: { images: ['{stem}/pics/{i}{ext}'] } }) === 'x y/pics/0.jpg' && noIdx({ image: { ext: ['.webp', '{entry}'] } }) === 'x y/images/0.webp' && noIdx({ paths: { images: ['{name}'] } }) === 'bg0000.jpg' && cmdsOf(parse(text1001, null, { stem: 'a$&b', options: {} })).find((c) => c.op === 'bg')?.src === 'a$&b/images/0.jpg', noIdx({}))
+  const soundNoIdx = (options) => cmdsOf(parse(text1001, null, { stem: 'x', options })).find((c) => c.op === 'bgm')?.src
+  check('paths.sounds（没有文件索引）：默认 x/sounds/0.wav（先 .wav）；sound.ext [.ogg] → .ogg；paths.sounds 两个模板按顺序试', soundNoIdx({}) === 'x/sounds/0.wav' && soundNoIdx({ sound: { ext: ['.ogg'] } }) === 'x/sounds/0.ogg' && soundNoIdx({ paths: { sounds: ['{stem}/snd/{i}.mp3', '{stem}/sounds/{i}.wav'] } }) === 'x/snd/0.mp3', soundNoIdx({}))
+  const second = cmdsOf(parse(text1001, ctx, { stem: STEM, options: { paths: { sounds: ['{stem}/nope/{i}.wav', '{stem}/sounds/{i}.wav'], anyExt: false } } })).find((c) => c.op === 'bgm')
+  check('paths.sounds（有文件索引）：第一个模板不存在就试第二个（真实存在的那个生效）', second?.src === res('sounds', 0, 'wav'), J(second))
+  const idxFail = ['', 'a', 'x/y'].map((st) => { try { return parse(text1001, ctx, { stem: st, options: { paths: { images: ['{stem}/{i}'] } } }).steps.length } catch (error) { return error.message } })
+  check('空 stem / 奇怪的 stem 不炸', idxFail.every((v) => typeof v === 'number'), J(idxFail))
+
+  // ---------- 端到端：adapterOptions 手写进 config，走 导入 → 取场景 ----------
+  const handler2 = createGalHandler({ dataDir: path.join(work, 'data2'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) })
+  const tuned = { ...cfg, game: { id: 'bokusen', title: 'bokusen' }, adapterOptions: { 'bokusen-json': { ...cfg.adapterOptions['bokusen-json'], voice: { patterns: ['/nomatch/'], loopAsBgse: false }, bgm: { patterns: [], index: 2 }, stand: { xScale: 2 } } } }
+  const imported2 = await handler2.importFromSource({ sourcePath: root, options: { adapters: ['bokusen-json'], config: tuned } })
+  const itemId2 = imported2.items[0].itemId
+  const list2 = (await handler2.getReaderContent(itemId2, 'main', { sectionId: '' })).node.items
+  const played2 = await handler2.getReaderContent(itemId2, 'main', { sectionId: list2.find((x) => x.title === STEM).node })
+  const cmds2 = (played2.scene || played2.node?.scene).steps.flatMap((s) => s.commands)
+  check('端到端：adapterOptions 里的 voice / bgm / stand 覆盖经 normalizeGalConfig → 导入 → 取场景生效（没有 voice / bgse，bgm = sounds/2，立绘 x×2）；不覆盖的默认项（资源目录）照常', !cmds2.some((c) => c.op === 'voice' || c.op === 'bgse') && cmds2.find((c) => c.op === 'bgm')?.src === res('sounds', 2, 'wav') && cmds2.find((c) => c.op === 'stand')?.parts[0].x === 480 && cmds2.find((c) => c.op === 'bg')?.src === res('images', 0, 'jpg'), J(cmds2.slice(0, 4)))
 } finally { await rm(work, { recursive: true, force: true }) }
 
 console.log(`\n${pass} passed, ${fail} failed`)
