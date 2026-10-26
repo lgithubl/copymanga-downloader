@@ -85,6 +85,7 @@ export const ADAPTER_RULES = {
       markerRes: ['^\\s*(?:\\$\\s*enable_skip\\s*\\(|play\\s+voice\\s+")'],
     },
     align: { left: 'left', right: 'right', center: 'center', truecenter: 'center' },
+    bareVoice: ['voice'],
   },
   'renpy-monmusu': {
     aliasFiles: ['script/movie.rpy'],
@@ -576,16 +577,17 @@ export const ADAPTER_RULES = {
     resourceDirKey: { from: 'json', field: 'resource_directory', segments: 3 },
     voice: { dirs: ['{rd}'], patterns: [], loopAsBgse: true },
     stand: { slots: { '1': [0.5], '2': [0.25, 0.75], '3+': [0.2, 0.5, 0.8] }, useScriptCoords: false },
-    layers: { overlay: ['4'], effect: ['3'] },
+    layers: { overlay: ['4'], effect: ['3'], stand: ['3'] },
     effects: {
       quakeMap: { hmax: 'horizontal', vmax: 'vertical' },
       shakeDivisor: 40,
       animHop: { top: 'vertical', left: 'horizontal' },
       sepia: { matchImage: 'sepia' },
-      animSlide: 'raw',
+      animSlide: 'ignore',
     },
     fallback: { faceToBase: true },
     index: { hashPattern: '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$', stemFallback: true },
+    memorial: { enabled: true, imageFade: 0.5, imageStep: true, protagonist: '', placeholder: '{{主人公}}' },
     text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] },
   },
   'bokusen-json': {
@@ -726,11 +728,11 @@ export const LAYOUTS = {
     adapters: ['renpy-legeclo'],
     adapterOptions: { 'renpy-legeclo': { aliasFiles: { paths: ['?script/movie.rpy'] }, imageDirs: { paths: ['images'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
-    // 规则：renpy-legeclo 全表（已验证：label H_<角色>_<编号> / play voice "字面量"）。未验证：voice ×39 的写法（见 pending）。thumbSources 已在上面 config 里（探测器写，真实目录验证过）。
+    // 规则：renpy-legeclo 全表（已验证：label H_<角色>_<编号> / play voice "字面量" / 裸 voice "路径" 语句（39238 行，路径相对 game/ 39/39 存在，bareVoice）；stop voice 忽略）。未验证：变量 / 无引号写法的 voice（没见过）。thumbSources 已在上面 config 里（探测器写，真实目录验证过）。
     ruleTables: ['renpy-legeclo'], ruleOverrides: {},
     engine: { classify: [] },
-    // PENDING（待真实数据，不写进 config，只是文档）：play voice 的 ×39 种写法（变量 / 无引号 / renpy.play）还没见到真实脚本，不要猜 voiceNoQuote.variables。落地方式见 scripts/dev/gal-pending-plan.md §3。
-    pending: [{ ref: 'gal-pending-plan.md §3', what: 'artemis_halloween_03.rpy 等的 voice ×39（变量 / 无引号写法）', draft: { 'renpy-legeclo': { voiceNoQuote: { variables: '<等 A 段数据：变量名 → 路径>' } } } }],
+    // 已解决：真实脚本里那 ×39 其实是裸 voice "路径" 语句（Ren'Py 的 voice 语句，没有 play），由 bareVoice 处理；变量 / 无引号写法没有出现过，voiceNoQuote.variables 不要猜。
+    pending: [],
     config: {
       namesFiles: [], thumbsDirs: [], scriptExtensions: ['rpy'], hiddenDirs: [], labels: {}, merge: [], views: [],
       groups: [{ parent: '.', pattern: '^(.+)_\\d{2}$' }],   // 角色 id 可能带下划线（agnes_boulanger）：去掉末尾的 _<两位编号>
@@ -983,7 +985,7 @@ export const LAYOUTS = {
     adapters: ['tyrano-ks'],
     adapterOptions: { 'tyrano-ks': { root: { path: ['dmm'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
-    // 规则：tyrano-ks 全表。已验证：hash 命名 / resource_directory 取自同目录 json / 表情缺失退回基础立绘。未验证：anim layer=3 的滑入滑出（raw）、立绘位置只按出场顺序摆（stand.slots 是猜的）。
+    // 规则：tyrano-ks 全表。已验证：hash 命名 / resource_directory 取自同目录 json / 表情缺失退回基础立绘。已验证（脚本里的写法）：layer=3 上的角色 chara_show → anim 滑入 → freeimage 移除（animSlide ignore 吃掉滑入、freeimage 去掉 layer 3 的立绘）。未验证：layer=3 的真实画面（没有对照图，滑入 0.6 秒没有表达）、立绘位置只按出场顺序摆（stand.slots 是猜的）、Memorial 的 mem_img 渐变 / 一图一步的节奏（memorial.imageFade / imageStep 是猜的）。
     ruleTables: ['tyrano-ks'], ruleOverrides: {},
     engine: {
       classify: [],
@@ -994,7 +996,7 @@ export const LAYOUTS = {
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'dmm/raw_scenario', ext: '.ks', depth: 6 }],
     avatars: [], expectedDirs: ['dmm/assets'],
-    notes: ['列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；立绘滑入 / 滑出（anim layer）、layer 3 的 layopt / freeimage 暂未渲染，统计里会列出'],
+    notes: ['列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；layer 3 的立绘滑入 / 滑出不渲染（anim layer / layopt 静默吃掉，animSlide: raw 可改成记 raw）；Memorial 剧情（mem_img 幻灯片 / mem_voice 语音 + 台词 / memorial 段落）已支持'],
   },
   bokusen: {
     title: 'ぼくらの放課後戦争', kind: 'bokusen', detector: 'bokusen', autoOrder: 110,   // <根>/json/*.json（data.code 编译脚本）+ <根>/resource/<脚本名>/{images,sounds}
@@ -2015,6 +2017,7 @@ async function detectGrenze(scope) {
 }
 
 // ---- ぼくらの放課後戦争（bokusen）：<根>/json/<脚本名>.json（KAG / Tyrano 编译表），资源在 <根>/resource/<脚本名>/images|sounds
+const BOKUSEN_HEAD = /"data"\s*:\s*\{[\s\S]*?"code"\s*:\s*\{\s*"(?:images|sounds|articles|characters|tags|parameters|commands)"\s*:/   // 与 adapters/bokusen-json.mjs 的 HEAD 一致
 async function detectBokusen(scope) {
   const { media, declared, logs } = scope
   const loc = await locateGame(scope, scope.id)
@@ -2022,12 +2025,13 @@ async function detectBokusen(scope) {
   const { entry, base } = loc
   const jsonRel = join(base, 'json')
   if (!declared) {
-    // 没声明：要求 json/ 里有脚本开头是 {"data":{"code":{…（只读开头 8KB，最多看 5 个），并且同级有 resource/
+    // 没声明：要求 json/ 里有脚本头 8KB 内出现 "data":{…"code":{"images|…"（真实文件 {"error":…,"data":{"user":…,"code":…}}，老的紧凑写法也认；只读开头 8KB，最多看 20 个、认到一个即止），并且同级有 resource/
     let hits = 0
-    for (const name of (await listNames(path.join(media, ...splitRel(jsonRel)))).filter((n) => n.toLowerCase().endsWith('.json')).slice(0, 5)) {
+    for (const name of (await listNames(path.join(media, ...splitRel(jsonRel)))).filter((n) => n.toLowerCase().endsWith('.json')).slice(0, 20)) {   // 真实目录里有空文件，多看几个，认到一个就够
+      if (hits) break
       try {
         const head = (await readFile(path.join(media, ...splitRel(join(jsonRel, name))))).subarray(0, 8192).toString('utf8').replace(/^\uFEFF/, '')
-        if (/^\s*\{\s*"data"\s*:\s*\{\s*"code"\s*:\s*\{/.test(head)) hits++
+        if (BOKUSEN_HEAD.test(head)) hits++   // 同 bokusen-json.sniff：真实文件的 code 在 data.user 之后
       } catch { /* 读不了就当不是 */ }
     }
     if (!hits || !(await markersOk(media, entry, base, declared))) return null

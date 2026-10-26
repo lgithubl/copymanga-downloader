@@ -1390,7 +1390,7 @@
       "left": "horizontal",
       "top": "vertical"
      },
-     "animSlide": "raw",
+     "animSlide": "ignore",
      "quakeMap": {
       "hmax": "horizontal",
       "vmax": "vertical"
@@ -1413,7 +1413,17 @@
      ],
      "overlay": [
       "4"
+     ],
+     "stand": [
+      "3"
      ]
+    },
+    "memorial": {
+     "enabled": true,
+     "imageFade": 0.5,
+     "imageStep": true,
+     "placeholder": "{{主人公}}",
+     "protagonist": ""
     },
     "resourceDirKey": {
      "field": "resource_directory",
@@ -1506,6 +1516,9 @@
       "voice"
      ]
     },
+    "bareVoice": [
+     "voice"
+    ],
     "blackRes": [
      "^black$",
      "(?:^|_)black\\d*$"

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // 造 ぼくらの放課後戦争（bokusen，编译脚本 JSON）的 Gal 演示 / 测试数据（合成的，台词和名字都是自己编的，没有原作内容；不需要 ImageMagick）：
-//   <根>/json/<脚本名>.json                          {data:{code:{images,sounds,articles,characters,tags,parameters,commands}}}
+//   <根>/json/<脚本名>.json                          真实外壳 {error:{…},data:{user:{…},code:{images,sounds,articles,characters,tags,parameters,commands}},server_time}（1001 / 1003）；老的紧凑外壳 {data:{code:{…}}}（1002）
 //   <根>/resource/<脚本名>/images/<序号>.<扩展名>     sounds/<序号>.wav（列表里写 .m4a，磁盘上是 .wav）
 //   脚本：1001（有资源目录，带 BOM；开场交叉淡入背景 / 立绘层 + move / 多帧动画 / 循环声 / 【说话人】+「台词」）、
-//        1002（没有资源目录：资源缺失也不能炸）、1003（被截断的 JSON：解析失败也不能炸）
+//        1002（没有资源目录：资源缺失也不能炸；老的紧凑外壳）、1003（被截断的 JSON：解析失败也不能炸；真实外壳，截在 code 开头之后）
 //   node scripts/dev/make-bokusen-fixture.mjs <输出根目录>
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -35,7 +35,13 @@ export function silentWav() {
 }
 
 // 按「标签名 + 槽位对象」写命令：标签表按出现顺序现建（每个文件自己的顺序，适配器不能假定固定下标），参数组按槽位排成数组，没设的写 'nil'
-export function compileBokusen({ images = [], sounds = [], articles = [], script }) {
+// shape：'compact' = {data:{code}}（老的紧凑写法，默认）；'real' = 真实文件的外壳（error + data.user + data.code + server_time；user 是很长的播放器设置，code 在它后面）
+export const realShape = (code) => ({
+  error: { error_code: '00000', error_message: '', relogin_flag: 0 },
+  data: { user: { user_id: 0, fps: 15, url: '/', error_url: '/', is_debug: false, is_pc: true, voice_mute: false, voice_volume: 100, se_mute: false, se_volume: 100, bgm_mute: false, bgm_volume: 100, scr_words_transparency: 50, scr_words_speed: 50, scr_words_auto_speed: 50, skip_mode: 0, auto_mode: false }, code },
+  server_time: 1700000000,
+})
+export function compileBokusen({ images = [], sounds = [], articles = [], script, shape = 'compact' }) {
   const tags = []
   const parameters = []
   const commands = []
@@ -46,7 +52,8 @@ export function compileBokusen({ images = [], sounds = [], articles = [], script
     const group = Array.from({ length: width }, (_, i) => (slots[i] === undefined ? 'nil' : String(slots[i])))
     commands.push([tagIdx, parameters.push(group) - 1, order])
   })
-  return { data: { code: { images, sounds, articles, characters: [], tags, parameters, commands } } }
+  const code = { images, sounds, articles, characters: [], tags, parameters, commands }
+  return shape === 'real' ? realShape(code) : { data: { code } }
 }
 
 const IMAGES = ['bg0000.jpg', 'bg0001.jpg', 'sprite0002.png', 'sprite0003.png', 'frame0004.png', 'frame0005.png', 'frame0006.png']
@@ -81,10 +88,10 @@ export const SCRIPT_1002 = [['image', { 15: 'base', 16: 0, 23: 'fore', 28: 0, 29
 
 export async function buildBokusenFixture(root) {
   const put = async (rel, data) => { const abs = path.join(root, ...rel.split('/')); await mkdir(path.dirname(abs), { recursive: true }); await writeFile(abs, data) }
-  const first = { images: IMAGES, sounds: SOUNDS, articles: ARTICLES, script: SCRIPT_1001 }
+  const first = { images: IMAGES, sounds: SOUNDS, articles: ARTICLES, script: SCRIPT_1001, shape: 'real' }
   await put('json/1001 テスト－初H.json', `﻿${JSON.stringify(compileBokusen(first))}`)   // BOM
   await put('json/1002 リソースなし.json', JSON.stringify(compileBokusen({ images: IMAGES, sounds: SOUNDS, articles: ARTICLES, script: SCRIPT_1002 })))
-  await put('json/1003 壊れた.json', JSON.stringify(compileBokusen(first)).slice(0, 120))   // 截断：解析失败
+  await put('json/1003 壊れた.json', JSON.stringify(compileBokusen(first)).slice(0, 600))   // 截断：解析失败（600 字符已经越过 data.user，到了 code 的开头：嗅探认，解析不了）
   const colors = [[40, 120, 80], [60, 60, 160], [200, 80, 80], [220, 160, 60], [90, 200, 200], [200, 200, 90]]
   for (const [i, name] of IMAGES.slice(0, 6).entries()) await put(`resource/1001 テスト－初H/images/${i}${path.extname(name)}`, solidPng(64, 36, colors[i]))   // 第 6 张（6.png）故意不放
   for (let i = 0; i < SOUNDS.length; i++) await put(`resource/1001 テスト－初H/sounds/${i}.wav`, silentWav())

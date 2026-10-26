@@ -1,5 +1,8 @@
 // 适配器：ぼくらの放課後戦争（bokusen，KAG / Tyrano 风格脚本编译成的 JSON 表）→ 规范场景（gal-scene/1）。
 // 脚本 JSON = { data: { code: { images: [文件名…], sounds: [文件名…], articles: [文本…], characters, tags: [标签名…], parameters: [[槽位值…]…], commands: [[标签下标, 参数组下标, 顺序]…] } } }（可能有 BOM）。
+// 真实文件（1898 个）的完整外壳是 {"error":{"error_code":"00000",…},"data":{"user":{…很长的播放器设置…},"code":{…}},"server_time":…}（code 前面有一大段 user）；老的紧凑写法 {"data":{"code":{…}}} 也认。
+// 嗅探 / 解析：sniff 只读头 8KB（任意键序，要求 "data":{ …… "code":{ 后紧跟已知的 code 子键）；explainSniff(text, options) 给一句中文原因（没认出来时，引擎展示在被拒绝的文件里）；
+//   parse 按键取 data.code（键序不限；data.code 没有时退到顶层 code / data 下带 tags+commands 的对象）。空文件 / 非 JSON / 错误响应（1898 里 10 个是空的）→ 抛一个带原因的 Error，不炸。
 // 标签表是每个文件自带的：永远用 tags[标签下标] 取名字，不假定固定下标。parameters 里每组是按槽位排的数组，'nil' = 没设；commands 的第三项（顺序）单调不减（= 源码行号）。
 // 槽位含义（样本 1888 个文件里没有反例的；带「未证实」的是推测）：
 //   articles  0 = articles[] 的下标。文本是 【说话人】 标题行 和 「台词」 行；和 r（换行）/ p（等点击）/ cm（清文本框）交错
@@ -46,10 +49,30 @@ const clean = (value) => String(value ?? '').replace(/\\/g, '/').replace(/^\/+|\
 const rootOf = (options) => clean(options?.root)
 const resourceDirOf = (options) => clean(options?.resourceDir ?? 'resource') || 'resource'
 
-// 只看开头（列表嗅探只读 8KB，images / sounds / articles 在 tags 之前，所以只认 data.code 的开头）；绝不抛错
-const HEAD = /^\s*\{\s*"data"\s*:\s*\{\s*"code"\s*:\s*\{\s*"(?:images|sounds|articles|characters|tags|parameters|commands)"\s*:/
+// 只看开头 8KB（列表嗅探只读 8KB），绝不抛错。真实文件（1898 个里 1888 个）是 {"error":{…},"data":{"user":{…很长…},"code":{"images":…}},"server_time":…}：
+// data 里 code 前面有一大段 user，所以不能要求 "code" 紧跟在 "data" 后面。规则：8KB 内出现 "data":{ …任意内容… "code":{ 且后面紧跟一个已知的 code 子键。
+// 老的紧凑写法 {"data":{"code":{"images":… 是这个规则的特例，同样认。BOM / 前导空白都容忍。
+const CODE_KEYS = ['images', 'sounds', 'articles', 'characters', 'tags', 'parameters', 'commands']
+const HEAD = new RegExp(String.raw`"data"\s*:\s*\{[\s\S]*?"code"\s*:\s*\{\s*"(?:${CODE_KEYS.join('|')})"\s*:`)
+const headOf = (text) => String(text ?? '').replace(/^\uFEFF/, '').slice(0, 8192)
 export function sniff(text) {
-  try { return HEAD.test(String(text ?? '').replace(/^﻿/, '').slice(0, 8192)) } catch { return false }
+  try { return HEAD.test(headOf(text)) } catch { return false }
+}
+// 没认出来时给一句简短的中文原因（认得就返回 ''）。引擎在「被拒绝的文件」列表里展示它；绝不抛错
+export function explainSniff(text, _options) {
+  try {
+    const head = headOf(text)
+    if (HEAD.test(head)) return ''
+    const trimmed = head.trim()
+    if (!trimmed) return '文件是空的（0 字节或只有空白）'
+    if (trimmed[0] !== '{') return `不是 JSON 对象（开头是 ${JSON.stringify(trimmed.slice(0, 1))}）`
+    const failed = /"error_code"\s*:\s*"?([^",}\s]+)"?/.exec(trimmed)
+    const hasData = /"data"\s*:\s*\{/.test(trimmed)
+    if (failed && failed[1] !== '00000' && !hasData) return `是服务器的错误响应（error_code ${failed[1]}），没有 "data":{…"code":{`
+    if (!hasData) return '头 8KB 内没有 "data":{…"code":{（没有 "data":{）'
+    if (!/"code"\s*:\s*\{/.test(trimmed)) return '头 8KB 内没有 "data":{…"code":{（"code" 不在 8KB 以内，或根本没有）'
+    return `"code":{ 后面不是已知的子键（${CODE_KEYS.join(' / ')}）`
+  } catch { return '无法判断（嗅探出错）' }
 }
 
 // ---------- 上下文：resource 目录的文件索引 ----------
@@ -158,16 +181,30 @@ const HEADER = /^【([^】]*)】$/
 
 // 容错解析：BOM、尾部多余字符都先试着剥掉；还是不行就抛一个明确的错（列表页会当「解析失败」列出来，不会炸）
 function parseJson(text) {
-  const raw = String(text ?? '').replace(/^﻿/, '').trim()
+  const raw = String(text ?? '').replace(/^\uFEFF/, '').trim()
   try { return JSON.parse(raw) } catch { /* 往下试 */ }
   const end = raw.lastIndexOf('}')
   if (end > 0) { try { return JSON.parse(raw.slice(0, end + 1)) } catch { /* 往下 */ } }
-  throw new Error('不是有效的 JSON')
+  if (!raw) throw new Error('文件是空的（0 字节或只有空白），不是有效的 JSON')
+  throw new Error(`不是有效的 JSON（开头是 ${JSON.stringify(raw.slice(0, 12))}）`)
+}
+
+// 剧情表在 data.code；字段顺序不固定（data.user 可以在前面也可以在后面），所以按键取，不按位置。data.code 不在时退而求其次：顶层 code、data 下任一层带 tags / commands 的对象
+const isCode = (value) => isObj(value) && Array.isArray(value.commands) && Array.isArray(value.tags)
+function findCode(root) {
+  if (!isObj(root)) return null
+  for (const candidate of [root.data?.code, root.code]) if (isObj(candidate)) return candidate
+  for (const value of Object.values(isObj(root.data) ? root.data : {})) {
+    if (isCode(value)) return value
+    if (isObj(value)) for (const inner of Object.values(value)) if (isCode(inner)) return inner
+  }
+  return null
 }
 
 export function parse(text, ctx = null, meta = {}) {
-  const code = parseJson(text)?.data?.code
-  if (!code || !Array.isArray(code.commands) || !Array.isArray(code.tags) || !Array.isArray(code.parameters)) throw new Error('找不到 data.code 的 tags / parameters / commands（不是 bokusen 的剧情 JSON）')
+  const json = parseJson(text)
+  const code = findCode(json)
+  if (!code || !Array.isArray(code.commands) || !Array.isArray(code.tags) || !Array.isArray(code.parameters)) throw new Error(isObj(json) && isObj(json.error) && json.error.error_code && String(json.error.error_code) !== '00000' ? `服务器返回了错误（error_code ${json.error.error_code}${json.error.error_message ? `：${json.error.error_message}` : ''}），没有 data.code` : '找不到 data.code 的 tags / parameters / commands（不是 bokusen 的剧情 JSON）')
   const images = Array.isArray(code.images) ? code.images : []
   const sounds = Array.isArray(code.sounds) ? code.sounds : []
   const articles = Array.isArray(code.articles) ? code.articles : []
@@ -351,4 +388,4 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps, stats }
 }
 
-export const bokusenJsonAdapter = { id: ADAPTER_ID, label: 'ぼくらの放課後戦争（bokusen）编译脚本 JSON', sniff, parse, contextFiles, contextDirs, contextWalkLimit, prepare }
+export const bokusenJsonAdapter = { id: ADAPTER_ID, label: 'ぼくらの放課後戦争（bokusen）编译脚本 JSON', sniff, explainSniff, parse, contextFiles, contextDirs, contextWalkLimit, prepare }
