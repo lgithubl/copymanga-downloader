@@ -14,7 +14,14 @@
 //   [quake count= time= hmax=|vmax=]                   shake（hmax 横 / vmax 竖，幅度按 1 像素 = 1/40）
 //   [anim name=… top=|left=…]                          角色的跳 / 抖：连着的几条合成一个 shake（整个画面抖，不是只抖那个角色——没有单个立绘的动作指令）
 //   [image storage="sepia_filter-<hash>.png" layer=4] / [freeimage layer=4] / [layopt layer=4 visible=]   整屏滤镜 → 当前背景的 over（再发一条 bg）；换背景时带着走
-//   其余的（[anim layer=…] 的滑入 / 滑出、layer 3 的 layopt / freeimage、[kanim] [keyframe] [frame]、[iscript] 块、[mem_img] [mem_voice] [memorial]、没见过的标签）→ raw 原样保留，stats.raw 里有次数
+//   layer 3 上的角色（真实数据：[chara_show name= layer=3] → [chara_mod] → [anim layer=3 left="+=640" time=0] 跳到右边屏外 → [layopt layer=3 visible=true] → [anim layer=3 left="-=640" time=600] 0.6 秒滑入 → … → [freeimage layer=3] + [layopt layer=3 visible=false] 移除）：
+//                                                      chara_show layer=3 照常是立绘；effect 层（layers.effect，默认 3）上的 [anim layer=3] / [layopt layer=3] 默认静默吃掉（effects.animSlide: 'ignore'，没有场景指令表达滑入；改 'raw' 记 raw）；
+//                                                      [freeimage layer=N]（N 在 layers.stand 里，默认 3）去掉 shown 在这一层的角色（standOff / 重发剩下的立绘），其它层的立绘不动
+//   Memorial 剧情（[mem_img] [mem_voice] [memorial]，options.memorial.enabled 默认开）：
+//                                                      [mem_img for= storage= play_count=] → bg（带 memorial.imageFade 渐变），连着的几张每张一步（memorial.imageStep；4 张 = 幻灯片）；storage 走和 [bg] 一样的资源查找（带 hash / 不带）；
+//                                                      [mem_voice for= storage= text=] → 一步：voice + 台词（说话人空；text 里字面的 \n（反斜杠 n）→ 换行；{{主人公}} 默认原样保留，memorial.protagonist 非空时替换）；语音缺 → 只记 stats.missing，台词照出；
+//                                                      [memorial name=intro|main auto_next= random_voice=] → 段落标记：没写完的文本框先成一步、说话人清空，不记 raw（auto_next / random_voice 播放器没有对应，忽略）；用过的会在 stats.memorial 里记 sections / images / voices
+//   其余的（[anim layer=…] 滑入 / 滑出（animSlide 为 raw 时）、[kanim] [keyframe] [frame]、[iscript] 块、没见过的标签）→ raw 原样保留，stats.raw 里有次数
 //   [wa] [stopse] [cm] [position] [ptext] [chara_config] [call] [preload] [resetfont] [delay] 以及标签行外的注释（; 开头）静默忽略；[if] / [jump] / [glink] 等流程标签当 raw、脚本按顺序一路播下去
 // 资源（相对资源根 game/dmm/assets）：
 //   带 hash 的文件在 assets 平铺层，名字照抄（-<sha1>.<扩展名>）；找不到整名时按 stem（去掉 -<sha1>）再找一次
@@ -33,15 +40,19 @@
 //   stand: { slots: { '1': [0.5], '2': [0.25, 0.75], '3+': [0.2, 0.5, 0.8] }, useScriptCoords: false }
 //                                          slots：在场 n 个角色时每个的水平位置（0..1，按出场顺序；'N' = 恰好 N 个，按位置取；'N+' = N 个及以上，[第一个, 中间的, 最后一个]）；< 1/3 = left，> 2/3 = right，其余 center（部件的 align）
 //                                          useScriptCoords：true = 用 [chara_show left= top=] 当部件的 x / y（没有 left= 的角色仍按 slots）。没有对照图，默认 false
-//   layers: { overlay: ['4'], effect: ['3'] }
-//                                          overlay：整屏滤镜层（[image] / [freeimage] / [layopt visible=] → 当前背景的 over）；effect：滑入滑出之类的效果层（见 effects.animSlide）
-//   effects: { quakeMap: { hmax: 'horizontal', vmax: 'vertical' }, shakeDivisor: 40, animHop: { top: 'vertical', left: 'horizontal' }, sepia: { matchImage: 'sepia' }, animSlide: 'raw' }
+//   layers: { overlay: ['4'], effect: ['3'], stand: ['3'] }
+//                                          overlay：整屏滤镜层（[image] / [freeimage] / [layopt visible=] → 当前背景的 over）；effect：滑入滑出之类的效果层（见 effects.animSlide）；
+//                                          stand：放角色的层（[chara_show layer=N] 记下角色在哪层；缺省是 0 层）。[freeimage layer=N] 对 stand 里的层 = 去掉 shown 在这层的角色（[] = 不处理，freeimage 照旧）。chara_show 在任何层上都是立绘，这个表只管 freeimage
+//   effects: { quakeMap: { hmax: 'horizontal', vmax: 'vertical' }, shakeDivisor: 40, animHop: { top: 'vertical', left: 'horizontal' }, sepia: { matchImage: 'sepia' }, animSlide: 'ignore' }
 //                                          quakeMap：[quake] 的属性 → shake 轴（按顺序，第一个出现的属性决定；都没有取第一项，幅度 0）；shakeDivisor：幅度像素 / 这个数 = strength（封顶 1）；
 //                                          animHop：[anim name= top|left=] 的属性 → 抖动轴；sepia.matchImage：overlay 层上哪些图当滤镜（正则，空 = 都算）；
-//                                          animSlide：'raw' = [anim layer=…] 和 effect 层的 layopt / freeimage 记 raw；'ignore' = 静默丢掉（只对 effect 层）
+//                                          animSlide：'ignore'（默认）= [anim layer=…] 和 effect 层的 layopt / freeimage 静默吃掉（只对 effect 层；layer 3 的滑入 0.6 秒场景里没有对应指令）；'raw' = 记 raw（stats.raw 里有次数）；其它值 = 默认
 //   fallback: { faceToBase: true }         表情图缺失 → 退回基础立绘（false = 这个角色这一次不出图）
 //   index: { hashPattern: '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$', stemFallback: true }
 //                                          hashPattern：平铺层 <stem>-<sha1>.<ext> 的拆法（第 1 组 stem、第 2 组扩展名）；stemFallback：找不到整名时按 stem（去掉 hash）再找
+//   memorial: { enabled: true, imageFade: 0.5, imageStep: true, protagonist: '', placeholder: '{{主人公}}' }
+//                                          enabled：false = [mem_img] [mem_voice] [memorial] 记 raw（以前的行为）；imageFade：[mem_img] 的背景渐变秒数；imageStep：true = 每张图一步，false = 图都放进同一步（只有最后一张看得见）；
+//                                          protagonist / placeholder：[mem_voice] 的 text 里的占位符（字面串）→ 替换成 protagonist（空串 = 不替换）
 //   text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] }
 //                                          换行 / 等点击（结束一步）/ 翻页（结束一步并清框）/ 清文本框 的标签名
 // 文件索引的查找走 createIndexResolver：config.resourceResolve（扩展名回退 / 改写 / unicode / 大小写 / preferDirs）自动生效，同名文件按 preferDirs 挑。
@@ -82,10 +93,11 @@ export const DEFAULT_OPTIONS = {
   resourceDirKey: { from: 'json', field: 'resource_directory', segments: 3 },
   voice: { dirs: ['{rd}'], patterns: [], loopAsBgse: true },
   stand: { slots: structuredClone(DEFAULT_SLOTS), useScriptCoords: false },
-  layers: { overlay: ['4'], effect: ['3'] },
-  effects: { quakeMap: { hmax: 'horizontal', vmax: 'vertical' }, shakeDivisor: 40, animHop: { top: 'vertical', left: 'horizontal' }, sepia: { matchImage: 'sepia' }, animSlide: 'raw' },
+  layers: { overlay: ['4'], effect: ['3'], stand: ['3'] },
+  effects: { quakeMap: { hmax: 'horizontal', vmax: 'vertical' }, shakeDivisor: 40, animHop: { top: 'vertical', left: 'horizontal' }, sepia: { matchImage: 'sepia' }, animSlide: 'ignore' },
   fallback: { faceToBase: true },
   index: { hashPattern: DEFAULT_HASH, stemFallback: true },
+  memorial: { enabled: true, imageFade: 0.5, imageStep: true, protagonist: '', placeholder: '{{主人公}}' },
   text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] },
 }
 const settingsCache = new WeakMap()
@@ -108,11 +120,13 @@ function settingsOf(options) {
     useScriptCoords: o.stand?.useScriptCoords === true,
     overlayLayers: new Set(strList(o.layers?.overlay, ['4'])),
     effectLayers: new Set(strList(o.layers?.effect, ['3'])),
+    standLayers: new Set(strList(o.layers?.stand, ['3'])),
     quakeMap: Object.entries(quake),
     shakeDivisor: Number(o.effects?.shakeDivisor) > 0 ? Number(o.effects.shakeDivisor) : 40,
     animHop: hop,
     sepia: regexOf(o.effects?.sepia?.matchImage ?? 'sepia', /sepia/i) || /(?:)/,   // 空串 = overlay 层上的图都算
-    ignoreSlide: o.effects?.animSlide === 'ignore',
+    ignoreSlide: o.effects?.animSlide !== 'raw',   // 默认 'ignore'；只有 'raw' 才记 raw
+    memorial: { enabled: o.memorial?.enabled !== false, imageFade: Number.isFinite(Number(o.memorial?.imageFade)) && o.memorial?.imageFade !== null && o.memorial?.imageFade !== '' ? Math.max(0, Math.min(10, Number(o.memorial.imageFade))) : 0.5, imageStep: o.memorial?.imageStep !== false, protagonist: typeof o.memorial?.protagonist === 'string' ? o.memorial.protagonist : '', placeholder: typeof o.memorial?.placeholder === 'string' ? o.memorial.placeholder : '{{主人公}}' },
     faceToBase: o.fallback?.faceToBase !== false,
     hash: regexOf(o.index?.hashPattern ?? DEFAULT_HASH, regexOf(DEFAULT_HASH, null, 'i'), 'i'),
     stemFallback: o.index?.stemFallback !== false,
@@ -307,6 +321,7 @@ export function parse(text, ctx = null, meta = {}) {
   // ---- 状态 ----
   const chars = new Map()        // key → { jname, base（基础立绘路径或 ''）, faces: Map(face → storage), face（当前表情的路径） }
   const shown = []               // 在场角色 key（出场顺序）
+  const charLayer = new Map()    // 角色 key → [chara_show layer=] 的层（缺省 '0'）
   let standOn = false
   let standDirty = false
   let speaker = ''               // 当前 # 说话人的显示名
@@ -387,6 +402,7 @@ export function parse(text, ctx = null, meta = {}) {
         const key = lower(attrs.name || '')
         if (!key) break
         if (!shown.includes(key)) shown.push(key)
+        charLayer.set(key, String(attrs.layer ?? '0'))
         if (Number.isFinite(Number.parseFloat(attrs.left))) charOf(key).pos = { x: Number.parseFloat(attrs.left), y: Number.parseFloat(attrs.top) || 0 }
         standDirty = true
         break
@@ -466,7 +482,14 @@ export function parse(text, ctx = null, meta = {}) {
         break
       }
       case 'freeimage': {
-        if (st.overlayLayers.has(String(attrs.layer))) { if (overlay) { overlay = ''; flushStand(); emitBg(secs(attrs.time)) } } else if (!(st.ignoreSlide && st.effectLayers.has(String(attrs.layer)))) raw('freeimage', rawText)
+        const layer = String(attrs.layer)
+        if (st.overlayLayers.has(layer)) { if (overlay) { overlay = ''; flushStand(); emitBg(secs(attrs.time)) } break }
+        const onStand = st.standLayers.has(layer)
+        if (onStand) {   // 这一层上的角色被清掉（别的层的立绘不动）
+          const gone = shown.filter((key) => charLayer.get(key) === layer)
+          if (gone.length) { for (const key of gone) shown.splice(shown.indexOf(key), 1); standDirty = true }
+        }
+        if (!(st.effectLayers.has(layer) ? st.ignoreSlide : onStand)) raw('freeimage', rawText)   // effect 层：animSlide 决定；否则 stand 层吃掉、别的层 raw
         break
       }
       case 'layopt': {
@@ -474,6 +497,34 @@ export function parse(text, ctx = null, meta = {}) {
           const visible = !/^false$/i.test(attrs.visible)
           if (visible !== overlayVisible) { overlayVisible = visible; if (overlay) emitBg(0) }
         } else if (!(st.ignoreSlide && st.effectLayers.has(String(attrs.layer)))) raw('layopt', rawText)
+        break
+      }
+      case 'mem_img': case 'mem_voice': case 'memorial': {
+        const mem = st.memorial
+        if (!mem.enabled) { raw(tag, rawText); break }
+        const sums = (stats.memorial ||= { sections: [], images: 0, voices: 0 })
+        clearWindow()   // 没写完的文本框先成一步
+        if (tag === 'memorial') { sums.sections.push(attrs.name || ''); speaker = ''; break }
+        if (tag === 'mem_img') {
+          const src = find(attrs.storage)
+          if (!src) { count('unresolved', `mem_img:${baseName(attrs.storage)}`); break }
+          flushStand()
+          curBg = { src }
+          emitBg(mem.imageFade)
+          sums.images += 1
+          if (mem.imageStep) { speaker = ''; windowText = ''; clickStep() }
+          break
+        }
+        const src = find(attrs.storage, 'audio')
+        flushStand()
+        if (src) emit({ op: 'voice', src }); else if (attrs.storage) count('missing', `se:${baseName(attrs.storage)}`)
+        let body = String(attrs.text ?? '').replace(/\\n/g, '\n')
+        if (mem.protagonist && mem.placeholder) body = body.split(mem.placeholder).join(mem.protagonist)
+        speaker = ''
+        windowText = body
+        clickStep()
+        windowText = ''
+        sums.voices += 1
         break
       }
       case 'iscript': inScript = true; raw('iscript', ''); break

@@ -6,13 +6,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { galAdapter, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
-import { parse, prepare, sniff } from '../../web/library/gal/adapters/bokusen-json.mjs'
+import { DEFAULT_OPTIONS, explainSniff, parse, prepare, sniff } from '../../web/library/gal/adapters/bokusen-json.mjs'
 import { loadAdapterContext } from '../../web/library/gal/context.mjs'
 import { normalizeGalConfig } from '../../web/library/gal/config.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { SCRIPT_1001, buildBokusenFixture, compileBokusen } from './make-bokusen-fixture.mjs'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 
 let pass = 0
 let fail = 0
@@ -28,10 +28,33 @@ const cmdsOf = (out) => out.steps.flatMap((st) => st.commands)
 
 try {
   // ---------- sniff / 登记 ----------
-  check('sniff：认 {"data":{"code":{ 开头（BOM / 截断的文件也认），不认别的 JSON / 文本；对非 JSON、null、数字都不抛', sniff(text1001) && sniff(text1001.slice(0, 120)) && !sniff('{"data":{"x":1}}') && !sniff('{"bgms":[],"chara_keys":{}}') && !sniff('bg,a.jpg') && !sniff('') && !sniff(null) && !sniff(42), '')
+  check('sniff：认 data.code（真实外壳 / BOM / 截断在 code 之后的文件也认），不认别的 JSON / 文本；对非 JSON、null、数字都不抛', sniff(text1001) && sniff(text1001.slice(0, 600)) && !sniff('{"data":{"x":1}}') && !sniff('{"bgms":[],"chara_keys":{}}') && !sniff('bg,a.jpg') && !sniff('') && !sniff(null) && !sniff(42), '')
   check('适配器登记，sniffGalAdapter 认得', galAdapter('bokusen-json').id === 'bokusen-json' && sniffGalAdapter(text1001) === 'bokusen-json', sniffGalAdapter(text1001))
 
-  // ---------- 用真实的文件索引（context.mjs）解析 1001 ----------
+  // ---------- sniff 的真实外壳 / 老外壳 / 键序 / 无效文件 ----------
+  const codeObj = JSON.parse(text1001.replace(/^\uFEFF/, '')).data.code
+  const realText = J({ error: { error_code: '00000', error_message: '', relogin_flag: 0 }, data: { user: { user_id: 0, fps: 15, url: '/' }, code: codeObj }, server_time: 1700000000 })
+  const compactText = J({ data: { code: codeObj } })
+  const codeFirst = J({ data: { code: codeObj, user: { fps: 15 } }, error: { error_code: '00000' } })
+  const longUser = J({ error: { error_code: '00000' }, data: { user: { blob: 'x'.repeat(7000) }, code: codeObj } })
+  const tooFar = J({ error: { error_code: '00000' }, data: { user: { blob: 'x'.repeat(9000) }, code: codeObj } })
+  check('sniff：真实外壳（error + data.user + code + server_time）/ 老的紧凑外壳 / code 排在 user 前面 / 带 BOM / 7KB 的 user 后面的 code 都认', [realText, compactText, codeFirst, '\uFEFF' + realText, '  \n' + realText, longUser].every((t) => sniff(t) && sniffGalAdapter(t) === 'bokusen-json'), '')
+  check('sniff：code 在 8KB 之后不认；"code" 后面不是已知子键不认；别的 data.code（没有 bokusen 子键）、别的 JSON 不认', !sniff(tooFar) && !sniff('{"data":{"user":{},"code":{"foo":1}}}') && !sniff('{"data":{"code":"x"}}') && !sniff('{"error":{"error_code":"00000"},"data":{"user":{}}}') && !sniff('{"code":{"images":[]}}'), '')
+  check('sniff：code 的子键只要是已知的就行（tags / commands / parameters 打头也认）', ['images', 'sounds', 'articles', 'characters', 'tags', 'parameters', 'commands'].every((k) => sniff(`{"error":{},"data":{"user":{"a":1},"code":{"${k}":[]}}}`)), '')
+  // explainSniff：认得 → ''；不认 → 一句中文原因
+  check('explainSniff：认得的文件返回 ""；空文件 / 只有空白 / HTML / 错误响应 / 没有 data / 没有 code / code 子键不对 / code 超出 8KB 各有简短的中文原因；null / 数字不抛', explainSniff(realText) === '' && explainSniff(compactText, {}) === '' && /空/.test(explainSniff('')) && /空/.test(explainSniff(' \n ')) && /不是 JSON/.test(explainSniff('<html>x</html>')) && /error_code 123/.test(explainSniff('{"error":{"error_code":"123","error_message":"x"}}')) && /data/.test(explainSniff('{"a":1}')) && /code/.test(explainSniff('{"data":{"user":{}}}')) && /子键/.test(explainSniff('{"data":{"code":{"zzz":1}}}')) && /头 8KB 内没有 "data":\{…"code":\{/.test(explainSniff(tooFar)) && [null, undefined, 42].every((v) => typeof explainSniff(v) === 'string'), J([explainSniff(''), explainSniff(tooFar), explainSniff('{"a":1}')]))
+  check('DEFAULT_OPTIONS 仍然导出（drift 守卫依赖）', DEFAULT_OPTIONS?.resourceDir === 'resource', '')
+
+  // parse 在真实外壳 / 老外壳 / code 键序不同时给出同一份场景
+  const refSteps = J(parse(compactText, null, { stem: 'k' }).steps)
+  check('parse：真实外壳 / 老外壳 / code 排在 user 前面 / 带 BOM → 同一份 steps', [realText, codeFirst, '\uFEFF' + realText, longUser].every((t) => J(parse(t, null, { stem: 'k' }).steps) === refSteps) && parse(compactText, null, { stem: 'k' }).steps.length > 5, '')
+  const nested = parse(J({ error: {}, data: { user: {}, payload: { code: codeObj } } }), null, { stem: 'k' })
+  const topCode = parse(J({ error: {}, code: codeObj }), null, { stem: 'k' })
+  check('parse：data.code 不在时退到顶层 code / data 下带 tags + commands 的对象', J(nested.steps) === refSteps && J(topCode.steps) === refSteps, '')
+  const failures = [['', /空/], ['   \n', /空/], ['<html>', /JSON/], ['{"error":{"error_code":"777","error_message":"nope"},"server_time":1}', /error_code 777/], ['{"error":{"error_code":"00000"},"data":{"user":{}},"server_time":1}', /data\.code/], ['null', /data\.code/], ['[1,2]', /data\.code/], ['{"data":{"code":{"images":[]}}}', /data\.code/]].map(([t, re]) => { try { parse(t, null, {}); return `没抛：${t}` } catch (e) { return e instanceof Error && !(e instanceof TypeError) && re.test(e.message) ? '' : `${t} → ${e.message}` } })
+  check('parse：空文件 / 空白 / 非 JSON / 错误响应 / 缺 data.code / null / 数组 → 带原因的 Error（不是 TypeError）', failures.every((x) => !x), J(failures))
+
+
   const config = normalizeGalConfig({ resourceRoots: ['resource'], adapterOptions: { 'bokusen-json': { root: '', resourceDir: 'resource' } } })
   const adapter = galAdapter('bokusen-json')
   const ctx = await loadAdapterContext({ adapter, mediaDir: root, config })
@@ -78,7 +101,7 @@ try {
   check('没有资源目录的脚本（1002）：图 / 声音记 unresolved，台词照常出，不炸', Object.keys(lacking.stats.unresolved).length === 2 && !cmdsOf(lacking).some((c) => c.op === 'bg' || c.op === 'se') && lacking.steps.length === 1 && cmdsOf(lacking).some((c) => c.op === 'text' && c.segments[0].text === '「やあ」'), J(lacking))
   let error = ''
   try { parse(await readFile(path.join(root, 'json', '1003 壊れた.json'), 'utf8'), ctx, { stem: '1003' }) } catch (e) { error = e.message }
-  check('被截断的 JSON：parse 抛一个明确的 Error（列表页当「解析失败」列出），sniff 不抛', /JSON/.test(error) && sniff(text1001.slice(0, 120)), error)
+  check('被截断的 JSON：parse 抛一个明确的 Error（列表页当「解析失败」列出），sniff 不抛', /JSON/.test(error) && sniff(text1001.slice(0, 600)), error)
   let shape = ''
   try { parse('{"data":{"code":{"images":[]}}}', null, {}) } catch (e) { shape = e.message }
   check('形状不对（缺 tags / parameters / commands）：明确的错，不是 TypeError', /data\.code/.test(shape), shape)
@@ -183,6 +206,18 @@ try {
   const played2 = await handler2.getReaderContent(itemId2, 'main', { sectionId: list2.find((x) => x.title === STEM).node })
   const cmds2 = (played2.scene || played2.node?.scene).steps.flatMap((s) => s.commands)
   check('端到端：adapterOptions 里的 voice / bgm / stand 覆盖经 normalizeGalConfig → 导入 → 取场景生效（没有 voice / bgse，bgm = sounds/2，立绘 x×2）；不覆盖的默认项（资源目录）照常', !cmds2.some((c) => c.op === 'voice' || c.op === 'bgse') && cmds2.find((c) => c.op === 'bgm')?.src === res('sounds', 2, 'wav') && cmds2.find((c) => c.op === 'stand')?.parts[0].x === 480 && cmds2.find((c) => c.op === 'bg')?.src === res('images', 0, 'jpg'), J(cmds2.slice(0, 4)))
+
+  // ---------- 真实目录里有空文件 / 错误响应：列表照常出，其余脚本不受影响 ----------
+  const root3 = path.join(work, 'ぼくら-with-bad')
+  await buildBokusenFixture(root3)
+  await writeFile(path.join(root3, 'json', '4235 空.json'), '')
+  await writeFile(path.join(root3, 'json', '4311 空白.json'), '  \n')
+  await writeFile(path.join(root3, 'json', '4331 エラー.json'), '{"error":{"error_code":"10001","error_message":"x"},"server_time":1}')
+  const handler3 = createGalHandler({ dataDir: path.join(work, 'data3'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) })
+  const imported3 = await handler3.importFromSource({ sourcePath: root3, options: { adapters: ['bokusen-json'], config: { ...cfg, game: { id: 'bokusen', title: 'bokusen' } } } })
+  const list3 = (await handler3.getReaderContent(imported3.items[0].itemId, 'main', { sectionId: '' })).node.items.map((x) => x.title)
+  check('空文件 / 空白文件 / 错误响应 JSON 混在 json/ 里：列表不炸，只列出真正的脚本（3 个），坏文件不显示', list3.length === 3 && list3.includes(STEM) && !list3.some((t) => /^4\d{3}/.test(t)), J(list3))
+  check('这些坏文件的 explainSniff 各有原因：空 → "空"、错误响应 → error_code', /空/.test(explainSniff('')) && /error_code 10001/.test(explainSniff(await readFile(path.join(root3, 'json', '4331 エラー.json'), 'utf8'))), '')
 } finally { await rm(work, { recursive: true, force: true }) }
 
 console.log(`\n${pass} passed, ${fail} failed`)

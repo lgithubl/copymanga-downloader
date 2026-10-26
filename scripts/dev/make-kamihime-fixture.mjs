@@ -16,7 +16,7 @@ export const RD2 = '09dc2e61c4b6a8f30d7e1b5a9c2f4e6d8a0b3c5e7f1d2a4b'
 export const sha = (name) => [...Buffer.from(name)].map((b) => b.toString(16).padStart(2, '0')).join('').padEnd(40, 'a').slice(0, 40)
 export const hashed = (stem, ext) => `${stem}-${sha(stem)}.${ext}`
 
-const head = (extra = []) => [
+export const head = (extra = []) => [
   '*start',
   '[position height=160 top=600]',
   '[ptext name="chara_name_area" layer=message0 width="200" color=white x=10 y=560 size=26] ',
@@ -118,6 +118,73 @@ export async function buildKamihimeFixture(root) {
     await put(`raw_scenario/${rel}.json`, JSON.stringify({ is_r18: r18, resource_directory: rd, scenario_path: `09d/b8d/${rd}/scenario`, summary: '合成的摘要', title }))
   }
   await put('raw_scenario/soul/XX_无json/0001_x_script.ks', head().join('\n') + '\n#hana\n没有 json 的剧情。[l]\n')   // 没有同目录 json：标题用脚本名
+}
+
+// 追加的两个剧情（不进 buildKamihimeFixture：基础 fixture 的剧情数 / 步数被别的测试钉住）：
+//   MEMORIAL：Memorial 剧情（真实写法：[memorial name= auto_next= random_voice=] 段落标记、每段 4 张 [mem_img]、[mem_voice storage= text="…\\n…{{主人公}}…"]）
+//   LAYER3：layer 3 上的角色（[chara_show layer=3] → anim 跳到屏外 → layopt true → anim 0.6 秒滑入 → … → [freeimage layer=3] + [layopt layer=3 visible=false]）；另一个角色在 layer 0 不受影响
+export const RD3 = '5b3c9f0a1d2e4f6a8b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e'
+export const MEMORIAL_REL = 'soul/[Memorial0012]メモ/1022_harem-memorial_script.ks'
+export const LAYER3_REL = 'eidolon/MB01_花/9103_harem-layer3_script.ks'
+export const memIntro = (i) => hashed(`intro_mypage-memorial_item_0014_${i}`, 'png')
+export const memMain = (i) => hashed(`mypage-memorial_item_0014_${i}`, 'png')
+export const MEMORIAL = [
+  ...head(),
+  `[playbgm storage="${hashed('bgm_talk_001', 'mp3')}" loop=true]`,
+  `[bg storage="${hashed('story-bg_beach_00', 'jpg')}"  time=1000 wait=true]`,
+  '#hana',
+  '[chara_show name="hana" top=-0 time=0]',
+  '[playse storage="intro_mem_v1.mp3" loop=false clear=true ]',
+  '前置きの台詞。[l][cm]',
+  '[chara_hide name="hana" top=-0 time=0]',
+  '[memorial name="intro" auto_next=true]',
+  ...[0, 1, 2, 3].map((i) => `[mem_img for="intro" storage="${memIntro(i)}" play_count=1]`),
+  '[mem_voice for="intro" storage="intro_mem_v1.mp3" text="一行目。\\n二行目、{{主人公}}さん。"]',
+  '[memorial name="main" random_voice=false auto_next=false]',
+  ...[0, 1, 2, 3].map((i) => `[mem_img for="main" storage="${memMain(i)}" play_count=1]`),
+  '[mem_voice for="main" storage="gone_voice.mp3" text="音声ファイルなし。"]',
+  '[mem_voice for="main" storage="intro_mem_v1.mp3"]',
+  `[mem_img for="main" storage="${hashed('mem_gone', 'png')}" play_count=1]`,
+  '#hana',
+  '後ろの台詞。[l][cm]',
+  '',
+].join('\n')
+export const LAYER3 = [
+  ...head(),
+  `[bg storage="${hashed('story-bg_beach_00', 'jpg')}"  time=500 wait=true]`,
+  '#hana',
+  '[chara_show name="hana" top=-0 time=0]',
+  '[chara_mod name="hana" face="no" time=0]',
+  '一人目だけ。[l][cm]',
+  '#rina',
+  '[chara_show name="rina" layer=3 top=-0 time=0]',
+  '[chara_mod name="rina" face="no" time=0]',
+  '[anim layer=3 left="+=640" time=0]',
+  '[layopt layer=3 visible=true]',
+  '[anim layer=3 left="-=640" time=600 ]',
+  '[wa]',
+  '二人そろった。[l][cm]',
+  '[freeimage layer=3]',
+  '[layopt layer=3 visible=false]',
+  '凛だけ消えた。[l][cm]',
+  '[chara_show name="rina" layer=3 top=-0 time=0]',
+  '凛が戻った。[l][cm]',
+  '[chara_hide name="hana" top=-0 time=0]',
+  '[freeimage layer=3]',
+  '誰もいない。[l][cm]',
+  '',
+].join('\n')
+
+export async function buildKamihimeExtraFixture(root) {
+  const dmm = path.join(root, 'game', 'dmm')
+  const put = async (rel, content) => { await mkdir(path.dirname(path.join(dmm, rel)), { recursive: true }); await writeFile(path.join(dmm, rel), content) }
+  const img = async (rel, size, color) => { await mkdir(path.dirname(path.join(dmm, rel)), { recursive: true }); execFileSync('convert', ['-size', size, `xc:${color}`, path.join(dmm, rel)]) }
+  for (let i = 0; i < 4; i++) { await img(`assets/${memIntro(i)}`, '64x36', 'plum'); await img(`assets/${memMain(i)}`, '64x36', 'khaki') }
+  await put(`assets/${RD3}/intro_mem_v1.mp3`, 'rd3')
+  await put(`raw_scenario/${MEMORIAL_REL.replace(/_script\.ks$/, '')}_script.ks`, MEMORIAL)
+  await put(`raw_scenario/${MEMORIAL_REL.replace(/_script\.ks$/, '.json')}`, JSON.stringify({ is_r18: false, resource_directory: RD3, scenario_path: `aa/bb/${RD3}/scenario`, summary: '合成', title: 'Memorial 合成' }))
+  await put(`raw_scenario/${LAYER3_REL}`, LAYER3)
+  await put(`raw_scenario/${LAYER3_REL.replace(/_script\.ks$/, '.json')}`, JSON.stringify({ is_r18: false, resource_directory: RD1, scenario_path: `aa/bb/${RD1}/scenario`, summary: '合成', title: 'layer3 合成' }))
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -8,6 +8,7 @@
 //   show <立绘图名> [at left|right|center] [with 转场]   立绘 = images/sprite/ 下的一整张图（表情各是一个文件）→ stand 指令（单个部件、无裁剪）；
 //                                              不同的图名是不同的 tag，会同时显示（和 Ren'Py 一样）；hide <图名> 去掉；scene 会清掉所有立绘
 //   play music "路径" / play voice "路径" / play sound "路径"   bgm / voice / se；stop music [fadeout n] → bgmStop；stop voice / stop sound 忽略
+//   voice "路径" [sustain …]                  Ren'Py 的 voice 语句（没有 play；真实脚本 39238 行，路径相对 game/）→ voice 指令，和后面的那句台词同一步；只取第一个引号串，sustain 等参数忽略；`voice [变量]` / 无引号写法记 raw（voiceNoQuote.variables 里有的除外）
 //   "名字" "台词" / "" "台词"（旁白）            speaker + text，一句台词 = 一步；\n 是换行，{i}{w} 之类的文字标记去掉
 //   pause [秒] / with Dissolve(n) / window / jump / return / call   pause 带秒数 → wait；with 转场 → 短暂等待；其余忽略
 // 翻译叠加（tl/jptoen、tl/jptocn 里的 translate 块）暂不处理；只有 .rpyc 没有 .rpy 的脚本读不了（编译过的）。
@@ -16,10 +17,11 @@
 //   aliasFiles / imageDirs / aliasPatterns / movieNoLoopRe / imageIndex / voiceNoQuote / speakers / speakerVars / flow / transitions   同 monmusu（默认也一样；imageDirs 默认 ['images']）
 //   align {left:'left', right:'right', center:'center', truecenter:'center'}   show … at <变换名> → stand 部件的 align；表里没有的变换名 = 不写 align（可加 pos_left: 'left' 之类）
 //   audioCommands {music:['music'], voice:['voice'], se:['sound','audio'], other:'raw'}
+//   bareVoice ['voice']   裸 `voice "路径"` 语句按语音处理（列出语句名；[] = 关掉，这些行记 raw）
 //   blackRes ['^black$', '(?:^|_)black\\d*$']   scene 名字命中 = 黑底（不当背景图、不当缩略图）
 //   sniff {labelRe:'^\\s*label\\s+H_\\w+\\s*:', markerRes:['^\\s*(?:\\$\\s*enable_skip\\s*\\(|play\\s+voice\\s+")']}   sniff(text, options)
 import { DEFAULT_OPTIONS as MONMUSU_OPTIONS, contextDirs, contextFiles } from './renpy-monmusu.mjs'
-import { IGNORED_WORDS, aliasKey, buildRenpyContext, clean, flowFilter, isBlackName, isMusicChannel, makeSniff, num, optionsCompiler, readDialogue, readPlay, segmentsOf, splitWith, transitionSeconds } from './renpy-common.mjs'
+import { IGNORED_WORDS, aliasKey, buildRenpyContext, clean, flowFilter, isBlackName, isMusicChannel, makeSniff, num, optionsCompiler, readBareVoice, readDialogue, readPlay, segmentsOf, splitWith, transitionSeconds } from './renpy-common.mjs'
 
 export const ADAPTER_ID = 'renpy-legeclo'
 export { contextDirs, contextFiles }
@@ -27,6 +29,7 @@ export { contextDirs, contextFiles }
 export const DEFAULT_OPTIONS = {
   ...MONMUSU_OPTIONS,
   align: { left: 'left', right: 'right', center: 'center', truecenter: 'center' },
+  bareVoice: ['voice'],
   blackRes: ['^black$', '(?:^|_)black\\d*$'],
   // 独有写法：label H_xxx:（大写 H + 下划线）。monmusu 的 label 是 h<数字>，minashigo 靠 $ name= / xyz "…"，都不会被它认走
   sniff: { labelRe: '^\\s*label\\s+H_\\w+\\s*:', markerRes: ['^\\s*(?:\\$\\s*enable_skip\\s*\\(|play\\s+voice\\s+")'] },
@@ -100,6 +103,11 @@ export function parse(text, ctx = null, meta = null) {
     }
 
     const word = /^[A-Za-z_]\w*/.exec(line)?.[0] || ''
+    if (word && o.bareVoice.has(word) && /^\w+\s+\S/.test(line)) {   // 裸 voice 语句（没有 play）：和后面的台词同一步
+      const src = readBareVoice(line.slice(word.length), o, Q)
+      if (src) emit({ op: 'voice', src }); else count('raw', word)
+      continue
+    }
     switch (word) {
       case 'scene': {
         const { name, fade } = splitShow(line.slice(5), o)

@@ -13,6 +13,7 @@
 //   imageIndex       { preferDirs: [资源路径前缀], ext: [扩展名], extPriority: false }
 //   audioCommands    { music: [声道], voice: [声道], se: [声道], other: 'raw'|'se'|'ignore' }   声道名末尾可带 * 通配
 //   voiceNoQuote     { variables: { <变量名>: <路径> } }
+//   bareVoice        [语句名]：裸的 `<语句名> "路径"`（Ren'Py 的 voice 语句，没有 play）按语音处理，对应下一句台词；[] = 不认（记 raw）。只有默认值里写了这个键的适配器才读它（legeclo 默认 ['voice']）
 //   transitions      { named: <正则>, seconds: 0.5 }
 //   blackRes         [正则]：scene 名字命中 = 黑底
 //   sniff            { labelRe, markerRes: [正则] }
@@ -80,6 +81,7 @@ const COMPILERS = {
     const pick = (key) => channelMatcher(strings(given[key], d[key]))
     return { music: pick('music'), voice: pick('voice'), se: pick('se'), other: oneOf(given.other, ['raw', 'se', 'ignore'], d.other) }
   },
+  bareVoice: (v, d) => new Set(strings(v, d).filter((w) => /^[A-Za-z_]\w*$/.test(w))),
   voiceNoQuote: (v, d) => ({ variables: table(isObject(v) ? v.variables : undefined, d.variables) }),
   transitions: (v, d) => ({ named: safe(typeof v?.named === 'string' ? v.named : d.named, 'i'), seconds: Number.isFinite(Number(v?.seconds)) ? num(v.seconds) : d.seconds }),
   blackRes: (v, d) => regexes(v, d),
@@ -161,6 +163,8 @@ export function readPlay(line, o, q) {
   if (!operand && !literal) return null   // 认不出的写法（[表达式] / 没配的变量）：raw
   return { kind, src: operand }
 }
+// 裸语音语句：`voice "路径" [sustain / 其它参数]` → 路径（只取第一个引号串；[变量] / 裸变量名只认 voiceNoQuote.variables 里有的，同 play）；认不出 → ''（调用方记 raw）
+export const readBareVoice = (rest, o, q) => readOperand(rest, o, q)
 export const isMusicChannel = (o, channel) => o.audioCommands.music(channel)
 
 // 转场 → 渐变秒数：Dissolve(0.5) / Fade(0.5, 0, 0.5) 取第一个数；命名转场（transitions.named）按 transitions.seconds；None 或认不出 = 0
