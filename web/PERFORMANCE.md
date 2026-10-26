@@ -8,6 +8,8 @@
 - 只发一个启动请求 `GET /api/library/boot?<和列表一样的查询参数>`：配置 + 类型 + 列表（带进度）+ 元数据脚本一次取回。
 - 不开 SSE、不轮询，不请求 jobs / downloaded / reading-progress / inventory-update / history / config / types / metadata-actions。
 - 用户在这个页里切到别的视图（下载、搜索漫画…）时才启动后台同步（`showView`），补一次任务快照。
+- 路由参数（`web/static/library-route.js`）：`tag / type / sourceProfile / seriesSubtitle / sort / limit / page` 是搜索条件（和「搜索预设」同一套），另有 `find`：页内匹配框（`#library-find`）里的文字，非空才写、URL 编码、最长 200 字、去控制字符。点标签开新页时会带上当前匹配框的内容；新页（和手输的 `#/library?find=…`）首批结果渲染完后填框并跳到第一个命中，之后手改照常。`find` 不进搜索预设，也不写 localStorage。
+- 库页右侧有悬浮半透明 ▲▼ 按钮（`web/static/scroll-buttons.js`），每次把卡片网格滚动「可视高度的 80%」；窄屏整页滚动时改滚页面；到顶 / 到底 `aria-disabled`，内容放得下时隐藏；自测 `scripts/dev/fe-library-scrollbtn-selftest.mjs`。
 - 普通页面（没有 `tab=new`）的启动流程不变，但卡片上的「继续」进度改成服务端按当前页条目附带（`item.history`），不再单独取 1000 条历史。
 - 普通页面之间：一个浏览器只开一条 SSE（Web Locks 选组长，`BroadcastChannel` 转发事件，组长关了自动接班）；后台标签页不轮询。
 

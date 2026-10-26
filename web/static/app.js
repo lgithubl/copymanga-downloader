@@ -5,6 +5,7 @@ import { createGalPlayer } from '/gal-player.js'
 import { ratioOfStep } from '/gal-engine.js'
 import { HOVER_DELAY_MS, HOVER_MAX_COVER_RATIO, fitPreview, placeExpanded, worthExpanding } from '/hover-preview.js'
 import { libraryRouteHash, parseLibraryRoute } from '/library-route.js'
+import { createScrollButtons } from '/scroll-buttons.js'
 const els = {
   token: document.querySelector('#token'),
   app: document.querySelector('#app'),
@@ -444,7 +445,9 @@ function addNewTabRule(textarea, profileSelect, kindSelect, label) {
 }
 
 function openLibraryRouteInNewTab(fields) {
-  window.open(`${location.origin}${location.pathname}${location.search}${libraryRouteHash(fields, { page: 1, newTab: true })}`, '_blank', 'noopener')
+  // 页内匹配框里的文字一并带过去（调用方没显式给 find 时取当前框里的值）
+  const find = fields.find ?? els.libraryFind?.value ?? ''
+  window.open(`${location.origin}${location.pathname}${location.search}${libraryRouteHash({ ...fields, find }, { page: 1, newTab: true })}`, '_blank', 'noopener')
 }
 
 function openMediaRouteInNewTab(route) {
@@ -1749,6 +1752,8 @@ function restoreLibraryState() {
     trySet(els.librarySourceProfile, f.sourceProfile)
     if (els.libraryTagSearch) els.libraryTagSearch.value = f.tag
     libraryPage = Math.max(1, Math.floor(Number(f.page)) || 1)
+    // 路由里的页内匹配文字：填进框里，首批结果渲染完后跳到第一个命中（和手敲一致），不进 localStorage
+    if (els.libraryFind && f.find) { els.libraryFind.value = f.find; libraryFindBootJump = true }
     return
   }
   let state = null
@@ -3196,7 +3201,8 @@ function renderLibraryItems() {
   // 普通库页仍然一次建完（浏览器自带的查找 / 全选依赖完整 DOM）
   resetLibraryChunks()
   renderLibraryChunk(libraryTabIsNew && libraryItems.length > LIBRARY_LAZY_THRESHOLD ? LIBRARY_CHUNK : libraryItems.length)
-  refreshLibraryFind({ jump: false })
+  refreshLibraryFind({ jump: libraryFindBootJump })
+  libraryFindBootJump = false
   if (libraryItems.length === 0) {
     els.libraryItems.innerHTML = libraryIndexStatus && libraryIndexStatus.status !== 'ready'
       ? '<p class="muted">媒体缓存未就绪，请点击重建缓存</p>'
@@ -3263,6 +3269,7 @@ function renderLibraryChunk(upTo) {
 // —— 页内匹配：只管当前页的卡片。按数据（标题 / 标签 / 摘要）匹配，不看 DOM，所以没建出来的卡片也能命中 ——
 let libraryFindHits = []
 let libraryFindIndex = -1
+let libraryFindBootJump = false   // 路由带了 find：第一次渲染结果时跳到第一个命中，之后换页 / 刷新照旧不跳
 
 function libraryFindText(item) {
   const summary = libraryItemSummary(item)
@@ -3336,6 +3343,15 @@ document.addEventListener('keydown', (event) => {
   els.libraryFind.focus()
   els.libraryFind.select()
 })
+
+// —— 库页的悬浮 ▲▼ 分段滚动：滚的是卡片网格 #library-items（桌面布局里它自己 overflow:auto）；窄屏（≤900px）整页滚动时改滚页面 ——
+const libraryScrollTarget = () => {
+  const grid = els.libraryItems
+  if (!grid) return null
+  if (grid.scrollHeight > grid.clientHeight + 1 || !document.scrollingElement || document.scrollingElement.scrollHeight <= window.innerHeight + 1) return grid
+  return document.scrollingElement
+}
+if (els.libraryItems) createScrollButtons({ host: document.querySelector('#library-view'), getTarget: libraryScrollTarget, label: '媒体库分段滚动' })
 
 // —— 卡片宽度 / 页面总宽度 / 封面放大倍率：各存各的（localStorage），拖动的交互复用 openWidthAdjust ——
 const LIBRARY_CARD_W_KEY = 'copymanga.libraryCardWidth'
