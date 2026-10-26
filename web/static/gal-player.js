@@ -5,9 +5,10 @@
 import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } from '/gal-spine.js'
 import { createStandLayer } from '/gal-stand.js'
 import { attachBarLock } from '/gal-barlock.js'
-import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, segmentsText, stateAt, stepOfRatio } from '/gal-engine.js'
+import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
 const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
+// 音量：滑块位置 p（0..1，存进浏览器的就是它）→ 实际增益 volumeGain(p) = p²（感知曲线）。旧版存的是线性值，按滑块位置解释，听起来会比以前小
 const loadVolume = (key, fallback) => {
   const n = Number(localStorage.getItem(VOL_KEY[key]))
   return Number.isFinite(n) && localStorage.getItem(VOL_KEY[key]) !== null ? Math.max(0, Math.min(1, n)) : fallback
@@ -24,6 +25,7 @@ export const GAL_SETTINGS = {
   fontScaleDefault: 1,
   fontScaleMin: 0.6,
   fontScaleMax: 2,
+  fitMin: 0.6,                                      // 台词太长时自动缩小到字体大小设置的多少倍（再长就滚动）
   frameFpsKey: 'copymanga.gal.frameFps',            // 帧动画（FRAME_ANIM）每秒几帧：脚本里的速度参数不用，统一在这里设
   frameFpsDefault: 30,
   frameFpsMax: 60,
@@ -137,20 +139,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const upBtn = btn('↑ 列表', '回到上一级列表（选其它脚本）', 'gal-up')
   const prevBtn = btn('◀ 上一句', '上一句（← / Backspace）', 'gal-prev')
   const count = el('span', 'gal-count', '')
-  const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →；按住 Ctrl 快进）', 'gal-next-btn')
+  const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →；按住 Ctrl 或点「快进」快进）', 'gal-next-btn')
   const autoBtn = btn('自动', '自动播放（A / 单按 Alt）', 'gal-auto')
   const logBtn = btn('记录', '台词记录（L）', 'gal-log-btn')
-  const autoSelBtn = btn('自选', '自动选择选项开关（具体选第几个在 ⚙ 里设置）', 'gal-autosel')
-  const cfgBtn = btn('⚙', '设置：字体大小、文本框透明度、音量、自动播放、自动选择', 'gal-cfg')
+  const fastBtn = btn('快进', '快进开关（X；点一下开始，再点停止，遇到选项停下；也可以按住 Ctrl 快进）', 'gal-fast-btn')
+  fastBtn.setAttribute('aria-pressed', 'false')
+  const autoSelBtn = btn('自选', '自动选择选项开关（具体选第几个在「设置」里设置）', 'gal-autosel')
+  // 设置 / 更多合成一个按钮：.gal-cfg 和 .gal-more-btn 两个类都留着（老的选择器还能用）
+  const cfgBtn = btn('设置 ▾', '设置：显示（字体 / 透明度 / 沉浸 / 全屏）、音频、播放、画面', 'gal-cfg gal-more-btn')
   const chPrevBtn = btn('上话', '上一话', 'gal-ch-prev gal-imm-only')
   const chNextBtn = btn('下话', '下一话', 'gal-ch-next gal-imm-only')
   const contBtn = btn('继续下一章 ▶', '这一章看完了，继续下一章', 'gal-continue')
   contBtn.hidden = true
-  const moreBtn = btn('更多 ▾', '沉浸 / 全屏', 'gal-more-btn')
   const immBtn = btn('沉浸', '沉浸模式（I）', 'gal-imm')
   const fsBtn = btn('全屏', '全屏（F）', 'gal-fs')
-  const moreMenu = el('div', 'gal-more')
-  moreMenu.hidden = true
   // 静态画面（Spine）的 animation4 播放时会降速，降到原速度的多少在这里改（1 = 不降速）
   const slowInput = el('input', 'gal-more-number')
   slowInput.type = 'number'
@@ -215,23 +217,24 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const mosaicRow = el('label', 'gal-more-field')
   mosaicRow.append(el('span', '', '显示马赛克层'), mosaicInput)
   mosaicRow.hidden = !(scene?.stats?.mosaic?.total > 0)
-  moreMenu.append(immBtn, fsBtn, slowRow, fpsRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
   note.setAttribute('role', 'button')
   note.tabIndex = 0
-  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, moreBtn, lockBtn, backBtn, note)
+  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
 
-  // 设置弹层：文本框透明度 / 音量 / 自动播放等待时间
-  const settings = el('div', 'gal-settings')
+  // 设置弹层（原来的 ⚙ 设置和「更多」菜单合在这里）：显示 / 音频 / 播放 / 画面 四组。.gal-more 和 .gal-settings 两个类都留着
+  const settings = el('div', 'gal-settings gal-more')
   settings.hidden = true
   const range = (min, max, step, title) => { const r = el('input'); r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.title = title; return r }
   const row = (label, control, valueEl) => { const r = el('label', 'gal-set-row'); r.append(el('span', 'gal-set-label', label), control); if (valueEl) r.append(valueEl); return r }
   const opacityRange = range(0, 100, 5, '文本框背景不透明度')
   const opacityValue = el('span', 'gal-set-value', '')
-  const bgmRange = range(0, 1, 0.05, 'BGM 音量')
-  const seRange = range(0, 1, 0.05, '语音/音效音量')
+  const bgmRange = range(0, 1, 0.02, 'BGM 音量（滑块位置，实际增益 = 位置²）')
+  const seRange = range(0, 1, 0.02, '语音/音效音量（滑块位置，实际增益 = 位置²）')
+  const bgmValue = el('span', 'gal-set-value', '')
+  const seValue = el('span', 'gal-set-value', '')
   const delayInput = el('input')
   delayInput.type = 'number'
   delayInput.min = '0'
@@ -249,18 +252,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   autoChoiceInput.step = '1'
   autoChoiceInput.title = '遇到选项时自动选：-1 不开启；0 随机选一个；1/2/3… 选对应的项（没有这一项就随机）'
   autoChoiceInput.className = 'gal-set-number gal-set-autochoice'
+  // 分组标题用 ::before 画（data-title），不占子元素位置：每组里的行序号保持稳定
+  const section = (title, ...rows) => { const d = el('div', 'gal-set-section'); d.dataset.title = title; d.append(...rows); return d }
   settings.append(
-    row('字体大小', fontRange, fontValue),
-    row('文本框透明度', opacityRange, opacityValue),
-    row('BGM 音量', bgmRange),
-    row('语音/音效', seRange),
-    row('自动：语音播完后等', delayInput, delayUnit),
-    row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput),
+    section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), immBtn, fsBtn),
+    section('音频', row('BGM 音量', bgmRange, bgmValue), row('语音/音效', seRange, seValue)),
+    section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput)),
+    section('画面', slowRow, fpsRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
   )
   hud.append(box)
   // 工具栏不再叠在舞台里：放在舞台下面、播放器最底部，和列表页底部固定条同一个位置、同一个顺序（↑ 在最左）
   const barWrap = el('div', 'gal-bar-wrap')
-  barWrap.append(bar, settings, moreMenu)
+  barWrap.append(bar, settings)
   world.append(...layers, movie)
   stage.append(world, black, flashEl, hud)
   const logPanel = el('div', 'gal-log')
@@ -282,11 +285,43 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   container.replaceChildren(root)
   if (!hasSteps) stage.append(empty)
 
+  // ---------- 文本框：固定 2 行高，太长就缩字号 ----------
+  // 文本区高度在 CSS 里固定 = 2 行（按当前字体大小设置），名牌也是固定位置，所以文本框的矩形在任何一步都不变。
+  // 台词放不下时只缩台词字号（--gal-fit，相对用户设置的字号，二分查找，最小 FIT_MIN）；到最小还放不下就保持最小并允许滚动（完整台词在记录里）。
+  // 只在换台词 / 舞台尺寸变化 / 改字体大小时量一次（二分是对一个小元素读 scrollHeight，不会每帧重排）
+  const FIT_MIN = GAL_SETTINGS.fitMin
+  let fitRaf = 0
+  const overflows = () => textEl.scrollHeight > textEl.clientHeight + 1
+  function fitText() {
+    cancelAnimationFrame(fitRaf)
+    fitRaf = 0
+    textEl.classList.remove('gal-text-scroll')
+    textEl.style.removeProperty('--gal-fit')
+    textEl.scrollTop = 0
+    if (box.hidden || !textEl.clientHeight || !overflows()) return
+    textEl.style.setProperty('--gal-fit', String(FIT_MIN))
+    if (overflows()) { textEl.classList.add('gal-text-scroll'); return }
+    let lo = FIT_MIN   // lo 放得下，hi 放不下
+    let hi = 1
+    for (let i = 0; i < 6; i += 1) {
+      const mid = (lo + hi) / 2
+      textEl.style.setProperty('--gal-fit', String(mid))
+      if (overflows()) hi = mid
+      else lo = mid
+    }
+    textEl.style.setProperty('--gal-fit', String(lo))
+  }
+  const scheduleFit = () => { if (!fitRaf) fitRaf = requestAnimationFrame(fitText) }
+  if (typeof ResizeObserver === 'function') new ResizeObserver(scheduleFit).observe(stage)
+
   // ---------- 音频 ----------
-  let bgmVolume = loadVolume('bgm', 0.5)
+  let bgmVolume = loadVolume('bgm', 0.7)   // 滑块位置；0.7² ≈ 旧默认线性 0.5 的响度
   let seVolume = loadVolume('se', 1)
   bgmRange.value = String(bgmVolume)
   seRange.value = String(seVolume)
+  const pct = (p) => `${Math.round(p * 100)}%`
+  bgmValue.textContent = pct(bgmVolume)
+  seValue.textContent = pct(seVolume)
   let slowFactor = loadNumber(GAL_SETTINGS.slowKey, GAL_SETTINGS.slowDefault, GAL_SETTINGS.slowMin, 1)
   slowInput.value = String(slowFactor)
   slowInput.addEventListener('change', () => {
@@ -385,6 +420,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   const applyFont = () => {
     root.style.setProperty('--gal-font-scale', String(fontScale))
     fontValue.textContent = `${Math.round(fontScale * 100)}%`
+    fitText()
   }
   applyFont()
   const applyAutoChoiceButton = () => {
@@ -416,7 +452,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (!src) return
     const audio = new Audio(url(src))
     audio.loop = Boolean(spec.loop)
-    audio.volume = seVolume
+    audio.volume = volumeGain(seVolume)
     audio.addEventListener('error', () => markMissing(src))
     bgseAudio = audio
     if (wantBgm) audio.play().catch(() => {})
@@ -433,7 +469,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       if (bgVoices.has(slot) || !want?.src) continue
       const audio = new Audio(url(want.src))
       audio.loop = true
-      audio.volume = Math.max(0, Math.min(1, seVolume * (Number.isFinite(Number(want.volume)) ? Number(want.volume) : 1)))
+      audio.volume = Math.max(0, Math.min(1, volumeGain(seVolume) * (Number.isFinite(Number(want.volume)) ? Number(want.volume) : 1)))
       audio.addEventListener('error', () => markMissing(want.src))
       bgVoices.set(slot, { src: want.src, audio, volume: want.volume })
       if (wantBgm) audio.play().catch(() => {})
@@ -467,7 +503,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (!src) return
     const audio = new Audio(url(src))
     audio.loop = true
-    audio.volume = bgmVolume
+    audio.volume = volumeGain(bgmVolume)
     audio.addEventListener('error', () => markMissing(src))
     bgmAudio = audio
     if (wantBgm) audio.play().catch(() => {})   // 没有用户手势时浏览器会拒绝，第一次点击后下一次切换就能响
@@ -488,7 +524,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   let stepVoice = null   // { step, endedAt, failed }
   function playOnce(src, kind) {
     const audio = new Audio(url(src))
-    audio.volume = seVolume
+    audio.volume = volumeGain(seVolume)
     audio.addEventListener('error', () => markMissing(src))
     let record = null
     if (kind === 'voice') {
@@ -584,10 +620,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
 
   function paintText() {
     renderSegments(nameplate, state.speaker)
-    nameplate.hidden = !segmentsText(state.speaker).trim()
+    nameplate.classList.toggle('gal-name-empty', !segmentsText(state.speaker).trim())   // 不用 hidden：全局 [hidden] 是 display:none，名牌要继续占位
     renderSegments(textEl, state.text)
     const hasText = Boolean(segmentsText(state.text).trim())
     box.hidden = !hasText
+    fitText()
   }
 
   // 白屏（FADE_OUT2,white 淡到白并保持）：用闪屏那一层，保持时 opacity = 1；wash（白屏渐退）开始时先清掉它，让动画接手
@@ -606,7 +643,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     const { srcs, loop } = state.movie
     let i = 0
     movie.hidden = false
-    movie.volume = seVolume
+    movie.volume = volumeGain(seVolume)
     movie.loop = srcs.length === 1 && loop
     movie.src = url(srcs[0])
     movie.onerror = () => markMissing(srcs[i])
@@ -899,7 +936,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     autoTimer = setTimeout(advance, wait * 1000)
   }
   // 快进：按住 Ctrl（约 0.25 秒后进入，避免 Ctrl+F / Ctrl+C 误触）连续翻页——动画和语音 / 音效都跳过；遇到选项暂停（选完接着快进），到最后一步或松开 Ctrl 就停
+  // 工具栏「快进」按钮是锁存开关（fastLatched）：点一下一直快进，不用按住 Ctrl；遇到选项 / 到结尾 / 再点一下 / 离开播放器都会关掉（引擎还是同一套 setFast / fastTick）
   let fast = false
+  let fastLatched = false
   let fastTimer = 0
   let fastLoop = 0
   const fastBadge = el('div', 'gal-fast-badge', '⏩ 快进中')
@@ -908,6 +947,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   function setFast(on) {
     if (on === fast || destroyed) return
     fast = on
+    if (!on) fastLatched = false
+    fastBtn.classList.toggle('active', on)
+    fastBtn.setAttribute('aria-pressed', String(on))
     fastBadge.hidden = !on
     root.classList.toggle('is-fast', on)
     if (on) {
@@ -921,7 +963,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     }
   }
   function fastTick() {
-    if (destroyed || choiceState) return
+    if (destroyed) return
+    if (choiceState) { if (fastLatched) setFast(false); return }   // 按钮开的快进在选项处停下；按住 Ctrl 的快进只暂停，选完接着走
     if (posNow() >= path.length - 1) {   // 快进到头：不是停在最后一句，而是和「看完」一样回列表（有下一章就停在「继续下一章」）
       setFast(false)
       if (!running || !fastLastKick) { fastLastKick = true; finishOrWait() }
@@ -1123,7 +1166,6 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     diagPanel.hidden = !diagPanel.hidden
     if (!diagPanel.hidden) { logPanel.hidden = true; renderDiag() }
   }
-  const toggleMore = (open = moreMenu.hidden) => { moreMenu.hidden = !open }
   function toggleLog() {
     logPanel.hidden = !logPanel.hidden
     if (!logPanel.hidden) renderLog()
@@ -1146,7 +1188,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     const kind = viewKind()
     const rect = spineLayer?.viewRect?.(kind)
     if (!rect) { note.textContent = '当前画面没有 Spine 静态画面 / 角色，没法选中心'; return }
-    toggleMore(false)
+    toggleSettings(false)
     const layer = el('div', 'gal-center-layer')
     const frame = el('div', 'gal-center-frame')
     const vLine = el('div', 'gal-center-line gal-center-v')
@@ -1229,7 +1271,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   function openExpr() {
     const actors = faceActors()
     if (!actors.length) return
-    toggleMore(false)
+    toggleSettings(false)
     exprPanel.hidden = false
     logPanel.hidden = true
     diagPanel.hidden = true
@@ -1315,7 +1357,6 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   stage.addEventListener('click', () => {
     if (choiceState) return
     if (!settings.hidden) { toggleSettings(false); return }
-    if (!moreMenu.hidden) { toggleMore(false); return }
     if (!diagPanel.hidden) { diagPanel.hidden = true; return }
     if (!exprPanel.hidden) { closeExpr(); return }
     logPanel.hidden = true
@@ -1329,9 +1370,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   autoBtn.addEventListener('click', toggleAuto)
   logBtn.addEventListener('click', toggleLog)
   cfgBtn.addEventListener('click', () => toggleSettings())
-  fsBtn.addEventListener('click', () => { toggleMore(false); toggleFullscreen() })
-  immBtn.addEventListener('click', () => { toggleMore(false); onToggleImmersive?.() })
-  moreBtn.addEventListener('click', () => toggleMore())
+  fsBtn.addEventListener('click', () => { toggleSettings(false); toggleFullscreen() })
+  immBtn.addEventListener('click', () => { toggleSettings(false); onToggleImmersive?.() })
+  fastBtn.addEventListener('click', () => { fastLatched = !fastLatched; setFast(fastLatched) })
   contBtn.addEventListener('click', () => chapter?.next?.())
   note.addEventListener('click', toggleDiag)
   note.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); toggleDiag() } })
@@ -1376,8 +1417,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   })
   autoChoiceInput.addEventListener('change', () => { autoChoiceInput.value = String(autoChoice) })
   autoSelBtn.addEventListener('click', () => setAutoChoice(autoChoice >= 0 ? -1 : autoChoiceLast))   // 越界/空的值收回到有效值
-  bgmRange.addEventListener('input', () => { bgmVolume = Number(bgmRange.value); localStorage.setItem(VOL_KEY.bgm, String(bgmVolume)); if (bgmAudio) bgmAudio.volume = bgmVolume })
-  seRange.addEventListener('input', () => { seVolume = Number(seRange.value); localStorage.setItem(VOL_KEY.se, String(seVolume)); movie.volume = seVolume; if (bgseAudio) bgseAudio.volume = seVolume })
+  bgmRange.addEventListener('input', () => { bgmVolume = Number(bgmRange.value); bgmValue.textContent = pct(bgmVolume); localStorage.setItem(VOL_KEY.bgm, String(bgmVolume)); if (bgmAudio) bgmAudio.volume = volumeGain(bgmVolume) })
+  seRange.addEventListener('input', () => {
+    seVolume = Number(seRange.value)
+    seValue.textContent = pct(seVolume)
+    localStorage.setItem(VOL_KEY.se, String(seVolume))
+    const gain = volumeGain(seVolume)
+    movie.volume = gain
+    if (bgseAudio) bgseAudio.volume = gain
+    if (voiceAudio) voiceAudio.volume = gain
+    for (const v of bgVoices.values()) v.audio.volume = Math.max(0, Math.min(1, gain * (Number.isFinite(Number(v.volume)) ? Number(v.volume) : 1)))
+  })
 
   const onKey = (event) => {
     if (destroyed || !root.isConnected || event.ctrlKey || event.metaKey || event.altKey) return
@@ -1394,13 +1444,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (key === ' ' || key === 'Enter' || key === 'ArrowRight' || key === 'PageDown') next()
     else if (key === 'ArrowLeft' || key === 'PageUp' || key === 'Backspace') prev()
     else if (key === 'a' || key === 'A') toggleAuto()
+    else if (key === 'x' || key === 'X') fastBtn.click()
     else if (key === 'l' || key === 'L') toggleLog()
     else if (key === 'f' || key === 'F') toggleFullscreen()
     else if (key === 'i' || key === 'I') onToggleImmersive?.()
     else if (key === 'Escape') {
       // 先收面板；都没开才交给页面（退出沉浸）。全屏下的 Esc 浏览器自己会退全屏，不会到这里
       if (!settings.hidden) toggleSettings(false)
-      else if (!moreMenu.hidden) toggleMore(false)
       else if (!exprPanel.hidden) closeExpr()
       else if (!diagPanel.hidden) diagPanel.hidden = true
       else if (!logPanel.hidden) logPanel.hidden = true
@@ -1423,14 +1473,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     }
   }
   const onModUp = (event) => {
-    if (event.key === 'Control') { clearTimeout(fastTimer); setFast(false) }
+    if (event.key === 'Control') { clearTimeout(fastTimer); if (!fastLatched) setFast(false) }
     else if (event.key === 'Alt') {
       if (altPure && !destroyed && root.isConnected && root.getClientRects().length && !typing(event)) toggleAuto()
       altPure = false
       event.preventDefault()   // Windows 上单按 Alt 会把焦点给浏览器菜单栏
     }
   }
-  const onBlur = () => { clearTimeout(fastTimer); setFast(false); altPure = false }
+  const onBlur = () => { clearTimeout(fastTimer); if (!fastLatched) setFast(false); altPure = false }
   document.addEventListener('keydown', onModDown)
   document.addEventListener('keyup', onModUp)
   window.addEventListener('blur', onBlur)
@@ -1453,7 +1503,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     document.removeEventListener('keyup', onModUp)
     window.removeEventListener('blur', onBlur)
     clearTimeout(fastTimer)
+    cancelAnimationFrame(fitRaf)
     stopFrames()
+    fastLatched = false
     clearInterval(fastLoop)
     visibility.disconnect()
     bgmAudio?.pause()

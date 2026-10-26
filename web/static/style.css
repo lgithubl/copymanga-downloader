@@ -3978,7 +3978,8 @@ h2 {
   bottom: 3%;
   box-sizing: border-box;
   color: #fff;
-  font-size: calc(clamp(12px, 2.1cqw, 26px) * var(--gal-font-scale, 1));
+  --gal-fs: calc(clamp(12px, 2.1cqw, 26px) * var(--gal-font-scale, 1));   /* 用户字号设置后的基准字号：文本区高度按它算，缩字不改变高度 */
+  font-size: var(--gal-fs);
   left: 3%;
   position: absolute;
   right: 3%;
@@ -3988,13 +3989,11 @@ h2 {
 .gal-box {
   box-sizing: border-box;
   line-height: 1.7;
-  min-height: 8cqw;
   padding: 1.4cqw 2.4cqw 0.6cqw;
   position: relative;
 }
 
-.gal-box[hidden],
-.gal-name[hidden] {
+.gal-box[hidden] {
   display: none;
 }
 
@@ -4004,15 +4003,36 @@ h2 {
   text-shadow: 0 0 3px #000, 0 1px 2px #000, 0 0 8px rgba(0, 0, 0, 0.8);
 }
 
+/* 名牌：固定一行高、固定位置，旁白时只是看不见（.gal-name-empty，照样占位）——文本框的矩形不随说话人变化 */
 .gal-name {
   color: #ffd479;
   font-weight: 700;
-  margin-bottom: 0.15em;
+  height: 1.7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+.gal-name.gal-name-empty {
+  visibility: hidden;
+}
+
+/* 台词区：固定 2 行高（按字体大小设置，不随缩字变化）；--gal-fit 由播放器按长度算（太长就缩，最小 0.6，再长就滚动） */
 .gal-text {
+  font-size: calc(var(--gal-fs) * var(--gal-fit, 1));
+  height: calc(var(--gal-fs) * 3.4);
+  overflow: hidden;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.gal-text.gal-text-scroll {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.gal-text.gal-text-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .gal-next {
@@ -4766,3 +4786,15 @@ h2 {
 .scroll-btn:hover, .scroll-btn:focus-visible { opacity: 0.95; }
 .scroll-btn[aria-disabled="true"] { cursor: default; opacity: 0.12; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .scroll-btn { transition: none; } }
+/* 设置弹层（设置 + 更多合并）：分四组，内容多时弹层自己滚动 */
+.gal-settings.gal-more {
+  gap: 0.35em;
+  max-height: min(70vh, 34em);
+  overflow-y: auto;
+  width: min(100%, 26em);
+}
+.gal-set-section { display: grid; gap: 0.4em; }
+.gal-set-section + .gal-set-section { border-top: 1px solid rgba(255, 255, 255, 0.12); padding-top: 0.45em; }
+.gal-set-section::before { color: #94a3b8; content: attr(data-title); font-size: 0.85em; letter-spacing: 0.1em; }
+.gal-set-section .gal-btn { text-align: left; }
+.gal-settings .gal-more-field { font-size: inherit; }
