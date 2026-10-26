@@ -8,6 +8,8 @@
 // 画面 / 声音：
 //   fade,out|in,black|white,<秒> / TransitionFade,<名>,out|in,<颜色>,<秒>   黑场（out = 变黑并保持，in = 渐出）/ 白场闪
 //   bg,<图>,… / CrossFade,<图>,<渐变秒>,x,y,缩放x,缩放y / CrossFadeReady（只是准备，忽略）   背景（场景自己的 images/）
+//   TransitionCrossFade,<图>,<过渡名 traNa>,<渐变秒>,x,y,缩放x,缩放y / TransitionCrossFadeReady   同 CrossFade（commands.crossfade = 'bg'）：过渡名是遮罩过渡的名字，没有对应的图元，忽略，当作普通渐变换背景；Ready 忽略
+//     缩放不是 1 时跟一条 bgScale（只缩放当前背景；缩放没有真机对照，line.crossfadeScale = 'ignore' 可关）；x / y 位移没法跟背景走（bgZoom 不随换背景清掉），记 raw
 //   bgmplay,<名>,… / bgmstop,<淡出秒>,…    seplay,<名>,on|off(循环),… / sestop,…      全局 data/audio 的 BGM / 音效
 //   playmovie,<名>,loop|wait / stopmovie                    场景自己的 videos/（wait = 播一遍）
 //   wait,<秒>    await（等异步动作，不处理）
@@ -15,7 +17,11 @@
 //   chara,<骨架名>,<槽 chara_N>,x,y,?,缩放x,缩放y,?,on|off(off = 先不显示，等 charafade in)
 //   charamotion,<槽>,<动作>,on|off   —— 身体动作 = 轨道 0 的 <动作>（loop / joy / bashful / blues …，骨架里有同名动画），同时把轨道 1（表情）设成 ex_<动作>（骨架里成套有 ex_loop / ex_joy …，没有就跳过）
 //   charaexpression,<槽>,<表情> → 轨道 1 的 ex_<表情>（单独改表情）    charafade|asynccharafade,<槽>,in|out,<秒>    charadelete,<槽>
-// 认得但暂不渲染（记在 stats.raw）：cgmode / jump / asyncjump / shake / asyncshake / shakeall / emote / subimage / asyncmoveobject / bgblur / bgcolor / textsize / prefab …
+//   asyncmoveobject,character,<槽>,<秒>,<dx>,<dy>,<n>,<缓动>   角色位移（commands.asyncmoveobject = 'move'）：spine 指令的 x / y + move（秒，播放器线性渐移；缓动名 / n 忽略）。dx / dy 的单位按和 chara 的 x / y 一样（骨骼坐标单位，没有对照）；
+//        line.moveBase = 'offset'（默认）：dx / dy 是相对 chara 摆放位置的偏移（数据里 0,-40 之后常跟 0,0 回位，相对当前位置的话 0,0 就成了空操作）/ 'relative'：在当前位置上累加。目标不是 character / 槽里没有角色 → raw
+//   asyncjump,character,<槽>,<dy>,<秒>,<次数>   角色跳一下（commands.asyncjump = 'hop'）：spine 指令的 action = line.jumpAction（1 = 站位动作里的「跳两下」，固定 0.4 秒；dy / 秒 / 次数忽略）。dy 的符号没有对照（样本只有 -30），不分上下都当跳
+//   cgmode,on|off   看 CG 的模式（commands.cgmode = 'ui'）：on → 文本框隐藏（ui visible:false），off → 显示。没有真机对照：cgmode 也可能只是换一种 CG 版式而不是隐藏文本框——on 之后没有 off 的脚本里，台词会一直看不见（window,on 能再显示），觉得不对就设 commands.cgmode = 'raw'
+// 认得但暂不渲染（记在 stats.raw）：jump / shake / asyncshake / shakeall / emote / subimage / subimagedelete / bgblur / bgcolor / textsize / prefab …（commands.* = 'raw' 时 cgmode / asyncjump / asyncmoveobject / TransitionCrossFade 也记 raw）
 // title,<标题>, / endof 不是步骤：标题给列表用。
 //
 // ---------- 参数（config.adapterOptions['girlscreation-tag']，标签式和行式共用；全部可选，没写 = DEFAULT_OPTIONS = 以前的行为）----------
@@ -26,7 +32,11 @@
 //                     markers: { aku: [出现任一个 = Aku 写法], display: [有这些标签才需要 SPINE_ACTOR_DISPLAY 才显示角色], branch: [有这些标签 = 有分支] } }
 //   stand           { akuOffset: Aku 写法 LEFT / RIGHT 的横向偏移（估的）, akuDirections { 横向取值: -1 | 0 | 1 }, fruitsDim: ACTOR_COLOR_FILTER dark 的压暗值 }
 //   animation       { maxFrames: FRAME_ANIM / ANIM_PLAY 最多收多少帧 }
-//   line            { expressionPrefix: charamotion / charaexpression 的表情动画前缀, imageIdRe: message 末尾的头像 id }
+//   line            { expressionPrefix: charamotion / charaexpression 的表情动画前缀, imageIdRe: message 末尾的头像 id,
+//                     objectKind: asyncjump / asyncmoveobject 第 2 项里「角色」的正则, jumpAction: asyncjump 用的站位动作码, moveBase: 'offset' | 'relative'（asyncmoveobject 的 dx / dy 相对什么）,
+//                     crossfadeScale: 'bgScale' | 'ignore'（CrossFade 的缩放：跟一条 bgScale / 不管）}
+//   commands        { cgmode: 'ui' | 'raw', asyncjump: 'hop' | 'raw', asyncmoveobject: 'move' | 'raw'（旧名 'x' 也认）, crossfade: 'bg' | 'raw' }   每条命令的映射方式，默认 = 新映射；'raw' = 以前的行为
+//                     crossfade 'raw'：CrossFade 照旧（换背景 + 渐变，缩放 / 位移记 raw），TransitionCrossFade / TransitionCrossFadeReady 记 raw
 //   category        { re: 场景 id → 分类的正则（取匹配到的部分）, other: 没匹配时的分类名, unknownSpeaker: 没认出说话人的分组名 }
 //   titleLines      [正则…]：原始脚本里取标题的行（第 1 组 = 标题，多行模式）    speaker { suffixRe } 说话人去掉的后缀（括号别名）
 //   dirs            { scenes, audio, spine }（相对 root）  sceneDirs { 场景目录里各类资源的子目录名 }  audioKinds [data/audio 下的子目录]
@@ -41,7 +51,8 @@ export const DEFAULT_OPTIONS = {
   dialect: { window: 200000, headWindow: 8192, markers: { aku: ['<GROUP>', '<EV_DISPLAY>', '<SPINE_ACTOR_DISPLAY>'], display: ['<SPINE_ACTOR_DISPLAY>'], branch: ['<LABEL>'] } },
   stand: { akuOffset: 450, akuDirections: { LEFT: -1, RIGHT: 1, CENTER: 0 }, fruitsDim: 0.6 },
   animation: { maxFrames: 600 },
-  line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$' },
+  line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$', objectKind: '^character$', jumpAction: 1, moveBase: 'offset', crossfadeScale: 'bgScale' },
+  commands: { cgmode: 'ui', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' },
   category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
   titleLines: ['^title,([^,\\r\\n]+),'],
   speaker: { suffixRe: '（[^）]*）$' },
@@ -75,6 +86,7 @@ export function girlsCompiled(opt) {
   if (!compiledCache.has(opt)) {
     compiledCache.set(opt, {
       imageId: safeRegex(opt.line.imageIdRe),
+      objectKind: safeRegex(opt.line.objectKind),
       titles: safeRegexList(opt.titleLines, 'm'),
       suffix: safeRegex(opt.speaker.suffixRe),
       category: safeRegex(opt.category.re, ''),
@@ -92,6 +104,7 @@ export function girlsCompiled(opt) {
 const LINE_COMMANDS = new Set([
   'message', 'msgvoicesync', 'voice', 'window', 'fade', 'transitionfade', 'bg', 'crossfade', 'crossfadeready', 'bgmplay', 'bgmstop', 'seplay', 'sestop',
   'playmovie', 'stopmovie', 'wait', 'await', 'chara', 'charamotion', 'charaexpression', 'charafade', 'asynccharafade', 'charadelete', 'cgmode', 'title', 'endof',
+  'asyncjump', 'asyncmoveobject', 'transitioncrossfade', 'transitioncrossfadeready',
 ])
 // 只有行式脚本才会有的命令：认出任何一个就够；否则要求前面几行里至少 4 条已知命令
 const LINE_ONLY = new Set(['message', 'msgvoicesync', 'chara', 'charamotion', 'charafade', 'asynccharafade', 'crossfade', 'crossfadeready', 'playmovie', 'bgmplay', 'seplay', 'cgmode'])
@@ -142,6 +155,13 @@ export function parseLine(text, ctx = null, meta = {}) {
   const opt = ctx?.opts || girlsOptions(meta?.options)
   const imageId = girlsCompiled(opt).imageId   // 头像 id（iab4020078）
   const exPrefix = opt.line.expressionPrefix
+  const kindRe = girlsCompiled(opt).objectKind
+  const mode = {   // commands.*：不认识的值回到默认（asyncmoveobject 的旧名 'x' = 'move'）
+    cgmode: opt.commands.cgmode === 'raw' ? 'raw' : 'ui',
+    asyncjump: opt.commands.asyncjump === 'raw' ? 'raw' : 'hop',
+    asyncmoveobject: opt.commands.asyncmoveobject === 'raw' ? 'raw' : 'move',
+    crossfade: opt.commands.crossfade === 'raw' ? 'raw' : 'bg',
+  }
   const steps = []
   let commands = []
   let speaker = ''
@@ -164,7 +184,7 @@ export function parseLine(text, ctx = null, meta = {}) {
     for (const [key, files] of scene.spines) if (key.endsWith(`/${name}`)) return files
     return ctx?.globalSpines?.get(name) || null
   }
-  const paintActor = (slot, fade = 0) => {
+  const paintActor = (slot, fade = 0, extra = null) => {
     const actor = actors.get(slot)
     if (!actor || !actor.visible) return
     const files = skelFiles(actor.skel)
@@ -175,6 +195,7 @@ export function parseLine(text, ctx = null, meta = {}) {
     emit({
       op: 'spine', slot: `Actor${slot}`, kind: 'actor', skel: skelRes, atlas: atlasRes, x: actor.x, y: actor.y, scale: actor.scale, fade,
       tracks: actor.tracks.map((t, track) => (t ? { track, anim: t.anim, loop: t.loop } : null)).filter(Boolean), order: slot, loop: true, speed: 1,
+      ...(extra || {}),
     })
   }
 
@@ -186,6 +207,17 @@ export function parseLine(text, ctx = null, meta = {}) {
     steps.push({ index: steps.length, commands })
     commands = []
     voiceOpen = false
+  }
+  // CrossFade / TransitionCrossFade：换背景 + 渐变；缩放不是 1 跟一条 bgScale（换背景会清掉上一张的缩放）；x / y 位移没法表示，记 raw
+  const crossFade = (image, seconds, x, y, scaleX, label) => {
+    const src = res('images', image)
+    if (!src) { count('unresolved', `bg:${image}`); return }
+    if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
+    emit({ op: 'bg', src, fade: secOf(seconds) })
+    const scale = numOf(scaleX, 1)
+    const scaled = scale !== 1 && scale > 0
+    if (scaled && opt.line.crossfadeScale !== 'ignore') emit({ op: 'bgScale', scale, seconds: 0, easing: 'linear' })
+    if (numOf(x) !== 0 || numOf(y) !== 0 || (scaled && opt.line.crossfadeScale === 'ignore')) count('raw', `${label}(${scaled && opt.line.crossfadeScale === 'ignore' ? '缩放/位移' : '位移'})`)
   }
   const playVoice = (name) => {
     const src = res('voices', name)
@@ -239,10 +271,18 @@ export function parseLine(text, ctx = null, meta = {}) {
         break
       }
       case 'crossfadeready': break
+      case 'transitioncrossfadeready': if (mode.crossfade === 'raw') count('raw', cmd); break
       case 'crossfade': {   // CrossFade,图,渐变秒,x,y,缩放x,缩放y
-        const src = res('images', f[1])
-        if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src, fade: secOf(f[2]) }) } else count('unresolved', `bg:${f[1]}`)
-        if (numOf(f[5], 1) !== 1 || numOf(f[3]) !== 0 || numOf(f[4]) !== 0) count('raw', 'CrossFade(缩放/位移)')
+        if (mode.crossfade === 'raw') {
+          const src = res('images', f[1])
+          if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src, fade: secOf(f[2]) }) } else count('unresolved', `bg:${f[1]}`)
+          if (numOf(f[5], 1) !== 1 || numOf(f[3]) !== 0 || numOf(f[4]) !== 0) count('raw', 'CrossFade(缩放/位移)')
+        } else crossFade(f[1], f[2], f[3], f[4], f[5], 'CrossFade')
+        break
+      }
+      case 'transitioncrossfade': {   // TransitionCrossFade,图,过渡名,渐变秒,x,y,缩放x,缩放y（过渡名忽略）
+        if (mode.crossfade === 'raw') count('raw', cmd)
+        else crossFade(f[1], f[3], f[4], f[5], f[6], 'TransitionCrossFade')
         break
       }
       case 'bgmplay': { const src = audio('bgm', f[1]); if (src) emit({ op: 'bgm', src }); else count('unresolved', `bgm:${f[1]}`); break }
@@ -264,7 +304,7 @@ export function parseLine(text, ctx = null, meta = {}) {
       case 'chara': {   // chara,骨架,槽,x,y,?,缩放x,缩放y,?,on|off
         const slot = slotOf(f[2])
         const previous = actors.get(slot)
-        actors.set(slot, { skel: f[1], x: numOf(f[3]), y: numOf(f[4]), scale: numOf(f[6], 1) || 1, visible: isOn(f[9] === undefined ? 'on' : f[9]), tracks: previous?.skel === f[1] ? previous.tracks : [] })
+        actors.set(slot, { skel: f[1], x: numOf(f[3]), y: numOf(f[4]), bx: numOf(f[3]), by: numOf(f[4]), scale: numOf(f[6], 1) || 1, visible: isOn(f[9] === undefined ? 'on' : f[9]), tracks: previous?.skel === f[1] ? previous.tracks : [] })
         paintActor(slot, 0)
         break
       }
@@ -298,6 +338,33 @@ export function parseLine(text, ctx = null, meta = {}) {
         if (!actor) break
         if (actor.visible) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 })
         actors.delete(slot)
+        break
+      }
+      case 'cgmode': {   // cgmode,on|off
+        if (mode.cgmode === 'raw') { count('raw', cmd); break }
+        emit({ op: 'ui', visible: !isOn(f[1]), seconds: 0 })
+        break
+      }
+      case 'asyncjump': {   // asyncjump,character,槽,dy,秒,次数
+        const slot = slotOf(f[2])
+        if (mode.asyncjump === 'raw' || !kindRe?.test(f[1] || '')) { count('raw', cmd); break }
+        if (!actors.has(slot)) { count('raw', 'asyncjump(槽里没有角色)'); break }
+        paintActor(slot, 0, { action: opt.line.jumpAction })
+        break
+      }
+      case 'asyncmoveobject': {   // asyncmoveobject,character,槽,秒,dx,dy,n,缓动
+        const slot = slotOf(f[2])
+        if (mode.asyncmoveobject === 'raw' || !kindRe?.test(f[1] || '')) { count('raw', cmd); break }
+        const actor = actors.get(slot)
+        if (!actor) { count('raw', 'asyncmoveobject(槽里没有角色)'); break }
+        const relative = opt.line.moveBase === 'relative'
+        const x = (relative ? actor.x : actor.bx) + numOf(f[4])
+        const y = (relative ? actor.y : actor.by) + numOf(f[5])
+        if (x === actor.x && y === actor.y) break
+        actor.x = x
+        actor.y = y
+        const seconds = secOf(f[3])
+        paintActor(slot, 0, seconds > 0 ? { move: seconds } : null)
         break
       }
       case 'await': case 'title': case 'endof': break

@@ -113,7 +113,7 @@ const stand = (a1, a3, a4 = '', extra = {}) => T({ a1, a3, a4, anim: 'wait', ...
   check('utage paths.voice：默认按文件名找（Sound/Voice 优先于 BgVoice）；换模板 = 只认 BgVoice / 带 {charId} 的角色目录（charIdStrip 去掉 ch_）；找不到记 unresolved',
     voiceOf({}) === 'Sound/Voice/ImportChara/100/v1.ogg' && voiceOf({ paths: { voice: ['Sound/BgVoice/**/{name}.ogg'] } }) === 'Sound/BgVoice/v1.ogg'
     && voiceOf({ paths: { voice: ['Sound/Voice/ImportChara/{charId}/{name}.ogg'] } }) === 'Sound/Voice/ImportChara/100/v1.ogg' && voiceOf({ paths: { voice: ['Sound/Voice/ImportChara/{charId}/{name}.ogg'] } }, undefined, 'ルカ-私服-春') === undefined
-    && voiceOf({ paths: { voice: ['Sound/Voice/{charId}/{name}.ogg'], charIdStrip: '' } }) === undefined && uRun([T({ a1: 'ミナ-制服', text: 'x', voice: 'nope' })]).stats.unresolved['voice:nope'] === 1, voiceOf({}))
+    && voiceOf({ paths: { voice: ['Sound/Voice/{charId}/{name}.ogg'], charIdStrip: '' } }) === undefined && uRun([T({ a1: 'ミナ-制服', text: 'x', voice: 'v1' }), T({ a1: 'ミナ-制服', text: 'y', voice: 'nope' })]).stats.unresolved['voice:nope'] === 1, voiceOf({}))
   check('utage 同名语音 + config.resourceResolve.preferDirs：默认取字典序第一个；preferDirs 挑指定目录；extensionFallbacks 也生效（模板写 .wav，实际是 .ogg）',
     voiceOf({}, undefined, 'ミナ-制服', 'dup') === 'Sound/Voice/ImportChara/200/dup.ogg' && voiceOf({}, { preferDirs: ['Sound/Voice/Zeta'] }, 'ミナ-制服', 'dup') === 'Sound/Voice/Zeta/dup.ogg'
     && voiceOf({ paths: { voice: ['Sound/Voice/**/{name}.wav'] } }, { extensionFallbacks: { '.wav': ['.ogg'] } }) === 'Sound/Voice/ImportChara/100/v1.ogg' && voiceOf({ paths: { voice: ['Sound/Voice/**/{name}.wav'] } }) === undefined, String(voiceOf({}, { preferDirs: ['Sound/Voice/Zeta'] }, 'ミナ-制服', 'dup')))

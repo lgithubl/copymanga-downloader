@@ -15,6 +15,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -38,8 +44,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -98,6 +108,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -121,8 +137,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -394,6 +414,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -417,8 +443,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -477,6 +507,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -500,8 +536,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -757,6 +797,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -780,8 +826,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -840,6 +890,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -863,8 +919,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -931,6 +991,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -954,8 +1020,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -1014,6 +1084,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -1037,8 +1113,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -1224,6 +1304,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -1247,8 +1333,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -1307,6 +1397,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -1330,8 +1426,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -1562,6 +1662,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -1585,8 +1691,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -1645,6 +1755,12 @@
      "unknownSpeaker": "（未识别）"
     },
     "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "ui",
+     "crossfade": "bg"
+    },
     "dialect": {
      "headWindow": 8192,
      "markers": {
@@ -1668,8 +1784,12 @@
      "spine": "data/spine"
     },
     "line": {
+     "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
-     "imageIdRe": "^[a-z]{2,4}\\d+$"
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
     },
     "player": {
      "names": [
@@ -2435,6 +2555,17 @@
     "bgm": {
      "play": "loop"
     },
+    "catalog": {
+     "groups": [
+      {
+       "charFile": "(?:^|/)ch_{id}",
+       "fallback": "特别 / 其他",
+       "folder": "^CharaScenario$",
+       "idRe": "^CharaScenario(\\d{4})\\d{3}$",
+       "nameFrom": "masterCharacter"
+      }
+     ]
+    },
     "folderLabels": [
      [
       "^MainScenario$",
@@ -2482,6 +2613,7 @@
      "ext": "\\.(?:skel\\.bytes|png|jpe?g|ogg)$",
      "master": "Adventure/Master.chapter.json"
     },
+    "nameOnlyRow": "show",
     "off": {
      "arg": "^<Off>$",
      "mode": "speakerOnly"
@@ -2579,7 +2711,8 @@
       "ScaleTo": "raw",
       "ShakePosition": "action"
      },
-     "returnWhen": "pingpong"
+     "returnWhen": "pingpong",
+     "targetSlots": true
     }
    }
   },
