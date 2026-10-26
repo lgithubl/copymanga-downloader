@@ -12,20 +12,81 @@
 //   bgm（non = 停）→ bgm / bgmStop；sound1..3、bg_sound1..3 → se（一次性；bg_sound 是不是循环没有对照样本，按一次性放；non = 无）；voice_pack + voice → voice
 //   screen_effect / pic_action / pic_action_val / pic_size / effect + effect_pos / back_voice：含义未知 → raw {cmd, args}，记在 stats.raw
 // 资源（相对资源根 assets/resources/patchres/）：bg/battlebg/<名>/<名>.webp、bgm/<名小写>/<名>.m4a、sound/<名>/<名>.m4a、voice/<包小写>/<语音名>.m4a、merc/pic/<id>/body.webp|png；
-//   全部按「文件名（无扩展名，小写）」查索引（contextDirs 的目录递归列出来），不写死目录层级；merc/pic 下的 N.webp / <id>.webp 是头像图标 / 图集，不是立绘
-// 资源目录来自 config.adapterOptions['grenze-xml']：{ root（游戏根，相对媒体目录，默认 ''）, textDir（默认 <root>/TextAsset）, resourceDir（默认 <root>/assets/resources/patchres）}
+//   每种资源先按 paths 里的模板精确找，找不到再按「文件名（无扩展名，不分大小写）」在对应目录里找（contextDirs 的目录递归列出来），不写死目录层级；merc/pic 下的 N.webp / <id>.webp 是头像图标 / 图集，不是立绘
+// 适配器只「读配置、按配置匹配」：所有猜出来的路径 / 名字 / 数字都在 DEFAULT_OPTIONS 里，由 config.adapterOptions['grenze-xml']（管理员脚本 gal-layout 写）逐项覆盖
+// （对象逐层合并，数组 / 标量整个替换；没跑过脚本的条目用内置默认值，行为和以前一样）。完整选项（括号里 = 默认值）：
+//   root ('')  textDir ('<root>/TextAsset')  resourceDir ('<root>/assets/resources/patchres')    游戏根 / 对话 XML 目录 / 资源根（相对媒体目录）
+//   resourceDirs (['bg','bgm','sound','voice','merc/pic'])   资源根下进索引的子目录；index.ext = 进索引的扩展名正则（默认 \.(?:webp|png|jpe?g|m4a|mp3|ogg|wav)$）
+//   exts { bg: ['webp','png','jpg','jpeg'], bgm / sound / voice: ['m4a','mp3','ogg','wav'] }      模板里 {ext} 按这个顺序各试一次（= 同名文件的优先级；没有索引时用第一个）
+//   paths { bg, bgm, sound, voice, stand }   候选路径模板（数组，按顺序试，第一个在索引里的为准；索引里的路径都相对资源根）。占位符：{name}（属性值原样）{lower}（小写）{pack}（voice_pack 小写）{voice}（语音名）{hero}（hero_group_id）{ext}（见 exts）{file}（见 standFiles）；**/ = 中间任意层目录（按文件名找，大小写 / 扩展名后备 / preferDirs 来自 config.resourceResolve）
+//        默认 bg ['bg/battlebg/{name}/{name}.{ext}', 'bg/**/{name}.{ext}']、bgm ['bgm/{lower}/{name}.{ext}', 'bgm/**/{name}.{ext}']、sound ['sound/{name}/{name}.{ext}', 'sound/**/{name}.{ext}']、voice ['voice/{pack}/{voice}.{ext}', 'voice/**/{voice}.{ext}']、stand ['merc/pic/{hero}/{file}']；没有索引时按每个列表第一条猜
+//   duplicates { bg: 'first', bgm: 'first', sound: 'first', voice: 'skip', stand: 'first' }       **/ 模板里同名文件不止一个时：skip = 不猜（记 unresolved）/ first = 路径字典序第一个 / preferDirs = 按 config.resourceResolve.preferDirs 挑
+//   standFiles (['body.webp','body.png'])   一整张立绘图的文件名（优先级 = 顺序）；standPos ({ '1': 'left', '2': 'center', '3': 'right', default: 'center' })   pic_pos → align；standFit (1)   stand 部件的 fit（0 = 不带）
+//   standKeep ('untilNewHero')   没有 hero_group_id 的行：untilNewHero = 沿用上一个立绘直到换人 / 换位置 / 换背景；perRow = 每一行自己决定（没有 hero_group_id 就清掉立绘）
+//   none (['non'])   bgm / sound / voice / background 里表示「没有 / 停」的值（不分大小写）；bgBlack (['bg_b'])   找不到文件时变黑底的背景名（推测）
+//   bgSound { mode: 'se', attrs: ['bg_sound1','bg_sound2','bg_sound3'] }   bg_sound 怎么放：se = 一次性 / bgse = 循环背景音；soundAttrs (['sound1','sound2','sound3'])   一次性音效的属性（先放 bgSound.attrs 再放这些）
+//   rawAttrs (['screen_effect','pic_action','pic_action_val','pic_size','back_voice','effect+effect_pos'])   含义未知、记成 raw {cmd, args} 的属性（a+b = 同一条 raw，args = [a 的值, b 的值]；有 a 才发）；要忽略 / 改路由就从这里拿掉
+//   scene { split: 'chains', forkPolicy: 'merge' }   场景划分：chains = next_id 链；几条链汇合时 merge = 每个场景各自走到底（共用的后半段每个场景都有）/ first = 共用部分只属于文件里最靠前的那条链
+// 资源目录来自 config.adapterOptions['grenze-xml']：{ root（游戏根，相对媒体目录，默认 ''）, textDir（默认 <root>/TextAsset）, resourceDir（默认 <root>/assets/resources/patchres）, …上面的选项 }
 
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { decodeTextFile } from '../../text-decode.mjs'
+import { guessTemplate, lookupFor, mergeOptions, safeRegex } from './path-templates.mjs'
 
 export const ADAPTER_ID = 'grenze-xml'
 const joinPath = (...parts) => parts.filter(Boolean).join('/')
 const cleanDir = (value) => String(value ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
-const rootOf = (options) => cleanDir(options?.root)
-const textDirOf = (options) => cleanDir(options?.textDir) || joinPath(rootOf(options), 'TextAsset')
-const resourceDirOf = (options) => cleanDir(options?.resourceDir) || joinPath(rootOf(options), 'assets/resources/patchres')
-const RESOURCE_SUBDIRS = ['bg', 'bgm', 'sound', 'voice', 'merc/pic']
+const AUDIO_EXTS = ['m4a', 'mp3', 'ogg', 'wav']
+
+export const DEFAULT_OPTIONS = Object.freeze({
+  root: '',
+  textDir: '',
+  resourceDir: '',
+  resourceDirs: ['bg', 'bgm', 'sound', 'voice', 'merc/pic'],
+  index: { ext: '\\.(?:webp|png|jpe?g|m4a|mp3|ogg|wav)$' },
+  exts: { bg: ['webp', 'png', 'jpg', 'jpeg'], bgm: AUDIO_EXTS, sound: AUDIO_EXTS, voice: AUDIO_EXTS },
+  paths: {
+    bg: ['bg/battlebg/{name}/{name}.{ext}', 'bg/**/{name}.{ext}'],
+    bgm: ['bgm/{lower}/{name}.{ext}', 'bgm/**/{name}.{ext}'],
+    sound: ['sound/{name}/{name}.{ext}', 'sound/**/{name}.{ext}'],
+    voice: ['voice/{pack}/{voice}.{ext}', 'voice/**/{voice}.{ext}'],
+    stand: ['merc/pic/{hero}/{file}'],
+  },
+  duplicates: { bg: 'first', bgm: 'first', sound: 'first', voice: 'skip', stand: 'first' },
+  standFiles: ['body.webp', 'body.png'],
+  standPos: { 1: 'left', 2: 'center', 3: 'right', default: 'center' },
+  standKeep: 'untilNewHero',
+  standFit: 1,
+  none: ['non'],
+  bgBlack: ['bg_b'],
+  bgSound: { mode: 'se', attrs: ['bg_sound1', 'bg_sound2', 'bg_sound3'] },
+  soundAttrs: ['sound1', 'sound2', 'sound3'],
+  rawAttrs: ['screen_effect', 'pic_action', 'pic_action_val', 'pic_size', 'back_voice', 'effect+effect_pos'],
+  scene: { split: 'chains', forkPolicy: 'merge' },
+})
+const FREE_TABLES = ['exts', 'duplicates', 'standPos']
+const resolved = new WeakMap()
+export function resolveOptions(options) {
+  const source = options && typeof options === 'object' ? options : null
+  if (source && resolved.has(source)) return resolved.get(source)
+  const o = mergeOptions(DEFAULT_OPTIONS, source, FREE_TABLES)
+  o.root = cleanDir(o.root)
+  o.textDir = cleanDir(o.textDir) || joinPath(o.root, 'TextAsset')
+  o.resourceDir = cleanDir(o.resourceDir) || joinPath(o.root, 'assets/resources/patchres')
+  const list = (value, fallback) => (Array.isArray(value) ? value.map(String) : fallback)
+  for (const key of ['resourceDirs', 'standFiles', 'none', 'bgBlack', 'soundAttrs', 'rawAttrs']) o[key] = list(o[key], DEFAULT_OPTIONS[key])
+  o.bgSound.attrs = list(o.bgSound.attrs, DEFAULT_OPTIONS.bgSound.attrs)
+  for (const key of Object.keys(DEFAULT_OPTIONS.paths)) o.paths[key] = list(o.paths[key], DEFAULT_OPTIONS.paths[key])
+  for (const key of Object.keys(o.exts)) o.exts[key] = list(o.exts[key], AUDIO_EXTS)
+  o.none = o.none.map((v) => v.toLowerCase())
+  o.bgBlack = o.bgBlack.map((v) => v.toLowerCase())
+  o.ext = safeRegex(o.index.ext, 'i')
+  if (source) resolved.set(source, o)
+  return o
+}
+const textDirOf = (options) => resolveOptions(options).textDir
+const resourceDirOf = (options) => resolveOptions(options).resourceDir
 
 export function sniff(text) {
   return /<easy_dialog-\d+(?:\s[^>]*)?\sid\s*=\s*"/.test(String(text || '').slice(0, 8192))
@@ -66,7 +127,9 @@ export function readRows(text) {
 
 const MAX_CHAIN_ROWS = 200000
 // 行数组 → 场景（链）：{ start: 起点行 id, rows: [行下标…] }；forks = 有几行指向同一个 id（汇合点）的个数
-export function splitScenes(rows) {
+// forkPolicy：'merge'（默认）每个场景各自走到底；'first' 汇合后的共用部分只属于最靠前的那条链（后面的链走到已经被认领的行就停）
+// 返回的 walk(i) = 从第 i 行沿 next_id 走到底（完整的一条链，不管有没有被认领）
+export function splitScenes(rows, { forkPolicy = 'merge' } = {}) {
   const indexOf = new Map()
   rows.forEach((row, i) => { if (row.id !== undefined && !indexOf.has(row.id)) indexOf.set(row.id, i) })
   const incoming = new Set()
@@ -79,11 +142,12 @@ export function splitScenes(rows) {
     pointed.set(next, (pointed.get(next) || 0) + 1)
   }
   for (const n of pointed.values()) if (n > 1) merges += 1
-  const walk = (from) => {
+  const claimed = new Uint8Array(rows.length)
+  const walkFrom = (from, stopAtClaimed) => {
     const chain = []
     const seen = new Set()
     let i = from
-    while (i !== undefined && !seen.has(i) && chain.length < MAX_CHAIN_ROWS) {
+    while (i !== undefined && !seen.has(i) && chain.length < MAX_CHAIN_ROWS && !(stopAtClaimed && claimed[i])) {
       seen.add(i)
       chain.push(i)
       const next = rows[i].next_id
@@ -92,9 +156,8 @@ export function splitScenes(rows) {
     return chain
   }
   const scenes = []
-  const claimed = new Uint8Array(rows.length)
   const take = (i) => {
-    const chain = walk(i)
+    const chain = walkFrom(i, forkPolicy === 'first')
     for (const r of chain) claimed[r] = 1
     scenes.push({ start: rows[i].id, rows: chain })
   }
@@ -108,23 +171,21 @@ export function splitScenes(rows) {
     take(i)
     cycles += 1
   }
-  return { scenes, indexOf, stats: { rows: rows.length, merges, cycles, duplicateIds: rows.filter((row, i) => row.id !== undefined && indexOf.get(row.id) !== i).length } }
+  return { scenes, indexOf, walk: (from) => walkFrom(from, false), stats: { rows: rows.length, merges, cycles, duplicateIds: rows.filter((row, i) => row.id !== undefined && indexOf.get(row.id) !== i).length } }
 }
 
 // ---------- 上下文：场景索引 + 资源文件名索引 ----------
 export const contextFiles = () => []
-export const contextDirs = (options) => [textDirOf(options), ...RESOURCE_SUBDIRS.map((dir) => joinPath(resourceDirOf(options), dir))]
+export const contextDirs = (options) => [textDirOf(options), ...resolveOptions(options).resourceDirs.map((dir) => joinPath(resourceDirOf(options), dir))]
 export const contextWalkLimit = 2000000   // voice 一个目录就十万级文件，索引绝不能被默认的 40 万上限悄悄截断
 
-const AUDIO = /\.(?:m4a|mp3|ogg|wav)$/i
-const IMAGE_RANK = { webp: 0, png: 1, jpg: 2, jpeg: 2 }
 const SCENE_CACHE_MAX = 200
 const sceneCache = new Map()   // 绝对路径|mtime|size → { scenes, stats }（一个文件的场景列表；文件没变就不再扫描）
 const stripMarks = (text) => String(text).replace(/\s+/g, ' ').trim()
 
 // 一个文件 → 场景列表（给列表用：起点 id、行数、句数、前几个说话人、首句）
-function summarize(rows) {
-  const { scenes, stats } = splitScenes(rows)
+function summarize(rows, forkPolicy) {
+  const { scenes, stats } = splitScenes(rows, { forkPolicy })
   const out = scenes.map((scene) => {
     const names = []
     let lines = 0
@@ -142,75 +203,43 @@ function summarize(rows) {
   return { scenes: out, stats }
 }
 
-async function scenesOfFile(abs) {
+async function scenesOfFile(abs, forkPolicy) {
   let info
   try { info = await stat(abs) } catch { return null }
-  const key = `${abs}|${info.mtimeMs}|${info.size}`
+  const key = `${abs}|${info.mtimeMs}|${info.size}|${forkPolicy}`
   const hit = sceneCache.get(key)
   if (hit) return hit
   let text
   try { text = decodeTextFile(await readFile(abs)).text } catch { return null }
-  const summary = summarize(readRows(text))
+  const summary = summarize(readRows(text), forkPolicy)
   if (sceneCache.size >= SCENE_CACHE_MAX) sceneCache.delete(sceneCache.keys().next().value)
   sceneCache.set(key, summary)
   return summary
 }
 
 export async function prepare({ options, files, toResourcePath, truncated, mediaDir }) {
+  const o = resolveOptions(options)
   const toRes = toResourcePath || ((rel) => rel)
-  const textDir = textDirOf(options)
-  const resourceDir = resourceDirOf(options)
-  const bg = new Map()        // 文件名（无扩展名，小写）→ 资源路径（webp > png > jpg）
-  const bgm = new Map()
-  const sound = new Map()
-  const voices = new Map()    // <上一级目录小写>/<文件名小写> → 资源路径
-  const voiceByName = new Map()   // 文件名小写 → 资源路径（只收唯一的；撞名的记 null，不乱猜）
-  const stands = new Map()    // hero_group_id → 资源路径（merc/pic/<id>/body.webp|png）
-  const ranks = new Map([bg, bgm, sound, stands].map((map) => [map, new Map()]))   // 同名的图选 webp > png > jpg
-  const put = (map, key, res, rel) => {
-    const r = IMAGE_RANK[/\.([^./]+)$/.exec(rel)?.[1]?.toLowerCase()] ?? 3
-    const rank = ranks.get(map)
-    if (!map.has(key) || r < rank.get(key)) { map.set(key, res); rank.set(key, r) }
-  }
+  const { textDir, resourceDir } = o
+  const index = new Map()     // 相对资源根的路径（模板按这个找）→ 资源路径（播放页 / 资源接口认的路径）
   const dialogFiles = []
   for (const rel of files || []) {
-    const inText = rel.startsWith(`${textDir}/`) ? rel.slice(textDir.length + 1) : ''
-    if (inText) {
+    if (rel.startsWith(`${textDir}/`)) {
+      const inText = rel.slice(textDir.length + 1)
       const m = /^easy_dialog-(\d+)\.xml$/i.exec(inText)
       if (m) dialogFiles.push({ rel, n: Number(m[1]), name: inText })
       continue
     }
     if (!rel.startsWith(`${resourceDir}/`)) continue
-    const sub = rel.slice(resourceDir.length + 1)
-    const parts = sub.split('/')
-    const file = parts[parts.length - 1]
-    const stem = file.replace(/\.[^./]+$/, '').toLowerCase()
-    const res = toRes(rel)
-    switch (parts[0]) {
-      case 'bg': if (IMAGE_RANK[/\.([^./]+)$/.exec(file)?.[1]?.toLowerCase()] !== undefined) put(bg, stem, res, file); break
-      case 'bgm': if (AUDIO.test(file)) put(bgm, stem, res, file); break
-      case 'sound': if (AUDIO.test(file)) put(sound, stem, res, file); break
-      case 'voice':
-        if (AUDIO.test(file) && parts.length >= 3) {
-          voices.set(`${parts[parts.length - 2].toLowerCase()}/${stem}`, res)
-          voiceByName.set(stem, voiceByName.has(stem) ? null : res)
-        }
-        break
-      case 'merc': {
-        const m = /^merc\/pic\/([^/]+)\/body\.(webp|png)$/i.exec(sub)
-        if (m) put(stands, m[1], res, file)
-        break
-      }
-      default:
-    }
+    if (!o.ext || o.ext.test(rel)) index.set(rel.slice(resourceDir.length + 1), toRes(rel))
   }
   dialogFiles.sort((a, b) => a.n - b.n)
   const catalogFiles = []
   for (const file of dialogFiles) {
-    const got = mediaDir ? await scenesOfFile(path.join(mediaDir, ...file.rel.split('/'))) : null
+    const got = mediaDir ? await scenesOfFile(path.join(mediaDir, ...file.rel.split('/')), o.scene.forkPolicy) : null
     if (got?.scenes.length) catalogFiles.push({ ...file, ...got })
   }
-  const ctx = { bg, bgm, sound, voices, voiceByName, stands, hasIndex: Boolean(files?.length), truncated: Boolean(truncated), resourceDir }
+  const ctx = { index, hasIndex: Boolean(files?.length), truncated: Boolean(truncated), resourceDir, options }
   ctx.catalogTree = buildCatalog(catalogFiles)
   return ctx
 }
@@ -238,28 +267,19 @@ function buildCatalog(catalogFiles) {
 export const catalog = (ctx) => ctx?.catalogTree || null
 
 // ---------- 解析 ----------
-const POS = { 1: 'left', 2: 'center', 3: 'right' }
-const NON = (value) => String(value ?? '').trim().toLowerCase() === 'non'
-const RAW_KEYS = ['screen_effect', 'pic_action', 'pic_action_val', 'pic_size', 'back_voice']
-
 export function parse(text, ctx = null, meta = {}) {
   const rows = readRows(text)
   if (!rows.length) throw new Error('找不到 easy_dialog 行（不是 Grenze 的对话 XML）')
-  const { scenes, indexOf, stats: graph } = splitScenes(rows)
+  const o = resolveOptions(meta?.options ?? ctx?.options)
+  const { scenes, indexOf, walk, stats: graph } = splitScenes(rows, { forkPolicy: o.scene.forkPolicy === 'first' ? 'first' : 'merge' })
   const want = meta?.scene !== undefined && meta?.scene !== '' ? String(meta.scene) : ''
   let chain
   let start
   if (want) {
     if (!indexOf.has(want)) throw Object.assign(new Error(`文件里没有场景 ${want}（起点行 id 不存在）`), { statusCode: 404 })
     start = want
-    chain = []
-    const seen = new Set()
-    for (let i = indexOf.get(want); i !== undefined && !seen.has(i) && chain.length < MAX_CHAIN_ROWS; ) {
-      seen.add(i)
-      chain.push(i)
-      const next = rows[i].next_id
-      i = next === undefined || next === '' ? undefined : indexOf.get(next)
-    }
+    chain = o.scene.forkPolicy === 'first' ? scenes.find((scene) => scene.start === want)?.rows : null
+    chain = chain || walk(indexOf.get(want))
   } else {   // 没指定场景（直接打开整份文件）：播第一个场景
     start = scenes[0]?.start ?? rows[0].id
     chain = scenes[0]?.rows || [0]
@@ -268,16 +288,23 @@ export function parse(text, ctx = null, meta = {}) {
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const indexed = Boolean(ctx?.hasIndex)
   const lower = (value) => String(value).trim().toLowerCase()
+  const isNone = (value) => o.none.includes(lower(value ?? ''))
+  const lookup = indexed ? lookupFor(ctx, ctx.index, meta?.config?.resourceResolve) : null
 
-  // 名字 → 资源路径：有索引就查索引（找不到 = ''），没有索引就按约定的路径猜
-  const bgOf = (name) => (indexed ? ctx.bg.get(lower(name)) || '' : `bg/battlebg/${name}/${name}.webp`)
-  const bgmOf = (name) => (indexed ? ctx.bgm.get(lower(name)) || '' : `bgm/${lower(name)}/${name}.m4a`)
-  const soundOf = (name) => (indexed ? ctx.sound.get(lower(name)) || '' : `sound/${name}/${name}.m4a`)
-  const voiceOf = (pack, name) => {
-    if (!indexed) return `voice/${lower(pack)}/${name}.m4a`
-    return ctx.voices.get(`${lower(pack)}/${lower(name)}`) || ctx.voiceByName.get(lower(name)) || ''
+  // 名字 → 资源路径：有索引就查索引（找不到 = ''），没有索引就按模板猜（每个列表的第一条）
+  const resolve = (kind, vars) => {
+    const templates = o.paths[kind]
+    const full = { ...vars, ext: o.exts[kind] }
+    if (!indexed) return guessTemplate(templates, full)
+    const key = lookup.find(templates, full, o.duplicates[kind])
+    return key ? ctx.index.get(key) || '' : ''
   }
-  const standOf = (id) => (indexed ? ctx.stands.get(String(id).trim()) || '' : `merc/pic/${String(id).trim()}/body.webp`)
+  const bgOf = (name) => resolve('bg', { name })
+  const bgmOf = (name) => resolve('bgm', { name, lower: lower(name) })
+  const soundOf = (name) => resolve('sound', { name })
+  const voiceOf = (pack, name) => resolve('voice', { pack: lower(pack), voice: name })
+  const standOf = (id) => resolve('stand', { hero: String(id).trim(), file: o.standFiles })
+  const present = (value) => value !== undefined && value !== ''
 
   const steps = []
   let commands = []
@@ -291,45 +318,50 @@ export function parse(text, ctx = null, meta = {}) {
   for (const i of chain) {
     const row = rows[i]
     // --- 背景（换背景 = 换场景，立绘清掉）---
-    if (row.background !== undefined && row.background !== '' && !NON(row.background)) {
+    if (present(row.background) && !isNone(row.background)) {
       const src = bgOf(row.background)
       standOff()
       if (src) emit({ op: 'bg', src, fade: 0 })
-      else if (lower(row.background) === 'bg_b') emit({ op: 'bg', color: [0, 0, 0], fade: 0 })
+      else if (o.bgBlack.includes(lower(row.background))) emit({ op: 'bg', color: [0, 0, 0], fade: 0 })
       else count('unresolved', `bg:${row.background}`)
     }
-    // --- BGM（non = 停）---
-    if (row.bgm !== undefined && row.bgm !== '') {
-      if (NON(row.bgm)) { if (curBgm) emit({ op: 'bgmStop', fade: 0 }); curBgm = '' } else if (row.bgm !== curBgm) {
+    // --- BGM（none = 停）---
+    if (present(row.bgm)) {
+      if (isNone(row.bgm)) { if (curBgm) emit({ op: 'bgmStop', fade: 0 }); curBgm = '' } else if (row.bgm !== curBgm) {
         const src = bgmOf(row.bgm)
         if (src) { emit({ op: 'bgm', src }); curBgm = row.bgm } else count('unresolved', `bgm:${row.bgm}`)
       }
     }
-    // --- 音效（non = 无）---
-    for (const key of ['bg_sound1', 'bg_sound2', 'bg_sound3', 'sound1', 'sound2', 'sound3']) {
+    // --- 音效（none = 无）：bg_sound 按 bgSound.mode 放，其余一次性 ---
+    for (const [key, background] of [...o.bgSound.attrs.map((attr) => [attr, true]), ...o.soundAttrs.map((attr) => [attr, false])]) {
       const name = row[key]
-      if (name === undefined || name === '' || NON(name)) continue
+      if (!present(name) || isNone(name)) continue
       const src = soundOf(name)
-      if (src) emit({ op: 'se', src }); else count('unresolved', `sound:${name}`)
+      if (!src) count('unresolved', `sound:${name}`)
+      else emit(background && o.bgSound.mode === 'bgse' ? { op: 'bgse', src, loop: true } : { op: 'se', src })
     }
-    // --- 立绘（没有 hero_group_id 的行沿用上一个）---
-    if (row.voice_pack !== undefined && row.voice_pack !== '') pack = row.voice_pack
-    if (row.hero_group_id !== undefined && row.hero_group_id !== '') {
-      const align = POS[Number(row.pic_pos)] || 'center'
+    // --- 立绘（没有 hero_group_id 的行按 standKeep：沿用上一个 / 清掉）---
+    if (present(row.voice_pack)) pack = row.voice_pack
+    if (present(row.hero_group_id)) {
+      const align = o.standPos[String(Number(row.pic_pos))] || o.standPos.default || 'center'
       const key = `${String(row.hero_group_id).trim()}|${align}`
       if (key !== stand) {
         const src = standOf(row.hero_group_id)
-        if (src) { emit({ op: 'stand', parts: [{ src, align, fit: 1 }] }); stand = key; stats.stands += 1 } else { count('unresolved', `stand:${row.hero_group_id}`); standOff() }
+        if (src) { emit({ op: 'stand', parts: [{ src, align, ...(o.standFit ? { fit: o.standFit } : {}) }] }); stand = key; stats.stands += 1 } else { count('unresolved', `stand:${row.hero_group_id}`); standOff() }
       }
-    }
+    } else if (o.standKeep === 'perRow') standOff()
     // --- 语音 ---
-    if (row.voice !== undefined && row.voice !== '' && !NON(row.voice)) {
+    if (present(row.voice) && !isNone(row.voice)) {
       const src = voiceOf(row.voice_pack || pack, row.voice)
       if (src) emit({ op: 'voice', src }); else count('unresolved', `voice:${row.voice_pack || pack}/${row.voice}`)
     }
-    // --- 含义未知的：raw ---
-    for (const key of RAW_KEYS) if (row[key] !== undefined && row[key] !== '') { emit({ op: 'raw', cmd: key, args: [row[key]] }); count('raw', key) }
-    if (row.effect !== undefined && row.effect !== '') { emit({ op: 'raw', cmd: 'effect', args: [row.effect, row.effect_pos ?? ''] }); count('raw', 'effect') }
+    // --- 含义未知的：raw（rawAttrs；a+b = 一条 raw，args = [a, b]）---
+    for (const spec of o.rawAttrs) {
+      const [cmd, ...more] = spec.split('+')
+      if (!present(row[cmd])) continue
+      emit({ op: 'raw', cmd, args: [row[cmd], ...more.map((attr) => row[attr] ?? '')] })
+      count('raw', cmd)
+    }
 
     // --- 台词：没有 text 的行只放指令（并进下一句）---
     if (row.text === undefined || row.text === '') continue
