@@ -17,6 +17,7 @@
 //   transitions      { named: <正则>, seconds: 0.5 }
 //   blackRes         [正则]：scene 名字命中 = 黑底
 //   sniff            { labelRe, markerRes: [正则] }
+//   composite        { enabled: true }：多行 `image <名字（可含空格）> = Composite(` … `(0,0), "a.png",` … `)` 定义按图片别名读（只认默认值里写了这个键的适配器：monmusu / legeclo）；图层取带图片扩展名的字符串，第一层 = 背景（bg.src），有第二层以上时最后一层 = bg.over
 import { compileSafeRegex } from '../voice.mjs'
 import { createIndexResolver } from '../resolve.mjs'
 
@@ -86,6 +87,7 @@ const COMPILERS = {
   transitions: (v, d) => ({ named: safe(typeof v?.named === 'string' ? v.named : d.named, 'i'), seconds: Number.isFinite(Number(v?.seconds)) ? num(v.seconds) : d.seconds }),
   blackRes: (v, d) => regexes(v, d),
   sniff: (v, d) => ({ labelRe: safe(typeof v?.labelRe === 'string' ? v.labelRe : d.labelRe, 'm'), markerRes: regexes(v?.markerRes, d.markerRes, 'm') }),
+  composite: (v, d) => ({ enabled: typeof v?.enabled === 'boolean' ? v.enabled : d.enabled === true }),
   standTags: (v, d) => new Set(strings(v, d)),
   fadeTags: (v, d) => new Set(strings(v, d)),
   cropForms: (v, d) => regexes(v, d),
@@ -217,10 +219,45 @@ export const DEFAULT_ALIAS = {
 
 const extOf = (name) => name.slice(name.lastIndexOf('.') + 1).toLowerCase()
 
+// 多行 Composite 定义：`image <名字> = Composite(` 之后配对括号读到结束（跳过字符串里的括号），取里面带图片扩展名的字符串 = 图层（按出现顺序）。
+// 名字可以带空格（`ms0101b6 01`）。单个定义最多读 4000 个字符、一个文件最多 2000 个，防坏脚本
+const COMPOSITE_HEAD = /^[ \t]*image[ \t]+(.+?)[ \t]*=[ \t]*Composite[ \t]*\(/gm
+export function readComposites(body, extOk) {
+  const out = []
+  COMPOSITE_HEAD.lastIndex = 0
+  let head
+  while ((head = COMPOSITE_HEAD.exec(body)) && out.length < 2000) {
+    let depth = 1
+    let quote = ''
+    let i = COMPOSITE_HEAD.lastIndex
+    const start = i
+    for (; i < body.length && i - start < 4000 && depth > 0; i++) {
+      const c = body[i]
+      if (quote) { if (c === '\\') i++; else if (c === quote) quote = '' } else if (c === '"' || c === "'") quote = c
+      else if (c === '(') depth++
+      else if (c === ')') depth--
+      else if (c === '#') { while (i < body.length && body[i] !== '\n') i++ }
+    }
+    if (depth !== 0) continue
+    const inner = body.slice(start, i - 1)
+    const layers = []
+    for (const m of inner.matchAll(/"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g)) {
+      const src = clean(m[1] ?? m[2])
+      if (src && extOk(extOf(src))) layers.push(src)
+    }
+    if (layers.length) out.push({ name: head[1], layers })
+    COMPOSITE_HEAD.lastIndex = i
+  }
+  return out
+}
+// 图层 → bg 指令的 src / over（一层只有 src；多层 = 第一层打底、最后一层叠在上面）
+export const compositeBg = (layers) => (layers.length > 1 ? { src: layers[0], over: layers.at(-1) } : { src: layers[0] })
+
 // 参数：prepare 的入参（options 已经编译成 o）。resourceResolve = config.resourceResolve（没有 = 不开额外规则）
 export function buildRenpyContext({ texts, files, toResourcePath, resourceResolve }, o) {
   const movies = new Map()   // 别名 → { src, loop }
   const images = new Map()   // 别名 → 资源路径
+  const composites = new Map()   // 别名 → 图层资源路径[]（Composite 定义，o.composite.enabled 时才有）
   const { ext, extList, extPriority, preferDirs } = o.imageIndex
   const toRes = (rel) => (toResourcePath ? toResourcePath(rel) : rel)
   const sorted = [...(files || [])].sort()
@@ -245,6 +282,15 @@ export function buildRenpyContext({ texts, files, toResourcePath, resourceResolv
         if (m) { record(p.kind, m.groups, m[0]); break }
       }
     }
+    if (o.composite?.enabled) {
+      for (const { name, layers } of readComposites(body, (e) => ext.has(e))) {
+        const key = aliasKey(name)
+        if (images.has(key)) continue   // 前面已经有 `image X = "…"` 的明确定义：不覆盖
+        const real = layers.map((layer) => resolver.resolve(layer) || layer)
+        composites.set(key, real)
+        images.set(key, real[0])
+      }
+    }
     for (const p of o.aliasPatterns) {
       if (p.scope !== 'text') continue
       p.re.lastIndex = 0
@@ -266,5 +312,5 @@ export function buildRenpyContext({ texts, files, toResourcePath, resourceResolv
     if (!cur || score[0] < cur.score[0] || (score[0] === cur.score[0] && score[1] < cur.score[1])) best.set(key, { path, score })
   })
   for (const [key, { path }] of best) if (!images.has(key)) images.set(key, path)
-  return { movies, images }
+  return { movies, images, composites }
 }

@@ -59,6 +59,7 @@ export const ADAPTER_RULES = {
   'renpy-legeclo': {
     aliasFiles: ['script/movie.rpy'],
     imageDirs: ['images'],
+    composite: { enabled: true },
     aliasPatterns: [
       {
         kind: 'movie',
@@ -90,6 +91,7 @@ export const ADAPTER_RULES = {
   'renpy-monmusu': {
     aliasFiles: ['script/movie.rpy'],
     imageDirs: ['images'],
+    composite: { enabled: true },
     aliasPatterns: [
       {
         kind: 'movie',

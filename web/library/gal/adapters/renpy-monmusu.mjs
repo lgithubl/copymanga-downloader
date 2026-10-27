@@ -11,6 +11,7 @@
 // 适配器只读配置、按配置匹配：config.adapterOptions['renpy-monmusu']（路径相对媒体目录；适配器本身不读文件）。DEFAULT_OPTIONS = 今天的行为：
 //   aliasFiles ['script/movie.rpy'] / imageDirs ['images']      视频别名表 / 图片目录（给 context.mjs 读）
 //   aliasPatterns [{kind:'movie'|'image', re, scope?:'line'|'text'}]   别名定义写法（命名组 name / path；默认 = image X = Movie(play="…") / image X = "…"，单双引号各一条；scope 'text' = 对整个文件匹配，可写跨行形式）
+//   composite {enabled:true}       多行 Composite(...) 图片定义（名字可带空格）按图层读：第一层 = bg.src，两层以上时最后一层 = bg.over；false = 不读（这些名字查不到图）
 //   movieNoLoopRe                  命中视频定义文本 = 不循环（默认 loop=False）
 //   imageIndex {preferDirs:[], ext:[png,jpg,jpeg,webp,avif,gif], extPriority:false}   图片名 → 文件：同名文件按 preferDirs（资源路径前缀，靠前优先）→ extPriority 时按 ext 顺序 → 路径顺序挑；ext 也是别名定义里图片路径的扩展名白名单
 //   audioCommands {music:['music'], voice:['voice'], se:['sound','audio'], other:'raw'}   play/queue 的声道归类（末尾 * 通配；other = 其它声道：raw 记入 stats.raw / se / ignore）；按路径再归类由引擎 config.classify 做
@@ -20,7 +21,7 @@
 //   transitions {named:'^(?:dissolve|fade|pixellate|move)', seconds:0.5}   命名转场的渐变秒数
 //   blackRes ['^black$']           scene 名字命中 = 黑底
 //   sniff {labelRe, markerRes[]}   sniff(text, options)：头 8KB 里 labelRe 命中且 markerRes 任一命中
-import { DEFAULT_ALIAS, IGNORED_WORDS, aliasKey, buildRenpyContext, clean, flowFilter, isBlackName, isMusicChannel, makeSniff, num, optionsCompiler, readDialogue, readOperand, readPlay, renpyText, segmentsOf, splitWith, transitionSeconds } from './renpy-common.mjs'
+import { DEFAULT_ALIAS, IGNORED_WORDS, aliasKey, buildRenpyContext, clean, compositeBg, flowFilter, isBlackName, isMusicChannel, makeSniff, num, optionsCompiler, readDialogue, readOperand, readPlay, renpyText, segmentsOf, splitWith, transitionSeconds } from './renpy-common.mjs'
 
 export { renpyText }
 
@@ -29,6 +30,7 @@ export const DEFAULT_OPTIONS = {
   aliasFiles: ['script/movie.rpy'],
   imageDirs: ['images'],
   ...DEFAULT_ALIAS,
+  composite: { enabled: true },
   audioCommands: { music: ['music'], voice: ['voice'], se: ['sound', 'audio'], other: 'raw' },
   voiceNoQuote: { variables: {} },
   speakers: {},
@@ -71,9 +73,10 @@ export function parse(text, ctx = null, meta = null) {
     inMovie = true
     stats.movies += 1
   }
+  const bgLayers = (c, key) => (c.composites?.has(key) ? compositeBg(c.composites.get(key).map(clean)) : { src: clean(c.images.get(key)) })
   const bgFrom = (key, fade) => {
     if (inMovie) { emit({ op: 'movieOff' }); inMovie = false }
-    emit({ op: 'bg', src: clean(ctx.images.get(key)), fade })
+    emit({ op: 'bg', ...bgLayers(ctx, key), fade })
   }
 
   for (const rawLine of String(text || '').split(/\r?\n/)) {

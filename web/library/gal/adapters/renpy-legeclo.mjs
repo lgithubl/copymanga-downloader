@@ -21,7 +21,7 @@
 //   blackRes ['^black$', '(?:^|_)black\\d*$']   scene 名字命中 = 黑底（不当背景图、不当缩略图）
 //   sniff {labelRe:'^\\s*label\\s+H_\\w+\\s*:', markerRes:['^\\s*(?:\\$\\s*enable_skip\\s*\\(|play\\s+voice\\s+")']}   sniff(text, options)
 import { DEFAULT_OPTIONS as MONMUSU_OPTIONS, contextDirs, contextFiles } from './renpy-monmusu.mjs'
-import { IGNORED_WORDS, aliasKey, buildRenpyContext, clean, flowFilter, isBlackName, isMusicChannel, makeSniff, num, optionsCompiler, readBareVoice, readDialogue, readPlay, segmentsOf, splitWith, transitionSeconds } from './renpy-common.mjs'
+import { IGNORED_WORDS, aliasKey, buildRenpyContext, clean, compositeBg, flowFilter, isBlackName, isMusicChannel, makeSniff, num, optionsCompiler, readBareVoice, readDialogue, readPlay, segmentsOf, splitWith, transitionSeconds } from './renpy-common.mjs'
 
 export const ADAPTER_ID = 'renpy-legeclo'
 export { contextDirs, contextFiles }
@@ -119,7 +119,7 @@ export function parse(text, ctx = null, meta = null) {
         } else if (ctx?.movies?.has(key)) playMovie(key)
         else if (ctx?.images?.has(key)) {
           movieOff()
-          emit({ op: 'bg', src: clean(ctx.images.get(key)), fade })
+          emit({ op: 'bg', ...(ctx.composites?.has(key) ? compositeBg(ctx.composites.get(key).map(clean)) : { src: clean(ctx.images.get(key)) }), fade })
         } else {
           count('unresolved', name)
           emit({ op: 'raw', cmd: 'scene', args: [name] })
