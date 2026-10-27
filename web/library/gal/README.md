@@ -28,8 +28,9 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 | `dirThumbs` | 目录卡片头像规则：`{parent, name(正则), paths(模板，{name} {parent})}`；匹配的规则里**所有存在的**路径都进缩略图数组（见「卡片缩略图」），路径的目录 / 文件名段可带通配 `*` `?` |
 | `scriptThumbs` | 脚本缩略图模板（`{stem}` `{thumbsDir}`；`~/` = 相对媒体目录；可带通配），之后才是「脚本里第一张背景图」（前面都没有才用） |
 | `thumbSources` | 按文件名规律提取缩略图的规则列表（接在 `dirThumbs` / `scriptThumbs` 后面），见「卡片缩略图」 |
-| `thumbFallback` | 兜底封面（没有任何缩略图规则命中时从脚本里收几张图）：`{enabled, max, prefer, skipBlack, skip, scanSteps}`，见「卡片缩略图 → 兜底封面」 |
+| `thumbFallback` | 兜底封面（没有任何缩略图规则命中时从脚本里收几张图）：`{enabled, max, prefer, skipBlack, skip, scanSteps, topUp}`，见「卡片缩略图 → 兜底封面」 |
 | `thumbMode` | 卡片有多张图时怎么显示：`random`（默认）/ `first` / `hover` |
+| `thumbCover` / `thumbHover` | 卡片封面选哪张：`random`（默认）/ `first` / `last` / `{ index: N }`；悬停轮播：`{ enabled, count, order, intervalMs }`。`thumbMode` 是旧名（别名），见「卡片缩略图 → 封面与悬停轮播」 |
 | `cover` / `scriptCount` / `script` | 封面路径（`~/` 开头 = 相对媒体目录，只给封面用）/ 脚本数 / 谁写的这份配置 `{id, version, ranAt}` |
 | `groups` | 分组：`[{parent: 通配或 '.', pattern}]`。列 `parent` 下的目录时，脚本名（无扩展名）匹配 `pattern` 的按**第 1 个捕获组**归进虚拟目录（一个键一张卡片，节点 id `g:<键>:<路径>`），不匹配的照常列出；名字/头像和真实目录一样查 `labels` / `namesFiles` / `dirThumbs`。`parent: '.'` = 脚本根本身（`merge` 也认） |
 | `game` | `{id, title}`：这个媒体是哪个游戏/资源包（`id` 只含字母数字 `_-`）。**导入时在 config 里写**，tag 脚本按它分发——同一个 adapter、配置不同的两个媒体靠它区分；脚本同时打 `Gal游戏: <id>` 标签方便搜索（以 config 为准） |
@@ -238,6 +239,11 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
   - 脚本卡片的来源顺序：`scriptThumbs` 模板（通配全展开）→ `thumbSources`（`for` 含 script 的）→ `scriptIndex` → 兜底封面（`thumbFallback`：脚本里的事件图 / 立绘 / 背景，**前面都没有才用**）。目录 / 分组卡片：`dirThumbs`（parent、name 匹配的全部规则）→ `thumbSources`（`for` 含 dir 的）。
   - 通配（`dirThumbs.paths` / `scriptThumbs` 里）：`*` = 段内任意字符，`?` = 单个字符，不跨 `/`；匹配到的全部都算，按自然序；目录列表按目录 mtime 缓存（每个目录最多读 2 万项，一次展开最多 400 个路径）。
 - **前端**（`web/static/gal-browse.js` + `thumb-cycle.js`）：`thumbMode` = `random`（默认）每次渲染随机一张当封面（一次渲染内稳定，刷新才换）；`first` = 永远第一张（旧行为）；`hover` = 封面第一张、悬停才轮播。有多张图的卡片鼠标悬停 → 其余图随机顺序轮播（每张 700–900ms，先预加载下一张再换），移开立刻停并还原封面。不悬停的卡片不做任何事；`prefers-reduced-motion`、触摸、标签页在后台、封面还没加载好都不轮播。封面的首次加载仍走 `thumbLoader`（`data-src` 分批），轮播只在它加载完之后改 `src`；封面加载失败先换同一张卡片的下一张，都失败才报「加载失败」。
+- **封面与悬停轮播**（`thumbCover` / `thumbHover`，引擎字段，规整见 `config.mjs`；后端把规整后的值放在每个浏览节点上，`node.thumbCover` / `node.thumbHover`）：
+  - `thumbCover`：卡片有多张候选图时封面选哪张。`'random'`（默认，每次渲染随机，一次渲染内稳定）| `'first'` | `'last'` | `{ index: N }`（第 N 张，从 0 数，0–11；超出张数取最后一张）。只有一张图的卡片不受影响。写错的值退回 `random` 并报 `config-dropped`。
+  - `thumbHover`：`{ enabled（默认 true）, count（默认 4，1–12：一次悬停最多轮几张，**含封面**）, order: 'random' | 'sequential'（默认 random）, intervalMs: [最短, 最长]（默认 [700, 900]，100–10000 毫秒，小的在前；写单个数字 = 固定间隔）}`。只有候选图多于 1 张的卡片才轮播。`random` = 封面 + 随机挑的 `count-1` 张、每一轮洗牌；`sequential` = 封面之后按候选顺序（到头绕回开头）。没写的字段 = 默认，非法字段退回默认并报警。
+  - 旧的 `thumbMode` 仍然认（别名，`thumbCover` / `thumbHover` 没写时才用它推）：`random` → `thumbCover: 'random'`；`first` → `thumbCover: 'first'` + `thumbHover.enabled: false`（不轮播）；`hover` → `thumbCover: 'first'`（悬停轮播）。默认配置的行为和以前一样（随机封面、悬停轮播）。
+  - **浏览器里的本地开关**：列表页底部「更多」菜单里有「悬停轮播」复选框和「封面」下拉（跟随配置 / 随机 / 第一张 / 最后一张），存在浏览器 localStorage（`gal.thumbHover` = `on` / `off`、`gal.thumbCover` = `random` / `first` / `last`；「跟随配置」= 清掉）。本地选择优先于配置，只影响这个浏览器；改封面会重绘列表，改轮播立刻生效。
 - **`thumbSources`**：`[{ dir, match, key, for, forKey, forMatch, forStrip, kind, limit, fallback }]`（最多 10 条）。每条规则只列一次 `dir`（相对资源根；`~/` = 相对媒体目录，只有 `thumbsDirs` 读得到；可带通配 `*` `?`，**最多展开 3000 个目录**，每个目录最多读 2 万项），建成 `键 → 文件[]` 的索引（按目录 mtime 缓存）；卡片用自己的键去查。键可以来自文件名，也可以来自**目录结构**。
   - `match`：正则，对 `dir` 里的**文件名**（含扩展名）；`key`：文件的键（模板，默认 `{1}`）。
   - `for`：`script` | `dir` | `both`（默认）；`forKey`：卡片的键（模板）；`forMatch`（可选正则）：先对 stem / name 匹配，不匹配 = 规则不适用；`forStrip`（可选，正则或正则数组）：`forKey` 展开后依次把匹配到的部分删掉再去查索引。
@@ -266,17 +272,19 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
       `{ dir: 'game/images/thumb', match: '^(\\d{9})\\d{3}_360\\.jpg$', key: '{1}', for: 'script', forKey: '{stem}', forStrip: '^scene_' }`。
     - ミナシゴノシゴトR（脚本 `data/adv/textfiles/story/<9 位>.txt`；本集图 `data/image/episode/story/<9 位>.png`；角色头像 `data/image/character/thumb/<6 位>.png`，角色 id = 脚本名第 [1:7] 位，`120090312` → `200903`）：
       `{ dir: 'data/image/episode/story', match: '^(\\d{9})\\.png$', key: '{1}', for: 'script', forKey: '{stem}' }` + `{ dir: 'data/image/character/thumb', match: '^(\\d{6})\\.png$', key: '{1}', for: 'script', forKey: '{stem:1:7}' }`（等价写法 `forMatch: '^\\d(\\d{6})', forKey: '{1}'`；头像想只在没有本集图时用 → 加 `fallback: true`）。
+  - **`forStrip`**（可选，正则或正则数组，≤ 4 项）：**先**从脚本 / 目录名上删掉匹配到的部分（`'^scene_'`、`'^@'`、`'_ex$'`），`forMatch` / `forKey`（含 `{stem:0:9}` 这样的切片）看到的是去掉之后的名字；`forKey` 展开后的键上还会再去一次（兼容旧写法，比如 `forKey: '{parent}'`）。去完是空 = 这条规则对这张卡片不适用。非法正则丢掉并报 `config-dropped`。
   - **多来源合并**：一张卡片的 `thumbs` 来自 `scriptThumbs` 模板 → 每条 `thumbSources`（按数组顺序）→ `scriptIndex` → 兜底封面；全部按**真实文件**去重、保持先后顺序、最多 12 张；每条规则各自的 `limit` 只管自己。
   - 例（legeclo，gal-layout 写的）：`{dir:'images/thumbnail/st', match:'^hs_(.+)_st_(\\d\\d)\\d\\d(?:_(?:idle|hover))?\\.png$', key:'{1}_{2}', for:'script'}`——`hs_artemis_halloween_st_0301.png` → 键 `artemis_halloween_03` ↔ 脚本 `artemis_halloween_03.rpy`；同一话的 `0201` / `0202_idle` / `0203_hover` 全进数组；再来一条 `dir: 'images/st'` + `fallback: true` 退回整张场景图；角色卡片 `{dir:'images/thumbnail/char', match:'^st_(.+?)(?:_(?:idle|hover))?\\.(?:png|webp)$', key:'{1}', for:'dir'}`。
   - deepone / UViewer：默认 `dirThumbs` 的路径是 `download/character/{name}00/adv/image/{name}00.png`、`…_100.png`，再加 `download/character/{name}??/adv/image/{name}??.png` / `…_100.png`——资源目录是 `<4 位编号><2 位变体>`（`100181`、`102307`、`102309`…，几乎没有 `00`），`??` 把每个变体都收进数组，有 `00` 的排最前。
   - misttrain 的 `Textures/Characters/Bases/<id>201.png` 映射还没确认；确认后只要写 `thumbSources` 就行，不用改代码。
 - **兜底封面 `thumbFallback`**：脚本卡片**没有任何规则命中**（`scriptThumbs` / `thumbSources` / `scriptIndex` 都没有图）时，从解析好的场景里收几张图（`gal/fallback-thumbs.mjs`，和适配器无关：只看规范场景里的指令，复用 `scriptInfo` 已经解析的结果、随它缓存，只扫前 `scanSteps` 步，大脚本也只花固定的时间）。
-  - 配置 `thumbFallback: { enabled: true, max: 6, prefer: ['cg', 'stand', 'bg'], skipBlack: true, skip: [正则…], scanSteps: 200 }`，全部可选（没写的字段 = 默认；类型不对 / 越界的字段退回默认或夹住，并报 `config-dropped`）：`enabled: false` = 旧行为（只取脚本里第一张背景图，单图）；`max` 1–12；`prefer`：优先级数组，只收写了的几类（`bgOver` 是 `cg` 的别名）；`skipBlack`：文件名（无扩展名）命中 `skip` 里任一正则（不分大小写）的不要，默认 `black` / `white` / `blank` 按单词（`bg_black`、`white_fade` 跳过，`blackboard` 不跳）；`scanSteps` 10–2000。
+  - **`topUp: true`**（默认 `false`）：规则（`scriptThumbs` / `thumbSources` / `scriptIndex`）命中了图、但不足 `max` 张时，再从脚本自己的 cg → stand → bg 补到 `max` 张（**规则的图排在前面**，同一个真实文件去重）；规则的图已经够 `max` 张就不补，也不会截掉规则的图。`enabled: false` 时 `topUp` 不生效。没有规则命中时和以前一样走兜底。
+  - 配置 `thumbFallback: { enabled: true, max: 6, prefer: ['cg', 'stand', 'bg'], skipBlack: true, skip: [正则…], scanSteps: 200 }`，全部可选（没写的字段 = 默认；类型不对 / 越界的字段退回默认或夹住，并报 `config-dropped`）：`enabled: false` = 旧行为（只取脚本里第一张背景图，单图）；`max` 1–12；`prefer`：优先级数组，只收写了的几类（`bgOver` 是 `cg` 的别名）；`skipBlack`：文件名（无扩展名）命中 `skip` 里任一正则（不分大小写）的不要，默认 `black` / `white` / `blank` 按单词（`bg_black`、`white_fade` 跳过，`blackboard` 不跳）；`scanSteps` 10–2000；`topUp` 只认 true / false。
   - 三类图：**cg** = 事件图（`bg` 指令带 `over`：`over` 先、`src` 后；带 `cg: true` / `still: true` / `kind: 'cg'|'still'|'event'` 标记的指令；静态画面 spine 指令上的 `thumb` 字段）→ **stand** = 立绘（每个 `stand` 指令取第一个有图片扩展名的部件）→ **bg** = 背景（纯色背景没有 `src`，自然跳过）。每类按出现顺序、整体去重；候选逐个验证文件存在，凑够 `max` 张为止。视频 / 非图片扩展名不要。
   - 结果有多张图，卡片可以悬停轮播（以前只有一张背景）。没找到图时 `thumbWhy` 写「扫了前 N 步，事件图 a / 立绘 b / 背景 c 张，k 张是黑白占位图被跳过，…」。
 - **视频帧缩略图**：候选（`thumbSources` 的 `kind: 'video'`，或模板解析到 mp4 / mkv / webm / mov 文件）在 `thumbs` 里仍是视频的路径；前端取图时带 `frame=1`（`…/resource?path=…&frame=1`），服务端用 ffmpeg 截一帧 JPEG（视频时长的 10%，最多 30 秒，读不到时长用第 1 秒；宽度 ≤640）缓存到 `<DATA_DIR>/cache/gal-thumbs/<hash 前两位>/<sha1(真实路径, mtime, size, 参数版本)>.jpg`（`gal/video-thumb.mjs`）。路径照常经过 `resolveAsset`（只认媒体目录内的真实路径），非视频 → 415；同时最多 2 个 ffmpeg、20 秒超时、同一视频并发只截一次，失败 30 秒内不重试（422，说明原因：ffmpeg 没装 / 超时 / 视频损坏），卡片显示无图状态并在诊断里报「加载失败」；缓存命中 = 按文件发送（ETag / 304，`max-age=7 天`）。ffmpeg 不在 PATH 里就是上面的失败路径（Dockerfile.web 装了 ffmpeg）。
   - 扩展点：骨架（spine / live2d）截图暂不做；以后在 `thumbSources` 加 `kind: 'skeleton'`，在 `gal/thumbs.mjs` 的 `collectSources` 里接渲染器、结果同样缓存到 `cache/gal-thumbs`。
-- 测试：`scripts/dev/gal-selftest.mjs`（键提取 / 数组 / 去重封顶 / deepone 变体 / legeclo 映射 / thumbMode / 帧缓存）、`scripts/dev/gal-engine-thumbs-diag-selftest.mjs`（占位符 / 切片 / forStrip / 目录当键 / 多来源合并 / 通配超过 50 个目录 / 兜底封面 / 列表诊断，只用 node）、`scripts/dev/fe-gal-thumbs-selftest.mjs`（端口 8162：随机封面、悬停轮播、reduced-motion、thumbMode、加载失败、视频帧）。
+- 测试：`scripts/dev/gal-selftest.mjs`（键提取 / 数组 / 去重封顶 / deepone 变体 / legeclo 映射 / thumbMode / 帧缓存）、`scripts/dev/gal-engine-thumbs-diag-selftest.mjs`（占位符 / 切片 / forStrip / 目录当键 / 多来源合并 / 通配超过 50 个目录 / 兜底封面 / 列表诊断，只用 node）、`scripts/dev/fe-gal-thumbs-selftest.mjs`（端口 8162：随机封面、悬停轮播、reduced-motion、thumbMode、加载失败、视频帧）、`scripts/dev/gal-thumb-display-selftest.mjs`（只用 node：thumbCover / thumbHover 规整、封面 / 轮播计划、forStrip、topUp）、`scripts/dev/fe-gal-thumb-display-selftest.mjs`（端口 8165：last / index 封面、sequential / count / intervalMs、「更多」菜单里的本地开关）、`scripts/dev/gal-renpy-composite-selftest.mjs`（Composite 多行定义）。
 
 ## 浏览节点（取数接口 = 通用的 reader）
 
@@ -400,6 +408,7 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 |---|---|---|
 | `aliasFiles` / `imageDirs`（minashigo 另有 `standFiles`） | 路径数组 | 给 `context.mjs` 读的文件 / 目录（monmusu、legeclo：`['script/movie.rpy']` / `['images']`；minashigo：`['game/movie.rpy']` / `['game/images']`，`['game/script.rpy']`） |
 | `aliasPatterns` | `[{kind:'movie'\|'image', re, scope?:'line'\|'text'}]`（默认 = `image X = Movie(play="…")` / `image X = "…"`，单双引号各一条） | 命名组 `name` / `path`；`scope: 'text'` 对整个文件匹配（跨行 / Composite 形式）；正则走安全检查（不许反向引用 / 嵌套量词） |
+| `composite`（monmusu / legeclo） | `{ enabled: true }` | 多行 `image <名字（可含空格）> = Composite(` … `(0,0), "a.png",` … `)` 定义按图片别名读：图层 = 带图片扩展名的字符串（尺寸元组、没有扩展名的字符串不算）；`scene` 用到它时 `bg.src` = 第一层，有两层以上时最后一层 = `bg.over`（叠在上面）。已有 `image X = "…"` 明确定义的同名别名不被覆盖；`enabled: false` = 不读（这些名字查不到图，记 unresolved）。别名文件（`aliasFiles`）里的定义才会被读到；`gal-layout` 的 `ADAPTER_RULES` 里 `renpy-monmusu` / `renpy-legeclo` 都写了它（漂移守卫盯着）。minashigo 没有这个选项 |
 | `movieNoLoopRe` | `'\\bloop\\s*=\\s*False\\b'` | 命中 movie 定义文本 = 不循环 |
 | `imageIndex` | `{preferDirs:[], ext:[png,jpg,jpeg,webp,avif,gif], extPriority:false}` | 图片名 → 文件：同名按 `preferDirs`（资源路径前缀）→ `extPriority` 时按 `ext` 顺序 → 路径顺序；`ext` 也限制别名定义里的图片扩展名 |
 | `audioCommands` | `{music:['music'], voice:['voice'], se:['sound','audio'], other:'raw'}`（minashigo：`voice:['voice*']`、`se:[]`、`other:'se'`） | 声道归类（末尾 `*` 通配）；`other` = 没列的声道：`raw` / `se` / `ignore`；`stop <声道>` 跟 `music`。按路径再归类是引擎 `config.classify` 的事 |
