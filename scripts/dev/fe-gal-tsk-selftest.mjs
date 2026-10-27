@@ -113,7 +113,7 @@ try {
   // 7 Tween / Shake / ZoomCamera / 声音
   await page.evaluate(() => { window.__shake = 0; const t = setInterval(() => { const n = document.querySelector('.gal-world')?.getAnimations().length || 0; if (n > window.__shake) window.__shake = n }, 20); setTimeout(() => clearInterval(t), 4000) })
   await next('7 / 12')
-  await sleep(1200)
+  await sleep(3500)   // Tween 不是 NoWait 时脚本等它播完（原版 yield return），后面的 ZoomCamera 才开始
   const moved = await px(0.5 + 250 / 1280, 0.2)
   const camera = JSON.parse(await page.$eval('.gal-world', (e) => e.dataset.camera || '[]'))
   const matrix = await page.$eval('.gal-world', (e) => getComputedStyle(e).transform)

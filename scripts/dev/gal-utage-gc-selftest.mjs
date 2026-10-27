@@ -78,7 +78,7 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   const shown = run(seqRows)
   const sp = ofOp(shown, 'spine')
   check('nameOnlyRow（默认 show）：CharacterOff 之后只有角色名的行把角色摆回来（槽 = 上次的 Chara2，横向位置 = 上次的），后面的 Tween（Arg1 = 角色名）能找到它，不再记「角色不在场」',
-    sp.length === 3 && sp[1].slot === 'Chara2' && sp[1].x === 0.5 + 250 / 1280 && sp[2].slot === 'Chara2' && sp[2].action === 3 && !Object.keys(shown.stats.raw).some((k) => k.startsWith('Tween')), J(sp) + J(shown.stats.raw))
+    sp.length === 3 && sp[1].slot === 'Chara2' && sp[1].x === 0.5 + 250 / 1280 && sp[2].slot === 'Chara2' && sp[2].bounce?.y === -30 && sp[2].bounce.count === 2 && !Object.keys(shown.stats.raw).some((k) => k.startsWith('Tween')), J(sp) + J(shown.stats.raw))
   const faceOnly = run(seqRows, { nameOnlyRow: 'faceOnly' })
   check('nameOnlyRow = faceOnly：回到以前的行为（不摆；Tween 记「角色不在场」）；写错的值回到默认 show', ofOp(faceOnly, 'spine').length === 1 && faceOnly.stats.raw['Tween:MoveBy（角色不在场）'] === 1 && ofOp(run(seqRows, { nameOnlyRow: 'bogus' }), 'spine').length === 3, J(faceOnly.stats.raw))
   const firstFree = run([stand('ルカ-私服', 'Chara1'), mina({ text: 'x' })])
@@ -93,8 +93,8 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   const slotRows = [stand(MIRA, 'Chara1'), R('Tween', { a1: 'Chara1', a2: 'MoveBy', a3: 'time=.3 y=-30', a5: 'pingPong=2' }), R('Shake', { a1: 'Chara1', a3: 'x=15 y=0 time=0.6' }), R('Tween', { a1: 'Chara1', a2: 'MoveTo', a3: 'x=-250 time=1' }), R('Tween', { a1: 'Chara3', a2: 'MoveBy', a3: 'x=30', a5: 'pingPong=2' }), T({ text: 'x' })]
   const bySlot = run(slotRows)
   const sps = ofOp(bySlot, 'spine')
-  check('tween.targetSlots（默认 true）：Tween / Shake 的 Arg1 是槽名（Chara1）→ 指现在站在这个槽里的角色（动作 3 / 动作 2 / MoveTo 的 move）；空槽（Chara3）仍记「角色不在场」',
-    sps.length === 4 && sps[1].action === 3 && sps[2].action === 2 && sps[3].x === 0.5 - 250 / 1280 && sps[3].move === 1 && bySlot.stats.raw['Tween:MoveBy（角色不在场）'] === 1, J(sps) + J(bySlot.stats.raw))
+  check('tween.targetSlots（默认 true）：Tween / Shake 的 Arg1 是槽名（Chara1）→ 指现在站在这个槽里的角色（pingPong 的 bounce / Shake 的 shake / MoveTo 的 move = time / 2）；空槽（Chara3）仍记「角色不在场」',
+    sps.length === 4 && sps[1].bounce?.y === -30 && sps[2].shake?.x === 15 && sps[3].x === 0.5 - 250 / 1280 && sps[3].move === 0.5 && bySlot.stats.raw['Tween:MoveBy（角色不在场）'] === 1, J(sps) + J(bySlot.stats.raw))
   const noSlots = run(slotRows, { tween: { targetSlots: false } })
   check('tween.targetSlots = false：只认角色名（以前的行为）：槽名的 Tween / Shake 全记 raw', ofOp(noSlots, 'spine').length === 1 && noSlots.stats.raw['Tween:MoveBy（角色不在场）'] === 2 && noSlots.stats.raw['Shake:角色不在场'] === 1, J(noSlots.stats.raw))
   // 自定义槽映射：Chara1 → Left，Tween 的 Arg1 仍写 Utage 的 Chara1
@@ -174,6 +174,39 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   const base = ['fade,out,black,0.5', 'bg,abg1,0,0,1,1', 'window,on,0.25', 'message,,旁白,', ...ACTOR, 'charamotion,chara_1,loop,on', 'message,甲,x,']
   check('没有新命令的脚本：默认选项和全部 commands = raw 的结果完全一样（新映射不碰别的命令）', same(run(base).steps, run(base, { commands: { cgmode: 'raw', asyncjump: 'raw', asyncmoveobject: 'raw', crossfade: 'raw' } }).steps), '')
   check('sniffLine：asyncmoveobject / TransitionCrossFade 算行式命令（识别率更高）；标签式脚本仍不认', sniffLine('title,a,\nmessage,甲,x,\nasyncmoveobject,character,chara_1,0.4,0,0,10,linear\nTransitionCrossFade,abg1,tra,1,0,0,1,1\n') && !sniffLine('<NAME_PLATE>a\nx\n'), '')
+}
+
+// ================= 4. TSK 按原版代码（gal-samples21 反编译的 DialogueSystem）：摆放 / Tween / 表情图标 =================
+{
+  const charHeader = ['', 'CharacterName', 'NameText', 'Pattern', 'X', 'Y', 'Z', 'Pivot', 'Scale', 'Conditional', 'FileName', 'SubFileName', 'FileType']
+  const texHeader = ['', 'Label', 'Type', 'X', 'Y', 'Z', 'Pivot', 'Scale', 'Conditional', 'FileName', 'FileType']
+  const M2 = JSON.stringify({ settingList: [
+    table('Master.xls:Character', charHeader, [['', 'ミナ', 'ミナ', '', '40', '150', '', '', '1.5', '', 'Characters/ch_100/ch_100_m0_SkeletonData.asset', '', 'Spine']]),
+    table('Master.xls:Texture', texHeader, [['', 'EM_007', 'Sprite', '', '', '', '', '', '', 'Adventure/Textures/Spines/Emote/EM_007_SkeletonData.asset', 'Spine']]),
+  ] })
+  const FILES2 = ['Adventure/Master.chapter.json', 'Adventure/Textures/Spines/Emote/EM_007.skel.bytes', 'Adventure/Textures/Spines/Emote/EM_007.atlas.txt', 'Characters/ch_100/ch_100_m0.skel.bytes', 'Characters/ch_100/ch_100_m0.atlas.txt']
+  const ctx2 = prep({}, M2, FILES2)
+  const go = (rows) => utage.parse(B(rows), ctx2, { stem: 't', config: {} })
+  const spinesOf = (out) => out.steps.flatMap((st) => st.commands).filter((c) => c.op === 'spine')
+  const out = go([
+    stand('ミナ', 'Chara1', '100'), T({ a1: 'ミナ', text: 'a' }),
+    R('Tween', { a1: 'ミナ', a2: 'MoveBy', a3: 'time=.4 x=-50 y=30', a4: 'easeOutQuad', wait: 'NoWait' }), T({ a1: 'ミナ', text: 'b' }),
+    R('Tween', { a1: 'ミナ', a2: 'MoveBy', a3: 'time=.3 y=-30', a4: 'easeOutQuad', a5: 'pingPong=2', wait: 'NoWait' }), T({ text: 'c' }),
+    R('Sprite', { a1: 'EM_007', a3: 'Chara1', a4: '-25', a5: '170', anim: 'emotion', comp: 'Delete' }), T({ text: 'd' }),
+    T({ text: 'e' }),
+  ])
+  const sp = spinesOf(out)
+  check('TSK 摆放：place = (Master X + Arg4, Master Y − 10)，缩放 = Master Scale；舞台 1280×720（Master X 40 / Y 150 / Scale 1.5，Arg4 = 100）', sp[0].place.x === 140 && sp[0].place.y === 140 && sp[0].place.scale === 1.5 && same(sp[0].stage, [1280, 720]), J(sp[0]))
+  const moved = sp.find((c) => c.move)
+  check('TSK Tween MoveBy（非 pingPong）：时长 = time / 2、缓动原样带上、x 偏移记下来（后面的台词沿用）、y 偏移只到这个角色的下一句台词', moved.move === 0.2 && moved.ease === 'easeOutQuad' && moved.place.x === 90 && moved.place.y === 170, J(moved))
+  const afterSpeak = sp[sp.indexOf(moved) + 1]
+  check('TSK：这个角色再说话 → 重新摆一次（纵向偏移回到 0，横向偏移保留 = 原版 SetCharacterSpineAnimation）', afterSpeak && afterSpeak.place.x === 90 && afterSpeak.place.y === 140, J(afterSpeak))
+  const bounce = sp.find((c) => c.bounce)
+  check('TSK Tween pingPong=2：bounce { x:0, y:-30, 每段 0.3 秒，共 2 段 }，位置不变', bounce.bounce.y === -30 && bounce.bounce.seconds === 0.3 && bounce.bounce.count === 2 && bounce.place.x === 90, J(bounce))
+  const emote = sp.find((c) => c.slot === 'Chara1Emote')
+  check('TSK Sprite EM_xxx：Emotion 子物体（骨架 Adventure/Textures/Spines/Emote/EM_007），y = max(0, Arg5 − 130) 再加 Characters 轴心 120，ttl 1 秒（原版 1 秒后销毁）；下一步开头补 spineOff', emote && emote.skel === 'Adventure/Textures/Spines/Emote/EM_007.skel.bytes' && emote.place.x === -25 && emote.place.y === 160 && emote.place.scale === 1 && emote.ttl === 1 && emote.anim === 'emotion' && out.steps.some((st) => st.commands[0]?.op === 'spineOff' && st.commands[0].slot === 'Chara1Emote'), J(emote))
+  const noEmote = go([T({ text: 'x' }), R('Sprite', { a1: 'EM_999', a3: 'Chara1' }), T({ text: 'y' })])
+  check('TSK Sprite：骨架不在索引里 → 记「缺资源」不崩；AE_ / BE_ 在 Master 里没有 Spine 定义（原版什么都不做）→ raw', noEmote.stats.unresolved['effect:EM_999'] === 1 && go([R('Sprite', { a1: 'AE_0030', a3: 'EffectF' }), T({ text: 'z' })]).stats.raw['Sprite:AE'] === 1, J(noEmote.stats))
 }
 
 console.log(`${pass} passed, ${fail} failed`)

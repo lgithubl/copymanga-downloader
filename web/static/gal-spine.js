@@ -54,6 +54,8 @@ const ACTIONS = {
   3: (t) => ({ x: 0, y: -Math.sin(Math.min(1, t) * Math.PI) * 0.07 }),   // 下沉再回来
 }
 const ACTION_SECONDS = { 1: 0.4, 2: 0.3, 3: 1.3 }
+// 缓动（TSK 原版 DialogueSystem.Ease：只有 easeOutQuad / easeInQuad，其余线性）
+const easeOf = (t, name) => { const n = String(name || '').toLowerCase(); return n === 'easeoutquad' ? 1 - (1 - t) * (1 - t) : n === 'easeinquad' ? t * t : t }
 
 // 选动画：指定的有就用；没有（名字对不上）→ 站位立绘退到 idle_normal → 名字以 idle 开头的 → 名字里带 idle 的 → 第一个。
 // 对不上名字又什么都不播的话，骨架停在「初始姿势」——通常是各个部件散开的样子，看起来完全不是人
@@ -570,8 +572,9 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       }
     }
     // 位置（角色）：x / y 变了且这一步在播放（live）、spec.move > 0 → 从原来的位置平滑移到新位置；否则一步到位
-    const to = { x: Number(spec.x) || 0, y: Number(spec.y) || 0 }
-    if (live && Number(spec.move) > 0 && inst.pos && (inst.pos.x !== to.x || inst.pos.y !== to.y)) inst.moving = { from: { ...inst.pos }, to, began: performance.now(), ms: Number(spec.move) * 1000 }
+    const placed = spec.place && typeof spec.place === 'object'   // 精确摆放（TSK）：place = 舞台像素，不是 x / y 的比例
+    const to = placed ? { x: Number(spec.place.x) || 0, y: Number(spec.place.y) || 0 } : { x: Number(spec.x) || 0, y: Number(spec.y) || 0 }
+    if (live && Number(spec.move) > 0 && inst.pos && (inst.pos.x !== to.x || inst.pos.y !== to.y)) inst.moving = { from: { ...inst.pos }, to, began: performance.now(), ms: Number(spec.move) * 1000, ease: spec.ease }
     else inst.moving = null
     inst.pos = inst.moving ? inst.pos : to
     const speed = Number.isFinite(Number(spec.speed)) && Number(spec.speed) > 0 ? Number(spec.speed) : 1
@@ -594,6 +597,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     }
     if (live && spec.action && ACTIONS[spec.action]) inst.action = { kind: spec.action, began: performance.now() }
     else if (!live) inst.action = null
+    // 来回位移（TSK Tween pingPong：x / y 是舞台像素，每段 seconds 秒，共 count 段，缓动 ease；奇数段最后一段走完就回原位）：同一个 id 只在播放中演一次
+    if (spec.bounce && spec.bounce.id !== inst.bounceId) {
+      inst.bounceId = spec.bounce.id
+      inst.bounce = live ? { x: Number(spec.bounce.x) || 0, y: Number(spec.bounce.y) || 0, seconds: Math.max(0.01, Number(spec.bounce.seconds) || 0.3), count: Math.max(1, Math.floor(Number(spec.bounce.count)) || 2), ease: spec.bounce.ease, began: performance.now() } : null
+    }
     // 包围盒不是从初始姿势来的（附件由动画打开）：换了动画 / 皮肤就重新量一次（第一次在 create 里量）
     if (inst.boundsSource && inst.boundsSource !== 'setup' && (changed || inst.boundsAnim !== inst.anim)) { inst.boundsAnim = inst.anim; refreshBounds(inst) }
   }
@@ -645,14 +653,15 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   function set(specs, { live = false, slow = slowTo, view = null } = {}) {
     if (view) { views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }; if (view.camera) camera = normalizeCamera(view.camera); if (view.expressions) expressionTable = mergeExpressions(DEFAULT_EXPRESSIONS, view.expressions); if (view.blend && view.blend !== blendOverride) { blendOverride = ['noAdditive', 'allNormal'].includes(view.blend) ? view.blend : 'native'; for (const inst of instances.values()) applyBlendOverride(inst.data) } }
     slowTo = Number.isFinite(Number(slow)) && Number(slow) > 0 ? Math.min(1, Number(slow)) : 0.2
-    const wanted = specs || {}
+    // ttl（TSK 表情图标：播放 ttl 秒后销毁）：只在播放中出现，后退 / 续播的一步到位不显示
+    const wanted = Object.fromEntries(Object.entries(specs || {}).filter(([, spec]) => live || !(Number(spec?.ttl) > 0)))
     for (const slot of [...instances.keys()]) if (!wanted[slot]) instances.delete(slot)
     for (const [slot, spec] of Object.entries(wanted)) {
       const current = instances.get(slot)
       if (current && current.spec.skel === spec.skel && current.skeleton) { applySpec(current, spec, live); continue }
       if (current && current.spec.skel === spec.skel) { current.spec = spec; continue }   // 还在加载：只记最新的
       const token = Symbol(slot)
-      instances.set(slot, { spec, token, skeleton: null })
+      instances.set(slot, { spec, token, skeleton: null, ...(Number(spec.ttl) > 0 ? { expires: performance.now() + Number(spec.ttl) * 1000 } : {}) })
       create(slot, spec, live, token)
     }
     for (const cv of canvases) cv.hidden = instances.size === 0
@@ -731,12 +740,35 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         scale *= v.zoom
       }
     } else if (inst.spec.place && typeof inst.spec.place === 'object') {
-      // 精确摆放（TSK：原版代码的数值）：舞台 stage（默认 1280×720）、原点在画面中心、y 向上；骨骼原点落在 (place.x, place.y)，一个骨架单位 = place.scale 个舞台像素
+      // 精确摆放（TSK：原版代码的数值）：舞台 stage（默认 1280×720）、原点在画面中心、y 向上；骨骼原点落在 place（移动中取插值），一个骨架单位 = place.scale 个舞台像素
       const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
       const unit = width / stage
+      let pos = inst.pos || { x: Number(inst.spec.place.x) || 0, y: Number(inst.spec.place.y) || 0 }
+      if (inst.moving) {
+        const t = Math.min(1, (performance.now() - inst.moving.began) / inst.moving.ms)
+        const e = easeOf(t, inst.moving.ease)
+        pos = { x: inst.moving.from.x + (inst.moving.to.x - inst.moving.from.x) * e, y: inst.moving.from.y + (inst.moving.to.y - inst.moving.from.y) * e }
+        if (t >= 1) { inst.pos = inst.moving.to; inst.moving = null }
+      }
+      if (inst.bounce) {
+        const b = inst.bounce
+        const t = (performance.now() - b.began) / 1000
+        if (t >= b.seconds * b.count) inst.bounce = null
+        else {
+          const k = Math.floor(t / b.seconds)
+          const e = easeOf(t / b.seconds - k, b.ease)
+          const f = k % 2 === 0 ? e : 1 - e
+          pos = { x: pos.x + b.x * f, y: pos.y + b.y * f }
+        }
+      }
       scale = unit * (Number(inst.spec.place.scale) > 0 ? Number(inst.spec.place.scale) : 1)
-      px = width / 2 + (Number(inst.spec.place.x) || 0) * unit
-      py = height / 2 + (Number(inst.spec.place.y) || 0) * unit
+      px = width / 2 + pos.x * unit
+      py = height / 2 + pos.y * unit
+      if (inst.shake) {   // 随机抖（原版 HandleShakeCommand：每帧 ±x / ±y 随机，seconds 秒）
+        const t = (performance.now() - inst.shake.began) / 1000
+        if (t >= inst.shake.seconds) inst.shake = null
+        else { px += (Math.random() * 2 - 1) * inst.shake.x * unit; py += (Math.random() * 2 - 1) * inst.shake.y * unit }
+      }
     } else {
       scale = (height * 0.95) / h
       px = (inst.spec.x ?? 0.5) * width - (x + w / 2) * scale
@@ -756,6 +788,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   function frame(now) {
     raf = 0
     if (destroyed || paused || !readyBackends.length) return
+    for (const [slot, inst] of [...instances]) if (inst.expires && performance.now() > inst.expires) instances.delete(slot)
     const dt = Math.min(0.1, (now - (last || now)) / 1000)
     last = now
     const dpr = Math.min(2, globalThis.devicePixelRatio || 1)

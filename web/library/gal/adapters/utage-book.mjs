@@ -293,7 +293,7 @@ const bookRows = (grid) => {
     if (command.startsWith('//')) continue
     rows.push({
       command, a1: cell('Arg1'), a2: cell('Arg2'), a3: cell('Arg3'), a4: cell('Arg4'), a5: cell('Arg5'), a6: cell('Arg6'),
-      skin: cell('Skin'), anim: cell('SpineAnim'), sub: cell('SpineSubAnim'), speed: cell('AnimSpd'),
+      skin: cell('Skin'), anim: cell('SpineAnim'), sub: cell('SpineSubAnim'), speed: cell('AnimSpd'), compType: cell('AnimCompType'), waitType: cell('WaitType'),
       text: str(row.strings[columns.get('Text')]).replace(/\r/g, '').trim(), voice: cell('Voice'),
     })
   }
@@ -412,10 +412,14 @@ export function parse(text, ctx = null, meta = {}) {
     if (openBlock) openBlock.cmds.push(command)
     pending.push(command)
   }
+  // 表情图标（Sprite EM_xxx）原版 1 秒后销毁；播放器按 ttl 自己收，这里在这一步结束后补一条 spineOff，往回 / 重放时不会残留
+  const liveEmotes = new Set()
   const pushStep = () => {
     stats.commands += pending.length
     steps.push({ index: steps.length, commands: pending })
     pending = []
+    for (const slot of liveEmotes) pending.push({ op: 'spineOff', slot })
+    liveEmotes.clear()
   }
 
   // --- 舞台状态（编译时的近似：分支开始时从弹选项那一刻的状态重来）---
@@ -430,7 +434,7 @@ export function parse(text, ctx = null, meta = {}) {
   const restore = (snap) => { stage = new Map([...snap.stage].map(([slot, entry]) => [slot, { ...entry }])); slotOf = new Map(snap.slotOf); stillId = snap.stillId }
   // 原版（gal-samples21 反编译的 DialogueSystem.SetCharacterSpineAnimation）：Chara 的本地坐标 = (Master X + Arg4 偏移, Master Y − 130)，缩放 = Master Scale × 100，骨架单位 0.01；
   // Characters 的 RectTransform 轴心在 (0.5, 1.7)，Chara1~4 都在轴心上，舞台 1280×720、原点在画面中心 → 骨架原点（y 向上）= (Master X + 偏移, Master Y − 10)，一个骨架单位 = Master Scale 个舞台像素
-  const placeOf = (entry) => ({ x: (entry.master?.x || 0) + (entry.x - o.standX.slotBase) * screenWidth, y: (entry.master?.y || 0) - 10, scale: entry.master?.scale || 1 })
+  const placeOf = (entry) => ({ x: (entry.master?.x || 0) + (entry.x - o.standX.slotBase) * screenWidth, y: (entry.master?.y || 0) - 10 + (entry.dy || 0), scale: entry.master?.scale || 1 })
   const standOp = (slot, entry, extra = {}) => ({
     op: 'spine', slot, kind: 'chara', skel: entry.skel, atlas: entry.atlas, anim: entry.anim, loop: true, speed: 1, x: entry.x, place: placeOf(entry), stage: [screenWidth, Math.round(screenWidth * 9 / 16)],
     ...(entry.skin ? { skin: entry.skin } : {}), ...(entry.sub ? { sub: entry.sub } : {}), ...extra,
@@ -467,9 +471,10 @@ export function parse(text, ctx = null, meta = {}) {
   const updateStand = (row) => {
     const slot = slotOf.get(row.a1)
     const entry = slot ? stage.get(slot) : null
-    if (!entry || (!row.skin && !row.anim && !row.sub)) return
-    const next = { ...entry, anim: row.anim || entry.anim, skin: row.skin || entry.skin, sub: row.sub || entry.sub }
-    if (next.anim === entry.anim && next.skin === entry.skin && next.sub === entry.sub) return
+    if (!entry) return
+    // 原版每个有说话人的台词行都重新摆一次（SetCharacterSpineAnimation：位置 = Master + 上次的横向偏移，纵向偏移回到 0）：Tween 的纵向位移到这一句为止
+    const next = { ...entry, anim: row.anim || entry.anim, skin: row.skin || entry.skin, sub: row.sub || entry.sub, dy: 0 }
+    if (next.anim === entry.anim && next.skin === entry.skin && next.sub === entry.sub && !entry.dy) return
     stage.set(slot, next)
     stats.spines += 1
     emit(standOp(slot, next))
@@ -658,11 +663,12 @@ export function parse(text, ctx = null, meta = {}) {
           const x = Math.abs(numOrNull(kv.x) ?? 0)
           const y = Math.abs(numOrNull(kv.y) ?? 0)
           const seconds = secOf(kv.time, 0.5)
-          if (/^graphics$/i.test(row.a1)) emit({ op: 'shake', axis: x && y ? 'overall' : y ? 'vertical' : 'horizontal', strength: Math.max(x, y) / 40, seconds })
-          else if (targetSlot(row.a1)) emitAction(targetSlot(row.a1), x ? o.tween.actions.x : o.tween.actions.up)
+          if (/^(?:graphics|bg)$/i.test(row.a1)) emit({ op: 'shake', axis: x && y ? 'overall' : y ? 'vertical' : 'horizontal', strength: Math.max(x, y) / 40, seconds })
+          else if (targetSlot(row.a1)) { const slot = targetSlot(row.a1); stats.spines += 1; emit(standOp(slot, stage.get(slot), { shake: { id: `s${bounceSeq++}`, x: x || 5, y: y || 5, seconds } })) }
           else raw(`Shake:${row.a1 ? '角色不在场' : '无目标'}`)
           break
         }
+        case 'Sprite': sprite(row); break
         case 'Tween': tween(row); break
         case 'EndScenario': {
           resumeGuard = openBlock ? openBlock.outer : guard
@@ -690,35 +696,80 @@ export function parse(text, ctx = null, meta = {}) {
     }
     openBlock = null
   }
-  // Tween 折成立绘动作（种类 → 处理方式见 options.tween.kinds）：action = 来回的动作（立绘动作 x / up / down，时长、次数用播放器固定的）；
-  // moveBy / moveTo = 改横向位置（像素偏移）；raw（含表里没有的种类）= 没有对应的立绘字段，记 raw
-  function emitAction(slot, action) {
-    const entry = stage.get(slot)
-    if (!entry) return
-    stats.spines += 1
-    emit(standOp(slot, entry, { action }))
+  // Sprite（原版 ApplyEffectSpineAnimation）：Arg1 = 键，Arg3 = 目标物体（Chara1~4），Arg4 / Arg5 = x / y（本地像素），SpineAnim = 动画，AnimCompType = Loop / Delete（1 秒后销毁）
+  //   EM_xxx：目标的 Emotion 子物体（骨架 Adventure/Textures/Spines/Emote/EM_xxx），y = max(0, Arg5 − 130)，缩放 100（= 1 个骨架单位 1 像素）；ch_<id>_b / _f：目标的 b / f 子物体（骨架 Characters/ch_<id>/ch_<id>_b），不改 y
+  //   其余（Title 之外）：键要在 Master 里是 Spine 才有效（AE_ 在这份 Master 里没有定义，BE_ 是图片 / 粒子）= 原版什么都不做，记 raw
+  const effectFiles = (dir, base) => {
+    const skel = `${dir}/${base}.skel.bytes`
+    if (hasIndex) { const hit = lookup.find([skel], {}); return hit ? { skel: hit, atlas: `${dir}/${base}.atlas.txt` } : null }
+    return { skel, atlas: `${dir}/${base}.atlas.txt` }
   }
+  function sprite(row) {
+    const key = row.a1
+    if (key === 'Title') {   // 标题卡：Text = '标题,副标题,位置码'（原版交给 TitleManager）；这里显示成一句没有说话人的字
+      const parts = row.text.split(',').map((part) => part.trim()).filter(Boolean)
+      if (parts.length > 1 && /^[A-Za-z]$/.test(parts.at(-1))) parts.pop()
+      if (parts.length) { emit({ op: 'speaker', segments: [] }); speaker = ''; emit({ op: 'text', segments: richText(parts.join('　')) }); pushStep() }
+      return
+    }
+    if (!key) { raw('Sprite:(空)'); return }
+    const target = /^Chara\d+$/.test(row.a3) ? row.a3 : slotOf.get(key) || ''
+    const argX = numOrNull(row.a4)
+    const argY = numOrNull(row.a5)
+    const isEm = /^EM_/.test(key)
+    const m = /^(ch_\d+)_([bf])$/.exec(key)
+    if (!isEm && !m) { raw(`Sprite:${/^(AE|BE)_/.test(key) ? key.slice(0, 2) : key}`); return }
+    if (!target) { raw(`Sprite:${key}（没有目标）`); return }
+    const files = isEm ? effectFiles('Adventure/Textures/Spines/Emote', key) : effectFiles(`Characters/${m[1]}`, key)
+    if (!files) { miss('effect', key); return }
+    const localY = isEm ? Math.max(0, (argY ?? 130) - 130) : argY ?? 0
+    const slot = isEm ? `${target}Emote` : `${target}${m[2]}`
+    const loop = /^loop$/i.test(row.compType)
+    const del = /^delete$/i.test(row.compType)
+    stats.spines += 1
+    emit({ op: 'spine', slot, kind: 'chara', skel: files.skel, atlas: files.atlas, anim: row.anim, loop: isEm ? true : loop || !del, speed: 1, place: { x: argX ?? 0, y: 120 + localY, scale: 1 }, stage: [screenWidth, Math.round(screenWidth * 9 / 16)], ...(del ? { ttl: 1 } : {}) })
+    if (del) liveEmotes.add(slot)
+  }
+
+  // Tween（原版 DialogueSystem.HandleTweenCommand，gal-samples21 反编译）：目标角色的 Chara 子物体的本地坐标（舞台像素）
+  //   Arg3 = 'time=秒 x=… y=…'，Arg4 = 缓动（easeOutQuad / easeInQuad，其余线性），Arg5 = 'pingPong=次数'，WaitType = NoWait 时不等它播完
+  //   pingPong > 0：按 (x, y) 位移来回 次数 段（每段 time 秒，奇数次最后一段走完回原位），位置不变
+  //   MoveBy / MoveTo（不是 pingPong）：时长 = time / 2；MoveBy = 相对位移，MoveTo = 绝对本地坐标；没写的轴不动；走完记下横向偏移（后面的台词行沿用），纵向偏移到该角色下一句台词为止
+  //   ColorTo / ScaleTo / RotateTo 原版没有处理（记 raw）
+  let bounceSeq = 0
   function tween(row) {
     const kv = keyValues(row.a3)
     const slot = targetSlot(row.a1)
     const mode = row.a2
     if (!slot) { raw(`Tween:${mode || '(空)'}（角色不在场）`); return }
+    const entry = stage.get(slot)
     const x = numOrNull(kv.x)
     const y = numOrNull(kv.y)
-    const entryOf = Object.hasOwn(o.tween.kinds, mode) ? o.tween.kinds[mode] : 'raw'
-    const form = entryOf && typeof entryOf === 'object' ? (o.re.ret?.test(row.a5) ? entryOf.returns : entryOf.else) : entryOf
-    if (form === 'action') {
-      if (x) emitAction(slot, o.tween.actions.x)
-      else if (y) emitAction(slot, y < 0 ? o.tween.actions.down : o.tween.actions.up)
-      else raw(`Tween:${mode}（没有 x / y）`)
-    } else if ((form === 'moveTo' || form === 'moveBy') && x !== null) {
-      const entry = stage.get(slot)
-      const next = { ...entry, x: form === 'moveTo' ? o.standX.slotBase + x / screenWidth : entry.x + x / screenWidth }
-      stage.set(slot, next)
-      lastStand.set(entry.key, { slot, x: next.x })
+    const time = secOf(kv.time, 0.5)
+    const pingPong = /^pingPong=(\d+)/i.exec(row.a5)
+    const waits = !/^nowait$/i.test(row.waitType)
+    if (pingPong && Number(pingPong[1]) > 0) {
+      const count = Number(pingPong[1])
       stats.spines += 1
-      emit(standOp(slot, next, secOf(kv.time) ? { move: secOf(kv.time) } : {}))
-    } else raw(`Tween:${mode || '(空)'}`)
+      emit(standOp(slot, entry, { bounce: { id: `b${bounceSeq++}`, x: x ?? 0, y: y ?? 0, seconds: time, count, ease: row.a4 } }))
+      if (waits) emit({ op: 'wait', seconds: time * count })
+      return
+    }
+    if (!/^move(by|to)$/i.test(mode)) { raw(`Tween:${mode || '(空)'}`); return }
+    const absolute = /^moveto$/i.test(mode)
+    const cur = placeOf(entry)
+    const baseY = (entry.master?.y || 0) - 10
+    const baseX = entry.master?.x || 0
+    // 本地坐标：x_local = cur.x，y_local = cur.y − 120（Characters 轴心在舞台中心上方 120）
+    const targetX = x === null ? cur.x : absolute ? x : cur.x + x
+    const targetLocalY = y === null ? cur.y - 120 : absolute ? y : cur.y - 120 + y
+    const next = { ...entry, x: o.standX.slotBase + (targetX - baseX) / screenWidth, dy: (targetLocalY + 120) - baseY }
+    stage.set(slot, next)
+    lastStand.set(entry.key, { slot, x: next.x })
+    stats.spines += 1
+    const dur = time / 2
+    emit(standOp(slot, next, dur > 0 ? { move: dur, ease: row.a4 } : {}))
+    if (waits && dur > 0) emit({ op: 'wait', seconds: dur })
   }
 
   grids.forEach((grid, gridIndex) => compileGrid(bookRows(grid), gridIndex))
