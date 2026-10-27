@@ -159,6 +159,12 @@ export function declaredPageSizes(atlasText) {
   }
   return sizes
 }
+// 4.x 的图集（new TextureAtlas(text) 先解析，再逐页 setTexture）：每页贴图同样报声明尺寸（page.width / height 是解析出来的声明值）。
+// 官方 4.0 的 MeshAttachment.updateUVs 也拿 texture.getImage().width 当分母：TSK（Unity 提取）里 atlas 声明 1513×1896、PNG 是 1024×2048，
+// 不报声明尺寸时网格 UV 全偏（头发 / 武器 / 脸采样到别处）。make(pageName) 返回该页的贴图
+export function setPageTextures(atlas, make) {
+  for (const page of atlas.pages) page.setTexture(reportDeclaredSize(make(page.name), [page.width, page.height]))
+}
 export function reportDeclaredSize(texture, size) {
   if (!size) return texture
   const image = texture.getImage()
@@ -383,7 +389,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
             const declared = declaredPageSizes(atlasText)
             atlas = new spine.TextureAtlas(atlasText, (page) => reportDeclaredSize(new ns.GLTexture(backend.gl, imageOf(page)), declared.get(page)))
           } else {
-            for (const page of atlas.pages) page.setTexture(new ns.GLTexture(backend.context, imageOf(page.name)))
+            setPageTextures(atlas, (name) => new ns.GLTexture(backend.context, imageOf(name)))
           }
         } finally { if (premultiplyOnUpload) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false) }
         const loader = new spine.AtlasAttachmentLoader(atlas)

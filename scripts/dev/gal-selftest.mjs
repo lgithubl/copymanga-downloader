@@ -29,7 +29,7 @@ import { buildScene, firstBackgroundSrc } from '../../web/library/gal/scene.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, ratioOfStep, stateAt, stepOfRatio } from '../../web/static/gal-engine.js'
 import { buildGalFixture } from './make-gal-fixture.mjs'
-import { DEFAULT_EXPRESSIONS, castKeysOf, declaredPageSizes, faceDefaultsFor, mergeExpressions, reportDeclaredSize, resolveExpression } from '../../web/static/gal-spine.js'
+import { DEFAULT_EXPRESSIONS, castKeysOf, declaredPageSizes, faceDefaultsFor, mergeExpressions, reportDeclaredSize, resolveExpression, setPageTextures } from '../../web/static/gal-spine.js'
 import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
 import { MAX_THUMBS, buildSourceIndex, dedupeCap, fillKey, isVideoPath, segmentRegExp, subjectKey } from '../../web/library/gal/thumbs.mjs'
 import { createFrameCache } from '../../web/library/gal/video-thumb.mjs'
@@ -888,6 +888,13 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
   reportDeclaredSize(tex, sizes.get('a.png'))
   reportDeclaredSize(same, [64, 128])
   check('spine atlas：读出每页声明尺寸；贴图实际更小时 getImage() 报声明尺寸，一致时不动', sizes.get('a.png')?.join() === '4096,4096' && sizes.get('b.png')?.join() === '2048,1024' && tex.getImage().width === 4096 && tex.getImage().height === 4096 && same.getImage === origSame)
+  // 4.x 图集（TSK：atlas 声明 1513×1896，PNG 1024×2048）：每页都按声明尺寸报，网格 UV 才对
+  {
+    const set = []
+    const fakeAtlas = { pages: [{ name: 'p0.png', width: 1513, height: 1896, setTexture: (t) => set.push(t) }, { name: 'p1.png', width: 64, height: 64, setTexture: (t) => set.push(t) }] }
+    setPageTextures(fakeAtlas, (name) => ({ name, getImage: () => ({ width: name === 'p0.png' ? 1024 : 64, height: name === 'p0.png' ? 2048 : 64 }) }))
+    check('spine 4.x 图集：setPageTextures 每页 getImage() 报声明尺寸（1024×2048 的 PNG → 1513×1896），一致的页不动', set.length === 2 && set[0].getImage().width === 1513 && set[0].getImage().height === 1896 && set[1].getImage().width === 64, J(set.map((t) => t.getImage())))
+  }
   // 虚拟目录（config.views）：来源是子目录的（monmusu 总览）/ 来源是 parent 自己且独占的（minashigo 分类）
   {
     const root = path.join(work, 'views')
