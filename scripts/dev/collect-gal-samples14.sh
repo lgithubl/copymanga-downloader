@@ -2,13 +2,19 @@
 # 第十四轮样本（补第十三轮的缺口；cp 关键脚本 / 查看器 JS，文本脱敏，最后打成 tar.gz）：
 #   A Kamihime：游戏自己的 Ren'Py 脚本（script.rpy / Zoomable.rpy / screens.rpy / options.rpy，里面有 film + talk 剧情怎么播）+
 #      「*_harem-character_script.json」（film 剧情）所对应的资源目录的文件清单（名字 / 大小 / 图片宽高）+ 每个标题目录下的全部文件
-#   B Girls Creation：在 BASE 下找名叫 chara_0032_r18_1 的场景目录（第十三轮只在查看器目录里找，没找到）：脚本 / 骨骼 / atlas / 文件清单
-#   C 在 BASE 下找带 asyncmoveobject / subimage / cgmode 字样的查看器文件（hmr_40101123 那种 Utage 风格脚本用的是另一个查看器），原样（脱敏）复制
+#   B Girls Creation：在游戏目录（GC / AKU / FRUITS，只在这几个目录里找，不扫 BASE）里找名叫 chara_0032_r18_1 的场景目录：脚本 / 骨骼 / atlas / 文件清单
+#   C 在这几个游戏目录里找带 asyncmoveobject / subimage / cgmode 字样的文件（hmr_40101123 那种 Utage 风格脚本的播放代码），原样（脱敏）复制；不进 scenes 目录
 # 输出 ./gal-samples14.tar.gz（默认），发给我。
-#   用法：BASE=/你的/游戏/父目录 bash collect-gal-samples14.sh（个别目录用变量覆盖：KAMIHIME=）
+#   用法：BASE=/你的/游戏/父目录 bash collect-gal-samples14.sh（个别目录用变量覆盖：KAMIHIME= GC= AKU= FRUITS=；要多扫别的游戏目录就 EXTRA="目录1:目录2"）
 #   只读原目录；不复制音频、视频、图片（只列文件名 / 大小 / 图片宽高）；文本里连续 3 个以上的中日文字符会被替换成 <N字>（目录名、文件名不屏蔽）。单个文件超过 3MB 只取前 3MB。
 BASE="${BASE:-.}"
 : "${KAMIHIME:=$BASE/Kamihime_Player- 1.0}"
+: "${AKU:=$BASE/Aku No Onna Kanbu - Perigee New Moon Viewer}"
+: "${FRUITS:=$BASE/Fruits Fulcute!}"
+if [ -z "$GC" ]; then
+  GC="$BASE/Girls Creation"
+  [ -d "$GC" ] || GC="$(find "$BASE" -maxdepth 3 -name 'Girls Creation R Viewer.exe' 2>/dev/null | head -1 | xargs -r -d '\n' dirname)"
+fi
 OUTDIR="${OUTDIR:-$PWD}"
 PY="$(command -v python3 || command -v python)"
 [ -z "$PY" ] && { echo "需要 python3"; exit 1; }
@@ -108,6 +114,11 @@ elif mode == 'grep':   # 带关键字的文本文件（查看器 js / html）
 PYEOF
 echo "收集时间：$(date '+%F %T')    BASE=$BASE" > "$STAGE/_info.txt"
 [ -d "$KAMIHIME" ] && { echo "== kamihime：$KAMIHIME"; "$PY" "$HELPER" kamihime "$KAMIHIME" "$STAGE/kamihime"; } || echo "(没找到目录：KAMIHIME = $KAMIHIME)"
-echo "== 在 $BASE 下找场景目录 chara_0032_r18_1"; "$PY" "$HELPER" findscene "$BASE" "$STAGE/gc_scene" chara_0032_r18_1
-echo "== 在 $BASE 下找带 asyncmoveobject / subimage / cgmode 的文件"; "$PY" "$HELPER" grep "$BASE" "$STAGE/utage_viewer" asyncmoveobject subimage cgmode
+IFS=':' read -r -a GAME_DIRS <<< "$GC:$AKU:$FRUITS:$EXTRA"
+for g in "${GAME_DIRS[@]}"; do
+  [ -n "$g" ] && [ -d "$g" ] || continue
+  tag="$(basename "$g" | tr -c 'A-Za-z0-9\n' '_')"
+  echo "== $g：找场景目录 chara_0032_r18_1"; "$PY" "$HELPER" findscene "$g" "$STAGE/gc_scene/$tag" chara_0032_r18_1
+  echo "== $g：找带 asyncmoveobject / subimage / cgmode 的文件"; "$PY" "$HELPER" grep "$g" "$STAGE/utage_viewer/$tag" asyncmoveobject subimage cgmode
+done
 tar -C "$STAGE" -czf "$OUT" . && echo "完成：$OUT（$(du -h "$OUT" | cut -f1)，$(tar -tzf "$OUT" | wc -l) 项）——把这个文件发给我"
