@@ -1073,7 +1073,14 @@ export const LAYOUTS = {
     // groups：按脚本编号的形状分七类（gal-samples12 的 7290 个脚本全部分到了，没有剩下的）：1<6 位角色编号><2 位序号>[N|X…] = 角色剧情（941 张卡）；6<5 位><3 位>[字母] = 6 开头的角色（7 张）；<7 位>[E|N|S] = 主线章节（265 张，难度后缀的几个合成一张）；<4 位><2 位> = 6 位编号（2 张）；ev<活动号>_<段>_<序号>[N|X] = 活动（163 张）；ex<号>_<序号> = 番外；audition* = 试镜（1 张）。卡片标题 = 分组键；名称表 data/resource.json 是加密的，读不了——以后有了名字表在 labels 里加 { 分组键: 名字 } 即可
     // 缩略图（dir 相对资源根 = data/）：脚本 <9 位>.txt ↔ image/episode/story/<9 位>.png（已验证：gal-samples9，5321 个脚本里 1815 个有对应图）；角色头像：脚本名 [1:7] = 6 位角色编号（已验证和 spine/character/<6 位> 一致），
     // 图和编号的对应只验证了「同样是 6 位编号」（猜的）；脚本卡片 = 本集图在前、头像接在后面；角色分组卡片（键 = 6 位编号）= icon → deck → profile → stand
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [{ parent: '.', pattern: '^1(\\d{6})\\d{2}[A-Z]?$' }, { parent: '.', pattern: '^(6\\d{5})\\d{3}[A-Z]?$' }, { parent: '.', pattern: '^(\\d{7})[A-Z]?$' }, { parent: '.', pattern: '^(\\d{4})\\d{2}[A-Z]?$' }, { parent: '.', pattern: '^(ev\\d+)_\\d+_\\d+[A-Z]?$' }, { parent: '.', pattern: '^(ex\\d+)_\\d+$' }, { parent: '.', pattern: '^(audition)\\d*(?:_.*)?$' }], dirThumbs: [], scriptThumbs: [], thumbSources: [
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [
+        { parent: '.', as: 'chars', label: '人物剧情', match: String.raw`^(?:1|6)\d{8}[A-Z]?$`, exclusive: true },
+        { parent: '.', as: 'main', label: '主线', match: String.raw`^\d{6,7}[A-Z]?$`, exclusive: true },
+        { parent: '.', as: 'events', label: '活动', match: String.raw`^ev\d+_`, exclusive: true },
+        { parent: '.', as: 'extras', label: '番外', match: String.raw`^ex\d+_`, exclusive: true },
+        { parent: '.', as: 'audition', label: '试镜', match: String.raw`^audition`, exclusive: true },
+      ],
+      groups: [{ parent: 'chars', pattern: String.raw`^1(\d{6})\d{2}[A-Z]?$` }, { parent: 'chars', pattern: String.raw`^(6\d{5})\d{3}[A-Z]?$` }, { parent: 'main', pattern: String.raw`^(\d{7})[A-Z]?$` }, { parent: 'main', pattern: String.raw`^(\d{4})\d{2}[A-Z]?$` }, { parent: 'events', pattern: String.raw`^(ev\d+)_\d+_\d+[A-Z]?$` }, { parent: 'extras', pattern: String.raw`^(ex\d+)_\d+$` }, { parent: 'audition', pattern: String.raw`^(audition)\d*(?:_.*)?$` }], dirThumbs: [], scriptThumbs: [], thumbSources: [
         { dir: 'image/episode/story', match: String.raw`^(\d{9})\.png$`, key: '{1}', for: 'script', forKey: '{stem}' },
         { dir: 'image/character/icon', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'script', forKey: '{stem:1:7}', limit: 1 },
         { dir: 'image/character/deck', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'script', forKey: '{stem:1:7}', limit: 1 },
@@ -1231,7 +1238,7 @@ export const LAYOUTS = {
     bases: ['', 'game'], searchDepth: 6,
     anchors: ['dmm/raw_scenario'], siblings: [], markers: ['dmm/assets'],   // 没声明：要求有 assets 和至少一个 .ks（detectKamihime）
     scriptRoots: [{ id: 'ks', dir: 'dmm/raw_scenario', label: '日文' }],
-    resourceRoots: ['dmm/assets'],
+    resourceRoots: ['dmm/assets', 'dmm/portrait'],   // 第二个根：角色头像（目录卡片的缩略图，tyrano-ks 的 catalog 按目录名找）
     adapters: ['tyrano-ks'],
     adapterOptions: { 'tyrano-ks': { root: { path: ['dmm'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config

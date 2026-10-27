@@ -74,7 +74,7 @@ export function sniff(text) {
 
 // ---------- 上下文：assets 文件索引 + 每个剧情 json 里的 resource_directory / 标题 ----------
 export const contextFiles = () => []
-export const contextDirs = (options) => [joinPath(rootOf(options), 'assets'), joinPath(rootOf(options), 'raw_scenario')]
+export const contextDirs = (options) => [joinPath(rootOf(options), 'assets'), joinPath(rootOf(options), 'raw_scenario'), joinPath(rootOf(options), 'portrait')]
 export const contextTextFilter = (options) => {
   const prefix = `${joinPath(rootOf(options), 'raw_scenario')}/`
   return (rel) => rel.startsWith(prefix) && /\.json$/i.test(rel)
@@ -195,6 +195,8 @@ export function prepare({ options, texts, files, toResourcePath }) {
   const stems = new Map()       // <stem><扩展名>（去掉 -<sha1>）→ 资源路径
   const stemsAny = new Map()    // <stem>（不要扩展名）→ 资源路径
   const rdFiles = new Map()     // <resource_directory>/<文件名> → 资源路径
+  const portraitDir = `${joinPath(rootOf(options), 'portrait')}/`
+  const portraits = new Map()   // 角色头像：<portrait/ 下的文件名，无扩展名> → 资源路径（目录卡片的缩略图，按目录名找）
   const scripts = []            // raw_scenario 下的 .ks（相对媒体目录）
   for (const rel of files || []) {
     if (rel.startsWith(assets)) {
@@ -209,11 +211,14 @@ export function prepare({ options, texts, files, toResourcePath }) {
           if (!stems.has(name)) stems.set(name, toRes(rel))
         }
       } else if (!rdFiles.has(`${rest.slice(0, slash)}/${rest.slice(rest.lastIndexOf('/') + 1)}`)) rdFiles.set(`${rest.slice(0, slash)}/${rest.slice(rest.lastIndexOf('/') + 1)}`, toRes(rel))
+    } else if (rel.startsWith(portraitDir) && /\.(?:png|jpe?g|webp)$/i.test(rel) && !rel.slice(portraitDir.length).includes('/')) {
+      const name = rel.slice(portraitDir.length).replace(/\.[^.]+$/, '')
+      if (!portraits.has(name)) portraits.set(name, toRes(rel))
     } else if (rel.startsWith(scenarioDir) && /(?:\.ks|_script\.json)$/i.test(rel)) scripts.push(rel)   // .ks = 开场 / 对话；_script.json = 后面的 H 场景（胶片剧情）
   }
   const meta = new Map()   // 剧情键 → { rd, title, r18, summary }
   for (const [rel, text] of Object.entries(texts || {})) if (rel.startsWith(scenarioDir) && !/_script\.json$/i.test(rel)) meta.set(scriptKey(rel, st.keySegments), readMeta(text, st.keyField))
-  return { flat, stems, stemsAny, rdFiles, scripts, meta, scenarioDir, keySegments: st.keySegments, hash: st.hash, hasIndex: Boolean(files?.length) }
+  return { flat, stems, stemsAny, rdFiles, scripts, portraits, meta, scenarioDir, keySegments: st.keySegments, hash: st.hash, hasIndex: Boolean(files?.length) }
 }
 
 // 内存索引的查找器（ctx 重建 / config.resourceResolve 变了就换新的）
@@ -236,6 +241,13 @@ export function catalog(ctx) {
   if (!catalogCache.has(ctx)) catalogCache.set(ctx, buildCatalog(ctx))
   return catalogCache.get(ctx)
 }
+// 角色目录名（[愛運ぶ天使]サマエル / ソル[神化覚醒] / 名字）→ portrait/ 里的头像：名字原样 → 去掉开头的 [称号] → 去掉结尾的 [称号] → 两头都去掉（gal-samples16：348 个目录里 303 个能对上）
+function portraitOf(ctx, name) {
+  if (!ctx.portraits?.size) return ''
+  const stripped = name.replace(/^\[[^\]]*\]/, '')
+  for (const candidate of [name, stripped, name.replace(/\[[^\]]*\]$/, ''), stripped.replace(/\[[^\]]*\]$/, '')]) if (candidate && ctx.portraits.has(candidate)) return ctx.portraits.get(candidate)
+  return ''
+}
 function buildCatalog(ctx) {
   const root = { children: [] }
   const dirs = new Map()   // 目录 id → 节点
@@ -247,7 +259,12 @@ function buildCatalog(ctx) {
     for (const part of parts) {
       id = id ? `${id}/${part}` : part
       let node = dirs.get(id)
-      if (!node) { node = { id, title: part, children: [] }; dirs.set(id, node); holder.children.push(node) }
+      if (!node) {
+        node = { id, title: part, children: [] }
+        const portrait = portraitOf(ctx, part)
+        if (portrait) node.thumb = portrait
+        dirs.set(id, node); holder.children.push(node)
+      }
       holder = node
     }
     const info = ctx.meta.get(scriptKey(rel, ctx.keySegments))

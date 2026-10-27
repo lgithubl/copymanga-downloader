@@ -5112,31 +5112,31 @@
    },
    "groups": [
     {
-     "parent": ".",
+     "parent": "chars",
      "pattern": "^1(\\d{6})\\d{2}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "chars",
      "pattern": "^(6\\d{5})\\d{3}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "main",
      "pattern": "^(\\d{7})[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "main",
      "pattern": "^(\\d{4})\\d{2}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "events",
      "pattern": "^(ev\\d+)_\\d+_\\d+[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "extras",
      "pattern": "^(ex\\d+)_\\d+$"
     },
     {
-     "parent": ".",
+     "parent": "audition",
      "pattern": "^(audition)\\d*(?:_.*)?$"
     }
    ],
@@ -5220,7 +5220,43 @@
     }
    ],
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "人物剧情",
+     "match": "^(?:1|6)\\d{8}[A-Z]?$",
+     "parent": "."
+    },
+    {
+     "as": "main",
+     "exclusive": true,
+     "label": "主线",
+     "match": "^\\d{6,7}[A-Z]?$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "^ev\\d+_",
+     "parent": "."
+    },
+    {
+     "as": "extras",
+     "exclusive": true,
+     "label": "番外",
+     "match": "^ex\\d+_",
+     "parent": "."
+    },
+    {
+     "as": "audition",
+     "exclusive": true,
+     "label": "试镜",
+     "match": "^audition",
+     "parent": "."
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: minashigo_r",
@@ -5245,31 +5281,31 @@
    },
    "groups": [
     {
-     "parent": ".",
+     "parent": "chars",
      "pattern": "^1(\\d{6})\\d{2}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "chars",
      "pattern": "^(6\\d{5})\\d{3}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "main",
      "pattern": "^(\\d{7})[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "main",
      "pattern": "^(\\d{4})\\d{2}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "events",
      "pattern": "^(ev\\d+)_\\d+_\\d+[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "extras",
      "pattern": "^(ex\\d+)_\\d+$"
     },
     {
-     "parent": ".",
+     "parent": "audition",
      "pattern": "^(audition)\\d*(?:_.*)?$"
     }
    ],
@@ -5353,7 +5389,43 @@
     }
    ],
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "人物剧情",
+     "match": "^(?:1|6)\\d{8}[A-Z]?$",
+     "parent": "."
+    },
+    {
+     "as": "main",
+     "exclusive": true,
+     "label": "主线",
+     "match": "^\\d{6,7}[A-Z]?$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "^ev\\d+_",
+     "parent": "."
+    },
+    {
+     "as": "extras",
+     "exclusive": true,
+     "label": "番外",
+     "match": "^ex\\d+_",
+     "parent": "."
+    },
+    {
+     "as": "audition",
+     "exclusive": true,
+     "label": "试镜",
+     "match": "^audition",
+     "parent": "."
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: minashigo_r",
@@ -5378,31 +5450,31 @@
    },
    "groups": [
     {
-     "parent": ".",
+     "parent": "chars",
      "pattern": "^1(\\d{6})\\d{2}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "chars",
      "pattern": "^(6\\d{5})\\d{3}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "main",
      "pattern": "^(\\d{7})[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "main",
      "pattern": "^(\\d{4})\\d{2}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "events",
      "pattern": "^(ev\\d+)_\\d+_\\d+[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "extras",
      "pattern": "^(ex\\d+)_\\d+$"
     },
     {
-     "parent": ".",
+     "parent": "audition",
      "pattern": "^(audition)\\d*(?:_.*)?$"
     }
    ],
@@ -5486,7 +5558,43 @@
     }
    ],
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "人物剧情",
+     "match": "^(?:1|6)\\d{8}[A-Z]?$",
+     "parent": "."
+    },
+    {
+     "as": "main",
+     "exclusive": true,
+     "label": "主线",
+     "match": "^\\d{6,7}[A-Z]?$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "^ev\\d+_",
+     "parent": "."
+    },
+    {
+     "as": "extras",
+     "exclusive": true,
+     "label": "番外",
+     "match": "^ex\\d+_",
+     "parent": "."
+    },
+    {
+     "as": "audition",
+     "exclusive": true,
+     "label": "试镜",
+     "match": "^audition",
+     "parent": "."
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: minashigo_r",
@@ -5511,31 +5619,31 @@
    },
    "groups": [
     {
-     "parent": ".",
+     "parent": "chars",
      "pattern": "^1(\\d{6})\\d{2}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "chars",
      "pattern": "^(6\\d{5})\\d{3}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "main",
      "pattern": "^(\\d{7})[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "main",
      "pattern": "^(\\d{4})\\d{2}[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "events",
      "pattern": "^(ev\\d+)_\\d+_\\d+[A-Z]?$"
     },
     {
-     "parent": ".",
+     "parent": "extras",
      "pattern": "^(ex\\d+)_\\d+$"
     },
     {
-     "parent": ".",
+     "parent": "audition",
      "pattern": "^(audition)\\d*(?:_.*)?$"
     }
    ],
@@ -5619,7 +5727,43 @@
     }
    ],
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "人物剧情",
+     "match": "^(?:1|6)\\d{8}[A-Z]?$",
+     "parent": "."
+    },
+    {
+     "as": "main",
+     "exclusive": true,
+     "label": "主线",
+     "match": "^\\d{6,7}[A-Z]?$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "^ev\\d+_",
+     "parent": "."
+    },
+    {
+     "as": "extras",
+     "exclusive": true,
+     "label": "番外",
+     "match": "^ex\\d+_",
+     "parent": "."
+    },
+    {
+     "as": "audition",
+     "exclusive": true,
+     "label": "试镜",
+     "match": "^audition",
+     "parent": "."
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: minashigo_r",

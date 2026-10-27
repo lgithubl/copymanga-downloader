@@ -420,11 +420,41 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     ? { type: 'dir', id: child.id, title: child.title, subtitle: child.subtitle ?? `${child.children.length} 项`, thumb: child.thumb || '', thumbs: child.thumb ? [child.thumb] : [], ...(child.thumb ? {} : { thumbWhy: ['适配器目录（catalog）没有给缩略图'] }), badge: child.badge || '', node: virtualNodeId(child.id, 1) }
     : { type: 'script', id: child.script, title: child.title, subtitle: child.subtitle || '', thumb: child.thumb || '', thumbs: child.thumb ? [child.thumb] : [], ...(child.thumb ? {} : { thumbWhy: ['适配器目录（catalog）没有给缩略图'] }), badge: child.badge || '', node: idOf(defaultSet, 'script', child.script) })
 
+  // 适配器的目录（catalog）节点：适配器自己给了 thumb 就用它；没给的，目录卡片走 thumbSources / dirThumbs 规则（名字 = 卡片标题），
+  // 脚本卡片走和文件系统列表同一套（scriptInfo：规则 → 兜底：脚本里的 CG / 立绘 / 背景，topUp），以前这两种卡片在 catalog 里一律没图。
+  // 并发限制 6：每个脚本要解析一次（scriptInfo 按文件 mtime 缓存）；路径带 :: 的（一个文件装很多场景）不是真文件，跳过。
+  async function enrichCatalogItems(children, holder) {
+    const out = new Array(children.length)
+    let next = 0
+    const work = async () => {
+      while (next < children.length) {
+        const i = next++
+        const child = children[i]
+        const item = catalogItem(child)
+        out[i] = item
+        if (item.thumb) continue
+        try {
+          if (child.children) {
+            const why = []
+            const thumbs = [...(await thumbEngine.forDir({ name: String(child.title || ''), parentName: String(holder?.title || '') }, { why })).values()]
+            if (thumbs.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: thumbs[0], thumbs } } else if (why.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }
+          } else if (child.script && !child.script.includes('::')) {
+            const info = await scriptInfo(defaultSet, child.script)
+            if (info.thumbs.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
+          }
+        } catch { /* 取不到图就保持适配器给的样子（没有图） */ }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(6, children.length) }, work))
+    return out
+  }
+
   async function catalogNode(catalog, id, page, view) {
     const holder = id ? catalog.byId.get(id) : catalog.tree
     if (!holder?.children) throw fail('目录不存在', 404)
     const paged = await pageOfView(holder.children, view, page, (child) => ({ title: child.title, extra: `${child.subtitle || ''} ${child.script ? stemOf(child.script) : child.id}` }))
     const parentId = id ? catalog.parentOfId.get(id) : null
+    const items = await enrichCatalogItems(paged.slice, holder)
     return {
       node: {
         id: id ? virtualNodeId(id, paged.current, view) : dirNodeId(defaultSet, '', paged.current, view),
@@ -440,7 +470,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         page: paged.current,
         pageCount: paged.pageCount,
         total: paged.total,
-        items: paged.slice.map(catalogItem),
+        items,
         ...(holder.text ? { text: holder.text } : {}),
         ...(holder.related?.length ? { related: holder.related.map((rel) => ({ title: rel.title, node: virtualNodeId(rel.id, 1) })) } : {}),
         ...viewInfo(view, paged, id ? virtualNodeId(id, 1) : ''),

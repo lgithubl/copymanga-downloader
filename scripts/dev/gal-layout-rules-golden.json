@@ -3186,7 +3186,8 @@
     "screenWidth": 1280,
     "selection": {
      "adjacentGroups": true,
-     "groupSuffix": "-\\d+$"
+     "groupSuffix": "-\\d+$",
+     "singleAsText": true
     },
     "slotPrefix": "Chara",
     "slots": {

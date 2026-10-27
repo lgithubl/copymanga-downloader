@@ -53,6 +53,7 @@ export function collectFallbackImages(scene, options = {}) {
       const flagged = command.cg === true || command.still === true || ['cg', 'still', 'event'].includes(command.kind)
       switch (command.op) {
         case 'bg':
+          if (command.film) break   // 胶片背景（Kamihime：整张条带 / 转了 90° 存的图）不能直接当缩略图用
           if (command.over) { add('cg', command.over); add('cg', command.src) }   // EV：over 是图 2（前景图），src 是底图；都算事件图
           else if (flagged) add('cg', command.src)
           else add('bg', command.src)

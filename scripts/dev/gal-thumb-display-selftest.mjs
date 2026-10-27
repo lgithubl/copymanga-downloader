@@ -94,5 +94,38 @@ registerGalAdapter({ id: 'test-topup', label: '测试：JSON 步骤', sniff: (te
   check('节点带 thumbCover / thumbHover（规整后的值）；旧 thumbMode: first → thumbCover first + thumbHover.enabled false；默认 random / enabled', cfg.node.thumbCover === 'last' && J(cfg.node.thumbHover) === J({ enabled: true, count: 3, order: 'sequential', intervalMs: [300, 500] }) && legacy.node.thumbCover === 'first' && legacy.node.thumbHover.enabled === false && legacy.node.thumbMode === 'first' && (await run({})).node.thumbCover === 'random', J([cfg.node.thumbCover, legacy.node.thumbHover]))
 }
 
+// ================= 5. 适配器目录（catalog）里的卡片也走规则 + 兜底 =================
+{
+  for (const f of ['room1.png', 'room2.png', 'dir_A.png', 'dir_A2.png']) await mk(`resources/cat/img/${f}`)
+  const steps = [[{ op: 'bg', src: 'cat/img/room1.png' }], [{ op: 'bg', src: 'cat/img/room2.png' }]]
+  for (const stem of ['s1', 's2']) await mk(`resources/cat/s/${stem}.txt`, `#CT${J(steps)}`)
+  registerGalAdapter({
+    id: 'test-catalog', label: '测试：目录', prepare: () => ({ ok: 1 }), sniff: (text) => text.startsWith('#CT'), parse: (text) => ({ steps: JSON.parse(text.slice(3)).map((commands, index) => ({ index, commands })), stats: {} }),
+    catalog: () => ({ children: [
+      { id: 'dirA', title: 'A', children: [{ id: 'leaf1', title: 'one', script: 'resources/cat/s/s1.txt' }] },
+      { id: 'dirB', title: 'B', children: [{ id: 'leaf2', title: 'two', script: 'resources/cat/s/s2.txt', thumb: 'cat/img/room2.png' }] },
+      { id: 'leaf3', title: 'three', script: 'resources/cat/s/s1.txt' },
+    ] }),
+  })
+  const run = async (extra = {}) => {
+    const provider = createBrowseProvider({ mediaDir: media, adapters: ['test-catalog'], resolveAsset, config: { scriptRoots: [{ id: 'text', dir: 'resources/cat/s' }], scriptThumbs: [], ...extra } })
+    return (await provider.getNode('')).node.items
+  }
+  const items = await run({ thumbSources: [{ dir: 'cat/img', match: '^dir_(\\w)\\d?\\.png$', key: '{1}', for: 'dir', forKey: '{name}' }] })
+  const byTitle = Object.fromEntries(items.map((i) => [i.title, i]))
+  check('catalog 目录卡片（适配器没给 thumb）：thumbSources 规则按卡片标题（A → dir_A.png、dir_A2.png）取图，不再没图；没有命中规则的目录（B）仍没有', J(byTitle.A.thumbs.map((p) => p.replace('cat/img/', ''))) === J(['dir_A.png', 'dir_A2.png']) && byTitle.B.thumbs.length === 0 && Array.isArray(byTitle.B.thumbWhy), J(items))
+  const leaves = await run({})
+  const leafOne = (await createBrowseProvider({ mediaDir: media, adapters: ['test-catalog'], resolveAsset, config: { scriptRoots: [{ id: 'text', dir: 'resources/cat/s' }], scriptThumbs: [] } }).getNode('')).node.items.find((i) => i.title === 'three')
+  check('catalog 脚本卡片（适配器没给 thumb）：走和文件系统列表一样的兜底（脚本里的背景图）；适配器自己给了 thumb 的（two）原样保留', J(leafOne.thumbs.map((p) => p.replace('cat/img/', ''))) === J(['room1.png', 'room2.png']) && leafOne.thumb === leafOne.thumbs[0] && !('thumbWhy' in leafOne), J(leafOne))
+  // 胶片背景（bg.film）不当兜底封面（整张条带 / 转了 90° 存的图直接显示是错的）
+  {
+    const { collectFallbackImages } = await import('../../web/library/gal/fallback-thumbs.mjs')
+    const got = collectFallbackImages({ steps: [{ index: 0, commands: [{ op: 'bg', src: 'a/strip.jpg', film: { ratio: 1.40625, fps: 16, rotate: 90 } }] }, { index: 1, commands: [{ op: 'bg', src: 'a/room.png' }] }] }, normalizeGalConfig({}).thumbFallback)
+    check('兜底封面：带 film 的 bg 跳过，只取普通背景（room.png）', J(got.images.map((i) => i.src)) === J(['a/room.png']), J(got.images))
+  }
+  const noFallback = await run({ thumbFallback: { enabled: false } })
+  check('thumbFallback.enabled = false：脚本卡片退回「脚本第一张背景图」（旧逻辑，仍然有图）', noFallback.find((i) => i.title === 'three').thumbs.length === 1, J(noFallback))
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

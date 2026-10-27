@@ -70,6 +70,9 @@ const rels = [`game/dmm/assets/${RD}/black.jpg`, `game/dmm/assets/${RD}/single.j
   check('film.enabled = false：记 raw film-script，只有一个空步（不炸）', off.stats.raw['film-script'] === 1 && off.steps.length === 1)
   const tuned = parse(J(FILM), ctx, { rel: filmScript, options: { film: { frameRatio: 2, autoFrames: 8, transitions: { whiteout2s: { op: 'fade', to: 'white', seconds: 1 } } } } })
   check('film 参数可调：frameRatio 2、autoFrames 8（wait = 8 / 8 + 1 = 2 秒）、transition 表换成 fade white 1 秒', tuned.steps[0].commands.find((c) => c.op === 'bg').film.ratio === 2 && tuned.steps[4].commands.some((c) => c.op === 'fade' && c.to === 'white') && tuned.steps[4].commands.some((c) => c.op === 'wait' && c.seconds === 2), J(tuned.steps[4]))
+  const withPortrait = prepare({ options: { root: 'dmm' }, texts, files: [...rels.map(strip), 'dmm/portrait/テスト.png', 'dmm/portrait/other.png'], toResourcePath: (r) => r.replace(/^dmm\/portrait\//, '') })
+  const folder = catalog(withPortrait).children[0].children[0]
+  check('catalog 角色目录卡片：目录名 テスト[x] 去掉 [称号] → portrait/テスト.png 当缩略图（资源根里是 テスト.png）；对不上头像的目录不给 thumb', folder.thumb === 'テスト.png' && !catalog(ctx).children[0].children[0].thumb, J([folder.thumb, folder.title]))
   check('不是胶片的 .ks 文本照旧走标签解析（开场：1 步，有台词）', parse(INTRO, ctx, { rel: leaves[0].script }).steps.length === 1)
 }
 
