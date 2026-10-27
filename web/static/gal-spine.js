@@ -730,6 +730,13 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         py = height / 2 + v.zoom * (py - (1 - v.cy) * height)
         scale *= v.zoom
       }
+    } else if (inst.spec.place && typeof inst.spec.place === 'object') {
+      // 精确摆放（TSK：原版代码的数值）：舞台 stage（默认 1280×720）、原点在画面中心、y 向上；骨骼原点落在 (place.x, place.y)，一个骨架单位 = place.scale 个舞台像素
+      const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
+      const unit = width / stage
+      scale = unit * (Number(inst.spec.place.scale) > 0 ? Number(inst.spec.place.scale) : 1)
+      px = width / 2 + (Number(inst.spec.place.x) || 0) * unit
+      py = height / 2 + (Number(inst.spec.place.y) || 0) * unit
     } else {
       scale = (height * 0.95) / h
       px = (inst.spec.x ?? 0.5) * width - (x + w / 2) * scale

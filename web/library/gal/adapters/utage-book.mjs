@@ -189,7 +189,7 @@ export function readMaster(text, strip = DEFAULT_OPTIONS.paths.skeletonSuffixStr
         const key = row.get('CharacterName')
         if (!key || chars.has(key)) continue
         const file = cleanPath(row.get('FileName'))
-        chars.set(key, { name: row.get('NameText'), file, ...splitFile(file, strip), type: row.get('FileType') })
+        chars.set(key, { name: row.get('NameText'), file, ...splitFile(file, strip), type: row.get('FileType'), posX: Number(row.get('X')) || 0, posY: Number(row.get('Y')) || 0, scale: Number(row.get('Scale')) > 0 ? Number(row.get('Scale')) : 1 })
       }
     } else if (kind === 'Texture') {
       for (const row of readTable(setting)) { const label = row.get('Label'); if (label && !textures.has(label)) textures.set(label, { type: row.get('Type'), file: cleanPath(row.get('FileName')) }) }
@@ -354,7 +354,7 @@ export function parse(text, ctx = null, meta = {}) {
     for (const pair of paths.characters) {
       const guess = expandTemplate(pair?.skel, vars)[0]
       const skel = hasIndex ? lookup.find([pair?.skel], vars) : guess
-      if (skel) return { skel, atlas: expandTemplate(pair.atlas, vars)[0] || '' }
+      if (skel) return { skel, atlas: expandTemplate(pair.atlas, vars)[0] || '', master: { x: info.posX || 0, y: info.posY || 0, scale: info.scale > 0 ? info.scale : 1 } }
     }
     if (hasIndex) miss('character-file', `${vars.dir}/${vars.base}`)
     return null
@@ -428,8 +428,11 @@ export function parse(text, ctx = null, meta = {}) {
   let bgvoiceOn = false
   const snapshot = () => ({ stage: new Map([...stage].map(([slot, entry]) => [slot, { ...entry }])), slotOf: new Map(slotOf), stillId })
   const restore = (snap) => { stage = new Map([...snap.stage].map(([slot, entry]) => [slot, { ...entry }])); slotOf = new Map(snap.slotOf); stillId = snap.stillId }
+  // 原版（gal-samples21 反编译的 DialogueSystem.SetCharacterSpineAnimation）：Chara 的本地坐标 = (Master X + Arg4 偏移, Master Y − 130)，缩放 = Master Scale × 100，骨架单位 0.01；
+  // Characters 的 RectTransform 轴心在 (0.5, 1.7)，Chara1~4 都在轴心上，舞台 1280×720、原点在画面中心 → 骨架原点（y 向上）= (Master X + 偏移, Master Y − 10)，一个骨架单位 = Master Scale 个舞台像素
+  const placeOf = (entry) => ({ x: (entry.master?.x || 0) + (entry.x - o.standX.slotBase) * screenWidth, y: (entry.master?.y || 0) - 10, scale: entry.master?.scale || 1 })
   const standOp = (slot, entry, extra = {}) => ({
-    op: 'spine', slot, kind: 'chara', skel: entry.skel, atlas: entry.atlas, anim: entry.anim, loop: true, speed: 1, x: entry.x,
+    op: 'spine', slot, kind: 'chara', skel: entry.skel, atlas: entry.atlas, anim: entry.anim, loop: true, speed: 1, x: entry.x, place: placeOf(entry), stage: [screenWidth, Math.round(screenWidth * 9 / 16)],
     ...(entry.skin ? { skin: entry.skin } : {}), ...(entry.sub ? { sub: entry.sub } : {}), ...extra,
   })
   const slotName = (utageSlot) => { const mapped = Object.hasOwn(o.slots, utageSlot) ? o.slots[utageSlot] : utageSlot; return mapped ? String(mapped) : '' }
