@@ -74,8 +74,8 @@ if mode == 'rootinfo':   # 游戏根目录：顶层清单 + 小文本 / 脚本�
         depth = p[len(root):].count(os.sep)   # 1 = 根目录下的文件
         ext = os.path.splitext(p)[1].lower()
         code = ext in ('.py', '.bat', '.cmd', '.ps1', '.sh', '.md', '.js', '.html', '.htm')   # 脚本 / 说明：深度 ≤ 3
-        data = ext in ('.txt', '.json', '.xml', '.cfg', '.ini')                                # 数据 / 配置：只要根目录和下一层（别把几千个剧情 json 都拷进来）
-        if ((code and depth <= 3) or (data and depth <= 2)) and os.path.getsize(p) <= 300 * 1024 and not os.path.basename(p).startswith('._'):
+        data = ext in ('.txt', '.json', '.xml', '.cfg', '.ini')                                # 数据 / 配置：只要根目录一层（别把几千个剧情 json 都拷进来）
+        if ((code and depth <= 3) or (data and depth <= 1)) and os.path.getsize(p) <= 300 * 1024 and not os.path.basename(p).startswith('._'):
             if put(p, os.path.join(stage, 'files', rel(p))): n += 1
         if n >= 200: break
     print('  小文本 / 脚本 %d 个' % n)
