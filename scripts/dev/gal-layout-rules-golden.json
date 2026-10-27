@@ -1313,6 +1313,200 @@
    "walkFiles": 400000
   }
  },
+ "girlscreation282": {
+  "adapterOptions": {
+   "girlscreation-line": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "actors",
+     "crossfade": "bg"
+    },
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "crossfadeScale": "bgScale",
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "root": "",
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   },
+   "girlscreation-tag": {
+    "animation": {
+     "maxFrames": 600
+    },
+    "audioKinds": [
+     "bgm",
+     "se"
+    ],
+    "category": {
+     "other": "其他",
+     "re": "^[A-Za-z]+",
+     "unknownSpeaker": "（未识别）"
+    },
+    "categoryLabels": {},
+    "commands": {
+     "asyncjump": "hop",
+     "asyncmoveobject": "move",
+     "cgmode": "actors",
+     "crossfade": "bg"
+    },
+    "dialect": {
+     "headWindow": 8192,
+     "markers": {
+      "aku": [
+       "<GROUP>",
+       "<EV_DISPLAY>",
+       "<SPINE_ACTOR_DISPLAY>"
+      ],
+      "branch": [
+       "<LABEL>"
+      ],
+      "display": [
+       "<SPINE_ACTOR_DISPLAY>"
+      ]
+     },
+     "window": 200000
+    },
+    "dirs": {
+     "audio": "data/audio",
+     "scenes": "scenes",
+     "spine": "data/spine"
+    },
+    "line": {
+     "crossfadeScale": "bgScale",
+     "expressionPrefix": "ex_",
+     "imageIdRe": "^[a-z]{2,4}\\d+$",
+     "jumpAction": 1,
+     "moveBase": "offset",
+     "objectKind": "^character$"
+    },
+    "player": {
+     "names": [
+      "館長"
+     ]
+    },
+    "sample": {
+     "files": [
+      "/(?:script\\.txt|output_script\\.txt|script_original\\.txt|original_script\\.txt|originial_script\\.txt|h[ms]r_\\d+\\.txt)$"
+     ]
+    },
+    "sceneDirs": {
+     "animations": "animations",
+     "bgvoices": "bgvoices",
+     "images": "images",
+     "spines": "spines",
+     "videos": "videos",
+     "voices": "voices"
+    },
+    "scenes": {
+     "lineScript": "^h[ms]r_[^/]+\\.txt$",
+     "script": [
+      "script.txt",
+      "output_script.txt"
+     ],
+     "thumb": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    "speaker": {
+     "suffixRe": "（[^）]*）$"
+    },
+    "stand": {
+     "akuDirections": {
+      "CENTER": 0,
+      "LEFT": -1,
+      "RIGHT": 1
+     },
+     "akuOffset": 450,
+     "fruitsDim": 0.6
+    },
+    "titleLines": [
+     "^title,([^,\\r\\n]+),"
+    ]
+   }
+  },
+  "classify": [],
+  "limits": {
+   "sampleFiles": 20000,
+   "walkFiles": 400000
+  }
+ },
  "grenze": {
   "adapterOptions": {
    "grenze-xml": {

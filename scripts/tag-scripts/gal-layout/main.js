@@ -10,7 +10,7 @@
 //   1. LAYOUTS ——「游戏 id → 目录配置」的数据表（只有这一块是每个游戏固定的知识：目录在哪、脚本根 / 资源根是什么、适配器参数模板、分组 / 合并 / 缩略图规则…）。
 //      发现某个游戏的目录配置不对：改这张表（或者在选项 layouts 里按 id 覆盖某几个字段），上传新版本、重跑；不用改探测代码，更不用重建镜像。
 //      每个游戏除了目录配置，还写它的规则配置：ruleTables（写哪些适配器的全表）/ ruleOverrides（只对这个游戏改的子键）/ engine（classify / resourceResolve / indexSkip / limits / player）；每个游戏块的注释写明哪些是真实数据验证过的、哪些是猜的；pending = 等真实数据的占位（只是文档，不写进 config）。
-//      表里所有「列表」都是数组（哪怕现在只有一个元素），以后加候选不用改格式；别名（aster / jaxin / maid / aku / fruits → girlscreation，deepone → uviewer）用 extends，不拷贝。
+//      表里所有「列表」都是数组（哪怕现在只有一个元素），以后加候选不用改格式；别名（aster / jaxin / maid / aku / fruits / girlscreation282 → girlscreation，deepone → uviewer）用 extends，不拷贝。
 //   2. 布局引擎 —— 路径模式（* 通配 / 正则段）展开、按表里的候选位置直接 stat（命中就不搜索），都没命中才退回广度优先搜索；表项写坏了不会崩，记日志、退回内置的。
 //   3. generateTags —— 分发（config.game.id）、覆盖、写 config，以及「这次运行的改动情况」（和条目现有 config 逐字段对比）。
 //   4. 各游戏的探测函数 —— 只做依赖数据的事：数脚本、挑封面、从真实文件里认头像模板 / 菜单按钮图、生成分类节点、抽样判断。
@@ -1133,6 +1133,8 @@ export const LAYOUTS = {
   // Aku：角色摆放用原版 spine-widget 的 fitToCanvas（player.cameraMode: 'widget'，常数见 gal-spine.js；原版 preloader.js / spine-widget.js 核对过，gal-samples13）。engine 是整份替换，所以把 girlscreation 的 classify / limits 也写上
   aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu', engine: { classify: [], limits: { walkFiles: 400000, sampleFiles: 20000 }, player: { cameraMode: 'widget' } } },
   fruits: { extends: 'girlscreation', title: 'Fruits Fulcute!' },
+  // Girls Creation R Viewer 282寝：和 R 同一个查看器，但行式脚本有 54 个（R 里只有 3 个），单独一个 id 方便以后给它单独加规则
+  girlscreation282: { extends: 'girlscreation', title: 'Girls Creation R Viewer 282寝' },
 
   // ---- Unity 剧情查看器素材
   tenkeiprdx: {

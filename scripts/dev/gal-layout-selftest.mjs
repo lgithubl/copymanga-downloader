@@ -51,7 +51,7 @@ const CASES = [
   { name: 'legeclo', ids: ['legeclo'], build: buildLegecloFixture },
   { name: 'monmusu', ids: ['monmusu'], build: buildMonmusuFixture },
   { name: 'minashigo', ids: ['minashigo'], build: buildMinashigoFixture },
-  { name: 'girlscreation', ids: ['girlscreation', 'aster', 'jaxin', 'maid', 'aku', 'fruits'], build: buildGirlsCreationFixture },
+  { name: 'girlscreation', ids: ['girlscreation', 'girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits'], build: buildGirlsCreationFixture },
   { name: 'tenkeiprdx', ids: ['tenkeiprdx'], build: (d) => buildTenkeiFixture(d) },
   { name: 'tsk', ids: ['tsk'], build: buildTskFixture },
   { name: 'grenze', ids: ['grenze'], build: buildGrenzeFixture },
@@ -175,13 +175,13 @@ if (process.argv.includes('--update-golden')) {
 }
 
 
-const ALL_IDS = ['uviewer', 'deepone', 'legeclo', 'monmusu', 'angelic', 'minashigo', 'minashigo_r', 'girlscreation', 'aster', 'jaxin', 'maid', 'aku', 'fruits', 'tenkeiprdx', 'misttrain', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi']
+const ALL_IDS = ['uviewer', 'deepone', 'legeclo', 'monmusu', 'angelic', 'minashigo', 'minashigo_r', 'girlscreation', 'girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits', 'tenkeiprdx', 'misttrain', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi']
 const logText = (out) => (out.logs || []).join('\n')
 const withLayouts = (layouts) => ({ layouts })
 
-// ================= 表：21 个 id 全在、extends 都解析得到、所有列表字段都是数组 =================
+// ================= 表：22 个 id 全在、extends 都解析得到、所有列表字段都是数组 =================
 {
-  check('LAYOUTS 导出了、含全部 21 个 id（不多不少）', LAYOUTS && J(Object.keys(LAYOUTS).sort()) === J([...ALL_IDS].sort()), J(Object.keys(LAYOUTS || {})))
+  check('LAYOUTS 导出了、含全部 22 个 id（不多不少）', LAYOUTS && J(Object.keys(LAYOUTS).sort()) === J([...ALL_IDS].sort()), J(Object.keys(LAYOUTS || {})))
   const unresolved = []
   for (const id of ALL_IDS) {
     const problems = []
@@ -192,7 +192,7 @@ const withLayouts = (layouts) => ({ layouts })
   const dangling = Object.entries(LAYOUTS).filter(([, e]) => e.extends !== undefined && !(typeof e.extends === 'string' && e.extends in LAYOUTS)).map(([id]) => id)
   check('每个 extends 都指向表里存在的 id', !dangling.length, dangling.join())
   const aliases = Object.entries(LAYOUTS).filter(([, e]) => e.extends).map(([id, e]) => `${id}→${e.extends}`).sort()
-  check('别名：aster / jaxin / maid / aku / fruits → girlscreation，deepone → uviewer（用 extends，没有拷贝整份）', J(aliases) === J(['aku→girlscreation', 'aster→girlscreation', 'deepone→uviewer', 'fruits→girlscreation', 'jaxin→girlscreation', 'maid→girlscreation']) && Object.entries(LAYOUTS).filter(([, e]) => e.extends).every(([, e]) => Object.keys(e).filter((k) => k !== 'extends' && k !== 'title' && !(k === 'engine' && e === LAYOUTS.aku)).length === 0), aliases.join())   // 别名只改 title；唯一的例外是 aku 多一份 engine（player.cameraMode: 'widget'，原版 spine-widget 的摆放）
+  check('别名：aster / jaxin / maid / aku / fruits → girlscreation，deepone → uviewer（用 extends，没有拷贝整份）', J(aliases) === J(['aku→girlscreation', 'aster→girlscreation', 'deepone→uviewer', 'fruits→girlscreation', 'girlscreation282→girlscreation', 'jaxin→girlscreation', 'maid→girlscreation']) && Object.entries(LAYOUTS).filter(([, e]) => e.extends).every(([, e]) => Object.keys(e).filter((k) => k !== 'extends' && k !== 'title' && !(k === 'engine' && e === LAYOUTS.aku)).length === 0), aliases.join())   // 别名只改 title；唯一的例外是 aku 多一份 engine（player.cameraMode: 'widget'，原版 spine-widget 的摆放）
   const girls = mod.resolveLayout('girlscreation')
   const noAkuPlayer = (layout) => ({ ...layout, title: '', engine: { ...layout.engine, player: undefined } })
   check('别名解析出来的数据 = 父项的数据（只有 title 不同；aku 另有 engine.player.cameraMode = widget）', ALL_IDS.filter((id) => LAYOUTS[id].extends === 'girlscreation').every((id) => J(noAkuPlayer(mod.resolveLayout(id))) === J(noAkuPlayer(girls))) && J(mod.resolveLayout('aku').engine.player) === J({ cameraMode: 'widget' }) && !girls.engine.player)
@@ -316,7 +316,7 @@ const withLayouts = (layouts) => ({ layouts })
 // ================= 别名：共用 girlscreation 的数据，写回各自声明的 id =================
 {
   const base = await run(MEDIA.girlscreation.direct, { game: { id: 'girlscreation' } })
-  for (const id of ['aster', 'jaxin', 'maid', 'aku', 'fruits']) {
+  for (const id of ['girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits']) {
     const out = await run(MEDIA.girlscreation.direct, { game: { id, title: `T-${id}` } })
     const cfg = cfgOf(out)
     check(`别名 ${id}：数据和 girlscreation 一致（aku 多 player.cameraMode = widget），game.id 写回「${id}」（title 保留）、标签 Gal游戏: ${id}`, cfg?.game?.id === id && cfg.game.title === `T-${id}` && J(stable({ ...cfg, game: null, player: null })) === J(stable({ ...cfgOf(base), game: null, player: null })) && (id === 'aku' ? cfg.player?.cameraMode === 'widget' : !cfg.player?.cameraMode) && out.itemTags.includes(`Gal游戏: ${id}`) && out.details.kind === 'girlscreation', J(cfg?.game))

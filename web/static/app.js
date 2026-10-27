@@ -2439,6 +2439,7 @@ const GAL_PRESETS = {
   monmusu: { adapters: ['renpy-monmusu'], game: { id: 'monmusu', title: 'Monmusu' } },
   minashigo: { adapters: ['renpy-minashigo'], game: { id: 'minashigo', title: 'Minashigo' } },
   girlscreation: { adapters: ['girlscreation-tag'], game: { id: 'girlscreation', title: 'Girls Creation' } },
+  girlscreation282: { adapters: ['girlscreation-tag'], game: { id: 'girlscreation282', title: 'Girls Creation R Viewer 282寝' } },
   aster: { adapters: ['girlscreation-tag'], game: { id: 'aster', title: 'Angelica Aster' } },
   jaxin: { adapters: ['girlscreation-tag'], game: { id: 'jaxin', title: 'jaxin' } },
   maid: { adapters: ['girlscreation-tag'], game: { id: 'maid', title: 'maid' } },

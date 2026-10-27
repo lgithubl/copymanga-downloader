@@ -1637,6 +1637,96 @@
   },
   "replace": false
  },
+ "girlscreation|direct|girlscreation282": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "girlscreation282",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbFallback": {
+    "topUp": true
+   },
+   "thumbSources": [
+    {
+     "dir": "scenes/*",
+     "for": "script",
+     "forKey": "{parent}",
+     "key": "{dirname}",
+     "match": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    {
+     "dir": "scenes/*",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{dirname}",
+     "match": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    }
+   ],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: girlscreation282",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: girlscreation282"
+  ],
+  "details": {
+   "game": "girlscreation282",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
  "girlscreation|direct|aster": {
   "config": {
    "adapterOptions": {
@@ -2260,6 +2350,96 @@
   ],
   "details": {
    "game": "girlscreation",
+   "kind": "girlscreation",
+   "scripts": 4,
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "girlscreation|wrapped|girlscreation282": {
+  "config": {
+   "adapterOptions": {
+    "girlscreation-tag": {
+     "root": "girlscreation/package.nw"
+    }
+   },
+   "cover": "scenes/chmr_40101001/thumbnail.png",
+   "dirThumbs": [],
+   "game": {
+    "id": "girlscreation282",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "nodes": {
+    "cat1": {
+     "auto": true,
+     "catalog": "c/chmr"
+    },
+    "cat2": {
+     "auto": true,
+     "catalog": "c/chsr"
+    },
+    "home": {
+     "auto": true,
+     "children": [
+      "cat1",
+      "cat2"
+     ]
+    }
+   },
+   "resourceRoots": [
+    "girlscreation/package.nw"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 4,
+   "scriptExtensions": [
+    "txt"
+   ],
+   "scriptRoots": [
+    {
+     "dir": "girlscreation/package.nw/scenes",
+     "id": "scenes",
+     "label": "scenes"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbFallback": {
+    "topUp": true
+   },
+   "thumbSources": [
+    {
+     "dir": "scenes/*",
+     "for": "script",
+     "forKey": "{parent}",
+     "key": "{dirname}",
+     "match": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    },
+    {
+     "dir": "scenes/*",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{dirname}",
+     "match": "^thumbnail\\.(?:png|jpe?g|webp)$"
+    }
+   ],
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: girlscreation282",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: girlscreation282"
+  ],
+  "details": {
+   "game": "girlscreation282",
    "kind": "girlscreation",
    "scripts": 4,
    "cover": "scenes/chmr_40101001/thumbnail.png",
