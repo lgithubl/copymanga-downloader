@@ -18,7 +18,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -111,7 +111,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -515,7 +515,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -608,7 +608,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -719,6 +719,11 @@
      "sounds": [
       "{stem}/sounds/{i}{ext}"
      ]
+    },
+    "resourceId": {
+     "enabled": true,
+     "maxDigits": 6,
+     "minDigits": 4
     },
     "slotMap": {
      "animstart": {
@@ -939,7 +944,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -1032,7 +1037,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -1133,7 +1138,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -1226,7 +1231,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -1353,11 +1358,42 @@
      "左": "left"
     },
     "effects": {
-     "17": null,
-     "18": null,
-     "20": null,
-     "21": null,
-     "22": null,
+     "17": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.36,
+      "strength": 0.1
+     },
+     "18": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.36,
+      "strength": 0.1
+     },
+     "19": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.36,
+      "strength": 0.1
+     },
+     "20": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.36,
+      "strength": 0.1
+     },
+     "21": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.36,
+      "strength": 0.1
+     },
+     "22": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.36,
+      "strength": 0.1
+     },
      "エナジードレイン": null,
      "ダメージエフェクト": null,
      "ハンマー": null,
@@ -1434,10 +1470,19 @@
      "2": null,
      "3": null,
      "4": null,
-     "5": null,
+     "5": {
+      "at": "stand",
+      "op": "standOff",
+      "suppressStand": true
+     },
      "8": null,
      "9": null,
      "10": null,
+     "14": {
+      "at": "stand",
+      "op": "standOff",
+      "whenNoHero": true
+     },
      "マスク": null,
      "下から_全身": null,
      "右側現れ消え": null,
@@ -1456,7 +1501,8 @@
      ],
      "立ち絵全消え": {
       "at": "stand",
-      "op": "standOff"
+      "op": "standOff",
+      "suppressStand": true
      }
     },
     "picSize": {
@@ -1485,18 +1531,97 @@
      "split": "chains"
     },
     "screenEffects": {
-     "1": null,
-     "2": null,
-     "3": null,
-     "4": null,
-     "5": null,
-     "6": null,
-     "7": null,
-     "8": null,
-     "9": null,
-     "10": null,
-     "11": null,
-     "13": null,
+     "1": {
+      "at": "start",
+      "op": "fade",
+      "seconds": 1,
+      "to": "white"
+     },
+     "2": {
+      "color": "white",
+      "op": "wash",
+      "seconds": 1
+     },
+     "3": {
+      "at": "start",
+      "op": "fade",
+      "seconds": 1,
+      "to": "black"
+     },
+     "4": {
+      "op": "fade",
+      "seconds": 1,
+      "to": "clear"
+     },
+     "5": {
+      "color": "white",
+      "count": 1,
+      "op": "flash",
+      "seconds": 0.3
+     },
+     "6": {
+      "color": "white",
+      "count": 2,
+      "op": "flash",
+      "seconds": 0.3
+     },
+     "7": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.6,
+      "strength": 0.25
+     },
+     "8": {
+      "axis": "overall",
+      "op": "shake",
+      "seconds": 0.4,
+      "strength": 0.15
+     },
+     "9": {
+      "color": "white",
+      "op": "wash",
+      "seconds": 1
+     },
+     "10": {
+      "alpha": 0.22,
+      "color": [
+       112,
+       76,
+       40
+      ],
+      "op": "overlay",
+      "rect": [
+       0,
+       0,
+       1280,
+       720
+      ],
+      "slot": "screenfx"
+     },
+     "11": {
+      "op": "overlayOff",
+      "slot": "screenfx"
+     },
+     "12": {
+      "alpha": 0.45,
+      "color": [
+       128,
+       128,
+       128
+      ],
+      "op": "overlay",
+      "rect": [
+       0,
+       0,
+       1280,
+       720
+      ],
+      "slot": "screenfx"
+     },
+     "13": {
+      "op": "overlayOff",
+      "slot": "screenfx"
+     },
      "フラッシュ": {
       "color": "white",
       "count": 1,
@@ -1514,10 +1639,41 @@
       "op": "wash",
       "seconds": 1
      },
+     "回想OFF": {
+      "op": "overlayOff",
+      "slot": "screenfx"
+     },
+     "回想ON": {
+      "alpha": 0.22,
+      "color": [
+       112,
+       76,
+       40
+      ],
+      "op": "overlay",
+      "rect": [
+       0,
+       0,
+       1280,
+       720
+      ],
+      "slot": "screenfx"
+     },
+     "溶明_白幕": {
+      "color": "white",
+      "op": "wash",
+      "seconds": 1
+     },
      "溶明_黒幕": {
       "op": "fade",
       "seconds": 1,
       "to": "clear"
+     },
+     "溶暗_白幕": {
+      "at": "start",
+      "op": "fade",
+      "seconds": 1,
+      "to": "white"
      },
      "溶暗_黒幕": {
       "at": "start",
@@ -1582,7 +1738,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -1675,7 +1831,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -1782,6 +1938,7 @@
      "autoFrames": 16,
      "enabled": true,
      "frameRatio": 1.40625,
+     "rotate": 90,
      "transitions": {
       "whiteout2s": {
        "color": "white",
@@ -1968,7 +2125,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {
@@ -2061,7 +2218,7 @@
     "commands": {
      "asyncjump": "hop",
      "asyncmoveobject": "move",
-     "cgmode": "ui",
+     "cgmode": "actors",
      "crossfade": "bg"
     },
     "dialect": {

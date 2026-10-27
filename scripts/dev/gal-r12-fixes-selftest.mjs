@@ -69,5 +69,20 @@ const J = JSON.stringify
   check('ミナシゴノシゴトR：规则是数组（七条），不是单条', Array.isArray(LAYOUTS.minashigo_r.config.groups) && LAYOUTS.minashigo_r.config.groups.length === 7)
 }
 
+// ---- 3b. ぼくら：资源目录按数字 id 找（脚本名 <角色> 【标题】<id>，资源目录 <id> 【标题】<角色>）----
+{
+  const bk = await import('../../web/library/gal/adapters/bokusen-json.mjs')
+  const { compileBokusen } = await import('./make-bokusen-fixture.mjs')
+  const text = JSON.stringify(compileBokusen({ images: ['a.jpg'], sounds: [], articles: ['台詞'], script: [['image', { 15: 'base', 16: 0, 23: 'fore', 28: 0, 29: 0 }], ['articles', { 0: 0 }], ['p']] }))
+  const files = ['resource/502704 【花嫁】みやび/images/0.jpg', 'resource/502704 【花嫁】みやび/sounds/0.wav', 'resource/4733 【体育祭25】コニー/images/0.jpg', 'resource/1111 A/images/0.jpg', 'resource/1111 B/images/0.jpg']
+  const ctx = bk.prepare({ options: {}, files, toResourcePath: (r) => r })
+  const bgOf = (stem, options) => bk.parse(text, bk.prepare({ options: options || {}, files, toResourcePath: (r) => r }), { stem, options }).steps.flatMap((st) => st.commands).filter((c) => c.op === 'bg' || c.op === 'stand')
+  const srcs = (stem, options) => J(bgOf(stem, options)).match(/resource\/[^"]+|[0-9]{4,6} [^"]+\/images\/0\.jpg/g) || []
+  check('ぼくら：脚本名 みやび 【花嫁】502704（id 在最后）→ 资源目录 502704 【花嫁】みやび（id 在最前），按数字 id 找到图', J(bgOf('みやび 【花嫁】502704')).includes('502704 【花嫁】みやび/images/0.jpg'), J(bgOf('みやび 【花嫁】502704')))
+  check('ぼくら：年份那种两位数字（【体育祭25】）不算 id；4 位 id 4733 也能找到', J(bgOf('コニー 【体育祭25】4733')).includes('4733 【体育祭25】コニー/images/0.jpg'), J(bgOf('コニー 【体育祭25】4733')))
+  check('ぼくら：同一个 id 对应多个目录（1111 A / 1111 B）→ 不猜，回到按脚本名（找不到）；同名目录有就直接用；resourceId.enabled = false → 不按 id 找', !J(bgOf('x 1111')).includes('images/0.jpg') && J(bgOf('502704 【花嫁】みやび')).includes('502704 【花嫁】みやび/images/0.jpg') && !J(bgOf('みやび 【花嫁】502704', { resourceId: { enabled: false } })).includes('images/0.jpg'), J(bgOf('x 1111')))
+  check('prepare：资源目录第一层名字收进 topDirs', ctx.topDirs.size === 4 && ctx.topDirs.has('502704 【花嫁】みやび'), J([...ctx.topDirs]))
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

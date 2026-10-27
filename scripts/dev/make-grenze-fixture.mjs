@@ -34,10 +34,10 @@ export async function buildGrenzeFixture(root, { bigRows = 0 } = {}) {
   const file1 = [
     L(1, 110001, 110002, { name: '-', text: '――Opening.', voice_pack: 'Main11', bg_sound1: 'se_00', background: 'bg_b' }),
     L(1, 120001, 120002, { name: '-', text: 'Second story, first line.' }),
-    L(1, 110002, 110003, { name: '-', text: '《俺》Thinking & more <ok>.\nSecond line.', screen_effect: 4, background: 'bg_demo_1', bgm: 'ER2_bgm02', bg_sound1: 'se_378', voice_pack: 'Main11' }),
-    L(1, 110003, 110004, { name: 'Alice', text: '「Hello」', hero_group_id: 101011, pic_pos: 2, pic_face: 5, voice_pack: 'Main11', voice: 'MainVoice_00_01_001', sound1: 'se_378', pic_action: 5, effect: 17, effect_pos: 2 }),
+    L(1, 110002, 110003, { name: '-', text: '《俺》Thinking & more <ok>.\nSecond line.', screen_effect: 41, background: 'bg_demo_1', bgm: 'ER2_bgm02', bg_sound1: 'se_378', voice_pack: 'Main11' }),
+    L(1, 110003, 110004, { name: 'Alice', text: '「Hello」', hero_group_id: 101011, pic_pos: 2, pic_face: 5, voice_pack: 'Main11', voice: 'MainVoice_00_01_001', sound1: 'se_378', pic_action: 41, effect: 41, effect_pos: 2 }),
     L(1, 120002, 120003, { name: 'Bob', text: 'Second story, second line.', hero_group_id: 701004, pic_pos: 1, pic_face: 1 }),
-    L(1, 110004, 110005, { screen_effect: 8 }),
+    L(1, 110004, 110005, { screen_effect: 42 }),
     L(1, 110005, 110006, { name: 'Bob', text: 'Right side.', hero_group_id: 701004, pic_pos: 3, pic_face: 1 }),
     L(1, 110006, 110007, { name: '-', text: 'Narration keeps the stand.' }),
     L(1, 120003, undefined, { name: '-', text: 'Second story ends here.' }),
@@ -73,7 +73,7 @@ export async function buildGrenzeFixture(root, { bigRows = 0 } = {}) {
       const attrs = { id, next_id: last ? undefined : id + 1, name: i % 3 ? 'Name' : '-', text: `Line ${i}. ${'x'.repeat(40 + (i % 50))}` }
       if (i % 5 < 3) Object.assign(attrs, { hero_group_id: 101011, pic_pos: 2, pic_face: 1 + (i % 6) })
       if (i % 5 === 0) attrs.sound1 = 'se_378'
-      if (i % 40 === 0) attrs.screen_effect = 3 + (i % 7)
+      if (i % 40 === 0) attrs.screen_effect = 43 + (i % 7)
       if (i % 100 === 0) { attrs.background = 'bg_demo_1'; attrs.bgm = 'ER2_bgm02' }
       rows.push(row(99, attrs))
     }

@@ -78,24 +78,48 @@ export const DEFAULT_OPTIONS = Object.freeze({
   rawAttrs: ['screen_effect', 'pic_action', 'pic_action_val', 'pic_size', 'effect+effect_pos'],
   attrTables: { screen_effect: 'screenEffects', pic_action: 'picActions', effect: 'effects', pic_size: 'picSize' },
   screenEffects: {
-    '速い画面揺れ': { op: 'shake', axis: 'overall', strength: 0.15, seconds: 0.4 },
-    '画面シェイク': { op: 'shake', axis: 'overall', strength: 0.25, seconds: 0.6 },
-    '溶明_黒幕': { op: 'fade', to: 'clear', seconds: 1 },
+    // 名字（<DEFINE> 表里的写法）和数字 id 是同一回事：gal-samples16 的 easy_dialog-2 / 12 / 13 / 14 里 screen_effect 的 DEFINE = 溶暗_白幕 1 / 溶明_白幕 2 / 溶暗_黒幕 3 / 溶明_黒幕 4 /
+    //   フラッシュ 5 / フラッシュ2回 6 / 画面シェイク 7 / 速い画面揺れ 8 / 光エフェクト 9 / 回想ON 10 / 回想OFF 11 / …ON 12 / …OFF 13（有的文件直接写数字，没有 DEFINE）。作者的查看器 app.js 对数字的处理一致（1~4 盖白 / 黑再淡出、7 抖、8 快抖、10~13 滤镜）
+    '溶暗_白幕': { op: 'fade', to: 'white', seconds: 1, at: 'start' },
+    '溶明_白幕': { op: 'wash', color: 'white', seconds: 1 },
     '溶暗_黒幕': { op: 'fade', to: 'black', seconds: 1, at: 'start' },
+    '溶明_黒幕': { op: 'fade', to: 'clear', seconds: 1 },
     'フラッシュ': { op: 'flash', color: 'white', count: 1, seconds: 0.3 },
     'フラッシュ2回': { op: 'flash', color: 'white', count: 2, seconds: 0.3 },
+    '画面シェイク': { op: 'shake', axis: 'overall', strength: 0.25, seconds: 0.6 },
+    '速い画面揺れ': { op: 'shake', axis: 'overall', strength: 0.15, seconds: 0.4 },
     '光エフェクト': { op: 'wash', color: 'white', seconds: 1 },
-    ...Object.fromEntries(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '13'].map((id) => [id, null])),
+    '回想ON': { op: 'overlay', slot: 'screenfx', rect: [0, 0, 1280, 720], color: [112, 76, 40], alpha: 0.22 },
+    '回想OFF': { op: 'overlayOff', slot: 'screenfx' },
+    // 回想（棕褐色滤镜）/ 灰度（12 / 13）没有对应的滤镜指令，用整屏半透明色罩近似（猜的）
+    '1': { op: 'fade', to: 'white', seconds: 1, at: 'start' },
+    '2': { op: 'wash', color: 'white', seconds: 1 },
+    '3': { op: 'fade', to: 'black', seconds: 1, at: 'start' },
+    '4': { op: 'fade', to: 'clear', seconds: 1 },
+    '5': { op: 'flash', color: 'white', count: 1, seconds: 0.3 },
+    '6': { op: 'flash', color: 'white', count: 2, seconds: 0.3 },
+    '7': { op: 'shake', axis: 'overall', strength: 0.25, seconds: 0.6 },
+    '8': { op: 'shake', axis: 'overall', strength: 0.15, seconds: 0.4 },
+    '9': { op: 'wash', color: 'white', seconds: 1 },
+    '10': { op: 'overlay', slot: 'screenfx', rect: [0, 0, 1280, 720], color: [112, 76, 40], alpha: 0.22 },
+    '11': { op: 'overlayOff', slot: 'screenfx' },
+    '12': { op: 'overlay', slot: 'screenfx', rect: [0, 0, 1280, 720], color: [128, 128, 128], alpha: 0.45 },
+    '13': { op: 'overlayOff', slot: 'screenfx' },
   },
   picActions: {
-    '立ち絵全消え': { op: 'standOff', at: 'stand' },
+    '立ち絵全消え': { op: 'standOff', at: 'stand', suppressStand: true },
     '溶明溶暗': [{ op: 'fade', to: 'black', seconds: 0.4 }, { op: 'fade', to: 'clear', seconds: 0.4 }],
     '下から_全身': null, '右側現れ消え': null, '左側現れ消え': null, 'マスク': null,
-    ...Object.fromEntries(['1', '2', '3', '4', '5', '8', '9', '10'].map((id) => [id, null])),
+    // 数字 id：作者的 server.py —— 5 = 隐藏这个角色（行里有 hero_group_id 时这一行不再摆立绘）；5 / 14 且这一行没有角色 = 清掉全部立绘（clearActors）；其余（1 2 3 4 8 9 10）是立绘的进场动作，没有对应指令
+    '1': null, '2': null, '3': null, '4': null,
+    '5': { op: 'standOff', at: 'stand', suppressStand: true },
+    '8': null, '9': null, '10': null,
+    '14': { op: 'standOff', at: 'stand', whenNoHero: true },
   },
   effects: {
     'ダメージエフェクト': null, '斬撃1': null, '斬撃2': null, '斬撃3': null, 'ハンマー': null, '波動': null, 'エナジードレイン': null,
-    ...Object.fromEntries(['17', '18', '20', '21', '22'].map((id) => [id, null])),
+    // 视觉特效 17~22：作者的 app.js 里都是舞台抖动（其余数字是各种光效，没有对应指令）
+    ...Object.fromEntries(['17', '18', '19', '20', '21', '22'].map((id) => [id, { op: 'shake', axis: 'overall', strength: 0.1, seconds: 0.36 }])),
   },
   effectPos: { '中': 'center', '左': 'left', '右': 'right', 1: 'left', 2: 'center', 3: 'right' },
   picSize: { '拡大': null, '通常': null, '2': null, '立ち絵全消え': null },
@@ -370,6 +394,7 @@ export function parse(text, ctx = null, meta = {}) {
   const fill = (op, pos) => (pos ? Object.fromEntries(Object.entries(op).map(([k, v]) => [k, typeof v === 'string' ? v.replaceAll('{pos}', pos) : v])) : op)
   // 特效类属性 → 映射出来的指令（按 at 分到三个时机）或 raw；返回 false = 不是本函数处理的（没有这个属性）
   const phases = { start: [], stand: [], end: [], raw: [] }
+  let suppressStand = false   // 这一行的 pic_action 说「隐藏角色」：不再摆这一行的立绘
   const collectAttr = (spec, row) => {
     const [cmd, ...more] = spec.split('+')
     if (!present(row[cmd])) return
@@ -387,7 +412,11 @@ export function parse(text, ctx = null, meta = {}) {
       count('raw', label)
       return
     }
-    for (const { at, ...op } of ops) phases[at === 'start' || at === 'stand' ? at : 'end'].push(fill(op, pos))
+    for (const { at, suppressStand: hide, whenNoHero, ...op } of ops) {
+      if (whenNoHero && present(row.hero_group_id)) continue   // 只在这一行没有角色时才生效（14）
+      if (hide) suppressStand = true
+      phases[at === 'start' || at === 'stand' ? at : 'end'].push(fill(op, pos))
+    }
     count('mapped', label)
   }
   const flushPhase = (name) => {
@@ -397,6 +426,7 @@ export function parse(text, ctx = null, meta = {}) {
 
   for (const i of chain) {
     const row = rows[i]
+    suppressStand = false
     for (const spec of o.rawAttrs) collectAttr(spec, row)
     flushPhase('start')
     // --- 背景（换背景 = 换场景，立绘清掉）---
@@ -427,7 +457,7 @@ export function parse(text, ctx = null, meta = {}) {
     if (present(row.voice_pack)) pack = row.voice_pack
     if (present(row.back_voice_pack)) backPack = row.back_voice_pack
     const sizeKey = size ? JSON.stringify(size) : ''
-    if (present(row.hero_group_id)) {
+    if (present(row.hero_group_id) && !suppressStand) {
       const align = o.standPos[String(Number(row.pic_pos))] || o.standPos.default || 'center'
       const key = `${String(row.hero_group_id).trim()}|${align}|${sizeKey}`
       if (key !== stand) {

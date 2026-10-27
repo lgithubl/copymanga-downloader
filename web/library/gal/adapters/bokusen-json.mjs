@@ -88,14 +88,17 @@ export function prepare({ options, files, toResourcePath }) {
   const toRes = toResourcePath || ((rel) => rel)
   const prefix = `${joinPath(rootOf(options), resourceDirOf(options))}/`
   const resources = new Set()
+  const topDirs = new Set()   // 资源目录下的第一层目录名（= 每个脚本一个）
   const byBase = new Map()   // 去掉扩展名的资源路径 → 资源路径（扩展名对不上时按序号找）
   for (const rel of files || []) {
     let res = toRes(rel)
     if (res.startsWith(prefix)) res = res.slice(prefix.length)   // 资源根没配成 resource 目录时自己去掉前缀
     resources.add(res)
+    const slash = res.indexOf('/')
+    if (slash > 0) topDirs.add(res.slice(0, slash))
     if (!byBase.has(noExt(res))) byBase.set(noExt(res), res)
   }
-  return { resources, byBase, hasIndex: Boolean(files?.length) }
+  return { resources, byBase, topDirs, hasIndex: Boolean(files?.length) }
 }
 
 // ---------- 参数（只读配置，补满默认值；同一个 options 对象只算一次）----------
@@ -118,6 +121,7 @@ export const DEFAULT_OPTIONS = {
   root: '',
   resourceDir: 'resource',
   paths: { images: ['{stem}/images/{i}{ext}'], sounds: ['{stem}/sounds/{i}{ext}'], anyExt: true },
+  resourceId: { enabled: true, minDigits: 4, maxDigits: 6 },
   image: { ext: ['{entry}'], defaultExt: '.jpg' },
   sound: { ext: ['.wav', '{entry}'], defaultExt: '' },
   slotMap: structuredClone(DEFAULT_SLOTS),
@@ -151,6 +155,7 @@ function settingsOf(options) {
   const out = {
     slots,
     paths: { images: strList(paths.images, ['{stem}/images/{i}{ext}']), sounds: strList(paths.sounds, ['{stem}/sounds/{i}{ext}']), anyExt: paths.anyExt !== false },
+    resourceId: { enabled: o.resourceId?.enabled !== false, minDigits: Math.max(1, Math.min(12, Math.floor(numOr(o.resourceId?.minDigits, 4)))), maxDigits: Math.max(1, Math.min(12, Math.floor(numOr(o.resourceId?.maxDigits, 6)))) },
     ext: {
       images: { list: strList(o.image?.ext, ['{entry}']), defaultExt: String(o.image?.defaultExt ?? '.jpg') },
       sounds: { list: strList(o.sound?.ext, ['.wav', '{entry}']), defaultExt: String(o.sound?.defaultExt ?? '') },
@@ -209,11 +214,22 @@ export function parse(text, ctx = null, meta = {}) {
   const images = Array.isArray(code.images) ? code.images : []
   const sounds = Array.isArray(code.sounds) ? code.sounds : []
   const articles = Array.isArray(code.articles) ? code.articles : []
-  const stem = String(meta?.stem || '')
+  const scriptStem = String(meta?.stem || '')
   const stats = { rows: code.commands.length, commands: 0, raw: {}, unresolved: {}, stands: 0 }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
 
   const st = settingsOf(meta?.options)
+  // 资源目录名 = 脚本名？不一定：资源目录是「<id> 【标题】<角色>」（id 在最前），脚本名常是「<角色> 【标题】<id>」（id 在最后）。同名目录有就用，没有就按数字 id（4~6 位）找（gal-samples16：1898 个脚本里 1653 个能这样对上）
+  const resourceStemOf = () => {
+    if (!scriptStem || !ctx?.topDirs || ctx.topDirs.has(scriptStem) || !st.resourceId.enabled) return scriptStem
+    const ids = (scriptStem.match(/\d+/g) || []).filter((d) => d.length >= st.resourceId.minDigits && d.length <= st.resourceId.maxDigits)
+    for (const id of ids) {
+      const hits = [...ctx.topDirs].filter((dir) => (dir.match(/\d+/g) || []).includes(id))
+      if (hits.length === 1) return hits[0]
+    }
+    return scriptStem
+  }
+  const stem = resourceStemOf()
   const resolver = ctx?.hasIndex && stem ? resolverOf(ctx, meta?.config?.resourceResolve) : null
 
   // 参数槽：数组按位置，对象按键；'nil' / null / 缺 = 没设（返回 ''）

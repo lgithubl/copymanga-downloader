@@ -127,9 +127,9 @@ async function e2e(adapterId, tree, adapterOptions, scriptRel, extraConfig = {})
   check('grenze screenEffects：速い画面揺れ / 画面シェイク → overall shake；溶明_黒幕 → fade clear；溶暗_黒幕 → fade black；フラッシュ → flash×1；フラッシュ2回 → flash×2；光エフェクト → wash（at 不进场景指令）',
     same(await fx('速い画面揺れ'), [{ op: 'shake', axis: 'overall', strength: 0.15, seconds: 0.4 }]) && (await fx('画面シェイク'))[0].strength === 0.25 && same(await fx('溶明_黒幕'), [{ op: 'fade', to: 'clear', seconds: 1 }]) && same(await fx('溶暗_黒幕'), [{ op: 'fade', to: 'black', seconds: 1 }])
     && same(await fx('フラッシュ'), [{ op: 'flash', color: 'white', count: 1, seconds: 0.3 }]) && (await fx('フラッシュ2回'))[0].count === 2 && same(await fx('光エフェクト'), [{ op: 'wash', color: 'white', seconds: 1 }]), J(await fx('溶暗_黒幕')))
-  const numerics = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '13', '99']
+  const numerics = ['14', '15', '99']
   const rawOut = await run(numerics.map((n) => ({ screen_effect: n, ...T })))
-  check('grenze screenEffects：数字 id 默认 raw（含没见过的 99）；raw 指令 {cmd, args} 照旧；stats.raw 按 screen_effect:<值> 分开记', ops(rawOut, 'raw').length === numerics.length && same(ops(rawOut, 'raw')[0], { op: 'raw', cmd: 'screen_effect', args: ['1'] }) && numerics.every((n) => rawOut.stats.raw[`screen_effect:${n}`] === 1) && ops(rawOut, 'shake', 'fade', 'flash', 'wash').length === 0, J(rawOut.stats.raw))
+  check('grenze screenEffects：表里没有的数字 id（14 / 15 / 99）默认 raw；raw 指令 {cmd, args} 照旧；stats.raw 按 screen_effect:<值> 分开记', ops(rawOut, 'raw').length === numerics.length && same(ops(rawOut, 'raw')[0], { op: 'raw', cmd: 'screen_effect', args: ['14'] }) && numerics.every((n) => rawOut.stats.raw[`screen_effect:${n}`] === 1) && ops(rawOut, 'shake', 'fade', 'flash', 'wash').length === 0, J(rawOut.stats.raw))
   const ov = async (value, table) => run([{ screen_effect: value, ...T }], { screenEffects: table })
   check('grenze screenEffects 覆盖：数字 8 → shake（表里追加）、フラッシュ 改 null → raw、画面シェイク 改 drop → 什么都不记；没动的保持',
     ops(await ov('8', { 8: { op: 'shake', axis: 'vertical', strength: 0.1, seconds: 0.3 } }), 'shake').length === 1 && (await ov('フラッシュ', { フラッシュ: null })).stats.raw['screen_effect:フラッシュ'] === 1
@@ -149,15 +149,15 @@ async function e2e(adapterId, tree, adapterOptions, scriptRel, extraConfig = {})
   const clear = await pa([{ hero_group_id: '7', pic_pos: '2', ...T }, { pic_action: '立ち絵全消え', ...T }, { pic_action: '立ち絵全消え', ...T }, { ...T }])
   check('grenze picActions 立ち絵全消え → standOff（只在有立绘时发一次；之后沿用逻辑不再出现立绘）', same(ops(clear, 'stand', 'standOff', 'raw').map((c) => c.op), ['stand', 'standOff']) && same(clear.stats.mapped, { 'pic_action:立ち絵全消え': 2 }), J(clear.stats))
   const swap = await pa([{ hero_group_id: '7', ...T }, { pic_action: '立ち絵全消え', hero_group_id: '7', ...T }, { pic_action: '立ち絵全消え', hero_group_id: '8', ...T }])
-  check('grenze picActions 立ち絵全消え 和新立绘同一行：先清再出（standOff 在前，同一个 hero 也重新发 stand）', same(ops(swap, 'stand', 'standOff').map((c) => c.op), ['stand', 'standOff', 'stand', 'standOff', 'stand']), J(ops(swap, 'stand', 'standOff').map((c) => c.op)))
+  check('grenze picActions 立ち絵全消え（= 数字 5）和角色同一行：隐藏这个角色，这一行不再摆立绘（作者的 server.py：action 5 + hero = hide）', same(ops(swap, 'stand', 'standOff').map((c) => c.op), ['stand', 'standOff']), J(ops(swap, 'stand', 'standOff').map((c) => c.op)))
   const dip = await pa([{ pic_action: '溶明溶暗', ...T }])
   check('grenze picActions 溶明溶暗 → 淡到黑再淡回（两条 fade）', same(ops(dip, 'fade').map((c) => c.to), ['black', 'clear']))
-  const picRaw = await pa(['下から_全身', '右側現れ消え', '左側現れ消え', 'マスク', '5', '4'].map((v) => ({ pic_action: v, ...T })))
-  check('grenze picActions：下から_全身 / 右側現れ消え / 左側現れ消え / マスク / 数字 id 默认 raw，按值分开记', ops(picRaw, 'raw').length === 6 && ['下から_全身', '右側現れ消え', '左側現れ消え', 'マスク', '5', '4'].every((v) => picRaw.stats.raw[`pic_action:${v}`] === 1), J(picRaw.stats.raw))
+  const picRaw = await pa(['下から_全身', '右側現れ消え', '左側現れ消え', 'マスク', '99', '4'].map((v) => ({ pic_action: v, ...T })))
+  check('grenze picActions：下から_全身 / 右側現れ消え / 左側現れ消え / マスク / 数字 id 默认 raw，按值分开记', ops(picRaw, 'raw').length === 6 && ['下から_全身', '右側現れ消え', '左側現れ消え', 'マスク', '99', '4'].every((v) => picRaw.stats.raw[`pic_action:${v}`] === 1), J(picRaw.stats.raw))
 
   // --- effect / effect_pos ---
-  const eff = await run([{ effect: 'ダメージエフェクト', effect_pos: '中', ...T }, { effect: '斬撃1', effect_pos: '2', ...T }, { effect: '17', effect_pos: '左', ...T }, { effect: '斬撃3', ...T }, { effect: 'ハンマー', effect_pos: '9', ...T }])
-  check('grenze effects 默认全 raw（没有渲染器）：raw 的 args = [effect, effect_pos]（指令本身不变）；stats.raw 按 effect:<值>', same(ops(eff, 'raw'), [['ダメージエフェクト', '中'], ['斬撃1', '2'], ['17', '左'], ['斬撃3', ''], ['ハンマー', '9']].map((args) => ({ op: 'raw', cmd: 'effect', args }))) && eff.stats.raw['effect:斬撃1'] === 1, J(ops(eff, 'raw')))
+  const eff = await run([{ effect: 'ダメージエフェクト', effect_pos: '中', ...T }, { effect: '斬撃1', effect_pos: '2', ...T }, { effect: '15', effect_pos: '左', ...T }, { effect: '斬撃3', ...T }, { effect: 'ハンマー', effect_pos: '9', ...T }])
+  check('grenze effects 默认全 raw（没有渲染器）：raw 的 args = [effect, effect_pos]（指令本身不变）；stats.raw 按 effect:<值>', same(ops(eff, 'raw'), [['ダメージエフェクト', '中'], ['斬撃1', '2'], ['15', '左'], ['斬撃3', ''], ['ハンマー', '9']].map((args) => ({ op: 'raw', cmd: 'effect', args }))) && eff.stats.raw['effect:斬撃1'] === 1, J(ops(eff, 'raw')))
   const effMap = await run([{ effect: '斬撃1', effect_pos: '右', ...T }], { effects: { 斬撃1: { op: 'flash', color: 'white', count: 1, seconds: 0.2 } } })
   check('grenze effects 填表就生效：斬撃1 → flash，不再记 raw', ops(effMap, 'flash').length === 1 && ops(effMap, 'raw').length === 0 && effMap.stats.mapped['effect:斬撃1'] === 1)
   const effPos = await run([{ effect: '波動', effect_pos: '右', ...T }], { effects: { 波動: { op: 'flash', color: '{pos}', count: 1, seconds: 0.2 } }, effectPos: { 右: 'RIGHT' } })
@@ -184,11 +184,22 @@ async function e2e(adapterId, tree, adapterOptions, scriptRel, extraConfig = {})
     && same(await bv([{ back_voice_pack: '101072_BK', bv: 'ade9_0005@0.4', ...T }], { backVoice: { attr: 'bv', sep: '@', slot: 's2' } }), [['bgvoice', 's2', 'R/voice/101072_bk/ade9_0005.m4a', 0.4]]))
   check('grenze back_voice 的 none 值 / rawAttrs 里写回 back_voice 仍能记 raw（兼容旧配置）', same(await bv([{ back_voice: 'non', ...T }]), []) && (await run([{ back_voice: 'x#1', ...T }], { rawAttrs: ['back_voice'] })).stats.raw['back_voice:x#1'] === 1)
 
+  // --- 数字 id（作者的 web_viewer app.js / server.py）---
+  const num = async (value) => ops(await run([{ screen_effect: value, ...T }]), 'fade', 'wash', 'flash', 'shake', 'overlay', 'overlayOff')
+  check('grenze 数字 screen_effect：1 淡到白 / 2 白屏淡出 / 3 淡到黑 / 4 黑屏淡出 / 5 白闪 / 6 白闪两次 / 7 画面シェイク / 8 速い画面揺れ / 9 扫光（和 DEFINE 里的名字是同一回事）', same((await num('1')).map((c) => [c.op, c.to]), [['fade', 'white']]) && same((await num('2')).map((c) => [c.op, c.color]), [['wash', 'white']]) && same((await num('3')).map((c) => [c.op, c.to]), [['fade', 'black']]) && same((await num('4')).map((c) => [c.op, c.to]), [['fade', 'clear']]) && (await num('5'))[0].count === 1 && (await num('6'))[0].count === 2 && (await num('7'))[0].op === 'shake' && same(await num('7'), await fx('画面シェイク')) && same(await num('8'), await fx('速い画面揺れ')) && same(await num('3'), await fx('溶暗_黒幕')) && same(await num('5'), await fx('フラッシュ')) && (await num('9'))[0].op === 'wash')
+  const mem = await run([{ screen_effect: '10', ...T }, { screen_effect: '11', ...T }, { screen_effect: '12', ...T }, { screen_effect: '13', ...T }])
+  check('grenze 数字 screen_effect 10 / 11 回忆滤镜开 / 关、12 / 13 灰度开 / 关 → 整屏色罩 overlay（slot screenfx）/ overlayOff；没有 raw', same(ops(mem, 'overlay', 'overlayOff').map((c) => c.op), ['overlay', 'overlayOff', 'overlay', 'overlayOff']) && Object.keys(mem.stats.raw).length === 0, J(mem.stats))
+  const visual = await run([{ effect: '19', effect_pos: '中', ...T }, { effect: '3', effect_pos: '中', ...T }])
+  check('grenze 数字 effect 17~22 → 舞台抖动；其余数字（光效）仍是 raw', ops(visual, 'shake').length === 1 && visual.stats.raw['effect:3'] === 1)
+  const hide5 = await pa([{ hero_group_id: '7', pic_pos: '2', ...T }, { hero_group_id: '7', pic_pos: '2', pic_action: '5', ...T }])
+  check('grenze pic_action 5 + hero_group_id = 隐藏这个角色（这一行不再摆立绘，先 standOff）；不记 raw', same(ops(hide5, 'stand', 'standOff').map((c) => c.op), ['stand', 'standOff']) && Object.keys(hide5.stats.raw).length === 0, J(ops(hide5, 'stand', 'standOff')))
+  const clear14 = await pa([{ hero_group_id: '7', pic_pos: '2', ...T }, { pic_action: '14', ...T }, { hero_group_id: '8', pic_pos: '2', pic_action: '14', ...T }])
+  check('grenze pic_action 14：这一行没有角色 = 清掉立绘；带角色的行照常摆（只有 5 才隐藏）', same(ops(clear14, 'stand', 'standOff').map((c) => c.op), ['stand', 'standOff', 'stand']), J(ops(clear14, 'stand', 'standOff')))
   // --- 兼容：以前的 rawAttrs 语义 ---
-  const legacy = await run([{ pic_action_val: '5', screen_effect: '8', new_attr: 'x', ...T }], { rawAttrs: ['pic_action_val', 'new_attr', 'screen_effect'] })
+  const legacy = await run([{ pic_action_val: '5', screen_effect: '99', new_attr: 'x', ...T }], { rawAttrs: ['pic_action_val', 'new_attr', 'screen_effect'] })
   check('grenze rawAttrs 语义不变：没有表的属性（pic_action_val / 新属性）照旧只记 raw（按 属性:值 分开）；rawAttrs 里没有的属性不处理', same(ops(legacy, 'raw').map((c) => c.cmd), ['pic_action_val', 'new_attr', 'screen_effect']) && legacy.stats.raw['pic_action_val:5'] === 1 && legacy.stats.raw['new_attr:x'] === 1 && (await run([{ screen_effect: 'フラッシュ', ...T }], { rawAttrs: [] })).steps.flatMap((s) => s.commands).every((c) => c.op !== 'flash'))
   const d = grenze.resolveOptions({})
-  check('grenze 默认选项：映射表就位（screenEffects 7 个名字 + 12 个数字 null；picActions 6 个名字；effects 7 个名字）', Object.keys(d.screenEffects).length === 19 && Object.keys(d.picActions).length === 14 && ['ダメージエフェクト', '斬撃1', '斬撃2', '斬撃3', 'ハンマー', '波動', 'エナジードレイン'].every((k) => k in d.effects) && d.attrTables.screen_effect === 'screenEffects' && d.backVoice.slot === 'back' && !d.rawAttrs.includes('back_voice'), J(Object.keys(d.picActions)))
+  check('grenze 默认选项：映射表就位（screenEffects 11 个名字（DEFINE 里的）+ 13 个数字（和名字同一回事）；picActions 6 个名字 + 数字（5 / 14 有映射）；effects 7 个名字）', Object.keys(d.screenEffects).length === 24 && Object.keys(d.picActions).length === 15 && ['ダメージエフェクト', '斬撃1', '斬撃2', '斬撃3', 'ハンマー', '波動', 'エナジードレイン'].every((k) => k in d.effects) && d.attrTables.screen_effect === 'screenEffects' && d.backVoice.slot === 'back' && !d.rawAttrs.includes('back_voice'), J(Object.keys(d.picActions)))
   check('grenze resolveOptions 同一份参数只合并一次，且表里的默认映射不被运行时改动（解析两次结果一样）', same(J(await run([{ screen_effect: '溶暗_黒幕', background: 'a', ...T }])), J(await run([{ screen_effect: '溶暗_黒幕', background: 'a', ...T }]))) && grenze.DEFAULT_OPTIONS.screenEffects['溶暗_黒幕'].at === 'start')
 }
 
