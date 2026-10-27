@@ -62,5 +62,11 @@ const cmds = (ctx, options) => monmusu.parse(script, ctx, { options }).steps.fla
   const key = subjectKey(rule, { kind: 'script', stem: '371IH42Z15' })
   check('angelic 封面：脚本 371IH42Z15 → images/thumbnail/371i_idle.jpg（键忽略大小写；hover 图不收）', rule?.lower === true && key === '371i' && J(map.get(key)) === J(['images/thumbnail/371i_idle.jpg']), J([rule, key, [...map]]))
 }
+{
+  const { LAYOUTS } = await import('../../scripts/tag-scripts/gal-layout/main.js')
+  const g = LAYOUTS.angelic.config.groups[0]
+  const re = new RegExp(g.pattern)
+  check('angelic 分组：脚本名 <3 位编号><字母><6 位> → 按前 3 位（371IH42Z15 → 371，001J1U4O63 → 001）；父目录 hscene', g.parent === 'hscene' && re.exec('371IH42Z15')?.[1] === '371' && re.exec('001J1U4O63')?.[1] === '001' && !re.test('sub_nav_x'))
+}
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

@@ -1003,9 +1003,15 @@ export const LAYOUTS = {
     config: {
       namesFiles: [], thumbsDirs: [], scriptExtensions: ['rpy'],
       hiddenDirs: ['sub_nav', 'sub_nav_byname', 'tl'],   // 菜单脚本（sub_*.rpy / byname_*.rpy）不是剧情
-      merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [],
+      merge: [], views: [],
+      // 分类：脚本名 = <3 位编号><1 位字母><6 位随机串>，前 3 位 = 角色 / 剧情组（355 组；gal-samples15 的 807 个脚本名），同组的放进一张卡片
+      groups: [{ parent: 'hscene', pattern: String.raw`^(\d{3})[A-Za-z0-9]{7}$` }],
+      dirThumbs: [], scriptThumbs: [], scriptIndex: [],
       // 封面：脚本 371IH42Z15 → images/thumbnail/371i_idle.jpg（脚本名前 4 位 = 角色 / 剧情编号，文件名小写；gal-samples15 的文件清单对出来的）
-      thumbSources: [{ dir: 'images/thumbnail', match: String.raw`^(\d{3}[A-Za-z])_idle\.(?:jpe?g|png|webp)$`, key: '{1}', for: 'script', forKey: '{stem:0:4}', lower: true }],
+      thumbSources: [
+        { dir: 'images/thumbnail', match: String.raw`^(\d{3}[A-Za-z])_idle\.(?:jpe?g|png|webp)$`, key: '{1}', for: 'script', forKey: '{stem:0:4}', lower: true },
+        { dir: 'images/thumbnail', match: String.raw`^(\d{3})[A-Za-z]_idle\.(?:jpe?g|png|webp)$`, key: '{1}', for: 'dir', forKey: '{name}', limit: 4 },
+      ],
     },
     count: [{ dir: 'script/hscene', ext: '.rpy', depth: 8 }],
     avatars: [], expectedDirs: [],

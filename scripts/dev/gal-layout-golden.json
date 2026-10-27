@@ -4814,7 +4814,12 @@
     "id": "angelic",
     "title": ""
    },
-   "groups": [],
+   "groups": [
+    {
+     "parent": "hscene",
+     "pattern": "^(\\d{3})[A-Za-z0-9]{7}$"
+    }
+   ],
    "hiddenDirs": [
     "sub_nav",
     "sub_nav_byname",
@@ -4850,6 +4855,14 @@
      "key": "{1}",
      "lower": true,
      "match": "^(\\d{3}[A-Za-z])_idle\\.(?:jpe?g|png|webp)$"
+    },
+    {
+     "dir": "images/thumbnail",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{1}",
+     "limit": 4,
+     "match": "^(\\d{3})[A-Za-z]_idle\\.(?:jpe?g|png|webp)$"
     }
    ],
    "thumbsDirs": [],
@@ -4888,7 +4901,12 @@
     "id": "angelic",
     "title": ""
    },
-   "groups": [],
+   "groups": [
+    {
+     "parent": "hscene",
+     "pattern": "^(\\d{3})[A-Za-z0-9]{7}$"
+    }
+   ],
    "hiddenDirs": [
     "sub_nav",
     "sub_nav_byname",
@@ -4924,6 +4942,14 @@
      "key": "{1}",
      "lower": true,
      "match": "^(\\d{3}[A-Za-z])_idle\\.(?:jpe?g|png|webp)$"
+    },
+    {
+     "dir": "images/thumbnail",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{1}",
+     "limit": 4,
+     "match": "^(\\d{3})[A-Za-z]_idle\\.(?:jpe?g|png|webp)$"
     }
    ],
    "thumbsDirs": [],
@@ -4962,7 +4988,12 @@
     "id": "angelic",
     "title": ""
    },
-   "groups": [],
+   "groups": [
+    {
+     "parent": "hscene",
+     "pattern": "^(\\d{3})[A-Za-z0-9]{7}$"
+    }
+   ],
    "hiddenDirs": [
     "sub_nav",
     "sub_nav_byname",
@@ -4998,6 +5029,14 @@
      "key": "{1}",
      "lower": true,
      "match": "^(\\d{3}[A-Za-z])_idle\\.(?:jpe?g|png|webp)$"
+    },
+    {
+     "dir": "images/thumbnail",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{1}",
+     "limit": 4,
+     "match": "^(\\d{3})[A-Za-z]_idle\\.(?:jpe?g|png|webp)$"
     }
    ],
    "thumbsDirs": [],
@@ -5036,7 +5075,12 @@
     "id": "angelic",
     "title": ""
    },
-   "groups": [],
+   "groups": [
+    {
+     "parent": "hscene",
+     "pattern": "^(\\d{3})[A-Za-z0-9]{7}$"
+    }
+   ],
    "hiddenDirs": [
     "sub_nav",
     "sub_nav_byname",
@@ -5072,6 +5116,14 @@
      "key": "{1}",
      "lower": true,
      "match": "^(\\d{3}[A-Za-z])_idle\\.(?:jpe?g|png|webp)$"
+    },
+    {
+     "dir": "images/thumbnail",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{1}",
+     "limit": 4,
+     "match": "^(\\d{3})[A-Za-z]_idle\\.(?:jpe?g|png|webp)$"
     }
    ],
    "thumbsDirs": [],
