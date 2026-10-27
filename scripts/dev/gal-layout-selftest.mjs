@@ -313,6 +313,18 @@ const withLayouts = (layouts) => ({ layouts })
   check('部分写坏（markers / siblings 里有非法项）：非法项丢掉，别的照用，不崩', cfgOf(g2)?.game?.id === 'tsk', logText(g2))
 }
 
+// ================= Grenze 封面：标题 LOGO（资源根是 assets/resources/patchres，不是 base → 封面路径用 ~/ 相对媒体目录）=================
+{
+  const root = MEDIA.grenze.direct
+  const grenze = (await readdir(root)).length ? root : root
+  const bannerDir = path.join(root, 'assets/resources/patchres/banner/banner_title')
+  await mkdir(bannerDir, { recursive: true })
+  await writeFile(path.join(bannerDir, 'LOGO_demo_520.webp'), 'x')
+  const out = await run(grenze, { game: { id: 'grenze' } })
+  check('Grenze 封面 = patchres/banner/banner_title 里的 LOGO_*.webp，路径 ~/ 开头（相对媒体目录）', out.details?.cover === '~/assets/resources/patchres/banner/banner_title/LOGO_demo_520.webp' || out.itemPatch?.cover === '~/assets/resources/patchres/banner/banner_title/LOGO_demo_520.webp', J([out.details?.cover, out.itemPatch?.cover, out.itemPatch?.coverPath]))
+  await rm(bannerDir, { recursive: true, force: true })
+}
+
 // ================= 别名：共用 girlscreation 的数据，写回各自声明的 id =================
 {
   const base = await run(MEDIA.girlscreation.direct, { game: { id: 'girlscreation' } })

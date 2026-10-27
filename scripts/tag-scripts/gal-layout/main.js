@@ -1320,7 +1320,7 @@ export const LAYOUTS = {
     },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [],   // 数 TextAsset 里的 easy_dialog-N.xml（detectGrenze）
-    cover: [{ dir: 'patchres/banner/banner_title', match: '^LOGO_.*\\.(?:webp|png)$', flags: 'i', pick: 'first' }],   // 封面 = 标题 LOGO（gal-samples15 的图片目录清单：patchres/banner/banner_title 里 LOGO_<…>_520.webp 291 张）
+    cover: [{ dir: 'assets/resources/patchres/banner/banner_title', match: '^LOGO_.*\\.(?:webp|png)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 标题 LOGO（gal-samples15 的图片目录清单：patchres/banner/banner_title 里 LOGO_<…>_520.webp 291 张）
     avatars: [], expectedDirs: ['assets/resources/patchres'],
     notes: ['按 next_id 链拆场景（每个文件几百个）；立绘 = merc/pic/<hero_group_id>/body.webp|png 整张；screen_effect / pic_action / effect 含义未知，记为未渲染指令（stats.raw）'],
   },
@@ -1645,12 +1645,13 @@ async function coverFromRules(media, entry, base) {
     const dirs = await expand(media, base, rule.dir, 'dir', 400)
     for (const dir of dirs) {
       const dirAbs = path.join(media, ...splitRel(dir.rel))
+      const out = (rel) => (rule.fromMedia ? `~/${dir.rel}/${rel.slice(rel.lastIndexOf('/') + 1)}` : rel)   // fromMedia：封面路径相对媒体目录（~/ 开头）——资源根不是 base 的时候用（Grenze：资源根是 assets/resources/patchres）
       if (Array.isArray(rule.files)) {
-        for (const file of rule.files) if (await isFile(path.join(dirAbs, file))) return join(relFromBase(base, dir.rel), file)
+        for (const file of rule.files) if (await isFile(path.join(dirAbs, file))) return out(join(relFromBase(base, dir.rel), file))
       } else {
         const re = new RegExp(rule.match, String(rule.flags || '').replace(/[^imsu]/g, ''))
         const names = (await listNames(dirAbs)).filter((name) => re.test(name))
-        if (names.length) return join(relFromBase(base, dir.rel), rule.pick === 'last' ? names[names.length - 1] : names[0])
+        if (names.length) return out(join(relFromBase(base, dir.rel), rule.pick === 'last' ? names[names.length - 1] : names[0]))
       }
     }
   }
@@ -2356,7 +2357,9 @@ async function detectGrenze(scope) {
   const dialogs = (await listNames(path.join(media, ...splitRel(config.scriptRoots[0]?.dir || join(base, 'TextAsset'))))).filter((name) => /^easy_dialog-\d+\.xml$/i.test(name))
   logs.push(`Grenze 游戏根：${base || '.'}；对话 XML ${dialogs.length} 个；资源目录${hasResources ? '有' : '没有（背景 / 声音 / 立绘都会缺）'}`)
   for (const line of entry.notes) logs.push(line)
+  const cover = await coverFromRules(media, entry, base)
   return makeFound(scope, entry, loc, config, {
+    cover,
     count: async () => { logs.push(`对话 XML ${dialogs.length} 个${dialogs.length ? '' : '——结构可能不对'}`); return dialogs.length },
   })
 }
