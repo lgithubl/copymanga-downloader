@@ -525,7 +525,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
   const first = await run(MEDIA.bokusen.direct, { game: { id: 'bokusen' } }, {}, { tags: [] })
   const l1 = lineOf(first, /^\+ adapterOptions\['bokusen-json'\]/)
   const sec1 = first.logs.slice(first.logs.findIndex((l) => /^本次改动/.test(l)))
-  check('改动报告：新增 adapterOptions → 「+ adapterOptions[\'bokusen-json\']（新增）：11 个键（…）」一行，不是整张表的 JSON；classify / limits / resourceResolve 也各一行', /^\+ adapterOptions\['bokusen-json'\]（新增）：11 个键（root、resourceDir、/.test(l1) && l1.length < 160 && /^\+ classify（新增）：（空）/.test(lineOf(first, /^\+ classify/)) && /^\+ limits（新增）/.test(lineOf(first, /^\+ limits/)) && /^\+ resourceResolve（新增）/.test(lineOf(first, /^\+ resourceResolve/)) && J(first.details.changes.adapterOptions.added) === J({ 'bokusen-json': 10 }), l1)
+  check('改动报告：新增 adapterOptions → 「+ adapterOptions[\'bokusen-json\']（新增）：11 个键（…）」一行，不是整张表的 JSON；classify / limits / resourceResolve 也各一行', /^\+ adapterOptions\['bokusen-json'\]（新增）：11 个键（root、resourceDir、/.test(l1) && l1.length < 160 && /^\+ classify（新增）：（空）/.test(lineOf(first, /^\+ classify/)) && /^\+ limits（新增）/.test(lineOf(first, /^\+ limits/)) && /^\+ resourceResolve（新增）/.test(lineOf(first, /^\+ resourceResolve/)) && J(first.details.changes.adapterOptions.added) === J({ 'bokusen-json': 11 }), l1)
   check('改动报告：规则表很大时改动段仍 ≤ 8KB / 每行 ≤ 500 字 / 总行数 ≤ 80、details ≤ 4000', Buffer.byteLength(sec1.join('\n')) <= 8192 && sec1.every((l) => l.length <= 500) && first.logs.length <= 80 && JSON.stringify(first.details).length <= 4000, `${Buffer.byteLength(sec1.join('\n'))} / ${JSON.stringify(first.details).length}`)
   const store1 = storeOf(first)
   const again = await run(MEDIA.bokusen.direct, store1.config, {}, { tags: store1.tags })
