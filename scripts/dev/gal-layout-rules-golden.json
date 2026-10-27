@@ -44,6 +44,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -137,6 +140,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -549,6 +555,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -642,6 +651,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -978,6 +990,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1071,6 +1086,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1172,6 +1190,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1265,6 +1286,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1366,6 +1390,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1459,6 +1486,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -1966,6 +1996,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -2059,6 +2092,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -2361,6 +2397,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",
@@ -2454,6 +2493,9 @@
      "spine": "data/spine"
     },
     "line": {
+     "bgTransform": "bgZoom",
+     "blurUnit": 3,
+     "coordUnit": 0.6667,
      "crossfadeScale": "bgScale",
      "expressionPrefix": "ex_",
      "imageIdRe": "^[a-z]{2,4}\\d+$",

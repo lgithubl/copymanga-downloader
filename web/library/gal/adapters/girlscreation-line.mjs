@@ -51,7 +51,7 @@ export const DEFAULT_OPTIONS = {
   dialect: { window: 200000, headWindow: 8192, markers: { aku: ['<GROUP>', '<EV_DISPLAY>', '<SPINE_ACTOR_DISPLAY>'], display: ['<SPINE_ACTOR_DISPLAY>'], branch: ['<LABEL>'] } },
   stand: { akuOffset: 450, akuDirections: { LEFT: -1, RIGHT: 1, CENTER: 0 }, fruitsDim: 0.6 },
   animation: { maxFrames: 600 },
-  line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$', objectKind: '^character$', jumpAction: 1, moveBase: 'offset', crossfadeScale: 'bgScale' },
+  line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$', objectKind: '^character$', jumpAction: 1, moveBase: 'offset', crossfadeScale: 'bgScale', bgTransform: 'bgZoom', coordUnit: 0.6667, blurUnit: 3 },
   commands: { cgmode: 'actors', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' },
   category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
   titleLines: ['^title,([^,\\r\\n]+),'],
@@ -104,7 +104,7 @@ export function girlsCompiled(opt) {
 const LINE_COMMANDS = new Set([
   'message', 'msgvoicesync', 'voice', 'window', 'fade', 'transitionfade', 'bg', 'crossfade', 'crossfadeready', 'bgmplay', 'bgmstop', 'seplay', 'sestop',
   'playmovie', 'stopmovie', 'wait', 'await', 'chara', 'charamotion', 'charaexpression', 'charafade', 'asynccharafade', 'charadelete', 'cgmode', 'title', 'endof',
-  'asyncjump', 'asyncmoveobject', 'transitioncrossfade', 'transitioncrossfadeready',
+  'asyncjump', 'asyncmoveobject', 'transitioncrossfade', 'transitioncrossfadeready', 'subimage', 'subimagedelete', 'bgblur', 'bgcolor', 'shakeall', 'asyncshakeall', 'asyncshake',
 ])
 // 只有行式脚本才会有的命令：认出任何一个就够；否则要求前面几行里至少 4 条已知命令
 const LINE_ONLY = new Set(['message', 'msgvoicesync', 'chara', 'charamotion', 'charafade', 'asynccharafade', 'crossfade', 'crossfadeready', 'playmovie', 'bgmplay', 'seplay', 'cgmode'])
@@ -180,6 +180,8 @@ export function parseLine(text, ctx = null, meta = {}) {
   const actors = new Map()   // 槽 → { skel, x, y, scale, visible, tracks: [] }
   const onStage = new Set()  // 台上现在有的 spine 角色槽（发过 spine、没 spineOff）：cgmode,on 时要收起来
   let cgOn = false           // cgmode,on 到 cgmode,off 之间：角色藏起来，期间对角色的改动只记状态不画
+  let zoomActive = false     // 当前背景有没有用 bgZoom 摆过（位移 / 缩放）：回到 0,0,1 时要补一条复位
+  let shakeSeq = 0
   const skelFiles = (name) => {
     if (!scene) return ctx?.globalSpines?.get(name) || null
     if (scene.spines.has(name)) return scene.spines.get(name)
@@ -211,16 +213,29 @@ export function parseLine(text, ctx = null, meta = {}) {
     commands = []
     voiceOpen = false
   }
-  // CrossFade / TransitionCrossFade：换背景 + 渐变；缩放不是 1 跟一条 bgScale（换背景会清掉上一张的缩放）；x / y 位移没法表示，记 raw
+  // bg / CrossFade / TransitionCrossFade 的 x,y,缩放（脚本坐标 = 1920×1080，y 向上；样本里 (0,100,×1.3) 正好把放大后的图底边对齐，(-300,…,×1.3) 是放大后的横向余量）：
+  //   line.bgTransform = 'bgZoom'（默认）→ 一条 bgZoom { scale, x, y }（场景像素 = 脚本坐标 × line.coordUnit，y 取反）；回到 0,0,1 补一条复位。'legacy' = 以前的做法（缩放跟 bgScale，位移记 raw）
+  const bgTransform = (x, y, scaleX, label) => {
+    const scale = numOf(scaleX, 1) > 0 ? numOf(scaleX, 1) : 1
+    if (opt.line.bgTransform === 'legacy') {
+      if (scale !== 1 && opt.line.crossfadeScale !== 'ignore') emit({ op: 'bgScale', scale, seconds: 0, easing: 'linear' })
+      if (numOf(x) !== 0 || numOf(y) !== 0 || (scale !== 1 && opt.line.crossfadeScale === 'ignore')) count('raw', `${label}(${scale !== 1 && opt.line.crossfadeScale === 'ignore' ? '缩放/位移' : '位移'})`)
+      return
+    }
+    const unit = Number(opt.line.coordUnit) > 0 ? Number(opt.line.coordUnit) : 0.6667
+    const bx = numOf(x) * unit
+    const by = -numOf(y) * unit
+    const active = scale !== 1 || bx !== 0 || by !== 0
+    if (active || zoomActive) emit({ op: 'bgZoom', scale, x: bx, y: by })
+    zoomActive = active
+  }
+  // CrossFade / TransitionCrossFade：换背景 + 渐变 + bgTransform
   const crossFade = (image, seconds, x, y, scaleX, label) => {
     const src = res('images', image)
     if (!src) { count('unresolved', `bg:${image}`); return }
     if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
     emit({ op: 'bg', src, fade: secOf(seconds) })
-    const scale = numOf(scaleX, 1)
-    const scaled = scale !== 1 && scale > 0
-    if (scaled && opt.line.crossfadeScale !== 'ignore') emit({ op: 'bgScale', scale, seconds: 0, easing: 'linear' })
-    if (numOf(x) !== 0 || numOf(y) !== 0 || (scaled && opt.line.crossfadeScale === 'ignore')) count('raw', `${label}(${scaled && opt.line.crossfadeScale === 'ignore' ? '缩放/位移' : '位移'})`)
+    bgTransform(x, y, scaleX, label)
   }
   const playVoice = (name) => {
     const src = res('voices', name)
@@ -270,7 +285,7 @@ export function parseLine(text, ctx = null, meta = {}) {
       case 'bg': {
         const src = res('images', f[1])
         if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src, fade: 0 }) } else count('unresolved', `bg:${f[1]}`)
-        if (numOf(f[4], 1) !== 1 || numOf(f[3]) !== 0 || numOf(f[2]) !== 0) count('raw', 'bg(缩放/位移)')
+        if (src || opt.line.bgTransform === 'legacy') { if (opt.line.bgTransform === 'legacy') { if (numOf(f[4], 1) !== 1 || numOf(f[3]) !== 0 || numOf(f[2]) !== 0) count('raw', 'bg(缩放/位移)') } else bgTransform(f[2], f[3], f[4], 'bg') }
         break
       }
       case 'crossfadeready': break
@@ -354,7 +369,7 @@ export function parseLine(text, ctx = null, meta = {}) {
         } else if (cgOn) { cgOn = false; for (const slot of actors.keys()) paintActor(slot, 0) }
         break
       }
-      case 'asyncjump': {   // asyncjump,character,槽,dy,秒,次数
+      case 'jump': case 'asyncjump': {   // asyncjump,character,槽,dy,秒,次数（jump 同）
         const slot = slotOf(f[2])
         if (mode.asyncjump === 'raw' || !kindRe?.test(f[1] || '')) { count('raw', cmd); break }
         if (!actors.has(slot)) { count('raw', 'asyncjump(槽里没有角色)'); break }
@@ -376,6 +391,34 @@ export function parseLine(text, ctx = null, meta = {}) {
         paintActor(slot, 0, seconds > 0 ? { move: seconds } : null)
         break
       }
+      case 'subimage': {   // subimage,图,id,x,y,缩放x,缩放y,层序,透明度：贴在场景上的一张图（x / y 脚本坐标 1920×1080、y 向上；样本里两张叠在屏幕上下 800 之外）
+        const src = res('images', f[1])
+        if (!src) { count('unresolved', `bg:${f[1]}`); break }
+        const id = String(f[2] || 'subimage').replace(/[^\w-]/g, '_')
+        emit({ op: 'overlay', slot: id, src, x: numOf(f[3]), y: -numOf(f[4]), scaleX: numOf(f[5], 1), scaleY: numOf(f[6], 1), z: numOf(f[7], 1), stage: [1920, 1080] })
+        break
+      }
+      case 'subimagedelete': emit({ op: 'overlayOff', slot: String(f[1] || 'subimage').replace(/[^\w-]/g, '_') }); break
+      case 'bgblur': emit({ op: 'bgBlur', radius: Math.max(0, numOf(f[1])) * (Number(opt.line.blurUnit) > 0 ? Number(opt.line.blurUnit) : 3) }); break   // bgblur,等级,秒：等级 × line.blurUnit 场景像素（没有真机对照）
+      case 'bgcolor': {   // bgcolor,r,g,b,a,秒（0~1）：背景纯色
+        const c = [f[1], f[2], f[3]].map((v) => Math.round(Math.max(0, Math.min(1, numOf(v, 0))) * 255))
+        if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
+        emit({ op: 'bg', color: c, fade: secOf(f[5]) })
+        break
+      }
+      case 'shakeall': case 'asyncshakeall': {   // shakeall,x,y,秒,间隔：整屏抖动
+        const x = Math.abs(numOf(f[1])); const y = Math.abs(numOf(f[2]))
+        if (!x && !y) break
+        emit({ op: 'shake', axis: x && y ? 'overall' : y ? 'vertical' : 'horizontal', strength: (Math.max(x, y) * (Number(opt.line.coordUnit) > 0 ? Number(opt.line.coordUnit) : 0.6667)) / 40, seconds: secOf(f[3], 0.5) })
+        break
+      }
+      case 'shake': case 'asyncshake': {   // shake,character,槽,幅度,秒,次数：角色抖动
+        const slot = slotOf(f[2])
+        if (!kindRe?.test(f[1] || '') || !actors.has(slot)) { count('raw', cmd); break }
+        paintActor(slot, 0, { shake: { id: `s${shakeSeq++}`, x: numOf(f[3], 10), y: 0, seconds: secOf(f[4], 0.3) } })
+        break
+      }
+      case 'textsize': case 'defaultcharacolor': break   // 界面字号 / 角色默认色：不影响画面内容
       case 'await': case 'title': case 'endof': break
       default: count('raw', cmd)
     }

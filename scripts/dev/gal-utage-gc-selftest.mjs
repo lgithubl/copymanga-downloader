@@ -157,14 +157,24 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   check('asyncmoveobject：角色还没显示（chara … off）时只记下位置，之后 charafade in 直接出现在新位置', ofOp(hidden, 'spine').length === 1 && ofOp(hidden, 'spine')[0].x === 15 && ofOp(hidden, 'spine')[0].fade === 0.3, J(ofOp(hidden, 'spine')))
 
   // CrossFade / TransitionCrossFade
-  const cross = run(['CrossFadeReady', 'CrossFade,abg1,1,0,0,1.3,1.3', 'TransitionCrossFadeReady', 'TransitionCrossFade,abg2,tra11a,0.6,0,0,1.3,1.3', 'message,甲,x,'])
-  check('CrossFade / TransitionCrossFade → bg + 渐变秒（过渡名 tra11a 忽略）；缩放 ≠ 1 跟一条 bgScale（seconds 0）；Ready 忽略；没有 raw',
+  const cross = run(['CrossFadeReady', 'CrossFade,abg1,1,0,0,1.3,1.3', 'TransitionCrossFadeReady', 'TransitionCrossFade,abg2,tra11a,0.6,0,0,1.3,1.3', 'message,甲,x,'], { line: { bgTransform: 'legacy' } })
+  check('line.bgTransform = legacy：CrossFade / TransitionCrossFade → bg + 渐变秒（过渡名 tra11a 忽略）；缩放 ≠ 1 跟一条 bgScale（seconds 0）；Ready 忽略；没有 raw',
     same(flat(cross).filter((c) => ['bg', 'bgScale'].includes(c.op)).map((c) => [c.op, c.src?.replace(/^.*\//, ''), c.fade, c.scale]), [['bg', 'abg1.png', 1, undefined], ['bgScale', undefined, undefined, 1.3], ['bg', 'abg2.png', 0.6, undefined], ['bgScale', undefined, undefined, 1.3]])
     && Object.keys(cross.stats.raw).length === 0, J(flat(cross)) + J(cross.stats.raw))
-  const crossPos = run(['CrossFade,abg1,0.6,300,0,1,1', 'TransitionCrossFade,abg2,tra01a,1,300,0,1.3,1.3'])
+  const crossPos = run(['CrossFade,abg1,0.6,300,0,1,1', 'TransitionCrossFade,abg2,tra01a,1,300,0,1.3,1.3'], { line: { bgTransform: 'legacy' } })
   check('CrossFade：缩放 = 1 不出 bgScale；x / y 位移没法表示 → raw「CrossFade(位移)」/「TransitionCrossFade(位移)」', ofOp(crossPos, 'bgScale').length === 1 && crossPos.stats.raw['CrossFade(位移)'] === 1 && crossPos.stats.raw['TransitionCrossFade(位移)'] === 1, J(crossPos.stats.raw))
-  const crossIgnore = run(['CrossFade,abg1,1,0,0,1.3,1.3'], { line: { crossfadeScale: 'ignore' } })
+  const crossIgnore = run(['CrossFade,abg1,1,0,0,1.3,1.3'], { line: { bgTransform: 'legacy', crossfadeScale: 'ignore' } })
   check('line.crossfadeScale = ignore：不出 bgScale，记 raw「CrossFade(缩放/位移)」（和以前一样）', ofOp(crossIgnore, 'bgScale').length === 0 && crossIgnore.stats.raw['CrossFade(缩放/位移)'] === 1, J(crossIgnore.stats.raw))
+  // 默认（bgZoom）：脚本坐标 1920×1080、y 向上 → 场景像素 ×0.6667、y 取反；回到 0,0,1 补复位
+  const zoomed = run(['CrossFade,abg1,0.5,-300,100,1.3,1.3', 'message,甲,x,', 'CrossFade,abg2,0,0,0,1,1', 'CrossFade,abg1,0,0,0,1,1', 'message,甲,y,'])
+  const zooms = flat(zoomed).filter((c) => c.op === 'bgZoom')
+  check('CrossFade 默认：位移 + 缩放 → 一条 bgZoom（x −300 → −200、y 100 → −66.7、scale 1.3）；回到 0,0,1 补一条复位，之后再 0,0,1 不重复', zooms.length === 2 && zooms[0].scale === 1.3 && Math.abs(zooms[0].x + 200.01) < 0.1 && Math.abs(zooms[0].y + 66.67) < 0.1 && zooms[1].scale === 1 && zooms[1].x === 0 && !Object.keys(zoomed.stats.raw).length, J(zooms) + J(zoomed.stats.raw))
+  // subimage / subimagedelete / bgblur / bgcolor / shakeall / asyncshake
+  const misc = run(['subimage,abg1,subimage_1,0,-800,1.5,0.5,1,1', 'bgblur,3,2', 'bgcolor,1,0,0.5,1,0', 'shakeall,10,10,0.3,0.01', 'chara,st1,chara_1,0,0,10,1,1,1,on', 'asyncshake,character,chara_1,15,0.4,1', 'textsize,48,2', 'subimagedelete,subimage_1', 'message,甲,x,'])
+  const m = flat(misc)
+  check('subimage → overlay（脚本坐标 stage 1920×1080、y 取反、缩放 / 层序）；subimagedelete → overlayOff；bgblur → bgBlur（等级 × 3）；bgcolor → bg 纯色；shakeall → shake；asyncshake 角色 → spine 带 shake；textsize 不记 raw',
+    m.some((c) => c.op === 'overlay' && c.slot === 'subimage_1' && c.y === 800 && c.scaleX === 1.5 && c.scaleY === 0.5 && c.stage?.[0] === 1920) && m.some((c) => c.op === 'overlayOff' && c.slot === 'subimage_1') && m.some((c) => c.op === 'bgBlur' && c.radius === 9)
+    && m.some((c) => c.op === 'bg' && c.color?.join() === '255,0,128') && m.some((c) => c.op === 'shake' && c.axis === 'overall') && m.some((c) => c.op === 'spine' && c.shake?.x === 15) && !Object.keys(misc.stats.raw).length, J(m.map((c) => c.op)) + J(misc.stats.raw))
   const crossRaw = run(['CrossFadeReady', 'CrossFade,abg1,1,0,0,1.3,1.3', 'TransitionCrossFadeReady', 'TransitionCrossFade,abg2,tra11a,0.6,0,0,1.3,1.3', 'message,甲,x,'], { commands: { crossfade: 'raw' } })
   check('commands.crossfade = raw：回到以前（CrossFade 照旧 bg + 渐变、缩放记 raw、没有 bgScale；TransitionCrossFade / Ready 记 raw）',
     same(ofOp(crossRaw, 'bg').map((c) => c.fade), [1]) && ofOp(crossRaw, 'bgScale').length === 0 && same(crossRaw.stats.raw, { 'CrossFade(缩放/位移)': 1, TransitionCrossFadeReady: 1, TransitionCrossFade: 1 }), J(crossRaw.stats.raw))
