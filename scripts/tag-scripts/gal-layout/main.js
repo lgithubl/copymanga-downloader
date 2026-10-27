@@ -613,6 +613,7 @@ export const ADAPTER_RULES = {
     bgChange: { f: { fade: 0.5 }, c: { fade: 0 }, s: { fade: 0.5 }, default: { fade: 0 } },
     audioExtFallback: ['.ogg', '.mp3', '.wav', '.m4a', '.opus', '.flac'],
     stand: {
+      clearOnBgChange: true,
       path: 'images/stands/{key}/{body}/{key}_{body}_{brow}_{eye}_{lip}{h}.png',
       fields: {
         key: ['key', 'chara_id'],
@@ -992,8 +993,10 @@ export const LAYOUTS = {
     // 规则：renpy-minashigo 全表（已验证：DynamicCharacter("name")、scene_<编号>.rpy）。缩略图对应关系未知（见 pending）。
     ruleTables: ['renpy-minashigo'], ruleOverrides: {},
     engine: { classify: [] },
-    // PENDING（待真实数据，不写进 config，只是文档）：game/images/thumb/<12 位>_360.jpg 和 scene_<9 位> 的编号对应关系还不知道，N 填不出来；确认前不要启用任何 thumbSources。见 scripts/dev/gal-pending-plan.md §1。
-    pending: [{ ref: 'gal-pending-plan.md §1', what: 'minashigo 缩略图 = game/images/thumb/<12 位>_360.jpg', draft: { thumbSources: [{ dir: 'game/images/thumb', match: '^(\\d{N})\\d*_360\\.jpg$', key: '{1}', forKey: '<由 scene 编号截取>', for: 'script' }] } }],
+    // 缩略图已解决（见下面 config.thumbSources 的注释）
+    pending: [],
+    // 缩略图（gal-samples7 §C：thumb 1423 个里 1323 个的前 9 位 = 某个 scene_<9 位>）：images/thumb/<场景 id><3 位>_360.jpg ↔ scene_<场景 id>（forStrip 去掉 scene_）；images/cg/<场景 id>/*.jpg 目录名 = 场景 id，最多 5 张接在后面；
+    // 角色分组卡片（键 = 6 位角色编号）：images/icon/Character/<6 位>.png + images/stand/<6 位>stand_<a-z>.png（文件名格式已验证；和分组键是同一种 6 位编号，对应关系是猜的）
     config: {
       namesFiles: [], thumbsDirs: [], scriptExtensions: ['rpy'], hiddenDirs: [], labels: {}, merge: [],
       // 首页分类：角色（scene_<1 位类别><6 位角色编号><2 位序号>，按角色编号分组）/ 活动（scene_ev<活动号>_…，按活动号分组）/ 主线（scene_<7 位数字>，平铺）；视图是独占的
@@ -1004,6 +1007,12 @@ export const LAYOUTS = {
       ],
       groups: [{ parent: 'chars', pattern: '^scene_\\d(\\d{6})\\d{2}$' }, { parent: 'events', pattern: '^scene_(ev\\d+)_' }],
       dirThumbs: [], scriptThumbs: [],
+      thumbSources: [
+        { dir: 'images/thumb', match: String.raw`^(.+)\d{3}_360\.jpg$`, key: '{1}', for: 'script', forKey: '{stem}', forStrip: '^scene_' },
+        { dir: 'images/cg/*', match: String.raw`\.(?:png|jpe?g|webp)$`, key: '{dirname}', for: 'script', forKey: '{stem}', forStrip: '^scene_', limit: 5 },
+        { dir: 'images/icon/Character', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'dir', forKey: '{name}' },
+        { dir: 'images/stand', match: String.raw`^(\d{6})stand_[a-z]\.png$`, key: '{1}', for: 'dir', forKey: '{name}', limit: 3 },
+      ],
     },
     count: [{ dir: 'game/scripts', ext: '.rpy', depth: 3 }],
     avatars: [], expectedDirs: [],
@@ -1038,7 +1047,17 @@ export const LAYOUTS = {
     },
     engine: { classify: [] },
     // groups：按脚本编号的形状分七类（gal-samples12 的 7290 个脚本全部分到了，没有剩下的）：1<6 位角色编号><2 位序号>[N|X…] = 角色剧情（941 张卡）；6<5 位><3 位>[字母] = 6 开头的角色（7 张）；<7 位>[E|N|S] = 主线章节（265 张，难度后缀的几个合成一张）；<4 位><2 位> = 6 位编号（2 张）；ev<活动号>_<段>_<序号>[N|X] = 活动（163 张）；ex<号>_<序号> = 番外；audition* = 试镜（1 张）。卡片标题 = 分组键；名称表 data/resource.json 是加密的，读不了——以后有了名字表在 labels 里加 { 分组键: 名字 } 即可
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [{ parent: '.', pattern: '^1(\\d{6})\\d{2}[A-Z]?$' }, { parent: '.', pattern: '^(6\\d{5})\\d{3}[A-Z]?$' }, { parent: '.', pattern: '^(\\d{7})[A-Z]?$' }, { parent: '.', pattern: '^(\\d{4})\\d{2}[A-Z]?$' }, { parent: '.', pattern: '^(ev\\d+)_\\d+_\\d+[A-Z]?$' }, { parent: '.', pattern: '^(ex\\d+)_\\d+$' }, { parent: '.', pattern: '^(audition)\\d*(?:_.*)?$' }], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    // 缩略图（dir 相对资源根 = data/）：脚本 <9 位>.txt ↔ image/episode/story/<9 位>.png（已验证：gal-samples9，5321 个脚本里 1815 个有对应图）；角色头像：脚本名 [1:7] = 6 位角色编号（已验证和 spine/character/<6 位> 一致），
+    // 图和编号的对应只验证了「同样是 6 位编号」（猜的）；脚本卡片 = 本集图在前、头像接在后面；角色分组卡片（键 = 6 位编号）= icon → deck → profile → stand
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [{ parent: '.', pattern: '^1(\\d{6})\\d{2}[A-Z]?$' }, { parent: '.', pattern: '^(6\\d{5})\\d{3}[A-Z]?$' }, { parent: '.', pattern: '^(\\d{7})[A-Z]?$' }, { parent: '.', pattern: '^(\\d{4})\\d{2}[A-Z]?$' }, { parent: '.', pattern: '^(ev\\d+)_\\d+_\\d+[A-Z]?$' }, { parent: '.', pattern: '^(ex\\d+)_\\d+$' }, { parent: '.', pattern: '^(audition)\\d*(?:_.*)?$' }], dirThumbs: [], scriptThumbs: [], thumbSources: [
+        { dir: 'image/episode/story', match: String.raw`^(\d{9})\.png$`, key: '{1}', for: 'script', forKey: '{stem}' },
+        { dir: 'image/character/icon', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'script', forKey: '{stem:1:7}', limit: 1 },
+        { dir: 'image/character/deck', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'script', forKey: '{stem:1:7}', limit: 1 },
+        { dir: 'image/character/icon', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'dir', forKey: '{name}' },
+        { dir: 'image/character/deck', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'dir', forKey: '{name}' },
+        { dir: 'image/character/profile', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'dir', forKey: '{name}' },
+        { dir: 'image/character/stand', match: String.raw`^(\d{6})\d{2}\.png$`, key: '{1}', for: 'dir', forKey: '{name}', limit: 3 },
+      ], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'adv/textfiles/story', ext: '.txt', depth: 2 }],
     avatars: [], expectedDirs: [],
     notes: ['按脚本编号的形状分组（角色 / 主线章节 / 活动 ev / 番外 ex / 试镜），标题暂时是分组键；立绘（spriteatlas 图集）、CG（sprite）、闪屏 / 抖动已渲染；mask / imgconf / 黑底图 / anm 暂未渲染（见上面的注释）'],
@@ -1062,7 +1081,14 @@ export const LAYOUTS = {
       // sampleFiles：未验证的猜测——脚本抽样默认 3000，场景数超过它时索引会截断（渲染诊断报 sample-truncated）；放到 ceiling 20000 保证不会悄悄少读（比适配器默认宽，不是逐字节等价）。
       limits: { walkFiles: 400000, sampleFiles: 20000 },
     },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [] },
+    // 缩略图（g2.log / add.g.3.log 的目录树：每个场景目录 scenes/<场景 id>/ 里有 thumbnail.png|jpg）：键 = 场景目录名；脚本卡片 forKey = 父目录名；topUp：再从脚本里补事件图 / 立绘 / 背景（最多 6 张，规则的图在前）让卡片能悬停轮播
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [],
+      thumbSources: [
+        { dir: 'scenes/*', match: String.raw`^thumbnail\.(?:png|jpe?g|webp)$`, key: '{dirname}', for: 'script', forKey: '{parent}' },
+        { dir: 'scenes/*', match: String.raw`^thumbnail\.(?:png|jpe?g|webp)$`, key: '{dirname}', for: 'dir', forKey: '{name}' },
+      ],
+      thumbFallback: { topUp: true },
+    },
     count: [],   // 数「有 script.txt / output_script.txt / hmr_·hsr_<id>.txt 的场景」（detectGirlsCreation）
     cover: [{ dir: 'scenes/*', files: ['thumbnail.png', 'thumbnail.jpg', 'thumbnail.webp'] }],
     avatars: [], expectedDirs: ['data/audio'],
@@ -1139,7 +1165,10 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000 },   // utage-book.contextWalkLimit：Sound/Voice/ImportChara/<角色>/ 下语音很多
     },
     // Adventure 下的 Master.chapter.json 和图片目录不是剧情，适配器的嗅探把它们挡掉（只认 *.book.json 靠适配器，不靠扩展名）
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: ['BackGrounds', 'Effects', 'Spine', 'Textures'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [] },
+    // 缩略图：角色分组卡片（目录节点名 '@<4 位角色号>'，forStrip 去掉 @）← Sprites/Chara/Thumb_005|Thumb_006/chara_<7 位>_<n>_<n>.png（真实路径不带 Textures/）；脚本 CharaScenario<7 位> 前 4 位 = 角色号（头像与角色的对应是猜的）
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: ['BackGrounds', 'Effects', 'Spine', 'Textures'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [],
+      thumbSources: [{ dir: 'Sprites/Chara/Thumb_*', match: String.raw`^chara_(\d{4})\d{3}_.*\.png$`, key: '{1}', for: 'dir', forKey: '{name}', forStrip: '^@', limit: 6 }],
+    },
     count: [{ dir: 'Adventure', ext: '.book.json', depth: 3 }],
     cover: [{ dir: 'Adventure/BackGrounds', match: '\\.(png|jpe?g)$', flags: 'i', pick: 'first' }],
     avatars: [], expectedDirs: ['Characters', 'Stills', 'Sound'],
@@ -1160,7 +1189,15 @@ export const LAYOUTS = {
     // 规则：artwhirl-json 全表（按官方 json_story_player 的语义写的；others.action 的 bow / jump / swing / vibe / avoid 近似成轻微整屏抖动，slidein* / attack* 记 raw，emotion.* drop（原版 json_story_player 不处理 emotion）；bg_change.val f / c / s → 渐变秒数（猜的）；音频扩展名对不上时按 audioExtFallback 换；voices 字符串 / dic 下标两种写法都认；换场景时收掉上一个场景的立绘）。
     ruleTables: ['artwhirl-json'], ruleOverrides: {},
     engine: { classify: [] },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    // 缩略图（dir 相对资源根 = game/）：episode_scripts/<KEY>_ep<N>/<KEY>_ep<N>_00.json（H 版 _h.json）↔ episode_thumb/<KEY>/<KEY>_episode<N>_thumb.jpg（H 版 …_episode<N>h_thumb.jpg）；目录 / 分组卡片 ← images/icons/<KEY>/icon_m.jpg + icon_s.png；hscripts 的 H 场景没有直接的缩略图，走兜底 + topUp
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100,
+      thumbSources: [
+        { dir: 'episode_thumb/*', match: String.raw`^(.+)_episode(\d+)(h?)_thumb\.jpg$`, key: '{1}_{2}{3}', for: 'script', forMatch: String.raw`^(.+)_ep(\d+)_00$`, forKey: '{1}_{2}' },
+        { dir: 'episode_thumb/*', match: String.raw`^(.+)_episode(\d+)(h?)_thumb\.jpg$`, key: '{1}_{2}{3}', for: 'script', forMatch: String.raw`^(.+)_ep(\d+)_h$`, forKey: '{1}_{2}h' },
+        { dir: 'images/icons/*', match: String.raw`^icon_[ms]\.(?:jpg|png)$`, key: '{dirname}', for: 'dir', forMatch: String.raw`^(.+?)(?:_ep\d+)?$`, forKey: '{1}' },
+      ],
+      thumbFallback: { topUp: true },
+    },
     count: [{ dir: 'episode_scripts', ext: '.json', depth: 3 }, { dir: 'hscripts', ext: '.json', depth: 3 }],
     avatars: [], expectedDirs: ['images/stands', 'audio'],
     notes: ['剧情 JSON 按 官方 json_story_player 的语义解析（背景 / HCG 视频 / BGM / 语音 / 立绘组合）；立绘动作（others 的 action 的 slidein / attack）暂未渲染，统计里会列出；表情特效（emotion）原版就不处理，不记'],
@@ -1182,7 +1219,8 @@ export const LAYOUTS = {
       // 无 hash 的表情 png 很多在磁盘上不存在 → 适配器退回基础立绘（fallback.faceToBase）。limits 抄的是 tyrano-ks 自己的 contextWalkLimit / contextSampleLimit（3067 个剧情各一个 json）。
       limits: { walkFiles: 800000, sampleFiles: 20000 },
     },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    // 兜底封面跳过占位图：默认的 black / white / blank（按单词）再加 sepia_filter（回忆滤镜层 [image storage="sepia_filter-<hash>.png" layer=4]）；skip 是整张替换默认值，所以默认那条也要写进来
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100, thumbFallback: { skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', 'sepia_filter'] } },
     count: [{ dir: 'dmm/raw_scenario', ext: '.ks', depth: 6 }],
     avatars: [], expectedDirs: ['dmm/assets'],
     notes: ['列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；layer 3 的立绘滑入 / 滑出不渲染（anim layer / layopt 静默吃掉，animSlide: raw 可改成记 raw）；Memorial 剧情（mem_img 幻灯片 / mem_voice 语音 + 台词 / memorial 段落）已支持'],

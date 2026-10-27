@@ -235,6 +235,7 @@ export function parse(text, ctx = null, meta = {}) {
   const waiting = new Map() // 槽 → 角色还没出现时先收到的动画
   const actors = new Map()  // 槽 → { skel, x, y, scale, fade, move, tracks: [{ anim, loop }] }
   const dirty = new Set()
+  const onStage = new Set()   // 现在在台上的 spine 角色槽（发过 spine、还没 spineOff）：VIDEO_PLAY 要把它们收起来
   let shakeId = 0
   const flushActors = () => {
     for (const slot of dirty) {
@@ -253,6 +254,7 @@ export function parse(text, ctx = null, meta = {}) {
         tracks: actor.tracks.map((t, track) => (t ? { track, anim: t.anim, loop: t.loop } : null)).filter(Boolean),
         order: slot, loop: true, speed: 1,
       })
+      onStage.add(slot)
       actor.fade = 0
       actor.move = 0
     }
@@ -334,7 +336,7 @@ export function parse(text, ctx = null, meta = {}) {
         case 'EV_FADE': if (akuStyle && /^out$/i.test(a[1] || '')) emit({ op: 'bgoff', fade: secs(a[2]) }); break   // EV_FADE,1,IN|OUT,毫秒：OUT = EV 图淡出；IN 不用处理（EV 指令已经显示）
         case 'SPINE_ACTOR_FADE': {   // 槽,IN|OUT,毫秒：OUT = 角色淡出（并从显示集合里拿掉）；IN = 淡入（下一次发 spine 指令时带上淡入时长）
           const slot = Math.trunc(numOf(a[0]))
-          if (/^out$/i.test(a[1] || '')) { shownActors.delete(slot); dirty.delete(slot); if (actors.has(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[2]) }) }
+          if (/^out$/i.test(a[1] || '')) { shownActors.delete(slot); dirty.delete(slot); if (actors.has(slot)) { onStage.delete(slot); emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[2]) }) } }
           else if (/^in$/i.test(a[1] || '') && actors.has(slot)) { actors.get(slot).fade = secs(a[2]); shownActors.add(slot); dirty.add(slot) }
           break
         }
@@ -344,7 +346,7 @@ export function parse(text, ctx = null, meta = {}) {
         case 'SPINE_ACTOR_DISPLAY': {   // Aku 写法：槽,SHOW | HIDE
           const slot = Math.trunc(numOf(a[0]))
           if (/^show$/i.test(a[1] || '')) { shownActors.add(slot); if (actors.has(slot)) dirty.add(slot) }
-          else if (/^hide$/i.test(a[1] || '')) { shownActors.delete(slot); dirty.delete(slot); if (actors.has(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 }) }
+          else if (/^hide$/i.test(a[1] || '')) { shownActors.delete(slot); dirty.delete(slot); if (actors.has(slot)) { onStage.delete(slot); emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 }) } }
           break
         }
         case 'NAME_PLATE': name = arg; lines = []; break
@@ -436,6 +438,8 @@ export function parse(text, ctx = null, meta = {}) {
         case 'STOP_VOICE': break
         case 'VIDEO_PLAY': {
           const src = res('videos', a[0])
+          // 原版查看器（Girls Creation R Viewer 的 scene.js VIDEO_PLAY）：放视频时还在台上的角色一律先藏起来（注释写的是「修正有问题的脚本」）；之后同一个角色再 SPINE_ACTOR 才会重新出现
+          if (!akuStyle) { for (const slot of [...onStage]) { onStage.delete(slot); emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 }) } for (const slot of dirty) if (actors.has(slot)) dirty.delete(slot) }
           // 两种写法（各自的原版查看器 scene.js 里的 VIDEO_PLAY）：Girls Creation / Aku = 名字,loop|once|wait,速度；Fruits = 名字,速度,循环(1 / 0)——第 2 项是数字就是 Fruits 的写法
           const fruitsForm = /^[0-9.]+$/.test(String(a[1] ?? '').trim())
           const loop = fruitsForm ? Number(a[2]) === 1 : a[1] === undefined ? true : /^loop$/i.test(a[1])
@@ -505,7 +509,7 @@ export function parse(text, ctx = null, meta = {}) {
           const slot = Math.trunc(numOf(a[0]))
           dirty.delete(slot)
           waiting.delete(slot)
-          if (actors.delete(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[1]) })
+          if (actors.delete(slot)) { onStage.delete(slot); emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secs(a[1]) }) }
           break
         }
         case 'ZOOM': {   // ZOOM,缩放,?,x,y：背景整体缩放 + 平移（x 取反，单位场景像素），角色缩放按上面的规则

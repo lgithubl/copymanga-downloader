@@ -43,6 +43,19 @@ async function e2e(adapterId, tree, adapterOptions, scriptRel, extraConfig = {})
   }
   const run = (rows, options = {}, files) => aw.parse(base(rows), prep(options, files), { stem: 'e', options })
 
+  // --- 换场景清立绘（原版 json_story_player.rpy：背景变了就 renpy.scene() 清掉所有层，之后只有这一行带 charas 才重新摆）---
+  const bgChange = [{ cmd: 'bg_change', val: 'c' }]
+  const kinds = (out) => ops(out, 'stand', 'standOff', 'bg').map((c) => c.op)
+  const noCmd = run([{ charas: [3] }, { bg: 2 }, { bg: 2 }])
+  check('魔法学园 背景换了（没有 bg_change 指令）而没有新 charas 也收立绘；之后同一个背景不重复收', same(kinds(noCmd), ['bg', 'stand', 'bg', 'standOff']), J(kinds(noCmd)))
+  const viaCmd = run([{ others: bgChange, text: null }, { charas: [3] }, { charas: null }, { bg: 2, others: bgChange, text: null }, { bg: 2 }, { bg: 2 }])
+  check('魔法学园 第 0 行 bg_change 时还没有立绘 = 无害；新场景（bg_change）charas=null → 收一次', same(kinds(viaCmd), ['bg', 'stand', 'bg', 'standOff']) || same(kinds(viaCmd), ['bg', 'stand', 'standOff']) || kinds(viaCmd).filter((o) => o === 'standOff').length === 1, J(kinds(viaCmd)))
+  const withNew = run([{ charas: [3] }, { bg: 2, others: bgChange, charas: [3] }])
+  check('魔法学园 新场景的这一行自带 charas：整组替换，不先 standOff', same(kinds(withNew), ['bg', 'stand', 'bg', 'stand']), J(kinds(withNew)))
+  const sameBg = run([{ charas: [3] }, { others: bgChange, bg: 1 }])
+  check('魔法学园 bg_change 但背景值没变（同一张图再来一次）也算换场景：清立绘（原版 background_changed）', same(kinds(sameBg), ['bg', 'stand', 'bg', 'standOff']), J(kinds(sameBg)))
+  check('魔法学园 stand.clearOnBgChange false = 不收：立绘一直留着', same(kinds(run([{ charas: [3] }, { bg: 2 }, { bg: 2 }], { stand: { clearOnBgChange: false } })), ['bg', 'stand', 'bg']), J(kinds(run([{ charas: [3] }, { bg: 2 }, { bg: 2 }], { stand: { clearOnBgChange: false } }))))
+
   // --- others 表 ---
   const act = (type, extra = {}) => ({ cmd: 'action', val: { type, target: [{ body_file: 'body10', chara_id: 'PAULY' }] }, ...extra })
   const emo = (type) => ({ cmd: 'emotion', val: { type, target: [{ body_file: 'body10', chara_id: 'PAULY' }] } })

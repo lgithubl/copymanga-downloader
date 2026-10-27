@@ -405,6 +405,7 @@
      }
     },
     "stand": {
+     "clearOnBgChange": true,
      "defaults": {
       "brow": "b",
       "eye": "e",
