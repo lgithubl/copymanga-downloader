@@ -1363,6 +1363,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       const close = btn('关闭', '')
       head.append(el('strong', '', '表情预设'), copy, close)
       const body = el('div', 'gal-expr-body')
+      // 每个下拉框左右各一个小按钮 = 上一项 / 下一项（点完照常触发 change，预览马上更新）；面板本身又小又能滚动，不挡着看效果
+      const stepBtn = (label, title, onClick) => { const b = el('button', 'gal-step', label); b.type = 'button'; b.title = title; b.addEventListener('click', (event) => { event.stopPropagation(); onClick() }); return b }
+      const stepSelect = (select) => {
+        const go = (d) => { const n = select.options.length; if (!n) return; select.selectedIndex = Math.max(0, Math.min(n - 1, select.selectedIndex + d)); select.dispatchEvent(new Event('change')) }
+        const wrap = el('span', 'gal-step-wrap')
+        wrap.append(stepBtn('◀', '上一项', () => go(-1)), select, stepBtn('▶', '下一项', () => go(1)))
+        return wrap
+      }
       const field = (label, control) => { const row = el('label', 'gal-expr-field'); row.append(el('span', '', label), control); return row }
       const actorSelect = el('select', 'gal-more-select')
       for (const item of actors) { const option = el('option', '', `${item.slot} · ${castKeysOf(item.skel).skelBase}`); option.value = item.slot; option.selected = item.slot === actor.slot; actorSelect.append(option) }
@@ -1372,7 +1380,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       presetInput.value = preset
       const list = el('datalist')
       list.id = 'gal-expr-presets'
-      for (const name of new Set([...presets, ...Object.keys(mergeExpressions(expressionTable()).default || {})])) { const option = el('option'); option.value = name; list.append(option) }
+      const presetNames = [...new Set([...presets, ...Object.keys(mergeExpressions(expressionTable()).default || {})])]
+      for (const name of presetNames) { const option = el('option'); option.value = name; list.append(option) }
       const scopeSelect = el('select', 'gal-more-select')
       for (const [value, label] of [[castKey || skelBase, `这个角色（${castKey || skelBase}）`], ['default', '所有角色']]) { const option = el('option', '', label); option.value = value; scopeSelect.append(option) }
       const selects = new Map()
@@ -1393,7 +1402,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         for (const name of actor.animations.filter((n) => n.startsWith(`${group}/`))) { const suffix = name.slice(group.length + 1 + group.length + 1 - 1).replace(/^_/, ''); const option = el('option', '', suffix); option.value = suffix; option.selected = suffix === values[group]; select.append(option) }
         select.addEventListener('change', preview)
         selects.set(group, select)
-        groupRows.append(field(`${label}（${group}）`, select))
+        groupRows.append(field(`${label}（${group}）`, stepSelect(select)))
       }
       const specOf = () => Object.fromEntries([...selects].filter(([, select]) => select.value).map(([group, select]) => [group, select.value]))
       function preview() { spineLayer?.setExpressions(expressionTable({ [scopeSelect.value]: { [presetInput.value.trim()]: specOf() } })) }
@@ -1421,7 +1430,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(JSON.stringify(views.expressions, null, 2)); copy.textContent = '已复制' } catch { copy.textContent = '复制失败' } setTimeout(() => { copy.textContent = '复制配置' }, 1500) })
       close.addEventListener('click', closeExpr)
       const hint = el('div', 'gal-expr-hint', `当前这句里 ${actor.slot} 用的预设：${actor.expression?.preset || '（脚本没给）'}${actor.expression ? `（${actor.expression.source === 'table' ? `来自预设表：${actor.expression.scope}` : '预设表里没有，用默认脸'}）` : ''}。改下面的选项马上预览；预设名改成别的是给别的预设建表（要走到用它的那一句才看得到）。`)
-      body.append(hint, field('角色', actorSelect), field('预设名', presetInput), list, field('保存到', scopeSelect), groupRows)
+      const presetStep = el('span', 'gal-step-wrap')
+      const goPreset = (d) => { if (!presetNames.length) return; const at = presetNames.indexOf(presetInput.value.trim()); presetInput.value = presetNames[Math.max(0, Math.min(presetNames.length - 1, (at < 0 ? (d > 0 ? -1 : presetNames.length) : at) + d))]; presetInput.dispatchEvent(new Event('change')) }
+      presetStep.append(stepBtn('◀', '上一个预设名', () => goPreset(-1)), presetInput, stepBtn('▶', '下一个预设名', () => goPreset(1)))
+      body.append(hint, field('角色', stepSelect(actorSelect)), field('预设名', presetStep), list, field('保存到', stepSelect(scopeSelect)), groupRows)
       const foot = el('div', 'gal-expr-foot')
       foot.append(save, clear)
       exprPanel.append(head, body, foot)

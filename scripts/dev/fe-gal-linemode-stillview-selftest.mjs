@@ -368,6 +368,15 @@ try {
     const eyeSelect = (await page.$$('.gal-expr-groups select'))[0]
     const groupLabels = await page.$$eval('.gal-expr-groups .gal-expr-field > span', (nodes) => nodes.map((n) => n.textContent))
     const eyeIndex = groupLabels.findIndex((t) => /\(eye\)|（eye）/.test(t))
+    const box = await page.evaluate(() => { const p = document.querySelector('.gal-expr').getBoundingClientRect(); const st = document.querySelector('.gal-stage').getBoundingClientRect(); return { w: p.width / st.width, h: p.height / st.height } })
+    check('表情面板是小框：宽 / 高都不到舞台的一半（选了之后看得到实际效果）；内容多时自己有滚动条', box.w < 0.5 && box.h < 0.5 && (await page.$eval('.gal-expr', (e) => getComputedStyle(e).overflowY)) === 'auto', J(box))
+    const eyeBefore = await page.evaluate((i) => document.querySelectorAll('.gal-expr-groups select')[i].value, eyeIndex)
+    const eyeSteps = (await page.$$('.gal-expr-groups .gal-expr-field'))[eyeIndex]
+    await (await eyeSteps.$$('.gal-step'))[1].click()
+    const eyeNext = await page.evaluate((i) => document.querySelectorAll('.gal-expr-groups select')[i].value, eyeIndex)
+    await (await (await page.$$('.gal-expr-groups .gal-expr-field'))[eyeIndex].$$('.gal-step'))[0].click()
+    const eyeBack = await page.evaluate((i) => document.querySelectorAll('.gal-expr-groups select')[i].value, eyeIndex)
+    check('每个下拉框左右有 ◀ ▶：▶ = 下一项（值变了）、◀ = 回到上一项；角色 / 预设名 / 保存到 也有', eyeNext !== eyeBefore && eyeBack === eyeBefore && (await page.$$('.gal-expr .gal-step')).length >= 2 * (4 + 3), J([eyeBefore, eyeNext, eyeBack, (await page.$$('.gal-expr .gal-step')).length]))
     await (await page.$$('.gal-expr-groups select'))[eyeIndex].selectOption('002')
     await sleep(400)
     const scopeOptions = await page.$$eval('.gal-expr .gal-more-select', (nodes) => nodes[nodes.length - 1] ? [...nodes[nodes.length - 1].options].map((o) => o.value) : [])

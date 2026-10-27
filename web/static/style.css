@@ -4747,12 +4747,15 @@ h2 {
 .gal-more-field[hidden] { display: none; }
 
 /* 表情预设面板（更多 → 表情…） */
-.gal-expr { bottom: 8px; left: 8px; max-height: 80%; overflow: auto; position: absolute; right: 8px; z-index: 12; }
+.gal-expr { bottom: 8px; max-height: 46%; overflow: auto; position: absolute; right: 8px; width: min(24em, calc(100% - 16px)); z-index: 12; }
 .gal-expr[hidden] { display: none; }
 .gal-expr-body { display: grid; gap: 6px; }
-.gal-expr-groups { display: grid; gap: 4px 12px; grid-template-columns: repeat(auto-fill, minmax(15em, 1fr)); }
+.gal-expr-groups { display: grid; gap: 4px; grid-template-columns: 1fr; }
 .gal-expr-field { align-items: center; display: flex; gap: 6px; }
-.gal-expr-field > span { flex: 0 0 8.5em; }
+.gal-expr-field > span { flex: 0 0 6em; font-size: 12px; }
+.gal-expr-field .gal-more-select, .gal-expr-field .gal-more-number { min-width: 0; width: 100%; }
+.gal-step-wrap { align-items: center; display: flex; flex: 1; gap: 3px; min-width: 0; }
+.gal-step { background: var(--site-secondary, #475569); border: 0; border-radius: 4px; color: #fff; cursor: pointer; flex: none; font-size: 11px; line-height: 1; padding: 5px 6px; }
 .gal-expr-hint { color: #9ca3af; font-size: 12px; line-height: 1.5; }
 .gal-expr-foot { display: flex; gap: 8px; margin-top: 8px; }
 
