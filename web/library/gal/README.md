@@ -865,6 +865,22 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **angelic 立绘**（`renpy-monmusu.stands`，只对 angelic 打开；`composite.byName` 允许图层写没有扩展名的图片名）：`show 371lid 01:` + 缩进的 `xpos / ypos / xalign / yalign / zoom`，按 Ren'Py 的锚点规则在 1920×1080 设计画布上摆；槽位 = 名字第一个词（image tag），`hide` 去掉、`scene` 清空；没写位置 = 底边居中。封面 `images/thumbnail/<脚本名前 4 位>_idle.jpg`（`thumbSources[].lower` = 键忽略大小写）。
 - **新的 game.id `girlscreation282`**（Girls Creation R Viewer 282寝，`extends: 'girlscreation'`）：行式脚本 54 个（R 里只有 3 个），单独一个 id 方便以后给它加规则。
 
+### TSK：按原版代码（gal-samples21：Assembly-CSharp.dll 反编译出的 `DIALOGUE.DialogueSystem`）
+
+- **摆放**：立绘原点（舞台 1280×720、中心为原点、y 向上）= (Master X + Arg4 偏移, Master Y − 10)，一个骨架单位 = Master Scale 个舞台像素（`spine.place` + `stage`）。依据：`SetCharacterSpineAnimation` 的 `(posX + 偏移, posY − 130)`、`scale × 100`、骨架缩放 0.01，`Characters` 的 RectTransform 轴心 (0.5, 1.7)、Chara1~4 都在轴心上（`level2` 里解析出来的）。每个有说话人的台词行都会重新摆一次（纵向偏移回 0，横向偏移保留）。
+- **Tween**：`pingPong=N` → `bounce`（x / y 位移来回 N 段，每段 time 秒，缓动 easeOutQuad / easeInQuad / 线性）；`MoveBy` / `MoveTo`（非 pingPong）时长 = time / 2、MoveTo 是绝对本地坐标；WaitType 不是 NoWait 时脚本等它播完（`wait`）。ColorTo 等原版没处理的记 raw。
+- **Shake**：目标 `Graphics` / `BG` = 整屏抖动，角色 = 随机抖（`spine.shake`）。
+- **Sprite**：`EM_xxx` = 表情图标（Emotion 子物体，`ttl` 1 秒后销毁，下一步开头补 `spineOff`）；`ch_<id>_b/_f` = 角色的 b / f 层；`Title` = 标题卡（显示成一句没有说话人的字）；`AE_` / `BE_` 在这份 Master 里没有 Spine 定义，原版什么都不做，记 raw。
+- **图集声明尺寸**：Unity 提取出来的 atlas 声明尺寸和 PNG 不一致（1513×1896 ↔ 1024×2048）；4.x 运行时算网格 UV 也用 `texture.getImage().width`，所以 4.x 路径也要报声明尺寸（`setPageTextures`，之前只有 3.x 路径做了）。影响所有这种来源的 4.x 骨骼。
+
+### 其它这轮的改动
+
+- **GC 行式脚本**：`bg` / `CrossFade` / `TransitionCrossFade` 的 x,y,缩放 → 一条 `bgZoom`（脚本坐标 1920×1080、y 向上，×`line.coordUnit` 0.6667 折场景像素；回到 0,0,1 补复位；`line.bgTransform = 'legacy'` 回到旧做法）；`subimage` / `subimagedelete` → `overlay` / `overlayOff`；`bgblur` → `bgBlur`（等级 × `line.blurUnit` 3，没有真机对照）；`bgcolor`、`shakeall` / `asyncshakeall`、`asyncshake` / `shake` 角色抖动、`jump` 同 `asyncjump`；`textsize` / `defaultcharacolor` 不记 raw。原版查看器的 package.nw / nw.dll 里没有这些命令的实现（第 19 轮二进制搜索），语义是按命令名和参数样例推的。
+- **angelic**：脚本名 `<3 位编号><字母><6 位>` 按前 3 位分组（`hscene` 下 355 组），分组封面 `images/thumbnail/<编号><字母>_idle.jpg`。
+- **迷雾列车**：角色缩略图 `Textures/Characters/Bases/<底号>201.png`；目录卡片带 `key`（底号）供取图。
+- **Grenze**：封面 = `patchres/banner/banner_title` 里的 `LOGO_*`（`cover[].fromMedia`：路径用 `~/` 相对媒体目录）。
+- **确认不是 bug**（第 18–19 轮的数据）：魔法学园 `ROLA_ep5_h` / `YUNI_ep7_h` / `AMRITA_ep6_h` 没有 voices、也没有语音目录；原版 `json_story_player.rpy` 只处理 `bg_change`，`action` / `emotion` 本来就忽略；ぼくら 1898 个脚本里 1065 个没有资源目录（`bokusen_main.exe` 没下载下来），URL 图片本地没有；deepone 的 `adu105705_*` 语音本地没有；GC `chara_0032_r18_1` 的 4.0 骨骼 `Wait` / `Normal` / `Fast` / `After` 的骨骼关键帧全部相同（静止），只有 `Finish` 会淡入叠图；maid `cast006001` 的贴图只有 961×424，粗糙是原图分辨率。
+
 ### 每个游戏一个唯一的 game.id（导入页「Gal 游戏」下拉）
 
 导入页选方案 `gal-import`，在「Gal 游戏」下拉里选游戏、点「刷新 json」，会把 `adapters` 和 `config.game`（id + 标题）填进方案 JSON；再改 `rootDir` 即可。`rootDir`、`dryRun`、`defaultMetadataActions` 保留文本框里现有的值。
