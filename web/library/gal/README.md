@@ -793,7 +793,8 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - `tyrano-ks` 的 `sniff` / `prepare` / `catalog` 认 `_script.json`（目录里和 `.ks` 并列；标题取同名元数据 json 的 `title`，没有就用脚本名），gal-layout 的 kamihime 条目 `scriptExtensions` 要带 `json`。
 - 每句台词 = 一步；一段的第一步带 `bgm` / `bg { src, film: { ratio, fps, loop } }` / 过渡。`auto: true` 且没有台词的段不单独成步：指令并进下一步的开头，`wait` = 不循环时 `autoFrames / fps` + `stay`（帧数要看图高，适配器读不到图，`autoFrames` 默认 16，样本里都是 16 帧）。
 - 选项 `film { enabled, frameRatio, autoFrames, transitions }`：`transitions` 把段里的 `transition` 名字换成一条指令（`wash` / `fade` / `flash`），默认 `whiteout2s` = 白屏 2 秒渐退（**含义是猜的**，没有原版播放器核对），没列出的名字记 raw。
-- 播放器：`bg.film` 在舞台里放一个按舞台高度铺的 `.gal-film`，图加载完按 图高 / (图宽 × ratio) 算帧数，按 `fps` 翻帧；`loop: false` 播到最后一帧停住。
+- **方向**（作者的 `game/dmm/2_build_rpy.py` 核对过）：胶片是**逆时针转了 90° 存的**——`Rotozoom(文件, 90)` 之后一帧是 900×640 的横版、`Filmstrip((900,640),(16,1),1/fps)` 从左往右 16 帧。所以 `film.rotate = 90`（默认），播放器把竖条转回来、帧 0 在最左；`rotate: 0` = 不转（竖版帧）。同一个脚本里 `auto` / `stay` / `repeat` / `transition` 原作者的转换器根本不处理（空台词变成「点击继续」一行），这些是我们自己的近似。
+- 播放器：`bg.film` 在舞台里放一个按舞台高度铺的 `.gal-film`（里面一条 `.gal-film-strip`），图加载完按 图高 / (图宽 × ratio) 算帧数，按 `fps` 翻帧；`loop: false` 播到最后一帧停住。
 
 
 ### Otogi Frontier R（离线网页版，`otogi-json`）

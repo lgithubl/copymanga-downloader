@@ -20,7 +20,7 @@
 //   asyncmoveobject,character,<槽>,<秒>,<dx>,<dy>,<n>,<缓动>   角色位移（commands.asyncmoveobject = 'move'）：spine 指令的 x / y + move（秒，播放器线性渐移；缓动名 / n 忽略）。dx / dy 的单位按和 chara 的 x / y 一样（骨骼坐标单位，没有对照）；
 //        line.moveBase = 'offset'（默认）：dx / dy 是相对 chara 摆放位置的偏移（数据里 0,-40 之后常跟 0,0 回位，相对当前位置的话 0,0 就成了空操作）/ 'relative'：在当前位置上累加。目标不是 character / 槽里没有角色 → raw
 //   asyncjump,character,<槽>,<dy>,<秒>,<次数>   角色跳一下（commands.asyncjump = 'hop'）：spine 指令的 action = line.jumpAction（1 = 站位动作里的「跳两下」，固定 0.4 秒；dy / 秒 / 次数忽略）。dy 的符号没有对照（样本只有 -30），不分上下都当跳
-//   cgmode,on|off   看 CG 的模式（commands.cgmode = 'ui'）：on → 文本框隐藏（ui visible:false），off → 显示。没有真机对照：cgmode 也可能只是换一种 CG 版式而不是隐藏文本框——on 之后没有 off 的脚本里，台词会一直看不见（window,on 能再显示），觉得不对就设 commands.cgmode = 'raw'
+//   cgmode,on|off   CG 模式（commands.cgmode = 'actors'，默认）：on → 台上的角色全部藏起来（spineOff，角色还在）、off → 摆回来；期间对角色的改动只记状态。文本框归 window 命令管。证据：gal-samples16 的 54 个行式脚本里 34 处 cgmode,on 时台上还有角色、紧接着 playmovie 放 CG，cgmode,off 前还对没有重新 chara 的角色发 charamotion。'ui' = 旧行为（on 隐藏文本框）；'raw' = 记 raw
 // 认得但暂不渲染（记在 stats.raw）：jump / shake / asyncshake / shakeall / emote / subimage / subimagedelete / bgblur / bgcolor / textsize / prefab …（commands.* = 'raw' 时 cgmode / asyncjump / asyncmoveobject / TransitionCrossFade 也记 raw）
 // title,<标题>, / endof 不是步骤：标题给列表用。
 //
@@ -35,7 +35,7 @@
 //   line            { expressionPrefix: charamotion / charaexpression 的表情动画前缀, imageIdRe: message 末尾的头像 id,
 //                     objectKind: asyncjump / asyncmoveobject 第 2 项里「角色」的正则, jumpAction: asyncjump 用的站位动作码, moveBase: 'offset' | 'relative'（asyncmoveobject 的 dx / dy 相对什么）,
 //                     crossfadeScale: 'bgScale' | 'ignore'（CrossFade 的缩放：跟一条 bgScale / 不管）}
-//   commands        { cgmode: 'ui' | 'raw', asyncjump: 'hop' | 'raw', asyncmoveobject: 'move' | 'raw'（旧名 'x' 也认）, crossfade: 'bg' | 'raw' }   每条命令的映射方式，默认 = 新映射；'raw' = 以前的行为
+//   commands        { cgmode: 'actors' | 'ui' | 'raw', asyncjump: 'hop' | 'raw', asyncmoveobject: 'move' | 'raw'（旧名 'x' 也认）, crossfade: 'bg' | 'raw' }   每条命令的映射方式，默认 = 新映射；'raw' = 以前的行为
 //                     crossfade 'raw'：CrossFade 照旧（换背景 + 渐变，缩放 / 位移记 raw），TransitionCrossFade / TransitionCrossFadeReady 记 raw
 //   category        { re: 场景 id → 分类的正则（取匹配到的部分）, other: 没匹配时的分类名, unknownSpeaker: 没认出说话人的分组名 }
 //   titleLines      [正则…]：原始脚本里取标题的行（第 1 组 = 标题，多行模式）    speaker { suffixRe } 说话人去掉的后缀（括号别名）
@@ -52,7 +52,7 @@ export const DEFAULT_OPTIONS = {
   stand: { akuOffset: 450, akuDirections: { LEFT: -1, RIGHT: 1, CENTER: 0 }, fruitsDim: 0.6 },
   animation: { maxFrames: 600 },
   line: { expressionPrefix: 'ex_', imageIdRe: '^[a-z]{2,4}\\d+$', objectKind: '^character$', jumpAction: 1, moveBase: 'offset', crossfadeScale: 'bgScale' },
-  commands: { cgmode: 'ui', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' },
+  commands: { cgmode: 'actors', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' },
   category: { re: '^[A-Za-z]+', other: '其他', unknownSpeaker: '（未识别）' },
   titleLines: ['^title,([^,\\r\\n]+),'],
   speaker: { suffixRe: '（[^）]*）$' },
@@ -157,7 +157,7 @@ export function parseLine(text, ctx = null, meta = {}) {
   const exPrefix = opt.line.expressionPrefix
   const kindRe = girlsCompiled(opt).objectKind
   const mode = {   // commands.*：不认识的值回到默认（asyncmoveobject 的旧名 'x' = 'move'）
-    cgmode: opt.commands.cgmode === 'raw' ? 'raw' : 'ui',
+    cgmode: ['ui', 'raw'].includes(opt.commands.cgmode) ? opt.commands.cgmode : 'actors',
     asyncjump: opt.commands.asyncjump === 'raw' ? 'raw' : 'hop',
     asyncmoveobject: opt.commands.asyncmoveobject === 'raw' ? 'raw' : 'move',
     crossfade: opt.commands.crossfade === 'raw' ? 'raw' : 'bg',
@@ -178,6 +178,8 @@ export function parseLine(text, ctx = null, meta = {}) {
   const audio = (kind, key) => ctx?.audio?.[kind]?.get(key) || ''
 
   const actors = new Map()   // 槽 → { skel, x, y, scale, visible, tracks: [] }
+  const onStage = new Set()  // 台上现在有的 spine 角色槽（发过 spine、没 spineOff）：cgmode,on 时要收起来
+  let cgOn = false           // cgmode,on 到 cgmode,off 之间：角色藏起来，期间对角色的改动只记状态不画
   const skelFiles = (name) => {
     if (!scene) return ctx?.globalSpines?.get(name) || null
     if (scene.spines.has(name)) return scene.spines.get(name)
@@ -186,12 +188,13 @@ export function parseLine(text, ctx = null, meta = {}) {
   }
   const paintActor = (slot, fade = 0, extra = null) => {
     const actor = actors.get(slot)
-    if (!actor || !actor.visible) return
+    if (!actor || !actor.visible || cgOn) return
     const files = skelFiles(actor.skel)
     const skelRes = files?.get('skel') || files?.get('bytes') || files?.get('json') || ''
     const atlasRes = files?.get('atlas') || files?.get('txt') || ''
     if (!skelRes || !atlasRes) { count('unresolved', `spine:${actor.skel}`); return }
     stats.spines += 1
+    onStage.add(slot)
     emit({
       op: 'spine', slot: `Actor${slot}`, kind: 'actor', skel: skelRes, atlas: atlasRes, x: actor.x, y: actor.y, scale: actor.scale, fade,
       tracks: actor.tracks.map((t, track) => (t ? { track, anim: t.anim, loop: t.loop } : null)).filter(Boolean), order: slot, loop: true, speed: 1,
@@ -329,20 +332,26 @@ export function parseLine(text, ctx = null, meta = {}) {
         const slot = slotOf(f[1])
         const actor = actors.get(slot)
         if (!actor) break
-        if (/^in$/i.test(f[2])) { actor.visible = true; paintActor(slot, secOf(f[3])) } else { actor.visible = false; emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secOf(f[3]) }) }
+        if (/^in$/i.test(f[2])) { actor.visible = true; paintActor(slot, secOf(f[3])) } else { actor.visible = false; onStage.delete(slot); emit({ op: 'spineOff', slot: `Actor${slot}`, fade: secOf(f[3]) }) }
         break
       }
       case 'charadelete': {
         const slot = slotOf(f[1])
         const actor = actors.get(slot)
         if (!actor) break
-        if (actor.visible) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 })
+        if (actor.visible && onStage.has(slot)) emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 })
+        onStage.delete(slot)
         actors.delete(slot)
         break
       }
       case 'cgmode': {   // cgmode,on|off
         if (mode.cgmode === 'raw') { count('raw', cmd); break }
-        emit({ op: 'ui', visible: !isOn(f[1]), seconds: 0 })
+        if (mode.cgmode === 'ui') { emit({ op: 'ui', visible: !isOn(f[1]), seconds: 0 }); break }
+        // 'actors'（默认）：gal-samples16 的 54 个行式脚本里 34 处 cgmode,on 时台上还有角色、脚本没有显式移除，紧接着就是 playmovie 放 CG；cgmode,off 之前还对没有重新 chara 的角色发 charamotion
+        //   → cgmode,on 把台上的角色全部藏起来（角色还在，只是不显示），cgmode,off 再把它们摆回来；文本框归 window 命令管，cgmode 不碰
+        if (isOn(f[1])) {
+          if (!cgOn) { cgOn = true; for (const slot of [...onStage]) { onStage.delete(slot); emit({ op: 'spineOff', slot: `Actor${slot}`, fade: 0 }) } }
+        } else if (cgOn) { cgOn = false; for (const slot of actors.keys()) paintActor(slot, 0) }
         break
       }
       case 'asyncjump': {   // asyncjump,character,槽,dy,秒,次数

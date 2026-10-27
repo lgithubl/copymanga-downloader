@@ -42,6 +42,22 @@ const J = JSON.stringify
   check('GC（tag）：台上没有角色时 VIDEO_PLAY 不发 spineOff', !none.includes('spineOff') && none.includes('movie'), J(none))
 }
 
+// ---- 2b. GC 行式脚本：cgmode,on 收起角色，cgmode,off 摆回来 ----
+{
+  const { parseLine } = await import('../../web/library/gal/adapters/girlscreation-line.mjs')
+  const gcTag = await import('../../web/library/gal/adapters/girlscreation-tag.mjs')
+  const files = ['pk/scenes/chmr_1/hmr_1.txt', 'pk/scenes/chmr_1/images/abg1.png', 'pk/scenes/chmr_1/images/abg2.png', 'pk/scenes/chmr_1/spines/st1.skel', 'pk/scenes/chmr_1/spines/st1.atlas', 'pk/scenes/chmr_1/videos/v.mp4']
+  const run = (text, options) => parseLine(text, gcTag.prepare({ options: { root: 'pk', ...(options || {}) }, texts: {}, files, toResourcePath: (r) => r }), { rel: 'chmr_1/hmr_1.txt', stem: 'hmr_1', options }).steps.map((st) => st.commands.map((c) => c.op + (c.slot ? `:${c.slot}` : '')))
+  const script = ['bg,abg1,0,0,1,1', 'chara,st1,chara_1,0,0,10,1,1,1,on', 'charamotion,chara_1,loop,on', 'message,甲,a,x', 'cgmode,on', 'playmovie,v,loop', 'charamotion,chara_1,joy,on', 'message,甲,b,x', 'stopmovie', 'cgmode,off', 'message,甲,c,x', ''].join('\n')
+  const flat = run(script).flat()
+  const seq = flat.filter((o) => o.startsWith('spine'))
+  check('行式 cgmode,on → 台上的角色 spineOff；CG 期间的 charamotion 只记状态不画；cgmode,off → 角色摆回来（spine 又发一次）；不再动文本框（没有 ui 指令）', J(seq) === J(['spine:Actor1', 'spine:Actor1', 'spineOff:Actor1', 'spine:Actor1']) && !flat.includes('ui'), J(run(script)))
+  const old = run(script, { commands: { cgmode: 'ui' } }).flat()
+  check("commands.cgmode = 'ui'：旧行为（on 隐藏文本框、off 显示），不动角色", old.filter((o) => o === 'ui').length === 2 && !old.some((o) => o.startsWith('spineOff')), J(old))
+  const none = run(['bg,abg1,0,0,1,1', 'cgmode,on', 'cgmode,off', 'message,甲,a,x', ''].join('\n')).flat()
+  check('台上没有角色时 cgmode 不发任何指令', !none.some((o) => o.startsWith('spine')), J(none))
+}
+
 // ---- 3. ミナシゴノシゴトR 分组 ----
 {
   const { LAYOUTS } = await import('../../scripts/tag-scripts/gal-layout/main.js')

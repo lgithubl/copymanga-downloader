@@ -580,49 +580,62 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // 逐帧背景（FRAME_ANIM）：在当前前台层上循环换图，换背景 / 退出时停掉
   let frameTimer = 0
   function stopFrames() { clearInterval(frameTimer); frameTimer = 0 }
-  // 胶片背景（bg.film = { ratio, fps, loop }）：src 是一张竖排的胶片（每帧宽 × 高 = 1 : ratio，帧数 = 图高 / (图宽 × ratio)），整个舞台高度放一帧，按 fps 往下翻；
-  // 帧数要等图加载完才知道。loop = false 播到最后一帧停住；fps <= 1 = 静图（只显示第一帧）
+  // 胶片背景（bg.film = { ratio, fps, loop, rotate? }）：src 是一张竖排的胶片（文件里每帧宽 × 高 = 1 : ratio，帧数 = 图高 / (图宽 × ratio)），整个舞台高度放一帧，按 fps 往下翻；
+  // 帧数要等图加载完才知道。loop = false 播到最后一帧停住；fps <= 1 = 静图（只显示第一帧）。
+  // rotate: 90 = 胶片是逆时针转了 90° 存的（Kamihime：原版 Rotozoom(文件, 90)，一帧显示出来是横版 ratio : 1，帧 0 在最左），显示时要转回来
   function paintFilm(layer, bg) {
     layer.querySelectorAll('.gal-film').forEach((node) => node.remove())
     if (!bg?.film || !bg.src) return null
     const film = el('div', 'gal-film')
-    film.style.cssText = `position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);aspect-ratio:${1} / ${Number(bg.film.ratio) > 0 ? Number(bg.film.ratio) : 1};background:url("${url(bg.src)}") no-repeat 0 0 / 100% 100%`
+    const ratio = Number(bg.film.ratio) > 0 ? Number(bg.film.ratio) : 1
+    const rotated = Number(bg.film.rotate) === 90
+    film.dataset.rotate = rotated ? '90' : '0'
+    film.style.cssText = `position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);overflow:hidden;aspect-ratio:${rotated ? `${ratio} / 1` : `1 / ${ratio}`}`
+    const strip = el('div', 'gal-film-strip')
+    strip.style.cssText = `position:absolute;left:0;top:0;background:url("${url(bg.src)}") no-repeat 0 0 / 100% 100%`
+    if (!rotated) strip.style.cssText += ';right:0;bottom:0'
+    film.append(strip)
     layer.append(film)
     return film
   }
   function startFilm(layer, bg) {
     const film = layer?.querySelector?.('.gal-film')
     if (!film || !bg?.film) return
+    const strip = film.firstElementChild
     const ratio = Number(bg.film.ratio) > 0 ? Number(bg.film.ratio) : 1
+    const rotated = film.dataset.rotate === '90'
     const probe = new Image()
     probe.onload = () => {
       if (!film.isConnected) return
       const frames = Math.max(1, Math.round(probe.naturalHeight / (probe.naturalWidth * ratio)))
-      film.style.backgroundSize = `100% ${frames * 100}%`
-      const at = (i) => { film.style.backgroundPosition = `0 ${frames > 1 ? (i / (frames - 1)) * 100 : 0}%` }
+      let index = 0
+      const at = (i) => {
+        index = i
+        if (rotated) {
+          // 条带（宽 = 文件里一帧的宽 → 显示出来的高 bh，高 = 帧数 × 显示出来的帧宽 bw），绕左上角逆时针转 90° 再平移：帧 i 落在 [i × bw, (i + 1) × bw]
+          const bw = film.clientWidth
+          const bh = film.clientHeight
+          strip.style.width = `${bh}px`
+          strip.style.height = `${frames * bw}px`
+          strip.style.transformOrigin = '0 0'
+          strip.style.transform = `translate(${-i * bw}px, ${bh}px) rotate(-90deg)`
+        } else {
+          strip.style.backgroundSize = `100% ${frames * 100}%`
+          strip.style.backgroundPosition = `0 ${frames > 1 ? (i / (frames - 1)) * 100 : 0}%`
+        }
+      }
       at(0)
+      if (typeof ResizeObserver === 'function') new ResizeObserver(() => { if (film.isConnected) at(index) }).observe(film)
       const fps = Number(bg.film.fps)
       if (frames < 2 || !(fps > 1)) return
-      let index = 0
       clearInterval(frameTimer)
       frameTimer = setInterval(() => {
-        index += 1
-        if (index >= frames) { if (bg.film.loop === false) { clearInterval(frameTimer); frameTimer = 0; return } index = 0 }
-        at(index)
+        let next = index + 1
+        if (next >= frames) { if (bg.film.loop === false) { clearInterval(frameTimer); frameTimer = 0; return } next = 0 }
+        at(next)
       }, 1000 / fps)
     }
     probe.src = url(bg.src)
-  }
-  function startFrames(layer) {
-    stopFrames()
-    const frames = state.bg?.frames
-    if (!layer || !frames?.length) return
-    for (const src of frames) { const image = new Image(); image.src = url(src) }   // 预载，播放时不卡
-    let index = 0
-    frameTimer = setInterval(() => {
-      index = (index + 1) % frames.length
-      layer.style.backgroundImage = `url("${url(frames[index])}")`
-    }, 1000 / frameFps)
   }
   function paintBg(bg, fade, instant) {
     stopFrames()

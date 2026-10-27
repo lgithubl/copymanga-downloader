@@ -101,9 +101,9 @@ export const DEFAULT_OPTIONS = {
   index: { hashPattern: DEFAULT_HASH, stemFallback: true },
   memorial: { enabled: true, imageFade: 0.5, imageStep: true, protagonist: '', placeholder: '{{主人公}}' },
   text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] },
-  film: { enabled: true, frameRatio: 1.40625, autoFrames: 16, transitions: { whiteout2s: { op: 'wash', color: 'white', seconds: 2 } } },
+  film: { enabled: true, frameRatio: 1.40625, rotate: 90, autoFrames: 16, transitions: { whiteout2s: { op: 'wash', color: 'white', seconds: 2 } } },
 }
-// 胶片剧情（<id>_harem-character_script.json）的参数：frameRatio = 胶片一帧的高 / 宽（样本里每帧 640×900）；autoFrames = 不循环的自动段按几帧算时长（帧数要看图的高度，适配器读不到图，样本里都是 16 帧）；
+// 胶片剧情（<id>_harem-character_script.json）的参数：frameRatio = 胶片一帧的高 / 宽（文件里每帧 640×900）；rotate = 90：胶片是逆时针转了 90° 存的（作者的 2_build_rpy.py：Rotozoom(文件, 90)，Filmstrip 一帧 900×640、16×1），显示时转回来；0 = 不转；autoFrames = 不循环的自动段按几帧算时长（帧数要看图的高度，适配器读不到图，样本里都是 16 帧）；
 // transitions = 段里 transition 字段的名字 → 一条指令（wash / fade / flash）；没列出的名字记 raw
 const FILM_OPS = new Set(['wash', 'fade', 'flash'])
 function filmSettings(value) {
@@ -113,7 +113,7 @@ function filmSettings(value) {
   const given = isObj(o.transitions) ? o.transitions : DEFAULT_OPTIONS.film.transitions
   const transitions = {}
   for (const [name, command] of Object.entries(given)) if (isObj(command) && FILM_OPS.has(command.op)) transitions[name] = command
-  return { enabled: o.enabled !== false, frameRatio: ratio > 0 ? ratio : 1.40625, autoFrames: frames > 0 ? frames : 16, transitions }
+  return { enabled: o.enabled !== false, frameRatio: ratio > 0 ? ratio : 1.40625, rotate: Number(o.rotate) === 0 ? 0 : 90, autoFrames: frames > 0 ? frames : 16, transitions }
 }
 const settingsCache = new WeakMap()
 function settingsOf(options) {
@@ -357,7 +357,7 @@ export function parse(text, ctx = null, meta = {}) {
       const fps = Number(seg.fps) > 0 ? Number(seg.fps) : 1
       const loop = seg.repeat !== false
       if (seg.bgm) { const bgm = find(String(seg.bgm), 'audio'); if (bgm) emit({ op: 'bgm', src: bgm }); else count('missing', `bgm:${seg.bgm}`) }
-      if (src) emit({ op: 'bg', src, fade: 0, film: { ratio: st.film.frameRatio, fps, loop } })
+      if (src) emit({ op: 'bg', src, fade: 0, film: { ratio: st.film.frameRatio, fps, loop, ...(st.film.rotate ? { rotate: st.film.rotate } : {}) } })
       else if (seg.film) count('unresolved', `film:${seg.film}`)
       if (seg.transition) {
         const transition = st.film.transitions[seg.transition]

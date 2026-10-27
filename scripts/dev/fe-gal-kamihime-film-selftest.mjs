@@ -61,7 +61,7 @@ const rels = [`game/dmm/assets/${RD}/black.jpg`, `game/dmm/assets/${RD}/single.j
   const ops = (i) => cmds[i].map((c) => c.op).join(',')
   check('胶片剧情：每句台词一步（5 句 → 5 步）；第 1 步 = bgm + 背景（胶片）+ 语音 + 说话人 + 台词', out.steps.length === 5 && ops(0) === 'bgm,bg,voice,speaker,text', J(out.steps.map((s, i) => ops(i))))
   const bg0 = cmds[0].find((c) => c.op === 'bg')
-  check('第 1 段：film 找到 resource_directory 里的 black.jpg；fps 1（静图），循环；一帧宽高比 1 : 1.40625', bg0.src === `game/dmm/assets/${RD}/black.jpg`.replace(/^game\//, '') && J(bg0.film) === J({ ratio: 1.40625, fps: 1, loop: true }), J(bg0))
+  check('第 1 段：film 找到 resource_directory 里的 black.jpg；fps 1（静图），循环；一帧宽高比 1 : 1.40625', bg0.src === `game/dmm/assets/${RD}/black.jpg`.replace(/^game\//, '') && J(bg0.film) === J({ ratio: 1.40625, fps: 1, loop: true, rotate: 90 }), J(bg0))
   check('语音 / bgm：resource_directory 里的 v_01.mp3、平铺层带 hash 的 bgm（按 stem 回退）', cmds[0].find((c) => c.op === 'voice').src.endsWith(`${RD}/v_01.mp3`) && cmds[0].find((c) => c.op === 'bgm').src.includes('bgm_h_001-'), J(cmds[0]))
   check('第 2 段（fps 24）：两句 = 两步；第 1 步背景是 strip.jpg，旁白（chara 空）→ 说话人清空', ops(2) === 'bg,speaker,text' && cmds[2].find((c) => c.op === 'bg').film.fps === 24 && cmds[2].find((c) => c.op === 'speaker').segments.length === 0 && ops(3) === 'speaker,text', J([ops(2), ops(3)]))
   check('自动段（auto、没有台词）不单独成步：bg（repeat false → loop false）+ transition whiteout2s → wash 白 2 秒 + wait（16 帧 / 8fps = 2 秒 + stay 1 秒 = 3 秒）并进下一步开头', J(cmds[4].slice(0, 3).map((c) => [c.op, c.film?.loop, c.color, c.seconds])) === J([['bg', false, undefined, undefined], ['wash', undefined, 'white', 2], ['wait', undefined, undefined, 3]]), J(cmds[4]))
@@ -126,17 +126,23 @@ try {
         await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(dir.node.items[1].node)}`)
         await page.waitForSelector('.gal-player .gal-stage')
         await page.waitForFunction(() => /^1 \/ 5/.test(document.querySelector('.gal-count')?.textContent || ''))
-        const filmBox = () => page.evaluate(() => { const f = [...document.querySelectorAll('.gal-film')].find((n) => n.parentElement.style.opacity !== '0'); return f ? { size: f.style.backgroundSize, pos: f.style.backgroundPosition, w: f.getBoundingClientRect().width, h: f.getBoundingClientRect().height } : null })
+        // 胶片逆时针转了 90° 存的（作者的 2_build_rpy.py：Rotozoom(文件, 90)）：显示出来一帧是横版 1.40625 : 1，帧 0 在最左；条带转完之后的外接框 = 帧数 × 帧宽 × 帧高
+        const filmBox = () => page.evaluate(() => {
+          const f = [...document.querySelectorAll('.gal-film')].find((n) => n.parentElement.style.opacity !== '0')
+          if (!f) return null
+          const strip = f.firstElementChild.getBoundingClientRect()
+          return { w: f.getBoundingClientRect().width, h: f.getBoundingClientRect().height, sw: strip.width, sh: strip.height, sx: strip.left - f.getBoundingClientRect().left, rotate: f.dataset.rotate, transform: f.firstElementChild.style.transform }
+        })
         await sleep(600)
         const first = await filmBox()
-        check('第 1 段：胶片元素（.gal-film）存在，高 = 舞台高度、宽 = 高 / 1.40625（竖版一帧居中）', first && Math.abs(first.w / first.h - 1 / 1.40625) < 0.01, J(first))
+        check('第 1 段：胶片元素（.gal-film）存在，高 = 舞台高度、宽 = 高 × 1.40625（横版一帧居中）；rotate = 90', first && first.rotate === '90' && Math.abs(first.w / first.h - 1.40625) < 0.01, J(first))
         await page.keyboard.press('Space'); await sleep(300)
         await page.keyboard.press('Space'); await sleep(1200)   // 第 3 步：strip.jpg（3 帧，24fps，循环）
         const second = await filmBox()
-        check('第 2 段：strip.jpg 按 3 帧切（background-size 100% 300%），正在翻帧（位置不在初始的 0%）', second && /^100% 300%$/.test(second.size), J(second))
+        check('第 2 段：strip.jpg 按 3 帧切：转完之后的条带外接框 = 3 帧宽 × 1 帧高（高等于舞台里那一帧的高），帧 i 靠 translate(-i × 帧宽) 对齐', second && Math.abs(second.sh - second.h) < 2 && Math.abs(second.sw - 3 * second.w) < 3, J(second))
         const positions = new Set()
-        for (let i = 0; i < 12; i++) { positions.add((await filmBox())?.pos); await sleep(30) }
-        check('24fps 循环：采样到不止一个帧位置（0% / 50% / 100% 里至少两个）', positions.size >= 2, J([...positions]))
+        for (let i = 0; i < 14; i++) { positions.add((await filmBox())?.transform); await sleep(30) }
+        check('24fps 循环：采样到不止一个帧位置（translate 的 x 在 0 / −帧宽 / −2 × 帧宽 里至少两个）', positions.size >= 2, J([...positions]))
         await page.screenshot({ path: path.join(process.env.SHOT_DIR || os.tmpdir(), 'kamihime-film.png') })
         check('没有页面错误', errors.length === 0, J(errors))
       } finally { await browser.close() }

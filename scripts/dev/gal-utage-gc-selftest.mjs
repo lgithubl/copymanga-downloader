@@ -122,12 +122,12 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   const ACTOR = ['chara,st1,chara_1,10,20,0,1,1,0,on']
   const cmd = (extra) => [...ACTOR, ...extra, 'message,甲,台词,']
 
-  check('GC 新选项默认值（schema）：commands { cgmode: ui, asyncjump: hop, asyncmoveobject: move, crossfade: bg }；line.objectKind / jumpAction / moveBase / crossfadeScale',
-    same(GC_DEFAULTS.commands, { cgmode: 'ui', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' }) && GC_DEFAULTS.line.jumpAction === 1 && GC_DEFAULTS.line.moveBase === 'offset' && GC_DEFAULTS.line.crossfadeScale === 'bgScale' && GC_DEFAULTS.line.objectKind === '^character$', J(GC_DEFAULTS.commands))
+  check('GC 新选项默认值（schema）：commands { cgmode: actors, asyncjump: hop, asyncmoveobject: move, crossfade: bg }；line.objectKind / jumpAction / moveBase / crossfadeScale',
+    same(GC_DEFAULTS.commands, { cgmode: 'actors', asyncjump: 'hop', asyncmoveobject: 'move', crossfade: 'bg' }) && GC_DEFAULTS.line.jumpAction === 1 && GC_DEFAULTS.line.moveBase === 'offset' && GC_DEFAULTS.line.crossfadeScale === 'bgScale' && GC_DEFAULTS.line.objectKind === '^character$', J(GC_DEFAULTS.commands))
 
   // cgmode
-  const cg = run(['cgmode,on', 'message,甲,a,', 'cgmode,off', 'message,甲,b,'])
-  check('cgmode,on → ui 隐藏、off → ui 显示（秒 0）；不再记 raw', same(ofOp(cg, 'ui').map((c) => c.visible), [false, true]) && !cg.stats.raw.cgmode, J(ofOp(cg, 'ui')))
+  const cg = run(['cgmode,on', 'message,甲,a,', 'cgmode,off', 'message,甲,b,'], { commands: { cgmode: 'ui' } })
+  check("commands.cgmode = 'ui'（旧默认）：cgmode,on → ui 隐藏、off → ui 显示（秒 0）；不再记 raw", same(ofOp(cg, 'ui').map((c) => c.visible), [false, true]) && !cg.stats.raw.cgmode, J(ofOp(cg, 'ui')))
   const cgRaw = run(['cgmode,on', 'message,甲,a,', 'cgmode,off', 'message,甲,b,'], { commands: { cgmode: 'raw' } })
   check('commands.cgmode = raw：回到以前（没有 ui 指令，stats.raw.cgmode = 2）', ofOp(cgRaw, 'ui').length === 0 && cgRaw.stats.raw.cgmode === 2 && same(run(['cgmode,on', 'message,甲,a,'], { commands: { cgmode: 'bogus' } }).steps, run(['cgmode,on', 'message,甲,a,']).steps), J(cgRaw.stats.raw))
 
