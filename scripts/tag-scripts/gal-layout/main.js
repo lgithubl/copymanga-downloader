@@ -1275,7 +1275,12 @@ export const LAYOUTS = {
       resourceResolve: { extensionFallbacks: { '.m4a': ['.wav'] } },
       limits: { walkFiles: 1000000 },   // bokusen-json.contextWalkLimit：826 个资源目录 × 几十到几百个文件
     },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [
+        // 脚本名两种写法：「<编号> 【<分类>】<标题>」/「<标题> 【<分类>】<编号>」，H 场景是「<编号> <标题>H」/「<标题>H<编号>」。分类名后面带两位数字（年份）的当活动——是看名字猜的，没有原版数据佐证
+        { parent: '.', as: 'h', label: 'H', match: String.raw`^[^【]*H\d*$`, exclusive: true },
+        { parent: '.', as: 'events', label: '活动', match: String.raw`【[^】]*(?:\d{2}|七夕\d*|V-DAY\d*|Ｖ-[^】]*|節分\d*|水着\d*|[戌寅卯辰巳午未申酉亥子丑]年)】`, exclusive: true },
+        { parent: '.', as: 'chars', label: '人物', match: String.raw`【[^】]*】`, exclusive: true },
+      ], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'json', ext: '.json', depth: 2 }],
     avatars: [], expectedDirs: ['resource'],
     notes: ['只有一部分脚本有同名资源子目录，没有的脚本只出台词（列表页「渲染诊断」会报缺资源）；打不开的 JSON（解析失败）照样列出来、打开时再报错'],

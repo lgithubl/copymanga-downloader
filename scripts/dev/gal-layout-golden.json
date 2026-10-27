@@ -4195,7 +4195,29 @@
    ],
    "scriptThumbs": [],
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "h",
+     "exclusive": true,
+     "label": "H",
+     "match": "^[^【]*H\\d*$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "【[^】]*(?:\\d{2}|七夕\\d*|V-DAY\\d*|Ｖ-[^】]*|節分\\d*|水着\\d*|[戌寅卯辰巳午未申酉亥子丑]年)】",
+     "parent": "."
+    },
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "人物",
+     "match": "【[^】]*】",
+     "parent": "."
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: bokusen",
@@ -4251,7 +4273,29 @@
    ],
    "scriptThumbs": [],
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "h",
+     "exclusive": true,
+     "label": "H",
+     "match": "^[^【]*H\\d*$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "【[^】]*(?:\\d{2}|七夕\\d*|V-DAY\\d*|Ｖ-[^】]*|節分\\d*|水着\\d*|[戌寅卯辰巳午未申酉亥子丑]年)】",
+     "parent": "."
+    },
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "人物",
+     "match": "【[^】]*】",
+     "parent": "."
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: bokusen",
@@ -4307,7 +4351,29 @@
    ],
    "scriptThumbs": [],
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "h",
+     "exclusive": true,
+     "label": "H",
+     "match": "^[^【]*H\\d*$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "【[^】]*(?:\\d{2}|七夕\\d*|V-DAY\\d*|Ｖ-[^】]*|節分\\d*|水着\\d*|[戌寅卯辰巳午未申酉亥子丑]年)】",
+     "parent": "."
+    },
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "人物",
+     "match": "【[^】]*】",
+     "parent": "."
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: bokusen",
@@ -4363,7 +4429,29 @@
    ],
    "scriptThumbs": [],
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "h",
+     "exclusive": true,
+     "label": "H",
+     "match": "^[^【]*H\\d*$",
+     "parent": "."
+    },
+    {
+     "as": "events",
+     "exclusive": true,
+     "label": "活动",
+     "match": "【[^】]*(?:\\d{2}|七夕\\d*|V-DAY\\d*|Ｖ-[^】]*|節分\\d*|水着\\d*|[戌寅卯辰巳午未申酉亥子丑]年)】",
+     "parent": "."
+    },
+    {
+     "as": "chars",
+     "exclusive": true,
+     "label": "人物",
+     "match": "【[^】]*】",
+     "parent": "."
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: bokusen",
