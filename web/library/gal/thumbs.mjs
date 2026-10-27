@@ -70,10 +70,12 @@ export function buildSourceIndex(rule, files) {
 }
 
 // 卡片（script：stem / parent / parent2；dir：name / parent / parent2）→ 在索引里要查的键；规则不适用（for 不对 / forMatch 不匹配 / 键为空）返回 null
-// 顺序：forMatch（先对 stem / name 匹配，捕获组可写进 forKey）→ forKey 模板（占位符见 CARD_PLACEHOLDERS，支持 {x:起:止} 切片）→ forStrip（正则，依次把匹配到的部分删掉：去前缀 / 后缀）
+// 顺序：forStrip（正则，依次把匹配到的部分从 stem / name 上删掉：去前缀 / 后缀）→ forMatch（对去掉之后的名字匹配，捕获组可写进 forKey）→ forKey 模板（占位符见 CARD_PLACEHOLDERS，支持 {x:起:止} 切片）→ 展开后的键再 forStrip 一次（兼容旧写法）
 export function subjectKey(rule, subject) {
   if (rule.for !== 'both' && rule.for !== subject.kind) return null
-  const own = subject.kind === 'script' ? subject.stem : subject.name
+  let own = subject.kind === 'script' ? subject.stem : subject.name
+  // forStrip 先从脚本 / 目录名上去掉（'^scene_'、'^@'），forMatch / forKey 看到的是去掉之后的名字；展开后的键上再去一次（兼容旧写法：forKey 里用别的占位符）
+  for (const source of [rule.forStrip].flat()) if (source) own = own.replace(new RegExp(source, 'g'), '')
   const m = rule.forMatch ? new RegExp(rule.forMatch).exec(own) : null
   if (rule.forMatch && !m) return null
   let key = fillKey(rule.forKey || (subject.kind === 'script' ? '{stem}' : '{name}'), m, { stem: own, name: own, parent: subject.parent || '', parent2: subject.parent2 || '' })

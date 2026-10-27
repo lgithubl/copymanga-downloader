@@ -434,6 +434,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         breadcrumb: catalogCrumbs(catalog, id),
         sets: setChoices(defaultSet),
         thumbMode: config.thumbMode,
+        thumbCover: config.thumbCover,
+        thumbHover: config.thumbHover,
         pageSize: paged.size,
         page: paged.current,
         pageCount: paged.pageCount,
@@ -600,23 +602,26 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const indexed = indexRules.length ? (await readScriptIndex()).get(stemOf(rel)) : null
     if (indexed?.thumb) await thumbEngine.addPaths(found, [indexed.thumb], 'scriptIndex', why)
     else why.push(indexRules.length ? `scriptIndex：${indexRules.length} 条规则（目录 ${[...new Set(indexRules.map((r) => r.dir))].join(' / ')}），索引里没有「${stemOf(rel)}」（索引了 ${(await readScriptIndex()).size} 个脚本）` : 'scriptIndex：未配置')
+    // 兜底封面：脚本里的事件图 / CG → 立绘 → 背景（去重、跳过黑白占位图），见 fallback-thumbs.mjs；只扫前 N 步，结果跟着 scriptInfo 一起缓存
+    // topUp：规则命中了但不足 max 张时，规则的图在前，再从脚本自己的图补到 max
+    const fillFromScript = async () => {
+      const got = collectFallbackImages(scene, config.thumbFallback)
+      const max = config.thumbFallback.max
+      for (const { src } of got.images) {
+        if (found.size >= max) break
+        await thumbEngine.addPaths(found, [src], 'thumbFallback', why, max)
+      }
+      if (!found.size) why.push(`thumbFallback：扫了前 ${got.scanned} 步${got.truncated ? `（脚本共 ${scene.steps.length} 步，其余没扫）` : ''}，事件图 ${got.counts.cg} / 立绘 ${got.counts.stand} / 背景 ${got.counts.bg} 张${got.skipped ? `，${got.skipped} 张是黑白占位图被跳过` : ''}${got.images.length ? '，候选文件都不存在' : '，没有可用的图'}`)
+    }
     if (!found.size) {
       if (!scene) why.push(`脚本没解析成功（适配器 ${adapterId}）：${parseError || '未知原因'}`)
-      else if (config.thumbFallback.enabled) {
-        // 兜底：从脚本里收几张图（事件图 / CG → 立绘 → 背景，去重、跳过黑白占位图），见 fallback-thumbs.mjs；只扫前 N 步，结果跟着 scriptInfo 一起缓存
-        const got = collectFallbackImages(scene, config.thumbFallback)
-        const max = config.thumbFallback.max
-        for (const { src } of got.images) {
-          if (found.size >= max) break
-          await thumbEngine.addPaths(found, [src], 'thumbFallback', why, max)
-        }
-        if (!found.size) why.push(`thumbFallback：扫了前 ${got.scanned} 步${got.truncated ? `（脚本共 ${scene.steps.length} 步，其余没扫）` : ''}，事件图 ${got.counts.cg} / 立绘 ${got.counts.stand} / 背景 ${got.counts.bg} 张${got.skipped ? `，${got.skipped} 张是黑白占位图被跳过` : ''}${got.images.length ? '，候选文件都不存在' : '，没有可用的图'}`)
-      } else {
+      else if (config.thumbFallback.enabled) await fillFromScript()
+      else {
         const bg = firstBackgroundSrc(scene)
         if (bg) await thumbEngine.addPaths(found, [bg], '脚本第一张背景图', why)
         else why.push(`脚本里没有背景图指令（bg）：${scene.steps.length} 步、${hasMovie ? '只有视频' : '没有画面指令'}`)
       }
-    }
+    } else if (scene && config.thumbFallback.enabled && config.thumbFallback.topUp && found.size < config.thumbFallback.max) await fillFromScript()
     const thumbs = [...found.values()]
     const result = { adapterId, thumb: thumbs[0] || '', thumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumbs.length ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
@@ -742,6 +747,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       sets: setChoices(set),
       pageSize,
       thumbMode: config.thumbMode,
+        thumbCover: config.thumbCover,
+        thumbHover: config.thumbHover,
       ...(Object.keys(config.player).length ? { player: config.player } : {}),   // 播放器默认值（config.player）：浏览器里没存过对应设置时用
     }
 

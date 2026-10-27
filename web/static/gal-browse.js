@@ -2,7 +2,7 @@
 // 点了就 onOpen(节点 id)，由页面层再取一次（reader?sectionId=…）。这里不认识目录结构，只认 kind / items。
 // 全部用 textContent / setAttribute 写入后端给的文字，不拼 innerHTML。
 import { attachBarLock } from './gal-barlock.js'
-import { attachThumbCycle, pickCover, thumbUrl } from './thumb-cycle.js'
+import { DEFAULT_HOVER, attachThumbCycle, pickCover, thumbUrl } from './thumb-cycle.js'
 import { assetUrl } from './gal-engine.js'
 import { createGalVoice } from './gal-voice.js'
 
@@ -21,6 +21,11 @@ const el = (tag, className = '', text = '') => {
 // thumbLoader：可选，卡片缩略图交给它分批加载（图只带 data-src）；不传就用浏览器自带的 lazy
 // 列表很长（100/1000 张卡片）时：筛选 / 排序 / 每页条数 / 翻页都是服务端按节点 id 里的视图参数做的（node.view / node.viewBase），这里只拼 id
 let refocusSearch = null   // 搜索框触发的重绘后，把焦点还给新的搜索框（重绘是整页换节点）
+// 卡片封面 / 悬停轮播的本地偏好（localStorage，空 = 跟配置）：gal.thumbHover = on | off；gal.thumbCover = random | first | last
+const PREF_HOVER = 'gal.thumbHover'
+const PREF_COVER = 'gal.thumbCover'
+const readPref = (key) => { try { return localStorage.getItem(key) || '' } catch { return '' } }
+const writePref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key) } catch { /* 存不了就只对这次有效 */ } }
 let keepMenuOpen = null    // 在「更多」里改了搜索 / 排序 / 每页条数 → 重绘后把菜单重新打开（还要接着改别的）
 export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, thumbLoader = null, onRefreshIndex = null }) {
   const node = reader.node
@@ -234,6 +239,21 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     select.addEventListener('change', () => onOpen(select.value, 'self'))
     moreMenu.append(field('文本版本', select))
   }
+  // 缩略图：悬停轮播开关 / 封面选哪张（存在浏览器本地，覆盖配置；「跟随配置」= 清掉本地选择）
+  const hoverCfg = { ...DEFAULT_HOVER, ...(node.thumbHover || {}) }
+  const hoverOn = () => { const pref = readPref(PREF_HOVER); return pref === 'on' ? true : pref === 'off' ? false : hoverCfg.enabled !== false }
+  const coverCfg = node.thumbCover ?? (node.thumbMode === 'random' || !node.thumbMode ? 'random' : 'first')
+  const coverOf = () => { const pref = readPref(PREF_COVER); return ['random', 'first', 'last'].includes(pref) ? pref : coverCfg }
+  const hoverBox = el('input', 'gal-browse-hover-toggle')
+  hoverBox.type = 'checkbox'
+  hoverBox.checked = hoverOn()
+  hoverBox.title = '鼠标悬停在有多张图的卡片上时轮播'
+  hoverBox.addEventListener('change', () => writePref(PREF_HOVER, hoverBox.checked ? 'on' : 'off'))
+  const coverSel = el('select', 'gal-browse-cover-select')
+  coverSel.title = '卡片有多张图时封面选哪张'
+  for (const [value, label] of [['', '跟随配置'], ['random', '随机'], ['first', '第一张'], ['last', '最后一张']]) { const option = el('option', '', label); option.value = value; option.selected = value === readPref(PREF_COVER); coverSel.append(option) }
+  coverSel.addEventListener('change', () => { writePref(PREF_COVER, coverSel.value); keepMenuOpen = node.viewBase; go(node.id) })
+  moreMenu.append(field('悬停轮播', hoverBox), field('封面', coverSel))
   const immBtn = el('button', 'gal-browse-imm', '沉浸')
   immBtn.type = 'button'
   immBtn.title = '沉浸模式（I）'
@@ -327,12 +347,12 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     const box = el('div', className)
     // 一张卡片可以有多张图（item.thumbs，thumb = 第一张）；thumbMode：random（默认）随机一张当封面 / first 只第一张 / hover 封面第一张、悬停轮播
     const thumbs = item.thumbs?.length ? item.thumbs : item.thumb ? [item.thumb] : []
-    const mode = node.thumbMode || 'random'
+    const cover = coverOf()
     if (!thumbs.length) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
     if (!thumbs.length && item.type === 'dir') box.dataset.icon = '📁'
     if (thumbs.length) {
       const urls = thumbs.map((path) => thumbUrl(reader.resourceBase, path))
-      const coverAt = pickCover(thumbs.length, mode)
+      const coverAt = pickCover(thumbs.length, cover)
       const img = el('img')
       img.alt = ''
       img.decoding = 'async'
@@ -348,7 +368,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
         refreshDiag()
       })
       box.append(img)
-      if (thumbs.length > 1 && mode !== 'first') cardCycles.push({ box, img, urls, coverAt })
+      if (thumbs.length > 1) cardCycles.push({ box, img, urls, coverAt, hover: { ...hoverCfg, enabled: true }, isEnabled: hoverOn })
     } else {
       box.classList.add('empty')
     }
