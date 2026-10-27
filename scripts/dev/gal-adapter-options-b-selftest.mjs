@@ -86,14 +86,12 @@ const stand = (a1, a3, a4 = '', extra = {}) => T({ a1, a3, a4, anim: 'wait', ...
     && opsOf(uRun([R('Bgm', { a1: 'BGM9' }), T({ text: 'x' })]), 'bgm')[0].src === 'Sound/Bgm/BGM9.ogg', J(bgm({})))
 
   // tween
-  const tweenRows = [stand('ミナ-制服', 'Chara1'), R('Tween', { a1: 'ミナ-制服', a2: 'MoveBy', a3: 'y=-30', a5: 'pingPong' }), R('Tween', { a1: 'ミナ-制服', a2: 'MoveBy', a3: 'x=128 time=1' }), R('Tween', { a1: 'ミナ-制服', a2: 'MoveTo', a3: 'x=-128' }), R('Tween', { a1: 'ミナ-制服', a2: 'ColorTo', a3: 'x=1' }), T({ text: 'x' })]
-  const tw = (options) => { const out = uRun(tweenRows, options); return { actions: opsOf(out, 'spine').map((c) => c.action).filter(Boolean), xs: opsOf(out, 'spine').slice(1).filter((c) => !c.action).map((c) => c.x), raw: out.stats.raw } }
-  check('utage tween：默认 MoveBy+pingPong → 动作 3、MoveBy → 改 x、MoveTo → 改 x、ColorTo → raw；kinds / actions / returnWhen 覆盖后改变',
-    same(tw({}), { actions: [3], xs: [0.5 + 128 / 1280, 0.5 - 128 / 1280], raw: { 'Tween:ColorTo': 1 } })
-    && same(tw({ tween: { kinds: { MoveBy: 'raw' } } }).raw, { 'Tween:MoveBy': 2, 'Tween:ColorTo': 1 }) && tw({ tween: { kinds: { MoveBy: 'raw' } } }).actions.length === 0
-    && same(tw({ tween: { actions: { down: 9 } } }).actions, [9]) && tw({ tween: { returnWhen: 'never' } }).actions.length === 0 && tw({ tween: { kinds: { MoveBy: { returns: 'moveBy', else: 'action' } } } }).actions.length === 1 && tw({ tween: { kinds: { ColorTo: 'moveTo' } } }).xs.length === 3, J(tw({})))
-  const shakeOut = (options) => opsOf(uRun([stand('ミナ-制服', 'Chara1'), R('Shake', { a1: 'ミナ-制服', a3: 'x=5' }), R('Shake', { a1: 'ミナ-制服', a3: 'y=5' }), T({ text: 'x' })], options), 'spine').map((c) => c.action).filter(Boolean)
-  check('utage tween.actions 同样管 Shake 角色：默认 x → 2、y → 1', same(shakeOut({}), [2, 1]) && same(shakeOut({ tween: { actions: { x: 7, up: 8 } } }), [7, 8]), J(shakeOut({})))
+  const tweenRows = [stand('ミナ-制服', 'Chara1'), R('Tween', { a1: 'ミナ-制服', a2: 'MoveBy', a3: 'y=-30', a5: 'pingPong=2' }), R('Tween', { a1: 'ミナ-制服', a2: 'MoveBy', a3: 'x=128 time=1' }), R('Tween', { a1: 'ミナ-制服', a2: 'MoveTo', a3: 'x=-128' }), R('Tween', { a1: 'ミナ-制服', a2: 'ColorTo', a3: 'x=1' }), T({ text: 'x' })]
+  const tw = (options) => { const out = uRun(tweenRows, options); const sp = opsOf(out, 'spine'); return { bounces: sp.filter((c) => c.bounce).map((c) => c.bounce.y), moves: sp.slice(1).filter((c) => !c.bounce && c.move !== undefined).map((c) => c.x), raw: out.stats.raw } }
+  check('utage tween（按原版代码，没有 kinds / actions 选项了）：MoveBy + pingPong → bounce；MoveBy → 改 x（time / 2）；MoveTo → 改 x；ColorTo → raw',
+    same(tw({}), { bounces: [-30], moves: [0.5 + 128 / 1280, 0.5 - 128 / 1280], raw: { 'Tween:ColorTo': 1 } }), J(tw({})))
+  const shakeOut = (options) => opsOf(uRun([stand('ミナ-制服', 'Chara1'), R('Shake', { a1: 'ミナ-制服', a3: 'x=5' }), R('Shake', { a1: 'ミナ-制服', a3: 'y=5' }), T({ text: 'x' })], options), 'spine').map((c) => c.shake).filter(Boolean)
+  check('utage Shake 角色 → 每条一个 shake（x / y 幅度）', shakeOut({}).length === 2 && shakeOut({})[0].x === 5 && shakeOut({})[1].y === 5, J(shakeOut({})))
 
   // selection
   const selRows = [R('Selection', { a1: '*S-a-1', text: 'A' }), R('Selection', { a1: '*S-a-2', text: 'B' }), R('Selection', { a1: '*plain', text: 'C' }), R('Selection', { a1: '*other', text: 'D' }), R('*S-a-1'), T({ text: '1' }), R('*S-a-2'), T({ text: '2' }), R('*plain'), T({ text: '3' }), R('*other'), T({ text: '4' })]

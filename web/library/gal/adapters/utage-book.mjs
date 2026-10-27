@@ -31,8 +31,7 @@
 //   speaker { source: ['NameText', 'key'], splitOn: '-', pick: 'beforeLast', characterArg: '^<Character=(.*)>$' }
 //        显示名按 source 的顺序取第一个非空的：NameText = Master 的 NameText、key = 角色名（Arg1）按 splitOn 切后 pick（beforeLast = 最后一个 splitOn 之前的部分 / first = 第一段 / last = 最后一段 / 没有 splitOn 就是整个名字）、raw = 角色名原样；characterArg 的第 1 组 = 说话人改名
 //   bgm { play: 'loop' }         loop = 放 loop 文件（只有 intro 时放 intro；两个都有时 intro 记在指令的 intro 字段）/ intro = 放 intro 文件（没有再放 loop）/ intro+loop = 放 intro 并把 loop 文件记在指令的 loop 字段（播放器暂不认接续）
-//   tween { kinds: { MoveBy: { returns: 'action', else: 'moveBy' }, MoveTo: 'moveTo', PunchPosition: 'action', ShakePosition: 'action', ColorTo: 'raw', ScaleTo: 'raw', RotateTo: 'raw' }, actions: { x: 2, up: 1, down: 3 }, returnWhen: 'pingpong' }
-//        kinds 的值：action = 折成立绘动作（x → actions.x，y<0 → actions.down，y>0 → actions.up）/ moveBy · moveTo = 改槽位横向位置 / raw = 记 raw；对象 { returns, else } = Arg5 匹配 returnWhen（不分大小写）时用 returns；不在表里的 Tween 种类记 raw。Shake 角色的动作也用 actions（x → actions.x，否则 actions.up）
+//   tween { targetSlots: true }   Tween / Shake 的 Arg1 可以是站位槽名（见下一项）。Tween 本身按原版代码处理（pingPong → bounce，MoveBy / MoveTo → 位移，见 tween() 上面的注释），没有可调项
 //   selection { groupSuffix: '-\\d+$', adjacentGroups: true }   Selection 标签（去掉开头 *）匹配 groupSuffix 的，去掉后缀相同的算一组；不匹配的：adjacentGroups = 连续的 Selection 行算一组，否则一行一组
 //   nameOnlyRow ('show')         只有角色名（Arg1）、没有站位槽（Arg3）、也不是 <Off> 的行，而这个角色不在场：show = 把它摆出来（槽 = 它上次用过的槽，没有就取第一个空槽；横向位置 = 上次的，没有就居中）/ faceOnly = 不摆（以前的行为，只在已在场时更新表情）
 //                                真实数据：CharacterOff 之后、Selection 标签之后常有这样的行，后面的 Tween / Shake 就指着这个名字；<Off> 行不受影响
@@ -69,12 +68,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
   off: { mode: 'speakerOnly', arg: '^<Off>$' },
   speaker: { source: ['NameText', 'key'], splitOn: '-', pick: 'beforeLast', characterArg: '^<Character=(.*)>$' },
   bgm: { play: 'loop' },
-  tween: {
-    kinds: { MoveBy: { returns: 'action', else: 'moveBy' }, MoveTo: 'moveTo', PunchPosition: 'action', ShakePosition: 'action', ColorTo: 'raw', ScaleTo: 'raw', RotateTo: 'raw' },
-    actions: { x: 2, up: 1, down: 3 },
-    returnWhen: 'pingpong',
-    targetSlots: true,
-  },
+  tween: { targetSlots: true },
   nameOnlyRow: 'show',
   selection: { groupSuffix: '-\\d+$', adjacentGroups: true, singleAsText: true },
   // 文件夹 → 中文名（猜的，卡片副标题里同时写着文件夹名）；顺序 = 列表顺序
@@ -123,7 +117,6 @@ export function resolveOptions(options) {
     off: safeRegex(o.off.arg, 'i'),
     characterArg: safeRegex(o.speaker.characterArg, ''),
     group: safeRegex(o.selection.groupSuffix, ''),
-    ret: safeRegex(o.tween.returnWhen, 'i'),
     ext: safeRegex(o.index.ext, 'i'),
     books: o.index.books.map((source) => safeRegex(source, 'i')).filter(Boolean),
     charId: safeRegex(o.paths.charIdStrip, ''),

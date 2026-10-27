@@ -3469,24 +3469,6 @@
      "slotBase": 0.5
     },
     "tween": {
-     "actions": {
-      "down": 3,
-      "up": 1,
-      "x": 2
-     },
-     "kinds": {
-      "ColorTo": "raw",
-      "MoveBy": {
-       "else": "moveBy",
-       "returns": "action"
-      },
-      "MoveTo": "moveTo",
-      "PunchPosition": "action",
-      "RotateTo": "raw",
-      "ScaleTo": "raw",
-      "ShakePosition": "action"
-     },
-     "returnWhen": "pingpong",
      "targetSlots": true
     }
    }

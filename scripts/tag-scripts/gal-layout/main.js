@@ -536,20 +536,7 @@ export const ADAPTER_RULES = {
     off: { mode: 'speakerOnly', arg: '^<Off>$' },
     speaker: { source: ['NameText', 'key'], splitOn: '-', pick: 'beforeLast', characterArg: '^<Character=(.*)>$' },
     bgm: { play: 'loop' },
-    tween: {
-      kinds: {
-        MoveBy: { returns: 'action', else: 'moveBy' },
-        MoveTo: 'moveTo',
-        PunchPosition: 'action',
-        ShakePosition: 'action',
-        ColorTo: 'raw',
-        ScaleTo: 'raw',
-        RotateTo: 'raw',
-      },
-      actions: { x: 2, up: 1, down: 3 },
-      returnWhen: 'pingpong',
-      targetSlots: true,
-    },
+    tween: { targetSlots: true },
     nameOnlyRow: 'show',
     selection: { groupSuffix: '-\\d+$', adjacentGroups: true, singleAsText: true },
     catalog: {
