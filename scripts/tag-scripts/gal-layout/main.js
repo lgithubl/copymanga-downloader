@@ -1320,6 +1320,7 @@ export const LAYOUTS = {
     },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [],   // 数 TextAsset 里的 easy_dialog-N.xml（detectGrenze）
+    cover: [{ dir: 'patchres/banner/banner_title', match: '^LOGO_.*\\.(?:webp|png)$', flags: 'i', pick: 'first' }],   // 封面 = 标题 LOGO（gal-samples15 的图片目录清单：patchres/banner/banner_title 里 LOGO_<…>_520.webp 291 张）
     avatars: [], expectedDirs: ['assets/resources/patchres'],
     notes: ['按 next_id 链拆场景（每个文件几百个）；立绘 = merc/pic/<hero_group_id>/body.webp|png 整张；screen_effect / pic_action / effect 含义未知，记为未渲染指令（stats.raw）'],
   },
