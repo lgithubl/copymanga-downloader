@@ -47,7 +47,7 @@ await writeSpine(path.join(scene, 'spines'), 'st1', { format: 'binary', color: '
 await rename(path.join(scene, 'spines/st1.skel.bytes'), path.join(scene, 'spines/st1.skel'))
 await rename(path.join(scene, 'spines/st1.atlas.txt'), path.join(scene, 'spines/st1.atlas'))
 await writeFile(path.join(scene, 'hmr_1.txt'), ['fade,out,black,0.2', 'title,行式テスト,', 'bgmplay,bgm1,0', 'window,on,0.25', 'message,,旁白一句,', 'voice,v1', 'message,甲,「第一句」,iab4020078', 'voice,v2',
-  'chara,st1,chara_1,0,0,10,1,1,0,off', 'charamotion,chara_1,loop,on', 'charamotion,chara_1,joy,on', 'charafade,chara_1,in,0.2', 'await', 'msgvoicesync,chara_1,甲,「同步台词」,iab4030908,v2', 'cgmode,on'].join('\n'))
+  'chara,st1,chara_1,0,0,10,1,1,0,off', 'charamotion,chara_1,loop,on', 'charamotion,chara_1,joy,on', 'charafade,chara_1,in,0.2', 'await', 'msgvoicesync,chara_1,甲,「同步台词」,iab4030908,v2'].join('\n'))
 // 高个子骨架（533 × 1386，和真实的「橋」一样）+ 标签式脚本：y=0、缩放 0.7——原查看器里这个人的头在舞台上 43% 的位置，脚在舞台下面
 const tall = path.join(pk, 'scenes', 'chmr_3')
 await mkdir(path.join(tall, 'spines'), { recursive: true })

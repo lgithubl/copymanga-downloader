@@ -63,6 +63,7 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   //   forMatch  可选，正则：对 stem / name 先匹配一次，捕获组 {1}… / 命名组 {名字} 也能写进 forKey（不匹配 = 这条规则对这张卡片不适用）
   //   forStrip  可选，正则（或正则数组）：forKey 展开后，依次把匹配到的部分删掉再去查索引（去前缀 / 后缀：'^scene_' 把 scene_123456789 变成 123456789）
   //   切片      任何模板里的 {x:起:止} / {x:起}：取占位符值的 [起, 止)（JS slice：从 0 数、止不含、可为负）。{stem:0:9} = 前 9 个字符，{stem:1:7} = 第 1～6 个字符（120090312 → 200903）
+  //   lower     true = 键比较忽略大小写（文件的键和卡片的键都转小写；angelic：脚本 371IH42Z15 ↔ thumbnail/371i_idle.jpg）
   //   kind      image（默认，只收图片扩展名）| video（只收 mp4 mkv webm mov m4v，卡片显示视频的一帧）
   //   limit     每张卡片最多取几张（默认 12）；fallback：true = 前面都没找到图时才用这条
   thumbSources: [],
@@ -295,6 +296,7 @@ export function normalizeGalConfigWithWarnings(raw) {
       dir: fromMedia ? `~/${rest}` : rest, match, key: text(rule.key, 100) || '{1}',
       for: ['script', 'dir'].includes(rule.for) ? rule.for : 'both', forKey: text(rule.forKey, 100), forMatch: regexOrEmpty(rule.forMatch),
       kind: rule.kind === 'video' ? 'video' : 'image', limit: Math.max(1, Math.min(12, Math.floor(Number(rule.limit)) || 12)), fallback: Boolean(rule.fallback),
+      ...(rule.lower === true ? { lower: true } : {}),
       ...(forStrip.length ? { forStrip } : {}),
     }
     // 模板里写了没有的占位符（拼错）：展开成空串，这条规则永远查不到——报出来（规则保留）

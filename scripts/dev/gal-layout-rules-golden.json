@@ -234,6 +234,7 @@
      "^black$"
     ],
     "composite": {
+     "byName": true,
      "enabled": true
     },
     "flow": {
@@ -261,6 +262,13 @@
     },
     "speakerVars": [],
     "speakers": {},
+    "stands": {
+     "design": [
+      1920,
+      1080
+     ],
+     "enabled": true
+    },
     "transitions": {
      "named": "^(?:dissolve|fade|pixellate|move)",
      "seconds": 0.5
@@ -2262,6 +2270,7 @@
      "(?:^|_)black\\d*$"
     ],
     "composite": {
+     "byName": false,
      "enabled": true
     },
     "flow": {
@@ -2289,6 +2298,13 @@
     },
     "speakerVars": [],
     "speakers": {},
+    "stands": {
+     "design": [
+      1920,
+      1080
+     ],
+     "enabled": false
+    },
     "transitions": {
      "named": "^(?:dissolve|fade|pixellate|move)",
      "seconds": 0.5
@@ -2930,6 +2946,7 @@
      "^black$"
     ],
     "composite": {
+     "byName": false,
      "enabled": true
     },
     "flow": {
@@ -2957,6 +2974,13 @@
     },
     "speakerVars": [],
     "speakers": {},
+    "stands": {
+     "design": [
+      1920,
+      1080
+     ],
+     "enabled": false
+    },
     "transitions": {
      "named": "^(?:dissolve|fade|pixellate|move)",
      "seconds": 0.5

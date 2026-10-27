@@ -62,7 +62,8 @@ try {
   const itemB = await importItem(dirB, { adapters: ['uviewer-csv'], config: { game: { id: 'custom-r' }, scriptRoots: [{ id: 'story', dir: 'data/adv/textfiles/story', label: 'story' }], resourceRoots: ['data'], scriptExtensions: ['txt'], adapterOptions: { 'uviewer-csv': { sprites: { enabled: true } } } } }, '')
   const reader = async (id, sectionId) => (await (await fetch(`${base}/api/library/items/gal/${id}/reader/main?sectionId=${encodeURIComponent(sectionId)}`)).json())
   const homeA = await reader(itemA, '')
-  const groupCard = homeA.node.items.find((i) => i.title === '200903')
+  const charsA = await reader(itemA, homeA.node.items.find((i) => i.title === '人物剧情').node)   // 顶层视图：人物剧情 / 主线 …
+  const groupCard = charsA.node.items.find((i) => i.title === '200903')
   const groupA = await reader(itemA, groupCard.node)
   const targetA = groupA.node.items.find((i) => i.title === '120090301').node
   const homeB = await reader(itemB, '')
@@ -91,7 +92,10 @@ try {
   // 列表：按角色编号分组
   await page.goto(link(itemA, ''))
   await page.waitForSelector('.gal-browse .gal-card')
-  check('首页：角色编号分组卡片「200903」+ 不匹配分组规则的 100042 脚本（照常列出）', J((await page.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))).sort()) === J(['100042', '200903']), J(await page.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))))
+  check('首页：顶层视图「人物剧情」/「主线」（按编号形状分）', J((await page.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))).sort()) === J(['主线', '人物剧情'].sort()), J(await page.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))))
+  await page.click('.gal-card[data-title="人物剧情"]')
+  await page.waitForSelector('.gal-card[data-title="200903"]')
+  check('人物剧情里：角色编号分组卡片「200903」', J(await page.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))) === J(['200903']))
   await page.click('.gal-card[data-title="200903"]')
   await page.waitForSelector('.gal-card.is-script')
   check('进分组：两个脚本 120090301 / 120090302', J(await page.$$eval('.gal-card-title', (es) => es.map((e) => e.textContent))) === J(['120090301', '120090302']))

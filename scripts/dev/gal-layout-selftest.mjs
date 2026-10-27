@@ -482,6 +482,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
     const full = normalizeGalConfig(applyGalConfigPatch({}, cfgOf(await run(MEDIA_ROOT, { game: { id } }))))
     const legacy = normalizeGalConfig(applyGalConfigPatch({}, cfgOf(await run(MEDIA_ROOT, { game: { id } }, LEGACY_OPTIONS()))))
     const adapterIds = mod.resolveLayout(id).adapters
+    if (Object.keys(mod.resolveLayout(id).ruleOverrides || {}).length) continue   // 游戏自己声明了和默认值不同的规则（angelic 的立绘）：写满规则表 ≠ 关掉规则表是故意的
     const view = (cfg) => ({ classify: cfg.classify, resourceResolve: cfg.resourceResolve, player: cfg.player, limits: cfg.limits, indexSkip: cfg.indexSkip })
     for (const adapterId of adapterIds) {
       let adapter = null

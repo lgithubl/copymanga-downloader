@@ -854,6 +854,17 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 
 测试：`scripts/dev/gal-voice-selftest.mjs`（纯 node：各适配器的语音收集 / 正则拒绝 / LRU / 目录多脚本 / 错误）、`scripts/dev/fe-gal-voice-selftest.mjs`（浏览器，端口 8163）。
 
+### 本轮（第 17 轮采集之后）的行为补充
+
+- **GC 行式 `cgmode`**（`girlscreation-line`，`commands.cgmode`，默认 `actors`）：`cgmode,on` 时台上的 spine 角色收起来（`spineOff`），期间 `charashow` 不再画，`cgmode,off` 后按当前状态补回；`ui` = 只隐藏界面，`raw` = 不处理。`VIDEO_PLAY`（非 Aku 方言）同样先收角色。
+- **ぼくら资源目录按编号找**（`bokusen-json.resourceId`，`{enabled, minDigits:4, maxDigits:6}`）：脚本名没有同名资源目录时，找名字里数字串（4–6 位）包含脚本编号的唯一目录。分类视图（`LAYOUTS.bokusen.config.views`）：H / 活动 / 人物——活动按「分类名带两位数字（年份）」和节日名猜的，没有原版数据佐证。
+- **Grenze 数字 / DEFINE 效果码**（`grenze-xml.screenEffects` / `picActions` / `effects`）：1–13 与同名字符串等价，14 = 没有主角立绘时清场，17–22 = 轻微震动；`立ち絵全消え` / `5` 压住本行的立绘块。表里没有的码仍记 raw。
+- **TSK（utage-book）Selection**：相邻的 Selection 行合成一组；Selection 之间隔着 Jump / EndScenario 才拆开。只有一个选项且标签紧跟在后面的当作旁白文字（`selection.singleAsText`）；只有说话人没有立绘的行不查立绘。
+- **目录卡片缩略图**（catalog 节点）：适配器提供的目录树也走 `thumbSources` / `dirThumbs`（`browse.enrichCatalogItems`，并发 6）；Kamihime 的角色目录卡片取 `portrait/<角色名>.png`（名字去掉前后 `[称号]` 逐个试）。胶片剧情（film）不参与脚本内兜底取图。
+- **ミナシゴノシゴトR 顶层视图**：人物剧情 / 主线 / 活动 / 番外 / 试镜，按编号形状分（`LAYOUTS.minashigo_r.config.views`），各视图里再按原有 7 条规则分组。
+- **angelic 立绘**（`renpy-monmusu.stands`，只对 angelic 打开；`composite.byName` 允许图层写没有扩展名的图片名）：`show 371lid 01:` + 缩进的 `xpos / ypos / xalign / yalign / zoom`，按 Ren'Py 的锚点规则在 1920×1080 设计画布上摆；槽位 = 名字第一个词（image tag），`hide` 去掉、`scene` 清空；没写位置 = 底边居中。封面 `images/thumbnail/<脚本名前 4 位>_idle.jpg`（`thumbSources[].lower` = 键忽略大小写）。
+- **新的 game.id `girlscreation282`**（Girls Creation R Viewer 282寝，`extends: 'girlscreation'`）：行式脚本 54 个（R 里只有 3 个），单独一个 id 方便以后给它加规则。
+
 ### 每个游戏一个唯一的 game.id（导入页「Gal 游戏」下拉）
 
 导入页选方案 `gal-import`，在「Gal 游戏」下拉里选游戏、点「刷新 json」，会把 `adapters` 和 `config.game`（id + 标题）填进方案 JSON；再改 `rootDir` 即可。`rootDir`、`dryRun`、`defaultMetadataActions` 保留文本框里现有的值。

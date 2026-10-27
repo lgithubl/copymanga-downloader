@@ -4806,6 +4806,16 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "images/thumbnail",
+     "for": "script",
+     "forKey": "{stem:0:4}",
+     "key": "{1}",
+     "lower": true,
+     "match": "^(\\d{3}[A-Za-z])_idle\\.(?:jpe?g|png|webp)$"
+    }
+   ],
    "thumbsDirs": [],
    "views": []
   },
@@ -4870,6 +4880,16 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "images/thumbnail",
+     "for": "script",
+     "forKey": "{stem:0:4}",
+     "key": "{1}",
+     "lower": true,
+     "match": "^(\\d{3}[A-Za-z])_idle\\.(?:jpe?g|png|webp)$"
+    }
+   ],
    "thumbsDirs": [],
    "views": []
   },
@@ -4934,6 +4954,16 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "images/thumbnail",
+     "for": "script",
+     "forKey": "{stem:0:4}",
+     "key": "{1}",
+     "lower": true,
+     "match": "^(\\d{3}[A-Za-z])_idle\\.(?:jpe?g|png|webp)$"
+    }
+   ],
    "thumbsDirs": [],
    "views": []
   },
@@ -4998,6 +5028,16 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "images/thumbnail",
+     "for": "script",
+     "forKey": "{stem:0:4}",
+     "key": "{1}",
+     "lower": true,
+     "match": "^(\\d{3}[A-Za-z])_idle\\.(?:jpe?g|png|webp)$"
+    }
+   ],
    "thumbsDirs": [],
    "views": []
   },

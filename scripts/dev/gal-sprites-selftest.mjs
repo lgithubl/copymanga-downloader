@@ -165,8 +165,10 @@ const ops = (r) => r.steps.flatMap((s) => s.commands)
   check('LAYOUTS.minashigo_r 的分组规则对真实编号：120090312 → 200903、130230301 → 302303、121850102 → 218501；6 位 / 6 开头的编号不匹配', (() => { const re = new RegExp(LAYOUTS.minashigo_r.config.groups[0].pattern); return re.exec('120090312')?.[1] === '200903' && re.exec('130230301')?.[1] === '302303' && re.exec('121850102')?.[1] === '218501' && !re.test('100042') && !re.test('630000001') })())
   const prov = createBrowseProvider({ mediaDir: root, adapters: ['uviewer-csv'], resolveAsset: async () => { throw new Error('none') }, config: cfg })
   const home = (await prov.getNode('')).node
-  check('列表：角色 200903 的两个脚本成一张分组卡片（标题 200903），100042 照常列出', home.items.length === 2 && home.items.some((i) => i.title === '200903' && i.type === 'dir') && home.items.some((i) => i.title === '100042' && i.type === 'script'), J(home.items.map((i) => [i.type, i.title])))
-  const group = (await prov.getNode(home.items.find((i) => i.title === '200903').node)).node
+  const charsView = (await prov.getNode(home.items.find((i) => i.title === '人物剧情')?.node)).node
+  const mainView = (await prov.getNode(home.items.find((i) => i.title === '主线')?.node)).node
+  check('列表：顶层视图 人物剧情 / 主线；角色 200903 的两个脚本在人物剧情里成一张分组卡片（标题 200903），100042 在主线里照常列出', home.items.length === 2 && charsView.items.length === 1 && charsView.items.some((i) => i.title === '200903' && i.type === 'dir') && mainView.items.some((i) => i.title === '100042' && i.type === 'script'), J([home.items.map((i) => i.title), charsView.items.map((i) => i.title), mainView.items.map((i) => i.title)]))
+  const group = (await prov.getNode(charsView.items.find((i) => i.title === '200903').node)).node
   check('分组里：120090301 / 120090302', J(group.items.map((i) => i.title)) === J(['120090301', '120090302']), J(group.items.map((i) => i.title)))
   const played = await prov.getNode(group.items[0].node)
   const steps = played.scene.steps

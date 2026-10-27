@@ -114,9 +114,11 @@ try {
   const other = await galLayoutScript({ item: { itemId: 'no', title: 'no', config: {}, source: { path: path.join(work, 'empty') }, adapters: [] }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
   check('gal-layout 不会把别的目录认成 bokusen（不存在的目录 → 不认领）', other.itemPatch?.gal?.config?.game?.id !== 'bokusen', J(other.logs))
 
+  check('gal-layout 的 bokusen 分类视图：H / 活动 / 人物（名字里有【…】的是人物，分类名带两位数字 / 节日名的是活动，【】之前没有且以 H 结尾的是 H）', J(cfg.views?.map((v) => v.as)) === J(['h', 'events', 'chars']) && (() => { const [h, ev, ch] = cfg.views.map((v) => new RegExp(v.match)); return h.test('20013 初H') && h.test('百々H20062') && !h.test('1234 【春】xH') && ev.test('1234 【桜15】y') && ev.test('x 【七夕1】9') && !ev.test('1234 【春】x') && ch.test('1234 【春】x') })(), J(cfg.views))
+
   // ---------- 真实 handler：导入 → 列表 → 取场景 → 取资源 ----------
   const handler = createGalHandler({ dataDir: path.join(work, 'data'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) })
-  const imported = await handler.importFromSource({ sourcePath: root, options: { adapters: ['bokusen-json'], config: { ...cfg, game: { id: 'bokusen', title: 'bokusen' } } } })
+  const imported = await handler.importFromSource({ sourcePath: root, options: { adapters: ['bokusen-json'], config: { ...cfg, views: [], game: { id: 'bokusen', title: 'bokusen' } } } })   // 这里测解析 / 列表，不要分类视图（视图的测试在下面）
   const itemId = imported.items[0].itemId
   const node = async (sectionId) => (await handler.getReaderContent(itemId, 'main', { sectionId })).node
   const home = await node('')
@@ -199,7 +201,7 @@ try {
 
   // ---------- 端到端：adapterOptions 手写进 config，走 导入 → 取场景 ----------
   const handler2 = createGalHandler({ dataDir: path.join(work, 'data2'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) })
-  const tuned = { ...cfg, game: { id: 'bokusen', title: 'bokusen' }, adapterOptions: { 'bokusen-json': { ...cfg.adapterOptions['bokusen-json'], voice: { patterns: ['/nomatch/'], loopAsBgse: false }, bgm: { patterns: [], index: 2 }, stand: { xScale: 2 } } } }
+  const tuned = { ...cfg, views: [], game: { id: 'bokusen', title: 'bokusen' }, adapterOptions: { 'bokusen-json': { ...cfg.adapterOptions['bokusen-json'], voice: { patterns: ['/nomatch/'], loopAsBgse: false }, bgm: { patterns: [], index: 2 }, stand: { xScale: 2 } } } }
   const imported2 = await handler2.importFromSource({ sourcePath: root, options: { adapters: ['bokusen-json'], config: tuned } })
   const itemId2 = imported2.items[0].itemId
   const list2 = (await handler2.getReaderContent(itemId2, 'main', { sectionId: '' })).node.items
@@ -214,7 +216,7 @@ try {
   await writeFile(path.join(root3, 'json', '4311 空白.json'), '  \n')
   await writeFile(path.join(root3, 'json', '4331 エラー.json'), '{"error":{"error_code":"10001","error_message":"x"},"server_time":1}')
   const handler3 = createGalHandler({ dataDir: path.join(work, 'data3'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => (await import('node:fs')).existsSync(p), getConfig: () => ({ mediaImportProfiles: {} }) })
-  const imported3 = await handler3.importFromSource({ sourcePath: root3, options: { adapters: ['bokusen-json'], config: { ...cfg, game: { id: 'bokusen', title: 'bokusen' } } } })
+  const imported3 = await handler3.importFromSource({ sourcePath: root3, options: { adapters: ['bokusen-json'], config: { ...cfg, views: [], game: { id: 'bokusen', title: 'bokusen' } } } })   // 这里测解析 / 列表，不要分类视图（视图的测试在下面）
   const list3 = (await handler3.getReaderContent(imported3.items[0].itemId, 'main', { sectionId: '' })).node.items.map((x) => x.title)
   check('空文件 / 空白文件 / 错误响应 JSON 混在 json/ 里：列表不炸，只列出真正的脚本（3 个），坏文件不显示', list3.length === 3 && list3.includes(STEM) && !list3.some((t) => /^4\d{3}/.test(t)), J(list3))
   check('这些坏文件的 explainSniff 各有原因：空 → "空"、错误响应 → error_code', /空/.test(explainSniff('')) && /error_code 10001/.test(explainSniff(await readFile(path.join(root3, 'json', '4331 エラー.json'), 'utf8'))), '')

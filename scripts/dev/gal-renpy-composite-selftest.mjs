@@ -26,8 +26,8 @@ image movie_x = Movie(play="movies/x.webm")
 `
 const found = readComposites(defs, isImg)
 check('readComposites：多行 + 名字带空格 + 单双引号 + 注释 / 字符串里的括号；没有图层 / 没闭合的不算', J(found) === J([
-  { name: 'ms0101b6 01', layers: ['images/ev/ms0101b6_base.png', 'images/ev/ms0101b6_face.png', 'images/ev/ms0101b6_fx(1).png'] },
-  { name: 'single', layers: ['images/ev/only.png'] },
+  { name: 'ms0101b6 01', layers: ['images/ev/ms0101b6_base.png', 'images/ev/ms0101b6_face.png', 'images/ev/ms0101b6_fx(1).png'], size: [1280, 720] },
+  { name: 'single', layers: ['images/ev/only.png'], size: [100, 100] },
 ]), J(found))
 
 const files = ['images/ev/ms0101b6_base.png', 'images/ev/ms0101b6_face.png', 'images/ev/ms0101b6_fx(1).png', 'images/ev/only.png', 'images/bg/plain.jpg', 'images/bg/other.jpg']
@@ -53,7 +53,7 @@ for (const [label, mod, id] of [['monmusu', monmusu, 'renpy-monmusu'], ['legeclo
   const ctxOff = mod.prepare({ options: off, texts: { 'script/movie.rpy': defs }, files, toResourcePath: (r) => r })
   const parsedOff = mod.parse(script, ctxOff, { options: off })
   check(`${label}：composite.enabled = false → 不读合成图，scene 记 unresolved（和以前一样）`, !ctxOff.composites.size && parsedOff.stats.unresolved['ms0101b6 01'] === 1 && parsedOff.stats.unresolved.single === 1, J(parsedOff.stats))
-  check(`${label}：DEFAULT_OPTIONS.composite = { enabled: true }（id ${id}）`, J(mod.DEFAULT_OPTIONS.composite) === J({ enabled: true }))
+  check(`${label}：DEFAULT_OPTIONS.composite = { enabled: true, byName: false }（id ${id}）`, J(mod.DEFAULT_OPTIONS.composite) === J({ enabled: true, byName: false }))
 }
 // 图层名没有扩展名 / 不是图片的字符串（Composite 的第一个参数是尺寸元组，不是字符串）不会被当图层
 check('尺寸元组 / 没有图片扩展名的字符串不算图层', J(readComposites('image a = Composite((1, 2), (0,0), "noext", (0,0), "x.txt")\n', isImg)) === '[]')

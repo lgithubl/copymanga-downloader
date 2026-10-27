@@ -61,7 +61,8 @@ export function buildSourceIndex(rule, files) {
     if (name.startsWith('.') || !exts.has(extOf(name))) continue
     const m = re.exec(name)
     if (!m) continue
-    const key = fillKey(rule.key, m, fileVars(dir, name))
+    const filled = fillKey(rule.key, m, fileVars(dir, name))
+    const key = rule.lower ? filled.toLowerCase() : filled
     if (!key) continue
     const list = map.get(key) || []
     if (list.length < MAX_PER_KEY) { list.push(dir ? `${dir}/${name}` : name); map.set(key, list) }
@@ -80,7 +81,7 @@ export function subjectKey(rule, subject) {
   if (rule.forMatch && !m) return null
   let key = fillKey(rule.forKey || (subject.kind === 'script' ? '{stem}' : '{name}'), m, { stem: own, name: own, parent: subject.parent || '', parent2: subject.parent2 || '' })
   for (const source of [rule.forStrip].flat()) if (source) key = key.replace(new RegExp(source, 'g'), '')
-  return key || null
+  return key ? (rule.lower ? key.toLowerCase() : key) : null
 }
 
 // 去重 + 封顶（纯函数，测试用）：按先后顺序保留第一次出现的

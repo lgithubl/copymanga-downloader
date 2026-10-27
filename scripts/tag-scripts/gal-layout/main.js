@@ -59,7 +59,8 @@ export const ADAPTER_RULES = {
   'renpy-legeclo': {
     aliasFiles: ['script/movie.rpy'],
     imageDirs: ['images'],
-    composite: { enabled: true },
+    composite: { enabled: true, byName: false },
+    stands: { enabled: false, design: [1920, 1080] },
     aliasPatterns: [
       {
         kind: 'movie',
@@ -91,7 +92,8 @@ export const ADAPTER_RULES = {
   'renpy-monmusu': {
     aliasFiles: ['script/movie.rpy'],
     imageDirs: ['images'],
-    composite: { enabled: true },
+    composite: { enabled: true, byName: false },
+    stands: { enabled: false, design: [1920, 1080] },
     aliasPatterns: [
       {
         kind: 'movie',
@@ -994,12 +996,16 @@ export const LAYOUTS = {
     adapterOptions: { 'renpy-monmusu': { aliasFiles: { paths: ['?script/movies.rpy', '?script/stills.rpy'] }, imageDirs: { paths: ['?images', '?resources'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
     // 规则：和 monmusu 同一个适配器、同一张表（别名表文件名不同由探测器的 aliasFiles 写）；angelic 的真实数据只有结构，没有逐项验证。
-    ruleTables: ['renpy-monmusu'], ruleOverrides: {},
+    ruleTables: ['renpy-monmusu'],
+    // angelic 的立绘：`show 371lid 01:` + 缩进的 ypos / xalign / zoom，图片是 Composite((1166, 1026), (0,0), "371lid_st_s_99", …)——图层写的是没有扩展名的图片名（靠 images/ 目录的自动命名查），设计分辨率 1920×1080
+    ruleOverrides: { 'renpy-monmusu': { composite: { byName: true }, stands: { enabled: true } } },
     engine: { classify: [] },
     config: {
       namesFiles: [], thumbsDirs: [], scriptExtensions: ['rpy'],
       hiddenDirs: ['sub_nav', 'sub_nav_byname', 'tl'],   // 菜单脚本（sub_*.rpy / byname_*.rpy）不是剧情
       merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [],
+      // 封面：脚本 371IH42Z15 → images/thumbnail/371i_idle.jpg（脚本名前 4 位 = 角色 / 剧情编号，文件名小写；gal-samples15 的文件清单对出来的）
+      thumbSources: [{ dir: 'images/thumbnail', match: String.raw`^(\d{3}[A-Za-z])_idle\.(?:jpe?g|png|webp)$`, key: '{1}', for: 'script', forKey: '{stem:0:4}', lower: true }],
     },
     count: [{ dir: 'script/hscene', ext: '.rpy', depth: 8 }],
     avatars: [], expectedDirs: [],

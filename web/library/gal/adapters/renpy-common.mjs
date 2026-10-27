@@ -87,7 +87,12 @@ const COMPILERS = {
   transitions: (v, d) => ({ named: safe(typeof v?.named === 'string' ? v.named : d.named, 'i'), seconds: Number.isFinite(Number(v?.seconds)) ? num(v.seconds) : d.seconds }),
   blackRes: (v, d) => regexes(v, d),
   sniff: (v, d) => ({ labelRe: safe(typeof v?.labelRe === 'string' ? v.labelRe : d.labelRe, 'm'), markerRes: regexes(v?.markerRes, d.markerRes, 'm') }),
-  composite: (v, d) => ({ enabled: typeof v?.enabled === 'boolean' ? v.enabled : d.enabled === true }),
+  composite: (v, d) => ({ enabled: typeof v?.enabled === 'boolean' ? v.enabled : d.enabled === true, byName: typeof v?.byName === 'boolean' ? v.byName : d.byName === true }),
+  stands: (v, d) => {
+    const dim = (x) => Number.isFinite(Number(x)) && Number(x) > 0 && Number(x) <= 8192
+    const design = Array.isArray(v?.design) && v.design.length === 2 && v.design.every(dim) ? v.design.map(Number) : d.design
+    return { enabled: typeof v?.enabled === 'boolean' ? v.enabled : d.enabled === true, design }
+  },
   standTags: (v, d) => new Set(strings(v, d)),
   fadeTags: (v, d) => new Set(strings(v, d)),
   cropForms: (v, d) => regexes(v, d),
@@ -220,9 +225,9 @@ export const DEFAULT_ALIAS = {
 const extOf = (name) => name.slice(name.lastIndexOf('.') + 1).toLowerCase()
 
 // 多行 Composite 定义：`image <名字> = Composite(` 之后配对括号读到结束（跳过字符串里的括号），取里面带图片扩展名的字符串 = 图层（按出现顺序）。
-// 名字可以带空格（`ms0101b6 01`）。单个定义最多读 4000 个字符、一个文件最多 2000 个，防坏脚本
+// byName：没有扩展名的纯名字字符串也算图层（引用别的图片别名）；size = 开头的 (宽, 高)。名字可以带空格（`ms0101b6 01`）。单个定义最多读 4000 个字符、一个文件最多 2000 个，防坏脚本
 const COMPOSITE_HEAD = /^[ \t]*image[ \t]+(.+?)[ \t]*=[ \t]*Composite[ \t]*\(/gm
-export function readComposites(body, extOk) {
+export function readComposites(body, extOk, byName = false) {
   const out = []
   COMPOSITE_HEAD.lastIndex = 0
   let head
@@ -244,8 +249,10 @@ export function readComposites(body, extOk) {
     for (const m of inner.matchAll(/"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g)) {
       const src = clean(m[1] ?? m[2])
       if (src && extOk(extOf(src))) layers.push(src)
+      else if (byName && /^[\w-]+$/.test(src)) layers.push(src)   // 没有扩展名的图片名（angelic：(0,0), "371lid_st_s_99"）= 引用别的图片别名，prepare 末尾再查
     }
-    if (layers.length) out.push({ name: head[1], layers })
+    const size = /^\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/.exec(inner)
+    if (layers.length) out.push({ name: head[1], layers, ...(size ? { size: [Number(size[1]), Number(size[2])] } : {}) })
     COMPOSITE_HEAD.lastIndex = i
   }
   return out
@@ -258,6 +265,8 @@ export function buildRenpyContext({ texts, files, toResourcePath, resourceResolv
   const movies = new Map()   // 别名 → { src, loop }
   const images = new Map()   // 别名 → 资源路径
   const composites = new Map()   // 别名 → 图层资源路径[]（Composite 定义，o.composite.enabled 时才有）
+  const compositeSize = new Map()   // 别名 → [宽, 高]（Composite 的画布大小）
+  const byNameLayers = new Map()   // 别名 → 含图片名的图层（composite.byName），图片目录索引建好后再解析
   const { ext, extList, extPriority, preferDirs } = o.imageIndex
   const toRes = (rel) => (toResourcePath ? toResourcePath(rel) : rel)
   const sorted = [...(files || [])].sort()
@@ -283,9 +292,11 @@ export function buildRenpyContext({ texts, files, toResourcePath, resourceResolv
       }
     }
     if (o.composite?.enabled) {
-      for (const { name, layers } of readComposites(body, (e) => ext.has(e))) {
+      for (const { name, layers, size } of readComposites(body, (e) => ext.has(e), Boolean(o.composite.byName))) {
         const key = aliasKey(name)
         if (images.has(key)) continue   // 前面已经有 `image X = "…"` 的明确定义：不覆盖
+        if (size) compositeSize.set(key, size)
+        if (layers.some((layer) => !ext.has(extOf(layer)))) { byNameLayers.set(key, layers); continue }
         const real = layers.map((layer) => resolver.resolve(layer) || layer)
         composites.set(key, real)
         images.set(key, real[0])
@@ -312,5 +323,12 @@ export function buildRenpyContext({ texts, files, toResourcePath, resourceResolv
     if (!cur || score[0] < cur.score[0] || (score[0] === cur.score[0] && score[1] < cur.score[1])) best.set(key, { path, score })
   })
   for (const [key, { path }] of best) if (!images.has(key)) images.set(key, path)
-  return { movies, images, composites }
+  // 含图片名的 Composite：名字先查 `image X = "…"`，再查图片目录；查不到的层丢掉，一层都没有就当没这个定义
+  for (const [key, layers] of byNameLayers) {
+    const real = layers.map((layer) => (ext.has(extOf(layer)) ? resolver.resolve(layer) || layer : images.get(aliasKey(layer)))).filter(Boolean)
+    if (!real.length) continue
+    composites.set(key, real)
+    images.set(key, real[0])
+  }
+  return { movies, images, composites, compositeSize }
 }

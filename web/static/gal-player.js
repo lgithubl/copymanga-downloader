@@ -637,6 +637,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     }
     probe.src = url(bg.src)
   }
+  function startFrames(layer) {
+    stopFrames()
+    const frames = state.bg?.frames
+    if (!layer || !frames?.length) return
+    for (const src of frames) { const image = new Image(); image.src = url(src) }   // 预载，播放时不卡
+    let index = 0
+    frameTimer = setInterval(() => {
+      index = (index + 1) % frames.length
+      layer.style.backgroundImage = `url("${url(frames[index])}")`
+    }, 1000 / frameFps)
+  }
   function paintBg(bg, fade, instant) {
     stopFrames()
     const next = layers[1 - frontLayer]

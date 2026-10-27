@@ -713,8 +713,9 @@ check('条目 id 不合法 → 报错（防路径拼接）', Boolean(await err(h
     const lineText = ['fade,out,black,0.5', 'bg,abg1,0,0,1,1', 'title,标题,', 'bgmplay,bgm1,0', 'window,on,0.25', 'message,,旁白,', 'message,,含逗号，, 还有<br>换行,', 'voice,v1', 'message,甲,「台词」,iab4020078', 'voice,v2', 'voice,v3',
       'chara,st1,chara_2,0,0,20,1,1,0,off', 'charamotion,chara_2,loop,on', 'charafade,chara_2,in,0.5', 'msgvoicesync,chara_2,甲,「同步」,iab4030908,v4', 'playmovie,m1,loop', 'cgmode,on'].join('\n')
     const lineFiles = ['chmr_1/hmr_1.txt', 'chmr_1/images/abg1.png', 'chmr_1/voices/v1.ogg', 'chmr_1/voices/v2.ogg', 'chmr_1/voices/v3.ogg', 'chmr_1/voices/v4.ogg', 'chmr_1/videos/m1.mp4', 'chmr_1/spines/st1.skel', 'chmr_1/spines/st1.atlas', 'data/audio/bgm/bgm1.m4a']
-    const lineCtx = gcMod.prepare({ options: {}, texts: { 'scenes/chmr_1/hmr_1.txt': lineText }, files: lineFiles.map((f) => (f.startsWith('data/') ? f : `scenes/${f}`)), toResourcePath: (r) => r })
-    const lineScene = gcMod.parse(lineText, lineCtx, { rel: 'chmr_1/hmr_1.txt', stem: 'hmr_1' })
+    const lineOpts = { commands: { cgmode: 'ui' } }   // 默认 cgmode = actors（收角色，见 gal-r12-fixes）；这里测 ui 方式
+    const lineCtx = gcMod.prepare({ options: lineOpts, texts: { 'scenes/chmr_1/hmr_1.txt': lineText }, files: lineFiles.map((f) => (f.startsWith('data/') ? f : `scenes/${f}`)), toResourcePath: (r) => r })
+    const lineScene = gcMod.parse(lineText, lineCtx, { rel: 'chmr_1/hmr_1.txt', stem: 'hmr_1', options: lineOpts })
     const textOf = (step) => step.commands.find((c) => c.op === 'text')?.segments.map((x) => x.text).join('')
     const opsOf = (step) => step.commands.map((c) => c.op)
     check('行式脚本：message 一句一步（旁白 / 带逗号的台词 / <br> 换行）；voice 归后面的 message；没有台词的 voice 各自一步；msgvoicesync 带语音和说话人；资源都能找到；cgmode,on → ui 隐藏（不再记 raw）', lineScene.steps.length === 6 && textOf(lineScene.steps[0]) === '旁白' && textOf(lineScene.steps[1]) === '含逗号，,还有\n换行' && opsOf(lineScene.steps[2]).includes('voice') && textOf(lineScene.steps[2]) === '「台词」' && textOf(lineScene.steps[3]) === '' && textOf(lineScene.steps[4]) === '' && textOf(lineScene.steps[5]) === '「同步」' && lineScene.steps[5].commands.some((c) => c.op === 'movie') && Object.keys(lineScene.stats.unresolved).length === 0 && lineScene.stats.raw.cgmode === undefined && lineScene.steps[5].commands.some((c) => c.op === 'ui' && c.visible === false) && lineCtx.info.get('chmr_1').title === '标题', J(lineScene.steps.map((st) => [textOf(st), opsOf(st)])) + J(lineScene.stats))
@@ -1470,8 +1471,10 @@ async function gcMod0Prepare({ truncated }) {
   check('ミナシゴノシゴトR：没写 game.id 也能认出来（data 下有 adv/image 和 adv/sound）', auto.itemPatch?.gal?.config?.game?.id === 'minashigo_r', J(auto.logs))
   const prov = createBrowseProvider({ mediaDir: root, adapters: ['uviewer-csv'], resolveAsset: noAsset, config: cfg })
   const home = (await prov.getNode('')).node
-  check('ミナシゴノシゴトR：首页：编号 1<6 位角色><2 位序号> 的脚本按角色编号分成一张卡片（标题 100104，里面 2 个脚本），不匹配的 100042 照常列出（story_json 的 API 响应不在脚本根里）', home.items.length === 2 && home.items.some((i) => i.title === '100104' && i.type !== 'script') && home.items.some((i) => i.title === '100042' && i.type === 'script'), J(home.items.map((i) => [i.type, i.title])))
-  const group = (await prov.getNode(home.items.find((i) => i.title === '100104').node)).node
+  const charsView = (await prov.getNode(home.items.find((i) => i.title === '人物剧情')?.node)).node
+  const mainView = (await prov.getNode(home.items.find((i) => i.title === '主线')?.node)).node
+  check('ミナシゴノシゴトR：首页：顶层视图 人物剧情 / 主线（按编号形状）；人物剧情里编号 1<6 位角色><2 位序号> 的脚本按角色编号分成一张卡片（标题 100104，里面 2 个脚本），6 位的 100042 在主线里照常列出（story_json 的 API 响应不在脚本根里）', home.items.length === 2 && charsView.items.length === 1 && charsView.items.some((i) => i.title === '100104' && i.type !== 'script') && mainView.items.some((i) => i.title === '100042' && i.type === 'script'), J([home.items.map((i) => i.title), charsView.items.map((i) => [i.type, i.title]), mainView.items.map((i) => [i.type, i.title])]))
+  const group = (await prov.getNode(charsView.items.find((i) => i.title === '100104').node)).node
   check('ミナシゴノシゴトR：分组「100104」里是 110010412 / 110010413 两个脚本', J(group.items.map((i) => i.title).sort()) === J(['110010412', '110010413']) && group.items.every((i) => i.type === 'script'), J(group.items.map((i) => [i.type, i.title])))
   const played = await prov.getNode(group.items[0].node)
   const cmds = played.scene.steps.flatMap((st) => st.commands)
