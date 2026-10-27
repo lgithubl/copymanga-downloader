@@ -423,6 +423,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 适配器的目录（catalog）节点：适配器自己给了 thumb 就用它；没给的，目录卡片走 thumbSources / dirThumbs 规则（名字 = 卡片标题），
   // 脚本卡片走和文件系统列表同一套（scriptInfo：规则 → 兜底：脚本里的 CG / 立绘 / 背景，topUp），以前这两种卡片在 catalog 里一律没图。
   // 并发限制 6：每个脚本要解析一次（scriptInfo 按文件 mtime 缓存）；路径带 :: 的（一个文件装很多场景）不是真文件，跳过。
+  // 目录卡片的取图名 = 适配器给的 key（没给用标题）：标题常常是显示名（角色名），文件按编号命名（misttrain：Bases/<底号>201.png）
   async function enrichCatalogItems(children, holder) {
     const out = new Array(children.length)
     let next = 0
@@ -436,7 +437,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         try {
           if (child.children) {
             const why = []
-            const thumbs = [...(await thumbEngine.forDir({ name: String(child.title || ''), parentName: String(holder?.title || '') }, { why })).values()]
+            const thumbs = [...(await thumbEngine.forDir({ name: String(child.key ?? child.title ?? ''), parentName: String(holder?.title || '') }, { why })).values()]
             if (thumbs.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: thumbs[0], thumbs } } else if (why.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }
           } else if (child.script && !child.script.includes('::')) {
             const info = await scriptInfo(defaultSet, child.script)

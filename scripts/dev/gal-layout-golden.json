@@ -4524,6 +4524,15 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "Textures/Characters/Bases",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{1}",
+     "match": "^(\\d+)201\\.png$"
+    }
+   ],
    "thumbsDirs": []
   },
   "itemTags": [
@@ -4597,6 +4606,15 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "Textures/Characters/Bases",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{1}",
+     "match": "^(\\d+)201\\.png$"
+    }
+   ],
    "thumbsDirs": []
   },
   "itemTags": [
@@ -4670,6 +4688,15 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "Textures/Characters/Bases",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{1}",
+     "match": "^(\\d+)201\\.png$"
+    }
+   ],
    "thumbsDirs": []
   },
   "itemTags": [
@@ -4743,6 +4770,15 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbSources": [
+    {
+     "dir": "Textures/Characters/Bases",
+     "for": "dir",
+     "forKey": "{name}",
+     "key": "{1}",
+     "match": "^(\\d+)201\\.png$"
+    }
+   ],
    "thumbsDirs": []
   },
   "itemTags": [

@@ -96,7 +96,7 @@ registerGalAdapter({ id: 'test-topup', label: '测试：JSON 步骤', sniff: (te
 
 // ================= 5. 适配器目录（catalog）里的卡片也走规则 + 兜底 =================
 {
-  for (const f of ['room1.png', 'room2.png', 'dir_A.png', 'dir_A2.png']) await mk(`resources/cat/img/${f}`)
+  for (const f of ['room1.png', 'room2.png', 'dir_A.png', 'dir_A2.png', 'dir_K.png']) await mk(`resources/cat/img/${f}`)
   const steps = [[{ op: 'bg', src: 'cat/img/room1.png' }], [{ op: 'bg', src: 'cat/img/room2.png' }]]
   for (const stem of ['s1', 's2']) await mk(`resources/cat/s/${stem}.txt`, `#CT${J(steps)}`)
   registerGalAdapter({
@@ -104,6 +104,7 @@ registerGalAdapter({ id: 'test-topup', label: '测试：JSON 步骤', sniff: (te
     catalog: () => ({ children: [
       { id: 'dirA', title: 'A', children: [{ id: 'leaf1', title: 'one', script: 'resources/cat/s/s1.txt' }] },
       { id: 'dirB', title: 'B', children: [{ id: 'leaf2', title: 'two', script: 'resources/cat/s/s2.txt', thumb: 'cat/img/room2.png' }] },
+      { id: 'dirK', title: '显示名', key: 'K', children: [{ id: 'leaf4', title: 'four', script: 'resources/cat/s/s1.txt' }] },
       { id: 'leaf3', title: 'three', script: 'resources/cat/s/s1.txt' },
     ] }),
   })
@@ -114,6 +115,7 @@ registerGalAdapter({ id: 'test-topup', label: '测试：JSON 步骤', sniff: (te
   const items = await run({ thumbSources: [{ dir: 'cat/img', match: '^dir_(\\w)\\d?\\.png$', key: '{1}', for: 'dir', forKey: '{name}' }] })
   const byTitle = Object.fromEntries(items.map((i) => [i.title, i]))
   check('catalog 目录卡片（适配器没给 thumb）：thumbSources 规则按卡片标题（A → dir_A.png、dir_A2.png）取图，不再没图；没有命中规则的目录（B）仍没有', J(byTitle.A.thumbs.map((p) => p.replace('cat/img/', ''))) === J(['dir_A.png', 'dir_A2.png']) && byTitle.B.thumbs.length === 0 && Array.isArray(byTitle.B.thumbWhy), J(items))
+  check('catalog 目录卡片：适配器给了 key（标题是显示名）→ 按 key 取图（显示名 → dir_K.png）', J(byTitle['显示名'].thumbs.map((p) => p.replace('cat/img/', ''))) === J(['dir_K.png']), J(byTitle['显示名']))
   const leaves = await run({})
   const leafOne = (await createBrowseProvider({ mediaDir: media, adapters: ['test-catalog'], resolveAsset, config: { scriptRoots: [{ id: 'text', dir: 'resources/cat/s' }], scriptThumbs: [] } }).getNode('')).node.items.find((i) => i.title === 'three')
   check('catalog 脚本卡片（适配器没给 thumb）：走和文件系统列表一样的兜底（脚本里的背景图）；适配器自己给了 thumb 的（two）原样保留', J(leafOne.thumbs.map((p) => p.replace('cat/img/', ''))) === J(['room1.png', 'room2.png']) && leafOne.thumb === leafOne.thumbs[0] && !('thumbWhy' in leafOne), J(leafOne))

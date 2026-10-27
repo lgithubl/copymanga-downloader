@@ -1178,9 +1178,9 @@ export const LAYOUTS = {
     // 规则：misttrain-json 全表（真实数据验证：UScenes / Spines / MasterData）。角色缩略图（Bases/<Id>201.png）未验证（见 pending）。
     ruleTables: ['misttrain-json'], ruleOverrides: {},
     engine: { classify: [] },
-    // PENDING（待真实数据，不写进 config，只是文档）：假设「Textures/Characters/Bases/<Id>201.png」= 角色卡片缩略图，还没被数据证实（D 段统计）；确认前不要启用。见 scripts/dev/gal-pending-plan.md §2。
-    pending: [{ ref: 'gal-pending-plan.md §2', what: 'misttrain 角色缩略图 = Textures/Characters/Bases/<Id>201.png', draft: { thumbSources: [{ dir: 'Textures/Characters/Bases', match: '^(\\d+)201\\.png$', key: '{1}', for: 'dir' }] } }],
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [] },
+    // 角色缩略图：Textures/Characters/Bases/<底号>201.png（gal-samples19 的清单对出来的：100201 / 101201 / 10201 → 底号 100 / 101 / 10，404×568），角色卡片的 key = Stills 下的底号
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [],
+      thumbSources: [{ dir: 'Textures/Characters/Bases', match: String.raw`^(\d+)201\.png$`, key: '{1}', for: 'dir', forKey: '{name}' }] },
     count: [{ dir: 'UScenes', ext: '.json', depth: 4 }],
     cover: [],
     avatars: [], expectedDirs: ['MasterData', 'Spines', 'Sounds', 'BackGrounds'],

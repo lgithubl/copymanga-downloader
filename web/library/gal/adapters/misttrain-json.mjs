@@ -220,6 +220,7 @@ function buildCatalog(ctx) {
   }
   const people = [...byBase].sort((a, b) => natAsc(a[0], b[0])).map(([base, list]) => ({
     id: `chars/${base}`,
+    key: base,   // 取缩略图用（Textures/Characters/Bases/<底号>201.png），标题是显示名
     title: master.bases.get(base) || `角色 ${base}`,
     subtitle: `${list.length} 项`,
     children: list.map(([stem, entry]) => node(stem, stem, entry, `chars/${base}`)),
