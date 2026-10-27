@@ -196,8 +196,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // 角色摆放（只有当前画面里有角色时才显示）：自动 = 把骨架包围盒放进舞台居中（默认，和以前一样）；固定相机 = 原查看器的做法，窗口宽 / 中心 X / 中心 Y 是「骨骼单位」，
   // 每个游戏的查看器常数不一样（Girls Creation R Viewer 是 1920 / 0 / 900，别的游戏的没有源码），所以交给你按媒体自己调，存在这个媒体里
   const camModeSelect = el('select', 'gal-more-select')
-  for (const [value, label] of [['fit', '自动（包围盒居中）'], ['fixed', '固定相机']]) { const option = el('option', '', label); option.value = value; camModeSelect.append(option) }
-  camModeSelect.title = '自动：把骨架整个放进舞台居中；固定相机：世界窗口宽 / 中心点按下面的数字，每个骨骼单位 = 舞台宽 / 窗口宽 个像素，脚本里的 x / y / 缩放按它摆'
+  for (const [value, label] of [['fit', '自动（包围盒居中）'], ['fixed', '固定相机'], ['widget', '原版（Aku）']]) { const option = el('option', '', label); option.value = value; camModeSelect.append(option) }
+  camModeSelect.title = '自动：把骨架整个放进舞台居中；固定相机：世界窗口宽 / 中心点按下面的数字，每个骨骼单位 = 舞台宽 / 窗口宽 个像素，脚本里的 x / y / 缩放按它摆；原版（Aku）：照 Aku 查看器的 spine-widget（2.2 倍窗口、底边偏移 120，水平按包围盒居中）'
   const camModeRow = el('label', 'gal-more-field')
   camModeRow.append(el('span', '', '角色摆放'), camModeSelect)
   const camNumber = (title, step) => { const input = el('input', 'gal-more-number'); input.type = 'number'; input.step = String(step); input.title = title; return input }
@@ -358,7 +358,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   }
   const cleanCamera = (camera) => {
     const num = (value, fallback, min, max) => (Number.isFinite(Number(value)) && value !== '' && value !== null && value !== undefined ? Math.max(min, Math.min(max, Number(value))) : fallback)
-    return { mode: camera?.mode === 'fixed' ? 'fixed' : 'fit', width: num(camera?.width, 1920, 100, 20000), cx: num(camera?.cx, 0, -20000, 20000), cy: num(camera?.cy, 900, -20000, 20000) }
+    return { mode: camera?.mode === 'fixed' ? 'fixed' : camera?.mode === 'widget' ? 'widget' : 'fit', width: num(camera?.width, 1920, 100, 20000), cx: num(camera?.cx, 0, -20000, 20000), cy: num(camera?.cy, 900, -20000, 20000) }
   }
   const loadViews = () => {
     let saved = {}
@@ -580,6 +580,39 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   // 逐帧背景（FRAME_ANIM）：在当前前台层上循环换图，换背景 / 退出时停掉
   let frameTimer = 0
   function stopFrames() { clearInterval(frameTimer); frameTimer = 0 }
+  // 胶片背景（bg.film = { ratio, fps, loop }）：src 是一张竖排的胶片（每帧宽 × 高 = 1 : ratio，帧数 = 图高 / (图宽 × ratio)），整个舞台高度放一帧，按 fps 往下翻；
+  // 帧数要等图加载完才知道。loop = false 播到最后一帧停住；fps <= 1 = 静图（只显示第一帧）
+  function paintFilm(layer, bg) {
+    layer.querySelectorAll('.gal-film').forEach((node) => node.remove())
+    if (!bg?.film || !bg.src) return null
+    const film = el('div', 'gal-film')
+    film.style.cssText = `position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);aspect-ratio:${1} / ${Number(bg.film.ratio) > 0 ? Number(bg.film.ratio) : 1};background:url("${url(bg.src)}") no-repeat 0 0 / 100% 100%`
+    layer.append(film)
+    return film
+  }
+  function startFilm(layer, bg) {
+    const film = layer?.querySelector?.('.gal-film')
+    if (!film || !bg?.film) return
+    const ratio = Number(bg.film.ratio) > 0 ? Number(bg.film.ratio) : 1
+    const probe = new Image()
+    probe.onload = () => {
+      if (!film.isConnected) return
+      const frames = Math.max(1, Math.round(probe.naturalHeight / (probe.naturalWidth * ratio)))
+      film.style.backgroundSize = `100% ${frames * 100}%`
+      const at = (i) => { film.style.backgroundPosition = `0 ${frames > 1 ? (i / (frames - 1)) * 100 : 0}%` }
+      at(0)
+      const fps = Number(bg.film.fps)
+      if (frames < 2 || !(fps > 1)) return
+      let index = 0
+      clearInterval(frameTimer)
+      frameTimer = setInterval(() => {
+        index += 1
+        if (index >= frames) { if (bg.film.loop === false) { clearInterval(frameTimer); frameTimer = 0; return } index = 0 }
+        at(index)
+      }, 1000 / fps)
+    }
+    probe.src = url(bg.src)
+  }
   function startFrames(layer) {
     stopFrames()
     const frames = state.bg?.frames
@@ -597,7 +630,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     const prev = layers[frontLayer]
     const seconds = instant ? 0 : fade
     const apply = (layer) => {
-      layer.style.backgroundImage = bg?.src ? (bg.over ? `url("${url(bg.over)}"), url("${url(bg.src)}")` : `url("${url(bg.src)}")`) : 'none'
+      paintFilm(layer, bg)
+      layer.style.backgroundImage = bg?.film ? 'none' : bg?.src ? (bg.over ? `url("${url(bg.over)}"), url("${url(bg.src)}")` : `url("${url(bg.src)}")`) : 'none'
       layer.style.backgroundColor = bg?.color ? `rgb(${bg.color.join(',')})` : bg?.src ? '#0b0f17' : 'transparent'
     }
     for (const src of [bg?.src, bg?.over]) {
@@ -614,6 +648,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       prev.style.opacity = '0'
       frontLayer = 1 - frontLayer
       if (bg?.frames) startFrames(layers[frontLayer])
+      if (bg?.film) startFilm(layers[frontLayer], bg)
       return
     }
     void next.offsetWidth
@@ -625,6 +660,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     else prev.style.opacity = '0'
     frontLayer = 1 - frontLayer
     if (bg?.frames) startFrames(layers[frontLayer])
+    if (bg?.film) startFilm(layers[frontLayer], bg)
   }
 
   function paintText() {
@@ -649,16 +685,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
 
   function paintMovie(instant) {
     if (!state.movie) { movie.pause(); movie.hidden = true; movie.removeAttribute('src'); return }
-    const { srcs, loop } = state.movie
+    const { srcs, loop, rate } = state.movie
     let i = 0
     movie.hidden = false
     movie.volume = volumeGain(seVolume)
     movie.loop = srcs.length === 1 && loop
     movie.src = url(srcs[0])
+    movie.playbackRate = rate || 1   // src 一换浏览器会把速度重置，所以每次设 src 之后都要再设
     movie.onerror = () => markMissing(srcs[i])
     movie.onended = () => {
       i += 1
-      if (i < srcs.length) { movie.src = url(srcs[i]); movie.loop = i === srcs.length - 1 && loop; movie.play().catch(() => {}) }
+      if (i < srcs.length) { movie.src = url(srcs[i]); movie.playbackRate = rate || 1; movie.loop = i === srcs.length - 1 && loop; movie.play().catch(() => {}) }
     }
     movie.play().catch(() => {})
   }

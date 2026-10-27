@@ -147,7 +147,7 @@ const text2 = await readFile(path.join(media, SCRIPT2), 'utf8')
   for (const declared of [false, true]) {
     const layout = await galLayoutScript({ item: { itemId: 'kh', title: 'kh', config: declared ? { game: { id: 'kamihime' } } : {}, source: { path: media }, adapters: ['tyrano-ks'] }, script: { id: 'gal-layout', version: '2.9.0', options: {} } })
     const cfg = layout.itemPatch?.gal?.config
-    check(`gal-layout（${declared ? '声明 game.id' : '没写 game.id'}）：认出 kamihime（脚本根 dmm/raw_scenario、资源根 dmm/assets、扩展名 ks、适配器参数 root、脚本数 3）`, cfg?.game?.id === 'kamihime' && cfg.scriptRoots?.[0]?.dir === 'game/dmm/raw_scenario' && J(cfg.resourceRoots) === J(['game/dmm/assets']) && J(cfg.scriptExtensions) === J(['ks']) && cfg.adapterOptions?.['tyrano-ks']?.root === 'game/dmm' && cfg.scriptCount === 3 && layout.itemTags.includes('Gal游戏: kamihime'), J(cfg) + J(layout.logs))
+    check(`gal-layout（${declared ? '声明 game.id' : '没写 game.id'}）：认出 kamihime（脚本根 dmm/raw_scenario、资源根 dmm/assets、扩展名 ks + json（json = 胶片剧情）、适配器参数 root、脚本数 3）`, cfg?.game?.id === 'kamihime' && cfg.scriptRoots?.[0]?.dir === 'game/dmm/raw_scenario' && J(cfg.resourceRoots) === J(['game/dmm/assets']) && J(cfg.scriptExtensions) === J(['ks', 'json']) && cfg.adapterOptions?.['tyrano-ks']?.root === 'game/dmm' && cfg.scriptCount === 3 && layout.itemTags.includes('Gal游戏: kamihime'), J(cfg) + J(layout.logs))
   }
   const emptyDir = path.join(dataDir, 'empty-media')
   await mkdir(path.join(emptyDir, 'game', 'raw_scenario'), { recursive: true })   // 有 raw_scenario 但不在 dmm 下

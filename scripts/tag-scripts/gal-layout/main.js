@@ -608,7 +608,7 @@ export const ADAPTER_RULES = {
         slideinR: 'raw', slideinL: 'raw', slideinD: 'raw', attackR: 'raw', attackL: 'raw', attackD: 'raw',
         default: 'raw',
       },
-      emotion: { shock: 'raw', sweat: 'raw', question: 'raw', donyori: 'raw', exclamation: 'raw', anger: 'raw', paa: 'raw', kirakira: 'raw', default: 'raw' },
+      emotion: { shock: 'drop', sweat: 'drop', question: 'drop', donyori: 'drop', exclamation: 'drop', anger: 'drop', paa: 'drop', kirakira: 'drop', default: 'drop' },
     },
     bgChange: { f: { fade: 0.5 }, c: { fade: 0 }, s: { fade: 0.5 }, default: { fade: 0 } },
     audioExtFallback: ['.ogg', '.mp3', '.wav', '.m4a', '.opus', '.flac'],
@@ -656,6 +656,7 @@ export const ADAPTER_RULES = {
     index: { hashPattern: '^(.+)-[0-9a-f]{40}(\\.[^.]+)?$', stemFallback: true },
     memorial: { enabled: true, imageFade: 0.5, imageStep: true, protagonist: '', placeholder: '{{主人公}}' },
     text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] },
+    film: { enabled: true, frameRatio: 1.40625, autoFrames: 16, transitions: { whiteout2s: { op: 'wash', color: 'white', seconds: 2 } } },
   },
   'bokusen-json': {
     root: '',
@@ -1036,11 +1037,11 @@ export const LAYOUTS = {
       },
     },
     engine: { classify: [] },
-    // groups：脚本编号 1<6 位角色编号><2 位序号> → 按角色编号分组（卡片标题 = 编号；名称表 data/resource.json 是加密的，读不了——以后有了名字表在 labels 里加 { 角色编号: 名字 } 即可）；6 开头的 20 个脚本不匹配，照常列在外面
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [{ parent: '.', pattern: '^1(\\d{6})\\d{2}$' }], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    // groups：按脚本编号的形状分七类（gal-samples12 的 7290 个脚本全部分到了，没有剩下的）：1<6 位角色编号><2 位序号>[N|X…] = 角色剧情（941 张卡）；6<5 位><3 位>[字母] = 6 开头的角色（7 张）；<7 位>[E|N|S] = 主线章节（265 张，难度后缀的几个合成一张）；<4 位><2 位> = 6 位编号（2 张）；ev<活动号>_<段>_<序号>[N|X] = 活动（163 张）；ex<号>_<序号> = 番外；audition* = 试镜（1 张）。卡片标题 = 分组键；名称表 data/resource.json 是加密的，读不了——以后有了名字表在 labels 里加 { 分组键: 名字 } 即可
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['txt'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [{ parent: '.', pattern: '^1(\\d{6})\\d{2}[A-Z]?$' }, { parent: '.', pattern: '^(6\\d{5})\\d{3}[A-Z]?$' }, { parent: '.', pattern: '^(\\d{7})[A-Z]?$' }, { parent: '.', pattern: '^(\\d{4})\\d{2}[A-Z]?$' }, { parent: '.', pattern: '^(ev\\d+)_\\d+_\\d+[A-Z]?$' }, { parent: '.', pattern: '^(ex\\d+)_\\d+$' }, { parent: '.', pattern: '^(audition)\\d*(?:_.*)?$' }], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'adv/textfiles/story', ext: '.txt', depth: 2 }],
     avatars: [], expectedDirs: [],
-    notes: ['按角色编号分组（1<6 位角色编号><2 位序号>），标题暂时是编号；立绘（spriteatlas 图集）、CG（sprite）、闪屏 / 抖动已渲染；mask / imgconf / 黑底图 / anm 暂未渲染（见上面的注释）'],
+    notes: ['按脚本编号的形状分组（角色 / 主线章节 / 活动 ev / 番外 ex / 试镜），标题暂时是分组键；立绘（spriteatlas 图集）、CG（sprite）、闪屏 / 抖动已渲染；mask / imgconf / 黑底图 / anm 暂未渲染（见上面的注释）'],
   },
 
   // ---- Girls Creation 家族（NW.js，标签式脚本）：package.nw/scenes/<场景>/script.txt + data/audio。tenkeiprdx 也有 scenes/，但里面是 json 且旁边有 Backgrounds / Spines 等，不会混
@@ -1072,7 +1073,8 @@ export const LAYOUTS = {
   aster: { extends: 'girlscreation', title: 'Angelica Aster R Viewer' },
   jaxin: { extends: 'girlscreation', title: 'Jaxin' },
   maid: { extends: 'girlscreation', title: 'Maid' },
-  aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu' },
+  // Aku：角色摆放用原版 spine-widget 的 fitToCanvas（player.cameraMode: 'widget'，常数见 gal-spine.js；原版 preloader.js / spine-widget.js 核对过，gal-samples13）。engine 是整份替换，所以把 girlscreation 的 classify / limits 也写上
+  aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu', engine: { classify: [], limits: { walkFiles: 400000, sampleFiles: 20000 }, player: { cameraMode: 'widget' } } },
   fruits: { extends: 'girlscreation', title: 'Fruits Fulcute!' },
 
   // ---- Unity 剧情查看器素材
@@ -1155,13 +1157,13 @@ export const LAYOUTS = {
     adapters: ['artwhirl-json'],
     adapterOptions: { 'artwhirl-json': { root: { path: ['.'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
-    // 规则：artwhirl-json 全表（按官方 json_story_player 的语义写的；others.action 的 bow / jump / swing / vibe / avoid 近似成轻微整屏抖动，slidein* / attack* 和 emotion.* 记 raw；bg_change.val f / c / s → 渐变秒数（猜的）；音频扩展名对不上时按 audioExtFallback 换；voices 字符串 / dic 下标两种写法都认；换场景时收掉上一个场景的立绘）。
+    // 规则：artwhirl-json 全表（按官方 json_story_player 的语义写的；others.action 的 bow / jump / swing / vibe / avoid 近似成轻微整屏抖动，slidein* / attack* 记 raw，emotion.* drop（原版 json_story_player 不处理 emotion）；bg_change.val f / c / s → 渐变秒数（猜的）；音频扩展名对不上时按 audioExtFallback 换；voices 字符串 / dic 下标两种写法都认；换场景时收掉上一个场景的立绘）。
     ruleTables: ['artwhirl-json'], ruleOverrides: {},
     engine: { classify: [] },
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'episode_scripts', ext: '.json', depth: 3 }, { dir: 'hscripts', ext: '.json', depth: 3 }],
     avatars: [], expectedDirs: ['images/stands', 'audio'],
-    notes: ['剧情 JSON 按 官方 json_story_player 的语义解析（背景 / HCG 视频 / BGM / 语音 / 立绘组合）；立绘动作与表情特效（others 的 action / emotion）暂未渲染，统计里会列出'],
+    notes: ['剧情 JSON 按 官方 json_story_player 的语义解析（背景 / HCG 视频 / BGM / 语音 / 立绘组合）；立绘动作（others 的 action 的 slidein / attack）暂未渲染，统计里会列出；表情特效（emotion）原版就不处理，不记'],
   },
   kamihime: {
     title: 'Kamihime Player（TyranoScript）', kind: 'kamihime', detector: 'kamihime', autoOrder: 100,   // .ks 独有，放在通用 uviewer 之前
@@ -1172,7 +1174,7 @@ export const LAYOUTS = {
     adapters: ['tyrano-ks'],
     adapterOptions: { 'tyrano-ks': { root: { path: ['dmm'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
-    // 规则：tyrano-ks 全表。已验证：hash 命名 / resource_directory 取自同目录 json / 表情缺失退回基础立绘。已验证（脚本里的写法）：layer=3 上的角色 chara_show → anim 滑入 → freeimage 移除（animSlide ignore 吃掉滑入、freeimage 去掉 layer 3 的立绘）。未验证：layer=3 的真实画面（没有对照图，滑入 0.6 秒没有表达）、立绘位置只按出场顺序摆（stand.slots 是猜的）、Memorial 的 mem_img 渐变 / 一图一步的节奏（memorial.imageFade / imageStep 是猜的）。
+    // 规则：tyrano-ks 全表。胶片剧情（<id>_harem-character_script.json，开场 .ks 的下一个编号，gal-samples13 / 14 核对：321 段，fps 1 / 8 / 16 / 24，film = 竖排胶片 640×14400 = 16 帧 640×900）→ film 选项，scriptExtensions 要带 json。已验证：hash 命名 / resource_directory 取自同目录 json / 表情缺失退回基础立绘。已验证（脚本里的写法）：layer=3 上的角色 chara_show → anim 滑入 → freeimage 移除（animSlide ignore 吃掉滑入、freeimage 去掉 layer 3 的立绘）。未验证：layer=3 的真实画面（没有对照图，滑入 0.6 秒没有表达）、立绘位置只按出场顺序摆（stand.slots 是猜的）、Memorial 的 mem_img 渐变 / 一图一步的节奏（memorial.imageFade / imageStep 是猜的）。
     ruleTables: ['tyrano-ks'], ruleOverrides: {},
     engine: {
       classify: [],
@@ -1180,7 +1182,7 @@ export const LAYOUTS = {
       // 无 hash 的表情 png 很多在磁盘上不存在 → 适配器退回基础立绘（fallback.faceToBase）。limits 抄的是 tyrano-ks 自己的 contextWalkLimit / contextSampleLimit（3067 个剧情各一个 json）。
       limits: { walkFiles: 800000, sampleFiles: 20000 },
     },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [{ dir: 'dmm/raw_scenario', ext: '.ks', depth: 6 }],
     avatars: [], expectedDirs: ['dmm/assets'],
     notes: ['列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；layer 3 的立绘滑入 / 滑出不渲染（anim layer / layopt 静默吃掉，animSlide: raw 可改成记 raw）；Memorial 剧情（mem_img 幻灯片 / mem_voice 语音 + 台词 / memorial 段落）已支持'],

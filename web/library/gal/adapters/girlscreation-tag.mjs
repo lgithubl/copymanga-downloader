@@ -8,7 +8,7 @@
 //   <BG>名,NONE,0,缩放,x,y            背景图（场景自己的 images/<名>.* ；缩放 / 位移暂不渲染，记在 stats.raw 里）   <BG_OUT>ms 去掉背景
 //   <FADE_OUT2>black,ms / <FADE_IN2>black|white,ms   黑场渐入 / 渐出，白场闪    <WAIT2>ms 等待
 //   <BGM_PLAY>名,0, / <BGM_STOP>ms     data/audio/bgm      <SE_PLAY>通道,名,TRUE|FALSE,音量,0 / <SE_STOP>通道,ms   data/audio/se（循环的走背景音效声道）
-//   <VOICE_PLAY>名 / <VOICE_SINGLE_PLAY>名    voices/<名>.*     <VIDEO_PLAY>名,loop,通道 / <VIDEO_STOP>   videos/<名>.*
+//   <VOICE_PLAY>名 / <VOICE_SINGLE_PLAY>名    voices/<名>.*     <VIDEO_PLAY>名,loop|once|wait,速度（Girls Creation / Aku）或 名,速度,循环 1|0（Fruits）/ <VIDEO_STOP>   videos/<名>.*
 //   <SPINE_ACTOR>槽,骨架名,,初始动画,,0,淡入ms,x=..|y=..,缩放,skel     放一个 Spine 角色（槽 1~4）：spine 指令（kind actor）；第 4 项是出场时播的动画（轨道 0，循环；maid 里写的是表情预设名，如「通常」）
 //   <SPINE_ACTOR_PLAY>槽,动画,轨道,循环      轨道 0 身体、轨道 1 表情（ex_<名>）——两条轨道同时播；<SPINE_ACTOR_TRACK>槽,轨道,动画,循环 同样给某条轨道设动画（参数顺序不同）
 //   <SPINE_ACTOR_SHAKE>槽,x,y,时长            角色抖动（衰减的来回晃，时长按 60 = 1 秒）
@@ -436,7 +436,11 @@ export function parse(text, ctx = null, meta = {}) {
         case 'STOP_VOICE': break
         case 'VIDEO_PLAY': {
           const src = res('videos', a[0])
-          if (src) { emit({ op: 'movie', srcs: [src], loop: a[1] === undefined ? true : /^loop$/i.test(a[1]) }); movieOn = true; stats.movies += 1 } else count('unresolved', `video:${a[0]}`)
+          // 两种写法（各自的原版查看器 scene.js 里的 VIDEO_PLAY）：Girls Creation / Aku = 名字,loop|once|wait,速度；Fruits = 名字,速度,循环(1 / 0)——第 2 项是数字就是 Fruits 的写法
+          const fruitsForm = /^[0-9.]+$/.test(String(a[1] ?? '').trim())
+          const loop = fruitsForm ? Number(a[2]) === 1 : a[1] === undefined ? true : /^loop$/i.test(a[1])
+          const rate = Number(fruitsForm ? a[1] : a[2])
+          if (src) { emit({ op: 'movie', srcs: [src], loop, ...(rate > 0 && rate !== 1 ? { rate } : {}) }); movieOn = true; stats.movies += 1 } else count('unresolved', `video:${a[0]}`)
           break
         }
         case 'VIDEO_STOP': if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } break

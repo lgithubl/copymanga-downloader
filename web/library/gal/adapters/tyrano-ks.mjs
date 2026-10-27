@@ -67,6 +67,8 @@ const rootOf = (options) => String(options?.root ?? 'game/dmm').replace(/\\/g, '
 // 独有写法：*start 标签 + Tyrano 的标签（chara_new / call tyrano.ks / position / ptext …）
 export function sniff(text) {
   const head = String(text || '').replace(/^﻿/, '').slice(0, 8192)
+  // 胶片剧情（_script.json）：JSON 数组，每段有 film / fps / talk（只读了开头 8KB，不能整个 parse，按字段名认）
+  if (/^\s*\[\s*\{/.test(head) && /"film"\s*:/.test(head) && /"fps"\s*:/.test(head) && /"talk"\s*:/.test(head)) return true
   return /^\s*\*start\b/m.test(head) && /\[(?:chara_new|chara_config|chara_show|ptext|position|playbgm|bg|call)\b/.test(head)
 }
 
@@ -99,6 +101,19 @@ export const DEFAULT_OPTIONS = {
   index: { hashPattern: DEFAULT_HASH, stemFallback: true },
   memorial: { enabled: true, imageFade: 0.5, imageStep: true, protagonist: '', placeholder: '{{主人公}}' },
   text: { lineBreakTags: ['r'], clickWaitTags: ['l'], pageTags: ['p'], clearTags: ['cm'] },
+  film: { enabled: true, frameRatio: 1.40625, autoFrames: 16, transitions: { whiteout2s: { op: 'wash', color: 'white', seconds: 2 } } },
+}
+// 胶片剧情（<id>_harem-character_script.json）的参数：frameRatio = 胶片一帧的高 / 宽（样本里每帧 640×900）；autoFrames = 不循环的自动段按几帧算时长（帧数要看图的高度，适配器读不到图，样本里都是 16 帧）；
+// transitions = 段里 transition 字段的名字 → 一条指令（wash / fade / flash）；没列出的名字记 raw
+const FILM_OPS = new Set(['wash', 'fade', 'flash'])
+function filmSettings(value) {
+  const o = isObj(value) ? value : {}
+  const ratio = Number(o.frameRatio)
+  const frames = Math.floor(Number(o.autoFrames))
+  const given = isObj(o.transitions) ? o.transitions : DEFAULT_OPTIONS.film.transitions
+  const transitions = {}
+  for (const [name, command] of Object.entries(given)) if (isObj(command) && FILM_OPS.has(command.op)) transitions[name] = command
+  return { enabled: o.enabled !== false, frameRatio: ratio > 0 ? ratio : 1.40625, autoFrames: frames > 0 ? frames : 16, transitions }
 }
 const settingsCache = new WeakMap()
 function settingsOf(options) {
@@ -130,6 +145,7 @@ function settingsOf(options) {
     faceToBase: o.fallback?.faceToBase !== false,
     hash: regexOf(o.index?.hashPattern ?? DEFAULT_HASH, regexOf(DEFAULT_HASH, null, 'i'), 'i'),
     stemFallback: o.index?.stemFallback !== false,
+    film: filmSettings(o.film),
     lineBreak: tagSet(o.text?.lineBreakTags, ['r']), clickWait: tagSet(o.text?.clickWaitTags, ['l']), page: tagSet(o.text?.pageTags, ['p']), clear: tagSet(o.text?.clearTags, ['cm']),
   }
   settingsCache.set(o, out)
@@ -148,6 +164,16 @@ const alignOf = (fraction) => (fraction < 1 / 3 ? 'left' : fraction > 2 / 3 ? 'r
 const lower = (text) => String(text).toLowerCase()
 // 剧情脚本 / json 的键：路径最后 N 段（类别 / 目录 / 文件），去掉 _script 和扩展名——脚本和 json 的前缀不一样（相对脚本根 / 相对媒体目录），只看最后几段
 const scriptKey = (rel, segments = 3) => String(rel || '').replace(/\\/g, '/').split('/').filter(Boolean).slice(-segments).join('/').replace(/(?:_script)?\.[^./]+$/, '')
+
+// 胶片剧情：JSON 数组、元素里有 film 字段（<id>_harem-character_script.json）；不是就 null
+function filmOf(text) {
+  const head = String(text || '').replace(/^﻿/, '').trimStart()
+  if (!head.startsWith('[')) return null
+  try {
+    const data = JSON.parse(head)
+    return Array.isArray(data) && data.length && data.every(isObj) && data.some((seg) => 'film' in seg) ? data : null
+  } catch { return null }
+}
 
 function readMeta(text, field) {
   try {
@@ -183,10 +209,10 @@ export function prepare({ options, texts, files, toResourcePath }) {
           if (!stems.has(name)) stems.set(name, toRes(rel))
         }
       } else if (!rdFiles.has(`${rest.slice(0, slash)}/${rest.slice(rest.lastIndexOf('/') + 1)}`)) rdFiles.set(`${rest.slice(0, slash)}/${rest.slice(rest.lastIndexOf('/') + 1)}`, toRes(rel))
-    } else if (rel.startsWith(scenarioDir) && /\.ks$/i.test(rel)) scripts.push(rel)
+    } else if (rel.startsWith(scenarioDir) && /(?:\.ks|_script\.json)$/i.test(rel)) scripts.push(rel)   // .ks = 开场 / 对话；_script.json = 后面的 H 场景（胶片剧情）
   }
   const meta = new Map()   // 剧情键 → { rd, title, r18, summary }
-  for (const [rel, text] of Object.entries(texts || {})) if (rel.startsWith(scenarioDir)) meta.set(scriptKey(rel, st.keySegments), readMeta(text, st.keyField))
+  for (const [rel, text] of Object.entries(texts || {})) if (rel.startsWith(scenarioDir) && !/_script\.json$/i.test(rel)) meta.set(scriptKey(rel, st.keySegments), readMeta(text, st.keyField))
   return { flat, stems, stemsAny, rdFiles, scripts, meta, scenarioDir, keySegments: st.keySegments, hash: st.hash, hasIndex: Boolean(files?.length) }
 }
 
@@ -225,7 +251,7 @@ function buildCatalog(ctx) {
       holder = node
     }
     const info = ctx.meta.get(scriptKey(rel, ctx.keySegments))
-    const stem = file.replace(/(?:_script)?\.ks$/i, '')
+    const stem = file.replace(/(?:_script)?\.(?:ks|json)$/i, '')
     holder.children.push({ id: `s:${rel}`, title: info?.title || stem, subtitle: info?.title ? stem : '', badge: info?.r18 ? 'R18' : '', script: rel })
   }
   for (const node of dirs.values()) node.subtitle = `${node.children.length} 项`
@@ -317,6 +343,47 @@ export function parse(text, ctx = null, meta = {}) {
     return st.stemFallback ? via(resolvers.stems, ctx.stems, name) || via(resolvers.stemsAny, ctx.stemsAny, name.replace(/\.[^.]+$/, '')) : ''
   }
   const isVoice = (path) => { const low = lower(path); return rdDirs.some((dir) => low.startsWith(`${lower(dir)}/`)) || st.voice.patterns.some((re) => re.test(path)) }
+
+  // ---- 胶片剧情（<id>_harem-character_script.json）：数组，每段 { fps, auto, film, talk: [{ chara, words, voice? }], bgm?, repeat?, stay?, transition? } ----
+  // film = 一张竖排的胶片图（样本：640×14400 = 16 帧 640×900；640×900 = 单帧），在 resource_directory 目录里；fps 是播放帧率（1 = 静图）；每句 talk = 一步（点一下）。
+  // auto = true 且没有台词的段：不等点击，播完（repeat = false 时按 autoFrames / fps，再加 stay）自动进下一段——这些指令并进下一步的开头；transition 按表（whiteout2s = 白场渐出）。
+  const filmSegments = filmOf(text)
+  if (filmSegments) {
+    if (!st.film.enabled) { count('raw', 'film-script'); return { steps: [{ index: 0, commands: [{ op: 'text', segments: [] }] }], stats } }
+    const toSeconds = (value) => { const m = /^\s*([0-9.]+)\s*(ms|s)?\s*$/i.exec(String(value ?? '')); return m ? (m[2]?.toLowerCase() === 'ms' ? Number(m[1]) / 1000 : Number(m[1])) : 0 }
+    let curSpeaker = ''
+    for (const seg of filmSegments) {
+      const src = seg.film ? find(String(seg.film), 'audio') : ''
+      const fps = Number(seg.fps) > 0 ? Number(seg.fps) : 1
+      const loop = seg.repeat !== false
+      if (seg.bgm) { const bgm = find(String(seg.bgm), 'audio'); if (bgm) emit({ op: 'bgm', src: bgm }); else count('missing', `bgm:${seg.bgm}`) }
+      if (src) emit({ op: 'bg', src, fade: 0, film: { ratio: st.film.frameRatio, fps, loop } })
+      else if (seg.film) count('unresolved', `film:${seg.film}`)
+      if (seg.transition) {
+        const transition = st.film.transitions[seg.transition]
+        if (transition) emit({ ...transition })
+        else count('raw', `film:transition:${seg.transition}`)
+      }
+      const lines = (Array.isArray(seg.talk) ? seg.talk : []).filter((t) => isObj(t) && (String(t.words || '').trim() || String(t.chara || '').trim() || t.voice))
+      for (const t of lines) {
+        const voice = t.voice ? find(String(t.voice), 'audio') : ''
+        if (voice) emit({ op: 'voice', src: voice }); else if (t.voice) count('missing', `voice:${t.voice}`)
+        const who = String(t.chara || '')
+        if (who !== curSpeaker) { emit({ op: 'speaker', segments: who ? [{ text: who }] : [] }); curSpeaker = who }
+        emit({ op: 'text', segments: String(t.words || '') ? [{ text: String(t.words) }] : [] })
+        stats.commands += current.length
+        steps.push({ index: steps.length, commands: current })
+        current = []
+      }
+      if (!lines.length) {
+        const seconds = (loop ? 0 : st.film.autoFrames / fps) + toSeconds(seg.stay)
+        emit({ op: 'wait', seconds: Math.min(60, seconds > 0 ? seconds : 1) })
+      }
+    }
+    if (current.length) { if (steps.length) { steps[steps.length - 1].commands.push(...current); stats.commands += current.length } else steps.push({ index: 0, commands: [...current, { op: 'text', segments: [] }] }) }
+    stats.film = filmSegments.length
+    return { steps, stats }
+  }
 
   // ---- 状态 ----
   const chars = new Map()        // key → { jname, base（基础立绘路径或 ''）, faces: Map(face → storage), face（当前表情的路径） }

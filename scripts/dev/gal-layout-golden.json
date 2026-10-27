@@ -3308,7 +3308,8 @@
    },
    "scriptCount": 3,
    "scriptExtensions": [
-    "ks"
+    "ks",
+    "json"
    ],
    "scriptIndex": [],
    "scriptRoots": [
@@ -3363,7 +3364,8 @@
    },
    "scriptCount": 3,
    "scriptExtensions": [
-    "ks"
+    "ks",
+    "json"
    ],
    "scriptIndex": [],
    "scriptRoots": [
@@ -3418,7 +3420,8 @@
    },
    "scriptCount": 3,
    "scriptExtensions": [
-    "ks"
+    "ks",
+    "json"
    ],
    "scriptIndex": [],
    "scriptRoots": [
@@ -3473,7 +3476,8 @@
    },
    "scriptCount": 3,
    "scriptExtensions": [
-    "ks"
+    "ks",
+    "json"
    ],
    "scriptIndex": [],
    "scriptRoots": [
@@ -4523,7 +4527,31 @@
    "groups": [
     {
      "parent": ".",
-     "pattern": "^1(\\d{6})\\d{2}$"
+     "pattern": "^1(\\d{6})\\d{2}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(6\\d{5})\\d{3}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(\\d{7})[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(\\d{4})\\d{2}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(ev\\d+)_\\d+_\\d+[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(ex\\d+)_\\d+$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(audition)\\d*(?:_.*)?$"
     }
    ],
    "hiddenDirs": [],
@@ -4578,7 +4606,31 @@
    "groups": [
     {
      "parent": ".",
-     "pattern": "^1(\\d{6})\\d{2}$"
+     "pattern": "^1(\\d{6})\\d{2}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(6\\d{5})\\d{3}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(\\d{7})[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(\\d{4})\\d{2}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(ev\\d+)_\\d+_\\d+[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(ex\\d+)_\\d+$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(audition)\\d*(?:_.*)?$"
     }
    ],
    "hiddenDirs": [],
@@ -4633,7 +4685,31 @@
    "groups": [
     {
      "parent": ".",
-     "pattern": "^1(\\d{6})\\d{2}$"
+     "pattern": "^1(\\d{6})\\d{2}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(6\\d{5})\\d{3}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(\\d{7})[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(\\d{4})\\d{2}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(ev\\d+)_\\d+_\\d+[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(ex\\d+)_\\d+$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(audition)\\d*(?:_.*)?$"
     }
    ],
    "hiddenDirs": [],
@@ -4688,7 +4764,31 @@
    "groups": [
     {
      "parent": ".",
-     "pattern": "^1(\\d{6})\\d{2}$"
+     "pattern": "^1(\\d{6})\\d{2}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(6\\d{5})\\d{3}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(\\d{7})[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(\\d{4})\\d{2}[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(ev\\d+)_\\d+_\\d+[A-Z]?$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(ex\\d+)_\\d+$"
+    },
+    {
+     "parent": ".",
+     "pattern": "^(audition)\\d*(?:_.*)?$"
     }
    ],
    "hiddenDirs": [],

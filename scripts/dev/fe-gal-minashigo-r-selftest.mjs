@@ -57,7 +57,7 @@ try {
   const itemA = await importItem(dirA, { adapters: ['uviewer-csv'], config: { game: { id: 'minashigo_r' } } }, 'gal-layout')
   let full = null
   for (let i = 0; i < 60; i++) { full = await (await fetch(`${base}/api/library/items/gal/${itemA}`)).json(); if (full.config?.script?.id === 'gal-layout') break; await sleep(300) }
-  check('导入 + gal-layout：game.id minashigo_r、sprites 打开、groups 写进配置、脚本数 3', full.config?.game?.id === 'minashigo_r' && full.config?.adapterOptions?.['uviewer-csv']?.sprites?.enabled === true && full.config?.groups?.length === 1 && full.scriptCount === 3, J([full.config?.game, full.config?.groups, full.scriptCount]))
+  check('导入 + gal-layout：game.id minashigo_r、sprites 打开、groups 写进配置、脚本数 3', full.config?.game?.id === 'minashigo_r' && full.config?.adapterOptions?.['uviewer-csv']?.sprites?.enabled === true && full.config?.groups?.length === 7 && full.scriptCount === 3, J([full.config?.game, full.config?.groups, full.scriptCount]))
   // 条目 B：手写配置（不跑 gal-layout，game.id 用不认识的值）：sprites 开、mask 当矩形、imgconf 改布局（默认表）
   const itemB = await importItem(dirB, { adapters: ['uviewer-csv'], config: { game: { id: 'custom-r' }, scriptRoots: [{ id: 'story', dir: 'data/adv/textfiles/story', label: 'story' }], resourceRoots: ['data'], scriptExtensions: ['txt'], adapterOptions: { 'uviewer-csv': { sprites: { enabled: true } } } } }, '')
   const reader = async (id, sectionId) => (await (await fetch(`${base}/api/library/items/gal/${id}/reader/main?sectionId=${encodeURIComponent(sectionId)}`)).json())

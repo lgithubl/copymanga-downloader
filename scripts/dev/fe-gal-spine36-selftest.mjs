@@ -176,6 +176,8 @@ try {
   const rows = await info()
   const rowA = rows.find((r) => r.slot === 'A')
   check('info()：3.6 二进制识别为 3.6.38 / 运行时 3.6，动画和皮肤读出来了', rowA.version === '3.6.38' && rowA.runtime === '3.6' && J(rowA.animations) === J(['idle', 'flip']) && rowA.skins.length === 1 && rowA.used === 'idle' && !rowA.error, J(rowA))
+  const rowB = rows.find((r) => r.slot === 'B')
+  check('直通贴图 + 骨架里没有 additive / multiply / screen 槽：上传时不预乘（pmaInfo.straight = true、premultipliedOnUpload = false），仍按预乘方式画（pma = true，和 Aku 原版 premultipliedAlpha: true 一致）；3.6 二进制（转成 JSON 再扫）同样', rowB.pmaInfo?.straight === true && rowB.pmaInfo.premultipliedOnUpload === false && rowB.pma === true && rowA.pmaInfo?.straight === true, J([rowA.pmaInfo, rowB.pmaInfo, rowB.pma]))
   const gl = await page.evaluate(() => window.__layer.glInfo().map((g) => g.runtime).sort())
   check('glInfo 里有 3.6 和 3.8 两个运行时', J(gl) === J(['3.6', '3.8']), J(gl))
 
@@ -199,6 +201,24 @@ try {
   check('3.6.53 JSON（Aku 结构：1 骨骼 11 槽、Em00…Em09 只有 slots 时间线、atlas 开头有空行）：加载成功，识别 3.6.53，初始姿势 0 个可见附件、包围盒按动画首帧算（来源 animation）', aku.loaded && aku.version === '3.6.53' && aku.runtime === '3.6' && aku.animations.length === 10 && aku.slotCount === 11 && aku.attachmentsSetup === 0 && aku.boundsSource === 'animation' && aku.boundsEmpty === false && aku.used === 'Em06', J(aku))
   check('Aku 结构：Em06 画出非空像素（画面正中是饱和的橙色，不是透明）；诊断写「初始姿势没有可见附件，已按动画首帧计算包围盒」', near(akuCenter, [255, 140, 0]) && aku.problems.includes('初始姿势没有可见附件，已按动画首帧计算包围盒'), J([akuCenter, aku.problems]))
   await setSpecs({ E: spec('aku36', 0.5, 'Em06') })   // 同一动画再来一次：不重复建、不抛错
+
+  // 2c. 角色摆放的 widget 模式 = Aku 原版 spine-widget 的 fitToCanvas：窗口 2.2 倍画布（1280×720），水平按包围盒中心，原点在距底边 (2.2×720 − 120) 个单位处；
+  //     舞台 600×600、区域 200×400（x −100..100、y 0..400）：一个单位 = 600 / (2.2×1280) = 0.2131 像素，原点离底 312px，区域落在离顶 203..288px、x 279..321
+  const actorSpec = { skel: 'j36.skel.bytes', atlas: 'j36.atlas.txt', kind: 'actor', x: 0, y: 0, scale: 1, anim: 'idle', tracks: [{ track: 0, anim: 'idle', loop: true }], order: 0 }
+  await setSpecs({})
+  await page.evaluate(() => window.__layer.setCamera({ mode: 'widget' }))
+  await setSpecs({ W: actorSpec })
+  await page.waitForFunction(() => window.__layer.info().some((r) => r.slot === 'W' && r.loaded), null, { timeout: 15000 })
+  await sleep(600)
+  const wIn = await pixel('3.6', 0.5, 245 / 600)
+  const wAbove = await pixel('3.6', 0.5, 120 / 600)
+  const wLeft = await pixel('3.6', 0.4, 245 / 600)
+  check('widget 摆放（Aku 原版）：区域落在 x 279..321、离顶 203..288px（中间是红色；它上面 / 两侧都是透明，不是自动模式那种铺满舞台）', near(wIn, [220, 20, 60]) && wAbove[3] < 30 && wLeft[3] < 30, J([wIn, wAbove, wLeft]))
+  await page.evaluate(() => window.__layer.setCamera({ mode: 'fit' }))
+  await sleep(500)
+  const fitAbove = await pixel('3.6', 0.5, 120 / 600)
+  check('同一份数据切回自动摆放：骨架整个放进舞台，原来透明的位置变成有颜色的像素（说明上一条确实是 widget 模式在起作用）', fitAbove[3] > 200, J(fitAbove))
+  await setSpecs({})
 
   // 3. 截断的 3.6 二进制：解析失败（带版本），不冒充缺资源
   await setSpecs({ X: spec('bad36', 0.5, 'idle') })

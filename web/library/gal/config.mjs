@@ -574,8 +574,8 @@ export function normalizeGalConfigWithWarnings(raw) {
   if (isPlainObject(v.player)) {
     for (const [key, value] of Object.entries(v.player)) {
       if (key === 'cameraMode') {
-        if (value === 'auto' || value === 'fixed') player.cameraMode = value
-        else warn('player.cameraMode', "只能是 'auto' 或 'fixed'，已丢掉", value)
+        if (value === 'auto' || value === 'fixed' || value === 'widget') player.cameraMode = value
+        else warn('player.cameraMode', "只能是 'auto'、'fixed' 或 'widget'，已丢掉", value)
         continue
       }
       const range = PLAYER_RANGES[key]

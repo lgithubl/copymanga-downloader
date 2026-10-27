@@ -268,9 +268,15 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // 放大倍率 + 哪一点放在舞台正中（cx / cy = 0..1，左→右、上→下），静态画面（still）和角色（actor）各一份；播放器「更多」里改，按媒体存
   let views = { still: { zoom: 1, cx: 0.5, cy: 0.5 }, actor: { zoom: 1, cx: 0.5, cy: 0.5 } }
   // 角色（actor）怎么摆：'fit' = 自动（把骨架包围盒放进舞台居中，脚本里的 x / y / 缩放按这个比例算——默认，和以前一样）；
+  // 'widget' = Aku 原版查看器的 fitToCanvas（见下面 WIDGET_*）；
   // 'fixed' = 固定相机（Girls Creation R Viewer 的做法：世界窗口宽 width 个骨骼单位、中心在 (cx, cy)，每个单位 = 舞台宽 / width 个像素，原点落在 舞台中心 + (x − cx, −(y + cy)) 个单位，缩放绕原点）。
   // 不同游戏的查看器相机常数不一样（只有 Girls Creation R Viewer 的读过源码：1920 / 0 / 900），所以做成「更多」里可调的，按媒体存
   let camera = { mode: 'fit', width: 1920, cx: 0, cy: 900 }
+  // 'widget' = 原版 spine-widget 的 fitToCanvas（Aku 查看器）：常数都是它 spine-widget.js / preloader.js 里写死的
+  const WIDGET_WINDOW = 2.2
+  const WIDGET_STAGE_W = 1280
+  const WIDGET_STAGE_H = 720
+  const WIDGET_BOTTOM = 120
   // 混合模式覆盖（有的显卡驱动上 additive / multiply / screen 会画成白屏，见渲染诊断的 WebGL 一行）：
   // 'native' = 骨骼原样（默认）；'noAdditive' = additive 改按普通画（光效变成普通叠加）；'allNormal' = additive / multiply / screen 全按普通画
   let blendOverride = 'native'
@@ -358,10 +364,18 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       try {
         const imageOf = (page) => images.get(page) || images.get(page.split('/').pop())
         // 预乘：图集标记（4.1+ 才有 pma 行）或像素统计认出已经预乘的，原样上传；直通 alpha 的贴图（透明处还带着颜色）让浏览器上传时预乘一次。
-        // 之后一律按预乘方式画——Screen / Multiply 这类混合直接用 RGB 不看 alpha，直通贴图透明处的颜色会被加上去（整幅白块 / 紫色罩子 / 脸上一块白），预乘之后透明处是 0，不再有这个问题
+        // 之后按预乘方式画（straight 的例外见下）——Screen / Multiply 这类混合直接用 RGB 不看 alpha，直通贴图透明处的颜色会被加上去（整幅白块 / 紫色罩子 / 脸上一块白），预乘之后透明处是 0，不再有这个问题
         const atlasPma = Boolean(atlas?.pages?.some?.((page) => page.pma))
         const detectedPma = [...images.values()].some(detectPremultiplied)
-        const premultiplyOnUpload = !atlasPma && !detectedPma
+        // 例外：直通贴图 + 骨架里没有 additive / multiply / screen 的槽 = 上传时不预乘（贴图原样），绘制仍按预乘方式（和 Aku 原版查看器一样：preloader.js 里 premultipliedAlpha: true，
+        // 贴图直接 gl.texImage2D 上传不预乘；我们上传时预乘一遍会让脸颊 / 腮红发灰，gal-samples12 的 c31000802 对照过）。
+        // 要在建 atlas 之前知道有没有这类槽，只能先扫骨架：JSON（含 3.6 二进制转出来的 JSON）扫 slots[].blend；其它二进制读不到，保持预乘（老行为）
+        let skeletonJson = null
+        if (detected.format === 'json') skeletonJson = JSON.parse(new TextDecoder().decode(u8))
+        else if (detected.runtime === '3.6') skeletonJson = spine36BinaryToJson(u8)
+        const noFancyBlend = Array.isArray(skeletonJson?.slots) && skeletonJson.slots.every((slot) => !slot?.blend || slot.blend === 'normal')
+        const straight = !atlasPma && !detectedPma && noFancyBlend
+        const premultiplyOnUpload = !atlasPma && !detectedPma && !straight
         const gl = backend.gl
         if (premultiplyOnUpload) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
         try {
@@ -375,15 +389,15 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         const loader = new spine.AtlasAttachmentLoader(atlas)
         // 3.6 的官方 Web 运行时没有 SkeletonBinary：二进制先转成 3.6 JSON 结构，再由官方 SkeletonJson 建数据（见 gal-spine36-binary.js）
         const data = detected.format === 'json'
-          ? new spine.SkeletonJson(loader).readSkeletonData(JSON.parse(new TextDecoder().decode(u8)))
+          ? new spine.SkeletonJson(loader).readSkeletonData(skeletonJson)
           : detected.runtime === '3.6'
-            ? new spine.SkeletonJson(loader).readSkeletonData(spine36BinaryToJson(u8))
+            ? new spine.SkeletonJson(loader).readSkeletonData(skeletonJson)
             : new spine.SkeletonBinary(loader).readSkeletonData(u8)
         // 预乘 alpha：图集里写了 pma（4.x）或者像素统计认出来就按预乘画。两个来源分开记，渲染诊断里能看到（白块 / 发黑多半是这里猜错了）
         // 混合模式：非 normal 的槽数（additive / multiply / screen）和 clipping 附件数——白块、发黑常常是这几类槽
         const blends = { additive: 0, multiply: 0, screen: 0 }
         for (const slot of data.slots || []) { const mode = slot.blendMode; if (mode === 1) blends.additive += 1; else if (mode === 2) blends.multiply += 1; else if (mode === 3) blends.screen += 1 }
-        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: true, pmaInfo: { atlas: atlasPma, detected: detectedPma, premultipliedOnUpload: premultiplyOnUpload }, blends }
+        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: true, pmaInfo: { atlas: atlasPma, detected: detectedPma, premultipliedOnUpload: premultiplyOnUpload, straight }, blends }
       } catch (error) {
         return fail({ kind: 'parse', message: `骨骼解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` })
       }
@@ -620,7 +634,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   }
   const normalizeCamera = (value) => {
     const num = (n, fallback) => (Number.isFinite(Number(n)) && n !== '' && n !== null ? Number(n) : fallback)
-    return { mode: value?.mode === 'fixed' ? 'fixed' : 'fit', width: Math.max(100, Math.min(20000, num(value?.width, 1920))), cx: Math.max(-20000, Math.min(20000, num(value?.cx, 0))), cy: Math.max(-20000, Math.min(20000, num(value?.cy, 900))) }
+    return { mode: value?.mode === 'fixed' ? 'fixed' : value?.mode === 'widget' ? 'widget' : 'fit', width: Math.max(100, Math.min(20000, num(value?.width, 1920))), cx: Math.max(-20000, Math.min(20000, num(value?.cx, 0))), cy: Math.max(-20000, Math.min(20000, num(value?.cy, 900))) }
   }
   function set(specs, { live = false, slow = slowTo, view = null } = {}) {
     if (view) { views = { still: normalizeView(view.still), actor: normalizeView(view.actor) }; if (view.camera) camera = normalizeCamera(view.camera); if (view.expressions) expressionTable = mergeExpressions(DEFAULT_EXPRESSIONS, view.expressions); if (view.blend && view.blend !== blendOverride) { blendOverride = ['noAdditive', 'allNormal'].includes(view.blend) ? view.blend : 'native'; for (const inst of instances.values()) applyBlendOverride(inst.data) } }
@@ -684,6 +698,13 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         scale = unit * specScale
         px = width / 2 + (pos.x - camera.cx) * unit
         py = height / 2 - (pos.y + camera.cy) * unit
+      } else if (camera.mode === 'widget') {
+        // 原版 spine-widget 的 fitToCanvas（Aku 查看器：画布 1280×720，窗口 = 2.2 倍画布，水平以骨架包围盒中心为中心，窗口底边在 y = −2.2×720 + 120 个骨骼单位）：
+        // 一个骨骼单位 = 画布宽 / (2.2 × 1280) 个像素，骨骼原点落在距底边 (2.2×720 − 120) 个单位处；脚本里的 x / y / 缩放绕原点（y 为正 = 往下）
+        unit = width / (WIDGET_WINDOW * WIDGET_STAGE_W)
+        scale = unit * specScale
+        px = width / 2 - (x + w / 2) * unit + pos.x * unit
+        py = (WIDGET_WINDOW * WIDGET_STAGE_H - WIDGET_BOTTOM) * unit - pos.y * unit
       } else {
         // 自动：骨架包围盒（x, y, w, h）整个放进舞台得到基准比例 fit，包围盒中心在舞台中心时原点所在的位置 + 脚本的 x / y（按 fit 折）；缩放绕骨骼原点
         unit = Math.min(width / w, height / h)

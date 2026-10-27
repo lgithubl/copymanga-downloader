@@ -8,7 +8,7 @@
 //   语音 → audio/voice/<剧情文件名>/<语音名>（.mp3 → .ogg）；有的剧情复用别的剧情组的语音（VICTORIA_ca2_h2 引用 VICTORIA_ca1_h2_*）——这里按语音文件名在索引里找，不看目录
 //   立绘 charas[i] 里每项是 dic 里的一个字典 { key | chara_id, body | body_file, brow = b, eye = e, lip = r, pos = 0.5, h }：
 //        images/stands/<key>/<body>/<key>_<body>_<brow>_<eye>_<lip>[_h].png，找不到按官方的顺序退（brow→b、eye→e、h→不带 h）；每次 charas 非空就整组替换（空 / null = 沿用上一组）
-// 没做：others 里 action / emotion 的立绘动作 / 表情特效（只有 others 表里列出的类型有近似映射，见下）、effects、waits、colors 以外的台词样式；这些记在 stats.raw。
+// 没做：others 里 action 的立绘动作（只有 others 表里列出的类型有近似映射，见下；原版也不处理）、effects、waits、colors 以外的台词样式；这些记在 stats.raw。emotion 表情特效原版不处理，默认 drop（不记）。
 
 import { createIndexResolver } from '../resolve.mjs'
 import { cleanDir, createOptionsReader, fillTemplate, safeRegex } from './options-merge.mjs'
@@ -22,7 +22,7 @@ import { cleanDir, createOptionsReader, fillTemplate, safeRegex } from './option
 //                   一个场景指令对象 / 指令对象数组（用现有的 scene 指令，比如 { op: 'shake', axis, strength, seconds }）；类型表里没有的类型用该 cmd 的 default，cmd 不在表里 = raw。整张表逐 cmd、逐 type 覆盖 / 追加。
 //                   已知类型（600 个脚本枚举）：action = bow 1365 / jump 906 / swing 833 / slideinR 261 / vibe 233 / slideinL 87 / attackR 56 / attackD 24 / attackL 23 / slideinD 22 / avoid 12（val.target 几乎总是 1 个 { body_file, chara_id }）；
 //                   emotion = shock 740 / sweat 279 / question 179 / donyori 125 / exclamation 115 / anger 53 / paa 45 / kirakira 25。静图立绘的 stand 指令没有「单个部件的动作」（动作只有 spine 指令有），
-//                   所以 bow / jump / swing / vibe / avoid 默认近似成整屏一次很轻的抖动（连背景一起动；方向 / 强度 / 时长都是推测值，不想要就把那项改成 'raw'）；slidein* / attack*（位移）和全部 emotion（气泡图标）没有对应指令，记 raw。
+//                   所以 bow / jump / swing / vibe / avoid 默认近似成整屏一次很轻的抖动（连背景一起动；方向 / 强度 / 时长都是推测值，不想要就把那项改成 'raw'）；slidein* / attack*（位移）没有对应指令，记 raw；emotion（气泡图标）默认 drop——原版 json_story_player.rpy 只认 others 里的 bg_change，action / emotion 它都不处理（样本 gal-samples12 核对），所以不是缺口，不记 raw。
 //                   没有 type 的指令（val 不是对象 / 没有 type）记成 `others:<cmd>`（和以前一样）。
 //   bgChange      { f|c|s|…: { fade 秒 }, default }：others 里 bg_change 的 val（bg_change.val：f 4265 / c 1634 / s 250）→ 换背景的渐变秒数。f = fade 0.5、c = cut 0、s = 当 fade 0.5（含义和秒数都是猜的）；没有 val / 表里没有 = default（0 = 以前的行为）
 //   audioExtFallback  [扩展名…]：音频名的扩展名在磁盘上找不到时按顺序换（默认 .ogg .mp3 .wav .m4a .opus .flac；只在原名和 extPrefer 都找不到时才试；[] = 不试）。只对资源名（bgm / se 等）生效，语音另见 voice.extFallback；stats.bgm = { referenced, resolved, unresolved }
@@ -56,7 +56,7 @@ export const DEFAULT_OPTIONS = {
       slideinR: 'raw', slideinL: 'raw', slideinD: 'raw', attackR: 'raw', attackL: 'raw', attackD: 'raw',
       default: 'raw',
     },
-    emotion: { shock: 'raw', sweat: 'raw', question: 'raw', donyori: 'raw', exclamation: 'raw', anger: 'raw', paa: 'raw', kirakira: 'raw', default: 'raw' },
+    emotion: { shock: 'drop', sweat: 'drop', question: 'drop', donyori: 'drop', exclamation: 'drop', anger: 'drop', paa: 'drop', kirakira: 'drop', default: 'drop' },
   },
   // bg_change 的 val（背景怎么切）→ 换背景的渐变秒数；没有 val / 表里没有的用 default。f / c / s 的含义是猜的（fade / cut / slide），s 当 fade 处理
   bgChange: { f: { fade: 0.5 }, c: { fade: 0 }, s: { fade: 0.5 }, default: { fade: 0 } },

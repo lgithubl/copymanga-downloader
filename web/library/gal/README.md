@@ -390,7 +390,7 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 - **写法**：说话人来自 `$ name= "…"`（空 = 旁白），台词是 `xyz "…"`（一句一步）；`play music / voice2 / queue sound '…'` → bgm / voice / se；`scene <图片名>`（先查 `movie.rpy` 里的 Movie 别名，再查图片目录；`black1` 这类没有图就是黑底）；`show black` / `hide black` 黑场；`with flash…` 闪屏；`stop music`。
 - **立绘**：`script.rpy` 里的 `layeredimage standimage`，每个 `attribute` = 立绘图集上裁出的一块（`im.Crop("images/stand/…png",(x,y,w,h))` + `zoom` / `xpos` / `ypos`）。脚本里 `show standimage <属性…>` 逐个攒，到下一句台词前合成一条 `stand`（parts 按定义顺序）；`hide standimage` / `scene` → `standOff`。播放器用 canvas（`gal-stand.js`，1920×1080 设计坐标）按 Ren'Py 默认摆法（底边对齐、水平居中）画出来。
 - **适配器参数**（`config.adapterOptions['renpy-minashigo']`，路径相对媒体目录）：`{ aliasFiles: ['game/movie.rpy'], standFiles: ['game/script.rpy'], imageDirs: ['game/images'] }`。路径和实际不一样时用 `gal-layout` 的 `overrides` 改（资源根 `resourceRoots` 默认 `game/`，音频 / 图片路径相对它）。
-- **分组**：`scene_<1 位类别><6 位角色编号><2 位序号>` 按角色编号归成一张卡片，主线（`scene_2100002`）/ 活动（`scene_ev059_00_02`）照常列出；改规则用 `groups`。
+- **分组**：`scene_<1 位类别><6 位角色编号><2 位序号>` 按角色编号归成一张卡片；主线 / 活动 / 番外 / 试镜（ミナシゴノシゴトR）按编号形状各有一条分组规则，见下面「ミナシゴノシゴトR」一节；改规则用 `groups`。
 - **暂未渲染**：别的特效图（`show slash_1` 之类）只记在 `stats.raw`，播放器提示里能看到，可用 `rawIgnore` 允许。
 
 ## 适配器选项（Ren'Py 三个 + uviewer-csv）：读配置、按配置匹配
@@ -474,7 +474,7 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 
 ### minashigo_r 的 LAYOUTS 配置（`scripts/tag-scripts/gal-layout/main.js`）
 
-- `config.groups = [{ parent: '.', pattern: '^1(\\d{6})\\d{2}$' }]`：脚本编号 `1<6 位角色编号><2 位序号>`（`120090312` → `200903`）按角色编号分成虚拟目录，卡片标题 = 编号（名称表 `data/resource.json` 是加密的，读不了；以后有了名字表在 `labels` 里加 `{ 角色编号: 名字 }`）；6 开头的 20 个脚本不匹配，照常列在外面。缩略图规则以后单独加。
+- `config.groups`（七条规则，按脚本编号的形状分，gal-samples12 的 7290 个脚本全部分到）：`^1(\d{6})\d{2}[A-Z]?$` 角色剧情（键 = 6 位角色编号，`120090312` → `200903`）、`^(6\d{5})\d{3}[A-Z]?$` 6 开头的角色、`^(\d{7})[A-Z]?$` 主线章节（`2100002E/N/S` 难度后缀合成一张）、`^(\d{4})\d{2}[A-Z]?$` 6 位编号、`^(ev\d+)_\d+_\d+[A-Z]?$` 活动、`^(ex\d+)_\d+$` 番外、`^(audition)\d*(?:_.*)?$` 试镜。卡片标题 = 分组键（名称表 `data/resource.json` 是 AES 加密的，读不了；以后有了名字表在 `labels` 里加 `{ 分组键: 名字 }`）。缩略图规则以后单独加。
 - `ruleOverrides['uviewer-csv'].sprites = { enabled: true, fit: 'contain', atlas: { baseKeys: ['{name}.png'] }, commands: { mask: 'raw', imgconf: 'raw' }, slotRules: [{ cmds: ['sprite'], match: '^(?:black|bg)\\d*$', as: 'raw' }] }`：立绘、CG、闪屏、抖动渲染；`mask` / `imgconf` / 黑底图 `sprite black.jpg` / `anm` 保持 `raw`。
 - **没有真实画面核对的猜测**：舞台 1280×720；坐标 y 向上、原图画布中心 = 舞台中心 + (x, y)（旁证：`imgconf,dan2,dan1,0,-1360,…,2,2` 在这个约定下恰好把放大 2 倍的脸放进 `mask,dan1,0,0,1280,200` 的窗口）、画布缩放 = 脚本里的 scale；plist 帧里 `spriteOffset` = 帧中心相对画布中心的偏移（y 向上）；`textureRotated` = 顺时针存放、逆时针还原，`textureRect` 的 w / h 是还原后的大小（旋转帧在贴图里占 h×w）；`body.png` 是所有 `NNN.png`（同大小、同偏移的表情）的底图（`baseKeys`）；`sprite` 第 5、6 个参数 = 缩放 / 淡入秒；`mask` 的 alpha 可能是裁剪阈值而不是不透明度，`mask` / `imgconf` 在游戏里很可能是「裁剪窗口 + 在窗口里放大的脸」，黑底图很可能是对话框背景一类的界面件——所以这几样保持 `raw`，想试渲染：在条目的 `layouts` 覆盖里去掉对应的 `commands` / `slotRules` 项重跑。
 - 测试：`node scripts/dev/gal-sprites-selftest.mjs`（plist 解析 / 指令翻译 / 引擎状态 / 端到端，纯 node）、`node scripts/dev/fe-gal-minashigo-r-selftest.mjs`（浏览器，端口 8194，截图 `/tmp/minashigo-r-shots`：立绘像素、旋转帧、叠加层矩形 / 图 / imgconf / spriteoff、缺图集提示）。
@@ -618,6 +618,13 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | **Twinkle Star Knights X** | Unity + Utage（`utage-book`，game.id `tsk`） | `<数据根>/Adventure/<剧情文件夹>/*.book.json` + `Adventure/Master.chapter.json`；数据根 = `…_Data/StreamingAssets/<游戏名>`，见「Twinkle Star Knights X」一节 |
 
 
+### `VIDEO_PLAY` 的两种写法 / `movie.rate`（gal-samples13：Fruits、Girls Creation 原版查看器 scene.js）
+
+- Girls Creation / Aku：`<VIDEO_PLAY>名字,loop|once|wait,速度`；Fruits：`<VIDEO_PLAY>名字,速度,循环 1|0`。第 2 项是数字就按 Fruits 的写法（以前把 Fruits 的速度 1 当成「不循环」，视频播一遍就停在最后一帧）。`movie` 指令多了可选的 `rate`（播放速度，≠ 1 才带），播放器设 `playbackRate`。
+- Aku 的角色摆放：`player.cameraMode: 'widget'`（gal-layout 的 `aku` 条目写了）= 原版 spine-widget 的 `fitToCanvas`：窗口 = 2.2 倍画布（1280×720），水平按骨架包围盒中心，窗口底边在 `y = −2.2×720 + 120` 个骨骼单位；一个骨骼单位 = 画布宽 / (2.2×1280) 个像素。「更多 → 角色摆放」里是「原版（Aku）」。
+- Spine 贴图的预乘：直通 alpha 的贴图 + 骨架里没有 additive / multiply / screen 的槽 = 上传时不预乘、仍按预乘方式画（Aku 原版 `premultipliedAlpha: true` 且直接上传；我们以前一律上传预乘，Aku 角色的脸颊 / 腮红会发灰）。要先扫骨架才知道有没有这类槽，所以只对 JSON（含 3.6 二进制转出来的 JSON）生效，其它二进制保持预乘；`info()` 的 `pmaInfo.straight` 能看到。
+
+
 ### Aku / Fruits 的写法差异（Girls Creation 家族的两种方言）
 目录结构一样（`scenes/<场景>/script.txt` + `data/audio`），脚本的标签语义有差别，适配器按内容识别：
 - **Aku No Onna Kanbu**（脚本里有 `<GROUP>` / `<EV_DISPLAY>` / `<SPINE_ACTOR_DISPLAY>`）：`<GROUP><FADE_IN>black,0 <EV>… <FADE_OUT>black,500</GROUP>` = 先黑场、换图、再淡出显示，所以 `FADE_IN` = 变黑、`FADE_OUT` = 去掉黑场（和 `FADE_OUT2` / `FADE_IN2` 相反，不处理会一直黑屏）；
@@ -631,11 +638,11 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 资源路径：`bg/x` → `images/bg/x`；`chara/<角色>/<文件>`（3 段）→ `images/bg/<角色>_<文件>`；`chara/<角色>/<资源>/<帧>`（4 段）→ `images/hcg/…`，有同名 `.webm` 就当视频播（帧名 1 / 4 不循环）；bgm `.mp3` 优先找同名 `.ogg`；语音按**文件名**在整个索引里找（有的剧情复用别的剧情组的语音）。立绘 `images/stands/<key>/<body>/<key>_<body>_<brow>_<eye>_<lip>[_h].png`，找不到按 brow→b、eye→e、h→不带 h 的顺序退。
 - gal-layout：`game/episode_scripts` + `game/hscripts` 当脚本根（扩展名 json），资源根 = `game`；没写 game.id 时要求同时有 `images/stands` 和 `audio`。导入页预设「魔法学园的少女们」。
 - **`others` 表**（`others: { action: { <type>: 映射…, default: 'raw' }, emotion: { … } }`，逐 cmd、逐 type 覆盖 / 追加；映射 = `'raw'`（只记 `stats.raw['others:<cmd>:<type>']`）/ `'drop'`（忽略）/ 场景指令对象 / 指令数组）。600 个脚本里的全部类型：action = `bow` 1365 / `jump` 906 / `swing` 833 / `slideinR` 261 / `vibe` 233 / `slideinL` 87 / `attackR` 56 / `attackD` 24 / `attackL` 23 / `slideinD` 22 / `avoid` 12；emotion = `shock` 740 / `sweat` 279 / `question` 179 / `donyori` 125 / `exclamation` 115 / `anger` 53 / `paa` 45 / `kirakira` 25（`val.target` 几乎总是一个 `{ body_file, chara_id }`）。
-  静图立绘的 `stand` 指令**没有「单个部件的动作」**（动作只有 `spine` 指令有），所以默认把 `bow` / `jump` / `swing` / `vibe` / `avoid` 近似成**整屏**一次很轻的 `shake`（连背景一起动；方向 / 强度 / 时长都是推测值，在表里改；不想要就改成 `'raw'`）；`slidein*` / `attack*`（位移）和全部 `emotion`（气泡图标）没有对应指令，记 raw。没有 `type` 的指令记 `others:<cmd>`，没有表的 cmd 记 `others:<cmd>:<type>`；映射成功的计入 `stats.mapped`。
+  静图立绘的 `stand` 指令**没有「单个部件的动作」**（动作只有 `spine` 指令有），所以默认把 `bow` / `jump` / `swing` / `vibe` / `avoid` 近似成**整屏**一次很轻的 `shake`（连背景一起动；方向 / 强度 / 时长都是推测值，在表里改；不想要就改成 `'raw'`）；`slidein*` / `attack*`（位移）没有对应指令，记 raw；全部 `emotion`（气泡图标）默认 `'drop'`——官方 `json_story_player.rpy` 只认 `others` 里的 `bg_change`，`action` / `emotion` 它都不处理（gal-samples12 核对过），所以不是缺口，不记 raw。没有 `type` 的指令记 `others:<cmd>`，没有表的 cmd 记 `others:<cmd>:<type>`；映射成功的计入 `stats.mapped`。
 - **`bg_change` 的 val**（`bgChange: { f: { fade: 0.5 }, c: { fade: 0 }, s: { fade: 0.5 }, default: { fade: 0 } }`）：600 个脚本里 `f` 4265 / `c` 1634 / `s` 250。含义是**猜的**（fade / cut / slide；`s` 当 fade），换背景的 `bg` 指令带这个渐变秒数；没有 val、没见过的 val = `default`（0 = 以前的行为）。
 - **语音**：类型决定怎么读——字符串 = 文件名、整数 = `dic` 下标（`dic[n]` 是字符串 = 文件名，是字典 = 取 `voice.nameFields` 里第一个字符串）、`null` / 空 = 没有；`'voices'` 在 `dic.indexFields` 默认值里，所以两种写法都认（以前整数会被当成文件名 `"12"`）。换算成 `.ogg` 的名字在索引里没有时再试脚本里写的原名（`.mp3`）；`voice.extFallback`（默认 `[]`）可以再加别的扩展名。`stats.voices = { referenced, resolved, unresolved, guessed（没有索引时按 fallback 拼的） }`，找不到的名字记 `stats.unresolved['voice:<名>']`（下标越界记 `voice:#<n>`）。
   **「没有声音」的排查**（`AMRITA_ep6_h`）：这个脚本 `voices` 长度 221、**全是 null**——它本来就没有语音；BGM 的 212 个引用（`resources` 里的 `bgm/battle05.mp3` 这类字符串，`bgms` 是 `dic` 下标）都能按文件名在 `game/audio/bgm` 找到。阶段 2 重构后的 BGM 路径用合成数据逐项验证过（只有 `.mp3` / 同名 `.ogg` 优先 / 大小写不同 / 多资源根），没有发现回归；和重构前的实现对比，唯一区别是以前找不到的情况（语音 `.ogg` 换算后不存在而 `.mp3` 存在）现在找得到。`audioExtFallback`（默认 `['.ogg', '.mp3', '.wav', '.m4a', '.opus', '.flac']`）是防御性的：BGM 名的扩展名在磁盘上找不到时按序换扩展名（没有证据磁盘上是别的格式）。`stats.bgm = { referenced, resolved, unresolved }`，诊断里能直接看到是不是缺文件。
-- 未渲染：上面表里记 raw 的 `others`（`slidein*` / `attack*` / 全部 `emotion`）、`effects`、`waits`；统计里（`stats.raw`）会列出次数。
+- 未渲染：上面表里记 raw 的 `others`（`slidein*` / `attack*`）、`effects`、`waits`；统计里（`stats.raw`）会列出次数。
 
 ### ぼくらの放課後戦争（bokusen，`bokusen-json`）
 - 脚本是 KAG / Tyrano 风格脚本编译出来的 JSON 表：真实文件（1898 个）是 `{"error":{"error_code":"00000",…},"data":{"user":{…很长的播放器设置…},"code":{images, sounds, articles, characters, tags, parameters, commands}},"server_time":…}`（`code` 前面有一大段 `user`）；老的紧凑写法 `{data:{code:{…}}}` 也认；可能有 BOM。`commands` 每项 `[标签下标, 参数组下标, 顺序]`（顺序 = 源码行号，单调不减）；`parameters` 每组是按槽位排的数组，`'nil'` = 没设。**标签表是每个文件自带的**：永远用 `tags[标签下标]` 取名字，不假定固定下标（21 种标签：bgmopt / playbgm / image / trans / wt / r / articles / p / cm / move / wm / animstart / playse / stopse / animstop / wait / seopt / fadese / wf / fadeoutbgm / wb）。
@@ -766,6 +773,16 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   `paths { characters, stills, bg, voice, bgvoice, se, bgse, bgm, bgmIntro, bgmFallback, skeletonSuffixStrip, charIdStrip }`（候选路径模板数组，占位符 `{name}` `{file:png}` `{intro:ogg}` `{dir}` `{base}` `{charId}` `{id}`，`**/` = 任意层目录按文件名找，stills 的 `*` = 骨架基名通配）。
   查文件走 `createIndexResolver`（经 `adapters/path-templates.mjs`：扩展名后备 / 改写 / unicode / `preferDirs` / 大小写来自 `config.resourceResolve`，在 `parse` 时按 `meta.config` 查，所以改配置不用重建上下文）。测试：`node scripts/dev/gal-adapter-options-selftest.mjs`。
 
+### Kamihime 的胶片剧情（`<id>_harem-character_script.json`）
+
+开场 `.ks`（`2607`）的下一个编号（`2608`）是真正的 H 场景，格式是 JSON 数组：`[{ fps, auto, film, talk: [{ chara, words, voice? }], bgm?, repeat?, stay?, transition? }]`（gal-samples13 / 14：321 段，`fps` 1 / 8 / 16 / 24，`film` 在 `resource_directory` 目录里）。`film` 是一张**竖排胶片**（一帧宽 : 高 = 1 : 1.40625，样本里 640×900；640×14400 = 16 帧），`fps` ≤ 1 = 静图。
+
+- `tyrano-ks` 的 `sniff` / `prepare` / `catalog` 认 `_script.json`（目录里和 `.ks` 并列；标题取同名元数据 json 的 `title`，没有就用脚本名），gal-layout 的 kamihime 条目 `scriptExtensions` 要带 `json`。
+- 每句台词 = 一步；一段的第一步带 `bgm` / `bg { src, film: { ratio, fps, loop } }` / 过渡。`auto: true` 且没有台词的段不单独成步：指令并进下一步的开头，`wait` = 不循环时 `autoFrames / fps` + `stay`（帧数要看图高，适配器读不到图，`autoFrames` 默认 16，样本里都是 16 帧）。
+- 选项 `film { enabled, frameRatio, autoFrames, transitions }`：`transitions` 把段里的 `transition` 名字换成一条指令（`wash` / `fade` / `flash`），默认 `whiteout2s` = 白屏 2 秒渐退（**含义是猜的**，没有原版播放器核对），没列出的名字记 raw。
+- 播放器：`bg.film` 在舞台里放一个按舞台高度铺的 `.gal-film`，图加载完按 图高 / (图宽 × ratio) 算帧数，按 `fps` 翻帧；`loop: false` 播到最后一帧停住。
+
+
 ### Otogi Frontier R（离线网页版，`otogi-json`）
 用户本地的离线网页播放器（`启动离线版.html` + `000.js`），剧情数据是**没有扩展名**的 JSON。播放语义照游戏自带的 `000.js` / `spine-player.html` 读出来，位置 / 摆放里没对照的部分标「猜」。
 - **没有扩展名**：`config.scriptExtensions` 写 `['']`（空串 = 没有扩展名，引擎层通用支持：`config.mjs` 放行空串，`browse.mjs` 的 `extOf` 本来就返回 `''`；`.rpyc` 那种「只有编译产物」的检查只对有扩展名的文件生效）。真正的格式判断靠适配器的嗅探，不靠扩展名。
@@ -786,7 +803,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **语音大多不在本地**（脚本里引用 33340 个语音名，用户那份只有 85 个）：找不到的语音 / SE 不发指令（不会请求 404、不触发「缺少资源」），计入 `stats.missing.voice` / `stats.missing.se` 和 `stats.voices { total, found, missing }`；背景 / BGM / 骨架找不到记 `stats.unresolved`（渲染诊断里报）。
 - **语言**：`lang`（`jp` 默认 / `cn` / `tw`）按 `langs` 表选目录：`cn` / `tw` → 普通剧情 `typeadv/MScenes_TW`、成人剧情 `jsoncn`，表里没有的文件退回日文。选择发生在列表（catalog）里：每个节点的脚本路径就是选好的那个文件（打开脚本只认路径；直接打开日文路径永远是日文）。`cn` / `tw` 的划分是猜的（`jsoncn` 是简体还是繁体没有样本）。
 - **列表（catalog，节点 id 稳定）**：`main` 主线（`main/<章 id>` 每章一个目录，章名 = `list.json` worldmap 里同 `Id` 的名字，没有就用章 id；场景 = `Episode/Main/<章 id>` 里 `MStoryId` 对应的文件，标题 = 数组里的 `Title`，副标题 = `RequireCondition`）、
-  `chars` 角色（`c/<MMonsterId>`：`VieableEpisodeList/*` 的条目按 `MMonsterId` 分组，名字 = `MasterData/MMonsters.json` 的 `n`、没有就取 `list.json` `chara[floor(id/10)].name[0]`；有 `icon/chara/icon/png/<id>.png` 就当缩略图；子项 = 普通剧情 `MSceneId` + 成人剧情 `MAdultId`（角标 R18），标题 = 条目的 `Title`）、
+  `chars` 角色（`c/<文件名 或 RootMonsterId>`：`VieableEpisodeList/*` **一个文件 = 一个角色的全部形态**（里面的 `MMonsterId` 是连续的变体，如 13001 里是 13002~13005；以前按 `MMonsterId` 分组，一个角色被拆成 3~4 张卡）；对象写法 `{ RootMonsterId, RootSpiritId, Episodes }` 的文件，根 id 相同的合成一组（`21291` / `21301` → `21271`）；gal-samples12 的 1418 个文件 → 1404 张卡。名字 = 组 id 或组里 `MMonsterId` 在 `MasterData/MMonsters.json` 的 `n`、没有就取 `list.json` `chara[id 或 floor(id/10)].name[0]`；有 `icon/chara/icon/png/<id>.png` 就当缩略图；子项 = 普通剧情 `MSceneId` + 成人剧情 `MAdultId`（角标 R18），标题 = 条目的 `Title`）、
   `all` 全部普通剧情（`typeadv/MScenes` 里每个 id 文件，标题 = 文件开头的 `Title`）、`adult` 全部成人剧情（`json/` 里每个，标题 = VieableEpisodeList 的 `Title`，没有就是 id，角标 R18）。指到不存在文件的条目不列；文件名要匹配 `idPattern`（默认 `^\d+$`）才算剧情。
   标题靠读剧情文件开头（`contextSampleLimit` 20000：3395 个普通剧情 + 1418 个 `VieableEpisodeList`；`VieableEpisodeList` 超过 24KB 被截断时容忍，取前面完整的条目）。`MasterData/MMonsters.json`（6887 项）和 `list.json` 由 `contextFiles` 读一次。
 - **文件索引**：`typeadv`（含 10 万个语音、立绘、背景、两套 MScenes）、`chara/still`、`othersounds`、`bgm`、`json`、`jsoncn`、`VieableEpisodeList`、`Episode/Main`、`icon/chara/icon/png`（9 个目录，引擎上限 10 个）；`contextWalkLimit` 80 万，gal-layout 写 `limits { walkFiles: 800000, sampleFiles: 20000 }`。

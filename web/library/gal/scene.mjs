@@ -5,7 +5,7 @@
 //   speaker {segments}             text {segments}        （片段 { text, ruby?, style?: { outline?, color?, size?, bold?, italic? } }）
 //   choice {id, var, options: [{ value, segments }]}   弹选项（选的序号记进变量 var）；id = 步序号:指令序号，进度里按它存选择
 //   bgm {src}  bgmStop {fade}      se {src}   voice {src}
-//   movie {srcs[], loop}           movieOff {}
+//   movie {srcs[], loop, rate?}    movieOff {}        （rate = 播放速度，缺省 1；Fruits 的 VIDEO_PLAY 带速度）
 //   fade {to: 'black'|'clear', seconds}     wait {seconds}
 //   任何指令都可以带 when: [{ var, op, value, not? }]（全部成立才执行；变量没设过时一律不成立）——if/elseif/else 分支编译成它
 //   spine {slot, kind: 'chara'|'still', skel, atlas, anim, loop, speed, x?, dim?, action?, order?}   Spine 骨骼动画（同 slot 再来一条 = 更新；没有 Spine 运行时的播放器忽略）

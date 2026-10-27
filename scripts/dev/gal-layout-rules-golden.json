@@ -191,6 +191,9 @@
   "limits": {
    "sampleFiles": 20000,
    "walkFiles": 400000
+  },
+  "player": {
+   "cameraMode": "widget"
   }
  },
  "angelic": {
@@ -390,15 +393,15 @@
       ]
      },
      "emotion": {
-      "anger": "raw",
-      "default": "raw",
-      "donyori": "raw",
-      "exclamation": "raw",
-      "kirakira": "raw",
-      "paa": "raw",
-      "question": "raw",
-      "shock": "raw",
-      "sweat": "raw"
+      "anger": "drop",
+      "default": "drop",
+      "donyori": "drop",
+      "exclamation": "drop",
+      "kirakira": "drop",
+      "paa": "drop",
+      "question": "drop",
+      "shock": "drop",
+      "sweat": "drop"
      }
     },
     "stand": {
@@ -1773,6 +1776,18 @@
     },
     "fallback": {
      "faceToBase": true
+    },
+    "film": {
+     "autoFrames": 16,
+     "enabled": true,
+     "frameRatio": 1.40625,
+     "transitions": {
+      "whiteout2s": {
+       "color": "white",
+       "op": "wash",
+       "seconds": 2
+      }
+     }
     },
     "index": {
      "hashPattern": "^(.+)-[0-9a-f]{40}(\\.[^.]+)?$",

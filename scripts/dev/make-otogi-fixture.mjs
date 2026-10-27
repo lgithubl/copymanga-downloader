@@ -84,6 +84,13 @@ export async function buildOtogiFixture(root) {
   await put('VieableEpisodeList/10021', json([{ Id: 3, MSceneId: 210021, MAdultId: 1200052, MMonsterId: 10021, Title: 'Bob story', Description: 'd', IsViewable: true }]))
   const filler = [{ Id: 10, MSceneId: 210031, MAdultId: null, MMonsterId: 10031, Title: 'Big list first', Description: 'd', IsViewable: true }]
   for (let i = 0; i < 300; i++) filler.push({ Id: 100 + i, MSceneId: 300000 + i, MAdultId: null, MMonsterId: 10031, Title: `Filler ${i} ${'x'.repeat(60)}`, Description: 'd', IsViewable: true })
+  // 一个文件 = 一个角色的全部形态：数组里的 MMonsterId 是连续的变体（10042 / 10043）；对象写法 { RootMonsterId, Episodes } 的两个文件指向同一个根 = 合成一组
+  await put('VieableEpisodeList/10041', json([
+    { Id: 20, MSceneId: 210011, MAdultId: null, MMonsterId: 10042, Title: 'Form A', Description: 'd', IsViewable: true },
+    { Id: 21, MSceneId: 210021, MAdultId: null, MMonsterId: 10043, Title: 'Form B', Description: 'd', IsViewable: true },
+  ]))
+  await put('VieableEpisodeList/10051', json({ RootMonsterId: 10051, RootSpiritId: 0, Favorite: false, Episodes: [{ Id: 30, MSceneId: 210011, MAdultId: null, MMonsterId: 10052, Title: 'Root one', Description: 'd', IsViewable: true }] }))
+  await put('VieableEpisodeList/10061', json({ RootMonsterId: 10051, RootSpiritId: 0, Favorite: false, Episodes: [{ Id: 31, MSceneId: 210021, MAdultId: null, MMonsterId: 10062, Title: 'Root two', Description: 'd', IsViewable: true }] }))
   await put('VieableEpisodeList/10031', json(filler))   // > 24KB：contextTextFilter 只读开头 24KB，被截断的数组要能容忍
 
   // ---- 普通剧情（没有扩展名）

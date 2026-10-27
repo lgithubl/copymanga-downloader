@@ -20,7 +20,7 @@
 //   MScenes_TW 里有的文件顶层是数组（多个场景）：parse 容忍——arrayScenes 'first'（默认）= 只播第一个场景（原页面非「主线」模式的做法）/ 'all' = 依次全播。
 // 列表（catalog，节点 id 稳定）：
 //   main              主线（Episode/Main/<章 id> 每章一个目录 main/<章 id>，章名 = list.json worldmap 里同 Id 的名字，没有就用章 id；里面是 MStoryId 对应的场景，标题 = 数组里的 Title）
-//   chars             角色（VieableEpisodeList 里按 MMonsterId 分组：c/<MMonsterId>，名字 = MasterData/MMonsters.json 的 n，没有就取 list.json chara[id].name[0]；里面是这个角色的普通剧情（MSceneId）和成人剧情（MAdultId，角标 R18））
+//   chars             角色（VieableEpisodeList 按文件分组 = 一个角色的全部形态：c/<文件名，或对象写法里的 RootMonsterId / RootSpiritId>，名字 = 组 id 或组里 MMonsterId 在 MasterData/MMonsters.json 的 n，没有就取 list.json chara[id].name[0]；里面是这个角色的普通剧情（MSceneId）和成人剧情（MAdultId，角标 R18））
 //   all               全部普通剧情（typeadv/MScenes 里每个文件，标题 = 文件里的 Title，没有就用 id）
 //   adult             全部成人剧情（json 里每个文件，标题 = VieableEpisodeList 里的 Title，没有就用 id）
 //   没有脚本文件的条目（MStoryId / MSceneId 指到不存在的文件）不列。标题来自读每个剧情文件开头（contextSampleLimit 20000）。
@@ -207,7 +207,9 @@ function arrayOf(text) {
   } catch { /* 被截断 */ }
   let end = source.lastIndexOf('}')
   for (let tries = 0; end > 0 && tries < 20; tries += 1, end = source.lastIndexOf('}', end - 1)) {
-    try { const value = JSON.parse(`${source.slice(0, end + 1)}]`); if (Array.isArray(value)) return value } catch { /* 再往前一个 */ }
+    for (const tail of [']', ']}']) {   // 数组本身被截断 / 对象里的数组被截断（{ Root…, Episodes: [ … 被截断）
+      try { const value = JSON.parse(`${source.slice(0, end + 1)}${tail}`); if (Array.isArray(value)) return value; if (isObj(value)) { const first = Object.values(value).find(Array.isArray); if (first) return first } } catch { /* 再往前一个 */ }
+    }
   }
   return []
 }
@@ -253,7 +255,11 @@ export function prepare({ options, texts, files, toResourcePath, truncated, samp
       const entries = arrayOf(text).filter((e) => isObj(e) && e.MStoryId !== undefined && e.MStoryId !== null).map((e) => ({ id: String(e.MStoryId), title: typeof e.Title === 'string' ? e.Title.trim() : '', condition: typeof e.RequireCondition === 'string' ? e.RequireCondition.trim() : '' }))
       chapters.push({ id: name, entries })
     } else if (dir === o.data.episodes) {
-      for (const e of arrayOf(text)) if (isObj(e)) episodes.push(e)
+      // 一个文件 = 一个角色组（里面的 MMonsterId 是同一个角色的形态变体，连续编号）。两种写法：数组；或对象 { RootMonsterId, RootSpiritId, Episodes: [...] }（根 id 非 0 时同一个根的几个文件合成一组）
+      const rows = arrayOf(text)
+      const rootOf = (field) => Number(new RegExp(`"${field}"\\s*:\\s*(\\d+)`).exec(String(text).slice(0, 400))?.[1]) || 0
+      const root = String(rootOf('RootMonsterId') || rootOf('RootSpiritId') || '')
+      for (const e of rows) if (isObj(e)) episodes.push({ ...e, _group: root || name })
     } else if (o.langs.jp.normal.includes(dir)) {
       const title = headTitle(text)
       if (title) sceneTitles.set(name, title)
@@ -319,19 +325,20 @@ function buildCatalog({ o, ctx, chapters, episodes, chapterNames, charaNames, mo
   }
   if (mainChildren.length) top.push({ id: 'main', title: '主线', subtitle: `${mainChildren.length} 章`, children: mainChildren })
 
-  // 角色：VieableEpisodeList 按 MMonsterId 分组
-  const byMonster = new Map()
+  // 角色：VieableEpisodeList 按「文件」分组（= 一个角色的全部形态；按 MMonsterId 分会把一个角色拆成 3~4 张卡）
+  const byGroup = new Map()
   for (const e of episodes) {
-    if (e.MMonsterId === undefined || e.MMonsterId === null) continue
-    const key = String(e.MMonsterId)
-    if (!byMonster.has(key)) byMonster.set(key, [])
-    byMonster.get(key).push(e)
+    const key = String(e._group ?? e.MMonsterId ?? '')
+    if (!key) continue
+    if (!byGroup.has(key)) byGroup.set(key, [])
+    byGroup.get(key).push(e)
   }
   const charaChildren = []
-  for (const monster of [...byMonster.keys()].sort(natural)) {
+  for (const group of [...byGroup.keys()].sort(natural)) {
     const seen = new Set()
     const children = []
-    for (const e of byMonster.get(monster).slice().sort((a, b) => natural(String(a.Id ?? ''), String(b.Id ?? '')))) {
+    const rows = byGroup.get(group)
+    for (const e of rows.slice().sort((a, b) => natural(String(a.Id ?? ''), String(b.Id ?? '')))) {
       const title = typeof e.Title === 'string' ? e.Title.trim() : ''
       for (const [kind, field, badge] of [['normal', 'MSceneId', ''], ['adult', 'MAdultId', 'R18']]) {
         if (e[field] === undefined || e[field] === null) continue
@@ -339,13 +346,16 @@ function buildCatalog({ o, ctx, chapters, episodes, chapterNames, charaNames, mo
         const script = found(kind, id)
         if (!script || seen.has(script)) continue
         seen.add(script)
-        children.push({ id: `c/${monster}/${kind === 'adult' ? 'a' : 'n'}${id}`, title: title || (kind === 'adult' ? adultTitle(id) : normalTitle(id)), subtitle: `#${id}`, badge, script })
+        children.push({ id: `c/${group}/${kind === 'adult' ? 'a' : 'n'}${id}`, title: title || (kind === 'adult' ? adultTitle(id) : normalTitle(id)), subtitle: `#${id}`, badge, script })
       }
     }
     if (!children.length) continue
-    const name = monsterNames.get(monster) || charaNames[monster]?.name?.[0] || charaNames[String(Math.floor(Number(monster) / 10))]?.name?.[0] || `#${monster}`
-    const icon = o.paths.icon.flatMap((template) => expandTemplate(template, { monster, ext: o.exts.image })).find((key) => ctx.index.has(key)) || ''
-    charaChildren.push({ id: `c/${monster}`, title: name, subtitle: `${children.length} 个剧情 · ${monster}`, ...(icon ? { thumb: ctx.index.get(icon) } : {}), children })
+    // 名字 / 头像：先试组 id，再试组里出现过的 MMonsterId（小的在前）
+    const monsters = [...new Set(rows.map((e) => e.MMonsterId).filter((m) => m !== undefined && m !== null && m !== 0).map(String))].sort(natural)
+    const candidates = [group, ...monsters]
+    const name = candidates.map((m) => monsterNames.get(m) || charaNames[m]?.name?.[0]).find(Boolean) || candidates.map((m) => charaNames[String(Math.floor(Number(m) / 10))]?.name?.[0]).find(Boolean) || `#${group}`
+    const icon = candidates.flatMap((monster) => o.paths.icon.flatMap((template) => expandTemplate(template, { monster, ext: o.exts.image }))).find((key) => ctx.index.has(key)) || ''
+    charaChildren.push({ id: `c/${group}`, title: name, subtitle: `${children.length} 个剧情 · ${group}`, ...(icon ? { thumb: ctx.index.get(icon) } : {}), children })
   }
   if (charaChildren.length) top.push({ id: 'chars', title: '角色', subtitle: `${charaChildren.length} 个角色`, children: charaChildren })
 

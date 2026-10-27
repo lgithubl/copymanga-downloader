@@ -118,12 +118,13 @@ let ctx
   // -- 列表（catalog）+ 语言
   const tree = catalog(ctx)
   const top = tree.children.map((c) => [c.id, c.title, c.children.length])
-  check('列表：顶层 main / chars / all / adult（主线、角色、全部普通剧情、全部成人剧情），节点 id 稳定', J(top) === J([['main', '主线', 2], ['chars', '角色', 3], ['all', '全部普通剧情', 5], ['adult', '全部成人剧情', 2]]), J(top))
+  check('列表：顶层 main / chars / all / adult（主线、角色、全部普通剧情、全部成人剧情），节点 id 稳定', J(top) === J([['main', '主线', 2], ['chars', '角色', 5], ['all', '全部普通剧情', 5], ['adult', '全部成人剧情', 2]]), J(top))
   const main = tree.children[0]
   check('主线：每章一个目录 main/<章 id>，章名 = list.json worldmap 里同 Id 的名字（没有就用章 id）；里面是 MStoryId 对应的场景，标题 = 数组里的 Title；没有脚本文件的 MStoryId（777）不列', J(main.children.map((c) => [c.id, c.title, c.children.length])) === J([['main/1001', '1.Small Island', 2], ['main/25001', '25001', 1]]) && J(main.children[0].children.map((c) => [c.id, c.title, c.script, c.subtitle])) === J([['main/1001/3', '1 Arrival', 'typeadv/MScenes/3', '1-1 clear'], ['main/1001/4', '2 Second', 'typeadv/MScenes/4', '1-2 clear']]), J(main.children))
   const chars = tree.children[1]
-  check('角色：VieableEpisodeList 按 MMonsterId 分组（c/<id>），名字取 MMonsters.json 的 n，没有就取 list.json chara[floor(id/10)]；子项 = 普通剧情（MSceneId）+ 成人剧情（MAdultId，角标 R18），标题 = 条目的 Title；指到不存在文件的条目不列；有图标就带 thumb',
-    J(chars.children.map((c) => [c.id, c.title, c.children.length])) === J([['c/10011', 'Alice', 2], ['c/10021', 'Bob', 2], ['c/10031', 'Fallback Name', 1]]) && J(chars.children[0].children.map((c) => [c.id, c.title, c.script, c.badge])) === J([['c/10011/n210011', 'Alice story one', 'typeadv/MScenes/210011', ''], ['c/10011/a1200051', 'Alice story one', 'json/1200051', 'R18']]) && chars.children[0].thumb === 'icon/chara/icon/png/10011.png' && !chars.children[1].thumb, J(chars.children[0]))
+  check('角色：VieableEpisodeList 按文件分组（一个文件 = 一个角色的全部形态，c/<文件名 / RootMonsterId>），名字取 MMonsters.json 的 n，没有就取 list.json chara[floor(id/10)]；子项 = 普通剧情（MSceneId）+ 成人剧情（MAdultId，角标 R18），标题 = 条目的 Title；指到不存在文件的条目不列；有图标就带 thumb',
+    J(chars.children.map((c) => [c.id, c.title, c.children.length])) === J([['c/10011', 'Alice', 2], ['c/10021', 'Bob', 2], ['c/10031', 'Fallback Name', 1], ['c/10041', '#10041', 2], ['c/10051', '#10051', 2]]) && J(chars.children[0].children.map((c) => [c.id, c.title, c.script, c.badge])) === J([['c/10011/n210011', 'Alice story one', 'typeadv/MScenes/210011', ''], ['c/10011/a1200051', 'Alice story one', 'json/1200051', 'R18']]) && chars.children[0].thumb === 'icon/chara/icon/png/10011.png' && !chars.children[1].thumb, J(chars.children[0]))
+  check('角色分组：数组文件里 MMonsterId 不同的变体（10042 / 10043）合成一张卡（不是两张）；对象写法 { RootMonsterId, Episodes } 的两个文件（10051 / 10061，根都是 10051）合成一张卡，子项按剧情去重', chars.children[3].children.map((c) => c.title).join() === 'Form A,Form B' && chars.children[4].children.map((c) => c.title).join() === 'Root one,Root two', J(chars.children.map((c) => [c.id, c.children.map((x) => x.title)])))
   check('VieableEpisodeList 超过 24KB 被截断：照样读出前面完整的条目（10031 的第一条），不崩', chars.children[2].children[0].title === 'Big list first' && ctx.counts.episodes > 3, J(ctx.counts))
   const normalAll = tree.children[2].children
   const adultAll = tree.children[3].children
