@@ -230,6 +230,9 @@
     "blackRes": [
      "^black$"
     ],
+    "composite": {
+     "enabled": true
+    },
     "flow": {
      "conditionals": "linear",
      "menu": "raw"
@@ -1891,6 +1894,9 @@
      "^black$",
      "(?:^|_)black\\d*$"
     ],
+    "composite": {
+     "enabled": true
+    },
     "flow": {
      "conditionals": "linear",
      "menu": "raw"
@@ -2556,6 +2562,9 @@
     "blackRes": [
      "^black$"
     ],
+    "composite": {
+     "enabled": true
+    },
     "flow": {
      "conditionals": "linear",
      "menu": "raw"

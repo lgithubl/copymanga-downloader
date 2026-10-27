@@ -856,7 +856,7 @@ export const RULE_DEVIATIONS = {}
 //   adapterOptions 适配器参数模板 { <适配器 id>: { <选项>: 值 } }，选项的形状（适配器的契约）不变：
 //                    字符串 / 数组 / 数字 = 原样；{ path: [候选…] } = 单个路径字符串（第一个存在的，否则第一个）；
 //                    { paths: ['a', '?b'] } = 路径数组（'?' 开头 = 存在才写；不带 ? = 总是写）。路径都相对 base，结果相对条目目录
-//   config         固定的引擎字段（scriptExtensions / hiddenDirs / labels / merge / views / groups / dirThumbs / scriptThumbs / scriptIndex / thumbSources / pageSize / namesFiles / thumbsDirs …）
+//   config         固定的引擎字段（scriptExtensions / hiddenDirs / labels / merge / views / groups / dirThumbs / scriptThumbs / scriptIndex / thumbSources（含 forStrip）/ thumbFallback（含 topUp）/ thumbCover / thumbHover / pageSize / namesFiles / thumbsDirs …）
 //                    namesFiles / thumbsDirs 的路径相对 base（uviewer 相对 base 的上一层，见 detectUviewerGame）
 //   count          数脚本数：[{ dir, ext, depth }]（各项相加）
 //   cover          封面规则（路径相对 base，要等于资源根）：{ dir, match, flags, pick: 'first' | 'last' } 或 { dir（可带 *）, files: [...] }，第一个有结果的算
@@ -1785,7 +1785,39 @@ function canonField(key, value) {
     case 'merge': return list((r) => ({ ...r, badges: r.badges ?? {} }))
     case 'dirThumbs': return list((r) => ({ ...r, parent: r.parent || '*', name: r.name ?? '' }))
     case 'scriptIndex': return list((r) => ({ ...r, key: r.key || '{1}', badge: r.badge ?? '' }))
-    case 'thumbSources': return list((r) => ({ ...r, key: r.key || '{1}', for: ['script', 'dir'].includes(r.for) ? r.for : 'both', forKey: r.forKey ?? '', forMatch: r.forMatch ?? '', kind: r.kind === 'video' ? 'video' : 'image', limit: Math.max(1, Math.min(12, Math.floor(Number(r.limit)) || 12)), fallback: Boolean(r.fallback) }))
+    case 'thumbSources': return list((r) => {
+      // forStrip：引擎存成正则数组（≤ 4 项，不合法的丢掉），空 = 不存这个键
+      const strip = [r.forStrip].flat().filter((x) => typeof x === 'string' && x && (() => { try { new RegExp(x); return true } catch { return false } })()).slice(0, 4)
+      const { forStrip: _drop, ...rest } = r
+      return { ...rest, ...(strip.length ? { forStrip: strip } : {}), key: r.key || '{1}', for: ['script', 'dir'].includes(r.for) ? r.for : 'both', forKey: r.forKey ?? '', forMatch: r.forMatch ?? '', kind: r.kind === 'video' ? 'video' : 'image', limit: Math.max(1, Math.min(12, Math.floor(Number(r.limit)) || 12)), fallback: Boolean(r.fallback) }
+    })
+    // thumbFallback / thumbHover：引擎把没写的字段补成默认值（和 web/library/gal/config.mjs 的 DEFAULT_THUMB_FALLBACK / DEFAULT_THUMB_HOVER 一致），数字夹到范围里
+    case 'thumbFallback': {
+      if (!isPlain(value)) return value
+      const num = (x, d, lo, hi) => (x === undefined || x === null || x === '' || typeof x === 'boolean' || !Number.isFinite(Math.floor(Number(x))) ? d : Math.max(lo, Math.min(hi, Math.floor(Number(x)))))
+      const prefer = Array.isArray(value.prefer) ? [...new Set(value.prefer.map((k) => (k === 'bgOver' ? 'cg' : k)).filter((k) => ['cg', 'stand', 'bg'].includes(k)))] : []
+      return {
+        enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+        max: num(value.max, 6, 1, 12),
+        prefer: prefer.length ? prefer : ['cg', 'stand', 'bg'],
+        skipBlack: typeof value.skipBlack === 'boolean' ? value.skipBlack : true,
+        skip: Array.isArray(value.skip) ? value.skip : ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'],
+        scanSteps: num(value.scanSteps, 200, 10, 2000),
+        topUp: typeof value.topUp === 'boolean' ? value.topUp : false,
+      }
+    }
+    case 'thumbHover': {
+      if (!isPlain(value)) return value
+      const count = Number.isFinite(Math.floor(Number(value.count))) && value.count !== null && value.count !== '' && typeof value.count !== 'boolean' ? Math.max(1, Math.min(12, Math.floor(Number(value.count)))) : 4
+      const range = Array.isArray(value.intervalMs) && value.intervalMs.length === 2 && value.intervalMs.every((x) => typeof x === 'number' && Number.isFinite(x))
+        ? [Math.max(100, Math.min(10000, Math.round(Math.min(...value.intervalMs)))), Math.max(100, Math.min(10000, Math.round(Math.max(...value.intervalMs))))]
+        : [700, 900]
+      return { enabled: typeof value.enabled === 'boolean' ? value.enabled : true, count, order: value.order === 'sequential' ? 'sequential' : 'random', intervalMs: range }
+    }
+    case 'thumbCover':
+      if (['random', 'first', 'last'].includes(value)) return value
+      if (isPlain(value) && value.index !== undefined && value.index !== null && value.index !== '' && typeof value.index !== 'boolean' && Number.isFinite(Number(value.index)) && Math.floor(Number(value.index)) >= 0) return { index: Math.min(11, Math.floor(Number(value.index))) }
+      return 'random'
     // 引擎规整：空的路径列表退回默认值（relList）——存进去的是默认值，所以写 [] 和存着默认值是同一回事
     case 'namesFiles': return Array.isArray(value) && !value.length ? ['user_data/character_names.json'] : value
     case 'thumbsDirs': return Array.isArray(value) && !value.length ? ['user_data/thumbnails'] : value
