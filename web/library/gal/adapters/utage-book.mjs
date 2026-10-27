@@ -76,7 +76,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
     targetSlots: true,
   },
   nameOnlyRow: 'show',
-  selection: { groupSuffix: '-\\d+$', adjacentGroups: true },
+  selection: { groupSuffix: '-\\d+$', adjacentGroups: true, singleAsText: true },
   // 文件夹 → 中文名（猜的，卡片副标题里同时写着文件夹名）；顺序 = 列表顺序
   folderLabels: [['^MainScenario$', '主线'], ['^CharaScenario$', '角色剧情'], ['^StoryEventScenario$', '活动剧情'], ['^BossrushEventScenario$', 'Bossrush 活动'], ['^HomeEventScenario$', '家园事件'], ['^ItemEventScenario$', '道具事件'], ['^SpEventScenario$', '特别活动'], ['^SubjugationEventScenario$', '讨伐活动']],
   // 列表分组（见头部 catalog）：角色剧情按角色 id（剧情号前 4 位）分组
@@ -507,17 +507,29 @@ export function parse(text, ctx = null, meta = {}) {
     const groupOfLabel = new Map()   // 标签 → { group, index }
     const byKey = new Map()
     let run = null
+    let runId = 0       // 连续的 Selection 行算一次选择；中间隔着别的命令就是另一次
+    let prevCmd = ''    // 上一个不是标签的命令
+    const lastOfKey = new Map()
+    // TSK 的 *S-ch10910021-1 … -5 标签前缀相同，但每个 Selection 前后都隔着剧情（上一个分支没有 Jump 收尾）：是 5 次单独的提示，不是 1 个 5 选项的选择。
+    // 交错写法（Selection → 标签 → 分支 → Jump / EndScenario → 下一个 Selection）才是同一次选择的几个选项：上一个分支被 Jump / EndScenario 收尾了，才并进同一组
     rows.forEach((row, i) => {
-      if (row.command !== 'Selection') { run = null; return }
+      if (row.command !== 'Selection') { run = null; runId += 1; if (!row.command.startsWith('*')) prevCmd = row.command; return }
       const m = row.a1.startsWith('*') && o.re.group ? o.re.group.exec(row.a1.slice(1)) : null
       const key = m ? row.a1.slice(1, 1 + m.index) : null
       let group
-      if (m) group = byKey.get(key) || (byKey.set(key, { options: [] }), byKey.get(key))
-      else { if (!run || !o.selection.adjacentGroups) run = { options: [] }; group = run }
+      if (m) {
+        const prior = lastOfKey.get(key)
+        const interleaved = prior && !run && (prevCmd === 'Jump' || prevCmd === 'EndScenario')
+        if (interleaved) group = prior
+        else { group = byKey.get(`${key}#${runId}`) || (byKey.set(`${key}#${runId}`, { options: [] }), byKey.get(`${key}#${runId}`)) }
+        lastOfKey.set(key, group)
+        run = run || { options: [] }   // 同一行紧跟着的 Selection 仍算同一次（相邻）
+      } else { if (!run || !o.selection.adjacentGroups) run = { options: [] }; group = run }
       if (!groups.includes(group)) groups.push(group)
       groupOfRow.set(i, group)
       if (!groupOfLabel.has(row.a1)) groupOfLabel.set(row.a1, { group, index: group.options.length })
       group.options.push({ label: row.a1, text: row.text })
+      prevCmd = 'Selection'
     })
     let dead = false
     let deadUntil = null          // null = 到下一个标签；否则到这个标签
@@ -546,7 +558,17 @@ export function parse(text, ctx = null, meta = {}) {
       if (command === 'Selection') {
         const group = groupOfRow.get(i)
         closeBlock()
-        if (group && !group.var) {
+        // 只有一个选项、而且它的标签就在下一行（没有分支可选 = 「点一下继续」的提示）：渲染成一行普通台词，不弹选择
+        if (group && !group.var && !group.plain && o.selection.singleAsText && group.options.length === 1 && labelAt.get(group.options[0].label) === i + 1) {
+          group.plain = true
+          emit({ op: 'speaker', segments: [] })
+          emit({ op: 'text', segments: richText(group.options[0].text) })
+          pushStep()
+          speaker = null
+          stats.singleChoices = (stats.singleChoices || 0) + 1
+          return
+        }
+        if (group && !group.var && !group.plain) {
           choiceCount += 1
           group.var = `sel${choiceCount}`
           group.outer = guard
@@ -564,7 +586,9 @@ export function parse(text, ctx = null, meta = {}) {
         case '': {
           const asChar = o.re.characterArg?.exec(row.a2)
           const off = Boolean(o.re.off?.test(row.a2))
-          if (row.a1 && !off) { if (row.a3) showStand(row); else if (!slotOf.has(row.a1) && o.nameOnlyRow === 'show') showNameOnly(row); else updateStand(row) }
+          // Arg1 在角色表里查不到、这一行又没有表情 / 动画 / 位置 = 只是「说话人」的名字（TSK：梨緒 / クロト / モンスター 的纯台词行，65 行），不去找立绘，也不记「缺角色」
+          const speakerOnly = row.a1 && master && !master.chars.has(row.a1) && !row.a3 && !row.skin && !row.anim
+          if (row.a1 && !off && !speakerOnly) { if (row.a3) showStand(row); else if (!slotOf.has(row.a1) && o.nameOnlyRow === 'show') showNameOnly(row); else updateStand(row) }
           else if (row.a1 && o.off.mode === 'hide') hideStand(row.a1)
           if (!row.text) { if (!row.a1 && !row.voice) ignore('空行'); break }
           const voice = row.voice

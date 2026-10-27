@@ -543,7 +543,7 @@ export const ADAPTER_RULES = {
       targetSlots: true,
     },
     nameOnlyRow: 'show',
-    selection: { groupSuffix: '-\\d+$', adjacentGroups: true },
+    selection: { groupSuffix: '-\\d+$', adjacentGroups: true, singleAsText: true },
     catalog: {
       groups: [
         {

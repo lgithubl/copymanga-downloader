@@ -141,8 +141,9 @@ const main1 = [
 const main2 = [['Main000201', [
   R('*main000201'), R('Bg', { a1: 'bg_adv_001_1' }),
   T({ text: '質問。' }),
-  R('Selection', { a1: '*S-m2-1', text: '右' }), R('*S-m2-1'), T({ text: '右の答え。' }),
-  R('Selection', { a1: '*S-m2-2', text: '左' }), R('*S-m2-2'), T({ text: '左の答え（最後の分支、結束なし）。' }),
+  R('Selection', { a1: '*S-m2-1', text: '右' }), R('Selection', { a1: '*S-m2-2', text: '左' }),   // 连续的 Selection = 一次选择（Utage：连着的 Selection 行一起弹）
+  R('*S-m2-1'), T({ text: '右の答え。' }),
+  R('*S-m2-2'), T({ text: '左の答え（最後の分支、結束なし）。' }),
 ]]]
 
 // 交错写法 + Jump 汇合；还有一条带 flag 的 Jump（没有运行时变量，当作没跳）

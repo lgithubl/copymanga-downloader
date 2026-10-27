@@ -101,6 +101,18 @@ const stand = (a1, a3, a4 = '', extra = {}) => T({ a1, a3, a4, anim: 'wait', ...
   check('utage selection：默认按去掉 -数字 分组、没有后缀的相邻行算一组（A|B 和 C|D 两个 choice）；groupSuffix 换了 / adjacentGroups=false 后分组改变',
     same(sel({}), ['A|B', 'C|D']) && same(sel({ selection: { groupSuffix: '-x$' } }), ['A|B|C|D']) && same(sel({ selection: { adjacentGroups: false } }), ['A|B', 'C', 'D']), J(sel({})))
 
+  const sel2 = (rows) => opsOf(uRun(rows), 'choice').map((c) => c.options.map((o) => seg(o)).join('|'))
+  // selection：TSK 真实结构（gal-samples15 的 CharaScenario1091002）——标签前缀相同、每个 Selection 前后隔着剧情、上一个分支没有 Jump 收尾 = 每个 Selection 是一次单独的「点一下继续」提示，不是 1 个多选项的选择
+  const prompts = [T({ text: '前' }), R('Selection', { a1: '*S-c-1', text: '触る' }), R('*S-c-1'), T({ text: '一の続き' }), R('Selection', { a1: '*S-c-2', text: '見る' }), R('*S-c-2'), T({ text: '二の続き' })]
+  const pOut = uRun(prompts)
+  check('utage selection：标签前缀相同但每个 Selection 隔着剧情（上一个分支没 Jump）= 单独的提示，渲染成普通台词（没有 choice）：前 / 触る / 一の続き / 見る / 二の続き',
+    opsOf(pOut, 'choice').length === 0 && same(opsOf(pOut, 'text').map(seg).filter(Boolean), ['前', '触る', '一の続き', '見る', '二の続き']) && pOut.stats.singleChoices === 2, J(opsOf(pOut, 'text').map(seg)))
+  check('utage selection：selection.singleAsText = false → 回到弹选择（5 个单独的提示被并成一次多选项 / 各弹一次，看分组规则）；相邻的 Selection 行仍是一次选择；交错写法（上一个分支 Jump 收尾）仍是一次选择',
+    opsOf(uRun(prompts, { selection: { singleAsText: false } }), 'choice').length >= 1 && same(sel2([R('Selection', { a1: '*S-d-1', text: 'A' }), R('Selection', { a1: '*S-d-2', text: 'B' }), R('*S-d-1'), T({ text: 'a' }), R('*S-d-2'), T({ text: 'b' })]), ['A|B']) && same(sel2([R('Selection', { a1: '*S-e-1', text: 'A' }), R('*S-e-1'), T({ text: 'a' }), R('Jump', { a1: '*S-e-end' }), R('Selection', { a1: '*S-e-2', text: 'B' }), R('*S-e-2'), T({ text: 'b' }), R('*S-e-end')]), ['A|B']), '')
+
+  // 说话人名字不在角色表里的纯台词行：不找立绘、不记缺角色
+  const spk = uRun([T({ a1: '梨緒', text: 'こんにちは' })])
+  check('utage：Arg1 不在角色表里、又没有表情 / 动画 / 位置的台词行 = 纯说话人（说话人照出，不记 stats.unresolved.character:…）', seg(opsOf(spk, 'speaker')[0]) === '梨緒' && !Object.keys(spk.stats.unresolved || {}).some((k) => k.startsWith('character')) && !Object.keys(spk.stats.missing || {}).some((k) => k.startsWith('character')), J(spk.stats))
   // folderLabels
   const tree = (options) => uPrep(options).catalogTree.children.map((n) => [n.title, n.subtitle])
   check('utage folderLabels：默认 MainScenario → 主线 / CharaScenario → 角色剧情（按规则顺序排，没匹配的排最后；副标题带文件夹名）',
@@ -213,10 +225,10 @@ const GC = (out) => out.steps.flatMap((s) => s.commands)
     && (await stands(standRows, { standPos: { 3: 'R', default: 'C' } })).map((c) => c.parts?.[0].align).filter(Boolean).join() === 'R,C' && !('fit' in (await stands(standRows, { standFit: 0 }))[0].parts[0]), J(await stands(standRows, {})))
   check('grenze standKeep：默认 untilNewHero = 旁白行沿用立绘（不重发）；perRow = 没有 hero_group_id 的行清掉立绘',
     same((await stands(standRows, {})).map((c) => c.op), ['stand', 'stand']) && same((await stands(standRows, { standKeep: 'perRow' })).map((c) => c.op), ['stand', 'standOff', 'stand']), J(await stands(standRows, { standKeep: 'perRow' })))
-  const rawRow = [{ screen_effect: '8', pic_action: '1', effect: '3', effect_pos: '2', new_attr: 'x', text: 't' }]
+  const rawRow = [{ screen_effect: '99', pic_action: '1', effect: '3', effect_pos: '2', new_attr: 'x', text: 't' }]
   const raws = async (options) => GC(await gRun(rawRow, options)).filter((c) => c.op === 'raw').map((c) => [c.cmd, c.args])
   check('grenze rawAttrs：默认 screen_effect / pic_action / effect+effect_pos 记 raw（effect 带 effect_pos）；拿掉的属性不再记；新属性加进来就记；a+b 都有才带 b 的值',
-    same(await raws({}), [['screen_effect', ['8']], ['pic_action', ['1']], ['effect', ['3', '2']]]) && same(await raws({ rawAttrs: ['pic_action'] }), [['pic_action', ['1']]]) && same(await raws({ rawAttrs: ['new_attr', 'effect'] }), [['new_attr', ['x']], ['effect', ['3']]]) && (await gRun(rawRow, { rawAttrs: [] })).stats.raw.screen_effect === undefined, J(await raws({})))
+    same(await raws({}), [['screen_effect', ['99']], ['pic_action', ['1']], ['effect', ['3', '2']]]) && same(await raws({ rawAttrs: ['pic_action'] }), [['pic_action', ['1']]]) && same(await raws({ rawAttrs: ['new_attr', 'effect'] }), [['new_attr', ['x']], ['effect', ['3']]]) && (await gRun(rawRow, { rawAttrs: [] })).stats.raw.screen_effect === undefined, J(await raws({})))
   // scene
   const forkRows = [{ id: '1', next_id: '3', text: 'a' }, { id: '2', next_id: '3', text: 'b' }, { id: '3', text: 'c' }]
   const forkXml = X(forkRows)
@@ -232,7 +244,7 @@ const GC = (out) => out.steps.flatMap((s) => s.commands)
   const dir = await mkdtemp(path.join(os.tmpdir(), 'opt-grenze-'))
   const write = async (rel, text) => { await mkdir(path.dirname(path.join(dir, rel)), { recursive: true }); await writeFile(path.join(dir, rel), text) }
   for (const f of GFILES) await write(`G/${f}`, 'x')
-  const xml = X([{ background: 'a', hero_group_id: '7', pic_pos: '1', voice_pack: 'ZZ', voice: 'dup', screen_effect: '3', text: 'hi' }, { text: 'narr' }])
+  const xml = X([{ background: 'a', hero_group_id: '7', pic_pos: '1', voice_pack: 'ZZ', voice: 'dup', screen_effect: '99', text: 'hi' }, { text: 'narr' }])
   await write('G/TextAsset/easy_dialog-1.xml', xml)
   const adapter = galAdapter('grenze-xml')
   const run = async (adapterOptions, resourceResolve) => {
