@@ -13,12 +13,12 @@ export const MAX_SCRIPT_BYTES = 4 * 1024 * 1024
 // 脚本卡片的兜底封面（没有任何缩略图规则命中时从脚本里收图，见 fallback-thumbs.mjs）
 export const FALLBACK_PREFER = Object.freeze(['cg', 'stand', 'movie', 'bg'])
 // 视频缩略图截哪一帧：seconds > 0 = 固定秒数；否则 时长 × percent（最多 max 秒）
-export const DEFAULT_THUMB_FRAME = Object.freeze({ percent: 0.1, seconds: 0, max: 30 })
+export const DEFAULT_THUMB_FRAME = Object.freeze({ percent: 0.5, seconds: 0, max: 3600, skipDark: true })
 // 骨骼 / 立绘场景的「渲染缩略图」（浏览器在列表页离屏渲染，传回服务器缓存）：enabled / 缩略图宽（高按 16:9）/ 最多扫多少步找第一个有骨骼的画面 / 同时渲染几张
-export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1 })
-export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3] })
+export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5 })
+export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95] })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
-export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, scanSteps: 200, topUp: false, kindMax: Object.freeze({}) })
+export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, scanSteps: 200, scanFrom: 0, topUp: false, kindMax: Object.freeze({}) })
 // 卡片封面 / 悬停轮播（见 DEFAULT_GAL_CONFIG 里 thumbCover / thumbHover 的说明）
 export const THUMB_COVER_MODES = Object.freeze(['random', 'first', 'last'])
 export const DEFAULT_THUMB_HOVER = Object.freeze({ enabled: true, count: 4, order: 'random', intervalMs: Object.freeze([700, 900]) })
@@ -26,7 +26,7 @@ export const THUMB_HOVER_LIMITS = Object.freeze({ count: [1, 12], intervalMs: [1
 // thumbSources 模板里能用的占位符（见 thumbs.mjs 的说明；{1}{2}… 捕获组和命名捕获组另算）
 export const FILE_PLACEHOLDERS = Object.freeze(['file', 'base', 'dirname', 'dir1', 'dir2', 'dir3', 'dirpath'])
 export const CARD_PLACEHOLDERS = Object.freeze(['stem', 'name', 'parent', 'parent2'])
-export const THUMB_FALLBACK_LIMITS = Object.freeze({ max: [1, 12], scanSteps: [10, 2000], skip: 10 })
+export const THUMB_FALLBACK_LIMITS = Object.freeze({ max: [1, 12], scanSteps: [10, 2000], scanFrom: [0, 0.95], skip: 10 })
 
 export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 脚本根（相对媒体目录）：可以有几个——它们是「可切换的文本版本」（比如中/日），首页上有下拉；第一个是默认
@@ -86,10 +86,10 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   thumbCover: 'random',
   // 悬停轮播：{ enabled（默认 true）, count（卡片轮播的图数上限，含封面，1～12，默认 4）, order: random | sequential（默认 random）, intervalMs: [最短, 最长]（默认 [700, 900]）}；只有候选图多于 1 张的卡片才轮播
   thumbHover: { enabled: true, count: 4, order: 'random', intervalMs: [700, 900] },
-  // 视频缩略图截哪一帧：{ percent: 时长的比例（0～0.95，默认 0.1）, seconds: 固定秒数（> 0 时优先，默认 0）, max: 按比例时最多取到第几秒（默认 30） }
-  thumbFrame: { percent: 0.1, seconds: 0, max: 30 },
-  // 渲染缩略图（骨骼 / 立绘场景：规则和兜底都没有图、或脚本里有骨骼时，列表页浏览器离屏渲染一帧传回服务器缓存）：{ enabled（默认 true）, width（160～1280，默认 640）, scanSteps（找 CG / 立绘画面时看多少步：最多看 max(scanSteps×4, 600) 步，默认 150）, concurrency（同时渲染几张，1～3，默认 1）}
-  thumbRender: { enabled: true, width: 640, scanSteps: 150, concurrency: 1 },
+  // 视频缩略图截哪一帧：{ percent: 时长的比例（0～0.95，默认 0.5）, seconds: 固定秒数（> 0 时优先，默认 0）, max: 按比例时最多取到第几秒（默认 3600）, skipDark: 这一帧太黑（片头淡入 / 黑屏）就换别的位置（默认 true） }
+  thumbFrame: { percent: 0.5, seconds: 0, max: 3600, skipDark: true },
+  // 渲染缩略图（骨骼 / 立绘场景：规则和兜底都没有图、或脚本里有骨骼时，列表页浏览器离屏渲染一帧传回服务器缓存）：{ enabled（默认 true）, width（160～1280，默认 640）, scanSteps（找 CG / 立绘画面时看多少步：最多看 max(scanSteps×4, 600) 步，默认 150）, concurrency（同时渲染几张，1～3，默认 1）, seek（骨骼动画取到第几成的位置，0～0.95，默认 0.5；0 = 第一帧）}
+  thumbRender: { enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5 },
   // 分组：列 parent（通配；'.' = 脚本根本身）下的目录时，脚本文件名（无扩展名）能匹配 pattern 的，按第 1 个捕获组分成虚拟目录
   // （比如 ^(\\d{5}) 把 10001A1、10001B1 归到「10001」一张卡片里）；不匹配的脚本照常列出。虚拟目录的名字/头像和真实目录一样查 labels / namesFiles / dirThumbs
   groups: [],
@@ -329,9 +329,9 @@ export function normalizeGalConfigWithWarnings(raw) {
       if (typeof tf[key] === 'boolean') thumbFallback[key] = tf[key]
       else warn(`thumbFallback.${key}`, '只能是 true / false，用默认值', tf[key])
     }
-    for (const key of ['max', 'scanSteps']) {
+    for (const key of ['max', 'scanSteps', 'scanFrom']) {
       if (tf[key] === undefined) continue
-      const n = Math.floor(Number(tf[key]))
+      const n = key === 'scanFrom' ? Number(tf[key]) : Math.floor(Number(tf[key]))
       const [lo, hi] = THUMB_FALLBACK_LIMITS[key]
       if (tf[key] === null || tf[key] === '' || typeof tf[key] === 'boolean' || !Number.isFinite(n)) { warn(`thumbFallback.${key}`, '不是数字，用默认值', tf[key]); continue }
       thumbFallback[key] = Math.max(lo, Math.min(hi, n))
@@ -423,6 +423,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     numIn(v.thumbFrame, 'percent', [0, 0.95], thumbFrame, 'thumbFrame')
     numIn(v.thumbFrame, 'seconds', [0, 36000], thumbFrame, 'thumbFrame')
     numIn(v.thumbFrame, 'max', [1, 36000], thumbFrame, 'thumbFrame')
+    if (v.thumbFrame.skipDark !== undefined) { if (typeof v.thumbFrame.skipDark === 'boolean') thumbFrame.skipDark = v.thumbFrame.skipDark; else warn('thumbFrame.skipDark', '只能是 true / false，用默认值', v.thumbFrame.skipDark) }
   }
   const thumbRender = { ...DEFAULT_THUMB_RENDER }
   if (v.thumbRender !== undefined && !isPlainObject(v.thumbRender)) warn('thumbRender', '不是对象，用默认值', v.thumbRender)
@@ -430,6 +431,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     for (const key of Object.keys(v.thumbRender)) if (!(key in DEFAULT_THUMB_RENDER)) warn('thumbRender', `不认识的字段 ${key}，已丢掉`, key)
     if (v.thumbRender.enabled !== undefined) { if (typeof v.thumbRender.enabled === 'boolean') thumbRender.enabled = v.thumbRender.enabled; else warn('thumbRender.enabled', '只能是 true / false，用默认值', v.thumbRender.enabled) }
     for (const key of ['width', 'scanSteps', 'concurrency']) { numIn(v.thumbRender, key, THUMB_RENDER_LIMITS[key], thumbRender, 'thumbRender'); thumbRender[key] = Math.round(thumbRender[key]) }
+    numIn(v.thumbRender, 'seek', THUMB_RENDER_LIMITS.seek, thumbRender, 'thumbRender')
   }
 
   const groups = []

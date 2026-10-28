@@ -4144,6 +4144,7 @@
      "bg",
      "stand"
     ],
+    "scanFrom": 0.3,
     "skip": [
      "(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)",
      "sepia_filter"
@@ -4215,6 +4216,7 @@
      "bg",
      "stand"
     ],
+    "scanFrom": 0.3,
     "skip": [
      "(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)",
      "sepia_filter"
@@ -4286,6 +4288,7 @@
      "bg",
      "stand"
     ],
+    "scanFrom": 0.3,
     "skip": [
      "(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)",
      "sepia_filter"
@@ -4357,6 +4360,7 @@
      "bg",
      "stand"
     ],
+    "scanFrom": 0.3,
     "skip": [
      "(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)",
      "sepia_filter"
@@ -4427,7 +4431,8 @@
      "movie",
      "bg",
      "stand"
-    ]
+    ],
+    "scanFrom": 0.4
    },
    "thumbsDirs": [],
    "views": [
@@ -4516,7 +4521,8 @@
      "movie",
      "bg",
      "stand"
-    ]
+    ],
+    "scanFrom": 0.4
    },
    "thumbsDirs": [],
    "views": [
@@ -4605,7 +4611,8 @@
      "movie",
      "bg",
      "stand"
-    ]
+    ],
+    "scanFrom": 0.4
    },
    "thumbsDirs": [],
    "views": [
@@ -4694,7 +4701,8 @@
      "movie",
      "bg",
      "stand"
-    ]
+    ],
+    "scanFrom": 0.4
    },
    "thumbsDirs": [],
    "views": [

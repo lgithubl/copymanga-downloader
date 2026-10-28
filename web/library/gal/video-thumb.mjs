@@ -9,8 +9,10 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
-export const FRAME_VERSION = 'v2-w640-q4'
-export const DEFAULT_FRAME_AT = Object.freeze({ percent: 0.1, seconds: 0, max: 30 })
+export const FRAME_VERSION = 'v3-w640-q4'
+export const DEFAULT_FRAME_AT = Object.freeze({ percent: 0.5, seconds: 0, max: 3600, skipDark: true })
+const DARK_BELOW = 24                                  // 平均亮度（YAVG，0~255）低于它算黑屏 / 淡入淡出帧
+const FALLBACK_FRACTIONS = [0.8, 0.3, 0.65, 0.9, 0.15, 0.4]   // 基准位置太黑时依次换这些位置
 const FAIL_TTL_MS = 30000
 
 export function createFrameCache({ dir, concurrency = 2, timeoutMs = 20000, ffmpeg = 'ffmpeg', ffprobe = 'ffprobe', run = execFileAsync }) {
@@ -30,14 +32,38 @@ export function createFrameCache({ dir, concurrency = 2, timeoutMs = 20000, ffmp
       return Number.isFinite(seconds) && seconds > 0 ? seconds : 0
     } catch { return 0 }
   }
-  // at：截哪一秒——seconds > 0 = 固定秒数；否则 时长 × percent，最多 max 秒；超出视频长度的由下面「从头截」兜底
+  // 一个位置的平均亮度（YAVG）：取不到（ffmpeg 不支持 / 失败）= 当作不黑，不影响出图
+  async function brightnessAt(file, seconds) {
+    try {
+      const { stdout } = await run(ffmpeg, ['-v', 'error', '-ss', seconds.toFixed(3), '-i', file, '-frames:v', '1', '-vf', 'scale=160:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-'], { timeout: timeoutMs })
+      const m = /lavfi\.signalstats\.YAVG=([\d.]+)/.exec(String(stdout))
+      return m ? Number(m[1]) : null
+    } catch { return null }
+  }
+  // 截哪一秒——seconds > 0 = 固定秒数；否则 时长 × percent（最多 max 秒）。skipDark：这一帧太黑（片头淡入 / 黑屏）就依次试 FALLBACK_FRACTIONS 里的位置，
+  // 取第一个够亮的，都不亮就取最亮的那个；固定秒数（seconds）不换。超出视频长度的由下面「从头截」兜底
   async function extract(file, out, pos = DEFAULT_FRAME_AT) {
     const duration = await durationOf(file)
-    const at = Number(pos.seconds) > 0 ? Number(pos.seconds) : duration ? Math.min(duration * Number(pos.percent), Number(pos.max) || 30) : 1
+    const fixed = Number(pos.seconds) > 0
+    const at = fixed ? Number(pos.seconds) : duration ? Math.min(duration * Number(pos.percent), Number(pos.max) || 3600) : 1
+    let chosen = at
+    if (!fixed && duration && pos.skipDark !== false) {
+      let best = { seconds: at, y: await brightnessAt(file, at) }
+      if (best.y !== null && best.y < DARK_BELOW) {
+        for (const fraction of FALLBACK_FRACTIONS) {
+          const seconds = Math.min(duration * fraction, Number(pos.max) || 3600)
+          const y = await brightnessAt(file, seconds)
+          if (y === null) break
+          if (y > best.y) best = { seconds, y }
+          if (y >= DARK_BELOW) break
+        }
+      }
+      chosen = best.seconds
+    }
     const tmp = `${out}.${process.pid}-${Date.now()}.tmp.jpg`
     const args = (seconds) => ['-y', '-v', 'error', '-ss', seconds.toFixed(3), '-i', file, '-frames:v', '1', '-vf', "scale='min(640,iw)':-2", '-q:v', '4', tmp]
     try {
-      try { await run(ffmpeg, args(at), { timeout: timeoutMs }); await stat(tmp) } catch (error) {
+      try { await run(ffmpeg, args(chosen), { timeout: timeoutMs }); await stat(tmp) } catch (error) {
         if (error?.code === 'ENOENT' && !error?.stderr) throw error   // ffmpeg 本身不存在：不用再试
         await run(ffmpeg, args(0), { timeout: timeoutMs })            // 位置超出视频：从头截
       }

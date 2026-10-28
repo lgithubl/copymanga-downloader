@@ -29,7 +29,7 @@ check('kindMax 校验：不认识的类 / 非数字丢掉，默认空（不限�
 const c = normalizeGalConfig({ thumbFrame: { percent: 2, seconds: 5, max: 0, zzz: 1 }, thumbRender: { enabled: 'x', width: 99999, scanSteps: 1, concurrency: 9, extra: 1 } })
 check('thumbFrame 夹范围（percent ≤ 0.95、max ≥ 1）；thumbRender 夹范围、类型不对 / 不认识的字段丢掉', c.thumbFrame.percent === 0.95 && c.thumbFrame.seconds === 5 && c.thumbFrame.max === 1 && c.thumbRender.width === 1280 && c.thumbRender.scanSteps === 10 && c.thumbRender.concurrency === 3 && c.thumbRender.enabled === true, J([c.thumbFrame, c.thumbRender]))
 const d = normalizeGalConfig({})
-check('默认：thumbFrame { 0.1, 0, 30 }；thumbRender 开、640、150 步、并发 1', J(d.thumbFrame) === J({ percent: 0.1, seconds: 0, max: 30 }) && J(d.thumbRender) === J({ enabled: true, width: 640, scanSteps: 150, concurrency: 1 }), J([d.thumbFrame, d.thumbRender]))
+check('默认：thumbFrame { 0.5, 0, 3600, skipDark }；thumbRender 开、640、150 步、并发 1、seek 0.5', J(d.thumbFrame) === J({ percent: 0.5, seconds: 0, max: 3600, skipDark: true }) && J(d.thumbRender) === J({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5 }), J([d.thumbFrame, d.thumbRender]))
 
 // 截帧：位置按配置（ffmpeg 用假的记录参数）
 {
@@ -38,6 +38,7 @@ check('默认：thumbFrame { 0.1, 0, 30 }；thumbRender 开、640、150 步、�
   const calls = []
   const run = async (cmd, args) => {
     if (cmd === 'ffprobe') return { stdout: '100\n' }
+    if (args.some((a) => String(a).includes('signalstats'))) return { stdout: '' }   // 亮度探测：取不到 = 不当黑屏
     calls.push(args[args.indexOf('-ss') + 1]); await writeFile(args.at(-1), Buffer.alloc(300, 1)); return { stdout: '' }
   }
   const cache = createFrameCache({ dir: path.join(dir, 'c'), run })
@@ -45,7 +46,19 @@ check('默认：thumbFrame { 0.1, 0, 30 }；thumbRender 开、640、150 步、�
   await cache.frameOf(video, { percent: 0.5, max: 30 })           // 50 秒，封顶 30
   await cache.frameOf(video, { seconds: 7 })                      // 固定 7 秒
   await cache.frameOf(video, { seconds: 7 })                      // 同一位置命中缓存，不再截
-  check('截帧位置：默认时长 × 0.1；percent 0.5 且 max 30 → 30 秒；seconds 7 → 7 秒；同位置命中缓存（不同位置各有各的缓存）', J(calls) === J(['10.000', '30.000', '7.000']), J(calls))
+    await cache.frameOf(video, { percent: 0.1 })                    // 10 秒（和默认 50 秒不是同一个缓存）
+  check('截帧位置：默认时长 × 0.5 = 50 秒；percent 0.5 且 max 30 → 30 秒；seconds 7 → 7 秒；同位置命中缓存', J(calls) === J(['50.000', '30.000', '7.000', '10.000']), J(calls))
+  // 黑屏跳过：50% 处太黑 → 换 80%（亮度由 signalstats 报）
+  const calls2 = []
+  const bright = { '50.000': 3, '80.000': 90 }
+  const run2 = async (cmd, args) => {
+    if (cmd === 'ffprobe') return { stdout: '100\n' }
+    const at = args[args.indexOf('-ss') + 1]
+    if (args.some((a) => String(a).includes('signalstats'))) return { stdout: `lavfi.signalstats.YAVG=${bright[at] ?? 1}\n` }
+    calls2.push(at); await writeFile(args.at(-1), Buffer.alloc(300, 1)); return { stdout: '' }
+  }
+  await createFrameCache({ dir: path.join(dir, 'c2'), run: run2 }).frameOf(video)
+  check('50% 处是黑屏（YAVG 3）→ 换到 80% 处（YAVG 90）截帧；固定 seconds 不换', J(calls2) === J(['80.000']), J(calls2))
   await rm(dir, { recursive: true, force: true })
 }
 console.log(`\n${pass} passed, ${fail} failed`)

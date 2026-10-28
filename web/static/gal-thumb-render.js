@@ -39,6 +39,13 @@ export function pickRenderStep(scene, scanSteps = 150, after = 2) {
   return { index, score: best.score, state: stateAt(scene, index) }
 }
 
+// 缩略图的骨骼：每个角色动画从 seek（0~1）处取一帧
+function seekAll(spines, seek) {
+  const f = Number(seek)
+  if (!(f > 0)) return spines
+  return Object.fromEntries(Object.entries(spines).map(([k, v]) => [k, v && typeof v === 'object' ? { ...v, seek: f } : v]))
+}
+
 // cfg：{ apiBase（…/api/library/items/gal/<id>）, resourceBase, node, key, width, cameraMode, scanSteps }
 export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 30000 } = {}) {
   const width = Math.max(160, Math.min(1280, Number(cfg.width) || 640))
@@ -83,7 +90,7 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
     await withTimeout((async () => {
       await standLayer.set(state.stand, state.stands, { live: false })
       await overlayLayer.set(state.overlays, { live: false })
-      if (spineLayer) { await spineLayer.set(state.spines, { live: false, view: { camera: { mode: cfg.cameraMode === 'fixed' || cfg.cameraMode === 'widget' ? cfg.cameraMode : 'fit' } } }); await spineLayer.ready() }
+      if (spineLayer) { await spineLayer.set(seekAll(state.spines, cfg.seek), { live: false, view: { camera: { mode: cfg.cameraMode === 'fixed' || cfg.cameraMode === 'widget' ? cfg.cameraMode : 'fit' } } }); await spineLayer.ready() }
       await frame(); await frame()
     })(), timeoutMs, '渲染画面')
     if (spineLayer) {

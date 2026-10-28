@@ -1260,7 +1260,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 20000 },
     },
     // 兜底封面跳过占位图：默认的 black / white / blank（按单词）再加 sepia_filter（回忆滤镜层 [image storage="sepia_filter-<hash>.png" layer=4]）；skip 是整张替换默认值，所以默认那条也要写进来
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100, thumbFallback: { skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', 'sepia_filter'], prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } } },
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100, thumbFallback: { scanFrom: 0.3, skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', 'sepia_filter'], prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } } },
     count: [{ dir: 'dmm/raw_scenario', ext: '.ks', depth: 6 }],
     avatars: [], expectedDirs: ['dmm/assets'],
     notes: ['列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；layer 3 的立绘滑入 / 滑出不渲染（anim layer / layopt 静默吃掉，animSlide: raw 可改成记 raw）；Memorial 剧情（mem_img 幻灯片 / mem_voice 语音 + 台词 / memorial 段落）已支持'],
@@ -1287,7 +1287,7 @@ export const LAYOUTS = {
         { parent: '.', as: 'h', label: 'H', match: String.raw`^[^【]*H\d*$`, exclusive: true },
         { parent: '.', as: 'events', label: '活动', match: String.raw`【[^】]*(?:\d{2}|七夕\d*|V-DAY\d*|Ｖ-[^】]*|節分\d*|水着\d*|[戌寅卯辰巳午未申酉亥子丑]年)】`, exclusive: true },
         { parent: '.', as: 'chars', label: '人物', match: String.raw`【[^】]*】`, exclusive: true },
-      ], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } }, pageSize: 100 },
+      ], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { scanFrom: 0.4, prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } }, pageSize: 100 },
     count: [{ dir: 'json', ext: '.json', depth: 2 }],
     avatars: [], expectedDirs: ['resource'],
     notes: ['只有一部分脚本有同名资源子目录，没有的脚本只出台词（列表页「渲染诊断」会报缺资源）；打不开的 JSON（解析失败）照样列出来、打开时再报错'],
@@ -1890,6 +1890,7 @@ function canonField(key, value) {
         skipBlack: typeof value.skipBlack === 'boolean' ? value.skipBlack : true,
         skip: Array.isArray(value.skip) ? value.skip : ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'],
         scanSteps: num(value.scanSteps, 200, 10, 2000),
+        scanFrom: Number.isFinite(Number(value.scanFrom)) && value.scanFrom !== null && value.scanFrom !== '' && typeof value.scanFrom !== 'boolean' ? Math.max(0, Math.min(0.95, Number(value.scanFrom))) : 0,
         topUp: typeof value.topUp === 'boolean' ? value.topUp : false,
         kindMax: isPlain(value.kindMax) ? Object.fromEntries(Object.entries(value.kindMax).filter(([k, v]) => ['cg', 'stand', 'movie', 'bg'].includes(k) && Number.isFinite(Math.floor(Number(v))) && v !== null && v !== '' && typeof v !== 'boolean').map(([k, v]) => [k, Math.max(0, Math.min(12, Math.floor(Number(v))))])) : {},
       }

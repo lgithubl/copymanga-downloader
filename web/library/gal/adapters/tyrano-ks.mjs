@@ -245,7 +245,9 @@ export function catalog(ctx) {
 function portraitOf(ctx, name) {
   if (!ctx.portraits?.size) return ''
   const stripped = name.replace(/^\[[^\]]*\]/, '')
-  for (const candidate of [name, stripped, name.replace(/\[[^\]]*\]$/, ''), stripped.replace(/\[[^\]]*\]$/, '')]) if (candidate && ctx.portraits.has(candidate)) return ctx.portraits.get(candidate)
+  // 目录名 [称号]名 / 名[称号]，头像文件名是 (称号)名.png / 名(称号).png / 名.png（真实清单 3658 个，括号是半角圆括号）：原样、去掉称号、方括号换成圆括号都试
+  const round = (text) => text.replace(/^\[([^\]]*)\]/, '($1)').replace(/\[([^\]]*)\]$/, '($1)')
+  for (const candidate of [name, round(name), stripped, name.replace(/\[[^\]]*\]$/, ''), stripped.replace(/\[[^\]]*\]$/, '')]) if (candidate && ctx.portraits.has(candidate)) return ctx.portraits.get(candidate)
   return ''
 }
 function buildCatalog(ctx) {

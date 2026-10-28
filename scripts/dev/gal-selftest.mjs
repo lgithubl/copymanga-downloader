@@ -1731,6 +1731,7 @@ async function gcMod0Prepare({ truncated }) {
   let runs = 0, running = 0, peak = 0
   const fakeRun = async (cmd, args) => {
     if (cmd === 'ffprobe') return { stdout: '40\n' }
+    if (args.some((a) => String(a).includes('signalstats'))) return { stdout: '' }   // 亮度探测不算截帧
     runs += 1; running += 1; peak = Math.max(peak, running)
     await new Promise((r) => setTimeout(r, 40))
     running -= 1

@@ -8,6 +8,7 @@
 //     bg    背景：bg 指令的 src（纯色背景没有 src，自然跳过）
 //   每一类内部按出现顺序、去重；整体按 prefer 排好后截到 max * 3 个候选（调用方逐个验证文件存在，凑够 max 张为止）。
 //   只扫前 scanSteps 步（默认 200）：大脚本也只花固定的时间；扫到够多就提前停。
+//   scanFrom：从脚本的这个比例之后开始扫（默认 0 = 从头）；scanSteps 是从那里往后扫多少步
 //   kindMax：{ stand: 1 } 每一类最多收几张（没写的类不限）；立绘 / 表情差分特别多的游戏用它限制
 //   skipBlack：文件名（无扩展名）命中 skip 里任一正则的丢掉（纯黑 / 纯白占位图，默认 black / white / blank 按单词边界）。
 import { DEFAULT_THUMB_FALLBACK, FALLBACK_PREFER, THUMB_FALLBACK_LIMITS } from './config.mjs'
@@ -51,7 +52,10 @@ export function collectFallbackImages(scene, options = {}) {
   }
   const full = () => kinds.every((kind) => buckets[kind].length >= want) || kinds.reduce((n, kind) => n + buckets[kind].length, 0) >= want * 2
   let scanned = 0
-  for (const step of steps.slice(0, limit)) {
+  // scanFrom：从脚本的这个比例（0～0.95）之后开始扫（0 = 从头；0.5 = 后半段）：开头多半是标题 / 过场，后面才有代表性的画面
+  const from = Math.max(0, Math.min(0.95, Number(cfg.scanFrom) || 0))
+  const startAt = Math.floor(steps.length * from)
+  for (const step of steps.slice(startAt, startAt + limit)) {
     scanned += 1
     for (const command of step?.commands || []) {
       if (!command || typeof command !== 'object') continue

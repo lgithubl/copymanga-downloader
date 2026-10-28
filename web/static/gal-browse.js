@@ -377,7 +377,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       img.addEventListener('error', () => {
         if (render && !renderMissing && img.getAttribute('src') === renderUrl) {
           renderMissing = true   // 缓存里还没有：排队渲染（失败不缓存、不记标记，下次重建页面还会再试）
-          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: item.node, key: render.key, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, cameraMode: reader.item?.config?.player?.cameraMode || '' })
+          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: item.node, key: render.key, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
             .then((blob) => { const local = URL.createObjectURL(blob); urls[0] = local; img.hidden = false; img.src = local; box.classList.remove('empty'); if (!img.isConnected) box.prepend(img) })
             .catch((error) => {
               if (/已销毁|已经试过/.test(error?.message || '')) return

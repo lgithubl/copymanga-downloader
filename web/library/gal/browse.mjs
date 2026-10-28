@@ -34,7 +34,7 @@ import { safeRelPath } from './paths.mjs'
 import { createThumbEngine, invalidateThumbCaches } from './thumbs.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { collectFallbackImages } from './fallback-thumbs.mjs'
-export const RENDER_THUMB_VERSION = 'r1'   // 渲染缩略图的版本：渲染逻辑变了就加一，服务器缓存跟着换
+export const RENDER_THUMB_VERSION = 'r2'   // 渲染缩略图的版本：渲染逻辑变了就加一，服务器缓存跟着换
 import { explainRejectedFile } from './diagnostics.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 import { collectVoices, compileVoiceRegex, filterVoices, parseVoiceTargets, pickRandom, shuffled, voiceCacheClear, voiceCacheGet, voiceCacheSet, voiceStats } from './voice.mjs'

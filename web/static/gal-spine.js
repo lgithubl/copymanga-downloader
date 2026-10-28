@@ -566,7 +566,9 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     } else {
       changed = Boolean(name) && (name !== inst.anim || inst.loop !== (spec.loop !== false))
       if (changed) {
-        inst.state.setAnimation(0, name, spec.loop !== false)
+        const entry = inst.state.setAnimation(0, name, spec.loop !== false)
+        const seek = Number(spec.seek)
+        if (entry && seek > 0 && entry.animation?.duration > 0) entry.trackTime = entry.animation.duration * Math.min(seek, 0.99)   // 缩略图：从动画中段取一帧（第 0 帧常是收起 / 透明的初始姿势）
         inst.anim = name
         inst.loop = spec.loop !== false
       }
