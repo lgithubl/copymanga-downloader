@@ -750,10 +750,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     if (!standLayer) standLayer = createStandLayer({ parent: world, url, onMissing: markMissing, media: media() })
     standLayer.set(state.stand, state.stands, { live })
   }
+  let underLayer = null   // spec.under 的叠加层：画在立绘 / 骨骼之下（背景的前景部件）
   function paintOverlays(live = false) {
-    if (!overlayLayer && !state.overlays.length) return
-    if (!overlayLayer) overlayLayer = createOverlayLayer({ parent: world, url, onMissing: markMissing, media: media() })
-    overlayLayer.set(state.overlays, { live })
+    const over = state.overlays.filter((o) => !o.under)
+    const under = state.overlays.filter((o) => o.under)
+    if (overlayLayer || over.length) {
+      if (!overlayLayer) overlayLayer = createOverlayLayer({ parent: world, url, onMissing: markMissing, media: media() })
+      overlayLayer.set(over, { live })
+    }
+    if (underLayer || under.length) {
+      if (!underLayer) underLayer = createOverlayLayer({ parent: world, url, onMissing: markMissing, media: media(), under: true })
+      underLayer.set(under, { live })
+    }
   }
   // 镜头：位置（x,y 取反，按舞台高度换算）+ 缩放（z 是千分比，放大系数 1.3）。live 且有时长：从 from 平滑移到 to
   const zoomOf = (z) => (z ? 1 + (z / 1000) * 1.3 : 1)
@@ -1630,6 +1638,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     spineLayer?.destroy()
     standLayer?.destroy()
     overlayLayer?.destroy()
+    underLayer?.destroy()
     if (document.fullscreenElement === root) document.exitFullscreen?.()
   }
 

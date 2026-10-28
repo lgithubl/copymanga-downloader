@@ -920,3 +920,15 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 同一套探测的游戏（Girls Creation 家族、UViewer 系）在 gal-layout 里是「别名 id」：声明了 `game.id` 才走，探测和原 id 完全一样，**声明什么 id 就原样写回 `config.game.id` 和状态 tag**（`Gal游戏: aku` 等）。
 - 没填 `game.id` 时自动探测不区分别名：Girls Creation 家族的目录认成 `girlscreation`，UViewer 系认成 `uviewer`——想要唯一 id 就在导入方案里选对应的游戏。
 - 适配器本身按脚本内容识别写法（Aku / Fruits 的方言差异在适配器里处理），不看 `game.id`，所以换 id 不影响解析。
+
+## 缩略图帧位置 / 渲染取帧（第 29 轮）
+
+- 视频帧默认取时长的 50%（`thumbFrame.percent` 0.5，`max` 3600 秒），并且 `skipDark`（默认 true）：这一帧平均亮度（ffmpeg `signalstats` 的 YAVG）< 24 就依次换 80% / 30% / 65% / 90% / 15% / 40% 处，取第一个够亮的（都不亮取最亮的）；`seconds > 0` 固定秒数不换。探测失败（ffmpeg 不支持 signalstats）当作不黑，照常出图。**signalstats 这条命令没有在真实 ffmpeg 上跑过**（沙箱没有 ffmpeg），用假执行器测了流程。
+- 骨骼渲染缩略图（`thumbRender.seek`，默认 0.5）：每个角色动画从 50% 处取一帧（第 0 帧常是收起 / 透明的初始姿势）；渲染版本 `r2`，旧缓存自然失效。
+- 兜底封面 `thumbFallback.scanFrom`（0～0.95，默认 0）：从脚本的这个比例之后开始扫图；bokusen 0.4、kamihime 0.3（脚本开头多是黑底 / 标题）。
+- Kamihime 人物卡片：目录名 `[称号]名` / `名[称号]` 对 portrait 文件名 `(称号)名.png` / `名(称号).png` 时，方括号换成圆括号再试。
+
+## TSK 多章剧情 / 背景前景部件
+
+- 一个 `*.book.json` 有多个 grid（章）时，列表里展开成目录「第 N 章」（路径 `<文件>::N`，原版也是一章一章读）；不带 `::N` 的路径仍是整个文件接起来播。章数由 prepare 读各文件的 `importGridList` 得到（按路径 + mtime + size 缓存）。
+- Sprite 命令的普通图片（`bg_adv_*_front` 这类背景前景部件）现在带 `under: true`：画在立绘 / 骨骼之下（`.gal-overlay-under`，z-index 2）。反编译的场景里没有 BgParts 物体，原版是否绘制、画在哪都没法对照，这是按「front = 背景的前景、在角色后面」的推断；`adapterOptions.utage-book.spriteImagesUnder: false` 回到盖在角色之上。

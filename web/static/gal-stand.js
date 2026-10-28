@@ -227,9 +227,9 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
 //   src：图（资源路径），以「舞台中心 + (x, y)」为中心画（y 向下为正），大小 = 原图 × fit 系数 × (scaleX, scaleY)；fit：none（默认）| contain | cover（先把图缩放到舞台大小再乘 scale）
 //   rect：舞台像素里的矩形（左上角 + 宽高，y 向下；再加上 x / y 偏移、宽高乘 scaleX / scaleY）。没有 src 时用 color 填它（color 缺省黑色；rect 缺省整个舞台）；有 src 时 rect 是裁剪窗口（图只在它里面可见）
 //   alpha：0~1（默认 1）；alpha / scaleX / scaleY <= 0 = 隐藏；z：越大越靠上（同 z 按出现顺序）；fade：第一次出现淡入（秒，实时播放时）。图缺了报 onMissing。
-export function createOverlayLayer({ parent, url, onMissing = () => {}, media = null }) {
+export function createOverlayLayer({ parent, url, onMissing = () => {}, media = null, under = false }) {
   const canvas = document.createElement('canvas')
-  canvas.className = 'gal-overlay'
+  canvas.className = under ? 'gal-overlay gal-overlay-under' : 'gal-overlay'   // under：画在立绘 / 骨骼之下（背景的前景部件）
   canvas.width = DESIGN_W
   canvas.height = DESIGN_H
   parent.append(canvas)

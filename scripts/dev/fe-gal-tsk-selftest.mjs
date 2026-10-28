@@ -83,7 +83,11 @@ try {
   await page.getByText('主线', { exact: true }).first().click()
   await page.waitForFunction(() => /MainScenario0001/.test(document.body.innerText), null, { timeout: 8000 })
   await page.screenshot({ path: path.join(shotDir, '0-list.png') })
+  // 多章的文件在列表里展开成「第 N 章」；这里整个文件接起来播（路径不带 ::N），验证章与章之间的分隔
   await page.getByText('MainScenario0001').first().click()
+  await page.waitForFunction(() => /第 1 章/.test(document.body.innerText) && /第 2 章/.test(document.body.innerText), null, { timeout: 8000 })
+  check('列表：MainScenario0001 有 2 章 → 展开成「第 1 章 / 第 2 章」', true)
+  await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent('s:MainScenario/MainScenario0001.book.json')}`)
   await page.waitForSelector('.gal-player', { timeout: 10000 })
   await waitCount('1 / 13')
   await sleep(1500)   // 第一步有背景渐变 0.5 秒，BGM 在它之后才开始请求；播放中按下一句只是「跳过动画」

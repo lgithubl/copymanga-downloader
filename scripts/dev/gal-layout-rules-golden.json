@@ -3482,6 +3482,7 @@
      "splitOn": "-"
     },
     "spriteImages": true,
+    "spriteImagesUnder": true,
     "standX": {
      "argIndex": 4,
      "slotBase": 0.5

@@ -1631,7 +1631,7 @@ async function gcMod0Prepare({ truncated }) {
   try { adapter.parse('nope', ctx, {}) } catch (error) { bad2 = error.message }
   check('TSK：不是 Utage 工作簿 / 不是 JSON → 抛出清楚的错误', /importGridList/.test(bad) && /JSON/.test(bad2), `${bad} | ${bad2}`)
   const tree = adapter.catalog(ctx)
-  check('TSK：列表（catalog）：剧情文件夹（主线 / 角色剧情）→ 剧情文件（角色剧情再按角色分组：fixture 的 Master 里没有 1002 这个角色 → 全进「特别 / 其他」组，剧情节点 id 不变）；全部剧情；脚本路径相对媒体目录；没有体检问题', J(tree.children.map((n) => [n.id, n.children.length])) === J([['c/MainScenario', 2], ['c/CharaScenario', 1], ['all', 4]]) && J(tree.children[1].children.map((n) => [n.id, n.title, n.children.map((c) => c.id)])) === J([['c/CharaScenario/@other', '特别 / 其他', ['c/CharaScenario/CharaScenario1002001', 'c/CharaScenario/CharaScenario1002002']]]) && tree.children[0].children[0].script === `${TSK_SA}/Adventure/MainScenario/MainScenario0001.book.json` && adapter.health(ctx).length === 0, J(tree))
+  check('TSK：列表（catalog）：剧情文件夹（主线 / 角色剧情）→ 剧情文件（角色剧情再按角色分组：fixture 的 Master 里没有 1002 这个角色 → 全进「特别 / 其他」组，剧情节点 id 不变）；全部剧情；脚本路径相对媒体目录；没有体检问题', J(tree.children.map((n) => [n.id, n.children.length])) === J([['c/MainScenario', 2], ['c/CharaScenario', 1], ['all', 4]]) && J(tree.children[0].children[0].children.map((c) => c.script.slice(-17))) === J(['0001.book.json::1', '0001.book.json::2']) && J(tree.children[1].children.map((n) => [n.id, n.title, n.children.map((c) => c.id)])) === J([['c/CharaScenario/@other', '特别 / 其他', ['c/CharaScenario/CharaScenario1002001', 'c/CharaScenario/CharaScenario1002002']]]) && tree.children[0].children[1].script === `${TSK_SA}/Adventure/MainScenario/MainScenario0002.book.json` && adapter.health(ctx).length === 0, J(tree))
   // gal-layout：认出结构（没写 game.id，也写 adapters）
   const layout = await galLayoutScript({ item: { itemId: 'tsk', title: 'tsk', config: {}, source: { path: dir }, adapters: ['utage-book'] }, script: { id: 'gal-layout', version: '2.8.0', options: {} } })
   const cfg = layout.itemPatch?.gal?.config
@@ -1644,8 +1644,12 @@ async function gcMod0Prepare({ truncated }) {
   const provider = createBrowseProvider({ mediaDir: dir, adapters: ['utage-book'], resolveAsset: async () => { throw new Error('none') }, config: cfg })
   const home = (await provider.getNode('')).node
   check('TSK：浏览首页 = 剧情文件夹（角色剧情 / 主线 / 全部剧情，不含 BackGrounds / Effects）；点进去是剧情卡片，不含 Master.chapter.json', J(home.items.map((i) => i.title)) === J(['角色剧情', '主线', '全部剧情']) && J((await provider.getNode(home.items[1].node)).node.items.map((i) => i.title)) === J(['MainScenario0001', 'MainScenario0002']), J(home.items))
-  const played = await provider.getNode((await provider.getNode(home.items[1].node)).node.items[0].node)
-  check('TSK：播放页：scene.adapter = utage-book，步数 = 解析结果；上一话 / 下一话沿用列表', played.scene?.adapter === 'utage-book' && played.scene.steps.length === out.steps.length && played.sectionNavigation.next?.title === 'MainScenario0002', J(played.sectionNavigation))
+  const mainFolder = (await provider.getNode(home.items[1].node)).node
+  check('TSK：多章的剧情文件（MainScenario0001 有 2 章）在列表里是目录，里面是第 1 / 2 章；单章的（MainScenario0002）还是一个场景', mainFolder.items[0].title === 'MainScenario0001' && mainFolder.items[1].title === 'MainScenario0002', J(mainFolder.items.map((i) => [i.title, i.node])))
+  const chapters = (await provider.getNode(mainFolder.items[0].node)).node
+  const played = await provider.getNode(chapters.items[0].node)
+  const chapter1 = adapter.parse(text1, ctx, { stem: 'x.book', scene: 1 })
+  check('TSK：播放页（第 1 章）：scene.adapter = utage-book，步数 = 只解析这一章；下一话 = 第 2 章', played.scene?.adapter === 'utage-book' && played.scene.steps.length === chapter1.steps.length && chapter1.steps.length < out.steps.length && /2/.test(played.sectionNavigation.next?.title || ''), J([played.scene?.steps?.length, chapter1.steps.length, out.steps.length, played.sectionNavigation]))
 }
 
 

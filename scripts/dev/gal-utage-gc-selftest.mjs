@@ -262,5 +262,23 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   check('TSK BgEvent 播放规则：AnimSpd > 0 循环 / 0 冻结；stop 冻结、start 循环；没有时动画名带 loop 循环，否则冻结（速度 0）', rows.every(([extra, loop, freeze]) => { const c = still(extra); return c.loop === loop && Boolean(c.freeze) === freeze }), J(rows.map(([e]) => J(still(e)))))
 }
 
+// 多章的剧情文件：列表里展开成「第 N 章（路径 ::N）」；单章的还是一个场景
+{
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'utage-ch-'))
+  await mkdir(path.join(dir, 'Adventure/CharaScenario'), { recursive: true })
+  const grid = (name) => ({ name, rows: [] })
+  await writeFile(path.join(dir, 'Adventure/CharaScenario/CharaScenario1001001.book.json'), JSON.stringify({ importGridList: [grid('x.xlsx:Ch1'), grid('x.xlsx:Ch2'), grid('x.xlsx:Ch3')] }))
+  await writeFile(path.join(dir, 'Adventure/CharaScenario/CharaScenario1001002.book.json'), JSON.stringify({ importGridList: [grid('y.xlsx:Ch1')] }))
+  const ctx = await utage.prepare({ options: {}, texts: {}, files: ['Adventure/CharaScenario/CharaScenario1001001.book.json', 'Adventure/CharaScenario/CharaScenario1001002.book.json'], mediaDir: dir })
+  const find = (node, id) => (node.id === id ? node : (node.children || []).map((c) => find(c, id)).find(Boolean))
+  const multi = find(ctx.catalogTree, 'all/CharaScenario1001001')
+  const single = find(ctx.catalogTree, 'all/CharaScenario1001002')
+  check('多章文件展开：第 1～3 章（::N）；单章文件还是一个场景', multi?.children?.length === 3 && multi.children[1].script.endsWith('.book.json::2') && !multi.script && single?.script && !single.children, J([multi, single]))
+  await rm(dir, { recursive: true, force: true })
+}
+
 console.log(`${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

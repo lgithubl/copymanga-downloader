@@ -541,6 +541,7 @@ export const ADAPTER_RULES = {
     tween: { targetSlots: true },
     nameOnlyRow: 'show',
     spriteImages: true,
+    spriteImagesUnder: true,
     selection: { groupSuffix: '-\\d+$', adjacentGroups: true, singleAsText: true },
     catalog: {
       groups: [

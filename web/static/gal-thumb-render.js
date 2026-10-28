@@ -84,12 +84,14 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
   const media = createStageMedia({ url, onMissing: (s) => errors.push(`缺 ${s}`) })
   const standLayer = createStandLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media })
   const overlayLayer = createOverlayLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media })
+  const underLayer = createOverlayLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media, under: true })
   const hasSpines = Object.keys(state.spines || {}).length > 0
   const spineLayer = hasSpines ? createSpineLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), onUnavailable: (v) => errors.push(`运行时 ${v}`), onError: (e) => errors.push(String(e)) }) : null
   try {
     await withTimeout((async () => {
       await standLayer.set(state.stand, state.stands, { live: false })
-      await overlayLayer.set(state.overlays, { live: false })
+      await overlayLayer.set(state.overlays.filter((o) => !o.under), { live: false })
+      await underLayer.set(state.overlays.filter((o) => o.under), { live: false })
       if (spineLayer) { await spineLayer.set(seekAll(state.spines, cfg.seek), { live: false, view: { camera: { mode: cfg.cameraMode === 'fixed' || cfg.cameraMode === 'widget' ? cfg.cameraMode : 'fit' } } }); await spineLayer.ready() }
       await frame(); await frame()
     })(), timeoutMs, '渲染画面')
@@ -98,11 +100,11 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
       if (!info.length || info.some((r) => !r.loaded || r.error)) throw new Error(`骨骼没加载好：${errors.concat(info.map((r) => r.error?.message || r.error || '')).filter(Boolean).join('；') || '未知原因'}`)
     }
     // 叠放顺序和播放页一致：立绘 → 骨骼 → 叠加层
-    const order = [standLayer.canvas, ...(spineLayer ? [...host.querySelectorAll('canvas.gal-spine')] : []), overlayLayer.canvas]
+    const order = [underLayer.canvas, standLayer.canvas, ...(spineLayer ? [...host.querySelectorAll('canvas.gal-spine')] : []), overlayLayer.canvas]
     let drew = 0
     for (const cv of order) { if (cv?.width && cv?.height) { ctx.drawImage(cv, 0, 0, width, height); drew += 1 } }
     if (!drew) throw new Error('没有可画的层')
-  } finally { spineLayer?.destroy(); standLayer.destroy(); overlayLayer.destroy(); host.remove() }
+  } finally { spineLayer?.destroy(); standLayer.destroy(); overlayLayer.destroy(); underLayer.destroy(); host.remove() }
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82))
   if (!blob || blob.size < 200) throw new Error('导出图片失败')
   return blob

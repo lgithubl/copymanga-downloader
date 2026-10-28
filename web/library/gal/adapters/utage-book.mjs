@@ -52,6 +52,8 @@
 //        se ['{file:ogg}', 'Sound/Se/{name}.ogg', 'Sound/BgSe/{name}.ogg']、bgse（Se / BgSe 反过来）、bgm ['{file:ogg}']、bgmIntro ['{intro:ogg}']、bgmFallback ['Sound/Bgm/{name}.ogg']（Master 表里没有 / 文件不在时才用）
 //   没有文件索引时不查，按每个列表的第一条模板猜（**/ 去掉）。
 // 列表（adapter.catalog）：Adventure/ 下每个剧情文件夹（MainScenario / CharaScenario …）→ 剧情文件（一个文件 = 一个场景）+ 全部剧情；每次从文件索引现读。CharaScenario 再按角色分组（catalog.groups，见上）。
+import { readFile, stat } from 'node:fs/promises'
+import path from 'node:path'
 import { parseRichText } from './uviewer-csv.mjs'
 import { expandTemplate, guessTemplate, lookupFor, mergeOptions, safeRegex } from './path-templates.mjs'
 
@@ -70,6 +72,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
   bgm: { play: 'loop' },
   tween: { targetSlots: true },
   nameOnlyRow: 'show',
+  spriteImagesUnder: true,   // 这些图（背景的前景部件）画在角色 / 骨骼之下（场景里没有 BgParts 物体，原版是不是画、画在哪都没法对照；false = 盖在角色之上）
   spriteImages: true,   // Sprite 命令的普通图片（BgParts 前景等）叠在背景上。注意：反编译的原版 HandleSpriteCommand 只认 Spine / EM_ / ch_，这些图原版可能根本不画——false = 记 raw（以前的行为）
   selection: { groupSuffix: '-\\d+$', adjacentGroups: true, singleAsText: true },
   // 文件夹 → 中文名（猜的，卡片副标题里同时写着文件夹名）；顺序 = 列表顺序
@@ -111,6 +114,7 @@ export function resolveOptions(options) {
   const list = (value, fallback) => (Array.isArray(value) ? value.map(String) : fallback)
   o.nameOnlyRow = o.nameOnlyRow === 'faceOnly' ? 'faceOnly' : 'show'
   o.spriteImages = o.spriteImages !== false
+  o.spriteImagesUnder = o.spriteImagesUnder !== false
   o.tween.targetSlots = o.tween.targetSlots !== false
   o.speaker.source = list(o.speaker.source, DEFAULT_OPTIONS.speaker.source)
   for (const key of ['dirs', 'books']) o.index[key] = list(o.index[key], DEFAULT_OPTIONS.index[key])
@@ -195,7 +199,7 @@ export function readMaster(text, strip = DEFAULT_OPTIONS.paths.skeletonSuffixStr
   return { chars, textures, sounds }
 }
 
-export function prepare({ options, texts, files, toResourcePath }) {
+export function prepare({ options, texts, files, toResourcePath, mediaDir }) {
   const o = resolveOptions(options)
   const toRes = toResourcePath || ((rel) => rel)
   const books = []                // { rel, category, stem }
@@ -212,7 +216,44 @@ export function prepare({ options, texts, files, toResourcePath }) {
   const master = readMaster(textOf(masterName), o.paths.skeletonSuffixStrip)
   const ctx = { books, index, master, hasIndex: Boolean(files?.length), options }
   ctx.catalogTree = buildCatalog(ctx, o)
-  return ctx
+  if (!mediaDir) return ctx
+  // 有媒体目录：读一遍每个剧情文件有几章（grid），多章的文件在列表里展开成「第 N 章」（路径 <文件>::N），原版也是一章一章单独读的
+  return chaptersOfBooks(ctx.books, mediaDir).then((found) => {
+    if (!found) return ctx
+    ctx.catalogTree = buildCatalog(ctx, o)
+    return ctx
+  })
+}
+
+const chapterCache = new Map()   // 绝对路径|mtime|size → [{ n, name, rows }] | null（一章 / 读不了）
+const CHAPTER_CACHE_MAX = 5000
+async function chaptersOfBook(abs) {
+  let info
+  try { info = await stat(abs) } catch { return null }
+  const key = `${abs}|${info.mtimeMs}|${info.size}`
+  if (chapterCache.has(key)) return chapterCache.get(key)
+  let chapters = null
+  try {
+    const data = JSON.parse(String(await readFile(abs, 'utf8')).replace(/^\uFEFF/, ''))
+    const grids = Array.isArray(data?.importGridList) ? data.importGridList : []
+    if (grids.length > 1) chapters = grids.map((grid, i) => ({ n: i + 1, name: str(grid?.name).replace(/^.*:/, ''), rows: Array.isArray(grid?.rows) ? grid.rows.length : 0 }))
+  } catch { /* 读不了 / 不是剧情文件：当一章 */ }
+  if (chapterCache.size >= CHAPTER_CACHE_MAX) chapterCache.delete(chapterCache.keys().next().value)
+  chapterCache.set(key, chapters)
+  return chapters
+}
+async function chaptersOfBooks(books, mediaDir) {
+  let any = false
+  let next = 0
+  const worker = async () => {
+    while (next < books.length) {
+      const book = books[next++]
+      const chapters = await chaptersOfBook(path.join(mediaDir, ...book.rel.split('/')))
+      if (chapters) { book.chapters = chapters; any = true } else delete book.chapters
+    }
+  }
+  await Promise.all(Array.from({ length: 8 }, worker))
+  return any
 }
 
 // ---------- 列表 ----------
@@ -251,7 +292,17 @@ function buildCatalog(ctx, o) {
   const labelOf = (category) => { const i = ruleOf(category); return i < 0 ? '' : o.re.labels[i][1] }
   const byCategory = new Map()
   for (const book of ctx.books) { if (!byCategory.has(book.category)) byCategory.set(book.category, []); byCategory.get(book.category).push(book) }
-  const node = (prefix, book) => ({ id: `${prefix}/${book.stem}`, title: book.stem, subtitle: labelOf(book.category) ? `${labelOf(book.category)} · ${book.category}` : book.category, script: book.rel })
+  const node = (prefix, book) => {
+    const base = { id: `${prefix}/${book.stem}`, title: book.stem, subtitle: labelOf(book.category) ? `${labelOf(book.category)} · ${book.category}` : book.category }
+    if (!book.chapters?.length) return { ...base, script: book.rel }
+    // 多章的文件：展开成一章一个场景（路径 <文件>::<章号>，原版也是一章一章单独读）；不带 ::N 的路径仍然是整个文件接起来播（上一话 / 下一话沿着章走，所以列表里不放这一项）
+    return {
+      ...base, subtitle: `${base.subtitle ? `${base.subtitle} · ` : ''}${book.chapters.length} 章`,
+      children: [
+        ...book.chapters.map((c) => ({ id: `${base.id}/${c.n}`, title: `第 ${c.n} 章`, subtitle: [c.name, c.rows ? `${c.rows} 行` : ''].filter(Boolean).join(' · '), script: `${book.rel}::${c.n}` })),
+      ],
+    }
+  }
   const categories = [...byCategory].sort((a, b) => {
     const ia = ruleOf(a[0])
     const ib = ruleOf(b[0])
@@ -742,7 +793,7 @@ export function parse(text, ctx = null, meta = {}) {
       const src = resolveBg(key)
       if (!src) return
       stats.sprites = (stats.sprites || 0) + 1
-      emit({ op: 'overlay', slot: `spr_${key}`, src, fit: 'cover', z: 1, fade: secOf(row.a6) })
+      emit({ op: 'overlay', slot: `spr_${key}`, src, fit: 'cover', z: 1, ...(o.spriteImagesUnder === false ? {} : { under: true }), fade: secOf(row.a6) })
       return
     }
     if (!isEm && !m) { raw(`Sprite:${/^(AE|BE)_/.test(key) ? key.slice(0, 2) : key}`); return }
