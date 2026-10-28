@@ -1,9 +1,10 @@
 // 脚本卡片的「兜底封面」：没有任何 thumbSources / scriptThumbs / scriptIndex 命中时，从场景（已经解析好的 scene）里收几张有代表性的图。
 // 和适配器无关：只认规范场景（gal-scene/1）里的指令，不碰具体游戏的目录结构。
-//   优先级（config.thumbFallback.prefer，默认 ['cg', 'stand', 'bg']）：
+//   优先级（config.thumbFallback.prefer，默认 ['cg', 'stand', 'movie', 'bg']）：
 //     cg    事件图 / CG：bg 指令带 over（叠在 src 上的第二张图 = EV 图）；任何带 cg / still 标记的指令（cg: true、still: true、kind: 'cg' | 'still' | 'event'）的 src；
 //           spine 指令（静态画面）上的 thumb 字段（png / jpg / webp）
 //     stand 立绘：stand 指令的第一个有图片扩展名的 part（一个立绘指令只取一张，部件叠层的脸 / 表情不单独算）
+//     movie 视频：movie 指令的 srcs（卡片显示视频的一帧，位置见 config.thumbFrame）
 //     bg    背景：bg 指令的 src（纯色背景没有 src，自然跳过）
 //   每一类内部按出现顺序、去重；整体按 prefer 排好后截到 max * 3 个候选（调用方逐个验证文件存在，凑够 max 张为止）。
 //   只扫前 scanSteps 步（默认 200）：大脚本也只花固定的时间；扫到够多就提前停。
@@ -33,12 +34,13 @@ export function collectFallbackImages(scene, options = {}) {
   const prefer = (Array.isArray(cfg.prefer) ? cfg.prefer : FALLBACK_PREFER).map((k) => (k === 'bgOver' ? 'cg' : k)).filter((k, i, all) => FALLBACK_PREFER.includes(k) && all.indexOf(k) === i)
   const kinds = prefer.length ? prefer : FALLBACK_PREFER
   const skip = cfg.skipBlack === false ? [] : compileSkip(cfg.skip)
-  const buckets = { cg: [], stand: [], bg: [] }
+  const buckets = { cg: [], stand: [], movie: [], bg: [] }
   const seen = new Set()
-  const counts = { cg: 0, stand: 0, bg: 0 }
+  const counts = { cg: 0, stand: 0, movie: 0, bg: 0 }
   let skipped = 0
   const add = (kind, src) => {
-    if (!usable(src) || seen.has(src)) return
+    if (kind === 'movie' ? !(typeof src === 'string' && src.length < 400 && VIDEO_RE.test(src)) : !usable(src)) return
+    if (seen.has(src)) return
     seen.add(src)
     counts[kind] += 1
     if (skip.some((re) => re.test(stemOfSrc(src)))) { skipped += 1; return }
@@ -58,6 +60,7 @@ export function collectFallbackImages(scene, options = {}) {
           else if (flagged) add('cg', command.src)
           else add('bg', command.src)
           break
+        case 'movie': for (const src of Array.isArray(command.srcs) ? command.srcs.slice(0, 3) : []) add('movie', src); break   // 视频：卡片显示它的一帧（thumbFrame 控制截哪一帧）
         case 'stand': {
           if (flagged) { add('cg', command.parts?.[0]?.src); break }
           const part = (command.parts || []).find((p) => typeof p?.src === 'string' && IMAGE_RE.test(p.src))

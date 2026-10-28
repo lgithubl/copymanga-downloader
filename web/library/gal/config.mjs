@@ -11,7 +11,12 @@ export const DEFAULT_PAGE_SIZE = 25
 export const DEFAULT_INDEX_SKIP = Object.freeze(['^\\.', '\\|', '#'])
 export const MAX_SCRIPT_BYTES = 4 * 1024 * 1024
 // 脚本卡片的兜底封面（没有任何缩略图规则命中时从脚本里收图，见 fallback-thumbs.mjs）
-export const FALLBACK_PREFER = Object.freeze(['cg', 'stand', 'bg'])
+export const FALLBACK_PREFER = Object.freeze(['cg', 'stand', 'movie', 'bg'])
+// 视频缩略图截哪一帧：seconds > 0 = 固定秒数；否则 时长 × percent（最多 max 秒）
+export const DEFAULT_THUMB_FRAME = Object.freeze({ percent: 0.1, seconds: 0, max: 30 })
+// 骨骼 / 立绘场景的「渲染缩略图」（浏览器在列表页离屏渲染，传回服务器缓存）：enabled / 缩略图宽（高按 16:9）/ 最多扫多少步找第一个有骨骼的画面 / 同时渲染几张
+export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1 })
+export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3] })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
 export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, scanSteps: 200, topUp: false })
 // 卡片封面 / 悬停轮播（见 DEFAULT_GAL_CONFIG 里 thumbCover / thumbHover 的说明）
@@ -81,6 +86,10 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   thumbCover: 'random',
   // 悬停轮播：{ enabled（默认 true）, count（卡片轮播的图数上限，含封面，1～12，默认 4）, order: random | sequential（默认 random）, intervalMs: [最短, 最长]（默认 [700, 900]）}；只有候选图多于 1 张的卡片才轮播
   thumbHover: { enabled: true, count: 4, order: 'random', intervalMs: [700, 900] },
+  // 视频缩略图截哪一帧：{ percent: 时长的比例（0～0.95，默认 0.1）, seconds: 固定秒数（> 0 时优先，默认 0）, max: 按比例时最多取到第几秒（默认 30） }
+  thumbFrame: { percent: 0.1, seconds: 0, max: 30 },
+  // 渲染缩略图（骨骼 / 立绘场景：规则和兜底都没有图、或脚本里有骨骼时，列表页浏览器离屏渲染一帧传回服务器缓存）：{ enabled（默认 true）, width（160～1280，默认 640）, scanSteps（找第一个有骨骼的画面最多看几步，默认 150）, concurrency（同时渲染几张，1～3，默认 1）}
+  thumbRender: { enabled: true, width: 640, scanSteps: 150, concurrency: 1 },
   // 分组：列 parent（通配；'.' = 脚本根本身）下的目录时，脚本文件名（无扩展名）能匹配 pattern 的，按第 1 个捕获组分成虚拟目录
   // （比如 ^(\\d{5}) 把 10001A1、10001B1 归到「10001」一张卡片里）；不匹配的脚本照常列出。虚拟目录的名字/头像和真实目录一样查 labels / namesFiles / dirThumbs
   groups: [],
@@ -331,7 +340,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     if (tf.prefer !== undefined) {
       const list = Array.isArray(tf.prefer) ? tf.prefer : null
       const kinds = (list || []).map((k) => (k === 'bgOver' ? 'cg' : k)).filter((k, i, all) => FALLBACK_PREFER.includes(k) && all.indexOf(k) === i)
-      if (!list || !kinds.length) warn('thumbFallback.prefer', '要是 cg / stand / bg 组成的数组（bgOver = cg），用默认值', tf.prefer)
+      if (!list || !kinds.length) warn('thumbFallback.prefer', '要是 cg / stand / movie / bg 组成的数组（bgOver = cg），用默认值', tf.prefer)
       else {
         if (list.length > kinds.length) warn('thumbFallback.prefer', '有不认识 / 重复的项，已丢掉', list)
         thumbFallback.prefer = kinds
@@ -386,6 +395,30 @@ export function normalizeGalConfigWithWarnings(raw) {
         if (nums[0] !== a || nums[1] !== b) warn('thumbHover.intervalMs', `已规整为 [${a}, ${b}]（范围 ${lo}–${hi}，小的在前）`, th.intervalMs)
       }
     }
+  }
+
+  // thumbFrame / thumbRender：数值字段逐个校验，不合格的退回默认并报告
+  const numIn = (obj, key, [lo, hi], target, where) => {
+    if (obj[key] === undefined) return
+    const n = Number(obj[key])
+    if (obj[key] === null || obj[key] === '' || typeof obj[key] === 'boolean' || !Number.isFinite(n)) { warn(`${where}.${key}`, '不是数字，用默认值', obj[key]); return }
+    target[key] = Math.max(lo, Math.min(hi, n))
+    if (target[key] !== n) warn(`${where}.${key}`, `超出范围 ${lo}–${hi}，夹到 ${target[key]}`, obj[key])
+  }
+  const thumbFrame = { ...DEFAULT_THUMB_FRAME }
+  if (v.thumbFrame !== undefined && !isPlainObject(v.thumbFrame)) warn('thumbFrame', '不是对象，用默认值', v.thumbFrame)
+  if (isPlainObject(v.thumbFrame)) {
+    for (const key of Object.keys(v.thumbFrame)) if (!(key in DEFAULT_THUMB_FRAME)) warn('thumbFrame', `不认识的字段 ${key}，已丢掉`, key)
+    numIn(v.thumbFrame, 'percent', [0, 0.95], thumbFrame, 'thumbFrame')
+    numIn(v.thumbFrame, 'seconds', [0, 36000], thumbFrame, 'thumbFrame')
+    numIn(v.thumbFrame, 'max', [1, 36000], thumbFrame, 'thumbFrame')
+  }
+  const thumbRender = { ...DEFAULT_THUMB_RENDER }
+  if (v.thumbRender !== undefined && !isPlainObject(v.thumbRender)) warn('thumbRender', '不是对象，用默认值', v.thumbRender)
+  if (isPlainObject(v.thumbRender)) {
+    for (const key of Object.keys(v.thumbRender)) if (!(key in DEFAULT_THUMB_RENDER)) warn('thumbRender', `不认识的字段 ${key}，已丢掉`, key)
+    if (v.thumbRender.enabled !== undefined) { if (typeof v.thumbRender.enabled === 'boolean') thumbRender.enabled = v.thumbRender.enabled; else warn('thumbRender.enabled', '只能是 true / false，用默认值', v.thumbRender.enabled) }
+    for (const key of ['width', 'scanSteps', 'concurrency']) { numIn(v.thumbRender, key, THUMB_RENDER_LIMITS[key], thumbRender, 'thumbRender'); thumbRender[key] = Math.round(thumbRender[key]) }
   }
 
   const groups = []
@@ -631,6 +664,8 @@ export function normalizeGalConfigWithWarnings(raw) {
     thumbMode: ['random', 'first', 'hover'].includes(v.thumbMode) ? v.thumbMode : d.thumbMode,
     thumbCover,
     thumbHover,
+    thumbFrame,
+    thumbRender,
     groups: v.groups === undefined ? [] : groups,
     scriptIndex: v.scriptIndex === undefined ? [] : scriptIndex,
     game,

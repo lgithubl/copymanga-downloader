@@ -5336,7 +5336,20 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
         if (resource.file) return await sendCachedFile(req, res, resource.file, resource.contentType, resource.cacheControl)
         return binary(res, 200, resource.body, resource.contentType)
       }
+      if (action === 'render-thumb' && handler.getRenderThumb) {   // Gal：浏览器离屏渲染的缩略图（命中 = JPEG，没有 = 404）
+        const found = await handler.getRenderThumb(itemId, url.searchParams.get('key') || '')
+        return await sendCachedFile(req, res, found.file, found.contentType, found.cacheControl)
+      }
       if (action === 'progress') return json(res, 200, await handler.getProgress(itemId))
+    }
+    if (pathname.startsWith('/api/library/items/') && req.method === 'PUT') {
+      const parts = pathname.split('/').filter(Boolean)
+      const [, , , type, itemId, action] = parts
+      const handler = libraryHandler(type)
+      if (action === 'render-thumb' && handler.putRenderThumb) {
+        if (Number(req.headers['content-length']) > 600 * 1024) return json(res, 413, { error: '图片太大' })
+        return json(res, 200, await handler.putRenderThumb(itemId, url.searchParams.get('key') || '', await readBuffer(req)))
+      }
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'POST') {
       const parts = pathname.split('/').filter(Boolean)

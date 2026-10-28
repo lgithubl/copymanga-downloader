@@ -9,7 +9,7 @@
 //   - 封面：config.cover（脚本写；取的时候原样返回，不缩放）
 
 import { createHash } from 'node:crypto'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
@@ -214,9 +214,33 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const file = await resolveAsset(item, resourcePath)
     if (frame) {
       if (!isVideoPath(file)) throw Object.assign(new Error('不是视频文件'), { statusCode: 415 })
-      return { file: await frames.frameOf(file), contentType: 'image/jpeg', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
+      return { file: await frames.frameOf(file, normalizeGalConfig(item.config).thumbFrame), contentType: 'image/jpeg', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
     }
     return { body: await readFile(file), contentType: contentTypeOf(file) }
+  }
+
+  // 渲染缩略图（浏览器离屏渲染的一帧 JPEG）：按 key 存在 cache/gal-render-thumbs。GET 命中返回图、没有 404（前端据此决定要不要渲染）；PUT 存图（只收 JPEG、≤ 600KB、key 必须是 40 位十六进制）
+  const bad = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode })
+  const renderDir = path.join(dataDir, 'cache', 'gal-render-thumbs')
+  const renderFile = (key) => {
+    if (!/^[0-9a-f]{40}$/.test(String(key))) throw bad('key 不合法', 400)
+    return path.join(renderDir, key.slice(0, 2), `${key}.jpg`)
+  }
+  async function getRenderThumb(itemId, key) {
+    await readItem(itemId)
+    const file = renderFile(key)
+    try { if ((await stat(file)).size > 0) return { file, contentType: 'image/jpeg', cacheControl: 'public, max-age=31536000, immutable' } } catch { /* 没有 */ }
+    throw bad('还没有渲染缩略图', 404)
+  }
+  async function putRenderThumb(itemId, key, buffer) {
+    await readItem(itemId)
+    const file = renderFile(key)
+    if (!Buffer.isBuffer(buffer) || buffer.length < 200 || buffer.length > 600 * 1024) throw bad('图片大小不合格（200B ~ 600KB）', 413)
+    if (!(buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)) throw bad('只收 JPEG', 415)
+    await mkdir(path.dirname(file), { recursive: true })
+    const tmp = `${file}.${process.pid}-${Date.now()}.tmp`
+    try { await writeFile(tmp, buffer); await rename(tmp, file) } finally { await rm(tmp, { force: true }).catch(() => {}) }   // 同一个 key 两个页面同时传：后到的覆盖，内容等价
+    return { ok: true }
   }
 
   async function getThumbnail(itemId) {
@@ -440,6 +464,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     refreshIndex,
     getRandomVoice,
     getResource,
+    getRenderThumb,
+    putRenderThumb,
     getThumbnail,
     getThumbnailFile,
     getProgress,

@@ -146,12 +146,12 @@ const nodeOf = async (config, id, adapters) => (await provider(config, adapters)
   check('校验：key 里写了卡片侧的 {stem}（文件侧不能用）→ 警告；forKey 里写文件侧的 {dirname} → 警告', normalizeGalConfigWithWarnings({ thumbSources: [{ dir: 'a', match: 'x', key: '{stem}' }, { dir: 'a', match: 'x', forKey: '{dirname}' }] }).warnings.filter((w) => /不认识/.test(w.reason)).length === 2, '')
   const tf = (v) => normalizeGalConfigWithWarnings({ thumbFallback: v })
   const d = normalizeGalConfig({}).thumbFallback
-  check('thumbFallback 默认：enabled、max 6、prefer [cg, stand, bg]、skipBlack、skip（black / white / blank）、scanSteps 200', d.enabled === true && d.max === 6 && J(d.prefer) === J(['cg', 'stand', 'bg']) && d.skipBlack === true && d.skip.length === 1 && d.scanSteps === 200, J(d))
+  check('thumbFallback 默认：enabled、max 6、prefer [cg, stand, movie, bg]、skipBlack、skip（black / white / blank）、scanSteps 200', d.enabled === true && d.max === 6 && J(d.prefer) === J(['cg', 'stand', 'movie', 'bg']) && d.skipBlack === true && d.skip.length === 1 && d.scanSteps === 200, J(d))
   const c1 = tf({ enabled: false, max: 99, prefer: ['bgOver', 'bg', 'bg', 'zzz'], skipBlack: false, skip: ['ok', '(', 5], scanSteps: 5 })
   check('thumbFallback 校验：max 夹到 1–12、prefer 的 bgOver = cg 并去重去不认识的、skip 坏正则丢掉、scanSteps 夹到 10–2000，各自报告', c1.config.thumbFallback.enabled === false && c1.config.thumbFallback.max === 12 && J(c1.config.thumbFallback.prefer) === J(['cg', 'bg']) && c1.config.thumbFallback.skipBlack === false && J(c1.config.thumbFallback.skip) === J(['ok']) && c1.config.thumbFallback.scanSteps === 10 && ['max', 'prefer', 'skip', 'scanSteps'].every((f) => c1.warnings.some((w) => w.field === `thumbFallback.${f}`)), J(c1.warnings))
   const c2 = tf('junk')
   const c3 = tf({ enabled: 'no', max: 'x', prefer: [], zzz: 1 })
-  check('thumbFallback 校验：不是对象 → 默认 + 警告；字段类型不对 / prefer 为空 → 该字段默认 + 警告；不认识的字段丢掉并警告', J(c2.config.thumbFallback) === J(d) && c2.warnings.some((w) => w.field === 'thumbFallback') && c3.config.thumbFallback.enabled === true && c3.config.thumbFallback.max === 6 && J(c3.config.thumbFallback.prefer) === J(['cg', 'stand', 'bg']) && c3.warnings.length === 4, J(c3.warnings))
+  check('thumbFallback 校验：不是对象 → 默认 + 警告；字段类型不对 / prefer 为空 → 该字段默认 + 警告；不认识的字段丢掉并警告', J(c2.config.thumbFallback) === J(d) && c2.warnings.some((w) => w.field === 'thumbFallback') && c3.config.thumbFallback.enabled === true && c3.config.thumbFallback.max === 6 && J(c3.config.thumbFallback.prefer) === J(['cg', 'stand', 'movie', 'bg']) && c3.warnings.length === 4, J(c3.warnings))
   check('thumbFallback 只写一部分 = 其余默认（{ enabled: false } 只关兜底）', J(tf({ enabled: false }).config.thumbFallback) === J({ ...d, enabled: false }) && tf({ enabled: false }).warnings.length === 0, '')
 }
 

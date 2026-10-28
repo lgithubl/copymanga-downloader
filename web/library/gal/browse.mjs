@@ -34,6 +34,7 @@ import { safeRelPath } from './paths.mjs'
 import { createThumbEngine, invalidateThumbCaches } from './thumbs.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { collectFallbackImages } from './fallback-thumbs.mjs'
+export const RENDER_THUMB_VERSION = 'r1'   // 渲染缩略图的版本：渲染逻辑变了就加一，服务器缓存跟着换
 import { explainRejectedFile } from './diagnostics.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 import { collectVoices, compileVoiceRegex, filterVoices, parseVoiceTargets, pickRandom, shuffled, voiceCacheClear, voiceCacheGet, voiceCacheSet, voiceStats } from './voice.mjs'
@@ -441,7 +442,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
             if (thumbs.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: thumbs[0], thumbs } } else if (why.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }
           } else if (child.script && !child.script.includes('::')) {
             const info = await scriptInfo(defaultSet, child.script)
-            if (info.thumbs.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
+            if (info.thumbs.length || info.renderKey) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs, ...(info.renderKey ? { render: { key: info.renderKey } } : {}) } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
           }
         } catch { /* 取不到图就保持适配器给的样子（没有图） */ }
       }
@@ -644,6 +645,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       }
       if (!found.size) why.push(`thumbFallback：扫了前 ${got.scanned} 步${got.truncated ? `（脚本共 ${scene.steps.length} 步，其余没扫）` : ''}，事件图 ${got.counts.cg} / 立绘 ${got.counts.stand} / 背景 ${got.counts.bg} 张${got.skipped ? `，${got.skipped} 张是黑白占位图被跳过` : ''}${got.images.length ? '，候选文件都不存在' : '，没有可用的图'}`)
     }
+    const ruleHit = found.size > 0   // 规则（不含兜底）已经给了图：不再渲染
     if (!found.size) {
       if (!scene) why.push(`脚本没解析成功（适配器 ${adapterId}）：${parseError || '未知原因'}`)
       else if (config.thumbFallback.enabled) await fillFromScript()
@@ -654,7 +656,12 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       }
     } else if (scene && config.thumbFallback.enabled && config.thumbFallback.topUp && found.size < config.thumbFallback.max) await fillFromScript()
     const thumbs = [...found.values()]
-    const result = { adapterId, thumb: thumbs[0] || '', thumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumbs.length ? [] : why, issues }
+    // 渲染缩略图：脚本前 scanSteps 步里有骨骼（spine 指令），而规则（thumbSources / scriptThumbs / scriptIndex）没给图时，列表页让浏览器离屏渲染一帧传回来（见 gal-thumb-render.js）；
+    // key = 脚本路径 + mtime + 大小 + 版本 + 宽度，脚本改了 key 就变，服务器缓存按 key 存
+    const renderCfg = config.thumbRender
+    const hasSpine = Boolean(scene) && renderCfg.enabled && scene.steps.slice(0, renderCfg.scanSteps).some((step) => step.commands.some((c) => c.op === 'spine'))
+    const renderKey = hasSpine && !ruleHit ? createHash('sha1').update(JSON.stringify([abs, info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex') : ''
+    const result = { adapterId, renderKey, thumb: thumbs[0] || '', thumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumbs.length ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
     return result
   }
@@ -791,7 +798,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const paged = await pageOfView(members, view, page, (entry) => ({ title: entry.stem, extra: entry.name }))
       const items = await mapLimit(paged.slice, IO_CONCURRENCY, async (entry) => {
         const info = await scriptInfo(set, entry.rel)
-        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...(info.renderKey ? { render: { key: info.renderKey } } : {}), node: idOf(set, 'script', entry.rel) }
       })
       return { node: { id: groupNodeId(set, rel, key, paged.current, view), kind: 'cards', title: await labelOf(key), ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, groupNodeId(set, rel, key, 1)) } }
     }
@@ -820,7 +827,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
           return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry)), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
         }
         const info = await scriptInfo(set, entry.rel)
-        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, node: idOf(set, 'script', entry.rel) }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...(info.renderKey ? { render: { key: info.renderKey } } : {}), node: idOf(set, 'script', entry.rel) }
       })
       const title = rel ? await labelOf(baseName(rel)) : '首页'
       return { node: { id: dirNodeId(set, rel, paged.current, view), kind: 'cards', title, ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, dirNodeId(set, rel, 1)) } }

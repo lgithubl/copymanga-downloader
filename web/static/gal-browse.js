@@ -3,6 +3,7 @@
 // 全部用 textContent / setAttribute 写入后端给的文字，不拼 innerHTML。
 import { attachBarLock } from './gal-barlock.js'
 import { DEFAULT_HOVER, attachThumbCycle, pickCover, thumbUrl } from './thumb-cycle.js'
+import { createThumbRenderer } from './gal-thumb-render.js'
 import { assetUrl } from './gal-engine.js'
 import { createGalVoice } from './gal-voice.js'
 
@@ -30,6 +31,16 @@ let keepMenuOpen = null    // 在「更多」里改了搜索 / 排序 / 每页�
 export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, thumbLoader = null, onRefreshIndex = null }) {
   const node = reader.node
   const root = el('div', 'gal-browse')
+  // 渲染缩略图（骨骼 / 立绘场景，见 gal-thumb-render.js）：卡片带 item.render.key 时先取服务器缓存（命中 = 直接是图），没有（404）才入队离屏渲染并传回缓存
+  const apiBase = String(reader.resourceBase || '').replace(/\/resource$/, '')
+  const renderCfg = reader.item?.config?.thumbRender || {}
+  const thumbRenderer = createThumbRenderer({
+    concurrency: Number(renderCfg.concurrency) || 1,
+    upload: async (task, blob) => {
+      const res = await fetch(`${apiBase}/render-thumb?key=${task.key}`, { method: 'PUT', body: blob, headers: { 'Content-Type': 'image/jpeg' } })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    },
+  })
   root.dataset.node = node.id
   const voice = createGalVoice({ reader, host: root })   // 随机语音：卡片 / 工具栏上的 🎲（gal-voice.js）
 
@@ -348,11 +359,13 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     // 一张卡片可以有多张图（item.thumbs，thumb = 第一张）；thumbMode：random（默认）随机一张当封面 / first 只第一张 / hover 封面第一张、悬停轮播
     const thumbs = item.thumbs?.length ? item.thumbs : item.thumb ? [item.thumb] : []
     const cover = coverOf()
-    if (!thumbs.length) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
+    const render = item.type === 'script' && item.render?.key ? item.render : null
+    const renderUrl = render ? `${apiBase}/render-thumb?key=${render.key}` : ''
+    if (!thumbs.length && !render) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
     if (!thumbs.length && item.type === 'dir') box.dataset.icon = '📁'
-    if (thumbs.length) {
-      const urls = thumbs.map((path) => thumbUrl(reader.resourceBase, path))
-      const coverAt = pickCover(thumbs.length, cover)
+    if (thumbs.length || render) {
+      const urls = [...(render ? [renderUrl] : []), ...thumbs.map((path) => thumbUrl(reader.resourceBase, path))]
+      const coverAt = render ? 0 : pickCover(thumbs.length, cover)   // 有渲染缩略图就以它为封面（缓存里没有时先显示别的图，渲染好了换上）
       const img = el('img')
       img.alt = ''
       img.decoding = 'async'
@@ -360,7 +373,22 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       if (thumbLoader) { img.dataset.src = src; thumbImages.push(img) } else { img.loading = 'lazy'; img.src = src }
       // 封面加载失败：还有别的图就换下一张试，都不行才报「加载失败」
       const untried = urls.map((_, i) => i).filter((i) => i !== coverAt)
+      let renderMissing = false
       img.addEventListener('error', () => {
+        if (render && !renderMissing && img.getAttribute('src') === renderUrl) {
+          renderMissing = true   // 缓存里还没有：排队渲染（失败不缓存、不记标记，下次重建页面还会再试）
+          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: item.node, key: render.key, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, cameraMode: reader.item?.config?.player?.cameraMode || '' })
+            .then((blob) => { const local = URL.createObjectURL(blob); urls[0] = local; img.hidden = false; img.src = local; box.classList.remove('empty'); if (!img.isConnected) box.prepend(img) })
+            .catch((error) => {
+              if (/已销毁|已经试过/.test(error?.message || '')) return
+              if (!thumbs.length) { img.remove(); box.classList.add('empty') }
+              problems.push({ kind: '渲染缩略图失败', title: item.title, node: item.node, lines: [error?.message || String(error), '下次打开列表会再试一次'] })
+              refreshDiag()
+            })
+          if (untried.length) { img.src = urls[untried.shift()]; return }
+          img.hidden = true; box.classList.add('empty')   // 没有别的图：等渲染好再显示
+          return
+        }
         if (untried.length) { img.src = urls[untried.shift()]; return }
         img.remove()
         box.classList.add('empty')
@@ -368,7 +396,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
         refreshDiag()
       })
       box.append(img)
-      if (thumbs.length > 1) cardCycles.push({ box, img, urls, coverAt, hover: { ...hoverCfg, enabled: true }, isEnabled: hoverOn })
+      if (urls.length > 1) cardCycles.push({ box, img, urls, coverAt, hover: { ...hoverCfg, enabled: true }, isEnabled: hoverOn })
     } else {
       box.classList.add('empty')
     }
@@ -428,5 +456,5 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
 
   container.replaceChildren(root)
   if (thumbLoader && thumbImages.length) thumbLoader.attach(thumbImages, { root: container })
-  return { destroy: () => { voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
+  return { destroy: () => { thumbRenderer.destroy(); voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
 }

@@ -881,6 +881,14 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **Grenze**：封面 = `patchres/banner/banner_title` 里的 `LOGO_*`（`cover[].fromMedia`：路径用 `~/` 相对媒体目录）。
 - **确认不是 bug**（第 18–19 轮的数据）：魔法学园 `ROLA_ep5_h` / `YUNI_ep7_h` / `AMRITA_ep6_h` 没有 voices、也没有语音目录；原版 `json_story_player.rpy` 只处理 `bg_change`，`action` / `emotion` 本来就忽略；ぼくら 1898 个脚本里 1065 个没有资源目录（`bokusen_main.exe` 没下载下来），URL 图片本地没有；deepone 的 `adu105705_*` 语音本地没有；GC `chara_0032_r18_1` 的 4.0 骨骼 `Wait` / `Normal` / `Fast` / `After` 的骨骼关键帧全部相同（静止），只有 `Finish` 会淡入叠图；maid `cast006001` 的贴图只有 961×424，粗糙是原图分辨率。
 
+### 列表缩略图：视频帧 + 骨骼渲染图（config.thumbFallback.prefer 的 movie / config.thumbFrame / config.thumbRender）
+
+- **视频场景**：兜底（`thumbFallback.prefer`，默认 `[cg, stand, movie, bg]`）现在会收 `movie` 指令的视频，卡片显示视频的一帧（`prefer` 里不写 `movie` = 旧行为）。`thumbSources` 里 `kind: 'video'` 的规则本来就能用。
+- **截哪一帧**（`config.thumbFrame`）：`seconds` > 0 = 固定秒数；否则 时长 × `percent`（默认 0.1，最多 `max` 30 秒）。不同位置各有各的缓存（`cache/gal-thumbs`）。
+- **骨骼场景（骨骼 + 背景）**：脚本前 `thumbRender.scanSteps` 步里有 `spine` 指令、而规则（`thumbSources` / `scriptThumbs` / `scriptIndex`）没给图时，列表项带 `render.key`；浏览器在列表页离屏渲染一帧（背景 + 骨骼，和播放页同一套摆放，取第一个有骨骼的步再往后 2 步），`PUT …/render-thumb?key=` 传回服务器缓存（`cache/gal-render-thumbs/<key 前两位>/<key>.jpg`，≤ 600KB 的 JPEG），之后 `GET` 直接命中。key = 脚本路径 + mtime + 大小 + 渲染版本 + 宽度，脚本变了就重新渲染。
+- **并发 / 失败**：所有列表页共用一个渲染队列（`thumbRender.concurrency`，默认 1，一次一个 WebGL 上下文，渲染完就销毁）；只在卡片的缓存图加载失败（404）时才入队，也就是卡片滚到可见附近才渲染；翻页 / 换节点时排队的任务丢掉。渲染失败（骨骼取不到、超时、画面空）**不缓存、不留标记**：卡片显示兜底图，列表诊断里记一条，下次重建页面还会再试（同一页里同一张只试一次）。
+- 关掉：`thumbRender: { enabled: false }`。
+
 ### 每个游戏一个唯一的 game.id（导入页「Gal 游戏」下拉）
 
 导入页选方案 `gal-import`，在「Gal 游戏」下拉里选游戏、点「刷新 json」，会把 `adapters` 和 `config.game`（id + 标题）填进方案 JSON；再改 `rootDir` 即可。`rootDir`、`dryRun`、`defaultMetadataActions` 保留文本框里现有的值。

@@ -9,7 +9,8 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
-export const FRAME_VERSION = 'v1-w640-q4'
+export const FRAME_VERSION = 'v2-w640-q4'
+export const DEFAULT_FRAME_AT = Object.freeze({ percent: 0.1, seconds: 0, max: 30 })
 const FAIL_TTL_MS = 30000
 
 export function createFrameCache({ dir, concurrency = 2, timeoutMs = 20000, ffmpeg = 'ffmpeg', ffprobe = 'ffprobe', run = execFileAsync }) {
@@ -29,9 +30,10 @@ export function createFrameCache({ dir, concurrency = 2, timeoutMs = 20000, ffmp
       return Number.isFinite(seconds) && seconds > 0 ? seconds : 0
     } catch { return 0 }
   }
-  async function extract(file, out) {
+  // at：截哪一秒——seconds > 0 = 固定秒数；否则 时长 × percent，最多 max 秒；超出视频长度的由下面「从头截」兜底
+  async function extract(file, out, pos = DEFAULT_FRAME_AT) {
     const duration = await durationOf(file)
-    const at = duration ? Math.min(duration * 0.1, 30) : 1
+    const at = Number(pos.seconds) > 0 ? Number(pos.seconds) : duration ? Math.min(duration * Number(pos.percent), Number(pos.max) || 30) : 1
     const tmp = `${out}.${process.pid}-${Date.now()}.tmp.jpg`
     const args = (seconds) => ['-y', '-v', 'error', '-ss', seconds.toFixed(3), '-i', file, '-frames:v', '1', '-vf', "scale='min(640,iw)':-2", '-q:v', '4', tmp]
     try {
@@ -45,9 +47,10 @@ export function createFrameCache({ dir, concurrency = 2, timeoutMs = 20000, ffmp
 
   return {
     // file：真实视频路径（调用方已经用 resolveAsset 做过「只认媒体目录内」的检查）。返回缓存里的 JPEG 路径；失败抛 { statusCode }
-    async frameOf(file) {
+    async frameOf(file, at = DEFAULT_FRAME_AT) {
+      const pos = { ...DEFAULT_FRAME_AT, ...at }
       const info = await stat(file)
-      const key = createHash('sha1').update(JSON.stringify([file, info.mtimeMs, info.size, FRAME_VERSION])).digest('hex')
+      const key = createHash('sha1').update(JSON.stringify([file, info.mtimeMs, info.size, FRAME_VERSION, pos])).digest('hex')
       const out = path.join(dir, key.slice(0, 2), `${key}.jpg`)
       try { if ((await stat(out)).size > 0) return out } catch { /* 还没有 */ }
       const bad = failed.get(key)
@@ -58,7 +61,7 @@ export function createFrameCache({ dir, concurrency = 2, timeoutMs = 20000, ffmp
           await slot()
           try {
             await mkdir(path.dirname(out), { recursive: true })
-            await extract(file, out)
+            await extract(file, out, pos)
             return out
           } catch (error) {
             const reason = error?.code === 'ENOENT' ? 'ffmpeg 不可用（没有安装？）' : error?.killed ? `ffmpeg 超时（${Math.round(timeoutMs / 1000)} 秒）` : `ffmpeg 截帧失败：${String(error?.stderr || error?.message || error).trim().split('\n').pop().slice(0, 200)}`
