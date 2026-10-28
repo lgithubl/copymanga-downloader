@@ -423,6 +423,7 @@ export function parse(text, ctx = null, meta = {}) {
   let voiceFound = 0
   let stillId = ''
   let bgvoiceOn = false
+  let blackOn = false         // 画面被 FadeOut 盖黑了（原版 Line_RunDialogue：台词出现时画面全黑就瞬间淡入）
   const snapshot = () => ({ stage: new Map([...stage].map(([slot, entry]) => [slot, { ...entry }])), slotOf: new Map(slotOf), stillId })
   const restore = (snap) => { stage = new Map([...snap.stage].map(([slot, entry]) => [slot, { ...entry }])); slotOf = new Map(snap.slotOf); stillId = snap.stillId }
   // 原版（gal-samples21 反编译的 DialogueSystem.SetCharacterSpineAnimation）：Chara 的本地坐标 = (Master X + Arg4 偏移, Master Y − 130)，缩放 = Master Scale × 100，骨架单位 0.01；
@@ -472,16 +473,30 @@ export function parse(text, ctx = null, meta = {}) {
     stats.spines += 1
     emit(standOp(slot, next))
   }
+  // BgEvent（原版 ProcessBgEventAnimation）：只加载 Stills/<id>/<id> 一个骨架，1:1 像素画在舞台中心；播放方式：
+  //   AnimSpd 有值 → 速度 = 它，> 0 循环；否则 AnimCompType stop = 冻结 / start = 速度 1 循环；再否则动画名带 loop = 循环，不带 = 速度 0（冻结在第一帧）
+  //   每次 BgEvent 之后原版还会调 CharacterOff（淡出所有角色，时长 = Arg6）
   const playStill = (row) => {
     const files = stillFiles(row.a1)
     if (!files.length) return
     if (stillId !== row.a1) { emit({ op: 'bgoff', fade: 0 }); emit({ op: 'spineOff', prefix: 'still' }); stillId = row.a1 }
     const anim = row.anim
-    const speed = numOrNull(row.speed)
-    files.forEach((file, order) => {
+    const comp = String(row.compType || '').toLowerCase()
+    const speedNum = row.speed !== '' ? Number(row.speed) : NaN
+    let speed = 1
+    let loop = false
+    if (row.speed !== '' && Number.isFinite(speedNum)) { speed = speedNum; loop = speedNum > 0 }
+    else if (comp === 'stop') { speed = 0 }
+    else if (comp === 'start') { loop = true }
+    else if (anim && /loop/i.test(anim)) { loop = true }
+    else speed = 0
+    const exact = files.filter((f) => new RegExp(`/${String(row.a1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.skel`).test(f.skel))   // 目录里有 <id>.skel 就只用它（原版只读这一个），没有就全放
+    const chosen = exact.length ? exact : files
+    chosen.forEach((file, order) => {
       stats.spines += 1
-      emit({ op: 'spine', slot: `still${order}`, kind: 'still', skel: file.skel, atlas: file.atlas, anim, loop: /_loop$/i.test(anim), speed: speed && speed > 0 ? speed : 1, order })
+      emit({ op: 'spine', slot: `still${order}`, kind: 'still', skel: file.skel, atlas: file.atlas, anim, loop, speed: speed > 0 ? speed : 1, ...(speed === 0 ? { freeze: true } : {}), order, place: { x: 0, y: 0, scale: 1 }, stage: [screenWidth, Math.round(screenWidth * 9 / 16)] })
     })
+    if (stage.size) { emit({ op: 'spineOff', prefix: o.slotPrefix || 'Chara', fade: secOf(row.a6, 0.5) }); stage.clear(); slotOf.clear() }
   }
   // Tween / Shake 的目标：Arg1 是角色名（在场）或站位槽名（Chara1…，tween.targetSlots）→ 槽；不在场 = ''
   const targetSlot = (a1) => {
@@ -498,7 +513,8 @@ export function parse(text, ctx = null, meta = {}) {
     stats.rows += rows.length
     // 开头清场：上一个 grid 留下的立绘 / 静态画面 / 背景人声 / 背景音效不带过来
     if (gridIndex > 0 && (stage.size || stillId || bgvoiceOn)) { emit({ op: 'spineOff' }); emit({ op: 'bgseStop' }); emit({ op: 'bgvoiceOff', slot: '1' }) }
-    stage = new Map(); slotOf = new Map(); stillId = ''; bgvoiceOn = false
+    if (gridIndex > 0 && blackOn) emit({ op: 'fade', to: 'clear', seconds: 0 })   // 上一章结尾盖黑：新一章开头清掉
+    stage = new Map(); slotOf = new Map(); stillId = ''; bgvoiceOn = false; blackOn = false
     guard = null; openBlock = null; speaker = null
     const labelAt = new Map()     // 标签 → 行号
     rows.forEach((row, i) => { if (row.command.startsWith('*') && !labelAt.has(row.command)) labelAt.set(row.command, i) })
@@ -592,6 +608,7 @@ export function parse(text, ctx = null, meta = {}) {
           if (row.a1 && !off && !speakerOnly) { if (row.a3) showStand(row); else if (!slotOf.has(row.a1) && o.nameOnlyRow === 'show') showNameOnly(row); else updateStand(row) }
           else if (row.a1 && o.off.mode === 'hide') hideStand(row.a1)
           if (!row.text) { if (!row.a1 && !row.voice) ignore('空行'); break }
+          if (blackOn) { emit({ op: 'fade', to: 'clear', seconds: 0 }); blackOn = false }   // 原版：fade.color.a >= 1 时 FadeInEffect(color, 0)
           const voice = row.voice
           if (voice) {
             const src = resolveWith(paths.voice, { name: voice, ...charVars(row.a1) })
@@ -629,8 +646,8 @@ export function parse(text, ctx = null, meta = {}) {
         }
         case 'StopBgVoice': emit({ op: 'bgvoiceOff', slot: '1' }); bgvoiceOn = false; break
         case 'Wait': if (a6 > 0) emit({ op: 'wait', seconds: a6 }); break
-        case 'FadeOut': emit({ op: 'fade', to: 'black', seconds: a6 }); break
-        case 'FadeIn': emit({ op: 'fade', to: 'clear', seconds: a6 }); break
+        case 'FadeOut': emit({ op: 'fade', to: 'black', seconds: a6 }); blackOn = true; break
+        case 'FadeIn': emit({ op: 'fade', to: 'clear', seconds: a6 }); blackOn = false; break
         case 'CharacterOff': {
           if (row.a1) {
             const slot = slotOf.get(row.a1)
@@ -765,7 +782,15 @@ export function parse(text, ctx = null, meta = {}) {
     if (waits && dur > 0) emit({ op: 'wait', seconds: dur })
   }
 
-  grids.forEach((grid, gridIndex) => compileGrid(bookRows(grid), gridIndex))
+  // 一个 book.json 里有几章（每个 grid = 一章，原版一章一章单独读）：
+  //   脚本路径带 ::<章号>（从 1 数）= 只播这一章；不带 = 全部接起来播，章与章之间插一句「第 N 章」的分隔
+  const only = Number(meta?.scene) >= 1 ? Math.floor(Number(meta.scene)) : 0
+  if (only && !grids[only - 1]) throw new Error(`没有第 ${only} 章（这个文件有 ${grids.length} 章）`)
+  grids.forEach((grid, gridIndex) => {
+    if (only && gridIndex !== only - 1) return
+    if (!only && gridIndex > 0 && grids.length > 1) { emit({ op: 'speaker', segments: [] }); emit({ op: 'text', segments: [{ text: `—— 第 ${gridIndex + 1} 章 ——` }] }); pushStep(); speaker = null }
+    compileGrid(bookRows(grid), only ? 0 : gridIndex)
+  })
   // 整个剧情的语音一条都没找到：逐条记「找不到」没有意义（TSK 的 9xxxxxx 角色剧情在磁盘上没有语音目录），合成一条说明
   if (hasIndex && voiceRows > 0 && voiceFound === 0) {
     for (const key of Object.keys(stats.unresolved)) if (key.startsWith('voice:')) delete stats.unresolved[key]
@@ -787,4 +812,4 @@ export function health(ctx) {
   if (!ctx.books.length) out.push({ code: 'no-books', message: 'Adventure/ 下没有 *.book.json' })
   return out
 }
-export const utageBookAdapter = { id: ADAPTER_ID, health, label: 'Utage 剧情（*.book.json，Twinkle Star Knights X）', sniff, parse, contextFiles, contextDirs, contextWalkLimit, prepare, catalog }
+export const utageBookAdapter = { id: ADAPTER_ID, sceneInPath: true, health, label: 'Utage 剧情（*.book.json，Twinkle Star Knights X）', sniff, parse, contextFiles, contextDirs, contextWalkLimit, prepare, catalog }

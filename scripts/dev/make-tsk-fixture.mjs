@@ -113,7 +113,7 @@ const main1 = [
     R('Wait', { a6: '0.5' }),
     R('FadeIn', { a6: '1' }),
     R('HideMessageWindow'),
-    R('BgEvent', { a1: 'st_1001001', anim: 'cut_2_loop', speed: '0' }),                                           // 静态画面，循环
+    R('BgEvent', { a1: 'st_1001001', anim: 'cut_2_loop' }),                                           // 静态画面，循环
     T({ text: '一枚絵の上で。' }),
     R('BgEvent', { a1: 'st_1001001', anim: 'cut_1' }),                                                           // 同一幅换动画，不循环
     T({ text: '次の絵。' }),

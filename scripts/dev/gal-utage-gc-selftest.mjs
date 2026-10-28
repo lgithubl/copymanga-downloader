@@ -246,5 +246,21 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   check('artwhirl 语音：文件索引被截断时按原版第一个候选目录直接给路径（不再静默没声音）', guess === 'audio/voice/X_ca1_h2/X_ca1_X_001.ogg', J(guess))
 }
 
+// ================= 7. TSK：章拆分 / 盖黑后台词自动淡入 / BgEvent 播放规则（原版 Line_RunDialogue / ProcessBgEventAnimation）=================
+{
+  const charHeader = ['', 'CharacterName', 'NameText', 'Pattern', 'X', 'Y', 'Z', 'Pivot', 'Scale', 'Conditional', 'FileName', 'SubFileName', 'FileType']
+  const M3 = JSON.stringify({ settingList: [table('Master.xls:Character', charHeader, [['', 'ミナ', 'ミナ', '', '0', '130', '', '', '1', '', 'Characters/ch_100/ch_100_m0_SkeletonData.asset', '', 'Spine']])] })
+  const ctx3 = prep({}, M3, ['Adventure/Master.chapter.json', 'Characters/ch_100/ch_100_m0.skel.bytes', 'Characters/ch_100/ch_100_m0.atlas.txt', 'Stills/st_9/st_9.skel.bytes', 'Stills/st_9/st_9.atlas.txt'])
+  const grid = (rows) => ({ rows: [{ strings: HEADER }, ...rows].map((row, i) => ({ rowIndex: i, isEmpty: 0, isCommentOut: 0, ...row })) })
+  const book = JSON.stringify({ importGridList: [grid([R('FadeOut', { a6: '1' }), T({ text: 'g1' })]), grid([T({ text: 'g2' })])] })
+  const all = utage.parse(book, ctx3, { stem: 'b', config: {} })
+  const ops = (out) => out.steps.flatMap((st) => st.commands)
+  check('TSK：FadeOut 盖黑后第一句台词前自动补 fade clear 0（原版：画面全黑时台词出现就瞬间淡入）', same(ops(all).filter((c) => c.op === 'fade').map((c) => [c.to, c.seconds]), [['black', 1], ['clear', 0]]), J(ops(all).filter((c) => c.op === 'fade')))
+  check('TSK：多章（多个 grid）接起来播时章与章之间插一步「第 2 章」；带 scene（::2）只播第 2 章，超出报错', all.steps.length === 3 && all.steps[1].commands.some((c) => c.op === 'text' && /第 2 章/.test(c.segments[0].text)) && utage.parse(book, ctx3, { stem: 'b', scene: '2', config: {} }).steps.length === 1 && (() => { try { utage.parse(book, ctx3, { scene: '3', config: {} }); return false } catch { return true } })(), J(all.steps.length))
+  const still = (extra) => utage.parse(B([R('BgEvent', { a1: 'st_9', anim: 'cut_1', ...extra }), T({ text: 'x' })]), ctx3, { config: {} }).steps.flatMap((st) => st.commands).find((c) => c.op === 'spine')
+  const rows = [[{}, false, true], [{ anim: 'cut_2_loop' }, true, false], [{ comp: 'stop', anim: 'cut_2_loop' }, false, true], [{ comp: 'start' }, true, false], [{ speed: '0.5' }, true, false], [{ speed: '0' }, false, true]]
+  check('TSK BgEvent 播放规则：AnimSpd > 0 循环 / 0 冻结；stop 冻结、start 循环；没有时动画名带 loop 循环，否则冻结（速度 0）', rows.every(([extra, loop, freeze]) => { const c = still(extra); return c.loop === loop && Boolean(c.freeze) === freeze }), J(rows.map(([e]) => J(still(e)))))
+}
+
 console.log(`${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

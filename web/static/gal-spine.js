@@ -578,7 +578,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     else inst.moving = null
     inst.pos = inst.moving ? inst.pos : to
     const speed = Number.isFinite(Number(spec.speed)) && Number(spec.speed) > 0 ? Number(spec.speed) : 1
-    inst.state.timeScale = speed
+    inst.state.timeScale = spec.freeze ? 0 : speed   // freeze：冻结在当前帧（TSK BgEvent 没有 loop / start 时速度 0）
     // 降速（animation4）：和原查看器一样，开始播放后 1 秒内把速度从 speed 渐变到 slowTo；一步到位（后退 / 续播）直接停在 slowTo
     const prevSlow = inst.slow
     inst.slow = null
@@ -627,7 +627,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       updateWorld(backend, skeleton)
       const state = new sp.AnimationState(new sp.AnimationStateData(loaded.data))
       Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found, data: loaded.data, skeleton, state, boundsOk: false, bounds: { x: -960, y: -540, w: 1920, h: 1080 }, anim: '', loop: true })
-      applySpec(current, spec, live)
+      applySpec(current, current.spec || spec, live)   // 加载中又来了新指令（set 只记最新的 spec）：用最新的，不是第一次的（chmr_40101123 第 1 句没表情）
       refreshBounds(current)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
@@ -688,7 +688,14 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     let scale
     let px
     let py
-    if (inst.spec.kind === 'still') {
+    if (inst.spec.kind === 'still' && inst.spec.place && typeof inst.spec.place === 'object') {
+      // 精确摆放的静态画面（TSK BgEvent：原版 1 个骨架 1:1 像素画在舞台中心，不缩放）
+      const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
+      const unit = width / stage
+      scale = unit * (Number(inst.spec.place.scale) > 0 ? Number(inst.spec.place.scale) : 1)
+      px = width / 2 + (Number(inst.spec.place.x) || 0) * unit
+      py = height / 2 + (Number(inst.spec.place.y) || 0) * unit
+    } else if (inst.spec.kind === 'still') {
       // 静态画面的各层共用同一套变换（它们在游戏里是同一个原点、同一个缩放叠在一起）：以最底下那一层（序号最小，底图）的包围盒放进舞台，
       // 其它层（人物、特效，包围盒不一样）按同一个缩放和原点画——不能各按各的包围盒缩放居中，不然小的层会被放大、错位；
       // 也不能按面积最大的层，比底图还大的特效层会把整幅画面缩小
