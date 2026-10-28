@@ -47,6 +47,7 @@ import { collectVoices, compileVoiceRegex, filterVoices, parseVoiceTargets, pick
 //   · 目录卡片上的数量：按 目录 mtime 缓存
 // 都是 LRU，有上限。
 const CACHE_TTL_MS = 5 * 60 * 1000
+const SCRIPT_INFO_TTL_MS = 30 * 60 * 1000   // 脚本摘要按文件 mtime + 大小缓存，TTL 只是为了缩略图文件后来出现 / 消失：放长一点，别让翻一页（100 个脚本重新解析）动不动就等
 const sniffCache = new Map()
 const entriesCache = new Map()
 const scriptInfoCache = new Map()
@@ -606,7 +607,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const abs = absOf(set, rel)
     const info = await stat(abs)
     const key = `${abs}|${info.mtimeMs}|${info.size}|${infoCfgKey}`
-    const cached = cacheGet(scriptInfoCache, key, CACHE_TTL_MS)
+    const cached = cacheGet(scriptInfoCache, key, SCRIPT_INFO_TTL_MS)
     if (cached) return cached
     const adapterId = await scriptAdapterOf(abs)
     let excerpt = ''

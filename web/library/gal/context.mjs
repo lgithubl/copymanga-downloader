@@ -25,6 +25,7 @@ const SAMPLE_BYTES = 24 * 1024
 const SAMPLE_BYTES_CEILING = 256 * 1024
 const DIR_TTL_MS = 5 * 60 * 1000
 const cache = new Map()   // key → { fileKey, builtAt, ctx, stats }
+const building = new Map()   // key → 正在重建的 Promise（单飞）
 
 // 文件索引的状态（给界面显示 + 刷新按钮用）：这个媒体目录下各适配器上下文的建立时间 / 文件数 / 有没有被截断
 export function contextStats(mediaDir) {
@@ -95,6 +96,10 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
   const cached = cache.get(key)
   if (cached && cached.fileKey === fileKey && (!dirRels.length || Date.now() - cached.builtAt < DIR_TTL_MS)) return cached.ctx
 
+  // 重建（遍历目录 + 适配器 prepare，大游戏要好几秒）：同一个 key 同时只做一次（并发请求共用一个 Promise）；
+  // 过了 TTL 但目录 mtime 没变（fileKey 一样）= 旧索引大概率还对：先把旧的给调用方，后台重建，下次请求用新的（不让用户为「缓存到期」等几秒）
+  async function build() {
+
   const texts = {}
   for (const rel of fileRels) {
     try {
@@ -144,5 +149,16 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
   if (cache.size > 200) cache.clear()
   const stats = { adapter: adapter.id, builtAt: new Date().toISOString(), files: files.length, truncated: Boolean(files.truncated), sampleTruncated, sampleLimit, limit: walkLimit, ms: Date.now() - startedAt, dirs: dirRels }
   cache.set(key, { fileKey, builtAt: Date.now(), ctx, stats })
-  return ctx
+    return ctx
+  }
+  const pending = building.get(key)
+  const stale = cached && cached.fileKey === fileKey
+  if (stale && cached.ctx) {
+    if (!pending) { const job = build().catch((error) => console.warn(`[gal] ${adapter.id} 后台重建索引失败：${error?.message || error}`)).finally(() => building.delete(key)); building.set(key, job) }
+    return cached.ctx
+  }
+  if (pending) return pending
+  const job = build().finally(() => building.delete(key))
+  building.set(key, job)
+  return job
 }
