@@ -4467,7 +4467,9 @@ h2 {
   bottom: 24px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
   box-sizing: border-box;
-  display: grid;
+  display: flex;   /* 不能是 grid：面板有三个子元素（标题行 / 脚本栏 / 章节列表），grid 只有两行模板，脚本栏被压成 0 高度、内容溢出后被章节列表盖住 */
+  flex-direction: column;
+  gap: 12px;
   padding: 12px;
   position: fixed;
   right: 24px;
