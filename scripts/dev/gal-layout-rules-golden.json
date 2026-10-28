@@ -73,6 +73,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -168,6 +169,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -584,6 +586,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -679,6 +682,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -1019,6 +1023,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -1114,6 +1119,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -1219,6 +1225,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -1314,6 +1321,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -1419,6 +1427,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -1514,6 +1523,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -2025,6 +2035,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -2120,6 +2131,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -2426,6 +2438,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [
@@ -2521,6 +2534,7 @@
      "videos": "videos",
      "voices": "voices"
     },
+    "sceneImageData": "data/scripts/data/sceneImageData.js",
     "scenes": {
      "lineScript": "^h[ms]r_[^/]+\\.txt$",
      "script": [

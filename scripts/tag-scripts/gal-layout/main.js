@@ -252,6 +252,7 @@ export const ADAPTER_RULES = {
     titleLines: ['^title,([^,\\r\\n]+),'],
     speaker: { suffixRe: '（[^）]*）$' },
     dirs: { scenes: 'scenes', audio: 'data/audio', spine: 'data/spine' },
+    sceneImageData: 'data/scripts/data/sceneImageData.js',
     sceneDirs: {
       images: 'images',
       videos: 'videos',
@@ -303,6 +304,7 @@ export const ADAPTER_RULES = {
     titleLines: ['^title,([^,\\r\\n]+),'],
     speaker: { suffixRe: '（[^）]*）$' },
     dirs: { scenes: 'scenes', audio: 'data/audio', spine: 'data/spine' },
+    sceneImageData: 'data/scripts/data/sceneImageData.js',
     sceneDirs: {
       images: 'images',
       videos: 'videos',

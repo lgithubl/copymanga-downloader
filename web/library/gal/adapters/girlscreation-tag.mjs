@@ -29,7 +29,8 @@ const joinPath = (...parts) => parts.filter(Boolean).join('/')
 const rootOf = (options) => cleanDir(girlsOptions(options).root)
 
 // ---------- 上下文：场景索引 + 全局音频索引 + 标题 / 主要说话人 ----------
-export const contextFiles = () => []
+// sceneImageData.js（Aku / Fruits 的查看器自带，data/scripts/data/sceneImageData.js）：EV / BG 图的「底图」——值不是 null 的图只是和底图的差分，要先画底图再把这张叠上去
+export const contextFiles = (options) => { const file = girlsOptions(options).sceneImageData; return file ? [joinPath(rootOf(options), cleanDir(file))] : [] }
 export const contextDirs = (options) => Object.values(girlsOptions(options).dirs).map((dir) => joinPath(rootOf(options), cleanDir(dir)))
 export const contextTextFilter = (options) => {
   const opt = girlsOptions(options)
@@ -133,7 +134,16 @@ export function prepare({ options, texts, files, toResourcePath, truncated = fal
     info.set(id, { title, speaker })
   }
   const categoryLabels = { ...opt.categoryLabels }
-  return { opts: opt, root, scenes, audio, info, categoryLabels, truncated, noScript, globalSpines }
+  const baseImages = new Map()   // 场景 id → Map(图名 → 底图名)
+  const imageData = Object.entries(texts || {}).find(([rel]) => /sceneImageData\.js$/i.test(rel))?.[1]
+  if (imageData) {
+    for (const m of String(imageData).matchAll(/"[^"]*\/scenes\/([^/"]+)\/images\/([^"/]+?)\.(?:webp|png|jpe?g)"\s*:\s*"[^"]*\/images\/([^"/]+?)\.(?:webp|png|jpe?g)"/g)) {
+      if (m[2] === m[3]) continue
+      if (!baseImages.has(m[1])) baseImages.set(m[1], new Map())
+      baseImages.get(m[1]).set(m[2], m[3])
+    }
+  }
+  return { opts: opt, root, scenes, audio, info, categoryLabels, truncated, noScript, globalSpines, baseImages }
 }
 
 // ---------- 列表 ----------
@@ -381,7 +391,8 @@ export function parse(text, ctx = null, meta = {}) {
         }
         case 'BG': {
           const src = res('images', a[0])
-          if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src, fade: 0 }) } else { count('unresolved', `bg:${a[0]}`) }
+          const baseSrc = src ? res('images', ctx?.baseImages?.get(sceneId)?.get(a[0]) || '') : ''
+          if (src) { if (movieOn) { emit({ op: 'movieOff' }); movieOn = false } emit({ op: 'bg', src: baseSrc || src, ...(baseSrc ? { over: src } : {}), fade: 0 }) } else { count('unresolved', `bg:${a[0]}`) }
           if (numOf(a[3], 1) !== 1 || numOf(a[4]) !== 0 || numOf(a[5]) !== 0) count('raw', 'BG(缩放/位移)')
           break
         }
@@ -524,10 +535,11 @@ export function parse(text, ctx = null, meta = {}) {
           if (mode === 'OUT') { count('raw', 'EV(OUT)'); break }
           const color = /^black$/i.test(a[0]) ? [0, 0, 0] : /^white$/i.test(a[0]) ? [255, 255, 255] : null
           const src = color ? '' : res('images', a[0])
-          const over = a[3] ? res('images', a[3]) : ''
+          const baseName = !color && !a[3] ? ctx?.baseImages?.get(sceneId)?.get(a[0]) : ''
+          const over = a[3] ? res('images', a[3]) : baseName ? src : ''   // 底图映射：先画底图，再把这张差分叠上去
           if (movieOn) { emit({ op: 'movieOff' }); movieOn = false }
           if (color) emit({ op: 'bg', color, fade: mode === 'IN' ? secs(a[2]) : 0 })
-          else if (src) emit({ op: 'bg', src, ...(over ? { over } : {}), fade: mode === 'IN' ? secs(a[2]) : 0 })
+          else if (src) emit({ op: 'bg', src: baseName ? res('images', baseName) || src : src, ...(over ? { over } : {}), fade: mode === 'IN' ? secs(a[2]) : 0 })
           else count('unresolved', `ev:${a[0]}`)
           if (a[3] && !over && !color) count('unresolved', `ev:${a[3]}`)
           break

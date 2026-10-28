@@ -57,6 +57,7 @@ export const DEFAULT_OPTIONS = {
   titleLines: ['^title,([^,\\r\\n]+),'],
   speaker: { suffixRe: '（[^）]*）$' },
   dirs: { scenes: 'scenes', audio: 'data/audio', spine: 'data/spine' },
+  sceneImageData: 'data/scripts/data/sceneImageData.js',
   sceneDirs: { images: 'images', videos: 'videos', voices: 'voices', bgvoices: 'bgvoices', animations: 'animations', spines: 'spines' },
   audioKinds: ['bgm', 'se'],
   scenes: { script: ['script.txt', 'output_script.txt'], lineScript: '^h[ms]r_[^/]+\\.txt$', thumb: '^thumbnail\\.(?:png|jpe?g|webp)$' },

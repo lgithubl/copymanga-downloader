@@ -219,5 +219,18 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   check('TSK Sprite：骨架不在索引里 → 记「缺资源」不崩；AE_ / BE_ 在 Master 里没有 Spine 定义（原版什么都不做）→ raw', noEmote.stats.unresolved['effect:EM_999'] === 1 && go([R('Sprite', { a1: 'AE_0030', a3: 'EffectF' }), T({ text: 'z' })]).stats.raw['Sprite:AE'] === 1, J(noEmote.stats))
 }
 
+// ================= 5. Aku / Fruits：sceneImageData（EV / BG 图的底图 = 差分图要叠在底图上）=================
+{
+  const imageData = 'sceneImageData = {\n "./scenes/c1/images/still_a_02.webp": null,\n "./scenes/c1/images/still_a_01.webp": "./scenes/c1/images/still_a_02.webp",\n "./scenes/c1/images/still_a_04.webp": "./scenes/c1/images/still_a_02.webp"\n}'
+  const dataFile = 'data/scripts/data/sceneImageData.js'
+  const text = ['<EV>still_a_02,0', '<NAME_PLATE>甲', 'a', '<PAUSE>', '<EV>still_a_01,0', '<NAME_PLATE>甲', 'b', '<PAUSE>', '<BG>still_a_04,0,0,1,1', '<NAME_PLATE>甲', 'c', '<PAUSE>'].join('\n')
+  const files = ['scenes/c1/script.txt', 'scenes/c1/images/still_a_02.png', 'scenes/c1/images/still_a_01.png', 'scenes/c1/images/still_a_04.png']
+  const ctx = gc.prepare({ options: {}, texts: { [dataFile]: imageData }, files, toResourcePath: (r) => r })
+  const out = gc.parse(text, ctx, { rel: 'c1/script.txt', stem: 'script' })
+  const bgs = out.steps.flatMap((st) => st.commands).filter((c) => c.op === 'bg').map((c) => [c.src.replace(/^.*\//, ''), c.over?.replace(/^.*\//, '')])
+  check('Aku sceneImageData：底图（值 null）的 EV 单独画；有底图的 EV / BG（差分图）→ bg { src: 底图, over: 这张 }（原版 preloader 先画底图再叠这张）', J(bgs) === J([['still_a_02.png', undefined], ['still_a_02.png', 'still_a_01.png'], ['still_a_02.png', 'still_a_04.png']]), J(bgs))
+  check('contextFiles：默认读 <root>/data/scripts/data/sceneImageData.js；sceneImageData 写空串 = 不读', J(gc.contextFiles({ root: 'pk' })) === J(['pk/data/scripts/data/sceneImageData.js']) && gc.contextFiles({ sceneImageData: '' }).length === 0, J(gc.contextFiles({ root: 'pk' })))
+}
+
 console.log(`${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
