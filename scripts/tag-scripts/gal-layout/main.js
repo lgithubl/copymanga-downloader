@@ -1090,8 +1090,7 @@ export const LAYOUTS = {
       ],
       groups: [{ parent: 'chars', pattern: String.raw`^1(\d{6})\d{2}[A-Z]?$` }, { parent: 'chars', pattern: String.raw`^(6\d{5})\d{3}[A-Z]?$` }, { parent: 'main', pattern: String.raw`^(\d{7})[A-Z]?$` }, { parent: 'main', pattern: String.raw`^(\d{4})\d{2}[A-Z]?$` }, { parent: 'events', pattern: String.raw`^(ev\d+)_\d+_\d+[A-Z]?$` }, { parent: 'extras', pattern: String.raw`^(ex\d+)_\d+$` }, { parent: 'audition', pattern: String.raw`^(audition)\d*(?:_.*)?$` }], dirThumbs: [], scriptThumbs: [], thumbSources: [
         { dir: 'image/episode/story', match: String.raw`^(\d{9})\.png$`, key: '{1}', for: 'script', forKey: '{stem}' },
-        { dir: 'image/character/icon', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'script', forKey: '{stem:1:7}', limit: 1 },
-        { dir: 'image/character/deck', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'script', forKey: '{stem:1:7}', limit: 1 },
+        // 脚本卡片不再用角色头像 icon / deck（头像只给角色分组卡片用）：没有 episode/story 图的脚本走兜底 / 渲染缩略图（场景 CG、立绘）
         { dir: 'image/character/icon', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'dir', forKey: '{name}' },
         { dir: 'image/character/deck', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'dir', forKey: '{name}' },
         { dir: 'image/character/profile', match: String.raw`^(\d{6})\.png$`, key: '{1}', for: 'dir', forKey: '{name}' },

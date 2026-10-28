@@ -44,7 +44,7 @@ const lookup = (rules, files, subject) => {
 {
   const rules = sourcesOf('minashigo_r')
   const files = [{ dir: 'image/episode/story', name: '120090312.png' }, { dir: 'image/character/icon', name: '200903.png' }, { dir: 'image/character/deck', name: '200903.png' }, { dir: 'image/character/profile', name: '200903.png' }, { dir: 'image/character/stand', name: '20090301.png' }]
-  check('ミナシゴノシゴトR：脚本 120090312 = 本集图在前，再接角色（[1:7] = 200903）的 icon / deck', J(lookup(rules, files, { kind: 'script', stem: '120090312', parent: '' })) === J(['image/episode/story/120090312.png', 'image/character/icon/200903.png', 'image/character/deck/200903.png']), J(lookup(rules, files, { kind: 'script', stem: '120090312', parent: '' })))
+  check('ミナシゴノシゴトR：脚本 120090312 = 只有本集图（episode/story）；角色头像 icon / deck 不再给脚本卡片用（场景 CG 走渲染 / 兜底）', J(lookup(rules, files, { kind: 'script', stem: '120090312', parent: '' })) === J(['image/episode/story/120090312.png']), J(lookup(rules, files, { kind: 'script', stem: '120090312', parent: '' })))
   check('ミナシゴノシゴトR：角色分组卡片（键 200903）= icon → deck → profile → stand', J(lookup(rules, files, { kind: 'dir', name: '200903' })) === J(['image/character/icon/200903.png', 'image/character/deck/200903.png', 'image/character/profile/200903.png', 'image/character/stand/20090301.png']))
 }
 
