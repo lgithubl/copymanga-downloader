@@ -80,6 +80,30 @@ try {
   const imgSrcs = (page) => page.$$eval('.gal-card.is-script', (cards) => cards.map((c) => [c.dataset.title, c.querySelector('img')?.getAttribute('src') || '', c.querySelector('img')?.hidden || false]))
   const cacheFiles = async () => { try { const all = []; for (const d of await readdir(path.join(dataDir, 'cache', 'gal-render-thumbs'))) all.push(...await readdir(path.join(dataDir, 'cache', 'gal-render-thumbs', d))); return all } catch { return [] } }
 
+  // ---- 0. 选哪一步：CG 优先 ----
+  {
+    const page = await ctx.newPage()
+    await page.goto(`${base}/health`)
+    const picks = await page.evaluate(async () => {
+      const { pickRenderStep } = await import('/gal-thumb-render.js')
+      const bg = (src, over) => ({ op: 'bg', src, ...(over ? { over } : {}) })
+      const chara = { op: 'spine', slot: 'A', kind: 'actor', skel: 'a.skel', atlas: 'a.atlas' }
+      const still = { op: 'spine', slot: 'still0', kind: 'still', skel: 's.skel', atlas: 's.atlas' }
+      const text = { op: 'text', segments: [{ text: 'x' }] }
+      const mk = (steps) => ({ steps: steps.map((commands, index) => ({ index, commands })) })
+      const r = (scene) => { const p = pickRenderStep(scene, 150); return p ? [p.index, p.score] : null }
+      return {
+        onlyBg: r(mk([[bg('a.png'), text], [text]])),
+        chara: r(mk([[bg('a.png'), text], [chara, text], [text], [text], [text]])),
+        stillBeatsChara: r(mk([[bg('a.png'), chara, text], [text], [text], [still, text]])),
+        evBeatsAll: r(mk([[bg('a.png'), chara, text], [still, text], [bg('a.png', 'ev.png'), text]])),
+        farStill: r(mk([[bg('a.png'), chara, text], ...Array.from({ length: 300 }, () => [text]), [still, text]])),
+      }
+    })
+    check('选帧：纯背景 → 不渲染（null）；有角色（第 1 步出现）→ 往后推 2 步 = 第 3 步（分 30）', picks.onlyBg === null && picks.chara[1] === 30 && picks.chara[0] === 3, JSON.stringify(picks))
+    check('选帧：静态画面骨骼（still，90）比角色画面优先，CG（bg.over，100）比 still 优先；很靠后（300 步以后）的 CG 也找得到', picks.stillBeatsChara[1] === 90 && picks.stillBeatsChara[0] === 3 && picks.evBeatsAll[1] === 100 && picks.evBeatsAll[0] === 2 && picks.farStill[1] === 90 && picks.farStill[0] === 301, JSON.stringify(picks))
+    await page.close()
+  }
   // ---- 1. 第一次：缓存没有 → 渲染 → 上传 ----
   {
     const { page, log } = await open()

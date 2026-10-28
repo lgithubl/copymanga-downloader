@@ -88,7 +88,7 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   thumbHover: { enabled: true, count: 4, order: 'random', intervalMs: [700, 900] },
   // 视频缩略图截哪一帧：{ percent: 时长的比例（0～0.95，默认 0.1）, seconds: 固定秒数（> 0 时优先，默认 0）, max: 按比例时最多取到第几秒（默认 30） }
   thumbFrame: { percent: 0.1, seconds: 0, max: 30 },
-  // 渲染缩略图（骨骼 / 立绘场景：规则和兜底都没有图、或脚本里有骨骼时，列表页浏览器离屏渲染一帧传回服务器缓存）：{ enabled（默认 true）, width（160～1280，默认 640）, scanSteps（找第一个有骨骼的画面最多看几步，默认 150）, concurrency（同时渲染几张，1～3，默认 1）}
+  // 渲染缩略图（骨骼 / 立绘场景：规则和兜底都没有图、或脚本里有骨骼时，列表页浏览器离屏渲染一帧传回服务器缓存）：{ enabled（默认 true）, width（160～1280，默认 640）, scanSteps（找 CG / 立绘画面时看多少步：最多看 max(scanSteps×4, 600) 步，默认 150）, concurrency（同时渲染几张，1～3，默认 1）}
   thumbRender: { enabled: true, width: 640, scanSteps: 150, concurrency: 1 },
   // 分组：列 parent（通配；'.' = 脚本根本身）下的目录时，脚本文件名（无扩展名）能匹配 pattern 的，按第 1 个捕获组分成虚拟目录
   // （比如 ^(\\d{5}) 把 10001A1、10001B1 归到「10001」一张卡片里）；不匹配的脚本照常列出。虚拟目录的名字/头像和真实目录一样查 labels / namesFiles / dirThumbs

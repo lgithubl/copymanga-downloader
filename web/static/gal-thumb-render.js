@@ -3,25 +3,40 @@
 //   · 并发：全局队列，同时最多 concurrency 张（默认 1，一次一个 WebGL 上下文，渲染完就销毁）；只渲染滚到可见附近的卡片（调用方在图加载失败时才入队）
 //   · 失败：不缓存、不写任何标记——渲染失败 / 超时 / 骨骼加载失败 / 画面是空的都只是这一次没有图，下次重建列表页还会再试（同一个页面里同一张最多试一次，免得循环）
 //   · 页面销毁（destroy）：排队的任务丢掉，正在渲染的做完就丢结果
-// 选哪一帧：脚本前 scanSteps 步里第一个有骨骼的画面，再往后 2 步（表情通常紧跟着出来）；背景用那一步的 bg（含 over），骨骼用 gal-spine 的渲染层（和播放页同一套摆放）。
+// 选哪一帧：CG 优先（bg.over / 静态画面骨骼 / 铺满的叠加图），其次有立绘 / 骨骼角色的画面（见 pickRenderStep）；整个画面（背景 + 立绘 + 骨骼 + 叠加层）都画，和播放页同一套摆放。
 import { assetUrl, stateAt } from '/gal-engine.js'
 import { createSpineLayer } from '/gal-spine.js'
+import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 
 const loadImage = (url) => new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => reject(new Error(`图片加载失败：${url}`)); img.src = url })
 const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
 const withTimeout = (promise, ms, what) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error(`${what}超时（${Math.round(ms / 1000)} 秒）`)), ms); promise.then((v) => { clearTimeout(t); resolve(v) }, (e) => { clearTimeout(t); reject(e) }) })
 
-// 画面选哪一步：返回 { index, state }；找不到有骨骼的步 = null
+// 画面选哪一步：要「真正的场景」——CG（bg 带 over / 静态画面骨骼 still / 铺满的叠加图）优先，其次有立绘 / 骨骼角色的画面，最后才是纯背景。
+//   分数：CG 100（bg.over）/ 90（spine kind still）/ 60（overlay 带 src）；角色 30（spine / stand）；纯背景 1。取分数最高的，同分取最早的；
+//   角色画面往后推 2 步（表情通常紧跟着出来），CG 就用它出现的那一步。只在有画面指令的步重新算状态（台词步状态不变）
+const VISUAL_OPS = new Set(['bg', 'spine', 'spineOff', 'stand', 'standOff', 'overlay', 'overlayOff', 'movie', 'movieOff'])
+export function scoreState(state) {
+  if (state.bg?.over) return 100
+  if (Object.values(state.spines || {}).some((spec) => spec?.kind === 'still')) return 90
+  if ((state.overlays || []).some((o) => o?.src)) return 60
+  if (Object.keys(state.spines || {}).length || state.stand?.parts?.length || (state.stands || []).length) return 30
+  return state.bg?.src ? 1 : 0
+}
 export function pickRenderStep(scene, scanSteps = 150, after = 2) {
   const steps = Array.isArray(scene?.steps) ? scene.steps : []
-  const limit = Math.min(steps.length, scanSteps)
+  const limit = Math.min(steps.length, Math.max(scanSteps * 4, 600))
+  let best = null
   for (let i = 0; i < limit; i++) {
-    if (steps[i].commands?.some((c) => c.op === 'spine')) {
-      const index = Math.min(steps.length - 1, i + after)
-      return { index, state: stateAt(scene, index) }
-    }
+    if (!steps[i].commands?.some((c) => VISUAL_OPS.has(c.op))) continue
+    const state = stateAt(scene, i)
+    const score = scoreState(state)
+    if (score > (best?.score ?? 0)) best = { index: i, score }
+    if (score >= 100) break
   }
-  return null
+  if (!best || best.score < 30) return null   // 只有背景（或什么都没有）：这种卡片用普通的图片缩略图就行
+  const index = best.score >= 60 ? best.index : Math.min(steps.length - 1, best.index + after)
+  return { index, score: best.score, state: stateAt(scene, index) }
 }
 
 // cfg：{ apiBase（…/api/library/items/gal/<id>）, resourceBase, node, key, width, cameraMode, scanSteps }
@@ -33,7 +48,7 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
   const data = await res.json()
   const scene = data.scene || data.node?.scene
   const picked = pickRenderStep(scene, cfg.scanSteps)
-  if (!picked) throw new Error('脚本前几步里没有骨骼画面')
+  if (!picked) throw new Error('脚本里没有 CG / 立绘 / 骨骼画面')
   const { state } = picked
   const canvas = document.createElement('canvas')
   canvas.width = width
@@ -46,9 +61,10 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
     ctx.drawImage(img, (width - img.naturalWidth * k) / 2, (height - img.naturalHeight * k) / 2, img.naturalWidth * k, img.naturalHeight * k)
   }
   if (Array.isArray(state.bg?.color)) { ctx.fillStyle = `rgb(${state.bg.color.join(',')})`; ctx.fillRect(0, 0, width, height) }
+  const url = (src) => assetUrl(cfg.resourceBase, src)
   for (const src of [state.bg?.src, state.bg?.over]) {
     if (!src) continue
-    try { cover(await loadImage(assetUrl(cfg.resourceBase, src))) } catch { /* 背景缺了：骨骼照画 */ }
+    try { cover(await loadImage(url(src))) } catch { /* 背景缺了：别的层照画 */ }
   }
   const host = document.createElement('div')
   host.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px;pointer-events:none;overflow:hidden`
@@ -58,19 +74,28 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
   host.append(style)
   document.body.append(host)
   const errors = []
-  const layer = createSpineLayer({ parent: host, url: (src) => assetUrl(cfg.resourceBase, src), onMissing: (s) => errors.push(`缺 ${s}`), onUnavailable: (v) => errors.push(`运行时 ${v}`), onError: (e) => errors.push(String(e)) })
+  const media = createStageMedia({ url, onMissing: (s) => errors.push(`缺 ${s}`) })
+  const standLayer = createStandLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media })
+  const overlayLayer = createOverlayLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media })
+  const hasSpines = Object.keys(state.spines || {}).length > 0
+  const spineLayer = hasSpines ? createSpineLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), onUnavailable: (v) => errors.push(`运行时 ${v}`), onError: (e) => errors.push(String(e)) }) : null
   try {
     await withTimeout((async () => {
-      await layer.set(state.spines, { live: false, view: { camera: { mode: cfg.cameraMode === 'fixed' || cfg.cameraMode === 'widget' ? cfg.cameraMode : 'fit' } } })
-      await layer.ready()
+      await standLayer.set(state.stand, state.stands, { live: false })
+      await overlayLayer.set(state.overlays, { live: false })
+      if (spineLayer) { await spineLayer.set(state.spines, { live: false, view: { camera: { mode: cfg.cameraMode === 'fixed' || cfg.cameraMode === 'widget' ? cfg.cameraMode : 'fit' } } }); await spineLayer.ready() }
       await frame(); await frame()
-    })(), timeoutMs, '渲染骨骼')
-    const info = layer.info()
-    if (!info.length || info.some((r) => !r.loaded || r.error)) throw new Error(`骨骼没加载好：${errors.concat(info.map((r) => r.error?.message || r.error || '')).filter(Boolean).join('；') || '未知原因'}`)
+    })(), timeoutMs, '渲染画面')
+    if (spineLayer) {
+      const info = spineLayer.info()
+      if (!info.length || info.some((r) => !r.loaded || r.error)) throw new Error(`骨骼没加载好：${errors.concat(info.map((r) => r.error?.message || r.error || '')).filter(Boolean).join('；') || '未知原因'}`)
+    }
+    // 叠放顺序和播放页一致：立绘 → 骨骼 → 叠加层
+    const order = [standLayer.canvas, ...(spineLayer ? [...host.querySelectorAll('canvas.gal-spine')] : []), overlayLayer.canvas]
     let drew = 0
-    for (const cv of host.querySelectorAll('canvas')) { if (cv.width && cv.height) { ctx.drawImage(cv, 0, 0, width, height); drew += 1 } }
-    if (!drew) throw new Error('没有骨骼画布')
-  } finally { layer.destroy(); host.remove() }
+    for (const cv of order) { if (cv?.width && cv?.height) { ctx.drawImage(cv, 0, 0, width, height); drew += 1 } }
+    if (!drew) throw new Error('没有可画的层')
+  } finally { spineLayer?.destroy(); standLayer.destroy(); overlayLayer.destroy(); host.remove() }
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82))
   if (!blob || blob.size < 200) throw new Error('导出图片失败')
   return blob

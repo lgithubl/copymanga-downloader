@@ -656,10 +656,10 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       }
     } else if (scene && config.thumbFallback.enabled && config.thumbFallback.topUp && found.size < config.thumbFallback.max) await fillFromScript()
     const thumbs = [...found.values()]
-    // 渲染缩略图：脚本前 scanSteps 步里有骨骼（spine 指令），而规则（thumbSources / scriptThumbs / scriptIndex）没给图时，列表页让浏览器离屏渲染一帧传回来（见 gal-thumb-render.js）；
+    // 渲染缩略图：脚本里有骨骼 / 立绘 / 叠加图（spine / stand / overlay 指令），而规则（thumbSources / scriptThumbs / scriptIndex）没给图时，列表页让浏览器离屏渲染一帧传回来（见 gal-thumb-render.js）；
     // key = 脚本路径 + mtime + 大小 + 版本 + 宽度，脚本改了 key 就变，服务器缓存按 key 存
     const renderCfg = config.thumbRender
-    const hasSpine = Boolean(scene) && renderCfg.enabled && scene.steps.slice(0, renderCfg.scanSteps).some((step) => step.commands.some((c) => c.op === 'spine'))
+    const hasSpine = Boolean(scene) && renderCfg.enabled && scene.steps.slice(0, Math.max(renderCfg.scanSteps * 4, 600)).some((step) => step.commands.some((c) => c.op === 'spine' || (c.op === 'stand' && c.parts?.length) || (c.op === 'overlay' && c.src)))   // 有骨骼 / 立绘 / 叠加图（CG）的脚本
     const renderKey = hasSpine && !ruleHit ? createHash('sha1').update(JSON.stringify([abs, info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex') : ''
     const result = { adapterId, renderKey, thumb: thumbs[0] || '', thumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumbs.length ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
