@@ -1126,7 +1126,7 @@ export const LAYOUTS = {
         { dir: 'scenes/*', match: String.raw`^thumbnail\.(?:png|jpe?g|webp)$`, key: '{dirname}', for: 'script', forKey: '{parent}' },
         { dir: 'scenes/*', match: String.raw`^thumbnail\.(?:png|jpe?g|webp)$`, key: '{dirname}', for: 'dir', forKey: '{name}' },
       ],
-      thumbFallback: { topUp: true },
+      thumbFallback: { topUp: true, prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } },   // 立绘 / 表情差分很多：每个脚本最多 1 张立绘，CG / 视频 / 背景在前
     },
     count: [],   // 数「有 script.txt / output_script.txt / hmr_·hsr_<id>.txt 的场景」（detectGirlsCreation）
     cover: [{ dir: 'scenes/*', files: ['thumbnail.png', 'thumbnail.jpg', 'thumbnail.webp'] }],
@@ -1237,7 +1237,7 @@ export const LAYOUTS = {
         { dir: 'episode_thumb/*', match: String.raw`^(.+)_episode(\d+)(h?)_thumb\.jpg$`, key: '{1}_{2}{3}', for: 'script', forMatch: String.raw`^(.+)_ep(\d+)_h$`, forKey: '{1}_{2}h' },
         { dir: 'images/icons/*', match: String.raw`^icon_[ms]\.(?:jpg|png)$`, key: '{dirname}', for: 'dir', forMatch: String.raw`^(.+?)(?:_ep\d+)?$`, forKey: '{1}' },
       ],
-      thumbFallback: { topUp: true },
+      thumbFallback: { topUp: true, prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } },   // 立绘 / 表情差分很多：每个脚本最多 1 张立绘，CG / 视频 / 背景在前
     },
     count: [{ dir: 'episode_scripts', ext: '.json', depth: 3 }, { dir: 'hscripts', ext: '.json', depth: 3 }],
     avatars: [], expectedDirs: ['images/stands', 'audio'],
@@ -1261,7 +1261,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 20000 },
     },
     // 兜底封面跳过占位图：默认的 black / white / blank（按单词）再加 sepia_filter（回忆滤镜层 [image storage="sepia_filter-<hash>.png" layer=4]）；skip 是整张替换默认值，所以默认那条也要写进来
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100, thumbFallback: { skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', 'sepia_filter'] } },
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100, thumbFallback: { skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', 'sepia_filter'], prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } } },
     count: [{ dir: 'dmm/raw_scenario', ext: '.ks', depth: 6 }],
     avatars: [], expectedDirs: ['dmm/assets'],
     notes: ['列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；layer 3 的立绘滑入 / 滑出不渲染（anim layer / layopt 静默吃掉，animSlide: raw 可改成记 raw）；Memorial 剧情（mem_img 幻灯片 / mem_voice 语音 + 台词 / memorial 段落）已支持'],
@@ -1288,7 +1288,7 @@ export const LAYOUTS = {
         { parent: '.', as: 'h', label: 'H', match: String.raw`^[^【]*H\d*$`, exclusive: true },
         { parent: '.', as: 'events', label: '活动', match: String.raw`【[^】]*(?:\d{2}|七夕\d*|V-DAY\d*|Ｖ-[^】]*|節分\d*|水着\d*|[戌寅卯辰巳午未申酉亥子丑]年)】`, exclusive: true },
         { parent: '.', as: 'chars', label: '人物', match: String.raw`【[^】]*】`, exclusive: true },
-      ], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+      ], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } }, pageSize: 100 },
     count: [{ dir: 'json', ext: '.json', depth: 2 }],
     avatars: [], expectedDirs: ['resource'],
     notes: ['只有一部分脚本有同名资源子目录，没有的脚本只出台词（列表页「渲染诊断」会报缺资源）；打不开的 JSON（解析失败）照样列出来、打开时再报错'],
@@ -1308,7 +1308,7 @@ export const LAYOUTS = {
       classify: [],
       limits: { walkFiles: 2000000 },   // grenze-xml.contextWalkLimit：voice 一个目录十万级文件
     },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } }, pageSize: 100 },
     count: [],   // 数 TextAsset 里的 easy_dialog-N.xml（detectGrenze）
     cover: [{ dir: 'assets/resources/patchres/banner/banner_title', match: '^LOGO_.*\\.(?:webp|png)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 标题 LOGO（gal-samples15 的图片目录清单：patchres/banner/banner_title 里 LOGO_<…>_520.webp 291 张）
     avatars: [], expectedDirs: ['assets/resources/patchres'],
@@ -1883,15 +1883,16 @@ function canonField(key, value) {
     case 'thumbFallback': {
       if (!isPlain(value)) return value
       const num = (x, d, lo, hi) => (x === undefined || x === null || x === '' || typeof x === 'boolean' || !Number.isFinite(Math.floor(Number(x))) ? d : Math.max(lo, Math.min(hi, Math.floor(Number(x)))))
-      const prefer = Array.isArray(value.prefer) ? [...new Set(value.prefer.map((k) => (k === 'bgOver' ? 'cg' : k)).filter((k) => ['cg', 'stand', 'bg'].includes(k)))] : []
+      const prefer = Array.isArray(value.prefer) ? [...new Set(value.prefer.map((k) => (k === 'bgOver' ? 'cg' : k)).filter((k) => ['cg', 'stand', 'movie', 'bg'].includes(k)))] : []
       return {
         enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
         max: num(value.max, 6, 1, 12),
-        prefer: prefer.length ? prefer : ['cg', 'stand', 'bg'],
+        prefer: prefer.length ? prefer : ['cg', 'stand', 'movie', 'bg'],
         skipBlack: typeof value.skipBlack === 'boolean' ? value.skipBlack : true,
         skip: Array.isArray(value.skip) ? value.skip : ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'],
         scanSteps: num(value.scanSteps, 200, 10, 2000),
         topUp: typeof value.topUp === 'boolean' ? value.topUp : false,
+        kindMax: isPlain(value.kindMax) ? Object.fromEntries(Object.entries(value.kindMax).filter(([k, v]) => ['cg', 'stand', 'movie', 'bg'].includes(k) && Number.isFinite(Math.floor(Number(v))) && v !== null && v !== '' && typeof v !== 'boolean').map(([k, v]) => [k, Math.max(0, Math.min(12, Math.floor(Number(v))))])) : {},
       }
     }
     case 'thumbHover': {

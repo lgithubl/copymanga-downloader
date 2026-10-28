@@ -8,6 +8,7 @@
 //     bg    背景：bg 指令的 src（纯色背景没有 src，自然跳过）
 //   每一类内部按出现顺序、去重；整体按 prefer 排好后截到 max * 3 个候选（调用方逐个验证文件存在，凑够 max 张为止）。
 //   只扫前 scanSteps 步（默认 200）：大脚本也只花固定的时间；扫到够多就提前停。
+//   kindMax：{ stand: 1 } 每一类最多收几张（没写的类不限）；立绘 / 表情差分特别多的游戏用它限制
 //   skipBlack：文件名（无扩展名）命中 skip 里任一正则的丢掉（纯黑 / 纯白占位图，默认 black / white / blank 按单词边界）。
 import { DEFAULT_THUMB_FALLBACK, FALLBACK_PREFER, THUMB_FALLBACK_LIMITS } from './config.mjs'
 
@@ -34,6 +35,7 @@ export function collectFallbackImages(scene, options = {}) {
   const prefer = (Array.isArray(cfg.prefer) ? cfg.prefer : FALLBACK_PREFER).map((k) => (k === 'bgOver' ? 'cg' : k)).filter((k, i, all) => FALLBACK_PREFER.includes(k) && all.indexOf(k) === i)
   const kinds = prefer.length ? prefer : FALLBACK_PREFER
   const skip = cfg.skipBlack === false ? [] : compileSkip(cfg.skip)
+  const caps = cfg.kindMax && typeof cfg.kindMax === 'object' ? cfg.kindMax : {}
   const buckets = { cg: [], stand: [], movie: [], bg: [] }
   const seen = new Set()
   const counts = { cg: 0, stand: 0, movie: 0, bg: 0 }
@@ -43,6 +45,7 @@ export function collectFallbackImages(scene, options = {}) {
     if (seen.has(src)) return
     seen.add(src)
     counts[kind] += 1
+    if (Number.isFinite(caps[kind]) && buckets[kind].length >= caps[kind]) return   // kindMax：这一类已经够了
     if (skip.some((re) => re.test(stemOfSrc(src)))) { skipped += 1; return }
     buckets[kind].push(src)
   }

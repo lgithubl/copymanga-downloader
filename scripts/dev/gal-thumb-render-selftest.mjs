@@ -18,6 +18,13 @@ const order = (cfg) => collectFallbackImages(scene, cfg).images.map((i) => `${i.
 check('兜底默认：事件图 → 立绘 → 视频 → 背景；movie 指令的 srcs 都收（视频），背景最后', J(order({})) === J(['stand:st/x.png', 'movie:v/one.mp4', 'movie:v/two.webm', 'bg:bg/a.png']), J(order({})))
 check('prefer 里没写 movie = 不收视频（旧行为）；prefer 把 movie 放最前 = 视频帧优先', J(order({ prefer: ['cg', 'stand', 'bg'] })) === J(['stand:st/x.png', 'bg:bg/a.png']) && order({ prefer: ['movie', 'bg'] })[0] === 'movie:v/one.mp4', J(order({ prefer: ['movie', 'bg'] })))
 
+// kindMax：立绘 / 表情差分很多时每类限张数
+const many = { steps: [{ commands: [{ op: 'bg', src: 'bg/a.png' }, { op: 'bg', src: 'bg/b.png' }, ...['f1', 'f2', 'f3', 'f4'].map((n) => ({ op: 'stand', parts: [{ src: `st/${n}.png` }] }))] }] }
+const many2 = collectFallbackImages(many, { prefer: ['cg', 'bg', 'stand'], kindMax: { stand: 1 } }).images.map((i) => `${i.kind}:${i.src}`)
+check('kindMax { stand: 1 }：4 张表情差分的立绘只留 1 张，背景在前（prefer cg, bg, stand）', J(many2) === J(['bg:bg/a.png', 'bg:bg/b.png', 'stand:st/f1.png']), J(many2))
+const kc = normalizeGalConfig({ thumbFallback: { kindMax: { stand: 1, zzz: 2, bg: 'x' } } }).thumbFallback.kindMax
+check('kindMax 校验：不认识的类 / 非数字丢掉，默认空（不限）', J(kc) === J({ stand: 1 }) && J(normalizeGalConfig({}).thumbFallback.kindMax) === '{}', J(kc))
+
 // 配置校验
 const c = normalizeGalConfig({ thumbFrame: { percent: 2, seconds: 5, max: 0, zzz: 1 }, thumbRender: { enabled: 'x', width: 99999, scanSteps: 1, concurrency: 9, extra: 1 } })
 check('thumbFrame 夹范围（percent ≤ 0.95、max ≥ 1）；thumbRender 夹范围、类型不对 / 不认识的字段丢掉', c.thumbFrame.percent === 0.95 && c.thumbFrame.seconds === 5 && c.thumbFrame.max === 1 && c.thumbRender.width === 1280 && c.thumbRender.scanSteps === 10 && c.thumbRender.concurrency === 3 && c.thumbRender.enabled === true, J([c.thumbFrame, c.thumbRender]))

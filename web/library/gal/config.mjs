@@ -18,7 +18,7 @@ export const DEFAULT_THUMB_FRAME = Object.freeze({ percent: 0.1, seconds: 0, max
 export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1 })
 export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3] })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
-export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, scanSteps: 200, topUp: false })
+export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, scanSteps: 200, topUp: false, kindMax: Object.freeze({}) })
 // 卡片封面 / 悬停轮播（见 DEFAULT_GAL_CONFIG 里 thumbCover / thumbHover 的说明）
 export const THUMB_COVER_MODES = Object.freeze(['random', 'first', 'last'])
 export const DEFAULT_THUMB_HOVER = Object.freeze({ enabled: true, count: 4, order: 'random', intervalMs: Object.freeze([700, 900]) })
@@ -319,7 +319,7 @@ export function normalizeGalConfigWithWarnings(raw) {
 
   // thumbFallback：兜底封面（见 DEFAULT_GAL_CONFIG 里的说明）。没写 = 默认；写了的字段逐个校验，不合格的退回默认并报告
   const dtf = DEFAULT_THUMB_FALLBACK
-  const thumbFallback = { ...dtf, prefer: [...dtf.prefer], skip: [...dtf.skip] }
+  const thumbFallback = { ...dtf, prefer: [...dtf.prefer], skip: [...dtf.skip], kindMax: {} }
   if (v.thumbFallback !== undefined && !isPlainObject(v.thumbFallback)) warn('thumbFallback', '不是对象，用默认值', v.thumbFallback)
   if (isPlainObject(v.thumbFallback)) {
     const tf = v.thumbFallback
@@ -344,6 +344,17 @@ export function normalizeGalConfigWithWarnings(raw) {
       else {
         if (list.length > kinds.length) warn('thumbFallback.prefer', '有不认识 / 重复的项，已丢掉', list)
         thumbFallback.prefer = kinds
+      }
+    }
+    if (tf.kindMax !== undefined) {   // 每一类最多收几张：{ stand: 1 } = 立绘最多 1 张（立绘 / 表情差分很多时别把卡片塞满脸）；没写的类不限
+      if (!isPlainObject(tf.kindMax)) warn('thumbFallback.kindMax', '不是对象，用默认值（不限）', tf.kindMax)
+      else {
+        for (const [kind, value] of Object.entries(tf.kindMax)) {
+          const n = Math.floor(Number(value))
+          if (!FALLBACK_PREFER.includes(kind)) warn('thumbFallback.kindMax', `不认识的类 ${kind}（cg / stand / movie / bg），已丢掉`, kind)
+          else if (value === null || value === '' || typeof value === 'boolean' || !Number.isFinite(n)) warn(`thumbFallback.kindMax.${kind}`, '不是数字，已丢掉', value)
+          else thumbFallback.kindMax[kind] = Math.max(0, Math.min(THUMB_FALLBACK_LIMITS.max[1], n))
+        }
       }
     }
     if (tf.skip !== undefined) {

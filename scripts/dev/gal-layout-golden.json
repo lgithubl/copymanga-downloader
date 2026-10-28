@@ -1602,6 +1602,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -1692,6 +1701,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -1782,6 +1800,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -1872,6 +1899,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -1962,6 +1998,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2052,6 +2097,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2142,6 +2196,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2232,6 +2295,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2322,6 +2394,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2412,6 +2493,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2502,6 +2592,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2592,6 +2691,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2682,6 +2790,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2772,6 +2889,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2862,6 +2988,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -2952,6 +3087,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -3725,6 +3869,17 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ]
+   },
    "thumbsDirs": [],
    "views": []
   },
@@ -3780,6 +3935,17 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ]
+   },
    "thumbsDirs": [],
    "views": []
   },
@@ -3835,6 +4001,17 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ]
+   },
    "thumbsDirs": [],
    "views": []
   },
@@ -3890,6 +4067,17 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ]
+   },
    "thumbsDirs": [],
    "views": []
   },
@@ -3947,6 +4135,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "skip": [
      "(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)",
      "sepia_filter"
@@ -4009,6 +4206,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "skip": [
      "(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)",
      "sepia_filter"
@@ -4071,6 +4277,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "skip": [
      "(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)",
      "sepia_filter"
@@ -4133,6 +4348,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "skip": [
      "(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)",
      "sepia_filter"
@@ -4194,6 +4418,17 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ]
+   },
    "thumbsDirs": [],
    "views": [
     {
@@ -4272,6 +4507,17 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ]
+   },
    "thumbsDirs": [],
    "views": [
     {
@@ -4350,6 +4596,17 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ]
+   },
    "thumbsDirs": [],
    "views": [
     {
@@ -4428,6 +4685,17 @@
     }
    ],
    "scriptThumbs": [],
+   "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ]
+   },
    "thumbsDirs": [],
    "views": [
     {
@@ -5187,6 +5455,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -5276,6 +5553,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -5365,6 +5651,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
@@ -5454,6 +5749,15 @@
    ],
    "scriptThumbs": [],
    "thumbFallback": {
+    "kindMax": {
+     "stand": 1
+    },
+    "prefer": [
+     "cg",
+     "movie",
+     "bg",
+     "stand"
+    ],
     "topUp": true
    },
    "thumbSources": [
