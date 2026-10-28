@@ -70,6 +70,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
   bgm: { play: 'loop' },
   tween: { targetSlots: true },
   nameOnlyRow: 'show',
+  spriteImages: true,   // Sprite 命令的普通图片（BgParts 前景等）叠在背景上。注意：反编译的原版 HandleSpriteCommand 只认 Spine / EM_ / ch_，这些图原版可能根本不画——false = 记 raw（以前的行为）
   selection: { groupSuffix: '-\\d+$', adjacentGroups: true, singleAsText: true },
   // 文件夹 → 中文名（猜的，卡片副标题里同时写着文件夹名）；顺序 = 列表顺序
   folderLabels: [['^MainScenario$', '主线'], ['^CharaScenario$', '角色剧情'], ['^StoryEventScenario$', '活动剧情'], ['^BossrushEventScenario$', 'Bossrush 活动'], ['^HomeEventScenario$', '家园事件'], ['^ItemEventScenario$', '道具事件'], ['^SpEventScenario$', '特别活动'], ['^SubjugationEventScenario$', '讨伐活动']],
@@ -109,6 +110,7 @@ export function resolveOptions(options) {
   o.standX = { slotBase: num(o.standX.slotBase, 0.5), argIndex: Math.round(num(o.standX.argIndex, 4)) }
   const list = (value, fallback) => (Array.isArray(value) ? value.map(String) : fallback)
   o.nameOnlyRow = o.nameOnlyRow === 'faceOnly' ? 'faceOnly' : 'show'
+  o.spriteImages = o.spriteImages !== false
   o.tween.targetSlots = o.tween.targetSlots !== false
   o.speaker.source = list(o.speaker.source, DEFAULT_OPTIONS.speaker.source)
   for (const key of ['dirs', 'books']) o.index[key] = list(o.index[key], DEFAULT_OPTIONS.index[key])
@@ -679,6 +681,12 @@ export function parse(text, ctx = null, meta = {}) {
           break
         }
         case 'Sprite': sprite(row); break
+        case 'SpriteOff': {
+          if (o.spriteImages === false) { raw('SpriteOff'); break }   // 原版：目标为空什么都不做；有键 = 去掉它
+          if (row.a1) emit({ op: 'overlayOff', slot: `spr_${row.a1}` })
+          else ignore('SpriteOff(空)')
+          break
+        }
         case 'Tween': tween(row); break
         case 'EndScenario': {
           resumeGuard = openBlock ? openBlock.outer : guard
@@ -728,6 +736,15 @@ export function parse(text, ctx = null, meta = {}) {
     const argY = numOrNull(row.a5)
     const isEm = /^EM_/.test(key)
     const m = /^(ch_\d+)_([bf])$/.exec(key)
+    // 普通图片（Master Texture 表里 Type = Sprite、FileName 是图片：BgParts / EffectF 层上的前景、遮挡图）：叠在背景之上（透明 png），SpriteOff <键> 去掉
+    const tex = master?.textures.get(key)
+    if (o.spriteImages !== false && !isEm && !m && tex && /\.(?:png|jpe?g|webp)$/i.test(tex.file || '')) {
+      const src = resolveBg(key)
+      if (!src) return
+      stats.sprites = (stats.sprites || 0) + 1
+      emit({ op: 'overlay', slot: `spr_${key}`, src, fit: 'cover', z: 1, fade: secOf(row.a6) })
+      return
+    }
     if (!isEm && !m) { raw(`Sprite:${/^(AE|BE)_/.test(key) ? key.slice(0, 2) : key}`); return }
     if (!target) { raw(`Sprite:${key}（没有目标）`); return }
     const files = isEm ? effectFiles('Adventure/Textures/Spines/Emote', key) : effectFiles(`Characters/${m[1]}`, key)

@@ -147,7 +147,7 @@ try {
   // 渲染诊断：raw 指令 / 缺资源
   await page.click('.gal-note')
   const diag = await page.$eval('.gal-diag-text', (e) => e.textContent)
-  check('渲染诊断：暂未渲染的指令里有 FooBar / Sprite；缺资源里有缺的语音 zz_missing_voice 和背景 bg_adv_099_1', /FooBar/.test(diag) && /Sprite/.test(diag) && /zz_missing_voice/.test(diag) && /bg_adv_099_1/.test(diag), diag.slice(0, 900))
+  check('渲染诊断：暂未渲染的指令里有 FooBar / Param；缺资源里有缺的语音 zz_missing_voice 和背景 bg_adv_099_1', /FooBar/.test(diag) && /Param/.test(diag) && /zz_missing_voice/.test(diag) && /bg_adv_099_1/.test(diag), diag.slice(0, 900))
   await page.click('.gal-diag button:has-text("关闭")').catch(() => {})
 
   // 分支：交错写法（选 2 → 只走 2 的分支，一番的分支整步跳过）

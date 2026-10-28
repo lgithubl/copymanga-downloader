@@ -540,6 +540,7 @@ export const ADAPTER_RULES = {
     bgm: { play: 'loop' },
     tween: { targetSlots: true },
     nameOnlyRow: 'show',
+    spriteImages: true,
     selection: { groupSuffix: '-\\d+$', adjacentGroups: true, singleAsText: true },
     catalog: {
       groups: [
