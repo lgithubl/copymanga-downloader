@@ -1228,7 +1228,7 @@ export const LAYOUTS = {
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
     // 规则：artwhirl-json 全表（按官方 json_story_player 的语义写的；others.action 的 bow / jump / swing / vibe / avoid 近似成轻微整屏抖动，slidein* / attack* 记 raw，emotion.* drop（原版 json_story_player 不处理 emotion）；bg_change.val f / c / s → 渐变秒数（猜的）；音频扩展名对不上时按 audioExtFallback 换；voices 字符串 / dic 下标两种写法都认；换场景时收掉上一个场景的立绘）。
     ruleTables: ['artwhirl-json'], ruleOverrides: {},
-    engine: { classify: [] },
+    engine: { classify: [], limits: { walkFiles: 800000 } },   // images + audio：voice 一个游戏 13 万个文件（1400 个目录），加上图片会超过默认的 40 万
     // 缩略图（dir 相对资源根 = game/）：episode_scripts/<KEY>_ep<N>/<KEY>_ep<N>_00.json（H 版 _h.json）↔ episode_thumb/<KEY>/<KEY>_episode<N>_thumb.jpg（H 版 …_episode<N>h_thumb.jpg）；目录 / 分组卡片 ← images/icons/<KEY>/icon_m.jpg + icon_s.png；hscripts 的 H 场景没有直接的缩略图，走兜底 + topUp
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100,
       thumbSources: [

@@ -510,7 +510,10 @@
     }
    }
   },
-  "classify": []
+  "classify": [],
+  "limits": {
+   "walkFiles": 800000
+  }
  },
  "aster": {
   "adapterOptions": {

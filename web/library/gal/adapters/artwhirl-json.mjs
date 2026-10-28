@@ -143,7 +143,7 @@ export function prepare({ options, files, toResourcePath, resourceResolve }) {
   }
   const resolver = createIndexResolver({ index: resources, cfg: resourceResolve })
   const voices = createIndexResolver({ index: voiceIndex, cfg: resourceResolve, preferDirs: opt.voice.preferDirs.length ? opt.voice.preferDirs : null })
-  return { opts: opt, resources, resolver, voices, hasIndex: Boolean(files?.length), standZoom: opt.standZoom > 0 ? opt.standZoom : 1 }
+  return { opts: opt, resources, resolver, voices, hasIndex: Boolean(files?.length), truncated: Boolean(files?.truncated), standZoom: opt.standZoom > 0 ? opt.standZoom : 1 }
 }
 
 // ---------- 解析 ----------
@@ -301,7 +301,15 @@ export function parse(text, ctx = null, meta = {}) {
       stats.voices.referenced += 1
       const ext = extOf(voice).toLowerCase()
       const wanted = rx.voiceExt.has(ext) ? voice.slice(0, voice.length - ext.length) + rx.voiceExt.get(ext) : voice
-      let found = ctx?.voices?.resolveByName(wanted)
+      // 原版 json_story_player.rpy：先找 audio/voice/<剧情文件名>/<语音名>，再找 audio/voice/<语音名里 _00 / _hN / _hardhN 之前的部分>/<语音名>；
+      // 两个目录里可以有同名文件（AKUKAGUYA_ca1_00 和 AKUKAGUYA_ca1_h2 里都有 AKUKAGUYA_ca1_AKUKAGUYA_001.ogg，内容不同），所以先按目录找，找不到才按文件名全局找
+      const voiceDir = cleanDir(opt.voice.dir)
+      const prefix = /^(.+?_(?:00|h\d+|hardh\d+))_[^_]+_\d+\.[a-z0-9]+$/i.exec(wanted)
+      const dirCandidates = [stem, prefix?.[1]].filter(Boolean).map((dir) => `${voiceDir}/${dir}/${wanted}`)
+      let found = ''
+      for (const candidate of dirCandidates) { found = ctx?.resolver?.resolve(candidate) || ''; if (found) break }
+      if (!found) found = ctx?.voices?.resolveByName(wanted)
+      if (!found && ctx?.truncated && dirCandidates[0]) { found = dirCandidates[0]; stats.voices.guessed += 1 }   // 文件索引被截断：按原版的第一个候选目录直接给路径（取不到再报缺失）
       if (!found && ctx?.hasIndex && wanted !== voice) found = ctx.voices.resolveByName(voice)   // 换算后（.ogg）没有 → 试脚本里写的原名（.mp3）
       if (!found && ctx?.hasIndex && rx.voiceExts.length) {
         const base = wanted.slice(0, wanted.length - extOf(wanted).length)

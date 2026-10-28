@@ -232,5 +232,19 @@ const stand = (a1, a3, a4 = '') => T({ a1, a3, a4, anim: 'wait' })
   check('contextFiles：默认读 <root>/data/scripts/data/sceneImageData.js；sceneImageData 写空串 = 不读', J(gc.contextFiles({ root: 'pk' })) === J(['pk/data/scripts/data/sceneImageData.js']) && gc.contextFiles({ sceneImageData: '' }).length === 0, J(gc.contextFiles({ root: 'pk' })))
 }
 
+// ================= 6. 魔法学园：语音按原版的目录规则（剧情文件名目录优先；同名文件在别的目录里不会抢）=================
+{
+  const aw = await import('../../web/library/gal/adapters/artwhirl-json.mjs')
+  const files = ['audio/voice/AKUKAGUYA_ca1_00/AKUKAGUYA_ca1_AKUKAGUYA_003.ogg', 'audio/voice/AKUKAGUYA_ca1_h2/AKUKAGUYA_ca1_AKUKAGUYA_003.ogg', 'audio/voice/VANESSA_ep5_h/VANESSA_ep5_h_GINA_001.ogg']
+  const ctx = aw.prepare({ options: {}, files, toResourcePath: (r) => r })
+  const story = (voice) => JSON.stringify({ texts: ['a'], voices: [voice], names: [null], colors: [null], charas: [null], bgs: [null], bgms: [null], others: [null], dic: [] })
+  const voiceOf = (voice, stem) => aw.parse(story(voice), ctx, { stem }).steps.flatMap((st) => st.commands).find((c) => c.op === 'voice')?.src
+  check('artwhirl 语音：音频名 .mp3 → .ogg，先找 audio/voice/<剧情文件名>/（AKUKAGUYA_ca1_h2 的 003 不会被 AKUKAGUYA_ca1_00 里同名的抢走）', voiceOf('AKUKAGUYA_ca1_AKUKAGUYA_003.mp3', 'AKUKAGUYA_ca1_h2') === 'audio/voice/AKUKAGUYA_ca1_h2/AKUKAGUYA_ca1_AKUKAGUYA_003.ogg' && voiceOf('AKUKAGUYA_ca1_AKUKAGUYA_003.mp3', 'AKUKAGUYA_ca1_00') === 'audio/voice/AKUKAGUYA_ca1_00/AKUKAGUYA_ca1_AKUKAGUYA_003.ogg', J([voiceOf('AKUKAGUYA_ca1_AKUKAGUYA_003.mp3', 'AKUKAGUYA_ca1_h2')]))
+  check('artwhirl 语音：复用别的剧情组的语音（语音名里 _h<数字> 之前的部分是目录）也找得到', voiceOf('VANESSA_ep5_h_GINA_001.mp3', 'VANESSA_ep6_h') === 'audio/voice/VANESSA_ep5_h/VANESSA_ep5_h_GINA_001.ogg', J(voiceOf('VANESSA_ep5_h_GINA_001.mp3', 'VANESSA_ep6_h')))
+  const truncated = aw.prepare({ options: {}, files: Object.assign([], { truncated: true }), toResourcePath: (r) => r })
+  const guess = aw.parse(story('X_ca1_X_001.mp3'), truncated, { stem: 'X_ca1_h2' }).steps.flatMap((st) => st.commands).find((c) => c.op === 'voice')?.src
+  check('artwhirl 语音：文件索引被截断时按原版第一个候选目录直接给路径（不再静默没声音）', guess === 'audio/voice/X_ca1_h2/X_ca1_X_001.ogg', J(guess))
+}
+
 console.log(`${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
