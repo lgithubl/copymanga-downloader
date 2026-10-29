@@ -17,12 +17,17 @@ export const DEFAULT_THUMB_FRAME = Object.freeze({ percent: 0.5, seconds: 0, max
 // 骨骼 / 立绘场景的「渲染缩略图」（浏览器在列表页离屏渲染，传回服务器缓存）：enabled / 缩略图宽（高按 16:9）/ 最多扫多少步找第一个有骨骼的画面 / 同时渲染几张
 export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5 })
 export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95] })
+// 目录卡片的封面（目录 / 章节目录 / 角色分组里没有任何规则给图时，用它里面的脚本的封面；见 DEFAULT_GAL_CONFIG.dirCover）
+export const DIR_COVER_SOURCES = Object.freeze(['render', 'image'])
+export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]) })
+export const DIR_COVER_LIMITS = Object.freeze({ scan: [1, 30], depth: [1, 5], max: [1, 24], list: 10 })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
-export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, scanSteps: 200, scanFrom: 0, topUp: false, kindMax: Object.freeze({}) })
+export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, only: Object.freeze([]), scanSteps: 200, scanFrom: 0, topUp: false, kindMax: Object.freeze({}) })
 // 卡片封面 / 悬停轮播（见 DEFAULT_GAL_CONFIG 里 thumbCover / thumbHover 的说明）
 export const THUMB_COVER_MODES = Object.freeze(['random', 'first', 'last'])
-export const DEFAULT_THUMB_HOVER = Object.freeze({ enabled: true, count: 4, order: 'random', intervalMs: Object.freeze([700, 900]) })
-export const THUMB_HOVER_LIMITS = Object.freeze({ count: [1, 12], intervalMs: [100, 10000] })
+export const THUMB_HOVER_MODES = Object.freeze(['hover', 'auto'])
+export const DEFAULT_THUMB_HOVER = Object.freeze({ enabled: true, mode: 'hover', count: 4, order: 'random', intervalMs: Object.freeze([700, 900]) })
+export const THUMB_HOVER_LIMITS = Object.freeze({ count: [1, 24], intervalMs: [100, 10000] })
 // thumbSources 模板里能用的占位符（见 thumbs.mjs 的说明；{1}{2}… 捕获组和命名捕获组另算）
 export const FILE_PLACEHOLDERS = Object.freeze(['file', 'base', 'dirname', 'dir1', 'dir2', 'dir3', 'dirpath'])
 export const CARD_PLACEHOLDERS = Object.freeze(['stem', 'name', 'parent', 'parent2'])
@@ -79,13 +84,22 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   //   skipBlack true（默认）= 文件名命中 skip 的（纯黑 / 纯白占位图）不要
   //   skip      正则数组（对无扩展名的文件名，不分大小写），默认 black / white / blank 按单词；scanSteps 最多扫几步（10～2000，默认 200）
   //   topUp     true = 规则（scriptThumbs / thumbSources / scriptIndex）命中了图但不足 max 张时，再从脚本自己的 cg / stand / bg 补到 max 张（规则的图在前）；默认 false = 规则命中就不兜底
-  thumbFallback: { ...DEFAULT_THUMB_FALLBACK, prefer: [...DEFAULT_THUMB_FALLBACK.prefer], skip: [...DEFAULT_THUMB_FALLBACK.skip] },
+  //   only      白名单：正则数组（对完整的图片路径，不分大小写），写了就只要路径匹配其中任一条的图；默认 []（不限）。skip 和 only 同时写：先 only 再 skip
+  thumbFallback: { ...DEFAULT_THUMB_FALLBACK, prefer: [...DEFAULT_THUMB_FALLBACK.prefer], skip: [...DEFAULT_THUMB_FALLBACK.skip], only: [] },
+  // 目录卡片的封面（目录卡片没有 thumbSources / dirThumbs 规则给图时，用它里面脚本的封面；现在只有声明了 sceneThumbs 的适配器（utage-book）的目录会用）：
+  //   enabled  'auto'（默认：适配器声明了 sceneThumbs 才用）| true | false
+  //   scan     最多看几个脚本（深度优先，1～30，默认 6）；depth 往下找几层目录（1～5，默认 3）
+  //   max      封面最多几张（轮播用，1～24，默认 6）
+  //   prefer   优先级，数组，每项是 'render'（骨骼 / 立绘场景的渲染图，一个脚本一张）| 'image'（脚本的静态图：规则 / 兜底给的），或者 { source, match, take }：match = 正则（对脚本路径（render）/ 图片路径（image），不分大小写，没写 = 都要），take = 这一档最多取几张。
+  //            按顺序找：第一档有候选就用它，没有才看下一档（匹配 a 最优先，否则 b，否则默认）；merge: true = 各档的候选按顺序合起来，取到 max 张为止
+  //   skip / only  黑 / 白名单：正则数组（对脚本路径 / 图片路径），命中 skip 的丢掉；only 写了就只要命中其中一条的
+  dirCover: { ...DEFAULT_DIR_COVER, prefer: [...DEFAULT_DIR_COVER.prefer], skip: [], only: [] },
   // 卡片封面怎么选（卡片有多张图时）：random（默认，每次渲染随机一张当封面，悬停时随机顺序轮播）| first（只显示第一张，不轮播 = 旧行为）| hover（封面固定第一张，悬停时轮播）
   thumbMode: 'random',
   // 封面选哪张（卡片有多张候选图时）：random（默认）| first | last | { index: N }（第 N 张，从 0 数，超出就取最后一张）。thumbMode 是旧名：random → random；first → first 且不轮播；hover → first
   thumbCover: 'random',
-  // 悬停轮播：{ enabled（默认 true）, count（卡片轮播的图数上限，含封面，1～12，默认 4）, order: random | sequential（默认 random）, intervalMs: [最短, 最长]（默认 [700, 900]）}；只有候选图多于 1 张的卡片才轮播
-  thumbHover: { enabled: true, count: 4, order: 'random', intervalMs: [700, 900] },
+  // 轮播：{ enabled（默认 true）, mode: hover（悬停才轮播，默认）| auto（在屏幕里的卡片自动轮播，「更多」里可以改）, count（卡片轮播的图数上限，含封面，1～24，默认 4）, order: random | sequential（默认 random）, intervalMs: [最短, 最长]（默认 [700, 900]）}；只有候选图多于 1 张的卡片才轮播
+  thumbHover: { enabled: true, mode: 'hover', count: 4, order: 'random', intervalMs: [700, 900] },
   // 视频缩略图截哪一帧：{ percent: 时长的比例（0～0.95，默认 0.5）, seconds: 固定秒数（> 0 时优先，默认 0）, max: 按比例时最多取到第几秒（默认 3600）, skipDark: 这一帧太黑（片头淡入 / 黑屏）就换别的位置（默认 true） }
   thumbFrame: { percent: 0.5, seconds: 0, max: 3600, skipDark: true },
   // 渲染缩略图（骨骼 / 立绘场景：规则和兜底都没有图、或脚本里有骨骼时，列表页浏览器离屏渲染一帧传回服务器缓存）：{ enabled（默认 true）, width（160～1280，默认 640）, scanSteps（找 CG / 立绘画面时看多少步：最多看 max(scanSteps×4, 600) 步，默认 150）, concurrency（同时渲染几张，1～3，默认 1）, seek（骨骼动画取到第几成的位置，0～0.95，默认 0.5；0 = 第一帧）}
@@ -366,7 +380,63 @@ export function normalizeGalConfigWithWarnings(raw) {
         thumbFallback.skip = ok
       }
     }
+    if (tf.only !== undefined) {
+      const list = Array.isArray(tf.only) ? tf.only : null
+      if (!list) warn('thumbFallback.only', '不是数组，用默认值（不限）', tf.only)
+      else {
+        const ok = list.slice(0, THUMB_FALLBACK_LIMITS.skip).map((source) => text(source, 120)).filter((source) => { if (!source) return false; try { new RegExp(source, 'i'); return true } catch { return false } })
+        if (ok.length < list.length) warn('thumbFallback.only', `${list.length - ok.length} 项不是合法正则 / 太长 / 超过 ${THUMB_FALLBACK_LIMITS.skip} 项，已丢掉`, list)
+        thumbFallback.only = ok
+      }
+    }
   }
+
+  // dirCover：目录卡片的封面（见 DEFAULT_GAL_CONFIG 里的说明）
+  const ddc = DEFAULT_DIR_COVER
+  const dirCover = { ...ddc, prefer: [...ddc.prefer], skip: [], only: [] }
+  if (v.dirCover !== undefined && !isPlainObject(v.dirCover)) warn('dirCover', '不是对象，用默认值', v.dirCover)
+  if (isPlainObject(v.dirCover)) {
+    const dc = v.dirCover
+    for (const key of Object.keys(dc)) if (!(key in ddc)) warn('dirCover', `不认识的字段 ${key}，已丢掉`, key)
+    if (dc.enabled !== undefined) { if (dc.enabled === true || dc.enabled === false || dc.enabled === 'auto') dirCover.enabled = dc.enabled; else warn('dirCover.enabled', '只能是 auto / true / false，用默认值', dc.enabled) }
+    if (dc.merge !== undefined) { if (typeof dc.merge === 'boolean') dirCover.merge = dc.merge; else warn('dirCover.merge', '只能是 true / false，用默认值', dc.merge) }
+    for (const key of ['scan', 'depth', 'max']) {
+      if (dc[key] === undefined) continue
+      const n = Math.floor(Number(dc[key]))
+      const [lo, hi] = DIR_COVER_LIMITS[key]
+      if (dc[key] === null || dc[key] === '' || typeof dc[key] === 'boolean' || !Number.isFinite(n)) { warn(`dirCover.${key}`, '不是数字，用默认值', dc[key]); continue }
+      dirCover[key] = Math.max(lo, Math.min(hi, n))
+      if (dirCover[key] !== n) warn(`dirCover.${key}`, `超出范围 ${lo}–${hi}，夹到 ${dirCover[key]}`, dc[key])
+    }
+    for (const key of ['skip', 'only']) {
+      if (dc[key] === undefined) continue
+      if (!Array.isArray(dc[key])) { warn(`dirCover.${key}`, '不是数组，用默认值', dc[key]); continue }
+      const ok = dc[key].slice(0, DIR_COVER_LIMITS.list).map((source) => text(source, 120)).filter((source) => { if (!source) return false; try { new RegExp(source, 'i'); return true } catch { return false } })
+      if (ok.length < dc[key].length) warn(`dirCover.${key}`, `${dc[key].length - ok.length} 项不是合法正则 / 太长 / 超过 ${DIR_COVER_LIMITS.list} 项，已丢掉`, dc[key])
+      dirCover[key] = ok
+    }
+    if (dc.prefer !== undefined) {
+      if (!Array.isArray(dc.prefer)) warn('dirCover.prefer', '不是数组，用默认值', dc.prefer)
+      else {
+        const tiers = []
+        for (const one of dc.prefer.slice(0, DIR_COVER_LIMITS.list)) {
+          const src = typeof one === 'string' ? one : isPlainObject(one) ? one.source : ''
+          if (!DIR_COVER_SOURCES.includes(src)) { warn('dirCover.prefer', `不认识的档 ${JSON.stringify(one)}（render / image / { source, match, take }），已丢掉`, one); continue }
+          let match = ''
+          if (isPlainObject(one) && one.match !== undefined && one.match !== '') {
+            match = text(one.match, 120)
+            try { new RegExp(match, 'i') } catch { warn('dirCover.prefer', `match 不是合法正则：${match}，这一档的 match 已丢掉`, one); match = '' }
+          }
+          const take = isPlainObject(one) && one.take !== undefined ? Math.max(0, Math.min(DIR_COVER_LIMITS.max[1], Math.floor(Number(one.take)) || 0)) : 0
+          tiers.push({ source: src, match, take })
+        }
+        if (tiers.length) dirCover.prefer = tiers
+        else warn('dirCover.prefer', '没有一档合法，用默认值', dc.prefer)
+      }
+    }
+  }
+  // 默认的 prefer 也规整成对象（和写了的一致，下游只处理一种形状）
+  dirCover.prefer = dirCover.prefer.map((t) => (typeof t === 'string' ? { source: t, match: '', take: 0 } : t))
 
   // thumbCover / thumbHover（thumbMode 是旧名：没写 thumbCover 时按它推；thumbMode: first 同时关掉轮播）
   const coverOf = (value) => {
@@ -380,7 +450,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     if (got) { thumbCover = got; if (got.index !== undefined && Math.floor(Number(v.thumbCover.index)) !== got.index) warn('thumbCover.index', '超出范围 0–11，夹到 11', v.thumbCover) }
     else warn('thumbCover', '只能是 random / first / last / { index: N }（N ≥ 0），用默认值', v.thumbCover)
   } else if (v.thumbMode === 'first' || v.thumbMode === 'hover') thumbCover = 'first'
-  const thumbHover = { enabled: DEFAULT_THUMB_HOVER.enabled, count: DEFAULT_THUMB_HOVER.count, order: DEFAULT_THUMB_HOVER.order, intervalMs: [...DEFAULT_THUMB_HOVER.intervalMs] }
+  const thumbHover = { enabled: DEFAULT_THUMB_HOVER.enabled, mode: DEFAULT_THUMB_HOVER.mode, count: DEFAULT_THUMB_HOVER.count, order: DEFAULT_THUMB_HOVER.order, intervalMs: [...DEFAULT_THUMB_HOVER.intervalMs] }
   if (v.thumbMode === 'first' && v.thumbHover === undefined) thumbHover.enabled = false
   if (v.thumbHover !== undefined && !isPlainObject(v.thumbHover)) warn('thumbHover', '不是对象，用默认值', v.thumbHover)
   if (isPlainObject(v.thumbHover)) {
@@ -393,6 +463,7 @@ export function normalizeGalConfigWithWarnings(raw) {
       if (th.count === null || th.count === '' || typeof th.count === 'boolean' || !Number.isFinite(n)) warn('thumbHover.count', '不是数字，用默认值', th.count)
       else { thumbHover.count = Math.max(lo, Math.min(hi, n)); if (thumbHover.count !== n) warn('thumbHover.count', `超出范围 ${lo}–${hi}，夹到 ${thumbHover.count}`, th.count) }
     }
+    if (th.mode !== undefined) { if (THUMB_HOVER_MODES.includes(th.mode)) thumbHover.mode = th.mode; else warn('thumbHover.mode', '只能是 hover / auto，用默认值', th.mode) }
     if (th.order !== undefined) { if (th.order === 'random' || th.order === 'sequential') thumbHover.order = th.order; else warn('thumbHover.order', '只能是 random / sequential，用默认值', th.order) }
     if (th.intervalMs !== undefined) {
       const [lo, hi] = THUMB_HOVER_LIMITS.intervalMs
@@ -674,6 +745,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     scriptThumbs: v.scriptThumbs === undefined ? d.scriptThumbs.slice() : (Array.isArray(v.scriptThumbs) ? v.scriptThumbs : []).map((t) => text(t, 300)).filter(Boolean).slice(0, 10),
     thumbSources: v.thumbSources === undefined ? [] : thumbSources,
     thumbFallback,
+    dirCover,
     thumbMode: ['random', 'first', 'hover'].includes(v.thumbMode) ? v.thumbMode : d.thumbMode,
     thumbCover,
     thumbHover,

@@ -25,6 +25,7 @@ let refocusSearch = null   // 搜索框触发的重绘后，把焦点还给新�
 // 卡片封面 / 悬停轮播的本地偏好（localStorage，空 = 跟配置）：gal.thumbHover = on | off；gal.thumbCover = random | first | last
 const PREF_HOVER = 'gal.thumbHover'
 const PREF_COVER = 'gal.thumbCover'
+const PREF_MODE = 'gal.thumbCarousel'   // 轮播方式：hover | auto（空 = 跟配置 thumbHover.mode）
 const readPref = (key) => { try { return localStorage.getItem(key) || '' } catch { return '' } }
 const writePref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key) } catch { /* 存不了就只对这次有效 */ } }
 let keepMenuOpen = null    // 在「更多」里改了搜索 / 排序 / 每页条数 → 重绘后把菜单重新打开（还要接着改别的）
@@ -258,13 +259,18 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   const hoverBox = el('input', 'gal-browse-hover-toggle')
   hoverBox.type = 'checkbox'
   hoverBox.checked = hoverOn()
-  hoverBox.title = '鼠标悬停在有多张图的卡片上时轮播'
+  hoverBox.title = '有多张图的卡片轮播（悬停 / 自动见「轮播方式」）'
   hoverBox.addEventListener('change', () => writePref(PREF_HOVER, hoverBox.checked ? 'on' : 'off'))
   const coverSel = el('select', 'gal-browse-cover-select')
   coverSel.title = '卡片有多张图时封面选哪张'
   for (const [value, label] of [['', '跟随配置'], ['random', '随机'], ['first', '第一张'], ['last', '最后一张']]) { const option = el('option', '', label); option.value = value; option.selected = value === readPref(PREF_COVER); coverSel.append(option) }
   coverSel.addEventListener('change', () => { writePref(PREF_COVER, coverSel.value); keepMenuOpen = node.viewBase; go(node.id) })
-  moreMenu.append(field('悬停轮播', hoverBox), field('封面', coverSel))
+  const modeOf = () => { const pref = readPref(PREF_MODE); return pref === 'hover' || pref === 'auto' ? pref : (hoverCfg.mode === 'auto' ? 'auto' : 'hover') }
+  const modeSel = el('select', 'gal-browse-carousel-mode')
+  modeSel.title = '悬停 = 鼠标放上去才轮播；自动 = 在屏幕里的卡片自己轮播'
+  for (const [value, label] of [['', '跟随配置'], ['hover', '悬停'], ['auto', '自动']]) { const option = el('option', '', label); option.value = value; option.selected = value === readPref(PREF_MODE); modeSel.append(option) }
+  modeSel.addEventListener('change', () => { writePref(PREF_MODE, modeSel.value); keepMenuOpen = node.viewBase; go(node.id) })
+  moreMenu.append(field('轮播', hoverBox), field('轮播方式', modeSel), field('封面', coverSel))
   const immBtn = el('button', 'gal-browse-imm', '沉浸')
   immBtn.type = 'button'
   immBtn.title = '沉浸模式（I）'
@@ -359,12 +365,14 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     // 一张卡片可以有多张图（item.thumbs，thumb = 第一张）；thumbMode：random（默认）随机一张当封面 / first 只第一张 / hover 封面第一张、悬停轮播
     const thumbs = item.thumbs?.length ? item.thumbs : item.thumb ? [item.thumb] : []
     const cover = coverOf()
-    const render = item.render?.key && (item.type === 'script' || item.render.node) ? item.render : null   // 目录卡片的封面是它里面某个脚本渲染的（render.node）
-    const renderUrl = render ? `${apiBase}/render-thumb?key=${render.key}` : ''
+    const renders = (item.renders?.length ? item.renders : item.render?.key ? [item.render] : []).filter((r) => r?.key && (item.type === 'script' || r.node))   // 目录卡片的封面是它里面脚本渲染的（render.node）；多个 = 轮播里的几张
+    const render = renders[0] || null
+    const renderUrlOf = (r) => `${apiBase}/render-thumb?key=${r.key}`
+    const renderUrl = render ? renderUrlOf(render) : ''
     if (!thumbs.length && !render) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
     if (!thumbs.length && item.type === 'dir') box.dataset.icon = '📁'
     if (thumbs.length || render) {
-      const urls = [...(render ? [renderUrl] : []), ...thumbs.map((path) => thumbUrl(reader.resourceBase, path))]
+      const urls = [...renders.map(renderUrlOf), ...thumbs.map((path) => thumbUrl(reader.resourceBase, path))]
       const coverAt = render ? 0 : pickCover(thumbs.length, cover)   // 有渲染缩略图就以它为封面（缓存里没有时先显示别的图，渲染好了换上）
       const img = el('img')
       img.alt = ''
@@ -396,7 +404,20 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
         refreshDiag()
       })
       box.append(img)
-      if (urls.length > 1) cardCycles.push({ box, img, urls, coverAt, hover: { ...hoverCfg, enabled: true }, isEnabled: hoverOn })
+      // 轮播里除封面外的渲染图：开始轮播时才检查缓存、没有就排队渲染（一个目录最多几张，全部一进列表就渲染太重）
+      let extrasDone = false
+      const ensureExtras = renders.length > 1 ? () => {
+        if (extrasDone) return
+        extrasDone = true
+        renders.slice(1).forEach((r, k) => {
+          fetch(renderUrlOf(r)).then((res) => {
+            if (res.ok) return null
+            return thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: r.node || item.node, key: r.key, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
+              .then((blob) => { urls[k + 1] = URL.createObjectURL(blob) })
+          }).catch(() => {})
+        })
+      } : null
+      if (urls.length > 1) cardCycles.push({ box, img, urls, coverAt, hover: { ...hoverCfg, enabled: true, mode: modeOf(), ...(item.carousel ? { count: item.carousel } : {}) }, isEnabled: hoverOn, onStart: ensureExtras })
     } else {
       box.classList.add('empty')
     }

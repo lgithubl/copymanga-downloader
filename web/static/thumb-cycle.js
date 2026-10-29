@@ -6,7 +6,7 @@
 const VIDEO_EXT = /\.(mp4|mkv|webm|mov|m4v)$/i
 export const isVideoSrc = (path) => VIDEO_EXT.test(String(path))
 export const INTERVAL_MS = [700, 900]
-export const DEFAULT_HOVER = { enabled: true, count: 4, order: 'random', intervalMs: INTERVAL_MS }
+export const DEFAULT_HOVER = { enabled: true, mode: 'hover', count: 4, order: 'random', intervalMs: INTERVAL_MS }
 
 // 图的地址：视频带 frame=1，服务端给一帧 JPEG（video-thumb.mjs）
 export const thumbUrl = (base, path) => `${base}?path=${encodeURIComponent(path)}${isVideoSrc(path) ? '&frame=1' : ''}`
@@ -36,10 +36,12 @@ export function hoverPlan(total, coverAt, hover = DEFAULT_HOVER, rand = Math.ran
   return shuffled(others, rand).slice(0, count - 1)
 }
 
+// hover.mode：hover（默认，鼠标悬停才轮播）| auto（在屏幕里的卡片自己轮播）
 // target：接收 hover 的元素（卡片）；img：封面 <img>；urls：全部图的地址；coverAt：封面是第几张
-export function attachThumbCycle({ target, img, urls, coverAt = 0, hover = DEFAULT_HOVER, isEnabled = () => true, win = window, rand = Math.random }) {
+export function attachThumbCycle({ target, img, urls, coverAt = 0, hover = DEFAULT_HOVER, isEnabled = () => true, onStart = null, win = window, rand = Math.random }) {
   if (urls.length < 2) return null
   const range = Array.isArray(hover.intervalMs) && hover.intervalMs.length === 2 ? hover.intervalMs : INTERVAL_MS
+  let onMiss = () => {}
   let timer = 0
   let token = 0
   let active = false
@@ -59,6 +61,7 @@ export function attachThumbCycle({ target, img, urls, coverAt = 0, hover = DEFAU
     if (active || !hover.enabled || !isEnabled() || (event?.pointerType && event.pointerType !== 'mouse') || reduced()) return
     if (!img.isConnected || !img.complete || !img.naturalWidth) return
     active = true
+    try { onStart?.() } catch { /* 钩子出错不影响轮播 */ }
     const mine = ++token
     home = img.getAttribute('src') || ''
     let last = coverAt
@@ -81,16 +84,52 @@ export function attachThumbCycle({ target, img, urls, coverAt = 0, hover = DEFAU
       const ok = await preload(urls[index])
       if (token !== mine || !active) return
       if (reduced() || win.document.hidden || !img.isConnected) { stop(); return }
-      if (ok) { img.src = urls[index]; last = index; misses = 0 } else if (++misses >= urls.length) { stop(); return }
+      if (ok) { img.src = urls[index]; last = index; misses = 0 } else if (++misses >= urls.length) { stop(); onMiss(); return }
       upcoming = nextIndex()
       preload(urls[upcoming])   // 预热下一张，到点直接换
       timer = win.setTimeout(step, delay())
     }
     timer = win.setTimeout(step, delay())
   }
+  // auto：不用悬停，在屏幕里的卡片自己轮播（IntersectionObserver：滚出屏幕就停；标签页在后台停；错开启动，别一起换图）。触摸设备也能用
+  const auto = hover.mode === 'auto' && typeof win.IntersectionObserver === 'function'
+  let visible = false
+  let kick = 0
+  let retries = 0
+  const tryStart = (wait = 200 + rand() * 1000) => {
+    win.clearTimeout(kick)
+    kick = win.setTimeout(() => { if (visible && !active && !win.document.hidden) start() }, wait)
+  }
+  // 有的图还没好（渲染缩略图要现渲）：这一轮全 miss 停了，屏幕里还在就隔几秒再试，最多 3 次
+  onMiss = () => { if (auto && visible && retries++ < 3) tryStart(4000) }
+  const onVisibility = () => { if (win.document.hidden) { win.clearTimeout(kick); stop() } else if (visible) tryStart() }
+  const onLoad = () => { if (visible && !active) tryStart() }
+  let observer = null
   const onEnter = (event) => start(event)
-  target.addEventListener('pointerenter', onEnter)
-  target.addEventListener('pointerleave', stop)
-  target.addEventListener('pointercancel', stop)
-  return { stop, destroy: () => { stop(); target.removeEventListener('pointerenter', onEnter); target.removeEventListener('pointerleave', stop); target.removeEventListener('pointercancel', stop) } }
+  if (auto) {
+    observer = new win.IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        visible = entry.isIntersecting
+        if (visible) { retries = 0; tryStart() } else { win.clearTimeout(kick); stop() }
+      }
+    }, { threshold: 0.2 })
+    observer.observe(target)
+    img.addEventListener('load', onLoad)
+    win.document.addEventListener('visibilitychange', onVisibility)
+  } else {
+    target.addEventListener('pointerenter', onEnter)
+    target.addEventListener('pointerleave', stop)
+    target.addEventListener('pointercancel', stop)
+  }
+  return {
+    stop,
+    destroy: () => {
+      stop()
+      win.clearTimeout(kick)
+      observer?.disconnect()
+      img.removeEventListener('load', onLoad)
+      win.document.removeEventListener('visibilitychange', onVisibility)
+      target.removeEventListener('pointerenter', onEnter); target.removeEventListener('pointerleave', stop); target.removeEventListener('pointercancel', stop)
+    },
+  }
 }

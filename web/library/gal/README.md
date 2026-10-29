@@ -945,3 +945,19 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 路径带 `::N` 的章节卡片以前整个跳过摘要（没有封面也没有渲染缩略图），拆章之后 TSK 的卡片几乎都没图。现在适配器声明 `sceneThumbs: true`（utage-book）时，章节按 `<文件>::N` 算封面（规则 → 兜底 → 骨骼渲染）；别的 `sceneInPath` 适配器（grenze-xml，一个文件几十个场景）保持跳过。
 - 目录卡片（角色分组、章节目录、剧情文件夹）规则没给图时，用它里面前 6 个脚本里第一个有封面的（`render.node` = 那个脚本的节点，目录自己不是场景）。同一个 key 的几张卡片共用一次渲染。
 - 角色分组卡片的取图名是 `@<4 位角色号>`（`key`），以前没给 key，`thumbSources`（Sprites/Chara/Thumb_*）永远对不上。
+
+## 目录卡片封面 / 轮播 / 黑白名单（配置化）
+
+全部写在脚本（gal-layout 的 LAYOUTS 或条目 config）里，不用改代码。
+
+- **`dirCover`**（目录卡片没有 thumbSources / dirThumbs 规则给图时，用它里面脚本的封面）：`enabled`（auto = 适配器声明了 `sceneThumbs` 才用，默认；true / false）、`scan`（最多看几个脚本，默认 6）、`depth`（往下几层，默认 3）、`max`（封面最多几张 = 这张卡片轮播的图数，1～24，默认 6）、`merge`（false = 第一档有候选就只用它；true = 各档按顺序合起来）、`prefer`（优先级数组，每项 `'render'`（骨骼 / 立绘场景的渲染图）| `'image'`（脚本的静态图）或 `{ source, match, take }`——match 是正则（对脚本路径 / 图片路径，不分大小写），take 是这一档最多几张）、`skip` / `only`（黑 / 白名单，正则数组，对脚本路径 / 图片路径）。TSK 现在写的是 `{ enabled: true, scan: 8, max: 6, prefer: ['render', 'image'] }`：优先骨骼渲染图，没有再用静态图。章节卡片、角色分组卡片的规则一个没动。
+- **`thumbFallback.only`**：兜底封面的白名单（正则数组，对完整图片路径），写了就只要命中的；`skip`（黑名单，对无扩展名的文件名）原来就有。
+- **`thumbHover.mode`**：`hover`（默认，悬停才轮播）| `auto`（在屏幕里的卡片自己轮播：IntersectionObserver，滚出屏幕 / 标签页在后台就停，错开启动，渲染图还没好时隔几秒再试）。**「更多」→「轮播方式」**（跟随配置 / 悬停 / 自动）存在浏览器本地，覆盖配置；「轮播」复选框是总开关。`thumbHover.count`（轮播图数上限，含封面）上限从 12 提到 24。
+- 目录卡片的渲染图可以有多张（`item.renders`）：封面那张照旧在列表页渲染，其余的在这张卡片开始轮播时才检查缓存、没有再排队渲染（一个目录几张全部进列表就渲染太重）。
+
+### G 媒体封面（媒体卡片的封面图）
+
+由 gal-layout 写到 `config.cover`，只改脚本配置就能改：
+1. 每个游戏的 LAYOUTS 条目里的 `cover` 规则（`{ dir, match, flags, pick: first | last }` 或 `{ dir, files }`）——数组，第一个有结果的算（就是优先级：a 没有再 b）；
+2. 脚本参数 `overrides: [{ path, cover }]`——按媒体目录路径单独指定封面（`~/` 开头 = 相对媒体目录），优先于规则。
+重新跑一遍 gal-layout 生效。没有「按名字优先级挑多张」的随机 / 轮播（媒体封面是单张）。

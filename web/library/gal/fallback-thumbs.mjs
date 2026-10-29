@@ -36,6 +36,7 @@ export function collectFallbackImages(scene, options = {}) {
   const prefer = (Array.isArray(cfg.prefer) ? cfg.prefer : FALLBACK_PREFER).map((k) => (k === 'bgOver' ? 'cg' : k)).filter((k, i, all) => FALLBACK_PREFER.includes(k) && all.indexOf(k) === i)
   const kinds = prefer.length ? prefer : FALLBACK_PREFER
   const skip = cfg.skipBlack === false ? [] : compileSkip(cfg.skip)
+  const only = compileSkip(cfg.only)   // 白名单：写了就只要完整路径命中其中一条的图（同一套「安全编译正则」）
   const caps = cfg.kindMax && typeof cfg.kindMax === 'object' ? cfg.kindMax : {}
   const buckets = { cg: [], stand: [], movie: [], bg: [] }
   const seen = new Set()
@@ -45,6 +46,7 @@ export function collectFallbackImages(scene, options = {}) {
     if (kind === 'movie' ? !(typeof src === 'string' && src.length < 400 && VIDEO_RE.test(src)) : !usable(src)) return
     if (seen.has(src)) return
     seen.add(src)
+    if (only.length && !only.some((re) => re.test(src))) { skipped += 1; return }
     counts[kind] += 1
     if (Number.isFinite(caps[kind]) && buckets[kind].length >= caps[kind]) return   // kindMax：这一类已经够了
     if (skip.some((re) => re.test(stemOfSrc(src)))) { skipped += 1; return }

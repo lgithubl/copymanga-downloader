@@ -1209,6 +1209,7 @@ export const LAYOUTS = {
     // 缩略图：角色分组卡片（目录节点名 '@<4 位角色号>'，forStrip 去掉 @）← Sprites/Chara/Thumb_005|Thumb_006/chara_<7 位>_<n>_<n>.png（真实路径不带 Textures/）；脚本 CharaScenario<7 位> 前 4 位 = 角色号（头像与角色的对应是猜的）
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: ['BackGrounds', 'Effects', 'Spine', 'Textures'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [],
       thumbSources: [{ dir: 'Sprites/Chara/Thumb_*', match: String.raw`^chara_(\d{4})\d{3}_.*\.png$`, key: '{1}', for: 'dir', forKey: '{name}', forStrip: '^@', limit: 6 }],
+      dirCover: { enabled: true, scan: 8, max: 6, prefer: ['render', 'image'], skip: [], only: [] },   // 目录卡片（章节目录等）：优先骨骼 / 立绘渲染图，没有再用静态图；最多 6 张轮播；要黑 / 白名单写 skip / only（正则，对脚本路径 / 图片路径）
     },
     count: [{ dir: 'Adventure', ext: '.book.json', depth: 3 }],
     cover: [{ dir: 'Adventure/BackGrounds', match: '\\.(png|jpe?g)$', flags: 'i', pick: 'first' }],
@@ -1892,17 +1893,37 @@ function canonField(key, value) {
         skip: Array.isArray(value.skip) ? value.skip : ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'],
         scanSteps: num(value.scanSteps, 200, 10, 2000),
         scanFrom: Number.isFinite(Number(value.scanFrom)) && value.scanFrom !== null && value.scanFrom !== '' && typeof value.scanFrom !== 'boolean' ? Math.max(0, Math.min(0.95, Number(value.scanFrom))) : 0,
+        only: Array.isArray(value.only) ? value.only : [],
         topUp: typeof value.topUp === 'boolean' ? value.topUp : false,
         kindMax: isPlain(value.kindMax) ? Object.fromEntries(Object.entries(value.kindMax).filter(([k, v]) => ['cg', 'stand', 'movie', 'bg'].includes(k) && Number.isFinite(Math.floor(Number(v))) && v !== null && v !== '' && typeof v !== 'boolean').map(([k, v]) => [k, Math.max(0, Math.min(12, Math.floor(Number(v))))])) : {},
       }
     }
+    // dirCover：目录卡片的封面（和 config.mjs 的 DEFAULT_DIR_COVER / 校验一致：数字夹范围、prefer 规整成 { source, match, take } 对象、skip / only 留合法正则）
+    case 'dirCover': {
+      if (!isPlain(value)) return value
+      const numIn = (x, d, lo, hi) => (x === undefined || x === null || x === '' || typeof x === 'boolean' || !Number.isFinite(Math.floor(Number(x))) ? d : Math.max(lo, Math.min(hi, Math.floor(Number(x)))))
+      const okRe = (x) => typeof x === 'string' && x.length > 0 && x.length <= 120 && (() => { try { new RegExp(x, 'i'); return true } catch { return false } })()
+      const tiers = (Array.isArray(value.prefer) ? value.prefer : []).slice(0, 10).map((one) => {
+        const source = typeof one === 'string' ? one : isPlain(one) ? one.source : ''
+        if (!['render', 'image'].includes(source)) return null
+        return { source, match: isPlain(one) && okRe(one.match) ? one.match : '', take: isPlain(one) && one.take !== undefined ? Math.max(0, Math.min(24, Math.floor(Number(one.take)) || 0)) : 0 }
+      }).filter(Boolean)
+      return {
+        enabled: value.enabled === true || value.enabled === false || value.enabled === 'auto' ? value.enabled : 'auto',
+        scan: numIn(value.scan, 6, 1, 30), depth: numIn(value.depth, 3, 1, 5), max: numIn(value.max, 6, 1, 24),
+        merge: typeof value.merge === 'boolean' ? value.merge : false,
+        prefer: tiers.length ? tiers : [{ source: 'render', match: '', take: 0 }, { source: 'image', match: '', take: 0 }],
+        skip: (Array.isArray(value.skip) ? value.skip : []).slice(0, 10).filter(okRe),
+        only: (Array.isArray(value.only) ? value.only : []).slice(0, 10).filter(okRe),
+      }
+    }
     case 'thumbHover': {
       if (!isPlain(value)) return value
-      const count = Number.isFinite(Math.floor(Number(value.count))) && value.count !== null && value.count !== '' && typeof value.count !== 'boolean' ? Math.max(1, Math.min(12, Math.floor(Number(value.count)))) : 4
+      const count = Number.isFinite(Math.floor(Number(value.count))) && value.count !== null && value.count !== '' && typeof value.count !== 'boolean' ? Math.max(1, Math.min(24, Math.floor(Number(value.count)))) : 4
       const range = Array.isArray(value.intervalMs) && value.intervalMs.length === 2 && value.intervalMs.every((x) => typeof x === 'number' && Number.isFinite(x))
         ? [Math.max(100, Math.min(10000, Math.round(Math.min(...value.intervalMs)))), Math.max(100, Math.min(10000, Math.round(Math.max(...value.intervalMs))))]
         : [700, 900]
-      return { enabled: typeof value.enabled === 'boolean' ? value.enabled : true, count, order: value.order === 'sequential' ? 'sequential' : 'random', intervalMs: range }
+      return { enabled: typeof value.enabled === 'boolean' ? value.enabled : true, mode: value.mode === 'auto' ? 'auto' : 'hover', count, order: value.order === 'sequential' ? 'sequential' : 'random', intervalMs: range }
     }
     case 'thumbCover':
       if (['random', 'first', 'last'].includes(value)) return value

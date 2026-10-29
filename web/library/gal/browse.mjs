@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto'
 import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { galAdapter, galAdapterIds, sniffGalAdapter } from './adapters/index.mjs'
+import { pickDirCover } from './dir-cover.mjs'
 import { expandTemplate, galConfigView, globToRegExp, normalizeGalConfig, parentRegExp } from './config.mjs'
 import { buildGraphCatalog } from './graph.mjs'
 import { contextStats, invalidateContexts, loadAdapterContext } from './context.mjs'
@@ -428,6 +429,21 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 目录卡片的取图名 = 适配器给的 key（没给用标题）：标题常常是显示名（角色名），文件按编号命名（misttrain：Bases/<底号>201.png）
   const scriptsOf = (node, depth, limit, out = []) => { for (const c of node.children || []) { if (out.length >= limit) break; if (c.script) out.push(c.script); else if (depth > 1) scriptsOf(c, depth - 1, limit, out) } return out }
   const adapterHasSceneThumbs = (adapters?.length ? adapters : galAdapterIds()).some((id) => { try { return Boolean(galAdapter(id)?.sceneThumbs) } catch { return false } })
+  const dirCoverActive = () => config.dirCover.enabled === true || (config.dirCover.enabled === 'auto' && adapterHasSceneThumbs)
+  // 目录卡片的封面：里面前 scan 个脚本（深度优先、最多 depth 层）的候选，按 config.dirCover 挑（dir-cover.mjs：prefer 档位 / skip / only / merge / max）
+  async function dirCoverOf(node) {
+    const dc = config.dirCover
+    const cands = { render: [], image: [] }
+    const seenImage = new Set()
+    const seenKey = new Set()
+    for (const rel of scriptsOf(node, dc.depth, dc.scan)) {
+      const info = await scriptInfo(defaultSet, rel)
+      if (info.renderKey && !seenKey.has(info.renderKey)) { seenKey.add(info.renderKey); cands.render.push({ name: rel, render: { key: info.renderKey, node: idOf(defaultSet, 'script', rel) } }) }
+      for (const path of info.thumbs) if (!seenImage.has(path)) { seenImage.add(path); cands.image.push({ name: path, path }) }
+    }
+    const got = pickDirCover(cands, dc)
+    return got.thumbs.length || got.renders.length ? got : null
+  }
   async function enrichCatalogItems(children, holder) {
     const out = new Array(children.length)
     let next = 0
@@ -443,12 +459,9 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
             const why = []
             const thumbs = [...(await thumbEngine.forDir({ name: String(child.key ?? child.title ?? ''), parentName: String(holder?.title || '') }, { why })).values()]
             if (thumbs.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: thumbs[0], thumbs } } else {
-              // 规则没给图：目录用它里面第一个脚本（最多往下找 3 层）的封面——章节目录 / 角色分组都是这样（只有 sceneThumbs 的适配器，别的游戏的目录卡片保持原样）
-              let cover = null
-              let coverScript = ''
-              if (adapterHasSceneThumbs) for (const first of scriptsOf(child, 3, 6)) { const got = await scriptInfo(defaultSet, first); if (got.thumbs.length || got.renderKey) { cover = got; coverScript = first; break } }   // 最多试 6 个脚本，第一个有封面的就用
-              // 渲染缩略图要渲染的是那个脚本（render.node = 脚本的节点 id），目录卡片自己不是场景
-              if (cover) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: cover.thumb, thumbs: cover.thumbs, ...(cover.renderKey ? { render: { key: cover.renderKey, node: idOf(defaultSet, 'script', coverScript) } } : {}) } }
+              // 规则没给图：目录用它里面脚本的封面（config.dirCover：优先级 / 黑白名单 / 张数；默认 render > image，最多 6 张）
+              const dc = dirCoverActive() ? await dirCoverOf(child) : null
+              if (dc) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: dc.thumbs[0] || '', thumbs: dc.thumbs, carousel: config.dirCover.max, ...(dc.renders.length ? { render: dc.renders[0], renders: dc.renders } : {}) } }
               else if (why.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }
             }
           } else if (child.script) {

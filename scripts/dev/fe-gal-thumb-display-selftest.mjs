@@ -36,6 +36,7 @@ const variants = {
   index: { thumbCover: { index: 2 }, thumbHover: { enabled: false } },
   first: { thumbCover: 'first', thumbHover: { count: 3, order: 'sequential', intervalMs: [200, 300] } },
   random: { thumbHover: { count: 3, order: 'random', intervalMs: [200, 300] } },
+  auto: { thumbHover: { mode: 'auto', count: 3, order: 'sequential', intervalMs: [200, 300] } },
 }
 
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'fe-thumbdisp8165-'))
@@ -57,7 +58,7 @@ try {
   }
   const node = async (name) => (await (await fetch(`${base}/api/library/items/gal/${ids[name]}/reader/main?sectionId=`)).json()).node
   const last = await node('last')
-  check('API：节点带 thumbCover / thumbHover（规整后）', last.thumbCover === 'last' && J(last.thumbHover) === J({ enabled: true, count: 3, order: 'sequential', intervalMs: [200, 300] }) && J((await node('index')).thumbCover) === J({ index: 2 }) && (await node('random')).thumbCover === 'random', J(last))
+  check('API：节点带 thumbCover / thumbHover（规整后）', last.thumbCover === 'last' && J(last.thumbHover) === J({ enabled: true, mode: 'hover', count: 3, order: 'sequential', intervalMs: [200, 300] }) && J((await node('index')).thumbCover) === J({ index: 2 }) && (await node('random')).thumbCover === 'random', J(last))
 
   browser = await chromium.launch()
   const open = async (name, { prefs = {} } = {}) => {
@@ -149,6 +150,29 @@ try {
   for (const p of rnd.out) seenSet.add(p)
   check('random 顺序、count 3：一次悬停只出现 3 张不同的图（封面 + 2 张）', rnd.out.length >= 4 && seenSet.size === 3 && [...seenSet].every((p) => s1.includes(p)), J([...seenSet]))
   await d.ctx.close()
+  // —— 自动轮播（thumbHover.mode: auto）：不悬停，屏幕里的卡片自己换图；本地偏好「悬停」可以覆盖；「自动」偏好可以覆盖 hover 配置 ——
+  const au = await open('auto'); await loaded(au.page)
+  const autoSeen = new Set([await srcOf(au.page)])
+  const t1 = Date.now()
+  while (Date.now() - t1 < 4500) { autoSeen.add(await srcOf(au.page)); await sleep(60) }
+  check('auto：鼠标不动、不悬停，4.5 秒里卡片自己换了图（count 3 → 最多 3 张不同的）', autoSeen.size >= 2 && autoSeen.size <= 3 && [...autoSeen].every((p) => s1.includes(p)), J([...autoSeen]))
+  const modeUi = await au.page.evaluate(() => { document.querySelector('.gal-browse-more-btn').click(); const sel = document.querySelector('.gal-browse-carousel-mode'); return sel ? [sel.value, [...sel.options].map((o) => o.value)] : null })
+  check('「更多」菜单有「轮播方式」下拉：默认「跟随配置」（空），选项 跟随配置 / 悬停 / 自动', J(modeUi) === J(['', ['', 'hover', 'auto']]), J(modeUi))
+  await au.ctx.close()
+  const ah = await open('auto', { prefs: { 'gal.thumbCarousel': 'hover' } }); await loaded(ah.page)
+  const hoverPrefSeen = new Set([await srcOf(ah.page)])
+  const t2 = Date.now()
+  while (Date.now() - t2 < 2500) { hoverPrefSeen.add(await srcOf(ah.page)); await sleep(60) }
+  check('本地偏好「悬停」覆盖配置的 auto：不悬停就不换图', hoverPrefSeen.size === 1, J([...hoverPrefSeen]))
+  const hv = await hoverSeen(ah.page, 1500)
+  check('同一个偏好下悬停仍然轮播', hv.out.length >= 2, J(hv))
+  await ah.ctx.close()
+  const fa = await open('first', { prefs: { 'gal.thumbCarousel': 'auto' } }); await loaded(fa.page)
+  const autoPrefSeen = new Set([await srcOf(fa.page)])
+  const t3 = Date.now()
+  while (Date.now() - t3 < 4500) { autoPrefSeen.add(await srcOf(fa.page)); await sleep(60) }
+  check('本地偏好「自动」覆盖配置的 hover：不悬停也自己换图', autoPrefSeen.size >= 2, J([...autoPrefSeen]))
+  await fa.ctx.close()
 } catch (error) {
   fail++
   console.log(`FAIL 测试中断：${error.message} @ ${(error.stack || '').split('\n')[1] || ''}`)

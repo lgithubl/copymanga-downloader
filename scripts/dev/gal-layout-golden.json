@@ -3475,6 +3475,17 @@
     }
    },
    "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "dirCover": {
+    "enabled": true,
+    "max": 6,
+    "only": [],
+    "prefer": [
+     "render",
+     "image"
+    ],
+    "scan": 8,
+    "skip": []
+   },
    "dirThumbs": [],
    "game": {
     "id": "tsk",
@@ -3566,6 +3577,17 @@
     }
    },
    "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "dirCover": {
+    "enabled": true,
+    "max": 6,
+    "only": [],
+    "prefer": [
+     "render",
+     "image"
+    ],
+    "scan": 8,
+    "skip": []
+   },
    "dirThumbs": [],
    "game": {
     "id": "tsk",
@@ -3657,6 +3679,17 @@
     }
    },
    "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "dirCover": {
+    "enabled": true,
+    "max": 6,
+    "only": [],
+    "prefer": [
+     "render",
+     "image"
+    ],
+    "scan": 8,
+    "skip": []
+   },
    "dirThumbs": [],
    "game": {
     "id": "tsk",
@@ -3748,6 +3781,17 @@
     }
    },
    "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
+   "dirCover": {
+    "enabled": true,
+    "max": 6,
+    "only": [],
+    "prefer": [
+     "render",
+     "image"
+    ],
+    "scan": 8,
+    "skip": []
+   },
    "dirThumbs": [],
    "game": {
     "id": "tsk",

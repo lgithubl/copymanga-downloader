@@ -403,6 +403,14 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
   check('改动报告：skipped 的 details.changes 把现有字段列为 kept（原样不动）', J(unknown.details.changes.kept) === J(['game']), J(unknown.details.changes))
 }
 
+// TSK 的 dirCover（prefer 写字符串、引擎存对象）：存回去再跑一遍，仍是「没有改动」（canonField 的 dirCover 镜像和引擎规整一致）
+{
+  const tskFirst = await run(MEDIA.tsk.direct, {}, {}, { tags: [] })
+  const tskStore = storeOf(tskFirst)
+  const tskSecond = await run(MEDIA.tsk.direct, tskStore.config, {}, { tags: tskStore.tags })
+  check('TSK dirCover：写 prefer: [render, image]、引擎存成对象 → 第二次相同运行「没有改动」', Boolean(tskStore.config.dirCover) && tskStore.config.dirCover.prefer[0]?.source === 'render' && summaryOf(tskSecond) === '没有改动', JSON.stringify([tskStore.config.dirCover, summaryOf(tskSecond)]))
+}
+
 // ================= 全部 fixture：存下来再跑一遍都是「没有改动」（改动对比的规整和引擎一致）；日志 / details 的体量在服务端限额内 =================
 {
   const notStable = []
