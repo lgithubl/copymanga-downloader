@@ -115,7 +115,7 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
 const shared = { active: 0, waiting: [] }
 export function createThumbRenderer({ concurrency = 1, render = renderSceneThumb, upload = null } = {}) {
   let destroyed = false
-  const attempted = new Set()   // 这个页面里已经试过的 key：同一张最多试一次（失败后下次重建页面再试）
+  const attempted = new Map()   // 这个页面里已经试过的 key → 它的 promise：同一张最多试一次（失败后下次重建页面再试）；同一个 key 的几张卡片（比如目录和它里面的脚本用同一张封面）共用这一次的结果
   const pump = () => {
     while (shared.active < Math.max(1, concurrency) && shared.waiting.length) {
       const job = shared.waiting.shift()
@@ -134,9 +134,10 @@ export function createThumbRenderer({ concurrency = 1, render = renderSceneThumb
   return {
     enqueue(task) {
       if (destroyed) return Promise.reject(new Error('已销毁'))
-      if (attempted.has(task.key)) return Promise.reject(new Error('这个页面里已经试过了'))
-      attempted.add(task.key)
-      return new Promise((resolve, reject) => { shared.waiting.push({ task, resolve, reject, owner }); pump() })
+      if (attempted.has(task.key)) return attempted.get(task.key)
+      const promise = new Promise((resolve, reject) => { shared.waiting.push({ task, resolve, reject, owner }); pump() })
+      attempted.set(task.key, promise)
+      return promise
     },
     get pending() { return shared.waiting.filter((j) => j.owner === owner).length },
     destroy() { destroyed = true; for (let i = shared.waiting.length - 1; i >= 0; i--) if (shared.waiting[i].owner === owner) shared.waiting.splice(i, 1)[0].reject(new Error('已销毁')) },

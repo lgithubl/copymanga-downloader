@@ -1215,6 +1215,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
           if (item.expression?.source === 'table') lines.push(`    表情预设「${item.expression.preset}」→ 预设表（范围 ${item.expression.scope}）：${item.faceDefaults.join(', ')}`)
           else if (item.faceDefaults?.length) lines.push(`    ${item.missingAnimations?.length ? `表情预设没有映射（原游戏用预设表把「${item.missingAnimations.join('、')}」展开成眼 / 眉 / 嘴等分层动画，这张表在加密的 castData 里）` : '分层脸骨架，脚本没给表情'}→ 先用默认脸顶上：${item.faceDefaults.join(', ')}`)
           lines.push(`    骨架里的动画（${item.animations.length}）：${item.animations.slice(0, 40).join(', ')}${item.animations.length > 40 ? ' …' : ''}`)
+          for (const a of item.atlasAlign || []) lines.push(`    图集对齐：${a.page} PNG ${a.png.join('×')} 比 atlas 声明 ${a.declared.join('×')} 小、内容没缩 → 贴回声明大小（偏移 ${a.offset.join(', ')}）`)
           if (item.pmaInfo) {
             const blends = item.blends ? Object.entries(item.blends).filter(([, n]) => n > 0).map(([name, n]) => `${name} ${n} 个槽`).join('、') : ''
             if (item.blendOverride && item.blendOverride !== 'native') lines.push(`    混合模式覆盖：${item.blendOverride === 'allNormal' ? '全部按普通画' : 'additive 改按普通画'}（「更多 → 混合模式」）`)

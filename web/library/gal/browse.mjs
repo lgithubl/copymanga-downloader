@@ -426,6 +426,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 脚本卡片走和文件系统列表同一套（scriptInfo：规则 → 兜底：脚本里的 CG / 立绘 / 背景，topUp），以前这两种卡片在 catalog 里一律没图。
   // 并发限制 6：每个脚本要解析一次（scriptInfo 按文件 mtime 缓存）；路径带 :: 的（一个文件装很多场景）不是真文件，跳过。
   // 目录卡片的取图名 = 适配器给的 key（没给用标题）：标题常常是显示名（角色名），文件按编号命名（misttrain：Bases/<底号>201.png）
+  const scriptsOf = (node, depth, limit, out = []) => { for (const c of node.children || []) { if (out.length >= limit) break; if (c.script) out.push(c.script); else if (depth > 1) scriptsOf(c, depth - 1, limit, out) } return out }
+  const adapterHasSceneThumbs = (adapters?.length ? adapters : galAdapterIds()).some((id) => { try { return Boolean(galAdapter(id)?.sceneThumbs) } catch { return false } })
   async function enrichCatalogItems(children, holder) {
     const out = new Array(children.length)
     let next = 0
@@ -440,8 +442,16 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
           if (child.children) {
             const why = []
             const thumbs = [...(await thumbEngine.forDir({ name: String(child.key ?? child.title ?? ''), parentName: String(holder?.title || '') }, { why })).values()]
-            if (thumbs.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: thumbs[0], thumbs } } else if (why.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }
-          } else if (child.script && !child.script.includes('::')) {
+            if (thumbs.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: thumbs[0], thumbs } } else {
+              // 规则没给图：目录用它里面第一个脚本（最多往下找 3 层）的封面——章节目录 / 角色分组都是这样（只有 sceneThumbs 的适配器，别的游戏的目录卡片保持原样）
+              let cover = null
+              let coverScript = ''
+              if (adapterHasSceneThumbs) for (const first of scriptsOf(child, 3, 6)) { const got = await scriptInfo(defaultSet, first); if (got.thumbs.length || got.renderKey) { cover = got; coverScript = first; break } }   // 最多试 6 个脚本，第一个有封面的就用
+              // 渲染缩略图要渲染的是那个脚本（render.node = 脚本的节点 id），目录卡片自己不是场景
+              if (cover) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: cover.thumb, thumbs: cover.thumbs, ...(cover.renderKey ? { render: { key: cover.renderKey, node: idOf(defaultSet, 'script', coverScript) } } : {}) } }
+              else if (why.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }
+            }
+          } else if (child.script) {
             const info = await scriptInfo(defaultSet, child.script)
             if (info.thumbs.length || info.renderKey) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs, ...(info.renderKey ? { render: { key: info.renderKey } } : {}) } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
           }
@@ -603,19 +613,28 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   }
 
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
-  async function scriptInfo(set, rel) {
+  async function scriptInfo(set, scriptRel) {
+    // 路径带 ::<场景>（一个文件装多个场景，utage-book 的章）：磁盘上是 ::前面的文件，场景号交给适配器（meta.scene）；只有适配器声明 sceneThumbs 的才算封面（grenze 这类一个文件几十个场景，每个都整份解析太贵）
+    const sceneAt = scriptRel.indexOf('::')
+    const rel = sceneAt >= 0 ? scriptRel.slice(0, sceneAt) : scriptRel
+    const sceneKey = sceneAt >= 0 ? scriptRel.slice(sceneAt + 2) : ''
     const abs = absOf(set, rel)
     const info = await stat(abs)
-    const key = `${abs}|${info.mtimeMs}|${info.size}|${infoCfgKey}`
+    const key = `${abs}|${info.mtimeMs}|${info.size}|${infoCfgKey}|${sceneKey}`
     const cached = cacheGet(scriptInfoCache, key, SCRIPT_INFO_TTL_MS)
     if (cached) return cached
-    const adapterId = await scriptAdapterOf(abs)
+    const adapterId = await scriptAdapterOf(abs, Boolean(sceneKey))
+    if (sceneKey && !(() => { try { return galAdapter(adapterId)?.sceneThumbs } catch { return false } })()) {
+      const empty = { adapterId, renderKey: '', thumb: '', thumbs: [], excerpt: '', hasMovie: false, badge: '', thumbWhy: [], issues: [] }
+      cacheSet(scriptInfoCache, key, empty, 30000)
+      return empty
+    }
     let excerpt = ''
     let hasMovie = false
     let scene = null
     let parseError = ''
     try {
-      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId), metaFor(adapterId, { rel, stem: stemOf(rel) }))
+      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId), metaFor(adapterId, { rel, stem: stemOf(rel), ...(sceneKey ? { scene: sceneKey } : {}) }))
       excerpt = excerptOf(scene)
       hasMovie = scene.steps.some((step) => step.commands.some((c) => c.op === 'movie'))
     } catch (error) { parseError = error?.message || String(error) /* 解析失败：照样列出来，打开时再报错 */ }
@@ -661,7 +680,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     // key = 脚本路径 + mtime + 大小 + 版本 + 宽度，脚本改了 key 就变，服务器缓存按 key 存
     const renderCfg = config.thumbRender
     const hasSpine = Boolean(scene) && renderCfg.enabled && scene.steps.slice(0, Math.max(renderCfg.scanSteps * 4, 600)).some((step) => step.commands.some((c) => c.op === 'spine' || (c.op === 'stand' && c.parts?.length) || (c.op === 'overlay' && c.src)))   // 有骨骼 / 立绘 / 叠加图（CG）的脚本
-    const renderKey = hasSpine && !ruleHit ? createHash('sha1').update(JSON.stringify([abs, info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex') : ''
+    const renderKey = hasSpine && !ruleHit ? createHash('sha1').update(JSON.stringify([abs, ...(sceneKey ? [sceneKey] : []), info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex') : ''
     const result = { adapterId, renderKey, thumb: thumbs[0] || '', thumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumbs.length ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
     return result

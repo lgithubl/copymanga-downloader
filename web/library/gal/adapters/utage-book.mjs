@@ -280,7 +280,7 @@ function groupBooks(ctx, rule, folderId, books, node) {
   }
   const out = [...groups].sort((a, b) => natAsc(a[0], b[0])).map(([key, list]) => {
     const gid = `${folderId}/@${key}`
-    return { id: gid, title: nameOf(key), subtitle: `${key} · ${list.length} 个`, children: list.map((book) => node(folderId, book)) }
+    return { id: gid, key: `@${key}`, title: nameOf(key), subtitle: `${key} · ${list.length} 个`, children: list.map((book) => node(folderId, book)) }
   })
   if (rest.length && rule.fallback) out.push({ id: `${folderId}/@other`, title: rule.fallback, subtitle: `${rest.length} 个`, children: rest.map((book) => node(folderId, book)) })
   else out.push(...rest.map((book) => node(folderId, book)))
@@ -880,4 +880,4 @@ export function health(ctx) {
   if (!ctx.books.length) out.push({ code: 'no-books', message: 'Adventure/ 下没有 *.book.json' })
   return out
 }
-export const utageBookAdapter = { id: ADAPTER_ID, sceneInPath: true, health, label: 'Utage 剧情（*.book.json，Twinkle Star Knights X）', sniff, parse, contextFiles, contextDirs, contextWalkLimit, prepare, catalog }
+export const utageBookAdapter = { id: ADAPTER_ID, sceneInPath: true, sceneThumbs: true, health, label: 'Utage 剧情（*.book.json，Twinkle Star Knights X）', sniff, parse, contextFiles, contextDirs, contextWalkLimit, prepare, catalog }

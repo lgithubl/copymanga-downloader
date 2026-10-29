@@ -359,7 +359,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     // 一张卡片可以有多张图（item.thumbs，thumb = 第一张）；thumbMode：random（默认）随机一张当封面 / first 只第一张 / hover 封面第一张、悬停轮播
     const thumbs = item.thumbs?.length ? item.thumbs : item.thumb ? [item.thumb] : []
     const cover = coverOf()
-    const render = item.type === 'script' && item.render?.key ? item.render : null
+    const render = item.render?.key && (item.type === 'script' || item.render.node) ? item.render : null   // 目录卡片的封面是它里面某个脚本渲染的（render.node）
     const renderUrl = render ? `${apiBase}/render-thumb?key=${render.key}` : ''
     if (!thumbs.length && !render) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
     if (!thumbs.length && item.type === 'dir') box.dataset.icon = '📁'
@@ -377,7 +377,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       img.addEventListener('error', () => {
         if (render && !renderMissing && img.getAttribute('src') === renderUrl) {
           renderMissing = true   // 缓存里还没有：排队渲染（失败不缓存、不记标记，下次重建页面还会再试）
-          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: item.node, key: render.key, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
+          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: render.node || item.node, key: render.key, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
             .then((blob) => { const local = URL.createObjectURL(blob); urls[0] = local; img.hidden = false; img.src = local; box.classList.remove('empty'); if (!img.isConnected) box.prepend(img) })
             .catch((error) => {
               if (/已销毁|已经试过/.test(error?.message || '')) return

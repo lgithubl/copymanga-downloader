@@ -6,6 +6,7 @@
 // 不会冒充成缺资源。每个运行时各用一块 canvas（同一帧里不同版本的骨骼不交叉叠层，各自按顺序画）。没有运行时就只提示、不渲染。
 // 骨骼文件两种都认：二进制（.skel / .skel.bytes）和 JSON（内容以 { 开头）。
 
+import { atlasPageGeometry, findCropOffset } from './gal-spine-atlas.js'
 import { spine36BinaryToJson } from './gal-spine36-binary.js'
 
 export const SPINE_RUNTIMES = { '3.6': '/vendor/spine-webgl-3.6.js', '3.8': '/vendor/spine-webgl.js', '4.0': '/vendor/spine-webgl-4.0.js', '4.2': '/vendor/spine-webgl-4.2.js' }
@@ -193,8 +194,8 @@ export function premultipliedPixels(rgba) { return isPremultipliedCount(countPre
 export function detectPremultipliedImage(image) { return detectPremultiplied(image) }   // 给测试用
 function detectPremultiplied(image) {
   try {
-    const w = image.naturalWidth || 1
-    const h = image.naturalHeight || 1
+    const w = image.naturalWidth || image.width || 1
+    const h = image.naturalHeight || image.height || 1
     const band = Math.max(1, Math.min(h, Math.floor(4000000 / w)))
     const canvas = document.createElement('canvas')
     canvas.width = w
@@ -369,6 +370,34 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         try { images.set(page, await loadImage(dir + page)) } catch { onMissing(dir + page); missingPages.push(dir + page) }
       }
       if (missingPages.length) return { error: { ...base, kind: 'missing', message: `取不到图集图片 ${missingPages.join('、')}（atlas 声明 ${pageNames.length} 页，缺 ${missingPages.length} 页）`, missingPages, atlasPages: pageNames.length } }
+      // 图集页的 PNG 比 atlas 声明的小几十像素、内容没缩（TSK Stills：声明 2048×2048，PNG 2048×2003，顶上 45 行被裁掉）：贴回声明大小的画布，UV 才对（见 gal-spine-atlas.js）
+      const aligned = []
+      try {
+        const geometry = atlasPageGeometry(atlasText)
+        for (const [pageName, image] of [...images]) {
+          const g = geometry.find((p) => p.name === pageName || p.name.split('/').pop() === pageName.split('/').pop())
+          const w = image.naturalWidth
+          const h = image.naturalHeight
+          if (!g?.width || !g.rects.length || (w === g.width && h === g.height) || w > g.width || h > g.height || g.width - w > 96 || g.height - h > 96) continue
+          const probe = document.createElement('canvas')
+          probe.width = w
+          probe.height = h
+          const pctx = probe.getContext('2d', { willReadFrequently: true })
+          pctx.drawImage(image, 0, 0)
+          const rgba = pctx.getImageData(0, 0, w, h).data
+          const alpha = new Uint8Array(w * h)
+          for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3]
+          const found = findCropOffset({ alpha, w, h, dw: g.width, dh: g.height, rects: g.rects })
+          if (found.mode !== 'pad') { console.info(`[gal-spine] ${pageName}：PNG ${w}×${h} 与 atlas 声明 ${g.width}×${g.height} 不一样，按整体缩放处理（${found.reason}）`); continue }
+          const padded = document.createElement('canvas')
+          padded.width = g.width
+          padded.height = g.height
+          padded.getContext('2d').drawImage(image, found.ox, found.oy)
+          images.set(pageName, padded)
+          aligned.push({ page: pageName, png: [w, h], declared: [g.width, g.height], offset: [found.ox, found.oy] })
+          console.info(`[gal-spine] ${pageName}：PNG ${w}×${h}、atlas 声明 ${g.width}×${g.height}——内容没缩、只是被裁了边，贴回声明大小（偏移 ${found.ox}, ${found.oy}）`)
+        }
+      } catch (error) { console.warn('[gal-spine] 图集对齐检查失败，按原样使用：', error) }
       try {
         const imageOf = (page) => images.get(page) || images.get(page.split('/').pop())
         // 预乘：图集标记（4.1+ 才有 pma 行）或像素统计认出已经预乘的，原样上传；直通 alpha 的贴图（透明处还带着颜色）让浏览器上传时预乘一次。
@@ -405,7 +434,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         // 混合模式：非 normal 的槽数（additive / multiply / screen）和 clipping 附件数——白块、发黑常常是这几类槽
         const blends = { additive: 0, multiply: 0, screen: 0 }
         for (const slot of data.slots || []) { const mode = slot.blendMode; if (mode === 1) blends.additive += 1; else if (mode === 2) blends.multiply += 1; else if (mode === 3) blends.screen += 1 }
-        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: true, pmaInfo: { atlas: atlasPma, detected: detectedPma, premultipliedOnUpload: premultiplyOnUpload, straight }, blends }
+        return { data, atlas, backend, version: data.version || detected.version, runtime: detected.runtime, format: detected.format, pma: true, pmaInfo: { atlas: atlasPma, detected: detectedPma, premultipliedOnUpload: premultiplyOnUpload, straight }, blends, aligned }
       } catch (error) {
         return fail({ kind: 'parse', message: `骨骼解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` })
       }
@@ -628,7 +657,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       skeleton.setToSetupPose()
       updateWorld(backend, skeleton)
       const state = new sp.AnimationState(new sp.AnimationStateData(loaded.data))
-      Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found, data: loaded.data, skeleton, state, boundsOk: false, bounds: { x: -960, y: -540, w: 1920, h: 1080 }, anim: '', loop: true })
+      Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, atlasAlign: loaded.aligned || [], blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found, data: loaded.data, skeleton, state, boundsOk: false, bounds: { x: -960, y: -540, w: 1920, h: 1080 }, anim: '', loop: true })
       applySpec(current, current.spec || spec, live)   // 加载中又来了新指令（set 只记最新的 spec）：用最新的，不是第一次的（chmr_40101123 第 1 句没表情）
       refreshBounds(current)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
@@ -888,7 +917,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
         requestedTracks,
         faceDefaults: inst.faceDefaults || [], expression: inst.expression || null, missingRequested: inst.missingAnims || [],
-        pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, blends: inst.blends || null, blendOverride,
+        pma: Boolean(inst.pma), pmaInfo: inst.pmaInfo || null, atlasAlign: inst.atlasAlign || [], blends: inst.blends || null, blendOverride,
         animations: names,
         skins: inst.data ? (inst.data.skins || []).map((skin) => `${skin.name}(${skinSize(skin)})`) : [], skin: inst.skinName || '', skinRequested: inst.skinRequested || '', skinFound: inst.skinFound !== false,
         version: inst.data?.version || inst.version || '', runtime: inst.runtime || '', error: inst.error?.message || '', errorKind: inst.error?.kind || '', missingPages: inst.error?.missingPages || [], atlasPages: inst.error?.atlasPages || 0,
