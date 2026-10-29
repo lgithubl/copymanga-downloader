@@ -40,7 +40,7 @@ let browser
 try {
   const form = new FormData()
   form.set('importProfile', 'gal-import'); form.set('sourcePath', media)
-  form.set('profileOptions', JSON.stringify({ adapters: ['girlscreation-tag'], config: { game: { id: 'girlscreation' } } })); form.set('metadataActionIds', 'gal-layout')
+  form.set('profileOptions', JSON.stringify({ adapters: ['girlscreation-tag'], config: { game: { id: 'girlscreation' }, dirCover: { enabled: true, scan: 6, max: 3, prefer: ['render', 'image'] } } })); form.set('metadataActionIds', 'gal-layout')
   const imported = await (await fetch(`${base}/api/library/items?type=gal`, { method: 'POST', body: form })).json()
   const itemId = imported.items[0].itemId
   for (let i = 0; i < 60; i++) { const full = await (await fetch(`${base}/api/library/items/gal/${itemId}`)).json(); if (full.config?.script?.id === 'gal-layout') break; await sleep(300) }
@@ -57,6 +57,10 @@ try {
     return false
   }
   await walk('')
+  // 目录卡片（文件系统列表，不是 catalog）：规则没给图时，dirCover（enabled: true）用里面脚本的渲染图当封面，render.node 指向那个脚本
+  const topDirs = (await reader('')).node.items.filter((i) => i.type === 'dir')
+  const dirWithRender = topDirs.find((d) => d.render?.node)
+  check('目录卡片（文件系统列表）：dirCover 开着 → 里面有骨骼渲染场景的目录卡片带 render（node = 里面那个脚本，key 合法）、carousel = max（3）', Boolean(dirWithRender) && /^[0-9a-f]{40}$/.test(dirWithRender.render.key) && /^s:/.test(dirWithRender.render.node) && dirWithRender.carousel === 3, J(topDirs.map((d) => [d.title, d.render, d.carousel])))
   const rendered = items.filter((i) => i.render)
   check('服务端：有骨骼、规则没给图的脚本卡片带 render.key（5 个）；有 thumbnail.png 的不带', rendered.length >= 4 && items.every((i) => !i.render || /^[0-9a-f]{40}$/.test(i.render.key)), J(items.map((i) => [i.title, !!i.render])))
   check('服务端：渲染缓存还没有 → GET render-thumb 404；key 不合法 → 400；PUT 非 JPEG → 415', (await fetch(`${api}/render-thumb?key=${rendered[0].render.key}`)).status === 404 && (await fetch(`${api}/render-thumb?key=zz`)).status === 400 && (await fetch(`${api}/render-thumb?key=${rendered[0].render.key}`, { method: 'PUT', body: Buffer.alloc(500, 1) })).status === 415, '')

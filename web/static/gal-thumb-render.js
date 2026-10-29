@@ -39,6 +39,32 @@ export function pickRenderStep(scene, scanSteps = 150, after = 2) {
   return { index, score: best.score, state: stateAt(scene, index) }
 }
 
+// 胶片场景（bg.film）：找第一个用这条胶片（bg.src = film）的画面。胶片没有骨骼 / 立绘，不走上面的打分
+export function pickFilmStep(scene, film) {
+  const steps = Array.isArray(scene?.steps) ? scene.steps : []
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i].commands?.some((c) => c.op === 'bg' && c.film && c.src === film)) return { index: i, score: 100, state: stateAt(scene, i) }
+  }
+  return null
+}
+// 胶片的一帧画成一张图（canvas）：文件是竖排的条带（每帧宽 × 高 = 1 : ratio，帧数 = 图高 / (图宽 × ratio)）；rotate 90 = 逆时针转了 90° 存的（和 gal-player.js 的 startFilm 同一套几何），转回来
+export function filmFrameCanvas(img, film, fraction = 0.5) {
+  const ratio = Number(film?.ratio) > 0 ? Number(film.ratio) : 1
+  const w = img.naturalWidth
+  const h = img.naturalHeight
+  const frameH = w * ratio
+  const frames = Math.max(1, Math.round(h / frameH))
+  const index = Math.max(0, Math.min(frames - 1, Math.floor(frames * Math.max(0, Math.min(0.99, Number(fraction) || 0)))))
+  const rotated = Number(film?.rotate) === 90
+  const out = document.createElement('canvas')
+  out.width = Math.round(rotated ? frameH : w)
+  out.height = Math.round(rotated ? w : frameH)
+  const c = out.getContext('2d')
+  if (rotated) { c.translate(0, out.height); c.rotate(-Math.PI / 2) }
+  c.drawImage(img, 0, index * frameH, w, Math.min(frameH, h - index * frameH), 0, 0, w, Math.min(frameH, h - index * frameH))
+  return out
+}
+
 // 缩略图的骨骼：每个角色动画从 seek（0~1）处取一帧
 function seekAll(spines, seek) {
   const f = Number(seek)
@@ -54,8 +80,8 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
   if (!res.ok) throw new Error(`取脚本失败：HTTP ${res.status}`)
   const data = await res.json()
   const scene = data.scene || data.node?.scene
-  const picked = pickRenderStep(scene, cfg.scanSteps)
-  if (!picked) throw new Error('脚本里没有 CG / 立绘 / 骨骼画面')
+  const picked = cfg.film ? pickFilmStep(scene, cfg.film) : pickRenderStep(scene, cfg.scanSteps)
+  if (!picked) throw new Error(cfg.film ? `脚本里没有用到胶片 ${cfg.film}` : '脚本里没有 CG / 立绘 / 骨骼画面')
   const { state } = picked
   const canvas = document.createElement('canvas')
   canvas.width = width
@@ -64,14 +90,20 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, width, height)
   const cover = (img) => {
-    const k = Math.max(width / img.naturalWidth, height / img.naturalHeight)
-    ctx.drawImage(img, (width - img.naturalWidth * k) / 2, (height - img.naturalHeight * k) / 2, img.naturalWidth * k, img.naturalHeight * k)
+    const iw = img.naturalWidth || img.width
+    const ih = img.naturalHeight || img.height
+    const k = Math.max(width / iw, height / ih)
+    ctx.drawImage(img, (width - iw * k) / 2, (height - ih * k) / 2, iw * k, ih * k)
   }
   if (Array.isArray(state.bg?.color)) { ctx.fillStyle = `rgb(${state.bg.color.join(',')})`; ctx.fillRect(0, 0, width, height) }
   const url = (src) => assetUrl(cfg.resourceBase, src)
   for (const src of [state.bg?.src, state.bg?.over]) {
     if (!src) continue
-    try { cover(await loadImage(url(src))) } catch { /* 背景缺了：别的层照画 */ }
+    try {
+      const img = await loadImage(url(src))
+      if (src === state.bg?.src && state.bg?.film) cover(filmFrameCanvas(img, state.bg.film, cfg.filmFrame))   // 胶片：取一帧（转回正的）再铺满
+      else cover(img)
+    } catch { /* 背景缺了：别的层照画 */ }
   }
   const host = document.createElement('div')
   host.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px;pointer-events:none;overflow:hidden`

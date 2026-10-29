@@ -196,6 +196,17 @@
    }
   },
   "classify": [],
+  "dirCover": {
+   "enabled": true,
+   "max": 6,
+   "only": [],
+   "prefer": [
+    "render",
+    "image"
+   ],
+   "scan": 8,
+   "skip": []
+  },
   "limits": {
    "sampleFiles": 20000,
    "walkFiles": 400000
@@ -2268,6 +2279,17 @@
    }
   },
   "classify": [],
+  "dirCover": {
+   "enabled": true,
+   "max": 4,
+   "only": [],
+   "prefer": [
+    "render",
+    "image"
+   ],
+   "scan": 6,
+   "skip": []
+  },
   "limits": {
    "sampleFiles": 20000,
    "walkFiles": 800000
@@ -3493,6 +3515,17 @@
    }
   },
   "classify": [],
+  "dirCover": {
+   "enabled": true,
+   "max": 6,
+   "only": [],
+   "prefer": [
+    "render",
+    "image"
+   ],
+   "scan": 8,
+   "skip": []
+  },
   "limits": {
    "walkFiles": 800000
   }

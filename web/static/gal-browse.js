@@ -385,7 +385,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       img.addEventListener('error', () => {
         if (render && !renderMissing && img.getAttribute('src') === renderUrl) {
           renderMissing = true   // 缓存里还没有：排队渲染（失败不缓存、不记标记，下次重建页面还会再试）
-          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: render.node || item.node, key: render.key, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
+          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: render.node || item.node, key: render.key, film: render.film || '', filmFrame: renderCfg.filmFrame ?? 0.5, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
             .then((blob) => { const local = URL.createObjectURL(blob); urls[0] = local; img.hidden = false; img.src = local; box.classList.remove('empty'); if (!img.isConnected) box.prepend(img) })
             .catch((error) => {
               if (/已销毁|已经试过/.test(error?.message || '')) return
@@ -412,7 +412,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
         renders.slice(1).forEach((r, k) => {
           fetch(renderUrlOf(r)).then((res) => {
             if (res.ok) return null
-            return thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: r.node || item.node, key: r.key, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
+            return thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: r.node || item.node, key: r.key, film: r.film || '', filmFrame: renderCfg.filmFrame ?? 0.5, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
               .then((blob) => { urls[k + 1] = URL.createObjectURL(blob) })
           }).catch(() => {})
         })

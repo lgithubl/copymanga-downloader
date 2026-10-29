@@ -123,7 +123,7 @@ async function snapshot(legacy = true) {
   return snap
 }
 
-const ENGINE_KEYS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player']
+const ENGINE_KEYS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player', 'dirCover', 'thumbRender']
 // 规则字段快照：每个游戏 id（直接放的目录、声明 id）一份：adapterOptions 里探测函数没写的键（= 规则表贡献的）+ engine 字段
 async function rulesSnapshot() {
   const snap = {}
@@ -169,7 +169,7 @@ if (process.argv.includes('--update-golden')) {
   const rulesNow = await rulesSnapshot()
   check(`规则 golden（${Object.keys(rulesGolden).length} 个游戏 id）：规则表贡献的 adapterOptions 键 + classify / resourceResolve / limits 和 gal-layout-rules-golden.json 逐字段一致`, J(rulesGolden) === J(rulesNow), Object.keys(rulesGolden).filter((k) => J(rulesGolden[k]) !== J(rulesNow[k])).join())
   const legacySnap = await snapshot(false)
-  const sameDetector = Object.keys(golden).every((k) => { const a = JSON.parse(J(legacySnap[k].config)); for (const key of ENGINE_KEYS) delete a[key]; for (const [adapter, table] of Object.entries(a.adapterOptions || {})) a.adapterOptions[adapter] = Object.fromEntries(Object.entries(table).filter(([name]) => name in (golden[k].config.adapterOptions?.[adapter] || {}))); for (const adapter of Object.keys(a.adapterOptions || {})) if (!(adapter in (golden[k].config.adapterOptions || {}))) delete a.adapterOptions[adapter]; if (a.adapterOptions && !Object.keys(a.adapterOptions).length) delete a.adapterOptions; return J(sortDeep(a)) === J(golden[k].config) })
+  const sameDetector = Object.keys(golden).every((k) => { const a = JSON.parse(J(legacySnap[k].config)); for (const key of ENGINE_KEYS) delete a[key]; for (const [adapter, table] of Object.entries(a.adapterOptions || {})) a.adapterOptions[adapter] = Object.fromEntries(Object.entries(table).filter(([name]) => name in (golden[k].config.adapterOptions?.[adapter] || {}))); for (const adapter of Object.keys(a.adapterOptions || {})) if (!(adapter in (golden[k].config.adapterOptions || {}))) delete a.adapterOptions[adapter]; if (a.adapterOptions && !Object.keys(a.adapterOptions).length) delete a.adapterOptions; const want = JSON.parse(J(golden[k].config)); for (const key of ENGINE_KEYS) delete want[key]; return J(sortDeep(a)) === J(sortDeep(want)) })
   check('规则表是纯增量：打开规则表后的结果，去掉规则字段（engine 字段 + 探测函数没写的 adapterOptions 键），和旧 golden 逐字段相等（探测函数写的 root / aliasFiles / imageDirs / 布局字段一个没变）', sameDetector)
   check('golden 里至少有一组真的认出了游戏（防止全是空的假通过）', keys.filter((k) => golden[k].config?.game?.id).length >= 40, String(keys.filter((k) => golden[k].config?.game?.id).length))
 }
@@ -194,8 +194,8 @@ const withLayouts = (layouts) => ({ layouts })
   const aliases = Object.entries(LAYOUTS).filter(([, e]) => e.extends).map(([id, e]) => `${id}→${e.extends}`).sort()
   check('别名：aster / jaxin / maid / aku / fruits → girlscreation，deepone → uviewer（用 extends，没有拷贝整份）', J(aliases) === J(['aku→girlscreation', 'aster→girlscreation', 'deepone→uviewer', 'fruits→girlscreation', 'girlscreation282→girlscreation', 'jaxin→girlscreation', 'maid→girlscreation']) && Object.entries(LAYOUTS).filter(([, e]) => e.extends).every(([, e]) => Object.keys(e).filter((k) => k !== 'extends' && k !== 'title' && !(k === 'engine' && e === LAYOUTS.aku)).length === 0), aliases.join())   // 别名只改 title；唯一的例外是 aku 多一份 engine（player.cameraMode: 'widget'，原版 spine-widget 的摆放）
   const girls = mod.resolveLayout('girlscreation')
-  const noAkuPlayer = (layout) => ({ ...layout, title: '', engine: { ...layout.engine, player: undefined } })
-  check('别名解析出来的数据 = 父项的数据（只有 title 不同；aku 另有 engine.player.cameraMode = widget）', ALL_IDS.filter((id) => LAYOUTS[id].extends === 'girlscreation').every((id) => J(noAkuPlayer(mod.resolveLayout(id))) === J(noAkuPlayer(girls))) && J(mod.resolveLayout('aku').engine.player) === J({ cameraMode: 'widget' }) && !girls.engine.player)
+  const noAkuPlayer = (layout) => ({ ...layout, title: '', engine: { ...layout.engine, player: undefined, dirCover: undefined } })
+  check('别名解析出来的数据 = 父项的数据（只有 title 不同；aku 另有 engine.player.cameraMode = widget 和 engine.dirCover）', ALL_IDS.filter((id) => LAYOUTS[id].extends === 'girlscreation').every((id) => J(noAkuPlayer(mod.resolveLayout(id))) === J(noAkuPlayer(girls))) && J(mod.resolveLayout('aku').engine.player) === J({ cameraMode: 'widget' }) && !girls.engine.player)
   const handlers = ALL_IDS.map((id) => [id, LAYOUTS[id].autoOrder])
   check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'uviewer']), J(handlers))
 }
@@ -331,7 +331,7 @@ const withLayouts = (layouts) => ({ layouts })
   for (const id of ['girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits']) {
     const out = await run(MEDIA.girlscreation.direct, { game: { id, title: `T-${id}` } })
     const cfg = cfgOf(out)
-    check(`别名 ${id}：数据和 girlscreation 一致（aku 多 player.cameraMode = widget），game.id 写回「${id}」（title 保留）、标签 Gal游戏: ${id}`, cfg?.game?.id === id && cfg.game.title === `T-${id}` && J(stable({ ...cfg, game: null, player: null })) === J(stable({ ...cfgOf(base), game: null, player: null })) && (id === 'aku' ? cfg.player?.cameraMode === 'widget' : !cfg.player?.cameraMode) && out.itemTags.includes(`Gal游戏: ${id}`) && out.details.kind === 'girlscreation', J(cfg?.game))
+    check(`别名 ${id}：数据和 girlscreation 一致（aku 多 player.cameraMode = widget），game.id 写回「${id}」（title 保留）、标签 Gal游戏: ${id}`, cfg?.game?.id === id && cfg.game.title === `T-${id}` && J(stable({ ...cfg, game: null, player: null, dirCover: null })) === J(stable({ ...cfgOf(base), game: null, player: null, dirCover: null })) && (id === 'aku' ? cfg.dirCover?.enabled === true && cfg.dirCover.prefer[0]?.source === 'render' || cfg.dirCover?.prefer?.[0] === 'render' : !cfg.dirCover) && (id === 'aku' ? cfg.player?.cameraMode === 'widget' : !cfg.player?.cameraMode) && out.itemTags.includes(`Gal游戏: ${id}`) && out.details.kind === 'girlscreation', J(cfg?.game))
   }
   const dp = await run(MEDIA.uviewer.direct, { game: { id: 'deepone' } })
   const uv = await run(MEDIA.uviewer.direct, { game: { id: 'uviewer' } })

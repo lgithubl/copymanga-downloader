@@ -4146,6 +4146,17 @@
      "root": "game/dmm"
     }
    },
+   "dirCover": {
+    "enabled": true,
+    "max": 4,
+    "only": [],
+    "prefer": [
+     "render",
+     "image"
+    ],
+    "scan": 6,
+    "skip": []
+   },
    "dirThumbs": [],
    "game": {
     "id": "kamihime",
@@ -4217,6 +4228,17 @@
     "tyrano-ks": {
      "root": "game/dmm"
     }
+   },
+   "dirCover": {
+    "enabled": true,
+    "max": 4,
+    "only": [],
+    "prefer": [
+     "render",
+     "image"
+    ],
+    "scan": 6,
+    "skip": []
    },
    "dirThumbs": [],
    "game": {
@@ -4290,6 +4312,17 @@
      "root": "kamihime/game/dmm"
     }
    },
+   "dirCover": {
+    "enabled": true,
+    "max": 4,
+    "only": [],
+    "prefer": [
+     "render",
+     "image"
+    ],
+    "scan": 6,
+    "skip": []
+   },
    "dirThumbs": [],
    "game": {
     "id": "kamihime",
@@ -4361,6 +4394,17 @@
     "tyrano-ks": {
      "root": "kamihime/game/dmm"
     }
+   },
+   "dirCover": {
+    "enabled": true,
+    "max": 4,
+    "only": [],
+    "prefer": [
+     "render",
+     "image"
+    ],
+    "scan": 6,
+    "skip": []
    },
    "dirThumbs": [],
    "game": {

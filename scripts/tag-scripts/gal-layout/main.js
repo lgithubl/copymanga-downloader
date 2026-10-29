@@ -1139,7 +1139,7 @@ export const LAYOUTS = {
   jaxin: { extends: 'girlscreation', title: 'Jaxin' },
   maid: { extends: 'girlscreation', title: 'Maid' },
   // Aku：角色摆放用原版 spine-widget 的 fitToCanvas（player.cameraMode: 'widget'，常数见 gal-spine.js；原版 preloader.js / spine-widget.js 核对过，gal-samples13）。engine 是整份替换，所以把 girlscreation 的 classify / limits 也写上
-  aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu', engine: { classify: [], limits: { walkFiles: 400000, sampleFiles: 20000 }, player: { cameraMode: 'widget' } } },
+  aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu', engine: { classify: [], limits: { walkFiles: 400000, sampleFiles: 20000 }, player: { cameraMode: 'widget' }, dirCover: { enabled: true, scan: 8, max: 6, prefer: ['render', 'image'], skip: [], only: [] } } },   // 角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播
   fruits: { extends: 'girlscreation', title: 'Fruits Fulcute!' },
   // Girls Creation R Viewer 282寝：和 R 同一个查看器，但行式脚本有 54 个（R 里只有 3 个），单独一个 id 方便以后给它单独加规则
   girlscreation282: { extends: 'girlscreation', title: 'Girls Creation R Viewer 282寝' },
@@ -1262,7 +1262,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 20000 },
     },
     // 兜底封面跳过占位图：默认的 black / white / blank（按单词）再加 sepia_filter（回忆滤镜层 [image storage="sepia_filter-<hash>.png" layer=4]）；skip 是整张替换默认值，所以默认那条也要写进来
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100, thumbFallback: { scanFrom: 0.3, skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', 'sepia_filter'], prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } } },
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100, dirCover: { enabled: true, scan: 6, max: 4, prefer: ['render', 'image'], skip: [], only: [] }, thumbFallback: { scanFrom: 0.3, skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', 'sepia_filter'], prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } } },
     count: [{ dir: 'dmm/raw_scenario', ext: '.ks', depth: 6 }],
     avatars: [], expectedDirs: ['dmm/assets'],
     notes: ['列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；layer 3 的立绘滑入 / 滑出不渲染（anim layer / layopt 静默吃掉，animSlide: raw 可改成记 raw）；Memorial 剧情（mem_img 幻灯片 / mem_voice 语音 + 台词 / memorial 段落）已支持'],
@@ -1462,7 +1462,7 @@ function normalizeLayout(raw, problems, id) {
   return out
 }
 // 引擎层通用配置字段（config.mjs 的 classify / resourceResolve / indexSkip / limits / player）：LAYOUTS 里的 engine 原样写进 config
-const ENGINE_FIELDS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player']
+const ENGINE_FIELDS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player', 'dirCover', 'thumbRender']
 // 深度合并：对象逐键递归，数组 / 标量整个替换（后者赢）；和适配器自己的 mergeOptions 同一个口径
 function deepMerge(a, b) {
   if (!isPlain(a) || !isPlain(b)) return b === undefined ? structuredClone(a) : structuredClone(b)
@@ -1915,6 +1915,16 @@ function canonField(key, value) {
         prefer: tiers.length ? tiers : [{ source: 'render', match: '', take: 0 }, { source: 'image', match: '', take: 0 }],
         skip: (Array.isArray(value.skip) ? value.skip : []).slice(0, 10).filter(okRe),
         only: (Array.isArray(value.only) ? value.only : []).slice(0, 10).filter(okRe),
+      }
+    }
+    // thumbRender：和 config.mjs 的 DEFAULT_THUMB_RENDER / 校验一致（没写的补默认值，数字夹范围）
+    case 'thumbRender': {
+      if (!isPlain(value)) return value
+      const numIn = (x, d, lo, hi) => (x === undefined || x === null || x === '' || typeof x === 'boolean' || !Number.isFinite(Number(x)) ? d : Math.max(lo, Math.min(hi, Number(x))))
+      return {
+        enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+        width: Math.round(numIn(value.width, 640, 160, 1280)), scanSteps: Math.round(numIn(value.scanSteps, 150, 10, 1000)), concurrency: Math.round(numIn(value.concurrency, 1, 1, 3)),
+        seek: numIn(value.seek, 0.5, 0, 0.95), film: typeof value.film === 'boolean' ? value.film : true, filmFrame: numIn(value.filmFrame, 0.5, 0, 0.99), filmMax: Math.round(numIn(value.filmMax, 4, 1, 12)),
       }
     }
     case 'thumbHover': {

@@ -430,20 +430,26 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const scriptsOf = (node, depth, limit, out = []) => { for (const c of node.children || []) { if (out.length >= limit) break; if (c.script) out.push(c.script); else if (depth > 1) scriptsOf(c, depth - 1, limit, out) } return out }
   const adapterHasSceneThumbs = (adapters?.length ? adapters : galAdapterIds()).some((id) => { try { return Boolean(galAdapter(id)?.sceneThumbs) } catch { return false } })
   const dirCoverActive = () => config.dirCover.enabled === true || (config.dirCover.enabled === 'auto' && adapterHasSceneThumbs)
-  // 目录卡片的封面：里面前 scan 个脚本（深度优先、最多 depth 层）的候选，按 config.dirCover 挑（dir-cover.mjs：prefer 档位 / skip / only / merge / max）
-  async function dirCoverOf(node) {
+  // 卡片上的渲染图：骨骼 / 立绘场景的一张（renderKey）+ 胶片场景每段胶片一张（filmRenders，Kamihime 的 harem 场景）；多张 = renders（轮播）
+  const renderFieldsOf = (info) => {
+    const list = [...(info.renderKey ? [{ key: info.renderKey }] : []), ...(info.filmRenders || [])]
+    return list.length ? { render: list[0], ...(list.length > 1 ? { renders: list } : {}) } : {}
+  }
+  // 目录卡片的封面：候选脚本（里面前 scan 个，深度优先、最多 depth 层）的封面，按 config.dirCover 挑（dir-cover.mjs：prefer 档位 / skip / only / merge / max）
+  async function dirCoverOfScripts(rels) {
     const dc = config.dirCover
     const cands = { render: [], image: [] }
     const seenImage = new Set()
     const seenKey = new Set()
-    for (const rel of scriptsOf(node, dc.depth, dc.scan)) {
+    for (const rel of rels) {
       const info = await scriptInfo(defaultSet, rel)
-      if (info.renderKey && !seenKey.has(info.renderKey)) { seenKey.add(info.renderKey); cands.render.push({ name: rel, render: { key: info.renderKey, node: idOf(defaultSet, 'script', rel) } }) }
+      for (const r of [...(info.renderKey ? [{ key: info.renderKey }] : []), ...(info.filmRenders || [])]) if (!seenKey.has(r.key)) { seenKey.add(r.key); cands.render.push({ name: rel, render: { ...r, node: idOf(defaultSet, 'script', rel) } }) }
       for (const path of info.thumbs) if (!seenImage.has(path)) { seenImage.add(path); cands.image.push({ name: path, path }) }
     }
     const got = pickDirCover(cands, dc)
     return got.thumbs.length || got.renders.length ? got : null
   }
+  const dirCoverOf = (node) => dirCoverOfScripts(scriptsOf(node, config.dirCover.depth, config.dirCover.scan))
   async function enrichCatalogItems(children, holder) {
     const out = new Array(children.length)
     let next = 0
@@ -466,7 +472,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
             }
           } else if (child.script) {
             const info = await scriptInfo(defaultSet, child.script)
-            if (info.thumbs.length || info.renderKey) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs, ...(info.renderKey ? { render: { key: info.renderKey } } : {}) } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
+            if (info.thumbs.length || info.renderKey || info.filmRenders?.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs, ...renderFieldsOf(info) } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
           }
         } catch { /* 取不到图就保持适配器给的样子（没有图） */ }
       }
@@ -694,15 +700,49 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const renderCfg = config.thumbRender
     const hasSpine = Boolean(scene) && renderCfg.enabled && scene.steps.slice(0, Math.max(renderCfg.scanSteps * 4, 600)).some((step) => step.commands.some((c) => c.op === 'spine' || (c.op === 'stand' && c.parts?.length) || (c.op === 'overlay' && c.src)))   // 有骨骼 / 立绘 / 叠加图（CG）的脚本
     const renderKey = hasSpine && !ruleHit ? createHash('sha1').update(JSON.stringify([abs, ...(sceneKey ? [sceneKey] : []), info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex') : ''
-    const result = { adapterId, renderKey, thumb: thumbs[0] || '', thumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: thumbs.length ? [] : why, issues }
+    // 胶片场景（bg.film：Kamihime harem 场景，整张竖排条带转了 90° 存的）：兜底封面不能直接用条带，只有一张灰底；每段不同的胶片渲染一帧（thumbRender.filmFrame 处），最多 filmMax 段，卡片轮播
+    const filmRenders = []
+    if (scene && renderCfg.enabled && renderCfg.film !== false && !ruleHit) {
+      const seenFilm = new Set()
+      for (const step of scene.steps.slice(0, 3000)) {
+        for (const c of step.commands) {
+          if (c.op === 'bg' && c.film && typeof c.src === 'string' && !seenFilm.has(c.src)) {
+            seenFilm.add(c.src)
+            filmRenders.push({ key: createHash('sha1').update(JSON.stringify([abs, ...(sceneKey ? [sceneKey] : []), 'film', c.src, renderCfg.filmFrame, info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex'), film: c.src })
+          }
+        }
+        if (filmRenders.length >= renderCfg.filmMax) break
+      }
+    }
+    const shownThumbs = filmRenders.length ? [] : thumbs   // 有胶片渲染图时，兜底的灰底图不要
+    const result = { adapterId, renderKey, filmRenders, thumb: shownThumbs[0] || '', thumbs: shownThumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: shownThumbs.length || filmRenders.length ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
     return result
   }
 
   // 目录 / 分组卡片的头像：dirThumbs（全部匹配的规则、通配全展开）+ thumbSources → { thumb（= 第一张）, thumbs, thumbWhy（没找到图时：试了哪些规则 / 路径）}
-  const withWhy = async (entry, extra) => {
+  // 目录 / 分组卡片下面的脚本（深度优先、最多 depth 层、最多 limit 个）：目录卡片没有规则给图时，dirCover 用它们的封面
+  async function scriptsBelow(set, rel, depth, limit, out = []) {
+    const listing = await listDir(set, rel).catch(() => null)
+    if (!listing) return out
+    for (const e of listing.all) {
+      if (out.length >= limit) break
+      if (e.type === 'script') out.push(e.rel)
+      else if (e.type === 'group') { for (const m of e.members) { if (out.length >= limit) break; out.push(m.rel) } }
+      else if (e.type === 'dir' && depth > 1) await scriptsBelow(set, e.rel, depth - 1, limit, out)
+    }
+    return out
+  }
+  // scriptsOfEntry：() => 候选脚本路径数组（目录 = scriptsBelow，分组 = 成员）；config.dirCover 开着（enabled: true；auto 只对 catalog 里声明了 sceneThumbs 的适配器）且规则没给图才用
+  const withWhy = async (entry, extra, scriptsOfEntry = null) => {
     const tried = []
     const thumbs = [...(await thumbEngine.forDir(entry, { why: tried })).values()]
+    if (!thumbs.length && scriptsOfEntry && config.dirCover.enabled === true) {
+      try {
+        const cover = await dirCoverOfScripts((await scriptsOfEntry()).slice(0, config.dirCover.scan))
+        if (cover) return { thumb: cover.thumbs[0] || '', thumbs: cover.thumbs, carousel: config.dirCover.max, ...(cover.renders.length ? { render: cover.renders[0], renders: cover.renders } : {}), ...extra }
+      } catch { /* 取不到封面就保持没有图 */ }
+    }
     return { thumb: thumbs[0] || '', thumbs, ...(thumbs.length ? {} : { thumbWhy: tried }), ...extra }
   }
 
@@ -831,7 +871,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const paged = await pageOfView(members, view, page, (entry) => ({ title: entry.stem, extra: entry.name }))
       const items = await mapLimit(paged.slice, IO_CONCURRENCY, async (entry) => {
         const info = await scriptInfo(set, entry.rel)
-        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...(info.renderKey ? { render: { key: info.renderKey } } : {}), node: idOf(set, 'script', entry.rel) }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...renderFieldsOf(info), node: idOf(set, 'script', entry.rel) }
       })
       return { node: { id: groupNodeId(set, rel, key, paged.current, view), kind: 'cards', title: await labelOf(key), ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, groupNodeId(set, rel, key, 1)) } }
     }
@@ -852,15 +892,15 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       const items = await mapLimit(paged.slice, IO_CONCURRENCY, async (entry) => {
         if (entry.type === 'group') {
           const label = await labelOf(entry.key)
-          return { type: 'dir', id: entry.rel, title: label, subtitle: `${label !== entry.key ? `${entry.key} · ` : ''}${entry.members.length} 项`, ...(await withWhy({ name: entry.key, parentName: rel ? baseName(rel) : '' })), badge: '', node: groupNodeId(set, rel, entry.key, 1) }
+          return { type: 'dir', id: entry.rel, title: label, subtitle: `${label !== entry.key ? `${entry.key} · ` : ''}${entry.members.length} 项`, ...(await withWhy({ name: entry.key, parentName: rel ? baseName(rel) : '' }, undefined, async () => entry.members.map((m) => m.rel))), badge: '', node: groupNodeId(set, rel, entry.key, 1) }
         }
         if (entry.type === 'dir') {
           const label = await labelOf(entry.name)
           const n = await countChildren(set, entry.rel)
-          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry)), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
+          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry, undefined, () => scriptsBelow(set, entry.rel, config.dirCover.depth, config.dirCover.scan))), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
         }
         const info = await scriptInfo(set, entry.rel)
-        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...(info.renderKey ? { render: { key: info.renderKey } } : {}), node: idOf(set, 'script', entry.rel) }
+        return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...renderFieldsOf(info), node: idOf(set, 'script', entry.rel) }
       })
       const title = rel ? await labelOf(baseName(rel)) : '首页'
       return { node: { id: dirNodeId(set, rel, paged.current, view), kind: 'cards', title, ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, dirNodeId(set, rel, 1)) } }

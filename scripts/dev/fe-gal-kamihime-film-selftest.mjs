@@ -116,6 +116,9 @@ try {
     check('读胶片剧情（真实 handler）：scene 来自 tyrano-ks，5 步，背景带 film', played.scene?.adapter === 'tyrano-ks' && played.scene.steps.length === 5 && bgs.length >= 3 && bgs.every((b) => b.film), J(played.scene?.stats))
     const res = async (src) => (await fetch(`${base}${played.resourceBase}?path=${encodeURIComponent(src)}`)).status
     check('资源接口：胶片 jpg 取得到', await res(bgs[1].src) === 200, J(bgs[1]))
+    // 列表卡片：胶片场景没有骨骼，但每段不同的胶片渲染一帧（renders，轮播）；兜底的灰底图不要
+    const filmCard = dir.node.items[1]
+    check('列表：胶片场景卡片带 renders（每段不同的、找得到的胶片一张：black / strip / single = 3 张（nothere 找不到，不出 bg），film 字段是胶片路径），兜底图不要（thumbs 空）', Array.isArray(filmCard.renders) && filmCard.renders.length === 3 && filmCard.renders.every((r) => /^[0-9a-f]{40}$/.test(r.key) && r.film) && J(filmCard.renders.map((r) => r.film.split('/').pop())) === J(['black.jpg', 'strip.jpg', 'single.jpg']) && filmCard.thumbs.length === 0 && J(filmCard.render) === J(filmCard.renders[0]), J(filmCard))
     if (!chromium) console.log('SKIP 没有 @playwright/test：跳过浏览器部分')
     else {
       const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
@@ -136,6 +139,24 @@ try {
           const strip = f.firstElementChild.getBoundingClientRect()
           return { w: f.getBoundingClientRect().width, h: f.getBoundingClientRect().height, sw: strip.width, sh: strip.height, sx: strip.left - f.getBoundingClientRect().left, rotate: f.dataset.rotate, transform: f.firstElementChild.style.transform }
         })
+        // 渲染缩略图：胶片取中间一帧（strip.jpg 三帧 红 / 绿 / 蓝 → 绿），转回正的再铺满
+        const stripSrc = filmCard.renders[1].film
+        const tint = await page.evaluate(async ([api, resourceBase, node, film, frameFraction]) => {
+          const m = await import('/gal-thumb-render.js')
+          const blob = await m.renderSceneThumb({ apiBase: api, resourceBase, node, film, filmFrame: frameFraction, width: 160 })
+          const bmp = await createImageBitmap(blob)
+          const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height
+          const x = c.getContext('2d'); x.drawImage(bmp, 0, 0)
+          const px = (fx, fy) => [...x.getImageData(Math.round(fx * (c.width - 1)), Math.round(fy * (c.height - 1)), 1, 1).data]
+          return { size: [bmp.width, bmp.height], center: px(0.5, 0.5), corners: [px(0.1, 0.1), px(0.9, 0.9)] }
+        }, [`${base}/api/library/items/gal/${itemId}`, played.resourceBase, dir.node.items[1].node, stripSrc, 0.5])
+        const greenish = (p) => p[1] > 150 && p[0] < 120 && p[2] < 120
+        check('renderSceneThumb({ film }) 胶片中间一帧：160×90 的 JPEG，中心和四周都是绿（lime），不是红 / 蓝 / 黑', tint.size[0] === 160 && tint.size[1] === 90 && greenish(tint.center) && tint.corners.every(greenish), J(tint))
+        const none = await page.evaluate(async ([api, resourceBase, node]) => {
+          const m = await import('/gal-thumb-render.js')
+          try { await m.renderSceneThumb({ apiBase: api, resourceBase, node, film: 'no/such/film.jpg', width: 160 }); return 'ok' } catch (e) { return String(e.message) }
+        }, [`${base}/api/library/items/gal/${itemId}`, played.resourceBase, dir.node.items[1].node])
+        check('film 对不上脚本里的任何一段胶片：报「脚本里没有用到胶片」，不画空图', /没有用到胶片/.test(none), none)
         await sleep(600)
         const first = await filmBox()
         check('第 1 段：胶片元素（.gal-film）存在，高 = 舞台高度、宽 = 高 × 1.40625（横版一帧居中）；rotate = 90', first && first.rotate === '90' && Math.abs(first.w / first.h - 1.40625) < 0.01, J(first))

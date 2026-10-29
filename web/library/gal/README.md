@@ -961,3 +961,9 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 1. 每个游戏的 LAYOUTS 条目里的 `cover` 规则（`{ dir, match, flags, pick: first | last }` 或 `{ dir, files }`）——数组，第一个有结果的算（就是优先级：a 没有再 b）；
 2. 脚本参数 `overrides: [{ path, cover }]`——按媒体目录路径单独指定封面（`~/` 开头 = 相对媒体目录），优先于规则。
 重新跑一遍 gal-layout 生效。没有「按名字优先级挑多张」的随机 / 轮播（媒体封面是单张）。
+
+## 胶片场景缩略图（Kamihime harem）/ 文件系统目录的 dirCover（第 31 轮）
+
+- **胶片场景**（`bg.film`：`<id>_harem-character_script.json`，整张竖排条带转了 90° 存的）以前兜底封面会跳过条带，只剩一张灰底图。现在规则没给图时，脚本里每段**不同的、找得到的**胶片渲染一帧（`thumbRender.filmFrame`，默认 0.5 = 条带中间一帧，转回正的再铺满 16:9），最多 `thumbRender.filmMax` 段（默认 4，1～12），卡片轮播（`item.renders`，每项带 `film` = 胶片路径；渲染 key 含胶片路径和 filmFrame）。有胶片渲染图时不再带兜底的灰底图。`thumbRender.film: false` 关掉。
+- **dirCover 也用在文件系统目录 / 分组卡片**（以前只有 catalog）：`dirCover.enabled: true` 时，规则（thumbSources / dirThumbs）没给图的目录 / 分组卡片，用里面前 `scan` 个脚本（`depth` 层以内）的封面，`prefer` / `skip` / `only` / `max` 同上；`auto` 仍然只对声明了 `sceneThumbs` 的 catalog（TSK）生效。写在布局里：`config.dirCover`，或者 `engine.dirCover`（`engine` 现在也认 `dirCover` / `thumbRender`，别名继承时写在 engine 里就不会替换掉整份 config）。
+- 现在写了的：Aku `engine.dirCover = { enabled: true, scan: 8, max: 6, prefer: [render, image] }`（角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播）；Kamihime `config.dirCover = { enabled: true, scan: 6, max: 4, prefer: [render, image] }`（角色目录有头像用头像，没有头像的用里面场景的渲染图 / 图）。
