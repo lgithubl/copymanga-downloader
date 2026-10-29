@@ -408,6 +408,20 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   // 一律卡片：目录卡片（头像/文件夹图标、中文标签、数量）和脚本卡片（缩略图、台词摘要）混排，右上角的小标签是来源（合并目录时用来分辨来自哪个目录）
   const body = el('div', 'gal-browse-body gal-browse-cards')
   if (node.notice) body.append(el('div', 'gal-browse-notice', node.notice))
+  // 多个脚本根（魔法学园：剧情 / H 场景……）：首页顶部并列标签，点一个 = 打开那一套的首页（「更多」里的下拉框仍然有）
+  if (node.sets?.length > 1) {
+    const tabs = el('div', 'gal-browse-tabs')
+    tabs.setAttribute('role', 'tablist')
+    for (const set of node.sets) {
+      const tab = el('button', `gal-browse-tab${set.active ? ' active' : ''}`, set.label)
+      tab.type = 'button'
+      tab.setAttribute('role', 'tab')
+      tab.setAttribute('aria-selected', set.active ? 'true' : 'false')
+      tab.addEventListener('click', () => { if (!set.active) onOpen(set.node, 'self') })
+      tabs.append(tab)
+    }
+    body.append(tabs)
+  }
   // 节点图：节点的描述文字 + 「相关」节点（关联，不是父子；点了和进子节点一样往下走，返回上一级仍回到这里）
   if (node.text) body.append(el('div', 'gal-browse-text', node.text))
   if (node.related?.length) {

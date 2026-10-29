@@ -178,6 +178,13 @@ check('点两次「↑ 上一级」：回到首页', (await crumbs()) === '首�
 // 文本版本
 const sets = await page.$$eval('.gal-browse-sets option', (os) => os.map((o) => [o.textContent, o.selected]))
 check('首页「更多」里有「文本版本」下拉：text（默认选中）+ 另一套', JSON.stringify(sets) === JSON.stringify([['text', true], ['text---日文20251102', false]]), JSON.stringify(sets))
+const tabs = await page.$$eval('.gal-browse-tab', (bs) => bs.map((b) => [b.textContent, b.classList.contains('active')]))
+check('多个脚本根：首页顶部并列标签（和「文本版本」下拉同一组：text 当前、另一套）', JSON.stringify(tabs) === JSON.stringify([['text', true], ['text---日文20251102', false]]), JSON.stringify(tabs))
+await page.click('.gal-browse-tab:not(.active)')
+await page.waitForFunction(() => document.querySelectorAll('.gal-card').length === 2)
+check('点标签：切到另一套的首页（2 个目录），标签高亮跟着换', JSON.stringify(await rowTitles()) === JSON.stringify(['纪念馆', '角色']) && JSON.stringify(await page.$$eval('.gal-browse-tab', (bs) => bs.map((b) => b.classList.contains('active')))) === '[false,true]')
+await page.click('.gal-browse-tab:not(.active)')
+await page.waitForFunction(() => document.querySelectorAll('.gal-card').length === 9)
 await sleep(300)
 check('首页载入后：「更多」菜单是收起的、搜索框没有被自动聚焦（根节点 id 是空串，不能和「没有待办」混淆）', await page.$eval('.gal-browse-more-menu', (m) => m.hidden) && !(await page.evaluate(() => document.activeElement?.classList.contains('gal-browse-search'))))
 await page.click('.gal-browse-more-btn')   // 文本版本下拉在「更多」里

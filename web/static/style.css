@@ -4319,6 +4319,10 @@ h2 {
 .gal-browse-crumb.current { color: var(--site-text); font-weight: 600; overflow-wrap: anywhere; }
 .gal-browse-sep { color: var(--site-muted); }
 .gal-browse-notice { background: #fff7ed; border: 1px solid #f5c58a; border-radius: 6px; color: #8a4b08; grid-column: 1 / -1; padding: 8px 10px; }
+.gal-browse-tabs { border-bottom: 1px solid var(--site-border, #d9dee7); display: flex; gap: 6px; grid-column: 1 / -1; }
+.gal-browse-tab { background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--site-muted); cursor: pointer; font-size: 14px; padding: 6px 14px; }
+.gal-browse-tab:hover { color: var(--site-text); }
+.gal-browse-tab.active { border-bottom-color: var(--site-primary-text, #1c64f2); color: var(--site-primary-text, #1c64f2); font-weight: 600; }
 .gal-browse-empty { color: var(--site-muted); padding: 32px 0; text-align: center; }
 .gal-browse-cards { align-items: start; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 .gal-card { align-content: start; background: var(--site-panel-soft); border: 1px solid var(--site-border); border-radius: 8px; color: var(--site-text); display: grid; gap: 6px; min-height: 0; padding: 8px; text-align: left; }
