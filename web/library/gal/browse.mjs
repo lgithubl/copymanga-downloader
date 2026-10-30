@@ -453,7 +453,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const renderFieldsOf = (info) => (info.markers?.length ? { ...renderFieldsBase(info), markers: info.markers } : renderFieldsBase(info))   // markers = 场景跳转点（config.sceneMarkers）
   const renderFieldsBase = (info) => {
     const list = [...(info.renderKey ? [{ key: info.renderKey }] : []), ...(info.filmRenders || []), ...(info.innerRenders || [])]
-    const carousel = info.innerRenders?.length ? { carousel: config.thumbRender.innerMax } : {}   // 悬停轮播的张数跟着 innerMax（默认悬停只轮 4 张）
+    const carousel = info.innerRenders?.length || (config.thumbRender.inner && info.filmRenders?.length > 1) ? { carousel: config.thumbRender.innerMax } : {}   // 悬停轮播的张数跟着 innerMax（默认悬停只轮 4 张）
     if (info.ruleCover && list.length) return { renders: list, ruleCover: true, ...carousel }   // 规则给的图（thumbnail.png 之类）仍是封面，渲染图排在它后面轮播
     return list.length ? { render: list[0], ...(list.length > 1 ? { renders: list } : {}), ...carousel } : {}
   }
@@ -748,6 +748,16 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         }
         if (filmRenders.length >= renderCfg.filmMax) break
       }
+    }
+    // 胶片场景的内部轮播（thumbRender.inner）：同一条胶片再多取几个不同位置的帧（innerRenders 个，先中间帧），总数不超过 innerMax；不然一条胶片的场景只有一张图，鼠标放上去不会动
+    if (renderCfg.inner && filmRenders.length) {
+      const n = Math.max(1, renderCfg.innerRenders)
+      const fractions = Array.from({ length: n }, (_, k) => Math.round(((k + 0.5) / n) * 1000) / 1000)
+      const order = [renderCfg.filmFrame, ...fractions.filter((f) => Math.abs(f - renderCfg.filmFrame) > 0.05)]
+      const films = filmRenders.map((r) => r.film)
+      const list = []
+      for (const frame of order) for (const film of films) list.push({ key: createHash('sha1').update(JSON.stringify([abs, ...(sceneKey ? [sceneKey] : []), 'film', film, frame, info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex'), film, ...(frame === renderCfg.filmFrame ? {} : { frame }) })
+      filmRenders.splice(0, filmRenders.length, ...list.slice(0, renderCfg.innerMax))
     }
     const innerRenders = []
     if (innerPicks && !filmRenders.length) {

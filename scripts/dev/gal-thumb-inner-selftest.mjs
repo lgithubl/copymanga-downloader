@@ -113,5 +113,25 @@ registerGalAdapter({ id: 'test-inner', label: '测试：JSON 步骤', sniff: (te
   check('config 校验：from 只认 first / last、leafScan 不能是负数，退回默认并警告', bad.config.dirCover.from === 'first' && bad.config.dirCover.leafScan === 0 && bad.warnings.some((w) => w.field === 'dirCover.from') && bad.warnings.some((w) => w.field === 'dirCover.leafScan'), J(bad))
 }
 
+// ---- 胶片场景（bg.film）：同一条胶片取几个不同位置的帧 ----
+{
+  for (const f of ['strip1.jpg', 'strip2.jpg']) await mk(`resources/fm/${f}`)
+  const film = { ratio: 1.40625, fps: 16, rotate: 90 }
+  const text = (t) => ({ op: 'text', segments: [{ text: t }] })
+  const fbg = (name) => ({ op: 'bg', src: `fm/${name}`, film })
+  await mk('resources/fs/film_one.txt', `#FM${J([[fbg('strip1.jpg')], [text('a')], [text('b')], [text('c')]])}`)
+  await mk('resources/fs/film_two.txt', `#FM${J([[fbg('strip1.jpg')], [text('a')], [fbg('strip2.jpg')], [text('b')], [text('c')]])}`)
+  registerGalAdapter({ id: 'test-film', label: '测试：胶片', sniff: (t) => t.startsWith('#FM'), parse: (t) => ({ steps: JSON.parse(t.slice(3)).map((commands, index) => ({ index, commands })), stats: {} }) })
+  const provider = (thumbRender) => createBrowseProvider({ mediaDir: media, adapters: ['test-film'], resolveAsset, config: { scriptRoots: [{ id: 'text', dir: 'resources/fs' }], scriptThumbs: [], thumbRender } })
+  const items = async (tr) => Object.fromEntries((await provider(tr).getNode('')).node.items.map((i) => [i.title, i]))
+  const off = await items({})
+  check('胶片场景，inner 关（以前）：一条胶片 = 1 张渲染图（鼠标放上去不会动）；两条不同的胶片 = 2 张', off.film_one.renders === undefined && off.film_one.render?.film === 'fm/strip1.jpg' && off.film_two.renders?.length === 2, J([off.film_one, off.film_two.renders]))
+  const on = await items({ inner: true, innerMax: 4, innerRenders: 3 })
+  const one = on.film_one.renders
+  check('胶片场景，inner 开：一条胶片 = 同一条胶片的 3 个不同位置的帧（先中间帧 0.5，再 0.167 / 0.833）；key 互不相同；第一张（中间帧）的 key 和 inner 关时一样；没有 frame 字段的是默认帧', one?.length === 3 && J(one.map((r) => r.frame ?? 0.5)) === '[0.5,0.167,0.833]' && new Set(one.map((r) => r.key)).size === 3 && one[0].key === off.film_one.render.key && one.every((r) => r.film === 'fm/strip1.jpg') && on.film_one.carousel === 4, J(one))
+  const two = on.film_two.renders
+  check('两条胶片 + inner：帧优先（先每条的中间帧，再下一个位置），总数不超过 innerMax（4）', two?.length === 4 && J(two.map((r) => [r.film, r.frame ?? 0.5])) === J([['fm/strip1.jpg', 0.5], ['fm/strip2.jpg', 0.5], ['fm/strip1.jpg', 0.167], ['fm/strip2.jpg', 0.167]]), J(two))
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

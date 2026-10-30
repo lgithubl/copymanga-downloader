@@ -1493,7 +1493,7 @@ export const LAYOUTS = {
       resourceResolve: { extensionFallbacks: { '.m4a': ['.wav'] } },
       limits: { walkFiles: 1000000 },   // bokusen-json.contextWalkLimit：826 个资源目录 × 几十到几百个文件
     },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [
+    config: { sceneMarkers: [{ label: '背景人声开始', kind: 'cmd', op: 'bgse', pick: 'first', max: 1 }, { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 5 }], namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [
         // 脚本名两种写法：「<编号> 【<分类>】<标题>」/「<标题> 【<分类>】<编号>」，H 场景是「<编号> <标题>H」/「<标题>H<编号>」。分类名后面带两位数字（年份）的当活动——是看名字猜的，没有原版数据佐证
         { parent: '.', as: 'h', label: 'H', match: String.raw`^[^【]*H\d*$`, exclusive: true },
         { parent: '.', as: 'events', label: '活动', match: String.raw`【[^】]*(?:\d{2}|七夕\d*|V-DAY\d*|Ｖ-[^】]*|節分\d*|水着\d*|[戌寅卯辰巳午未申酉亥子丑]年)】`, exclusive: true },
@@ -1524,7 +1524,7 @@ export const LAYOUTS = {
     config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Rio: 'CG 画廊' }, merge: [], views: [{ parent: '*', as: 'special', label: '特殊场景', dirs: [], match: '_[hH]$', exclusive: false, badges: {} }],   // 每个剧情 arc 目录下多一个「特殊场景」（脚本名以 _H 结尾的，要改规则改 match；全量列表照旧）
     groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.advhd', depth: 3 }], avatars: [], expectedDirs: [],
-    cover: [{ dir: '/^manual$/i', match: '\\.(?:png|jpe?g|webp|bmp)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 游戏目录里 Manual 目录（普通目录，不是 Manual.arc）的第一张图（路径相对媒体目录）
+    cover: [{ dir: '/^manual$/i', files: ['Manual.jpg'], fromMedia: true, abs: true }, { dir: '*/manual', files: ['Manual.jpg'], fromMedia: true, abs: true }, { dir: '/^manual$/i', match: '\\.(?:png|jpe?g|webp|bmp)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 游戏目录里 Manual 目录（普通目录，不是 Manual.arc）的第一张图（路径相对媒体目录）
     notes: ['arc 在第一次浏览时由服务端展开到 <根>/arc/（之后按 arc 的大小 + 修改时间判断要不要重做）；缺的容器（Chip / Voice 没给全）对应的图 / 语音在渲染诊断里报缺资源', '脚本数在展开之前是 0（这个脚本只看目录，不读 arc），展开后列表里才有'],
   },
   grenze: {
@@ -1542,7 +1542,7 @@ export const LAYOUTS = {
       classify: [],
       limits: { walkFiles: 2000000 },   // grenze-xml.contextWalkLimit：voice 一个目录十万级文件
     },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], sceneMarkers: [{ label: '背景人声开始', kind: 'cmd', op: 'bgse', pick: 'first', max: 1 }, { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 5 }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } }, pageSize: 100 },
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } }, pageSize: 100 },
     count: [],   // 数 TextAsset 里的 easy_dialog-N.xml（detectGrenze）
     cover: [{ dir: 'assets/resources/patchres/banner/banner_title', match: '^LOGO_.*\\.(?:webp|png)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 标题 LOGO（gal-samples15 的图片目录清单：patchres/banner/banner_title 里 LOGO_<…>_520.webp 291 张）
     avatars: [], expectedDirs: ['assets/resources/patchres'],

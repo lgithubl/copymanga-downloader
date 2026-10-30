@@ -118,7 +118,7 @@ try {
     check('资源接口：胶片 jpg 取得到', await res(bgs[1].src) === 200, J(bgs[1]))
     // 列表卡片：胶片场景没有骨骼，但每段不同的胶片渲染一帧（renders，轮播）；兜底的灰底图不要
     const filmCard = dir.node.items[1]
-    check('列表：胶片场景卡片带 renders（每段不同的、找得到的胶片一张：black / strip / single = 3 张（nothere 找不到，不出 bg），film 字段是胶片路径），兜底图不要（thumbs 空）', Array.isArray(filmCard.renders) && filmCard.renders.length === 3 && filmCard.renders.every((r) => /^[0-9a-f]{40}$/.test(r.key) && r.film) && J(filmCard.renders.map((r) => r.film.split('/').pop())) === J(['black.jpg', 'strip.jpg', 'single.jpg']) && filmCard.thumbs.length === 0 && J(filmCard.render) === J(filmCard.renders[0]), J(filmCard))
+    check('列表：胶片场景卡片带 renders（Kamihime 默认开了 inner：每段不同的、找得到的胶片的中间帧 black / strip / single，再加第一条胶片的另一个位置的帧，共 4 张（innerMax）；nothere 找不到，不出 bg，film 字段是胶片路径），兜底图不要（thumbs 空）', Array.isArray(filmCard.renders) && filmCard.renders.length === 4 && filmCard.renders.every((r) => /^[0-9a-f]{40}$/.test(r.key) && r.film) && J(filmCard.renders.map((r) => r.film.split('/').pop())) === J(['black.jpg', 'strip.jpg', 'single.jpg', 'black.jpg']) && filmCard.renders[3].frame > 0 && filmCard.renders[3].frame < 0.5 && filmCard.thumbs.length === 0 && J(filmCard.render) === J(filmCard.renders[0]), J(filmCard))
     if (!chromium) console.log('SKIP 没有 @playwright/test：跳过浏览器部分')
     else {
       const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })

@@ -388,7 +388,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
 {
   const media = path.join(work, 'lpsl')
   await buildAdvhdFixture(media)
-  const run = (config, options = {}) => generateTags({ item: { itemId: 'x', title: 'x', config, source: { path: media }, adapters: ['advhd::ws2'] }, script: { id: 'gal-layout', version: '2.24.0', options } })
+  const run = (config, options = {}) => generateTags({ item: { itemId: 'x', title: 'x', config, source: { path: media }, adapters: ['advhd::ws2'] }, script: { id: 'gal-layout', version: '2.25.0', options } })
   const out = await run({ game: { id: 'advhd::lpsl' } })
   const cfg = out.itemPatch.gal.config
   check('家族布局：game.id「advhd::lpsl」不在表里 → 按家族 advhd 处理（日志说明），写 脚本根 / 资源根 / 脚本扩展名 / adapterOptions.resDir / containers / limits，game.id 原样写回', cfg.game.id === 'advhd::lpsl' && cfg.scriptRoots[0].dir === 'arc/script' && cfg.resourceRoots[0] === 'arc/res' && J(cfg.scriptExtensions) === J(['advhd']) && cfg.adapterOptions['advhd::ws2'].resDir === 'arc/res' && cfg.containers.enabled === true && cfg.containers.rules.some((r) => r.skip) && cfg.limits.sampleBytes === 262144 && out.logs.some((l) => /按家族「advhd」/.test(l)) && out.details.kind === 'advhd' && out.itemTags.includes('Gal游戏: advhd::lpsl'), J([out.logs.slice(0, 5), cfg.game]))
@@ -398,15 +398,15 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const emptyDir = path.join(work, 'not-advhd')
   await mkdir(emptyDir, { recursive: true })
   await writeFile(path.join(emptyDir, 'Script2.arc'), 'x')
-  const noMarkers = await generateTags({ item: { itemId: 'x', title: 'x', config: {}, source: { path: emptyDir } }, script: { id: 'gal-layout', version: '2.24.0', options: {} } })
+  const noMarkers = await generateTags({ item: { itemId: 'x', title: 'x', config: {}, source: { path: emptyDir } }, script: { id: 'gal-layout', version: '2.25.0', options: {} } })
   check('只有 Script2.arc、没有 AdvHD.exe / Rio*.arc：自动探测不认领（markers 不满足）；声明了 id 才按锚点认', noMarkers.itemPatch?.gal?.config?.game?.id !== 'advhd::lpsl' && !String(noMarkers.itemPatch?.gal?.config?.game?.id || '').startsWith('advhd'))
-  const declared = await generateTags({ item: { itemId: 'x', title: 'x', config: { game: { id: 'advhd::other' } }, source: { path: emptyDir } }, script: { id: 'gal-layout', version: '2.24.0', options: {} } })
+  const declared = await generateTags({ item: { itemId: 'x', title: 'x', config: { game: { id: 'advhd::other' } }, source: { path: emptyDir } }, script: { id: 'gal-layout', version: '2.25.0', options: {} } })
   check('声明了 advhd::other、目录里有 Script2.arc → 认（锚点够了）', declared.itemPatch?.gal?.config?.game?.id === 'advhd::other')
   const over = await run({ game: { id: 'advhd::lpsl' } }, { layouts: { 'advhd::lpsl': { scriptRoots: [{ id: 'main', dir: 'arc/script/Rio1', label: '本篇' }] } } })
   check('这个游戏自己的差异：选项 layouts["advhd::lpsl"] 叠在家族项之上（只覆盖写了的字段），别的游戏不受影响', over.itemPatch.gal.config.scriptRoots[0].id === 'main' && over.itemPatch.gal.config.containers.enabled === true && (await run({ game: { id: 'advhd::lpsl2' } })).itemPatch.gal.config.scriptRoots[0].id === 'story')
   const overFamily = await run({ game: { id: 'advhd::lpsl' } }, { layouts: { advhd: { notes: [], engine: { containers: { enabled: true, rules: [{ match: '\\.arc$' }] } } } } })
   check('选项 layouts.advhd（家族 key）对家族下所有游戏生效：这里把 containers 规则换成「全收」', overFamily.itemPatch.gal.config.containers.rules.length === 1)
-  const again = await generateTags({ item: { itemId: 'x', title: 'x', config: cfg, source: { path: media }, adapters: ['advhd::ws2'] }, script: { id: 'gal-layout', version: '2.24.0', options: {} } })
+  const again = await generateTags({ item: { itemId: 'x', title: 'x', config: cfg, source: { path: media }, adapters: ['advhd::ws2'] }, script: { id: 'gal-layout', version: '2.25.0', options: {} } })
   check('存进条目再跑一次 = 没有改动（containers 的默认值字段和引擎规整一致，不会被当成改动）', /新增 0 项 \/ 修改 0 项 \/ 删除 0 项/.test(again.logs.join('\n')), again.logs.filter((l) => /本次改动|^[+~-]/.test(l)).join(' | '))
   const { warnings } = normalizeGalConfigWithWarnings(applyGalConfigPatch({}, cfg))
   check('写出来的 config 经引擎规整没有任何警告', warnings.length === 0, J(warnings))
@@ -418,7 +418,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const item = imported.items[0]
   check('导入：adapters 里的 advhd::ws2 被认；game.id 带 :: 能存', J(item.adapters) === J(['advhd::ws2']) && item.config.game.id === 'advhd::lpsl', J([item.adapters, item.config.game]))
   check('导入本身不碰 arc（只建元数据）', !(await exists(path.join(media, 'arc'))))
-  const tagOut = await generateTags({ item, script: { id: 'gal-layout', version: '2.24.0', options: {} } })
+  const tagOut = await generateTags({ item, script: { id: 'gal-layout', version: '2.25.0', options: {} } })
   await handler.patchItemMetadata(item.itemId, { gal: tagOut.itemPatch.gal })
   const I = await handler.getItem(item.itemId)
   let warmed = false
@@ -444,7 +444,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   await buildAdvhdFixture(fresh)
   const handler2 = createGalHandler({ dataDir: path.join(work, 'data2'), safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: fresh, adapters: ['advhd::ws2'] } } }) })
   const imp2 = (await handler2.importFromSource({ options: { adapters: ['advhd::ws2'], config: { game: { id: 'advhd::lpsl' } } } })).items[0]
-  const tag2 = await generateTags({ item: imp2, script: { id: 'gal-layout', version: '2.24.0', options: {} } })
+  const tag2 = await generateTags({ item: imp2, script: { id: 'gal-layout', version: '2.25.0', options: {} } })
   await handler2.internals.updateItem(imp2.itemId, (it) => ({ ...it, config: applyGalConfigPatch(it.config, tag2.itemPatch.gal.config) }))   // 绕过 patchItemMetadata（它会在后台预热展开）
   check('没浏览、也没预热，直接取资源也会先展开 arc（resolveAsset 自己保证；不依赖谁先打开列表页）', !(await exists(path.join(fresh, 'arc'))) && (await handler2.getResource(imp2.itemId, 'Bgm/BGM01.ogg')).body.toString() === 'OggS-bgm')
 }

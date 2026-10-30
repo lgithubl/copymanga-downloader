@@ -356,6 +356,16 @@ const withLayouts = (layouts) => ({ layouts })
   await rm(path.join(MEDIA.girlscreation.direct, 'package.nw/data'), { recursive: true, force: true })
 }
 
+// ================= 场景跳转点规则写进 config（以前 bokusen 的规则误写进了 grenze 的条目，ぼくら 一直没有按钮）=================
+{
+  const markersOf = async (name, id) => cfgOf(await run(MEDIA[name].direct, { game: { id } })).sceneMarkers
+  const bok = await markersOf('bokusen', 'bokusen')
+  const art = await markersOf('artwhirl', 'artwhirl')
+  const gre = await markersOf('grenze', 'grenze')
+  const kam = await markersOf('kamihime', 'kamihime')
+  check('sceneMarkers 写在对的游戏上：bokusen = bgse + bgmStop 两条（cmd）；artwhirl = H 开始一条（bg）；grenze / kamihime 没有', J(bok?.map((r) => [r.kind, r.op])) === J([['cmd', 'bgse'], ['cmd', 'bgmStop']]) && J(art?.map((r) => [r.kind, r.label])) === J([['bg', 'H 开始']]) && !gre?.length && !kam?.length, J([bok, art, gre, kam]))
+}
+
 // ================= AdvHD 封面：游戏目录里的 Manual 目录（普通目录，名字不分大小写）的第一张图，路径 ~/ 开头 =================
 {
   const root = MEDIA.advhd.direct
@@ -365,6 +375,9 @@ const withLayouts = (layouts) => ({ layouts })
   const out = await run(root, { game: { id: 'advhd::lpsl' } })
   const cover = out.details?.cover ?? out.itemPatch?.cover
   check('AdvHD 封面 = Manual 目录里按名字排第一的图（目录名不分大小写，只认图片），路径 ~/ 开头', cover === '~/MANUAL/a_01.JPG', J(cover))
+  await writeFile(path.join(dir, 'Manual.jpg'), 'x'); await writeFile(path.join(dir, 'Manual.pdf'), 'x'); await writeFile(path.join(dir, '000_first.png'), 'x')
+  const pick = await run(root, { game: { id: 'advhd::lpsl' } })
+  check('AdvHD 封面：Manual 目录里有 Manual.jpg 就指定用它（不是按名字排第一的 000_first.png，也不是 pdf）', (pick.details?.cover ?? pick.itemPatch?.cover) === '~/MANUAL/Manual.jpg', J(pick.details?.cover))
   await rm(dir, { recursive: true, force: true })
   const none = await run(root, { game: { id: 'advhd::lpsl' } })
   check('AdvHD 没有 Manual 目录 = 没有封面（不报错）', !(none.details?.cover ?? none.itemPatch?.cover), J(none.details?.cover))
@@ -503,7 +516,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
 // ================= 规则表（ADAPTER_RULES + engine 字段）：写进 config、体量、端到端等价、和 layouts / overrides 的关系 =================
 {
   const manifest = JSON.parse(await readFile(path.join(path.dirname(MAIN), 'manifest.json'), 'utf8'))
-  check('manifest：版本 2.24.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.24.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
+  check('manifest：版本 2.25.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.25.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
 
   // 每个 fixture 的声明 id（别名都跑）：写出来的 config 经过引擎规整一条警告都没有（规则表 / engine 字段都合格），体量在引擎上限内
   const tooBig = []

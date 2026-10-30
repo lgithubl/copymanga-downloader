@@ -1005,6 +1005,8 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 字段（`thumbRender` 里，都有默认值）：`inner`（默认 false）、`innerMax`（总张数上限，含封面，默认 4，1–12）、`innerRenders`（最多渲染几个不同的画面，默认 3，1–6）。渲染图优先占名额，剩下的名额用场景里的图（thumbFallback 的 CG → 立绘 → 背景顺序）补；规则给的图超出名额会被截掉，但至少留第一张。悬停轮播的张数（`item.carousel`）跟着 `innerMax`。
 - 选画面：`pickRenderSteps`（`web/static/gal-thumb-pick.js`，纯函数，浏览器和服务端共用）——第 0 个 = 以前的选法（CG > 静态画面骨骼 > 叠加图 > 角色，缓存 key 不变），后面按分数从高到低，画面签名（骨骼名 + 动画 / 叠加图 / 立绘部件 / `bg.over`）相同的去重；纯背景不算。第 k 个画面的缓存 key = 在原 key 上加 `variant k`，浏览器渲染时按 `variant` 取第 k 个画面。
 - 现在只给 Aku 开了（`LAYOUTS.aku.engine.thumbRender = { inner: true, innerMax: 4, innerRenders: 3 }`，gal-layout 2.20.0，要重跑 gal-layout 才会写进已导入的条目）。别的游戏（Kamihime 等）想要，在布局里加同样一行即可。
+- **胶片场景（Kamihime harem）+ inner**：同一条胶片再取 `innerRenders` 个不同位置的帧（先中间帧 `filmFrame`，再 1/6、5/6 处），多条胶片时先每条的中间帧再下一个位置，总数不超过 `innerMax`（渲染描述里带 `frame`，浏览器按它取胶片的那一帧）。以前一条胶片的场景只有一张渲染图，鼠标放上去不会动。
+- **浏览器里的悬停轮播**：`scripts/dev/fe-gal-carousel-selftest.mjs`（真服务 + 真浏览器，AdvHD 合成数据：导入时开 inner，鼠标悬停卡片，封面 `<img>` 的地址真的在换）。**这条测试是后来补的**：之前我只测过服务端输出和单张渲染，没测过列表卡片的悬停，这是个测试缺口。骨骼（WebGL）渲染在这个沙箱里仍然测不了。
 - 没验证的：浏览器里的卡片轮播顺序（规则图 → 渲染图 → 其余图）和真实 Aku 数据下骨骼渲染（这个沙箱的无头浏览器渲染不了骨骼，`fe-gal-render-thumb-selftest` 在没改动的代码上也同样超时）；服务端部分（选画面 / key / 名额 / ruleCover 字段）有自测。顺带修了：`scriptInfo` 的缓存键以前不含 `thumbRender`，改了渲染配置要等 30 秒缓存过期才生效。
 
 ### 目录卡片封面：`dirCover.from` / `leafScan`；虚拟目录 `views` 的 parent 通配；角色头像 T5 优先 T6
