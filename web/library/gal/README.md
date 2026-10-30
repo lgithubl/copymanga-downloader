@@ -998,6 +998,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **做了近似的**：计时器（`SetTimer` 秒数 + `StartTimer` → `wait`，`timers` 可关 / 封顶）；过渡的类型（0 / 9 / 22 / 23 / 25 / 100）和遮罩图都近似成同样时长的淡入淡出，类型 / 遮罩记进 `stats.transitions` / `stats.masks`。
 - **没做的东西看得见**：`ExecuteFunction` 按 `functions` 表（`drop` = 不记，`{ setFlag: N }` = 函数把结果写进标志号，别的 = 不渲染并记 `raw` `ExecuteFunction:<名字>` + `stats.skippedFunctions`，表里没有的名字走 `default`）；没映射的指令记 `raw`（`ignoreOps` 里的布局 / 计时 / 内部状态只计数进 `stats.ignored`）；解码到不在引擎表里的指令就停（`stats.truncated` 带偏移和 opcode），脚本照常打开。播放页右下角「立绘/特效等 N 条指令暂未渲染」点开能看到按指令名汇总，`stats.unresolved` 是缺的资源。
 - **CG 画廊**：游戏的画廊页逻辑在 Lua（`menu_gallery.lua`）里，没有搬；但 `Rio.arc` 的 `CG_PAGE.ws2` 就是画廊的查表（518 个 `openCgBrowser(图)` + 页码寄存器 105 的 Condition），默认只展开这一个脚本，适配器按「画廊」读成一页页 CG（每个 CG 一步，图 + 名字，页码当说话人；`gallery` 选项可调）。回放 / 标题 / 设置 / 存档界面没做（界面逻辑，不是剧情数据）；回放等价于脚本列表本身。
+- **库封面**：游戏目录里的 `Manual` 目录（普通目录，名字不分大小写；不是 `Manual.arc`）里按名字排第一的图片 = 整个 G 的封面（gal-layout 的 `cover` 规则，`fromMedia`，路径 `~/Manual/…`）；没有这个目录 = 没有封面。
 - **视频**：`PlayMovie ED_XX.DAT` 的文件不在 arc 里（样本包也没有）。游戏目录里有 `movie` 目录时 gal-layout 把它加进资源根和适配器 `extraDirs`，按同名找（`movie.exts` 含 `dat`）；`.DAT` 的实际封装没有样本，浏览器能不能放不确定（Content-Type 是 octet-stream）。
 - **补指令 / 补格式**：新游戏遇到引擎表里没有的 opcode → 用 Ghidra 从那个版本的 exe 里导出 `PTR_DAT_1403ea420`（类型表）更新 `OPCODE_LAYOUTS`；arc 格式不同（加密等）→ 在 `containers.mjs` 加读取方式；游戏自己的 `ExecuteFunction` → 在 `functions` 里加映射。
 - **仍然是推断 / 没验证的**（样本缺 Chip3/4/6/7、全部 Voice、Model 这几个 arc，立绘 / 背景 / 语音只有合成数据的测试）：

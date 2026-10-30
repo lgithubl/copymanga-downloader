@@ -320,6 +320,20 @@ const withLayouts = (layouts) => ({ layouts })
   check('部分写坏（markers / siblings 里有非法项）：非法项丢掉，别的照用，不崩', cfgOf(g2)?.game?.id === 'tsk', logText(g2))
 }
 
+// ================= AdvHD 封面：游戏目录里的 Manual 目录（普通目录，名字不分大小写）的第一张图，路径 ~/ 开头 =================
+{
+  const root = MEDIA.advhd.direct
+  const dir = path.join(root, 'MANUAL')
+  await mkdir(dir, { recursive: true })
+  await writeFile(path.join(dir, 'b_02.png'), 'x'); await writeFile(path.join(dir, 'a_01.JPG'), 'x'); await writeFile(path.join(dir, 'readme.txt'), 'x')
+  const out = await run(root, { game: { id: 'advhd::lpsl' } })
+  const cover = out.details?.cover ?? out.itemPatch?.cover
+  check('AdvHD 封面 = Manual 目录里按名字排第一的图（目录名不分大小写，只认图片），路径 ~/ 开头', cover === '~/MANUAL/a_01.JPG', J(cover))
+  await rm(dir, { recursive: true, force: true })
+  const none = await run(root, { game: { id: 'advhd::lpsl' } })
+  check('AdvHD 没有 Manual 目录 = 没有封面（不报错）', !(none.details?.cover ?? none.itemPatch?.cover), J(none.details?.cover))
+}
+
 // ================= Grenze 封面：标题 LOGO（资源根是 assets/resources/patchres，不是 base → 封面路径用 ~/ 相对媒体目录）=================
 {
   const root = MEDIA.grenze.direct
@@ -453,7 +467,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
 // ================= 规则表（ADAPTER_RULES + engine 字段）：写进 config、体量、端到端等价、和 layouts / overrides 的关系 =================
 {
   const manifest = JSON.parse(await readFile(path.join(path.dirname(MAIN), 'manifest.json'), 'utf8'))
-  check('manifest：版本 2.18.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.18.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
+  check('manifest：版本 2.19.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.19.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
 
   // 每个 fixture 的声明 id（别名都跑）：写出来的 config 经过引擎规整一条警告都没有（规则表 / engine 字段都合格），体量在引擎上限内
   const tooBig = []

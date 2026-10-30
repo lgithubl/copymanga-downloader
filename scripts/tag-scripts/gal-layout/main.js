@@ -1510,6 +1510,7 @@ export const LAYOUTS = {
     },
     config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Rio: 'CG 画廊' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.advhd', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [{ dir: '/^manual$/i', match: '\\.(?:png|jpe?g|webp|bmp)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 游戏目录里 Manual 目录（普通目录，不是 Manual.arc）的第一张图（路径相对媒体目录）
     notes: ['arc 在第一次浏览时由服务端展开到 <根>/arc/（之后按 arc 的大小 + 修改时间判断要不要重做）；缺的容器（Chip / Voice 没给全）对应的图 / 语音在渲染诊断里报缺资源', '脚本数在展开之前是 0（这个脚本只看目录，不读 arc），展开后列表里才有'],
   },
   grenze: {
@@ -2695,7 +2696,7 @@ async function detectAdvhd(scope) {
     config.resourceRoots = [...(config.resourceRoots || []), movie.rel]
     config.adapterOptions = { ...(config.adapterOptions || {}), 'advhd::ws2': { ...(config.adapterOptions?.['advhd::ws2'] || {}), extraDirs: [movie.rel] } }
   }
-  const found = makeFound(scope, entry, loc, config)
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
   const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
   found.id = scope.gameId || `advhd::${slug || 'game'}`
   found.kind = entry.kind || 'advhd'
