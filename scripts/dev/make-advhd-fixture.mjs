@@ -94,6 +94,7 @@ export function pnaBuild({ magic = 'PNAP', width = 100, height = 200, frames }) 
     rec.writeInt32LE(frame.y ?? 0, 12)
     rec.writeUInt32LE(frame.w ?? 0, 16)
     rec.writeUInt32LE(frame.h ?? 0, 20)
+    rec.writeUInt32LE(frame.mode ?? 0, 24)   // 第 7 个 u32：引擎按它给帧选图层种类 / 混合方式（3 = 正片叠底、8 = 滤色、10 = 加色、0x15 = 减色）
     rec.writeDoubleLE(frame.scale ?? 1, 28)
     const body = frame.data || Buffer.alloc(0)
     rec.writeUInt32LE(body.length, 36)

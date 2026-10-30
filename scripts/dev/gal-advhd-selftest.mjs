@@ -332,6 +332,18 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('立绘只画有图的帧（0 和 5；按序号从大到小画，和引擎的绘制循环一样，小的在上面）；空帧 / 组标记 / 非 PNG 不画，也不算「没查到」；超出帧数的序号（9）才算没查到；stats.pnaFrames 按种类计数', stand?.parts.length === 2 && stand.parts[0].alpha === 0.5 && stand.parts[1].alpha === undefined && /5\.png$/.test(stand.parts[0].src) && /0\.png$/.test(stand.parts[1].src) && scene.stats.pnaFrames.empty === 1 && scene.stats.pnaFrames.group === 1 && scene.stats.pnaFrames.unsupported === 1 && scene.stats.unresolved['pna-frame:ST_KIND.PNA#9'] === 1 && Object.keys(scene.stats.unresolved).some((k) => /^pna-frame-format:ST_KIND\.PNA#4\(52494646/.test(k)), J([stand, scene.stats.pnaFrames, scene.stats.unresolved]))
 }
 
+// ================= PNA 帧的混合方式（记录里的第 7 个 u32）=================
+{
+  const dir = path.join(work, 'game-blend')
+  await buildAdvhdFixture(dir)
+  const f = (id, mode, tag) => ({ type: 0, id, x: 0, y: 0, w: 10, h: 10, mode, data: pngBytes(tag) })
+  await writeFile(path.join(dir, 'Chip4.arc'), arcBuild([{ name: 'ST_BLEND.pna', data: pnaBuild({ width: 100, height: 100, frames: [f(0, 3, 31), f(1, 8, 32), f(2, 10, 33), f(3, 21, 34), f(4, 0, 35), f(5, 7, 36)] }) }]))
+  const scene = await parseGame(dir, [['ClearLayer', ['*']], ['UsePnaPackage', ['st01', 'ST_BLEND.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 6, 0, 1, 2, 3, 4, 5]], commit(0), msg(0, 'x%K%P'), ['FileEnd', []]])
+  const stand = scene.steps[0].commands.find((c) => c.op === 'stand')
+  const byFile = Object.fromEntries(stand.parts.map((p) => [p.src.replace(/^.*\//, ''), p.blend]))
+  check('帧模式 → 混合方式：3 = 正片叠底、8 = 滤色、10 = 加色、21 = 减色；0 和不认识的模式（7）= 普通叠加（没有 blend 字段）；index.json 里 mode 保留', byFile['0.png'] === 'multiply' && byFile['1.png'] === 'screen' && byFile['2.png'] === 'add' && byFile['3.png'] === 'subtract' && byFile['4.png'] === undefined && byFile['5.png'] === undefined && J(JSON.parse(await readFile(path.join(dir, 'arc/res/Chip4/ST_BLEND.pna/index.json'), 'utf8')).frames.map((x) => x.mode ?? 0)) === '[3,8,10,21,0,7]', J(byFile))
+}
+
 // ================= 计时器 / 遮罩过渡 / 电影 / CG 画廊 =================
 {
   const res = await parseGame(game, STORY_TIMER, { extraDirs: ['movie'] }, { resourceRoots: ['arc/res', 'movie'] })

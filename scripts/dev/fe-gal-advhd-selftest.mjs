@@ -28,12 +28,18 @@ await put('Rio.arc', arcBuild([{ name: 'LAYER_ORDER.ws2', data: ws2Encode([end])
 // 长背景图平移：1280×1400 的竖条（上红下蓝），基准位置 (0, -250)，平移 (0, -400)、2 秒、线性
 // 立绘位置偏移：红帧（舞台 x 100..., y 250..650）往下偏移 +40 像素，2 秒线性
 const BOB = [['ClearLayer', ['*']], ['SetBackground', ['bg01', 'BG_01.PNG', 1, 1]], ['UsePnaPackage', ['st01', 'ST_TOW_A_M.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 1, 1]], ['MoveBackground', ['st01', 0, 0, 100, 50, 0, 0]], commit(0), ['SetRegister', [0, 5, 0]], ['SetRegister', [0, 6, 40]], ['Effect1', ['st01', 'effect01', 1, 0, 0xc0, 5, 6, 0, 0, 2, 0, 0]], msg(0, '晃动%K%P'), ['FileEnd', []]]
+// 混合方式：红色底（帧 1，PNA 记录的 mode = 0）+ 50% 灰的「腮红」帧（帧 0，mode = 3 = 正片叠底），盖在底的一角；引擎按序号从大到小画，所以小序号的在上面
+const BLEND = [['ClearLayer', ['*']], ['SetBackground', ['bg01', 'BG_01.PNG', 1, 1]], ['UsePnaPackage', ['st01', 'ST_BLEND.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 2, 1, 0]], ['MoveBackground', ['st01', 0, 0, 100, 50, 0, 0]], commit(0), msg(0, '混合%K%P'), ['FileEnd', []]]
 const PAN = [['ClearLayer', ['*']], ['SetBackground', ['bg01', 'LONG_01.PNG', 1, 1]], ['MoveBackground', ['bg01', 0, 0, 0, -250, 0, 0]], commit(0), ['SetRegister', [0, 5, 0]], ['SetRegister', [0, 6, -400]], ['Effect1', ['bg01', 'effect01', 1, 0, 0xc0, 5, 6, 0, 0, 2, 0, 0]], msg(0, '平移%K%P'), ['FileEnd', []]]
-await put('Rio1.arc', arcBuild([{ name: '001_00.ws2', data: ws2Encode(STORY_001) }, { name: '002_00_H.ws2', data: ws2Encode(STORY_BRANCH) }, { name: '003_PAN.ws2', data: ws2Encode(PAN) }, { name: '004_BOB.ws2', data: ws2Encode(BOB) }]))
+await put('Rio1.arc', arcBuild([{ name: '001_00.ws2', data: ws2Encode(STORY_001) }, { name: '002_00_H.ws2', data: ws2Encode(STORY_BRANCH) }, { name: '003_PAN.ws2', data: ws2Encode(PAN) }, { name: '004_BOB.ws2', data: ws2Encode(BOB) }, { name: '005_BLEND.ws2', data: ws2Encode(BLEND) }]))
 await put('Chip3.arc', arcBuild([
   { name: 'BG_01.png', data: png('1280x720', 'blue') },
   { name: 'EV_01.png', data: png('1280x720', 'lime') },
   { name: 'LONG_01.png', data: execFileSync('convert', ['-size', '1280x1400', 'gradient:red-blue', 'png:-'], { maxBuffer: 16 * 1024 * 1024 }) },
+  { name: 'ST_BLEND.pna', data: pnaBuild({ width: 600, height: 800, frames: [
+    { type: 0, id: 0, x: 100, y: 200, w: 100, h: 100, mode: 3, data: png('100x100', 'rgb(128,128,128)') },   // 0：灰（正片叠底），盖在底的左上角
+    { type: 0, id: 1, x: 100, y: 200, w: 300, h: 400, data: png('300x400', 'red') },                            // 1：红色底
+  ] }) },
   { name: 'ST_TOW_A_M.pna', data: pnaBuild({ width: 600, height: 800, frames: [
     { type: 1 }, { type: 0, id: 1, x: 100, y: 200, w: 300, h: 400, data: png('300x400', 'red') }, { type: 0, id: 2, x: 0, y: 0, w: 10, h: 10, data: png('10x10', 'black') },
     { type: 0, id: 3, x: 50, y: 60, w: 20, h: 30, data: png('20x30', 'yellow') }, { type: 2 },
@@ -72,7 +78,7 @@ try {
     const dir = await reader(home.node.items[0].node)
     check('目录里有虚拟目录「特殊场景」（_H 结尾的脚本），排在最前', dir.node.items[0]?.title === '特殊场景' && dir.node.items[0].type === 'dir', J(dir.node.items.map((i) => i.title)))
     dir.node.items = dir.node.items.filter((i) => i.type === 'script')   // 下面按脚本顺序取
-    check('目录里 4 个脚本（001_00、002_00_H、003_PAN、004_BOB）', dir.node.items.map((i) => i.title).join() === '001_00,002_00_H,003_PAN,004_BOB', J(dir.node.items.map((i) => i.title)))
+    check('目录里 5 个脚本（001_00、002_00_H、003_PAN、004_BOB、005_BLEND）', dir.node.items.map((i) => i.title).join() === '001_00,002_00_H,003_PAN,004_BOB,005_BLEND', J(dir.node.items.map((i) => i.title)))
     const story = await reader(dir.node.items[0].node)
     const branch = await reader(dir.node.items[1].node)
     check('播放（001_00）：scene 来自 advhd::ws2，6 步；没走到的功能看得见（raw 里有 Effect1:kind0 / ExecuteFunction:playSpecialEffect）', story.scene?.adapter === 'advhd::ws2' && story.scene.steps.length === 6 && story.scene.stats.raw['Effect1:kind0'] === 1 && story.scene.stats.raw['ExecuteFunction:playSpecialEffect'] === 1, J(story.scene?.stats));
@@ -162,6 +168,15 @@ try {
         await sleep(2600)
         const after = await probe()
         check('立绘位置偏移（standMove）：开始时红帧上沿还在原位（舞台 y = 270 处是红的），2 秒线性往下 40 像素之后上沿到了 290，那一点变成透明', before[0] > 200 && before[3] === 255 && after[3] === 0, J([before, after]))
+
+        // 混合方式：红底 300×400 在舞台 (100 + 100, 50 + 200) = (200, 250) 起；灰色 100×100 在同一个左上角。canvas = 1.5 倍：灰块中心 = (250, 300) → (375, 450)；红底别处 = (467, 600) → (700, 900)
+        await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(dir.node.items[4].node)}`)
+        await page.waitForSelector('.gal-player .gal-stage')
+        await page.waitForFunction(() => document.querySelector('canvas.gal-stand')?.dataset.slots === '["st01"]')
+        await sleep(400)
+        const overlap = await pixel(375, 450)
+        const baseOnly = await pixel(700, 900)
+        check('混合方式（PNA 帧 mode = 3 = 正片叠底）：灰块盖在红底上 = 红 × 灰 ≈ (128, 0, 0)（普通叠加会是灰色 (128, 128, 128)，就是「黑斑」）；红底别处还是红', overlap && Math.abs(overlap[0] - 128) < 8 && overlap[1] < 8 && overlap[2] < 8 && baseOnly && baseOnly[0] > 240 && baseOnly[1] < 8, J([overlap, baseOnly]))
         check('立绘偏移页面没有页面错误', errors.length === 0, J(errors))
       } finally { await browser.close() }
     }

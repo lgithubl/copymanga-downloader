@@ -88,6 +88,8 @@ export function prepare({ options, files, texts, toResourcePath, resourceResolve
   return { opts: opt, resources, resolver, pnas, pnaBad, hasIndex: Boolean(files?.length), truncated: Boolean(truncated) }
 }
 
+// PNA 帧记录的第 7 个 u32（引擎里选图层种类 / 混合状态）→ 播放器的混合方式。引擎的混合状态表（FUN_1400054f0 建、FUN_1400b55f0 按图层种类选）：状态 2 = DEST_COLOR·(1-a) 即正片叠底、3 = 滤色、4 = 加色、5 = 减色（REV_SUBTRACT）；其它种类 = 普通 alpha 叠加
+const BLEND_OF_MODE = { 3: 'multiply', 8: 'screen', 10: 'add', 21: 'subtract' }
 // ---------- 小工具 ----------
 const FILE_ENDS = new Set(['FileEnd', 'NextFile', 'OpenTitle'])
 const regexes = (list) => (Array.isArray(list) ? list : []).map((source) => safeRegex(source)).filter(Boolean)
@@ -229,8 +231,9 @@ export function parse(text, ctx = null, meta = {}) {
       // 有图的帧才画；别的帧不算「没查到」，但在 stats.pnaFrames 里按种类计数：empty = 没有图像数据（引擎里是个空图层）、group = 组开始 / 结束标记、unsupported = 有数据但不是 PNG（索引里记了开头 8 字节）
       if (frame.kind && frame.kind !== 'image') { stats.pnaFrames[frame.kind] = (stats.pnaFrames[frame.kind] || 0) + 1; if (frame.kind === 'unsupported' && hasIndex) count('unresolved', `pna-frame-format:${layer.pna}#${id}(${frame.magic || '?'})`); continue }
       if (typeof frame.file !== 'string') { if (hasIndex) count('unresolved', `pna-frame:${layer.pna}#${id}`); continue }
+      const blend = BLEND_OF_MODE[frame.mode]   // 帧记录的第 7 个 u32 = 图层种类（引擎 FUN_140115930：3 → 种类 8 → 混合状态 2 = 正片叠底；8 → 0x11 → 3 = 滤色；10 → 0x12 → 4 = 加色；0x15 → 0x13 → 5 = 减色；别的 = 普通 alpha 叠加）
       const alpha = Number(frame.alpha ?? frame.scale)   // 记录里的 f64 = 这一帧的透明度（引擎里是图层 +0x48，画的时候乘进着色器的 g_Color.a）
-      parts.push({ src: `${entry.dir}/${frame.file}`, x: Math.round(layer.x + frame.x + frame.w / 2 - stageW / 2), y: Math.round(layer.y + frame.y + frame.h / 2 - stageH / 2), ...(alpha > 0 && alpha < 0.98 ? { alpha: Math.round(alpha * 100) / 100 } : {}) })
+      parts.push({ src: `${entry.dir}/${frame.file}`, x: Math.round(layer.x + frame.x + frame.w / 2 - stageW / 2), y: Math.round(layer.y + frame.y + frame.h / 2 - stageH / 2), ...(alpha > 0 && alpha < 0.98 ? { alpha: Math.round(alpha * 100) / 100 } : {}), ...(blend ? { blend } : {}) })
     }
     return parts
   }
