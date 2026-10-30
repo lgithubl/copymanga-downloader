@@ -1016,6 +1016,25 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 原因：布局表里 `resourceRoots` 的语义是「候选，只写第一个存在的」，Kamihime 写了 `['dmm/assets', 'dmm/portrait']`，实际只有 `game/dmm/assets` 进了 config；头像在第二个根里，适配器给的路径没法去掉根前缀，资源接口按 `game/dmm/assets/game/dmm/portrait/…` 找，自然 404。这个 bug 从「第二个根」那条注释写下的时候就在（注释说有第二个根，代码只写第一个）。
 - 修法：布局条目新字段 `resourceRootsAll: true` = 候选里每个存在的都写（Kamihime 开了）。自测 `gal-kamihime-portrait-selftest.mjs` 用 `[愛及屋烏]エレシュキガル` + `(愛及屋烏)エレシュキガル.png` 复现了 404（关掉 `resourceRootsAll` 就是 3 项全失败），修完全过。要重跑 gal-layout（2.26.0）才会写进已导入的条目。
 
+### 预乘 alpha 的 PNA 帧（`PNAP` / `WPAP`）：展开时还原成直通 alpha
+
+- 实测（exe `FUN_14011bdc0`）：`PNA` 头魔数第 4 个字母 `P` = 帧是**预乘 alpha**（`S` = 直通），第 1 个字母 `P` = PNG、`W` = WebP。引擎里预乘帧走 `ONE / INV_SRC_ALPHA` 的混合状态，直通帧走 `SRC_ALPHA / INV_SRC_ALPHA`。
+- 网页是 canvas 直通 alpha：预乘的腮红帧（`mode 3` = 正片叠底）直接画会把颜色再乘一次 alpha，脸上出现灰斑。所以展开 `PNAP` 的帧时服务端把 rgb 除回 alpha（`png-unpremultiply.mjs`，只处理 8 位 RGBA 非隔行 PNG；alpha 0 的像素 rgb 清 0），`index.json` 里 `premultiplied: true` + `unpremultiplied: true`。`PNAS` 的帧原样，`premultiplied: false`。
+- `WPAP` / `WPAS`（WebP 帧）：只识别（文件名 `<序号>.webp`，`format: 'webp'`），**没有还原**（Node 里没有 WebP 解码）；`index.json` 里 `premultiplied: true` + `unpremultiplied: false`。目前没有真实样本，不确定网页上会不会出灰斑。
+- 推断成分：引擎里预乘标志位后续在哪些地方被用到，没有逐处追完；「还原成直通就对」是根据加载器标志 + 腮红帧的像素数据（rgb ≈ 粉色 × alpha）得出的。
+- 行为：hybrid 按需取出和 files 展开的字节一致；`CONTAINER_FORMAT_VERSION = 5`，旧缓存会自动重建。
+
+### 看完场景 / 点「列表」回到来路，并恢复滚动位置
+
+- 进下一层（点卡片）前把当前列表的滚动位置存在 `sessionStorage`（按 单元 + 节点 id；节点 id 带页码 / 排序 / 随机种子）。「列表」按钮和看完最后一句都回到**进来时的那个列表**（导航轨迹的栈顶，比如特殊场景），不再是服务端算的语义上一级；没有来路才退回上一级。回来时恢复滚动位置。
+- 宽屏滚的是 `.media-reader-content`，窄屏（≤ 900px）是整页在滚，两种都处理。
+
+### Kamihime 胶片封面
+
+- 胶片名字命中 `thumbFallback.skip`（black / white / blank）的不当封面也不进轮播；全是黑胶片就没有渲染图，走兜底图。
+- 渲染图的地址不再进「换下一张试」的备用链（渲染图 404 只表示还没渲染，不是坏图），所以不会再因为轮播的第 2 张还没渲染出来就把封面删掉并报「加载失败」。
+- 轮播里额外的渲染图：卡片进入屏幕（含 200px 预留）后空闲时就开始渲染，不用等悬停；卡片右下角有「轮播 N 张」角标。
+
 ### 场景卡片的内部轮播（`thumbRender.inner`）
 
 - 以前一个场景卡片最多一张渲染图（胶片场景除外），而且规则给了图（`thumbnail.png` 之类）就完全不渲染。`thumbRender.inner: true` 之后：封面仍是规则给的第一张（规则没给图时是第一张渲染图），后面轮播场景**内部**的画面——**骨骼 / 立绘 / CG 渲染图在前，场景里的图在后**。

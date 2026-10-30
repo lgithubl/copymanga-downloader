@@ -5,10 +5,12 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { deflateSync, inflateSync } from 'node:zlib'
 import { generateTags } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { decodeWs2, OPCODE_LAYOUTS, OPCODE_NAMES, ror2 } from '../../web/library/gal/adapters/advhd-ws2-decode.mjs'
 import { galAdapter, galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { applyGalConfigPatch, normalizeGalConfig, normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
+import { unpremultiplyPng } from '../../web/library/gal/png-unpremultiply.mjs'
 import { containerReport, ensureContainers, invalidateContainers, materialize, parsePna, readArcIndex, SCRIPT_DECODERS, virtualFiles } from '../../web/library/gal/containers.mjs'
 import { loadAdapterContext } from '../../web/library/gal/context.mjs'
 import { resolveOnDisk } from '../../web/library/gal/resolve.mjs'
@@ -102,7 +104,7 @@ await buildAdvhdFixture(game, { brokenArc: true })
   check('脚本被解成 JSON 指令流：format / arc / name / size / ins[[偏移, 指令名, 参数]]；sniff 认得', parsed.format === 'advhd-ws2/1' && parsed.arc === 'Rio1' && parsed.name === '001_00' && parsed.ins.length === STORY_001.length && parsed.ins[0][1] === 'ClearLayer' && galAdapter('advhd::ws2').sniff(text) && sniffGalAdapter(text) === 'advhd::ws2', J(parsed.ins.slice(0, 2)))
   const pnaDir = path.join(game, 'arc/res/Chip3/ST_TOW_A_M.pna')
   const index = JSON.parse(await readFile(path.join(pnaDir, 'index.json'), 'utf8'))
-  check('PNA 展开成目录：index.json（宽 / 高 / 帧：n（序号）type id x y w h scale file）+ <帧序号>.png；组标记帧没有文件；记录里的 id 字段（倒序）照记但不用来命名', J(await list(pnaDir)) === J(['1.png', '2.png', '3.png', 'index.json']) && index.width === 600 && index.height === 800 && index.frames.length === 5 && index.frames[1].file === '1.png' && index.frames[1].id === 3 && index.frames[1].n === 1 && index.frames[0].file === undefined && (await readFile(path.join(pnaDir, '3.png'))).equals(pngBytes(13)), J(index))
+  check('PNA 展开成目录：index.json（宽 / 高 / 帧：n（序号）type id x y w h scale file）+ <帧序号>.png；组标记帧没有文件；记录里的 id 字段（倒序）照记但不用来命名', J(await list(pnaDir)) === J(['1.png', '2.png', '3.png', 'index.json']) && index.width === 600 && index.height === 800 && index.frames.length === 5 && index.frames[1].file === '1.png' && index.frames[1].id === 3 && index.frames[1].n === 1 && index.frames[0].file === undefined && (await readFile(path.join(pnaDir, '3.png'))).equals(unpremultiplyPng(pngBytes(13)).buffer), J(index))
   let bumpN = 0
   const stampFile = path.join(game, 'arc/.stamp.json')
   const mtime1 = (await stat(path.join(game, 'arc/res/Bgm/BGM01.ogg'))).mtimeMs
@@ -174,6 +176,15 @@ const parseGame = async (mediaDir, story, options = {}, configExtra = {}) => {
   const ctx = await loadAdapterContext({ adapter, mediaDir, config: ctxConfig })
   return buildScene('advhd::ws2', decodeText(ws2Encode(story)), ctx, { rel: 'arc/script/Rio1/x.advhd', stem: 'x', options, config: {} })
 }
+// 1×1 RGBA PNG（raw = [0（滤波）, r, g, b, a]）/ 取 1×1 PNG 的第一个像素
+const pngRaw = (raw) => {
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0 })
+  const crc = (buf) => { let c = 0xffffffff; for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0 }
+  const be = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b }
+  const chunk = (type, data) => { const body = Buffer.concat([Buffer.from(type), data]); return Buffer.concat([be(data.length), body, be(crc(body))]) }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', Buffer.concat([be(1), be(1), Buffer.from([8, 6, 0, 0, 0])])), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
+}
+const decodePngFirstPixel = (png) => { let pos = 8; const idat = []; while (pos < png.length) { const len = png.readUInt32BE(pos); if (png.subarray(pos + 4, pos + 8).toString() === 'IDAT') idat.push(png.subarray(pos + 8, pos + 8 + len)); pos += 12 + len } const raw = inflateSync(Buffer.concat(idat)); return [raw[1], raw[2], raw[3], raw[4]] }
 const cmdsOf = (scene, step) => scene.steps[step].commands
 const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c.op === 'text').map((c) => c.segments.map((x) => x.text).join(''))
 {
@@ -322,14 +333,14 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
     { type: 0, id: 0, x: 10, y: 20, w: 100, h: 200, data: pngBytes(21) },        // 0 图
     { type: 0, id: -1 },                                                          // 1 空帧（没有图像数据）
     { type: 1 }, { type: 2 },                                                     // 2 / 3 组开始 / 结束
-    { type: 0, id: 4, x: 0, y: 0, w: 5, h: 5, data: Buffer.from('RIFF\x10\0\0\0WEBPVP8 ') },   // 4 有数据但不是 PNG
+    { type: 0, id: 4, x: 0, y: 0, w: 5, h: 5, data: Buffer.from('BM666666666666') },   // 4 有数据但不是 PNG / WebP
     { type: 0, id: 5, x: 5, y: 5, w: 5, h: 5, scale: 0.5, data: pngBytes(22) },    // 5 图（记录里的 f64 = 透明度 0.5）
   ] }) }]))
   const scene = await parseGame(dir, [['ClearLayer', ['*']], ['UsePnaPackage', ['st01', 'ST_KIND.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 6, 0, 1, 2, 4, 5, 9]], commit(0), msg(0, 'x%K%P'), ['FileEnd', []]])
   const index = JSON.parse(await readFile(path.join(dir, 'arc/res/Chip4/ST_KIND.pna/index.json'), 'utf8'))
-  check('PNA 索引每帧带 kind：image / empty / group / unsupported（非 PNG：写成 <序号>.bin，记开头 8 字节 magic 和大小）', J(index.frames.map((f) => f.kind)) === J(['image', 'empty', 'group', 'group', 'unsupported', 'image']) && index.frames[4].magic === '52494646' + '10000000' && (await exists(path.join(dir, 'arc/res/Chip4/ST_KIND.pna/4.bin'))) && !index.frames[4].file, J(index.frames))
+  check('PNA 索引每帧带 kind：image / empty / group / unsupported（非 PNG：写成 <序号>.bin，记开头 8 字节 magic 和大小）', J(index.frames.map((f) => f.kind)) === J(['image', 'empty', 'group', 'group', 'unsupported', 'image']) && index.frames[4].magic === '424d363636363636' && (await exists(path.join(dir, 'arc/res/Chip4/ST_KIND.pna/4.bin'))) && !index.frames[4].file, J(index.frames))
   const stand = scene.steps[0].commands.find((c) => c.op === 'stand')
-  check('立绘只画有图的帧（0 和 5；按序号从大到小画，和引擎的绘制循环一样，小的在上面）；空帧 / 组标记 / 非 PNG 不画，也不算「没查到」；超出帧数的序号（9）才算没查到；stats.pnaFrames 按种类计数', stand?.parts.length === 2 && stand.parts[0].alpha === 0.5 && stand.parts[1].alpha === undefined && /5\.png$/.test(stand.parts[0].src) && /0\.png$/.test(stand.parts[1].src) && scene.stats.pnaFrames.empty === 1 && scene.stats.pnaFrames.group === 1 && scene.stats.pnaFrames.unsupported === 1 && scene.stats.unresolved['pna-frame:ST_KIND.PNA#9'] === 1 && Object.keys(scene.stats.unresolved).some((k) => /^pna-frame-format:ST_KIND\.PNA#4\(52494646/.test(k)), J([stand, scene.stats.pnaFrames, scene.stats.unresolved]))
+  check('立绘只画有图的帧（0 和 5；按序号从大到小画，和引擎的绘制循环一样，小的在上面）；空帧 / 组标记 / 非 PNG 不画，也不算「没查到」；超出帧数的序号（9）才算没查到；stats.pnaFrames 按种类计数', stand?.parts.length === 2 && stand.parts[0].alpha === 0.5 && stand.parts[1].alpha === undefined && /5\.png$/.test(stand.parts[0].src) && /0\.png$/.test(stand.parts[1].src) && scene.stats.pnaFrames.empty === 1 && scene.stats.pnaFrames.group === 1 && scene.stats.pnaFrames.unsupported === 1 && scene.stats.unresolved['pna-frame:ST_KIND.PNA#9'] === 1 && Object.keys(scene.stats.unresolved).some((k) => /^pna-frame-format:ST_KIND\.PNA#4\(424d3636/.test(k)), J([stand, scene.stats.pnaFrames, scene.stats.unresolved]))
 }
 
 // ================= PNA 帧的混合方式（记录里的第 7 个 u32）=================
@@ -342,6 +353,40 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const stand = scene.steps[0].commands.find((c) => c.op === 'stand')
   const byFile = Object.fromEntries(stand.parts.map((p) => [p.src.replace(/^.*\//, ''), p.blend]))
   check('帧模式 → 混合方式：3 = 正片叠底、8 = 滤色、10 = 加色、21 = 减色；0 和不认识的模式（7）= 普通叠加（没有 blend 字段）；index.json 里 mode 保留', byFile['0.png'] === 'multiply' && byFile['1.png'] === 'screen' && byFile['2.png'] === 'add' && byFile['3.png'] === 'subtract' && byFile['4.png'] === undefined && byFile['5.png'] === undefined && J(JSON.parse(await readFile(path.join(dir, 'arc/res/Chip4/ST_BLEND.pna/index.json'), 'utf8')).frames.map((x) => x.mode ?? 0)) === '[3,8,10,21,0,7]', J(byFile))
+}
+
+// ================= PNA 魔数：PNAP / PNAS（PNG，预乘 / 直通）、WPAP / WPAS（WebP）=================
+{
+  const dir = path.join(work, 'game-magic')
+  await buildAdvhdFixture(dir)
+  // 半透明像素（RGBA 8 位）：预乘后的 PNG（颜色已经乘过 alpha）
+  const halfPng = (r, g, b, a) => { const raw = Buffer.from([0, r, g, b, a]); return pngRaw(raw) }
+  const webp = Buffer.from('RIFF\x10\0\0\0WEBPVP8 \0\0\0\0')
+  const frames = (data) => [{ type: 0, id: 0, x: 0, y: 0, w: 1, h: 1, mode: 3, data }, { type: 0, id: 1, x: 0, y: 0, w: 1, h: 1, data }]
+  await writeFile(path.join(dir, 'Chip4.arc'), arcBuild([
+    { name: 'ST_P.pna', data: pnaBuild({ magic: 'PNAP', width: 10, height: 10, frames: frames(halfPng(127, 96, 97, 128)) }) },
+    { name: 'ST_S.pna', data: pnaBuild({ magic: 'PNAS', width: 10, height: 10, frames: frames(halfPng(127, 96, 97, 128)) }) },
+    { name: 'ST_W.pna', data: pnaBuild({ magic: 'WPAP', width: 10, height: 10, frames: frames(webp) }) },
+  ]))
+  const cfgFiles = cfgWith(FAMILY_CONTAINERS)
+  const cfgHybrid = cfgWith({ ...FAMILY_CONTAINERS, mode: 'hybrid' })
+  await ensureContainers({ mediaDir: dir, config: cfgFiles })
+  const idx = async (name) => JSON.parse(await readFile(path.join(dir, 'arc/res/Chip4', name, 'index.json'), 'utf8'))
+  const px = async (file) => { const png = await readFile(file); return decodePngFirstPixel(png) }
+  const [ip, is, iw] = [await idx('ST_P.pna'), await idx('ST_S.pna'), await idx('ST_W.pna')]
+  check('index.json 带 format / premultiplied / unpremultiplied：PNAP = png、预乘、已还原；PNAS = png、直通、没转；WPAP = webp、预乘、没转（服务端没有 WebP 解码）；mode 照记', ip.format === 'png' && ip.premultiplied === true && ip.unpremultiplied === true && is.format === 'png' && is.premultiplied === false && is.unpremultiplied === false && iw.format === 'webp' && iw.premultiplied === true && iw.unpremultiplied === false && ip.frames[0].mode === 3, J([ip, is, iw].map((x) => [x.magic, x.format, x.premultiplied, x.unpremultiplied])))
+  const p0 = await px(path.join(dir, 'arc/res/Chip4/ST_P.pna/0.png'))
+  const s0 = await px(path.join(dir, 'arc/res/Chip4/ST_S.pna/0.png'))
+  check('PNAP 的帧展开时预乘 → 直通：(127, 96, 97, α128) → (253, 191, 193, α128)；PNAS 的帧原样（127, 96, 97, 128）', J(p0) === J([253, 191, 193, 128]) && J(s0) === J([127, 96, 97, 128]), J([p0, s0]))
+  check('WebP 帧（WPAP）：kind = image、文件 <序号>.webp、字节原样（不转）', iw.frames[0].kind === 'image' && iw.frames[0].file === '0.webp' && (await readFile(path.join(dir, 'arc/res/Chip4/ST_W.pna/0.webp'))).equals(webp), J(iw.frames[0]))
+  // hybrid：取出来的 PNAP 帧和 files 方式展开的字节一样
+  const dirH = path.join(work, 'game-magic-h')
+  await buildAdvhdFixture(dirH)
+  await writeFile(path.join(dirH, 'Chip4.arc'), await readFile(path.join(dir, 'Chip4.arc')))
+  await ensureContainers({ mediaDir: dirH, config: cfgHybrid })
+  const got = await materialize({ mediaDir: dirH, config: cfgHybrid, rels: ['arc/res/Chip4/ST_P.pna/0.png', 'arc/res/Chip4/ST_W.pna/1.webp', 'arc/res/Chip4/ST_S.pna/1.png'] })
+  const same = async (rel) => (await readFile(path.join(dirH, rel))).equals(await readFile(path.join(dir, rel)))
+  check('hybrid：按需取出的 PNAP 帧（已转直通）/ PNAS 帧 / WebP 帧，和 files 方式展开的字节逐字节一样；转过的不会重复取', got === 3 && (await same('arc/res/Chip4/ST_P.pna/0.png')) && (await same('arc/res/Chip4/ST_S.pna/1.png')) && (await same('arc/res/Chip4/ST_W.pna/1.webp')) && (await materialize({ mediaDir: dirH, config: cfgHybrid, rels: ['arc/res/Chip4/ST_P.pna/0.png'] })) === 0, String(got))
 }
 
 // ================= 计时器 / 遮罩过渡 / 电影 / CG 画廊 =================
@@ -436,7 +481,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const res = await handler.getResource(I.itemId, play.scene.steps[0].commands[0].src)
   const voice = await handler.getResource(I.itemId, 'Voice/TW_0001.ogg')
   const frame = await handler.getResource(I.itemId, 'Chip3/ST_TOW_A_M.pna/1.png')
-  check('取资源：图（image/png）、语音、PNA 的帧 PNG 都能取（路径按资源根 arc/res、名字忽略大小写）；大小写不一致也行', res.body.equals(pngBytes(1)) && res.contentType === 'image/png' && voice.body.toString() === 'OggS-1' && frame.body.equals(pngBytes(11)) && (await handler.getResource(I.itemId, 'chip3/bg_01.PNG')).body.equals(pngBytes(1)))
+  check('取资源：图（image/png）、语音、PNA 的帧 PNG 都能取（路径按资源根 arc/res、名字忽略大小写）；大小写不一致也行', res.body.equals(pngBytes(1)) && res.contentType === 'image/png' && voice.body.toString() === 'OggS-1' && frame.body.equals(unpremultiplyPng(pngBytes(11)).buffer) && (await handler.getResource(I.itemId, 'chip3/bg_01.PNG')).body.equals(pngBytes(1)))
   const evil = await handler.getResource(I.itemId, '../Rio1.arc').then(() => 'ok', (e) => e.statusCode)
   check('取资源：../ 越界挡住（400）', evil === 400, String(evil))
   // 直接取资源（没经过浏览）也能展开

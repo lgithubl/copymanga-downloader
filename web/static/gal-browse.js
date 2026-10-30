@@ -413,8 +413,9 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       img.decoding = 'async'
       const src = urls[coverAt]
       if (thumbLoader) { img.dataset.src = src; thumbImages.push(img) } else { img.loading = 'lazy'; img.src = src }
-      // 封面加载失败：还有别的图就换下一张试，都不行才报「加载失败」
-      const untried = urls.map((_, i) => i).filter((i) => i !== coverAt)
+      // 封面加载失败：还有别的「文件图」就换下一张试，都不行才报「加载失败」；渲染图的地址不进备用链（它 404 只表示还没渲染，不是坏图）
+      const renderSet = new Set(renders.map(renderUrlOf))
+      const untried = urls.map((_, i) => i).filter((i) => i !== coverAt && !renderSet.has(urls[i]))
       let renderMissing = false
       img.addEventListener('error', () => {
         if (render && !renderMissing && img.getAttribute('src') === renderUrl) {
@@ -431,6 +432,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
           img.hidden = true; box.classList.add('empty')   // 没有别的图：等渲染好再显示
           return
         }
+        if (renderSet.has(img.getAttribute('src'))) return   // 渲染图（封面已处理 / 轮播里的）没缓存不算失败，不删图
         if (untried.length) { img.src = urls[untried.shift()]; return }
         img.remove()
         box.classList.add('empty')
@@ -451,6 +453,8 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
           }).catch(() => {})
         })
       } : null
+      if (item.carousel > 1 || urls.length > 1) { const n = Math.max(item.carousel || 0, Math.min(urls.length, item.carousel || urls.length)); if (n > 1) { const badge = el('span', 'gal-card-carousel', `轮播 ${n} 张`); box.append(badge) } }
+      if (ensureExtras) cardExtras.push({ box, start: ensureExtras })
       if (urls.length > 1) cardCycles.push({ box, img, urls, coverAt, hover: { ...hoverCfg, enabled: true, mode: modeOf(), ...(item.carousel ? { count: item.carousel } : {}) }, isEnabled: hoverOn, onStart: ensureExtras })
     } else {
       box.classList.add('empty')
@@ -458,6 +462,8 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     return box
   }
   const cycles = []
+  let prerenderObserver = null
+  const cardExtras = []   // 轮播里有额外渲染图的卡片：进入屏幕后空闲时预渲染（不等悬停）
   const cardCycles = []   // 有多张图的卡片：卡片建好后挂悬停轮播（hover 的目标是整张卡片，不只是图）
 
   // 一律卡片：目录卡片（头像/文件夹图标、中文标签、数量）和脚本卡片（缩略图、台词摘要）混排，右上角的小标签是来源（合并目录时用来分辨来自哪个目录）
@@ -537,6 +543,15 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   refreshDiag()
 
   container.replaceChildren(root)
+  if (cardExtras.length && typeof IntersectionObserver === 'function') {
+    const idle = typeof requestIdleCallback === 'function' ? (fn) => requestIdleCallback(fn, { timeout: 4000 }) : (fn) => setTimeout(fn, 300)
+    const byBox = new Map(cardExtras.map((c) => [c.box, c.start]))
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { const start = byBox.get(e.target); io.unobserve(e.target); if (start) idle(start) }
+    }, { root: container, rootMargin: '200px' })
+    for (const c of cardExtras) io.observe(c.box)
+    prerenderObserver = io
+  }
   if (thumbLoader && thumbImages.length) thumbLoader.attach(thumbImages, { root: container })
-  return { destroy: () => { thumbRenderer.destroy(); voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
+  return { destroy: () => { prerenderObserver?.disconnect(); thumbRenderer.destroy(); voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
 }

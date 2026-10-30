@@ -796,10 +796,14 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const filmRenders = []
     if (scene && renderCfg.enabled && renderCfg.film !== false && !ruleHit) {
       const seenFilm = new Set()
+      // 黑 / 白 / 空白的占位胶片（black.jpg 之类）不当封面：用 thumbFallback.skip 的名字规则（skipBlack 关掉就不筛）
+      const filmSkip = config.thumbFallback.skipBlack === false ? [] : (config.thumbFallback.skip || []).flatMap((source) => { try { return [new RegExp(source, 'i')] } catch { return [] } })
+      const blankFilm = (src) => filmSkip.some((re) => re.test(src.slice(src.lastIndexOf('/') + 1).replace(/\.[^.]+$/, '')))
       for (const step of scene.steps.slice(0, 3000)) {
         for (const c of step.commands) {
           if (c.op === 'bg' && c.film && typeof c.src === 'string' && !seenFilm.has(c.src)) {
             seenFilm.add(c.src)
+            if (blankFilm(c.src)) continue
             filmRenders.push({ key: createHash('sha1').update(JSON.stringify([abs, ...(sceneKey ? [sceneKey] : []), 'film', c.src, renderCfg.filmFrame, info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex'), film: c.src })
           }
         }

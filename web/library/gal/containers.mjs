@@ -11,10 +11,11 @@ import { createHash } from 'node:crypto'
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
+import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
-// 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名）
-export const CONTAINER_FORMAT_VERSION = 4
+// 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied）
+export const CONTAINER_FORMAT_VERSION = 5
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -164,11 +165,15 @@ const kindOf = (name, scriptKinds) => {
   return ''
 }
 
+// 帧数据的图片格式：PNG / WebP（WPAP / WPAS 的帧是 WebP）/ 别的（''）
+const imageFormatOf = (head) => (head.length >= 8 && head.subarray(0, 8).equals(PNG_MAGIC) ? 'png' : head.length >= 12 && head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP' ? 'webp' : '')
+// 魔数 PNAP / PNAS / WPAP / WPAS：第 4 个字母 P = 预乘 alpha（引擎读取函数 FUN_14011bdc0 里 …P → 标志 1，…S → 0），S = 直通；第 1 个字母 P = PNG、W = WebP（标志 +0x7c）
+const pnaKind = (magic) => ({ premultiplied: magic[3] === 'P', webp: magic[0] === 'W' })
 // PNA 的一帧在 index.json 里的一行（两种展开方式共用）：png = 数据是 PNG；magic = 非 PNG 数据的开头 8 字节（十六进制）
-function frameRow(i, f, { png, magic }) {
+function frameRow(i, f, { fmt, magic }) {
   const row = { n: i, type: f.type, id: f.id, x: f.x, y: f.y, w: f.w, h: f.h, scale: f.scale, alpha: f.scale, ...(f.mode ? { mode: f.mode } : {}) }   // alpha = 记录里的 f64（引擎里是图层 +0x48，着色器的 alpha；以前叫 scale）；mode = 第 7 个 u32（3 / 8 / 10 / 0x15 = 特殊图层，其余 0）
-  row.kind = f.type === 1 || f.type === 2 ? 'group' : f.size > 0 ? (png ? 'image' : 'unsupported') : 'empty'   // group = 组开始 / 结束标记；empty = 没有图像数据；unsupported = 有数据但不是 PNG
-  if (f.size > 0 && png) row.file = `${i}.png`   // 按帧的序号（文件里的顺序）命名：DisplayCharacterImage 用的是这个序号（引擎里是数组下标，FUN_140115930），不是记录里的 id 字段
+  row.kind = f.type === 1 || f.type === 2 ? 'group' : f.size > 0 ? (fmt ? 'image' : 'unsupported') : 'empty'   // group = 组开始 / 结束标记；empty = 没有图像数据；unsupported = 有数据但不是 PNG / WebP
+  if (f.size > 0 && fmt) row.file = `${i}.${fmt}`   // 按帧的序号（文件里的顺序）命名：DisplayCharacterImage 用的是这个序号（引擎里是数组下标，FUN_140115930），不是记录里的 id 字段
   else if (f.size > 0) { row.unsupported = true; row.magic = magic; row.size = f.size }
   return row
 }
@@ -189,12 +194,12 @@ async function readPnaLayout(handle, offset, size) {
     if (pos + f.size > size) throw new Error(`PNA 第 ${i} 帧的数据超出文件`)
     f.pos = offset + pos
     pos += f.size
-    if (f.size >= 8) { const m = await readRange(handle, f.pos, 8); f.png = m.equals(PNG_MAGIC); f.magic = m.toString('hex') } else { f.png = false; f.magic = '' }
+    if (f.size >= 8) { const m = await readRange(handle, f.pos, Math.min(12, f.size)); f.fmt = imageFormatOf(m); f.magic = m.subarray(0, 8).toString('hex') } else { f.fmt = ''; f.magic = '' }
     frames.push(f)
   }
   return { magic, width: head.readUInt32LE(8), height: head.readUInt32LE(12), frames }
 }
-const pnaIndexJson = (layout) => JSON.stringify({ magic: layout.magic, width: layout.width, height: layout.height, frames: layout.frames.map((f, i) => frameRow(i, f, { png: f.png, magic: f.magic })) })
+const pnaIndexJson = (layout, converted = false) => JSON.stringify({ magic: layout.magic, format: pnaKind(layout.magic).webp ? 'webp' : 'png', premultiplied: pnaKind(layout.magic).premultiplied, unpremultiplied: converted, width: layout.width, height: layout.height, frames: layout.frames.map((f, i) => frameRow(i, f, { fmt: f.fmt, magic: f.magic })) })   // premultiplied = 源数据是预乘 alpha；unpremultiplied = 展开出来的 PNG 已经还原成直通 alpha（浏览器直接能用）
 
 // ---------- 展开一个容器 ----------
 async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
@@ -220,9 +225,9 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
           const layout = await readPnaLayout(handle, entry.offset, entry.size)
           const dir = path.join(outRoot, 'res', stem, ...name.split('/'))
           await mkdir(dir, { recursive: true })
-          await writeFile(path.join(dir, 'index.json'), pnaIndexJson(layout))
+          await writeFile(path.join(dir, 'index.json'), pnaIndexJson(layout, pnaKind(layout.magic).premultiplied))
           result.pna += 1
-          result.pnaFrames += layout.frames.filter((f) => f.png).length
+          result.pnaFrames += layout.frames.filter((f) => f.fmt).length
           result.lazy = (result.lazy || 0) + 1
         } catch (error) { result.bad.push(`${name}（${error.message}）`) }
         continue
@@ -254,11 +259,17 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
         try {
           const pna = parsePna(data)
           await mkdir(dir, { recursive: true })
-          const index = { magic: pna.magic, width: pna.width, height: pna.height, frames: [] }
+          const kind = pnaKind(pna.magic)
+          const index = { magic: pna.magic, format: kind.webp ? 'webp' : 'png', premultiplied: kind.premultiplied, unpremultiplied: kind.premultiplied && !kind.webp, width: pna.width, height: pna.height, frames: [] }
           for (const [i, frame] of pna.frames.entries()) {
-            const png = frame.size > 0 && frame.data.subarray(0, 8).equals(PNG_MAGIC)
-            const row = frameRow(i, frame, { png, magic: frame.data.subarray(0, 8).toString('hex') })
-            if (png) { await writeFile(path.join(dir, row.file), frame.data); result.pnaFrames += 1 } else if (frame.size > 0) await writeFile(path.join(dir, `${i}.bin`), frame.data)   // 非 PNG（样本里没见过）：原样写成 <序号>.bin
+            const fmt = frame.size > 0 ? imageFormatOf(frame.data) : ''
+            const row = frameRow(i, frame, { fmt, magic: frame.data.subarray(0, 8).toString('hex') })
+            if (fmt) {
+              let out = frame.data
+              if (kind.premultiplied && fmt === 'png') { const conv = unpremultiplyPng(frame.data); out = conv.buffer; if (!conv.converted) { index.unpremultiplied = false; row.unconverted = conv.reason } }   // 预乘 → 直通（WebP 帧不转：服务端没有 WebP 解码）
+              await writeFile(path.join(dir, row.file), out)
+              result.pnaFrames += 1
+            } else if (frame.size > 0) await writeFile(path.join(dir, `${i}.bin`), frame.data)   // 不是 PNG / WebP（样本里没见过）：原样写成 <序号>.bin
             index.frames.push(row)
           }
           await writeFile(path.join(dir, 'index.json'), JSON.stringify(index))
@@ -325,7 +336,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
         try {
           handle ||= await open(file, 'r')
           const layout = await readPnaLayout(handle, entry.offset, entry.size)
-          layout.frames.forEach((f, i) => { if (f.size > 0) add(`${base}/${name}/${i}.${f.png ? 'png' : 'bin'}`, { file, offset: f.pos, size: f.size }) })
+          { const kind = pnaKind(layout.magic); layout.frames.forEach((f, i) => { if (f.size > 0) add(`${base}/${name}/${i}.${f.fmt || 'bin'}`, { file, offset: f.pos, size: f.size, ...(kind.premultiplied && f.fmt === 'png' ? { unpremultiply: true } : {}) }) }) }
         } catch { /* 这个 PNA 坏了：当没有（展开时已经在报告里记了） */ }
       }
     } finally { await handle?.close().catch(() => {}) }
@@ -364,13 +375,14 @@ export async function materialize({ mediaDir, config, rels }) {
     const hit = v.map.get(String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
     if (!hit) continue
     const target = path.join(mediaDir, ...hit.rel.split('/'))
-    try { if ((await stat(target)).size === hit.size) continue } catch { /* 还没有 */ }
+    try { const have = await stat(target); if (hit.unpremultiply ? have.size > 0 : have.size === hit.size) continue } catch { /* 还没有 */ }   // 转过的（预乘 → 直通）大小和 .arc 里的不一样：只看有没有
     let pending = materializing.get(target)
     if (!pending) {
       pending = (async () => {
         const handle = await open(hit.file, 'r')
         try {
-          const data = await readRange(handle, hit.offset, hit.size)
+          let data = await readRange(handle, hit.offset, hit.size)
+          if (hit.unpremultiply) data = unpremultiplyPng(data).buffer   // PNAP 的帧：预乘 → 直通（转不了就原样）
           await mkdir(path.dirname(target), { recursive: true })
           const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
           await writeFile(tmp, data)

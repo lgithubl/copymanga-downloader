@@ -4218,15 +4218,37 @@ function galBackLoad(unitId) {
 function galBackSave(unitId, map) {
   try { sessionStorage.setItem(galBackKey(unitId), JSON.stringify(Object.fromEntries(Object.entries(map).slice(-30)))) } catch { /* 存不了就退回服务端的上一级 */ }
 }
+// 进下一层（child / related）前记下当前列表的滚动位置，回来（up / back）时恢复；按「单元 + 节点 id」存，id 里带着页码 / 排序 / 随机种子
+const galScrollKey = (unitId) => `copymanga.galScroll.${unitId}`
+function galScrollMap(unitId) {
+  try { const map = JSON.parse(sessionStorage.getItem(galScrollKey(unitId)) || '{}'); return map && typeof map === 'object' ? map : {} } catch { return {} }
+}
+function galScrollSave(unitId, nodeId, top) {
+  if (!nodeId) return
+  const map = galScrollMap(unitId)
+  delete map[nodeId]
+  map[nodeId] = Math.max(0, Math.round(top))
+  try { sessionStorage.setItem(galScrollKey(unitId), JSON.stringify(Object.fromEntries(Object.entries(map).slice(-30)))) } catch { /* 存不了就回到顶部 */ }
+}
+// 列表的滚动容器：宽屏是 .media-reader-content 自己，窄屏（≤900px）它是 overflow:visible、整页在滚
+const galScroller = () => (getComputedStyle(els.mediaReaderContent).overflowY === 'visible' ? document.scrollingElement || document.documentElement : els.mediaReaderContent)
+let galRestoreScroll = null   // { id, top }：renderGalBrowse 渲染到这个节点时用一次
 let galPendingStart = null   // 卡片上的场景跳转点按钮：{ base（节点 id）, step }，renderGal 打开那个脚本时用一次
 function galNavigate(reader, nodeId, kind = 'self', extra = null) {
   galPendingStart = Number.isInteger(extra?.at) && extra.at > 0 ? { base: galBase(nodeId), step: extra.at } : null
   const unitId = reader.unit.unitId
   const current = reader.node?.id ?? reader.section?.sectionId ?? ''
   let target = nodeId
-  if (kind === 'child' || kind === 'related' || kind === 'up') {
+  galRestoreScroll = null
+  if ((kind === 'child' || kind === 'related') && reader.node && reader.node.kind !== 'player') galScrollSave(unitId, current, galScroller().scrollTop)
+  if (kind === 'child' || kind === 'related' || kind === 'up' || kind === 'back') {
     let trail = galTrailLoad(unitId)
-    if (kind === 'child' || kind === 'related') {
+    if (kind === 'back') {
+      // 看完场景 / 点「列表」：回到进来时的那个列表（特殊场景、搜索结果……），不是服务端算的语义上一级；没有来路才退回 nodeId
+      const from = trail.length ? trail[trail.length - 1] : ''
+      target = from || nodeId
+      if (from) trail = trail.slice(0, -1)
+    } else if (kind === 'child' || kind === 'related') {
       trail = trail.filter((id) => galBase(id) !== galBase(current))
       trail.push(current)
       if (kind === 'related') galBackSave(unitId, { ...galBackLoad(unitId), [galBase(nodeId)]: current })
@@ -4241,6 +4263,7 @@ function galNavigate(reader, nodeId, kind = 'self', extra = null) {
     }
     galTrailSave(unitId, trail)
   }
+  if (kind === 'up' || kind === 'back') { const top = galScrollMap(unitId)[target]; if (top > 0) galRestoreScroll = { id: target, top } }
   return openUnitInSession(unitId, target)
 }
 const galThumbLoader = createThumbLoader({ getSettings: () => thumbSettingsFromConfig(appConfig || {}) })
@@ -4282,6 +4305,12 @@ function renderGalBrowse(reader) {
   if (galImmersive) galBrowser.setImmersive(true)
   else if (immersivePref('gal')) enterGalImmersive()
   els.mediaReaderContent.scrollTop = 0
+  if (galRestoreScroll && galRestoreScroll.id === reader.node.id) {
+    const { top } = galRestoreScroll
+    galRestoreScroll = null
+    galScroller().scrollTop = top
+    requestAnimationFrame(() => { galScroller().scrollTop = top })   // 图片还没撑开高度时先设一次不够，下一帧再设
+  }
   mediaPageIndex = 0
   mediaPageCount = 1
   mediaPageStep = 1
@@ -4336,7 +4365,7 @@ function renderGal(reader) {
       back: () => { exitGalImmersive(); els.mediaReaderBack?.click() },
       // 「列表」回到它的上一级（首页/分类/角色），从那里选别的脚本；沉浸状态保留，进列表时自动退出
       up: reader.node?.parent != null
-        ? () => { galNavigate(reader, reader.node.parent, 'up').catch((error) => alert(error.message)) }
+        ? () => { galNavigate(reader, reader.node.parent, 'back').catch((error) => alert(error.message)) }
         : null,
       // 最后一句看完（手动点下一句 / 自动播放到头）：先把「已看完」存下来（不能等 500ms 的防抖：马上就换页了，
       // 到时候 currentMediaReader 已经是列表节点），再回上一级列表；没有上一级就像「返回」一样离开这个媒体
@@ -4344,7 +4373,7 @@ function renderGal(reader) {
         clearTimeout(libraryProgressTimer)
         galRatio = 1
         await saveLibraryProgress(1, reader).catch(() => {})
-        if (reader.node?.parent != null) await galNavigate(reader, reader.node.parent, 'up')
+        if (reader.node?.parent != null) await galNavigate(reader, reader.node.parent, 'back')
         else { exitGalImmersive(); els.mediaReaderBack?.click() }
       },
     },

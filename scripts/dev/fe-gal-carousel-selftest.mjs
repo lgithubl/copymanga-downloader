@@ -66,6 +66,10 @@ try {
         await sleep(2500)   // 先让封面（渲染图）出来
         const imgSrc = () => page.$eval('.gal-card.is-script img', (i) => i.getAttribute('src') || '')
         const before = await imgSrc()
+        const extraKey = card.renders?.[1]?.key
+        check('不用悬停：卡片进了屏幕、空闲后就已经去取第 2 张轮播图（预渲染）', Boolean(extraKey) && reqs.some((r) => r.includes(extraKey.slice(0, 12)) || r.includes(extraKey.slice(-12))), J([extraKey, reqs]))
+        check('卡片右下角有「轮播 N 张」角标（N ≥ 2）', /^轮播 [2-9]\d* 张$/.test(await page.$eval('.gal-card.is-script .gal-card-carousel', (e) => e.textContent).catch(() => '')), '')
+        check('封面图还在（没有被「加载失败」的备用链删掉）', Boolean(await page.$('.gal-card.is-script .gal-card-thumb img')), '')
         await page.hover('.gal-card.is-script')
         const seen = new Set([before])
         for (let i = 0; i < 40; i++) { await sleep(250); seen.add(await imgSrc()) }

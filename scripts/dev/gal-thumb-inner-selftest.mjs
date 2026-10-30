@@ -131,6 +131,13 @@ registerGalAdapter({ id: 'test-inner', label: '测试：JSON 步骤', sniff: (te
   check('胶片场景，inner 开：一条胶片 = 同一条胶片的 3 个不同位置的帧（先中间帧 0.5，再 0.167 / 0.833）；key 互不相同；第一张（中间帧）的 key 和 inner 关时一样；没有 frame 字段的是默认帧', one?.length === 3 && J(one.map((r) => r.frame ?? 0.5)) === '[0.5,0.167,0.833]' && new Set(one.map((r) => r.key)).size === 3 && one[0].key === off.film_one.render.key && one.every((r) => r.film === 'fm/strip1.jpg') && on.film_one.carousel === 4, J(one))
   const two = on.film_two.renders
   check('两条胶片 + inner：帧优先（先每条的中间帧，再下一个位置），总数不超过 innerMax（4）', two?.length === 4 && J(two.map((r) => [r.film, r.frame ?? 0.5])) === J([['fm/strip1.jpg', 0.5], ['fm/strip2.jpg', 0.5], ['fm/strip1.jpg', 0.167], ['fm/strip2.jpg', 0.167]]), J(two))
+  // 黑 / 空白胶片不当封面（Kamihime 的 black.jpg）
+  await mk('resources/fs/film_black.txt', `#FM${J([[fbg('black.jpg')], [text('a')], [fbg('strip3.jpg')], [text('b')]])}`)
+  await mk('resources/fs/film_allblack.txt', `#FM${J([[fbg('black.jpg')], [text('a')], [fbg('blank.jpg')], [text('b')]])}`)
+  const bl = await items({ inner: true })
+  check('胶片里有 black.jpg：跳过黑胶片，封面和轮播都只用有内容的那条（strip3）', bl.film_black.renders?.length > 0 && bl.film_black.renders.every((r) => r.film === 'fm/strip3.jpg'), J(bl.film_black.renders))
+  check('胶片全是 black / blank：没有渲染图（不拿黑图当封面）', !bl.film_allblack.render && !bl.film_allblack.renders, J(bl.film_allblack))
+
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

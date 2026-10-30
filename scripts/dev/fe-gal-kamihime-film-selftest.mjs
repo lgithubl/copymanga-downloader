@@ -118,7 +118,7 @@ try {
     check('资源接口：胶片 jpg 取得到', await res(bgs[1].src) === 200, J(bgs[1]))
     // 列表卡片：胶片场景没有骨骼，但每段不同的胶片渲染一帧（renders，轮播）；兜底的灰底图不要
     const filmCard = dir.node.items[1]
-    check('列表：胶片场景卡片带 renders（Kamihime 默认开了 inner：每段不同的、找得到的胶片的中间帧 black / strip / single，再加第一条胶片的另一个位置的帧，共 4 张（innerMax）；nothere 找不到，不出 bg，film 字段是胶片路径），兜底图不要（thumbs 空）', Array.isArray(filmCard.renders) && filmCard.renders.length === 4 && filmCard.renders.every((r) => /^[0-9a-f]{40}$/.test(r.key) && r.film) && J(filmCard.renders.map((r) => r.film.split('/').pop())) === J(['black.jpg', 'strip.jpg', 'single.jpg', 'black.jpg']) && filmCard.renders[3].frame > 0 && filmCard.renders[3].frame < 0.5 && filmCard.thumbs.length === 0 && J(filmCard.render) === J(filmCard.renders[0]), J(filmCard))
+    check('列表：胶片场景卡片带 renders（Kamihime 默认开了 inner：每段不同的、找得到的胶片的中间帧 strip / single（black.jpg 是黑胶片，跳过不当封面），再加各自另一个位置的帧，共 4 张（innerMax）；nothere 找不到，不出 bg，film 字段是胶片路径），兜底图不要（thumbs 空）', Array.isArray(filmCard.renders) && filmCard.renders.length === 4 && filmCard.renders.every((r) => /^[0-9a-f]{40}$/.test(r.key) && r.film) && J(filmCard.renders.map((r) => r.film.split('/').pop())) === J(['strip.jpg', 'single.jpg', 'strip.jpg', 'single.jpg']) && filmCard.renders[2].frame > 0 && filmCard.renders[2].frame < 0.5 && filmCard.thumbs.length === 0 && J(filmCard.render) === J(filmCard.renders[0]), J(filmCard))
     if (!chromium) console.log('SKIP 没有 @playwright/test：跳过浏览器部分')
     else {
       const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
@@ -140,7 +140,7 @@ try {
           return { w: f.getBoundingClientRect().width, h: f.getBoundingClientRect().height, sw: strip.width, sh: strip.height, sx: strip.left - f.getBoundingClientRect().left, rotate: f.dataset.rotate, transform: f.firstElementChild.style.transform }
         })
         // 渲染缩略图：胶片取中间一帧（strip.jpg 三帧 红 / 绿 / 蓝 → 绿），转回正的再铺满
-        const stripSrc = filmCard.renders[1].film
+        const stripSrc = filmCard.renders[0].film
         const tint = await page.evaluate(async ([api, resourceBase, node, film, frameFraction]) => {
           const m = await import('/gal-thumb-render.js')
           const blob = await m.renderSceneThumb({ apiBase: api, resourceBase, node, film, filmFrame: frameFraction, width: 160 })
