@@ -5334,6 +5334,7 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
         const resource = await handler.getResource(itemId, url.searchParams.get('path') || '', {
           subtitle: url.searchParams.get('subtitle') === '1',
           frame: url.searchParams.get('frame') === '1',   // Gal：视频的一帧（卡片缩略图）
+          width: Number(url.searchParams.get('w')) || 0,   // Gal：图片缩略图的宽度（缩小后的 WebP，不是原图）
         })
         if (resource.file) return await sendCachedFile(req, res, resource.file, resource.contentType, resource.cacheControl)
         return binary(res, 200, resource.body, resource.contentType)

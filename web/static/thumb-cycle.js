@@ -9,7 +9,9 @@ export const INTERVAL_MS = [700, 900]
 export const DEFAULT_HOVER = { enabled: true, mode: 'hover', count: 4, order: 'random', intervalMs: INTERVAL_MS }
 
 // 图的地址：视频带 frame=1，服务端给一帧 JPEG（video-thumb.mjs）
-export const thumbUrl = (base, path) => `${base}?path=${encodeURIComponent(path)}${isVideoSrc(path) ? '&frame=1' : ''}`
+// 图片带 w=<宽度>：服务端给缩小后的 WebP（卡片用，不要几 MB 的原图）；width 传 0 / 不传 = 原图
+export const thumbUrl = (base, path, width = 0) => `${base}?path=${encodeURIComponent(path)}${isVideoSrc(path) ? '&frame=1' : width > 0 ? `&w=${Math.round(width)}` : ''}`
+export const CARD_THUMB_WIDTH = 480   // 卡片缩略图的宽度（3:4 / 16:9 的卡片最宽约 300 CSS 像素，留 HiDPI 余量）
 
 export function shuffled(list, rand = Math.random) {
   const out = [...list]

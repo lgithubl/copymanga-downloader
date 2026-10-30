@@ -12,7 +12,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg imagemagick unzip unar \
   && rm -rf /var/lib/apt/lists/*
 
-# parse5 是 web/ 下唯一的 npm 依赖（EPUB 朗读分句用），先单独装，改业务代码不会让这层缓存失效
+# web/ 下的 npm 依赖：parse5（EPUB 朗读分句）、sharp（Gal 卡片 / 画廊的图片缩略图；预编译二进制随 npm 包的平台可选依赖装好，Debian glibc 直接可用）。先单独装，改业务代码不会让这层缓存失效
 COPY web/package.json web/package-lock.json ./web/
 RUN cd web && npm ci --omit=dev --no-audit --no-fund
 

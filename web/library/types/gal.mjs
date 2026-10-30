@@ -15,7 +15,8 @@ import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
-import { ensureContainers, materialize } from '../gal/containers.mjs'
+import { ensureContainers, materialize, virtualEntry, virtualHas } from '../gal/containers.mjs'
+import { IMAGE_THUMB_EXT, bucketOf, createImageThumbCache } from '../gal/image-thumb.mjs'
 import { resolveOnDisk } from '../gal/resolve.mjs'
 import { isVideoPath } from '../gal/thumbs.mjs'
 import { createFrameCache } from '../gal/video-thumb.mjs'
@@ -58,6 +59,7 @@ export function normalizeGalOptions(value = {}) {
 export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathExists, getConfig }) {
   const metaRoot = path.join(dataDir, 'library-meta', type)
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
+  const imageThumbs = createImageThumbCache({ dir: path.join(dataDir, 'cache', 'gal-img-thumbs') })   // 卡片 / 画廊的图片缩略图（WebP）
   const frames = createFrameCache({ dir: path.join(dataDir, 'cache', 'gal-thumbs') })   // 视频缩略图（一帧 JPEG）的缓存目录
 
   const options = (override = {}) => normalizeGalOptions({ ...(getConfig().mediaImportProfiles?.[GAL_PROFILE] || {}), ...override })
@@ -187,7 +189,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   // 把脚本里的相对路径解析成磁盘上的真实文件。路径相对「资源根」（config.resourceRoots，按顺序找，取第一个存在的）；
   // `~/` 开头 = 相对媒体目录：资源接口只放行缩略图缓存目录（config.thumbsDirs），封面（allowMedia）可以是媒体目录里的任意文件，别的拒绝。
   // 只认媒体目录之内的真实路径（realpath），目录穿越和符号链接逃逸都挡掉。
-  async function resolveAsset(item, resourcePath, { allowMedia = false } = {}) {
+  async function resolveAsset(item, resourcePath, { allowMedia = false, skipMaterialize = false, wantedOut = null } = {}) {
     const bad = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode })
     const config = normalizeGalConfig(item.config)
     let rel = String(resourcePath || '').replace(/\\/g, '/').replace(/^\/+/, '')
@@ -201,7 +203,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     // 容器 hybrid 方式：这个路径如果是还没展开的资源，先从 .arc 里把那一个条目取出来（写成文件），后面就和普通文件一样
     const roots = (config.resourceRoots?.length ? config.resourceRoots : ['']).map((root) => String(root || '').replace(/^\.\/?/, '').replace(/\/+$/, ''))
     const wanted = fromMedia ? [rel] : [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))].flatMap((variant) => roots.map((root) => (root ? `${root}/${variant}` : variant)))
-    await materialize({ mediaDir: work, config, rels: wanted }).catch(() => {})
+    if (wantedOut) wantedOut.push(...wanted)
+    if (!skipMaterialize) await materialize({ mediaDir: work, config, rels: wanted }).catch(() => {})
     if (fromMedia) {
       if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
       const hit = await resolveOnDisk({ work, rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: false })   // ~/ 路径：只认媒体目录内的原路径，不套任何解析规则 / allowedRoots
@@ -214,9 +217,38 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     throw bad('资源不存在', 404)
   }
 
+  // 列表阶段的存在性检查（封面 / 语音有没有）：磁盘上有就给真实路径；容器（.arc）里还没展开的条目给它将来落盘的路径，不解压——
+  // 真正要内容的时候（取资源 / 缩略图）才取。不然列表一建就把每个封面候选、每条语音都从 .arc 里解压成文件，几百张 MB 级的原图落盘
+  async function resolveExists(item, rel) {
+    const wanted = []
+    try { return await resolveAsset(item, rel, { skipMaterialize: true, wantedOut: wanted }) } catch (error) {
+      if (error?.statusCode && error.statusCode !== 404) throw error
+      const work = workDirOf(item)
+      const virtual = await virtualHas({ mediaDir: work, config: normalizeGalConfig(item.config), rels: wanted })
+      if (virtual) return path.join(work, ...virtual.split('/'))
+      throw error
+    }
+  }
+
   // frame：视频 → 一帧 JPEG（卡片缩略图）。resolveAsset 已经把路径限制在媒体目录内，截出来的图缓存在 cache/gal-thumbs，返回 { file, contentType } 让路由按文件发（ETag / 长缓存）
-  async function getResource(itemId, resourcePath, { frame = false } = {}) {
+  async function getResource(itemId, resourcePath, { frame = false, width = 0 } = {}) {
     const item = await readItem(itemId)
+    // width：图片缩略图（卡片 / 画廊）。磁盘上已有的文件直接缩；容器（.arc）里还没展开的条目从 .arc 里读出来缩，原图不落盘；缩不了（sharp 没装 / 不是图片）退回原图
+    if (width && !frame && bucketOf(width) && IMAGE_THUMB_EXT.test(String(resourcePath))) {
+      const wanted = []
+      let source = null
+      try {
+        const onDisk = await resolveAsset(item, resourcePath, { skipMaterialize: true, wantedOut: wanted })
+        source = await imageThumbs.fileSource(onDisk)
+      } catch (error) {
+        if (error?.statusCode && error.statusCode !== 404) throw error
+        const work = workDirOf(item)
+        const entry = await virtualEntry({ mediaDir: work, config: normalizeGalConfig(item.config), rels: wanted })
+        if (entry) source = { id: `arc:${entry.key}`, read: entry.read }
+      }
+      const thumb = source ? await imageThumbs.thumbOf(source, width) : null
+      if (thumb) return { file: thumb, contentType: 'image/webp', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
+    }
     const file = await resolveAsset(item, resourcePath)
     if (frame) {
       if (!isVideoPath(file)) throw Object.assign(new Error('不是视频文件'), { statusCode: 415 })
@@ -276,7 +308,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       mediaDir: workDirOf(item),
       config: item.config,
       adapters: item.adapters,
-      resolveAsset: (rel) => resolveAsset(item, rel),
+      resolveAsset: (rel) => resolveExists(item, rel),
       extraWarnings: [...(item.configWarnings || []), ...(item.adapterWarnings || [])],
     })
   }

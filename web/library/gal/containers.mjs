@@ -364,6 +364,47 @@ export async function virtualFiles({ mediaDir, config }) {
   return v ? { files: v.files, sig: v.sig } : { files: [], sig: '' }
 }
 
+// 只问「有没有」：路径（候选几个）里第一个属于虚拟索引的条目，返回它将来落盘的相对路径（不读 .arc 里的内容、不写文件）；没有 = ''。
+// 列表阶段的存在性检查（封面 / 语音有没有）用它，不然每检查一张图就得把原图解压出来
+export async function virtualHas({ mediaDir, config, rels }) {
+  const cfg = config?.containers
+  if (!isHybrid(cfg) || !rels?.length) return ''
+  const v = await virtualIndex({ mediaDir, config }).catch(() => null)
+  if (!v) return ''
+  for (const rel of rels) {
+    const hit = v.map.get(String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
+    if (hit) return hit.rel
+  }
+  return ''
+}
+
+// 缩略图用：路径（候选几个）里第一个属于虚拟索引的条目，不落盘——返回 { key（同一份内容同一个 key：.arc 的路径 / 大小 / 修改时间 + 条目位置 + 是否转直通）, read()（取出字节；PNAP 帧已转直通） }；没有 = null
+export async function virtualEntry({ mediaDir, config, rels }) {
+  const cfg = config?.containers
+  if (!isHybrid(cfg) || !rels?.length) return null
+  const v = await virtualIndex({ mediaDir, config }).catch(() => null)
+  if (!v) return null
+  for (const rel of rels) {
+    const hit = v.map.get(String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
+    if (!hit) continue
+    const st = await stat(hit.file).catch(() => null)
+    if (!st) continue
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), CONTAINER_FORMAT_VERSION])).digest('hex')
+    return {
+      key,
+      rel: hit.rel,
+      async read() {
+        const handle = await open(hit.file, 'r')
+        try {
+          const data = await readRange(handle, hit.offset, hit.size)
+          return hit.unpremultiply ? unpremultiplyPng(data).buffer : data
+        } finally { await handle.close().catch(() => {}) }
+      },
+    }
+  }
+  return null
+}
+
 // 把请求到的路径（相对媒体目录，可以有几个候选）里属于虚拟索引的、磁盘上还没有的，从 .arc 里读出来写成文件（先写临时文件再改名；同一个文件并发请求只取一次）。返回取出了几个
 export async function materialize({ mediaDir, config, rels }) {
   const cfg = config?.containers
