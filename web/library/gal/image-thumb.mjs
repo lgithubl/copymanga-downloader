@@ -8,8 +8,10 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 
-export const IMAGE_THUMB_VERSION = 'v1-webp80'
+export const IMAGE_THUMB_VERSION = 'v2-webp80-top'
 export const THUMB_BUCKETS = Object.freeze([160, 240, 320, 480, 640, 960, 1280])
+export const TALL_RATIO = 2.4   // 高 / 宽超过它算超长图
+export const TALL_TOP_RATIO = 0.6   // 超长图取顶部 宽 × 0.6 高的一段：按 Manual.jpg（2616×14696，最上面的封面插画高约 0.58 倍宽）定的，别的超长图也取最上面这一段
 export const IMAGE_THUMB_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|tiff?)$/i
 
 export const bucketOf = (width) => {
@@ -37,7 +39,7 @@ export function createImageThumbCache({ dir, concurrency = Math.max(1, Number(pr
   const release = () => { const next = waiting.shift(); if (next) next(); else active -= 1 }
 
   // source：{ id（字符串，来源标识）, read()（Buffer）}；返回缓存文件路径，缩不了 = null
-  async function thumbOf(source, width) {
+  async function thumbOf(source, width, { top = null } = {}) {
     const bucket = bucketOf(width)
     if (!bucket) return null
     const key = createHash('sha1').update(JSON.stringify([source.id, bucket, IMAGE_THUMB_VERSION])).digest('hex')
@@ -53,7 +55,9 @@ export function createImageThumbCache({ dir, concurrency = Math.max(1, Number(pr
         try {
           const input = await source.read()
           await mkdir(path.dirname(out), { recursive: true })
-          await sharp(input, { limitInputPixels: maxInputPixels, failOn: 'none' }).rotate().resize({ width: bucket, withoutEnlargement: true }).webp({ quality }).toFile(tmp)
+          const base = sharp(input, { limitInputPixels: maxInputPixels, failOn: 'none' })
+          const picked = top ? base.extract({ left: 0, top: 0, width: top.width, height: top.height }) : base.rotate()
+          await picked.resize({ width: bucket, withoutEnlargement: true }).webp({ quality }).toFile(tmp)
           await rename(tmp, out)
           return out
         } catch {
@@ -66,10 +70,22 @@ export function createImageThumbCache({ dir, concurrency = Math.max(1, Number(pr
     return pending
   }
 
+  // 超长图（长条漫画 / 整本说明书拼成一张：高 / 宽 > TALL_RATIO）：卡片按 3:4 居中裁，中心落在内容中段，封面变成说明书正文。取顶部那一段（宽 × TALL_TOP_RATIO）缩成 WebP；
+  // 不是超长图 / sharp 没装 / 读不了 = null（调用方用原图）。只读文件头判断高宽，不解码
+  async function tallTopOf(file, width = 960) {
+    const sharp = await getSharp()
+    if (!sharp) return null
+    let meta
+    try { meta = await sharp(file, { limitInputPixels: maxInputPixels }).metadata() } catch { return null }
+    if (!meta.width || !meta.height || meta.height / meta.width <= TALL_RATIO) return null
+    const source = await fileSource(file)
+    return thumbOf({ ...source, id: `top:${source.id}` }, width, { top: { width: meta.width, height: Math.round(meta.width * TALL_TOP_RATIO) } })
+  }
+
   // 磁盘文件的来源标识（真实路径 + 大小 + 修改时间）
   async function fileSource(file) {
     const st = await stat(file)
     return { id: `file:${file}:${st.size}:${Math.round(st.mtimeMs)}`, read: () => readFile(file) }
   }
-  return { thumbOf, fileSource, available: async () => Boolean(await getSharp()) }
+  return { thumbOf, tallTopOf, fileSource, available: async () => Boolean(await getSharp()) }
 }

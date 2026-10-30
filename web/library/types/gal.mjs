@@ -239,6 +239,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       let source = null
       try {
         const onDisk = await resolveAsset(item, resourcePath, { skipMaterialize: true, wantedOut: wanted })
+        const tallTop = await imageThumbs.tallTopOf(onDisk, bucketOf(width))   // 超长图取顶部一段（卡片居中裁会裁到中段）
+        if (tallTop) return { file: tallTop, contentType: 'image/webp', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
         source = await imageThumbs.fileSource(onDisk)
       } catch (error) {
         if (error?.statusCode && error.statusCode !== 404) throw error
@@ -297,6 +299,9 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     if (!item.coverPath) throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
     try {
       const file = await resolveAsset(item, item.coverPath, { allowMedia: true })
+      // 超长图（整本说明书拼成一张的 Manual.jpg 之类）：卡片居中裁会裁到正文里，取顶部一段缩小当封面；普通图原样
+      const top = IMAGE_THUMB_EXT.test(file) ? await imageThumbs.tallTopOf(file) : null
+      if (top) return { file: top, contentType: 'image/webp' }
       return { file, contentType: contentTypeOf(file) }
     } catch {
       throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })

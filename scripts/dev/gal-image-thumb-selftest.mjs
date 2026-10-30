@@ -111,5 +111,27 @@ check('不存在的图带 w：404', missing === 404, String(missing))
 const evil = await handler.getResource(id, '../Rio1.arc', { width: 320 }).then(() => 'ok', (e) => e.statusCode)
 check('带 w 也挡住 ../ 越界（400）', evil === 400, String(evil))
 
+// ---- 超长图（Manual.jpg 那种）：封面 / 卡片缩略图取顶部一段，不是正中间 ----
+{
+  // 600×2400：上面 800 行红（封面插画），下面蓝（正文）；高 / 宽 = 4 > 2.4
+  const tallRaw = Buffer.alloc(600 * 2400 * 3)
+  for (let y = 0; y < 2400; y++) for (let x = 0; x < 600; x++) { const o = (y * 600 + x) * 3; if (y < 800) { tallRaw[o] = 220 } else { tallRaw[o + 2] = 220 } }
+  await writeFile(path.join(media, 'Tall.jpg'), await sharp(tallRaw, { raw: { width: 600, height: 2400, channels: 3 } }).jpeg().toBuffer())
+  await writeFile(path.join(media, 'Normal.jpg'), await sharp({ create: { width: 800, height: 600, channels: 3, background: { r: 0, g: 200, b: 0 } } }).jpeg().toBuffer())
+  const set = (cover) => handler.internals.updateItem(id, (it) => ({ ...it, config: { ...it.config, cover } }))
+  const centre = async (file) => { const m = await meta(file); const px = await sharp(file).removeAlpha().raw().toBuffer(); const o = (Math.floor(m.height / 2) * m.width + Math.floor(m.width / 2)) * 3; return { m, rgb: [px[o], px[o + 1], px[o + 2]] } }
+  await set('~/Tall.jpg')
+  const cover = await handler.getThumbnailFile(id)
+  const c = await centre(cover.file)
+  check('库封面是超长图（600×2400）：取顶部一段（宽 600 → 高 360 = 宽 × 0.6），正中间是红（封面插画），不是蓝（正文）；WebP', cover.contentType === 'image/webp' && c.m.width === 600 && c.m.height === 360 && c.rgb[0] > 150 && c.rgb[2] < 80, J([cover.contentType, c.m.width, c.m.height, c.rgb]))
+  const cover2 = await handler.getThumbnailFile(id)
+  check('同一张超长图封面再取 = 命中缓存（同一个文件）', cover2.file === cover.file)
+  await set('~/Normal.jpg')
+  const normal = await handler.getThumbnailFile(id)
+  check('普通比例的封面原样给（原文件、image/jpeg），不动', normal.file.endsWith('Normal.jpg') && normal.contentType === 'image/jpeg', J(normal))
+  const cardTall = await handler.getResource(id, '~/Tall.jpg', { width: 320 }).catch((e) => e)
+  check('~/ 路径（媒体目录）本来就不给资源接口放行，带 w 也一样（403）；卡片的超长图走资源根下的路径', cardTall.statusCode === 403, J(cardTall.statusCode ?? cardTall))
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
