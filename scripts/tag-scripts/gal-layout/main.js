@@ -1438,7 +1438,7 @@ export const LAYOUTS = {
     ruleTables: ['artwhirl-json'], ruleOverrides: {},
     engine: { classify: [], limits: { walkFiles: 800000 } },   // images + audio：voice 一个游戏 13 万个文件（1400 个目录），加上图片会超过默认的 40 万
     // 缩略图（dir 相对资源根 = game/）：episode_scripts/<KEY>_ep<N>/<KEY>_ep<N>_00.json（H 版 _h.json）↔ episode_thumb/<KEY>/<KEY>_episode<N>_thumb.jpg（H 版 …_episode<N>h_thumb.jpg）；目录 / 分组卡片 ← images/icons/<KEY>/icon_m.jpg + icon_s.png；hscripts 的 H 场景没有直接的缩略图，走兜底 + topUp
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100,
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: [], labels: {}, merge: [], views: [], sceneMarkers: [{ label: 'H 开始', kind: 'bg', match: '/hcg/[^/]+/ca\\d+[A-Za-z0-9]+/\\d+(@\\d+)?\\.(jpe?g|png)$', pick: 'run', max: 6 }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100,
       thumbSources: [
         { dir: 'episode_thumb/*', match: String.raw`^(.+)_episode(\d+)(h?)_thumb\.jpg$`, key: '{1}_{2}{3}', for: 'script', forMatch: String.raw`^(.+)_ep(\d+)_00$`, forKey: '{1}_{2}' },
         { dir: 'episode_thumb/*', match: String.raw`^(.+)_episode(\d+)(h?)_thumb\.jpg$`, key: '{1}_{2}{3}', for: 'script', forMatch: String.raw`^(.+)_ep(\d+)_h$`, forKey: '{1}_{2}h' },
@@ -1542,7 +1542,7 @@ export const LAYOUTS = {
       classify: [],
       limits: { walkFiles: 2000000 },   // grenze-xml.contextWalkLimit：voice 一个目录十万级文件
     },
-    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } }, pageSize: 100 },
+    config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['xml'], hiddenDirs: [], labels: {}, merge: [], views: [], sceneMarkers: [{ label: '背景人声开始', kind: 'cmd', op: 'bgse', pick: 'first', max: 1 }, { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 5 }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } }, pageSize: 100 },
     count: [],   // 数 TextAsset 里的 easy_dialog-N.xml（detectGrenze）
     cover: [{ dir: 'assets/resources/patchres/banner/banner_title', match: '^LOGO_.*\\.(?:webp|png)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 标题 LOGO（gal-samples15 的图片目录清单：patchres/banner/banner_title 里 LOGO_<…>_520.webp 291 张）
     avatars: [], expectedDirs: ['assets/resources/patchres'],
@@ -2127,6 +2127,7 @@ function canonField(key, value) {
   switch (key) {
     case 'scriptRoots': return list((r) => ({ ...r, id: r.id ?? '', dir: r.dir ?? '', label: r.label || r.id || '' }))
     case 'views': return list((r) => ({ ...r, parent: !r.parent || r.parent === '.' ? '' : r.parent, label: r.label ?? '', dirs: r.dirs ?? [], match: r.match ?? '', exclusive: Boolean(r.exclusive), badges: r.badges ?? {} }))
+    case 'sceneMarkers': return list((r) => ({ label: r.label, kind: r.kind, ...(r.kind === 'cmd' && r.op ? { op: r.op } : {}), ...(r.match ? { match: r.match } : {}), pick: r.pick || (r.kind === 'bg' ? 'run' : 'each'), max: Math.max(1, Math.min(12, Math.floor(Number(r.max)) || 6)) }))
     case 'merge': return list((r) => ({ ...r, badges: r.badges ?? {} }))
     case 'dirThumbs': return list((r) => ({ ...r, parent: r.parent || '*', name: r.name ?? '' }))
     case 'scriptIndex': return list((r) => ({ ...r, key: r.key || '{1}', badge: r.badge ?? '' }))

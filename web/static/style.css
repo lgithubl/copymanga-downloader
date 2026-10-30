@@ -4338,6 +4338,9 @@ h2 {
 .gal-card.is-dir .gal-card-title { text-align: center; }
 .gal-card-sub { color: var(--site-muted); display: -webkit-box; font-size: 12px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .gal-card.is-dir .gal-card-sub { text-align: center; }
+.gal-card-marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.gal-card-mark { background: color-mix(in srgb, var(--site-accent, #6b8cff) 14%, transparent); border: 1px solid color-mix(in srgb, var(--site-accent, #6b8cff) 45%, transparent); border-radius: 10px; color: inherit; cursor: pointer; font-size: 11px; line-height: 1.4; padding: 1px 8px; }
+.gal-card-mark:hover { background: color-mix(in srgb, var(--site-accent, #6b8cff) 30%, transparent); }
 .gal-badge { background: var(--site-bar); border-radius: 10px; color: var(--site-secondary); font-size: 11px; padding: 1px 7px; }
 .gal-badge.done { background: var(--read-color); color: #1a7f37; }
 .gal-browse-pager { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }

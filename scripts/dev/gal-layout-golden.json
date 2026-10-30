@@ -3944,6 +3944,22 @@
    "resourceRoots": [
     "assets/resources/patchres"
    ],
+   "sceneMarkers": [
+    {
+     "kind": "cmd",
+     "label": "背景人声开始",
+     "max": 1,
+     "op": "bgse",
+     "pick": "first"
+    },
+    {
+     "kind": "cmd",
+     "label": "BGM 停止",
+     "max": 5,
+     "op": "bgmStop",
+     "pick": "each"
+    }
+   ],
    "script": {
     "id": "gal-layout",
     "version": "2.12.0"
@@ -4009,6 +4025,22 @@
    "pageSize": 100,
    "resourceRoots": [
     "assets/resources/patchres"
+   ],
+   "sceneMarkers": [
+    {
+     "kind": "cmd",
+     "label": "背景人声开始",
+     "max": 1,
+     "op": "bgse",
+     "pick": "first"
+    },
+    {
+     "kind": "cmd",
+     "label": "BGM 停止",
+     "max": 5,
+     "op": "bgmStop",
+     "pick": "each"
+    }
    ],
    "script": {
     "id": "gal-layout",
@@ -4076,6 +4108,22 @@
    "resourceRoots": [
     "grenze/assets/resources/patchres"
    ],
+   "sceneMarkers": [
+    {
+     "kind": "cmd",
+     "label": "背景人声开始",
+     "max": 1,
+     "op": "bgse",
+     "pick": "first"
+    },
+    {
+     "kind": "cmd",
+     "label": "BGM 停止",
+     "max": 5,
+     "op": "bgmStop",
+     "pick": "each"
+    }
+   ],
    "script": {
     "id": "gal-layout",
     "version": "2.12.0"
@@ -4141,6 +4189,22 @@
    "pageSize": 100,
    "resourceRoots": [
     "grenze/assets/resources/patchres"
+   ],
+   "sceneMarkers": [
+    {
+     "kind": "cmd",
+     "label": "背景人声开始",
+     "max": 1,
+     "op": "bgse",
+     "pick": "first"
+    },
+    {
+     "kind": "cmd",
+     "label": "BGM 停止",
+     "max": 5,
+     "op": "bgmStop",
+     "pick": "each"
+    }
    ],
    "script": {
     "id": "gal-layout",
@@ -5576,6 +5640,15 @@
    "resourceRoots": [
     "game"
    ],
+   "sceneMarkers": [
+    {
+     "kind": "bg",
+     "label": "H 开始",
+     "match": "/hcg/[^/]+/ca\\d+[A-Za-z0-9]+/\\d+(@\\d+)?\\.(jpe?g|png)$",
+     "max": 6,
+     "pick": "run"
+    }
+   ],
    "script": {
     "id": "gal-layout",
     "version": "2.12.0"
@@ -5673,6 +5746,15 @@
    "pageSize": 100,
    "resourceRoots": [
     "game"
+   ],
+   "sceneMarkers": [
+    {
+     "kind": "bg",
+     "label": "H 开始",
+     "match": "/hcg/[^/]+/ca\\d+[A-Za-z0-9]+/\\d+(@\\d+)?\\.(jpe?g|png)$",
+     "max": 6,
+     "pick": "run"
+    }
    ],
    "script": {
     "id": "gal-layout",
@@ -5772,6 +5854,15 @@
    "resourceRoots": [
     "artwhirl/game"
    ],
+   "sceneMarkers": [
+    {
+     "kind": "bg",
+     "label": "H 开始",
+     "match": "/hcg/[^/]+/ca\\d+[A-Za-z0-9]+/\\d+(@\\d+)?\\.(jpe?g|png)$",
+     "max": 6,
+     "pick": "run"
+    }
+   ],
    "script": {
     "id": "gal-layout",
     "version": "2.12.0"
@@ -5869,6 +5960,15 @@
    "pageSize": 100,
    "resourceRoots": [
     "artwhirl/game"
+   ],
+   "sceneMarkers": [
+    {
+     "kind": "bg",
+     "label": "H 开始",
+     "match": "/hcg/[^/]+/ca\\d+[A-Za-z0-9]+/\\d+(@\\d+)?\\.(jpe?g|png)$",
+     "max": 6,
+     "pick": "run"
+    }
    ],
    "script": {
     "id": "gal-layout",

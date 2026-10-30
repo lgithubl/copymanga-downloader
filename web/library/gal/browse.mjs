@@ -36,6 +36,7 @@ import { safeRelPath } from './paths.mjs'
 import { createThumbEngine, invalidateThumbCaches } from './thumbs.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { collectFallbackImages } from './fallback-thumbs.mjs'
+import { computeMarkers } from './markers.mjs'
 import { pickRenderSteps } from '../../static/gal-thumb-pick.js'
 export const RENDER_THUMB_VERSION = 'r2'   // 渲染缩略图的版本：渲染逻辑变了就加一，服务器缓存跟着换
 import { explainRejectedFile } from './diagnostics.mjs'
@@ -173,7 +174,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
   const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}|${maxScriptBytes}`
-  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbFallback, config.thumbRender, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)
+  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbFallback, config.thumbRender, config.sceneMarkers, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)
   let namesCache = null
 
   const absOf = (set, rel) => path.join(mediaDir, ...(set.dir ? set.dir.split('/') : []), ...(rel ? rel.split('/') : []))
@@ -449,7 +450,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const adapterHasSceneThumbs = (adapters?.length ? adapters : galAdapterIds()).some((id) => { try { return Boolean(galAdapter(id)?.sceneThumbs) } catch { return false } })
   const dirCoverActive = () => config.dirCover.enabled === true || (config.dirCover.enabled === 'auto' && adapterHasSceneThumbs)
   // 卡片上的渲染图：骨骼 / 立绘场景的一张（renderKey）+ 胶片场景每段胶片一张（filmRenders，Kamihime 的 harem 场景）；多张 = renders（轮播）
-  const renderFieldsOf = (info) => {
+  const renderFieldsOf = (info) => (info.markers?.length ? { ...renderFieldsBase(info), markers: info.markers } : renderFieldsBase(info))   // markers = 场景跳转点（config.sceneMarkers）
+  const renderFieldsBase = (info) => {
     const list = [...(info.renderKey ? [{ key: info.renderKey }] : []), ...(info.filmRenders || []), ...(info.innerRenders || [])]
     const carousel = info.innerRenders?.length ? { carousel: config.thumbRender.innerMax } : {}   // 悬停轮播的张数跟着 innerMax（默认悬停只轮 4 张）
     if (info.ruleCover && list.length) return { renders: list, ruleCover: true, ...carousel }   // 规则给的图（thumbnail.png 之类）仍是封面，渲染图排在它后面轮播
@@ -492,7 +494,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
             }
           } else if (child.script) {
             const info = await scriptInfo(defaultSet, child.script)
-            if (info.thumbs.length || info.renderKey || info.filmRenders?.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs, ...renderFieldsOf(info) } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
+            if (info.thumbs.length || info.renderKey || info.filmRenders?.length || info.markers?.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs, ...renderFieldsOf(info) } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
           }
         } catch { /* 取不到图就保持适配器给的样子（没有图） */ }
       }
@@ -755,7 +757,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       for (let k = ruleHit || !renderKey ? 0 : 1; k < n; k++) innerRenders.push({ key: keyOf(k), variant: k })   // 规则没给图时第 0 个就是 renderKey（缓存 key 和以前一样）
     }
     const shownThumbs = filmRenders.length ? [] : thumbs   // 有胶片渲染图时，兜底的灰底图不要
-    const result = { adapterId, renderKey, filmRenders, ...(innerRenders.length ? { innerRenders, ...(ruleHit ? { ruleCover: true } : {}) } : {}), thumb: shownThumbs[0] || '', thumbs: shownThumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: shownThumbs.length || filmRenders.length ? [] : why, issues }
+    const markers = scene && config.sceneMarkers.length ? computeMarkers(scene, config.sceneMarkers.map((rule) => ({ ...rule, re: rule.match ? new RegExp(rule.match, 'i') : null }))) : []
+    const result = { adapterId, renderKey, filmRenders, ...(markers.length ? { markers } : {}), ...(innerRenders.length ? { innerRenders, ...(ruleHit ? { ruleCover: true } : {}) } : {}), thumb: shownThumbs[0] || '', thumbs: shownThumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: shownThumbs.length || filmRenders.length ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
     return result
   }

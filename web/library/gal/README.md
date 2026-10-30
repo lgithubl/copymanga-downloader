@@ -971,6 +971,19 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **dirCover 也用在文件系统目录 / 分组卡片**（以前只有 catalog）：`dirCover.enabled: true` 时，规则（thumbSources / dirThumbs）没给图的目录 / 分组卡片，用里面前 `scan` 个脚本（`depth` 层以内）的封面，`prefer` / `skip` / `only` / `max` 同上；`auto` 仍然只对声明了 `sceneThumbs` 的 catalog（TSK）生效。写在布局里：`config.dirCover`，或者 `engine.dirCover`（`engine` 现在也认 `dirCover` / `thumbRender`，别名继承时写在 engine 里就不会替换掉整份 config）。
 - 现在写了的：Aku `engine.dirCover = { enabled: true, scan: 8, max: 6, prefer: [render, image] }`（角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播）；Kamihime `config.dirCover = { enabled: true, scan: 6, max: 4, prefer: [render, image] }`（角色目录有头像用头像，没有头像的用里面场景的渲染图 / 图）。
 
+### 场景跳转点（`config.sceneMarkers`）：卡片上的小按钮，点了从那一步开始播
+
+- 脚本卡片（场景选择那一层）可以带几个小按钮，点哪个就从那一步开始播（计数、台词、画面都是那一步的状态，不用上次的进度 / 选项）；点卡片本身仍是从头 / 接着上次。典型用途：直接跳到 H 场景开始的地方。
+- 规则（`config.sceneMarkers`，最多 8 条）：`{ label, kind, op?, match?, pick?, max? }`。
+  - `kind: 'bg'`：按**当前背景**判断（最后一个 `bg` 指令的 src / over 命中 `match`，必填）。`pick: 'run'`（默认）= 每一段连续命中的第一步；`each` = 每次换到命中的背景；`first` / `last`。
+  - `kind: 'cmd'`：按指令判断，`op` = 场景里的指令名（`bgse` 背景人声 / `bgmStop` / `bgm` / `movie` / `se` / `voice` / `text` …），`match`（可选）对 src / name / 台词文字。`pick: 'each'`（默认）/ `first` / `last`。
+  - `max`：每条规则最多几个（默认 6）；同一条规则命中多个时标签加序号（「H 开始 2」）；总数最多 12；第 0 步和最后两步不要；同一步只留第一条规则的。
+- 计算在服务端 `scriptInfo`（和封面 / 摘要同一次解析，跟着它缓存）：`markers.mjs`；结果在卡片的 `item.markers = [{ step, label, ratio }]`。播放器按步号起播（`createGalPlayer` 的 `startStep`；那一步在没选的分支上就取后面最近的一步）。
+- 现在写了的（gal-layout 2.23.0；已导入的条目要重跑）：
+  - **魔法学园的少女们**：`{ label: 'H 开始', kind: 'bg', match: '/hcg/<角色>/ca<…>/<N>.jpg' }`（适配器把 H 的 CG 背景放在 `images/hcg/` 下）。样本 `AKUKAGUYA_ca1_h2`（340 步）→ 第 88、183 步两段。`COSETTE_ca4_hardh2` 没有样本，命名一致，规则应该直接适用。
+  - **ぼくらの放課後戦争**：`bgse`（背景人声，H 的呼吸 / 水声）第一次出现 +「BGM 停止」每次。样本 4130（362 步）：BGM 停止在 50 / 151 / 170 / 199 / 319，背景人声从 203 开始。没有更直接的「H 开始」信号：脚本里没有标志位，只有画面 / 音频的变化；你说的「180 句左右」应该是 170（黑场 + BGM 停）到 199 之间，想精确改规则（比如只留 170 和 203）即可。
+- 没验证的：魔法学园的 COSETTE 脚本、其它 ぼくら 脚本（只有 4130 一个样本，别的 H 脚本的信号是否一样没核对）。
+
 ### 库封面：指定文件（`cover` 规则的 `abs` + `fromMedia`）
 
 - gal-layout 的布局表里每个游戏的 `cover` 现在可以写成 `{ dir, files: [文件名], fromMedia: true, abs: true }`：`abs` = `dir` 从**媒体目录**（不是游戏根 base）起算，`fromMedia` = 封面路径是 `~/<相对媒体目录的路径>`。每个规则同时写了 `<路径>` 和 `*/<路径>`（外面包了一层目录的）。**布局表里写了 cover 规则就以规则为准**（第一个命中的），没命中才用探测函数自己找的封面（以前探测函数不看 cover 规则的游戏，写了也不生效）。

@@ -4218,7 +4218,9 @@ function galBackLoad(unitId) {
 function galBackSave(unitId, map) {
   try { sessionStorage.setItem(galBackKey(unitId), JSON.stringify(Object.fromEntries(Object.entries(map).slice(-30)))) } catch { /* 存不了就退回服务端的上一级 */ }
 }
-function galNavigate(reader, nodeId, kind = 'self') {
+let galPendingStart = null   // 卡片上的场景跳转点按钮：{ base（节点 id）, step }，renderGal 打开那个脚本时用一次
+function galNavigate(reader, nodeId, kind = 'self', extra = null) {
+  galPendingStart = Number.isInteger(extra?.at) && extra.at > 0 ? { base: galBase(nodeId), step: extra.at } : null
   const unitId = reader.unit.unitId
   const current = reader.node?.id ?? reader.section?.sectionId ?? ''
   let target = nodeId
@@ -4265,7 +4267,7 @@ function renderGalBrowse(reader) {
     reader,
     progress: Object.fromEntries(Object.entries(nodes).map(([id, entry]) => [id, { ratio: Number(entry?.ratio) || 0, completedAt: entry?.completedAt || '' }])),
     thumbLoader: galThumbLoader,
-    onOpen: (nodeId, kind) => { galNavigate(reader, nodeId, kind).catch((error) => alert(error.message)) },
+    onOpen: (nodeId, kind, extra) => { galNavigate(reader, nodeId, kind, extra).catch((error) => alert(error.message)) },
     // 沉浸和播放页是同一套页面状态：浏览层也能进/退，切到播放页、再回列表都保持
     onToggleImmersive: toggleGalImmersive,
     onEscape: () => exitGalImmersive({ remember: true }),
@@ -4305,13 +4307,16 @@ function renderGal(reader) {
     ? Number(mine.nodes?.[sectionId]?.ratio ?? (mine.lastSectionId === sectionId ? mine.lastScrollRatio : 0)) || 0
     : 0
   galRatio = resume
-  const savedChoices = mine?.nodes?.[sectionId]?.choices || {}
-  galChoices = resume >= 0.98 ? {} : { ...savedChoices }
+  const pendingStart = galPendingStart && galBase(sectionId) === galPendingStart.base ? galPendingStart : null   // 从卡片上的跳转点进来：从那一步开始，不用上次的进度 / 选项
+  galPendingStart = null
+  const savedChoices = pendingStart ? {} : mine?.nodes?.[sectionId]?.choices || {}
+  galChoices = resume >= 0.98 || pendingStart ? {} : { ...savedChoices }
   galPlayer = createGalPlayer({
     container: els.mediaReaderContent,
     reader,
-    startRatio: resume >= 0.98 ? 0 : resume,   // 上次已经看完就从头来
-    startChoices: resume >= 0.98 ? {} : savedChoices,
+    startRatio: pendingStart || resume >= 0.98 ? 0 : resume,   // 上次已经看完就从头来
+    startStep: pendingStart ? pendingStart.step : null,   // 场景跳转点：从这一步（脚本里的步号）开始
+    startChoices: pendingStart || resume >= 0.98 ? {} : savedChoices,
     viewKey: readerOwner(reader)?.itemId || '',   // 画面放大 / 中心按媒体（条目）存
     // 「更多 → 显示马赛克层」改了之后：按新的设置重取当前这份脚本
     onReload: () => { galNavigate(reader, reader.node?.id ?? reader.section?.sectionId ?? '', 'self').catch((error) => alert(error.message)) },

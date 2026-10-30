@@ -63,6 +63,8 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 虚拟目录（视图）：在 parent 下多出一个叫 as 的目录，内容 = dirs 里这几个子目录（不写 = parent 自己）的脚本，stem 匹配 match 的才算；
   // exclusive = 被它收走的脚本不再出现在 parent 自己的列表里。分组（groups）、封面（dirThumbs）、标签（labels）都按路径 <parent>/<as> 配
   views: [],
+  // 场景跳转点（卡片上的小按钮，点了从那一步开始播；见 markers.mjs）：[{ label, kind: 'bg' | 'cmd', op（kind cmd 时的指令名）, match（正则）, pick, max }]
+  sceneMarkers: [],
   // 目录卡片的头像：parent 是父目录名（* = 任意），name 是目录名的正则；paths 是模板，{name} {parent} 会被替换，取第一个存在的
   // paths 里文件名 / 目录名段可以带通配 * ?（* = 段内任意字符，? = 单个字符），匹配到的全部都算（按自然序）；没有通配的模板按原样、存在就算。
   // 所有存在的路径都进卡片的 thumbs 数组（去重、最多 12 张），第一张 = thumb。UViewer 的资源目录是 <4 位编号><2 位变体>（几乎没有 00），所以 {name}?? 把每个变体都收进来，{name}00 排在最前
@@ -292,6 +294,29 @@ export function normalizeGalConfigWithWarnings(raw) {
 
   const nodes = normalizeNodes(v.nodes)
   if (v.nodes !== undefined && v.nodes !== null && !nodes) warn('nodes', '没有 home 节点或格式不对，当作没配', v.nodes)
+
+  // sceneMarkers：场景跳转点（markers.mjs）。写坏的一条丢掉并报告；最多 8 条规则
+  const sceneMarkers = []
+  overList('sceneMarkers', v.sceneMarkers, 8)
+  for (const rule of Array.isArray(v.sceneMarkers) ? v.sceneMarkers.slice(0, 8) : []) {
+    const label = text(rule?.label, 30)
+    const kind = rule?.kind === 'bg' || rule?.kind === 'cmd' ? rule.kind : ''
+    if (!label || !kind) { warn('sceneMarkers', 'label 为空或 kind 不是 bg / cmd，已丢掉这一条', rule); continue }
+    const op = kind === 'cmd' ? text(rule.op, 30) : ''
+    if (kind === 'cmd' && !/^[A-Za-z][A-Za-z0-9_]*$/.test(op)) { warn('sceneMarkers.op', 'kind cmd 要写指令名（字母 / 数字 / 下划线），已丢掉这一条', rule); continue }
+    let match = ''
+    if (rule.match !== undefined && rule.match !== '') {
+      try { match = typeof rule.match === 'string' && rule.match.length <= 200 && compileSafeRegex(rule.match, { flags: 'i' }) ? rule.match : '' } catch { match = '' }
+      if (!match) { warn('sceneMarkers.match', '不是合法正则 / 太长，已丢掉这一条', rule); continue }
+    }
+    if (kind === 'bg' && !match) { warn('sceneMarkers.match', 'kind bg 必须写 match，已丢掉这一条', rule); continue }
+    const picks = kind === 'bg' ? ['run', 'each', 'first', 'last'] : ['each', 'first', 'last']
+    let pick = kind === 'bg' ? 'run' : 'each'
+    if (rule.pick !== undefined) { if (picks.includes(rule.pick)) pick = rule.pick; else warn('sceneMarkers.pick', `只能是 ${picks.join(' / ')}，用默认值 ${pick}`, rule.pick) }
+    let max = 6
+    if (rule.max !== undefined) { const n = Math.floor(Number(rule.max)); if (rule.max === null || rule.max === '' || typeof rule.max === 'boolean' || !Number.isFinite(n)) warn('sceneMarkers.max', '不是数字，用默认值 6', rule.max); else max = Math.max(1, Math.min(12, n)) }
+    sceneMarkers.push({ label, kind, ...(op ? { op } : {}), ...(match ? { match } : {}), pick, max })
+  }
 
   const merge = []
   overList('merge', v.merge, MAX_LIST)
@@ -843,6 +868,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     labels: v.labels === undefined ? { ...d.labels } : labels,
     merge: v.merge === undefined ? d.merge.map((r) => ({ ...r, dirs: [...r.dirs], badges: { ...r.badges } })) : merge,
     views: v.views === undefined ? [] : views,
+    sceneMarkers: v.sceneMarkers === undefined ? [] : sceneMarkers,
     dirThumbs: v.dirThumbs === undefined ? d.dirThumbs.map((r) => ({ ...r, paths: [...r.paths] })) : dirThumbs,
     scriptThumbs: v.scriptThumbs === undefined ? d.scriptThumbs.slice() : (Array.isArray(v.scriptThumbs) ? v.scriptThumbs : []).map((t) => text(t, 300)).filter(Boolean).slice(0, 10),
     thumbSources: v.thumbSources === undefined ? [] : thumbSources,

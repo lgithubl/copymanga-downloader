@@ -80,7 +80,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
 //   chapter: { canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
-export function createGalPlayer({ container, reader, startRatio = 0, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null }) {
+export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null }) {
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
   let choices = { ...(startChoices || {}) }
@@ -1696,7 +1696,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
   }
 
   // ---------- 启动 ----------
-  const startPos = stepOfRatio(startRatio, path.length)
+  // startStep（场景跳转点）：路径里第一个步号 >= startStep 的位置（那一步在没选的分支上就取后面最近的）；没有就用进度比例
+  const posOfStep = (step) => { const at = path.findIndex((n) => n >= step); return at < 0 ? Math.max(0, path.length - 1) : at }
+  const startPos = Number.isInteger(startStep) && startStep > 0 ? posOfStep(startStep) : stepOfRatio(startRatio, path.length)
   updateCount()
   updateNote()
   updateChapterButtons()

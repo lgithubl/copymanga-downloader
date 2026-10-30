@@ -18,7 +18,7 @@ const el = (tag, className = '', text = '') => {
 // 沉浸是整个页面的状态（和播放页共用同一套：页面层隐藏头部/顶栏），这里在底部固定条里放按钮：
 //   onToggleImmersive()  进入/退出沉浸（和全屏一起收在「更多」菜单里）      onLeave()  离开这个媒体（沉浸里页面头部藏起来了，所以这里也要有）
 //   onEscape()           沉浸时按 Esc
-// onOpen(节点 id, kind)：kind = 'child'（点卡片进下一层）/ 'up'（上一级、面包屑）/ 'self'（同一层换页、换筛选/排序、换文本版本）；页面层靠它记「回来时的页码和筛选」
+// onOpen(节点 id, kind, extra)：extra = { at: 步号 }（卡片上的场景跳转点按钮：从那一步开始播）；kind = 'child'（点卡片进下一层）/ 'up'（上一级、面包屑）/ 'self'（同一层换页、换筛选/排序、换文本版本）；页面层靠它记「回来时的页码和筛选」
 // thumbLoader：可选，卡片缩略图交给它分批加载（图只带 data-src）；不传就用浏览器自带的 lazy
 // 列表很长（100/1000 张卡片）时：筛选 / 排序 / 每页条数 / 翻页都是服务端按节点 id 里的视图参数做的（node.view / node.viewBase），这里只拼 id
 let refocusSearch = null   // 搜索框触发的重绘后，把焦点还给新的搜索框（重绘是整页换节点）
@@ -483,6 +483,19 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     if (item.node !== 'x:expr') thumb.append(voice.attach(item.node, item.node, { title: `随机放一条「${item.title}」里的语音（不打开）` }))
     card.append(thumb, el('div', 'gal-card-title', item.title))
     if (item.subtitle) card.append(el('div', 'gal-card-sub', item.subtitle))
+    // 场景跳转点（config.sceneMarkers，服务端按规则算好的 item.markers）：每个一个小按钮，点了从那一步开始播（不触发整张卡片的点击）
+    if (item.type === 'script' && item.markers?.length) {
+      const marks = el('div', 'gal-card-marks')
+      for (const mark of item.markers.slice(0, 12)) {
+        const button = el('button', 'gal-card-mark', mark.label)
+        button.type = 'button'
+        button.title = `从第 ${mark.step + 1} 步开始（约 ${Math.round((mark.ratio || 0) * 100)}%）`
+        button.dataset.step = String(mark.step)
+        button.addEventListener('click', (event) => { event.stopPropagation(); onOpen(item.node, 'child', { at: mark.step }) })
+        marks.append(button)
+      }
+      card.append(marks)
+    }
     card.addEventListener('click', () => onOpen(item.node, 'child'))
     body.append(card)
     for (const cycle of cardCycles.splice(0)) cycles.push(attachThumbCycle({ target: card, ...cycle }))
