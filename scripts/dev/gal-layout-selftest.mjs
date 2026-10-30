@@ -201,7 +201,7 @@ const withLayouts = (layouts) => ({ layouts })
   const aliases = Object.entries(LAYOUTS).filter(([, e]) => e.extends).map(([id, e]) => `${id}→${e.extends}`).sort()
   check('别名：aster / jaxin / maid / aku / fruits → girlscreation，deepone → uviewer（用 extends，没有拷贝整份）', J(aliases) === J(['aku→girlscreation', 'aster→girlscreation', 'deepone→uviewer', 'fruits→girlscreation', 'girlscreation282→girlscreation', 'jaxin→girlscreation', 'maid→girlscreation']) && Object.entries(LAYOUTS).filter(([, e]) => e.extends).every(([, e]) => Object.keys(e).filter((k) => k !== 'extends' && k !== 'title' && !(k === 'engine' && e === LAYOUTS.aku)).length === 0), aliases.join())   // 别名只改 title；唯一的例外是 aku 多一份 engine（player.cameraMode: 'widget'，原版 spine-widget 的摆放）
   const girls = mod.resolveLayout('girlscreation')
-  const noAkuPlayer = (layout) => ({ ...layout, title: '', engine: { ...layout.engine, player: undefined, dirCover: undefined } })
+  const noAkuPlayer = (layout) => ({ ...layout, title: '', engine: { ...layout.engine, player: undefined, dirCover: undefined, thumbRender: undefined } })
   check('别名解析出来的数据 = 父项的数据（只有 title 不同；aku 另有 engine.player.cameraMode = widget 和 engine.dirCover）', ALL_IDS.filter((id) => LAYOUTS[id].extends === 'girlscreation').every((id) => J(noAkuPlayer(mod.resolveLayout(id))) === J(noAkuPlayer(girls))) && J(mod.resolveLayout('aku').engine.player) === J({ cameraMode: 'widget' }) && !girls.engine.player)
   const handlers = ALL_IDS.map((id) => [id, LAYOUTS[id].autoOrder])
   check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'advhd', 'uviewer']), J(handlers))
@@ -352,7 +352,7 @@ const withLayouts = (layouts) => ({ layouts })
   for (const id of ['girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits']) {
     const out = await run(MEDIA.girlscreation.direct, { game: { id, title: `T-${id}` } })
     const cfg = cfgOf(out)
-    check(`别名 ${id}：数据和 girlscreation 一致（aku 多 player.cameraMode = widget），game.id 写回「${id}」（title 保留）、标签 Gal游戏: ${id}`, cfg?.game?.id === id && cfg.game.title === `T-${id}` && J(stable({ ...cfg, game: null, player: null, dirCover: null })) === J(stable({ ...cfgOf(base), game: null, player: null, dirCover: null })) && (id === 'aku' ? cfg.dirCover?.enabled === true && cfg.dirCover.prefer[0]?.source === 'render' || cfg.dirCover?.prefer?.[0] === 'render' : !cfg.dirCover) && (id === 'aku' ? cfg.player?.cameraMode === 'widget' : !cfg.player?.cameraMode) && out.itemTags.includes(`Gal游戏: ${id}`) && out.details.kind === 'girlscreation', J(cfg?.game))
+    check(`别名 ${id}：数据和 girlscreation 一致（aku 多 player.cameraMode = widget），game.id 写回「${id}」（title 保留）、标签 Gal游戏: ${id}`, cfg?.game?.id === id && cfg.game.title === `T-${id}` && J(stable({ ...cfg, game: null, player: null, dirCover: null, thumbRender: null })) === J(stable({ ...cfgOf(base), game: null, player: null, dirCover: null, thumbRender: null })) && (id === 'aku' ? cfg.dirCover?.enabled === true && cfg.dirCover.prefer[0]?.source === 'render' || cfg.dirCover?.prefer?.[0] === 'render' : !cfg.dirCover) && (id === 'aku' ? cfg.player?.cameraMode === 'widget' : !cfg.player?.cameraMode) && out.itemTags.includes(`Gal游戏: ${id}`) && out.details.kind === 'girlscreation', J(cfg?.game))
   }
   const dp = await run(MEDIA.uviewer.direct, { game: { id: 'deepone' } })
   const uv = await run(MEDIA.uviewer.direct, { game: { id: 'uviewer' } })
@@ -467,7 +467,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
 // ================= 规则表（ADAPTER_RULES + engine 字段）：写进 config、体量、端到端等价、和 layouts / overrides 的关系 =================
 {
   const manifest = JSON.parse(await readFile(path.join(path.dirname(MAIN), 'manifest.json'), 'utf8'))
-  check('manifest：版本 2.19.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.19.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
+  check('manifest：版本 2.20.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.20.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
 
   // 每个 fixture 的声明 id（别名都跑）：写出来的 config 经过引擎规整一条警告都没有（规则表 / engine 字段都合格），体量在引擎上限内
   const tooBig = []

@@ -971,6 +971,14 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **dirCover 也用在文件系统目录 / 分组卡片**（以前只有 catalog）：`dirCover.enabled: true` 时，规则（thumbSources / dirThumbs）没给图的目录 / 分组卡片，用里面前 `scan` 个脚本（`depth` 层以内）的封面，`prefer` / `skip` / `only` / `max` 同上；`auto` 仍然只对声明了 `sceneThumbs` 的 catalog（TSK）生效。写在布局里：`config.dirCover`，或者 `engine.dirCover`（`engine` 现在也认 `dirCover` / `thumbRender`，别名继承时写在 engine 里就不会替换掉整份 config）。
 - 现在写了的：Aku `engine.dirCover = { enabled: true, scan: 8, max: 6, prefer: [render, image] }`（角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播）；Kamihime `config.dirCover = { enabled: true, scan: 6, max: 4, prefer: [render, image] }`（角色目录有头像用头像，没有头像的用里面场景的渲染图 / 图）。
 
+### 场景卡片的内部轮播（`thumbRender.inner`）
+
+- 以前一个场景卡片最多一张渲染图（胶片场景除外），而且规则给了图（`thumbnail.png` 之类）就完全不渲染。`thumbRender.inner: true` 之后：封面仍是规则给的第一张（规则没给图时是第一张渲染图），后面轮播场景**内部**的画面——**骨骼 / 立绘 / CG 渲染图在前，场景里的图在后**。
+- 字段（`thumbRender` 里，都有默认值）：`inner`（默认 false）、`innerMax`（总张数上限，含封面，默认 4，1–12）、`innerRenders`（最多渲染几个不同的画面，默认 3，1–6）。渲染图优先占名额，剩下的名额用场景里的图（thumbFallback 的 CG → 立绘 → 背景顺序）补；规则给的图超出名额会被截掉，但至少留第一张。悬停轮播的张数（`item.carousel`）跟着 `innerMax`。
+- 选画面：`pickRenderSteps`（`web/static/gal-thumb-pick.js`，纯函数，浏览器和服务端共用）——第 0 个 = 以前的选法（CG > 静态画面骨骼 > 叠加图 > 角色，缓存 key 不变），后面按分数从高到低，画面签名（骨骼名 + 动画 / 叠加图 / 立绘部件 / `bg.over`）相同的去重；纯背景不算。第 k 个画面的缓存 key = 在原 key 上加 `variant k`，浏览器渲染时按 `variant` 取第 k 个画面。
+- 现在只给 Aku 开了（`LAYOUTS.aku.engine.thumbRender = { inner: true, innerMax: 4, innerRenders: 3 }`，gal-layout 2.20.0，要重跑 gal-layout 才会写进已导入的条目）。别的游戏（Kamihime 等）想要，在布局里加同样一行即可。
+- 没验证的：浏览器里的卡片轮播顺序（规则图 → 渲染图 → 其余图）和真实 Aku 数据下骨骼渲染（这个沙箱的无头浏览器渲染不了骨骼，`fe-gal-render-thumb-selftest` 在没改动的代码上也同样超时）；服务端部分（选画面 / key / 名额 / ruleCover 字段）有自测。顺带修了：`scriptInfo` 的缓存键以前不含 `thumbRender`，改了渲染配置要等 30 秒缓存过期才生效。
+
 ## WillPlus AdvHD（ADVPlayerHD 引擎家族）/ 容器（`config.containers`）
 
 **game.id = `advhd::<游戏>`，适配器 id = `advhd::ws2`**（`::` 分段 = 引擎家族 + 具体对象）。第一个游戏是 `advhd::lpsl`（Lovey-dovey Part-time Sex Life）。同引擎的新游戏只要 id 以 `advhd::` 开头，gal-layout 就按家族项 `LAYOUTS.advhd` 处理，**不用在脚本里为每个游戏加一条**；某个游戏真有差异时再用选项 `layouts['advhd::<游戏>']`（叠在家族项上，只覆盖写了的字段）或 `layouts.advhd`（改整个家族）。没声明 game.id 时自动探测（`Script*.arc` + `AdvHD.exe` + `Rio*.arc`），认领成 `advhd::<目录名的小写字母数字>`。

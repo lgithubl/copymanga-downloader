@@ -4,7 +4,7 @@
 //   · 失败：不缓存、不写任何标记——渲染失败 / 超时 / 骨骼加载失败 / 画面是空的都只是这一次没有图，下次重建列表页还会再试（同一个页面里同一张最多试一次，免得循环）
 //   · 页面销毁（destroy）：排队的任务丢掉，正在渲染的做完就丢结果
 // 选哪一帧：CG 优先（bg.over / 静态画面骨骼 / 铺满的叠加图），其次有立绘 / 骨骼角色的画面（见 pickRenderStep）；整个画面（背景 + 立绘 + 骨骼 + 叠加层）都画，和播放页同一套摆放。
-import { assetUrl, stateAt } from '/gal-engine.js'
+import { assetUrl } from '/gal-engine.js'
 import { createSpineLayer } from '/gal-spine.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 
@@ -12,41 +12,9 @@ const loadImage = (url) => new Promise((resolve, reject) => { const img = new Im
 const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
 const withTimeout = (promise, ms, what) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error(`${what}超时（${Math.round(ms / 1000)} 秒）`)), ms); promise.then((v) => { clearTimeout(t); resolve(v) }, (e) => { clearTimeout(t); reject(e) }) })
 
-// 画面选哪一步：要「真正的场景」——CG（bg 带 over / 静态画面骨骼 still / 铺满的叠加图）优先，其次有立绘 / 骨骼角色的画面，最后才是纯背景。
-//   分数：CG 100（bg.over）/ 90（spine kind still）/ 60（overlay 带 src）；角色 30（spine / stand）；纯背景 1。取分数最高的，同分取最早的；
-//   角色画面往后推 2 步（表情通常紧跟着出来），CG 就用它出现的那一步。只在有画面指令的步重新算状态（台词步状态不变）
-const VISUAL_OPS = new Set(['bg', 'spine', 'spineOff', 'stand', 'standOff', 'overlay', 'overlayOff', 'movie', 'movieOff'])
-export function scoreState(state) {
-  if (state.bg?.over) return 100
-  if (Object.values(state.spines || {}).some((spec) => spec?.kind === 'still')) return 90
-  if ((state.overlays || []).some((o) => o?.src)) return 60
-  if (Object.keys(state.spines || {}).length || state.stand?.parts?.length || (state.stands || []).length) return 30
-  return state.bg?.src ? 1 : 0
-}
-export function pickRenderStep(scene, scanSteps = 150, after = 2) {
-  const steps = Array.isArray(scene?.steps) ? scene.steps : []
-  const limit = Math.min(steps.length, Math.max(scanSteps * 4, 600))
-  let best = null
-  for (let i = 0; i < limit; i++) {
-    if (!steps[i].commands?.some((c) => VISUAL_OPS.has(c.op))) continue
-    const state = stateAt(scene, i)
-    const score = scoreState(state)
-    if (score > (best?.score ?? 0)) best = { index: i, score }
-    if (score >= 100) break
-  }
-  if (!best || best.score < 30) return null   // 只有背景（或什么都没有）：这种卡片用普通的图片缩略图就行
-  const index = best.score >= 60 ? best.index : Math.min(steps.length - 1, best.index + after)
-  return { index, score: best.score, state: stateAt(scene, index) }
-}
+export { pickFilmStep, pickRenderStep, pickRenderSteps, scoreState } from './gal-thumb-pick.js'
+import { pickFilmStep, pickRenderStep, pickRenderSteps } from './gal-thumb-pick.js'
 
-// 胶片场景（bg.film）：找第一个用这条胶片（bg.src = film）的画面。胶片没有骨骼 / 立绘，不走上面的打分
-export function pickFilmStep(scene, film) {
-  const steps = Array.isArray(scene?.steps) ? scene.steps : []
-  for (let i = 0; i < steps.length; i++) {
-    if (steps[i].commands?.some((c) => c.op === 'bg' && c.film && c.src === film)) return { index: i, score: 100, state: stateAt(scene, i) }
-  }
-  return null
-}
 // 胶片的一帧画成一张图（canvas）：文件是竖排的条带（每帧宽 × 高 = 1 : ratio，帧数 = 图高 / (图宽 × ratio)）；rotate 90 = 逆时针转了 90° 存的（和 gal-player.js 的 startFilm 同一套几何），转回来
 export function filmFrameCanvas(img, film, fraction = 0.5) {
   const ratio = Number(film?.ratio) > 0 ? Number(film.ratio) : 1
@@ -80,7 +48,8 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
   if (!res.ok) throw new Error(`取脚本失败：HTTP ${res.status}`)
   const data = await res.json()
   const scene = data.scene || data.node?.scene
-  const picked = cfg.film ? pickFilmStep(scene, cfg.film) : pickRenderStep(scene, cfg.scanSteps)
+  const variant = Math.max(0, Math.floor(Number(cfg.variant) || 0))
+  const picked = cfg.film ? pickFilmStep(scene, cfg.film) : variant ? pickRenderSteps(scene, cfg.scanSteps, variant + 1)[variant] : pickRenderStep(scene, cfg.scanSteps)
   if (!picked) throw new Error(cfg.film ? `脚本里没有用到胶片 ${cfg.film}` : '脚本里没有 CG / 立绘 / 骨骼画面')
   const { state } = picked
   const canvas = document.createElement('canvas')

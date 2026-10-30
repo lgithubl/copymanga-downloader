@@ -16,8 +16,8 @@ export const FALLBACK_PREFER = Object.freeze(['cg', 'stand', 'movie', 'bg'])
 // 视频缩略图截哪一帧：seconds > 0 = 固定秒数；否则 时长 × percent（最多 max 秒）
 export const DEFAULT_THUMB_FRAME = Object.freeze({ percent: 0.5, seconds: 0, max: 3600, skipDark: true })
 // 骨骼 / 立绘场景的「渲染缩略图」（浏览器在列表页离屏渲染，传回服务器缓存）：enabled / 缩略图宽（高按 16:9）/ 最多扫多少步找第一个有骨骼的画面 / 同时渲染几张
-export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5, film: true, filmFrame: 0.5, filmMax: 4 })
-export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95], filmFrame: [0, 0.99], filmMax: [1, 12] })
+export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5, film: true, filmFrame: 0.5, filmMax: 4, inner: false, innerMax: 4, innerRenders: 3 })
+export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95], filmFrame: [0, 0.99], filmMax: [1, 12], innerMax: [1, 12], innerRenders: [1, 6] })
 // 目录卡片的封面（目录 / 章节目录 / 角色分组里没有任何规则给图时，用它里面的脚本的封面；见 DEFAULT_GAL_CONFIG.dirCover）
 export const DIR_COVER_SOURCES = Object.freeze(['render', 'image'])
 export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]) })
@@ -114,7 +114,7 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 视频缩略图截哪一帧：{ percent: 时长的比例（0～0.95，默认 0.5）, seconds: 固定秒数（> 0 时优先，默认 0）, max: 按比例时最多取到第几秒（默认 3600）, skipDark: 这一帧太黑（片头淡入 / 黑屏）就换别的位置（默认 true） }
   thumbFrame: { percent: 0.5, seconds: 0, max: 3600, skipDark: true },
   // 渲染缩略图（骨骼 / 立绘场景：规则和兜底都没有图、或脚本里有骨骼时，列表页浏览器离屏渲染一帧传回服务器缓存）：{ enabled（默认 true）, width（160～1280，默认 640）, scanSteps（找 CG / 立绘画面时看多少步：最多看 max(scanSteps×4, 600) 步，默认 150）, concurrency（同时渲染几张，1～3，默认 1）, seek（骨骼动画取到第几成的位置，0～0.95，默认 0.5；0 = 第一帧）, film（胶片场景（bg.film：Kamihime）渲染胶片帧，默认 true）, filmFrame（取胶片的第几成，0～0.99，默认 0.5 = 中间一帧）, filmMax（一张卡片最多渲染几段胶片（轮播），1～12，默认 4）}
-  thumbRender: { enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5, film: true, filmFrame: 0.5, filmMax: 4 },
+  thumbRender: { ...DEFAULT_THUMB_RENDER },
   // 分组：列 parent（通配；'.' = 脚本根本身）下的目录时，脚本文件名（无扩展名）能匹配 pattern 的，按第 1 个捕获组分成虚拟目录
   // （比如 ^(\\d{5}) 把 10001A1、10001B1 归到「10001」一张卡片里）；不匹配的脚本照常列出。虚拟目录的名字/头像和真实目录一样查 labels / namesFiles / dirThumbs
   groups: [],
@@ -586,6 +586,8 @@ export function normalizeGalConfigWithWarnings(raw) {
     numIn(v.thumbRender, 'seek', THUMB_RENDER_LIMITS.seek, thumbRender, 'thumbRender')
     numIn(v.thumbRender, 'filmFrame', THUMB_RENDER_LIMITS.filmFrame, thumbRender, 'thumbRender')
     numIn(v.thumbRender, 'filmMax', THUMB_RENDER_LIMITS.filmMax, thumbRender, 'thumbRender'); thumbRender.filmMax = Math.round(thumbRender.filmMax)
+    if (v.thumbRender.inner !== undefined) { if (typeof v.thumbRender.inner === 'boolean') thumbRender.inner = v.thumbRender.inner; else warn('thumbRender.inner', '只能是 true / false，用默认值', v.thumbRender.inner) }
+    for (const key of ['innerMax', 'innerRenders']) { numIn(v.thumbRender, key, THUMB_RENDER_LIMITS[key], thumbRender, 'thumbRender'); thumbRender[key] = Math.round(thumbRender[key]) }
     if (v.thumbRender.film !== undefined) { if (typeof v.thumbRender.film === 'boolean') thumbRender.film = v.thumbRender.film; else warn('thumbRender.film', '只能是 true / false，用默认值', v.thumbRender.film) }
   }
 

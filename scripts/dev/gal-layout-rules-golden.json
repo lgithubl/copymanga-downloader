@@ -447,6 +447,11 @@
   },
   "player": {
    "cameraMode": "widget"
+  },
+  "thumbRender": {
+   "inner": true,
+   "innerMax": 4,
+   "innerRenders": 3
   }
  },
  "angelic": {

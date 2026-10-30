@@ -29,7 +29,7 @@ check('kindMax 校验：不认识的类 / 非数字丢掉，默认空（不限�
 const c = normalizeGalConfig({ thumbFrame: { percent: 2, seconds: 5, max: 0, zzz: 1 }, thumbRender: { enabled: 'x', width: 99999, scanSteps: 1, concurrency: 9, extra: 1 } })
 check('thumbFrame 夹范围（percent ≤ 0.95、max ≥ 1）；thumbRender 夹范围、类型不对 / 不认识的字段丢掉', c.thumbFrame.percent === 0.95 && c.thumbFrame.seconds === 5 && c.thumbFrame.max === 1 && c.thumbRender.width === 1280 && c.thumbRender.scanSteps === 10 && c.thumbRender.concurrency === 3 && c.thumbRender.enabled === true, J([c.thumbFrame, c.thumbRender]))
 const d = normalizeGalConfig({})
-check('默认：thumbFrame { 0.5, 0, 3600, skipDark }；thumbRender 开、640、150 步、并发 1、seek 0.5、胶片中间帧最多 4 段', J(d.thumbFrame) === J({ percent: 0.5, seconds: 0, max: 3600, skipDark: true }) && J(d.thumbRender) === J({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5, film: true, filmFrame: 0.5, filmMax: 4 }), J([d.thumbFrame, d.thumbRender]))
+check('默认：thumbFrame { 0.5, 0, 3600, skipDark }；thumbRender 开、640、150 步、并发 1、seek 0.5、胶片中间帧最多 4 段', J(d.thumbFrame) === J({ percent: 0.5, seconds: 0, max: 3600, skipDark: true }) && J(d.thumbRender) === J({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5, film: true, filmFrame: 0.5, filmMax: 4, inner: false, innerMax: 4, innerRenders: 3 }), J([d.thumbFrame, d.thumbRender]))
 
 // 截帧：位置按配置（ffmpeg 用假的记录参数）
 {

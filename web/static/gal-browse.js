@@ -366,14 +366,16 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     const thumbs = item.thumbs?.length ? item.thumbs : item.thumb ? [item.thumb] : []
     const cover = coverOf()
     const renders = (item.renders?.length ? item.renders : item.render?.key ? [item.render] : []).filter((r) => r?.key && (item.type === 'script' || r.node))   // 目录卡片的封面是它里面脚本渲染的（render.node）；多个 = 轮播里的几张
-    const render = renders[0] || null
+    const ruleCover = Boolean(item.ruleCover) && thumbs.length > 0 && renders.length > 0   // 规则给的图是封面，渲染图排在后面轮播
+    const render = ruleCover ? null : renders[0] || null
     const renderUrlOf = (r) => `${apiBase}/render-thumb?key=${r.key}`
     const renderUrl = render ? renderUrlOf(render) : ''
     if (!thumbs.length && !render) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
     if (!thumbs.length && item.type === 'dir') box.dataset.icon = '📁'
     if (thumbs.length || render) {
-      const urls = [...renders.map(renderUrlOf), ...thumbs.map((path) => thumbUrl(reader.resourceBase, path))]
-      const coverAt = render ? 0 : pickCover(thumbs.length, cover)   // 有渲染缩略图就以它为封面（缓存里没有时先显示别的图，渲染好了换上）
+      const thumbUrls = thumbs.map((path) => thumbUrl(reader.resourceBase, path))
+      const urls = ruleCover ? [thumbUrls[0], ...renders.map(renderUrlOf), ...thumbUrls.slice(1)] : [...renders.map(renderUrlOf), ...thumbUrls]
+      const coverAt = ruleCover ? 0 : render ? 0 : pickCover(thumbs.length, cover)   // 有渲染缩略图就以它为封面（缓存里没有时先显示别的图，渲染好了换上）
       const img = el('img')
       img.alt = ''
       img.decoding = 'async'
@@ -385,7 +387,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       img.addEventListener('error', () => {
         if (render && !renderMissing && img.getAttribute('src') === renderUrl) {
           renderMissing = true   // 缓存里还没有：排队渲染（失败不缓存、不记标记，下次重建页面还会再试）
-          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: render.node || item.node, key: render.key, film: render.film || '', filmFrame: renderCfg.filmFrame ?? 0.5, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
+          thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: render.node || item.node, key: render.key, variant: render.variant || 0, film: render.film || '', filmFrame: renderCfg.filmFrame ?? 0.5, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
             .then((blob) => { const local = URL.createObjectURL(blob); urls[0] = local; img.hidden = false; img.src = local; box.classList.remove('empty'); if (!img.isConnected) box.prepend(img) })
             .catch((error) => {
               if (/已销毁|已经试过/.test(error?.message || '')) return
@@ -406,13 +408,13 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       box.append(img)
       // 轮播里除封面外的渲染图：开始轮播时才检查缓存、没有就排队渲染（一个目录最多几张，全部一进列表就渲染太重）
       let extrasDone = false
-      const ensureExtras = renders.length > 1 ? () => {
+      const ensureExtras = renders.length > (ruleCover ? 0 : 1) ? () => {
         if (extrasDone) return
         extrasDone = true
-        renders.slice(1).forEach((r, k) => {
+        renders.slice(ruleCover ? 0 : 1).forEach((r, k) => {
           fetch(renderUrlOf(r)).then((res) => {
             if (res.ok) return null
-            return thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: r.node || item.node, key: r.key, film: r.film || '', filmFrame: renderCfg.filmFrame ?? 0.5, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
+            return thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: r.node || item.node, key: r.key, variant: r.variant || 0, film: r.film || '', filmFrame: renderCfg.filmFrame ?? 0.5, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
               .then((blob) => { urls[k + 1] = URL.createObjectURL(blob) })
           }).catch(() => {})
         })

@@ -1335,7 +1335,7 @@ export const LAYOUTS = {
   jaxin: { extends: 'girlscreation', title: 'Jaxin' },
   maid: { extends: 'girlscreation', title: 'Maid' },
   // Aku：角色摆放用原版 spine-widget 的 fitToCanvas（player.cameraMode: 'widget'，常数见 gal-spine.js；原版 preloader.js / spine-widget.js 核对过，gal-samples13）。engine 是整份替换，所以把 girlscreation 的 classify / limits 也写上
-  aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu', engine: { classify: [], limits: { walkFiles: 400000, sampleFiles: 20000 }, player: { cameraMode: 'widget' }, dirCover: { enabled: true, scan: 8, max: 6, prefer: ['render', 'image'], skip: [], only: [] } } },   // 角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播
+  aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu', engine: { classify: [], limits: { walkFiles: 400000, sampleFiles: 20000 }, player: { cameraMode: 'widget' }, dirCover: { enabled: true, scan: 8, max: 6, prefer: ['render', 'image'], skip: [], only: [] }, thumbRender: { inner: true, innerMax: 4, innerRenders: 3 } } },   // 角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播；场景卡片：thumbnail 之后再轮播场景内部的骨骼渲染（最多 3 个不同画面）> 图，总数最多 4 张
   fruits: { extends: 'girlscreation', title: 'Fruits Fulcute!' },
   // Girls Creation R Viewer 282寝：和 R 同一个查看器，但行式脚本有 54 个（R 里只有 3 个），单独一个 id 方便以后给它单独加规则
   girlscreation282: { extends: 'girlscreation', title: 'Girls Creation R Viewer 282寝' },
@@ -2189,6 +2189,7 @@ function canonField(key, value) {
         enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
         width: Math.round(numIn(value.width, 640, 160, 1280)), scanSteps: Math.round(numIn(value.scanSteps, 150, 10, 1000)), concurrency: Math.round(numIn(value.concurrency, 1, 1, 3)),
         seek: numIn(value.seek, 0.5, 0, 0.95), film: typeof value.film === 'boolean' ? value.film : true, filmFrame: numIn(value.filmFrame, 0.5, 0, 0.99), filmMax: Math.round(numIn(value.filmMax, 4, 1, 12)),
+        inner: typeof value.inner === 'boolean' ? value.inner : false, innerMax: Math.round(numIn(value.innerMax, 4, 1, 12)), innerRenders: Math.round(numIn(value.innerRenders, 3, 1, 6)),
       }
     }
     case 'thumbHover': {
