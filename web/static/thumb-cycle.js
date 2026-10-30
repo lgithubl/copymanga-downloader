@@ -1,7 +1,7 @@
 // Gal 卡片缩略图：一张卡片有多张图（item.thumbs）时的「随机封面 + 悬停轮播」。纯 DOM 逻辑，浏览器自测见 scripts/dev/fe-gal-thumbs-selftest.mjs。
 //   · 封面：thumbCover = random（默认）每次渲染随机选一张 | first | last | { index: N }（旧的 thumbMode：first / hover = 第一张，first 同时不轮播）
 //   · 轮播（thumbHover：enabled / count / order / intervalMs）：鼠标悬停才开始（没悬停的卡片零开销）；封面 + 最多 count-1 张其余图，random 随机顺序 / sequential 按原顺序，每张 intervalMs（默认 700–900ms）；下一张先预加载好再换（不闪、不空白）；
-//     移开立刻停并还原封面；prefers-reduced-motion、触摸、标签页在后台、封面还没加载好（thumbLoader 还没放行 / 加载失败）都不轮播
+//     移开立刻停并还原封面；触摸、标签页在后台、封面还没加载好（thumbLoader 还没放行 / 加载失败）都不轮播
 //   · 封面 <img> 的首次加载仍由 thumbLoader 管（data-src）；这里只在它加载完之后改 src，不碰 data-src
 const VIDEO_EXT = /\.(mp4|mkv|webm|mov|m4v)$/i
 export const isVideoSrc = (path) => VIDEO_EXT.test(String(path))
@@ -48,7 +48,9 @@ export function attachThumbCycle({ target, img, urls, coverAt = 0, hover = DEFAU
   let token = 0
   let active = false
   let home = ''
-  const reduced = () => Boolean(win.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+  // 系统「减少动态效果」：只挡 auto（不用悬停、自己一直在换图）；悬停轮播是用户主动触发的、只是换一张图（没有动画），不挡——
+  // 不然 Windows 关了「动画效果」的机器上轮播永远不动，还没有任何提示
+  const reduced = () => hover.mode === 'auto' && Boolean(win.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
   const delay = () => range[0] + rand() * (range[1] - range[0])
   const preload = (url) => new Promise((resolve) => { const probe = new win.Image(); probe.onload = () => resolve(true); probe.onerror = () => resolve(false); probe.src = url })
 

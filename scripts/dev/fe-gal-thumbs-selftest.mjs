@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 浏览器自测：Gal 卡片缩略图——数组（thumbs）、随机封面、悬停轮播、thumbMode（first / hover）、prefers-reduced-motion、
+// 浏览器自测：Gal 卡片缩略图——数组（thumbs）、随机封面、悬停轮播、thumbMode（first / hover）、prefers-reduced-motion（悬停照常，auto 才让路）、
 // 封面加载失败时换下一张 / 全失败才报「加载失败」、视频帧缩略图（ffmpeg + cache/gal-thumbs；没有 ffmpeg 就跳过这部分）。
 //   PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-thumbs-selftest.mjs        端口 8162；需要 ImageMagick（convert）
 import { spawn, spawnSync } from 'node:child_process'
@@ -141,12 +141,14 @@ try {
   check('没有页面错误', page.errors.length === 0, J(page.errors))
   await ctx.close()
 
-  // —— prefers-reduced-motion：只选封面，不轮播 ——
+  // —— prefers-reduced-motion：悬停轮播照常（用户主动触发、只换图没有动画）；只有 auto 模式（自己一直换）才让路 ——
   const rm = await open('random', { reducedMotion: 'reduce' })
   await loaded(rm.page, 's1')
   const rmCover = await srcOf(rm.page, 's1')
-  await rm.page.hover('.gal-card[data-title="s1"]'); await sleep(2400)
-  check('prefers-reduced-motion：悬停不轮播（封面不变）', (await srcOf(rm.page, 's1')) === rmCover && s1.includes(pathOf(rmCover)))
+  await rm.page.hover('.gal-card[data-title="s1"]')
+  const rmSeen = new Set([rmCover])
+  for (let i = 0; i < 14; i++) { await sleep(250); rmSeen.add(await srcOf(rm.page, 's1')) }
+  check('prefers-reduced-motion：悬停轮播照常（封面换过，且都是这张卡片自己的图）', rmSeen.size >= 2 && [...rmSeen].every((u) => s1.includes(pathOf(u))), J([...rmSeen]))
   await rm.ctx.close()
 
   // —— thumbMode first：封面永远是第一张、不轮播 ——
