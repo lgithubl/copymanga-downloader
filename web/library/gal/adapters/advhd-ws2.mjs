@@ -10,12 +10,13 @@
 //   UsePnaPackage(图层, 包名) + DisplayCharacterImage(图层, …, 图片 id 表) + MoveBackground(图层, …, x, y, …) → stand（按图层一个 slot）：包 = containers 展开的 <包名>.pna/{index.json,<帧 id>.png}，画 id 表里的帧
 //   ClearLayer(图层 | *) 清图层；Unk65 = 一次「提交画面」（图层变更在这里生效，f32 第 1 个 = 渐变秒数）；PlayMovie → movie（在索引里找同名视频）
 //   ShowChoice → choice；选项的跳转是本脚本的偏移（jump 6）→ 每个选项一段带 when 的分支，汇合点之后不带 when；跳转是文件名（jump 7）→ 记进 stats.links（播放器没有「换脚本」，选项只是展示）
-//   Jump / Jump2 跟随；Condition(类型, 变量, 值, 真跳转, 假跳转) 按 flags / conditions 求值（SetFlag 在本脚本里设过的变量按设的值；没有值的变量按 flags.unknown，默认 = 真）；
+//   Jump / Jump2 跟随；Condition(类型, 变量, 值, p1, p2) 按 flags / conditions 求值：成立 = 顺着往下，不成立 = p1（else 块）或 p2（结尾）（SetFlag / ExecuteFunction 的 setFlag 在本脚本里设过的变量按设的值；没有值的变量按 flags.values 默认，再没有按 flags.unknown，默认 = 真）；
 //   ConditionalJump(a, b)：按 conditionalJump（默认取第二个目标 = 跳过动画）；FileEnd / NextFile = 结束（NextFile 的目标记进 stats.links）
-//   ExecuteFunction(名字 …) 按 functions 表：drop（不记）/ skip（不渲染，记 raw `ExecuteFunction:名字`、stats.skippedFunctions）；表里没有的名字 = default
+//   ExecuteFunction(名字, 字符串, u16 标志号, byte) 按 functions 表：drop（不记）/ { setFlag: N }（函数把结果写进标志号，GetMsgSkip = 快进状态写 0）/ skip（不渲染，记 raw `ExecuteFunction:名字`、stats.skippedFunctions）；表里没有的名字 = default
 //   不认识 / 没做的指令：ignoreOps 里的（布局 / 计时 / 内部状态）只计数（stats.ignored）；别的记 raw（stats.raw）——「立绘/特效等 N 条指令暂未渲染」和渲染诊断里能看到，哪个指令没做一目了然
 // 推断（没有逆向 exe 的指令分发、没有立绘样本，下面这些是按数据猜的，都可以用 options 改）：
-//   · Condition 的类型 2 / 128 / 129 / 130 = == / < / > / >=（社区文档也只写「相等、小于、大于、大于等于之类」，没确认哪个是哪个）；两个跳转目标 = 真 / 假（文档说法）
+//   · Condition 的类型 2 / 128 / 129 / 130 = == / < / > / >=（社区文档也只写「相等、小于、大于、大于等于之类」，没确认哪个是哪个）。跳转的含义有数据证据：成立 = 往下走，不成立 = p1（else 块）或 p2（结尾）（263 处 p1、p2 都非零的 Condition 全是「真块 + Jump2 + 假块」）
+//   · 标志 127 = 相册 / 回放模式（LegacyGame.lua 的 openConfirm：GetFlag(127) 为真时标题确认框换成相册版），正常阅读 = 0；标志 999 = GetMsgSkip 写的「正在快进」，正常阅读 = 0——两个默认值有 Lua 依据
 //   · 0xAF 指令（解码器里 b4 + f4）、Unk65 的 f32 = 渐变秒数、MoveBackground 的 (x, y) = 图层左上角在舞台里的位置（舞台 1280×720）：都是按字节形状 / 数值范围猜的
 //   · ConditionalJump 取第二个目标：样本里它后面总是同一个立绘的几帧小动画（带 SetTimer），第二个目标正好跳过它们
 //   · PNA 帧里「type 0 = 图片、1 / 2 = 组开始 / 结束」来自 UI 包样本，立绘包没有样本；DisplayCharacterImage 的 id 表 = 要画的帧 id 是按名字 / 个数猜的
@@ -33,10 +34,10 @@ export const DEFAULT_OPTIONS = {
   speaker: { strip: ['^%[A-Za-z]{1,3}'] },
   text: { strip: ['%[A-Za-z]'], newline: '\\n' },
   fade: { max: 10 },
-  flags: { values: { 127: 0 }, unknown: true },
+  flags: { values: { 127: 0, 999: 0 }, unknown: true },
   conditions: { 2: '==', 128: '<', 129: '>', 130: '>=' },
   conditionalJump: 'second',
-  functions: { default: 'skip', GetMsgSkip: 'drop', openCgBrowser: 'drop', openGallery: 'drop', openGalleryTitle: 'drop', openNmsSaveLoad: 'drop', openNameInput: 'drop', ArcGraphicOpenTest: 'drop', SetStopSkip: 'drop', openSceneSelect: 'drop', openCharSelect: 'drop' },
+  functions: { default: 'skip', GetMsgSkip: { setFlag: 0 }, ArcGraphicOpenTest: { setFlag: 0 }, openCgBrowser: 'drop', openGallery: 'drop', openGalleryTitle: 'drop', openNmsSaveLoad: 'drop', openNameInput: 'drop', SetStopSkip: 'drop', openSceneSelect: 'drop', openCharSelect: 'drop' },
   skipFiles: ['^LAYER_ORDER$'],
   ignoreOps: ['Unk05', 'Unk08', 'Unk0A', 'Unk0D', 'Unk0E', 'Unk13', 'Unk16', 'Unk17', 'Unk19', 'Unk1B', 'Unk1D', 'Unk3D', 'Unk3E', 'Unk64', 'Unk68', 'UnkFB', 'UnkFC', 'UnkFD', 'LayerConfig', 'SetTimer', 'StartTimer', 'CharMessageStart', 'AddMessageToLog', 'InitKeyName', 'LayersList', 'SetFlag', 'SetVariable', 'VariableUnk', 'VariableUnk32', 'VariableUnk3', 'VariableUnk4', 'VariableUnk51', 'VariableUnk2', 'UnkBackground1', 'UnkBackground2', 'UnkBackground3', 'Unk42', 'Unk43', 'SoundUnk1', 'SoundUnk2', 'SoundEffectUnk30', 'MusicUnk1', 'ShowGraphic', 'SetMask', 'PrepareBackgroundArea', 'UnkScreen', 'Unk67', 'Unk97', 'UnkAF', 'UnkB0', 'SetPnaFile', 'Unk75', 'Unk78', 'Unk7A', 'Unk7B', 'Unk84', 'Unk4A', 'OpenTitle'],
   movie: { exts: ['mp4', 'webm', 'm4v', 'mov'] },
@@ -253,7 +254,7 @@ export function parse(text, ctx = null, meta = {}) {
         const ins = list[i]
         if (FILE_ENDS.has(ins.name)) break
         if (ins.name === 'Jump' || ins.name === 'Jump2') { i = byAt.get(ins.args[0]); continue }
-        if (ins.name === 'Condition' && ins.args.length >= 5) { for (const t of [ins.args[3], ins.args[4]]) if (t && byAt.has(t)) stack.push(byAt.get(t)) }
+        if (ins.name === 'Condition' && ins.args.length >= 5) { const t = ins.args[3] || ins.args[4]; if (t && byAt.has(t)) stack.push(byAt.get(t)) }
         if (ins.name === 'ConditionalJump') { for (const t of ins.args) if (t && byAt.has(t)) stack.push(byAt.get(t)) }
         if (ins.name === 'ShowChoice') { for (const c of ins.extra || []) if (c.jump === 6 && byAt.has(c.target)) stack.push(byAt.get(c.target)); break }
         i += 1
@@ -304,10 +305,12 @@ export function parse(text, ctx = null, meta = {}) {
       switch (ins.name) {
         case 'Jump': case 'Jump2': next = byAt.has(a[0]) ? byAt.get(a[0]) : list.length; break
         case 'Condition': {
+          // Condition(类型, 变量, 值, p1, p2)：条件成立 = 顺着往下走；不成立 = 有 p1（else 块的开头）就去 p1，没有就去 p2（整个 if 的结尾）。
+          // 依据：样本里 263 处 p1、p2 都非零的 Condition 全是「真块 + Jump2 p2 + 假块（从 p1 开始）」的版式（253 处是 GetMsgSkip 之后的 StopMusic(0) / StopMusic(1)）；p1 = 0 的是「没有 else」的 if（跳到结尾）
           if (a.length >= 5) {
             const result = condition(a)
             const truth = result === null ? opt.flags.unknown !== false : result
-            const target = truth ? a[3] : a[4]
+            const target = truth ? 0 : a[3] || a[4]
             if (target) next = byAt.has(target) ? byAt.get(target) : list.length
             if (result === null) stats.ignored['Condition:unknown-flag'] = (stats.ignored['Condition:unknown-flag'] || 0) + 1
           }
@@ -367,9 +370,13 @@ export function parse(text, ctx = null, meta = {}) {
           break
         }
         case 'ExecuteFunction': {
+          // ExecuteFunction(Lua 函数名, 字符串参数, u16 标志号, byte)：函数是游戏 Lua（LegacyGame.lua）里的全局函数。
+          // functions 表：'drop' = 不记；{ setFlag: N } = 这个函数把结果写进「标志号」那个标志（GetMsgSkip = 现在是不是在快进，写 0；ArcGraphicOpenTest = 补丁标记图在不在，写 0），之后的 Condition 按它求值；
+          // 别的（'skip'、表里没有的名字走 default）= 不渲染，记 raw ExecuteFunction:<名字> + stats.skippedFunctions
           const name = String(a[0])
           const mode = rx.functions.has(name) ? rx.functions.get(name) : rx.functions.get('default') || 'skip'
-          if (mode !== 'drop') { count('skippedFunctions', name); count('raw', `ExecuteFunction:${name}`); emit({ op: 'raw', cmd: `ExecuteFunction:${name}`, args: a.slice(1, 3) }) }
+          if (mode && typeof mode === 'object' && Number.isFinite(Number(mode.setFlag))) { env.set(num(a[2]), Number(mode.setFlag)); stats.ignored[`ExecuteFunction:${name}`] = (stats.ignored[`ExecuteFunction:${name}`] || 0) + 1 }
+          else if (mode !== 'drop') { count('skippedFunctions', name); count('raw', `ExecuteFunction:${name}`); emit({ op: 'raw', cmd: `ExecuteFunction:${name}`, args: a.slice(1, 3) }) }
           break
         }
         case 'ShowChoice': { return choice(ins, i) }

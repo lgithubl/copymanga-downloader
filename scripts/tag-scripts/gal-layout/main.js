@@ -844,7 +844,8 @@ export const ADAPTER_RULES = {
     },
     "flags": {
       "values": {
-        "127": 0
+        "127": 0,
+        "999": 0
       },
       "unknown": true
     },
@@ -857,13 +858,17 @@ export const ADAPTER_RULES = {
     "conditionalJump": "second",
     "functions": {
       "default": "skip",
-      "GetMsgSkip": "drop",
+      "GetMsgSkip": {
+        "setFlag": 0
+      },
+      "ArcGraphicOpenTest": {
+        "setFlag": 0
+      },
       "openCgBrowser": "drop",
       "openGallery": "drop",
       "openGalleryTitle": "drop",
       "openNmsSaveLoad": "drop",
       "openNameInput": "drop",
-      "ArcGraphicOpenTest": "drop",
       "SetStopSkip": "drop",
       "openSceneSelect": "drop",
       "openCharSelect": "drop"

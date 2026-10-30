@@ -55,12 +55,17 @@
     "flags": {
      "unknown": true,
      "values": {
-      "127": 0
+      "127": 0,
+      "999": 0
      }
     },
     "functions": {
-     "ArcGraphicOpenTest": "drop",
-     "GetMsgSkip": "drop",
+     "ArcGraphicOpenTest": {
+      "setFlag": 0
+     },
+     "GetMsgSkip": {
+      "setFlag": 0
+     },
      "SetStopSkip": "drop",
      "default": "skip",
      "openCgBrowser": "drop",

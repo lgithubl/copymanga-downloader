@@ -128,7 +128,7 @@ export const STORY_001 = [
   sfx('charTOW', 'TW_0002.OGG'), name('%LC透羽'), msg(2, '立ち絵あり%K%P'),
   ['ClearLayer', ['ev01']], bg('ev01', 'EV_01.PNG'), commit(0), msg(3, 'CG%K%P'),
   sfx('bgvtow', 'SV_TOW_01.OGG'), sfx('se01', 'SE_01.OGG'), msg(4, '背景人声と効果音%K%P'),
-  ['ExecuteFunction', ['GetMsgSkip', '', 231, 3, 1]], ['ExecuteFunction', ['playSpecialEffect', 'x', 0, 0, 0]],
+  ['ExecuteFunction', ['GetMsgSkip', '', 999, 1]], ['ExecuteFunction', ['playSpecialEffect', 'x', 0, 0]],
   ['Effect1', ['bg01', 'effect01', 1, 0, 0, 192, 5, 6, 0, 0, 40, 0, 0, 0]], ['UnkAF', [255, 255, 0, 0, 0, 0, 1, 0]],
   ['StopMusic', ['bgm01', 1]], msg(5, '終わり%K%P'),
   ['NextFile', ['002_00_H']], ['FileEnd', [0, 0, 0, 0, 0]],
@@ -160,6 +160,16 @@ export const STORY_COND = [
   ['ConditionalJump', [{ ref: 'skipA' }, { ref: 'skipB' }]], msg(4, 'アニメ A%K%P'),
   { label: 'skipA' }, msg(5, 'アニメ B%K%P'),
   { label: 'skipB' }, msg(6, '終端%K%P'),
+  ['FileEnd', [0, 0, 0, 0, 0]],
+]
+
+// GetMsgSkip 之后的版式（样本里 253 处）：Condition(==, 999, 1, p1 = else 块, p2 = 结尾)；真块 StopMusic(0) + Jump2 p2；假块（p1 起）StopMusic(1)
+export const STORY_SKIP = [
+  ['ExecuteFunction', ['GetMsgSkip', '', 999, 1]],
+  ['Condition', [2, 999, 1, { ref: 'else' }, { ref: 'end' }]],
+  ['StopMusic', ['bgm01', 0]], ['Jump2', [{ ref: 'end' }]],
+  { label: 'else' }, ['StopMusic', ['bgm01', 1]],
+  { label: 'end' }, msg(0, '終わり%K%P'),
   ['FileEnd', [0, 0, 0, 0, 0]],
 ]
 

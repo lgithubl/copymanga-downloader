@@ -3,6 +3,7 @@
 //   · 指令表来自社区工具 DarthFly/advhd_ws2_tools（Ws2/Opcodes，PHP）逐条翻译，版本分支按 2.11 取（v > 2.1 / > 1.4 / > 1.06 / > 1.0 全成立）；
 //     0xAF（b4 + f4）是 LPSL 里多出来的一条（社区表里没有，从 5 个剧情脚本里的固定形状推出：后面紧跟着认得的 Unk65 / SetDisplayName）
 //     用 LPSL（ensemble SWEET，AdvHD 2.1.0.0）的 Rio / Rio1 的 .ws2 验证：每个剧情文件正好读到 FF 指令，不多不少
+//   · ExecuteFunction(Lua 函数名, 字符串参数, u16, byte)：社区表写成 b3；GetMsgSkip 的 (231, 3, 1) = u16 999（LegacyGame.lua 里 GetMsgSkip(_, 标志号) 把结果写进这个标志，脚本随后 Condition 的变量正是 999）+ byte 1，所以按 w + b 读
 //   · 只做解码（指令 + 参数），不做语义；语义（背景 / 立绘 / 语音 / 选项 …）在 advhd-ws2.mjs
 export const ror2 = (buffer) => { const out = Buffer.allocUnsafe(buffer.length); for (let i = 0; i < buffer.length; i++) { const x = buffer[i]; out[i] = ((x >> 2) | ((x & 3) << 6)) & 0xff } return out }
 
@@ -34,7 +35,7 @@ const FIXED = {
   0x02: ['Jump2', ['d']], 0x06: ['Jump', ['d']], 0x09: ['LayerConfig', ['b3', 'f']], 0x0b: ['SetFlag', ['w', 'b']],
   0x04: ['RunFile', ['s']], 0x07: ['NextFile', ['s']], 0x1a: ['OpenTitle', ['s']], 0x37: ['ClearLayer', ['s']], 0x5c: ['RainEnd', ['s']], 0x66: ['ShowGraphic', ['s']], 0x43: ['Unk43', ['s']], 0x6f: ['VariableUnk', ['s']], 0x32: ['VariableUnk32', ['s']],
   0x11: ['SetTimer', ['s', 'b', 'f']], 0x12: ['StartTimer', ['s', 'b3']], 0x14: ['DisplayMessage', ['d', 's', 's', 'b']], 0x15: ['SetDisplayName', ['s', 'b']],
-  0x16: ['Unk16', ['b2']], 0x18: ['AddMessageToLog', ['b', 's']], 0x19: ['Unk19', ['b4']], 0x1c: ['ExecuteFunction', ['s', 's', 'b3']],
+  0x16: ['Unk16', ['b2']], 0x18: ['AddMessageToLog', ['b', 's']], 0x19: ['Unk19', ['b4']], 0x1c: ['ExecuteFunction', ['s', 's', 'w', 'b']],
   0x1e: ['PlayMusic', ['s', 's', 'b17']], 0x1f: ['StopMusic', ['s', 'f']], 0x20: ['MusicUnk1', ['s', 'f', 'w']],
   0x28: ['SoundEffect', ['s', 's', 'f', 'f', 'b14']], 0x29: ['SoundUnk1', ['s', 'f']], 0x2a: ['SoundUnk2', ['s', 'f', 'b2']], 0x2e: ['CharMessageStart', []], 0x30: ['SoundEffectUnk30', ['s', 'f']],
   0x33: ['SetBackground', ['s', 's']], 0x34: ['UsePnaPackage', ['s', 's', 'b2']], 0x35: ['PlayMovie', ['s', 's', 'b3']],

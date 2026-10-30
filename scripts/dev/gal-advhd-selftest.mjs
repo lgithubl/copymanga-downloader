@@ -16,7 +16,7 @@ import { buildScene } from '../../web/library/gal/scene.mjs'
 import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath } from '../../web/static/gal-engine.js'
-import { STORY_001, STORY_BRANCH, STORY_COND, arcBuild, buildAdvhdFixture, msg, pnaBuild, pngBytes, ws2Encode, ws2Plain } from './make-advhd-fixture.mjs'
+import { STORY_001, STORY_BRANCH, STORY_COND, STORY_SKIP, arcBuild, buildAdvhdFixture, msg, pnaBuild, pngBytes, ws2Encode, ws2Plain } from './make-advhd-fixture.mjs'
 
 let pass = 0
 let fail = 0
@@ -44,6 +44,8 @@ const cfgWith = (containers, extra = {}) => normalizeGalConfig({ scriptRoots: [{
   check('Condition：类型 1 / 3（后面不是 50 51 125 127 128）没有参数；2 / 130 带 变量 + 值 + 两个跳转', J(withCond.map((i) => i.args.length)) === J([1, 5, 5, 1, 5]), J(withCond.map((i) => i.args)))
   const choice = decodeWs2(ror2(ws2Encode(STORY_BRANCH))).find((i) => i.name === 'ShowChoice')
   check('ShowChoice：选项（id、文字、3 个标志字节、跳转类型 6 = 本脚本偏移 / 7 = 文件名）', choice.choices.length === 3 && choice.choices[0].jump === 6 && typeof choice.choices[0].target === 'number' && choice.choices[2].target === 'OTHER_00' && choice.choices[1].text === '右へ', J(choice))
+  const fn = decodeWs2(ror2(ws2Encode(STORY_SKIP))).find((i) => i.name === 'ExecuteFunction')
+  check('ExecuteFunction：函数名 / 字符串参数 / u16 标志号（999）/ byte', J(fn.args) === J(['GetMsgSkip', '', 999, 1]), J(fn))
   const stand = decodeWs2(ror2(ws2Encode(STORY_001))).find((i) => i.name === 'DisplayCharacterImage')
   check('DisplayCharacterImage：第 3 个字节 = 图片 id 个数，id 表在 extra 里', J(stand.ids) === J([1, 3]) && stand.args[0] === 'st01', J(stand))
   let err = null
@@ -219,6 +221,13 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const t = await parseGame(game, unknown)
   const f = await parseGame(game, unknown, { flags: { unknown: false } })
   check('没设过的变量：flags.unknown（默认 = 真 → 走 p1（0 = 继续往下）；false = 走 p2）；stats.ignored 记一笔 Condition:unknown-flag', J(textOf(t)) === J(['未知の変数は真']) && J(textOf(f)) === J(['未知の変数は偽']) && t.stats.ignored['Condition:unknown-flag'] === 1, J([textOf(t), textOf(f)]))
+  // GetMsgSkip 之后的 if / else 版式：成立 = 往下（StopMusic 0），不成立 = else 块（p1，StopMusic 1）；GetMsgSkip 把 999 写成 0（没在快进）→ 走 else
+  const stopsOf = (scene) => scene.steps.flatMap((st) => st.commands).filter((c) => c.op === 'bgmStop').map((c) => c.fade)
+  const skipNormal = await parseGame(game, STORY_SKIP)
+  const skipOn = await parseGame(game, STORY_SKIP, { functions: { GetMsgSkip: { setFlag: 1 } } })
+  const skipUnknown = await parseGame(game, STORY_SKIP.slice(1).map((i) => (i[0] === 'Condition' ? ['Condition', [2, 998, 1, i[1][3], i[1][4]]] : i)))   // 998：没有默认值也没人写过 → flags.unknown（真）→ 往下
+  check('Condition 的跳转：成立 = 顺着往下，不成立 = p1（else 块）；GetMsgSkip（functions.GetMsgSkip = { setFlag: 0 }）把 999 写成 0 → 走 else = StopMusic 淡出 1 秒；改成 { setFlag: 1 } → 往下 = StopMusic 0；两种都只走一个块；没有值的变量 998 按 flags.unknown（真）往下', J(stopsOf(skipNormal)) === J([1]) && J(stopsOf(skipOn)) === J([0]) && J(textOf(skipNormal)) === J(['終わり']) && J(stopsOf(skipUnknown)) === J([0]), J([stopsOf(skipNormal), stopsOf(skipOn), stopsOf(skipUnknown)]))
+  check('ExecuteFunction 的 setFlag 模式不记 raw（只计 stats.ignored）；没有 p1 的 Condition（只有 p2）= 没有 else：不成立直接跳到结尾', !skipNormal.stats.raw['ExecuteFunction:GetMsgSkip'] && skipNormal.stats.ignored['ExecuteFunction:GetMsgSkip'] === 1)
   const loop = [{ label: 'top' }, msg(0, '一度だけ'), ['Jump', [{ ref: 'top' }]]]
   const looped = await parseGame(game, loop)
   check('死循环的脚本（Jump 回自己）：每条指令只走一次，不会卡死', J(textOf(looped)) === J(['一度だけ']))
