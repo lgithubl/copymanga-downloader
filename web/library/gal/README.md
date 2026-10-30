@@ -999,6 +999,12 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 已写的（路径都是你给的）：aku `package.nw/data/ui/loading_bg.png`；angelic `game/gui/window_icon.png`；kamihime `game/backgrounds/陽だまりの中で.jpg`；legeclo `game/images/st/hs_jeanne_and_michael_st_0201.png`；minashigo `game/images/mainmenu/title_127.jpg`；otogi `title/3rd_title.png`；tenkeiprdx `…/Imported/Backgrounds/eventstill/bg_eventstill_2451.png`；tsk `…/Sprites/PictureBook/still_517.png`；bokusen `resource/503301*/images/12.jpg`；minashigo_r `data/image/special/thumbnail/TitleAnimation_123.png`；monmusu `game/images/bg/_title_bg.png`；misttrain `…/Textures/Icons/Atlas/FieldSkills/field_skill-2.png`；artwhirl `game/images/bg/LUNA_still_n1.jpg`；advhd 取游戏目录里 `Manual` 的第一张图。
 - 注意：aku 是 girlscreation 的别名，子项的 `cover` 会整个替换父项的，所以 aku 的列表里把 girlscreation 原来的「场景 thumbnail」规则也带上了（放在指定文件后面）。文件名是写死的，游戏版本变了文件改名就会退回原来的封面逻辑。要重跑 gal-layout（2.22.0）才会写进已导入的条目。
 
+### Kamihime 角色头像 404（`resourceRootsAll`，gal-layout 2.26.0）
+
+- 现象：角色目录卡片「加载失败」，缩略图路径 `game/dmm/portrait/(愛及屋烏)エレシュキガル.png`，请求 404（文件其实在）。
+- 原因：布局表里 `resourceRoots` 的语义是「候选，只写第一个存在的」，Kamihime 写了 `['dmm/assets', 'dmm/portrait']`，实际只有 `game/dmm/assets` 进了 config；头像在第二个根里，适配器给的路径没法去掉根前缀，资源接口按 `game/dmm/assets/game/dmm/portrait/…` 找，自然 404。这个 bug 从「第二个根」那条注释写下的时候就在（注释说有第二个根，代码只写第一个）。
+- 修法：布局条目新字段 `resourceRootsAll: true` = 候选里每个存在的都写（Kamihime 开了）。自测 `gal-kamihime-portrait-selftest.mjs` 用 `[愛及屋烏]エレシュキガル` + `(愛及屋烏)エレシュキガル.png` 复现了 404（关掉 `resourceRootsAll` 就是 3 项全失败），修完全过。要重跑 gal-layout（2.26.0）才会写进已导入的条目。
+
 ### 场景卡片的内部轮播（`thumbRender.inner`）
 
 - 以前一个场景卡片最多一张渲染图（胶片场景除外），而且规则给了图（`thumbnail.png` 之类）就完全不渲染。`thumbRender.inner: true` 之后：封面仍是规则给的第一张（规则没给图时是第一张渲染图），后面轮播场景**内部**的画面——**骨骼 / 立绘 / CG 渲染图在前，场景里的图在后**。

@@ -1069,7 +1069,7 @@ export const RULE_DEVIATIONS = {}
 //   siblings       base 下至少存在一个的目录（和别的游戏区分用）；空 = 不要求
 //   markers        没声明 game.id 时才查：每项必须存在；某一项本身是数组 = 其中任意一个存在就行
 //   scriptRoots    脚本根候选 [{ id, dir, label }]：存在的都写（dir 可带通配，一个匹配一个脚本根）；一个都不存在就写第一个
-//   resourceRoots  资源根候选：写第一个存在的，都不存在就写第一个（'.' = base 自己）
+//   resourceRoots  资源根候选：写第一个存在的，都不存在就写第一个（'.' = base 自己）；resourceRootsAll: true = 每个存在的都写（按顺序）
 //   adapters       这个游戏默认的适配器 id（导入时用；条目里的适配器和它们没有交集时日志里提醒）
 //   ruleTables     数组：写哪些适配器的完整规则表（ADAPTER_RULES[适配器 id]）；ruleOverrides = { <适配器 id>: { 子键: 值 } }：这个游戏自己的差异（深度合并，对象逐键、数组整个替换）
 //   engine         { classify, resourceResolve, indexSkip, limits, player }：引擎层通用配置，原样写进 config 顶层（要清掉某个字段就写 [] / {}，引擎的合并是顶层字段整个替换）
@@ -1456,7 +1456,7 @@ export const LAYOUTS = {
     bases: ['', 'game'], searchDepth: 6,
     anchors: ['dmm/raw_scenario'], siblings: [], markers: ['dmm/assets'],   // 没声明：要求有 assets 和至少一个 .ks（detectKamihime）
     scriptRoots: [{ id: 'ks', dir: 'dmm/raw_scenario', label: '日文' }],
-    resourceRoots: ['dmm/assets', 'dmm/portrait'],   // 第二个根：角色头像（目录卡片的缩略图，tyrano-ks 的 catalog 按目录名找）
+    resourceRoots: ['dmm/assets', 'dmm/portrait'], resourceRootsAll: true,   // 第二个根：角色头像（目录卡片的缩略图，tyrano-ks 的 catalog 按目录名找）
     adapters: ['tyrano-ks'],
     adapterOptions: { 'tyrano-ks': { root: { path: ['dmm'] } } },
     // ---- 规则配置（脚本是唯一来源）：ruleTables = 写哪些适配器的全表；ruleOverrides = 只对这个游戏改的子键（深度合并在全表之上，空 = 和全表一致）；engine = 引擎层配置字段，原样写进 config
@@ -1823,7 +1823,10 @@ async function buildConfig(media, entry, base, { userBase } = {}) {
   }
   if (!scriptRoots.length && entry.scriptRoots[0]) scriptRoots.push({ id: entry.scriptRoots[0].id, dir: join2(entry.scriptRoots[0].dir), label: entry.scriptRoots[0].label ?? entry.scriptRoots[0].id })
   const resourceRoot = await firstExisting(media, base, entry.resourceRoots, 'dir')
-  const config = { scriptRoots, resourceRoots: [resourceRoot ?? base] }
+  // resourceRootsAll: true = 候选里**每一个**存在的都写进去（按顺序；Kamihime：dmm/assets + dmm/portrait，头像在第二个根里，只写第一个的话头像路径 game/dmm/portrait/… 解析不了，目录卡片 404）；默认只写第一个存在的
+  const roots = []
+  if (entry.resourceRootsAll) for (const candidate of entry.resourceRoots) { const one = (await expand(media, base, candidate, 'dir'))[0]?.rel; if (one && !roots.includes(one)) roots.push(one) }
+  const config = { scriptRoots, resourceRoots: roots.length ? roots : [resourceRoot ?? base] }
   const template = structuredClone(entry.config)
   for (const key of ['namesFiles', 'thumbsDirs']) if (Array.isArray(template[key])) template[key] = template[key].map((rel) => join(userBase ?? base, patternSegments(rel).join('/')))
   Object.assign(config, template)
