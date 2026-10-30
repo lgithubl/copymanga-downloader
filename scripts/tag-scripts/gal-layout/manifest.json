@@ -1,7 +1,7 @@
 {
   "id": "gal-layout",
   "name": "Gal 布局配置",
-  "version": "2.21.0",
+  "version": "2.22.0",
   "description": "Gal 媒体的配置脚本（UViewer / legeclo（Ren'Py）/ monmusu（Ren'Py）/ Girls Creation（标签式脚本）/ tenkeiprdx（Unity 剧情 JSON + Spine）/ misttrain（MistTrainGirls X，Unity 剧情 JSON + Spine）/ minashigo（Ren'Py，MinashigoViewer）/ Kamihime（TyranoScript）/ ぼくらの放課後戦争（编译脚本 JSON）/ TSK（Utage）/ grenze（GrenzeViewer，对话 XML）/ WillPlus AdvHD 引擎家族（game.id = advhd::<游戏>，.arc 由服务端展开）等多种游戏合一）：按条目 config.game.id 分发；没填 game.id 就按 legeclo → monmusu → girlscreation → tenkeiprdx → misttrain → minashigo → … → grenze → advhd → UViewer 的顺序探测目录结构，认出来的把 game.id 写回 config；都认不出就写通用配置、不认领。探测目录的实际结构，把条目的 config（脚本根、资源根、名称文件、缩略图目录、合并 / 分组规则、适配器参数等）调到能正确读取，并挑封面、统计脚本数。导入时自动跑一次；目录没按标准结构放就靠它修正。在选项里可以按路径给某个媒体单独覆盖任何配置；脚本版本和运行时间写进 config.script，并打上「Gal配置」「Gal配置version」「Gal游戏」标签。每个游戏固定的目录配置都在 main.js 开头的 LAYOUTS 表里（游戏 id → 候选位置 / 脚本根 / 资源根 / 适配器参数 / 分组 …，列表全是数组，别名用 extends）：先按表里的候选位置直接查，没命中才广度优先搜索；日志里有「本次改动：…」——这次运行和条目现有配置的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项），结构化版本在 details.changes。每个游戏的适配器 / 引擎规则也在 main.js 里（脚本是唯一来源，适配器和引擎只读 config、按 config 匹配）：ADAPTER_RULES（每个适配器的完整 adapterOptions 规则表，抄自适配器的 DEFAULT_OPTIONS）+ LAYOUTS 里的 ruleTables（写哪些适配器的表）/ ruleOverrides（只对这个游戏改的子键，深度合并在全表之上，探测到的 root / aliasFiles / imageDirs 等永远优先）/ engine（classify / resourceResolve / indexSkip / limits / player，原样写进 config）；改动报告里 adapterOptions 按适配器 id 汇总（新增 N 个键 / 变了哪些子键）。目录配置或规则不对：改 LAYOUTS / ADAPTER_RULES（或用选项 layouts 覆盖某个游戏的某几个字段，如 layouts.bokusen.ruleOverrides）、上传新版本重跑，不用改镜像。",
   "scope": ["item"],
   "libraryTypes": ["gal"],

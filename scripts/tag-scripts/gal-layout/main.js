@@ -1112,6 +1112,7 @@ export const LAYOUTS = {
 
   // ---- Ren'Py 播放器：game/script/hscene
   legeclo: {
+    cover: [{ dir: 'game/images/st', files: ['hs_jeanne_and_michael_st_0201.png'], fromMedia: true, abs: true }, { dir: '*/game/images/st', files: ['hs_jeanne_and_michael_st_0201.png'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     title: "legeclo（Ren'Py）", kind: 'legeclo', detector: 'legeclo', autoOrder: 10,
     bases: ['', 'game'], searchDepth: 6,
     anchors: ['script/hscene'], siblings: [], markers: [],   // 和 monmusu 目录相似：靠 options.rpy 里的 legeclo / 旁边的 legeclo_py.* 认（detectLegeclo）
@@ -1143,6 +1144,7 @@ export const LAYOUTS = {
     notes: ['脚本根 script/hscene；按角色分组（<角色>_<编号>）；只读 .rpy（只有 .rpyc 的读不了）；翻译（tl/）暂不叠加', '缩略图：脚本 images/thumbnail/st/hs_<角色>_st_<话><变体>*.png（退回 images/st/）、角色 images/thumbnail/char/st_<角色>*.png；同一张卡片的全部变体都进缩略图数组'],
   },
   monmusu: {
+    cover: [{ dir: 'game/images/bg', files: ['_title_bg.png'], fromMedia: true, abs: true }, { dir: '*/game/images/bg', files: ['_title_bg.png'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     title: "monmusu（Ren'Py）", kind: 'monmusu', detector: 'monmusu', autoOrder: 20,
     bases: ['', 'game'], searchDepth: 6,
     anchors: ['script/hscene'], siblings: [], markers: ['script/movie.rpy'],   // 没声明又没有视频别名表：不确定是 monmusu
@@ -1180,6 +1182,7 @@ export const LAYOUTS = {
     notes: ['首页入口：动画 / 事件 / 总览（hscene + hscene_still 合并）；动画和总览按角色编号分组'],
   },
   angelic: {
+    cover: [{ dir: 'game/gui', files: ['window_icon.png'], fromMedia: true, abs: true }, { dir: '*/game/gui', files: ['window_icon.png'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     title: "angelic_py（Ren'Py）", kind: 'angelic', detector: 'angelic', autoOrder: 30,   // monmusu 之后：没有 movie.rpy 但有 movies.rpy / stills.rpy（复数）的才是它
     bases: ['', 'game'], searchDepth: 6,
     anchors: ['script/hscene'], siblings: [], markers: [['script/movies.rpy', 'script/stills.rpy']],
@@ -1211,6 +1214,7 @@ export const LAYOUTS = {
     notes: ['脚本文件名是随机串、没有角色编号：不分组、不配头像 / 封面（卡片显示脚本名）；只有 .rpyc 没有 .rpy 的脚本解析不了，列表页「渲染诊断」里会列出'],
   },
   minashigo: {
+    cover: [{ dir: 'game/images/mainmenu', files: ['title_127.jpg'], fromMedia: true, abs: true }, { dir: '*/game/images/mainmenu', files: ['title_127.jpg'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     title: "minashigo（Ren'Py，MinashigoViewer）", kind: 'minashigo', detector: 'minashigo', autoOrder: 70,
     bases: [''], searchDepth: 6,
     anchors: ['game/scripts'], siblings: [], markers: [],   // 没声明时靠 game/script.rpy 开头的 DynamicCharacter("name") 认（detectMinashigo）
@@ -1250,6 +1254,7 @@ export const LAYOUTS = {
 
   // ---- ミナシゴノシゴトR（cocos2d 网页版官方数据）：data/adv/textfiles/story（uviewer-csv 格式），资源在 data/adv/{image,sound,movie}
   minashigo_r: {
+    cover: [{ dir: 'data/image/special/thumbnail', files: ['TitleAnimation_123.png'], fromMedia: true, abs: true }, { dir: '*/data/image/special/thumbnail', files: ['TitleAnimation_123.png'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     title: 'ミナシゴノシゴトR', kind: 'minashigo_r', detector: 'minashigo_r', autoOrder: 80,   // 放在通用 uviewer 之前
     bases: ['', 'data'], searchDepth: 6,
     anchors: ['adv/textfiles/story'], siblings: [], markers: ['adv/image', 'adv/sound'],   // 没声明：要求 data 下还有 adv/image 和 adv/sound，免得把别的 adv/textfiles/story 认走
@@ -1335,7 +1340,7 @@ export const LAYOUTS = {
   jaxin: { extends: 'girlscreation', title: 'Jaxin' },
   maid: { extends: 'girlscreation', title: 'Maid' },
   // Aku：角色摆放用原版 spine-widget 的 fitToCanvas（player.cameraMode: 'widget'，常数见 gal-spine.js；原版 preloader.js / spine-widget.js 核对过，gal-samples13）。engine 是整份替换，所以把 girlscreation 的 classify / limits 也写上
-  aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu', engine: { classify: [], limits: { walkFiles: 400000, sampleFiles: 20000 }, player: { cameraMode: 'widget' }, dirCover: { enabled: true, scan: 8, max: 6, prefer: ['render', 'image'], skip: [], only: [] }, thumbRender: { inner: true, innerMax: 4, innerRenders: 3 } } },   // 角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播；场景卡片：thumbnail 之后再轮播场景内部的骨骼渲染（最多 3 个不同画面）> 图，总数最多 4 张
+  aku: { extends: 'girlscreation', title: 'Aku No Onna Kanbu', cover: [{ dir: 'package.nw/data/ui', files: ['loading_bg.png'], fromMedia: true, abs: true }, { dir: '*/package.nw/data/ui', files: ['loading_bg.png'], fromMedia: true, abs: true }, { dir: 'scenes/*', files: ['thumbnail.png', 'thumbnail.jpg', 'thumbnail.webp'] }], engine: { classify: [], limits: { walkFiles: 400000, sampleFiles: 20000 }, player: { cameraMode: 'widget' }, dirCover: { enabled: true, scan: 8, max: 6, prefer: ['render', 'image'], skip: [], only: [] }, thumbRender: { inner: true, innerMax: 4, innerRenders: 3 } } },   // 角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播；场景卡片：thumbnail 之后再轮播场景内部的骨骼渲染（最多 3 个不同画面）> 图，总数最多 4 张
   fruits: { extends: 'girlscreation', title: 'Fruits Fulcute!' },
   // Girls Creation R Viewer 282寝：和 R 同一个查看器，但行式脚本有 54 个（R 里只有 3 个），单独一个 id 方便以后给它单独加规则
   girlscreation282: { extends: 'girlscreation', title: 'Girls Creation R Viewer 282寝' },
@@ -1356,6 +1361,7 @@ export const LAYOUTS = {
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [] },
     count: [{ dir: 'scenes', ext: '.json', depth: 4 }],
     cover: [
+      { dir: '*_Data/StreamingAssets/*/Imported/Backgrounds/eventstill', files: ['bg_eventstill_2451.png'], fromMedia: true, abs: true }, { dir: '*/*_Data/StreamingAssets/*/Imported/Backgrounds/eventstill', files: ['bg_eventstill_2451.png'], fromMedia: true, abs: true }, { dir: '*_Data/StreamingAssets/*/*/Imported/Backgrounds/eventstill', files: ['bg_eventstill_2451.png'], fromMedia: true, abs: true }, { dir: '*/*_Data/StreamingAssets/*/*/Imported/Backgrounds/eventstill', files: ['bg_eventstill_2451.png'], fromMedia: true, abs: true },   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
       { dir: 'EpisodeThumbnails/event', match: '^ep_eventstill_([^_]+)_([^_]+)', pick: 'last' },
       { dir: 'EpisodeThumbnails/extra', match: '^ep_eventstill_([^_]+)_([^_]+)', pick: 'last' },
     ],
@@ -1380,7 +1386,7 @@ export const LAYOUTS = {
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [],
       thumbSources: [{ dir: 'Textures/Characters/Bases', match: String.raw`^(\d+)201\.png$`, key: '{1}', for: 'dir', forKey: '{name}' }] },
     count: [{ dir: 'UScenes', ext: '.json', depth: 4 }],
-    cover: [],
+    cover: [{ dir: '*_Data/StreamingAssets/*/Textures/Icons/Atlas/FieldSkills', files: ['field_skill-2.png'], fromMedia: true, abs: true }, { dir: '*/*_Data/StreamingAssets/*/Textures/Icons/Atlas/FieldSkills', files: ['field_skill-2.png'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     avatars: [], expectedDirs: ['MasterData', 'Spines', 'Sounds', 'BackGrounds'],
     nodes: [['chars', 'chars'], ['other', 'other'], ['all', 'all']],
     notes: [],
@@ -1411,7 +1417,7 @@ export const LAYOUTS = {
       dirCover: { enabled: true, scan: 8, max: 6, from: 'last', leafScan: 1, prefer: ['render', 'image'], skip: [], only: [] },   // 一本书（CharaScenario…）= 最后一章的封面（from last + leafScan 1，和那一章的卡片一样）；别的目录卡片用最后 8 个脚本；目录卡片（章节目录等）：优先骨骼 / 立绘渲染图，没有再用静态图；最多 6 张轮播；要黑 / 白名单写 skip / only（正则，对脚本路径 / 图片路径）
     },
     count: [{ dir: 'Adventure', ext: '.book.json', depth: 3 }],
-    cover: [{ dir: 'Adventure/BackGrounds', match: '\\.(png|jpe?g)$', flags: 'i', pick: 'first' }],
+    cover: [{ dir: '*_Data/StreamingAssets/*/Sprites/PictureBook', files: ['still_517.png'], fromMedia: true, abs: true }, { dir: '*/*_Data/StreamingAssets/*/Sprites/PictureBook', files: ['still_517.png'], fromMedia: true, abs: true }, { dir: 'Adventure/BackGrounds', match: '\\.(png|jpe?g)$', flags: 'i', pick: 'first' }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     avatars: [], expectedDirs: ['Characters', 'Stills', 'Sound'],
     nodes: [['all', 'all']],   // 前面再加每个含 *.book.json 的剧情文件夹一个节点（detectTsk 现读）
     notes: [],
@@ -1419,6 +1425,7 @@ export const LAYOUTS = {
 
   // ---- 其它
   artwhirl: {
+    cover: [{ dir: 'game/images/bg', files: ['LUNA_still_n1.jpg'], fromMedia: true, abs: true }, { dir: '*/game/images/bg', files: ['LUNA_still_n1.jpg'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     title: "魔法学园的少女们（ArtWhirl，Ren'Py + JSON）", kind: 'artwhirl', detector: 'artwhirl', autoOrder: 90,
     bases: ['', 'game'], searchDepth: 6,
     anchors: ['episode_scripts'], siblings: [], markers: ['images/stands', 'audio'],   // 没声明：要求有 images/stands 和 audio（免得认走别的 episode_scripts）
@@ -1444,6 +1451,7 @@ export const LAYOUTS = {
     notes: ['剧情 JSON 按 官方 json_story_player 的语义解析（背景 / HCG 视频 / BGM / 语音 / 立绘组合）；立绘动作（others 的 action 的 slidein / attack）暂未渲染，统计里会列出；表情特效（emotion）原版就不处理，不记'],
   },
   kamihime: {
+    cover: [{ dir: 'game/backgrounds', files: ['陽だまりの中で.jpg'], fromMedia: true, abs: true }, { dir: '*/game/backgrounds', files: ['陽だまりの中で.jpg'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     title: 'Kamihime Player（TyranoScript）', kind: 'kamihime', detector: 'kamihime', autoOrder: 100,   // .ks 独有，放在通用 uviewer 之前
     bases: ['', 'game'], searchDepth: 6,
     anchors: ['dmm/raw_scenario'], siblings: [], markers: ['dmm/assets'],   // 没声明：要求有 assets 和至少一个 .ks（detectKamihime）
@@ -1468,6 +1476,7 @@ export const LAYOUTS = {
     notes: ['列表（类别 → 目录 → 剧情，标题取同目录 json 的 title）由 tyrano-ks 适配器现读；layer 3 的立绘滑入 / 滑出不渲染（anim layer / layopt 静默吃掉，animSlide: raw 可改成记 raw）；Memorial 剧情（mem_img 幻灯片 / mem_voice 语音 + 台词 / memorial 段落）已支持'],
   },
   bokusen: {
+    cover: [{ dir: 'resource/503301*/images', files: ['12.jpg'], fromMedia: true, abs: true }, { dir: '*/resource/503301*/images', files: ['12.jpg'], fromMedia: true, abs: true }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     title: 'ぼくらの放課後戦争', kind: 'bokusen', detector: 'bokusen', autoOrder: 110,   // <根>/json/*.json（data.code 编译脚本）+ <根>/resource/<脚本名>/{images,sounds}
     bases: [''], searchDepth: 4,
     anchors: ['json'], siblings: [], markers: ['resource'],   // 没声明：json/ 里还要有脚本开头是 {"data":{"code":{…（detectBokusen）
@@ -1562,7 +1571,7 @@ export const LAYOUTS = {
     // scriptExtensions ['']：剧情文件没有扩展名；真正的格式判断靠适配器的嗅探（只认 {"Id":N,"Title|Description":…,"MSceneDetails|MAdultDetails":[ 开头）
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: [''], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100 },
     count: [],   // 数 typeadv/MScenes 和 json 里的剧情文件（detectOtogi）
-    cover: [{ dir: 'typeadv/bg/adventure', match: '\\.png$', flags: 'i', pick: 'first' }, { dir: 'typeadv/bg', match: '^bg_adventure_.*\\.png$', flags: 'i', pick: 'first' }, { dir: 'title', match: '\\.png$', flags: 'i', pick: 'first' }],
+    cover: [{ dir: 'title', files: ['3rd_title.png'], fromMedia: true, abs: true }, { dir: '*/title', files: ['3rd_title.png'], fromMedia: true, abs: true }, { dir: 'typeadv/bg/adventure', match: '\\.png$', flags: 'i', pick: 'first' }, { dir: 'typeadv/bg', match: '^bg_adventure_.*\\.png$', flags: 'i', pick: 'first' }, { dir: 'title', match: '\\.png$', flags: 'i', pick: 'first' }],   // 库封面：指定文件（路径从媒体目录起算，找不到再试外面包了一层的；都没有才用下面 / 探测函数找的）
     avatars: [], expectedDirs: ['typeadv/CharaStand', 'chara/still', 'VieableEpisodeList', 'MasterData'],
     nodes: [['main', 'main'], ['chars', 'chars'], ['all', 'all'], ['adult', 'adult']],
     notes: ['剧情文件没有扩展名（typeadv/MScenes/<id>、json/<id>）；列表（主线 / 角色 / 全部普通 / 全部成人）由 otogi-json 适配器读 list.json / Episode/Main / VieableEpisodeList / MasterData 现建', '语音只有一小部分在本地：找不到的语音不发指令，计入 stats.missing.voice（不算「缺少资源」）；语言切换用 adapterOptions[\'otogi-json\'].lang（jp / cn / tw）'],
@@ -1862,7 +1871,7 @@ async function tableCount(media, entry, base, options) {
 // 封面规则：返回相对 base 的路径（= 相对资源根）
 async function coverFromRules(media, entry, base) {
   for (const rule of entry.cover) {
-    const dirs = await expand(media, base, rule.dir, 'dir', 400)
+    const dirs = await expand(media, rule.abs ? '' : base, rule.dir, 'dir', 400)   // abs: true = dir 从媒体目录（而不是游戏根 base）起算，配合 fromMedia：封面文件在资源根外面、位置固定的游戏
     for (const dir of dirs) {
       const dirAbs = path.join(media, ...splitRel(dir.rel))
       const out = (rel) => (rule.fromMedia ? `~/${dir.rel}/${rel.slice(rel.lastIndexOf('/') + 1)}` : rel)   // fromMedia：封面路径相对媒体目录（~/ 开头）——资源根不是 base 的时候用（Grenze：资源根是 assets/resources/patchres）
@@ -1902,6 +1911,7 @@ async function warnMissing(media, entry, base, logs) {
 function makeFound(scope, entry, loc, config, { cover = '', nodes, count } = {}) {
   const { media, logs } = scope
   return {
+    entry,
     id: scope.id,
     kind: entry.kind || scope.id,
     note: '',
@@ -2052,7 +2062,9 @@ export async function generateTags(ctx) {
   // 3) 脚本数、封面
   const result = await (found.finish ? found.finish(media, config, options, logs) : { count: 0, cover: '' })
   config.scriptCount = result.count
-  const cover = coverOverride || result.cover
+  // 布局表里写了 cover 规则的，不管探测函数有没有自己找封面，规则命中就用规则的（第一个有结果的）；没写 / 没命中才用探测函数找到的
+  const ruled = found.entry?.cover?.length ? await coverFromRules(media, found.entry, found.base ?? '') : ''
+  const cover = coverOverride || ruled || result.cover
   if (cover) config.cover = cover
   logs.push(cover ? `封面：${cover}` : '没找到合适的封面')
 

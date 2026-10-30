@@ -199,9 +199,9 @@ const withLayouts = (layouts) => ({ layouts })
   const dangling = Object.entries(LAYOUTS).filter(([, e]) => e.extends !== undefined && !(typeof e.extends === 'string' && e.extends in LAYOUTS)).map(([id]) => id)
   check('每个 extends 都指向表里存在的 id', !dangling.length, dangling.join())
   const aliases = Object.entries(LAYOUTS).filter(([, e]) => e.extends).map(([id, e]) => `${id}→${e.extends}`).sort()
-  check('别名：aster / jaxin / maid / aku / fruits → girlscreation，deepone → uviewer（用 extends，没有拷贝整份）', J(aliases) === J(['aku→girlscreation', 'aster→girlscreation', 'deepone→uviewer', 'fruits→girlscreation', 'girlscreation282→girlscreation', 'jaxin→girlscreation', 'maid→girlscreation']) && Object.entries(LAYOUTS).filter(([, e]) => e.extends).every(([, e]) => Object.keys(e).filter((k) => k !== 'extends' && k !== 'title' && !(k === 'engine' && e === LAYOUTS.aku)).length === 0), aliases.join())   // 别名只改 title；唯一的例外是 aku 多一份 engine（player.cameraMode: 'widget'，原版 spine-widget 的摆放）
+  check('别名：aster / jaxin / maid / aku / fruits → girlscreation，deepone → uviewer（用 extends，没有拷贝整份）', J(aliases) === J(['aku→girlscreation', 'aster→girlscreation', 'deepone→uviewer', 'fruits→girlscreation', 'girlscreation282→girlscreation', 'jaxin→girlscreation', 'maid→girlscreation']) && Object.entries(LAYOUTS).filter(([, e]) => e.extends).every(([, e]) => Object.keys(e).filter((k) => k !== 'extends' && k !== 'title' && !((k === 'engine' || k === 'cover') && e === LAYOUTS.aku)).length === 0), aliases.join())   // 别名只改 title；唯一的例外是 aku 多一份 engine（player.cameraMode: 'widget'，原版 spine-widget 的摆放）
   const girls = mod.resolveLayout('girlscreation')
-  const noAkuPlayer = (layout) => ({ ...layout, title: '', engine: { ...layout.engine, player: undefined, dirCover: undefined, thumbRender: undefined } })
+  const noAkuPlayer = (layout) => ({ ...layout, title: '', cover: undefined, engine: { ...layout.engine, player: undefined, dirCover: undefined, thumbRender: undefined } })
   check('别名解析出来的数据 = 父项的数据（只有 title 不同；aku 另有 engine.player.cameraMode = widget 和 engine.dirCover）', ALL_IDS.filter((id) => LAYOUTS[id].extends === 'girlscreation').every((id) => J(noAkuPlayer(mod.resolveLayout(id))) === J(noAkuPlayer(girls))) && J(mod.resolveLayout('aku').engine.player) === J({ cameraMode: 'widget' }) && !girls.engine.player)
   const handlers = ALL_IDS.map((id) => [id, LAYOUTS[id].autoOrder])
   check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'advhd', 'uviewer']), J(handlers))
@@ -318,6 +318,42 @@ const withLayouts = (layouts) => ({ layouts })
   check('写坏的字段在日志里说明（布局表「legeclo」：bases 不是数组）', /布局表「legeclo」：bases 不是数组/.test(logText(g1)), logText(g1))
   const g2 = await run(MEDIA.tsk.direct, { game: { id: 'tsk' } }, { layouts: { tsk: { markers: [5, ['a', 7]], siblings: ['/(bad/'] } } })
   check('部分写坏（markers / siblings 里有非法项）：非法项丢掉，别的照用，不崩', cfgOf(g2)?.game?.id === 'tsk', logText(g2))
+}
+
+// ================= 指定文件的库封面（abs + fromMedia）：13 个游戏各一个固定文件，路径 ~/ 开头（相对媒体目录；外面包一层目录的也找得到）=================
+{
+  const COVERS = [
+    ['girlscreation', 'aku', 'package.nw/data/ui/loading_bg.png'],
+    ['angelic', 'angelic', 'game/gui/window_icon.png'],
+    ['kamihime', 'kamihime', 'game/backgrounds/陽だまりの中で.jpg'],
+    ['legeclo', 'legeclo', 'game/images/st/hs_jeanne_and_michael_st_0201.png'],
+    ['minashigo', 'minashigo', 'game/images/mainmenu/title_127.jpg'],
+    ['advhd', 'advhd::lpsl', 'Manual/Manual.jpg'],
+    ['tenkeiprdx', 'tenkeiprdx', 'Tenkeiprdx X_Data/StreamingAssets/Tenkeiprdx X/Imported/Backgrounds/eventstill/bg_eventstill_2451.png'],
+    ['tsk', 'tsk', 'Twinkle Star Knights X_Data/StreamingAssets/Twinkle Star Knights X/Sprites/PictureBook/still_517.png'],
+    ['bokusen', 'bokusen', 'resource/503301 【バーテンダー】小春/images/12.jpg'],
+    ['minashigo_r', 'minashigo_r', 'data/image/special/thumbnail/TitleAnimation_123.png'],
+    ['monmusu', 'monmusu', 'game/images/bg/_title_bg.png'],
+    ['misttrain', 'misttrain', 'MistTrainGirls X_Data/StreamingAssets/MistTrainGirls X/Textures/Icons/Atlas/FieldSkills/field_skill-2.png'],
+    ['artwhirl', 'artwhirl', 'game/images/bg/LUNA_still_n1.jpg'],
+  ]
+  const coverOf = (out) => out.details?.cover ?? out.itemPatch?.cover ?? ''
+  const bad = []
+  for (const [name, id, rel] of COVERS) {
+    const root = MEDIA[name].direct
+    const file = path.join(root, ...rel.split('/'))
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, 'x')
+    const direct = coverOf(await run(root, { game: { id } }))
+    const wrapped = coverOf(await run(MEDIA[name].wrapped, { game: { id } }))
+    if (direct !== `~/${rel}`) bad.push(`${id} direct: ${direct}`)
+    if (wrapped !== `~/${name}/${rel}`) bad.push(`${id} wrapped: ${wrapped}`)
+    await rm(file, { force: true })
+    const gone = coverOf(await run(root, { game: { id } }))
+    if (gone === `~/${rel}`) bad.push(`${id} 文件删了还在`)
+  }
+  check('指定文件封面：13 个游戏各一个固定文件 → 封面 = ~/<相对媒体目录的路径>（外面包一层目录也找得到）；文件不在就退回原来的封面逻辑', !bad.length, bad.join(' | '))
+  await rm(path.join(MEDIA.girlscreation.direct, 'package.nw/data'), { recursive: true, force: true })
 }
 
 // ================= AdvHD 封面：游戏目录里的 Manual 目录（普通目录，名字不分大小写）的第一张图，路径 ~/ 开头 =================
@@ -467,7 +503,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
 // ================= 规则表（ADAPTER_RULES + engine 字段）：写进 config、体量、端到端等价、和 layouts / overrides 的关系 =================
 {
   const manifest = JSON.parse(await readFile(path.join(path.dirname(MAIN), 'manifest.json'), 'utf8'))
-  check('manifest：版本 2.21.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.21.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
+  check('manifest：版本 2.22.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.22.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
 
   // 每个 fixture 的声明 id（别名都跑）：写出来的 config 经过引擎规整一条警告都没有（规则表 / engine 字段都合格），体量在引擎上限内
   const tooBig = []

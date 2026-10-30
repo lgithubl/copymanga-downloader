@@ -971,6 +971,12 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **dirCover 也用在文件系统目录 / 分组卡片**（以前只有 catalog）：`dirCover.enabled: true` 时，规则（thumbSources / dirThumbs）没给图的目录 / 分组卡片，用里面前 `scan` 个脚本（`depth` 层以内）的封面，`prefer` / `skip` / `only` / `max` 同上；`auto` 仍然只对声明了 `sceneThumbs` 的 catalog（TSK）生效。写在布局里：`config.dirCover`，或者 `engine.dirCover`（`engine` 现在也认 `dirCover` / `thumbRender`，别名继承时写在 engine 里就不会替换掉整份 config）。
 - 现在写了的：Aku `engine.dirCover = { enabled: true, scan: 8, max: 6, prefer: [render, image] }`（角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播）；Kamihime `config.dirCover = { enabled: true, scan: 6, max: 4, prefer: [render, image] }`（角色目录有头像用头像，没有头像的用里面场景的渲染图 / 图）。
 
+### 库封面：指定文件（`cover` 规则的 `abs` + `fromMedia`）
+
+- gal-layout 的布局表里每个游戏的 `cover` 现在可以写成 `{ dir, files: [文件名], fromMedia: true, abs: true }`：`abs` = `dir` 从**媒体目录**（不是游戏根 base）起算，`fromMedia` = 封面路径是 `~/<相对媒体目录的路径>`。每个规则同时写了 `<路径>` 和 `*/<路径>`（外面包了一层目录的）。**布局表里写了 cover 规则就以规则为准**（第一个命中的），没命中才用探测函数自己找的封面（以前探测函数不看 cover 规则的游戏，写了也不生效）。
+- 已写的（路径都是你给的）：aku `package.nw/data/ui/loading_bg.png`；angelic `game/gui/window_icon.png`；kamihime `game/backgrounds/陽だまりの中で.jpg`；legeclo `game/images/st/hs_jeanne_and_michael_st_0201.png`；minashigo `game/images/mainmenu/title_127.jpg`；otogi `title/3rd_title.png`；tenkeiprdx `…/Imported/Backgrounds/eventstill/bg_eventstill_2451.png`；tsk `…/Sprites/PictureBook/still_517.png`；bokusen `resource/503301*/images/12.jpg`；minashigo_r `data/image/special/thumbnail/TitleAnimation_123.png`；monmusu `game/images/bg/_title_bg.png`；misttrain `…/Textures/Icons/Atlas/FieldSkills/field_skill-2.png`；artwhirl `game/images/bg/LUNA_still_n1.jpg`；advhd 取游戏目录里 `Manual` 的第一张图。
+- 注意：aku 是 girlscreation 的别名，子项的 `cover` 会整个替换父项的，所以 aku 的列表里把 girlscreation 原来的「场景 thumbnail」规则也带上了（放在指定文件后面）。文件名是写死的，游戏版本变了文件改名就会退回原来的封面逻辑。要重跑 gal-layout（2.22.0）才会写进已导入的条目。
+
 ### 场景卡片的内部轮播（`thumbRender.inner`）
 
 - 以前一个场景卡片最多一张渲染图（胶片场景除外），而且规则给了图（`thumbnail.png` 之类）就完全不渲染。`thumbRender.inner: true` 之后：封面仍是规则给的第一张（规则没给图时是第一张渲染图），后面轮播场景**内部**的画面——**骨骼 / 立绘 / CG 渲染图在前，场景里的图在后**。
