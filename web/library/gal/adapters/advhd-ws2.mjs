@@ -79,7 +79,7 @@ export function prepare({ options, files, texts, toResourcePath, resourceResolve
     try {
       const data = JSON.parse(text)
       const frames = new Map()
-      for (const frame of Array.isArray(data.frames) ? data.frames : []) if (frame && frame.type === 0 && typeof frame.file === 'string') frames.set(frame.n, frame)   // 键 = 帧序号（文件里的顺序），DisplayCharacterImage 的数组用的就是这个
+      for (const frame of Array.isArray(data.frames) ? data.frames : []) if (frame && Number.isInteger(frame.n)) frames.set(frame.n, frame)   // 所有帧都登记（带 kind：image / empty / group / unsupported），画的时候再分   // 键 = 帧序号（文件里的顺序），DisplayCharacterImage 的数组用的就是这个
       const entry = { dir: toRes(m[1]), width: Number(data.width) || 0, height: Number(data.height) || 0, frames }
       pnas.set(m[2].toLowerCase(), entry)
     } catch { pnaBad += 1 }   // 索引被截断 / 损坏：这个包当没有
@@ -143,6 +143,7 @@ export function parse(text, ctx = null, meta = {}) {
   const hasIndex = Boolean(ctx?.hasIndex)
   stats.transitions = {}
   stats.effects = { pan: 0, standMove: 0 }
+  stats.pnaFrames = {}
   stats.masks = {}
 
   // 资源：脚本里的名字（带扩展名）→ 索引里的路径；找不到按同名换扩展名再找
@@ -221,10 +222,15 @@ export function parse(text, ctx = null, meta = {}) {
     if (!entry) return null
     const [stageW, stageH] = opt.stage
     const parts = []
-    for (const id of layer.ids || []) {
+    // 引擎按帧序号从大到小画（CPNA 图层的绘制循环是 for i = 帧数 - 1 … 0）：序号小的在上面，和脚本里列的顺序无关
+    for (const id of [...new Set(layer.ids || [])].sort((a, b) => b - a)) {
       const frame = entry.frames.get(id)
       if (!frame) { if (hasIndex) count('unresolved', `pna-frame:${layer.pna}#${id}`); continue }
-      parts.push({ src: `${entry.dir}/${frame.file}`, x: Math.round(layer.x + frame.x + frame.w / 2 - stageW / 2), y: Math.round(layer.y + frame.y + frame.h / 2 - stageH / 2) })
+      // 有图的帧才画；别的帧不算「没查到」，但在 stats.pnaFrames 里按种类计数：empty = 没有图像数据（引擎里是个空图层）、group = 组开始 / 结束标记、unsupported = 有数据但不是 PNG（索引里记了开头 8 字节）
+      if (frame.kind && frame.kind !== 'image') { stats.pnaFrames[frame.kind] = (stats.pnaFrames[frame.kind] || 0) + 1; if (frame.kind === 'unsupported' && hasIndex) count('unresolved', `pna-frame-format:${layer.pna}#${id}(${frame.magic || '?'})`); continue }
+      if (typeof frame.file !== 'string') { if (hasIndex) count('unresolved', `pna-frame:${layer.pna}#${id}`); continue }
+      const alpha = Number(frame.alpha ?? frame.scale)   // 记录里的 f64 = 这一帧的透明度（引擎里是图层 +0x48，画的时候乘进着色器的 g_Color.a）
+      parts.push({ src: `${entry.dir}/${frame.file}`, x: Math.round(layer.x + frame.x + frame.w / 2 - stageW / 2), y: Math.round(layer.y + frame.y + frame.h / 2 - stageH / 2), ...(alpha > 0 && alpha < 0.98 ? { alpha: Math.round(alpha * 100) / 100 } : {}) })
     }
     return parts
   }

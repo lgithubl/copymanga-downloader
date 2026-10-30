@@ -183,7 +183,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('第 1 步：bgm（Bgm 容器）→ voice（char* 通道，Voice 容器）→ speaker（%LC 去掉）→ text（\\n = 换行，{汉字:ふりがな} = ruby，%K %P 去掉）', J(s0.slice(1).map((c) => c.op)) === J(['bgm', 'voice', 'speaker', 'text']) && s0[1].src === 'Bgm/BGM01.ogg' && s0[2].src === 'Voice/TW_0001.ogg' && s0[3].segments[0].text === '透羽' && J(s0[4].segments) === J([{ text: '「' }, { text: '應賀', ruby: 'おうが' }, { text: 'です。\nよろしく」' }]), J(s0))
   check('说话人换了才发 speaker：空名 = 旁白（segments: []），同一个人连续不重复发', s1[0].op === 'speaker' && s1[0].segments.length === 0 && s1[1].op === 'text' && !s3.some((c) => c.op === 'speaker'), J([s1, s3]))
   const stand = s2.find((c) => c.op === 'stand')
-  check('立绘：UsePnaPackage + DisplayCharacterImage(帧序号表 [1, 3]；记录里的 id 字段是倒序的，不看) + MoveBackground(x, y) → stand（slot = 图层名，parts = PNA 里序号 1 和 3 的两帧的 PNG，舞台 1280×720，位置 = 图层位置 + 帧位置，换算成「中心相对舞台中心」）', stand?.slot === 'st01' && J(stand.stage) === J([1280, 720]) && stand.fade === 0.2 && J(stand.parts) === J([{ src: 'Chip3/ST_TOW_A_M.pna/1.png', x: -290, y: 90 }, { src: 'Chip3/ST_TOW_A_M.pna/3.png', x: -480, y: -235 }]), J(stand))
+  check('立绘：UsePnaPackage + DisplayCharacterImage(帧序号表 [1, 3]；记录里的 id 字段是倒序的，不看) + MoveBackground(x, y) → stand（slot = 图层名，parts = PNA 里序号 1 和 3 的两帧的 PNG，舞台 1280×720，位置 = 图层位置 + 帧位置，换算成「中心相对舞台中心」）', stand?.slot === 'st01' && J(stand.stage) === J([1280, 720]) && stand.fade === 0.2 && J(stand.parts) === J([{ src: 'Chip3/ST_TOW_A_M.pna/3.png', x: -480, y: -235 }, { src: 'Chip3/ST_TOW_A_M.pna/1.png', x: -290, y: 90 }]), J(stand))
   check('事件图：ev 图层有图时 bg = { src: bg 的图, over: ev 的图 }', J(s3.find((c) => c.op === 'bg')) === J({ op: 'bg', src: 'Chip3/BG_01.png', over: 'Chip3/EV_01.png' }), J(s3))
   check('声音通道：char* = voice，bgv* = bgvoice（槽位 = 通道名，音量 1），se* = se；StopMusic = bgmStop（带淡出秒数）', J(s4.slice(0, 2)) === J([{ op: 'bgvoice', slot: 'bgvtow', src: 'Voice/SV_TOW_01.ogg', volume: 1 }, { op: 'se', src: 'Se/SE_01.ogg' }]) && s5.some((c) => c.op === 'bgmStop' && c.fade === 1), J([s4, s5]))
   check('stats：语音引用 / 解析（3 / 3）、bgm、图片、choices 等计数；没走到的指令（NextFile 后面的 FileEnd）计 unvisited', scene.stats.voices.referenced === 3 && scene.stats.voices.resolved === 3 && scene.stats.voices.unresolved === 0 && scene.stats.bgm.resolved === 1 && scene.stats.images.referenced === 2 && scene.stats.images.resolved === 2 && scene.stats.stands === 1 && scene.stats.choices === 0 && scene.stats.unvisited === 1, J(scene.stats))
@@ -269,6 +269,24 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('easeOf：0 线性；1 / 2 / 3 = sine 的 In / Out / InOut；4 / 7 = quad / cubic In；6 = quad InOut；端点 0 → 0、1 → 1（back / elastic 过冲也一样）；超范围的编号按线性', J(f(0)) === J([0, 0.25, 0.5, 0.75, 1]) && J(f(1)) === J([0, 0.076, 0.293, 0.617, 1]) && J(f(2)) === J([0, 0.383, 0.707, 0.924, 1]) && J(f(3)) === J([0, 0.146, 0.5, 0.854, 1]) && J(f(4)) === J([0, 0.063, 0.25, 0.563, 1]) && J(f(7)) === J([0, 0.016, 0.125, 0.422, 1]) && J(f(6)) === J([0, 0.125, 0.5, 0.875, 1]) && [...Array(31).keys()].every((m) => easeOf(m, 0) === 0 || m >= 22) && [...Array(31).keys()].every((m) => Math.abs(easeOf(m, 1) - 1) < 1e-9) && easeOf(99, 0.3) === 0.3, J([f(1), f(4), f(7)]))
 }
 
+// ================= PNA 帧的种类（image / empty / group / unsupported）=================
+{
+  const dir = path.join(work, 'game-kinds')
+  await buildAdvhdFixture(dir)
+  await writeFile(path.join(dir, 'Chip4.arc'), arcBuild([{ name: 'ST_KIND.pna', data: pnaBuild({ width: 600, height: 800, frames: [
+    { type: 0, id: 0, x: 10, y: 20, w: 100, h: 200, data: pngBytes(21) },        // 0 图
+    { type: 0, id: -1 },                                                          // 1 空帧（没有图像数据）
+    { type: 1 }, { type: 2 },                                                     // 2 / 3 组开始 / 结束
+    { type: 0, id: 4, x: 0, y: 0, w: 5, h: 5, data: Buffer.from('RIFF\x10\0\0\0WEBPVP8 ') },   // 4 有数据但不是 PNG
+    { type: 0, id: 5, x: 5, y: 5, w: 5, h: 5, scale: 0.5, data: pngBytes(22) },    // 5 图（记录里的 f64 = 透明度 0.5）
+  ] }) }]))
+  const scene = await parseGame(dir, [['ClearLayer', ['*']], ['UsePnaPackage', ['st01', 'ST_KIND.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 6, 0, 1, 2, 4, 5, 9]], commit(0), msg(0, 'x%K%P'), ['FileEnd', []]])
+  const index = JSON.parse(await readFile(path.join(dir, 'arc/res/Chip4/ST_KIND.pna/index.json'), 'utf8'))
+  check('PNA 索引每帧带 kind：image / empty / group / unsupported（非 PNG：写成 <序号>.bin，记开头 8 字节 magic 和大小）', J(index.frames.map((f) => f.kind)) === J(['image', 'empty', 'group', 'group', 'unsupported', 'image']) && index.frames[4].magic === '52494646' + '10000000' && (await exists(path.join(dir, 'arc/res/Chip4/ST_KIND.pna/4.bin'))) && !index.frames[4].file, J(index.frames))
+  const stand = scene.steps[0].commands.find((c) => c.op === 'stand')
+  check('立绘只画有图的帧（0 和 5；按序号从大到小画，和引擎的绘制循环一样，小的在上面）；空帧 / 组标记 / 非 PNG 不画，也不算「没查到」；超出帧数的序号（9）才算没查到；stats.pnaFrames 按种类计数', stand?.parts.length === 2 && stand.parts[0].alpha === 0.5 && stand.parts[1].alpha === undefined && /5\.png$/.test(stand.parts[0].src) && /0\.png$/.test(stand.parts[1].src) && scene.stats.pnaFrames.empty === 1 && scene.stats.pnaFrames.group === 1 && scene.stats.pnaFrames.unsupported === 1 && scene.stats.unresolved['pna-frame:ST_KIND.PNA#9'] === 1 && Object.keys(scene.stats.unresolved).some((k) => /^pna-frame-format:ST_KIND\.PNA#4\(52494646/.test(k)), J([stand, scene.stats.pnaFrames, scene.stats.unresolved]))
+}
+
 // ================= 计时器 / 遮罩过渡 / 电影 / CG 画廊 =================
 {
   const res = await parseGame(game, STORY_TIMER, { extraDirs: ['movie'] }, { resourceRoots: ['arc/res', 'movie'] })
@@ -285,7 +303,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const addMode = await parseGame(game, [['ClearLayer', ['*']], ['UsePnaPackage', ['st01', 'ST_TOW_A_M.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 1, 1]], ['DisplayCharacterImage', ['st01', 0, 1, 1, 3]], commit(0), msg(0, 'x'), ['FileEnd', []]])
   const onlyOne = await parseGame(game, [['ClearLayer', ['*']], ['UsePnaPackage', ['st01', 'ST_TOW_A_M.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 1, 3]], commit(0), msg(0, 'x'), ['FileEnd', []]])
   const partsOf = (scene) => scene.steps.flatMap((st) => st.commands).find((c) => c.op === 'stand')?.parts.map((p) => p.src.split('/').pop())
-  check('DisplayCharacterImage 的第一个 u8：非 0 = 先藏起别的帧（只剩列出来的）；0 = 在已显示的帧上再加', J(partsOf(addMode)) === J(['1.png', '3.png']) && J(partsOf(onlyOne)) === J(['3.png']), J([partsOf(addMode), partsOf(onlyOne)]))
+  check('DisplayCharacterImage 的第一个 u8：非 0 = 先藏起别的帧（只剩列出来的）；0 = 在已显示的帧上再加', J(partsOf(addMode)) === J(['3.png', '1.png']) && J(partsOf(onlyOne)) === J(['3.png']), J([partsOf(addMode), partsOf(onlyOne)]))
   const bob = await parseGame(game, STORY_BOB)
   const bobOps = bob.steps.flatMap((st) => st.commands).filter((c) => c.op === 'stand' || c.op === 'standMove')
   check('立绘上的 Effect1 种类 1（位置偏移）→ standMove（slot = 图层名；目标 = 寄存器 5 / 6 或立即数；时长 f4 秒；缓动 mode；延迟）；ST_QUAKE 这种带立即数的也一样；一串小动画各一条', J(bobOps.map((c) => c.op)) === J(['stand', 'standMove', 'standMove', 'standMove']) && J(bobOps[1]) === J({ op: 'standMove', slot: 'st01', to: [0, 10], seconds: 0.3, ease: 3 }) && J(bobOps[2]) === J({ op: 'standMove', slot: 'st01', to: [0, -10], seconds: 0.3, ease: 3, delay: 0.1 }) && J(bobOps[3]) === J({ op: 'standMove', slot: 'st01', to: [2, 2], seconds: 0.025, ease: 1 }) && bob.stats.effects.standMove === 3 && !bob.stats.raw['Effect1:kind1'], J(bobOps))

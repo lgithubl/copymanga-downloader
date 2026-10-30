@@ -13,7 +13,8 @@ import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
-export const CONTAINER_FORMAT_VERSION = 2
+// 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha）
+export const CONTAINER_FORMAT_VERSION = 3
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -122,7 +123,7 @@ export function parsePna(buffer) {
   let pos = 20 + count * 40
   for (let i = 0; i < count; i++) {
     const r = 20 + i * 40
-    const frame = { type: buffer.readUInt32LE(r), id: buffer.readInt32LE(r + 4), x: buffer.readInt32LE(r + 8), y: buffer.readInt32LE(r + 12), w: buffer.readUInt32LE(r + 16), h: buffer.readUInt32LE(r + 20), scale: buffer.readDoubleLE(r + 28), size: buffer.readUInt32LE(r + 36) }
+    const frame = { mode: buffer.readUInt32LE(r + 24), type: buffer.readUInt32LE(r), id: buffer.readInt32LE(r + 4), x: buffer.readInt32LE(r + 8), y: buffer.readInt32LE(r + 12), w: buffer.readUInt32LE(r + 16), h: buffer.readUInt32LE(r + 20), scale: buffer.readDoubleLE(r + 28), size: buffer.readUInt32LE(r + 36) }
     if (pos + frame.size > buffer.length) throw new Error(`PNA 第 ${i} 帧的数据超出文件`)
     frame.data = buffer.subarray(pos, pos + frame.size)
     pos += frame.size
@@ -208,12 +209,18 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
           await mkdir(dir, { recursive: true })
           const index = { magic: pna.magic, width: pna.width, height: pna.height, frames: [] }
           for (const [i, frame] of pna.frames.entries()) {
-            const row = { n: i, type: frame.type, id: frame.id, x: frame.x, y: frame.y, w: frame.w, h: frame.h, scale: frame.scale }
+            const row = { n: i, type: frame.type, id: frame.id, x: frame.x, y: frame.y, w: frame.w, h: frame.h, scale: frame.scale, alpha: frame.scale, ...(frame.mode ? { mode: frame.mode } : {}) }   // mode = 记录里第 7 个 u32（引擎按它选图层种类：3 / 8 / 10 / 0x15 = 特殊图层，其余 0）
+            row.kind = frame.type === 1 || frame.type === 2 ? 'group' : frame.size > 0 ? (frame.data.subarray(0, 8).equals(PNG_MAGIC) ? 'image' : 'unsupported') : 'empty'   // group = 组开始 / 结束标记；empty = 没有图像数据的帧；unsupported = 有数据但不是 PNG
             if (frame.size > 0 && frame.data.subarray(0, 8).equals(PNG_MAGIC)) {
               row.file = `${i}.png`   // 按帧的序号（文件里的顺序）命名：脚本里的 DisplayCharacterImage 用的是这个序号（引擎里是数组下标，FUN_140115930），不是记录里的 id 字段
               await writeFile(path.join(dir, row.file), frame.data)
               result.pnaFrames += 1
-            } else if (frame.size > 0) row.unsupported = true   // 不是 PNG（样本里没见过）：记在索引里，不写文件
+            } else if (frame.size > 0) {   // 不是 PNG（样本里没见过）：数据原样写成 <序号>.bin，开头 8 字节记在索引里（看清它到底是什么格式再决定怎么解）
+              row.unsupported = true
+              row.magic = frame.data.subarray(0, 8).toString('hex')
+              row.size = frame.size
+              await writeFile(path.join(dir, `${i}.bin`), frame.data)
+            }
             index.frames.push(row)
           }
           await writeFile(path.join(dir, 'index.json'), JSON.stringify(index))

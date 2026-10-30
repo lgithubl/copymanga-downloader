@@ -15,7 +15,7 @@ const J = JSON.stringify
 
 // ---- config ----
 const d = normalizeGalConfig({})
-check('默认：dirCover = auto / scan 6 / depth 3 / max 6 / 不合并 / prefer [render, image]（对象形状）/ skip、only 空；thumbHover.mode = hover；thumbFallback.only = []', J(d.dirCover) === J({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, prefer: [{ source: 'render', match: '', take: 0 }, { source: 'image', match: '', take: 0 }], skip: [], only: [] }) && d.thumbHover.mode === 'hover' && J(d.thumbFallback.only) === '[]', J([d.dirCover, d.thumbHover.mode, d.thumbFallback.only]))
+check('默认：dirCover = auto / scan 6 / depth 3 / max 6 / 不合并 / prefer [render, image]（对象形状）/ skip、only 空；thumbHover.mode = hover；thumbFallback.only = []', J(d.dirCover) === J({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, from: 'first', leafScan: 0, prefer: [{ source: 'render', match: '', take: 0 }, { source: 'image', match: '', take: 0 }], skip: [], only: [] }) && d.thumbHover.mode === 'hover' && J(d.thumbFallback.only) === '[]', J([d.dirCover, d.thumbHover.mode, d.thumbFallback.only]))
 const c = normalizeGalConfig({
   dirCover: { enabled: true, scan: 99, depth: 0, max: 99, merge: true, prefer: ['image', { source: 'render', match: 'ch_\\d+', take: 2 }, 'zzz', { source: 'image', match: '(' }], skip: ['black', '('], only: ['bg'], extra: 1 },
   thumbHover: { mode: 'auto', count: 30 }, thumbFallback: { only: ['bg/', '[', 5] },

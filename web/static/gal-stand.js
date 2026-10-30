@@ -7,7 +7,7 @@
 // 图缺了就报 onMissing（顶部提示「缺少资源」），别的部件照画。
 //
 // 按槽位的立绘（stand 指令带 slot）和图集帧（part.atlas，Cocos2d plist）：画在同一个 canvas 上（先画上面的整体立绘，再按槽位顺序叠）。
-//   slot 立绘 = { slot, parts: [part], fade?, stage?: [w, h] }；part = { atlas | src, x?, y?, scale?, dim? }
+//   slot 立绘 = { slot, parts: [part], fade?, stage?: [w, h] }；part = { atlas | src, x?, y?, scale?, dim?, alpha? }
 //     坐标是「舞台像素」（stage 默认 1280x720，整个舞台按比例铺满 1920x1080 的 canvas）：x / y = 原图画布（图集里就是 spriteSourceSize 那块；整张图就是图本身）的中心相对舞台中心的偏移，y 向下为正（适配器负责把「y 向上」的游戏换算过来）；scale 默认 1；scale <= 0 = 隐藏（不加载）
 //     atlas = { plist, frame | frames, texture?, base? }：plist / texture 是资源路径（texture 缺省 = plist 换成 .png）；frames = 候选帧名（第一个在 plist 里存在的）；base = 底图帧名（存在才画，先画）。plist 由这里拉取、解析（gal-atlas.js），按 URL 缓存
 //     fade：槽位第一次出现时淡入（秒，只在实时播放时；消失是立即的）
@@ -92,7 +92,7 @@ function drawResolved(ctx, geo, item, alpha, off = [0, 0]) {
   const s = geo.k * scale
   const px = geo.cx + geo.k * (num(part.x) + off[0])
   const py = geo.cy + geo.k * (num(part.y) + off[1])
-  ctx.globalAlpha = alpha
+  ctx.globalAlpha = alpha * (Number(part.alpha) > 0 && Number(part.alpha) < 1 ? Number(part.alpha) : 1)   // part.alpha：这一部件自己的透明度（AdvHD 的 PNA 帧记录里有）
   ctx.filter = Number(part.dim) > 0 && Number(part.dim) < 1 ? `brightness(${Number(part.dim)})` : 'none'
   if (!frames) {
     ctx.drawImage(image, px - (image.naturalWidth * s) / 2, py - (image.naturalHeight * s) / 2, image.naturalWidth * s, image.naturalHeight * s)
