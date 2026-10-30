@@ -1,5 +1,6 @@
 // 适配器注册表。新增原始格式：写一个 { id, label, sniff(text), explainSniff?(text, options) → string（可选：sniff 没认时一句话说明原因）, parse(text, ctx, meta) → { steps, stats }（meta = { rel, stem }：这份脚本的路径和文件名） }，在这里登记即可。
 // 需要查别的文件才能解析的格式（别名表、图片目录…）再实现 contextFiles / contextDirs / prepare，见 ../context.mjs。
+import { advhdWs2Adapter } from './advhd-ws2.mjs'
 import { artwhirlJsonAdapter } from './artwhirl-json.mjs'
 import { bokusenJsonAdapter } from './bokusen-json.mjs'
 import { girlsCreationTagAdapter } from './girlscreation-tag.mjs'
@@ -31,6 +32,7 @@ registerGalAdapter(tyranoKsAdapter)           // TyranoScript .ks（*start + [ch
 registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
 registerGalAdapter(grenzeXmlAdapter)          // <easy_dialog-N id= next_id= …/> 行，独有写法，不会和别的格式抢
 registerGalAdapter(utageBookAdapter)          // Utage 工作簿 JSON（importGridList + Command/Arg1 表头），独有写法
+registerGalAdapter(advhdWs2Adapter)           // WillPlus AdvHD（advhd::ws2）：containers 从 .arc 解出来的 {"format":"advhd-ws2/1"…} 指令流，独有写法
 registerGalAdapter(otogiJsonAdapter)          // Otogi Frontier R：{"Id":N,"Title":…,"MSceneDetails":[ / {"Id":N,"Description":…,"MAdultDetails":[（无扩展名的 JSON），独有写法
 
 export const galAdapterIds = () => [...adapters.keys()]

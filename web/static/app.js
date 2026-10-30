@@ -2455,6 +2455,8 @@ const GAL_PRESETS = {
   grenze: { adapters: ['grenze-xml'], game: { id: 'grenze', title: 'Grenze' } },
   tsk: { adapters: ['utage-book'], game: { id: 'tsk', title: 'Twinkle Star Knights X' } },
   otogi: { adapters: ['otogi-json'], game: { id: 'otogi', title: 'Otogi Frontier R' } },
+  // WillPlus AdvHD 家族：id 用 :: 分段（advhd::<游戏>），同引擎的新游戏在这里加一行（或直接在方案 JSON 里写 advhd::<名字>——gal-layout 按家族处理，不用改脚本）
+  advhd_lpsl: { adapters: ['advhd::ws2'], game: { id: 'advhd::lpsl', title: 'Lovey-dovey Part-time Sex Life' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]

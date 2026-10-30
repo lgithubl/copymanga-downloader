@@ -1,4 +1,213 @@
 {
+ "advhd::lpsl": {
+  "adapterOptions": {
+   "advhd::ws2": {
+    "audioExts": [
+     "ogg",
+     "flac",
+     "wav",
+     "mp3"
+    ],
+    "channelDefault": "se",
+    "channels": [
+     {
+      "as": "voice",
+      "match": "^char"
+     },
+     {
+      "as": "bgvoice",
+      "match": "^bgv",
+      "volume": 1
+     },
+     {
+      "as": "se",
+      "match": "^se"
+     }
+    ],
+    "colorImages": [
+     {
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "match": "^EF_BLACK"
+     },
+     {
+      "color": [
+       255,
+       255,
+       255
+      ],
+      "match": "^EF_WHITE"
+     }
+    ],
+    "conditionalJump": "second",
+    "conditions": {
+     "2": "==",
+     "128": "<",
+     "129": ">",
+     "130": ">="
+    },
+    "fade": {
+     "max": 10
+    },
+    "flags": {
+     "unknown": true,
+     "values": {
+      "127": 0
+     }
+    },
+    "functions": {
+     "ArcGraphicOpenTest": "drop",
+     "GetMsgSkip": "drop",
+     "SetStopSkip": "drop",
+     "default": "skip",
+     "openCgBrowser": "drop",
+     "openCharSelect": "drop",
+     "openGallery": "drop",
+     "openGalleryTitle": "drop",
+     "openNameInput": "drop",
+     "openNmsSaveLoad": "drop",
+     "openSceneSelect": "drop"
+    },
+    "ignoreOps": [
+     "Unk05",
+     "Unk08",
+     "Unk0A",
+     "Unk0D",
+     "Unk0E",
+     "Unk13",
+     "Unk16",
+     "Unk17",
+     "Unk19",
+     "Unk1B",
+     "Unk1D",
+     "Unk3D",
+     "Unk3E",
+     "Unk64",
+     "Unk68",
+     "UnkFB",
+     "UnkFC",
+     "UnkFD",
+     "LayerConfig",
+     "SetTimer",
+     "StartTimer",
+     "CharMessageStart",
+     "AddMessageToLog",
+     "InitKeyName",
+     "LayersList",
+     "SetFlag",
+     "SetVariable",
+     "VariableUnk",
+     "VariableUnk32",
+     "VariableUnk3",
+     "VariableUnk4",
+     "VariableUnk51",
+     "VariableUnk2",
+     "UnkBackground1",
+     "UnkBackground2",
+     "UnkBackground3",
+     "Unk42",
+     "Unk43",
+     "SoundUnk1",
+     "SoundUnk2",
+     "SoundEffectUnk30",
+     "MusicUnk1",
+     "ShowGraphic",
+     "SetMask",
+     "PrepareBackgroundArea",
+     "UnkScreen",
+     "Unk67",
+     "Unk97",
+     "UnkAF",
+     "UnkB0",
+     "SetPnaFile",
+     "Unk75",
+     "Unk78",
+     "Unk7A",
+     "Unk7B",
+     "Unk84",
+     "Unk4A",
+     "OpenTitle"
+    ],
+    "imageExts": [
+     "png",
+     "jpg",
+     "jpeg"
+    ],
+    "layers": [
+     {
+      "match": "^ev",
+      "role": "ev"
+     },
+     {
+      "match": "^bg",
+      "role": "bg"
+     },
+     {
+      "match": "^st",
+      "role": "st"
+     }
+    ],
+    "maxReach": 20000,
+    "movie": {
+     "exts": [
+      "mp4",
+      "webm",
+      "m4v",
+      "mov"
+     ]
+    },
+    "skipFiles": [
+     "^LAYER_ORDER$"
+    ],
+    "speaker": {
+     "strip": [
+      "^%[A-Za-z]{1,3}"
+     ]
+    },
+    "stage": [
+     1280,
+     720
+    ],
+    "text": {
+     "newline": "\\n",
+     "strip": [
+      "%[A-Za-z]"
+     ]
+    }
+   }
+  },
+  "classify": [],
+  "containers": {
+   "dir": "arc",
+   "enabled": true,
+   "maxEntries": 200000,
+   "maxTotalMB": 8192,
+   "rules": [
+    {
+     "match": "^(?:Script\\d*|DX11Effect|Model|Rio)\\.arc$",
+     "skip": true
+    },
+    {
+     "match": "\\.arc$"
+    }
+   ],
+   "scan": [
+    "."
+   ],
+   "scriptDecoder": "advhd-ws2",
+   "scriptExt": "advhd"
+  },
+  "limits": {
+   "sampleBytes": 262144,
+   "sampleFiles": 20000,
+   "scriptBytes": 16777216,
+   "walkFiles": 800000
+  },
+  "resourceResolve": {}
+ },
  "aku": {
   "adapterOptions": {
    "girlscreation-line": {

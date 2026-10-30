@@ -15,6 +15,7 @@ import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
+import { ensureContainers } from '../gal/containers.mjs'
 import { resolveOnDisk } from '../gal/resolve.mjs'
 import { isVideoPath } from '../gal/thumbs.mjs'
 import { createFrameCache } from '../gal/video-thumb.mjs'
@@ -194,6 +195,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     if (fromMedia) rel = rel.slice(2)
     if (!rel || rel.split('/').some((part) => part === '..' || part === '')) throw bad('资源路径无效')
     const work = workDirOf(item)
+    await ensureContainers({ mediaDir: work, config }).catch(() => {})   // 容器（.arc）还没展开就先展开：直接打开资源链接（没经过浏览）也能找到文件
     // 解析顺序（规则全在 gal/resolve.mjs，config.resourceResolve 配）：原路径（资源根依次 + stripPrefixes 去前缀）→ rewrites → extensionFallbacks → normalizeUnicode → 按路径段忽略大小写；
     // 找到的真实路径（realpath）必须在媒体目录内，或在管理员写的 resourceResolve.allowedRoots 内——目录穿越和符号链接逃逸都挡掉。
     if (fromMedia) {
@@ -380,7 +382,20 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     if (!unit) throw new Error(`Unit not found: ${unitId}`)
     return unit
   }
-  const patchItemMetadata = (itemId, patch = {}) => updateItem(itemId, (item) => {
+  // 容器（config.containers，如 WillPlus .arc）：gal-layout 把 config 写好之后马上在后台展开（大 arc 要几分钟，别等到第一次打开列表才开始；和浏览共用同一次展开——单飞）。
+  // 失败不抛：浏览时会再试一次，错误在列表页的渲染诊断里
+  const warmContainers = (item) => {
+    try {
+      const config = normalizeGalConfig(item.config)
+      if (config.containers.enabled) ensureContainers({ mediaDir: workDirOf(item), config }).catch(() => {})
+    } catch { /* 目录没了 / 配置坏了：浏览时会报 */ }
+  }
+  const patchItemMetadata = async (itemId, patch = {}) => {
+    const next = await patchItemMetadataNow(itemId, patch)
+    if (patch.gal?.config !== undefined) warmContainers(next)
+    return next
+  }
+  const patchItemMetadataNow = (itemId, patch = {}) => updateItem(itemId, (item) => {
     const next = { ...item }
     if (patch.workKey !== undefined) next.workKey = String(patch.workKey || '')
     if (patch.title !== undefined && String(patch.title || '').trim()) next.title = String(patch.title).trim()

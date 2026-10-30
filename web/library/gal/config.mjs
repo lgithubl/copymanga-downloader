@@ -5,6 +5,7 @@
 // config 全是数据（路径、字典、模板），不含代码：模板只做占位符替换，之后仍要通过存在性检查和「只认媒体目录内的真实路径」才会被读。
 
 import { safeRelPath } from './paths.mjs'
+import { SCRIPT_DECODER_IDS } from './containers.mjs'
 import { compileSafeRegex, isValidVoiceRegex } from './voice.mjs'
 
 export const DEFAULT_PAGE_SIZE = 25
@@ -21,6 +22,11 @@ export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps
 export const DIR_COVER_SOURCES = Object.freeze(['render', 'image'])
 export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]) })
 export const DIR_COVER_LIMITS = Object.freeze({ scan: [1, 30], depth: [1, 5], max: [1, 24], list: 10 })
+// 容器（打包格式，如 WillPlus .arc）：服务端自己读容器、展开到媒体目录下的缓存目录，见 containers.mjs
+export const CONTAINER_PNA_MODES = Object.freeze(['frames', 'raw', 'skip'])
+export const CONTAINER_KINDS = Object.freeze(['script', 'res', 'pna'])
+export const DEFAULT_CONTAINERS = Object.freeze({ enabled: false, dir: 'arc', scan: Object.freeze(['.']), scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: Object.freeze([]), maxEntries: 200000, maxTotalMB: 8192 })
+export const CONTAINER_LIMITS = Object.freeze({ rules: 20, list: 10, maxEntries: [1, 1000000], maxTotalMB: [1, 65536] })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
 export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, only: Object.freeze([]), scanSteps: 200, scanFrom: 0, topUp: false, kindMax: Object.freeze({}) })
 // 卡片封面 / 悬停轮播（见 DEFAULT_GAL_CONFIG 里 thumbCover / thumbHover 的说明）
@@ -94,6 +100,11 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   //            按顺序找：第一档有候选就用它，没有才看下一档（匹配 a 最优先，否则 b，否则默认）；merge: true = 各档的候选按顺序合起来，取到 max 张为止
   //   skip / only  黑 / 白名单：正则数组（对脚本路径 / 图片路径），命中 skip 的丢掉；only 写了就只要命中其中一条的
   dirCover: { ...DEFAULT_DIR_COVER, prefer: [...DEFAULT_DIR_COVER.prefer], skip: [], only: [] },
+  // 容器（见 containers.mjs）：{ enabled（默认 false）, dir（展开到媒体目录下的哪个目录，默认 arc）, scan（在哪些目录里找 .arc，相对媒体目录，默认 ['.']）, scriptDecoder（二进制脚本的解码器，默认 advhd-ws2）, scriptExt（解出来的脚本的扩展名，默认 advhd）,
+  //   rules（容器名正则 → 怎么处理，第一条命中的生效；没有任何规则命中的容器不展开）：[{ match（正则，对容器文件名，不分大小写）, skip（true = 这个容器不展开：黑名单）, kinds（只展开这几类：script 脚本 / res 图片音频视频 / pna 动画包，默认全部）,
+  //     include / exclude（正则数组，对条目名，不分大小写：写了 include 就只要命中其中一条的；exclude 命中的丢掉）, pna（frames 按帧拆成 PNG + index.json（默认）/ raw 原样 / skip 不要）}],
+  //   maxEntries（单个容器条目上限）, maxTotalMB（展开的总大小上限）}。默认没启用：整个字段不写 = 引擎不碰任何容器
+  containers: { ...DEFAULT_CONTAINERS, scan: [...DEFAULT_CONTAINERS.scan], rules: [] },
   // 卡片封面怎么选（卡片有多张图时）：random（默认，每次渲染随机一张当封面，悬停时随机顺序轮播）| first（只显示第一张，不轮播 = 旧行为）| hover（封面固定第一张，悬停时轮播）
   thumbMode: 'random',
   // 封面选哪张（卡片有多张候选图时）：random（默认）| first | last | { index: N }（第 N 张，从 0 数，超出就取最后一张）。thumbMode 是旧名：random → random；first → first 且不轮播；hover → first
@@ -143,6 +154,9 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
 })
 
 const MAX_LIST = 20
+// game.id / 适配器 id：引擎家族用 :: 分段（advhd::lpsl = 家族 advhd 的游戏 lpsl；advhd::ws2 = 家族 advhd 的脚本适配器）
+export const GAME_ID = /^[A-Za-z0-9_-]{1,40}(?:::[A-Za-z0-9_-]{1,40}){0,2}$/
+export const ADAPTER_ID = /^[a-z0-9-]{1,40}(?:::[a-z0-9-]{1,40}){0,2}$/
 const MAX_RULE_REGEX = 200
 const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '')
 
@@ -438,6 +452,73 @@ export function normalizeGalConfigWithWarnings(raw) {
   // 默认的 prefer 也规整成对象（和写了的一致，下游只处理一种形状）
   dirCover.prefer = dirCover.prefer.map((t) => (typeof t === 'string' ? { source: t, match: '', take: 0 } : t))
 
+  // containers：容器展开（见 DEFAULT_GAL_CONFIG 里的说明）
+  const dco = DEFAULT_CONTAINERS
+  const containers = { ...dco, scan: [...dco.scan], rules: [] }
+  if (v.containers !== undefined && !isPlainObject(v.containers)) warn('containers', '不是对象，用默认值', v.containers)
+  if (isPlainObject(v.containers)) {
+    const c = v.containers
+    for (const key of Object.keys(c)) if (!(key in dco)) warn('containers', `不认识的字段 ${key}，已丢掉`, key)
+    if (c.enabled !== undefined) { if (typeof c.enabled === 'boolean') containers.enabled = c.enabled; else warn('containers.enabled', '只能是 true / false，用默认值', c.enabled) }
+    if (c.dir !== undefined) {
+      const rel = typeof c.dir === 'string' ? safeRelPath(c.dir) : null
+      if (rel) containers.dir = rel
+      else warn('containers.dir', '不是安全的相对目录，用默认值', c.dir)
+    }
+    if (c.scan !== undefined) {
+      const bad = []
+      const list = []
+      for (const raw of Array.isArray(c.scan) ? c.scan.slice(0, CONTAINER_LIMITS.list) : []) {
+        const rel = raw === '.' ? '.' : typeof raw === 'string' ? safeRelPath(raw) : null
+        if (rel === null || rel === '') bad.push(raw)
+        else if (!list.includes(rel)) list.push(rel)
+      }
+      for (const raw of bad) warn('containers.scan', '不是安全的相对目录，已丢掉', raw)
+      if (!Array.isArray(c.scan)) warn('containers.scan', '不是数组，用默认值', c.scan)
+      else if (list.length) containers.scan = list
+      else warn('containers.scan', '没有一项合法，用默认值', c.scan)
+    }
+    if (c.scriptDecoder !== undefined) { if (SCRIPT_DECODER_IDS.includes(c.scriptDecoder)) containers.scriptDecoder = c.scriptDecoder; else warn('containers.scriptDecoder', `不认识的解码器（可用：${SCRIPT_DECODER_IDS.join(' / ')}），用默认值`, c.scriptDecoder) }
+    if (c.scriptExt !== undefined) { if (typeof c.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(c.scriptExt)) containers.scriptExt = c.scriptExt; else warn('containers.scriptExt', '只能是 1-10 位小写字母 / 数字，用默认值', c.scriptExt) }
+    for (const key of ['maxEntries', 'maxTotalMB']) {
+      if (c[key] === undefined) continue
+      const n = Number(c[key])
+      const [lo, hi] = CONTAINER_LIMITS[key]
+      if (c[key] === null || c[key] === '' || typeof c[key] === 'boolean' || !Number.isFinite(n)) { warn(`containers.${key}`, '不是数字，用默认值', c[key]); continue }
+      containers[key] = Math.max(lo, Math.min(hi, Math.round(n)))
+      if (containers[key] !== Math.round(n)) warn(`containers.${key}`, `超出范围 ${lo}–${hi}，夹到 ${containers[key]}`, c[key])
+    }
+    if (c.rules !== undefined) {
+      if (!Array.isArray(c.rules)) warn('containers.rules', '不是数组，用默认值', c.rules)
+      else {
+        if (c.rules.length > CONTAINER_LIMITS.rules) warn('containers.rules', `最多 ${CONTAINER_LIMITS.rules} 条，多出的丢掉`, c.rules.length)
+        for (const rule of c.rules.slice(0, CONTAINER_LIMITS.rules)) {
+          if (!isPlainObject(rule)) { warn('containers.rules', '这一条不是对象，已丢掉', rule); continue }
+          for (const key of Object.keys(rule)) if (!['match', 'skip', 'kinds', 'include', 'exclude', 'pna'].includes(key)) warn('containers.rules', `不认识的字段 ${key}，已丢掉`, key)
+          const match = text(rule.match, MAX_RULE_REGEX)
+          try { if (!match || !compileSafeRegex(match, { flags: 'i' })) throw new Error('empty') } catch { warn('containers.rules', 'match 为空或不是合法正则（太长 / 量词套量词 / 反向引用），这一条已丢掉', rule); continue }
+          const out = { match }
+          if (rule.skip !== undefined) { if (typeof rule.skip === 'boolean') { if (rule.skip) out.skip = true } else warn('containers.rules.skip', '只能是 true / false，已丢掉', rule.skip) }
+          if (rule.kinds !== undefined) {
+            const kinds = Array.isArray(rule.kinds) ? rule.kinds.filter((k) => CONTAINER_KINDS.includes(k)) : []
+            if (kinds.length) out.kinds = [...new Set(kinds)]
+            else warn('containers.rules.kinds', `没有合法的类型（${CONTAINER_KINDS.join(' / ')}），已丢掉`, rule.kinds)
+          }
+          for (const key of ['include', 'exclude']) {
+            if (rule[key] === undefined) continue
+            if (!Array.isArray(rule[key])) { warn(`containers.rules.${key}`, '不是数组，已丢掉', rule[key]); continue }
+            const ok = []
+            for (const source of rule[key].slice(0, CONTAINER_LIMITS.list)) { try { if (typeof source === 'string' && compileSafeRegex(source, { flags: 'i' })) ok.push(source.trim()) } catch { /* 下面统一报 */ } }
+            if (ok.length < rule[key].length) warn(`containers.rules.${key}`, `${rule[key].length - ok.length} 项不是合法正则 / 太长 / 超过 ${CONTAINER_LIMITS.list} 项，已丢掉`, rule[key])
+            if (ok.length) out[key] = ok
+          }
+          if (rule.pna !== undefined) { if (CONTAINER_PNA_MODES.includes(rule.pna)) { if (rule.pna !== 'frames') out.pna = rule.pna } else warn('containers.rules.pna', `只能是 ${CONTAINER_PNA_MODES.join(' / ')}，用默认值 frames`, rule.pna) }
+          containers.rules.push(out)
+        }
+      }
+    }
+  }
+
   // thumbCover / thumbHover（thumbMode 是旧名：没写 thumbCover 时按它推；thumbMode: first 同时关掉轮播）
   const coverOf = (value) => {
     if (typeof value === 'string' && THUMB_COVER_MODES.includes(value)) return value
@@ -518,10 +599,10 @@ export function normalizeGalConfigWithWarnings(raw) {
     groups.push({ parent, pattern })
   }
 
-  const game = isPlainObject(v.game) && /^[A-Za-z0-9_-]{1,40}$/.test(String(v.game.id ?? ''))
+  const game = isPlainObject(v.game) && GAME_ID.test(String(v.game.id ?? ''))
     ? { id: String(v.game.id), title: text(v.game.title, 100) }
     : null
-  if (v.game !== undefined && v.game !== null && !game) warn('game', 'id 必须是 1-40 位字母 / 数字 / _ / -，当作没配', v.game)
+  if (v.game !== undefined && v.game !== null && !game) warn('game', 'id 必须是 1-40 位字母 / 数字 / _ / -，引擎家族可以用 :: 分段（如 advhd::lpsl），当作没配', v.game)
 
   // adapterOptions：每个适配器 ≤ 16 KB，合计 ≤ 64 KB（规则表会放在这里）；id 不合格 / 不是对象 / 太大 / 超出合计 = 丢掉并报告
   const adapterOptions = {}
@@ -530,7 +611,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     const entries = Object.entries(v.adapterOptions)
     if (entries.length > ADAPTER_OPTIONS_MAX.adapters) warn('adapterOptions', `适配器超过 ${ADAPTER_OPTIONS_MAX.adapters} 个，多出的被丢掉`, entries[ADAPTER_OPTIONS_MAX.adapters][0])
     for (const [id, options] of entries.slice(0, ADAPTER_OPTIONS_MAX.adapters)) {
-      if (!/^[a-z0-9-]{1,40}$/.test(id)) { warn('adapterOptions', '适配器 id 不合格（只能是小写字母 / 数字 / -，≤ 40 位），整项被丢掉', id); continue }
+      if (!ADAPTER_ID.test(id)) { warn('adapterOptions', '适配器 id 不合格（只能是小写字母 / 数字 / -，可以用 :: 分段，如 advhd::ws2，≤ 40 位），整项被丢掉', id); continue }
       if (!isPlainObject(options)) { warn(`adapterOptions.${id}`, '不是对象，已丢掉', options); continue }
       try {
         const json = JSON.stringify(options)
@@ -749,6 +830,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     thumbSources: v.thumbSources === undefined ? [] : thumbSources,
     thumbFallback,
     dirCover,
+    containers,
     thumbMode: ['random', 'first', 'hover'].includes(v.thumbMode) ? v.thumbMode : d.thumbMode,
     thumbCover,
     thumbHover,

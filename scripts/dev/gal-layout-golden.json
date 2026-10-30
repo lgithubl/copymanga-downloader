@@ -5899,6 +5899,254 @@
   },
   "replace": false
  },
+ "advhd|direct|advhd::lpsl": {
+  "config": {
+   "adapterOptions": {
+    "advhd::ws2": {
+     "resDir": "arc/res"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "advhd::lpsl",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "arc/res"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 0,
+   "scriptExtensions": [
+    "advhd"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "arc/script",
+     "id": "story",
+     "label": "剧情"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbFallback": {
+    "prefer": [
+     "cg",
+     "stand",
+     "bg"
+    ]
+   },
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: advhd::lpsl",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: advhd::lpsl"
+  ],
+  "details": {
+   "game": "advhd::lpsl",
+   "kind": "advhd",
+   "scripts": 0,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "advhd|direct|auto": {
+  "config": {
+   "adapterOptions": {
+    "advhd::ws2": {
+     "resDir": "arc/res"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "advhd::advhd",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "arc/res"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 0,
+   "scriptExtensions": [
+    "advhd"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "arc/script",
+     "id": "story",
+     "label": "剧情"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbFallback": {
+    "prefer": [
+     "cg",
+     "stand",
+     "bg"
+    ]
+   },
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: advhd::advhd",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: advhd::advhd"
+  ],
+  "details": {
+   "game": "advhd::advhd",
+   "kind": "advhd",
+   "scripts": 0,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "advhd|wrapped|advhd::lpsl": {
+  "config": {
+   "adapterOptions": {
+    "advhd::ws2": {
+     "resDir": "advhd/arc/res"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "advhd::lpsl",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "advhd/arc/res"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 0,
+   "scriptExtensions": [
+    "advhd"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "advhd/arc/script",
+     "id": "story",
+     "label": "剧情"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbFallback": {
+    "prefer": [
+     "cg",
+     "stand",
+     "bg"
+    ]
+   },
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: advhd::lpsl",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: advhd::lpsl"
+  ],
+  "details": {
+   "game": "advhd::lpsl",
+   "kind": "advhd",
+   "scripts": 0,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
+ "advhd|wrapped|auto": {
+  "config": {
+   "adapterOptions": {
+    "advhd::ws2": {
+     "resDir": "advhd/arc/res"
+    }
+   },
+   "dirThumbs": [],
+   "game": {
+    "id": "advhd::advhd",
+    "title": ""
+   },
+   "groups": [],
+   "hiddenDirs": [],
+   "labels": {},
+   "merge": [],
+   "namesFiles": [],
+   "pageSize": 100,
+   "resourceRoots": [
+    "advhd/arc/res"
+   ],
+   "script": {
+    "id": "gal-layout",
+    "version": "2.12.0"
+   },
+   "scriptCount": 0,
+   "scriptExtensions": [
+    "advhd"
+   ],
+   "scriptIndex": [],
+   "scriptRoots": [
+    {
+     "dir": "advhd/arc/script",
+     "id": "story",
+     "label": "剧情"
+    }
+   ],
+   "scriptThumbs": [],
+   "thumbFallback": {
+    "prefer": [
+     "cg",
+     "stand",
+     "bg"
+    ]
+   },
+   "thumbsDirs": [],
+   "views": []
+  },
+  "itemTags": [
+   "Gal配置: advhd::advhd",
+   "Gal配置version: 2.12.0",
+   "Gal游戏: advhd::advhd"
+  ],
+  "details": {
+   "game": "advhd::advhd",
+   "kind": "advhd",
+   "scripts": 0,
+   "cover": "",
+   "overrides": []
+  },
+  "replace": false
+ },
  "minashigo_r|direct|minashigo_r": {
   "config": {
    "dirThumbs": [],

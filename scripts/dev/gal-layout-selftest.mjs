@@ -81,6 +81,13 @@ const CASES = [
     },
   },
   {
+    // 家族 advhd：声明的 game.id 不在布局表里（advhd::lpsl）也要按家族项处理；自动探测 = advhd::<目录名>
+    name: 'advhd', ids: ['advhd::lpsl'], build: async (d) => {
+      await mkdir(d, { recursive: true })
+      for (const name of ['Script2.arc', 'Rio.arc', 'Rio1.arc', 'Chip0.arc', 'Bgm.arc', 'AdvHD.exe']) await put(d, name, 'x')
+    },
+  },
+  {
     name: 'minashigo_r', ids: ['minashigo_r'], build: async (d) => {
       for (const dir of ['data/adv/textfiles/story', 'data/adv/image', 'data/adv/sound']) await mkdir(path.join(d, dir), { recursive: true })
       await put(d, 'data/adv/textfiles/story/1001.txt', 'msg,0,hi\n')
@@ -123,7 +130,7 @@ async function snapshot(legacy = true) {
   return snap
 }
 
-const ENGINE_KEYS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player', 'dirCover', 'thumbRender']
+const ENGINE_KEYS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player', 'dirCover', 'thumbRender', 'containers']
 // 规则字段快照：每个游戏 id（直接放的目录、声明 id）一份：adapterOptions 里探测函数没写的键（= 规则表贡献的）+ engine 字段
 async function rulesSnapshot() {
   const snap = {}
@@ -175,13 +182,13 @@ if (process.argv.includes('--update-golden')) {
 }
 
 
-const ALL_IDS = ['uviewer', 'deepone', 'legeclo', 'monmusu', 'angelic', 'minashigo', 'minashigo_r', 'girlscreation', 'girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits', 'tenkeiprdx', 'misttrain', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi']
+const ALL_IDS = ['uviewer', 'deepone', 'legeclo', 'monmusu', 'angelic', 'minashigo', 'minashigo_r', 'girlscreation', 'girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits', 'tenkeiprdx', 'misttrain', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'advhd']
 const logText = (out) => (out.logs || []).join('\n')
 const withLayouts = (layouts) => ({ layouts })
 
 // ================= 表：22 个 id 全在、extends 都解析得到、所有列表字段都是数组 =================
 {
-  check('LAYOUTS 导出了、含全部 22 个 id（不多不少）', LAYOUTS && J(Object.keys(LAYOUTS).sort()) === J([...ALL_IDS].sort()), J(Object.keys(LAYOUTS || {})))
+  check('LAYOUTS 导出了、含全部 23 个 id（不多不少）', LAYOUTS && J(Object.keys(LAYOUTS).sort()) === J([...ALL_IDS].sort()), J(Object.keys(LAYOUTS || {})))
   const unresolved = []
   for (const id of ALL_IDS) {
     const problems = []
@@ -197,7 +204,7 @@ const withLayouts = (layouts) => ({ layouts })
   const noAkuPlayer = (layout) => ({ ...layout, title: '', engine: { ...layout.engine, player: undefined, dirCover: undefined } })
   check('别名解析出来的数据 = 父项的数据（只有 title 不同；aku 另有 engine.player.cameraMode = widget 和 engine.dirCover）', ALL_IDS.filter((id) => LAYOUTS[id].extends === 'girlscreation').every((id) => J(noAkuPlayer(mod.resolveLayout(id))) === J(noAkuPlayer(girls))) && J(mod.resolveLayout('aku').engine.player) === J({ cameraMode: 'widget' }) && !girls.engine.player)
   const handlers = ALL_IDS.map((id) => [id, LAYOUTS[id].autoOrder])
-  check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'uviewer']), J(handlers))
+  check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'advhd', 'uviewer']), J(handlers))
 }
 {
   // schema：遍历表里每一项（未解析 extends 的原始写法），所有「列表」字段必须是数组，哪怕现在只有一个元素
@@ -446,7 +453,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
 // ================= 规则表（ADAPTER_RULES + engine 字段）：写进 config、体量、端到端等价、和 layouts / overrides 的关系 =================
 {
   const manifest = JSON.parse(await readFile(path.join(path.dirname(MAIN), 'manifest.json'), 'utf8'))
-  check('manifest：版本 2.17.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.17.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
+  check('manifest：版本 2.18.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.18.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
 
   // 每个 fixture 的声明 id（别名都跑）：写出来的 config 经过引擎规整一条警告都没有（规则表 / engine 字段都合格），体量在引擎上限内
   const tooBig = []

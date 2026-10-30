@@ -30,6 +30,7 @@ import { galAdapter, galAdapterIds, sniffGalAdapter } from './adapters/index.mjs
 import { pickDirCover } from './dir-cover.mjs'
 import { expandTemplate, galConfigView, globToRegExp, normalizeGalConfig, parentRegExp } from './config.mjs'
 import { buildGraphCatalog } from './graph.mjs'
+import { containerReport, ensureContainers, invalidateContainers } from './containers.mjs'
 import { contextStats, invalidateContexts, loadAdapterContext } from './context.mjs'
 import { safeRelPath } from './paths.mjs'
 import { createThumbEngine, invalidateThumbCaches } from './thumbs.mjs'
@@ -56,6 +57,7 @@ const countCache = new Map()
 const expressionCache = new Map()
 // 手动刷新（界面「更多 → 刷新索引」）：丢掉这个媒体目录的全部缓存——适配器上下文（文件索引 + 名称表）、嗅探结果、目录列表、脚本摘要、数量
 export function invalidateBrowseCaches(mediaDir) {
+  invalidateContainers(mediaDir)   // 容器展开的单飞记录（下一次浏览按 stamp 重新检查容器有没有变）
   let n = invalidateContexts(mediaDir) + invalidateThumbCaches(mediaDir)
   for (const map of [sniffCache, entriesCache, scriptInfoCache, countCache, expressionCache]) {
     for (const key of [...map.keys()]) if (String(key).startsWith(`${mediaDir}${path.sep}`) || String(key).startsWith(`${mediaDir}|`)) { map.delete(key); n += 1 }
@@ -960,6 +962,14 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     // config 里被丢掉 / 夹住 / 退回默认的内容（以前悄悄丢）：每条一行，最多 10 条
     for (const w of configWarnings.slice(0, 10)) add('warn', 'config-dropped', `config.${w.field}：${w.reason}${w.snippet ? `（${w.snippet}）` : ''}`)
     if (configWarnings.length > 10) add('warn', 'config-dropped', `config 里还有 ${configWarnings.length - 10} 处被丢掉 / 调整的内容没有列出`)
+    if (config.containers.enabled) {
+      if (containerFailure) add('error', 'container-failed', `容器展开失败：${containerFailure}`)
+      const report = containerReport(mediaDir)
+      const arcs = Object.entries(report?.arcs || {})
+      for (const [name, r] of arcs) if (r.error) add('error', 'container-failed', `容器 ${name} 展开失败：${r.error}`)
+      for (const [name, r] of arcs) if (r.bad?.length) add('warn', 'container-bad-entries', `容器 ${name} 里有 ${r.bad.length} 个条目没展开（名字不安全 / PNA 损坏 / 太大）`, r.bad.slice(0, 5))
+      if (report && !arcs.some(([, r]) => r.scripts || r.res || r.pna || r.cached)) add('warn', 'container-empty', `config.containers 已启用，但没有展开出任何东西：检查 containers.scan（容器文件所在目录）和 containers.rules（容器名匹配 / skip 黑名单）`)
+    }
     const home = parsed.kind === 'dir' && !parsed.rel
     if (home) {
       for (const set of sets) {
@@ -1114,6 +1124,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // params：{ node, include, exclude, target, bgvoice, tries, resourceBase, rand }。成功返回 { ok: true, ...结果 }；
   // 没有可放的语音返回 { ok: false, status: 404, error: 'no-voice' | 'all-filtered', reason, tried, ms }；参数不合格抛 400（code: invalid-regex / invalid-target）
   async function randomVoice({ node = '', include = '', exclude = '', target = 'path', bgvoice = false, tries = DEFAULT_VOICE_TRIES, resourceBase = '', rand = Math.random } = {}) {
+    await prepareContainers()
     const startedAt = Date.now()
     const includeRe = compileVoiceRegex(include || config.voiceInclude, '白名单')
     const excludeRe = compileVoiceRegex(exclude || config.voiceExclude, '黑名单')
@@ -1168,7 +1179,12 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return { ok: false, status: 404, error: 'no-voice', reason: single ? '这个脚本里没有语音' : `${where}，都没有语音${scripts.length > stats.tried ? '（再点一次会换一批脚本）' : ''}`, ...done({}) }
   }
 
+  // 容器（config.containers）：第一次浏览 / 取随机语音前先展开（幂等，没变的容器直接跳过）；失败不挡浏览，记在 problems 里
+  const prepareContainers = () => ensureContainers({ mediaDir, config }).catch((error) => { containerFailure = String(error.message || error).slice(0, 300) })
+  let containerFailure = ''
+
   async function getNode(nodeId, opts = {}) {
+    await prepareContainers()
     if (nodeId === 'x:expr') {
       if (!expressionAdapter) throw fail('这个媒体没有表情预设', 404)
       return expressionNode()

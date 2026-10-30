@@ -33,9 +33,10 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 | `thumbCover` / `thumbHover` | 卡片封面选哪张：`random`（默认）/ `first` / `last` / `{ index: N }`；悬停轮播：`{ enabled, count, order, intervalMs }`。`thumbMode` 是旧名（别名），见「卡片缩略图 → 封面与悬停轮播」 |
 | `cover` / `scriptCount` / `script` | 封面路径（`~/` 开头 = 相对媒体目录，只给封面用）/ 脚本数 / 谁写的这份配置 `{id, version, ranAt}` |
 | `groups` | 分组：`[{parent: 通配或 '.', pattern}]`。列 `parent` 下的目录时，脚本名（无扩展名）匹配 `pattern` 的按**第 1 个捕获组**归进虚拟目录（一个键一张卡片，节点 id `g:<键>:<路径>`），不匹配的照常列出；名字/头像和真实目录一样查 `labels` / `namesFiles` / `dirThumbs`。`parent: '.'` = 脚本根本身（`merge` 也认） |
-| `game` | `{id, title}`：这个媒体是哪个游戏/资源包（`id` 只含字母数字 `_-`）。**导入时在 config 里写**，tag 脚本按它分发——同一个 adapter、配置不同的两个媒体靠它区分；脚本同时打 `Gal游戏: <id>` 标签方便搜索（以 config 为准） |
+| `game` | `{id, title}`：这个媒体是哪个游戏/资源包（`id` 只含字母数字 `_-`；引擎家族用 `::` 分段，如 `advhd::lpsl`，最多 3 段）。**导入时在 config 里写**，tag 脚本按它分发——同一个 adapter、配置不同的两个媒体靠它区分；脚本同时打 `Gal游戏: <id>` 标签方便搜索（以 config 为准） |
 | `adapterOptions` | `{<adapter id>: {…}}`，原样交给适配器（每个适配器序列化后 ≤ 16 KB，合计 ≤ 64 KB，最多 10 个适配器；规则表会放在这里）；需要查别的文件的适配器用它指路径。适配器从 `prepare({options})` 或 **`parse` 的 `meta.options`** 拿到，见「适配器契约」 |
 | `scriptIndex` | 脚本索引（给脚本配缩略图 + 来源角标）：`[{dir, pattern, key, badge}]`。`dir`（相对媒体目录）里的文件名匹配 `pattern` 时，按 `key` 模板（`{1}{2}…` = 捕获组）算出它对应哪个脚本（脚本名，无扩展名），这个文件就是那个脚本的缩略图，`badge` 显示在卡片右上角 |
+| `containers` | 容器（打包格式）：服务端自己读 `.arc`、展开到媒体目录下的缓存目录，见「WillPlus AdvHD / 容器」。`{enabled（默认 false）, dir, scan, scriptDecoder, scriptExt, rules[{match, skip, kinds, include, exclude, pna}], maxEntries, maxTotalMB}` |
 | `hiddenDirs` | 列目录时不显示的目录名（任意层级，精确匹配） |
 | `classify` / `resourceResolve` / `indexSkip` / `limits` / `player` | 引擎层的通用能力（只读配置、按配置匹配；脏知识由元数据脚本写进来）：音频指令重分类 / 资源路径解析规则 / 文件索引跳过的名字 / 上限 / 播放器默认值，见下「引擎层通用配置」 |
 | `stripPrefixes` `scriptExtensions` `pageSize` | 资源找不到时去掉的前缀 / 脚本扩展名（`''` = 没有扩展名的文件，`['']` 只认无扩展名的、`['', 'json']` 两种都认；Otogi 的剧情文件是 `typeadv/MScenes/10001` 这样的）/ 每页卡片数 |
@@ -614,6 +615,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | **Kamihime Player** | TyranoScript（`tyrano-ks`，game.id `kamihime`） | `game/dmm/raw_scenario/<类别>/<目录>/<id>_script.ks` + 同目录 `<id>.json`；资源 `game/dmm/assets`（带 hash 的平铺 + `<resource_directory>/` 里的语音）；见「Kamihime Player」一节 |
 | **Grenze**（GrenzeViewer） | Unity 导出（`grenze-xml`，game.id `grenze`） | `TextAsset/easy_dialog-N.xml`（一个文件几百个场景）+ `assets/resources/patchres/{bg/battlebg,bgm,sound,voice,merc/pic}`；见「Grenze」一节 |
 | legeclo、minashigo（Ren'Py）、tenkeiprdx、misttrain、UViewer | 见各自一节 | |
+| **WillPlus AdvHD 家族**（第一个：Lovey-dovey Part-time Sex Life） | 引擎家族 `advhd`（`advhd::ws2`，game.id `advhd::<游戏>`） | 服务端读 `.arc`（`config.containers`）→ ws2 指令流；见「WillPlus AdvHD / 容器」 |
 | **Otogi Frontier R**（离线网页版） | 无扩展名的剧情 JSON（`otogi-json`，game.id `otogi`） | `list.json` + `typeadv/MScenes/<id>`（普通剧情）+ `json/<id>`（成人剧情，Spine 静态画面）+ `Episode/Main` / `VieableEpisodeList` / `MasterData`（列表）；见「Otogi Frontier R」一节 |
 | **Twinkle Star Knights X** | Unity + Utage（`utage-book`，game.id `tsk`） | `<数据根>/Adventure/<剧情文件夹>/*.book.json` + `Adventure/Master.chapter.json`；数据根 = `…_Data/StreamingAssets/<游戏名>`，见「Twinkle Star Knights X」一节 |
 
@@ -916,6 +918,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 | Grenze | `grenze` | `grenze-xml` |
 | Twinkle Star Knights X | `tsk` | `utage-book` |
 | Otogi Frontier R（离线网页版，无扩展名 JSON） | `otogi` | `otogi-json` |
+| WillPlus AdvHD：Lovey-dovey Part-time Sex Life | `advhd::lpsl` | `advhd::ws2` |
 
 - 同一套探测的游戏（Girls Creation 家族、UViewer 系）在 gal-layout 里是「别名 id」：声明了 `game.id` 才走，探测和原 id 完全一样，**声明什么 id 就原样写回 `config.game.id` 和状态 tag**（`Gal游戏: aku` 等）。
 - 没填 `game.id` 时自动探测不区分别名：Girls Creation 家族的目录认成 `girlscreation`，UViewer 系认成 `uviewer`——想要唯一 id 就在导入方案里选对应的游戏。
@@ -967,3 +970,31 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **胶片场景**（`bg.film`：`<id>_harem-character_script.json`，整张竖排条带转了 90° 存的）以前兜底封面会跳过条带，只剩一张灰底图。现在规则没给图时，脚本里每段**不同的、找得到的**胶片渲染一帧（`thumbRender.filmFrame`，默认 0.5 = 条带中间一帧，转回正的再铺满 16:9），最多 `thumbRender.filmMax` 段（默认 4，1～12），卡片轮播（`item.renders`，每项带 `film` = 胶片路径；渲染 key 含胶片路径和 filmFrame）。有胶片渲染图时不再带兜底的灰底图。`thumbRender.film: false` 关掉。
 - **dirCover 也用在文件系统目录 / 分组卡片**（以前只有 catalog）：`dirCover.enabled: true` 时，规则（thumbSources / dirThumbs）没给图的目录 / 分组卡片，用里面前 `scan` 个脚本（`depth` 层以内）的封面，`prefer` / `skip` / `only` / `max` 同上；`auto` 仍然只对声明了 `sceneThumbs` 的 catalog（TSK）生效。写在布局里：`config.dirCover`，或者 `engine.dirCover`（`engine` 现在也认 `dirCover` / `thumbRender`，别名继承时写在 engine 里就不会替换掉整份 config）。
 - 现在写了的：Aku `engine.dirCover = { enabled: true, scan: 8, max: 6, prefer: [render, image] }`（角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播）；Kamihime `config.dirCover = { enabled: true, scan: 6, max: 4, prefer: [render, image] }`（角色目录有头像用头像，没有头像的用里面场景的渲染图 / 图）。
+
+## WillPlus AdvHD（ADVPlayerHD 引擎家族）/ 容器（`config.containers`）
+
+**game.id = `advhd::<游戏>`，适配器 id = `advhd::ws2`**（`::` 分段 = 引擎家族 + 具体对象）。第一个游戏是 `advhd::lpsl`（Lovey-dovey Part-time Sex Life）。同引擎的新游戏只要 id 以 `advhd::` 开头，gal-layout 就按家族项 `LAYOUTS.advhd` 处理，**不用在脚本里为每个游戏加一条**；某个游戏真有差异时再用选项 `layouts['advhd::<游戏>']`（叠在家族项上，只覆盖写了的字段）或 `layouts.advhd`（改整个家族）。没声明 game.id 时自动探测（`Script*.arc` + `AdvHD.exe` + `Rio*.arc`），认领成 `advhd::<目录名的小写字母数字>`。
+
+```
+游戏目录/  Script2.arc（引擎 Lua，不读）  Rio.arc（UI / 辅助脚本，默认 skip）  Rio1.arc（剧情 ws2）  Chip*.arc / Graphic.arc / SysGraphic.arc（图，含 .pna）
+           Bgm.arc / Se*.arc / Voice*.arc（声音）  AdvHD.exe
+   ──第一次浏览 / 取资源时，服务端读 arc（containers.mjs）──▶
+           arc/script/<容器>/<脚本>.advhd      .ws2 → ROR2 解扰 → 解成 {"format":"advhd-ws2/1","ins":[[偏移, 指令名, 参数[, 选项表 | 图片 id 表]]…]}
+           arc/res/<容器>/<条目名>             图 / 声音 / 视频 原样；.pna → <名>.pna/{index.json, <帧 id>.png}（帧里的 PNG 拆出来 + 位置 / 尺寸索引）
+           arc/.stamp.json                     每个容器 大小 + mtime + 规则指纹：没变不重做；变了整个容器重展开（旧条目不残留）
+```
+
+- **展开不是流式读**：arc 展开到磁盘缓存目录（要和引擎的「只认媒体目录内真实文件」一致，也让封面 / 缩略图 / 随机语音 / 视频帧等现有能力原样可用）。代价是磁盘占用翻倍；用 `containers.rules` 的 `skip` / `include` / `exclude`（正则，对容器名 / 条目名，不分大小写）控制要不要收，`maxTotalMB`（默认 8192）/ `maxEntries` 兜底。
+- **容器是外来的二进制**：目录大小 / 条目数 / 偏移全部对着文件大小校验，条目名只认安全的相对路径（`..` / 隐藏 / `|` `#` / 太长 / 层数太多的拒掉，记在报告的 `bad` 里），展开先写临时目录再整体换（中途失败不留半截）。出问题在列表页的渲染诊断里：`container-failed`（哪个容器、为什么）/ `container-bad-entries` / `container-empty`（启用了但没展开出任何东西：检查 `scan` / `rules`）。
+- **规则**（`rules` 第一条命中的容器名正则生效；没有任何规则命中的容器不展开）：`skip: true` = 黑名单；`kinds` ⊂ `script` / `res` / `pna`；`include` / `exclude`；`pna: frames`（默认，拆帧）/ `raw`（原样）/ `skip`。家族默认：`Script*/DX11Effect/Model/Rio` skip，别的 `.arc` 全收。新游戏的容器名不一样（`Rio2.arc` / `Voice3.arc`…）默认就收，不想要的加一条 skip。
+- **脚本适配器 `advhd::ws2`**：ws2 指令 → gal-scene/1。台词 / 说话人 / 语音（`char*` 通道）/ 背景人声（`bgv*`）/ 音效 / bgm / 背景（`bg*` 图层）/ 事件图（`ev*` 图层 = `bg.over`）/ 纯色图（`EF_BLACK` 等 = `bg.color`）/ 立绘（`UsePnaPackage` + `DisplayCharacterImage` 的 id 表 + `MoveBackground` 位置 → `stand` 槽位，画 PNA 里那几帧）/ 选项（本脚本跳转 = 带 `when` 的分支，汇合点之后不带；跳到别的脚本的选项 = 一步提示，选了就在这里结束）/ 条件跳转（`SetFlag` + `Condition`）。**全部由 `adapterOptions['advhd::ws2']` 控制**（gal-layout 的 `ADAPTER_RULES` 写进 config，漂移守卫比对）：`layers` `colorImages` `channels` `speaker` `text` `fade` `flags`（`values` 默认 `{127: 0}`、`unknown`）`conditions` `conditionalJump` `functions` `skipFiles` `ignoreOps` `movie` `audioExts` `imageExts` `resDir`。
+- **没做的东西看得见**：`ExecuteFunction` 按 `functions` 表（`drop` = 不记，别的 = 不渲染并记 `raw` `ExecuteFunction:<名字>` + `stats.skippedFunctions`，表里没有的名字走 `default`）；没映射的指令记 `raw`（`ignoreOps` 里的布局 / 计时 / 内部状态只计数进 `stats.ignored`）；解码到不认识的指令就停（`stats.truncated` 带偏移和 opcode），脚本照常打开。播放页右下角「立绘/特效等 N 条指令暂未渲染」点开能看到按指令名汇总，`stats.unresolved` 是缺的资源（容器没给全时语音 / 图都会报在这里）。
+- **补指令 / 补格式**：新游戏遇到不认识的 opcode → 在 `advhd-ws2-decode.mjs` 的指令表里加一行（名字 + 参数规格）；arc 格式不同（加密等）→ 在 `containers.mjs` 加读取方式；游戏自己的 `ExecuteFunction` → 在 `functions` 里加映射。
+- **推断 / 没验证的地方**（逆向笔记和样本都没有直接证据；样本缺 Chip3/4/6/7、全部 Voice、Model 这几个 arc，立绘 / 背景 / 语音只有合成数据的测试）：
+  - ws2 指令分发没有逆向（只有社区指令表，针对 2.11；这个游戏是 2.1，多出 `0xAF`（按字节形状当 `b4 + f4`，语义不明）和 `Condition` 类型 `0x7D`）。
+  - `Condition` 类型 2 / 128 / 129 / 130 = `==` / `<` / `>` / `>=` 是猜的；两个跳转目标按社区文档当 真 / 假；没有值的标志按 `flags.unknown`（默认真），`127` 默认 0（它在标题 / 选项页里切换两套内容）。
+  - `ConditionalJump(a, b)` 取第二个目标（样本里它后面是同一个立绘的几帧小动画，第二个目标正好跳过）。
+  - `Unk65` 的 f32 = 渐变秒数、`MoveBackground` 的 (x, y) = 图层左上角在 1280×720 舞台里的位置、`DisplayCharacterImage` 的 id 表 = 要画的 PNA 帧 id：按数值范围 / 名字猜的，没有立绘 PNA 样本核对。
+  - PNA 帧里嵌 PNG 是**样本为准**：`SysGraphic.arc` 的 UI 包里帧确实是内嵌 PNG（逆向笔记 TODO 第三轮「帧只是图片名引用、像素在外部」和样本不符）；帧 type 0 = 图片、1 / 2 = 组开始 / 结束来自这批样本。立绘包是否同构没有样本。
+  - 视频（`PlayMovie ED_XX.DAT`）：`.DAT` 在样本的 arc 里没有，只按「同名 mp4 / webm / m4v / mov 在索引里」找，找不到记 `raw` PlayMovie + `unresolved`。
+  - 特效（`Effect1/2/3`、`DragBackground`、雨 / 抖动等）、计时器等待、`ShowGraphic` 遮罩过渡都没做（记 raw / ignored）。

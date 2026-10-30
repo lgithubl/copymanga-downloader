@@ -17,6 +17,7 @@
 //
 // 分发：
 //   config.game.id 已经填了（导入时写的）  → 只走那个游戏的探测（id 见 LAYOUTS）。认不出结构：uviewer / deepone 退回通用配置，别的跳过；不认识的 id 跳过
+//                                           引擎家族：表里没有这个 id、但 LAYOUTS 有一项声明了 family 前缀（advhd:: → LAYOUTS.advhd）且 id 以它开头（advhd::lpsl）→ 按家族项处理，新游戏不用在表里加一条
 //   没填 game.id                          → 按 LAYOUTS 里的 autoOrder 顺序探测（legeclo → monmusu → angelic → girlscreation → tenkeiprdx → misttrain → minashigo → minashigo_r → artwhirl → kamihime → bokusen → grenze → tsk → otogi → uviewer），
 //                                           谁认出来谁认领（把 game.id 写回 config）；都认不出 → 通用配置，不认领。声明了 game.id 就不看 markers（标记 / 门槛）
 // 各游戏怎么找目录（解析顺序）：
@@ -36,7 +37,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -772,6 +773,185 @@ export const ADAPTER_RULES = {
     backVoice: { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' },
     scene: { split: 'chains', forkPolicy: 'merge' },
   },
+  // advhd::ws2：WillPlus AdvHD 家族的脚本适配器（ws2 指令流 → 场景）。抄自 web/library/gal/adapters/advhd-ws2.mjs 的 DEFAULT_OPTIONS（漂移守卫 gal-layout-rules-selftest 会逐键比）；推断的部分（条件类型 / Unk65 渐变 / MoveBackground 位置 / ConditionalJump）见适配器文件头
+  'advhd::ws2': {
+    "resDir": "arc/res",
+    "stage": [
+      1280,
+      720
+    ],
+    "layers": [
+      {
+        "match": "^ev",
+        "role": "ev"
+      },
+      {
+        "match": "^bg",
+        "role": "bg"
+      },
+      {
+        "match": "^st",
+        "role": "st"
+      }
+    ],
+    "colorImages": [
+      {
+        "match": "^EF_BLACK",
+        "color": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "match": "^EF_WHITE",
+        "color": [
+          255,
+          255,
+          255
+        ]
+      }
+    ],
+    "channels": [
+      {
+        "match": "^char",
+        "as": "voice"
+      },
+      {
+        "match": "^bgv",
+        "as": "bgvoice",
+        "volume": 1
+      },
+      {
+        "match": "^se",
+        "as": "se"
+      }
+    ],
+    "channelDefault": "se",
+    "speaker": {
+      "strip": [
+        "^%[A-Za-z]{1,3}"
+      ]
+    },
+    "text": {
+      "strip": [
+        "%[A-Za-z]"
+      ],
+      "newline": "\\n"
+    },
+    "fade": {
+      "max": 10
+    },
+    "flags": {
+      "values": {
+        "127": 0
+      },
+      "unknown": true
+    },
+    "conditions": {
+      "2": "==",
+      "128": "<",
+      "129": ">",
+      "130": ">="
+    },
+    "conditionalJump": "second",
+    "functions": {
+      "default": "skip",
+      "GetMsgSkip": "drop",
+      "openCgBrowser": "drop",
+      "openGallery": "drop",
+      "openGalleryTitle": "drop",
+      "openNmsSaveLoad": "drop",
+      "openNameInput": "drop",
+      "ArcGraphicOpenTest": "drop",
+      "SetStopSkip": "drop",
+      "openSceneSelect": "drop",
+      "openCharSelect": "drop"
+    },
+    "skipFiles": [
+      "^LAYER_ORDER$"
+    ],
+    "ignoreOps": [
+      "Unk05",
+      "Unk08",
+      "Unk0A",
+      "Unk0D",
+      "Unk0E",
+      "Unk13",
+      "Unk16",
+      "Unk17",
+      "Unk19",
+      "Unk1B",
+      "Unk1D",
+      "Unk3D",
+      "Unk3E",
+      "Unk64",
+      "Unk68",
+      "UnkFB",
+      "UnkFC",
+      "UnkFD",
+      "LayerConfig",
+      "SetTimer",
+      "StartTimer",
+      "CharMessageStart",
+      "AddMessageToLog",
+      "InitKeyName",
+      "LayersList",
+      "SetFlag",
+      "SetVariable",
+      "VariableUnk",
+      "VariableUnk32",
+      "VariableUnk3",
+      "VariableUnk4",
+      "VariableUnk51",
+      "VariableUnk2",
+      "UnkBackground1",
+      "UnkBackground2",
+      "UnkBackground3",
+      "Unk42",
+      "Unk43",
+      "SoundUnk1",
+      "SoundUnk2",
+      "SoundEffectUnk30",
+      "MusicUnk1",
+      "ShowGraphic",
+      "SetMask",
+      "PrepareBackgroundArea",
+      "UnkScreen",
+      "Unk67",
+      "Unk97",
+      "UnkAF",
+      "UnkB0",
+      "SetPnaFile",
+      "Unk75",
+      "Unk78",
+      "Unk7A",
+      "Unk7B",
+      "Unk84",
+      "Unk4A",
+      "OpenTitle"
+    ],
+    "movie": {
+      "exts": [
+        "mp4",
+        "webm",
+        "m4v",
+        "mov"
+      ]
+    },
+    "audioExts": [
+      "ogg",
+      "flac",
+      "wav",
+      "mp3"
+    ],
+    "imageExts": [
+      "png",
+      "jpg",
+      "jpeg"
+    ],
+    "maxReach": 20000
+  },
   'otogi-json': {
     root: '',
     lang: 'jp',
@@ -1294,6 +1474,28 @@ export const LAYOUTS = {
     avatars: [], expectedDirs: ['resource'],
     notes: ['只有一部分脚本有同名资源子目录，没有的脚本只出台词（列表页「渲染诊断」会报缺资源）；打不开的 JSON（解析失败）照样列出来、打开时再报错'],
   },
+  // ---- WillPlus AdvHD（ADVPlayerHD）引擎家族：game.id = advhd::<游戏>（任何以 advhd:: 开头的 id 都走这一项，不用每个游戏写一条；某个游戏真有差异时再加 'advhd::<游戏>': { extends: 'advhd', … } 或用选项 layouts 覆盖）。
+  //   目录：<根>/{Script*.arc, Rio*.arc（剧情 ws2）, Chip*.arc / Graphic.arc / SysGraphic.arc（图）, Bgm.arc / Se*.arc / Voice*.arc（声音）, AdvHD.exe}。arc 由引擎（config.containers）在服务端读、展开到 <根>/arc/，剧情 = arc/script/<容器>/<脚本>.advhd（.ws2 解成指令流 JSON），资源 = arc/res/<容器>/…
+  //   哪些容器 / 条目展开：engine.containers.rules（容器名正则 → skip 黑名单 / kinds / include / exclude）。新游戏的容器名不一样（Rio2.arc / Voice3.arc…）默认就收；不想要的加一条 skip。
+  advhd: {
+    title: 'WillPlus AdvHD（ADVPlayerHD 引擎）', kind: 'advhd', detector: 'advhd', autoOrder: 138, family: 'advhd::',   // 在 otogi 之后、uviewer（通用）之前
+    bases: [''], searchDepth: 3,
+    anchors: ['/^Script\\d*\\.arc$/i'], siblings: [], markers: [['AdvHD.exe', '/^advhd\\.exe$/i'], '/^Rio\\d*\\.arc$/i'],   // 没声明：Script*.arc（引擎的 Lua 脚本）+ AdvHD.exe + Rio*.arc（剧情）
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res'],
+    adapters: ['advhd::ws2'],
+    adapterOptions: { 'advhd::ws2': { resDir: { path: ['arc/res'] } } },
+    ruleTables: ['advhd::ws2'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},   // 脚本里写 BG_17_D.PNG，arc 里存 bg_17_d.png 之类：引擎默认就按路径段 / 名字忽略大小写找（caseInsensitive 默认 true），不用写
+      limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },   // 立绘 PNA 的帧索引（index.json）要读全；ws2 解出来的指令流一个脚本可达几 MB
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model|Rio)\\.arc$', skip: true }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.advhd', depth: 3 }], avatars: [], expectedDirs: [],
+    notes: ['arc 在第一次浏览时由服务端展开到 <根>/arc/（之后按 arc 的大小 + 修改时间判断要不要重做）；缺的容器（Chip / Voice 没给全）对应的图 / 语音在渲染诊断里报缺资源', '脚本数在展开之前是 0（这个脚本只看目录，不读 arc），展开后列表里才有'],
+  },
   grenze: {
     title: 'Grenze（GrenzeViewer）', kind: 'grenze', detector: 'grenze', autoOrder: 120,
     bases: [''], searchDepth: 6,
@@ -1452,7 +1654,7 @@ function normalizeLayout(raw, problems, id) {
   out.adapterOptions = raw.adapterOptions && typeof raw.adapterOptions === 'object' && !Array.isArray(raw.adapterOptions) ? raw.adapterOptions : {}
   // 规则配置：ruleTables = 适配器 id 数组；ruleOverrides = { 适配器 id: 对象 }；engine = { classify / resourceResolve / indexSkip / limits / player }（原样写进 config，写坏的由引擎规整时丢掉并报告）
   if (out.ruleTables !== undefined && !Array.isArray(out.ruleTables)) { bad('ruleTables 不是数组，忽略这个字段'); out.ruleTables = [] }
-  out.ruleTables = (out.ruleTables || []).filter((a) => { const ok = typeof a === 'string' && /^[a-z0-9-]{1,40}$/.test(a); if (!ok) bad(`ruleTables 里有不合法的适配器 id：${JSON.stringify(a)}，忽略这一项`); return ok })
+  out.ruleTables = (out.ruleTables || []).filter((a) => { const ok = typeof a === 'string' && /^[a-z0-9-]{1,40}(?:::[a-z0-9-]{1,40}){0,2}$/.test(a); if (!ok) bad(`ruleTables 里有不合法的适配器 id：${JSON.stringify(a)}，忽略这一项`); return ok })
   out.ruleOverrides = isPlain(raw.ruleOverrides) ? Object.fromEntries(Object.entries(raw.ruleOverrides).filter(([id, v]) => { const ok = isPlain(v); if (!ok) bad(`ruleOverrides.${id} 不是对象，忽略`); return ok })) : {}
   if (raw.ruleOverrides !== undefined && !isPlain(raw.ruleOverrides)) bad('ruleOverrides 不是对象，忽略这个字段')
   out.engine = isPlain(raw.engine) ? Object.fromEntries(Object.entries(raw.engine).filter(([k]) => { const ok = ENGINE_FIELDS.includes(k); if (!ok) bad(`engine 里不认识的字段 ${k}（可用：${ENGINE_FIELDS.join(' / ')}），忽略`); return ok })) : {}
@@ -1462,7 +1664,7 @@ function normalizeLayout(raw, problems, id) {
   return out
 }
 // 引擎层通用配置字段（config.mjs 的 classify / resourceResolve / indexSkip / limits / player）：LAYOUTS 里的 engine 原样写进 config
-const ENGINE_FIELDS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player', 'dirCover', 'thumbRender']
+const ENGINE_FIELDS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player', 'dirCover', 'thumbRender', 'containers']
 // 深度合并：对象逐键递归，数组 / 标量整个替换（后者赢）；和适配器自己的 mergeOptions 同一个口径
 function deepMerge(a, b) {
   if (!isPlain(a) || !isPlain(b)) return b === undefined ? structuredClone(a) : structuredClone(b)
@@ -1474,9 +1676,14 @@ function regexOk(source, flags) { try { new RegExp(source, String(flags || '').r
 
 // 解析 id 的布局：沿 extends 往上合并（子项的字段替换父项的），再叠上选项 layouts 里的覆盖；覆盖写坏了退回内置的；内置的也坏了返回 null
 export function resolveLayout(id, overrides = {}, problems = []) {
+  // 引擎家族：表里没有这个 id、但有一项声明了 family 前缀（advhd:: → LAYOUTS.advhd）且 id 以它开头 → 用家族项（新游戏不用在表里加一条）；选项 layouts 里家族 key 和这个 id 的覆盖都生效（id 的叠在家族的上面）
+  const familyKey = (key) => (Object.prototype.hasOwnProperty.call(LAYOUTS, key) ? '' : Object.entries(LAYOUTS).find(([, own]) => own && typeof own.family === 'string' && own.family && key.startsWith(own.family) && key.length > own.family.length)?.[0] || '')
   const table = (key, withOverride) => {
-    const base = Object.prototype.hasOwnProperty.call(LAYOUTS, key) ? LAYOUTS[key] : null
-    const over = withOverride && overrides && typeof overrides === 'object' ? overrides[key] : undefined
+    const fam = familyKey(key)
+    const base = Object.prototype.hasOwnProperty.call(LAYOUTS, key) ? LAYOUTS[key] : fam ? (({ family: _f, autoOrder: _a, ...rest }) => rest)(LAYOUTS[fam]) : null
+    const pick = (k) => (withOverride && overrides && typeof overrides === 'object' ? overrides[k] : undefined)
+    let over = pick(key)
+    if (fam) { const famOver = pick(fam); if (famOver !== undefined && isPlain(famOver)) over = { ...famOver, ...(isPlain(over) ? over : {}) } }
     if (over === undefined) return base
     if (!over || typeof over !== 'object' || Array.isArray(over)) { problems.push(`选项 layouts.${key} 不是对象：忽略`); return base }
     return { ...(base || {}), ...over }
@@ -1715,6 +1922,7 @@ const DETECTORS = {
   bokusen: (scope) => detectBokusen(scope),
   grenze: (scope) => detectGrenze(scope),
   otogi: (scope) => detectOtogi(scope),
+  advhd: (scope) => detectAdvhd(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -1730,7 +1938,13 @@ function gameHandlers() {
       name = typeof cur.detector === 'string' ? cur.detector : ''
       cur = typeof cur.extends === 'string' && Object.prototype.hasOwnProperty.call(LAYOUTS, cur.extends) ? LAYOUTS[cur.extends] : null
     }
-    if (DETECTORS[name]) handlers.push({ id, detect: DETECTORS[name], detector: name, autoOrder: Number.isFinite(own.autoOrder) ? own.autoOrder : null })
+    let family = ''
+    cur = own
+    for (let depth = 0; cur && depth < 6 && !family; depth++) {
+      family = typeof cur.family === 'string' ? cur.family : ''
+      cur = typeof cur.extends === 'string' && Object.prototype.hasOwnProperty.call(LAYOUTS, cur.extends) ? LAYOUTS[cur.extends] : null
+    }
+    if (DETECTORS[name]) handlers.push({ id, detect: DETECTORS[name], detector: name, autoOrder: Number.isFinite(own.autoOrder) ? own.autoOrder : null, family })
   }
   return handlers
 }
@@ -1751,12 +1965,20 @@ export async function generateTags(ctx) {
   // 1) 认游戏、探测结构
   let found = null
   if (game?.id) {
-    const handler = handlers.find((g) => g.id === game.id)
+    // 精确 id 优先；没有就按家族前缀（advhd::<游戏> → 家族 advhd）：新游戏不用在表里加一条，家族的默认配置直接用；某个游戏的差异写在选项 layouts['advhd::<游戏>'] 里（叠在家族项之上）
+    let handler = handlers.find((g) => g.id === game.id)
+    let viaFamily = false
+    if (!handler) { handler = handlers.find((g) => g.family && game.id.startsWith(g.family) && game.id.length > g.family.length); viaFamily = Boolean(handler) }
     if (!handler) {
       logs.push(`这个媒体的 config.game.id 是「${game.id}」，本脚本不认识这个游戏（认识：${handlers.map((g) => g.id).join(' / ')}）：跳过`)
       return keepOwn(ctx, logs, { skipped: true })
     }
-    found = await handler.detect(scopeOf(handler, true))
+    const scope = scopeOf(handler, true)
+    if (viaFamily) {
+      scope.gameId = game.id   // 布局按这个 id 解析（resolveLayout 会落到家族项，再叠上选项 layouts 里这个游戏 / 这个家族的覆盖）
+      logs.push(`game.id「${game.id}」不在布局表里，按家族「${handler.id}」（${handler.family}*）处理${(options.layouts || {})[game.id] ? '，叠上选项 layouts 里这个游戏的覆盖' : ''}`)
+    }
+    found = await handler.detect(scope)
     if (!found && handler.detector === 'uviewer') found = genericLayout()   // 探测不到结构时 UViewer 系退回通用配置
     if (!found) {
       logs.push(`config.game.id 是「${game.id}」，但目录里没认出它的结构：不改任何配置（可以用 overrides 指定路径，或检查 rootDir）`)
@@ -1915,6 +2137,31 @@ function canonField(key, value) {
         prefer: tiers.length ? tiers : [{ source: 'render', match: '', take: 0 }, { source: 'image', match: '', take: 0 }],
         skip: (Array.isArray(value.skip) ? value.skip : []).slice(0, 10).filter(okRe),
         only: (Array.isArray(value.only) ? value.only : []).slice(0, 10).filter(okRe),
+      }
+    }
+    // containers：容器展开（和 config.mjs 的 DEFAULT_CONTAINERS / 校验一致：没写的补默认值，规则里的默认值字段不存）
+    case 'containers': {
+      if (!isPlain(value)) return value
+      const numIn = (x, d, lo, hi) => (x === undefined || x === null || x === '' || typeof x === 'boolean' || !Number.isFinite(Number(x)) ? d : Math.max(lo, Math.min(hi, Math.round(Number(x)))))
+      const okRe = (x) => typeof x === 'string' && x.trim().length > 0 && x.trim().length <= 200 && (() => { try { new RegExp(x.trim(), 'i'); return true } catch { return false } })()
+      const rules = (Array.isArray(value.rules) ? value.rules : []).slice(0, 20).filter((r) => isPlain(r) && okRe(r.match)).map((r) => {
+        const out = { match: r.match.trim() }
+        if (r.skip === true) out.skip = true
+        const kinds = Array.isArray(r.kinds) ? [...new Set(r.kinds.filter((k) => ['script', 'res', 'pna'].includes(k)))] : []
+        if (kinds.length) out.kinds = kinds
+        for (const key of ['include', 'exclude']) { const list = (Array.isArray(r[key]) ? r[key] : []).slice(0, 10).filter(okRe).map((x) => x.trim()); if (list.length) out[key] = list }
+        if (['raw', 'skip'].includes(r.pna)) out.pna = r.pna
+        return out
+      })
+      const scan = (Array.isArray(value.scan) ? value.scan : []).slice(0, 10).filter((x) => typeof x === 'string' && x)
+      return {
+        enabled: typeof value.enabled === 'boolean' ? value.enabled : false,
+        dir: typeof value.dir === 'string' && value.dir ? value.dir : 'arc',
+        scan: scan.length ? [...new Set(scan)] : ['.'],
+        scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
+        scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
+        rules,
+        maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
     }
     // thumbRender：和 config.mjs 的 DEFAULT_THUMB_RENDER / 校验一致（没写的补默认值，数字夹范围）
@@ -2413,6 +2660,27 @@ async function detectBokusen(scope) {
   logs.push(`bokusen 游戏根：${base || '.'}；脚本根：${jsonRel}；资源根：${join(base, 'resource')}${hasResource ? '' : '（目录不存在：图片 / 声音会缺，台词照常）'}`)
   for (const line of entry.notes) logs.push(line)
   return makeFound(scope, entry, loc, config)
+}
+
+// ---- WillPlus AdvHD 家族：见 LAYOUTS.advhd。id：声明了 game.id 就用它（advhd::<游戏>），没声明 = advhd::<目录名的小写字母数字>；arc 的展开由引擎做，这里只写配置（路径相对根）
+async function detectAdvhd(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  if (!declared && !(await markersOk(media, entry, base, declared))) return null
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  // 路径类设置相对根：容器目录 / 扫描目录跟着根走（根不是条目目录本身时）
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config)
+  const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `advhd::${slug || 'game'}`
+  found.kind = entry.kind || 'advhd'
+  const arcs = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.arc$/i.test(n))
+  logs.push(`AdvHD 游戏根：${base || '.'}；容器 ${arcs.length} 个（${arcs.slice(0, 8).join(' / ')}${arcs.length > 8 ? ' …' : ''}）；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
 }
 
 // ---- Kamihime Player（TyranoScript）：<根>/game/dmm/raw_scenario/<类别>/<目录>/<id>_script.ks，资源在 game/dmm/assets；列表由 tyrano-ks 适配器的 catalog 每次现读
