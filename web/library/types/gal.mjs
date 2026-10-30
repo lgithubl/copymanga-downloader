@@ -15,7 +15,7 @@ import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
-import { ensureContainers } from '../gal/containers.mjs'
+import { ensureContainers, materialize } from '../gal/containers.mjs'
 import { resolveOnDisk } from '../gal/resolve.mjs'
 import { isVideoPath } from '../gal/thumbs.mjs'
 import { createFrameCache } from '../gal/video-thumb.mjs'
@@ -198,6 +198,10 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     await ensureContainers({ mediaDir: work, config }).catch(() => {})   // 容器（.arc）还没展开就先展开：直接打开资源链接（没经过浏览）也能找到文件
     // 解析顺序（规则全在 gal/resolve.mjs，config.resourceResolve 配）：原路径（资源根依次 + stripPrefixes 去前缀）→ rewrites → extensionFallbacks → normalizeUnicode → 按路径段忽略大小写；
     // 找到的真实路径（realpath）必须在媒体目录内，或在管理员写的 resourceResolve.allowedRoots 内——目录穿越和符号链接逃逸都挡掉。
+    // 容器 hybrid 方式：这个路径如果是还没展开的资源，先从 .arc 里把那一个条目取出来（写成文件），后面就和普通文件一样
+    const roots = (config.resourceRoots?.length ? config.resourceRoots : ['']).map((root) => String(root || '').replace(/^\.\/?/, '').replace(/\/+$/, ''))
+    const wanted = fromMedia ? [rel] : [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))].flatMap((variant) => roots.map((root) => (root ? `${root}/${variant}` : variant)))
+    await materialize({ mediaDir: work, config, rels: wanted }).catch(() => {})
     if (fromMedia) {
       if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
       const hit = await resolveOnDisk({ work, rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: false })   // ~/ 路径：只认媒体目录内的原路径，不套任何解析规则 / allowedRoots

@@ -201,6 +201,7 @@
    "enabled": true,
    "maxEntries": 200000,
    "maxTotalMB": 8192,
+   "mode": "hybrid",
    "rules": [
     {
      "match": "^(?:Script\\d*|DX11Effect|Model)\\.arc$",

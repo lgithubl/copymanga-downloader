@@ -26,8 +26,10 @@ export const DIR_COVER_LIMITS = Object.freeze({ scan: [1, 30], depth: [1, 5], ma
 export const CONTAINER_PNA_MODES = Object.freeze(['frames', 'raw', 'skip'])
 // 画廊页按图名前缀拆组（containers.rules[].gallery）的默认值：openCgBrowser(图) 的调用、页码标记 Condition(130, 105)、至少 20 个调用才算画廊、组名 = 第一张图的名字去掉末尾 _数字
 export const DEFAULT_CONTAINER_GALLERY = Object.freeze({ functions: Object.freeze(['openCgBrowser']), pageFlags: Object.freeze([105]), minCalls: 20, group: '_\\d+$' })
+// 展开方式：hybrid（默认）= 脚本展开到磁盘（很小），图 / 声音 / 视频 / PNA 帧不展开，被请求时才从 .arc 里读出那一个条目（写到磁盘当缓存）；files = 全部展开到磁盘（以前的行为，出问题就回退到它）
+export const CONTAINER_MODES = Object.freeze(['hybrid', 'files'])
 export const CONTAINER_KINDS = Object.freeze(['script', 'res', 'pna'])
-export const DEFAULT_CONTAINERS = Object.freeze({ enabled: false, dir: 'arc', scan: Object.freeze(['.']), scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: Object.freeze([]), maxEntries: 200000, maxTotalMB: 8192 })
+export const DEFAULT_CONTAINERS = Object.freeze({ enabled: false, dir: 'arc', scan: Object.freeze(['.']), scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', mode: 'hybrid', rules: Object.freeze([]), maxEntries: 200000, maxTotalMB: 8192 })
 export const CONTAINER_LIMITS = Object.freeze({ rules: 20, list: 10, maxEntries: [1, 1000000], maxTotalMB: [1, 65536] })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
 export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, only: Object.freeze([]), scanSteps: 200, scanFrom: 0, topUp: false, kindMax: Object.freeze({}) })
@@ -508,6 +510,7 @@ export function normalizeGalConfigWithWarnings(raw) {
       else warn('containers.scan', '没有一项合法，用默认值', c.scan)
     }
     if (c.scriptDecoder !== undefined) { if (SCRIPT_DECODER_IDS.includes(c.scriptDecoder)) containers.scriptDecoder = c.scriptDecoder; else warn('containers.scriptDecoder', `不认识的解码器（可用：${SCRIPT_DECODER_IDS.join(' / ')}），用默认值`, c.scriptDecoder) }
+    if (c.mode !== undefined) { if (CONTAINER_MODES.includes(c.mode)) containers.mode = c.mode; else warn('containers.mode', `只能是 ${CONTAINER_MODES.join(' / ')}，用默认值 ${containers.mode}`, c.mode) }
     if (c.scriptExt !== undefined) { if (typeof c.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(c.scriptExt)) containers.scriptExt = c.scriptExt; else warn('containers.scriptExt', '只能是 1-10 位小写字母 / 数字，用默认值', c.scriptExt) }
     for (const key of ['maxEntries', 'maxTotalMB']) {
       if (c[key] === undefined) continue

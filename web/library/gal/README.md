@@ -971,6 +971,15 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **dirCover 也用在文件系统目录 / 分组卡片**（以前只有 catalog）：`dirCover.enabled: true` 时，规则（thumbSources / dirThumbs）没给图的目录 / 分组卡片，用里面前 `scan` 个脚本（`depth` 层以内）的封面，`prefer` / `skip` / `only` / `max` 同上；`auto` 仍然只对声明了 `sceneThumbs` 的 catalog（TSK）生效。写在布局里：`config.dirCover`，或者 `engine.dirCover`（`engine` 现在也认 `dirCover` / `thumbRender`，别名继承时写在 engine 里就不会替换掉整份 config）。
 - 现在写了的：Aku `engine.dirCover = { enabled: true, scan: 8, max: 6, prefer: [render, image] }`（角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播）；Kamihime `config.dirCover = { enabled: true, scan: 6, max: 4, prefer: [render, image] }`（角色目录有头像用头像，没有头像的用里面场景的渲染图 / 图）。
 
+### 容器的展开方式（`config.containers.mode`）：hybrid（默认）/ files
+
+- **`hybrid`（默认）**：脚本照常展开到磁盘（`arc/script/<容器>/<脚本>.advhd`，很小）；**图 / 声音 / 视频 / PNA 帧不展开**。PNA 只写 `index.json`（读头、记录表和每帧开头 8 字节，不读像素）。资源被请求时（`resolveAsset`）才从 `.arc` 里按偏移读出**那一个条目**，写成 `arc/res/<容器>/<条目名>` 当缓存（先写临时文件再改名，同一个文件并发请求只取一次）。
+  - 内存里常驻的只有**虚拟索引**（`containers.mjs` 的 `virtualIndex`）：每个 `.arc` 的「小写路径 → 偏移 / 大小」，按 `.arc` 的大小 + mtime 判断要不要重建。适配器的文件索引（`context.mjs`）把虚拟路径当成「磁盘上有这些文件」，所以适配器解析资源、立绘帧、画廊的结果和 files 方式逐字节一样（自测里 4 份脚本 × 两种方式比过；LPSL 真实数据 `021_00` 也一样）。
+  - LPSL 真实数据（展开全部 `.arc`）：hybrid **0.3 秒 / 磁盘 8 MB**，files **0.9 秒 / 磁盘 131 MB**；虚拟文件 2635 个；取出一个音效 2 毫秒。
+- **`files`（以前的行为，出问题就回退到它）**：所有选中的条目全部展开到磁盘。
+- **怎么切换**：放在每个条目的 `config.containers.mode`（改它之后下次浏览会自动重新展开：hybrid → files 把资源全展开；files → hybrid 把磁盘上展开的资源清掉）。gal-layout 重跑会按布局表重写这个字段：全局回退用选项 `layouts.advhd = { engine: { containers: { …家族默认, mode: 'files' } } }`（`containers` 整个替换，要把规则也抄上），或者重跑后再手改条目的 `config.containers.mode`。
+- **hybrid 的限制 / 没做的**：脚本没有做成「现解码、不落盘」（列表要读目录，改动太大；脚本才几 MB）；`config.resourceResolve` 里的 `extensionFallbacks` / `rewrites` 对还没取出的虚拟条目不生效（适配器按索引里的确切路径取，用不到；靠规则猜名字的功能在 hybrid 下找不到没展开的文件）；`getResource` 一次把整个文件读进内存再发（和 files 方式一样，没有 Range）。
+
 ### 场景跳转点（`config.sceneMarkers`）：卡片上的小按钮，点了从那一步开始播
 
 - 脚本卡片（场景选择那一层）可以带几个小按钮，点哪个就从那一步开始播（计数、台词、画面都是那一步的状态，不用上次的进度 / 选项）；点卡片本身仍是从头 / 接着上次。典型用途：直接跳到 H 场景开始的地方。

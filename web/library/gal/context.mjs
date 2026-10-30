@@ -12,6 +12,7 @@
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { DEFAULT_INDEX_SKIP } from './config.mjs'
+import { virtualFiles } from './containers.mjs'
 import { safeRelPath } from './paths.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 
@@ -74,6 +75,10 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
   const dirRels = cleanRels(adapter.contextDirs?.(options))
   const skip = compileSkip(config)
   const limits = config.limits || {}
+  // 容器 hybrid 方式：图 / 声音 / PNA 帧没有展开，文件索引里要加上「虚拟文件」（containers.mjs 的虚拟索引）；这些目录的 mtime 不参与缓存键（取出资源会改它），改用 .arc 的签名
+  const resDir = config.containers?.enabled && config.containers.mode !== 'files' ? `${config.containers.dir}/res` : ''
+  const virt = resDir ? await virtualFiles({ mediaDir, config }) : { files: [], sig: '' }
+  const isVirtualDir = (rel) => Boolean(resDir) && (rel === resDir || rel.startsWith(`${resDir}/`))
   const key = `${mediaDir}|${adapter.id}|${JSON.stringify(options)}|${config.resourceRoots.join(',')}|${JSON.stringify([skip.map((re) => re.source), limits, config.resourceResolve || null])}`
   const parts = []
   for (const rel of fileRels) {
@@ -83,7 +88,9 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
     } catch { parts.push(`${rel}:-`) }
   }
   // 目录：自己和下一层子目录的 mtime（里面新增/删除文件、子目录就会变），所以新增剧情、缩略图、立绘马上能看到；更深层的靠 TTL
+  if (virt.sig) parts.push(`virtual:${virt.sig}`)
   for (const rel of dirRels) {
+    if (isVirtualDir(rel)) { parts.push(`${rel}/:v`); continue }
     try {
       const abs = path.join(mediaDir, ...rel.split('/'))
       parts.push(`${rel}/:${(await stat(abs)).mtimeMs}`)
@@ -114,6 +121,10 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
   const walkLimit = clampInt(limits.walkFiles, 1, MAX_WALK_FILES_CEILING, Number(adapter.contextWalkLimit) > 0 ? Math.min(MAX_WALK_FILES_CEILING, Number(adapter.contextWalkLimit)) : MAX_WALK_FILES)
   const walkDepth = clampInt(limits.walkDepth, 1, 12, MAX_WALK_DEPTH)
   for (const rel of dirRels) await walk(mediaDir, rel, 0, files, walkLimit, walkDepth, skip)
+  if (virt.files.length) {   // 虚拟文件（hybrid）：在 adapter 要的目录里的都算；磁盘上已经取出来的（和遍历到的重复）不重复加
+    const seen = new Set(files)
+    for (const rel of virt.files) if (!seen.has(rel) && dirRels.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) files.push(rel)
+  }
   if (files.truncated) console.warn(`[gal] ${adapter.id}：${mediaDir} 的文件索引超过上限 ${walkLimit} 个，被截断（部分场景 / 资源会找不到）`)
   // 磁盘上的相对路径（相对媒体目录）→ 脚本/资源接口认的路径（相对第一个匹配的资源根）
   const roots = [...config.resourceRoots].filter(Boolean).sort((a, b) => b.length - a.length)

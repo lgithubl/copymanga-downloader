@@ -1519,7 +1519,7 @@ export const LAYOUTS = {
       classify: [],
       resourceResolve: {},   // 脚本里写 BG_17_D.PNG，arc 里存 bg_17_d.png 之类：引擎默认就按路径段 / 名字忽略大小写找（caseInsensitive 默认 true），不用写
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },   // 立绘 PNA 的帧索引（index.json）要读全；ws2 解出来的指令流一个脚本可达几 MB
-      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model)\\.arc$', skip: true }, { match: '^Rio\\.arc$', kinds: ['script'], include: ['^CG_PAGE\\.ws2$'], gallery: { functions: ['openCgBrowser'], pageFlags: [105], minCalls: 20, group: '_\\d+$' } }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', mode: 'hybrid', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model)\\.arc$', skip: true }, { match: '^Rio\\.arc$', kinds: ['script'], include: ['^CG_PAGE\\.ws2$'], gallery: { functions: ['openCgBrowser'], pageFlags: [105], minCalls: 20, group: '_\\d+$' } }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
     },
     config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Rio: 'CG 画廊' }, merge: [], views: [{ parent: '*', as: 'special', label: '特殊场景', dirs: [], match: '_[hH]$', exclusive: false, badges: {} }],   // 每个剧情 arc 目录下多一个「特殊场景」（脚本名以 _H 结尾的，要改规则改 match；全量列表照旧）
     groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
@@ -2204,6 +2204,7 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
+        mode: value.mode === 'files' ? 'files' : 'hybrid',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }

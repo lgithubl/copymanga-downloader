@@ -13,8 +13,8 @@ import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
-// 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha）
-export const CONTAINER_FORMAT_VERSION = 3
+// 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名）
+export const CONTAINER_FORMAT_VERSION = 4
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -155,7 +155,7 @@ function compileRules(cfg) {
     gallery: rule.gallery || null,
   }))
 }
-const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.maxEntries, cfg.maxTotalMB])).digest('hex').slice(0, 16)
+const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.maxEntries, cfg.maxTotalMB])).digest('hex').slice(0, 16)
 const kindOf = (name, scriptKinds) => {
   const ext = extOf(name)
   if (SCRIPT_EXTS.has(ext)) return scriptKinds
@@ -163,6 +163,38 @@ const kindOf = (name, scriptKinds) => {
   if (IMAGE_EXTS.has(ext) || AUDIO_EXTS.has(ext) || VIDEO_EXTS.has(ext)) return 'res'
   return ''
 }
+
+// PNA 的一帧在 index.json 里的一行（两种展开方式共用）：png = 数据是 PNG；magic = 非 PNG 数据的开头 8 字节（十六进制）
+function frameRow(i, f, { png, magic }) {
+  const row = { n: i, type: f.type, id: f.id, x: f.x, y: f.y, w: f.w, h: f.h, scale: f.scale, alpha: f.scale, ...(f.mode ? { mode: f.mode } : {}) }   // alpha = 记录里的 f64（引擎里是图层 +0x48，着色器的 alpha；以前叫 scale）；mode = 第 7 个 u32（3 / 8 / 10 / 0x15 = 特殊图层，其余 0）
+  row.kind = f.type === 1 || f.type === 2 ? 'group' : f.size > 0 ? (png ? 'image' : 'unsupported') : 'empty'   // group = 组开始 / 结束标记；empty = 没有图像数据；unsupported = 有数据但不是 PNG
+  if (f.size > 0 && png) row.file = `${i}.png`   // 按帧的序号（文件里的顺序）命名：DisplayCharacterImage 用的是这个序号（引擎里是数组下标，FUN_140115930），不是记录里的 id 字段
+  else if (f.size > 0) { row.unsupported = true; row.magic = magic; row.size = f.size }
+  return row
+}
+// 只读 PNA 的头、记录表和每帧开头 8 字节（不读像素数据）：hybrid 方式用它写 index.json、建虚拟索引。返回 { magic, width, height, frames: [{ ...记录, pos（帧数据在 .arc 里的绝对偏移）, png, magic }] }
+async function readPnaLayout(handle, offset, size) {
+  if (size < 20) throw new Error('PNA 太小')
+  const head = await readRange(handle, offset, 20)
+  const magic = head.subarray(0, 4).toString('latin1')
+  if (!PNA_MAGICS.has(magic)) throw new Error('不是 PNA（魔数不对）')
+  const count = head.readUInt32LE(16)
+  if (count > 100000 || 20 + count * 40 > size) throw new Error(`PNA 帧数 ${count} 不合理`)
+  const recs = await readRange(handle, offset + 20, count * 40)
+  const frames = []
+  let pos = 20 + count * 40
+  for (let i = 0; i < count; i++) {
+    const r = i * 40
+    const f = { mode: recs.readUInt32LE(r + 24), type: recs.readUInt32LE(r), id: recs.readInt32LE(r + 4), x: recs.readInt32LE(r + 8), y: recs.readInt32LE(r + 12), w: recs.readUInt32LE(r + 16), h: recs.readUInt32LE(r + 20), scale: recs.readDoubleLE(r + 28), size: recs.readUInt32LE(r + 36) }
+    if (pos + f.size > size) throw new Error(`PNA 第 ${i} 帧的数据超出文件`)
+    f.pos = offset + pos
+    pos += f.size
+    if (f.size >= 8) { const m = await readRange(handle, f.pos, 8); f.png = m.equals(PNG_MAGIC); f.magic = m.toString('hex') } else { f.png = false; f.magic = '' }
+    frames.push(f)
+  }
+  return { magic, width: head.readUInt32LE(8), height: head.readUInt32LE(12), frames }
+}
+const pnaIndexJson = (layout) => JSON.stringify({ magic: layout.magic, width: layout.width, height: layout.height, frames: layout.frames.map((f, i) => frameRow(i, f, { png: f.png, magic: f.magic })) })
 
 // ---------- 展开一个容器 ----------
 async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
@@ -180,6 +212,21 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
       if (!kind || !rule.kinds.has(kind) || (kind === 'pna' && rule.pna === 'skip')) { result.skipped += 1; continue }
       if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) { result.excluded += 1; continue }
       if (entry.size > MAX_ENTRY_BYTES) { result.bad.push(`${name}（${entry.size} 字节太大）`); continue }
+      // hybrid（默认）：图 / 声音 / 视频 / PNA 帧不展开（被请求时才从 .arc 读那一个条目，见 materialize）；PNA 只写 index.json（读头和记录表，不读像素）
+      const lazy = cfg.mode !== 'files' && (kind === 'res' || kind === 'pna')
+      if (lazy && (kind === 'res' || rule.pna === 'raw')) { result.res += 1; result.lazy = (result.lazy || 0) + 1; continue }
+      if (lazy) {
+        try {
+          const layout = await readPnaLayout(handle, entry.offset, entry.size)
+          const dir = path.join(outRoot, 'res', stem, ...name.split('/'))
+          await mkdir(dir, { recursive: true })
+          await writeFile(path.join(dir, 'index.json'), pnaIndexJson(layout))
+          result.pna += 1
+          result.pnaFrames += layout.frames.filter((f) => f.png).length
+          result.lazy = (result.lazy || 0) + 1
+        } catch (error) { result.bad.push(`${name}（${error.message}）`) }
+        continue
+      }
       budget.bytes += entry.size
       if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
       const data = await readRange(handle, entry.offset, entry.size)
@@ -209,18 +256,9 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
           await mkdir(dir, { recursive: true })
           const index = { magic: pna.magic, width: pna.width, height: pna.height, frames: [] }
           for (const [i, frame] of pna.frames.entries()) {
-            const row = { n: i, type: frame.type, id: frame.id, x: frame.x, y: frame.y, w: frame.w, h: frame.h, scale: frame.scale, alpha: frame.scale, ...(frame.mode ? { mode: frame.mode } : {}) }   // mode = 记录里第 7 个 u32（引擎按它选图层种类：3 / 8 / 10 / 0x15 = 特殊图层，其余 0）
-            row.kind = frame.type === 1 || frame.type === 2 ? 'group' : frame.size > 0 ? (frame.data.subarray(0, 8).equals(PNG_MAGIC) ? 'image' : 'unsupported') : 'empty'   // group = 组开始 / 结束标记；empty = 没有图像数据的帧；unsupported = 有数据但不是 PNG
-            if (frame.size > 0 && frame.data.subarray(0, 8).equals(PNG_MAGIC)) {
-              row.file = `${i}.png`   // 按帧的序号（文件里的顺序）命名：脚本里的 DisplayCharacterImage 用的是这个序号（引擎里是数组下标，FUN_140115930），不是记录里的 id 字段
-              await writeFile(path.join(dir, row.file), frame.data)
-              result.pnaFrames += 1
-            } else if (frame.size > 0) {   // 不是 PNG（样本里没见过）：数据原样写成 <序号>.bin，开头 8 字节记在索引里（看清它到底是什么格式再决定怎么解）
-              row.unsupported = true
-              row.magic = frame.data.subarray(0, 8).toString('hex')
-              row.size = frame.size
-              await writeFile(path.join(dir, `${i}.bin`), frame.data)
-            }
+            const png = frame.size > 0 && frame.data.subarray(0, 8).equals(PNG_MAGIC)
+            const row = frameRow(i, frame, { png, magic: frame.data.subarray(0, 8).toString('hex') })
+            if (png) { await writeFile(path.join(dir, row.file), frame.data); result.pnaFrames += 1 } else if (frame.size > 0) await writeFile(path.join(dir, `${i}.bin`), frame.data)   // 非 PNG（样本里没见过）：原样写成 <序号>.bin
             index.frames.push(row)
           }
           await writeFile(path.join(dir, 'index.json'), JSON.stringify(index))
@@ -237,10 +275,120 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
   return result
 }
 
+// ---------- hybrid：虚拟索引 + 按需取出 ----------
+// 虚拟索引 = 没展开的资源（图 / 声音 / 视频 / PNA 帧）的「相对媒体目录的路径 → .arc 里的位置」：每个 .arc 只读目录（和 PNA 的头），内存里放几万条也就几 MB。
+// 按 .arc 的 大小 + mtime 判断要不要重建；适配器的文件索引（context.mjs）把它的路径当成「磁盘上有这些文件」，资源接口（types/gal.mjs 的 resolveAsset）取到时先 materialize 再按普通文件走。
+const virtuals = new Map()   // mediaDir|dir|指纹 → { sig, value: { map: Map(小写路径 → { rel, file, offset, size }), files: [rel], sig } } | Promise
+const materializing = new Map()   // 目标文件 → Promise（同一个文件同时只取一次）
+const isHybrid = (cfg) => Boolean(cfg?.enabled) && cfg.mode !== 'files'
+
+async function listArcs(mediaDir, cfg) {
+  const rules = compileRules(cfg)
+  const out = []
+  for (const scanDir of cfg.scan) {
+    const dir = path.join(mediaDir, ...(scanDir && scanDir !== '.' ? scanDir.split('/') : []))
+    let names = []
+    try { names = (await readdir(dir)).sort() } catch { continue }
+    for (const arcName of names) {
+      if (!/\.arc$/i.test(arcName)) continue
+      const rule = rules.find((r) => r.re.test(arcName))
+      if (!rule || rule.skip) continue
+      const file = path.join(dir, arcName)
+      let info
+      try { info = await stat(file) } catch { continue }
+      if (info.isFile()) out.push({ arcName, file, rule, sig: `${arcName}:${info.size}:${Math.floor(info.mtimeMs)}` })
+    }
+  }
+  return out
+}
+
+async function buildVirtual(mediaDir, cfg, arcs, sig) {
+  const map = new Map()
+  const files = []
+  const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
+  for (const { arcName, file, rule } of arcs) {
+    let entries
+    try { entries = (await readArcIndex(file)).entries } catch { continue }
+    if (entries.length > cfg.maxEntries) continue
+    const stem = withoutExt(arcName)
+    const base = `${cfg.dir}/res/${stem}`
+    let handle = null
+    try {
+      for (const entry of entries) {
+        const name = safeEntryName(entry.name)
+        if (!name) continue
+        const kind = kindOf(name, 'script')
+        if (!kind || kind === 'script' || !rule.kinds.has(kind) || (kind === 'pna' && rule.pna === 'skip')) continue
+        if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
+        if (entry.size > MAX_ENTRY_BYTES) continue
+        if (kind === 'res' || rule.pna === 'raw') { add(`${base}/${name}`, { file, offset: entry.offset, size: entry.size }); continue }
+        try {
+          handle ||= await open(file, 'r')
+          const layout = await readPnaLayout(handle, entry.offset, entry.size)
+          layout.frames.forEach((f, i) => { if (f.size > 0) add(`${base}/${name}/${i}.${f.png ? 'png' : 'bin'}`, { file, offset: f.pos, size: f.size }) })
+        } catch { /* 这个 PNA 坏了：当没有（展开时已经在报告里记了） */ }
+      }
+    } finally { await handle?.close().catch(() => {}) }
+  }
+  return { map, files, sig }
+}
+
+// 当前的虚拟索引（不是 hybrid / 没启用 = null）。.arc 没变就沿用；并发调用共用一次重建
+export async function virtualIndex({ mediaDir, config }) {
+  const cfg = config?.containers
+  if (!isHybrid(cfg) || !mediaDir) return null
+  const arcs = await listArcs(mediaDir, cfg)
+  const sig = arcs.map((a) => a.sig).join('|')
+  const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
+  const hit = virtuals.get(key)
+  if (hit?.sig === sig) return hit.promise
+  const promise = buildVirtual(mediaDir, cfg, arcs, sig)
+  virtuals.set(key, { sig, promise })
+  promise.catch(() => { if (virtuals.get(key)?.promise === promise) virtuals.delete(key) })
+  return promise
+}
+// 适配器文件索引用：hybrid 下「磁盘上看起来有」的资源路径（相对媒体目录）；cache 键用 sig
+export async function virtualFiles({ mediaDir, config }) {
+  const v = await virtualIndex({ mediaDir, config }).catch(() => null)
+  return v ? { files: v.files, sig: v.sig } : { files: [], sig: '' }
+}
+
+// 把请求到的路径（相对媒体目录，可以有几个候选）里属于虚拟索引的、磁盘上还没有的，从 .arc 里读出来写成文件（先写临时文件再改名；同一个文件并发请求只取一次）。返回取出了几个
+export async function materialize({ mediaDir, config, rels }) {
+  const cfg = config?.containers
+  if (!isHybrid(cfg) || !rels?.length) return 0
+  const v = await virtualIndex({ mediaDir, config }).catch(() => null)
+  if (!v) return 0
+  let n = 0
+  for (const rel of rels) {
+    const hit = v.map.get(String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
+    if (!hit) continue
+    const target = path.join(mediaDir, ...hit.rel.split('/'))
+    try { if ((await stat(target)).size === hit.size) continue } catch { /* 还没有 */ }
+    let pending = materializing.get(target)
+    if (!pending) {
+      pending = (async () => {
+        const handle = await open(hit.file, 'r')
+        try {
+          const data = await readRange(handle, hit.offset, hit.size)
+          await mkdir(path.dirname(target), { recursive: true })
+          const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
+          await writeFile(tmp, data)
+          await rename(tmp, target)
+        } finally { await handle.close().catch(() => {}) }
+      })().finally(() => materializing.delete(target))
+      materializing.set(target, pending)
+    }
+    await pending
+    n += 1
+  }
+  return n
+}
+
 const inflight = new Map()   // mediaDir|dir → Promise
 const lastReport = new Map() // mediaDir → { at, arcs: { 名字: 结果 | { error } } }
 export const containerReport = (mediaDir) => lastReport.get(mediaDir) || null
-export function invalidateContainers(mediaDir) { for (const key of [...inflight.keys()]) if (key.startsWith(`${mediaDir}|`)) inflight.delete(key); lastReport.delete(mediaDir) }
+export function invalidateContainers(mediaDir) { for (const key of [...inflight.keys()]) if (key.startsWith(`${mediaDir}|`)) inflight.delete(key); for (const key of [...virtuals.keys()]) if (key.startsWith(`${mediaDir}|`)) virtuals.delete(key); lastReport.delete(mediaDir) }
 
 // 保证容器已展开（没配置 / 没启用 = 什么都不做）。幂等：容器没变（大小 + mtime + 规则指纹）就跳过；同一个目录并发调用只做一次
 export function ensureContainers({ mediaDir, config }) {
