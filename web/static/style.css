@@ -4338,6 +4338,9 @@ h2 {
 .gal-card.is-dir .gal-card-title { text-align: center; }
 .gal-card-sub { color: var(--site-muted); display: -webkit-box; font-size: 12px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .gal-card.is-dir .gal-card-sub { text-align: center; }
+.gal-view-rule { border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 4px; margin-top: 6px; padding-top: 6px; }
+.gal-view-rule-input { background: transparent; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); border-radius: 6px; color: inherit; font-family: monospace; font-size: 12px; padding: 3px 6px; }
+.gal-view-rule-on { font-size: 12px; }
 .gal-card-marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .gal-card-mark { background: color-mix(in srgb, var(--site-accent, #6b8cff) 14%, transparent); border: 1px solid color-mix(in srgb, var(--site-accent, #6b8cff) 45%, transparent); border-radius: 10px; color: inherit; cursor: pointer; font-size: 11px; line-height: 1.4; padding: 1px 8px; }
 .gal-card-mark:hover { background: color-mix(in srgb, var(--site-accent, #6b8cff) 30%, transparent); }

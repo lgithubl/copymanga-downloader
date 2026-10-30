@@ -26,6 +26,7 @@ let refocusSearch = null   // 搜索框触发的重绘后，把焦点还给新�
 const PREF_HOVER = 'gal.thumbHover'
 const PREF_COVER = 'gal.thumbCover'
 const PREF_MODE = 'gal.thumbCarousel'   // 轮播方式：hover | auto（空 = 跟配置 thumbHover.mode）
+const newSeed = () => 1 + Math.floor(Math.random() * 999999999)
 const readPref = (key) => { try { return localStorage.getItem(key) || '' } catch { return '' } }
 const writePref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key) } catch { /* 存不了就只对这次有效 */ } }
 let keepMenuOpen = null    // 在「更多」里改了搜索 / 排序 / 每页条数 → 重绘后把菜单重新打开（还要接着改别的）
@@ -79,11 +80,12 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   // ---- 视图（筛选 / 排序 / 每页条数 / 翻页）：节点 id = <viewBase>[|q=…&s=…&n=…][#页码] ----
   const view = node.view && node.viewBase !== undefined ? node.view : null
   const viewId = (patch = {}, page = 1) => {
-    const next = { q: view.q, sort: view.sort, size: view.size === view.defaultSize ? 0 : view.size, ...patch }
+    const next = { q: view.q, sort: view.sort, seed: view.seed || 0, size: view.size === view.defaultSize ? 0 : view.size, ...patch }
     const params = new URLSearchParams()
     if (next.q) params.set('q', next.q)
     if (next.sort && next.sort !== 'default') params.set('s', next.sort)
     if (next.size) params.set('n', String(next.size))
+    if (next.sort === 'random') params.set('r', String(next.seed || newSeed()))   // 随机排序的种子：同一个种子 = 同一个顺序（翻页稳定），「重新随机」换一个
     const text = params.toString()
     return `${node.viewBase}${text ? `|${text}` : ''}${page > 1 ? `#${page}` : ''}`
   }
@@ -207,7 +209,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       option.selected = entry.id === view.sort
       sort.append(option)
     }
-    sort.addEventListener('change', () => { keepMenuOpen = node.viewBase; go(viewId({ sort: sort.value }, 1)) })
+    sort.addEventListener('change', () => { keepMenuOpen = node.viewBase; go(viewId({ sort: sort.value, seed: sort.value === 'random' ? newSeed() : 0 }, 1)) })
     const size = el('select', 'gal-browse-size')
     size.title = '每页条数'
     for (const n of view.sizes || []) {
@@ -221,7 +223,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     const from = node.total ? (node.page - 1) * node.pageSize + 1 : 0
     const to = Math.min(node.total, node.page * node.pageSize)
     moreMenu.append(
-      field('搜索', search), field('排序', sort), field('每页', size),
+      field('搜索', search), field('排序', sort), ...(view.sort === 'random' ? [(() => { const again = el('button', 'gal-pager-btn', '重新随机'); again.type = 'button'; again.addEventListener('click', () => { keepMenuOpen = node.viewBase; go(viewId({ seed: newSeed() }, 1)) }); return again })()] : []), field('每页', size),
       el('div', 'gal-browse-range', view.q
         ? `筛选「${view.q}」：${node.total} / ${view.unfiltered} 项${node.total ? ` · 第 ${from}–${to} 项` : ''}`
         : `${node.total ? `第 ${from}–${to} 项 · ` : ''}共 ${node.total} 项`),
@@ -238,6 +240,36 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     }
   }
   if (!(view && (view.unfiltered > 8 || view.q))) moreMenu.append(el('div', 'gal-browse-range', node.total != null ? `共 ${node.total} 项` : ''))
+  // 虚拟目录规则（比如 AdvHD 每个剧情目录下的「特殊场景」）：规则存在浏览器本地（按条目），随请求带给服务端，不改服务端配置、不影响别人
+  if (node.viewRules?.length) {
+    const viewKey = `copymanga.gal.view.${reader.item?.itemId || ''}`
+    const loadView = () => { try { return JSON.parse(localStorage.getItem(viewKey) || 'null') || {} } catch { return {} } }
+    const saveRules = (rules) => { try { const saved = loadView(); if (Object.keys(rules).length) saved.viewRules = rules; else delete saved.viewRules; localStorage.setItem(viewKey, JSON.stringify(saved)) } catch { /* 存不了就算了 */ } }
+    for (const rule of node.viewRules) {
+      const box = el('div', 'gal-view-rule')
+      box.dataset.view = rule.as
+      box.append(el('div', 'gal-more-label', `${rule.label}：规则`))
+      const input = el('input', 'gal-view-rule-input')
+      input.type = 'text'
+      input.value = rule.match
+      input.placeholder = '正则，不分大小写；空 = 全部'
+      input.spellcheck = false
+      const on = el('select', 'gal-view-rule-on')
+      for (const [id, label] of [['name', '脚本名'], ['path', '路径'], ['marker', '命中跳转点']]) { const option = el('option', '', label); option.value = id; option.selected = id === rule.on; on.append(option) }
+      const apply = el('button', 'gal-pager-btn', '应用')
+      apply.type = 'button'
+      apply.addEventListener('click', () => { const rules = { ...(loadView().viewRules || {}), [rule.as]: { match: input.value.trim(), on: on.value } }; saveRules(rules); keepMenuOpen = node.viewBase; onOpen(node.id, 'self') })
+      box.append(input, on, apply)
+      if (rule.local) {
+        const reset = el('button', 'gal-pager-btn', `恢复默认${rule.defaultMatch ? `（${rule.defaultMatch}）` : ''}`)
+        reset.type = 'button'
+        reset.addEventListener('click', () => { const rules = { ...(loadView().viewRules || {}) }; delete rules[rule.as]; saveRules(rules); keepMenuOpen = node.viewBase; onOpen(node.id, 'self') })
+        box.append(reset)
+      }
+      box.append(el('div', 'gal-browse-range', `${rule.local ? '本地规则 · ' : '默认规则 · '}命中 ${rule.count} 个脚本（只在这个浏览器里生效）`))
+      moreMenu.append(box)
+    }
+  }
   // 文本版本（不同语言/备份的文本）：切换 = 打开那一套的首页
   if (node.sets?.length > 1) {
     const select = el('select', 'gal-browse-sets')

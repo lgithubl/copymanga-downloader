@@ -971,6 +971,17 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **dirCover 也用在文件系统目录 / 分组卡片**（以前只有 catalog）：`dirCover.enabled: true` 时，规则（thumbSources / dirThumbs）没给图的目录 / 分组卡片，用里面前 `scan` 个脚本（`depth` 层以内）的封面，`prefer` / `skip` / `only` / `max` 同上；`auto` 仍然只对声明了 `sceneThumbs` 的 catalog（TSK）生效。写在布局里：`config.dirCover`，或者 `engine.dirCover`（`engine` 现在也认 `dirCover` / `thumbRender`，别名继承时写在 engine 里就不会替换掉整份 config）。
 - 现在写了的：Aku `engine.dirCover = { enabled: true, scan: 8, max: 6, prefer: [render, image] }`（角色目录卡片：优先里面场景的骨骼渲染图，没有再用静态图，最多 6 张轮播）；Kamihime `config.dirCover = { enabled: true, scan: 6, max: 4, prefer: [render, image] }`（角色目录有头像用头像，没有头像的用里面场景的渲染图 / 图）。
 
+### 随机排序 + 虚拟目录规则框（浏览器本地覆盖）
+
+- **随机排序**：「更多 → 排序」多了「随机」。节点 id 带 `s=random&r=<种子>`：服务端用种子洗牌（mulberry32），**同一个种子顺序不变**，所以翻页、刷新、返回都稳定；选「随机」时前端生成一个新种子，「重新随机」换一个。目录在前、各自内部随机；先筛选再洗牌再分页。没有配置项（默认排序不变）。
+- **虚拟目录规则框**（比如 AdvHD 每个剧情目录下的「特殊场景」）：「更多」里，当前目录下有虚拟目录（`config.views`）时多一个框：**匹配正则**（不分大小写，空 = 全部）+ **匹配对象**（脚本名 / 路径 / 命中跳转点）+「应用」「恢复默认」+「命中 N 个」。
+  - **只存在这个浏览器里**（`localStorage['copymanga.gal.view.<条目 id>'].viewRules = { <视图名>: { match, on } }`），不写服务端配置、不影响别人，也不会被重跑 gal-layout 覆盖；所以不需要权限、不用新接口。每次读目录的请求带 `vr=<JSON>`（最多 2000 字符），服务端用请求级上下文（AsyncLocalStorage）临时覆盖布局里的规则，只对这一个请求生效，并发请求互不串。
+  - 服务端每次都校验（`normalizeViewOverrides`）：最多 6 条、视图名只认字母数字下划线横线点和中日文、正则要合法（走 `compileSafeRegex`）、超过 200 字符的整条丢掉（不截断）；写坏的忽略 = 用布局的默认规则。
+  - 匹配对象：`name` = 脚本名（不含扩展名）；`path` = 相对路径（含目录，如 `Rio1/002_00_H`）；`marker` = 命中 `config.sceneMarkers` 的脚本（regex 可再按跳转点的标签筛；要读每个脚本的摘要，最多看 600 个，有缓存）。内容型（marker）不支持「独占」视图。
+  - 节点返回 `viewRules: [{ as, label, match, on, local, defaultMatch, count }]` 给规则框用。
+- 局限：换浏览器 / 清了本地数据就没了；别人看到的还是布局里的默认规则；要全员共享得走服务端保存（那才需要接口 + 权限）。
+- 测试：`gal-view-rules-selftest.mjs`（13 项：种子稳定 / 翻页 / 三种匹配 / 写坏的忽略 / 并发请求各用各的）+ `fe-gal-viewrules-selftest.mjs`（真浏览器 11 项：随机、重新随机、规则框应用 / 恢复默认、请求带 vr、本地存储）。
+
 ### 容器的展开方式（`config.containers.mode`）：hybrid（默认）/ files
 
 - **`hybrid`（默认）**：脚本照常展开到磁盘（`arc/script/<容器>/<脚本>.advhd`，很小）；**图 / 声音 / 视频 / PNA 帧不展开**。PNA 只写 `index.json`（读头、记录表和每帧开头 8 字节，不读像素）。资源被请求时（`resolveAsset`）才从 `.arc` 里按偏移读出**那一个条目**，写成 `arc/res/<容器>/<条目名>` 当缓存（先写临时文件再改名，同一个文件并发请求只取一次）。

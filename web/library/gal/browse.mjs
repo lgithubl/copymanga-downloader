@@ -35,8 +35,10 @@ import { contextStats, invalidateContexts, loadAdapterContext } from './context.
 import { safeRelPath } from './paths.mjs'
 import { createThumbEngine, invalidateThumbCaches } from './thumbs.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { collectFallbackImages } from './fallback-thumbs.mjs'
 import { computeMarkers } from './markers.mjs'
+import { compileSafeRegex } from './voice.mjs'
 import { pickRenderSteps } from '../../static/gal-thumb-pick.js'
 export const RENDER_THUMB_VERSION = 'r2'   // 渲染缩略图的版本：渲染逻辑变了就加一，服务器缓存跟着换
 import { explainRejectedFile } from './diagnostics.mjs'
@@ -94,7 +96,7 @@ const IO_CONCURRENCY = 16
 
 // ---------- 列表视图（筛选 / 排序 / 每页条数）----------
 export const GAL_PAGE_SIZES = [10, 25, 50, 100, 200, 500]
-export const GAL_SORTS = [{ id: 'default', label: '默认（目录在前）' }, { id: 'name', label: '名称 ↑' }, { id: 'name_desc', label: '名称 ↓' }]
+export const GAL_SORTS = [{ id: 'default', label: '默认（目录在前）' }, { id: 'name', label: '名称 ↑' }, { id: 'name_desc', label: '名称 ↓' }, { id: 'random', label: '随机' }]
 export function parseGalView(optionText = '') {
   let params
   try { params = new URLSearchParams(optionText) } catch { params = new URLSearchParams() }
@@ -104,6 +106,7 @@ export function parseGalView(optionText = '') {
     q: String(params.get('q') || '').trim().slice(0, 100),
     sort: GAL_SORTS.some((entry) => entry.id === sort) ? sort : 'default',
     size: GAL_PAGE_SIZES.includes(size) ? size : 0,   // 0 = 用配置里的默认
+    seed: /^\d{1,9}$/.test(params.get('r') || '') ? Number(params.get('r')) : 0,   // 随机排序的种子（同一个种子 = 同一个顺序，翻页稳定；前端点「重新随机」换一个）
   }
 }
 // 只写和默认不同的；没有就是空串
@@ -112,8 +115,25 @@ export function galViewSuffix(view = {}) {
   if (view.q) params.set('q', view.q)
   if (view.sort && view.sort !== 'default') params.set('s', view.sort)
   if (view.size) params.set('n', String(view.size))
+  if (view.sort === 'random' && view.seed) params.set('r', String(view.seed))
   const text = params.toString()
   return text ? `|${text}` : ''
+}
+
+// 本地视图规则覆盖（请求参数 vr，浏览器本地存的）→ { <视图名>: { match, on, re } }；写坏的丢掉。服务端会拿它去匹配每个脚本名，所以长度 / 正则都要校验
+export function normalizeViewOverrides(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out = {}
+  for (const [as, v] of Object.entries(raw).slice(0, 6)) {
+    if (!/^[\w.\-\u3040-\u30ff\u4e00-\u9fff]{1,40}$/.test(as) || !v || typeof v !== 'object') continue
+    const on = ['name', 'path', 'marker'].includes(v.on) ? v.on : 'name'
+    const match = typeof v.match === 'string' ? v.match.trim() : ''
+    if (match.length > 200) continue   // 太长不要（不截断：截断后意思就变了）
+    let re = null
+    if (match) { try { re = compileSafeRegex(match, { flags: 'i', label: 'viewRules.match' }) } catch { re = null } if (!re) continue }
+    out[as] = { match, on, re }
+  }
+  return Object.keys(out).length ? out : null
 }
 
 const naturalCompare = (a, b) => a.localeCompare(b, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' })
@@ -158,19 +178,38 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const groupRules = config.groups.map((rule) => ({ ...rule, test: parentRegExp(rule.parent), re: new RegExp(rule.pattern) }))
   // 虚拟目录（config.views）：<parent>/<as> 这个路径磁盘上没有，列它时把来源目录（dirs，没写 = parent 自己）里 stem 匹配 match 的脚本收进来
   // parent 可以是通配（* ?）：每个匹配的目录下各有一个这样的视图——规则（viewRules）按 parent 匹配，实例（把 parent / rel 换成真实目录）才交给后面的代码用
-  const viewRules = config.views.map((rule) => ({ ...rule, test: rule.parent ? parentRegExp(rule.parent) : /^$/, re: rule.match ? new RegExp(rule.match) : null }))
+  const baseViewRules = config.views.map((rule) => ({ ...rule, on: 'name', test: rule.parent ? parentRegExp(rule.parent) : /^$/, re: rule.match ? new RegExp(rule.match) : null }))
+  // 本地覆盖（浏览器里「更多」的规则框，存在浏览器本地、随请求带来，不写服务端配置）：{ <视图名>: { match, on: 'name' | 'path' | 'marker' } }。
+  // 请求级上下文（AsyncLocalStorage）：provider 里很多函数都用到视图规则，不用一路改签名；每个请求各用各的。
+  const viewStore = new AsyncLocalStorage()
+  const viewRulesNow = () => {
+    const ov = viewStore.getStore()
+    if (!ov) return baseViewRules
+    return baseViewRules.map((rule) => (ov[rule.as] ? { ...rule, on: ov[rule.as].on, re: ov[rule.as].match ? ov[rule.as].re : null, local: true } : rule))
+  }
   const viewOf = (rule, parent) => ({ ...rule, parent, rel: parent ? `${parent}/${rule.as}` : rule.as })
   const viewAt = (rel) => {
     const at = rel.lastIndexOf('/')
     const parent = at < 0 ? '' : rel.slice(0, at)
     const name = at < 0 ? rel : rel.slice(at + 1)
-    const rule = viewRules.find((r) => r.as === name && r.test.test(parent))
+    const rule = viewRulesNow().find((r) => r.as === name && r.test.test(parent))
     return rule ? viewOf(rule, parent) : null
   }
-  const viewsUnder = (dirRel) => viewRules.filter((rule) => rule.test.test(dirRel)).map((rule) => viewOf(rule, dirRel))
-  const viewTakes = (rule, stem) => !rule.re || rule.re.test(stem)
-  // 独占视图（exclusive，来源是 parent 自己）收走的脚本：在 parent 的列表里不再出现，它的「父节点」是这个视图
-  const exclusiveViewOf = (dirRel, stem) => viewsUnder(dirRel).find((rule) => rule.exclusive && !rule.dirs.length && viewTakes(rule, stem)) || null
+  const viewsUnder = (dirRel) => viewRulesNow().filter((rule) => rule.test.test(dirRel)).map((rule) => viewOf(rule, dirRel))
+  // 脚本（{ stem, rel }）归不归这个视图：on name = 脚本名、path = 相对路径（含目录）；marker 要读脚本摘要，走 viewTakesAsync（同步这里不认 = 不收）
+  const viewTakes = (rule, script) => (rule.on === 'marker' ? false : !rule.re || rule.re.test(rule.on === 'path' ? script.rel : script.stem))
+  async function viewTakesAsync(set, rule, script) {
+    if (rule.on !== 'marker') return viewTakes(rule, script)
+    const info = await scriptInfo(set, script.rel).catch(() => null)
+    return Boolean(info?.markers?.length) && (!rule.re || info.markers.some((m) => rule.re.test(m.label)))
+  }
+  const filterViewScripts = async (set, rule, scripts, want = true) => {
+    if (rule.on !== 'marker') return scripts.filter((script) => viewTakes(rule, script) === want)
+    const rows = await mapLimit(scripts.slice(0, 600), 6, async (script) => ({ script, ok: await viewTakesAsync(set, rule, script) }))   // 内容型规则要读脚本摘要（有缓存）：最多看 600 个
+    return rows.filter((row) => row.ok === want).map((row) => row.script)
+  }
+  // 独占视图（exclusive，来源是 parent 自己）收走的脚本：在 parent 的列表里不再出现，它的「父节点」是这个视图（内容型规则不支持独占：要读脚本，这里是同步的）
+  const exclusiveViewOf = (dirRel, script) => viewsUnder(dirRel).find((rule) => rule.exclusive && !rule.dirs.length && rule.on !== 'marker' && viewTakes(rule, script)) || null
   const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
   const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}|${maxScriptBytes}`
@@ -195,7 +234,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 一个路径（目录或脚本）在界面上的「父节点目录」：在被合并掉的子目录里的，父节点是合并它们的那个目录
   const effectiveParentDir = (rel) => {
     const dir = parentRel(rel)
-    const taken = scriptExtensions.includes(extOf(rel)) ? exclusiveViewOf(dir, stemOf(rel)) : null
+    const taken = scriptExtensions.includes(extOf(rel)) ? exclusiveViewOf(dir, { stem: stemOf(rel), rel }) : null
     if (taken) return taken.rel
     return mergedSourceRule(dir) ? parentRel(dir) : dir
   }
@@ -261,7 +300,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   async function pageOfView(entries, view, page, describe) {
     const size = view.size || pageSize
     let list = entries
-    if (view.q || view.sort === 'name' || view.sort === 'name_desc') {
+    if (view.q || view.sort === 'name' || view.sort === 'name_desc' || view.sort === 'random') {
       const described = await Promise.all(entries.map(async (entry) => ({ entry, ...(await describe(entry)) })))
       let rows = described
       if (view.q) {
@@ -270,6 +309,11 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       }
       if (view.sort === 'name') rows = [...rows].sort((a, b) => naturalCompare(a.title, b.title))
       else if (view.sort === 'name_desc') rows = [...rows].sort((a, b) => naturalCompare(b.title, a.title))
+      else if (view.sort === 'random') {   // 目录在前、各自内部随机；带种子的洗牌（mulberry32），同一个种子顺序不变
+        const isDir = (row) => (row.entry.type ? row.entry.type !== 'script' : Boolean(row.entry.children))
+        const shuffle = (list) => { const out = [...list]; let a = (view.seed || 1) >>> 0; const rnd = () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }; for (let i = out.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [out[i], out[j]] = [out[j], out[i]] } return out }
+        rows = [...shuffle(rows.filter(isDir)), ...shuffle(rows.filter((row) => !isDir(row)))]
+      }
       list = rows.map((row) => row.entry)
     }
     const total = list.length
@@ -280,7 +324,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 节点上给前端的视图信息：当前筛选 / 排序 / 每页条数，和可选项；viewBase = 不带视图参数和页码的基础 id（前端拼新 id 用）
   const viewInfo = (view, paged, viewBase) => ({
     viewBase,
-    view: { q: view.q, sort: view.sort, size: paged.size, defaultSize: pageSize, sizes: GAL_PAGE_SIZES, sorts: GAL_SORTS, unfiltered: paged.unfiltered },
+    view: { q: view.q, sort: view.sort, seed: view.seed || 0, size: paged.size, defaultSize: pageSize, sizes: GAL_PAGE_SIZES, sorts: GAL_SORTS, unfiltered: paged.unfiltered },
   })
 
   // ---------- 读目录 / 脚本 ----------
@@ -593,6 +637,19 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return { dirs: base.dirs.map((entry) => ({ ...entry, origin })), scripts: base.scripts.map((entry) => ({ ...entry, origin })), rejected: base.rejected || [], compiledOnly: base.compiledOnly || [] }
   }
 
+  // 「更多」里的规则框要显示的：这个目录下的虚拟目录（和这个目录自己，如果它就是虚拟目录）当前生效的规则、默认规则、命中的脚本数
+  async function viewRulesInfo(set, rel) {
+    const out = []
+    const seen = new Set()
+    for (const rule of [...viewsUnder(rel), ...(viewAt(rel) ? [viewAt(rel)] : [])]) {
+      if (seen.has(rule.as)) continue
+      seen.add(rule.as)
+      const base = baseViewRules.find((r) => r.as === rule.as)
+      const inside = await listDir(set, rule.rel).catch(() => null)
+      out.push({ as: rule.as, label: rule.label || rule.as, match: rule.re ? rule.re.source : '', on: rule.on, local: Boolean(rule.local), defaultMatch: base?.re ? base.re.source : '', count: inside?.allScripts.length ?? 0 })
+    }
+    return out
+  }
   // 一个目录里的内容：目录在前、脚本在后，自然序（合并目录时，几个来源的内容混在一起排）。
   // 脚本要被适配器认得才算（读 8KB 头，缓存）
   async function listDir(set, rel) {
@@ -605,7 +662,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
       for (const sourceName of view.dirs.length ? view.dirs : ['']) {
         const sourceRel = [view.parent, sourceName].filter(Boolean).join('/')
         const got = await readEntries(set, sourceRel, view.dirs.length ? (view.badges[sourceName] || sourceName) : '')
-        if (got) { own.scripts = own.scripts.concat(got.scripts.filter((script) => viewTakes(view, script.stem))); rejected.push(...got.rejected) }
+        if (got) { own.scripts = own.scripts.concat(await filterViewScripts(set, view, got.scripts)); rejected.push(...got.rejected) }
       }
     } else {
       own = await readEntries(set, rel)
@@ -617,7 +674,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     let scripts = own.scripts
     // 这个目录下挂着的虚拟目录：独占的收走脚本；有内容的才列出来
     for (const sub of viewsUnder(rel)) {
-      if (sub.exclusive && !sub.dirs.length) scripts = scripts.filter((script) => !viewTakes(sub, script.stem))
+      if (sub.exclusive && !sub.dirs.length && sub.on !== 'marker') scripts = await filterViewScripts(set, sub, scripts, false)
       const inside = await listDir(set, sub.rel).catch(() => null)
       if (inside?.allScripts.length) dirs = dirs.concat({ type: 'dir', name: sub.as, rel: sub.rel, origin: '', virtual: true })
     }
@@ -956,7 +1013,8 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...renderFieldsOf(info), node: idOf(set, 'script', entry.rel) }
       })
       const title = rel ? await labelOf(baseName(rel)) : '首页'
-      return { node: { id: dirNodeId(set, rel, paged.current, view), kind: 'cards', title, ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...viewInfo(view, paged, dirNodeId(set, rel, 1)) } }
+      const viewRulesList = await viewRulesInfo(set, rel)
+      return { node: { id: dirNodeId(set, rel, paged.current, view), kind: 'cards', title, ...base, pageSize: paged.size, page: paged.current, pageCount: paged.pageCount, total: paged.total, items, ...(viewRulesList.length ? { viewRules: viewRulesList } : {}), ...viewInfo(view, paged, dirNodeId(set, rel, 1)) } }
     }
 
     // script
@@ -1235,6 +1293,10 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   let containerFailure = ''
 
   async function getNode(nodeId, opts = {}) {
+    const overrides = normalizeViewOverrides(opts.viewRules)
+    return overrides ? viewStore.run(overrides, () => getNodeRun(nodeId, opts)) : getNodeRun(nodeId, opts)
+  }
+  async function getNodeRun(nodeId, opts = {}) {
     await prepareContainers()
     if (nodeId === 'x:expr') {
       if (!expressionAdapter) throw fail('这个媒体没有表情预设', 404)

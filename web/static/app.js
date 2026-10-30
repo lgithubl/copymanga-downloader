@@ -4064,7 +4064,7 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     if (sectionId) params.set('sectionId', sectionId)
     // Gal：这个媒体在「更多」里打开过「显示马赛克层」就一直带上（按媒体存在 localStorage 的 copymanga.gal.view.<条目 id> 里）
     if (owner.type === 'gal') {
-      try { const saved = JSON.parse(localStorage.getItem(`copymanga.gal.view.${owner.itemId}`) || 'null'); if (saved?.showMosaic !== undefined) params.set('mosaic', saved.showMosaic ? '1' : '0') } catch { /* 读不了就按适配器配置 */ }
+      try { const saved = JSON.parse(localStorage.getItem(`copymanga.gal.view.${owner.itemId}`) || 'null'); if (saved?.showMosaic !== undefined) params.set('mosaic', saved.showMosaic ? '1' : '0'); if (saved?.viewRules && typeof saved.viewRules === 'object') params.set('vr', JSON.stringify(saved.viewRules)) } catch { /* 读不了就按适配器配置 */ }
     }
     const suffix = params.toString() ? `?${params}` : ''
     const reader = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)

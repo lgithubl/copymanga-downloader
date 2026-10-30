@@ -5303,6 +5303,8 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
           sectionId: url.searchParams.get('sectionId') || '',
           // Gal：播放器「更多 → 显示马赛克层」（按媒体存在浏览器里）随请求带来；没带 = 按 adapterOptions.showMosaic
           ...(url.searchParams.has('mosaic') ? { showMosaic: url.searchParams.get('mosaic') === '1' } : {}),
+          // Gal：「更多 → 虚拟目录规则」存在浏览器本地，随请求带来（JSON，最多 2000 字符；服务端再校验，写坏的忽略）
+          ...(url.searchParams.get('vr') ? (() => { try { const text = url.searchParams.get('vr'); return text.length <= 2000 ? { viewRules: JSON.parse(text) } : {} } catch { return {} } })() : {}),
         })))
       }
       if (action === 'thumbnail') {
