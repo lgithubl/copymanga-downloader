@@ -20,10 +20,12 @@ export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, s
 export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95], filmFrame: [0, 0.99], filmMax: [1, 12], innerMax: [1, 12], innerRenders: [1, 6] })
 // 目录卡片的封面（目录 / 章节目录 / 角色分组里没有任何规则给图时，用它里面的脚本的封面；见 DEFAULT_GAL_CONFIG.dirCover）
 export const DIR_COVER_SOURCES = Object.freeze(['render', 'image'])
-export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]) })
+export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, from: 'first', leafScan: 0, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]) })
 export const DIR_COVER_LIMITS = Object.freeze({ scan: [1, 30], depth: [1, 5], max: [1, 24], list: 10 })
 // 容器（打包格式，如 WillPlus .arc）：服务端自己读容器、展开到媒体目录下的缓存目录，见 containers.mjs
 export const CONTAINER_PNA_MODES = Object.freeze(['frames', 'raw', 'skip'])
+// 画廊页按图名前缀拆组（containers.rules[].gallery）的默认值：openCgBrowser(图) 的调用、页码标记 Condition(130, 105)、至少 20 个调用才算画廊、组名 = 第一张图的名字去掉末尾 _数字
+export const DEFAULT_CONTAINER_GALLERY = Object.freeze({ functions: Object.freeze(['openCgBrowser']), pageFlags: Object.freeze([105]), minCalls: 20, group: '_\\d+$' })
 export const CONTAINER_KINDS = Object.freeze(['script', 'res', 'pna'])
 export const DEFAULT_CONTAINERS = Object.freeze({ enabled: false, dir: 'arc', scan: Object.freeze(['.']), scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: Object.freeze([]), maxEntries: 200000, maxTotalMB: 8192 })
 export const CONTAINER_LIMITS = Object.freeze({ rules: 20, list: 10, maxEntries: [1, 1000000], maxTotalMB: [1, 65536] })
@@ -274,7 +276,7 @@ export function normalizeGalConfigWithWarnings(raw) {
   const views = []
   overList('views', v.views, MAX_LIST)
   for (const rule of Array.isArray(v.views) ? v.views.slice(0, MAX_LIST) : []) {
-    const parent = safeGlob(rule?.parent) === '.' || !rule?.parent ? '' : safeRelPath(text(rule.parent, 200))
+    const parent = safeGlob(rule?.parent) === '.' || !rule?.parent ? '' : (safeGlob(rule.parent) || null)   // parent 可以带通配（* ?）：每个匹配的目录下各有一个这样的视图（AdvHD：每个剧情 arc 目录下一个「特殊场景」）
     const as = safeName(typeof rule?.as === 'string' ? rule.as : '')
     if (parent === null || !as) { warn('views', parent === null ? 'parent 不是安全路径' : 'as 无效', rule); continue }
     const dirs = (Array.isArray(rule?.dirs) ? rule.dirs : []).map(safeName).filter(Boolean).slice(0, 10)
@@ -414,6 +416,8 @@ export function normalizeGalConfigWithWarnings(raw) {
     for (const key of Object.keys(dc)) if (!(key in ddc)) warn('dirCover', `不认识的字段 ${key}，已丢掉`, key)
     if (dc.enabled !== undefined) { if (dc.enabled === true || dc.enabled === false || dc.enabled === 'auto') dirCover.enabled = dc.enabled; else warn('dirCover.enabled', '只能是 auto / true / false，用默认值', dc.enabled) }
     if (dc.merge !== undefined) { if (typeof dc.merge === 'boolean') dirCover.merge = dc.merge; else warn('dirCover.merge', '只能是 true / false，用默认值', dc.merge) }
+    if (dc.leafScan !== undefined) { const n = Math.floor(Number(dc.leafScan)); if (dc.leafScan === null || dc.leafScan === '' || typeof dc.leafScan === 'boolean' || !Number.isFinite(n) || n < 0) warn('dirCover.leafScan', '不是 0 以上的整数，用默认值（0 = 跟着 scan）', dc.leafScan); else dirCover.leafScan = Math.min(30, n) }
+    if (dc.from !== undefined) { if (dc.from === 'first' || dc.from === 'last') dirCover.from = dc.from; else warn('dirCover.from', '只能是 first / last，用默认值', dc.from) }
     for (const key of ['scan', 'depth', 'max']) {
       if (dc[key] === undefined) continue
       const n = Math.floor(Number(dc[key]))
@@ -494,7 +498,7 @@ export function normalizeGalConfigWithWarnings(raw) {
         if (c.rules.length > CONTAINER_LIMITS.rules) warn('containers.rules', `最多 ${CONTAINER_LIMITS.rules} 条，多出的丢掉`, c.rules.length)
         for (const rule of c.rules.slice(0, CONTAINER_LIMITS.rules)) {
           if (!isPlainObject(rule)) { warn('containers.rules', '这一条不是对象，已丢掉', rule); continue }
-          for (const key of Object.keys(rule)) if (!['match', 'skip', 'kinds', 'include', 'exclude', 'pna'].includes(key)) warn('containers.rules', `不认识的字段 ${key}，已丢掉`, key)
+          for (const key of Object.keys(rule)) if (!['match', 'skip', 'kinds', 'include', 'exclude', 'pna', 'gallery'].includes(key)) warn('containers.rules', `不认识的字段 ${key}，已丢掉`, key)
           const match = text(rule.match, MAX_RULE_REGEX)
           try { if (!match || !compileSafeRegex(match, { flags: 'i' })) throw new Error('empty') } catch { warn('containers.rules', 'match 为空或不是合法正则（太长 / 量词套量词 / 反向引用），这一条已丢掉', rule); continue }
           const out = { match }
@@ -513,6 +517,18 @@ export function normalizeGalConfigWithWarnings(raw) {
             if (ok.length) out[key] = ok
           }
           if (rule.pna !== undefined) { if (CONTAINER_PNA_MODES.includes(rule.pna)) { if (rule.pna !== 'frames') out.pna = rule.pna } else warn('containers.rules.pna', `只能是 ${CONTAINER_PNA_MODES.join(' / ')}，用默认值 frames`, rule.pna) }
+          if (rule.gallery !== undefined && rule.gallery !== false) {
+            const g = rule.gallery === true ? {} : isPlainObject(rule.gallery) ? rule.gallery : null
+            if (!g) warn('containers.rules.gallery', '只能是 true 或对象 { functions, pageFlags, minCalls, group }，已丢掉', rule.gallery)
+            else {
+              const strs = (list, fallback) => { const ok = (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && /^[A-Za-z0-9_.:-]{1,60}$/.test(x)).slice(0, 10); return ok.length ? ok : fallback }
+              const flags = (Array.isArray(g.pageFlags) ? g.pageFlags : []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < 100000).slice(0, 10)
+              let group = DEFAULT_CONTAINER_GALLERY.group
+              if (g.group !== undefined) { try { if (typeof g.group === 'string' && g.group.trim() && g.group.length <= 120 && compileSafeRegex(g.group, { flags: 'i' })) group = g.group.trim(); else throw new Error('x') } catch { warn('containers.rules.gallery.group', '不是合法正则 / 太长，用默认值', g.group) } }
+              const mc = Math.floor(Number(g.minCalls))
+              out.gallery = { functions: strs(g.functions, [...DEFAULT_CONTAINER_GALLERY.functions]), pageFlags: flags.length ? flags : [...DEFAULT_CONTAINER_GALLERY.pageFlags], minCalls: g.minCalls !== undefined && Number.isFinite(mc) && mc >= 1 ? Math.min(1000, mc) : DEFAULT_CONTAINER_GALLERY.minCalls, group }
+            }
+          }
           containers.rules.push(out)
         }
       }

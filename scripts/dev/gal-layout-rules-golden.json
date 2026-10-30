@@ -207,6 +207,16 @@
      "skip": true
     },
     {
+     "gallery": {
+      "functions": [
+       "openCgBrowser"
+      ],
+      "group": "_\\d+$",
+      "minCalls": 20,
+      "pageFlags": [
+       105
+      ]
+     },
      "include": [
       "^CG_PAGE\\.ws2$"
      ],
@@ -2532,6 +2542,11 @@
   "limits": {
    "sampleFiles": 20000,
    "walkFiles": 800000
+  },
+  "thumbRender": {
+   "inner": true,
+   "innerMax": 4,
+   "innerRenders": 3
   }
  },
  "legeclo": {
@@ -3756,6 +3771,8 @@
   "classify": [],
   "dirCover": {
    "enabled": true,
+   "from": "last",
+   "leafScan": 1,
    "max": 6,
    "only": [],
    "prefer": [

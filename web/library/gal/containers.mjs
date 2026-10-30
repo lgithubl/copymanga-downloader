@@ -31,6 +31,33 @@ export const SCRIPT_DECODERS = Object.freeze({
       const rows = ins.map((i) => JSON.stringify(i.choices ? [i.at, i.name, i.args, i.choices] : [i.at, i.name, i.args]))
       return `{"format":"advhd-ws2/1","arc":${JSON.stringify(arc)},"name":${JSON.stringify(name)},"size":${buffer.length}${ins.truncated ? `,"truncated":${JSON.stringify(ins.truncated)}` : ''},"ins":[\n${rows.join(',\n')}\n]}\n`
     },
+    // 画廊页（一长串 ExecuteFunction openCgBrowser(图)）按图名前缀拆成几组：组名 = 第一张图的名字（无扩展名）去掉 group 正则（默认末尾 _数字）之后的部分；
+    // 每组一个脚本文件（只留这一组的 openCgBrowser 和它们前面的页码标记，适配器按画廊读，见 advhd-ws2.mjs 的 data.gallery）。不是画廊页（调用不够 minCalls）= 不拆
+    split(buffer, { arc, name }, gallery) {
+      const ins = decodeWs2(ror2(buffer), { tolerant: true })
+      const fns = new Set(gallery.functions)
+      const isCall = (i) => i.name === 'ExecuteFunction' && fns.has(String(i.args[0]))
+      if (ins.filter(isCall).length < gallery.minCalls) return []
+      const re = compileSafeRegex(gallery.group, { flags: 'i', label: 'containers.rules.gallery.group' })
+      const flags = new Set(gallery.pageFlags)
+      const groups = new Map()
+      let marker = null
+      let markerUsed = null
+      for (const i of ins) {
+        if (i.name === 'Condition' && i.args.length >= 5 && i.args[0] === 130 && flags.has(i.args[1])) { marker = i; continue }
+        if (!isCall(i)) continue
+        const first = String(i.args[1] || '').replace(/\\/g, '/').split('/').filter(Boolean)[0] || ''
+        const stem = first.replace(/^.*\//, '').replace(/\.[^.]+$/, '')
+        const key = (re ? stem.replace(re, '') : stem).replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^[._-]+|[._-]+$/g, '') || 'other'
+        if (!groups.has(key)) groups.set(key, [])
+        const rows = groups.get(key)
+        if (marker && markerUsed !== marker) rows.push(marker)
+        markerUsed = marker
+        rows.push(i)
+      }
+      const rowOf = (i) => JSON.stringify([i.at, i.name, i.args])
+      return [...groups].map(([key, list]) => ({ name: key, text: `{"format":"advhd-ws2/1","arc":${JSON.stringify(arc)},"name":${JSON.stringify(`${name}/${key}`)},"size":${buffer.length},"gallery":${JSON.stringify({ group: key })},"ins":[\n${[...new Set(list)].map(rowOf).join(',\n')}\n]}\n` }))
+    },
   },
 })
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
@@ -124,6 +151,7 @@ function compileRules(cfg) {
     include: (rule.include || []).map((s) => compileSafeRegex(s, { flags: 'i', label: 'containers.rules.include' })).filter(Boolean),
     exclude: (rule.exclude || []).map((s) => compileSafeRegex(s, { flags: 'i', label: 'containers.rules.exclude' })).filter(Boolean),
     pna: rule.pna || 'frames',
+    gallery: rule.gallery || null,
   }))
 }
 const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.maxEntries, cfg.maxTotalMB])).digest('hex').slice(0, 16)
@@ -162,6 +190,16 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
         await mkdir(path.dirname(target), { recursive: true })
         await writeFile(target, text)
         result.scripts += 1
+        if (rule.gallery && decoder.split) {
+          const parts = decoder.split(data, { arc: stem, name: base }, rule.gallery)
+          for (const part of parts.slice(0, 2000)) {
+            const partTarget = path.join(outRoot, 'script', stem, ...`${base}/${part.name}.${cfg.scriptExt || decoder.ext}`.split('/'))
+            await mkdir(path.dirname(partTarget), { recursive: true })
+            await writeFile(partTarget, part.text)
+            result.scripts += 1
+          }
+          if (parts.length) result.galleryGroups = (result.galleryGroups || 0) + parts.length
+        }
         if (text.includes('"truncated"')) result.truncatedScripts += 1
       } else if (kind === 'pna' && rule.pna !== 'raw') {
         const dir = path.join(outRoot, 'res', stem, ...name.split('/'))

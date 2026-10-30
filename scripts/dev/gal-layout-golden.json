@@ -3477,6 +3477,8 @@
    "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
    "dirCover": {
     "enabled": true,
+    "from": "last",
+    "leafScan": 1,
     "max": 6,
     "only": [],
     "prefer": [
@@ -3544,7 +3546,17 @@
    "scriptThumbs": [],
    "thumbSources": [
     {
-     "dir": "Sprites/Chara/Thumb_*",
+     "dir": "Sprites/Chara/Thumb_005",
+     "for": "dir",
+     "forKey": "{name}",
+     "forStrip": "^@",
+     "key": "{1}",
+     "limit": 6,
+     "match": "^chara_(\\d{4})\\d{3}_.*\\.png$"
+    },
+    {
+     "dir": "Sprites/Chara/Thumb_006",
+     "fallback": true,
      "for": "dir",
      "forKey": "{name}",
      "forStrip": "^@",
@@ -3579,6 +3591,8 @@
    "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
    "dirCover": {
     "enabled": true,
+    "from": "last",
+    "leafScan": 1,
     "max": 6,
     "only": [],
     "prefer": [
@@ -3646,7 +3660,17 @@
    "scriptThumbs": [],
    "thumbSources": [
     {
-     "dir": "Sprites/Chara/Thumb_*",
+     "dir": "Sprites/Chara/Thumb_005",
+     "for": "dir",
+     "forKey": "{name}",
+     "forStrip": "^@",
+     "key": "{1}",
+     "limit": 6,
+     "match": "^chara_(\\d{4})\\d{3}_.*\\.png$"
+    },
+    {
+     "dir": "Sprites/Chara/Thumb_006",
+     "fallback": true,
      "for": "dir",
      "forKey": "{name}",
      "forStrip": "^@",
@@ -3681,6 +3705,8 @@
    "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
    "dirCover": {
     "enabled": true,
+    "from": "last",
+    "leafScan": 1,
     "max": 6,
     "only": [],
     "prefer": [
@@ -3748,7 +3774,17 @@
    "scriptThumbs": [],
    "thumbSources": [
     {
-     "dir": "Sprites/Chara/Thumb_*",
+     "dir": "Sprites/Chara/Thumb_005",
+     "for": "dir",
+     "forKey": "{name}",
+     "forStrip": "^@",
+     "key": "{1}",
+     "limit": 6,
+     "match": "^chara_(\\d{4})\\d{3}_.*\\.png$"
+    },
+    {
+     "dir": "Sprites/Chara/Thumb_006",
+     "fallback": true,
      "for": "dir",
      "forKey": "{name}",
      "forStrip": "^@",
@@ -3783,6 +3819,8 @@
    "cover": "Adventure/BackGrounds/bg_adv_001_1.png",
    "dirCover": {
     "enabled": true,
+    "from": "last",
+    "leafScan": 1,
     "max": 6,
     "only": [],
     "prefer": [
@@ -3850,7 +3888,17 @@
    "scriptThumbs": [],
    "thumbSources": [
     {
-     "dir": "Sprites/Chara/Thumb_*",
+     "dir": "Sprites/Chara/Thumb_005",
+     "for": "dir",
+     "forKey": "{name}",
+     "forStrip": "^@",
+     "key": "{1}",
+     "limit": 6,
+     "match": "^chara_(\\d{4})\\d{3}_.*\\.png$"
+    },
+    {
+     "dir": "Sprites/Chara/Thumb_006",
+     "fallback": true,
      "for": "dir",
      "forKey": "{name}",
      "forStrip": "^@",
@@ -5947,7 +5995,17 @@
     ]
    },
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "special",
+     "badges": {},
+     "dirs": [],
+     "exclusive": false,
+     "label": "特殊场景",
+     "match": "_[hH]$",
+     "parent": "*"
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: advhd::lpsl",
@@ -6011,7 +6069,17 @@
     ]
    },
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "special",
+     "badges": {},
+     "dirs": [],
+     "exclusive": false,
+     "label": "特殊场景",
+     "match": "_[hH]$",
+     "parent": "*"
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: advhd::advhd",
@@ -6075,7 +6143,17 @@
     ]
    },
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "special",
+     "badges": {},
+     "dirs": [],
+     "exclusive": false,
+     "label": "特殊场景",
+     "match": "_[hH]$",
+     "parent": "*"
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: advhd::lpsl",
@@ -6139,7 +6217,17 @@
     ]
    },
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "special",
+     "badges": {},
+     "dirs": [],
+     "exclusive": false,
+     "label": "特殊场景",
+     "match": "_[hH]$",
+     "parent": "*"
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: advhd::advhd",

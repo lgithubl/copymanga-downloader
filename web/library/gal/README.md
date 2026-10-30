@@ -979,6 +979,18 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 现在只给 Aku 开了（`LAYOUTS.aku.engine.thumbRender = { inner: true, innerMax: 4, innerRenders: 3 }`，gal-layout 2.20.0，要重跑 gal-layout 才会写进已导入的条目）。别的游戏（Kamihime 等）想要，在布局里加同样一行即可。
 - 没验证的：浏览器里的卡片轮播顺序（规则图 → 渲染图 → 其余图）和真实 Aku 数据下骨骼渲染（这个沙箱的无头浏览器渲染不了骨骼，`fe-gal-render-thumb-selftest` 在没改动的代码上也同样超时）；服务端部分（选画面 / key / 名额 / ruleCover 字段）有自测。顺带修了：`scriptInfo` 的缓存键以前不含 `thumbRender`，改了渲染配置要等 30 秒缓存过期才生效。
 
+### 目录卡片封面：`dirCover.from` / `leafScan`；虚拟目录 `views` 的 parent 通配；角色头像 T5 优先 T6
+
+- `dirCover.from`：`first`（默认，取前 `scan` 个脚本）| `last`（取最后 `scan` 个）。`dirCover.leafScan`：直接装着脚本的节点（TSK 的一本书 = 若干章）用这个数代替 `scan`（0 = 跟着 scan）。TSK 写了 `from: last, leafScan: 1`：`CharaScenario1091002` 这样的书卡片 = 最后一章的封面（和那一章自己的卡片是同一套规则 / 兜底 / 渲染）；别的目录卡片取最后 8 个脚本。
+- TSK 角色头像：`thumbSources` 拆成 `Thumb_005` 和 `Thumb_006` 两条，第二条 `fallback: true`——有 Thumb_005 的图就只用它，没有才用 Thumb_006。
+- `views[].parent` 现在可以带通配（`*` / `?`）：每个匹配的目录下各有一个这样的虚拟目录（以前必须写死目录名）。AdvHD 家族默认写了 `{ parent: '*', as: 'special', label: '特殊场景', match: '_[hH]$' }`：每个剧情 arc 目录下多一个「特殊场景」，里面是脚本名以 `_H` 结尾的；全量列表照旧（非 exclusive）。要改规则就改这条的 `match`；没有匹配脚本的目录不显示它。
+- 都是配置字段，旧条目要重跑 gal-layout（2.21.0）才会写进去。
+
+### AdvHD：CG 画廊按图名前缀分组（`containers.rules[].gallery`）
+
+- 以前整个 `CG_PAGE` 是一个脚本（518 张图一串）。容器规则新增 `gallery: { functions: ['openCgBrowser'], pageFlags: [105], minCalls: 20, group: '_\\d+$' }`（Rio.arc 的规则里默认写了）：展开 `CG_PAGE.ws2` 时，除了整个的 `CG_PAGE.advhd`，还按**第一张图的名字（无扩展名）去掉 `group` 正则（默认末尾 `_数字`）之后的前缀**分组，每组一个脚本 `arc/script/Rio/CG_PAGE/<前缀>.advhd`（只留这一组的 `openCgBrowser` 和它们前面的页码标记；`BG_01` 与 `BG_01/EV_01` 叠加都归 `BG`）。适配器看到 `data.gallery` 就按画廊读（张数少也是）。
+- 没验证：真实 `CG_PAGE` 里的图名长什么样（`group` 默认只去末尾 `_数字`；如果真实名字是 `CG_12_a` 之类要改这条正则）。
+
 ## WillPlus AdvHD（ADVPlayerHD 引擎家族）/ 容器（`config.containers`）
 
 **game.id = `advhd::<游戏>`，适配器 id = `advhd::ws2`**（`::` 分段 = 引擎家族 + 具体对象）。第一个游戏是 `advhd::lpsl`（Lovey-dovey Part-time Sex Life）。同引擎的新游戏只要 id 以 `advhd::` 开头，gal-layout 就按家族项 `LAYOUTS.advhd` 处理，**不用在脚本里为每个游戏加一条**；某个游戏真有差异时再用选项 `layouts['advhd::<游戏>']`（叠在家族项上，只覆盖写了的字段）或 `layouts.advhd`（改整个家族）。没声明 game.id 时自动探测（`Script*.arc` + `AdvHD.exe` + `Rio*.arc`），认领成 `advhd::<目录名的小写字母数字>`。

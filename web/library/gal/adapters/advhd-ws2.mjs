@@ -160,7 +160,7 @@ export function parse(text, ctx = null, meta = {}) {
 
   // ---- CG 画廊页：按「画廊」读（见 DEFAULT_OPTIONS.gallery）----
   const galleryCalls = list.filter((ins) => ins.name === 'ExecuteFunction' && opt.gallery.functions.includes(String(ins.args[0])))
-  if (opt.gallery.functions.length && galleryCalls.length >= opt.gallery.minCalls) {
+  if (opt.gallery.functions.length && (galleryCalls.length >= opt.gallery.minCalls || (data.gallery && galleryCalls.length))) {   // data.gallery：容器展开时按前缀拆出来的一组（config.containers.rules[].gallery），张数少也按画廊读
     const gSteps = []
     let page = null
     let lastPage = null

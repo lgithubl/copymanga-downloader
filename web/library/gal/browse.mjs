@@ -156,9 +156,17 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const mergeRules = config.merge.map((rule) => ({ ...rule, test: parentRegExp(rule.parent) }))
   const groupRules = config.groups.map((rule) => ({ ...rule, test: parentRegExp(rule.parent), re: new RegExp(rule.pattern) }))
   // 虚拟目录（config.views）：<parent>/<as> 这个路径磁盘上没有，列它时把来源目录（dirs，没写 = parent 自己）里 stem 匹配 match 的脚本收进来
-  const viewRules = config.views.map((rule) => ({ ...rule, rel: rule.parent ? `${rule.parent}/${rule.as}` : rule.as, re: rule.match ? new RegExp(rule.match) : null }))
-  const viewAt = (rel) => viewRules.find((rule) => rule.rel === rel) || null
-  const viewsUnder = (dirRel) => viewRules.filter((rule) => rule.parent === dirRel)
+  // parent 可以是通配（* ?）：每个匹配的目录下各有一个这样的视图——规则（viewRules）按 parent 匹配，实例（把 parent / rel 换成真实目录）才交给后面的代码用
+  const viewRules = config.views.map((rule) => ({ ...rule, test: rule.parent ? parentRegExp(rule.parent) : /^$/, re: rule.match ? new RegExp(rule.match) : null }))
+  const viewOf = (rule, parent) => ({ ...rule, parent, rel: parent ? `${parent}/${rule.as}` : rule.as })
+  const viewAt = (rel) => {
+    const at = rel.lastIndexOf('/')
+    const parent = at < 0 ? '' : rel.slice(0, at)
+    const name = at < 0 ? rel : rel.slice(at + 1)
+    const rule = viewRules.find((r) => r.as === name && r.test.test(parent))
+    return rule ? viewOf(rule, parent) : null
+  }
+  const viewsUnder = (dirRel) => viewRules.filter((rule) => rule.test.test(dirRel)).map((rule) => viewOf(rule, dirRel))
   const viewTakes = (rule, stem) => !rule.re || rule.re.test(stem)
   // 独占视图（exclusive，来源是 parent 自己）收走的脚本：在 parent 的列表里不再出现，它的「父节点」是这个视图
   const exclusiveViewOf = (dirRel, stem) => viewsUnder(dirRel).find((rule) => rule.exclusive && !rule.dirs.length && viewTakes(rule, stem)) || null
@@ -431,6 +439,13 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 并发限制 6：每个脚本要解析一次（scriptInfo 按文件 mtime 缓存）；路径带 :: 的（一个文件装很多场景）不是真文件，跳过。
   // 目录卡片的取图名 = 适配器给的 key（没给用标题）：标题常常是显示名（角色名），文件按编号命名（misttrain：Bases/<底号>201.png）
   const scriptsOf = (node, depth, limit, out = []) => { for (const c of node.children || []) { if (out.length >= limit) break; if (c.script) out.push(c.script); else if (depth > 1) scriptsOf(c, depth - 1, limit, out) } return out }
+  // dirCover.from = last：取最后 scan 个（从头收全再截尾；候选脚本最多看 2000 个）
+  // leafScan：直接装着脚本的节点（TSK 的一本书 = 若干章）用这个数（0 = 跟着 scan）：from last + leafScan 1 = 只用最后一章的封面（和那一章的脚本卡片一样）
+  const coverScriptsOf = (node, depth, scan) => {
+    const leaf = config.dirCover.leafScan > 0 && node.children?.length && node.children.every((c) => c.script)
+    const limit = leaf ? config.dirCover.leafScan : scan
+    return config.dirCover.from === 'last' ? scriptsOf(node, depth, 2000).slice(-limit) : scriptsOf(node, depth, limit)
+  }
   const adapterHasSceneThumbs = (adapters?.length ? adapters : galAdapterIds()).some((id) => { try { return Boolean(galAdapter(id)?.sceneThumbs) } catch { return false } })
   const dirCoverActive = () => config.dirCover.enabled === true || (config.dirCover.enabled === 'auto' && adapterHasSceneThumbs)
   // 卡片上的渲染图：骨骼 / 立绘场景的一张（renderKey）+ 胶片场景每段胶片一张（filmRenders，Kamihime 的 harem 场景）；多张 = renders（轮播）
@@ -454,7 +469,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const got = pickDirCover(cands, dc)
     return got.thumbs.length || got.renders.length ? got : null
   }
-  const dirCoverOf = (node) => dirCoverOfScripts(scriptsOf(node, config.dirCover.depth, config.dirCover.scan))
+  const dirCoverOf = (node) => dirCoverOfScripts(coverScriptsOf(node, config.dirCover.depth, config.dirCover.scan))
   async function enrichCatalogItems(children, holder) {
     const out = new Array(children.length)
     let next = 0
@@ -764,7 +779,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const thumbs = [...(await thumbEngine.forDir(entry, { why: tried })).values()]
     if (!thumbs.length && scriptsOfEntry && config.dirCover.enabled === true) {
       try {
-        const cover = await dirCoverOfScripts((await scriptsOfEntry()).slice(0, config.dirCover.scan))
+        const cover = await dirCoverOfScripts(config.dirCover.from === 'last' ? (await scriptsOfEntry()).slice(-config.dirCover.scan) : (await scriptsOfEntry()).slice(0, config.dirCover.scan))
         if (cover) return { thumb: cover.thumbs[0] || '', thumbs: cover.thumbs, carousel: config.dirCover.max, ...(cover.renders.length ? { render: cover.renders[0], renders: cover.renders } : {}), ...extra }
       } catch { /* 取不到封面就保持没有图 */ }
     }
@@ -922,7 +937,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         if (entry.type === 'dir') {
           const label = await labelOf(entry.name)
           const n = await countChildren(set, entry.rel)
-          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry, undefined, () => scriptsBelow(set, entry.rel, config.dirCover.depth, config.dirCover.scan))), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
+          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry, undefined, () => scriptsBelow(set, entry.rel, config.dirCover.depth, config.dirCover.from === 'last' ? 2000 : config.dirCover.scan))), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
         }
         const info = await scriptInfo(set, entry.rel)
         return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...renderFieldsOf(info), node: idOf(set, 'script', entry.rel) }

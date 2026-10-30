@@ -1404,8 +1404,11 @@ export const LAYOUTS = {
     // Adventure 下的 Master.chapter.json 和图片目录不是剧情，适配器的嗅探把它们挡掉（只认 *.book.json 靠适配器，不靠扩展名）
     // 缩略图：角色分组卡片（目录节点名 '@<4 位角色号>'，forStrip 去掉 @）← Sprites/Chara/Thumb_005|Thumb_006/chara_<7 位>_<n>_<n>.png（真实路径不带 Textures/）；脚本 CharaScenario<7 位> 前 4 位 = 角色号（头像与角色的对应是猜的）
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['json'], hiddenDirs: ['BackGrounds', 'Effects', 'Spine', 'Textures'], labels: {}, merge: [], groups: [], dirThumbs: [], scriptThumbs: [],
-      thumbSources: [{ dir: 'Sprites/Chara/Thumb_*', match: String.raw`^chara_(\d{4})\d{3}_.*\.png$`, key: '{1}', for: 'dir', forKey: '{name}', forStrip: '^@', limit: 6 }],
-      dirCover: { enabled: true, scan: 8, max: 6, prefer: ['render', 'image'], skip: [], only: [] },   // 目录卡片（章节目录等）：优先骨骼 / 立绘渲染图，没有再用静态图；最多 6 张轮播；要黑 / 白名单写 skip / only（正则，对脚本路径 / 图片路径）
+      thumbSources: [   // 角色头像：Thumb_005 优先，没有才用 Thumb_006（fallback: true = 前面已经有图就不用这条）
+        { dir: 'Sprites/Chara/Thumb_005', match: String.raw`^chara_(\d{4})\d{3}_.*\.png$`, key: '{1}', for: 'dir', forKey: '{name}', forStrip: '^@', limit: 6 },
+        { dir: 'Sprites/Chara/Thumb_006', match: String.raw`^chara_(\d{4})\d{3}_.*\.png$`, key: '{1}', for: 'dir', forKey: '{name}', forStrip: '^@', limit: 6, fallback: true },
+      ],
+      dirCover: { enabled: true, scan: 8, max: 6, from: 'last', leafScan: 1, prefer: ['render', 'image'], skip: [], only: [] },   // 一本书（CharaScenario…）= 最后一章的封面（from last + leafScan 1，和那一章的卡片一样）；别的目录卡片用最后 8 个脚本；目录卡片（章节目录等）：优先骨骼 / 立绘渲染图，没有再用静态图；最多 6 张轮播；要黑 / 白名单写 skip / only（正则，对脚本路径 / 图片路径）
     },
     count: [{ dir: 'Adventure', ext: '.book.json', depth: 3 }],
     cover: [{ dir: 'Adventure/BackGrounds', match: '\\.(png|jpe?g)$', flags: 'i', pick: 'first' }],
@@ -1456,6 +1459,7 @@ export const LAYOUTS = {
       // 真实数据：assets 平铺 1.1 万个带 hash 的文件（game/dmm/assets/<stem>-<sha1>.<ext>）+ 5000 多个 <resource_directory> 子目录（无 hash 的 mp3 在 assets/<resource_directory>/）；
       // 无 hash 的表情 png 很多在磁盘上不存在 → 适配器退回基础立绘（fallback.faceToBase）。limits 抄的是 tyrano-ks 自己的 contextWalkLimit / contextSampleLimit（3067 个剧情各一个 json）。
       limits: { walkFiles: 800000, sampleFiles: 20000 },
+      thumbRender: { inner: true, innerMax: 4, innerRenders: 3 },   // 场景卡片：封面之后再轮播场景内部的骨骼 / 立绘 / CG 渲染（最多 3 个不同画面）> 图，总数最多 4 张（胶片场景仍用胶片轮播）
     },
     // 兜底封面跳过占位图：默认的 black / white / blank（按单词）再加 sepia_filter（回忆滤镜层 [image storage="sepia_filter-<hash>.png" layer=4]）；skip 是整张替换默认值，所以默认那条也要写进来
     config: { namesFiles: [], thumbsDirs: [], scriptExtensions: ['ks', 'json'], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], pageSize: 100, dirCover: { enabled: true, scan: 6, max: 4, prefer: ['render', 'image'], skip: [], only: [] }, thumbFallback: { scanFrom: 0.3, skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', 'sepia_filter'], prefer: ['cg', 'movie', 'bg', 'stand'], kindMax: { stand: 1 } } },
@@ -1506,9 +1510,10 @@ export const LAYOUTS = {
       classify: [],
       resourceResolve: {},   // 脚本里写 BG_17_D.PNG，arc 里存 bg_17_d.png 之类：引擎默认就按路径段 / 名字忽略大小写找（caseInsensitive 默认 true），不用写
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },   // 立绘 PNA 的帧索引（index.json）要读全；ws2 解出来的指令流一个脚本可达几 MB
-      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model)\\.arc$', skip: true }, { match: '^Rio\\.arc$', kinds: ['script'], include: ['^CG_PAGE\\.ws2$'] }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model)\\.arc$', skip: true }, { match: '^Rio\\.arc$', kinds: ['script'], include: ['^CG_PAGE\\.ws2$'], gallery: { functions: ['openCgBrowser'], pageFlags: [105], minCalls: 20, group: '_\\d+$' } }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Rio: 'CG 画廊' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Rio: 'CG 画廊' }, merge: [], views: [{ parent: '*', as: 'special', label: '特殊场景', dirs: [], match: '_[hH]$', exclusive: false, badges: {} }],   // 每个剧情 arc 目录下多一个「特殊场景」（脚本名以 _H 结尾的，要改规则改 match；全量列表照旧）
+    groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.advhd', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [{ dir: '/^manual$/i', match: '\\.(?:png|jpe?g|webp|bmp)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 游戏目录里 Manual 目录（普通目录，不是 Manual.arc）的第一张图（路径相对媒体目录）
     notes: ['arc 在第一次浏览时由服务端展开到 <根>/arc/（之后按 arc 的大小 + 修改时间判断要不要重做）；缺的容器（Chip / Voice 没给全）对应的图 / 语音在渲染诊断里报缺资源', '脚本数在展开之前是 0（这个脚本只看目录，不读 arc），展开后列表里才有'],
@@ -2150,7 +2155,7 @@ function canonField(key, value) {
       return {
         enabled: value.enabled === true || value.enabled === false || value.enabled === 'auto' ? value.enabled : 'auto',
         scan: numIn(value.scan, 6, 1, 30), depth: numIn(value.depth, 3, 1, 5), max: numIn(value.max, 6, 1, 24),
-        merge: typeof value.merge === 'boolean' ? value.merge : false,
+        merge: typeof value.merge === 'boolean' ? value.merge : false, from: value.from === 'last' ? 'last' : 'first', leafScan: numIn(value.leafScan, 0, 0, 30),
         prefer: tiers.length ? tiers : [{ source: 'render', match: '', take: 0 }, { source: 'image', match: '', take: 0 }],
         skip: (Array.isArray(value.skip) ? value.skip : []).slice(0, 10).filter(okRe),
         only: (Array.isArray(value.only) ? value.only : []).slice(0, 10).filter(okRe),
@@ -2168,6 +2173,15 @@ function canonField(key, value) {
         if (kinds.length) out.kinds = kinds
         for (const key of ['include', 'exclude']) { const list = (Array.isArray(r[key]) ? r[key] : []).slice(0, 10).filter(okRe).map((x) => x.trim()); if (list.length) out[key] = list }
         if (['raw', 'skip'].includes(r.pna)) out.pna = r.pna
+        if (r.gallery !== undefined && r.gallery !== false) {
+          const g = r.gallery === true ? {} : isPlain(r.gallery) ? r.gallery : null
+          if (g) {
+            const strs = (list, fallback) => { const ok = (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && /^[A-Za-z0-9_.:-]{1,60}$/.test(x)).slice(0, 10); return ok.length ? ok : fallback }
+            const flags = (Array.isArray(g.pageFlags) ? g.pageFlags : []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < 100000).slice(0, 10)
+            const mc = Math.floor(Number(g.minCalls))
+            out.gallery = { functions: strs(g.functions, ['openCgBrowser']), pageFlags: flags.length ? flags : [105], minCalls: g.minCalls !== undefined && Number.isFinite(mc) && mc >= 1 ? Math.min(1000, mc) : 20, group: okRe(g.group) ? g.group.trim() : '_\\d+$' }
+          }
+        }
         return out
       })
       const scan = (Array.isArray(value.scan) ? value.scan : []).slice(0, 10).filter((x) => typeof x === 'string' && x)

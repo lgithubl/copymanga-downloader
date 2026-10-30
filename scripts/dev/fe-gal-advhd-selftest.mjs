@@ -70,6 +70,8 @@ try {
     const home = await reader('')
     check('第一次浏览：服务端读 arc，首页 = 目录卡片 Rio1；没有 error 级的 problems', home.node?.items?.map((i) => i.title).join() === 'Rio1' && !(home.node.problems || []).some((p) => p.level === 'error'), J([home.node?.items?.map((i) => i.title), home.node?.problems]))
     const dir = await reader(home.node.items[0].node)
+    check('目录里有虚拟目录「特殊场景」（_H 结尾的脚本），排在最前', dir.node.items[0]?.title === '特殊场景' && dir.node.items[0].type === 'dir', J(dir.node.items.map((i) => i.title)))
+    dir.node.items = dir.node.items.filter((i) => i.type === 'script')   // 下面按脚本顺序取
     check('目录里 4 个脚本（001_00、002_00_H、003_PAN、004_BOB）', dir.node.items.map((i) => i.title).join() === '001_00,002_00_H,003_PAN,004_BOB', J(dir.node.items.map((i) => i.title)))
     const story = await reader(dir.node.items[0].node)
     const branch = await reader(dir.node.items[1].node)

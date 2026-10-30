@@ -80,5 +80,38 @@ registerGalAdapter({ id: 'test-inner', label: '测试：JSON 步骤', sniff: (te
   check('inner: false：innerMax 不生效', none.scene_x.thumbs.length === 1, J(none.scene_x.thumbs))
 }
 
+// ---- dirCover.from / leafScan（TSK：一本书 = 最后一章的封面）+ 头像 T5 优先 T6 兜底 ----
+{
+  for (const f of ['a1.png', 'a2.png', 'a3.png', 'b1.png', 'T5/chara_1091001_1.png', 'T6/chara_1091001_1.png', 'T6/chara_2222001_1.png']) await mk(`resources/lf/${f}`)
+  const one = (img) => [[{ op: 'bg', src: `lf/${img}` }]]
+  for (const [stem, img] of [['c1', 'a1.png'], ['c2', 'a2.png'], ['c3', 'a3.png'], ['d1', 'b1.png']]) await mk(`resources/lfs/${stem}.txt`, `#LF${J(one(img))}`)
+  registerGalAdapter({
+    id: 'test-leaf', label: '测试：书', prepare: () => ({ ok: 1 }), sniff: (text) => text.startsWith('#LF'), parse: (text) => ({ steps: JSON.parse(text.slice(3)).map((commands, index) => ({ index, commands })), stats: {} }),
+    catalog: () => ({ children: [
+      { id: 'book', title: 'CharaScenario1091002', children: ['c1', 'c2', 'c3'].map((c) => ({ id: c, title: c, script: `resources/lfs/${c}.txt` })) },
+      { id: 'chara', title: '角色', key: '@1091', children: [{ id: 'd1', title: 'd1', script: 'resources/lfs/d1.txt' }] },
+      { id: 'chara2', title: '角色2', key: '@2222', children: [{ id: 'd2', title: 'd2', script: 'resources/lfs/d1.txt' }] },
+    ] }),
+  })
+  const thumbSources = [
+    { dir: 'lf/T5', match: '^chara_(\\d{4})\\d{3}_.*\\.png$', key: '{1}', for: 'dir', forKey: '{name}', forStrip: '^@', limit: 6 },
+    { dir: 'lf/T6', match: '^chara_(\\d{4})\\d{3}_.*\\.png$', key: '{1}', for: 'dir', forKey: '{name}', forStrip: '^@', limit: 6, fallback: true },
+  ]
+  const run = async (dirCover) => {
+    const provider = createBrowseProvider({ mediaDir: media, adapters: ['test-leaf'], resolveAsset, config: { scriptRoots: [{ id: 'text', dir: 'resources/lfs' }], scriptThumbs: [], thumbSources, thumbFallback: { max: 6 }, dirCover } })
+    return Object.fromEntries((await provider.getNode('')).node.items.map((i) => [i.title, i]))
+  }
+  const strip = (list) => (list || []).map((p) => p.replace('lf/', ''))
+  const first = await run({ enabled: true, scan: 8, max: 6 })
+  check('dirCover 默认（from first）：一本书 = 三章的图都轮播', J(strip(first.CharaScenario1091002.thumbs)) === '["a1.png","a2.png","a3.png"]', J(first.CharaScenario1091002))
+  const last = await run({ enabled: true, scan: 8, max: 6, from: 'last', leafScan: 1 })
+  check('from last + leafScan 1：一本书 = 只有最后一章的图（a3.png）', J(strip(last.CharaScenario1091002.thumbs)) === '["a3.png"]', J(last.CharaScenario1091002))
+  const lastOnly = await run({ enabled: true, scan: 2, max: 6, from: 'last' })
+  check('from last（不写 leafScan）：取最后 scan（2）个脚本 = a2、a3', J(strip(lastOnly.CharaScenario1091002.thumbs)) === '["a2.png","a3.png"]', J(lastOnly.CharaScenario1091002))
+  check('头像：Thumb_005 有就只用它（1091 → T5 的图，不带 T6 的）；没有才用 T6（2222 → T6）', J(strip(first['角色'].thumbs)) === '["T5/chara_1091001_1.png"]' && J(strip(first['角色2'].thumbs)) === '["T6/chara_2222001_1.png"]', J([first['角色'].thumbs, first['角色2'].thumbs]))
+  const bad = normalizeGalConfigWithWarnings({ dirCover: { from: 'middle', leafScan: -1 } })
+  check('config 校验：from 只认 first / last、leafScan 不能是负数，退回默认并警告', bad.config.dirCover.from === 'first' && bad.config.dirCover.leafScan === 0 && bad.warnings.some((w) => w.field === 'dirCover.from') && bad.warnings.some((w) => w.field === 'dirCover.leafScan'), J(bad))
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
