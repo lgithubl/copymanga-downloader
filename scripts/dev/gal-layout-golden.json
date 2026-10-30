@@ -5913,7 +5913,9 @@
    },
    "groups": [],
    "hiddenDirs": [],
-   "labels": {},
+   "labels": {
+    "Rio": "CG 画廊"
+   },
    "merge": [],
    "namesFiles": [],
    "pageSize": 100,
@@ -5975,7 +5977,9 @@
    },
    "groups": [],
    "hiddenDirs": [],
-   "labels": {},
+   "labels": {
+    "Rio": "CG 画廊"
+   },
    "merge": [],
    "namesFiles": [],
    "pageSize": 100,
@@ -6037,7 +6041,9 @@
    },
    "groups": [],
    "hiddenDirs": [],
-   "labels": {},
+   "labels": {
+    "Rio": "CG 画廊"
+   },
    "merge": [],
    "namesFiles": [],
    "pageSize": 100,
@@ -6099,7 +6105,9 @@
    },
    "groups": [],
    "hiddenDirs": [],
-   "labels": {},
+   "labels": {
+    "Rio": "CG 画廊"
+   },
    "merge": [],
    "namesFiles": [],
    "pageSize": 100,

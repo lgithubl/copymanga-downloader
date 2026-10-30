@@ -16,7 +16,7 @@ import { buildScene } from '../../web/library/gal/scene.mjs'
 import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { activePath } from '../../web/static/gal-engine.js'
-import { STORY_001, STORY_BRANCH, STORY_COND, STORY_SKIP, arcBuild, buildAdvhdFixture, msg, pnaBuild, pngBytes, ws2Encode, ws2Plain } from './make-advhd-fixture.mjs'
+import { STORY_001, STORY_BRANCH, STORY_COND, STORY_GALLERY, STORY_SKIP, STORY_TIMER, arcBuild, buildAdvhdFixture, msg, pnaBuild, pngBytes, ws2Encode, ws2Plain } from './make-advhd-fixture.mjs'
 
 let pass = 0
 let fail = 0
@@ -29,7 +29,7 @@ const work = await mkdtemp(path.join(os.tmpdir(), 'gal-advhd-'))
 const exists = (p) => stat(p).then(() => true, () => false)
 const list = async (dir) => { try { return (await readdir(dir)).sort() } catch { return [] } }
 const decodeText = (buffer, arc = 'Rio1', name = 'x') => SCRIPT_DECODERS['advhd-ws2'].decode(buffer, { arc, name })
-const FAMILY_CONTAINERS = { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model|Rio)\\.arc$', skip: true }, { match: '\\.arc$' }] }
+const FAMILY_CONTAINERS = { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model)\\.arc$', skip: true }, { match: '^Rio\\.arc$', kinds: ['script'], include: ['^CG_PAGE\\.ws2$'] }, { match: '\\.arc$' }] }
 const cfgWith = (containers, extra = {}) => normalizeGalConfig({ scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }], resourceRoots: ['arc/res'], scriptExtensions: ['advhd'], containers, limits: { sampleFiles: 20000, sampleBytes: 262144 }, ...extra })
 
 // ================= ws2 解码 =================
@@ -93,8 +93,8 @@ await buildAdvhdFixture(game, { brokenArc: true })
   const cfg = cfgWith(FAMILY_CONTAINERS)
   const report = await ensureContainers({ mediaDir: game, config: cfg })
   const arcs = report.arcs
-  check('规则：Script2 / Rio 在黑名单（skip）里不展开；坏的 Chip9.arc 报错但不影响别的容器', arcs['./Script2.arc']?.skipped === 'rule' && arcs['./Rio.arc']?.skipped === 'rule' && /不是 ARC|不合理|太小/.test(arcs['./Chip9.arc']?.error || '') && arcs['./Rio1.arc']?.scripts === 3, J(arcs))
-  check('展开：剧情 = arc/script/<容器>/<脚本>.advhd（readme.txt 这种不认识的类型不展开）；图 / 声音 = arc/res/<容器>/<条目名> 原样', J(await list(path.join(game, 'arc/script/Rio1'))) === J(['001_00.advhd', '002_00_H.advhd', '003_00.advhd']) && J(await list(path.join(game, 'arc/res/Voice'))) === J(['SV_TOW_01.ogg', 'TW_0001.ogg', 'TW_0002.ogg']) && (await readFile(path.join(game, 'arc/res/Bgm/BGM01.ogg'), 'utf8')) === 'OggS-bgm' && !(await exists(path.join(game, 'arc/script/Rio')) ) && !(await exists(path.join(game, 'arc/res/Chip9'))), J(await list(path.join(game, 'arc'))))
+  check('规则：Script2 在黑名单（skip）里不展开；Rio.arc 只收 CG_PAGE（kinds / include）；坏的 Chip9.arc 报错但不影响别的容器', arcs['./Script2.arc']?.skipped === 'rule' && arcs['./Rio.arc']?.scripts === 1 && arcs['./Rio.arc']?.excluded === 2 && /不是 ARC|不合理|太小/.test(arcs['./Chip9.arc']?.error || '') && arcs['./Rio1.arc']?.scripts === 3, J(arcs))
+  check('展开：剧情 = arc/script/<容器>/<脚本>.advhd（readme.txt 这种不认识的类型不展开）；图 / 声音 = arc/res/<容器>/<条目名> 原样', J(await list(path.join(game, 'arc/script/Rio1'))) === J(['001_00.advhd', '002_00_H.advhd', '003_00.advhd']) && J(await list(path.join(game, 'arc/res/Voice'))) === J(['SV_TOW_01.ogg', 'TW_0001.ogg', 'TW_0002.ogg']) && (await readFile(path.join(game, 'arc/res/Bgm/BGM01.ogg'), 'utf8')) === 'OggS-bgm' && J(await list(path.join(game, 'arc/script/Rio'))) === J(['CG_PAGE.advhd']) && !(await exists(path.join(game, 'arc/res/Chip9'))), J(await list(path.join(game, 'arc'))))
   const text = await readFile(path.join(game, 'arc/script/Rio1/001_00.advhd'), 'utf8')
   const parsed = JSON.parse(text)
   check('脚本被解成 JSON 指令流：format / arc / name / size / ins[[偏移, 指令名, 参数]]；sniff 认得', parsed.format === 'advhd-ws2/1' && parsed.arc === 'Rio1' && parsed.name === '001_00' && parsed.ins.length === STORY_001.length && parsed.ins[0][1] === 'ClearLayer' && galAdapter('advhd::ws2').sniff(text) && sniffGalAdapter(text) === 'advhd::ws2', J(parsed.ins.slice(0, 2)))
@@ -238,6 +238,23 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('不是 JSON：报「不是有效的 JSON」', /不是有效的 JSON/.test(bad?.message || ''))
 }
 
+// ================= 计时器 / 遮罩过渡 / 电影 / CG 画廊 =================
+{
+  const res = await parseGame(game, STORY_TIMER, { extraDirs: ['movie'] }, { resourceRoots: ['arc/res', 'movie'] })
+  const waits = res.steps.flatMap((st) => st.commands).filter((c) => c.op === 'wait').map((c) => c.seconds)
+  check('计时器：SetTimer(名, _, 秒) + StartTimer(名) → wait（秒数封顶 timers.max = 10）；没有 SetTimer 的计时器不等', J(waits) === J([2, 10]), J(waits))
+  const off = await parseGame(game, STORY_TIMER, { timers: { wait: false } })
+  check('options.timers.wait = false：不等', !off.steps.flatMap((st) => st.commands).some((c) => c.op === 'wait'))
+  check('过渡类型和遮罩进 stats（都近似成淡入淡出）：Unk65 的类型 0 / 100 各一次，类型 100 前面的 ShowGraphic 遮罩图（EFMSK_12.PNG）记 stats.masks；渐变秒数照用', res.stats.transitions.type0 === 1 && res.stats.transitions.type100 === 1 && res.stats.masks['EFMSK_12.PNG'] === 1 && res.steps[0].commands.find((c) => c.op === 'bg').fade === 0.5 && res.steps[0].commands.filter((c) => c.op === 'bg').at(-1).fade === 0.7, J([res.stats.transitions, res.stats.masks, res.steps[0].commands.filter((c) => c.op === 'bg')]))
+  const movies = res.steps.flatMap((st) => st.commands).filter((c) => c.op === 'movie')
+  check('电影：extraDirs（游戏目录里的 movie）索引进来，OP.DAT 按名字找到 → movie 指令（资源根里是 OP.DAT）；找不到的 GONE.DAT 记 raw PlayMovie + unresolved', J(movies.map((m) => m.srcs)) === J([['OP.DAT']]) && res.stats.raw.PlayMovie === 1 && res.stats.unresolved['movie:GONE.DAT'] === 1, J([movies, res.stats.raw, res.stats.unresolved]))
+  const gallery = await parseGame(game, STORY_GALLERY)
+  const gTexts = textOf(gallery)
+  check('CG 画廊页（CG_PAGE）：不是剧情，按「画廊」读——每个 openCgBrowser 一步（图 + 名字），页码（var 105 的 Condition 值）当说话人；两层图 a/b = bg + over；找不到的图记 unresolved', gallery.stats.gallery.calls === 20 && gallery.steps.length === 20 && gTexts[0] === 'BG_01' && gallery.steps[0].commands.some((c) => c.op === 'speaker' && c.segments[0].text === 'ページ 1') && gallery.steps[0].commands[0].src === 'Chip3/BG_01.png' && J(gallery.steps[2].commands[0]) === J({ op: 'bg', src: 'Chip3/BG_01.png', over: 'Chip3/EV_01.png' }) && gallery.steps[10].commands.some((c) => c.op === 'speaker' && c.segments[0].text === 'ページ 2') && gallery.stats.images.unresolved === 17, J([gallery.stats, gallery.steps.slice(0, 3)]))
+  const few = await parseGame(game, STORY_GALLERY, { gallery: { minCalls: 99 } })
+  check('openCgBrowser 少于 gallery.minCalls：按剧情读（函数在 drop 表里，不记）；gallery.functions = [] 也是', few.stats.gallery === undefined && (await parseGame(game, STORY_GALLERY, { gallery: { functions: [] } })).stats.gallery === undefined)
+}
+
 // ================= 家族布局（gal-layout）+ handler 端到端 =================
 {
   const media = path.join(work, 'lpsl')
@@ -246,6 +263,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const out = await run({ game: { id: 'advhd::lpsl' } })
   const cfg = out.itemPatch.gal.config
   check('家族布局：game.id「advhd::lpsl」不在表里 → 按家族 advhd 处理（日志说明），写 脚本根 / 资源根 / 脚本扩展名 / adapterOptions.resDir / containers / limits，game.id 原样写回', cfg.game.id === 'advhd::lpsl' && cfg.scriptRoots[0].dir === 'arc/script' && cfg.resourceRoots[0] === 'arc/res' && J(cfg.scriptExtensions) === J(['advhd']) && cfg.adapterOptions['advhd::ws2'].resDir === 'arc/res' && cfg.containers.enabled === true && cfg.containers.rules.some((r) => r.skip) && cfg.limits.sampleBytes === 262144 && out.logs.some((l) => /按家族「advhd」/.test(l)) && out.details.kind === 'advhd' && out.itemTags.includes('Gal游戏: advhd::lpsl'), J([out.logs.slice(0, 5), cfg.game]))
+  check('游戏目录里有 movie 目录：加进资源根（arc/res 之后），适配器 extraDirs 指向它（PlayMovie 的 .DAT 不在 arc 里）', J(cfg.resourceRoots) === J(['arc/res', 'movie']) && J(cfg.adapterOptions['advhd::ws2'].extraDirs) === J(['movie']) && cfg.labels.Rio === 'CG 画廊' && cfg.containers.rules.some((r) => r.include?.includes('^CG_PAGE\\.ws2$')), J([cfg.resourceRoots, cfg.adapterOptions, cfg.labels]))
   const auto = await run({})
   check('没声明 game.id：自动探测（Script*.arc + AdvHD.exe + Rio*.arc），认领成 advhd::<目录名>', auto.itemPatch.gal.config.game.id === 'advhd::lpsl', J(auto.itemPatch.gal.config.game))
   const emptyDir = path.join(work, 'not-advhd')
@@ -278,8 +296,8 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   for (let i = 0; i < 100 && !warmed; i++) { warmed = await exists(path.join(media, 'arc/res/Chip3/BG_01.png')); if (!warmed) await new Promise((r) => setTimeout(r, 50)) }
   check('gal-layout 写好 config（containers 已启用）后服务端在后台马上展开 arc——不用等第一次打开列表', I.config.containers?.enabled === true && warmed)
   const home = (await handler.getReaderContent(I.itemId, 'main', { sectionId: '' })).node
-  check('第一次浏览：服务端读 arc 展开，首页 = 容器目录卡片（Rio1），不是空的；没有 problems', home.items.map((i) => i.title).join() === 'Rio1' && (await exists(path.join(media, 'arc/res/Chip3/BG_01.png'))) && !home.problems?.some((p) => p.level === 'error'), J(home.items.map((i) => i.title)))
-  const dirNode = (await handler.getReaderContent(I.itemId, 'main', { sectionId: home.items[0].node || home.items[0].id })).node
+  check('第一次浏览：服务端读 arc 展开，首页 = 容器目录卡片（Rio = CG 画廊、Rio1），不是空的；没有 problems', home.items.map((i) => i.title).join() === 'CG 画廊,Rio1' && (await exists(path.join(media, 'arc/res/Chip3/BG_01.png'))) && !home.problems?.some((p) => p.level === 'error'), J(home.items.map((i) => i.title)))
+  const dirNode = (await handler.getReaderContent(I.itemId, 'main', { sectionId: home.items[1].node || home.items[1].id })).node
   check('目录：3 个脚本（readme.txt / Rio.arc 里的辅助脚本不在）', dirNode.items.map((i) => i.title).join() === '001_00,002_00_H,003_00', J(dirNode.items.map((i) => i.title)))
   const play = await handler.getReaderContent(I.itemId, 'main', { sectionId: dirNode.items[0].node || dirNode.items[0].id })
   check('播放：scene 来自适配器 advhd::ws2，台词 / 语音 / 背景资源都解析到了 arc 展开的文件；脚本卡片有封面（兜底封面优先 cg：事件图 EV_01）', play.node.kind === 'player' && play.scene.adapter === 'advhd::ws2' && play.scene.stats.voices.resolved === 3 && play.scene.steps[0].commands[0].src === 'Chip3/BG_01.png' && dirNode.items[0].thumb === 'Chip3/EV_01.png', J([play.scene.adapter, play.scene.stats.voices, dirNode.items[0].thumb]))
@@ -306,7 +324,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const provider = createBrowseProvider({ mediaDir: media, config: cfg, adapters: ['advhd::ws2'], resolveAsset: async () => '' })
   const home = (await provider.getNode('')).node
   const problems = home.problems || []
-  check('坏容器：problems 里有 container-failed（指名是哪个容器）；其余容器照常展开、能浏览', problems.some((p) => p.code === 'container-failed' && /Chip9\.arc/.test(p.message)) && home.items.map((i) => i.title).join() === 'Rio1', J(problems))
+  check('坏容器：problems 里有 container-failed（指名是哪个容器）；其余容器照常展开、能浏览', problems.some((p) => p.code === 'container-failed' && /Chip9\.arc/.test(p.message)) && home.items.map((i) => i.title).join() === 'Rio,Rio1', J(problems))
   const empty = path.join(work, 'nothing')
   await mkdir(empty, { recursive: true })
   const provider2 = createBrowseProvider({ mediaDir: empty, config: cfgWith(FAMILY_CONTAINERS), adapters: ['advhd::ws2'], resolveAsset: async () => '' })

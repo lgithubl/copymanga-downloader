@@ -998,4 +998,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - `Unk65` 的 f32 = 渐变秒数、`MoveBackground` 的 (x, y) = 图层左上角在 1280×720 舞台里的位置、`DisplayCharacterImage` 的 id 表 = 要画的 PNA 帧 id：按数值范围 / 名字猜的，没有立绘 PNA 样本核对。
   - PNA 帧里嵌 PNG 是**样本为准**：`SysGraphic.arc` 的 UI 包里帧确实是内嵌 PNG（逆向笔记 TODO 第三轮「帧只是图片名引用、像素在外部」和样本不符）；帧 type 0 = 图片、1 / 2 = 组开始 / 结束来自这批样本。立绘包是否同构没有样本。
   - 视频（`PlayMovie ED_XX.DAT`）：`.DAT` 在样本的 arc 里没有，只按「同名 mp4 / webm / m4v / mov 在索引里」找，找不到记 `raw` PlayMovie + `unresolved`。
-  - 特效（`Effect1/2/3`、`DragBackground`、雨 / 抖动等）、计时器等待、`ShowGraphic` 遮罩过渡都没做（记 raw / ignored）。
+  - **没做的特效**：`Effect1/2/3`（约 3400 条）、`DragBackground`（约 1900 条）记 raw。样本里它们是「背景长图 `*_L` 的平移 / 立绘的上下晃动」（`LayerConfig` 5 / 6 号参数 = 位移，`Effect1` 的第 5 个浮点数 = 时长，立绘 ±10 像素 0.3 秒，背景 40 / 60），但要摆对需要图片的实际尺寸和 `MoveBackground` 给的初始偏移，播放器的 `camera` 又是整屏（含立绘）一起动——没有长图样本，做出来大概率是错的，所以不猜。
+  - **做了近似的**：计时器（`SetTimer` 秒数 + `StartTimer` → `wait`，`timers` 可关 / 封顶）；遮罩过渡（`ShowGraphic` 遮罩图 + `Unk65` 类型 100）和别的过渡类型都近似成同样时长的淡入淡出，类型 / 遮罩记进 `stats.transitions` / `stats.masks`。
+  - **CG 画廊**：游戏的画廊页逻辑在 Lua（`menu_gallery.lua`）里，没有搬；但 `Rio.arc` 的 `CG_PAGE.ws2` 就是画廊的查表（518 个 `openCgBrowser(图)` + 页码 / 选中格的 Condition），默认只展开这一个脚本，适配器按「画廊」读成一页页 CG（每个 CG 一步，图 + 名字，页码当说话人；`gallery` 选项可调）。样本里 CG 图在缺的 Chip 容器里，所以真实数据上图都是缺的，结构（518 个、80 页）是对的。回放 / 标题 / 设置 / 存档界面没做（界面逻辑，不是剧情数据）；回放等价于脚本列表本身。
+  - **视频**：`PlayMovie ED_XX.DAT` 的文件不在 arc 里（样本包也没有）。游戏目录里有 `movie` 目录时 gal-layout 把它加进资源根和适配器 `extraDirs`，按同名找（`movie.exts` 含 `dat`）；`.DAT` 的实际封装没有样本，浏览器能不能放不确定（Content-Type 是 octet-stream）。

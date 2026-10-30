@@ -896,8 +896,6 @@ export const ADAPTER_RULES = {
       "UnkFC",
       "UnkFD",
       "LayerConfig",
-      "SetTimer",
-      "StartTimer",
       "CharMessageStart",
       "AddMessageToLog",
       "InitKeyName",
@@ -919,7 +917,6 @@ export const ADAPTER_RULES = {
       "SoundUnk2",
       "SoundEffectUnk30",
       "MusicUnk1",
-      "ShowGraphic",
       "SetMask",
       "PrepareBackgroundArea",
       "UnkScreen",
@@ -941,9 +938,24 @@ export const ADAPTER_RULES = {
         "mp4",
         "webm",
         "m4v",
-        "mov"
+        "mov",
+        "dat"
       ]
     },
+    "timers": {
+      "wait": true,
+      "max": 10
+    },
+    "gallery": {
+      "functions": [
+        "openCgBrowser"
+      ],
+      "minCalls": 20,
+      "pageFlags": [
+        105
+      ]
+    },
+    "extraDirs": [],
     "audioExts": [
       "ogg",
       "flac",
@@ -1495,9 +1507,9 @@ export const LAYOUTS = {
       classify: [],
       resourceResolve: {},   // 脚本里写 BG_17_D.PNG，arc 里存 bg_17_d.png 之类：引擎默认就按路径段 / 名字忽略大小写找（caseInsensitive 默认 true），不用写
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },   // 立绘 PNA 的帧索引（index.json）要读全；ws2 解出来的指令流一个脚本可达几 MB
-      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model|Rio)\\.arc$', skip: true }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model)\\.arc$', skip: true }, { match: '^Rio\\.arc$', kinds: ['script'], include: ['^CG_PAGE\\.ws2$'] }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Rio: 'CG 画廊' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.advhd', depth: 3 }], avatars: [], expectedDirs: [],
     notes: ['arc 在第一次浏览时由服务端展开到 <根>/arc/（之后按 arc 的大小 + 修改时间判断要不要重做）；缺的容器（Chip / Voice 没给全）对应的图 / 语音在渲染诊断里报缺资源', '脚本数在展开之前是 0（这个脚本只看目录，不读 arc），展开后列表里才有'],
   },
@@ -2678,6 +2690,12 @@ async function detectAdvhd(scope) {
   const config = await buildConfig(media, entry, base)
   // 路径类设置相对根：容器目录 / 扫描目录跟着根走（根不是条目目录本身时）
   if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  // 游戏目录里的 movie（PlayMovie 的 .DAT 不在 arc 里）：有就加进资源根，并让适配器把它也索引进来
+  const movie = (await expand(media, base, '/^movie$/i', 'dir'))[0]
+  if (movie) {
+    config.resourceRoots = [...(config.resourceRoots || []), movie.rel]
+    config.adapterOptions = { ...(config.adapterOptions || {}), 'advhd::ws2': { ...(config.adapterOptions?.['advhd::ws2'] || {}), extraDirs: [movie.rel] } }
+  }
   const found = makeFound(scope, entry, loc, config)
   const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
   found.id = scope.gameId || `advhd::${slug || 'game'}`

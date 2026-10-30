@@ -39,8 +39,13 @@ export const DEFAULT_OPTIONS = {
   conditionalJump: 'second',
   functions: { default: 'skip', GetMsgSkip: { setFlag: 0 }, ArcGraphicOpenTest: { setFlag: 0 }, openCgBrowser: 'drop', openGallery: 'drop', openGalleryTitle: 'drop', openNmsSaveLoad: 'drop', openNameInput: 'drop', SetStopSkip: 'drop', openSceneSelect: 'drop', openCharSelect: 'drop' },
   skipFiles: ['^LAYER_ORDER$'],
-  ignoreOps: ['Unk05', 'Unk08', 'Unk0A', 'Unk0D', 'Unk0E', 'Unk13', 'Unk16', 'Unk17', 'Unk19', 'Unk1B', 'Unk1D', 'Unk3D', 'Unk3E', 'Unk64', 'Unk68', 'UnkFB', 'UnkFC', 'UnkFD', 'LayerConfig', 'SetTimer', 'StartTimer', 'CharMessageStart', 'AddMessageToLog', 'InitKeyName', 'LayersList', 'SetFlag', 'SetVariable', 'VariableUnk', 'VariableUnk32', 'VariableUnk3', 'VariableUnk4', 'VariableUnk51', 'VariableUnk2', 'UnkBackground1', 'UnkBackground2', 'UnkBackground3', 'Unk42', 'Unk43', 'SoundUnk1', 'SoundUnk2', 'SoundEffectUnk30', 'MusicUnk1', 'ShowGraphic', 'SetMask', 'PrepareBackgroundArea', 'UnkScreen', 'Unk67', 'Unk97', 'UnkAF', 'UnkB0', 'SetPnaFile', 'Unk75', 'Unk78', 'Unk7A', 'Unk7B', 'Unk84', 'Unk4A', 'OpenTitle'],
-  movie: { exts: ['mp4', 'webm', 'm4v', 'mov'] },
+  ignoreOps: ['Unk05', 'Unk08', 'Unk0A', 'Unk0D', 'Unk0E', 'Unk13', 'Unk16', 'Unk17', 'Unk19', 'Unk1B', 'Unk1D', 'Unk3D', 'Unk3E', 'Unk64', 'Unk68', 'UnkFB', 'UnkFC', 'UnkFD', 'LayerConfig', 'CharMessageStart', 'AddMessageToLog', 'InitKeyName', 'LayersList', 'SetFlag', 'SetVariable', 'VariableUnk', 'VariableUnk32', 'VariableUnk3', 'VariableUnk4', 'VariableUnk51', 'VariableUnk2', 'UnkBackground1', 'UnkBackground2', 'UnkBackground3', 'Unk42', 'Unk43', 'SoundUnk1', 'SoundUnk2', 'SoundEffectUnk30', 'MusicUnk1', 'SetMask', 'PrepareBackgroundArea', 'UnkScreen', 'Unk67', 'Unk97', 'UnkAF', 'UnkB0', 'SetPnaFile', 'Unk75', 'Unk78', 'Unk7A', 'Unk7B', 'Unk84', 'Unk4A', 'OpenTitle'],
+  movie: { exts: ['mp4', 'webm', 'm4v', 'mov', 'dat'] },   // PlayMovie ED_XX.DAT：同名文件（扩展名依次换成这些）在索引里找；.DAT 的实际封装没有样本（Media Foundation 能放的 mp4 / wmv？）
+  timers: { wait: true, max: 10 },   // SetTimer(名, _, 秒) + StartTimer(名)：停这么多秒（wait 指令，点一下就跳过）
+  // CG 画廊页（Rio.arc 的 CG_PAGE.ws2）：脚本里是一长串 Condition（页码 / 选中格）+ ExecuteFunction openCgBrowser(图) 的查表，不是剧情；有 minCalls 个以上这类调用就按「画廊」读：每个 CG 一步（图 + 名字），页码（pageFlags 里的变量的 Condition 值）当说话人
+  gallery: { functions: ['openCgBrowser'], minCalls: 20, pageFlags: [105] },
+  extraDirs: [],   // 除 resDir 外还要索引的目录（相对媒体目录），比如游戏目录里的 movie
+
   audioExts: ['ogg', 'flac', 'wav', 'mp3'],
   imageExts: ['png', 'jpg', 'jpeg'],
   maxReach: 20000,
@@ -53,7 +58,7 @@ export const explainSniff = () => '开头不是 {"format":"advhd-ws2/1"…（这
 
 // ---------- 上下文：资源索引 + PNA 帧索引 ----------
 export const contextFiles = () => []
-export const contextDirs = (options) => [String(readOptions(options).resDir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')]
+export const contextDirs = (options) => { const opt = readOptions(options); return [opt.resDir, ...opt.extraDirs].map((dir) => String(dir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter(Boolean) }
 export const contextTextFilter = () => (rel) => /\.pna\/index\.json$/i.test(rel)
 export const contextWalkLimit = 800000
 export const contextSampleLimit = 20000
@@ -136,6 +141,8 @@ export function parse(text, ctx = null, meta = {}) {
   if (data.truncated) stats.truncated = String(data.truncated).slice(0, 200)
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const hasIndex = Boolean(ctx?.hasIndex)
+  stats.transitions = {}
+  stats.masks = {}
 
   // 资源：脚本里的名字（带扩展名）→ 索引里的路径；找不到按同名换扩展名再找
   const find = (name, exts) => {
@@ -148,6 +155,33 @@ export function parse(text, ctx = null, meta = {}) {
     return ''
   }
   const pnaOf = (name) => (ctx?.pnas ? ctx.pnas.get(nameOf(name).toLowerCase()) || ctx.pnas.get(`${stemOf(name).toLowerCase()}.pna`) : null)
+
+
+  // ---- CG 画廊页：按「画廊」读（见 DEFAULT_OPTIONS.gallery）----
+  const galleryCalls = list.filter((ins) => ins.name === 'ExecuteFunction' && opt.gallery.functions.includes(String(ins.args[0])))
+  if (opt.gallery.functions.length && galleryCalls.length >= opt.gallery.minCalls) {
+    const gSteps = []
+    let page = null
+    let lastPage = null
+    for (const ins of list) {
+      if (ins.name === 'Condition' && ins.args.length >= 5 && ins.args[0] === 130 && opt.gallery.pageFlags.includes(ins.args[1])) { page = ins.args[2]; continue }
+      if (ins.name !== 'ExecuteFunction' || !opt.gallery.functions.includes(String(ins.args[0]))) continue
+      const file = String(ins.args[1] || '')
+      const parts = file.split('/').filter(Boolean)
+      const srcs = parts.map((part) => find(part, opt.imageExts))
+      stats.images.referenced += 1
+      const commands = []
+      if (srcs[0]) { stats.images.resolved += 1; commands.push({ op: 'bg', src: srcs[0], ...(srcs[1] ? { over: srcs[1] } : {}) }) }
+      else { stats.images.unresolved += 1; if (hasIndex) count('unresolved', `image:${nameOf(parts[0] || file)}`) }
+      if (page !== lastPage) { commands.push({ op: 'speaker', segments: page === null ? [] : [{ text: `ページ ${page}` }] }); lastPage = page }
+      commands.push({ op: 'text', segments: [{ text: stemOf(parts[0] || file) }] })
+      gSteps.push({ index: gSteps.length, commands })
+    }
+    stats.messages = gSteps.length
+    stats.gallery = { calls: galleryCalls.length }
+    stats.commands = gSteps.reduce((n, step) => n + step.commands.length, 0)
+    return { steps: gSteps, stats }
+  }
 
   // ---- 输出 ----
   const steps = []
@@ -227,6 +261,8 @@ export function parse(text, ctx = null, meta = {}) {
   // ---- 控制流 ----
   const visited = new Set()
   const env = new Map()
+  const timers = new Map()
+  let lastMask = ''
   const flagValue = (id) => (env.has(id) ? env.get(id) : Object.hasOwn(opt.flags.values, String(id)) ? Number(opt.flags.values[String(id)]) : null)
   function condition(args) {
     const [kind, id, value] = args
@@ -351,7 +387,19 @@ export function parse(text, ctx = null, meta = {}) {
           if (layer?.kind === 'pna') { layer.x = num(a[4]); layer.y = num(a[5]); dirty = true } else stats.ignored.MoveBackground = (stats.ignored.MoveBackground || 0) + 1
           break
         }
-        case 'Unk65': fadeSeconds = Math.max(fadeSeconds, num(a[3])); commit(); break
+        case 'SetTimer': timers.set(String(a[0]), num(a[2])); break
+        case 'StartTimer': {
+          const seconds = Math.min(opt.timers.max, timers.get(String(a[0])) || 0)
+          if (opt.timers.wait && seconds > 0) emit({ op: 'wait', seconds })
+          break
+        }
+        case 'ShowGraphic': lastMask = nameOf(a[0]); break
+        // Unk65 = 提交画面：a[3] = 渐变秒数；a[0] = 过渡类型（样本里 0 / 9 / 22 / 23 / 25 / 100；100 前面总有 ShowGraphic 的遮罩图 = 遮罩过渡）——所有类型都近似成同样时长的淡入淡出，类型和遮罩记进 stats.transitions / stats.masks（看得出哪些画面是近似的）
+        case 'Unk65':
+          fadeSeconds = Math.max(fadeSeconds, num(a[3]))
+          if (dirty) { stats.transitions[`type${a[0]}`] = (stats.transitions[`type${a[0]}`] || 0) + 1; if (a[0] === 100 && lastMask) stats.masks[lastMask] = (stats.masks[lastMask] || 0) + 1 }
+          commit()
+          break
         case 'SetDisplayName': pendingName = String(a[0] ?? ''); break
         case 'DisplayMessage': message(ins); break
         case 'SoundEffect': sound(ins); break

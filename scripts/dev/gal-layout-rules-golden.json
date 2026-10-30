@@ -49,6 +49,7 @@
      "129": ">",
      "130": ">="
     },
+    "extraDirs": [],
     "fade": {
      "max": 10
     },
@@ -76,6 +77,15 @@
      "openNmsSaveLoad": "drop",
      "openSceneSelect": "drop"
     },
+    "gallery": {
+     "functions": [
+      "openCgBrowser"
+     ],
+     "minCalls": 20,
+     "pageFlags": [
+      105
+     ]
+    },
     "ignoreOps": [
      "Unk05",
      "Unk08",
@@ -96,8 +106,6 @@
      "UnkFC",
      "UnkFD",
      "LayerConfig",
-     "SetTimer",
-     "StartTimer",
      "CharMessageStart",
      "AddMessageToLog",
      "InitKeyName",
@@ -119,7 +127,6 @@
      "SoundUnk2",
      "SoundEffectUnk30",
      "MusicUnk1",
-     "ShowGraphic",
      "SetMask",
      "PrepareBackgroundArea",
      "UnkScreen",
@@ -161,7 +168,8 @@
       "mp4",
       "webm",
       "m4v",
-      "mov"
+      "mov",
+      "dat"
      ]
     },
     "skipFiles": [
@@ -181,6 +189,10 @@
      "strip": [
       "%[A-Za-z]"
      ]
+    },
+    "timers": {
+     "max": 10,
+     "wait": true
     }
    }
   },
@@ -192,8 +204,17 @@
    "maxTotalMB": 8192,
    "rules": [
     {
-     "match": "^(?:Script\\d*|DX11Effect|Model|Rio)\\.arc$",
+     "match": "^(?:Script\\d*|DX11Effect|Model)\\.arc$",
      "skip": true
+    },
+    {
+     "include": [
+      "^CG_PAGE\\.ws2$"
+     ],
+     "kinds": [
+      "script"
+     ],
+     "match": "^Rio\\.arc$"
     },
     {
      "match": "\\.arc$"

@@ -173,11 +173,35 @@ export const STORY_SKIP = [
   ['FileEnd', [0, 0, 0, 0, 0]],
 ]
 
+// CG 画廊页（Rio.arc 的 CG_PAGE.ws2）：一长串「页码 / 选中格」Condition + openCgBrowser(图) 的查表；前 3 个能解析（BG_01、EV_01、BG_01/EV_01 两层），后面 17 个图不存在
+export const STORY_GALLERY = [
+  ['SetVariable', ['@GALLERYBG', '']],
+  ['Condition', [130, 105, 1, 0, 0]],
+  ...Array.from({ length: 20 }, (_, i) => [
+    ['Condition', [2, 1620 + i, 1, 0, 0]],
+    ['ExecuteFunction', ['openCgBrowser', i === 0 ? 'BG_01.png' : i === 1 ? 'EV_01.png' : i === 2 ? 'BG_01.png/EV_01.png' : `NOPE_${i}.png`, 0, 0]],
+    ...(i === 9 ? [['Condition', [130, 105, 2, 0, 0]]] : []),
+  ]).flat(),
+  ['FileEnd', [0, 0, 0, 0, 0]],
+]
+
+// 计时器 + 遮罩过渡 + 电影
+export const STORY_TIMER = [
+  ['ClearLayer', ['*']], bg('bg01', 'BG_01.PNG'), ['SetTimer', ['timer01', 0, 2]], ['StartTimer', ['timer01', 1, 0, 0]], commit(0.5),
+  ['SetTimer', ['timer02', 0, 99]], ['StartTimer', ['timer02', 1, 0, 0]], ['StartTimer', ['timer03', 1, 0, 0]],
+  ['ShowGraphic', ['EFMSK_12.PNG']], ['ClearLayer', ['*']], bg('ev01', 'EV_01.PNG'), ['Unk65', [100, 0, 0, 0.7, 0, 2, 0, 0]],
+  ['PlayMovie', ['movie', 'OP.DAT', 1, 1, 1]], ['PlayMovie', ['movie', 'GONE.DAT', 1, 1, 1]],
+  msg(0, '終わり%K%P'),
+  ['FileEnd', [0, 0, 0, 0, 0]],
+]
+
 export async function buildAdvhdFixture(dir, { voices = true, brokenArc = false } = {}) {
   await mkdir(dir, { recursive: true })
   const put = (rel, data) => writeFile(path.join(dir, rel), data)
   await put('Script2.arc', arcBuild([{ name: 'ArcFileName.lua', data: Buffer.from('-- lua') }]))
-  await put('Rio.arc', arcBuild([{ name: 'LAYER_ORDER.ws2', data: ws2Encode([['FileEnd', [0, 0, 0, 0, 0]]]) }, { name: 'title.ws2', data: ws2Encode([['FileEnd', [0, 0, 0, 0, 0]]]) }]))
+  await put('Rio.arc', arcBuild([{ name: 'LAYER_ORDER.ws2', data: ws2Encode([['FileEnd', [0, 0, 0, 0, 0]]]) }, { name: 'title.ws2', data: ws2Encode([['FileEnd', [0, 0, 0, 0, 0]]]) }, { name: 'CG_PAGE.ws2', data: ws2Encode(STORY_GALLERY) }]))
+  await mkdir(path.join(dir, 'movie'), { recursive: true })
+  await put('movie/OP.DAT', 'movie-bytes')
   await put('Rio1.arc', arcBuild([
     { name: '001_00.ws2', data: ws2Encode(STORY_001) },
     { name: '002_00_H.ws2', data: ws2Encode(STORY_BRANCH) },
