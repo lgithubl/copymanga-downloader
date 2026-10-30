@@ -8,7 +8,7 @@ import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { STORY_001, STORY_BRANCH, arcBuild, pnaBuild, ws2Encode } from './make-advhd-fixture.mjs'
+import { STORY_001, STORY_BRANCH, arcBuild, commit, msg, pnaBuild, ws2Encode } from './make-advhd-fixture.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 let pass = 0
@@ -25,10 +25,15 @@ const put = (name, data) => writeFile(path.join(media, name), data)
 const end = ['FileEnd', [0, 0, 0, 0, 0]]
 await put('Script2.arc', arcBuild([{ name: 'ArcFileName.lua', data: Buffer.from('-- lua') }]))
 await put('Rio.arc', arcBuild([{ name: 'LAYER_ORDER.ws2', data: ws2Encode([end]) }]))
-await put('Rio1.arc', arcBuild([{ name: '001_00.ws2', data: ws2Encode(STORY_001) }, { name: '002_00_H.ws2', data: ws2Encode(STORY_BRANCH) }]))
+// 长背景图平移：1280×1400 的竖条（上红下蓝），基准位置 (0, -250)，平移 (0, -400)、2 秒、线性
+// 立绘位置偏移：红帧（舞台 x 100..., y 250..650）往下偏移 +40 像素，2 秒线性
+const BOB = [['ClearLayer', ['*']], ['SetBackground', ['bg01', 'BG_01.PNG', 1, 1]], ['UsePnaPackage', ['st01', 'ST_TOW_A_M.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 1, 1]], ['MoveBackground', ['st01', 0, 0, 100, 50, 0, 0]], commit(0), ['SetRegister', [0, 5, 0]], ['SetRegister', [0, 6, 40]], ['Effect1', ['st01', 'effect01', 1, 0, 0xc0, 5, 6, 0, 0, 2, 0, 0]], msg(0, '晃动%K%P'), ['FileEnd', []]]
+const PAN = [['ClearLayer', ['*']], ['SetBackground', ['bg01', 'LONG_01.PNG', 1, 1]], ['MoveBackground', ['bg01', 0, 0, 0, -250, 0, 0]], commit(0), ['SetRegister', [0, 5, 0]], ['SetRegister', [0, 6, -400]], ['Effect1', ['bg01', 'effect01', 1, 0, 0xc0, 5, 6, 0, 0, 2, 0, 0]], msg(0, '平移%K%P'), ['FileEnd', []]]
+await put('Rio1.arc', arcBuild([{ name: '001_00.ws2', data: ws2Encode(STORY_001) }, { name: '002_00_H.ws2', data: ws2Encode(STORY_BRANCH) }, { name: '003_PAN.ws2', data: ws2Encode(PAN) }, { name: '004_BOB.ws2', data: ws2Encode(BOB) }]))
 await put('Chip3.arc', arcBuild([
   { name: 'BG_01.png', data: png('1280x720', 'blue') },
   { name: 'EV_01.png', data: png('1280x720', 'lime') },
+  { name: 'LONG_01.png', data: execFileSync('convert', ['-size', '1280x1400', 'gradient:red-blue', 'png:-'], { maxBuffer: 16 * 1024 * 1024 }) },
   { name: 'ST_TOW_A_M.pna', data: pnaBuild({ width: 600, height: 800, frames: [
     { type: 1 }, { type: 0, id: 1, x: 100, y: 200, w: 300, h: 400, data: png('300x400', 'red') }, { type: 0, id: 2, x: 0, y: 0, w: 10, h: 10, data: png('10x10', 'black') },
     { type: 0, id: 3, x: 50, y: 60, w: 20, h: 30, data: png('20x30', 'yellow') }, { type: 2 },
@@ -65,10 +70,10 @@ try {
     const home = await reader('')
     check('第一次浏览：服务端读 arc，首页 = 目录卡片 Rio1；没有 error 级的 problems', home.node?.items?.map((i) => i.title).join() === 'Rio1' && !(home.node.problems || []).some((p) => p.level === 'error'), J([home.node?.items?.map((i) => i.title), home.node?.problems]))
     const dir = await reader(home.node.items[0].node)
-    check('目录里 2 个脚本（001_00、002_00_H）', dir.node.items.map((i) => i.title).join() === '001_00,002_00_H', J(dir.node.items.map((i) => i.title)))
+    check('目录里 4 个脚本（001_00、002_00_H、003_PAN、004_BOB）', dir.node.items.map((i) => i.title).join() === '001_00,002_00_H,003_PAN,004_BOB', J(dir.node.items.map((i) => i.title)))
     const story = await reader(dir.node.items[0].node)
     const branch = await reader(dir.node.items[1].node)
-    check('播放（001_00）：scene 来自 advhd::ws2，6 步；没走到的功能看得见（raw 里有 Effect1 / ExecuteFunction:playSpecialEffect）', story.scene?.adapter === 'advhd::ws2' && story.scene.steps.length === 6 && story.scene.stats.raw.Effect1 === 1 && story.scene.stats.raw['ExecuteFunction:playSpecialEffect'] === 1, J(story.scene?.stats));
+    check('播放（001_00）：scene 来自 advhd::ws2，6 步；没走到的功能看得见（raw 里有 Effect1:kind0 / ExecuteFunction:playSpecialEffect）', story.scene?.adapter === 'advhd::ws2' && story.scene.steps.length === 6 && story.scene.stats.raw['Effect1:kind0'] === 1 && story.scene.stats.raw['ExecuteFunction:playSpecialEffect'] === 1, J(story.scene?.stats));
     const res = async (src) => fetch(`${base}${story.resourceBase}?path=${encodeURIComponent(src)}`)
     const bgRes = await res('Chip3/BG_01.png')
     const frameRes = await res('Chip3/ST_TOW_A_M.pna/1.png')
@@ -125,6 +130,37 @@ try {
         await page.keyboard.press('Space'); await sleep(400)
         check('下一步 = 汇合后的台词「合流」（左分支的「左の道」被跳过）', /合流/.test(await text()), await text())
         check('分支页面没有页面错误', errors.length === 0, J(errors))
+
+        // 长背景图平移：原尺寸摆（基准位置 (0, -250)），2 秒线性平移 (0, -400) 之后停在 -650
+        await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(dir.node.items[2].node)}`)
+        await page.waitForSelector('.gal-player .gal-stage')
+        const layerBox = () => page.evaluate(() => {
+          const stage = document.querySelector('.gal-stage')
+          const front = [...document.querySelectorAll('.gal-bg')].find((l) => getComputedStyle(l).opacity === '1')
+          const cs = front && getComputedStyle(front)
+          return front ? { k: stage.clientHeight / 720, size: cs.backgroundSize, pos: cs.backgroundPosition } : null
+        })
+        const px = (value) => value.split(' ').map((x) => Number.parseFloat(x))
+        await sleep(300)
+        const early = await layerBox()
+        check('长背景图：按原尺寸摆（background-size = 1280 × 1400 乘舞台缩放），起点 = 基准位置 (0, -250)，300 毫秒时已经往上走了一点（-250 ~ -340）', early && Math.abs(px(early.size)[0] - 1280 * early.k) < 2 && Math.abs(px(early.size)[1] - 1400 * early.k) < 2 && px(early.pos)[1] <= -250 * early.k + 6 && px(early.pos)[1] >= -340 * early.k && Math.abs(px(early.pos)[0]) < 2, J(early))
+        await sleep(2600)
+        const late = await layerBox()
+        check('平移 2 秒之后停在 -250 + -400 = -650（舞台像素乘缩放）', late && Math.abs(px(late.pos)[1] - -650 * late.k) < 6, J(late))
+        await page.screenshot({ path: path.join(process.env.SHOT_DIR || os.tmpdir(), 'advhd-pan.png') })
+        check('平移页面没有页面错误', errors.length === 0, J(errors))
+
+        // 立绘位置偏移：红帧上沿在舞台 y = 250（canvas 375），往下偏移 40 → 290；在舞台 y = 270（canvas 405）取一个像素：开始是红的，播完是透明的
+        await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(dir.node.items[3].node)}`)
+        await page.waitForSelector('.gal-player .gal-stage')
+        await page.waitForFunction(() => document.querySelector('canvas.gal-stand')?.dataset.slots === '["st01"]')
+        const probe = () => page.evaluate(() => { const c = document.querySelector('canvas.gal-stand'); return [...c.getContext('2d').getImageData(525, 405, 1, 1).data] })
+        await sleep(100)
+        const before = await probe()
+        await sleep(2600)
+        const after = await probe()
+        check('立绘位置偏移（standMove）：开始时红帧上沿还在原位（舞台 y = 270 处是红的），2 秒线性往下 40 像素之后上沿到了 290，那一点变成透明', before[0] > 200 && before[3] === 255 && after[3] === 0, J([before, after]))
+        check('立绘偏移页面没有页面错误', errors.length === 0, J(errors))
       } finally { await browser.close() }
     }
   }

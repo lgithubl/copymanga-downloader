@@ -979,7 +979,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 游戏目录/  Script2.arc（引擎 Lua，不读）  Rio.arc（UI / 辅助脚本，默认 skip）  Rio1.arc（剧情 ws2）  Chip*.arc / Graphic.arc / SysGraphic.arc（图，含 .pna）
            Bgm.arc / Se*.arc / Voice*.arc（声音）  AdvHD.exe
    ──第一次浏览 / 取资源时，服务端读 arc（containers.mjs）──▶
-           arc/script/<容器>/<脚本>.advhd      .ws2 → ROR2 解扰 → 解成 {"format":"advhd-ws2/1","ins":[[偏移, 指令名, 参数[, 选项表 | 图片 id 表]]…]}
+           arc/script/<容器>/<脚本>.advhd      .ws2 → ROR2 解扰 → 解成 {"format":"advhd-ws2/1","ins":[[偏移, 指令名, 参数[, 选项表]]…]}
            arc/res/<容器>/<条目名>             图 / 声音 / 视频 原样；.pna → <名>.pna/{index.json, <帧 id>.png}（帧里的 PNG 拆出来 + 位置 / 尺寸索引）
            arc/.stamp.json                     每个容器 大小 + mtime + 规则指纹：没变不重做；变了整个容器重展开（旧条目不残留）
 ```
@@ -989,16 +989,20 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **规则**（`rules` 第一条命中的容器名正则生效；没有任何规则命中的容器不展开）：`skip: true` = 黑名单；`kinds` ⊂ `script` / `res` / `pna`；`include` / `exclude`；`pna: frames`（默认，拆帧）/ `raw`（原样）/ `skip`。家族默认：`Script*/DX11Effect/Model/Rio` skip，别的 `.arc` 全收。新游戏的容器名不一样（`Rio2.arc` / `Voice3.arc`…）默认就收，不想要的加一条 skip。
 - **脚本适配器 `advhd::ws2`**：ws2 指令 → gal-scene/1。台词 / 说话人 / 语音（`char*` 通道）/ 背景人声（`bgv*`）/ 音效 / bgm / 背景（`bg*` 图层）/ 事件图（`ev*` 图层 = `bg.over`）/ 纯色图（`EF_BLACK` 等 = `bg.color`）/ 立绘（`UsePnaPackage` + `DisplayCharacterImage` 的 id 表 + `MoveBackground` 位置 → `stand` 槽位，画 PNA 里那几帧）/ 选项（本脚本跳转 = 带 `when` 的分支，汇合点之后不带；跳到别的脚本的选项 = 一步提示，选了就在这里结束）/ 条件跳转（`SetFlag` + `Condition`）。**全部由 `adapterOptions['advhd::ws2']` 控制**（gal-layout 的 `ADAPTER_RULES` 写进 config，漂移守卫比对）：`layers` `colorImages` `channels` `speaker` `text` `fade` `flags`（`values` 默认 `{127: 0}`、`unknown`）`conditions` `conditionalJump` `functions` `skipFiles` `ignoreOps` `movie` `audioExts` `imageExts` `resDir`。
 - **没做的东西看得见**：`ExecuteFunction(名字, 字符串, u16 标志号, byte)` 按 `functions` 表（`drop` = 不记，`{ setFlag: N }` = 函数把结果写进标志号（`GetMsgSkip`），别的 = 不渲染并记 `raw` `ExecuteFunction:<名字>` + `stats.skippedFunctions`，表里没有的名字走 `default`）；没映射的指令记 `raw`（`ignoreOps` 里的布局 / 计时 / 内部状态只计数进 `stats.ignored`）；解码到不认识的指令就停（`stats.truncated` 带偏移和 opcode），脚本照常打开。播放页右下角「立绘/特效等 N 条指令暂未渲染」点开能看到按指令名汇总，`stats.unresolved` 是缺的资源（容器没给全时语音 / 图都会报在这里）。
-- **补指令 / 补格式**：新游戏遇到不认识的 opcode → 在 `advhd-ws2-decode.mjs` 的指令表里加一行（名字 + 参数规格）；arc 格式不同（加密等）→ 在 `containers.mjs` 加读取方式；游戏自己的 `ExecuteFunction` → 在 `functions` 里加映射。
-- **推断 / 没验证的地方**（逆向笔记和样本都没有直接证据；样本缺 Chip3/4/6/7、全部 Voice、Model 这几个 arc，立绘 / 背景 / 语音只有合成数据的测试）：
-  - ws2 指令分发没有逆向（逆向文档没有写；只有社区指令表，针对 2.11；这个游戏是 2.1，多出 `0xAF`（按字节形状当 `b4 + f4`，语义不明）和 `Condition` 类型 `0x7D`）。游戏 Lua 的反编译（`dec/`）能给出 `ExecuteFunction` 各函数 / 标志的含义，已经用上了（见下）。
-  - `Condition` 类型 2 / 128 / 129 / 130 = `==` / `<` / `>` / `>=` 是猜的（社区文档只写「相等、小于、大于、大于等于之类」）。**跳转含义有数据证据**：成立 = 顺着往下，不成立 = `p1`（else 块开头）或 `p2`（结尾）——样本里 263 处 p1、p2 都非零的 Condition 全是「真块 + `Jump2` + 假块」的版式。
-  - **标志有逆向的 Lua 依据**（`dec/LegacyGame.lua`）：`127` = 相册 / 回放模式（`openConfirm` 里 `GetFlag(127)` 为真时标题确认框换成相册版；H 脚本开头的「127 == 1 且 110 ≥ 2 → 跳进脚本中段」是回放入口），正常阅读 = 0；`999` = `GetMsgSkip` 写的「正在快进」（`ExecuteFunction` 的 u16 参数就是这个标志号），正常阅读 = 0。所以 `flags.values` 默认 `{127: 0, 999: 0}`，`functions.GetMsgSkip = { setFlag: 0 }`。别的标志（99 / 105 / 110 / 1016 …）只在菜单 / 回放页里用，没有值时按 `flags.unknown`（默认真）。
-  - `ConditionalJump(a, b)` 取第二个目标（样本里它后面是同一个立绘的几帧小动画，第二个目标正好跳过）。
-  - `Unk65` 的 f32 = 渐变秒数、`MoveBackground` 的 (x, y) = 图层左上角在 1280×720 舞台里的位置、`DisplayCharacterImage` 的 id 表 = 要画的 PNA 帧 id：按数值范围 / 名字猜的，没有立绘 PNA 样本核对。
-  - PNA 帧里嵌 PNG 是**样本为准**：`SysGraphic.arc` 的 UI 包里帧确实是内嵌 PNG（逆向笔记 TODO 第三轮「帧只是图片名引用、像素在外部」和样本不符）；帧 type 0 = 图片、1 / 2 = 组开始 / 结束来自这批样本。立绘包是否同构没有样本。
-  - 视频（`PlayMovie ED_XX.DAT`）：`.DAT` 在样本的 arc 里没有，只按「同名 mp4 / webm / m4v / mov 在索引里」找，找不到记 `raw` PlayMovie + `unresolved`。
-  - **没做的特效**：`Effect1/2/3`（约 3400 条）、`DragBackground`（约 1900 条）记 raw。样本里它们是「背景长图 `*_L` 的平移 / 立绘的上下晃动」（`LayerConfig` 5 / 6 号参数 = 位移，`Effect1` 的第 5 个浮点数 = 时长，立绘 ±10 像素 0.3 秒，背景 40 / 60），但要摆对需要图片的实际尺寸和 `MoveBackground` 给的初始偏移，播放器的 `camera` 又是整屏（含立绘）一起动——没有长图样本，做出来大概率是错的，所以不猜。
-  - **做了近似的**：计时器（`SetTimer` 秒数 + `StartTimer` → `wait`，`timers` 可关 / 封顶）；遮罩过渡（`ShowGraphic` 遮罩图 + `Unk65` 类型 100）和别的过渡类型都近似成同样时长的淡入淡出，类型 / 遮罩记进 `stats.transitions` / `stats.masks`。
-  - **CG 画廊**：游戏的画廊页逻辑在 Lua（`menu_gallery.lua`）里，没有搬；但 `Rio.arc` 的 `CG_PAGE.ws2` 就是画廊的查表（518 个 `openCgBrowser(图)` + 页码 / 选中格的 Condition），默认只展开这一个脚本，适配器按「画廊」读成一页页 CG（每个 CG 一步，图 + 名字，页码当说话人；`gallery` 选项可调）。样本里 CG 图在缺的 Chip 容器里，所以真实数据上图都是缺的，结构（518 个、80 页）是对的。回放 / 标题 / 设置 / 存档界面没做（界面逻辑，不是剧情数据）；回放等价于脚本列表本身。
-  - **视频**：`PlayMovie ED_XX.DAT` 的文件不在 arc 里（样本包也没有）。游戏目录里有 `movie` 目录时 gal-layout 把它加进资源根和适配器 `extraDirs`，按同名找（`movie.exts` 含 `dat`）；`.DAT` 的实际封装没有样本，浏览器能不能放不确定（Content-Type 是 octet-stream）。
+- **指令的依据：AdvHD.exe 本身**（逆向笔记没写 ws2，这部分是这次直接反编译 exe 得到的，方法：Ghidra 12.2 无界面分析 + 全程序反编译，搜 `ror 2`（FUN_140324e60，OpenMP 并行的解扰循环）→ 找到 ws2 加载函数 FUN_140127460 → 解释器主循环 FUN_14008ce80）：
+  - 主循环读一个 opcode，用 `PTR_DAT_1403ea420[opcode]`（操作数**类型表**）读操作数，再调 `LegacyGame + 0x1bb0 + opcode*8` 的处理函数（161 个，在 FUN_140061fb0 里注册）。`advhd-ws2-decode.mjs` 的 `OPCODE_LAYOUTS` 就是这张表导出来的整张表（205 项），**201 个剧情 / 辅助脚本全部正好读到 FF（FileEnd）+ 8 字节尾巴**。
+  - 这纠正了之前用社区表（针对 2.11）的错：SetBackground 少读了 2 个字节，解码器把它们当成一条假的 `Condition(kind 1)`（4455 处）；`0xAF` / `Condition` 的「变长」也是社区表的猜测——引擎里 Condition 永远是 5 个操作数、`0xAF` = (u16, u16, f32 × 4)，不存在 `0x7D`。
+  - **处理函数读过的**（语义不是猜的）：`Condition`（标志 = 布尔位图，类型最高位 = 比较浮点寄存器；成立往下走，不成立去 p1（else）或 p2）、`SetRegister`（0x09，浮点寄存器 = / += / -= / *= / /=，位 0x80 = 值来自另一个寄存器）、`SetFlag`（值 == 1 置位）、`Unk65` = **过渡**（`%Transition%`：u16 层组、u8 类型、时长秒、遮罩图文件名）、`MoveBackground`（组 0 = 基准位置 x, y, z；位掩码 = 哪些浮点参数是寄存器）、`DragBackground`（把图层一组属性读进寄存器）、`Effect1`（给图层属性开「从 0 到目标值」的动画：种类 u16、缓动 u8（0..30，Penner 那一族：线性 / sine / quad / cubic / quart / quint / expo / circ / back / elastic / bounce 各 In / Out / InOut）、位掩码、5 个目标 / 时长浮点、重复、延迟；增量累加，播完偏移留着）、`ConditionalJump`（把当前位置压成返回点再跳到第二个目标）。
+  - 游戏 Lua（`dec/LegacyGame.lua`）给出标志含义：`127` = 相册 / 回放模式，`999` = `GetMsgSkip` 写的「正在快进」，正常阅读都是 0；`ExecuteFunction(名字, 字符串, u16 标志号, byte)` 的标志号就是函数把结果写进的标志。
+- **特效**（`Effect1`）：种类 1 = 位置偏移 (dx, dy)——背景 / 事件图上的是**长背景图的平移**（`bgPan`：背景按原尺寸摆，基准位置 = `MoveBackground` 组 0，平移 = 寄存器里的目标，时长 / 缓动 / 延迟照原样）；立绘上的是**晃动 / ST_QUAKE 抖动**（`standMove`：同一步里的一串小动画叠加）。播放器（gal-player.js / gal-stand.js / gal-engine.js 的 `easeOf`）实现了 `bg.pos` / `bgPan` / `standMove`。种类 0（颜色 / 透明度）等别的种类没做，记 raw `Effect1:kind<N>`；`Effect2`（停止效果）只计数；`Effect3` / `Effect44` / 下雨 / 烟雾等记 raw。
+- **做了近似的**：计时器（`SetTimer` 秒数 + `StartTimer` → `wait`，`timers` 可关 / 封顶）；过渡的类型（0 / 9 / 22 / 23 / 25 / 100）和遮罩图都近似成同样时长的淡入淡出，类型 / 遮罩记进 `stats.transitions` / `stats.masks`。
+- **没做的东西看得见**：`ExecuteFunction` 按 `functions` 表（`drop` = 不记，`{ setFlag: N }` = 函数把结果写进标志号，别的 = 不渲染并记 `raw` `ExecuteFunction:<名字>` + `stats.skippedFunctions`，表里没有的名字走 `default`）；没映射的指令记 `raw`（`ignoreOps` 里的布局 / 计时 / 内部状态只计数进 `stats.ignored`）；解码到不在引擎表里的指令就停（`stats.truncated` 带偏移和 opcode），脚本照常打开。播放页右下角「立绘/特效等 N 条指令暂未渲染」点开能看到按指令名汇总，`stats.unresolved` 是缺的资源。
+- **CG 画廊**：游戏的画廊页逻辑在 Lua（`menu_gallery.lua`）里，没有搬；但 `Rio.arc` 的 `CG_PAGE.ws2` 就是画廊的查表（518 个 `openCgBrowser(图)` + 页码寄存器 105 的 Condition），默认只展开这一个脚本，适配器按「画廊」读成一页页 CG（每个 CG 一步，图 + 名字，页码当说话人；`gallery` 选项可调）。回放 / 标题 / 设置 / 存档界面没做（界面逻辑，不是剧情数据）；回放等价于脚本列表本身。
+- **视频**：`PlayMovie ED_XX.DAT` 的文件不在 arc 里（样本包也没有）。游戏目录里有 `movie` 目录时 gal-layout 把它加进资源根和适配器 `extraDirs`，按同名找（`movie.exts` 含 `dat`）；`.DAT` 的实际封装没有样本，浏览器能不能放不确定（Content-Type 是 octet-stream）。
+- **补指令 / 补格式**：新游戏遇到引擎表里没有的 opcode → 用 Ghidra 从那个版本的 exe 里导出 `PTR_DAT_1403ea420`（类型表）更新 `OPCODE_LAYOUTS`；arc 格式不同（加密等）→ 在 `containers.mjs` 加读取方式；游戏自己的 `ExecuteFunction` → 在 `functions` 里加映射。
+- **仍然是推断 / 没验证的**（样本缺 Chip3/4/6/7、全部 Voice、Model 这几个 arc，立绘 / 背景 / 语音只有合成数据的测试）：
+  - `MoveBackground` 组 0 的 (x, y) 的**原点 / 锚点**（我假设是图层左上角在 1280×720 舞台里的位置；引擎里画图用的是一整套 3D 矩阵，没逐行读）；`bgPan` 的方向 / 距离是照 `Effect1` 的累加算的，但长图的实际尺寸没有样本核对。
+  - `DisplayCharacterImage` 的 id 表 = 要画的 PNA 帧 id（按名字 / 个数猜的，没读那个处理函数）；PNA 帧里「type 0 = 图片、1 / 2 = 组开始 / 结束」来自 UI 包样本，立绘包没有样本。
+  - **PNA 帧里嵌 PNG 是样本为准**：`SysGraphic.arc` 的 UI 包里帧确实是内嵌 PNG（逆向笔记 TODO 第三轮「帧只是图片名引用、像素在外部」和样本不符）。
+  - `Effect1` 的最后一对（u16 重复次数、浮点延迟）只处理了延迟；缓动 22-30（back / elastic / bounce）是标准公式，没逐个对着反编译核对（0-21 核对过）。
+  - 变量 / 标志 / 寄存器在真实游戏里是跨脚本持久的（存档里），这里每个脚本从默认值起；没有默认值的标志按 `flags.unknown`（默认真），所以脚本里依赖前面剧情的分支走的是「默认那条」。

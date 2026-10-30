@@ -3,7 +3,7 @@
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, stands: [], overlays: [], camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, white: false, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, stands: [], overlays: [], camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, bgPan: null, white: false, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -84,13 +84,30 @@ export function applyCommand(state, command, choices = null) {
       recordChoice(state.vars, command, choices)
       break
     case 'bg':
-      state.bg = command.src ? { src: command.src, ...(command.over ? { over: command.over } : {}), ...(command.film && typeof command.film === 'object' ? { film: command.film } : {}), ...(Array.isArray(command.frames) && command.frames.length > 1 ? { frames: command.frames } : {}) } : { color: command.color }
+      state.bg = command.src ? { src: command.src, ...(command.over ? { over: command.over } : {}), ...(command.film && typeof command.film === 'object' ? { film: command.film } : {}), ...(Array.isArray(command.frames) && command.frames.length > 1 ? { frames: command.frames } : {}), ...(Array.isArray(command.pos) && command.pos.length === 2 ? { pos: [Number(command.pos[0]) || 0, Number(command.pos[1]) || 0] } : {}) } : { color: command.color }
       state.bgfx = null   // 换了背景，缩放 / 模糊跟着旧背景走
+      state.bgPan = null
       break
     case 'bgoff':
       state.bg = null
       state.bgfx = null
+      state.bgPan = null
       break
+    case 'standMove': {   // 槽位立绘的位置偏移动画（AdvHD 的 Effect1 kind 1 用在立绘上：晃动 / 抖动）：to = [dx, dy] 舞台像素；offset = 累计偏移（留着，+10 再 -10 回到原位）；moves = 这一步里新开的动画（实时播放时一起动，播完由播放器清掉）
+      const slot = String(command.slot ?? '')
+      const to = [Number(command.to?.[0]) || 0, Number(command.to?.[1]) || 0]
+      const move = { to, seconds: Math.max(0, Number(command.seconds) || 0), ease: Math.trunc(Number(command.ease) || 0), delay: Math.max(0, Number(command.delay) || 0) }
+      state.stands = state.stands.map((s) => (String(s.slot) !== slot ? s : { ...s, offset: [(s.offset?.[0] || 0) + to[0], (s.offset?.[1] || 0) + to[1]], moves: [...(s.moves || []), move] }))
+      break
+    }
+    case 'bgPan': {   // 背景平移（AdvHD 的 Effect1 kind 1：位置偏移 (dx, dy)，舞台像素；ease = 缓动编号，见 easeOf）：背景按原尺寸摆（bg.pos = 左上角，缺省 [0, 0]），offset = 平移完成后的累计偏移；bgPan = 这一次的动画（实时播放用）
+      if (!state.bg?.src) break
+      const from = state.bg.offset || [0, 0]
+      const to = [from[0] + (Number(command.to?.[0]) || 0), from[1] + (Number(command.to?.[1]) || 0)]
+      state.bg = { ...state.bg, offset: to }
+      state.bgPan = { from, to, seconds: Math.max(0, Number(command.seconds) || 0), ease: Math.trunc(Number(command.ease) || 0), delay: Math.max(0, Number(command.delay) || 0) }
+      break
+    }
     case 'speaker':
       state.speaker = command.segments || []
       break
@@ -191,6 +208,30 @@ export function stateAt(scene, index, choices = {}) {
   const last = Math.min(index, (scene?.steps?.length || 0) - 1)
   for (let i = 0; i <= last; i++) for (const command of scene.steps[i].commands) applyCommand(state, command, choices)
   return state
+}
+
+// 缓动函数（AdvHD 的 Effect1 的 mode：0..30，引擎里是 FUN_140132370 的 switch，按 In / Out / InOut 三个一组：0 线性、1-3 sine、4-6 quad、7-9 cubic、10-12 quart、13-15 quint、16-18 expo、19-21 circ、22-24 back、25-27 elastic、28-30 bounce）。t ∈ [0, 1] → [0, 1]（back / elastic 会越界）。
+// 0-21 对着反编译的公式核对过（pow 的指数 2 / 3 / 4 / 5、sin(t·π/2)、sqrt(1 - t²) …）；22-30 是同一族的标准公式，没逐个核对
+const BACK = 1.70158
+const bounceOut = (t) => { const n = 7.5625; const d = 2.75; if (t < 1 / d) return n * t * t; if (t < 2 / d) { const u = t - 1.5 / d; return n * u * u + 0.75 } if (t < 2.5 / d) { const u = t - 2.25 / d; return n * u * u + 0.9375 } const u = t - 2.625 / d; return n * u * u + 0.984375 }
+const power = (n) => ({ in: (t) => t ** n, out: (t) => 1 - (1 - t) ** n, inOut: (t) => (t < 0.5 ? 2 ** (n - 1) * t ** n : 1 - ((-2 * t + 2) ** n) / 2) })
+const FAMILIES = [
+  { in: (t) => t, out: (t) => t, inOut: (t) => t },
+  { in: (t) => 1 - Math.cos((t * Math.PI) / 2), out: (t) => Math.sin((t * Math.PI) / 2), inOut: (t) => -(Math.cos(Math.PI * t) - 1) / 2 },
+  power(2), power(3), power(4), power(5),
+  { in: (t) => (t === 0 ? 0 : 2 ** (10 * t - 10)), out: (t) => (t === 1 ? 1 : 1 - 2 ** (-10 * t)), inOut: (t) => (t === 0 ? 0 : t === 1 ? 1 : t < 0.5 ? 2 ** (20 * t - 10) / 2 : (2 - 2 ** (-20 * t + 10)) / 2) },
+  { in: (t) => 1 - Math.sqrt(1 - t * t), out: (t) => Math.sqrt(1 - (t - 1) ** 2), inOut: (t) => (t < 0.5 ? (1 - Math.sqrt(1 - (2 * t) ** 2)) / 2 : (Math.sqrt(1 - (-2 * t + 2) ** 2) + 1) / 2) },
+  { in: (t) => (BACK + 1) * t ** 3 - BACK * t * t, out: (t) => 1 + (BACK + 1) * (t - 1) ** 3 + BACK * (t - 1) ** 2, inOut: (t) => { const c = BACK * 1.525; return t < 0.5 ? ((2 * t) ** 2 * ((c + 1) * 2 * t - c)) / 2 : ((2 * t - 2) ** 2 * ((c + 1) * (t * 2 - 2) + c) + 2) / 2 } },
+  { in: (t) => (t === 0 ? 0 : t === 1 ? 1 : -(2 ** (10 * t - 10)) * Math.sin((t * 10 - 10.75) * ((2 * Math.PI) / 3))), out: (t) => (t === 0 ? 0 : t === 1 ? 1 : 2 ** (-10 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1), inOut: (t) => { const c = (2 * Math.PI) / 4.5; return t === 0 ? 0 : t === 1 ? 1 : t < 0.5 ? -(2 ** (20 * t - 10) * Math.sin((20 * t - 11.125) * c)) / 2 : (2 ** (-20 * t + 10) * Math.sin((20 * t - 11.125) * c)) / 2 + 1 } },
+  { in: (t) => 1 - bounceOut(1 - t), out: bounceOut, inOut: (t) => (t < 0.5 ? (1 - bounceOut(1 - 2 * t)) / 2 : (1 + bounceOut(2 * t - 1)) / 2) },
+]
+export function easeOf(mode, t) {
+  const m = Math.trunc(Number(mode))
+  const x = Math.max(0, Math.min(1, Number(t) || 0))
+  if (!(m >= 0 && m <= 30)) return x
+  if (m === 0) return x
+  const family = FAMILIES[Math.floor((m - 1) / 3) + 1]
+  return family[['in', 'out', 'inOut'][(m - 1) % 3]](x)
 }
 
 // 一条指令动画执行时要等多久（秒）：渐变背景、黑场、wait；其余立即

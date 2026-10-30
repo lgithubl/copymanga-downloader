@@ -1,25 +1,25 @@
 // 适配器：WillPlus AdvHD 引擎（ADVPlayerHD）的剧情脚本（.ws2，由 containers.mjs 从 .arc 里读出来、解成 JSON 文本）→ 规范场景（gal-scene/1）。
 // id = advhd::ws2：引擎家族 advhd 的脚本适配器，家族里所有游戏（game.id = advhd::<游戏>）共用；游戏之间的差别只在 config（adapterOptions['advhd::ws2'] + containers 规则），不写死游戏。
 //
-// 输入（advhd-ws2-decode.mjs 解出来的指令流）：{"format":"advhd-ws2/1","arc","name","size","truncated"?,"ins":[[偏移, 指令名, 参数[, 选项表 | 图片 id 表]]…]}。
-// 指令含义的依据：社区的 ws2 指令表（DarthFly/advhd_ws2_tools，名字和参数个数）+ 对 LPSL 全部 153 个剧情脚本的统计 / 逐条对照；哪些是推断见下面「推断」。
+// 输入（advhd-ws2-decode.mjs 解出来的指令流）：{"format":"advhd-ws2/1","arc","name","size","truncated"?,"ins":[[偏移, 指令名, 参数[, 选项表]]…]}。
+// 指令含义的依据：AdvHD.exe 本身——解释器主循环（FUN_14008ce80）按 opcode 查操作数类型表（PTR_DAT_1403ea420，解码器 advhd-ws2-decode.mjs 里的 OPCODE_LAYOUTS）读操作数，再调 LegacyGame+0x1bb0+opcode*8 的处理函数（161 个）；Condition / SetRegister / Unk65 / MoveBackground / Effect1 的语义是读这些处理函数的反编译得到的（见各 case 的注释）。游戏 Lua（LegacyGame.lua）给出标志 / 函数的含义；没读过的处理函数（立绘 / PNA 帧的选取等）仍按数据猜，见下面「推断」。
 // 映射（全部可以用 adapterOptions['advhd::ws2'] 改，见 DEFAULT_OPTIONS）：
 //   DisplayMessage(id, 'char', 文本)            → text（%K %P 等控制符去掉，{汉字:ふりがな} = ruby，\n = 换行）；SetDisplayName('%LC名字') → speaker（空 = 旁白）
 //   SoundEffect(通道, 文件)                      → 通道名按 channels 规则：char* = voice，bgv* = bgvoice（循环背景人声），其余 = se；PlayMusic = bgm，StopMusic = bgmStop
 //   SetBackground(图层, 文件)                    → 图层按 layers 规则分角色：bg / ev（事件图 = bg 的 over）/ st；EF_BLACK / EF_WHITE 这类纯色图 = bg.color（colorImages）
-//   UsePnaPackage(图层, 包名) + DisplayCharacterImage(图层, …, 图片 id 表) + MoveBackground(图层, …, x, y, …) → stand（按图层一个 slot）：包 = containers 展开的 <包名>.pna/{index.json,<帧 id>.png}，画 id 表里的帧
-//   ClearLayer(图层 | *) 清图层；Unk65 = 一次「提交画面」（图层变更在这里生效，f32 第 1 个 = 渐变秒数）；PlayMovie → movie（在索引里找同名视频）
+//   UsePnaPackage(图层, 包名) + DisplayCharacterImage(图层, 清掉别的, u8, 帧序号表) + MoveBackground(图层, …, x, y, …) → stand（按图层一个 slot）：包 = containers 展开的 <包名>.pna/{index.json,<帧 id>.png}，画 id 表里的帧
+//   ClearLayer(图层 | *) 清图层；Unk65 = 一次「过渡」（引擎里叫 %Transition%：图层变更在这里生效，第 3 个操作数 = 过渡时长秒，最后一个 = 遮罩图文件名）；PlayMovie → movie（在索引里找同名视频）
 //   ShowChoice → choice；选项的跳转是本脚本的偏移（jump 6）→ 每个选项一段带 when 的分支，汇合点之后不带 when；跳转是文件名（jump 7）→ 记进 stats.links（播放器没有「换脚本」，选项只是展示）
-//   Jump / Jump2 跟随；Condition(类型, 变量, 值, p1, p2) 按 flags / conditions 求值：成立 = 顺着往下，不成立 = p1（else 块）或 p2（结尾）（SetFlag / ExecuteFunction 的 setFlag 在本脚本里设过的变量按设的值；没有值的变量按 flags.values 默认，再没有按 flags.unknown，默认 = 真）；
+//   Jump / Jump2 跟随；Condition(类型, 变量, 值, p1, p2)：类型最高位 = 比较浮点寄存器（SetRegister 写的）否则比较布尔标志（SetFlag / 函数写的），成立 = 顺着往下，不成立 = p1（else 块）或 p2（结尾）；没有值的标志按 flags.values 默认，再没有按 flags.unknown（默认 = 真），寄存器没写过 = regs.values 默认 / 0；
 //   ConditionalJump(a, b)：按 conditionalJump（默认取第二个目标 = 跳过动画）；FileEnd / NextFile = 结束（NextFile 的目标记进 stats.links）
 //   ExecuteFunction(名字, 字符串, u16 标志号, byte) 按 functions 表：drop（不记）/ { setFlag: N }（函数把结果写进标志号，GetMsgSkip = 快进状态写 0）/ skip（不渲染，记 raw `ExecuteFunction:名字`、stats.skippedFunctions）；表里没有的名字 = default
 //   不认识 / 没做的指令：ignoreOps 里的（布局 / 计时 / 内部状态）只计数（stats.ignored）；别的记 raw（stats.raw）——「立绘/特效等 N 条指令暂未渲染」和渲染诊断里能看到，哪个指令没做一目了然
-// 推断（没有逆向 exe 的指令分发、没有立绘样本，下面这些是按数据猜的，都可以用 options 改）：
-//   · Condition 的类型 2 / 128 / 129 / 130 = == / < / > / >=（社区文档也只写「相等、小于、大于、大于等于之类」，没确认哪个是哪个）。跳转的含义有数据证据：成立 = 往下走，不成立 = p1（else 块）或 p2（结尾）（263 处 p1、p2 都非零的 Condition 全是「真块 + Jump2 + 假块」）
+// 推断（没读过对应的处理函数 / 没有样本，按数据猜的，都可以用 options 改）：
 //   · 标志 127 = 相册 / 回放模式（LegacyGame.lua 的 openConfirm：GetFlag(127) 为真时标题确认框换成相册版），正常阅读 = 0；标志 999 = GetMsgSkip 写的「正在快进」，正常阅读 = 0——两个默认值有 Lua 依据
-//   · 0xAF 指令（解码器里 b4 + f4）、Unk65 的 f32 = 渐变秒数、MoveBackground 的 (x, y) = 图层左上角在舞台里的位置（舞台 1280×720）：都是按字节形状 / 数值范围猜的
-//   · ConditionalJump 取第二个目标：样本里它后面总是同一个立绘的几帧小动画（带 SetTimer），第二个目标正好跳过它们
-//   · PNA 帧里「type 0 = 图片、1 / 2 = 组开始 / 结束」来自 UI 包样本，立绘包没有样本；DisplayCharacterImage 的 id 表 = 要画的帧 id 是按名字 / 个数猜的
+//   · MoveBackground 组 0 的 (x, y) = 图层的基准位置（引擎里是图层的 +0xc / +0x10；原点和锚点没读，这里按「图层左上角在 1280×720 舞台里的位置」摆）
+//   · DisplayCharacterImage(图层, 清掉别的 u8, u8, 个数, ...帧序号)：处理函数（FUN_14006bd00）读过——图层必须是 PNA 图层，数组 = 要显示的帧的**序号**（PNA 里帧记录的顺序，FUN_140115930 的数组下标，不是记录里的 id 字段），第一个 u8 非 0 = 先把别的帧都藏起来；帧要不要画 / 每帧怎么摆（x, y, w, h）按 PNA 记录
+//   · ConditionalJump(a, b) 取第二个目标：引擎的处理函数把当前位置压成一个返回点再跳到第二个目标，样本里它后面总是同一个立绘的几帧小动画，第二个目标正好跳过它们
+//   · PNA 帧里「type 0 = 图片、1 / 2 = 组开始 / 结束」来自 UI 包样本，立绘包没有样本
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader, safeRegex } from './options-merge.mjs'
 
@@ -34,12 +34,12 @@ export const DEFAULT_OPTIONS = {
   speaker: { strip: ['^%[A-Za-z]{1,3}'] },
   text: { strip: ['%[A-Za-z]'], newline: '\\n' },
   fade: { max: 10 },
-  flags: { values: { 127: 0, 999: 0 }, unknown: true },
-  conditions: { 2: '==', 128: '<', 129: '>', 130: '>=' },
+  flags: { values: { 127: 0, 999: 0 }, unknown: true },   // 布尔标志（位图）：values = 开局默认值（0 / 1）；没有默认值也没人写过的标志按 unknown
+  regs: { values: {}, unknown: 0 },   // 浮点寄存器（SetRegister 写、Condition 的 128+ 类型读、特效的参数引用）：values = 开局默认值；没写过的 = unknown（0）
   conditionalJump: 'second',
   functions: { default: 'skip', GetMsgSkip: { setFlag: 0 }, ArcGraphicOpenTest: { setFlag: 0 }, openCgBrowser: 'drop', openGallery: 'drop', openGalleryTitle: 'drop', openNmsSaveLoad: 'drop', openNameInput: 'drop', SetStopSkip: 'drop', openSceneSelect: 'drop', openCharSelect: 'drop' },
   skipFiles: ['^LAYER_ORDER$'],
-  ignoreOps: ['Unk05', 'Unk08', 'Unk0A', 'Unk0D', 'Unk0E', 'Unk13', 'Unk16', 'Unk17', 'Unk19', 'Unk1B', 'Unk1D', 'Unk3D', 'Unk3E', 'Unk64', 'Unk68', 'UnkFB', 'UnkFC', 'UnkFD', 'LayerConfig', 'CharMessageStart', 'AddMessageToLog', 'InitKeyName', 'LayersList', 'SetFlag', 'SetVariable', 'VariableUnk', 'VariableUnk32', 'VariableUnk3', 'VariableUnk4', 'VariableUnk51', 'VariableUnk2', 'UnkBackground1', 'UnkBackground2', 'UnkBackground3', 'Unk42', 'Unk43', 'SoundUnk1', 'SoundUnk2', 'SoundEffectUnk30', 'MusicUnk1', 'SetMask', 'PrepareBackgroundArea', 'UnkScreen', 'Unk67', 'Unk97', 'UnkAF', 'UnkB0', 'SetPnaFile', 'Unk75', 'Unk78', 'Unk7A', 'Unk7B', 'Unk84', 'Unk4A', 'OpenTitle'],
+  ignoreOps: ['Unk05', 'Unk08', 'Unk0A', 'Unk0D', 'Unk0E', 'Unk13', 'Unk16', 'Unk17', 'Unk19', 'Unk1B', 'Unk1D', 'Unk3D', 'Unk3E', 'Unk64', 'Unk68', 'UnkFB', 'UnkFC', 'UnkFD', 'CharMessageStart', 'AddMessageToLog', 'InitKeyName', 'LayersList', 'SetFlag', 'SetVariable', 'VariableUnk', 'VariableUnk32', 'VariableUnk3', 'VariableUnk4', 'VariableUnk51', 'VariableUnk2', 'UnkBackground1', 'UnkBackground2', 'UnkBackground3', 'Unk42', 'Unk43', 'SoundUnk1', 'SoundUnk2', 'SoundEffectUnk30', 'MusicUnk1', 'SetMask', 'ShowGraphic', 'Effect2', 'PrepareBackgroundArea', 'UnkScreen', 'Unk67', 'Unk97', 'UnkAF', 'UnkB0', 'SetPnaFile', 'Unk75', 'Unk78', 'Unk7A', 'Unk7B', 'Unk84', 'Unk4A', 'OpenTitle'],
   movie: { exts: ['mp4', 'webm', 'm4v', 'mov', 'dat'] },   // PlayMovie ED_XX.DAT：同名文件（扩展名依次换成这些）在索引里找；.DAT 的实际封装没有样本（Media Foundation 能放的 mp4 / wmv？）
   timers: { wait: true, max: 10 },   // SetTimer(名, _, 秒) + StartTimer(名)：停这么多秒（wait 指令，点一下就跳过）
   // CG 画廊页（Rio.arc 的 CG_PAGE.ws2）：脚本里是一长串 Condition（页码 / 选中格）+ ExecuteFunction openCgBrowser(图) 的查表，不是剧情；有 minCalls 个以上这类调用就按「画廊」读：每个 CG 一步（图 + 名字），页码（pageFlags 里的变量的 Condition 值）当说话人
@@ -79,7 +79,7 @@ export function prepare({ options, files, texts, toResourcePath, resourceResolve
     try {
       const data = JSON.parse(text)
       const frames = new Map()
-      for (const frame of Array.isArray(data.frames) ? data.frames : []) if (frame && frame.type === 0 && typeof frame.file === 'string') frames.set(frame.id, frame)
+      for (const frame of Array.isArray(data.frames) ? data.frames : []) if (frame && frame.type === 0 && typeof frame.file === 'string') frames.set(frame.n, frame)   // 键 = 帧序号（文件里的顺序），DisplayCharacterImage 的数组用的就是这个
       const entry = { dir: toRes(m[1]), width: Number(data.width) || 0, height: Number(data.height) || 0, frames }
       pnas.set(m[2].toLowerCase(), entry)
     } catch { pnaBad += 1 }   // 索引被截断 / 损坏：这个包当没有
@@ -142,6 +142,7 @@ export function parse(text, ctx = null, meta = {}) {
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const hasIndex = Boolean(ctx?.hasIndex)
   stats.transitions = {}
+  stats.effects = { pan: 0, standMove: 0 }
   stats.masks = {}
 
   // 资源：脚本里的名字（带扩展名）→ 索引里的路径；找不到按同名换扩展名再找
@@ -210,8 +211,9 @@ export function parse(text, ctx = null, meta = {}) {
     }
     if (color && (color.role === 'st' || !ev || color.role === 'ev')) return { color: color.color }
     if (ev && bg) return { src: bg.src, over: ev.src }
-    if (ev) return { src: ev.src }
-    if (bg) return { src: bg.src }
+    const placed = (layer) => ({ src: layer.src, ...(layer.x || layer.y ? { pos: [layer.x, layer.y] } : {}) })   // 基准位置（MoveBackground 组 0）不是 (0, 0) 才带 pos：播放器按原尺寸摆（长背景图），否则走原来的铺满
+    if (ev) return placed(ev)
+    if (bg) return placed(bg)
     return color ? { color: color.color } : null
   }
   function standParts(layer) {
@@ -260,23 +262,58 @@ export function parse(text, ctx = null, meta = {}) {
 
   // ---- 控制流 ----
   const visited = new Set()
-  const env = new Map()
+  const env = new Map()    // 布尔标志（SetFlag / 函数写的）
+  const regs = new Map()   // 浮点寄存器（SetRegister 写的）
   const timers = new Map()
-  let lastMask = ''
-  const flagValue = (id) => (env.has(id) ? env.get(id) : Object.hasOwn(opt.flags.values, String(id)) ? Number(opt.flags.values[String(id)]) : null)
+  const flagOf = (id) => (env.has(id) ? env.get(id) : Object.hasOwn(opt.flags.values, String(id)) ? Number(opt.flags.values[String(id)]) !== 0 : null)
+  const regOf = (id) => (regs.has(id) ? regs.get(id) : Object.hasOwn(opt.regs.values, String(id)) ? Number(opt.regs.values[String(id)]) : num(opt.regs.unknown))
+  // Condition(kind, var, value, p1, p2)——按引擎的处理函数（FUN_140062a70）：
+  //   kind 的最高位（0x80）= 比较「浮点寄存器」：左 = regs[var]，右 = value（kind & 0x40 时 = regs[(int)value]）；kind & 0x3f：0 左 ≥ 右、1 左 ≤ 右、2 ==、3 !=、4 左 > 右、5 左 < 右
+  //   否则比较「布尔标志」：左 = flags[var]，右 = value ≠ 0（kind & 0x40 时 = flags[(int)value]）；kind & 0x3f：0 左 ∨ ¬右、1 ¬左 ∨ 右、2 同值、3 异值、4 左 ∧ ¬右、5 ¬左 ∧ 右
+  // 返回 true / false；标志没有值（既没人写过也没有默认值）返回 null（按 flags.unknown）
   function condition(args) {
     const [kind, id, value] = args
-    const op = opt.conditions[String(kind)]
-    const left = flagValue(id)
-    if (!op || left === null || !Number.isFinite(left)) return null
-    switch (op) {
-      case '==': return left === value
-      case '!=': return left !== value
-      case '<': return left < value
-      case '>': return left > value
-      case '>=': return left >= value
-      case '<=': return left <= value
+    const mode = kind & 0x3f
+    if (kind & 0x80) {
+      const left = regOf(id)
+      const right = kind & 0x40 ? regOf(Math.trunc(value)) : value
+      switch (mode) {
+        case 0: return left >= right
+        case 1: return left <= right
+        case 2: return left === right
+        case 3: return left !== right
+        case 4: return left > right
+        case 5: return left < right
+        default: return null
+      }
+    }
+    const leftRaw = flagOf(id)
+    const rightRaw = kind & 0x40 ? flagOf(Math.trunc(value)) : value !== 0
+    if (leftRaw === null || rightRaw === null) return null
+    const left = leftRaw
+    const right = rightRaw
+    switch (mode) {
+      case 0: return left || !right
+      case 1: return !left || right
+      case 2: return left === right
+      case 3: return left !== right
+      case 4: return left && !right
+      case 5: return !left && right
       default: return null
+    }
+  }
+  // SetRegister(op, reg, value)：op & 0x80 = value 是另一个寄存器的编号；op & 0x7f：0 = 赋值、1 +=、2 -=、3 *=、4 /=（除 0 不动）
+  function setRegister(a) {
+    const [op, id, rawValue] = a
+    const value = op & 0x80 ? regOf(Math.trunc(rawValue)) : rawValue
+    const current = regOf(id)
+    switch (op & 0x7f) {
+      case 0: regs.set(id, value); break
+      case 1: regs.set(id, current + value); break
+      case 2: regs.set(id, current - value); break
+      case 3: regs.set(id, current * value); break
+      case 4: if (value !== 0) regs.set(id, current / value); break
+      default: break
     }
   }
   // 从 start 往后能走到的所有偏移（Jump / Condition 两个出口 / ConditionalJump 两个出口 / 顺着往下），用来找选项分支的汇合点
@@ -357,7 +394,8 @@ export function parse(text, ctx = null, meta = {}) {
           if (target && byAt.has(target)) next = byAt.get(target)
           break
         }
-        case 'SetFlag': env.set(a[0], a[1]); break
+        case 'SetFlag': env.set(a[0], a[1] === 1); break   // 引擎：值 == 1 置位，别的清掉
+        case 'SetRegister': setRegister(a); break
         case 'FileEnd': return 'end'
         case 'NextFile': count('links', `next:${a[0]}`); return 'end'
         case 'OpenTitle': return 'end'
@@ -375,16 +413,46 @@ export function parse(text, ctx = null, meta = {}) {
           else {
             stats.images.referenced += 1
             const src = find(file, opt.imageExts)
-            if (src) { stats.images.resolved += 1; layers.set(layer, { kind: 'img', src }) } else { stats.images.unresolved += 1; if (hasIndex) count('unresolved', `image:${nameOf(file)}`); layers.delete(layer) }
+            if (src) { stats.images.resolved += 1; layers.set(layer, { kind: 'img', src, x: 0, y: 0 }) } else { stats.images.unresolved += 1; if (hasIndex) count('unresolved', `image:${nameOf(file)}`); layers.delete(layer) }
           }
           dirty = true
           break
         }
         case 'UsePnaPackage': layers.set(a[0], { kind: 'pna', pna: a[1], ids: [], x: 0, y: 0 }); dirty = true; break
-        case 'DisplayCharacterImage': { const layer = layers.get(a[0]); if (layer?.kind === 'pna') { layer.ids = Array.isArray(ins.extra) ? ins.extra : []; dirty = true } break }
+        case 'DisplayCharacterImage': { const layer = layers.get(a[0]); if (layer?.kind === 'pna') { const ids = a.slice(4); layer.ids = a[1] ? ids : [...new Set([...(layer.ids || []), ...ids])]; dirty = true } break }   // [图层, 清掉别的（非 0 = 先把没列出来的帧藏起来，0 = 在已显示的上面再加）, u8, 个数, ...帧序号]
+        // MoveBackground(图层, 组, 寄存器位掩码, f0..f3)：位掩码从高位起每一位 = 对应的浮点参数是寄存器编号；组 0 = 基准位置 (x, y, z)（引擎里是图层的 +0xc / +0x10 / +0x14），别的组是缩放 / 旋转 / 颜色等（没做）
         case 'MoveBackground': {
+          const [, group, flagsByte] = a
+          const floats = a.slice(3, 7).map((value, k) => (flagsByte & (0x80 >> k) ? regOf(Math.trunc(value)) : value))
           const layer = layers.get(a[0])
-          if (layer?.kind === 'pna') { layer.x = num(a[4]); layer.y = num(a[5]); dirty = true } else stats.ignored.MoveBackground = (stats.ignored.MoveBackground || 0) + 1
+          if (group === 0 && (layer?.kind === 'pna' || layer?.kind === 'img')) { layer.x = num(floats[0]); layer.y = num(floats[1]); dirty = true }
+          else stats.ignored[`MoveBackground:group${group}`] = (stats.ignored[`MoveBackground:group${group}`] || 0) + 1
+          break
+        }
+        // DragBackground(图层, 组, 寄存器 A, B, C, D)：把图层这一组属性「读」进寄存器（组 0 = 基准位置 x, y, z → regs[A], regs[B], regs[C]）；别的组没读（记 stats.ignored）
+        case 'DragBackground': {
+          const [, group, ra, rb, rc] = a
+          const layer = layers.get(a[0])
+          if (group === 0) { regs.set(Math.trunc(ra), layer?.x ?? 0); regs.set(Math.trunc(rb), layer?.y ?? 0); regs.set(Math.trunc(rc), 0) }
+          else stats.ignored[`DragBackground:group${group}`] = (stats.ignored[`DragBackground:group${group}`] || 0) + 1
+          break
+        }
+        // Effect1(图层, 效果名, 种类 u16, 缓动 u8, 寄存器位掩码 u8, f0..f4, 重复 u16, 延迟 f)：给图层的一组属性开一个「从 0 到目标值」的动画（目标 f0.. 位掩码从高位起每一位 = 这个浮点数是寄存器编号；f4 = 时长秒；延迟 = 最后那个 f，掩码 0x04 位）；
+        // 动画的增量累加到图层属性上，播完偏移留着（所以 +10 再 -10 回到原位）。种类 1 = 位置偏移 (dx, dy)（属性 4 / 5 加到位置 x / y 上）——背景 / 事件图上的就是长背景图的平移（bgPan），立绘上的是晃动 / ST_QUAKE 抖动（standMove）；缓动 mode = FUN_140132370（easeOf）。别的种类（颜色 / 缩放 / 旋转…）没做，记 raw
+        case 'Effect1': {
+          const [layerName, , kind, mode, flagsByte] = a
+          const f = a.slice(5, 10).map((value, k) => (flagsByte & (0x80 >> k) ? regOf(Math.trunc(value)) : value))
+          const delay = flagsByte & 0x04 ? regOf(Math.trunc(a[11])) : a[11]
+          const layer = layers.get(layerName)
+          if (kind === 1 && layer?.kind === 'img') {
+            commit()
+            emit({ op: 'bgPan', to: [Math.round(num(f[0]) * 100) / 100, Math.round(num(f[1]) * 100) / 100], seconds: Math.min(600, Math.max(0, num(f[4]))), ease: mode, ...(num(delay) > 0 ? { delay: num(delay) } : {}) })
+            stats.effects.pan += 1
+          } else if (kind === 1 && layer?.kind === 'pna') {
+            // 立绘上的位置偏移（晃动 / ST_QUAKE 抖动：一串小动画同时跑）：每个 Effect1 一条 standMove，播放器把同一步里的叠加起来
+            emit({ op: 'standMove', slot: layerName, to: [Math.round(num(f[0]) * 100) / 100, Math.round(num(f[1]) * 100) / 100], seconds: Math.min(600, Math.max(0, num(f[4]))), ease: mode, ...(num(delay) > 0 ? { delay: num(delay) } : {}) })
+            stats.effects.standMove += 1
+          } else { count('raw', `Effect1:kind${kind}`); emit({ op: 'raw', cmd: 'Effect1', args: a.slice(0, 5) }) }
           break
         }
         case 'SetTimer': timers.set(String(a[0]), num(a[2])); break
@@ -393,11 +461,10 @@ export function parse(text, ctx = null, meta = {}) {
           if (opt.timers.wait && seconds > 0) emit({ op: 'wait', seconds })
           break
         }
-        case 'ShowGraphic': lastMask = nameOf(a[0]); break
-        // Unk65 = 提交画面：a[3] = 渐变秒数；a[0] = 过渡类型（样本里 0 / 9 / 22 / 23 / 25 / 100；100 前面总有 ShowGraphic 的遮罩图 = 遮罩过渡）——所有类型都近似成同样时长的淡入淡出，类型和遮罩记进 stats.transitions / stats.masks（看得出哪些画面是近似的）
+        // Unk65 = 过渡（引擎日志里叫 %Transition%）：(u16 层组, u8 过渡类型, f 时长秒, f 第二个时长, u8, 遮罩图文件名)；时长 0 = 立刻；样本里类型有 0 / 9 / 22 / 23 / 25 / 100，100 带遮罩图（EFMSK_xx）——都近似成同样时长的淡入淡出，类型和遮罩记进 stats.transitions / stats.masks（看得出哪些画面是近似的）
         case 'Unk65':
-          fadeSeconds = Math.max(fadeSeconds, num(a[3]))
-          if (dirty) { stats.transitions[`type${a[0]}`] = (stats.transitions[`type${a[0]}`] || 0) + 1; if (a[0] === 100 && lastMask) stats.masks[lastMask] = (stats.masks[lastMask] || 0) + 1 }
+          fadeSeconds = Math.max(fadeSeconds, num(a[2]))
+          if (dirty) { stats.transitions[`type${a[1]}`] = (stats.transitions[`type${a[1]}`] || 0) + 1; if (a[5]) stats.masks[nameOf(a[5])] = (stats.masks[nameOf(a[5])] || 0) + 1 }
           commit()
           break
         case 'SetDisplayName': pendingName = String(a[0] ?? ''); break
@@ -423,7 +490,7 @@ export function parse(text, ctx = null, meta = {}) {
           // 别的（'skip'、表里没有的名字走 default）= 不渲染，记 raw ExecuteFunction:<名字> + stats.skippedFunctions
           const name = String(a[0])
           const mode = rx.functions.has(name) ? rx.functions.get(name) : rx.functions.get('default') || 'skip'
-          if (mode && typeof mode === 'object' && Number.isFinite(Number(mode.setFlag))) { env.set(num(a[2]), Number(mode.setFlag)); stats.ignored[`ExecuteFunction:${name}`] = (stats.ignored[`ExecuteFunction:${name}`] || 0) + 1 }
+          if (mode && typeof mode === 'object' && Number.isFinite(Number(mode.setFlag))) { env.set(num(a[2]), Number(mode.setFlag) === 1); stats.ignored[`ExecuteFunction:${name}`] = (stats.ignored[`ExecuteFunction:${name}`] || 0) + 1 }
           else if (mode !== 'drop') { count('skippedFunctions', name); count('raw', `ExecuteFunction:${name}`); emit({ op: 'raw', cmd: `ExecuteFunction:${name}`, args: a.slice(1, 3) }) }
           break
         }

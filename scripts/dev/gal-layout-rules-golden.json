@@ -43,12 +43,6 @@
      }
     ],
     "conditionalJump": "second",
-    "conditions": {
-     "2": "==",
-     "128": "<",
-     "129": ">",
-     "130": ">="
-    },
     "extraDirs": [],
     "fade": {
      "max": 10
@@ -105,7 +99,6 @@
      "UnkFB",
      "UnkFC",
      "UnkFD",
-     "LayerConfig",
      "CharMessageStart",
      "AddMessageToLog",
      "InitKeyName",
@@ -128,6 +121,8 @@
      "SoundEffectUnk30",
      "MusicUnk1",
      "SetMask",
+     "ShowGraphic",
+     "Effect2",
      "PrepareBackgroundArea",
      "UnkScreen",
      "Unk67",
@@ -171,6 +166,10 @@
       "mov",
       "dat"
      ]
+    },
+    "regs": {
+     "unknown": 0,
+     "values": {}
     },
     "skipFiles": [
      "^LAYER_ORDER$"

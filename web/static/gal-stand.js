@@ -14,6 +14,7 @@
 //   plist 取不到 / 解析失败 / 找不到帧 / 贴图取不到 = 报 onMissing（plist 路径 / 「plist#帧名」/ 贴图路径），别的照画。
 // 叠加层（overlay 指令）在 createOverlayLayer：静态图 / 矩形，见该函数上面的注释。
 import { atlasFrames, framePlacement, parsePlist, resolveAtlasFrames } from '/gal-atlas.js'
+import { easeOf } from '/gal-engine.js'
 
 const DESIGN_W = 1920
 const DESIGN_H = 1080
@@ -85,12 +86,12 @@ async function resolvePart(media, part) {
   return null
 }
 
-function drawResolved(ctx, geo, item, alpha) {
+function drawResolved(ctx, geo, item, alpha, off = [0, 0]) {
   const { part, image, frames } = item
   const scale = num(part.scale, 1)
   const s = geo.k * scale
-  const px = geo.cx + geo.k * num(part.x)
-  const py = geo.cy + geo.k * num(part.y)
+  const px = geo.cx + geo.k * (num(part.x) + off[0])
+  const py = geo.cy + geo.k * (num(part.y) + off[1])
   ctx.globalAlpha = alpha
   ctx.filter = Number(part.dim) > 0 && Number(part.dim) < 1 ? `brightness(${Number(part.dim)})` : 'none'
   if (!frames) {
@@ -129,6 +130,24 @@ function fadeTracker() {
     active(now) { return [...born.values()].some((f) => f && now - f.at < f.seconds * 1000) },
     clear() { born.clear() },
   }
+}
+
+// 槽位当前的位置偏移（舞台像素）：offset 是动画都播完之后的累计偏移；这一步新开的 moves（实时播放才有）各自从 0 走到 to（缓动 ease、delay 秒后开始、seconds 秒），多个同时叠加（立绘抖动是十几个小动画一起跑）
+function slotOffset(slot, now) {
+  const final = slot.offset || [0, 0]
+  if (!slot.moves?.length || slot.startAt === undefined) return { at: final, moving: false }
+  let dx = final[0]
+  let dy = final[1]
+  let moving = false
+  for (const move of slot.moves) {
+    const elapsed = (now - slot.startAt) / 1000 - (move.delay || 0)
+    const progress = move.seconds > 0 ? Math.max(0, Math.min(1, elapsed / move.seconds)) : 1
+    if (progress < 1) moving = true
+    const rest = 1 - easeOf(move.ease, progress)   // 还差多少没走完
+    dx -= move.to[0] * rest
+    dy -= move.to[1] * rest
+  }
+  return { at: [dx, dy], moving }
 }
 
 export function createStandLayer({ parent, url, onMissing = () => {}, media = null }) {
@@ -192,8 +211,13 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
       }
       ctx.filter = 'none'
     }
-    for (const slot of drawn.slots) for (const item of slot.items) drawResolved(ctx, slot.geo, item, fades.alpha(slot.slot, now))
-    if (fades.active(now)) frameRaf = requestAnimationFrame(paint)
+    let moving = false
+    for (const slot of drawn.slots) {
+      const off = slotOffset(slot, now)
+      if (off.moving) moving = true
+      for (const item of slot.items) drawResolved(ctx, slot.geo, item, fades.alpha(slot.slot, now), off.at)
+    }
+    if (moving || fades.active(now)) frameRaf = requestAnimationFrame(paint)
   }
 
   // stand：整体立绘（旧行为，{ parts: [{ src, crop?, zoom, … }] }）；stands：按槽位的立绘 [{ slot, parts, fade?, stage? }]；live：实时播放（槽位第一次出现时才淡入）
@@ -210,9 +234,9 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
     ])
     if (mine !== seq) return   // 加载期间又换了立绘：丢掉这次
     const legacy = parts.length ? layout(parts, loaded) : null
-    const drawnSlots = slots.map((slot, i) => ({ slot: String(slot.slot), geo: geometry(slot.stage), items: resolved[i].filter(Boolean) }))
-    drawn = { legacy, slots: drawnSlots }
     const now = performance.now()
+    const drawnSlots = slots.map((slot, i) => ({ slot: String(slot.slot), geo: geometry(slot.stage), items: resolved[i].filter(Boolean), offset: Array.isArray(slot.offset) ? [num(slot.offset[0]), num(slot.offset[1])] : null, ...(live && Array.isArray(slot.moves) && slot.moves.length ? { moves: slot.moves.filter((m) => m && Array.isArray(m.to)).map((m) => ({ to: [num(m.to[0]), num(m.to[1])], seconds: Math.max(0, num(m.seconds)), ease: Math.trunc(num(m.ease)), delay: Math.max(0, num(m.delay)) })), startAt: now } : {}) }))
+    drawn = { legacy, slots: drawnSlots }
     fades.sync(drawnSlots.map((s) => s.slot), live, (key) => num(slots.find((s) => String(s.slot) === key)?.fade), now)
     paint(now)
     canvas.dataset.parts = String((legacy?.items.length || 0) + drawnSlots.reduce((n, s) => n + s.items.length, 0))

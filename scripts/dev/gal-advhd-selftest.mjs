@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from '
 import os from 'node:os'
 import path from 'node:path'
 import { generateTags } from '../../scripts/tag-scripts/gal-layout/main.js'
-import { decodeWs2, OPCODE_TABLE, ror2 } from '../../web/library/gal/adapters/advhd-ws2-decode.mjs'
+import { decodeWs2, OPCODE_LAYOUTS, OPCODE_NAMES, ror2 } from '../../web/library/gal/adapters/advhd-ws2-decode.mjs'
 import { galAdapter, galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { applyGalConfigPatch, normalizeGalConfig, normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
 import { containerReport, ensureContainers, invalidateContainers, parsePna, readArcIndex, SCRIPT_DECODERS } from '../../web/library/gal/containers.mjs'
@@ -15,8 +15,8 @@ import { resolveOnDisk } from '../../web/library/gal/resolve.mjs'
 import { buildScene } from '../../web/library/gal/scene.mjs'
 import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
-import { activePath } from '../../web/static/gal-engine.js'
-import { STORY_001, STORY_BRANCH, STORY_COND, STORY_GALLERY, STORY_SKIP, STORY_TIMER, arcBuild, buildAdvhdFixture, msg, pnaBuild, pngBytes, ws2Encode, ws2Plain } from './make-advhd-fixture.mjs'
+import { activePath, applyCommand, easeOf, initialState, stateAt } from '../../web/static/gal-engine.js'
+import { STORY_001, STORY_BRANCH, STORY_COND, STORY_BOB, STORY_GALLERY, STORY_PAN, STORY_SKIP, STORY_TIMER, arcBuild, buildAdvhdFixture, commit, msg, pnaBuild, pngBytes, ws2Encode, ws2Plain } from './make-advhd-fixture.mjs'
 
 let pass = 0
 let fail = 0
@@ -36,25 +36,27 @@ const cfgWith = (containers, extra = {}) => normalizeGalConfig({ scriptRoots: [{
 {
   const buf = Buffer.from([0, 1, 2, 3, 4, 5, 250, 251, 252, 253, 254, 255])
   check('ror2：逐字节循环右移 2 位，再循环左移 2 位（测试编码器的 rol2）= 原样', ror2(buf).equals(Buffer.from(buf.map((x) => ((x >> 2) | ((x & 3) << 6)) & 0xff))) && ror2(Buffer.from([0x01]))[0] === 0x40)
-  const items = [['SetBackground', ['bg01', '背景.PNG']], ['Unk65', [1, 2, 3, 0.5, 0.25, 4, 5, 6]], ['UnkAF', [255, 255, 0, 0, 0, 0, 1, 0]], ['FileEnd', [0, 0, 0, 0, 0]]]
+  const items = [['SetBackground', ['bg01', '背景.PNG', 1, 1]], ['Unk65', [3, 22, 0.5, 0.25, 2, 'EFMSK_12.PNG']], ['UnkAF', [255, 255, 0.5, 0, 1, 0]], ['FileEnd', []]]
   const out = decodeWs2(ror2(ws2Encode(items)))
-  check('解码：指令名 / 参数（UTF-16LE 字符串、f32）和编码前一致；0xAF = b4 + f4（8 个参数）', J(out.map((i) => i.name)) === J(items.map((i) => i[0])) && J(out.map((i) => i.args)) === J(items.map((i) => i[1])), J(out))
-  check('解码：每条指令带它在文件里的偏移 at，且单调递增', out.every((i, k) => k === 0 || i.at > out[k - 1].at) && out[0].at === 0)
-  const withCond = decodeWs2(ror2(ws2Encode([['Condition', [1]], ['Condition', [2, 127, 1, 0, 40]], ['Condition', [130, 99, -1, 0, 40]], ['Condition', [3]], ['FileEnd', [0, 0, 0, 0, 0]]])))
-  check('Condition：类型 1 / 3（后面不是 50 51 125 127 128）没有参数；2 / 130 带 变量 + 值 + 两个跳转', J(withCond.map((i) => i.args.length)) === J([1, 5, 5, 1, 5]), J(withCond.map((i) => i.args)))
+  check('解码：指令名 / 参数（UTF-16LE 字符串、u8 / u16 / f32）和编码前一致；SetBackground = (图层, 文件, u8, u8)（社区表少这 2 个字节）；0xAF = (u16, u16, f32 × 4)；Unk65 = 过渡（u16 层组, u8 类型, f 时长, f, u8, 遮罩文件名）', J(out.map((i) => i.name)) === J(items.map((i) => i[0])) && J(out.map((i) => i.args)) === J(items.map((i) => i[1])), J(out))
+  check('解码：每条指令带它在文件里的偏移 at，且单调递增；到 FileEnd 就结束（后面的 8 字节尾巴不当指令）', out.every((i, k) => k === 0 || i.at > out[k - 1].at) && out[0].at === 0 && decodeWs2(ws2Plain(items)).length === 4)
+  const withCond = decodeWs2(ror2(ws2Encode([['Condition', [0, 1, 1, 0, 0]], ['Condition', [2, 127, 1, 0, 40]], ['Condition', [130, 99, -1, 0, 40]], ['FileEnd', []]])))
+  check('Condition 永远是 5 个操作数（类型 u8、变量 u16、值 f32、p1 u32、p2 u32）——没有「类型 1 不带参数」这回事', J(withCond.map((i) => i.args.length)) === J([5, 5, 5, 0]), J(withCond.map((i) => i.args)))
   const choice = decodeWs2(ror2(ws2Encode(STORY_BRANCH))).find((i) => i.name === 'ShowChoice')
   check('ShowChoice：选项（id、文字、3 个标志字节、跳转类型 6 = 本脚本偏移 / 7 = 文件名）', choice.choices.length === 3 && choice.choices[0].jump === 6 && typeof choice.choices[0].target === 'number' && choice.choices[2].target === 'OTHER_00' && choice.choices[1].text === '右へ', J(choice))
   const fn = decodeWs2(ror2(ws2Encode(STORY_SKIP))).find((i) => i.name === 'ExecuteFunction')
   check('ExecuteFunction：函数名 / 字符串参数 / u16 标志号（999）/ byte', J(fn.args) === J(['GetMsgSkip', '', 999, 1]), J(fn))
   const stand = decodeWs2(ror2(ws2Encode(STORY_001))).find((i) => i.name === 'DisplayCharacterImage')
-  check('DisplayCharacterImage：第 3 个字节 = 图片 id 个数，id 表在 extra 里', J(stand.ids) === J([1, 3]) && stand.args[0] === 'st01', J(stand))
+  check('DisplayCharacterImage：数组型操作数 = 个数（u8）+ 元素（u16）：[图层, u8, u8, 个数, ...图片 id]', J(stand.args) === J(['st01', 2, 1, 2, 1, 3]), J(stand))
+  const gallery = decodeWs2(ror2(ws2Encode([['LayersList', [2, 'a', 'b']], ['FileEnd', []]])))
+  check('字符串数组（LayersList）= 个数 + 字符串', J(gallery[0].args) === J([2, 'a', 'b']))
   let err = null
   try { decodeWs2(Buffer.from([0x7e, 0x00])) } catch (e) { err = e }
-  check('不认识的 opcode：抛错，带偏移和 opcode；tolerant 模式停在那里、返回已解出的部分、truncated 记原因', /偏移 0（opcode 0x7e）/.test(err?.message || '') && decodeWs2(Buffer.concat([ws2Plain([['ClearLayer', ['*']]]), Buffer.from([0x7e])]), { tolerant: true }).truncated?.includes('0x7e'))
+  check('不在引擎操作数表里的 opcode：抛错，带偏移和 opcode；tolerant 模式停在那里、返回已解出的部分、truncated 记原因', /偏移 0（opcode 0x7e）/.test(err?.message || '') && decodeWs2(Buffer.concat([ws2Plain([['ClearLayer', ['*']]]).subarray(0, 14), Buffer.from([0x7e])]), { tolerant: true }).truncated?.includes('0x7e'), err?.message)
   let err2 = null
-  try { decodeWs2(ws2Plain([['SetBackground', ['bg01', 'x']]]).subarray(0, 9)) } catch (e) { err2 = e }
+  try { decodeWs2(ws2Plain([['SetBackground', ['bg01', 'x', 1, 1]]]).subarray(0, 9)) } catch (e) { err2 = e }
   check('文件被截断（字符串没有结束）：报 eof，带偏移', /偏移 0.*eof/.test(err2?.message || ''), err2?.message)
-  check('opcode 表：社区表的指令 + 0xAF；没有重复的名字', OPCODE_TABLE[0xaf]?.[0] === 'UnkAF' && new Set(Object.values(OPCODE_TABLE).map(([n]) => n)).size === Object.keys(OPCODE_TABLE).length)
+  check('操作数表：来自 exe 的 PTR_DAT_1403ea420（205 项有布局）；0xAF / 0x47（Effect1）/ 0x09（寄存器运算）都在；名字没有重复', Object.keys(OPCODE_LAYOUTS).length === 205 && J(OPCODE_LAYOUTS[0xaf]) === J(['w', 'w', 'f', 'f', 'f', 'f']) && OPCODE_LAYOUTS[0x47].length === 12 && J(OPCODE_LAYOUTS[0x09]) === J(['b', 'w', 'f']) && new Set(Object.values(OPCODE_NAMES)).size === Object.keys(OPCODE_NAMES).length)
 }
 
 // ================= ARC / PNA 读取 =================
@@ -100,7 +102,7 @@ await buildAdvhdFixture(game, { brokenArc: true })
   check('脚本被解成 JSON 指令流：format / arc / name / size / ins[[偏移, 指令名, 参数]]；sniff 认得', parsed.format === 'advhd-ws2/1' && parsed.arc === 'Rio1' && parsed.name === '001_00' && parsed.ins.length === STORY_001.length && parsed.ins[0][1] === 'ClearLayer' && galAdapter('advhd::ws2').sniff(text) && sniffGalAdapter(text) === 'advhd::ws2', J(parsed.ins.slice(0, 2)))
   const pnaDir = path.join(game, 'arc/res/Chip3/ST_TOW_A_M.pna')
   const index = JSON.parse(await readFile(path.join(pnaDir, 'index.json'), 'utf8'))
-  check('PNA 展开成目录：index.json（宽 / 高 / 帧：type id x y w h scale file）+ <帧 id>.png；组标记帧没有文件', J(await list(pnaDir)) === J(['1.png', '2.png', '3.png', 'index.json']) && index.width === 600 && index.height === 800 && index.frames.length === 5 && index.frames[1].file === '1.png' && index.frames[0].file === undefined && (await readFile(path.join(pnaDir, '3.png'))).equals(pngBytes(13)), J(index))
+  check('PNA 展开成目录：index.json（宽 / 高 / 帧：n（序号）type id x y w h scale file）+ <帧序号>.png；组标记帧没有文件；记录里的 id 字段（倒序）照记但不用来命名', J(await list(pnaDir)) === J(['1.png', '2.png', '3.png', 'index.json']) && index.width === 600 && index.height === 800 && index.frames.length === 5 && index.frames[1].file === '1.png' && index.frames[1].id === 3 && index.frames[1].n === 1 && index.frames[0].file === undefined && (await readFile(path.join(pnaDir, '3.png'))).equals(pngBytes(13)), J(index))
   const stampFile = path.join(game, 'arc/.stamp.json')
   const mtime1 = (await stat(path.join(game, 'arc/res/Bgm/BGM01.ogg'))).mtimeMs
   invalidateContainers(game)
@@ -178,15 +180,15 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('第 1 步：bgm（Bgm 容器）→ voice（char* 通道，Voice 容器）→ speaker（%LC 去掉）→ text（\\n = 换行，{汉字:ふりがな} = ruby，%K %P 去掉）', J(s0.slice(1).map((c) => c.op)) === J(['bgm', 'voice', 'speaker', 'text']) && s0[1].src === 'Bgm/BGM01.ogg' && s0[2].src === 'Voice/TW_0001.ogg' && s0[3].segments[0].text === '透羽' && J(s0[4].segments) === J([{ text: '「' }, { text: '應賀', ruby: 'おうが' }, { text: 'です。\nよろしく」' }]), J(s0))
   check('说话人换了才发 speaker：空名 = 旁白（segments: []），同一个人连续不重复发', s1[0].op === 'speaker' && s1[0].segments.length === 0 && s1[1].op === 'text' && !s3.some((c) => c.op === 'speaker'), J([s1, s3]))
   const stand = s2.find((c) => c.op === 'stand')
-  check('立绘：UsePnaPackage + DisplayCharacterImage(id 表 [1, 3]) + MoveBackground(x, y) → stand（slot = 图层名，parts = PNA 里那两帧的 PNG，舞台 1280×720，位置 = 图层位置 + 帧位置，换算成「中心相对舞台中心」）', stand?.slot === 'st01' && J(stand.stage) === J([1280, 720]) && stand.fade === 0.2 && J(stand.parts) === J([{ src: 'Chip3/ST_TOW_A_M.pna/1.png', x: -290, y: 90 }, { src: 'Chip3/ST_TOW_A_M.pna/3.png', x: -480, y: -235 }]), J(stand))
+  check('立绘：UsePnaPackage + DisplayCharacterImage(帧序号表 [1, 3]；记录里的 id 字段是倒序的，不看) + MoveBackground(x, y) → stand（slot = 图层名，parts = PNA 里序号 1 和 3 的两帧的 PNG，舞台 1280×720，位置 = 图层位置 + 帧位置，换算成「中心相对舞台中心」）', stand?.slot === 'st01' && J(stand.stage) === J([1280, 720]) && stand.fade === 0.2 && J(stand.parts) === J([{ src: 'Chip3/ST_TOW_A_M.pna/1.png', x: -290, y: 90 }, { src: 'Chip3/ST_TOW_A_M.pna/3.png', x: -480, y: -235 }]), J(stand))
   check('事件图：ev 图层有图时 bg = { src: bg 的图, over: ev 的图 }', J(s3.find((c) => c.op === 'bg')) === J({ op: 'bg', src: 'Chip3/BG_01.png', over: 'Chip3/EV_01.png' }), J(s3))
   check('声音通道：char* = voice，bgv* = bgvoice（槽位 = 通道名，音量 1），se* = se；StopMusic = bgmStop（带淡出秒数）', J(s4.slice(0, 2)) === J([{ op: 'bgvoice', slot: 'bgvtow', src: 'Voice/SV_TOW_01.ogg', volume: 1 }, { op: 'se', src: 'Se/SE_01.ogg' }]) && s5.some((c) => c.op === 'bgmStop' && c.fade === 1), J([s4, s5]))
   check('stats：语音引用 / 解析（3 / 3）、bgm、图片、choices 等计数；没走到的指令（NextFile 后面的 FileEnd）计 unvisited', scene.stats.voices.referenced === 3 && scene.stats.voices.resolved === 3 && scene.stats.voices.unresolved === 0 && scene.stats.bgm.resolved === 1 && scene.stats.images.referenced === 2 && scene.stats.images.resolved === 2 && scene.stats.stands === 1 && scene.stats.choices === 0 && scene.stats.unvisited === 1, J(scene.stats))
-  check('没做的功能看得见：未知函数 playSpecialEffect → raw（ExecuteFunction:playSpecialEffect）+ stats.skippedFunctions；GetMsgSkip 在 drop 表里不记；Effect1 → raw；UnkAF 在 ignoreOps 里只计数', J(scene.stats.skippedFunctions) === J({ playSpecialEffect: 1 }) && scene.stats.raw['ExecuteFunction:playSpecialEffect'] === 1 && scene.stats.raw.Effect1 === 1 && !scene.stats.raw['ExecuteFunction:GetMsgSkip'] && scene.stats.ignored.UnkAF === 1 && s5.some((c) => c.op === 'raw' && c.cmd === 'ExecuteFunction:playSpecialEffect') && s5.some((c) => c.op === 'raw' && c.cmd === 'Effect1'), J([scene.stats.raw, scene.stats.ignored]))
+  check('没做的功能看得见：未知函数 playSpecialEffect → raw（ExecuteFunction:playSpecialEffect）+ stats.skippedFunctions；GetMsgSkip 在 drop 表里不记；种类 0（颜色）的 Effect1 → raw（Effect1:kind0）、Effect3 → raw；UnkAF 在 ignoreOps 里只计数', J(scene.stats.skippedFunctions) === J({ playSpecialEffect: 1 }) && scene.stats.raw['ExecuteFunction:playSpecialEffect'] === 1 && scene.stats.raw['Effect1:kind0'] === 1 && scene.stats.raw.Effect3 === 1 && !scene.stats.raw['ExecuteFunction:GetMsgSkip'] && scene.stats.ignored.UnkAF === 1 && s5.some((c) => c.op === 'raw' && c.cmd === 'ExecuteFunction:playSpecialEffect') && s5.some((c) => c.op === 'raw' && c.cmd === 'Effect3'), J([scene.stats.raw, scene.stats.ignored]))
   check('NextFile 的目标记进 stats.links（播放器没有换脚本）；脚本在 FileEnd / NextFile 结束', scene.stats.links['next:002_00_H'] === 1)
 
-  const opt = await parseGame(game, STORY_001, { functions: { default: 'drop' }, channels: [{ match: '^char', as: 'se' }], ignoreOps: ['Effect1'], fade: { max: 0.1 } })
-  check('options 可改：functions.default = drop（不记 raw）/ channels（char* 当 se）/ ignoreOps（Effect1 不再 raw）/ fade.max 夹渐变秒数', !opt.stats.raw['ExecuteFunction:playSpecialEffect'] && !opt.stats.raw.Effect1 && opt.stats.ignored.Effect1 === 1 && opt.steps[0].commands.find((c) => c.op === 'se')?.src === 'Voice/TW_0001.ogg' && opt.steps[0].commands[0].fade === 0.1, J(opt.steps[0].commands.slice(0, 3)))
+  const opt = await parseGame(game, STORY_001, { functions: { default: 'drop' }, channels: [{ match: '^char', as: 'se' }], ignoreOps: ['Effect3'], fade: { max: 0.1 } })
+  check('options 可改：functions.default = drop（不记 raw）/ channels（char* 当 se）/ ignoreOps（Effect3 不再 raw）/ fade.max 夹渐变秒数', !opt.stats.raw['ExecuteFunction:playSpecialEffect'] && !opt.stats.raw.Effect3 && opt.stats.ignored.Effect3 === 1 && opt.steps[0].commands.find((c) => c.op === 'se')?.src === 'Voice/TW_0001.ogg' && opt.steps[0].commands[0].fade === 0.1, J(opt.steps[0].commands.slice(0, 3)))
   const noIndex = buildScene('advhd::ws2', decodeText(ws2Encode(STORY_001)), null, { rel: 'x', stem: 'x', options: {}, config: {} })
   check('没有资源索引（ctx 为空）：台词照常，资源不发指令也不报缺（不是缺资源，是没法查）', noIndex.stats.messages === 6 && !noIndex.steps.flatMap((s) => s.commands).some((c) => ['voice', 'bgm', 'bg', 'stand'].includes(c.op)) && J(noIndex.stats.unresolved) === '{}')
   // 缺资源：删掉 Voice 容器
@@ -217,7 +219,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('options.conditionalJump：none = 不跳（动画 A、B 都走）/ first = 取第一个目标', J(textOf(none)) === J(['flag10 = 1 の道', '通常', 'アニメ A', 'アニメ B', '終端']) && J(textOf(first)) === J(['flag10 = 1 の道', '通常', 'アニメ B', '終端']), J([textOf(none), textOf(first)]))
   const flag = await parseGame(game, STORY_COND, { flags: { values: { 127: 1 } } })
   check('options.flags.values：127 = 1 → 「127 == 1」为真，多出那一句', J(textOf(flag)) === J(['flag10 = 1 の道', '127 = 1 の道（既定では通らない）', '通常', '終端']), J(textOf(flag)))
-  const unknown = [['Condition', [2, 55, 1, 0, { ref: 'skip' }]], msg(0, '未知の変数は真'), ['Jump', [{ ref: 'end' }]], { label: 'skip' }, msg(1, '未知の変数は偽'), { label: 'end' }, ['FileEnd', [0, 0, 0, 0, 0]]]
+  const unknown = [['Condition', [2, 55, 1, 0, { ref: 'skip' }]], msg(0, '未知の変数は真'), ['Jump', [{ ref: 'end' }]], { label: 'skip' }, msg(1, '未知の変数は偽'), { label: 'end' }, ['FileEnd', []]]
   const t = await parseGame(game, unknown)
   const f = await parseGame(game, unknown, { flags: { unknown: false } })
   check('没设过的变量：flags.unknown（默认 = 真 → 走 p1（0 = 继续往下）；false = 走 p2）；stats.ignored 记一笔 Condition:unknown-flag', J(textOf(t)) === J(['未知の変数は真']) && J(textOf(f)) === J(['未知の変数は偽']) && t.stats.ignored['Condition:unknown-flag'] === 1, J([textOf(t), textOf(f)]))
@@ -238,6 +240,32 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('不是 JSON：报「不是有效的 JSON」', /不是有效的 JSON/.test(bad?.message || ''))
 }
 
+// ================= 播放器引擎：bg.pos / bgPan / 缓动 =================
+{
+  const state = initialState()
+  applyCommand(state, { op: 'bg', src: 'a.png', pos: [0, -250] })
+  check('engine：bg 带 pos 就记在 state.bg.pos（播放器按原尺寸摆）；没有就没有这个键', J(state.bg) === J({ src: 'a.png', pos: [0, -250] }) && J((() => { const t = initialState(); applyCommand(t, { op: 'bg', src: 'a.png' }); return t.bg })()) === J({ src: 'a.png' }))
+  applyCommand(state, { op: 'bgPan', to: [0, -400], seconds: 40, ease: 3, delay: 0.5 })
+  check('engine：bgPan → state.bg.offset = 累计偏移，state.bgPan = 这一次的动画 { from, to, seconds, ease, delay }', J(state.bg.offset) === J([0, -400]) && J(state.bgPan) === J({ from: [0, 0], to: [0, -400], seconds: 40, ease: 3, delay: 0.5 }), J(state.bgPan))
+  applyCommand(state, { op: 'bgPan', to: [10, 100], seconds: 1, ease: 0 })
+  check('engine：再来一次 bgPan 累加（偏移留着：+10 再 -10 回到原位的写法也成立）', J(state.bg.offset) === J([10, -300]) && J(state.bgPan.from) === J([0, -400]))
+  applyCommand(state, { op: 'bg', src: 'b.png' })
+  check('engine：换背景清掉 offset / bgPan', !state.bg.offset && state.bgPan === null)
+  const scene = { steps: [{ commands: [{ op: 'bg', src: 'a.png', pos: [0, -250] }, { op: 'bgPan', to: [0, -400], seconds: 2, ease: 0 }] }] }
+  check('engine：stateAt（后退 / 续播的一步到位渲染）= 平移完成后的偏移', J(stateAt(scene, 0).bg.offset) === J([0, -400]))
+  applyCommand(initialState(), { op: 'bgPan', to: [1, 1] })   // 没有背景：不炸
+  {
+    const t = initialState()
+    applyCommand(t, { op: 'stand', slot: 'st01', parts: [{ src: 'a.png', x: 0, y: 0 }] })
+    applyCommand(t, { op: 'standMove', slot: 'st01', to: [0, 10], seconds: 0.3, ease: 3 })
+    applyCommand(t, { op: 'standMove', slot: 'st01', to: [0, -10], seconds: 0.3, ease: 3, delay: 0.1 })
+    applyCommand(t, { op: 'standMove', slot: 'nope', to: [5, 5] })
+    check('engine：standMove → 槽位的 offset 累计（+10 再 -10 回到 [0, 0]）、moves 记这一步新开的两个动画；没有这个槽位的忽略；再来一次 stand 重置', J(t.stands[0].offset) === J([0, 0]) && t.stands[0].moves.length === 2 && J(t.stands[0].moves[1]) === J({ to: [0, -10], seconds: 0.3, ease: 3, delay: 0.1 }) && (() => { applyCommand(t, { op: 'stand', slot: 'st01', parts: [{ src: 'b.png' }] }); return !t.stands[0].offset && !t.stands[0].moves })())
+  }
+  const f = (mode) => [0, 0.25, 0.5, 0.75, 1].map((t) => Math.round(easeOf(mode, t) * 1000) / 1000)
+  check('easeOf：0 线性；1 / 2 / 3 = sine 的 In / Out / InOut；4 / 7 = quad / cubic In；6 = quad InOut；端点 0 → 0、1 → 1（back / elastic 过冲也一样）；超范围的编号按线性', J(f(0)) === J([0, 0.25, 0.5, 0.75, 1]) && J(f(1)) === J([0, 0.076, 0.293, 0.617, 1]) && J(f(2)) === J([0, 0.383, 0.707, 0.924, 1]) && J(f(3)) === J([0, 0.146, 0.5, 0.854, 1]) && J(f(4)) === J([0, 0.063, 0.25, 0.563, 1]) && J(f(7)) === J([0, 0.016, 0.125, 0.422, 1]) && J(f(6)) === J([0, 0.125, 0.5, 0.875, 1]) && [...Array(31).keys()].every((m) => easeOf(m, 0) === 0 || m >= 22) && [...Array(31).keys()].every((m) => Math.abs(easeOf(m, 1) - 1) < 1e-9) && easeOf(99, 0.3) === 0.3, J([f(1), f(4), f(7)]))
+}
+
 // ================= 计时器 / 遮罩过渡 / 电影 / CG 画廊 =================
 {
   const res = await parseGame(game, STORY_TIMER, { extraDirs: ['movie'] }, { resourceRoots: ['arc/res', 'movie'] })
@@ -248,6 +276,18 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('过渡类型和遮罩进 stats（都近似成淡入淡出）：Unk65 的类型 0 / 100 各一次，类型 100 前面的 ShowGraphic 遮罩图（EFMSK_12.PNG）记 stats.masks；渐变秒数照用', res.stats.transitions.type0 === 1 && res.stats.transitions.type100 === 1 && res.stats.masks['EFMSK_12.PNG'] === 1 && res.steps[0].commands.find((c) => c.op === 'bg').fade === 0.5 && res.steps[0].commands.filter((c) => c.op === 'bg').at(-1).fade === 0.7, J([res.stats.transitions, res.stats.masks, res.steps[0].commands.filter((c) => c.op === 'bg')]))
   const movies = res.steps.flatMap((st) => st.commands).filter((c) => c.op === 'movie')
   check('电影：extraDirs（游戏目录里的 movie）索引进来，OP.DAT 按名字找到 → movie 指令（资源根里是 OP.DAT）；找不到的 GONE.DAT 记 raw PlayMovie + unresolved', J(movies.map((m) => m.srcs)) === J([['OP.DAT']]) && res.stats.raw.PlayMovie === 1 && res.stats.unresolved['movie:GONE.DAT'] === 1, J([movies, res.stats.raw, res.stats.unresolved]))
+  const pan = await parseGame(game, STORY_PAN)
+  const panOps = pan.steps.flatMap((st) => st.commands).filter((c) => c.op === 'bg' || c.op === 'bgPan')
+  check('长背景图平移：MoveBackground 组 0 = 基准位置 → bg.pos = [0, -250]；DragBackground 把位置读进寄存器；SetRegister（赋值 / 从另一个寄存器加）算出 dy = -400 + (-250) = -650；Effect1 种类 1（位置偏移）→ bgPan { to: [0, -650], seconds: 40, ease: 3, delay: 0.5 }；Effect2（停止）只计数', J(panOps) === J([{ op: 'bg', src: 'Chip3/BG_01.png', pos: [0, -250] }, { op: 'bgPan', to: [0, -650], seconds: 40, ease: 3, delay: 0.5 }]) && pan.stats.effects.pan === 1 && pan.stats.ignored.Effect2 === 1 && !pan.stats.raw.Effect1 && !pan.stats.raw.DragBackground, J([panOps, pan.stats.effects, pan.stats.raw]))
+  const addMode = await parseGame(game, [['ClearLayer', ['*']], ['UsePnaPackage', ['st01', 'ST_TOW_A_M.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 1, 1]], ['DisplayCharacterImage', ['st01', 0, 1, 1, 3]], commit(0), msg(0, 'x'), ['FileEnd', []]])
+  const onlyOne = await parseGame(game, [['ClearLayer', ['*']], ['UsePnaPackage', ['st01', 'ST_TOW_A_M.PNA', 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 1, 1]], ['DisplayCharacterImage', ['st01', 2, 1, 1, 3]], commit(0), msg(0, 'x'), ['FileEnd', []]])
+  const partsOf = (scene) => scene.steps.flatMap((st) => st.commands).find((c) => c.op === 'stand')?.parts.map((p) => p.src.split('/').pop())
+  check('DisplayCharacterImage 的第一个 u8：非 0 = 先藏起别的帧（只剩列出来的）；0 = 在已显示的帧上再加', J(partsOf(addMode)) === J(['1.png', '3.png']) && J(partsOf(onlyOne)) === J(['3.png']), J([partsOf(addMode), partsOf(onlyOne)]))
+  const bob = await parseGame(game, STORY_BOB)
+  const bobOps = bob.steps.flatMap((st) => st.commands).filter((c) => c.op === 'stand' || c.op === 'standMove')
+  check('立绘上的 Effect1 种类 1（位置偏移）→ standMove（slot = 图层名；目标 = 寄存器 5 / 6 或立即数；时长 f4 秒；缓动 mode；延迟）；ST_QUAKE 这种带立即数的也一样；一串小动画各一条', J(bobOps.map((c) => c.op)) === J(['stand', 'standMove', 'standMove', 'standMove']) && J(bobOps[1]) === J({ op: 'standMove', slot: 'st01', to: [0, 10], seconds: 0.3, ease: 3 }) && J(bobOps[2]) === J({ op: 'standMove', slot: 'st01', to: [0, -10], seconds: 0.3, ease: 3, delay: 0.1 }) && J(bobOps[3]) === J({ op: 'standMove', slot: 'st01', to: [2, 2], seconds: 0.025, ease: 1 }) && bob.stats.effects.standMove === 3 && !bob.stats.raw['Effect1:kind1'], J(bobOps))
+  const flat = await parseGame(game, STORY_001)
+  check('基准位置是 (0, 0) 的背景不带 pos（走播放器原来的铺满），别的图层 / 特效种类不变', J(flat.steps[0].commands.find((c) => c.op === 'bg')) === J({ op: 'bg', src: 'Chip3/BG_01.png', fade: 0.5 }))
   const gallery = await parseGame(game, STORY_GALLERY)
   const gTexts = textOf(gallery)
   check('CG 画廊页（CG_PAGE）：不是剧情，按「画廊」读——每个 openCgBrowser 一步（图 + 名字），页码（var 105 的 Condition 值）当说话人；两层图 a/b = bg + over；找不到的图记 unresolved', gallery.stats.gallery.calls === 20 && gallery.steps.length === 20 && gTexts[0] === 'BG_01' && gallery.steps[0].commands.some((c) => c.op === 'speaker' && c.segments[0].text === 'ページ 1') && gallery.steps[0].commands[0].src === 'Chip3/BG_01.png' && J(gallery.steps[2].commands[0]) === J({ op: 'bg', src: 'Chip3/BG_01.png', over: 'Chip3/EV_01.png' }) && gallery.steps[10].commands.some((c) => c.op === 'speaker' && c.segments[0].text === 'ページ 2') && gallery.stats.images.unresolved === 17, J([gallery.stats, gallery.steps.slice(0, 3)]))

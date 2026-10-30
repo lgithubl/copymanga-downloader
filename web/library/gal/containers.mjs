@@ -2,7 +2,7 @@
 // 之后引擎、适配器、资源解析都按普通文件工作（不用用户在本机解包）。
 //   arc/script/<容器名>/<脚本名>.<scriptExt>     脚本：二进制脚本按 config.containers.scriptDecoder 解成 JSON 文本（适配器吃文本）
 //   arc/res/<容器名>/<条目名>                      图片 / 音频 / 视频：原样
-//   arc/res/<容器名>/<条目名>.pna/{index.json,<帧 id>.png}   PNA 动画包：按帧拆成 PNG + 一份帧索引（位置 / 尺寸）
+//   arc/res/<容器名>/<条目名>.pna/{index.json,<帧序号>.png}   PNA 动画包：按帧拆成 PNG + 一份帧索引（位置 / 尺寸）
 //   arc/.stamp.json                                每个容器的 大小 + mtime + 规则指纹：没变就不重新展开
 // 什么容器、哪些条目要展开，全部由 config.containers 控制（rules：容器名正则 → skip / kinds / include / exclude / pna），见 config.mjs。
 // WillPlus ARC（见 advhd-willplus/ARC_FORMAT.md）：u32 条目数、u32 目录大小、条目 { u32 大小, u32 相对偏移, UTF-16LE 名字 + NUL }，数据在 8 + 目录大小 + 相对偏移；不加密。
@@ -28,7 +28,7 @@ export const SCRIPT_DECODERS = Object.freeze({
     ext: 'advhd',
     decode(buffer, { arc, name }) {
       const ins = decodeWs2(ror2(buffer), { tolerant: true })
-      const rows = ins.map((i) => JSON.stringify(i.choices ? [i.at, i.name, i.args, i.choices] : i.ids ? [i.at, i.name, i.args, i.ids] : [i.at, i.name, i.args]))
+      const rows = ins.map((i) => JSON.stringify(i.choices ? [i.at, i.name, i.args, i.choices] : [i.at, i.name, i.args]))
       return `{"format":"advhd-ws2/1","arc":${JSON.stringify(arc)},"name":${JSON.stringify(name)},"size":${buffer.length}${ins.truncated ? `,"truncated":${JSON.stringify(ins.truncated)}` : ''},"ins":[\n${rows.join(',\n')}\n]}\n`
     },
   },
@@ -172,7 +172,7 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
           for (const [i, frame] of pna.frames.entries()) {
             const row = { n: i, type: frame.type, id: frame.id, x: frame.x, y: frame.y, w: frame.w, h: frame.h, scale: frame.scale }
             if (frame.size > 0 && frame.data.subarray(0, 8).equals(PNG_MAGIC)) {
-              row.file = `${frame.id}.png`
+              row.file = `${i}.png`   // 按帧的序号（文件里的顺序）命名：脚本里的 DisplayCharacterImage 用的是这个序号（引擎里是数组下标，FUN_140115930），不是记录里的 id 字段
               await writeFile(path.join(dir, row.file), frame.data)
               result.pnaFrames += 1
             } else if (frame.size > 0) row.unsupported = true   // 不是 PNG（样本里没见过）：记在索引里，不写文件

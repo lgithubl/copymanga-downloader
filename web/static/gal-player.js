@@ -5,7 +5,7 @@
 import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } from '/gal-spine.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 import { attachBarLock } from '/gal-barlock.js'
-import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, galPlayerDefaults, ratioOfStep, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
+import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
 const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
 // 音量：滑块位置 p（0..1，存进浏览器的就是它）→ 实际增益 volumeGain(p) = p²（感知曲线）。旧版存的是线性值，按滑块位置解释，听起来会比以前小
@@ -648,8 +648,54 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       layer.style.backgroundImage = `url("${url(frames[index])}")`
     }, 1000 / frameFps)
   }
+  // 背景按原尺寸摆（bg.pos = 左上角，舞台 1280×720 坐标，offset = 平移累计；AdvHD 的长背景图 / 平移）：背景层 CSS 用 background-size / position 的像素值，没有 pos / offset 的背景走样式表里原来的 cover 摆法
+  const naturalSizes = new Map()
+  const naturalOf = (src) => new Promise((resolve) => {
+    if (naturalSizes.has(src)) return resolve(naturalSizes.get(src))
+    const probe = new Image()
+    probe.onload = () => { const size = { w: probe.naturalWidth, h: probe.naturalHeight }; naturalSizes.set(src, size); resolve(size) }
+    probe.onerror = () => resolve(null)
+    probe.src = url(src)
+  })
+  let panAnim = null
+  const stopPan = () => { try { panAnim?.cancel() } catch { /* 没有 */ } panAnim = null }
+  const nativeAt = (bg, offset) => {
+    const k = stage.clientHeight / 720
+    const [x, y] = bg.pos || [0, 0]
+    return { k, at: (o) => `${((x + o[0]) * k).toFixed(2)}px ${((y + o[1]) * k).toFixed(2)}px` }
+  }
+  async function placeBg(layer, bg) {
+    if (!bg?.src || bg.film || (!bg.pos && !bg.offset)) { layer.style.backgroundSize = ''; layer.style.backgroundPosition = ''; layer.style.backgroundRepeat = ''; return }
+    const size = await naturalOf(bg.src)
+    if (!size || bg !== state.bg) return
+    const { k, at } = nativeAt(bg)
+    layer.style.backgroundRepeat = 'no-repeat'
+    layer.style.backgroundSize = `${(size.w * k).toFixed(2)}px ${(size.h * k).toFixed(2)}px`
+    layer.style.backgroundPosition = at(bg.offset || [0, 0])
+  }
+  // 背景平移：从 pan.from 到 pan.to，seconds 秒、缓动 pan.ease、delay 秒之后开始；快进 / 瞬时渲染直接到终点
+  async function paintBgPan(pan, instant) {
+    stopPan()
+    const bg = state.bg
+    if (!pan || !bg?.src) return
+    const layer = layers[frontLayer]
+    const size = await naturalOf(bg.src)
+    if (!size || bg !== state.bg) return
+    const { k, at } = nativeAt(bg)
+    layer.style.backgroundRepeat = 'no-repeat'
+    layer.style.backgroundSize = `${(size.w * k).toFixed(2)}px ${(size.h * k).toFixed(2)}px`
+    if (instant || skipping || !pan.seconds || typeof layer.animate !== 'function') { layer.style.backgroundPosition = at(pan.to); return }
+    layer.style.backgroundPosition = at(pan.from)
+    const steps = 48
+    const frames = []
+    for (let i = 0; i <= steps; i++) { const e = easeOf(pan.ease, i / steps); frames.push({ backgroundPosition: at([pan.from[0] + (pan.to[0] - pan.from[0]) * e, pan.from[1] + (pan.to[1] - pan.from[1]) * e]) }) }
+    const animation = layer.animate(frames, { duration: pan.seconds * 1000, delay: (pan.delay || 0) * 1000, fill: 'both', easing: 'linear' })
+    panAnim = animation
+    animation.onfinish = () => { layer.style.backgroundPosition = at(pan.to); animation.cancel(); if (panAnim === animation) panAnim = null }
+  }
   function paintBg(bg, fade, instant) {
     stopFrames()
+    stopPan()
     const next = layers[1 - frontLayer]
     const prev = layers[frontLayer]
     const seconds = instant ? 0 : fade
@@ -657,6 +703,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
       paintFilm(layer, bg)
       layer.style.backgroundImage = bg?.film ? 'none' : bg?.src ? (bg.over ? `url("${url(bg.over)}"), url("${url(bg.src)}")` : `url("${url(bg.src)}")`) : 'none'
       layer.style.backgroundColor = bg?.color ? `rgb(${bg.color.join(',')})` : bg?.src ? '#0b0f17' : 'transparent'
+      placeBg(layer, bg)
     }
     for (const src of [bg?.src, bg?.over]) {
       if (!src) continue
@@ -834,6 +881,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
     reportStep()
     updateCount()
     const step = scene.steps[i]
+    for (const st of state.stands) if (st.moves) delete st.moves   // 上一步的立绘动画已经开过了：这一步只放这一步新开的
     for (const command of step.commands) {
       if (destroyed || mine !== gen) return
       if (!condMet(command.when, state.vars)) continue   // 没选中的分支：整条跳过
@@ -865,6 +913,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
         case 'bgBlur':
         case 'bgZoom':
           paintBgFx(!skipping)
+          break
+        case 'bgPan':
+          paintBgPan(state.bgPan, false)
           break
         case 'speaker':
         case 'text':
@@ -900,6 +951,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startChoice
           break
         case 'stand':
         case 'standOff':
+        case 'standMove':
           paintStand(!skipping)
           break
         case 'overlay':

@@ -773,7 +773,7 @@ export const ADAPTER_RULES = {
     backVoice: { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' },
     scene: { split: 'chains', forkPolicy: 'merge' },
   },
-  // advhd::ws2：WillPlus AdvHD 家族的脚本适配器（ws2 指令流 → 场景）。抄自 web/library/gal/adapters/advhd-ws2.mjs 的 DEFAULT_OPTIONS（漂移守卫 gal-layout-rules-selftest 会逐键比）；推断的部分（条件类型 / Unk65 渐变 / MoveBackground 位置 / ConditionalJump）见适配器文件头
+  // advhd::ws2：WillPlus AdvHD 家族的脚本适配器（ws2 指令流 → 场景）。抄自 web/library/gal/adapters/advhd-ws2.mjs 的 DEFAULT_OPTIONS（漂移守卫 gal-layout-rules-selftest 会逐键比）；推断的部分见适配器文件头
   'advhd::ws2': {
     "resDir": "arc/res",
     "stage": [
@@ -849,11 +849,9 @@ export const ADAPTER_RULES = {
       },
       "unknown": true
     },
-    "conditions": {
-      "2": "==",
-      "128": "<",
-      "129": ">",
-      "130": ">="
+    "regs": {
+      "values": {},
+      "unknown": 0
     },
     "conditionalJump": "second",
     "functions": {
@@ -895,7 +893,6 @@ export const ADAPTER_RULES = {
       "UnkFB",
       "UnkFC",
       "UnkFD",
-      "LayerConfig",
       "CharMessageStart",
       "AddMessageToLog",
       "InitKeyName",
@@ -918,6 +915,8 @@ export const ADAPTER_RULES = {
       "SoundEffectUnk30",
       "MusicUnk1",
       "SetMask",
+      "ShowGraphic",
+      "Effect2",
       "PrepareBackgroundArea",
       "UnkScreen",
       "Unk67",
