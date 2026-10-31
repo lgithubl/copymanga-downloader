@@ -4,10 +4,11 @@
 #   GH_TOKEN=... GAL_ROOT=/游戏库目录 bash gal-collect-run.sh [GAL_ROOT]
 #
 # 采集什么（按引擎自动判断，见下面 ENGINES；判断不出来的游戏只收目录清单 + exe + 小文本）：
+#   · Unity 资源目录（GameMaterial 等）：*.dsm / *.cof / system 下的小文件、每个目录 3 个小的 .psm 样本
 #   · 每个游戏：目录清单（相对路径 / 大小 / 修改时间，不含存档目录）、根目录 exe、≤2MB 的 txt/xml/json/ini 等小文本
 #   · BGI：sysprg/system/sysgrp.arc、BGI.*、data*.arc          · 自有 arc 家族：script.arc、data.arc、其余 arc 的头
 #   · KiriKiri：scn/patch 的 xp3（整个）、别的 xp3 的头 + 尾（索引）、plugin 下的 dll
-#   · Artemis：pfs 档案               · Unity：globalgamemanagers、Managed/Assembly-CSharp、global-metadata.dat、resources / sharedassets、Archives/*.arc
+#   · Artemis：pf8 档案的索引 + 脚本类条目（.ast/.lua/.tbl/.ini/.csv…，不要声音 / 图片 / psb）   · Unity：globalgamemanagers、Managed/Assembly-CSharp、global-metadata.dat、resources / sharedassets、Archives/*.arc
 #   · 家族 7（ChakraCore）：Arc*.dat、Resources/*.dat       · XFL：scr.xfl 整个、别的 xfl 的头 + 尾       · AGE：SC*.BIN、ALF 的头 + 尾
 # 一律不收：存档（save / savedata / UserData / *.sud / SAVE*.DAT）、视频 / 音频 / 图片、安装包 / 卸载程序、pdf、lnk。
 #
@@ -27,7 +28,10 @@
 # 还原：同一个游戏的分卷按序号 cat 起来再解压：cat gal-collect-<时间>-g01.tar.gz.part-* | tar xzf -
 # 退出码：0 全部成功；1 出错（出错日志已打包上传）；2 有分卷上传失败（留在本地输出目录）
 set -uo pipefail
-VERSION="1.0"
+# 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
+# 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+VERSION="1.1"
+export GAL_COLLECT_VERSION="$VERSION"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
 HOST_TAG="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9' '_' | cut -c1-20)"
 ROOT="${1:-${GAL_ROOT:-}}"
@@ -74,7 +78,8 @@ on_exit() {
 }
 trap on_exit EXIT
 
-log "gal-collect-run $VERSION  repo=$REPO tag=$TAG part=${GAL_COLLECT_PART_MB:-40}MB dryrun=$DRYRUN out=$OUT"
+log "===== gal-collect-run 版本 v$VERSION ====="
+log "gal-collect-run v$VERSION  repo=$REPO tag=$TAG part=${GAL_COLLECT_PART_MB:-40}MB dryrun=$DRYRUN out=$OUT"
 [ -n "$PY" ] || { log "需要 python3"; exit 1; }
 [ -n "$ROOT" ] || { log "没有指定游戏库目录：用第一个参数或环境变量 GAL_ROOT"; exit 1; }
 [ -d "$ROOT" ] || { log "目录不存在：$ROOT"; exit 1; }
@@ -85,7 +90,7 @@ fi
 
 HELPER="$OUT/collect.py"
 cat > "$HELPER" <<'PYEOF'
-import gzip, hashlib, io, os, re, sys, tarfile, time, json
+import collections, gzip, hashlib, io, os, re, struct, sys, tarfile, time, json
 root = os.path.abspath(sys.argv[1]); out = sys.argv[2]; ts = sys.argv[3]; host = sys.argv[4]
 env = os.environ
 MB = 1 << 20
@@ -95,13 +100,13 @@ HT = int(float(env.get('GAL_COLLECT_HT_MB', '8'))) * MB
 TOTAL_MAX = int(float(env.get('GAL_COLLECT_TOTAL_MAX_MB', '6000'))) * MB
 ONLY = re.compile(env['GAL_COLLECT_ONLY'], re.I) if env.get('GAL_COLLECT_ONLY') else None
 BINARIES = env.get('GAL_COLLECT_BINARIES') == '1'
-VERSION = '1.0'
+VERSION = env.get('GAL_COLLECT_VERSION', 'unknown')
 
 def say(msg): print(msg, file=sys.stderr, flush=True)
 
 # 一律不收（相对路径，统一用 / 、小写比较）
 EXCL = re.compile(r'(^|/)(save|savedata|userdata|backup)(/|$)|\.(sud|sav|lnk|rar|7z|zip|tmp|bak|mp4|mpg|mpeg|wmv|avi|mkv|webm|ogg|mp3|wav|flac|m4a|png|jpg|jpeg|bmp|gif|psm|pdf)$|(^|/)save[^/]*\.(dat|bak|sth|seek)$|(^|/)(unins|uninst|uninstall)[^/]*$', re.I)
-TEXT_EXT = ('.txt', '.xml', '.json', '.ini', '.cf', '.cfg', '.gdb', '.edb', '.hvl', '.log', '.info', '.inf', '.csv', '.sig', '.lst')
+TEXT_EXT = ('.txt', '.xml', '.json', '.ini', '.cf', '.cfg', '.gdb', '.edb', '.hvl', '.log', '.info', '.inf', '.csv', '.sig', '.lst', '.aai', '.dsm', '.cof')
 
 MARK = re.compile(r'\.(exe|xp3|arc|xfl|pfs|agf|alf)$|\.pfs\.\d+$', re.I)
 
@@ -176,7 +181,7 @@ def pick(items, eng):
                     else: add(e, 'ht', 'krkr:xp3-index')
                 elif low.startswith('plugin/') and base.endswith('.dll') and e.size <= 8 * MB: add(e, 'full', 'krkr:plugin')
             elif en == 'artemis':
-                if re.search(r'\.pfs(\.\d+)?$', base): add(e, 'full', 'artemis:pfs')
+                if re.search(r'\.pfs(\.\d+)?$', base): add(e, 'pfs', 'artemis:pf8')   # 索引 + 脚本类条目（不是头尾：.ast 脚本在 8MB 之外）
             elif en == 'unity':
                 seg = low.split('/')
                 if len(seg) >= 2 and seg[0].endswith('_data'):
@@ -197,6 +202,16 @@ def pick(items, eng):
             elif en == 'age':
                 if base.endswith('.bin') and e.size <= 8 * MB: add(e, 'full', 'age:bin')
                 elif base.endswith('.alf'): add(e, 'ht', 'age:alf')
+    # Unity 的资源目录（GameMaterial 之类）：*.dsm / *.cof / system 下的小文件 + 每个目录最多 3 个小的 .psm 样本（.psm 平时不收）
+    if 'unity' in eng:
+        per_dir = collections.Counter()
+        for e in sorted(items, key=lambda x: x.size):
+            low = e.rel.lower(); base = low.rsplit('/', 1)[-1]
+            if low.endswith(('.dsm', '.cof')) and e.size <= 50 * MB and e.rel not in want: want[e.rel] = (e, 'full', 'unity:resdata')
+            elif '/system/' in '/' + low and e.size <= 1 * MB and '.' not in base and e.rel not in want: want[e.rel] = (e, 'full', 'unity:system')
+            elif low.endswith('.psm') and e.size <= 8 * MB:
+                d = low.rsplit('/', 1)[0] if '/' in low else ''
+                if per_dir[d] < 3 and e.rel not in want: per_dir[d] += 1; want[e.rel] = (e, 'full', 'unity:psm-sample')
     return list(want.values())
 
 class Split:
@@ -237,6 +252,38 @@ def sha_file_stream(path, limit=None):
             h.update(b); left = None if left is None else left - len(b)
     return h.hexdigest()
 
+PFS_SCRIPT_EXT = ('.ast', '.lua', '.tbl', '.asb', '.ini', '.ipt', '.sli', '.dat', '.csv', '.txt', '.json', '.xml')
+PFS_ENTRY_MAX = 80 * MB   # 一个 pfs 里选中的条目总量上限
+
+def pf8_entries(f, size):
+    """pf8 档案：'pf8' + u32 索引大小 + u32 条目数；索引块 = 前 索引大小 + 7 字节；每条 u32 名字长 + 名字(utf-8，\\ 分隔) + u32 0 + u32 偏移 + u32 大小。解析不了返回 None。"""
+    f.seek(0); head = f.read(11)
+    if len(head) < 11 or head[:3] != b'pf8': return None
+    isz, cnt = struct.unpack('<II', head[3:11])
+    if isz <= 0 or isz + 7 > size or cnt <= 0 or cnt > 2000000: return None
+    f.seek(0); idx = f.read(isz + 7); p = 11; ents = []
+    try:
+        for _ in range(cnt):
+            ln = struct.unpack('<I', idx[p:p + 4])[0]
+            if ln <= 0 or ln > 1024: return None
+            name = idx[p + 4:p + 4 + ln].decode('utf-8', 'replace'); p += 4 + ln
+            _z, off, sz = struct.unpack('<III', idx[p:p + 12]); p += 12
+            ents.append((name, off, sz))
+    except struct.error:
+        return None
+    return idx, ents
+
+def pf8_pick(ents, size):
+    """脚本类条目：扩展名在 PFS_SCRIPT_EXT 里，csv 不要语音 / 声音目录下的，累计 ≤ PFS_ENTRY_MAX。"""
+    out = []; total = 0
+    for name, off, sz in ents:
+        low = name.lower().replace('\\', '/')
+        if not low.endswith(PFS_SCRIPT_EXT): continue
+        if low.endswith('.csv') and low.startswith(('sound/', 'voice/')): continue
+        if sz <= 0 or off + sz > size or total + sz > PFS_ENTRY_MAX: continue
+        out.append((name, off, sz)); total += sz
+    return out
+
 def main():
     games = [g for g in walk_games() if not ONLY or ONLY.search(os.path.relpath(g, root))]
     say('游戏根 %d 个' % len(games))
@@ -259,6 +306,24 @@ def main():
                 eff = mode
                 if mode == 'full' and e.size > FULL_MAX: eff = 'ht'
                 try:
+                    if eff == 'pfs':
+                        with open(e.path, 'rb') as f:
+                            got = pf8_entries(f, e.size)
+                            if got is None:
+                                say('  ! %s 不是可解析的 pf8，改收头 + 尾' % e.rel); eff = 'ht'
+                            else:
+                                idx, ents = got; stored = 0
+                                ti = tarfile.TarInfo('%s/%s.__pf8index' % (gid, e.rel)); ti.size = len(idx); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(idx)); stored += len(idx)
+                                mf.write('%s\t%s\tpf8index\t%s\t%d\t%d\t%s\n' % (gid, e.rel, rule, e.size, len(idx), hashlib.sha256(idx).hexdigest()))
+                                chosen = pf8_pick(ents, e.size)
+                                for name, off, sz in chosen:
+                                    f.seek(off); data = f.read(sz)
+                                    if len(data) != sz: mf.write('%s\t%s\tERROR\t%s\t%d\t0\tshort read %s\n' % (gid, e.rel + ':' + name, rule, sz, name)); continue
+                                    ti = tarfile.TarInfo('%s/%s.__entries/%s' % (gid, e.rel, name.replace('\\', '/'))); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data)); stored += len(data)
+                                    mf.write('%s\t%s\tpf8entry\t%s\t%d\t%d\t%s\n' % (gid, e.rel + ':' + name, rule, sz, len(data), hashlib.sha256(data).hexdigest()))
+                                say('   pf8 %s：索引 %d 条，选中 %d 个脚本类条目' % (e.rel, len(ents), len(chosen)))
+                                total += stored; picked_bytes += stored
+                                continue
                     if eff == 'full':
                         with open(e.path, 'rb') as f:
                             ti = tarfile.TarInfo('%s/%s' % (gid, e.rel)); ti.size = e.size; ti.mtime = e.mtime

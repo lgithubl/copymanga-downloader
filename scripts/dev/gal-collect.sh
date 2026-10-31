@@ -69,7 +69,7 @@ log "取实际脚本：$SRC_REPO@$SRC_REF:$SRC_PATH"
 "$GH" api -H "Accept: application/vnd.github.raw" "repos/$SRC_REPO/contents/$SRC_PATH?ref=$SRC_REF" > "$TMP/run.sh" || { log "取脚本失败"; exit 1; }
 [ -s "$TMP/run.sh" ] || { log "取到的脚本是空的"; exit 1; }
 SUM="$(sha256sum "$TMP/run.sh" | cut -d' ' -f1)"
-log "实际脚本 sha256=$SUM（$(wc -l < "$TMP/run.sh") 行）"
+log "实际脚本 sha256=$SUM（$(wc -l < "$TMP/run.sh") 行）版本 v$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$TMP/run.sh" | head -1)"
 if [ -n "${GAL_COLLECT_SHA256:-}" ] && [ "$GAL_COLLECT_SHA256" != "$SUM" ]; then log "sha256 对不上（期望 $GAL_COLLECT_SHA256），不执行"; exit 1; fi
 head -1 "$TMP/run.sh" | grep -q '^#!.*bash' || { log "实际脚本第一行不是 bash 脚本，不执行"; exit 1; }
 # 4) 执行
