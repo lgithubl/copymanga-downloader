@@ -288,13 +288,24 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const wanted = []
     for (const step of scene.steps) for (const command of step.commands) if (command.op === 'goto' && typeof command.script === 'string') wanted.push(command)
     if (!wanted.length && !scene.next?.script) return
-    const listed = await listDir(set, effectiveParentDir(rel)).catch(() => null)
-    if (!listed) return
-    const byName = new Map()
-    for (const entry of listed.allScripts || []) { for (const name of [entry.stem, baseName(entry.rel).replace(/\.[^.]+$/, '')]) { const key = String(name).toLowerCase(); if (!byName.has(key)) byName.set(key, entry.rel) } }
-    const nodeOf = (name) => { const found = byName.get(String(name).replace(/\.[^.]+$/, '').toLowerCase()); return found ? idOf(set, 'script', found) : '' }
-    for (const command of wanted) { const node = nodeOf(command.script); if (node) command.node = node }
-    if (scene.next?.script) { const node = nodeOf(scene.next.script); if (node) scene.next.node = node }
+    const stemKey = (name) => String(name).replace(/\.[^.]+$/, '').toLowerCase()
+    const add = (map, listed) => { for (const entry of listed?.allScripts || []) { for (const name of [entry.stem, baseName(entry.rel).replace(/\.[^.]+$/, '')]) { const key = String(name).toLowerCase(); if (!map.has(key)) map.set(key, entry.rel) } } }
+    // 先在同一个脚本目录里找；找不到再在整个脚本根的各个子目录里找（BGI：脚本按名字引用，不管在哪个容器里；名字在根下重复时取第一个）
+    const local = new Map()
+    add(local, await listDir(set, effectiveParentDir(rel)).catch(() => null))
+    let everywhere = null
+    const nodeOf = async (name) => {
+      const key = stemKey(name)
+      if (local.has(key)) return idOf(set, 'script', local.get(key))
+      if (!everywhere) {
+        everywhere = new Map()
+        const root = await listDir(set, '').catch(() => null)
+        for (const entry of root?.all || []) if (entry.type === 'dir') add(everywhere, await listDir(set, entry.rel).catch(() => null))
+      }
+      return everywhere.has(key) ? idOf(set, 'script', everywhere.get(key)) : ''
+    }
+    for (const command of wanted) { const node = await nodeOf(command.script); if (node) command.node = node }
+    if (scene.next?.script) { const node = await nodeOf(scene.next.script); if (node) scene.next.node = node }
   }
 
   const idOf = (set, _kind, rel) => `${set === defaultSet ? '' : `@${set.id}|`}s:${rel}`

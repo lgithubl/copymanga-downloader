@@ -12,8 +12,9 @@ import { bwToOgg, cbgDecode, cbgToPng, dscDecode, encodePng, isBurikoScript, rea
 import { normalizeGalConfig, normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
 import { ensureContainers, materialize, virtualEntry, virtualFiles } from '../../web/library/gal/containers.mjs'
 import { galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
+import { parseV2 } from '../../web/library/gal/bgi-cbg2.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
-import { BgiScript, buildArc20, bwWrap, cbgEncode, dscEncode } from './make-bgi-fixture.mjs'
+import { BgiScript, buildArc20, bwWrap, cbgEncode, cbgV2Encode, dscEncode } from './make-bgi-fixture.mjs'
 
 let pass = 0
 let fail = 0
@@ -69,9 +70,47 @@ function decodePng(png) {
   check('CBG → PNG：RGBA 8 位，宽高对；颜色通道从 BGR(A) 换成 RGB(A)（第一个像素 B/R 对调）', png.width === 5 && png.height === 4 && png.channels === 4 && first[0] === rgba.pixels[2] && first[2] === rgba.pixels[0] && first[1] === rgba.pixels[1] && first[3] === rgba.pixels[3], J([first, [...rgba.pixels.subarray(0, 4)]]))
   const enc = cbgEncode(rgba)
   const broken = Buffer.from(enc); broken[0x32] ^= 0xff
-  const v2 = Buffer.from(enc); v2.writeUInt16LE(2, 0x2e)
+  const v2 = Buffer.from(enc); v2.writeUInt16LE(3, 0x2e)
   const err = (b) => { try { cbgDecode(b); return '' } catch (e) { return e.message } }
-  check('CompressedBG：加密段校验失败 / version 2（没做）→ 抛错，说明原因', /校验失败/.test(err(broken)) && /version 2/.test(err(v2)), J([err(broken), err(v2)]))
+  check('CompressedBG：加密段校验失败 / version 3（不认识）→ 抛错，说明原因', /校验失败/.test(err(broken)) && /version 3/.test(err(v2)), J([err(broken), err(v2)]))
+  // ---- CompressedBG v2（DCT）：系数级往返 + 平坦块的数值 ----
+  {
+    const W = 16
+    const H = 16
+    const quant = Buffer.alloc(128, 1)
+    const blocksPerRow = W / 8
+    const mkRow = (seed) => {   // 3 通道 × 2 块 × 64
+      const c = new Int16Array(3 * blocksPerRow * 64)
+      for (let ch = 0; ch < 3; ch++) for (let b = 0; b < blocksPerRow; b++) {
+        const o = (ch * blocksPerRow + b) * 64
+        c[o] = (seed * 13 + ch * 40 + b * 7) - 60
+        for (let q = 1; q < 64; q++) if ((q * 31 + seed * 17 + ch * 5 + b) % 9 === 0) c[o + q] = ((q * 7 + seed) % 61) - 30
+        if (ch === 1 && b === 1) { c[o + 20] = 3; c[o + 63] = -5 }   // 要跳 16 个的零段 + 最后一个位置有值（没有结束标记）
+      }
+      return c
+    }
+    const rows = [mkRow(1), mkRow(2)]
+    const file = cbgV2Encode({ width: W, height: H, bpp: 24, rows, quant })
+    const hdr = { width: W, height: H, bpp: 24, key: file.readUInt32LE(0x24), encLen: file.readInt32LE(0x28), checkSum: file[0x2c], checkXor: file[0x2d] }
+    const parsed = parseV2(file, hdr)
+    check('CompressedBG v2：量化系数（DC 差分 + AC 的 0 段 / 跳 16 / 末位）编码 → 解码逐个一致', parsed.rows.length === 2 && parsed.rows.every((r, i) => r.length === rows[i].length && r.every((v, k) => v === rows[i][k])), J(parsed.rows.map((r, i) => [...r].findIndex((v, k) => v !== rows[i][k]))))
+    const flatRow = (dc) => { const c = new Int16Array(3 * blocksPerRow * 64); for (let ch = 0; ch < 3; ch++) for (let b = 0; b < blocksPerRow; b++) c[(ch * blocksPerRow + b) * 64] = dc[ch]; return c }
+    const gray = cbgDecode(cbgV2Encode({ width: W, height: H, bpp: 24, rows: [flatRow([0, 0, 0]), flatRow([80, 0, 0])], quant }))
+    const at = (x, y) => [...gray.pixels.subarray((y * W + x) * 3, (y * W + x) * 3 + 3)]
+    check('CompressedBG v2：DC=0 的块 → 灰 128；亮度 DC=80 → 138（Y = 128 + D/8，Cb/Cr 128 时 RGB = Y）', gray.bpp === 24 && J(at(3, 3)) === J([128, 128, 128]) && J(at(9, 12)) === J([138, 138, 138]), J([at(3, 3), at(9, 12)]))
+    const ac = new Int16Array(3 * blocksPerRow * 64); ac[1] = 200   // 只有水平方向最低的一个 AC
+    const wave = cbgDecode(cbgV2Encode({ width: W, height: 8, bpp: 8, rows: [Int16Array.from(ac.subarray(0, 128))], quant }))
+    const line = [...wave.pixels.subarray(0, 8)]
+    check('CompressedBG v2：灰度 + 单个 AC 系数 → 沿 x 单调变化（余弦基）、两头对称', wave.bpp === 8 && line[0] > line[7] && line.every((v, i) => i === 0 || v <= line[i - 1]) && Math.abs(line[0] + line[7] - 256) <= 2, J(line))
+    const cropped = cbgDecode(cbgV2Encode({ width: 11, height: 10, bpp: 24, rows: [flatRow([0, 0, 0]), flatRow([0, 0, 0])].map((r) => r), quant }))
+    check('CompressedBG v2：宽高不是 8 的倍数 → 裁掉对齐填充（11×10）', cropped.width === 11 && cropped.height === 10 && cropped.pixels.length === 11 * 10 * 3, J([cropped.width, cropped.height, cropped.pixels.length]))
+    const alpha = new Uint8Array(W * H); for (let i = 0; i < alpha.length; i++) alpha[i] = i < 40 ? (i * 5) & 0xff : i < 200 ? 77 : 255
+    const rgba = cbgDecode(cbgV2Encode({ width: W, height: H, bpp: 32, rows: [flatRow([0, 0, 0]), flatRow([0, 0, 0])], quant, alpha }))
+    check('CompressedBG v2：32 位带 alpha（字面 + 回指）→ BGRA，alpha 逐个一致', rgba.bpp === 32 && rgba.pixels.length === W * H * 4 && Array.from({ length: W * H }, (_, i) => rgba.pixels[i * 4 + 3]).every((v, i) => v === alpha[i]), J(Array.from({ length: 24 }, (_, i) => rgba.pixels[i * 4 + 3])))
+    const broken2 = Buffer.from(file); broken2[0x31] ^= 0xff
+    const cut = file.subarray(0, file.length - 40)
+    check('CompressedBG v2：校验失败 / 被截断 → 抛错（不崩）', /校验失败/.test(err(broken2)) && (() => { try { cbgDecode(cut); return true } catch { return true } })() && err(Buffer.from(file).fill(0, 0x28, 0x2c)) !== '', err(broken2))
+  }
   const ogg = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(30, 7)])
   check('BW：头 0x40 + bw → 去头得到 Ogg；不是 BW 抛错', bwToOgg(bwWrap(ogg)).equals(ogg) && sniffEntry(bwWrap(ogg)) === 'bw' && (() => { try { bwToOgg(ogg); return false } catch { return true } })())
 }
@@ -123,6 +162,10 @@ const msgs = (events) => flat(events).filter((e) => e.k === 'cmd' && e.token ===
   bye.msg('last', 'A').jumpScenario('next_scene').msg('never', 'A')
   const rb = runOf(bye)
   check('jump_scenario：记成 sys 事件（文件名），脚本到此结束；后面的不执行', J(msgs(rb.events)) === J(['last']) && rb.events.at(-1).k === 'sys' && rb.events.at(-1).name === 'jump_scenario' && rb.events.at(-1).args[0] === 'next_scene', J(rb.events.at(-1)))
+  const lab = new BgiScript()
+  lab.msg('x', 'A').push('target_scene').op(0x3f, 1).op(0xf6).op(0xf3).msg('never', 'A')   // 库脚本的写法：set_label(文件名) 之后 jump_scenario 不带参数
+  const rl = runOf(lab)
+  check('jump_scenario 不带参数：目标取前面 set_label 的字符串（游戏库脚本的写法）', rl.events.at(-1).name === 'jump_scenario' && J(rl.events.at(-1).args) === J(['target_scene']) && J(msgs(rl.events)) === J(['x']), J(rl.events.at(-1)))
 }
 {
   // 选择：3 个选项各一段，汇合点之后只有一份；分发代码（选择之后、分开之前）不算进分支
@@ -162,7 +205,7 @@ await mkdir(path.join(media, 'Archive'), { recursive: true })
   const scene1 = new BgiScript()
   scene1.call('_PlayBGM', 0, 'bgm01', 0, 1, 100, 0)
     .call('_DrawScene', 'bg01', 0, 2, 0, 32767, 32767, 100, 0, 32767, 32767, 100, 1, 0, 700, 0)
-    .call('_DrawBS', 4, 'ST01', 0, 0, 0, 0, 2, 268435456, 300, 268435456, 0, 0, 0, 100, -1, -1, 0, 0, 0, 0, -1, 200, 1, -256, 'ST01_F')
+    .call('_DrawBS', 4, 'ST01', 0, 0, 0, 0, 2, -150, 40, 80, 0, 0, 0, 100, -1, -1, 0, 0, 0, 0, -1, 200, 1, -256, 'ST01_F')
     .call('_PlayVoice', 0, 'v001', 100, 64, 1, 0, 1, 0)
     .msg('Hello <Rruby>kanji</R> world', 'Alice')
     .call('_Wait', 1500, 1)
@@ -223,7 +266,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const scene = adapter.parse(text, ctx)
   const st = scene.steps
   const cmdsOf = (i) => st[i].commands.map((c) => c.op)
-  check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center' }, { src: 'ST01_F.png', align: 'center' }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
+  check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center', shiftX: -150, shiftY: 40, zoom: 0.8 }, { src: 'ST01_F.png', align: 'center', shiftX: -150, shiftY: 40, zoom: 0.8 }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
   check('场景：_Wait = wait（秒）；旁白（说话人空）= speaker 清空；选项挂在问题那句台词的步里', st[1].commands.some((c) => c.op === 'wait' && c.seconds === 1.5) && J(st[1].commands.find((c) => c.op === 'speaker').segments) === J([]) && st[1].commands.some((c) => c.op === 'choice' && c.options.length === 2 && c.options[1].segments[0].text === 'Right'), J(st[1]))
   const choice = st[1].commands.find((c) => c.op === 'choice')
   const g = (n) => J([{ var: choice.var, op: '==', value: n }])

@@ -1032,12 +1032,15 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **剧本不是引擎字节码**：是游戏自己的 system 程序解释的 32 位 token 流。这里把它「执行」一遍（栈 + 工作变量 / 标志 + 跳转 / 子程序），游戏命令（≥ 0x100）和库函数（callfn）不执行、只记成事件：`msg`（0x140：文本、说话人）、`_PlayVoice / _PlayBGM / _PlaySE / _DrawScene / _DrawBS / _DrawSPR / _Wait / _FadeBGM …`。
 - **选择**（`SelectEx` / `_SelectEx`）：每个选项各跑一遍（结果放 `lwork(0)`），去掉各分支一开始相同的分发代码，找各分支都经过的第一个地方当汇合点；汇合点之前的事件挂在 choice 的分支里，之后只有一份。分支里再遇到同一个选择点不再分叉（依次取没取过的选项，都取过就结束这一路），避免「选完所有选项才继续」的菜单循环爆炸。分支里有 `jump_scenario` 且没有共同汇合点 = 各走各的（`stats.run.unmerged`）。
 - **跳转**：脚本末尾的 `jump_scenario` = `scene.next`（看完接着播）；分支里的 = 带 `when` 的 `goto`（同 AdvHD 的做法，服务端按名字补 node）。`call_scenario`（调库场景 `_GM` 之类）不跟，只记 `stats.links`。
-- **样本核对**（g02 / g03 / g07，共约 330 个剧本）：全部能解压 + 执行，没有出错；14 个选择点里 13 个有汇合点。g07 里 3 个系统 / 库脚本（`root_common` 之类，菜单循环）被步数上限截断，事件数另有上限 `MAX_BGI_EVENTS = 100000`（剧情脚本远远不到）。
+- **样本核对**（g02 / g03 / g07，共约 330 个剧本）：全部能解压 + 执行，没有出错。
+- **有依据的**（读游戏自带的库脚本 `framework._bs`，在 `system.arc` 里，用自己的反编译器看参数怎么用）：`_DrawBS(槽, 本体, …)` 的 `args[7]` = x（相对画面中心的偏移，`0x10000000` = 默认）、`args[8]` = y、`args[9]` = 放大率（百分比），从 `args[24]` 起是表情 / 配件图；左右槽位的位置对称，支持「x 是中心相对」。适配器出的立绘部件 = `{ src, align: 'center', shiftX?, shiftY?, zoom? }`，`gal-stand.js` 对齐之后再平移（`shiftX` / `shiftY`，设计像素）。
+- **跳转目标**：库脚本里 `jump_scenario` / `call_scenario` 不带参数，目标是前面 `set_label` 的字符串（`test_label` 也按这个判断）；已在 g02 `com10a` 上核对（三个分支 → `com10A_IF_NA / _EI / _BAD`，`browse.mjs linkScene` 补上 node）。`linkScene` 先在同一目录找，找不到再到别的容器目录里找（跨目录这一支只有代码，没有真实样本走到）。
 - **推断 / 没验证**：
-  - 立绘（`_DrawBS`）的位置 / 大小：x = 第 8 个参数（`0x10000000` = 居中，负 = 左、正 = 右），本体和表情图叠在一起按同一个对齐画；**采集的数据里没有立绘图，没验证过对不对得齐**。
-  - 条件跳转的值如果读到「没设过」的变量按 0 处理，可能走错分支；标志（`lflag`）只模拟了脚本自己写的。
-  - CompressedBG **version 2 没做**（样本里全是 version 1，抛错并说明）；DSC 的 `BurikoAnimation` 动画表等不是剧本的条目跳过。
-  - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——都是按用法猜的。
+  - 立绘 y 的竖直基准（这里当「底边对齐再平移 y」）和本体 / 表情图是不是同一张画布大小：**采集的数据里没有立绘图，没验证过对不对得齐**；放大率的锚点同理（按底边中心放大）。
+  - 条件跳转读到「没设过」的变量按 0 处理，可能走错分支；标志（`lflag`）只模拟了脚本自己写的。**没有先跑初始化脚本**（它们在库脚本里，菜单循环，被步数 / 事件上限截断）。
+  - g07 的 `root_common*` 三个库脚本仍被截断（菜单循环，不含剧情）；有 `maxSteps = 2,000,000`、`maxEvents = 100,000`、空转 60,000 步三道上限。选择点里没有汇合点的，是分支各自 `jump_scenario` 到不同脚本（合理，不是缺陷）。
+  - CompressedBG **version 2 已按 GARbro 移植**（`bgi-cbg2.mjs`：DCT 块 + 哈夫曼 + alpha），但样本里全是 version 1，**没对过真实文件**；只和自带编码器（系数级往返、平坦块数值、alpha 回指、裁剪填充）对过；浮点按 double 算，和 GARbro 的 float 可能有 ±1 的差。DSC 的 `BurikoAnimation` 动画表等不是剧本的条目跳过。
+  - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
 - **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
 
 ### AdvHD 的跳转：选项跳到别的脚本（`goto`）/ 看完接着播（`scene.next`）

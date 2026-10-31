@@ -4,6 +4,7 @@
 //   cbgEncode({ width, height, bpp, pixels })  CompressedBG version 1（平均预测 + 零段 + 哈夫曼，和解码器同一套建树）
 //   bwWrap(ogg)                  头 0x40 + 'bw  ' + Ogg
 //   BgiScript                    token 流汇编器：push / str / args / call / msg / select / label / jmp / jcc …
+import { buildTree, FILL_ORDER } from '../../web/library/gal/bgi-cbg2.mjs'
 const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n >>> 0); return b }
 
 // ---------- ARC20 ----------
@@ -124,6 +125,115 @@ export function cbgEncode({ width, height, bpp, pixels, key = 0x0badf00d }) {
   head.writeInt32LE(packedBuf.length, 0x20); head.writeUInt32LE(key >>> 0, 0x24); head.writeInt32LE(enc.length, 0x28)
   head[0x2c] = sum; head[0x2d] = xor; head.writeUInt16LE(1, 0x2e)
   return Buffer.concat([head, enc, stream])
+}
+
+// ---------- CompressedBG v2 ----------
+// 输入的是量化后的系数（不做正向 DCT）：rows[blockRow] = Int16Array（通道 × 块 × 64，通道内按块排；每块第 0 个 = DC 绝对值，其余是自然顺序的 AC）；
+// quant = 128 字节量化表；alpha = 可选，每个像素 1 字节（宽高按 8 对齐后的尺寸）。和解码器共用建树 / 顺序表，比特流部分是独立写的。
+export function cbgV2Encode({ width, height, bpp, rows, quant, alpha = null, key = 0x0badf00d }) {
+  const W = (width + 7) & -8
+  const channels = bpp === 8 ? 1 : 3
+  const bitLen = (n) => { let c = 0; while (n) { c++; n >>>= 1 } return c }
+  // 每个 8 行块 → { dcTokens, … } 先收集符号再建树
+  const symbols1 = new Array(16).fill(0)
+  const symbols2 = new Array(0xb0).fill(0)
+  const plan = rows.map((coefs) => {
+    const dc = []
+    let acc = 0
+    for (let k = 0; k < coefs.length; k += 64) {
+      const diff = coefs[k] - acc
+      acc = coefs[k]
+      const size = bitLen(Math.abs(diff))
+      symbols1[size]++
+      dc.push({ size, value: diff > 0 ? diff : diff + (1 << size) - 1 })
+    }
+    const ac = []
+    for (let k = 0; k < coefs.length; k += 64) {
+      const list = []
+      let index = 1
+      for (let q = 1; q < 64; q++) {
+        const v = coefs[k + FILL_ORDER[q]]
+        if (!v) continue
+        let gap = q - index
+        while (gap >= 16) { list.push({ code: 0xf }); symbols2[0xf]++; gap -= 16 }
+        const size = bitLen(Math.abs(v))
+        const code = (size << 4) | gap   // 低 4 位 = 前面的 0 个数，高 4 位 = 位数（最多 10：0xAF）
+        list.push({ code, size, value: v > 0 ? v : v + (1 << size) - 1 })
+        symbols2[code]++
+        index = q + 1
+      }
+      if (index <= 63) { list.push({ code: 0 }); symbols2[0]++ }
+      ac.push(list)
+    }
+    return { dc, ac, size: coefs.length }
+  })
+  if (!symbols2.some(Boolean)) symbols2[0] = 1   // 没有 AC：树不能是空的
+  const codesOf = (weights) => {
+    const nodes = buildTree(weights, true)
+    const codes = new Map()
+    const walk = (n, prefix) => { if (n < 0) return; if (!nodes[n].parent) { codes.set(n, prefix); return } walk(nodes[n].l, [...prefix, 0]); walk(nodes[n].r, [...prefix, 1]) }
+    walk(nodes.length - 1, [])
+    return codes
+  }
+  const codes1 = codesOf(symbols1)
+  const codes2 = codesOf(symbols2)
+  const varint = (n) => { const out = []; while (n >= 0x80) { out.push((n & 0x7f) | 0x80); n >>>= 7 } out.push(n); return out }
+  const padSkip = ((W >> 3) + 7) >> 3
+  const blocks = plan.map((row) => {
+    const bits = []
+    const put = (value, n) => { for (let i = n - 1; i >= 0; i--) bits.push((value >> i) & 1) }
+    for (const d of row.dc) { bits.push(...codes1.get(d.size)); if (d.size) put(d.value, d.size) }
+    while (bits.length % 8) bits.push(0)
+    for (const list of row.ac) for (const t of list) { bits.push(...codes2.get(t.code)); if (t.size) put(t.value, t.size) }
+    while (bits.length % 8) bits.push(0)
+    const stream = Buffer.alloc(bits.length / 8 + 1)   // 多留 1 个字节：解码器在「字节读完」时就停（GARbro 的行为）
+    for (let i = 0; i < bits.length; i++) stream[i >> 3] |= bits[i] << (7 - (i & 7))
+    return Buffer.concat([Buffer.alloc(padSkip), Buffer.from(varint(row.size)), stream])
+  })
+  const treeBytes = Buffer.from([...symbols1.flatMap(varint), ...symbols2.flatMap(varint)])
+  const base = treeBytes.length + (rows.length + 1) * 4
+  let alphaBuf = Buffer.alloc(0)
+  if (alpha) {
+    const parts = [u32(1)]
+    const items = []
+    for (let i = 0; i < alpha.length;) {   // 和前一个像素相同的一串（≥ 3）用回指（x = -1, y = 0），其余按字面
+      let run = 0
+      while (i > 0 && i + run < alpha.length && alpha[i + run] === alpha[i - 1] && run < 130) run++
+      if (run >= 3) { items.push({ ref: run }); i += run } else { items.push({ lit: alpha[i] }); i++ }
+    }
+    const out = []
+    let pending = []
+    const flush = () => {
+      if (!pending.length) return
+      let c = 0
+      pending.forEach((p, k) => { if (p.ref) c |= 1 << k })
+      out.push(Buffer.from([c]))
+      for (const p of pending) { if (p.ref) { const b = Buffer.alloc(2); b.writeUInt16LE(0x3f | ((p.ref - 3) << 9)); out.push(b) } else out.push(Buffer.from([p.lit])) }
+      pending = []
+    }
+    for (const it of items) { pending.push(it); if (pending.length === 8) flush() }
+    flush()
+    alphaBuf = Buffer.concat([...parts, ...out])
+  }
+  const offsets = []
+  let at = base
+  for (const b of blocks) { offsets.push(at); at += b.length }
+  offsets.push(at)
+  const offsetBuf = Buffer.concat(offsets.map(u32))
+  const body = Buffer.concat([treeBytes, offsetBuf, ...blocks, alphaBuf])
+  // 加密段：量化表
+  const plain = Buffer.from(quant)
+  const next = keyStream(key, 0)
+  const enc = Buffer.from(plain.map((b) => (b + next()) & 0xff))
+  let sum = 0
+  let xor = 0
+  for (const b of plain) { sum = (sum + b) & 0xff; xor ^= b }
+  const head = Buffer.alloc(0x30)
+  head.write('CompressedBG___', 0, 'latin1')
+  head.writeUInt16LE(width, 0x10); head.writeUInt16LE(height, 0x12); head.writeInt32LE(bpp, 0x14)
+  head.writeUInt32LE(key >>> 0, 0x24); head.writeInt32LE(enc.length, 0x28)
+  head[0x2c] = sum; head[0x2d] = xor; head.writeUInt16LE(2, 0x2e)
+  return Buffer.concat([head, enc, body])
 }
 
 // ---------- BW ----------

@@ -16,7 +16,8 @@
 //   SelectEx / _SelectEx(选项…)              → choice（选项挂在问题那句台词的步里）；每个选项一段带 when 的分支；jump_scenario 在分支里 = 带 when 的 goto
 //   jump_scenario(文件, …)                   → scene.next（脚本末尾接着播）；call_scenario 是调库场景（_GM 之类）：不跟，计数
 // 推断（没有样本验证，按数据猜的，都可以用 options 改）：
-//   · 立绘的位置 / 大小：_DrawBS 的参数里 x = args[7]（268435456 = 0x10000000 = 默认居中）、y = args[8]；立绘本体和表情图是不是同一张画布大小（对得齐）没有样本（采集的 arc 里没有立绘图），这里叠在一起按同一个对齐方式画
+//   有依据（读 system.arc 里的 framework._bs）：_DrawBS 的 x = args[7]（相对画面中心的偏移，0x10000000 = 默认）、y = args[8]、放大率 = args[9]（百分比）；左右槽位的位置对称，支持 x 是中心相对
+//   没验证（采集里没有立绘图）：y 的竖直基准（这里当作「底边对齐再平移 y」）、本体和表情图是不是同一张画布大小（对得齐）
 //   · _DrawScene 换背景会清掉立绘；_FadeBS 第 2 个参数 = 0 表示淡出（去掉）——参数含义按用法猜的
 //   · _FadeBGM(槽, 毫秒, 音量) 音量 0 = 淡出停止
 import { createIndexResolver } from '../resolve.mjs'
@@ -129,7 +130,6 @@ export function parse(text, ctx = null, meta = {}) {
   let shown = { bg: null, stand: null }
   let dirty = false
   const effectiveBg = () => eventImage?.src || eventImage?.color ? (eventImage.src ? { src: eventImage.src } : { color: eventImage.color }) : bgState
-  const alignOf = (x) => (x < 0 ? 'left' : x > 0 && x < 1e6 ? 'right' : 'center')
   function commit() {
     if (!dirty) return
     dirty = false
@@ -190,15 +190,21 @@ export function parse(text, ctx = null, meta = {}) {
     } else if (name === '_FadeSPR') { if (eventImage && num(a[0]) === eventImage.slot && num(a[1], 1) === 0) { eventImage = null; dirty = true } }
     else if (rx.bust.has(name)) {
       const body = str(a[1])
+      // 参数含义出自游戏自带的 framework._bs（system.arc）：a[7] = x（相对画面中心的偏移，0x10000000 = 默认），a[8] = y，a[9] = 放大率（百分比）
       const x = num(a[7], 0)
-      const align = alignOf(x >= 1e6 ? 0 : x)
+      const y = num(a[8], 0)
+      const mag = num(a[9], 0)
+      const shiftX = Math.abs(x) >= 1e6 ? 0 : x
+      const shiftY = Math.abs(y) >= 1e6 ? 0 : y
+      const zoom = mag > 0 && mag < 1e6 && mag !== 100 ? mag / 100 : 1
+      const place = { align: 'center', ...(shiftX ? { shiftX } : {}), ...(shiftY ? { shiftY } : {}), ...(zoom !== 1 ? { zoom } : {}) }
       const parts = []
       const bodySrc = imageOf(body)?.src
-      if (bodySrc) parts.push({ src: bodySrc, align })
+      if (bodySrc) parts.push({ src: bodySrc, ...place })
       for (const [i, v] of a.entries()) {   // 本体后面的字符串参数 = 表情 / 配件图，叠在本体上
         if (i < 2 || typeof v !== 'string' || !v) continue
         const src = imageOf(v)?.src
-        if (src) parts.push({ src, align })
+        if (src) parts.push({ src, ...place })
       }
       if (parts.length) busts.set(num(a[0]), { parts, x })
       dirty = true

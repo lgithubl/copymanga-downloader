@@ -5,6 +5,7 @@
 // 外来的二进制：所有长度 / 偏移都对着文件大小校验；解码出的大小有上限。
 import { open } from 'node:fs/promises'
 import { deflateSync } from 'node:zlib'
+import { cbgV2Decode } from './bgi-cbg2.mjs'
 
 export const BURIKO_ARC_MAGIC = 'BURIKO ARC20'
 const MAX_ENTRIES = 200000
@@ -143,7 +144,7 @@ export function dscDecode(data) {
   return out
 }
 
-// ---------- CompressedBG（version 1）→ 像素 / PNG ----------
+// ---------- CompressedBG（version 1；version 2 在 bgi-cbg2.mjs）→ 像素 / PNG ----------
 // 头 0x30：魔数 16 + u16 宽 + u16 高 + u32 bpp + 8 字节 + u32 中间长度(0x20) + u32 key(0x24) + u32 加密长度(0x28) + u8 sum + u8 xor + u16 版本；
 // 加密段（用 key 序列加密）是 256 个变长整数（哈夫曼权重）；后面是 MSB 先出的比特流 → 中间数据（交替的「字面段 / 零段」长度前缀）→ 像素 → 逆平均预测
 export function cbgDecode(data) {
@@ -157,7 +158,8 @@ export function cbgDecode(data) {
   const checkSum = data[0x2c]
   const checkXor = data[0x2d]
   const version = data.readUInt16LE(0x2e)
-  if (version >= 2) throw new Error(`CompressedBG version ${version} 暂不支持（只做了 version 1）`)
+  if (version === 2) return cbgV2Decode(data, { width, height, bpp, key, encLen, checkSum, checkXor })
+  if (version > 2) throw new Error(`CompressedBG version ${version} 暂不支持`)
   if (![8, 24, 32].includes(bpp)) throw new Error(`CompressedBG bpp ${bpp} 暂不支持`)
   if (!width || !height || width * height > 64 * 1024 * 1024) throw new Error('CompressedBG 宽高不合理')
   if (interLen < 0 || interLen > MAX_DECODED || encLen < 0 || 0x30 + encLen > data.length) throw new Error('CompressedBG 头不合理')
@@ -320,6 +322,7 @@ const SCRIPT_MAGIC = 'BurikoCompiledScriptVer1.00'
 const OPERAND_TOKENS = new Set([0x00, 0x01, 0x02, 0x03, 0x08, 0x09, 0x0a, 0x19, 0x3f])
 const BINARY = { 0x20: (a, b) => (a + b) | 0, 0x21: (a, b) => (a - b) | 0, 0x22: (a, b) => Math.imul(a, b), 0x23: (a, b) => (b ? Math.trunc(a / b) | 0 : 0), 0x24: (a, b) => (b ? (a % b) | 0 : 0), 0x25: (a, b) => a & b, 0x26: (a, b) => a | b, 0x27: (a, b) => a ^ b, 0x29: (a, b) => a << b, 0x2a: (a, b) => a >>> b, 0x2b: (a, b) => a >> b, 0x30: (a, b) => (a === b ? 1 : 0), 0x31: (a, b) => (a !== b ? 1 : 0), 0x32: (a, b) => (a <= b ? 1 : 0), 0x33: (a, b) => (a >= b ? 1 : 0), 0x34: (a, b) => (a < b ? 1 : 0), 0x35: (a, b) => (a > b ? 1 : 0), 0x38: (a, b) => (a && b ? 1 : 0), 0x39: (a, b) => (a || b ? 1 : 0) }
 const MAX_TOKENS = 4_000_000
+const IDLE_STEPS = 60_000
 // args n：把栈顶 n 个值的顺序倒过来（原地；n 很大时不能用展开 …spread，会爆调用栈）
 function reverseTop(stack, n) {
   if (!(n > 1) || n > stack.length) return
@@ -437,9 +440,9 @@ function instrsOf(info, buf) {
   }
   return { instrs, indexOf }
 }
-const cloneState = (st) => ({ recent: st.recent.slice(), ip: st.ip, stack: st.stack.slice(), calls: st.calls.slice(), mem: new Map(st.mem), lwork: new Map(st.lwork), flags: new Map(st.flags), picks: new Map(st.picks), label: st.label, steps: st.steps, done: st.done })
+const cloneState = (st) => ({ recent: st.recent.slice(), ip: st.ip, stack: st.stack.slice(), calls: st.calls.slice(), mem: new Map(st.mem), lwork: new Map(st.lwork), flags: new Map(st.flags), picks: new Map(st.picks), labelStrings: st.labelStrings.slice(), steps: st.steps, done: st.done })
 
-export function runBurikoScript(buf, { maxSteps = 2_000_000 } = {}) {
+export function runBurikoScript(buf, { maxSteps = 2_000_000, maxEvents = 100_000 } = {}) {
   const info = readBurikoStatements(buf)   // 只为了 token 流终点和字符串表
   const { instrs, indexOf } = instrsOf(info, buf)
   const total = { steps: 0, choices: 0, truncated: false, merged: 0, unmerged: 0 }
@@ -447,6 +450,8 @@ export function runBurikoScript(buf, { maxSteps = 2_000_000 } = {}) {
   // 跑一个状态，直到：结束 / 步数用完 / 遇到 stopAt / （允许分叉时）遇到选择。返回 { events, st, reason, choice }
   const run = (st, { stopAt = null, fork = true, trace = null } = {}) => {
     const events = []
+    let lastCount = 0
+    let idle = 0
     const { stack } = st
     const num = (v) => (typeof v === 'number' ? v : null)
     const truthy = (v) => (typeof v === 'number' ? v !== 0 : false)
@@ -455,6 +460,9 @@ export function runBurikoScript(buf, { maxSteps = 2_000_000 } = {}) {
       const ins = instrs[st.ip]
       if (stopAt !== null && ins.at === stopAt && st.steps > 0) return { events, st, reason: 'stop' }
       if (++total.steps > maxSteps) { total.truncated = true; st.done = true; return { events, st, reason: 'limit' } }
+      // 很久没有任何新事件还在转 = 等输入 / 空转的菜单循环：停下（标 truncated）。剧情脚本两次事件之间的指令数远远不到
+      if (events.length !== lastCount) { lastCount = events.length; idle = 0 } else if (++idle > IDLE_STEPS) { total.truncated = true; st.done = true; return { events, st, reason: 'idle' } }
+      if (events.length > maxEvents) { total.truncated = true; st.done = true; return { events, st, reason: 'events' } }   // 菜单循环之类一直在出事件：到上限就停
       st.steps++
       if (trace) trace.push(ins.at)
       const idx = trace ? trace.length - 1 : -1
@@ -522,9 +530,11 @@ export function runBurikoScript(buf, { maxSteps = 2_000_000 } = {}) {
         const name = SYS_TOKENS[t] || ''
         const args = stk.slice().reverse()
         stk.length = 0
-        if (name === 'test_label') stk.push(args[0] === st.label ? 1 : 0)
-        else if (name === 'set_label') st.label = args[0]
-        else events.push({ idx, k: 'sys', at: ins.at, name, args })
+        // set_label(名字…, 0)：把「要去的脚本 / 标签」记下来；后面的 jump_scenario / call_scenario 自己不带参数，目标就是最近一次 set_label 的字符串（文件名[, 标签名]）
+        // test_label(名字)：当前设的标签里有这个名字 = 1（文件开头的标签分发用，正常从头播时一个都不中）
+        if (name === 'test_label') stk.push(typeof args[0] === 'string' && st.labelStrings.includes(args[0]) ? 1 : 0)
+        else if (name === 'set_label') st.labelStrings = args.filter((v) => typeof v === 'string')
+        else events.push({ idx, k: 'sys', at: ins.at, name, args: (name === 'jump_scenario' || name === 'call_scenario') && !args.some((v) => typeof v === 'string') ? st.labelStrings.slice() : args })
         if (name === 'jump_scenario' || name === 'quit' || name === 'jump_alias') { st.done = true; return { events, st, reason: name } }
       }
       st.ip = next
@@ -544,7 +554,7 @@ export function runBurikoScript(buf, { maxSteps = 2_000_000 } = {}) {
     return null
   }
   const top = []
-  let st = { recent: [], ip: 0, stack: [], calls: [], mem: new Map(), lwork: new Map(), flags: new Map(), picks: new Map(), label: '', steps: 0, done: false }
+  let st = { recent: [], ip: 0, stack: [], calls: [], mem: new Map(), lwork: new Map(), flags: new Map(), picks: new Map(), labelStrings: [], steps: 0, done: false }
   for (let guard = 0; guard < 200; guard++) {
     const r = run(st)
     for (const e of r.events) top.push(e)   // 事件可能有几十万个：不能用 push(...) 展开（会爆调用栈）
