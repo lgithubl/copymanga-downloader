@@ -30,7 +30,8 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
-VERSION="1.1"
+# 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
+VERSION="1.2"
 export GAL_COLLECT_VERSION="$VERSION"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
 HOST_TAG="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9' '_' | cut -c1-20)"
@@ -284,6 +285,50 @@ def pf8_pick(ents, size):
         out.append((name, off, sz)); total += sz
     return out
 
+BGI_IMG_EACH_MAX = 6 * MB      # 单张样本图上限
+BGI_IMG_TOTAL_MAX = 48 * MB    # 一个 data*.arc 里样本图的累计上限
+
+def bgi_samples(f, size):
+    """BURIKO ARC20（'BURIKO ARC20' + u32 条目数 + 每条 0x80：名字 0x60 + u32 偏移 + u32 大小）：返回 (索引字节, [(名字, 偏移, 大小)], 目录清单文本)；解析不了返回 None。
+    CompressedBG 头 0x30：魔数 16 + u16 宽 + u16 高 + u32 位数 + … + u16 版本(0x2e)。挑选：立绘（32 位、不比宽矮）按名字前缀分散（同前缀最多 3 张）10 张、背景（24 位、宽 >= 640）4 张、version 2 的 4 张、32 位小图（宽 <= 256）4 张。"""
+    f.seek(0); head = f.read(16)
+    if len(head) < 16 or head[:12] != b'BURIKO ARC20': return None
+    cnt = struct.unpack('<I', head[12:16])[0]
+    if cnt <= 0 or cnt > 200000 or 16 + cnt * 0x80 > size: return None
+    f.seek(0); idx = f.read(16 + cnt * 0x80); base = 16 + cnt * 0x80; ents = []
+    for i in range(cnt):
+        rec = idx[16 + i * 0x80:16 + (i + 1) * 0x80]
+        name = rec[:0x60].split(b'\0', 1)[0].decode('cp932', 'replace')
+        off, sz = struct.unpack('<II', rec[0x60:0x68])
+        if base + off + sz > size: continue
+        ents.append((name, base + off, sz))
+    imgs = []; lines = ['name\toffset\tsize\twidth\theight\tbpp\tversion\n']
+    for name, off, sz in ents:
+        if sz < 0x30: continue
+        f.seek(off); h = f.read(0x30)
+        if h[:15] != b'CompressedBG___': continue
+        w, hh, bpp = struct.unpack('<HHi', h[0x10:0x18]); ver = struct.unpack('<H', h[0x2e:0x30])[0]
+        imgs.append((name, off, sz, w, hh, bpp, ver)); lines.append('%s\t%d\t%d\t%d\t%d\t%d\t%d\n' % (name, off, sz, w, hh, bpp, ver))
+    chosen = {}
+    def take(cands, limit, key=None):
+        seen = {}; n = 0
+        for c in cands:
+            if n >= limit: break
+            if c[0] in chosen or c[2] > BGI_IMG_EACH_MAX: continue
+            k = key(c) if key else None
+            if k is not None and seen.get(k, 0) >= 3: continue   # 同一个名字前缀最多 3 张
+            seen[k] = seen.get(k, 0) + 1; chosen[c[0]] = c; n += 1
+    prefix = lambda c: re.sub(r'[\d_].*$', '', c[0].lower())[:6]
+    take(sorted((c for c in imgs if c[5] == 32 and c[4] >= c[3] * 0.9 and c[3] > 256), key=lambda c: -c[2]), 10, prefix)
+    take(sorted((c for c in imgs if c[5] == 24 and c[3] >= 640), key=lambda c: c[2]), 4, prefix)
+    take([c for c in imgs if c[6] >= 2], 4)
+    take([c for c in imgs if c[5] == 32 and c[3] <= 256], 4, prefix)
+    out = []; total = 0
+    for c in chosen.values():
+        if total + c[2] > BGI_IMG_TOTAL_MAX: continue
+        out.append((c[0], c[1], c[2])); total += c[2]
+    return idx, out, ''.join(lines)
+
 def main():
     games = [g for g in walk_games() if not ONLY or ONLY.search(os.path.relpath(g, root))]
     say('游戏根 %d 个' % len(games))
@@ -339,6 +384,19 @@ def main():
                                 ti = tarfile.TarInfo('%s/%s.__%s_at%d_of%d' % (gid, e.rel, name, off, e.size)); ti.size = len(data); ti.mtime = e.mtime
                                 tar.addfile(ti, io.BytesIO(data)); stored += len(data)
                                 mf.write('%s\t%s\t%s\t%s\t%d\t%d\t%s\n' % (gid, e.rel, name, rule, e.size, len(data), hashlib.sha256(data).hexdigest()))
+                            if rule == 'bgi:data':   # 太大只收了头尾：再按 ARC20 索引补收样本图 + 图的目录清单
+                                got = bgi_samples(f, e.size)
+                                if got is not None:
+                                    idx, picked, catalog = got
+                                    cat = catalog.encode('utf-8')
+                                    ti = tarfile.TarInfo('%s/%s.__bgi/__catalog.tsv' % (gid, e.rel)); ti.size = len(cat); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(cat)); stored += len(cat)
+                                    mf.write('%s\t%s\tbgicatalog\t%s\t%d\t%d\t%s\n' % (gid, e.rel, rule, e.size, len(cat), hashlib.sha256(cat).hexdigest()))
+                                    for name, off, sz in picked:
+                                        f.seek(off); data = f.read(sz)
+                                        if len(data) != sz: continue
+                                        ti = tarfile.TarInfo('%s/%s.__bgi/%s' % (gid, e.rel, re.sub(r'[\\/:*?"<>|]', '_', name))); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data)); stored += len(data)
+                                        mf.write('%s\t%s\tbgiimage\t%s\t%d\t%d\t%s\n' % (gid, e.rel + ':' + name, rule, sz, len(data), hashlib.sha256(data).hexdigest()))
+                                    say('   bgi %s：目录清单 + 样本图 %d 张' % (e.rel, len(picked)))
                     total += stored; picked_bytes += stored
                 except OSError as ex:
                     say('  ! 读不了 %s: %s' % (e.rel, ex)); mf.write('%s\t%s\tERROR\t%s\t%d\t0\t%s\n' % (gid, e.rel, rule, e.size, ex))
