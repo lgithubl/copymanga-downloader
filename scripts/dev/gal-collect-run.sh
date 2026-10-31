@@ -30,8 +30,9 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.2"
+VERSION="1.3"
 export GAL_COLLECT_VERSION="$VERSION"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
 HOST_TAG="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9' '_' | cut -c1-20)"
@@ -193,7 +194,7 @@ def pick(items, eng):
                     elif base == 'resources.assets' or re.fullmatch(r'sharedassets\d+\.assets', base): add(e, 'full', 'unity:assets')
                     elif rest.startswith('streamingassets/') and base.endswith(('.json', '.txt', '.csv', '.bytes', '.xml')) and e.size <= 2 * MB: add(e, 'full', 'unity:streaming')
                 if low.startswith('archives/') and base.endswith('.arc'): add(e, 'full', 'unity:archives')
-                if BINARIES and base in ('gameassembly.dll', 'unityplayer.dll') and e.size <= 400 * MB: add(e, 'full', 'unity:binary')
+                if (base == 'gameassembly.dll' and e.size <= 120 * MB) or (BINARIES and base in ('gameassembly.dll', 'unityplayer.dll') and e.size <= 400 * MB): add(e, 'full', 'unity:binary')
             elif en == 'chakra':
                 if re.fullmatch(r'arc\d\d\.dat', base): add(e, 'full', 'chakra:arc')
                 elif low.startswith('resources/') and base.endswith('.dat') and e.size <= 20 * MB: add(e, 'full', 'chakra:res')
@@ -329,6 +330,60 @@ def bgi_samples(f, size):
         out.append((c[0], c[1], c[2])); total += c[2]
     return idx, out, ''.join(lines)
 
+SAMPLE_EACH_MAX = 3 * MB
+SAMPLE_TOTAL_MAX = 24 * MB
+
+def spread_pick(ents, n=8):
+    """ents：[(标签, 偏移, 大小)]，取大小在 1KB~SAMPLE_EACH_MAX 之间、沿着条目顺序均匀分布的 n 个，累计 ≤ SAMPLE_TOTAL_MAX。"""
+    ok = [e for e in ents if 1024 <= e[2] <= SAMPLE_EACH_MAX]
+    if not ok: return []
+    step = max(1, len(ok) // n); out = []; total = 0
+    for e in ok[::step][:n]:
+        if total + e[2] > SAMPLE_TOTAL_MAX: break
+        out.append(e); total += e[2]
+    return out
+
+def arcfam_samples(f, size):
+    """自有 arc：u32 LE 头大小 + 条目 [u8 名字长, 名字(混淆), u32 BE 大小, u32 BE 原大小, u32 BE 偏移]。返回 (目录清单文本, [(标签, 偏移, 大小)])：清单带每个条目开头 16 字节（认格式用）。"""
+    f.seek(0); h = f.read(4)
+    if len(h) < 4: return None
+    hs = struct.unpack('<I', h)[0]
+    if hs <= 0 or hs > size or hs > 64 * MB: return None
+    f.seek(0); b = f.read(hs + 4); p = 4; ents = []
+    try:
+        while p < hs + 4:
+            n = b[p]; raw = b[p + 1:p + 1 + n]; p += 1 + n
+            s1, s2, off = struct.unpack('>III', b[p:p + 12]); p += 12
+            ents.append((raw, s1, s2, off))
+    except (IndexError, struct.error):
+        return None
+    if p != hs + 4: return None
+    lines = ['rawname_hex\tsize\torig_size\toffset\thead16\n']; picks = []
+    for i, (raw, s1, s2, off) in enumerate(ents):
+        head = b''
+        if off + 16 <= size and s1 >= 0:
+            f.seek(off); head = f.read(16)
+        lines.append('%s\t%d\t%d\t%d\t%s\n' % (raw.hex(), s1, s2, off, head.hex()))
+        if off + s1 <= size: picks.append(('%05d' % i, off, s1))
+    return ''.join(lines), spread_pick(picks)
+
+def xfl_samples(f, size):
+    """XFL（LB）：'LB' 01 00 + u32 表大小 + u32 条目数 + 条目 [name(0x20) + u32 偏移(从表尾起) + u32 大小]。"""
+    f.seek(0); h = f.read(12)
+    if len(h) < 12 or h[:2] != b'LB': return None
+    tbl, cnt = struct.unpack('<II', h[4:12])
+    if cnt <= 0 or cnt > 2000000 or tbl != cnt * 0x28 or 12 + tbl > size: return None
+    f.seek(12); t = f.read(tbl); base = 12 + tbl
+    lines = ['name\toffset\tsize\thead16\n']; picks = []
+    for i in range(cnt):
+        r = t[i * 0x28:(i + 1) * 0x28]; name = r[:0x20].split(b'\0')[0].decode('cp932', 'replace')
+        off, sz = struct.unpack('<II', r[0x20:0x28])
+        head = b''
+        if base + off + 16 <= size: f.seek(base + off); head = f.read(16)
+        lines.append('%s\t%d\t%d\t%s\n' % (name, off, sz, head.hex()))
+        if base + off + sz <= size: picks.append((name, base + off, sz))
+    return ''.join(lines), spread_pick(picks)
+
 def main():
     games = [g for g in walk_games() if not ONLY or ONLY.search(os.path.relpath(g, root))]
     say('游戏根 %d 个' % len(games))
@@ -384,6 +439,18 @@ def main():
                                 ti = tarfile.TarInfo('%s/%s.__%s_at%d_of%d' % (gid, e.rel, name, off, e.size)); ti.size = len(data); ti.mtime = e.mtime
                                 tar.addfile(ti, io.BytesIO(data)); stored += len(data)
                                 mf.write('%s\t%s\t%s\t%s\t%d\t%d\t%s\n' % (gid, e.rel, name, rule, e.size, len(data), hashlib.sha256(data).hexdigest()))
+                            if rule in ('arcfam:other', 'xfl:index'):   # 只收了头（尾）：再补一份「条目清单（含每个条目开头 16 字节）」+ 几个样本条目，认图片 / 声音 / 脚本格式用
+                                got = arcfam_samples(f, e.size) if rule == 'arcfam:other' else xfl_samples(f, e.size)
+                                if got is not None:
+                                    catalog, picked = got; cat = catalog.encode('utf-8')
+                                    ti = tarfile.TarInfo('%s/%s.__samples/__catalog.tsv' % (gid, e.rel)); ti.size = len(cat); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(cat)); stored += len(cat)
+                                    mf.write('%s\t%s\tcatalog\t%s\t%d\t%d\t%s\n' % (gid, e.rel, rule, e.size, len(cat), hashlib.sha256(cat).hexdigest()))
+                                    for label, off, sz in picked:
+                                        f.seek(off); data = f.read(sz)
+                                        if len(data) != sz: continue
+                                        ti = tarfile.TarInfo('%s/%s.__samples/%s' % (gid, e.rel, re.sub(r'[\\/:*?"<>|]', '_', label))); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data)); stored += len(data)
+                                        mf.write('%s\t%s\tsample\t%s\t%d\t%d\t%s\n' % (gid, e.rel + ':' + label, rule, sz, len(data), hashlib.sha256(data).hexdigest()))
+                                    say('   %s %s：清单 %d 行 + 样本 %d 个' % (rule.split(':')[0], e.rel, catalog.count(chr(10)) - 1, len(picked)))
                             if rule == 'bgi:data':   # 太大只收了头尾：再按 ARC20 索引补收样本图 + 图的目录清单
                                 got = bgi_samples(f, e.size)
                                 if got is not None:
