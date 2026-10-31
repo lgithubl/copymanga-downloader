@@ -1024,7 +1024,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 推断成分：引擎里预乘标志位后续在哪些地方被用到，没有逐处追完；「还原成直通就对」是根据加载器标志 + 腮红帧的像素数据（rgb ≈ 粉色 × alpha）得出的。
 - 行为：hybrid 按需取出和 files 展开的字节一致；`CONTAINER_FORMAT_VERSION = 5`，旧缓存会自动重建。
 
-## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.27.0）
+## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.28.0）
 
 - **依据**：公开资料，没有逆向 exe——`morkt/GARbro` 的 `ArcFormats/Ethornell`（BURIKO ARC20、DSC FORMAT 1.00、CompressedBG、BW）和 `Cytlan/openbgi` 的 `docs/scenario.md`（`BurikoCompiledScriptVer1.00` 的容器和 token 机）。样本：三个游戏（トリプルペアリング / FD / 両腕が折れたので…）的 `Archive/data0*.arc`。
 - **目录**：`<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，规则里跳过）, sysgrp.arc, Archive/data0*.arc}`。`data01xxx` = DSC 压缩的剧本、`data02xxx` = CompressedBG 图、`data03xxx~04xxx` = BW（Ogg）声音；条目名没有扩展名，**按内容认**（`containers.format: 'buriko'`）。
@@ -1042,6 +1042,21 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - CompressedBG **version 2 已按 GARbro 移植**（`bgi-cbg2.mjs`：DCT 块 + 哈夫曼 + alpha），但样本里全是 version 1，**没对过真实文件**；只和自带编码器（系数级往返、平坦块数值、alpha 回指、裁剪填充）对过；浮点按 double 算，和 GARbro 的 float 可能有 ±1 的差。DSC 的 `BurikoAnimation` 动画表等不是剧本的条目跳过。
   - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
 - **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
+
+## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.28.0）
+
+- **依据**：自己在采集的真实游戏上核对（g13《妹(姉)は兄(弟)の性癖を歪ませたい！》，`yugamase.pfs` + `yugamase.pfs.000`，83 个剧本）。没有逆向 exe。
+- **pf8 档案**（`web/library/gal/pf8.mjs`）：头 `pf8` + u32 索引大小 + u32 条目数；索引块 = 文件 [7, 7 + 索引大小)；条目 = u32 名字长 + 名字（utf-8，`\` 分隔）+ u32 0 + u32 偏移 + u32 大小；加密 = 条目内容逐字节 XOR `key[i % 20]`，`key = SHA1(索引块)`。两个档案（23747 + 623 条）的索引解析后偏移 / 大小都落在文件内，脚本解密后是可读文本。
+- **展开**（`config.containers`，`format: pf8`、`flat: true`、只支持 hybrid、`scan: ['.']`、规则 `\.pfs(\.\d+)?$`）：`.ast` 解密后展开到 `<根>/arc/script/<pfs 名>/<脚本>.ast`（`yugamase.pfs` → `yugamase/`，`.pfs.000` → `yugamase_000/`，互不覆盖）；图 / 声音 / `.ogv` 不展开，虚拟路径 = `arc/res/<档案里的路径>`（如 `arc/res/image/bg/bg01a.png`），被请求时才解密取出，**放进缓存目录 `cache/gal-arc-res`（有上限的 LRU），不写进媒体目录**；lua / csv / psb 等不处理。
+- **脚本结构**：`ast = { block_00000 = { {命令…}, text = { vo = {…}, ja = { { name = {…}, "一行", {"rt2"} } } }, select = { ja = {…} }, linknext, linkback }, …, label = { top = { block } } }`；沿 `linknext` 从 `label.top.block` 走。
+- **映射**：`text.ja` → speaker（`name` 最后一项）+ text（`rt2` 之间换行）；`text.vo` → voice（`sound/vo/<ch>/` 或 `sound/vobin/<ch>/`）；`bg`（`file` + `path`：`:bg/` → `image/bg/`，`:ev/<组>/` → `image/ev/<组>/`）→ bg，找不到图按同名 `.ogv` 找 → movie（循环），`black` / `white` 没有图 = 纯色；`fg`（`mode = 2`）→ stand，`mode = -2` → standOff；`bgm` / `se` / `ex func=wait`；`select`（每个 `{"select", file}` = 一个选项跳去的脚本，文字在 `select.ja`）→ choice + 带 `when` 的 goto（服务端按名字补 node）；最后一个 block 的 `excall` → `scene.next`。
+- **样本核对**（83 个剧本全部解析 + 走完，所有 block 都走到）：16879 句台词、语音 6857 / 6858 找到、图 5271 / 5271 找到（441 个是 `.ogv` 事件视频）、2 个选择点，选项 goto 的目标脚本都在；用真实脚本重新打成 pf8 后整条链（导入 → gal-layout → 列表 83 项 → 场景 → 资源）通。
+- **推断 / 没验证**：
+  - 立绘：游戏本身用 E-mote（`image/fg/*.psb`，30~67MB 一个），浏览器放不了，这里改用 `image/fg/_blog/<file>/<face>.png`（脚本里 3209 次 `fg` 全部有同名 png）。**这些 png 是不是适合当立绘（尺寸 / 裁切 / 是否带透明）没有样本验证**（采集里没有图）；`x`（±280 / ±150）按「相对画面中心的偏移」处理，`mx / size / lv / id / always` 不用，`mode = 1 / -1` 含义不明、忽略。
+  - `cgdel`（171）、`extrans`（过渡）、`quake`、`flash`、`fgf / fgact`（立绘动作）、`scene / evset`（回想）、`msgoff` 等记进 `stats.ignored`，不渲染。
+  - `excall` 带 `label` / `cond` 的（调用别的脚本里的标签）只记 `stats.links`；不在最后一个 block 的 `excall` 不当 `scene.next`。
+  - 只支持 `pf8`（`pf6` 等老版本魔数不对，gal-layout 不认领）。新导入时 `scriptCount` 是 0（展开在第一次浏览才做），浏览过一次再「刷新 json」才有数。
+- **自测**：`node scripts/dev/gal-artemis-selftest.mjs`（合成数据，`make-artemis-fixture.mjs` 的 `buildPf8` / `astOf`）。
 
 ### AdvHD 的跳转：选项跳到别的脚本（`goto`）/ 看完接着播（`scene.next`）
 

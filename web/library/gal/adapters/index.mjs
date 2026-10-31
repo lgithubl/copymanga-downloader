@@ -2,6 +2,7 @@
 // 需要查别的文件才能解析的格式（别名表、图片目录…）再实现 contextFiles / contextDirs / prepare，见 ../context.mjs。
 import { advhdWs2Adapter } from './advhd-ws2.mjs'
 import { artwhirlJsonAdapter } from './artwhirl-json.mjs'
+import { artemisAstAdapter } from './artemis-ast.mjs'
 import { bgiBsAdapter } from './bgi-bs.mjs'
 import { bokusenJsonAdapter } from './bokusen-json.mjs'
 import { girlsCreationTagAdapter } from './girlscreation-tag.mjs'
@@ -33,6 +34,7 @@ registerGalAdapter(tyranoKsAdapter)           // TyranoScript .ks（*start + [ch
 registerGalAdapter(girlsCreationTagAdapter)   // 标签式脚本（<NAME_PLATE> / <PAUSE>），独有写法，不会和别的格式抢
 registerGalAdapter(grenzeXmlAdapter)          // <easy_dialog-N id= next_id= …/> 行，独有写法，不会和别的格式抢
 registerGalAdapter(utageBookAdapter)          // Utage 工作簿 JSON（importGridList + Command/Arg1 表头），独有写法
+registerGalAdapter(artemisAstAdapter)         // Artemis（artemis::ast）：containers 从 pf8 解密展开的 .ast（Lua 表）脚本
 registerGalAdapter(bgiBsAdapter)              // BGI / Ethornell（bgi::bs）：containers 从 BURIKO ARC20 解出来的 {"format":"bgi-bs/1"…} 事件流，独有写法
 registerGalAdapter(advhdWs2Adapter)           // WillPlus AdvHD（advhd::ws2）：containers 从 .arc 解出来的 {"format":"advhd-ws2/1"…} 指令流，独有写法
 registerGalAdapter(otogiJsonAdapter)          // Otogi Frontier R：{"Id":N,"Title":…,"MSceneDetails":[ / {"Id":N,"Description":…,"MAdultDetails":[（无扩展名的 JSON），独有写法

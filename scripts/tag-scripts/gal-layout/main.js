@@ -37,9 +37,9 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { open, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 
 const ADAPTER_OPTIONS_BYTES = 16384   // 引擎 config.mjs 的 ADAPTER_OPTIONS_MAX.perAdapter
@@ -772,6 +772,76 @@ export const ADAPTER_RULES = {
     picSize: { '拡大': null, '通常': null, '2': null, '立ち絵全消え': null },
     backVoice: { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' },
     scene: { split: 'chains', forkPolicy: 'merge' },
+  },
+  // artemis::ast：Artemis 家族的脚本适配器（.ast = Lua 表 → 场景）。抄自 web/library/gal/adapters/artemis-ast.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'artemis::ast': {
+    "resDir": "arc/res",
+    "stage": [
+      1280,
+      720
+    ],
+    "colorImages": [
+      {
+        "match": "^black$",
+        "color": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "match": "^white$",
+        "color": [
+          255,
+          255,
+          255
+        ]
+      }
+    ],
+    "speaker": {
+      "strip": []
+    },
+    "imageDirs": {
+      "bg": "image/bg",
+      "ev": "image/ev",
+      "sd": "image/sd",
+      "sys": "image/sys"
+    },
+    "imageExts": [
+      "png",
+      "jpg",
+      "jpeg",
+      "webp"
+    ],
+    "videoExts": [
+      "ogv",
+      "webm",
+      "mp4"
+    ],
+    "audioExts": [
+      "ogg",
+      "flac",
+      "wav",
+      "mp3"
+    ],
+    "bgmDir": "sound/bgm",
+    "seDir": "sound/se",
+    "voiceDirs": [
+      "sound/vo",
+      "sound/vobin"
+    ],
+    "stand": {
+      "enabled": true,
+      "dir": "image/fg/_blog",
+      "ext": "png",
+      "align": "center",
+      "useX": true
+    },
+    "wait": {
+      "enabled": true,
+      "max": 10
+    },
+    "extraDirs": []
   },
   // bgi::bs：BGI / Ethornell 家族的脚本适配器（BurikoCompiledScript 事件流 → 场景）。抄自 web/library/gal/adapters/bgi-bs.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'bgi::bs': {
@@ -1597,6 +1667,29 @@ export const LAYOUTS = {
     cover: [],
     notes: ['arc 在第一次浏览时由服务端展开剧本到 <根>/arc/script/（图 / 声音不展开，被请求时才取、才转格式；之后按 arc 的大小 + 修改时间判断要不要重做）', '剧本是「执行」一遍得到的事件序列：选择（SelectEx）按选项分支、汇合点之后一份；条件跳转的值未知时按 0（没走到的分支在 stats.run 里看不到，见 README 的 BGI 一节）', '立绘的位置 / 大小没有样本验证（见适配器开头的推断一栏）'],
   },
+  // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
+  //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；
+  //   图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<档案里的路径>，如 arc/res/image/bg/bg01a.png），被请求时才解密取出。
+  artemis: {
+    title: 'Artemis（pf8 + ast 脚本）', kind: 'artemis', detector: 'artemis', autoOrder: 139.5, family: 'artemis::',   // 紧跟 bgi，uviewer（通用）之前；探测时还要看 .pfs 的魔数是 pf8
+    bases: [''], searchDepth: 3,
+    anchors: ['/\\.pfs$/i'], siblings: [], markers: [],
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res'],
+    adapters: ['artemis::ast'],
+    adapterOptions: { 'artemis::ast': { resDir: { path: ['arc/res'] } } },
+    ruleTables: ['artemis::ast'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},
+      limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'artemis-ast', scriptExt: 'ast', mode: 'hybrid', format: 'pf8', flat: true, rules: [{ match: '\\.pfs(?:\\.\\d+)?$' }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['ast'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.ast', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['pf8 在第一次浏览时由服务端展开脚本到 <根>/arc/script/（图 / 声音不展开，被请求时才解密取出放进缓存目录；之后按档案的大小 + 修改时间判断要不要重做）', '立绘用 image/fg/_blog/<角色>/<表情>.png（游戏本身的立绘是 E-mote psb，浏览器放不了）；位置 / 大小没有对照画面（见适配器开头的推断一栏）'],
+  },
   // ---- WillPlus AdvHD（ADVPlayerHD）引擎家族：game.id = advhd::<游戏>（任何以 advhd:: 开头的 id 都走这一项，不用每个游戏写一条；某个游戏真有差异时再加 'advhd::<游戏>': { extends: 'advhd', … } 或用选项 layouts 覆盖）。
   //   目录：<根>/{Script*.arc, Rio*.arc（剧情 ws2）, Chip*.arc / Graphic.arc / SysGraphic.arc（图）, Bgm.arc / Se*.arc / Voice*.arc（声音）, AdvHD.exe}。arc 由引擎（config.containers）在服务端读、展开到 <根>/arc/，剧情 = arc/script/<容器>/<脚本>.advhd（.ws2 解成指令流 JSON），资源 = arc/res/<容器>/…
   //   哪些容器 / 条目展开：engine.containers.rules（容器名正则 → skip 黑名单 / kinds / include / exclude）。新游戏的容器名不一样（Rio2.arc / Voice3.arc…）默认就收；不想要的加一条 skip。
@@ -2053,6 +2146,7 @@ const DETECTORS = {
   otogi: (scope) => detectOtogi(scope),
   advhd: (scope) => detectAdvhd(scope),
   bgi: (scope) => detectBgi(scope),
+  artemis: (scope) => detectArtemis(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2302,8 +2396,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: value.format === 'buriko' ? 'buriko' : 'willplus', flat: value.flat === true,
-        mode: value.format === 'buriko' || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: value.format === 'buriko' ? 'buriko' : value.format === 'pf8' ? 'pf8' : 'willplus', flat: value.flat === true,
+        mode: value.format === 'buriko' || value.format === 'pf8' || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -2856,6 +2950,30 @@ async function detectBgi(scope) {
   found.kind = entry.kind || 'bgi'
   const arcs = (await listNames(path.join(media, ...splitRel(join(base, 'Archive'))))).filter((n) => /\.arc$/i.test(n))
   logs.push(`BGI 游戏根：${base || '.'}；Archive 里 ${arcs.length} 个容器；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// ---- Artemis 家族：见 LAYOUTS.artemis。id：声明了 game.id 就用它（artemis::<游戏>），没声明 = artemis::<目录名的小写字母数字>；pf8 的展开由引擎做，这里只写配置（路径相对根）。没声明时要求 .pfs 的魔数是 pf8
+async function detectArtemis(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  const pfs = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.pfs(\.\d+)?$/i.test(n)).sort()
+  let magic = ''
+  if (pfs.length) {
+    try { const h = await open(path.join(media, ...splitRel(join(base, pfs[0]))), 'r'); try { const b = Buffer.alloc(3); await h.read(b, 0, 3, 0); magic = b.toString('latin1') } finally { await h.close() } } catch { /* 读不了 = 不是 */ }
+  }
+  if (magic !== 'pf8') { if (declared) logs.push(`Artemis：${pfs[0] || '.pfs'} 的魔数不是 pf8（${JSON.stringify(magic)}），这个版本只支持 pf8`); return null }
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `artemis::${slug || 'game'}`
+  found.kind = entry.kind || 'artemis'
+  logs.push(`Artemis 游戏根：${base || '.'}；pf8 档案 ${pfs.length} 个（${pfs.slice(0, 4).join(' / ')}）；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
 }
