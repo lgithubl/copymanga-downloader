@@ -4333,6 +4333,7 @@ h2 {
 .gal-card-thumb img { display: block; height: 100%; object-fit: cover; width: 100%; }
 .gal-card-thumb.empty { background: linear-gradient(135deg, var(--site-cover), var(--site-border)); }
 .gal-card-badge { background: rgba(8, 12, 24, 0.78); border-radius: 4px; color: #fff; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 6px; position: absolute; right: 6px; text-transform: uppercase; top: 6px; }
+.gal-card-carousel.partial { background: rgba(120, 70, 0, 0.85); pointer-events: auto; }
 .gal-card-carousel { background: rgba(8, 12, 24, 0.78); border-radius: 4px; bottom: 6px; color: #fff; font-size: 11px; line-height: 1; padding: 3px 6px; pointer-events: none; position: absolute; left: 6px; }
 .gal-card-progress { bottom: 6px; left: 6px; position: absolute; }
 .gal-card-title { -webkit-box-orient: vertical; display: -webkit-box; font-size: 14px; font-weight: 600; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }

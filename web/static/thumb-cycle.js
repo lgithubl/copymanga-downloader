@@ -50,7 +50,8 @@ export function attachThumbCycle({ target, img, urls, coverAt = 0, hover = DEFAU
   let home = ''
   // 系统「减少动态效果」：只挡 auto（不用悬停、自己一直在换图）；悬停轮播是用户主动触发的、只是换一张图（没有动画），不挡——
   // 不然 Windows 关了「动画效果」的机器上轮播永远不动，还没有任何提示
-  const reduced = () => hover.mode === 'auto' && Boolean(win.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+  // 「更多」里用户明确选了「自动」（hover.explicit）= 用户要它动，不挡；只有跟随配置的 auto 才让路
+  const reduced = () => hover.mode === 'auto' && !hover.explicit && Boolean(win.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
   const delay = () => range[0] + rand() * (range[1] - range[0])
   const preload = (url) => new Promise((resolve) => { const probe = new win.Image(); probe.onload = () => resolve(true); probe.onerror = () => resolve(false); probe.src = url })
 

@@ -77,6 +77,34 @@ try {
         console.log('请求', J(reqs.slice(-12)))
         check('悬停卡片 10 秒内，封面 <img> 的地址至少换过一次（轮播真的在动）', seen.size >= 2, J([...seen].map((x) => x.slice(0, 80))))
         check('没有页面错误', errors.length === 0, J(errors))
+        // 「更多」里明确选了「自动」：系统开了「减少动态效果」也照样自己轮播（用户要它动）
+        {
+          const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' })
+          await c2.addInitScript(() => { localStorage.setItem('copymanga.immersivePref', JSON.stringify({ gal: false })); localStorage.setItem('gal.thumbCarousel', 'auto') })
+          const p2 = await c2.newPage()
+          await p2.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(rio1.node)}`)
+          await p2.waitForSelector('.gal-card.is-script')
+          await sleep(3000)
+          const seen2 = new Set()
+          for (let i = 0; i < 40; i++) { await sleep(250); seen2.add(await p2.$eval('.gal-card.is-script img', (e) => e.getAttribute('src') || '').catch(() => '')) }
+          check('更多里选了「自动」+ 系统开了减少动态效果：不用悬停也自己轮播（地址换过）', seen2.size >= 2, J([...seen2].map((x) => x.slice(0, 60))))
+          await c2.close()
+        }
+        // 角标如实显示「已就绪/计划」：额外的渲染图还没取到时是「3/4」（变色），取到后才是「轮播 4 张」
+        {
+          const c3 = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+          await c3.addInitScript(() => localStorage.setItem('copymanga.immersivePref', JSON.stringify({ gal: false })))
+          const p3 = await c3.newPage()
+          await p3.route(/render-thumb/, async (route) => { if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 3500)); await route.continue() })   // 渲染图的 GET 慢 3.5 秒
+          await p3.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(rio1.node)}`)
+          await p3.waitForSelector('.gal-card.is-script .gal-card-carousel')
+          const early = await p3.$eval('.gal-card-carousel', (e) => ({ text: e.textContent, partial: e.classList.contains('partial'), title: e.title }))
+          check('额外的渲染图还没取到：角标是「轮播 3/4 张」、变色、提示说明还在生成（不是直接写 4 张）', /^轮播 \d\/4 张$/.test(early.text) && early.partial && /生成/.test(early.title), J(early))
+          await sleep(9000)
+          const late = await p3.$eval('.gal-card-carousel', (e) => ({ text: e.textContent, partial: e.classList.contains('partial') }))
+          check('都取到之后：角标变成「轮播 4 张」、不再变色', late.text === '轮播 4 张' && !late.partial, J(late))
+          await c3.close()
+        }
       } finally { await browser.close() }
     }
   }

@@ -442,20 +442,40 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       box.append(img)
       // 轮播里除封面外的渲染图：开始轮播时才检查缓存、没有就排队渲染（一个目录最多几张，全部一进列表就渲染太重）
       let extrasDone = false
-      const ensureExtras = renders.length > (ruleCover ? 0 : 1) ? () => {
+      // 角标如实显示「已就绪几张 / 计划几张」：计划 n 张，其余的渲染图还没生成 / 生成失败时轮播只能轮到已有的几张——不能光写计划数
+      const extraRenders = renders.slice(ruleCover ? 0 : 1)
+      const planned = Math.max(item.carousel || 0, Math.min(urls.length, item.carousel || urls.length))
+      let ready = 1 + (urls.length - 1 - extraRenders.length > 0 ? urls.length - 1 - extraRenders.length : 0)   // 封面 + 文件图（已经有的）
+      let failedExtras = 0
+      let badge = null
+      const failReasons = []
+      const paintBadge = () => {
+        if (!badge) return
+        const shown = Math.min(planned, ready)
+        badge.textContent = shown >= planned ? `轮播 ${planned} 张` : `轮播 ${shown}/${planned} 张`
+        badge.classList.toggle('partial', shown < planned)
+        badge.title = shown >= planned ? '' : failedExtras ? `有 ${failedExtras} 张生成失败，轮播只轮得到已有的图：${failReasons.join('；')}` : '其余的图还在生成（生成好会自动加入轮播）'
+      }
+      const ensureExtras = extraRenders.length ? () => {
         if (extrasDone) return
         extrasDone = true
-        renders.slice(ruleCover ? 0 : 1).forEach((r, k) => {
+        extraRenders.forEach((r, k) => {
           fetch(renderUrlOf(r)).then((res) => {
-            if (res.ok) return null
+            if (res.ok) { ready += 1; paintBadge(); return null }
             return thumbRenderer.enqueue({ apiBase, resourceBase: reader.resourceBase, node: r.node || item.node, key: r.key, variant: r.variant || 0, film: r.film || '', filmFrame: r.frame ?? renderCfg.filmFrame ?? 0.5, width: renderCfg.width || 640, scanSteps: renderCfg.scanSteps || 150, seek: renderCfg.seek ?? 0.5, cameraMode: reader.item?.config?.player?.cameraMode || '' })
-              .then((blob) => { urls[k + 1] = URL.createObjectURL(blob) })
-          }).catch(() => {})
+              .then((blob) => { urls[k + 1] = URL.createObjectURL(blob); ready += 1; paintBadge() })
+          }).catch((error) => {
+            if (/已销毁|已经试过/.test(error?.message || '')) return
+            failedExtras += 1
+            failReasons.push(error?.message || String(error))
+            problems.push({ kind: '渲染缩略图失败', title: item.title, node: item.node, lines: [`轮播里的第 ${k + 2} 张：${error?.message || String(error)}`, '下次打开列表会再试一次'] })
+            paintBadge(); refreshDiag()
+          })
         })
       } : null
-      if (item.carousel > 1 || urls.length > 1) { const n = Math.max(item.carousel || 0, Math.min(urls.length, item.carousel || urls.length)); if (n > 1) { const badge = el('span', 'gal-card-carousel', `轮播 ${n} 张`); box.append(badge) } }
+      if (planned > 1) { badge = el('span', 'gal-card-carousel'); box.append(badge); paintBadge() }
       if (ensureExtras) cardExtras.push({ box, start: ensureExtras })
-      if (urls.length > 1) cardCycles.push({ box, img, urls, coverAt, hover: { ...hoverCfg, enabled: true, mode: modeOf(), ...(item.carousel ? { count: item.carousel } : {}) }, isEnabled: hoverOn, onStart: ensureExtras })
+      if (urls.length > 1) cardCycles.push({ box, img, urls, coverAt, hover: { ...hoverCfg, enabled: true, mode: modeOf(), explicit: Boolean(readPref(PREF_MODE)), ...(item.carousel ? { count: item.carousel } : {}) }, isEnabled: hoverOn, onStart: ensureExtras })
     } else {
       box.classList.add('empty')
     }
