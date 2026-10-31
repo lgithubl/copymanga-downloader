@@ -1028,7 +1028,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 
 - **依据**：公开资料，没有逆向 exe——`morkt/GARbro` 的 `ArcFormats/Ethornell`（BURIKO ARC20、DSC FORMAT 1.00、CompressedBG、BW）和 `Cytlan/openbgi` 的 `docs/scenario.md`（`BurikoCompiledScriptVer1.00` 的容器和 token 机）。样本：三个游戏（トリプルペアリング / FD / 両腕が折れたので…）的 `Archive/data0*.arc`。
 - **目录**：`<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，规则里跳过）, sysgrp.arc, Archive/data0*.arc}`。`data01xxx` = DSC 压缩的剧本、`data02xxx` = CompressedBG 图、`data03xxx~04xxx` = BW（Ogg）声音；条目名没有扩展名，**按内容认**（`containers.format: 'buriko'`）。
-- **展开**（`config.containers`，`format: buriko`、`flat: true`、只支持 hybrid）：剧本展开到 `<根>/arc/script/<容器>/<名>.bgi`（事件流 JSON，`bgi-bs/1`）；图 / 声音**不展开**，虚拟路径 = `arc/res/<名>.png|.ogg`（不带容器名，脚本按名字引用），被请求时才从 `.arc` 取出并转格式（CompressedBG → PNG、BW → Ogg）；缩略图（`?w=`）也走这条，原图不落盘。
+- **展开**（`config.containers`，`format: buriko`、`flat: true`、只支持 hybrid）：剧本展开到 `<根>/arc/script/<容器>/<名>.bgi`（事件流 JSON，`bgi-bs/1`）；图 / 声音**不展开**，虚拟路径 = `arc/res/<名>.png|.ogg`（不带容器名，脚本按名字引用），被请求时才从 `.arc` 取出并转格式（CompressedBG → PNG、BW → Ogg），放进缓存目录 `cache/gal-arc-res`（有上限、LRU，CBG → PNG 解码较慢，缓存能复用）；缩略图（`?w=`）直接从 `.arc` 读，原图不落盘。
 - **剧本不是引擎字节码**：是游戏自己的 system 程序解释的 32 位 token 流。这里把它「执行」一遍（栈 + 工作变量 / 标志 + 跳转 / 子程序），游戏命令（≥ 0x100）和库函数（callfn）不执行、只记成事件：`msg`（0x140：文本、说话人）、`_PlayVoice / _PlayBGM / _PlaySE / _DrawScene / _DrawBS / _DrawSPR / _Wait / _FadeBGM …`。
 - **选择**（`SelectEx` / `_SelectEx`）：每个选项各跑一遍（结果放 `lwork(0)`），去掉各分支一开始相同的分发代码，找各分支都经过的第一个地方当汇合点；汇合点之前的事件挂在 choice 的分支里，之后只有一份。分支里再遇到同一个选择点不再分叉（依次取没取过的选项，都取过就结束这一路），避免「选完所有选项才继续」的菜单循环爆炸。分支里有 `jump_scenario` 且没有共同汇合点 = 各走各的（`stats.run.unmerged`）。
 - **跳转**：脚本末尾的 `jump_scenario` = `scene.next`（看完接着播）；分支里的 = 带 `when` 的 `goto`（同 AdvHD 的做法，服务端按名字补 node）。`call_scenario`（调库场景 `_GM` 之类）不跟，只记 `stats.links`。
@@ -1059,7 +1059,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 之前：列表阶段验证封面 / 语音存在时走会解压的 `resolveAsset`，容器（.arc）里每个候选都被解压成原图文件（一张几 MB），卡片再直接显示原图。现在：
   1. 列表阶段的存在性检查（`resolveExists`）只问 `.arc` 的虚拟索引有没有，**不解压**；
   2. 卡片请求带 `w=480`（`CARD_THUMB_WIDTH`）：服务端把图缩成 WebP（`web/library/gal/image-thumb.mjs`，sharp），缓存在 `<DATA_DIR>/cache/gal-img-thumbs/`；来源是磁盘文件就直接缩，是 `.arc` 里的条目就从 `.arc` 读出来缩——**原图不落盘**；
-  3. 播放页取原图（不带 `w`）才照旧落盘。
+  3. 播放页取原图（不带 `w`）：从 `.arc` 取出来放进**缓存目录** `<DATA_DIR>/cache/gal-arc-res/<前两位>/<key>.<扩展名>`（`gal/arc-res-cache.mjs`），**不再写进媒体目录的 `arc/res/`**；总量上限默认 2048MB（环境变量 `GAL_ARC_CACHE_MB`），超过按最久没用淘汰（LRU，命中就刷新 mtime；刚写的 60 秒内不淘汰）；key = `.arc` 路径 / 大小 / mtime + 条目位置 + 转格式 + 格式版本，`.arc` 不变就一直命中。媒体目录里已有的 `arc/res` 旧文件照旧优先使用（可以直接删，会按需重新取）。**以后所有走容器 hybrid 的游戏（AdvHD、BGI、之后新增的引擎）都用这一套，不要再往媒体目录里落盘。**
 - 缓存键 = 来源（`.arc` 路径 / 大小 / 修改时间 + 条目位置，或文件路径 / 大小 / 修改时间）+ 宽度档位（160 / 240 / 320 / 480 / 640 / 960 / 1280）+ 版本。`.arc` 不变就永远命中；不放大小图。
 - 并发：同时最多 2 张在缩（环境变量 `GAL_THUMB_CONCURRENCY`），读 `.arc` 也在槽位里；同一张同时来多次只缩一次；libvips 线程压成 1、内存缓存 32MB；一张失败不影响排队的后面几张。
 - 退回：sharp 没装 / 加载失败 / 图坏了 / 不是图片格式 = 退回原图（和以前一样）。

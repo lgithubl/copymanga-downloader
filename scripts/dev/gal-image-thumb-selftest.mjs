@@ -4,7 +4,7 @@
 //   node scripts/dev/gal-image-thumb-selftest.mjs
 import { randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, stat, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { generateTags } from '../../scripts/tag-scripts/gal-layout/main.js'
@@ -96,11 +96,28 @@ check('PNA 的帧（PNAP）也能缩：WebP、宽 160，保留透明；颜色是
 const onDisk = (await readdir(path.join(media, 'arc/res'), { recursive: true }).catch(() => [])).filter((f) => /^Chip4.*\.(png|webp)$/i.test(f))
 check('缩略图请求一圈下来，arc/res/Chip4 下没有任何图片落盘（只有 PNA 的 index.json）', onDisk.length === 0, J(onDisk))
 
-// 磁盘上已有的文件（比如播放时取过原图）：缩略图直接从文件缩
-const orig = await handler.getResource(id, 'Chip4/BIG.png')   // 不带 w = 原图（会落盘）
-check('不带 w：原图（image/png，字节和 arc 里的一样），并落盘', orig.body.equals(big) && (await exists(path.join(media, 'arc/res/Chip4/BIG.png'))))
+// 不带 w = 原图：从 .arc 取出来放进缓存目录（cache/gal-arc-res），不写进媒体目录
+const orig = await handler.getResource(id, 'Chip4/BIG.png')
+const cached = (await readdir(path.join(dataDir, 'cache', 'gal-arc-res'), { recursive: true }).catch(() => [])).filter((f) => /\.png$/i.test(f))
+check('不带 w：原图（image/png，字节和 arc 里的一样），放进缓存目录 gal-arc-res，媒体目录 arc/res 里没有', (orig.file ? (await readFile(orig.file)) : orig.body).equals(big) && cached.length === 1 && !(await exists(path.join(media, 'arc/res/Chip4/BIG.png'))), J([cached, orig.contentType]))
+const again = await handler.getResource(id, 'Chip4/BIG.png')
+check('再取一次命中缓存（不重复写：缓存里仍是 1 个 png）', ((await readdir(path.join(dataDir, 'cache', 'gal-arc-res'), { recursive: true })).filter((f) => /\.png$/i.test(f))).length === 1 && Boolean(again))
 const t4 = await handler.getResource(id, 'Chip4/BIG.png', { width: 640 })
-check('磁盘上已有的文件：?w=640 从文件缩（宽 640）', (await meta(t4.file)).width === 640)
+check('?w=640 缩略图（宽 640）', (await meta(t4.file)).width === 640)
+{
+  // 缓存上限（LRU）：写满后淘汰最久没用的，刚写的不动
+  const { createArcResCache } = await import('../../web/library/gal/arc-res-cache.mjs')
+  const dir = path.join(work, 'arc-cache-test')
+  const c = createArcResCache({ dir, maxBytes: 250 })
+  const mk = (key) => ({ key: key.repeat(40).slice(0, 40), rel: 'x/a.png', read: async () => Buffer.alloc(100, 1) })
+  const files = []
+  for (const k of ['a', 'b', 'c']) files.push(await c.get(mk(k)))
+  const old = new Date(Date.now() - 3600_000)
+  for (const f of files.slice(0, 2)) await utimes(f, old, old)
+  await c.prune(true)
+  const left = await Promise.all(files.map((f) => exists(f)))
+  check('arc 缓存上限：超过上限淘汰最久没用的（旧的删掉、刚写的保留）', J(left) === J([false, true, true]), J(left))
+}
 // 不是图片 / 视频 frame / 小图不放大
 const ogg = await handler.getResource(id, 'Bgm/BGM01.ogg', { width: 320 })
 check('不是图片（ogg）带 w：忽略 w，照常给原内容', Buffer.isBuffer(ogg.body) && ogg.body.toString() === 'OggS-bgm')

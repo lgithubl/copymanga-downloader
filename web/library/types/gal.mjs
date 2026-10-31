@@ -15,7 +15,8 @@ import { withFileLock } from '../atomic-json-store.mjs'
 import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
-import { ensureContainers, materialize, virtualEntry, virtualHas } from '../gal/containers.mjs'
+import { createArcResCache } from '../gal/arc-res-cache.mjs'
+import { ensureContainers, virtualEntry, virtualHas } from '../gal/containers.mjs'
 import { IMAGE_THUMB_EXT, bucketOf, createImageThumbCache } from '../gal/image-thumb.mjs'
 import { resolveOnDisk } from '../gal/resolve.mjs'
 import { isVideoPath } from '../gal/thumbs.mjs'
@@ -59,6 +60,7 @@ export function normalizeGalOptions(value = {}) {
 export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathExists, getConfig }) {
   const metaRoot = path.join(dataDir, 'library-meta', type)
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
+  const arcRes = createArcResCache({ dir: path.join(dataDir, 'cache', 'gal-arc-res') })   // .arc 里的资源取原图 / 原音频：写这里（有总量上限、LRU），不再写进媒体目录
   const imageThumbs = createImageThumbCache({ dir: path.join(dataDir, 'cache', 'gal-img-thumbs') })   // 卡片 / 画廊的图片缩略图（WebP）
   const frames = createFrameCache({ dir: path.join(dataDir, 'cache', 'gal-thumbs') })   // 视频缩略图（一帧 JPEG）的缓存目录
 
@@ -200,21 +202,30 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     await ensureContainers({ mediaDir: work, config }).catch(() => {})   // 容器（.arc）还没展开就先展开：直接打开资源链接（没经过浏览）也能找到文件
     // 解析顺序（规则全在 gal/resolve.mjs，config.resourceResolve 配）：原路径（资源根依次 + stripPrefixes 去前缀）→ rewrites → extensionFallbacks → normalizeUnicode → 按路径段忽略大小写；
     // 找到的真实路径（realpath）必须在媒体目录内，或在管理员写的 resourceResolve.allowedRoots 内——目录穿越和符号链接逃逸都挡掉。
-    // 容器 hybrid 方式：这个路径如果是还没展开的资源，先从 .arc 里把那一个条目取出来（写成文件），后面就和普通文件一样
+    // 容器 hybrid 方式：磁盘上没有的资源，从 .arc 里取那一个条目放进缓存目录（gal-arc-res，有上限）；媒体目录里已有的文件照旧优先
     const roots = (config.resourceRoots?.length ? config.resourceRoots : ['']).map((root) => String(root || '').replace(/^\.\/?/, '').replace(/\/+$/, ''))
     const wanted = fromMedia ? [rel] : [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))].flatMap((variant) => roots.map((root) => (root ? `${root}/${variant}` : variant)))
     if (wantedOut) wantedOut.push(...wanted)
-    if (!skipMaterialize) await materialize({ mediaDir: work, config, rels: wanted }).catch(() => {})
-    if (fromMedia) {
-      if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
-      const hit = await resolveOnDisk({ work, rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: false })   // ~/ 路径：只认媒体目录内的原路径，不套任何解析规则 / allowedRoots
+    const onDisk = async () => {
+      if (fromMedia) {
+        if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
+        const hit = await resolveOnDisk({ work, rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: false })   // ~/ 路径：只认媒体目录内的原路径，不套任何解析规则 / allowedRoots
+        if (hit) return hit
+        throw bad('资源不存在', 404)
+      }
+      const variants = [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))]
+      const hit = await resolveOnDisk({ work, rootRels: config.resourceRoots, variants, cfg: config.resourceResolve })
       if (hit) return hit
       throw bad('资源不存在', 404)
     }
-    const variants = [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))]
-    const hit = await resolveOnDisk({ work, rootRels: config.resourceRoots, variants, cfg: config.resourceResolve })
-    if (hit) return hit
-    throw bad('资源不存在', 404)
+    if (skipMaterialize) return onDisk()
+    try { return await onDisk() } catch (error) {
+      if (error?.statusCode !== 404) throw error
+      // 容器 hybrid 方式：磁盘上没有、但是 .arc 里有的条目 → 取出来放进缓存目录（不写媒体目录），返回缓存文件
+      const entry = await virtualEntry({ mediaDir: work, config, rels: wanted })
+      if (!entry) throw error
+      return arcRes.get(entry)
+    }
   }
 
   // 列表阶段的存在性检查（封面 / 语音有没有）：磁盘上有就给真实路径；容器（.arc）里还没展开的条目给它将来落盘的路径，不解压——
