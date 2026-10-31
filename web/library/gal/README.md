@@ -1024,6 +1024,22 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 推断成分：引擎里预乘标志位后续在哪些地方被用到，没有逐处追完；「还原成直通就对」是根据加载器标志 + 腮红帧的像素数据（rgb ≈ 粉色 × alpha）得出的。
 - 行为：hybrid 按需取出和 files 展开的字节一致；`CONTAINER_FORMAT_VERSION = 5`，旧缓存会自动重建。
 
+## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.27.0）
+
+- **依据**：公开资料，没有逆向 exe——`morkt/GARbro` 的 `ArcFormats/Ethornell`（BURIKO ARC20、DSC FORMAT 1.00、CompressedBG、BW）和 `Cytlan/openbgi` 的 `docs/scenario.md`（`BurikoCompiledScriptVer1.00` 的容器和 token 机）。样本：三个游戏（トリプルペアリング / FD / 両腕が折れたので…）的 `Archive/data0*.arc`。
+- **目录**：`<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，规则里跳过）, sysgrp.arc, Archive/data0*.arc}`。`data01xxx` = DSC 压缩的剧本、`data02xxx` = CompressedBG 图、`data03xxx~04xxx` = BW（Ogg）声音；条目名没有扩展名，**按内容认**（`containers.format: 'buriko'`）。
+- **展开**（`config.containers`，`format: buriko`、`flat: true`、只支持 hybrid）：剧本展开到 `<根>/arc/script/<容器>/<名>.bgi`（事件流 JSON，`bgi-bs/1`）；图 / 声音**不展开**，虚拟路径 = `arc/res/<名>.png|.ogg`（不带容器名，脚本按名字引用），被请求时才从 `.arc` 取出并转格式（CompressedBG → PNG、BW → Ogg）；缩略图（`?w=`）也走这条，原图不落盘。
+- **剧本不是引擎字节码**：是游戏自己的 system 程序解释的 32 位 token 流。这里把它「执行」一遍（栈 + 工作变量 / 标志 + 跳转 / 子程序），游戏命令（≥ 0x100）和库函数（callfn）不执行、只记成事件：`msg`（0x140：文本、说话人）、`_PlayVoice / _PlayBGM / _PlaySE / _DrawScene / _DrawBS / _DrawSPR / _Wait / _FadeBGM …`。
+- **选择**（`SelectEx` / `_SelectEx`）：每个选项各跑一遍（结果放 `lwork(0)`），去掉各分支一开始相同的分发代码，找各分支都经过的第一个地方当汇合点；汇合点之前的事件挂在 choice 的分支里，之后只有一份。分支里再遇到同一个选择点不再分叉（依次取没取过的选项，都取过就结束这一路），避免「选完所有选项才继续」的菜单循环爆炸。分支里有 `jump_scenario` 且没有共同汇合点 = 各走各的（`stats.run.unmerged`）。
+- **跳转**：脚本末尾的 `jump_scenario` = `scene.next`（看完接着播）；分支里的 = 带 `when` 的 `goto`（同 AdvHD 的做法，服务端按名字补 node）。`call_scenario`（调库场景 `_GM` 之类）不跟，只记 `stats.links`。
+- **样本核对**（g02 / g03 / g07，共约 330 个剧本）：全部能解压 + 执行，没有出错；14 个选择点里 13 个有汇合点。g07 里 3 个系统 / 库脚本（`root_common` 之类，菜单循环）被步数上限截断，事件数另有上限 `MAX_BGI_EVENTS = 100000`（剧情脚本远远不到）。
+- **推断 / 没验证**：
+  - 立绘（`_DrawBS`）的位置 / 大小：x = 第 8 个参数（`0x10000000` = 居中，负 = 左、正 = 右），本体和表情图叠在一起按同一个对齐画；**采集的数据里没有立绘图，没验证过对不对得齐**。
+  - 条件跳转的值如果读到「没设过」的变量按 0 处理，可能走错分支；标志（`lflag`）只模拟了脚本自己写的。
+  - CompressedBG **version 2 没做**（样本里全是 version 1，抛错并说明）；DSC 的 `BurikoAnimation` 动画表等不是剧本的条目跳过。
+  - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——都是按用法猜的。
+- **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
+
 ### AdvHD 的跳转：选项跳到别的脚本（`goto`）/ 看完接着播（`scene.next`）
 
 - 样本（LPSL `Rio1`）里选项全是「跳到别的脚本」（`ShowChoice` 的跳转类型 7，文件名）：`022_00` 的 4 个选项各去 `022_01`～`022_04`，再接到 `TW_/KA_/HI_/MG_000_00` 四条线；`HI_007_00`、`KA_013_00` 等是选项 → 另一条线。脚本结尾的 `NextFile` 几乎每个脚本都有。以前选了只显示一步「→ 脚本 X へ続く」并结束，`NextFile` 只记进 `stats.links`，「下一话」按列表顺序。

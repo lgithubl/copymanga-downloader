@@ -978,6 +978,111 @@
    "walkFiles": 400000
   }
  },
+ "bgi::triplepairing": {
+  "adapterOptions": {
+   "bgi::bs": {
+    "audioExts": [
+     "ogg",
+     "flac",
+     "wav",
+     "mp3"
+    ],
+    "bgFunctions": [
+     "_DrawScene"
+    ],
+    "bgmFunctions": [
+     "_PlayBGM"
+    ],
+    "bustFunctions": [
+     "_DrawBS"
+    ],
+    "clearBustsOnScene": true,
+    "colorImages": [
+     {
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "match": "^BLACK$"
+     },
+     {
+      "color": [
+       255,
+       255,
+       255
+      ],
+      "match": "^WHITE$"
+     }
+    ],
+    "eventImageFunctions": [
+     "_DrawSPR"
+    ],
+    "extraDirs": [],
+    "imageExts": [
+     "png",
+     "jpg",
+     "jpeg"
+    ],
+    "seFunctions": [
+     "_PlaySE",
+     "_PlayStreamSE"
+    ],
+    "speaker": {
+     "strip": []
+    },
+    "stage": [
+     1280,
+     720
+    ],
+    "text": {
+     "stripTags": [
+      "<\\/?C\\d*>",
+      "<\\/?[A-QS-Z]\\w*>"
+     ]
+    },
+    "voiceFunctions": [
+     "_PlayVoice"
+    ],
+    "wait": {
+     "enabled": true,
+     "max": 10
+    }
+   }
+  },
+  "classify": [],
+  "containers": {
+   "dir": "arc",
+   "enabled": true,
+   "flat": true,
+   "format": "buriko",
+   "maxEntries": 200000,
+   "maxTotalMB": 8192,
+   "mode": "hybrid",
+   "rules": [
+    {
+     "match": "^(?:sysprg|system)\\.arc$",
+     "skip": true
+    },
+    {
+     "match": "\\.arc$"
+    }
+   ],
+   "scan": [
+    "Archive",
+    "."
+   ],
+   "scriptDecoder": "bgi-bs",
+   "scriptExt": "bgi"
+  },
+  "limits": {
+   "sampleBytes": 262144,
+   "sampleFiles": 20000,
+   "scriptBytes": 16777216,
+   "walkFiles": 800000
+  },
+  "resourceResolve": {}
+ },
  "bokusen": {
   "adapterOptions": {
    "bokusen-json": {

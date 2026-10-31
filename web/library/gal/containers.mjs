@@ -11,11 +11,12 @@ import { createHash } from 'node:crypto'
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
+import { bwToOgg, cbgToPng, dscDecode, isBurikoScript, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
 import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied）
-export const CONTAINER_FORMAT_VERSION = 5
+export const CONTAINER_FORMAT_VERSION = 6
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -24,8 +25,32 @@ const AUDIO_EXTS = new Set(['ogg', 'flac', 'wav', 'mp3', 'opus', 'm4a'])
 const VIDEO_EXTS = new Set(['mp4', 'webm', 'm4v', 'mov'])
 const SCRIPT_EXTS = new Set(['ws2'])
 
+// BGI（BURIKO ARC20 里的 DSC 压缩剧本）：解压 → 把 token 流「执行」一遍 → 事件流（bgi-bs/1，适配器 bgi::bs 吃它）。不是剧本的 DSC（动画表之类）抛错，调用方当跳过
+const compactEvent = (ev) => {
+  const trim = (args) => { const list = args.map((v) => (typeof v === 'number' || typeof v === 'string' ? v : null)); let end = list.length; while (end > 0 && (list[end - 1] === 0 || list[end - 1] === null)) end--; return list.slice(0, end) }
+  if (ev.k === 'call') return ['c', ev.name, ev.at, trim(ev.args)]
+  if (ev.k === 'cmd') return ev.token === 0x140 ? ['k', ev.token, ev.at, trim(ev.args)] : null
+  if (ev.k === 'sys') return ev.name === 'call_scenario' || ev.name === 'jump_scenario' ? ['s', ev.name, ev.at, trim(ev.args)] : null
+  if (ev.k === 'choice') return ev.branches ? ['x', ev.at, ev.name, ev.options, ev.branches.map((b) => b.map(compactEvent).filter(Boolean)), ev.merge ?? null] : null
+  return null
+}
+const MAX_BGI_EVENTS = 100000
+const BGI_BS_DECODER = {
+  ext: 'bgi',
+  decode(buffer, { arc, name }) {
+    const raw = sniffEntry(buffer.subarray(0, 16)) === 'dsc' ? dscDecode(buffer) : buffer
+    if (!isBurikoScript(raw)) throw new Error('不是 BurikoCompiledScript')
+    const run = runBurikoScript(raw)
+    const events = run.events.map(compactEvent).filter(Boolean)
+    // 系统 / 库脚本（菜单循环之类）可能一跑就是几十万个事件：只留前 MAX_BGI_EVENTS 个，标 truncated（剧情脚本远远不到）
+    let truncated = run.truncated
+    if (events.length > MAX_BGI_EVENTS) { events.length = MAX_BGI_EVENTS; truncated = true }
+    return JSON.stringify({ format: 'bgi-bs/1', arc, name, size: raw.length, imports: run.imports, run: { steps: run.steps, choices: run.choices, merged: run.merged, unmerged: run.unmerged, truncated }, events })
+  },
+}
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
+  'bgi-bs': BGI_BS_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -65,6 +90,27 @@ export const SCRIPT_DECODERS = Object.freeze({
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // ---------- ARC 读取 ----------
+// 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
+const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : readArcIndex(file))
+// buriko 的条目没有扩展名：看内容开头 → { kind, ext, transform }（kind：script / res；''= 不认识，跳过）。res 的 transform 在取出来时做（cbg → png、bw → ogg）
+async function classifyBuriko(handle, entry) {
+  if (entry.size < 8) return { kind: '' }
+  const head = await readRange(handle, entry.offset, Math.min(16, entry.size))
+  const sniff = sniffEntry(head)
+  if (sniff === 'dsc') return { kind: 'script', ext: '', transform: '' }
+  if (sniff === 'cbg') return { kind: 'res', ext: 'png', transform: 'cbg-png' }
+  if (sniff === 'bw') return { kind: 'res', ext: 'ogg', transform: 'bw-ogg' }
+  return { kind: '' }
+}
+// 取出来的字节要不要转：cbg-png（CompressedBG → PNG）/ bw-ogg（去掉 BW 头）；PNAP 的预乘 → 直通另算（unpremultiply）
+function transformData(data, hit) {
+  if (hit.transform === 'cbg-png') return cbgToPng(data)
+  if (hit.transform === 'bw-ogg') return bwToOgg(data)
+  return hit.unpremultiply ? unpremultiplyPng(data).buffer : data
+}
+// 资源（图 / 声音）展开后的相对路径（相对容器目录 cfg.dir）：flat = 所有容器的资源放同一个目录（BGI：脚本按名字引用，不带容器名）
+const resRel = (cfg, stem, name) => (cfg.flat ? `res/${name}` : `res/${stem}/${name}`)
+
 // 返回 { size, entries: [{ name, offset, size }] }；格式不对抛 Error（带原因）
 export async function readArcIndex(file) {
   const handle = await open(file, 'r')
@@ -156,7 +202,7 @@ function compileRules(cfg) {
     gallery: rule.gallery || null,
   }))
 }
-const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.maxEntries, cfg.maxTotalMB])).digest('hex').slice(0, 16)
+const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB])).digest('hex').slice(0, 16)
 const kindOf = (name, scriptKinds) => {
   const ext = extOf(name)
   if (SCRIPT_EXTS.has(ext)) return scriptKinds
@@ -203,7 +249,8 @@ const pnaIndexJson = (layout, converted = false) => JSON.stringify({ magic: layo
 
 // ---------- 展开一个容器 ----------
 async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
-  const { entries } = await readArcIndex(file)
+  const { entries } = await readIndexFor(file, cfg)
+  const buriko = cfg.format === 'buriko'
   const stem = withoutExt(arcName)
   const decoder = SCRIPT_DECODERS[cfg.scriptDecoder]
   const result = { entries: entries.length, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
@@ -213,12 +260,14 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
     for (const entry of entries) {
       const name = safeEntryName(entry.name)
       if (!name) { result.bad.push(entry.name.slice(0, 60)); continue }
-      const kind = kindOf(name, 'script')
+      // buriko（BGI）的条目没有扩展名，按内容分：DSC = 剧本、CompressedBG = 图、BW = 声音（图 / 声音只在 hybrid 的虚拟索引里，取出来时才转）
+      const cls = buriko ? await classifyBuriko(handle, entry) : null
+      const kind = buriko ? cls.kind : kindOf(name, 'script')
       if (!kind || !rule.kinds.has(kind) || (kind === 'pna' && rule.pna === 'skip')) { result.skipped += 1; continue }
       if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) { result.excluded += 1; continue }
       if (entry.size > MAX_ENTRY_BYTES) { result.bad.push(`${name}（${entry.size} 字节太大）`); continue }
       // hybrid（默认）：图 / 声音 / 视频 / PNA 帧不展开（被请求时才从 .arc 读那一个条目，见 materialize）；PNA 只写 index.json（读头和记录表，不读像素）
-      const lazy = cfg.mode !== 'files' && (kind === 'res' || kind === 'pna')
+      const lazy = (cfg.mode !== 'files' || buriko) && (kind === 'res' || kind === 'pna')
       if (lazy && (kind === 'res' || rule.pna === 'raw')) { result.res += 1; result.lazy = (result.lazy || 0) + 1; continue }
       if (lazy) {
         try {
@@ -237,8 +286,13 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
       const data = await readRange(handle, entry.offset, entry.size)
       if (kind === 'script') {
         if (!decoder) throw new Error(`没有脚本解码器 ${cfg.scriptDecoder}`)
-        const base = withoutExt(name)
-        const text = decoder.decode(data, { arc: stem, name: base })
+        const base = buriko ? name : withoutExt(name)
+        let text
+        try { text = decoder.decode(data, { arc: stem, name: base }) } catch (error) {
+          if (!buriko) throw error
+          result.skipped += 1; result.notScript = (result.notScript || 0) + 1   // DSC 里不是剧本的（动画表之类）
+          continue
+        }
         const target = path.join(outRoot, 'script', stem, ...`${base}.${cfg.scriptExt || decoder.ext}`.split('/'))
         await mkdir(path.dirname(target), { recursive: true })
         await writeFile(target, text)
@@ -319,7 +373,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
   for (const { arcName, file, rule } of arcs) {
     let entries
-    try { entries = (await readArcIndex(file)).entries } catch { continue }
+    try { entries = (await readIndexFor(file, cfg)).entries } catch { continue }
     if (entries.length > cfg.maxEntries) continue
     const stem = withoutExt(arcName)
     const base = `${cfg.dir}/res/${stem}`
@@ -328,6 +382,15 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
       for (const entry of entries) {
         const name = safeEntryName(entry.name)
         if (!name) continue
+        if (cfg.format === 'buriko') {
+          // BGI：图 / 声音按内容认（CompressedBG → .png、BW → .ogg），虚拟路径 = <dir>/res/<名字>.<扩展名>（flat：不带容器名）；取出来时才转格式
+          if (entry.size > MAX_ENTRY_BYTES || !rule.kinds.has('res')) continue
+          if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
+          handle ||= await open(file, 'r')
+          const cls = await classifyBuriko(handle, entry).catch(() => ({ kind: '' }))
+          if (cls.kind === 'res') add(`${cfg.dir}/${resRel(cfg, stem, `${name}.${cls.ext}`)}`, { file, offset: entry.offset, size: entry.size, transform: cls.transform })
+          continue
+        }
         const kind = kindOf(name, 'script')
         if (!kind || kind === 'script' || !rule.kinds.has(kind) || (kind === 'pna' && rule.pna === 'skip')) continue
         if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
@@ -389,7 +452,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,
@@ -397,7 +460,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
         const handle = await open(hit.file, 'r')
         try {
           const data = await readRange(handle, hit.offset, hit.size)
-          return hit.unpremultiply ? unpremultiplyPng(data).buffer : data
+          return transformData(data, hit)
         } finally { await handle.close().catch(() => {}) }
       },
     }
@@ -416,14 +479,14 @@ export async function materialize({ mediaDir, config, rels }) {
     const hit = v.map.get(String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
     if (!hit) continue
     const target = path.join(mediaDir, ...hit.rel.split('/'))
-    try { const have = await stat(target); if (hit.unpremultiply ? have.size > 0 : have.size === hit.size) continue } catch { /* 还没有 */ }   // 转过的（预乘 → 直通）大小和 .arc 里的不一样：只看有没有
+    try { const have = await stat(target); if (hit.unpremultiply || hit.transform ? have.size > 0 : have.size === hit.size) continue } catch { /* 还没有 */ }   // 转过的（预乘 → 直通）大小和 .arc 里的不一样：只看有没有
     let pending = materializing.get(target)
     if (!pending) {
       pending = (async () => {
         const handle = await open(hit.file, 'r')
         try {
           let data = await readRange(handle, hit.offset, hit.size)
-          if (hit.unpremultiply) data = unpremultiplyPng(data).buffer   // PNAP 的帧：预乘 → 直通（转不了就原样）
+          data = transformData(data, hit)   // PNAP 的帧：预乘 → 直通（转不了就原样）；BGI：CompressedBG → PNG、BW → Ogg
           await mkdir(path.dirname(target), { recursive: true })
           const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
           await writeFile(tmp, data)

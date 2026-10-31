@@ -37,7 +37,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -773,6 +773,77 @@ export const ADAPTER_RULES = {
     backVoice: { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' },
     scene: { split: 'chains', forkPolicy: 'merge' },
   },
+  // bgi::bs：BGI / Ethornell 家族的脚本适配器（BurikoCompiledScript 事件流 → 场景）。抄自 web/library/gal/adapters/bgi-bs.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'bgi::bs': {
+    "resDir": "arc/res",
+    "stage": [
+      1280,
+      720
+    ],
+    "colorImages": [
+      {
+        "match": "^BLACK$",
+        "color": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "match": "^WHITE$",
+        "color": [
+          255,
+          255,
+          255
+        ]
+      }
+    ],
+    "speaker": {
+      "strip": []
+    },
+    "text": {
+      "stripTags": [
+        "<\\/?C\\d*>",
+        "<\\/?[A-QS-Z]\\w*>"
+      ]
+    },
+    "voiceFunctions": [
+      "_PlayVoice"
+    ],
+    "bgmFunctions": [
+      "_PlayBGM"
+    ],
+    "seFunctions": [
+      "_PlaySE",
+      "_PlayStreamSE"
+    ],
+    "bgFunctions": [
+      "_DrawScene"
+    ],
+    "eventImageFunctions": [
+      "_DrawSPR"
+    ],
+    "bustFunctions": [
+      "_DrawBS"
+    ],
+    "wait": {
+      "enabled": true,
+      "max": 10
+    },
+    "clearBustsOnScene": true,
+    "audioExts": [
+      "ogg",
+      "flac",
+      "wav",
+      "mp3"
+    ],
+    "imageExts": [
+      "png",
+      "jpg",
+      "jpeg"
+    ],
+    "extraDirs": []
+  },
   // advhd::ws2：WillPlus AdvHD 家族的脚本适配器（ws2 指令流 → 场景）。抄自 web/library/gal/adapters/advhd-ws2.mjs 的 DEFAULT_OPTIONS（漂移守卫 gal-layout-rules-selftest 会逐键比）；推断的部分见适配器文件头
   'advhd::ws2': {
     "resDir": "arc/res",
@@ -1503,6 +1574,29 @@ export const LAYOUTS = {
     avatars: [], expectedDirs: ['resource'],
     notes: ['只有一部分脚本有同名资源子目录，没有的脚本只出台词（列表页「渲染诊断」会报缺资源）；打不开的 JSON（解析失败）照样列出来、打开时再报错'],
   },
+  // ---- BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等）家族：game.id = bgi::<游戏>（任何以 bgi:: 开头的 id 都走这一项）。
+  //   目录：<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，不展开）, sysgrp.arc（系统图）, Archive/data0*.arc（剧本 data01xxx = DSC 压缩的 BurikoCompiledScript、图 data02xxx = CompressedBG、声音 data03xxx~04xxx = BW(Ogg)）}。
+  //   arc 由引擎（config.containers，format: buriko）在服务端读：剧本展开到 <根>/arc/script/<容器>/<脚本>.bgi（事件流 JSON）；图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<名字>.png|.ogg，不带容器名），被请求时才转成 PNG / Ogg。
+  bgi: {
+    title: 'BGI / Ethornell（BURIKO 引擎）', kind: 'bgi', detector: 'bgi', autoOrder: 139, family: 'bgi::',   // 紧跟 advhd
+    bases: [''], searchDepth: 3,
+    anchors: ['/^sysprg\\.arc$/i'], siblings: [], markers: [['BGI.gdb', '/^bgi\\.gdb$/i'], '/^sysgrp\\.arc$/i'],   // 没声明：sysprg.arc + (BGI.gdb 或 sysgrp.arc)
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res'],
+    adapters: ['bgi::bs'],
+    adapterOptions: { 'bgi::bs': { resDir: { path: ['arc/res'] } } },
+    ruleTables: ['bgi::bs'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},   // 脚本里写 UR04SA_N，虚拟索引里是 UR04SA_N.png：适配器按「名字 + 扩展名」找，大小写忽略
+      limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
+      containers: { enabled: true, dir: 'arc', scan: ['Archive', '.'], scriptDecoder: 'bgi-bs', scriptExt: 'bgi', mode: 'hybrid', format: 'buriko', flat: true, rules: [{ match: '^(?:sysprg|system)\\.arc$', skip: true }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['bgi'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.bgi', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['arc 在第一次浏览时由服务端展开剧本到 <根>/arc/script/（图 / 声音不展开，被请求时才取、才转格式；之后按 arc 的大小 + 修改时间判断要不要重做）', '剧本是「执行」一遍得到的事件序列：选择（SelectEx）按选项分支、汇合点之后一份；条件跳转的值未知时按 0（没走到的分支在 stats.run 里看不到，见 README 的 BGI 一节）', '立绘的位置 / 大小没有样本验证（见适配器开头的推断一栏）'],
+  },
   // ---- WillPlus AdvHD（ADVPlayerHD）引擎家族：game.id = advhd::<游戏>（任何以 advhd:: 开头的 id 都走这一项，不用每个游戏写一条；某个游戏真有差异时再加 'advhd::<游戏>': { extends: 'advhd', … } 或用选项 layouts 覆盖）。
   //   目录：<根>/{Script*.arc, Rio*.arc（剧情 ws2）, Chip*.arc / Graphic.arc / SysGraphic.arc（图）, Bgm.arc / Se*.arc / Voice*.arc（声音）, AdvHD.exe}。arc 由引擎（config.containers）在服务端读、展开到 <根>/arc/，剧情 = arc/script/<容器>/<脚本>.advhd（.ws2 解成指令流 JSON），资源 = arc/res/<容器>/…
   //   哪些容器 / 条目展开：engine.containers.rules（容器名正则 → skip 黑名单 / kinds / include / exclude）。新游戏的容器名不一样（Rio2.arc / Voice3.arc…）默认就收；不想要的加一条 skip。
@@ -1958,6 +2052,7 @@ const DETECTORS = {
   grenze: (scope) => detectGrenze(scope),
   otogi: (scope) => detectOtogi(scope),
   advhd: (scope) => detectAdvhd(scope),
+  bgi: (scope) => detectBgi(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2207,7 +2302,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        mode: value.mode === 'files' ? 'files' : 'hybrid',
+        format: value.format === 'buriko' ? 'buriko' : 'willplus', flat: value.flat === true,
+        mode: value.format === 'buriko' || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -2740,6 +2836,26 @@ async function detectAdvhd(scope) {
   found.kind = entry.kind || 'advhd'
   const arcs = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.arc$/i.test(n))
   logs.push(`AdvHD 游戏根：${base || '.'}；容器 ${arcs.length} 个（${arcs.slice(0, 8).join(' / ')}${arcs.length > 8 ? ' …' : ''}）；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// ---- BGI / Ethornell 家族：见 LAYOUTS.bgi。id：声明了 game.id 就用它（bgi::<游戏>），没声明 = bgi::<目录名的小写字母数字>；arc 的展开由引擎做，这里只写配置（路径相对根）
+async function detectBgi(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  if (!declared && !(await markersOk(media, entry, base, declared))) return null
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `bgi::${slug || 'game'}`
+  found.kind = entry.kind || 'bgi'
+  const arcs = (await listNames(path.join(media, ...splitRel(join(base, 'Archive'))))).filter((n) => /\.arc$/i.test(n))
+  logs.push(`BGI 游戏根：${base || '.'}；Archive 里 ${arcs.length} 个容器；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
 }
