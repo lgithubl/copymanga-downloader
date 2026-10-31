@@ -8,10 +8,11 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 
-export const IMAGE_THUMB_VERSION = 'v2-webp80-top'
+export const IMAGE_THUMB_VERSION = 'v3-webp80-top'
 export const THUMB_BUCKETS = Object.freeze([160, 240, 320, 480, 640, 960, 1280])
-export const TALL_RATIO = 2.4   // 高 / 宽超过它算超长图
-export const TALL_TOP_RATIO = 0.6   // 超长图取顶部 宽 × 0.6 高的一段：按 Manual.jpg（2616×14696，最上面的封面插画高约 0.58 倍宽）定的，别的超长图也取最上面这一段
+// 超长图的默认值（config.coverCrop 可以按游戏改）：高 / 宽超过 TALL_RATIO 算超长图；取顶部 宽 × TALL_TOP_RATIO 高的一段（0.6 按 Manual.jpg：2616×14696，最上面的封面插画高约 0.58 倍宽）
+export const TALL_RATIO = 1.6
+export const TALL_TOP_RATIO = 0.6
 export const IMAGE_THUMB_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|tiff?)$/i
 
 export const bucketOf = (width) => {
@@ -70,16 +71,18 @@ export function createImageThumbCache({ dir, concurrency = Math.max(1, Number(pr
     return pending
   }
 
-  // 超长图（长条漫画 / 整本说明书拼成一张：高 / 宽 > TALL_RATIO）：卡片按 3:4 居中裁，中心落在内容中段，封面变成说明书正文。取顶部那一段（宽 × TALL_TOP_RATIO）缩成 WebP；
+  // 超长图（长条漫画 / 整本说明书拼成一张：高 / 宽 > TALL_RATIO）：卡片按 3:4 居中裁，中心落在内容中段，封面变成说明书正文。取顶部那一段（宽 × top）缩成 WebP；
   // 不是超长图 / sharp 没装 / 读不了 = null（调用方用原图）。只读文件头判断高宽，不解码
-  async function tallTopOf(file, width = 960) {
+  async function tallTopOf(file, width = 960, { enabled = true, tallRatio = TALL_RATIO, top = TALL_TOP_RATIO } = {}) {
+    if (!enabled) return null
     const sharp = await getSharp()
     if (!sharp) return null
     let meta
     try { meta = await sharp(file, { limitInputPixels: maxInputPixels }).metadata() } catch { return null }
-    if (!meta.width || !meta.height || meta.height / meta.width <= TALL_RATIO) return null
+    if (!meta.width || !meta.height || meta.height / meta.width <= tallRatio) return null
     const source = await fileSource(file)
-    return thumbOf({ ...source, id: `top:${source.id}` }, width, { top: { width: meta.width, height: Math.round(meta.width * TALL_TOP_RATIO) } })
+    const height = Math.min(meta.height, Math.max(1, Math.round(meta.width * top)))
+    return thumbOf({ ...source, id: `top:${top}:${source.id}` }, width, { top: { width: meta.width, height } })
   }
 
   // 磁盘文件的来源标识（真实路径 + 大小 + 修改时间）

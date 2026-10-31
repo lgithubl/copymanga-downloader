@@ -17,6 +17,9 @@ export const FALLBACK_PREFER = Object.freeze(['cg', 'stand', 'movie', 'bg'])
 export const DEFAULT_THUMB_FRAME = Object.freeze({ percent: 0.5, seconds: 0, max: 3600, skipDark: true })
 // 骨骼 / 立绘场景的「渲染缩略图」（浏览器在列表页离屏渲染，传回服务器缓存）：enabled / 缩略图宽（高按 16:9）/ 最多扫多少步找第一个有骨骼的画面 / 同时渲染几张
 export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5, film: true, filmFrame: 0.5, filmMax: 4, inner: false, innerMax: 4, innerRenders: 3 })
+// 封面 / 卡片缩略图的超长图裁剪（image-thumb.mjs）：高 / 宽 > tallRatio 的图（整本说明书拼成一张的 Manual.jpg 之类）不让卡片居中裁到中段，改取最上面「宽 × top」高的一段
+export const DEFAULT_COVER_CROP = Object.freeze({ enabled: true, tallRatio: 1.6, top: 0.6 })
+export const COVER_CROP_LIMITS = Object.freeze({ tallRatio: [1, 20], top: [0.2, 2] })
 export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95], filmFrame: [0, 0.99], filmMax: [1, 12], innerMax: [1, 12], innerRenders: [1, 6] })
 // 目录卡片的封面（目录 / 章节目录 / 角色分组里没有任何规则给图时，用它里面的脚本的封面；见 DEFAULT_GAL_CONFIG.dirCover）
 export const DIR_COVER_SOURCES = Object.freeze(['render', 'image'])
@@ -120,6 +123,8 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 视频缩略图截哪一帧：{ percent: 时长的比例（0～0.95，默认 0.5）, seconds: 固定秒数（> 0 时优先，默认 0）, max: 按比例时最多取到第几秒（默认 3600）, skipDark: 这一帧太黑（片头淡入 / 黑屏）就换别的位置（默认 true） }
   thumbFrame: { percent: 0.5, seconds: 0, max: 3600, skipDark: true },
   // 渲染缩略图（骨骼 / 立绘场景：规则和兜底都没有图、或脚本里有骨骼时，列表页浏览器离屏渲染一帧传回服务器缓存）：{ enabled（默认 true）, width（160～1280，默认 640）, scanSteps（找 CG / 立绘画面时看多少步：最多看 max(scanSteps×4, 600) 步，默认 150）, concurrency（同时渲染几张，1～3，默认 1）, seek（骨骼动画取到第几成的位置，0～0.95，默认 0.5；0 = 第一帧）, film（胶片场景（bg.film：Kamihime）渲染胶片帧，默认 true）, filmFrame（取胶片的第几成，0～0.99，默认 0.5 = 中间一帧）, filmMax（一张卡片最多渲染几段胶片（轮播），1～12，默认 4）}
+  // 封面 / 卡片缩略图遇到超长图（高 / 宽 > tallRatio，默认 1.6）：取最上面「宽 × top」（默认 0.6）高的一段；enabled: false = 不裁，原图交给卡片居中裁。每个游戏的比例不一样就在这里按游戏配
+  coverCrop: { ...DEFAULT_COVER_CROP },
   thumbRender: { ...DEFAULT_THUMB_RENDER },
   // 分组：列 parent（通配；'.' = 脚本根本身）下的目录时，脚本文件名（无扩展名）能匹配 pattern 的，按第 1 个捕获组分成虚拟目录
   // （比如 ^(\\d{5}) 把 10001A1、10001B1 归到「10001」一张卡片里）；不匹配的脚本照常列出。虚拟目录的名字/头像和真实目录一样查 labels / namesFiles / dirThumbs
@@ -635,6 +640,15 @@ export function normalizeGalConfigWithWarnings(raw) {
     if (v.thumbRender.film !== undefined) { if (typeof v.thumbRender.film === 'boolean') thumbRender.film = v.thumbRender.film; else warn('thumbRender.film', '只能是 true / false，用默认值', v.thumbRender.film) }
   }
 
+  const coverCrop = { ...DEFAULT_COVER_CROP }
+  if (v.coverCrop !== undefined && !isPlainObject(v.coverCrop)) warn('coverCrop', '不是对象，用默认值', v.coverCrop)
+  if (isPlainObject(v.coverCrop)) {
+    for (const key of Object.keys(v.coverCrop)) if (!(key in DEFAULT_COVER_CROP)) warn('coverCrop', `不认识的字段 ${key}，已丢掉`, key)
+    if (v.coverCrop.enabled !== undefined) { if (typeof v.coverCrop.enabled === 'boolean') coverCrop.enabled = v.coverCrop.enabled; else warn('coverCrop.enabled', '只能是 true / false，用默认值', v.coverCrop.enabled) }
+    numIn(v.coverCrop, 'tallRatio', COVER_CROP_LIMITS.tallRatio, coverCrop, 'coverCrop')
+    numIn(v.coverCrop, 'top', COVER_CROP_LIMITS.top, coverCrop, 'coverCrop')
+  }
+
   const groups = []
   overList('groups', v.groups, MAX_LIST)
   for (const rule of Array.isArray(v.groups) ? v.groups.slice(0, MAX_LIST) : []) {
@@ -883,6 +897,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     thumbHover,
     thumbFrame,
     thumbRender,
+    coverCrop,
     groups: v.groups === undefined ? [] : groups,
     scriptIndex: v.scriptIndex === undefined ? [] : scriptIndex,
     game,

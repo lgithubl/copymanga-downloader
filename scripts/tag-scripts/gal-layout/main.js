@@ -1695,7 +1695,7 @@ function normalizeLayout(raw, problems, id) {
   return out
 }
 // 引擎层通用配置字段（config.mjs 的 classify / resourceResolve / indexSkip / limits / player）：LAYOUTS 里的 engine 原样写进 config
-const ENGINE_FIELDS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player', 'dirCover', 'thumbRender', 'containers']
+const ENGINE_FIELDS = ['classify', 'resourceResolve', 'indexSkip', 'limits', 'player', 'dirCover', 'thumbRender', 'coverCrop', 'containers']
 // 深度合并：对象逐键递归，数组 / 标量整个替换（后者赢）；和适配器自己的 mergeOptions 同一个口径
 function deepMerge(a, b) {
   if (!isPlain(a) || !isPlain(b)) return b === undefined ? structuredClone(a) : structuredClone(b)
@@ -2213,6 +2213,12 @@ function canonField(key, value) {
       }
     }
     // thumbRender：和 config.mjs 的 DEFAULT_THUMB_RENDER / 校验一致（没写的补默认值，数字夹范围）
+    // coverCrop：和 config.mjs 的 DEFAULT_COVER_CROP / 校验一致
+    case 'coverCrop': {
+      if (!isPlain(value)) return value
+      const numIn = (x, d, lo, hi) => (x === undefined || x === null || x === '' || typeof x === 'boolean' || !Number.isFinite(Number(x)) ? d : Math.max(lo, Math.min(hi, Number(x))))
+      return { enabled: typeof value.enabled === 'boolean' ? value.enabled : true, tallRatio: numIn(value.tallRatio, 1.6, 1, 20), top: numIn(value.top, 0.6, 0.2, 2) }
+    }
     case 'thumbRender': {
       if (!isPlain(value)) return value
       const numIn = (x, d, lo, hi) => (x === undefined || x === null || x === '' || typeof x === 'boolean' || !Number.isFinite(Number(x)) ? d : Math.max(lo, Math.min(hi, Number(x))))

@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, readdir, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { generateTags } from '../../scripts/tag-scripts/gal-layout/main.js'
-import { applyGalConfigPatch } from '../../web/library/gal/config.mjs'
+import { applyGalConfigPatch, normalizeGalConfig, normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
 import { bucketOf, createImageThumbCache } from '../../web/library/gal/image-thumb.mjs'
 import { createGalHandler } from '../../web/library/types/gal.mjs'
 import { arcBuild, buildAdvhdFixture, pnaBuild } from './make-advhd-fixture.mjs'
@@ -129,6 +129,25 @@ check('带 w 也挡住 ../ 越界（400）', evil === 400, String(evil))
   await set('~/Normal.jpg')
   const normal = await handler.getThumbnailFile(id)
   check('普通比例的封面原样给（原文件、image/jpeg），不动', normal.file.endsWith('Normal.jpg') && normal.contentType === 'image/jpeg', J(normal))
+  // config.coverCrop：默认 tallRatio 1.6、top 0.6；按游戏可改
+  await writeFile(path.join(media, 'Mid.jpg'), await sharp({ create: { width: 600, height: 1200, channels: 3, background: { r: 0, g: 0, b: 200 } } }).jpeg().toBuffer())   // 高 / 宽 = 2（旧阈值 2.4 不裁，现在 1.6 要裁）
+  await set('~/Mid.jpg')
+  const mid = await handler.getThumbnailFile(id)
+  check('默认阈值 1.6：高 / 宽 = 2 的图（以前 2.4 不裁）也取顶部（600 × 360）', mid.contentType === 'image/webp' && (await meta(mid.file)).height === 360, J(mid))
+  const withCrop = (coverCrop) => handler.internals.updateItem(id, (it) => ({ ...it, config: { ...it.config, coverCrop } }))
+  await withCrop({ tallRatio: 3 })
+  const noCrop = await handler.getThumbnailFile(id)
+  check('coverCrop.tallRatio = 3：高 / 宽 = 2 的图不裁，原文件', noCrop.file.endsWith('Mid.jpg') && noCrop.contentType === 'image/jpeg', J(noCrop))
+  await withCrop({ top: 1 })
+  const tall1 = await handler.getThumbnailFile(id)
+  check('coverCrop.top = 1：取顶部「宽 × 1」= 600 × 600（缓存键带 top，和 0.6 的不是同一个文件）', (await meta(tall1.file)).height === 600 && tall1.file !== mid.file, J(await meta(tall1.file)))
+  await withCrop({ enabled: false })
+  const off = await handler.getThumbnailFile(id)
+  check('coverCrop.enabled = false：一律原图', off.file.endsWith('Mid.jpg'), J(off))
+  await handler.internals.updateItem(id, (it) => { const { coverCrop, ...rest } = it.config; return { ...it, config: rest } })
+  const dflt = normalizeGalConfig({}).coverCrop
+  const bad = normalizeGalConfigWithWarnings({ coverCrop: { tallRatio: 'x', top: 99, enabled: 'yes', foo: 1 } })
+  check('配置规整：默认 { enabled: true, tallRatio: 1.6, top: 0.6 }；不合格的字段退回默认 / 夹范围并报警告（tallRatio 不是数字、top 夹到 2、enabled 不是布尔、foo 不认识）', J(dflt) === J({ enabled: true, tallRatio: 1.6, top: 0.6 }) && bad.config.coverCrop.tallRatio === 1.6 && bad.config.coverCrop.top === 2 && bad.config.coverCrop.enabled === true && bad.warnings.length >= 4, J([bad.config.coverCrop, bad.warnings.length]))
   const cardTall = await handler.getResource(id, '~/Tall.jpg', { width: 320 }).catch((e) => e)
   check('~/ 路径（媒体目录）本来就不给资源接口放行，带 w 也一样（403）；卡片的超长图走资源根下的路径', cardTall.statusCode === 403, J(cardTall.statusCode ?? cardTall))
 }
