@@ -3,7 +3,7 @@
 //   minashigo：一组「立绘图集上裁出的一块」叠成一个立绘，part 画在 (x, y)（相对立绘左上角），整体按 Ren'Py 的默认摆法放（底边对齐画面底边、水平居中）。
 //   legeclo：每个部件是一整张立绘图（没有 crop），可以带 align: 'left' | 'center' | 'right'（show xxx at left）——有 align 的部件各自独立摆放，
 //   底边对齐画面底边，水平按 align 贴左 / 居中 / 贴右（和 Ren'Py 的 xalign 0 / 0.5 / 1 一样）；没有 align 的还是上面那种整体摆法。
-//   带 align 的部件还可以带 shiftX / shiftY（设计像素）：对齐之后再平移。
+//   带 align 的部件还可以带 shiftX / shiftY（设计像素）：对齐之后再平移；vcenter: true = 竖直方向以图的中心为准（不是底边对齐）。
 //   grenze：同 legeclo（整张图 + align），另带 fit: 1（图比画面高就缩到画面高度）。
 // 图缺了就报 onMissing（顶部提示「缺少资源」），别的部件照画。
 //
@@ -188,7 +188,7 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
       if (!img) return null
       const [sx, sy, sw, sh] = part.crop || [0, 0, img.naturalWidth, img.naturalHeight]
       const zoom = part.fit && sh * (Number(part.zoom) || 1) > DESIGN_H ? DESIGN_H / sh : Number(part.zoom) || 1   // fit：比画面还高的整张立绘（grenze 的 body 有 1426×1580）缩到画面高度，矮的不放大
-      return { img, sx, sy, sw, sh, dx: Number(part.x) || 0, dy: Number(part.y) || 0, dw: sw * zoom, dh: sh * zoom, align: ['left', 'center', 'right'].includes(part.align) ? part.align : '', shiftX: Number(part.shiftX) || 0, shiftY: Number(part.shiftY) || 0, dim: Number(part.dim) > 0 && Number(part.dim) < 1 ? Number(part.dim) : 0 }
+      return { img, sx, sy, sw, sh, dx: Number(part.x) || 0, dy: Number(part.y) || 0, dw: sw * zoom, dh: sh * zoom, align: ['left', 'center', 'right'].includes(part.align) ? part.align : '', shiftX: Number(part.shiftX) || 0, shiftY: Number(part.shiftY) || 0, vcenter: part.vcenter === true, dim: Number(part.dim) > 0 && Number(part.dim) < 1 ? Number(part.dim) : 0 }
     }).filter(Boolean)
     const grouped = items.filter((it) => !it.align)
     const width = Math.max(0, ...grouped.map((it) => it.dx + it.dw))
@@ -200,7 +200,7 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
       if (!it.align) continue
       it.fixedX = it.align === 'left' ? 0 : it.align === 'right' ? DESIGN_W - it.dw : (DESIGN_W - it.dw) / 2
       it.fixedX += it.shiftX   // 对齐之后再整体平移（bgi：_DrawBS 的 x / y）
-      it.fixedY = DESIGN_H - it.dh + it.shiftY
+      it.fixedY = (it.vcenter ? (DESIGN_H - it.dh) / 2 : DESIGN_H - it.dh) + it.shiftY   // vcenter：以图的中心为准（bgi），否则底边对齐
     }
     return { items, ox, oy }
   }

@@ -847,8 +847,8 @@ export const ADAPTER_RULES = {
   'bgi::bs': {
     "resDir": "arc/res",
     "stage": [
-      1280,
-      720
+      1920,
+      1080
     ],
     "colorImages": [
       {

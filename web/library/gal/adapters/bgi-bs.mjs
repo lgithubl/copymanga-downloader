@@ -17,7 +17,10 @@
 //   jump_scenario(文件, …)                   → scene.next（脚本末尾接着播）；call_scenario 是调库场景（_GM 之类）：不跟，计数
 // 推断（没有样本验证，按数据猜的，都可以用 options 改）：
 //   有依据（读 system.arc 里的 framework._bs）：_DrawBS 的 x = args[7]（相对画面中心的偏移，0x10000000 = 默认）、y = args[8]、放大率 = args[9]（百分比）；左右槽位的位置对称，支持 x 是中心相对
-//   没验证（采集里没有立绘图）：y 的竖直基准（这里当作「底边对齐再平移 y」）、本体和表情图是不是同一张画布大小（对得齐）
+//   真实立绘图核对（g02 / g03 / g07 的 CompressedBG）：本体（如 NO04SA_M 1680×1580）头顶离图的上沿只有 ~57px、最下面一行不透明（身体被画面下沿截掉）；
+//     本体 y = 180 / 300、放大 90 或默认：「图的底边对齐画面底边再平移 y」会把头顶推到画面外（-111px），所以 y 按「图的中心 = 画面中心 + (x, y)」处理（头顶落在画面 6%~19% 高度处）——
+//     这是按「头不能被切掉」推的最合理的一种，没有游戏截图对照，不是证实
+//   没验证：表情 / 嘴 / 眼部件（比本体小，如 750×590、1260×3150）在本体里的位置——参数里没有偏移，可能在这些图自己的头里（0x18 起 8 字节），本体的这 8 字节全是 0，部件的样本还没收；现在部件和本体按同一个中心叠，位置不对
 //   · _DrawScene 换背景会清掉立绘；_FadeBS 第 2 个参数 = 0 表示淡出（去掉）——参数含义按用法猜的
 //   · _FadeBGM(槽, 毫秒, 音量) 音量 0 = 淡出停止
 import { createIndexResolver } from '../resolve.mjs'
@@ -26,7 +29,7 @@ import { createOptionsReader, safeRegex } from './options-merge.mjs'
 export const ADAPTER_ID = 'bgi::bs'
 export const DEFAULT_OPTIONS = {
   resDir: 'arc/res',   // containers 展开后的资源目录（相对媒体目录）；要和 config.containers.dir + resourceRoots 对上
-  stage: [1280, 720],
+  stage: [1920, 1080],   // 游戏分辨率：纯色 BLACK 背景和 CG 都是 1920×1080（采集的真实图核对过）
   colorImages: [{ match: '^BLACK$', color: [0, 0, 0] }, { match: '^WHITE$', color: [255, 255, 255] }],
   speaker: { strip: [] },
   text: { stripTags: ['<\\/?C\\d*>', '<\\/?[A-QS-Z]\\w*>'] },   // ruby（<R…>）以外要去掉的标记（正则）
@@ -197,7 +200,7 @@ export function parse(text, ctx = null, meta = {}) {
       const shiftX = Math.abs(x) >= 1e6 ? 0 : x
       const shiftY = Math.abs(y) >= 1e6 ? 0 : y
       const zoom = mag > 0 && mag < 1e6 && mag !== 100 ? mag / 100 : 1
-      const place = { align: 'center', ...(shiftX ? { shiftX } : {}), ...(shiftY ? { shiftY } : {}), ...(zoom !== 1 ? { zoom } : {}) }
+      const place = { align: 'center', vcenter: true, ...(shiftX ? { shiftX } : {}), ...(shiftY ? { shiftY } : {}), ...(zoom !== 1 ? { zoom } : {}) }
       const parts = []
       const bodySrc = imageOf(body)?.src
       if (bodySrc) parts.push({ src: bodySrc, ...place })

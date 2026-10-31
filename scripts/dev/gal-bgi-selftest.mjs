@@ -234,12 +234,12 @@ await mkdir(path.join(media, 'Archive'), { recursive: true })
   await writeFile(path.join(media, 'BGI.gdb'), 'SDC FORMAT 1.00')
 }
 const layoutItem = { itemId: 'b', title: 'b', config: { game: { id: 'bgi::test' } }, source: { path: media }, adapters: ['bgi::bs'] }
-const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.28.0', options: {} } })
+const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.29.0', options: {} } })
 const cfgRaw = tagOut.itemPatch.gal.config
 const cfg = normalizeGalConfig(cfgRaw)
 check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat / hybrid / bgi-bs，扫 Archive 和根；系统程序（sysprg / system）规则里跳过；资源根 arc/res；适配器 bgi::bs；写出来的 config 引擎规整后零警告', cfg.game.id === 'bgi::test' && cfg.containers.format === 'buriko' && cfg.containers.flat === true && cfg.containers.mode === 'hybrid' && cfg.containers.scriptDecoder === 'bgi-bs' && J(cfg.containers.scan) === J(['Archive', '.']) && cfg.containers.rules[0].skip === true && J(cfg.resourceRoots) === J(['arc/res']) && J(tagOut.itemPatch.gal.adapters ?? layoutItem.adapters) !== '[]' && normalizeGalConfigWithWarnings(cfgRaw).warnings.length === 0, J([cfg.containers, normalizeGalConfigWithWarnings(cfgRaw).warnings]))
 {
-  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.28.0', options: {} } })
+  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.29.0', options: {} } })
   check('gal-layout：存进条目再跑一次 = 没有改动', /新增 0 项 \/ 修改 0 项 \/ 删除 0 项/.test(again.logs.join('\n')), again.logs.filter((l) => /本次改动/.test(l)).join(' | '))
 }
 {
@@ -266,7 +266,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const scene = adapter.parse(text, ctx)
   const st = scene.steps
   const cmdsOf = (i) => st[i].commands.map((c) => c.op)
-  check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center', shiftX: -150, shiftY: 40, zoom: 0.8 }, { src: 'ST01_F.png', align: 'center', shiftX: -150, shiftY: 40, zoom: 0.8 }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
+  check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center', vcenter: true, shiftX: -150, shiftY: 40, zoom: 0.8 }, { src: 'ST01_F.png', align: 'center', vcenter: true, shiftX: -150, shiftY: 40, zoom: 0.8 }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
   check('场景：_Wait = wait（秒）；旁白（说话人空）= speaker 清空；选项挂在问题那句台词的步里', st[1].commands.some((c) => c.op === 'wait' && c.seconds === 1.5) && J(st[1].commands.find((c) => c.op === 'speaker').segments) === J([]) && st[1].commands.some((c) => c.op === 'choice' && c.options.length === 2 && c.options[1].segments[0].text === 'Right'), J(st[1]))
   const choice = st[1].commands.find((c) => c.op === 'choice')
   const g = (n) => J([{ var: choice.var, op: '==', value: n }])
@@ -290,7 +290,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media, adapters: ['bgi::bs'] } } }) })
   const imported = await handler.importFromSource({ options: { adapters: ['bgi::bs'], config: { game: { id: 'bgi::test' } } } })
   const item = imported.items[0]
-  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.28.0', options: {} } })
+  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.29.0', options: {} } })
   await handler.internals.updateItem(item.itemId, (it) => ({ ...it, config: { ...it.config, ...out.itemPatch.gal.config } }))   // 绕过 patchItemMetadata（它会在后台预热展开）
   const id = item.itemId
   const home = (await handler.getReaderContent(id, 'main', { sectionId: '' })).node

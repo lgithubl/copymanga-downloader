@@ -92,17 +92,17 @@ await writeFile(path.join(media, 'game.pfs.000'), buildPf8([
   { name: 'image/ev/ev_x/ev_x_01.ogv', data: Buffer.from('OGV-DATA') },
 ]))
 const layoutItem = { itemId: 'a', title: 'a', config: { game: { id: 'artemis::test' } }, source: { path: media }, adapters: ['artemis::ast'] }
-const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.28.0', options: {} } })
+const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.29.0', options: {} } })
 const cfgRaw = tagOut.itemPatch.gal.config
 const cfg = normalizeGalConfig(cfgRaw)
 check('gal-layout：认出 artemis（id = artemis::test），containers = pf8 / flat / hybrid / artemis-ast / 扫根 / 规则 .pfs[.nnn]；脚本根 arc/script、资源根 arc/res；适配器 artemis::ast；写出 adapterOptions', cfg.containers.enabled && cfg.containers.format === 'pf8' && cfg.containers.flat === true && cfg.containers.mode === 'hybrid' && cfg.containers.scriptDecoder === 'artemis-ast' && cfg.containers.scriptExt === 'ast' && J(cfg.containers.scan) === J(['.']) && cfg.scriptRoots[0].dir === 'arc/script' && J(cfg.resourceRoots) === J(['arc/res']) && cfg.adapterOptions['artemis::ast']?.resDir === 'arc/res', J([cfg.containers, cfg.scriptRoots, cfg.resourceRoots]))
 {
   const notPf8 = path.join(work, 'notpf8'); await mkdir(notPf8); await writeFile(path.join(notPf8, 'x.exe'), 'MZ'); await writeFile(path.join(notPf8, 'x.pfs'), 'pf6-something-else')
-  const none = await generateTags({ item: { itemId: 'n', title: 'n', config: {}, source: { path: notPf8 } }, script: { id: 'gal-layout', version: '2.28.0', options: {} } })
+  const none = await generateTags({ item: { itemId: 'n', title: 'n', config: {}, source: { path: notPf8 } }, script: { id: 'gal-layout', version: '2.29.0', options: {} } })
   check('gal-layout：没声明 game.id 且 .pfs 魔数不是 pf8 → 不认领（不写 artemis 配置）', !JSON.stringify(none.itemPatch?.gal?.config || {}).includes('artemis'), J(none.itemPatch?.gal?.config?.game))
 }
 {
-  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.28.0', options: {} } })
+  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.29.0', options: {} } })
   check('gal-layout：存进条目再跑一次 = 没有改动', /新增 0 项 \/ 修改 0 项 \/ 删除 0 项/.test(again.logs.join('\n')), again.logs.filter((l) => /本次改动/.test(l)).join(' | '))
 }
 {
@@ -122,7 +122,7 @@ check('gal-layout：认出 artemis（id = artemis::test），containers = pf8 / 
   const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media, adapters: ['artemis::ast'] } } }) })
   const imported = await handler.importFromSource({ options: { adapters: ['artemis::ast'], config: { game: { id: 'artemis::test' } } } })
   const item = imported.items[0]
-  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.28.0', options: {} } })
+  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.29.0', options: {} } })
   await handler.internals.updateItem(item.itemId, (it) => ({ ...it, config: { ...it.config, ...out.itemPatch.gal.config } }))
   const id = item.itemId
   const home = (await handler.getReaderContent(id, 'main', { sectionId: '' })).node

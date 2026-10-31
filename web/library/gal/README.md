@@ -1024,7 +1024,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 推断成分：引擎里预乘标志位后续在哪些地方被用到，没有逐处追完；「还原成直通就对」是根据加载器标志 + 腮红帧的像素数据（rgb ≈ 粉色 × alpha）得出的。
 - 行为：hybrid 按需取出和 files 展开的字节一致；`CONTAINER_FORMAT_VERSION = 5`，旧缓存会自动重建。
 
-## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.28.0）
+## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.29.0）
 
 - **依据**：公开资料，没有逆向 exe——`morkt/GARbro` 的 `ArcFormats/Ethornell`（BURIKO ARC20、DSC FORMAT 1.00、CompressedBG、BW）和 `Cytlan/openbgi` 的 `docs/scenario.md`（`BurikoCompiledScriptVer1.00` 的容器和 token 机）。样本：三个游戏（トリプルペアリング / FD / 両腕が折れたので…）的 `Archive/data0*.arc`。
 - **目录**：`<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，规则里跳过）, sysgrp.arc, Archive/data0*.arc}`。`data01xxx` = DSC 压缩的剧本、`data02xxx` = CompressedBG 图、`data03xxx~04xxx` = BW（Ogg）声音；条目名没有扩展名，**按内容认**（`containers.format: 'buriko'`）。
@@ -1036,14 +1036,15 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **有依据的**（读游戏自带的库脚本 `framework._bs`，在 `system.arc` 里，用自己的反编译器看参数怎么用）：`_DrawBS(槽, 本体, …)` 的 `args[7]` = x（相对画面中心的偏移，`0x10000000` = 默认）、`args[8]` = y、`args[9]` = 放大率（百分比），从 `args[24]` 起是表情 / 配件图；左右槽位的位置对称，支持「x 是中心相对」。适配器出的立绘部件 = `{ src, align: 'center', shiftX?, shiftY?, zoom? }`，`gal-stand.js` 对齐之后再平移（`shiftX` / `shiftY`，设计像素）。
 - **跳转目标**：库脚本里 `jump_scenario` / `call_scenario` 不带参数，目标是前面 `set_label` 的字符串（`test_label` 也按这个判断）；已在 g02 `com10a` 上核对（三个分支 → `com10A_IF_NA / _EI / _BAD`，`browse.mjs linkScene` 补上 node）。`linkScene` 先在同一目录找，找不到再到别的容器目录里找（跨目录这一支只有代码，没有真实样本走到）。
 - **推断 / 没验证**：
-  - 立绘 y 的竖直基准（这里当「底边对齐再平移 y」）和本体 / 表情图是不是同一张画布大小：**采集的数据里没有立绘图，没验证过对不对得齐**；放大率的锚点同理（按底边中心放大）。
+  - 立绘（`_DrawBS`）位置：用真实立绘图核对过一部分（g02 / g03 / g07，v1.3 采集）——本体（如 `NO04SA_M` 1680×1580）头顶离图上沿只有 ~57px、最下一行不透明；按「底边对齐画面再平移 y」头顶会被推到画面外（-111px），所以 y 按「图的中心 = 画面中心 + (x, y)」（`vcenter`），放大率绕中心；游戏分辨率 1920×1080（黑底 / CG 都是）。**这是按「头不能被切掉」推的最合理的一种，没有游戏截图对照，不是证实。**
+  - 立绘的表情 / 嘴 / 眼部件（750×590、1260×3150 这种，比本体小）在本体里的位置：参数里没有偏移，可能在这些图自己的头里（0x18 起 8 字节；本体的这 8 字节全是 0）。**部件样本还没收到，现在部件和本体按同一个中心叠，位置不对**；采集脚本 v1.4 会收部件样本和每张图头里的 22 字节。
   - 条件跳转读到「没设过」的变量按 0 处理，可能走错分支；标志（`lflag`）只模拟了脚本自己写的。**没有先跑初始化脚本**（它们在库脚本里，菜单循环，被步数 / 事件上限截断）。
   - g07 的 `root_common*` 三个库脚本仍被截断（菜单循环，不含剧情）；有 `maxSteps = 2,000,000`、`maxEvents = 100,000`、空转 60,000 步三道上限。选择点里没有汇合点的，是分支各自 `jump_scenario` 到不同脚本（合理，不是缺陷）。
-  - CompressedBG **version 2 已按 GARbro 移植**（`bgi-cbg2.mjs`：DCT 块 + 哈夫曼 + alpha），但样本里全是 version 1，**没对过真实文件**；只和自带编码器（系数级往返、平坦块数值、alpha 回指、裁剪填充）对过；浮点按 double 算，和 GARbro 的 float 可能有 ±1 的差。DSC 的 `BurikoAnimation` 动画表等不是剧本的条目跳过。
+  - CompressedBG **version 2 已按 GARbro 移植**（`bgi-cbg2.mjs`：DCT 块 + 哈夫曼 + alpha）：v1.3 采集里有 81 张真实 v2 图（24 / 32 位，最大 4140×2460），全部解码不出错，目视检查 3 张（商店背景、CG、立绘）画面正确；195 张样本（v1 114 + v2 81）全部能解。自带编码器做系数级往返；浮点按 double 算，和 GARbro 的 float 可能有 ±1 的差。DSC 的 `BurikoAnimation` 动画表等不是剧本的条目跳过。
   - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
 - **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
 
-## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.28.0）
+## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.29.0）
 
 - **依据**：自己在采集的真实游戏上核对（g13《妹(姉)は兄(弟)の性癖を歪ませたい！》，`yugamase.pfs` + `yugamase.pfs.000`，83 个剧本）。没有逆向 exe。
 - **pf8 档案**（`web/library/gal/pf8.mjs`）：头 `pf8` + u32 索引大小 + u32 条目数；索引块 = 文件 [7, 7 + 索引大小)；条目 = u32 名字长 + 名字（utf-8，`\` 分隔）+ u32 0 + u32 偏移 + u32 大小；加密 = 条目内容逐字节 XOR `key[i % 20]`，`key = SHA1(索引块)`。两个档案（23747 + 623 条）的索引解析后偏移 / 大小都落在文件内，脚本解密后是可读文本。

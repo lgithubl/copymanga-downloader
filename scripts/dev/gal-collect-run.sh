@@ -30,9 +30,10 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.3"
+VERSION="1.4"
 export GAL_COLLECT_VERSION="$VERSION"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
 HOST_TAG="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9' '_' | cut -c1-20)"
@@ -303,13 +304,13 @@ def bgi_samples(f, size):
         off, sz = struct.unpack('<II', rec[0x60:0x68])
         if base + off + sz > size: continue
         ents.append((name, base + off, sz))
-    imgs = []; lines = ['name\toffset\tsize\twidth\theight\tbpp\tversion\n']
+    imgs = []; lines = ['name\toffset\tsize\twidth\theight\tbpp\tversion\thdr18\n']
     for name, off, sz in ents:
         if sz < 0x30: continue
         f.seek(off); h = f.read(0x30)
         if h[:15] != b'CompressedBG___': continue
         w, hh, bpp = struct.unpack('<HHi', h[0x10:0x18]); ver = struct.unpack('<H', h[0x2e:0x30])[0]
-        imgs.append((name, off, sz, w, hh, bpp, ver)); lines.append('%s\t%d\t%d\t%d\t%d\t%d\t%d\n' % (name, off, sz, w, hh, bpp, ver))
+        imgs.append((name, off, sz, w, hh, bpp, ver)); lines.append('%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n' % (name, off, sz, w, hh, bpp, ver, h[0x18:0x2e].hex()))   # 末列 = 头里 0x18..0x2d 的 22 字节（立绘部件的位置偏移可能在这里）
     chosen = {}
     def take(cands, limit, key=None):
         seen = {}; n = 0
@@ -324,6 +325,7 @@ def bgi_samples(f, size):
     take(sorted((c for c in imgs if c[5] == 24 and c[3] >= 640), key=lambda c: c[2]), 4, prefix)
     take([c for c in imgs if c[6] >= 2], 4)
     take([c for c in imgs if c[5] == 32 and c[3] <= 256], 4, prefix)
+    take([c for c in imgs if c[5] == 32 and 256 < c[3] <= 1400 and c[2] <= BGI_IMG_EACH_MAX], 12, prefix)   # 立绘的表情 / 嘴 / 眼部件（比本体小）
     out = []; total = 0
     for c in chosen.values():
         if total + c[2] > BGI_IMG_TOTAL_MAX: continue
