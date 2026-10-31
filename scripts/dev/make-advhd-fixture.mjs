@@ -134,7 +134,7 @@ export const STORY_BRANCH = [
   ['ShowChoice', [3], [
     { id: 1, text: '左へ', flags: [0, 1, 0], jump: 6, target: { ref: 'left' } },
     { id: 2, text: '右へ', flags: [0, 2, 0], jump: 6, target: { ref: 'right' } },
-    { id: 3, text: '別の話へ', flags: [0, 3, 0], jump: 7, target: 'OTHER_00' },
+    { id: 3, text: '別の話へ', flags: [0, 3, 0], jump: 7, target: '001_00' },
   ]],
   { label: 'left' }, msg(1, '左の道%K%P'), ['Jump', [{ ref: 'merge' }]],
   { label: 'right' }, msg(2, '右の道%K%P'),

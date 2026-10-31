@@ -45,7 +45,7 @@ const cfgWith = (containers, extra = {}) => normalizeGalConfig({ scriptRoots: [{
   const withCond = decodeWs2(ror2(ws2Encode([['Condition', [0, 1, 1, 0, 0]], ['Condition', [2, 127, 1, 0, 40]], ['Condition', [130, 99, -1, 0, 40]], ['FileEnd', []]])))
   check('Condition 永远是 5 个操作数（类型 u8、变量 u16、值 f32、p1 u32、p2 u32）——没有「类型 1 不带参数」这回事', J(withCond.map((i) => i.args.length)) === J([5, 5, 5, 0]), J(withCond.map((i) => i.args)))
   const choice = decodeWs2(ror2(ws2Encode(STORY_BRANCH))).find((i) => i.name === 'ShowChoice')
-  check('ShowChoice：选项（id、文字、3 个标志字节、跳转类型 6 = 本脚本偏移 / 7 = 文件名）', choice.choices.length === 3 && choice.choices[0].jump === 6 && typeof choice.choices[0].target === 'number' && choice.choices[2].target === 'OTHER_00' && choice.choices[1].text === '右へ', J(choice))
+  check('ShowChoice：选项（id、文字、3 个标志字节、跳转类型 6 = 本脚本偏移 / 7 = 文件名）', choice.choices.length === 3 && choice.choices[0].jump === 6 && typeof choice.choices[0].target === 'number' && choice.choices[2].target === '001_00' && choice.choices[1].text === '右へ', J(choice))
   const fn = decodeWs2(ror2(ws2Encode(STORY_SKIP))).find((i) => i.name === 'ExecuteFunction')
   check('ExecuteFunction：函数名 / 字符串参数 / u16 标志号（999）/ byte', J(fn.args) === J(['GetMsgSkip', '', 999, 1]), J(fn))
   const stand = decodeWs2(ror2(ws2Encode(STORY_001))).find((i) => i.name === 'DisplayCharacterImage')
@@ -199,7 +199,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('声音通道：char* = voice，bgv* = bgvoice（槽位 = 通道名，音量 1），se* = se；StopMusic = bgmStop（带淡出秒数）', J(s4.slice(0, 2)) === J([{ op: 'bgvoice', slot: 'bgvtow', src: 'Voice/SV_TOW_01.ogg', volume: 1 }, { op: 'se', src: 'Se/SE_01.ogg' }]) && s5.some((c) => c.op === 'bgmStop' && c.fade === 1), J([s4, s5]))
   check('stats：语音引用 / 解析（3 / 3）、bgm、图片、choices 等计数；没走到的指令（NextFile 后面的 FileEnd）计 unvisited', scene.stats.voices.referenced === 3 && scene.stats.voices.resolved === 3 && scene.stats.voices.unresolved === 0 && scene.stats.bgm.resolved === 1 && scene.stats.images.referenced === 2 && scene.stats.images.resolved === 2 && scene.stats.stands === 1 && scene.stats.choices === 0 && scene.stats.unvisited === 1, J(scene.stats))
   check('没做的功能看得见：未知函数 playSpecialEffect → raw（ExecuteFunction:playSpecialEffect）+ stats.skippedFunctions；GetMsgSkip 在 drop 表里不记；种类 0（颜色）的 Effect1 → raw（Effect1:kind0）、Effect3 → raw；UnkAF 在 ignoreOps 里只计数', J(scene.stats.skippedFunctions) === J({ playSpecialEffect: 1 }) && scene.stats.raw['ExecuteFunction:playSpecialEffect'] === 1 && scene.stats.raw['Effect1:kind0'] === 1 && scene.stats.raw.Effect3 === 1 && !scene.stats.raw['ExecuteFunction:GetMsgSkip'] && scene.stats.ignored.UnkAF === 1 && s5.some((c) => c.op === 'raw' && c.cmd === 'ExecuteFunction:playSpecialEffect') && s5.some((c) => c.op === 'raw' && c.cmd === 'Effect3'), J([scene.stats.raw, scene.stats.ignored]))
-  check('NextFile 的目标记进 stats.links（播放器没有换脚本）；脚本在 FileEnd / NextFile 结束', scene.stats.links['next:002_00_H'] === 1)
+  check('NextFile 的目标记进 stats.links，也给 scene.next.script（看完接着播它；服务端再补 node）；脚本在 FileEnd / NextFile 结束', scene.stats.links['next:002_00_H'] === 1 && J(scene.next) === J({ script: '002_00_H' }), J(scene.next))
 
   const opt = await parseGame(game, STORY_001, { functions: { default: 'drop' }, channels: [{ match: '^char', as: 'se' }], ignoreOps: ['Effect3'], fade: { max: 0.1 } })
   check('options 可改：functions.default = drop（不记 raw）/ channels（char* 当 se）/ ignoreOps（Effect3 不再 raw）/ fade.max 夹渐变秒数', !opt.stats.raw['ExecuteFunction:playSpecialEffect'] && !opt.stats.raw.Effect3 && opt.stats.ignored.Effect3 === 1 && opt.steps[0].commands.find((c) => c.op === 'se')?.src === 'Voice/TW_0001.ogg' && opt.steps[0].commands[0].fade === 0.1, J(opt.steps[0].commands.slice(0, 3)))
@@ -214,7 +214,7 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
 {
   const scene = await parseGame(game, STORY_BRANCH)
   const c1 = scene.steps[0].commands.at(-1)
-  check('选项：choice（id = 步序号:指令序号、var、options 值 1..3）挂在问题那句台词的步里（问题留在文本框里）；本脚本跳转的两个选项 → 带 when 的分支，汇合点之后不带 when', scene.steps.length === 5 && c1.op === 'choice' && c1.id === '0:3' && c1.var === 'sel0' && c1.options.length === 3 && c1.options[2].value === 3 && J(textOf(scene)) === J(['選んでください', '（「別の話へ」→ 脚本 OTHER_00 へ続く）', '左の道', '右の道', '合流']), J(textOf(scene)))
+  check('选项：choice（id = 步序号:指令序号、var、options 值 1..3）挂在问题那句台词的步里（问题留在文本框里）；本脚本跳转的两个选项 → 带 when 的分支，汇合点之后不带 when', scene.steps.length === 5 && c1.op === 'choice' && c1.id === '0:3' && c1.var === 'sel0' && c1.options.length === 3 && c1.options[2].value === 3 && J(textOf(scene)) === J(['選んでください', '（「別の話へ」→ 脚本 001_00 へ続く）', '左の道', '右の道', '合流']), J(textOf(scene)))
   const guardOf = (i) => J([...new Set(scene.steps[i].commands.map((c) => J(c.when)))])
   const g = (op, value) => J([J([{ var: 'sel0', op, value }])])
   check('分支的 when：左 = sel0 == 1，右 = sel0 == 2，别的脚本的选项 = sel0 == 3，汇合之后 = sel0 != 3（选了「跳到别的脚本」就在提示那里结束）；问题那一步没有 when', guardOf(2) === g('==', 1) && guardOf(3) === g('==', 2) && guardOf(1) === g('==', 3) && guardOf(4) === g('!=', 3) && scene.steps[0].commands.every((c) => !c.when), J([0, 1, 2, 3, 4].map(guardOf)))
@@ -222,8 +222,10 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   const path2 = activePath(scene, { '0:3': 2 })
   const path3 = activePath(scene, { '0:3': 3 })
   const said = (p) => J(p.map((i) => scene.steps[i].commands.filter((c) => c.op === 'text').map((c) => c.segments.map((x) => x.text).join('')).join('')))
-  check('播放器按选择走：选 1 = 左 → 合流；选 2 = 右 → 合流；选 3 = 提示 → 结束（没有合流）', said(path1) === J(['選んでください', '左の道', '合流']) && said(path2) === J(['選んでください', '右の道', '合流']) && said(path3) === J(['選んでください', '（「別の話へ」→ 脚本 OTHER_00 へ続く）']), J([path1, path2, path3]))
-  check('stats：choices = 1，别的脚本的选项记进 links', scene.stats.choices === 1 && Object.keys(scene.stats.links).some((k) => /choice 3 「別の話へ」→ OTHER_00/.test(k)), J(scene.stats.links))
+  check('播放器按选择走：选 1 = 左 → 合流；选 2 = 右 → 合流；选 3 = 提示 → 结束（没有合流）', said(path1) === J(['選んでください', '左の道', '合流']) && said(path2) === J(['選んでください', '右の道', '合流']) && said(path3) === J(['選んでください', '（「別の話へ」→ 脚本 001_00 へ続く）']), J([path1, path2, path3]))
+  const gotos = scene.steps.flatMap((st) => st.commands.filter((c) => c.op === 'goto'))
+  check('跳到别的脚本的选项：带 when（sel0 == 3）的 goto 指令（script = 001_00，choice = 3），排在文字提示（找不到目标时才显示）前面；没有 NextFile 的脚本没有 scene.next', gotos.length === 1 && gotos[0].script === '001_00' && gotos[0].choice === 3 && J(gotos[0].when) === J([{ var: 'sel0', op: '==', value: 3 }]) && scene.next === undefined, J([gotos, scene.next]))
+  check('stats：choices = 1，别的脚本的选项记进 links', scene.stats.choices === 1 && Object.keys(scene.stats.links).some((k) => /choice 3 「別の話へ」→ 001_00/.test(k)), J(scene.stats.links))
 }
 {
   const scene = await parseGame(game, STORY_COND)
@@ -478,6 +480,13 @@ const textOf = (scene) => scene.steps.flatMap((s) => s.commands).filter((c) => c
   check('「特殊场景」里只有 _H 的脚本（002_00_H）；全量列表（上面那个目录）仍有全部 3 个；Rio（CG 画廊）里没有 _H 脚本 = 不出现这个视图', special.items.map((i) => i.title).join() === '002_00_H', J(special.items.map((i) => i.title)))
   const play = await handler.getReaderContent(I.itemId, 'main', { sectionId: dirScripts[0].node || dirScripts[0].id })
   check('播放：scene 来自适配器 advhd::ws2，台词 / 语音 / 背景资源都解析到了 arc 展开的文件；脚本卡片有封面（兜底封面优先 cg：事件图 EV_01）', play.node.kind === 'player' && play.scene.adapter === 'advhd::ws2' && play.scene.stats.voices.resolved === 3 && play.scene.steps[0].commands[0].src === 'Chip3/BG_01.png' && dirScripts[0].thumb === 'Chip3/EV_01.png', J([play.scene.adapter, play.scene.stats.voices, dirScripts[0].thumb]))
+  const nodeOfTitle = (t) => { const it = dirScripts.find((x) => x.title.toLowerCase() === t); return it?.node || it?.id }
+  const read001 = await handler.getReaderContent(I.itemId, 'main', { sectionId: nodeOfTitle('001_00') })
+  const read002 = await handler.getReaderContent(I.itemId, 'main', { sectionId: nodeOfTitle('002_00_h') })
+  const gotoCmd = read002.scene.steps.flatMap((st) => st.commands).find((c) => c.op === 'goto')
+  check('跳转补 node：001_00 的 NextFile → scene.next.node = 002_00_H 的节点；002_00_H 里选项「別の話へ」的 goto.node = 001_00 的节点（同一个目录里按名字找，忽略大小写）', read001.scene.next?.script === '002_00_H' && read001.scene.next.node === nodeOfTitle('002_00_h') && gotoCmd?.node === nodeOfTitle('001_00') && Boolean(gotoCmd.node), J([read001.scene.next, gotoCmd]))
+  const fakeNext = await handler.getReaderContent(I.itemId, 'main', { sectionId: nodeOfTitle('003_00') })
+  check('没有 NextFile 的脚本（003_00）没有 scene.next', fakeNext.scene.next === undefined)
   const res = await handler.getResource(I.itemId, play.scene.steps[0].commands[0].src)
   const voice = await handler.getResource(I.itemId, 'Voice/TW_0001.ogg')
   const frame = await handler.getResource(I.itemId, 'Chip3/ST_TOW_A_M.pna/1.png')

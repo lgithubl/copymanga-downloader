@@ -9,7 +9,7 @@
 //   SetBackground(图层, 文件)                    → 图层按 layers 规则分角色：bg / ev（事件图 = bg 的 over）/ st；EF_BLACK / EF_WHITE 这类纯色图 = bg.color（colorImages）
 //   UsePnaPackage(图层, 包名) + DisplayCharacterImage(图层, 清掉别的, u8, 帧序号表) + MoveBackground(图层, …, x, y, …) → stand（按图层一个 slot）：包 = containers 展开的 <包名>.pna/{index.json,<帧 id>.png}，画 id 表里的帧
 //   ClearLayer(图层 | *) 清图层；Unk65 = 一次「过渡」（引擎里叫 %Transition%：图层变更在这里生效，第 3 个操作数 = 过渡时长秒，最后一个 = 遮罩图文件名）；PlayMovie → movie（在索引里找同名视频）
-//   ShowChoice → choice；选项的跳转是本脚本的偏移（jump 6）→ 每个选项一段带 when 的分支，汇合点之后不带 when；跳转是文件名（jump 7）→ 记进 stats.links（播放器没有「换脚本」，选项只是展示）
+//   ShowChoice → choice；跳到别的脚本的选项（jump 7）→ 带 when 的 goto 指令（script = 目标脚本名；服务端找得到那份脚本就补 node，播放器直接接着播，用户感觉不到换了文件）+ 一步文字提示（找不到时才显示）；NextFile → scene.next.script（看完这份接着播它）；选项的跳转是本脚本的偏移（jump 6）→ 每个选项一段带 when 的分支，汇合点之后不带 when；跳转是文件名（jump 7）→ 记进 stats.links（播放器没有「换脚本」，选项只是展示）
 //   Jump / Jump2 跟随；Condition(类型, 变量, 值, p1, p2)：类型最高位 = 比较浮点寄存器（SetRegister 写的）否则比较布尔标志（SetFlag / 函数写的），成立 = 顺着往下，不成立 = p1（else 块）或 p2（结尾）；没有值的标志按 flags.values 默认，再没有按 flags.unknown（默认 = 真），寄存器没写过 = regs.values 默认 / 0；
 //   ConditionalJump(a, b)：按 conditionalJump（默认取第二个目标 = 跳过动画）；FileEnd / NextFile = 结束（NextFile 的目标记进 stats.links）
 //   ExecuteFunction(名字, 字符串, u16 标志号, byte) 按 functions 表：drop（不记）/ { setFlag: N }（函数把结果写进标志号，GetMsgSkip = 快进状态写 0）/ skip（不渲染，记 raw `ExecuteFunction:名字`、stats.skippedFunctions）；表里没有的名字 = default
@@ -139,6 +139,7 @@ export function parse(text, ctx = null, meta = {}) {
   if (!data || data.format !== 'advhd-ws2/1' || !Array.isArray(data.ins)) throw new Error('不是 advhd-ws2/1 指令流')
   const list = data.ins.map((row) => ({ at: row[0], name: row[1], args: Array.isArray(row[2]) ? row[2] : [], extra: row[3] }))
   const byAt = new Map(list.map((ins, i) => [ins.at, i]))
+  let nextScript = ''   // NextFile 的目标脚本名（最后走到的那个）：scene.next，播放器看完这一份就接着播它
   const stats = { instructions: list.length, messages: 0, choices: 0, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, images: { referenced: 0, resolved: 0, unresolved: 0 }, stands: 0, raw: {}, ignored: {}, unresolved: {}, skippedFunctions: {}, links: {}, unvisited: 0 }
   if (data.truncated) stats.truncated = String(data.truncated).slice(0, 200)
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
@@ -406,7 +407,7 @@ export function parse(text, ctx = null, meta = {}) {
         case 'SetFlag': env.set(a[0], a[1] === 1); break   // 引擎：值 == 1 置位，别的清掉
         case 'SetRegister': setRegister(a); break
         case 'FileEnd': return 'end'
-        case 'NextFile': count('links', `next:${a[0]}`); return 'end'
+        case 'NextFile': count('links', `next:${a[0]}`); nextScript = String(a[0] ?? ''); return 'end'
         case 'OpenTitle': return 'end'
         case 'RunFile': if (!rx.skipFiles.some((re) => re.test(String(a[0])))) { count('raw', `RunFile:${a[0]}`); emit({ op: 'raw', cmd: 'RunFile', args: [a[0]] }) } break
         case 'ClearLayer': {
@@ -535,6 +536,7 @@ export function parse(text, ctx = null, meta = {}) {
     for (const [n, c] of (ins.extra || []).entries()) {
       if (c.jump !== 7) continue
       guard = [...outer, { var: variable, op: '==', value: n + 1 }]
+      emit({ op: 'goto', script: String(c.target), choice: n + 1 })   // 选了它就直接接着播那个脚本（服务端找得到就补 node；找不到播放器忽略，显示下面的提示）
       emit({ op: 'speaker', segments: [] })
       emit({ op: 'text', segments: [{ text: `（「${String(c.text)}」→ 脚本 ${String(c.target)} へ続く）` }] })
       endStep()
@@ -569,7 +571,7 @@ export function parse(text, ctx = null, meta = {}) {
   stats.unvisited = list.filter((ins) => !visited.has(ins.at)).length
   if (commands.length || !steps.length) { commands.push({ op: 'text', segments: [] }); endStep() }
   stats.commands = steps.reduce((n, step) => n + step.commands.length, 0)
-  return { steps, stats }
+  return { steps, stats, ...(nextScript ? { next: { script: nextScript } } : {}) }
 }
 
 export const advhdWs2Adapter = { id: ADAPTER_ID, label: 'WillPlus AdvHD（ws2 剧情，经 containers 展开）', sniff, explainSniff, parse, contextFiles, contextDirs, contextTextFilter, contextWalkLimit, contextSampleLimit, prepare }

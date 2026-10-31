@@ -79,7 +79,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 }
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
-//   chapter: { canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
+//   chapter: { jump(节点 id)（脚本里的 goto：直接接着播那个脚本，返回 true = 已经跳走）, canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
 export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null }) {
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
@@ -898,6 +898,16 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
           updateCount()
         }
         applyCommand(state, command, choices)
+        continue
+      }
+      if (command.op === 'goto') {
+        // 选项跳到别的脚本（适配器的 goto，服务端找得到目标就补了 node）：直接接着播那个脚本，用户感觉不到换了文件；
+        // 页面层不接（没有 chapter.jump）/ 找不到目标 / 连续跳得太快（死循环保护）= 忽略，后面的文字提示照常显示
+        if (command.node && chapter?.jump) {
+          let jumped = false
+          try { jumped = await chapter.jump(command.node) } catch { jumped = false }
+          if (jumped) { gen += 1; running = false; return }
+        }
         continue
       }
       const seconds = skipping ? 0 : commandDuration(command)

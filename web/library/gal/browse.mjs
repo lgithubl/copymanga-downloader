@@ -283,6 +283,20 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     if (rel === null) throw fail('无效的路径', 400)
     return { set, kind: tag === 'd' ? 'dir' : 'script', rel, page: tag === 'd' ? page : 1, view }
   }
+  // 场景里的跳转（goto：选项跳别的脚本；scene.next：看完接着播）按脚本名补上节点 id：同一个目录里找（和脚本列表同一份），名字忽略大小写、扩展名
+  async function linkScene(set, rel, scene) {
+    const wanted = []
+    for (const step of scene.steps) for (const command of step.commands) if (command.op === 'goto' && typeof command.script === 'string') wanted.push(command)
+    if (!wanted.length && !scene.next?.script) return
+    const listed = await listDir(set, effectiveParentDir(rel)).catch(() => null)
+    if (!listed) return
+    const byName = new Map()
+    for (const entry of listed.allScripts || []) { for (const name of [entry.stem, baseName(entry.rel).replace(/\.[^.]+$/, '')]) { const key = String(name).toLowerCase(); if (!byName.has(key)) byName.set(key, entry.rel) } }
+    const nodeOf = (name) => { const found = byName.get(String(name).replace(/\.[^.]+$/, '').toLowerCase()); return found ? idOf(set, 'script', found) : '' }
+    for (const command of wanted) { const node = nodeOf(command.script); if (node) command.node = node }
+    if (scene.next?.script) { const node = nodeOf(scene.next.script); if (node) scene.next.node = node }
+  }
+
   const idOf = (set, _kind, rel) => `${set === defaultSet ? '' : `@${set.id}|`}s:${rel}`
   // 页码总是写出来（列表节点的 id 固定带 #页码），好和「回到第几页」对得上
   const dirNodeId = (set, rel, page, view = null) => {
@@ -1024,6 +1038,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     // script
     const { fileRel, sceneKey, real, adapterId } = await resolveScript(set, rel)
     const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), metaFor(adapterId, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) }))
+    await linkScene(set, rel, scene)   // goto / next 指令的目标脚本名 → 节点 id（同一个目录里按名字找，忽略大小写）；找不到的不补，播放器当没有
 
     if (entry) {
       const siblings = catalogChildren(catalog, holderId).filter((c) => c.script)

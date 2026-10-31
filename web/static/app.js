@@ -4232,10 +4232,22 @@ function galScrollSave(unitId, nodeId, top) {
 }
 // 列表的滚动容器：宽屏是 .media-reader-content 自己，窄屏（≤900px）它是 overflow:visible、整页在滚
 const galScroller = () => (getComputedStyle(els.mediaReaderContent).overflowY === 'visible' ? document.scrollingElement || document.documentElement : els.mediaReaderContent)
+// 脚本接着播下一个脚本（选项跳文件 / 看完接着播 NextFile）：不进导航轨迹（「列表」仍回到进来的列表），从头播；
+// 连续太快地跳（脚本一开头就跳回去之类的死循环）就拒绝，播放器退回显示文字提示
+const galChainTimes = []
+function galChainAllowed() {
+  const now = Date.now()
+  while (galChainTimes.length && now - galChainTimes[0] > 4000) galChainTimes.shift()
+  return galChainTimes.length < 4
+}
+function galChain(reader, nodeId) {
+  galChainTimes.push(Date.now())
+  return galNavigate(reader, nodeId, 'chain')
+}
 let galRestoreScroll = null   // { id, top }：renderGalBrowse 渲染到这个节点时用一次
 let galPendingStart = null   // 卡片上的场景跳转点按钮：{ base（节点 id）, step }，renderGal 打开那个脚本时用一次
 function galNavigate(reader, nodeId, kind = 'self', extra = null) {
-  galPendingStart = Number.isInteger(extra?.at) && extra.at > 0 ? { base: galBase(nodeId), step: extra.at } : null
+  galPendingStart = kind === 'chain' ? { base: galBase(nodeId), step: 0 } : Number.isInteger(extra?.at) && extra.at > 0 ? { base: galBase(nodeId), step: extra.at } : null   // chain：脚本接着播下一个脚本——从头开始，不用那份脚本上次的进度 / 选项
   const unitId = reader.unit.unitId
   const current = reader.node?.id ?? reader.section?.sectionId ?? ''
   let target = nodeId
@@ -4358,10 +4370,20 @@ function renderGal(reader) {
     onToggleImmersive: toggleGalImmersive,
     onEscape: () => exitGalImmersive({ remember: true }),
     chapter: {
+      // 脚本里的 goto（选项跳到别的脚本）：把这份标成看完，直接接着播目标脚本；返回 true = 已经跳走
+      jump: async (nodeId) => {
+        if (!nodeId || !galChainAllowed()) return false
+        clearTimeout(libraryProgressTimer)
+        galRatio = 1
+        await saveLibraryProgress(1, reader).catch(() => {})
+        await galChain(reader, nodeId)
+        return true
+      },
       canPrev: () => Boolean(mediaStepTarget('prev')),
-      canNext: () => Boolean(mediaStepTarget('next')),
+      // 「下一话」：脚本自己说了下一个（NextFile）就跟它走，不按列表顺序
+      canNext: () => Boolean(reader.scene?.next?.node) || Boolean(mediaStepTarget('next')),
       prev: () => { mediaStepTarget('prev')?.() },
-      next: () => { mediaStepTarget('next')?.() },
+      next: () => { if (reader.scene?.next?.node && galChainAllowed()) galChain(reader, reader.scene.next.node).catch((error) => alert(error.message)); else mediaStepTarget('next')?.() },
       back: () => { exitGalImmersive(); els.mediaReaderBack?.click() },
       // 「列表」回到它的上一级（首页/分类/角色），从那里选别的脚本；沉浸状态保留，进列表时自动退出
       up: reader.node?.parent != null
@@ -4373,6 +4395,7 @@ function renderGal(reader) {
         clearTimeout(libraryProgressTimer)
         galRatio = 1
         await saveLibraryProgress(1, reader).catch(() => {})
+        if (reader.scene?.next?.node && galChainAllowed()) { await galChain(reader, reader.scene.next.node); return }   // 脚本自己说了下一个（NextFile）：接着播，不回列表
         if (reader.node?.parent != null) await galNavigate(reader, reader.node.parent, 'back')
         else { exitGalImmersive(); els.mediaReaderBack?.click() }
       },

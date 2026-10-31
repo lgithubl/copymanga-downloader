@@ -122,6 +122,14 @@ try {
         await page.screenshot({ path: path.join(process.env.SHOT_DIR || os.tmpdir(), 'advhd-story.png') })
         check('没有页面错误；除了没有的语音 / 资源，没有 4xx 的资源请求', errors.length === 0 && missing.length === 0, J([errors, missing]))
 
+        // 选项跳到别的脚本：直接接着播目标脚本（001_00，第一句「…よろしく」），不显示提示、不回列表
+        await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(dir.node.items[1].node)}`)
+        await page.waitForSelector('.gal-player .gal-stage')
+        await page.waitForFunction(() => { const c = document.querySelector('.gal-choices'); return c && !c.hidden }, null, { timeout: 5000 })
+        await page.locator('.gal-choice').nth(2).click()
+        await page.keyboard.press('Space')
+        await page.waitForFunction(() => /よろしく/.test(document.querySelector('.gal-text')?.textContent || ''), null, { timeout: 8000 })
+        check('选「別の話へ」：直接进了目标脚本 001_00（第一句是它的台词「…よろしく」），没有「へ続く」的提示，还在播放页（没回列表）', /よろしく/.test(await text()) && !/へ続く/.test(await text()) && Boolean(await page.$('.gal-player .gal-stage')) && (await count()).startsWith('1 /'), J([await text(), await count()]))
         // 分支脚本：选项 → 带 when 的分支 → 汇合
         await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(dir.node.items[1].node)}`)
         await page.waitForSelector('.gal-player .gal-stage')
@@ -138,6 +146,19 @@ try {
         await page.keyboard.press('Space'); await sleep(400)
         check('下一步 = 汇合后的台词「合流」（左分支的「左の道」被跳过）', /合流/.test(await text()), await text())
         check('分支页面没有页面错误', errors.length === 0, J(errors))
+
+        // 看完有 NextFile 的脚本：接着播下一个脚本（001_00 → 002_00_H），不回列表
+        await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(dir.node.items[0].node)}`)
+        await page.waitForSelector('.gal-player .gal-stage')
+        await page.waitForFunction(() => /應賀/.test(document.querySelector('.gal-text')?.textContent || '') && /^1 \/ 6/.test(document.querySelector('.gal-count')?.textContent || ''))
+        for (let i = 0; i < 12; i++) { const c = await count(); const m = /^(\d+) \/ (\d+)/.exec(c); if (m && m[1] === m[2]) break; await page.keyboard.press('Space'); await sleep(350)}
+        await page.keyboard.press('Space')
+        await page.waitForFunction(() => /選んでください/.test(document.querySelector('.gal-text')?.textContent || ''), null, { timeout: 8000 })
+        check('看完 001_00（NextFile → 002_00_H）：直接接着播 002_00_H（第一句「選んでください」），不回列表', /選んでください/.test(await text()) && Boolean(await page.$('.gal-player .gal-stage')), await text())
+        await page.evaluate(() => document.querySelector('.gal-player .gal-up').click())
+        await page.waitForSelector('.gal-card.is-script')
+        check('接着播之后点「列表」：回到进来的那个列表（轨迹没被接着播改掉），列表里有脚本卡片', (await page.$$('.gal-card.is-script')).length >= 3, '')
+        check('跳转页面没有页面错误', errors.length === 0, J(errors))
 
         // 长背景图平移：原尺寸摆（基准位置 (0, -250)），2 秒线性平移 (0, -400) 之后停在 -650
         await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(dir.node.items[2].node)}`)
