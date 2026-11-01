@@ -30,11 +30,12 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.6 Artemis（pf8）补收图 / 声音样本（_blog 立绘每角色 2 张、bg / ev / sys、bgm / vo 各几个）；自有 arc 补收 EV 事件 CG 的底图 + 叠加层、几张背景
 # 1.5 BGI：按「角色 + 尺寸」把立绘本体和它的 e / o / y 部件配对收（可以跨 data*.arc），核对不同变体里部件的位置
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.5"
+VERSION="1.6"
 export GAL_COLLECT_VERSION="$VERSION"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
 HOST_TAG="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9' '_' | cut -c1-20)"
@@ -412,7 +413,21 @@ def arcfam_samples(f, size):
             f.seek(off); head = f.read(16)
         lines.append('%s\t%d\t%d\t%d\t%s\n' % (raw.hex(), s1, s2, off, head.hex()))
         if off + s1 <= size: picks.append(('%05d' % i, off, s1))
-    return ''.join(lines), spread_pick(picks)
+    # eomaia 的 EV（事件 CG）：底图 EV<nn>S<n>.PNG + 它的叠加层 EV<nn>S_FACE / MOJI / KARADA / EFF…，再加几张背景（BG_*_S.PNG、H*.PNG）：核对叠加层怎么叠
+    names = [(''.join(chr((c + len(raw) - i) & 0xff) for i, c in enumerate(raw)), s1, off) for raw, s1, s2, off in ents if off + s1 <= size and s1 == s2]
+    extra = []
+    bases = sorted(n for n in names if re.fullmatch(r'EV\d+S\d*\.PNG', n[0]) and n[1] <= 6 * MB)
+    for base in bases[::max(1, len(bases) // 3)][:3]:
+        prefix = re.sub(r'\d*\.PNG$', '', base[0])   # EV02S1.PNG → EV02S
+        extra.append(base)
+        extra += [n for n in names if re.fullmatch(re.escape(prefix) + r'_(FACE|MOJI|KARADA|EFF)\d+\.PNG', n[0]) and n[1] <= 6 * MB][:4]
+    bgs = sorted(n for n in names if re.fullmatch(r'(BG_.*_S|H\d+|BG\d+)\.PNG', n[0]) and n[1] <= 6 * MB)
+    extra += bgs[::max(1, len(bgs) // 4)][:4]
+    sample = spread_pick(picks)
+    taken = {x[1] for x in sample}
+    for n in extra:
+        if n[2] not in taken: sample.append((n[0], n[2], n[1])); taken.add(n[2])
+    return ''.join(lines), sample
 
 def xfl_samples(f, size):
     """XFL（LB）：'LB' 01 00 + u32 表大小 + u32 条目数 + 条目 [name(0x20) + u32 偏移(从表尾起) + u32 大小]。"""
@@ -430,6 +445,32 @@ def xfl_samples(f, size):
         lines.append('%s\t%d\t%d\t%s\n' % (name, off, sz, head.hex()))
         if base + off + sz <= size: picks.append((name, base + off, sz))
     return ''.join(lines), spread_pick(picks)
+
+PF8_MEDIA_MAX = 60 * MB
+
+def pf8_media(ents, size):
+    """Artemis 的图 / 声音样本（不是全收）：image/fg/_blog 每个角色目录 2 张（立绘用的图）、image/bg 6 张、image/ev 4 张、image/sys 3 张、sound/bgm 2 个、sound/vo 3 个；累计 <= PF8_MEDIA_MAX。"""
+    def spread(items, n):
+        items = sorted(items)
+        if not items: return []
+        step = max(1, len(items) // n)
+        return items[::step][:n]
+    cand = collections.defaultdict(list); out = []; total = 0
+    for name, off, sz in ents:
+        low = name.lower().replace('\\', '/'); parts = low.split('/')
+        if sz <= 0 or off + sz > size: continue
+        if low.startswith('image/fg/_blog/') and low.endswith('.png') and sz <= 2 * MB and len(parts) >= 5: cand['blog:' + parts[3]].append((sz, name, off))
+        elif low.startswith('image/bg/') and low.endswith('.png') and sz <= 4 * MB: cand['bg'].append((sz, name, off))
+        elif low.startswith('image/ev/') and low.endswith('.png') and sz <= 4 * MB: cand['ev'].append((sz, name, off))
+        elif low.startswith('image/sys/') and low.endswith('.png') and sz <= 1 * MB: cand['sys'].append((sz, name, off))
+        elif low.startswith('sound/bgm/') and low.endswith('.ogg') and sz <= 8 * MB: cand['bgm'].append((sz, name, off))
+        elif low.startswith('sound/vo/') and low.endswith('.ogg') and sz <= 1 * MB: cand['vo'].append((sz, name, off))
+    for key, items in sorted(cand.items()):
+        n = 2 if key.startswith('blog:') else {'bg': 6, 'ev': 4, 'sys': 3, 'bgm': 2, 'vo': 3}[key]
+        for sz, name, off in spread(items, n):
+            if total + sz > PF8_MEDIA_MAX: continue
+            out.append((name, off, sz)); total += sz
+    return out
 
 def main():
     games = [g for g in walk_games() if not ONLY or ONLY.search(os.path.relpath(g, root))]
@@ -463,7 +504,7 @@ def main():
                                 idx, ents = got; stored = 0
                                 ti = tarfile.TarInfo('%s/%s.__pf8index' % (gid, e.rel)); ti.size = len(idx); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(idx)); stored += len(idx)
                                 mf.write('%s\t%s\tpf8index\t%s\t%d\t%d\t%s\n' % (gid, e.rel, rule, e.size, len(idx), hashlib.sha256(idx).hexdigest()))
-                                chosen = pf8_pick(ents, e.size)
+                                chosen = pf8_pick(ents, e.size) + pf8_media(ents, e.size)
                                 for name, off, sz in chosen:
                                     f.seek(off); data = f.read(sz)
                                     if len(data) != sz: mf.write('%s\t%s\tERROR\t%s\t%d\t0\tshort read %s\n' % (gid, e.rel + ':' + name, rule, sz, name)); continue
