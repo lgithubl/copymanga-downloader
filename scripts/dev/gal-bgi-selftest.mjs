@@ -266,7 +266,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const scene = adapter.parse(text, ctx)
   const st = scene.steps
   const cmdsOf = (i) => st[i].commands.map((c) => c.op)
-  check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center', vcenter: true, shiftX: -150, shiftY: 40, zoom: 0.8 }, { src: 'ST01_F.png', align: 'center', vcenter: true, shiftX: -150, shiftY: 40, zoom: 0.8 }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
+  check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center', vcenter: true, shiftX: -150, shiftY: 40, zoom: 0.8 }, { src: 'ST01_F.png', attach: true, zoom: 0.8 }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
   check('场景：_Wait = wait（秒）；旁白（说话人空）= speaker 清空；选项挂在问题那句台词的步里', st[1].commands.some((c) => c.op === 'wait' && c.seconds === 1.5) && J(st[1].commands.find((c) => c.op === 'speaker').segments) === J([]) && st[1].commands.some((c) => c.op === 'choice' && c.options.length === 2 && c.options[1].segments[0].text === 'Right'), J(st[1]))
   const choice = st[1].commands.find((c) => c.op === 'choice')
   const g = (n) => J([{ var: choice.var, op: '==', value: n }])
@@ -308,6 +308,23 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   check('取资源：背景（CBG）= PNG、声音（BW）= Ogg；取资源时才落盘', res.contentType === 'image/png' && resPng.width === 4 && (await handler.getResource(id, 'v001.ogg')).body.subarray(0, 4).toString() === 'OggS', J(res.contentType))
   const thumb = await handler.getResource(id, 'ST01.png', { width: 160 })
   check('缩略图（?w=）：容器里的图直接缩成 WebP 缓存', thumb.contentType === 'image/webp' && Boolean(thumb.file), J(thumb))
+}
+
+{
+  // 立绘部件的多帧图：同组（<角色>_<尺寸>）里同宽的部件，最矮的 = 一帧；整数倍且 ≥ 1.5 倍的取出来时只留第一帧（cbgToPng cropHeight / containers markFrameSheets）
+  const dir = path.join(work, 'sheets'); await mkdir(path.join(dir, 'Archive'), { recursive: true })
+  const img = (w, h, seed) => { const pixels = Buffer.alloc(w * h * 4); for (let i = 0; i < pixels.length; i++) pixels[i] = (i * 5 + seed) & 0xff; return { width: w, height: h, bpp: 32, pixels } }
+  await writeFile(path.join(dir, 'Archive', 'data02000.arc'), buildArc20([
+    { name: 'XX01_M_O_A01', data: cbgEncode(img(40, 20, 1)) }, { name: 'XX01_M_E_A01', data: cbgEncode(img(40, 60, 2)) },
+    { name: 'XX01_M_E_A21', data: cbgEncode(img(40, 20, 3)) }, { name: 'XX01_M_E_A05', data: cbgEncode(img(40, 30, 4)) },
+    { name: 'XX01SA_M', data: cbgEncode(img(80, 60, 5)) },
+  ]))
+  const sheetCfg = normalizeGalConfig({ containers: { enabled: true, dir: 'arc', scan: ['Archive'], scriptDecoder: 'bgi-bs', scriptExt: 'bgi', mode: 'hybrid', format: 'buriko', flat: true, rules: [{ match: '\\.arc$' }] } })
+  const h = async (name) => decodePng(await (await virtualEntry({ mediaDir: dir, config: sheetCfg, rels: [`arc/res/${name}.png`] })).read()).height
+  check('立绘部件的多帧图：60 高的眼（同宽最矮 20 → 3 帧）只留第一帧 = 20；1 帧的嘴 / 眼不动；30 高（不是整数倍）不动；本体不动', (await h('XX01_M_E_A01')) === 20 && (await h('XX01_M_O_A01')) === 20 && (await h('XX01_M_E_A21')) === 20 && (await h('XX01_M_E_A05')) === 30 && (await h('XX01SA_M')) === 60, J([await h('XX01_M_E_A01'), await h('XX01_M_E_A05')]))
+  const whole = cbgToPng(cbgEncode(img(8, 6, 9)))
+  const top = cbgToPng(cbgEncode(img(8, 6, 9)), { cropHeight: 2 })
+  check('cbgToPng cropHeight：只留最上面几行（像素 = 原图前几行）', decodePng(top).height === 2 && decodePng(top).raw.equals(decodePng(whole).raw.subarray(0, 8 * 2 * 4)))
 }
 
 // ================= 真实样本（可选）=================

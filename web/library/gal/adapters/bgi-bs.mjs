@@ -20,7 +20,8 @@
 //   真实立绘图核对（g02 / g03 / g07 的 CompressedBG）：本体（如 NO04SA_M 1680×1580）头顶离图的上沿只有 ~57px、最下面一行不透明（身体被画面下沿截掉）；
 //     本体 y = 180 / 300、放大 90 或默认：「图的底边对齐画面底边再平移 y」会把头顶推到画面外（-111px），所以 y 按「图的中心 = 画面中心 + (x, y)」处理（头顶落在画面 6%~19% 高度处）——
 //     这是按「头不能被切掉」推的最合理的一种，没有游戏截图对照，不是证实
-//   没验证：表情 / 嘴 / 眼部件（比本体小，如 750×590、1260×3150）在本体里的位置——参数里没有偏移，可能在这些图自己的头里（0x18 起 8 字节），本体的这 8 字节全是 0，部件的样本还没收；现在部件和本体按同一个中心叠，位置不对
+//   表情 / 嘴 / 眼部件（比本体小）：图头里没有偏移（22415 张图头 0x18~0x1f 全是 0），参数里也没有；对了一对真实样本（pa01sa_l 1680×1680 + pa01_l_e_a01 1280 宽的眼）——水平居中（偏移 (1680-1280)/2）、顶边对齐，眼睛落在脸上；f 变体（750×750）部件和本体同尺寸、原点对齐。只验证了这一对 + f 变体，别的变体（M / K / N）没有成对的样本
+//   部件里眨眼 / 说话的几帧竖着拼成一张（1330×2550 = 3 × 850、1620×5120 = 4 × 1280）：containers 取资源时按「同组最矮的同宽部件 = 一帧」只留第一帧
 //   · _DrawScene 换背景会清掉立绘；_FadeBS 第 2 个参数 = 0 表示淡出（去掉）——参数含义按用法猜的
 //   · _FadeBGM(槽, 毫秒, 音量) 音量 0 = 淡出停止
 import { createIndexResolver } from '../resolve.mjs'
@@ -204,10 +205,14 @@ export function parse(text, ctx = null, meta = {}) {
       const parts = []
       const bodySrc = imageOf(body)?.src
       if (bodySrc) parts.push({ src: bodySrc, ...place })
-      for (const [i, v] of a.entries()) {   // 本体后面的字符串参数 = 表情 / 配件图，叠在本体上
-        if (i < 2 || typeof v !== 'string' || !v) continue
-        const src = imageOf(v)?.src
-        if (src) parts.push({ src, ...place })
+      // 本体后面的字符串参数 = 表情 / 嘴 / 眼等部件（比本体小、有的是几帧竖着拼的图，取资源时已经只留第一帧）：attach = 水平居中、顶边对齐在本体上。
+      // 不是图的（NO01_M007 这样的「表情编号」，不是档案里的条目）不算缺资源，记进 stats.ignored
+      if (bodySrc) {
+        for (const [i, v] of a.entries()) {
+          if (i < 2 || typeof v !== 'string' || !v) continue
+          const src = find(v, opt.imageExts)
+          if (src) { stats.images.referenced += 1; stats.images.resolved += 1; parts.push({ src, attach: true, ...(zoom !== 1 ? { zoom } : {}) }) } else count('ignored', 'bs:part-not-file')
+        }
       }
       if (parts.length) busts.set(num(a[0]), { parts, x })
       dirty = true

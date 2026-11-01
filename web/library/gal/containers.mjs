@@ -116,16 +116,16 @@ const pf8Stem = (arcName) => arcName.replace(/\.pfs(?:\.(\d+))?$/i, (_m, n) => (
 // buriko 的条目没有扩展名：看内容开头 → { kind, ext, transform }（kind：script / res；''= 不认识，跳过）。res 的 transform 在取出来时做（cbg → png、bw → ogg）
 async function classifyBuriko(handle, entry) {
   if (entry.size < 8) return { kind: '' }
-  const head = await readRange(handle, entry.offset, Math.min(16, entry.size))
+  const head = await readRange(handle, entry.offset, Math.min(0x18, entry.size))
   const sniff = sniffEntry(head)
   if (sniff === 'dsc') return { kind: 'script', ext: '', transform: '' }
-  if (sniff === 'cbg') return { kind: 'res', ext: 'png', transform: 'cbg-png' }
+  if (sniff === 'cbg') return { kind: 'res', ext: 'png', transform: 'cbg-png', ...(head.length >= 0x14 ? { w: head.readUInt16LE(0x10), h: head.readUInt16LE(0x12) } : {}) }
   if (sniff === 'bw') return { kind: 'res', ext: 'ogg', transform: 'bw-ogg' }
   return { kind: '' }
 }
 // 取出来的字节要不要转：cbg-png（CompressedBG → PNG）/ bw-ogg（去掉 BW 头）；PNAP 的预乘 → 直通另算（unpremultiply）
 function transformData(data, hit) {
-  if (hit.transform === 'cbg-png') return cbgToPng(data)
+  if (hit.transform === 'cbg-png') return cbgToPng(data, hit.crop ? { cropHeight: hit.crop } : {})
   if (hit.transform === 'bw-ogg') return bwToOgg(data)
   if (hit.transform === 'pf8') return pf8Decrypt(data, hit.key)
   return hit.unpremultiply ? unpremultiplyPng(data).buffer : data
@@ -413,7 +413,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
           if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
           handle ||= await open(file, 'r')
           const cls = await classifyBuriko(handle, entry).catch(() => ({ kind: '' }))
-          if (cls.kind === 'res') add(`${cfg.dir}/${resRel(cfg, stem, `${name}.${cls.ext}`)}`, { file, offset: entry.offset, size: entry.size, transform: cls.transform })
+          if (cls.kind === 'res') add(`${cfg.dir}/${resRel(cfg, stem, `${name}.${cls.ext}`)}`, { file, offset: entry.offset, size: entry.size, transform: cls.transform, ...(cls.w ? { w: cls.w, h: cls.h } : {}) })
           continue
         }
         if (cfg.format === 'pf8') {
@@ -436,7 +436,29 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
       }
     } finally { await handle?.close().catch(() => {}) }
   }
+  if (cfg.format === 'buriko') markFrameSheets(map)
   return { map, files, sig }
+}
+
+// BGI 的立绘部件（表情 / 嘴 / 眼：<角色>_<尺寸>_<种类>_<编号>，如 no01_m_e_a01）：眨眼 / 说话的几帧竖着拼在一张图里（真实样本：no01_m 的眼 1330×2550 = 3 × 850，嘴 1330×850 = 1 帧；ai01_m 的 1620×3840 = 3 × 1280、1620×5120 = 4 × 1280）。
+// 同一组（<角色>_<尺寸>）里同宽的部件，最矮的高度 = 一帧；比它高 1.5 倍以上而且正好是整数倍的 = 多帧的图，取出来时只留第一帧（hit.crop = 一帧的高度）
+function markFrameSheets(map) {
+  const groups = new Map()
+  for (const hit of map.values()) {
+    if (hit.transform !== 'cbg-png' || !hit.w) continue
+    const m = /^([a-z0-9]+_[a-z0-9]+)_[a-z]+_[^/]*\.png$/i.exec(hit.rel.replace(/^.*\//, ''))
+    if (!m) continue
+    const key = m[1].toLowerCase()
+    const g = groups.get(key)
+    if (g) g.push(hit); else groups.set(key, [hit])
+  }
+  for (const list of groups.values()) {
+    for (const hit of list) {
+      const frame = Math.min(...list.filter((o) => Math.abs(o.w - hit.w) <= hit.w * 0.03).map((o) => o.h))   // 宽度差 3% 以内算同一种窗口（no04_m 的眼 1260 宽、嘴 1270 宽）
+      if (hit.h >= frame * 1.5 && hit.h % frame === 0) hit.crop = frame
+      else if (hit.h >= frame * 1.4) for (const n of [3, 4]) if (hit.h % n === 0 && Math.abs(hit.h / n - frame) <= frame * 0.06) { hit.crop = hit.h / n; break }   // 4650 = 3 × 1550，同组最矮是 1490（no04_l）：差 6% 以内也按 3 / 4 帧算
+    }
+  }
 }
 
 // 当前的虚拟索引（不是 hybrid / 没启用 = null）。.arc 没变就沿用；并发调用共用一次重建
@@ -484,7 +506,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,

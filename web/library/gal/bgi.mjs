@@ -299,9 +299,13 @@ export function encodePng(width, height, channels, raw, level = 6) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(rows, { level })), chunk('IEND', Buffer.alloc(0))])
 }
 // CompressedBG 的像素是 BGR(A)：转成 RGB(A) 再编成 PNG
-export function cbgToPng(data) {
-  const { width, height, bpp, pixels } = cbgDecode(data)
+// cropHeight：只留最上面这么高的一段（立绘部件的多帧图只要第一帧）
+export function cbgToPng(data, { cropHeight = 0 } = {}) {
+  const decoded = cbgDecode(data)
+  const { width, bpp } = decoded
   const channels = bpp / 8
+  const height = cropHeight > 0 && cropHeight < decoded.height ? cropHeight : decoded.height
+  const pixels = height === decoded.height ? decoded.pixels : decoded.pixels.subarray(0, width * height * channels)
   const raw = Buffer.from(pixels)
   if (channels >= 3) for (let i = 0; i < raw.length; i += channels) { const b = raw[i]; raw[i] = raw[i + 2]; raw[i + 2] = b }
   return encodePng(width, height, channels, raw)
