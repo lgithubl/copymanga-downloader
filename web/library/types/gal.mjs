@@ -325,6 +325,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       config: item.config,
       adapters: item.adapters,
       resolveAsset: (rel) => resolveExists(item, rel),
+      warmAsset: (rel) => resolveAsset(item, rel),   // 预热：取场景时后台把要用的图取出来 / 解码进缓存
       extraWarnings: [...(item.configWarnings || []), ...(item.adapterWarnings || [])],
     })
   }

@@ -13,6 +13,7 @@ import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
 import { bwToOgg, cbgToPng, dscDecode, isBurikoScript, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
 import { decodeScre } from './arcfam-decode.mjs'
+import { runCbg } from './decode-pool.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
 import { pf8Decrypt, readPf8Index } from './pf8.mjs'
 import { unpremultiplyPng } from './png-unpremultiply.mjs'
@@ -144,6 +145,11 @@ async function classifyBuriko(handle, entry) {
   return { kind: '' }
 }
 // 取出来的字节要不要转：cbg-png（CompressedBG → PNG）/ bw-ogg（去掉 BW 头）；PNAP 的预乘 → 直通另算（unpremultiply）
+// 异步版：CompressedBG → PNG 放 worker 线程（不卡主线程），别的转换还是同步做
+async function transformDataAsync(data, hit) {
+  if (hit.transform === 'cbg-png') return runCbg(data, hit.crop ? { cropHeight: hit.crop } : {})
+  return transformData(data, hit)
+}
 function transformData(data, hit) {
   if (hit.transform === 'cbg-png') return cbgToPng(data, hit.crop ? { cropHeight: hit.crop } : {})
   if (hit.transform === 'bw-ogg') return bwToOgg(data)
@@ -543,7 +549,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
         const handle = await open(hit.file, 'r')
         try {
           const data = await readRange(handle, hit.offset, hit.size)
-          return transformData(data, hit)
+          return transformDataAsync(data, hit)
         } finally { await handle.close().catch(() => {}) }
       },
     }
@@ -569,7 +575,7 @@ export async function materialize({ mediaDir, config, rels }) {
         const handle = await open(hit.file, 'r')
         try {
           let data = await readRange(handle, hit.offset, hit.size)
-          data = transformData(data, hit)   // PNAP 的帧：预乘 → 直通（转不了就原样）；BGI：CompressedBG → PNG、BW → Ogg
+          data = await transformDataAsync(data, hit)   // PNAP 的帧：预乘 → 直通（转不了就原样）；BGI：CompressedBG → PNG、BW → Ogg
           await mkdir(path.dirname(target), { recursive: true })
           const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
           await writeFile(tmp, data)

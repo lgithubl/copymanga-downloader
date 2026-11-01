@@ -99,9 +99,11 @@ check('缩略图请求一圈下来，arc/res/Chip4 下没有任何图片落盘�
 // 不带 w = 原图：从 .arc 取出来放进缓存目录（cache/gal-arc-res），不写进媒体目录
 const orig = await handler.getResource(id, 'Chip4/BIG.png')
 const cached = (await readdir(path.join(dataDir, 'cache', 'gal-arc-res'), { recursive: true }).catch(() => [])).filter((f) => /\.png$/i.test(f))
-check('不带 w：原图（image/png，字节和 arc 里的一样），放进缓存目录 gal-arc-res，媒体目录 arc/res 里没有', (orig.file ? (await readFile(orig.file)) : orig.body).equals(big) && cached.length === 1 && !(await exists(path.join(media, 'arc/res/Chip4/BIG.png'))), J([cached, orig.contentType]))
+check('不带 w：原图（image/png，字节和 arc 里的一样），放进缓存目录 gal-arc-res，媒体目录 arc/res 里没有', (orig.file ? (await readFile(orig.file)) : orig.body).equals(big) && cached.length >= 1 && !(await exists(path.join(media, 'arc/res/Chip4/BIG.png'))), J([cached, orig.contentType]))
+const countPng = async () => (await readdir(path.join(dataDir, 'cache', 'gal-arc-res'), { recursive: true })).filter((f) => /\.png$/i.test(f)).length
+const before = await countPng()
 const again = await handler.getResource(id, 'Chip4/BIG.png')
-check('再取一次命中缓存（不重复写：缓存里仍是 1 个 png）', ((await readdir(path.join(dataDir, 'cache', 'gal-arc-res'), { recursive: true })).filter((f) => /\.png$/i.test(f))).length === 1 && Boolean(again))
+check('再取一次命中缓存（不重复写：缓存里的 png 个数不变）', (await countPng()) === before && Boolean(again))
 const t4 = await handler.getResource(id, 'Chip4/BIG.png', { width: 640 })
 check('?w=640 缩略图（宽 640）', (await meta(t4.file)).width === 640)
 {

@@ -160,7 +160,7 @@ const excerptOf = (scene) => {
 // mediaDir：媒体目录（绝对路径）。config：条目元数据里的 config（原样传，这里规整）。
 // resolveAsset(rel) → 磁盘真实路径（找不到抛错）；用来确认缩略图存在。
 // extraWarnings：调用方（handler）在 config 之外发现的、要报给管理员的丢弃项 [{ field, reason, snippet }]（比如不认识的适配器 id）
-export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, maxScriptBytes: defaultMaxScriptBytes = MAX_SCRIPT_BYTES, resolveAsset, extraWarnings = [] }) {
+export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, maxScriptBytes: defaultMaxScriptBytes = MAX_SCRIPT_BYTES, resolveAsset, warmAsset = null, extraWarnings = [] }) {
   const config = normalizeGalConfig(rawConfig)
   const configWarnings = []
   for (const w of [...config.warnings, ...(Array.isArray(extraWarnings) ? extraWarnings : [])]) if (!configWarnings.some((x) => x.field === w.field && x.reason === w.reason && x.snippet === w.snippet)) configWarnings.push(w)
@@ -662,6 +662,32 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return { dirs: base.dirs.map((entry) => ({ ...entry, origin })), scripts: base.scripts.map((entry) => ({ ...entry, origin })), rejected: base.rejected || [], compiledOnly: base.compiledOnly || [] }
   }
 
+
+  // 预热：播放器一取场景就在后台按出现顺序把图（bg / over / 立绘 / 叠加层）过一遍资源接口（容器里的会解码进缓存目录），2 个并发、最多 80 张；视频 / 声音不管。
+  // 同一份资源 5 分钟内不重复做（缓存本身也是单飞的）。warmAsset 没给 = 不预热
+  const warmedAt = new Map()
+  function warmScene(scene) {
+    if (!warmAsset) return
+    const wanted = []
+    const seen = new Set()
+    const add = (src) => { if (typeof src === 'string' && src && !seen.has(src)) { seen.add(src); wanted.push(src) } }
+    for (const step of scene?.steps || []) {
+      for (const command of step.commands || []) {
+        if (command.op === 'bg') { add(command.src); add(command.over) }
+        else if (command.op === 'stand') { for (const part of command.parts || []) add(part?.src) }
+        else if (command.op === 'overlay') add(command.src)
+      }
+      if (wanted.length >= 80) break
+    }
+    const now = Date.now()
+    const todo = wanted.slice(0, 80).filter((src) => !(warmedAt.get(src) > now - 300000))
+    for (const src of todo) warmedAt.set(src, now)
+    if (warmedAt.size > 20000) warmedAt.clear()
+    let at = 0
+    const worker = async () => { while (at < todo.length) { const src = todo[at++]; try { await warmAsset(src) } catch { /* 缺图 / 取不出来：播放时再报 */ } } }
+    void Promise.all([worker(), worker()]).catch(() => {})
+  }
+
   // 「更多」里的规则框要显示的：这个目录下的虚拟目录（和这个目录自己，如果它就是虚拟目录）当前生效的规则、默认规则、命中的脚本数
   async function viewRulesInfo(set, rel) {
     const out = []
@@ -1049,6 +1075,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     // script
     const { fileRel, sceneKey, real, adapterId } = await resolveScript(set, rel)
     const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), metaFor(adapterId, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) }))
+    warmScene(scene)   // 后台把场景里要用的图预先取出来 / 解码好（BGI 的 CBG 要解码，第一次要几百毫秒到几秒）：不等它，进了播放器图已经在缓存里
     await linkScene(set, rel, scene)   // goto / next 指令的目标脚本名 → 节点 id（同一个目录里按名字找，忽略大小写）；找不到的不补，播放器当没有
 
     if (entry) {

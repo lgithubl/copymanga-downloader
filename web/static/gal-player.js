@@ -1030,10 +1030,37 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     preloadNext(path[path.indexOf(i) + 1])
   }
 
+  // 预载：从下一步起往后看 PRELOAD_STEPS 步，把用到的图（bg / over / 立绘 / 叠加层）和下两步的语音先请求好（服务端会顺便把容器里的图解码进缓存）。
+  // 请求过的不再请求（Map 里留着对象，防止被回收时取消请求；最多留 80 个）
+  const PRELOAD_STEPS = 4
+  const preloaded = new Map()
   function preloadNext(i) {
-    const step = scene.steps[i]
-    if (!step) return
-    for (const command of step.commands) if (command.op === 'bg' && command.src) new Image().src = url(command.src)
+    let at = path.indexOf(i)
+    if (at < 0) return
+    const imageOf = (src) => {
+      if (typeof src !== 'string' || !src || preloaded.has(src)) return
+      const image = new Image()
+      image.src = url(src)
+      preloaded.set(src, image)
+    }
+    const audioOf = (src) => {
+      if (typeof src !== 'string' || !src || preloaded.has(src)) return
+      const audio = new Audio()
+      audio.preload = 'auto'
+      audio.src = url(src)
+      preloaded.set(src, audio)
+    }
+    for (let k = 0; k < PRELOAD_STEPS && at + k < path.length; k++) {
+      const step = scene.steps[path[at + k]]
+      if (!step) continue
+      for (const command of step.commands) {
+        if (command.op === 'bg') { imageOf(command.src); imageOf(command.over) }
+        else if (command.op === 'stand') for (const part of command.parts || []) imageOf(part?.src)
+        else if (command.op === 'overlay') imageOf(command.src)
+        else if (command.op === 'voice' && k < 2) audioOf(command.src)
+      }
+    }
+    while (preloaded.size > 80) preloaded.delete(preloaded.keys().next().value)
   }
 
   const posNow = () => path.indexOf(index)

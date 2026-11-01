@@ -299,6 +299,10 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   check('目录：两个脚本（scene1 / scene2），脚本卡片有台词摘要', dir.items.map((i) => i.title).join() === 'scene1,scene2' && /Hello|kanji/.test(dir.items[0].subtitle || ''), J(dir.items.map((i) => [i.title, i.subtitle])))
   const play = await handler.getReaderContent(id, 'main', { sectionId: dir.items[0].node || dir.items[0].id })
   check('播放：scene 来自适配器 bgi::bs；脚本末尾 jump_scenario → scene.next.node = scene2 的节点（服务端按名字补）', play.node.kind === 'player' && play.scene.adapter === 'bgi::bs' && play.scene.next?.node === (dir.items[1].node || dir.items[1].id), J([play.scene.adapter, play.scene.next]))
+  // 预热：取场景时后台把场景里的图解码进缓存目录（不等它）：bg01 / ST01 / ST01_F 都在缓存里
+  let warmed = []
+  for (let i = 0; i < 40 && warmed.length < 2; i++) { warmed = (await readdir(path.join(dataDir, 'cache', 'gal-arc-res'), { recursive: true }).catch(() => [])).filter((f) => /\.png$/i.test(f)); if (warmed.length < 2) await new Promise((r) => setTimeout(r, 100)) }
+  check('场景预热：取场景后，场景里的图（立绘 + 表情；背景 bg01 前面的测试已经取到媒体目录里了，不再进缓存）后台解码进缓存目录 gal-arc-res', warmed.length >= 2, J(warmed))
   const play2 = await handler.getReaderContent(id, 'main', { sectionId: dir.items[1].node || dir.items[1].id })
   const goto = play2.scene.steps.flatMap((s) => s.commands).find((c) => c.op === 'goto')
   check('播放：分支里的 goto 也补上了 node（scene1 的节点）', goto?.node === (dir.items[0].node || dir.items[0].id), J(goto))

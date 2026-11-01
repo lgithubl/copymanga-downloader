@@ -1087,6 +1087,13 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - 每个家族只一项（不再一个游戏一项）：刷新后把 JSON 里的 `config.game.id`（`<家族>::<自己起的名>`）和 `title`、路径改成自己的。
 - 浏览器自测 `fe-gal-selftest.mjs` 里加了这些预设的检查。
 
+### 图片预热 / 预载 / 解码不卡主线程
+
+- **服务端预热**（`browse.mjs warmScene`）：取脚本场景时，后台按出现顺序把场景里的图（`bg` / `over` / `stand` 部件 / `overlay`，最多 80 张，2 个并发）过一遍资源接口：容器里的图（BGI 的 CBG、Artemis 的 pf8、自有 arc 等）会被取出 / 解码进缓存目录 `gal-arc-res`，不等它，进了播放器图多半已经在缓存里；同一份 5 分钟内不重复做；缺图静默跳过（播放时才报）。
+- **解码放 worker 线程**（`decode-pool.mjs` / `decode-worker.mjs`）：CompressedBG → PNG 不再在主线程同步做（一张 4140×2460 的 v2 图要 3~4 秒，期间别的请求全被卡住）；最多 `GAL_DECODE_WORKERS`（默认 2，0 = 不用 worker）个，排队；worker 起不来 / 崩了退回主线程。实测：两张 4140×2460 并行 3.45 秒（顺序要 7.5 秒），主线程事件循环最大延迟 7ms。
+- **播放器预载**（`gal-player.js preloadNext`）：每播完一步，往后看 4 步，把用到的图（`bg` / `over` / 立绘部件 / `overlay`）和下两步的语音先请求好（以前只预载下一步的 `bg`）；请求过的不再请求。
+- 没做：BGM / 音效预载；大背景转 WebP / JPEG 缩小体积（现在 CBG → PNG，v2 的大图一张 14MB）；视频预载。
+
 ### 立绘整体缩放 / 偏移（设置 → 画面 → 立绘）
 
 - 播放器「设置」的「画面」组里多了一行「立绘 [百分比] % 偏移 [x] [y] [重置]」：对所有 `stand` 立绘整体生效（Spine 角色不受影响）。缩放绕画面底边中心，偏移是 1920×1080 设计像素（正 = 向右 / 向下），范围缩放 20%~400%、偏移 ±设计宽高；马上重画。存在这个媒体自己的设置里（和静图放大、表情预设一样存在浏览器本地，`views.stand = { scale, x, y }`），所以 BGI / Artemis 这类「位置是推断的」立绘可以自己调到对。实现：`gal-stand.js` 的 `setAdjust`（画布整体变换），`gal-player.js` 的设置行；`fe-gal-legeclo-selftest.mjs` 里有检查。
