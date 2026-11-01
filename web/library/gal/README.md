@@ -1081,10 +1081,10 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 ### 导入页「Gal 游戏」下拉里的预设（BGI / Artemis / 自有 arc）
 
 - 导入页（媒体导入 → Gal 导入方案）的「Gal 游戏」下拉 + 「刷新 json」= 把所选预设的 `adapters` 和 `config.game`（id / title）填进导入方案 JSON 文本框（`web/static/app.js` 的 `GAL_PRESETS` + `index.html` 的 `#gal-preset`；只改前端文本框，不保存）。新写的家族要在这两处各加一行，否则下拉里选不到——之前漏了，现在补上：
-  - `bgi_triplepairing` / `bgi_triplepairing_fd` / `bgi_ryoude` / `bgi_generic` → `bgi::bs`，`game.id = bgi::<名>`
-  - `artemis_yugamase` / `artemis_generic` → `artemis::ast`，`game.id = artemis::<名>`
-  - `arcfam_azato` / `arcfam_galxota` / `arcfam_generic` → `arcfam::scre`，`game.id = arcfam::<名>`
-  - `*_generic`：其它同引擎的游戏，刷新后把 JSON 里的 `config.game.id`（`<家族>::<自己起的名>`）和 `title` 改成自己的。
+  - `bgi` → `bgi::bs`，`game.id = bgi::game`
+  - `artemis` → `artemis::ast`，`game.id = artemis::game`
+  - `arcfam` → `arcfam::scre`，`game.id = arcfam::game`
+  - 每个家族只一项（不再一个游戏一项）：刷新后把 JSON 里的 `config.game.id`（`<家族>::<自己起的名>`）和 `title`、路径改成自己的。
 - 浏览器自测 `fe-gal-selftest.mjs` 里加了这些预设的检查。
 
 ### AdvHD 的跳转：选项跳到别的脚本（`goto`）/ 看完接着播（`scene.next`）
