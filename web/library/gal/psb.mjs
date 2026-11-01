@@ -1,0 +1,113 @@
+// PSB（KiriKiri / E-mote 的二进制树，魔数 "PSB\0"）读取：只读，转成普通 JS 值（对象 / 数组 / 数字 / 字符串 / null）。
+// 版本 2~4 的头：u16 版本 + u16 加密标志，后面是 u32 头长、名字表偏移、字符串表偏移、字符串数据偏移、资源块偏移 / 长度 / 数据偏移、根偏移。
+// 名字存成「双数组 trie」：三个无符号整数数组 a（base）、b（check）、c（每个名字的叶子节点）；叶子 idx 往上走 par = b[idx]，字符 = idx - a[par]，直到根（0），反过来就是名字（末尾有一个 0 终止符）。
+// 类型：0 null、1 null、2 false、3 true、4 = 0、5~12 = 1~8 字节有符号整数、13~20 = 无符号整数数组、21~24 = 字符串引用、25~28 = 资源引用、29 = 0.0、30 = f32、31 = f64、32 = 数组、33 = 对象。
+// 在 g08 / g09 的 scn.xp3 解出来的 PSB（全部约 520 个）上读通；不处理加密过的 PSB（头里加密标志 ≠ 0）和资源块内容（只返回引用）。
+const MAX_DEPTH = 64
+
+export class Psb {
+  constructor(buf) {
+    if (buf.length < 44 || buf.toString('latin1', 0, 4) !== 'PSB\0') throw new Error('不是 PSB')
+    this.d = buf
+    this.version = buf.readUInt16LE(4)
+    this.encrypt = buf.readUInt16LE(6)
+    if (this.encrypt !== 0) throw new Error('这个 PSB 的头是加密的（暂不支持）')
+    this.oNames = buf.readUInt32LE(12)
+    this.oStrings = buf.readUInt32LE(16)
+    this.oStringData = buf.readUInt32LE(20)
+    this.oEntries = buf.readUInt32LE(36)
+    this.names = this.loadNames()
+    this.strings = this.loadStrings()
+  }
+
+  uintArray(pos) {
+    const d = this.d
+    const t = d[pos]
+    if (t < 0x0d || t > 0x14) throw new Error(`PSB：期望整数数组，实际类型 0x${t.toString(16)}（偏移 ${pos}）`)
+    pos += 1
+    const cn = t - 0x0c
+    const count = d.readUIntLE(pos, cn)
+    pos += cn
+    const es = d[pos] - 0x0c
+    pos += 1
+    if (es < 1 || es > 6 || count > 0x4000000) throw new Error('PSB：整数数组头不合理')
+    const out = new Array(count)
+    for (let i = 0; i < count; i++) out[i] = d.readUIntLE(pos + i * es, es)
+    return [out, pos + count * es]
+  }
+
+  loadNames() {
+    const [a, p1] = this.uintArray(this.oNames)
+    const [b, p2] = this.uintArray(p1)
+    const [c] = this.uintArray(p2)
+    const names = new Array(c.length)
+    for (let k = 0; k < c.length; k++) {
+      let idx = c[k]
+      const chars = []
+      for (let guard = 0; idx !== 0 && idx < b.length && guard < 4096; guard++) {
+        const par = b[idx]
+        chars.push(idx - a[par])
+        idx = par
+      }
+      chars.reverse()
+      names[k] = Buffer.from(chars).toString('utf8').replace(/\0+$/, '')
+    }
+    return names
+  }
+
+  loadStrings() {
+    const [offs] = this.uintArray(this.oStrings)
+    const out = new Array(offs.length)
+    for (let i = 0; i < offs.length; i++) {
+      const start = this.oStringData + offs[i]
+      let end = this.d.indexOf(0, start)
+      if (end < 0) end = this.d.length
+      out[i] = this.d.toString('utf8', start, end)
+    }
+    return out
+  }
+
+  // → [值, 下一个位置]
+  value(pos, depth = 0) {
+    if (depth > MAX_DEPTH) throw new Error('PSB 嵌套太深')
+    const d = this.d
+    const t = d[pos]
+    pos += 1
+    if (t === 0 || t === 1) return [null, pos]
+    if (t === 2) return [false, pos]
+    if (t === 3) return [true, pos]
+    if (t === 4) return [0, pos]
+    if (t >= 5 && t <= 12) { const n = t - 4; return [n <= 6 ? d.readIntLE(pos, n) : Number(readBigSigned(d, pos, n)), pos + n] }
+    if (t >= 0x0d && t <= 0x14) return this.uintArray(pos - 1)
+    if (t >= 0x15 && t <= 0x18) { const n = t - 0x14; return [this.strings[d.readUIntLE(pos, n)] ?? '', pos + n] }
+    if (t >= 0x19 && t <= 0x1c) { const n = t - 0x18; return [{ resource: d.readUIntLE(pos, n) }, pos + n] }
+    if (t === 0x1d) return [0, pos]
+    if (t === 0x1e) return [d.readFloatLE(pos), pos + 4]
+    if (t === 0x1f) return [d.readDoubleLE(pos), pos + 8]
+    if (t === 0x20) {
+      const [offs, p] = this.uintArray(pos)
+      const out = new Array(offs.length)
+      for (let i = 0; i < offs.length; i++) out[i] = this.value(p + offs[i], depth + 1)[0]
+      return [out, p]
+    }
+    if (t === 0x21) {
+      const [keys, p1] = this.uintArray(pos)
+      const [offs, p2] = this.uintArray(p1)
+      const out = {}
+      for (let i = 0; i < keys.length; i++) out[this.names[keys[i]] ?? `?${keys[i]}`] = this.value(p2 + offs[i], depth + 1)[0]
+      return [out, p2]
+    }
+    throw new Error(`PSB：不认识的类型 0x${t.toString(16)}（偏移 ${pos - 1}）`)
+  }
+
+  root() { return this.value(this.oEntries)[0] }
+}
+
+function readBigSigned(buf, pos, n) {
+  let v = 0n
+  for (let i = n - 1; i >= 0; i--) v = (v << 8n) | BigInt(buf[pos + i])
+  return BigInt.asIntN(n * 8, v)
+}
+
+export const isPsb = (buf) => buf.length >= 44 && buf.toString('latin1', 0, 4) === 'PSB\0'
+export const readPsb = (buf) => new Psb(buf).root()

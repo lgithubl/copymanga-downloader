@@ -1218,3 +1218,13 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - **PNA 帧里嵌 PNG 是样本为准**：`SysGraphic.arc` 的 UI 包里帧确实是内嵌 PNG（逆向笔记 TODO 第三轮「帧只是图片名引用、像素在外部」和样本不符）。
   - `Effect1` 的最后一对（u16 重复次数、浮点延迟）只处理了延迟；缓动 22-30（back / elastic / bounce）是标准公式，没逐个对着反编译核对（0-21 核对过）。
   - 变量 / 标志 / 寄存器在真实游戏里是跨脚本持久的（存档里），这里每个脚本从默认值起；没有默认值的标志按 `flags.unknown`（默认真），所以脚本里依赖前面剧情的分支走的是「默认那条」。
+
+## KiriKiri Z（Hxv4 加密的 XP3）：解密 + PSB 读取（第一阶段，还没有适配器）
+
+- `krkr-hxv4.mjs`：读 XP3、解「特殊索引」、按（目录, 名字）找条目、解条目。**只做「已经有密钥包」的那一半**，密钥包（`params` 22B、`material` 64B、`key` 32B、`nonce0` / `nonce1` 24B，hex）以后放配置；从 exe 里取密钥（PE 资源 + TJS2 常量 + Argon2i + KDF，xp3-brute 的 `krkr_exe.rs` 约 1300 行）**没有移植**。
+- 依据：xp3-brute 0.3.7（crates.io，MIT）的源码。结构：特殊索引 = XChaCha20-Poly1305 + zlib（nonce 由 Hxv4 描述符 kind 低位选）；条目内容 = XOR，由 params + SHAKE256(material) 的控制表生成 128 个小虚拟机程序按 entry_key 算（`Hxv4Filter`）；名字 = BLAKE2s-256(UTF-16LE(名字 + "xp3hnp"))，目录 = SipHash-2-4（小端存放）。
+- **核对**：g08 / g09 的 `scn.xp3`（265 / 256 个条目）全部解密并通过 adlr 校验，和 xp3-brute 解出来的内容逐字节一致；PSB 自带的逻辑名（`sc_2_st01.txt`）加 `.scn` 用名字哈希能找回每一个条目（265 / 265、256 / 256）。g08 的 `data.xp3` 的特殊索引用同一个密钥包也能解开（只验证了索引，数据没验证）。
+- 逻辑名规律：剧本在根目录 `/`，名字 = `<PSB 里的 name>.scn`，如 `sc_2_st01.txt.scn`。图片 / 语音的目录和名字还没看过。
+- `psb.mjs`：PSB（魔数 `PSB\0`，版本 3）只读解析 → JS 值；资源块只返回引用。g08 / g09 的 521 个剧本 PSB 全部读通。
+- 没验证：别的 xp3（image / fgimage / evimage / voice）的数据能不能用同一个密钥包解（只有 `data.xp3` 的索引验证了）；`archive_slot ≠ 0` 的记录（指向别的档案）没处理。
+- 自测：`scripts/dev/gal-krkr-hxv4-selftest.mjs`（哈希向量、虚拟机向量、合成档案整条链；`KRKR_SAMPLE=<含 scn.xp3 的目录>:<密钥包.json>` 再多跑真实样本，样本和密钥包不进仓库）。
