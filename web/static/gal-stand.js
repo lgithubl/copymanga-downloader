@@ -166,6 +166,7 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
   const shared = media || createStageMedia({ url, onMissing })
   const images = new Map()   // src → Promise<HTMLImageElement | null>（整体立绘用；失败报 onMissing）
   let seq = 0
+  let adjust = { scale: 1, x: 0, y: 0 }   // 用户在「设置 → 画面」里调的立绘整体缩放 / 偏移（绕画面底边中心缩放，x / y 是设计像素）；对所有立绘生效
   let frameRaf = 0
   const fades = fadeTracker()
   let drawn = null   // { legacy, slots: [{ slot, geo, items }] }：最近一次解析好的内容（淡入时按帧重画）
@@ -213,6 +214,10 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
     frameRaf = 0
     ctx.clearRect(0, 0, DESIGN_W, DESIGN_H)
     if (!drawn) return
+    ctx.save()
+    ctx.translate(adjust.x + DESIGN_W / 2, adjust.y + DESIGN_H)
+    ctx.scale(adjust.scale, adjust.scale)
+    ctx.translate(-DESIGN_W / 2, -DESIGN_H)
     if (drawn.legacy) {
       const { items, ox, oy } = drawn.legacy
       for (const it of items) {
@@ -227,6 +232,7 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
       if (off.moving) moving = true
       for (const item of slot.items) drawResolved(ctx, slot.geo, item, fades.alpha(slot.slot, now), off.at)
     }
+    ctx.restore()
     if (moving || fades.active(now)) frameRaf = requestAnimationFrame(paint)
   }
 
@@ -253,7 +259,14 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
     canvas.dataset.slots = JSON.stringify(slots.map((s) => String(s.slot)))
   }
 
-  return { set, canvas, destroy: () => { seq += 1; cancelAnimationFrame(frameRaf); canvas.remove(); images.clear() } }
+  // 整体缩放 / 偏移（播放器「设置 → 画面 → 立绘」）：scale 0.2~4，x / y 设计像素；马上重画
+  function setAdjust(next) {
+    const n = (v, d) => (Number.isFinite(Number(v)) && v !== '' && v !== null ? Number(v) : d)
+    adjust = { scale: Math.max(0.2, Math.min(4, n(next?.scale, 1))), x: Math.max(-DESIGN_W, Math.min(DESIGN_W, n(next?.x, 0))), y: Math.max(-DESIGN_H, Math.min(DESIGN_H, n(next?.y, 0))) }
+    canvas.dataset.adjust = JSON.stringify(adjust)
+    if (drawn) { cancelAnimationFrame(frameRaf); paint(performance.now()) }
+  }
+  return { set, setAdjust, canvas, destroy: () => { seq += 1; cancelAnimationFrame(frameRaf); canvas.remove(); images.clear() } }
 }
 
 // ---------- 叠加层（overlay 指令）：静态图 / 矩形，画在立绘之上 ----------

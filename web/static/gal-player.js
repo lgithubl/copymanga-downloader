@@ -233,6 +233,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
 
   // 设置弹层（原来的 ⚙ 设置和「更多」菜单合在这里）：显示 / 音频 / 播放 / 画面 四组。.gal-more 和 .gal-settings 两个类都留着
+  // 立绘大小 / 偏移（只对 stand 立绘，Spine 角色不受影响）：存在这个媒体里
+  const standNumber = (title, step, min, max) => { const input = el('input', 'gal-more-number'); input.type = 'number'; input.step = String(step); input.min = String(min); input.max = String(max); input.title = title; return input }
+  const standScaleInput = standNumber('立绘整体缩放（百分比，100 = 原样；绕画面底边中心缩放）', 5, 20, 400)
+  const standXInput = standNumber('立绘整体水平偏移（1920×1080 设计像素，正 = 向右）', 10, -1920, 1920)
+  const standYInput = standNumber('立绘整体垂直偏移（1920×1080 设计像素，正 = 向下）', 10, -1080, 1080)
+  const standResetBtn = btn('重置', '立绘大小 / 偏移恢复默认', 'gal-more-btn')
+  const standRow = el('div', 'gal-more-field')
+  standRow.append(el('span', '', '立绘'), standScaleInput, el('span', '', '%'), el('span', '', '偏移'), standXInput, standYInput, standResetBtn)
   const settings = el('div', 'gal-settings gal-more')
   settings.hidden = true
   const range = (min, max, step, title) => { const r = el('input'); r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.title = title; return r }
@@ -266,7 +274,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), row('语音/音效', seRange, seValue)),
     section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput)),
-    section('画面', slowRow, fpsRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
+    section('画面', slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
   )
   hud.append(box)
   // 工具栏不再叠在舞台里：放在舞台下面、播放器最底部，和列表页底部固定条同一个位置、同一个顺序（↑ 在最左）
@@ -360,13 +368,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     const num = (value, fallback, min, max) => (Number.isFinite(Number(value)) && value !== '' && value !== null && value !== undefined ? Math.max(min, Math.min(max, Number(value))) : fallback)
     return { mode: camera?.mode === 'fixed' ? 'fixed' : camera?.mode === 'widget' ? 'widget' : 'fit', width: num(camera?.width, 1920, 100, 20000), cx: num(camera?.cx, 0, -20000, 20000), cy: num(camera?.cy, 900, -20000, 20000) }
   }
+  // 立绘整体缩放 / 偏移（这个媒体自己的设置）：scale 0.2~4（1 = 原样）、x / y 设计像素（1920×1080 里；绕画面底边中心缩放）
+  const cleanStand = (v) => {
+    const n = (value, fallback, min, max) => (Number.isFinite(Number(value)) && value !== '' && value !== null && value !== undefined ? Math.max(min, Math.min(max, Number(value))) : fallback)
+    return { scale: n(v?.scale, 1, 0.2, 4), x: n(v?.x, 0, -1920, 1920), y: n(v?.y, 0, -1080, 1080) }
+  }
   const loadViews = () => {
     let saved = {}
     try { saved = JSON.parse((viewStorageKey && localStorage.getItem(viewStorageKey)) || '{}') || {} } catch { saved = {} }
     const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
     const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
     const zoomDefault = pd.zoom !== undefined ? { zoom: pd.zoom } : undefined
-    return { still: cleanView(saved.still || legacy || zoomDefault), actor: cleanView(saved.actor || zoomDefault), camera: cleanCamera(saved.camera || (pd.cameraMode ? { mode: pd.cameraMode } : undefined)), blend: ['noAdditive', 'allNormal'].includes(saved.blend) ? saved.blend : 'native', expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined }
+    return { still: cleanView(saved.still || legacy || zoomDefault), actor: cleanView(saved.actor || zoomDefault), camera: cleanCamera(saved.camera || (pd.cameraMode ? { mode: pd.cameraMode } : undefined)), blend: ['noAdditive', 'allNormal'].includes(saved.blend) ? saved.blend : 'native', expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined, stand: cleanStand(saved.stand) }
   }
   let views = loadViews()
   // 表情预设表：内置初始值（gal-spine.js）← 服务端配置（adapterOptions['girlscreation-tag'].expressions）← 这个媒体自己调的（views.expressions）
@@ -410,6 +423,16 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (!viewStorageKey) return
     try { localStorage.setItem(viewStorageKey, JSON.stringify(views)) } catch { /* 存不了就只在这一页生效 */ }
   }
+  const syncStandInputs = () => { standScaleInput.value = String(Math.round(views.stand.scale * 100)); standXInput.value = String(Math.round(views.stand.x)); standYInput.value = String(Math.round(views.stand.y)) }
+  const applyStand = () => {
+    views = { ...views, stand: cleanStand({ scale: Number(standScaleInput.value) / 100, x: standXInput.value, y: standYInput.value }) }
+    syncStandInputs()
+    saveViews()
+    standLayer?.setAdjust(views.stand)
+  }
+  for (const input of [standScaleInput, standXInput, standYInput]) input.addEventListener('change', applyStand)
+  standResetBtn.addEventListener('click', () => { standScaleInput.value = '100'; standXInput.value = '0'; standYInput.value = '0'; applyStand() })
+  syncStandInputs()
   zoomInput.addEventListener('change', () => {
     const kind = viewKind()
     views = { ...views, [kind]: cleanView({ ...views[kind], zoom: Math.round(Number(zoomInput.value) * 100) / 100 }) }
@@ -794,7 +817,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const media = () => stageMedia || (stageMedia = createStageMedia({ url, onMissing: markMissing }))
   function paintStand(live = false) {
     if (!standLayer && !state.stand && !state.stands.length) return
-    if (!standLayer) standLayer = createStandLayer({ parent: world, url, onMissing: markMissing, media: media() })
+    if (!standLayer) { standLayer = createStandLayer({ parent: world, url, onMissing: markMissing, media: media() }); standLayer.setAdjust(views.stand) }
     standLayer.set(state.stand, state.stands, { live })
   }
   let underLayer = null   // spec.under 的叠加层：画在立绘 / 骨骼之下（背景的前景部件）
