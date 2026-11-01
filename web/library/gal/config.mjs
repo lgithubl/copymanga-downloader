@@ -32,10 +32,23 @@ export const CONTAINER_PNA_MODES = Object.freeze(['frames', 'raw', 'skip'])
 export const DEFAULT_CONTAINER_GALLERY = Object.freeze({ functions: Object.freeze(['openCgBrowser']), pageFlags: Object.freeze([105]), minCalls: 20, group: '_\\d+$' })
 // 展开方式：hybrid（默认）= 脚本展开到磁盘（很小），图 / 声音 / 视频 / PNA 帧不展开，被请求时才从 .arc 里读出那一个条目（写到磁盘当缓存）；files = 全部展开到磁盘（以前的行为，出问题就回退到它）
 export const CONTAINER_MODES = Object.freeze(['hybrid', 'files'])
-// 容器格式：willplus（WillPlus AdvHD 的 .arc，默认）/ buriko（BGI / Ethornell 的 BURIKO ARC20：条目没有扩展名，按内容认；只支持 hybrid）/ pf8（Artemis 的 .pfs：条目逐字节 XOR SHA1(索引)；只支持 hybrid）/ arcfam（自有 arc：eomaia 引擎的 script.arc / image.arc …，名字按长度混淆；只支持 hybrid）
-export const CONTAINER_FORMATS = Object.freeze(['willplus', 'buriko', 'pf8', 'arcfam'])
+// 容器格式：willplus（WillPlus AdvHD 的 .arc，默认）/ buriko（BGI / Ethornell 的 BURIKO ARC20：条目没有扩展名，按内容认；只支持 hybrid）/ pf8（Artemis 的 .pfs：条目逐字节 XOR SHA1(索引)；只支持 hybrid）/ arcfam（自有 arc：eomaia 引擎的 script.arc / image.arc …，名字按长度混淆；只支持 hybrid）/ krkr（KiriKiri Z 的 Hxv4 加密 xp3：文件名是哈希，要在 containers.keys 里放密钥包；只支持 hybrid）
+export const CONTAINER_FORMATS = Object.freeze(['willplus', 'buriko', 'pf8', 'arcfam', 'krkr'])
 export const CONTAINER_KINDS = Object.freeze(['script', 'res', 'pna'])
 export const DEFAULT_CONTAINERS = Object.freeze({ enabled: false, dir: 'arc', scan: Object.freeze(['.']), scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', mode: 'hybrid', format: 'willplus', flat: false, rules: Object.freeze([]), maxEntries: 200000, maxTotalMB: 8192 })
+// KiriKiri Z（Hxv4）的密钥包：[{ params 22B, material 64B, key 32B, nonce0 24B, nonce1 24B }]（hex，不分大小写）；最多 8 套，每套字段全对才收；返回规整后（小写 hex）的列表
+const KEY_BUNDLE_HEX = Object.freeze({ params: 22, material: 64, key: 32, nonce0: 24, nonce1: 24 })
+export function normalizeKeyBundles(list) {
+  const out = []
+  for (const raw of (Array.isArray(list) ? list : []).slice(0, 8)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const bundle = {}
+    let ok = true
+    for (const [k, n] of Object.entries(KEY_BUNDLE_HEX)) { const v = typeof raw[k] === 'string' ? raw[k].trim().toLowerCase() : ''; if (!new RegExp(`^[0-9a-f]{${n * 2}}$`).test(v)) { ok = false; break } bundle[k] = v }
+    if (ok) out.push(bundle)
+  }
+  return out
+}
 export const CONTAINER_LIMITS = Object.freeze({ rules: 20, list: 10, maxEntries: [1, 1000000], maxTotalMB: [1, 65536] })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
 export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, only: Object.freeze([]), scanSteps: 200, scanFrom: 0, topUp: false, kindMax: Object.freeze({}) })
@@ -498,7 +511,7 @@ export function normalizeGalConfigWithWarnings(raw) {
   if (v.containers !== undefined && !isPlainObject(v.containers)) warn('containers', '不是对象，用默认值', v.containers)
   if (isPlainObject(v.containers)) {
     const c = v.containers
-    for (const key of Object.keys(c)) if (!(key in dco)) warn('containers', `不认识的字段 ${key}，已丢掉`, key)
+    for (const key of Object.keys(c)) if (!(key in dco) && key !== 'keys') warn('containers', `不认识的字段 ${key}，已丢掉`, key)
     if (c.enabled !== undefined) { if (typeof c.enabled === 'boolean') containers.enabled = c.enabled; else warn('containers.enabled', '只能是 true / false，用默认值', c.enabled) }
     if (c.dir !== undefined) {
       const rel = typeof c.dir === 'string' ? safeRelPath(c.dir) : null
@@ -522,7 +535,17 @@ export function normalizeGalConfigWithWarnings(raw) {
     if (c.mode !== undefined) { if (CONTAINER_MODES.includes(c.mode)) containers.mode = c.mode; else warn('containers.mode', `只能是 ${CONTAINER_MODES.join(' / ')}，用默认值 ${containers.mode}`, c.mode) }
     if (c.format !== undefined) { if (CONTAINER_FORMATS.includes(c.format)) containers.format = c.format; else warn('containers.format', `只能是 ${CONTAINER_FORMATS.join(' / ')}，用默认值 ${containers.format}`, c.format) }
     if (c.flat !== undefined) { if (typeof c.flat === 'boolean') containers.flat = c.flat; else warn('containers.flat', '只能是 true / false，用默认值', c.flat) }
-    if (['buriko', 'pf8', 'arcfam'].includes(containers.format) && containers.mode !== 'hybrid') { containers.mode = 'hybrid'; warn('containers.mode', `format 是 ${containers.format} 时只支持 hybrid（图 / 声音要在取出来时转格式 / 解密），已改成 hybrid`, c.mode) }
+    if (['buriko', 'pf8', 'arcfam', 'krkr'].includes(containers.format) && containers.mode !== 'hybrid') { containers.mode = 'hybrid'; warn('containers.mode', `format 是 ${containers.format} 时只支持 hybrid（图 / 声音要在取出来时转格式 / 解密），已改成 hybrid`, c.mode) }
+    // krkr（Hxv4）的密钥包（也可以放服务端的密钥文件 <DATA_DIR>/gal-krkr-keys.json，见 containers.mjs；写在这里的优先）
+    if (c.keys !== undefined) {
+      if (!Array.isArray(c.keys)) warn('containers.keys', '不是数组，已丢掉', typeof c.keys)
+      else {
+        if (c.keys.length > 8) warn('containers.keys', '最多 8 套，多出的丢掉', c.keys.length)
+        const list = normalizeKeyBundles(c.keys)
+        if (list.length < Math.min(8, c.keys.length)) warn('containers.keys', '有的密钥包不完整（要 params 22B / material 64B / key 32B / nonce0 24B / nonce1 24B 的 hex），已丢掉', '（密钥内容不显示）')
+        if (list.length) containers.keys = list
+      }
+    }
     if (c.scriptExt !== undefined) { if (typeof c.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(c.scriptExt)) containers.scriptExt = c.scriptExt; else warn('containers.scriptExt', '只能是 1-10 位小写字母 / 数字，用默认值', c.scriptExt) }
     for (const key of ['maxEntries', 'maxTotalMB']) {
       if (c[key] === undefined) continue

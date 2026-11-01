@@ -2461,6 +2461,7 @@ const GAL_PRESETS = {
   bgi: { adapters: ['bgi::bs'], game: { id: 'bgi::game', title: '' } },
   artemis: { adapters: ['artemis::ast'], game: { id: 'artemis::game', title: '' } },
   arcfam: { adapters: ['arcfam::scre'], game: { id: 'arcfam::game', title: '' } },
+  krkr: { adapters: ['krkr::scn'], game: { id: 'krkr::game', title: '' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]

@@ -5,7 +5,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { deflateSync } from 'node:zlib'
-import { Hxv4Filter, adler32, applyState, nameHash, openHxv4Archive, pathHash, xchacha20poly1305Seal } from '../../web/library/gal/krkr-hxv4.mjs'
+import { Hxv4Filter, applyState, nameHash, openHxv4Archive, pathHash } from '../../web/library/gal/krkr-hxv4.mjs'
+import { buildHxv4Xp3, makeBundle } from './make-krkr-fixture.mjs'
 
 let passed = 0
 let failed = 0
@@ -42,58 +43,8 @@ try {
     nonce1: createHash('sha256').update('n1').digest().subarray(0, 24).toString('hex'),
   }
   const filter = Hxv4Filter.fromBundle(bundle)
-  const fakeName = (id) => { const w = []; let v = BigInt(id); do { w.push(0x5000 + Number(v & 0x3fffn)); v >>= 14n } while (v > 0n); return Buffer.from(String.fromCharCode(...w), 'utf16le') }
   const files = [['/', 'a.scn', Buffer.from('PSB\0hello world, scene a'.repeat(30))], ['/', 'b.scn', Buffer.from('second file '.repeat(200))], ['sub', 'c.png', Buffer.alloc(5000, 7)]]
-  // 先排数据：[魔数 11][索引指针 8] 之后是各条目的（zlib 或原样）段，再是特殊索引，再是索引块
-  const chunks = []
-  let cursor = 19
-  const records = []
-  const fileChunks = []
-  const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b }
-  const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b }
-  const chunk = (tag, body) => Buffer.concat([Buffer.from(tag, 'latin1'), u64(body.length), body])
-  files.forEach(([dir, name, plain], i) => {
-    const id = i + 1
-    const entryKey = BigInt.asUintN(64, 0x1234567890abcdefn + BigInt(i) * 0x1111111111n)
-    const flag = i % 2
-    const enc = Buffer.from(plain)
-    applyState(filter.stateFor(entryKey, flag), 0, enc)
-    const compress = i === 1
-    const stored = compress ? deflateSync(enc) : enc
-    const offset = cursor
-    chunks.push(stored)
-    cursor += stored.length
-    const nm = fakeName(id)
-    const info = Buffer.concat([u32(0), u64(plain.length), u64(stored.length), Buffer.from([nm.length / 2 & 0xff, 0]), nm])
-    const segm = Buffer.concat([u32(compress ? 1 : 0), u64(offset), u64(plain.length), u64(stored.length)])
-    fileChunks.push(chunk('File', Buffer.concat([chunk('info', info), chunk('segm', segm), chunk('adlr', u32(adler32(plain)))])))
-    records.push({ dir, name, id, entryKey, flag })
-  })
-  // 特殊索引：[路径哈希(8)、[名字哈希(32)、[打包定位, entry_key]]…]… 的序列化
-  const be32 = (n) => { const b = Buffer.alloc(4); b.writeInt32BE(n); return b }
-  const hxBytes = (b) => Buffer.concat([Buffer.from([3]), be32(b.length), b])
-  const hxInt = (v) => { const b = Buffer.alloc(9); b[0] = 4; b.writeBigInt64BE(BigInt.asIntN(64, v), 1); return b }
-  const hxArr = (items) => Buffer.concat([Buffer.from([0x81]), be32(items.length), ...items])
-  const byDir = new Map()
-  for (const r of records) { if (!byDir.has(r.dir)) byDir.set(r.dir, []); byDir.get(r.dir).push(r) }
-  const rootItems = []
-  for (const [dir, rs] of byDir) {
-    rootItems.push(hxBytes(pathHash(dir)))
-    rootItems.push(hxArr(rs.flatMap((r) => [hxBytes(nameHash(r.name)), hxArr([hxInt((BigInt(r.flag) << 32n) | BigInt(r.id)), hxInt(r.entryKey)])])))
-  }
-  const serialized = hxArr(rootItems)
-  const compressed = deflateSync(serialized)
-  const plainSpecial = Buffer.concat([u32(serialized.length), compressed])
-  const sealed = xchacha20poly1305Seal(Buffer.from(bundle.key, 'hex'), Buffer.from(bundle.nonce0, 'hex'), plainSpecial)
-  const blob = Buffer.concat([sealed.subarray(sealed.length - 16), sealed.subarray(0, sealed.length - 16)])   // 标签在前
-  const specialOffset = cursor
-  chunks.push(blob)
-  cursor += blob.length
-  const hxDesc = chunk('Hxv4', Buffer.concat([u64(specialOffset), u32(blob.length), Buffer.from([0, 0])]))
-  const indexRaw = Buffer.concat([hxDesc, ...fileChunks])
-  const indexOffset = cursor
-  const indexBlock = Buffer.concat([Buffer.from([1]), u64(deflateSync(indexRaw).length), u64(indexRaw.length), deflateSync(indexRaw)])
-  const xp3 = Buffer.concat([Buffer.from([0x58, 0x50, 0x33, 0x0d, 0x0a, 0x20, 0x0a, 0x1a, 0x8b, 0x67, 0x01]), u64(indexOffset), ...chunks, indexBlock])
+  const xp3 = buildHxv4Xp3(files, bundle)
   const file = path.join(work, 'synthetic.xp3')
   await writeFile(file, xp3)
   const arc = await openHxv4Archive(file, bundle)

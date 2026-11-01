@@ -8,6 +8,7 @@
 // WillPlus ARC（见 advhd-willplus/ARC_FORMAT.md）：u32 条目数、u32 目录大小、条目 { u32 大小, u32 相对偏移, UTF-16LE 名字 + NUL }，数据在 8 + 目录大小 + 相对偏移；不加密。
 // 容器是外来的二进制：所有长度 / 偏移都要对着文件大小校验，条目名只认安全的相对路径，展开的数量 / 总大小有上限。
 import { createHash } from 'node:crypto'
+import { readFileSync, statSync } from 'node:fs'
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
@@ -15,12 +16,17 @@ import { bwToOgg, cbgToPng, dscDecode, isBurikoScript, parseBgiFaceSet, readBuri
 import { decodeScre } from './arcfam-decode.mjs'
 import { runCbg } from './decode-pool.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
+import { normalizeKeyBundles } from './config.mjs'
+import { Hxv4Filter, applyState, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
+import { inflateSync } from 'node:zlib'
+import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
+import { isPsb } from './psb.mjs'
 import { pf8Decrypt, readPf8Index } from './pf8.mjs'
 import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 8
+export const CONTAINER_FORMAT_VERSION = 9
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -71,11 +77,17 @@ const ARCFAM_SCRE_DECODER = {
     return JSON.stringify({ format: 'arcfam-scre/1', arc, name, size: buffer.length, events })
   },
 }
+// KiriKiri Z（Hxv4 加密 xp3 里的 PSB 场景脚本）：调用方已经解密成明文 PSB，这里压成 krkr-scn/1（适配器 krkr::scn 吃它）
+const KRKR_SCN_DECODER = {
+  ext: 'krkr',
+  decode(buffer, { arc }) { return decodeKrkrScnBuffer(buffer, { arc }).text },
+}
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
   'bgi-bs': BGI_BS_DECODER,
   'artemis-ast': ARTEMIS_AST_DECODER,
   'arcfam-scre': ARCFAM_SCRE_DECODER,
+  'krkr-scn': KRKR_SCN_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -251,7 +263,7 @@ function compileRules(cfg) {
     gallery: rule.gallery || null,
   }))
 }
-const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB])).digest('hex').slice(0, 16)
+const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex')])).digest('hex').slice(0, 16)
 const kindOf = (name, scriptKinds) => {
   const ext = extOf(name)
   if (SCRIPT_EXTS.has(ext)) return scriptKinds
@@ -393,6 +405,141 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
   return result
 }
 
+
+// ---------- KiriKiri Z（Hxv4 加密的 xp3）----------
+// 文件名是哈希：脚本（scn.xp3 里的 PSB）解密后展开成 script/<容器>/<名字>.krkr，同时把脚本里引用的资源名（图 / bgm / 语音）写进 refs/<容器>.json；
+// 虚拟索引 = 这些名字 × 常见扩展名算名字哈希，在每个 xp3 的特殊索引里命中的条目（refs 以外的文件没有名字，列不出来）。取出来时才解密。
+const KRKR_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp']
+const KRKR_AUDIO_EXTS = ['ogg', 'opus', 'wav', 'mp3']
+const krkrFilters = new Map()   // 密钥包 JSON → Hxv4Filter（128 个小程序，建一次）
+const krkrFilterFor = (bundle) => { const k = JSON.stringify(bundle); let f = krkrFilters.get(k); if (!f) { f = Hxv4Filter.fromBundle(bundle); krkrFilters.set(k, f); if (krkrFilters.size > 16) krkrFilters.delete(krkrFilters.keys().next().value) } return f }
+// 密钥包：config.containers.keys 优先，没有就用服务端的密钥文件（<DATA_DIR>/gal-krkr-keys.json = 密钥包数组；setKeysFile 指定；按 mtime 重读）。
+// 密钥是凭据，放服务端文件里不会被 gal-layout 重跑冲掉、也不跟着条目的配置走
+let keysFile = ''
+let keysCache = { mtime: -1, list: [] }
+export function setKeysFile(file) { keysFile = file || ''; keysCache = { mtime: -1, list: [] } }
+function fileKeys() {
+  if (!keysFile) return []
+  try {
+    const mtime = statSync(keysFile).mtimeMs
+    if (mtime !== keysCache.mtime) keysCache = { mtime, list: normalizeKeyBundles(JSON.parse(readFileSync(keysFile, 'utf8'))) }
+  } catch { keysCache = { mtime: -1, list: [] } }
+  return keysCache.list
+}
+const effectiveKeys = (cfg) => (cfg?.keys?.length ? cfg.keys : fileKeys())
+// 用密钥包里第一套能打开这个 xp3 的打开它 → { arc, bundle, index }
+async function openKrkr(file, cfg) {
+  const keys = effectiveKeys(cfg)
+  if (!keys.length) throw new Error('没有密钥包（config.containers.keys 或服务端密钥文件 gal-krkr-keys.json）')
+  let last = null
+  for (const [index, bundle] of keys.entries()) {
+    try { return { arc: await openHxv4Archive(file, bundle, { filter: krkrFilterFor(bundle) }), bundle, index } } catch (error) { last = error }
+  }
+  throw new Error(`密钥包里没有一套能打开 ${path.basename(file)}：${last?.message || last}`)
+}
+async function expandKrkr({ file, arcName, rule, cfg, outRoot, budget }) {
+  const stem = withoutExt(arcName)
+  const result = { entries: 0, scripts: 0, res: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
+  if (!rule.kinds.has('script')) { result.skipped = 1; return result }   // 只有资源的 xp3：虚拟索引里处理
+  const { arc } = await openKrkr(file, cfg)
+  try {
+    result.entries = arc.entries.length
+    if (arc.entries.length > cfg.maxEntries) throw new Error(`条目 ${arc.entries.length} 个，超过上限 ${cfg.maxEntries}（config.containers.maxEntries）`)
+    const refs = { img: new Set(), bgm: new Set(), voice: new Set() }
+    for (const entry of arc.entries) {
+      if (!entry.meta || entry.hxv4Id === 0) { result.skipped += 1; continue }   // id 0 = 「禁止解包」的警告占位条目
+      budget.bytes += entry.originalSize
+      if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
+      let data
+      try { data = await arc.readEntry(entry) } catch (error) { result.bad.push(`#${entry.hxv4Id}（${error.message}）`); continue }
+      if (!isPsb(data)) { result.skipped += 1; result.notScript = (result.notScript || 0) + 1; continue }
+      let decoded
+      try { decoded = decodeKrkrScnBuffer(data, { arc: stem }) } catch (error) { result.skipped += 1; result.notScript = (result.notScript || 0) + 1; continue }
+      const name = safeEntryName(decoded.name)
+      if (!name) { result.bad.push(decoded.name.slice(0, 60)); continue }
+      const target = path.join(outRoot, 'script', stem, ...`${name}.${cfg.scriptExt || 'krkr'}`.split('/'))
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, decoded.text)
+      result.scripts += 1
+      for (const kind of Object.keys(refs)) for (const n of decoded.refs[kind]) refs[kind].add(n)
+    }
+    const refsFile = path.join(outRoot, 'refs', stem, 'names.json')
+    await mkdir(path.dirname(refsFile), { recursive: true })
+    await writeFile(refsFile, JSON.stringify({ img: [...refs.img], bgm: [...refs.bgm], voice: [...refs.voice] }))
+  } finally { await arc.close() }
+  return result
+}
+// refs 目录的状态（进虚拟索引的签名：脚本展开完 / 变了，虚拟索引要重建）
+async function krkrRefsSig(mediaDir, cfg) {
+  const dir = path.join(mediaDir, ...cfg.dir.split('/'), 'refs')
+  let sig = ''
+  try { for (const stemDir of (await readdir(dir)).sort()) { const st = await stat(path.join(dir, stemDir, 'names.json')).catch(() => null); if (st) sig += `|${stemDir}:${st.size}:${Math.floor(st.mtimeMs)}` } } catch { /* 还没展开 */ }
+  return `|refs${sig}`
+}
+async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
+  const map = new Map()
+  const files = []
+  const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
+  // 引用的资源名
+  const names = { img: new Set(), bgm: new Set(), voice: new Set() }
+  const refsDir = path.join(mediaDir, ...cfg.dir.split('/'), 'refs')
+  try {
+    for (const stemDir of await readdir(refsDir)) {
+      let data
+      try { data = JSON.parse(await readFile(path.join(refsDir, stemDir, 'names.json'), 'utf8')) } catch { continue }
+      for (const kind of Object.keys(names)) for (const n of Array.isArray(data[kind]) ? data[kind] : []) if (typeof n === 'string' && n && n.length <= 80) names[kind].add(n)
+    }
+  } catch { /* 还没展开：没有名字 = 空索引（refs 出现后签名变了会重建） */ }
+  const candidates = new Map()   // 名字哈希（hex 大写）→ 文件名（带扩展名）
+  const addCandidates = (list, exts) => { for (const n of list) for (const ext of exts) { const file = `${n}.${ext}`; candidates.set(nameHash(file).toString('hex').toUpperCase(), file) } }
+  addCandidates(names.img, KRKR_IMAGE_EXTS)
+  addCandidates(names.bgm, KRKR_AUDIO_EXTS)
+  addCandidates(names.voice, KRKR_AUDIO_EXTS)
+  if (!candidates.size) return { map, files, sig }
+  for (const { file, rule } of arcs) {
+    if (!rule.kinds.has('res')) continue
+    let opened
+    try { opened = await openKrkr(file, cfg) } catch { continue }
+    try {
+      const byRecord = new Map(opened.arc.entries.filter((e) => e.meta).map((e) => [e.meta, e]))
+      for (const record of opened.arc.special) {
+        if (record.archiveSlot !== 0) continue
+        const label = candidates.get(record.nameHash)
+        if (!label) continue
+        const entry = byRecord.get(record)
+        if (!entry || entry.originalSize > MAX_ENTRY_BYTES) continue
+        add(`${cfg.dir}/res/${label}`, { file, offset: 0, size: entry.originalSize, transform: 'krkr', bundleJson: opened.bundle, krkr: { id: entry.hxv4Id, segments: entry.segments, entryKey: record.entryKey.toString(), filterFlag: record.filterFlag, originalSize: entry.originalSize, archiveSize: entry.archiveSize, adler: entry.adler } })
+      }
+    } finally { await opened.arc.close() }
+  }
+  return { map, files, sig }
+}
+async function readKrkrHit(hit) {
+  const k = hit.krkr
+  const handle = await open(hit.file, 'r')
+  try {
+    const parts = []
+    for (const s of k.segments) {
+      const raw = await readRange(handle, s.offset, s.archiveSize)
+      const method = s.flags & 7
+      if (method === 1) parts.push(inflateSync(raw)); else if (method === 0) parts.push(raw); else throw new Error(`不支持的段编码 ${method}`)
+    }
+    let data = Buffer.concat(parts)
+    if (data.length !== k.originalSize && data.length === k.archiveSize) data = inflateSync(data)
+    applyState(krkrFilterFor(hit.bundleJson).stateFor(BigInt(k.entryKey), k.filterFlag), 0, data)
+    return data
+  } finally { await handle.close().catch(() => {}) }
+}
+// 取一个虚拟条目的字节（转好格式 / 解好密的）
+async function readHit(hit) {
+  if (hit.krkr) return readKrkrHit(hit)
+  const handle = await open(hit.file, 'r')
+  try {
+    const data = await readRange(handle, hit.offset, hit.size)
+    return await transformDataAsync(data, hit)
+  } finally { await handle.close().catch(() => {}) }
+}
+
 // ---------- hybrid：虚拟索引 + 按需取出 ----------
 // 虚拟索引 = 没展开的资源（图 / 声音 / 视频 / PNA 帧）的「相对媒体目录的路径 → .arc 里的位置」：每个 .arc 只读目录（和 PNA 的头），内存里放几万条也就几 MB。
 // 按 .arc 的 大小 + mtime 判断要不要重建；适配器的文件索引（context.mjs）把它的路径当成「磁盘上有这些文件」，资源接口（types/gal.mjs 的 resolveAsset）取到时先 materialize 再按普通文件走。
@@ -408,7 +555,7 @@ async function listArcs(mediaDir, cfg) {
     let names = []
     try { names = (await readdir(dir)).sort() } catch { continue }
     for (const arcName of names) {
-      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : /\.arc$/i).test(arcName)) continue
+      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : /\.arc$/i).test(arcName)) continue
       const rule = rules.find((r) => r.re.test(arcName))
       if (!rule || rule.skip) continue
       const file = path.join(dir, arcName)
@@ -421,6 +568,7 @@ async function listArcs(mediaDir, cfg) {
 }
 
 async function buildVirtual(mediaDir, cfg, arcs, sig) {
+  if (cfg.format === 'krkr') return buildKrkrVirtual(mediaDir, cfg, arcs, sig)
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
@@ -502,7 +650,7 @@ export async function virtualIndex({ mediaDir, config }) {
   const cfg = config?.containers
   if (!isHybrid(cfg) || !mediaDir) return null
   const arcs = await listArcs(mediaDir, cfg)
-  const sig = arcs.map((a) => a.sig).join('|')
+  const sig = arcs.map((a) => a.sig).join('|') + (cfg.format === 'krkr' ? await krkrRefsSig(mediaDir, cfg) : '')
   const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
   const hit = virtuals.get(key)
   if (hit?.sig === sig) return hit.promise
@@ -542,17 +690,11 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.krkr?.id ?? 0, CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,
-      async read() {
-        const handle = await open(hit.file, 'r')
-        try {
-          const data = await readRange(handle, hit.offset, hit.size)
-          return transformDataAsync(data, hit)
-        } finally { await handle.close().catch(() => {}) }
-      },
+      read() { return readHit(hit) },
     }
   }
   return null
@@ -573,15 +715,11 @@ export async function materialize({ mediaDir, config, rels }) {
     let pending = materializing.get(target)
     if (!pending) {
       pending = (async () => {
-        const handle = await open(hit.file, 'r')
-        try {
-          let data = await readRange(handle, hit.offset, hit.size)
-          data = await transformDataAsync(data, hit)   // PNAP 的帧：预乘 → 直通（转不了就原样）；BGI：CompressedBG → PNG、BW → Ogg
-          await mkdir(path.dirname(target), { recursive: true })
-          const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-          await writeFile(tmp, data)
-          await rename(tmp, target)
-        } finally { await handle.close().catch(() => {}) }
+        const data = await readHit(hit)   // PNAP 的帧：预乘 → 直通（转不了就原样）；BGI：CompressedBG → PNG、BW → Ogg；KiriKiri：段拼起来 + 解密
+        await mkdir(path.dirname(target), { recursive: true })
+        const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
+        await writeFile(tmp, data)
+        await rename(tmp, target)
       })().finally(() => materializing.delete(target))
       materializing.set(target, pending)
     }
@@ -624,7 +762,7 @@ async function run(mediaDir, cfg) {
     let names = []
     try { names = (await readdir(dir)).sort() } catch { continue }
     for (const arcName of names) {
-      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : /\.arc$/i).test(arcName)) continue
+      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : /\.arc$/i).test(arcName)) continue
       const rule = rules.find((r) => r.re.test(arcName))
       if (!rule) continue
       const key = `${scanDir}/${arcName}`
@@ -638,9 +776,9 @@ async function run(mediaDir, cfg) {
       const stem = cfg.format === 'pf8' ? pf8Stem(arcName) : withoutExt(arcName)
       const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
       try {
-        const result = await expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget })
+        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
         // 先展开到临时目录，再整体换掉这个容器的两个子目录（中途失败不会留下半截内容）
-        for (const part of ['script', 'res']) {
+        for (const part of ['script', 'res', 'refs']) {
           const from = path.join(tmp, part, stem)
           const to = path.join(outRoot, part, stem)
           await rm(to, { recursive: true, force: true })

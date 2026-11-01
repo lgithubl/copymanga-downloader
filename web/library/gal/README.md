@@ -1024,7 +1024,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 推断成分：引擎里预乘标志位后续在哪些地方被用到，没有逐处追完；「还原成直通就对」是根据加载器标志 + 腮红帧的像素数据（rgb ≈ 粉色 × alpha）得出的。
 - 行为：hybrid 按需取出和 files 展开的字节一致；`CONTAINER_FORMAT_VERSION = 5`，旧缓存会自动重建。
 
-## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.33.0）
+## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.34.0）
 
 - **依据**：公开资料，没有逆向 exe——`morkt/GARbro` 的 `ArcFormats/Ethornell`（BURIKO ARC20、DSC FORMAT 1.00、CompressedBG、BW）和 `Cytlan/openbgi` 的 `docs/scenario.md`（`BurikoCompiledScriptVer1.00` 的容器和 token 机）。样本：三个游戏（トリプルペアリング / FD / 両腕が折れたので…）的 `Archive/data0*.arc`。
 - **目录**：`<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，规则里跳过）, sysgrp.arc, Archive/data0*.arc}`。`data01xxx` = DSC 压缩的剧本、`data02xxx` = CompressedBG 图、`data03xxx~04xxx` = BW（Ogg）声音；条目名没有扩展名，**按内容认**（`containers.format: 'buriko'`）。
@@ -1047,7 +1047,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
 - **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
 
-## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.33.0）
+## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.34.0）
 
 - **依据**：自己在采集的真实游戏上核对（g13《妹(姉)は兄(弟)の性癖を歪ませたい！》，`yugamase.pfs` + `yugamase.pfs.000`，83 个剧本）。没有逆向 exe。
 - **pf8 档案**（`web/library/gal/pf8.mjs`）：头 `pf8` + u32 索引大小 + u32 条目数；索引块 = 文件 [7, 7 + 索引大小)；条目 = u32 名字长 + 名字（utf-8，`\` 分隔）+ u32 0 + u32 偏移 + u32 大小；加密 = 条目内容逐字节 XOR `key[i % 20]`，`key = SHA1(索引块)`。两个档案（23747 + 623 条）的索引解析后偏移 / 大小都落在文件内，脚本解密后是可读文本。
@@ -1062,7 +1062,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - 只支持 `pf8`（`pf6` 等老版本魔数不对，gal-layout 不认领）。新导入时 `scriptCount` 是 0（展开在第一次浏览才做），浏览过一次再「刷新 json」才有数。
 - **自测**：`node scripts/dev/gal-artemis-selftest.mjs`（合成数据，`make-artemis-fixture.mjs` 的 `buildPf8` / `astOf`）。
 
-## 自有 arc（eomaia 引擎，`arcfam::scre`，gal-layout 2.33.0）
+## 自有 arc（eomaia 引擎，`arcfam::scre`，gal-layout 2.34.0）
 
 - **依据**：自己在采集的真实游戏上核对（g06《あざとカワイイ綾瀬ちゃん！》、g10《ギャル×オタ》的 `script.arc` 是明文 SCRE；g11《シルキーズプラス fuyukuru》的 `script.arc` 条目表同格式但内容压缩）。没有逆向 exe。
 - **档案**（`web/library/gal/arcfam.mjs`）：`u32 LE 头大小` + 条目表（`u8 名字长 + 名字 + u32 BE 大小 + u32 BE 原大小 + u32 BE 偏移`，偏移从文件头起）+ 数据；17 个真实档案（含 12852 条的 voice.arc）的条目表长度和头里的大小逐字节吻合。**名字混淆：`c' = toupper(c) − 名字长度 + 下标`**（不是每个游戏一个 K；用 `startup.script`、`adv_kohai01.script`、`kirara####.ogg` 核对，g11 的 `00.BIN` 也对）；名字大小写丢失（只剩大写，资源按名字找时忽略大小写）。大小 ≠ 原大小 = 压缩（g11 的 script / data，算法没识别）：跳过并记进展开结果的 `unsupported`。
@@ -1100,7 +1100,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 ### 「特殊场景」汇总到首页（BGI / Artemis / 自有 arc）
 
 - `config.views[].dirs` 现在支持通配：`'*'` = `parent` 下的所有子目录（真实目录），`'**'` = 所有层的子目录（最多 300 个）；以前只能写具体目录名（最多 10 个）。`parent` 写根（`''` / `'.'`）+ `dirs: ['*']` = 首页一个虚拟目录，把每个 arc 目录里名字匹配 `match` 的脚本都收进来（脚本卡片带来源目录当角标）。AdvHD 仍是每个 arc 目录下各一个（`parent: '*'`，没改）。
-- 新家族默认规则（`LAYOUTS.*.config.views`，gal-layout 2.33.0）：
+- 新家族默认规则（`LAYOUTS.*.config.views`，gal-layout 2.34.0）：
   - **BGI**：`match: (_|\d)h\d*$`（g02 / g03 / g07 核对：`nasuka_01_h`、`nasuka_05h`、`eimi_03_h1`、`211_movea01_01_h01` 共 74 个）
   - **Artemis**：`match: \dh$`（`02_共通_01h`、`04_kae_11h` 共 19 个 / 83 个剧本）
   - **自有 arc**：`match: (_H\d+$)|(\dH_)`（g09 的 `ADV_KOHAI_H01`、g14 的 `TX_1_2H_N`；名字是大写的）
@@ -1219,12 +1219,27 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - `Effect1` 的最后一对（u16 重复次数、浮点延迟）只处理了延迟；缓动 22-30（back / elastic / bounce）是标准公式，没逐个对着反编译核对（0-21 核对过）。
   - 变量 / 标志 / 寄存器在真实游戏里是跨脚本持久的（存档里），这里每个脚本从默认值起；没有默认值的标志按 `flags.unknown`（默认真），所以脚本里依赖前面剧情的分支走的是「默认那条」。
 
-## KiriKiri Z（Hxv4 加密的 XP3）：解密 + PSB 读取（第一阶段，还没有适配器）
+## KiriKiri Z（Hxv4 加密的 XP3，`krkr::scn`，gal-layout 2.34.0）
 
-- `krkr-hxv4.mjs`：读 XP3、解「特殊索引」、按（目录, 名字）找条目、解条目。**只做「已经有密钥包」的那一半**，密钥包（`params` 22B、`material` 64B、`key` 32B、`nonce0` / `nonce1` 24B，hex）以后放配置；从 exe 里取密钥（PE 资源 + TJS2 常量 + Argon2i + KDF，xp3-brute 的 `krkr_exe.rs` 约 1300 行）**没有移植**。
-- 依据：xp3-brute 0.3.7（crates.io，MIT）的源码。结构：特殊索引 = XChaCha20-Poly1305 + zlib（nonce 由 Hxv4 描述符 kind 低位选）；条目内容 = XOR，由 params + SHAKE256(material) 的控制表生成 128 个小虚拟机程序按 entry_key 算（`Hxv4Filter`）；名字 = BLAKE2s-256(UTF-16LE(名字 + "xp3hnp"))，目录 = SipHash-2-4（小端存放）。
-- **核对**：g08 / g09 的 `scn.xp3`（265 / 256 个条目）全部解密并通过 adlr 校验，和 xp3-brute 解出来的内容逐字节一致；PSB 自带的逻辑名（`sc_2_st01.txt`）加 `.scn` 用名字哈希能找回每一个条目（265 / 265、256 / 256）。g08 的 `data.xp3` 的特殊索引用同一个密钥包也能解开（只验证了索引，数据没验证）。
-- 逻辑名规律：剧本在根目录 `/`，名字 = `<PSB 里的 name>.scn`，如 `sc_2_st01.txt.scn`。图片 / 语音的目录和名字还没看过。
-- `psb.mjs`：PSB（魔数 `PSB\0`，版本 3）只读解析 → JS 值；资源块只返回引用。g08 / g09 的 521 个剧本 PSB 全部读通。
-- 没验证：别的 xp3（image / fgimage / evimage / voice）的数据能不能用同一个密钥包解（只有 `data.xp3` 的索引验证了）；`archive_slot ≠ 0` 的记录（指向别的档案）没处理。
-- 自测：`scripts/dev/gal-krkr-hxv4-selftest.mjs`（哈希向量、虚拟机向量、合成档案整条链；`KRKR_SAMPLE=<含 scn.xp3 的目录>:<密钥包.json>` 再多跑真实样本，样本和密钥包不进仓库）。
+**现状（第一阶段）**：剧本 + 台词 + 说话人 + 语音 + BGM + 背景（PNG / JPG）能播；立绘（PIMG 分层图）、事件 CG（TLG 图）还没做。用 g07（おっぱいスパイ学園）的真实 `scn.xp3` + 采集到的资源在浏览器里走了一遍整条链（导入 → gal-layout → 列表 → 播放，背景 / 台词出来，截图看过）；g08 的 256 个剧本全部能解码 + 适配器解析（41706 句台词）。
+
+### 文件和配置
+- `krkr-hxv4.mjs`：读 XP3、解「特殊索引」、按（目录, 名字）找条目、解条目；`psb.mjs`：PSB 读取；`krkr-scn.mjs`：PSB 场景 → `krkr-scn/1` JSON；`adapters/krkr-scn.mjs`：JSON → 场景；`containers.mjs` 的 `format: 'krkr'`：展开 / 虚拟索引 / 取资源。
+- **密钥包**（只做「已有密钥包」的一半；从 exe 里取密钥没移植）：`params` 22B、`material` 64B、`key` 32B、`nonce0` / `nonce1` 24B（hex）。放服务端文件 **`<DATA_DIR>/gal-krkr-keys.json`**（数组，一套或多套；按 mtime 重读；每个 xp3 用第一套能打开的）——不放条目配置里是因为 gal-layout 重跑会把条目配置里没声明的字段冲掉，而且密钥是凭据；也可以写在 `config.containers.keys`（优先）。取得方法：xp3-brute 的 `inspect --exe` 加环境变量 `XP3_KEYBUNDLE=1`（见采集的 `krkr-hxv4-kit`）。
+- 目录：`<根>/{scn.xp3（场景脚本）, data.xp3 / image.xp3 / fgimage.xp3 / evimage.xp3（图）, voice*.xp3（语音）, *.exe}`。导入页「Gal 游戏」下拉选「KiriKiri Z」，改 id / title，再跑 gal-layout（它认 scn.xp3 里有 Hxv4 描述符）。
+- 展开：`scn.xp3` 里的 PSB 解密后压成 `<根>/arc/script/scn/<脚本>.krkr`，同时把剧本引用的图 / bgm / 语音名写进 `<根>/arc/refs/scn/names.json`。**文件名是哈希，列不出来**——虚拟索引 = refs 里的名字 × 扩展名（图 png / jpg / jpeg / webp / bmp；声音 ogg / opus / wav / mp3）算名字哈希，在每个资源 xp3 的特殊索引里命中的才进 `arc/res/<名字>.<扩展名>`，取出来时才解密。所以剧本没引用的资源（UI 之类）看不到。
+- 脚本逻辑名：PSB 自带 `name`（`sc_2_st01.txt`），展开后的脚本叫 `sc_2_st01`；条目在 xp3 里的名字 = `<name>.scn`（根目录）。
+
+### 脚本怎么读（g08 / g09 的 521 个剧本看出来的）
+- `scenes[].lines`：`["startline","vflag",0,"name",说话人,"text",1]` 后面跟的数字 n = 台词 `texts[n - 1]`（46420 / 46420 的说话人对得上）；`texts[i] = [说话人|null, [[null, 文字（\\n 换行）, 字号]…], [{name, voice, type}]|null, 标志, {data: 此刻的图层快照}]`。
+- 每句台词自带「此刻的环境快照」（`data`：bg / 立绘 / ev / bgm …），所以适配器不重放 `envupdate`，直接用快照：`bg`（stage，`showmode` 3 = 显示 / 0 = 隐藏）= 背景，`ev`（event）= 事件 CG（盖在背景上），`character` = 立绘（`imageFile.file` = `cha001.stand` + `options { dress, face, pose, add }`，位置名 `posName`：前 / 左 / 右 / 中 …）。
+- 没有台词但有「等待 + 画面变了」的（黑屏、换背景）出一个无台词的步。`pre` 里的 `wait` → wait；背景语音（`playvoice` type 2）、`quake` 不渲染。
+- 这些游戏没有选项（线性），`nexts` 指向别的脚本 = `scene.next`（指回 `gameloop` 的菜单 = 没有 next，`menuScripts` 可改）。
+- 解出来的格式（扩展名命中得到的，内容看过的）：图 = PNG / JPG；BGM / 语音 = OGG；`.stand` = KiriKiri 文本外壳（`FE FE <模式> FF FE`）里的 TJS 字典（脸 / 身体偏移）；立绘 = `.pimg`（PSB：`layers[]` { left, top, width, height, name, visible, group_layer_id } + 每层一张 TLG 资源）；事件 CG = TLG（`TLG0.0sds` 外壳）；视频 = Matroska；`data.xp3` 里还有 `.l2d`（Live2D）。
+
+### 没做 / 没验证
+- 立绘：PIMG 分层图要读 PSB 资源块 + TLG 解码 + 按 `options` 选图层 + 按 `.stand` 偏移摆放；事件 CG 要 TLG 解码；都没做，`stats.ignored.character` 能看到有多少步有立绘。
+- 密钥只验证了 g07 / g08（采集里的 g08 / g09）两个游戏的 scn.xp3、以及它们的 data / image / voice 等 xp3 的索引（同一套密钥包都能解开）；别的 KiriKiri 游戏要自己的密钥包。
+- 转场（crossfade）/ 镜头动作（xpos / ypos / zpos 的移动，例如开场的长背景图上下卷动）不渲染；bg01 这类大尺寸背景按铺满显示。
+- `krkr-hxv4.mjs` 的细节：特殊索引 = XChaCha20-Poly1305 + zlib（nonce 由 Hxv4 描述符 kind 低位选）；条目内容 = XOR，由 params + SHAKE256(material) 的控制表生成 128 个小虚拟机程序按 entry_key 算（`Hxv4Filter`）；名字 = BLAKE2s-256(UTF-16LE(名字 + "xp3hnp"))，目录 = SipHash-2-4（小端存放）；移植自 xp3-brute 0.3.7（MIT）。g08 / g09 的 `scn.xp3`（265 / 256 条）全部解密并通过 adlr 校验、和 xp3-brute 的输出逐字节一致。
+- `KRKR_SAMPLE=<含 scn.xp3 的目录>:<密钥包.json>` 给 `gal-krkr-hxv4-selftest.mjs` / `gal-krkr-selftest.mjs` 再多跑一段真实样本（样本和密钥不进仓库）。

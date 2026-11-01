@@ -37,7 +37,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -797,6 +797,32 @@ export const ADAPTER_RULES = {
       "strip": []
     },
     "extraDirs": []
+  },
+  // krkr::scn：KiriKiri Z（Hxv4）家族的脚本适配器（PSB 场景 JSON → 场景）。抄自 web/library/gal/adapters/krkr-scn.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'krkr::scn': {
+      "resDir": "arc/res",
+      "stage": [
+          1920,
+          1080
+      ],
+      "imageExts": [
+          "png",
+          "jpg"
+      ],
+      "audioExts": [
+          "ogg",
+          "opus",
+          "wav",
+          "mp3"
+      ],
+      "wait": {
+          "enabled": true,
+          "max": 10
+      },
+      "menuScripts": [
+          "^gameloop"
+      ],
+      "extraDirs": []
   },
   // artemis::ast：Artemis 家族的脚本适配器（.ast = Lua 表 → 场景）。抄自 web/library/gal/adapters/artemis-ast.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'artemis::ast': {
@@ -1717,6 +1743,30 @@ export const LAYOUTS = {
     cover: [],
     notes: ['arc 在第一次浏览时由服务端展开剧本到 <根>/arc/script/（图 / 声音不展开，被请求时才取、放进缓存目录）；g11（シルキーズプラス）的剧本是压缩的（.MES），算法没识别，列表是空的', '剧本只认了字节模式：选择 / 分支 / 跳转没做，按出现顺序线性输出（见适配器开头的说明）'],
   },
+  // ---- KiriKiri Z（Wamsoft，Hxv4 加密的 xp3）家族：game.id = krkr::<游戏>（任何以 krkr:: 开头的 id 都走这一项）。
+  //   目录：<根>/{*.exe, scn.xp3（场景脚本 = PSB）, data.xp3 / image.xp3 / fgimage.xp3 / evimage.xp3（图）, voice*.xp3（语音）, plugin/}。xp3 由引擎（config.containers，format: krkr）在服务端读：
+  //   文件名是哈希，要密钥包才能解——密钥包放服务端文件 <DATA_DIR>/gal-krkr-keys.json（数组，每套 params / material / key / nonce0 / nonce1 的 hex；也可以写在 config.containers.keys）。
+  //   scn.xp3 里的 PSB 解密后展开到 <根>/arc/script/scn/<脚本>.krkr（krkr-scn/1 JSON）；图 / 语音按「剧本里引用的名字 × 扩展名」算哈希在索引里找，只在 hybrid 的虚拟索引里，被请求时才解密（<根>/arc/res/<名字>.<扩展名>）。
+  krkr: {
+    title: 'KiriKiri Z（Hxv4 加密 xp3）', kind: 'krkr', detector: 'krkr', autoOrder: 139.8, family: 'krkr::',   // 紧跟 arcfam，uviewer（通用）之前；探测时还要看 scn.xp3 是 Hxv4 加密的
+    bases: [''], searchDepth: 3,
+    anchors: ['/^scn\\.xp3$/i'], siblings: [], markers: [['data.xp3', 'image.xp3']],
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res'],
+    adapters: ['krkr::scn'],
+    adapterOptions: { 'krkr::scn': { resDir: { path: ['arc/res'] } } },
+    ruleTables: ['krkr::scn'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},
+      limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'krkr-scn', scriptExt: 'krkr', mode: 'hybrid', format: 'krkr', flat: true, rules: [{ match: '^scn\\.xp3$', kinds: ['script'] }, { match: '\\.xp3$', kinds: ['res'] }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['krkr'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '_\\d+h$|_h\\d*$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.krkr', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['xp3 在第一次浏览时由服务端展开剧本（需要密钥包：<DATA_DIR>/gal-krkr-keys.json）；没有密钥包 / 密钥包不对，列表是空的，容器报告里有原因', '这一版没有立绘（PIMG 分层图）和事件 CG（TLG 图）；背景（PNG / JPG）、BGM / 语音（OGG）、台词有'],
+  },
   // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
   //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；
   //   图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<档案里的路径>，如 arc/res/image/bg/bg01a.png），被请求时才解密取出。
@@ -2226,6 +2276,7 @@ const DETECTORS = {
   bgi: (scope) => detectBgi(scope),
   artemis: (scope) => detectArtemis(scope),
   arcfam: (scope) => detectArcfam(scope),
+  krkr: (scope) => detectKrkr(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2483,8 +2534,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -3109,6 +3160,55 @@ async function detectArcfam(scope) {
   found.kind = entry.kind || 'arcfam'
   const arcs = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.arc$/i.test(n))
   logs.push(`自有 arc 游戏根：${base || '.'}；${arcs.length} 个 arc（${arcs.slice(0, 6).join(' / ')}）；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// ---- KiriKiri Z（Hxv4）家族：见 LAYOUTS.krkr。id：声明了 game.id 就用它（krkr::<游戏>），没声明 = krkr::<目录名的小写字母数字>；没声明时要求 scn.xp3 是 Hxv4 加密的（XP3 索引里有 Hxv4 描述符）
+async function xp3IsHxv4(file) {
+  let handle
+  try {
+    handle = await open(file, 'r')
+    const head = Buffer.alloc(19)
+    await handle.read(head, 0, 19, 0)
+    if (!head.subarray(0, 11).equals(Buffer.from([0x58, 0x50, 0x33, 0x0d, 0x0a, 0x20, 0x0a, 0x1a, 0x8b, 0x67, 0x01]))) return false
+    let pointerPos = 11
+    for (let block = 0; block < 8; block++) {
+      const pb = Buffer.alloc(8)
+      await handle.read(pb, 0, 8, pointerPos)
+      const pointer = Number(pb.readBigUInt64LE(0))
+      const flag = Buffer.alloc(1)
+      await handle.read(flag, 0, 1, pointer)
+      const method = flag[0] & 7
+      let decoded
+      let end
+      if (method === 0) { const size = Buffer.alloc(8); await handle.read(size, 0, 8, pointer + 1); const n = Number(size.readBigUInt64LE(0)); if (n > 64 * 1024 * 1024) return false; decoded = Buffer.alloc(n); await handle.read(decoded, 0, n, pointer + 9); end = pointer + 9 + n }
+      else if (method === 1) { const sizes = Buffer.alloc(16); await handle.read(sizes, 0, 16, pointer + 1); const stored = Number(sizes.readBigUInt64LE(0)); if (stored > 64 * 1024 * 1024) return false; const raw = Buffer.alloc(stored); await handle.read(raw, 0, stored, pointer + 17); decoded = (await import('node:zlib')).inflateSync(raw); end = pointer + 17 + stored }
+      else return false
+      if (decoded.includes(Buffer.from('Hxv4', 'latin1'))) return true
+      if (!(flag[0] & 0x80)) return false
+      pointerPos = end   // 0x80 = 后面还有一块：下一个指针紧跟在这块数据后面
+    }
+    return false
+  } catch { return false } finally { await handle?.close().catch(() => {}) }
+}
+async function detectKrkr(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  if (!declared && !(await markersOk(media, entry, base, declared))) return null
+  const scn = path.join(media, ...splitRel(join(base, 'scn.xp3')))
+  if (!(await xp3IsHxv4(scn))) { if (declared) logs.push('KiriKiri：scn.xp3 不是 Hxv4 加密的 xp3（没有 Hxv4 描述符），不是已知的 KiriKiri Z'); return null }
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `krkr::${slug || 'game'}`
+  found.kind = entry.kind || 'krkr'
+  const xp3s = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.xp3$/i.test(n))
+  logs.push(`KiriKiri Z 游戏根：${base || '.'}；${xp3s.length} 个 xp3（${xp3s.slice(0, 6).join(' / ')}）；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
 }
