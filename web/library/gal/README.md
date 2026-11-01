@@ -1078,6 +1078,15 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - **g11（シルキーズプラス）的剧本是压缩的（`.MES`），算法没识别，列表是空的**；它的图是 `AKB ` 格式（layer.arc）、`data.arc` 是压缩的 `.BIN`，都没做。
 - **自测**：`node scripts/dev/gal-arcfam-selftest.mjs`（合成数据，`make-arcfam-fixture.mjs` 的 `buildArcfam` / `Scre`）。
 
+### 导入页「Gal 游戏」下拉里的预设（BGI / Artemis / 自有 arc）
+
+- 导入页（媒体导入 → Gal 导入方案）的「Gal 游戏」下拉 + 「刷新 json」= 把所选预设的 `adapters` 和 `config.game`（id / title）填进导入方案 JSON 文本框（`web/static/app.js` 的 `GAL_PRESETS` + `index.html` 的 `#gal-preset`；只改前端文本框，不保存）。新写的家族要在这两处各加一行，否则下拉里选不到——之前漏了，现在补上：
+  - `bgi_triplepairing` / `bgi_triplepairing_fd` / `bgi_ryoude` / `bgi_generic` → `bgi::bs`，`game.id = bgi::<名>`
+  - `artemis_yugamase` / `artemis_generic` → `artemis::ast`，`game.id = artemis::<名>`
+  - `arcfam_azato` / `arcfam_galxota` / `arcfam_generic` → `arcfam::scre`，`game.id = arcfam::<名>`
+  - `*_generic`：其它同引擎的游戏，刷新后把 JSON 里的 `config.game.id`（`<家族>::<自己起的名>`）和 `title` 改成自己的。
+- 浏览器自测 `fe-gal-selftest.mjs` 里加了这些预设的检查。
+
 ### AdvHD 的跳转：选项跳到别的脚本（`goto`）/ 看完接着播（`scene.next`）
 
 - 样本（LPSL `Rio1`）里选项全是「跳到别的脚本」（`ShowChoice` 的跳转类型 7，文件名）：`022_00` 的 4 个选项各去 `022_01`～`022_04`，再接到 `TW_/KA_/HI_/MG_000_00` 四条线；`HI_007_00`、`KA_013_00` 等是选项 → 另一条线。脚本结尾的 `NextFile` 几乎每个脚本都有。以前选了只显示一步「→ 脚本 X へ続く」并结束，`NextFile` 只记进 `stats.links`，「下一话」按列表顺序。

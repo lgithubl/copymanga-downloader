@@ -2457,6 +2457,16 @@ const GAL_PRESETS = {
   otogi: { adapters: ['otogi-json'], game: { id: 'otogi', title: 'Otogi Frontier R' } },
   // WillPlus AdvHD 家族：id 用 :: 分段（advhd::<游戏>），同引擎的新游戏在这里加一行（或直接在方案 JSON 里写 advhd::<名字>——gal-layout 按家族处理，不用改脚本）
   advhd_lpsl: { adapters: ['advhd::ws2'], game: { id: 'advhd::lpsl', title: 'Lovey-dovey Part-time Sex Life' } },
+  // BGI / Ethornell 家族（bgi::<游戏>，Archive/data*.arc）、Artemis 家族（artemis::<游戏>，*.pfs）、自有 arc / eomaia 家族（arcfam::<游戏>，script.arc + image.arc …）：同样按家族处理，新游戏可以用 *_generic 改 id / title，或直接在方案 JSON 里写 <家族>::<名字>
+  bgi_triplepairing: { adapters: ['bgi::bs'], game: { id: 'bgi::triplepairing', title: 'トリプルペアリング -Triple Pairing-' } },
+  bgi_triplepairing_fd: { adapters: ['bgi::bs'], game: { id: 'bgi::triplepairingfd', title: 'トリプルペアリング FD' } },
+  bgi_ryoude: { adapters: ['bgi::bs'], game: { id: 'bgi::ryoude', title: '両腕が折れたのでHなお世話をされる話' } },
+  bgi_generic: { adapters: ['bgi::bs'], game: { id: 'bgi::game', title: '' } },
+  artemis_yugamase: { adapters: ['artemis::ast'], game: { id: 'artemis::yugamase', title: '妹(姉)は兄(弟)の性癖を歪ませたい！' } },
+  artemis_generic: { adapters: ['artemis::ast'], game: { id: 'artemis::game', title: '' } },
+  arcfam_azato: { adapters: ['arcfam::scre'], game: { id: 'arcfam::azato', title: 'あざとカワイイ綾瀬ちゃん！' } },
+  arcfam_galxota: { adapters: ['arcfam::scre'], game: { id: 'arcfam::galxota', title: 'ギャル×オタ ～織川きららはお世話したい～' } },
+  arcfam_generic: { adapters: ['arcfam::scre'], game: { id: 'arcfam::game', title: '' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]
