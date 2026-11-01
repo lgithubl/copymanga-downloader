@@ -95,17 +95,17 @@ await writeFile(path.join(media, 'music.arc'), buildArcfam([{ name: 'bgm_05.wav'
 await writeFile(path.join(media, 'effect.arc'), buildArcfam([{ name: 'se_1_005.wav', data: Buffer.from('RIFF-se') }]))
 await writeFile(path.join(media, 'data.arc'), buildArcfam([{ name: 'adv_cgmode.json', data: Buffer.from('{}') }]))
 const layoutItem = { itemId: 'a', title: 'a', config: { game: { id: 'arcfam::test' } }, source: { path: media }, adapters: ['arcfam::scre'] }
-const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
 const cfgRaw = tagOut.itemPatch.gal.config
 const cfg = normalizeGalConfig(cfgRaw)
 check('gal-layout：认出 arcfam（id = arcfam::test），containers = arcfam / flat / hybrid / arcfam-scre；脚本根 arc/script、资源根 arc/res；适配器 arcfam::scre', cfg.containers.enabled && cfg.containers.format === 'arcfam' && cfg.containers.flat === true && cfg.containers.mode === 'hybrid' && cfg.containers.scriptDecoder === 'arcfam-scre' && cfg.containers.scriptExt === 'arcfam' && cfg.scriptRoots[0].dir === 'arc/script' && J(cfg.resourceRoots) === J(['arc/res']) && cfg.adapterOptions['arcfam::scre']?.resDir === 'arc/res', J(cfg.containers))
 {
   const other = path.join(work, 'other'); await mkdir(other); await writeFile(path.join(other, 'x.exe'), 'MZ'); await writeFile(path.join(other, 'systeminfo.json'), '{}'); await writeFile(path.join(other, 'image.arc'), 'x'); await writeFile(path.join(other, 'script.arc'), Buffer.concat([Buffer.from([9, 0, 0, 0]), Buffer.alloc(40, 0x30)]))
-  const none = await generateTags({ item: { itemId: 'n', title: 'n', config: {}, source: { path: other } }, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+  const none = await generateTags({ item: { itemId: 'n', title: 'n', config: {}, source: { path: other } }, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
   check('gal-layout：没声明 game.id 且 script.arc 的条目表对不上 → 不认领', !JSON.stringify(none.itemPatch?.gal?.config || {}).includes('arcfam'), J(none.itemPatch?.gal?.config?.game))
 }
 {
-  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
   check('gal-layout：存进条目再跑一次 = 没有改动', /新增 0 项 \/ 修改 0 项 \/ 删除 0 项/.test(again.logs.join('\n')), again.logs.filter((l) => /本次改动/.test(l)).join(' | '))
 }
 {
@@ -125,7 +125,7 @@ check('gal-layout：认出 arcfam（id = arcfam::test），containers = arcfam /
   const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media, adapters: ['arcfam::scre'] } } }) })
   const imported = await handler.importFromSource({ options: { adapters: ['arcfam::scre'], config: { game: { id: 'arcfam::test' } } } })
   const item = imported.items[0]
-  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
   await handler.internals.updateItem(item.itemId, (it) => ({ ...it, config: { ...it.config, ...out.itemPatch.gal.config } }))
   const id = item.itemId
   const home = (await handler.getReaderContent(id, 'main', { sectionId: '' })).node

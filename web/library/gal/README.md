@@ -1024,7 +1024,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 推断成分：引擎里预乘标志位后续在哪些地方被用到，没有逐处追完；「还原成直通就对」是根据加载器标志 + 腮红帧的像素数据（rgb ≈ 粉色 × alpha）得出的。
 - 行为：hybrid 按需取出和 files 展开的字节一致；`CONTAINER_FORMAT_VERSION = 5`，旧缓存会自动重建。
 
-## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.30.0）
+## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.31.0）
 
 - **依据**：公开资料，没有逆向 exe——`morkt/GARbro` 的 `ArcFormats/Ethornell`（BURIKO ARC20、DSC FORMAT 1.00、CompressedBG、BW）和 `Cytlan/openbgi` 的 `docs/scenario.md`（`BurikoCompiledScriptVer1.00` 的容器和 token 机）。样本：三个游戏（トリプルペアリング / FD / 両腕が折れたので…）的 `Archive/data0*.arc`。
 - **目录**：`<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，规则里跳过）, sysgrp.arc, Archive/data0*.arc}`。`data01xxx` = DSC 压缩的剧本、`data02xxx` = CompressedBG 图、`data03xxx~04xxx` = BW（Ogg）声音；条目名没有扩展名，**按内容认**（`containers.format: 'buriko'`）。
@@ -1047,7 +1047,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
 - **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
 
-## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.30.0）
+## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.31.0）
 
 - **依据**：自己在采集的真实游戏上核对（g13《妹(姉)は兄(弟)の性癖を歪ませたい！》，`yugamase.pfs` + `yugamase.pfs.000`，83 个剧本）。没有逆向 exe。
 - **pf8 档案**（`web/library/gal/pf8.mjs`）：头 `pf8` + u32 索引大小 + u32 条目数；索引块 = 文件 [7, 7 + 索引大小)；条目 = u32 名字长 + 名字（utf-8，`\` 分隔）+ u32 0 + u32 偏移 + u32 大小；加密 = 条目内容逐字节 XOR `key[i % 20]`，`key = SHA1(索引块)`。两个档案（23747 + 623 条）的索引解析后偏移 / 大小都落在文件内，脚本解密后是可读文本。
@@ -1056,13 +1056,13 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **映射**：`text.ja` → speaker（`name` 最后一项）+ text（`rt2` 之间换行）；`text.vo` → voice（`sound/vo/<ch>/` 或 `sound/vobin/<ch>/`）；`bg`（`file` + `path`：`:bg/` → `image/bg/`，`:ev/<组>/` → `image/ev/<组>/`）→ bg，找不到图按同名 `.ogv` 找 → movie（循环），`black` / `white` 没有图 = 纯色；`fg`（`mode = 2`）→ stand，`mode = -2` → standOff；`bgm` / `se` / `ex func=wait`；`select`（每个 `{"select", file}` = 一个选项跳去的脚本，文字在 `select.ja`）→ choice + 带 `when` 的 goto（服务端按名字补 node）；最后一个 block 的 `excall` → `scene.next`。
 - **样本核对**（83 个剧本全部解析 + 走完，所有 block 都走到）：16879 句台词、语音 6857 / 6858 找到、图 5271 / 5271 找到（441 个是 `.ogv` 事件视频）、2 个选择点，选项 goto 的目标脚本都在；用真实脚本重新打成 pf8 后整条链（导入 → gal-layout → 列表 83 项 → 场景 → 资源）通。
 - **推断 / 没验证**：
-  - 立绘：游戏本身用 E-mote（`image/fg/*.psb`，30~67MB 一个），浏览器放不了，这里改用 `image/fg/_blog/<file>/<face>.png`（脚本里 3209 次 `fg` 全部有同名 png）。**这些 png 是不是适合当立绘（尺寸 / 裁切 / 是否带透明）没有样本验证**（采集里没有图）；`x`（±280 / ±150）按「相对画面中心的偏移」处理，`mx / size / lv / id / always` 不用，`mode = 1 / -1` 含义不明、忽略。
+  - 立绘：游戏本身用 E-mote（`image/fg/*.psb`，30~67MB 一个），浏览器放不了，这里改用 `image/fg/_blog/<file>/<face>.png`（脚本里 3209 次 `fg` 全部有同名 png）。**v1.6 采集拿到了真实的 `_blog` 图**：576×324、透明背景的 16:9 半身像，表情已经画好（目视核对，角色大约在画框中间偏左）——所以不是小图，而是整张「画框」：按铺满 1920 宽的设计画面放大（`stand.zoom = 1920 / 576`）、底边对齐；`x`（±280 / ±150，1280 舞台像素）× 1.5 换成设计坐标当平移。**位置 / 大小仍没有游戏截图对照**（两个角色同时在场时各自一张画框叠在一起，靠 `x` 错开）；`mx / size / lv / id / always` 不用，`mode = 1 / -1` 含义不明、忽略。
   - `cgdel`（171）、`extrans`（过渡）、`quake`、`flash`、`fgf / fgact`（立绘动作）、`scene / evset`（回想）、`msgoff` 等记进 `stats.ignored`，不渲染。
   - `excall` 带 `label` / `cond` 的（调用别的脚本里的标签）只记 `stats.links`；不在最后一个 block 的 `excall` 不当 `scene.next`。
   - 只支持 `pf8`（`pf6` 等老版本魔数不对，gal-layout 不认领）。新导入时 `scriptCount` 是 0（展开在第一次浏览才做），浏览过一次再「刷新 json」才有数。
 - **自测**：`node scripts/dev/gal-artemis-selftest.mjs`（合成数据，`make-artemis-fixture.mjs` 的 `buildPf8` / `astOf`）。
 
-## 自有 arc（eomaia 引擎，`arcfam::scre`，gal-layout 2.30.0）
+## 自有 arc（eomaia 引擎，`arcfam::scre`，gal-layout 2.31.0）
 
 - **依据**：自己在采集的真实游戏上核对（g06《あざとカワイイ綾瀬ちゃん！》、g10《ギャル×オタ》的 `script.arc` 是明文 SCRE；g11《シルキーズプラス fuyukuru》的 `script.arc` 条目表同格式但内容压缩）。没有逆向 exe。
 - **档案**（`web/library/gal/arcfam.mjs`）：`u32 LE 头大小` + 条目表（`u8 名字长 + 名字 + u32 BE 大小 + u32 BE 原大小 + u32 BE 偏移`，偏移从文件头起）+ 数据；17 个真实档案（含 12852 条的 voice.arc）的条目表长度和头里的大小逐字节吻合。**名字混淆：`c' = toupper(c) − 名字长度 + 下标`**（不是每个游戏一个 K；用 `startup.script`、`adv_kohai01.script`、`kirara####.ogg` 核对，g11 的 `00.BIN` 也对）；名字大小写丢失（只剩大写，资源按名字找时忽略大小写）。大小 ≠ 原大小 = 压缩（g11 的 script / data，算法没识别）：跳过并记进展开结果的 `unsupported`。
@@ -1073,7 +1073,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **没做 / 推断**：
   - **脚本去向**（`33 xxx.script\0` 脚本引用，认字节模式）：最后一句文本之后出现的引用 = 这个脚本的去向——只有 1 个 → `scene.next`；≥ 2 个并排 → choice（选项文字只能是目标脚本名）+ 带 `when` 的 goto。真实样本核对：g10 的 `TX_1_1_W → TX_1_2H_N → TX_1_3_W → TX_2_1_W → …` 是一条完整的线性链（21 个脚本）；g06 的 `ADV_KOHAI02 → 03 → 04 → 05 → 06`，06 末尾并排 `adv_kohai_h04 / adv_kohai07`，07 末尾并排 `08a / 08b`，`08A` 末尾并排 `h07 / h08 / 09a`。中间出现的引用（如 `ADV_KOHAI04` 里的 `adv_kohai_h01`，H 场景）只记 `stats.links`，不当去向，所以这些 H 场景只能从列表单独进。**「≥ 2 个并排 = 选择」是按位置猜的**（脚本里没有选项文字，操作码没逆全，没能确认它们是不是玩家的选择、选项真名是什么、条件是什么）。
   - 脚本内的条件判断 / 变量没做。
-  - 叠加层的分槽方式和层序是按文件名 / 出现顺序猜的；底图每句台词前引擎都会重发一次，重复的被去掉。
+  - 叠加层：v1.6 采集的真实图核对了——EV 底图（脸是空的）+ `FACE` / `KARADA`（手臂）/ `MOJI`（效果字）都是 1280×720 的透明整画布，叠在 (0, 0) 就是完整的 CG（目视核对 `EV11S0` + `KARADA1` + `FACE0` + `MOJI1`）。分槽方式（按文件名里的「_种类」）和层序（出现顺序）仍是按名字猜的；底图每句台词前引擎都会重发一次，重复的被去掉。
   - 说话人 / 文本的配对只看出现顺序（说话人压栈后的下一句文本）；`0x14` 文本的识别靠「至少 2 个字符的合法 utf-8 + `\0`，且不是整数 `0x14`」，没有逐条对照原引擎。
   - **g11（シルキーズプラス）的剧本是压缩的（`.MES`），算法没识别，列表是空的**；它的图是 `AKB ` 格式（layer.arc）、`data.arc` 是压缩的 `.BIN`，都没做。
 - **自测**：`node scripts/dev/gal-arcfam-selftest.mjs`（合成数据，`make-arcfam-fixture.mjs` 的 `buildArcfam` / `Scre`）。

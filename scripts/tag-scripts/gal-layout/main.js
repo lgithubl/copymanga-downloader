@@ -860,7 +860,9 @@ export const ADAPTER_RULES = {
       "dir": "image/fg/_blog",
       "ext": "png",
       "align": "center",
-      "useX": true
+      "useX": true,
+      "zoom": 3.3333,
+      "xScale": 1.5
     },
     "wait": {
       "enabled": true,

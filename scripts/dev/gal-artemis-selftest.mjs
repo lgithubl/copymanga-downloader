@@ -59,7 +59,7 @@ const files = ['arc/res/image/bg/bg01.png', 'arc/res/image/ev/ev_x/ev_x_01.ogv',
   const scene = adapter.parse(ast, ctx)
   const st = scene.steps
   const ops = (i) => st[i].commands.map((c) => c.op)
-  check('场景：开头一步 = bgm / bg / stand / wait / voice / speaker / text（命令按出现顺序，视觉变化在台词那一刻提交）；stand = _blog 图 + center + shiftX（x）', J(ops(0)) === J(['bgm', 'wait', 'bg', 'stand', 'voice', 'speaker', 'text']) && st[0].commands[0].src === 'sound/bgm/bgm01.ogg' && st[0].commands[1].seconds === 1.5 && st[0].commands[2].src === 'image/bg/bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'image/fg/_blog/kae_0/通常Ａ.png', align: 'center', shiftX: -280 }]) && st[0].commands[4].src === 'sound/vo/kae/v001.ogg', J(st[0]))
+  check('场景：开头一步 = bgm / bg / stand / wait / voice / speaker / text（命令按出现顺序，视觉变化在台词那一刻提交）；stand = _blog 图 + center + zoom（576 宽放大到 1920）+ shiftX（x × 1.5）', J(ops(0)) === J(['bgm', 'wait', 'bg', 'stand', 'voice', 'speaker', 'text']) && st[0].commands[0].src === 'sound/bgm/bgm01.ogg' && st[0].commands[1].seconds === 1.5 && st[0].commands[2].src === 'image/bg/bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'image/fg/_blog/kae_0/通常Ａ.png', align: 'center', zoom: 3.3333, shiftX: -420 }]) && st[0].commands[4].src === 'sound/vo/kae/v001.ogg', J(st[0]))
   check('场景：text 里每行之间 rt2 → 换行；说话人 = name 的最后一项，没有 = 旁白（speaker 空）', J(st[0].commands.find((c) => c.op === 'text').segments) === J([{ text: '「こんにちは」\n二行目' }]) && J(st[0].commands.find((c) => c.op === 'speaker').segments) === J([{ text: '花衣' }]) && J(st[1].commands.find((c) => c.op === 'speaker').segments) === J([]))
   check('场景：fg mode=-2 → standOff；ev 图找不到 png 时按同名找 .ogv → movie（循环）；se', st[1].commands.some((c) => c.op === 'movie' && c.srcs[0] === 'image/ev/ev_x/ev_x_01.ogv' && c.loop === true) && st[1].commands.some((c) => c.op === 'standOff') && st[1].commands.some((c) => c.op === 'se' && c.src === 'sound/se/se01.ogg'), J(st[1]))
   const ch = st[1].commands.find((c) => c.op === 'choice')
@@ -92,17 +92,17 @@ await writeFile(path.join(media, 'game.pfs.000'), buildPf8([
   { name: 'image/ev/ev_x/ev_x_01.ogv', data: Buffer.from('OGV-DATA') },
 ]))
 const layoutItem = { itemId: 'a', title: 'a', config: { game: { id: 'artemis::test' } }, source: { path: media }, adapters: ['artemis::ast'] }
-const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
 const cfgRaw = tagOut.itemPatch.gal.config
 const cfg = normalizeGalConfig(cfgRaw)
 check('gal-layout：认出 artemis（id = artemis::test），containers = pf8 / flat / hybrid / artemis-ast / 扫根 / 规则 .pfs[.nnn]；脚本根 arc/script、资源根 arc/res；适配器 artemis::ast；写出 adapterOptions', cfg.containers.enabled && cfg.containers.format === 'pf8' && cfg.containers.flat === true && cfg.containers.mode === 'hybrid' && cfg.containers.scriptDecoder === 'artemis-ast' && cfg.containers.scriptExt === 'ast' && J(cfg.containers.scan) === J(['.']) && cfg.scriptRoots[0].dir === 'arc/script' && J(cfg.resourceRoots) === J(['arc/res']) && cfg.adapterOptions['artemis::ast']?.resDir === 'arc/res', J([cfg.containers, cfg.scriptRoots, cfg.resourceRoots]))
 {
   const notPf8 = path.join(work, 'notpf8'); await mkdir(notPf8); await writeFile(path.join(notPf8, 'x.exe'), 'MZ'); await writeFile(path.join(notPf8, 'x.pfs'), 'pf6-something-else')
-  const none = await generateTags({ item: { itemId: 'n', title: 'n', config: {}, source: { path: notPf8 } }, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+  const none = await generateTags({ item: { itemId: 'n', title: 'n', config: {}, source: { path: notPf8 } }, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
   check('gal-layout：没声明 game.id 且 .pfs 魔数不是 pf8 → 不认领（不写 artemis 配置）', !JSON.stringify(none.itemPatch?.gal?.config || {}).includes('artemis'), J(none.itemPatch?.gal?.config?.game))
 }
 {
-  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
   check('gal-layout：存进条目再跑一次 = 没有改动', /新增 0 项 \/ 修改 0 项 \/ 删除 0 项/.test(again.logs.join('\n')), again.logs.filter((l) => /本次改动/.test(l)).join(' | '))
 }
 {
@@ -122,7 +122,7 @@ check('gal-layout：认出 artemis（id = artemis::test），containers = pf8 / 
   const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media, adapters: ['artemis::ast'] } } }) })
   const imported = await handler.importFromSource({ options: { adapters: ['artemis::ast'], config: { game: { id: 'artemis::test' } } } })
   const item = imported.items[0]
-  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
   await handler.internals.updateItem(item.itemId, (it) => ({ ...it, config: { ...it.config, ...out.itemPatch.gal.config } }))
   const id = item.itemId
   const home = (await handler.getReaderContent(id, 'main', { sectionId: '' })).node

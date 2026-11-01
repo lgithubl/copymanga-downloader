@@ -65,7 +65,7 @@ await writeFile(path.join(media, 'Chip4.arc'), arcBuild([
 const dataDir = path.join(work, 'data')
 const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media, adapters: ['advhd::ws2'] } } }) })
 const imp = (await handler.importFromSource({ options: { adapters: ['advhd::ws2'], config: { game: { id: 'advhd::lpsl' } } } })).items[0]
-const tag = await generateTags({ item: imp, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+const tag = await generateTags({ item: imp, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
 await handler.internals.updateItem(imp.itemId, (it) => ({ ...it, config: applyGalConfigPatch(it.config, tag.itemPatch.gal.config) }))   // 绕过 patchItemMetadata（它会在后台预热展开）
 const id = imp.itemId
 const meta = async (file) => sharp(file).metadata()

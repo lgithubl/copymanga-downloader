@@ -234,12 +234,12 @@ await mkdir(path.join(media, 'Archive'), { recursive: true })
   await writeFile(path.join(media, 'BGI.gdb'), 'SDC FORMAT 1.00')
 }
 const layoutItem = { itemId: 'b', title: 'b', config: { game: { id: 'bgi::test' } }, source: { path: media }, adapters: ['bgi::bs'] }
-const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
 const cfgRaw = tagOut.itemPatch.gal.config
 const cfg = normalizeGalConfig(cfgRaw)
 check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat / hybrid / bgi-bs，扫 Archive 和根；系统程序（sysprg / system）规则里跳过；资源根 arc/res；适配器 bgi::bs；写出来的 config 引擎规整后零警告', cfg.game.id === 'bgi::test' && cfg.containers.format === 'buriko' && cfg.containers.flat === true && cfg.containers.mode === 'hybrid' && cfg.containers.scriptDecoder === 'bgi-bs' && J(cfg.containers.scan) === J(['Archive', '.']) && cfg.containers.rules[0].skip === true && J(cfg.resourceRoots) === J(['arc/res']) && J(tagOut.itemPatch.gal.adapters ?? layoutItem.adapters) !== '[]' && normalizeGalConfigWithWarnings(cfgRaw).warnings.length === 0, J([cfg.containers, normalizeGalConfigWithWarnings(cfgRaw).warnings]))
 {
-  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
   check('gal-layout：存进条目再跑一次 = 没有改动', /新增 0 项 \/ 修改 0 项 \/ 删除 0 项/.test(again.logs.join('\n')), again.logs.filter((l) => /本次改动/.test(l)).join(' | '))
 }
 {
@@ -290,7 +290,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media, adapters: ['bgi::bs'] } } }) })
   const imported = await handler.importFromSource({ options: { adapters: ['bgi::bs'], config: { game: { id: 'bgi::test' } } } })
   const item = imported.items[0]
-  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.30.0', options: {} } })
+  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
   await handler.internals.updateItem(item.itemId, (it) => ({ ...it, config: { ...it.config, ...out.itemPatch.gal.config } }))   // 绕过 patchItemMetadata（它会在后台预热展开）
   const id = item.itemId
   const home = (await handler.getReaderContent(id, 'main', { sectionId: '' })).node

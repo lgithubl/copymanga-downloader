@@ -12,8 +12,8 @@
 //   select（每个 {"select", file} = 一个选项跳去的脚本，文字在 block.select.ja）→ choice + 带 when 的 goto
 //   excall（file）：整个脚本最后一个 block 里的 = scene.next（接着播）；别的只记 stats.links
 // 推断（没有对照画面，都可以用 options 改）：
-//   · 立绘：游戏本身用 E-mote（image/fg/*.psb，30~67MB 一个，浏览器放不了），这里改用 image/fg/_blog/<file>/<face>.png（和脚本里 file / face 一一对上，样本里 3209 次使用全部有对应的 png）当立绘；它是不是适合当立绘（尺寸 / 裁切）没有样本验证
-//   · fg 的 x（±280 / ±150 …）按「相对画面中心的偏移」处理（没有对照）；mx / size / lv / id / always（动作）不用；mode = 1 / -1 的含义不明，忽略
+//   · 立绘：游戏本身用 E-mote（image/fg/*.psb，30~67MB 一个，浏览器放不了），这里改用 image/fg/_blog/<file>/<face>.png（和脚本里 file / face 一一对上，样本里 3209 次使用全部有对应的 png）当立绘；真实图（v1.6 采集）是 576×324、透明背景的 16:9 半身像（角色大约在画框中间偏左、表情已经画好），所以按铺满 1920 宽的设计画面放大（zoom 1920 / 576）、底边对齐；位置（x）没有游戏截图对照
+//   · fg 的 x（±280 / ±150 …）按「相对画面中心的偏移（1280 舞台像素，×1.5 换成设计坐标）」处理（没有对照）；mx / size / lv / id / always（动作）不用；mode = 1 / -1 的含义不明，忽略
 //   · cgdel / extrans / quake / flash / fgf / fgact / scene / evset 等记进 stats.ignored，不渲染
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader, safeRegex } from './options-merge.mjs'
@@ -31,7 +31,7 @@ export const DEFAULT_OPTIONS = {
   bgmDir: 'sound/bgm',
   seDir: 'sound/se',
   voiceDirs: ['sound/vo', 'sound/vobin'],
-  stand: { enabled: true, dir: 'image/fg/_blog', ext: 'png', align: 'center', useX: true },
+  stand: { enabled: true, dir: 'image/fg/_blog', ext: 'png', align: 'center', useX: true, zoom: 3.3333, xScale: 1.5 },   // _blog 图 576×324（16:9 的半身像画框）：放大到铺满 1920 宽的设计画面（1920 / 576）；脚本里的 x 是 1280 舞台的像素，×1.5 换成设计坐标
   wait: { enabled: true, max: 10 },
   extraDirs: [],
 }
@@ -279,7 +279,8 @@ export function parse(text, ctx = null, meta = {}) {
     const img = imageRef(src, `${file}/${face}`)
     if (!img) return
     const x = opt.stand.useX && Number.isFinite(Number(param(cmd, 'x'))) ? num(param(cmd, 'x')) : 0
-    stands.set(ch, { parts: [{ src: img.src, align: opt.stand.align, ...(x ? { shiftX: x } : {}) }], x })
+    const shiftX = Math.round(x * opt.stand.xScale)
+    stands.set(ch, { parts: [{ src: img.src, align: opt.stand.align, ...(opt.stand.zoom && opt.stand.zoom !== 1 ? { zoom: opt.stand.zoom } : {}), ...(shiftX ? { shiftX } : {}) }], x })
     dirty = true
   }
   function onSound(name, cmd) {
