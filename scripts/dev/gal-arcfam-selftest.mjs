@@ -69,6 +69,31 @@ const json = JSON.stringify({ format: 'arcfam-scre/1', arc: 'script', name: 'ADV
   check('缺资源：索引里没有的图 / 声音记进 stats.unresolved，场景照常出', partial.stats.unresolved['image:EV02S1.png'] >= 1 && partial.stats.unresolved['voice:rico_0011.ogg'] === 1 && partial.steps.length === st.length, J(partial.stats.unresolved))
 }
 
+// ---- eomaia_char 立绘（g10）：.CHAR（JSON）+ 部件图集 JSON → stand ----
+{
+  const charDef = { version: 1, size: { width: 1000, height: 800 }, base: { 0: { x: 0, y: 0, width: 1000, height: 800, fileid: 'kirara_st_01_l_0' }, 1: { x: 0, y: 0, width: 1000, height: 800, fileid: 'kirara_st_01_l_1' } }, sub: { brow: { x: 300, y: 200, width: 100, height: 40, fileid: 'kirara_st_01_l_brow', cnt: 3 }, 'eye-open': { x: 310, y: 250, width: 120, height: 50, fileid: 'kirara_st_01_l_eye-open', cnt: 3 }, 'eye-close': { x: 310, y: 250, width: 120, height: 50, fileid: 'kirara_st_01_l_eye-close', cnt: 2 }, 'mouth-open': { x: 340, y: 330, width: 60, height: 40, fileid: 'kirara_st_01_l_mouth-open', cnt: 2 }, 'mouth-close': { x: 340, y: 330, width: 60, height: 40, fileid: 'kirara_st_01_l_mouth-close', cnt: 2 }, cheek: { x: 290, y: 280, width: 200, height: 100, fileid: 'kirara_st_01_l_cheek', cnt: 2 } } }
+  const atlas = (fileid, w, h, n) => ({ frames: Object.fromEntries(Array.from({ length: n }, (_, k) => [`${fileid}_${n - 1 - k}`, { frame: { x: 0, y: k * h, w, h }, rotated: false, trimmed: false }])) })   // 竖着排，序号倒着（和真实图集一样：_n-1 在最上面）
+  const texts = { 'arc/res/KIRARA_ST_01_L.CHAR': JSON.stringify(charDef) }
+  for (const [part, w, h, n] of [['brow', 100, 40, 3], ['eye-open', 120, 50, 3], ['eye-close', 120, 50, 2], ['mouth-open', 60, 40, 2], ['mouth-close', 60, 40, 2], ['cheek', 200, 100, 2]]) texts[`arc/res/KIRARA_ST_01_L_${part.toUpperCase()}.JSON`] = JSON.stringify(atlas(`kirara_st_01_l_${part}`, w, h, n))
+  const charFiles = ['arc/res/KIRARA_ST_01_L.CHAR', 'arc/res/KIRARA_ST_01_L_0.PNG', 'arc/res/KIRARA_ST_01_L_1.PNG', ...Object.keys(texts).filter((k) => /JSON$/.test(k)), ...['BROW', 'EYE-OPEN', 'EYE-CLOSE', 'MOUTH-OPEN', 'MOUTH-CLOSE', 'CHEEK'].map((p) => `arc/res/KIRARA_ST_01_L_${p}.PNG`), 'arc/res/BG03.PNG']
+  const ctx = adapter.prepare({ options: {}, files: charFiles, texts, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
+  const sc = new Scre()
+  sc.bg('bg03.png').charLoad('kirara_ST_01_l.char', { scale: 125, slot: 1, x: -275, y: 840 }).charPart('brow', 1).charPart('eye-open', 2).charPart('mouth-close', 0).charPart('cheek', 1).charBase(0).charShow(500).narration('立絵あり。')
+    .charLoad('kirara_ST_01_l.char', { slot: 0 }).charPart('brow', 0).charPart('eye-close', 1).charPart('mouth-open', 1).charBase(1).charShow(-1).narration('表情を変えた。')
+    .charHide(500).narration('立絵を消した。')
+    .charLoad('kirara_ST_01_l.char').charShow(0).narration('また出す。').charClear().narration('全部消す。')
+  const ev = decodeScre(sc.build())
+  check('eomaia_char：事件 m（101 带位置 [x, y, 19]、102 部件、103、104 显示、105 隐藏、106 清空）按出现顺序抽出来', ev.filter((e) => e[0] === 'm').slice(0, 8).map((e) => e[1]).join() === '101,102,102,102,102,103,104,101' && J(ev.find((e) => e[0] === 'm' && e[1] === 101).slice(2)) === J([[100 + 25, 1, 'kirara_ST_01_l.char', 1], [-275, 840, 19]]), J(ev.filter((e) => e[0] === 'm').slice(0, 3)))
+  const scene = adapter.parse(JSON.stringify({ format: 'arcfam-scre/1', arc: 'script', name: 'X', size: 0, events: ev }), ctx)
+  const stands = scene.steps.flatMap((x) => x.commands).filter((c) => c.op === 'stand' || c.op === 'standOff')
+  check('eomaia_char：显示 → stand（底图 + cheek / eye / brow / mouth 各一帧；缩放 125%；整组中心 = (960 - 275, 840)）；换表情再来一条 stand；隐藏 / 清空 → standOff；没显示（101 没有 104）不出', stands.map((c) => c.op).join() === 'stand,stand,standOff,stand,standOff', stands.map((c) => c.op).join())
+  const first = stands[0].parts
+  check('eomaia_char：第一个 stand——底图 = base[101 的第 2 个参数]（这里 1）；部件 = 图集 PNG + crop（frames[<文件>_<序号>] 的框）+ 位置（sub 的 x / y × 缩放）；顺序 cheek → eye → brow → mouth；整组 vcenter + shiftX / shiftY', first[0].src === 'KIRARA_ST_01_L_1.PNG' && first[0].zoom === 1.25 && first[0].vcenter === true && first[0].shiftX === -275 && first[0].shiftY === 300 && J(first.slice(1).map((p) => p.src)) === J(['KIRARA_ST_01_L_CHEEK.PNG', 'KIRARA_ST_01_L_EYE-OPEN.PNG', 'KIRARA_ST_01_L_BROW.PNG', 'KIRARA_ST_01_L_MOUTH-CLOSE.PNG']) && J(first[1].crop) === J([0, 0, 200, 100]) && first[1].x === 290 * 1.25 && first[1].y === 280 * 1.25 && J(first[2].crop) === J([0, 0, 120, 50]), J(first))
+  check('eomaia_char：序号 → 图集帧（brow 3 帧：序号 1 = 倒数第 2 张、序号 0 = 最下面一张）；闭眼 / 张嘴换了部件名', J(first[3].crop) === J([0, 40, 100, 40]) && stands[1].parts.some((p) => p.src === 'KIRARA_ST_01_L_EYE-CLOSE.PNG') && stands[1].parts.some((p) => p.src === 'KIRARA_ST_01_L_MOUTH-OPEN.PNG') && stands[1].parts[0].src === 'KIRARA_ST_01_L_0.PNG' && stands[1].parts[0].zoom === 1 && stands[1].parts[0].shiftX === -200 && stands[1].parts[0].shiftY === 100, J(stands[1].parts))
+  const miss = adapter.parse(JSON.stringify({ format: 'arcfam-scre/1', arc: 'script', name: 'X', size: 0, events: ev }), adapter.prepare({ options: {}, files: ['arc/res/BG03.PNG'], toResourcePath: (r) => r.replace(/^arc\/res\//, '') }))
+  check('eomaia_char：找不到 .CHAR / 图 → 不出 stand，记 stats.unresolved（场景照常出）', !miss.steps.flatMap((x) => x.commands).some((c) => c.op === 'stand') && miss.stats.unresolved['char:kirara_st_01_l'] >= 1 && miss.stats.messages === scene.stats.messages, J(miss.stats.unresolved))
+}
+
 // ---- 脚本去向：末尾 1 个引用 = next；末尾并排多个 = 选择；中间的只记 links ----
 {
   const ctx = adapter.prepare({ options: {}, files, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
@@ -114,7 +139,7 @@ check('gal-layout：认出 arcfam（id = arcfam::test），containers = arcfam /
   const text = await readFile(path.join(media, 'arc/script/script/ADV01.arcfam'), 'utf8')
   check('展开：.SCRIPT 解成事件流 JSON 展开到 arc/script/<arc 名>/<脚本>.arcfam；压缩的（.MES）数进 unsupported；lib / json 不展开；图 / 声音一个都没落盘', JSON.parse(text).format === 'arcfam-scre/1' && (await exists(path.join(media, 'arc/script/script/ADV02.arcfam'))) && !(await exists(path.join(media, 'arc/script/script/SETTING.arcfam'))) && !(await exists(path.join(media, 'arc/res'))) && Object.values(rep).some((r) => r.unsupported === 1), J(rep))
   const vf = await virtualFiles({ mediaDir: media, config: cfg })
-  check('虚拟索引（flat）：png / ogg / wav 在 arc/res/<名字>（大写）；脚本 / json 不在', J([...vf.files].sort()) === J([...files.filter((f) => /PNG$/.test(f)), 'arc/res/RICO_0011.OGG', 'arc/res/RICO_0012.OGG', 'arc/res/BGM_05.WAV', 'arc/res/SE_1_005.WAV'].sort()), J(vf.files))
+  check('虚拟索引（flat）：png / ogg / wav / json（立绘描述，小）在 arc/res/<名字>（大写）；脚本不在', J([...vf.files].sort()) === J([...files.filter((f) => /PNG$/.test(f)), 'arc/res/ADV_CGMODE.JSON', 'arc/res/RICO_0011.OGG', 'arc/res/RICO_0012.OGG', 'arc/res/BGM_05.WAV', 'arc/res/SE_1_005.WAV'].sort()), J(vf.files))
   const entry = await virtualEntry({ mediaDir: media, config: cfg, rels: ['arc/res/RICO_0011.OGG'] })
   check('virtualEntry.read()：原样给出（自有 arc 的资源没有加密）', (await entry.read()).toString() === 'OggS-v11')
   const n = await materialize({ mediaDir: media, config: cfg, rels: ['arc/res/BGM_05.WAV'] })

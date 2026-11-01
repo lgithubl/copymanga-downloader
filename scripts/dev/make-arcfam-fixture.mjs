@@ -31,6 +31,14 @@ export class Scre {
   voice(file) { return this.int(0).res('eomaia_audio', 129, file) }
   speaker(name) { return this.str(`【${name}】`).int(0).int(0).int(7).int(0x17).call() }
   ref(file) { return this.str(file) }   // 脚本引用（下一个脚本 / 分支 / 回想）：压一个字符串 xxx.script
+  // eomaia_char 立绘调用（g10）：前面 `x, y, 19` + 0x34 = 位置；每个调用 = 参数 + 方法号 + 对象名 + 2 + 11 + CALL
+  charCall(method, ...args) { for (const a of args) typeof a === 'string' ? this.str(a) : this.int(a); return this.int(method).str('eomaia_char').int(2).int(11).call() }
+  charLoad(name, { scale = 100, slot = 4, x = -200, y = 640 } = {}) { this.int(x).int(y).int(19); this.code.push(Buffer.from([0x34])); return this.charCall(101, scale, slot, name, 1) }
+  charPart(part, idx) { return this.charCall(102, 0, idx, part, 1) }
+  charBase(n) { return this.charCall(103, n) }
+  charShow(fade = 500) { return this.charCall(104, fade, 0) }
+  charHide(fade = 500) { return this.charCall(105, fade, 0, 1) }
+  charClear() { return this.charCall(106, -1, 1) }
   narration(text) { this.code.push(Buffer.from([0x18]), u32be(this.lines++), u32be(0), Buffer.from([0x14]), Buffer.from(`${text}\0`, 'utf8')); return this }
   say(text) { this.code.push(Buffer.from([0x14]), Buffer.from(`${text}\0`, 'utf8')); return this }
   build() {

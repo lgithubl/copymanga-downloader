@@ -28,7 +28,7 @@ const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'])
 const AUDIO_EXTS = new Set(['ogg', 'flac', 'wav', 'mp3', 'opus', 'm4a'])
 const VIDEO_EXTS = new Set(['mp4', 'webm', 'm4v', 'mov'])
 const SCRIPT_EXTS = new Set(['ws2'])
-const ARCFAM_RES_EXTS = new Set(['png', 'jpg', 'jpeg', 'ogg', 'wav', 'mp3'])
+const ARCFAM_RES_EXTS = new Set(['png', 'jpg', 'jpeg', 'ogg', 'wav', 'mp3', 'char', 'json'])   // char / json：eomaia 立绘的描述（.CHAR = 角色定义 JSON，部件图集的 JSON），适配器要读，都很小
 const PF8_RES_EXTS = new Set([...IMAGE_EXTS, ...AUDIO_EXTS, 'ogv'])   // ogv：Artemis 的动态事件图（浏览器能直接播 Theora）
 
 // BGI（BURIKO ARC20 里的 DSC 压缩剧本）：解压 → 把 token 流「执行」一遍 → 事件流（bgi-bs/1，适配器 bgi::bs 吃它）。不是剧本的 DSC（动画表之类）抛错，调用方当跳过

@@ -3,6 +3,7 @@
 //   minashigo：一组「立绘图集上裁出的一块」叠成一个立绘，part 画在 (x, y)（相对立绘左上角），整体按 Ren'Py 的默认摆法放（底边对齐画面底边、水平居中）。
 //   legeclo：每个部件是一整张立绘图（没有 crop），可以带 align: 'left' | 'center' | 'right'（show xxx at left）——有 align 的部件各自独立摆放，
 //   底边对齐画面底边，水平按 align 贴左 / 居中 / 贴右（和 Ren'Py 的 xalign 0 / 0.5 / 1 一样）；没有 align 的还是上面那种整体摆法。
+//   不带 align 的整组立绘（legacy）：部件也可以带 shiftX / shiftY（整组平移，设计像素，每个部件写同一个值）和 vcenter（第一个部件写了 = 整组以中心为准竖直居中，否则底边对齐）；x / y 是缩放之后的画布内偏移（调用方自己乘 zoom）。
 //   attach: true 的部件（立绘的表情 / 嘴 / 眼）跟着前面最近一个带 align 的部件：左上角对齐它的左上角（大小各自，缩放同本体；不再自己摆）。
 //   带 align 的部件还可以带 shiftX / shiftY（设计像素）：对齐之后再平移；vcenter: true = 竖直方向以图的中心为准（不是底边对齐）。
 //   grenze：同 legeclo（整张图 + align），另带 fit: 1（图比画面高就缩到画面高度）。
@@ -196,7 +197,7 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
     const width = Math.max(0, ...grouped.map((it) => it.dx + it.dw))
     const height = Math.max(0, ...grouped.map((it) => it.dy + it.dh))
     const ox = (DESIGN_W - width) / 2
-    const oy = DESIGN_H - height
+    const oy = grouped[0]?.vcenter ? (DESIGN_H - height) / 2 : DESIGN_H - height   // 整组的竖直基准看第一个部件的 vcenter（eomaia 立绘：以图的中心为准，位置由 shiftX / shiftY 平移）
     // 有 align 的部件：各自的位置（左上角）算好，画的时候不再加整体的偏移
     let base = null   // attach 部件的参照：前面最近一个没有 attach 的、带 align 的部件
     for (const it of items) {
@@ -222,7 +223,7 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
       const { items, ox, oy } = drawn.legacy
       for (const it of items) {
         ctx.filter = it.dim ? `brightness(${it.dim})` : 'none'   // dim：不说话的角色压暗（Fruits 的 ACTOR_COLOR_FILTER dark）
-        ctx.drawImage(it.img, it.sx, it.sy, it.sw, it.sh, it.align ? it.fixedX : ox + it.dx, it.align ? it.fixedY : oy + it.dy, it.dw, it.dh)
+        ctx.drawImage(it.img, it.sx, it.sy, it.sw, it.sh, it.align ? it.fixedX : ox + it.dx + it.shiftX, it.align ? it.fixedY : oy + it.dy + it.shiftY, it.dw, it.dh)
       }
       ctx.filter = 'none'
     }

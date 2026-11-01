@@ -12,7 +12,7 @@
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { DEFAULT_INDEX_SKIP } from './config.mjs'
-import { virtualFiles } from './containers.mjs'
+import { virtualEntry, virtualFiles } from './containers.mjs'
 import { safeRelPath } from './paths.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 
@@ -152,7 +152,13 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
           const { bytesRead } = await handle.read(buffer, 0, sampleBytes, 0)
           texts[rel] = decodeTextFile(buffer.subarray(0, bytesRead)).text
         } finally { await handle.close() }
-      } catch { /* 读不了就当没有 */ }
+      } catch {
+        // 磁盘上没有：容器（hybrid）里的虚拟文件——小文本（描述文件 / 图集 JSON 之类）直接从 .arc 读出来，不落盘
+        try {
+          const entry = await virtualEntry({ mediaDir, config, rels: [rel] })
+          if (entry) { const data = await entry.read(); texts[rel] = decodeTextFile(data.subarray(0, sampleBytes)).text }
+        } catch { /* 读不了就当没有 */ }
+      }
     }
   }
   if (sampleTruncated) console.warn(`[gal] ${adapter.id}：${mediaDir} 的脚本抽样超过上限 ${sampleLimit} 个，只读了前 ${sampleLimit} 个（列表 / 标题可能不全）`)
