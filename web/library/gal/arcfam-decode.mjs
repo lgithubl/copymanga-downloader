@@ -3,7 +3,8 @@
 //   SCRE 头：'SCRE' u32 0、u32 行数、u32 20、(行数 + 1) 个 u32 偏移（第一个 = 字节码起点）；字节码是栈机，整数一律大端：0x32 + i32 = 压整数，0x33 + 字符串\0 = 压字符串，0x17 = 调用，0x14 + 字符串\0 = 文本，0x18 + 8 字节 = 行号（u32，u32）
 //   资源调用：`33 文件名\0  32 方法号  33 对象名\0  …  17`——对象 eomaia_audio（129 = 语音 .ogg，102 = BGM .wav，117 = 音效 .wav）、eomaia_image（102 = 底图：bg* / BG_* / EV*S* / h* / e*，105 / 106 = 叠加层：face / moji / karada / eff / cutin）等
 //   说话人：`33 【名字】\0` 在文本之前压栈，只用一次
-// 没做：选择 / 分支 / 跳转（按文件里出现的顺序线性输出，分支各段都会出现）、叠加层的位置、立绘（这个引擎的样本里没看到立绘调用）、操作码的完整语义。
+//   脚本引用：`33 xxx.script\0`（下一个脚本 / 分支去的脚本 / 回想场景）→ ['j', 名字]。真实脚本里：g06 的 ADV_KOHAI02 末尾只有一个（adv_kohai03.script）= 接着播；ADV_KOHAI08 末尾并排两个（adv_kohai08a / 08b）= 路线分支；中间出现的（adv_kohai_h01 等）是 H 场景，也在列表里，这里只记 links
+// 没做：脚本内的选择（g06 / g10 的剧本里没有选项文字，路线分支靠脚本引用）、条件判断、叠加层的位置、立绘（这个引擎的样本里没看到立绘调用）、操作码的完整语义。
 const AUDIO_METHODS = { 129: 'v', 102: 'b', 117: 's' }   // eomaia_audio
 
 export function isScre(buf) { return buf.length > 20 && buf.subarray(0, 4).toString('latin1') === 'SCRE' }
@@ -27,6 +28,9 @@ export function decodeScre(buf) {
     if (m[3] === 'eomaia_audio' && AUDIO_METHODS[method] && (ext === 'ogg' || ext === 'wav')) events.push({ at: m.index, e: [AUDIO_METHODS[method], file] })
     else if (m[3] === 'eomaia_image' && (method === 102 || method === 105 || method === 106) && ext === 'png') events.push({ at: m.index, e: ['i', method, file] })
   }
+  // 脚本引用
+  const ref = /3([\x20-\x7e]{3,40}\.script)\x00/g
+  for (let m = ref.exec(s); m; m = ref.exec(s)) if (m.index >= start) events.push({ at: m.index, e: ['j', m[1].toLowerCase()] })
   // 说话人：【名字】
   const who = /3(\xe3\x80\x90[^\x00]{1,80}?\xe3\x80\x91)\x00/g
   for (let m = who.exec(s); m; m = who.exec(s)) if (m.index >= start) events.push({ at: m.index, e: ['w', utf8(m[1]).replace(/^【|】$/g, '')] })

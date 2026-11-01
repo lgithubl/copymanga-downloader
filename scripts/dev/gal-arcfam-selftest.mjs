@@ -69,6 +69,20 @@ const json = JSON.stringify({ format: 'arcfam-scre/1', arc: 'script', name: 'ADV
   check('缺资源：索引里没有的图 / 声音记进 stats.unresolved，场景照常出', partial.stats.unresolved['image:EV02S1.png'] >= 1 && partial.stats.unresolved['voice:rico_0011.ogg'] === 1 && partial.steps.length === st.length, J(partial.stats.unresolved))
 }
 
+// ---- 脚本去向：末尾 1 个引用 = next；末尾并排多个 = 选择；中间的只记 links ----
+{
+  const ctx = adapter.prepare({ options: {}, files, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
+  const run = (sc) => adapter.parse(JSON.stringify({ format: 'arcfam-scre/1', arc: 'script', name: 'X', size: 0, events: decodeScre(sc.build()) }), ctx)
+  const one = run(new Scre().narration('一つ目の文。').ref('adv_kohai_h01.script').narration('二つ目の文。').ref('adv_kohai03.script'))
+  check('脚本去向：末尾只有一个引用 = scene.next（中间的 H 场景引用只记 stats.links，不影响）', J(one.next) === J({ script: 'adv_kohai03' }) && one.stats.links['script:adv_kohai_h01'] === 1 && !one.steps.flatMap((s) => s.commands).some((c) => c.op === 'goto'), J([one.next, one.stats.links]))
+  const two = run(new Scre().narration('分かれ道').ref('adv_kohai08a.script').ref('adv_kohai08b.script'))
+  const ch = two.steps.flatMap((s) => s.commands).find((c) => c.op === 'choice')
+  const gotos = two.steps.flatMap((s) => s.commands).filter((c) => c.op === 'goto')
+  check('脚本去向：末尾并排两个引用 = 路线分支：choice（选项文字 = 脚本名大写，挂在最后一句台词的步里）+ 带 when 的 goto；没有 scene.next', Boolean(ch) && J(ch.options.map((o) => o.segments[0].text)) === J(['ADV_KOHAI08A', 'ADV_KOHAI08B']) && gotos.length === 2 && gotos[0].script === 'adv_kohai08a' && J(gotos[1].when) === J([{ var: ch.var, op: '==', value: 2 }]) && two.next === undefined && J(two.steps[0].commands.at(-1).op) === J('choice'), J(two.steps))
+  const none = run(new Scre().narration('終わりの文。'))
+  check('脚本去向：没有引用 = 没有 next', none.next === undefined)
+}
+
 // ---- 容器 + 整条链 ----
 const media = path.join(work, 'game')
 await mkdir(media, { recursive: true })

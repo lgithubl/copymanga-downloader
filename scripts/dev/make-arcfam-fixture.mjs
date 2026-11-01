@@ -30,6 +30,7 @@ export class Scre {
   se(file) { return this.int(1).res('eomaia_audio', 117, file) }
   voice(file) { return this.int(0).res('eomaia_audio', 129, file) }
   speaker(name) { return this.str(`【${name}】`).int(0).int(0).int(7).int(0x17).call() }
+  ref(file) { return this.str(file) }   // 脚本引用（下一个脚本 / 分支 / 回想）：压一个字符串 xxx.script
   narration(text) { this.code.push(Buffer.from([0x18]), u32be(this.lines++), u32be(0), Buffer.from([0x14]), Buffer.from(`${text}\0`, 'utf8')); return this }
   say(text) { this.code.push(Buffer.from([0x14]), Buffer.from(`${text}\0`, 'utf8')); return this }
   build() {

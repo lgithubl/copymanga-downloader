@@ -5,8 +5,9 @@
 // 映射：
 //   t（+ 前面最近一个 w）→ speaker + text；v → voice；b → bgm；s → se
 //   i 102（底图：bg* / BG_* / EV*S* / h* / e*）→ bg，同时清掉叠加层；i 105 / 106（叠加层：face / moji / karada / eff / cutin …）→ overlay（按文件名里「_种类」分槽，同种类再来一张 = 替换；整张铺满，真实样本里 EV 的底图和叠加层都是 1280×720）
+//   j（脚本引用）：最后一句文本之后出现的 = 这个脚本的去向——只有 1 个 → scene.next（接着播）；≥ 2 个 → choice（选项文字 = 目标脚本名）+ 带 when 的 goto（真实样本：ADV_KOHAI08 末尾并排 adv_kohai08a / 08b = 路线分支，ADV_KOHAI09A 末尾并排 3 个）；前面出现的（H 场景 adv_kohai_h01 等）只记 stats.links
 // 没做 / 推断：
-//   · 选择 / 分支 / 跳转（字节码没有逆全）：按文件里出现的顺序线性输出，分支各段都会出现；脚本之间没有 scene.next
+//   · 脚本内的选择 / 条件判断（字节码没有逆全；g06 / g10 的剧本里没有选项文字，路线靠脚本引用）：「≥ 2 个去向 = 选择」是按位置猜的，选项文字只能用脚本名
 //   · 叠加层的层序：按出现顺序叠；分槽方式是按文件名猜的；底图每句台词前都会重新发一次（引擎的习惯），重复的会被去掉
 //   · 说话人：`【名字】` 压栈后下一句文本用它，用一次就清；没有 = 旁白
 //   · 压缩的剧本（g11 的 .MES，算法没识别）不展开
@@ -94,6 +95,13 @@ export function parse(text, ctx = null, meta = {}) {
     return ''
   }
 
+  // 去向：最后一句文本之后的脚本引用
+  let lastText = -1
+  data.events.forEach((ev, i) => { if (Array.isArray(ev) && ev[0] === 't') lastText = i })
+  const stemOf = (file) => str(file).replace(/\.script$/i, '')
+  const endRefs = []
+  data.events.forEach((ev, i) => { if (Array.isArray(ev) && ev[0] === 'j') { count('links', `script:${stemOf(ev[1])}`); if (i > lastText && !endRefs.includes(stemOf(ev[1]))) endRefs.push(stemOf(ev[1])) } })
+
   let speaker = ''
   for (const ev of data.events) {
     if (!Array.isArray(ev)) continue
@@ -135,9 +143,23 @@ export function parse(text, ctx = null, meta = {}) {
     } else count('ignored', String(kind))
   }
   commit()
+  let next = null
+  if (endRefs.length === 1) next = { script: endRefs[0] }
+  else if (endRefs.length >= 2) {
+    // 路线分支：选项挂在最后一句台词的步里（没有就自己一步）
+    const last = !commands.length && steps.length ? steps[steps.length - 1] : null
+    const host = last && last.commands.some((c) => c.op === 'text' && c.segments.length) ? last : null
+    const stepIndex = host ? host.index : steps.length
+    const variable = `sel${stepIndex}`
+    const into = host ? host.commands : commands
+    into.push({ op: 'choice', id: `${stepIndex}:${into.length}`, var: variable, options: endRefs.map((name, n) => ({ value: n + 1, segments: [{ text: name.toUpperCase() }] })) })
+    stats.choices += 1
+    if (!host) { into.push({ op: 'text', segments: [] }); endStep() }
+    endRefs.forEach((script, n) => emit({ op: 'goto', script, when: [{ var: variable, op: '==', value: n + 1 }] }))
+  }
   if (commands.length || !steps.length) { emit({ op: 'text', segments: [] }); endStep() }
   stats.commands = steps.reduce((n, step) => n + step.commands.length, 0)
-  return { steps, stats }
+  return { steps, stats, ...(next ? { next } : {}) }
 }
 
 export const arcfamScreAdapter = { id: ADAPTER_ID, label: '自有 arc / eomaia（SCRE，经 containers 展开）', sniff, explainSniff, parse, contextFiles, contextDirs, contextTextFilter, contextWalkLimit, contextSampleLimit, prepare }
