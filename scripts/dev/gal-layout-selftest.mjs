@@ -387,7 +387,15 @@ const withLayouts = (layouts) => ({ layouts })
   check('AdvHD 封面：Manual 目录里有 Manual.jpg 就指定用它（不是按名字排第一的 000_first.png，也不是 pdf）', (pick.details?.cover ?? pick.itemPatch?.cover) === '~/MANUAL/Manual.jpg', J(pick.details?.cover))
   await rm(dir, { recursive: true, force: true })
   const none = await run(root, { game: { id: 'advhd::lpsl' } })
-  check('AdvHD 没有 Manual 目录 = 没有封面（不报错）', !(none.details?.cover ?? none.itemPatch?.cover), J(none.details?.cover))
+  check('AdvHD 没有 Manual 目录 = 退而用根目录里 exe 的图标当封面（exe:AdvHD.exe，不报错）', (none.details?.cover ?? none.itemPatch?.cover) === 'exe:AdvHD.exe', J(none.details?.cover))
+  // exe 封面规则：白名单 / 黑名单（正则，匹配 exe 文件名）；默认黑名单排除卸载 / 安装 / 配置之类；多个候选取最大的；enabled: false 关掉
+  await writeFile(path.join(root, 'unins000.exe'), 'x'.repeat(5000)); await writeFile(path.join(root, 'Config.exe'), 'x'.repeat(4000)); await writeFile(path.join(root, 'Other.exe'), 'x'.repeat(3000))
+  const big = await run(root, { game: { id: 'advhd::lpsl' } })
+  check('exe 封面：默认黑名单排除 unins000 / Config（虽然它们更大），在剩下的里取最大的（Other.exe 3000 字节 > AdvHD.exe）', (big.details?.cover ?? big.itemPatch?.cover) === 'exe:Other.exe', J(big.details?.cover))
+  const white = await run(root, { game: { id: 'advhd::lpsl' }, coverExe: { include: ['^other'], exclude: [] } })
+  check('exe 封面：白名单 ^other → 只在匹配的里选（Other.exe）；黑名单写 [] 就不排除（unins000 也进候选，但白名单挡掉了）', (white.details?.cover ?? white.itemPatch?.cover) === 'exe:Other.exe', J(white.details?.cover))
+  const off = await run(root, { game: { id: 'advhd::lpsl' }, coverExe: { enabled: false } })
+  check('exe 封面：enabled: false = 不用 exe 图标', !(off.details?.cover ?? off.itemPatch?.cover), J(off.details?.cover))
 }
 
 // ================= Grenze 封面：标题 LOGO（资源根是 assets/resources/patchres，不是 base → 封面路径用 ~/ 相对媒体目录）=================
@@ -523,7 +531,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
 // ================= 规则表（ADAPTER_RULES + engine 字段）：写进 config、体量、端到端等价、和 layouts / overrides 的关系 =================
 {
   const manifest = JSON.parse(await readFile(path.join(path.dirname(MAIN), 'manifest.json'), 'utf8'))
-  check('manifest：版本 2.32.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.32.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
+  check('manifest：版本 2.33.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.33.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
 
   // 每个 fixture 的声明 id（别名都跑）：写出来的 config 经过引擎规整一条警告都没有（规则表 / engine 字段都合格），体量在引擎上限内
   const tooBig = []

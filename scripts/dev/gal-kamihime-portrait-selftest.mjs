@@ -28,7 +28,7 @@ await copyFile(path.join(from, '9101_harem-summon.json'), path.join(sceneDir, '9
 await mkdir(path.join(dmm, 'portrait'), { recursive: true })
 await writeFile(path.join(dmm, 'portrait', '(愛及屋烏)エレシュキガル.png'), 'png')
 
-const out = await generateTags({ item: { itemId: 'k', title: 'k', config: { game: { id: 'kamihime' } }, source: { path: media }, adapters: ['tyrano-ks'] }, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
+const out = await generateTags({ item: { itemId: 'k', title: 'k', config: { game: { id: 'kamihime' } }, source: { path: media }, adapters: ['tyrano-ks'] }, script: { id: 'gal-layout', version: '2.33.0', options: {} } })
 const raw = out.itemPatch?.gal?.config || out.itemPatch?.config
 check('gal-layout：resourceRoots 两个都写（game/dmm/assets、game/dmm/portrait）', J(raw.resourceRoots) === J(['game/dmm/assets', 'game/dmm/portrait']), J(raw.resourceRoots))
 const config = normalizeGalConfig(raw)

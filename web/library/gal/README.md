@@ -1024,7 +1024,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 推断成分：引擎里预乘标志位后续在哪些地方被用到，没有逐处追完；「还原成直通就对」是根据加载器标志 + 腮红帧的像素数据（rgb ≈ 粉色 × alpha）得出的。
 - 行为：hybrid 按需取出和 files 展开的字节一致；`CONTAINER_FORMAT_VERSION = 5`，旧缓存会自动重建。
 
-## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.32.0）
+## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.33.0）
 
 - **依据**：公开资料，没有逆向 exe——`morkt/GARbro` 的 `ArcFormats/Ethornell`（BURIKO ARC20、DSC FORMAT 1.00、CompressedBG、BW）和 `Cytlan/openbgi` 的 `docs/scenario.md`（`BurikoCompiledScriptVer1.00` 的容器和 token 机）。样本：三个游戏（トリプルペアリング / FD / 両腕が折れたので…）的 `Archive/data0*.arc`。
 - **目录**：`<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，规则里跳过）, sysgrp.arc, Archive/data0*.arc}`。`data01xxx` = DSC 压缩的剧本、`data02xxx` = CompressedBG 图、`data03xxx~04xxx` = BW（Ogg）声音；条目名没有扩展名，**按内容认**（`containers.format: 'buriko'`）。
@@ -1047,7 +1047,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
 - **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
 
-## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.32.0）
+## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.33.0）
 
 - **依据**：自己在采集的真实游戏上核对（g13《妹(姉)は兄(弟)の性癖を歪ませたい！》，`yugamase.pfs` + `yugamase.pfs.000`，83 个剧本）。没有逆向 exe。
 - **pf8 档案**（`web/library/gal/pf8.mjs`）：头 `pf8` + u32 索引大小 + u32 条目数；索引块 = 文件 [7, 7 + 索引大小)；条目 = u32 名字长 + 名字（utf-8，`\` 分隔）+ u32 0 + u32 偏移 + u32 大小；加密 = 条目内容逐字节 XOR `key[i % 20]`，`key = SHA1(索引块)`。两个档案（23747 + 623 条）的索引解析后偏移 / 大小都落在文件内，脚本解密后是可读文本。
@@ -1062,7 +1062,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - 只支持 `pf8`（`pf6` 等老版本魔数不对，gal-layout 不认领）。新导入时 `scriptCount` 是 0（展开在第一次浏览才做），浏览过一次再「刷新 json」才有数。
 - **自测**：`node scripts/dev/gal-artemis-selftest.mjs`（合成数据，`make-artemis-fixture.mjs` 的 `buildPf8` / `astOf`）。
 
-## 自有 arc（eomaia 引擎，`arcfam::scre`，gal-layout 2.32.0）
+## 自有 arc（eomaia 引擎，`arcfam::scre`，gal-layout 2.33.0）
 
 - **依据**：自己在采集的真实游戏上核对（g06《あざとカワイイ綾瀬ちゃん！》、g10《ギャル×オタ》的 `script.arc` 是明文 SCRE；g11《シルキーズプラス fuyukuru》的 `script.arc` 条目表同格式但内容压缩）。没有逆向 exe。
 - **档案**（`web/library/gal/arcfam.mjs`）：`u32 LE 头大小` + 条目表（`u8 名字长 + 名字 + u32 BE 大小 + u32 BE 原大小 + u32 BE 偏移`，偏移从文件头起）+ 数据；17 个真实档案（含 12852 条的 voice.arc）的条目表长度和头里的大小逐字节吻合。**名字混淆：`c' = toupper(c) − 名字长度 + 下标`**（不是每个游戏一个 K；用 `startup.script`、`adv_kohai01.script`、`kirara####.ogg` 核对，g11 的 `00.BIN` 也对）；名字大小写丢失（只剩大写，资源按名字找时忽略大小写）。大小 ≠ 原大小 = 压缩（g11 的 script / data，算法没识别）：跳过并记进展开结果的 `unsupported`。
@@ -1087,10 +1087,17 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - 每个家族只一项（不再一个游戏一项）：刷新后把 JSON 里的 `config.game.id`（`<家族>::<自己起的名>`）和 `title`、路径改成自己的。
 - 浏览器自测 `fe-gal-selftest.mjs` 里加了这些预设的检查。
 
+### exe 图标当封面（`coverExe`）
+
+- 游戏没有别的封面（布局规则 / 探测函数都没找到）时，gal-layout 在**游戏根目录**里选一个 exe，把封面写成 `exe:<相对媒体目录的 exe 路径>`；服务端取封面时才从 exe 的资源里提取最大的图标（`web/library/gal/pe-icon.mjs`：读 PE 的 `RT_GROUP_ICON` / `RT_ICON`，PNG 图标原样、老的 BMP（DIB）图标转成 PNG；只读头和 `.rsrc` 节），缓存在 `<DATA_DIR>/cache/gal-exe-icons/`，不写进媒体目录。
+- 真实核对：トリプルペアリング / あざとカワイイ綾瀬ちゃん！ / ギャル×オタ / 妹(姉)は兄(弟)の 的 exe 都取出 256×256 的角色头像图标（BMP 图标只用合成的 PE 测过，没有真实样本）。
+- `config.coverExe = { enabled: true, include: [], exclude: [...] }`：`include` 白名单、`exclude` 黑名单都是匹配 **exe 文件名**的正则（不分大小写，≤ 20 条、每条 ≤ 100 字符）；白名单空 = 不限；通过白名单、不在黑名单的里面取**文件最大的**。默认黑名单：`^unin`、`uninst`、`^setup`、`^install`、`^autorun`、`crash`、`redist`、`dxsetup`、`^config`、`launcher`。`enabled: false` = 不用。改完点「刷新 json」重新挑。
+- 局限：图标最大 256px，卡片上放大会有点糊；exe 里没有图标 / 不是 PE → 封面 404（卡片没图，不报错）；只看根目录，不进子目录。
+
 ### 「特殊场景」汇总到首页（BGI / Artemis / 自有 arc）
 
 - `config.views[].dirs` 现在支持通配：`'*'` = `parent` 下的所有子目录（真实目录），`'**'` = 所有层的子目录（最多 300 个）；以前只能写具体目录名（最多 10 个）。`parent` 写根（`''` / `'.'`）+ `dirs: ['*']` = 首页一个虚拟目录，把每个 arc 目录里名字匹配 `match` 的脚本都收进来（脚本卡片带来源目录当角标）。AdvHD 仍是每个 arc 目录下各一个（`parent: '*'`，没改）。
-- 新家族默认规则（`LAYOUTS.*.config.views`，gal-layout 2.32.0）：
+- 新家族默认规则（`LAYOUTS.*.config.views`，gal-layout 2.33.0）：
   - **BGI**：`match: (_|\d)h\d*$`（g02 / g03 / g07 核对：`nasuka_01_h`、`nasuka_05h`、`eimi_03_h1`、`211_movea01_01_h01` 共 74 个）
   - **Artemis**：`match: \dh$`（`02_共通_01h`、`04_kae_11h` 共 19 个 / 83 个剧本）
   - **自有 arc**：`match: (_H\d+$)|(\dH_)`（g09 的 `ADV_KOHAI_H01`、g14 的 `TX_1_2H_N`；名字是大写的）

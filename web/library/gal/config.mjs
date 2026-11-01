@@ -18,6 +18,7 @@ export const DEFAULT_THUMB_FRAME = Object.freeze({ percent: 0.5, seconds: 0, max
 // 骨骼 / 立绘场景的「渲染缩略图」（浏览器在列表页离屏渲染，传回服务器缓存）：enabled / 缩略图宽（高按 16:9）/ 最多扫多少步找第一个有骨骼的画面 / 同时渲染几张
 export const DEFAULT_THUMB_RENDER = Object.freeze({ enabled: true, width: 640, scanSteps: 150, concurrency: 1, seek: 0.5, film: true, filmFrame: 0.5, filmMax: 4, inner: false, innerMax: 4, innerRenders: 3 })
 // 封面 / 卡片缩略图的超长图裁剪（image-thumb.mjs）：高 / 宽 > tallRatio 的图（整本说明书拼成一张的 Manual.jpg 之类）不让卡片居中裁到中段，改取最上面「宽 × top」高的一段
+export const DEFAULT_COVER_EXE_EXCLUDE = Object.freeze(['^unin', 'uninst', '^setup', '^install', '^autorun', 'crash', 'redist', 'dxsetup', '^config', 'launcher'])
 export const DEFAULT_COVER_CROP = Object.freeze({ enabled: true, tallRatio: 1.6, top: 0.6 })
 export const COVER_CROP_LIMITS = Object.freeze({ tallRatio: [1, 20], top: [0.2, 2] })
 export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95], filmFrame: [0, 0.99], filmMax: [1, 12], innerMax: [1, 12], innerRenders: [1, 6] })
@@ -145,6 +146,7 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
 // dirs = 把这些目录里认得出的脚本收进来；expand = 每个匹配的目录生成一个子节点（用 as 指的节点当模板）。有它的话首页和所有列表都由它给，
   // 目录对不上 / 没匹配到 / 有文件没人认的地方，列表页的「渲染诊断」里都会报。null = 不用节点图（走适配器 catalog 或真实目录）
   nodes: null,
+  coverExe: { enabled: true, include: [], exclude: [...DEFAULT_COVER_EXE_EXCLUDE] },   // 没有别的封面时，用游戏目录里 exe 的图标当封面：include（白名单，空 = 不限）/ exclude（黑名单）是匹配 exe 文件名的正则（不分大小写），默认把卸载 / 安装 / 配置之类排除
   cover: '',          // 封面：相对资源根的路径；~/ 开头 = 相对媒体目录（只给封面用）
   // 允许忽略的未渲染指令（正则字符串列表，不分大小写）：播放器里「N 条指令暂未渲染」的统计会跳过匹配的指令。
   // 匹配对象是指令名（如 spriteatlas）和「指令名,参数1,参数2…」（如 anm,foo,bar），任一匹配就算「我允许了」
@@ -858,8 +860,25 @@ export function normalizeGalConfigWithWarnings(raw) {
     }
   }
 
+  const coverExe = { enabled: true, include: [], exclude: [...DEFAULT_COVER_EXE_EXCLUDE] }
+  if (v.coverExe !== undefined && !isPlainObject(v.coverExe)) warn('coverExe', '不是对象，用默认值', v.coverExe)
+  if (isPlainObject(v.coverExe)) {
+    for (const key of Object.keys(v.coverExe)) if (!['enabled', 'include', 'exclude'].includes(key)) warn('coverExe', `不认识的字段 ${key}，已丢掉`, key)
+    if (v.coverExe.enabled !== undefined) { if (typeof v.coverExe.enabled === 'boolean') coverExe.enabled = v.coverExe.enabled; else warn('coverExe.enabled', '只能是 true / false，用默认值', v.coverExe.enabled) }
+    for (const key of ['include', 'exclude']) {
+      if (v.coverExe[key] === undefined) continue
+      if (!Array.isArray(v.coverExe[key])) { warn(`coverExe.${key}`, '不是数组，用默认值', v.coverExe[key]); continue }
+      const list = []
+      for (const source of v.coverExe[key].slice(0, 20)) {
+        if (typeof source !== 'string' || !source || source.length > 100) { warn(`coverExe.${key}`, '正则要是 1~100 个字符的字符串，已丢掉这一条', source); continue }
+        try { new RegExp(source) } catch { warn(`coverExe.${key}`, '不是合法正则，已丢掉这一条', source); continue }
+        list.push(source)
+      }
+      coverExe[key] = list
+    }
+  }
   const cover = text(v.cover, 400)
-  const coverRel = cover.startsWith('~/') ? safeRelPath(cover.slice(2)) : safeRelPath(cover)
+  const coverRel = cover.startsWith('exe:') ? (/\.exe$/i.test(cover) ? safeRelPath(cover.slice(4)) : null) : cover.startsWith('~/') ? safeRelPath(cover.slice(2)) : safeRelPath(cover)
   if (cover && coverRel === null) warn('cover', '不是安全的相对路径，已丢掉', cover)
   const script = isPlainObject(v.script)
     ? { id: text(v.script.id, 60), version: text(v.script.version, 40), ranAt: text(v.script.ranAt, 40) }
@@ -903,6 +922,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     thumbFrame,
     thumbRender,
     coverCrop,
+    coverExe,
     groups: v.groups === undefined ? [] : groups,
     scriptIndex: v.scriptIndex === undefined ? [] : scriptIndex,
     game,

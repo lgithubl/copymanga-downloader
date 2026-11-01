@@ -16,6 +16,7 @@ import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
 import { createArcResCache } from '../gal/arc-res-cache.mjs'
+import { extractExeIcon } from '../gal/pe-icon.mjs'
 import { ensureContainers, virtualEntry, virtualHas } from '../gal/containers.mjs'
 import { IMAGE_THUMB_EXT, bucketOf, createImageThumbCache } from '../gal/image-thumb.mjs'
 import { resolveOnDisk } from '../gal/resolve.mjs'
@@ -294,11 +295,30 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     return { ok: true }
   }
 
+  // 封面 = exe:<相对媒体目录的 exe 路径>：从 exe 的资源里取最大的图标（PNG），缓存在 <DATA_DIR>/cache/gal-exe-icons/<sha1(路径 / 大小 / 修改时间)>.png；取不出来 / 不是 exe → 404
+  async function exeIconFile(item, coverPath) {
+    const rel = String(coverPath).slice(4)
+    if (!/\.exe$/i.test(rel)) throw Object.assign(new Error('不是 exe'), { statusCode: 404 })
+    const exe = await resolveOnDisk({ work: workDirOf(item), rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: true })
+    if (!exe) throw Object.assign(new Error('exe 不存在'), { statusCode: 404 })
+    const info = await stat(exe)
+    const key = createHash('sha1').update(JSON.stringify([exe, info.size, Math.round(info.mtimeMs), 'v1'])).digest('hex')
+    const file = path.join(dataDir, 'cache', 'gal-exe-icons', `${key}.png`)
+    if (await stat(file).then((st) => st.size > 0, () => false)) return file
+    const png = await extractExeIcon(exe)
+    if (!png) throw Object.assign(new Error('exe 里没有可用的图标'), { statusCode: 404 })
+    await mkdir(path.dirname(file), { recursive: true })
+    const tmp = `${file}.${process.pid}-${Date.now()}.tmp`
+    try { await writeFile(tmp, png); await rename(tmp, file) } finally { await rm(tmp, { force: true }).catch(() => {}) }
+    return file
+  }
+  const coverFileOf = (item) => (String(item.coverPath).startsWith('exe:') ? exeIconFile(item, item.coverPath) : resolveAsset(item, item.coverPath, { allowMedia: true }))
+
   async function getThumbnail(itemId) {
     const item = await readItem(itemId)
     if (!item.coverPath) throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
     try {
-      const file = await resolveAsset(item, item.coverPath, { allowMedia: true })
+      const file = await coverFileOf(item)
       return { body: await readFile(file), contentType: contentTypeOf(file) }
     } catch {
       throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
@@ -309,7 +329,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const item = await readItem(itemId)
     if (!item.coverPath) throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
     try {
-      const file = await resolveAsset(item, item.coverPath, { allowMedia: true })
+      const file = await coverFileOf(item)
       // 超长图（整本说明书拼成一张的 Manual.jpg 之类）：卡片居中裁会裁到正文里，取顶部一段缩小当封面；普通图原样
       const top = IMAGE_THUMB_EXT.test(file) ? await imageThumbs.tallTopOf(file, 960, normalizeGalConfig(item.config).coverCrop) : null
       if (top) return { file: top, contentType: 'image/webp' }

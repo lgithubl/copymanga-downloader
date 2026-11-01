@@ -2127,6 +2127,34 @@ async function coverFromRules(media, entry, base) {
   return ''
 }
 
+// ---- exe 图标封面：config.coverExe = { enabled, include, exclude }（正则，匹配 exe 文件名，不分大小写）；在游戏根目录里选：通过白名单（空 = 不限）、不在黑名单的 exe 里取最大的
+const DEFAULT_COVER_EXE_EXCLUDE = ['^unin', 'uninst', '^setup', '^install', '^autorun', 'crash', 'redist', 'dxsetup', '^config', 'launcher']   // 和 web/library/gal/config.mjs 的 DEFAULT_COVER_EXE_EXCLUDE 一致
+function coverExeRules(raw) {
+  const rules = { enabled: true, include: [], exclude: [...DEFAULT_COVER_EXE_EXCLUDE] }
+  if (isPlain(raw)) {
+    if (typeof raw.enabled === 'boolean') rules.enabled = raw.enabled
+    for (const key of ['include', 'exclude']) if (Array.isArray(raw[key])) rules[key] = raw[key].filter((x) => typeof x === 'string' && x && x.length <= 100).slice(0, 20)
+  }
+  return rules
+}
+async function pickExeCover(media, base, rules, logs) {
+  const compile = (list) => list.map((source) => { try { return new RegExp(source, 'i') } catch { return null } }).filter(Boolean)
+  const include = compile(rules.include)
+  const exclude = compile(rules.exclude)
+  const dir = path.join(media, ...splitRel(base))
+  const found = []
+  for (const name of await listNames(dir)) {
+    if (!/\.exe$/i.test(name)) continue
+    if (include.length && !include.some((re) => re.test(name))) continue
+    if (exclude.some((re) => re.test(name))) continue
+    try { const info = await stat(path.join(dir, name)); if (info.isFile()) found.push({ name, size: info.size }) } catch { /* 读不了就算没有 */ }
+  }
+  found.sort((a, b) => b.size - a.size || a.name.localeCompare(b.name))
+  if (!found.length) return ''
+  logs.push(`exe 封面候选：${found.slice(0, 5).map((f) => f.name).join(' / ')}${found.length > 5 ? ' …' : ''}（取最大的）`)
+  return `exe:${join(base, found[0].name)}`
+}
+
 // 头像：递归找第一张匹配的图；返回 { cover, dirThumb }
 async function scanAvatars(media, entry, base) {
   for (const avatar of entry.avatars) {
@@ -2307,8 +2335,16 @@ export async function generateTags(ctx) {
   config.scriptCount = result.count
   // 布局表里写了 cover 规则的，不管探测函数有没有自己找封面，规则命中就用规则的（第一个有结果的）；没写 / 没命中才用探测函数找到的
   const ruled = found.entry?.cover?.length ? await coverFromRules(media, found.entry, found.base ?? '') : ''
-  const cover = coverOverride || ruled || result.cover
+  let cover = coverOverride || ruled || result.cover
+  // 都没有封面：用游戏根目录里 exe 的图标（config.coverExe 的 include 白名单 / exclude 黑名单匹配 exe 文件名；没写就用默认黑名单：卸载 / 安装 / 配置 / 崩溃上报之类）。服务端取封面时才从 exe 里提取图标（exe:<路径>）
+  let exeRules = null
+  if (!cover) {
+    exeRules = coverExeRules(ctx.item?.config?.coverExe)
+    const exe = exeRules.enabled ? await pickExeCover(media, found.base ?? '', exeRules, logs) : ''
+    if (exe) cover = exe; else exeRules = null
+  }
   if (cover) config.cover = cover
+  if (exeRules) config.coverExe = exeRules
   logs.push(cover ? `封面：${cover}` : '没找到合适的封面')
 
   // 3.5) 默认节点图：没有手写的 nodes 才生成（手写的 = home 不带 auto）；replace 整体替换时手写的 nodes 也带上，不丢
