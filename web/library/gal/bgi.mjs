@@ -335,6 +335,23 @@ function reverseTop(stack, n) {
 const VAR_TOKENS = ['set_lwork', 'lwork', 'set_gwork', 'gwork', 'set_lflag', 'lflag', 'set_gflag', 'gflag', 'lstr', 'set_gflag2', 'gflag2']
 const SYS_TOKENS = { 0xec: 'regstr', 0xf0: 'call_scenario', 0xf1: 'jump_alias', 0xf3: 'jump_scenario', 0xf4: 'quit', 0xf5: 'quit_if_idle', 0xf6: 'set_label', 0xf7: 'test_label', 0xf8: 'msgbox_num', 0xf9: 'msgbox', 0xfa: 'debug_dump', 0xfc: 'file_dialog', 0xff: 'debug_pc' }
 
+// 表情编号表（data060xx.arc 里的 animationset***，DSC 解开后魔数 BurikoAnimationDefinitionSet）：编号（NO01_N007）→ 这个表情默认的部件（红晕 R / 嘴 O / 眼 E / 眉 Y / 其它 X）。
+// 记录 = 编号字符串后面跟若干个部件名（长度前缀的字符串），下一个编号出现就换下一条；脚本里 _DrawBS 的 args[24] 就是这个编号，后面 args[26..37] 里显式给的部件覆盖同类部件。
+// g02 的 4 个 animationset（000 / 010 / 020 / 040）合起来 1732 条，把 g02 全部剧本里 8228 次 _DrawBS 的编号全覆盖了（8228 / 8228）
+const FACE_SET_MAGIC = 'BurikoAnimationDefinitionSet'
+const FACE_CODE = /^[A-Z]{2}\d\d_[A-Z]\d{3}$/
+export const isBgiFaceSet = (buf) => buf.length > 0x40 && buf.subarray(0, FACE_SET_MAGIC.length).toString('latin1') === FACE_SET_MAGIC
+export function parseBgiFaceSet(buf) {
+  if (!isBgiFaceSet(buf)) throw new Error('不是 BurikoAnimationDefinitionSet')
+  const faces = {}
+  let cur = null
+  for (const m of buf.subarray(FACE_SET_MAGIC.length).toString('latin1').matchAll(/[A-Za-z][A-Za-z0-9_]{5,}/g)) {
+    const token = m[0]
+    if (FACE_CODE.test(token)) { cur = []; faces[token] = cur } else if (cur) cur.push(token)
+  }
+  return { format: 'bgi-faceset/1', faces }
+}
+
 export function isBurikoScript(buf) { return buf.length > 0x30 && buf.subarray(0, SCRIPT_MAGIC.length).toString('latin1') === SCRIPT_MAGIC }
 
 // 解开容器：{ imports, exports: [{ name, offset }], base（token 流起点，文件偏移）, tokenEnd（token 流的结束 = 最小的字符串偏移）, string(off) }

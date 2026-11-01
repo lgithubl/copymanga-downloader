@@ -205,7 +205,7 @@ await mkdir(path.join(media, 'Archive'), { recursive: true })
   const scene1 = new BgiScript()
   scene1.call('_PlayBGM', 0, 'bgm01', 0, 1, 100, 0)
     .call('_DrawScene', 'bg01', 0, 2, 0, 32767, 32767, 100, 0, 32767, 32767, 100, 1, 0, 700, 0)
-    .call('_DrawBS', 4, 'ST01', 0, 0, 0, 0, 2, -150, 40, 80, 0, 0, 0, 100, -1, -1, 0, 0, 0, 0, -1, 200, 1, -256, 'ST01_F')
+    .call('_DrawBS', 4, 'ST01', 0, 0, 0, 0, 2, -150, 40, 80, 0, 0, 0, 100, -1, -1, 0, 0, 0, 0, -1, 200, 1, -256, 'ST01_N001', 0, 0, 0, 'ST01_N_O_B02')
     .call('_PlayVoice', 0, 'v001', 100, 64, 1, 0, 1, 0)
     .msg('Hello <Rruby>kanji</R> world', 'Alice')
     .call('_Wait', 1500, 1)
@@ -225,9 +225,16 @@ await mkdir(path.join(media, 'Archive'), { recursive: true })
   await writeFile(path.join(media, 'Archive', 'data02000.arc'), buildArc20([
     { name: 'bg01', data: cbgEncode(px(3, 24)) },
     { name: 'ST01', data: cbgEncode(px(5, 32)) },
-    { name: 'ST01_F', data: cbgEncode(px(7, 32)) },
+    { name: 'ST01_N_E_A01', data: cbgEncode(px(7, 32)) },
+    { name: 'ST01_N_O_A01', data: cbgEncode(px(9, 32)) },
+    { name: 'ST01_N_O_B02', data: cbgEncode(px(13, 32)) },
     { name: 'weird', data: Buffer.from('not an image or sound at all, no magic') },
   ]))
+  // 表情编号表（animationset***）：魔数 + 若干条「编号 + 部件名」（长度前缀字符串）；ST01_N001 → 嘴 A01 / 眼 A01 / 眉 01（眉的图没有，用来验证缺部件不报错）
+  const pstr = (t) => Buffer.concat([Buffer.from([t.length, 0]), Buffer.from(t, 'latin1'), Buffer.alloc(2)])
+  const faceSet = Buffer.concat([Buffer.from('BurikoAnimationDefinitionSet\0'), Buffer.alloc(40), ...['ST01_N001', 'ST01_N_O_A01', 'ST01_N_E_A01', 'ST01_N_Y_01', 'ST01_N002', 'ST01_N_O_A01', 'ST01_N_E_A01', 'ST01_N_Y_02'].map(pstr)])
+  await mkdir(path.join(media, 'Archive'), { recursive: true })
+  await writeFile(path.join(media, 'Archive', 'data06000.arc'), buildArc20([{ name: 'animationset000', data: dscEncode(faceSet) }]))
   await writeFile(path.join(media, 'Archive', 'data03000.arc'), buildArc20([{ name: 'bgm01', data: bwWrap(Buffer.concat([Buffer.from('OggS'), Buffer.alloc(20, 9)])) }, { name: 'v001', data: bwWrap(Buffer.concat([Buffer.from('OggS'), Buffer.alloc(20, 8)])) }, { name: 'se01', data: bwWrap(Buffer.concat([Buffer.from('OggS'), Buffer.alloc(20, 6)])) }]))
   await writeFile(path.join(media, 'sysprg.arc'), buildArc20([{ name: 'sys._bp', data: Buffer.from('program bytes') }]))
   await writeFile(path.join(media, 'sysgrp.arc'), buildArc20([{ name: 'sysimg', data: cbgEncode(px(11, 32)) }]))
@@ -247,7 +254,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const rep = report.arcs
   check('展开：剧本（DSC → 事件流 JSON）展开到 arc/script/<容器>/<名>.bgi；不是剧本的 DSC（动画表）和不认识的条目跳过；sysprg / system 按规则不展开；图 / 声音一个都没落盘', (await exists(path.join(media, 'arc/script/data01500/scene1.bgi'))) && (await exists(path.join(media, 'arc/script/data01500/scene2.bgi'))) && !(await exists(path.join(media, 'arc/script/data01500/animation000.bgi'))) && !(await exists(path.join(media, 'arc/res/bg01.png'))) && rep['Archive/data01500.arc'].scripts === 2 && rep['Archive/data01500.arc'].notScript === 1 && rep['./sysprg.arc']?.skipped === 'rule', J(rep))
   const vf = await virtualFiles({ mediaDir: media, config: cfg })
-  check('虚拟索引（flat，不带容器名）：图 = arc/res/<名>.png、声音 = arc/res/<名>.ogg；不认识的条目没有；sysgrp 的图也在', J([...vf.files].sort()) === J(['arc/res/ST01.png', 'arc/res/ST01_F.png', 'arc/res/bg01.png', 'arc/res/bgm01.ogg', 'arc/res/se01.ogg', 'arc/res/sysimg.png', 'arc/res/v001.ogg']), J(vf.files))
+  check('虚拟索引（flat，不带容器名）：图 = arc/res/<名>.png、声音 = arc/res/<名>.ogg；不认识的条目没有；sysgrp 的图也在', J([...vf.files].sort()) === J(['arc/res/ST01.png', 'arc/res/ST01_N_E_A01.png', 'arc/res/ST01_N_O_A01.png', 'arc/res/ST01_N_O_B02.png', 'arc/res/animationset000.json', 'arc/res/bg01.png', 'arc/res/bgm01.ogg', 'arc/res/se01.ogg', 'arc/res/sysimg.png', 'arc/res/v001.ogg']), J(vf.files))
   const n1 = await materialize({ mediaDir: media, config: cfg, rels: ['arc/res/bg01.png', 'arc/res/BGM01.ogg'] })
   const png = decodePng(await readFile(path.join(media, 'arc/res/bg01.png')))
   const src = px(3, 24)
@@ -258,15 +265,18 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   check('缩略图用的 virtualEntry.read()：不落盘也给出转好的 PNG（RGBA 4×4）', decodePng(read).channels === 4 && !(await exists(path.join(media, 'arc/res/ST01.png'))))
 }
 {
-  const files = ['arc/res/ST01.png', 'arc/res/ST01_F.png', 'arc/res/bg01.png', 'arc/res/bgm01.ogg', 'arc/res/se01.ogg', 'arc/res/v001.ogg']
+  const files = ['arc/res/ST01.png', 'arc/res/ST01_N_E_A01.png', 'arc/res/ST01_N_O_A01.png', 'arc/res/ST01_N_O_B02.png', 'arc/res/animationset000.json', 'arc/res/bg01.png', 'arc/res/bgm01.ogg', 'arc/res/se01.ogg', 'arc/res/v001.ogg']
   const adapter = (await import('../../web/library/gal/adapters/bgi-bs.mjs'))
-  const ctx = adapter.prepare({ options: {}, files, texts: {}, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
+  const faceEntry = await virtualEntry({ mediaDir: media, config: cfg, rels: ['arc/res/animationset000.json'] })
+  const faceJson = (await faceEntry.read()).toString('utf8')
+  const ctx = adapter.prepare({ options: {}, files, texts: { 'arc/res/animationset000.json': faceJson }, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
   const text = await readFile(path.join(media, 'arc/script/data01500/scene1.bgi'), 'utf8')
   check('适配器认领：sniff 认 {"format":"bgi-bs/1"…}；已注册；别的格式不认', adapter.sniff(text) && galAdapterIds().includes('bgi::bs') && sniffGalAdapter(text) === 'bgi::bs' && !adapter.sniff('{"format":"advhd-ws2/1"}'))
   const scene = adapter.parse(text, ctx)
   const st = scene.steps
   const cmdsOf = (i) => st[i].commands.map((c) => c.op)
-  check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center', vcenter: true, shiftX: -150, shiftY: 40, zoom: 0.8 }, { src: 'ST01_F.png', attach: true, zoom: 0.8 }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
+  check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center', vcenter: true, shiftX: -150, shiftY: 40, zoom: 0.8 }, { src: 'ST01_N_O_B02.png', attach: true, zoom: 0.8 }, { src: 'ST01_N_E_A01.png', attach: true, zoom: 0.8 }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
+  check('表情编号表：args[24] 的编号查 animationset 得到默认部件（嘴 / 眼 / 眉），args[28] 显式给的嘴覆盖默认的嘴；表里有但图不存在的眉记 bs:part-not-file，不报错', scene.stats.ignored['bs:part-not-file'] === 1 && !scene.stats.ignored['bs:face-code-unknown'] && JSON.parse(faceJson).faces.ST01_N002.length === 3, J(scene.stats.ignored))
   check('场景：_Wait = wait（秒）；旁白（说话人空）= speaker 清空；选项挂在问题那句台词的步里', st[1].commands.some((c) => c.op === 'wait' && c.seconds === 1.5) && J(st[1].commands.find((c) => c.op === 'speaker').segments) === J([]) && st[1].commands.some((c) => c.op === 'choice' && c.options.length === 2 && c.options[1].segments[0].text === 'Right'), J(st[1]))
   const choice = st[1].commands.find((c) => c.op === 'choice')
   const g = (n) => J([{ var: choice.var, op: '==', value: n }])
@@ -299,7 +309,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   check('目录：两个脚本（scene1 / scene2），脚本卡片有台词摘要', dir.items.map((i) => i.title).join() === 'scene1,scene2' && /Hello|kanji/.test(dir.items[0].subtitle || ''), J(dir.items.map((i) => [i.title, i.subtitle])))
   const play = await handler.getReaderContent(id, 'main', { sectionId: dir.items[0].node || dir.items[0].id })
   check('播放：scene 来自适配器 bgi::bs；脚本末尾 jump_scenario → scene.next.node = scene2 的节点（服务端按名字补）', play.node.kind === 'player' && play.scene.adapter === 'bgi::bs' && play.scene.next?.node === (dir.items[1].node || dir.items[1].id), J([play.scene.adapter, play.scene.next]))
-  // 预热：取场景时后台把场景里的图解码进缓存目录（不等它）：bg01 / ST01 / ST01_F 都在缓存里
+  // 预热：取场景时后台把场景里的图解码进缓存目录（不等它）：bg01 / ST01 / 表情部件 都在缓存里
   let warmed = []
   for (let i = 0; i < 40 && warmed.length < 2; i++) { warmed = (await readdir(path.join(dataDir, 'cache', 'gal-arc-res'), { recursive: true }).catch(() => [])).filter((f) => /\.png$/i.test(f)); if (warmed.length < 2) await new Promise((r) => setTimeout(r, 100)) }
   check('场景预热：取场景后，场景里的图（立绘 + 表情；背景 bg01 前面的测试已经取到媒体目录里了，不再进缓存）后台解码进缓存目录 gal-arc-res', warmed.length >= 2, J(warmed))

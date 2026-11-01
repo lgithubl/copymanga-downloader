@@ -54,17 +54,24 @@ export const explainSniff = () => '开头不是 {"format":"bgi-bs/1"…（这个
 
 export const contextFiles = () => []
 export const contextDirs = (options) => { const opt = readOptions(options); return [opt.resDir, ...opt.extraDirs].map((dir) => String(dir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter(Boolean) }
-export const contextTextFilter = () => () => false
+export const contextTextFilter = () => (rel) => /(^|\/)animationset\w*\.json$/i.test(rel)   // 表情编号表（containers 把 animationset*** 展开成虚拟的 .json）
 export const contextWalkLimit = 800000
-export const contextSampleLimit = 20000
+export const contextSampleLimit = 200
 
-export function prepare({ options, files, toResourcePath, resourceResolve, truncated }) {
+export function prepare({ options, files, texts, toResourcePath, resourceResolve, truncated }) {
   const opt = readOptions(options)
   const toRes = toResourcePath || ((rel) => rel)
   const resources = new Set()
   for (const rel of files || []) resources.add(toRes(rel))
   const resolver = createIndexResolver({ index: resources, cfg: { ...(resourceResolve || {}), caseInsensitive: true } })
-  return { opts: opt, resources, resolver, hasIndex: Boolean(files?.length), truncated: Boolean(truncated) }
+  // 表情编号表：编号（大写）→ 部件名数组；几个 animationset 合起来
+  const faces = new Map()
+  for (const text of Object.values(texts || {})) {
+    let data = null
+    try { data = JSON.parse(text) } catch { /* 不是 JSON 就跳过 */ }
+    if (data?.format === 'bgi-faceset/1') for (const [code, parts] of Object.entries(data.faces || {})) if (Array.isArray(parts)) faces.set(code.toUpperCase(), parts)
+  }
+  return { opts: opt, resources, resolver, hasIndex: Boolean(files?.length), truncated: Boolean(truncated), faces }
 }
 
 const compiledCache = new WeakMap()
@@ -205,12 +212,26 @@ export function parse(text, ctx = null, meta = {}) {
       const parts = []
       const bodySrc = imageOf(body)?.src
       if (bodySrc) parts.push({ src: bodySrc, ...place })
-      // 本体后面的字符串参数 = 表情 / 嘴 / 眼等部件（比本体小、有的是几帧竖着拼的图，取资源时已经只留第一帧）：attach = 左上角对齐本体的左上角。
-      // 不是图的（NO01_M007 这样的「表情编号」，不是档案里的条目）不算缺资源，记进 stats.ignored
+      // 表情部件（比本体小、有的是几帧竖着拼的图，取资源时已经只留第一帧）：attach = 左上角对齐本体的左上角。
+      // args[24] = 表情编号（NO01_N007）：不是档案里的图，而是 animationset 表里的一条——给出这个表情默认的 红晕 R / 嘴 O / 眼 E / 眉 Y（/ 其它 X）部件；
+      // args[26..37] 里显式给的部件（NO01_N_O_B04 这样的名字）覆盖同类的默认部件。没找到表的编号（没采到 / 别的游戏）记进 stats.ignored
       if (bodySrc) {
+        const kindOf = (partName) => { const seg = String(partName).split('_'); return seg.length >= 4 ? `${seg[2]}${seg[2] === 'R' ? seg[3][0] : ''}`.toUpperCase() : '' }
+        const order = ['R', 'RR', 'RB', 'O', 'E', 'Y', 'T', 'X']
+        const slotOf = new Map()   // 类别 → 部件名；按 order 的顺序画
+        const code = str(a[24])
+        const preset = code && ctx?.faces?.get(code.toUpperCase())
+        if (preset) for (const p of preset) { const k = kindOf(p); if (k) slotOf.set(k, p) }
+        else if (code) count('ignored', 'bs:face-code-unknown')
+        const extra = []
         for (const [i, v] of a.entries()) {
-          if (i < 2 || typeof v !== 'string' || !v) continue
-          const src = find(v, opt.imageExts)
+          if (i < 25 || typeof v !== 'string' || !v) continue
+          const k = kindOf(v)
+          if (k) slotOf.set(k, v); else extra.push(v)
+        }
+        const names = [...order.filter((k) => slotOf.has(k)).map((k) => slotOf.get(k)), ...[...slotOf].filter(([k]) => !order.includes(k)).map(([, p]) => p), ...extra]
+        for (const part of names) {
+          const src = find(part, opt.imageExts)
           if (src) { stats.images.referenced += 1; stats.images.resolved += 1; parts.push({ src, attach: true, ...(zoom !== 1 ? { zoom } : {}) }) } else count('ignored', 'bs:part-not-file')
         }
       }

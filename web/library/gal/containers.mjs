@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
-import { bwToOgg, cbgToPng, dscDecode, isBurikoScript, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
+import { bwToOgg, cbgToPng, dscDecode, isBurikoScript, parseBgiFaceSet, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
 import { decodeScre } from './arcfam-decode.mjs'
 import { runCbg } from './decode-pool.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
@@ -20,7 +20,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 7
+export const CONTAINER_FORMAT_VERSION = 8
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -139,7 +139,7 @@ async function classifyBuriko(handle, entry) {
   if (entry.size < 8) return { kind: '' }
   const head = await readRange(handle, entry.offset, Math.min(0x18, entry.size))
   const sniff = sniffEntry(head)
-  if (sniff === 'dsc') return { kind: 'script', ext: '', transform: '' }
+  if (sniff === 'dsc') return /^animationset/i.test(entry.name || '') ? { kind: 'res', ext: 'json', transform: 'bgi-faceset' } : { kind: 'script', ext: '', transform: '' }   // 表情编号表（animationset***）当成资源：虚拟的 <名字>.json
   if (sniff === 'cbg') return { kind: 'res', ext: 'png', transform: 'cbg-png', ...(head.length >= 0x14 ? { w: head.readUInt16LE(0x10), h: head.readUInt16LE(0x12) } : {}) }
   if (sniff === 'bw') return { kind: 'res', ext: 'ogg', transform: 'bw-ogg' }
   return { kind: '' }
@@ -153,6 +153,7 @@ async function transformDataAsync(data, hit) {
 function transformData(data, hit) {
   if (hit.transform === 'cbg-png') return cbgToPng(data, hit.crop ? { cropHeight: hit.crop } : {})
   if (hit.transform === 'bw-ogg') return bwToOgg(data)
+  if (hit.transform === 'bgi-faceset') return Buffer.from(JSON.stringify(parseBgiFaceSet(dscDecode(data))))
   if (hit.transform === 'pf8') return pf8Decrypt(data, hit.key)
   return hit.unpremultiply ? unpremultiplyPng(data).buffer : data
 }
