@@ -217,7 +217,7 @@ await mkdir(path.join(media, 'Archive'), { recursive: true })
   const scene2 = new BgiScript()
   scene2.select('go', 'stay').dispatch(['G', 'S']).label('G').msg('going', 'A').jumpScenario('scene1').label('S').msg('staying', 'A')
   const anim = Buffer.concat([Buffer.from('BurikoAnimation1.00\0'), Buffer.alloc(40, 1)])
-  await writeFile(path.join(media, 'Archive', 'data01000.arc'), buildArc20([
+  await writeFile(path.join(media, 'Archive', 'data01500.arc'), buildArc20([
     { name: 'scene1', data: dscEncode(scene1.build()) },
     { name: 'scene2', data: dscEncode(scene2.build()) },
     { name: 'animation000', data: dscEncode(anim) },
@@ -234,18 +234,18 @@ await mkdir(path.join(media, 'Archive'), { recursive: true })
   await writeFile(path.join(media, 'BGI.gdb'), 'SDC FORMAT 1.00')
 }
 const layoutItem = { itemId: 'b', title: 'b', config: { game: { id: 'bgi::test' } }, source: { path: media }, adapters: ['bgi::bs'] }
-const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
+const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
 const cfgRaw = tagOut.itemPatch.gal.config
 const cfg = normalizeGalConfig(cfgRaw)
 check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat / hybrid / bgi-bs，扫 Archive 和根；系统程序（sysprg / system）规则里跳过；资源根 arc/res；适配器 bgi::bs；写出来的 config 引擎规整后零警告', cfg.game.id === 'bgi::test' && cfg.containers.format === 'buriko' && cfg.containers.flat === true && cfg.containers.mode === 'hybrid' && cfg.containers.scriptDecoder === 'bgi-bs' && J(cfg.containers.scan) === J(['Archive', '.']) && cfg.containers.rules[0].skip === true && J(cfg.resourceRoots) === J(['arc/res']) && J(tagOut.itemPatch.gal.adapters ?? layoutItem.adapters) !== '[]' && normalizeGalConfigWithWarnings(cfgRaw).warnings.length === 0, J([cfg.containers, normalizeGalConfigWithWarnings(cfgRaw).warnings]))
 {
-  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
+  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
   check('gal-layout：存进条目再跑一次 = 没有改动', /新增 0 项 \/ 修改 0 项 \/ 删除 0 项/.test(again.logs.join('\n')), again.logs.filter((l) => /本次改动/.test(l)).join(' | '))
 }
 {
   const report = await ensureContainers({ mediaDir: media, config: cfg })
   const rep = report.arcs
-  check('展开：剧本（DSC → 事件流 JSON）展开到 arc/script/<容器>/<名>.bgi；不是剧本的 DSC（动画表）和不认识的条目跳过；sysprg / system 按规则不展开；图 / 声音一个都没落盘', (await exists(path.join(media, 'arc/script/data01000/scene1.bgi'))) && (await exists(path.join(media, 'arc/script/data01000/scene2.bgi'))) && !(await exists(path.join(media, 'arc/script/data01000/animation000.bgi'))) && !(await exists(path.join(media, 'arc/res/bg01.png'))) && rep['Archive/data01000.arc'].scripts === 2 && rep['Archive/data01000.arc'].notScript === 1 && rep['./sysprg.arc']?.skipped === 'rule', J(rep))
+  check('展开：剧本（DSC → 事件流 JSON）展开到 arc/script/<容器>/<名>.bgi；不是剧本的 DSC（动画表）和不认识的条目跳过；sysprg / system 按规则不展开；图 / 声音一个都没落盘', (await exists(path.join(media, 'arc/script/data01500/scene1.bgi'))) && (await exists(path.join(media, 'arc/script/data01500/scene2.bgi'))) && !(await exists(path.join(media, 'arc/script/data01500/animation000.bgi'))) && !(await exists(path.join(media, 'arc/res/bg01.png'))) && rep['Archive/data01500.arc'].scripts === 2 && rep['Archive/data01500.arc'].notScript === 1 && rep['./sysprg.arc']?.skipped === 'rule', J(rep))
   const vf = await virtualFiles({ mediaDir: media, config: cfg })
   check('虚拟索引（flat，不带容器名）：图 = arc/res/<名>.png、声音 = arc/res/<名>.ogg；不认识的条目没有；sysgrp 的图也在', J([...vf.files].sort()) === J(['arc/res/ST01.png', 'arc/res/ST01_F.png', 'arc/res/bg01.png', 'arc/res/bgm01.ogg', 'arc/res/se01.ogg', 'arc/res/sysimg.png', 'arc/res/v001.ogg']), J(vf.files))
   const n1 = await materialize({ mediaDir: media, config: cfg, rels: ['arc/res/bg01.png', 'arc/res/BGM01.ogg'] })
@@ -261,7 +261,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const files = ['arc/res/ST01.png', 'arc/res/ST01_F.png', 'arc/res/bg01.png', 'arc/res/bgm01.ogg', 'arc/res/se01.ogg', 'arc/res/v001.ogg']
   const adapter = (await import('../../web/library/gal/adapters/bgi-bs.mjs'))
   const ctx = adapter.prepare({ options: {}, files, texts: {}, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
-  const text = await readFile(path.join(media, 'arc/script/data01000/scene1.bgi'), 'utf8')
+  const text = await readFile(path.join(media, 'arc/script/data01500/scene1.bgi'), 'utf8')
   check('适配器认领：sniff 认 {"format":"bgi-bs/1"…}；已注册；别的格式不认', adapter.sniff(text) && galAdapterIds().includes('bgi::bs') && sniffGalAdapter(text) === 'bgi::bs' && !adapter.sniff('{"format":"advhd-ws2/1"}'))
   const scene = adapter.parse(text, ctx)
   const st = scene.steps
@@ -280,7 +280,7 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const partial = adapter.prepare({ options: {}, files: ['arc/res/bg01.png'], toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
   const miss = adapter.parse(text, partial)
   check('缺资源：索引里没有的图 / 声音记进 stats.unresolved（不会让整个场景失败）', miss.stats.unresolved['image:ST01'] === 1 && miss.stats.unresolved['voice:v001'] === 1 && miss.stats.unresolved['bgm:bgm01'] === 1 && miss.steps.length === st.length, J(miss.stats.unresolved))
-  const s2 = adapter.parse(await readFile(path.join(media, 'arc/script/data01000/scene2.bgi'), 'utf8'), ctx)
+  const s2 = adapter.parse(await readFile(path.join(media, 'arc/script/data01500/scene2.bgi'), 'utf8'), ctx)
   const gotos = s2.steps.flatMap((s) => s.commands).filter((c) => c.op === 'goto')
   check('场景：分支里的 jump_scenario = 带 when 的 goto { script }（播放器直接接着播）；没有汇合点的分支各自带到结束', gotos.length === 1 && gotos[0].script === 'scene1' && Array.isArray(gotos[0].when) && s2.next === undefined, J(gotos))
 }
@@ -290,11 +290,11 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media, adapters: ['bgi::bs'] } } }) })
   const imported = await handler.importFromSource({ options: { adapters: ['bgi::bs'], config: { game: { id: 'bgi::test' } } } })
   const item = imported.items[0]
-  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
+  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
   await handler.internals.updateItem(item.itemId, (it) => ({ ...it, config: { ...it.config, ...out.itemPatch.gal.config } }))   // 绕过 patchItemMetadata（它会在后台预热展开）
   const id = item.itemId
   const home = (await handler.getReaderContent(id, 'main', { sectionId: '' })).node
-  check('列表：首页 = 容器目录卡片（data01000，里面 2 个脚本）；没有 problems', home.items.map((i) => i.title).join() === 'data01000' && !home.problems?.some((p) => p.level === 'error'), J(home))
+  check('列表：首页 = 容器目录卡片（data01500，里面 2 个脚本）；没有 problems', home.items.map((i) => i.title).join() === 'data01500' && !home.problems?.some((p) => p.level === 'error'), J(home))
   const dir = (await handler.getReaderContent(id, 'main', { sectionId: home.items[0].node || home.items[0].id })).node
   check('目录：两个脚本（scene1 / scene2），脚本卡片有台词摘要', dir.items.map((i) => i.title).join() === 'scene1,scene2' && /Hello|kanji/.test(dir.items[0].subtitle || ''), J(dir.items.map((i) => [i.title, i.subtitle])))
   const play = await handler.getReaderContent(id, 'main', { sectionId: dir.items[0].node || dir.items[0].id })
@@ -329,6 +329,28 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const whole = cbgToPng(cbgEncode(img(8, 6, 9)))
   const top = cbgToPng(cbgEncode(img(8, 6, 9)), { cropHeight: 2 })
   check('cbgToPng cropHeight：只留最上面几行（像素 = 原图前几行）', decodePng(top).height === 2 && decodePng(top).raw.equals(decodePng(whole).raw.subarray(0, 8 * 2 * 4)))
+}
+
+{
+  // 首页的「特殊场景」：parent = 根、dirs = ['*']：把每个 arc 目录里名字匹配 (_|\d)h\d*$ 的脚本收到首页一个虚拟目录里；系统 arc（data0100x~0149x）按规则整个跳过
+  const root = path.join(work, 'special'); await mkdir(path.join(root, 'Archive'), { recursive: true })
+  const one = (text) => dscEncode(new BgiScript().msg(text, 'A').build())
+  await writeFile(path.join(root, 'sysprg.arc'), buildArc20([{ name: 'sys._bp', data: Buffer.from('p') }]))
+  await writeFile(path.join(root, 'BGI.gdb'), 'x')
+  await writeFile(path.join(root, 'Archive', 'data01000.arc'), buildArc20([{ name: 'flow', data: one('system flow') }]))   // 系统脚本：不列出
+  await writeFile(path.join(root, 'Archive', 'data01500.arc'), buildArc20([{ name: 'nasuka_01', data: one('story one') }, { name: 'nasuka_01_h', data: one('h scene one') }, { name: 'nasuka_05h', data: one('h scene two') }]))
+  await writeFile(path.join(root, 'Archive', 'data01510.arc'), buildArc20([{ name: 'eimi_03', data: one('story two') }, { name: 'eimi_03_h2', data: one('h scene three') }, { name: 'chapter', data: one('not h') }]))
+  const dataDir = path.join(work, 'data-special')
+  const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: root, adapters: ['bgi::bs'] } } }) })
+  const imported = await handler.importFromSource({ options: { adapters: ['bgi::bs'], config: { game: { id: 'bgi::special' } } } })
+  const item = imported.items[0]
+  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
+  await handler.internals.updateItem(item.itemId, (it) => ({ ...it, config: { ...it.config, ...out.itemPatch.gal.config } }))
+  const home = (await handler.getReaderContent(item.itemId, 'main', { sectionId: '' })).node
+  check('首页：arc 目录卡片（系统 arc data01000 被跳过）+ 虚拟目录「特殊场景」', J(home.items.map((i) => i.title)) === J(['data01500', 'data01510', '特殊场景']) || J(home.items.map((i) => i.title).sort()) === J(['data01500', 'data01510', '特殊场景'].sort()), J(home.items.map((i) => i.title)))
+  const special = home.items.find((i) => i.title === '特殊场景')
+  const inside = (await handler.getReaderContent(item.itemId, 'main', { sectionId: special.node || special.id })).node
+  check('特殊场景：跨 arc 收进 3 个 H 场景（nasuka_01_h / nasuka_05h / eimi_03_h2），story / chapter 不收', J(inside.items.map((i) => i.title).sort()) === J(['eimi_03_h2', 'nasuka_01_h', 'nasuka_05h']), J(inside.items.map((i) => i.title)))
 }
 
 // ================= 真实样本（可选）=================

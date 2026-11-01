@@ -663,6 +663,27 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   }
 
 
+  // 视图的来源目录：dirs 里写的名字；'*' = parent 下的所有子目录（真实目录，不含虚拟的）——这样首页的「特殊场景」可以把每个 arc 目录里的都收进来；'**' = 所有层的子目录（最多 300 个）。没写 dirs = parent 自己
+  async function expandViewDirs(set, view) {
+    if (!view.dirs.length) return ['']
+    const out = []
+    const walk = async (rel, prefix, deep) => {
+      const got = await readEntries(set, rel).catch(() => null)
+      for (const sub of got?.dirs || []) {
+        if (out.length >= 300) return
+        const name = prefix ? `${prefix}/${sub.name}` : sub.name
+        out.push(name)
+        if (deep) await walk([view.parent, name].filter(Boolean).join('/'), name, true)
+      }
+    }
+    for (const name of view.dirs) {
+      if (name === '*') await walk(view.parent, '', false)
+      else if (name === '**') await walk(view.parent, '', true)
+      else if (!out.includes(name)) out.push(name)
+    }
+    return out
+  }
+
   // 预热：播放器一取场景就在后台按出现顺序把图（bg / over / 立绘 / 叠加层）过一遍资源接口（容器里的会解码进缓存目录），2 个并发、最多 80 张；视频 / 声音不管。
   // 同一份资源 5 分钟内不重复做（缓存本身也是单飞的）。warmAsset 没给 = 不预热
   const warmedAt = new Map()
@@ -710,7 +731,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const compiledOnly = []
     if (view) {
       own = { dirs: [], scripts: [] }
-      for (const sourceName of view.dirs.length ? view.dirs : ['']) {
+      for (const sourceName of await expandViewDirs(set, view)) {
         const sourceRel = [view.parent, sourceName].filter(Boolean).join('/')
         const got = await readEntries(set, sourceRel, view.dirs.length ? (view.badges[sourceName] || sourceName) : '')
         if (got) { own.scripts = own.scripts.concat(await filterViewScripts(set, view, got.scripts)); rejected.push(...got.rejected) }

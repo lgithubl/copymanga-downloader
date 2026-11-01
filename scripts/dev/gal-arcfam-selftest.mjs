@@ -88,24 +88,24 @@ const media = path.join(work, 'game')
 await mkdir(media, { recursive: true })
 await writeFile(path.join(media, 'game.exe'), 'MZ')
 await writeFile(path.join(media, 'systeminfo.json'), '{}')
-await writeFile(path.join(media, 'script.arc'), buildArcfam([{ name: 'startup.script', data: Buffer.from('not a scre but fine') }, { name: 'adv01.script', data: script }, { name: 'adv02.script', data: new Scre().narration('二つ目の脚本。').build() }, { name: 'fk001.mes', data: Buffer.alloc(8, 1), origSize: 80 }, { name: 'setting.lib', data: Buffer.from('lib') }]))
+await writeFile(path.join(media, 'script.arc'), buildArcfam([{ name: 'startup.script', data: Buffer.from('not a scre but fine') }, { name: 'adv01.script', data: script }, { name: 'adv02.script', data: new Scre().narration('二つ目の脚本。').build() }, { name: 'adv_kohai_h01.script', data: new Scre().narration('H シーン。').build() }, { name: 'tx_1_2h_n.script', data: new Scre().narration('もう一つの H。').build() }, { name: 'fk001.mes', data: Buffer.alloc(8, 1), origSize: 80 }, { name: 'setting.lib', data: Buffer.from('lib') }]))
 await writeFile(path.join(media, 'image.arc'), buildArcfam(files.filter((f) => /PNG$/.test(f)).map((f) => ({ name: f.replace('arc/res/', ''), data: Buffer.from(`PNG:${f}`) }))))
 await writeFile(path.join(media, 'voice.arc'), buildArcfam([{ name: 'rico_0011.ogg', data: Buffer.from('OggS-v11') }, { name: 'rico_0012.ogg', data: Buffer.from('OggS-v12') }]))
 await writeFile(path.join(media, 'music.arc'), buildArcfam([{ name: 'bgm_05.wav', data: Buffer.from('RIFF-bgm') }]))
 await writeFile(path.join(media, 'effect.arc'), buildArcfam([{ name: 'se_1_005.wav', data: Buffer.from('RIFF-se') }]))
 await writeFile(path.join(media, 'data.arc'), buildArcfam([{ name: 'adv_cgmode.json', data: Buffer.from('{}') }]))
 const layoutItem = { itemId: 'a', title: 'a', config: { game: { id: 'arcfam::test' } }, source: { path: media }, adapters: ['arcfam::scre'] }
-const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
+const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
 const cfgRaw = tagOut.itemPatch.gal.config
 const cfg = normalizeGalConfig(cfgRaw)
 check('gal-layout：认出 arcfam（id = arcfam::test），containers = arcfam / flat / hybrid / arcfam-scre；脚本根 arc/script、资源根 arc/res；适配器 arcfam::scre', cfg.containers.enabled && cfg.containers.format === 'arcfam' && cfg.containers.flat === true && cfg.containers.mode === 'hybrid' && cfg.containers.scriptDecoder === 'arcfam-scre' && cfg.containers.scriptExt === 'arcfam' && cfg.scriptRoots[0].dir === 'arc/script' && J(cfg.resourceRoots) === J(['arc/res']) && cfg.adapterOptions['arcfam::scre']?.resDir === 'arc/res', J(cfg.containers))
 {
   const other = path.join(work, 'other'); await mkdir(other); await writeFile(path.join(other, 'x.exe'), 'MZ'); await writeFile(path.join(other, 'systeminfo.json'), '{}'); await writeFile(path.join(other, 'image.arc'), 'x'); await writeFile(path.join(other, 'script.arc'), Buffer.concat([Buffer.from([9, 0, 0, 0]), Buffer.alloc(40, 0x30)]))
-  const none = await generateTags({ item: { itemId: 'n', title: 'n', config: {}, source: { path: other } }, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
+  const none = await generateTags({ item: { itemId: 'n', title: 'n', config: {}, source: { path: other } }, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
   check('gal-layout：没声明 game.id 且 script.arc 的条目表对不上 → 不认领', !JSON.stringify(none.itemPatch?.gal?.config || {}).includes('arcfam'), J(none.itemPatch?.gal?.config?.game))
 }
 {
-  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
+  const again = await generateTags({ item: { ...layoutItem, config: cfgRaw }, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
   check('gal-layout：存进条目再跑一次 = 没有改动', /新增 0 项 \/ 修改 0 项 \/ 删除 0 项/.test(again.logs.join('\n')), again.logs.filter((l) => /本次改动/.test(l)).join(' | '))
 }
 {
@@ -125,12 +125,15 @@ check('gal-layout：认出 arcfam（id = arcfam::test），containers = arcfam /
   const handler = createGalHandler({ dataDir, safeSegment: (v) => String(v).replace(/[^\w.-]/g, '_'), pathExists: async (p) => exists(p), getConfig: () => ({ mediaImportProfiles: { 'gal-import': { rootDir: media, adapters: ['arcfam::scre'] } } }) })
   const imported = await handler.importFromSource({ options: { adapters: ['arcfam::scre'], config: { game: { id: 'arcfam::test' } } } })
   const item = imported.items[0]
-  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.31.0', options: {} } })
+  const out = await generateTags({ item, script: { id: 'gal-layout', version: '2.32.0', options: {} } })
   await handler.internals.updateItem(item.itemId, (it) => ({ ...it, config: { ...it.config, ...out.itemPatch.gal.config } }))
   const id = item.itemId
   const home = (await handler.getReaderContent(id, 'main', { sectionId: '' })).node
   const dir = (await handler.getReaderContent(id, 'main', { sectionId: home.items[0].node || home.items[0].id })).node
-  check('列表：首页 = arc 目录卡片（script），里面是剧本 ADV01 / ADV02（STARTUP 里没有文本也列出来）', home.items.map((i) => i.title).join() === 'script' && dir.items.some((i) => i.title === 'ADV01') && dir.items.some((i) => i.title === 'ADV02'), J([home.items.map((i) => i.title), dir.items.map((i) => i.title)]))
+  check('列表：首页 = arc 目录卡片（script），里面是剧本 ADV01 / ADV02（STARTUP 里没有文本也列出来）', home.items.map((i) => i.title).filter((t) => t !== '特殊场景').join() === 'script' && dir.items.some((i) => i.title === 'ADV01') && dir.items.some((i) => i.title === 'ADV02'), J([home.items.map((i) => i.title), dir.items.map((i) => i.title)]))
+  const special = home.items.find((i) => i.title === '特殊场景')
+  const specialList = special ? (await handler.getReaderContent(id, 'main', { sectionId: special.node || special.id })).node.items.map((i) => i.title).sort() : []
+  check('首页：虚拟目录「特殊场景」收 _H<数字> 结尾 / 数字 + H_ 的脚本（ADV_KOHAI_H01、TX_1_2H_N），别的不收', J(specialList) === J(['ADV_KOHAI_H01', 'TX_1_2H_N']), J([home.items.map((i) => i.title), specialList]))
   const adv = dir.items.find((i) => i.title === 'ADV01')
   const play = await handler.getReaderContent(id, 'main', { sectionId: adv.node || adv.id })
   check('播放：scene 来自适配器 arcfam::scre；5 句台词', play.node.kind === 'player' && play.scene.adapter === 'arcfam::scre' && play.scene.stats.messages === 5, J([play.node?.kind, play.scene?.adapter, play.scene?.stats?.messages]))

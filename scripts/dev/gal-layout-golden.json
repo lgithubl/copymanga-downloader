@@ -6389,7 +6389,19 @@
     ]
    },
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "special",
+     "badges": {},
+     "dirs": [
+      "*"
+     ],
+     "exclusive": false,
+     "label": "特殊场景",
+     "match": "(_|\\d)h\\d*$",
+     "parent": ""
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: bgi::triplepairing",
@@ -6451,7 +6463,19 @@
     ]
    },
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "special",
+     "badges": {},
+     "dirs": [
+      "*"
+     ],
+     "exclusive": false,
+     "label": "特殊场景",
+     "match": "(_|\\d)h\\d*$",
+     "parent": ""
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: bgi::bgi",
@@ -6513,7 +6537,19 @@
     ]
    },
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "special",
+     "badges": {},
+     "dirs": [
+      "*"
+     ],
+     "exclusive": false,
+     "label": "特殊场景",
+     "match": "(_|\\d)h\\d*$",
+     "parent": ""
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: bgi::triplepairing",
@@ -6575,7 +6611,19 @@
     ]
    },
    "thumbsDirs": [],
-   "views": []
+   "views": [
+    {
+     "as": "special",
+     "badges": {},
+     "dirs": [
+      "*"
+     ],
+     "exclusive": false,
+     "label": "特殊场景",
+     "match": "(_|\\d)h\\d*$",
+     "parent": ""
+    }
+   ]
   },
   "itemTags": [
    "Gal配置: bgi::bgi",

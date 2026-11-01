@@ -1065,6 +1065,10 @@
      "skip": true
     },
     {
+     "match": "^data01[0-4]\\d\\d\\.arc$",
+     "skip": true
+    },
+    {
      "match": "\\.arc$"
     }
    ],
