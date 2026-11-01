@@ -12,6 +12,8 @@ import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'nod
 import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
 import { bwToOgg, cbgToPng, dscDecode, isBurikoScript, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
+import { decodeScre } from './arcfam-decode.mjs'
+import { readArcfamIndex } from './arcfam.mjs'
 import { pf8Decrypt, readPf8Index } from './pf8.mjs'
 import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
@@ -25,6 +27,7 @@ const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'])
 const AUDIO_EXTS = new Set(['ogg', 'flac', 'wav', 'mp3', 'opus', 'm4a'])
 const VIDEO_EXTS = new Set(['mp4', 'webm', 'm4v', 'mov'])
 const SCRIPT_EXTS = new Set(['ws2'])
+const ARCFAM_RES_EXTS = new Set(['png', 'jpg', 'jpeg', 'ogg', 'wav', 'mp3'])
 const PF8_RES_EXTS = new Set([...IMAGE_EXTS, ...AUDIO_EXTS, 'ogv'])   // ogv：Artemis 的动态事件图（浏览器能直接播 Theora）
 
 // BGI（BURIKO ARC20 里的 DSC 压缩剧本）：解压 → 把 token 流「执行」一遍 → 事件流（bgi-bs/1，适配器 bgi::bs 吃它）。不是剧本的 DSC（动画表之类）抛错，调用方当跳过
@@ -59,10 +62,19 @@ const ARTEMIS_AST_DECODER = {
     return text
   },
 }
+// 自有 arc（eomaia 的 SCRE 剧本）：认字节模式抽出事件流（arcfam-scre/1，适配器 arcfam::scre 吃它）
+const ARCFAM_SCRE_DECODER = {
+  ext: 'arcfam',
+  decode(buffer, { arc, name }) {
+    const events = decodeScre(buffer)
+    return JSON.stringify({ format: 'arcfam-scre/1', arc, name, size: buffer.length, events })
+  },
+}
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
   'bgi-bs': BGI_BS_DECODER,
   'artemis-ast': ARTEMIS_AST_DECODER,
+  'arcfam-scre': ARCFAM_SCRE_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -103,12 +115,20 @@ export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
-const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : readArcIndex(file))
+const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : readArcIndex(file))
 // pf8（Artemis）：按扩展名分——.ast = 脚本（解密后交给解码器），图 / 声音 = 资源（取出来时解密），别的（lua / csv / psb …）跳过
 function classifyPf8(name) {
   const ext = extOf(name)
   if (ext === 'ast') return { kind: 'script' }
   if (PF8_RES_EXTS.has(ext)) return { kind: 'res', transform: 'pf8' }
+  return { kind: '' }
+}
+// 自有 arc：名字（大写）按扩展名分——.SCRIPT = 剧本，图 / 声音 = 资源；大小 ≠ 原大小 = 压缩（算法没识别）跳过；别的（json / lib / bin / mes …）跳过
+function classifyArcfam(name, entry) {
+  if (entry.origSize !== entry.size) return { kind: '', compressed: true }
+  const ext = extOf(name)
+  if (ext === 'script') return { kind: 'script' }
+  if (ARCFAM_RES_EXTS.has(ext)) return { kind: 'res' }
   return { kind: '' }
 }
 // pf8 容器的名字：.pfs / .pfs.000 → pfs 的主名（脚本展开到 script/<主名>/…）
@@ -274,6 +294,7 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
   const { entries, key } = await readIndexFor(file, cfg)
   const buriko = cfg.format === 'buriko'
   const pf8 = cfg.format === 'pf8'
+  const arcfam = cfg.format === 'arcfam'
   const stem = pf8 ? pf8Stem(arcName) : withoutExt(arcName)
   const decoder = SCRIPT_DECODERS[cfg.scriptDecoder]
   const result = { entries: entries.length, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
@@ -284,13 +305,14 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
       const name = safeEntryName(entry.name)
       if (!name) { result.bad.push(entry.name.slice(0, 60)); continue }
       // buriko（BGI）的条目没有扩展名，按内容分：DSC = 剧本、CompressedBG = 图、BW = 声音（图 / 声音只在 hybrid 的虚拟索引里，取出来时才转）
-      const cls = buriko ? await classifyBuriko(handle, entry) : pf8 ? classifyPf8(name) : null
-      const kind = buriko || pf8 ? cls.kind : kindOf(name, 'script')
+      const cls = buriko ? await classifyBuriko(handle, entry) : pf8 ? classifyPf8(name) : arcfam ? classifyArcfam(name, entry) : null
+      const kind = buriko || pf8 || arcfam ? cls.kind : kindOf(name, 'script')
+      if (arcfam && cls.compressed) { result.unsupported = (result.unsupported || 0) + 1 }
       if (!kind || !rule.kinds.has(kind) || (kind === 'pna' && rule.pna === 'skip')) { result.skipped += 1; continue }
       if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) { result.excluded += 1; continue }
       if (entry.size > MAX_ENTRY_BYTES) { result.bad.push(`${name}（${entry.size} 字节太大）`); continue }
       // hybrid（默认）：图 / 声音 / 视频 / PNA 帧不展开（被请求时才从 .arc 读那一个条目，见 materialize）；PNA 只写 index.json（读头和记录表，不读像素）
-      const lazy = (cfg.mode !== 'files' || buriko || pf8) && (kind === 'res' || kind === 'pna')
+      const lazy = (cfg.mode !== 'files' || buriko || pf8 || arcfam) && (kind === 'res' || kind === 'pna')
       if (lazy && (kind === 'res' || rule.pna === 'raw')) { result.res += 1; result.lazy = (result.lazy || 0) + 1; continue }
       if (lazy) {
         try {
@@ -310,10 +332,10 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
       if (pf8) data = pf8Decrypt(data, key)
       if (kind === 'script') {
         if (!decoder) throw new Error(`没有脚本解码器 ${cfg.scriptDecoder}`)
-        const base = buriko ? name : pf8 ? withoutExt(name.replace(/^script\//i, '')) : withoutExt(name)
+        const base = buriko ? name : pf8 ? withoutExt(name.replace(/^script\//i, '')) : withoutExt(name)   // arcfam 同 willplus：去扩展名
         let text
         try { text = decoder.decode(data, { arc: stem, name: base }) } catch (error) {
-          if (!buriko && !pf8) throw error
+          if (!buriko && !pf8 && !arcfam) throw error
           result.skipped += 1; result.notScript = (result.notScript || 0) + 1   // DSC 里不是剧本的（动画表之类）
           continue
         }
@@ -414,6 +436,13 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
           handle ||= await open(file, 'r')
           const cls = await classifyBuriko(handle, entry).catch(() => ({ kind: '' }))
           if (cls.kind === 'res') add(`${cfg.dir}/${resRel(cfg, stem, `${name}.${cls.ext}`)}`, { file, offset: entry.offset, size: entry.size, transform: cls.transform, ...(cls.w ? { w: cls.w, h: cls.h } : {}) })
+          continue
+        }
+        if (cfg.format === 'arcfam') {
+          // 自有 arc：图 / 声音（没压缩的），虚拟路径 = <dir>/res/<名字（大写）>（flat：不带容器名）
+          if (entry.size > MAX_ENTRY_BYTES || !rule.kinds.has('res') || classifyArcfam(name, entry).kind !== 'res') continue
+          if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
+          add(`${cfg.dir}/${resRel(cfg, stem, name)}`, { file, offset: entry.offset, size: entry.size })
           continue
         }
         if (cfg.format === 'pf8') {

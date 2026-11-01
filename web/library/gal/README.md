@@ -1024,7 +1024,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 推断成分：引擎里预乘标志位后续在哪些地方被用到，没有逐处追完；「还原成直通就对」是根据加载器标志 + 腮红帧的像素数据（rgb ≈ 粉色 × alpha）得出的。
 - 行为：hybrid 按需取出和 files 展开的字节一致；`CONTAINER_FORMAT_VERSION = 5`，旧缓存会自动重建。
 
-## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.29.0）
+## BGI / Ethornell（BURIKO 引擎：HOOKSOFT / Tily 等，`bgi::bs`，gal-layout 2.30.0）
 
 - **依据**：公开资料，没有逆向 exe——`morkt/GARbro` 的 `ArcFormats/Ethornell`（BURIKO ARC20、DSC FORMAT 1.00、CompressedBG、BW）和 `Cytlan/openbgi` 的 `docs/scenario.md`（`BurikoCompiledScriptVer1.00` 的容器和 token 机）。样本：三个游戏（トリプルペアリング / FD / 両腕が折れたので…）的 `Archive/data0*.arc`。
 - **目录**：`<根>/{BGI.gdb, sysprg.arc / system.arc（系统程序，规则里跳过）, sysgrp.arc, Archive/data0*.arc}`。`data01xxx` = DSC 压缩的剧本、`data02xxx` = CompressedBG 图、`data03xxx~04xxx` = BW（Ogg）声音；条目名没有扩展名，**按内容认**（`containers.format: 'buriko'`）。
@@ -1047,7 +1047,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - `_DrawSPR`（事件图）当成 bg 换掉背景、`_FadeSPR` 去掉；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
 - **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
 
-## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.29.0）
+## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.30.0）
 
 - **依据**：自己在采集的真实游戏上核对（g13《妹(姉)は兄(弟)の性癖を歪ませたい！》，`yugamase.pfs` + `yugamase.pfs.000`，83 个剧本）。没有逆向 exe。
 - **pf8 档案**（`web/library/gal/pf8.mjs`）：头 `pf8` + u32 索引大小 + u32 条目数；索引块 = 文件 [7, 7 + 索引大小)；条目 = u32 名字长 + 名字（utf-8，`\` 分隔）+ u32 0 + u32 偏移 + u32 大小；加密 = 条目内容逐字节 XOR `key[i % 20]`，`key = SHA1(索引块)`。两个档案（23747 + 623 条）的索引解析后偏移 / 大小都落在文件内，脚本解密后是可读文本。
@@ -1061,6 +1061,21 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - `excall` 带 `label` / `cond` 的（调用别的脚本里的标签）只记 `stats.links`；不在最后一个 block 的 `excall` 不当 `scene.next`。
   - 只支持 `pf8`（`pf6` 等老版本魔数不对，gal-layout 不认领）。新导入时 `scriptCount` 是 0（展开在第一次浏览才做），浏览过一次再「刷新 json」才有数。
 - **自测**：`node scripts/dev/gal-artemis-selftest.mjs`（合成数据，`make-artemis-fixture.mjs` 的 `buildPf8` / `astOf`）。
+
+## 自有 arc（eomaia 引擎，`arcfam::scre`，gal-layout 2.30.0）
+
+- **依据**：自己在采集的真实游戏上核对（g06《あざとカワイイ綾瀬ちゃん！》、g10《ギャル×オタ》的 `script.arc` 是明文 SCRE；g11《シルキーズプラス fuyukuru》的 `script.arc` 条目表同格式但内容压缩）。没有逆向 exe。
+- **档案**（`web/library/gal/arcfam.mjs`）：`u32 LE 头大小` + 条目表（`u8 名字长 + 名字 + u32 BE 大小 + u32 BE 原大小 + u32 BE 偏移`，偏移从文件头起）+ 数据；17 个真实档案（含 12852 条的 voice.arc）的条目表长度和头里的大小逐字节吻合。**名字混淆：`c' = toupper(c) − 名字长度 + 下标`**（不是每个游戏一个 K；用 `startup.script`、`adv_kohai01.script`、`kirara####.ogg` 核对，g11 的 `00.BIN` 也对）；名字大小写丢失（只剩大写，资源按名字找时忽略大小写）。大小 ≠ 原大小 = 压缩（g11 的 script / data，算法没识别）：跳过并记进展开结果的 `unsupported`。
+- **展开**（`config.containers`，`format: arcfam`、`flat: true`、只支持 hybrid、`scan: ['.']`、规则 `\.arc$`）：`.SCRIPT` → 事件流 JSON，展开到 `<根>/arc/script/<arc 名>/<脚本>.arcfam`；png / jpg / ogg / wav / mp3 不展开，虚拟路径 = `arc/res/<名字（大写）>`，被请求时才取（放进缓存目录 `cache/gal-arc-res`）；json / lib / bin / mes 不处理。
+- **剧本**（`arcfam-decode.mjs`）：SCRE = `'SCRE' u32 0 + u32 行数 + u32 20 + (行数+1) 个 u32 偏移 + 栈机字节码`（整数大端；`0x32` 压整数、`0x33` 压字符串、`0x17` 调用、`0x14` + 字符串 = 文本、`0x18` + 8 字节 = 行号）。**没有逆全操作码**，改认字节模式：资源调用 `33 文件名\0 32 方法号 33 对象名\0`（`eomaia_audio`：129 语音 / 102 BGM / 117 音效；`eomaia_image`：102 底图、105 / 106 叠加层）、说话人 `33 【名字】\0`、文本 `0x14 utf-8 \0`。
+- **映射**（适配器 `arcfam::scre`）：文本（+ 前面最近一个说话人，用一次）→ speaker + text；语音 / BGM / 音效；102 底图 → bg（并收掉旧叠加层），105 / 106 → overlay（按文件名里的「_种类」分槽，如 `EV02S_face11.png` → `face`，同槽再来一张 = 换，`fit: cover` 铺满；真实样本里 EV 底图和叠加层都是 1280×720）。
+- **样本核对**（g06 + g10 共 86 个剧本）：抽出文本 8967 句、语音 3991、BGM 179、音效 208、说话人 4695、图 8789；用 g06 真实 `script.arc` + 其它 arc 的头做整条链（导入 → gal-layout → 列表 31 个剧本 → 场景 74 句 → 语音取回 `OggS`）通（图 / BGM 在 8MB 的头之外所以没解析到，是样本的限制）。
+- **没做 / 推断**：
+  - **选择 / 分支 / 跳转**没做（没逆全操作码）：按文件里出现的顺序线性输出，分支各段都会出现，脚本之间没有 `scene.next`。
+  - 叠加层的分槽方式和层序是按文件名 / 出现顺序猜的；底图每句台词前引擎都会重发一次，重复的被去掉。
+  - 说话人 / 文本的配对只看出现顺序（说话人压栈后的下一句文本）；`0x14` 文本的识别靠「至少 2 个字符的合法 utf-8 + `\0`，且不是整数 `0x14`」，没有逐条对照原引擎。
+  - **g11（シルキーズプラス）的剧本是压缩的（`.MES`），算法没识别，列表是空的**；它的图是 `AKB ` 格式（layer.arc）、`data.arc` 是压缩的 `.BIN`，都没做。
+- **自测**：`node scripts/dev/gal-arcfam-selftest.mjs`（合成数据，`make-arcfam-fixture.mjs` 的 `buildArcfam` / `Scre`）。
 
 ### AdvHD 的跳转：选项跳到别的脚本（`goto`）/ 看完接着播（`scene.next`）
 

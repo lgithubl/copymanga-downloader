@@ -31,8 +31,8 @@ export const CONTAINER_PNA_MODES = Object.freeze(['frames', 'raw', 'skip'])
 export const DEFAULT_CONTAINER_GALLERY = Object.freeze({ functions: Object.freeze(['openCgBrowser']), pageFlags: Object.freeze([105]), minCalls: 20, group: '_\\d+$' })
 // 展开方式：hybrid（默认）= 脚本展开到磁盘（很小），图 / 声音 / 视频 / PNA 帧不展开，被请求时才从 .arc 里读出那一个条目（写到磁盘当缓存）；files = 全部展开到磁盘（以前的行为，出问题就回退到它）
 export const CONTAINER_MODES = Object.freeze(['hybrid', 'files'])
-// 容器格式：willplus（WillPlus AdvHD 的 .arc，默认）/ buriko（BGI / Ethornell 的 BURIKO ARC20：条目没有扩展名，按内容认；只支持 hybrid）/ pf8（Artemis 的 .pfs：条目逐字节 XOR SHA1(索引)；只支持 hybrid）
-export const CONTAINER_FORMATS = Object.freeze(['willplus', 'buriko', 'pf8'])
+// 容器格式：willplus（WillPlus AdvHD 的 .arc，默认）/ buriko（BGI / Ethornell 的 BURIKO ARC20：条目没有扩展名，按内容认；只支持 hybrid）/ pf8（Artemis 的 .pfs：条目逐字节 XOR SHA1(索引)；只支持 hybrid）/ arcfam（自有 arc：eomaia 引擎的 script.arc / image.arc …，名字按长度混淆；只支持 hybrid）
+export const CONTAINER_FORMATS = Object.freeze(['willplus', 'buriko', 'pf8', 'arcfam'])
 export const CONTAINER_KINDS = Object.freeze(['script', 'res', 'pna'])
 export const DEFAULT_CONTAINERS = Object.freeze({ enabled: false, dir: 'arc', scan: Object.freeze(['.']), scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', mode: 'hybrid', format: 'willplus', flat: false, rules: Object.freeze([]), maxEntries: 200000, maxTotalMB: 8192 })
 export const CONTAINER_LIMITS = Object.freeze({ rules: 20, list: 10, maxEntries: [1, 1000000], maxTotalMB: [1, 65536] })
@@ -520,7 +520,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     if (c.mode !== undefined) { if (CONTAINER_MODES.includes(c.mode)) containers.mode = c.mode; else warn('containers.mode', `只能是 ${CONTAINER_MODES.join(' / ')}，用默认值 ${containers.mode}`, c.mode) }
     if (c.format !== undefined) { if (CONTAINER_FORMATS.includes(c.format)) containers.format = c.format; else warn('containers.format', `只能是 ${CONTAINER_FORMATS.join(' / ')}，用默认值 ${containers.format}`, c.format) }
     if (c.flat !== undefined) { if (typeof c.flat === 'boolean') containers.flat = c.flat; else warn('containers.flat', '只能是 true / false，用默认值', c.flat) }
-    if ((containers.format === 'buriko' || containers.format === 'pf8') && containers.mode !== 'hybrid') { containers.mode = 'hybrid'; warn('containers.mode', `format 是 ${containers.format} 时只支持 hybrid（图 / 声音要在取出来时转格式 / 解密），已改成 hybrid`, c.mode) }
+    if (['buriko', 'pf8', 'arcfam'].includes(containers.format) && containers.mode !== 'hybrid') { containers.mode = 'hybrid'; warn('containers.mode', `format 是 ${containers.format} 时只支持 hybrid（图 / 声音要在取出来时转格式 / 解密），已改成 hybrid`, c.mode) }
     if (c.scriptExt !== undefined) { if (typeof c.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(c.scriptExt)) containers.scriptExt = c.scriptExt; else warn('containers.scriptExt', '只能是 1-10 位小写字母 / 数字，用默认值', c.scriptExt) }
     for (const key of ['maxEntries', 'maxTotalMB']) {
       if (c[key] === undefined) continue

@@ -37,7 +37,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -772,6 +772,31 @@ export const ADAPTER_RULES = {
     picSize: { '拡大': null, '通常': null, '2': null, '立ち絵全消え': null },
     backVoice: { attr: 'back_voice', packAttr: 'back_voice_pack', sep: '#', slot: 'back', volume: 1, onMissing: 'keep' },
     scene: { split: 'chains', forkPolicy: 'merge' },
+  },
+  // arcfam::scre：自有 arc / eomaia 家族的脚本适配器（SCRE 事件流 → 场景）。抄自 web/library/gal/adapters/arcfam-scre.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'arcfam::scre': {
+    "resDir": "arc/res",
+    "stage": [
+      1280,
+      720
+    ],
+    "imageExts": [
+      "png",
+      "jpg"
+    ],
+    "audioExts": [
+      "ogg",
+      "wav",
+      "mp3"
+    ],
+    "overlay": {
+      "enabled": true,
+      "fit": "cover"
+    },
+    "speaker": {
+      "strip": []
+    },
+    "extraDirs": []
   },
   // artemis::ast：Artemis 家族的脚本适配器（.ast = Lua 表 → 场景）。抄自 web/library/gal/adapters/artemis-ast.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'artemis::ast': {
@@ -1667,6 +1692,29 @@ export const LAYOUTS = {
     cover: [],
     notes: ['arc 在第一次浏览时由服务端展开剧本到 <根>/arc/script/（图 / 声音不展开，被请求时才取、才转格式；之后按 arc 的大小 + 修改时间判断要不要重做）', '剧本是「执行」一遍得到的事件序列：选择（SelectEx）按选项分支、汇合点之后一份；条件跳转的值未知时按 0（没走到的分支在 stats.run 里看不到，见 README 的 BGI 一节）', '立绘的位置 / 大小没有样本验证（见适配器开头的推断一栏）'],
   },
+  // ---- 自有 arc（eomaia 引擎：コンフィチュールソフト / シルキーズプラス 等）家族：game.id = arcfam::<游戏>（任何以 arcfam:: 开头的 id 都走这一项）。
+  //   目录：<根>/{script.arc, data.arc, image.arc | layer.arc, voice.arc, music.arc, effect.arc, systeminfo.json | FileInfo.xml, *.exe}。arc 由引擎（config.containers，format: arcfam）在服务端读：
+  //   script.arc 里的 .SCRIPT（SCRE）认字节模式解成事件流，展开到 <根>/arc/script/<arc 名>/<脚本>.arcfam；图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<名字，大写>），被请求时才取出。压缩的（g11 的 .MES）不展开。
+  arcfam: {
+    title: '自有 arc（eomaia 引擎）', kind: 'arcfam', detector: 'arcfam', autoOrder: 139.7, family: 'arcfam::',   // 紧跟 artemis，uviewer（通用）之前；探测时还要看 script.arc 的条目表对得上
+    bases: [''], searchDepth: 3,
+    anchors: ['/^script\\.arc$/i'], siblings: [], markers: [['systeminfo.json', '/^fileinfo\\.xml$/i'], ['image.arc', 'layer.arc']],
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res'],
+    adapters: ['arcfam::scre'],
+    adapterOptions: { 'arcfam::scre': { resDir: { path: ['arc/res'] } } },
+    ruleTables: ['arcfam::scre'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},
+      limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'arcfam-scre', scriptExt: 'arcfam', mode: 'hybrid', format: 'arcfam', flat: true, rules: [{ match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['arcfam'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.arcfam', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['arc 在第一次浏览时由服务端展开剧本到 <根>/arc/script/（图 / 声音不展开，被请求时才取、放进缓存目录）；g11（シルキーズプラス）的剧本是压缩的（.MES），算法没识别，列表是空的', '剧本只认了字节模式：选择 / 分支 / 跳转没做，按出现顺序线性输出（见适配器开头的说明）'],
+  },
   // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
   //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；
   //   图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<档案里的路径>，如 arc/res/image/bg/bg01a.png），被请求时才解密取出。
@@ -2147,6 +2195,7 @@ const DETECTORS = {
   advhd: (scope) => detectAdvhd(scope),
   bgi: (scope) => detectBgi(scope),
   artemis: (scope) => detectArtemis(scope),
+  arcfam: (scope) => detectArcfam(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2396,8 +2445,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: value.format === 'buriko' ? 'buriko' : value.format === 'pf8' ? 'pf8' : 'willplus', flat: value.flat === true,
-        mode: value.format === 'buriko' || value.format === 'pf8' || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -2974,6 +3023,54 @@ async function detectArtemis(scope) {
   found.id = scope.gameId || `artemis::${slug || 'game'}`
   found.kind = entry.kind || 'artemis'
   logs.push(`Artemis 游戏根：${base || '.'}；pf8 档案 ${pfs.length} 个（${pfs.slice(0, 4).join(' / ')}）；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// ---- 自有 arc 家族：见 LAYOUTS.arcfam。id：声明了 game.id 就用它（arcfam::<游戏>），没声明 = arcfam::<目录名的小写字母数字>；没声明时要求 script.arc 的条目表对得上（头大小 = 条目表长度、名字解出来是可打印字符）
+async function arcfamTableOk(file) {
+  let handle
+  try {
+    handle = await open(file, 'r')
+    const { size } = await handle.stat()
+    const head = Buffer.alloc(4)
+    await handle.read(head, 0, 4, 0)
+    const hs = head.readUInt32LE(0)
+    if (hs < 4 || hs > 64 * 1024 * 1024 || 4 + hs > size) return false
+    const table = Buffer.alloc(hs)
+    await handle.read(table, 0, hs, 4)
+    let p = 0
+    let good = 0
+    let total = 0
+    while (p < table.length) {
+      const n = table[p]
+      if (n === 0 || p + 1 + n + 12 > table.length) return false
+      let name = ''
+      for (let i = 0; i < n; i++) name += String.fromCharCode((table[p + 1 + i] + n - i) & 0xff)
+      if (/^[\x20-\x7e]+$/.test(name)) good++
+      total++
+      p += 1 + n + 12
+    }
+    return total > 0 && good >= total * 0.8
+  } catch { return false } finally { await handle?.close().catch(() => {}) }
+}
+async function detectArcfam(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  if (!declared && !(await markersOk(media, entry, base, declared))) return null
+  const scriptArc = path.join(media, ...splitRel(join(base, 'script.arc')))
+  if (!(await arcfamTableOk(scriptArc))) { if (declared) logs.push('自有 arc：script.arc 的条目表对不上（头大小 / 名字），不是已知的自有 arc'); return null }
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `arcfam::${slug || 'game'}`
+  found.kind = entry.kind || 'arcfam'
+  const arcs = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.arc$/i.test(n))
+  logs.push(`自有 arc 游戏根：${base || '.'}；${arcs.length} 个 arc（${arcs.slice(0, 6).join(' / ')}）；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
 }
