@@ -30,10 +30,11 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.5 BGI：按「角色 + 尺寸」把立绘本体和它的 e / o / y 部件配对收（可以跨 data*.arc），核对不同变体里部件的位置
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.4"
+VERSION="1.5"
 export GAL_COLLECT_VERSION="$VERSION"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
 HOST_TAG="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9' '_' | cut -c1-20)"
@@ -290,7 +291,7 @@ def pf8_pick(ents, size):
 BGI_IMG_EACH_MAX = 6 * MB      # 单张样本图上限
 BGI_IMG_TOTAL_MAX = 48 * MB    # 一个 data*.arc 里样本图的累计上限
 
-def bgi_samples(f, size):
+def bgi_samples(f, size, forced=None):
     """BURIKO ARC20（'BURIKO ARC20' + u32 条目数 + 每条 0x80：名字 0x60 + u32 偏移 + u32 大小）：返回 (索引字节, [(名字, 偏移, 大小)], 目录清单文本)；解析不了返回 None。
     CompressedBG 头 0x30：魔数 16 + u16 宽 + u16 高 + u32 位数 + … + u16 版本(0x2e)。挑选：立绘（32 位、不比宽矮）按名字前缀分散（同前缀最多 3 张）10 张、背景（24 位、宽 >= 640）4 张、version 2 的 4 张、32 位小图（宽 <= 256）4 张。"""
     f.seek(0); head = f.read(16)
@@ -330,7 +331,51 @@ def bgi_samples(f, size):
     for c in chosen.values():
         if total + c[2] > BGI_IMG_TOTAL_MAX: continue
         out.append((c[0], c[1], c[2])); total += c[2]
+    have = {o[0] for o in out}
+    for c in imgs:   # 跨容器配对挑出来的（本体和部件可能在不同的 data*.arc 里）：不受上面的数量限制
+        if forced and c[0] in forced and c[0] not in have: out.append((c[0], c[1], c[2])); have.add(c[0])
     return idx, out, ''.join(lines)
+
+BGI_PAIR_GROUPS = 36        # 一个游戏最多配几组（<角色>_<尺寸>）
+BGI_PAIR_EACH_MAX = 4 * MB
+
+def bgi_pairs(entries):
+    """entries：这个游戏的 data*.arc（Entry）。读所有 CBG 的头，按「角色(4 位) + 尺寸字母」配对：立绘本体 <角色><2 位>_<尺寸> 和它的部件 <角色>_<尺寸>_<种类>_<编号>
+    （同一对可以在不同的 data*.arc 里）。每组取 1 个本体 + e / o / y 各 1 个部件（各取最小的）；每个尺寸字母最多 6 组，总共最多 BGI_PAIR_GROUPS 组。返回 {Entry.rel: {名字…}}。"""
+    bodies = {}; parts = {}
+    for e in entries:
+        try:
+            with open(e.path, 'rb') as f:
+                f.seek(0); head = f.read(16)
+                if head[:12] != b'BURIKO ARC20': continue
+                cnt = struct.unpack('<I', head[12:16])[0]
+                if cnt <= 0 or cnt > 200000 or 16 + cnt * 0x80 > e.size: continue
+                f.seek(0); idx = f.read(16 + cnt * 0x80); base = 16 + cnt * 0x80
+                for i in range(cnt):
+                    rec = idx[16 + i * 0x80:16 + (i + 1) * 0x80]
+                    name = rec[:0x60].split(b'\0')[0].decode('cp932', 'replace'); off, sz = struct.unpack('<II', rec[0x60:0x68])
+                    low = name.lower()
+                    if sz < 0x30 or sz > BGI_PAIR_EACH_MAX or base + off + sz > e.size: continue
+                    mb = re.fullmatch(r'([a-z0-9]{4})[a-z]{2}_([a-z])', low); mp = re.fullmatch(r'([a-z0-9]{4})_([a-z])_([a-z]+)_[a-z0-9_]+', low)
+                    if not (mb or mp): continue
+                    f.seek(base + off); h = f.read(0x14)
+                    if h[:15] != b'CompressedBG___': continue
+                    if mb: bodies.setdefault((mb.group(1), mb.group(2)), []).append((sz, e.rel, name))
+                    else: parts.setdefault((mp.group(1), mp.group(2)), {}).setdefault(mp.group(3), []).append((sz, e.rel, name))
+        except OSError:
+            continue
+    keys = sorted(k for k in bodies if k in parts and any(kind in parts[k] for kind in ('e', 'o', 'y')))
+    per_size = collections.Counter(); chosen = []
+    for k in keys[::max(1, len(keys) // (BGI_PAIR_GROUPS * 2))]:
+        if per_size[k[1]] >= 6 or len(chosen) >= BGI_PAIR_GROUPS: continue
+        per_size[k[1]] += 1; chosen.append(k)
+    forced = collections.defaultdict(set)
+    for k in chosen:
+        sz, rel, name = min(bodies[k]); forced[rel].add(name)
+        for kind in ('e', 'o', 'y'):
+            if kind in parts[k]:
+                sz, rel, name = min(parts[k][kind]); forced[rel].add(name)
+    return forced
 
 SAMPLE_EACH_MAX = 3 * MB
 SAMPLE_TOTAL_MAX = 24 * MB
@@ -395,6 +440,7 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = list_files(game); eng = engines_of(items); picks = pick(items, eng)
+        bgi_forced = bgi_pairs([e for e, _m, r in picks if r == 'bgi:data']) if 'bgi' in eng else {}
         say('== %s %s  引擎=%s 文件=%d 选中=%d' % (gid, rel_game, ','.join(eng), len(items), len(picks)))
         listing = io.BytesIO(('rel\tsize\tmtime\n' + ''.join('%s\t%d\t%d\n' % (e.rel, e.size, e.mtime) for e in items)).encode('utf-8'))
         prefix = os.path.join(out, 'gal-collect-%s-%s-%s.tar.gz' % (ts, host, gid))
@@ -454,7 +500,7 @@ def main():
                                         mf.write('%s\t%s\tsample\t%s\t%d\t%d\t%s\n' % (gid, e.rel + ':' + label, rule, sz, len(data), hashlib.sha256(data).hexdigest()))
                                     say('   %s %s：清单 %d 行 + 样本 %d 个' % (rule.split(':')[0], e.rel, catalog.count(chr(10)) - 1, len(picked)))
                             if rule == 'bgi:data':   # 太大只收了头尾：再按 ARC20 索引补收样本图 + 图的目录清单
-                                got = bgi_samples(f, e.size)
+                                got = bgi_samples(f, e.size, bgi_forced.get(e.rel))
                                 if got is not None:
                                     idx, picked, catalog = got
                                     cat = catalog.encode('utf-8')
