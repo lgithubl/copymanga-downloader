@@ -317,5 +317,17 @@ if (process.env.KRKR_SAMPLE) {
   check(`真实样本 ${dir}：${scripts} 个剧本全部过解码器 + 适配器（${messages} 句台词），没有出错`, crashed === 0 && scripts > 0, `crashed ${crashed}`)
 } else console.log('SKIP 真实样本（KRKR_SAMPLE=<目录>:<密钥包.json> 才跑）')
 
+// ---- 台词行内控制码（%f字体; / #颜色; / %数字; / [读音]汉字）----
+{
+  const seg = (t) => adapter.krkrSegments(t, {})
+  const j = JSON.stringify
+  check('控制码：行首 %150; 去掉、正文不带它', j(seg('%150;「だーー！」')) === j([{ text: '「だーー！」' }]), j(seg('%150;「だーー！」')))
+  check('控制码：%f字体;#00ff80c0;♥%fuser;#; → ♥ 单独一段、粉色 #ff80c0，前后文字原样', j(seg('あっ%f源ノ角ゴシックB;#00ff80c0;♥%fuser;#;」')) === j([{ text: 'あっ' }, { text: '♥', style: { color: '#ff80c0' } }, { text: '」' }]), j(seg('あっ%f源ノ角ゴシックB;#00ff80c0;♥%fuser;#;」')))
+  check('控制码：6 位 #RRGGBB; 也认，#; 恢复默认色', j(seg('#ff0000;赤#;白')) === j([{ text: '赤', style: { color: '#ff0000' } }, { text: '白' }]), j(seg('#ff0000;赤#;白')))
+  check('控制码：[う]宇[さ]佐[み]美 = 三个单字注音（读音在前）', j(seg('[う]宇[さ]佐[み]美')) === j([{ text: '宇', ruby: 'う' }, { text: '佐', ruby: 'さ' }, { text: '美', ruby: 'み' }]), j(seg('[う]宇[さ]佐[み]美')))
+  check('控制码：非假名的方括号 / 没有分号的 % # 原样保留', j(seg('[A]と100%と#1')) === j([{ text: '[A]と100%と#1' }]), j(seg('[A]と100%と#1')))
+  check('控制码：换行保留，无控制码的文本是一整段', j(seg('一行目\n二行目')) === j([{ text: '一行目\n二行目' }]), j(seg('一行目\n二行目')))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

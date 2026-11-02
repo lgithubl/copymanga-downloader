@@ -36,6 +36,35 @@ export const DEFAULT_OPTIONS = {
 const readOptions = createOptionsReader(DEFAULT_OPTIONS)
 
 const HEAD = /^\s*\{\s*"format"\s*:\s*"krkr-scn\/1"/
+// 台词里的行内控制码（g07 / g08 的剧本里统计出来的，一共这几种）：
+//   %f<字体名>;  切字体（%fuser; 切回用户字体）——字体名只是为了显示 ♥ 之类的符号，网页里忽略
+//   #00RRGGBB; / #RRGGBB;  设颜色，#;  恢复（♥ 是 #00ff80c0; = 粉色 #ff80c0）
+//   %<数字>;  行首的 %150; 之类（含义没对过引擎，按文字速度处理：忽略）
+//   [读音]汉字  注音，读音在前、只对后面那一个字（[う]宇[さ]佐[み]美 = 宇佐美 うさみ；[ちち]乳 = 乳 ちち）；读音只认假名，别的方括号原样保留
+const KRKR_CODE = /%f[^;\n]*;|%\d+;|#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})?;|\[([\u3041-\u3096\u30a1-\u30fa\u30fcー]{1,12})\](?=([^\[\]\n]))/g
+export function krkrSegments(text, stats = null) {
+  const segments = []
+  let color = ''
+  let last = 0
+  const push = (value, extra = {}) => {
+    if (!value) return
+    const prev = segments[segments.length - 1]
+    const style = color ? { color } : null
+    if (!extra.ruby && prev && !prev.ruby && JSON.stringify(prev.style || null) === JSON.stringify(style)) { prev.text += value; return }
+    segments.push({ text: value, ...(extra.ruby ? { ruby: extra.ruby } : {}), ...(style ? { style } : {}) })
+  }
+  const src = String(text)
+  for (const m of src.matchAll(KRKR_CODE)) {
+    push(src.slice(last, m.index))
+    last = m.index + m[0].length
+    const code = m[0]
+    if (m[1] !== undefined) { push(m[2], { ruby: m[1] }); last += m[2].length; if (stats) stats.ruby = (stats.ruby || 0) + 1 }
+    else if (code[0] === '#') color = code.length > 2 ? `#${code.slice(1, -1).slice(-6).toLowerCase()}` : ''
+  }
+  push(src.slice(last))
+  return segments
+}
+
 export const sniff = (text) => HEAD.test(String(text || '').replace(/^﻿/, '').slice(0, 512))
 export const explainSniff = () => '开头不是 {"format":"krkr-scn/1"…（这个适配器吃 containers 从 KiriKiri 的 scn.xp3 里解出来的场景 JSON，不是原始 PSB）'
 
@@ -223,8 +252,8 @@ export function parse(text, ctx = null, meta = {}) {
         if (hit) { stats.voices.resolved += 1; emit({ op: 'voice', src: hit }) } else { stats.voices.unresolved += 1; if (hasIndex) count('unresolved', `voice:${step.v}`) }
       }
       if (typeof step.t === 'string') {
-        emit({ op: 'speaker', segments: step.n ? [{ text: step.n }] : [] })
-        emit({ op: 'text', segments: step.t ? [{ text: step.t }] : [] })
+        emit({ op: 'speaker', segments: step.n ? krkrSegments(step.n, stats) : [] })
+        emit({ op: 'text', segments: step.t ? krkrSegments(step.t, stats) : [] })
         stats.messages += 1
       } else emit({ op: 'text', segments: [] })
       endStep()
