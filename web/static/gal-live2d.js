@@ -3,6 +3,7 @@
 // 约定（真实 g08 的 ev_cg*.l2d 对过）：顶点 y 向下、画布像素 = 位置 × pixelsPerUnit + 画布原点；UV 直接用，纹理按解出来的原样（第一行在上）。
 // 剪裁（clipping mask）：先把蒙版网格的纹理 alpha（不乘不透明度——Cubism 里不透明度 0 的蒙版照样剪裁）取并集画进一张离屏的蒙版，再用它乘被剪裁的网格；flags 的 bit3 = 反转（只画蒙版之外）。
 // 混合：普通 = 预乘 alpha；加 = (ONE, ONE)；乘 = (DST_COLOR, ONE_MINUS_SRC_ALPHA)。颜色：乘色 / 屏幕色（moc3 4.02 的关键形态颜色，沿变形器链叠）。
+// 马赛克：userdata3.json 里标了 mosaic 的 ArtMesh 用马赛克着色器（krkrlive2d.dll 里的原样：到它为止的画面按 16 像素的格子取样）。
 // 没做：物理（physics3.json）/ 姿势 / 表情 / 口型 / 眨眼；motion3 的 FadeIn / FadeOut；混合形状参数。
 //
 // spec（engine 的 state.live2d / scene 的 live2d 指令）：{ src: model3.json 的资源路径, motion?: 名字（动作文件名去掉 .motion3.json，或 r3h 这种「_03h」的简写）, loop?: boolean, variables?: { 参数显示名或 Id: 值 } }
@@ -11,7 +12,8 @@ import { createFrame, evaluateMotion, parseMoc3, parseMotion, updateModel } from
 const VERT = `attribute vec2 a_pos;
 attribute vec2 a_uv;
 varying vec2 v_uv;
-void main() { v_uv = a_uv; gl_Position = vec4(a_pos, 0.0, 1.0); }`
+varying vec2 v_scr;
+void main() { v_uv = a_uv; v_scr = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }`
 const FRAG = `precision mediump float;
 varying vec2 v_uv;
 uniform sampler2D u_tex;
@@ -32,6 +34,26 @@ void main() {
   }
   gl_FragColor = vec4(t.rgb * a, a);
 }`
+// 马赛克（userdata3.json 里 Value = "mosaic" 的 ArtMesh）：krkrlive2d.dll 里的着色器原样——把「到这个网格为止已经画好的画面」按格子取样（格 = 画布 / 16 像素；ceil 取格子的右上角），
+// 网格的形状 + 剪裁蒙版决定哪里打码，alpha 恒为 1（不看网格的纹理，那块纯绿色只是标记）
+const MOSAIC_FRAG = `precision highp float;
+varying vec2 v_scr;
+uniform sampler2D u_scene;
+uniform sampler2D u_mask;
+uniform vec2 u_res;
+uniform vec2 u_param;
+uniform int u_maskMode;
+void main() {
+  vec2 tc = ceil(v_scr * u_param) / u_param;
+  vec4 c = texture2D(u_scene, tc);
+  float a = 1.0;
+  if (u_maskMode > 0) {
+    float m = texture2D(u_mask, gl_FragCoord.xy / u_res).r;
+    a = (u_maskMode == 2) ? (1.0 - m) : m;
+  }
+  gl_FragColor = vec4(c.rgb * a, a);
+}`
+const MOSAIC_CELL = 16   // krkrlive2d.dll 里的默认格子大小（像素，模型画布上）
 const MASK_FRAG = `precision mediump float;
 varying vec2 v_uv;
 uniform sampler2D u_tex;
@@ -86,9 +108,10 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
     try {
       const main = program(FRAG)
       const mask = program(MASK_FRAG)
+      const mosaic = program(MOSAIC_FRAG)
       const loc = (p, n) => gl.getUniformLocation(p, n)
       const minmax = gl.MAX || gl.getExtension('EXT_blend_minmax')?.MAX_EXT
-      gl2 = { main, mask, minmax, u: { tex: loc(main, 'u_tex'), mask: loc(main, 'u_mask'), res: loc(main, 'u_res'), mul: loc(main, 'u_mul'), scr: loc(main, 'u_scr'), opacity: loc(main, 'u_opacity'), maskMode: loc(main, 'u_maskMode') }, um: { tex: loc(mask, 'u_tex') }, maskTex: null, fbo: null, size: [0, 0] }
+      gl2 = { main, mask, minmax, u: { tex: loc(main, 'u_tex'), mask: loc(main, 'u_mask'), res: loc(main, 'u_res'), mul: loc(main, 'u_mul'), scr: loc(main, 'u_scr'), opacity: loc(main, 'u_opacity'), maskMode: loc(main, 'u_maskMode') }, um: { tex: loc(mask, 'u_tex') }, mosaic, uo: { scene: loc(mosaic, 'u_scene'), mask: loc(mosaic, 'u_mask'), res: loc(mosaic, 'u_res'), param: loc(mosaic, 'u_param'), maskMode: loc(mosaic, 'u_maskMode') }, sceneTex: null, maskTex: null, fbo: null, size: [0, 0] }
     } catch (error) { unavailable = true; onUnavailable(error); gl = null; return null }
     return gl
   }
@@ -117,9 +140,17 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       }
       let cdi = null
       if (refs.DisplayInfo) { try { cdi = await fetchJson(dir + refs.DisplayInfo) } catch { /* 没有显示名表：variables 的键要直接是 Id */ } }
+      let mosaic = new Set()
+      if (refs.UserData) {
+        try {
+          const ud = await fetchJson(dir + refs.UserData)
+          const wanted = new Set((ud.UserData || []).filter((u) => u?.Target === 'ArtMesh' && u.Value === 'mosaic').map((u) => u.Id))
+          mosaic = new Set(model.artMeshIds.map((id, i) => (wanted.has(id) ? i : -1)).filter((i) => i >= 0))
+        } catch { /* 没有 userdata：没有马赛克网格 */ }
+      }
       const files = []
       for (const group of Object.values(json.FileReferences?.Motions || {})) for (const m of group) if (m?.File) files.push(m.File)
-      return { model, textures, motions: new Map(), cdi, files, dir, nameToId: new Map((cdi?.Parameters || []).map((p) => [p.Name, p.Id])) }
+      return { model, textures, motions: new Map(), cdi, files, dir, mosaic, nameToId: new Map((cdi?.Parameters || []).map((p) => [p.Name, p.Id])) }
     })()
     promise.catch(() => models.delete(src))
     models.set(src, promise)
@@ -169,7 +200,14 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
   }
   function ensureMask(w, h) {
     if (gl2.fbo && gl2.size[0] === w && gl2.size[1] === h) return
-    if (gl2.fbo) { gl.deleteFramebuffer(gl2.fbo); gl.deleteTexture(gl2.maskTex) }
+    if (gl2.fbo) { gl.deleteFramebuffer(gl2.fbo); gl.deleteTexture(gl2.maskTex); gl.deleteTexture(gl2.sceneTex) }
+    gl2.sceneTex = gl.createTexture()   // 马赛克用：当前画面的拷贝
+    gl.bindTexture(gl.TEXTURE_2D, gl2.sceneTex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
     gl2.maskTex = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, gl2.maskTex)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
@@ -252,6 +290,25 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
           gl.bindFramebuffer(gl.FRAMEBUFFER, null)
           gl.viewport(0, 0, w, h)
         }
+      }
+      if (entry.mosaic.has(i)) {   // 马赛克网格：先把到现在为止的画面拷下来，再按格子取样画进网格形状里
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, gl2.sceneTex)
+        gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, w, h)
+        gl.useProgram(gl2.mosaic)
+        gl.enable(gl.BLEND)
+        gl.blendEquation(gl.FUNC_ADD)
+        gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+        bindMesh(mesh)
+        gl.uniform1i(gl2.uo.scene, 0)
+        gl.activeTexture(gl.TEXTURE1)
+        gl.bindTexture(gl.TEXTURE_2D, gl2.maskTex)
+        gl.uniform1i(gl2.uo.mask, 1)
+        gl.uniform2f(gl2.uo.res, w, h)
+        gl.uniform2f(gl2.uo.param, cw / MOSAIC_CELL, ch / MOSAIC_CELL)
+        gl.uniform1i(gl2.uo.maskMode, maskList.length ? (inverted ? 2 : 1) : 0)
+        gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0)
+        continue
       }
       gl.useProgram(gl2.main)
       gl.enable(gl.BLEND)
