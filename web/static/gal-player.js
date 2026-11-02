@@ -6,7 +6,7 @@ import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } fro
 import { createLive2dLayer } from '/gal-live2d.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 import { attachBarLock } from '/gal-barlock.js'
-import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
+import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
 const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
 // 音量：滑块位置 p（0..1，存进浏览器的就是它）→ 实际增益 volumeGain(p) = p²（感知曲线）。旧版存的是线性值，按滑块位置解释，听起来会比以前小
@@ -33,6 +33,10 @@ export const GAL_SETTINGS = {
   slowKey: 'copymanga.gal.slow',                    // 静态画面 animation4 的降速倍率（1 = 不降速）
   slowDefault: 0.2,                                 // 原查看器写死的值
   slowMin: 0.05,
+  animSpeedKey: 'copymanga.gal.animSpeed',           // 动画速度倍率（渐变 / 黑场 / 等待 / 立绘淡入…的时长除以它；1 = 不调整）
+  animSpeedDefault: 1,
+  animSpeedMin: 0.1,
+  animSpeedMax: 10,
   viewKeyPrefix: 'copymanga.gal.view.',             // 画面放大 / 中心（每个媒体各存一份：copymanga.gal.view.<条目 id> = { still: { zoom, cx, cy }, actor: { … } }）
   stillZoomKey: 'copymanga.gal.stillZoom',          // 旧版全局设置（只读，当作没有按媒体存过时的默认值）
   stillCenterKey: 'copymanga.gal.stillCenter',
@@ -171,6 +175,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   slowInput.title = '动画 4 开始后 1 秒内降速到原速度的多少倍（1 = 不降速，原查看器是 0.2）'
   const slowRow = el('label', 'gal-more-field')
   slowRow.append(el('span', '', '动画4降速'), slowInput, el('span', '', '倍'))
+  const animInput = el('input', 'gal-more-number')
+  animInput.type = 'number'
+  animInput.min = String(GAL_SETTINGS.animSpeedMin)
+  animInput.max = String(GAL_SETTINGS.animSpeedMax)
+  animInput.step = '0.1'
+  animInput.title = '动画速度倍率：换背景的渐变、黑场、等待、立绘淡入等动画的时长除以它（2 = 快一倍，0.5 = 慢一半，1 = 不调整）；语音 / 音乐 / 视频不受影响'
+  const animRow = el('label', 'gal-more-field')
+  animRow.append(el('span', '', '动画速度'), animInput, el('span', '', '倍'))
   const fpsInput = el('input', 'gal-more-number')
   fpsInput.type = 'number'
   fpsInput.min = '1'
@@ -275,7 +287,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), row('语音/音效', seRange, seValue)),
     section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput)),
-    section('画面', slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
+    section('画面', animRow, slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
   )
   hud.append(box)
   // 工具栏不再叠在舞台里：放在舞台下面、播放器最底部，和列表页底部固定条同一个位置、同一个顺序（↑ 在最左）
@@ -347,6 +359,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     slowInput.value = String(slowFactor)
     try { localStorage.setItem(GAL_SETTINGS.slowKey, String(slowFactor)) } catch { /* 存不了就只在这一页生效 */ }
     if (spineLayer) paintSpines(false)
+  })
+  let animSpeed = loadNumber(GAL_SETTINGS.animSpeedKey, GAL_SETTINGS.animSpeedDefault, GAL_SETTINGS.animSpeedMin, GAL_SETTINGS.animSpeedMax)
+  animInput.value = String(animSpeed)
+  animInput.addEventListener('change', () => {
+    const n = Number(animInput.value)
+    animSpeed = Number.isFinite(n) && animInput.value !== '' ? Math.max(GAL_SETTINGS.animSpeedMin, Math.min(GAL_SETTINGS.animSpeedMax, n)) : GAL_SETTINGS.animSpeedDefault
+    animInput.value = String(animSpeed)
+    try { localStorage.setItem(GAL_SETTINGS.animSpeedKey, String(animSpeed)) } catch { /* 存不了就只在这一页生效 */ }
   })
   let frameFps = Math.round(loadNumber(GAL_SETTINGS.frameFpsKey, GAL_SETTINGS.frameFpsDefault, 1, GAL_SETTINGS.frameFpsMax))
   fpsInput.value = String(frameFps)
@@ -946,8 +966,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
         }
         continue
       }
-      const seconds = skipping ? 0 : commandDuration(command)
-      applyCommand(state, command, choices)
+      const scaled = scaleCommandTime(command, animSpeed)   // 动画速度：时长除以倍速（1 = 原样）
+      const seconds = skipping ? 0 : commandDuration(scaled)
+      applyCommand(state, scaled, choices)
       switch (command.op) {
         case 'bg':
         case 'bgoff':
@@ -1020,14 +1041,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
           setBgVoices(state.bgvoices)
           break
         case 'ui':
-          paintUi(skipping, command.seconds || 0)
+          paintUi(skipping, scaled.seconds || 0)
           break
         case 'shake':
-          if (!skipping) playShake(command)
+          if (!skipping) playShake(scaled)
           break
         case 'flash':
         case 'wash':
-          if (!skipping) playFlash(command)
+          if (!skipping) playFlash(scaled)
           break
         default:
       }

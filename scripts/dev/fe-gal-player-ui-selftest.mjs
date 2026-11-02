@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { volumeGain } from '../../web/static/gal-engine.js'
+import { scaleCommandTime, volumeGain } from '../../web/static/gal-engine.js'
 
 const require = createRequire(import.meta.url)
 let chromium
@@ -25,6 +25,16 @@ const J = JSON.stringify
 check('volumeGain：0 → 0，1 → 1，0.5 → 0.25（p²）', volumeGain(0) === 0 && volumeGain(1) === 1 && volumeGain(0.5) === 0.25)
 check('volumeGain：单调递增；越界 / 非数字被夹到 0..1', [0, 0.1, 0.3, 0.6, 1].every((p, i, a) => i === 0 || volumeGain(p) > volumeGain(a[i - 1])) && volumeGain(2) === 1 && volumeGain(-1) === 0 && volumeGain(NaN) === 0 && Math.abs(volumeGain('0.4') - 0.16) < 1e-9)
 check('volumeGain：左端比线性更细（0.1 → 0.01），低位不会一下子消失', Math.abs(volumeGain(0.1) - 0.01) < 1e-9 && volumeGain(0.9) < 0.9)
+
+// ---- 0b. 动画速度（纯函数）：seconds / fade / delay 除以倍速，音频 / 视频不动，倍速 1 原样返回同一个对象 ----
+{
+  const bg = { op: 'bg', src: 'a.png', fade: 1 }
+  const fade = { op: 'fade', to: 'black', seconds: 0.6 }
+  const stand = { op: 'stand', slot: 'A', fade: 0.25, parts: [] }
+  const pan = { op: 'bgPan', to: [1, 1], seconds: 2, delay: 1 }
+  check('scaleCommandTime：倍速 2 = 渐变 / 黑场 / 立绘淡入 / 平移的 seconds、fade、delay 减半；原指令不被改', scaleCommandTime(bg, 2).fade === 0.5 && scaleCommandTime(fade, 2).seconds === 0.3 && scaleCommandTime(stand, 2).fade === 0.125 && scaleCommandTime(pan, 2).seconds === 1 && scaleCommandTime(pan, 2).delay === 0.5 && bg.fade === 1 && pan.seconds === 2)
+  check('scaleCommandTime：倍速 1 / 非法值 = 原样返回同一个对象；音频 / 视频指令（bgm / voice / movie…）不缩放；没有时长字段的指令原样', scaleCommandTime(bg, 1) === bg && scaleCommandTime(bg, 0) === bg && scaleCommandTime(bg, NaN) === bg && scaleCommandTime({ op: 'bgmStop', fade: 1 }, 2).fade === 1 && scaleCommandTime({ op: 'wait', seconds: 1 }, 4).seconds === 0.25 && scaleCommandTime({ op: 'text', segments: [] }, 2).op === 'text')
+}
 
 // ---- 夹具：一个 uviewer-csv 目录；几个脚本 ----
 const LONG = '这是一句很长很长的台词，用来测试文本框在文字太多的时候会不会自动缩小字号，让它刚好放进固定的两行高度里面去。'.repeat(1)
@@ -135,11 +145,11 @@ try {
   const pop = await page.evaluate(() => {
     const p = document.querySelector('.gal-settings')
     const q = (s) => Boolean(p.querySelector(s))
-    return { shown: !p.hidden && getComputedStyle(p).display !== 'none', titles: [...p.querySelectorAll('.gal-set-section')].map((s) => s.dataset.title), font: q('.gal-set-row input[title*="字体"]'), opacity: q('.gal-set-row input[title*="透明"]'), bgm: q('.gal-set-row input[title*="BGM"]'), se: q('.gal-set-row input[title*="语音"]'), delay: q('.gal-set-number:not(.gal-set-autochoice)'), auto: q('.gal-set-autochoice'), imm: q('.gal-imm'), fs: q('.gal-fs'), slow: q('input.gal-more-number[max="1"]'), fps: q('input.gal-more-number[max="60"]'), zoom: q('input.gal-more-number[max="4"]'), center: q('.gal-center-btn'), step: p.querySelector('.gal-set-row input[title*="BGM"]')?.step, pct: p.querySelectorAll('.gal-set-row')[2]?.querySelector('.gal-set-value')?.textContent, scrollable: getComputedStyle(p).overflowY, r: (() => { const b = p.getBoundingClientRect(); const s = document.querySelector('.gal-stage').getBoundingClientRect(); return b.left >= s.left - 1 && b.right <= s.right + 1 && b.top >= 0 && b.bottom <= innerHeight })() }
+    return { shown: !p.hidden && getComputedStyle(p).display !== 'none', titles: [...p.querySelectorAll('.gal-set-section')].map((s) => s.dataset.title), font: q('.gal-set-row input[title*="字体"]'), opacity: q('.gal-set-row input[title*="透明"]'), bgm: q('.gal-set-row input[title*="BGM"]'), se: q('.gal-set-row input[title*="语音"]'), delay: q('.gal-set-number:not(.gal-set-autochoice)'), auto: q('.gal-set-autochoice'), imm: q('.gal-imm'), fs: q('.gal-fs'), slow: q('input.gal-more-number[max="1"]'), fps: q('input.gal-more-number[max="60"]'), zoom: q('input.gal-more-number[max="4"]'), anim: q('input.gal-more-number[max="10"]'), center: q('.gal-center-btn'), step: p.querySelector('.gal-set-row input[title*="BGM"]')?.step, pct: p.querySelectorAll('.gal-set-row')[2]?.querySelector('.gal-set-value')?.textContent, scrollable: getComputedStyle(p).overflowY, r: (() => { const b = p.getBoundingClientRect(); const s = document.querySelector('.gal-stage').getBoundingClientRect(); return b.left >= s.left - 1 && b.right <= s.right + 1 && b.top >= 0 && b.bottom <= innerHeight })() }
   })
   check('弹层分 显示 / 音频 / 播放 / 画面 四组', J(pop.titles) === J(['显示', '音频', '播放', '画面']), J(pop.titles))
   check('弹层里有原来 ⚙ 的全部控件：字体 / 透明度 / BGM / 语音音效 / 自动等待 / 自动选择', pop.shown && pop.font && pop.opacity && pop.bgm && pop.se && pop.delay && pop.auto, J(pop))
-  check('弹层里有原来「更多」的全部控件：沉浸 / 全屏 / 动画4降速 / 帧动画速度 / 画面放大 / 选择中心', pop.imm && pop.fs && pop.slow && pop.fps && pop.zoom && pop.center, J(pop))
+  check('弹层里有原来「更多」的全部控件：沉浸 / 全屏 / 动画4降速 / 帧动画速度 / 画面放大 / 选择中心，和新加的「动画速度」（默认 1）', pop.imm && pop.fs && pop.slow && pop.fps && pop.zoom && pop.center && pop.anim, J(pop))
   check('音量滑块步长 0.02、旁边有百分比；弹层在舞台宽度内、不超出窗口、可滚动', pop.step === '0.02' && /%$/.test(pop.pct || '') && pop.scrollable === 'auto' && pop.r, J(pop))
   await page.screenshot({ path: path.join(shotDir, 'popover.png') })
   const stepBefore = await cnt()

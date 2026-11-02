@@ -4,7 +4,7 @@
 // 每个候选都要过 resolveAsset（存在 + 只认媒体目录内的真实路径），按真实文件去重，最多 MAX_THUMBS 张。
 // 视频（mp4 / mkv / webm / mov）也可以是候选：数组里还是它的路径，前端取图时带 frame=1，服务端给一帧 JPEG（见 video-thumb.mjs）。
 // 扩展点：骨架（spine / live2d）截图暂不做——以后可以在 thumbSources 里加 kind: 'skeleton'，在这里的 collectSources 里接渲染器。
-import { readdir, stat } from 'node:fs/promises'
+import { open, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { CARD_PLACEHOLDERS, FILE_PLACEHOLDERS, expandTemplate } from './config.mjs'
 
@@ -99,8 +99,72 @@ export function invalidateThumbCaches(mediaDir) {
 }
 const trim = (map, max) => { while (map.size > max) map.delete(map.keys().next().value) }
 
+// ---- 缩略图黑名单（config.thumbSkip）----
+// 图片尺寸（只读文件头）：PNG / JPEG / WebP；认不出 = null
+export async function imageSizeOf(file) {
+  let handle
+  try {
+    handle = await open(file, 'r')
+    const buf = Buffer.alloc(262144)
+    const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
+    const b = buf.subarray(0, bytesRead)
+    if (b.length > 24 && b.readUInt32BE(0) === 0x89504e47) return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) }
+    if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8) {
+      let p = 2
+      while (p + 9 < b.length) {
+        if (b[p] !== 0xff) { p += 1; continue }
+        const marker = b[p + 1]
+        if (marker === 0xff) { p += 1; continue }
+        if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { height: b.readUInt16BE(p + 5), width: b.readUInt16BE(p + 7) }
+        if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) { p += 2; continue }
+        p += 2 + b.readUInt16BE(p + 2)
+      }
+      return null
+    }
+    if (b.length > 30 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') {
+      const kind = b.toString('latin1', 12, 16)
+      if (kind === 'VP8X') return { width: 1 + b.readUIntLE(24, 3), height: 1 + b.readUIntLE(27, 3) }
+      if (kind === 'VP8 ') return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff }
+      if (kind === 'VP8L') { const bits = b.readUInt32LE(21); return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 } }
+    }
+    return null
+  } catch { return null } finally { await handle?.close().catch(() => {}) }
+}
+const MIB = 1024 * 1024
+const skipCache = new Map()   // 真实路径|mtime|大小 → { size, dims }
+// 命中黑名单的原因（没命中 = ''）：rules = config.thumbSkip 编译好的（match 变成 re）；一条规则里写了的条件要全部满足
+export async function thumbSkipReason(rules, real, candidate) {
+  if (!rules.length) return ''
+  let info
+  try { info = await stat(real) } catch { return '' }
+  const key = `${real}|${info.mtimeMs}|${info.size}`
+  let cached = skipCache.get(key)
+  if (!cached) { cached = { size: info.size, dims: undefined }; skipCache.set(key, cached); trim(skipCache, 5000) }
+  for (const [i, r] of rules.entries()) {
+    const parts = []
+    let ok = true
+    if (r.re) { if (r.re.test(candidate)) parts.push(`路径匹配 /${r.match}/`); else ok = false }
+    if (ok && r.minMB !== undefined) { if (cached.size < r.minMB * MIB) parts.push(`${(cached.size / MIB).toFixed(2)}MB < ${r.minMB}MB`); else ok = false }
+    if (ok && r.maxMB !== undefined) { if (cached.size > r.maxMB * MIB) parts.push(`${(cached.size / MIB).toFixed(2)}MB > ${r.maxMB}MB`); else ok = false }
+    if (ok && ['minWidth', 'minHeight', 'maxWidth', 'maxHeight'].some((k) => r[k] !== undefined)) {
+      if (cached.dims === undefined) cached.dims = await imageSizeOf(real)
+      const d = cached.dims
+      if (!d) ok = false
+      else {
+        for (const [k, test, label] of [['minWidth', d.width < r.minWidth, `宽 ${d.width} < ${r.minWidth}`], ['minHeight', d.height < r.minHeight, `高 ${d.height} < ${r.minHeight}`], ['maxWidth', d.width > r.maxWidth, `宽 ${d.width} > ${r.maxWidth}`], ['maxHeight', d.height > r.maxHeight, `高 ${d.height} > ${r.maxHeight}`]]) {
+          if (r[k] === undefined) continue
+          if (test) parts.push(label); else { ok = false; break }
+        }
+      }
+    }
+    if (ok) return `命中 thumbSkip[${i}]（${parts.join('，')}）`
+  }
+  return ''
+}
+
 export function createThumbEngine({ mediaDir, config, resolveAsset }) {
   const roots = config.resourceRoots
+  const skipRules = (config.thumbSkip || []).map((r) => ({ ...r, re: r.match ? new RegExp(r.match, 'i') : null }))
   const split = (rel) => (rel ? rel.split('/') : [])
   // 资源路径（相对资源根 / ~/ 相对媒体目录）→ 可能的磁盘目录（和 resolveAsset 同样的查找顺序：每个资源根 + 去掉 stripPrefixes）
   function absDirs(rel) {
@@ -178,7 +242,13 @@ export function createThumbEngine({ mediaDir, config, resolveAsset }) {
       if (wild && !found.length) { why.push(`${from}：${candidate} → 没有匹配的文件`); continue }
       for (const one of found) {
         if (out.size >= cap) return
-        try { const real = await resolveAsset(one); const key = typeof real === 'string' ? real : one; if (!out.has(key)) out.set(key, one) } catch (error) { if (!wild) why.push(`${from}：${one} → ${whyOf(error)}`) }
+        try {
+          const real = await resolveAsset(one)
+          const key = typeof real === 'string' ? real : one
+          if (out.has(key)) continue
+          if (skipRules.length && typeof real === 'string') { const reason = await thumbSkipReason(skipRules, real, one); if (reason) { why.push(`${from}：${one} → ${reason}，跳过`); continue } }
+          out.set(key, one)
+        } catch (error) { if (!wild) why.push(`${from}：${one} → ${whyOf(error)}`) }
       }
     }
   }

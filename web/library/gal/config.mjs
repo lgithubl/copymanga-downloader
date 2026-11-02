@@ -116,6 +116,10 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   //   skip      正则数组（对无扩展名的文件名，不分大小写），默认 black / white / blank 按单词；scanSteps 最多扫几步（10～2000，默认 200）
   //   topUp     true = 规则（scriptThumbs / thumbSources / scriptIndex）命中了图但不足 max 张时，再从脚本自己的 cg / stand / bg 补到 max 张（规则的图在前）；默认 false = 规则命中就不兜底
   //   only      白名单：正则数组（对完整的图片路径，不分大小写），写了就只要路径匹配其中任一条的图；默认 []（不限）。skip 和 only 同时写：先 only 再 skip
+  // 缩略图黑名单（轮播 / 封面的每一张候选图都过一遍，命中就不要，换下一张；每个游戏自己配）：[{ match, minMB, maxMB, minWidth, minHeight, maxWidth, maxHeight }]（最多 10 条）
+  //   一条规则里写了几个条件就要全部满足才算命中（AND）；规则之间是 OR：{ minMB: 1.3 } = 文件小于 1.3MB 的丢掉；{ match: 'cha', minWidth: 800 } = 路径带 cha 且宽小于 800 的丢掉（min* = 小于它丢，max* = 大于它丢）
+  //   match 正则（对图片路径，不分大小写）；minMB / maxMB：文件大小小于 / 大于它就命中（MB，可以小数；虚拟容器里的图按转成 PNG 之后的大小）；minWidth / minHeight / maxWidth / maxHeight：图片尺寸（像素，认 PNG / JPEG / WebP；读不出尺寸的图这几个条件当不命中）
+  thumbSkip: [],
   thumbFallback: { ...DEFAULT_THUMB_FALLBACK, prefer: [...DEFAULT_THUMB_FALLBACK.prefer], skip: [...DEFAULT_THUMB_FALLBACK.skip], only: [] },
   // 目录卡片的封面（目录卡片没有 thumbSources / dirThumbs 规则给图时，用它里面脚本的封面；现在只有声明了 sceneThumbs 的适配器（utage-book）的目录会用）：
   //   enabled  'auto'（默认：适配器声明了 sceneThumbs 才用）| true | false
@@ -396,6 +400,29 @@ export function normalizeGalConfigWithWarnings(raw) {
     thumbSources.push(entry)
   }
 
+  // thumbSkip：缩略图黑名单（见 DEFAULT_GAL_CONFIG 里的说明）
+  const thumbSkip = []
+  if (v.thumbSkip !== undefined && !Array.isArray(v.thumbSkip)) warn('thumbSkip', '不是数组，不过滤', v.thumbSkip)
+  const SKIP_NUMS = ['minMB', 'maxMB', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight']
+  for (const rule of Array.isArray(v.thumbSkip) ? v.thumbSkip.slice(0, 10) : []) {
+    if (!isPlainObject(rule)) { warn('thumbSkip', '这一项不是对象，已丢掉', rule); continue }
+    for (const key of Object.keys(rule)) if (key !== 'match' && !SKIP_NUMS.includes(key)) warn('thumbSkip', `不认识的字段 ${key}，已丢掉`, key)
+    const entry = {}
+    if (rule.match !== undefined) {
+      const source = regexOrEmpty(rule.match)
+      if (source) entry.match = source
+      else warn('thumbSkip.match', '不是合法正则 / 太长，已丢掉这个条件', rule.match)
+    }
+    for (const key of SKIP_NUMS) {
+      if (rule[key] === undefined) continue
+      const n = Number(rule[key])
+      if (rule[key] === null || rule[key] === '' || typeof rule[key] === 'boolean' || !Number.isFinite(n) || n < 0) { warn(`thumbSkip.${key}`, '要是 ≥ 0 的数字，已丢掉这个条件', rule[key]); continue }
+      entry[key] = n
+    }
+    if (!Object.keys(entry).length) { warn('thumbSkip', '一个有效条件都没有，已丢掉这条规则', rule); continue }
+    thumbSkip.push(entry)
+  }
+  if (Array.isArray(v.thumbSkip) && v.thumbSkip.length > 10) warn('thumbSkip', '超过 10 条，多出的被丢掉', v.thumbSkip[10])
   // thumbFallback：兜底封面（见 DEFAULT_GAL_CONFIG 里的说明）。没写 = 默认；写了的字段逐个校验，不合格的退回默认并报告
   const dtf = DEFAULT_THUMB_FALLBACK
   const thumbFallback = { ...dtf, prefer: [...dtf.prefer], skip: [...dtf.skip], kindMax: {} }
@@ -936,6 +963,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     dirThumbs: v.dirThumbs === undefined ? d.dirThumbs.map((r) => ({ ...r, paths: [...r.paths] })) : dirThumbs,
     scriptThumbs: v.scriptThumbs === undefined ? d.scriptThumbs.slice() : (Array.isArray(v.scriptThumbs) ? v.scriptThumbs : []).map((t) => text(t, 300)).filter(Boolean).slice(0, 10),
     thumbSources: v.thumbSources === undefined ? [] : thumbSources,
+    thumbSkip,
     thumbFallback,
     dirCover,
     containers,

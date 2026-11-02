@@ -251,6 +251,19 @@ export function commandDuration(command) {
   return 0
 }
 
+// 动画速度（播放器「设置 → 动画速度」）：把指令里的动画时长（seconds / fade / delay）除以倍速，返回新指令（不改原指令；倍速 1 原样返回）。
+// 音频（bgm / se / voice / 视频 / bgvoice）和不是时长的字段不动；wait 也算「动画」一起缩放
+const NO_SCALE_OPS = new Set(['bgm', 'bgmStop', 'bgse', 'bgseStop', 'voice', 'se', 'movie', 'movieOff', 'bgvoice', 'bgvoiceOff'])
+export function scaleCommandTime(command, speed) {
+  const k = Number(speed)
+  if (!(k > 0) || k === 1 || NO_SCALE_OPS.has(command.op)) return command
+  let out = command
+  for (const key of ['seconds', 'fade', 'delay']) {
+    if (typeof command[key] === 'number' && command[key] > 0) { if (out === command) out = { ...command }; out[key] = command[key] / k }
+  }
+  return out
+}
+
 export const segmentsText = (segments) => (segments || []).map((segment) => segment.text).join('')
 
 // 回看记录：到某一步为止出现过的台词（说话人 + 内容）

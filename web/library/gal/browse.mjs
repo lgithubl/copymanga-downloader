@@ -213,7 +213,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
   const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}|${maxScriptBytes}`
-  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbFallback, config.thumbRender, config.sceneMarkers, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)
+  const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbFallback, config.thumbSkip, config.thumbRender, config.sceneMarkers, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)
   let namesCache = null
 
   const absOf = (set, rel) => path.join(mediaDir, ...(set.dir ? set.dir.split('/') : []), ...(rel ? rel.split('/') : []))
