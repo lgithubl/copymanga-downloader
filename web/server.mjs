@@ -20,6 +20,7 @@ import { runLrrMigration } from './library/archive-migration.mjs'
 import { hasGeneratedPreview } from './library/index-flags.mjs'
 import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
+import { createGalTranslator } from './library/gal-translate.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
 import { parseReplacements, toSpokenText } from './library/epub-tts-text.mjs'
 import { cleanTtsRules, parseTtsRules, ttsParamsFor, ttsVoiceKey } from './library/epub-tts-flags.mjs'
@@ -41,6 +42,7 @@ const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
 const TAG_OVERRIDE_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-overrides')
 const TAG_SCRIPT_CONFIG_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-script-config')
 const EPUB_TTS_CACHE_DIR = path.join(DATA_DIR, 'cache', 'epub-tts')
+const GAL_TRANSLATE_CACHE_DIR = path.join(DATA_DIR, 'cache', 'gal-translate')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -100,6 +102,7 @@ const tagQueue = []
 const runningTagJobIds = new Set()
 let tagWorkerTimer = null
 let config = defaultConfig()
+const galTranslator = createGalTranslator({ getConfig: () => config, cacheDir: GAL_TRANSLATE_CACHE_DIR })
 const execFileAsync = promisify(execFile)
 const APP_COMIC_METADATA = '元数据.json'
 const APP_CHAPTER_METADATA = '章节元数据.json'
@@ -383,6 +386,21 @@ function defaultConfig() {
     // （逗号顿号分号等）拆开，还超就硬切——拆分逻辑见 web/static/app.js 的
     // splitLongEpubTtsText。
     epubTtsBatchMaxChars: 200,
+    // Gal 播放器的台词翻译（OpenAI 兼容的 /v1/chat/completions，和 ai-translate-subtitle-v1 同一类后端）。见 library/gal-translate.mjs
+    // 缓存按「模型 + 目标语言 + 提示词 + 原文」；并发上限 = 同时打到模型的批数（本地模型 / GPU 扛不住乱打，默认 1）
+    galTranslateEnabled: false,
+    galTranslateApiBase: 'http://127.0.0.1:8080',
+    galTranslateApiKey: '',
+    galTranslateModel: 'sakura',
+    galTranslatePrompt: '',   // 空 = 内置的「保持口语化和角色语气」提示词
+    galTranslateSourceLanguage: 'ja',
+    galTranslateTargetLanguage: 'zh',
+    galTranslateBatchSize: 15,
+    galTranslateContextSize: 2,
+    galTranslateMaxConcurrency: 1,
+    galTranslateTimeoutMs: 120000,
+    galTranslateRetryCount: 2,
+    galTranslateLookahead: 40,   // 播放器往后预加载多少句
     mediaImportProfiles: {
       'rj-media': {
         maxDepth: 6,
@@ -534,6 +552,19 @@ function normalizeConfig(value) {
     epubTtsMaxConcurrency: clampNumber(value?.epubTtsMaxConcurrency, 1, 8, defaults.epubTtsMaxConcurrency),
     epubTtsBatchMaxSentences: clampNumber(value?.epubTtsBatchMaxSentences, 1, 20, defaults.epubTtsBatchMaxSentences),
     epubTtsBatchMaxChars: clampNumber(value?.epubTtsBatchMaxChars, 20, 2000, defaults.epubTtsBatchMaxChars),
+    galTranslateEnabled: value?.galTranslateEnabled === true,
+    galTranslateApiBase: String(value?.galTranslateApiBase ?? defaults.galTranslateApiBase).trim().slice(0, 300),
+    galTranslateApiKey: String(value?.galTranslateApiKey ?? '').trim().slice(0, 300),
+    galTranslateModel: String(value?.galTranslateModel || defaults.galTranslateModel).trim().slice(0, 120),
+    galTranslatePrompt: String(value?.galTranslatePrompt ?? '').slice(0, 4000),
+    galTranslateSourceLanguage: String(value?.galTranslateSourceLanguage || defaults.galTranslateSourceLanguage).trim().slice(0, 12),
+    galTranslateTargetLanguage: String(value?.galTranslateTargetLanguage || defaults.galTranslateTargetLanguage).trim().slice(0, 12),
+    galTranslateBatchSize: clampNumber(value?.galTranslateBatchSize, 1, 50, defaults.galTranslateBatchSize),
+    galTranslateContextSize: clampNumber(value?.galTranslateContextSize, 0, 10, defaults.galTranslateContextSize),
+    galTranslateMaxConcurrency: clampNumber(value?.galTranslateMaxConcurrency, 1, 8, defaults.galTranslateMaxConcurrency),
+    galTranslateTimeoutMs: clampNumber(value?.galTranslateTimeoutMs, 1000, 3600000, defaults.galTranslateTimeoutMs),
+    galTranslateRetryCount: clampNumber(value?.galTranslateRetryCount, 0, 5, defaults.galTranslateRetryCount),
+    galTranslateLookahead: clampNumber(value?.galTranslateLookahead, 0, 200, defaults.galTranslateLookahead),
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     mediaOpenInNewTabRules: Array.isArray(value?.mediaOpenInNewTabRules)
@@ -5052,6 +5083,13 @@ async function route(req, res) {
     }
     if (pathname === '/api/inventory-update' && req.method === 'GET') {
       return json(res, 200, latestInventoryUpdate() || null)
+    }
+    // Gal 台词翻译：{ lines: [字符串 | { text, ctx }], priority: 'now' | 'ahead', waitMs }；到点没好的句子回 pending，客户端稍后再要（缓存 / 在途去重，不会重复打模型）。断开连接 = 撤掉这个请求独占、还没开始的句子
+    if (pathname === '/api/gal/translate' && req.method === 'POST') {
+      const controller = new AbortController()
+      res.on('close', () => { if (!res.writableEnded) controller.abort() })
+      const out = await galTranslator.handle(await readJson(req), { signal: controller.signal })
+      return json(res, out.status, out.body)
     }
     if (pathname === '/api/config' && req.method === 'GET') return json(res, 200, config)
     if (pathname === '/api/config' && req.method === 'POST') {

@@ -261,6 +261,19 @@ const els = {
   configEpubTtsMaxConcurrency: document.querySelector('#config-epub-tts-max-concurrency'),
   configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
+  configGalTranslateEnabled: document.querySelector('#config-gal-translate-enabled'),
+  configGalTranslateApiBase: document.querySelector('#config-gal-translate-api-base'),
+  configGalTranslateApiKey: document.querySelector('#config-gal-translate-api-key'),
+  configGalTranslateModel: document.querySelector('#config-gal-translate-model'),
+  configGalTranslateSource: document.querySelector('#config-gal-translate-source'),
+  configGalTranslateTarget: document.querySelector('#config-gal-translate-target'),
+  configGalTranslatePrompt: document.querySelector('#config-gal-translate-prompt'),
+  configGalTranslateBatch: document.querySelector('#config-gal-translate-batch'),
+  configGalTranslateContext: document.querySelector('#config-gal-translate-context'),
+  configGalTranslateConcurrency: document.querySelector('#config-gal-translate-concurrency'),
+  configGalTranslateLookahead: document.querySelector('#config-gal-translate-lookahead'),
+  configGalTranslateTimeout: document.querySelector('#config-gal-translate-timeout'),
+  configGalTranslateRetry: document.querySelector('#config-gal-translate-retry'),
   configMediaSubtitleExtensions: document.querySelector('#config-media-subtitle-extensions'),
   configLibraryDirectOpenRules: document.querySelector('#config-library-direct-open-rules'),
   configMediaNewTabRules: document.querySelector('#config-media-new-tab-rules'),
@@ -1488,6 +1501,19 @@ function applyConfig(config) {
   els.configEpubTtsMaxConcurrency.value = config.epubTtsMaxConcurrency || 1
   els.configEpubTtsBatchMaxSentences.value = config.epubTtsBatchMaxSentences || 5
   els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
+  els.configGalTranslateEnabled.checked = config.galTranslateEnabled === true
+  els.configGalTranslateApiBase.value = config.galTranslateApiBase || ''
+  els.configGalTranslateApiKey.value = config.galTranslateApiKey || ''
+  els.configGalTranslateModel.value = config.galTranslateModel || 'sakura'
+  els.configGalTranslateSource.value = config.galTranslateSourceLanguage || 'ja'
+  els.configGalTranslateTarget.value = config.galTranslateTargetLanguage || 'zh'
+  els.configGalTranslatePrompt.value = config.galTranslatePrompt || ''
+  els.configGalTranslateBatch.value = config.galTranslateBatchSize || 15
+  els.configGalTranslateContext.value = config.galTranslateContextSize ?? 2
+  els.configGalTranslateConcurrency.value = config.galTranslateMaxConcurrency || 1
+  els.configGalTranslateLookahead.value = config.galTranslateLookahead ?? 40
+  els.configGalTranslateTimeout.value = config.galTranslateTimeoutMs || 120000
+  els.configGalTranslateRetry.value = config.galTranslateRetryCount ?? 2
   els.configMediaImportSourceRoots.value = config.mediaImportSourceRoots || ''
   els.configTextSectionChars.value = config.textSectionChars > 0 ? String(config.textSectionChars) : ''
   els.configMediaSubtitleExtensions.value = config.mediaSubtitleExtensions || defaultMediaSubtitleExtensions
@@ -4364,6 +4390,8 @@ function renderGal(reader) {
     startStep: pendingStart ? pendingStart.step : null,   // 场景跳转点：从这一步（脚本里的步号）开始
     startChoices: pendingStart || resume >= 0.98 ? {} : savedChoices,
     viewKey: readerOwner(reader)?.itemId || '',   // 画面放大 / 中心按媒体（条目）存
+    // 台词翻译（设置页 → Gal 翻译；没启用 / 没填模型地址 = 播放器里不出「翻译」按钮）
+    translate: appConfig?.galTranslateEnabled && appConfig?.galTranslateApiBase ? { enabled: true, lookahead: appConfig.galTranslateLookahead ?? 40, batch: appConfig.galTranslateBatchSize ?? 15, context: appConfig.galTranslateContextSize ?? 2 } : null,
     // 「更多 → 显示马赛克层」改了之后：按新的设置重取当前这份脚本
     onReload: () => { galNavigate(reader, reader.node?.id ?? reader.section?.sectionId ?? '', 'self').catch((error) => alert(error.message)) },
     onStep: (step, total) => {
@@ -8733,6 +8761,19 @@ els.configSave.addEventListener('click', async () => {
         epubTtsMaxConcurrency: Number(els.configEpubTtsMaxConcurrency.value),
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
+        galTranslateEnabled: els.configGalTranslateEnabled.checked,
+        galTranslateApiBase: els.configGalTranslateApiBase.value,
+        galTranslateApiKey: els.configGalTranslateApiKey.value,
+        galTranslateModel: els.configGalTranslateModel.value,
+        galTranslateSourceLanguage: els.configGalTranslateSource.value,
+        galTranslateTargetLanguage: els.configGalTranslateTarget.value,
+        galTranslatePrompt: els.configGalTranslatePrompt.value,
+        galTranslateBatchSize: Number(els.configGalTranslateBatch.value),
+        galTranslateContextSize: Number(els.configGalTranslateContext.value),
+        galTranslateMaxConcurrency: Number(els.configGalTranslateConcurrency.value),
+        galTranslateLookahead: Number(els.configGalTranslateLookahead.value),
+        galTranslateTimeoutMs: Number(els.configGalTranslateTimeout.value),
+        galTranslateRetryCount: Number(els.configGalTranslateRetry.value),
         mediaSubtitleExtensions: els.configMediaSubtitleExtensions.value,
         libraryDirectOpenRules: directOpenRules,
         mediaOpenInNewTabRules: newTabRules.media,

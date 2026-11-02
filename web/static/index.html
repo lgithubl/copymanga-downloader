@@ -792,6 +792,19 @@
               <label>每批最大句数（预加载从 1 句开始逐批递增，封顶这个数）<input id="config-epub-tts-batch-max-sentences" type="number" min="1" max="20" step="1" /></label>
               <label>每批最大字符数（累计超了就少装几句；单句本身超了会先按次级标点/硬切拆开）<input id="config-epub-tts-batch-max-chars" type="number" min="20" max="2000" step="1" /></label>
 
+              <h3>Gal 翻译（播放器的「翻译」按钮）</h3>
+              <label class="checkbox-line"><input id="config-gal-translate-enabled" type="checkbox" />启用台词翻译（OpenAI 兼容的 /v1/chat/completions，如 sakura / llama.cpp / vLLM）</label>
+              <label>模型服务地址<input id="config-gal-translate-api-base" placeholder="http://127.0.0.1:8080" /></label>
+              <label>API Key（可留空）<input id="config-gal-translate-api-key" type="password" autocomplete="off" /></label>
+              <label>模型名<input id="config-gal-translate-model" placeholder="sakura" /></label>
+              <label>源语言 / 目标语言<span class="inline-pair"><input id="config-gal-translate-source" placeholder="ja" size="6" /><input id="config-gal-translate-target" placeholder="zh" size="6" /></span></label>
+              <label>提示词（留空 = 内置：保持口语化和角色语气，不加解释）<textarea id="config-gal-translate-prompt" rows="3"></textarea></label>
+              <label>每批句数（一次请求翻译多少句；越大越省，但模型答错一批的损失也越大）<input id="config-gal-translate-batch" type="number" min="1" max="50" step="1" /></label>
+              <label>上文句数（每批带前面几句当语境）<input id="config-gal-translate-context" type="number" min="0" max="10" step="1" /></label>
+              <label>最大并发（同时打到模型的批数；本地模型 / GPU 扛不住乱打，默认 1）<input id="config-gal-translate-concurrency" type="number" min="1" max="8" step="1" /></label>
+              <label>预加载（播放器往后提前翻译多少句，0 = 不预加载）<input id="config-gal-translate-lookahead" type="number" min="0" max="200" step="1" /></label>
+              <label>单次请求超时（毫秒）/ 失败重试次数<span class="inline-pair"><input id="config-gal-translate-timeout" type="number" min="1000" max="3600000" step="1000" /><input id="config-gal-translate-retry" type="number" min="0" max="5" step="1" /></span></label>
+
               <h3>导出相关</h3>
               <label>导出目录<input id="config-export-dir" /></label>
               <label>导出目录格式<input id="config-export-dir-fmt" /></label>

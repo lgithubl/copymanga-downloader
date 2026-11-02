@@ -189,7 +189,7 @@ try {
   check('音频：语音 / 音效 / 背景音效 / 背景人声 / 视频 各一个滑块；旧的「语音/音效」值（0.3）当它们的初始值；脚本里没出现的组（背景音效 / 背景人声 / 视频）隐藏', J(groups.map((g) => g[0])) === J(['voice', 'sfx', 'bgse', 'bgvoice', 'movie']) && groups.every((g) => g[2] === '0.3') && groups.filter((g) => ['bgse', 'bgvoice', 'movie'].includes(g[0])).every((g) => g[1] === true), J(groups))
   await page.$eval('[data-audio-group="voice"] input', (e) => { e.value = '0.4'; e.dispatchEvent(new Event('input', { bubbles: true })) })
   check('音频：改语音滑块只存语音（voiceVolume = 0.4），音效滑块不动', await page.evaluate(() => localStorage.getItem('copymanga.gal.voiceVolume') === '0.4' && localStorage.getItem('copymanga.gal.sfxVolume') === null && document.querySelector('[data-audio-group="sfx"] input').value === '0.3'))
-  check('设置里有「快进：选完选项后继续」「看完后自动进入下一章」两个复选框，状态跟着存的值（快进选完继续已勾）', await page.evaluate(() => { const rows = [...document.querySelectorAll('.gal-set-check')]; const by = (t) => rows.find((r) => r.textContent.includes(t))?.querySelector('input'); return rows.length === 2 && by('选完选项后继续')?.checked === true && by('自动进入下一章')?.checked === false }))
+  check('设置里有「快进：选完选项后继续」「看完后自动进入下一章」两个复选框，状态跟着存的值（快进选完继续已勾）；翻译没启用时「自动翻译」那一行隐藏', await page.evaluate(() => { const rows = [...document.querySelectorAll('.gal-set-check')]; const by = (t) => rows.find((r) => r.textContent.includes(t))?.querySelector('input'); return rows.length === 3 && by('选完选项后继续')?.checked === true && by('自动进入下一章')?.checked === false && by('自动翻译')?.closest('.gal-set-row')?.hidden === true }))
   await page.click('.gal-fast-btn')
   await page.waitForFunction(() => !document.querySelector('.gal-choices')?.hidden, null, { timeout: 15000 })
   await sleep(300)

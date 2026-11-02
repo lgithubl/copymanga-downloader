@@ -4,6 +4,7 @@
 // 立绘 / 遮罩等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
 import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } from '/gal-spine.js'
 import { createLive2dLayer } from '/gal-live2d.js'
+import { createTranslateClient } from '/gal-translate.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 import { attachBarLock } from '/gal-barlock.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
@@ -44,6 +45,11 @@ export const GAL_SETTINGS = {
   slowKey: 'copymanga.gal.slow',                    // 静态画面 animation4 的降速倍率（1 = 不降速）
   slowDefault: 0.2,                                 // 原查看器写死的值
   slowMin: 0.05,
+  translateOnKey: 'copymanga.gal.translateOn',      // 工具栏「翻译」开关
+  autoTranslateKey: 'copymanga.gal.autoTranslate',  // 自动播放等译文（阻塞翻页）
+  translateBlockKey: 'copymanga.gal.translateBlockSec', // 阻塞最多几秒（0 = 一直等到译文好）
+  translateBlockDefault: 10,
+  translateBlockMax: 600,
   fastResumeKey: 'copymanga.gal.fastResume',        // 快进遇到选项：false = 停下（默认，原来的行为）；true = 选完接着快进
   autoNextKey: 'copymanga.gal.autoNextChapter',     // 看完一章：false = 回列表 / 停在「继续下一章」（默认）；true = 自动进入下一章
   animSpeedKey: 'copymanga.gal.animSpeed',           // 动画速度倍率（渐变 / 黑场 / 等待 / 立绘淡入…的时长除以它；1 = 不调整）
@@ -98,7 +104,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
 //   chapter: { jump(节点 id)（脚本里的 goto：直接接着播那个脚本，返回 true = 已经跳走）, canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
-export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null }) {
+export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null, translate = null }) {
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
   let choices = { ...(startChoices || {}) }
@@ -151,8 +157,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const box = el('div', 'gal-box')
   const nameplate = el('div', 'gal-name')
   const textEl = el('div', 'gal-text')
+  const transEl = el('div', 'gal-trans')   // 译文：原文下面单独一行（翻译开着才显示；原文永远先显示，译文好了再填）
+  transEl.hidden = true
   const marker = el('div', 'gal-next', '▼')
-  box.append(nameplate, textEl, marker)
+  box.append(nameplate, textEl, transEl, marker)
   const empty = el('div', 'gal-empty', '没有可播放的内容')
   // 工具栏在文本框底部（同一块半透明背景里），按钮都是小号的；没有台词时文本框收起，工具栏仍留在原位
   const bar = el('div', 'gal-bar')
@@ -168,6 +176,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →；按住 Ctrl 或点「快进」快进）', 'gal-next-btn')
   const autoBtn = btn('自动', '自动播放（A / 单按 Alt）', 'gal-auto')
   const logBtn = btn('记录', '台词记录（L）', 'gal-log-btn')
+  const transBtn = btn('翻译', '显示译文（原文先显示，译文在后台翻好了再填；需要在设置页配好翻译模型）', 'gal-trans-btn')
+  transBtn.hidden = !translate?.enabled
+  transBtn.setAttribute('aria-pressed', 'false')
   const fastBtn = btn('快进', '快进开关（X；点一下开始，再点停止，遇到选项停下；也可以按住 Ctrl 快进）', 'gal-fast-btn')
   fastBtn.setAttribute('aria-pressed', 'false')
   const autoSelBtn = btn('自选', '自动选择选项开关（具体选第几个在「设置」里设置）', 'gal-autosel')
@@ -256,7 +267,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const note = el('span', 'muted gal-note', '')
   note.setAttribute('role', 'button')
   note.tabIndex = 0
-  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
+  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, transBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
 
   // 设置弹层（原来的 ⚙ 设置和「更多」菜单合在这里）：显示 / 音频 / 播放 / 画面 四组。.gal-more 和 .gal-settings 两个类都留着
   // 立绘大小 / 偏移（只对 stand 立绘，Spine 角色不受影响）：存在这个媒体里
@@ -280,6 +291,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const checkRow = (label, title) => { const input = el('input'); input.type = 'checkbox'; const r = el('label', 'gal-set-row gal-set-check'); r.title = title; r.append(el('span', 'gal-set-label', label), input); return { row: r, input } }
   const fastResumeCtl = checkRow('快进：选完选项后继续', '快进（工具栏的「快进」按钮）遇到选项时：不勾 = 停下；勾上 = 等你选完后接着快进')
   const autoNextCtl = checkRow('看完后自动进入下一章', '一章看完（自动 / 快进 / 点到最后一句）：不勾 = 回列表或停在「继续下一章」；勾上 = 直接进入下一章，自动播放 / 快进的状态也带过去')
+  const autoTransCtl = checkRow('自动翻译：自动播放等译文', '开着：自动播放翻到下一句之前，如果这一句的译文还没翻好就等（最多等下面的秒数）；关着：不等，译文晚到就晚点显示。快进不受影响')
+  const blockInput = el('input')
+  blockInput.type = 'number'
+  blockInput.min = '0'
+  blockInput.max = String(GAL_SETTINGS.translateBlockMax)
+  blockInput.step = '1'
+  blockInput.className = 'gal-set-number'
+  blockInput.title = '自动播放等译文最多等几秒；0 = 一直等到译文翻好（译文失败 / 翻译服务不可用时不会死等，直接放行）'
+  const blockRow = el('label', 'gal-set-row')
+  blockRow.append(el('span', 'gal-set-label', '阻塞最大'), blockInput, el('span', 'gal-set-value', '秒'))
+  autoTransCtl.row.hidden = blockRow.hidden = !translate?.enabled
   const delayInput = el('input')
   delayInput.type = 'number'
   delayInput.min = '0'
@@ -302,7 +324,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   settings.append(
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
-    section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row),
+    section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow),
     section('画面', animRow, slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
   )
   hud.append(box)
@@ -387,6 +409,59 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   autoNextCtl.input.checked = autoNext
   fastResumeCtl.input.addEventListener('change', () => { fastResume = fastResumeCtl.input.checked; try { localStorage.setItem(GAL_SETTINGS.fastResumeKey, fastResume ? '1' : '0') } catch { /* 存不了就只在这一页生效 */ } })
   autoNextCtl.input.addEventListener('change', () => { autoNext = autoNextCtl.input.checked; try { localStorage.setItem(GAL_SETTINGS.autoNextKey, autoNext ? '1' : '0') } catch { /* 同上 */ } })
+  // ---------- 翻译（原文永远先显示，译文在后台翻好了再填；见 gal-translate.js / library/gal-translate.mjs）----------
+  let transOn = false
+  let autoTrans = loadFlag(GAL_SETTINGS.autoTranslateKey)
+  let blockSec = loadNumber(GAL_SETTINGS.translateBlockKey, GAL_SETTINGS.translateBlockDefault, 0, GAL_SETTINGS.translateBlockMax)
+  autoTransCtl.input.checked = autoTrans
+  blockInput.value = String(blockSec)
+  autoTransCtl.input.addEventListener('change', () => { autoTrans = autoTransCtl.input.checked; try { localStorage.setItem(GAL_SETTINGS.autoTranslateKey, autoTrans ? '1' : '0') } catch { /* 同上 */ } })
+  blockInput.addEventListener('change', () => {
+    const n = Number(blockInput.value)
+    blockSec = Number.isFinite(n) && blockInput.value !== '' ? Math.max(0, Math.min(GAL_SETTINGS.translateBlockMax, n)) : GAL_SETTINGS.translateBlockDefault
+    blockInput.value = String(blockSec)
+    try { localStorage.setItem(GAL_SETTINGS.translateBlockKey, String(blockSec)) } catch { /* 同上 */ }
+  })
+  const tr = translate?.enabled
+    ? createTranslateClient({ lookahead: translate.lookahead ?? 40, chunk: translate.batch ?? 15, contextSize: translate.context ?? 2, onChange: () => paintTrans() })
+    : null
+  // 每步的台词（按播放顺序，没台词的步 ''）：给翻译客户端当「这个脚本的句子表」；路径变了（选了选项）重算
+  const stepText = (stepIndex) => {
+    const commands = scene.steps[stepIndex]?.commands || []
+    for (let k = commands.length - 1; k >= 0; k--) { if (commands[k].op === 'text') { const t = segmentsText(commands[k].segments).replace(/\s+/g, ' ').trim(); if (t) return t } }
+    return ''
+  }
+  let pathTextsFor = null
+  let pathTexts = []
+  const currentText = () => segmentsText(state.text).replace(/\s+/g, ' ').trim()
+  function paintTrans() {
+    if (!tr || !transOn) { transEl.hidden = true; return }
+    const text = currentText()
+    if (!text) { transEl.hidden = true; return }
+    const v = tr.get(text)
+    transEl.hidden = false
+    transEl.classList.toggle('gal-trans-wait', v?.state !== 'ok')
+    transEl.textContent = v?.state === 'ok' ? v.t : !tr.available ? '（翻译不可用）' : v?.state === 'error' ? '（翻译失败）' : '翻译中…'
+  }
+  let lastFocusAt = -2
+  function focusTrans(force = false) {
+    if (!tr || !transOn) return
+    if (pathTextsFor !== path) { pathTextsFor = path; pathTexts = path.map(stepText); lastFocusAt = -2 }
+    const at = Math.max(0, posNow())
+    if (!force && at === lastFocusAt) return
+    lastFocusAt = at
+    tr.focus({ texts: pathTexts, at })
+  }
+  function setTranslate(on) {
+    transOn = Boolean(on) && Boolean(tr)
+    transBtn.classList.toggle('active', transOn)
+    transBtn.setAttribute('aria-pressed', String(transOn))
+    try { localStorage.setItem(GAL_SETTINGS.translateOnKey, transOn ? '1' : '0') } catch { /* 同上 */ }
+    tr?.pause(!transOn || fast)
+    paintTrans()
+    if (transOn) focusTrans(true)
+  }
+  transBtn.addEventListener('click', () => setTranslate(!transOn))
   let animSpeed = loadNumber(GAL_SETTINGS.animSpeedKey, GAL_SETTINGS.animSpeedDefault, GAL_SETTINGS.animSpeedMin, GAL_SETTINGS.animSpeedMax)
   animInput.value = String(animSpeed)
   animInput.addEventListener('change', () => {
@@ -812,6 +887,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     const hasText = Boolean(segmentsText(state.text).trim())
     box.hidden = !hasText
     fitText()
+    paintTrans()   // 译文在原文之后画（原文已经在上面画完了）
   }
 
   // 白屏（FADE_OUT2,white 淡到白并保持）：用闪屏那一层，保持时 opacity = 1；wash（白屏渐退）开始时先清掉它，让动画接手
@@ -1138,6 +1214,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     updateContinue()
     nextBtn.disabled = !path.length || (pos >= path.length - 1 && !running)
     if (!logPanel.hidden) renderLog()
+    focusTrans()
   }
   function updateNote() {
     const parts = []
@@ -1189,7 +1266,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
 
   // ---------- 操作 ----------
-  function stopAuto() { clearTimeout(autoTimer); autoTimer = 0 }
+  let autoToken = 0   // stopAuto 一次 +1：armAdvance 里等译文的那一段据此知道自己已经过期
+  function stopAuto() { clearTimeout(autoTimer); autoTimer = 0; autoToken += 1 }
   function scheduleAuto() {
     stopAuto()
     if (!auto || running || choiceState || destroyed) return
@@ -1202,14 +1280,30 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (voice) {
       if (!voice.endedAt) return
       const remaining = Math.max(0, voiceDelay * 1000 - (performance.now() - voice.endedAt))
-      autoTimer = setTimeout(advance, remaining)
+      armAdvance(remaining, advance)
       return
     }
     // 没有语音（或语音放不出来）：按台词长度估一个阅读时间
     const chars = segmentsText(state.text).length
     // 乘 voiceDelay / 默认值：默认（1）= 原来的估算；0 = 不等；设置对有语音和没语音的句子都生效
     const wait = Math.max(1.2, Math.min(8, 0.8 + chars * 0.12)) * (voiceDelay / GAL_SETTINGS.autoVoiceDelayDefault)
-    autoTimer = setTimeout(advance, wait * 1000)
+    armAdvance(wait * 1000, advance)
+  }
+  // 该翻页了：「自动翻译」开着、翻译开着、这一句的译文还没好 → 先等译文（最多 blockSec 秒，0 = 一直等；译文失败 / 翻译不可用 = 不再等），再翻页。
+  // 原文早就显示了，这里只管「什么时候翻下一页」；等的时候用户翻页 / 暂停 / 关自动都会作废这次等待（autoToken）
+  function armAdvance(ms, advance) {
+    const token = autoToken
+    autoTimer = setTimeout(async () => {
+      autoTimer = 0
+      const text = currentText()
+      if (tr && transOn && autoTrans && text && !tr.ready(text) && tr.available) {
+        const at = index
+        const myGen = gen
+        await tr.whenReady(text, blockSec * 1000)
+        if (destroyed || token !== autoToken || !auto || myGen !== gen || at !== index) return
+      }
+      advance()
+    }, ms)
   }
   // 快进：按住 Ctrl（约 0.25 秒后进入，避免 Ctrl+F / Ctrl+C 误触）连续翻页——动画和语音 / 音效都跳过；遇到选项暂停（选完接着快进），到最后一步或松开 Ctrl 就停
   // 工具栏「快进」按钮是锁存开关（fastLatched）：点一下一直快进，不用按住 Ctrl；遇到选项 / 到结尾 / 再点一下 / 离开播放器都会关掉（引擎还是同一套 setFast / fastTick）
@@ -1228,6 +1322,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     fastBtn.setAttribute('aria-pressed', String(on))
     fastBadge.hidden = !on
     root.classList.toggle('is-fast', on)
+    tr?.pause(!transOn || on)   // 快进中不预加载译文（句子一晃而过），停下来再接着要
     if (on) {
       stopAuto()
       voiceAudio?.pause()
@@ -1798,8 +1893,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const visibility = new IntersectionObserver((entries) => {
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
-    if (visible) { spineLayer?.setPaused(false); live2dLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
-    else { spineLayer?.setPaused(true); live2dLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
+    if (visible) { tr?.pause(!transOn || fast); spineLayer?.setPaused(false); live2dLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
+    else { tr?.pause(true); spineLayer?.setPaused(true); live2dLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
   })
   visibility.observe(stage)
 
@@ -1825,6 +1920,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     movie.removeAttribute('src')
     spineLayer?.destroy()
     live2dLayer?.destroy()
+    tr?.destroy()
     standLayer?.destroy()
     overlayLayer?.destroy()
     underLayer?.destroy()
@@ -1849,5 +1945,6 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (c.auto) { auto = true; autoBtn.classList.add('active'); autoBtn.textContent = '自动中' }
     if (c.fast) { fastLatched = true; setFast(true) }
   }
+  if (tr && loadFlag(GAL_SETTINGS.translateOnKey)) setTranslate(true)   // 上次开着翻译：这次接着开
   return { destroy, next, prev, setImmersive, get index() { return index }, get total() { return path.length }, get choices() { return { ...choices } }, ratio: () => ratioOfStep(Math.max(0, posNow()), path.length) }
 }
