@@ -10,7 +10,7 @@ import { normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs
 import { ensureContainers, materialize, setKeysFile, virtualEntry, virtualFiles } from '../../web/library/gal/containers.mjs'
 import { decodeKrkrScn } from '../../web/library/gal/krkr-scn.mjs'
 import { galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
-import { pickPimgLayers, pimgInfo } from '../../web/library/gal/krkr-pimg.mjs'
+import { parseSinfo, pickPimgLayers, pimgInfo } from '../../web/library/gal/krkr-pimg.mjs'
 import { decodeTlg, tlgToPng } from '../../web/library/gal/tlg.mjs'
 import { Psb } from '../../web/library/gal/psb.mjs'
 import { buildHxv4Xp3, buildPsb, encodeKirikiriText, encodeTlg5, makeBundle } from './make-krkr-fixture.mjs'
@@ -172,6 +172,10 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
   const c = pickPimgLayers(info, { dress: '水着', face: '微笑', add: '頬:眼鏡なし:ナイフ' })
   check('PIMG 选层：dress → pose → face → add 的顺序；全角括号按 NFKC 对上；脚本的「頬」= 层「頬(通常)」；pose「基本」没有对应的层不算缺', J(a.ids) === J([4, 7, 2]) && a.missing.length === 0, J(a))
   check('PIMG 选层：add 用 : 隔开、可以多项（頬（照れ）:眼鏡）；「xxxなし」不画；找不到的层记进 missing（不报错）', J(b.ids) === J([4, 8, 1, 3]) && J(c.ids) === J([7, 2]) && J(c.missing) === J(['dress:水着', 'add:ナイフ']), J([b, c]))
+  const sinfo = parseSinfo('#dress\t服装名\t種別\t差分名\tレイヤ名\ndress\t制服\tdiff\t基本\t制服\ndress\t制服\tdiff\t弓\t裸\ndress\t水着\tdiff\t弓\tダミー\nface\t微笑\t表情差分/微笑\nface\t怒り\t表情差分/怒り\naddgroup\t頬\nadd\t頬\t頬（通常）\nadd\t頬（照れ）\t頬(照れ)\nadd\t頬なし\tダミー\nadd\t眼鏡\t眼鏡\n')
+  const d1 = pickPimgLayers(info, { dress: '制服', pose: '弓', face: '怒り', add: '頬なし:眼鏡' }, sinfo)
+  const d2 = pickPimgLayers(info, { dress: '水着', pose: '弓', face: '微笑', add: '頬' }, sinfo)
+  check('.sinfo（立绘的选项表）：dress + pose → 身体层（制服 / 弓 → 裸），ダミー = 这个组合没有图；face 取路径最后一段；add 的各项（頬なし = ダミー = 不画；頬 = 頬（通常））', sinfo.dress.length === 3 && sinfo.face.length === 2 && sinfo.add.length === 4 && J(d1.ids) === J([5, 8, 3]) && J(d2.ids) === J([7, 2]) && J(d2.missing) === '[]', J([d1, d2, sinfo]))
   check('PIMG 信息：画布 / 层的位置（left top w h）/ 类别 / 资源号', info.width === 200 && info.height === 400 && J(info.layers[3]) === J([4, '制服', null, 50, 20, 100, 350, 1, 'image', 3]) && info.layers[5][8] === 'group', J(info.layers))
 }
 
@@ -190,14 +194,14 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
         label: '*main', title: '', nexts: [], lines: lines(3),
         texts: [
           text(null, '立绘出场', null, [layer('ev', 'event', 'evcg005_06'), char('A', 'cha001.stand', { dress: '制服', face: '微笑', pose: '基本', add: '頬' }, '前', [['leveloffset', '#0,0,0,111,0,-10'], ['zpos', 0]])]),
-          text('A', '换表情 + 右边', null, [layer('ev', 'event', 'evcg001_03u1'), char('A', 'cha001.stand', { dress: '制服', face: '怒り', add: '頬（照れ）:眼鏡' }, '右', [['leveloffset', '#0,0,0,111,0,-10']])]),
-          text('A', '特写', null, [char('A', 'cha001.stand', { dress: '制服', face: '微笑', add: '頬' }, '前', [['leveloffset', '#0,0,0,228,0,200'], ['xpos', -480]]), char('B', 'cha002.stand', {}, '前', [])]),
+          text('A', '换表情（sinfo 把「怒り」映射到「表情差分/微笑」）+ 右边', null, [layer('ev', 'event', 'evcg001_03u1'), char('A', 'cha001.stand', { dress: '制服', face: '怒り', add: '頬（照れ）:眼鏡' }, '右', [['leveloffset', '#0,0,0,111,0,-10']])]),
+          text('A', '特写', null, [layer('ev', 'event', 'evcg005_06r2'), char('A', 'cha001.stand', { dress: '制服', face: '微笑', add: '頬' }, '前', [['leveloffset', '#0,0,0,228,0,200'], ['xpos', -480]]), char('B', 'cha002.stand', {}, '前', [])]),
         ],
       }],
     }
     const tlg = (v) => encodeTlg5(4, 3, 4, Buffer.alloc(48, v))
     await writeFile(path.join(media, 'scn.xp3'), buildHxv4Xp3([['/', 'p1.txt.scn', buildPsb(root3)]], bundle))
-    await writeFile(path.join(media, 'fgimage.xp3'), buildHxv4Xp3([['/', 'cha001.pimg', pimgBuffer]], bundle))
+    await writeFile(path.join(media, 'fgimage.xp3'), buildHxv4Xp3([['/', 'cha001.pimg', pimgBuffer], ['/', 'cha001.sinfo', encodeKirikiriText('dress\t制服\tdiff\t基本\t制服\nface\t怒り\t表情差分/微笑\nadd\t頬\t頬（通常）\n')]], bundle))
     // evimage：cg001_03u1.tlg = 直接的 TLG；cg005_06 = 重定向文本（名字不是 cg005_06.tlg，只能靠内容找）→ cg005_06__zzzzzz.dpak（PSB，成员 cg005_06.tlg + 一张 PNG 叠加）
     const dpak = buildPsb({ 'cg005_06.tlg': { resource: tlg(77) }, 'deadbeef.png': { resource: Buffer.from('\x89PNG\r\n\x1a\nxxxx', 'latin1') } })
     await writeFile(path.join(media, 'evimage.xp3'), buildHxv4Xp3([['/', 'cg001_03u1.tlg', tlg(55)], ['/', 'some_random_name.bin', encodeKirikiriText('psb://cg005_06__zzzzzz.dpak/cg005_06.tlg\npsb://cg005_06__zzzzzz.dpak/deadbeef.png\n')], ['/', 'cg005_06__zzzzzz.dpak', dpak]], bundle))
@@ -212,6 +216,7 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     check('虚拟索引：立绘 = <名字>.pimg.json；直接的 TLG 事件 CG（去 ev 前缀找 cg001_03u1.tlg）= evcg001_03u1.png；重定向 → dpak 的成员 = evcg005_06.png（不靠名字，靠重定向文本的内容）', vf.files.includes('arc/res/cha001.pimg.json') && vf.files.includes('arc/res/evcg001_03u1.png') && vf.files.includes('arc/res/evcg005_06.png'), J(vf.files))
     const read = async (rel) => (await virtualEntry({ mediaDir: media, config, rels: [rel] })).read()
     const infoJson = JSON.parse((await read('arc/res/cha001.pimg.json')).toString('utf8'))
+    const sinfoJson = JSON.parse((await read('arc/res/cha001.sinfo.json')).toString('utf8'))
     const layer4 = await read('arc/res/cha001.pimg/4.png')
     const layer7 = await read('arc/res/cha001.pimg/7.png')
     const canvas = await read('arc/res/cha001.pimg/canvas.png')
@@ -220,15 +225,17 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     const cg1 = decodePng(await read('arc/res/evcg001_03u1.png'))
     const cg5 = decodePng(await read('arc/res/evcg005_06.png'))
     check('事件 CG：直接的 TLG 和 dpak 里的 TLG 都转成 PNG，像素对（55 / 77）', cg1.width === 4 && cg1.height === 3 && cg1.raw.every((v) => v === 55) && cg5.raw.every((v) => v === 77), J([cg1.width, cg5.width]))
+    const cg5r2 = vf.files.includes('arc/res/evcg005_06r2.png') ? decodePng(await read('arc/res/evcg005_06r2.png')) : null
+    check('事件 CG 的变体（evcg005_06r2：重定向条目的名字猜不出来，没法一一对上）= 用同一个 CG 编号（005_06）里已经对上的底图顶替', Boolean(cg5r2) && cg5r2.raw.every((v) => v === 77), J(vf.files))
     // 适配器：从展开的剧本 + 虚拟索引读出的层表
-    const texts3 = { 'arc/res/cha001.pimg.json': J(infoJson) }
+    const texts3 = { 'arc/res/cha001.pimg.json': J(infoJson), 'arc/res/cha001.sinfo.json': J(sinfoJson) }
     const ctx3 = adapter.prepare({ options: {}, files: vf.files, texts: texts3, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
     const script3 = await readFile(path.join(media, 'arc/script/scn/p1.krkr'), 'utf8')
     const scene3 = adapter.parse(script3, ctx3)
     const stands = scene3.steps.flatMap((st) => st.commands.filter((c) => c.op === 'stand' || c.op === 'standOff'))
     const zoom1 = Math.round((1.11 * (1080 / 400)) * 10000) / 10000
     check('适配器：立绘 = 每个角色一个槽位（slot = 角色名）的 stand，部件 = 选中的层（身体 / 脸 / 腮红）；第一次出现带 fade；换表情只发 stand，不发 standOff；缩放 = leveloffset 第 4 项 % × 舞台高 ÷ 画布高', stands[0].op === 'stand' && stands[0].slot === 'A' && stands[0].fade === 0.25 && stands[0].parts.length === 3 && stands[0].parts[0].src === 'cha001.pimg/4.png' && stands[0].parts[0].scale === zoom1 && J(stands[0].stage) === J([1920, 1080]), J(stands[0]))
-    check('适配器：位置——xpos / posName（右 = +480）；身体放大后没超过舞台 = 画布底边贴舞台底边（y 偏移 = (舞台高 - 画布高 × 缩放) ÷ 2）', stands[1].op === 'stand' && !stands[1].fade && stands[1].parts[0].x === Math.round(480 + (50 + 100 / 2 - 100) * zoom1) && stands[1].parts[0].y === Math.round((1080 - 400 * zoom1) / 2 + (20 + 350 / 2 - 200) * zoom1) && J(stands[1].parts.map((p) => p.src)) === J(['cha001.pimg/4.png', 'cha001.pimg/8.png', 'cha001.pimg/1.png', 'cha001.pimg/3.png']), J(stands[1]))
+    check('适配器：位置——xpos / posName（右 = +480）；身体放大后没超过舞台 = 画布底边贴舞台底边（y 偏移 = (舞台高 - 画布高 × 缩放) ÷ 2）', stands[1].op === 'stand' && !stands[1].fade && stands[1].parts[0].x === Math.round(480 + (50 + 100 / 2 - 100) * zoom1) && stands[1].parts[0].y === Math.round((1080 - 400 * zoom1) / 2 + (20 + 350 / 2 - 200) * zoom1) && J(stands[1].parts.map((p) => p.src)) === J(['cha001.pimg/4.png', 'cha001.pimg/7.png', 'cha001.pimg/1.png', 'cha001.pimg/3.png']), J(stands[1]))
     const zoom3 = Math.round((2.28 * (1080 / 400)) * 10000) / 10000
     check('适配器：特写（放大后身体超过舞台）= 头顶在舞台上方 5%；xpos = -480；缺的立绘（cha002 没有 PIMG）记 unresolved、不报错', stands[2].parts[0].x === Math.round(-480 + (50 + 50 - 100) * zoom3) && stands[2].parts[0].y === Math.round((0.05 * 1080 - 20 * zoom3 + (400 * zoom3) / 2) - 540 + (20 + 175 - 200) * zoom3) && scene3.stats.unresolved['pimg:cha002'] >= 1 && scene3.stats.stands === 3, J([stands[2], scene3.stats]))
     check('适配器：事件 CG（ev）= bg（evcg005_06.png / evcg001_03u1.png）', J(scene3.steps[0].commands.filter((c) => c.op === 'bg')) === J([{ op: 'bg', src: 'evcg005_06.png' }]) && scene3.steps[1].commands.some((c) => c.op === 'bg' && c.src === 'evcg001_03u1.png'), J(scene3.steps[0].commands))

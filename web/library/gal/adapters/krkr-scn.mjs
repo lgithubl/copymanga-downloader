@@ -11,7 +11,7 @@
 //   多个 scene（脚本里的 *start / *dummy1 …）按顺序接在一起；最后一个 scene 的 nexts 指向别的脚本（不是 gameloop.txt 的菜单）→ scene.next
 // 没做 / 推断：
 //   立绘（class character，imageFile.file = cha001.stand + options { dress, face, pose, add }，showmode 3 = 显示）→ 每个角色一个槽位（slot = 角色名）的 stand：PIMG（cha001.pimg，分层 PSB，每层一张 TLG）按 options 选图层
-//     （dress → 身体、pose、face、add 用 ':' 隔开的各项，见 krkr-pimg.mjs），每层一个部件，部件的位置 = 层在画布里的位置；containers 把 PIMG 虚拟成 <名字>.pimg.json（层表）和 <名字>.pimg/<层 id>.png（每层转好的 PNG）。
+//     （dress + pose → 身体、face、add 用 ':' 隔开的各项；映射表 = <名字>.sinfo.json，没有就按层名猜，见 krkr-pimg.mjs），每层一个部件，部件的位置 = 层在画布里的位置；containers 把 PIMG 虚拟成 <名字>.pimg.json（层表）和 <名字>.pimg/<层 id>.png（每层转好的 PNG）。
 //     位置 / 缩放（推断，没有对照图）：缩放 = leveloffset 的第 4 项（百分比）× 舞台高 ÷ 画布高（真实 PIMG：身体 1948 高 / 画布 2246 高，111% 时正好 ≈ 舞台高）；水平 = action.xpos，没有按 posName（左 -480 / 右 480 / 左中 -240 / 右中 240 / 其余居中）；
 //     缩放后身体不超过舞台高 = 画布底边对齐舞台底边，否则（特写）头顶落在舞台上方 5% 处。leveloffset 的 y、zpos、order 没用。想调就用播放器「设置 → 画面 → 立绘」。
 //   · 每步的图层是脚本自带的「此刻的环境快照」（texts[i][4].data），不重放 envupdate；没有台词也没有等待的画面变化会并进下一句
@@ -38,7 +38,7 @@ export const explainSniff = () => '开头不是 {"format":"krkr-scn/1"…（这�
 
 export const contextFiles = () => []
 export const contextDirs = (options) => { const opt = readOptions(options); return [opt.resDir, ...opt.extraDirs].map((dir) => String(dir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter(Boolean) }
-export const contextTextFilter = () => (rel) => /\.pimg\.json$/i.test(rel)   // 立绘的层表（containers 虚拟出来的，很小）
+export const contextTextFilter = () => (rel) => /\.(pimg|sinfo)\.json$/i.test(rel)   // 立绘的层表 / 选项表（containers 虚拟出来的，很小）
 export const contextWalkLimit = 800000
 export const contextSampleLimit = 2000
 
@@ -117,7 +117,8 @@ export function parse(text, ctx = null, meta = {}) {
     const zoom = (Number.isFinite(pct) && pct > 0 ? pct / 100 : 1) * (stageH / info.height)
     const xpos = Number(act.xpos)
     const x = Number.isFinite(xpos) ? xpos : POS_X[posName] ?? 0
-    const { ids, missing } = pickPimgLayers(info, options || {})
+    const sinfoPath = ctx.resolver.resolveByName(`${stem}.sinfo.json`)
+    const { ids, missing } = pickPimgLayers(info, options || {}, sinfoPath ? ctx.readJson?.(sinfoPath) : null)
     for (const m of missing) count('ignored', `pimg-layer:${m}`)
     if (!ids.length) return null
     const byId = new Map(info.layers.map((l) => [l[0], l]))   // 层 = [id, 名, 组, left, top, w, h, 可见, 类别, 资源号]

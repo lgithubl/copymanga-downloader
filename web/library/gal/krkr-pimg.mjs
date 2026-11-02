@@ -4,6 +4,25 @@
 //   层名对不上的不报错（那一类不画）：add 的名字和 PIMG 里的层名写法不完全一样（脚本全角括号「頬（照れ）」、PIMG 里是「頬(照れ)」），按 NFKC 规整后比；脚本里的「頬」= PIMG 里的「頬」或「頬(通常)」；「xxxなし」= 不画。
 const norm = (s) => String(s ?? '').normalize('NFKC').replace(/\s+/g, '')
 
+// .sinfo（立绘的选项表，KiriKiri 文本外壳里的 TSV；每个立绘一份，和 .pimg 配套）：脚本里的选项值 → PIMG 里的层名。行：
+//   dress <服装名> diff <差分名 = pose> <层名 | ダミー>      脚本 options.dress + options.pose → 身体层（pose「基本」一行、「弓」「HG」…各一行；ダミー = 这个组合没有图）
+//   face  <表情名> <组/层名>                                脚本 options.face → 「表情差分/微笑」这样的路径（取最后一段）
+//   addgroup <组名> / add <值> <层名 | ダミー>               脚本 options.add（: 隔开的各项）→ 层
+// 例（g07 cha001）：face 困惑 = 表情差分/困惑・呆れ，face 恥じらい = 表情差分/恥じらい、照れ，add 頬 = 頬（通常），add 頬なし = ダミー。
+// → { dress: [[服装, pose, 层名|null]], face: [[表情, 路径]], add: [[值, 层名|null]] }
+export function parseSinfo(text) {
+  const out = { dress: [], face: [], add: [] }
+  for (const line of String(text).split(/\r?\n/)) {
+    if (!line || line.startsWith('#')) continue
+    const c = line.split('\t')
+    const layer = (v) => (v === undefined || v === '' || v === 'ダミー' ? null : v)
+    if (c[0] === 'dress' && c.length >= 5) out.dress.push([c[1], c[3], layer(c[4])])
+    else if (c[0] === 'face' && c.length >= 3) out.face.push([c[1], c[2]])
+    else if (c[0] === 'add' && c.length >= 3) out.add.push([c[1], layer(c[2])])
+  }
+  return out
+}
+
 // → { width, height, layers: [[id, name, group, left, top, w, h, visible, kind, res]], }（紧凑：写进虚拟的 .pimg.json）
 export function pimgInfo(root) {
   if (!root || !Array.isArray(root.layers)) throw new Error('不是 PIMG（没有 layers）')
@@ -14,8 +33,8 @@ export function pimgInfo(root) {
   }
 }
 
-// options → 要画的层 id（按画的先后）；info = pimgInfo 的结果。返回 { ids, missing: [类别:值] }
-export function pickPimgLayers(info, options = {}) {
+// options → 要画的层 id（按画的先后）；info = pimgInfo 的结果；sinfo = parseSinfo 的结果（有就按它的映射，没有 / 对不上就按层名猜）。返回 { ids, missing: [类别:值] }
+export function pickPimgLayers(info, options = {}, sinfo = null) {
   const images = info.layers.filter((l) => l[8] === 'image' && l[9] !== null)
   const byName = new Map()
   for (const l of images) { const k = norm(l[1]); if (!byName.has(k)) byName.set(k, l) }
@@ -23,14 +42,22 @@ export function pickPimgLayers(info, options = {}) {
   const ids = []
   const missing = []
   const push = (kind, value, layer) => { if (layer) { if (!ids.includes(layer[0])) ids.push(layer[0]) } else missing.push(`${kind}:${value}`) }
-  for (const kind of ['dress', 'pose', 'face']) {
-    const value = options?.[kind]
-    if (!value) continue
-    const layer = exact(value)
-    if (layer || kind !== 'pose') push(kind, value, layer)   // pose 没有对应的层很常见（「基本」= 没有额外的层）：不算缺
+  const lower = (v) => norm(v).toLowerCase()
+  // dress：sinfo 里按（服装, pose）找；没有这一行 = 回到「服装名就是层名」
+  if (options?.dress) {
+    const row = sinfo?.dress.find(([d, p]) => norm(d) === norm(options.dress) && lower(p) === lower(options.pose || '基本'))
+    if (row) { if (row[2]) push('dress', options.dress, exact(row[2])) } else push('dress', options.dress, exact(options.dress))
   }
-  const adds = String(options?.add ?? '').split(':').map((s) => s.trim()).filter(Boolean)
+  if (options?.pose && !sinfo) { const layer = exact(options.pose); if (layer) push('pose', options.pose, layer) }   // 没有 sinfo 时 pose 可能是单独的层；pose 没有对应的层很常见，不算缺
+  if (options?.face) {
+    const row = sinfo?.face.find(([f]) => norm(f) === norm(options.face))
+    const name = row ? row[1].split('/').pop() : options.face
+    push('face', options.face, exact(name) || exact(options.face))
+  }
+  const adds = String(options?.add ?? '').split(':').map((x) => x.trim()).filter(Boolean)
   for (const token of adds) {
+    const row = sinfo?.add.find(([v]) => norm(v) === norm(token))
+    if (row) { if (row[1]) push('add', token, exact(row[1])); continue }   // ダミー = 不画（頬なし / 手裏剣なし）
     if (/なし$/.test(norm(token))) continue
     let layer = exact(token)
     if (!layer && norm(token) === '頬') layer = exact('頬(通常)')

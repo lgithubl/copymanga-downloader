@@ -494,6 +494,24 @@ export async function openHxv4Archive(file, bundle, { filter = null } = {}) {
       if (verify && entry.adler !== null && adler32(data) !== entry.adler) throw new Error('解密后校验和（adlr）对不上：密钥包或移植有误')
       return data
     }
+    // 取一个条目明文的一段 [start, start + length)：段都是原样存的（没压缩）时只读这一段再按偏移解密（XOR 只和逻辑偏移有关）；有压缩段就整条读出来再切
+    const readEntryRange = async (entry, start, length) => {
+      if (!entry.meta) throw new Error('这个条目在特殊索引里没有记录（没法解密）')
+      const end = Math.min(entry.originalSize, start + length)
+      if (start >= end) return Buffer.alloc(0)
+      if (entry.segments.some((s) => (s.flags & 7) !== 0)) return (await readEntry(entry, { verify: false })).subarray(start, end)
+      const parts = []
+      let at = 0
+      for (const sg of entry.segments) {
+        const from = Math.max(start, at)
+        const to = Math.min(end, at + sg.originalSize)
+        if (from < to) parts.push(await readAt(handle, sg.offset + (from - at), to - from))
+        at += sg.originalSize
+      }
+      const data = Buffer.concat(parts)
+      applyState(fx.stateFor(entry.meta.entryKey, entry.meta.filterFlag), start, data)
+      return data
+    }
     return {
       size,
       kind: hxv4.kind,
@@ -503,6 +521,7 @@ export async function openHxv4Archive(file, bundle, { filter = null } = {}) {
       // 按逻辑目录 + 文件名找条目：目录 '/' = 根，其它写法同引擎里的（如 'bgimage/'）；找不到 = null
       find(dirPath, fileName) { const r = byName.get(hashOf(dirPath, fileName)); return r ? byRecord.get(r) || null : null },
       readEntry,
+      readEntryRange,
       async close() { await handle.close() },
     }
   } catch (error) { await handle.close().catch(() => {}); throw error }

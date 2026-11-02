@@ -18,7 +18,7 @@ import { runCbg } from './decode-pool.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
 import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
-import { pimgInfo } from './krkr-pimg.mjs'
+import { parseSinfo, pimgInfo } from './krkr-pimg.mjs'
 import { isTlg, tlgToPng } from './tlg.mjs'
 import { inflateSync } from 'node:zlib'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
@@ -505,6 +505,7 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
     addCandidate(`${n}.tlg`, `${n}.png`, 'tlg-png')
     if (/^ev/.test(n)) addCandidate(`${n.replace(/^ev/, '')}.tlg`, `${n}.png`, 'tlg-png')
     addCandidate(`${n}.pimg`, `${n}.pimg.json`, 'pimg-json', { pimg: n })
+    addCandidate(`${n}.sinfo`, `${n}.sinfo.json`, 'sinfo-json')
   }
   for (const kind of ['bgm', 'voice']) for (const n of names[kind]) for (const ext of KRKR_AUDIO_EXTS) addCandidate(`${n}.${ext}`, `${n}.${ext}`, 'raw')
   if (!candidates.size) return { map, files, sig }
@@ -547,20 +548,57 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
       opened.keep = true   // 先别关：事件 CG 的 dpak 要在同一个档案里按名字哈希找，最后统一关
     } finally { if (!opened.keep) await opened.arc.close() }
   }
-  // 重定向 → 逻辑名（n 或 去 ev 的 n 对得上成员名）
+  // dpak 的成员表：每个重定向指向的 dpak 打开头部（PSB 的名字 / 字符串 / 根，不碰资源）列出所有 .tlg 成员（一个 dpak = 一组 CG：cg005_06 / cg005_06r1 / …）；成员名 = 去掉 ev 的逻辑名
+  const memberIndex = new Map()   // 成员 stem（小写）→ { member, record, entry, file, bundle }
   try {
+    const dpaks = new Map()
+    for (const r of redirects.values()) { const record = r.byHash.get(hashHex(r.dpak)); const entry = record && r.byRecord.get(record); if (entry && !dpaks.has(record)) dpaks.set(record, { r, record, entry }) }
+    for (const { r, record, entry } of dpaks.values()) {
+      const archive = pending.find((p) => p.file === r.file)?.arc
+      if (!archive) continue
+      try {
+        const head = await archive.readEntryRange(entry, 0, 64)
+        if (!isPsb(head) || head.length < 44) continue
+        const dataStart = head.readUInt32LE(32)   // 资源数据区起点：在它之前的是名字 / 字符串 / 根
+        if (!(dataStart > 44 && dataStart <= 1 << 20)) continue
+        const prefix = await archive.readEntryRange(entry, 0, dataStart)
+        for (const member of Object.keys(new Psb(prefix).root())) if (/\.tlg$/i.test(member)) memberIndex.set(member.replace(/\.tlg$/i, '').toLowerCase(), { member, record, entry, file: r.file, bundle: r.bundle })
+      } catch { /* 这个 dpak 读不了：跳过 */ }
+    }
     for (const n of names.img) {
       const key = n.replace(/^ev/, '').toLowerCase()
-      const r = redirects.get(key) || redirects.get(n.toLowerCase())
-      if (!r || map.has(`${cfg.dir}/res/${n}.png`.toLowerCase())) continue
-      const record = r.byHash.get(hashHex(r.dpak))
-      const entry = record && r.byRecord.get(record)
-      if (!entry || entry.originalSize > MAX_ENTRY_BYTES) continue
-      const hit = entryHit(entry, record, r.file, { mode: 'dpak-member', member: r.member })
-      hit.bundleJson = r.bundle
+      let hitm = memberIndex.get(key) || memberIndex.get(n.toLowerCase())
+      if (!hitm) {   // dpak 头读不出来（档案被截断之类）：用重定向文本里直接写的那一个成员
+        const r = redirects.get(key) || redirects.get(n.toLowerCase())
+        const record = r && r.byHash.get(hashHex(r.dpak))
+        const entry = record && r.byRecord.get(record)
+        if (entry) hitm = { member: r.member, record, entry, file: r.file, bundle: r.bundle }
+      }
+      if (!hitm || map.has(`${cfg.dir}/res/${n}.png`.toLowerCase())) continue
+      const hit = entryHit(hitm.entry, hitm.record, hitm.file, { mode: 'dpak-member', member: hitm.member })
+      hit.bundleJson = hitm.bundle
       add(`${cfg.dir}/res/${n}.png`, hit)
     }
   } finally { for (const { arc } of pending) await arc.close().catch(() => {}) }
+  // 事件 CG 的变体（evcg001_01r1 … r4 = 同一张底图 + 叠加层的不同阶段；ev_mv001_02… = 同一个 CG 的动态版）：每个变体是一个重定向条目（底图 TLG + 一张 PNG 叠加层），
+  // 条目自己的名字猜不出来（只知道 id 按名字排序），所以变体没法一一对上。退一步：找不到的变体用「同一个 CG 编号（001_02）里已经对上的」图顶替（底图，没有叠加层）
+  try {
+    const groupOf = (n) => /^ev(?:_mv|cg|ed)?(x?\d+_\d+)/.exec(n)?.[1] || ''
+    const byGroup = new Map()   // CG 编号 → [已对上的 { n, hit }]，底图（名字没有 r / u / w 后缀）排前面
+    for (const n of names.img) {
+      const g = groupOf(n)
+      const hit = g && map.get(`${cfg.dir}/res/${n}.png`.toLowerCase())
+      if (!hit || !hit.krkr || !['tlg-png', 'dpak-member'].includes(hit.krkr.mode)) continue
+      if (!byGroup.has(g)) byGroup.set(g, [])
+      byGroup.get(g).push({ n, hit })
+    }
+    for (const list of byGroup.values()) list.sort((a, b) => (/^ev(?:cg)?\d+_\d+$/.test(a.n) ? 0 : 1) - (/^ev(?:cg)?\d+_\d+$/.test(b.n) ? 0 : 1) || a.n.length - b.n.length)
+    for (const n of names.img) {
+      if (!/^ev(?:_mv|cg)\d+_\d+/.test(n) || map.has(`${cfg.dir}/res/${n}.png`.toLowerCase())) continue
+      const stand = byGroup.get(groupOf(n))?.[0]
+      if (stand) add(`${cfg.dir}/res/${n}.png`, { ...stand.hit, krkr: { ...stand.hit.krkr, fallbackFor: stand.n } })
+    }
+  } catch { /* 顶替不了就算了 */ }
   // 立绘的层：<名字>.pimg/<层 id>.png / canvas.png 现算（不列进 files：适配器按 .pimg.json 里的层 id 直接引用）
   const dynamic = (key, rel) => {
     const m = /^(.*\.pimg)\/(canvas|\d+)\.png$/i.exec(key)
@@ -589,6 +627,7 @@ async function readKrkrHit(hit) {
   switch (k.mode || 'raw') {
     case 'tlg-png': return tlgToPng(data)
     case 'pimg-json': return Buffer.from(JSON.stringify(pimgInfo(new Psb(data).root())))
+    case 'sinfo-json': return Buffer.from(JSON.stringify(parseSinfo(decodeKirikiriText(data) ?? data.toString('utf8'))))
     case 'pimg-layer': {
       const psb = new Psb(data)
       const root = psb.root()
