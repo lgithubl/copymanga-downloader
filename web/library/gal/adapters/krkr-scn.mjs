@@ -10,11 +10,15 @@
 //   pre 里的 wait → wait（秒，最多 10）；playvoice（背景语音 type 2）/ quake / stopvoice 不渲染，记 stats.ignored
 //   多个 scene（脚本里的 *start / *dummy1 …）按顺序接在一起；最后一个 scene 的 nexts 指向别的脚本（不是 gameloop.txt 的菜单）→ scene.next
 // 没做 / 推断：
-//   · 立绘（class character，imageFile.file = cha001.stand + options { dress, face, pose, add }）：是 fgimage.xp3 里的 PIMG（PSB 分层图，每层一张 TLG）按 options 选图层——这一版还没做，记 stats.ignored['character']
+//   立绘（class character，imageFile.file = cha001.stand + options { dress, face, pose, add }，showmode 3 = 显示）→ 每个角色一个槽位（slot = 角色名）的 stand：PIMG（cha001.pimg，分层 PSB，每层一张 TLG）按 options 选图层
+//     （dress → 身体、pose、face、add 用 ':' 隔开的各项，见 krkr-pimg.mjs），每层一个部件，部件的位置 = 层在画布里的位置；containers 把 PIMG 虚拟成 <名字>.pimg.json（层表）和 <名字>.pimg/<层 id>.png（每层转好的 PNG）。
+//     位置 / 缩放（推断，没有对照图）：缩放 = leveloffset 的第 4 项（百分比）× 舞台高 ÷ 画布高（真实 PIMG：身体 1948 高 / 画布 2246 高，111% 时正好 ≈ 舞台高）；水平 = action.xpos，没有按 posName（左 -480 / 右 480 / 左中 -240 / 右中 240 / 其余居中）；
+//     缩放后身体不超过舞台高 = 画布底边对齐舞台底边，否则（特写）头顶落在舞台上方 5% 处。leveloffset 的 y、zpos、order 没用。想调就用播放器「设置 → 画面 → 立绘」。
 //   · 每步的图层是脚本自带的「此刻的环境快照」（texts[i][4].data），不重放 envupdate；没有台词也没有等待的画面变化会并进下一句
 //   · 转场（crossfade 等）/ 镜头动作（xpos / ypos / zpos 的移动）不渲染
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader } from './options-merge.mjs'
+import { pickPimgLayers } from '../krkr-pimg.mjs'
 
 export const ADAPTER_ID = 'krkr::scn'
 export const DEFAULT_OPTIONS = {
@@ -34,17 +38,26 @@ export const explainSniff = () => '开头不是 {"format":"krkr-scn/1"…（这�
 
 export const contextFiles = () => []
 export const contextDirs = (options) => { const opt = readOptions(options); return [opt.resDir, ...opt.extraDirs].map((dir) => String(dir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter(Boolean) }
-export const contextTextFilter = () => () => false
+export const contextTextFilter = () => (rel) => /\.pimg\.json$/i.test(rel)   // 立绘的层表（containers 虚拟出来的，很小）
 export const contextWalkLimit = 800000
-export const contextSampleLimit = 200
+export const contextSampleLimit = 2000
 
-export function prepare({ options, files, toResourcePath, resourceResolve, truncated }) {
+export function prepare({ options, files, texts, toResourcePath, resourceResolve, truncated }) {
   const opt = readOptions(options)
   const toRes = toResourcePath || ((rel) => rel)
   const resources = new Set()
   for (const rel of files || []) resources.add(toRes(rel))
   const resolver = createIndexResolver({ index: resources, cfg: { ...(resourceResolve || {}), caseInsensitive: true } })
-  return { opts: opt, resources, resolver, hasIndex: Boolean(files?.length), truncated: Boolean(truncated) }
+  const lowerTexts = new Map()   // 资源路径（小写）→ 文本
+  for (const [rel, text] of Object.entries(texts || {})) lowerTexts.set(toRes(rel).toLowerCase(), text)
+  const json = new Map()
+  const readJson = (resPath) => {
+    const key = String(resPath || '').toLowerCase()
+    if (!key) return null
+    if (!json.has(key)) { try { json.set(key, JSON.parse(lowerTexts.get(key) || 'null')) } catch { json.set(key, null) } }
+    return json.get(key)
+  }
+  return { opts: opt, resources, resolver, hasIndex: Boolean(files?.length), truncated: Boolean(truncated), readJson }
 }
 
 const str = (v) => (typeof v === 'string' ? v : '')
@@ -87,17 +100,47 @@ export function parse(text, ctx = null, meta = {}) {
     if (hasIndex) count('unresolved', `image:${file}`)
     return null
   }
+  // 立绘：槽位（角色名）→ 上次发出去的签名；变了才发
+  const shownStands = new Map()
+  const stageW = opt.stage[0]
+  const stageH = opt.stage[1]
+  const POS_X = { 左: -480, 右: 480, 左中: -240, 右中: 240 }
+  function standOf(layer) {
+    const [name, , file, options, posName, , actions] = layer
+    const stem = String(file || '').replace(/\.[^.]+$/, '')
+    if (!stem) return null
+    const infoPath = hasIndex ? ctx.resolver.resolveByName(`${stem}.pimg.json`) : ''
+    const info = infoPath ? ctx.readJson?.(infoPath) : null
+    if (!info?.layers) { if (hasIndex) count('unresolved', `pimg:${stem}`); return null }
+    const act = Object.fromEntries((actions || []).map((a) => [a[0], a[1]]))
+    const pct = Number(String(act.leveloffset || '').split(',')[3])
+    const zoom = (Number.isFinite(pct) && pct > 0 ? pct / 100 : 1) * (stageH / info.height)
+    const xpos = Number(act.xpos)
+    const x = Number.isFinite(xpos) ? xpos : POS_X[posName] ?? 0
+    const { ids, missing } = pickPimgLayers(info, options || {})
+    for (const m of missing) count('ignored', `pimg-layer:${m}`)
+    if (!ids.length) return null
+    const byId = new Map(info.layers.map((l) => [l[0], l]))   // 层 = [id, 名, 组, left, top, w, h, 可见, 类别, 资源号]
+    const bodyTop = Math.min(...ids.map((id) => byId.get(id)[4]))
+    const bodyBottom = Math.max(...ids.map((id) => byId.get(id)[4] + byId.get(id)[6]))
+    // 画布中心相对舞台中心的竖直偏移：身体放大后没超过舞台 = 画布底边贴舞台底边；超过（特写）= 头顶在舞台上方 5%
+    const fits = (bodyBottom - bodyTop) * zoom <= stageH * 1.05
+    const y = fits ? (stageH - info.height * zoom) / 2 : (0.05 * stageH - bodyTop * zoom + (info.height * zoom) / 2) - stageH / 2
+    const parts = ids.map((id) => {
+      const l = byId.get(id)
+      return { src: `${stem}.pimg/${id}.png`, x: Math.round(x + (l[3] + l[5] / 2 - info.width / 2) * zoom), y: Math.round(y + (l[4] + l[6] / 2 - info.height / 2) * zoom), scale: Math.round(zoom * 10000) / 10000 }
+    })
+    return { slot: String(name), parts }
+  }
   function applyLayers(layers) {
     let bg = null
     let ev = null
-    let characters = 0
     for (const l of layers || []) {
       if (!Array.isArray(l)) continue
       const [name, cls, file, , , showmode] = l
       if (showmode !== 3) continue
       if (cls === 'stage' && name === 'bg' && file) bg = file
       else if (cls === 'event' && name === 'ev' && file) ev = file
-      else if (cls === 'character') characters += 1
     }
     const want = ev || bg || ''
     if (want !== shown) {
@@ -105,7 +148,22 @@ export function parse(text, ctx = null, meta = {}) {
       if (!want) emit({ op: 'bgoff' })
       else { const img = imageOf(want); if (img) emit({ op: 'bg', ...img }); else emit({ op: 'bgoff' }) }
     }
-    if (characters) stats.ignored.character = (stats.ignored.character || 0) + 1
+    // 立绘：每个显示着的角色一个槽位；没了的去掉
+    const now = new Map()
+    for (const l of layers || []) {
+      if (!Array.isArray(l) || l[1] !== 'character' || l[5] !== 3) continue
+      const stand = standOf(l)
+      if (stand) now.set(stand.slot, stand)
+      else if (l[2]) count('ignored', 'character')
+    }
+    for (const slot of [...shownStands.keys()]) if (!now.has(slot)) { emit({ op: 'standOff', slot }); shownStands.delete(slot) }
+    for (const [slot, stand] of now) {
+      const sig = JSON.stringify(stand.parts)
+      if (shownStands.get(slot) === sig) continue
+      emit({ op: 'stand', slot, parts: stand.parts, stage: [stageW, stageH], ...(shownStands.has(slot) ? {} : { fade: 0.25 }) })
+      shownStands.set(slot, sig)
+      stats.stands += 1
+    }
   }
   function applyBgm(b) {
     if (!Array.isArray(b)) return

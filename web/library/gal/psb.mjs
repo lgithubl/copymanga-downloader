@@ -101,6 +101,14 @@ export class Psb {
   }
 
   root() { return this.value(this.oEntries)[0] }
+
+  // 资源块（图 / 声音等的原始字节）：偏移表 / 长度表 / 数据区在头里（24 / 28 / 32）；root 里的 { resource: n } = 这里的第 n 个
+  resources() {
+    const [offs] = this.uintArray(this.d.readUInt32LE(24))
+    const [lens] = this.uintArray(this.d.readUInt32LE(28))
+    const base = this.d.readUInt32LE(32)
+    return offs.map((o, i) => this.d.subarray(base + o, base + o + lens[i]))
+  }
 }
 
 function readBigSigned(buf, pos, n) {

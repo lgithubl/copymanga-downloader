@@ -507,3 +507,31 @@ export async function openHxv4Archive(file, bundle, { filter = null } = {}) {
     }
   } catch (error) { await handle.close().catch(() => {}); throw error }
 }
+
+// KiriKiri 的 FE FE 文本外壳（.stand / .ks / .tjs 之类的文本文件）：FE FE <模式> FF FE + 载荷。
+// 模式 0：字符 ≥ 0x20 时 ch ^= ((ch & 0xfe) << 8) ^ 1；模式 1：相邻位互换；模式 2：zlib（8 字节压缩长度 + 8 字节原长度 + zlib），BOM 在压缩流外面。
+// → 字符串；不是这种外壳返回 null
+export function decodeKirikiriText(buf) {
+  if (buf.length < 5 || buf[0] !== 0xfe || buf[1] !== 0xfe || buf[3] !== 0xff || buf[4] !== 0xfe) return null
+  const mode = buf[2]
+  let body
+  if (mode === 0 || mode === 1) {
+    if ((buf.length - 5) % 2) return null
+    body = Buffer.alloc(buf.length - 5)
+    for (let i = 5; i < buf.length; i += 2) {
+      let ch = buf.readUInt16LE(i)
+      if (mode === 1) ch = (((ch & 0xaaaa) >> 1) | ((ch & 0x5555) << 1)) & 0xffff
+      else if (ch >= 0x20) ch = (ch ^ (((ch & 0x00fe) << 8) ^ 1)) & 0xffff
+      body.writeUInt16LE(ch, i - 5)
+    }
+  } else if (mode === 2) {
+    if (buf.length < 21) return null
+    const compressed = Number(buf.readBigUInt64LE(5))
+    const original = Number(buf.readBigUInt64LE(13))
+    if (21 + compressed !== buf.length || original > 1 << 30) return null
+    body = inflateSync(buf.subarray(21))
+    if (body.length !== original) return null
+  } else return null
+  if (body.length >= 2 && body[0] === 0xff && body[1] === 0xfe) body = body.subarray(2)
+  return body.toString('utf16le')
+}

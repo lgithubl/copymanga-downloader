@@ -72,6 +72,7 @@ export function buildHxv4Xp3(files, bundle) {
 export function buildPsb(root) {
   const names = []
   const strings = []
+  const resources = []   // { resource: Buffer } 的值 → 资源块
   const nameIndex = (n) => { let i = names.indexOf(n); if (i < 0) { i = names.length; names.push(n) } return i }
   const stringIndex = (s) => { let i = strings.indexOf(s); if (i < 0) { i = strings.length; strings.push(s) } return i }
   const uintBytes = (v) => (v < 0x100 ? 1 : v < 0x10000 ? 2 : v < 0x1000000 ? 3 : 4)
@@ -87,6 +88,7 @@ export function buildPsb(root) {
       while (n < 8 && (v < -(2 ** (8 * n - 1)) || v >= 2 ** (8 * n - 1))) n++
       const b = Buffer.alloc(n); b.writeIntLE(v, 0, Math.min(n, 6)); return Buffer.concat([Buffer.from([4 + n]), b])
     }
+    if (v && typeof v === 'object' && Buffer.isBuffer(v.resource)) { const i = resources.length; resources.push(v.resource); const n = uintBytes(i); return Buffer.concat([Buffer.from([0x18 + n]), le(i, n)]) }
     if (typeof v === 'string') { const i = stringIndex(v); const n = uintBytes(i); return Buffer.concat([Buffer.from([0x14 + n]), le(i, n)]) }
     if (Array.isArray(v)) { const items = v.map(value); let off = 0; const offs = items.map((b) => { const o = off; off += b.length; return o }); return Buffer.concat([Buffer.from([0x20]), uintArray(offs), ...items]) }
     const keys = Object.keys(v)
@@ -132,7 +134,50 @@ export function buildPsb(root) {
   const oNames = 44
   const oStrings = oNames + namesBlock.length
   const oStringData = oStrings + stringsBlock.length
-  const oEntries = oStringData + dataBlock.length
-  header.writeUInt32LE(oNames, 12); header.writeUInt32LE(oStrings, 16); header.writeUInt32LE(oStringData, 20); header.writeUInt32LE(oEntries, 36)
-  return Buffer.concat([header, namesBlock, stringsBlock, dataBlock, entries])
+  let ro = 0
+  const resOffs = resources.map((r) => { const o = ro; ro += r.length; return o })
+  const chunkOffBlock = uintArray(resOffs)
+  const chunkLenBlock = uintArray(resources.map((r) => r.length))
+  const oChunkOff = oStringData + dataBlock.length
+  const oChunkLen = oChunkOff + chunkOffBlock.length
+  const oEntries = oChunkLen + chunkLenBlock.length
+  const oChunkData = oEntries + entries.length
+  header.writeUInt32LE(oNames, 12); header.writeUInt32LE(oStrings, 16); header.writeUInt32LE(oStringData, 20); header.writeUInt32LE(oChunkOff, 24); header.writeUInt32LE(oChunkLen, 28); header.writeUInt32LE(oChunkData, 32); header.writeUInt32LE(oEntries, 36)
+  return Buffer.concat([header, namesBlock, stringsBlock, dataBlock, chunkOffBlock, chunkLenBlock, entries, ...resources])
+}
+
+// 合成的 TLG5（自测用；原始块 mark = 1，不压缩）：rgba = 每像素 R G B A（channels 4）或 R G B（channels 3）
+export function encodeTlg5(width, height, channels, rgba) {
+  const up = (x, y, c) => (y === 0 ? 0 : rgba[((y - 1) * width + x) * channels + c])
+  const planes = Array.from({ length: channels }, () => Buffer.alloc(width * height))
+  // TLG 内部是 B G R A 顺序
+  const order = channels === 4 ? [2, 1, 0, 3] : [2, 1, 0]
+  for (let y = 0; y < height; y++) {
+    const prevD = [0, 0, 0, 0]
+    for (let x = 0; x < width; x++) {
+      const s = []
+      for (let k = 0; k < channels; k++) {
+        const c = order[k]
+        const d = (rgba[(y * width + x) * channels + c] - up(x, y, c)) & 255
+        s.push((d - prevD[k]) & 255)
+        prevD[k] = d
+      }
+      const i = y * width + x
+      planes[0][i] = (s[0] - s[1]) & 255
+      planes[1][i] = s[1]
+      planes[2][i] = (s[2] - s[1]) & 255
+      if (channels === 4) planes[3][i] = s[3]
+    }
+  }
+  const head = Buffer.alloc(11 + 1 + 12 + 4)
+  head.write('TLG5.0\0raw\x1a', 0, 'latin1'); head[11] = channels; head.writeUInt32LE(width, 12); head.writeUInt32LE(height, 16); head.writeUInt32LE(height, 20); head.writeUInt32LE(0, 24)
+  const blocks = planes.map((p) => Buffer.concat([Buffer.from([1]), (() => { const b = Buffer.alloc(4); b.writeUInt32LE(p.length); return b })(), p]))
+  return Buffer.concat([head, ...blocks])
+}
+
+// KiriKiri 文本外壳（FE FE <模式> FF FE …）：模式 1 = 相邻位互换（解码时再换一次）；模式 0 的逆：ch ^= ((ch & 0xfe) << 8) ^ 1（ch >= 0x20）——只实现模式 1
+export function encodeKirikiriText(text, mode = 1) {
+  const body = Buffer.from(text, 'utf16le')
+  if (mode === 1) for (let i = 0; i < body.length; i += 2) { const ch = body.readUInt16LE(i); body.writeUInt16LE((((ch & 0xaaaa) >> 1) | ((ch & 0x5555) << 1)) & 0xffff, i) }
+  return Buffer.concat([Buffer.from([0xfe, 0xfe, mode, 0xff, 0xfe]), body])
 }

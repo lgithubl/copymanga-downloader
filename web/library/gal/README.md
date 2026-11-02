@@ -1221,7 +1221,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 
 ## KiriKiri Z（Hxv4 加密的 XP3，`krkr::scn`，gal-layout 2.34.0）
 
-**现状（第一阶段）**：剧本 + 台词 + 说话人 + 语音 + BGM + 背景（PNG / JPG）能播；立绘（PIMG 分层图）、事件 CG（TLG 图）还没做。用 g07（おっぱいスパイ学園）的真实 `scn.xp3` + 采集到的资源在浏览器里走了一遍整条链（导入 → gal-layout → 列表 → 播放，背景 / 台词出来，截图看过）；g08 的 256 个剧本全部能解码 + 适配器解析（41706 句台词）。
+**现状**：剧本 + 台词 + 说话人 + 语音 + BGM + 背景（PNG / JPG）+ 立绘（PIMG 分层图，TLG5 图层）+ 事件 CG（TLG6，直接的或藏在 dpak 里的）都有。用 g07（おっぱいスパイ学園）的真实 `scn.xp3` + 采集到的资源在浏览器里走了一遍整条链（导入 → gal-layout → 列表 → 播放，背景 / 台词出来，截图看过）；g08 的 256 个剧本全部能解码 + 适配器解析（41706 句台词）。
 
 ### 文件和配置
 - `krkr-hxv4.mjs`：读 XP3、解「特殊索引」、按（目录, 名字）找条目、解条目；`psb.mjs`：PSB 读取；`krkr-scn.mjs`：PSB 场景 → `krkr-scn/1` JSON；`adapters/krkr-scn.mjs`：JSON → 场景；`containers.mjs` 的 `format: 'krkr'`：展开 / 虚拟索引 / 取资源。
@@ -1237,8 +1237,13 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - 这些游戏没有选项（线性），`nexts` 指向别的脚本 = `scene.next`（指回 `gameloop` 的菜单 = 没有 next，`menuScripts` 可改）。
 - 解出来的格式（扩展名命中得到的，内容看过的）：图 = PNG / JPG；BGM / 语音 = OGG；`.stand` = KiriKiri 文本外壳（`FE FE <模式> FF FE`）里的 TJS 字典（脸 / 身体偏移）；立绘 = `.pimg`（PSB：`layers[]` { left, top, width, height, name, visible, group_layer_id } + 每层一张 TLG 资源）；事件 CG = TLG（`TLG0.0sds` 外壳）；视频 = Matroska；`data.xp3` 里还有 `.l2d`（Live2D）。
 
-### 没做 / 没验证
-- 立绘：PIMG 分层图要读 PSB 资源块 + TLG 解码 + 按 `options` 选图层 + 按 `.stand` 偏移摆放；事件 CG 要 TLG 解码；都没做，`stats.ignored.character` 能看到有多少步有立绘。
+### 立绘（PIMG）和事件 CG
+- **TLG**（`tlg.mjs`）：TLG5（LZSS + 行预测）/ TLG6（Golomb + MED / 平均预测）/ `TLG0.0 sds` 外壳 → RGBA → PNG；移植自 libtlg-rs 0.2.4（MIT）。真实的 TLG5（立绘图层）和 TLG6（1920×1080 事件 CG）解出来看过，对；测试里 TLG5 用编码器（解码器的逆）逐字节回环，TLG6 没有编码器、只有真实样本。不支持带异或的变体（XXXYYY / XXXZZZ / JKMXE8）和 TLG6 的外部 Golomb 表。
+- **立绘 = `.pimg`**（PSB，`krkr-pimg.mjs`）：`width` / `height` 画布 + `layers[]`（`layer_id`、`name`、`left`、`top`、`width`、`height`、`visible`、`layer_type` 0 图 / 2 组、`group_layer_id`）+ 每层一张 TLG（`<layer_id>.tlg` → 资源）。**身体层（dress）没有五官**（和 BGI 一样），表情在「表情差分」组里一层一个，腮红 / 眼镜另有层。脚本里 `options = { dress, face, pose, add }`：按层名选层，**画的顺序 = dress → pose → face → add 各项**（g07 的 PIMG 合成对过：反过来脸会被身体盖住）；`add` 用 `:` 隔开多项（`頬:眼鏡`）；层名按 NFKC 规整后比（脚本是全角括号「頬（照れ）」、PIMG 里是「頬(照れ)」）；脚本里的「頬」= 层「頬」或「頬(通常)」；「眼鏡なし」之类 = 不画；`pose`「基本」没有对应的层很常见，不算缺。
+- containers 把 PIMG 虚拟成 `arc/res/<名字>.pimg.json`（层表，适配器读）、`arc/res/<名字>.pimg/<层 id>.png`（现算：取到时才解密整个 PIMG、取这一层的 TLG 转 PNG，不列进文件索引）、`<名字>.pimg/canvas.png`（整张画布大小的透明图）。**缓存键要带上层 id / 成员名**（以前只有条目 id，同一个 PIMG 的所有层共用一个缓存文件，取到的全是第一层——浏览器里看到整个人叠了两层才发现的）。
+- 立绘的位置 / 缩放（**推断**，没有游戏画面对照）：一个角色一个槽位（slot = 角色名）；缩放 = `leveloffset`（`#0,0,0,111,0,-10`）第 4 项的百分比 × 舞台高 ÷ 画布高（真实 PIMG：身体 1948 高 / 画布 2246 高，111% 时 ≈ 舞台高）；水平 = `xpos`，没有按 `posName`（左 -480 / 右 480 / 左中 -240 / 右中 240，其余居中）；缩放后身体不超过舞台高 = 画布底边贴舞台底边，否则（特写）头顶在舞台上方 5%。`leveloffset` 的第 6 项（y）、`zpos`、`order`、`rotate`、`opacity` 都没用。位置不对就用播放器「设置 → 画面 → 立绘」调。
+- **事件 CG**：脚本里是 `ev` 层（`evcg001_03u1`）。evimage.xp3 里的条目有三种：直接的 TLG（名字 = 去掉 `ev` 的逻辑名 + `.tlg`）；**重定向文本**（`psb://cg002_30__mzraya.dpak/cg002_30r4.tlg` + 一行 `psb://…/<哈希>.png`，条目自己的名字不是逻辑名也猜不出来，只能靠内容找：containers 读 evimage 里所有 ≤ 2KB 的条目、解码 KiriKiri 文本外壳、按「成员名 = 去掉 ev 的逻辑名」建表）；dpak（PSB，成员 = 完整的 1920×1080 TLG + 一两张 PNG 叠加层）。每个名字（`…`、`…r1`、`…u1`）是一张完整的图。**叠加层（PNG，精液之类）没做**：位置不明（PNG 的尺寸不是 1920×1080，位置应该在 TJS 里）。
+- 采集脚本 v1.8 没采立绘的 `.pimg`（名字表里是 `cha001.stand` 带扩展名，`.pimg` / `.sinfo` 没算哈希）和 evimage 的重定向 / dpak，所以用真实立绘走整条链时，PIMG 是从采集到的随机 PSB 里挑 1 个放到 `cha001.pimg` 里造出来的（图是真的，对应关系是造的）。
 - 密钥只验证了 g07 / g08（采集里的 g08 / g09）两个游戏的 scn.xp3、以及它们的 data / image / voice 等 xp3 的索引（同一套密钥包都能解开）；别的 KiriKiri 游戏要自己的密钥包。
 - 转场（crossfade）/ 镜头动作（xpos / ypos / zpos 的移动，例如开场的长背景图上下卷动）不渲染；bg01 这类大尺寸背景按铺满显示。
 - `krkr-hxv4.mjs` 的细节：特殊索引 = XChaCha20-Poly1305 + zlib（nonce 由 Hxv4 描述符 kind 低位选）；条目内容 = XOR，由 params + SHAKE256(material) 的控制表生成 128 个小虚拟机程序按 entry_key 算（`Hxv4Filter`）；名字 = BLAKE2s-256(UTF-16LE(名字 + "xp3hnp"))，目录 = SipHash-2-4（小端存放）；移植自 xp3-brute 0.3.7（MIT）。g08 / g09 的 `scn.xp3`（265 / 256 条）全部解密并通过 adlr 校验、和 xp3-brute 的输出逐字节一致。

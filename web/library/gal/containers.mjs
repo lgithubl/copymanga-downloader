@@ -12,15 +12,17 @@ import { readFileSync, statSync } from 'node:fs'
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
-import { bwToOgg, cbgToPng, dscDecode, isBurikoScript, parseBgiFaceSet, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
+import { bwToOgg, cbgToPng, dscDecode, encodePng, isBurikoScript, parseBgiFaceSet, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
 import { decodeScre } from './arcfam-decode.mjs'
 import { runCbg } from './decode-pool.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
 import { normalizeKeyBundles } from './config.mjs'
-import { Hxv4Filter, applyState, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
+import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
+import { pimgInfo } from './krkr-pimg.mjs'
+import { isTlg, tlgToPng } from './tlg.mjs'
 import { inflateSync } from 'node:zlib'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
-import { isPsb } from './psb.mjs'
+import { Psb, isPsb } from './psb.mjs'
 import { pf8Decrypt, readPf8Index } from './pf8.mjs'
 import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
@@ -476,11 +478,16 @@ async function krkrRefsSig(mediaDir, cfg) {
   try { for (const stemDir of (await readdir(dir)).sort()) { const st = await stat(path.join(dir, stemDir, 'names.json')).catch(() => null); if (st) sig += `|${stemDir}:${st.size}:${Math.floor(st.mtimeMs)}` } } catch { /* 还没展开 */ }
   return `|refs${sig}`
 }
+// 图 / 立绘 / CG 的候选文件名（名字哈希要用）：逻辑名 n →
+//   n.<png|jpg|…>（直接是图）、n.tlg（TLG，转成 PNG）、去掉 ev 前缀的 cg…（事件 CG 在 evimage.xp3 里叫 cg001_03u1.tlg，脚本里叫 evcg001_03u1）、
+//   n.pimg（立绘：分层 PSB；虚拟成 <n>.pimg.json + <n>.pimg/<层 id>.png + <n>.pimg/canvas.png）
+const KRKR_PLAIN_IMAGE = ['png', 'jpg', 'jpeg', 'webp', 'bmp']
+const KRKR_REDIRECT_MAX = 2048   // 重定向文本（psb://X.dpak/成员）很小：只读 ≤ 这么大的条目来找
+const hashHex = (name) => nameHash(name).toString('hex').toUpperCase()
 async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
-  // 引用的资源名
   const names = { img: new Set(), bgm: new Set(), voice: new Set() }
   const refsDir = path.join(mediaDir, ...cfg.dir.split('/'), 'refs')
   try {
@@ -490,33 +497,84 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
       for (const kind of Object.keys(names)) for (const n of Array.isArray(data[kind]) ? data[kind] : []) if (typeof n === 'string' && n && n.length <= 80) names[kind].add(n)
     }
   } catch { /* 还没展开：没有名字 = 空索引（refs 出现后签名变了会重建） */ }
-  const candidates = new Map()   // 名字哈希（hex 大写）→ 文件名（带扩展名）
-  const addCandidates = (list, exts) => { for (const n of list) for (const ext of exts) { const file = `${n}.${ext}`; candidates.set(nameHash(file).toString('hex').toUpperCase(), file) } }
-  addCandidates(names.img, KRKR_IMAGE_EXTS)
-  addCandidates(names.bgm, KRKR_AUDIO_EXTS)
-  addCandidates(names.voice, KRKR_AUDIO_EXTS)
+  // 名字哈希 → [{ rel（虚拟路径里的文件名）, mode }]
+  const candidates = new Map()
+  const addCandidate = (file, rel, mode, extra = {}) => { const h = hashHex(file); if (!candidates.has(h)) candidates.set(h, []); candidates.get(h).push({ rel, mode, ...extra }) }
+  for (const n of names.img) {
+    for (const ext of KRKR_PLAIN_IMAGE) addCandidate(`${n}.${ext}`, `${n}.${ext}`, 'raw')
+    addCandidate(`${n}.tlg`, `${n}.png`, 'tlg-png')
+    if (/^ev/.test(n)) addCandidate(`${n.replace(/^ev/, '')}.tlg`, `${n}.png`, 'tlg-png')
+    addCandidate(`${n}.pimg`, `${n}.pimg.json`, 'pimg-json', { pimg: n })
+  }
+  for (const kind of ['bgm', 'voice']) for (const n of names[kind]) for (const ext of KRKR_AUDIO_EXTS) addCandidate(`${n}.${ext}`, `${n}.${ext}`, 'raw')
   if (!candidates.size) return { map, files, sig }
+  const entryHit = (entry, record, file, extra) => ({ file, offset: 0, size: entry.originalSize, transform: 'krkr', krkr: { id: entry.hxv4Id, segments: entry.segments, entryKey: record.entryKey.toString(), filterFlag: record.filterFlag, originalSize: entry.originalSize, archiveSize: entry.archiveSize, adler: entry.adler, ...extra } })
+  const redirects = new Map()   // 成员名（无扩展名）→ { dpak 文件名, 成员文件名, 所在 xp3 }
+  const pending = []            // 稍后处理的 { archive, byName }
   for (const { file, rule } of arcs) {
     if (!rule.kinds.has('res')) continue
     let opened
     try { opened = await openKrkr(file, cfg) } catch { continue }
     try {
-      const byRecord = new Map(opened.arc.entries.filter((e) => e.meta).map((e) => [e.meta, e]))
-      for (const record of opened.arc.special) {
+      const { arc, bundle } = opened
+      const byRecord = new Map(arc.entries.filter((e) => e.meta).map((e) => [e.meta, e]))
+      const byHash = new Map()
+      for (const record of arc.special) {
         if (record.archiveSlot !== 0) continue
-        const label = candidates.get(record.nameHash)
-        if (!label) continue
+        byHash.set(record.nameHash, record)
+        const list = candidates.get(record.nameHash)
+        if (!list) continue
         const entry = byRecord.get(record)
         if (!entry || entry.originalSize > MAX_ENTRY_BYTES) continue
-        add(`${cfg.dir}/res/${label}`, { file, offset: 0, size: entry.originalSize, transform: 'krkr', bundleJson: opened.bundle, krkr: { id: entry.hxv4Id, segments: entry.segments, entryKey: record.entryKey.toString(), filterFlag: record.filterFlag, originalSize: entry.originalSize, archiveSize: entry.archiveSize, adler: entry.adler } })
+        for (const c of list) {
+          const hit = entryHit(entry, record, file, { mode: c.mode })
+          hit.bundleJson = bundle
+          add(`${cfg.dir}/res/${c.rel}`, hit)
+        }
       }
-    } finally { await opened.arc.close() }
+      // 事件 CG：evimage.xp3 里大部分条目是小文本 psb://<包>.dpak/<成员>.tlg（重定向），真正的图在 .dpak（PSB）里；成员名 = 去掉 ev 的逻辑名
+      for (const entry of arc.entries) {
+        if (!entry.meta || entry.originalSize > KRKR_REDIRECT_MAX || entry.hxv4Id === 0) continue
+        let text = null
+        try { text = decodeKirikiriText(await arc.readEntry(entry, { verify: false })) } catch { continue }
+        if (!text || !text.includes('psb://')) continue
+        for (const line of text.split(/\r?\n/)) {
+          const m = /^psb:\/\/([^/]+\.dpak)\/(.+\.tlg)$/i.exec(line.trim())
+          if (m) redirects.set(m[2].replace(/\.tlg$/i, '').toLowerCase(), { dpak: m[1], member: m[2], file, bundle, byHash, byRecord })
+        }
+      }
+      pending.push({ file, bundle, arc })
+      opened.keep = true   // 先别关：事件 CG 的 dpak 要在同一个档案里按名字哈希找，最后统一关
+    } finally { if (!opened.keep) await opened.arc.close() }
   }
-  return { map, files, sig }
+  // 重定向 → 逻辑名（n 或 去 ev 的 n 对得上成员名）
+  try {
+    for (const n of names.img) {
+      const key = n.replace(/^ev/, '').toLowerCase()
+      const r = redirects.get(key) || redirects.get(n.toLowerCase())
+      if (!r || map.has(`${cfg.dir}/res/${n}.png`.toLowerCase())) continue
+      const record = r.byHash.get(hashHex(r.dpak))
+      const entry = record && r.byRecord.get(record)
+      if (!entry || entry.originalSize > MAX_ENTRY_BYTES) continue
+      const hit = entryHit(entry, record, r.file, { mode: 'dpak-member', member: r.member })
+      hit.bundleJson = r.bundle
+      add(`${cfg.dir}/res/${n}.png`, hit)
+    }
+  } finally { for (const { arc } of pending) await arc.close().catch(() => {}) }
+  // 立绘的层：<名字>.pimg/<层 id>.png / canvas.png 现算（不列进 files：适配器按 .pimg.json 里的层 id 直接引用）
+  const dynamic = (key, rel) => {
+    const m = /^(.*\.pimg)\/(canvas|\d+)\.png$/i.exec(key)
+    if (!m) return null
+    const base = map.get(`${m[1]}.json`)
+    if (!base || base.krkr?.mode !== 'pimg-json') return null
+    return { ...base, rel, krkr: { ...base.krkr, mode: 'pimg-layer', layer: m[2] } }
+  }
+  return { map, files, sig, dynamic }
 }
 async function readKrkrHit(hit) {
   const k = hit.krkr
   const handle = await open(hit.file, 'r')
+  let data
   try {
     const parts = []
     for (const s of k.segments) {
@@ -524,11 +582,36 @@ async function readKrkrHit(hit) {
       const method = s.flags & 7
       if (method === 1) parts.push(inflateSync(raw)); else if (method === 0) parts.push(raw); else throw new Error(`不支持的段编码 ${method}`)
     }
-    let data = Buffer.concat(parts)
+    data = Buffer.concat(parts)
     if (data.length !== k.originalSize && data.length === k.archiveSize) data = inflateSync(data)
     applyState(krkrFilterFor(hit.bundleJson).stateFor(BigInt(k.entryKey), k.filterFlag), 0, data)
-    return data
   } finally { await handle.close().catch(() => {}) }
+  switch (k.mode || 'raw') {
+    case 'tlg-png': return tlgToPng(data)
+    case 'pimg-json': return Buffer.from(JSON.stringify(pimgInfo(new Psb(data).root())))
+    case 'pimg-layer': {
+      const psb = new Psb(data)
+      const root = psb.root()
+      if (k.layer === 'canvas') return encodePng(Number(root.width), Number(root.height), 4, Buffer.alloc(Number(root.width) * Number(root.height) * 4), 1)
+      const ref = root[`${k.layer}.tlg`]
+      if (!ref) throw new Error(`PIMG 里没有层 ${k.layer}`)
+      return tlgToPng(psb.resources()[ref.resource])
+    }
+    case 'dpak-member': {
+      const psb = new Psb(data)
+      const ref = psb.root()[k.member]
+      if (!ref) throw new Error(`dpak 里没有成员 ${k.member}`)
+      const bytes = psb.resources()[ref.resource]
+      return isTlg(bytes) ? tlgToPng(bytes) : bytes
+    }
+    default: return data
+  }
+}
+// 虚拟索引里按路径找条目（krkr：立绘的层是现算的，不在表里）
+function hitFor(v, rel) {
+  const clean = String(rel).replace(/\\/g, '/').replace(/^\/+/, '')
+  const key = clean.toLowerCase()
+  return v.map.get(key) || v.dynamic?.(key, clean) || null
 }
 // 取一个虚拟条目的字节（转好格式 / 解好密的）
 async function readHit(hit) {
@@ -673,7 +756,7 @@ export async function virtualHas({ mediaDir, config, rels }) {
   const v = await virtualIndex({ mediaDir, config }).catch(() => null)
   if (!v) return ''
   for (const rel of rels) {
-    const hit = v.map.get(String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
+    const hit = hitFor(v, rel)
     if (hit) return hit.rel
   }
   return ''
@@ -686,11 +769,11 @@ export async function virtualEntry({ mediaDir, config, rels }) {
   const v = await virtualIndex({ mediaDir, config }).catch(() => null)
   if (!v) return null
   for (const rel of rels) {
-    const hit = v.map.get(String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
+    const hit = hitFor(v, rel)
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.krkr?.id ?? 0, CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,
@@ -708,7 +791,7 @@ export async function materialize({ mediaDir, config, rels }) {
   if (!v) return 0
   let n = 0
   for (const rel of rels) {
-    const hit = v.map.get(String(rel).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
+    const hit = hitFor(v, rel)
     if (!hit) continue
     const target = path.join(mediaDir, ...hit.rel.split('/'))
     try { const have = await stat(target); if (hit.unpremultiply || hit.transform ? have.size > 0 : have.size === hit.size) continue } catch { /* 还没有 */ }   // 转过的（预乘 → 直通）大小和 .arc 里的不一样：只看有没有
