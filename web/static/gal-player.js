@@ -256,8 +256,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   delayInput.type = 'number'
   delayInput.min = '0'
   delayInput.max = String(GAL_SETTINGS.autoVoiceDelayMax)
-  delayInput.step = '0.5'
-  delayInput.title = '自动播放时，语音播完后再等多少秒进入下一句（没有语音的句子按台词长度估算）'
+  delayInput.step = '0.01'
+  delayInput.title = '自动播放时，语音播完后再等多少秒进入下一句（可以小数，如 0.01）。没有语音的句子：按台词长度估一个阅读时间，再乘「这个数 ÷ 默认值 1」——0 = 不等，1 = 估算值，2 = 两倍'
   delayInput.className = 'gal-set-number'
   const delayUnit = el('span', 'gal-set-value', '秒')
   const fontRange = range(Math.round(GAL_SETTINGS.fontScaleMin * 100), Math.round(GAL_SETTINGS.fontScaleMax * 100), 5, '台词字体大小')
@@ -1159,7 +1159,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     // 没有语音（或语音放不出来）：按台词长度估一个阅读时间
     const chars = segmentsText(state.text).length
-    const wait = Math.max(1.2, Math.min(8, 0.8 + chars * 0.12))
+    // 乘 voiceDelay / 默认值：默认（1）= 原来的估算；0 = 不等；设置对有语音和没语音的句子都生效
+    const wait = Math.max(1.2, Math.min(8, 0.8 + chars * 0.12)) * (voiceDelay / GAL_SETTINGS.autoVoiceDelayDefault)
     autoTimer = setTimeout(advance, wait * 1000)
   }
   // 快进：按住 Ctrl（约 0.25 秒后进入，避免 Ctrl+F / Ctrl+C 误触）连续翻页——动画和语音 / 音效都跳过；遇到选项暂停（选完接着快进），到最后一步或松开 Ctrl 就停
