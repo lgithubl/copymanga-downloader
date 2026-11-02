@@ -5,6 +5,7 @@
 import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } from '/gal-spine.js'
 import { createLive2dLayer } from '/gal-live2d.js'
 import { createTranslateClient } from '/gal-translate.js'
+import { createTtsClient, ttsKey } from '/gal-tts-client.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 import { attachBarLock } from '/gal-barlock.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
@@ -12,7 +13,7 @@ import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration,
 // se = 旧版「语音/音效」合在一起的那一个（只读：新的几个滑块没存过时拿它当初始值，升级后听感不变）
 // 自动进入下一章时，自动播放 / 快进的状态带给下一章的播放器（每章是新建的播放器实例）
 let carryOver = null
-const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume', voice: 'copymanga.gal.voiceVolume', sfx: 'copymanga.gal.sfxVolume', bgse: 'copymanga.gal.bgseVolume', bgvoice: 'copymanga.gal.bgvoiceVolume', movie: 'copymanga.gal.movieVolume' }
+const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume', voice: 'copymanga.gal.voiceVolume', tts: 'copymanga.gal.ttsVolume', sfx: 'copymanga.gal.sfxVolume', bgse: 'copymanga.gal.bgseVolume', bgvoice: 'copymanga.gal.bgvoiceVolume', movie: 'copymanga.gal.movieVolume' }
 // 音频分组（设置 → 音频，每组一个滑块；op = 场景里的音频指令）：脚本里没出现的组，滑块自动隐藏
 const AUDIO_GROUPS = [
   { key: 'voice', label: '语音', ops: ['voice'], title: '语音音量（滑块位置，实际增益 = 位置²）' },
@@ -20,6 +21,7 @@ const AUDIO_GROUPS = [
   { key: 'bgse', label: '背景音效', ops: ['bgse'], title: '背景音效音量（bgse 指令：循环的环境音；滑块位置，实际增益 = 位置²）' },
   { key: 'bgvoice', label: '背景人声', ops: ['bgvoice'], title: '背景人声音量（bgvoice 指令：循环的背景人声，再乘脚本里写的音量；滑块位置，实际增益 = 位置²）' },
   { key: 'movie', label: '视频', ops: ['movie'], title: '视频自带声音的音量（滑块位置，实际增益 = 位置²）' },
+  { key: 'tts', label: '朗读', ops: [], always: 'tts', title: '朗读（TTS）音量（滑块位置，实际增益 = 位置²）' },
 ]
 // 音量：滑块位置 p（0..1，存进浏览器的就是它）→ 实际增益 volumeGain(p) = p²（感知曲线）。旧版存的是线性值，按滑块位置解释，听起来会比以前小
 const loadVolume = (key, fallback) => {
@@ -50,6 +52,9 @@ export const GAL_SETTINGS = {
   translateBlockKey: 'copymanga.gal.translateBlockSec', // 阻塞最多几秒（0 = 一直等到译文好）
   translateBlockDefault: 10,
   translateBlockMax: 600,
+  ttsOnKey: 'copymanga.gal.ttsOn',                  // 工具栏「朗读」开关
+  ttsSourceKey: 'copymanga.gal.ttsSource',          // 朗读什么：orig 原文 | trans 译文
+  ttsVoicedKey: 'copymanga.gal.ttsVoiced',          // 游戏本来有语音的句子也朗读
   fastResumeKey: 'copymanga.gal.fastResume',        // 快进遇到选项：false = 停下（默认，原来的行为）；true = 选完接着快进
   autoNextKey: 'copymanga.gal.autoNextChapter',     // 看完一章：false = 回列表 / 停在「继续下一章」（默认）；true = 自动进入下一章
   animSpeedKey: 'copymanga.gal.animSpeed',           // 动画速度倍率（渐变 / 黑场 / 等待 / 立绘淡入…的时长除以它；1 = 不调整）
@@ -104,7 +109,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
 //   chapter: { jump(节点 id)（脚本里的 goto：直接接着播那个脚本，返回 true = 已经跳走）, canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
-export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null, translate = null }) {
+export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null, translate = null, tts = null }) {
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
   let choices = { ...(startChoices || {}) }
@@ -179,6 +184,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const transBtn = btn('翻译', '显示译文（原文先显示，译文在后台翻好了再填；需要在设置页配好翻译模型）', 'gal-trans-btn')
   transBtn.hidden = !translate?.enabled
   transBtn.setAttribute('aria-pressed', 'false')
+  const ttsBtn = btn('朗读', '朗读台词（没有语音的句子；原文先显示，声音合成好了再播；需要在设置页配好 TTS 服务并启用 Gal 朗读）', 'gal-tts-btn')
+  ttsBtn.hidden = !tts?.enabled
+  ttsBtn.setAttribute('aria-pressed', 'false')
   const fastBtn = btn('快进', '快进开关（X；点一下开始，再点停止，遇到选项停下；也可以按住 Ctrl 快进）', 'gal-fast-btn')
   fastBtn.setAttribute('aria-pressed', 'false')
   const autoSelBtn = btn('自选', '自动选择选项开关（具体选第几个在「设置」里设置）', 'gal-autosel')
@@ -267,7 +275,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const note = el('span', 'muted gal-note', '')
   note.setAttribute('role', 'button')
   note.tabIndex = 0
-  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, transBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
+  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, transBtn, ttsBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
 
   // 设置弹层（原来的 ⚙ 设置和「更多」菜单合在这里）：显示 / 音频 / 播放 / 画面 四组。.gal-more 和 .gal-settings 两个类都留着
   // 立绘大小 / 偏移（只对 stand 立绘，Spine 角色不受影响）：存在这个媒体里
@@ -298,10 +306,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   blockInput.max = String(GAL_SETTINGS.translateBlockMax)
   blockInput.step = '1'
   blockInput.className = 'gal-set-number'
-  blockInput.title = '自动播放等译文最多等几秒；0 = 一直等到译文翻好（译文失败 / 翻译服务不可用时不会死等，直接放行）'
+  blockInput.title = '自动播放等译文 / 等朗读的声音最多等几秒；0 = 一直等到好（失败 / 服务不可用时不会死等，直接放行）。自动翻译和朗读共用'
   const blockRow = el('label', 'gal-set-row')
   blockRow.append(el('span', 'gal-set-label', '阻塞最大'), blockInput, el('span', 'gal-set-value', '秒'))
-  autoTransCtl.row.hidden = blockRow.hidden = !translate?.enabled
+  autoTransCtl.row.hidden = !translate?.enabled
+  blockRow.hidden = !translate?.enabled && !tts?.enabled   // 自动翻译 / 朗读共用
+  const ttsSourceSelect = el('select', 'gal-set-select')
+  for (const [value, label] of [['orig', '原文'], ['trans', '译文（需要开翻译）']]) { const o = el('option', '', label); o.value = value; ttsSourceSelect.append(o) }
+  ttsSourceSelect.title = '朗读读什么：原文 / 译文（译文翻好了才读，没翻好之前不读）'
+  const ttsSourceRow = el('label', 'gal-set-row')
+  ttsSourceRow.append(el('span', 'gal-set-label', '朗读内容'), ttsSourceSelect, el('span', 'gal-set-value', ''))
+  const ttsVoicedCtl = checkRow('朗读也读有语音的句子', '不勾：游戏本来有语音的句子不朗读（只读没有语音的）；勾上：有语音的也朗读')
+  ttsSourceRow.hidden = ttsVoicedCtl.row.hidden = !tts?.enabled
   const delayInput = el('input')
   delayInput.type = 'number'
   delayInput.min = '0'
@@ -324,7 +340,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   settings.append(
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
-    section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow),
+    section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow, ttsSourceRow, ttsVoicedCtl.row),
     section('画面', animRow, slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
   )
   hud.append(box)
@@ -387,7 +403,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const vol = Object.fromEntries(AUDIO_GROUPS.map((g) => [g.key, loadVolume(g.key, legacyVolume)]))   // 组 key → 滑块位置
   const gainOf = (key) => volumeGain(vol[key])
   const usedOps = new Set(scene.steps.flatMap((step) => step.commands.map((c) => c.op)))
-  for (const g of AUDIO_GROUPS) audioRanges[g.key].row.hidden = !g.ops.some((op) => usedOps.has(op))
+  for (const g of AUDIO_GROUPS) audioRanges[g.key].row.hidden = g.always === 'tts' ? !tts?.enabled : !g.ops.some((op) => usedOps.has(op))
   bgmRange.value = String(bgmVolume)
   for (const g of AUDIO_GROUPS) { audioRanges[g.key].range.value = String(vol[g.key]); }
   const pct = (p) => `${Math.round(p * 100)}%`
@@ -423,7 +439,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     try { localStorage.setItem(GAL_SETTINGS.translateBlockKey, String(blockSec)) } catch { /* 同上 */ }
   })
   const tr = translate?.enabled
-    ? createTranslateClient({ lookahead: translate.lookahead ?? 40, chunk: translate.batch ?? 15, contextSize: translate.context ?? 2, onChange: () => paintTrans() })
+    ? createTranslateClient({ lookahead: translate.lookahead ?? 40, chunk: translate.batch ?? 15, contextSize: translate.context ?? 2, onChange: () => { paintTrans(); if (ttsOn && ttsSource === 'trans') { focusTts(true); ttsTryPlay() } } })
     : null
   // 每步的台词（按播放顺序，没台词的步 ''）：给翻译客户端当「这个脚本的句子表」；路径变了（选了选项）重算
   const stepText = (stepIndex) => {
@@ -462,6 +478,103 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (transOn) focusTrans(true)
   }
   transBtn.addEventListener('click', () => setTranslate(!transOn))
+  // ---------- 朗读（TTS）：没有语音的句子，原文显示之后后台合成，合成好了再播（见 gal-tts-client.js / library/gal-tts.mjs）----------
+  let ttsOn = false
+  let ttsSource = (() => { try { return localStorage.getItem(GAL_SETTINGS.ttsSourceKey) === 'trans' ? 'trans' : 'orig' } catch { return 'orig' } })()
+  let ttsVoiced = loadFlag(GAL_SETTINGS.ttsVoicedKey)
+  ttsSourceSelect.value = ttsSource
+  ttsVoicedCtl.input.checked = ttsVoiced
+  const ttsClient = tts?.enabled ? createTtsClient({ lookahead: tts.lookahead ?? 6, onChange: () => onTtsChange() }) : null
+  const voicedSteps = new Map()
+  const stepHasVoice = (stepIndex) => { if (!voicedSteps.has(stepIndex)) voicedSteps.set(stepIndex, (scene.steps[stepIndex]?.commands || []).some((c) => c.op === 'voice')); return voicedSteps.get(stepIndex) }
+  let speakers = null   // 每步的说话人（没有 speaker 指令的步沿用上一步）
+  const speakerAt = (stepIndex) => {
+    if (!speakers) {
+      speakers = []
+      let last = ''
+      for (const step of scene.steps) {
+        for (const c of step.commands) if (c.op === 'speaker') last = segmentsText(c.segments).replace(/\s+/g, ' ').trim()
+        speakers.push(last)
+      }
+    }
+    return speakers[stepIndex] || ''
+  }
+  // 这个播放位置要读的东西：{ text, speaker, lang }；没有 = null（没台词 / 游戏有语音且没勾「也读」/ 要读译文但译文还没翻好）
+  function ttsItemAt(pos) {
+    const stepIndex = path[pos]
+    if (stepIndex === undefined || (!ttsVoiced && stepHasVoice(stepIndex))) return null
+    const original = stepText(stepIndex)
+    if (!original) return null
+    const useTrans = ttsSource === 'trans' && tr && transOn
+    if (!useTrans) return { text: original, speaker: speakerAt(stepIndex), lang: tts.sourceLang || '' }
+    const v = tr.get(original)
+    return v?.state === 'ok' && v.t ? { text: v.t, speaker: speakerAt(stepIndex), lang: tts.targetLang || '' } : null
+  }
+  let ttsRecord = null       // { gen, key, audio, endedAt, failed }：当前这一步正在播（或播过）的朗读
+  let ttsWaitTimer = 0
+  let ttsGaveUp = ''         // 等声音等够了的 key：自动播放不再等它
+  let lastTtsFocus = -2
+  const ttsCurrent = () => (ttsOn && ttsClient && !fast ? ttsItemAt(posNow()) : null)
+  function focusTts(force = false) {
+    if (!ttsClient || !ttsOn || fast) return
+    const at = Math.max(0, posNow())
+    if (!force && at === lastTtsFocus) return
+    lastTtsFocus = at
+    const list = new Array(path.length).fill(null)
+    for (let i = at; i < Math.min(path.length, at + 1 + (tts.lookahead ?? 6)); i++) list[i] = ttsItemAt(i)
+    ttsClient.focus({ items: list, at })
+  }
+  function stopTts() {
+    if (ttsRecord?.audio) { try { ttsRecord.audio.pause() } catch { /* 没在播就算了 */ } }
+    ttsRecord = null
+    clearTimeout(ttsWaitTimer)
+    ttsWaitTimer = 0
+    ttsGaveUp = ''
+  }
+  // 当前这一步的声音合成好了、这一步也跑完了、还没播过 → 播（原文早就显示了）
+  function ttsTryPlay() {
+    if (!ttsClient || !ttsOn || fast || running || skipping || destroyed) return
+    const item = ttsCurrent()
+    if (!item) return
+    if (ttsRecord && ttsRecord.gen === gen) return
+    const key = ttsKey(item)
+    const v = ttsClient.get(key)
+    if (v?.state !== 'ok' || !v.url) return
+    const audio = new Audio(v.url)   // 朗读的 url 是服务端的接口路径（不是资源路径，不能走 url()）
+    audio.volume = gainOf('tts')
+    const record = { gen, key, audio, endedAt: 0, failed: false }
+    ttsRecord = record
+    clearTimeout(ttsWaitTimer)
+    ttsWaitTimer = 0
+    audio.addEventListener('ended', () => { record.endedAt = performance.now(); if (ttsRecord === record) scheduleAuto() })
+    audio.addEventListener('error', () => { record.failed = true; if (ttsRecord === record) scheduleAuto() })
+    audio.play().catch(() => { record.failed = true; if (ttsRecord === record) scheduleAuto() })   // 浏览器拒绝自动播放：按「没有朗读」处理，自动播放不再等它
+  }
+  function onTtsChange() {
+    ttsTryPlay()
+    if (ttsOn && !ttsClient.available) scheduleAuto()   // 朗读不可用了：自动播放别再等
+  }
+  function setTts(on) {
+    ttsOn = Boolean(on) && Boolean(ttsClient)
+    ttsBtn.classList.toggle('active', ttsOn)
+    ttsBtn.setAttribute('aria-pressed', String(ttsOn))
+    try { localStorage.setItem(GAL_SETTINGS.ttsOnKey, ttsOn ? '1' : '0') } catch { /* 同上 */ }
+    ttsClient?.pause(!ttsOn || fast)
+    stopTts()
+    if (ttsOn) { focusTts(true); ttsTryPlay() }
+    scheduleAuto()
+  }
+  ttsBtn.addEventListener('click', () => setTts(!ttsOn))
+  ttsSourceSelect.addEventListener('change', () => {
+    ttsSource = ttsSourceSelect.value === 'trans' ? 'trans' : 'orig'
+    try { localStorage.setItem(GAL_SETTINGS.ttsSourceKey, ttsSource) } catch { /* 同上 */ }
+    stopTts(); focusTts(true); ttsTryPlay()
+  })
+  ttsVoicedCtl.input.addEventListener('change', () => {
+    ttsVoiced = ttsVoicedCtl.input.checked
+    try { localStorage.setItem(GAL_SETTINGS.ttsVoicedKey, ttsVoiced ? '1' : '0') } catch { /* 同上 */ }
+    stopTts(); focusTts(true); ttsTryPlay()
+  })
   let animSpeed = loadNumber(GAL_SETTINGS.animSpeedKey, GAL_SETTINGS.animSpeedDefault, GAL_SETTINGS.animSpeedMin, GAL_SETTINGS.animSpeedMax)
   animInput.value = String(animSpeed)
   animInput.addEventListener('change', () => {
@@ -999,6 +1112,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // 一步到位渲染第 i 步之后的状态（后退 / 续播 / 开头）。不播语音和音效——那是一次性的
   function renderInstant(i) {
     gen += 1
+    stopTts()
     cancelChoice()
     running = false
     skipping = false
@@ -1034,6 +1148,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     running = true
     skipping = fast   // 快进时每一步都按「已点击跳过」处理：渐变 / 等待 / 语音 / 音效都跳过
     const mine = ++gen
+    stopTts()
     stopAuto()
     cancelChoice()
     index = i
@@ -1215,6 +1330,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     nextBtn.disabled = !path.length || (pos >= path.length - 1 && !running)
     if (!logPanel.hidden) renderLog()
     focusTrans()
+    focusTts()
+    ttsTryPlay()
   }
   function updateNote() {
     const parts = []
@@ -1277,11 +1394,28 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     const advance = atEnd ? finish : next
     // 这一步有语音：等它播完，再多等 voiceDelay 秒。语音还在放时直接返回，播完（ended）会再调用本函数
     const voice = stepVoice && stepVoice.step === gen && !stepVoice.failed ? stepVoice : null
+    const ttsItem = ttsCurrent()
+    const ttsNowKey = ttsItem ? ttsKey(ttsItem) : ''
+    const ttsRec = ttsNowKey && ttsRecord && ttsRecord.gen === gen && ttsRecord.key === ttsNowKey && !ttsRecord.failed ? ttsRecord : null
     if (voice) {
       if (!voice.endedAt) return
-      const remaining = Math.max(0, voiceDelay * 1000 - (performance.now() - voice.endedAt))
+      if (ttsRec && !ttsRec.endedAt) return   // 也朗读有语音的句子：两个都播完才算
+      const remaining = Math.max(0, voiceDelay * 1000 - (performance.now() - Math.max(voice.endedAt, ttsRec?.endedAt || 0)))
       armAdvance(remaining, advance)
       return
+    }
+    // 朗读：像语音一样等它播完再多等 voiceDelay 秒；声音还没合成好就等（最多 blockSec 秒，0 = 一直等；朗读失败 / 不可用 = 不等）
+    if (ttsNowKey) {
+      if (ttsRec) {
+        if (!ttsRec.endedAt) return
+        armAdvance(Math.max(0, voiceDelay * 1000 - (performance.now() - ttsRec.endedAt)), advance)
+        return
+      }
+      const st = ttsClient.get(ttsNowKey)
+      if (st?.state !== 'skipped' && st?.state !== 'error' && ttsClient.available && ttsGaveUp !== ttsNowKey && !(ttsRecord && ttsRecord.gen === gen && ttsRecord.failed)) {
+        if (blockSec > 0 && !ttsWaitTimer) { const waitKey = ttsNowKey; ttsWaitTimer = setTimeout(() => { ttsWaitTimer = 0; ttsGaveUp = waitKey; scheduleAuto() }, blockSec * 1000) }
+        return
+      }
     }
     // 没有语音（或语音放不出来）：按台词长度估一个阅读时间
     const chars = segmentsText(state.text).length
@@ -1323,6 +1457,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     fastBadge.hidden = !on
     root.classList.toggle('is-fast', on)
     tr?.pause(!transOn || on)   // 快进中不预加载译文（句子一晃而过），停下来再接着要
+    ttsClient?.pause(!ttsOn || on)
+    if (on) stopTts(); else if (ttsOn) { focusTts(true); ttsTryPlay() }
     if (on) {
       stopAuto()
       voiceAudio?.pause()
@@ -1822,6 +1958,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (key === 'movie') movie.volume = gain
     else if (key === 'bgse') { if (bgseAudio) bgseAudio.volume = gain }
     else if (key === 'voice') { if (voiceAudio) voiceAudio.volume = gain }
+    else if (key === 'tts') { if (ttsRecord?.audio) ttsRecord.audio.volume = gain }
     else if (key === 'bgvoice') for (const v of bgVoices.values()) v.audio.volume = Math.max(0, Math.min(1, gain * (Number.isFinite(Number(v.volume)) ? Number(v.volume) : 1)))
   }
   for (const g of AUDIO_GROUPS) {
@@ -1893,8 +2030,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const visibility = new IntersectionObserver((entries) => {
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
-    if (visible) { tr?.pause(!transOn || fast); spineLayer?.setPaused(false); live2dLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
-    else { tr?.pause(true); spineLayer?.setPaused(true); live2dLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
+    if (visible) { tr?.pause(!transOn || fast); ttsClient?.pause(!ttsOn || fast); spineLayer?.setPaused(false); live2dLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
+    else { tr?.pause(true); ttsClient?.pause(true); ttsRecord?.audio?.pause(); spineLayer?.setPaused(true); live2dLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
   })
   visibility.observe(stage)
 
@@ -1921,6 +2058,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     spineLayer?.destroy()
     live2dLayer?.destroy()
     tr?.destroy()
+    stopTts()
+    ttsClient?.destroy()
     standLayer?.destroy()
     overlayLayer?.destroy()
     underLayer?.destroy()
@@ -1946,5 +2085,6 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (c.fast) { fastLatched = true; setFast(true) }
   }
   if (tr && loadFlag(GAL_SETTINGS.translateOnKey)) setTranslate(true)   // 上次开着翻译：这次接着开
+  if (ttsClient && loadFlag(GAL_SETTINGS.ttsOnKey)) setTts(true)
   return { destroy, next, prev, setImmersive, get index() { return index }, get total() { return path.length }, get choices() { return { ...choices } }, ratio: () => ratioOfStep(Math.max(0, posNow()), path.length) }
 }

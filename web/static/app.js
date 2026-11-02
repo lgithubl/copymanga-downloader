@@ -261,6 +261,9 @@ const els = {
   configEpubTtsMaxConcurrency: document.querySelector('#config-epub-tts-max-concurrency'),
   configEpubTtsBatchMaxSentences: document.querySelector('#config-epub-tts-batch-max-sentences'),
   configEpubTtsBatchMaxChars: document.querySelector('#config-epub-tts-batch-max-chars'),
+  configGalTtsEnabled: document.querySelector('#config-gal-tts-enabled'),
+  configGalTtsRules: document.querySelector('#config-gal-tts-rules'),
+  configGalTtsLookahead: document.querySelector('#config-gal-tts-lookahead'),
   configGalTranslateEnabled: document.querySelector('#config-gal-translate-enabled'),
   configGalTranslateApiBase: document.querySelector('#config-gal-translate-api-base'),
   configGalTranslateApiKey: document.querySelector('#config-gal-translate-api-key'),
@@ -1501,6 +1504,9 @@ function applyConfig(config) {
   els.configEpubTtsMaxConcurrency.value = config.epubTtsMaxConcurrency || 1
   els.configEpubTtsBatchMaxSentences.value = config.epubTtsBatchMaxSentences || 5
   els.configEpubTtsBatchMaxChars.value = config.epubTtsBatchMaxChars || 200
+  els.configGalTtsEnabled.checked = config.galTtsEnabled === true
+  els.configGalTtsRules.value = formatEpubTtsRules(config.galTtsRules)
+  els.configGalTtsLookahead.value = config.galTtsLookahead ?? 6
   els.configGalTranslateEnabled.checked = config.galTranslateEnabled === true
   els.configGalTranslateApiBase.value = config.galTranslateApiBase || ''
   els.configGalTranslateApiKey.value = config.galTranslateApiKey || ''
@@ -4391,6 +4397,8 @@ function renderGal(reader) {
     startChoices: pendingStart || resume >= 0.98 ? {} : savedChoices,
     viewKey: readerOwner(reader)?.itemId || '',   // 画面放大 / 中心按媒体（条目）存
     // 台词翻译（设置页 → Gal 翻译；没启用 / 没填模型地址 = 播放器里不出「翻译」按钮）
+    // 台词朗读（设置页 → Gal 朗读；TTS 服务地址用「朗读（TTS）」那组；没启用 = 播放器里不出「朗读」按钮）
+    tts: appConfig?.galTtsEnabled && appConfig?.epubTtsApiBase ? { enabled: true, lookahead: appConfig.galTtsLookahead ?? 6, sourceLang: appConfig.galTranslateSourceLanguage || 'ja', targetLang: appConfig.galTranslateTargetLanguage || 'zh' } : null,
     translate: appConfig?.galTranslateEnabled && appConfig?.galTranslateApiBase ? { enabled: true, lookahead: appConfig.galTranslateLookahead ?? 40, batch: appConfig.galTranslateBatchSize ?? 15, context: appConfig.galTranslateContextSize ?? 2 } : null,
     // 「更多 → 显示马赛克层」改了之后：按新的设置重取当前这份脚本
     onReload: () => { galNavigate(reader, reader.node?.id ?? reader.section?.sectionId ?? '', 'self').catch((error) => alert(error.message)) },
@@ -8720,6 +8728,7 @@ els.configSave.addEventListener('click', async () => {
     const directOpenRules = parseNewTabRules(els.configLibraryDirectOpenRules.value, '直接进浏览')
     const newTabRules = { media: parseNewTabRules(els.configMediaNewTabRules.value, '打开媒体'), tagSearch: parseNewTabRules(els.configTagSearchNewTabRules.value, '点标签') }
     const epubTtsRules = parseEpubTtsRules(els.configEpubTtsRules.value)
+    const galTtsRules = (() => { const raw = els.configGalTtsRules.value.trim(); if (!raw) return []; let v; try { v = JSON.parse(raw) } catch (error) { throw new Error(`「Gal 朗读规则」不是合法的 JSON：${error.message}`) } if (!Array.isArray(v)) throw new Error('「Gal 朗读规则」必须是 JSON 数组'); return v })()
     setLoading(els.configSave, true)
     els.token.value = els.configToken.value.trim()
     localStorage.setItem('copymanga.token', els.token.value)
@@ -8761,6 +8770,9 @@ els.configSave.addEventListener('click', async () => {
         epubTtsMaxConcurrency: Number(els.configEpubTtsMaxConcurrency.value),
         epubTtsBatchMaxSentences: Number(els.configEpubTtsBatchMaxSentences.value),
         epubTtsBatchMaxChars: Number(els.configEpubTtsBatchMaxChars.value),
+        galTtsEnabled: els.configGalTtsEnabled.checked,
+        galTtsRules,
+        galTtsLookahead: Number(els.configGalTtsLookahead.value),
         galTranslateEnabled: els.configGalTranslateEnabled.checked,
         galTranslateApiBase: els.configGalTranslateApiBase.value,
         galTranslateApiKey: els.configGalTranslateApiKey.value,

@@ -21,6 +21,7 @@ import { hasGeneratedPreview } from './library/index-flags.mjs'
 import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
 import { createGalTranslator } from './library/gal-translate.mjs'
+import { cleanGalTtsRules, createGalTts } from './library/gal-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
 import { parseReplacements, toSpokenText } from './library/epub-tts-text.mjs'
 import { cleanTtsRules, parseTtsRules, ttsParamsFor, ttsVoiceKey } from './library/epub-tts-flags.mjs'
@@ -43,6 +44,7 @@ const TAG_OVERRIDE_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-overrides'
 const TAG_SCRIPT_CONFIG_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-script-config')
 const EPUB_TTS_CACHE_DIR = path.join(DATA_DIR, 'cache', 'epub-tts')
 const GAL_TRANSLATE_CACHE_DIR = path.join(DATA_DIR, 'cache', 'gal-translate')
+const GAL_TTS_CACHE_DIR = path.join(DATA_DIR, 'cache', 'gal-tts')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -103,6 +105,7 @@ const runningTagJobIds = new Set()
 let tagWorkerTimer = null
 let config = defaultConfig()
 const galTranslator = createGalTranslator({ getConfig: () => config, cacheDir: GAL_TRANSLATE_CACHE_DIR })
+const galTts = createGalTts({ getConfig: () => config, cacheDir: GAL_TTS_CACHE_DIR, synth: callGsvTtsBatched, spoken: (text) => epubTtsSpoken(text) })
 const execFileAsync = promisify(execFile)
 const APP_COMIC_METADATA = '元数据.json'
 const APP_CHAPTER_METADATA = '章节元数据.json'
@@ -401,6 +404,11 @@ function defaultConfig() {
     galTranslateTimeoutMs: 120000,
     galTranslateRetryCount: 2,
     galTranslateLookahead: 40,   // 播放器往后预加载多少句
+    // Gal 台词朗读：复用上面 epubTts* 的 GSV-TTS-Lite 服务地址 / 默认参考音频 / 最大并发 / 每批句数字数 / 文本替换规则；这里只加开关、按说话人选音色的规则、预加载句数。见 library/gal-tts.mjs
+    galTtsEnabled: false,
+    // 每条 { match（正则，不分大小写）, on?: 'speaker'（默认）| 'text', speaker_audio?, prompt_audio?, prompt_text?, text_language?, prompt_language? }，第一条命中的生效；空 = 全部用默认音色
+    galTtsRules: [],
+    galTtsLookahead: 6,   // 播放器往后预合成多少句（GPU 推理，比翻译少得多）
     mediaImportProfiles: {
       'rj-media': {
         maxDepth: 6,
@@ -565,6 +573,9 @@ function normalizeConfig(value) {
     galTranslateTimeoutMs: clampNumber(value?.galTranslateTimeoutMs, 1000, 3600000, defaults.galTranslateTimeoutMs),
     galTranslateRetryCount: clampNumber(value?.galTranslateRetryCount, 0, 5, defaults.galTranslateRetryCount),
     galTranslateLookahead: clampNumber(value?.galTranslateLookahead, 0, 200, defaults.galTranslateLookahead),
+    galTtsEnabled: value?.galTtsEnabled === true,
+    galTtsRules: cleanGalTtsRules(value?.galTtsRules),
+    galTtsLookahead: clampNumber(value?.galTtsLookahead, 0, 40, defaults.galTtsLookahead),
     mediaImportProfiles: normalizeMediaImportProfiles(value?.mediaImportProfiles, defaults.mediaImportProfiles),
     mediaSubtitleExtensions: normalizeExtensionList(value?.mediaSubtitleExtensions, defaults.mediaSubtitleExtensions),
     mediaOpenInNewTabRules: Array.isArray(value?.mediaOpenInNewTabRules)
@@ -5090,6 +5101,19 @@ async function route(req, res) {
       res.on('close', () => { if (!res.writableEnded) controller.abort() })
       const out = await galTranslator.handle(await readJson(req), { signal: controller.signal })
       return json(res, out.status, out.body)
+    }
+    // Gal 台词朗读：{ lines: [{ text, speaker?, lang? }], priority: 'now' | 'ahead', waitMs }；没好的回 pending，客户端再要（缓存 / 在途去重）。断开连接 = 撤掉这个请求独占、还没开始合成的句子
+    if (pathname === '/api/gal/tts' && req.method === 'POST') {
+      const controller = new AbortController()
+      res.on('close', () => { if (!res.writableEnded) controller.abort() })
+      const out = await galTts.handle(await readJson(req), { signal: controller.signal })
+      return json(res, out.status, out.body)
+    }
+    if (pathname.startsWith('/api/gal/tts/') && req.method === 'GET') {
+      const match = /^([0-9a-f]{40})\.wav$/.exec(pathname.slice('/api/gal/tts/'.length))
+      const file = match ? galTts.wavPath(match[1]) : null
+      if (!file || !(await pathExists(file))) return json(res, 404, { error: 'audio not found' })
+      return streamFile(res, file, 'audio/wav')
     }
     if (pathname === '/api/config' && req.method === 'GET') return json(res, 200, config)
     if (pathname === '/api/config' && req.method === 'POST') {

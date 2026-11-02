@@ -805,6 +805,11 @@
               <label>预加载（播放器往后提前翻译多少句，0 = 不预加载）<input id="config-gal-translate-lookahead" type="number" min="0" max="200" step="1" /></label>
               <label>单次请求超时（毫秒）/ 失败重试次数<span class="inline-pair"><input id="config-gal-translate-timeout" type="number" min="1000" max="3600000" step="1000" /><input id="config-gal-translate-retry" type="number" min="0" max="5" step="1" /></span></label>
 
+              <h3>Gal 朗读（播放器的「朗读」按钮；TTS 服务地址 / 参考音频 / 并发等用上面「朗读（TTS）」那组）</h3>
+              <label class="checkbox-line"><input id="config-gal-tts-enabled" type="checkbox" />启用 Gal 台词朗读</label>
+              <label>按说话人选音色的规则（JSON 数组，第一条命中的生效；留空 = 全部用默认音色）<textarea id="config-gal-tts-rules" rows="4" placeholder='[{"match":"^小夜$","speaker_audio":"examples/sayo.wav","prompt_audio":"examples/sayo_prompt.wav","prompt_text":"…","text_language":"ja"}]'></textarea></label>
+              <label>预合成（播放器往后提前合成多少句，0 = 不预合成）<input id="config-gal-tts-lookahead" type="number" min="0" max="40" step="1" /></label>
+
               <h3>导出相关</h3>
               <label>导出目录<input id="config-export-dir" /></label>
               <label>导出目录格式<input id="config-export-dir-fmt" /></label>
