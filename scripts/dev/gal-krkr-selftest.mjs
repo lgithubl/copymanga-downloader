@@ -317,6 +317,13 @@ if (process.env.KRKR_SAMPLE) {
   check(`真实样本 ${dir}：${scripts} 个剧本全部过解码器 + 适配器（${messages} 句台词），没有出错`, crashed === 0 && scripts > 0, `crashed ${crashed}`)
 } else console.log('SKIP 真实样本（KRKR_SAMPLE=<目录>:<密钥包.json> 才跑）')
 
+// ---- g07 的 Live2D：脚本里 ev_mv001_02r5s ↔ live2d.xp3 的 ev_cg001_02.l2d（动作文件名 = 图层名）----
+{
+  const j = JSON.stringify
+  check('Live2D 名字：ev_mv001_02r5s → 模型 ev_cg001_02、动作 ev_mv001_02r5s；r1 / r4h / 41s 也认', j(adapter.krkrMvOf('ev_mv001_02r5s')) === j({ stem: 'ev_cg001_02', motion: 'ev_mv001_02r5s' }) && adapter.krkrMvOf('ev_mv001_02r4h').stem === 'ev_cg001_02' && adapter.krkrMvOf('ev_mv002_41s').stem === 'ev_cg002_41' && adapter.krkrMvOf('ev_mvx03_01r1').stem === 'ev_cgx03_01', j(adapter.krkrMvOf('ev_mv001_02r5s')))
+  check('Live2D 名字：不是 ev_mv 的（evcg001_01 / bg01）不认', adapter.krkrMvOf('evcg001_01') === null && adapter.krkrMvOf('bg01') === null)
+}
+
 // ---- 台词行内控制码（%f字体; / #颜色; / %数字; / [读音]汉字）----
 {
   const seg = (t) => adapter.krkrSegments(t, {})

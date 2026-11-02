@@ -1245,7 +1245,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 
 ### 脚本怎么读（g08 / g09 的 521 个剧本看出来的）
 - **台词里的行内控制码**（`krkrSegments`；256 + 265 个剧本里统计出来的，全部识别，解析后没有残留）：`%f字体名;`（切字体，`%fuser;` 切回）忽略；`#00RRGGBB;` / `#RRGGBB;` 设颜色（♥ 是 `#00ff80c0;` = 粉色 `#ff80c0`），`#;` 恢复；`%150;` 之类的 `%数字;` 忽略（猜是文字速度，没对过引擎）；`[读音]汉字` = 注音，读音在前、只对后面一个字（`[う]宇[さ]佐[み]美` = 宇佐美 うさみ），读音只认假名，别的方括号原样保留。
-- **g07 的 Live2D（还没做）**：脚本里 ev 图层叫 `ev_mv001_02r5s`（不带 `.l2d`，但带 139 个 `variables`），`live2d.xp3` 里的包叫 `ev_cg001_02.l2d`（按名字哈希对出来的，37 个里认出 25 个，`ev_mvNNN_MM` ↔ `ev_cgNNN_MM.l2d` 编号一一对得上）。现在适配器把 `ev_mv…` 当静态图 `ev_mv…png` 显示，所以看到的是 CG 不是 Live2D。映射和 motion 怎么定还没有证据（要 g07 的一个 `.l2d` 对参数名 + 引擎 TJS），采集 v1.12 会收。
+- **g07 的 Live2D**：脚本里 ev 图层叫 `ev_mv001_02r5s`（不带 `.l2d`，带 139 个 `variables`），模型包在 `live2d.xp3` 里叫 `ev_cg001_02.l2d`（`ev_mvNNN_MM` ↔ `ev_cgNNN_MM.l2d`）；包里的动作文件就叫 `ev_mv001_02r1` … `r7s`，`variables` 的 139 个键和 cdi3 的参数名全部对得上（g07 的 `ev_cg001_02.l2d` 实测）。适配器：ev 层带 variables 且 `ev_cg….model3.json` 在索引里 = 输出 `live2d`（motion = 图层名，loop），否则当静态图。真实 g07 `sc_4_001_01h` 第 169 步浏览器里渲染出来了（含马赛克）。
 - `scenes[].lines`：`["startline","vflag",0,"name",说话人,"text",1]` 后面跟的数字 n = 台词 `texts[n - 1]`（46420 / 46420 的说话人对得上）；`texts[i] = [说话人|null, [[null, 文字（\\n 换行）, 字号]…], [{name, voice, type}]|null, 标志, {data: 此刻的图层快照}]`。
 - 每句台词自带「此刻的环境快照」（`data`：bg / 立绘 / ev / bgm …），所以适配器不重放 `envupdate`，直接用快照：`bg`（stage，`showmode` 3 = 显示 / 0 = 隐藏）= 背景，`ev`（event）= 事件 CG（盖在背景上），`character` = 立绘（`imageFile.file` = `cha001.stand` + `options { dress, face, pose, add }`，位置名 `posName`：前 / 左 / 右 / 中 …）。
 - 没有台词但有「等待 + 画面变了」的（黑屏、换背景）出一个无台词的步。`pre` 里的 `wait` → wait；背景语音（`playvoice` type 2）、`quake` 不渲染。

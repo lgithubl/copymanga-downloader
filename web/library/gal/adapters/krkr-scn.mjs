@@ -42,6 +42,7 @@ const HEAD = /^\s*\{\s*"format"\s*:\s*"krkr-scn\/1"/
 //   %<数字>;  行首的 %150; 之类（含义没对过引擎，按文字速度处理：忽略）
 //   [读音]汉字  注音，读音在前、只对后面那一个字（[う]宇[さ]佐[み]美 = 宇佐美 うさみ；[ちち]乳 = 乳 ちち）；读音只认假名，别的方括号原样保留
 const KRKR_CODE = /%f[^;\n]*;|%\d+;|#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})?;|\[([\u3041-\u3096\u30a1-\u30fa\u30fcー]{1,12})\](?=([^\[\]\n]))/g
+export function krkrMvOf(file) { const m = /^ev_mv(\w+?_\d+)(?:[a-z]\d*[a-z]?)?$/i.exec(String(file)); return m ? { stem: `ev_cg${m[1]}`, motion: String(file) } : null }
 export function krkrSegments(text, stats = null) {
   const segments = []
   let color = ''
@@ -174,11 +175,13 @@ export function parse(text, ctx = null, meta = {}) {
     return { slot: String(name), parts }
   }
   let shownL2d = ''
-  function l2dOf({ file, options }) {
+  // g07 的 ev 层叫 ev_mv001_02r5s（没有 .l2d，带 variables）：模型包是 live2d.xp3 里的 ev_cg001_02.l2d，动作文件就叫 ev_mv001_02r5s（目前只在 g07 对过）
+  const mvOf = krkrMvOf
+  function l2dOf({ file, options, motion: mvMotion }) {
     const stem = String(file).replace(/\.l2d$/i, '')
     const src = hasIndex ? ctx.resolver.resolveByName(`${stem}.model3.json`) : ''
     if (!src) { if (hasIndex) count('unresolved', `l2d:${stem}`); return null }
-    const o = options && typeof options === 'object' ? options : {}
+    const o = options && typeof options === 'object' ? { ...options, ...(mvMotion ? { motion: mvMotion, loop: true } : {}) } : (mvMotion ? { motion: mvMotion, loop: true } : {})
     const variables = o.variables && typeof o.variables === 'object' && Object.keys(o.variables).length ? o.variables : null
     return { src, ...(typeof o.motion === 'string' && o.motion ? { motion: o.motion } : {}), ...(o.loop === true || o.loop === 'true' ? { loop: true } : {}), ...(variables ? { variables } : {}) }
   }
@@ -191,7 +194,12 @@ export function parse(text, ctx = null, meta = {}) {
       const [name, cls, file, options, , showmode] = l
       if (showmode !== 3) continue
       if (cls === 'stage' && name === 'bg' && file) bg = file
-      else if (cls === 'event' && name === 'ev' && file) { if (/\.l2d$/i.test(file)) l2d = { file, options } ; else ev = file }
+      else if (cls === 'event' && name === 'ev' && file) {
+        const mv = options && typeof options === 'object' && options.variables && typeof options.variables === 'object' ? mvOf(file) : null
+        if (/\.l2d$/i.test(file)) l2d = { file, options }
+        else if (mv && hasIndex && ctx.resolver.resolveByName(`${mv.stem}.model3.json`)) l2d = { file: mv.stem, options, motion: mv.motion }
+        else ev = file
+      }
     }
     // 事件 CG（ev）盖在背景上；ev 的图取不到（Live2D 的 .l2d、mpg 视频、没采到）= 退回背景，不要黑屏
     let img = ev ? imageOf(ev) : null
