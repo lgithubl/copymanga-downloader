@@ -6,7 +6,7 @@
 //   texts[i] = [说话人 | null, [[null, 文字（\\n = 换行）, 字号, …]…], [{ name, voice, type }] | null, 标志, { data: 图层快照 }]
 //   图层快照 data = [[名字, 类别, { class, name, showmode（3 显示 / 0 隐藏）, redraw: { imageFile: { file, options }, posName }, action: [[键, 值]…] }]…]
 //     类别：stage（背景，名字 bg）/ character（立绘，imageFile.file = 立绘定义名如 cha001.stand，options = { dress, face, pose, add } 选图层）/ event（事件 CG，名字 ev）/ layer / evdanmen / evcutin；bgm / se 是声音；udmask / msgwin 是遮罩 / 对话框的脸
-// 输出：每个台词一步 { t: 文字, n: 说话人, v: 语音名, l: [压缩后的图层], b: [bgm 文件, 状态, 音量, 循环], pre: [[命令, 参数…]…] }；没有台词但有「等待 + 画面变化」的也出一步（无 t）。
+// 输出：每个台词一步 { t: 文字, n: 说话人, v: 语音名, l: [压缩后的图层], b: [bgm 文件, 状态, 音量, 循环], tr: [转场方式, 毫秒, 遮罩]（envupdate 里 "trans" 后面那个：crossfade / universal（带遮罩图 rule）/ mosaic / ripple / rotateswap），pre: [[命令, 参数…]…] }；没有台词但有「等待 + 画面变化」的也出一步（无 t）。
 import { Psb } from './psb.mjs'
 
 const LAYER_CLASSES = new Set(['stage', 'character', 'event', 'layer', 'evdanmen', 'evcutin'])
@@ -49,12 +49,19 @@ export function decodeKrkrScn(root, { arc = '' } = {}) {
     let snap = null   // 最近一次看到的环境快照（data）
     let lastKey = ''   // 上一步的图层 JSON（比较用）
     let pre = []
+    let trans = null   // 最近一次 envupdate 里的转场 [方式, 毫秒, 遮罩]，下一步用掉
     const emitLayers = (data) => { const l = layersOf(data); for (const x of l) if (looksName(x[2])) refs.img.add(x[2].replace(/\.[A-Za-z0-9]+$/, '')); return l }
     for (let i = 0; i < lines.length; i++) {
       const ln = lines[i]
       if (Array.isArray(ln) && typeof ln[0] === 'number' && ln[1] && typeof ln[1] === 'object' && Array.isArray(ln[1].data)) { snap = ln[1].data; continue }
       if (!Array.isArray(ln) || typeof ln[0] !== 'string') continue
       const cmd = ln[0]
+      if (cmd === 'envupdate') {
+        const at = ln.indexOf('trans')
+        const t = at >= 0 ? ln[at + 1] : null
+        if (t && typeof t === 'object' && typeof t.method === 'string' && t.method) trans = [t.method, Number(t.time) > 0 ? Number(t.time) : 0, typeof t.rule === 'string' ? t.rule : '']
+        continue
+      }
       if (cmd === 'startline') {
         const hasText = ln.includes('text') && ln[ln.indexOf('text') + 1] === 1
         if (!hasText) continue
@@ -69,10 +76,11 @@ export function decodeKrkrScn(root, { arc = '' } = {}) {
         const voiceInfo = Array.isArray(t[2]) ? t[2].find((x) => x && typeof x.voice === 'string') : null
         if (voiceInfo && looksName(voiceInfo.voice)) refs.voice.add(voiceInfo.voice)
         const text = (Array.isArray(t[1]) ? t[1].map((seg) => (typeof seg?.[1] === 'string' ? seg[1] : '')).join('') : '').replace(/\\n/g, '\n')
-        const step = { t: text, ...(t[0] ? { n: t[0] } : {}), ...(voiceInfo ? { v: voiceInfo.voice } : {}), l: layers, ...(bgm ? { b: bgm } : {}), ...(pre.length ? { pre } : {}) }
+        const step = { t: text, ...(t[0] ? { n: t[0] } : {}), ...(voiceInfo ? { v: voiceInfo.voice } : {}), l: layers, ...(bgm ? { b: bgm } : {}), ...(trans ? { tr: trans } : {}), ...(pre.length ? { pre } : {}) }
         steps.push(step)
         lastKey = JSON.stringify(layers)
         pre = []
+        trans = null
         if (++total > MAX_STEPS) throw new Error('步数超过上限')
         continue
       }
@@ -82,7 +90,7 @@ export function decodeKrkrScn(root, { arc = '' } = {}) {
         if (snap && Number.isFinite(ms)) {
           const layers = emitLayers(snap)
           const key = JSON.stringify(layers)
-          if (key !== lastKey) { const bgm = bgmOf(snap); steps.push({ l: layers, ...(bgm ? { b: bgm } : {}), pre: [...pre, ['wait', ms]] }); lastKey = key; pre = []; continue }
+          if (key !== lastKey) { const bgm = bgmOf(snap); steps.push({ l: layers, ...(bgm ? { b: bgm } : {}), ...(trans ? { tr: trans } : {}), pre: [...pre, ['wait', ms]] }); lastKey = key; pre = []; trans = null; continue }
         }
         if (Number.isFinite(ms)) pre.push(['wait', ms])
         continue

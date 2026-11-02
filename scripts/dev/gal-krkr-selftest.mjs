@@ -13,6 +13,9 @@ import { galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/i
 import { parseSinfo, pickPimgLayers, pimgInfo } from '../../web/library/gal/krkr-pimg.mjs'
 import { decodeTlg, tlgToPng } from '../../web/library/gal/tlg.mjs'
 import { Psb } from '../../web/library/gal/psb.mjs'
+import { encodePng } from '../../web/library/gal/bgi.mjs'
+import { createRequire } from 'node:module'
+import { crc32 } from 'node:zlib'
 import { buildHxv4Xp3, buildPsb, encodeKirikiriText, encodeTlg5, makeBundle } from './make-krkr-fixture.mjs'
 
 // PNG（滤波 0、8 位、非隔行）读回像素：只认 encodePng 出的
@@ -35,6 +38,23 @@ function decodePng(png) {
   for (let y = 0; y < height; y++) rows.copy(raw, y * width * channels, y * (width * channels + 1) + 1, (y + 1) * (width * channels + 1))
   return { width, height, channels, raw }
 }
+
+// 带 oFFs 块（左上角位置）的 PNG：KiriKiri 的叠加层 PNG 就是这样自带摆放位置
+function pngWithOffset(width, height, rgba, x, y) {
+  const png = encodePng(width, height, 4, rgba)
+  const data = Buffer.alloc(9)
+  data.writeInt32BE(x, 0)
+  data.writeInt32BE(y, 4)
+  const type = Buffer.from('oFFs')
+  const chunk = Buffer.alloc(12 + 9)
+  chunk.writeUInt32BE(9, 0)
+  type.copy(chunk, 4)
+  data.copy(chunk, 8)
+  chunk.writeUInt32BE(crc32(Buffer.concat([type, data])), 17)
+  const at = 8 + 12 + 13   // 签名 + IHDR 块
+  return Buffer.concat([png.subarray(0, at), chunk, png.subarray(at)])
+}
+const sharpLib = (() => { try { return createRequire(new URL('../../web/package.json', import.meta.url))('sharp') } catch { return null } })()
 
 let passed = 0
 let failed = 0
@@ -60,6 +80,7 @@ const root = {
       lines: [
         ['startline', 'vflag', 0, 'name', '', 'text', 1], 1, [3, 1, 2, null, 34, 192, null, null],
         ['playvoice', 'loop', 1, 'name', 'A', 'type', 2, 'voice', 'bgv_a'],
+        ['envupdate', 'update', [], 'wait', { list: [null, { mode: 0, name: 'ev' }] }, 'trans', { method: 'crossfade', time: 1000 }],
         ['startline', 'vflag', 0, 'name', 'A', 'text', 1], 2, [4, 2, 3, null, 36, 192, null, null],
         ['wait', 'time', '500'],
         ['startline', 'vflag', 0, 'name', 'A', 'text', 1], 3, [5, 3, null, null, 36],
@@ -76,6 +97,7 @@ const steps = out.scenes[1].steps
 check('脚本解码：一句台词一步（n - 1 取 texts）；说话人 / 语音 / 文字（\\n 换行）；只留 stage / character / event 这类图层', decoded.name === 's1' && steps.length === 4 && steps[0].t === '第一行\n第二行' && !steps[0].n && steps[1].n === 'A' && steps[1].v === 'v001' && steps[0].l.length === 2 && steps[0].l.every((l) => ['stage', 'character'].includes(l[1])) && J(steps[0].l[1].slice(0, 4)) === J(['A', 'character', 'cha001.stand', { face: '微笑' }]), J(steps))
 check('脚本解码：图层的动作只留认识的（ypos），未知的丢掉；bgm = [文件, 状态, 音量, 循环]', J(steps[0].l[0][6]) === J([['ypos', 10]]) && J(steps[0].b) === J(['bgm1', 1, 100, 1]), J(steps[0]))
 check('脚本解码：没有台词的「等待 + 画面变了」出一个无台词的步（pre 带 wait）；背景语音 playvoice 记进 pre', steps[3].t === undefined && J(steps[3].pre.at(-1)) === J(['wait', 1200]) && J(steps[1].pre) === J([['bgv', 'bgv_a', 1]]) && J(steps[2].pre) === J([['wait', 500]]), J(steps.map((s) => s.pre)))
+check('脚本解码：envupdate 里 "trans" 后面的转场（方式 / 毫秒 / 遮罩）挂在下一个台词步上（tr），用掉就清', J(steps[1].tr) === J(['crossfade', 1000, '']) && steps[0].tr === undefined && steps[2].tr === undefined, J(steps.map((s) => s.tr)))
 check('脚本解码：refs = 引用的图（去掉扩展名；纯色 width,1,height,1,color,… 不是文件名，不算）/ bgm / 语音', J(decoded.refs.img.sort()) === J(['bg01', 'black', 'cha001', 'ev01']) && J(decoded.refs.bgm) === J(['bgm1']) && J(decoded.refs.voice.sort()) === J(['bgv_a', 'v001', 'v002']), J(decoded.refs))
 
 // ---- 适配器 ----
@@ -86,6 +108,7 @@ const cmds = (i) => scene.steps[i].commands
 check('适配器认领：sniff 认 {"format":"krkr-scn/1"…}；已注册', adapter.sniff(decoded.text) && galAdapterIds().includes('krkr::scn') && sniffGalAdapter(decoded.text) === 'krkr::scn' && !adapter.sniff('{"format":"bgi-bs/1"}'))
 check('适配器：第一步 = bg + bgm + speaker（旁白清空）+ text；立绘这一版不渲染（记 stats.ignored.character）', J(cmds(0).map((c) => c.op)) === J(['bg', 'bgm', 'speaker', 'text']) && cmds(0)[0].src === 'bg01.png' && cmds(0)[1].src === 'bgm1.ogg' && scene.stats.ignored.character === 1, J(cmds(0)))
 check('适配器：事件 CG（ev）盖在背景上 = 换 bg；语音 = voice；同样的 bgm 不重复发', J(cmds(1).map((c) => c.op)) === J(['bg', 'voice', 'speaker', 'text']) && cmds(1)[0].src === 'ev01.jpg' && cmds(1)[1].src === 'v001.ogg', J(cmds(1)))
+check('适配器：转场 = 换背景 / 事件图时的 fade 秒数（crossfade 1000ms → fade 1；没有转场的步不带 fade）；方式记 stats.transitions；transitionMax 封顶', cmds(1)[0].fade === 1 && cmds(0)[0].fade === undefined && scene.stats.transitions.crossfade === 1 && adapter.parse(decoded.text, adapter.prepare({ options: { transitionMax: 0.4 }, files, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })).steps[1].commands[0].fade === 0.4, J(cmds(1)))
 check('适配器：纯色背景（width,1,height,1,color,0xff102030）= bg.color；ev 隐藏 = 回到背景；bgm 状态 0 = bgmStop；pre 的 wait = wait；缺的语音记 unresolved', J(cmds(2).slice(0, 3)) === J([{ op: 'wait', seconds: 0.5 }, { op: 'bg', color: [16, 32, 48] }, { op: 'bgmStop', fade: 1 }]) && scene.stats.unresolved['voice:v002'] === 1, J(cmds(2)))
 check('适配器：无台词的步（黑屏 + 等待）= bg + wait + 空文本；末尾 nexts 指向别的脚本 = scene.next', scene.steps.length === 4 && cmds(3).some((c) => c.op === 'bg') && cmds(3).some((c) => c.op === 'wait') && J(scene.next) === J({ script: 's2' }), J([cmds(3), scene.next]))
 check('适配器：nexts 指回菜单（gameloop）= 没有 next', adapter.parse(JSON.stringify({ ...out, scenes: [{ ...out.scenes[1], nexts: [{ storage: 'gameloop.txt', target: '*home', type: 0 }] }] }), ctx).next === undefined)
@@ -107,11 +130,11 @@ try {
   setKeysFile(keysFile)
   // gal-layout 认出 krkr（scn.xp3 里有 Hxv4 描述符 + data.xp3 在）
   const layoutItem = { itemId: 'k', title: 'k', config: { game: { id: 'krkr::chain' } }, source: { path: media }, adapters: ['krkr::scn'] }
-  const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.34.0', options: {} } })
+  const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.35.0', options: {} } })
   const cfgRaw = tagOut.itemPatch?.gal?.config
   const norm = cfgRaw ? normalizeGalConfigWithWarnings(cfgRaw) : null
   check('gal-layout：认出 krkr（id = krkr::chain），containers = krkr / hybrid / flat，scn.xp3 = 脚本、别的 xp3 = 资源；资源根 arc/res；写出来的 config 规整后零警告', Boolean(norm) && norm.config.containers.format === 'krkr' && norm.config.containers.scriptDecoder === 'krkr-scn' && norm.config.containers.mode === 'hybrid' && J(norm.config.resourceRoots) === J(['arc/res']) && norm.warnings.length === 0 && !('keys' in norm.config.containers), J([norm?.warnings, norm?.config?.containers]))
-  const noHx = await generateTags({ item: { ...layoutItem, source: { path: (await (async () => { const d = path.join(work, 'Plain'); await mkdir(d, { recursive: true }); await writeFile(path.join(d, 'scn.xp3'), 'not an xp3'); await writeFile(path.join(d, 'data.xp3'), 'x'); return d })()) } }, script: { id: 'gal-layout', version: '2.34.0', options: {} } })
+  const noHx = await generateTags({ item: { ...layoutItem, source: { path: (await (async () => { const d = path.join(work, 'Plain'); await mkdir(d, { recursive: true }); await writeFile(path.join(d, 'scn.xp3'), 'not an xp3'); await writeFile(path.join(d, 'data.xp3'), 'x'); return d })()) } }, script: { id: 'gal-layout', version: '2.35.0', options: {} } })
   check('gal-layout：scn.xp3 不是 Hxv4 加密的 xp3 = 不认', !noHx.itemPatch?.gal?.config?.containers, J(noHx.logs))
   const config = norm.config
   const report = await ensureContainers({ mediaDir: media, config })
@@ -191,11 +214,12 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     const root3 = {
       name: 'p1.txt',
       scenes: [{
-        label: '*main', title: '', nexts: [], lines: lines(3),
+        label: '*main', title: '', nexts: [], lines: lines(4),
         texts: [
           text(null, '立绘出场', null, [layer('ev', 'event', 'evcg005_06'), char('A', 'cha001.stand', { dress: '制服', face: '微笑', pose: '基本', add: '頬' }, '前', [['leveloffset', '#0,0,0,111,0,-10'], ['zpos', 0]])]),
           text('A', '换表情（sinfo 把「怒り」映射到「表情差分/微笑」）+ 右边', null, [layer('ev', 'event', 'evcg001_03u1'), char('A', 'cha001.stand', { dress: '制服', face: '怒り', add: '頬（照れ）:眼鏡' }, '右', [['leveloffset', '#0,0,0,111,0,-10']])]),
           text('A', '特写', null, [layer('ev', 'event', 'evcg005_06r2'), char('A', 'cha001.stand', { dress: '制服', face: '微笑', add: '頬' }, '前', [['leveloffset', '#0,0,0,228,0,200'], ['xpos', -480]]), char('B', 'cha002.stand', {}, '前', [])]),
+          text('A', '变体 r1（底图 + 叠加层）', null, [layer('ev', 'event', 'evcg005_06r1')]),
         ],
       }],
     }
@@ -203,13 +227,16 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     await writeFile(path.join(media, 'scn.xp3'), buildHxv4Xp3([['/', 'p1.txt.scn', buildPsb(root3)]], bundle))
     await writeFile(path.join(media, 'fgimage.xp3'), buildHxv4Xp3([['/', 'cha001.pimg', pimgBuffer], ['/', 'cha001.sinfo', encodeKirikiriText('dress\t制服\tdiff\t基本\t制服\nface\t怒り\t表情差分/微笑\nadd\t頬\t頬（通常）\n')]], bundle))
     // evimage：cg001_03u1.tlg = 直接的 TLG；cg005_06 = 重定向文本（名字不是 cg005_06.tlg，只能靠内容找）→ cg005_06__zzzzzz.dpak（PSB，成员 cg005_06.tlg + 一张 PNG 叠加）
-    const dpak = buildPsb({ 'cg005_06.tlg': { resource: tlg(77) }, 'deadbeef.png': { resource: Buffer.from('\x89PNG\r\n\x1a\nxxxx', 'latin1') } })
-    await writeFile(path.join(media, 'evimage.xp3'), buildHxv4Xp3([['/', 'cg001_03u1.tlg', tlg(55)], ['/', 'some_random_name.bin', encodeKirikiriText('psb://cg005_06__zzzzzz.dpak/cg005_06.tlg\npsb://cg005_06__zzzzzz.dpak/deadbeef.png\n')], ['/', 'cg005_06__zzzzzz.dpak', dpak]], bundle))
+    // 变体 = 同一个 dpak 的重定向条目按 id 顺序排：base（只有底图，没有叠加层 = 锚点）、r1（底图 + 一张叠加 PNG，2×2、左上角在 (1, 1)）
+    const overlayRgba = Buffer.alloc(16)
+    for (let i = 0; i < 4; i++) overlayRgba.set([200, 100, 50, 255], i * 4)
+    const dpak = buildPsb({ 'cg005_06.tlg': { resource: tlg(77) }, 'deadbeef.png': { resource: pngWithOffset(2, 2, overlayRgba, 1, 1) } })
+    await writeFile(path.join(media, 'evimage.xp3'), buildHxv4Xp3([['/', 'cg001_03u1.tlg', tlg(55)], ['/', 'some_random_name.bin', encodeKirikiriText('psb://cg005_06__zzzzzz.dpak/cg005_06.tlg\n')], ['/', 'another_random.bin', encodeKirikiriText('psb://cg005_06__zzzzzz.dpak/cg005_06.tlg\npsb://cg005_06__zzzzzz.dpak/deadbeef.png\n')], ['/', 'cg005_06__zzzzzz.dpak', dpak]], bundle))
     await writeFile(path.join(media, 'game.exe'), 'MZ')
     const keysFile = path.join(work3, 'gal-krkr-keys.json')
     await writeFile(keysFile, J([bundle]), { mode: 0o600 })
     setKeysFile(keysFile)
-    const cfgRaw = (await generateTags({ item: { itemId: 's', title: 's', config: { game: { id: 'krkr::stand' } }, source: { path: media }, adapters: ['krkr::scn'] }, script: { id: 'gal-layout', version: '2.34.0', options: {} } })).itemPatch.gal.config
+    const cfgRaw = (await generateTags({ item: { itemId: 's', title: 's', config: { game: { id: 'krkr::stand' } }, source: { path: media }, adapters: ['krkr::scn'] }, script: { id: 'gal-layout', version: '2.35.0', options: {} } })).itemPatch.gal.config
     const config = normalizeGalConfigWithWarnings(cfgRaw).config
     await ensureContainers({ mediaDir: media, config })
     const vf = await virtualFiles({ mediaDir: media, config })
@@ -226,6 +253,11 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     const cg5 = decodePng(await read('arc/res/evcg005_06.png'))
     check('事件 CG：直接的 TLG 和 dpak 里的 TLG 都转成 PNG，像素对（55 / 77）', cg1.width === 4 && cg1.height === 3 && cg1.raw.every((v) => v === 55) && cg5.raw.every((v) => v === 77), J([cg1.width, cg5.width]))
     const cg5r2 = vf.files.includes('arc/res/evcg005_06r2.png') ? decodePng(await read('arc/res/evcg005_06r2.png')) : null
+    check('事件 CG 的变体按重定向条目的 id 顺序对名字（rN = 这一组第一个 id + N；没有叠加层、底图就是 <组>rN 的条目当锚点）：evcg005_06r1 = 第二个条目 = 底图 + 叠加 PNG，按 oFFs 摆到 (1, 1)', vf.files.includes('arc/res/evcg005_06r1.png') && (sharpLib ? await (async () => {
+      const raw = await sharpLib(await read('arc/res/evcg005_06r1.png')).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+      const px = (x, y) => [...raw.data.subarray((y * raw.info.width + x) * 4, (y * raw.info.width + x) * 4 + 3)]
+      return raw.info.width === 4 && raw.info.height === 3 && J(px(0, 0)) === J([77, 77, 77]) && J(px(1, 1)) === J([200, 100, 50]) && J(px(2, 2)) === J([200, 100, 50]) && J(px(3, 2)) === J([77, 77, 77])
+    })() : true), sharpLib ? '' : 'sharp 没装：只核对了条目存在')
     check('事件 CG 的变体（evcg005_06r2：重定向条目的名字猜不出来，没法一一对上）= 用同一个 CG 编号（005_06）里已经对上的底图顶替', Boolean(cg5r2) && cg5r2.raw.every((v) => v === 77), J(vf.files))
     // 适配器：从展开的剧本 + 虚拟索引读出的层表
     const texts3 = { 'arc/res/cha001.pimg.json': J(infoJson), 'arc/res/cha001.sinfo.json': J(sinfoJson) }

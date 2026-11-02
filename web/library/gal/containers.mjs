@@ -19,7 +19,7 @@ import { readArcfamIndex } from './arcfam.mjs'
 import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
 import { parseSinfo, pimgInfo } from './krkr-pimg.mjs'
-import { isTlg, tlgToPng } from './tlg.mjs'
+import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
 import { inflateSync } from 'node:zlib'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
 import { Psb, isPsb } from './psb.mjs'
@@ -28,7 +28,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 9
+export const CONTAINER_FORMAT_VERSION = 10
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -511,6 +511,7 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
   if (!candidates.size) return { map, files, sig }
   const entryHit = (entry, record, file, extra) => ({ file, offset: 0, size: entry.originalSize, transform: 'krkr', krkr: { id: entry.hxv4Id, segments: entry.segments, entryKey: record.entryKey.toString(), filterFlag: record.filterFlag, originalSize: entry.originalSize, archiveSize: entry.archiveSize, adler: entry.adler, ...extra } })
   const redirects = new Map()   // 成员名（无扩展名）→ { dpak 文件名, 成员文件名, 所在 xp3 }
+  const redirectEntries = []    // 每个重定向条目：{ id, dpak, member（底图 TLG）, overlays（叠加层 PNG 成员名）, … }（变体按 id 顺序对名字用）
   const pending = []            // 稍后处理的 { archive, byName }
   for (const { file, rule } of arcs) {
     if (!rule.kinds.has('res')) continue
@@ -539,10 +540,19 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
         let text = null
         try { text = decodeKirikiriText(await arc.readEntry(entry, { verify: false })) } catch { continue }
         if (!text || !text.includes('psb://')) continue
+        let first = null
+        const overlays = []
         for (const line of text.split(/\r?\n/)) {
           const m = /^psb:\/\/([^/]+\.dpak)\/(.+\.tlg)$/i.exec(line.trim())
-          if (m) redirects.set(m[2].replace(/\.tlg$/i, '').toLowerCase(), { dpak: m[1], member: m[2], file, bundle, byHash, byRecord })
+          if (m) {
+            redirects.set(m[2].replace(/\.tlg$/i, '').toLowerCase(), { dpak: m[1], member: m[2], file, bundle, byHash, byRecord })
+            if (!first) first = { dpak: m[1], member: m[2] }
+            continue
+          }
+          const p = /^psb:\/\/([^/]+\.dpak)\/(.+\.png)$/i.exec(line.trim())
+          if (p && first && p[1] === first.dpak) overlays.push(p[2])
         }
+        if (first) redirectEntries.push({ id: entry.hxv4Id, dpak: first.dpak, member: first.member, overlays, file, bundle, byHash, byRecord })
       }
       pending.push({ file, bundle, arc })
       opened.keep = true   // 先别关：事件 CG 的 dpak 要在同一个档案里按名字哈希找，最后统一关
@@ -580,6 +590,48 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
       add(`${cfg.dir}/res/${n}.png`, hit)
     }
   } finally { for (const { arc } of pending) await arc.close().catch(() => {}) }
+  // 事件 CG 的变体（evcg001_01r1 … r4）：每个变体是 evimage.xp3 里的一个重定向条目（底图 TLG + 0~n 张 PNG 叠加层），条目的名字是哈希猜不出来，
+  // 但同一个 dpak 的条目 id 按变体名排序连续排：base（无后缀）、r1、r2…。按「rN = 这一组第一个 id + N」对（有缺号的组用最近的锚点校准：
+  // 锚点 = 没有叠加层、底图就是 <组>rN 自己的条目，名字对得上）。真实数据 g07 / g08：174 + 148 个锚点里 170 + 146 个和这个规则一致（其余是组里缺了某个 rN，用最近的锚点校准就对上）
+  try {
+    const groups = new Map()   // 档案|组（dpak 名去掉 __随机后缀）→ 按 id 排好的条目
+    for (const r of redirectEntries) {
+      const stem = r.dpak.replace(/\.dpak$/i, '').replace(/__[^_]+$/, '').toLowerCase()
+      const key = `${r.file}|${stem}`
+      if (!groups.has(key)) groups.set(key, { stem, list: [] })
+      groups.get(key).list.push(r)
+    }
+    const byStem = new Map()
+    for (const g of groups.values()) {
+      g.list.sort((a, b) => a.id - b.id)
+      g.anchors = []
+      g.list.forEach((r, index) => {
+        if (r.overlays.length) return
+        const m = new RegExp(`^${g.stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:r(\\d+))?$`, 'i').exec(r.member.replace(/\.tlg$/i, ''))
+        if (m) g.anchors.push({ index, rank: m[1] ? Number(m[1]) : 0 })
+      })
+      if (!byStem.has(g.stem)) byStem.set(g.stem, [])
+      byStem.get(g.stem).push(g)
+    }
+    for (const n of names.img) {
+      const key = `${cfg.dir}/res/${n}.png`.toLowerCase()
+      if (map.has(key)) continue
+      const m = /^ev(.+?)(?:r(\d+))?$/i.exec(n)
+      if (!m) continue
+      const g = (byStem.get(m[1].toLowerCase()) || [])[0]
+      if (!g) continue
+      const rank = m[2] ? Number(m[2]) : 0
+      const ref = g.anchors.length ? g.anchors.reduce((best, a) => (Math.abs(a.rank - rank) < Math.abs(best.rank - rank) ? a : best)) : { index: 0, rank: 0 }
+      const r = g.list[ref.index + (rank - ref.rank)]
+      if (!r) continue
+      const record = r.byHash.get(hashHex(r.dpak))
+      const entry = record && r.byRecord.get(record)
+      if (!entry) continue
+      const hit = entryHit(entry, record, r.file, { mode: r.overlays.length ? 'ev-composite' : 'dpak-member', member: r.member, ...(r.overlays.length ? { overlays: r.overlays } : {}), byRank: true })
+      hit.bundleJson = r.bundle
+      add(`${cfg.dir}/res/${n}.png`, hit)
+    }
+  } catch { /* 对不上就走下面的顶替 */ }
   // 事件 CG 的变体（evcg001_01r1 … r4 = 同一张底图 + 叠加层的不同阶段；ev_mv001_02… = 同一个 CG 的动态版）：每个变体是一个重定向条目（底图 TLG + 一张 PNG 叠加层），
   // 条目自己的名字猜不出来（只知道 id 按名字排序），所以变体没法一一对上。退一步：找不到的变体用「同一个 CG 编号（001_02）里已经对上的」图顶替（底图，没有叠加层）
   try {
@@ -643,8 +695,53 @@ async function readKrkrHit(hit) {
       const bytes = psb.resources()[ref.resource]
       return isTlg(bytes) ? tlgToPng(bytes) : bytes
     }
+    case 'ev-composite': return composeEvVariant(new Psb(data), k)
     default: return data
   }
+}
+// PNG 的 oFFs 块（KiriKiri 的叠加层 PNG 自带摆放位置：x / y 是左上角在 1920×1080 页里的位置，vpAg = 页大小）
+function pngOffset(buf) {
+  let p = 8
+  while (p + 12 <= buf.length) {
+    const n = buf.readUInt32BE(p)
+    const type = buf.toString('latin1', p + 4, p + 8)
+    if (type === 'oFFs' && n >= 8) return { x: buf.readInt32BE(p + 8), y: buf.readInt32BE(p + 12) }
+    if (type === 'IDAT' || type === 'IEND') break
+    p += 12 + n
+  }
+  return { x: 0, y: 0 }
+}
+let sharpPromise = null
+const loadSharp = () => (sharpPromise ||= import('sharp').then((m) => m.default || m).catch(() => null))
+// 底图（TLG）+ 叠加层（PNG，按 oFFs 摆）→ 一张 PNG；没有 sharp / 叠加层坏了 = 只返回底图
+async function composeEvVariant(psb, k) {
+  const root = psb.root()
+  const res = psb.resources()
+  const baseRef = root[k.member]
+  if (!baseRef) throw new Error(`dpak 里没有成员 ${k.member}`)
+  const baseBytes = res[baseRef.resource]
+  const sharp = isTlg(baseBytes) && k.overlays?.length ? await loadSharp() : null
+  if (!sharp) return isTlg(baseBytes) ? tlgToPng(baseBytes) : baseBytes
+  const base = decodeTlg(baseBytes)
+  const layers = []
+  for (const name of k.overlays) {
+    const ref = root[name]
+    if (!ref) continue
+    const buf = res[ref.resource]
+    const { x, y } = pngOffset(buf)
+    const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    // 叠加层超出底图的部分裁掉（sharp 的 composite 不接受越界）
+    const left = Math.max(0, -x)
+    const top = Math.max(0, -y)
+    const width = Math.min(info.width - left, base.width - Math.max(0, x))
+    const height = Math.min(info.height - top, base.height - Math.max(0, y))
+    if (width <= 0 || height <= 0) continue
+    const cropped = Buffer.alloc(width * height * 4)
+    for (let row = 0; row < height; row++) data.copy(cropped, row * width * 4, ((top + row) * info.width + left) * 4, ((top + row) * info.width + left + width) * 4)
+    layers.push({ input: cropped, raw: { width, height, channels: 4 }, left: Math.max(0, x), top: Math.max(0, y) })
+  }
+  if (!layers.length) return tlgToPng(baseBytes)
+  return sharp(base.data, { raw: { width: base.width, height: base.height, channels: base.channels } }).ensureAlpha().composite(layers).png().toBuffer()
 }
 // 虚拟索引里按路径找条目（krkr：立绘的层是现算的，不在表里）
 function hitFor(v, rel) {
@@ -812,7 +909,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,

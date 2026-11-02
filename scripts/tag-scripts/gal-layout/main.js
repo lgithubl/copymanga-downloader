@@ -819,6 +819,7 @@ export const ADAPTER_RULES = {
           "enabled": true,
           "max": 10
       },
+      "transitionMax": 3,
       "menuScripts": [
           "^gameloop"
       ],

@@ -15,7 +15,8 @@
 //     位置 / 缩放（推断，没有对照图）：缩放 = leveloffset 的第 4 项（百分比）× 舞台高 ÷ 画布高（真实 PIMG：身体 1948 高 / 画布 2246 高，111% 时正好 ≈ 舞台高）；水平 = action.xpos，没有按 posName（左 -480 / 右 480 / 左中 -240 / 右中 240 / 其余居中）；
 //     缩放后身体不超过舞台高 = 画布底边对齐舞台底边，否则（特写）头顶落在舞台上方 5% 处。leveloffset 的 y、zpos、order 没用。想调就用播放器「设置 → 画面 → 立绘」。
 //   · 每步的图层是脚本自带的「此刻的环境快照」（texts[i][4].data），不重放 envupdate；没有台词也没有等待的画面变化会并进下一句
-//   · 转场（crossfade 等）/ 镜头动作（xpos / ypos / zpos 的移动）不渲染
+//   · 转场：envupdate 的 trans（crossfade / universal 遮罩擦除 / mosaic / ripple / rotateswap，时长毫秒）→ 换背景 / 事件图时的 fade 秒数（全部近似成淡入淡出，方式记 stats.transitions）；没写时长的转场不淡
+//   · 镜头动作（xpos / ypos / zpos / zoom）不渲染：真实脚本里背景 / 事件图上没有 MoveAction（只有立绘上的 RandomAction / SinAction 抖动），静态的偏移 / 缩放量的原点和单位没法对照验证
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader } from './options-merge.mjs'
 import { pickPimgLayers } from '../krkr-pimg.mjs'
@@ -27,6 +28,7 @@ export const DEFAULT_OPTIONS = {
   imageExts: ['png', 'jpg'],
   audioExts: ['ogg', 'opus', 'wav', 'mp3'],
   wait: { enabled: true, max: 10 },
+  transitionMax: 3,   // 转场淡入淡出最多几秒（0 = 不要转场）
   menuScripts: ['^gameloop'],   // nexts 指向这些脚本（返回菜单）= 播完了，不接着播
   extraDirs: [],
 }
@@ -71,7 +73,7 @@ export function parse(text, ctx = null, meta = {}) {
   try { data = JSON.parse(String(text || '').replace(/^﻿/, '')) } catch { throw new Error('不是有效的 JSON') }
   if (!data || data.format !== 'krkr-scn/1' || !Array.isArray(data.scenes)) throw new Error('不是 krkr-scn/1 场景')
   const hasIndex = Boolean(ctx?.hasIndex)
-  const stats = { events: 0, messages: 0, choices: 0, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, images: { referenced: 0, resolved: 0, unresolved: 0 }, stands: 0, raw: {}, ignored: {}, unresolved: {}, links: {} }
+  const stats = { events: 0, messages: 0, choices: 0, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, images: { referenced: 0, resolved: 0, unresolved: 0 }, stands: 0, raw: {}, ignored: {}, unresolved: {}, links: {}, transitions: {} }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const find = (name, exts) => {
     const wanted = String(name || '').replace(/\\/g, '/').replace(/^.*\//, '')
@@ -141,7 +143,7 @@ export function parse(text, ctx = null, meta = {}) {
     })
     return { slot: String(name), parts }
   }
-  function applyLayers(layers) {
+  function applyLayers(layers, tr) {
     let bg = null
     let ev = null
     for (const l of layers || []) {
@@ -157,7 +159,10 @@ export function parse(text, ctx = null, meta = {}) {
     if (!img && bg) { img = imageOf(bg); want = img ? bg : '' }
     if (want !== shown) {
       shown = want
-      if (!img) emit({ op: 'bgoff' }); else emit({ op: 'bg', ...img })
+      // 转场（envupdate 的 trans）：不管 crossfade / universal（遮罩擦除）/ mosaic / ripple / rotateswap，都近似成同样时长的淡入淡出；方式记进 stats.transitions（看得出哪些是近似的）
+      const fade = Array.isArray(tr) && tr[1] > 0 ? Math.min(opt.transitionMax, tr[1] / 1000) : 0
+      if (Array.isArray(tr)) count('transitions', `${tr[0]}${tr[2] ? `:${tr[2]}` : ''}`)
+      if (!img) emit({ op: 'bgoff', ...(fade ? { fade } : {}) }); else emit({ op: 'bg', ...img, ...(fade ? { fade } : {}) })
     }
     // 立绘：每个显示着的角色一个槽位；没了的去掉
     const now = new Map()
@@ -195,7 +200,7 @@ export function parse(text, ctx = null, meta = {}) {
       for (const pre of step.pre || []) {
         if (pre[0] === 'wait') { if (opt.wait.enabled) { const seconds = Math.min(opt.wait.max, Number(pre[1]) / 1000); if (seconds > 0) emit({ op: 'wait', seconds }) } } else count('ignored', pre[0])
       }
-      applyLayers(step.l)
+      applyLayers(step.l, step.tr)
       applyBgm(step.b)
       if (typeof step.v === 'string') {
         stats.voices.referenced += 1
