@@ -3,6 +3,7 @@
 // 另外：Spine 骨骼动画（站位立绘、整幅静态画面，gal-spine.js）、镜头（整个画面一起平移/缩放）、背景音效声道、闪屏。
 // 立绘 / 遮罩等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
 import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } from '/gal-spine.js'
+import { createLive2dLayer } from '/gal-live2d.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 import { attachBarLock } from '/gal-barlock.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
@@ -113,7 +114,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // 渲染诊断的「适配器统计」：scene.stats 里除了上面单独处理的（raw / unresolved / notes / arrayGuess / arrayUnknown）之外的字段——所有游戏统一在这里露出来，不再只有认识的几个字段才显示。
   // 纯结构计数（指令数 / 行数 / 立绘数…）只在诊断文本里列出，不算「有问题」；别的非空字段（missing / fallbacks / ignored / frameEffects / indexTruncated / unmatchedEndif…）会让右下角提示可点
   const STATS_HANDLED = new Set(['raw', 'unresolved', 'notes', 'arrayGuess', 'arrayUnknown'])
-  const STATS_STRUCTURE = new Set(['commands', 'rows', 'grids', 'frames', 'stands', 'movies', 'spines', 'choices', 'scene', 'scenes', 'form', 'dialect', 'classified'])
+  const STATS_STRUCTURE = new Set(['commands', 'rows', 'grids', 'frames', 'stands', 'live2d', 'movies', 'spines', 'choices', 'scene', 'scenes', 'form', 'dialect', 'classified'])
   const emptyStat = (value) => value === 0 || value === '' || value === false || value == null || (typeof value === 'object' && !Object.keys(value).length)
   const extraStats = Object.entries(scene.stats || {}).filter(([key, value]) => !STATS_HANDLED.has(key) && !emptyStat(value))
   const nodeProblems = Array.isArray(reader.node?.problems) ? reader.node.problems : []   // 后端的列表阶段检查：config 里被丢掉 / 夹住的内容、索引截断…（播放页也带）
@@ -809,6 +810,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera, blend: views.blend, expressions: expressionTable() } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
   }
+  // Live2D（live2d 指令：KiriKiri 的 .l2d）：第一次要画时才建 canvas；在背景 / 视频之上、立绘 / 骨骼之下
+  let live2dLayer = null
+  function paintLive2d() {
+    if (!live2dLayer && !state.live2d) return
+    if (!live2dLayer) {
+      live2dLayer = createLive2dLayer({ parent: world, before: movie.nextSibling, url, onMissing: markMissing, onUnavailable: () => { live2dUnavailable = true; updateNote() } })
+      if (!wantBgm) live2dLayer.setPaused(true)
+    }
+    live2dLayer.set(state.live2d)
+  }
+  let live2dUnavailable = false
   // 立绘（stand 指令，renpy-minashigo；带 slot / atlas 的按槽位立绘）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下
   // 叠加层（overlay 指令：静态图 / 矩形）：同样第一次要画时才建，画在立绘之上。两层共用一份图 / 图集缓存
   let standLayer = null
@@ -875,6 +887,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     paintBlack(true)
     paintWhite(true)
     paintMovie(true)
+    paintLive2d()
     paintSpines(false)
     paintStand()
     paintOverlays()
@@ -978,6 +991,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
         case 'movieOff':
           paintMovie(false)
           break
+        case 'live2d':
+        case 'live2dOff':
+          paintLive2d()
+          break
         case 'spine':
         case 'spineOff':
           paintSpines(true)
@@ -1078,6 +1095,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     const parts = []
     if (rawIgnored) parts.push(`立绘/特效等 ${rawIgnored} 条指令暂未渲染`)
     if (spineUnavailable) parts.push('Spine 运行时缺失：立绘/动画未渲染')
+    if (live2dUnavailable) parts.push('Live2D 需要 WebGL：模型未渲染')
     const badVersion = [...spineErrors.values()].filter((e) => e.kind === 'version').length
     const badParse = [...spineErrors.values()].filter((e) => e.kind === 'parse').length
     if (badVersion) parts.push(`Spine 版本不支持 ${badVersion} 个`)
@@ -1723,8 +1741,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const visibility = new IntersectionObserver((entries) => {
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
-    if (visible) { spineLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
-    else { spineLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
+    if (visible) { spineLayer?.setPaused(false); live2dLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
+    else { spineLayer?.setPaused(true); live2dLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
   })
   visibility.observe(stage)
 
@@ -1749,6 +1767,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     movie.pause()
     movie.removeAttribute('src')
     spineLayer?.destroy()
+    live2dLayer?.destroy()
     standLayer?.destroy()
     overlayLayer?.destroy()
     underLayer?.destroy()

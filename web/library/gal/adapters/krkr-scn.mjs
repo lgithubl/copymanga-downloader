@@ -6,7 +6,8 @@
 // 映射：
 //   台词 → speaker + text；语音 → voice；bgm 文件变了 / 状态 0 → 1 → bgm，状态变 0 → bgmStop；
 //   图层 bg（stage，showmode 3）→ bg（文件 = 图名，图在 image.xp3 / data.xp3 里是 .png / .jpg；`width,1,height,1,color,0xff000000` 这种是纯色）；
-//   图层 ev（event，showmode 3）= 事件 CG → 盖在 bg 上（当成 bg 换掉，去掉后回到背景；ev 的图取不到——Live2D 的 .l2d、mpg 视频——就退回背景）；
+//   图层 ev（event，showmode 3）= 事件 CG → 盖在 bg 上（当成 bg 换掉，去掉后回到背景；ev 的图取不到——mpg 视频、没采到——就退回背景）；
+//     ev 是 .l2d（Live2D 模型包）→ live2d 指令（src = 虚拟的 <名字>.l2d/<名字>.model3.json；options 的 motion / loop / variables 原样带上），底下的背景照常显示；模型取不到记 unresolved；
 //   pre 里的 wait → wait（秒，最多 10）；playvoice（背景语音 type 2）/ quake / stopvoice 不渲染，记 stats.ignored
 //   多个 scene（脚本里的 *start / *dummy1 …）按顺序接在一起；最后一个 scene 的 nexts 指向别的脚本（不是 gameloop.txt 的菜单）→ scene.next
 // 没做 / 推断：
@@ -73,7 +74,7 @@ export function parse(text, ctx = null, meta = {}) {
   try { data = JSON.parse(String(text || '').replace(/^﻿/, '')) } catch { throw new Error('不是有效的 JSON') }
   if (!data || data.format !== 'krkr-scn/1' || !Array.isArray(data.scenes)) throw new Error('不是 krkr-scn/1 场景')
   const hasIndex = Boolean(ctx?.hasIndex)
-  const stats = { events: 0, messages: 0, choices: 0, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, images: { referenced: 0, resolved: 0, unresolved: 0 }, stands: 0, raw: {}, ignored: {}, unresolved: {}, links: {}, transitions: {} }
+  const stats = { events: 0, messages: 0, choices: 0, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, images: { referenced: 0, resolved: 0, unresolved: 0 }, stands: 0, live2d: 0, raw: {}, ignored: {}, unresolved: {}, links: {}, transitions: {} }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
   const find = (name, exts) => {
     const wanted = String(name || '').replace(/\\/g, '/').replace(/^.*\//, '')
@@ -143,15 +144,25 @@ export function parse(text, ctx = null, meta = {}) {
     })
     return { slot: String(name), parts }
   }
+  let shownL2d = ''
+  function l2dOf({ file, options }) {
+    const stem = String(file).replace(/\.l2d$/i, '')
+    const src = hasIndex ? ctx.resolver.resolveByName(`${stem}.model3.json`) : ''
+    if (!src) { if (hasIndex) count('unresolved', `l2d:${stem}`); return null }
+    const o = options && typeof options === 'object' ? options : {}
+    const variables = o.variables && typeof o.variables === 'object' && Object.keys(o.variables).length ? o.variables : null
+    return { src, ...(typeof o.motion === 'string' && o.motion ? { motion: o.motion } : {}), ...(o.loop === true || o.loop === 'true' ? { loop: true } : {}), ...(variables ? { variables } : {}) }
+  }
   function applyLayers(layers, tr) {
     let bg = null
     let ev = null
+    let l2d = null
     for (const l of layers || []) {
       if (!Array.isArray(l)) continue
-      const [name, cls, file, , , showmode] = l
+      const [name, cls, file, options, , showmode] = l
       if (showmode !== 3) continue
       if (cls === 'stage' && name === 'bg' && file) bg = file
-      else if (cls === 'event' && name === 'ev' && file) ev = file
+      else if (cls === 'event' && name === 'ev' && file) { if (/\.l2d$/i.test(file)) l2d = { file, options } ; else ev = file }
     }
     // 事件 CG（ev）盖在背景上；ev 的图取不到（Live2D 的 .l2d、mpg 视频、没采到）= 退回背景，不要黑屏
     let img = ev ? imageOf(ev) : null
@@ -164,6 +175,10 @@ export function parse(text, ctx = null, meta = {}) {
       if (Array.isArray(tr)) count('transitions', `${tr[0]}${tr[2] ? `:${tr[2]}` : ''}`)
       if (!img) emit({ op: 'bgoff', ...(fade ? { fade } : {}) }); else emit({ op: 'bg', ...img, ...(fade ? { fade } : {}) })
     }
+    // Live2D（ev 层的 .l2d）：model3.json 在虚拟索引里（containers 把 .l2d ZIP 展开成 <名字>.l2d/<成员>）；底下的背景照常显示
+    const spec = l2d ? l2dOf(l2d) : null
+    const l2dSig = spec ? JSON.stringify(spec) : ''
+    if (l2dSig !== shownL2d) { shownL2d = l2dSig; emit(spec ? { op: 'live2d', ...spec } : { op: 'live2dOff' }); if (spec) stats.live2d += 1 }
     // 立绘：每个显示着的角色一个槽位；没了的去掉
     const now = new Map()
     for (const l of layers || []) {

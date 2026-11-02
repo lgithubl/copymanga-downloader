@@ -17,6 +17,7 @@ import { encodePng } from '../../web/library/gal/bgi.mjs'
 import { createRequire } from 'node:module'
 import { crc32 } from 'node:zlib'
 import { buildHxv4Xp3, buildPsb, encodeKirikiriText, encodeTlg5, makeBundle } from './make-krkr-fixture.mjs'
+import { buildKtx, buildTinyMoc3, buildZip } from './make-moc3-fixture.mjs'
 
 // PNG（滤波 0、8 位、非隔行）读回像素：只认 encodePng 出的
 function decodePng(png) {
@@ -214,12 +215,13 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     const root3 = {
       name: 'p1.txt',
       scenes: [{
-        label: '*main', title: '', nexts: [], lines: lines(4),
+        label: '*main', title: '', nexts: [], lines: lines(5),
         texts: [
           text(null, '立绘出场', null, [layer('ev', 'event', 'evcg005_06'), char('A', 'cha001.stand', { dress: '制服', face: '微笑', pose: '基本', add: '頬' }, '前', [['leveloffset', '#0,0,0,111,0,-10'], ['zpos', 0]])]),
           text('A', '换表情（sinfo 把「怒り」映射到「表情差分/微笑」）+ 右边', null, [layer('ev', 'event', 'evcg001_03u1'), char('A', 'cha001.stand', { dress: '制服', face: '怒り', add: '頬（照れ）:眼鏡' }, '右', [['leveloffset', '#0,0,0,111,0,-10']])]),
           text('A', '特写', null, [layer('ev', 'event', 'evcg005_06r2'), char('A', 'cha001.stand', { dress: '制服', face: '微笑', add: '頬' }, '前', [['leveloffset', '#0,0,0,228,0,200'], ['xpos', -480]]), char('B', 'cha002.stand', {}, '前', [])]),
           text('A', '变体 r1（底图 + 叠加层）', null, [layer('ev', 'event', 'evcg005_06r1')]),
+          text('A', 'Live2D', null, [layer('ev', 'event', 'ev_demo.l2d', 3, { motion: 'r1', loop: 'true', variables: { 甲: 1 } })]),
         ],
       }],
     }
@@ -231,7 +233,15 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     const overlayRgba = Buffer.alloc(16)
     for (let i = 0; i < 4; i++) overlayRgba.set([200, 100, 50, 255], i * 4)
     const dpak = buildPsb({ 'cg005_06.tlg': { resource: tlg(77) }, 'deadbeef.png': { resource: pngWithOffset(2, 2, overlayRgba, 1, 1) } })
-    await writeFile(path.join(media, 'evimage.xp3'), buildHxv4Xp3([['/', 'cg001_03u1.tlg', tlg(55)], ['/', 'some_random_name.bin', encodeKirikiriText('psb://cg005_06__zzzzzz.dpak/cg005_06.tlg\n')], ['/', 'another_random.bin', encodeKirikiriText('psb://cg005_06__zzzzzz.dpak/cg005_06.tlg\npsb://cg005_06__zzzzzz.dpak/deadbeef.png\n')], ['/', 'cg005_06__zzzzzz.dpak', dpak]], bundle))
+    // Live2D 模型包（.l2d = ZIP）：model3.json / moc3 / cdi3 / 一个动作 / KTX 纹理（2×2 RGBA8）
+    const l2dZip = buildZip([
+      ['ev_demo.model3.json', Buffer.from(J({ Version: 3, FileReferences: { Moc: 'ev_demo.moc3', Textures: ['ev_demo.4096/texture_00.png'], DisplayInfo: 'ev_demo.cdi3.json', Motions: { '': [{ File: 'motions/ev_mv_01.motion3.json' }] } } })), 8],
+      ['ev_demo.moc3', buildTinyMoc3(), 8],
+      ['ev_demo.cdi3.json', Buffer.from(J({ Version: 3, Parameters: [{ Id: 'ParamA', GroupId: '', Name: '甲' }], Parts: [] })), 8],
+      ['motions/ev_mv_01.motion3.json', Buffer.from(J({ Version: 3, Meta: { Duration: 1, Loop: true }, Curves: [] })), 8],
+      ['ev_demo.4096/texture_00.ktx', buildKtx(2, 2, 0x8058, 0x1908, Buffer.from([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 9, 9, 9, 9])), 0],
+    ])
+    await writeFile(path.join(media, 'evimage.xp3'), buildHxv4Xp3([['/', 'cg001_03u1.tlg', tlg(55)], ['/', 'some_random_name.bin', encodeKirikiriText('psb://cg005_06__zzzzzz.dpak/cg005_06.tlg\n')], ['/', 'another_random.bin', encodeKirikiriText('psb://cg005_06__zzzzzz.dpak/cg005_06.tlg\npsb://cg005_06__zzzzzz.dpak/deadbeef.png\n')], ['/', 'cg005_06__zzzzzz.dpak', dpak], ['/', 'ev_demo.l2d', l2dZip]], bundle))
     await writeFile(path.join(media, 'game.exe'), 'MZ')
     const keysFile = path.join(work3, 'gal-krkr-keys.json')
     await writeFile(keysFile, J([bundle]), { mode: 0o600 })
@@ -271,6 +281,19 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     const zoom3 = Math.round((2.28 * (1080 / 400)) * 10000) / 10000
     check('适配器：特写（放大后身体超过舞台）= 头顶在舞台上方 5%；xpos = -480；缺的立绘（cha002 没有 PIMG）记 unresolved、不报错', stands[2].parts[0].x === Math.round(-480 + (50 + 50 - 100) * zoom3) && stands[2].parts[0].y === Math.round((0.05 * 1080 - 20 * zoom3 + (400 * zoom3) / 2) - 540 + (20 + 175 - 200) * zoom3) && scene3.stats.unresolved['pimg:cha002'] >= 1 && scene3.stats.stands === 3, J([stands[2], scene3.stats]))
     check('适配器：事件 CG（ev）= bg（evcg005_06.png / evcg001_03u1.png）', J(scene3.steps[0].commands.filter((c) => c.op === 'bg')) === J([{ op: 'bg', src: 'evcg005_06.png' }]) && scene3.steps[1].commands.some((c) => c.op === 'bg' && c.src === 'evcg001_03u1.png'), J(scene3.steps[0].commands))
+    // Live2D：虚拟索引里 <名字>.l2d/<成员>（纹理 .ktx 虚拟成 .png），取资源时才解 ZIP / KTX
+    const l2dFiles = ['ev_demo.model3.json', 'ev_demo.moc3', 'ev_demo.cdi3.json', 'motions/ev_mv_01.motion3.json', 'ev_demo.4096/texture_00.png'].map((f) => `arc/res/ev_demo.l2d/${f}`)
+    check('Live2D：.l2d（ZIP）按目录展开成虚拟文件 <名字>.l2d/<成员>（只读 ZIP 尾部目录；纹理 .ktx 虚拟成 .png——model3.json 里写的就是 .png）', l2dFiles.every((f) => vf.files.includes(f)) && !vf.files.some((f) => /\.ktx$/.test(f)), J(vf.files.filter((f) => /l2d/.test(f))))
+    const l2dModel = JSON.parse((await read(l2dFiles[0])).toString('utf8'))
+    const l2dMoc = await read(l2dFiles[1])
+    const l2dTex = await read(l2dFiles[4])
+    check('Live2D：取成员 = 解密 + 解 ZIP（model3.json / moc3 原样）；纹理 KTX → PNG（像素对）；不同成员缓存键不同', l2dModel.FileReferences.Moc === 'ev_demo.moc3' && l2dMoc.subarray(0, 4).toString() === 'MOC3' && l2dTex.readUInt32BE(16) === 2 && decodePng(l2dTex).raw[0] === 255 && (await keyOf(l2dFiles[1])) !== (await keyOf(l2dFiles[4])), J([l2dMoc.length, l2dTex.length]))
+    const l2dCmd = scene3.steps[4].commands.find((c) => c.op === 'live2d')
+    check('适配器：ev 是 .l2d = live2d 指令（src = 虚拟的 model3.json；motion / loop / variables 原样带上），模型没了 = live2dOff；统计 live2d 计数', Boolean(l2dCmd) && l2dCmd.src === 'ev_demo.l2d/ev_demo.model3.json' && l2dCmd.motion === 'r1' && l2dCmd.loop === true && J(l2dCmd.variables) === J({ 甲: 1 }) && scene3.stats.live2d === 1 && !scene3.steps[4].commands.some((c) => c.op === 'bg' && /l2d/.test(c.src || '')), J(scene3.steps[4].commands.map((c) => c.op)))
+    const engine = await import('../../web/static/gal-engine.js')
+    const st = engine.stateAt(scene3, 4, {})
+    const st2 = engine.applyCommand(engine.applyCommand({ ...st }, { op: 'live2dOff' }), { op: 'bgoff' })
+    check('engine：live2d 指令进状态（state.live2d = { src, motion, loop, variables }），live2dOff 清掉', st.live2d?.src === 'ev_demo.l2d/ev_demo.model3.json' && st.live2d.motion === 'r1' && st2.live2d === null, J(st.live2d))
   } finally { await rm(work3, { recursive: true, force: true }) }
 }
 

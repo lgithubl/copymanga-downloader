@@ -14,7 +14,7 @@ import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
 import { bwToOgg, cbgToPng, dscDecode, encodePng, isBurikoScript, parseBgiFaceSet, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
 import { decodeScre } from './arcfam-decode.mjs'
-import { runCbg } from './decode-pool.mjs'
+import { runCbg, runKtx } from './decode-pool.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
 import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
@@ -22,6 +22,7 @@ import { parseSinfo, pimgInfo } from './krkr-pimg.mjs'
 import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
 import { inflateSync } from 'node:zlib'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
+import { extractZipMember, parseZipCentral, parseZipEnd } from './l2d-zip.mjs'
 import { Psb, isPsb } from './psb.mjs'
 import { pf8Decrypt, readPf8Index } from './pf8.mjs'
 import { unpremultiplyPng } from './png-unpremultiply.mjs'
@@ -484,6 +485,25 @@ async function krkrRefsSig(mediaDir, cfg) {
 const KRKR_PLAIN_IMAGE = ['png', 'jpg', 'jpeg', 'webp', 'bmp']
 const KRKR_REDIRECT_MAX = 2048   // 重定向文本（psb://X.dpak/成员）很小：只读 ≤ 这么大的条目来找
 const hashHex = (name) => nameHash(name).toString('hex').toUpperCase()
+// Live2D 的 .l2d（ZIP）：只读目录（尾部），每个成员一个虚拟文件 <名字>.l2d/<成员>（纹理 .ktx 虚拟成 .png，model3.json 里写的就是 .png）
+async function addL2dMembers({ arc, entry, record, file, bundle, base, add, entryHit, dir }) {
+  try {
+    const size = entry.originalSize
+    const tailLen = Math.min(size, 65536 + 22)
+    const tail = await arc.readEntryRange(entry, size - tailLen, tailLen)
+    const end = parseZipEnd(tail)
+    if (!end || end.cdOffset + end.cdSize > size) return
+    const central = end.cdOffset >= size - tailLen ? tail.subarray(end.cdOffset - (size - tailLen), end.cdOffset - (size - tailLen) + end.cdSize) : await arc.readEntryRange(entry, end.cdOffset, end.cdSize)
+    for (const member of parseZipCentral(central, end.count)) {
+      const texture = /\.ktx$/i.test(member.name)
+      const rel = `${dir}/res/${base}/${texture ? member.name.replace(/\.ktx$/i, '.png') : member.name}`
+      const hit = entryHit(entry, record, file, { mode: texture ? 'l2d-texture' : 'l2d-member', member: member.name, zip: member })
+      hit.bundleJson = bundle
+      add(rel, hit)
+    }
+  } catch { /* 这个包读不了（采集没收全 / 不是 ZIP）：没有这个模型 */ }
+}
+const l2dZips = new Map()   // 解密好的 .l2d（几十 MB）：同一个模型的 moc3 / 纹理 / 动作连着取，最近 2 个留着
 async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
   const map = new Map()
   const files = []
@@ -506,6 +526,7 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
     if (/^ev/.test(n)) addCandidate(`${n.replace(/^ev/, '')}.tlg`, `${n}.png`, 'tlg-png')
     addCandidate(`${n}.pimg`, `${n}.pimg.json`, 'pimg-json', { pimg: n })
     addCandidate(`${n}.sinfo`, `${n}.sinfo.json`, 'sinfo-json')
+    addCandidate(`${n}.l2d`, `${n}.l2d`, 'l2d')   // Live2D 模型包（ZIP）：展开成 <名字>.l2d/<成员>
   }
   for (const kind of ['bgm', 'voice']) for (const n of names[kind]) for (const ext of KRKR_AUDIO_EXTS) addCandidate(`${n}.${ext}`, `${n}.${ext}`, 'raw')
   if (!candidates.size) return { map, files, sig }
@@ -529,6 +550,7 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
         const entry = byRecord.get(record)
         if (!entry || entry.originalSize > MAX_ENTRY_BYTES) continue
         for (const c of list) {
+          if (c.mode === 'l2d') { await addL2dMembers({ arc, entry, record, file, bundle, base: c.rel, add, entryHit, dir: cfg.dir }); continue }
           const hit = entryHit(entry, record, file, { mode: c.mode })
           hit.bundleJson = bundle
           add(`${cfg.dir}/res/${c.rel}`, hit)
@@ -663,9 +685,14 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
 }
 async function readKrkrHit(hit) {
   const k = hit.krkr
-  const handle = await open(hit.file, 'r')
-  let data
+  const isL2d = k.mode === 'l2d-member' || k.mode === 'l2d-texture'
+  const l2dKey = isL2d ? `${hit.file}:${k.id}` : ''
+  let cached = isL2d ? l2dZips.get(l2dKey) : null
+  if (cached) { l2dZips.delete(l2dKey); l2dZips.set(l2dKey, cached) }   // 最近用过
+  const handle = cached ? null : await open(hit.file, 'r')
+  let data = cached
   try {
+    if (!cached) {
     const parts = []
     for (const s of k.segments) {
       const raw = await readRange(handle, s.offset, s.archiveSize)
@@ -675,8 +702,12 @@ async function readKrkrHit(hit) {
     data = Buffer.concat(parts)
     if (data.length !== k.originalSize && data.length === k.archiveSize) data = inflateSync(data)
     applyState(krkrFilterFor(hit.bundleJson).stateFor(BigInt(k.entryKey), k.filterFlag), 0, data)
-  } finally { await handle.close().catch(() => {}) }
+    }
+  } finally { await handle?.close().catch(() => {}) }
+  if (isL2d && !cached) { l2dZips.set(l2dKey, data); while (l2dZips.size > 2) l2dZips.delete(l2dZips.keys().next().value) }
   switch (k.mode || 'raw') {
+    case 'l2d-member': return Buffer.from(extractZipMember(data, k.zip))
+    case 'l2d-texture': return rgbaToPng(await runKtx(Buffer.from(extractZipMember(data, k.zip))))   // BC7 解码在 worker 线程里做（4096² 要 2 秒）
     case 'tlg-png': return tlgToPng(data)
     case 'pimg-json': return Buffer.from(JSON.stringify(pimgInfo(new Psb(data).root())))
     case 'sinfo-json': return Buffer.from(JSON.stringify(parseSinfo(decodeKirikiriText(data) ?? data.toString('utf8'))))
@@ -713,6 +744,12 @@ function pngOffset(buf) {
 }
 let sharpPromise = null
 const loadSharp = () => (sharpPromise ||= import('sharp').then((m) => m.default || m).catch(() => null))
+// RGBA → PNG（大纹理走 sharp，低压缩等级；没有 sharp 退回自带的编码器）
+async function rgbaToPng({ width, height, data }) {
+  const sharp = await loadSharp()
+  if (sharp) return sharp(data, { raw: { width, height, channels: 4 } }).png({ compressionLevel: 2 }).toBuffer()
+  return encodePng(width, height, 4, data)
+}
 // 底图（TLG）+ 叠加层（PNG，按 oFFs 摆）→ 一张 PNG；没有 sharp / 叠加层坏了 = 只返回底图
 async function composeEvVariant(psb, k) {
   const root = psb.root()

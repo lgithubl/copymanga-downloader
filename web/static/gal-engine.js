@@ -3,7 +3,7 @@
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, spines: {}, stand: null, stands: [], overlays: [], camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, bgPan: null, white: false, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, live2d: null, spines: {}, stand: null, stands: [], overlays: [], camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, bgPan: null, white: false, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -128,6 +128,14 @@ export function applyCommand(state, command, choices = null) {
       break
     case 'wash':   // 白屏渐退成透明：白屏没了
       state.white = false
+      break
+    case 'live2d': {   // Live2D 模型（moc3，WebGL）：src = model3.json 的资源路径，motion / loop / variables = 动作和参数；再来一条 = 换（动作 / 参数变了）
+      const { op: _op, when: _when, ...spec } = command
+      state.live2d = spec.src ? spec : null
+      break
+    }
+    case 'live2dOff':
+      state.live2d = null
       break
     case 'movie':
       state.movie = { srcs: command.srcs, loop: Boolean(command.loop), ...(command.rate > 0 && command.rate !== 1 ? { rate: command.rate } : {}) }
