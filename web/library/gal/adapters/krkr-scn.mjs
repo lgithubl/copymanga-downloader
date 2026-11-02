@@ -13,14 +13,54 @@
 // 没做 / 推断：
 //   立绘（class character，imageFile.file = cha001.stand + options { dress, face, pose, add }，showmode 3 = 显示）→ 每个角色一个槽位（slot = 角色名）的 stand：PIMG（cha001.pimg，分层 PSB，每层一张 TLG）按 options 选图层
 //     （dress + pose → 身体、face、add 用 ':' 隔开的各项；映射表 = <名字>.sinfo.json，没有就按层名猜，见 krkr-pimg.mjs），每层一个部件，部件的位置 = 层在画布里的位置；containers 把 PIMG 虚拟成 <名字>.pimg.json（层表）和 <名字>.pimg/<层 id>.png（每层转好的 PNG）。
-//     位置 / 缩放（推断，没有对照图）：缩放 = leveloffset 的第 4 项（百分比）× 舞台高 ÷ 画布高（真实 PIMG：身体 1948 高 / 画布 2246 高，111% 时正好 ≈ 舞台高）；水平 = action.xpos，没有按 posName（左 -480 / 右 480 / 左中 -240 / 右中 240 / 其余居中）；
-//     缩放后身体不超过舞台高 = 画布底边对齐舞台底边，否则（特写）头顶落在舞台上方 5% 处。leveloffset 的 y、zpos、order 没用。想调就用播放器「设置 → 画面 → 立绘」。
+//     位置 / 缩放（照引擎的 TJS 字节码 + 脚本数据推的，见 krkrStandGeometry；没有对照截图，只做过统计验证）：画布中心 = 舞台中心 + f × (xpos + xoffset, ypos + yoffset) + (leveloffset 的 x, −y)，缩放 = f，
+//     f = 100 ÷ (100 + zpos)（zpos −50 = 手前 = 2 倍，+51.5 = 奥 = 0.66 倍，0 = 前 = 1 倍；引擎里是透视投影，CAMERAOFFSETZ = −100）；xoffset / yoffset 来自 <名字>.stand；leveloffset = 脚本动作里的 `#x0,y0,x1,y1,…`（每个层级一对，按 zorder = 100 × f 在 [66, 100, 200, 225] 之间插值），没有就用 .stand 里的。
+//     没有 zpos 时用 posName 的层级（奥 66 / 前 100 / 手前 200 / 目前 225），水平位置没有 xpos 就按 posName（左 −480 / 右 480 / 左中 −240 / 右中 240 / 左奥 −720 / 右奥 720 / 左外 −960 / 右外 960 / 中 0）。
+//     没对过的：y 方向的符号（leveloffset 的 y 取负、ypos 取正是统计出来的：8 个角色的头顶落点最集中）、图是 1:1 贴到舞台（1920×1080）上的；order 只是绘制顺序。想调就用播放器「设置 → 画面 → 立绘」。
 //   · 每步的图层是脚本自带的「此刻的环境快照」（texts[i][4].data），不重放 envupdate；没有台词也没有等待的画面变化会并进下一句
 //   · 转场：envupdate 的 trans（crossfade / universal 遮罩擦除 / mosaic / ripple / rotateswap，时长毫秒）→ 换背景 / 事件图时的 fade 秒数（全部近似成淡入淡出，方式记 stats.transitions）；没写时长的转场不淡
 //   · 镜头动作（xpos / ypos / zpos / zoom）不渲染：真实脚本里背景 / 事件图上没有 MoveAction（只有立绘上的 RandomAction / SinAction 抖动），静态的偏移 / 缩放量的原点和单位没法对照验证
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader } from './options-merge.mjs'
 import { pickPimgLayers } from '../krkr-pimg.mjs'
+
+// 立绘几何（引擎 data.xp3 里的 TJS：KAGEnvImage / EnvGraphicBase.calcAffineMatrix / calcLevel / interlvoffset）
+const KRKR_LEVELS = [66, 100, 200, 225]   // base.stage 同目录的配置里的 "levels"：层级号 ↔ zorder
+export const KRKR_POS_X = Object.freeze({ 左外: -960, 左奥: -720, 左: -480, 左中: -240, 中: 0, 右中: 240, 右: 480, 右奥: 720, 右外: 960 })
+const KRKR_POS_Z = Object.freeze({ 奥: 66, 前: 100, 手前: 200, 目前: 225 })
+// 引擎的 calcLevel：zorder → { lv（上界层级号）, w（往下一层插值的权重）}
+function krkrCalcLevel(z) {
+  for (let i = 0; i < KRKR_LEVELS.length; i += 1) {
+    if (z > KRKR_LEVELS[i]) continue
+    if (i === 0) return { lv: 0, w: 0 }
+    return { lv: i, w: 1 - (z - KRKR_LEVELS[i - 1]) / (KRKR_LEVELS[i] - KRKR_LEVELS[i - 1]) }
+  }
+  return { lv: KRKR_LEVELS.length + Math.trunc((z - KRKR_LEVELS[KRKR_LEVELS.length - 1]) / 50), w: 0 }
+}
+// 引擎的 interlvoffset：每个层级一对 (x, y)，按 zorder 在相邻两层之间插值
+function krkrLevelOffset(pairs, z) {
+  if (!pairs.length) return [0, 0]
+  let { lv, w } = krkrCalcLevel(z)
+  if (lv >= pairs.length) lv = pairs.length - 1
+  let [x, y] = pairs[lv]
+  if (w > 0 && lv > 0) { x = x * (1 - w) + pairs[lv - 1][0] * w; y = y * (1 - w) + pairs[lv - 1][1] * w }
+  return [x, y]
+}
+// act = 脚本里这个角色的动作表（{ leveloffset: '#0,0,0,111,0,-10', xpos, ypos, zpos }）；stand = parseStandInfo 的结果（可空）；返回 { f（缩放）, cx, cy（画布中心，舞台坐标，左上角为原点）}
+export function krkrStandGeometry({ act = {}, posName = null, stand = null, stage = [1920, 1080] }) {
+  const zpos = Number(act.zpos)
+  let f = Number.isFinite(zpos) && zpos > -99 ? 100 / (100 + zpos) : (KRKR_POS_Z[posName] ?? 100) / 100
+  f = Math.max(0.2, Math.min(5, f))
+  const z = 100 * f
+  const text = String(act.leveloffset ?? '').replace(/^#/, '')
+  const nums = text ? text.split(',').map(Number).filter((n) => Number.isFinite(n)) : []
+  const pairs = nums.length >= 2 ? Array.from({ length: Math.floor(nums.length / 2) }, (_, i) => [nums[i * 2], nums[i * 2 + 1]]) : (stand?.leveloffset || [])
+  const [lx, ly] = krkrLevelOffset(pairs, z)
+  const xpos = Number(act.xpos)
+  const x = Number.isFinite(xpos) ? xpos : KRKR_POS_X[posName] ?? 0
+  const y = Number(act.ypos) || 0
+  return { f, cx: stage[0] / 2 + f * (x + (stand?.xoffset || 0)) + lx, cy: stage[1] / 2 + f * (y + (stand?.yoffset || 0)) - ly }
+}
 
 export const ADAPTER_ID = 'krkr::scn'
 export const DEFAULT_OPTIONS = {
@@ -71,7 +111,7 @@ export const explainSniff = () => '开头不是 {"format":"krkr-scn/1"…（这�
 
 export const contextFiles = () => []
 export const contextDirs = (options) => { const opt = readOptions(options); return [opt.resDir, ...opt.extraDirs].map((dir) => String(dir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter(Boolean) }
-export const contextTextFilter = () => (rel) => /\.(pimg|sinfo)\.json$/i.test(rel)   // 立绘的层表 / 选项表（containers 虚拟出来的，很小）
+export const contextTextFilter = () => (rel) => /\.(pimg|sinfo|stand)\.json$/i.test(rel)   // 立绘的层表 / 选项表 / 位置配置（containers 虚拟出来的，很小）
 export const contextWalkLimit = 800000
 export const contextSampleLimit = 2000
 
@@ -145,7 +185,6 @@ export function parse(text, ctx = null, meta = {}) {
   const shownStands = new Map()
   const stageW = opt.stage[0]
   const stageH = opt.stage[1]
-  const POS_X = { 左: -480, 右: 480, 左中: -240, 右中: 240 }
   function standOf(layer) {
     const [name, , file, options, posName, , actions] = layer
     const stem = String(file || '').replace(/\.[^.]+$/, '')
@@ -154,23 +193,17 @@ export function parse(text, ctx = null, meta = {}) {
     const info = infoPath ? ctx.readJson?.(infoPath) : null
     if (!info?.layers) { if (hasIndex) count('unresolved', `pimg:${stem}`); return null }
     const act = Object.fromEntries((actions || []).map((a) => [a[0], a[1]]))
-    const pct = Number(String(act.leveloffset || '').split(',')[3])
-    const zoom = (Number.isFinite(pct) && pct > 0 ? pct / 100 : 1) * (stageH / info.height)
-    const xpos = Number(act.xpos)
-    const x = Number.isFinite(xpos) ? xpos : POS_X[posName] ?? 0
+    const standPath = ctx.resolver.resolveByName(`${stem}.stand.json`)
+    const standInfo = standPath ? ctx.readJson?.(standPath) : null
+    const geo = krkrStandGeometry({ act, posName, stand: standInfo, stage: [stageW, stageH] })
     const sinfoPath = ctx.resolver.resolveByName(`${stem}.sinfo.json`)
     const { ids, missing } = pickPimgLayers(info, options || {}, sinfoPath ? ctx.readJson?.(sinfoPath) : null)
     for (const m of missing) count('ignored', `pimg-layer:${m}`)
     if (!ids.length) return null
     const byId = new Map(info.layers.map((l) => [l[0], l]))   // 层 = [id, 名, 组, left, top, w, h, 可见, 类别, 资源号]
-    const bodyTop = Math.min(...ids.map((id) => byId.get(id)[4]))
-    const bodyBottom = Math.max(...ids.map((id) => byId.get(id)[4] + byId.get(id)[6]))
-    // 画布中心相对舞台中心的竖直偏移：身体放大后没超过舞台 = 画布底边贴舞台底边；超过（特写）= 头顶在舞台上方 5%
-    const fits = (bodyBottom - bodyTop) * zoom <= stageH * 1.05
-    const y = fits ? (stageH - info.height * zoom) / 2 : (0.05 * stageH - bodyTop * zoom + (info.height * zoom) / 2) - stageH / 2
     const parts = ids.map((id) => {
       const l = byId.get(id)
-      return { src: `${stem}.pimg/${id}.png`, x: Math.round(x + (l[3] + l[5] / 2 - info.width / 2) * zoom), y: Math.round(y + (l[4] + l[6] / 2 - info.height / 2) * zoom), scale: Math.round(zoom * 10000) / 10000 }
+      return { src: `${stem}.pimg/${id}.png`, x: Math.round(geo.cx - stageW / 2 + (l[3] + l[5] / 2 - info.width / 2) * geo.f), y: Math.round(geo.cy - stageH / 2 + (l[4] + l[6] / 2 - info.height / 2) * geo.f), scale: Math.round(geo.f * 10000) / 10000 }
     })
     return { slot: String(name), parts }
   }

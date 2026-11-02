@@ -18,7 +18,7 @@ import { runCbg, runKtx } from './decode-pool.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
 import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
-import { parseSinfo, pimgInfo } from './krkr-pimg.mjs'
+import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
 import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
 import { inflateSync } from 'node:zlib'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
@@ -29,7 +29,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 11
+export const CONTAINER_FORMAT_VERSION = 12
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -527,6 +527,7 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
     if (/^ev/.test(n)) addCandidate(`${n.replace(/^ev/, '')}.tlg`, `${n}.png`, 'tlg-png')
     addCandidate(`${n}.pimg`, `${n}.pimg.json`, 'pimg-json', { pimg: n })
     addCandidate(`${n}.sinfo`, `${n}.sinfo.json`, 'sinfo-json')
+    addCandidate(`${n}.stand`, `${n}.stand.json`, 'stand-json')
     addCandidate(`${n}.l2d`, `${n}.l2d`, 'l2d')   // Live2D 模型包（ZIP）：展开成 <名字>.l2d/<成员>
     // g07：脚本里叫 ev_mv001_02r5s，live2d.xp3 里的包叫 ev_cg001_02.l2d
     const mv = /^ev_mv(\w+?_\d+)/i.exec(n)
@@ -715,6 +716,7 @@ async function readKrkrHit(hit) {
     case 'tlg-png': return tlgToPng(data)
     case 'pimg-json': return Buffer.from(JSON.stringify(pimgInfo(new Psb(data).root())))
     case 'sinfo-json': return Buffer.from(JSON.stringify(parseSinfo(decodeKirikiriText(data) ?? data.toString('utf8'))))
+    case 'stand-json': return Buffer.from(JSON.stringify(parseStandInfo(decodeKirikiriText(data) ?? data.toString('utf8'))))
     case 'pimg-layer': {
       const psb = new Psb(data)
       const root = psb.root()

@@ -1766,7 +1766,7 @@ export const LAYOUTS = {
     config: { scriptExtensions: ['krkr'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '_\\d+h$|_h\\d*$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.krkr', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
-    notes: ['xp3 在第一次浏览时由服务端展开剧本（需要密钥包：<DATA_DIR>/gal-krkr-keys.json）；没有密钥包 / 密钥包不对，列表是空的，容器报告里有原因', '立绘（PIMG 分层图 + TLG 图层）、事件 CG（TLG / dpak）、背景（PNG / JPG）、BGM / 语音（OGG）、台词都有；立绘的位置 / 缩放是推断的（没有对照图），可以在播放器「设置 → 画面 → 立绘」里调；事件 CG 的叠加图（精液之类的 PNG 层）和转场 / 镜头动作没做'],
+    notes: ['xp3 在第一次浏览时由服务端展开剧本（需要密钥包：<DATA_DIR>/gal-krkr-keys.json）；没有密钥包 / 密钥包不对，列表是空的，容器报告里有原因', '立绘（PIMG 分层图 + TLG 图层）、事件 CG（TLG / dpak）、背景（PNG / JPG）、BGM / 语音（OGG）、台词都有；立绘的位置 / 缩放照引擎脚本推的（zpos 透视 + leveloffset + .stand 偏移；没有对照截图，不对可以在播放器「设置 → 画面 → 立绘」里调）；事件 CG 的叠加图、转场（近似成淡入淡出）和 Live2D 已做；镜头动作没做'],
   },
   // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
   //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；

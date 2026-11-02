@@ -10,7 +10,7 @@ import { normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs
 import { ensureContainers, materialize, setKeysFile, virtualEntry, virtualFiles } from '../../web/library/gal/containers.mjs'
 import { decodeKrkrScn } from '../../web/library/gal/krkr-scn.mjs'
 import { galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
-import { parseSinfo, pickPimgLayers, pimgInfo } from '../../web/library/gal/krkr-pimg.mjs'
+import { parseSinfo, parseStandInfo, pickPimgLayers, pimgInfo } from '../../web/library/gal/krkr-pimg.mjs'
 import { decodeTlg, tlgToPng } from '../../web/library/gal/tlg.mjs'
 import { Psb } from '../../web/library/gal/psb.mjs'
 import { encodePng } from '../../web/library/gal/bgi.mjs'
@@ -275,11 +275,9 @@ const info = pimgInfo(new Psb(pimgBuffer).root())
     const script3 = await readFile(path.join(media, 'arc/script/scn/p1.krkr'), 'utf8')
     const scene3 = adapter.parse(script3, ctx3)
     const stands = scene3.steps.flatMap((st) => st.commands.filter((c) => c.op === 'stand' || c.op === 'standOff'))
-    const zoom1 = Math.round((1.11 * (1080 / 400)) * 10000) / 10000
-    check('适配器：立绘 = 每个角色一个槽位（slot = 角色名）的 stand，部件 = 选中的层（身体 / 脸 / 腮红）；第一次出现带 fade；换表情只发 stand，不发 standOff；缩放 = leveloffset 第 4 项 % × 舞台高 ÷ 画布高', stands[0].op === 'stand' && stands[0].slot === 'A' && stands[0].fade === 0.25 && stands[0].parts.length === 3 && stands[0].parts[0].src === 'cha001.pimg/4.png' && stands[0].parts[0].scale === zoom1 && J(stands[0].stage) === J([1920, 1080]), J(stands[0]))
-    check('适配器：位置——xpos / posName（右 = +480）；身体放大后没超过舞台 = 画布底边贴舞台底边（y 偏移 = (舞台高 - 画布高 × 缩放) ÷ 2）', stands[1].op === 'stand' && !stands[1].fade && stands[1].parts[0].x === Math.round(480 + (50 + 100 / 2 - 100) * zoom1) && stands[1].parts[0].y === Math.round((1080 - 400 * zoom1) / 2 + (20 + 350 / 2 - 200) * zoom1) && J(stands[1].parts.map((p) => p.src)) === J(['cha001.pimg/4.png', 'cha001.pimg/7.png', 'cha001.pimg/1.png', 'cha001.pimg/3.png']), J(stands[1]))
-    const zoom3 = Math.round((2.28 * (1080 / 400)) * 10000) / 10000
-    check('适配器：特写（放大后身体超过舞台）= 头顶在舞台上方 5%；xpos = -480；缺的立绘（cha002 没有 PIMG）记 unresolved、不报错', stands[2].parts[0].x === Math.round(-480 + (50 + 50 - 100) * zoom3) && stands[2].parts[0].y === Math.round((0.05 * 1080 - 20 * zoom3 + (400 * zoom3) / 2) - 540 + (20 + 175 - 200) * zoom3) && scene3.stats.unresolved['pimg:cha002'] >= 1 && scene3.stats.stands === 3, J([stands[2], scene3.stats]))
+    check('适配器：立绘 = 每个角色一个槽位（slot = 角色名）的 stand，部件 = 选中的层（身体 / 脸 / 腮红）；第一次出现带 fade；换表情只发 stand，不发 standOff；缩放 f = 1（zpos 0），中心 = 舞台中心 − (0, leveloffset 层级 1 的 y = 111)', stands[0].op === 'stand' && stands[0].slot === 'A' && stands[0].fade === 0.25 && stands[0].parts.length === 3 && stands[0].parts[0].src === 'cha001.pimg/4.png' && stands[0].parts[0].scale === 1 && stands[0].parts[0].x === 0 && stands[0].parts[0].y === -111 + (20 + 175 - 200) && J(stands[0].stage) === J([1920, 1080]), J(stands[0]))
+    check('适配器：位置——xpos / posName（右 = +480）；没有 xpos 时按 posName', stands[1].op === 'stand' && !stands[1].fade && stands[1].parts[0].x === 480 + (50 + 100 / 2 - 100) && stands[1].parts[0].y === -111 + (20 + 350 / 2 - 200) && J(stands[1].parts.map((p) => p.src)) === J(['cha001.pimg/4.png', 'cha001.pimg/7.png', 'cha001.pimg/1.png', 'cha001.pimg/3.png']), J(stands[1]))
+    check('适配器：xpos = -480、leveloffset y = 228；缺的立绘（cha002 没有 PIMG）记 unresolved、不报错', stands[2].parts[0].x === -480 + (50 + 50 - 100) && stands[2].parts[0].y === -228 + (20 + 175 - 200) && scene3.stats.unresolved['pimg:cha002'] >= 1 && scene3.stats.stands === 3, J([stands[2], scene3.stats]))
     check('适配器：事件 CG（ev）= bg（evcg005_06.png / evcg001_03u1.png）', J(scene3.steps[0].commands.filter((c) => c.op === 'bg')) === J([{ op: 'bg', src: 'evcg005_06.png' }]) && scene3.steps[1].commands.some((c) => c.op === 'bg' && c.src === 'evcg001_03u1.png'), J(scene3.steps[0].commands))
     // Live2D：虚拟索引里 <名字>.l2d/<成员>（纹理 .ktx 虚拟成 .png），取资源时才解 ZIP / KTX
     const l2dFiles = ['ev_demo.model3.json', 'ev_demo.moc3', 'ev_demo.cdi3.json', 'motions/ev_mv_01.motion3.json', 'ev_demo.4096/texture_00.png'].map((f) => `arc/res/ev_demo.l2d/${f}`)
@@ -316,6 +314,23 @@ if (process.env.KRKR_SAMPLE) {
   await arc.close()
   check(`真实样本 ${dir}：${scripts} 个剧本全部过解码器 + 适配器（${messages} 句台词），没有出错`, crashed === 0 && scripts > 0, `crashed ${crashed}`)
 } else console.log('SKIP 真实样本（KRKR_SAMPLE=<目录>:<密钥包.json> 才跑）')
+
+{
+  const st = parseStandInfo('[%[\n "facexoff"=>-270,\n "faceyoff"=>-360,\n "filename"=>"cha001",\n "leveloffset"=>[[0,0],[0,0],[-40,-237]],\n "xoffset"=>48,\n "yoffset"=>392\n]]\n')
+  check('.stand 解析：xoffset / yoffset / facexoff / faceyoff + leveloffset 每层一对', JSON.stringify(st) === JSON.stringify({ xoffset: 48, yoffset: 392, facexoff: -270, faceyoff: -360, leveloffset: [[0, 0], [0, 0], [-40, -237]] }), JSON.stringify(st))
+}
+
+// ---- 立绘几何（引擎 TJS 推的：zpos 透视 + leveloffset 插值 + .stand 偏移）----
+{
+  const g = (o) => adapter.krkrStandGeometry({ stage: [1920, 1080], ...o })
+  const j = JSON.stringify
+  check('立绘几何：前（zpos 0）f = 1；中心 = 舞台中心 + (xpos + xoffset, yoffset) − (0, leveloffset 层级 1 的 y)', j(g({ act: { zpos: 0, xpos: 480, leveloffset: '#0,0,0,111,0,-10' }, stand: { xoffset: 48, yoffset: 392 } })) === j({ f: 1, cx: 960 + 480 + 48, cy: 540 + 392 - 111 }), j(g({ act: { zpos: 0, xpos: 480, leveloffset: '#0,0,0,111,0,-10' }, stand: { xoffset: 48, yoffset: 392 } })))
+  const near = g({ act: { zpos: -50, leveloffset: '#0,0,0,111,0,-10' }, stand: { xoffset: 48, yoffset: 392 } })
+  check('立绘几何：手前（zpos −50）f = 2；偏移 × f，leveloffset 层级 2 的 y（−10）不被 f 放大', near.f === 2 && near.cx === 960 + 2 * 48 && near.cy === 540 + 2 * 392 + 10, j(near))
+  check('立绘几何：奥（zpos 51.5151…）f ≈ 0.66；目前（zpos −55.55…）f = 2.25', Math.abs(g({ act: { zpos: 51.51515151515151 } }).f - 0.66) < 0.001 && Math.abs(g({ act: { zpos: -55.55555555555556 } }).f - 2.25) < 0.001)
+  check('立绘几何：层级之间插值（zorder 150 = 前和手前正中，y 取 111 与 −10 的平均）；超出层级数的取最后一对', Math.abs(g({ act: { zpos: -33.333333333333336, leveloffset: '#0,0,0,111,0,-10' } }).cy - (540 - 50.5)) < 0.01 && g({ act: { zpos: -55.55555555555556, leveloffset: '#0,0,0,111,0,-10' } }).cy === 540 + 10, j(g({ act: { zpos: -33.333333333333336, leveloffset: '#0,0,0,111,0,-10' } })))
+  check('立绘几何：没有 zpos 按 posName 层级（手前 = 2 倍），没有 xpos 按 posName（左 = −480），没有 leveloffset 用 .stand 的', g({ posName: '手前' }).f === 2 && g({ posName: '左' }).cx === 960 - 480 && g({ posName: '手前', stand: { leveloffset: [[0, 0], [0, 0], [-40, -237]] } }).cx === 960 - 40 && g({ posName: '手前', stand: { leveloffset: [[0, 0], [0, 0], [-40, -237]] } }).cy === 540 + 237)
+}
 
 // ---- g07 的 Live2D：脚本里 ev_mv001_02r5s ↔ live2d.xp3 的 ev_cg001_02.l2d（动作文件名 = 图层名）----
 {

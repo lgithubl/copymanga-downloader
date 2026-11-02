@@ -23,6 +23,16 @@ export function parseSinfo(text) {
   return out
 }
 
+// .stand（立绘的配置，KiriKiri 文本里的 TJS 字典数组 [%["xoffset"=>48, "yoffset"=>392, "leveloffset"=>[[0,0],[0,0],[-40,-237]], "facexoff"=>-270, …]]）：
+//   xoffset / yoffset = 这个立绘的基准位置偏移（画布中心相对舞台中心，px，y 向下）；leveloffset = 每个「层级」（奥 / 前 / 手前…）的 (x, y)；face* = 脸窗位置（不用）。只取数字字段。
+export function parseStandInfo(text) {
+  const src = String(text)
+  const num = (key) => { const m = new RegExp(`"${key}"\\s*=>\\s*(-?\\d+(?:\\.\\d+)?)`).exec(src); return m ? Number(m[1]) : 0 }
+  const lo = /"leveloffset"\s*=>\s*\[((?:\s*\[[^\]]*\]\s*,?)*)\]/.exec(src)
+  const levelOffset = lo ? [...lo[1].matchAll(/\[\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\]/g)].map((m) => [Number(m[1]), Number(m[2])]) : []
+  return { xoffset: num('xoffset'), yoffset: num('yoffset'), facexoff: num('facexoff'), faceyoff: num('faceyoff'), leveloffset: levelOffset }
+}
+
 // → { width, height, layers: [[id, name, group, left, top, w, h, visible, kind, res]], }（紧凑：写进虚拟的 .pimg.json）
 export function pimgInfo(root) {
   if (!root || !Array.isArray(root.layers)) throw new Error('不是 PIMG（没有 layers）')
