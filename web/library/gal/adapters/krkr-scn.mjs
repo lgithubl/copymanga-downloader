@@ -6,7 +6,7 @@
 // 映射：
 //   台词 → speaker + text；语音 → voice；bgm 文件变了 / 状态 0 → 1 → bgm，状态变 0 → bgmStop；
 //   图层 bg（stage，showmode 3）→ bg（文件 = 图名，图在 image.xp3 / data.xp3 里是 .png / .jpg；`width,1,height,1,color,0xff000000` 这种是纯色）；
-//   图层 ev（event，showmode 3）= 事件 CG → 盖在 bg 上（当成 bg 换掉，去掉后回到背景）；
+//   图层 ev（event，showmode 3）= 事件 CG → 盖在 bg 上（当成 bg 换掉，去掉后回到背景；ev 的图取不到——Live2D 的 .l2d、mpg 视频——就退回背景）；
 //   pre 里的 wait → wait（秒，最多 10）；playvoice（背景语音 type 2）/ quake / stopvoice 不渲染，记 stats.ignored
 //   多个 scene（脚本里的 *start / *dummy1 …）按顺序接在一起；最后一个 scene 的 nexts 指向别的脚本（不是 gameloop.txt 的菜单）→ scene.next
 // 没做 / 推断：
@@ -90,15 +90,23 @@ export function parse(text, ctx = null, meta = {}) {
   // 当前显示：背景（bg）+ 事件 CG（ev）；变了才发
   let shown = ''
   let bgm = { file: null, playing: false }
+  const imageCache = new Map()   // 图名 → 解析结果（同一张图只算一次，统计也只计一次）
   const imageOf = (file) => {
+    if (imageCache.has(file)) return imageCache.get(file)
     const color = colorOf(file)
-    if (color) return { color }
-    const src = find(file, opt.imageExts)
-    stats.images.referenced += 1
-    if (src) { stats.images.resolved += 1; return { src } }
-    stats.images.unresolved += 1
-    if (hasIndex) count('unresolved', `image:${file}`)
-    return null
+    let result
+    if (color) result = { color }
+    else {
+      const src = find(file, opt.imageExts)
+      stats.images.referenced += 1
+      if (src) { stats.images.resolved += 1; result = { src } } else {
+        stats.images.unresolved += 1
+        if (hasIndex) count('unresolved', `image:${file}`)
+        result = null
+      }
+    }
+    imageCache.set(file, result)
+    return result
   }
   // 立绘：槽位（角色名）→ 上次发出去的签名；变了才发
   const shownStands = new Map()
@@ -143,11 +151,13 @@ export function parse(text, ctx = null, meta = {}) {
       if (cls === 'stage' && name === 'bg' && file) bg = file
       else if (cls === 'event' && name === 'ev' && file) ev = file
     }
-    const want = ev || bg || ''
+    // 事件 CG（ev）盖在背景上；ev 的图取不到（Live2D 的 .l2d、mpg 视频、没采到）= 退回背景，不要黑屏
+    let img = ev ? imageOf(ev) : null
+    let want = img ? ev : ''
+    if (!img && bg) { img = imageOf(bg); want = img ? bg : '' }
     if (want !== shown) {
       shown = want
-      if (!want) emit({ op: 'bgoff' })
-      else { const img = imageOf(want); if (img) emit({ op: 'bg', ...img }); else emit({ op: 'bgoff' }) }
+      if (!img) emit({ op: 'bgoff' }); else emit({ op: 'bg', ...img })
     }
     // 立绘：每个显示着的角色一个槽位；没了的去掉
     const now = new Map()
