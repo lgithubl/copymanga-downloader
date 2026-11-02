@@ -4840,3 +4840,11 @@ h2 {
 .gal-voice-toast { background: rgba(8, 12, 24, 0.9); border-radius: 8px; bottom: 64px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35); color: #fff; font-size: 13px; left: 50%; max-width: min(36em, 92vw); overflow-wrap: anywhere; padding: 8px 14px; pointer-events: none; position: fixed; text-align: center; transform: translateX(-50%); z-index: 60; }
 .gal-voice-toast[hidden] { display: none; }
 .gal-voice-toast.is-error { background: rgba(120, 24, 24, 0.94); }
+
+.gal-set-row[hidden] {
+  display: none;
+}
+
+.gal-set-check input[type='checkbox'] {
+  justify-self: start;
+}

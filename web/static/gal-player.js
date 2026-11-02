@@ -8,7 +8,18 @@ import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-sta
 import { attachBarLock } from '/gal-barlock.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
-const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume' }
+// se = 旧版「语音/音效」合在一起的那一个（只读：新的几个滑块没存过时拿它当初始值，升级后听感不变）
+// 自动进入下一章时，自动播放 / 快进的状态带给下一章的播放器（每章是新建的播放器实例）
+let carryOver = null
+const VOL_KEY = { bgm: 'copymanga.gal.bgmVolume', se: 'copymanga.gal.seVolume', voice: 'copymanga.gal.voiceVolume', sfx: 'copymanga.gal.sfxVolume', bgse: 'copymanga.gal.bgseVolume', bgvoice: 'copymanga.gal.bgvoiceVolume', movie: 'copymanga.gal.movieVolume' }
+// 音频分组（设置 → 音频，每组一个滑块；op = 场景里的音频指令）：脚本里没出现的组，滑块自动隐藏
+const AUDIO_GROUPS = [
+  { key: 'voice', label: '语音', ops: ['voice'], title: '语音音量（滑块位置，实际增益 = 位置²）' },
+  { key: 'sfx', label: '音效', ops: ['se'], title: '音效音量（se 指令：单次音效；滑块位置，实际增益 = 位置²）' },
+  { key: 'bgse', label: '背景音效', ops: ['bgse'], title: '背景音效音量（bgse 指令：循环的环境音；滑块位置，实际增益 = 位置²）' },
+  { key: 'bgvoice', label: '背景人声', ops: ['bgvoice'], title: '背景人声音量（bgvoice 指令：循环的背景人声，再乘脚本里写的音量；滑块位置，实际增益 = 位置²）' },
+  { key: 'movie', label: '视频', ops: ['movie'], title: '视频自带声音的音量（滑块位置，实际增益 = 位置²）' },
+]
 // 音量：滑块位置 p（0..1，存进浏览器的就是它）→ 实际增益 volumeGain(p) = p²（感知曲线）。旧版存的是线性值，按滑块位置解释，听起来会比以前小
 const loadVolume = (key, fallback) => {
   const n = Number(localStorage.getItem(VOL_KEY[key]))
@@ -33,6 +44,8 @@ export const GAL_SETTINGS = {
   slowKey: 'copymanga.gal.slow',                    // 静态画面 animation4 的降速倍率（1 = 不降速）
   slowDefault: 0.2,                                 // 原查看器写死的值
   slowMin: 0.05,
+  fastResumeKey: 'copymanga.gal.fastResume',        // 快进遇到选项：false = 停下（默认，原来的行为）；true = 选完接着快进
+  autoNextKey: 'copymanga.gal.autoNextChapter',     // 看完一章：false = 回列表 / 停在「继续下一章」（默认）；true = 自动进入下一章
   animSpeedKey: 'copymanga.gal.animSpeed',           // 动画速度倍率（渐变 / 黑场 / 等待 / 立绘淡入…的时长除以它；1 = 不调整）
   animSpeedDefault: 1,
   animSpeedMin: 0.1,
@@ -261,9 +274,12 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const opacityRange = range(0, 100, 5, '文本框背景不透明度')
   const opacityValue = el('span', 'gal-set-value', '')
   const bgmRange = range(0, 1, 0.02, 'BGM 音量（滑块位置，实际增益 = 位置²）')
-  const seRange = range(0, 1, 0.02, '语音/音效音量（滑块位置，实际增益 = 位置²）')
+  const audioRanges = {}   // 组 key → { range, value }
+  for (const g of AUDIO_GROUPS) audioRanges[g.key] = { range: range(0, 1, 0.02, g.title), value: el('span', 'gal-set-value', '') }
   const bgmValue = el('span', 'gal-set-value', '')
-  const seValue = el('span', 'gal-set-value', '')
+  const checkRow = (label, title) => { const input = el('input'); input.type = 'checkbox'; const r = el('label', 'gal-set-row gal-set-check'); r.title = title; r.append(el('span', 'gal-set-label', label), input); return { row: r, input } }
+  const fastResumeCtl = checkRow('快进：选完选项后继续', '快进（工具栏的「快进」按钮）遇到选项时：不勾 = 停下；勾上 = 等你选完后接着快进')
+  const autoNextCtl = checkRow('看完后自动进入下一章', '一章看完（自动 / 快进 / 点到最后一句）：不勾 = 回列表或停在「继续下一章」；勾上 = 直接进入下一章，自动播放 / 快进的状态也带过去')
   const delayInput = el('input')
   delayInput.type = 'number'
   delayInput.min = '0'
@@ -285,8 +301,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const section = (title, ...rows) => { const d = el('div', 'gal-set-section'); d.dataset.title = title; d.append(...rows); return d }
   settings.append(
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), immBtn, fsBtn),
-    section('音频', row('BGM 音量', bgmRange, bgmValue), row('语音/音效', seRange, seValue)),
-    section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput)),
+    section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
+    section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row),
     section('画面', animRow, slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
   )
   hud.append(box)
@@ -345,12 +361,16 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
 
   // ---------- 音频 ----------
   let bgmVolume = loadVolume('bgm', 0.7)   // 滑块位置；0.7² ≈ 旧默认线性 0.5 的响度
-  let seVolume = loadVolume('se', 1)
+  const legacyVolume = loadVolume('se', 1)
+  const vol = Object.fromEntries(AUDIO_GROUPS.map((g) => [g.key, loadVolume(g.key, legacyVolume)]))   // 组 key → 滑块位置
+  const gainOf = (key) => volumeGain(vol[key])
+  const usedOps = new Set(scene.steps.flatMap((step) => step.commands.map((c) => c.op)))
+  for (const g of AUDIO_GROUPS) audioRanges[g.key].row.hidden = !g.ops.some((op) => usedOps.has(op))
   bgmRange.value = String(bgmVolume)
-  seRange.value = String(seVolume)
+  for (const g of AUDIO_GROUPS) { audioRanges[g.key].range.value = String(vol[g.key]); }
   const pct = (p) => `${Math.round(p * 100)}%`
   bgmValue.textContent = pct(bgmVolume)
-  seValue.textContent = pct(seVolume)
+  for (const g of AUDIO_GROUPS) audioRanges[g.key].value.textContent = pct(vol[g.key])
   let slowFactor = loadNumber(GAL_SETTINGS.slowKey, GAL_SETTINGS.slowDefault, GAL_SETTINGS.slowMin, 1)
   slowInput.value = String(slowFactor)
   slowInput.addEventListener('change', () => {
@@ -360,6 +380,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     try { localStorage.setItem(GAL_SETTINGS.slowKey, String(slowFactor)) } catch { /* 存不了就只在这一页生效 */ }
     if (spineLayer) paintSpines(false)
   })
+  const loadFlag = (key) => { try { return localStorage.getItem(key) === '1' } catch { return false } }
+  let fastResume = loadFlag(GAL_SETTINGS.fastResumeKey)
+  let autoNext = loadFlag(GAL_SETTINGS.autoNextKey)
+  fastResumeCtl.input.checked = fastResume
+  autoNextCtl.input.checked = autoNext
+  fastResumeCtl.input.addEventListener('change', () => { fastResume = fastResumeCtl.input.checked; try { localStorage.setItem(GAL_SETTINGS.fastResumeKey, fastResume ? '1' : '0') } catch { /* 存不了就只在这一页生效 */ } })
+  autoNextCtl.input.addEventListener('change', () => { autoNext = autoNextCtl.input.checked; try { localStorage.setItem(GAL_SETTINGS.autoNextKey, autoNext ? '1' : '0') } catch { /* 同上 */ } })
   let animSpeed = loadNumber(GAL_SETTINGS.animSpeedKey, GAL_SETTINGS.animSpeedDefault, GAL_SETTINGS.animSpeedMin, GAL_SETTINGS.animSpeedMax)
   animInput.value = String(animSpeed)
   animInput.addEventListener('change', () => {
@@ -505,7 +532,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (!src) return
     const audio = new Audio(url(src))
     audio.loop = Boolean(spec.loop)
-    audio.volume = volumeGain(seVolume)
+    audio.volume = gainOf('bgse')
     audio.addEventListener('error', () => markMissing(src))
     bgseAudio = audio
     if (wantBgm) audio.play().catch(() => {})
@@ -522,7 +549,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       if (bgVoices.has(slot) || !want?.src) continue
       const audio = new Audio(url(want.src))
       audio.loop = true
-      audio.volume = Math.max(0, Math.min(1, volumeGain(seVolume) * (Number.isFinite(Number(want.volume)) ? Number(want.volume) : 1)))
+      audio.volume = Math.max(0, Math.min(1, gainOf('bgvoice') * (Number.isFinite(Number(want.volume)) ? Number(want.volume) : 1)))
       audio.addEventListener('error', () => markMissing(want.src))
       bgVoices.set(slot, { src: want.src, audio, volume: want.volume })
       if (wantBgm) audio.play().catch(() => {})
@@ -577,7 +604,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   let stepVoice = null   // { step, endedAt, failed }
   function playOnce(src, kind) {
     const audio = new Audio(url(src))
-    audio.volume = volumeGain(seVolume)
+    audio.volume = gainOf(kind === 'voice' ? 'voice' : 'sfx')
     audio.addEventListener('error', () => markMissing(src))
     let record = null
     if (kind === 'voice') {
@@ -803,7 +830,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     const { srcs, loop, rate } = state.movie
     let i = 0
     movie.hidden = false
-    movie.volume = volumeGain(seVolume)
+    movie.volume = gainOf('movie')
     movie.loop = srcs.length === 1 && loop
     movie.src = url(srcs[0])
     movie.playbackRate = rate || 1   // src 一换浏览器会把速度重置，所以每次设 src 之后都要再设
@@ -1213,7 +1240,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   function fastTick() {
     if (destroyed) return
-    if (choiceState) { if (fastLatched) setFast(false); return }   // 按钮开的快进在选项处停下；按住 Ctrl 的快进只暂停，选完接着走
+    if (choiceState) { if (fastLatched && !fastResume) setFast(false); return }   // 按钮开的快进在选项处停下（「快进：选完选项后继续」勾上就只暂停，选完接着快进）；按住 Ctrl 的快进只暂停，选完接着走
     if (posNow() >= path.length - 1) {   // 快进到头：不是停在最后一句，而是和「看完」一样回列表（有下一章就停在「继续下一章」）
       setFast(false)
       if (!running || !fastLastKick) { fastLastKick = true; finishOrWait() }
@@ -1246,8 +1273,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (destroyed || finishing || choiceState) return
     finishing = true
     stopAuto()
+    const continueNext = autoNext && Boolean(chapter?.canNext?.())
+    if (continueNext) carryOver = { at: Date.now(), auto, fast: fastLatched }   // 下一章的播放器接着自动 / 快进
     setFast(false)
-    try { await (chapter?.finish ? chapter.finish() : chapter?.up?.()) } finally { finishing = false }
+    try { await (chapter?.finish ? chapter.finish({ continueNext }) : chapter?.up?.()) } finally { finishing = false }
   }
   // 跳到某一步（后退 / 回看记录 / 续播）。回到一个已经选过的选项那一步 = 重选：这一步起的选择全部作废，从选项开始重新走
   function enterStep(target, { backward = false } = {}) {
@@ -1692,16 +1721,22 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   autoChoiceInput.addEventListener('change', () => { autoChoiceInput.value = String(autoChoice) })
   autoSelBtn.addEventListener('click', () => setAutoChoice(autoChoice >= 0 ? -1 : autoChoiceLast))   // 越界/空的值收回到有效值
   bgmRange.addEventListener('input', () => { bgmVolume = Number(bgmRange.value); bgmValue.textContent = pct(bgmVolume); localStorage.setItem(VOL_KEY.bgm, String(bgmVolume)); if (bgmAudio) bgmAudio.volume = volumeGain(bgmVolume) })
-  seRange.addEventListener('input', () => {
-    seVolume = Number(seRange.value)
-    seValue.textContent = pct(seVolume)
-    localStorage.setItem(VOL_KEY.se, String(seVolume))
-    const gain = volumeGain(seVolume)
-    movie.volume = gain
-    if (bgseAudio) bgseAudio.volume = gain
-    if (voiceAudio) voiceAudio.volume = gain
-    for (const v of bgVoices.values()) v.audio.volume = Math.max(0, Math.min(1, gain * (Number.isFinite(Number(v.volume)) ? Number(v.volume) : 1)))
-  })
+  // 每组音频一个滑块：改了就存、并让正在播的同组声音马上跟着变
+  const applyGroupGain = (key) => {
+    const gain = gainOf(key)
+    if (key === 'movie') movie.volume = gain
+    else if (key === 'bgse') { if (bgseAudio) bgseAudio.volume = gain }
+    else if (key === 'voice') { if (voiceAudio) voiceAudio.volume = gain }
+    else if (key === 'bgvoice') for (const v of bgVoices.values()) v.audio.volume = Math.max(0, Math.min(1, gain * (Number.isFinite(Number(v.volume)) ? Number(v.volume) : 1)))
+  }
+  for (const g of AUDIO_GROUPS) {
+    audioRanges[g.key].range.addEventListener('input', () => {
+      vol[g.key] = Number(audioRanges[g.key].range.value)
+      audioRanges[g.key].value.textContent = pct(vol[g.key])
+      try { localStorage.setItem(VOL_KEY[g.key], String(vol[g.key])) } catch { /* 存不了就只在这一页生效 */ }
+      applyGroupGain(g.key)
+    })
+  }
 
   const onKey = (event) => {
     if (destroyed || !root.isConnected || event.ctrlKey || event.metaKey || event.altKey) return
@@ -1806,6 +1841,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   if (hasSteps && path.length) {
     if (startPos > 0) enterStep(path[startPos])
     else runStep(path[0])
+  }
+  // 上一章自动进入这一章：接着自动播放 / 快进
+  if (carryOver && Date.now() - carryOver.at < 20000) {
+    const c = carryOver
+    carryOver = null
+    if (c.auto) { auto = true; autoBtn.classList.add('active'); autoBtn.textContent = '自动中' }
+    if (c.fast) { fastLatched = true; setFast(true) }
   }
   return { destroy, next, prev, setImmersive, get index() { return index }, get total() { return path.length }, get choices() { return { ...choices } }, ratio: () => ratioOfStep(Math.max(0, posNow()), path.length) }
 }

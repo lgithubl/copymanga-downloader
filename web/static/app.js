@@ -4396,11 +4396,13 @@ function renderGal(reader) {
         : null,
       // 最后一句看完（手动点下一句 / 自动播放到头）：先把「已看完」存下来（不能等 500ms 的防抖：马上就换页了，
       // 到时候 currentMediaReader 已经是列表节点），再回上一级列表；没有上一级就像「返回」一样离开这个媒体
-      finish: async () => {
+      finish: async ({ continueNext = false } = {}) => {
         clearTimeout(libraryProgressTimer)
         galRatio = 1
         await saveLibraryProgress(1, reader).catch(() => {})
         if (reader.scene?.next?.node && galChainAllowed()) { await galChain(reader, reader.scene.next.node); return }   // 脚本自己说了下一个（NextFile）：接着播，不回列表
+        const nextStep = continueNext ? mediaStepTarget('next') : null   // 「更多 → 看完后自动进入下一章」：按列表顺序进下一章
+        if (nextStep) { nextStep(); return }
         if (reader.node?.parent != null) await galNavigate(reader, reader.node.parent, 'back')
         else { exitGalImmersive(); els.mediaReaderBack?.click() }
       },
