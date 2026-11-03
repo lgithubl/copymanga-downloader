@@ -210,7 +210,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   }
   // 独占视图（exclusive，来源是 parent 自己）收走的脚本：在 parent 的列表里不再出现，它的「父节点」是这个视图（内容型规则不支持独占：要读脚本，这里是同步的）
   const exclusiveViewOf = (dirRel, script) => viewsUnder(dirRel).find((rule) => rule.exclusive && !rule.dirs.length && rule.on !== 'marker' && viewTakes(rule, script)) || null
-  const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
+  const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset, materialize: warmAsset })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
   const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}|${maxScriptBytes}`
   const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbFallback, config.thumbSkip, config.thumbRender, config.sceneMarkers, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)

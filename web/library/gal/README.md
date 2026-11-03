@@ -28,7 +28,7 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 | `dirThumbs` | 目录卡片头像规则：`{parent, name(正则), paths(模板，{name} {parent})}`；匹配的规则里**所有存在的**路径都进缩略图数组（见「卡片缩略图」），路径的目录 / 文件名段可带通配 `*` `?` |
 | `scriptThumbs` | 脚本缩略图模板（`{stem}` `{thumbsDir}`；`~/` = 相对媒体目录；可带通配），之后才是「脚本里第一张背景图」（前面都没有才用） |
 | `thumbSources` | 按文件名规律提取缩略图的规则列表（接在 `dirThumbs` / `scriptThumbs` 后面），见「卡片缩略图」 |
-| `thumbSkip` | 缩略图黑名单（每个游戏自己配；轮播 / 封面的每张候选图都过一遍，命中就跳过、换下一张）：`[{ match, minMB, maxMB, minWidth, minHeight, maxWidth, maxHeight }]`（≤ 10 条）。一条规则里写了几个条件要**全部满足**才命中，规则之间任一命中就丢；`min*` = 小于它丢、`max*` = 大于它丢；`match` 是对图片路径的正则（不分大小写）；大小是文件大小（MB = 1024²，虚拟容器里的图按转成 PNG 之后的），尺寸只读 PNG / JPEG / WebP 的文件头（读不出尺寸的图，尺寸条件当不命中）。例：`[{ "minMB": 1.3 }]` = 小于 1.3MB 的都不要；`[{ "match": "cha", "minWidth": 800 }]` = 路径带 cha 且宽小于 800 的不要。命中的原因会写进卡片的缩略图诊断（`thumbWhy`） |
+| `thumbSkip` | 缩略图黑名单（每个游戏自己配；轮播 / 封面的每张候选图都过一遍，命中就跳过、换下一张）：`[{ match, minMB, maxMB, minWidth, minHeight, maxWidth, maxHeight }]`（≤ 10 条）。一条规则里写了几个条件要**全部满足**才命中，规则之间任一命中就丢；`min*` = 小于它丢、`max*` = 大于它丢；`match` 是对图片路径的正则（不分大小写）；大小是文件大小（MB = 1024²，虚拟容器里的图按转成 PNG 之后的），尺寸只读 PNG / JPEG / WebP 的文件头（读不出尺寸的图，尺寸条件当不命中）。例：`[{ "minMB": 1.3 }]` = 小于 1.3MB 的都不要；`[{ "match": "cha", "minWidth": 800 }]` = 路径带 cha 且宽小于 800 的不要。命中的原因会写进卡片的缩略图诊断（`thumbWhy`）；**容器（BGI / krkr 的 .arc / .xp3）里还没解压的图**：配了 thumbSkip 的游戏会先把这些候选图取出来再量（每个引擎最多解压 200 张，超了的不过滤并在诊断里说明；没配 thumbSkip 的游戏不解压任何图）。以前这类图一律不过滤（stat 失败就当没命中）。 |
 | `thumbFallback` | 兜底封面（没有任何缩略图规则命中时从脚本里收几张图）：`{enabled, max, prefer, skipBlack, skip, scanSteps, topUp}`，见「卡片缩略图 → 兜底封面」 |
 | `thumbMode` | 卡片有多张图时怎么显示：`random`（默认）/ `first` / `hover` |
 | `thumbCover` / `thumbHover` | 卡片封面选哪张：`random`（默认）/ `first` / `last` / `{ index: N }`；悬停轮播：`{ enabled, count, order, intervalMs }`。`thumbMode` 是旧名（别名），见「卡片缩略图 → 封面与悬停轮播」 |

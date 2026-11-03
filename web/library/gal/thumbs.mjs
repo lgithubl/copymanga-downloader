@@ -162,7 +162,11 @@ export async function thumbSkipReason(rules, real, candidate) {
   return ''
 }
 
-export function createThumbEngine({ mediaDir, config, resolveAsset }) {
+// materialize(rel) → 真实文件路径（可选）：容器（BGI / krkr 的 .arc / .xp3）里还没解压的图，resolveAsset 只给「将来落盘的路径」（磁盘上还没有）；
+// 配了 thumbSkip 时要量大小 / 尺寸就得先把它取出来（只对候选图做，每个引擎最多 MATERIALIZE_BUDGET 张，超了的当作量不出来、不过滤）
+const MATERIALIZE_BUDGET = 200
+export function createThumbEngine({ mediaDir, config, resolveAsset, materialize = null }) {
+  let materializeLeft = MATERIALIZE_BUDGET
   const roots = config.resourceRoots
   const skipRules = (config.thumbSkip || []).map((r) => ({ ...r, re: r.match ? new RegExp(r.match, 'i') : null }))
   const split = (rel) => (rel ? rel.split('/') : [])
@@ -246,7 +250,16 @@ export function createThumbEngine({ mediaDir, config, resolveAsset }) {
           const real = await resolveAsset(one)
           const key = typeof real === 'string' ? real : one
           if (out.has(key)) continue
-          if (skipRules.length && typeof real === 'string') { const reason = await thumbSkipReason(skipRules, real, one); if (reason) { why.push(`${from}：${one} → ${reason}，跳过`); continue } }
+          if (skipRules.length && typeof real === 'string') {
+            let file = real
+            if (!(await stat(real).then(() => true, () => false))) {   // 还在容器里没解压：先取出来再量
+              file = ''
+              if (materialize && materializeLeft > 0) { materializeLeft -= 1; try { const got = await materialize(one); if (typeof got === 'string') file = got } catch { /* 取不出来：不过滤 */ } }
+              else if (materialize) why.push(`${from}：${one} → 解压名额用完（${MATERIALIZE_BUDGET}），没法量大小，不过滤`)
+            }
+            const reason = file ? await thumbSkipReason(skipRules, file, one) : ''
+            if (reason) { why.push(`${from}：${one} → ${reason}，跳过`); continue }
+          }
           out.set(key, one)
         } catch (error) { if (!wild) why.push(`${from}：${one} → ${whyOf(error)}`) }
       }

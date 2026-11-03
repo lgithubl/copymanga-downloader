@@ -46,6 +46,23 @@ try {
   check('路径 + 尺寸要同时满足（AND）：路径带 cha 且宽 < 800（minWidth）才丢，big_bg / small_bg 路径不匹配所以留着', J((await run([{ match: 'cha', minWidth: 800 }], all)).names) === J(['big_bg.png', 'small_bg.png', 'cha_wide.png']))
   check('规则之间是 OR：再加一条 minMB 1.3 = 小文件全丢，只剩 2MB 的', J((await run([{ match: 'cha', minWidth: 800 }, { minMB: 1.3 }], all)).names) === J(['big_bg.png']))
   check('尺寸条件：minWidth（宽 < 它丢）/ maxHeight（高 > 它丢）；读不出尺寸的文件这些条件不命中', J((await run([{ minWidth: 100 }], all)).names) === J(['big_bg.png', 'cha_wide.png', 'cha_narrow.png']) && J((await run([{ maxHeight: 25 }], all)).names) === J(['cha_wide.png', 'cha_narrow.png']))
+  // 容器里还没解压的图：resolveAsset 只给「将来落盘的路径」（磁盘上没有）；以前 stat 失败 = 不过滤（thumbSkip 对这类图一律不生效），现在先 materialize 再量
+  {
+    const store = new Map([['virt/big.png', big], ['virt/small.png', png(40, 30)]])
+    const calls = []
+    const virtualResolve = async (rel) => path.join(work, 'cache', ...rel.split('/'))   // 路径在、文件不在
+    const materialize = async (rel) => { calls.push(rel); const file = path.join(work, 'cache', ...rel.split('/')); await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, store.get(rel)); return file }
+    const { config } = normalizeGalConfigWithWarnings({ thumbSkip: [{ minMB: 1.3 }] })
+    const out = new Map(); const why = []
+    await createThumbEngine({ mediaDir: media, config, resolveAsset: virtualResolve, materialize }).addPaths(out, ['virt/big.png', 'virt/small.png'], 'test', why)
+    check('容器里没解压的图：先取出来再量——小的被 minMB 丢掉、大的留下，诊断里有原因', J([...out.values()]) === J(['virt/big.png']) && why.some((w) => /virt\/small\.png.*MB < 1\.3MB/.test(w)) && calls.length === 2, J([[...out.values()], why, calls]))
+    const out2 = new Map(); const calls2 = []
+    await createThumbEngine({ mediaDir: media, config: normalizeGalConfigWithWarnings({}).config, resolveAsset: virtualResolve, materialize: async (r) => { calls2.push(r); return '' } }).addPaths(out2, ['virt/big.png', 'virt/small.png'], 'test', [])
+    check('没配 thumbSkip 的游戏：不解压任何图（没有额外开销），图都留着', calls2.length === 0 && out2.size === 2, J([calls2, out2.size]))
+    const out3 = new Map()
+    await createThumbEngine({ mediaDir: media, config, resolveAsset: async (rel) => path.join(work, 'cache-none', ...rel.split('/')), materialize: async () => { throw new Error('取不出来') } }).addPaths(out3, ['virt/big.png', 'virt/small.png'], 'test', [])
+    check('取不出来（解压失败）= 量不出来、不过滤，不报错', out3.size === 2)
+  }
   const sz = await imageSizeOf(path.join(media, 'img/cha_wide.png'))
   check('imageSizeOf：PNG 宽高（只读文件头）；不是图 = null', sz.width === 900 && sz.height === 20 && (await imageSizeOf(path.join(work, 'nope'))) === null)
 } finally { await rm(work, { recursive: true, force: true }) }
