@@ -1283,3 +1283,16 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **适配器映射**（`adapters/rscript-gsc.mjs`）：台词（说话人 / 语音号 / 文本；`|汉字[かな]` 或 `汉字[かな]` = ruby，`^N` 换行，`^C ^B ^I ^S ^D ^F ^L ^V` 样式标记去掉；`0x52` 接在上一页后面）；背景 / 事件 CG（`grpe/<编号 4 位>.png`，1 层 = 事件 CG）；立绘 = 每层一个槽位 `L<层号>`，**锚点 cx / cy = 1 → x / y 是图的中心**（真实脚本里立绘层全是 (1, 1)），移动（`0x21` 绝对 / `0x22` 相对 / 目标 0 = 所有层、> 100 = 编组）只要落点；`grpo_cu` = 铺满的叠加层；bgm = `bgm/Track<NN>.wav`；音效 = `wav/<号 4 位>.ogg`；语音 = `voice/<号>.ogg`，号 ≥ 10000 = 分库 `voice/<号 ÷ 10000>/<号 mod 10000>.ogg`；选择 = choice + 带 `when` 的分支。
 - **没验证**：没有游戏截图对照——立绘位置直接把「锚点 + (x, y)」当舞台（1920×1080）坐标，叠放顺序 = 出现顺序（不是引擎的层序）；`^C` 颜色（调色板在 exe 里）没做；转场 / 抖动 / 闪屏 / 按钮 / 存档界面不做；`mpg` 视频不播；脚本之间的变量（旗标）从 0 开始，所以靠旗标分支的地方走的是「值为 0」那条；`voice.xfl` 的嵌套分库（1.xfl … 7.xfl）只用合成数据测过，真实 g10 的采集里只有头 8MB，没验证过。
 - 测试：`node scripts/dev/gal-rscript-selftest.mjs`（合成的 XFL / GSC / WCG / Vorbis ACM 夹具：格式、执行、适配器、containers、gal-layout；`RSCRIPT_SAMPLE=<游戏根>` 时再把真实 scr.xfl 的所有脚本过一遍）。
+
+## Unity「GameMaterial」系（data.dsm + .psm；`unity::dsm`，game.id = `unity::<游戏>`）
+
+気になるあの娘はえろちゅーばー！（Calcite，Unity Mono，`Assembly-CSharp.dll` 没混淆，用 IL 反汇编对照过）。脚本不在 Unity 资源包里，而是 `GameMaterial/data.dsm`；图 / 声音是磁盘上的普通文件。
+
+- **目录**：`<游戏>/GameMaterial/{data.dsm（加密脚本）, env.cof（加密的品牌 / 标题）, bgimage（背景 `b_*` + 事件 CG `ev_*`）/ fgimage（立绘 `CHAxx_pN_MM_a_K`，1920×1080 整张画布）/ endingdata / … 的 *.psm, voice / sound（bgm）/ se 的 ogg, system/*（StandPos / name / bgm …，明文）}`。gal-layout 的 base = `GameMaterial` 目录。
+- **data.dsm / env.cof**：.NET Rijndael = AES-256-CBC（PKCS7），密码 `pass`，盐 UTF-8「saltは必ず8バイト以上」，PBKDF2-HMAC-SHA1 1000 轮取 48 字节（前 32 = key，后 16 = IV），输入是（带 BOM 的）base64 文本。`system/*` 不加密。用真实文件验证过（data.dsm → 409838 字符，32472 行）。
+- **.psm** = PNG，第一个字节 `0x89` 被改成 `0xED`。hybrid 虚拟索引：每个 `.psm` 一个 `<base>/arc/res/<名>.png`（flat），被请求时改回首字节。
+- **展开**（`config.containers.format = 'dsm'`，只支持 hybrid，flat）：`data.dsm` 解密后按章节切开写到 `<base>/arc/script/data/<序号>_<章节>.dsm`：边界标签 `*EpNNN` / `*chaN_ex` / `*chaN_end`（真实 g09 共 13 段）；每段第一行 `;//@dsm {"id","next","labels"}`，labels = 这一段里引用、但在别的段里的标签 → 段名（跳转 / 选项用）。**特殊路线**（所有选择都选同一个女主才进的 `*chaN_ex`）是单独的一段，不接在主线上（脚本里是 `[if exp="ChaNflg == 3"][jump]`，变量只由选项累加，播放器不模拟）。
+- **适配器映射**（`adapters/unity-dsm.mjs`）：KAG 风格标签——文字 = 直接写的行，`[cpg]` / `[cpg1]` 换页（一页可以几行）；`[OnName num=…]` 说话人（只管这一页，颜色取 `system/name`）；`[pv f="Yume001]` 语音（注意只有开头引号）→ `voice/Yume001.ogg`；`[BG g=…]` / `[Event g=…]` 背景 / 事件 CG（`black` / `white` = 纯色，带 `rule` = 淡入淡出）；`[FG f="名" f="序号" pos=…]` 或 `[FG g=“名" f=序号 pos=…]`（引号可以不成对）→ `fgimage/<名>_a_<序号>`；`[FO layer="A"]` 清立绘；`[plbgm bg=…]` → `sound/<名>.ogg`，`[stbgm]` 停；`[ps se=se001]` → `se/se001.ogg`；`[SQ]` + `[link target=*标签]文字` … `[s]` → choice + 带 `when` 的分支，分支结尾 `[jump]` 到同一个标签 = 汇合；目标在别的段 = 带 `when` 的 `goto <段名>`。
+- **立绘位置**（`Sprite2DTestScript.ShowFGImage` 的 IL）：`x = 画布中心 + {LL −750, L −420, C 0, R +420, RR +750} + system/StandPos 的修正（LX −50 / RX +50 / RRX +10 …）`，y 同理（StandPos 的 *Y，真实值全是 0）。对着 1920×1080 的整图成立（真实样本都是）。
+- **没验证**：没有游戏截图对照——立绘位置公式的 y（`h − 540`）、`[cpg1]` / `[cpg cn=true]` 的区别（都当换页）、`[wait]` 的单位（没发）、`[t_move]` 立绘动作 / `[lbox]` / `[stopse]`（没做）、换背景时立绘一并清掉（推断；真实脚本里只有 4 处换背景时立绘还在）。真实语音里 `Ritsu307` 在文件清单里找不到（脚本引用了、磁盘上没有）。
+- 测试：`node scripts/dev/gal-dsm-selftest.mjs`（合成加密脚本：加解密 / 切章节 / 词法 / 适配器 / containers / gal-layout；`DSM_SAMPLE=<GameMaterial 目录>` 时再把真实 data.dsm 整份解密 + 解析一遍）。

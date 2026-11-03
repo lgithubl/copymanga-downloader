@@ -37,7 +37,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / rscript / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / rscript / unity / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -857,6 +857,81 @@ export const ADAPTER_RULES = {
       "max": 10
     },
     "colorImages": true
+  },
+  // unity::dsm：Unity GameMaterial 系（Calcite）的脚本适配器（解密后的 KAG 风格章节脚本 → 场景）。抄自 web/library/gal/adapters/unity-dsm.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'unity::dsm': {
+    "resDir": "arc/res",
+    "mediaDirs": [
+      "GameMaterial/voice",
+      "GameMaterial/sound",
+      "GameMaterial/se"
+    ],
+    "stage": [
+      1920,
+      1080
+    ],
+    "voiceDir": "voice",
+    "bgmDir": "sound",
+    "seDir": "se",
+    "audioExts": [
+      "ogg",
+      "wav",
+      "mp3"
+    ],
+    "standOffsets": {
+      "LL": [
+        -750,
+        0
+      ],
+      "L": [
+        -420,
+        0
+      ],
+      "C": [
+        0,
+        0
+      ],
+      "R": [
+        420,
+        0
+      ],
+      "RR": [
+        750,
+        0
+      ]
+    },
+    "standAdjust": {
+      "LL": [
+        0,
+        0
+      ],
+      "L": [
+        -50,
+        0
+      ],
+      "C": [
+        0,
+        0
+      ],
+      "R": [
+        50,
+        0
+      ],
+      "RR": [
+        10,
+        0
+      ]
+    },
+    "transitionFade": 0.5,
+    "speakerColors": {
+      "衛太": "#7ea2ff",
+      "ゆめ": "#ffde00",
+      "律": "#ff5e5e",
+      "夕香": "#e180f2",
+      "ヒロイン4": "#ffb321",
+      "酔": "#72fb4e",
+      "*": "#d2d2d2"
+    }
   },
   // artemis::ast：Artemis 家族的脚本适配器（.ast = Lua 表 → 场景）。抄自 web/library/gal/adapters/artemis-ast.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'artemis::ast': {
@@ -1824,6 +1899,30 @@ export const LAYOUTS = {
     cover: [],
     notes: ['xfl 在第一次浏览时由服务端展开剧本（执行一遍 GSC 字节码，调用别的脚本时内联）；图（WCG）/ 声音（Vorbis ACM 的 wav）只在虚拟索引里，被请求时才转格式', '立绘（整张 1920×1680 的画布，身体 / 表情 / 嘴各一层）按「锚点 + (x, y)」当舞台坐标放；没有游戏截图对照，位置 / 层序没验证；^C 颜色标记没做；mpg 视频不播'],
   },
+  // ---- Unity「GameMaterial」系（Calcite『気になるあの娘はえろちゅーばー！』）：game.id = unity::<游戏>（任何以 unity:: 开头的 id 都走这一项）。
+  //   目录：<游戏>/GameMaterial/{data.dsm（加密脚本）, env.cof, bgimage / fgimage / endingdata / … 的 *.psm（PNG 改了首字节）, voice / sound / se 的 ogg, system/*（StandPos / name …）}。
+  //   base = GameMaterial 目录。data.dsm 由引擎（config.containers，format: dsm）解密（AES-256-CBC，密码 'pass'）后按章节切开展开到 <base>/arc/script/data/<序号>_<章节>.dsm；
+  //   .psm 只在 hybrid 的虚拟索引里（<base>/arc/res/<名>.png），被请求时把首字节改回 0x89；voice / sound / se 是磁盘上的普通 ogg。
+  unity: {
+    title: 'Unity GameMaterial（Calcite）', kind: 'unity', detector: 'unity', autoOrder: 139.95, family: 'unity::',   // 紧跟 rscript，uviewer（通用）之前；探测时还要看 data.dsm 是 base64 文本
+    bases: ['GameMaterial', '*/GameMaterial', '*/*/GameMaterial'], searchDepth: 4,
+    anchors: ['/^data\\.dsm$/i'], siblings: [], markers: [['env.cof', 'bgimage']],
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res', '.'],
+    adapters: ['unity::dsm'],
+    adapterOptions: { 'unity::dsm': { resDir: { path: ['arc/res'] }, mediaDirs: { paths: ['voice', 'sound', 'se'] } } },
+    ruleTables: ['unity::dsm'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},
+      limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
+      containers: { enabled: true, dir: 'arc', scan: ['.', 'bgimage', 'fgimage', 'endingdata'], scriptDecoder: 'unity-dsm', scriptExt: 'dsm', mode: 'hybrid', format: 'dsm', flat: true, rules: [{ match: '^data\\.dsm$', kinds: ['script'] }, { match: '\\.psm$', kinds: ['res'] }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['dsm'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.dsm', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['data.dsm 在第一次浏览时由服务端解密、按章节切开（Ep000 … Ep006 + 每条路线的特殊章 *_ex / 结局 *_end，共 13 段）；.psm 只在虚拟索引里，被请求时才改回 PNG', '选项（SQ / link）、汇合（jump）、立绘位置（照 Sprite2DTestScript 的公式）、说话人颜色（system/name）都有；没有游戏截图对照，立绘位置 / 转场 / [wait] / [t_move] 动作没验证；特殊路线（所有选择都选同一个女主）的章节是单独的一段，不接在主线上'],
+  },
   // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
   //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；
   //   图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<档案里的路径>，如 arc/res/image/bg/bg01a.png），被请求时才解密取出。
@@ -2335,6 +2434,7 @@ const DETECTORS = {
   arcfam: (scope) => detectArcfam(scope),
   krkr: (scope) => detectKrkr(scope),
   rscript: (scope) => detectRscript(scope),
+  unity: (scope) => detectUnity(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2592,8 +2692,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -3291,6 +3391,30 @@ async function detectRscript(scope) {
   found.kind = entry.kind || 'rscript'
   const xfls = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.xfl$/i.test(n))
   logs.push(`RScript 游戏根：${base || '.'}；${xfls.length} 个 xfl（${xfls.slice(0, 6).join(' / ')}）；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// ---- Unity GameMaterial：见 LAYOUTS.unity。id：声明了 game.id 就用它（unity::<游戏>），没声明 = unity::<目录名的小写字母数字>；没声明时要求 data.dsm 是 base64 文本
+async function detectUnity(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  if (!declared && !(await markersOk(media, entry, base, declared))) return null
+  const dsm = path.join(media, ...splitRel(join(base, 'data.dsm')))
+  let isB64 = false
+  try { const h = await open(dsm, 'r'); try { const head = Buffer.alloc(256); const { bytesRead } = await h.read(head, 0, 256, 0); isB64 = bytesRead >= 64 && /^(?:\xEF\xBB\xBF)?[A-Za-z0-9+/=\r\n]+$/.test(head.subarray(0, bytesRead).toString('latin1')) } finally { await h.close() } } catch { /* 读不了 = 不是 */ }
+  if (!isB64) { if (declared) logs.push('Unity GameMaterial：data.dsm 不是 base64 文本（应该是加密后再 base64 的脚本）'); return null }
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const gameDir = path.basename(path.dirname(path.resolve(media, ...splitRel(base)))) || path.basename(path.resolve(media))
+  const slug = gameDir.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `unity::${slug || 'game'}`
+  found.kind = entry.kind || 'unity'
+  logs.push(`Unity GameMaterial 根：${base || '.'}；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
 }

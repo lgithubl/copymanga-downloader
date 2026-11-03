@@ -19,6 +19,7 @@ import { readArcfamIndex } from './arcfam.mjs'
 import { isVorbisRiff, parseGsc, readXflIndex, riffVorbisToOgg } from './rscript-gsc.mjs'
 import { decodeGscScript, runGsc } from './rscript-run.mjs'
 import { wcgToPng } from './rscript-wcg.mjs'
+import { DSM_MAX_BYTES, decryptDsm, isPsm, psmToPng, splitDsm } from './unity-dsm.mjs'
 import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
 import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
@@ -96,6 +97,11 @@ const RSCRIPT_GSC_DECODER = {
     return decodeGscScript(buffer, { arc, name, loadProgram: siblings?.load || null, initial: siblings?.bootstrap || null })
   },
 }
+// Unity GameMaterial（data.dsm）：加密 + base64 的 KAG 风格脚本。展开时由 expandDsm 解密并按章节切开（见 unity-dsm.mjs）；这里的解码器只用来校验 config.containers.scriptDecoder，decode = 解密成整份明文
+const UNITY_DSM_DECODER = {
+  ext: 'dsm',
+  decode(buffer) { return decryptDsm(buffer) },
+}
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
   'bgi-bs': BGI_BS_DECODER,
@@ -103,6 +109,7 @@ export const SCRIPT_DECODERS = Object.freeze({
   'arcfam-scre': ARCFAM_SCRE_DECODER,
   'krkr-scn': KRKR_SCN_DECODER,
   'rscript-gsc': RSCRIPT_GSC_DECODER,
+  'unity-dsm': UNITY_DSM_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -141,6 +148,8 @@ export const SCRIPT_DECODERS = Object.freeze({
 })
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
+// 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
+const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
 const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
@@ -190,6 +199,7 @@ function transformData(data, hit) {
   if (hit.transform === 'cbg-png') return cbgToPng(data, hit.crop ? { cropHeight: hit.crop } : {})
   if (hit.transform === 'bw-ogg') return bwToOgg(data)
   if (hit.transform === 'wcg-png') return wcgToPng(data)
+  if (hit.transform === 'psm-png') return psmToPng(data)
   if (hit.transform === 'riff-ogg') return Buffer.from(riffVorbisToOgg(data))
   if (hit.transform === 'bgi-faceset') return Buffer.from(JSON.stringify(parseBgiFaceSet(dscDecode(data))))
   if (hit.transform === 'pf8') return pf8Decrypt(data, hit.key)
@@ -333,6 +343,29 @@ async function readPnaLayout(handle, offset, size) {
   return { magic, width: head.readUInt32LE(8), height: head.readUInt32LE(12), frames }
 }
 const pnaIndexJson = (layout, converted = false) => JSON.stringify({ magic: layout.magic, format: pnaKind(layout.magic).webp ? 'webp' : 'png', premultiplied: pnaKind(layout.magic).premultiplied, unpremultiplied: converted, width: layout.width, height: layout.height, frames: layout.frames.map((f, i) => frameRow(i, f, { fmt: f.fmt, magic: f.magic })) })   // premultiplied = 源数据是预乘 alpha；unpremultiplied = 展开出来的 PNG 已经还原成直通 alpha（浏览器直接能用）
+
+// ---------- Unity GameMaterial：data.dsm（脚本）/ .psm（图） ----------
+// .dsm：解密 → 按章节切开 → 每段一个脚本文件 script/<容器名>/<段名>.<ext>；.psm：一个文件 = 一张图（PNG 改了第一个字节），只进 hybrid 的虚拟索引，这里什么都不展开
+async function expandDsm({ file, arcName, rule, cfg, outRoot, budget }) {
+  const stem = withoutExt(arcName)
+  const result = { entries: 1, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
+  if (!/\.dsm$/i.test(arcName)) { result.res = 1; result.lazy = 1; return result }
+  if (!rule.kinds.has('script')) { result.skipped = 1; return result }
+  const info = await stat(file)
+  if (info.size > DSM_MAX_BYTES) throw new Error(`${arcName} 太大（${info.size} 字节）`)
+  const text = decryptDsm(await readFile(file))
+  budget.bytes += text.length
+  if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
+  const chunks = splitDsm(text)
+  result.entries = chunks.length
+  for (const chunk of chunks.slice(0, cfg.maxEntries)) {
+    const target = path.join(outRoot, 'script', stem, `${chunk.name}.${cfg.scriptExt || 'dsm'}`)
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, chunk.text)
+    result.scripts += 1
+  }
+  return result
+}
 
 // ---------- 展开一个容器 ----------
 async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
@@ -860,7 +893,7 @@ async function listArcs(mediaDir, cfg) {
     let names = []
     try { names = (await readdir(dir)).sort() } catch { continue }
     for (const arcName of names) {
-      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : /\.arc$/i).test(arcName)) continue
+      if (!arcRegex(cfg).test(arcName)) continue
       const rule = rules.find((r) => r.re.test(arcName))
       if (!rule || rule.skip) continue
       const file = path.join(dir, arcName)
@@ -877,6 +910,19 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
+  if (cfg.format === 'dsm') {
+    // Unity GameMaterial：每个 .psm 一个虚拟 .png（flat：脚本按名字引用，不带目录），取出来时把第一个字节改回 0x89
+    for (const { arcName, file, rule } of arcs) {
+      if (!/\.psm$/i.test(arcName) || !rule.kinds.has('res')) continue
+      const name = withoutExt(arcName)
+      if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
+      let size = 0
+      try { size = (await stat(file)).size } catch { continue }
+      if (size < 8 || size > MAX_ENTRY_BYTES) continue
+      add(`${cfg.dir}/res/${name}.png`, { file, offset: 0, size, transform: 'psm-png' })
+    }
+    return { map, files, sig }
+  }
   for (const { arcName, file, rule } of arcs) {
     let entries
     let key = null
@@ -1096,7 +1142,7 @@ async function run(mediaDir, cfg) {
     let names = []
     try { names = (await readdir(dir)).sort() } catch { continue }
     for (const arcName of names) {
-      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : /\.arc$/i).test(arcName)) continue
+      if (!arcRegex(cfg).test(arcName)) continue
       const rule = rules.find((r) => r.re.test(arcName))
       if (!rule) continue
       const key = `${scanDir}/${arcName}`
@@ -1110,7 +1156,7 @@ async function run(mediaDir, cfg) {
       const stem = cfg.format === 'pf8' ? pf8Stem(arcName) : withoutExt(arcName)
       const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
       try {
-        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
+        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
         // 先展开到临时目录，再整体换掉这个容器的两个子目录（中途失败不会留下半截内容）
         for (const part of ['script', 'res', 'refs']) {
           const from = path.join(tmp, part, stem)
