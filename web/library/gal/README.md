@@ -1296,3 +1296,14 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - **立绘位置**（`Sprite2DTestScript.ShowFGImage` 的 IL）：`x = 画布中心 + {LL −750, L −420, C 0, R +420, RR +750} + system/StandPos 的修正（LX −50 / RX +50 / RRX +10 …）`，y 同理（StandPos 的 *Y，真实值全是 0）。对着 1920×1080 的整图成立（真实样本都是）。
 - **没验证**：没有游戏截图对照——立绘位置公式的 y（`h − 540`）、`[cpg1]` / `[cpg cn=true]` 的区别（都当换页）、`[wait]` 的单位（没发）、`[t_move]` 立绘动作 / `[lbox]` / `[stopse]`（没做）、换背景时立绘一并清掉（推断；真实脚本里只有 4 处换背景时立绘还在）。真实语音里 `Ritsu307` 在文件清单里找不到（脚本引用了、磁盘上没有）。
 - 测试：`node scripts/dev/gal-dsm-selftest.mjs`（合成加密脚本：加解密 / 切章节 / 词法 / 适配器 / containers / gal-layout；`DSM_SAMPLE=<GameMaterial 目录>` 时再把真实 data.dsm 整份解密 + 解析一遍）。
+
+## MahotanArchive（まほろば妖女奇譚 アーカイブ，Tauri；`mahotan::json`，game.id = `mahotan::<游戏>`）
+
+Tauri 2 的图鉴 / 剧情查看器（私有仓库 `mahotan-archive/` 有前期分析）。内容全在 `assets/*.mhp`（**就是 ZIP**，Store / Deflate；文件名可以改，看里面的内容）：data（`data/scripts/**.json` 剧情 1001 个：`scene/{general,adult}` 465 + `stories/{main,events,…}` 536，共 40252 句台词）、images（5610）、audio（41884，语音 + bgm，4.8GB）、videos、sites、ui、更新包（`update-received-…`，里面有新语音 / 图，同路径覆盖底包）；`translations/*.mhp` 是翻译包，不是资源。
+
+- **展开 / 虚拟索引**（`config.containers.format = 'mhp'`，只支持 hybrid，不 flat，只扫 `assets`）：data 包的 `data/scripts/**.json` 原样展开到 `<base>/arc/script/<mhp 名>/<路径>`；别的条目（图 / 声音 / 视频 / 字体）只在虚拟索引里，路径 = 条目名（`arc/res/images/backgrounds/background-001.jpg`），被请求时才读本地头 + 数据（Deflate 解压）。更新包先处理，同路径的覆盖底包。`data/`、`metadata/` 不进虚拟索引。
+- **脚本格式**：每个脚本 = `commands`（`text` name / content / voice、`background` bg_N、`bgm`、`chara_show` / `chara_hide`、`transition_in` / `transition_out`、`emotion` / `aura_*` / `chara_jump` / `chara_shake` / `chara_blink` / `eye` 特效）+ `storyAssets`（visuals / voices / backgrounds / bgm / metadata，**每个脚本自己一张表**：同一个 `bg_3` 在不同脚本里指向不同的 `background-NNN.jpg`；表里是 `null` 的 = 没有图）。stories 的表在 `playback.storyAssets` 里。
+- **适配器映射**（`adapters/mahotan-json.mjs`，行为对照 exe 里提出来的前端 `index-*.js`：故事播放器的命令循环、`Qd` / `Su` / `Q8` 立绘布局、CSS）：同时只有一个角色；`kind = standing` → 头对齐：`adapters/mahotan-heads.json`（`scripts/dev/extract-mahotan-heads.mjs` 从前端 JS 提的 287 个头框）里有头框的，头框长边 = 舞台高度的 20%、头框中心在高度的 25%、水平居中；没有头框的退回「bounds 撑满舞台高度、脚对齐底边」；`kind = cg` → 铺满舞台（contain）；`transition_out` 渐黑 1 秒、`transition_in` 渐出 2 秒；文字去掉换行连起来（日文不加空格）；`%player_name`：别人说话时 = 称呼（默认「主様」），旁白 / 玩家 = 名字（默认「主人公」），`%player_nameさん` 称呼已是さん / 様结尾就不再加（和前端 `$s` / `d0` 一样）；名字 / 称呼可以在适配器参数 `protagonistName` / `protagonistAddress` 里改。
+- **验证了什么**：真实 data 包 1001 个脚本全部嗅探 + 解析（40252 句 = 全部 `text`），所有引用的图 / 语音 / bgm 都在 images / audio / 更新包的目录里（图 19215 + 语音 33156，没有缺的）。
+- **没验证**：没有游戏截图对照——立绘位置只是照前端公式算（非故事 scene 模式的容器按和故事模式一样处理）；虚拟索引 / 取资源只用合成 zip 测过（真实的大 mhp 没在这边跑过：images / audio / 更新包只采到了目录清单）；表情 / 光环 / 跳动 / 震动 / 眨眼没做；翻译包（`translations/*.mhp`）没接。
+- 测试：`node scripts/dev/gal-mahotan-selftest.mjs`（合成 data / images / 更新包 mhp：展开、虚拟索引、更新覆盖、Deflate、适配器、gal-layout；`MAHOTAN_SAMPLE=<含 assets/mahotan-data.mhp 的目录>` 时再把真实 data 包整份解析一遍）。

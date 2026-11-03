@@ -24,7 +24,8 @@ import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
 import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
 import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
-import { inflateSync } from 'node:zlib'
+import { inflateRawSync, inflateSync } from 'node:zlib'
+import { openZip } from '../zip-reader.mjs'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
 import { extractZipMember, parseZipCentral, parseZipEnd } from './l2d-zip.mjs'
 import { Psb, isPsb } from './psb.mjs'
@@ -102,6 +103,11 @@ const UNITY_DSM_DECODER = {
   ext: 'dsm',
   decode(buffer) { return decryptDsm(buffer) },
 }
+// MahotanArchive（まほろば妖女奇譚；.mhp = ZIP，data/scripts/ 下是明文 JSON 剧情）：展开时由 expandMhp 原样写出；这里的解码器只用来校验 config.containers.scriptDecoder
+const MAHOTAN_JSON_DECODER = {
+  ext: 'json',
+  decode(buffer) { return buffer.toString('utf8').replace(/^\uFEFF/, '') },
+}
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
   'bgi-bs': BGI_BS_DECODER,
@@ -110,6 +116,7 @@ export const SCRIPT_DECODERS = Object.freeze({
   'krkr-scn': KRKR_SCN_DECODER,
   'rscript-gsc': RSCRIPT_GSC_DECODER,
   'unity-dsm': UNITY_DSM_DECODER,
+  'mahotan-json': MAHOTAN_JSON_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -149,7 +156,7 @@ export const SCRIPT_DECODERS = Object.freeze({
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
-const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : /\.arc$/i)
+const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
 const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
@@ -364,6 +371,36 @@ async function expandDsm({ file, arcName, rule, cfg, outRoot, budget }) {
     await writeFile(target, chunk.text)
     result.scripts += 1
   }
+  return result
+}
+
+// ---------- MahotanArchive：.mhp（ZIP，Store / Deflate） ----------
+// 展开：data/scripts/ 下的 JSON 剧情原样写到 script/<mhp 名>/<scripts 之后的路径>（scene/general/avt_00004.json、stories/main/…）；别的条目（图 / 声音 / 视频 / 字体 …）只进 hybrid 的虚拟索引，被请求时才从 ZIP 里读（见 buildVirtual 的 mhp 分支）
+async function expandMhp({ file, arcName, rule, cfg, outRoot, budget }) {
+  const stem = withoutExt(arcName)
+  const result = { entries: 0, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
+  const zip = await openZip(file)
+  try {
+    result.entries = zip.entries.length
+    if (result.entries > cfg.maxEntries) throw new Error(`条目 ${result.entries} 个，超过上限 ${cfg.maxEntries}（config.containers.maxEntries）`)
+    for (const entry of zip.entries) {
+      if (entry.isDirectory) continue
+      const m = /^data\/scripts\/(.+\.json)$/i.exec(entry.name)
+      if (!m) { if (/^(images|media|fonts|official-sites|wiki)\//i.test(entry.name)) result.res += 1; continue }
+      if (!rule.kinds.has('script')) { result.skipped += 1; continue }
+      const name = safeEntryName(m[1])
+      if (!name) { result.bad.push(entry.name.slice(0, 60)); continue }
+      if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) { result.excluded += 1; continue }
+      if (entry.size > MAX_ENTRY_BYTES) { result.bad.push(`${name}（${entry.size} 字节太大）`); continue }
+      budget.bytes += entry.size
+      if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
+      const text = (await zip.read(entry)).toString('utf8').replace(/^\uFEFF/, '')
+      const target = path.join(outRoot, 'script', stem, ...name.split('/'))
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, text)
+      result.scripts += 1
+    }
+  } finally { await zip.close() }
   return result
 }
 
@@ -873,6 +910,14 @@ async function readHit(hit) {
   if (hit.krkr) return readKrkrHit(hit)
   const handle = await open(hit.file, 'r')
   try {
+    if (hit.zipLocal) {   // ZIP 条目：hit.offset = 本地头位置；本地头 30 字节 + 文件名 + 额外字段之后才是数据
+      const local = await readRange(handle, hit.offset, 30)
+      if (local.length < 30 || local.readUInt32LE(0) !== 0x04034b50) throw new Error('zip 本地头损坏')
+      const raw = await readRange(handle, hit.offset + 30 + local.readUInt16LE(26) + local.readUInt16LE(28), hit.size)
+      if (hit.method === 0) return raw
+      if (hit.method === 8) return inflateRawSync(raw)
+      throw new Error(`不支持的压缩方式 ${hit.method}`)
+    }
     const data = await readRange(handle, hit.offset, hit.size)
     return await transformDataAsync(data, hit)
   } finally { await handle.close().catch(() => {}) }
@@ -910,6 +955,27 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
+  if (cfg.format === 'mhp') {
+    // MahotanArchive：每个 .mhp 里除 data/ 和 metadata/ 之外的条目都进虚拟索引，路径 = 条目名（脚本里的资源路径就是这个，如 images/backgrounds/background-001.jpg）；
+    // 更新包（名字里带 update）先处理：同一路径更新包的赢（add 是先到先得）。取出来时读本地头 + 数据，Deflate 的解压
+    const ordered = [...arcs].sort((a, b) => Number(/update/i.test(b.arcName)) - Number(/update/i.test(a.arcName)) || a.arcName.localeCompare(b.arcName))
+    for (const { arcName, file, rule } of ordered) {
+      if (!rule.kinds.has('res')) continue
+      let zip
+      try { zip = await openZip(file) } catch { continue }
+      try {
+        if (zip.entries.length > cfg.maxEntries) continue
+        for (const entry of zip.entries) {
+          if (entry.isDirectory || /^(data|metadata)\//i.test(entry.name) || entry.size > MAX_ENTRY_BYTES) continue
+          const name = safeEntryName(entry.name)
+          if (!name) continue
+          if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
+          add(`${cfg.dir}/res/${name}`, { file, offset: entry.localOffset, size: entry.compressedSize, zipLocal: true, method: entry.method, usize: entry.size })
+        }
+      } finally { await zip.close() }
+    }
+    return { map, files, sig }
+  }
   if (cfg.format === 'dsm') {
     // Unity GameMaterial：每个 .psm 一个虚拟 .png（flat：脚本按名字引用，不带目录），取出来时把第一个字节改回 0x89
     for (const { arcName, file, rule } of arcs) {
@@ -1156,7 +1222,7 @@ async function run(mediaDir, cfg) {
       const stem = cfg.format === 'pf8' ? pf8Stem(arcName) : withoutExt(arcName)
       const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
       try {
-        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
+        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'mhp' ? expandMhp({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
         // 先展开到临时目录，再整体换掉这个容器的两个子目录（中途失败不会留下半截内容）
         for (const part of ['script', 'res', 'refs']) {
           const from = path.join(tmp, part, stem)
