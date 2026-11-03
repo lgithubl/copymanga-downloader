@@ -5403,6 +5403,8 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
         if (resource.file) return await sendCachedFile(req, res, resource.file, resource.contentType, resource.cacheControl)
         return binary(res, 200, resource.body, resource.contentType)
       }
+      // Gal 诊断中心：GET …/diagnostics?scope=card|item|global 只列出支持哪些诊断（不计算）；运行见下面的 POST …/diagnostics/<id>
+      if (action === 'diagnostics' && handler.listDiagnostics) return json(res, 200, await handler.listDiagnostics(itemId, { scope: url.searchParams.get('scope') || 'card' }))
       if (action === 'render-thumb' && handler.getRenderThumb) {   // Gal：浏览器离屏渲染的缩略图（命中 = JPEG，没有 = 404）
         const found = await handler.getRenderThumb(itemId, url.searchParams.get('key') || '')
         return await sendCachedFile(req, res, found.file, found.contentType, found.cacheControl)
@@ -5435,6 +5437,12 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       if (action === 'history-flush') {
         const body = await readJson(req)
         return json(res, 200, await recordLibraryHistory(type, itemId, body, { flush: true }))
+      }
+      if (action === 'diagnostics' && parts[6] && handler.runDiagnostic) {
+        try { return json(res, 200, await handler.runDiagnostic(itemId, parts[6], await readJson(req))) } catch (error) {
+          if (error?.statusCode) return json(res, error.statusCode, { error: error.message })
+          throw error
+        }
       }
       if (action === 'metadata-actions' || action === 'tag-scripts') {
         const body = await readJson(req)

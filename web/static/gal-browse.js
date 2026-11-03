@@ -1,6 +1,7 @@
 // Gal 的浏览层：把后端给的「节点」（web/library/gal/browse.mjs）渲染成卡片网格 / 列表，选项自带下一个节点的 id，
 // 点了就 onOpen(节点 id)，由页面层再取一次（reader?sectionId=…）。这里不认识目录结构，只认 kind / items。
 // 全部用 textContent / setAttribute 写入后端给的文字，不拼 innerHTML。
+import { createDiagnosticsDialog } from './gal-diag.js'
 import { attachBarLock } from './gal-barlock.js'
 import { CARD_THUMB_WIDTH, DEFAULT_HOVER, attachThumbCycle, pickCover, thumbUrl } from './thumb-cycle.js'
 import { createThumbRenderer } from './gal-thumb-render.js'
@@ -25,6 +26,7 @@ let refocusSearch = null   // 搜索框触发的重绘后，把焦点还给新�
 // 卡片封面 / 悬停轮播的本地偏好（localStorage，空 = 跟配置）：gal.thumbHover = on | off；gal.thumbCover = random | first | last
 const PREF_HOVER = 'gal.thumbHover'
 const PREF_COVER = 'gal.thumbCover'
+const PREF_DIAG = 'gal.diag'   // 「更多」里的诊断总开关：on = 每张卡片左上角有个小按钮（只负责打开诊断窗口；默认关）
 const PREF_MODE = 'gal.thumbCarousel'   // 轮播方式：hover | auto（空 = 跟配置 thumbHover.mode）
 const newSeed = () => 1 + Math.floor(Math.random() * 999999999)
 const readPref = (key) => { try { return localStorage.getItem(key) || '' } catch { return '' } }
@@ -303,6 +305,14 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   for (const [value, label] of [['', '跟随配置'], ['hover', '悬停'], ['auto', '自动']]) { const option = el('option', '', label); option.value = value; option.selected = value === readPref(PREF_MODE); modeSel.append(option) }
   modeSel.addEventListener('change', () => { writePref(PREF_MODE, modeSel.value); keepMenuOpen = node.viewBase; go(node.id) })
   moreMenu.append(field('轮播', hoverBox), field('轮播方式', modeSel), field('封面', coverSel))
+  const diagBox = el('input', 'gal-browse-diag-toggle')
+  diagBox.type = 'checkbox'
+  diagBox.checked = readPref(PREF_DIAG) === 'on'
+  diagBox.title = '打开后每张卡片左上角出现一个「诊」按钮，点它只是打开诊断窗口；窗口里点具体的诊断项才会运行'
+  diagBox.addEventListener('change', () => { writePref(PREF_DIAG, diagBox.checked ? 'on' : ''); keepMenuOpen = node.viewBase; go(node.id) })
+  moreMenu.append(field('诊断按钮', diagBox))
+  const diagOn = () => readPref(PREF_DIAG) === 'on'
+  const diagDialog = createDiagnosticsDialog({ apiBase })
   const immBtn = el('button', 'gal-browse-imm', '沉浸')
   immBtn.type = 'button'
   immBtn.title = '沉浸模式（I）'
@@ -538,6 +548,15 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
       if (progressTag) { progressTag.classList.add('gal-card-progress'); thumb.append(progressTag) }
     }
     if (item.issues?.length) problems.push({ kind: '脚本问题', title: item.title, node: item.node, lines: item.issues })
+    if (diagOn() && item.node !== 'x:expr') {   // 诊断小按钮：只打开窗口，不计算
+      const diag = el('span', 'gal-card-diag', '诊')
+      diag.setAttribute('role', 'button'); diag.tabIndex = 0; diag.title = `诊断「${item.title}」（打开诊断窗口，窗口里点具体项才运行）`
+      const openDiag = (event) => { event.preventDefault(); event.stopPropagation(); diagDialog.open({ card: { type: item.type, id: item.id, title: item.title } }) }
+      diag.addEventListener('click', openDiag)
+      diag.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') openDiag(event); else event.stopPropagation() })
+      diag.addEventListener('dblclick', (event) => event.stopPropagation())
+      thumb.append(diag)
+    }
     if (item.node !== 'x:expr') thumb.append(voice.attach(item.node, item.node, { title: `随机放一条「${item.title}」里的语音（不打开）` }))
     card.append(thumb, el('div', 'gal-card-title', item.title))
     if (item.subtitle) card.append(el('div', 'gal-card-sub', item.subtitle))
@@ -573,5 +592,5 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     prerenderObserver = io
   }
   if (thumbLoader && thumbImages.length) thumbLoader.attach(thumbImages, { root: container })
-  return { destroy: () => { prerenderObserver?.disconnect(); thumbRenderer.destroy(); voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
+  return { destroy: () => { diagDialog.close(); prerenderObserver?.disconnect(); thumbRenderer.destroy(); voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
 }

@@ -25,6 +25,7 @@ import { createFrameCache } from '../gal/video-thumb.mjs'
 import { shardedPath, walkShardedFiles, writeJsonAtomic } from '../meta-shard.mjs'
 import { parseTags } from '../tag-store.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
+import { diagnosticText, findDiagnostic, listDiagnostics as listDiagnosticDefs, normalizeParams } from '../gal/diag-center.mjs'
 
 export const GAL_TYPE = 'gal'
 export const GAL_PROFILE = 'gal-import'
@@ -340,6 +341,15 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     }
   }
 
+  // 容器（hybrid）里这个资源的原始大小；磁盘上本来就有的文件 / 不在容器里 = null
+  async function storedSizeOf(item, rel) {
+    const wanted = []
+    try { await resolveAsset(item, rel, { skipMaterialize: true, wantedOut: wanted }); return null } catch { /* 磁盘上没有：看容器 */ }
+    if (!wanted.length) return null
+    const entry = await virtualEntry({ mediaDir: workDirOf(item), config: normalizeGalConfig(item.config), rels: wanted })
+    return entry?.size ?? null
+  }
+
   function providerOf(item) {
     return createBrowseProvider({
       mediaDir: workDirOf(item),
@@ -347,8 +357,28 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       adapters: item.adapters,
       resolveAsset: (rel) => resolveExists(item, rel),
       warmAsset: (rel) => resolveAsset(item, rel),   // 预热：取场景时后台把要用的图取出来 / 解码进缓存
+      storedSize: (rel) => storedSizeOf(item, rel),   // 诊断用：容器里这张图转格式之前的大小
       extraWarnings: [...(item.configWarnings || []), ...(item.adapterWarnings || [])],
     })
+  }
+
+  // ---------- 诊断中心（见 gal/diagnostics.mjs）：列出来不计算；run 才算 ----------
+  async function listDiagnostics(itemId, { scope = 'card' } = {}) {
+    await readItem(itemId)
+    return { diagnostics: listDiagnosticDefs(scope) }
+  }
+  // body：{ node?: { type, id }（card 范围要带，就是卡片的 item.type / item.id）, params?: {...} }
+  async function runDiagnostic(itemId, diagId, body = {}) {
+    const def = findDiagnostic(diagId)
+    if (!def) throw Object.assign(new Error('没有这个诊断'), { statusCode: 404 })
+    const item = await readItem(itemId)
+    const card = body?.node && typeof body.node === 'object' ? { type: String(body.node.type || ''), id: String(body.node.id || '') } : null
+    if (def.scope === 'card' && !card?.id) throw Object.assign(new Error('这个诊断要指定卡片（node）'), { statusCode: 400 })
+    const config = normalizeGalConfig(item.config)
+    const params = normalizeParams(def, body?.params)
+    const started = Date.now()
+    const result = await def.run({ item, card, config, provider: providerOf(item), dataDir, extraWarnings: [...(item.configWarnings || []), ...(item.adapterWarnings || [])] }, params)
+    return { id: def.id, title: def.title, params, tookMs: Date.now() - started, ...result, text: diagnosticText(def.title, result) }
   }
 
   // 手动刷新文件索引：丢掉这个条目的全部浏览缓存（适配器上下文 = 文件索引 + 名称表、嗅探、目录列表、脚本摘要），马上按磁盘现状重建首页，返回新的索引状态
@@ -551,6 +581,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     listUnits,
     getReaderContent,
     refreshIndex,
+    listDiagnostics,
+    runDiagnostic,
     getRandomVoice,
     getResource,
     getRenderThumb,

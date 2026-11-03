@@ -63,6 +63,22 @@ try {
     await createThumbEngine({ mediaDir: media, config, resolveAsset: async (rel) => path.join(work, 'cache-none', ...rel.split('/')), materialize: async () => { throw new Error('取不出来') } }).addPaths(out3, ['virt/big.png', 'virt/small.png'], 'test', [])
     check('取不出来（解压失败）= 量不出来、不过滤，不报错', out3.size === 2)
   }
+  // 诊断用的 trace：每个候选记 来源 / 容器内大小（storedSize 钩子）/ 转换后大小 / 宽高 / 留还是丢 / 原因；没开 trace 时不记
+  {
+    const { config } = normalizeGalConfigWithWarnings({ thumbSkip: [{ minMB: 1.3 }] })
+    const engine = createThumbEngine({ mediaDir: media, config, resolveAsset, storedSize: async (rel) => (rel.includes('small') ? 123 : null) })
+    const trace = []
+    engine.setTrace(trace)
+    const out = new Map()
+    await engine.addPaths(out, ['img/big_bg.png', 'img/small_bg.png'], 'test', [])
+    engine.setTrace(null)
+    const small = trace.find((r) => /small_bg/.test(r.candidate))
+    const bigRow = trace.find((r) => /big_bg/.test(r.candidate))
+    check('诊断 trace：小图 = 丢掉（原因写了 thumbSkip[0] 和大小）、容器内大小来自 storedSize 钩子、有宽高；大图 = 留下', trace.length === 2 && small && !small.kept && /thumbSkip\[0\]/.test(small.reason) && small.stored === 123 && small.dims?.width === 40 && bigRow?.kept === true && bigRow.size > 2 * 1024 * 1024 && bigRow.stored === null, J(trace))
+    const after = []
+    await engine.addPaths(new Map(), ['img/cha_wide.png'], 'test', after)
+    check('trace 关掉后不再记录（平时没有额外开销）', trace.length === 2)
+  }
   const sz = await imageSizeOf(path.join(media, 'img/cha_wide.png'))
   check('imageSizeOf：PNG 宽高（只读文件头）；不是图 = null', sz.width === 900 && sz.height === 20 && (await imageSizeOf(path.join(work, 'nope'))) === null)
 } finally { await rm(work, { recursive: true, force: true }) }

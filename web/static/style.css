@@ -4899,3 +4899,31 @@ h2 {
 .gal-set-color-reset {
   margin-left: 0.5em;
 }
+
+/* 诊断中心：卡片左上角的小按钮（只负责打开窗口）+ 弹框 */
+.gal-card-diag { align-items: center; background: rgba(8, 12, 24, 0.78); border-radius: 4px; color: #fff; cursor: pointer; display: inline-flex; font-size: 12px; font-weight: 700; height: 22px; justify-content: center; left: 6px; line-height: 1; position: absolute; top: 6px; user-select: none; width: 22px; z-index: 2; }
+.gal-card-diag:hover, .gal-card-diag:focus-visible { background: var(--site-primary); outline: none; }
+.gal-diag-overlay { background: rgba(0, 0, 0, 0.55); display: flex; inset: 0; justify-content: center; padding: 4vh 3vw; position: fixed; z-index: 80; }
+.gal-diag-dialog { background: var(--site-panel); border: 1px solid var(--site-border); border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45); color: var(--site-text); display: flex; flex-direction: column; gap: 10px; max-height: 92vh; max-width: min(1100px, 100%); overflow: auto; padding: 14px; width: 100%; }
+.gal-diag-head { align-items: center; display: flex; gap: 10px; justify-content: space-between; }
+.gal-diag-title { font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.gal-diag-list { display: grid; gap: 8px; }
+.gal-diag-item { border: 1px solid var(--site-border); border-radius: 8px; display: grid; gap: 4px; padding: 8px 10px; }
+.gal-diag-item-title { align-items: center; display: flex; flex-wrap: wrap; font-weight: 600; gap: 8px; }
+.gal-diag-cost { background: var(--site-control); border-radius: 4px; color: var(--site-muted); font-size: 11px; font-weight: 400; padding: 1px 6px; }
+.gal-diag-cost.is-medium { color: #e8b04a; }
+.gal-diag-cost.is-heavy { color: #ff7a7a; }
+.gal-diag-desc, .gal-diag-hint { color: var(--site-muted); font-size: 13px; }
+.gal-diag-controls { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; }
+.gal-diag-param { align-items: center; display: inline-flex; font-size: 13px; gap: 6px; }
+.gal-diag-input { background: var(--site-control); border: 1px solid var(--site-control-border); border-radius: 6px; color: var(--site-text); min-height: 28px; padding: 2px 8px; width: 5em; }
+.gal-diag-result { border-top: 1px solid var(--site-border); display: grid; gap: 8px; padding-top: 10px; }
+.gal-diag-summary { font-weight: 600; overflow-wrap: anywhere; }
+.gal-diag-section-title { font-size: 13px; font-weight: 700; margin-top: 4px; }
+.gal-diag-table-wrap { max-height: 38vh; overflow: auto; }
+.gal-diag-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.gal-diag-table th, .gal-diag-table td { border: 1px solid var(--site-border); overflow-wrap: anywhere; padding: 3px 6px; text-align: left; vertical-align: top; }
+.gal-diag-table th { background: var(--site-control); position: sticky; top: 0; }
+.gal-diag-notes { color: var(--site-muted); font-size: 12px; margin: 0; padding-left: 1.2em; }
+.gal-diag-actions { display: flex; gap: 8px; }
+.gal-diag-error { color: #ff7a7a; }

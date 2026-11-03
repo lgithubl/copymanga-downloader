@@ -160,7 +160,7 @@ const excerptOf = (scene) => {
 // mediaDir：媒体目录（绝对路径）。config：条目元数据里的 config（原样传，这里规整）。
 // resolveAsset(rel) → 磁盘真实路径（找不到抛错）；用来确认缩略图存在。
 // extraWarnings：调用方（handler）在 config 之外发现的、要报给管理员的丢弃项 [{ field, reason, snippet }]（比如不认识的适配器 id）
-export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, maxScriptBytes: defaultMaxScriptBytes = MAX_SCRIPT_BYTES, resolveAsset, warmAsset = null, extraWarnings = [] }) {
+export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, maxScriptBytes: defaultMaxScriptBytes = MAX_SCRIPT_BYTES, resolveAsset, warmAsset = null, storedSize = null, extraWarnings = [] }) {
   const config = normalizeGalConfig(rawConfig)
   const configWarnings = []
   for (const w of [...config.warnings, ...(Array.isArray(extraWarnings) ? extraWarnings : [])]) if (!configWarnings.some((x) => x.field === w.field && x.reason === w.reason && x.snippet === w.snippet)) configWarnings.push(w)
@@ -210,7 +210,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   }
   // 独占视图（exclusive，来源是 parent 自己）收走的脚本：在 parent 的列表里不再出现，它的「父节点」是这个视图（内容型规则不支持独占：要读脚本，这里是同步的）
   const exclusiveViewOf = (dirRel, script) => viewsUnder(dirRel).find((rule) => rule.exclusive && !rule.dirs.length && rule.on !== 'marker' && viewTakes(rule, script)) || null
-  const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset, materialize: warmAsset })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
+  const thumbEngine = createThumbEngine({ mediaDir, config, resolveAsset, materialize: warmAsset, storedSize })   // 缩略图提取：模板（含通配）+ thumbSources，见 thumbs.mjs
   // 缓存键里要带的「配置指纹」：配置变了（脚本扩展名 / 隐藏目录 / 适配器 / 缩略图规则…）缓存就不能沿用
   const entriesCfgKey = `${config.scriptExtensions.join(',')}|${config.hiddenDirs.join(',')}|${(adapters || []).join(',')}|${maxScriptBytes}`
   const infoCfgKey = createHash('sha1').update(JSON.stringify([mediaDir, config.scriptThumbs, config.thumbSources, config.thumbFallback, config.thumbSkip, config.thumbRender, config.sceneMarkers, config.thumbsDirs, config.resourceRoots, config.stripPrefixes, config.scriptIndex, config.adapterOptions, config.rawIgnore, config.classify, config.resourceResolve, config.indexSkip, config.limits, adapters])).digest('hex').slice(0, 16)
@@ -783,7 +783,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   }
 
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
-  async function scriptInfo(set, scriptRel) {
+  async function scriptInfo(set, scriptRel, { fresh = false } = {}) {
     // 路径带 ::<场景>（一个文件装多个场景，utage-book 的章）：磁盘上是 ::前面的文件，场景号交给适配器（meta.scene）；只有适配器声明 sceneThumbs 的才算封面（grenze 这类一个文件几十个场景，每个都整份解析太贵）
     const sceneAt = scriptRel.indexOf('::')
     const rel = sceneAt >= 0 ? scriptRel.slice(0, sceneAt) : scriptRel
@@ -791,7 +791,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const abs = absOf(set, rel)
     const info = await stat(abs)
     const key = `${abs}|${info.mtimeMs}|${info.size}|${infoCfgKey}|${sceneKey}`
-    const cached = cacheGet(scriptInfoCache, key, SCRIPT_INFO_TTL_MS)
+    const cached = fresh ? null : cacheGet(scriptInfoCache, key, SCRIPT_INFO_TTL_MS)   // fresh：诊断要重新走一遍选图过程
     if (cached) return cached
     const adapterId = await scriptAdapterOf(abs, Boolean(sceneKey))
     if (sceneKey && !(() => { try { return galAdapter(adapterId)?.sceneThumbs } catch { return false } })()) {
@@ -1398,5 +1398,17 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     return result
   }
 
-  return { config, getNode, randomVoice, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, groupNodeId, virtualNodeId, effectiveParentDir } }
+  // 诊断：这张脚本卡片的缩略图是怎么选出来的（每个候选：来源规则 / 容器内大小 / 转换后大小 / 宽高 / 留还是丢、为什么）。不走缓存，重新选一遍；点诊断才会调用
+  async function diagnoseThumbs({ scriptRel, limit = 30 }) {
+    await prepareContainers()
+    const rel = String(scriptRel || '')
+    const trace = []
+    thumbEngine.setTrace(trace)
+    let info
+    try { info = await scriptInfo(defaultSet, rel, { fresh: true }) } finally { thumbEngine.setTrace(null) }
+    const cap = Math.max(1, Math.min(200, Math.floor(Number(limit)) || 30))
+    return { adapterId: info.adapterId, thumbs: info.thumbs || [], why: info.thumbWhy || [], total: trace.length, rows: trace.slice(0, cap), skipRules: config.thumbSkip }
+  }
+
+  return { config, getNode, randomVoice, diagnoseThumbs, internals: { parseNodeId, listDir, scriptInfo, idOf, dirNodeId, groupNodeId, virtualNodeId, effectiveParentDir } }
 }

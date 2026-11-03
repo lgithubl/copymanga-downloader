@@ -165,8 +165,10 @@ export async function thumbSkipReason(rules, real, candidate) {
 // materialize(rel) → 真实文件路径（可选）：容器（BGI / krkr 的 .arc / .xp3）里还没解压的图，resolveAsset 只给「将来落盘的路径」（磁盘上还没有）；
 // 配了 thumbSkip 时要量大小 / 尺寸就得先把它取出来（只对候选图做，每个引擎最多 MATERIALIZE_BUDGET 张，超了的当作量不出来、不过滤）
 const MATERIALIZE_BUDGET = 200
-export function createThumbEngine({ mediaDir, config, resolveAsset, materialize = null }) {
+// storedSize(rel) → 容器里这张图的原始大小（可选，只有诊断用）；trace 开着时（setTrace(数组)）addPaths 把每个候选的处理过程记进去（诊断用，平时是 null）
+export function createThumbEngine({ mediaDir, config, resolveAsset, materialize = null, storedSize = null }) {
   let materializeLeft = MATERIALIZE_BUDGET
+  let trace = null
   const roots = config.resourceRoots
   const skipRules = (config.thumbSkip || []).map((r) => ({ ...r, re: r.match ? new RegExp(r.match, 'i') : null }))
   const split = (rel) => (rel ? rel.split('/') : [])
@@ -250,16 +252,20 @@ export function createThumbEngine({ mediaDir, config, resolveAsset, materialize 
           const real = await resolveAsset(one)
           const key = typeof real === 'string' ? real : one
           if (out.has(key)) continue
-          if (skipRules.length && typeof real === 'string') {
+          const row = trace ? { from, candidate: one, file: typeof real === 'string' ? real : '', stored: null, size: null, dims: null, kept: true, reason: '' } : null
+          if (row && storedSize) { try { row.stored = (await storedSize(one)) ?? null } catch { /* 不是容器里的图 */ } }
+          if ((skipRules.length || row) && typeof real === 'string') {
             let file = real
             if (!(await stat(real).then(() => true, () => false))) {   // 还在容器里没解压：先取出来再量
               file = ''
-              if (materialize && materializeLeft > 0) { materializeLeft -= 1; try { const got = await materialize(one); if (typeof got === 'string') file = got } catch { /* 取不出来：不过滤 */ } }
+              if (materialize && (materializeLeft > 0 || (row && !skipRules.length))) { if (skipRules.length) materializeLeft -= 1; try { const got = await materialize(one); if (typeof got === 'string') file = got } catch { /* 取不出来：不过滤 */ } }
               else if (materialize) why.push(`${from}：${one} → 解压名额用完（${MATERIALIZE_BUDGET}），没法量大小，不过滤`)
             }
-            const reason = file ? await thumbSkipReason(skipRules, file, one) : ''
-            if (reason) { why.push(`${from}：${one} → ${reason}，跳过`); continue }
+            if (row && file) { try { row.size = (await stat(file)).size; row.dims = await imageSizeOf(file) } catch { /* 量不出来 */ } }
+            const reason = skipRules.length && file ? await thumbSkipReason(skipRules, file, one) : ''
+            if (reason) { why.push(`${from}：${one} → ${reason}，跳过`); if (row) { row.kept = false; row.reason = reason; trace.push(row) } continue }
           }
+          if (row) trace.push(row)
           out.set(key, one)
         } catch (error) { if (!wild) why.push(`${from}：${one} → ${whyOf(error)}`) }
       }
@@ -279,6 +285,7 @@ export function createThumbEngine({ mediaDir, config, resolveAsset, materialize 
   }
 
   return {
+    setTrace(list) { trace = Array.isArray(list) ? list : null },
     addPaths,
     collectSources,
     // 脚本卡片：scriptThumbs 模板 + thumbSources（scriptIndex / 脚本里的背景图由调用方接在后面）

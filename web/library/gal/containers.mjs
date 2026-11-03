@@ -956,6 +956,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     return {
       key,
       rel: hit.rel,
+      size: hit.size,   // 容器里这个条目的原始大小（转格式之前；诊断用）
       read() { return readHit(hit) },
     }
   }
