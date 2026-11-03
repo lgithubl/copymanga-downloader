@@ -26,6 +26,7 @@ import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
 import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
 import { inflateRawSync, inflateSync } from 'node:zlib'
 import { openZip } from '../zip-reader.mjs'
+import { DEFAULT_LANGUAGES, buildDramas, parseText } from './arcrecord-dialog.mjs'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
 import { extractZipMember, parseZipCentral, parseZipEnd } from './l2d-zip.mjs'
 import { Psb, isPsb } from './psb.mjs'
@@ -108,6 +109,11 @@ const MAHOTAN_JSON_DECODER = {
   ext: 'json',
   decode(buffer) { return buffer.toString('utf8').replace(/^\uFEFF/, '') },
 }
+// ArcRecord_D（Dialog.txt + Text/<语言>.txt）：展开时由 expandArcdrama 切成每段剧情一个 JSON；这里的解码器只用来校验 config.containers.scriptDecoder
+const ARCRECORD_DIALOG_DECODER = {
+  ext: 'arcdrama',
+  decode(buffer) { return buffer.toString('utf8') },
+}
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
   'bgi-bs': BGI_BS_DECODER,
@@ -117,6 +123,7 @@ export const SCRIPT_DECODERS = Object.freeze({
   'rscript-gsc': RSCRIPT_GSC_DECODER,
   'unity-dsm': UNITY_DSM_DECODER,
   'mahotan-json': MAHOTAN_JSON_DECODER,
+  'arcrecord-dialog': ARCRECORD_DIALOG_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -156,7 +163,7 @@ export const SCRIPT_DECODERS = Object.freeze({
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
-const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : /\.arc$/i)
+const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
 const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
@@ -401,6 +408,33 @@ async function expandMhp({ file, arcName, rule, cfg, outRoot, budget }) {
       result.scripts += 1
     }
   } finally { await zip.close() }
+  return result
+}
+
+// ---------- ArcRecord_D：Dialog.txt（`@` 分隔表）+ 同目录 Text/<语言>.txt ----------
+// 展开：每段剧情（DramaID）一个 JSON 写到 script/<表名>/<DramaID>.<ext>；资源（BG / Sound / Hero …）是磁盘上的普通文件，不在这里管
+async function expandArcdrama({ file, arcName, rule, cfg, outRoot, budget }) {
+  const stem = withoutExt(arcName)
+  const result = { entries: 0, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
+  if (!rule.kinds.has('script')) { result.skipped = 1; return result }
+  const info = await stat(file)
+  if (info.size > 256 * 1024 * 1024) throw new Error(`${arcName} 太大（${info.size} 字节）`)
+  const texts = {}
+  for (const lang of DEFAULT_LANGUAGES) {
+    try { texts[lang] = parseText(await readFile(path.join(path.dirname(file), 'Text', `${lang}.txt`))) } catch { /* 没有这种语言 */ }
+  }
+  const dramas = buildDramas(await readFile(file), texts)
+  result.entries = dramas.length
+  for (const drama of dramas.slice(0, cfg.maxEntries)) {
+    const name = safeEntryName(drama.id)
+    if (!name) { result.bad.push(drama.id.slice(0, 60)); continue }
+    budget.bytes += drama.text.length
+    if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
+    const target = path.join(outRoot, 'script', stem, `${name}.${cfg.scriptExt || 'arcdrama'}`)
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, drama.text)
+    result.scripts += 1
+  }
   return result
 }
 
@@ -955,6 +989,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
+  if (cfg.format === 'arcdrama') return { map, files, sig }   // ArcRecord_D：资源是磁盘上的普通文件，没有虚拟条目
   if (cfg.format === 'mhp') {
     // MahotanArchive：每个 .mhp 里除 data/ 和 metadata/ 之外的条目都进虚拟索引，路径 = 条目名（脚本里的资源路径就是这个，如 images/backgrounds/background-001.jpg）；
     // 更新包（名字里带 update）先处理：同一路径更新包的赢（add 是先到先得）。取出来时读本地头 + 数据，Deflate 的解压
@@ -1222,7 +1257,7 @@ async function run(mediaDir, cfg) {
       const stem = cfg.format === 'pf8' ? pf8Stem(arcName) : withoutExt(arcName)
       const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
       try {
-        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'mhp' ? expandMhp({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
+        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'mhp' ? expandMhp({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'arcdrama' ? expandArcdrama({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
         // 先展开到临时目录，再整体换掉这个容器的两个子目录（中途失败不会留下半截内容）
         for (const part of ['script', 'res', 'refs']) {
           const from = path.join(tmp, part, stem)

@@ -1307,3 +1307,14 @@ Tauri 2 的图鉴 / 剧情查看器（私有仓库 `mahotan-archive/` 有前期�
 - **验证了什么**：真实 data 包 1001 个脚本全部嗅探 + 解析（40252 句 = 全部 `text`），所有引用的图 / 语音 / bgm 都在 images / audio / 更新包的目录里（图 19215 + 语音 33156，没有缺的）。
 - **没验证**：没有游戏截图对照——立绘位置只是照前端公式算（非故事 scene 模式的容器按和故事模式一样处理）；虚拟索引 / 取资源只用合成 zip 测过（真实的大 mhp 没在这边跑过：images / audio / 更新包只采到了目录清单）；表情 / 光环 / 跳动 / 震动 / 眨眼没做；翻译包（`translations/*.mhp`）没接。
 - 测试：`node scripts/dev/gal-mahotan-selftest.mjs`（合成 data / images / 更新包 mhp：展开、虚拟索引、更新覆盖、Deflate、适配器、gal-layout；`MAHOTAN_SAMPLE=<含 assets/mahotan-data.mhp 的目录>` 时再把真实 data 包整份解析一遍）。
+
+## ArcRecord_D（幻想天街 Kuusoutengai；`arcrecord::dialog`，game.id = `arcrecord::<游戏>`）
+
+Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 有反编译）。采集到的是**导出的 Unity 资源**（`ArcRecordExport/Assets/Game/…`，约 20GB、4.9 万个文件）：`StaticData/`（`@` 分隔的明文表）+ `BG/*.png` + `Sound/{BGM,Dialog}/*.wav` + `Hero/H0xx/Sound/*.wav`（角色语音）+ `Hero/H0xx/…`（Spine 骨骼 + fbx 预制体）+ `CG/…`（Spine 场景）。**没有容器**：资源全是磁盘上的普通文件。
+
+- **剧情表**：`StaticData/Dialog.txt`（41 列：Role1-3 / RoleMotion / TalkSound / Sound / Music / DialogBGPerfab / Speaker / Dialog / Scene …，44321 行）；一段 drama = 从 `DramaID` 非空的行起到下一个非空的行前（真实 1719 段，id 会重复 → `_2`）。台词 / 说话人是 `T_` 开头的键，文本在 `StaticData/Text/<JPN|CHS|CHT|ENG|…>.txt`（`Key@Value`）；Dialog.txt 里有一行带坏字节（游戏自己的数据）。
+- **展开**（`config.containers.format = 'arcdrama'`，只扫 `Game/StaticData`）：按 DramaID 切成每段一个 JSON（`arcrecord-dialog/1`，带 JPN / CHS / CHT / ENG 四种语言里这一段用到的键）展开到 `<base>/arc/script/Dialog/<DramaID>.arcdrama`；base = 含 `Game` 的那一层（导出里是 `ArcRecordExport/Assets`）。
+- **适配器映射**（`adapters/arcrecord-dialog.mjs`）：台词（`<br>` 换行、`<color=#…>` 取颜色、`<size>` 去掉、`{0}` / 说话人 `player` = 主角名 `playerName`）；`language` 选语言（默认 JPN）；`DialogBGPerfab` → `BG/<名>.png`（没有 png 的预制体目录取目录里的 png，`BG/BG_Black` = 黑，`CG/…` 的 Spine 场景没做）；`Music` → `Sound/BGM/<名>.wav`（`Blank` = 停）；`Sound` 音效 → wav（默认的 `Effect_Dialog` 每句都有，不放）；`TalkSound`（`Hero/H0xx/Sound/<名>`）= 角色语音。
+- **验证了什么**：真实表切 1719 段、43288 句台词；引用的 BG png 1928 个 / BGM 2536 / 语音 4431 / 音效 6988 个都在导出资源的目录清单里，没找到的是文件本身就缺（BG 预制体目录只有 fbx、个别音效 / 语音）。
+- **没做 / 没验证**：角色（`Role1-3` = `Hero/H0xx/H0xx_Dialog` 预制体）——导出里只有 fbx 网格，预制体里的位置和 `RoleMotion`（`talkdown`、`Normal~talkup` …）怎么映射到 Spine 动画不在资源里；Spine 骨骼是 **4.1.23**（`Hero/H047/H047/H047.skel.asset` + `.atlas.asset` + png），播放器现有的运行时只有 3.6 / 3.8 / 4.0 / 4.2，没有 4.1；`CG/…` 的 Spine 场景同理；LINE 聊天剧情（`LineDrama.txt` / `LineDialog.txt`，230 段 / 1 万行，有分支）没接；背景的缩放 / 位置不知道（原样铺）；音效 / 语音是在这一行开始时放，实际时机不详。没有游戏截图对照。
+- 测试：`node scripts/dev/gal-arcrecord-selftest.mjs`（合成 Dialog.txt + Text：切段 / 坏字节 / 重复 id / 适配器 / containers / gal-layout；`ARC_SAMPLE=<…/Game 目录>` 时再把真实表整份切段 + 解析一遍）。

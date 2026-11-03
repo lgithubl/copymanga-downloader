@@ -37,7 +37,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / rscript / unity / mahotan / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / rscript / unity / mahotan / arcrecord / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -946,6 +946,28 @@ export const ADAPTER_RULES = {
     "headCenterY": 0.25,
     "transitionOut": 1,
     "transitionIn": 2
+  },
+  // arcrecord::dialog：ArcRecord_D（幻想天街）的脚本适配器（Dialog.txt 切出来的剧情 JSON → 场景）。抄自 web/library/gal/adapters/arcrecord-dialog.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'arcrecord::dialog': {
+    "resDir": "Game",
+    "language": "JPN",
+    "playerName": "主人公",
+    "audioExts": [
+      "wav",
+      "ogg",
+      "mp3"
+    ],
+    "imageExts": [
+      "png",
+      "jpg",
+      "jpeg"
+    ],
+    "skipSounds": [
+      "Sound/Dialog/Effect_Dialog"
+    ],
+    "stopMusic": [
+      "Sound/BGM/Blank"
+    ]
   },
   // artemis::ast：Artemis 家族的脚本适配器（.ast = Lua 表 → 场景）。抄自 web/library/gal/adapters/artemis-ast.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'artemis::ast': {
@@ -1961,6 +1983,29 @@ export const LAYOUTS = {
     cover: [],
     notes: ['.mhp 在第一次浏览时由服务端展开剧本（data/scripts 里的 JSON）；图 / 声音只在虚拟索引里，被请求时才从 ZIP 读出来（更新包覆盖底包）', '立绘按前端公式算（头对齐：mahotan-heads.json 里有头框的立绘；其余 bounds 撑满高度、脚对齐）；没有游戏截图对照，位置没验证；表情 / 光环 / 跳动 / 震动 / 眨眼特效没做；%player_name 用 userdata 的默认名字（主人公 / 主様），可以在适配器参数里改'],
   },
+  // ---- ArcRecord_D（幻想天街 Kuusoutengai，Unity 2018 Mono；导出的 Unity 资源 ArcRecordExport/Assets/Game/…）：game.id = arcrecord::<游戏>（任何以 arcrecord:: 开头的 id 都走这一项）。
+  //   目录：<base>/Game/{StaticData/（Dialog.txt = 剧情表、Text/<语言>.txt = 台词 / 说话人，`@` 分隔明文）, BG/*.png, Sound/{BGM,Dialog}/*.wav, Hero/H0xx/Sound/*.wav（角色语音）, Hero/H0xx/…（Spine 骨骼 + fbx 预制体）, CG/…（Spine 场景）}；base = 含 Game 的那一层（导出里是 ArcRecordExport/Assets）。
+  //   引擎（config.containers，format: arcdrama）把 Dialog.txt 按 DramaID 切成每段一个 JSON（带 Text 里的几种语言），展开到 <base>/arc/script/Dialog/<DramaID>.arcdrama；资源是磁盘上的普通文件（<base>/Game/…）。
+  arcrecord: {
+    title: 'ArcRecord_D（幻想天街）', kind: 'arcrecord', detector: 'arcrecord', autoOrder: 139.97, family: 'arcrecord::',   // 紧跟 mahotan，uviewer（通用）之前；探测时还要看 Dialog.txt 首行是 ID@DramaID
+    bases: ['ArcRecordExport/Assets', '*/ArcRecordExport/Assets', 'Assets', '*/Assets', ''], searchDepth: 4,
+    anchors: [['Game', 'StaticData', 'Dialog.txt']], siblings: [], markers: [],
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['Game'],
+    adapters: ['arcrecord::dialog'],
+    adapterOptions: { 'arcrecord::dialog': { resDir: { path: ['Game'] } } },
+    ruleTables: ['arcrecord::dialog'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},
+      limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
+      containers: { enabled: true, dir: 'arc', scan: ['Game/StaticData'], scriptDecoder: 'arcrecord-dialog', scriptExt: 'arcdrama', mode: 'hybrid', format: 'arcdrama', flat: false, rules: [{ match: '^Dialog\\.txt$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['arcdrama'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.arcdrama', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['Dialog.txt 在第一次浏览时由服务端按 DramaID 切成每段剧情一个 JSON（真实数据 1719 段、4 万多句，台词带 JPN / CHS / CHT / ENG）；台词语言在适配器参数 language 里选', '背景（BG/*.png）/ BGM / 音效 / 角色语音都有；角色立绘（Hero/H0xx 的 Spine + fbx 预制体）和 CG Spine 场景没做：预制体里的位置 / 动画映射不在导出资源里，Spine 版本是 4.1（播放器的运行时没有 4.1）；没有游戏截图对照'],
+  },
   // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
   //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；
   //   图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<档案里的路径>，如 arc/res/image/bg/bg01a.png），被请求时才解密取出。
@@ -2474,6 +2519,7 @@ const DETECTORS = {
   rscript: (scope) => detectRscript(scope),
   unity: (scope) => detectUnity(scope),
   mahotan: (scope) => detectMahotan(scope),
+  arcrecord: (scope) => detectArcrecord(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2731,8 +2777,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -3479,6 +3525,30 @@ async function detectMahotan(scope) {
   found.id = scope.gameId || `mahotan::${slug || 'game'}`
   found.kind = entry.kind || 'mahotan'
   logs.push(`MahotanArchive 根：${base || '.'}；${mhps.length} 个 .mhp（${mhps.slice(0, 6).join(' / ')}）；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// ---- ArcRecord_D：见 LAYOUTS.arcrecord。id：声明了 game.id 就用它（arcrecord::<游戏>），没声明 = arcrecord::<最外层目录名的小写字母数字>；没声明时要求 Dialog.txt 首行是 ID@DramaID…
+async function detectArcrecord(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  if (!declared && !(await markersOk(media, entry, base, declared))) return null
+  const dialog = path.join(media, ...splitRel(join(base, 'Game/StaticData/Dialog.txt')))
+  let ok = false
+  try { const h = await open(dialog, 'r'); try { const head = Buffer.alloc(64); const { bytesRead } = await h.read(head, 0, 64, 0); ok = /^(?:\xEF\xBB\xBF)?ID@DramaID@/.test(head.subarray(0, bytesRead).toString('latin1')) } finally { await h.close() } } catch { /* 读不了 = 不是 */ }
+  if (!ok) { if (declared) logs.push('ArcRecord_D：Game/StaticData/Dialog.txt 首行不是 ID@DramaID@…'); return null }
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const outer = splitRel(base)[0] || path.basename(path.resolve(media))
+  const slug = outer.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `arcrecord::${slug || 'game'}`
+  found.kind = entry.kind || 'arcrecord'
+  logs.push(`ArcRecord_D 根：${base || '.'}；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
 }

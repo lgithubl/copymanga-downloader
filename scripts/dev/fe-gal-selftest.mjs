@@ -82,8 +82,8 @@ check('导入页：元数据脚本 gal-layout 默认勾上（来自方案的 def
   await page.fill('#media-import-profile-config', JSON.stringify({ rootDir: '/data/keep-me', adapters: ['uviewer-csv'], defaultMetadataActions: ['gal-layout'], dryRun: true }))
   check('Gal 游戏下拉和「刷新 json」只在 Gal 导入方案里显示', await page.$eval('#gal-preset-row', (e) => !e.hidden))
   const games = await page.$$eval('#gal-preset option', (os) => os.map((o) => o.value))
-  check('下拉里有全部支持的游戏（含 misttrain）', ['uviewer', 'legeclo', 'monmusu', 'minashigo', 'girlscreation', 'tenkeiprdx', 'misttrain', 'advhd_lpsl', 'bgi', 'artemis', 'arcfam', 'krkr', 'rscript', 'unity', 'mahotan'].every((g) => games.includes(g)), games.join())
-  for (const [game, adapter, gameId = game] of [['girlscreation', 'girlscreation-tag'], ['misttrain', 'misttrain-json'], ['monmusu', 'renpy-monmusu'], ['advhd_lpsl', 'advhd::ws2', 'advhd::lpsl'], ['bgi', 'bgi::bs', 'bgi::game'], ['artemis', 'artemis::ast', 'artemis::game'], ['arcfam', 'arcfam::scre', 'arcfam::game'], ['krkr', 'krkr::scn', 'krkr::game'], ['rscript', 'rscript::gsc', 'rscript::game'], ['unity', 'unity::dsm', 'unity::game'], ['mahotan', 'mahotan::json', 'mahotan::game']]) {
+  check('下拉里有全部支持的游戏（含 misttrain）', ['uviewer', 'legeclo', 'monmusu', 'minashigo', 'girlscreation', 'tenkeiprdx', 'misttrain', 'advhd_lpsl', 'bgi', 'artemis', 'arcfam', 'krkr', 'rscript', 'unity', 'mahotan', 'arcrecord'].every((g) => games.includes(g)), games.join())
+  for (const [game, adapter, gameId = game] of [['girlscreation', 'girlscreation-tag'], ['misttrain', 'misttrain-json'], ['monmusu', 'renpy-monmusu'], ['advhd_lpsl', 'advhd::ws2', 'advhd::lpsl'], ['bgi', 'bgi::bs', 'bgi::game'], ['artemis', 'artemis::ast', 'artemis::game'], ['arcfam', 'arcfam::scre', 'arcfam::game'], ['krkr', 'krkr::scn', 'krkr::game'], ['rscript', 'rscript::gsc', 'rscript::game'], ['unity', 'unity::dsm', 'unity::game'], ['mahotan', 'mahotan::json', 'mahotan::game'], ['arcrecord', 'arcrecord::dialog', 'arcrecord::game']]) {
     await page.selectOption('#gal-preset', game)
     await page.click('#gal-preset-refresh')
     const json = JSON.parse(await page.$eval('#media-import-profile-config', (e) => e.value))

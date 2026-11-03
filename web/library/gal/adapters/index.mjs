@@ -9,6 +9,7 @@ import { bgiBsAdapter } from './bgi-bs.mjs'
 import { rscriptGscAdapter } from './rscript-gsc.mjs'
 import { unityDsmAdapter } from './unity-dsm.mjs'
 import { mahotanJsonAdapter } from './mahotan-json.mjs'
+import { arcrecordDialogAdapter } from './arcrecord-dialog.mjs'
 import { bokusenJsonAdapter } from './bokusen-json.mjs'
 import { girlsCreationTagAdapter } from './girlscreation-tag.mjs'
 import { grenzeXmlAdapter } from './grenze-xml.mjs'
@@ -45,6 +46,7 @@ registerGalAdapter(artemisAstAdapter)         // Artemis（artemis::ast）：con
 registerGalAdapter(rscriptGscAdapter)         // Liar-soft codeX RScript（rscript::gsc）：containers 从 scr.xfl 解出来 + 执行过的 {"format":"rscript-gsc/1"…} 事件流
 registerGalAdapter(unityDsmAdapter)           // Unity GameMaterial（unity::dsm）：containers 解密 data.dsm、按章节切好的 KAG 风格脚本（;//@dsm 头），独有写法
 registerGalAdapter(mahotanJsonAdapter)        // MahotanArchive（mahotan::json）：containers 从 .mhp 展开的 data/scripts/**.json（{"sceneId":… / {"id":…,"version":…,"frames":…），独有写法
+registerGalAdapter(arcrecordDialogAdapter)    // ArcRecord_D（arcrecord::dialog）：containers 从 StaticData/Dialog.txt 切出来的 {"format":"arcrecord-dialog/1"…}，独有写法
 registerGalAdapter(bgiBsAdapter)              // BGI / Ethornell（bgi::bs）：containers 从 BURIKO ARC20 解出来的 {"format":"bgi-bs/1"…} 事件流，独有写法
 registerGalAdapter(advhdWs2Adapter)           // WillPlus AdvHD（advhd::ws2）：containers 从 .arc 解出来的 {"format":"advhd-ws2/1"…} 指令流，独有写法
 registerGalAdapter(otogiJsonAdapter)          // Otogi Frontier R：{"Id":N,"Title":…,"MSceneDetails":[ / {"Id":N,"Description":…,"MAdultDetails":[（无扩展名的 JSON），独有写法
