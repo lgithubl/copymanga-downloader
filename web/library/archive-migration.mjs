@@ -75,6 +75,7 @@ export async function runLrrMigration({
     archives: 0,
     imported: 0,
     skippedExisting: 0,
+    skipReasons: {},
     skippedExtension: {},
     missingFile: 0,
     pathMismatch: 0,
@@ -88,7 +89,7 @@ export async function runLrrMigration({
     nonUtf8: { total: 0, found: 0, stillMissing: 0, byEncoding: {}, undecodable: 0, titleReplaced: 0, examples: [] },
     namespaces: [],          // 迁移前的标签命名空间分布（前 20），用来设计 tagMap
     tagMapExamples: [],      // tagMap 生效后的前后对比
-    examples: { missingFile: [], pathMismatch: [], noCover: [], failed: [], skippedExtension: [] },
+    examples: { missingFile: [], pathMismatch: [], noCover: [], failed: [], skippedExtension: [], skippedExisting: [] },
     idCheck: { sampled: 0, mismatched: 0, mismatches: [] },
     cancelled: false,
   }
@@ -155,6 +156,11 @@ export async function runLrrMigration({
           }
           if (!overwrite && await handler.internals.itemExists(key)) {
             report.skippedExisting += 1
+            // 和导入一样说明「已存在」是怎么回事（id 相同：同一个文件 / 内容相同的另一份 / id 冲突）
+            const why = await handler.internals.explainExisting(key, typeof zipPathArg === 'string' ? zipPathArg : rawDisplay)
+            report.skipReasons[why.reason] = (report.skipReasons[why.reason] || 0) + 1
+            const same = report.examples.skippedExisting.length
+            if (same < 30) report.examples.skippedExisting.push(`${shown.text} ← 已有条目「${why.existingTitle || ''}」${why.existingOrigin ? `（${why.existingOrigin}）` : ''}：${why.reason}${why.existingPath ? `；指向 ${why.existingPath}` : ''}`)
             return
           }
           const name = redisDecode(hash.name)

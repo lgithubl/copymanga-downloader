@@ -8198,6 +8198,7 @@ function formatArchiveJob(job) {
     lines.push(
       `Redis 键 ${p.redisKeys ?? 0} · 已处理档案 ${p.archives ?? 0}`,
       `${job.options?.dryRun ? '将导入' : '已导入'} ${p.imported ?? 0} · 已存在跳过 ${p.skippedExisting ?? 0} · 失败 ${p.failed ?? 0}`,
+      ...Object.entries(p.skipReasons || {}).sort((x, y) => y[1] - x[1]).map(([why, n]) => `  已存在跳过 ${n} 个：${why}`),
       `文件缺失 ${p.missingFile ?? 0} · 路径前缀不匹配 ${p.pathMismatch ?? 0} · 非 zip 跳过 ${skippedExt}`,
       `封面：已复制 ${p.coverCopied ?? 0} · 没有 ${p.noCover ?? 0} · 无标题 ${p.noTitle ?? 0} · 无标签 ${p.noTags ?? 0} · 标签总数 ${p.totalTags ?? 0}`,
       `ID 抽样校验：${p.idCheck?.sampled ?? 0} 个，不一致 ${p.idCheck?.mismatched ?? 0}`,
@@ -8216,7 +8217,13 @@ function formatArchiveJob(job) {
     }
     for (const entry of p.idCheck?.mismatches || []) lines.push(`  ID 不一致：${entry}`)
   } else {
-    lines.push(`扫描 ${p.scanned ?? 0} · 导入 ${p.imported ?? 0} · 已存在跳过 ${p.skipped ?? 0} · 失败 ${p.failed ?? 0}`)
+    lines.push(`扫描 ${p.scanned ?? 0} · ${job.options?.dryRun ? '将导入' : '导入'} ${p.imported ?? 0} · 已存在跳过 ${p.skipped ?? 0} · 失败 ${p.failed ?? 0}${p.limited ? ' · 已达限量' : ''}`)
+    const reasons = Object.entries(p.skipReasons || {}).sort((x, y) => y[1] - x[1])
+    if (reasons.length) {
+      lines.push('跳过原因（条目 id = 压缩包前 512000 字节的 SHA1，id 相同就算已存在）：', ...reasons.map(([why, n]) => `  ${n} 个：${why}`))
+      for (const e of (p.skipExamples || []).slice(0, 12)) lines.push(`  · ${e.file}`, `      已有条目 ${e.id.slice(0, 8)}「${e.existingTitle || ''}」${e.existingOrigin ? `（${e.existingOrigin}）` : ''}→ ${e.existingPath || '(无路径)'}${e.size != null && e.existingSize ? `  大小 ${e.size} / 已有 ${e.existingSize}` : ''}`)
+      if ((p.skipExamples || []).length > 12) lines.push(`  …… 还有 ${p.skipExamples.length - 12} 条示例在任务报告里（job.report.skipExamples）`)
+    }
     for (const entry of (p.errors || []).slice(0, 5)) lines.push(`  失败：${entry.file}：${entry.error}`)
   }
   return lines.join('\n')

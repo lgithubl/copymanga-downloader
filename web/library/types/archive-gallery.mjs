@@ -658,6 +658,25 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     }
   }
 
+  // 已存在条目和这次扫到的文件是什么关系（用在导入的「已存在跳过」说明里）
+  async function explainExisting(itemId, file) {
+    let existing
+    try { existing = await readItem(itemId) } catch (error) { return { reason: '条目 json 读不出来', detail: error.message } }
+    const existingFile = zipFileOf(existing)
+    const existingPath = Buffer.isBuffer(existingFile) ? existing.zip.path : existingFile
+    const origin = existing.origin?.lrr ? '迁移自 LANraragi' : existing.origin?.sourceFile ? '之前导入过' : '来源未知'
+    const base = { existingTitle: existing.title, existingPath, existingSize: existing.zip.size, existingOrigin: origin }
+    let current
+    try { current = await stat(file) } catch { current = null }
+    const sameFile = typeof existingFile === 'string' && path.resolve(existingFile) === path.resolve(file)
+    if (sameFile) return { reason: '同一个文件已经导入过（条目指向的就是这个路径）', size: current?.size, ...base }
+    let existingInfo = null
+    try { existingInfo = await stat(existingFile) } catch { /* 条目指向的 zip 不在了 */ }
+    if (!existingInfo) return { reason: '条目已存在，但它指向的 zip 已经不在原路径（这个文件是同内容的另一份）', size: current?.size, ...base }
+    if (current && existingInfo.size !== current.size) return { reason: `id 冲突：前 ${ID_SAMPLE_BYTES} 字节相同，但大小不同（可能是同一个包的不同版本 / 末尾内容不同）`, size: current.size, ...base }
+    return { reason: '内容相同的另一个文件已经导入过（id = 前 ' + ID_SAMPLE_BYTES + ' 字节的 SHA1 相同，大小也一样）', size: current?.size, ...base }
+  }
+
   // 从目录（或单个压缩包）导入：每个压缩包 mv 进受管目录并建一个条目。
   // onItems(batch) 每攒一批调用一次（服务端用它批量写标签库）；返回统计。
   // options：limit（最多新导入几个，0 = 不限）、dryRun（只统计，不 mv、不写）、zipFilenameEncoding（写进条目，读取时用）
@@ -667,7 +686,10 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     const encoding = String(options.zipFilenameEncoding || ENCODING).trim().toLowerCase()
     const source = path.resolve(String(sourcePath || ''))
     assertAllowedSource(source)
-    const stats = { scanned: 0, imported: 0, skipped: 0, failed: 0, errors: [], dryRun, limit, limited: false }
+    const stats = { scanned: 0, imported: 0, skipped: 0, failed: 0, errors: [], dryRun, limit, limited: false, skipReasons: {}, skipExamples: [] }
+    const exampleCap = dryRun ? 200 : 50   // 每个原因都至少留几条示例：总量封顶，先到先得，但每种原因最多占一半
+    const perReasonCap = Math.max(5, Math.floor(exampleCap / 2))
+    let explained = 0
     let batch = []
     const flush = async () => {
       if (!batch.length) return
@@ -683,6 +705,14 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
         const itemId = await computeArchiveId(file)
         if (await itemExists(itemId)) {
           stats.skipped += 1
+          // 为什么算「已存在」：条目 id = 压缩包前 ID_SAMPLE_BYTES 字节的 SHA1，id 一样就跳过；这里把「和谁冲突」讲清楚（最多详查 5000 个，免得几十万个压缩包全读 json）
+          if (explained < 5000) {
+            explained += 1
+            const why = await explainExisting(itemId, file)
+            stats.skipReasons[why.reason] = (stats.skipReasons[why.reason] || 0) + 1
+            const sameReason = stats.skipExamples.filter((entry) => entry.reason === why.reason).length
+            if (stats.skipExamples.length < exampleCap && sameReason < perReasonCap) stats.skipExamples.push({ file, id: itemId, ...why })
+          } else stats.skipReasons['未详查（超过 5000 个）'] = (stats.skipReasons['未详查（超过 5000 个）'] || 0) + 1
         } else if (dryRun) {
           stats.imported += 1   // 试运行里表示「将会导入」
         } else {
@@ -789,6 +819,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
       readItem,
       updateItem,
       itemExists,
+      explainExisting,
       hasCover,
       hasPreview,
       clearTagGroups,
