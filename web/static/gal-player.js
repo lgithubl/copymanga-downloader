@@ -47,6 +47,8 @@ export const GAL_SETTINGS = {
   slowKey: 'copymanga.gal.slow',                    // 静态画面 animation4 的降速倍率（1 = 不降速）
   slowDefault: 0.2,                                 // 原查看器写死的值
   slowMin: 0.05,
+  transColorKey: 'copymanga.gal.transColor',         // 译文颜色（#rrggbb；空 = 跟服务端设置 / 内置浅绿）
+  transColorDefault: '#9fe0c8',
   translateOnKey: 'copymanga.gal.translateOn',      // 工具栏「翻译」开关
   autoTranslateKey: 'copymanga.gal.autoTranslate',  // 自动播放等译文（阻塞翻页）
   translateBlockKey: 'copymanga.gal.translateBlockSec', // 阻塞最多几秒（0 = 一直等到译文好）
@@ -307,6 +309,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   blockInput.step = '1'
   blockInput.className = 'gal-set-number'
   blockInput.title = '自动播放等译文 / 等朗读的声音最多等几秒；0 = 一直等到好（失败 / 服务不可用时不会死等，直接放行）。自动翻译和朗读共用'
+  const colorInput = el('input')
+  colorInput.type = 'color'
+  colorInput.className = 'gal-set-color'
+  colorInput.title = '译文那一行的颜色（只改这台设备；「恢复默认」= 跟服务端设置 / 内置浅绿）'
+  const colorReset = btn('恢复默认', '清掉这台设备上的译文颜色，回到服务端设置的颜色（没设就是内置浅绿）', 'gal-set-color-reset')
+  const colorRow = el('label', 'gal-set-row')
+  colorRow.append(el('span', 'gal-set-label', '译文颜色'), colorInput, colorReset)
+  colorRow.hidden = !translate?.enabled
   const blockRow = el('label', 'gal-set-row')
   blockRow.append(el('span', 'gal-set-label', '阻塞最大'), blockInput, el('span', 'gal-set-value', '秒'))
   autoTransCtl.row.hidden = !translate?.enabled
@@ -338,7 +348,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // 分组标题用 ::before 画（data-title），不占子元素位置：每组里的行序号保持稳定
   const section = (title, ...rows) => { const d = el('div', 'gal-set-section'); d.dataset.title = title; d.append(...rows); return d }
   settings.append(
-    section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), immBtn, fsBtn),
+    section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), colorRow, immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
     section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow, ttsSourceRow, ttsVoicedCtl.row),
     section('画面', animRow, slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
@@ -426,6 +436,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   fastResumeCtl.input.addEventListener('change', () => { fastResume = fastResumeCtl.input.checked; try { localStorage.setItem(GAL_SETTINGS.fastResumeKey, fastResume ? '1' : '0') } catch { /* 存不了就只在这一页生效 */ } })
   autoNextCtl.input.addEventListener('change', () => { autoNext = autoNextCtl.input.checked; try { localStorage.setItem(GAL_SETTINGS.autoNextKey, autoNext ? '1' : '0') } catch { /* 同上 */ } })
   // ---------- 翻译（原文永远先显示，译文在后台翻好了再填；见 gal-translate.js / library/gal-translate.mjs）----------
+  // 译文颜色：本机设置（localStorage）优先，其次服务端设置（translate.color），最后是样式里的内置浅绿；用 CSS 变量，改了不用重绘
+  const colorOk = (v) => /^#[0-9a-fA-F]{6}$/.test(String(v || ''))
+  const savedColor = () => { try { const v = localStorage.getItem(GAL_SETTINGS.transColorKey); return colorOk(v) ? v.toLowerCase() : '' } catch { return '' } }
+  const applyTransColor = () => {
+    const color = savedColor() || (colorOk(translate?.color) ? String(translate.color).toLowerCase() : '')
+    if (color) transEl.style.setProperty('--gal-trans-color', color); else transEl.style.removeProperty('--gal-trans-color')
+    colorInput.value = color || GAL_SETTINGS.transColorDefault
+  }
+  colorInput.addEventListener('input', () => { try { localStorage.setItem(GAL_SETTINGS.transColorKey, colorInput.value) } catch { /* 存不了就只对这次有效 */ } applyTransColor() })
+  colorReset.addEventListener('click', (event) => { event.preventDefault(); try { localStorage.removeItem(GAL_SETTINGS.transColorKey) } catch { /* 同上 */ } applyTransColor() })
+  applyTransColor()
   let transOn = false
   let autoTrans = loadFlag(GAL_SETTINGS.autoTranslateKey)
   let blockSec = loadNumber(GAL_SETTINGS.translateBlockKey, GAL_SETTINGS.translateBlockDefault, 0, GAL_SETTINGS.translateBlockMax)

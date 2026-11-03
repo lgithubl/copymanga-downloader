@@ -65,7 +65,7 @@ let browser
 try {
   // 翻译配置：开、批 5、上文 2、预加载 12、并发 1
   const cfg = await (await fetch(`${base}/api/config`)).json()
-  await fetch(`${base}/api/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: J({ ...cfg, galTranslateEnabled: true, galTranslateApiBase: `http://127.0.0.1:${llmServer.address().port}`, galTranslateBatchSize: 5, galTranslateContextSize: 2, galTranslateLookahead: 12, galTranslateMaxConcurrency: 1, galTranslateRetryCount: 0 }) })
+  await fetch(`${base}/api/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: J({ ...cfg, galTranslateEnabled: true, galTranslateColor: '#ff8800', galTranslateApiBase: `http://127.0.0.1:${llmServer.address().port}`, galTranslateBatchSize: 5, galTranslateContextSize: 2, galTranslateLookahead: 12, galTranslateMaxConcurrency: 1, galTranslateRetryCount: 0 }) })
   const form = new FormData()
   form.set('importProfile', 'gal-import'); form.set('sourcePath', media)
   form.set('profileOptions', J({ adapters: ['uviewer-csv'] })); form.set('metadataActionIds', 'gal-layout')
@@ -100,6 +100,16 @@ try {
   check('点翻译：原文（甲1）一直在，译文行出现（先「翻译中…」）', (await text()).includes('甲1') && ((await trans()).text === '翻译中…' || (await trans()).text.startsWith('译:')), J(await trans()))
   await page.waitForFunction(() => /^译:/.test(document.querySelector('.gal-trans')?.textContent || ''))
   check('译文到了：显示「译:甲1」，不再是等待样式；原文没变', (await trans()).text === '译:甲1' && !(await trans()).wait && (await text()).includes('甲1'), J(await trans()))
+  // ---- 1b. 译文颜色：服务端默认（#ff8800）→ 设置里按设备改 → 恢复默认 ----
+  const colorOf = () => page.$eval('.gal-trans', (e) => getComputedStyle(e).color)
+  check('译文颜色：没有本机设置时用服务端设置的颜色 #ff8800（rgb(255, 136, 0)）', (await colorOf()) === 'rgb(255, 136, 0)', await colorOf())
+  await page.click('.gal-cfg')
+  await page.$eval('.gal-set-color', (input) => { input.value = '#12ab34'; input.dispatchEvent(new Event('input', { bubbles: true })) })
+  check('译文颜色：设置 → 显示 里改成 #12ab34，译文立刻变色，并存进本机（copymanga.gal.transColor）', (await colorOf()) === 'rgb(18, 171, 52)' && (await page.evaluate(() => localStorage.getItem('copymanga.gal.transColor'))) === '#12ab34', await colorOf())
+  await page.reload(); await page.waitForSelector('.gal-player .gal-stage'); await page.waitForFunction(() => /译:/.test(document.querySelector('.gal-trans')?.textContent || ''))
+  check('译文颜色：刷新后还是本机设置的颜色', (await colorOf()) === 'rgb(18, 171, 52)', await colorOf())
+  await page.click('.gal-cfg'); await page.click('.gal-set-color-reset')
+  check('译文颜色：恢复默认 = 清掉本机设置，回到服务端的 #ff8800', (await colorOf()) === 'rgb(255, 136, 0)' && (await page.evaluate(() => localStorage.getItem('copymanga.gal.transColor'))) === null, await colorOf())
   // ---- 2. 预加载窗口 + 并发上限 ----
   await sleep(1500)
   const asked = llm.calls.flatMap((c) => c.texts)

@@ -4851,7 +4851,7 @@ h2 {
 
 /* 译文：原文下面单独一行（翻译开着才出现）；没翻好时淡一点 */
 .gal-trans {
-  color: #9fe0c8;
+  color: var(--gal-trans-color, #9fe0c8);
   font-size: 0.82em;
   line-height: 1.5;
   max-height: 4.6em;
@@ -4885,4 +4885,17 @@ h2 {
 
 .gal-set-select option {
   color: #000;
+}
+
+.gal-set-color {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  height: 1.8em;
+  padding: 0;
+  width: 3em;
+}
+
+.gal-set-color-reset {
+  margin-left: 0.5em;
 }

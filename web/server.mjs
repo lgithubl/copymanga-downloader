@@ -398,6 +398,7 @@ function defaultConfig() {
     galTranslatePrompt: '',   // 空 = 内置的「保持口语化和角色语气」提示词
     galTranslateSourceLanguage: 'ja',
     galTranslateTargetLanguage: 'zh',
+    galTranslateColor: '',
     galTranslateBatchSize: 15,
     galTranslateContextSize: 2,
     galTranslateMaxConcurrency: 1,
@@ -567,6 +568,7 @@ function normalizeConfig(value) {
     galTranslatePrompt: String(value?.galTranslatePrompt ?? '').slice(0, 4000),
     galTranslateSourceLanguage: String(value?.galTranslateSourceLanguage || defaults.galTranslateSourceLanguage).trim().slice(0, 12),
     galTranslateTargetLanguage: String(value?.galTranslateTargetLanguage || defaults.galTranslateTargetLanguage).trim().slice(0, 12),
+    galTranslateColor: /^#[0-9a-fA-F]{6}$/.test(String(value?.galTranslateColor ?? '').trim()) ? String(value.galTranslateColor).trim().toLowerCase() : '',
     galTranslateBatchSize: clampNumber(value?.galTranslateBatchSize, 1, 50, defaults.galTranslateBatchSize),
     galTranslateContextSize: clampNumber(value?.galTranslateContextSize, 0, 10, defaults.galTranslateContextSize),
     galTranslateMaxConcurrency: clampNumber(value?.galTranslateMaxConcurrency, 1, 8, defaults.galTranslateMaxConcurrency),

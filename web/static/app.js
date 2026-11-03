@@ -272,6 +272,7 @@ const els = {
   configGalTranslateTarget: document.querySelector('#config-gal-translate-target'),
   configGalTranslatePrompt: document.querySelector('#config-gal-translate-prompt'),
   configGalTranslateBatch: document.querySelector('#config-gal-translate-batch'),
+  configGalTranslateColor: document.querySelector('#config-gal-translate-color'),
   configGalTranslateContext: document.querySelector('#config-gal-translate-context'),
   configGalTranslateConcurrency: document.querySelector('#config-gal-translate-concurrency'),
   configGalTranslateLookahead: document.querySelector('#config-gal-translate-lookahead'),
@@ -1515,6 +1516,7 @@ function applyConfig(config) {
   els.configGalTranslateTarget.value = config.galTranslateTargetLanguage || 'zh'
   els.configGalTranslatePrompt.value = config.galTranslatePrompt || ''
   els.configGalTranslateBatch.value = config.galTranslateBatchSize || 15
+  els.configGalTranslateColor.value = config.galTranslateColor || ''
   els.configGalTranslateContext.value = config.galTranslateContextSize ?? 2
   els.configGalTranslateConcurrency.value = config.galTranslateMaxConcurrency || 1
   els.configGalTranslateLookahead.value = config.galTranslateLookahead ?? 40
@@ -4399,7 +4401,7 @@ function renderGal(reader) {
     // 台词翻译（设置页 → Gal 翻译；没启用 / 没填模型地址 = 播放器里不出「翻译」按钮）
     // 台词朗读（设置页 → Gal 朗读；TTS 服务地址用「朗读（TTS）」那组；没启用 = 播放器里不出「朗读」按钮）
     tts: appConfig?.galTtsEnabled && appConfig?.epubTtsApiBase ? { enabled: true, lookahead: appConfig.galTtsLookahead ?? 6, sourceLang: appConfig.galTranslateSourceLanguage || 'ja', targetLang: appConfig.galTranslateTargetLanguage || 'zh' } : null,
-    translate: appConfig?.galTranslateEnabled && appConfig?.galTranslateApiBase ? { enabled: true, lookahead: appConfig.galTranslateLookahead ?? 40, batch: appConfig.galTranslateBatchSize ?? 15, context: appConfig.galTranslateContextSize ?? 2 } : null,
+    translate: appConfig?.galTranslateEnabled && appConfig?.galTranslateApiBase ? { enabled: true, lookahead: appConfig.galTranslateLookahead ?? 40, batch: appConfig.galTranslateBatchSize ?? 15, context: appConfig.galTranslateContextSize ?? 2, color: appConfig.galTranslateColor || '' } : null,
     // 「更多 → 显示马赛克层」改了之后：按新的设置重取当前这份脚本
     onReload: () => { galNavigate(reader, reader.node?.id ?? reader.section?.sectionId ?? '', 'self').catch((error) => alert(error.message)) },
     onStep: (step, total) => {
@@ -8780,6 +8782,7 @@ els.configSave.addEventListener('click', async () => {
         galTranslateSourceLanguage: els.configGalTranslateSource.value,
         galTranslateTargetLanguage: els.configGalTranslateTarget.value,
         galTranslatePrompt: els.configGalTranslatePrompt.value,
+        galTranslateColor: els.configGalTranslateColor.value.trim(),
         galTranslateBatchSize: Number(els.configGalTranslateBatch.value),
         galTranslateContextSize: Number(els.configGalTranslateContext.value),
         galTranslateMaxConcurrency: Number(els.configGalTranslateConcurrency.value),
