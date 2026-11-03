@@ -4923,6 +4923,7 @@ h2 {
 .gal-diag-table-wrap { max-height: 38vh; overflow: auto; }
 .gal-diag-table { border-collapse: collapse; font-size: 12px; width: 100%; }
 .gal-diag-table th, .gal-diag-table td { border: 1px solid var(--site-border); overflow-wrap: anywhere; padding: 3px 6px; text-align: left; vertical-align: top; }
+.gal-diag-preview { background: #0003; display: block; max-height: 110px; max-width: 120px; object-fit: contain; }
 .gal-diag-table th { background: var(--site-control); position: sticky; top: 0; }
 .gal-diag-notes { color: var(--site-muted); font-size: 12px; margin: 0; padding-left: 1.2em; }
 .gal-diag-actions { display: flex; gap: 8px; }

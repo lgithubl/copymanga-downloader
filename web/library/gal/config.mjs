@@ -119,6 +119,7 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   // 缩略图黑名单（轮播 / 封面的每一张候选图都过一遍，命中就不要，换下一张；每个游戏自己配）：[{ match, minMB, maxMB, minWidth, minHeight, maxWidth, maxHeight }]（最多 10 条）
   //   一条规则里写了几个条件就要全部满足才算命中（AND）；规则之间是 OR：{ minMB: 1.3 } = 文件小于 1.3MB 的丢掉；{ match: 'cha', minWidth: 800 } = 路径带 cha 且宽小于 800 的丢掉（min* = 小于它丢，max* = 大于它丢）
   //   match 正则（对图片路径，不分大小写）；minMB / maxMB：文件大小小于 / 大于它就命中（MB，可以小数；虚拟容器里的图按转成 PNG 之后的大小）；minWidth / minHeight / maxWidth / maxHeight：图片尺寸（像素，认 PNG / JPEG / WebP；读不出尺寸的图这几个条件当不命中）
+  //   minStoredMB / maxStoredMB：解压前（容器里的原始）大小小于 / 大于它就命中（MB；磁盘上本来就有的图 = 文件大小；量不出来 = 不命中）。这两个和 match 一样不用解压；只有写了 minMB / maxMB / 宽高的规则才需要先解压——没有这样的规则时，一阶段（选候选图）完全不解压容器里的图
   thumbSkip: [],
   thumbFallback: { ...DEFAULT_THUMB_FALLBACK, prefer: [...DEFAULT_THUMB_FALLBACK.prefer], skip: [...DEFAULT_THUMB_FALLBACK.skip], only: [] },
   // 目录卡片的封面（目录卡片没有 thumbSources / dirThumbs 规则给图时，用它里面脚本的封面；现在只有声明了 sceneThumbs 的适配器（utage-book）的目录会用）：
@@ -403,7 +404,7 @@ export function normalizeGalConfigWithWarnings(raw) {
   // thumbSkip：缩略图黑名单（见 DEFAULT_GAL_CONFIG 里的说明）
   const thumbSkip = []
   if (v.thumbSkip !== undefined && !Array.isArray(v.thumbSkip)) warn('thumbSkip', '不是数组，不过滤', v.thumbSkip)
-  const SKIP_NUMS = ['minMB', 'maxMB', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight']
+  const SKIP_NUMS = ['minStoredMB', 'maxStoredMB', 'minMB', 'maxMB', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight']
   for (const rule of Array.isArray(v.thumbSkip) ? v.thumbSkip.slice(0, 10) : []) {
     if (!isPlainObject(rule)) { warn('thumbSkip', '这一项不是对象，已丢掉', rule); continue }
     for (const key of Object.keys(rule)) if (key !== 'match' && !SKIP_NUMS.includes(key)) warn('thumbSkip', `不认识的字段 ${key}，已丢掉`, key)

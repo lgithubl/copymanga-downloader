@@ -74,7 +74,7 @@ try {
     engine.setTrace(null)
     const small = trace.find((r) => /small_bg/.test(r.candidate))
     const bigRow = trace.find((r) => /big_bg/.test(r.candidate))
-    check('诊断 trace：小图 = 丢掉（原因写了 thumbSkip[0] 和大小）、容器内大小来自 storedSize 钩子、有宽高；大图 = 留下', trace.length === 2 && small && !small.kept && /thumbSkip\[0\]/.test(small.reason) && small.stored === 123 && small.dims?.width === 40 && bigRow?.kept === true && bigRow.size > 2 * 1024 * 1024 && bigRow.stored === null, J(trace))
+    check('诊断 trace：小图 = 丢掉（原因写了 thumbSkip[0] 和大小）、容器内大小来自 storedSize 钩子、有宽高；大图（磁盘文件）解压前大小 = 文件大小、留下', trace.length === 2 && small && !small.kept && /thumbSkip\[0\]/.test(small.reason) && small.stored === 123 && small.dims?.width === 40 && bigRow?.kept === true && bigRow.size > 2 * 1024 * 1024 && bigRow.stored === bigRow.size, J(trace))   // 磁盘上本来就有的图：解压前大小 = 文件大小
     const after = []
     await engine.addPaths(new Map(), ['img/cha_wide.png'], 'test', after)
     check('trace 关掉后不再记录（平时没有额外开销）', trace.length === 2)
@@ -82,6 +82,37 @@ try {
   const sz = await imageSizeOf(path.join(media, 'img/cha_wide.png'))
   check('imageSizeOf：PNG 宽高（只读文件头）；不是图 = null', sz.width === 900 && sz.height === 20 && (await imageSizeOf(path.join(work, 'nope'))) === null)
 } finally { await rm(work, { recursive: true, force: true }) }
+
+
+// ---- 一阶段什么时候解压：只有「通过了便宜条件、还有要解压才能量的条件」的容器图才会取出来 ----
+{
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'thumb-plan-'))
+  try {
+    const sizes = { 'v/tiny.png': 100 * 1024, 'v/mid.png': 600 * 1024, 'v/huge.png': 3 * 1024 * 1024, 'v/unknown.png': null }
+    const png = (w, h) => encodePng(w, h, 4, Buffer.alloc(w * h * 4, 7))
+    const run = async (thumbSkip, files) => {
+      const { config } = normalizeGalConfigWithWarnings({ thumbSkip })
+      let extracted = 0
+      const resolveAsset = async (rel) => path.join(dir, ...rel.split('/'))   // 容器里的图：「将来落盘的路径」，磁盘上还没有
+      const materialize = async (rel) => { extracted += 1; const abs = path.join(dir, ...rel.split('/')); await mkdir(path.dirname(abs), { recursive: true }); await writeFile(abs, png(rel.includes('huge') ? 900 : 300, 20)); return abs }
+      const engine = createThumbEngine({ mediaDir: dir, config, resolveAsset, materialize, storedSize: async (rel) => sizes[rel] ?? null })
+      const out = new Map(); const why = []
+      await engine.addPaths(out, files, 'test', why)
+      return { names: [...out.values()].map((v) => v.split('/').pop()), extracted, why }
+    }
+    const all = Object.keys(sizes)
+    let r = await run([], all)
+    check('没配 thumbSkip：一阶段不解压', r.names.length === 4 && r.extracted === 0, J(r))
+    r = await run([{ match: 'tiny' }], all)
+    check('只有 match 规则：路径命中的直接丢，其余也不解压（以前只要配了规则就全部解压）', J(r.names.sort()) === J(['huge.png', 'mid.png', 'unknown.png']) && r.extracted === 0, J(r))
+    r = await run([{ minStoredMB: 0.5 }], all)
+    check('只有 minStoredMB：解压前大小 < 0.5MB 的丢掉（tiny），量不出来的（unknown）不过滤，全程不解压', J(r.names.sort()) === J(['huge.png', 'mid.png', 'unknown.png']) && r.extracted === 0 && r.why.some((w) => /解压前 0\.10MB < 0\.5MB/.test(w)), J(r))
+    r = await run([{ maxStoredMB: 2 }], all)
+    check('maxStoredMB：解压前大小 > 2MB 的丢掉（huge），不解压', J(r.names.sort()) === J(['mid.png', 'tiny.png', 'unknown.png']) && r.extracted === 0, J(r))
+    r = await run([{ minStoredMB: 0.5, minWidth: 800 }], all)
+    check('混合规则（解压前 < 0.5MB 且 宽 < 800，AND）：只有解压前大小通过的图（tiny）才解压去量宽度（宽 300 < 800 → 丢）；mid / huge / 量不出来的先被便宜条件排除，不解压', J(r.names.sort()) === J(['huge.png', 'mid.png', 'unknown.png']) && r.extracted === 1 && r.why.length === 1 && /tiny/.test(r.why[0]), J(r))
+  } finally { await rm(dir, { recursive: true, force: true }) }
+}
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

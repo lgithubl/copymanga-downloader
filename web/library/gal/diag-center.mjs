@@ -1,6 +1,7 @@
 // 诊断中心（服务端）：每个诊断是一条注册项 { id, title, description, scope, cost, params, run(ctx, params) }。
 //   · 列出来（list）不算任何东西；只有用户在诊断窗口里点了某一项才 run（列表页的小按钮只负责打开窗口）
 //   · scope：card（某张卡片，要带 node）/ item（整个游戏条目）/ global（整个库）；cost：light / medium / heavy（界面上标出来，heavy 会先确认）
+//   · 单元格可以是字符串，也可以是 { image: <资源路径> }（界面按卡片缩略图的接口画一张小预览图，点开看大图；复制成文本时写 [图]）
 //   · 结果统一成 { summary, sections: [{ title, columns, rows }], notes }：界面只写一份渲染（表格 + 复制成文本 + 下载 JSON），新增诊断不用改界面
 import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -44,11 +45,11 @@ export const DIAGNOSTICS = [
       const kept = r.rows.filter((x) => x.kept).length
       const sections = [{
         title: `候选图（共 ${r.total} 个，显示前 ${r.rows.length} 个）`,
-        columns: ['来源', '路径', '容器内大小', '转换后大小', '宽×高', '结果', '原因'],
-        rows: r.rows.map((x) => [x.from, x.candidate, fmtBytes(x.stored), fmtBytes(x.size), x.dims ? `${x.dims.width}×${x.dims.height}` : '—', x.kept ? '留下' : '丢掉', x.reason || '']),
+        columns: ['预览', '来源', '路径', '容器内大小', '转换后大小', '宽×高', '结果', '原因'],
+        rows: r.rows.map((x) => [{ image: x.candidate }, x.from, x.candidate, fmtBytes(x.stored), fmtBytes(x.size), x.dims ? `${x.dims.width}×${x.dims.height}` : '—', x.kept ? '留下' : '丢掉', x.reason || '']),
       }]
       sections.push({ title: '当前 thumbSkip 规则', columns: ['#', '规则'], rows: (r.skipRules || []).length ? r.skipRules.map((rule, i) => [String(i + 1), JSON.stringify(rule)]) : [['—', '没有配置（不过滤）']] })
-      if (r.thumbs.length) sections.push({ title: '最后给卡片的缩略图', columns: ['#', '路径'], rows: r.thumbs.map((t, i) => [String(i + 1), t]) })
+      if (r.thumbs.length) sections.push({ title: '最后给卡片的缩略图', columns: ['#', '预览', '路径'], rows: r.thumbs.map((t, i) => [String(i + 1), { image: t }, t]) })
       return { summary: `适配器 ${r.adapterId || '—'}；候选 ${r.total} 个，留下 ${kept} 个、丢掉 ${r.rows.length - kept} 个（只统计显示的）；卡片最终 ${r.thumbs.length} 张`, sections, notes: r.why.length ? r.why : [] }
     },
   },
@@ -134,7 +135,7 @@ export function diagnosticText(title, result) {
   const lines = [`# ${title}`, result.summary || '']
   for (const section of result.sections || []) {
     lines.push('', `## ${section.title}`, section.columns.join(' | '))
-    for (const row of section.rows) lines.push(row.join(' | '))
+    for (const row of section.rows) lines.push(row.map((cell) => (cell && typeof cell === 'object' && 'image' in cell ? '[图]' : cell)).join(' | '))
   }
   if (result.notes?.length) lines.push('', '## 备注', ...result.notes.map((n) => `- ${n}`))
   return lines.join('\n')

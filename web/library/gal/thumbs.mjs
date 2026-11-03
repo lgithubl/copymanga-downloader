@@ -132,18 +132,44 @@ export async function imageSizeOf(file) {
 }
 const MIB = 1024 * 1024
 const skipCache = new Map()   // 真实路径|mtime|大小 → { size, dims }
-// 命中黑名单的原因（没命中 = ''）：rules = config.thumbSkip 编译好的（match 变成 re）；一条规则里写了的条件要全部满足
-export async function thumbSkipReason(rules, real, candidate) {
+// 规则里的条件分两类：便宜的（match 路径正则、minStoredMB / maxStoredMB 解压前大小）不用解压就能判断；
+// 要解压的（minMB / maxMB 转换后大小、宽高）必须先把图取出来转好格式才能量。一阶段只在「有规则还需要这些」时才解压。
+const EXPENSIVE = ['minMB', 'maxMB', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight']
+export const ruleNeedsExtract = (r) => EXPENSIVE.some((k) => r[k] !== undefined)
+// 便宜条件：{ ok: 全部满足, parts: 命中说明 }。stored = 解压前大小（容器里的原始大小 / 磁盘文件大小；null = 量不出来 → 写了解压前大小条件的规则当作不命中，不过滤）
+function cheapCheck(r, candidate, stored) {
+  const parts = []
+  if (r.re) { if (r.re.test(candidate)) parts.push(`路径匹配 /${r.match}/`); else return { ok: false, parts } }
+  if (r.minStoredMB !== undefined) { if (stored !== null && stored < r.minStoredMB * MIB) parts.push(`解压前 ${(stored / MIB).toFixed(2)}MB < ${r.minStoredMB}MB`); else return { ok: false, parts } }
+  if (r.maxStoredMB !== undefined) { if (stored !== null && stored > r.maxStoredMB * MIB) parts.push(`解压前 ${(stored / MIB).toFixed(2)}MB > ${r.maxStoredMB}MB`); else return { ok: false, parts } }
+  return { ok: true, parts }
+}
+// 第一步（不解压）：只看便宜条件。reason = 已经确定要丢；needExtract = 还有规则的便宜条件通过了、剩下的条件要解压后才能判断；alive = 那些规则（带它的序号）
+export function planSkip(rules, candidate, stored = null) {
+  const alive = []
+  for (const [i, r] of rules.entries()) {
+    const { ok, parts } = cheapCheck(r, candidate, stored)
+    if (!ok) continue
+    if (!ruleNeedsExtract(r)) return { reason: `命中 thumbSkip[${i}]（${parts.join('，')}）`, needExtract: false, alive: [] }
+    alive.push({ rule: r, index: i })
+  }
+  return { reason: '', needExtract: alive.length > 0, alive }
+}
+// 第二步（已经取出来了）：量转换后的大小 / 宽高，判断 alive 里的规则（也可以直接传整张规则表 + 不传 stored：旧调用方式）
+export async function thumbSkipReason(rules, real, candidate, stored = null) {
   if (!rules.length) return ''
   let info
   try { info = await stat(real) } catch { return '' }
   const key = `${real}|${info.mtimeMs}|${info.size}`
   let cached = skipCache.get(key)
   if (!cached) { cached = { size: info.size, dims: undefined }; skipCache.set(key, cached); trim(skipCache, 5000) }
-  for (const [i, r] of rules.entries()) {
-    const parts = []
+  for (const [n, entry] of rules.entries()) {
+    const r = entry.rule || entry
+    const i = entry.rule ? entry.index : n
+    const cheap = cheapCheck(r, candidate, stored)
+    if (!cheap.ok) continue
+    const parts = [...cheap.parts]
     let ok = true
-    if (r.re) { if (r.re.test(candidate)) parts.push(`路径匹配 /${r.match}/`); else ok = false }
     if (ok && r.minMB !== undefined) { if (cached.size < r.minMB * MIB) parts.push(`${(cached.size / MIB).toFixed(2)}MB < ${r.minMB}MB`); else ok = false }
     if (ok && r.maxMB !== undefined) { if (cached.size > r.maxMB * MIB) parts.push(`${(cached.size / MIB).toFixed(2)}MB > ${r.maxMB}MB`); else ok = false }
     if (ok && ['minWidth', 'minHeight', 'maxWidth', 'maxHeight'].some((k) => r[k] !== undefined)) {
@@ -163,7 +189,7 @@ export async function thumbSkipReason(rules, real, candidate) {
 }
 
 // materialize(rel) → 真实文件路径（可选）：容器（BGI / krkr 的 .arc / .xp3）里还没解压的图，resolveAsset 只给「将来落盘的路径」（磁盘上还没有）；
-// 配了 thumbSkip 时要量大小 / 尺寸就得先把它取出来（只对候选图做，每个引擎最多 MATERIALIZE_BUDGET 张，超了的当作量不出来、不过滤）
+// 配了需要「转换后大小 / 宽高」的 thumbSkip 规则时，通过了便宜条件（路径 / 解压前大小）的候选图才取出来量（每个引擎最多 MATERIALIZE_BUDGET 张，超了的当作量不出来、不过滤）；没有这类规则就不解压
 const MATERIALIZE_BUDGET = 200
 // storedSize(rel) → 容器里这张图的原始大小（可选，只有诊断用）；trace 开着时（setTrace(数组)）addPaths 把每个候选的处理过程记进去（诊断用，平时是 null）
 export function createThumbEngine({ mediaDir, config, resolveAsset, materialize = null, storedSize = null }) {
@@ -253,16 +279,25 @@ export function createThumbEngine({ mediaDir, config, resolveAsset, materialize 
           const key = typeof real === 'string' ? real : one
           if (out.has(key)) continue
           const row = trace ? { from, candidate: one, file: typeof real === 'string' ? real : '', stored: null, size: null, dims: null, kept: true, reason: '' } : null
-          if (row && storedSize) { try { row.stored = (await storedSize(one)) ?? null } catch { /* 不是容器里的图 */ } }
+          let stored = null   // 解压前大小：容器里的原始大小；磁盘上本来就有的图 = 文件大小
+          const usesStored = skipRules.some((r) => r.minStoredMB !== undefined || r.maxStoredMB !== undefined)
+          if ((usesStored || row) && storedSize) { try { stored = (await storedSize(one)) ?? null } catch { /* 不是容器里的图 */ } }
           if ((skipRules.length || row) && typeof real === 'string') {
-            let file = real
-            if (!(await stat(real).then(() => true, () => false))) {   // 还在容器里没解压：先取出来再量
-              file = ''
-              if (materialize && (materializeLeft > 0 || (row && !skipRules.length))) { if (skipRules.length) materializeLeft -= 1; try { const got = await materialize(one); if (typeof got === 'string') file = got } catch { /* 取不出来：不过滤 */ } }
+            const onDisk = await stat(real).then((info) => info, () => null)
+            if (stored === null && onDisk) stored = onDisk.size
+            if (row) row.stored = stored
+            // 第一步：只看便宜的条件（路径 / 解压前大小），不解压；没有规则还需要「转换后大小 / 宽高」就到此为止，一阶段不解压
+            const plan = skipRules.length ? planSkip(skipRules, one, stored) : { reason: '', needExtract: false, alive: [] }
+            let reason = plan.reason
+            let file = onDisk ? real : ''
+            // 第二步：要量转换后的大小 / 宽高（或诊断要显示）才把容器里的图取出来
+            if (!reason && (plan.needExtract || row) && !onDisk) {
+              const spend = plan.needExtract   // 诊断自己要看的不占一阶段的名额
+              if (materialize && (!spend || materializeLeft > 0)) { if (spend) materializeLeft -= 1; try { const got = await materialize(one); if (typeof got === 'string') file = got } catch { /* 取不出来：不过滤 */ } }
               else if (materialize) why.push(`${from}：${one} → 解压名额用完（${MATERIALIZE_BUDGET}），没法量大小，不过滤`)
             }
             if (row && file) { try { row.size = (await stat(file)).size; row.dims = await imageSizeOf(file) } catch { /* 量不出来 */ } }
-            const reason = skipRules.length && file ? await thumbSkipReason(skipRules, file, one) : ''
+            if (!reason && plan.needExtract && file) reason = await thumbSkipReason(plan.alive, file, one, stored)
             if (reason) { why.push(`${from}：${one} → ${reason}，跳过`); if (row) { row.kept = false; row.reason = reason; trace.push(row) } continue }
           }
           if (row) trace.push(row)

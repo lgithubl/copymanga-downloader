@@ -312,7 +312,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   diagBox.addEventListener('change', () => { writePref(PREF_DIAG, diagBox.checked ? 'on' : ''); keepMenuOpen = node.viewBase; go(node.id) })
   moreMenu.append(field('诊断按钮', diagBox))
   const diagOn = () => readPref(PREF_DIAG) === 'on'
-  const diagDialog = createDiagnosticsDialog({ apiBase })
+  const diagDialog = createDiagnosticsDialog({ apiBase, resourceBase: reader.resourceBase })
   const immBtn = el('button', 'gal-browse-imm', '沉浸')
   immBtn.type = 'button'
   immBtn.title = '沉浸模式（I）'

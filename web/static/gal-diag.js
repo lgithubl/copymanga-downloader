@@ -1,3 +1,4 @@
+import { thumbUrl } from './thumb-cycle.js'
 // 诊断中心（浏览页的弹框）：列表页卡片上的小按钮只负责「打开」这个窗口；窗口里列出支持的诊断，点了「运行」才请求服务端计算。
 //   · 列出：GET <apiBase>/diagnostics?scope=card（只返回名字 / 说明 / 开销 / 参数，不计算）
 //   · 运行：POST <apiBase>/diagnostics/<id>  { node: { type, id }, params }  → { summary, sections: [{ title, columns, rows }], notes, text, tookMs }
@@ -11,7 +12,8 @@ function el(tag, className, text) {
 }
 const COST = { light: ['轻', '很快，基本不读文件'], medium: ['中', '会读文件 / 解压，可能要几秒'], heavy: ['重', '会遍历或解压很多文件，可能很慢'] }
 
-export function createDiagnosticsDialog({ apiBase, fetchImpl = (...args) => fetch(...args) }) {
+export function createDiagnosticsDialog({ apiBase, resourceBase = '', fetchImpl = (...args) => fetch(...args) }) {
+  const resBase = resourceBase || `${apiBase}/resource`
   let overlay = null
   let controller = null
 
@@ -34,7 +36,17 @@ export function createDiagnosticsDialog({ apiBase, fetchImpl = (...args) => fetc
       table.append(head)
       for (const row of section.rows) {
         const tr = el('tr')
-        for (const cell of row) tr.append(el('td', '', String(cell ?? '')))
+        for (const cell of row) {
+          const td = el('td', '')
+          if (cell && typeof cell === 'object' && 'image' in cell) {
+            // 预览：和卡片缩略图同一个接口（w=宽度 → 服务端缩小的 WebP）；点开新窗口看大一点的
+            const link = el('a'); link.href = thumbUrl(resBase, cell.image, 1280); link.target = '_blank'; link.rel = 'noopener'; link.title = cell.image
+            const img = el('img', 'gal-diag-preview'); img.loading = 'lazy'; img.alt = ''; img.src = thumbUrl(resBase, cell.image, 240)
+            img.addEventListener('error', () => { link.replaceChildren(el('span', 'gal-diag-hint', '（预览失败）')) })
+            link.append(img); td.append(link)
+          } else td.textContent = String(cell ?? '')
+          tr.append(td)
+        }
         table.append(tr)
       }
       wrap.append(table)
