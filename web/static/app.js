@@ -2496,6 +2496,9 @@ const GAL_PRESETS = {
   artemis: { adapters: ['artemis::ast'], game: { id: 'artemis::game', title: '' } },
   arcfam: { adapters: ['arcfam::scre'], game: { id: 'arcfam::game', title: '' } },
   krkr: { adapters: ['krkr::scn'], game: { id: 'krkr::game', title: '' } },
+  rscript: { adapters: ['rscript::gsc'], game: { id: 'rscript::game', title: '' } },
+  unity: { adapters: ['unity::dsm'], game: { id: 'unity::game', title: '' } },
+  mahotan: { adapters: ['mahotan::json'], game: { id: 'mahotan::game', title: '' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]
