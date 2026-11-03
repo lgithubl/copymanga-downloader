@@ -91,6 +91,8 @@ function bitWriter() {
 {
   const files = ['motions/ev_mv001_02_00.motion3.json', 'motions/ev_mv001_02_01.motion3.json', 'motions/ev_mv001_02_03.motion3.json', 'motions/ev_mv001_02_03h.motion3.json', 'motions/ev_mv001_02_05s.motion3.json']
   check('动作名：文件名去掉 .motion3.json 直接对；r1 / r3h / r5s 这种简写 = 「…_01」「…_03h」「…_05s」；找不到 = 空', pickMotionFile(files, 'ev_mv001_02_01') === files[1] && pickMotionFile(files, 'r3h') === files[3] && pickMotionFile(files, 'r3') === files[2] && pickMotionFile(files, 'r5s') === files[4] && pickMotionFile(files, 'r0') === files[0] && pickMotionFile(files, 'r9') === '' && pickMotionFile(files, '') === '')
+  const noEv = ['motions/mv003_02r1.motion3.json', 'motions/mv003_02r3h.motion3.json', 'motions/mv003_02r4s.motion3.json']
+  check('动作名：脚本里叫 ev_mv003_02r1、模型包里的文件叫 mv003_02r1（没有 ev_ 前缀）也对得上；反过来、大小写不同也行', pickMotionFile(noEv, 'ev_mv003_02r1') === noEv[0] && pickMotionFile(noEv, 'ev_mv003_02r3h') === noEv[1] && pickMotionFile(['motions/ev_mv001_02r1.motion3.json'], 'mv001_02r1') === 'motions/ev_mv001_02r1.motion3.json' && pickMotionFile(noEv, 'EV_MV003_02R4S') === noEv[2] && pickMotionFile(noEv, 'ev_mv003_02r9') === '')
   const m = parseMoc3(buildTinyMoc3())
   const params = Float32Array.from(m.paramDefault)
   const hit = applyVariables(m, new Map([['甲', 'ParamA']]), { 甲: 1, ParamA: 0.25, 没有: 3 }, params)

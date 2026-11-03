@@ -82,7 +82,7 @@ const HEAD = /^\s*\{\s*"format"\s*:\s*"krkr-scn\/1"/
 //   %<数字>;  行首的 %150; 之类（含义没对过引擎，按文字速度处理：忽略）
 //   [读音]汉字  注音，读音在前、只对后面那一个字（[う]宇[さ]佐[み]美 = 宇佐美 うさみ；[ちち]乳 = 乳 ちち）；读音只认假名，别的方括号原样保留
 const KRKR_CODE = /%f[^;\n]*;|%\d+;|#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})?;|\[([\u3041-\u3096\u30a1-\u30fa\u30fcー]{1,12})\](?=([^\[\]\n]))/g
-export function krkrMvOf(file) { const m = /^ev_mv(\w+?_\d+)(?:[a-z]\d*[a-z]?)?$/i.exec(String(file)); return m ? { stem: `ev_cg${m[1]}`, motion: String(file) } : null }
+export function krkrMvOf(file) { const m = /^ev_mv(\w+?_\d+)(?:[a-z]\d*)*$/i.exec(String(file)); return m ? { stem: `ev_cg${m[1]}`, motion: String(file) } : null }
 export function krkrSegments(text, stats = null) {
   const segments = []
   let color = ''

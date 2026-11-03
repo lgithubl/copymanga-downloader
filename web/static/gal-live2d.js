@@ -66,6 +66,10 @@ export function pickMotionFile(files, name) {
   const base = (f) => String(f).replace(/^.*\//, '').replace(/\.motion3\.json$/i, '')
   const exact = files.find((f) => base(f) === name)
   if (exact) return exact
+  // 同一个游戏里各模型包的动作文件前缀不统一（g09 おっぱいスパイ学園：ev_cg001_02 的是 ev_mv001_02r1，ev_cg003_02 的是 mv003_02r1，而脚本里一律叫 ev_mv…）：去掉 ev_ 前缀、不分大小写再对一次
+  const plain = (n) => String(n).replace(/^ev_/i, '').toLowerCase()
+  const loose = files.find((f) => plain(base(f)) === plain(name))
+  if (loose) return loose
   const short = /^r(\d)(.*)$/i.exec(name)
   if (short) return files.find((f) => new RegExp(`_0${short[1]}${short[2]}$`, 'i').test(base(f))) || ''
   return files.find((f) => base(f).endsWith(`_${name}`)) || ''
