@@ -142,7 +142,7 @@ def walk_games():
         rel = os.path.relpath(d, root)
         depth = 0 if rel == '.' else rel.count(os.sep) + 1
         if depth > 5: ds[:] = []; continue
-        hit = any(MARK.search(f) for f in fs) or any(x.lower().endswith('_data') for x in ds)
+        hit = any(MARK.search(f) for f in fs) or any(x.lower().endswith('_data') for x in ds) or os.path.isdir(os.path.join(d, 'bundles', 'scenarios'))   # 最后一项：Imys 离线图库的 content 目录（没有 exe，bundles/scenarios 里是剧情脚本）
         if hit and rel != '.':
             games.append(d); ds[:] = []
         else:
