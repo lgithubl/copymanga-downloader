@@ -8218,9 +8218,17 @@ function formatArchiveJob(job) {
     for (const entry of p.idCheck?.mismatches || []) lines.push(`  ID 不一致：${entry}`)
   } else {
     lines.push(`扫描 ${p.scanned ?? 0} · ${job.options?.dryRun ? '将导入' : '导入'} ${p.imported ?? 0} · 已存在跳过 ${p.skipped ?? 0} · 失败 ${p.failed ?? 0}${p.limited ? ' · 已达限量' : ''}`)
+    if (p.separate) {
+      lines.push(`前 512000 字节相同（id 撞了）但不是同一个文件，当作独立条目${job.options?.dryRun ? '将导入' : '已导入'}：${p.separate} 个`)
+      for (const e of (p.separateExamples || []).slice(0, 12)) {
+        const d = e.diff
+        lines.push(`  · ${e.file}`, `      和已有条目 ${e.conflictWith.slice(0, 8)}「${e.existingTitle || ''}」${e.existingOrigin ? `（${e.existingOrigin}）` : ''}撞 id：${e.because}${d ? `；页数 ${d.pages} / 已有 ${d.existingPages}；这个文件多 ${d.addedCount}${d.addedInThis?.length ? `（${d.addedInThis.join('、')}）` : ''}，已有的多 ${d.missingCount}${d.onlyInExisting?.length ? `（${d.onlyInExisting.join('、')}）` : ''}` : '；（读不出条目差异）'}`)
+      }
+      if ((p.separateExamples || []).length > 12) lines.push(`  …… 还有 ${p.separateExamples.length - 12} 条示例在任务报告里（job.report.separateExamples）`)
+    }
     const reasons = Object.entries(p.skipReasons || {}).sort((x, y) => y[1] - x[1])
     if (reasons.length) {
-      lines.push('跳过原因（条目 id = 压缩包前 512000 字节的 SHA1，id 相同就算已存在）：', ...reasons.map(([why, n]) => `  ${n} 个：${why}`))
+      lines.push('跳过原因（同一个文件 / 内容相同的另一份，已经有条目）：', ...reasons.map(([why, n]) => `  ${n} 个：${why}`))
       for (const e of (p.skipExamples || []).slice(0, 12)) lines.push(`  · ${e.file}`, `      已有条目 ${e.id.slice(0, 8)}「${e.existingTitle || ''}」${e.existingOrigin ? `（${e.existingOrigin}）` : ''}→ ${e.existingPath || '(无路径)'}${e.size != null && e.existingSize ? `  大小 ${e.size} / 已有 ${e.existingSize}` : ''}`)
       if ((p.skipExamples || []).length > 12) lines.push(`  …… 还有 ${p.skipExamples.length - 12} 条示例在任务报告里（job.report.skipExamples）`)
     }

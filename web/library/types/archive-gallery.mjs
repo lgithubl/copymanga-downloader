@@ -669,12 +669,74 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     let current
     try { current = await stat(file) } catch { current = null }
     const sameFile = typeof existingFile === 'string' && path.resolve(existingFile) === path.resolve(file)
-    if (sameFile) return { reason: '同一个文件已经导入过（条目指向的就是这个路径）', size: current?.size, ...base }
+    if (sameFile) return { reason: '同一个文件已经导入过（条目指向的就是这个路径）', sameFile: true, size: current?.size, ...base }
     let existingInfo = null
     try { existingInfo = await stat(existingFile) } catch { /* 条目指向的 zip 不在了 */ }
     if (!existingInfo) return { reason: '条目已存在，但它指向的 zip 已经不在原路径（这个文件是同内容的另一份）', size: current?.size, ...base }
     if (current && existingInfo.size !== current.size) return { reason: `id 冲突：前 ${ID_SAMPLE_BYTES} 字节相同，但大小不同（可能是同一个包的不同版本 / 末尾内容不同）`, size: current.size, ...base }
     return { reason: '内容相同的另一个文件已经导入过（id = 前 ' + ID_SAMPLE_BYTES + ' 字节的 SHA1 相同，大小也一样）', size: current?.size, ...base }
+  }
+
+  // 压缩包末尾 ID_SAMPLE_BYTES 字节的 SHA1（id 只看开头，撞 id 时靠它 + 大小判断是不是同一个文件）
+  async function tailHashOf(filePath, size) {
+    const handle = await open(filePath, 'r')
+    try {
+      const length = Math.min(ID_SAMPLE_BYTES, size)
+      const buf = Buffer.alloc(length)
+      let done = 0
+      while (done < length) {
+        const { bytesRead } = await handle.read(buf, done, length - done, size - length + done)
+        if (!bytesRead) break
+        done += bytesRead
+      }
+      return createHash('sha1').update(buf.subarray(0, done)).digest('hex')
+    } finally { await handle.close() }
+  }
+
+  // 两个 zip 的图片条目差异（页数、谁多谁少）；读不了就返回 null
+  async function zipDiff(existingFile, file, encoding) {
+    const names = async (target) => {
+      const zip = await openZip(target, { filenameEncoding: encoding })
+      try { return zip.imageEntries().map((entry) => entry.name) } finally { await zip.close() }
+    }
+    try {
+      const [a, b] = [await names(existingFile), await names(file)]
+      const inA = new Set(a); const inB = new Set(b)
+      return {
+        existingPages: a.length, pages: b.length,
+        addedInThis: b.filter((name) => !inA.has(name)).slice(0, 5), onlyInExisting: a.filter((name) => !inB.has(name)).slice(0, 5),
+        addedCount: b.filter((name) => !inA.has(name)).length, missingCount: a.filter((name) => !inB.has(name)).length,
+      }
+    } catch { return null }
+  }
+
+  // 这个文件应该用哪个条目 id：
+  //   new        没有同 id 的条目：用前 ID_SAMPLE_BYTES 字节的 SHA1（和 LANraragi 的 id 一致）
+  //   duplicate  同 id 的条目就是它（同一个路径 / 大小和末尾都一样）：跳过
+  //   separate   同 id 但不是同一个文件（大小或末尾不一样）：当作另一个文件，id 改成 SHA1(<原 id>:<大小>:<末尾 SHA1>)，确定的，重跑不会重复导入
+  async function resolveIdentity(file, size, encoding) {
+    const baseId = await computeArchiveId(file)
+    if (!(await itemExists(baseId))) return { action: 'new', itemId: baseId, baseId }
+    const info = await explainExisting(baseId, file)
+    if (info.sameFile) return { action: 'duplicate', itemId: baseId, baseId, why: info }
+    let existing = null
+    try { existing = await readItem(baseId) } catch { /* 读不出来按重复处理 */ }
+    const existingFile = existing ? zipFileOf(existing) : ''
+    let existingInfo = null
+    try { existingInfo = existingFile ? await stat(existingFile) : null } catch { /* 条目指向的 zip 不在了 */ }
+    const tail = await tailHashOf(file, size)
+    let different = false
+    let because = ''
+    if (existing && existing.zip.size && existing.zip.size !== size) { different = true; because = `大小不同（${size} / 已有 ${existing.zip.size}）` }
+    else if (existingInfo && existingInfo.size === size) {
+      const existingTail = await tailHashOf(existingFile, existingInfo.size).catch(() => '')
+      if (existingTail && existingTail !== tail) { different = true; because = `大小相同但末尾 ${ID_SAMPLE_BYTES} 字节不同` }
+    }
+    if (!different) return { action: 'duplicate', itemId: baseId, baseId, why: { ...info, reason: existingInfo ? `内容相同的另一个文件已经导入过（大小和末尾 ${ID_SAMPLE_BYTES} 字节的 SHA1 都一样）` : info.reason } }
+    const altId = createHash('sha1').update(`${baseId}:${size}:${tail}`).digest('hex')
+    if (await itemExists(altId)) return { action: 'duplicate', itemId: altId, baseId, why: { ...(await explainExisting(altId, file)), reason: `和 ${baseId.slice(0, 8)} 撞了 id，但这个文件已经作为独立条目 ${altId.slice(0, 8)} 导入过` } }
+    const diff = await zipDiff(existingFile, file, encoding)
+    return { action: 'separate', itemId: altId, baseId, because, diff, existingTitle: existing?.title || '', existingPath: existing?.zip?.path || '', existingSize: existing?.zip?.size || 0, existingOrigin: info.existingOrigin }
   }
 
   // 从目录（或单个压缩包）导入：每个压缩包 mv 进受管目录并建一个条目。
@@ -686,10 +748,14 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
     const encoding = String(options.zipFilenameEncoding || ENCODING).trim().toLowerCase()
     const source = path.resolve(String(sourcePath || ''))
     assertAllowedSource(source)
-    const stats = { scanned: 0, imported: 0, skipped: 0, failed: 0, errors: [], dryRun, limit, limited: false, skipReasons: {}, skipExamples: [] }
+    const stats = { scanned: 0, imported: 0, skipped: 0, failed: 0, errors: [], dryRun, limit, limited: false, skipReasons: {}, skipExamples: [], separate: 0, separateExamples: [] }
     const exampleCap = dryRun ? 200 : 50   // 每个原因都至少留几条示例：总量封顶，先到先得，但每种原因最多占一半
     const perReasonCap = Math.max(5, Math.floor(exampleCap / 2))
-    let explained = 0
+    const noteSeparate = (identity, file) => {   // 撞 id 但不是同一个文件：当作独立条目导入，说明差在哪
+      if (identity.action !== 'separate') return
+      stats.separate += 1
+      if (stats.separateExamples.length < exampleCap) stats.separateExamples.push({ file, id: identity.itemId, conflictWith: identity.baseId, because: identity.because, diff: identity.diff, existingTitle: identity.existingTitle, existingPath: identity.existingPath, existingSize: identity.existingSize, existingOrigin: identity.existingOrigin })
+    }
     let batch = []
     const flush = async () => {
       if (!batch.length) return
@@ -702,21 +768,23 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
       if (limit && stats.imported >= limit) { stats.limited = true; break }
       stats.scanned += 1
       try {
-        const itemId = await computeArchiveId(file)
-        if (await itemExists(itemId)) {
+        const fileInfo = await stat(file)
+        const identity = await resolveIdentity(file, fileInfo.size, encoding)
+        const itemId = identity.itemId
+        if (identity.action === 'duplicate') {
           stats.skipped += 1
-          // 为什么算「已存在」：条目 id = 压缩包前 ID_SAMPLE_BYTES 字节的 SHA1，id 一样就跳过；这里把「和谁冲突」讲清楚（最多详查 5000 个，免得几十万个压缩包全读 json）
-          if (explained < 5000) {
-            explained += 1
-            const why = await explainExisting(itemId, file)
-            stats.skipReasons[why.reason] = (stats.skipReasons[why.reason] || 0) + 1
-            const sameReason = stats.skipExamples.filter((entry) => entry.reason === why.reason).length
-            if (stats.skipExamples.length < exampleCap && sameReason < perReasonCap) stats.skipExamples.push({ file, id: itemId, ...why })
-          } else stats.skipReasons['未详查（超过 5000 个）'] = (stats.skipReasons['未详查（超过 5000 个）'] || 0) + 1
+          // 为什么算「已存在」（最多详查 5000 个）
+          const why = identity.why || {}
+          const reason = why.reason || '已存在'
+          stats.skipReasons[reason] = (stats.skipReasons[reason] || 0) + 1
+          const sameReason = stats.skipExamples.filter((entry) => entry.reason === reason).length
+          if (stats.skipExamples.length < exampleCap && sameReason < perReasonCap) stats.skipExamples.push({ file, id: itemId, ...why })
         } else if (dryRun) {
           stats.imported += 1   // 试运行里表示「将会导入」
+          noteSeparate(identity, file)
         } else {
-          const info = await stat(file)
+          noteSeparate(identity, file)
+          const info = fileInfo
           const pageCount = await pageCountOf(file, encoding)
           const target = managedZipPath(itemId, options.managedDir)
           await movePath(file, target)
@@ -733,7 +801,7 @@ export function createArchiveGalleryHandler({ type = ARCHIVE_TYPE, dataDir, safe
             sourceProfile: profile,
             filenameEncoding: encoding,
             // 导入前的完整路径（目录 + 文件名）：压缩包 mv 进受管目录后文件名变成 <id>.zip，标签脚本要靠它解析 [..] (..)
-            origin: { sourceFile: file },
+            origin: { sourceFile: file, ...(identity.action === 'separate' ? { idConflictWith: identity.baseId } : {}) },
           }))
           batch.push(item)
           stats.imported += 1
