@@ -3,8 +3,9 @@
 import { Worker } from 'node:worker_threads'
 import { cbgToPng } from './bgi.mjs'
 import { ktxToRgba } from './l2d-zip.mjs'
+import { wcgToPng } from './rscript-wcg.mjs'
 
-const runSync = (task) => (task.kind === 'ktx' ? ktxToRgba(task.data) : cbgToPng(task.data, task.crop ? { cropHeight: task.crop } : {}))
+const runSync = (task) => (task.kind === 'ktx' ? ktxToRgba(task.data) : task.kind === 'wcg' ? wcgToPng(Buffer.from(task.data.buffer, task.data.byteOffset, task.data.byteLength)) : cbgToPng(task.data, task.crop ? { cropHeight: task.crop } : {}))
 
 const SIZE = Math.max(0, Number(process.env.GAL_DECODE_WORKERS ?? 2) || 0)
 const workers = []   // { worker, busy, task }
@@ -62,4 +63,9 @@ export function runCbg(data, { cropHeight = 0 } = {}) {
 export function runKtx(data) {
   if (!SIZE || broken) return Promise.resolve().then(() => ktxToRgba(data))
   return new Promise((resolve, reject) => { queue.push({ id: nextId++, kind: 'ktx', data, resolve, reject }); pump() })
+}
+// RScript 的 WCG → PNG（一张 1920×1080 的 CG 要 0.4 秒左右，放 worker 里不卡主线程）
+export function runWcg(data) {
+  if (!SIZE || broken) return Promise.resolve().then(() => wcgToPng(data))
+  return new Promise((resolve, reject) => { queue.push({ id: nextId++, kind: 'wcg', data, resolve, reject }); pump() })
 }

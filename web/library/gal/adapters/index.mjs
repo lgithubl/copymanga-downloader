@@ -6,6 +6,7 @@ import { arcfamScreAdapter } from './arcfam-scre.mjs'
 import { krkrScnAdapter } from './krkr-scn.mjs'
 import { artemisAstAdapter } from './artemis-ast.mjs'
 import { bgiBsAdapter } from './bgi-bs.mjs'
+import { rscriptGscAdapter } from './rscript-gsc.mjs'
 import { bokusenJsonAdapter } from './bokusen-json.mjs'
 import { girlsCreationTagAdapter } from './girlscreation-tag.mjs'
 import { grenzeXmlAdapter } from './grenze-xml.mjs'
@@ -39,6 +40,7 @@ registerGalAdapter(utageBookAdapter)          // Utage 工作簿 JSON（importGr
 registerGalAdapter(krkrScnAdapter)           // KiriKiri Z（krkr::scn）：containers 解密 scn.xp3 里的 PSB 剧本、压成 {"format":"krkr-scn/1"…}
 registerGalAdapter(arcfamScreAdapter)         // 自有 arc / eomaia（arcfam::scre）：containers 从 script.arc 解出来的 {"format":"arcfam-scre/1"…} 事件流
 registerGalAdapter(artemisAstAdapter)         // Artemis（artemis::ast）：containers 从 pf8 解密展开的 .ast（Lua 表）脚本
+registerGalAdapter(rscriptGscAdapter)         // Liar-soft codeX RScript（rscript::gsc）：containers 从 scr.xfl 解出来 + 执行过的 {"format":"rscript-gsc/1"…} 事件流
 registerGalAdapter(bgiBsAdapter)              // BGI / Ethornell（bgi::bs）：containers 从 BURIKO ARC20 解出来的 {"format":"bgi-bs/1"…} 事件流，独有写法
 registerGalAdapter(advhdWs2Adapter)           // WillPlus AdvHD（advhd::ws2）：containers 从 .arc 解出来的 {"format":"advhd-ws2/1"…} 指令流，独有写法
 registerGalAdapter(otogiJsonAdapter)          // Otogi Frontier R：{"Id":N,"Title":…,"MSceneDetails":[ / {"Id":N,"Description":…,"MAdultDetails":[（无扩展名的 JSON），独有写法

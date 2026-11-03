@@ -37,7 +37,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / rscript / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -824,6 +824,39 @@ export const ADAPTER_RULES = {
           "^gameloop"
       ],
       "extraDirs": []
+  },
+  // rscript::gsc：Liar-soft codeX RScript 家族的脚本适配器（GSC 事件流 → 场景）。抄自 web/library/gal/adapters/rscript-gsc.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'rscript::gsc': {
+    "resDir": "arc/res",
+    "stage": [
+      1920,
+      1080
+    ],
+    "eventsDir": "grpe",
+    "standDirs": [
+      "grpo_bu0",
+      "grpo_bu1"
+    ],
+    "overlayDirs": [
+      "grpo_cu"
+    ],
+    "eventLayers": [
+      1
+    ],
+    "standMinLayer": 11,
+    "voiceDir": "voice",
+    "soundDir": "wav",
+    "bgmDir": "bgm",
+    "bgmName": "Track{n2}.wav",
+    "audioExts": [
+      "ogg",
+      "wav"
+    ],
+    "wait": {
+      "enabled": true,
+      "max": 10
+    },
+    "colorImages": true
   },
   // artemis::ast：Artemis 家族的脚本适配器（.ast = Lua 表 → 场景）。抄自 web/library/gal/adapters/artemis-ast.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'artemis::ast': {
@@ -1768,6 +1801,29 @@ export const LAYOUTS = {
     cover: [],
     notes: ['xp3 在第一次浏览时由服务端展开剧本（需要密钥包：<DATA_DIR>/gal-krkr-keys.json）；没有密钥包 / 密钥包不对，列表是空的，容器报告里有原因', '立绘（PIMG 分层图 + TLG 图层）、事件 CG（TLG / dpak）、背景（PNG / JPG）、BGM / 语音（OGG）、台词都有；立绘的位置 / 缩放照引擎脚本推的（zpos 透视 + leveloffset + .stand 偏移；没有对照截图，不对可以在播放器「设置 → 画面 → 立绘」里调）；事件 CG 的叠加图、转场（近似成淡入淡出）和 Live2D 已做；镜头动作没做'],
   },
+  // ---- Liar-soft codeX RScript（.xfl 档案，脚本 .gsc 字节码）家族：game.id = rscript::<游戏>（任何以 rscript:: 开头的 id 都走这一项）。
+  //   目录：<根>/{*.exe, scr.xfl（脚本）, grpe.xfl（背景 / 事件 CG）, grpo*.xfl（立绘 / 过场 / 特效）, voice.xfl（里面嵌套 1.xfl … 分库）, wav.xfl（音效）, bgm.xfl（PCM）, mov/*.mpg}。xfl 由引擎（config.containers，format: xfl）在服务端读：
+  //   scr.xfl 里的 .gsc 字节码「执行」一遍（调用别的脚本时内联执行）→ 事件流，展开到 <根>/arc/script/scr/<脚本号>.rscript；图（.wcg → png）/ 声音（Vorbis ACM 的 wav → ogg）只在 hybrid 的虚拟索引里（<根>/arc/res/<档案名>/<编号>.<扩展名>），被请求时才转。
+  rscript: {
+    title: 'Liar-soft codeX RScript（.xfl）', kind: 'rscript', detector: 'rscript', autoOrder: 139.9, family: 'rscript::',   // 紧跟 krkr，uviewer（通用）之前；探测时还要看 scr.xfl 是 LB 档案
+    bases: [''], searchDepth: 3,
+    anchors: ['/^scr\\.xfl$/i'], siblings: [], markers: [['grpe.xfl', 'grpo.xfl']],
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res'],
+    adapters: ['rscript::gsc'],
+    adapterOptions: { 'rscript::gsc': { resDir: { path: ['arc/res'] } } },
+    ruleTables: ['rscript::gsc'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},
+      limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'rscript-gsc', scriptExt: 'rscript', mode: 'hybrid', format: 'xfl', flat: false, rules: [{ match: '^scr\\.xfl$', kinds: ['script'] }, { match: '\\.xfl$', kinds: ['res'] }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['rscript'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.rscript', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['xfl 在第一次浏览时由服务端展开剧本（执行一遍 GSC 字节码，调用别的脚本时内联）；图（WCG）/ 声音（Vorbis ACM 的 wav）只在虚拟索引里，被请求时才转格式', '立绘（整张 1920×1680 的画布，身体 / 表情 / 嘴各一层）按「锚点 + (x, y)」当舞台坐标放；没有游戏截图对照，位置 / 层序没验证；^C 颜色标记没做；mpg 视频不播'],
+  },
   // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
   //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；
   //   图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<档案里的路径>，如 arc/res/image/bg/bg01a.png），被请求时才解密取出。
@@ -2278,6 +2334,7 @@ const DETECTORS = {
   artemis: (scope) => detectArtemis(scope),
   arcfam: (scope) => detectArcfam(scope),
   krkr: (scope) => detectKrkr(scope),
+  rscript: (scope) => detectRscript(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2535,8 +2592,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam', 'krkr'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -3210,6 +3267,30 @@ async function detectKrkr(scope) {
   found.kind = entry.kind || 'krkr'
   const xp3s = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.xp3$/i.test(n))
   logs.push(`KiriKiri Z 游戏根：${base || '.'}；${xp3s.length} 个 xp3（${xp3s.slice(0, 6).join(' / ')}）；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// ---- Liar-soft codeX RScript：见 LAYOUTS.rscript。id：声明了 game.id 就用它（rscript::<游戏>），没声明 = rscript::<目录名的小写字母数字>；没声明时要求 scr.xfl 是 LB 档案
+async function detectRscript(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  if (!declared && !(await markersOk(media, entry, base, declared))) return null
+  const scr = path.join(media, ...splitRel(join(base, 'scr.xfl')))
+  let isLb = false
+  try { const h = await open(scr, 'r'); try { const head = Buffer.alloc(4); await h.read(head, 0, 4, 0); isLb = head[0] === 0x4c && head[1] === 0x42 && head[2] === 1 } finally { await h.close() } } catch { /* 读不了 = 不是 */ }
+  if (!isLb) { if (declared) logs.push('RScript：scr.xfl 不是 LB 档案（开头不是 4C 42 01），不是已知的 Liar-soft codeX RScript'); return null }
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `rscript::${slug || 'game'}`
+  found.kind = entry.kind || 'rscript'
+  const xfls = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.xfl$/i.test(n))
+  logs.push(`RScript 游戏根：${base || '.'}；${xfls.length} 个 xfl（${xfls.slice(0, 6).join(' / ')}）；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
 }

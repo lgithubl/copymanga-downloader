@@ -14,8 +14,11 @@ import path from 'node:path'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
 import { bwToOgg, cbgToPng, dscDecode, encodePng, isBurikoScript, parseBgiFaceSet, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
 import { decodeScre } from './arcfam-decode.mjs'
-import { runCbg, runKtx } from './decode-pool.mjs'
+import { runCbg, runKtx, runWcg } from './decode-pool.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
+import { isVorbisRiff, parseGsc, readXflIndex, riffVorbisToOgg } from './rscript-gsc.mjs'
+import { decodeGscScript, runGsc } from './rscript-run.mjs'
+import { wcgToPng } from './rscript-wcg.mjs'
 import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
 import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
@@ -29,7 +32,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 12
+export const CONTAINER_FORMAT_VERSION = 13
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -85,12 +88,21 @@ const KRKR_SCN_DECODER = {
   ext: 'krkr',
   decode(buffer, { arc }) { return decodeKrkrScnBuffer(buffer, { arc }).text },
 }
+// Liar-soft codeX RScript（.xfl 里的 GSC 字节码）：「执行」一遍 → 事件流（rscript-gsc/1，适配器 rscript::gsc 吃它）。
+//   siblings = { load(脚本号) → 解析好的 GSC | null, bootstrap: { dirs, anchors } }：调用别的脚本（0x0f）时内联执行被调用的；bootstrap = 引擎启动时（初始化脚本）设好的各层资源目录 / 锚点
+const RSCRIPT_GSC_DECODER = {
+  ext: 'rscript',
+  decode(buffer, { arc, name, siblings }) {
+    return decodeGscScript(buffer, { arc, name, loadProgram: siblings?.load || null, initial: siblings?.bootstrap || null })
+  },
+}
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
   'bgi-bs': BGI_BS_DECODER,
   'artemis-ast': ARTEMIS_AST_DECODER,
   'arcfam-scre': ARCFAM_SCRE_DECODER,
   'krkr-scn': KRKR_SCN_DECODER,
+  'rscript-gsc': RSCRIPT_GSC_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -131,7 +143,7 @@ export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
-const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : readArcIndex(file))
+const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
 // pf8（Artemis）：按扩展名分——.ast = 脚本（解密后交给解码器），图 / 声音 = 资源（取出来时解密），别的（lua / csv / psb …）跳过
 function classifyPf8(name) {
   const ext = extOf(name)
@@ -145,6 +157,14 @@ function classifyArcfam(name, entry) {
   const ext = extOf(name)
   if (ext === 'script') return { kind: 'script' }
   if (ARCFAM_RES_EXTS.has(ext)) return { kind: 'res' }
+  return { kind: '' }
+}
+// XFL 的条目有扩展名：.gsc = 剧本；.wcg（图）/ .wav（声音）= 资源（取出来时才转：wcg → png，Vorbis ACM 的 wav → ogg）；.lwg / .msk / .fsc 这些界面 / 过场用的不管
+function classifyXfl(name) {
+  const ext = extOf(name)
+  if (ext === 'gsc') return { kind: 'script' }
+  if (ext === 'wcg') return { kind: 'res', ext: 'png', transform: 'wcg-png' }
+  if (ext === 'wav') return { kind: 'res', ext: 'wav' }
   return { kind: '' }
 }
 // pf8 容器的名字：.pfs / .pfs.000 → pfs 的主名（脚本展开到 script/<主名>/…）
@@ -163,11 +183,14 @@ async function classifyBuriko(handle, entry) {
 // 异步版：CompressedBG → PNG 放 worker 线程（不卡主线程），别的转换还是同步做
 async function transformDataAsync(data, hit) {
   if (hit.transform === 'cbg-png') return runCbg(data, hit.crop ? { cropHeight: hit.crop } : {})
+  if (hit.transform === 'wcg-png') return runWcg(data)
   return transformData(data, hit)
 }
 function transformData(data, hit) {
   if (hit.transform === 'cbg-png') return cbgToPng(data, hit.crop ? { cropHeight: hit.crop } : {})
   if (hit.transform === 'bw-ogg') return bwToOgg(data)
+  if (hit.transform === 'wcg-png') return wcgToPng(data)
+  if (hit.transform === 'riff-ogg') return Buffer.from(riffVorbisToOgg(data))
   if (hit.transform === 'bgi-faceset') return Buffer.from(JSON.stringify(parseBgiFaceSet(dscDecode(data))))
   if (hit.transform === 'pf8') return pf8Decrypt(data, hit.key)
   return hit.unpremultiply ? unpremultiplyPng(data).buffer : data
@@ -317,24 +340,44 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
   const buriko = cfg.format === 'buriko'
   const pf8 = cfg.format === 'pf8'
   const arcfam = cfg.format === 'arcfam'
+  const xfl = cfg.format === 'xfl'
   const stem = pf8 ? pf8Stem(arcName) : withoutExt(arcName)
   const decoder = SCRIPT_DECODERS[cfg.scriptDecoder]
   const result = { entries: entries.length, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
   if (entries.length > cfg.maxEntries) throw new Error(`条目 ${entries.length} 个，超过上限 ${cfg.maxEntries}（config.containers.maxEntries）`)
   const handle = await open(file, 'r')
+  // XFL 的脚本档案（scr.xfl 才几 MB）：整个读进内存，脚本之间互相调用（0x0f）要内联执行被调用的；bootstrap = 引擎启动时设好的各层资源目录 / 锚点（跑一遍就有 ≥ 10 个目录的那个脚本）
+  let siblings = null
+  if (xfl && rule.kinds.has('script') && entries.some((e) => /\.gsc$/i.test(e.name)) && (await handle.stat()).size <= 256 * 1024 * 1024) {
+    const whole = await readFile(file)
+    const byNum = new Map()
+    for (const e of entries) { const m = /^(\d+)\.gsc$/i.exec(e.name); if (m) byNum.set(Number(m[1]), e) }
+    const programs = new Map()
+    const load = (num) => { const e = byNum.get(num); if (!e) return null; if (!programs.has(num)) { let prog = null; try { prog = parseGsc(whole.subarray(e.offset, e.offset + e.size)) } catch { prog = null } programs.set(num, prog) } return programs.get(num) }
+    let bootstrap = null
+    for (const num of [...byNum.keys()].sort((a, b) => a - b)) {
+      const prog = load(num)
+      if (!prog) continue
+      let r
+      try { r = runGsc(prog, { loadProgram: load, maxSteps: 200000 }) } catch { continue }
+      if (r.final.dirs.size >= 10) { bootstrap = { dirs: [...r.final.dirs], anchors: [...r.final.anchors] }; break }
+    }
+    siblings = { load, bootstrap }
+    siblings.whole = whole
+  }
   try {
     for (const entry of entries) {
       const name = safeEntryName(entry.name)
       if (!name) { result.bad.push(entry.name.slice(0, 60)); continue }
       // buriko（BGI）的条目没有扩展名，按内容分：DSC = 剧本、CompressedBG = 图、BW = 声音（图 / 声音只在 hybrid 的虚拟索引里，取出来时才转）
-      const cls = buriko ? await classifyBuriko(handle, entry) : pf8 ? classifyPf8(name) : arcfam ? classifyArcfam(name, entry) : null
-      const kind = buriko || pf8 || arcfam ? cls.kind : kindOf(name, 'script')
+      const cls = buriko ? await classifyBuriko(handle, entry) : pf8 ? classifyPf8(name) : arcfam ? classifyArcfam(name, entry) : xfl ? classifyXfl(name) : null
+      const kind = buriko || pf8 || arcfam || xfl ? cls.kind : kindOf(name, 'script')
       if (arcfam && cls.compressed) { result.unsupported = (result.unsupported || 0) + 1 }
       if (!kind || !rule.kinds.has(kind) || (kind === 'pna' && rule.pna === 'skip')) { result.skipped += 1; continue }
       if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) { result.excluded += 1; continue }
       if (entry.size > MAX_ENTRY_BYTES) { result.bad.push(`${name}（${entry.size} 字节太大）`); continue }
       // hybrid（默认）：图 / 声音 / 视频 / PNA 帧不展开（被请求时才从 .arc 读那一个条目，见 materialize）；PNA 只写 index.json（读头和记录表，不读像素）
-      const lazy = (cfg.mode !== 'files' || buriko || pf8 || arcfam) && (kind === 'res' || kind === 'pna')
+      const lazy = (cfg.mode !== 'files' || buriko || pf8 || arcfam || xfl) && (kind === 'res' || kind === 'pna')
       if (lazy && (kind === 'res' || rule.pna === 'raw')) { result.res += 1; result.lazy = (result.lazy || 0) + 1; continue }
       if (lazy) {
         try {
@@ -350,14 +393,14 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
       }
       budget.bytes += entry.size
       if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
-      let data = await readRange(handle, entry.offset, entry.size)
+      let data = siblings?.whole ? siblings.whole.subarray(entry.offset, entry.offset + entry.size) : await readRange(handle, entry.offset, entry.size)
       if (pf8) data = pf8Decrypt(data, key)
       if (kind === 'script') {
         if (!decoder) throw new Error(`没有脚本解码器 ${cfg.scriptDecoder}`)
         const base = buriko ? name : pf8 ? withoutExt(name.replace(/^script\//i, '')) : withoutExt(name)   // arcfam 同 willplus：去扩展名
         let text
-        try { text = decoder.decode(data, { arc: stem, name: base }) } catch (error) {
-          if (!buriko && !pf8 && !arcfam) throw error
+        try { text = decoder.decode(data, { arc: stem, name: base, siblings }) } catch (error) {
+          if (!buriko && !pf8 && !arcfam && !xfl) throw error
           result.skipped += 1; result.notScript = (result.notScript || 0) + 1   // DSC 里不是剧本的（动画表之类）
           continue
         }
@@ -817,7 +860,7 @@ async function listArcs(mediaDir, cfg) {
     let names = []
     try { names = (await readdir(dir)).sort() } catch { continue }
     for (const arcName of names) {
-      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : /\.arc$/i).test(arcName)) continue
+      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : /\.arc$/i).test(arcName)) continue
       const rule = rules.find((r) => r.re.test(arcName))
       if (!rule || rule.skip) continue
       const file = path.join(dir, arcName)
@@ -843,6 +886,34 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
     const base = `${cfg.dir}/res/${stem}`
     let handle = null
     try {
+      if (cfg.format === 'xfl') {
+        // Liar-soft：图 / 声音，虚拟路径 = <dir>/res/<档案名>[/<分库>]/<条目名去扩展名>.<png | ogg | wav>（不 flat：脚本里的路径带档案名，如 grpo_bu0\\1000、voice\\2\\0301）；取出来时才转格式。
+        //   嵌套的 .xfl 条目（voice.xfl 里的 1.xfl … 7.xfl = 语音分库）再读一层目录；wav 头 24 字节认 Vorbis ACM 外壳（fmt 标签 0x67xx）→ 这一组当 .ogg 虚拟出来（取出来时去外壳）；PCM（bgm.xfl 的 TrackNN.wav）保持 .wav
+        if (!rule.kinds.has('res')) continue
+        handle ||= await open(file, 'r')
+        const groups = [{ prefix: '', entries }]
+        for (const entry of entries) {
+          const nested = /^(.+)\.xfl$/i.exec(entry.name)
+          if (!nested || entry.size < 12) continue
+          try { groups.push({ prefix: safeEntryName(nested[1]), entries: (await readXflIndex(file, { offset: entry.offset, length: entry.size })).entries }) } catch { /* 嵌套的坏了：跳过 */ }
+        }
+        for (const group of groups) {
+          if (!group.prefix && group.prefix !== '') continue
+          const first = group.entries.find((e) => /\.wav$/i.test(e.name) && e.size >= 24)
+          const wavAsOgg = first ? isVorbisRiff(await readRange(handle, first.offset, 24)) : false
+          for (const entry of group.entries) {
+            const name = safeEntryName(entry.name)
+            if (!name || entry.size > MAX_ENTRY_BYTES) continue
+            if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
+            const cls = classifyXfl(name)
+            if (cls.kind !== 'res') continue
+            const sub = group.prefix ? `${stem}/${group.prefix}` : stem
+            if (cls.transform === 'wcg-png') add(`${cfg.dir}/${resRel(cfg, sub, `${withoutExt(name)}.png`)}`, { file, offset: entry.offset, size: entry.size, transform: 'wcg-png' })
+            else add(`${cfg.dir}/${resRel(cfg, sub, `${withoutExt(name)}.${wavAsOgg ? 'ogg' : 'wav'}`)}`, { file, offset: entry.offset, size: entry.size, ...(wavAsOgg ? { transform: 'riff-ogg' } : {}) })
+          }
+        }
+        continue
+      }
       for (const entry of entries) {
         const name = safeEntryName(entry.name)
         if (!name) continue
@@ -1025,7 +1096,7 @@ async function run(mediaDir, cfg) {
     let names = []
     try { names = (await readdir(dir)).sort() } catch { continue }
     for (const arcName of names) {
-      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : /\.arc$/i).test(arcName)) continue
+      if (!(cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : /\.arc$/i).test(arcName)) continue
       const rule = rules.find((r) => r.re.test(arcName))
       if (!rule) continue
       const key = `${scanDir}/${arcName}`
