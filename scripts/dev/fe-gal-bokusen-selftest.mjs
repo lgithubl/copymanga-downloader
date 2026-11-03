@@ -9,7 +9,7 @@ import { galAdapter, sniffGalAdapter } from '../../web/library/gal/adapters/inde
 import { DEFAULT_OPTIONS, explainSniff, parse, prepare, sniff } from '../../web/library/gal/adapters/bokusen-json.mjs'
 import { loadAdapterContext } from '../../web/library/gal/context.mjs'
 import { normalizeGalConfig } from '../../web/library/gal/config.mjs'
-import { createGalHandler } from '../../web/library/types/gal.mjs'
+import { createGalHandler } from './gal-handler-compat.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { SCRIPT_1001, buildBokusenFixture, compileBokusen } from './make-bokusen-fixture.mjs'
 import { readFile, writeFile } from 'node:fs/promises'

@@ -14,7 +14,7 @@ import { contextStats, loadAdapterContext } from '../../web/library/gal/context.
 import { candidatePaths, createIndexResolver } from '../../web/library/gal/resolve.mjs'
 import { applyClassify, buildScene } from '../../web/library/gal/scene.mjs'
 import { compileSafeRegex } from '../../web/library/gal/voice.mjs'
-import { createGalHandler } from '../../web/library/types/gal.mjs'
+import { createGalHandler } from './gal-handler-compat.mjs'
 import { galPlayerDefaults } from '../../web/static/gal-engine.js'
 
 let pass = 0

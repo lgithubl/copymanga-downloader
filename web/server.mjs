@@ -228,15 +228,36 @@ async function sendCachedFile(req, res, filePath, contentType, cacheControl = 'p
     res.writeHead(304, webHeaders(cacheHeaders))
     return res.end()
   }
-  const stream = createReadStream(filePath)
+  // Range：音频 / 视频靠它边下边播、拖进度条。没有 Range 支持时 Chrome 的媒体缓存会把「预加载取了一半就取消」的响应存成残缺的，
+  // 之后同一个 URL 播到缓存的末尾就当成播完（语音放到一半「直接中断」）；所以带 Accept-Ranges，Range 请求回 206 + 精确的 Content-Range
+  const range = parseByteRange(req.headers.range, info.size, req.headers['if-range'], etag, modified)
+  if (range === 'unsatisfiable') {
+    res.writeHead(416, webHeaders({ 'Content-Range': `bytes */${info.size}`, ...cacheHeaders }))
+    return res.end()
+  }
+  const stream = createReadStream(filePath, range ? { start: range.start, end: range.end } : undefined)
   stream.on('error', (error) => {
     console.error(`[thumbnail] 读取失败 ${filePath}: ${error.message}`)
     res.destroy()
   })
   res.on('error', () => stream.destroy())
   res.on('close', () => stream.destroy())
-  res.writeHead(200, webHeaders({ 'Content-Type': contentType, 'Content-Length': info.size, ...cacheHeaders }))
+  if (range) res.writeHead(206, webHeaders({ 'Content-Type': contentType, 'Content-Length': range.end - range.start + 1, 'Content-Range': `bytes ${range.start}-${range.end}/${info.size}`, 'Accept-Ranges': 'bytes', ...cacheHeaders }))
+  else res.writeHead(200, webHeaders({ 'Content-Type': contentType, 'Content-Length': info.size, 'Accept-Ranges': 'bytes', ...cacheHeaders }))
   stream.pipe(res)
+}
+
+// 单段 Range（bytes=a-b / a- / -n）。没带 / 不认识 / If-Range 对不上 = null（整个文件）；越界 = 'unsatisfiable'（416）
+function parseByteRange(header, size, ifRange = '', etag = '', modified = '') {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim())
+  if (!m || (!m[1] && !m[2])) return null
+  if (ifRange && ifRange !== etag && ifRange !== modified) return null
+  let start
+  let end
+  if (!m[1]) { const n = Number(m[2]); if (!n) return 'unsatisfiable'; start = Math.max(0, size - n); end = size - 1 }
+  else { start = Number(m[1]); end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1 }
+  if (!Number.isFinite(start) || start >= size || end < start) return 'unsatisfiable'
+  return { start, end }
 }
 
 function cleanName(value) {

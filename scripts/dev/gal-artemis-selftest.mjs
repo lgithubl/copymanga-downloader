@@ -11,7 +11,7 @@ import { ensureContainers, materialize, virtualEntry, virtualFiles } from '../..
 import { galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { LuaTable, parseLua } from '../../web/library/gal/adapters/artemis-ast.mjs'
 import { readPf8Index, pf8Decrypt } from '../../web/library/gal/pf8.mjs'
-import { createGalHandler } from '../../web/library/types/gal.mjs'
+import { createGalHandler } from './gal-handler-compat.mjs'
 import { astOf, buildPf8 } from './make-artemis-fixture.mjs'
 import { buildExe } from './make-pe-fixture.mjs'
 import { encodePng } from '../../web/library/gal/bgi.mjs'

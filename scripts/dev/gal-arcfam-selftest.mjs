@@ -10,7 +10,7 @@ import { ensureContainers, materialize, virtualEntry, virtualFiles } from '../..
 import { galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { readArcfamIndex } from '../../web/library/gal/arcfam.mjs'
 import { decodeScre, isScre } from '../../web/library/gal/arcfam-decode.mjs'
-import { createGalHandler } from '../../web/library/types/gal.mjs'
+import { createGalHandler } from './gal-handler-compat.mjs'
 import { Scre, buildArcfam } from './make-arcfam-fixture.mjs'
 
 let pass = 0

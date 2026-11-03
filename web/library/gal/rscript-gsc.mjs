@@ -136,6 +136,30 @@ export async function readXflIndex(file, { offset = 0, length = 0 } = {}) {
 
 // 带 Vorbis ACM 外壳的 WAVE（fmt 标签 0x674f / 0x6750 / 0x6751 / 0x676f / 0x6770 / 0x6771）：data 块里就是完整的 Ogg Vorbis 流，取出来就能播；别的（PCM 等）原样返回
 const VORBIS_TAGS = new Set([0x674f, 0x6750, 0x6751, 0x676f, 0x6770, 0x6771])
+// 真实文件里 Vorbis 的页之间夹着大量 28 字节的「空页」（OggS、序列号 0xffffffff、页号从 0 递增、0 字节数据，还带一个 BOS 页——Vorbis ACM 外壳的填充），最后一页（EOS）后面还有一串。
+// Ogg 里中途冒出一个新序列号的 BOS 页 = 「链接」：浏览器（Range 读文件 / 估时长时）把第一条链在第 4 页就当成结束——真实的 2.48 秒变成 0.45 秒，语音放到一半「直接中断」。
+// 只留第一页的序列号的页（每页自带 CRC，丢掉别的页不影响这些页），到它的 EOS 页为止
+export function cleanOggPages(ogg) {
+  if (ogg.length < 27 || ogg.toString('latin1', 0, 4) !== 'OggS') return ogg
+  const serial = ogg.readUInt32LE(14)
+  const kept = []
+  let dropped = 0
+  let pos = 0
+  while (pos + 27 <= ogg.length && ogg.toString('latin1', pos, pos + 4) === 'OggS') {
+    const segments = ogg[pos + 26]
+    if (pos + 27 + segments > ogg.length) break
+    let size = 0
+    for (let i = 0; i < segments; i += 1) size += ogg[pos + 27 + i]
+    const next = pos + 27 + segments + size
+    if (next > ogg.length) break
+    if (ogg.readUInt32LE(pos + 14) === serial) {
+      kept.push(ogg.subarray(pos, next))
+      if (ogg[pos + 5] & 4) { dropped += 1; break }   // EOS：后面都是填充
+    } else dropped += 1
+    pos = next
+  }
+  return dropped ? Buffer.concat(kept) : ogg
+}
 export function riffVorbisToOgg(data) {
   if (data.length < 12 || data.toString('latin1', 0, 4) !== 'RIFF' || data.toString('latin1', 8, 12) !== 'WAVE') return data
   let tag = 0
@@ -143,7 +167,7 @@ export function riffVorbisToOgg(data) {
     const id = data.toString('latin1', p, p + 4)
     const size = data.readUInt32LE(p + 4)
     if (id === 'fmt ' && size >= 2) tag = data.readUInt16LE(p + 8)
-    if (id === 'data') return VORBIS_TAGS.has(tag) && data.toString('latin1', p + 8, p + 12) === 'OggS' ? data.subarray(p + 8, Math.min(data.length, p + 8 + size)) : data
+    if (id === 'data') return VORBIS_TAGS.has(tag) && data.toString('latin1', p + 8, p + 12) === 'OggS' ? cleanOggPages(data.subarray(p + 8, Math.min(data.length, p + 8 + size))) : data
     p += 8 + size + (size & 1)
   }
   return data

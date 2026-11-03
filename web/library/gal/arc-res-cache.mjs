@@ -1,4 +1,4 @@
-// 容器（.arc）里的资源取原图 / 原音频时的磁盘缓存：<DATA_DIR>/cache/gal-arc-res/<前两位>/<key>.<扩展名>，有总量上限（LRU，按 mtime；命中就 touch）。
+// 容器（.arc）里的资源取原图 / 原音频时的磁盘缓存：<DATA_DIR>/cache/gal-arc-res/<前两位>/<key>.<扩展名>，有总量上限（LRU，按 atime；命中只 touch atime，mtime 不动——ETag 靠 mtime，不然每次请求 ETag 都变、304 永远命中不了）。
 //   · 以前 hybrid 方式取资源是把条目写进媒体目录的 arc/res/…，永久留着、只增不减；现在写到缓存目录，超过上限淘汰最久没用的，媒体目录不再增长
 //   · key 来自 containers.virtualEntry（.arc 路径 / 大小 / 修改时间 + 条目位置 + 转格式 + 格式版本）：.arc 不变就一直命中，变了就是新文件
 //   · 同一个条目并发请求只取一次；先写临时文件再改名；刚写出来的文件（FRESH_MS 内）不淘汰；写失败 = 抛错（调用方当取不到）
@@ -31,7 +31,7 @@ export function createArcResCache({ dir, maxBytes = (Number(process.env.GAL_ARC_
           const st = await stat(file).catch(() => null)
           if (!st?.isFile()) continue
           total += st.size
-          files.push({ file, size: st.size, at: st.mtimeMs })
+          files.push({ file, size: st.size, at: Math.max(st.atimeMs, st.mtimeMs) })
         }
       }
       if (total <= maxBytes) return
@@ -48,7 +48,7 @@ export function createArcResCache({ dir, maxBytes = (Number(process.env.GAL_ARC_
   async function get(entry) {
     const file = fileOf(entry)
     const have = await stat(file).catch(() => null)
-    if (have?.size > 0) { const t = new Date(); utimes(file, t, t).catch(() => {}); return file }
+    if (have?.size > 0) { const t = new Date(); utimes(file, t, new Date(Math.floor(have.mtimeMs))).catch(() => {}); return file }
     let pending = inflight.get(file)
     if (!pending) {
       pending = (async () => {

@@ -16,7 +16,7 @@ import { loadAdapterContext } from '../../web/library/gal/context.mjs'
 import { resolveOnDisk } from '../../web/library/gal/resolve.mjs'
 import { buildScene } from '../../web/library/gal/scene.mjs'
 import { createBrowseProvider } from '../../web/library/gal/browse.mjs'
-import { createGalHandler } from '../../web/library/types/gal.mjs'
+import { createGalHandler } from './gal-handler-compat.mjs'
 import { activePath, applyCommand, easeOf, initialState, stateAt } from '../../web/static/gal-engine.js'
 import { STORY_001, STORY_BRANCH, STORY_COND, STORY_BOB, STORY_GALLERY, STORY_PAN, STORY_SKIP, STORY_TIMER, arcBuild, buildAdvhdFixture, commit, msg, pnaBuild, pngBytes, ws2Encode, ws2Plain } from './make-advhd-fixture.mjs'
 

@@ -292,11 +292,11 @@ export function parsePna(buffer) {
 
 // ---------- 名字 / 路径 ----------
 const extOf = (name) => { const m = /\.([A-Za-z0-9]{1,8})$/.exec(name); return m ? m[1].toLowerCase() : '' }
-const safeEntryName = (raw) => {
+const safeEntryName = (raw, maxParts = 6) => {
   const name = String(raw).replace(/\\/g, '/').replace(/^\/+/, '')
   if (!name || name.length > MAX_NAME_CHARS || /[\0-\x1f]/.test(name)) return ''
   const parts = name.split('/')
-  if (parts.length > 6 || parts.some((part) => !part || part === '.' || part === '..' || part.startsWith('.') || /[|#]/.test(part))) return ''
+  if (parts.length > maxParts || parts.some((part) => !part || part === '.' || part === '..' || part.startsWith('.') || /[|#]/.test(part))) return ''
   return name
 }
 const withoutExt = (name) => name.replace(/\.[^./]+$/, '')
@@ -395,7 +395,7 @@ async function expandMhp({ file, arcName, rule, cfg, outRoot, budget }) {
       const m = /^data\/scripts\/(.+\.json)$/i.exec(entry.name)
       if (!m) { if (/^(images|media|fonts|official-sites|wiki)\//i.test(entry.name)) result.res += 1; continue }
       if (!rule.kinds.has('script')) { result.skipped += 1; continue }
-      const name = safeEntryName(m[1])
+      const name = safeEntryName(m[1], 12)
       if (!name) { result.bad.push(entry.name.slice(0, 60)); continue }
       if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) { result.excluded += 1; continue }
       if (entry.size > MAX_ENTRY_BYTES) { result.bad.push(`${name}（${entry.size} 字节太大）`); continue }
@@ -1002,7 +1002,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
         if (zip.entries.length > cfg.maxEntries) continue
         for (const entry of zip.entries) {
           if (entry.isDirectory || /^(data|metadata)\//i.test(entry.name) || entry.size > MAX_ENTRY_BYTES) continue
-          const name = safeEntryName(entry.name)
+          const name = safeEntryName(entry.name, 12)   // 语音路径 media/voices/characters/<角色>/scene/general/<名>.mp3 = 7 段
           if (!name) continue
           if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
           add(`${cfg.dir}/res/${name}`, { file, offset: entry.localOffset, size: entry.compressedSize, zipLocal: true, method: entry.method, usize: entry.size })
@@ -1046,8 +1046,6 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
         }
         for (const group of groups) {
           if (!group.prefix && group.prefix !== '') continue
-          const first = group.entries.find((e) => /\.wav$/i.test(e.name) && e.size >= 24)
-          const wavAsOgg = first ? isVorbisRiff(await readRange(handle, first.offset, 24)) : false
           for (const entry of group.entries) {
             const name = safeEntryName(entry.name)
             if (!name || entry.size > MAX_ENTRY_BYTES) continue
@@ -1055,6 +1053,8 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
             const cls = classifyXfl(name)
             if (cls.kind !== 'res') continue
             const sub = group.prefix ? `${stem}/${group.prefix}` : stem
+            // 同一个档案里 wav 的编码不一样（wav.xfl：多数是 Vorbis ACM，也有 PCM）：一个一个看头 24 字节，不能按第一个定整个档案
+            const wavAsOgg = cls.transform !== 'wcg-png' && /\.wav$/i.test(name) && entry.size >= 24 ? isVorbisRiff(await readRange(handle, entry.offset, 24)) : false
             if (cls.transform === 'wcg-png') add(`${cfg.dir}/${resRel(cfg, sub, `${withoutExt(name)}.png`)}`, { file, offset: entry.offset, size: entry.size, transform: 'wcg-png' })
             else add(`${cfg.dir}/${resRel(cfg, sub, `${withoutExt(name)}.${wavAsOgg ? 'ogg' : 'wav'}`)}`, { file, offset: entry.offset, size: entry.size, ...(wavAsOgg ? { transform: 'riff-ogg' } : {}) })
           }

@@ -13,7 +13,7 @@ import { normalizeGalConfig, normalizeGalConfigWithWarnings } from '../../web/li
 import { ensureContainers, materialize, virtualEntry, virtualFiles } from '../../web/library/gal/containers.mjs'
 import { galAdapterIds, sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { parseV2 } from '../../web/library/gal/bgi-cbg2.mjs'
-import { createGalHandler } from '../../web/library/types/gal.mjs'
+import { createGalHandler } from './gal-handler-compat.mjs'
 import { BgiScript, buildArc20, bwWrap, cbgEncode, cbgV2Encode, dscEncode } from './make-bgi-fixture.mjs'
 
 let pass = 0

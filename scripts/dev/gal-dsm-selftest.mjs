@@ -156,6 +156,7 @@ try {
   const norm = cfgRaw ? normalizeGalConfigWithWarnings(cfgRaw) : null
   const c = norm?.config
   check('gal-layout：认出 Unity GameMaterial（data.dsm 是 base64 + env.cof），id = unity::cake，containers = dsm / hybrid / flat；写出来的 config 规整后零警告', Boolean(c) && c.game.id === 'unity::cake' && c.containers.format === 'dsm' && c.containers.mode === 'hybrid' && c.containers.flat === true && c.containers.scriptDecoder === 'unity-dsm' && norm.warnings.length === 0, J([tagOut.logs, norm?.warnings, c?.containers]))
+  check('gal-layout：资源根 = arc/res（虚拟索引，磁盘上还没有也要写）+ base（voice / sound / se 的普通文件）；以前只写了 base，.psm 转出来的图一张都解析不到', J(c?.resourceRoots) === J(['Cake/GameMaterial/arc/res', 'Cake/GameMaterial']), J(c?.resourceRoots))
   check('gal-layout：适配器参数里的路径带上 base（Cake/GameMaterial/arc/res、…/voice）；资源根 = arc/res + base', J(c?.adapterOptions?.['unity::dsm']?.mediaDirs) === J(['Cake/GameMaterial/voice', 'Cake/GameMaterial/sound', 'Cake/GameMaterial/se']) && c.adapterOptions['unity::dsm'].resDir === 'Cake/GameMaterial/arc/res', J(c?.adapterOptions))
   const media = work
   const report = await ensureContainers({ mediaDir: media, config: c })

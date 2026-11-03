@@ -1318,3 +1318,10 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 - **验证了什么**：真实表切 1719 段、43288 句台词；引用的 BG png 1928 个 / BGM 2536 / 语音 4431 / 音效 6988 个都在导出资源的目录清单里，没找到的是文件本身就缺（BG 预制体目录只有 fbx、个别音效 / 语音）。
 - **没做 / 没验证**：角色（`Role1-3` = `Hero/H0xx/H0xx_Dialog` 预制体）——导出里只有 fbx 网格，预制体里的位置和 `RoleMotion`（`talkdown`、`Normal~talkup` …）怎么映射到 Spine 动画不在资源里；Spine 骨骼是 **4.1.23**（`Hero/H047/H047/H047.skel.asset` + `.atlas.asset` + png），播放器现有的运行时只有 3.6 / 3.8 / 4.0 / 4.2，没有 4.1；`CG/…` 的 Spine 场景同理；LINE 聊天剧情（`LineDrama.txt` / `LineDialog.txt`，230 段 / 1 万行，有分支）没接；背景的缩放 / 位置不知道（原样铺）；音效 / 语音是在这一行开始时放，实际时机不详。没有游戏截图对照。
 - 测试：`node scripts/dev/gal-arcrecord-selftest.mjs`（合成 Dialog.txt + Text：切段 / 坏字节 / 重复 id / 适配器 / containers / gal-layout；`ARC_SAMPLE=<…/Game 目录>` 时再把真实表整份切段 + 解析一遍）。
+
+### 资源接口：Range / ETag、Ogg 清理、`resourceRootsForce`
+
+- `GET …/resource` 对磁盘文件（含容器取出后放进 `cache/gal-arc-res` 的）流式发送，带 `Accept-Ranges: bytes`、`ETag`（大小 + mtime），支持 `Range`（206 / 416）和 `If-None-Match`（304）。以前整个读进内存、回 200 不带 Range，Chrome 对「预加载取一半就取消」的音频会缓存成残缺的，之后语音播到一半就当播完。`gal-arc-res` 的 LRU 命中只改 atime，不动 mtime（否则 ETag 每次都变，304 永远命中不了）。
+- RScript 的 Vorbis ACM wav：data 块里的 Ogg 夹着序列号 `0xffffffff` 的空页和结尾填充，Chrome 当成链接式 Ogg 处理而中断；`cleanOggPages` 只保留第一页的序列号、到 EOS 为止。同一个 xfl 里 Vorbis / PCM wav 混用，按条目判断（Vorbis → `.ogg`，PCM 保持 `.wav`）。
+- gal-layout 的 `resourceRootsForce: true`（Unity GameMaterial 用）：资源根不做「第一个存在的」筛选，全部写进 `resourceRoots`（`arc/res` 是虚拟目录，磁盘上不存在，但里面的 `.psm` → png 要取得到）。
+- `scripts/dev/gal-e2e-selftest.mjs`：起真的服务端，走导入 → gal-layout → 浏览 → 资源接口，覆盖 Unity / Mahotan / RScript 三种的虚拟资源和 Range / 304。

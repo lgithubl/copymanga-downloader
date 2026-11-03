@@ -14,7 +14,7 @@ import { DEFAULT_OPTIONS as TY_DEFAULTS, parse as tyParse } from '../../web/libr
 import { galAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { loadAdapterContext } from '../../web/library/gal/context.mjs'
 import { normalizeGalConfig } from '../../web/library/gal/config.mjs'
-import { createGalHandler } from '../../web/library/types/gal.mjs'
+import { createGalHandler } from './gal-handler-compat.mjs'
 import { generateTags as galLayoutScript } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { buildLegecloFixture } from './make-legeclo-fixture.mjs'
 import { LAYER3, LAYER3_REL, MEMORIAL, MEMORIAL_REL, RD3, buildKamihimeExtraFixture, buildKamihimeFixture, hashed, memIntro, memMain } from './make-kamihime-fixture.mjs'

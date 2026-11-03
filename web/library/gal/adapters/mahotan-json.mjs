@@ -5,7 +5,7 @@
 // 指令（cmd）：text（name / content / voice）、background（content = bg_N，title = 地点名）、bgm、chara_show / chara_hide、transition_in / transition_out、emotion / aura_show / aura_remove / chara_jump / chara_shake / chara_blink / eye（特效，没做）
 // 资源表 storyAssets：visuals（角色 id → 立绘 / CG 图）、voices（语音 id → media/voices/…mp3）、backgrounds（bg_N → images/backgrounds/background-NNN.jpg，**每个脚本自己一张表**，不是按 N 直接对应）、bgm、metadata（立绘：{ kind: 'standing', bounds: {left, top, right, bottom, sourceWidth, sourceHeight} } / { kind: 'cg' }）
 // 画面（对照 exe 里提出来的前端 index-*.js：故事播放器 Qd / Su / Q8 + CSS）：同时只有一个角色；standing = 头对齐（mahotan-heads.json 里有头框的立绘：头框长边 = 舞台高度的 20%，头框中心在舞台高度的 25% 处、水平居中；没有头框的退回「bounds 撑满舞台高度、脚对齐底边」）；cg = 铺满舞台（contain）；
-//   transition_out = 渐黑 1 秒、transition_in = 从黑渐出 2 秒（content = White 是白色，这里也用黑）；文字：去掉换行连起来（日文不加空格）；%player_name 在非玩家说话时 = 称呼（主様），玩家 / 旁白说话时 = 名字（主人公），%player_nameさん 按称呼是否已经以さん / 様结尾处理（和前端 $s / d0 一样）
+//   transition_in = 盖上黑 2 秒、transition_out = 从黑里揭开 1 秒（脚本顺序 in → 换背景 / 立绘 → out；content = White 是白色，这里也用黑）；文字：去掉换行连起来（日文不加空格）；%player_name 在非玩家说话时 = 称呼（主様），玩家 / 旁白说话时 = 名字（主人公），%player_nameさん 按称呼是否已经以さん / 様结尾处理（和前端 $s / d0 一样）
 // 没验证（没有游戏截图对照）：立绘位置只对着前端公式算，没有对过真实画面；非故事（scene）模式的立绘容器按和故事模式一样处理；特效（emotion / aura / jump / shake / blink）没做；chara_blink 自带的台词在前端也没用到，这里也不出
 import { readFileSync } from 'node:fs'
 import { createIndexResolver } from '../resolve.mjs'
@@ -19,8 +19,8 @@ export const DEFAULT_OPTIONS = {
   protagonistAddress: '主様',
   headFraction: 0.2,       // 头框长边 / 舞台高度（前端 hH）
   headCenterY: 0.25,       // 头框中心的高度 / 舞台高度（前端 mH）
-  transitionOut: 1,        // 渐黑秒数
-  transitionIn: 2,         // 从黑渐出秒数
+  transitionIn: 2,         // transition_in：盖上黑的秒数
+  transitionOut: 1,        // transition_out：从黑里揭开的秒数
 }
 const readOptions = createOptionsReader(DEFAULT_OPTIONS)
 
@@ -171,8 +171,8 @@ export function parse(text, ctx = null, meta = {}) {
         break
       }
       case 'chara_hide': visual = null; dirty = true; break
-      case 'transition_out': commit(); emit({ op: 'fade', to: 'black', seconds: opt.transitionOut }); break
-      case 'transition_in': commit(); emit({ op: 'fade', to: 'clear', seconds: opt.transitionIn }); break
+      case 'transition_in': commit(); emit({ op: 'fade', to: 'black', seconds: opt.transitionIn }); break    // 前端 Ui(色, 2000, true)：盖上黑（2 秒）
+      case 'transition_out': commit(); emit({ op: 'fade', to: 'clear', seconds: opt.transitionOut }); break   // Ui(色, 1000, false)：从黑里揭开（1 秒）；脚本顺序是 in → 换背景 / 立绘 → out
       case 'text': {
         commit()
         stats.messages += 1

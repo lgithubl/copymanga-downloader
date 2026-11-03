@@ -32,7 +32,7 @@ const png1 = 'b64:iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYP
 // ---- 夹具脚本 ----
 const sceneAssets = {
   visuals: { avt_1: 'images/characters/avt_1/standing/main.png', avt_1_1: 'images/characters/avt_1/cg/avt_1_1.png', avt_9: 'images/characters/avt_9/standing/main.png' },
-  voices: { v1: 'media/voices/a/v1.mp3', v2: 'media/voices/a/v2.mp3' },
+  voices: { v1: 'media/voices/characters/avt_1/scene/general/v1.mp3', v2: 'media/voices/a/v2.mp3' },   // v1 = 7 段深的真实语音路径（以前 containers 的 6 段上限把它丢了）
   backgrounds: { bg_3: 'images/backgrounds/background-001.jpg', bg_1: null },
   bgm: { bgm_1: 'media/bgm/bgm_1.mp3' },
   metadata: { avt_1: { kind: 'standing', bounds: { bottom: 1575, left: 770, right: 1337, sourceHeight: 2034, sourceWidth: 2034, top: 603 } }, avt_1_1: { kind: 'cg' }, avt_9: { kind: 'standing', bounds: { bottom: 1500, left: 800, right: 1300, sourceHeight: 2034, sourceWidth: 2034, top: 600 } } },
@@ -54,12 +54,12 @@ const story = J({ id: 'story_1', version: 'abc', frames: [{ text: 'x' }], comman
 check('嗅探：三种开头都认（{"sceneId"… / {"commands":[{…"cmd"… / {"id":…,"version":…,"frames":[…）；别的 JSON 不认', adapter.sniff(sceneGeneral) && adapter.sniff(sceneAdult) && adapter.sniff(story) && !adapter.sniff('{"scenes":[]}') && !adapter.sniff('{"id":"x","name":"y"}') && !adapter.sniff('not json'))
 
 // ---- 适配器 ----
-const files = ['images/backgrounds/background-001.jpg', 'images/characters/avt_1/standing/main.png', 'images/characters/avt_1/cg/avt_1_1.png', 'images/characters/avt_9/standing/main.png', 'media/voices/a/v1.mp3', 'media/voices/a/v2.mp3', 'media/bgm/bgm_1.mp3'].map((n) => `arc/res/${n}`)
+const files = ['images/backgrounds/background-001.jpg', 'images/characters/avt_1/standing/main.png', 'images/characters/avt_1/cg/avt_1_1.png', 'images/characters/avt_9/standing/main.png', 'media/voices/characters/avt_1/scene/general/v1.mp3', 'media/voices/a/v2.mp3', 'media/bgm/bgm_1.mp3'].map((n) => `arc/res/${n}`)
 const toResourcePath = (rel) => rel.replace(/^arc\/res\//, '')
 const ctx = adapter.prepare({ options: {}, files, toResourcePath })
 const scene = buildScene('mahotan::json', sceneGeneral, ctx, { options: {} })
 const all = scene.steps.flatMap((s) => s.commands)
-check('资源表：bg_3 → 这个脚本自己的 background-001.jpg；bgm / 语音 / 立绘都按 storyAssets 找到（没有未解析的）', all.some((c) => c.op === 'bg' && c.src === 'images/backgrounds/background-001.jpg') && all.some((c) => c.op === 'bgm' && c.src === 'media/bgm/bgm_1.mp3') && all.some((c) => c.op === 'voice' && c.src === 'media/voices/a/v1.mp3') && Object.keys(scene.stats.unresolved).length === 0, J(scene.stats))
+check('资源表：bg_3 → 这个脚本自己的 background-001.jpg；bgm / 语音 / 立绘都按 storyAssets 找到（没有未解析的）', all.some((c) => c.op === 'bg' && c.src === 'images/backgrounds/background-001.jpg') && all.some((c) => c.op === 'bgm' && c.src === 'media/bgm/bgm_1.mp3') && all.some((c) => c.op === 'voice' && c.src === 'media/voices/characters/avt_1/scene/general/v1.mp3') && Object.keys(scene.stats.unresolved).length === 0, J(scene.stats))
 check('文字：多行去掉换行连起来；说话人；%player_name 在别人说话时 = 称呼「主様」、%player_nameさん 称呼已是「様」结尾就不再加さん；旁白里 = 名字「主人公」', J(scene.steps[0].commands.find((c) => c.op === 'text').segments) === J([{ text: '「ねぇ、それ、取って」' }]) && scene.steps[1].commands.find((c) => c.op === 'text').segments[0].text === '主様は主様に会った' && scene.steps[2].commands.find((c) => c.op === 'text').segments[0].text === '主人公は笑った' && scene.steps[0].commands.find((c) => c.op === 'speaker').segments[0].text === '飯綱', J(scene.steps.slice(0, 3)))
 const stand = all.find((c) => c.op === 'stand')
 const fallbackScale = 1080 / (1575 - 603)
@@ -72,7 +72,7 @@ check('头对齐：有头框的立绘，头框长边 = 舞台高度的 20%、头
 check('头框表只在源图尺寸对得上才用（By 条目带 sourceWidth / sourceHeight）；表里没有的立绘 = 没有头框', adapter.headBoxOf('images/characters/cha_10001/standing/cha_10001.png', { sourceWidth: 2034, sourceHeight: 2034 })?.length === 4 && adapter.headBoxOf('images/characters/cha_10001/standing/cha_10001.png', { sourceWidth: 1000, sourceHeight: 1000 }) === null && adapter.headBoxOf('images/characters/nobody/standing/main.png', null) === null)
 const cgOverlay = all.find((c) => c.op === 'overlay')
 check('CG（kind = cg）：铺满舞台（overlay fit = contain），立绘撤掉；换回立绘时 CG 撤掉', cgOverlay?.slot === 'cg' && cgOverlay.fit === 'contain' && all.some((c) => c.op === 'standOff' && c.slot === 'chara') && all.some((c) => c.op === 'overlayOff' && c.slot === 'cg'), J(all.filter((c) => /overlay|stand/.test(c.op))))
-check('转场：transition_out = 渐黑 1 秒、transition_in = 渐出 2 秒（White 也用黑）；背景表里是 null 的 bg_1 = 不画背景（bgoff）；bgm 清空 = bgmStop', all.some((c) => c.op === 'fade' && c.to === 'black' && c.seconds === 1) && all.some((c) => c.op === 'fade' && c.to === 'clear' && c.seconds === 2) && all.some((c) => c.op === 'bgoff') && all.some((c) => c.op === 'bgmStop'), J(all.filter((c) => /fade|bgoff|bgmStop/.test(c.op))))
+check('转场：transition_in = 盖上黑 2 秒、transition_out = 从黑里揭开 1 秒（White 也用黑）；脚本顺序 in → 换背景 / 立绘 → out，揭开之前背景已经换好；背景表里是 null 的 bg_1 = 不画背景（bgoff）；bgm 清空 = bgmStop', all.some((c) => c.op === 'fade' && c.to === 'black' && c.seconds === 2) && all.some((c) => c.op === 'fade' && c.to === 'clear' && c.seconds === 1) && all.some((c) => c.op === 'bgoff') && all.some((c) => c.op === 'bgmStop'), J(all.filter((c) => /fade|bgoff|bgmStop/.test(c.op))))
 check('特效没做的（emotion）记进 ignored，不影响文字；每个 text 一步', scene.stats.ignored.emotion === 1 && scene.stats.messages === 5 && scene.steps.filter((s) => s.commands.some((c) => c.op === 'text' && c.segments.length)).length === 5, J(scene.stats))
 const st = buildScene('mahotan::json', story, ctx, { options: {} })
 const ad = buildScene('mahotan::json', sceneAdult, ctx, { options: {} })
@@ -90,7 +90,7 @@ try {
   await writeFile(path.join(root, 'userdata.json'), '{}')
   makeZip(path.join(root, 'assets', 'mahotan-data.mhp'), { 'metadata/packages/data.json': ['{}', 'deflate'], 'data/scripts/scene/general/avt_1.json': [sceneGeneral, 'deflate'], 'data/scripts/stories/main/story_1.json': [story, 'deflate'], 'data/catalogs/x.json': ['{}', 'store'] })
   makeZip(path.join(root, 'assets', 'mahotan-images.mhp'), { 'images/backgrounds/background-001.jpg': ['base-bg', 'store'], 'images/characters/avt_1/standing/main.png': [png1, 'deflate'], 'metadata/packages/images.json': ['{}', 'deflate'] })
-  makeZip(path.join(root, 'assets', 'mahotan-update-received-1.mhp'), { 'images/backgrounds/background-001.jpg': ['update-bg', 'store'], 'media/bgm/bgm_1.mp3': ['mp3data', 'store'] })
+  makeZip(path.join(root, 'assets', 'mahotan-update-received-1.mhp'), { 'images/backgrounds/background-001.jpg': ['update-bg', 'store'], 'media/bgm/bgm_1.mp3': ['mp3data', 'store'], 'media/voices/characters/avt_1/scene/general/v1.mp3': ['voice-deep', 'store'] })
   makeZip(path.join(root, 'translations', 'zh-Hant.mhp'), { 'data/catalog.json': ['{}', 'store'] })
   const layoutItem = { itemId: 'm', title: 'm', config: {}, source: { path: work }, adapters: ['mahotan::json'] }
   const tagOut = await generateTags({ item: layoutItem, script: { id: 'gal-layout', version: '2.37.0', options: {} } })
@@ -105,13 +105,13 @@ try {
   const base = path.join(root)
   check('展开：data 包的 data/scripts/**.json 原样写到 arc/script/mahotan-data/（保留 scene/general/…、stories/main/… 的目录）；别的包 / 翻译不展开脚本', report.arcs['MahotanArchive/assets/mahotan-data.mhp']?.scripts === 2 && (await readFile(path.join(base, 'arc/script/mahotan-data/scene/general/avt_1.json'), 'utf8')) === sceneGeneral && report.arcs['MahotanArchive/assets/mahotan-images.mhp']?.scripts === 0 && !Object.values(report.arcs).some((r) => r.error), J(report))
   const vf = await virtualFiles({ mediaDir: work, config: c })
-  check('虚拟索引：图 / 声音的路径 = 条目路径（arc/res/images/…）；data/ 和 metadata/ 不进；更新包里同路径的覆盖底包', J([...vf.files].sort()) === J(['MahotanArchive/arc/res/images/backgrounds/background-001.jpg', 'MahotanArchive/arc/res/images/characters/avt_1/standing/main.png', 'MahotanArchive/arc/res/media/bgm/bgm_1.mp3'].sort()), J(vf.files))
+  check('虚拟索引：图 / 声音的路径 = 条目路径（arc/res/images/…，最深 7 段的语音也进）；data/ 和 metadata/ 不进；更新包里同路径的覆盖底包', J([...vf.files].sort()) === J(['MahotanArchive/arc/res/images/backgrounds/background-001.jpg', 'MahotanArchive/arc/res/images/characters/avt_1/standing/main.png', 'MahotanArchive/arc/res/media/bgm/bgm_1.mp3', 'MahotanArchive/arc/res/media/voices/characters/avt_1/scene/general/v1.mp3'].sort()), J(vf.files))
   const n = await materialize({ mediaDir: work, config: c, rels: vf.files })
-  check('取资源：Store 原样、Deflate 解压（PNG 完整）；同路径取到的是更新包的内容', n === 3 && (await readFile(path.join(base, 'arc/res/images/backgrounds/background-001.jpg'), 'utf8')) === 'update-bg' && (await readFile(path.join(base, 'arc/res/images/characters/avt_1/standing/main.png'))).subarray(1, 4).toString() === 'PNG' && (await readFile(path.join(base, 'arc/res/media/bgm/bgm_1.mp3'), 'utf8')) === 'mp3data')
+  check('取资源：Store 原样、Deflate 解压（PNG 完整）；同路径取到的是更新包的内容；7 段深的语音路径也能取', n === 4 && (await readFile(path.join(base, 'arc/res/media/voices/characters/avt_1/scene/general/v1.mp3'), 'utf8')) === 'voice-deep' && (await readFile(path.join(base, 'arc/res/images/backgrounds/background-001.jpg'), 'utf8')) === 'update-bg' && (await readFile(path.join(base, 'arc/res/images/characters/avt_1/standing/main.png'))).subarray(1, 4).toString() === 'PNG' && (await readFile(path.join(base, 'arc/res/media/bgm/bgm_1.mp3'), 'utf8')) === 'mp3data')
   // 展开出来的脚本 + 虚拟索引 → 适配器端到端
   const ctx2 = adapter.prepare({ options: {}, files: vf.files, toResourcePath: (rel) => rel.replace(/^MahotanArchive\/arc\/res\//, '') })
   const e2e = buildScene('mahotan::json', await readFile(path.join(base, 'arc/script/mahotan-data/scene/general/avt_1.json'), 'utf8'), ctx2, { options: {} })
-  check('端到端：展开的脚本 + 虚拟索引 → 背景 / bgm / 立绘都解析到，没有缺资源（语音文件夹具里没造 = 记缺）', e2e.stats.images.unresolved === 1 && e2e.stats.bgm.unresolved === 0 && e2e.stats.voices.unresolved === 2 && Object.keys(e2e.stats.unresolved).every((k) => /^(voice:|image:images\/characters\/avt_1\/cg)/.test(k)), J(e2e.stats))
+  check('端到端：展开的脚本 + 虚拟索引 → 背景 / bgm / 立绘都解析到，没有缺资源（语音文件夹具里没造 = 记缺）', e2e.stats.images.unresolved === 1 && e2e.stats.bgm.unresolved === 0 && e2e.stats.voices.unresolved === 1 && Object.keys(e2e.stats.unresolved).every((k) => /^(voice:|image:images\/characters\/avt_1\/cg)/.test(k)), J(e2e.stats))
   const again = await ensureContainers({ mediaDir: work, config: c })
   check('再跑一遍：容器没变 = 命中缓存', again.arcs['MahotanArchive/assets/mahotan-data.mhp']?.cached === true)
 

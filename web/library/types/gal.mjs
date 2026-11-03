@@ -270,7 +270,9 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       if (!isVideoPath(file)) throw Object.assign(new Error('不是视频文件'), { statusCode: 415 })
       return { file: await frames.frameOf(file, normalizeGalConfig(item.config).thumbFrame), contentType: 'image/jpeg', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
     }
-    return { body: await readFile(file), contentType: contentTypeOf(file) }
+    // 给文件、不读进内存：服务端用 sendCachedFile 流式发（带 ETag / 304 和 Range / 206——音频 / 视频靠 Range 边下边播；
+    // 以前整个读进内存、回 200 不带 Accept-Ranges，Chrome 对「预加载取一半就取消」的音频会缓存成残缺的，之后语音放到一半就当播完）
+    return { file, contentType: contentTypeOf(file), cacheControl: 'public, max-age=3600' }
   }
 
   // 渲染缩略图（浏览器离屏渲染的一帧 JPEG）：按 key 存在 cache/gal-render-thumbs。GET 命中返回图、没有 404（前端据此决定要不要渲染）；PUT 存图（只收 JPEG、≤ 600KB、key 必须是 40 位十六进制）

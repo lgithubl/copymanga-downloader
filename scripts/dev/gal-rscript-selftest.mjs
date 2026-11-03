@@ -8,7 +8,7 @@ import { generateTags } from '../tag-scripts/gal-layout/main.js'
 import * as adapter from '../../web/library/gal/adapters/rscript-gsc.mjs'
 import { normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
 import { ensureContainers, materialize, virtualEntry, virtualFiles } from '../../web/library/gal/containers.mjs'
-import { decodeInstruction, isVorbisRiff, parseGsc, parseXfl, readXflIndex, riffVorbisToOgg } from '../../web/library/gal/rscript-gsc.mjs'
+import { cleanOggPages, decodeInstruction, isVorbisRiff, parseGsc, parseXfl, readXflIndex, riffVorbisToOgg } from '../../web/library/gal/rscript-gsc.mjs'
 import { decodeGscScript, runGsc } from '../../web/library/gal/rscript-run.mjs'
 import { decodeWcg, encodeWcg, readWcgHeader, wcgToPng } from '../../web/library/gal/rscript-wcg.mjs'
 import { assemble, buildRiff, buildXfl } from './make-rscript-fixture.mjs'
@@ -80,6 +80,18 @@ const s3 = assemble([{ op: 0x51, args: [0, 0, 0, 0, { str: '' }, { str: 'third' 
   const ogg = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(40, 3)])
   const riff = buildRiff(ogg)
   check('Vorbis ACM 的 WAVE：认得出（fmt 标签 0x6771），取出 data 里的 Ogg；PCM 的 WAVE 原样返回', isVorbisRiff(riff) && Buffer.from(riffVorbisToOgg(riff)).equals(ogg) && !isVorbisRiff(buildRiff(Buffer.alloc(10), { pcm: true })) && riffVorbisToOgg(buildRiff(Buffer.alloc(10), { pcm: true })).length > 10)
+  // 真实的 Vorbis ACM wav：Vorbis 的页之间夹着 28 字节的空页（序列号 0xffffffff、页号从 0 递增，带 BOS），EOS 页后面还有；浏览器会当成「链接」，在第 4 页就当播完（语音「直接中断」）
+  {
+    const page = (serial, no, flags, granule, payload) => {
+      const h = Buffer.alloc(27 + 1); h.write('OggS', 0, 'latin1'); h[5] = flags; h.writeBigInt64LE(BigInt(granule), 6); h.writeUInt32LE(serial, 14); h.writeUInt32LE(no, 18); h[26] = 1; h[27] = payload.length
+      return Buffer.concat([h, payload])
+    }
+    const junk = (no) => { const h = Buffer.alloc(28); h.write('OggS', 0, 'latin1'); h.writeUInt32LE(0xffffffff, 14); h.writeUInt32LE(no, 18); h[26] = 1; h[27] = 0; return h }
+    const real = [page(0, 0, 2, 0, Buffer.from('head')), page(0, 1, 0, 0, Buffer.from('setup')), page(0, 2, 0, 1000, Buffer.from('aaaa')), page(0, 3, 4, 2000, Buffer.from('bbbb'))]
+    const dirty = Buffer.concat([real[0], junk(0), junk(1), real[1], junk(2), real[2], junk(3), real[3], junk(4), junk(5)])
+    const cleaned = cleanOggPages(dirty)
+    check('Vorbis ACM 的 Ogg：夹在里面的空页（序列号不同）和 EOS 之后的填充都去掉，只剩 Vorbis 自己的页（顺序不变）；干净的原样返回', cleaned.equals(Buffer.concat(real)) && cleanOggPages(Buffer.concat(real)).equals(Buffer.concat(real)) && Buffer.from(riffVorbisToOgg(buildRiff(dirty))).equals(Buffer.concat(real)) && cleanOggPages(Buffer.from('not ogg')).toString() === 'not ogg')
+  }
 }
 
 // ---- 执行 ----
@@ -164,7 +176,7 @@ try {
   await writeFile(path.join(media, 'grpe.xfl'), buildXfl([['2022.wcg', wcg], ['0020.wcg', wcg]]))
   await writeFile(path.join(media, 'grpo_bu1.xfl'), buildXfl([['3400.wcg', wcg], ['3402.wcg', wcg]]))
   await writeFile(path.join(media, 'voice.xfl'), buildXfl([['0701.wav', buildRiff(ogg)], ['1.xfl', nestedVoice]]))
-  await writeFile(path.join(media, 'wav.xfl'), buildXfl([['0001.wav', buildRiff(ogg)]]))
+  await writeFile(path.join(media, 'wav.xfl'), buildXfl([['0001.wav', buildRiff(ogg)], ['0002.wav', buildRiff(Buffer.alloc(64, 3), { pcm: true })]]))   // 同一个档案里有 Vorbis ACM 也有 PCM
   await writeFile(path.join(media, 'bgm.xfl'), buildXfl([['Track05.wav', buildRiff(Buffer.alloc(64, 2), { pcm: true })]]))
   await writeFile(path.join(media, 'game.exe'), 'MZ')
   const layoutItem = { itemId: 'r', title: 'r', config: {}, source: { path: media }, adapters: ['rscript::gsc'] }
@@ -182,8 +194,8 @@ try {
   const report = await ensureContainers({ mediaDir: media, config })
   check('展开：scr.xfl 里的 .gsc 执行一遍 → arc/script/scr/<号>.rscript（rscript-gsc/1，调用 0002 已内联）；资源 xfl 不展开', report.arcs['./scr.xfl']?.scripts === 3 && !report.arcs['./grpe.xfl']?.error && JSON.parse(await readFile(path.join(media, 'arc/script/scr/0001.rscript'), 'utf8')).events.some((e) => e[0] === 'm' && e[3] === 'in-call'), J(report))
   const vf = await virtualFiles({ mediaDir: media, config })
-  const want = ['arc/res/grpe/2022.png', 'arc/res/grpe/0020.png', 'arc/res/grpo_bu1/3400.png', 'arc/res/grpo_bu1/3402.png', 'arc/res/voice/0701.ogg', 'arc/res/voice/1/0301.ogg', 'arc/res/voice/1/0302.ogg', 'arc/res/wav/0001.ogg', 'arc/res/bgm/Track05.wav']
-  check('虚拟索引：.wcg → .png；Vorbis ACM 的 wav → .ogg（含嵌套的 voice.xfl 里的 1.xfl 分库：voice/1/0301.ogg）；PCM 的 bgm 保持 .wav；路径带档案名', J([...vf.files].sort()) === J([...want].sort()), J([...vf.files].sort()))
+  const want = ['arc/res/grpe/2022.png', 'arc/res/grpe/0020.png', 'arc/res/grpo_bu1/3400.png', 'arc/res/grpo_bu1/3402.png', 'arc/res/voice/0701.ogg', 'arc/res/voice/1/0301.ogg', 'arc/res/voice/1/0302.ogg', 'arc/res/wav/0001.ogg', 'arc/res/wav/0002.wav', 'arc/res/bgm/Track05.wav']
+  check('虚拟索引：.wcg → .png；Vorbis ACM 的 wav → .ogg（一个一个看，同一个档案里的 PCM 保持 .wav）（含嵌套的 voice.xfl 里的 1.xfl 分库：voice/1/0301.ogg）；PCM 的 bgm 保持 .wav；路径带档案名', J([...vf.files].sort()) === J([...want].sort()), J([...vf.files].sort()))
   const n = await materialize({ mediaDir: media, config, rels: ['arc/res/grpe/2022.png', 'arc/res/voice/1/0301.ogg', 'arc/res/bgm/Track05.wav'] })
   const png = await readFile(path.join(media, 'arc/res/grpe/2022.png'))
   check('取资源：WCG 转成 PNG（头 + 宽高 4×3）；Vorbis ACM 去外壳 = 就是那段 Ogg；PCM 的 wav 原样', n === 3 && png.subarray(1, 4).toString() === 'PNG' && png.readUInt32BE(16) === 4 && (await readFile(path.join(media, 'arc/res/voice/1/0301.ogg'))).equals(ogg) && (await readFile(path.join(media, 'arc/res/bgm/Track05.wav'))).subarray(0, 4).toString() === 'RIFF')

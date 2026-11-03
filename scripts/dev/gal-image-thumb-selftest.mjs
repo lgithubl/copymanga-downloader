@@ -10,7 +10,7 @@ import path from 'node:path'
 import { generateTags } from '../../scripts/tag-scripts/gal-layout/main.js'
 import { applyGalConfigPatch, normalizeGalConfig, normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
 import { bucketOf, createImageThumbCache } from '../../web/library/gal/image-thumb.mjs'
-import { createGalHandler } from '../../web/library/types/gal.mjs'
+import { createGalHandler } from './gal-handler-compat.mjs'
 import { arcBuild, buildAdvhdFixture, pnaBuild } from './make-advhd-fixture.mjs'
 
 const sharp = createRequire(new URL('../../web/package.json', import.meta.url))('sharp')
