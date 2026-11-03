@@ -57,7 +57,8 @@ const MOSAIC_CELL = 16   // krkrlive2d.dll 里的默认格子大小（像素，�
 const MASK_FRAG = `precision mediump float;
 varying vec2 v_uv;
 uniform sampler2D u_tex;
-void main() { float a = texture2D(u_tex, v_uv).a; gl_FragColor = vec4(a, a, a, a); }`
+uniform float u_opacity;
+void main() { float a = texture2D(u_tex, v_uv).a * u_opacity; gl_FragColor = vec4(a, a, a, a); }`
 
 const dirOf = (p) => String(p).replace(/[^/]*$/, '')
 // motion 名 → motion3.json 的文件：先找「名字.motion3.json」，再把 r3h 这种简写当成「…_03h」（脚本里的 motion 只有 r0 r1 r2 r3 r3h r5 r5s，对应 ev_mv001_02_00 … _05s）
@@ -115,7 +116,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       const mosaic = program(MOSAIC_FRAG)
       const loc = (p, n) => gl.getUniformLocation(p, n)
       const minmax = gl.MAX || gl.getExtension('EXT_blend_minmax')?.MAX_EXT
-      gl2 = { main, mask, minmax, u: { tex: loc(main, 'u_tex'), mask: loc(main, 'u_mask'), res: loc(main, 'u_res'), mul: loc(main, 'u_mul'), scr: loc(main, 'u_scr'), opacity: loc(main, 'u_opacity'), maskMode: loc(main, 'u_maskMode') }, um: { tex: loc(mask, 'u_tex') }, mosaic, uo: { scene: loc(mosaic, 'u_scene'), mask: loc(mosaic, 'u_mask'), res: loc(mosaic, 'u_res'), param: loc(mosaic, 'u_param'), maskMode: loc(mosaic, 'u_maskMode') }, sceneTex: null, maskTex: null, fbo: null, size: [0, 0] }
+      gl2 = { main, mask, minmax, u: { tex: loc(main, 'u_tex'), mask: loc(main, 'u_mask'), res: loc(main, 'u_res'), mul: loc(main, 'u_mul'), scr: loc(main, 'u_scr'), opacity: loc(main, 'u_opacity'), maskMode: loc(main, 'u_maskMode') }, um: { tex: loc(mask, 'u_tex'), opacity: loc(mask, 'u_opacity') }, mosaic, uo: { scene: loc(mosaic, 'u_scene'), mask: loc(mosaic, 'u_mask'), res: loc(mosaic, 'u_res'), param: loc(mosaic, 'u_param'), maskMode: loc(mosaic, 'u_maskMode') }, sceneTex: null, maskTex: null, fbo: null, size: [0, 0] }
     } catch (error) { unavailable = true; onUnavailable(error); gl = null; return null }
     return gl
   }
@@ -284,6 +285,8 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
           for (const mi of maskList) {
             const mm = gpu.meshes[mi]
             if (!mm.count) continue
+            if (frame.opacities[mi] <= 0) continue   // 不透明度 0 的网格当遮罩也是空的（模型用「平时 0、插入时才 1」的遮罩网格做穿插：以前照样挡，插入物从身体上戳出来）
+            gl.uniform1f(gl2.um.opacity, frame.opacities[mi])
             bindMesh(mm)
             gl.activeTexture(gl.TEXTURE0)
             gl.bindTexture(gl.TEXTURE_2D, gpu.textures[model.artTexture[mi]])
