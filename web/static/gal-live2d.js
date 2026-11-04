@@ -247,8 +247,11 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
     const sy = (-2 * ppu) / ch
     const ox = (2 * originX) / cw - 1
     const oy = 1 - (2 * originY) / ch
-    for (const i of frame.renderOrder) {
+    // 顶点要给所有网格上传：不画的网格（不透明度 0 / 被禁用）常被别的网格当遮罩用（遮罩只看形状 / 贴图 alpha，不看不透明度）。
+    // 以前只上传 renderOrder 里的网格 → 这些「隐藏的遮罩网格」位置是空的，遮罩等于没有（ev_cg003_02 的 ArtMesh37 = 肚子轮廓，用来把 ちん 被肚子盖住的部分擦掉）
+    for (let i = 0; i < gpu.meshes.length; i++) {
       const mesh = gpu.meshes[i]
+      if (!mesh || !mesh.vc) continue
       const v = frame.vertices[i]
       for (let n = 0; n < mesh.vc; n++) { mesh.scratch[n * 2] = v[n * 2] * sx + ox; mesh.scratch[n * 2 + 1] = v[n * 2 + 1] * sy + oy }
       gl.bindBuffer(gl.ARRAY_BUFFER, mesh.pos)
