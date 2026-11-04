@@ -298,7 +298,9 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
           gl.viewport(0, 0, w, h)
         }
       }
-      if (entry.mosaic.has(i)) {   // 马赛克网格：先把到现在为止的画面拷下来，再按格子取样画进网格形状里
+      if (entry.mosaic.has(i)) {
+        if (!showMosaic) continue   // 「更多 → 显示马赛克层」关着（默认）：着色器马赛克网格不画；烘焙在贴图里的格子去不掉
+   // 马赛克网格：先把到现在为止的画面拷下来，再按格子取样画进网格形状里
         gl.activeTexture(gl.TEXTURE0)
         gl.bindTexture(gl.TEXTURE_2D, gl2.sceneTex)
         gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, w, h)
@@ -362,6 +364,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
 
   const sig = (spec) => (spec ? JSON.stringify([spec.src, spec.motion || '', Boolean(spec.loop), spec.variables || null]) : '')
   let currentSig = ''
+  let showMosaic = false
 
   return {
     // spec = null → 隐藏并停掉
@@ -387,6 +390,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       renderAt(0)
       kick()
     },
+    setMosaic(value) { const next = Boolean(value); if (next === showMosaic) return; showMosaic = next; if (runtime) { renderAt(runtime.last ? (runtime.last - runtime.t0) / 1000 : 0); kick() } },
     setPaused(value) { paused = Boolean(value); if (paused) { if (raf) { cancelAnimationFrame(raf); raf = 0 } } else { if (runtime) runtime.last = 0; kick() } },
     info() { return runtime ? [{ src: runtime.spec.src, motion: runtime.spec.motion || '', motionFile: pickMotionFile(runtime.entry.files, runtime.spec.motion), meshes: runtime.entry.model.counts.artMeshes, drawn: runtime.frame.renderOrder.length }] : [] },
     glInfo() { return gl ? [{ renderer: gl.getParameter(gl.RENDERER), lost: gl.isContextLost?.() ?? false, canvas: `${canvas.width}×${canvas.height}` }] : [] },

@@ -271,7 +271,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   mosaicInput.title = '叠上 still_configuration.json 里标成马赛克（IsMosaic）的层（这个媒体自己的设置）'
   const mosaicRow = el('label', 'gal-more-field')
   mosaicRow.append(el('span', '', '显示马赛克层'), mosaicInput)
-  mosaicRow.hidden = !(scene?.stats?.mosaic?.total > 0)
+  mosaicRow.hidden = !(scene?.stats?.mosaic?.total > 0 || scene?.stats?.live2d > 0)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
@@ -646,7 +646,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   mosaicInput.addEventListener('change', () => {
     views = { ...views, showMosaic: mosaicInput.checked }
     saveViews()
-    onReload?.()
+    live2dLayer?.setMosaic(mosaicInput.checked)
+    if (scene?.stats?.mosaic?.total > 0) onReload?.()   // 脚本里的马赛克层要按新设置重取脚本；只有 Live2D 的不用
   })
   const viewKind = () => (spineLayer?.hasKind?.('still') ? 'still' : spineLayer?.hasKind?.('actor') ? 'actor' : 'still')
   const syncViewInputs = () => {
@@ -1075,6 +1076,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       live2dLayer = createLive2dLayer({ parent: world, before: movie.nextSibling, url, onMissing: markMissing, onUnavailable: () => { live2dUnavailable = true; updateNote() } })
       if (!wantBgm) live2dLayer.setPaused(true)
     }
+    live2dLayer.setMosaic(views.showMosaic ?? false)   // Live2D 的马赛克网格：默认不显示，和「显示马赛克层」同一个开关
     live2dLayer.set(state.live2d)
   }
   let live2dUnavailable = false
