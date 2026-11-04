@@ -22,6 +22,8 @@ const OFF = {
   warpDeformerKeyformsV303: 468,
   parameterExtensions: 472, warpDeformerKeyformsV402: 484, rotationDeformerKeyformsV402: 488, artMeshKeyformsV402: 492,
   keyformMultiplyColors: 496, keyformScreenColors: 508, parametersV402: 520,
+  // 混合变形（blend shape，4.2 起）：每个字段一个指针，位置连着排
+  bsParamBindings: 532, bsKeyformBindings: 544, bsWarpDeformers: 564, bsArtMeshes: 576, bsConstraints: 588,
 }
 
 const COUNT_NAMES = ['parts', 'deformers', 'warpDeformers', 'rotationDeformers', 'artMeshes', 'parameters', 'partKeyforms', 'warpDeformerKeyforms', 'rotationDeformerKeyforms', 'artMeshKeyforms',
@@ -124,6 +126,29 @@ export function parseMoc3(input) {
     paramBindingStart: arr(Uint32Array, OFF.parameters + 28, c.parameters),
     paramBindingCount: arr(Uint32Array, OFF.parameters + 32, c.parameters),
     paramType: has402 ? arr(Uint32Array, OFF.parametersV402, c.parameters) : new Uint32Array(c.parameters),
+    // 混合变形：参数 → 它的混合变形绑定（parametersV402 的第 2、3 组：绑定序号、是否有）
+    paramBsBinding: has402 && c.blendShapeParameterBindings ? arr(Int32Array, OFF.parametersV402 + 4, c.parameters) : null,
+    paramBsFlag: has402 && c.blendShapeParameterBindings ? arr(Uint32Array, OFF.parametersV402 + 8, c.parameters) : null,
+    bsPbKeyStart: c.blendShapeParameterBindings ? arr(Uint32Array, OFF.bsParamBindings, c.blendShapeParameterBindings) : null,
+    bsPbKeyCount: c.blendShapeParameterBindings ? arr(Uint32Array, OFF.bsParamBindings + 4, c.blendShapeParameterBindings) : null,
+    bsKbBinding: c.blendShapeKeyformBindings ? arr(Uint32Array, OFF.bsKeyformBindings, c.blendShapeKeyformBindings) : null,
+    bsKbKeyformStart: c.blendShapeKeyformBindings ? arr(Uint32Array, OFF.bsKeyformBindings + 4, c.blendShapeKeyformBindings) : null,
+    bsKbKeyformCount: c.blendShapeKeyformBindings ? arr(Uint32Array, OFF.bsKeyformBindings + 8, c.blendShapeKeyformBindings) : null,
+    bsKbConstraintStart: c.blendShapeKeyformBindings ? arr(Uint32Array, OFF.bsKeyformBindings + 12, c.blendShapeKeyformBindings) : null,
+    bsKbConstraintCount: c.blendShapeKeyformBindings ? arr(Uint32Array, OFF.bsKeyformBindings + 16, c.blendShapeKeyformBindings) : null,
+    // 约束：[序号表（每项 = 约束号）]、[约束：参数号 / 曲线起点 / 曲线点数]、[曲线：参数值 → 倍率]
+    bsConstraintIndex: c.blendShapeConstraintIndices ? arr(Uint32Array, OFF.bsConstraints, c.blendShapeConstraintIndices) : null,
+    bsConstraintParam: c.blendShapeConstraints ? arr(Uint32Array, OFF.bsConstraints + 4, c.blendShapeConstraints) : null,
+    bsConstraintValueStart: c.blendShapeConstraints ? arr(Uint32Array, OFF.bsConstraints + 8, c.blendShapeConstraints) : null,
+    bsConstraintValueCount: c.blendShapeConstraints ? arr(Uint32Array, OFF.bsConstraints + 12, c.blendShapeConstraints) : null,
+    bsConstraintValueKey: c.blendShapeConstraintValues ? arr(Float32Array, OFF.bsConstraints + 16, c.blendShapeConstraintValues) : null,
+    bsConstraintValueWeight: c.blendShapeConstraintValues ? arr(Float32Array, OFF.bsConstraints + 20, c.blendShapeConstraintValues) : null,
+    bsWarpTarget: c.blendShapeWarpDeformers ? arr(Uint32Array, OFF.bsWarpDeformers, c.blendShapeWarpDeformers) : null,
+    bsWarpStart: c.blendShapeWarpDeformers ? arr(Uint32Array, OFF.bsWarpDeformers + 4, c.blendShapeWarpDeformers) : null,
+    bsWarpCount: c.blendShapeWarpDeformers ? arr(Uint32Array, OFF.bsWarpDeformers + 8, c.blendShapeWarpDeformers) : null,
+    bsArtTarget: c.blendShapeArtMeshes ? arr(Uint32Array, OFF.bsArtMeshes, c.blendShapeArtMeshes) : null,
+    bsArtStart: c.blendShapeArtMeshes ? arr(Uint32Array, OFF.bsArtMeshes + 4, c.blendShapeArtMeshes) : null,
+    bsArtCount: c.blendShapeArtMeshes ? arr(Uint32Array, OFF.bsArtMeshes + 8, c.blendShapeArtMeshes) : null,
     // keyforms
     partKeyformDrawOrder: arr(Float32Array, OFF.partKeyforms, c.partKeyforms),
     warpKeyformOpacity: arr(Float32Array, OFF.warpDeformerKeyforms, c.warpDeformerKeyforms),
@@ -194,7 +219,7 @@ function buildPuppet(m) {
     const list = []
     for (let i = m.kbStart[b]; i < m.kbStart[b] + m.kbCount[b]; i++) {
       const pb = m.paramBindingIndices[i]
-      list.push({ keys: m.keys.subarray(m.pbKeyStart[pb], m.pbKeyStart[pb] + m.pbKeyCount[pb]), param: pbToParam[pb] })
+      list.push({ keys: m.keys.subarray(m.pbKeyStart[pb], m.pbKeyStart[pb] + m.pbKeyCount[pb]), param: pbToParam[pb], eps: 0.1 ** m.paramDecimals[pbToParam[pb]] })
     }
     m.bindingTables[b] = list
   }
@@ -272,7 +297,8 @@ export function createFrame(m) {
 
 // ---- 插值 ----
 // 在有序关键点表里定位：返回 [下标, 到下一个点的比例 0..1]
-function keySegment(keys, value, out) {
+// eps：参数值离关键点不到 eps（0.1 ^ 参数的小数位数）就当成正好在关键点上（Cubism Core 的行为，对着真正的 Core 核对过：差 0.0003 的不透明度是 0 而不是 0.0003）
+export function keySegment(keys, value, out, eps = 0) {
   const last = keys.length - 1
   if (last <= 0 || value <= keys[0]) { out[0] = 0; out[1] = 0; return }
   if (value >= keys[last]) { out[0] = last - 1; out[1] = 1; return }
@@ -282,6 +308,13 @@ function keySegment(keys, value, out) {
   const upper = Math.min(Math.max(lo, 1), last)
   out[0] = upper - 1
   out[1] = rescale(value, keys[upper - 1], keys[upper])
+  if (eps > 0) {
+    // Core 是 float32：边界上（正好差 0.001）的比较按 float32 来（v < k0 + eps、v > k1 - eps）
+    const e32 = Math.fround(eps)
+    const v32 = Math.fround(value)
+    if (v32 < Math.fround(keys[upper - 1] + e32)) out[1] = 0
+    else if (v32 > Math.fround(keys[upper] - e32)) out[1] = 1
+  }
 }
 const seg = new Float64Array(2)
 const scaledTmp = new Float64Array(32)
@@ -292,7 +325,7 @@ function interpolate(table, params, add) {
   let baseIndex = 0
   let lastSize = 1
   for (let i = 0; i < n; i++) {
-    keySegment(table[i].keys, params[table[i].param], seg)
+    keySegment(table[i].keys, params[table[i].param], seg, table[i].eps)
     scaledTmp[i] = seg[1]
     baseIndex += seg[0] * lastSize
     lastSize *= table[i].keys.length
@@ -524,6 +557,55 @@ export function updateModel(m, frame, input) {
   return frame
 }
 
+
+// 混合变形（blend shape）：4.2 的 moc3 里，弯曲变形器 / 网格可以再挂「参数 → 偏移量」：每个绑定 3 个关键点（如 -30 / 0 / 30，基准点的偏移是 0），
+// 偏移量 = Σ 关键点权重 × 该关键点的位置表，直接加在平时的关键形态插值结果上（弯曲变形器加在控制点上，网格加在局部顶点上，之后照常过变形器）。
+// 约束（blendShapeConstraints）：某些绑定的偏移量要再乘「约束参数 → 倍率」的折线。有「约束」的参数（parametersV402 的第 3 组 = 2）另有一个关键点更密的绑定（序号 + 1），也由同一个参数驱动。
+// 对着引擎里真正的 Cubism Core（krkrlive2d.dll 里静态链接的那份，用模拟器跑）核对过顶点位置、绘制顺序、不透明度。
+const bsSeg = new Float64Array(2)
+function bsBindingParam(m) {
+  if (m.bsParamOf) return m.bsParamOf
+  const of = new Int32Array(m.counts.blendShapeParameterBindings || 0).fill(-1)
+  if (m.paramBsBinding) for (let p = 0; p < m.counts.parameters; p++) if (m.paramBsFlag[p] >= 1 && m.paramBsBinding[p] >= 0 && m.paramBsBinding[p] < of.length) { of[m.paramBsBinding[p]] = p; if (m.paramBsFlag[p] === 2 && m.paramBsBinding[p] + 1 < of.length) of[m.paramBsBinding[p] + 1] = p }
+  m.bsParamOf = of
+  return of
+}
+function applyBlendShape(m, frame, first, count, posStartOf, target, vertexCount) {
+  const paramOf = bsBindingParam(m)
+  for (let j = 0; j < count; j++) {
+    const kb = first + j
+    const binding = m.bsKbBinding[kb]
+    const param = paramOf[binding]
+    if (param < 0) continue
+    const keyStart = m.bsPbKeyStart[binding]
+    const keyCount = m.bsPbKeyCount[binding]
+    keySegment(m.keys.subarray(keyStart, keyStart + keyCount), frame.params[param], bsSeg, 0.1 ** m.paramDecimals[param])
+    const k0 = bsSeg[0]
+    const t = bsSeg[1]
+    // 约束：这个绑定的偏移量再乘「约束参数值 → 倍率」的折线（如 Param58 从 0 到 1，倍率 1.0 → 0.5）
+    let scale = 1
+    if (m.bsKbConstraintCount) {
+      for (let n = 0; n < m.bsKbConstraintCount[kb]; n++) {
+        const cons = m.bsConstraintIndex[m.bsKbConstraintStart[kb] + n]
+        const v = frame.params[m.bsConstraintParam[cons]]
+        const from = m.bsConstraintValueStart[cons]
+        const num = m.bsConstraintValueCount[cons]
+        if (!num) continue
+        let f = m.bsConstraintValueWeight[from + num - 1]
+        if (v <= m.bsConstraintValueKey[from]) f = m.bsConstraintValueWeight[from]
+        else for (let q = 1; q < num; q++) { const k1 = m.bsConstraintValueKey[from + q]; if (v <= k1) { const k0v = m.bsConstraintValueKey[from + q - 1]; const u = k1 === k0v ? 1 : (v - k0v) / (k1 - k0v); f = m.bsConstraintValueWeight[from + q - 1] * (1 - u) + m.bsConstraintValueWeight[from + q] * u; break } }
+        scale *= f
+      }
+    }
+    for (const [key, w0] of [[k0, 1 - t], [k0 + 1, t]]) {
+      const w = w0 * scale
+      if (!w || key >= keyCount) continue
+      const p = posStartOf(m.bsKbKeyformStart[kb] + key) / 2
+      for (let v = 0; v < vertexCount; v++) { target[v * 2] += m.positions[(p + v) * 2] * w; target[v * 2 + 1] += m.positions[(p + v) * 2 + 1] * w }
+    }
+  }
+}
+
 const ONE3 = [1, 1, 1]
 const ZERO3 = [0, 0, 0]
 function applyKeyforms(m, frame) {
@@ -549,6 +631,12 @@ function applyKeyforms(m, frame) {
       frame.warpOpacity[s] += m.warpKeyformOpacity[kStart + index] * w
       if (colorCap) accColor(frame.warpColor, s * 6, m.warpColorStart[s], index, w)
     })
+  }
+  if (m.bsWarpTarget) {
+    for (let e = 0; e < m.bsWarpTarget.length; e++) {
+      const s = m.bsWarpTarget[e]   // 弯曲变形器的序号（不是变形器总表里的序号）
+      applyBlendShape(m, frame, m.bsWarpStart[e], m.bsWarpCount[e], (k) => m.warpKeyformPosStart[k], frame.warpGrids[s], m.warpVertexCount[s])
+    }
   }
   // 旋转变形器
   for (let s = 0; s < m.counts.rotationDeformers; s++) {
@@ -587,6 +675,12 @@ function applyKeyforms(m, frame) {
       frame.opacities[i] += m.artKeyformOpacity[k] * w
       if (colorCap) accColor(frame.colors, i * 6, m.artColorStart[i], index, w)
     })
+  }
+  if (m.bsArtTarget) {
+    for (let e = 0; e < m.bsArtTarget.length; e++) {
+      const i = m.bsArtTarget[e]
+      applyBlendShape(m, frame, m.bsArtStart[e], m.bsArtCount[e], (k) => m.artKeyformPosStart[k], frame.vertices[i], m.artVertexCount[i])
+    }
   }
   // 胶水强度
   for (let g = 0; g < m.counts.glues; g++) {

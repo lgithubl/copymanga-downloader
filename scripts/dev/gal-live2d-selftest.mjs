@@ -1,7 +1,7 @@
 // Live2D（.l2d）：BC7 / KTX / ZIP 解码、moc3 读取和求值（合成的小模型）、motion3 曲线、动作名 / 参数名映射
 import { decodeBc7 } from '../../web/library/gal/bc7.mjs'
 import { extractZipMember, ktxToRgba, parseZipCentral, parseZipEnd } from '../../web/library/gal/l2d-zip.mjs'
-import { createFrame, evaluateMotion, parseMoc3, parseMotion, updateModel } from '../../web/static/gal-moc3.js'
+import { createFrame, evaluateMotion, keySegment, parseMoc3, parseMotion, updateModel } from '../../web/static/gal-moc3.js'
 import { applyVariables, pickMotionFile } from '../../web/static/gal-live2d.js'
 import { buildKtx, buildTinyMoc3, buildZip } from './make-moc3-fixture.mjs'
 
@@ -68,6 +68,16 @@ function bitWriter() {
   // 弯曲变形器 1×1，格点放大 2 倍（双线性）：局部 (0.5,0.5) → (1,1)；(0.25,0.25) → (0.5,0.5)；(0.75,0.25) → (1.5,0.5)
   check('求值：弯曲变形器（1×1，格点放大 2 倍，双线性）把子网格的局部坐标映射出去', near(v1[0], 1) && near(v1[1], 1) && near(v1[2], 0.5) && near(v1[3], 0.5) && near(v1[4], 1.5) && near(v1[5], 0.5), J(v1))
   check('求值：不透明度 / 颜色（没有 4.02 颜色 = 乘 1 / 屏幕 0）；绘制顺序：同一组里按 draw order、相同按对象序号 → 渲染 [0, 1]', J(f.renderOrder) === J([0, 1]) && f.opacities[0] === 1 && J(Array.from(f.colors.subarray(0, 6))) === J([1, 1, 1, 0, 0, 0]), J([f.renderOrder, f.opacities]))
+}
+
+// ---- 参数值贴近关键点（对着真正的 Cubism Core 核对出来的规则：离关键点不到 0.1^小数位数 就当正好在关键点上，边界按 float32 比较）----
+{
+  const out = new Float64Array(2)
+  const at = (keys, v, eps = 0.001) => { keySegment(keys, v, out, eps); return [out[0], +out[1].toFixed(6)] }
+  const keys = [0, 1]
+  check('关键点吸附：0.0003 → 正好在 0；0.9997 → 正好在 1；0.0012 / 0.9988 不吸；没给 eps = 不吸', J(at(keys, 0.0003)) === J([0, 0]) && J(at(keys, 0.9997)) === J([0, 1]) && at(keys, 0.0012)[1] === 0.0012 && at(keys, 0.9988)[1] === 0.9988 && at(keys, 0.0003, 0)[1] === 0.0003)
+  check('关键点吸附：正好差 0.001（float32 的 0.001 / 0.999）不吸——Core 就是这样（v < k0 + eps、v > k1 - eps）', Math.abs(at(keys, Math.fround(0.001))[1] - 0.001) < 1e-6 && Math.abs(at(keys, Math.fround(0.999))[1] - 0.999) < 1e-6)
+  check('关键点吸附：不看关键点间距（-30 / 0 / 30 的 0.0009 也吸、0.0011 不吸）', J(at([-30, 0, 30], 0.0009)) === J([1, 0]) && at([-30, 0, 30], 0.0011)[1] > 0)
 }
 
 // ---- motion3 ----
