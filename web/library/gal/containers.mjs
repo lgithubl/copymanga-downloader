@@ -19,6 +19,7 @@ import { readArcfamIndex } from './arcfam.mjs'
 import { isVorbisRiff, parseGsc, readXflIndex, riffVorbisToOgg } from './rscript-gsc.mjs'
 import { decodeGscScript, runGsc } from './rscript-run.mjs'
 import { wcgToPng } from './rscript-wcg.mjs'
+import { decodeArc, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt, tomoeImageTransform } from './tomoe.mjs'
 import { DSM_MAX_BYTES, decryptDsm, isPsm, psmToPng, splitDsm } from './unity-dsm.mjs'
 import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
@@ -35,7 +36,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 13
+export const CONTAINER_FORMAT_VERSION = 14
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -114,6 +115,11 @@ const ARCRECORD_DIALOG_DECODER = {
   ext: 'arcdrama',
   decode(buffer) { return buffer.toString('utf8') },
 }
+// 友恵の探偵物語（TinkerBell，Arc04.dat 剧本字节码）：展开时由 expandTomoe 按章节切成 tomoe-arc04/1 JSON；这里的解码器只用来校验 config.containers.scriptDecoder
+const TOMOE_ARC04_DECODER = {
+  ext: 'tomoe',
+  decode(buffer, { arc, name }) { return JSON.stringify({ format: 'tomoe-arc04/1', arc, name, chapters: splitChapters(buffer).chapters.length }) },
+}
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
   'bgi-bs': BGI_BS_DECODER,
@@ -124,6 +130,7 @@ export const SCRIPT_DECODERS = Object.freeze({
   'unity-dsm': UNITY_DSM_DECODER,
   'mahotan-json': MAHOTAN_JSON_DECODER,
   'arcrecord-dialog': ARCRECORD_DIALOG_DECODER,
+  'tomoe-arc04': TOMOE_ARC04_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -163,7 +170,7 @@ export const SCRIPT_DECODERS = Object.freeze({
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
-const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
+const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
 const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
@@ -214,6 +221,8 @@ function transformData(data, hit) {
   if (hit.transform === 'bw-ogg') return bwToOgg(data)
   if (hit.transform === 'wcg-png') return wcgToPng(data)
   if (hit.transform === 'psm-png') return psmToPng(data)
+  if (hit.transform === 'tomoe-img') return tomoeImageTransform(data, hit)
+  if (hit.transform === 'tomoe-snd') return tinkDecrypt(data)
   if (hit.transform === 'riff-ogg') return Buffer.from(riffVorbisToOgg(data))
   if (hit.transform === 'bgi-faceset') return Buffer.from(JSON.stringify(parseBgiFaceSet(dscDecode(data))))
   if (hit.transform === 'pf8') return pf8Decrypt(data, hit.key)
@@ -376,6 +385,31 @@ async function expandDsm({ file, arcName, rule, cfg, outRoot, budget }) {
     const target = path.join(outRoot, 'script', stem, `${chunk.name}.${cfg.scriptExt || 'dsm'}`)
     await mkdir(path.dirname(target), { recursive: true })
     await writeFile(target, chunk.text)
+    result.scripts += 1
+  }
+  return result
+}
+
+// ---------- 友恵の探偵物語（TinkerBell）：Arc04.dat（剧本）/ Arc03 + Arc06（声音）/ Data00 + DataNNN（图） ----------
+// Arc04.dat：按 ML 记录切成章节，每章一个脚本文件 script/Arc04/<序号>.<ext>（tomoe-arc04/1 JSON：events = [['T', 文本] | ['#', 操作号, …] | ['$', 操作号, …]]）；别的文件只进 hybrid 的虚拟索引，这里什么都不展开
+async function expandTomoe({ file, arcName, rule, cfg, outRoot, budget }) {
+  const stem = withoutExt(arcName)
+  const result = { entries: 1, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
+  if (!/^Arc04\.dat$/i.test(arcName)) { result.res = 1; result.lazy = 1; return result }
+  if (!rule.kinds.has('script')) { result.skipped = 1; return result }
+  const info = await stat(file)
+  if (info.size > 256 * 1024 * 1024) throw new Error(`${arcName} 太大（${info.size} 字节）`)
+  const { chapters, records } = splitChapters(await readFile(file))
+  if (!records) throw new Error('不是 TinkerBell 剧本（没有认出任何记录）')
+  result.entries = chapters.length
+  for (const chapter of chapters.slice(0, cfg.maxEntries)) {
+    const name = String(chapter.index + 1).padStart(2, '0')
+    const text = JSON.stringify({ format: 'tomoe-arc04/1', arc: arcName, name, record: chapter.start, texts: chapter.texts, events: chapter.events })
+    budget.bytes += text.length
+    if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
+    const target = path.join(outRoot, 'script', stem, `${name}.${cfg.scriptExt || 'tomoe'}`)
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, text)
     result.scripts += 1
   }
   return result
@@ -1012,6 +1046,46 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
     }
     return { map, files, sig }
   }
+  if (cfg.format === 'tomoe') {
+    // TinkerBell：Data00.dat 是图索引（全局图编号 = 按 Data000, 001, … 连续编），每张图看开头的类型分文件名：<编号>.jpg（JPEG）/ .png（整张位图 / PNG）/ .p.png（带遮罩的补丁，透明底）；
+    // 声音：Arc03 的声音表 + Arc06 → snd/<编号>.ogg（前 3615 字节要解密）。取出来时才解压 / 转格式
+    const by = new Map(arcs.map((a) => [a.arcName.toLowerCase(), a]))
+    const allowed = (name, rule) => rule.kinds.has('res') && !(rule.include.length && !rule.include.some((re) => re.test(name))) && !rule.exclude.some((re) => re.test(name))
+    const indexArc = by.get('data00.dat')
+    if (indexArc && allowed('img', indexArc.rule)) {
+      let table = []
+      try { table = parseImageIndex(await readFile(indexArc.file)) } catch { table = [] }
+      if (table.length <= cfg.maxEntries) {
+        const perFile = new Map()
+        table.forEach((entry, gid) => { if (!perFile.has(entry.file)) perFile.set(entry.file, []); perFile.get(entry.file).push({ entry, gid }) })
+        for (const [fi, list] of perFile) {
+          const arc = by.get(`data${String(fi).padStart(3, '0')}.dat`)
+          if (!arc) continue
+          let handle
+          let size = 0
+          try { handle = await open(arc.file, 'r'); size = (await handle.stat()).size } catch { continue }
+          try {
+            for (const { entry, gid } of list) {
+              if (!entry.size || entry.offset + entry.size > size || entry.size > MAX_ENTRY_BYTES) continue
+              const head = await readRange(handle, entry.offset, Math.min(entry.size, 96))
+              const probe = probeImage(head, entry.a > 0)
+              if (!probe.type) continue
+              add(`${cfg.dir}/res/img/${gid}.${probe.type === 'jpg' ? 'jpg' : probe.type === 'patch' ? 'p.png' : 'png'}`, { file: arc.file, offset: entry.offset, size: entry.size, transform: 'tomoe-img', a: entry.a, ...(probe.w ? { w: probe.w, h: probe.h } : {}) })
+            }
+          } finally { await handle.close().catch(() => {}) }
+        }
+      }
+    }
+    const tableArc = by.get('arc03.dat')
+    const dataArc = by.get('arc06.dat')
+    if (tableArc && dataArc && allowed('snd', tableArc.rule) && allowed('snd', dataArc.rule)) {
+      let sounds = []
+      let size = 0
+      try { sounds = parseSoundTable(decodeArc(await readFile(tableArc.file))); size = (await stat(dataArc.file)).size } catch { sounds = [] }
+      if (sounds.length <= cfg.maxEntries) for (const snd of sounds) if (snd.id > 0 && snd.size > 64 && snd.offset + snd.size <= size && snd.size <= MAX_ENTRY_BYTES) add(`${cfg.dir}/res/snd/${snd.id}.ogg`, { file: dataArc.file, offset: snd.offset, size: snd.size, transform: 'tomoe-snd' })
+    }
+    return { map, files, sig }
+  }
   if (cfg.format === 'dsm') {
     // Unity GameMaterial：每个 .psm 一个虚拟 .png（flat：脚本按名字引用，不带目录），取出来时把第一个字节改回 0x89
     for (const { arcName, file, rule } of arcs) {
@@ -1258,7 +1332,7 @@ async function run(mediaDir, cfg) {
       const stem = cfg.format === 'pf8' ? pf8Stem(arcName) : withoutExt(arcName)
       const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
       try {
-        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'mhp' ? expandMhp({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'arcdrama' ? expandArcdrama({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
+        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'mhp' ? expandMhp({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'tomoe' ? expandTomoe({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'arcdrama' ? expandArcdrama({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
         // 先展开到临时目录，再整体换掉这个容器的两个子目录（中途失败不会留下半截内容）
         for (const part of ['script', 'res', 'refs']) {
           const from = path.join(tmp, part, stem)

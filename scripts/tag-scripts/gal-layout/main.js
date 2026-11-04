@@ -37,7 +37,7 @@
 //   layouts 与规则表的关系：layouts.<id> 里写的字段整个替换表里同名字段（ruleOverrides / engine / ruleTables 也一样）；只想改某个适配器的某个子键 → layouts.<id>.ruleOverrides = { '<适配器 id>': { 子键: … } }（深度合并在 ADAPTER_RULES 之上）。
 //                   overrides[].config 是写完之后的顶层字段替换（写 adapterOptions 会替换整张，含规则表）。合并顺序：ADAPTER_RULES < ruleOverrides < 探测函数写的值（root / aliasFiles / imageDirs …永远赢）。
 // 返回的日志里有「本次改动：…」一段：这次运行和条目现有 config 的逐字段对比（新增 / 修改 / 删除 / 未变 / 保留，数组列出增删的项；adapterOptions 按适配器 id 汇总：「+ adapterOptions['bokusen-json']（新增）：10 个键」/「~ …（修改）：2 个键变了：bgm、animation」，不倾倒整张表）；结构化版本在 details.changes。
-// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / rscript / unity / mahotan / arcrecord / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
+// 状态 tag：Gal配置: aku / fruits / maid / jaxin / aster / deepone / grenze / tsk / otogi / advhd / bgi / artemis / arcfam / krkr / rscript / unity / mahotan / arcrecord / tomoe / kamihime / bokusen / uviewer / legeclo / monmusu / girlscreation / tenkeiprdx / misttrain / minashigo / 通用 / 自定义    Gal配置version: <脚本版本>    Gal游戏: <game.id>
 
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -968,6 +968,59 @@ export const ADAPTER_RULES = {
     "stopMusic": [
       "Sound/BGM/Blank"
     ]
+  },
+  // tomoe::arc04：友恵の探偵物語（TinkerBell）的脚本适配器（Arc04.dat 切出来的章节 JSON → 场景）。抄自 web/library/gal/adapters/tomoe-arc04.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'tomoe::arc04': {
+    "resDir": "arc/res",
+    "imgDir": "img",
+    "sndDir": "snd",
+    "stage": [
+      1920,
+      1080
+    ],
+    "bgLayers": [
+      132,
+      120,
+      127,
+      117,
+      121,
+      9999
+    ],
+    "overlayZ": {
+      "2": 10,
+      "4": 40,
+      "140": 20,
+      "141": 30
+    },
+    "clearFrom": 816,
+    "bgmBase": 6018,
+    "fade": 0.5,
+    "pageLimit": 12,
+    "speakers": {
+      "1": "友恵",
+      "2": "真由美",
+      "3": "依子",
+      "4": "聡子",
+      "5": "えみり",
+      "6": "豊子",
+      "7": "れいか",
+      "8": "宇佐美",
+      "9": "直美",
+      "10": "プリン",
+      "11": "のぞみ",
+      "12": "るい子",
+      "13": "みちる",
+      "14": "さおり",
+      "15": "香子",
+      "16": "ユイナ",
+      "17": "カフェ店員",
+      "18": "純代",
+      "19": "恵子",
+      "20": "かおり",
+      "21": "じゅん子",
+      "22": "えりな",
+      "23": "ちひろ"
+    }
   },
   // artemis::ast：Artemis 家族的脚本适配器（.ast = Lua 表 → 场景）。抄自 web/library/gal/adapters/artemis-ast.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'artemis::ast': {
@@ -2006,6 +2059,29 @@ export const LAYOUTS = {
     cover: [],
     notes: ['Dialog.txt 在第一次浏览时由服务端按 DramaID 切成每段剧情一个 JSON（真实数据 1719 段、4 万多句，台词带 JPN / CHS / CHT / ENG）；台词语言在适配器参数 language 里选', '背景（BG/*.png）/ BGM / 音效 / 角色语音都有；角色立绘（Hero/H0xx 的 Spine + fbx 预制体）和 CG Spine 场景没做：预制体里的位置 / 动画映射不在导出资源里，Spine 版本是 4.1（播放器的运行时没有 4.1）；没有游戏截图对照'],
   },
+  // ---- 友恵の探偵物語（Cyberworks TinkerBell 引擎，tomoe.exe + Arc00–06.dat + Resources/Data00–025.dat）：game.id = tomoe::<游戏>（任何以 tomoe:: 开头的 id 都走这一项）。
+  //   目录：<base>/{tomoe.exe, Arc04.dat（剧本字节码，没压缩）, Arc03.dat（声音表，LZSS）, Arc06.dat（声音，Ogg 前 3615 字节加密）, Resources/{Data00.dat（图索引）, Data000–025.dat（图）}}。
+  //   引擎（config.containers，format: tomoe）把 Arc04.dat 按 ML 记录切成章节，展开到 <base>/arc/script/Arc04/<序号>.tomoe；图 / 声音只在 hybrid 的虚拟索引里（<base>/arc/res/img/<编号>.jpg|.png|.p.png、arc/res/snd/<编号>.ogg），被请求时才解压 / 解密 / 转格式。
+  tomoe: {
+    title: '友恵の探偵物語（TinkerBell）', kind: 'tomoe', detector: 'tomoe', autoOrder: 139.98, family: 'tomoe::',   // 紧跟 arcrecord，uviewer（通用）之前；探测时还要看 Arc04.dat 是 [长度][正文][9999] 记录流
+    bases: ['', '*', '*/*'], searchDepth: 3,
+    anchors: [['Arc04.dat'], ['Resources', 'Data00.dat']], siblings: [], markers: [['Arc03.dat', 'Arc06.dat']],
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res'], resourceRootsForce: true,   // 全部在虚拟索引里（第一次浏览才有），磁盘上没有也要写
+    adapters: ['tomoe::arc04'],
+    adapterOptions: { 'tomoe::arc04': { resDir: { path: ['arc/res'] } } },
+    ruleTables: ['tomoe::arc04'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},
+      limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
+      containers: { enabled: true, dir: 'arc', scan: ['.', 'Resources'], scriptDecoder: 'tomoe-arc04', scriptExt: 'tomoe', mode: 'hybrid', format: 'tomoe', flat: false, rules: [{ match: '^Arc04\\.dat$', kinds: ['script'] }, { match: '^(Arc03|Arc06|Data\\d+)\\.dat$', kinds: ['res'] }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['tomoe'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.tomoe', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['Arc04.dat 在第一次浏览时由服务端按 ML 记录切成章节（文本 >= 20 行的块；真实数据 12 章、2.5 万页）；图（Data000–025，LZSS + 位图 / JPEG / PNG / 带遮罩的补丁）/ 声音（Arc06 的 Ogg，前 3615 字节解密）只在虚拟索引里，被请求时才转出来', '文字（含注音）/ 语音（声道 → 说话人）/ BGM / 音效 / 背景 / 叠加图层都有；选项、跳转（剧情是一条线）、层的叠放顺序和补丁盖在哪一层没有游戏截图对照，不一定对；章节标题卡（Data004）的触发方式没查出来'],
+  },
   // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
   //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；
   //   图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<档案里的路径>，如 arc/res/image/bg/bg01a.png），被请求时才解密取出。
@@ -2521,6 +2597,7 @@ const DETECTORS = {
   unity: (scope) => detectUnity(scope),
   mahotan: (scope) => detectMahotan(scope),
   arcrecord: (scope) => detectArcrecord(scope),
+  tomoe: (scope) => detectTomoe(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2778,8 +2855,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -3550,6 +3627,38 @@ async function detectArcrecord(scope) {
   found.id = scope.gameId || `arcrecord::${slug || 'game'}`
   found.kind = entry.kind || 'arcrecord'
   logs.push(`ArcRecord_D 根：${base || '.'}；game.id：${found.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// ---- 友恵の探偵物語（TinkerBell）：见 LAYOUTS.tomoe。id：声明了 game.id 就用它（tomoe::<游戏>），没声明 = tomoe::<目录名的小写字母数字>；没声明时要求 Arc04.dat 开头是 [u32 长度][正文][u32 9999] 记录
+async function detectTomoe(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  if (!declared && !(await markersOk(media, entry, base, declared))) return null
+  const script = path.join(media, ...splitRel(join(base, 'Arc04.dat')))
+  let ok = false
+  try {
+    const h = await open(script, 'r')
+    try {
+      const head = Buffer.alloc(4)
+      await h.read(head, 0, 4, 0)
+      const len = head.readUInt32LE(0)
+      if (len >= 4 && len < 65536) { const tail = Buffer.alloc(4); const { bytesRead } = await h.read(tail, 0, 4, len); ok = bytesRead === 4 && tail.readUInt32LE(0) === 9999 }
+    } finally { await h.close() }
+  } catch { /* 读不了 = 不是 */ }
+  if (!ok) { if (declared) logs.push('友恵の探偵物語：Arc04.dat 开头不是 [长度][正文][9999] 记录流（不是 TinkerBell 剧本）'); return null }
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const gameDir = path.basename(path.resolve(media, ...splitRel(base)))
+  const slug = gameDir.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found.id = scope.gameId || `tomoe::${slug || 'game'}`
+  found.kind = entry.kind || 'tomoe'
+  logs.push(`友恵の探偵物語 根：${base || '.'}；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
 }
