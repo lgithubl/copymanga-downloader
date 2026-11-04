@@ -3404,7 +3404,17 @@ const libraryScrollTarget = () => {
   if (grid.scrollHeight > grid.clientHeight + 1 || !document.scrollingElement || document.scrollingElement.scrollHeight <= window.innerHeight + 1) return grid
   return document.scrollingElement
 }
-if (els.libraryItems) createScrollButtons({ host: document.querySelector('#library-view'), getTarget: libraryScrollTarget, label: '媒体库分段滚动' })
+// 「自动」按钮（▲▼ 之间）：等价于按「更多 → 自动滚动频率」连续点 ▼；频率存本机（localStorage），'max' = 持续滚动（等价于一直按着）
+const SCROLL_AUTO_RATE_KEY = 'copymanga.scrollAutoRate'
+const SCROLL_AUTO_RATES = ['0.2', '0.33', '0.5', '1', '2', '3', 'max']
+const scrollAutoRate = () => { const v = localStorage.getItem(SCROLL_AUTO_RATE_KEY) || '1'; return v === 'max' ? 'max' : Number(v) || 1 }
+const scrollAutoSelect = document.querySelector('#library-scroll-auto-rate')
+if (scrollAutoSelect) {
+  const saved = localStorage.getItem(SCROLL_AUTO_RATE_KEY)
+  scrollAutoSelect.value = SCROLL_AUTO_RATES.includes(saved) ? saved : '1'
+  scrollAutoSelect.addEventListener('change', () => localStorage.setItem(SCROLL_AUTO_RATE_KEY, scrollAutoSelect.value))
+}
+if (els.libraryItems) createScrollButtons({ host: document.querySelector('#library-view'), getTarget: libraryScrollTarget, label: '媒体库分段滚动', getAutoRate: scrollAutoRate })
 
 // —— 卡片宽度 / 页面总宽度 / 封面放大倍率：各存各的（localStorage），拖动的交互复用 openWidthAdjust ——
 const LIBRARY_CARD_W_KEY = 'copymanga.libraryCardWidth'
