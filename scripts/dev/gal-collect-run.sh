@@ -32,6 +32,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.20 友恵の探偵物語（chakra）：Data000 / 003 / 004 按 Data00.dat 索引挑脚本用得最多的图（原样不解压），Arc06 出 RIFF 清单 + 样本，存档 / 存档缩略图 / tomoetantei.zip 全收
 # 1.19 修 1.18：Imys 的 scenarios 分 6 个子目录（combo / dress / event / favorite / quest / training），1.18 的正则只认第一层、只收到 default_chars 一个：每个子目录抽 12 个 + 最大 2 个（bundle 只有 2~25KB），再加每个子目录 1 个剧情语音 .acb\n# 1.18 Imys 这类剧情在 bundle 里的：content/bundles/scenarios 抽 8 个、textdefine 抽 4 个（.encrypted，≤8MB）
 # 1.17 跟着软连接走（游戏根 / 目录 / 文件是软连接都能扫到；按真实路径去重防成环）
 # 1.16 修 1.15：剧情表的正则没忽略大小写（Caches / _Data），Imys 的 mAdventures 等没收到
@@ -46,7 +47,7 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.19"
+VERSION="1.20"
 export GAL_COLLECT_VERSION="$VERSION"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
 HOST_TAG="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9' '_' | cut -c1-20)"
@@ -220,8 +221,11 @@ def pick(items, eng):
                 if low.startswith('archives/') and base.endswith('.arc'): add(e, 'full', 'unity:archives')
                 if (base == 'gameassembly.dll' and e.size <= 120 * MB) or (BINARIES and base in ('gameassembly.dll', 'unityplayer.dll') and e.size <= 400 * MB): add(e, 'full', 'unity:binary')
             elif en == 'chakra':
-                if re.fullmatch(r'arc\d\d\.dat', base): add(e, 'full', 'chakra:arc')
+                if base == 'arc06.dat': add(e, 'tomoe', 'chakra:arc06')   # 1.20：Arc06 = 一串 RIFF WAV（后面跟 Tink 标签）：只要「RIFF 位置 / 大小 / 标签」清单 + 几个样本，不收 428MB
+                elif re.fullmatch(r'arc\d\d\.dat', base): add(e, 'full', 'chakra:arc')
+                elif low.startswith('resources/') and re.fullmatch(r'data\d+\.dat', base) and (e.size > 20 * MB or base == 'data004.dat'): add(e, 'tomoe', 'chakra:resbig')   # 1.20：按 Data00.dat 的索引挑条目（脚本里用得最多的图）
                 elif low.startswith('resources/') and base.endswith('.dat') and e.size <= 20 * MB: add(e, 'full', 'chakra:res')
+                elif re.fullmatch(r'(g?save\d*|suspend)\.dat', base) or low.startswith('thumbnail/') or base == 'tomoetantei.zip': add(e, 'full', 'chakra:save')   # 1.20：存档（含剧本位置 / 变量）+ 存档缩略图（截图 = 对照画面）
             elif en == 'mhp':
                 if base.endswith('.mhp'): add(e, 'full' if e.size <= 20 * MB else 'mhp', 'mhp:small' if e.size <= 20 * MB else 'mhp:big')
                 elif base.endswith('.py') and e.size <= 1 * MB: add(e, 'full', 'mhp:script')
@@ -515,6 +519,58 @@ def arcfam_samples(f, size):
     for n in extra:
         if n[2] not in taken: sample.append((n[0], n[2], n[1])); taken.add(n[2])
     return ''.join(lines), sample
+
+TOMOE_USED = {"4": [1, 2], "0": [2, 65, 44, 100, 38, 9, 197, 195, 52, 196, 46, 227, 154, 83, 36, 42, 10, 43, 225, 37, 7, 67, 207, 41, 103, 45, 98, 155, 181, 107], "3": [520, 536, 548, 71, 513, 518, 97, 528, 533, 398, 450, 544, 21, 514, 519, 292, 305, 348, 408, 509, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 22, 24, 26, 27, 28], "1": [1, 6, 7, 8, 2, 3, 5, 4], "2": [0, 1, 2, 3, 4, 5, 6, 12, 20, 21, 22, 23, 24, 25, 13, 14, 15, 16, 18, 7, 8, 9, 10, 11, 19, 17]}   # 友恵の探偵物語：脚本里 $204（显示图片）引用最多的 Data 条目序号（按文件号），采集样本优先收这些
+
+def tomoe_pick(path, size, rule):
+    """友恵の探偵物語（tomoe.exe / ChakraCore）：
+    chakra:resbig —— Resources/DataNNN.dat 太大，按 Resources/Data00.dat 的索引（u32 文件数；每个文件 3 张表，每表 u32 条数 + 条目 [u32 解压后大小, u32 压缩后大小, u32 偏移, u32 0]）
+        挑条目（原样不解压）：脚本引用最多的先收，单个压缩后 <= 14MB，合计 <= 110MB（Data004 小，全收）。
+    chakra:arc06 —— 一串 RIFF WAV，每个后面跟 'Tink' 标签：扫出 (偏移, RIFF 大小, 标签 64 字节) 清单 + 开头 12 个 + 均匀 12 个样本。"""
+    base = os.path.basename(path)
+    if rule == 'chakra:resbig':
+        m = re.fullmatch(r'Data(\d+)\.dat', base, re.I)
+        idxp = os.path.join(os.path.dirname(path), 'Data00.dat')
+        if not m or not os.path.exists(idxp): return None
+        fi = int(m.group(1)); d = open(idxp, 'rb').read(); pos = 4; lists = []
+        for _ in range(78):
+            n = struct.unpack_from('<I', d, pos)[0]; pos += 4
+            lists.append([struct.unpack_from('<IIII', d, pos + 16 * i) for i in range(n)]); pos += 16 * n
+        ents = lists[3 * fi]
+        first = [k for k in TOMOE_USED.get(fi, []) if k < len(ents)]
+        order = first + [k for k in range(len(ents)) if k not in set(first)]
+        lines = ['k\tdecoded_size\tstored_size\toffset\n'] + ['%d\t%d\t%d\t%d\n' % (k, a, sz, off) for k, (a, sz, off, _b) in enumerate(ents)]
+        total = 0; picks = []
+        for k in order:
+            a, sz, off, _b = ents[k]
+            if sz > 14 * MB or off + sz > size or total + sz > 110 * MB: continue
+            picks.append(('e%04d_a%d' % (k, a), off, sz)); total += sz
+            if len(picks) >= 120: break
+        return ''.join(lines), picks
+    if rule == 'chakra:arc06':
+        lines = ['offset\triff_size\ttag64_hex\n']; riffs = []
+        with open(path, 'rb') as f:
+            carry = b''; base_off = 0
+            while True:
+                chunk = f.read(16 * MB)
+                if not chunk: break
+                buf = carry + chunk; start = 0
+                while True:
+                    i = buf.find(b'RIFF', start)
+                    if i < 0 or i + 12 > len(buf): break
+                    if buf[i + 8:i + 12] == b'WAVE': riffs.append((base_off + i, struct.unpack_from('<I', buf, i + 4)[0] + 8))
+                    start = i + 4
+                keep = min(len(buf), 16)
+                carry = buf[-keep:]; base_off += len(buf) - keep
+            for off, rs in riffs:
+                f.seek(off + rs); lines.append('%d\t%d\t%s\n' % (off, rs, f.read(64).hex()))
+            sel = riffs[:12] + riffs[::max(1, len(riffs) // 12)][:12]
+            picks = []; seen = set(); total = 0
+            for off, rs in sel:
+                if off in seen or rs > 3 * MB or total + rs > 40 * MB: continue
+                seen.add(off); total += rs; picks.append(('w%08d' % off, off, rs + 64))
+        return ''.join(lines), picks
+    return None
 
 def xfl_samples(f, size):
     """XFL（LB）：'LB' 01 00 + u32 表大小 + u32 条目数 + 条目 [name(0x20) + u32 偏移(从表尾起) + u32 大小]。"""
@@ -815,6 +871,23 @@ def main():
                                 say('   pf8 %s：索引 %d 条，选中 %d 个脚本类条目' % (e.rel, len(ents), len(chosen)))
                                 total += stored; picked_bytes += stored
                                 continue
+                    if eff == 'tomoe':
+                        got = tomoe_pick(e.path, e.size, rule)
+                        if got is None:
+                            say('  ! %s 认不出结构，改收头 + 尾' % e.rel); eff = 'ht'
+                        else:
+                            cat, picked = got; cb = cat.encode('utf-8'); stored = 0
+                            ti = tarfile.TarInfo('%s/%s.__tomoe/__catalog.tsv' % (gid, e.rel)); ti.size = len(cb); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(cb)); stored += len(cb)
+                            mf.write('%s\t%s\ttomoecatalog\t%s\t%d\t%d\t%s\n' % (gid, e.rel, rule, e.size, len(cb), hashlib.sha256(cb).hexdigest()))
+                            with open(e.path, 'rb') as f:
+                                for label, off, sz in picked:
+                                    f.seek(off); data = f.read(sz)
+                                    if len(data) != sz: continue
+                                    ti = tarfile.TarInfo('%s/%s.__tomoe/%s' % (gid, e.rel, label)); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data)); stored += len(data)
+                                    mf.write('%s\t%s\ttomoeentry\t%s\t%d\t%d\t%s\n' % (gid, e.rel + ':' + label, rule, sz, len(data), hashlib.sha256(data).hexdigest()))
+                            say('   tomoe %s：目录 %d 行 + 样本 %d 个' % (e.rel, cat.count(chr(10)) - 1, len(picked)))
+                            total += stored; picked_bytes += stored
+                            continue
                     if eff == 'mhp':
                         got = mhp_pick(e.path, e.size)
                         if got is None:
