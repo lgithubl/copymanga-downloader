@@ -335,8 +335,10 @@ if (process.env.KRKR_SAMPLE) {
 // ---- g07 的 Live2D：脚本里 ev_mv001_02r5s ↔ live2d.xp3 的 ev_cg001_02.l2d（动作文件名 = 图层名）----
 {
   const j = JSON.stringify
-  check('Live2D 名字：ev_mv001_02r5s → 模型 ev_cg001_02、动作 ev_mv001_02r5s；r1 / r4h / 41s 也认', j(adapter.krkrMvOf('ev_mv001_02r5s')) === j({ stem: 'ev_cg001_02', motion: 'ev_mv001_02r5s' }) && adapter.krkrMvOf('ev_mv001_02r4h').stem === 'ev_cg001_02' && adapter.krkrMvOf('ev_mv002_41s').stem === 'ev_cg002_41' && adapter.krkrMvOf('ev_mvx03_01r1').stem === 'ev_cgx03_01', j(adapter.krkrMvOf('ev_mv001_02r5s')))
-  check('Live2D 名字：r2h2（字母数字交替的后缀）/ x03_01 这种非数字编号也认', j(adapter.krkrMvOf('ev_mv008_04r2h2')) === j({ stem: 'ev_cg008_04', motion: 'ev_mv008_04r2h2' }) && j(adapter.krkrMvOf('ev_mvx03_01h')) === j({ stem: 'ev_cgx03_01', motion: 'ev_mvx03_01h' }))
+  const pick = (v) => (v ? { stem: v.stem, motion: v.motion } : v)
+  check('Live2D 名字：ev_mv001_02r5s → 模型 ev_cg001_02、动作 ev_mv001_02r5s；r1 / r4h / 41s 也认', j(pick(adapter.krkrMvOf('ev_mv001_02r5s'))) === j({ stem: 'ev_cg001_02', motion: 'ev_mv001_02r5s' }) && adapter.krkrMvOf('ev_mv001_02r4h').stem === 'ev_cg001_02' && adapter.krkrMvOf('ev_mv002_41s').stem === 'ev_cg002_41' && adapter.krkrMvOf('ev_mvx03_01r1').stem === 'ev_cgx03_01', j(pick(adapter.krkrMvOf('ev_mv001_02r5s'))))
+  check('Live2D 名字：r2h2（字母数字交替的后缀）/ x03_01 这种非数字编号也认', j(pick(adapter.krkrMvOf('ev_mv008_04r2h2'))) === j({ stem: 'ev_cg008_04', motion: 'ev_mv008_04r2h2' }) && j(pick(adapter.krkrMvOf('ev_mvx03_01h'))) === j({ stem: 'ev_cgx03_01', motion: 'ev_mvx03_01h' }))
+  check('Live2D 名字（おっぱいバニー学園）：mv002_02_00 / mv001_02r1（没有 ev_ 前缀）→ 候选包 ev_cg002_02 + ev_cg002_02s、动作统一成 ev_ 开头；mvx01_01_01 也认', j(adapter.krkrMvOf('mv002_02_00')) === j({ stem: 'ev_cg002_02', stems: ['ev_cg002_02', 'ev_cg002_02s'], motion: 'ev_mv002_02_00' }) && adapter.krkrMvOf('mv001_02r1').stems[1] === 'ev_cg001_02s' && adapter.krkrMvOf('mvx01_01_01').stem === 'ev_cgx01_01' && adapter.krkrMvOf('mv001_40h').stem === 'ev_cg001_40')
   check('Live2D 名字：不是 ev_mv 的（evcg001_01 / bg01）不认', adapter.krkrMvOf('evcg001_01') === null && adapter.krkrMvOf('bg01') === null)
 }
 

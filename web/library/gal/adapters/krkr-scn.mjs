@@ -82,7 +82,11 @@ const HEAD = /^\s*\{\s*"format"\s*:\s*"krkr-scn\/1"/
 //   %<数字>;  行首的 %150; 之类（含义没对过引擎，按文字速度处理：忽略）
 //   [读音]汉字  注音，读音在前、只对后面那一个字（[う]宇[さ]佐[み]美 = 宇佐美 うさみ；[ちち]乳 = 乳 ちち）；读音只认假名，别的方括号原样保留
 const KRKR_CODE = /%f[^;\n]*;|%\d+;|#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})?;|\[([\u3041-\u3096\u30a1-\u30fa\u30fcー]{1,12})\](?=([^\[\]\n]))/g
-export function krkrMvOf(file) { const m = /^ev_mv(\w+?_\d+)(?:[a-z]\d*)*$/i.exec(String(file)); return m ? { stem: `ev_cg${m[1]}`, motion: String(file) } : null }
+// ev_mv001_02r5s（g08）/ mv002_02_00 / mv001_02r1（g09，没有 ev_ 前缀）/ mvx01_01_01：→ 候选模型包名（ev_cgNNN_MM，g09 里多数带 s：ev_cgNNN_MMs）+ 动作名（统一成 ev_ 开头）
+export function krkrMvOf(file) {
+  const m = /^(?:ev_)?mv(\w+?_\d+)(?:_?[a-z]?\d*)*$/i.exec(String(file))
+  return m ? { stem: `ev_cg${m[1]}`, stems: [`ev_cg${m[1]}`, `ev_cg${m[1]}s`], motion: /^ev_/i.test(file) ? String(file) : `ev_${file}` } : null
+}
 export function krkrSegments(text, stats = null) {
   const segments = []
   let color = ''
@@ -214,7 +218,11 @@ export function parse(text, ctx = null, meta = {}) {
     const stem = String(file).replace(/\.l2d$/i, '')
     const src = hasIndex ? ctx.resolver.resolveByName(`${stem}.model3.json`) : ''
     if (!src) { if (hasIndex) count('unresolved', `l2d:${stem}`); return null }
-    const o = options && typeof options === 'object' ? { ...options, ...(mvMotion ? { motion: mvMotion, loop: true } : {}) } : (mvMotion ? { motion: mvMotion, loop: true } : {})
+    // g09 的 .l2d 层：options.motions = [{ name: 'main.ev_mv001_02_01', loop: 1 }]（组名.动作名）→ 取第一个
+    const first = options && Array.isArray(options.motions) ? options.motions[0] : null
+    const fromList = first && typeof first.name === 'string' ? { motion: first.name.replace(/^[^.]*\./, ''), loop: Boolean(first.loop) } : null
+    const base = options && typeof options === 'object' ? { ...options, ...(fromList || {}) } : (fromList || {})
+    const o = mvMotion ? { ...base, motion: mvMotion, loop: true } : base
     const variables = o.variables && typeof o.variables === 'object' && Object.keys(o.variables).length ? o.variables : null
     return { src, ...(typeof o.motion === 'string' && o.motion ? { motion: o.motion } : {}), ...(o.loop === true || o.loop === 'true' ? { loop: true } : {}), ...(variables ? { variables } : {}) }
   }
@@ -230,7 +238,7 @@ export function parse(text, ctx = null, meta = {}) {
       else if (cls === 'event' && name === 'ev' && file) {
         const mv = options && typeof options === 'object' && options.variables && typeof options.variables === 'object' ? mvOf(file) : null
         if (/\.l2d$/i.test(file)) l2d = { file, options }
-        else if (mv && hasIndex && ctx.resolver.resolveByName(`${mv.stem}.model3.json`)) l2d = { file: mv.stem, options, motion: mv.motion }
+        else if (mv && hasIndex && mv.stems.find((st) => ctx.resolver.resolveByName(`${st}.model3.json`))) l2d = { file: mv.stems.find((st) => ctx.resolver.resolveByName(`${st}.model3.json`)), options, motion: mv.motion }
         else ev = file
       }
     }

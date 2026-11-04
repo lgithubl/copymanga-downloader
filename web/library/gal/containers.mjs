@@ -677,8 +677,9 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
     addCandidate(`${n}.stand`, `${n}.stand.json`, 'stand-json')
     addCandidate(`${n}.l2d`, `${n}.l2d`, 'l2d')   // Live2D 模型包（ZIP）：展开成 <名字>.l2d/<成员>
     // g07：脚本里叫 ev_mv001_02r5s，live2d.xp3 里的包叫 ev_cg001_02.l2d
-    const mv = /^ev_mv(\w+?_\d+)/i.exec(n)
-    if (mv && !mvSeen.has(mv[1])) { mvSeen.add(mv[1]); addCandidate(`ev_cg${mv[1]}.l2d`, `ev_cg${mv[1]}.l2d`, 'l2d') }
+    // おっぱいバニー学園：脚本里叫 mv002_02_00 / mv001_02r1（没有 ev_ 前缀），包在 data.xp3 里叫 ev_cg002_02s.l2d（带 s）或 ev_cg001_40.l2d（不带）：两种都试
+    const mv = /^(?:ev_)?mv(\w+?_\d+)/i.exec(n)
+    if (mv && !mvSeen.has(mv[1])) { mvSeen.add(mv[1]); for (const suffix of ['', 's']) addCandidate(`ev_cg${mv[1]}${suffix}.l2d`, `ev_cg${mv[1]}${suffix}.l2d`, 'l2d') }
   }
   for (const kind of ['bgm', 'voice']) for (const n of names[kind]) for (const ext of KRKR_AUDIO_EXTS) addCandidate(`${n}.${ext}`, `${n}.${ext}`, 'raw')
   if (!candidates.size) return { map, files, sig }
