@@ -1144,6 +1144,7 @@ export const ADAPTER_RULES = {
     "eventImageFunctions": [
       "_DrawSPR"
     ],
+    "eventImageZ": 100,
     "bustFunctions": [
       "_DrawBS"
     ],

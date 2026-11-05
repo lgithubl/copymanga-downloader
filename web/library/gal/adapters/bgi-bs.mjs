@@ -11,7 +11,8 @@
 //   _PlayVoice(槽, 名, …)                    → voice；_PlayBGM(槽, 名, …) → bgm；_FadeBGM(槽, 毫秒, 0) / SoundStopAll(毫秒) → bgmStop；_PlaySE / _PlayStreamSE(槽, 名, …) → se
 //   _DrawScene(名, …)                        → bg（BLACK / WHITE 这类纯色名 = bg.color）；换背景会清掉立绘
 //   _DrawBS(槽, 本体, …, 表情…)              → 立绘（stand）：本体 + 后面的字符串参数（表情 / 配件）叠在一起；横向位置按 x 参数的正负分左 / 中 / 右；_FadeBS(槽, 0, …) 去掉这个槽
-//   _DrawSPR(槽, 名, …) / _FadeSPR(槽, 0, …) → 事件图（CG / 过场）：当成 bg 换掉背景，_FadeSPR 去掉后回到 _DrawScene 的背景
+//   _DrawSPR(槽, 名, …) / _FadeSPR(槽, 0, …) → 事件图（CG / 过场 / 手的特写）：图 = 叠加层 overlay（按图原来的大小、以画面中心 + (x, y) 为中心，叠在立绘之上，z = eventImageZ + 槽；参数 x / y = args[6] / args[7]，放大率 = args[8]，淡入 = args[20] 毫秒），_FadeSPR 去掉；
+//                                            纯色（WHITE / BLACK）= bg.color 换掉背景（整屏闪白 / 闪黑，_FadeSPR 去掉后回到 _DrawScene 的背景）。以前图也当成整屏背景换掉：小于画面的特写被拉成全屏，而且盖在立绘后面（用户对照游戏发现的）
 //   _Wait(毫秒, …)                           → wait
 //   SelectEx / _SelectEx(选项…)              → choice（选项挂在问题那句台词的步里）；每个选项一段带 when 的分支；jump_scenario 在分支里 = 带 when 的 goto
 //   jump_scenario(文件, …)                   → scene.next（脚本末尾接着播）；call_scenario 是调库场景（_GM 之类）：不跟，计数
@@ -39,6 +40,7 @@ export const DEFAULT_OPTIONS = {
   seFunctions: ['_PlaySE', '_PlayStreamSE'],
   bgFunctions: ['_DrawScene'],
   eventImageFunctions: ['_DrawSPR'],
+  eventImageZ: 100,      // 事件图叠加层的 z = eventImageZ + 槽号（叠加层整体已经在立绘之上）
   bustFunctions: ['_DrawBS'],
   wait: { enabled: true, max: 10 },
   clearBustsOnScene: true,
@@ -136,9 +138,10 @@ export function parse(text, ctx = null, meta = {}) {
 
   // ---- 画面状态 ----
   let bgState = null            // { src } | { color } | null：_DrawScene 的背景
-  let eventImage = null         // _DrawSPR 的事件图：{ slot, src } | { slot, color }
+  let eventImage = null         // _DrawSPR 的纯色事件图（整屏闪白 / 闪黑）：{ slot, color }
+  let sprites = new Map()       // _DrawSPR 的图：槽 → { src, x, y, scale, fade }（叠加层）
   let busts = new Map()         // 槽 → { parts: [{ src, align }], x }
-  let shown = { bg: null, stand: null }
+  let shown = { bg: null, stand: null, sprites: new Map() }
   let dirty = false
   const effectiveBg = () => eventImage?.src || eventImage?.color ? (eventImage.src ? { src: eventImage.src } : { color: eventImage.color }) : bgState
   function commit() {
@@ -158,8 +161,15 @@ export function parse(text, ctx = null, meta = {}) {
       if (parts.length) { emit({ op: 'stand', parts }); stats.stands += 1 } else emit({ op: 'standOff' })
       shown.stand = standSig
     }
+    for (const [slot, sprite] of sprites) {
+      const sig = JSON.stringify(sprite)
+      if (shown.sprites.get(slot) === sig) continue
+      shown.sprites.set(slot, sig)
+      emit({ op: 'overlay', slot: `spr${slot}`, src: sprite.src, fit: 'none', stage: opt.stage, z: opt.eventImageZ + slot, ...(sprite.x ? { x: sprite.x } : {}), ...(sprite.y ? { y: sprite.y } : {}), ...(sprite.scale !== 1 ? { scaleX: sprite.scale, scaleY: sprite.scale } : {}), ...(sprite.fade ? { fade: sprite.fade } : {}) })
+    }
+    for (const slot of [...shown.sprites.keys()]) if (!sprites.has(slot)) { shown.sprites.delete(slot); emit({ op: 'overlayOff', slot: `spr${slot}` }) }
   }
-  const resetShown = () => { shown = { bg: null, stand: null }; dirty = true }
+  const resetShown = () => { shown = { bg: null, stand: null, sprites: new Map() }; dirty = true }
 
   const imageOf = (name, { color = false } = {}) => {
     const src = find(name, opt.imageExts)
@@ -195,10 +205,24 @@ export function parse(text, ctx = null, meta = {}) {
       if (opt.clearBustsOnScene) busts = new Map()
       dirty = true
     } else if (rx.eventImage.has(name)) {
+      const slot = num(a[0])
       const img = bgOf(str(a[1]))
-      eventImage = img ? { slot: num(a[0]), ...img } : null
+      if (eventImage?.slot === slot) eventImage = null
+      sprites.delete(slot)
+      if (img?.color) eventImage = { slot, ...img }
+      else if (img?.src) {
+        const off = (v) => (Number.isFinite(Number(v)) && Math.abs(Number(v)) < 10000 ? Number(v) : 0)   // 32767 = 默认（中心）
+        const scale = num(a[8], 100)
+        sprites.set(slot, { src: img.src, x: off(a[6]), y: off(a[7]), scale: scale > 0 && scale < 10000 ? scale / 100 : 1, fade: Math.min(5, Math.max(0, num(a[20]) / 1000)) })
+      }
       dirty = true
-    } else if (name === '_FadeSPR') { if (eventImage && num(a[0]) === eventImage.slot && num(a[1], 1) === 0) { eventImage = null; dirty = true } }
+    } else if (name === '_FadeSPR') {
+      if (num(a[1], 1) === 0) {
+        const slot = num(a[0])
+        if (eventImage && slot === eventImage.slot) { eventImage = null; dirty = true }
+        if (sprites.delete(slot)) dirty = true
+      }
+    }
     else if (rx.bust.has(name)) {
       const body = str(a[1])
       // 参数含义出自游戏自带的 framework._bs（system.arc）：a[7] = x（相对画面中心的偏移，0x10000000 = 默认），a[8] = y，a[9] = 放大率（百分比）
@@ -289,10 +313,11 @@ export function parse(text, ctx = null, meta = {}) {
     const outer = guard
     into.push({ op: 'choice', id: `${stepIndex}:${into.length}`, var: variable, options: opts.map((text, n) => ({ value: n + 1, segments: [{ text }] })), ...(guard.length ? { when: guard } : {}) })
     if (!host) { into.push({ op: 'text', segments: [], ...(guard.length ? { when: guard } : {}) }); endStep() }
-    const saved = { bgState, eventImage, busts: new Map(busts) }
+    const saved = { bgState, eventImage, sprites: new Map(sprites), busts: new Map(busts) }
     for (const [n, events] of (Array.isArray(branches) ? branches : []).entries()) {
       bgState = saved.bgState
       eventImage = saved.eventImage
+      sprites = new Map(saved.sprites)
       busts = new Map(saved.busts)
       guard = [...outer, { var: variable, op: '==', value: n + 1 }]
       resetShown()

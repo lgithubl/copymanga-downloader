@@ -276,6 +276,17 @@ check('gal-layout：认出 bgi（id = bgi::test），containers = buriko / flat 
   const st = scene.steps
   const cmdsOf = (i) => st[i].commands.map((c) => c.op)
   check('场景：开头一步 = bgm + voice（按事件顺序）+ bg + 立绘（本体 + 表情叠在一起，x 居中 = center；视觉变化在台词那一刻提交）+ speaker + text（ruby 片段）', J(cmdsOf(0)) === J(['bgm', 'voice', 'bg', 'stand', 'speaker', 'text']) && st[0].commands[0].src === 'bgm01.ogg' && st[0].commands[1].src === 'v001.ogg' && st[0].commands[2].src === 'bg01.png' && J(st[0].commands[3].parts) === J([{ src: 'ST01.png', align: 'center', vcenter: true, shiftX: -150, shiftY: 40, zoom: 0.8 }, { src: 'ST01_N_O_B02.png', attach: true, zoom: 0.8 }, { src: 'ST01_N_E_A01.png', attach: true, zoom: 0.8 }]) && J(st[0].commands[4].segments) === J([{ text: 'Alice' }]) && J(st[0].commands[5].segments) === J([{ text: 'Hello ' }, { text: 'kanji', ruby: 'ruby' }, { text: ' world' }]), J(st[0]))
+  {
+    // _DrawSPR（真实脚本 212_movea01_02 的写法：[槽, 名, 0,0,0,2, x, y, 放大率, …, 淡入毫秒 = args[20]]）：图 = 叠加层（原大小、盖在立绘之上），不是整屏背景；_FadeSPR 去掉；WHITE = 整屏纯色背景
+    const msg = (t) => ['k', 0x140, 0, [t, '']]
+    const spr = (slot, name, extra = {}) => { const a = [slot, name, 0, 0, 0, 2, extra.x ?? 0, extra.y ?? 0, extra.scale ?? 100, 0, 0, 0, 100, 32767, 32767, 0, 0, 0, 0, -1, extra.fade ?? 300, 0, -256]; return ['c', '_DrawSPR', 0, a] }
+    const events = [['c', '_DrawScene', 0, ['bg01', 0, 2]], ['c', '_DrawBS', 0, [4, 'ST01', 0, 0, 0, 0, 2, 0, 0, 100]], spr(6, 'ST01_N_E_A01', { fade: 300 }), msg('hand'), ['c', '_FadeSPR', 0, [6, 0, 2, 0, 0, 0, 0, 300, 1, -256]], msg('gone'), spr(0, 'WHITE', { fade: 10 }), msg('flash')]
+    const sprScene = adapter.parse(J({ format: 'bgi-bs/1', arc: 'a', name: 'n', size: 0, imports: [], run: {}, events }), ctx)
+    const all = sprScene.steps.flatMap((x) => x.commands)
+    const ov = all.filter((c) => c.op === 'overlay')
+    check('_DrawSPR 的图 = 叠加层 overlay（槽 6 → spr6，原大小 fit none，z = 100 + 槽，淡入 0.3 秒）；背景还是 _DrawScene 的，立绘还在', ov.length === 1 && ov[0].slot === 'spr6' && ov[0].src === 'ST01_N_E_A01.png' && ov[0].fit === 'none' && ov[0].z === 106 && ov[0].fade === 0.3 && all.filter((c) => c.op === 'bg').length === 2 && all.some((c) => c.op === 'stand'), J(all.map((c) => c.op)))
+    check('_FadeSPR(槽, 0, …) 去掉这个叠加层；WHITE 仍然是整屏纯色背景', all.filter((c) => c.op === 'overlayOff').length === 1 && all.some((c) => c.op === 'bg' && J(c.color) === J([255, 255, 255])))
+  }
   check('表情编号表：args[24] 的编号查 animationset 得到默认部件（嘴 / 眼 / 眉），args[28] 显式给的嘴覆盖默认的嘴；表里有但图不存在的眉记 bs:part-not-file，不报错', scene.stats.ignored['bs:part-not-file'] === 1 && !scene.stats.ignored['bs:face-code-unknown'] && JSON.parse(faceJson).faces.ST01_N002.length === 3, J(scene.stats.ignored))
   check('场景：_Wait = wait（秒）；旁白（说话人空）= speaker 清空；选项挂在问题那句台词的步里', st[1].commands.some((c) => c.op === 'wait' && c.seconds === 1.5) && J(st[1].commands.find((c) => c.op === 'speaker').segments) === J([]) && st[1].commands.some((c) => c.op === 'choice' && c.options.length === 2 && c.options[1].segments[0].text === 'Right'), J(st[1]))
   const choice = st[1].commands.find((c) => c.op === 'choice')
