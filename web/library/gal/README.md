@@ -172,7 +172,7 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 - **运行时不在仓库里**（Spine Runtimes License 限制）：`Dockerfile.web` 构建时跑 `scripts/fetch-spine-runtime.sh`（固定提交 + sha256 校验）下载到 `web/static/vendor/`；本地开发手动跑一次。没有运行时：播放器栏里提示「Spine 运行时缺失」，其余照常。
 - **四个版本的运行时（3.6 / 3.8 / 4.0 / 4.2）**：`spine-webgl-3.6.js`（spine-runtimes 3.6 分支固定提交 `654c20e`）、`spine-webgl.js`（3.8）、`spine-webgl-4.0.js`（npm 4.0.31）、`spine-webgl-4.2.js`（npm 4.2.100），都由 `scripts/fetch-spine-runtime.sh` 下载并校验。
   每个骨骼先读文件头认版本（二进制：头里的版本字符串；JSON：`skeleton.spine`）再选运行时；每个版本一块 canvas（`data-runtime` 标了版本），同一幅画面里不同版本的骨骼各画各的、共用同一套变换。
-  4.1 / 3.7 / 4.3 等没有对应运行时的版本，右下角提示「Spine 版本不支持」，诊断面板写「识别：Spine 4.1.55 → 没有对应的运行时」和「版本不对：…」；
+  3.7 / 4.3 等没有对应运行时的版本，右下角提示「Spine 版本不支持」，诊断面板写「识别：Spine 4.1.55 → 没有对应的运行时」和「版本不对：…」；
   文件都取到了但解析失败写「骨骼解析失败（Spine x.y.z，运行时 …）」，**不再**冒充成缺 png；浏览器 console 里每个骨骼有一行 `[gal-spine] <路径>：识别为 Spine x.y.z → 运行时 …`。
 - 贴图预乘 alpha（Spine 导出勾了 Premultiply Alpha）：按原始尺寸分块检测（半透明像素的 RGB 都不超过 alpha），预乘的走预乘混合；4.x 的 atlas 带 `pma: true` 也认。按普通贴图画预乘贴图会让半透明处（脸颊渐变、关节接缝）发黑。
 - 静态画面各层共用一套变换，基准是最底下那一层（序号最小）的包围盒。
@@ -578,7 +578,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 - `still_configuration.json` 的 `Parts` 决定叠哪几层：`IsMosaic: true` 的层默认不叠，不在 `Parts` 里的文件也不叠。两种都会在渲染诊断里写明（`提示：…`）。播放器「更多 → 显示马赛克层」（这个场景有马赛克层时才出现）打开后重取脚本、叠上它们；按媒体存在浏览器里
   （`copymanga.gal.view.<条目 id>.showMosaic`，经 `reader?mosaic=1|0` 传给适配器，优先于 `adapterOptions['misttrain-json'].showMosaic`）。
 - 初始姿势下没有任何可见附件的层（附件由动画打开，比如 Aku 的 3.6.53 JSON：1 骨骼 + 11 槽，动画 `Em00…Em09` 只有 `slots` 时间线切附件）：包围盒**按动画首帧算**——在一副临时骨架上套上要播的动画（不循环，取 0 / 0.05 / 0.25 / 0.75 / 1.75 秒和动画末尾几个时间点，第一个非空的），还是空就用骨骼文件头的 `width` / `height`（`x` 没写 = `-w/2`，`y` 没写 = 0），都没有才是「包围盒为空」。来源（`info().boundsSource`）：`setup` | `animation` | `header` | `none`；换动画时重新量。以前它的包围盒是 `Infinity`，只能跳过它（还会让整个画面消失 / 角色不画）。
-- 渲染时特意不画 / 改着画的：multiply 和 screen 混合的槽按 normal 画（原查看器 `spine.js` 的注释：这两种在它那里渲染不对）；不支持的 Spine 版本（3.7 / 4.1 / 4.3）不画并报版本不支持；默认皮肤是空的就改用第一个有内容的命名皮肤；
+- 渲染时特意不画 / 改着画的：multiply 和 screen 混合的槽按 normal 画（原查看器 `spine.js` 的注释：这两种在它那里渲染不对）；不支持的 Spine 版本（3.7 / 4.3）不画并报版本不支持；默认皮肤是空的就改用第一个有内容的命名皮肤；
   maid 的分层脸骨架在表情预设名对不上时用默认脸顶上（诊断里写明）。除此之外没有忽略别的，包括 additive 和 clipping。
 
 
@@ -1321,7 +1321,7 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 - **展开**（`config.containers.format = 'arcdrama'`，只扫 `Game/StaticData`）：按 DramaID 切成每段一个 JSON（`arcrecord-dialog/1`，带 JPN / CHS / CHT / ENG 四种语言里这一段用到的键）展开到 `<base>/arc/script/Dialog/<DramaID>.arcdrama`；base = 含 `Game` 的那一层（导出里是 `ArcRecordExport/Assets`）。
 - **适配器映射**（`adapters/arcrecord-dialog.mjs`）：台词（`<br>` 换行、`<color=#…>` 取颜色、`<size>` 去掉、`{0}` / 说话人 `player` = 主角名 `playerName`）；`language` 选语言（默认 JPN）；`DialogBGPerfab` → `BG/<名>.png`（没有 png 的预制体目录取目录里的 png，`BG/BG_Black` = 黑，`CG/…` 的 Spine 场景没做）；`Music` → `Sound/BGM/<名>.wav`（`Blank` = 停）；`Sound` 音效 → wav（默认的 `Effect_Dialog` 每句都有，不放）；`TalkSound`（`Hero/H0xx/Sound/<名>`）= 角色语音。
 - **验证了什么**：真实表切 1719 段、43288 句台词；引用的 BG png 1928 个 / BGM 2536 / 语音 4431 / 音效 6988 个都在导出资源的目录清单里，没找到的是文件本身就缺（BG 预制体目录只有 fbx、个别音效 / 语音）。
-- **没做 / 没验证**：角色（`Role1-3` = `Hero/H0xx/H0xx_Dialog` 预制体）——导出里只有 fbx 网格，预制体里的位置和 `RoleMotion`（`talkdown`、`Normal~talkup` …）怎么映射到 Spine 动画不在资源里；Spine 骨骼是 **4.1.23**（`Hero/H047/H047/H047.skel.asset` + `.atlas.asset` + png），播放器现有的运行时只有 3.6 / 3.8 / 4.0 / 4.2，没有 4.1；`CG/…` 的 Spine 场景同理；LINE 聊天剧情（`LineDrama.txt` / `LineDialog.txt`，230 段 / 1 万行，有分支）没接；背景的缩放 / 位置不知道（原样铺）；音效 / 语音是在这一行开始时放，实际时机不详。没有游戏截图对照。
+- **没做 / 没验证**：角色（`Role1-3` = `Hero/H0xx/H0xx_Dialog` 预制体）——导出里只有 fbx 网格，预制体里的位置和 `RoleMotion`（`talkdown`、`Normal~talkup` …）怎么映射到 Spine 动画不在资源里；Spine 骨骼是 **4.1.23**（`Hero/H047/H047/H047.skel.asset` + `.atlas.asset` + png），播放器的运行时现在有 3.6 / 3.8 / 4.0 / 4.1 / 4.2（4.1 = 官方 4.1.24，fetch-spine-runtime.sh 下载）；`CG/…` 的 Spine 场景同理；LINE 聊天剧情（`LineDrama.txt` / `LineDialog.txt`，230 段 / 1 万行，有分支）没接；背景的缩放 / 位置不知道（原样铺）；音效 / 语音是在这一行开始时放，实际时机不详。没有游戏截图对照。
 - 测试：`node scripts/dev/gal-arcrecord-selftest.mjs`（合成 Dialog.txt + Text：切段 / 坏字节 / 重复 id / 适配器 / containers / gal-layout；`ARC_SAMPLE=<…/Game 目录>` 时再把真实表整份切段 + 解析一遍）。
 
 ## 友恵の探偵物語（Cyberworks TinkerBell；`tomoe::arc04`，game.id = `tomoe::<游戏>`，gal-layout 2.40.0）

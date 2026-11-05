@@ -1,6 +1,6 @@
 // Gal 播放器的 Spine 渲染层：叠在背景上的 WebGL canvas，画规范场景里 spine 指令描述的骨骼动画（站位立绘、整幅静态画面）。
 // 运行时是 Esotericsoftware 官方 spine-webgl，四个版本（许可证限制，不进仓库：Dockerfile 构建时下载到 /vendor/，本地用 scripts/fetch-spine-runtime.sh）：
-//   3.6 → spine-webgl-3.6.js    3.8 → spine-webgl.js    4.0 → spine-webgl-4.0.js    4.2 → spine-webgl-4.2.js
+//   3.6 → spine-webgl-3.6.js    3.8 → spine-webgl.js    4.0 → spine-webgl-4.0.js    4.1 → spine-webgl-4.1.js    4.2 → spine-webgl-4.2.js
 // 3.6 的官方 Web 运行时只有 JSON 加载器、没有二进制加载器：二进制的 3.6 骨骼先由 gal-spine36-binary.js 转成 3.6 JSON 结构，再交给官方 SkeletonJson 建数据。
 // 每个骨骼先读文件头认出版本（二进制：头里的版本字符串；JSON：skeleton.spine），再选对应的运行时解析和绘制；认不出 / 不支持的版本如实报「版本不支持」，
 // 不会冒充成缺资源。每个运行时各用一块 canvas（同一帧里不同版本的骨骼不交叉叠层，各自按顺序画）。没有运行时就只提示、不渲染。
@@ -9,7 +9,7 @@
 import { atlasPageGeometry, findCropOffset } from './gal-spine-atlas.js'
 import { spine36BinaryToJson } from './gal-spine36-binary.js'
 
-export const SPINE_RUNTIMES = { '3.6': '/vendor/spine-webgl-3.6.js', '3.8': '/vendor/spine-webgl.js', '4.0': '/vendor/spine-webgl-4.0.js', '4.2': '/vendor/spine-webgl-4.2.js' }
+export const SPINE_RUNTIMES = { '3.6': '/vendor/spine-webgl-3.6.js', '3.8': '/vendor/spine-webgl.js', '4.0': '/vendor/spine-webgl-4.0.js', '4.1': '/vendor/spine-webgl-4.1.js', '4.2': '/vendor/spine-webgl-4.2.js' }
 const runtimePromises = new Map()
 // version：SPINE_RUNTIMES 的键。3.8 沿用 <script>（全局 spine）；3.6 和 4.x 的包也是 `var spine = …`，几个都放全局会互相覆盖（3.6 和 3.8 要在同一个页面里共存），
 // 所以取文本、包进函数里执行，各自拿到自己的 spine 对象
@@ -37,7 +37,7 @@ export function loadSpineRuntime(version = '3.8') {
 }
 
 // 从骨骼文件头认版本：二进制 = 头 96 字节里的版本字符串（3.6 / 3.8：先是 hash 字符串再是版本；4.x：8 字节 hash 再是版本）；JSON = skeleton.spine。
-// runtime = 对应的运行时键（'3.6' | '3.8' | '4.0' | '4.2'），不支持的版本（3.7 / 4.1 / 4.3 …）是 ''
+// runtime = 对应的运行时键（'3.6' | '3.8' | '4.0' | '4.1' | '4.2'），不支持的版本（3.7 / 4.3 …）是 ''
 export function detectSpineVersion(bytes) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   const format = u8.find((b) => b > 32) === 0x7b ? 'json' : 'binary'
@@ -351,7 +351,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const base = { version: detected.version, runtime: detected.runtime, format: detected.format }
       console.info(`[gal-spine] ${spec.skel}：识别为 Spine ${detected.version || '未知版本'}（${detected.format === 'json' ? 'JSON' : '二进制'}）→ ${detected.runtime ? `运行时 ${detected.runtime}` : '没有对应的运行时'}`)
       const fail = (error) => { onError({ src: spec.skel, ...base, ...error }); return { error: { ...base, ...error } } }
-      if (!detected.runtime) return fail({ kind: 'version', message: `Spine 版本 ${detected.version || '未知'} 不支持（支持 3.6 / 3.8 / 4.0 / 4.2）` })
+      if (!detected.runtime) return fail({ kind: 'version', message: `Spine 版本 ${detected.version || '未知'} 不支持（支持 3.6 / 3.8 / 4.0 / 4.1 / 4.2）` })
       const backend = await backendFor(detected.runtime)
       if (!backend || destroyed) return { error: { ...base, kind: 'runtime', message: `Spine ${detected.runtime} 运行时不可用` } }   // onUnavailable 已经提示过
       const { spine, ns } = backend

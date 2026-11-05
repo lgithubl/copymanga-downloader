@@ -3,6 +3,7 @@
 #   spine-webgl-3.6.js   3.6.x （spine-runtimes 3.6 分支固定提交的 spine-ts/build；只有 SkeletonJson，二进制 .skel 由 web/static/gal-spine36-binary.js 转成 JSON 再读）
 #   spine-webgl.js       3.8   （spine-runtimes 固定提交的 spine-ts/build）
 #   spine-webgl-4.0.js   4.0.x （npm @esotericsoftware/spine-webgl@4.0.31 的 dist/iife）
+#   spine-webgl-4.1.js   4.1.x （npm @esotericsoftware/spine-webgl@4.1.24 的 dist/iife）
 #   spine-webgl-4.2.js   4.2.x （npm @esotericsoftware/spine-webgl@4.2.100 的 dist/iife）
 # 运行时受 Esoteric Software 的许可证约束（Spine Runtimes License），所以不放进仓库，构建镜像 / 本地开发时按固定版本下载并校验哈希。
 #   sh scripts/fetch-spine-runtime.sh [目标目录，默认 web/static/vendor]
@@ -34,4 +35,5 @@ fetch_npm() {
   echo "$out ($version) -> $DIR"
 }
 fetch_npm 4.0.31 d82e2c32d2fbe2d47d461da5b8dd3b9daac1fbfeda74e6476114d5d70619185a spine-webgl-4.0.js
+fetch_npm 4.1.24 66ca3462134a5559975172b34b47290a050ee4a96e2e4f361a418cad4769f122 spine-webgl-4.1.js
 fetch_npm 4.2.100 ed59374359cf9217a87723124f5e87665492b06dae04a7b5e83af0fd18b12db2 spine-webgl-4.2.js

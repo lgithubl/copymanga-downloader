@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 浏览器自测：Spine 多版本运行时（3.8 / 4.0 / 4.2）。同一幅静态画面（misttrain 合成素材）里每层用不同版本的骨骼（JSON，颜色不同），
 // 检查：按文件头识别版本并选对应运行时、三块 canvas 各画各的且共用同一套变换、诊断面板写出「识别：Spine x.y.z → 运行时 …」、
-// 不支持的版本（4.1）报「版本不对」而不是缺资源、损坏的骨骼报「解析失败」、4.x 运行时下载不到时的提示。需要先 sh scripts/fetch-spine-runtime.sh。
+// 不支持的版本（4.3）报「版本不对」而不是缺资源、损坏的骨骼报「解析失败」、4.x 运行时下载不到时的提示。需要先 sh scripts/fetch-spine-runtime.sh。
 //   PLAYWRIGHT_PATH=<@playwright/test> node scripts/dev/fe-gal-spine-versions-selftest.mjs     截图在 SHOT_DIR（默认 /tmp/gal-spine-versions-shots）
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -36,11 +36,11 @@ const R0 = path.join(media, 'G')
 const at = (...parts) => path.join(R0, ...parts)
 const ANIMS = ['animation1', 'animation2']
 const SP = 'Spines/Stills/234/223440107'
-// 1 = 3.8（金，底图 200×400）；3 = 4.0（天蓝，小一半）；5 = 4.2（红，更小）；7 = 4.1（不支持）；9 = 损坏的 3.8（atlas / png 都在）
+// 1 = 3.8（金，底图 200×400）；3 = 4.0（天蓝，小一半）；5 = 4.2（红，更小）；7 = 4.3（不支持）；9 = 损坏的 3.8（atlas / png 都在）
 await writeSpine(at(SP), '1', { format: 'json', color: 'goldenrod', animations: ANIMS, version: '3.8.99' })
 await writeSpine(at(SP), '3', { format: 'json', color: 'deepskyblue', animations: ANIMS, version: '4.0.64', region: { width: 120, height: 240, y: 120 } })
 await writeSpine(at(SP), '5', { format: 'json', color: 'crimson', animations: ANIMS, version: '4.2.38', region: { width: 60, height: 120, y: 60 } })
-await writeSpine(at(SP), '7', { format: 'json', color: 'green', animations: ANIMS, version: '4.1.55' })
+await writeSpine(at(SP), '7', { format: 'json', color: 'green', animations: ANIMS, version: '4.3.13' })
 await writeSpine(at(SP), '9', { format: 'json', color: 'purple', animations: ANIMS, version: '3.8.99' })
 await writeFile(at(`${SP}/9.skel.bytes`), '{"skeleton":{"spine":"3.8.99"},"bones":[{"name":"root"}],"slots":[{"name":"s","bone":"nope"}]}')   // 引用不存在的骨骼：解析失败
 for (const dir of ['MasterData', 'Sounds']) await mkdir(at(dir), { recursive: true })
@@ -64,7 +64,7 @@ for (let i = 0; i < 100; i++) { try { await fetch(`${base}/health`); break } cat
 
 let browser
 try {
-browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] })
+browser = await chromium.launch({ ...(process.env.CHROME ? { executablePath: process.env.CHROME } : {}),  args: ['--autoplay-policy=no-user-gesture-required', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] })
 const open = async (route) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
   await context.addInitScript(() => { localStorage.setItem('copymanga.immersivePref', JSON.stringify({ gal: false })) })
@@ -106,11 +106,11 @@ const near = (rgba, [r, g, b], tol = 45) => rgba[3] > 200 && Math.abs(rgba[0] - 
   check('4.0 的层没有铺满整个舞台（上方是透明的，不是天蓝）', upper4[3] < 20, J(upper4))
   const diag = await diagOf(page)
   check('诊断面板：每个骨架写出「识别：Spine 版本 → 运行时」', /识别：Spine 3\.8\.99 → 运行时 3\.8/.test(diag) && /识别：Spine 4\.0\.64 → 运行时 4\.0/.test(diag) && /识别：Spine 4\.2\.38 → 运行时 4\.2/.test(diag), diag)
-  check('不支持的版本（4.1.55）：诊断里写「版本不对：Spine 版本 4.1.55 不支持（支持 3.6 / 3.8 / 4.0 / 4.2）」，识别栏是 4.1.55 → 没有对应的运行时', /识别：Spine 4\.1\.55 → 没有对应的运行时/.test(diag) && /版本不对：Spine 版本 4\.1\.55 不支持（支持 3\.6 \/ 3\.8 \/ 4\.0 \/ 4\.2）/.test(diag), diag)
+  check('不支持的版本（4.3.13）：诊断里写「版本不对：Spine 版本 4.3.13 不支持（支持 3.6 / 3.8 / 4.0 / 4.1 / 4.2）」，识别栏是 4.3.13 → 没有对应的运行时', /识别：Spine 4\.3\.13 → 没有对应的运行时/.test(diag) && /版本不对：Spine 版本 4\.3\.13 不支持（支持 3\.6 \/ 3\.8 \/ 4\.0 \/ 4\.1 \/ 4\.2）/.test(diag), diag)
   check('损坏的骨骼（图集 png 都在）：写「解析失败…Spine 3.8.99，运行时 3.8」，不冒充缺资源；缺资源清单里没有 9.png', /解析失败：骨骼解析失败（Spine 3\.8\.99，运行时 3\.8）/.test(diag) && !/9\.png/.test(diag.split('缺少资源')[1] || ''), diag)
   const noteText = await page.$eval('.gal-note', (e) => e.textContent)
   check('右下角提示：「Spine 版本不支持 1 个」「Spine 骨骼解析失败 1 个」，没有「缺少资源」', /Spine 版本不支持 1 个/.test(noteText) && /Spine 骨骼解析失败 1 个/.test(noteText) && !/缺少资源/.test(noteText), noteText)
-  check('日志（console）里每个骨骼都有「识别为 Spine x.y.z → 运行时 …」', logs.some((l) => /1\.skel\.bytes.*识别为 Spine 3\.8\.99.*运行时 3\.8/.test(l)) && logs.some((l) => /3\.skel\.bytes.*识别为 Spine 4\.0\.64.*运行时 4\.0/.test(l)) && logs.some((l) => /5\.skel\.bytes.*识别为 Spine 4\.2\.38.*运行时 4\.2/.test(l)) && logs.some((l) => /7\.skel\.bytes.*识别为 Spine 4\.1\.55.*没有对应的运行时/.test(l)), J(logs))
+  check('日志（console）里每个骨骼都有「识别为 Spine x.y.z → 运行时 …」', logs.some((l) => /1\.skel\.bytes.*识别为 Spine 3\.8\.99.*运行时 3\.8/.test(l)) && logs.some((l) => /3\.skel\.bytes.*识别为 Spine 4\.0\.64.*运行时 4\.0/.test(l)) && logs.some((l) => /5\.skel\.bytes.*识别为 Spine 4\.2\.38.*运行时 4\.2/.test(l)) && logs.some((l) => /7\.skel\.bytes.*识别为 Spine 4\.3\.13.*没有对应的运行时/.test(l)), J(logs))
   await page.screenshot({ path: path.join(shotDir, '1-three-versions.png') })
   check('没有页面错误', errors.length === 0, J(errors))
   await context.close()
