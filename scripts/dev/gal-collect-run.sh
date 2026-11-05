@@ -33,6 +33,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.23 BGI 按图名收：新增规则 bgi:named（GAL_BGI_NAMES 正则，默认 ^osev_m_08[a-d]$ = 両腕が折れた… 手的特写 4 张）：读每个 data*.arc 的 ARC20 索引，命中的图原样收（单张 <= 12MB），不收档案头尾；ROUND_RULES 改成只收它
 # 1.22 只收「这一轮要的」：新增 GAL_COLLECT_RULES（规则名正则），默认 = ROUND_RULES（本版只写 ^chakra:）；没命中的游戏整个跳过。以后每个版本只写当次需要的规则，不再重收以前要过的\n# 1.21 修 1.20：TOMOE_USED 的键是字符串（JSON 来的），按文件号 int 取不到 → 没按「脚本用得最多」挑、从头顺序收了\n# 1.20 友恵の探偵物語（chakra）：Data000 / 003 / 004 按 Data00.dat 索引挑脚本用得最多的图（原样不解压），Arc06 出 RIFF 清单 + 样本，存档 / 存档缩略图 / tomoetantei.zip 全收
 # 1.19 修 1.18：Imys 的 scenarios 分 6 个子目录（combo / dress / event / favorite / quest / training），1.18 的正则只认第一层、只收到 default_chars 一个：每个子目录抽 12 个 + 最大 2 个（bundle 只有 2~25KB），再加每个子目录 1 个剧情语音 .acb\n# 1.18 Imys 这类剧情在 bundle 里的：content/bundles/scenarios 抽 8 个、textdefine 抽 4 个（.encrypted，≤8MB）
 # 1.17 跟着软连接走（游戏根 / 目录 / 文件是软连接都能扫到；按真实路径去重防成环）
@@ -48,10 +49,11 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.22"
+VERSION="1.23"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^chakra:'
+ROUND_RULES='^bgi:named$'
+export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
 HOST_TAG="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9' '_' | cut -c1-20)"
@@ -124,6 +126,7 @@ BINARIES = env.get('GAL_COLLECT_BINARIES') == '1'
 VERSION = env.get('GAL_COLLECT_VERSION', 'unknown')
 _rules = env.get('GAL_COLLECT_RULES') or env.get('GAL_COLLECT_RULES_DEFAULT') or ''
 RULES_RE = None if _rules in ('', 'all') else re.compile(_rules)
+BGI_NAMES_RE = re.compile(env.get('GAL_BGI_NAMES') or env.get('GAL_BGI_NAMES_DEFAULT') or '^$', re.I)
 
 def say(msg): print(msg, file=sys.stderr, flush=True)
 
@@ -426,6 +429,39 @@ def bgi_samples(f, size, forced=None):
 
 BGI_PAIR_GROUPS = 36        # 一个游戏最多配几组（<角色>_<尺寸>）
 BGI_PAIR_EACH_MAX = 4 * MB
+
+def bgi_named(items):
+    """按图名（GAL_BGI_NAMES，默认 BGI_NAMES_RE）找：读每个 data*.arc 的 ARC20 索引，返回 [Entry]（至少有一个条目名命中的档案）。"""
+    out = []
+    for e in items:
+        if not re.fullmatch(r'(?i)(.*/)?data\d+\.arc', e.rel): continue
+        try:
+            with open(e.path, 'rb') as f:
+                head = f.read(16)
+                if head[:12] != b'BURIKO ARC20': continue
+                cnt = struct.unpack('<I', head[12:16])[0]
+                if cnt <= 0 or cnt > 200000: continue
+                idx = f.read(cnt * 0x80)
+        except OSError: continue
+        for i in range(cnt):
+            name = idx[i * 0x80:i * 0x80 + 0x60].split(b'\0', 1)[0].decode('cp932', 'replace')
+            if BGI_NAMES_RE.search(name): out.append(e); break
+    return out
+
+def bgi_named_pick(path, size):
+    """返回 (命中的 [(名字, 偏移, 大小)], 目录清单文本)；索引读不了返回 None。"""
+    with open(path, 'rb') as f:
+        head = f.read(16)
+        if head[:12] != b'BURIKO ARC20': return None
+        cnt = struct.unpack('<I', head[12:16])[0]
+        idx = f.read(cnt * 0x80); base = 16 + cnt * 0x80; hits = []; lines = ['name\toffset\tsize\n']
+        for i in range(cnt):
+            rec = idx[i * 0x80:(i + 1) * 0x80]
+            name = rec[:0x60].split(b'\0', 1)[0].decode('cp932', 'replace')
+            off, sz = struct.unpack('<II', rec[0x60:0x68])
+            if BGI_NAMES_RE.search(name) and base + off + sz <= size and sz <= 12 * MB:
+                hits.append((name, base + off, sz)); lines.append('%s\t%d\t%d\n' % (name, base + off, sz))
+    return hits, ''.join(lines)
 
 def bgi_pairs(entries):
     """entries：这个游戏的 data*.arc（Entry）。读所有 CBG 的头，按「角色(4 位) + 尺寸字母」配对：立绘本体 <角色><2 位>_<尺寸> 和它的部件 <角色>_<尺寸>_<种类>_<编号>
@@ -845,6 +881,8 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = list_files(game); eng = engines_of(items); picks = pick(items, eng)
+        if 'bgi' in eng and RULES_RE is not None and RULES_RE.search('bgi:named'):
+            picks = picks + [(e, 'bginamed', 'bgi:named') for e in bgi_named(items)]
         if RULES_RE is not None:
             picks = [x for x in picks if RULES_RE.search(x[2])]
             if not picks:
@@ -881,6 +919,20 @@ def main():
                                 say('   pf8 %s：索引 %d 条，选中 %d 个脚本类条目' % (e.rel, len(ents), len(chosen)))
                                 total += stored; picked_bytes += stored
                                 continue
+                    if eff == 'bginamed':
+                        got = bgi_named_pick(e.path, e.size)
+                        if got is None: continue
+                        hits, cat = got; cb = cat.encode('utf-8'); stored = 0
+                        ti = tarfile.TarInfo('%s/%s.__bgi/__named.tsv' % (gid, e.rel)); ti.size = len(cb); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(cb)); stored += len(cb)
+                        with open(e.path, 'rb') as f:
+                            for name, off, sz in hits:
+                                f.seek(off); data = f.read(sz)
+                                if len(data) != sz: continue
+                                ti = tarfile.TarInfo('%s/%s.__bgi/%s' % (gid, e.rel, re.sub(r'[\\/:*?"<>|]', '_', name))); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data)); stored += len(data)
+                                mf.write('%s\t%s\tbgiimage\t%s\t%d\t%d\t%s\n' % (gid, e.rel + ':' + name, rule, sz, len(data), hashlib.sha256(data).hexdigest()))
+                        say('   bgi %s：按名收 %d 张' % (e.rel, len(hits)))
+                        total += stored; picked_bytes += stored
+                        continue
                     if eff == 'tomoe':
                         got = tomoe_pick(e.path, e.size, rule)
                         if got is None:
