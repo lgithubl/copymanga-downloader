@@ -1058,7 +1058,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
   - 条件跳转读到「没设过」的变量按 0 处理，可能走错分支；标志（`lflag`）只模拟了脚本自己写的。**没有先跑初始化脚本**（它们在库脚本里，菜单循环，被步数 / 事件上限截断）。
   - g07 的 `root_common*` 三个库脚本仍被截断（菜单循环，不含剧情）；有 `maxSteps = 2,000,000`、`maxEvents = 100,000`、空转 60,000 步三道上限。选择点里没有汇合点的，是分支各自 `jump_scenario` 到不同脚本（合理，不是缺陷）。
   - CompressedBG **version 2 已按 GARbro 移植**（`bgi-cbg2.mjs`：DCT 块 + 哈夫曼 + alpha）：v1.3 采集里有 81 张真实 v2 图（24 / 32 位，最大 4140×2460），全部解码不出错，目视检查 3 张（商店背景、CG、立绘）画面正确；195 张样本（v1 114 + v2 81）全部能解。自带编码器做系数级往返；浮点按 double 算，和 GARbro 的 float 可能有 ±1 的差。DSC 的 `BurikoAnimation` 动画表等不是剧本的条目跳过。
-  - `_DrawSPR`（事件图）：图 = 叠加层 overlay（原大小、中心 + args[6] / args[7]、放大率 args[8]、淡入 args[20] 毫秒、z = `eventImageZ` + 槽，盖在立绘之上），`_FadeSPR(槽, 0)` 去掉；纯色（WHITE / BLACK）仍然是 bg.color（整屏闪白 / 闪黑）。以前图也当成 bg 换掉背景：小于画面的特写（`212_movea01_02` 里的 `OSEV_M_08*` 手的特写）被拉成全屏、盖在立绘后面。**没有图对照**：样本里没有 `OSEV_M_*`，原图尺寸 / 位置没核对；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
+  - `_DrawSPR`（事件图）：图 = 叠加层 overlay（原大小、中心 + args[6] / args[7]、放大率 args[8]、淡入 args[20] 毫秒、z = `eventImageZ` + 槽，盖在立绘之上），`_FadeSPR(槽, 0)` 去掉；纯色（WHITE / BLACK）仍然是 bg.color（整屏闪白 / 闪黑）。以前图也当成 bg 换掉背景：小于画面的特写（`212_movea01_02` 里的 `OSEV_M_08*` 手的特写）被拉成全屏、盖在立绘后面。`OSEV_M_08A~D` 已核对：都是 700×700、全不透明（粉色渐变底 + 手），所以是「窗口」而不是全屏图；位置按脚本里 x / y = 0 放在画面中心，没有游戏截图对照；`_DrawScene` 换背景会清掉立绘；`_FadeBS` 第 2 个参数 0 = 去掉这个槽——按用法猜的（`_DrawBS` 的参数已有依据，这几个还没逐个读库脚本）。
 - **自测**：`scripts/dev/gal-bgi-selftest.mjs`（合成数据：DSC / CompressedBG / ARC20 / BW 的编码器在 `make-bgi-fixture.mjs`，剧本汇编器 `BgiScript`）；`BGI_SAMPLE_DIR=<有 data*.arc 的目录>` 再多跑一段真实样本检查（样本不进仓库）。
 
 ## Artemis（`artemis::ast`，pf8 档案 + `.ast` Lua 表脚本，gal-layout 2.34.0）
