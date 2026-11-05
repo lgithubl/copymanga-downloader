@@ -20,6 +20,8 @@ import { isVorbisRiff, parseGsc, readXflIndex, riffVorbisToOgg } from './rscript
 import { decodeGscScript, runGsc } from './rscript-run.mjs'
 import { wcgToPng } from './rscript-wcg.mjs'
 import { imysDecrypt, readTextAssets } from './unity-bundle.mjs'
+import { readAcb } from './cri-acb.mjs'
+import { IMYS_HCA_KEY, decodeHca, pcmToWav } from './cri-hca.mjs'
 import { decodeArc, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt, tomoeImageTransform } from './tomoe.mjs'
 import { DSM_MAX_BYTES, decryptDsm, isPsm, psmToPng, splitDsm } from './unity-dsm.mjs'
 import { normalizeKeyBundles } from './config.mjs'
@@ -37,7 +39,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 15
+export const CONTAINER_FORMAT_VERSION = 16
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -233,6 +235,7 @@ function transformData(data, hit) {
   if (hit.transform === 'riff-ogg') return Buffer.from(riffVorbisToOgg(data))
   if (hit.transform === 'bgi-faceset') return Buffer.from(JSON.stringify(parseBgiFaceSet(dscDecode(data))))
   if (hit.transform === 'pf8') return pf8Decrypt(data, hit.key)
+  if (hit.transform === 'imys-hca') return imysAcbToWav(data, hit)
   return hit.unpremultiply ? unpremultiplyPng(data).buffer : data
 }
 // 资源（图 / 声音）展开后的相对路径（相对容器目录 cfg.dir）：flat = 所有容器的资源放同一个目录（BGI：脚本按名字引用，不带容器名）
@@ -1026,12 +1029,64 @@ async function listArcs(mediaDir, cfg) {
   return out
 }
 
+// ---------- Imys：CRI 声音（raw/<VOICE|SCENARIO|BGM|SCENARIO_SE>/**.acb）----------
+// 虚拟路径 = <dir>/res/<voice|bgm|se>/<cue 名>.wav；单 cue 的 ACB 另按文件名再登记一个别名（BGMPlay(…, b0001) → bgm_0001 这类按文件名引用的）。取出来时：ACB → 取波形 → HCA 解密 + 解码 → 16 位 PCM WAV
+// raw/ 和 bundles/ 同级：扫描目录 <前缀>/bundles/scenarios → <前缀>/raw
+const imysAudioDir = (cfg) => `${String(cfg.scan?.[0] || '').replace(/\/?bundles\/scenarios\/?$/i, '').replace(/^\.$/, '')}/raw`.replace(/^\//, '')
+const imysAudioKind = (rel) => (/(^|\/)BGM(\/|$)/i.test(rel) ? 'bgm' : /(^|\/)SCENARIO_SE(\/|$)/i.test(rel) ? 'se' : 'voice')
+async function listImysAcb(mediaDir, cfg) {
+  const out = []
+  const walk = async (dir, rel, depth) => {
+    let items = []
+    try { items = await readdir(dir, { withFileTypes: true }) } catch { return }
+    for (const item of items.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (item.isDirectory()) { if (depth < 4) await walk(path.join(dir, item.name), rel ? `${rel}/${item.name}` : item.name, depth + 1); continue }
+      if (!/\.acb$/i.test(item.name)) continue
+      const file = path.join(dir, item.name)
+      let info
+      try { info = await stat(file) } catch { continue }
+      out.push({ file, rel, name: item.name.replace(/\.acb$/i, ''), size: info.size, sig: `${rel}/${item.name}:${info.size}:${Math.floor(info.mtimeMs)}` })
+    }
+  }
+  const base = imysAudioDir(cfg)
+  await walk(path.join(mediaDir, ...base.split('/')), base, 0)
+  return out
+}
+async function buildImysVirtual(mediaDir, cfg, sig) {
+  const map = new Map()
+  const files = []
+  const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
+  for (const acb of await listImysAcb(mediaDir, cfg)) {
+    if (acb.size > MAX_ENTRY_BYTES) continue
+    let cues
+    try { cues = readAcb(await readFile(acb.file)).cues } catch { continue }
+    const kind = imysAudioKind(acb.rel)
+    const named = cues.filter((c) => c.waveIds.length)
+    for (const cue of named) add(`${cfg.dir}/res/${kind}/${cue.name}.wav`, { file: acb.file, offset: 0, size: acb.size, transform: 'imys-hca', cue: cue.name })
+    if (named.length === 1 && named[0].name !== acb.name) add(`${cfg.dir}/res/${kind}/${acb.name}.wav`, { file: acb.file, offset: 0, size: acb.size, transform: 'imys-hca', cue: named[0].name })
+  }
+  return { map, files, sig }
+}
+function imysAcbToWav(data, hit) {
+  let ext = null
+  const acb = readAcb(data)
+  if (!acb.waves.size) {   // 流式：波形在同名 .awb（和 .acb 同目录）
+    try { ext = readFileSync(hit.file.replace(/\.acb$/i, '.awb')) } catch { /* 没采集到 */ }
+  }
+  const full = ext ? readAcb(data, ext) : acb
+  const cue = full.cues.find((c) => c.name === hit.cue)
+  const hca = cue && full.waves.get(cue.waveIds[0])
+  if (!hca) throw new Error(`ACB 里没有 ${hit.cue} 的波形${ext ? '' : '（可能在没采集到的 .awb 里）'}`)
+  return pcmToWav(decodeHca(hca, IMYS_HCA_KEY))
+}
+
 async function buildVirtual(mediaDir, cfg, arcs, sig) {
   if (cfg.format === 'krkr') return buildKrkrVirtual(mediaDir, cfg, arcs, sig)
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
-  if (cfg.format === 'arcdrama' || cfg.format === 'imys') return { map, files, sig }   // ArcRecord_D：资源是磁盘上的普通文件，没有虚拟条目
+  if (cfg.format === 'imys') return buildImysVirtual(mediaDir, cfg, sig)
+  if (cfg.format === 'arcdrama') return { map, files, sig }   // ArcRecord_D：资源是磁盘上的普通文件，没有虚拟条目
   if (cfg.format === 'mhp') {
     // MahotanArchive：每个 .mhp 里除 data/ 和 metadata/ 之外的条目都进虚拟索引，路径 = 条目名（脚本里的资源路径就是这个，如 images/backgrounds/background-001.jpg）；
     // 更新包（名字里带 update）先处理：同一路径更新包的赢（add 是先到先得）。取出来时读本地头 + 数据，Deflate 的解压
@@ -1212,7 +1267,7 @@ export async function virtualIndex({ mediaDir, config }) {
   const cfg = config?.containers
   if (!isHybrid(cfg) || !mediaDir) return null
   const arcs = await listArcs(mediaDir, cfg)
-  const sig = arcs.map((a) => a.sig).join('|') + (cfg.format === 'krkr' ? await krkrRefsSig(mediaDir, cfg) : '')
+  const sig = arcs.map((a) => a.sig).join('|') + (cfg.format === 'krkr' ? await krkrRefsSig(mediaDir, cfg) : cfg.format === 'imys' ? `|acb:${(await listImysAcb(mediaDir, cfg)).map((a) => a.sig).join(',')}` : '')
   const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
   const hit = virtuals.get(key)
   if (hit?.sig === sig) return hit.promise
@@ -1252,7 +1307,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.cue || '', hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,
