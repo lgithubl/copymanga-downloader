@@ -189,13 +189,13 @@ if (process.argv.includes('--update-golden')) {
 }
 
 
-const ALL_IDS = ['uviewer', 'deepone', 'legeclo', 'monmusu', 'angelic', 'minashigo', 'minashigo_r', 'girlscreation', 'girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits', 'tenkeiprdx', 'misttrain', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'advhd', 'bgi', 'artemis', 'arcfam', 'krkr', 'rscript', 'unity', 'mahotan', 'arcrecord', 'tomoe']
+const ALL_IDS = ['uviewer', 'deepone', 'legeclo', 'monmusu', 'angelic', 'minashigo', 'minashigo_r', 'girlscreation', 'girlscreation282', 'aster', 'jaxin', 'maid', 'aku', 'fruits', 'tenkeiprdx', 'misttrain', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'advhd', 'bgi', 'artemis', 'arcfam', 'krkr', 'rscript', 'unity', 'mahotan', 'arcrecord', 'tomoe', 'imys']
 const logText = (out) => (out.logs || []).join('\n')
 const withLayouts = (layouts) => ({ layouts })
 
 // ================= 表：22 个 id 全在、extends 都解析得到、所有列表字段都是数组 =================
 {
-  check('LAYOUTS 导出了、含全部 32 个 id（不多不少）', LAYOUTS && J(Object.keys(LAYOUTS).sort()) === J([...ALL_IDS].sort()), J(Object.keys(LAYOUTS || {})))
+  check('LAYOUTS 导出了、含全部 33 个 id（不多不少）', LAYOUTS && J(Object.keys(LAYOUTS).sort()) === J([...ALL_IDS].sort()), J(Object.keys(LAYOUTS || {})))
   const unresolved = []
   for (const id of ALL_IDS) {
     const problems = []
@@ -211,7 +211,7 @@ const withLayouts = (layouts) => ({ layouts })
   const noAkuPlayer = (layout) => ({ ...layout, title: '', cover: undefined, engine: { ...layout.engine, player: undefined, dirCover: undefined, thumbRender: undefined } })
   check('别名解析出来的数据 = 父项的数据（只有 title 不同；aku 另有 engine.player.cameraMode = widget 和 engine.dirCover）', ALL_IDS.filter((id) => LAYOUTS[id].extends === 'girlscreation').every((id) => J(noAkuPlayer(mod.resolveLayout(id))) === J(noAkuPlayer(girls))) && J(mod.resolveLayout('aku').engine.player) === J({ cameraMode: 'widget' }) && !girls.engine.player)
   const handlers = ALL_IDS.map((id) => [id, LAYOUTS[id].autoOrder])
-  check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'advhd', 'bgi', 'artemis', 'arcfam', 'krkr', 'rscript', 'unity', 'mahotan', 'arcrecord', 'tomoe', 'uviewer']), J(handlers))
+  check('自动探测顺序：只有主 id 有 autoOrder（别名只在声明了 game.id 时走），顺序 legeclo → monmusu → angelic → girlscreation → …', J(handlers.filter(([, o]) => Number.isFinite(o)).sort((a, b) => a[1] - b[1]).map(([id]) => id)) === J(['legeclo', 'monmusu', 'angelic', 'girlscreation', 'tenkeiprdx', 'misttrain', 'minashigo', 'minashigo_r', 'artwhirl', 'kamihime', 'bokusen', 'grenze', 'tsk', 'otogi', 'advhd', 'bgi', 'artemis', 'arcfam', 'krkr', 'rscript', 'unity', 'mahotan', 'arcrecord', 'tomoe', 'imys', 'uviewer']), J(handlers))
 }
 {
   // schema：遍历表里每一项（未解析 extends 的原始写法），所有「列表」字段必须是数组，哪怕现在只有一个元素
@@ -531,7 +531,7 @@ const lineOf = (out, re) => (out.logs || []).find((l) => re.test(l)) || ''
 // ================= 规则表（ADAPTER_RULES + engine 字段）：写进 config、体量、端到端等价、和 layouts / overrides 的关系 =================
 {
   const manifest = JSON.parse(await readFile(path.join(path.dirname(MAIN), 'manifest.json'), 'utf8'))
-  check('manifest：版本 2.41.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.41.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
+  check('manifest：版本 2.42.0，description 说明规则表（ADAPTER_RULES / ruleTables / engine）在 main.js 里、改表重跑即可', manifest.version === '2.42.0' && /ADAPTER_RULES/.test(manifest.description) && /ruleOverrides/.test(manifest.description), manifest.version)
 
   // 每个 fixture 的声明 id（别名都跑）：写出来的 config 经过引擎规整一条警告都没有（规则表 / engine 字段都合格），体量在引擎上限内
   const tooBig = []

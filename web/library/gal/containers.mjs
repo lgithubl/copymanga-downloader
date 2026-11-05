@@ -19,6 +19,7 @@ import { readArcfamIndex } from './arcfam.mjs'
 import { isVorbisRiff, parseGsc, readXflIndex, riffVorbisToOgg } from './rscript-gsc.mjs'
 import { decodeGscScript, runGsc } from './rscript-run.mjs'
 import { wcgToPng } from './rscript-wcg.mjs'
+import { imysDecrypt, readTextAssets } from './unity-bundle.mjs'
 import { decodeArc, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt, tomoeImageTransform } from './tomoe.mjs'
 import { DSM_MAX_BYTES, decryptDsm, isPsm, psmToPng, splitDsm } from './unity-dsm.mjs'
 import { normalizeKeyBundles } from './config.mjs'
@@ -36,7 +37,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 14
+export const CONTAINER_FORMAT_VERSION = 15
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -116,6 +117,11 @@ const ARCRECORD_DIALOG_DECODER = {
   decode(buffer) { return buffer.toString('utf8') },
 }
 // 友恵の探偵物語（TinkerBell，Arc04.dat 剧本字节码）：展开时由 expandTomoe 按章节切成 tomoe-arc04/1 JSON；这里的解码器只用来校验 config.containers.scriptDecoder
+// Imys：展开时由 runImys 逐个 .encrypted bundle 解密 → UnityFS → TextAsset → imys-adv/1 JSON；这里的解码器只用来校验 config.containers.scriptDecoder
+const IMYS_ADV_DECODER = {
+  ext: 'imys',
+  decode(buffer, { arc, name }) { const t = readTextAssets(imysDecrypt(buffer))[0]; return JSON.stringify({ format: 'imys-adv/1', arc, name, text: t?.text || '' }) },
+}
 const TOMOE_ARC04_DECODER = {
   ext: 'tomoe',
   decode(buffer, { arc, name }) { return JSON.stringify({ format: 'tomoe-arc04/1', arc, name, chapters: splitChapters(buffer).chapters.length }) },
@@ -131,6 +137,7 @@ export const SCRIPT_DECODERS = Object.freeze({
   'mahotan-json': MAHOTAN_JSON_DECODER,
   'arcrecord-dialog': ARCRECORD_DIALOG_DECODER,
   'tomoe-arc04': TOMOE_ARC04_DECODER,
+  'imys-adv': IMYS_ADV_DECODER,
   'advhd-ws2': {
     ext: 'advhd',
     decode(buffer, { arc, name }) {
@@ -170,7 +177,7 @@ export const SCRIPT_DECODERS = Object.freeze({
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
-const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
+const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
 const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
@@ -1024,7 +1031,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
-  if (cfg.format === 'arcdrama') return { map, files, sig }   // ArcRecord_D：资源是磁盘上的普通文件，没有虚拟条目
+  if (cfg.format === 'arcdrama' || cfg.format === 'imys') return { map, files, sig }   // ArcRecord_D：资源是磁盘上的普通文件，没有虚拟条目
   if (cfg.format === 'mhp') {
     // MahotanArchive：每个 .mhp 里除 data/ 和 metadata/ 之外的条目都进虚拟索引，路径 = 条目名（脚本里的资源路径就是这个，如 images/backgrounds/background-001.jpg）；
     // 更新包（名字里带 update）先处理：同一路径更新包的赢（add 是先到先得）。取出来时读本地头 + 数据，Deflate 的解压
@@ -1304,7 +1311,58 @@ export function ensureContainers({ mediaDir, config }) {
   return promise
 }
 
+// ---------- Imys：content/bundles/scenarios/<类别>/<id>.jp.encrypted（AES + UnityFS + TextAsset）→ script/<类别>/<id>.imys ----------
+// 一个 bundle = 一份剧本（几 KB），6000 多个；不按「容器」展开，而是按 scan 目录整个扫一遍：目录的 文件名 + 大小 + mtime 没变就跳过。资源（背景 / 立绘 bundle、CRI 声音）格式还没解，没有虚拟条目。
+async function runImys(mediaDir, cfg) {
+  const outRoot = path.join(mediaDir, ...cfg.dir.split('/'))
+  const stampFile = path.join(outRoot, '.stamp.json')
+  const report = { at: Date.now(), arcs: {} }
+  const files = []
+  const walk = async (dir, rel, depth) => {
+    let items = []
+    try { items = await readdir(dir, { withFileTypes: true }) } catch { return }
+    for (const item of items.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (item.isDirectory()) { if (depth < 3) await walk(path.join(dir, item.name), rel ? `${rel}/${item.name}` : item.name, depth + 1) } else if (/\.encrypted$/i.test(item.name) && !/^default_chars/i.test(item.name)) files.push({ file: path.join(dir, item.name), category: rel || 'scenarios', name: item.name.replace(/\.jp\.encrypted$|\.encrypted$/i, '') })
+    }
+  }
+  for (const scanDir of cfg.scan) await walk(path.join(mediaDir, ...(scanDir && scanDir !== '.' ? scanDir.split('/') : [])), '', 0)
+  const hash = createHash('sha1').update(fingerprint(cfg))
+  for (const f of files) { try { const info = await stat(f.file); hash.update(`${f.category}/${f.name}:${info.size}:${Math.floor(info.mtimeMs)}|`) } catch { /* 消失了 */ } }
+  const sig = hash.digest('hex')
+  let stamp = null
+  try { stamp = JSON.parse(await readFile(stampFile, 'utf8')) } catch { /* 第一次 */ }
+  if (stamp?.sig === sig && stamp.version === CONTAINER_FORMAT_VERSION) { report.arcs.scenarios = { ...stamp.result, cached: true }; lastReport.set(mediaDir, report); return report }
+  const result = { entries: files.length, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
+  const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
+  const budget = { bytes: 0, limit: cfg.maxTotalMB * 1024 * 1024 }
+  try {
+    for (const f of files.slice(0, cfg.maxEntries)) {
+      try {
+        const asset = readTextAssets(imysDecrypt(await readFile(f.file)))[0]
+        if (!asset || !asset.text) { result.skipped += 1; continue }
+        const name = safeEntryName(f.name)
+        if (!name) { result.bad.push(f.name.slice(0, 60)); continue }
+        const text = JSON.stringify({ format: 'imys-adv/1', category: f.category, name: f.name, text: asset.text })
+        budget.bytes += text.length
+        if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
+        const target = path.join(tmp, 'script', f.category, `${name}.${cfg.scriptExt || 'imys'}`)
+        await mkdir(path.dirname(target), { recursive: true })
+        await writeFile(target, text)
+        result.scripts += 1
+      } catch (error) { if (/超过上限/.test(error.message)) throw error; result.bad.push(`${f.category}/${f.name}（${String(error.message).slice(0, 80)}）`) }
+    }
+    await rm(path.join(outRoot, 'script'), { recursive: true, force: true })
+    try { await stat(path.join(tmp, 'script')); await mkdir(outRoot, { recursive: true }); await rename(path.join(tmp, 'script'), path.join(outRoot, 'script')) } catch { /* 一个都没有 */ }
+    await mkdir(outRoot, { recursive: true })
+    await writeFile(stampFile, JSON.stringify({ version: CONTAINER_FORMAT_VERSION, sig, result }))
+    report.arcs.scenarios = result
+  } catch (error) { report.arcs.scenarios = { error: String(error.message || error).slice(0, 300) } } finally { await rm(tmp, { recursive: true, force: true }).catch(() => {}) }
+  lastReport.set(mediaDir, report)
+  return report
+}
+
 async function run(mediaDir, cfg) {
+  if (cfg.format === 'imys') return runImys(mediaDir, cfg)
   const rules = compileRules(cfg)
   const outRoot = path.join(mediaDir, ...cfg.dir.split('/'))
   const stampFile = path.join(outRoot, '.stamp.json')

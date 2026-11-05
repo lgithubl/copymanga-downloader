@@ -1346,3 +1346,14 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 - RScript 的 Vorbis ACM wav：data 块里的 Ogg 夹着序列号 `0xffffffff` 的空页和结尾填充，Chrome 当成链接式 Ogg 处理而中断；`cleanOggPages` 只保留第一页的序列号、到 EOS 为止。同一个 xfl 里 Vorbis / PCM wav 混用，按条目判断（Vorbis → `.ogg`，PCM 保持 `.wav`）。
 - gal-layout 的 `resourceRootsForce: true`（Unity GameMaterial 用）：资源根不做「第一个存在的」筛选，全部写进 `resourceRoots`（`arc/res` 是虚拟目录，磁盘上不存在，但里面的 `.psm` → png 要取得到）。
 - `scripts/dev/gal-e2e-selftest.mjs`：起真的服务端，走导入 → gal-layout → 浏览 → 资源接口，覆盖 Unity / Mahotan / RScript 三种的虚拟资源和 Range / 304。
+
+
+## Imys（Unity 6 / IL2CPP 手游的离线图库；`imys::adv`，game.id = `imys::<游戏>`，gal-layout 2.42.0）
+
+根 = 离线图库的 `content` 目录（没有 exe）：`bundles/scenarios/<类别>/<id>.jp.encrypted`（剧本，6614 个：combo 496 / dress 1568 / event 1957 / favorite 301 / quest 329 / training 1962）、`bundles/backgrounds` / `bundles/characters/tati`（图）、`raw/{BGM,VOICE,SCENARIO,SCENARIO_SE}`（CRI 的 ACB / AWB）。
+
+- **剧本（做了，真实数据验证）**：`.encrypted` = AES-256-CBC（key = HMAC-SHA256(密钥 `dB3aqcLtAmBd`，消息 `RWd3NusabzRc`)，IV = 文件前 16 字节，密文 = 其后全部）→ **UnityFS**（Unity 6000.0.68f1，blocks info + 数据块都是 LZ4；`flags & 0x200` = blocks info 前要 16 对齐）→ **SerializedFile v22**（对象表 `pathID / byteStart(u64) / byteSize / 类型`）→ **TextAsset**（classID 49，name + script）= 纯文本剧本。`web/library/gal/unity-bundle.mjs`（只读 TextAsset，LZMA 没做）；采集里 84 个剧本 + 4 个 textdefine 全部解得开。
+- **展开**（`config.containers.format = 'imys'`，`scan: ['bundles/scenarios']`）：逐个 bundle 解密、取 TextAsset，展开到 `<根>/arc/script/<类别>/<id>.imys`（`imys-adv/1` JSON）；`default_chars`（字库）不展开；目录的「文件名 + 大小 + mtime」没变就跳过。**没有虚拟资源索引**。
+- **适配器映射**（`adapters/imys-adv.mjs`）：`说话人「台词」` = 对白，没有「」的行 = 旁白（每行一步），`<R 注音>汉字</R>` = ruby；`BGDraw` / `BGMPlay`（`bNNNN` → `bgm_NNNN`）/ `SEPlay` / `Voice` 按名字在资源索引里找同名文件（现在索引是空的，只记 `stats`）；`TimeWait` → wait；`FadeoutBlack / FadeinBlack`（White 同）→ 黑 / 白场；`Tati` / `ClrTati` / `TatiEffect` / `ScreenEffect` / `WindowOFF` / `ChangeUI` 记 `stats.ignored`。
+- **验证了什么**：导入真实 `content` 目录 → 6 个类别 14 项一份、第一份剧本 17 步（16 句台词，说话人 / 台词对得上）；`gal-imys-selftest.mjs`（合成 bundle 走完整链 + `IMYS_SAMPLE=<目录>` 时真实 bundle 全部解一遍）。
+- **没做**：① **背景 / 立绘图**：`bundles/backgrounds/<名>.jp.encrypted`（2~3MB）、`characters/tati/<编号>.encrypted`（1~6MB）里是什么（Texture2D？）没样本；立绘 `Tati(槽,角色,服装,表情,位置)` 怎么对到 `00101` 这类文件名也没样本（采集 v1.24 补收）。② **声音**：CRI ACB + AWB，样本里 HCA 头的加密类型是 56，要游戏专用的 64 位密钥，`GameAssembly.dll`（IL2CPP）里设置，没找。③ 没有游戏截图对照。

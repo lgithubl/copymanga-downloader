@@ -977,6 +977,15 @@ export const ADAPTER_RULES = {
       "spread": 0.28
     }
   },
+  // imys::adv：Imys（AES + UnityFS 里的纯文本剧本）的脚本适配器。抄自 web/library/gal/adapters/imys-adv.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
+  'imys::adv': {
+    "resDir": "arc/res",
+    "stage": [1920, 1080],
+    "imageExts": ["png", "jpg", "jpeg"],
+    "audioExts": ["ogg", "wav", "mp3"],
+    "wait": { "enabled": true, "max": 10 },
+    "fadeSeconds": 0.5
+  },
   // tomoe::arc04：友恵の探偵物語（TinkerBell）的脚本适配器（Arc04.dat 切出来的章节 JSON → 场景）。抄自 web/library/gal/adapters/tomoe-arc04.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'tomoe::arc04': {
     "resDir": "arc/res",
@@ -2071,6 +2080,29 @@ export const LAYOUTS = {
   // ---- 友恵の探偵物語（Cyberworks TinkerBell 引擎，tomoe.exe + Arc00–06.dat + Resources/Data00–025.dat）：game.id = tomoe::<游戏>（任何以 tomoe:: 开头的 id 都走这一项）。
   //   目录：<base>/{tomoe.exe, Arc04.dat（剧本字节码，没压缩）, Arc03.dat（声音表，LZSS）, Arc06.dat（声音，Ogg 前 3615 字节加密）, Resources/{Data00.dat（图索引）, Data000–025.dat（图）}}。
   //   引擎（config.containers，format: tomoe）把 Arc04.dat 按 ML 记录切成章节，展开到 <base>/arc/script/Arc04/<序号>.tomoe；图 / 声音只在 hybrid 的虚拟索引里（<base>/arc/res/img/<编号>.jpg|.png|.p.png、arc/res/snd/<编号>.ogg），被请求时才解压 / 解密 / 转格式。
+  // ---- Imys（Unity 6 / IL2CPP 手游的离线图库）：game.id = imys::<名字>（任何以 imys:: 开头的 id 都走这一项）。
+  //   目录：<根>/{bundles/scenarios/<类别>/<id>.jp.encrypted（剧本）, bundles/backgrounds / characters/tati（图，格式还没解）, raw/{BGM,VOICE,SCENARIO,SCENARIO_SE}（CRI 的 ACB / AWB，要密钥）}；根 = 离线图库的 content 目录（没有 exe）。
+  //   引擎（config.containers，format: imys）把 bundles/scenarios 下的每个 .encrypted（AES-256-CBC → UnityFS → TextAsset）展开成 <根>/arc/script/<类别>/<id>.imys；现在只有文字（背景 / 立绘 / 语音 / 音乐的资源格式还没解）。
+  imys: {
+    title: 'Imys（Unity 6 手游离线图库）', kind: 'imys', detector: 'imys', autoOrder: 139.99, family: 'imys::',   // 紧跟 tomoe，uviewer（通用）之前；探测时要看 bundles/scenarios 下有 .encrypted
+    bases: ['', '*', '*/*', '*/*/*'], searchDepth: 4,
+    anchors: [['bundles', 'scenarios']], siblings: [], markers: [],
+    scriptRoots: [{ id: 'story', dir: 'arc/script', label: '剧情' }],
+    resourceRoots: ['arc/res'], resourceRootsForce: true,
+    adapters: ['imys::adv'],
+    adapterOptions: { 'imys::adv': { resDir: { path: ['arc/res'] } } },
+    ruleTables: ['imys::adv'], ruleOverrides: {},
+    engine: {
+      classify: [],
+      resourceResolve: {},
+      limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
+      containers: { enabled: true, dir: 'arc', scan: ['bundles/scenarios'], scriptDecoder: 'imys-adv', scriptExt: 'imys', mode: 'hybrid', format: 'imys', flat: false, rules: [{ match: '\\.encrypted$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
+    },
+    config: { scriptExtensions: ['imys'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { combo: '交流 AVG', dress: '衣装', event: '活动', favorite: '亲密度', quest: '主线', training: '学园 AVG' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { enabled: false }, pageSize: 100 },
+    count: [{ dir: 'arc/script', ext: '.imys', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [],
+    notes: ['bundles/scenarios 在第一次浏览时由服务端逐个解密（AES-256-CBC，密钥 = HMAC-SHA256）+ 读 UnityFS 里的 TextAsset，展开成 arc/script/<类别>/<id>.imys（6 个类别、6600 多份）；现在只有文字：背景 / 立绘（bundles/backgrounds、characters/tati）和声音（raw/ 下 CRI 的 ACB + AWB，HCA 要密钥）的格式还没解'],
+  },
   tomoe: {
     title: '友恵の探偵物語（TinkerBell）', kind: 'tomoe', detector: 'tomoe', autoOrder: 139.98, family: 'tomoe::',   // 紧跟 arcrecord，uviewer（通用）之前；探测时还要看 Arc04.dat 是 [长度][正文][9999] 记录流
     bases: ['', '*', '*/*'], searchDepth: 3,
@@ -2607,6 +2639,7 @@ const DETECTORS = {
   mahotan: (scope) => detectMahotan(scope),
   arcrecord: (scope) => detectArcrecord(scope),
   tomoe: (scope) => detectTomoe(scope),
+  imys: (scope) => detectImys(scope),
   tsk: (scope) => detectTsk(scope),
   uviewer: (scope) => detectUviewerGame(scope),
 }
@@ -2864,8 +2897,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
       }
@@ -3638,6 +3671,34 @@ async function detectArcrecord(scope) {
   logs.push(`ArcRecord_D 根：${base || '.'}；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
   return found
+}
+
+// ---- Imys：见 LAYOUTS.imys。id：声明了 game.id 就用它，否则 imys::<目录名>
+async function detectImys(scope) {
+  const { media, declared, logs } = scope
+  const loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  const dir = path.join(media, ...splitRel(join(base, 'bundles/scenarios')))
+  let found = 0
+  const walk = async (d, depth) => {
+    let items = []
+    try { items = await readdir(d, { withFileTypes: true }) } catch { return }
+    for (const item of items) { if (found) return; if (item.isDirectory()) { if (depth < 3) await walk(path.join(d, item.name), depth + 1) } else if (/\.encrypted$/i.test(item.name)) found += 1 }
+  }
+  await walk(dir, 0)
+  if (!found) { if (declared) logs.push('Imys：bundles/scenarios 下没有 .encrypted'); return null }
+  announce(logs, scope.gameId || scope.id, loc)
+  const config = await buildConfig(media, entry, base)
+  if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
+  const found2 = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  const gameDir = path.basename(path.resolve(media, ...splitRel(base)))
+  const slug = gameDir.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
+  found2.id = scope.gameId || `imys::${slug || 'game'}`
+  found2.kind = entry.kind || 'imys'
+  logs.push(`Imys 根：${base || '.'}；game.id：${found2.id}`)
+  for (const line of entry.notes) logs.push(line)
+  return found2
 }
 
 // ---- 友恵の探偵物語（TinkerBell）：见 LAYOUTS.tomoe。id：声明了 game.id 就用它（tomoe::<游戏>），没声明 = tomoe::<目录名的小写字母数字>；没声明时要求 Arc04.dat 开头是 [u32 长度][正文][u32 9999] 记录

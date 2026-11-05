@@ -2501,6 +2501,7 @@ const GAL_PRESETS = {
   mahotan: { adapters: ['mahotan::json'], game: { id: 'mahotan::game', title: '' } },
   arcrecord: { adapters: ['arcrecord::dialog'], game: { id: 'arcrecord::game', title: '' } },
   tomoe: { adapters: ['tomoe::arc04'], game: { id: 'tomoe::game', title: '' } },
+  imys: { adapters: ['imys::adv'], game: { id: 'imys::game', title: '' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]
