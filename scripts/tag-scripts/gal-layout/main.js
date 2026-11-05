@@ -967,7 +967,15 @@ export const ADAPTER_RULES = {
     ],
     "stopMusic": [
       "Sound/BGM/Blank"
-    ]
+    ],
+    "roles": {
+      "enabled": true,
+      "dir": "Hero",
+      "idle": "00_Idle",
+      "talk": "91_Emo_talk",
+      "emoPrefix": "90_Emo",
+      "spread": 0.28
+    }
   },
   // tomoe::arc04：友恵の探偵物語（TinkerBell）的脚本适配器（Arc04.dat 切出来的章节 JSON → 场景）。抄自 web/library/gal/adapters/tomoe-arc04.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'tomoe::arc04': {

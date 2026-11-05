@@ -49,7 +49,23 @@ const texts = sc.steps.map((s) => s.commands.find((c) => c.op === 'text')).filte
 check('台词：<br> 换行；说话人键 → 文本；player = 主角名；{0} = 主角名；<color> → 颜色，<size> 去掉', texts[0].segments[0].text === 'こんにちは\n二行目' && J(texts[1].segments) === J([{ text: '主人公さん、' }, { text: '赤い', style: { color: '#ff0000' } }, { text: '大きい字' }]) && sc.steps[1].commands.find((c) => c.op === 'speaker').segments[0].text === '主人公' && sc.steps[0].commands.find((c) => c.op === 'speaker').segments[0].text === 'エパディ', J(texts))
 const zh = buildScene('arcrecord::dialog', dramas[0].text, adapter.prepare({ options: { language: 'CHS', playerName: 'ユウ' }, files, toResourcePath: toRes }), { options: { language: 'CHS', playerName: 'ユウ' } })
 check('语言可选（language = CHS）：有的键用中文，没有的键（这一段里 T_Dia_a2 …）空 → 那一行不出', zh.stats.language === 'CHS' && zh.stats.messages === 1 && zh.steps[0].commands.find((c) => c.op === 'text').segments[0].text === '你好', J(zh.stats))
-check('Role1-3（Spine 预制体）没做：记进 ignored，不影响文字', sc.stats.ignored.role === 1 && sc.stats.messages === 4, J(sc.stats))
+check('Role1-3：骨骼不在资源里 → 记 unresolved role:H047（不影响文字）', sc.stats.unresolved['role:H047'] === 1 && sc.stats.messages === 4, J(sc.stats))
+{
+  const roleFiles = [...files, 'Game/Hero/H047/H047/H047.skel.asset', 'Game/Hero/H047/H047/H047.atlas.asset', 'Game/Hero/H090/H090/H090.skel.asset', 'Game/Hero/H090/H090/H090.atlas.asset']
+  const rows = [
+    { ID: 'r1', DramaID: 'R', Role1: 'Hero/H047/H047_Dialog', RoleMotion1: 'Angry~talkup', Dialog: 'T_a', Speaker: 'T_s' },
+    { ID: 'r2', Role2: 'Hero/H090/H090_Dialog', RoleMotion2: 'Happy', Dialog: 'T_a' },
+    { ID: 'r3', RoleMotion1: 'talkdown', Dialog: 'T_a' },
+    { ID: 'r4', Role1: 'no', RoleBoolMotion2: 'Sleep', Dialog: 'T_a' },
+  ]
+  const text = J({ format: 'arcrecord-dialog/1', id: 'R', title: '', rows, text: { JPN: { T_a: 'x', T_s: 'y' } } })
+  const rs = buildScene('arcrecord::dialog', text, adapter.prepare({ options: {}, files: roleFiles, toResourcePath: toRes }), { options: {} })
+  const sp = rs.steps.flatMap((st, i) => st.commands.filter((c) => c.op === 'spine' || c.op === 'spineOff').map((c) => ({ i, ...c })))
+  const anims = (c) => c.tracks.map((t) => t.anim).join('+')
+  check('角色：Role1 H047 Angry~talkup → 00_Idle + 90_Emo2_angry + 91_Emo_talk，骨骼 / 图集指向 Hero/H047/H047/H047.skel.asset', sp[0]?.slot === 'Role1' && anims(sp[0]) === '00_Idle+90_Emo2_angry+91_Emo_talk' && /H047\.skel\.asset$/.test(sp[0].skel) && /H047\.atlas\.asset$/.test(sp[0].atlas), J(sp[0]))
+  check('角色：第二个角色出现 → 两人站位左右对称（±0.7 × spread），Role1 的位置跟着挪', sp.some((c) => c.slot === 'Role2' && c.x > 0) && sp.some((c) => c.slot === 'Role1' && c.x < 0), J(sp.map((c) => [c.i, c.slot, c.x])))
+  check('角色：talkdown 去掉说话嘴型（Role1 不再带 91_Emo_talk）；Role1=no → spineOff；BoolMotion Sleep → 99_sleep', sp.some((c) => c.i === 2 && c.slot === 'Role1' && !anims(c).includes('talk')) && sp.some((c) => c.op === 'spineOff' && c.slot === 'Role1') && sp.some((c) => c.slot === 'Role2' && anims(c).includes('99_sleep')), J(sp.map((c) => [c.i, c.op, c.slot, c.tracks && anims(c)])))
+}
 const noIndex = buildScene('arcrecord::dialog', dramas[0].text, adapter.prepare({ options: {}, files: [] }), { options: {} })
 check('没有资源索引：不报缺资源、台词照出', Object.keys(noIndex.stats.unresolved).length === 0 && noIndex.stats.messages === 4)
 
