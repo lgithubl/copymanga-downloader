@@ -11,7 +11,8 @@
 //   TimeWait (毫秒,CLICK_ENABLE); FadeoutBlack / FadeinBlack (FADE); FadeoutWhite / FadeinWhite; ScreenEffect (QUAKE | FLASH_ONCE | CONCENTRATE …); WindowOFF; ChangeUI (R18 | COMMON); Fontsize (…)
 //   说话人「台词」              对白；没有「」的行 = 旁白；<R 注音>汉字</R> = 注音
 // 现在做了：文字（含注音 / 说话人 / 旁白）、背景名（资源索引里有同名图才出图）、音乐 / 音效 / 语音的名字（有对应资源才出声）、等待、黑 / 白转场；
-// 没做：立绘（Tati 的「角色 / 服装 / 表情」怎么对到 bundles/characters/tati/<编号>.encrypted 还没有样本）、屏幕特效（记 stats.ignored）。
+// 立绘：Tati(槽,角色,衣装,表情号,位置) → res/tati/<角色+衣装>/<表情号>.png（服务端把图集里的身体 + 脸合成好）；表情号 1.. = default / smile / shy / ang / gag / option… 是按剧情上下文对的（01 平常、02 笑、03 害羞、04 生气、05 …），选项脸（06 起）没有对照。位置 = 水平偏移（猜的）。
+// 没做：TatiEffect（气泡）、屏幕特效（记 stats.ignored）。
 // 资源（背景 / 立绘 bundle、CRI 的 ACB+HCA 声音）的格式还没解，所以现在只出文字；见 README。
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader } from './options-merge.mjs'
@@ -23,6 +24,7 @@ export const DEFAULT_OPTIONS = {
   imageExts: ['png', 'jpg', 'jpeg'],
   audioExts: ['ogg', 'wav', 'mp3'],
   wait: { enabled: true, max: 10 },
+  tati: { enabled: true, stage: [1280, 720], spacing: 160 },   // Tati(槽,角色,衣装,表情,位置)：舞台 1280×720（背景 bundle 的原始大小）；位置 ±1 / ±2 = 水平偏移 spacing × 位置（像素，猜的）
   fadeSeconds: 0.5,
 }
 const readOptions = createOptionsReader(DEFAULT_OPTIONS)
@@ -87,6 +89,19 @@ export function parse(text, ctx = null, meta = {}) {
     for (const ext of exts) { const hit = ctx.resolver.resolveByName?.(`${name}.${ext}`) || ctx.resolver.resolve(`${name}.${ext}`); if (hit) return hit }
     return ''
   }
+  // 立绘：Tati(槽, 角色 3 位, 衣装 2 位, 表情号, 位置)。文件 = 角色 + 衣装（00101），衣装 00 找不到时试 01；表情号 → bundle 里的脸（default / smile / shy / ang / gag / option…，服务端按号合成）
+  const exact = (rel) => { if (!hasIndex) return ''; return ctx.resolver.resolve(rel) || '' }
+  stats.tati = { shown: 0, unresolved: 0 }
+  const tati = (a) => {
+    const [slot, char, costume, expr, pos] = a.map((x) => String(x || '').trim())
+    const n = String(Math.max(1, Number(expr) || 1)).padStart(2, '0')
+    let src = ''
+    for (const id of [`${char}${costume}`, ...(Number(costume) === 0 ? [`${char}01`] : [])]) { src = exact(`tati/${id}/${n}.png`); if (src) break }
+    if (!src) { stats.tati.unresolved += 1; if (hasIndex) count('unresolved', `tati:${char}${costume}`); return }
+    stats.tati.shown += 1
+    const dx = (Number(pos) || 0) * opt.tati.spacing
+    emit({ op: 'stand', slot: `T${slot}`, stage: opt.tati.stage, parts: [{ src, x: dx, y: 0, scale: 1 }], fade: 0 })
+  }
   const refer = (bucket, name, exts) => {
     stats[bucket].referenced += 1
     const src = find(name, exts)
@@ -115,7 +130,8 @@ export function parse(text, ctx = null, meta = {}) {
         case 'BGMStop': emit({ op: 'bgmStop' }); break
         case 'SEPlay': { const src = refer('sounds', a[1], opt.audioExts); if (src) emit({ op: 'se', src }); break }
         case 'Voice': { stats.voices.referenced += 1; voice = find(a[0], opt.audioExts); if (voice) stats.voices.resolved += 1; else { stats.voices.unresolved += 1; if (hasIndex) count('unresolved', `voices:${a[0]}`) } break }
-        case 'Tati': stats.stands += 1; count('ignored', 'Tati'); break
+        case 'Tati': { stats.stands += 1; if (opt.tati.enabled) tati(a); else count('ignored', 'Tati'); break }
+        case 'ClrTati': if (opt.tati.enabled) { const slot = String(a[0] || '').trim(); if (slot) emit({ op: 'standOff', slot: `T${slot}` }); else emit({ op: 'standOff' }) } else count('ignored', 'ClrTati'); break
         case 'TimeWait': { if (opt.wait.enabled) { const seconds = Math.min(opt.wait.max, (Number(a[0]) || 0) / 1000); if (seconds > 0) emit({ op: 'wait', seconds }) } break }
         case 'FadeoutBlack': emit({ op: 'bg', color: [0, 0, 0], fade: opt.fadeSeconds }); break
         case 'FadeoutWhite': emit({ op: 'bg', color: [255, 255, 255], fade: opt.fadeSeconds }); break

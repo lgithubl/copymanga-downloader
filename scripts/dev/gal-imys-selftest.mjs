@@ -115,8 +115,26 @@ if (process.env.IMYS_SAMPLE) {
   let ok = 0
   let bad = 0
   const walk = async (dir) => { for (const e of await readdir(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) await walk(p); else if (/\.encrypted$/.test(e.name)) { try { const t = readTextAssets(imysDecrypt(await readFile(p))); if (t[0]?.text) ok += 1; else bad += 1 } catch { bad += 1 } } } }
-  await walk(path.join(process.env.IMYS_SAMPLE, 'bundles'))
-  check(`真实 bundle 全部解得开（${ok} 个）`, ok > 0 && bad === 0, `bad=${bad}`)
+  await walk(path.join(process.env.IMYS_SAMPLE, 'bundles', 'scenarios'))
+  check(`真实剧本 bundle 全部解得开（${ok} 个）`, ok > 0 && bad === 0, `bad=${bad}`)
+  // 图：背景（Texture2D → PNG）、立绘（图集 + Sprite + setting → 舞台大小的 PNG）
+  const { backgroundPng, tatiBundle, tatiComposePng } = await import('../../web/library/gal/unity-assets.mjs')
+  const bgDir = path.join(process.env.IMYS_SAMPLE, 'bundles', 'backgrounds')
+  const tatiDir = path.join(process.env.IMYS_SAMPLE, 'bundles', 'characters', 'tati')
+  const bgs = await readdir(bgDir).catch(() => [])
+  if (bgs.length) {
+    const png = backgroundPng(await readFile(path.join(bgDir, bgs[0])))
+    check(`背景：${bgs[0]} → PNG（签名 + 1280×720）`, png.readUInt32BE(0) === 0x89504e47 && png.readUInt32BE(16) === 1280 && png.readUInt32BE(20) === 720, `${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`)
+  }
+  const tatis = (await readdir(tatiDir).catch(() => [])).filter((n) => /^\d{5}\.encrypted$/.test(n) && n !== '00001.encrypted')
+  if (tatis.length) {
+    const buf = await readFile(path.join(tatiDir, tatis[0]))
+    const b = tatiBundle(buf)
+    check(`立绘 ${tatis[0]}：有 stand + default / smile / shy / ang / gag，setting 有 stand / face`, ['stand', 'default', 'smile', 'shy', 'ang', 'gag'].every((k) => b.sprites.has(k)) && Boolean(b.setting.stand) && Boolean(b.setting.face), JSON.stringify([...b.sprites.keys()]))
+    const r1 = tatiComposePng(buf, 1)
+    const r3 = tatiComposePng(buf, 3)
+    check('立绘合成：表情 1 = default、3 = shy，舞台 1280×720，两张不一样', r1.faceName === 'default' && r3.faceName === 'shy' && r1.png.readUInt32BE(16) === 1280 && r1.png.readUInt32BE(20) === 720 && !r1.png.equals(r3.png))
+  }
 }
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

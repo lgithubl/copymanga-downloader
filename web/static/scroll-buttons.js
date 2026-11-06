@@ -29,7 +29,7 @@ export function createScrollButtons({ host, getTarget, step = 0.8, label = '', g
     auto = document.createElement('button')
     auto.type = 'button'
     auto.className = 'scroll-btn scroll-btn-auto'
-    auto.textContent = '自动'
+    auto.textContent = '⇊'
     auto.title = '自动向下滚（频率在「更多」里设置）'
     auto.setAttribute('aria-label', '自动向下滚动')
     auto.addEventListener('click', () => (autoTimer || autoFrame ? stopAuto() : startAuto()))
@@ -58,12 +58,12 @@ export function createScrollButtons({ host, getTarget, step = 0.8, label = '', g
     if (autoFrame) cancelAnimationFrame(autoFrame)
     autoTimer = 0
     autoFrame = 0
-    if (auto) { auto.classList.remove('active'); auto.textContent = '自动'; auto.setAttribute('aria-pressed', 'false') }
+    if (auto) { auto.classList.remove('active'); auto.textContent = '⇊'; auto.setAttribute('aria-pressed', 'false') }
   }
   const atBottom = () => down.getAttribute('aria-disabled') === 'true'
   function startAuto() {
     if (!auto || atBottom()) return
-    auto.classList.add('active'); auto.textContent = '停'; auto.setAttribute('aria-pressed', 'true')
+    auto.classList.add('active'); auto.textContent = '■'; auto.setAttribute('aria-pressed', 'true')
     const rate = getAutoRate()
     if (rate === 'max') {
       let last = performance.now()

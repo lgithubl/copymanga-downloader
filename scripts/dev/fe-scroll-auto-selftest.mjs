@@ -27,7 +27,7 @@ try {
   await page.goto(`http://127.0.0.1:${port}/`)
   await page.waitForSelector('.scroll-btn-auto')
   const top = () => page.$eval('#box', (e) => Math.round(e.scrollTop))
-  check('▲ 自动 ▼ 三个按钮，「自动」在中间', JSON.stringify(await page.$$eval('.scroll-btns button', (b) => b.map((x) => x.textContent))) === JSON.stringify(['▲', '自动', '▼']))
+  check('▲ 自动 ▼ 三个按钮，「自动」在中间', JSON.stringify(await page.$$eval('.scroll-btns button', (b) => b.map((x) => x.textContent))) === JSON.stringify(['▲', '⇊', '▼']))
   await page.click('.scroll-btn-auto'); await page.waitForTimeout(2300)
   const t1 = await top()
   check('频率 2 次/秒：2.3 秒 ≈ 5 次 ▼（每次 80% 可视高度 = 320px）', t1 >= 1280 && t1 <= 1920, String(t1))

@@ -4935,3 +4935,6 @@ h2 {
 .gal-diag-notes { color: var(--site-muted); font-size: 12px; margin: 0; padding-left: 1.2em; }
 .gal-diag-actions { display: flex; gap: 8px; }
 .gal-diag-error { color: #ff7a7a; }
+
+.gallery-more-group { display: grid; gap: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.18); }
+.gallery-more-title { color: rgba(255, 255, 255, 0.7); font-size: 12px; }

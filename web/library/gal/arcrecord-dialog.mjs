@@ -49,8 +49,43 @@ export function buildDramas(dialogBuffer, texts = {}) {
     }
     const sceneKey = drama.rows.find((r) => r.Scene)?.Scene
     const title = (sceneKey && (texts.JPN?.get(sceneKey) || texts[Object.keys(texts)[0]]?.get(sceneKey))) || ''
-    return { id, text: JSON.stringify({ format: DIALOG_FORMAT, id, title, rows: drama.rows, text }) }
+    return { id, text: JSON.stringify({ format: DIALOG_FORMAT, id, title, rows: drama.rows, text }), rows: drama.rows, textMap: text, title }
   })
+}
+
+// 展开时的目录分组：H153_03 / H153_Event_S1_01 → H153（同一个角色的放一起）；E1_01_02 → E1_01（同一章）；别的按前缀
+export function dramaGroup(id) {
+  let m = /^(H\d+)_/i.exec(id)
+  if (m) return m[1].toUpperCase()
+  m = /^(E\d+_\d+)(?:_|$)/i.exec(id)
+  if (m) return m[1]
+  m = /^(CT_Event|OLD_E\d+_\d+|test)/i.exec(id)
+  if (m) return m[1]
+  return 'other'
+}
+
+// 把一串连续的短剧情合并成一整段：事件剧情 H153_Event_S1_01 / 02 / 03 → H153_Event_S1；主线 E1_01_02 / 03 / … → E1_01（按编号排）。只合并 2 段以上的
+export function mergeDramas(dramas) {
+  const groups = new Map()
+  for (const d of dramas) {
+    const m = /^(H\d+_Event_S\d+|CT_Event_S\d+|E\d+_\d+)_(\d+)$/i.exec(d.id)
+    if (!m) continue
+    if (!groups.has(m[1])) groups.set(m[1], [])
+    groups.get(m[1]).push({ no: Number(m[2]), d })
+  }
+  const out = []
+  for (const [id, list] of groups) {
+    if (list.length < 2) continue
+    list.sort((a, b) => a.no - b.no)
+    const rows = []
+    const text = {}
+    for (const { d } of list) {
+      rows.push(...d.rows)
+      for (const [lang, bucket] of Object.entries(d.textMap || {})) Object.assign((text[lang] ||= {}), bucket)
+    }
+    out.push({ id, merged: list.length, text: JSON.stringify({ format: DIALOG_FORMAT, id, title: list[0].d.title || '', rows, text }) })
+  }
+  return out
 }
 
 // LineDialog.txt（ラブトーク = LINE 风格的聊天剧情，一个 DramaID 一段；主角的回复 / 选项没有 Speaker）→ 同样格式的剧情。

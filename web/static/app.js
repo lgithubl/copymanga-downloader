@@ -6889,7 +6889,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const upBtn = mkArrow(-1, '▲', '按住向上滚')
   const downBtn = mkArrow(1, '▼', '按住向下滚')
   // 「自动」：等价于一直按住 ▼——走的就是按住的那套逻辑，用栏里设的模式 / 速度 / 分段比例，不另起一套
-  const autoBtn = mkArrow(0, '自动', '自动向下滚：等价于一直按住 ▼（模式、速度、分段比例用栏里的设置）。再点一次 / 滚轮 / 触摸 / 点箭头 / 滚到底都会停')
+  const autoBtn = mkArrow(0, '⇊', '自动向下滚：等价于一直按住 ▼（模式、速度、分段比例用栏里的设置）。再点一次 / 滚轮 / 触摸 / 点箭头 / 滚到底都会停')
   autoBtn.classList.add('gallery-scroll-auto')
   autoBtn.setAttribute('aria-pressed', 'false')
   nav.append(upBtn, autoBtn, downBtn)
@@ -7035,7 +7035,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     if (!autoOn) return
     autoOn = false
     autoBtn.classList.remove('on')
-    autoBtn.textContent = '自动'
+    autoBtn.textContent = '⇊'
     autoBtn.setAttribute('aria-pressed', 'false')
     if (release) releaseScroll()
   }
@@ -7043,7 +7043,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     if (content.scrollTop >= content.scrollHeight - content.clientHeight - 1) return
     autoOn = true
     autoBtn.classList.add('on')
-    autoBtn.textContent = '停'
+    autoBtn.textContent = '■'
     autoBtn.setAttribute('aria-pressed', 'true')
     beginHold(1)
   }
@@ -7146,13 +7146,20 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   moreMenu.className = 'gallery-more-menu'
   moreMenu.hidden = true
   const detailBtn = mk('gallery-detail-btn', '详情', '标题、标签等详情；标签可点击搜索')
-  moreMenu.append(detailBtn)
+  // 滚动设置（模式 / 速度 / 分段比例）放在这个视图自己的「更多」里；自动 = 一直按住 ▼，用的就是这些
+  const scrollGroup = document.createElement('div')
+  scrollGroup.className = 'gallery-more-group'
+  const scrollTitle = document.createElement('span')
+  scrollTitle.className = 'gallery-more-title'
+  scrollTitle.textContent = '滚动（按住 ▼ / 自动）'
+  scrollGroup.append(scrollTitle, modeBtn, speedWrap, stepRatioWrap)
+  moreMenu.append(scrollGroup, detailBtn)
   moreWrap.append(moreBtn, moreMenu)
   moreBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = !moreMenu.hidden })
   detailBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = true; toggleMediaDetail() })
   document.addEventListener('click', (event) => { if (!moreMenu.hidden && !moreWrap.contains(event.target)) moreMenu.hidden = true })
 
-  bar.append(back, prevCh, info, nextCh, toc, widthBtn, modeBtn, speedWrap, stepRatioWrap, moreWrap, exitBtn)
+  bar.append(back, prevCh, info, nextCh, toc, widthBtn, moreWrap, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {

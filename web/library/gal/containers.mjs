@@ -21,6 +21,7 @@ import { decodeGscScript, runGsc } from './rscript-run.mjs'
 import { wcgToPng } from './rscript-wcg.mjs'
 import { imysDecrypt, readTextAssets } from './unity-bundle.mjs'
 import { readAcb, readAcbCues } from './cri-acb.mjs'
+import { backgroundPng, tatiComposePng } from './unity-assets.mjs'
 import { IMYS_HCA_KEY, decodeHca, pcmToWav } from './cri-hca.mjs'
 import { decodeArc, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt, tomoeImageTransform } from './tomoe.mjs'
 import { DSM_MAX_BYTES, decryptDsm, isPsm, psmToPng, splitDsm } from './unity-dsm.mjs'
@@ -30,7 +31,7 @@ import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
 import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
 import { inflateRawSync, inflateSync } from 'node:zlib'
 import { openZip } from '../zip-reader.mjs'
-import { DEFAULT_LANGUAGES, buildDramas, buildLineDramas, parseText } from './arcrecord-dialog.mjs'
+import { DEFAULT_LANGUAGES, buildDramas, buildLineDramas, dramaGroup, mergeDramas, parseText } from './arcrecord-dialog.mjs'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
 import { extractZipMember, parseZipCentral, parseZipEnd } from './l2d-zip.mjs'
 import { Psb, isPsb } from './psb.mjs'
@@ -39,7 +40,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 17
+export const CONTAINER_FORMAT_VERSION = 18
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -236,6 +237,8 @@ function transformData(data, hit) {
   if (hit.transform === 'bgi-faceset') return Buffer.from(JSON.stringify(parseBgiFaceSet(dscDecode(data))))
   if (hit.transform === 'pf8') return pf8Decrypt(data, hit.key)
   if (hit.transform === 'imys-hca') return imysAcbToWav(data, hit)
+  if (hit.transform === 'imys-bg') return backgroundPng(data)
+  if (hit.transform === 'imys-tati') return tatiComposePng(data, hit.expr).png
   return hit.unpremultiply ? unpremultiplyPng(data).buffer : data
 }
 // 资源（图 / 声音）展开后的相对路径（相对容器目录 cfg.dir）：flat = 所有容器的资源放同一个目录（BGI：脚本按名字引用，不带容器名）
@@ -417,7 +420,7 @@ async function expandTomoe({ file, arcName, rule, cfg, outRoot, budget }) {
     const chapterName = String(chapter.index + 1).padStart(2, '0')
     for (const scene of chapter.scenes) {
       if (written >= cfg.maxEntries) break
-      const name = `${chapterName}/${String(scene.index + 1).padStart(2, '0')}`   // script/Arc04/<章>/<节>.tomoe：章 = 剧本里的 ML 块，节 = 章里按场景切开的小节
+      const name = `${chapterName}/${String(scene.index + 1).padStart(2, '0')}${scene.cg ? '_cg' : ''}`   // 有 CG 的小节名字带 _cg（虚拟目录「CG 场景」按它收集）； script/Arc04/<章>/<节>.tomoe：章 = 剧本里的 ML 块，节 = 章里按场景切开的小节
       const text = JSON.stringify({ format: 'tomoe-arc04/1', arc: arcName, name, chapter: chapter.index + 1, scene: scene.index + 1, record: chapter.start, texts: scene.texts, events: scene.events })
       budget.bytes += text.length
       if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
@@ -476,11 +479,13 @@ async function expandArcdrama({ file, arcName, rule, cfg, outRoot, budget }) {
   const isLine = /^LineDialog\.txt$/i.test(arcName)
   let roleBuffer = null
   if (isLine) { try { roleBuffer = await readFile(path.join(path.dirname(file), 'Role.txt')) } catch { /* 没有就用角色编号当名字 */ } }
-  const dramas = isLine ? buildLineDramas(await readFile(file), texts, roleBuffer) : buildDramas(await readFile(file), texts)
+  const built = isLine ? buildLineDramas(await readFile(file), texts, roleBuffer) : buildDramas(await readFile(file), texts)
+  const dramas = isLine ? built : [...built, ...mergeDramas(built)]   // 短剧情的合并版（同一事件 / 同一章）也各出一份
   result.entries = dramas.length
   for (const drama of dramas.slice(0, cfg.maxEntries)) {
-    const name = safeEntryName(drama.id)
-    if (!name) { result.bad.push(drama.id.slice(0, 60)); continue }
+    const leaf = safeEntryName(drama.id)
+    if (!leaf) { result.bad.push(drama.id.slice(0, 60)); continue }
+    const name = `${safeEntryName(dramaGroup(drama.id)) || 'other'}/${leaf}`   // script/<类别>/<角色或章>/<剧情>.arcdrama：同一个角色 / 同一章的放一起
     budget.bytes += drama.text.length
     if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
     const target = path.join(outRoot, 'script', stem, `${name}.${cfg.scriptExt || 'arcdrama'}`)
@@ -996,7 +1001,7 @@ function hitFor(v, rel) {
 // 取一个虚拟条目的字节（转好格式 / 解好密的）
 async function readHit(hit) {
   if (hit.krkr) return readKrkrHit(hit)
-  if (hit.transform === 'imys-hca') return transformData(await readFile(hit.file), hit)   // ACB 整个读进来（索引阶段只读了元数据，没有记大小）
+  if (hit.transform === 'imys-hca' || hit.transform === 'imys-bg' || hit.transform === 'imys-tati') return transformData(await readFile(hit.file), hit)   // ACB 整个读进来（索引阶段只读了元数据，没有记大小）
   const handle = await open(hit.file, 'r')
   try {
     if (hit.zipLocal) {   // ZIP 条目：hit.offset = 本地头位置；本地头 30 字节 + 文件名 + 额外字段之后才是数据
@@ -1072,6 +1077,37 @@ function listImysAcb(mediaDir, cfg) {
   promise.catch(() => imysLists.delete(key))
   return promise
 }
+
+// Imys 的图：bundles/backgrounds/<名>.jp.encrypted（Texture2D）→ res/bg/<名>.png；bundles/characters/tati/<编号>.encrypted（图集 + 身体 / 表情 Sprite + 位置）→ res/tati/<编号>/<表情号 01..11>.png（身体 + 脸合成好的整张舞台图）
+// 目录只 readdir（和 ACB 一样不 stat 每个文件）；被请求时才解密 / 解包 / 合成。表情号没有的脸（这个角色没有 option3 …）取 default
+const imysBundleBase = (cfg) => String(cfg.scan?.[0] || '').replace(/\/?scenarios\/?$/i, '').replace(/^\.$/, '')   // <前缀>/bundles
+const IMYS_EXPRESSIONS = 11
+const imysBundleLists = new Map()
+function listImysBundles(mediaDir, cfg) {
+  const base = imysBundleBase(cfg)
+  const key = `${mediaDir}|${base}`
+  const hit = imysBundleLists.get(key)
+  if (hit && Date.now() - hit.at < IMYS_LIST_TTL_MS) return hit.promise
+  const promise = (async () => {
+    const out = { backgrounds: [], tati: [], sig: '' }
+    const parts = []
+    const read = async (rel, re, into) => {
+      const dir = path.join(mediaDir, ...`${base}/${rel}`.split('/').filter(Boolean))
+      let names = []
+      let info
+      try { info = await stat(dir); names = await readdir(dir) } catch { return }
+      parts.push(`${rel}:${Math.floor(info.mtimeMs)}:${names.length}`)
+      for (const name of names.sort()) { const m = re.exec(name); if (m) into.push({ file: path.join(dir, name), name: m[1] }) }
+    }
+    await read('backgrounds', /^(.+?)(?:\.jp)?\.encrypted$/i, out.backgrounds)
+    await read('characters/tati', /^(\d+)\.encrypted$/i, out.tati)
+    out.sig = createHash('sha1').update(parts.join('|')).digest('hex')
+    return out
+  })()
+  imysBundleLists.set(key, { at: Date.now(), promise })
+  promise.catch(() => imysBundleLists.delete(key))
+  return promise
+}
 // 索引（ACB → cue 名）：只读每个 ACB 的元数据（几次小范围读取，不读 AWB 数据），并发读；结果存到 <dir>/.audio-index.json，目录签名没变就直接用，重启后也不用重建
 async function imysAudioIndex(mediaDir, cfg) {
   const list = await listImysAcb(mediaDir, cfg)
@@ -1119,6 +1155,9 @@ async function buildImysVirtual(mediaDir, cfg, sig) {
     for (const cue of names) add(`${cfg.dir}/res/${kind}/${cue}.wav`, { file: acb.file, offset: 0, size: 0, transform: 'imys-hca', cue })
     if (names.length === 1 && names[0] !== acb.name) add(`${cfg.dir}/res/${kind}/${acb.name}.wav`, { file: acb.file, offset: 0, size: 0, transform: 'imys-hca', cue: names[0] })
   }
+  const bundles = await listImysBundles(mediaDir, cfg)
+  for (const bg of bundles.backgrounds) add(`${cfg.dir}/res/bg/${bg.name}.png`, { file: bg.file, offset: 0, size: 0, transform: 'imys-bg' })
+  for (const t of bundles.tati) for (let n = 1; n <= IMYS_EXPRESSIONS; n += 1) add(`${cfg.dir}/res/tati/${t.name}/${String(n).padStart(2, '0')}.png`, { file: t.file, offset: 0, size: 0, transform: 'imys-tati', expr: n })
   return { map, files, sig }
 }
 function imysAcbToWav(data, hit) {
@@ -1321,7 +1360,7 @@ export async function virtualIndex({ mediaDir, config }) {
   const cfg = config?.containers
   if (!isHybrid(cfg) || !mediaDir) return null
   const arcs = await listArcs(mediaDir, cfg)
-  const sig = arcs.map((a) => a.sig).join('|') + (cfg.format === 'krkr' ? await krkrRefsSig(mediaDir, cfg) : cfg.format === 'imys' ? `|acb:${(await listImysAcb(mediaDir, cfg)).sig}` : '')
+  const sig = arcs.map((a) => a.sig).join('|') + (cfg.format === 'krkr' ? await krkrRefsSig(mediaDir, cfg) : cfg.format === 'imys' ? `|acb:${(await listImysAcb(mediaDir, cfg)).sig}|b:${(await listImysBundles(mediaDir, cfg)).sig}` : '')
   const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
   const hit = virtuals.get(key)
   if (hit?.sig === sig) return hit.promise
@@ -1361,7 +1400,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.cue || '', hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.cue || '', hit.expr || 0, hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,
@@ -1404,7 +1443,7 @@ export async function materialize({ mediaDir, config, rels }) {
 const inflight = new Map()   // mediaDir|dir → Promise
 const lastReport = new Map() // mediaDir → { at, arcs: { 名字: 结果 | { error } } }
 export const containerReport = (mediaDir) => lastReport.get(mediaDir) || null
-export function invalidateContainers(mediaDir) { for (const key of [...inflight.keys()]) if (key.startsWith(`${mediaDir}|`)) inflight.delete(key); for (const key of [...virtuals.keys()]) if (key.startsWith(`${mediaDir}|`)) virtuals.delete(key); lastReport.delete(mediaDir); for (const key of [...imysRuns.keys()]) if (key.startsWith(`${mediaDir}|`)) imysRuns.delete(key); for (const key of [...imysLists.keys()]) if (key.startsWith(`${mediaDir}|`)) imysLists.delete(key) }
+export function invalidateContainers(mediaDir) { for (const key of [...inflight.keys()]) if (key.startsWith(`${mediaDir}|`)) inflight.delete(key); for (const key of [...virtuals.keys()]) if (key.startsWith(`${mediaDir}|`)) virtuals.delete(key); lastReport.delete(mediaDir); for (const key of [...imysRuns.keys()]) if (key.startsWith(`${mediaDir}|`)) imysRuns.delete(key); for (const key of [...imysLists.keys()]) if (key.startsWith(`${mediaDir}|`)) imysLists.delete(key); for (const key of [...imysBundleLists.keys()]) if (key.startsWith(`${mediaDir}|`)) imysBundleLists.delete(key) }
 
 // 保证容器已展开（没配置 / 没启用 = 什么都不做）。幂等：容器没变（大小 + mtime + 规则指纹）就跳过；同一个目录并发调用只做一次
 export function ensureContainers({ mediaDir, config }) {

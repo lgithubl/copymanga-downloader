@@ -225,6 +225,8 @@ export function parseRecord(body) {
 //   场景切换 = 画面切换（#29）之后紧跟着在背景层（132 / 120 / 127 / 117 / 121 / 9999）上显示一张真正的图（图号 < 816）
 const BG_LAYERS = new Set([132, 120, 127, 117, 121, 9999])
 const CLEAR_FROM = 816
+const CG_LAYERS = new Set([2, 140, 141])   // H 场景的 CG 画在这几层（4 层多是标题 / 字幕）
+const CG_MIN_DRAWS = 4                    // 一节里这几层上画了至少这么多张图才算「有 CG」
 export function splitChapters(buf, { minTexts = 20, sceneTexts = 80, sceneMax = 300 } = {}) {
   const records = parseScriptRecords(buf)
   const chapters = []
@@ -258,7 +260,9 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
     if (bgse !== null) out.push(['#', 114, bgse])
     return out
   }
-  const flush = () => { scenes.push({ index: scenes.length, texts, events: list }) }
+  let snapLen = 0   // list 开头「接上一节的现场」的长度（不算这一节自己画的）
+  const hasCg = () => list.slice(snapLen).filter((ev) => isDraw(ev) && CG_LAYERS.has(Number(ev[6])) && Number(ev[4]) < CLEAR_FROM).length >= CG_MIN_DRAWS
+  const flush = () => { scenes.push({ index: scenes.length, texts, events: list, cg: hasCg() }) }
   for (let i = 0; i < events.length; i++) {
     const ev = events[i]
     if (ev[0] === '#' && ev[1] === 29 && texts >= sceneTexts) {
@@ -272,6 +276,7 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
       if (bgDraw || (texts >= sceneMax && anyDraw)) {
         flush()
         list = snapshot()
+        snapLen = list.length
         texts = 0
       }
     }

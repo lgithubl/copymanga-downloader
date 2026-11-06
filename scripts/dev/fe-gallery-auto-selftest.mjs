@@ -64,7 +64,8 @@ try {
     ['连续 / 速度 600', { 'copymanga.galleryScrollMode': 'smooth', 'copymanga.galleryScrollSpeed': '600' }],
   ]) {
     await open(settings)
-    check(`${name}：箭头之间有「自动」按钮（▲ 自动 ▼）`, J(await page.$$eval('.gallery-scroll-nav button', (b) => b.map((x) => x.textContent))) === J(['▲', '自动', '▼']))
+    check(`${name}：箭头之间有「自动」按钮（▲ 自动 ▼）`, J(await page.$$eval('.gallery-scroll-nav button', (b) => b.map((x) => x.textContent))) === J(['▲', '⇊', '▼']))
+    check(`${name}：模式 / 速度 / 分段比例在这个视图自己的「更多」菜单里，栏上没有`, (await page.$$('.gallery-more-menu .gallery-speed')).length >= 1 && (await page.$$('.gallery-more-menu .gallery-scroll-mode')).length === 1 && (await page.$$('.gallery-bar > .gallery-speed')).length === 0)
     await holdDown(2000)
     const held = await top()
     await reset()
@@ -77,7 +78,7 @@ try {
     const after = await top()
     await sleep(800)
     check(`${name}：自动 2 秒滚的距离 ≈ 按住 ▼ 2 秒（按住 ${held}px / 自动 ${autoMid}px，差 ≤ 30%）`, held > 300 && Math.abs(autoMid - held) <= Math.max(held, autoMid) * 0.3 + 1, J({ held, autoMid, vh: await vh() }))
-    check(`${name}：再点一次就停（不再滚）；按钮在自动中是「停」/ aria-pressed`, pressed === 'true' && (await top()) - after <= 2 && (await page.$eval('.gallery-scroll-auto', (b) => b.textContent)) === '自动', J({ pressed, after, now: await top() }))
+    check(`${name}：再点一次就停（不再滚）；按钮在自动中是「停」/ aria-pressed`, pressed === 'true' && (await top()) - after <= 2 && (await page.$eval('.gallery-scroll-auto', (b) => b.textContent)) === '⇊', J({ pressed, after, now: await top() }))
   }
 
   // 滚轮 / 手动点 ▼ 会停掉自动；滚到底自己停

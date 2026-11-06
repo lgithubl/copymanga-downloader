@@ -92,7 +92,7 @@ try {
   const report = await ensureContainers({ mediaDir: work, config: c })
   const rep = report.arcs['Ark Re/ArcRecordExport/Assets/Game/StaticData/Dialog.txt']
   const out = path.join(work, 'Ark Re/ArcRecordExport/Assets/arc/script/Dialog')
-  check('展开：每段剧情一个 .arcdrama（E1_01 / E1_01_2 / E1_02），带 JPN + CHS', rep?.scripts === 3 && !rep.error && J(Object.keys(JSON.parse(await readFile(path.join(out, 'E1_01.arcdrama'), 'utf8')).text)) === J(['JPN', 'CHS']) && (await readFile(path.join(out, 'E1_01_2.arcdrama'), 'utf8')).includes('別の段'), J(report))
+  check('展开：每段剧情一个 .arcdrama（E1_01 / E1_01_2 / E1_02），带 JPN + CHS', rep?.scripts === 3 && !rep.error && J(Object.keys(JSON.parse(await readFile(path.join(out, 'E1_01', 'E1_01.arcdrama'), 'utf8')).text)) === J(['JPN', 'CHS']) && (await readFile(path.join(out, 'E1_01', 'E1_01_2.arcdrama'), 'utf8')).includes('別の段'), J(report))
   const again = await ensureContainers({ mediaDir: work, config: c })
   check('再跑一遍：容器没变 = 命中缓存', again.arcs['Ark Re/ArcRecordExport/Assets/Game/StaticData/Dialog.txt']?.cached === true)
 

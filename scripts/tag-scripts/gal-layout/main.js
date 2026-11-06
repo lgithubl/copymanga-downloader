@@ -994,6 +994,7 @@ export const ADAPTER_RULES = {
     "imageExts": ["png", "jpg", "jpeg"],
     "audioExts": ["ogg", "wav", "mp3"],
     "wait": { "enabled": true, "max": 10 },
+    "tati": { "enabled": true, "stage": [1280, 720], "spacing": 160 },
     "fadeSeconds": 0.5
   },
   // tomoe::arc04：友恵の探偵物語（TinkerBell）的脚本适配器（Arc04.dat 切出来的章节 JSON → 场景）。抄自 web/library/gal/adapters/tomoe-arc04.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
@@ -1013,12 +1014,6 @@ export const ADAPTER_RULES = {
       121,
       9999
     ],
-    "overlayZ": {
-      "2": 10,
-      "4": 40,
-      "140": 20,
-      "141": 30
-    },
     "clearFrom": 816,
     "bgmBase": 6018,
     "fade": 0.5,
@@ -2130,7 +2125,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
       containers: { enabled: true, dir: 'arc', scan: ['.', 'Resources'], scriptDecoder: 'tomoe-arc04', scriptExt: 'tomoe', mode: 'hybrid', format: 'tomoe', flat: false, rules: [{ match: '^Arc04\\.dat$', kinds: ['script'] }, { match: '^(Arc03|Arc06|Data\\d+)\\.dat$', kinds: ['res'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['tomoe'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { scriptExtensions: ['tomoe'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { cg: 'CG 场景' }, merge: [], views: [{ parent: 'Arc04', as: 'cg', label: 'CG 场景', dirs: ['*'], match: '_cg$' }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.tomoe', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['Arc04.dat 在第一次浏览时由服务端按 ML 记录切成章节（文本 >= 20 行的块；真实数据 12 章、2.5 万页）；图（Data000–025，LZSS + 位图 / JPEG / PNG / 带遮罩的补丁）/ 声音（Arc06 的 Ogg，前 3615 字节解密）只在虚拟索引里，被请求时才转出来', '文字（含注音）/ 语音（声道 → 说话人）/ BGM / 音效 / 背景 / 叠加图层都有；选项、跳转（剧情是一条线）、层的叠放顺序和补丁盖在哪一层没有游戏截图对照，不一定对；章节标题卡（Data004）的触发方式没查出来'],

@@ -7,7 +7,7 @@
 //   ['$', 204, 1, a, 图号, b, 层, 1]：在「层」上显示图（图号 ≥ 816 = 清掉这一层）；['#', 29, 2] … ['#', 13, 2]：画面切换（淡入淡出）的开始 / 提交
 //   层：132 / 120 / 127 / 117 / 121 / 9999 = 背景（Data000 的 JPEG / 位图）；2 / 140 / 141 / 4 = 叠在上面的图层（CG / 补丁）。每一层是「整张图 + 之后累计叠上去的补丁」：整张图换掉这一层的全部内容，带遮罩的补丁图（<编号>.p.png，只含和上一帧不同的像素）一张一张累计盖在上面（H 场景的 CG 差分就是这样连着来的；只画最后一张补丁会得到碎片），清空（图号 >= 816）把这一层清掉
 // 没处理：选项（#134 … #136，只在调试菜单里）、跳转 / 变量（#1 #2 #3 #8 #10，剧情是一条线）、#150 #66 #132 #54 #100 …（作用不明，记在 stats.ignored）
-// 没验证（没有游戏截图对照）：层的叠放顺序（按 overlayZ）、补丁盖在哪一层、图号 817 / 818 当「清空」用、切换时间；章节切分和章节的先后（c01… 按在文件里的顺序）
+// 没验证（没有游戏截图对照）：层的叠放顺序（现在按「最近画的在上面」，不看层号）、补丁盖在哪一层、图号 817 / 818 当「清空」用、切换时间；章节切分和章节的先后（c01… 按在文件里的顺序）
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader } from './options-merge.mjs'
 
@@ -18,7 +18,6 @@ export const DEFAULT_OPTIONS = {
   sndDir: 'snd',
   stage: [1920, 1080],
   bgLayers: [132, 120, 127, 117, 121, 9999],
-  overlayZ: { 2: 10, 140: 20, 141: 30, 4: 40 },   // 叠加层的层号 → z（越大越靠上）；补丁 +1
   clearFrom: 816,                                  // 图号 >= 这个 = 清空这一层
   bgmBase: 6018,                                   // BGM n → 声音号 bgmBase + n
   fade: 0.5,                                       // 画面切换的淡入淡出秒数
@@ -106,6 +105,7 @@ export function parse(text, ctx = null, meta = {}) {
   let voice = null
   let transition = false
   const emit = (command) => cmds.push(command)
+  let drawSeq = 0   // 绘制先后：叠放顺序按「最近画的在上面」（H 场景里 140 层的特写和 2 层的帧交替出现，只有最近画的才是想让人看到的）
   const layerState = (layer) => { let s = layers.get(layer); if (!s) { s = { stack: [] }; layers.set(layer, s) } return s }
   const imageSrc = (id) => {
     stats.images.referenced += 1
@@ -123,10 +123,10 @@ export function parse(text, ctx = null, meta = {}) {
     const img = imageSrc(id)
     if (!img) return
     if (img.patch) {   // 补丁：累计盖在这一层现有内容上
-      state.stack.push({ id, src: img.src, patch: true })
+      state.stack.push({ id, src: img.src, patch: true, seq: ++drawSeq })
       const patches = state.stack.filter((x) => x.patch)
       if (patches.length > opt.maxPatches) state.stack.splice(state.stack.indexOf(patches[0]), 1)
-    } else state.stack = [{ id, src: img.src, patch: false }]
+    } else state.stack = [{ id, src: img.src, patch: false, seq: ++drawSeq }]
     if (bgLayers.has(layer)) { const at = bgOrder.indexOf(layer); if (at >= 0) bgOrder.splice(at, 1); bgOrder.push(layer) }
   }
   // 把各层的最终状态和「已经发出去的」比一下，只发有变的
@@ -136,16 +136,17 @@ export function parse(text, ctx = null, meta = {}) {
     const wantBg = topBase?.src || ''
     if (wantBg !== applied.bg) { applied.bg = wantBg; emit(wantBg ? { op: 'bg', src: wantBg, fade } : { op: 'bg', color: [0, 0, 0], fade }) }
     const want = new Map()
-    const addStack = (prefix, stack, z) => {
+    const addStack = (prefix, stack, zBase) => {
       let k = 0
       for (const item of stack) {
-        if (item.patch) { want.set(`${prefix}p${k}`, { src: item.src, z: z + 1 + k * 0.01 }); k += 1 } else if (prefix.startsWith('L')) want.set(prefix, { src: item.src, z })
+        const z = zBase + item.seq * 0.0001
+        if (item.patch) { want.set(`${prefix}p${k}`, { src: item.src, z }); k += 1 } else if (prefix.startsWith('L')) want.set(prefix, { src: item.src, z })
       }
     }
     if (top) addStack(`B${bgOrder[bgOrder.length - 1]}`, top.stack, 1)
     for (const [layer, state] of layers) {
       if (bgLayers.has(layer) || !state.stack.length) continue
-      addStack(`L${layer}`, state.stack, opt.overlayZ[layer] ?? 10)
+      addStack(`L${layer}`, state.stack, 10)
     }
     for (const [slot, item] of want) {
       const key = `${item.src}|${item.z}`
