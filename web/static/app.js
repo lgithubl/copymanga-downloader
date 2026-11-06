@@ -3408,21 +3408,20 @@ const libraryScrollTarget = () => {
 }
 // 「自动」按钮（▲▼ 之间）：等价于按「更多 → 自动滚动频率」连续点 ▼；频率存本机（localStorage），'max' = 持续滚动（等价于一直按着）
 const SCROLL_AUTO_RATE_KEY = 'copymanga.scrollAutoRate'
-const SCROLL_AUTO_RATES = ['0.2', '0.33', '0.5', '1', '2', '3', 'max']
+const SCROLL_AUTO_RATES = ['0.2', '0.5', '1', '2', '3', '5', 'max']
 const scrollAutoRate = () => { const v = localStorage.getItem(SCROLL_AUTO_RATE_KEY) || '1'; return v === 'max' ? 'max' : Number(v) || 1 }
-// 频率下拉框：库页、图片浏览、媒体浏览各有一个（class scroll-auto-rate），共用同一个本机设置，改一个其余跟着变
-const scrollAutoSelects = [...document.querySelectorAll('.scroll-auto-rate')]
-{
+// 频率滑块（离散 7 档，对应 SCROLL_AUTO_RATES）：每次点击时现取，拖动立即生效
+const scrollAutoSlider = document.querySelector('#library-scroll-auto-rate')
+const scrollAutoLabel = document.querySelector('#library-scroll-auto-rate-val')
+const scrollAutoText = (v) => (v === 'max' ? '持续（最大）' : `每秒 ${v} 次`)
+if (scrollAutoSlider) {
   const saved = localStorage.getItem(SCROLL_AUTO_RATE_KEY)
-  for (const select of scrollAutoSelects) {
-    select.value = SCROLL_AUTO_RATES.includes(saved) ? saved : '1'
-    select.addEventListener('change', () => { localStorage.setItem(SCROLL_AUTO_RATE_KEY, select.value); for (const other of scrollAutoSelects) other.value = select.value })
-  }
+  const sync = () => { if (scrollAutoLabel) scrollAutoLabel.textContent = scrollAutoText(SCROLL_AUTO_RATES[Number(scrollAutoSlider.value)]) }
+  scrollAutoSlider.value = String(Math.max(0, SCROLL_AUTO_RATES.indexOf(SCROLL_AUTO_RATES.includes(saved) ? saved : '1')))
+  sync()
+  scrollAutoSlider.addEventListener('input', () => { localStorage.setItem(SCROLL_AUTO_RATE_KEY, SCROLL_AUTO_RATES[Number(scrollAutoSlider.value)]); sync() })
 }
 if (els.libraryItems) createScrollButtons({ host: document.querySelector('#library-view'), getTarget: libraryScrollTarget, label: '媒体库分段滚动', getAutoRate: scrollAutoRate })
-// 图片浏览（#viewer-images 自己滚动）、媒体浏览（#media-reader-content：图集 / 文本 / EPUB 竖排滚动；音视频、分页横排时内容不比可视区高，按钮自己隐藏）
-if (els.viewerImages) createScrollButtons({ host: els.viewerView, getTarget: () => els.viewerImages, label: '图片浏览分段滚动', getAutoRate: scrollAutoRate })
-if (els.mediaReaderContent) createScrollButtons({ host: els.mediaViewerView, getTarget: () => els.mediaReaderContent, label: '媒体浏览分段滚动', getAutoRate: scrollAutoRate })
 
 // —— 卡片宽度 / 页面总宽度 / 封面放大倍率：各存各的（localStorage），拖动的交互复用 openWidthAdjust ——
 const LIBRARY_CARD_W_KEY = 'copymanga.libraryCardWidth'
@@ -6889,7 +6888,11 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   }
   const upBtn = mkArrow(-1, '▲', '按住向上滚')
   const downBtn = mkArrow(1, '▼', '按住向下滚')
-  nav.append(upBtn, downBtn)
+  // 「自动」：等价于一直按住 ▼——走的就是按住的那套逻辑，用栏里设的模式 / 速度 / 分段比例，不另起一套
+  const autoBtn = mkArrow(0, '自动', '自动向下滚：等价于一直按住 ▼（模式、速度、分段比例用栏里的设置）。再点一次 / 滚轮 / 触摸 / 点箭头 / 滚到底都会停')
+  autoBtn.classList.add('gallery-scroll-auto')
+  autoBtn.setAttribute('aria-pressed', 'false')
+  nav.append(upBtn, autoBtn, downBtn)
   els.app.append(nav)
 
   // 起步/收尾的加减速。没有这一段的话速度是从 0 直接阶跃到满速，
@@ -6897,6 +6900,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const RAMP_UP_MS = 220
   const RAMP_DOWN_MS = 160
 
+  let autoOn = false
   let raf = 0
   let lastTs = 0
   let scrollDir = 0
@@ -6920,6 +6924,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     const max = Math.max(0, content.scrollHeight - content.clientHeight)
     pos = Math.max(0, Math.min(max, pos + vel * (dt / 1000)))
     content.scrollTop = pos
+    if (autoOn && pos >= max - 1) { raf = 0; vel = 0; stopAuto(); return }   // 自动滚到底就停
 
     if (!scrollDir && vel === 0) { raf = 0; return }
     raf = requestAnimationFrame(step)
@@ -6958,6 +6963,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     jumpFrom = content.scrollTop
     jumpTo = Math.max(0, Math.min(max, jumpFrom + scrollDir * jumpDistance()))
     if (jumpTo === jumpFrom) {           // 已经到头，别空转 rAF
+      if (autoOn) { stopAuto(); return }   // 自动滚到底就停
       if (scrollDir) scheduleJump()
       return
     }
@@ -6994,6 +7000,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   // 硬停：退出沉浸模式时用。不能只 releaseScroll——减速那 160ms 里 rAF 还在跑，
   // 会去摸已经被移除的 content
   const stopScroll = () => {
+    stopAuto({ release: false })
     scrollDir = 0
     vel = 0
     lastTs = 0
@@ -7002,11 +7009,8 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     raf = 0
     nav.classList.remove('active')
   }
-  const startScroll = (event, d) => {
-    event.preventDefault()
-    event.stopPropagation()
-    // 必须捕获指针：否则按住后手一移出按钮就收不到 pointerup，会一直滚停不下来
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+  // 开始「按住」：按钮按下和自动共用
+  const beginHold = (d) => {
     scrollDir = d
     lastTs = 0
     pos = content.scrollTop     // 期间可能被滚轮/跳章改过，重新对齐
@@ -7018,6 +7022,38 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     }
     if (!raf) raf = requestAnimationFrame(step)
   }
+  const startScroll = (event, d) => {
+    event.preventDefault()
+    event.stopPropagation()
+    // 必须捕获指针：否则按住后手一移出按钮就收不到 pointerup，会一直滚停不下来
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    if (autoOn) stopAuto({ release: false })   // 手动按住接管，不用先松开
+    beginHold(d)
+  }
+  // 自动 = 一直按住 ▼，直到再点一次 / 滚轮 / 触摸 / 键盘翻页 / 点箭头 / 滚到底
+  function stopAuto({ release = true } = {}) {
+    if (!autoOn) return
+    autoOn = false
+    autoBtn.classList.remove('on')
+    autoBtn.textContent = '自动'
+    autoBtn.setAttribute('aria-pressed', 'false')
+    if (release) releaseScroll()
+  }
+  const startAuto = () => {
+    if (content.scrollTop >= content.scrollHeight - content.clientHeight - 1) return
+    autoOn = true
+    autoBtn.classList.add('on')
+    autoBtn.textContent = '停'
+    autoBtn.setAttribute('aria-pressed', 'true')
+    beginHold(1)
+  }
+  autoBtn.addEventListener('click', (event) => { event.stopPropagation(); if (autoOn) stopAuto(); else startAuto() })
+  const userStopsAuto = (event) => {
+    if (!autoOn || nav.contains(event.target)) return
+    if (event.type === 'keydown' && !['PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End', ' '].includes(event.key)) return
+    stopAuto()
+  }
+  for (const type of ['wheel', 'touchstart', 'keydown']) window.addEventListener(type, userStopsAuto, { passive: true, capture: true })
   for (const b of [upBtn, downBtn]) {
     const d = Number(b.dataset.dir)
     b.addEventListener('pointerdown', (event) => startScroll(event, d))
@@ -7231,6 +7267,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     stopScroll()
     clearTimeout(dimTimer)
     document.removeEventListener('mousemove', bumpNav)
+    for (const type of ['wheel', 'touchstart', 'keydown']) window.removeEventListener(type, userStopsAuto, { capture: true })
     nav.remove()
     document.removeEventListener('mousemove', onPointerMove)
     document.removeEventListener('keydown', onKey)

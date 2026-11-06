@@ -3496,6 +3496,11 @@ h2 {
   background: rgba(15, 20, 25, 0.9);
 }
 
+.gallery-scroll-auto.on {
+  background: var(--site-accent, #2f6fdb);
+  border-color: transparent;
+}
+
 .gallery-speed {
   align-items: center;
   display: flex;

@@ -270,15 +270,6 @@
                 <div id="viewer-meta" class="muted">请选择一个章节</div>
               </div>
               <div class="chapter-actions">
-                <select id="viewer-scroll-auto-rate" class="scroll-auto-rate" title="悬浮「自动」按钮的滚动频率：每秒点几次 ▼（最大 = 持续滚动）；各页共用同一个设置">
-                      <option value="0.2">自动滚动：每 5 秒 1 次</option>
-                      <option value="0.33">自动滚动：每 3 秒 1 次</option>
-                      <option value="0.5">自动滚动：每 2 秒 1 次</option>
-                      <option value="1">自动滚动：每秒 1 次</option>
-                      <option value="2">自动滚动：每秒 2 次</option>
-                      <option value="3">自动滚动：每秒 3 次</option>
-                      <option value="max">自动滚动：持续（最大）</option>
-                    </select>
                 <button id="viewer-immersive" class="secondary" disabled>沉浸</button>
                 <button id="viewer-width-adjust" class="secondary" disabled title="拖动调整图片宽度">宽度</button>
                 <button id="viewer-prev" class="secondary" disabled>上一章</button>
@@ -325,15 +316,7 @@
                     <select id="library-type">
                       <option value="all">全部类型</option>
                     </select>
-                    <select id="library-scroll-auto-rate" class="scroll-auto-rate" title="悬浮「自动」按钮的滚动频率：每秒点几次 ▼（最大 = 持续滚动，等价于一直按着）">
-                      <option value="0.2">自动滚动：每 5 秒 1 次</option>
-                      <option value="0.33">自动滚动：每 3 秒 1 次</option>
-                      <option value="0.5">自动滚动：每 2 秒 1 次</option>
-                      <option value="1">自动滚动：每秒 1 次</option>
-                      <option value="2">自动滚动：每秒 2 次</option>
-                      <option value="3">自动滚动：每秒 3 次</option>
-                      <option value="max">自动滚动：持续（最大）</option>
-                    </select>
+                    <label class="scroll-auto-rate-wrap" title="悬浮「自动」按钮的滚动频率：每秒点几次 ▼（最右 = 持续滚动，等价于一直按着）">自动滚动<input id="library-scroll-auto-rate" class="scroll-auto-rate" type="range" min="0" max="6" step="1" value="3" /><span id="library-scroll-auto-rate-val" class="muted"></span></label>
                     <select id="library-limit" title="每页">
                       <option value="10">10</option>
                       <option value="20">20</option>
@@ -654,15 +637,6 @@
                 <details id="media-more" class="library-more-controls media-more-controls">
                   <summary>更多</summary>
                   <div>
-                    <select id="media-scroll-auto-rate" class="scroll-auto-rate" title="悬浮「自动」按钮的滚动频率：每秒点几次 ▼（最大 = 持续滚动）；各页共用同一个设置">
-                      <option value="0.2">自动滚动：每 5 秒 1 次</option>
-                      <option value="0.33">自动滚动：每 3 秒 1 次</option>
-                      <option value="0.5">自动滚动：每 2 秒 1 次</option>
-                      <option value="1">自动滚动：每秒 1 次</option>
-                      <option value="2">自动滚动：每秒 2 次</option>
-                      <option value="3">自动滚动：每秒 3 次</option>
-                      <option value="max">自动滚动：持续（最大）</option>
-                    </select>
                     <button id="media-detail-toggle" class="secondary" type="button" disabled title="标题、标签等详情；标签可点击搜索">详情</button>
                   </div>
                 </details>
