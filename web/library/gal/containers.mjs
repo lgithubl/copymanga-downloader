@@ -1470,7 +1470,7 @@ async function run(mediaDir, cfg) {
   if (cfg.format === 'imys') {   // 6000 多个 bundle：每次请求都 stat 一遍太慢，20 秒内复用上一次的结果（目录 / 规则变了 invalidateContainers 会清）
     const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
     const hit = imysRuns.get(key)
-    if (hit && Date.now() - hit.at < IMYS_LIST_TTL_MS) return hit.report
+    if (hit && Date.now() - hit.at < IMYS_LIST_TTL_MS) return { ...hit.report, arcs: { scenarios: { ...hit.report.arcs.scenarios, cached: true } } }
     const report = await runImys(mediaDir, cfg)
     imysRuns.set(key, { at: Date.now(), report })
     return report
