@@ -43,7 +43,7 @@ const ctx = adapter.prepare({ options: {}, files, toResourcePath: toRes })
 const sc = buildScene('arcrecord::dialog', dramas[0].text, ctx, { options: {} })
 const all = sc.steps.flatMap((c) => c.commands)
 check('嗅探：只认 arcrecord-dialog/1；原始表 / 别的 JSON 不认', adapter.sniff(dramas[0].text) && !adapter.sniff(dialogTxt.toString()) && !adapter.sniff('{"sceneId":"x"}'))
-check('背景：BG_Black = 纯黑；BG/A0019_Dialog → png；预制体目录（BG/S0061_Dialog 里只有贴图）→ 目录里的 png；CG/… 的 Spine 场景记 ignored', all.some((c) => c.op === 'bg' && c.color?.[0] === 0) && all.some((c) => c.op === 'bg' && c.src === 'BG/A0019_Dialog.png') && all.some((c) => c.op === 'bg' && c.src === 'BG/S0061_Dialog/tex.png') && sc.stats.ignored['bg:CG'] === 1, J(all.filter((c) => c.op === 'bg')))
+check('背景：BG_Black = 纯黑；BG/A0019_Dialog → png；预制体目录（BG/S0061_Dialog 里只有贴图）→ 目录里的 png；CG/… 找不到资源记 unresolved', all.some((c) => c.op === 'bg' && c.color?.[0] === 0) && all.some((c) => c.op === 'bg' && c.src === 'BG/A0019_Dialog.png') && all.some((c) => c.op === 'bg' && c.src === 'BG/S0061_Dialog/tex.png') && Object.keys(sc.stats.unresolved || {}).some((k) => k.startsWith('image:CG/')), J(all.filter((c) => c.op === 'bg')))
 check('BGM：Sound/BGM/Stage03 → wav；Blank = 停；默认的 Effect_Dialog 音效不放、别的音效放；TalkSound = 角色语音', all.some((c) => c.op === 'bgm' && c.src === 'Sound/BGM/Stage03.wav') && all.some((c) => c.op === 'bgmStop') && all.some((c) => c.op === 'se' && c.src === 'Sound/Dialog/Boom.wav') && !all.some((c) => c.op === 'se' && /Effect_Dialog/.test(c.src)) && all.some((c) => c.op === 'voice' && c.src === 'Hero/H047/Sound/H047_V1.wav'), J(all.filter((c) => /bgm|se|voice/.test(c.op))))
 const texts = sc.steps.map((s) => s.commands.find((c) => c.op === 'text')).filter(Boolean)
 check('台词：<br> 换行；说话人键 → 文本；player = 主角名；{0} = 主角名；<color> → 颜色，<size> 去掉', texts[0].segments[0].text === 'こんにちは\n二行目' && J(texts[1].segments) === J([{ text: '主人公さん、' }, { text: '赤い', style: { color: '#ff0000' } }, { text: '大きい字' }]) && sc.steps[1].commands.find((c) => c.op === 'speaker').segments[0].text === '主人公' && sc.steps[0].commands.find((c) => c.op === 'speaker').segments[0].text === 'エパディ', J(texts))
@@ -107,6 +107,38 @@ try {
     check(`真实样本：Dialog.txt 切成 ${all2.length} 段、解析 ${messages} 句台词`, all2.length === 1719 && messages > 43000, J([all2.length, messages]))
   } else console.log('SKIP 真实样本（ARC_SAMPLE=<…/Game 目录> 才跑）')
 } finally { await rm(work, { recursive: true, force: true }) }
+
+// ---- 角色皮肤 + CG ----
+{
+  const mk = (rows, text = {}) => JSON.stringify({ format: 'arcrecord-dialog/1', id: 'x', rows, text: { JPN: text } })
+  const T = { T_a: 'こんにちは', T_b: 'やあ', T_c: 'さよなら' }
+  const rows = [
+    { ID: 'x_01', DramaID: 'x', Role1: 'Hero/H090/H090_Dialog', Dialog: 'T_a' },
+    { ID: 'x_02', Role1: 'Hero/H090/H090_Dialog_1', Dialog: 'T_b' },
+    { ID: 'x_03', Role1: 'Hero/H090/H090_Dialog_2', Dialog: 'T_c' },
+    { ID: 'x_04', Role1: 'Hero/H090/H090_Dialog_UI', Dialog: 'T_c' },
+  ]
+  const f = ['Game/Hero/H090/H090/H090.skel.asset', 'Game/Hero/H090/H090/H090.atlas.asset']
+  const c2 = adapter.prepare({ options: {}, files: f, toResourcePath: toRes })
+  const scn = buildScene('arcrecord::dialog', mk(rows, T), c2, { options: {} })
+  const spines = scn.steps.flatMap((st) => st.commands).filter((c) => c.op === 'spine')
+  check('角色皮肤：H090_Dialog = LV1，_Dialog_1 = LV2，_Dialog_2 = LV3，_UI = LV1（默认皮肤只有头发 / 脸，没有衣服）', J(spines.map((x) => x.skin)) === J(['LV1', 'LV2', 'LV3', 'LV1']), J(spines.map((x) => [x.skin])))
+  check('角色：_Dialog_1 / _Dialog_UI 这类变体也认（以前被当成不认识的角色）', !scn.stats.ignored?.['role:H090_Dialog_1'] && spines.length === 4, J(scn.stats.ignored))
+  const cgFiles = ['Game/CG/A0247/Img/A0247.png', 'Game/CG/A0012/A0012/A0012_N.skel.asset', 'Game/CG/A0012/A0012/A0012_N.atlas.asset', 'Game/CG/P0001/Image/CG_P0001_1.png', 'Game/BG/B1.png']
+  const c3 = adapter.prepare({ options: {}, files: cgFiles, toResourcePath: toRes })
+  const cgRows = [
+    { ID: 'y_01', DramaID: 'y', DialogBGPerfab: 'CG/A0247/A0247', Dialog: 'T_a' },
+    { ID: 'y_02', DialogBGPerfab: 'CG/A0012/A0012', BGMotion: 'O~Opening', Dialog: 'T_b' },
+    { ID: 'y_03', DialogBGPerfab: 'CG/P0001/CG_P0001_1', Dialog: 'T_c' },
+    { ID: 'y_04', DialogBGPerfab: 'BG/B1', Dialog: 'T_a' },
+  ]
+  const sg = buildScene('arcrecord::dialog', mk(cgRows, T), c3, { options: {} })
+  const cmds = sg.steps.flatMap((st) => st.commands)
+  check('CG：没有骨架的 = 静态图（Img/<编号>.png）作背景', cmds.some((c) => c.op === 'bg' && c.src === 'CG/A0247/Img/A0247.png'), J(cmds.filter((c) => c.op === 'bg')))
+  const cgSpine = cmds.find((c) => c.op === 'spine' && c.slot === 'CG')
+  check('CG：有骨架的 = 全屏静态画面（still）Spine，轨道 00 / BG + BGMotion 里的名字', cgSpine?.kind === 'still' && cgSpine.skel === 'CG/A0012/A0012/A0012_N.skel.asset' && cgSpine.atlas === 'CG/A0012/A0012/A0012_N.atlas.asset' && J(cgSpine.tracks.map((t) => t.anim)) === J(['00', 'BG', 'O', 'Opening']), J(cgSpine))
+  check('CG：Image/CG_<编号>_1.png 变体；换回普通背景时去掉 Spine CG', cmds.some((c) => c.op === 'bg' && c.src === 'CG/P0001/Image/CG_P0001_1.png') && cmds.some((c) => c.op === 'spineOff' && c.slot === 'CG'), J(cmds.filter((c) => c.op === 'spineOff')))
+}
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

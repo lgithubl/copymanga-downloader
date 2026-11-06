@@ -30,7 +30,7 @@ import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
 import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
 import { inflateRawSync, inflateSync } from 'node:zlib'
 import { openZip } from '../zip-reader.mjs'
-import { DEFAULT_LANGUAGES, buildDramas, parseText } from './arcrecord-dialog.mjs'
+import { DEFAULT_LANGUAGES, buildDramas, buildLineDramas, parseText } from './arcrecord-dialog.mjs'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
 import { extractZipMember, parseZipCentral, parseZipEnd } from './l2d-zip.mjs'
 import { Psb, isPsb } from './psb.mjs'
@@ -473,7 +473,10 @@ async function expandArcdrama({ file, arcName, rule, cfg, outRoot, budget }) {
   for (const lang of DEFAULT_LANGUAGES) {
     try { texts[lang] = parseText(await readFile(path.join(path.dirname(file), 'Text', `${lang}.txt`))) } catch { /* 没有这种语言 */ }
   }
-  const dramas = buildDramas(await readFile(file), texts)
+  const isLine = /^LineDialog\.txt$/i.test(arcName)
+  let roleBuffer = null
+  if (isLine) { try { roleBuffer = await readFile(path.join(path.dirname(file), 'Role.txt')) } catch { /* 没有就用角色编号当名字 */ } }
+  const dramas = isLine ? buildLineDramas(await readFile(file), texts, roleBuffer) : buildDramas(await readFile(file), texts)
   result.entries = dramas.length
   for (const drama of dramas.slice(0, cfg.maxEntries)) {
     const name = safeEntryName(drama.id)

@@ -52,3 +52,40 @@ export function buildDramas(dialogBuffer, texts = {}) {
     return { id, text: JSON.stringify({ format: DIALOG_FORMAT, id, title, rows: drama.rows, text }) }
   })
 }
+
+// LineDialog.txt（ラブトーク = LINE 风格的聊天剧情，一个 DramaID 一段；主角的回复 / 选项没有 Speaker）→ 同样格式的剧情。
+// 行：ID@DramaID@Type@IsSafeMode@Speaker（H072 这样的角色编号）@SpeakerText@SpeakerIcon@Dialog（T_LineDialog_Dialog_<ID>）@NextDialogIDs（~ 分隔 = 分支）@Energy@DialogImagePrefab@DialogDramaImage@DialogDramaID
+// 这里按文件里的顺序线性展开（分支 / 选项都留着：选项行前面加 ▶，主角的回复说话人 = 主角）；重复的行（同一个 ID 出现两次）只留第一次；Reward 行是奖励说明。
+// roleNames：Role.txt 的 SpineObject（Hero/H105/H105_）→ NAME 键，用来把 H072 换成名字
+export function buildLineDramas(lineBuffer, texts = {}, roleBuffer = null) {
+  const { rows } = parseTable(lineBuffer)
+  const heroKey = new Map()
+  if (roleBuffer) for (const row of parseTable(roleBuffer).rows) { const m = /^Hero\/(H\d+)\//.exec(row.SpineObject || ''); if (m && row.NAME && !heroKey.has(m[1])) heroKey.set(m[1], row.NAME) }
+  const byDrama = new Map()
+  const seen = new Set()
+  for (const row of rows) {
+    if (!row.ID || !row.DramaID || seen.has(row.ID)) continue
+    seen.add(row.ID)
+    if (!byDrama.has(row.DramaID)) byDrama.set(row.DramaID, [])
+    byDrama.get(row.DramaID).push(row)
+  }
+  const out = []
+  for (const [id, list] of byDrama) {
+    const text = {}
+    const converted = list.map((row, i) => {
+      const key = `__line_${row.ID}`
+      const choose = /Choose$/.test(row.Type || '')
+      const spk = row.Speaker ? `__spk_${row.Speaker}` : '__player'
+      for (const [lang, map] of Object.entries(texts)) {
+        const t = map.get(row.Dialog)
+        if (t === undefined) continue
+        const bucket = (text[lang] ||= {})
+        bucket[key] = (choose ? '▶ ' : '') + t
+        if (!(spk in bucket)) bucket[spk] = row.Speaker ? (map.get(heroKey.get(row.Speaker) || '') || row.Speaker) : 'player'
+      }
+      return { ID: row.ID, ...(i === 0 ? { DramaID: id } : {}), Speaker: spk, Dialog: key, ...(row.Type ? { Type: row.Type } : {}), ...(row.NextDialogIDs ? { Next: row.NextDialogIDs } : {}) }
+    })
+    out.push({ id, text: JSON.stringify({ format: DIALOG_FORMAT, id, title: '', kind: 'line', rows: converted, text }) })
+  }
+  return out
+}

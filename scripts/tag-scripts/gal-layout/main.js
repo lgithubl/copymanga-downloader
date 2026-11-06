@@ -974,7 +974,17 @@ export const ADAPTER_RULES = {
       "idle": "00_Idle",
       "talk": "91_Emo_talk",
       "emoPrefix": "90_Emo",
-      "spread": 0.28
+      "spread": 0.28,
+      "skins": {
+        "1": "LV2",
+        "2": "LV3",
+        "default": "LV1"
+      }
+    },
+    "cg": {
+      "enabled": true,
+      "dir": "CG",
+      "anim": ""
     }
   },
   // imys::adv：Imys（AES + UnityFS 里的纯文本剧本）的脚本适配器。抄自 web/library/gal/adapters/imys-adv.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
@@ -2072,9 +2082,9 @@ export const LAYOUTS = {
       classify: [],
       resourceResolve: {},
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
-      containers: { enabled: true, dir: 'arc', scan: ['Game/StaticData'], scriptDecoder: 'arcrecord-dialog', scriptExt: 'arcdrama', mode: 'hybrid', format: 'arcdrama', flat: false, rules: [{ match: '^Dialog\\.txt$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
+      containers: { enabled: true, dir: 'arc', scan: ['Game/StaticData'], scriptDecoder: 'arcrecord-dialog', scriptExt: 'arcdrama', mode: 'hybrid', format: 'arcdrama', flat: false, rules: [{ match: '^(Dialog|LineDialog)\\.txt$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['arcdrama'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { scriptExtensions: ['arcdrama'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Dialog: '剧情（Dialog）', LineDialog: 'ラブトーク（聊天）' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.arcdrama', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['Dialog.txt 在第一次浏览时由服务端按 DramaID 切成每段剧情一个 JSON（真实数据 1719 段、4 万多句，台词带 JPN / CHS / CHT / ENG）；台词语言在适配器参数 language 里选', '背景（BG/*.png）/ BGM / 音效 / 角色语音都有；角色立绘（Hero/H0xx 的 Spine + fbx 预制体）和 CG Spine 场景没做：预制体里的位置 / 动画映射不在导出资源里，Spine 版本是 4.1（播放器的运行时没有 4.1）；没有游戏截图对照'],

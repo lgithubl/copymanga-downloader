@@ -1325,6 +1325,10 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 - **没做 / 没验证**：角色站位、图层顺序（`RoleOrder`）、`RoleEffects`、非 H047 / H090 的角色；Spine 骨骼是 **4.1.23**（`Hero/H047/H047/H047.skel.asset` + `.atlas.asset` + png），播放器的运行时现在有 3.6 / 3.8 / 4.0 / 4.1 / 4.2（4.1 = 官方 4.1.24，fetch-spine-runtime.sh 下载）；`CG/…` 的 Spine 场景同理；LINE 聊天剧情（`LineDrama.txt` / `LineDialog.txt`，230 段 / 1 万行，有分支）没接；背景的缩放 / 位置不知道（原样铺）；音效 / 语音是在这一行开始时放，实际时机不详。没有游戏截图对照。
 - 测试：`node scripts/dev/gal-arcrecord-selftest.mjs`（合成 Dialog.txt + Text：切段 / 坏字节 / 重复 id / 适配器 / containers / gal-layout；`ARC_SAMPLE=<…/Game 目录>` 时再把真实表整份切段 + 解析一遍）。
 
+- **皮肤（骨架里的衣服）**：Spine 骨架有 `default`（头发 / 脸 / 手，**没有衣服和身体**）+ `LV1 / LV2 / LV3`（衣服破损等级，`_M` 结尾 = 带马赛克部件的版本）。预制体变体决定用哪个：`H0xx_Dialog` = LV1，`_Dialog_1` = LV2，`_Dialog_2` = LV3，`_UI` = LV1（选项 `roles.skins`；变体 ↔ 等级是按用法推的：H090 的 `_1` / `_2` 出现在 H 剧情 / 被打倒之后，**没有预制体对照**）。以前只用默认皮肤，所以人物没有躯干；`_Dialog_1` / `_UI` 这类变体以前被当成不认识的角色。`_M`（马赛克）没用。
+- **CG**（`DialogBGPerfab` = `CG/<编号>/<名>`，选项 `cg`）：338 个 CG 里 88 个有 Spine 骨架（`CG/<编号>/<编号>/<编号>.skel.asset`，按全屏 `still` 播，轨道 `00`（待机）/ `BG` + BGMotion 里和骨架动画同名的 token，如 `20_Loop1`；`S` / `B` / `Opening` / `Vision` 是 Unity Animator 状态机的状态名，没有映射表，**没做**），其余 250 个是静态图（`Img/<编号>.png`、`<编号>.png`、`Image/CG_<编号>.png` …）直接当背景。**验证**：静态图 / 骨架查找 / 轨道 / 换回普通背景去掉 CG 有自测；**没有渲染验证**（采集样本里 A0012 的 11MB 主贴图被跳过了，画不出来）。
+- **ラブトーク（`LineDialog.txt`，230 段，`H145_01` 这类）**：LINE 风格的聊天剧情（角色编号 + 主角的回复 / 选项，`NextDialogIDs` 的 `~` = 分支），按文件顺序线性展开到 `script/LineDialog/<DramaID>.arcdrama`（选项行前加 ▶，主角的回复说话人 = 主角名，角色名从 `Role.txt` 的 SpineObject → NAME 来；重复的行只留第一次）。以前整个没展开；`Dialog.txt` 里同名的 `H145_01` 只是一句话 + 一张 CG（和聊天剧情配套，不是聊天本身）。分支没做（只线性读），Reward 行只显示奖励说明。
+
 ## 友恵の探偵物語（Cyberworks TinkerBell；`tomoe::arc04`，game.id = `tomoe::<游戏>`，gal-layout 2.40.0）
 
 32 位 MFC + ChakraCore（脚本里有 JS，对话流程是字节码）。全部从真实采集文件逆出来的（`tomoe.exe` 用 capstone 反汇编核对过操作号；每一条格式结论都在真实数据上验证过）：

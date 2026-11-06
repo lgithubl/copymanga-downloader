@@ -19,7 +19,8 @@ export const DEFAULT_OPTIONS = {
   imageExts: ['png', 'jpg', 'jpeg'],
   skipSounds: ['Sound/Dialog/Effect_Dialog'],   // 不放的音效（每句都有的默认声）
   stopMusic: ['Sound/BGM/Blank'],
-  roles: { enabled: true, dir: 'Hero', idle: '00_Idle', talk: '91_Emo_talk', emoPrefix: '90_Emo', spread: 0.28 },   // spread：多角色时每个的水平偏移 = 骨架包围盒宽 × spread
+  roles: { enabled: true, dir: 'Hero', idle: '00_Idle', talk: '91_Emo_talk', emoPrefix: '90_Emo', spread: 0.28, skins: { default: 'LV1', 1: 'LV2', 2: 'LV3' } },   // spread：多角色时每个的水平偏移 = 骨架包围盒宽 × spread；skins：预制体变体 → 骨架里的皮肤（H0xx_Dialog = LV1，_Dialog_1 = LV2，_Dialog_2 = LV3；默认皮肤只有头发 / 脸 / 手，没有衣服 / 身体）
+  cg: { enabled: true, dir: 'CG', anim: '' },   // DialogBGPerfab = CG/<编号>/<名>：有 Spine 骨架（CG/<编号>/<编号>/<编号>.skel.asset）就按全屏静态画面（still）播，没有就找静态图（Img/<编号>.png、<编号>.png、Image/CG_<编号>.png …）；anim：指定动画名（空 = 按 BGMotion 里的名字找，找不到由播放器挑）
 }
 const readOptions = createOptionsReader(DEFAULT_OPTIONS)
 const EMO_NO = { normal: 1, angry: 2, sad: 3, happy: 4, panic: 5, shame: 6, serious: 7, worry: 8, eyeclose: 9 }
@@ -39,14 +40,17 @@ export function prepare({ options, files, toResourcePath, resourceResolve, trunc
   const toRes = toResourcePath || ((rel) => rel)
   const resources = new Set()
   const dirImages = new Map()   // 小写目录 → 目录里第一张图（预制体目录里的贴图）
+  const cgSkels = new Map()     // 小写 CG 编号 → { skel, atlas }（CG/<编号>/<编号>/ 下的 .skel.asset / .skel.bytes + 同名 .atlas.asset）
   for (const rel of files || []) {
     const res = toRes(rel)
     resources.add(res)
     const m = /^(.*)\/[^/]+\.(?:png|jpe?g)$/i.exec(res)
     if (m && !dirImages.has(m[1].toLowerCase())) dirImages.set(m[1].toLowerCase(), res)
+    const cg = /^CG\/([^/]+)\/\1\/([^/]+)\.skel\.(?:asset|bytes)$/i.exec(res)
+    if (cg && !/\(\d+\)/.test(res) && !cgSkels.has(cg[1].toLowerCase())) cgSkels.set(cg[1].toLowerCase(), { skel: res, stem: res.replace(/\.skel\.(?:asset|bytes)$/i, '') })
   }
   const resolver = createIndexResolver({ index: resources, cfg: { ...(resourceResolve || {}), caseInsensitive: true } })
-  return { opts: opt, resources, resolver, dirImages, hasIndex: Boolean(files?.length), truncated: Boolean(truncated) }
+  return { opts: opt, resources, resolver, dirImages, cgSkels, hasIndex: Boolean(files?.length), truncated: Boolean(truncated) }
 }
 
 // <br> 换行；<color=#rrggbb>…</color> → 颜色；别的标签（<size=60> / </size>）去掉；{0} = 主角名
@@ -100,13 +104,18 @@ export function parse(text, ctx = null, meta = {}) {
   // —— 角色（Role1-3）——
   const roles = [null, null, null]   // { hero, emo, talk, dizzy }
   const shown = [null, null, null]   // 已经发出去的签名
-  const heroOf = (v) => /(?:^|\/)(H\d+)(?:_Dialog)?$/i.exec(String(v))?.[1] || ''
+  // Hero/H090/H090_Dialog(_1 | _2 | _UI) → { hero: 'H090', variant: '' | '1' | '2' | 'UI' }
+  const heroOf = (v) => { const m = /(?:^|\/)(H\d+)(?:_Dialog(?:_(\w+))?)?$/i.exec(String(v)); return m ? { hero: m[1], variant: m[2] || '' } : null }
   const emoOf = (token) => { const t = token.toLowerCase(); return ['normal', 'angry', 'sad', 'happy', 'panic', 'shame', 'serious', 'worry', 'eyeclose'].includes(t) ? t : '' }
   function roleStep(row) {
     for (let i = 0; i < 3; i += 1) {
       const v = row[`Role${i + 1}`]
       if (v === 'no') roles[i] = null
-      else if (v) { const hero = heroOf(v); if (hero) { if (roles[i]?.hero !== hero) roles[i] = { hero, emo: 'normal', talk: false, bool: '' } } else count('ignored', `role:${String(v).split('/').pop()}`) }
+      else if (v) {
+        const who = heroOf(v)
+        if (who) { if (roles[i]?.hero !== who.hero) roles[i] = { hero: who.hero, emo: 'normal', talk: false, bool: '', variant: who.variant }; else roles[i].variant = who.variant }
+        else count('ignored', `role:${String(v).split('/').pop()}`)
+      }
       const r = roles[i]
       if (!r) continue
       const motion = String(row[`RoleMotion${i + 1}`] || '')
@@ -132,24 +141,64 @@ export function parse(text, ctx = null, meta = {}) {
       const anim = r.bool === 'dizzy' ? '99_dizzy' : r.bool === 'sleep' ? '99_sleep' : ''
       const emoAnim = `${opt.roles.emoPrefix}${EMO_NO[r.emo]}_${r.emo}`
       const tracks = [{ track: 0, anim: opt.roles.idle, loop: true }, { track: 1, anim: anim || emoAnim, loop: true }, ...(r.talk && !anim ? [{ track: 2, anim: opt.roles.talk, loop: true }] : [])]
-      const sig = JSON.stringify([r.hero, x, tracks])
+      const skin = opt.roles.skins?.[r.variant || 'default'] || opt.roles.skins?.default || ''
+      const sig = JSON.stringify([r.hero, x, tracks, skin])
       if (shown[i] === sig) continue
       shown[i] = sig; stats.roles.shown += 1
-      emit({ op: 'spine', slot, kind: 'actor', skel, atlas, x: x * ROLE_UNIT, y: 0, scale: 1, fade: 0, tracks, order: i + 1, loop: true, speed: 1 })
+      emit({ op: 'spine', slot, kind: 'actor', skel, atlas, x: x * ROLE_UNIT, y: 0, scale: 1, fade: 0, tracks, order: i + 1, loop: true, speed: 1, ...(skin ? { skin } : {}) })
     }
+  }
+  // —— CG（DialogBGPerfab = CG/<编号>/<名>）——
+  let cgShown = false
+  let cgPlay = null   // 当前 Spine CG：{ id, skel, atlas }
+  const staticCg = (bgName) => {
+    const m = /^CG\/([^/]+)\/([^/]+)$/i.exec(bgName)
+    if (!m) return ''
+    const [, id, name] = m
+    for (const rel of [`CG/${id}/Img/${name}`, `CG/${id}/Image/${name}`, `CG/${id}/${name}`, `CG/${id}/Img/IMG_${name}`, `CG/${id}/Img/${id}`, `CG/${id}/${id}`, `CG/${id}/Img/IMG_${id}`, `CG/${id}/Image/CG_${id}`]) { const hit = find(rel, opt.imageExts); if (hit) return hit }
+    return ''
+  }
+  function showCg(bgName, row) {
+    const id = /^CG\/([^/]+)\//i.exec(bgName)?.[1] || ''
+    const spine = hasIndex ? ctx.cgSkels?.get(id.toLowerCase()) : null
+    const motions = String(row.BGMotion || '').split('~').filter(Boolean)
+    if (spine) {
+      const atlas = find(spine.stem, ['atlas.asset']) || find(spine.stem, ['atlas.txt'])
+      if (atlas) {
+        stats.cg = stats.cg || { spine: 0, still: 0, missing: 0 }
+        if (!cgPlay || cgPlay.id !== id || motions.length) {
+          stats.cg.spine += 1
+          cgPlay = { id, skel: spine.skel, atlas }
+          if (!cgShown) emit({ op: 'bg', color: [0, 0, 0], fade: 0 })
+          // 动画：骨架里有哪些动画这里不知道（Unity 的 Animator 状态机 S / B / Opening / Vision … 没导出成能直接用的映射），所以给几条候选轨道，名字对不上的轨道播放器跳过：
+          // 轨道 0 = 00（待机循环），1 = BG（背景部件循环），2.. = BGMotion 里的名字（和骨架动画同名时才生效，如 20_Loop1）
+          const tracks = [{ track: 0, anim: opt.cg.anim || '00', loop: true }, { track: 1, anim: 'BG', loop: true }, ...motions.filter((m) => !['00', 'BG'].includes(m)).slice(0, 6).map((m, k) => ({ track: 2 + k, anim: m, loop: true }))]
+          emit({ op: 'spine', slot: 'CG', kind: 'still', skel: spine.skel, atlas, tracks, loop: true, speed: 1, order: 0, fade: 0 })
+          cgShown = true
+        }
+        return
+      }
+    }
+    const src = staticCg(bgName)
+    stats.images.referenced += 1
+    if (src) { stats.images.resolved += 1; stats.cg = stats.cg || { spine: 0, still: 0, missing: 0 }; stats.cg.still += 1; emit({ op: 'bg', src, fade: 0 }); cgPlay = null } else { stats.images.unresolved += 1; if (hasIndex) count('unresolved', `image:${bgName}`) }
+    if (cgShown) { emit({ op: 'spineOff', slot: 'CG' }); cgShown = false }
   }
   for (const row of data.rows) {
     const bgName = row.DialogBGPerfab
     if (bgName && bgName !== 'no' && bgName !== bg) {
       bg = bgName
+      if (cgShown && !/^CG\//i.test(bgName)) { emit({ op: 'spineOff', slot: 'CG' }); cgShown = false }
       if (/^BG\/BG_Black$/i.test(bgName)) emit({ op: 'bg', color: [0, 0, 0], fade: 0 })
       else if (/^BG\//i.test(bgName)) {
         let src = find(bgName, opt.imageExts)
         if (!src && hasIndex) src = ctx.dirImages.get(bgName.toLowerCase()) || ''
         stats.images.referenced += 1
         if (src) { stats.images.resolved += 1; emit({ op: 'bg', src, fade: 0 }) } else { stats.images.unresolved += 1; if (hasIndex) count('unresolved', `image:${bgName}`) }
-      } else count('ignored', `bg:${bgName.split('/')[0]}`)   // CG/… 的 Spine 场景
+      } else if (opt.cg.enabled && /^CG\//i.test(bgName)) showCg(bgName, row)
+      else count('ignored', `bg:${bgName.split('/')[0]}`)
     }
+    else if (opt.cg.enabled && /^CG\//i.test(bg || '') && row.BGMotion && cgPlay) showCg(bg, row)   // 同一个 CG 换动作
     const musicName = row.Music
     if (musicName && musicName !== 'no' && musicName !== music) {
       music = musicName
@@ -165,7 +214,7 @@ export function parse(text, ctx = null, meta = {}) {
     if (!dialogText) { count('ignored', 'row-without-text'); continue }
     stats.messages += 1
     const speakerText = row.Speaker ? table[row.Speaker] : ''
-    const speaker = speakerText === 'player' ? opt.playerName : speakerText || ''
+    const speaker = speakerText === 'player' ? opt.playerName : speakerText === 'no' ? '' : speakerText || ''   // 'no' = 旁白，不是名字
     emit({ op: 'speaker', segments: speaker ? [{ text: speaker }] : [] })
     if (row.TalkSound && row.TalkSound !== 'no') { const src = refer('voices', row.TalkSound, opt.audioExts); if (src) emit({ op: 'voice', src }) }
     emit({ op: 'text', segments: markupSegments(dialogText, opt.playerName) })
