@@ -1,5 +1,6 @@
 // CRI ACB（@UTF 表 + 内嵌/外置 AFS2 AWB）解析：cue 名 → 波形 → HCA 数据
-export function readUtf(buf, base = 0) {
+// raw：data 字段不取内容，只给 { off, size }（off = 相对 buf 起点的绝对位置），用于只读头部再按范围取需要的块
+export function readUtf(buf, base = 0, { raw = false } = {}) {
   if (buf.toString('latin1', base, base + 4) !== '@UTF') throw new Error('不是 @UTF 表')
   const t = base + 8
   const rowOff = buf.readUInt16BE(t + 2), strOff = buf.readUInt32BE(t + 4), dataOff = buf.readUInt32BE(t + 8)
@@ -26,7 +27,7 @@ export function readUtf(buf, base = 0) {
       case 8: return { v: buf.readFloatBE(at), n: 4 }
       case 9: return { v: buf.readDoubleBE(at), n: 8 }
       case 0xa: return { v: str(buf.readUInt32BE(at)), n: 4 }
-      case 0xb: { const o = buf.readUInt32BE(at), s = buf.readUInt32BE(at + 4); return { v: buf.subarray(t + dataOff + o, t + dataOff + o + s), n: 8 } }
+      case 0xb: { const o = buf.readUInt32BE(at), s = buf.readUInt32BE(at + 4); if (raw) return { v: { off: t + dataOff + o, size: s }, n: 8 }; return { v: buf.subarray(t + dataOff + o, t + dataOff + o + s), n: 8 } }
       default: throw new Error(`UTF 字段类型 ${type}`)
     }
   }
@@ -58,16 +59,13 @@ export function readAfs2(buf, base = 0) {
   })
 }
 
-// → { cues: [{ name, index, waveIds }], waves: Map<id, Buffer(HCA)> }
-export function readAcb(buf, extAwb = null) {
-  const top = readUtf(buf).rows[0]
-  const tbl = (k) => (top[k] && top[k].length ? readUtf(top[k]).rows : [])
-  const nameRows = tbl('CueNameTable'), cueRows = tbl('CueTable'), synthRows = tbl('SynthTable'), waveRows = tbl('WaveformTable')
-  const awbBuf = top.AwbFile && top.AwbFile.length ? top.AwbFile : extAwb
-  const waves = new Map()
-  if (awbBuf) for (const e of readAfs2(awbBuf)) waves.set(e.id, e.data)
+const TABLES = ['CueNameTable', 'CueTable', 'SynthTable', 'WaveformTable']
+const rowsOf = (buf) => (buf && buf.length ? readUtf(buf).rows : [])
+
+// 表行 → cue 列表 [{ name, index, waveIds }]
+function cuesOf({ nameRows, cueRows, synthRows, waveRows }) {
   const waveId = (w) => (w.Streaming ? w.StreamAwbId : w.MemoryAwbId)
-  const cues = nameRows.map((n) => {
+  return nameRows.map((n) => {
     const cue = cueRows[n.CueIndex] || {}
     const ids = []
     const visitSynth = (si) => {
@@ -83,5 +81,26 @@ export function readAcb(buf, extAwb = null) {
     else if (cue.ReferenceType === 3 || cue.ReferenceType === 2) visitSynth(cue.ReferenceIndex)
     return { name: n.CueName, index: n.CueIndex, waveIds: ids }
   })
-  return { cues, waves }
+}
+
+// → { cues: [{ name, index, waveIds }], waves: Map<id, Buffer(HCA)> }
+export function readAcb(buf, extAwb = null) {
+  const top = readUtf(buf).rows[0]
+  const awbBuf = top.AwbFile && top.AwbFile.length ? top.AwbFile : extAwb
+  const waves = new Map()
+  if (awbBuf) for (const e of readAfs2(awbBuf)) waves.set(e.id, e.data)
+  const [nameRows, cueRows, synthRows, waveRows] = TABLES.map((k) => rowsOf(top[k]))
+  return { cues: cuesOf({ nameRows, cueRows, synthRows, waveRows }), waves }
+}
+
+// 只读元数据（不读 AWB 数据）：read(offset, length) → Promise<Buffer>。几次小范围读取就够，几万个 ACB 建索引不用把整个文件读进来
+export async function readAcbCues(read) {
+  const head = await read(0, 8192)
+  if (head.length < 32 || head.toString('latin1', 0, 4) !== '@UTF') throw new Error('不是 ACB')
+  const dataOff = head.readUInt32BE(8 + 8)
+  const topBuf = head.length >= dataOff + 8 ? head : await read(0, dataOff + 8)
+  const raw = readUtf(topBuf, 0, { raw: true }).rows[0]
+  const blobs = await Promise.all(TABLES.map((k) => (raw[k]?.size ? read(raw[k].off, raw[k].size) : Buffer.alloc(0))))
+  const [nameRows, cueRows, synthRows, waveRows] = blobs.map(rowsOf)
+  return cuesOf({ nameRows, cueRows, synthRows, waveRows })
 }

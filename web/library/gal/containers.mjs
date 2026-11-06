@@ -20,7 +20,7 @@ import { isVorbisRiff, parseGsc, readXflIndex, riffVorbisToOgg } from './rscript
 import { decodeGscScript, runGsc } from './rscript-run.mjs'
 import { wcgToPng } from './rscript-wcg.mjs'
 import { imysDecrypt, readTextAssets } from './unity-bundle.mjs'
-import { readAcb } from './cri-acb.mjs'
+import { readAcb, readAcbCues } from './cri-acb.mjs'
 import { IMYS_HCA_KEY, decodeHca, pcmToWav } from './cri-hca.mjs'
 import { decodeArc, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt, tomoeImageTransform } from './tomoe.mjs'
 import { DSM_MAX_BYTES, decryptDsm, isPsm, psmToPng, splitDsm } from './unity-dsm.mjs'
@@ -987,6 +987,7 @@ function hitFor(v, rel) {
 // 取一个虚拟条目的字节（转好格式 / 解好密的）
 async function readHit(hit) {
   if (hit.krkr) return readKrkrHit(hit)
+  if (hit.transform === 'imys-hca') return transformData(await readFile(hit.file), hit)   // ACB 整个读进来（索引阶段只读了元数据，没有记大小）
   const handle = await open(hit.file, 'r')
   try {
     if (hit.zipLocal) {   // ZIP 条目：hit.offset = 本地头位置；本地头 30 字节 + 文件名 + 额外字段之后才是数据
@@ -1034,36 +1035,80 @@ async function listArcs(mediaDir, cfg) {
 // raw/ 和 bundles/ 同级：扫描目录 <前缀>/bundles/scenarios → <前缀>/raw
 const imysAudioDir = (cfg) => `${String(cfg.scan?.[0] || '').replace(/\/?bundles\/scenarios\/?$/i, '').replace(/^\.$/, '')}/raw`.replace(/^\//, '')
 const imysAudioKind = (rel) => (/(^|\/)BGM(\/|$)/i.test(rel) ? 'bgm' : /(^|\/)SCENARIO_SE(\/|$)/i.test(rel) ? 'se' : 'voice')
-async function listImysAcb(mediaDir, cfg) {
-  const out = []
-  const walk = async (dir, rel, depth) => {
-    let items = []
-    try { items = await readdir(dir, { withFileTypes: true }) } catch { return }
-    for (const item of items.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      if (item.isDirectory()) { if (depth < 4) await walk(path.join(dir, item.name), rel ? `${rel}/${item.name}` : item.name, depth + 1); continue }
-      if (!/\.acb$/i.test(item.name)) continue
-      const file = path.join(dir, item.name)
+// 目录扫描：只 readdir（不 stat 每个文件——几万个 ACB 时 stat 一遍就要几秒，NAS 上更慢）；签名 = 各目录的 mtime + 文件数（增删文件会改目录 mtime）。结果缓存 20 秒：一次打开剧本会连着问很多次
+const IMYS_LIST_TTL_MS = 20000
+const imysRuns = new Map()
+const imysLists = new Map()   // mediaDir|raw 目录 → { at, promise }
+function listImysAcb(mediaDir, cfg) {
+  const base = imysAudioDir(cfg)
+  const key = `${mediaDir}|${base}`
+  const hit = imysLists.get(key)
+  if (hit && Date.now() - hit.at < IMYS_LIST_TTL_MS) return hit.promise
+  const promise = (async () => {
+    const files = []
+    const parts = []
+    const walk = async (dir, rel, depth) => {
+      let items = []
       let info
-      try { info = await stat(file) } catch { continue }
-      out.push({ file, rel, name: item.name.replace(/\.acb$/i, ''), size: info.size, sig: `${rel}/${item.name}:${info.size}:${Math.floor(info.mtimeMs)}` })
+      try { info = await stat(dir); items = await readdir(dir, { withFileTypes: true }) } catch { return }
+      parts.push(`${rel}:${Math.floor(info.mtimeMs)}:${items.length}`)
+      for (const item of items.sort((x, y) => (x.name < y.name ? -1 : 1))) {
+        if (item.isDirectory()) { if (depth < 4) await walk(path.join(dir, item.name), `${rel}/${item.name}`, depth + 1) } else if (/\.acb$/i.test(item.name)) files.push({ file: path.join(dir, item.name), rel, name: item.name.replace(/\.acb$/i, '') })
+      }
+    }
+    await walk(path.join(mediaDir, ...base.split('/')), base, 0)
+    return { files, sig: createHash('sha1').update(parts.join('|')).digest('hex') }
+  })()
+  imysLists.set(key, { at: Date.now(), promise })
+  promise.catch(() => imysLists.delete(key))
+  return promise
+}
+// 索引（ACB → cue 名）：只读每个 ACB 的元数据（几次小范围读取，不读 AWB 数据），并发读；结果存到 <dir>/.audio-index.json，目录签名没变就直接用，重启后也不用重建
+async function imysAudioIndex(mediaDir, cfg) {
+  const list = await listImysAcb(mediaDir, cfg)
+  const cacheFile = path.join(mediaDir, ...cfg.dir.split('/'), '.audio-index.json')
+  try {
+    const cached = JSON.parse(await readFile(cacheFile, 'utf8'))
+    if (cached.sig === list.sig && cached.version === CONTAINER_FORMAT_VERSION) return { list, cues: cached.cues }
+  } catch { /* 还没有 */ }
+  const startedAt = Date.now()
+  const cues = {}   // rel/名 → [cue 名]
+  let next = 0
+  let failed = 0
+  const worker = async () => {
+    for (;;) {
+      const f = list.files[next++]
+      if (!f) return
+      let handle
+      try {
+        handle = await open(f.file, 'r')
+        const found = await readAcbCues(async (offset, length) => { const buf = Buffer.alloc(length); const { bytesRead } = await handle.read(buf, 0, length, offset); return buf.subarray(0, bytesRead) })
+        const names = found.filter((c) => c.waveIds.length).map((c) => c.name)
+        if (names.length) cues[`${f.rel}/${f.name}`] = names
+      } catch { failed += 1 } finally { await handle?.close().catch(() => {}) }
     }
   }
-  const base = imysAudioDir(cfg)
-  await walk(path.join(mediaDir, ...base.split('/')), base, 0)
-  return out
+  await Promise.all(Array.from({ length: 24 }, worker))
+  console.log(`[gal] Imys 声音索引：${list.files.length} 个 ACB，${Object.keys(cues).length} 个有 cue，失败 ${failed}，${Date.now() - startedAt} ms`)
+  try {
+    await mkdir(path.dirname(cacheFile), { recursive: true })
+    const tmp = `${cacheFile}.tmp-${process.pid}`
+    await writeFile(tmp, JSON.stringify({ version: CONTAINER_FORMAT_VERSION, sig: list.sig, cues }))
+    await rename(tmp, cacheFile)
+  } catch { /* 写不了就下次再建 */ }
+  return { list, cues }
 }
 async function buildImysVirtual(mediaDir, cfg, sig) {
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
-  for (const acb of await listImysAcb(mediaDir, cfg)) {
-    if (acb.size > MAX_ENTRY_BYTES) continue
-    let cues
-    try { cues = readAcb(await readFile(acb.file)).cues } catch { continue }
+  const { list, cues } = await imysAudioIndex(mediaDir, cfg)
+  for (const acb of list.files) {
+    const names = cues[`${acb.rel}/${acb.name}`]
+    if (!names) continue
     const kind = imysAudioKind(acb.rel)
-    const named = cues.filter((c) => c.waveIds.length)
-    for (const cue of named) add(`${cfg.dir}/res/${kind}/${cue.name}.wav`, { file: acb.file, offset: 0, size: acb.size, transform: 'imys-hca', cue: cue.name })
-    if (named.length === 1 && named[0].name !== acb.name) add(`${cfg.dir}/res/${kind}/${acb.name}.wav`, { file: acb.file, offset: 0, size: acb.size, transform: 'imys-hca', cue: named[0].name })
+    for (const cue of names) add(`${cfg.dir}/res/${kind}/${cue}.wav`, { file: acb.file, offset: 0, size: 0, transform: 'imys-hca', cue })
+    if (names.length === 1 && names[0] !== acb.name) add(`${cfg.dir}/res/${kind}/${acb.name}.wav`, { file: acb.file, offset: 0, size: 0, transform: 'imys-hca', cue: names[0] })
   }
   return { map, files, sig }
 }
@@ -1267,7 +1312,7 @@ export async function virtualIndex({ mediaDir, config }) {
   const cfg = config?.containers
   if (!isHybrid(cfg) || !mediaDir) return null
   const arcs = await listArcs(mediaDir, cfg)
-  const sig = arcs.map((a) => a.sig).join('|') + (cfg.format === 'krkr' ? await krkrRefsSig(mediaDir, cfg) : cfg.format === 'imys' ? `|acb:${(await listImysAcb(mediaDir, cfg)).map((a) => a.sig).join(',')}` : '')
+  const sig = arcs.map((a) => a.sig).join('|') + (cfg.format === 'krkr' ? await krkrRefsSig(mediaDir, cfg) : cfg.format === 'imys' ? `|acb:${(await listImysAcb(mediaDir, cfg)).sig}` : '')
   const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
   const hit = virtuals.get(key)
   if (hit?.sig === sig) return hit.promise
@@ -1350,7 +1395,7 @@ export async function materialize({ mediaDir, config, rels }) {
 const inflight = new Map()   // mediaDir|dir → Promise
 const lastReport = new Map() // mediaDir → { at, arcs: { 名字: 结果 | { error } } }
 export const containerReport = (mediaDir) => lastReport.get(mediaDir) || null
-export function invalidateContainers(mediaDir) { for (const key of [...inflight.keys()]) if (key.startsWith(`${mediaDir}|`)) inflight.delete(key); for (const key of [...virtuals.keys()]) if (key.startsWith(`${mediaDir}|`)) virtuals.delete(key); lastReport.delete(mediaDir) }
+export function invalidateContainers(mediaDir) { for (const key of [...inflight.keys()]) if (key.startsWith(`${mediaDir}|`)) inflight.delete(key); for (const key of [...virtuals.keys()]) if (key.startsWith(`${mediaDir}|`)) virtuals.delete(key); lastReport.delete(mediaDir); for (const key of [...imysRuns.keys()]) if (key.startsWith(`${mediaDir}|`)) imysRuns.delete(key); for (const key of [...imysLists.keys()]) if (key.startsWith(`${mediaDir}|`)) imysLists.delete(key) }
 
 // 保证容器已展开（没配置 / 没启用 = 什么都不做）。幂等：容器没变（大小 + mtime + 规则指纹）就跳过；同一个目录并发调用只做一次
 export function ensureContainers({ mediaDir, config }) {
@@ -1391,12 +1436,14 @@ async function runImys(mediaDir, cfg) {
   const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
   const budget = { bytes: 0, limit: cfg.maxTotalMB * 1024 * 1024 }
   try {
-    for (const f of files.slice(0, cfg.maxEntries)) {
+    const todo = files.slice(0, cfg.maxEntries)
+    let cursor = 0
+    const expandOne = async (f) => {   // 读文件并发（NAS 上逐个读很慢），解密 / 解包是 CPU 活、同步做
       try {
         const asset = readTextAssets(imysDecrypt(await readFile(f.file)))[0]
-        if (!asset || !asset.text) { result.skipped += 1; continue }
+        if (!asset || !asset.text) { result.skipped += 1; return }
         const name = safeEntryName(f.name)
-        if (!name) { result.bad.push(f.name.slice(0, 60)); continue }
+        if (!name) { result.bad.push(f.name.slice(0, 60)); return }
         const text = JSON.stringify({ format: 'imys-adv/1', category: f.category, name: f.name, text: asset.text })
         budget.bytes += text.length
         if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
@@ -1406,6 +1453,9 @@ async function runImys(mediaDir, cfg) {
         result.scripts += 1
       } catch (error) { if (/超过上限/.test(error.message)) throw error; result.bad.push(`${f.category}/${f.name}（${String(error.message).slice(0, 80)}）`) }
     }
+    const startedAt = Date.now()
+    await Promise.all(Array.from({ length: 16 }, async () => { for (;;) { const f = todo[cursor++]; if (!f) return; await expandOne(f) } }))
+    console.log(`[gal] Imys 剧本展开：${result.scripts} 份（${todo.length} 个 bundle），${Date.now() - startedAt} ms`)
     await rm(path.join(outRoot, 'script'), { recursive: true, force: true })
     try { await stat(path.join(tmp, 'script')); await mkdir(outRoot, { recursive: true }); await rename(path.join(tmp, 'script'), path.join(outRoot, 'script')) } catch { /* 一个都没有 */ }
     await mkdir(outRoot, { recursive: true })
@@ -1417,7 +1467,14 @@ async function runImys(mediaDir, cfg) {
 }
 
 async function run(mediaDir, cfg) {
-  if (cfg.format === 'imys') return runImys(mediaDir, cfg)
+  if (cfg.format === 'imys') {   // 6000 多个 bundle：每次请求都 stat 一遍太慢，20 秒内复用上一次的结果（目录 / 规则变了 invalidateContainers 会清）
+    const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
+    const hit = imysRuns.get(key)
+    if (hit && Date.now() - hit.at < IMYS_LIST_TTL_MS) return hit.report
+    const report = await runImys(mediaDir, cfg)
+    imysRuns.set(key, { at: Date.now(), report })
+    return report
+  }
   const rules = compileRules(cfg)
   const outRoot = path.join(mediaDir, ...cfg.dir.split('/'))
   const stampFile = path.join(outRoot, '.stamp.json')
