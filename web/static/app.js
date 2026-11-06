@@ -3410,13 +3410,19 @@ const libraryScrollTarget = () => {
 const SCROLL_AUTO_RATE_KEY = 'copymanga.scrollAutoRate'
 const SCROLL_AUTO_RATES = ['0.2', '0.33', '0.5', '1', '2', '3', 'max']
 const scrollAutoRate = () => { const v = localStorage.getItem(SCROLL_AUTO_RATE_KEY) || '1'; return v === 'max' ? 'max' : Number(v) || 1 }
-const scrollAutoSelect = document.querySelector('#library-scroll-auto-rate')
-if (scrollAutoSelect) {
+// 频率下拉框：库页、图片浏览、媒体浏览各有一个（class scroll-auto-rate），共用同一个本机设置，改一个其余跟着变
+const scrollAutoSelects = [...document.querySelectorAll('.scroll-auto-rate')]
+{
   const saved = localStorage.getItem(SCROLL_AUTO_RATE_KEY)
-  scrollAutoSelect.value = SCROLL_AUTO_RATES.includes(saved) ? saved : '1'
-  scrollAutoSelect.addEventListener('change', () => localStorage.setItem(SCROLL_AUTO_RATE_KEY, scrollAutoSelect.value))
+  for (const select of scrollAutoSelects) {
+    select.value = SCROLL_AUTO_RATES.includes(saved) ? saved : '1'
+    select.addEventListener('change', () => { localStorage.setItem(SCROLL_AUTO_RATE_KEY, select.value); for (const other of scrollAutoSelects) other.value = select.value })
+  }
 }
 if (els.libraryItems) createScrollButtons({ host: document.querySelector('#library-view'), getTarget: libraryScrollTarget, label: '媒体库分段滚动', getAutoRate: scrollAutoRate })
+// 图片浏览（#viewer-images 自己滚动）、媒体浏览（#media-reader-content：图集 / 文本 / EPUB 竖排滚动；音视频、分页横排时内容不比可视区高，按钮自己隐藏）
+if (els.viewerImages) createScrollButtons({ host: els.viewerView, getTarget: () => els.viewerImages, label: '图片浏览分段滚动', getAutoRate: scrollAutoRate })
+if (els.mediaReaderContent) createScrollButtons({ host: els.mediaViewerView, getTarget: () => els.mediaReaderContent, label: '媒体浏览分段滚动', getAutoRate: scrollAutoRate })
 
 // —— 卡片宽度 / 页面总宽度 / 封面放大倍率：各存各的（localStorage），拖动的交互复用 openWidthAdjust ——
 const LIBRARY_CARD_W_KEY = 'copymanga.libraryCardWidth'
