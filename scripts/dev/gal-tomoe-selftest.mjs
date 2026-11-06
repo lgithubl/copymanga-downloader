@@ -138,7 +138,12 @@ try {
   const flat = scene.steps.flatMap((s) => s.commands.map((cmd) => ({ ...cmd, step: s.index })))
   const textOf = (cmd) => cmd.segments.map((s) => s.text).join('')
   const texts = flat.filter((x) => x.op === 'text')
-  check('适配器：每个点击一步；同一页的行累计显示', texts.length === 7 && textOf(texts[0]) === '序の0行目' && textOf(texts[1]) === '序の0行目\n序の1行目', J(texts.map(textOf)))
+  check('适配器：每个点击一步；默认一句句（只显示这一次点击的那一段，不累计整页）', texts.length === 7 && textOf(texts[0]) === '序の0行目' && textOf(texts[1]) === '序の1行目', J(texts.map(textOf)))
+  {
+    const pageScene = buildScene('tomoe::arc04', text, adapter.prepare({ options: { bgmBase: 0, pageMode: 'page' }, files: vf.files, toResourcePath: (rel) => rel.replace(/^arc\/res\//, '') }), { options: { bgmBase: 0, pageMode: 'page' } })
+    const pageTexts = pageScene.steps.flatMap((st) => st.commands).filter((x) => x.op === 'text').map(textOf)
+    check('适配器：pageMode = page 还是游戏原样（同一页的行累计到页末）', pageTexts[1] === '序の0行目\n序の1行目', J(pageTexts))
+  }
   const voiced = flat.filter((x) => x.op === 'text').find((x) => textOf(x).includes('声のある行'))
   const speakerCmd = flat.filter((x) => x.op === 'speaker' && x.step === voiced.step)[0]
   check('语音：#43 的声道 → 说话人（友恵），语音只管下一行；下一行没有说话人', speakerCmd?.segments?.[0]?.text === '友恵' && flat.some((x) => x.op === 'voice' && x.src === 'snd/1.ogg') && flat.filter((x) => x.op === 'speaker').find((x) => x.step === voiced.step + 1)?.segments?.length === 0)
@@ -149,7 +154,7 @@ try {
   check('背景：开头黑底；同一层「清空 + 显示」合成一次切换（不闪黑），切换提交时才发', bgs.length === 3 && bgs[0].color && bgs[1].src === 'img/1.png' && bgs[2].src === 'img/0.jpg', J(bgs))
   check('背景：在 #29 … #13 里的切换带淡入淡出', bgs[2].fade === 0.5 && bgs[1].fade === 0, J(bgs))
   const ov = flat.filter((x) => x.op === 'overlay')
-  check('叠加层：层 2 = 整张图，层 140 的补丁（.p.png）在补丁槽；按层给 z', ov.some((o) => o.slot === 'L2' && o.src === 'img/2.p.png') === false && ov.some((o) => o.slot === 'L2p' && o.src === 'img/2.p.png') && ov.every((o) => o.stage?.[0] === 1920), J(ov))
+  check('叠加层：层 2 = 整张图，层 140 的补丁（.p.png）在补丁槽；按层给 z', ov.some((o) => o.slot === 'L2' && o.src === 'img/2.p.png') === false && ov.some((o) => o.slot === 'L2p0' && o.src === 'img/2.p.png') && ov.every((o) => o.stage?.[0] === 1920), J(ov))
   check('清空：图号 ≥ 816 去掉这一层的叠加层', flat.filter((x) => x.op === 'overlayOff').length === 2, J(flat.filter((x) => x.op === 'overlayOff')))
   check('统计：图 / 声音全部找到', scene.stats.images.unresolved === 0 && scene.stats.voices.unresolved === 0 && scene.stats.sounds.unresolved === 0 && scene.stats.bgm.unresolved === 0, J(scene.stats))
 

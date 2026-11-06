@@ -39,7 +39,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 16
+export const CONTAINER_FORMAT_VERSION = 17
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -412,15 +412,21 @@ async function expandTomoe({ file, arcName, rule, cfg, outRoot, budget }) {
   const { chapters, records } = splitChapters(await readFile(file))
   if (!records) throw new Error('不是 TinkerBell 剧本（没有认出任何记录）')
   result.entries = chapters.length
-  for (const chapter of chapters.slice(0, cfg.maxEntries)) {
-    const name = String(chapter.index + 1).padStart(2, '0')
-    const text = JSON.stringify({ format: 'tomoe-arc04/1', arc: arcName, name, record: chapter.start, texts: chapter.texts, events: chapter.events })
-    budget.bytes += text.length
-    if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
-    const target = path.join(outRoot, 'script', stem, `${name}.${cfg.scriptExt || 'tomoe'}`)
-    await mkdir(path.dirname(target), { recursive: true })
-    await writeFile(target, text)
-    result.scripts += 1
+  let written = 0
+  for (const chapter of chapters) {
+    const chapterName = String(chapter.index + 1).padStart(2, '0')
+    for (const scene of chapter.scenes) {
+      if (written >= cfg.maxEntries) break
+      const name = `${chapterName}/${String(scene.index + 1).padStart(2, '0')}`   // script/Arc04/<章>/<节>.tomoe：章 = 剧本里的 ML 块，节 = 章里按场景切开的小节
+      const text = JSON.stringify({ format: 'tomoe-arc04/1', arc: arcName, name, chapter: chapter.index + 1, scene: scene.index + 1, record: chapter.start, texts: scene.texts, events: scene.events })
+      budget.bytes += text.length
+      if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
+      const target = path.join(outRoot, 'script', stem, `${name}.${cfg.scriptExt || 'tomoe'}`)
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, text)
+      result.scripts += 1
+      written += 1
+    }
   }
   return result
 }

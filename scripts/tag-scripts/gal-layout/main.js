@@ -1012,7 +1012,9 @@ export const ADAPTER_RULES = {
     "clearFrom": 816,
     "bgmBase": 6018,
     "fade": 0.5,
+    "pageMode": "sentence",
     "pageLimit": 12,
+    "maxPatches": 32,
     "speakers": {
       "1": "友恵",
       "2": "真由美",

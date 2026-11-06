@@ -218,9 +218,14 @@ export function parseRecord(body) {
   return { kind, args }
 }
 
-// 剧本 → 章节（按 ML 记录切开）。每章 { index, start, events: [['T', 文本] | ['#', 操作号, …] | ['$', 操作号, …]], texts }
+// 剧本 → 章节（按 ML 记录切开）→ 每章再按「场景」切成小节。每章 { index, start, events, texts, scenes: [{ index, texts, events }] }
+//   events：['T', 文本] | ['#', 操作号, …] | ['$', 操作号, …]（章节的全部事件，没切的）；scenes[i].events 是这一小节的事件，开头带「接上一节的现场」（还在显示的图层 / BGM / 循环音效），所以每一小节单独解析也有对的画面
 //   minTexts：文本行少于这个数的块（菜单 / 调试 / 子程序）不要
-export function splitChapters(buf, { minTexts = 20 } = {}) {
+//   sceneTexts：一小节至少多少行文本才允许在场景切换处切开；sceneMax：超过这么多行之后，任何一次画面切换（不只是换背景层）都切
+//   场景切换 = 画面切换（#29）之后紧跟着在背景层（132 / 120 / 127 / 117 / 121 / 9999）上显示一张真正的图（图号 < 816）
+const BG_LAYERS = new Set([132, 120, 127, 117, 121, 9999])
+const CLEAR_FROM = 816
+export function splitChapters(buf, { minTexts = 20, sceneTexts = 80, sceneMax = 300 } = {}) {
   const records = parseScriptRecords(buf)
   const chapters = []
   let cur = null
@@ -234,6 +239,58 @@ export function splitChapters(buf, { minTexts = 20 } = {}) {
     if (parsed.kind === 'T') { cur.events.push(['T', parsed.text]); cur.texts += 1 } else cur.events.push([parsed.kind, ...parsed.args])
   })
   const kept = chapters.filter((c) => c.texts >= minTexts)
-  kept.forEach((c, i) => { c.index = i })
+  kept.forEach((c, i) => { c.index = i; c.scenes = splitScenes(c.events, { sceneTexts, sceneMax }) })
   return { records: records.length, chapters: kept, total: chapters.length }
+}
+
+export const splitScenesForTest = (events, opts) => splitScenes(events, opts)   // 自测用
+const isDraw = (ev) => ev[0] === '$' && ev[1] === 204
+function splitScenes(events, { sceneTexts, sceneMax }) {
+  const scenes = []
+  let list = []
+  let texts = 0
+  const live = []          // 还在显示的绘制（按时间顺序）：整张图 / 补丁都留着，清空（图号 >= 816）去掉这一层的
+  let bgm = null
+  let bgse = null
+  const snapshot = () => {
+    const out = live.map((ev) => ev.slice())
+    if (bgm !== null) out.push(['#', 131, bgm, -1])
+    if (bgse !== null) out.push(['#', 114, bgse])
+    return out
+  }
+  const flush = () => { scenes.push({ index: scenes.length, texts, events: list }) }
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i]
+    if (ev[0] === '#' && ev[1] === 29 && texts >= sceneTexts) {
+      let bgDraw = false
+      let anyDraw = false
+      for (let j = i + 1; j < Math.min(events.length, i + 5); j++) {
+        if (!isDraw(events[j])) continue
+        anyDraw = true
+        if (BG_LAYERS.has(Number(events[j][6])) && Number(events[j][4]) < CLEAR_FROM) bgDraw = true
+      }
+      if (bgDraw || (texts >= sceneMax && anyDraw)) {
+        flush()
+        list = snapshot()
+        texts = 0
+      }
+    }
+    list.push(ev)
+    if (ev[0] === 'T') texts += 1
+    else if (isDraw(ev)) {
+      const layer = Number(ev[6])
+      for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === layer && Number(ev[4]) >= CLEAR_FROM) live.splice(k, 1)
+      if (Number(ev[4]) < CLEAR_FROM) {
+        live.push(ev)
+        const same = live.filter((x) => Number(x[6]) === layer)
+        if (same.length > 40) live.splice(live.indexOf(same[0]), 1)   // 防止无限增长（整张图一般很快把前面的盖掉，这里只管补丁连发）
+      }
+    } else if (ev[0] === '#' && ev[1] === 35) {   // #35 层：清掉这一层；9999 = 全部（每次换场景都有一条）
+      if (Number(ev[2]) === 9999) live.length = 0
+      else for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === Number(ev[2])) live.splice(k, 1)
+    } else if (ev[0] === '#' && ev[1] === 131) bgm = Number(ev[2]) >= 0 ? Number(ev[2]) : null
+    else if (ev[0] === '#' && ev[1] === 114) bgse = Number(ev[2]) >= 0 ? Number(ev[2]) : null
+  }
+  flush()
+  return scenes
 }
