@@ -158,6 +158,35 @@ export function parse(text, ctx = null, meta = {}) {
     for (const rel of [`CG/${id}/Img/${name}`, `CG/${id}/Image/${name}`, `CG/${id}/${name}`, `CG/${id}/Img/IMG_${name}`, `CG/${id}/Img/${id}`, `CG/${id}/${id}`, `CG/${id}/Img/IMG_${id}`, `CG/${id}/Image/CG_${id}`]) { const hit = find(rel, opt.imageExts); if (hit) return hit }
     return ''
   }
+  // 阶段列表：骨架动画名按数字前缀分组，每组取 Loop > Idle > 第一个；跳过 90_ 开头的（背景 / 手）
+  const stageList = (names) => {
+    const groups = new Map()
+    for (const n of names) { const m = /^(\d+)_/.exec(n); if (!m || m[1] === '90') continue; if (!groups.has(m[1])) groups.set(m[1], []); groups.get(m[1]).push(n) }
+    return [...groups.entries()].sort((x, y) => Number(x[0]) - Number(y[0])).map(([, list]) => list.find((n) => /loop/i.test(n)) || list.find((n) => /idle/i.test(n)) || list[0])
+  }
+  let camState = { x: 0, y: 0, s: 1 }
+  // BGMotion 的名字：NextStage = 下一阶段；有镜头 .anim 的 = 镜头移动（终点位置 / 缩放，时长 = 最后一个关键帧）；Normal = 回到原位
+  function cgMotion(tokens) {
+    if (!cgPlay) return
+    for (const token of tokens) {
+      if (token === 'NextStage') {
+        if (cgPlay.stage + 1 < cgPlay.stages.length) {
+          cgPlay.stage += 1
+          const anim = cgPlay.stages[cgPlay.stage]
+          emit({ op: 'spine', slot: 'CG', kind: 'still', skel: cgPlay.skel, atlas: cgPlay.atlas, tracks: [{ track: 0, anim, loop: true }, ...((cgPlay.cgi?.stages || []).includes('90_BG') ? [{ track: 1, anim: '90_BG', loop: true }] : [])], loop: true, speed: 1, order: 0, fade: 0 })
+        }
+        stats.cg.stage = (stats.cg.stage || 0) + 1
+        continue
+      }
+      const clip = cgPlay.cgi?.clips?.[token]
+      if (!clip) { count('ignored', `cgmotion:${token}`); continue }
+      const to = { x: clip.pos ? clip.pos[0] : camState.x, y: clip.pos ? clip.pos[1] : camState.y, s: clip.scale ?? camState.s }
+      if (to.x === camState.x && to.y === camState.y && to.s === camState.s) continue
+      emit({ op: 'camera', ui: true, from: [camState.x, camState.y, camState.s], to: [to.x, to.y, to.s], seconds: Math.min(8, clip.sec || 0) })
+      camState = to
+      stats.cg.camera = (stats.cg.camera || 0) + 1
+    }
+  }
   function showCg(bgName, row) {
     const id = /^CG\/([^/]+)\//i.exec(bgName)?.[1] || ''
     const spine = hasIndex ? ctx.cgSkels?.get(id.toLowerCase()) : null
@@ -170,9 +199,12 @@ export function parse(text, ctx = null, meta = {}) {
           stats.cg.spine += 1
           cgPlay = { id, skel: spine.skel, atlas }
           if (!cgShown) emit({ op: 'bg', color: [0, 0, 0], fade: 0 })
-          // 动画：骨架里有哪些动画这里不知道（Unity 的 Animator 状态机 S / B / Opening / Vision … 没导出成能直接用的映射），所以给几条候选轨道，名字对不上的轨道播放器跳过：
-          // 轨道 0 = 00（待机循环），1 = BG（背景部件循环），2.. = BGMotion 里的名字（和骨架动画同名时才生效，如 20_Loop1）
-          const tracks = [{ track: 0, anim: opt.cg.anim || '00', loop: true }, { track: 1, anim: 'BG', loop: true }, ...motions.filter((m) => !['00', 'BG'].includes(m)).slice(0, 6).map((m, k) => ({ track: 2 + k, anim: m, loop: true }))]
+          // 动画：骨架按「阶段」播（NextStage = 下一阶段；阶段 = 骨架动画名前缀的数字 00 / 10 / 19 / 20 … 升序，每阶段取 Loop > Idle > 第一个）+ 90_BG 背景轨道；
+          // 镜头动作（BGMotion 里的名字，如 ZoominFace）见 cgMotion。Animator 状态机（.controller）没采到，阶段推进是按 NextStage 次数推的
+          const cgi = data.cg?.[id]
+          const stages = stageList(cgi?.stages || [])
+          cgPlay = { id, skel: spine.skel, atlas, stages, stage: 0, cgi }
+          const tracks = [{ track: 0, anim: stages[0] || opt.cg.anim || '00', loop: true }, ...((cgi?.stages || []).includes('90_BG') ? [{ track: 1, anim: '90_BG', loop: true }] : [])]
           emit({ op: 'spine', slot: 'CG', kind: 'still', skel: spine.skel, atlas, tracks, loop: true, speed: 1, order: 0, fade: 0 })
           cgShown = true
         }
@@ -188,17 +220,17 @@ export function parse(text, ctx = null, meta = {}) {
     const bgName = row.DialogBGPerfab
     if (bgName && bgName !== 'no' && bgName !== bg) {
       bg = bgName
-      if (cgShown && !/^CG\//i.test(bgName)) { emit({ op: 'spineOff', slot: 'CG' }); cgShown = false }
+      if (cgShown && !/^CG\//i.test(bgName)) { emit({ op: 'spineOff', slot: 'CG' }); cgShown = false; cgPlay = null; if (camState.x || camState.y || camState.s !== 1) { emit({ op: 'camera', ui: true, from: [camState.x, camState.y, camState.s], to: [0, 0, 1], seconds: 0 }); camState = { x: 0, y: 0, s: 1 } } }
       if (/^BG\/BG_Black$/i.test(bgName)) emit({ op: 'bg', color: [0, 0, 0], fade: 0 })
       else if (/^BG\//i.test(bgName)) {
         let src = find(bgName, opt.imageExts)
         if (!src && hasIndex) src = ctx.dirImages.get(bgName.toLowerCase()) || ''
         stats.images.referenced += 1
         if (src) { stats.images.resolved += 1; emit({ op: 'bg', src, fade: 0 }) } else { stats.images.unresolved += 1; if (hasIndex) count('unresolved', `image:${bgName}`) }
-      } else if (opt.cg.enabled && /^CG\//i.test(bgName)) showCg(bgName, row)
+      } else if (opt.cg.enabled && /^CG\//i.test(bgName)) { camState = { x: 0, y: 0, s: 1 }; emit({ op: 'camera', ui: true, from: [0, 0, 1], to: [0, 0, 1], seconds: 0 }); showCg(bgName, row); cgMotion(String(row.BGMotion || '').split('~').filter(Boolean)) }
       else count('ignored', `bg:${bgName.split('/')[0]}`)
     }
-    else if (opt.cg.enabled && /^CG\//i.test(bg || '') && row.BGMotion && cgPlay) showCg(bg, row)   // 同一个 CG 换动作
+    else if (opt.cg.enabled && /^CG\//i.test(bg || '') && row.BGMotion && cgPlay) cgMotion(String(row.BGMotion).split('~').filter(Boolean))   // 同一个 CG 换动作
     const musicName = row.Music
     if (musicName && musicName !== 'no' && musicName !== music) {
       music = musicName

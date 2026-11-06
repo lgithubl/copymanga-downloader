@@ -176,7 +176,7 @@ export function applyCommand(state, command, choices = null) {
       state.overlays = typeof command.slot === 'string' && command.slot ? state.overlays.filter((o) => o.slot !== command.slot) : []
       break
     case 'camera':
-      state.camera = { to: command.to, from: command.from || null, seconds: command.seconds || 0 }
+      state.camera = { to: command.to, from: command.from || null, seconds: command.seconds || 0, ui: Boolean(command.ui) }
       break
     case 'bgse':
       state.bgse = command.src ? { src: command.src, loop: Boolean(command.loop) } : null

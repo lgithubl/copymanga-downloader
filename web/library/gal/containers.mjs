@@ -31,7 +31,7 @@ import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
 import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
 import { inflateRawSync, inflateSync } from 'node:zlib'
 import { openZip } from '../zip-reader.mjs'
-import { DEFAULT_LANGUAGES, buildDramas, buildLineDramas, dramaGroup, mergeDramas, parseText } from './arcrecord-dialog.mjs'
+import { DEFAULT_LANGUAGES, buildDramas, buildLineDramas, dramaGroup, mergeDramas, parseCameraClip, parseText } from './arcrecord-dialog.mjs'
 import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
 import { extractZipMember, parseZipCentral, parseZipEnd } from './l2d-zip.mjs'
 import { Psb, isPsb } from './psb.mjs'
@@ -480,6 +480,47 @@ async function expandArcdrama({ file, arcName, rule, cfg, outRoot, budget }) {
   let roleBuffer = null
   if (isLine) { try { roleBuffer = await readFile(path.join(path.dirname(file), 'Role.txt')) } catch { /* 没有就用角色编号当名字 */ } }
   const built = isLine ? buildLineDramas(await readFile(file), texts, roleBuffer) : buildDramas(await readFile(file), texts)
+  // CG 的镜头动作 + 骨架阶段动画名（读 Game/CG/<编号>/ 下的 .anim；没采到就没有）
+  const cgRoot = path.join(path.dirname(file), '..', 'CG')
+  const cgCache = new Map()
+  const cgInfo = async (id) => {
+    if (cgCache.has(id)) return cgCache.get(id)
+    const info = { clips: {}, stages: [] }
+    const walk = async (dir, depth) => {
+      let items = []
+      try { items = await readdir(dir, { withFileTypes: true }) } catch { return }
+      for (const it of items) {
+        const full = path.join(dir, it.name)
+        if (it.isDirectory()) { if (depth < 2) await walk(full, depth + 1); continue }
+        if (!/\.anim$/i.test(it.name)) continue
+        const inCamera = /_Controller$|^Controller$/i.test(path.basename(dir))
+        const inSkeleton = path.basename(dir) === id
+        if (!inCamera && !inSkeleton) continue
+        let text
+        try { const st = await stat(full); if (st.size > 256 * 1024) continue; text = await readFile(full, 'utf8') } catch { continue }
+        const name = it.name.replace(/\.anim$/i, '')
+        if (inCamera) info.clips[name] = parseCameraClip(text)
+        else info.stages.push(name)
+      }
+    }
+    await walk(path.join(cgRoot, id), 0)
+    info.stages.sort()
+    // 只留骨架里真有的动画（.anim 目录里还有别的 Animator 剪辑）：骨架二进制里字符串 = 长度 + 1 的一个字节 + 名字
+    for (const dir of [path.join(cgRoot, id, id), path.join(cgRoot, id)]) {
+      let skel = null
+      try { for (const f of await readdir(dir)) if (/\.skel\.(asset|bytes)$/i.test(f) && !/\(\d+\)/.test(f)) { skel = await readFile(path.join(dir, f)); break } } catch { /* 没有 */ }
+      if (skel) { info.stages = info.stages.filter((n) => skel.includes(Buffer.concat([Buffer.from([n.length + 1]), Buffer.from(n, 'utf8')]))); break }
+    }
+    cgCache.set(id, info)
+    return info
+  }
+  for (const drama of built) {
+    const ids = [...new Set((drama.rows || []).map((r) => /^CG\/([^/]+)\//i.exec(r.DialogBGPerfab || '')?.[1]).filter(Boolean))]
+    if (!ids.length) continue
+    const cg = {}
+    for (const id of ids) { const info = await cgInfo(id); if (Object.keys(info.clips).length || info.stages.length) cg[id] = info }
+    if (Object.keys(cg).length) { const data = JSON.parse(drama.text); data.cg = cg; drama.text = JSON.stringify(data); drama.cgData = cg }
+  }
   const dramas = isLine ? built : [...built, ...mergeDramas(built)]   // 短剧情的合并版（同一事件 / 同一章）也各出一份
   result.entries = dramas.length
   for (const drama of dramas.slice(0, cfg.maxEntries)) {

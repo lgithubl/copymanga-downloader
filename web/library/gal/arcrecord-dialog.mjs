@@ -79,11 +79,13 @@ export function mergeDramas(dramas) {
     list.sort((a, b) => a.no - b.no)
     const rows = []
     const text = {}
+    const cg = {}
     for (const { d } of list) {
+      Object.assign(cg, d.cgData || {})
       rows.push(...d.rows)
       for (const [lang, bucket] of Object.entries(d.textMap || {})) Object.assign((text[lang] ||= {}), bucket)
     }
-    out.push({ id, merged: list.length, text: JSON.stringify({ format: DIALOG_FORMAT, id, title: list[0].d.title || '', rows, text }) })
+    out.push({ id, merged: list.length, text: JSON.stringify({ format: DIALOG_FORMAT, id, title: list[0].d.title || '', rows, text, ...(Object.keys(cg).length ? { cg } : {}) }) })
   }
   return out
 }
@@ -124,3 +126,25 @@ export function buildLineDramas(lineBuffer, texts = {}, roleBuffer = null) {
   }
   return out
 }
+
+// —— CG 镜头动作（Unity AnimationClip YAML：CG/<编号>/<名>_Controller/<BGMotion 里的名字>.anim）——
+// 只取位置 / 缩放曲线的最后一个关键帧作为终点、最后一个关键帧的时间作为时长（镜头推拉 / 换视角）；Shake / Loop 这类循环抖动不展开（终点 = 起点）。
+// 位置是 Unity UI 单位（按 1920×1080 的画布），缩放是倍数。返回 { <名字>: { sec, pos: [x, y] | null, scale: s | null } }
+export function parseCameraClip(yaml) {
+  const curveEnd = (section) => {
+    const i = yaml.indexOf(`  ${section}:`)
+    if (i < 0) return null
+    const rest = yaml.slice(i + section.length + 3)
+    const next = rest.search(/\n  m_\w+:/)
+    const body = next < 0 ? rest : rest.slice(0, next)
+    const keys = [...body.matchAll(/time: ([-\d.e]+)\s+value: \{x: ([-\d.e]+), y: ([-\d.e]+), z: ([-\d.e]+)\}/g)].map((m) => ({ t: Number(m[1]), x: Number(m[2]), y: Number(m[3]), z: Number(m[4]) }))
+    return keys.length ? keys : null
+  }
+  const pos = curveEnd('m_PositionCurves')
+  const scale = curveEnd('m_ScaleCurves')
+  const times = [pos?.[pos.length - 1]?.t, scale?.[scale.length - 1]?.t].filter((t) => Number.isFinite(t))
+  const lastP = pos?.[pos.length - 1]
+  const lastS = scale?.[scale.length - 1]
+  return { sec: times.length ? Math.max(...times) : 0, pos: lastP ? [lastP.x, lastP.y] : null, scale: lastS ? lastS.x : null }
+}
+export function parseClipName(yaml) { return /m_Name: (.+)/.exec(yaml)?.[1]?.trim() || '' }

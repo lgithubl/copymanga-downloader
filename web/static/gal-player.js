@@ -1106,7 +1106,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   // 镜头：位置（x,y 取反，按舞台高度换算）+ 缩放（z 是千分比，放大系数 1.3）。live 且有时长：从 from 平滑移到 to
   const zoomOf = (z) => (z ? 1 + (z / 1000) * 1.3 : 1)
-  const cameraTransform = (pos) => {
+  const cameraTransform = (pos, ui) => {
+    if (ui) return `translate(${((pos?.[0] || 0) * stage.clientHeight / 1080).toFixed(2)}px, ${(-(pos?.[1] || 0) * stage.clientHeight / 1080).toFixed(2)}px) scale(${(pos?.[2] || 1).toFixed(4)})`   // Unity UI 单位（1920×1080 画布，y 向上）+ 缩放倍数
     const unit = stage.clientHeight * 0.00165
     const turn = Number(pos?.[3]) ? ` rotate(${(-Number(pos[3])).toFixed(2)}deg)` : ''   // 第 4 项 = 旋转度数（逆时针为正，CSS 顺时针为正所以取反）；没有就不转
     return `translate(${(-(pos?.[0] || 0) * unit).toFixed(2)}px, ${((pos?.[1] || 0) * unit).toFixed(2)}px) scale(${zoomOf(pos?.[2]).toFixed(4)})${turn}`
@@ -1116,11 +1117,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     world.dataset.camera = cam ? JSON.stringify(cam.to) : ''
     if (live && cam?.seconds > 0 && cam.from) {
       world.style.transition = 'none'
-      world.style.transform = cameraTransform(cam.from)
+      world.style.transform = cameraTransform(cam.from, cam.ui)
       void world.offsetWidth
       world.style.transition = `transform ${cam.seconds}s linear`
     } else world.style.transition = 'none'
-    world.style.transform = cam ? cameraTransform(cam.to) : 'none'
+    world.style.transform = cam ? cameraTransform(cam.to, cam.ui) : 'none'
   }
   // 闪屏 / 整屏纯色渐退：纯装饰，不进状态
   function playFlash(command) {

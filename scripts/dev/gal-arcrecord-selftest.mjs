@@ -136,8 +136,26 @@ try {
   const cmds = sg.steps.flatMap((st) => st.commands)
   check('CG：没有骨架的 = 静态图（Img/<编号>.png）作背景', cmds.some((c) => c.op === 'bg' && c.src === 'CG/A0247/Img/A0247.png'), J(cmds.filter((c) => c.op === 'bg')))
   const cgSpine = cmds.find((c) => c.op === 'spine' && c.slot === 'CG')
-  check('CG：有骨架的 = 全屏静态画面（still）Spine，轨道 00 / BG + BGMotion 里的名字', cgSpine?.kind === 'still' && cgSpine.skel === 'CG/A0012/A0012/A0012_N.skel.asset' && cgSpine.atlas === 'CG/A0012/A0012/A0012_N.atlas.asset' && J(cgSpine.tracks.map((t) => t.anim)) === J(['00', 'BG', 'O', 'Opening']), J(cgSpine))
+  check('CG：有骨架的 = 全屏静态画面（still）Spine，没有 .anim 数据时轨道 00', cgSpine?.kind === 'still' && cgSpine.skel === 'CG/A0012/A0012/A0012_N.skel.asset' && cgSpine.atlas === 'CG/A0012/A0012/A0012_N.atlas.asset' && J(cgSpine.tracks.map((t) => t.anim)) === J(['00']), J(cgSpine))
   check('CG：Image/CG_<编号>_1.png 变体；换回普通背景时去掉 Spine CG', cmds.some((c) => c.op === 'bg' && c.src === 'CG/P0001/Image/CG_P0001_1.png') && cmds.some((c) => c.op === 'spineOff' && c.slot === 'CG'), J(cmds.filter((c) => c.op === 'spineOff')))
+}
+
+{
+  const T = { T_a: 'あ', T_b: 'い', T_c: 'う', T_d: 'え' }
+  const cgData = { A0012: { stages: ['00_Idle_ani', '10_Loop_ani', '10_Idle_ani', '20_Idle_ani', '90_BG'], clips: { ZoominFace: { sec: 2, pos: [-200, -480], scale: 2.5 }, Normal: { sec: 1, pos: [0, 0], scale: 1 } } } }
+  const rows = [
+    { ID: 'z_01', DramaID: 'z', DialogBGPerfab: 'CG/A0012/A0012', BGMotion: 'O~Opening', Dialog: 'T_a' },
+    { ID: 'z_02', BGMotion: 'ZoominFace', Dialog: 'T_b' },
+    { ID: 'z_03', BGMotion: 'NextStage~Unknown', Dialog: 'T_c' },
+    { ID: 'z_04', BGMotion: 'Normal', Dialog: 'T_d' },
+  ]
+  const c = adapter.prepare({ options: {}, files: ['Game/CG/A0012/A0012/A0012_N.skel.asset', 'Game/CG/A0012/A0012/A0012_N.atlas.asset'], toResourcePath: toRes })
+  const sc2 = buildScene('arcrecord::dialog', JSON.stringify({ format: 'arcrecord-dialog/1', id: 'z', rows, text: { JPN: T }, cg: cgData }), c, { options: {} })
+  const all2 = sc2.steps.flatMap((st) => st.commands)
+  const cams = all2.filter((x) => x.op === 'camera' && x.seconds > 0)
+  check('CG 镜头：BGMotion 里有 .anim 的名字 → camera（Unity UI 单位 + 缩放，时长 = 最后关键帧），Normal 回原位', cams.length === 2 && cams[0].ui === true && J(cams[0].to) === J([-200, -480, 2.5]) && cams[0].seconds === 2 && J(cams[1].to) === J([0, 0, 1]), J(cams))
+  const spines = all2.filter((x) => x.op === 'spine' && x.slot === 'CG')
+  check('CG 阶段：开头播第一个阶段（00_Idle_ani + 90_BG），NextStage → 下一阶段（10 组取 Loop），不认识的名字记 ignored', spines[0].tracks[0].anim === '00_Idle_ani' && spines[0].tracks[1]?.anim === '90_BG' && spines[1]?.tracks[0].anim === '10_Loop_ani' && sc2.stats.ignored['cgmotion:Unknown'] === 1, J(spines.map((x) => x.tracks)))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)
