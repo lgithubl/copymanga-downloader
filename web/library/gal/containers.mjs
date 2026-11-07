@@ -36,11 +36,12 @@ import { decodeKrkrScnBuffer } from './krkr-scn.mjs'
 import { extractZipMember, parseZipCentral, parseZipEnd } from './l2d-zip.mjs'
 import { Psb, isPsb } from './psb.mjs'
 import { pf8Decrypt, readPf8Index } from './pf8.mjs'
+import { convertEmotePsb, findEmoteSeed } from './emote-psb.mjs'
 import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 18
+export const CONTAINER_FORMAT_VERSION = 19
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -207,6 +208,22 @@ function classifyXfl(name) {
   if (ext === 'wav') return { kind: 'res', ext: 'wav' }
   return { kind: '' }
 }
+// E-mote 的 PSB（Artemis）：pf8 解密 → 头解密 + 规格改 common + 贴图字节序（见 emote-psb.mjs）。种子：config.containers.emote.seed（数字）或 'auto' = 在游戏目录的 driver（emotedriver.dll）里找
+const emoteSeeds = new Map()   // dll 路径|大小|mtime → 种子（找不到 = null）
+function emotePsbTransform(psb, hit) {
+  const emote = hit.emote || {}
+  let seed = Number.isFinite(Number(emote.seed)) && emote.seed !== 'auto' && emote.seed !== null ? Number(emote.seed) : null
+  if (seed === null && psb.readUInt16LE(6) !== 0) {
+    const dll = path.join(path.dirname(hit.file), emote.driver || 'emotedriver.dll')
+    let info
+    try { info = statSync(dll) } catch { throw new Error(`头是加密的，但没有配 seed，游戏目录里也没有 ${emote.driver || 'emotedriver.dll'}`) }
+    const key = `${dll}|${info.size}|${Math.floor(info.mtimeMs)}`
+    if (!emoteSeeds.has(key)) emoteSeeds.set(key, findEmoteSeed(readFileSync(dll), psb.subarray(0, 4096)))
+    seed = emoteSeeds.get(key)
+    if (seed === null) throw new Error(`在 ${emote.driver || 'emotedriver.dll'} 里没找到头加密的种子，请在 config.containers.emote.seed 里写`)
+  }
+  return convertEmotePsb(psb, { seed, order: emote.textureOrder || 'auto' })
+}
 // pf8 容器的名字：.pfs / .pfs.000 → pfs 的主名（脚本展开到 script/<主名>/…）
 const pf8Stem = (arcName) => arcName.replace(/\.pfs(?:\.(\d+))?$/i, (_m, n) => (n ? `_${n}` : ''))   // yugamase.pfs → yugamase，yugamase.pfs.000 → yugamase_000（各自一个目录，互不覆盖）
 // buriko 的条目没有扩展名：看内容开头 → { kind, ext, transform }（kind：script / res；''= 不认识，跳过）。res 的 transform 在取出来时做（cbg → png、bw → ogg）
@@ -236,6 +253,7 @@ function transformData(data, hit) {
   if (hit.transform === 'riff-ogg') return Buffer.from(riffVorbisToOgg(data))
   if (hit.transform === 'bgi-faceset') return Buffer.from(JSON.stringify(parseBgiFaceSet(dscDecode(data))))
   if (hit.transform === 'pf8') return pf8Decrypt(data, hit.key)
+  if (hit.transform === 'pf8-emote') return emotePsbTransform(pf8Decrypt(data, hit.key), hit)
   if (hit.transform === 'imys-hca') return imysAcbToWav(data, hit)
   if (hit.transform === 'imys-bg') return backgroundPng(data)
   if (hit.transform === 'imys-tati') return tatiComposePng(data, hit.expr).png
@@ -335,7 +353,7 @@ function compileRules(cfg) {
     gallery: rule.gallery || null,
   }))
 }
-const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex')])).digest('hex').slice(0, 16)
+const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex')])).digest('hex').slice(0, 16)
 const kindOf = (name, scriptKinds) => {
   const ext = extOf(name)
   if (SCRIPT_EXTS.has(ext)) return scriptKinds
@@ -1353,7 +1371,12 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
         }
         if (cfg.format === 'pf8') {
           // Artemis：图 / 声音，虚拟路径 = <dir>/res/<条目路径>（flat：不带容器名）；取出来时才解密
-          if (entry.size > MAX_ENTRY_BYTES || !rule.kinds.has('res') || classifyPf8(name).kind !== 'res') continue
+          if (entry.size > MAX_ENTRY_BYTES || !rule.kinds.has('res')) continue
+          if (cfg.emote?.enabled && /\.psb$/i.test(name) && /^image\/fg\//i.test(name.replace(/\\/g, '/'))) {   // E-mote 模型：image/fg/<名>.psb → image/fg/<名>.emote.psb（转成 FreeMote WebGL SDK 能加载的纯 PSB）
+            add(`${cfg.dir}/${resRel(cfg, stem, name.replace(/\.psb$/i, '.emote.psb'))}`, { file, offset: entry.offset, size: entry.size, transform: 'pf8-emote', key, emote: cfg.emote })
+            continue
+          }
+          if (classifyPf8(name).kind !== 'res') continue
           if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
           add(`${cfg.dir}/${resRel(cfg, stem, name)}`, { file, offset: entry.offset, size: entry.size, transform: 'pf8', key })
           continue
@@ -1441,7 +1464,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.cue || '', hit.expr || 0, hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.cue || '', hit.expr || 0, hit.emote ? JSON.stringify(hit.emote) : '', hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,

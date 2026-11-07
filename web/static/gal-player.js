@@ -7,6 +7,7 @@ import { createLive2dLayer } from '/gal-live2d.js'
 import { createTranslateClient } from '/gal-translate.js'
 import { createTtsClient, ttsKey } from '/gal-tts-client.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
+import { createEmoteLayer } from '/gal-emote.js'
 import { attachBarLock } from '/gal-barlock.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
@@ -272,6 +273,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const mosaicRow = el('label', 'gal-more-field')
   mosaicRow.append(el('span', '', '显示马赛克层'), mosaicInput)
   mosaicRow.hidden = !(scene?.stats?.mosaic?.total > 0 || scene?.stats?.live2d > 0)
+  // E-mote 立绘（Artemis：image/fg/*.psb，FreeMote WebGL SDK 播放）：这个场景有 E-mote 立绘时才出现；默认开，关了 = 用静态立绘（_blog）；按媒体存
+  const emoteInput = el('input')
+  emoteInput.type = 'checkbox'
+  emoteInput.title = '用 E-mote 动态立绘（眨眼 / 表情 / 摇晃）；关了就用静态立绘。要服务端转好 PSB 并且有 E-mote 运行时（构建时下载），缺了会自动用静态立绘（这个媒体自己的设置）'
+  const emoteRow = el('label', 'gal-more-field')
+  emoteRow.append(el('span', '', 'E-mote 立绘'), emoteInput)
+  emoteRow.hidden = !(scene?.stats?.emote?.resolved > 0)
   const backBtn = btn('返回', '退出沉浸并离开这个媒体', 'gal-back gal-imm-only')
   const lockBtn = btn('🔒', '', 'gal-lock')
   const note = el('span', 'muted gal-note', '')
@@ -351,7 +359,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), colorRow, immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
     section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow, ttsSourceRow, ttsVoicedCtl.row),
-    section('画面', animRow, slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow),
+    section('画面', animRow, slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow, emoteRow),
   )
   hud.append(box)
   // 工具栏不再叠在舞台里：放在舞台下面、播放器最底部，和列表页底部固定条同一个位置、同一个顺序（↑ 在最左）
@@ -636,7 +644,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     const legacyCenter = String(localStorage.getItem(GAL_SETTINGS.stillCenterKey) || '').split(',').map(Number)
     const legacy = !saved.still && localStorage.getItem(GAL_SETTINGS.stillZoomKey) !== null ? { zoom: Number(localStorage.getItem(GAL_SETTINGS.stillZoomKey)), cx: legacyCenter[0], cy: legacyCenter[1] } : null
     const zoomDefault = pd.zoom !== undefined ? { zoom: pd.zoom } : undefined
-    return { still: cleanView(saved.still || legacy || zoomDefault), actor: cleanView(saved.actor || zoomDefault), camera: cleanCamera(saved.camera || (pd.cameraMode ? { mode: pd.cameraMode } : undefined)), blend: ['noAdditive', 'allNormal'].includes(saved.blend) ? saved.blend : 'native', expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined, stand: cleanStand(saved.stand) }
+    return { still: cleanView(saved.still || legacy || zoomDefault), actor: cleanView(saved.actor || zoomDefault), camera: cleanCamera(saved.camera || (pd.cameraMode ? { mode: pd.cameraMode } : undefined)), blend: ['noAdditive', 'allNormal'].includes(saved.blend) ? saved.blend : 'native', expressions: saved.expressions && typeof saved.expressions === 'object' ? saved.expressions : {}, confirmed: saved.confirmed && typeof saved.confirmed === 'object' ? saved.confirmed : {}, showMosaic: typeof saved.showMosaic === 'boolean' ? saved.showMosaic : undefined, emote: typeof saved.emote === 'boolean' ? saved.emote : undefined, stand: cleanStand(saved.stand) }
   }
   let views = loadViews()
   // 表情预设表：内置初始值（gal-spine.js）← 服务端配置（adapterOptions['girlscreation-tag'].expressions）← 这个媒体自己调的（views.expressions）
@@ -648,6 +656,12 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     saveViews()
     live2dLayer?.setMosaic(mosaicInput.checked)
     if (scene?.stats?.mosaic?.total > 0) onReload?.()   // 脚本里的马赛克层要按新设置重取脚本；只有 Live2D 的不用
+  })
+  emoteInput.checked = views.emote ?? true
+  emoteInput.addEventListener('change', () => {
+    views = { ...views, emote: emoteInput.checked }
+    saveViews()
+    paintStand()
   })
   const viewKind = () => (spineLayer?.hasKind?.('still') ? 'still' : spineLayer?.hasKind?.('actor') ? 'actor' : 'still')
   const syncViewInputs = () => {
@@ -1086,10 +1100,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   let overlayLayer = null
   let stageMedia = null
   const media = () => stageMedia || (stageMedia = createStageMedia({ url, onMissing: markMissing }))
+  // E-mote：stand 部件带 emote 规格（适配器写的）且开关开着 = 交给 E-mote 层播；还没加载好 / 加载失败 / 没有运行时的部件继续画静态图
+  let emoteLayer = null
   function paintStand(live = false) {
     if (!standLayer && !state.stand && !state.stands.length) return
     if (!standLayer) { standLayer = createStandLayer({ parent: world, url, onMissing: markMissing, media: media() }); standLayer.setAdjust(views.stand) }
-    standLayer.set(state.stand, state.stands, { live })
+    const parts = state.stand?.parts || []
+    const specs = (views.emote ?? true) ? parts.filter((p) => p?.emote?.slot && p.emote.src).map((p) => p.emote) : []
+    if (specs.length) {
+      if (!emoteLayer) emoteLayer = createEmoteLayer({ parent: world, url, onChange: () => paintStand() })
+      emoteLayer.set(specs)
+    } else emoteLayer?.clear()
+    const liveSlots = emoteLayer && specs.length ? emoteLayer.live() : new Set()
+    const stand = state.stand && liveSlots.size ? { ...state.stand, parts: parts.filter((p) => !(p?.emote && liveSlots.has(String(p.emote.slot)))) } : state.stand
+    standLayer.set(stand, state.stands, { live })
   }
   let underLayer = null   // spec.under 的叠加层：画在立绘 / 骨骼之下（背景的前景部件）
   function paintOverlays(live = false) {
@@ -2085,6 +2109,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     stopTts()
     ttsClient?.destroy()
     standLayer?.destroy()
+    emoteLayer?.destroy()
     overlayLayer?.destroy()
     underLayer?.destroy()
     if (document.fullscreenElement === root) document.exitFullscreen?.()

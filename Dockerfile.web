@@ -19,9 +19,12 @@ RUN cd web && npm ci --omit=dev --no-audit --no-fund
 COPY web ./web
 # Spine 3.8 官方 Web 运行时（Gal 播放器渲染 Spine 用；许可证限制，不进仓库，构建时按固定提交下载并校验）
 COPY scripts/fetch-spine-runtime.sh /tmp/fetch-spine-runtime.sh
+# FreeMote SDK 的 WebGL 引擎（E-mote 立绘；CC BY-NC-SA 4.0 / LGPLv3，不进仓库，构建时下载；下载失败不让构建失败，播放器退回静态立绘）
+COPY scripts/fetch-emote-runtime.sh /tmp/fetch-emote-runtime.sh
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
   && sh /tmp/fetch-spine-runtime.sh /app/web/static/vendor \
-  && rm -rf /var/lib/apt/lists/* /tmp/fetch-spine-runtime.sh
+  && (sh /tmp/fetch-emote-runtime.sh /app/web/static/vendor || echo 'E-mote 运行时没下载到：E-mote 立绘不可用（退回静态立绘）') \
+  && rm -rf /var/lib/apt/lists/* /tmp/fetch-spine-runtime.sh /tmp/fetch-emote-runtime.sh
 COPY scripts/tag-scripts /opt/copymanga/tag-scripts
 
 RUN mkdir -p /data/downloads

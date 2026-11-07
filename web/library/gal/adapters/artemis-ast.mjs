@@ -32,6 +32,7 @@ export const DEFAULT_OPTIONS = {
   seDir: 'sound/se',
   voiceDirs: ['sound/vo', 'sound/vobin'],
   stand: { enabled: true, dir: 'image/fg/_blog', ext: 'png', align: 'center', useX: true, zoom: 3.3333, xScale: 1.5 },   // _blog 图 576×324（16:9 的半身像画框）：放大到铺满 1920 宽的设计画面（1920 / 576）；脚本里的 x 是 1280 舞台的像素，×1.5 换成设计坐标
+  emote: { enabled: true, dir: 'image/fg', ext: 'emote.psb', xScale: 1.5, view: 'bust', zoom: 0.72, top: 0.04 },   // E-mote 立绘（FreeMote WebGL SDK 在浏览器里播）：模型 = containers 转好的 image/fg/<file>.emote.psb；播放器「更多」里的 E-mote 开关关了就用上面的静态立绘。view: bust（半身，按 zoom 缩放、头顶留 top 比例）| full（整身塞进舞台）；zoom = 每个单位多少设计像素（半身框；psb 一个单位 ≈ 1 像素的图集像素）；x 用 xScale 换成设计像素
   wait: { enabled: true, max: 10 },
   extraDirs: [],
 }
@@ -280,7 +281,18 @@ export function parse(text, ctx = null, meta = {}) {
     if (!img) return
     const x = opt.stand.useX && Number.isFinite(Number(param(cmd, 'x'))) ? num(param(cmd, 'x')) : 0
     const shiftX = Math.round(x * opt.stand.xScale)
-    stands.set(ch, { parts: [{ src: img.src, align: opt.stand.align, ...(opt.stand.zoom && opt.stand.zoom !== 1 ? { zoom: opt.stand.zoom } : {}), ...(shiftX ? { shiftX } : {}) }], x })
+    let emote = null
+    if (opt.emote.enabled) {
+      const psb = find([`${opt.emote.dir}/${file}.${opt.emote.ext}`], [])
+      stats.emote = stats.emote || { referenced: 0, resolved: 0 }
+      stats.emote.referenced += 1
+      if (psb) {
+        stats.emote.resolved += 1
+        const always = strParam(cmd, 'always')
+        emote = { slot: ch, src: psb, main: always, diff: face, x: Math.round(x * opt.emote.xScale), view: opt.emote.view, zoom: opt.emote.zoom, top: opt.emote.top }
+      }
+    }
+    stands.set(ch, { parts: [{ src: img.src, align: opt.stand.align, ...(opt.stand.zoom && opt.stand.zoom !== 1 ? { zoom: opt.stand.zoom } : {}), ...(shiftX ? { shiftX } : {}), ...(emote ? { emote } : {}) }], x })
     dirty = true
   }
   function onSound(name, cmd) {

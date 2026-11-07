@@ -1112,6 +1112,15 @@ export const ADAPTER_RULES = {
       "zoom": 3.3333,
       "xScale": 1.5
     },
+    "emote": {
+      "enabled": true,
+      "dir": "image/fg",
+      "ext": "emote.psb",
+      "xScale": 1.5,
+      "view": "bust",
+      "zoom": 0.72,
+      "top": 0.04
+    },
     "wait": {
       "enabled": true,
       "max": 10
@@ -2146,7 +2155,7 @@ export const LAYOUTS = {
       classify: [],
       resourceResolve: {},
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
-      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'artemis-ast', scriptExt: 'ast', mode: 'hybrid', format: 'pf8', flat: true, rules: [{ match: '\\.pfs(?:\\.\\d+)?$' }], maxEntries: 200000, maxTotalMB: 8192 },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'artemis-ast', scriptExt: 'ast', mode: 'hybrid', format: 'pf8', flat: true, rules: [{ match: '\\.pfs(?:\\.\\d+)?$' }], maxEntries: 200000, maxTotalMB: 8192, emote: { enabled: true, seed: 'auto', textureOrder: 'auto', driver: 'emotedriver.dll' } },
     },
     config: { scriptExtensions: ['ast'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '\\dh$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.ast', depth: 3 }], avatars: [], expectedDirs: [],
@@ -2908,6 +2917,15 @@ function canonField(key, value) {
         mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
+        emote: (() => {   // 和 config.mjs 的 DEFAULT_CONTAINERS.emote / 校验一致
+          const e = isPlain(value.emote) ? value.emote : {}
+          return {
+            enabled: typeof e.enabled === 'boolean' ? e.enabled : false,
+            seed: e.seed === 'auto' || (e.seed !== undefined && e.seed !== null && e.seed !== '' && typeof e.seed !== 'boolean' && Number.isInteger(Number(e.seed)) && Number(e.seed) >= 0 && Number(e.seed) <= 0xffffffff) ? (e.seed === 'auto' ? 'auto' : Number(e.seed)) : 'auto',
+            textureOrder: ['auto', 'rgba', 'bgra', 'argb', 'abgr'].includes(e.textureOrder) ? e.textureOrder : 'auto',
+            driver: typeof e.driver === 'string' && e.driver && !e.driver.startsWith('/') && !e.driver.split('/').includes('..') ? e.driver : 'emotedriver.dll',
+          }
+        })(),
       }
     }
     // thumbRender：和 config.mjs 的 DEFAULT_THUMB_RENDER / 校验一致（没写的补默认值，数字夹范围）
