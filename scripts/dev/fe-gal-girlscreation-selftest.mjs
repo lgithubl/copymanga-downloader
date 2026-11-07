@@ -125,6 +125,7 @@ try {
   await page.waitForSelector('.gal-player .gal-stage')
   await waitCount('1 / 3')
   await sleep(2500)   // 第一步有黑场渐入 / 等待共约 1.3 秒：播放中点下一步只是「跳过动画」
+  for (let g = 0; g < 40 && await page.$eval('.gal-movie', (v) => v.hidden).catch(() => true); g++) await sleep(150)   // 视频要等第一帧才换上去（夹具里的视频加载不了：3 秒后照样换上）
   check('视频场景：VIDEO_PLAY → 视频背景元素显示；台词；BGM / 语音按场景自己的目录请求', await page.$eval('.gal-movie', (v) => !v.hidden).catch(() => false) && (await text('.gal-text')) === '"A line over the video."', await text('.gal-text'))
   check('UI_DISP OFF：文本框隐藏（透明、不挡点击）', await page.$eval('.gal-box', (b) => b.style.opacity === '0' && b.style.pointerEvents === 'none'), await page.$eval('.gal-box', (b) => b.style.cssText))
   await page.keyboard.press('Space'); await waitCount('2 / 3')

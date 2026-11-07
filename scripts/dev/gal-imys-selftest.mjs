@@ -102,6 +102,17 @@ check('资源索引里有同名文件 → bg / voice / bgm 指令（名字 → �
   check('case 里的步骤带 when（var == 选项号）；break 之后的「続き。」不带 when', texts.filter((x) => x.when).every((x) => x.when.var === choice.var) && J(texts.filter((x) => x.when).map((x) => [x.text, x.when.value])) === J([['頬に触れる。', 1], ['暖かい', 1], ['んっ', 2]]) && texts.at(-1).text === '続き。' && !texts.at(-1).when, J(texts))
 }
 
+// —— Select n, {选项文字}; + InitializeSelectedItem（没有括号的命令不是台词）+ BGDraw("R18/…") 带 cg ——
+{
+  const body = '\tBGDraw\t("R18/hcg_0300301");\n\tRefresh\t(SUDDEN);\n前の文。\n\tInitializeSelectedItem\n\tSelect\t2, {行く}, {やめる};\n\tswitch( %0 )\n\t{\n//--選択肢①結果\n\tcase\t0:\n\tbreak\n\t}\n後の文。\n'
+  const sc = buildScene('imys::adv', J({ format: 'imys-adv/1', category: 'dress', name: 't', text: body }), adapter.prepare({ options: {}, files: ['arc/res/bg/R18/hcg_0300301.png'], toResourcePath: (r) => r.replace(/^arc\/res\//, '') }), { options: {} })
+  const texts = sc.steps.map((s) => s.commands.find((c) => c.op === 'text')?.segments?.map((x) => x.text).join('') || '')
+  const choice = sc.steps.flatMap((s) => s.commands).find((c) => c.op === 'choice')
+  check('Select 2, {行く}, {やめる} → 选项文字取 { } 里的；InitializeSelectedItem 不当旁白（记 ignored）', J(choice?.options.map((o) => o.segments[0].text)) === J(['行く', 'やめる']) && !texts.some((x) => /Initialize/.test(x)) && sc.stats.ignored.InitializeSelectedItem === 1, J([texts, choice, sc.stats.ignored]))
+  const bgCmd = sc.steps.flatMap((s) => s.commands).find((c) => c.op === 'bg')
+  check('BGDraw("R18/hcg_…") → bg 指令带 cg: true（兜底封面当 CG 优先挑）', bgCmd?.cg === true && /R18\/hcg_0300301\.png$/.test(bgCmd.src), J(bgCmd))
+}
+
 // —— containers 展开 ——
 const tmp = await mkdtemp(path.join(os.tmpdir(), 'imys-'))
 try {

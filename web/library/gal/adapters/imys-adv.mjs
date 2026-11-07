@@ -26,6 +26,7 @@ export const DEFAULT_OPTIONS = {
   wait: { enabled: true, max: 10 },
   tati: { enabled: true, stage: [1280, 720], spacing: 160 },   // Tati(槽,角色,衣装,表情,位置)：舞台 1280×720（背景 bundle 的原始大小）；位置 ±1 / ±2 = 水平偏移 spacing × 位置（像素，猜的）
   fadeSeconds: 0.5,
+  cgBg: '(^|/)(R18/|hcg_|eve_)',   // BGDraw 的名字命中它 = H CG（bg 指令带 cg: true：兜底封面当 CG 优先挑，场景跳转点也认）
 }
 const readOptions = createOptionsReader(DEFAULT_OPTIONS)
 
@@ -108,6 +109,7 @@ export function parse(text, ctx = null, meta = {}) {
     if (src) stats[bucket].resolved += 1; else { stats[bucket].unresolved += 1; if (hasIndex) count('unresolved', `${bucket}:${name}`) }
     return src
   }
+  const cgRe = (() => { try { return opt.cgBg ? new RegExp(opt.cgBg, 'i') : null } catch { return null } })()
   const steps = []
   let list = []
   let branch = null        // { var, value }：在 switch / case 里（Select 的选项）——里面的指令都带 when，没选这一支就整步不执行
@@ -131,13 +133,13 @@ export function parse(text, ctx = null, meta = {}) {
     if (!line || line.startsWith('//')) continue
     stats.lines += 1
     // Select n,…（体の触る場所を選ぶ 等）+ switch( %0 ) { case N: … break … }：選択肢 → 分岐（case の中の指令に when）
-    const sel = /^Select\s+(\d+)\b/.exec(line)
+    const sel = /^Select\s+(\d+)\b(.*)$/.exec(line)
     if (sel) {
       const count = Math.max(1, Math.min(8, Number(sel[1])))
-      const labels = []
+      const labels = [...sel[2].matchAll(/\{([^}]*)\}/g)].map((m) => m[1].trim())   // Select 1, {選択肢の文字}; ← 文字は同じ行の { } の中（触るタイプは座標だけで文字なし）
       for (let j = at + 1, depth = 0; j < allLines.length && labels.length < count; j++) {
         const m = /^\s*case\s+(\d+)\s*:/.exec(allLines[j])
-        if (m && Number(m[1]) < count) labels[Number(m[1])] = caseLabel(j, Number(m[1]))
+        if (m && Number(m[1]) < count && !labels[Number(m[1])]) labels[Number(m[1])] = caseLabel(j, Number(m[1]))
         if (/^\s*Select\b/.test(allLines[j])) break
       }
       endStep()   // 前面没发完的指令先落成一步
@@ -151,7 +153,8 @@ export function parse(text, ctx = null, meta = {}) {
       endStep()
       continue
     }
-    if (/^switch\s*\(/.test(line) || line === '{' || line === '}' || /^InitializeBodyTouchItem\b/.test(line)) { if (!/^(switch|\{|\})/.test(line)) count('ignored', 'InitializeBodyTouchItem'); if (line === '}') branch = null; continue }
+    if (/^switch\s*\(/.test(line) || line === '{' || line === '}') { if (line === '}') branch = null; continue }
+    if (/^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+\s*;?$/.test(line)) { count('ignored', line.replace(/\s*;$/, '')); continue }   // 没有括号的命令（驼峰命名、至少两段：InitializeSelectedItem / InitializeBodyTouchItem …）：不是台词
     const cs = /^case\s+(\d+)\s*:/.exec(line)
     if (cs) { branch = selectVar ? { var: selectVar, value: Number(cs[1]) + 1 } : null; stats.branches.cases += 1; continue }
     if (/^(break|default\s*:)/.test(line)) { if (/^break/.test(line)) { endStepIfPending(); branch = null } else branch = null; continue }
@@ -160,7 +163,7 @@ export function parse(text, ctx = null, meta = {}) {
       const [, name, rest] = cmd
       const a = argsOf(rest)
       switch (name) {
-        case 'BGDraw': { const src = refer('images', a[0], opt.imageExts); bg = src ? { src } : null; if (src) emit({ op: 'bg', src, fade: pendingFade || 0 }); else if (!hasIndex) emit({ op: 'bgoff', fade: 0 }); pendingFade = 0; break }
+        case 'BGDraw': { const src = refer('images', a[0], opt.imageExts); bg = src ? { src } : null; if (src) emit({ op: 'bg', src, fade: pendingFade || 0, ...(cgRe && cgRe.test(a[0]) ? { cg: true } : {}) }); else if (!hasIndex) emit({ op: 'bgoff', fade: 0 }); pendingFade = 0; break }
         case 'Refresh': pendingFade = /^FADE$/i.test(a[0] || '') ? opt.fadeSeconds : 0; count('transitions', a[0] || 'SUDDEN'); break
         case 'BGMPlay': { const m = /^b(\d+)$/i.exec(a[1] || ''); const src = refer('bgm', m ? `bgm_${m[1]}` : a[1], opt.audioExts); if (src) emit({ op: 'bgm', src }); break }
         case 'BGMStop': emit({ op: 'bgmStop' }); break

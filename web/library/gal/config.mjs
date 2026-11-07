@@ -24,7 +24,7 @@ export const COVER_CROP_LIMITS = Object.freeze({ tallRatio: [1, 20], top: [0.2, 
 export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95], filmFrame: [0, 0.99], filmMax: [1, 12], innerMax: [1, 12], innerRenders: [1, 6] })
 // 目录卡片的封面（目录 / 章节目录 / 角色分组里没有任何规则给图时，用它里面的脚本的封面；见 DEFAULT_GAL_CONFIG.dirCover）
 export const DIR_COVER_SOURCES = Object.freeze(['render', 'image'])
-export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, from: 'first', leafScan: 0, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]) })
+export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, from: 'first', leafScan: 0, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]), scriptOrder: Object.freeze([]) })
 export const DIR_COVER_LIMITS = Object.freeze({ scan: [1, 30], depth: [1, 5], max: [1, 24], list: 10 })
 // 容器（打包格式，如 WillPlus .arc）：服务端自己读容器、展开到媒体目录下的缓存目录，见 containers.mjs
 export const CONTAINER_PNA_MODES = Object.freeze(['frames', 'raw', 'skip'])
@@ -51,7 +51,7 @@ export function normalizeKeyBundles(list) {
 }
 export const CONTAINER_LIMITS = Object.freeze({ rules: 20, list: 10, maxEntries: [1, 1000000], maxTotalMB: [1, 65536] })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
-export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, only: Object.freeze([]), scanSteps: 200, scanFrom: 0, topUp: false, overlays: false, kindMax: Object.freeze({}) })
+export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, only: Object.freeze([]), scanSteps: 200, scanFrom: 0, topUp: false, overlays: false, cgFirst: false, kindMax: Object.freeze({}) })
 // 卡片封面 / 悬停轮播（见 DEFAULT_GAL_CONFIG 里 thumbCover / thumbHover 的说明）
 export const THUMB_COVER_MODES = Object.freeze(['random', 'first', 'last'])
 export const THUMB_HOVER_MODES = Object.freeze(['hover', 'auto'])
@@ -129,7 +129,7 @@ export const DEFAULT_GAL_CONFIG = Object.freeze({
   //   prefer   优先级，数组，每项是 'render'（骨骼 / 立绘场景的渲染图，一个脚本一张）| 'image'（脚本的静态图：规则 / 兜底给的），或者 { source, match, take }：match = 正则（对脚本路径（render）/ 图片路径（image），不分大小写，没写 = 都要），take = 这一档最多取几张。
   //            按顺序找：第一档有候选就用它，没有才看下一档（匹配 a 最优先，否则 b，否则默认）；merge: true = 各档的候选按顺序合起来，取到 max 张为止
   //   skip / only  黑 / 白名单：正则数组（对脚本路径 / 图片路径），命中 skip 的丢掉；only 写了就只要命中其中一条的
-  dirCover: { ...DEFAULT_DIR_COVER, prefer: [...DEFAULT_DIR_COVER.prefer], skip: [], only: [] },
+  dirCover: { ...DEFAULT_DIR_COVER, prefer: [...DEFAULT_DIR_COVER.prefer], skip: [], only: [], scriptOrder: [] },
   // 容器（见 containers.mjs）：{ enabled（默认 false）, dir（展开到媒体目录下的哪个目录，默认 arc）, scan（在哪些目录里找 .arc，相对媒体目录，默认 ['.']）, scriptDecoder（二进制脚本的解码器，默认 advhd-ws2）, scriptExt（解出来的脚本的扩展名，默认 advhd）,
   //   rules（容器名正则 → 怎么处理，第一条命中的生效；没有任何规则命中的容器不展开）：[{ match（正则，对容器文件名，不分大小写）, skip（true = 这个容器不展开：黑名单）, kinds（只展开这几类：script 脚本 / res 图片音频视频 / pna 动画包，默认全部）,
   //     include / exclude（正则数组，对条目名，不分大小写：写了 include 就只要命中其中一条的；exclude 命中的丢掉）, pna（frames 按帧拆成 PNG + index.json（默认）/ raw 原样 / skip 不要）}],
@@ -431,7 +431,7 @@ export function normalizeGalConfigWithWarnings(raw) {
   if (isPlainObject(v.thumbFallback)) {
     const tf = v.thumbFallback
     for (const key of Object.keys(tf)) if (!(key in dtf)) warn('thumbFallback', `不认识的字段 ${key}，已丢掉`, key)
-    for (const key of ['enabled', 'skipBlack', 'topUp', 'overlays']) {
+    for (const key of ['enabled', 'skipBlack', 'topUp', 'overlays', 'cgFirst']) {
       if (tf[key] === undefined) continue
       if (typeof tf[key] === 'boolean') thumbFallback[key] = tf[key]
       else warn(`thumbFallback.${key}`, '只能是 true / false，用默认值', tf[key])
@@ -486,7 +486,7 @@ export function normalizeGalConfigWithWarnings(raw) {
 
   // dirCover：目录卡片的封面（见 DEFAULT_GAL_CONFIG 里的说明）
   const ddc = DEFAULT_DIR_COVER
-  const dirCover = { ...ddc, prefer: [...ddc.prefer], skip: [], only: [] }
+  const dirCover = { ...ddc, prefer: [...ddc.prefer], skip: [], only: [], scriptOrder: [] }
   if (v.dirCover !== undefined && !isPlainObject(v.dirCover)) warn('dirCover', '不是对象，用默认值', v.dirCover)
   if (isPlainObject(v.dirCover)) {
     const dc = v.dirCover
@@ -503,7 +503,7 @@ export function normalizeGalConfigWithWarnings(raw) {
       dirCover[key] = Math.max(lo, Math.min(hi, n))
       if (dirCover[key] !== n) warn(`dirCover.${key}`, `超出范围 ${lo}–${hi}，夹到 ${dirCover[key]}`, dc[key])
     }
-    for (const key of ['skip', 'only']) {
+    for (const key of ['skip', 'only', 'scriptOrder']) {
       if (dc[key] === undefined) continue
       if (!Array.isArray(dc[key])) { warn(`dirCover.${key}`, '不是数组，用默认值', dc[key]); continue }
       const ok = dc[key].slice(0, DIR_COVER_LIMITS.list).map((source) => text(source, 120)).filter((source) => { if (!source) return false; try { new RegExp(source, 'i'); return true } catch { return false } })

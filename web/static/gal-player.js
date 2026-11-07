@@ -155,9 +155,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const stage = el('div', 'gal-stage')
   stage.tabIndex = 0
   const layers = [el('div', 'gal-bg'), el('div', 'gal-bg')]
-  const movie = el('video', 'gal-movie')
-  movie.hidden = true
-  movie.playsInline = true
+  const newVideo = () => { const video = el('video', 'gal-movie'); video.hidden = true; video.playsInline = true; return video }
+  let movie = newVideo()   // 当前在放的那个（换视频时先在另一个里加载好再换过去，见 paintMovie）
   const world = el('div', 'gal-world')   // 背景 + 视频 + Spine：镜头（平移/缩放）作用在它上面
   const black = el('div', 'gal-black')
   const flashEl = el('div', 'gal-flash')
@@ -1050,21 +1049,51 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     black.style.opacity = state.black ? '1' : '0'
   }
 
+  // 视频：同一个视频不重新设 src（以前每一步都重设 → 每步黑一下）；换视频时在另一个 <video> 里先加载到第一帧再换过去（旧的画面留着直到新的就绪，不再先黑后出）；
+  // 预载的视频（preloadNext）直接拿来用
+  const spareVideos = new Map()   // 资源路径 → 预载好的 <video>（没挂进页面）
   function paintMovie(instant) {
-    if (!state.movie) { movie.pause(); movie.hidden = true; movie.removeAttribute('src'); return }
+    if (!state.movie) { movie.pause(); movie.hidden = true; movie.removeAttribute('src'); delete movie.dataset.src; return }
     const { srcs, loop, rate } = state.movie
-    let i = 0
-    movie.hidden = false
-    movie.volume = gainOf('movie')
-    movie.loop = srcs.length === 1 && loop
-    movie.src = url(srcs[0])
-    movie.playbackRate = rate || 1   // src 一换浏览器会把速度重置，所以每次设 src 之后都要再设
-    movie.onerror = () => markMissing(srcs[i])
-    movie.onended = () => {
-      i += 1
-      if (i < srcs.length) { movie.src = url(srcs[i]); movie.playbackRate = rate || 1; movie.loop = i === srcs.length - 1 && loop; movie.play().catch(() => {}) }
+    const first = url(srcs[0])
+    const configure = (video) => {
+      let i = 0
+      video.muted = false
+      video.volume = gainOf('movie')
+      video.loop = srcs.length === 1 && loop
+      video.onerror = () => markMissing(srcs[i])
+      video.onended = () => {
+        i += 1
+        if (i < srcs.length) { video.src = url(srcs[i]); video.dataset.src = url(srcs[i]); video.playbackRate = rate || 1; video.loop = i === srcs.length - 1 && loop; video.play().catch(() => {}) }
+      }
     }
-    movie.play().catch(() => {})
+    if (movie.dataset.src === first && !movie.hidden) {   // 还是这个视频：不动（保留播放进度），只同步音量 / 循环 / 速度
+      movie.volume = gainOf('movie')
+      movie.loop = srcs.length === 1 && loop
+      if (movie.playbackRate !== (rate || 1)) movie.playbackRate = rate || 1
+      if (movie.paused && !movie.ended) movie.play().catch(() => {})
+      return
+    }
+    const old = movie
+    const next = spareVideos.get(srcs[0]) || newVideo()
+    spareVideos.delete(srcs[0])
+    configure(next)
+    if (next.dataset.src !== first) { next.src = first; next.dataset.src = first }
+    next.preload = 'auto'
+    next.playbackRate = rate || 1   // src 一换浏览器会把速度重置，所以每次设 src 之后都要再设
+    let shown = false
+    const show = () => {
+      if (shown) return
+      shown = true
+      next.hidden = false
+      next.play().catch(() => {})
+      if (old !== next) { old.pause(); old.removeAttribute('src'); old.remove() }
+    }
+    old.after(next)
+    movie = next
+    if (instant) { show(); return }
+    if (next.readyState >= 2) show()
+    else { next.addEventListener('loadeddata', show, { once: true }); setTimeout(show, 3000) }   // 3 秒还没第一帧也换过去（别卡住）
   }
 
   // Spine：第一次要画骨骼时才建 canvas / 加载运行时；运行时不在就提示，不影响别的
@@ -1354,6 +1383,17 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       audio.src = url(src)
       preloaded.set(src, audio)
     }
+    const videoOf = (src) => {
+      if (typeof src !== 'string' || !src || spareVideos.has(src) || movie.dataset.src === url(src)) return
+      const video = newVideo()
+      video.preload = 'auto'
+      video.muted = true   // 预载的不出声；paintMovie 里换上去时会设音量
+      video.src = url(src)
+      video.dataset.src = url(src)
+      video.load()
+      spareVideos.set(src, video)
+      while (spareVideos.size > 3) { const key = spareVideos.keys().next().value; const dropped = spareVideos.get(key); dropped.removeAttribute('src'); dropped.load?.(); spareVideos.delete(key) }
+    }
     for (let k = 0; k < PRELOAD_STEPS && at + k < path.length; k++) {
       const step = scene.steps[path[at + k]]
       if (!step) continue
@@ -1361,6 +1401,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
         if (command.op === 'bg') { imageOf(command.src); imageOf(command.over) }
         else if (command.op === 'stand') for (const part of command.parts || []) imageOf(part?.src)
         else if (command.op === 'overlay') imageOf(command.src)
+        else if (command.op === 'movie') videoOf(command.srcs?.[0])
         else if (command.op === 'voice' && k < 2) audioOf(command.src)
       }
     }
@@ -2103,6 +2144,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     voiceAudio?.pause()
     movie.pause()
     movie.removeAttribute('src')
+    for (const video of spareVideos.values()) { video.removeAttribute('src'); video.load?.() }
+    spareVideos.clear()
     spineLayer?.destroy()
     live2dLayer?.destroy()
     tr?.destroy()

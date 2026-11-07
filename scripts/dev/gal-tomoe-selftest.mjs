@@ -58,11 +58,11 @@ const SCRIPT = Buffer.concat([
   op('L', 0),
   ...Array.from({ length: 3 }, (_, i) => Buffer.concat([line(`序の${i}行目\n`), op('#', 87)])),
   imgOp(817, 132), imgOp(1, 132), op('#', 13, 2),
-  op('#', 131, 3, -1),
-  op('#', 43, 1, 1), line('「声のある行」\n'), op('#', 87),
+  op('#', 131, 2, -1),
+  op('#', 43, 0, 1), line('「声のある行」\n'), op('#', 87),
   line('ruby ÿÿ\u0003かんじ\u0002漢字 です\n'), op('#', 70),
   op('#', 29, 2), imgOp(817, 132), imgOp(0, 132), imgOp(2, 2), imgOp(3, 140), op('#', 13, 2),
-  op('#', 46, 2), op('#', 114, 2), line('折り返しの\n'), line('行です\n'), op('#', 87),
+  op('#', 46, 1), op('#', 114, 1), line('折り返しの\n'), line('行です\n'), op('#', 87),
   op('#', 114, -1), op('#', 131, -1, -1), imgOp(817, 2), imgOp(817, 140), line('最後\n'), op('#', 70),
 ])
 {
@@ -116,8 +116,8 @@ try {
   // Arc04 里夹具只有 8 行 < 20：展开 0 章（默认阈值）
   check('展开：Arc04.dat 的章节数 = 文本够多的块（夹具不够 = 0），别的文件算虚拟资源', report.arcs['./Arc04.dat']?.scripts === 0 && report.arcs['./Arc03.dat']?.lazy === 1 && report.arcs['Resources/Data000.dat']?.lazy === 1, J(report.arcs))
   const vf = await virtualFiles({ mediaDir: media, config: c })
-  const expected = ['arc/res/img/0.jpg', 'arc/res/img/1.png', 'arc/res/img/2.p.png', 'arc/res/img/3.png', 'arc/res/snd/1.ogg', 'arc/res/snd/2.ogg', 'arc/res/snd/3.ogg']
-  check('虚拟索引：图按类型分 .jpg / .png / .p.png（补丁），声音 snd/<编号>.ogg', J([...vf.files].sort()) === J(expected), J(vf.files))
+  const expected = ['arc/res/img/0.jpg', 'arc/res/img/1.png', 'arc/res/img/2.p.png', 'arc/res/img/3.png', 'arc/res/snd/0.ogg', 'arc/res/snd/1.ogg', 'arc/res/snd/2.ogg']
+  check('虚拟索引：图按类型分 .jpg / .png / .p.png（补丁），声音 snd/<声音号>.ogg（声音号 = 表里的序号 - 1：表的第 0 条是文件头）', J([...vf.files].sort()) === J(expected), J(vf.files))
   const n = await materialize({ mediaDir: media, config: c, rels: expected })
   check('取资源：全部落盘', n === expected.length, String(n))
   const read = (rel) => readFile(path.join(root, ...rel.split('/')))
@@ -127,7 +127,7 @@ try {
   const png2 = inflateSync((await read('arc/res/img/2.p.png')).subarray(41, -12))
   check('取资源：补丁 → RGBA PNG（遮罩为 1 的像素有颜色、其余透明）', png2.equals(Buffer.from([0, 0, 0, 0, 0, 7, 8, 9, 255])), J([...png2]))
   check('取资源：PNG = 去掉 6 字节头', (await read('arc/res/img/3.png')).equals(pngEntry.subarray(6)))
-  check('取资源：声音解密成 Ogg（前 3615 字节），后面原样', (await read('arc/res/snd/1.ogg')).equals(voice) && (await read('arc/res/snd/2.ogg')).equals(bgm) && (await read('arc/res/snd/3.ogg')).equals(se))
+  check('取资源：声音解密成 Ogg（前 3615 字节），后面原样', (await read('arc/res/snd/0.ogg')).equals(voice) && (await read('arc/res/snd/1.ogg')).equals(bgm) && (await read('arc/res/snd/2.ogg')).equals(se))
 
   // 适配器：用夹具脚本（minTexts = 3 切章）+ 虚拟索引的文件表
   const chapter = splitChapters(SCRIPT, { minTexts: 3 }).chapters[0]
@@ -146,10 +146,10 @@ try {
   }
   const voiced = flat.filter((x) => x.op === 'text').find((x) => textOf(x).includes('声のある行'))
   const speakerCmd = flat.filter((x) => x.op === 'speaker' && x.step === voiced.step)[0]
-  check('语音：#43 的声道 → 说话人（友恵），语音只管下一行；下一行没有说话人', speakerCmd?.segments?.[0]?.text === '友恵' && flat.some((x) => x.op === 'voice' && x.src === 'snd/1.ogg') && flat.filter((x) => x.op === 'speaker').find((x) => x.step === voiced.step + 1)?.segments?.length === 0)
+  check('语音：#43 的声道 → 说话人（友恵），语音只管下一行；下一行没有说话人', speakerCmd?.segments?.[0]?.text === '友恵' && flat.some((x) => x.op === 'voice' && x.src === 'snd/0.ogg') && flat.filter((x) => x.op === 'speaker').find((x) => x.step === voiced.step + 1)?.segments?.length === 0)
   const ruby = flat.filter((x) => x.op === 'text').find((x) => textOf(x).includes('漢字'))
   check('注音：ÿÿ<注音长度><注音><正文长度><正文> → { text, ruby }', ruby?.segments?.some((s) => s.text === '漢字' && s.ruby === 'かんじ') && textOf(ruby).includes('ruby '), J(ruby))
-  check('BGM / SE / 循环 SE：#131 n → 声音号 bgmBase + n；#46；#114（-1 停）', flat.some((x) => x.op === 'bgm' && x.src === 'snd/3.ogg') && flat.some((x) => x.op === 'se' && x.src === 'snd/2.ogg') && flat.some((x) => x.op === 'bgse' && x.src === 'snd/2.ogg' && x.loop) && flat.some((x) => x.op === 'bgseStop') && flat.some((x) => x.op === 'bgmStop'))
+  check('BGM / SE / 循环 SE：#131 n → 声音号 bgmBase + n；#46；#114（-1 停）', flat.some((x) => x.op === 'bgm' && x.src === 'snd/2.ogg') && flat.some((x) => x.op === 'se' && x.src === 'snd/1.ogg') && flat.some((x) => x.op === 'bgse' && x.src === 'snd/1.ogg' && x.loop) && flat.some((x) => x.op === 'bgseStop') && flat.some((x) => x.op === 'bgmStop'))
   const bgs = flat.filter((x) => x.op === 'bg')
   check('背景：开头黑底；同一层「清空 + 显示」合成一次切换（不闪黑），切换提交时才发', bgs.length === 3 && bgs[0].color && bgs[1].src === 'img/1.png' && bgs[2].src === 'img/0.jpg', J(bgs))
   check('背景：在 #29 … #13 里的切换带淡入淡出', bgs[2].fade === 0.5 && bgs[1].fade === 0, J(bgs))

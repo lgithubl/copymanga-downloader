@@ -1327,7 +1327,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
       let sounds = []
       let size = 0
       try { sounds = parseSoundTable(decodeArc(await readFile(tableArc.file))); size = (await stat(dataArc.file)).size } catch { sounds = [] }
-      if (sounds.length <= cfg.maxEntries) for (const snd of sounds) if (snd.id > 0 && snd.size > 64 && snd.offset + snd.size <= size && snd.size <= MAX_ENTRY_BYTES) add(`${cfg.dir}/res/snd/${snd.id}.ogg`, { file: dataArc.file, offset: snd.offset, size: snd.size, transform: 'tomoe-snd' })
+      if (sounds.length <= cfg.maxEntries) for (const snd of sounds) if (snd.id > 0 && snd.size > 64 && snd.offset + snd.size <= size && snd.size <= MAX_ENTRY_BYTES) add(`${cfg.dir}/res/snd/${snd.id - 1}.ogg`, { file: dataArc.file, offset: snd.offset, size: snd.size, transform: 'tomoe-snd' })
     }
     return { map, files, sig }
   }

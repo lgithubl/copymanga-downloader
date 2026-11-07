@@ -509,11 +509,18 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   // 并发限制 6：每个脚本要解析一次（scriptInfo 按文件 mtime 缓存）；路径带 :: 的（一个文件装很多场景）不是真文件，跳过。
   // 目录卡片的取图名 = 适配器给的 key（没给用标题）：标题常常是显示名（角色名），文件按编号命名（misttrain：Bases/<底号>201.png）
   const scriptsOf = (node, depth, limit, out = []) => { for (const c of node.children || []) { if (out.length >= limit) break; if (c.script) out.push(c.script); else if (depth > 1) scriptsOf(c, depth - 1, limit, out) } return out }
+  // dirCover.scriptOrder：脚本名（不含扩展名）命中第 k 条正则的排在前面（k 小的先），没命中的跟在后面，同档保持原来的先后；写了它就在全部候选（最多 2000 个）里排好再截 scan 个
+  const coverOrderRes = (config.dirCover.scriptOrder || []).map((source) => { try { return new RegExp(source, 'i') } catch { return null } }).filter(Boolean)
+  const orderCoverScripts = (list) => {
+    const rank = (rel) => { const stem = stemOf(rel); const i = coverOrderRes.findIndex((re) => re.test(stem)); return i < 0 ? coverOrderRes.length : i }
+    return list.map((rel, k) => [rel, k]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map((x) => x[0])
+  }
   // dirCover.from = last：取最后 scan 个（从头收全再截尾；候选脚本最多看 2000 个）
   // leafScan：直接装着脚本的节点（TSK 的一本书 = 若干章）用这个数（0 = 跟着 scan）：from last + leafScan 1 = 只用最后一章的封面（和那一章的脚本卡片一样）
   const coverScriptsOf = (node, depth, scan) => {
     const leaf = config.dirCover.leafScan > 0 && node.children?.length && node.children.every((c) => c.script)
     const limit = leaf ? config.dirCover.leafScan : scan
+    if (coverOrderRes.length) return orderCoverScripts(scriptsOf(node, depth, 2000)).slice(0, limit)
     return config.dirCover.from === 'last' ? scriptsOf(node, depth, 2000).slice(-limit) : scriptsOf(node, depth, limit)
   }
   const adapterHasSceneThumbs = (adapters?.length ? adapters : galAdapterIds()).some((id) => { try { return Boolean(galAdapter(id)?.sceneThumbs) } catch { return false } })
@@ -697,6 +704,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         if (command.op === 'bg') { add(command.src); add(command.over) }
         else if (command.op === 'stand') { for (const part of command.parts || []) add(part?.src) }
         else if (command.op === 'overlay') add(command.src)
+        else if (command.op === 'movie') for (const src of (command.srcs || []).slice(0, 2)) add(src)   // 视频（ogv → mp4 要服务端 ffmpeg 转，第一次要几百毫秒）也提前转好
       }
       if (wanted.length >= 80) break
     }
@@ -846,6 +854,17 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         else why.push(`脚本里没有背景图指令（bg）：${scene.steps.length} 步、${hasMovie ? '只有视频' : '没有画面指令'}`)
       }
     } else if (scene && config.thumbFallback.enabled && config.thumbFallback.topUp && found.size < config.thumbFallback.max) await fillFromScript()
+    // cgFirst：规则给了图（比如角色图标）时，脚本里的 CG 排到规则的图前面（CG → 规则的图 → 背景 / 立绘）；最多占 max - 1 个位置
+    if (found.size && scene && config.thumbFallback.enabled && config.thumbFallback.cgFirst) {
+      const got = collectFallbackImages(scene, config.thumbFallback)
+      const first = new Map()
+      for (const { src, kind } of got.images) { if (kind !== 'cg' || first.size >= Math.max(1, config.thumbFallback.max - 1)) continue; await thumbEngine.addPaths(first, [src], 'thumbFallback(cg)', why, config.thumbFallback.max) }
+      if (first.size) {
+        const rest = [...found.entries()]
+        found.clear()
+        for (const [key, value] of [...first.entries(), ...rest]) if (!found.has(key)) found.set(key, value)
+      }
+    }
     // 场景内部轮播（thumbRender.inner）：规则 / 兜底给的封面之外，再从场景里挑最多 innerRenders 个不同的骨骼 / 立绘 / CG 画面渲染（骨骼优先），剩下的名额补场景里的图；
     // 总数（规则图 + 渲染图 + 图）不超过 innerMax。封面仍是规则给的第一张（规则没给图时是第一张渲染图）
     let innerPicks = 0
@@ -925,7 +944,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const thumbs = [...(await thumbEngine.forDir(entry, { why: tried })).values()]
     if (!thumbs.length && scriptsOfEntry && config.dirCover.enabled === true) {
       try {
-        const cover = await dirCoverOfScripts(config.dirCover.from === 'last' ? (await scriptsOfEntry()).slice(-config.dirCover.scan) : (await scriptsOfEntry()).slice(0, config.dirCover.scan))
+        const cover = await dirCoverOfScripts(coverOrderRes.length ? orderCoverScripts(await scriptsOfEntry()).slice(0, config.dirCover.scan) : config.dirCover.from === 'last' ? (await scriptsOfEntry()).slice(-config.dirCover.scan) : (await scriptsOfEntry()).slice(0, config.dirCover.scan))
         if (cover) return { thumb: cover.thumbs[0] || '', thumbs: cover.thumbs, carousel: config.dirCover.max, ...(cover.renders.length ? { render: cover.renders[0], renders: cover.renders } : {}), ...extra }
       } catch { /* 取不到封面就保持没有图 */ }
     }
@@ -1083,7 +1102,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         if (entry.type === 'dir') {
           const label = await labelOf(entry.name)
           const n = await countChildren(set, entry.rel)
-          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry, undefined, () => scriptsBelow(set, entry.rel, config.dirCover.depth, config.dirCover.from === 'last' ? 2000 : config.dirCover.scan))), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
+          return { type: 'dir', id: entry.name, title: label, subtitle: `${label !== entry.name ? `${entry.name} · ` : ''}${n} 项`, ...(await withWhy(entry, undefined, () => scriptsBelow(set, entry.rel, config.dirCover.depth, config.dirCover.from === 'last' || coverOrderRes.length ? 2000 : config.dirCover.scan))), badge: entry.origin, node: dirNodeId(set, entry.rel, 1) }
         }
         const info = await scriptInfo(set, entry.rel)
         return { type: 'script', id: entry.rel, title: entry.stem, subtitle: [info.hasMovie ? '含视频' : '', info.excerpt].filter(Boolean).join(' · '), thumb: info.thumb, thumbs: info.thumbs, ...(info.thumb ? {} : { thumbWhy: info.thumbWhy }), ...(info.issues?.length ? { issues: info.issues } : {}), badge: entry.origin || info.badge, ...renderFieldsOf(info), node: idOf(set, 'script', entry.rel) }
