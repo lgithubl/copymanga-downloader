@@ -5,13 +5,47 @@
 // 在 g08 / g09 的 scn.xp3 解出来的 PSB（全部约 520 个）上读通；不处理加密过的 PSB（头里加密标志 ≠ 0）和资源块内容（只返回引用）。
 const MAX_DEPTH = 64
 
+// E-mote 的头加密（emotedriver.dll 的 StructCryptFilter，逆向自「妹(姉)は兄(弟)の性癖を歪ませたい！」的 emotedriver.dll）：
+// 头里加密标志 = 1 时，魔数 + 版本 + 标志 之后 headerLength - 8 字节（v4 = 48 字节）与 xorshift128 密钥流异或；
+// xorshift128：x = 123456789、y = 362436069、z = 521288629、w = 种子（十进制字符串经 strtol，这个游戏 = "49327924"）；每 4 字节取一个 w（低字节在前）。
+// 头长度（第一个 u32）自己也是加密的：先解 4 字节读出来，再接着解剩下的。种子是每个游戏自己的（在 emotedriver.dll 里），用 options.seed 传。
+export const EMOTE_SEED_YUGAMASE = 49327924
+export function xorshiftKeystream(seed) {
+  let x = 123456789 >>> 0
+  let y = 362436069 >>> 0
+  let z = 521288629 >>> 0
+  let w = seed >>> 0
+  let buf = 0
+  let left = 0
+  return () => {
+    if (!left) { const t = (x ^ (x << 11)) >>> 0; x = y; y = z; z = w; w = ((w ^ (w >>> 19)) ^ (t ^ (t >>> 8))) >>> 0; buf = w; left = 4 }
+    const b = buf & 255
+    buf >>>= 8
+    left -= 1
+    return b
+  }
+}
+export function decryptPsbHeader(buf, seed) {
+  const out = Buffer.from(buf)
+  const next = xorshiftKeystream(seed)
+  for (let i = 8; i < 12; i++) out[i] ^= next()
+  const headerLength = out.readUInt32LE(8)
+  if (headerLength < 44 || headerLength > 4096 || headerLength > out.length) throw new Error(`PSB 头解密后头长度 ${headerLength} 不合理（密钥种子不对？）`)
+  for (let i = 12; i < headerLength; i++) out[i] ^= next()
+  out.writeUInt16LE(0, 6)
+  return out
+}
+
 export class Psb {
-  constructor(buf) {
+  constructor(buf, { seed = null } = {}) {
     if (buf.length < 44 || buf.toString('latin1', 0, 4) !== 'PSB\0') throw new Error('不是 PSB')
+    if (buf.readUInt16LE(6) !== 0) {
+      if (seed === null) throw new Error('这个 PSB 的头是加密的：要传 options.seed（E-mote 的密钥种子，见 EMOTE_SEED_YUGAMASE）')
+      buf = decryptPsbHeader(buf, seed)
+    }
     this.d = buf
     this.version = buf.readUInt16LE(4)
     this.encrypt = buf.readUInt16LE(6)
-    if (this.encrypt !== 0) throw new Error('这个 PSB 的头是加密的（暂不支持）')
     this.oNames = buf.readUInt32LE(12)
     this.oStrings = buf.readUInt32LE(16)
     this.oStringData = buf.readUInt32LE(20)
@@ -81,6 +115,7 @@ export class Psb {
     if (t >= 0x0d && t <= 0x14) return this.uintArray(pos - 1)
     if (t >= 0x15 && t <= 0x18) { const n = t - 0x14; return [this.strings[d.readUIntLE(pos, n)] ?? '', pos + n] }
     if (t >= 0x19 && t <= 0x1c) { const n = t - 0x18; return [{ resource: d.readUIntLE(pos, n) }, pos + n] }
+    if (t >= 0x22 && t <= 0x25) { const n = t - 0x21; return [{ extra: d.readUIntLE(pos, n) }, pos + n] }   // v4 的 extra 资源（E-mote 的 src 贴图在这里）
     if (t === 0x1d) return [0, pos]
     if (t === 0x1e) return [d.readFloatLE(pos), pos + 4]
     if (t === 0x1f) return [d.readDoubleLE(pos), pos + 8]
@@ -101,6 +136,18 @@ export class Psb {
   }
 
   root() { return this.value(this.oEntries)[0] }
+
+  // v4 头 = 14 个 u32：长度、names、strings 偏移表、strings 数据、resources 偏移 / 长度 / 数据、entries、校验和、extra 偏移 / 长度 / 数据（索引 9..11）
+  // 这里按头里的位置读，位置对不上就返回空
+  extras() {
+    const h = (i) => this.d.readUInt32LE(8 + i * 4)
+    try {
+      const [offs] = this.uintArray(h(9))
+      const [lens] = this.uintArray(h(10))
+      const base = h(11)
+      return offs.map((o, i) => this.d.subarray(base + o, base + o + lens[i]))
+    } catch { return [] }
+  }
 
   // 资源块（图 / 声音等的原始字节）：偏移表 / 长度表 / 数据区在头里（24 / 28 / 32）；root 里的 { resource: n } = 这里的第 n 个
   resources() {
