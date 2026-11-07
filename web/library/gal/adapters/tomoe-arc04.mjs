@@ -19,6 +19,8 @@ export const DEFAULT_OPTIONS = {
   sndDir: 'snd',
   stage: [1920, 1080],
   bgLayers: [132, 120, 127, 117, 121, 9999],
+  keepBg35: true,                                  // #35 9999 只清叠加层（2 / 140 / 141 / 4），背景层留着（CG 的抠图补丁盖在原来的背景上；用真实图核对过：不留 = 抠图的人物站在黑底上），背景层靠图号 >= clearFrom 清；false = 全清（旧）
+  clearOp35: true,                                 // #35 是否清层（false = 不清；只有图号 >= clearFrom 的绘制才清那一层）
   clearFrom: 816,                                  // 图号 >= 这个 = 清空这一层
   bgmBase: 6018,                                   // BGM n → 声音号 bgmBase + n
   fade: 0.5,                                       // 画面切换的淡入淡出秒数
@@ -199,8 +201,8 @@ export function parse(text, ctx = null, meta = {}) {
       else if (op === 114) { if (ev[2] >= 0) { const src = sound('sounds', ev[2]); if (src) emit({ op: 'bgse', src, loop: true }) } else emit({ op: 'bgseStop' }) }
       else if (op === 132) emit({ op: 'bgmStop', fade: Math.max(0, Math.min(10, (Number(ev[2]) || 0) / 1000)) })   // #132 毫秒 = BGM 淡出
       else if (op === 131) { if (ev[2] >= 0) { const src = sound('bgm', opt.bgmBase + ev[2]); if (src) emit({ op: 'bgm', src }) } else emit({ op: 'bgmStop' }) }
-      else if (op === 35) {   // #35 层：清掉这一层的内容（9999 = 全部层；每次换场景都有一条，场景之间的 CG / 标题卡就是靠它清的）
-        if (Number(ev[2]) === 9999) { for (const state of layers.values()) state.stack = []; bgOrder.length = 0 } else { layerState(Number(ev[2])).stack = []; const at = bgOrder.indexOf(Number(ev[2])); if (at >= 0) bgOrder.splice(at, 1) }
+      else if (op === 35 && opt.clearOp35) {   // #35 层：清掉这一层的内容（9999 = 全部层）；keepBg35：9999 不动背景层（只清叠加层）
+        if (Number(ev[2]) === 9999) { for (const [layer, state] of layers) if (!(opt.keepBg35 && bgLayers.has(layer))) state.stack = []; if (!opt.keepBg35) bgOrder.length = 0 } else { layerState(Number(ev[2])).stack = []; const at = bgOrder.indexOf(Number(ev[2])); if (at >= 0) bgOrder.splice(at, 1) }
       }
       else if (op === 29) transition = true
       else if (op === 13) { applyLayers(transition ? opt.fade : 0); transition = false }

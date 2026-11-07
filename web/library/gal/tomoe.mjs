@@ -288,10 +288,10 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
       if (Number(ev[4]) < CLEAR_FROM) {
         live.push(ev)
         const same = live.filter((x) => Number(x[6]) === layer)
-        if (same.length > 40) live.splice(live.indexOf(same[0]), 1)   // 防止无限增长（整张图一般很快把前面的盖掉，这里只管补丁连发）
+        if (same.length > 200) live.splice(live.indexOf(same[0]), 1)   // 防止无限增长（整张图一般很快把前面的盖掉，这里只管补丁连发）
       }
     } else if (ev[0] === '#' && ev[1] === 35) {   // #35 层：清掉这一层；9999 = 全部（每次换场景都有一条）
-      if (Number(ev[2]) === 9999) live.length = 0
+      if (Number(ev[2]) === 9999) { for (let k = live.length - 1; k >= 0; k--) if (!BG_LAYERS.has(Number(live[k][6]))) live.splice(k, 1) }   // 9999 只清叠加层，背景层留着（CG 的抠图补丁盖在原来的背景上，背景层靠图号 >= 816 清）
       else for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === Number(ev[2])) live.splice(k, 1)
     } else if (ev[0] === '#' && ev[1] === 131) bgm = Number(ev[2]) >= 0 ? Number(ev[2]) : null
     else if (ev[0] === '#' && ev[1] === 132) bgm = null   // #132 2000 = BGM 淡出（99 处全是 2000，紧跟换场景；整个剧本 #131 -1 只出现 1 次，游戏靠 #132 停音乐）：之后没有新的 #131 就是没有 BGM

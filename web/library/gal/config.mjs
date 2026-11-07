@@ -35,7 +35,7 @@ export const CONTAINER_MODES = Object.freeze(['hybrid', 'files'])
 // 容器格式：willplus（WillPlus AdvHD 的 .arc，默认）/ buriko（BGI / Ethornell 的 BURIKO ARC20：条目没有扩展名，按内容认；只支持 hybrid）/ pf8（Artemis 的 .pfs：条目逐字节 XOR SHA1(索引)；只支持 hybrid）/ arcfam（自有 arc：eomaia 引擎的 script.arc / image.arc …，名字按长度混淆；只支持 hybrid）/ krkr（KiriKiri Z 的 Hxv4 加密 xp3：文件名是哈希，要在 containers.keys 里放密钥包；只支持 hybrid）/ xfl（Liar-soft codeX RScript 的 .xfl：'LB' 档案，脚本 .gsc、图 .wcg、声音是带 Vorbis ACM 外壳的 wav；只支持 hybrid）/ dsm（Unity GameMaterial：data.dsm = 加密脚本、.psm = 改了首字节的 PNG；只支持 hybrid）
 export const CONTAINER_FORMATS = Object.freeze(['willplus', 'buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys'])
 export const CONTAINER_KINDS = Object.freeze(['script', 'res', 'pna'])
-export const DEFAULT_CONTAINERS = Object.freeze({ enabled: false, dir: 'arc', scan: Object.freeze(['.']), scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', mode: 'hybrid', format: 'willplus', flat: false, rules: Object.freeze([]), maxEntries: 200000, maxTotalMB: 8192, emote: Object.freeze({ enabled: false, seed: 'auto', textureOrder: 'auto', driver: 'emotedriver.dll' }) })
+export const DEFAULT_CONTAINERS = Object.freeze({ enabled: false, dir: 'arc', scan: Object.freeze(['.']), scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', mode: 'hybrid', format: 'willplus', flat: false, rules: Object.freeze([]), maxEntries: 200000, maxTotalMB: 8192, emote: Object.freeze({ enabled: false, seed: 'auto', textureOrder: 'auto', driver: 'emotedriver.dll' }), video: Object.freeze({ enabled: false, crf: 23 }) })
 // KiriKiri Z（Hxv4）的密钥包：[{ params 22B, material 64B, key 32B, nonce0 24B, nonce1 24B }]（hex，不分大小写）；最多 8 套，每套字段全对才收；返回规整后（小写 hex）的列表
 const KEY_BUNDLE_HEX = Object.freeze({ params: 22, material: 64, key: 32, nonce0: 24, nonce1: 24 })
 export function normalizeKeyBundles(list) {
@@ -535,7 +535,7 @@ export function normalizeGalConfigWithWarnings(raw) {
 
   // containers：容器展开（见 DEFAULT_GAL_CONFIG 里的说明）
   const dco = DEFAULT_CONTAINERS
-  const containers = { ...dco, scan: [...dco.scan], rules: [], emote: { ...dco.emote } }
+  const containers = { ...dco, scan: [...dco.scan], rules: [], emote: { ...dco.emote }, video: { ...dco.video } }
   if (v.containers !== undefined && !isPlainObject(v.containers)) warn('containers', '不是对象，用默认值', v.containers)
   if (isPlainObject(v.containers)) {
     const c = v.containers
@@ -584,6 +584,16 @@ export function normalizeGalConfigWithWarnings(raw) {
         if (e.seed !== undefined) { if (e.seed === 'auto' || (Number.isInteger(Number(e.seed)) && Number(e.seed) >= 0 && Number(e.seed) <= 0xffffffff && e.seed !== '' && e.seed !== null && typeof e.seed !== 'boolean')) containers.emote.seed = e.seed === 'auto' ? 'auto' : Number(e.seed); else warn('containers.emote.seed', "只能是 'auto' 或 0~4294967295 的整数，用默认值", e.seed) }
         if (e.textureOrder !== undefined) { if (['auto', 'rgba', 'bgra', 'argb', 'abgr'].includes(e.textureOrder)) containers.emote.textureOrder = e.textureOrder; else warn('containers.emote.textureOrder', '只能是 auto / rgba / bgra / argb / abgr，用默认值', e.textureOrder) }
         if (e.driver !== undefined) { const rel = typeof e.driver === 'string' ? safeRelPath(e.driver) : null; if (rel) containers.emote.driver = rel; else warn('containers.emote.driver', '不是安全的相对路径，用默认值', e.driver) }
+      }
+    }
+    // video：Artemis 的 .ogv（Theora）事件图——Chrome 系浏览器 2024 年起不再支持 Theora（canPlayType 返回空，<video> 黑屏），取出来时用服务端的 ffmpeg 转成 H.264 mp4（虚拟路径 <名>.ogv → <名>.mp4）：{ enabled, crf（画质，18~35，越小越清晰）}
+    if (c.video !== undefined) {
+      if (!isPlainObject(c.video)) warn('containers.video', '不是对象，用默认值', c.video)
+      else {
+        const e = c.video
+        for (const key of Object.keys(e)) if (!(key in dco.video)) warn('containers.video', `不认识的字段 ${key}，已丢掉`, key)
+        if (e.enabled !== undefined) { if (typeof e.enabled === 'boolean') containers.video.enabled = e.enabled; else warn('containers.video.enabled', '只能是 true / false，用默认值', e.enabled) }
+        if (e.crf !== undefined) { const n = Math.floor(Number(e.crf)); if (e.crf === null || e.crf === '' || typeof e.crf === 'boolean' || !Number.isFinite(n)) warn('containers.video.crf', '不是数字，用默认值', e.crf); else containers.video.crf = Math.max(18, Math.min(35, n)) }
       }
     }
     if (c.scriptExt !== undefined) { if (typeof c.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(c.scriptExt)) containers.scriptExt = c.scriptExt; else warn('containers.scriptExt', '只能是 1-10 位小写字母 / 数字，用默认值', c.scriptExt) }

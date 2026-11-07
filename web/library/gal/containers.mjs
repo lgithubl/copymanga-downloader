@@ -9,8 +9,11 @@
 // 容器是外来的二进制：所有长度 / 偏移都要对着文件大小校验，条目名只认安全的相对路径，展开的数量 / 总大小有上限。
 import { createHash } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
-import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
 import { bwToOgg, cbgToPng, dscDecode, encodePng, isBurikoScript, parseBgiFaceSet, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
 import { decodeScre } from './arcfam-decode.mjs'
@@ -41,7 +44,7 @@ import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 19
+export const CONTAINER_FORMAT_VERSION = 20
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -238,7 +241,20 @@ async function classifyBuriko(handle, entry) {
 }
 // 取出来的字节要不要转：cbg-png（CompressedBG → PNG）/ bw-ogg（去掉 BW 头）；PNAP 的预乘 → 直通另算（unpremultiply）
 // 异步版：CompressedBG → PNG 放 worker 线程（不卡主线程），别的转换还是同步做
+const execFileP = promisify(execFile)
+// ogv（Theora）→ mp4（H.264 + AAC）：ffmpeg 转，先写临时文件再读回（ffmpeg 要能 seek；mp4 的 faststart 要二次写）。服务端镜像里有 ffmpeg；没有就抛错（取资源失败，播放器按缺图记）
+async function ogvToMp4(ogv, crf) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'gal-ogv-'))
+  try {
+    const input = path.join(dir, 'in.ogv')
+    const output = path.join(dir, 'out.mp4')
+    await writeFile(input, ogv)
+    await execFileP('ffmpeg', ['-v', 'error', '-y', '-i', input, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf || 23), '-pix_fmt', 'yuv420p', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output], { timeout: 10 * 60 * 1000, maxBuffer: 1 << 20 })
+    return await readFile(output)
+  } finally { await rm(dir, { recursive: true, force: true }).catch(() => {}) }
+}
 async function transformDataAsync(data, hit) {
+  if (hit.transform === 'pf8-ogv-mp4') return ogvToMp4(pf8Decrypt(data, hit.key), hit.crf)
   if (hit.transform === 'cbg-png') return runCbg(data, hit.crop ? { cropHeight: hit.crop } : {})
   if (hit.transform === 'wcg-png') return runWcg(data)
   return transformData(data, hit)
@@ -353,7 +369,7 @@ function compileRules(cfg) {
     gallery: rule.gallery || null,
   }))
 }
-const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex')])).digest('hex').slice(0, 16)
+const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, cfg.video || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex')])).digest('hex').slice(0, 16)
 const kindOf = (name, scriptKinds) => {
   const ext = extOf(name)
   if (SCRIPT_EXTS.has(ext)) return scriptKinds
@@ -438,7 +454,7 @@ async function expandTomoe({ file, arcName, rule, cfg, outRoot, budget }) {
     const chapterName = String(chapter.index + 1).padStart(2, '0')
     for (const scene of chapter.scenes) {
       if (written >= cfg.maxEntries) break
-      const name = `${chapterName}/${String(scene.index + 1).padStart(2, '0')}${scene.cg ? '_cg' : ''}`   // 有 CG 的小节名字带 _cg（虚拟目录「CG 场景」按它收集）； script/Arc04/<章>/<节>.tomoe：章 = 剧本里的 ML 块，节 = 章里按场景切开的小节
+      const name = `${chapterName}/${chapterName}_${String(scene.index + 1).padStart(2, '0')}${scene.cg ? '_cg' : ''}`   // 有 CG 的小节名字带 _cg（虚拟目录「CG 场景」按它收集）； script/Arc04/<章>/<节>.tomoe：章 = 剧本里的 ML 块，节 = 章里按场景切开的小节
       const text = JSON.stringify({ format: 'tomoe-arc04/1', arc: arcName, name, chapter: chapter.index + 1, scene: scene.index + 1, record: chapter.start, texts: scene.texts, events: scene.events })
       budget.bytes += text.length
       if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
@@ -1148,7 +1164,7 @@ function listImysBundles(mediaDir, cfg) {
   const hit = imysBundleLists.get(key)
   if (hit && Date.now() - hit.at < IMYS_LIST_TTL_MS) return hit.promise
   const promise = (async () => {
-    const out = { backgrounds: [], tati: [], sig: '' }
+    const out = { backgrounds: [], tati: [], icons: [], memorials: [], scenarios: [], sig: '' }
     const parts = []
     const read = async (rel, re, into, prefix = '') => {
       const dir = path.join(mediaDir, ...`${base}/${rel}`.split('/').filter(Boolean))
@@ -1161,6 +1177,9 @@ function listImysBundles(mediaDir, cfg) {
     await read('backgrounds', /^(.+?)(?:\.jp)?\.encrypted$/i, out.backgrounds)
     await read('backgrounds/r18', /^(.+?)(?:\.jp)?\.encrypted$/i, out.backgrounds, 'R18/')   // H CG（hcg_* / eve_*）：剧本里写 BGDraw("R18/hcg_0270301")，按文件名（basename）对上
     await read('characters/tati', /^(\d+)\.encrypted$/i, out.tati)
+    await read('characters/icon', /^(\w+)\.encrypted$/i, out.icons)   // 100×100 角色图标（<角色 3 位><衣装 2 位 / 字母码>）
+    await read('memorial/thumbnails', /^(\w+)\.encrypted$/i, out.memorials)   // 320×180 回想（H CG）缩略图
+    for (const cat of ['dress', 'training', 'favorite']) await read(`scenarios/${cat}`, /^(.+?)(?:\.jp)?\.encrypted$/i, out.scenarios, `${cat}/`)   // 只要名字（给脚本卡片配图标别名）
     out.sig = createHash('sha1').update(parts.join('|')).digest('hex')
     return out
   })()
@@ -1217,6 +1236,17 @@ async function buildImysVirtual(mediaDir, cfg, sig) {
   }
   const bundles = await listImysBundles(mediaDir, cfg)
   for (const bg of bundles.backgrounds) add(`${cfg.dir}/res/bg/${bg.name}.png`, { file: bg.file, offset: 0, size: 0, transform: 'imys-bg' })
+  const iconOf = new Map(bundles.icons.map((i) => [i.name.toLowerCase(), i]))
+  for (const i of bundles.icons) add(`${cfg.dir}/res/icon/${i.name}.png`, { file: i.file, offset: 0, size: 0, transform: 'imys-bg' })
+  for (const m of bundles.memorials) add(`${cfg.dir}/res/memorial/${m.name}.png`, { file: m.file, offset: 0, size: 0, transform: 'imys-bg' })
+  // 脚本卡片的图标别名 res/sicon/<脚本名>.png：衣装 cloth_<角色>_<衣装码> / 学园 gakuen_<角色>_<码> = 图标 <角色><码前两位>（找不到试 <角色>01）；亲密度 sin_<角色 3 位><2 位> = <角色>01
+  for (const s of bundles.scenarios) {
+    const stem = s.name.replace(/^[^/]+\//, '')
+    const m = /^(?:cloth|gakuen)_(\d{3})_(\w{2})/i.exec(stem) || /^sin_(\d{3})(\d{2})/i.exec(stem)
+    if (!m) continue
+    const icon = (/^sin_/i.test(stem) ? null : iconOf.get(`${m[1]}${m[2]}`.toLowerCase())) || iconOf.get(`${m[1]}01`)
+    if (icon) add(`${cfg.dir}/res/sicon/${stem}.png`, { file: icon.file, offset: 0, size: 0, transform: 'imys-bg' })
+  }
   for (const t of bundles.tati) for (let n = 1; n <= IMYS_EXPRESSIONS; n += 1) add(`${cfg.dir}/res/tati/${t.name}/${String(n).padStart(2, '0')}.png`, { file: t.file, offset: 0, size: 0, transform: 'imys-tati', expr: n })
   return { map, files, sig }
 }
@@ -1377,6 +1407,10 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
             add(`${cfg.dir}/${resRel(cfg, stem, name.replace(/\.psb$/i, '.emote.psb'))}`, { file, offset: entry.offset, size: entry.size, transform: 'pf8-emote', key, emote: cfg.emote })
             continue
           }
+          if (cfg.video?.enabled && /\.ogv$/i.test(name)) {   // Theora 的 .ogv → mp4（见 config.containers.video）
+            add(`${cfg.dir}/${resRel(cfg, stem, name.replace(/\.ogv$/i, '.mp4'))}`, { file, offset: entry.offset, size: entry.size, transform: 'pf8-ogv-mp4', key, crf: cfg.video.crf })
+            continue
+          }
           if (classifyPf8(name).kind !== 'res') continue
           if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) continue
           add(`${cfg.dir}/${resRel(cfg, stem, name)}`, { file, offset: entry.offset, size: entry.size, transform: 'pf8', key })
@@ -1465,7 +1499,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.cue || '', hit.expr || 0, hit.emote ? JSON.stringify(hit.emote) : '', hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.crf || 0, hit.cue || '', hit.expr || 0, hit.emote ? JSON.stringify(hit.emote) : '', hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
     return {
       key,
       rel: hit.rel,

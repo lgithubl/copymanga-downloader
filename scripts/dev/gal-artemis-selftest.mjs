@@ -65,7 +65,7 @@ const work = await mkdtemp(path.join(os.tmpdir(), 'gal-artemis-'))
   const s = adapter2.parse(b, ctx2).steps
   const o = (i, op) => s[i].commands.filter((c) => c.op === op)
   check('bg 带 id = 图层：cinema01 → overlay（槽 bg5、淡入 0.4、z 5），主背景不变（不是黑屏）', o(1, 'overlay')[0]?.slot === 'bg5' && o(1, 'overlay')[0].src === 'image/sys/cinema01.png' && o(1, 'overlay')[0].fade === 0.4 && o(1, 'overlay')[0].z === 5 && !o(1, 'bg').length, J(s[1]))
-  check('白闪图层：cover；alpha = 0 → 同槽更新（alpha 0）；cgdel id=9 → overlayOff bg9（bg5 还在）', o(2, 'overlay')[0]?.fit === 'cover' && o(3, 'overlay')[0]?.alpha === 0 && o(4, 'overlayOff')[0]?.slot === 'bg9' && !o(4, 'overlayOff').some((c) => c.slot === 'bg5'), J([s[2], s[3], s[4]]))
+  check('白闪图层：stage 1280×720；alpha = 0 → 同槽更新（alpha 0）；cgdel id=9 → overlayOff bg9（bg5 还在）', J(o(2, 'overlay')[0]?.stage) === J([1280, 720]) && o(3, 'overlay')[0]?.alpha === 0 && o(4, 'overlayOff')[0]?.slot === 'bg9' && !o(4, 'overlayOff').some((c) => c.slot === 'bg5'), J([s[2], s[3], s[4]]))
   check('fg mode=-1 删这个角色（只剩花衣）', J(o(2, 'stand')[0]?.parts.map((p) => p.src)) === J(['image/fg/_blog/kae_0/通常Ａ.png']), J(s[2]))
   check('bg face=1 换主背景但不清立绘 / 图层；cgdel id=-1 清所有图层', o(5, 'bg').length === 1 && !o(5, 'standOff').length && !o(5, 'overlayOff').length && o(6, 'overlayOff')[0]?.slot === 'bg5', J([s[5], s[6]]))
   check('bg 不带 id（主背景）= 删所有立绘（standOff）', o(7, 'standOff').length === 1, J(s[7]))
@@ -142,11 +142,26 @@ check('gal-layout：认出 artemis（id = artemis::test），containers = pf8 / 
   const s1 = await readFile(path.join(media, 'arc/script/game/s1.ast'), 'utf8')
   check('展开：.ast 解密后展开到 arc/script/<pfs 名>/<脚本>.ast（保留子目录）；lua / csv 不展开；图 / 声音一个都没落盘', s1.startsWith('astver = 2.0') && (await exists(path.join(media, 'arc/script/game/folder/s3.ast'))) && !(await exists(path.join(media, 'arc/script/game/adv.lua'))) && !(await exists(path.join(media, 'arc/res'))) && Object.values(rep).every((r) => !r.error), J(rep))
   const vf = await virtualFiles({ mediaDir: media, config: cfg })
-  check('虚拟索引（flat）：图 / 声音 / ogv 在 arc/res/<档案里的路径>；lua / csv / 脚本不在；两个 pfs 的条目都在', J([...vf.files].sort()) === J(['arc/res/image/bg/bg01.png', 'arc/res/image/ev/ev_x/ev_x_01.ogv', 'arc/res/image/fg/_blog/kae_0/通常Ａ.png', 'arc/res/sound/bgm/bgm01.ogg', 'arc/res/sound/se/se01.ogg', 'arc/res/sound/vo/kae/v001.ogg'].sort()), J(vf.files))
+  check('虚拟索引（flat）：图 / 声音 / 视频在 arc/res/<档案里的路径>（布局默认 containers.video 开着：.ogv → .mp4）；lua / csv / 脚本不在；两个 pfs 的条目都在', J([...vf.files].sort()) === J(['arc/res/image/bg/bg01.png', 'arc/res/image/ev/ev_x/ev_x_01.mp4', 'arc/res/image/fg/_blog/kae_0/通常Ａ.png', 'arc/res/sound/bgm/bgm01.ogg', 'arc/res/sound/se/se01.ogg', 'arc/res/sound/vo/kae/v001.ogg'].sort()), J(vf.files))
+  const cfgOgv = { ...cfg, containers: { ...cfg.containers, video: { enabled: false, crf: 23 } } }
+  const vfOgv = await virtualFiles({ mediaDir: media, config: cfgOgv })
+  check('containers.video 关着：.ogv 原样（路径还是 .ogv）', vfOgv.files.includes('arc/res/image/ev/ev_x/ev_x_01.ogv') && !vfOgv.files.some((f) => f.endsWith('.mp4')), J(vfOgv.files))
   const entry = await virtualEntry({ mediaDir: media, config: cfg, rels: ['arc/res/image/bg/bg01.png'] })
   check('virtualEntry.read()：不落盘就给出解密后的内容', (await entry.read()).toString() === 'PNGDATA-bg01' && !(await exists(path.join(media, 'arc/res'))))
   const n = await materialize({ mediaDir: media, config: cfg, rels: ['arc/res/sound/bgm/bgm01.ogg'] })
   check('取出（materialize）：解密后的内容（OggS 开头）', n === 1 && (await readFile(path.join(media, 'arc/res/sound/bgm/bgm01.ogg'))).subarray(0, 4).toString() === 'OggS')
+  {
+    // ogv → mp4：用一个假的 ffmpeg（最后一个参数 = 输出文件）走完整条取资源的链（真转换要镜像里的 ffmpeg + Theora 样本）
+    const bin = path.join(work, 'fakebin')
+    await mkdir(bin, { recursive: true })
+    await writeFile(path.join(bin, 'ffmpeg'), '#!/bin/sh\nfor a; do out="$a"; done\ncp "$(echo "$@" | sed \'s/.*-i \\([^ ]*\\) .*/\\1/\')" /dev/null 2>/dev/null\nprintf "MP4-FAKE" > "$out"\n', { mode: 0o755 })
+    const oldPath = process.env.PATH
+    process.env.PATH = `${bin}:${oldPath}`
+    try {
+      const n = await materialize({ mediaDir: media, config: cfg, rels: ['arc/res/image/ev/ev_x/ev_x_01.mp4'] })
+      check('取出视频：.ogv 解密后交给 ffmpeg，落盘的是转出来的 .mp4', n === 1 && (await readFile(path.join(media, 'arc/res/image/ev/ev_x/ev_x_01.mp4'), 'utf8')) === 'MP4-FAKE')
+    } finally { process.env.PATH = oldPath }
+  }
 }
 {
   const dataDir = path.join(work, 'data')

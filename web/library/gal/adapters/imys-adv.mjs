@@ -110,15 +110,51 @@ export function parse(text, ctx = null, meta = {}) {
   }
   const steps = []
   let list = []
-  const emit = (command) => list.push(command)
-  const endStep = () => { steps.push({ index: steps.length, commands: list }); list = [] }
+  let branch = null        // { var, value }：在 switch / case 里（Select 的选项）——里面的指令都带 when，没选这一支就整步不执行
+  const emit = (command) => list.push(branch && !command.when ? { ...command, when: [{ var: branch.var, op: '==', value: branch.value }] } : command)
+  const endStep = () => { if (!list.length) return; steps.push({ index: steps.length, commands: list }); list = [] }
+  const endStepIfPending = () => { if (list.length) { emit({ op: 'text', segments: [] }); endStep() } }
   let bg = null            // { src } | null
   let pendingFade = 0
   let voice = ''
-  for (const rawLine of data.text.replace(/\r/g, '').split('\n')) {
+  const allLines = data.text.replace(/\r/g, '').split('\n')
+  // case N: 的标签 = 它前面最近的「//--…」注释（「//--タッチ①結果」→「タッチ①」），没有就「選択 N+1」
+  const caseLabel = (at, n) => {
+    for (let j = at - 1; j >= Math.max(0, at - 4); j--) { const m = /^\s*\/\/--\s*(.+)$/.exec(allLines[j]); if (m) return m[1].replace(/結果\s*$/, '').trim() || `選択${n + 1}` }
+    return `選択${n + 1}`
+  }
+  let selectVar = ''
+  stats.branches = { selects: 0, cases: 0 }
+  for (let at = 0; at < allLines.length; at++) {
+    const rawLine = allLines[at]
     const line = rawLine.trim()
     if (!line || line.startsWith('//')) continue
     stats.lines += 1
+    // Select n,…（体の触る場所を選ぶ 等）+ switch( %0 ) { case N: … break … }：選択肢 → 分岐（case の中の指令に when）
+    const sel = /^Select\s+(\d+)\b/.exec(line)
+    if (sel) {
+      const count = Math.max(1, Math.min(8, Number(sel[1])))
+      const labels = []
+      for (let j = at + 1, depth = 0; j < allLines.length && labels.length < count; j++) {
+        const m = /^\s*case\s+(\d+)\s*:/.exec(allLines[j])
+        if (m && Number(m[1]) < count) labels[Number(m[1])] = caseLabel(j, Number(m[1]))
+        if (/^\s*Select\b/.test(allLines[j])) break
+      }
+      endStep()   // 前面没发完的指令先落成一步
+      const stepIndex = steps.length
+      selectVar = `sel${stepIndex}`
+      branch = null
+      stats.branches.selects += 1
+      emit({ op: 'speaker', segments: [] })
+      emit({ op: 'choice', id: `${stepIndex}:1`, var: selectVar, options: Array.from({ length: count }, (_x, n) => ({ value: n + 1, segments: [{ text: labels[n] || `選択${n + 1}` }] })) })
+      emit({ op: 'text', segments: [] })
+      endStep()
+      continue
+    }
+    if (/^switch\s*\(/.test(line) || line === '{' || line === '}' || /^InitializeBodyTouchItem\b/.test(line)) { if (!/^(switch|\{|\})/.test(line)) count('ignored', 'InitializeBodyTouchItem'); if (line === '}') branch = null; continue }
+    const cs = /^case\s+(\d+)\s*:/.exec(line)
+    if (cs) { branch = selectVar ? { var: selectVar, value: Number(cs[1]) + 1 } : null; stats.branches.cases += 1; continue }
+    if (/^(break|default\s*:)/.test(line)) { if (/^break/.test(line)) { endStepIfPending(); branch = null } else branch = null; continue }
     const cmd = COMMAND.exec(line)
     if (cmd && /^[A-Z]/.test(cmd[1])) {
       const [, name, rest] = cmd

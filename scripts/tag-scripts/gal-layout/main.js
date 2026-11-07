@@ -1014,6 +1014,8 @@ export const ADAPTER_RULES = {
       121,
       9999
     ],
+    "keepBg35": true,
+    "clearOp35": true,
     "clearFrom": 816,
     "bgmBase": 6018,
     "fade": 0.5,
@@ -1087,9 +1089,9 @@ export const ADAPTER_RULES = {
       "webp"
     ],
     "videoExts": [
-      "ogv",
+      "mp4",
       "webm",
-      "mp4"
+      "ogv"
     ],
     "audioExts": [
       "ogg",
@@ -1123,7 +1125,6 @@ export const ADAPTER_RULES = {
     },
     "layers": {
       "enabled": true,
-      "cover": "^(white|black)$",
       "maxFade": 5
     },
     "wait": {
@@ -2103,7 +2104,7 @@ export const LAYOUTS = {
   //   引擎（config.containers，format: tomoe）把 Arc04.dat 按 ML 记录切成章节，展开到 <base>/arc/script/Arc04/<序号>.tomoe；图 / 声音只在 hybrid 的虚拟索引里（<base>/arc/res/img/<编号>.jpg|.png|.p.png、arc/res/snd/<编号>.ogg），被请求时才解压 / 解密 / 转格式。
   // ---- Imys（Unity 6 / IL2CPP 手游的离线图库）：game.id = imys::<名字>（任何以 imys:: 开头的 id 都走这一项）。
   //   目录：<根>/{bundles/scenarios/<类别>/<id>.jp.encrypted（剧本）, bundles/backgrounds / characters/tati（图，格式还没解）, raw/{BGM,VOICE,SCENARIO,SCENARIO_SE}（CRI 的 ACB / AWB，要密钥）}；根 = 离线图库的 content 目录（没有 exe）。
-  //   角色分组（groups）：衣装 cloth_<角色 3 位>_<衣装码> / 学园 gakuen_<角色>_… / 亲密度 sin_<角色 3 位><2 位>；角色名（labels）= 这个角色的剧本里说话最多的人（84 个样本核对：Tati 的角色号和说话人一一对上，005 / 007 / 009 / 022 / 028 / 031 / 032 / 051 以后没有样本，先显示编号；022 的「プリシラ」只见过「深憶世界のプリシラ」所以没填）。
+  //   角色分组（groups）：衣装 cloth_<角色 3 位>_<衣装码> / 学园 gakuen_<角色>_… / 亲密度 sin_<角色 3 位><2 位>；角色名（labels）= 这个角色的剧本里说话最多的人（v1.28 采集每个角色每个类别一份，Tati 的角色号和说话人一一对上；051~062 是联动角色，取和主角色同屏时多出来的那个名字）。
   //   引擎（config.containers，format: imys）把 bundles/scenarios 下的每个 .encrypted（AES-256-CBC → UnityFS → TextAsset）展开成 <根>/arc/script/<类别>/<id>.imys；现在只有文字（背景 / 立绘 / 语音 / 音乐的资源格式还没解）。
   imys: {
     title: 'Imys（Unity 6 手游离线图库）', kind: 'imys', detector: 'imys', autoOrder: 139.99, family: 'imys::',   // 紧跟 tomoe，uviewer（通用）之前；探测时要看 bundles/scenarios 下有 .encrypted
@@ -2120,7 +2121,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
       containers: { enabled: true, dir: 'arc', scan: ['bundles/scenarios'], scriptDecoder: 'imys-adv', scriptExt: 'imys', mode: 'hybrid', format: 'imys', flat: false, rules: [{ match: '\\.encrypted$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['imys'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { combo: '交流 AVG', dress: '衣装', event: '活动', favorite: '亲密度', quest: '主线', training: '学园 AVG', '001': 'アシュリー', '002': 'クリス', '003': 'ソフィ', '004': 'ラディス', '006': 'コト', '008': 'パトリシア', '010': 'ポリン', '011': 'エルミナ', '012': 'セシル', '013': 'ティセ', '014': 'イリーナ', '015': 'ファム', '016': 'ラウラ', '017': 'クルチャ', '018': 'ヴァレリア', '019': 'シャロン', '020': 'ウィル', '021': 'ルージェニア', '023': 'リディア', '024': 'ギゼリック', '025': 'ナジャ', '026': 'アナスチガル', '027': 'フリッカ', '029': 'アリン', '030': 'ユー' }, merge: [], views: [], groups: [{ parent: 'dress', pattern: String.raw`^cloth_(\d{3})_` }, { parent: 'training', pattern: String.raw`^gakuen_(\d{3})_` }, { parent: 'favorite', pattern: String.raw`^sin_(\d{3})\d{2}` }], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'bg'], scanSteps: 60, max: 3 }, dirCover: { enabled: true, scan: 6, max: 4, prefer: ['image'], skip: [], only: [] }, pageSize: 100 },   // 脚本卡片：兜底封面 = 脚本里的 H CG / 背景（BGDraw 的图）；角色 / 类别卡片：用里面前 6 个剧本的封面轮播（最多 4 张；角色图标 / memorial 缩略图的格式没样本，v1.28 采集后再换）
+    config: { scriptExtensions: ['imys'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { combo: '交流 AVG', dress: '衣装', event: '活动', favorite: '亲密度', quest: '主线', training: '学园 AVG', '001': 'アシュリー', '002': 'クリス', '003': 'ソフィ', '004': 'ラディス', '006': 'コト', '008': 'パトリシア', '010': 'ポリン', '011': 'エルミナ', '012': 'セシル', '013': 'ティセ', '014': 'イリーナ', '015': 'ファム', '016': 'ラウラ', '017': 'クルチャ', '018': 'ヴァレリア', '019': 'シャロン', '020': 'ウィル', '021': 'ルージェニア', '023': 'リディア', '024': 'ギゼリック', '025': 'ナジャ', '026': 'アナスチガル', '027': 'フリッカ', '029': 'アリン', '030': 'ユー', '005': 'ベアトリーチェ', '007': 'クレア', '009': 'フランチェスカ', '022': 'プリシラ', '028': 'オリヴィエ', '031': 'レーナ', '032': 'アンジェリーク', '051': 'フィーナ', '052': '麻衣', '053': 'つぐみ', '054': '佳奈', '055': '瑛里華', '056': '陽菜', '057': '朱璃', '058': '古杜音', '059': 'ティア', '060': 'リシア', '061': 'エステル', '062': 'リース' }, merge: [], views: [], groups: [{ parent: 'dress', pattern: String.raw`^cloth_(\d{3})_` }, { parent: 'training', pattern: String.raw`^gakuen_(\d{3})_` }, { parent: 'favorite', pattern: String.raw`^sin_(\d{3})\d{2}` }], dirThumbs: [{ parent: 'dress', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }, { parent: 'training', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }, { parent: 'favorite', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }], scriptThumbs: ['sicon/{stem}.png'], scriptIndex: [], thumbFallback: { prefer: ['cg', 'bg'], scanSteps: 60, max: 3, topUp: true }, dirCover: { enabled: true, scan: 6, max: 4, prefer: ['image'], skip: [], only: [] }, pageSize: 100 },   // 脚本卡片：图标（virtual res/sicon/<脚本名>.png = 角色图标，衣装 / 学园用 <角色><衣装码前两位>）+ 兜底封面补到 3 张（脚本里的 H CG / 背景）；角色卡片：角色图标（res/icon/<角色>01.png，100×100）；别的目录卡片：用里面前 6 个剧本的封面轮播（最多 4 张；角色图标 / memorial 缩略图的格式没样本，v1.28 采集后再换）
     count: [{ dir: 'arc/script', ext: '.imys', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['bundles/scenarios 在第一次浏览时由服务端逐个解密（AES-256-CBC，密钥 = HMAC-SHA256）+ 读 UnityFS 里的 TextAsset，展开成 arc/script/<类别>/<id>.imys（6 个类别、6600 多份）；现在只有文字：背景 / 立绘（bundles/backgrounds、characters/tati）和声音（raw/ 下 CRI 的 ACB + AWB，HCA 要密钥）的格式还没解'],
@@ -2161,7 +2162,7 @@ export const LAYOUTS = {
       classify: [],
       resourceResolve: {},
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
-      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'artemis-ast', scriptExt: 'ast', mode: 'hybrid', format: 'pf8', flat: true, rules: [{ match: '\\.pfs(?:\\.\\d+)?$' }], maxEntries: 200000, maxTotalMB: 8192, emote: { enabled: true, seed: 'auto', textureOrder: 'auto', driver: 'emotedriver.dll' } },
+      containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'artemis-ast', scriptExt: 'ast', mode: 'hybrid', format: 'pf8', flat: true, rules: [{ match: '\\.pfs(?:\\.\\d+)?$' }], maxEntries: 200000, maxTotalMB: 8192, emote: { enabled: true, seed: 'auto', textureOrder: 'auto', driver: 'emotedriver.dll' }, video: { enabled: true, crf: 23 } },
     },
     config: { scriptExtensions: ['ast'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '\\dh$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.ast', depth: 3 }], avatars: [], expectedDirs: [],
@@ -2932,6 +2933,11 @@ function canonField(key, value) {
             textureOrder: ['auto', 'rgba', 'bgra', 'argb', 'abgr'].includes(e.textureOrder) ? e.textureOrder : 'auto',
             driver: typeof e.driver === 'string' && e.driver && !e.driver.startsWith('/') && !e.driver.split('/').includes('..') ? e.driver : 'emotedriver.dll',
           }
+        })(),
+        video: (() => {   // 和 config.mjs 的 DEFAULT_CONTAINERS.video / 校验一致
+          const e = isPlain(value.video) ? value.video : {}
+          const crf = Math.floor(Number(e.crf))
+          return { enabled: typeof e.enabled === 'boolean' ? e.enabled : false, crf: e.crf === undefined || e.crf === null || e.crf === '' || typeof e.crf === 'boolean' || !Number.isFinite(crf) ? 23 : Math.max(18, Math.min(35, crf)) }
         })(),
       }
     }

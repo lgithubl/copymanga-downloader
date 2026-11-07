@@ -196,5 +196,18 @@ try {
   check('适配器：#132 2000 → bgmStop（淡出 2 秒），不再记 ignored', stop?.fade === 2 && !sc.stats.ignored['#132'], J([stop, sc.stats.ignored]))
 }
 
+// —— #35 9999 只清叠加层，背景层留着（真实图核对：CG 的抠图补丁盖在原来的背景上）——
+{
+  const files = ['arc/res/img/1.jpg', 'arc/res/img/2.p.png', 'arc/res/img/3.png']
+  const ev = [['$', 204, 1, 0, 1, 0, 120, 1], ['$', 204, 1, 0, 3, 0, 2, 1], ['#', 87], ['#', 29, 2], ['#', 35, 9999], ['$', 204, 1, 0, 817, 0, 2, 1], ['$', 204, 1, 0, 2, 0, 140, 1], ['#', 13, 2], ['T', 'x'], ['#', 87]]
+  const mk = (options) => buildScene('tomoe::arc04', J({ format: 'tomoe-arc04/1', arc: 'Arc04.dat', name: 'x', events: ev }), adapter.prepare({ options, files, toResourcePath: (r) => r.replace(/^arc\/res\//, '') }), { options })
+  const last = (sc) => { let bg = null; const ov = new Map(); for (const c of sc.steps.flatMap((s) => s.commands)) { if (c.op === 'bg') bg = c.src || null; else if (c.op === 'overlay') ov.set(c.slot, c.src); else if (c.op === 'overlayOff') ov.delete(c.slot) } return { bg, ov: [...ov.keys()] } }
+  const keep = last(mk({}))
+  const all = last(mk({ keepBg35: false }))
+  check('#35 9999：默认只清叠加层（背景 1.jpg 留着，补丁 L140p0 在上面）；keepBg35: false = 全清（旧）', keep.bg === 'img/1.jpg' && J(keep.ov) === J(['L140p0']) && all.bg === null, J([keep, all]))
+  const sp = splitScenesForTest([['$', 204, 1, 0, 1, 0, 120, 1], ['$', 204, 1, 0, 3, 0, 2, 1], ['T', 'a'], ['T', 'b'], ['#', 35, 9999], ['#', 29, 2], ['$', 204, 1, 0, 5, 0, 132, 1], ['T', 'c']], { sceneTexts: 2, sceneMax: 300 })
+  check('分节：#35 9999 后「接上一节的现场」留背景层的图（120 层），不留叠加层（2 层）', sp.length === 2 && sp[1].events.some((e) => e[0] === '$' && e[6] === 120) && !sp[1].events.slice(0, 2).some((e) => e[0] === '$' && e[6] === 2), J(sp.map((s) => s.events.slice(0, 3))))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

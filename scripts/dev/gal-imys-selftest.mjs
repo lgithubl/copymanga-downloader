@@ -92,6 +92,16 @@ check('TimeWait → wait 1.5 秒；FadeoutBlack / FadeinBlack → 黑场再回�
 const withRes = buildScene('imys::adv', text, adapter.prepare({ options: {}, files: ['arc/res/bg_tra_301.png', 'arc/res/amv028_a70_00010.ogg', 'arc/res/bgm_1100.ogg'] }), { options: {} })
 check('资源索引里有同名文件 → bg / voice / bgm 指令（名字 → 文件）', withRes.steps.flatMap((s) => s.commands).some((c) => c.op === 'bg' && /bg_tra_301\.png$/.test(c.src)) && withRes.steps.flatMap((s) => s.commands).some((c) => c.op === 'voice') && withRes.steps.flatMap((s) => s.commands).some((c) => c.op === 'bgm' && /bgm_1100/.test(c.src)))
 
+// —— Select + switch / case（cloth_001_0702 的「触摸」小游戏）：选项 → 分支（case 里的指令带 when），不再把 switch / { / case / break 当旁白 ——
+{
+  const body = '\tSelect\t2,020:180,-60:000,070:-160\n\n\tswitch( %0 )\n\t{\n\n//--タッチ①結果\n\tcase\t0:\n\n頬に触れる。\n\tTati\t(01,001,07,03,+0);\nアシュリー「暖かい」\n\tbreak\n\n//--タッチ②結果\n\tcase\t1:\nアシュリー「んっ」\n\tbreak\n\t}\n続き。\n'
+  const sc = buildScene('imys::adv', J({ format: 'imys-adv/1', category: 'dress', name: 't', text: body }), adapter.prepare({ options: {}, files: [] }), { options: {} })
+  const texts = sc.steps.map((s) => ({ text: s.commands.find((c) => c.op === 'text')?.segments?.map((x) => x.text).join('') || '', when: s.commands[0].when?.[0], choice: s.commands.find((c) => c.op === 'choice') }))
+  const choice = texts.find((x) => x.choice)?.choice
+  check('Select n → 选项（标签 = case 前面的「//--タッチ①結果」去掉「結果」）；switch / case / break / { } 不当旁白', J(choice?.options.map((o) => o.segments[0].text)) === J(['タッチ①', 'タッチ②']) && !texts.some((x) => /switch|case|break|^\{|^\}/.test(x.text)), J(texts))
+  check('case 里的步骤带 when（var == 选项号）；break 之后的「続き。」不带 when', texts.filter((x) => x.when).every((x) => x.when.var === choice.var) && J(texts.filter((x) => x.when).map((x) => [x.text, x.when.value])) === J([['頬に触れる。', 1], ['暖かい', 1], ['んっ', 2]]) && texts.at(-1).text === '続き。' && !texts.at(-1).when, J(texts))
+}
+
 // —— containers 展开 ——
 const tmp = await mkdtemp(path.join(os.tmpdir(), 'imys-'))
 try {

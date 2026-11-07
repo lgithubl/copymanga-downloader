@@ -27,14 +27,14 @@ export const DEFAULT_OPTIONS = {
   speaker: { strip: [] },
   imageDirs: { bg: 'image/bg', ev: 'image/ev', sd: 'image/sd', sys: 'image/sys' },   // path 前缀 ":xx/…" → 目录
   imageExts: ['png', 'jpg', 'jpeg', 'webp'],
-  videoExts: ['ogv', 'webm', 'mp4'],   // bg 找不到图时按同名找视频（ev_*_m01_* 是 .ogv 动态事件图）→ movie（循环）
+  videoExts: ['mp4', 'webm', 'ogv'],   // bg 找不到图时按同名找视频（ev_*_m01_* 是 Theora 的 .ogv 动态事件图）→ movie（循环）。mp4 在前：Chrome 系浏览器不再支持 Theora，containers.video 把 .ogv 转成 .mp4（虚拟路径），没转才用 .ogv
   audioExts: ['ogg', 'flac', 'wav', 'mp3'],
   bgmDir: 'sound/bgm',
   seDir: 'sound/se',
   voiceDirs: ['sound/vo', 'sound/vobin'],
   stand: { enabled: true, dir: 'image/fg/_blog', ext: 'png', align: 'center', useX: true, zoom: 3.3333, xScale: 1.5 },   // _blog 图 576×324（16:9 的半身像画框）：放大到铺满 1920 宽的设计画面（1920 / 576）；脚本里的 x 是 1280 舞台的像素，×1.5 换成设计坐标
   emote: { enabled: true, dir: 'image/fg', ext: 'emote.psb', xScale: 1.5, view: 'bust', zoom: 0.72, top: 0.04 },   // E-mote 立绘（FreeMote WebGL SDK 在浏览器里播）：模型 = containers 转好的 image/fg/<file>.emote.psb；播放器「更多」里的 E-mote 开关关了就用上面的静态立绘。view: bust（半身，按 zoom 缩放、头顶留 top 比例）| full（整身塞进舞台）；zoom = 每个单位多少设计像素（半身框；psb 一个单位 ≈ 1 像素的图集像素）；x 用 xScale 换成设计像素
-  layers: { enabled: true, cover: '^(white|black)$', maxFade: 5 },   // bg 带 id（>= 1）= 叠在主背景上的图层（cinema 黑边 / 白闪 / sd 小人 …），不是换背景；cover = 铺满舞台的纯色图（其余按原大小居中）；cgdel 去掉
+  layers: { enabled: true, maxFade: 5 },   // bg 带 id（>= 1）= 叠在主背景上的图层（cinema 黑边 / 白闪 / sd 小人 / reco …），不是换背景；图都是 1280×720 的整幅画布（真实样本核对：cinema01 / reco / sd 都是 1280×720 带透明），按舞台 stage 原样叠；cgdel 去掉
   wait: { enabled: true, max: 10 },
   extraDirs: [],
 }
@@ -168,7 +168,6 @@ function compiled(opt) {
   const out = {
     colors: opt.colorImages.map((r) => ({ re: safeRegex(r?.match, 'i'), color: Array.isArray(r?.color) ? r.color.slice(0, 3).map((x) => Math.max(0, Math.min(255, Number(x) || 0))) : [0, 0, 0] })).filter((r) => r.re),
     speakerStrip: (Array.isArray(opt.speaker.strip) ? opt.speaker.strip : []).map((s) => safeRegex(s)).filter(Boolean),
-    layerCover: safeRegex(opt.layers.cover, 'i'),
   }
   compiledCache.set(opt, out)
   return out
@@ -272,7 +271,7 @@ export function parse(text, ctx = null, meta = {}) {
     if (!img) return
     const alpha = param(cmd, 'alpha') ?? param(cmd, 'a')
     const slot = `bg${id}`
-    const spec = { op: 'overlay', slot, src: img.src, ...(rx.layerCover?.test(file) ? { fit: 'cover' } : {}), z: num(param(cmd, 'lv'), 5) }
+    const spec = { op: 'overlay', slot, src: img.src, fit: 'none', stage: opt.stage, z: num(param(cmd, 'lv'), 5) }
     if (alpha !== undefined) spec.alpha = Math.max(0, Math.min(1, num(alpha, 255) / 255))
     const time = num(param(cmd, 'time'), 0)
     if (!overlays.has(slot) && time > 2) spec.fade = Math.min(opt.layers.maxFade, time / 1000)
