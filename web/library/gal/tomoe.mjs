@@ -294,6 +294,7 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
       if (Number(ev[2]) === 9999) live.length = 0
       else for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === Number(ev[2])) live.splice(k, 1)
     } else if (ev[0] === '#' && ev[1] === 131) bgm = Number(ev[2]) >= 0 ? Number(ev[2]) : null
+    else if (ev[0] === '#' && ev[1] === 132) bgm = null   // #132 2000 = BGM 淡出（99 处全是 2000，紧跟换场景；整个剧本 #131 -1 只出现 1 次，游戏靠 #132 停音乐）：之后没有新的 #131 就是没有 BGM
     else if (ev[0] === '#' && ev[1] === 114) bgse = Number(ev[2]) >= 0 ? Number(ev[2]) : null
   }
   flush()

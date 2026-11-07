@@ -1121,6 +1121,11 @@ export const ADAPTER_RULES = {
       "zoom": 0.72,
       "top": 0.04
     },
+    "layers": {
+      "enabled": true,
+      "cover": "^(white|black)$",
+      "maxFade": 5
+    },
     "wait": {
       "enabled": true,
       "max": 10
@@ -2088,7 +2093,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
       containers: { enabled: true, dir: 'arc', scan: ['Game/StaticData'], scriptDecoder: 'arcrecord-dialog', scriptExt: 'arcdrama', mode: 'hybrid', format: 'arcdrama', flat: false, rules: [{ match: '^(Dialog|LineDialog)\\.txt$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['arcdrama'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Dialog: '剧情（Dialog）', LineDialog: 'ラブトーク（聊天）' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { scriptExtensions: ['arcdrama'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Dialog: '剧情（Dialog）', LineDialog: 'ラブトーク（聊天）' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, dirCover: { enabled: true, scan: 8, max: 6, prefer: ['image'], skip: [], only: [] }, pageSize: 100 },   // 角色 / 章分组卡片（H153 …）没有规则给图：用里面前 8 个剧情的封面轮播（最多 6 张）
     count: [{ dir: 'arc/script', ext: '.arcdrama', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['Dialog.txt 在第一次浏览时由服务端按 DramaID 切成每段剧情一个 JSON（真实数据 1719 段、4 万多句，台词带 JPN / CHS / CHT / ENG）；台词语言在适配器参数 language 里选', '背景（BG/*.png）/ BGM / 音效 / 角色语音都有；角色立绘（Hero/H0xx 的 Spine + fbx 预制体）和 CG Spine 场景没做：预制体里的位置 / 动画映射不在导出资源里，Spine 版本是 4.1（播放器的运行时没有 4.1）；没有游戏截图对照'],
@@ -2098,6 +2103,7 @@ export const LAYOUTS = {
   //   引擎（config.containers，format: tomoe）把 Arc04.dat 按 ML 记录切成章节，展开到 <base>/arc/script/Arc04/<序号>.tomoe；图 / 声音只在 hybrid 的虚拟索引里（<base>/arc/res/img/<编号>.jpg|.png|.p.png、arc/res/snd/<编号>.ogg），被请求时才解压 / 解密 / 转格式。
   // ---- Imys（Unity 6 / IL2CPP 手游的离线图库）：game.id = imys::<名字>（任何以 imys:: 开头的 id 都走这一项）。
   //   目录：<根>/{bundles/scenarios/<类别>/<id>.jp.encrypted（剧本）, bundles/backgrounds / characters/tati（图，格式还没解）, raw/{BGM,VOICE,SCENARIO,SCENARIO_SE}（CRI 的 ACB / AWB，要密钥）}；根 = 离线图库的 content 目录（没有 exe）。
+  //   角色分组（groups）：衣装 cloth_<角色 3 位>_<衣装码> / 学园 gakuen_<角色>_… / 亲密度 sin_<角色 3 位><2 位>；角色名（labels）= 这个角色的剧本里说话最多的人（84 个样本核对：Tati 的角色号和说话人一一对上，005 / 007 / 009 / 022 / 028 / 031 / 032 / 051 以后没有样本，先显示编号；022 的「プリシラ」只见过「深憶世界のプリシラ」所以没填）。
   //   引擎（config.containers，format: imys）把 bundles/scenarios 下的每个 .encrypted（AES-256-CBC → UnityFS → TextAsset）展开成 <根>/arc/script/<类别>/<id>.imys；现在只有文字（背景 / 立绘 / 语音 / 音乐的资源格式还没解）。
   imys: {
     title: 'Imys（Unity 6 手游离线图库）', kind: 'imys', detector: 'imys', autoOrder: 139.99, family: 'imys::',   // 紧跟 tomoe，uviewer（通用）之前；探测时要看 bundles/scenarios 下有 .encrypted
@@ -2114,7 +2120,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
       containers: { enabled: true, dir: 'arc', scan: ['bundles/scenarios'], scriptDecoder: 'imys-adv', scriptExt: 'imys', mode: 'hybrid', format: 'imys', flat: false, rules: [{ match: '\\.encrypted$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['imys'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { combo: '交流 AVG', dress: '衣装', event: '活动', favorite: '亲密度', quest: '主线', training: '学园 AVG' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { enabled: false }, pageSize: 100 },
+    config: { scriptExtensions: ['imys'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { combo: '交流 AVG', dress: '衣装', event: '活动', favorite: '亲密度', quest: '主线', training: '学园 AVG', '001': 'アシュリー', '002': 'クリス', '003': 'ソフィ', '004': 'ラディス', '006': 'コト', '008': 'パトリシア', '010': 'ポリン', '011': 'エルミナ', '012': 'セシル', '013': 'ティセ', '014': 'イリーナ', '015': 'ファム', '016': 'ラウラ', '017': 'クルチャ', '018': 'ヴァレリア', '019': 'シャロン', '020': 'ウィル', '021': 'ルージェニア', '023': 'リディア', '024': 'ギゼリック', '025': 'ナジャ', '026': 'アナスチガル', '027': 'フリッカ', '029': 'アリン', '030': 'ユー' }, merge: [], views: [], groups: [{ parent: 'dress', pattern: String.raw`^cloth_(\d{3})_` }, { parent: 'training', pattern: String.raw`^gakuen_(\d{3})_` }, { parent: 'favorite', pattern: String.raw`^sin_(\d{3})\d{2}` }], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'bg'], scanSteps: 60, max: 3 }, dirCover: { enabled: true, scan: 6, max: 4, prefer: ['image'], skip: [], only: [] }, pageSize: 100 },   // 脚本卡片：兜底封面 = 脚本里的 H CG / 背景（BGDraw 的图）；角色 / 类别卡片：用里面前 6 个剧本的封面轮播（最多 4 张；角色图标 / memorial 缩略图的格式没样本，v1.28 采集后再换）
     count: [{ dir: 'arc/script', ext: '.imys', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['bundles/scenarios 在第一次浏览时由服务端逐个解密（AES-256-CBC，密钥 = HMAC-SHA256）+ 读 UnityFS 里的 TextAsset，展开成 arc/script/<类别>/<id>.imys（6 个类别、6600 多份）；现在只有文字：背景 / 立绘（bundles/backgrounds、characters/tati）和声音（raw/ 下 CRI 的 ACB + AWB，HCA 要密钥）的格式还没解'],
@@ -2134,7 +2140,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
       containers: { enabled: true, dir: 'arc', scan: ['.', 'Resources'], scriptDecoder: 'tomoe-arc04', scriptExt: 'tomoe', mode: 'hybrid', format: 'tomoe', flat: false, rules: [{ match: '^Arc04\\.dat$', kinds: ['script'] }, { match: '^(Arc03|Arc06|Data\\d+)\\.dat$', kinds: ['res'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['tomoe'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { cg: 'CG 场景' }, merge: [], views: [{ parent: 'Arc04', as: 'cg', label: 'CG 场景', dirs: ['*'], match: '_cg$' }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { scriptExtensions: ['tomoe'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { cg: 'CG 场景' }, merge: [], views: [{ parent: 'Arc04', as: 'cg', label: 'CG 场景', dirs: ['*'], match: '_cg$' }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { overlays: true, prefer: ['cg', 'stand', 'bg'], skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', '\\.p$'] }, pageSize: 100 },   // CG 场景的图在叠加层上（背景是黑的）：overlays 让兜底封面也收叠加层的整张图，补丁（<编号>.p）不要
     count: [{ dir: 'arc/script', ext: '.tomoe', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['Arc04.dat 在第一次浏览时由服务端按 ML 记录切成章节（文本 >= 20 行的块；真实数据 12 章、2.5 万页）；图（Data000–025，LZSS + 位图 / JPEG / PNG / 带遮罩的补丁）/ 声音（Arc06 的 Ogg，前 3615 字节解密）只在虚拟索引里，被请求时才转出来', '文字（含注音）/ 语音（声道 → 说话人）/ BGM / 音效 / 背景 / 叠加图层都有；选项、跳转（剧情是一条线）、层的叠放顺序和补丁盖在哪一层没有游戏截图对照，不一定对；章节标题卡（Data004）的触发方式没查出来'],
@@ -2861,6 +2867,7 @@ function canonField(key, value) {
         scanFrom: Number.isFinite(Number(value.scanFrom)) && value.scanFrom !== null && value.scanFrom !== '' && typeof value.scanFrom !== 'boolean' ? Math.max(0, Math.min(0.95, Number(value.scanFrom))) : 0,
         only: Array.isArray(value.only) ? value.only : [],
         topUp: typeof value.topUp === 'boolean' ? value.topUp : false,
+        overlays: typeof value.overlays === 'boolean' ? value.overlays : false,
         kindMax: isPlain(value.kindMax) ? Object.fromEntries(Object.entries(value.kindMax).filter(([k, v]) => ['cg', 'stand', 'movie', 'bg'].includes(k) && Number.isFinite(Math.floor(Number(v))) && v !== null && v !== '' && typeof v !== 'boolean').map(([k, v]) => [k, Math.max(0, Math.min(12, Math.floor(Number(v))))])) : {},
       }
     }

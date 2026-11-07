@@ -51,7 +51,7 @@ export function normalizeKeyBundles(list) {
 }
 export const CONTAINER_LIMITS = Object.freeze({ rules: 20, list: 10, maxEntries: [1, 1000000], maxTotalMB: [1, 65536] })
 export const DEFAULT_FALLBACK_SKIP = Object.freeze(['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)'])
-export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, only: Object.freeze([]), scanSteps: 200, scanFrom: 0, topUp: false, kindMax: Object.freeze({}) })
+export const DEFAULT_THUMB_FALLBACK = Object.freeze({ enabled: true, max: 6, prefer: FALLBACK_PREFER, skipBlack: true, skip: DEFAULT_FALLBACK_SKIP, only: Object.freeze([]), scanSteps: 200, scanFrom: 0, topUp: false, overlays: false, kindMax: Object.freeze({}) })
 // 卡片封面 / 悬停轮播（见 DEFAULT_GAL_CONFIG 里 thumbCover / thumbHover 的说明）
 export const THUMB_COVER_MODES = Object.freeze(['random', 'first', 'last'])
 export const THUMB_HOVER_MODES = Object.freeze(['hover', 'auto'])
@@ -431,7 +431,7 @@ export function normalizeGalConfigWithWarnings(raw) {
   if (isPlainObject(v.thumbFallback)) {
     const tf = v.thumbFallback
     for (const key of Object.keys(tf)) if (!(key in dtf)) warn('thumbFallback', `不认识的字段 ${key}，已丢掉`, key)
-    for (const key of ['enabled', 'skipBlack', 'topUp']) {
+    for (const key of ['enabled', 'skipBlack', 'topUp', 'overlays']) {
       if (tf[key] === undefined) continue
       if (typeof tf[key] === 'boolean') thumbFallback[key] = tf[key]
       else warn(`thumbFallback.${key}`, '只能是 true / false，用默认值', tf[key])

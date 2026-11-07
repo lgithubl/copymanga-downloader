@@ -10,6 +10,7 @@
 //   只扫前 scanSteps 步（默认 200）：大脚本也只花固定的时间；扫到够多就提前停。
 //   scanFrom：从脚本的这个比例之后开始扫（默认 0 = 从头）；scanSteps 是从那里往后扫多少步
 //   kindMax：{ stand: 1 } 每一类最多收几张（没写的类不限）；立绘 / 表情差分特别多的游戏用它限制
+//   overlays：true = overlay 指令的 src 也算 CG（默认 false；tomoe 的 CG 场景整张图都在叠加层上）
 //   skipBlack：文件名（无扩展名）命中 skip 里任一正则的丢掉（纯黑 / 纯白占位图，默认 black / white / blank 按单词边界）。
 import { DEFAULT_THUMB_FALLBACK, FALLBACK_PREFER, THUMB_FALLBACK_LIMITS } from './config.mjs'
 
@@ -76,6 +77,9 @@ export function collectFallbackImages(scene, options = {}) {
           if (part) add('stand', part.src)
           break
         }
+        case 'overlay':   // 叠加层的图（tomoe 的 CG 是画在 2 / 140 层上的整张图，背景是黑的）：overlays: true 才算 CG（别的游戏的叠加层多是小部件）；补丁（skip 里写 \.p$）不要
+          if (cfg.overlays && typeof command.src === 'string') add('cg', command.src)
+          break
         case 'spine':
           if (typeof command.thumb === 'string' && IMAGE_RE.test(command.thumb)) add(command.kind === 'still' || flagged ? 'cg' : 'stand', command.thumb)
           break

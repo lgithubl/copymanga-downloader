@@ -3,6 +3,7 @@
 //   ['T', 文本]：一行文字（连续的 T = 同一行折行，每段末尾的 \n 是折行不是换行）；ÿÿ<注音长度><注音><正文长度><正文> = 注音（ルビ）
 //   ['#', 87]：行末等点击；['#', 70]：页末（点击后清页）
 //   ['#', 43, 声音号, 声道]：语音（声道 = 说话人序号，见选项 speakers）；['#', 46, 声音号]：音效；['#', 114, 声音号]：循环音效（-1 = 停）；['#', 131, n, -1]：BGM（声音号 = 6018 + n；n = -1 停）
+//   ['#', 132, 毫秒]：BGM 淡出（99 处全是 2000，后面跟换场景；整个剧本 ['#', 131, -1, -1] 只有 1 处，游戏靠它停音乐）
 //   ['#', 35, 层]：清掉这一层（9999 = 全部层，每次换场景都有一条）
 //   ['$', 204, 1, a, 图号, b, 层, 1]：在「层」上显示图（图号 ≥ 816 = 清掉这一层）；['#', 29, 2] … ['#', 13, 2]：画面切换（淡入淡出）的开始 / 提交
 //   层：132 / 120 / 127 / 117 / 121 / 9999 = 背景（Data000 的 JPEG / 位图）；2 / 140 / 141 / 4 = 叠在上面的图层（CG / 补丁）。每一层是「整张图 + 之后累计叠上去的补丁」：整张图换掉这一层的全部内容，带遮罩的补丁图（<编号>.p.png，只含和上一帧不同的像素）一张一张累计盖在上面（H 场景的 CG 差分就是这样连着来的；只画最后一张补丁会得到碎片），清空（图号 >= 816）把这一层清掉
@@ -196,6 +197,7 @@ export function parse(text, ctx = null, meta = {}) {
       }
       else if (op === 46) { const src = sound('sounds', ev[2]); if (src) emit({ op: 'se', src }) }
       else if (op === 114) { if (ev[2] >= 0) { const src = sound('sounds', ev[2]); if (src) emit({ op: 'bgse', src, loop: true }) } else emit({ op: 'bgseStop' }) }
+      else if (op === 132) emit({ op: 'bgmStop', fade: Math.max(0, Math.min(10, (Number(ev[2]) || 0) / 1000)) })   // #132 毫秒 = BGM 淡出
       else if (op === 131) { if (ev[2] >= 0) { const src = sound('bgm', opt.bgmBase + ev[2]); if (src) emit({ op: 'bgm', src }) } else emit({ op: 'bgmStop' }) }
       else if (op === 35) {   // #35 层：清掉这一层的内容（9999 = 全部层；每次换场景都有一条，场景之间的 CG / 标题卡就是靠它清的）
         if (Number(ev[2]) === 9999) { for (const state of layers.values()) state.stack = []; bgOrder.length = 0 } else { layerState(Number(ev[2])).stack = []; const at = bgOrder.indexOf(Number(ev[2])); if (at >= 0) bgOrder.splice(at, 1) }

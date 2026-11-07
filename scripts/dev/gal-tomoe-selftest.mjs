@@ -10,7 +10,7 @@ import * as adapter from '../../web/library/gal/adapters/tomoe-arc04.mjs'
 import { normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
 import { ensureContainers, materialize, virtualFiles } from '../../web/library/gal/containers.mjs'
 import { buildScene } from '../../web/library/gal/scene.mjs'
-import { decodeArc, encodePng, lzssDecode, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt } from '../../web/library/gal/tomoe.mjs'
+import { decodeArc, encodePng, lzssDecode, parseImageIndex, parseSoundTable, probeImage, splitChapters, splitScenesForTest, tinkDecrypt } from '../../web/library/gal/tomoe.mjs'
 
 let passed = 0
 let failed = 0
@@ -185,6 +185,16 @@ try {
     check(`真实样本：Arc04.dat 切成 ${real.chapters.length} 章（${real.records} 条记录）、解析出 ${messages} 页`, real.records > 60000 && real.chapters.length >= 10 && messages > 15000, J([real.records, real.chapters.length, messages]))
   } else console.log('SKIP 真实样本（TOMOE_SAMPLE=<游戏目录> 才跑）')
 } finally { await rm(work, { recursive: true, force: true }) }
+
+// —— #132 毫秒 = BGM 淡出（真实剧本里 99 处，后面跟换场景；#131 -1 只有 1 处）——
+{
+  const fadeEvents = [['#', 131, 3, -1], ['T', 'あ'], ['T', 'い'], ['#', 132, 2000], ['#', 29, 2], ['#', 35, 9999], ['$', 204, 1, 0, 5, 0, 132, 1], ['#', 13, 2], ['T', 'う'], ['#', 87]]
+  const scenes = splitScenesForTest(fadeEvents, { sceneTexts: 2, sceneMax: 300 })
+  check('分节：#132 之后的下一节开头不带上一节的 BGM（淡出了）；没有 #132 才带', scenes.length === 2 && !scenes[1].events.some((ev) => ev[0] === '#' && ev[1] === 131) && splitScenesForTest(fadeEvents.filter((ev) => ev[1] !== 132), { sceneTexts: 2, sceneMax: 300 })[1].events.some((ev) => ev[0] === '#' && ev[1] === 131), J(scenes.map((s) => s.events.slice(0, 2))))
+  const sc = buildScene('tomoe::arc04', J({ format: 'tomoe-arc04/1', arc: 'Arc04.dat', name: 'x', events: [['T', 'あ'], ['#', 87], ['#', 132, 2000], ['T', 'い'], ['#', 87]] }), adapter.prepare({ options: {}, files: [] }), { options: {} })
+  const stop = sc.steps.flatMap((s) => s.commands).find((c) => c.op === 'bgmStop')
+  check('适配器：#132 2000 → bgmStop（淡出 2 秒），不再记 ignored', stop?.fade === 2 && !sc.stats.ignored['#132'], J([stop, sc.stats.ignored]))
+}
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

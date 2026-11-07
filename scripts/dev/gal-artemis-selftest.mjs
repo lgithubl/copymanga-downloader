@@ -45,6 +45,32 @@ const work = await mkdtemp(path.join(os.tmpdir(), 'gal-artemis-'))
   check('Lua 表：缺 } / 字符串没结束 / 顶层不是赋值 → 抛错（带行号）', /没有结束/.test(err('a = { 1,')) && /没有结束/.test(err('a = "x')) && /顶层/.test(err('12')))
 }
 
+// ---- 适配器：bg 的图层 / 清立绘（依据 system/image/image_bg.lua） ----
+{
+  const adapter2 = (await import('../../web/library/gal/adapters/artemis-ast.mjs'))
+  const F = ['arc/res/image/bg/bg01.png', 'arc/res/image/bg/bg02.png', 'arc/res/image/bg/white.png', 'arc/res/image/sys/cinema01.png', 'arc/res/image/fg/_blog/kae_0/通常Ａ.png', 'arc/res/image/fg/_blog/sat_0/通常Ａ.png']
+  const fg = (ch, file) => ['fg', { mode: 2, ch, file, path: ':fg/', face: '通常Ａ', lv: 3, id: 11 }]
+  const T = (s) => ({ lines: [s] })
+  const b = astOf([
+    { cmds: [['bg', { file: 'bg01', path: ':bg/' }], fg('花衣', 'kae_0'), fg('桜月', 'sat_0')], text: T('1') },
+    { cmds: [['bg', { file: 'cinema01', path: ':sys/', id: 5, lv: 5, rule: 'cinema', time: 400, sync: 0 }]], text: T('2') },
+    { cmds: [['bg', { file: 'white', path: ':bg/', id: 9, lv: 9, sync: 1, time: 500 }], ['fg', { mode: -1, ch: '桜月', lv: 3, id: 11 }]], text: T('3') },
+    { cmds: [['bg', { file: 'white', path: ':bg/', id: 9, lv: 9, sync: 1, time: 500, alpha: 0 }]], text: T('4') },
+    { cmds: [['cgdel', { id: 9, lv: 9 }]], text: T('5') },
+    { cmds: [['bg', { file: 'bg02', path: ':bg/', face: 1 }]], text: T('6') },
+    { cmds: [['cgdel', { id: -1 }]], text: T('7') },
+    { cmds: [['bg', { file: 'bg02', path: ':bg/' }]], text: T('8') },
+  ])
+  const ctx2 = adapter2.prepare({ options: {}, files: F, texts: {}, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
+  const s = adapter2.parse(b, ctx2).steps
+  const o = (i, op) => s[i].commands.filter((c) => c.op === op)
+  check('bg 带 id = 图层：cinema01 → overlay（槽 bg5、淡入 0.4、z 5），主背景不变（不是黑屏）', o(1, 'overlay')[0]?.slot === 'bg5' && o(1, 'overlay')[0].src === 'image/sys/cinema01.png' && o(1, 'overlay')[0].fade === 0.4 && o(1, 'overlay')[0].z === 5 && !o(1, 'bg').length, J(s[1]))
+  check('白闪图层：cover；alpha = 0 → 同槽更新（alpha 0）；cgdel id=9 → overlayOff bg9（bg5 还在）', o(2, 'overlay')[0]?.fit === 'cover' && o(3, 'overlay')[0]?.alpha === 0 && o(4, 'overlayOff')[0]?.slot === 'bg9' && !o(4, 'overlayOff').some((c) => c.slot === 'bg5'), J([s[2], s[3], s[4]]))
+  check('fg mode=-1 删这个角色（只剩花衣）', J(o(2, 'stand')[0]?.parts.map((p) => p.src)) === J(['image/fg/_blog/kae_0/通常Ａ.png']), J(s[2]))
+  check('bg face=1 换主背景但不清立绘 / 图层；cgdel id=-1 清所有图层', o(5, 'bg').length === 1 && !o(5, 'standOff').length && !o(5, 'overlayOff').length && o(6, 'overlayOff')[0]?.slot === 'bg5', J([s[5], s[6]]))
+  check('bg 不带 id（主背景）= 删所有立绘（standOff）', o(7, 'standOff').length === 1, J(s[7]))
+}
+
 // ---- 适配器 ----
 const adapter = (await import('../../web/library/gal/adapters/artemis-ast.mjs'))
 const blocks = [

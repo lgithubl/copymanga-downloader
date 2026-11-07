@@ -14,7 +14,8 @@
 // 推断（没有对照画面，都可以用 options 改）：
 //   · 立绘：游戏本身用 E-mote（image/fg/*.psb，30~67MB 一个，浏览器放不了），这里改用 image/fg/_blog/<file>/<face>.png（和脚本里 file / face 一一对上，样本里 3209 次使用全部有对应的 png）当立绘；真实图（v1.6 采集）是 576×324、透明背景的 16:9 半身像（角色大约在画框中间偏左、表情已经画好），所以按铺满 1920 宽的设计画面放大（zoom 1920 / 576）、底边对齐；位置（x）没有游戏截图对照
 //   · fg 的 x（±280 / ±150 …）按「相对画面中心的偏移（1280 舞台像素，×1.5 换成设计坐标）」处理（没有对照）；mx / size / lv / id / always（动作）不用；mode = 1 / -1 的含义不明，忽略
-//   · cgdel / extrans / quake / flash / fgf / fgact / scene / evset 等记进 stats.ignored，不渲染
+//   · bg 带 id（>= 1）= 叠在主背景上的图层（cinema 黑边 / 白闪 / sd 小人）→ overlay（槽 bg<id>）；bg 不带 id（主背景）会删掉所有立绘和图层（face=1 除外）；fg mode = -1 删这个角色；cgdel（id = -1 全部 / id = N）去图层——依据 system/image/image_bg.lua 的 image_view / cgdel_main
+//   · extrans / quake / flash / fgf / fgact / scene / evset 等记进 stats.ignored，不渲染
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader, safeRegex } from './options-merge.mjs'
 
@@ -33,6 +34,7 @@ export const DEFAULT_OPTIONS = {
   voiceDirs: ['sound/vo', 'sound/vobin'],
   stand: { enabled: true, dir: 'image/fg/_blog', ext: 'png', align: 'center', useX: true, zoom: 3.3333, xScale: 1.5 },   // _blog 图 576×324（16:9 的半身像画框）：放大到铺满 1920 宽的设计画面（1920 / 576）；脚本里的 x 是 1280 舞台的像素，×1.5 换成设计坐标
   emote: { enabled: true, dir: 'image/fg', ext: 'emote.psb', xScale: 1.5, view: 'bust', zoom: 0.72, top: 0.04 },   // E-mote 立绘（FreeMote WebGL SDK 在浏览器里播）：模型 = containers 转好的 image/fg/<file>.emote.psb；播放器「更多」里的 E-mote 开关关了就用上面的静态立绘。view: bust（半身，按 zoom 缩放、头顶留 top 比例）| full（整身塞进舞台）；zoom = 每个单位多少设计像素（半身框；psb 一个单位 ≈ 1 像素的图集像素）；x 用 xScale 换成设计像素
+  layers: { enabled: true, cover: '^(white|black)$', maxFade: 5 },   // bg 带 id（>= 1）= 叠在主背景上的图层（cinema 黑边 / 白闪 / sd 小人 …），不是换背景；cover = 铺满舞台的纯色图（其余按原大小居中）；cgdel 去掉
   wait: { enabled: true, max: 10 },
   extraDirs: [],
 }
@@ -166,6 +168,7 @@ function compiled(opt) {
   const out = {
     colors: opt.colorImages.map((r) => ({ re: safeRegex(r?.match, 'i'), color: Array.isArray(r?.color) ? r.color.slice(0, 3).map((x) => Math.max(0, Math.min(255, Number(x) || 0))) : [0, 0, 0] })).filter((r) => r.re),
     speakerStrip: (Array.isArray(opt.speaker.strip) ? opt.speaker.strip : []).map((s) => safeRegex(s)).filter(Boolean),
+    layerCover: safeRegex(opt.layers.cover, 'i'),
   }
   compiledCache.set(opt, out)
   return out
@@ -211,7 +214,8 @@ export function parse(text, ctx = null, meta = {}) {
   // ---- 画面状态：视觉变化在发台词那一刻提交 ----
   let bgState = null
   let stands = new Map()   // ch → { parts, x }
-  let shown = { bg: null, stand: null }
+  let overlays = new Map()   // 槽（bg<id>）→ overlay 指令
+  let shown = { bg: null, stand: null, overlays: new Map() }
   let dirty = false
   function commit() {
     if (!dirty) return
@@ -234,6 +238,13 @@ export function parse(text, ctx = null, meta = {}) {
       if (parts.length) { emit({ op: 'stand', parts }); stats.stands += 1 } else emit({ op: 'standOff' })
       shown.stand = standSig
     }
+    for (const slot of [...shown.overlays.keys()]) if (!overlays.has(slot)) { emit({ op: 'overlayOff', slot }); shown.overlays.delete(slot) }
+    for (const [slot, spec] of overlays) {
+      const sig = JSON.stringify(spec)
+      if (shown.overlays.get(slot) === sig) continue
+      emit(spec)
+      shown.overlays.set(slot, sig)
+    }
   }
 
   const imageRef = (found, name) => {
@@ -251,9 +262,34 @@ export function parse(text, ctx = null, meta = {}) {
     return `${base}/${m[2]}`.replace(/\/+$/, '')
   }
 
+  // 引擎（system/image/image_bg.lua image_view）：bg 不带 id（= 0）是主背景——换它会把所有立绘删掉（fgdelall）并重置所有图层（reset_bg），除非 face=1；
+  // 带 id（>= 1）是叠在上面的图层（no = id + 1 > 1），不动立绘，由 cgdel（id = -1 全部 / id = N 一个）去掉
+  function onLayerBg(cmd, id, file) {
+    if (!opt.layers.enabled) { count('ignored', 'bg:layer'); return }
+    const dir = imageDirOf(strParam(cmd, 'path'))
+    const hit = find([dir ? `${dir}/${file}` : ''], opt.imageExts) || findByName(file, opt.imageExts)
+    const img = imageRef(hit, file)
+    if (!img) return
+    const alpha = param(cmd, 'alpha') ?? param(cmd, 'a')
+    const slot = `bg${id}`
+    const spec = { op: 'overlay', slot, src: img.src, ...(rx.layerCover?.test(file) ? { fit: 'cover' } : {}), z: num(param(cmd, 'lv'), 5) }
+    if (alpha !== undefined) spec.alpha = Math.max(0, Math.min(1, num(alpha, 255) / 255))
+    const time = num(param(cmd, 'time'), 0)
+    if (!overlays.has(slot) && time > 2) spec.fade = Math.min(opt.layers.maxFade, time / 1000)
+    overlays.set(slot, spec)
+    dirty = true
+  }
+  function onCgdel(cmd) {
+    const id = num(param(cmd, 'id'), -1)
+    if (id === -1) { if (overlays.size) { overlays = new Map(); dirty = true } return }
+    if (overlays.delete(`bg${id}`)) dirty = true
+  }
   function onBg(cmd) {
     const file = strParam(cmd, 'file')
     if (!file) return
+    const layerId = num(param(cmd, 'id'), 0)
+    if (layerId >= 1) { onLayerBg(cmd, layerId, file); return }
+    if (num(param(cmd, 'face'), 0) !== 1) { if (stands.size || overlays.size) dirty = true; stands = new Map(); overlays = new Map() }
     const dir = imageDirOf(strParam(cmd, 'path'))
     const hit = find([dir ? `${dir}/${file}` : ''], opt.imageExts) || findByName(file, opt.imageExts)
     if (hit) bgState = imageRef(hit, file)
@@ -271,6 +307,7 @@ export function parse(text, ctx = null, meta = {}) {
   function onFg(cmd) {
     const mode = num(param(cmd, 'mode'), 0)
     if (mode === -2) { if (stands.size) { stands = new Map(); dirty = true } return }
+    if (mode === -1) { if (stands.delete(strParam(cmd, 'ch') || strParam(cmd, 'file'))) dirty = true; return }   // 删这个角色的立绘（mx / time 的滑出动画不做）
     if (mode !== 2 || !opt.stand.enabled) { count('ignored', `fg:mode=${mode}`); return }
     const ch = strParam(cmd, 'ch') || strParam(cmd, 'file')
     const file = strParam(cmd, 'file')
@@ -395,6 +432,7 @@ export function parse(text, ctx = null, meta = {}) {
       else if (name === 'rt2') continue
       else if (name === 'bg') onBg(item)
       else if (name === 'fg') onFg(item)
+      else if (name === 'cgdel') onCgdel(item)
       else if (name === 'bgm' || name === 'se') onSound(name, item)
       else if (name === 'ex') { if (strParam(item, 'func') === 'wait') { if (opt.wait.enabled) { const seconds = Math.min(opt.wait.max, num(param(item, 'time')) / 1000); if (seconds > 0) emit({ op: 'wait', seconds }) } } else count('ignored', `ex:${strParam(item, 'func')}`) }
       else if (name === 'select') selects.push(item)

@@ -1150,15 +1150,16 @@ function listImysBundles(mediaDir, cfg) {
   const promise = (async () => {
     const out = { backgrounds: [], tati: [], sig: '' }
     const parts = []
-    const read = async (rel, re, into) => {
+    const read = async (rel, re, into, prefix = '') => {
       const dir = path.join(mediaDir, ...`${base}/${rel}`.split('/').filter(Boolean))
       let names = []
       let info
       try { info = await stat(dir); names = await readdir(dir) } catch { return }
       parts.push(`${rel}:${Math.floor(info.mtimeMs)}:${names.length}`)
-      for (const name of names.sort()) { const m = re.exec(name); if (m) into.push({ file: path.join(dir, name), name: m[1] }) }
+      for (const name of names.sort()) { const m = re.exec(name); if (m) into.push({ file: path.join(dir, name), name: `${prefix}${m[1]}` }) }
     }
     await read('backgrounds', /^(.+?)(?:\.jp)?\.encrypted$/i, out.backgrounds)
+    await read('backgrounds/r18', /^(.+?)(?:\.jp)?\.encrypted$/i, out.backgrounds, 'R18/')   // H CG（hcg_* / eve_*）：剧本里写 BGDraw("R18/hcg_0270301")，按文件名（basename）对上
     await read('characters/tati', /^(\d+)\.encrypted$/i, out.tati)
     out.sig = createHash('sha1').update(parts.join('|')).digest('hex')
     return out

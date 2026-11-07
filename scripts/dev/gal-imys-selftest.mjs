@@ -8,7 +8,7 @@ import path from 'node:path'
 import { IMYS_KEY, imysDecrypt, lz4Block, readTextAssets, readUnityFS } from '../../web/library/gal/unity-bundle.mjs'
 import { buildScene } from '../../web/library/gal/scene.mjs'
 import { galAdapter } from '../../web/library/gal/adapters/index.mjs'
-import { ensureContainers } from '../../web/library/gal/containers.mjs'
+import { ensureContainers, invalidateContainers, virtualFiles } from '../../web/library/gal/containers.mjs'
 import { normalizeGalConfig } from '../../web/library/gal/config.mjs'
 
 let pass = 0
@@ -108,6 +108,15 @@ try {
   check('展开出来的 JSON：imys-adv/1，带类别、名字和剧本文本', one.format === 'imys-adv/1' && one.category === 'quest' && one.text === SCRIPT)
   const again = await ensureContainers({ mediaDir: tmp, config })
   check('再跑一遍：没变就跳过（cached）', again.arcs.scenarios?.cached === true)
+  // 背景虚拟索引：backgrounds 下一层 + r18（H CG，BGDraw("R18/hcg_…")）；剧本里的带目录名字按文件名对上
+  await mkdir(path.join(tmp, 'bundles/backgrounds/r18'), { recursive: true })
+  await writeFile(path.join(tmp, 'bundles/backgrounds/bg_avg_001.jp.encrypted'), Buffer.alloc(32))
+  await writeFile(path.join(tmp, 'bundles/backgrounds/r18/hcg_0270301.jp.encrypted'), Buffer.alloc(32))
+  invalidateContainers(tmp)
+  const vfiles = (await virtualFiles({ mediaDir: tmp, config })).files
+  check('背景索引：bg_avg_001 + r18/hcg_0270301（res/bg/R18/…png）', vfiles.includes('arc/res/bg/bg_avg_001.png') && vfiles.includes('arc/res/bg/R18/hcg_0270301.png'), J(vfiles.filter((f) => /\/bg\//.test(f))))
+  const cgScene = buildScene('imys::adv', J({ format: 'imys-adv/1', category: 'dress', name: 'c', text: '\tBGDraw\t("R18/hcg_0270301");\n\tRefresh\t(FADE);\nフリッカ「あ」\n' }), adapter.prepare({ options: {}, files: vfiles, toResourcePath: (r) => r.replace(/^arc\/res\//, '') }), { options: {} })
+  check('剧本 BGDraw("R18/hcg_0270301") → bg 指令（H CG 不再缺）', cgScene.steps.flatMap((s) => s.commands).some((c) => c.op === 'bg' && /R18\/hcg_0270301\.png$/.test(c.src)), J(cgScene.steps))
 } finally { await rm(tmp, { recursive: true, force: true }) }
 
 // —— 真实样本 ——

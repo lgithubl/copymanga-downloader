@@ -198,6 +198,12 @@ registerGalAdapter({ id: 'test-fallback', label: '测试：JSON 步骤', sniff: 
   const longScan = await run({ scanSteps: 300 })
   check('只扫前 N 步（默认 200）：第 250 步才出现的事件图 default 扫不到，scanSteps 300 才排到最前', !shortScan.longone.thumbs.includes('fb/img/late_cg.png') && longScan.longone.thumbs[0] === 'fb/img/late_cg.png', J([shortScan.longone.thumbs, longScan.longone.thumbs]))
   const pure = collectFallbackImages({ steps: steps300.map((commands, index) => ({ index, commands })) }, { scanSteps: 50, max: 2 })
+  {
+    const ovScene = { steps: [{ commands: [{ op: 'bg', color: [0, 0, 0] }, { op: 'overlay', slot: 'L140', src: 'img/704.jpg' }, { op: 'overlay', slot: 'L2p0', src: 'img/705.p.png' }, { op: 'overlay', slot: 'L2', src: 'img/711.jpg' }] }] }
+    const off = collectFallbackImages(ovScene, {})
+    const on = collectFallbackImages(ovScene, { overlays: true, skip: ['\\.p$'] })
+    check('collectFallbackImages：overlays 默认不算（别的游戏的叠加层是小部件）；overlays: true = 叠加层的整张图算 CG（tomoe），skip \\.p$ 去掉补丁', off.images.length === 0 && J(on.images) === J([{ src: 'img/704.jpg', kind: 'cg' }, { src: 'img/711.jpg', kind: 'cg' }]), J([off.images, on.images]))
+  }
   check('collectFallbackImages（纯函数）：scanned / truncated / counts / 候选数 ≤ max × 3；不是图片 / 视频 / 空 src 的忽略', pure.scanned <= 50 && pure.truncated === true && pure.images.length <= 6 && pure.images.every((x) => x.kind === 'bg') && J(collectFallbackImages({ steps: [{ commands: [{ op: 'bg', src: 'a.mp4' }, { op: 'bg', src: '' }, { op: 'bg', src: 'a.txt' }, { op: 'bg', src: 'ok' }, { op: 'stand', parts: [{ src: 'p.txt' }, { src: 'p.webp' }] }, { op: 'spine', kind: 'still', thumb: 'x/t.png' }] }] }).images) === J([{ src: 'x/t.png', kind: 'cg' }, { src: 'p.webp', kind: 'stand' }, { src: 'ok', kind: 'bg' }]), J(pure))
   check('collectFallbackImages：空场景 / 没有 steps 不抛错', collectFallbackImages(null).images.length === 0 && collectFallbackImages({ steps: [] }).scanned === 0, '')
   const cached = provider({ ...base, thumbFallback: {} }, ['test-fallback'])

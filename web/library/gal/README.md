@@ -1388,3 +1388,31 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 - **构图（猜的）**：`view: 'bust'`（默认）按 `zoom: 0.72` 缩放、头顶留 `top: 0.04` 的比例，下半身出画；`'full'` 整身塞进舞台；水平 = `x × xScale(1.5)`。没有游戏画面对照，`_blog` 的 576×324 半身框怎么裁的也没看到，所以位置 / 大小要在真机上对一下再调（`adapterOptions['artemis::ast'].emote`）。
 - **没验证**：只有 kae_2 一个模型；脚本里用得最多的 `sat_1`（1451 次）/ `kae_1` 采集里没有；多角色同屏的构图；真实 GPU 上的性能（我的测试是 SwiftShader 软渲染）；`always` 里换主时间线、`always` 里别的名字；`mx` / `size` / `lv` 这些 fg 参数没用；E-mote 的物理（胸摇发摇）是引擎自己的，没调。
 - 测试：`gal-emote-selftest.mjs`（合成数据 19 项 + `EMOTE_SAMPLE` / `EMOTE_DLL` 真实模型 4 项）、`fe-gal-emote-selftest.mjs`（真实 Chromium：默认开出画 / 关闭回静态 / 再打开；缺模型 / dll / 运行时就 SKIP）、`gal-psb-selftest.mjs`。
+
+
+## 第 N+1 轮（gal-layout 2.44.0，采集 v1.28）：Artemis 立绘 / 图层、Imys H CG / 角色分组、Ark Re 分组封面、友恵 BGM 淡出 / CG 封面
+
+**Artemis（`artemis::ast`）——对着引擎自带的 Lua（`system/image/image_bg.lua`、`e-mote.lua`）改的**
+- `bg` 不带 `id`（= 主背景）：引擎的 `image_view` 里 `fgdelall()`（删所有立绘）+ `reset_bg()`（重置所有图层），`face = 1` 除外。以前适配器换背景不清立绘，所以 04_kae_07h 第 108 句（`bg black` 之后）立绘还在。现在换主背景 = `standOff` + 去掉所有图层。
+- `bg` 带 `id`（≥ 1）：叠在主背景上的**图层**（`no = id + 1 > 1`），不换背景、不动立绘：`cinema01`（电影黑边，`lv=5 id=5`）、`reco`（回想标记 `id=1`）、白闪（`white`，`id=9 lv=9`，带 `alpha` / `time`）、`sd_kae_s01_00N`（小人，`id=6`）。以前把它们当主背景 → 04_kae_02 第 40 句开始满屏黑（`cinema01.png` 是黑边图）。现在 → `overlay`（槽 `bg<id>`、`z = lv`、`alpha` / 255、第一次出现的 `time` 当淡入；`white` / `black` 用 `fit: cover`，其余原大小居中——**这些图的大小没样本，采集 v1.28 收 image/sys + image/sd**）。`cgdel`（`id = -1` 去掉所有图层，`id = N` 去掉一个）→ `overlayOff`。选项 `layers`（`enabled` / `cover` / `maxFade`）。
+- `fg mode = -1` = 删这个角色的立绘（以前记 ignored）。
+- **没做**：`zbg*` 长背景的平移（`x2 / y2 / speed`）、`bg` 的 `x / y / zoom`；`fgact`（跳 / 鞠躬 / 点头）；`fgf`（画框里的立绘）；嘴型同步（`sound/vobin` 是什么还没看）；`reco` / `sd` 图的位置（没有图的大小）。
+- **视频 CG（`.ogv`）黑屏（02_共通_07 第 66 句起）**：适配器给的是对的 `movie` 指令（`ev_com_m01_03_0102.ogv` 等，144 个 .ogv 在索引里），原因要看样本（Theora 以外的编码？浏览器不支持？）——采集 v1.28 收 3 个 .ogv。
+- E-mote：`kae_1.psb` / `sat_1.psb`（脚本里最常用，各 67.5MB）采集 v1.28 收；别的模型的贴图格式 / 字节序没验证。
+
+**Imys**
+- **H CG 缺（cloth_030_0603 第 200 句左右）**：剧本写 `BGDraw("R18/hcg_0270301")`，图在 `bundles/backgrounds/r18/`（1296 个：`hcg_*` / `eve_*`），虚拟索引只扫了 `backgrounds` 这一层。现在 `r18` 子目录也扫，虚拟路径 `res/bg/R18/<名>.png`，适配器按文件名对上。**r18 里的 Texture2D 格式没样本**（采集 v1.28 收 5 个）。
+- **按角色分组**：`groups`：`dress` 的 `cloth_<角色 3 位>_<衣装码>`、`training` 的 `gakuen_<角色>_…`、`favorite` 的 `sin_<角色 3 位><2 位>` → 一个角色一张卡片；角色名（`labels`）= 这个角色的剧本里说话最多的人（84 个样本核对：`Tati` 的角色号和说话人一一对上）。已有名字的 25 个（001 アシュリー、002 クリス、003 ソフィ、004 ラディス、006 コト、008 パトリシア、010 ポリン、011 エルミナ、012 セシル、013 ティセ、014 イリーナ、015 ファム、016 ラウラ、017 クルチャ、018 ヴァレリア、019 シャロン、020 ウィル、021 ルージェニア、023 リディア、024 ギゼリック、025 ナジャ、026 アナスチガル、027 フリッカ、029 アリン、030 ユー）；005 / 007 / 009 / 022 / 028 / 031 / 032 / 051 以后没有样本 → 先显示编号（采集 v1.28 每个角色每个类别收最小的一份）。`event` / `quest` / `combo` 的编号规律没样本，不分组。
+- **封面**：脚本卡片 = 兜底封面（脚本里的 H CG / 背景，扫前 60 步，最多 3 张）；角色 / 类别卡片 = `dirCover`（里面前 6 个剧本的封面，最多 4 张轮播）。角色图标（`bundles/characters/icon/<角色 3 位><衣装 2 位>`，衣装码 = 剧本衣装码的前两位，`a8` / `le` / `me` 这类字母码也有对应图标）和 `bundles/memorial/thumbnails/{hcg,eve,bg}_*`（H CG 缩略图，约 125KB 一个）的格式没样本，采集 v1.28 收。
+- `cloth_001_0702` 第 13 句左右「奇怪字符」：84 个样本里没有这种字符（只有 `<R 注音>`），要看原文——采集 v1.28 收这份剧本。
+
+**Ark Re（`arcrecord::dialog`）**：`dirCover`（`enabled: true, scan: 8, max: 6, prefer: [image]`）——没有规则给图的角色 / 章分组卡片（`H153` …）用里面前 8 个剧情的封面轮播（最多 6 张）。（这条以前只写在 Aku / Kamihime / TSK 的布局里，ArcRecord 没写，所以分组卡片没图。）
+
+**友恵（`tomoe::arc04`）**
+- `#132 毫秒` = BGM 淡出：整个剧本 99 处，全是 `#132 2000`，后面紧跟换场景（`#29 #35 9999 …`），有的后面没有新的 `#131`；`#131 -1 -1`（停）只出现 1 次，游戏靠 `#132` 停音乐。以前适配器忽略 `#132`、切节时还把上一节的 BGM 带到下一节 → CG 场景里响着不该有的（或上一场的）BGM。现在 `#132` → `bgmStop`（淡出 2 秒），切节的「接上一节的现场」也跟着清掉。这是**读脚本的用法推出来的**，没有游戏对照。
+- **CG 场景没有缩略图**：CG 的图全在叠加层（2 / 140 层）上、背景是黑的，兜底封面只看 `bg` / `stand` → 没图。新增 `thumbFallback.overlays`（默认 false；tomoe 布局开着）：叠加层的整张图也算 CG，补丁（`<编号>.p`，用 `skip` 去掉）不要。
+- **没改**（没样本）：「12_cg 第 20 句左右缺背景」「第 60 句的 CG 有问题」——候选场景（`03_cg` 在第 4 / 10 / 11 / 12 章，`12_cg` 在第 7 / 12 章）用到的 95 张图的类型 / 宽高 / 是不是补丁都没有，采集 v1.28 收 `Data00x` 里全部 1496 张图的类型 / 宽高 / 标志清单 + 这 95 张图本身。
+
+**采集 v1.28 的规则**：`artemis:named`（pf8 里按名字：3 个 .ogv、image/sys 全部、image/sd、bg 的 black / white / bg04a / zbg04a、`kae_1.psb` / `sat_1.psb`，≤ 200MB）；`imys:r18` / `imys:thumb` / `imys:chars` / `imys:named`；`chakra:cgs`（每个 `Data00x.dat` 出 `__catalog.tsv`：全局编号 / 类型 / 宽 / 高 / 标志，+ CG 场景图原样，≤ 120MB / 文件）。本轮只收这几个（`ROUND_RULES`）。
+
+- `thumbFallback.overlays`（见上）：`config.mjs` 的 `DEFAULT_THUMB_FALLBACK` 多了 `overlays: false`。
