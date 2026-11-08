@@ -6858,7 +6858,6 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const STEP_RATIO_MIN = 0.15
   const STEP_RATIO_MAX = 0.9
   const JUMP_MS = 180            // 单次跳跃的动画时长
-  const MIN_PAUSE_MS = 160       // 两跳之间至少静止这么久，否则退化成连续滚动
   const SPEED_MIN = 100
   const SPEED_MAX = 3000
   const readSpeed = () => {
@@ -6908,7 +6907,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const holdSpeed = () => {
     if (!autoOn) return speed
     const rate = scrollAutoRate()
-    return rate === 'max' ? SPEED_MAX : Math.min(SPEED_MAX, Math.max(SPEED_MIN, rate * jumpDistance()))
+    return rate === 'max' ? Math.max(SPEED_MAX, 10 * jumpDistance()) : Math.max(SPEED_MIN, rate * jumpDistance())   // 不设上限：想要每秒几次就几次
   }
   let raf = 0
   let lastTs = 0
@@ -6948,9 +6947,13 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const easeOut = (t) => 1 - ((1 - t) ** 3)
   const jumpDistance = () => Math.max(40, content.clientHeight * stepRatio)
 
+  // 分段跳的节奏完全由速度（每秒几次）决定，没有「最小静止」之类的下限：间隔 = 一跳的距离 / 速度；跳的动画最长 180ms，间隔更短时压到间隔的 70%，再短（< 40ms）就直接到位
+  const jumpIntervalMs = () => Math.max(16, (jumpDistance() / holdSpeed()) * 1000)
+  const jumpMsFor = () => { const ms = Math.min(JUMP_MS, jumpIntervalMs() * 0.7); return ms < 40 ? 0 : ms }
+  let jumpMs = JUMP_MS
   const stepJump = (ts) => {
     if (!jumpStart) jumpStart = ts
-    const t = Math.min(1, (ts - jumpStart) / JUMP_MS)
+    const t = Math.min(1, (ts - jumpStart) / jumpMs)
     pos = jumpFrom + (jumpTo - jumpFrom) * easeOut(t)
     content.scrollTop = pos
     if (t < 1) { raf = requestAnimationFrame(stepJump); return }
@@ -6959,13 +6962,12 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   }
 
   function scheduleJump() {
-    // 滑块在两种模式下含义一致：平均速度。间隔由"跳多远 / 多快"反推，
-    // 但不能短于一次跳跃 + 最小静止，否则又变回连续滚动（分段模式因此有速度上限）。
-    const interval = Math.max(JUMP_MS + MIN_PAUSE_MS, (jumpDistance() / holdSpeed()) * 1000)
+    // 滑块在两种模式下含义一致：平均速度；间隔 = 一跳的距离 / 速度，不再有下限
+    const interval = jumpIntervalMs()
     jumpTimer = setTimeout(() => {
       jumpTimer = null
       if (scrollDir) beginJump()
-    }, interval - JUMP_MS)
+    }, Math.max(0, interval - jumpMsFor()))
   }
 
   function beginJump() {
@@ -6977,9 +6979,10 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
       if (scrollDir) scheduleJump()
       return
     }
-    // 速度拉到最大时，间隔已经卡在"一跳 + 最小静止"的下限，180ms 的渐变动画
+    // 速度很大时一跳的间隔很短，180ms 的渐变动画
     // 反而显得拖沓——跳过渐变直接到位，手感更接近滚轮快速滑动时的"唰"一下。
-    if (holdSpeed() >= SPEED_MAX) {
+    jumpMs = jumpMsFor()
+    if (jumpMs === 0 || holdSpeed() >= SPEED_MAX) {
       pos = jumpTo
       content.scrollTop = pos
       if (scrollDir) scheduleJump()
@@ -7105,7 +7108,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
 
   const speedWrap = document.createElement('label')
   speedWrap.className = 'gallery-speed'
-  speedWrap.title = '长按箭头时的滚动速度（分段模式下是平均速度，上限受最小静止时间限制）'
+  speedWrap.title = '长按箭头时的滚动速度（分段模式下是平均速度：每跳的间隔 = 一跳的距离 / 速度，没有别的限制）'
   const speedInput = document.createElement('input')
   speedInput.type = 'range'
   speedInput.min = String(SPEED_MIN)

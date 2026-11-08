@@ -42,6 +42,10 @@ export const GAL_SETTINGS = {
   fontScaleMin: 0.6,
   fontScaleMax: 2,
   fitMin: 0.6,                                      // 台词太长时自动缩小到字体大小设置的多少倍（再长就滚动）
+  movieBrightnessKey: 'copymanga.gal.movieBrightness', // 视频亮度（百分比，100 = 原样；CSS filter，不动视频文件）
+  movieContrastKey: 'copymanga.gal.movieContrast',     // 视频对比度（百分比，100 = 原样）
+  movieFilterMin: 30,
+  movieFilterMax: 200,
   frameFpsKey: 'copymanga.gal.frameFps',            // 帧动画（FRAME_ANIM）每秒几帧：脚本里的速度参数不用，统一在这里设
   frameFpsDefault: 30,
   frameFpsMax: 60,
@@ -225,6 +229,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   fpsInput.title = '逐帧动画（FRAME_ANIM）每秒播放几帧，循环播放；脚本里写的速度不用'
   const fpsRow = el('label', 'gal-more-field')
   fpsRow.append(el('span', '', '帧动画速度'), fpsInput, el('span', '', '帧/秒'))
+  // 视频亮度 / 对比度：本机设置，只影响视频（CSS filter），改了立刻生效
+  const mkFilterRow = (label, title) => {
+    const input = el('input', 'gal-more-number')
+    input.type = 'number'
+    input.min = String(GAL_SETTINGS.movieFilterMin)
+    input.max = String(GAL_SETTINGS.movieFilterMax)
+    input.step = '5'
+    input.title = title
+    const row = el('label', 'gal-more-field')
+    row.append(el('span', '', label), input, el('span', '', '%'))
+    return { input, row }
+  }
+  const movieBrightnessCtl = mkFilterRow('视频亮度', '视频亮度（100 = 原样；觉得视频太亮就调低）。只影响视频，不改文件')
+  const movieContrastCtl = mkFilterRow('视频对比度', '视频对比度（100 = 原样）。只影响视频，不改文件')
   // 静态画面放大：倍率 + 中心（拖动选，和库页面的「页面宽度」同一种操作）
   const zoomInput = el('input', 'gal-more-number')
   zoomInput.type = 'number'
@@ -358,7 +376,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), colorRow, immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
     section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow, ttsSourceRow, ttsVoicedCtl.row),
-    section('画面', animRow, slowRow, fpsRow, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow, emoteRow),
+    section('画面', animRow, slowRow, fpsRow, movieBrightnessCtl.row, movieContrastCtl.row, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow, emoteRow),
   )
   hud.append(box)
   // 工具栏不再叠在舞台里：放在舞台下面、播放器最底部，和列表页底部固定条同一个位置、同一个顺序（↑ 在最左）
@@ -613,6 +631,23 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   })
   let frameFps = Math.round(loadNumber(GAL_SETTINGS.frameFpsKey, GAL_SETTINGS.frameFpsDefault, 1, GAL_SETTINGS.frameFpsMax))
   fpsInput.value = String(frameFps)
+  const applyMovieFilter = () => {
+    const b = loadNumber(GAL_SETTINGS.movieBrightnessKey, 100, GAL_SETTINGS.movieFilterMin, GAL_SETTINGS.movieFilterMax)
+    const c = loadNumber(GAL_SETTINGS.movieContrastKey, 100, GAL_SETTINGS.movieFilterMin, GAL_SETTINGS.movieFilterMax)
+    movieBrightnessCtl.input.value = String(b)
+    movieContrastCtl.input.value = String(c)
+    if (b === 100 && c === 100) world.style.removeProperty('--gal-movie-filter')
+    else world.style.setProperty('--gal-movie-filter', `brightness(${b / 100}) contrast(${c / 100})`)
+  }
+  for (const [ctl, key] of [[movieBrightnessCtl, GAL_SETTINGS.movieBrightnessKey], [movieContrastCtl, GAL_SETTINGS.movieContrastKey]]) {
+    ctl.input.addEventListener('change', () => {
+      const n = Math.round(Number(ctl.input.value))
+      const v = Number.isFinite(n) ? Math.max(GAL_SETTINGS.movieFilterMin, Math.min(GAL_SETTINGS.movieFilterMax, n)) : 100
+      try { localStorage.setItem(key, String(v)) } catch { /* 存不了就只在这一页生效 */ }
+      applyMovieFilter()
+    })
+  }
+  applyMovieFilter()
   fpsInput.addEventListener('change', () => {
     const n = Math.round(Number(fpsInput.value))
     frameFps = Number.isFinite(n) ? Math.max(1, Math.min(GAL_SETTINGS.frameFpsMax, n)) : GAL_SETTINGS.frameFpsDefault

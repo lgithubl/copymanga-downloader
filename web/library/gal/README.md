@@ -1458,6 +1458,8 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 ## 2.46.x 补充
 
 - **视频交叉淡入**：`paintMovie` 在 `display:none → 显示` 之后必须强制重排（`void next.offsetWidth`）再设 opacity 过渡，用 `requestAnimationFrame` 不会触发过渡 = 硬切。`fe-gal-movie-fade-selftest.mjs` 听 `transitionrun` 验证（不要在测试里读 computed style，会强制样式计算让老写法碰巧能过渡）。
-- **自动滚动频率**：媒体库「更多」和图集 / 图片浏览沉浸条的「更多」共用 `copymanga.scrollAutoRate`（11 档，每秒 0.2 到 10 次 + 持续）；沉浸里 `⇊` 自动 = 每秒 N 次 × 一个分段跳的距离（分段模式受「一跳 + 最小静止」340ms 限制，约 3 次/秒封顶）。
+- **自动滚动频率**：媒体库「更多」和图集 / 图片浏览沉浸条的「更多」共用 `copymanga.scrollAutoRate`（11 档，每秒 0.2 到 10 次 + 持续）；沉浸里 `⇊` 自动 = 每秒 N 次 × 一个分段跳的距离（分段模式没有上限：间隔 = 一跳的距离 / 速度；跳的动画最长 180ms，间隔更短时压到间隔的 70%，< 40ms 直接到位）。
 - **Otogi 多骨架静态画面**：`<Id>.json` 是 `skeleton_list` 清单、没有 `<Id>.atlas.txt` 时，同目录 `<名>_S<n>.json + .atlas.txt` 按数字叠成 still1…n（`stats.multiSkeleton`）。用 222951 的真实 json / atlas + 合成贴图在真浏览器里渲染过：7 个骨架都加载、画面非黑。
 - **采集 v1.31**：`otogi:still` 放行 png（1.30 被 EXCL 过滤了）、`gc:scene`（Girls Creation 系整个场景目录，`GAL_GC_SCENES`，默认 story1020043）。
+- **视频亮度 / 对比度**：设置 → 画面里两个输入框（本机设置，30–200%，100 = 原样），CSS filter（`--gal-movie-filter`），只影响视频。
+- **采集 v1.32**：规则 `gc:cast`（`GAL_GC_CASTS`，默认 cast001001 = maid 场景 story1020043 的 Spine 角色 iroha_001）。1.31 收到的场景数据：`FRAME_ANIM,102004,3,62,33` 的 60 帧是 1024×576 jpg，亮度 145–147，没有黑帧；EV 图在 `images/`，帧在 `animations/`。

@@ -46,7 +46,7 @@ try {
   const section = dir.node.items[0].node
   browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
-  await ctx.addInitScript(() => localStorage.setItem('copymanga.immersivePref', JSON.stringify({ gal: false })))
+  await ctx.addInitScript(() => { localStorage.setItem('copymanga.immersivePref', JSON.stringify({ gal: false })); localStorage.setItem('copymanga.gal.movieBrightness', '60'); localStorage.setItem('copymanga.gal.movieContrast', '110') })
   const page = await ctx.newPage()
   const errors = []
   page.on('pageerror', (e) => errors.push(e.message))
@@ -67,6 +67,8 @@ try {
   // 过渡的时长：脚本 time=400 → 0.4 秒
   check('换完后新视频 opacity 回到默认（不留内联样式）', await page.$eval('.gal-movie', (v) => v.style.opacity === '' && v.style.transition === ''))
   check('换完后只剩一个视频元素（旧的移掉了）', (await page.$$('.gal-movie')).length === 1)
+  // 视频亮度 / 对比度（设置 → 画面）：本机设置 60% / 110% → 视频元素的 CSS filter
+  check('视频亮度 / 对比度设置生效：filter = brightness(0.6) contrast(1.1)；设置里有两个输入框且值对得上', await page.$eval('.gal-movie', (v) => getComputedStyle(v).filter) === 'brightness(0.6) contrast(1.1)' && (await page.$$eval('.gal-more-field', (rows) => rows.filter((r) => /视频亮度|视频对比度/.test(r.textContent)).map((r) => r.querySelector('input').value))).join() === '60,110')
   check('没有页面错误', errors.length === 0, JSON.stringify(errors))
 } catch (error) {
   fail++

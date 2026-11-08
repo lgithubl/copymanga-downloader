@@ -84,6 +84,17 @@ try {
     check(`${name}：再点一次就停（不再滚）；按钮在自动中是「停」/ aria-pressed`, pressed === 'true' && (await top()) - after <= 2 && (await page.$eval('.gallery-scroll-auto', (b) => b.textContent)) === '⇊', J({ pressed, after, now: await top() }))
   }
 
+  // 分段模式没有「每秒最多几次」的限制：每秒 10 次 × 每跳 15% 屏 → 1.5 屏/秒（以前 340ms 的下限会把它压到约 3 次/秒 = 0.45 屏/秒）
+  await open({ 'copymanga.galleryScrollMode': 'step', 'copymanga.galleryScrollStepRatio': '0.15', 'copymanga.scrollAutoRate': '10' })
+  await reset()
+  await page.evaluate(() => document.querySelector('.gallery-scroll-auto').click())
+  await sleep(1500)
+  const fast = await top()
+  await page.evaluate(() => document.querySelector('.gallery-scroll-auto').click())
+  const fastExpected = 10 * 1.5 * 0.15 * (await vh())
+  check(`分段 / 每秒 10 次 / 15%：1.5 秒滚的距离 ≈ 10 × 1.5 × 一跳（期望 ${Math.round(fastExpected)}px / 实际 ${fast}px，差 ≤ 35%）`, fast > fastExpected * 0.65 && fast < fastExpected * 1.35, J({ fast, fastExpected }))
+  await sleep(500)
+
   // 滚轮 / 手动点 ▼ 会停掉自动；滚到底自己停
   await open({ 'copymanga.galleryScrollMode': 'step', 'copymanga.galleryScrollSpeed': '3000', 'copymanga.galleryScrollStepRatio': '0.8' })
   await page.evaluate(() => document.querySelector('.gallery-scroll-auto').click())
