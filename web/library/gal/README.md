@@ -1458,7 +1458,7 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 ## 2.46.x 补充
 
 - **视频交叉淡入**：`paintMovie` 在 `display:none → 显示` 之后必须强制重排（`void next.offsetWidth`）再设 opacity 过渡，用 `requestAnimationFrame` 不会触发过渡 = 硬切。`fe-gal-movie-fade-selftest.mjs` 听 `transitionrun` 验证（不要在测试里读 computed style，会强制样式计算让老写法碰巧能过渡）。
-- **自动滚动频率**：媒体库「更多」和图集 / 图片浏览沉浸条的「更多」共用 `copymanga.scrollAutoRate`（11 档，每秒 0.2 到 10 次 + 持续）；沉浸里 `⇊` 自动 = 每秒 N 次 × 一个分段跳的距离（分段模式没有上限：间隔 = 一跳的距离 / 速度；跳的动画最长 180ms，间隔更短时压到间隔的 70%，< 40ms 直接到位）。
+- **自动滚动频率**：媒体库「更多」和图集 / 图片浏览沉浸条的「更多」共用 `copymanga.scrollAutoRate`（11 档，每秒 0.2 到 10 次 + 持续）。图集 / 图片里 `⇊` 自动 = 每隔 1/N 秒「点一下 ▼」（分段模式：跳一次，距离 / 动画 / 分段比例都是 ▼ 原来的设置，不设上限；间隔比一跳的动画短时只压缩这一跳的动画到间隔的 70%，< 40ms 直接到位）；连续模式和「持续」= 一直按住 ▼（原样，速度用 px/秒滑块）。老的模式 / 速度 / 分段比例只管 ▼ 自己，没有被替换。
 - **Otogi 多骨架静态画面**：`<Id>.json` 是 `skeleton_list` 清单、没有 `<Id>.atlas.txt` 时，同目录 `<名>_S<n>.json + .atlas.txt` 按数字叠成 still1…n（`stats.multiSkeleton`）。用 222951 的真实 json / atlas + 合成贴图在真浏览器里渲染过：7 个骨架都加载、画面非黑。
 - **采集 v1.31**：`otogi:still` 放行 png（1.30 被 EXCL 过滤了）、`gc:scene`（Girls Creation 系整个场景目录，`GAL_GC_SCENES`，默认 story1020043）。
 - **视频亮度 / 对比度**：设置 → 画面里两个输入框（本机设置，30–200%，100 = 原样），CSS filter（`--gal-movie-filter`），只影响视频。

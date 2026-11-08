@@ -6858,6 +6858,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const STEP_RATIO_MIN = 0.15
   const STEP_RATIO_MAX = 0.9
   const JUMP_MS = 180            // 单次跳跃的动画时长
+  const MIN_PAUSE_MS = 160       // 两跳之间至少静止这么久，否则退化成连续滚动
   const SPEED_MIN = 100
   const SPEED_MAX = 3000
   const readSpeed = () => {
@@ -6903,12 +6904,6 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const RAMP_DOWN_MS = 160
 
   let autoOn = false
-  // 自动 / 按住 用的速度：自动按「更多 → 自动滚动」的每秒 N 次（一次 = 一个分段跳的距离；持续 = 最大速度），按住用 px/s 滑块
-  const holdSpeed = () => {
-    if (!autoOn) return speed
-    const rate = scrollAutoRate()
-    return rate === 'max' ? Math.max(SPEED_MAX, 10 * jumpDistance()) : Math.max(SPEED_MIN, rate * jumpDistance())   // 不设上限：想要每秒几次就几次
-  }
   let raf = 0
   let lastTs = 0
   let scrollDir = 0
@@ -6920,10 +6915,9 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     const dt = lastTs ? Math.min(ts - lastTs, 100) : 16.7
     lastTs = ts
 
-    const hold = holdSpeed()
-    const target = scrollDir * hold
+    const target = scrollDir * speed
     const rampMs = Math.abs(target) > Math.abs(vel) ? RAMP_UP_MS : RAMP_DOWN_MS
-    const maxStep = hold * (dt / rampMs)
+    const maxStep = speed * (dt / rampMs)
     vel += Math.max(-maxStep, Math.min(maxStep, target - vel))
     if (!scrollDir && Math.abs(vel) < 1) vel = 0
 
@@ -6947,10 +6941,8 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const easeOut = (t) => 1 - ((1 - t) ** 3)
   const jumpDistance = () => Math.max(40, content.clientHeight * stepRatio)
 
-  // 分段跳的节奏完全由速度（每秒几次）决定，没有「最小静止」之类的下限：间隔 = 一跳的距离 / 速度；跳的动画最长 180ms，间隔更短时压到间隔的 70%，再短（< 40ms）就直接到位
-  const jumpIntervalMs = () => Math.max(16, (jumpDistance() / holdSpeed()) * 1000)
-  const jumpMsFor = () => { const ms = Math.min(JUMP_MS, jumpIntervalMs() * 0.7); return ms < 40 ? 0 : ms }
-  let jumpMs = JUMP_MS
+  let jumpMs = JUMP_MS   // 当前这一跳的动画时长：按住 / 点击 = JUMP_MS；自动每一次「按」间隔很短时会压短（见 autoTick）
+  let pressMs = null     // 自动的这一次「按」用的跳跃动画时长（null = 不是自动按的）
   const stepJump = (ts) => {
     if (!jumpStart) jumpStart = ts
     const t = Math.min(1, (ts - jumpStart) / jumpMs)
@@ -6962,12 +6954,13 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   }
 
   function scheduleJump() {
-    // 滑块在两种模式下含义一致：平均速度；间隔 = 一跳的距离 / 速度，不再有下限
-    const interval = jumpIntervalMs()
+    // 滑块在两种模式下含义一致：平均速度。间隔由"跳多远 / 多快"反推，
+    // 但不能短于一次跳跃 + 最小静止，否则又变回连续滚动（分段模式因此有速度上限）。
+    const interval = Math.max(JUMP_MS + MIN_PAUSE_MS, (jumpDistance() / speed) * 1000)
     jumpTimer = setTimeout(() => {
       jumpTimer = null
       if (scrollDir) beginJump()
-    }, Math.max(0, interval - jumpMsFor()))
+    }, interval - JUMP_MS)
   }
 
   function beginJump() {
@@ -6981,8 +6974,8 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     }
     // 速度很大时一跳的间隔很短，180ms 的渐变动画
     // 反而显得拖沓——跳过渐变直接到位，手感更接近滚轮快速滑动时的"唰"一下。
-    jumpMs = jumpMsFor()
-    if (jumpMs === 0 || holdSpeed() >= SPEED_MAX) {
+    jumpMs = pressMs ?? JUMP_MS
+    if (jumpMs === 0 || (pressMs === null && speed >= SPEED_MAX)) {
       pos = jumpTo
       content.scrollTop = pos
       if (scrollDir) scheduleJump()
@@ -7044,7 +7037,10 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     beginHold(d)
   }
   // 自动 = 一直按住 ▼，直到再点一次 / 滚轮 / 触摸 / 键盘翻页 / 点箭头 / 滚到底
+  let autoTimer = 0
   function stopAuto({ release = true } = {}) {
+    clearTimeout(autoTimer)
+    autoTimer = 0
     if (!autoOn) return
     autoOn = false
     autoBtn.classList.remove('on')
@@ -7058,7 +7054,26 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     autoBtn.classList.add('on')
     autoBtn.textContent = '■'
     autoBtn.setAttribute('aria-pressed', 'true')
-    beginHold(1)
+    const rate = scrollAutoRate()
+    if (mode === 'step' && rate !== 'max') { autoTick(); return }   // 分段：每隔 1/N 秒「点一下 ▼」
+    beginHold(1)   // 连续 / 持续：一直按住 ▼（老办法，速度用「按住 ▼」的 px/秒滑块）
+  }
+  // 自动（分段）= 每隔 1/N 秒点一下 ▼：和点 ▼ 一样跳一次（距离 = 分段比例 × 屏高，动画 = 原来那一跳），模式 / 分段比例 / 速度这些老设置照旧只管 ▼ 自己；
+  // 新的只有「多久点一次」。间隔比一跳的动画还短时，只把这一跳的动画压到间隔的 70%（< 40ms 直接到位），不设上限
+  function autoTick() {
+    autoTimer = 0
+    if (!autoOn) return
+    if (content.scrollTop >= content.scrollHeight - content.clientHeight - 1) { stopAuto(); return }
+    const rate = scrollAutoRate()
+    const interval = rate === 'max' ? 16 : 1000 / rate
+    const ms = Math.min(JUMP_MS, interval * 0.7)
+    pressMs = ms < 40 ? 0 : ms
+    scrollDir = 1
+    pos = content.scrollTop
+    beginJump()
+    scrollDir = 0
+    pressMs = null
+    if (autoOn) autoTimer = setTimeout(autoTick, interval)
   }
   autoBtn.addEventListener('click', (event) => { event.stopPropagation(); if (autoOn) stopAuto(); else startAuto() })
   const userStopsAuto = (event) => {
@@ -7164,10 +7179,10 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   scrollGroup.className = 'gallery-more-group'
   const scrollTitle = document.createElement('span')
   scrollTitle.className = 'gallery-more-title'
-  scrollTitle.textContent = '滚动（按住 ▼ / 自动）'
+  scrollTitle.textContent = '滚动（▼ / 自动）'
   const autoRateWrap = document.createElement('label')
   autoRateWrap.className = 'gallery-speed gallery-auto-rate'
-  autoRateWrap.title = '「⇊ 自动」的滚动频率：每秒几次（一次 = 一个分段跳的距离；最右 = 持续滚动）。和媒体库「更多」里的自动滚动是同一个设置'
+  autoRateWrap.title = '「⇊ 自动」多久点一次 ▼：每秒几次（分段模式：每次点一下 = 跳一次，距离 / 动画用下面的分段比例）。连续模式和最右的「持续」= 一直按住 ▼，用下面的速度。和媒体库「更多」里的自动滚动是同一个设置'
   const autoRateName = document.createElement('span')
   autoRateName.textContent = '自动滚动'
   const autoRateInput = document.createElement('input')
