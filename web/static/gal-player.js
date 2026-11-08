@@ -46,6 +46,11 @@ export const GAL_SETTINGS = {
   movieContrastKey: 'copymanga.gal.movieContrast',     // 视频对比度（百分比，100 = 原样）
   movieFilterMin: 30,
   movieFilterMax: 200,
+  frameSeamKey: 'copymanga.gal.frameSeam',          // 帧动画首尾混合：最后 N 帧渐变到开头 N 帧，循环处没有「一跳」（0 = 关）
+  frameSeamDefault: 3,
+  frameSeamMax: 12,
+  frameFadeSeconds: 0.3,                            // 换进 / 换出帧动画背景的交叉淡入
+  frameBitmapBudget: 400 * 1024 * 1024,             // 帧位图总字节上限（宽 × 高 × 4 × 帧数）；超了退回 CSS 换背景图的老办法
   frameFpsKey: 'copymanga.gal.frameFps',            // 帧动画（FRAME_ANIM）每秒几帧：脚本里的速度参数不用，统一在这里设
   frameFpsDefault: 30,
   frameFpsMax: 60,
@@ -229,6 +234,14 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   fpsInput.title = '逐帧动画（FRAME_ANIM）每秒播放几帧，循环播放；脚本里写的速度不用'
   const fpsRow = el('label', 'gal-more-field')
   fpsRow.append(el('span', '', '帧动画速度'), fpsInput, el('span', '', '帧/秒'))
+  const seamInput = el('input', 'gal-more-number')
+  seamInput.type = 'number'
+  seamInput.min = '0'
+  seamInput.max = String(GAL_SETTINGS.frameSeamMax)
+  seamInput.step = '1'
+  seamInput.title = '帧动画循环处的首尾混合：最后 N 帧渐变到开头 N 帧，让循环接得上、没有「一跳」；0 = 关（原样硬循环）'
+  const seamRow = el('label', 'gal-more-field')
+  seamRow.append(el('span', '', '帧动画首尾混合'), seamInput, el('span', '', '帧'))
   // 视频亮度 / 对比度：本机设置，只影响视频（CSS filter），改了立刻生效
   const mkFilterRow = (label, title) => {
     const input = el('input', 'gal-more-number')
@@ -376,7 +389,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), colorRow, immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
     section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow, ttsSourceRow, ttsVoicedCtl.row),
-    section('画面', animRow, slowRow, fpsRow, movieBrightnessCtl.row, movieContrastCtl.row, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow, emoteRow),
+    section('画面', animRow, slowRow, fpsRow, seamRow, movieBrightnessCtl.row, movieContrastCtl.row, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow, emoteRow),
   )
   hud.append(box)
   // 工具栏不再叠在舞台里：放在舞台下面、播放器最底部，和列表页底部固定条同一个位置、同一个顺序（↑ 在最左）
@@ -631,6 +644,15 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   })
   let frameFps = Math.round(loadNumber(GAL_SETTINGS.frameFpsKey, GAL_SETTINGS.frameFpsDefault, 1, GAL_SETTINGS.frameFpsMax))
   fpsInput.value = String(frameFps)
+  let frameSeam = Math.round(loadNumber(GAL_SETTINGS.frameSeamKey, GAL_SETTINGS.frameSeamDefault, 0, GAL_SETTINGS.frameSeamMax))
+  seamInput.value = String(frameSeam)
+  seamInput.addEventListener('change', () => {
+    const n = Math.round(Number(seamInput.value))
+    frameSeam = Number.isFinite(n) ? Math.max(0, Math.min(GAL_SETTINGS.frameSeamMax, n)) : GAL_SETTINGS.frameSeamDefault
+    seamInput.value = String(frameSeam)
+    try { localStorage.setItem(GAL_SETTINGS.frameSeamKey, String(frameSeam)) } catch { /* 存不了就只在这一页生效 */ }
+    startFrames(state.bg?.frames ? layers[frontLayer] : null)
+  })
   const applyMovieFilter = () => {
     const b = loadNumber(GAL_SETTINGS.movieBrightnessKey, 100, GAL_SETTINGS.movieFilterMin, GAL_SETTINGS.movieFilterMax)
     const c = loadNumber(GAL_SETTINGS.movieContrastKey, 100, GAL_SETTINGS.movieFilterMin, GAL_SETTINGS.movieFilterMax)
@@ -908,12 +930,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   // 逐帧背景（FRAME_ANIM）：在当前前台层上循环换图，换背景 / 退出时停掉
   let frameTimer = 0
-  function stopFrames() { clearInterval(frameTimer); frameTimer = 0 }
+  let frameRun = null   // canvas 帧播放：{ stop() }
+  function stopFrames() { clearInterval(frameTimer); frameTimer = 0; frameRun?.stop(); frameRun = null }
   // 胶片背景（bg.film = { ratio, fps, loop, rotate? }）：src 是一张竖排的胶片（文件里每帧宽 × 高 = 1 : ratio，帧数 = 图高 / (图宽 × ratio)），整个舞台高度放一帧，按 fps 往下翻；
   // 帧数要等图加载完才知道。loop = false 播到最后一帧停住；fps <= 1 = 静图（只显示第一帧）。
   // rotate: 90 = 胶片是逆时针转了 90° 存的（Kamihime：原版 Rotozoom(文件, 90)，一帧显示出来是横版 ratio : 1，帧 0 在最左），显示时要转回来
   function paintFilm(layer, bg) {
-    layer.querySelectorAll('.gal-film').forEach((node) => node.remove())
+    layer.querySelectorAll('.gal-film, .gal-frames').forEach((node) => node.remove())
     if (!bg?.film || !bg.src) return null
     const film = el('div', 'gal-film')
     const ratio = Number(bg.film.ratio) > 0 ? Number(bg.film.ratio) : 1
@@ -966,12 +989,72 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     probe.src = url(bg.src)
   }
-  // 逐帧循环（FRAME_ANIM / ANIM_PLAY）：每一帧的 Image 对象留着（不留着解码好的位图会被回收，换帧时现解码 = 闪黑）；下一帧还没加载 / 解码好就先留在当前这一帧，不换
+  // 逐帧循环（FRAME_ANIM / ANIM_PLAY）：用 canvas 播——每一帧只下载一次、解码成 ImageBitmap，之后只是 drawImage；下一帧没就绪就保持上一帧（canvas 里的像素不会丢），
+  // 所以不会再露出背景层的底色（原来每 33ms 换一次 CSS background-image，缓存被禁用 / 被挤掉 / 主线程卡的那一刻新图没取到 = 闪黑）。
+  // 首尾混合：第一遍从头播；之后在 [S, n) 里循环，最后 S 帧渐变到开头 S 帧，循环处接得上。
+  // 不能用 canvas（没有 createImageBitmap / 位图总量超预算 / 只有一帧）就退回 startFramesCss。
   let frameImages = []
   function startFrames(layer) {
     stopFrames()
     const frames = state.bg?.frames
     if (!layer || !frames?.length) return
+    layer.querySelectorAll('.gal-frames').forEach((node) => node.remove())
+    if (frames.length < 2 || typeof createImageBitmap !== 'function') { startFramesCss(layer, frames); return }
+    const n = frames.length
+    const canvas = el('canvas', 'gal-frames')
+    layer.append(canvas)
+    const g = canvas.getContext('2d')
+    const bitmaps = new Array(n).fill(null)   // ImageBitmap / false（取不到）
+    let alive = true
+    let raf = 0
+    let sized = false
+    let lastStep = -1
+    const closeAll = () => { for (const b of bitmaps) if (b && b.close) b.close() }
+    const fallback = () => { alive = false; cancelAnimationFrame(raf); closeAll(); canvas.remove(); frameRun = null; startFramesCss(layer, frames) }
+    const load = async (i) => {
+      try {
+        const response = await fetch(url(frames[i]))
+        if (!response.ok) throw new Error(String(response.status))
+        const bitmap = await createImageBitmap(await response.blob())
+        if (!alive) { bitmap.close?.(); return }
+        if (!sized) {
+          sized = true
+          if (bitmap.width * bitmap.height * 4 * n > GAL_SETTINGS.frameBitmapBudget) { fallback(); return }
+          canvas.width = bitmap.width
+          canvas.height = bitmap.height
+        }
+        bitmaps[i] = bitmap
+      } catch { if (alive) { bitmaps[i] = false; markMissing(frames[i]) } }
+    }
+    ;(async () => {   // 按顺序、6 路并发：先到的先能播
+      let next = 0
+      await Promise.all(Array.from({ length: Math.min(6, n) }, async () => { while (alive && next < n) await load(next++) }))
+    })()
+    const seam = Math.max(0, Math.min(frameSeam, Math.floor(n / 4)))
+    const indexOf = (step) => (step < n ? step : seam + ((step - n) % (n - seam)))
+    const draw = (idx) => {
+      const bitmap = bitmaps[idx]
+      if (!bitmap) return false   // 没就绪：保持上一帧
+      g.globalAlpha = 1
+      g.drawImage(bitmap, 0, 0)
+      if (seam > 0 && idx >= n - seam) {
+        const head = bitmaps[idx - (n - seam)]
+        if (head) { g.globalAlpha = (idx - (n - seam) + 1) / (seam + 1); g.drawImage(head, 0, 0); g.globalAlpha = 1 }
+      }
+      return true
+    }
+    const t0 = performance.now()
+    const tick = (now) => {
+      if (!alive) return
+      const step = Math.floor(((now - t0) * frameFps) / 1000)
+      if (step !== lastStep && draw(indexOf(step))) lastStep = step
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    frameRun = { stop() { alive = false; cancelAnimationFrame(raf); closeAll() } }   // canvas 留在层里（淡出时还要看得见最后一帧），下次这一层重画时 paintFilm 会清掉
+  }
+  // 老办法（回退用）：每一帧的 Image 对象留着；下一帧还没加载 / 解码好就先留在当前这一帧，不换
+  function startFramesCss(layer, frames) {
     const images = frames.map((src) => { const image = new Image(); image.src = url(src); image.decode?.().catch(() => {}); return image })
     frameImages = images
     let index = 0
@@ -1046,7 +1129,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     stopPan()
     const next = layers[1 - frontLayer]
     const prev = layers[frontLayer]
-    const seconds = instant ? 0 : fade
+    const seconds = instant ? 0 : bg?.frames ? Math.max(fade || 0, GAL_SETTINGS.frameFadeSeconds) : fade   // 帧动画背景换进来 / 切到别的背景走交叉淡入（脚本没写渐变也至少 0.3 秒）
     const apply = (layer) => {
       paintFilm(layer, bg)
       layer.style.backgroundImage = bg?.film ? 'none' : bg?.src ? (bg.over ? `url("${url(bg.over)}"), url("${url(bg.src)}")` : `url("${url(bg.src)}")`) : 'none'

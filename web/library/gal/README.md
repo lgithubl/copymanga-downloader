@@ -1463,3 +1463,4 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 - **采集 v1.31**：`otogi:still` 放行 png（1.30 被 EXCL 过滤了）、`gc:scene`（Girls Creation 系整个场景目录，`GAL_GC_SCENES`，默认 story1020043）。
 - **视频亮度 / 对比度**：设置 → 画面里两个输入框（本机设置，30–200%，100 = 原样），CSS filter（`--gal-movie-filter`），只影响视频。
 - **采集 v1.32**：规则 `gc:cast`（`GAL_GC_CASTS`，默认 cast001001 = maid 场景 story1020043 的 Spine 角色 iroha_001）。1.31 收到的场景数据：`FRAME_ANIM,102004,3,62,33` 的 60 帧是 1024×576 jpg，亮度 145–147，没有黑帧；EV 图在 `images/`，帧在 `animations/`。
+- **帧动画用 canvas 播**（`FRAME_ANIM` / `ANIM_PLAY`）：每帧下载一次、`createImageBitmap` 解码，之后只 `drawImage`；没就绪的帧保持上一帧，不会露出背景层底色。原来每 33ms 换 CSS `background-image`，缓存被禁用（DevTools 勾 Disable cache）/ 被挤掉时新图没取到 = 闪黑（用 story1020043 的真实脚本和帧在禁用缓存下录屏：旧 6 个暗帧，新 0 个）。换进 / 换出帧动画背景至少 0.3 秒交叉淡入；首尾混合（设置 → 画面，默认 3 帧）：第一遍从头播，之后在 [S, n) 里循环，最后 S 帧渐变到开头 S 帧。位图总量超 400MB / 没有 createImageBitmap / 只有一帧 → 退回 CSS 老办法。脚本里的每帧毫秒（`FRAME_ANIM` 第 4 项）仍然不用，速度走设置里的帧率。`fe-gal-frames-selftest.mjs` 覆盖。

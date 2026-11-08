@@ -3928,6 +3928,14 @@ h2 {
   z-index: 1;
 }
 
+.gal-frames {
+  height: 100%;
+  inset: 0;
+  object-fit: cover;
+  position: absolute;
+  width: 100%;
+}
+
 .gal-movie {
   background: #000;
   filter: var(--gal-movie-filter, none);
