@@ -6975,7 +6975,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     // 速度很大时一跳的间隔很短，180ms 的渐变动画
     // 反而显得拖沓——跳过渐变直接到位，手感更接近滚轮快速滑动时的"唰"一下。
     jumpMs = pressMs ?? JUMP_MS
-    if (jumpMs === 0 || (pressMs === null && speed >= SPEED_MAX)) {
+    if (jumpMs === 0 || speed >= SPEED_MAX) {   // 速度拉到最大 = 不要渐变直接到位：点 ▼ 和自动的每一下都一样
       pos = jumpTo
       content.scrollTop = pos
       if (scrollDir) scheduleJump()

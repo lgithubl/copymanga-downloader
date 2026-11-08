@@ -103,6 +103,25 @@ try {
     check(`${name}：再点一次就停（不再滚）；按钮在自动中是「停」/ aria-pressed`, pressed === 'true' && (await top()) - after <= 2 && (await page.$eval('.gallery-scroll-auto', (b) => b.textContent)) === '⇊', J({ pressed, after, now: await top() }))
   }
 
+  // 速度 3000（最大）= 点 ▼ 不要渐变、瞬间到位；自动的每一下和点 ▼ 一样（不能自动就带滑动动画）
+  await open({ 'copymanga.galleryScrollMode': 'step', 'copymanga.galleryScrollSpeed': '3000', 'copymanga.galleryScrollStepRatio': '0.7', 'copymanga.scrollAutoRate': '4' })
+  await reset()
+  await page.dispatchEvent('.gallery-scroll-arrow[data-dir="1"]', 'pointerdown', { pointerId: 1, bubbles: true })
+  await page.dispatchEvent('.gallery-scroll-arrow[data-dir="1"]', 'pointerup', { pointerId: 1, bubbles: true })
+  const oneJumpMax = (await vh()) * 0.7
+  const clickTop = await top()   // 点完立刻读：不能还在渐变途中
+  check(`速度 3000：点一下 ▼ = 瞬间到位（立刻读 ${clickTop}px，一跳 ${Math.round(oneJumpMax)}px）`, Math.abs(clickTop - oneJumpMax) <= 4, J({ clickTop, oneJumpMax }))
+  await reset()
+  await page.evaluate(() => { const b = document.querySelector('.gallery-scroll-auto'); b.click(); window.__autoTops = []; const c = document.querySelector('.media-reader-content'); const t0 = performance.now(); window.__ivA = setInterval(() => window.__autoTops.push([Math.round(performance.now() - t0), Math.round(c.scrollTop)]), 8) })
+  await sleep(1300)
+  await page.evaluate(() => { clearInterval(window.__ivA); document.querySelector('.gallery-scroll-auto').click() })
+  const autoTops = await page.evaluate(() => window.__autoTops)
+  // 瞬间到位：相邻两次采样的差只会是 0 或整整一跳（渐变会出现介于中间的值）
+  const mids = autoTops.map((v, i) => (i ? v[1] - autoTops[i - 1][1] : 0)).filter((d) => d > 4 && Math.abs(d - oneJumpMax) > 6)
+  check(`速度 3000 / 70% / 每秒 4 次：自动每一下也是瞬间到位（采样 ${autoTops.length} 个，出现 ${mids.length} 次「跳到一半」，应为 0）`, autoTops.length > 50 && mids.length === 0, J(mids.slice(0, 5)))
+  await reset()
+  await sleep(300)
+
   // 分段模式没有「每秒最多几次」的限制：每秒 10 次 × 每跳 15% 屏 → 1.5 屏/秒（以前 340ms 的下限会把它压到约 3 次/秒 = 0.45 屏/秒）
   await open({ 'copymanga.galleryScrollMode': 'step', 'copymanga.galleryScrollStepRatio': '0.15', 'copymanga.scrollAutoRate': '10' })
   await reset()
