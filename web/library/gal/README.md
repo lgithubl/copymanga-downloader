@@ -1454,3 +1454,10 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 - **播放器**：bg 先解码再显示、frame 循环跳过未加载图，修 girlscreation 多图轮播闪黑。
 - **采集脚本 v1.30**：`chakra:cgs`（44 张 base）、`mhp:named`、`otogi:still/list`。
 - 自动速度：三个引擎的「自动」速度在各自播放器设置里；Mahotan CG 为静图（Spine 仅 `animation/*_anim_standby`）。
+
+## 2.46.x 补充
+
+- **视频交叉淡入**：`paintMovie` 在 `display:none → 显示` 之后必须强制重排（`void next.offsetWidth`）再设 opacity 过渡，用 `requestAnimationFrame` 不会触发过渡 = 硬切。`fe-gal-movie-fade-selftest.mjs` 听 `transitionrun` 验证（不要在测试里读 computed style，会强制样式计算让老写法碰巧能过渡）。
+- **自动滚动频率**：媒体库「更多」和图集 / 图片浏览沉浸条的「更多」共用 `copymanga.scrollAutoRate`（11 档，每秒 0.2 到 10 次 + 持续）；沉浸里 `⇊` 自动 = 每秒 N 次 × 一个分段跳的距离（分段模式受「一跳 + 最小静止」340ms 限制，约 3 次/秒封顶）。
+- **Otogi 多骨架静态画面**：`<Id>.json` 是 `skeleton_list` 清单、没有 `<Id>.atlas.txt` 时，同目录 `<名>_S<n>.json + .atlas.txt` 按数字叠成 still1…n（`stats.multiSkeleton`）。用 222951 的真实 json / atlas + 合成贴图在真浏览器里渲染过：7 个骨架都加载、画面非黑。
+- **采集 v1.31**：`otogi:still` 放行 png（1.30 被 EXCL 过滤了）、`gc:scene`（Girls Creation 系整个场景目录，`GAL_GC_SCENES`，默认 story1020043）。

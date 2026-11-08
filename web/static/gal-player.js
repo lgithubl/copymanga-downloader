@@ -1111,11 +1111,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       next.hidden = false
       next.play().catch(() => {})
       if (!crossfade) { next.style.opacity = ''; next.style.transition = ''; if (old !== next) { old.pause(); old.removeAttribute('src'); old.remove() } return }
-      requestAnimationFrame(() => {
-        next.style.transition = `opacity ${fade}s linear`
-        next.style.opacity = '1'
-        setTimeout(() => { old.pause(); old.removeAttribute('src'); old.remove(); next.style.transition = ''; next.style.opacity = '' }, fade * 1000 + 50)
-      })
+      // 必须强制重排一次再设过渡：元素刚从 display:none 出来，没有「之前的样式」可比，直接（含 rAF 里）设 opacity 1 不会触发过渡 = 硬切
+      void next.offsetWidth
+      next.style.transition = `opacity ${fade}s linear`
+      next.style.opacity = '1'
+      setTimeout(() => { old.pause(); old.removeAttribute('src'); old.remove(); next.style.transition = ''; next.style.opacity = '' }, fade * 1000 + 50)
     }
     old.after(next)
     movie = next

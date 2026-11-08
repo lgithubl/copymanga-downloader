@@ -58,14 +58,15 @@ try {
   const reset = async () => { await page.evaluate(() => { document.querySelector('.media-reader-content').scrollTop = 0 }); await sleep(300) }
   const holdDown = async (ms) => { const box = await (await page.$('.gallery-scroll-arrow[data-dir="1"]')).boundingBox(); await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down(); await sleep(ms); await page.mouse.up(); await sleep(400) }
 
-  for (const [name, settings] of [
-    ['分段 / 速度 3000 / 80%（和你的设置一样）', { 'copymanga.galleryScrollMode': 'step', 'copymanga.galleryScrollSpeed': '3000', 'copymanga.galleryScrollStepRatio': '0.8' }],
-    ['分段 / 速度 1000 / 50%', { 'copymanga.galleryScrollMode': 'step', 'copymanga.galleryScrollSpeed': '1000', 'copymanga.galleryScrollStepRatio': '0.5' }],
-    ['连续 / 速度 600', { 'copymanga.galleryScrollMode': 'smooth', 'copymanga.galleryScrollSpeed': '600' }],
+  for (const [name, settings, ratio] of [
+    ['分段 / 速度 3000 / 80%（和你的设置一样）', { 'copymanga.galleryScrollMode': 'step', 'copymanga.galleryScrollSpeed': '3000', 'copymanga.galleryScrollStepRatio': '0.8', 'copymanga.scrollAutoRate': '2' }, 0.8],
+    ['分段 / 速度 1000 / 50%', { 'copymanga.galleryScrollMode': 'step', 'copymanga.galleryScrollSpeed': '1000', 'copymanga.galleryScrollStepRatio': '0.5', 'copymanga.scrollAutoRate': '2' }, 0.5],
+    ['连续 / 速度 600', { 'copymanga.galleryScrollMode': 'smooth', 'copymanga.galleryScrollSpeed': '600', 'copymanga.scrollAutoRate': '2' }, 0.35],
   ]) {
     await open(settings)
     check(`${name}：箭头之间有「自动」按钮（▲ 自动 ▼）`, J(await page.$$eval('.gallery-scroll-nav button', (b) => b.map((x) => x.textContent))) === J(['▲', '⇊', '▼']))
     check(`${name}：模式 / 速度 / 分段比例在这个视图自己的「更多」菜单里，栏上没有`, (await page.$$('.gallery-more-menu .gallery-speed')).length >= 1 && (await page.$$('.gallery-more-menu .gallery-scroll-mode')).length === 1 && (await page.$$('.gallery-bar > .gallery-speed')).length === 0)
+    check(`${name}：「更多」里有「自动滚动」滑块（11 档，当前每秒 2 次，和媒体库同一个设置）`, await page.$eval('.gallery-more-menu .gallery-auto-rate-input', (i) => i.max === '10' && i.value === '3') && (await page.$eval('.gallery-more-menu .gallery-auto-rate .gallery-speed-val', (e) => e.textContent)) === '每秒 2 次')
     await holdDown(2000)
     const held = await top()
     await reset()
@@ -77,7 +78,9 @@ try {
     await sleep(500)
     const after = await top()
     await sleep(800)
-    check(`${name}：自动 2 秒滚的距离 ≈ 按住 ▼ 2 秒（按住 ${held}px / 自动 ${autoMid}px，差 ≤ 30%）`, held > 300 && Math.abs(autoMid - held) <= Math.max(held, autoMid) * 0.3 + 1, J({ held, autoMid, vh: await vh() }))
+    // 自动按「自动滚动」滑块的每秒 N 次走（N = 2，一次 = 一个分段跳的距离），不再等于按住 ▼ 的 px/s
+    const expected = 2 * 2 * (await vh()) * ratio
+    check(`${name}：自动 2 秒滚的距离 ≈ 每秒 2 次 × 2 秒 × 一跳（期望 ${Math.round(expected)}px / 实际 ${autoMid}px，差 ≤ 40%）`, autoMid > 200 && Math.abs(autoMid - expected) <= expected * 0.4, J({ held, autoMid, expected }))
     check(`${name}：再点一次就停（不再滚）；按钮在自动中是「停」/ aria-pressed`, pressed === 'true' && (await top()) - after <= 2 && (await page.$eval('.gallery-scroll-auto', (b) => b.textContent)) === '⇊', J({ pressed, after, now: await top() }))
   }
 

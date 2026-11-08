@@ -550,7 +550,7 @@ export function parse(text, ctx = null, meta = {}) {
           // 多骨架：<Id>.json 是 {skeleton_list} 清单、没有 <Id>.atlas.txt；骨架在同目录 <名>.json + <名>.atlas.txt，按名字里的数字从底到顶叠
           skeletons = multiSkeletons(ctx, id)
           if (!skeletons.length) count('unresolved', `still:${id}`)
-          else count('raw', `multiSkeleton:${skeletons.length}`)
+          else stats.multiSkeleton = skeletons.length   // 只记个数（不进 raw：那会在「未渲染指令」里报成一条问题）
         }
       }
       if (skeletons.length) {

@@ -3410,17 +3410,20 @@ const libraryScrollTarget = () => {
 const SCROLL_AUTO_RATE_KEY = 'copymanga.scrollAutoRate'
 const SCROLL_AUTO_RATES = ['0.2', '0.5', '1', '2', '3', '4', '5', '6', '8', '10', 'max']
 const scrollAutoRate = () => { const v = localStorage.getItem(SCROLL_AUTO_RATE_KEY) || '1'; return v === 'max' ? 'max' : Number(v) || 1 }
-// 频率滑块（离散 11 档，对应 SCROLL_AUTO_RATES）：每次点击时现取，拖动立即生效
-const scrollAutoSlider = document.querySelector('#library-scroll-auto-rate')
-const scrollAutoLabel = document.querySelector('#library-scroll-auto-rate-val')
+// 频率滑块（离散 11 档，对应 SCROLL_AUTO_RATES）：每次点击时现取，拖动立即生效；媒体库「更多」和图集 / 图片浏览的「更多」共用同一个设置
 const scrollAutoText = (v) => (v === 'max' ? '持续（最大）' : `每秒 ${v} 次`)
-if (scrollAutoSlider) {
+function bindScrollAutoRate(slider, label) {
+  if (!slider) return
   const saved = localStorage.getItem(SCROLL_AUTO_RATE_KEY)
-  const sync = () => { if (scrollAutoLabel) scrollAutoLabel.textContent = scrollAutoText(SCROLL_AUTO_RATES[Number(scrollAutoSlider.value)]) }
-  scrollAutoSlider.value = String(Math.max(0, SCROLL_AUTO_RATES.indexOf(SCROLL_AUTO_RATES.includes(saved) ? saved : '1')))
+  slider.min = '0'
+  slider.max = String(SCROLL_AUTO_RATES.length - 1)
+  slider.step = '1'
+  const sync = () => { if (label) label.textContent = scrollAutoText(SCROLL_AUTO_RATES[Number(slider.value)]) }
+  slider.value = String(Math.max(0, SCROLL_AUTO_RATES.indexOf(SCROLL_AUTO_RATES.includes(saved) ? saved : '1')))
   sync()
-  scrollAutoSlider.addEventListener('input', () => { localStorage.setItem(SCROLL_AUTO_RATE_KEY, SCROLL_AUTO_RATES[Number(scrollAutoSlider.value)]); sync() })
+  slider.addEventListener('input', () => { try { localStorage.setItem(SCROLL_AUTO_RATE_KEY, SCROLL_AUTO_RATES[Number(slider.value)]) } catch { /* 存不下就只在本次生效 */ } sync() })
 }
+bindScrollAutoRate(document.querySelector('#library-scroll-auto-rate'), document.querySelector('#library-scroll-auto-rate-val'))
 if (els.libraryItems) createScrollButtons({ host: document.querySelector('#library-view'), getTarget: libraryScrollTarget, label: '媒体库分段滚动', getAutoRate: scrollAutoRate })
 
 // —— 卡片宽度 / 页面总宽度 / 封面放大倍率：各存各的（localStorage），拖动的交互复用 openWidthAdjust ——
@@ -6901,6 +6904,12 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const RAMP_DOWN_MS = 160
 
   let autoOn = false
+  // 自动 / 按住 用的速度：自动按「更多 → 自动滚动」的每秒 N 次（一次 = 一个分段跳的距离；持续 = 最大速度），按住用 px/s 滑块
+  const holdSpeed = () => {
+    if (!autoOn) return speed
+    const rate = scrollAutoRate()
+    return rate === 'max' ? SPEED_MAX : Math.min(SPEED_MAX, Math.max(SPEED_MIN, rate * jumpDistance()))
+  }
   let raf = 0
   let lastTs = 0
   let scrollDir = 0
@@ -6912,9 +6921,10 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     const dt = lastTs ? Math.min(ts - lastTs, 100) : 16.7
     lastTs = ts
 
-    const target = scrollDir * speed
+    const hold = holdSpeed()
+    const target = scrollDir * hold
     const rampMs = Math.abs(target) > Math.abs(vel) ? RAMP_UP_MS : RAMP_DOWN_MS
-    const maxStep = speed * (dt / rampMs)
+    const maxStep = hold * (dt / rampMs)
     vel += Math.max(-maxStep, Math.min(maxStep, target - vel))
     if (!scrollDir && Math.abs(vel) < 1) vel = 0
 
@@ -6951,7 +6961,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   function scheduleJump() {
     // 滑块在两种模式下含义一致：平均速度。间隔由"跳多远 / 多快"反推，
     // 但不能短于一次跳跃 + 最小静止，否则又变回连续滚动（分段模式因此有速度上限）。
-    const interval = Math.max(JUMP_MS + MIN_PAUSE_MS, (jumpDistance() / speed) * 1000)
+    const interval = Math.max(JUMP_MS + MIN_PAUSE_MS, (jumpDistance() / holdSpeed()) * 1000)
     jumpTimer = setTimeout(() => {
       jumpTimer = null
       if (scrollDir) beginJump()
@@ -6969,7 +6979,7 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
     }
     // 速度拉到最大时，间隔已经卡在"一跳 + 最小静止"的下限，180ms 的渐变动画
     // 反而显得拖沓——跳过渐变直接到位，手感更接近滚轮快速滑动时的"唰"一下。
-    if (speed >= SPEED_MAX) {
+    if (holdSpeed() >= SPEED_MAX) {
       pos = jumpTo
       content.scrollTop = pos
       if (scrollDir) scheduleJump()
@@ -7152,7 +7162,19 @@ function enterGalleryImmersive({ view, content, toggle, chapter, kind = '', reme
   const scrollTitle = document.createElement('span')
   scrollTitle.className = 'gallery-more-title'
   scrollTitle.textContent = '滚动（按住 ▼ / 自动）'
-  scrollGroup.append(scrollTitle, modeBtn, speedWrap, stepRatioWrap)
+  const autoRateWrap = document.createElement('label')
+  autoRateWrap.className = 'gallery-speed gallery-auto-rate'
+  autoRateWrap.title = '「⇊ 自动」的滚动频率：每秒几次（一次 = 一个分段跳的距离；最右 = 持续滚动）。和媒体库「更多」里的自动滚动是同一个设置'
+  const autoRateName = document.createElement('span')
+  autoRateName.textContent = '自动滚动'
+  const autoRateInput = document.createElement('input')
+  autoRateInput.type = 'range'
+  autoRateInput.className = 'gallery-auto-rate-input'
+  const autoRateVal = document.createElement('span')
+  autoRateVal.className = 'gallery-speed-val'
+  bindScrollAutoRate(autoRateInput, autoRateVal)
+  autoRateWrap.append(autoRateName, autoRateInput, autoRateVal)
+  scrollGroup.append(scrollTitle, modeBtn, autoRateWrap, speedWrap, stepRatioWrap)
   moreMenu.append(scrollGroup, detailBtn)
   moreWrap.append(moreBtn, moreMenu)
   moreBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = !moreMenu.hidden })
