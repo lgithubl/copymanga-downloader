@@ -523,7 +523,7 @@ export function parse(text, ctx = null, meta = {}) {
     let spRaw = 1       // 原页面的 sp 变量：Motion 和它不一样才改速度
     let timeScale = 1
     let last = ''
-    let skeleton = null
+    let skeletons = []   // 一个画面可以是多个骨架叠在一起（chara/still/<Id>/<名>_S1…S7，<Id>.json 只是清单）
     let tried = false
     const toScale = (motion) => (motion <= 0 ? o.motion.zero : motion > o.motion.fastAbove ? motion * o.motion.fastFactor : motion)
     for (const row of rows) {
@@ -545,17 +545,22 @@ export function parse(text, ctx = null, meta = {}) {
         tried = true
         const skel = resolve('skel', { scene: id }, 'image')
         const atlas = skel ? resolve('atlas', { scene: id }, 'image') : ''
-        if (skel && atlas) skeleton = { skel, atlas }
-        else count('unresolved', `still:${id}`)
+        if (skel && atlas) skeletons = [{ skel, atlas }]
+        else {
+          // 多骨架：<Id>.json 是 {skeleton_list} 清单、没有 <Id>.atlas.txt；骨架在同目录 <名>.json + <名>.atlas.txt，按名字里的数字从底到顶叠
+          skeletons = multiSkeletons(ctx, id)
+          if (!skeletons.length) count('unresolved', `still:${id}`)
+          else count('raw', `multiSkeleton:${skeletons.length}`)
+        }
       }
-      if (skeleton) {
+      if (skeletons.length) {
         if (create) { ani = '1'; last = ''; timeScale = toScale(spRaw) }
         if (anim && !o.anim[anim]) { count('raw', `CharaAnimation:${anim}`); emit({ op: 'raw', cmd: 'CharaAnimation', args: [anim] }) }   // 表里没有的值：不猜，记 raw
         else if (anim && anim !== ani) { ani = anim; if (o.anim[anim].speed) timeScale = o.anim[anim].speed }
         const entry = o.anim[ani] || o.anim['1']
         const sig = `${entry?.anim}|${entry?.loop}|${timeScale}`
         if (sig !== last) {
-          emit({ op: 'spine', slot: 'still1', kind: 'still', skel: skeleton.skel, atlas: skeleton.atlas, anim: entry?.anim || 'animation1', loop: entry ? entry.loop : true, speed: timeScale, order: 1, ...(view ? { x: view.x, y: view.y, scale: view.z } : {}) })
+          skeletons.forEach((sk, n) => emit({ op: 'spine', slot: `still${n + 1}`, kind: 'still', skel: sk.skel, atlas: sk.atlas, anim: entry?.anim || 'animation1', loop: entry ? entry.loop : true, speed: timeScale, order: n + 1, ...(view ? { x: view.x, y: view.y, scale: view.z } : {}) }))
           last = sig
           spineOn = true
         }
@@ -579,6 +584,23 @@ export function parse(text, ctx = null, meta = {}) {
   }
   if (!steps.length) push([{ op: 'text', segments: [] }])
   return { steps, stats }
+}
+
+// 同目录下的多个骨架（<名>.json + <名>.atlas.txt，<Id>.json 清单不算），按名字里的数字排
+function multiSkeletons(ctx, id) {
+  if (!ctx?.index?.size) return []
+  const dir = `chara/still/${id}/`
+  const out = []
+  for (const key of ctx.index.keys()) {
+    if (!key.startsWith(dir) || !key.endsWith('.json')) continue
+    const name = key.slice(dir.length, -'.json'.length)
+    if (name.includes('/') || name === id) continue
+    const atlas = ctx.index.get(`${dir}${name}.atlas.txt`)
+    if (atlas) out.push({ name, skel: ctx.index.get(key), atlas })
+  }
+  const num = (name) => Number(/(\d+)$/.exec(name)?.[1] ?? Infinity)
+  out.sort((a, b) => num(a.name) - num(b.name) || a.name.localeCompare(b.name))
+  return out.map(({ skel, atlas }) => ({ skel, atlas }))
 }
 
 export const otogiJsonAdapter = { id: ADAPTER_ID, label: 'Otogi Frontier R 剧情 JSON', sniff, explainSniff, parse, contextFiles, contextDirs, contextTextFilter, contextWalkLimit, contextSampleLimit, prepare, catalog, health }

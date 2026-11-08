@@ -109,6 +109,12 @@ let ctx
   check('成人剧情的声音：BGM bgm_10；Voice 在 othersounds/still/<Id>/<名>.m4a（缺的不发指令、记 missing.voice）；SE 非空 → raw（原页面不处理）；StillPath 忽略（stats.ignored）；Serif null 不动文字、"" 清空', J(a1.steps[0].commands.filter((c) => c.op === 'bgm' || c.op === 'voice')) === J([{ op: 'bgm', src: 'bgm/bgm_10.m4a' }, { op: 'voice', src: 'othersounds/still/1200051/h_v1.m4a' }]) && a1.stats.missing.voice === 1 && J(a1.steps[4].commands) === J([{ op: 'raw', cmd: 'SE', args: ['se_x'] }]) && a1.stats.ignored.StillPath === 1 && textsOf(a1)[4] === undefined && textsOf(a1)[5] === '', J([a1.stats, a1.steps[4].commands]))
   const a2 = play(await read('json/1200052'), '1200052')
   check('没有骨架的成人剧情：只出台词，记 unresolved:still:<Id>（一次），不发 spine', !flat(a2).some((c) => c.op === 'spine') && a2.steps.length === 2 && J(a2.stats.unresolved) === J({ 'still:1200052': 1 }) && J(textsOf(a2)) === J(['No skeleton for me.', 'Second.']), J(a2.stats))
+  const multiIndex = new Map(ctx.index)
+  for (const n of [10, 2, 1]) { multiIndex.set(`chara/still/1200052/th_S${n}.json`, `chara/still/1200052/th_S${n}.json`); multiIndex.set(`chara/still/1200052/th_S${n}.atlas.txt`, `chara/still/1200052/th_S${n}.atlas.txt`) }
+  multiIndex.set('chara/still/1200052/1200052.json', 'chara/still/1200052/1200052.json')   // 清单，不是骨架
+  const am = play(await read('json/1200052'), '1200052', { ...ctx, index: multiIndex })
+  const ms = flat(am).filter((c) => c.op === 'spine')
+  check('多骨架成人剧情（<Id>.json 是 skeleton_list 清单、没有 <Id>.atlas.txt）：同目录 <名>_S<n>.json + .atlas.txt 按数字从底到顶叠成 still1…n（S1、S2、S10），清单不算，不记 unresolved', J(ms.map((c) => [c.slot, c.order, c.skel])) === J([['still1', 1, 'chara/still/1200052/th_S1.json'], ['still2', 2, 'chara/still/1200052/th_S2.json'], ['still3', 3, 'chara/still/1200052/th_S10.json']]) && !am.stats.unresolved['still:1200052'], J(ms))
   const aUnknown = play(adultText.replace('"CharaAnimation":2', '"CharaAnimation":9'), '1200051')
   check('CharaAnimation 的值不在 anim 表里（9）：不猜，记 raw {cmd: CharaAnimation} + stats.raw，动画不变', J(flat(aUnknown).filter((c) => c.op === 'raw' && c.cmd === 'CharaAnimation')) === J([{ op: 'raw', cmd: 'CharaAnimation', args: ['9'] }]) && aUnknown.stats.raw['CharaAnimation:9'] === 1 && flat(aUnknown).filter((c) => c.op === 'spine').map((c) => c.anim).join() === 'animation1,animation1,animation3,animation4', J(aUnknown.stats.raw))   // 第 2 行的 Motion 2 仍然把速度改成 1.5（同一个动画只更新速度）
   const aCn = play(await read('jsoncn/1200051'), '1200051')
