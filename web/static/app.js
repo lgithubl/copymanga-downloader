@@ -3408,9 +3408,9 @@ const libraryScrollTarget = () => {
 }
 // 「自动」按钮（▲▼ 之间）：等价于按「更多 → 自动滚动频率」连续点 ▼；频率存本机（localStorage），'max' = 持续滚动（等价于一直按着）
 const SCROLL_AUTO_RATE_KEY = 'copymanga.scrollAutoRate'
-const SCROLL_AUTO_RATES = ['0.2', '0.5', '1', '2', '3', '5', 'max']
+const SCROLL_AUTO_RATES = ['0.2', '0.5', '1', '2', '3', '4', '5', '6', '8', '10', 'max']
 const scrollAutoRate = () => { const v = localStorage.getItem(SCROLL_AUTO_RATE_KEY) || '1'; return v === 'max' ? 'max' : Number(v) || 1 }
-// 频率滑块（离散 7 档，对应 SCROLL_AUTO_RATES）：每次点击时现取，拖动立即生效
+// 频率滑块（离散 11 档，对应 SCROLL_AUTO_RATES）：每次点击时现取，拖动立即生效
 const scrollAutoSlider = document.querySelector('#library-scroll-auto-rate')
 const scrollAutoLabel = document.querySelector('#library-scroll-auto-rate-val')
 const scrollAutoText = (v) => (v === 'max' ? '持续（最大）' : `每秒 ${v} 次`)
