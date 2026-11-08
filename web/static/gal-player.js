@@ -931,14 +931,19 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     probe.src = url(bg.src)
   }
+  // 逐帧循环（FRAME_ANIM / ANIM_PLAY）：每一帧的 Image 对象留着（不留着解码好的位图会被回收，换帧时现解码 = 闪黑）；下一帧还没加载 / 解码好就先留在当前这一帧，不换
+  let frameImages = []
   function startFrames(layer) {
     stopFrames()
     const frames = state.bg?.frames
     if (!layer || !frames?.length) return
-    for (const src of frames) { const image = new Image(); image.src = url(src) }   // 预载，播放时不卡
+    const images = frames.map((src) => { const image = new Image(); image.src = url(src); image.decode?.().catch(() => {}); return image })
+    frameImages = images
     let index = 0
     frameTimer = setInterval(() => {
-      index = (index + 1) % frames.length
+      const next = (index + 1) % images.length
+      if (!images[next].complete || !images[next].naturalWidth) return   // 还没好：这一拍不换
+      index = next
       layer.style.backgroundImage = `url("${url(frames[index])}")`
     }, 1000 / frameFps)
   }
@@ -987,6 +992,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     panAnim = animation
     animation.onfinish = () => { layer.style.backgroundPosition = at(pan.to); animation.cancel(); if (panAnim === animation) panAnim = null }
   }
+  // 换背景：新图还没加载 + 解码好就先让旧画面留着（新层先放着不显示），好了再切 / 淡入——以前一设 background-image 就把旧层淡成透明，图没好中间闪一下黑（逐帧动画 / 一连串背景最明显）。
+  // 样式（背景图 / 尺寸 / 位置）和 frontLayer 仍然同步设好，只有「显示出来」那一下等
+  const readyImages = new Set()
+  const decoding = new Map()
+  const decodeImage = (src) => {
+    if (readyImages.has(src)) return Promise.resolve()
+    if (!decoding.has(src)) {
+      const image = new Image()
+      image.src = url(src)
+      decoding.set(src, (image.decode ? image.decode() : new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject })).then(() => { readyImages.add(src); decoding.delete(src) }, () => { decoding.delete(src) }))
+    }
+    return decoding.get(src)
+  }
+  let bgToken = 0
   function paintBg(bg, fade, instant) {
     stopFrames()
     stopPan()
@@ -1007,25 +1026,27 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     apply(next)
     next.style.transition = 'none'
-    next.style.opacity = seconds ? '0' : bg ? '1' : '0'
-    if (!seconds) {
-      prev.style.transition = 'none'
-      prev.style.opacity = '0'
-      frontLayer = 1 - frontLayer
-      if (bg?.frames) startFrames(layers[frontLayer])
-      if (bg?.film) startFilm(layers[frontLayer], bg)
-      return
+    const need = instant ? [] : [bg?.src, bg?.over].filter((src) => typeof src === 'string' && src && !readyImages.has(src))
+    const token = ++bgToken
+    const reveal = () => {
+      if (!seconds) {
+        next.style.opacity = bg ? '1' : '0'
+        prev.style.transition = 'none'
+        prev.style.opacity = '0'
+        return
+      }
+      void next.offsetWidth
+      next.style.transition = `opacity ${seconds}s linear`
+      next.style.opacity = bg ? '1' : '0'
+      prev.style.transition = `opacity ${seconds}s linear`
+      prev.style.opacity = '0'   // bgoff 时旧层淡出、新层本来就是透明
     }
-    void next.offsetWidth
-    next.style.transition = `opacity ${seconds}s linear`
-    next.style.opacity = bg ? '1' : '0'
-    prev.style.transition = `opacity ${seconds}s linear`
-    if (bg) prev.style.opacity = '0'
-    // bgoff 时旧层淡出、新层本来就是透明
-    else prev.style.opacity = '0'
+    next.style.opacity = '0'
     frontLayer = 1 - frontLayer
     if (bg?.frames) startFrames(layers[frontLayer])
     if (bg?.film) startFilm(layers[frontLayer], bg)
+    if (!need.length) { reveal(); return }
+    Promise.race([Promise.all(need.map(decodeImage)), new Promise((resolve) => setTimeout(resolve, 1200))]).then(() => { if (token === bgToken && !destroyed) reveal() })
   }
 
   function paintText() {
@@ -1054,7 +1075,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const spareVideos = new Map()   // 资源路径 → 预载好的 <video>（没挂进页面）
   function paintMovie(instant) {
     if (!state.movie) { movie.pause(); movie.hidden = true; movie.removeAttribute('src'); delete movie.dataset.src; return }
-    const { srcs, loop, rate } = state.movie
+    const { srcs, loop, rate, fade } = state.movie
     const first = url(srcs[0])
     const configure = (video) => {
       let i = 0
@@ -1085,9 +1106,16 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     const show = () => {
       if (shown) return
       shown = true
+      const crossfade = fade > 0 && !instant && !old.hidden && old.getAttribute('src') && old !== next   // 脚本的 time = 换视频的交叉淡入：新的从透明淡到不透明盖住旧的，旧的一直播到盖满
+      if (crossfade) { next.style.transition = 'none'; next.style.opacity = '0' }
       next.hidden = false
       next.play().catch(() => {})
-      if (old !== next) { old.pause(); old.removeAttribute('src'); old.remove() }
+      if (!crossfade) { next.style.opacity = ''; next.style.transition = ''; if (old !== next) { old.pause(); old.removeAttribute('src'); old.remove() } return }
+      requestAnimationFrame(() => {
+        next.style.transition = `opacity ${fade}s linear`
+        next.style.opacity = '1'
+        setTimeout(() => { old.pause(); old.removeAttribute('src'); old.remove(); next.style.transition = ''; next.style.opacity = '' }, fade * 1000 + 50)
+      })
     }
     old.after(next)
     movie = next
@@ -1374,6 +1402,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       if (typeof src !== 'string' || !src || preloaded.has(src)) return
       const image = new Image()
       image.src = url(src)
+      image.decode?.().then(() => readyImages.add(src), () => {})   // 解码好的记下来：换背景时不用再等
       preloaded.set(src, image)
     }
     const audioOf = (src) => {

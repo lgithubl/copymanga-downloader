@@ -1444,3 +1444,13 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 **Ark Re**：分组卡片封面按 `dirCover.scriptOrder`（新）排：脚本名以 `_03` / `_02` / `_01` 结尾的排前面（H153_03 → 02 → 01），其余在后面轮播。
 
 **采集 v1.29**：`chakra:cgs` 的 CG 图加 03_21_cg / 04_02_cg 用到的 33 张（约 104MB）；本轮只收这一条。
+
+## 2.46.0 轮次要点
+
+- **Tomoe 图层保留模型**（`retainLayers`，替换 keepBg35/clearOp35）：每层保留 base + 补丁栈（`maxPatches` 96），`#35` 只隐藏不清内容，817+ 为清层标记；可见层按最近绘制顺序叠放。层间 z 序仍是按「最近绘制」推断，未经游戏内截图核对。
+- **缩略图分级 `cgFirst`**：有 CG 只用 CG，否则按规则（cloth 图标等），最后才是 bg；该分级下不再补满。
+- **dirCover**：`scriptOrder`（按脚本顺序取封面）、`perScript`（每个脚本轮流取一张）。
+- **视频**：Artemis ogv（Theora）→ 服务端 ffmpeg → H.264 mp4（虚拟 `.mp4`）；movie 的 `fade` 取自 bg `time`；前端同源视频不重置、预加载下一段、交叉淡入，避免逐句切换停顿。纯视频脚本的卡片缩略图走 `frame=1` 截帧（已用真实 ogv 验证）。
+- **播放器**：bg 先解码再显示、frame 循环跳过未加载图，修 girlscreation 多图轮播闪黑。
+- **采集脚本 v1.30**：`chakra:cgs`（44 张 base）、`mhp:named`、`otogi:still/list`。
+- 自动速度：三个引擎的「自动」速度在各自播放器设置里；Mahotan CG 为静图（Spine 仅 `animation/*_anim_standby`）。

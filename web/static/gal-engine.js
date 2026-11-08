@@ -138,7 +138,7 @@ export function applyCommand(state, command, choices = null) {
       state.live2d = null
       break
     case 'movie':
-      state.movie = { srcs: command.srcs, loop: Boolean(command.loop), ...(command.rate > 0 && command.rate !== 1 ? { rate: command.rate } : {}) }
+      state.movie = { srcs: command.srcs, loop: Boolean(command.loop), ...(command.rate > 0 && command.rate !== 1 ? { rate: command.rate } : {}), ...(command.fade > 0 ? { fade: Math.min(5, command.fade) } : {}) }
       break
     case 'movieOff':
       state.movie = null

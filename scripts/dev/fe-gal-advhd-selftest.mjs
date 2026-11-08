@@ -106,7 +106,9 @@ try {
         await page.waitForSelector('.gal-player .gal-stage')
         await page.waitForFunction(() => /^1 \/ 6/.test(document.querySelector('.gal-count')?.textContent || ''))
         await sleep(500)
-        const bg = await page.evaluate(() => [...document.querySelectorAll('.gal-bg')].filter((l) => getComputedStyle(l).opacity === '1').map((l) => l.style.backgroundImage))
+        const bgNow = () => page.evaluate(() => [...document.querySelectorAll('.gal-bg')].filter((l) => getComputedStyle(l).opacity === '1').map((l) => l.style.backgroundImage))
+        for (let g = 0; g < 40 && !(await bgNow()).length; g++) await sleep(150)   // 背景图要加载 + 解码好才显示（换背景不再先黑一下）
+        const bg = await bgNow()
         check('第 1 步：台词（ruby 的假名在、%K%P 不显示）；背景 = 从 arc 展开的 BG_01.png', /よろしく/.test(await text()) && !/%K|%P/.test(await text()) && bg.some((b) => /BG_01\.png/.test(decodeURIComponent(b))), J([await text(), bg]))
         await page.keyboard.press('Space'); await sleep(300)
         await page.keyboard.press('Space'); await sleep(900)   // 第 3 步：立绘出场（两帧：红 300×400 @(100,200)，黄 20×30 @(50,60)，图层位置 (100,50)）

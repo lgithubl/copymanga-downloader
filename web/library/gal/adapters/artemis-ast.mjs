@@ -34,6 +34,7 @@ export const DEFAULT_OPTIONS = {
   voiceDirs: ['sound/vo', 'sound/vobin'],
   stand: { enabled: true, dir: 'image/fg/_blog', ext: 'png', align: 'center', useX: true, zoom: 3.3333, xScale: 1.5 },   // _blog 图 576×324（16:9 的半身像画框）：放大到铺满 1920 宽的设计画面（1920 / 576）；脚本里的 x 是 1280 舞台的像素，×1.5 换成设计坐标
   emote: { enabled: true, dir: 'image/fg', ext: 'emote.psb', xScale: 1.5, view: 'bust', zoom: 0.72, top: 0.04 },   // E-mote 立绘（FreeMote WebGL SDK 在浏览器里播）：模型 = containers 转好的 image/fg/<file>.emote.psb；播放器「更多」里的 E-mote 开关关了就用上面的静态立绘。view: bust（半身，按 zoom 缩放、头顶留 top 比例）| full（整身塞进舞台）；zoom = 每个单位多少设计像素（半身框；psb 一个单位 ≈ 1 像素的图集像素）；x 用 xScale 换成设计像素
+  cgDirs: ['ev'],   // bg 的 path 是 ":<这些>/…"（:ev/ev_com_h05/）= 事件图（CG）：bg 指令带 cg: true，兜底封面当 CG 优先挑
   layers: { enabled: true, maxFade: 5 },   // bg 带 id（>= 1）= 叠在主背景上的图层（cinema 黑边 / 白闪 / sd 小人 / reco …），不是换背景；图都是 1280×720 的整幅画布（真实样本核对：cinema01 / reco / sd 都是 1280×720 带透明），按舞台 stage 原样叠；cgdel 去掉
   wait: { enabled: true, max: 10 },
   extraDirs: [],
@@ -221,7 +222,7 @@ export function parse(text, ctx = null, meta = {}) {
     dirty = false
     const sig = bgState ? JSON.stringify(bgState) : ''
     if (sig !== (shown.bg ?? '')) {
-      if (bgState?.movie) emit({ op: 'movie', srcs: [bgState.movie], loop: true })
+      if (bgState?.movie) emit({ op: 'movie', srcs: [bgState.movie], loop: true, ...(bgState.fade ? { fade: bgState.fade } : {}) })
       else {
         if (shown.movieOn) emit({ op: 'movieOff' })
         if (bgState) emit({ op: 'bg', ...bgState })
@@ -291,11 +292,12 @@ export function parse(text, ctx = null, meta = {}) {
     if (num(param(cmd, 'face'), 0) !== 1) { if (stands.size || overlays.size) dirty = true; stands = new Map(); overlays = new Map() }
     const dir = imageDirOf(strParam(cmd, 'path'))
     const hit = find([dir ? `${dir}/${file}` : ''], opt.imageExts) || findByName(file, opt.imageExts)
-    if (hit) bgState = imageRef(hit, file)
+    if (hit) { bgState = imageRef(hit, file); if (bgState && opt.cgDirs.includes(/^:([A-Za-z0-9_]+)\//.exec(strParam(cmd, 'path'))?.[1] || '')) bgState = { ...bgState, cg: true } }
     else if (find([dir ? `${dir}/${file}` : ''], opt.videoExts) || findByName(file, opt.videoExts)) {
       const video = find([dir ? `${dir}/${file}` : ''], opt.videoExts) || findByName(file, opt.videoExts)
       stats.images.referenced += 1; stats.images.resolved += 1; stats.videos = (stats.videos || 0) + 1
-      bgState = { movie: video }
+      const ms = num(param(cmd, 'time'), 0)
+      bgState = { movie: video, ...(ms > 2 ? { fade: Math.min(5, ms / 1000) } : {}) }   // time = 换视频的交叉淡入（ms）
     } else {
       const solid = colorOf(file)
       if (solid) bgState = { color: solid }

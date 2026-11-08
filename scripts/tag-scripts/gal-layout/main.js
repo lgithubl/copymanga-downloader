@@ -1015,14 +1015,13 @@ export const ADAPTER_RULES = {
       121,
       9999
     ],
-    "keepBg35": true,
-    "clearOp35": true,
+    "retainLayers": true,
     "clearFrom": 816,
     "bgmBase": 6018,
     "fade": 0.5,
     "pageMode": "sentence",
     "pageLimit": 12,
-    "maxPatches": 32,
+    "maxPatches": 96,
     "speakers": {
       "1": "友恵",
       "2": "真由美",
@@ -1124,6 +1123,9 @@ export const ADAPTER_RULES = {
       "zoom": 0.72,
       "top": 0.04
     },
+    "cgDirs": [
+      "ev"
+    ],
     "layers": {
       "enabled": true,
       "maxFade": 5
@@ -2095,7 +2097,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
       containers: { enabled: true, dir: 'arc', scan: ['Game/StaticData'], scriptDecoder: 'arcrecord-dialog', scriptExt: 'arcdrama', mode: 'hybrid', format: 'arcdrama', flat: false, rules: [{ match: '^(Dialog|LineDialog)\\.txt$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['arcdrama'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Dialog: '剧情（Dialog）', LineDialog: 'ラブトーク（聊天）' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, dirCover: { enabled: true, scan: 8, max: 6, prefer: ['image'], skip: [], only: [], scriptOrder: ['_03$', '_02$', '_01$'] }, pageSize: 100 },   // 角色 / 章分组卡片（H153 …）没有规则给图：用里面前 8 个剧情的封面轮播（最多 6 张）；scriptOrder：脚本名（_03 / _02 / _01 结尾的）排在前面，别的跟在后面
+    config: { scriptExtensions: ['arcdrama'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Dialog: '剧情（Dialog）', LineDialog: 'ラブトーク（聊天）' }, merge: [], views: [], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'bg'] }, dirCover: { enabled: true, scan: 12, max: 6, prefer: ['render', 'image'], skip: [], only: [], scriptOrder: ['_03$', '_02$', '_01$'], perScript: 1 }, pageSize: 100 },   // 角色 / 章分组卡片（H153 …）没有规则给图：用里面前 8 个剧情的封面轮播（最多 6 张）；scriptOrder：脚本名（_03 / _02 / _01 结尾的）排在前面，别的跟在后面；perScript 1：每个脚本只取一个（骨骼 CG 的渲染图在前，再是它的图），轮流出，不让一个脚本的几张场景图占满
     count: [{ dir: 'arc/script', ext: '.arcdrama', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['Dialog.txt 在第一次浏览时由服务端按 DramaID 切成每段剧情一个 JSON（真实数据 1719 段、4 万多句，台词带 JPN / CHS / CHT / ENG）；台词语言在适配器参数 language 里选', '背景（BG/*.png）/ BGM / 音效 / 角色语音都有；角色立绘（Hero/H0xx 的 Spine + fbx 预制体）和 CG Spine 场景没做：预制体里的位置 / 动画映射不在导出资源里，Spine 版本是 4.1（播放器的运行时没有 4.1）；没有游戏截图对照'],
@@ -2122,7 +2124,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
       containers: { enabled: true, dir: 'arc', scan: ['bundles/scenarios'], scriptDecoder: 'imys-adv', scriptExt: 'imys', mode: 'hybrid', format: 'imys', flat: false, rules: [{ match: '\\.encrypted$', kinds: ['script'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['imys'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { combo: '交流 AVG', dress: '衣装', event: '活动', favorite: '亲密度', quest: '主线', training: '学园 AVG', '001': 'アシュリー', '002': 'クリス', '003': 'ソフィ', '004': 'ラディス', '006': 'コト', '008': 'パトリシア', '010': 'ポリン', '011': 'エルミナ', '012': 'セシル', '013': 'ティセ', '014': 'イリーナ', '015': 'ファム', '016': 'ラウラ', '017': 'クルチャ', '018': 'ヴァレリア', '019': 'シャロン', '020': 'ウィル', '021': 'ルージェニア', '023': 'リディア', '024': 'ギゼリック', '025': 'ナジャ', '026': 'アナスチガル', '027': 'フリッカ', '029': 'アリン', '030': 'ユー', '005': 'ベアトリーチェ', '007': 'クレア', '009': 'フランチェスカ', '022': 'プリシラ', '028': 'オリヴィエ', '031': 'レーナ', '032': 'アンジェリーク', '051': 'フィーナ', '052': '麻衣', '053': 'つぐみ', '054': '佳奈', '055': '瑛里華', '056': '陽菜', '057': '朱璃', '058': '古杜音', '059': 'ティア', '060': 'リシア', '061': 'エステル', '062': 'リース' }, merge: [], views: [], groups: [{ parent: 'dress', pattern: String.raw`^cloth_(\d{3})_` }, { parent: 'training', pattern: String.raw`^gakuen_(\d{3})_` }, { parent: 'favorite', pattern: String.raw`^sin_(\d{3})\d{2}` }], dirThumbs: [{ parent: 'dress', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }, { parent: 'training', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }, { parent: 'favorite', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }], scriptThumbs: ['sicon/{stem}.png'], scriptIndex: [], thumbFallback: { prefer: ['cg', 'bg'], scanSteps: 400, max: 3, topUp: true, cgFirst: true }, sceneMarkers: [{ label: 'H 开始', kind: 'bg', match: '/R18/', pick: 'run', max: 4 }, { label: 'BGM 切换', kind: 'cmd', op: 'bgm', pick: 'each', max: 6 }, { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 3 }], dirCover: { enabled: true, scan: 6, max: 4, prefer: ['image'], skip: [], only: [] }, pageSize: 100 },   // 脚本卡片：H CG（兜底封面的 cg，cgFirst）→ 角色图标（virtual res/sicon/<脚本名>.png，衣装 / 学园用 <角色><衣装码前两位>）→ 背景，最多 3 张；场景跳转点：H 开始（切到 R18 的 CG）/ BGM 切换 / BGM 停止；角色卡片：角色图标（res/icon/<角色>01.png，100×100）；别的目录卡片：用里面前 6 个剧本的封面轮播（最多 4 张；角色图标 / memorial 缩略图的格式没样本，v1.28 采集后再换）
+    config: { scriptExtensions: ['imys'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { combo: '交流 AVG', dress: '衣装', event: '活动', favorite: '亲密度', quest: '主线', training: '学园 AVG', '001': 'アシュリー', '002': 'クリス', '003': 'ソフィ', '004': 'ラディス', '006': 'コト', '008': 'パトリシア', '010': 'ポリン', '011': 'エルミナ', '012': 'セシル', '013': 'ティセ', '014': 'イリーナ', '015': 'ファム', '016': 'ラウラ', '017': 'クルチャ', '018': 'ヴァレリア', '019': 'シャロン', '020': 'ウィル', '021': 'ルージェニア', '023': 'リディア', '024': 'ギゼリック', '025': 'ナジャ', '026': 'アナスチガル', '027': 'フリッカ', '029': 'アリン', '030': 'ユー', '005': 'ベアトリーチェ', '007': 'クレア', '009': 'フランチェスカ', '022': 'プリシラ', '028': 'オリヴィエ', '031': 'レーナ', '032': 'アンジェリーク', '051': 'フィーナ', '052': '麻衣', '053': 'つぐみ', '054': '佳奈', '055': '瑛里華', '056': '陽菜', '057': '朱璃', '058': '古杜音', '059': 'ティア', '060': 'リシア', '061': 'エステル', '062': 'リース' }, merge: [], views: [], groups: [{ parent: 'dress', pattern: String.raw`^cloth_(\d{3})_` }, { parent: 'training', pattern: String.raw`^gakuen_(\d{3})_` }, { parent: 'favorite', pattern: String.raw`^sin_(\d{3})\d{2}` }], dirThumbs: [{ parent: 'dress', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }, { parent: 'training', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }, { parent: 'favorite', name: '^\\d{3}$', paths: ['icon/{name}01.png'] }], scriptThumbs: ['sicon/{stem}.png'], scriptIndex: [], thumbFallback: { prefer: ['cg', 'bg'], scanSteps: 400, max: 3, cgFirst: true }, sceneMarkers: [{ label: 'H 开始', kind: 'bg', match: '/R18/', pick: 'run', max: 4 }, { label: 'BGM 切换', kind: 'cmd', op: 'bgm', pick: 'each', max: 6 }, { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 3 }], dirCover: { enabled: true, scan: 6, max: 4, prefer: ['image'], skip: [], only: [] }, pageSize: 100 },   // 脚本卡片（cgFirst 分档，有这一档就不要后面的）：有 H CG → 只用 CG；没有 → 角色图标（virtual res/sicon/<脚本名>.png，衣装 / 学园用 <角色><衣装码前两位>）；都没有 → 背景（最多 3 张）；场景跳转点：H 开始（切到 R18 的 CG）/ BGM 切换 / BGM 停止；角色卡片：角色图标（res/icon/<角色>01.png，100×100）；别的目录卡片：用里面前 6 个剧本的封面轮播（最多 4 张；角色图标 / memorial 缩略图的格式没样本，v1.28 采集后再换）
     count: [{ dir: 'arc/script', ext: '.imys', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['bundles/scenarios 在第一次浏览时由服务端逐个解密（AES-256-CBC，密钥 = HMAC-SHA256）+ 读 UnityFS 里的 TextAsset，展开成 arc/script/<类别>/<id>.imys（6 个类别、6600 多份）；现在只有文字：背景 / 立绘（bundles/backgrounds、characters/tati）和声音（raw/ 下 CRI 的 ACB + AWB，HCA 要密钥）的格式还没解'],
@@ -2165,7 +2167,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
       containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'artemis-ast', scriptExt: 'ast', mode: 'hybrid', format: 'pf8', flat: true, rules: [{ match: '\\.pfs(?:\\.\\d+)?$' }], maxEntries: 200000, maxTotalMB: 8192, emote: { enabled: true, seed: 'auto', textureOrder: 'auto', driver: 'emotedriver.dll' }, video: { enabled: true, crf: 23 } },
     },
-    config: { scriptExtensions: ['ast'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '\\dh$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { scriptExtensions: ['ast'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '\\dh$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.ast', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['pf8 在第一次浏览时由服务端展开脚本到 <根>/arc/script/（图 / 声音不展开，被请求时才解密取出放进缓存目录；之后按档案的大小 + 修改时间判断要不要重做）', '立绘用 image/fg/_blog/<角色>/<表情>.png（游戏本身的立绘是 E-mote psb，浏览器放不了）；位置 / 大小没有对照画面（见适配器开头的推断一栏）'],
@@ -2892,6 +2894,7 @@ function canonField(key, value) {
         skip: (Array.isArray(value.skip) ? value.skip : []).slice(0, 10).filter(okRe),
         only: (Array.isArray(value.only) ? value.only : []).slice(0, 10).filter(okRe),
         scriptOrder: (Array.isArray(value.scriptOrder) ? value.scriptOrder : []).slice(0, 10).filter(okRe),
+        perScript: numIn(value.perScript, 0, 0, 6),
       }
     }
     // containers：容器展开（和 config.mjs 的 DEFAULT_CONTAINERS / 校验一致：没写的补默认值，规则里的默认值字段不存）

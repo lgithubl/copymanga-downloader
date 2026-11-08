@@ -251,11 +251,13 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
   const scenes = []
   let list = []
   let texts = 0
-  const live = []          // 还在显示的绘制（按时间顺序）：整张图 / 补丁都留着，清空（图号 >= 816）去掉这一层的
+  const live = []          // 各层里还留着的绘制（按时间顺序）：整张图 / 补丁都留着，清空（图号 >= 816）去掉这一层的；#35 只是把层藏起来（visible），内容还在
+  const visible = new Set()   // 上一次 #35 之后画过的层
   let bgm = null
   let bgse = null
   const snapshot = () => {
     const out = live.map((ev) => ev.slice())
+    for (const layer of new Set(live.map((ev) => Number(ev[6])))) if (!visible.has(layer)) out.push(['#', 35, layer])   // 留着但藏起来的层
     if (bgm !== null) out.push(['#', 131, bgm, -1])
     if (bgse !== null) out.push(['#', 114, bgse])
     return out
@@ -284,15 +286,15 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
     if (ev[0] === 'T') texts += 1
     else if (isDraw(ev)) {
       const layer = Number(ev[6])
-      for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === layer && Number(ev[4]) >= CLEAR_FROM) live.splice(k, 1)
-      if (Number(ev[4]) < CLEAR_FROM) {
+      if (Number(ev[4]) >= CLEAR_FROM) { for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === layer) live.splice(k, 1); visible.delete(layer) }
+      else {
         live.push(ev)
+        visible.add(layer)
         const same = live.filter((x) => Number(x[6]) === layer)
         if (same.length > 200) live.splice(live.indexOf(same[0]), 1)   // 防止无限增长（整张图一般很快把前面的盖掉，这里只管补丁连发）
       }
-    } else if (ev[0] === '#' && ev[1] === 35) {   // #35 层：清掉这一层；9999 = 全部（每次换场景都有一条）
-      if (Number(ev[2]) === 9999) { for (let k = live.length - 1; k >= 0; k--) if (!BG_LAYERS.has(Number(live[k][6]))) live.splice(k, 1) }   // 9999 只清叠加层，背景层留着（CG 的抠图补丁盖在原来的背景上，背景层靠图号 >= 816 清）
-      else for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === Number(ev[2])) live.splice(k, 1)
+    } else if (ev[0] === '#' && ev[1] === 35) {   // #35 层：9999 = 全部层藏起来；内容不清
+      if (Number(ev[2]) === 9999) visible.clear(); else visible.delete(Number(ev[2]))
     } else if (ev[0] === '#' && ev[1] === 131) bgm = Number(ev[2]) >= 0 ? Number(ev[2]) : null
     else if (ev[0] === '#' && ev[1] === 132) bgm = null   // #132 2000 = BGM 淡出（99 处全是 2000，紧跟换场景；整个剧本 #131 -1 只出现 1 次，游戏靠 #132 停音乐）：之后没有新的 #131 就是没有 BGM
     else if (ev[0] === '#' && ev[1] === 114) bgse = Number(ev[2]) >= 0 ? Number(ev[2]) : null

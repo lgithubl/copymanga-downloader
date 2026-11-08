@@ -68,6 +68,12 @@ const work = await mkdtemp(path.join(os.tmpdir(), 'gal-artemis-'))
   check('白闪图层：stage 1280×720；alpha = 0 → 同槽更新（alpha 0）；cgdel id=9 → overlayOff bg9（bg5 还在）', J(o(2, 'overlay')[0]?.stage) === J([1280, 720]) && o(3, 'overlay')[0]?.alpha === 0 && o(4, 'overlayOff')[0]?.slot === 'bg9' && !o(4, 'overlayOff').some((c) => c.slot === 'bg5'), J([s[2], s[3], s[4]]))
   check('fg mode=-1 删这个角色（只剩花衣）', J(o(2, 'stand')[0]?.parts.map((p) => p.src)) === J(['image/fg/_blog/kae_0/通常Ａ.png']), J(s[2]))
   check('bg face=1 换主背景但不清立绘 / 图层；cgdel id=-1 清所有图层', o(5, 'bg').length === 1 && !o(5, 'standOff').length && !o(5, 'overlayOff').length && o(6, 'overlayOff')[0]?.slot === 'bg5', J([s[5], s[6]]))
+  {
+    const vctx = adapter2.prepare({ options: {}, files: ['arc/res/image/ev/ev_x/ev_x_01.mp4', 'arc/res/image/ev/ev_x/ev_x_02.mp4'], texts: {}, toResourcePath: (r) => r.replace(/^arc\/res\//, '') })
+    const vs = adapter2.parse(astOf([{ cmds: [['bg', { file: 'ev_x_01', path: ':ev/ev_x/', movie: 1, loop: 1 }]], text: T('v1') }, { cmds: [['bg', { file: 'ev_x_02', path: ':ev/ev_x/', movie: 1, loop: 1, face: 1, time: 400, sync: 0 }]], text: T('v2') }]), vctx).steps
+    const mv = vs.flatMap((s) => s.commands).filter((c) => c.op === 'movie')
+    check('视频换片：time=400 → movie 指令带 fade 0.4（交叉淡入）；第一个视频没有 time 就没有 fade', mv.length === 2 && mv[0].fade === undefined && mv[1].fade === 0.4, J(mv))
+  }
   check('bg 不带 id（主背景）= 删所有立绘（standOff）', o(7, 'standOff').length === 1, J(s[7]))
 }
 

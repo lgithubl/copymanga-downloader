@@ -10,6 +10,13 @@ export function pickDirCover(cands, dc) {
   const keep = (item) => (!only.length || only.some((re) => re.test(item.name))) && !skip.some((re) => re.test(item.name))
   const pools = { render: (cands.render || []).filter(keep), image: (cands.image || []).filter(keep) }
   const picked = []
+  if (dc.perScript > 0) {   // 按脚本的先后轮流：每个脚本最多 perScript 个（它的骨骼 / 立绘渲染图在前，再是图），脚本顺序 = 候选脚本的顺序（scriptOrder 排过的）
+    const byScript = new Map()
+    for (const item of [...pools.render, ...pools.image]) { const k = item.order ?? 0; if (!byScript.has(k)) byScript.set(k, []); byScript.get(k).push(item) }
+    for (const k of [...byScript.keys()].sort((a, b) => a - b)) picked.push(...byScript.get(k).slice(0, dc.perScript))
+    const chosen = picked.slice(0, dc.max)
+    return { thumbs: chosen.filter((c) => c.path).map((c) => c.path), renders: chosen.filter((c) => c.render).map((c) => c.render) }
+  }
   for (const tier of dc.prefer || []) {
     const re = tier.match ? reOf([tier.match])[0] : null
     let list = (pools[tier.source] || []).filter((item) => (!re || re.test(item.name)) && !picked.includes(item))

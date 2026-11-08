@@ -196,17 +196,17 @@ try {
   check('适配器：#132 2000 → bgmStop（淡出 2 秒），不再记 ignored', stop?.fade === 2 && !sc.stats.ignored['#132'], J([stop, sc.stats.ignored]))
 }
 
-// —— #35 9999 只清叠加层，背景层留着（真实图核对：CG 的抠图补丁盖在原来的背景上）——
+// —— #35 9999 只是把层藏起来，内容还在（用 v1.29 的真实图核对：03_21_cg 的补丁 314 的底图 312 是前一节画在 140 层上的）——
 {
   const files = ['arc/res/img/1.jpg', 'arc/res/img/2.p.png', 'arc/res/img/3.png']
-  const ev = [['$', 204, 1, 0, 1, 0, 120, 1], ['$', 204, 1, 0, 3, 0, 2, 1], ['#', 87], ['#', 29, 2], ['#', 35, 9999], ['$', 204, 1, 0, 817, 0, 2, 1], ['$', 204, 1, 0, 2, 0, 140, 1], ['#', 13, 2], ['T', 'x'], ['#', 87]]
+  const ev = [['$', 204, 1, 0, 3, 0, 140, 1], ['#', 87], ['#', 29, 2], ['#', 35, 9999], ['$', 204, 1, 0, 817, 0, 2, 1], ['$', 204, 1, 0, 2, 0, 140, 1], ['#', 13, 2], ['T', 'x'], ['#', 87]]
   const mk = (options) => buildScene('tomoe::arc04', J({ format: 'tomoe-arc04/1', arc: 'Arc04.dat', name: 'x', events: ev }), adapter.prepare({ options, files, toResourcePath: (r) => r.replace(/^arc\/res\//, '') }), { options })
-  const last = (sc) => { let bg = null; const ov = new Map(); for (const c of sc.steps.flatMap((s) => s.commands)) { if (c.op === 'bg') bg = c.src || null; else if (c.op === 'overlay') ov.set(c.slot, c.src); else if (c.op === 'overlayOff') ov.delete(c.slot) } return { bg, ov: [...ov.keys()] } }
+  const last = (sc) => { let bg = null; const ov = new Map(); for (const c of sc.steps.flatMap((s) => s.commands)) { if (c.op === 'bg') bg = c.src || null; else if (c.op === 'overlay') ov.set(c.slot, c.src); else if (c.op === 'overlayOff') ov.delete(c.slot) } return { bg, ov: [...ov.keys()].sort() } }
   const keep = last(mk({}))
-  const all = last(mk({ keepBg35: false }))
-  check('#35 9999：默认只清叠加层（背景 1.jpg 留着，补丁 L140p0 在上面）；keepBg35: false = 全清（旧）', keep.bg === 'img/1.jpg' && J(keep.ov) === J(['L140p0']) && all.bg === null, J([keep, all]))
-  const sp = splitScenesForTest([['$', 204, 1, 0, 1, 0, 120, 1], ['$', 204, 1, 0, 3, 0, 2, 1], ['T', 'a'], ['T', 'b'], ['#', 35, 9999], ['#', 29, 2], ['$', 204, 1, 0, 5, 0, 132, 1], ['T', 'c']], { sceneTexts: 2, sceneMax: 300 })
-  check('分节：#35 9999 后「接上一节的现场」留背景层的图（120 层），不留叠加层（2 层）', sp.length === 2 && sp[1].events.some((e) => e[0] === '$' && e[6] === 120) && !sp[1].events.slice(0, 2).some((e) => e[0] === '$' && e[6] === 2), J(sp.map((s) => s.events.slice(0, 3))))
+  const legacy = last(mk({ retainLayers: false }))
+  check('#35 9999：默认只藏起来——140 层的底图 3.png 还在，后面的补丁 2.p.png 叠在上面（碎片没有了）；retainLayers: false = 清掉（旧：只剩补丁）', J(keep.ov) === J(['L140', 'L140p0']) && J(legacy.ov) === J(['L140p0']), J([keep, legacy]))
+  const sp = splitScenesForTest([['$', 204, 1, 0, 1, 0, 120, 1], ['$', 204, 1, 0, 3, 0, 140, 1], ['T', 'a'], ['T', 'b'], ['#', 35, 9999], ['#', 29, 2], ['$', 204, 1, 0, 5, 0, 132, 1], ['T', 'c']], { sceneTexts: 2, sceneMax: 300 })
+  check('分节：「接上一节的现场」带上各层还留着的绘制（120 / 140），已经藏起来的层补一条 #35 <层>', sp.length === 2 && J(sp[1].events.slice(0, 4)) === J([['$', 204, 1, 0, 1, 0, 120, 1], ['$', 204, 1, 0, 3, 0, 140, 1], ['#', 35, 120], ['#', 35, 140]]), J(sp.map((s) => s.events.slice(0, 5))))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

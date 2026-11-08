@@ -15,7 +15,7 @@ const J = JSON.stringify
 
 // ---- config ----
 const d = normalizeGalConfig({})
-check('默认：dirCover = auto / scan 6 / depth 3 / max 6 / 不合并 / prefer [render, image]（对象形状）/ skip、only 空；thumbHover.mode = hover；thumbFallback.only = []', J(d.dirCover) === J({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, from: 'first', leafScan: 0, prefer: [{ source: 'render', match: '', take: 0 }, { source: 'image', match: '', take: 0 }], skip: [], only: [], scriptOrder: [] }) && d.thumbHover.mode === 'hover' && J(d.thumbFallback.only) === '[]', J([d.dirCover, d.thumbHover.mode, d.thumbFallback.only]))
+check('默认：dirCover = auto / scan 6 / depth 3 / max 6 / 不合并 / prefer [render, image]（对象形状）/ skip、only 空；thumbHover.mode = hover；thumbFallback.only = []', J(d.dirCover) === J({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, from: 'first', leafScan: 0, prefer: [{ source: 'render', match: '', take: 0 }, { source: 'image', match: '', take: 0 }], skip: [], only: [], scriptOrder: [], perScript: 0 }) && d.thumbHover.mode === 'hover' && J(d.thumbFallback.only) === '[]', J([d.dirCover, d.thumbHover.mode, d.thumbFallback.only]))
 const c = normalizeGalConfig({
   dirCover: { enabled: true, scan: 99, depth: 0, max: 99, merge: true, prefer: ['image', { source: 'render', match: 'ch_\\d+', take: 2 }, 'zzz', { source: 'image', match: '(' }], skip: ['black', '('], only: ['bg'], extra: 1 },
   thumbHover: { mode: 'auto', count: 30 }, thumbFallback: { only: ['bg/', '[', 5] },
@@ -25,6 +25,13 @@ check('thumbHover.mode: auto 认；count 上限 24；thumbFallback.only 只留�
 check('写错的值：dirCover.enabled 不认 → auto；thumbHover.mode 不认 → hover；报告里有对应的提示', (() => { const x = normalizeGalConfig({ dirCover: { enabled: 'maybe', prefer: [] }, thumbHover: { mode: 'sometimes' } }); return x.dirCover.enabled === 'auto' && x.thumbHover.mode === 'hover' && x.warnings.some((w) => w.field === 'dirCover.enabled') && x.warnings.some((w) => w.field === 'thumbHover.mode') && x.warnings.some((w) => w.field === 'dirCover.prefer') })())
 
 // ---- pickDirCover ----
+{
+  // perScript：按脚本轮流，每个脚本最多 N 个（渲染图在前，再是图）；脚本顺序 = order
+  const cands = { render: [{ order: 0, name: 'H153_03', render: { key: 'r03' } }, { order: 3, name: 'X_04', render: { key: 'r04' } }], image: [{ order: 0, name: 'bg1', path: 'bg/03a.png' }, { order: 0, name: 'bg2', path: 'bg/03b.png' }, { order: 1, name: 'cg02', path: 'cg/02.png' }, { order: 1, name: 'bg02', path: 'bg/02.png' }, { order: 2, name: 'cg01', path: 'cg/01.png' }, { order: 3, name: 'x', path: 'x.png' }] }
+  const got = pickDirCover(cands, { max: 6, merge: false, perScript: 1, prefer: [], skip: [], only: [] })
+  check('perScript: 1：每个脚本取一个、按脚本顺序轮流（03 的渲染图 → 02 的 CG → 01 的 CG → 别的），一个脚本的几张背景不占满', J(got.renders) === J([{ key: 'r03' }, { key: 'r04' }]) && J(got.thumbs) === J(['cg/02.png', 'cg/01.png']), J(got))
+}
+
 const base = { enabled: true, scan: 6, depth: 3, max: 6, merge: false, skip: [], only: [] }
 const cands = {
   render: [{ name: 'S/a.book.json::5', render: { key: 'k5', node: 'n5' } }, { name: 'S/b.book.json::2', render: { key: 'k2', node: 'n2' } }],

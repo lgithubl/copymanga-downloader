@@ -24,8 +24,8 @@ export const COVER_CROP_LIMITS = Object.freeze({ tallRatio: [1, 20], top: [0.2, 
 export const THUMB_RENDER_LIMITS = Object.freeze({ width: [160, 1280], scanSteps: [10, 1000], concurrency: [1, 3], seek: [0, 0.95], filmFrame: [0, 0.99], filmMax: [1, 12], innerMax: [1, 12], innerRenders: [1, 6] })
 // 目录卡片的封面（目录 / 章节目录 / 角色分组里没有任何规则给图时，用它里面的脚本的封面；见 DEFAULT_GAL_CONFIG.dirCover）
 export const DIR_COVER_SOURCES = Object.freeze(['render', 'image'])
-export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, from: 'first', leafScan: 0, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]), scriptOrder: Object.freeze([]) })
-export const DIR_COVER_LIMITS = Object.freeze({ scan: [1, 30], depth: [1, 5], max: [1, 24], list: 10 })
+export const DEFAULT_DIR_COVER = Object.freeze({ enabled: 'auto', scan: 6, depth: 3, max: 6, merge: false, from: 'first', leafScan: 0, prefer: Object.freeze(['render', 'image']), skip: Object.freeze([]), only: Object.freeze([]), scriptOrder: Object.freeze([]), perScript: 0 })
+export const DIR_COVER_LIMITS = Object.freeze({ scan: [1, 30], depth: [1, 5], max: [1, 24], perScript: [0, 6], list: 10 })
 // 容器（打包格式，如 WillPlus .arc）：服务端自己读容器、展开到媒体目录下的缓存目录，见 containers.mjs
 export const CONTAINER_PNA_MODES = Object.freeze(['frames', 'raw', 'skip'])
 // 画廊页按图名前缀拆组（containers.rules[].gallery）的默认值：openCgBrowser(图) 的调用、页码标记 Condition(130, 105)、至少 20 个调用才算画廊、组名 = 第一张图的名字去掉末尾 _数字
@@ -495,7 +495,7 @@ export function normalizeGalConfigWithWarnings(raw) {
     if (dc.merge !== undefined) { if (typeof dc.merge === 'boolean') dirCover.merge = dc.merge; else warn('dirCover.merge', '只能是 true / false，用默认值', dc.merge) }
     if (dc.leafScan !== undefined) { const n = Math.floor(Number(dc.leafScan)); if (dc.leafScan === null || dc.leafScan === '' || typeof dc.leafScan === 'boolean' || !Number.isFinite(n) || n < 0) warn('dirCover.leafScan', '不是 0 以上的整数，用默认值（0 = 跟着 scan）', dc.leafScan); else dirCover.leafScan = Math.min(30, n) }
     if (dc.from !== undefined) { if (dc.from === 'first' || dc.from === 'last') dirCover.from = dc.from; else warn('dirCover.from', '只能是 first / last，用默认值', dc.from) }
-    for (const key of ['scan', 'depth', 'max']) {
+    for (const key of ['scan', 'depth', 'max', 'perScript']) {
       if (dc[key] === undefined) continue
       const n = Math.floor(Number(dc[key]))
       const [lo, hi] = DIR_COVER_LIMITS[key]

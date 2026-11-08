@@ -539,10 +539,10 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
     const cands = { render: [], image: [] }
     const seenImage = new Set()
     const seenKey = new Set()
-    for (const rel of rels) {
+    for (const [order, rel] of rels.entries()) {
       const info = await scriptInfo(defaultSet, rel)
-      for (const r of [...(info.renderKey ? [{ key: info.renderKey }] : []), ...(info.filmRenders || [])]) if (!seenKey.has(r.key)) { seenKey.add(r.key); cands.render.push({ name: rel, render: { ...r, node: idOf(defaultSet, 'script', rel) } }) }
-      for (const path of info.thumbs) if (!seenImage.has(path)) { seenImage.add(path); cands.image.push({ name: path, path }) }
+      for (const r of [...(info.renderKey ? [{ key: info.renderKey }] : []), ...(info.filmRenders || [])]) if (!seenKey.has(r.key)) { seenKey.add(r.key); cands.render.push({ order, name: rel, render: { ...r, node: idOf(defaultSet, 'script', rel) } }) }
+      for (const path of info.thumbs) if (!seenImage.has(path)) { seenImage.add(path); cands.image.push({ order, name: path, path }) }
     }
     const got = pickDirCover(cands, dc)
     return got.thumbs.length || got.renders.length ? got : null
@@ -853,17 +853,13 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
         if (bg) await thumbEngine.addPaths(found, [bg], '脚本第一张背景图', why)
         else why.push(`脚本里没有背景图指令（bg）：${scene.steps.length} 步、${hasMovie ? '只有视频' : '没有画面指令'}`)
       }
-    } else if (scene && config.thumbFallback.enabled && config.thumbFallback.topUp && found.size < config.thumbFallback.max) await fillFromScript()
-    // cgFirst：规则给了图（比如角色图标）时，脚本里的 CG 排到规则的图前面（CG → 规则的图 → 背景 / 立绘）；最多占 max - 1 个位置
-    if (found.size && scene && config.thumbFallback.enabled && config.thumbFallback.cgFirst) {
+    } else if (scene && config.thumbFallback.enabled && config.thumbFallback.topUp && !config.thumbFallback.cgFirst && found.size < config.thumbFallback.max) await fillFromScript()
+    // cgFirst（分档，有这一档就不要后面的）：脚本里有 CG → 只用 CG（最多 max 张）；没有 CG → 规则给的图（角色图标）；都没有 → 兜底（背景 / 立绘）
+    if (scene && config.thumbFallback.enabled && config.thumbFallback.cgFirst) {
       const got = collectFallbackImages(scene, config.thumbFallback)
-      const first = new Map()
-      for (const { src, kind } of got.images) { if (kind !== 'cg' || first.size >= Math.max(1, config.thumbFallback.max - 1)) continue; await thumbEngine.addPaths(first, [src], 'thumbFallback(cg)', why, config.thumbFallback.max) }
-      if (first.size) {
-        const rest = [...found.entries()]
-        found.clear()
-        for (const [key, value] of [...first.entries(), ...rest]) if (!found.has(key)) found.set(key, value)
-      }
+      const cgOnly = new Map()
+      for (const { src, kind } of got.images) { if (kind !== 'cg' || cgOnly.size >= config.thumbFallback.max) continue; await thumbEngine.addPaths(cgOnly, [src], 'thumbFallback(cg)', why, config.thumbFallback.max) }
+      if (cgOnly.size) { found.clear(); for (const [key, value] of cgOnly) found.set(key, value) }
     }
     // 场景内部轮播（thumbRender.inner）：规则 / 兜底给的封面之外，再从场景里挑最多 innerRenders 个不同的骨骼 / 立绘 / CG 画面渲染（骨骼优先），剩下的名额补场景里的图；
     // 总数（规则图 + 渲染图 + 图）不超过 innerMax。封面仍是规则给的第一张（规则没给图时是第一张渲染图）

@@ -19,14 +19,13 @@ export const DEFAULT_OPTIONS = {
   sndDir: 'snd',
   stage: [1920, 1080],
   bgLayers: [132, 120, 127, 117, 121, 9999],
-  keepBg35: true,                                  // #35 9999 只清叠加层（2 / 140 / 141 / 4），背景层留着（CG 的抠图补丁盖在原来的背景上；用真实图核对过：不留 = 抠图的人物站在黑底上），背景层靠图号 >= clearFrom 清；false = 全清（旧）
-  clearOp35: true,                                 // #35 是否清层（false = 不清；只有图号 >= clearFrom 的绘制才清那一层）
+  retainLayers: true,                              // #35 只是把层「藏起来」（可见 = 上一次 #35 之后画过的层），层里的整张图 + 补丁还留着，再往这一层画（补丁）时连同以前的内容一起显示出来——CG 的底图在 140 层上一直留着，场景之间只靠 #35 + 817 切换（用 v1.29 的真实图核对：不留 = 抠图补丁没有底图 = 碎片）；false = #35 清掉所有层的内容（旧）
   clearFrom: 816,                                  // 图号 >= 这个 = 清空这一层
   bgmBase: 6018,                                   // BGM n → 声音号 bgmBase + n
   fade: 0.5,                                       // 画面切换的淡入淡出秒数
   pageMode: 'sentence',                            // 'sentence' = 一次点击一步，只显示这一次点击对应的那一段（一句句）；'page' = 游戏原样：同一页的行累计显示到页末（#70）才清
   pageLimit: 12,                                   // pageMode = page 时，一页最多累计几行（防止没有页末记号时无限变长）
-  maxPatches: 32,                                  // 一层最多累计几张补丁（超过的丢掉最早的，整张图保留）
+  maxPatches: 96,                                  // 一层最多累计几张补丁（超过的丢掉最早的，整张图保留；补丁是累计的，丢早的会丢像素，所以放宽）
   speakers: { 1: '友恵', 2: '真由美', 3: '依子', 4: '聡子', 5: 'えみり', 6: '豊子', 7: 'れいか', 8: '宇佐美', 9: '直美', 10: 'プリン', 11: 'のぞみ', 12: 'るい子', 13: 'みちる', 14: 'さおり', 15: '香子', 16: 'ユイナ', 17: 'カフェ店員', 18: '純代', 19: '恵子', 20: 'かおり', 21: 'じゅん子', 22: 'えりな', 23: 'ちひろ' },
 }
 const readOptions = createOptionsReader(DEFAULT_OPTIONS)
@@ -96,8 +95,7 @@ export function parse(text, ctx = null, meta = {}) {
     return src
   }
   const bgLayers = new Set(opt.bgLayers.map(Number))
-  const layers = new Map()      // 层号 → { stack: [{ id, src, patch }] }（整张图 + 累计的补丁）
-  const bgOrder = []            // 背景层按最近一次换整张图的先后
+  const layers = new Map()      // 层号 → { stack: [{ id, src, patch }]（整张图 + 累计的补丁）, visible, seq（最近一次往这层画的先后）}
   const applied = { bg: undefined, overlays: new Map() }   // 已经发出去的：bg src（'' = 黑）/ slot → src
   const steps = []
   let cmds = []
@@ -109,7 +107,7 @@ export function parse(text, ctx = null, meta = {}) {
   let transition = false
   const emit = (command) => cmds.push(command)
   let drawSeq = 0   // 绘制先后：叠放顺序按「最近画的在上面」（H 场景里 140 层的特写和 2 层的帧交替出现，只有最近画的才是想让人看到的）
-  const layerState = (layer) => { let s = layers.get(layer); if (!s) { s = { stack: [] }; layers.set(layer, s) } return s }
+  const layerState = (layer) => { let s = layers.get(layer); if (!s) { s = { stack: [], visible: false, seq: 0 }; layers.set(layer, s) } return s }
   const imageSrc = (id) => {
     stats.images.referenced += 1
     for (const ext of ['p.png', 'png', 'jpg']) {
@@ -122,35 +120,34 @@ export function parse(text, ctx = null, meta = {}) {
   }
   const showLayer = (layer, id) => {
     const state = layerState(layer)
-    if (id >= opt.clearFrom) { state.stack = []; const at = bgOrder.indexOf(layer); if (at >= 0) bgOrder.splice(at, 1); return }
+    if (id >= opt.clearFrom) { state.stack = []; state.visible = false; return }   // 817 / 818 …：清空这一层
     const img = imageSrc(id)
     if (!img) return
+    state.seq = ++drawSeq
+    state.visible = true
     if (img.patch) {   // 补丁：累计盖在这一层现有内容上
-      state.stack.push({ id, src: img.src, patch: true, seq: ++drawSeq })
+      state.stack.push({ id, src: img.src, patch: true })
       const patches = state.stack.filter((x) => x.patch)
       if (patches.length > opt.maxPatches) state.stack.splice(state.stack.indexOf(patches[0]), 1)
-    } else state.stack = [{ id, src: img.src, patch: false, seq: ++drawSeq }]
-    if (bgLayers.has(layer)) { const at = bgOrder.indexOf(layer); if (at >= 0) bgOrder.splice(at, 1); bgOrder.push(layer) }
+    } else state.stack = [{ id, src: img.src, patch: false }]
   }
-  // 把各层的最终状态和「已经发出去的」比一下，只发有变的
+  // 把可见的层和「已经发出去的」比一下，只发有变的。叠放：可见的层按最近一次往上画的先后，后画的在上；背景 = 可见的背景层里最近画的那个的整张图
   const applyLayers = (fade) => {
-    const top = bgOrder.length ? layers.get(bgOrder[bgOrder.length - 1]) : null
-    const topBase = top?.stack.find((x) => !x.patch)
-    const wantBg = topBase?.src || ''
+    const visible = [...layers.entries()].filter(([, s]) => s.visible && s.stack.length).sort((a, b) => a[1].seq - b[1].seq)
+    const bgs = visible.filter(([layer]) => bgLayers.has(layer))
+    const top = bgs.length ? bgs[bgs.length - 1] : null
+    const wantBg = top?.[1].stack.find((x) => !x.patch)?.src || ''
     if (wantBg !== applied.bg) { applied.bg = wantBg; emit(wantBg ? { op: 'bg', src: wantBg, fade } : { op: 'bg', color: [0, 0, 0], fade }) }
     const want = new Map()
-    const addStack = (prefix, stack, zBase) => {
+    const addStack = (prefix, state, zBase) => {
       let k = 0
-      for (const item of stack) {
-        const z = zBase + item.seq * 0.0001
+      state.stack.forEach((item, idx) => {
+        const z = zBase + state.seq * 0.001 + idx * 0.000001
         if (item.patch) { want.set(`${prefix}p${k}`, { src: item.src, z }); k += 1 } else if (prefix.startsWith('L')) want.set(prefix, { src: item.src, z })
-      }
+      })
     }
-    if (top) addStack(`B${bgOrder[bgOrder.length - 1]}`, top.stack, 1)
-    for (const [layer, state] of layers) {
-      if (bgLayers.has(layer) || !state.stack.length) continue
-      addStack(`L${layer}`, state.stack, 10)
-    }
+    if (top) addStack(`B${top[0]}`, top[1], 1)
+    for (const [layer, state] of visible) if (!bgLayers.has(layer)) addStack(`L${layer}`, state, 10)
     for (const [slot, item] of want) {
       const key = `${item.src}|${item.z}`
       if (applied.overlays.get(slot) === key) continue
@@ -201,8 +198,10 @@ export function parse(text, ctx = null, meta = {}) {
       else if (op === 114) { if (ev[2] >= 0) { const src = sound('sounds', ev[2]); if (src) emit({ op: 'bgse', src, loop: true }) } else emit({ op: 'bgseStop' }) }
       else if (op === 132) emit({ op: 'bgmStop', fade: Math.max(0, Math.min(10, (Number(ev[2]) || 0) / 1000)) })   // #132 毫秒 = BGM 淡出
       else if (op === 131) { if (ev[2] >= 0) { const src = sound('bgm', opt.bgmBase + ev[2]); if (src) emit({ op: 'bgm', src }) } else emit({ op: 'bgmStop' }) }
-      else if (op === 35 && opt.clearOp35) {   // #35 层：清掉这一层的内容（9999 = 全部层）；keepBg35：9999 不动背景层（只清叠加层）
-        if (Number(ev[2]) === 9999) { for (const [layer, state] of layers) if (!(opt.keepBg35 && bgLayers.has(layer))) state.stack = []; if (!opt.keepBg35) bgOrder.length = 0 } else { layerState(Number(ev[2])).stack = []; const at = bgOrder.indexOf(Number(ev[2])); if (at >= 0) bgOrder.splice(at, 1) }
+      else if (op === 35) {   // #35 层：9999 = 全部层；retainLayers（默认）只是藏起来，内容还在；false = 清掉
+        const target = Number(ev[2])
+        const hit = target === 9999 ? [...layers.values()] : [layerState(target)]
+        for (const state of hit) { state.visible = false; if (!opt.retainLayers) state.stack = [] }
       }
       else if (op === 29) transition = true
       else if (op === 13) { applyLayers(transition ? opt.fade : 0); transition = false }

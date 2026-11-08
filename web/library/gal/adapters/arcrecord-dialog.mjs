@@ -213,7 +213,7 @@ export function parse(text, ctx = null, meta = {}) {
     }
     const src = staticCg(bgName)
     stats.images.referenced += 1
-    if (src) { stats.images.resolved += 1; stats.cg = stats.cg || { spine: 0, still: 0, missing: 0 }; stats.cg.still += 1; emit({ op: 'bg', src, fade: 0 }); cgPlay = null } else { stats.images.unresolved += 1; if (hasIndex) count('unresolved', `image:${bgName}`) }
+    if (src) { stats.images.resolved += 1; stats.cg = stats.cg || { spine: 0, still: 0, missing: 0 }; stats.cg.still += 1; emit({ op: 'bg', src, fade: 0, cg: true }); cgPlay = null } else { stats.images.unresolved += 1; if (hasIndex) count('unresolved', `image:${bgName}`) }
     if (cgShown) { emit({ op: 'spineOff', slot: 'CG' }); cgShown = false }
   }
   for (const row of data.rows) {
