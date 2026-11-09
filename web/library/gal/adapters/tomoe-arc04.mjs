@@ -19,7 +19,8 @@ export const DEFAULT_OPTIONS = {
   sndDir: 'snd',
   stage: [1920, 1080],
   bgLayers: [132, 120, 127, 117, 121, 9999],
-  retainLayers: true,                              // #35 只是把层「藏起来」（可见 = 上一次 #35 之后画过的层），层里的整张图 + 补丁还留着，再往这一层画（补丁）时连同以前的内容一起显示出来——CG 的底图在 140 层上一直留着，场景之间只靠 #35 + 817 切换（用 v1.29 的真实图核对：不留 = 抠图补丁没有底图 = 碎片）；false = #35 清掉所有层的内容（旧）
+  layerModel: 'engine',                            // 'engine' = 按引擎的图层：每层留着整张图 + 累计补丁，号小的在前（2 层最前，9999 最后），#35 只是选转场效果（tomoe.exe 的 0x4748f0 → 0x47bd70），不隐藏图层；'legacy' = 旧模型（#35 隐藏、最近画的在上）
+  retainLayers: true,                              // 只在 layerModel = legacy 时有用：                              // #35 只是把层「藏起来」（可见 = 上一次 #35 之后画过的层），层里的整张图 + 补丁还留着，再往这一层画（补丁）时连同以前的内容一起显示出来——CG 的底图在 140 层上一直留着，场景之间只靠 #35 + 817 切换（用 v1.29 的真实图核对：不留 = 抠图补丁没有底图 = 碎片）；false = #35 清掉所有层的内容（旧）
   clearFrom: 816,                                  // 图号 >= 这个 = 清空这一层
   bgmBase: 6018,                                   // BGM n → 声音号 bgmBase + n
   fade: 0.5,                                       // 画面切换的淡入淡出秒数
@@ -133,6 +134,7 @@ export function parse(text, ctx = null, meta = {}) {
   }
   // 把可见的层和「已经发出去的」比一下，只发有变的。叠放：可见的层按最近一次往上画的先后，后画的在上；背景 = 可见的背景层里最近画的那个的整张图
   const applyLayers = (fade) => {
+    if (opt.layerModel === 'engine') return applyEngine(fade)
     const visible = [...layers.entries()].filter(([, s]) => s.visible && s.stack.length).sort((a, b) => a[1].seq - b[1].seq)
     const bgs = visible.filter(([layer]) => bgLayers.has(layer))
     const top = bgs.length ? bgs[bgs.length - 1] : null
@@ -148,6 +150,31 @@ export function parse(text, ctx = null, meta = {}) {
     }
     if (top) addStack(`B${top[0]}`, top[1], 1)
     for (const [layer, state] of visible) if (!bgLayers.has(layer)) addStack(`L${layer}`, state, 10)
+    for (const [slot, item] of want) {
+      const key = `${item.src}|${item.z}`
+      if (applied.overlays.get(slot) === key) continue
+      applied.overlays.set(slot, key)
+      emit({ op: 'overlay', slot, src: item.src, fit: 'none', stage: opt.stage, z: item.z, fade })
+    }
+    for (const slot of [...applied.overlays.keys()]) if (!want.has(slot)) { applied.overlays.delete(slot); emit({ op: 'overlayOff', slot }) }
+  }
+  // 引擎模型：所有有内容的层都在，前面（号小）的盖住后面的。从前往后找第一个有整张图的层：它的整张图 = 背景，它的补丁和更前面的层 = 叠加层；更后面的层被盖住，不发
+  const applyEngine = (fade) => {
+    const present = [...layers.entries()].filter(([, s]) => s.stack.length).sort((a, b) => a[0] - b[0])
+    let at = present.findIndex(([, s]) => s.stack.some((x) => !x.patch))
+    const used = at < 0 ? present : present.slice(0, at + 1)
+    const bgLayer = at < 0 ? null : used[used.length - 1]
+    const wantBg = bgLayer?.[1].stack.find((x) => !x.patch)?.src || ''
+    if (wantBg !== applied.bg) { applied.bg = wantBg; emit(wantBg ? { op: 'bg', src: wantBg, fade } : { op: 'bg', color: [0, 0, 0], fade }) }
+    const want = new Map()
+    for (const [layer, state] of used) {
+      const zBase = 1 + (10000 - layer) / 100   // 2 层 ≈ 100.98（最前），9999 层 ≈ 1.01
+      let k = 0
+      state.stack.forEach((item, idx) => {
+        const z = zBase + idx * 0.000001
+        if (item.patch) { want.set(`L${layer}p${k}`, { src: item.src, z }); k += 1 } else if (!(bgLayer && bgLayer[0] === layer)) want.set(`L${layer}`, { src: item.src, z })
+      })
+    }
     for (const [slot, item] of want) {
       const key = `${item.src}|${item.z}`
       if (applied.overlays.get(slot) === key) continue
@@ -198,6 +225,7 @@ export function parse(text, ctx = null, meta = {}) {
       else if (op === 114) { if (ev[2] >= 0) { const src = sound('sounds', ev[2]); if (src) emit({ op: 'bgse', src, loop: true }) } else emit({ op: 'bgseStop' }) }
       else if (op === 132) emit({ op: 'bgmStop', fade: Math.max(0, Math.min(10, (Number(ev[2]) || 0) / 1000)) })   // #132 毫秒 = BGM 淡出
       else if (op === 131) { if (ev[2] >= 0) { const src = sound('bgm', opt.bgmBase + ev[2]); if (src) emit({ op: 'bgm', src }) } else emit({ op: 'bgmStop' }) }
+      else if (op === 35 && opt.layerModel === 'engine') { /* 转场效果选择，不隐藏图层 */ }
       else if (op === 35) {   // #35 层：9999 = 全部层；retainLayers（默认）只是藏起来，内容还在；false = 清掉
         const target = Number(ev[2])
         const hit = target === 9999 ? [...layers.values()] : [layerState(target)]

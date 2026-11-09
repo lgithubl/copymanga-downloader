@@ -257,7 +257,6 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
   let bgse = null
   const snapshot = () => {
     const out = live.map((ev) => ev.slice())
-    for (const layer of new Set(live.map((ev) => Number(ev[6])))) if (!visible.has(layer)) out.push(['#', 35, layer])   // 留着但藏起来的层
     if (bgm !== null) out.push(['#', 131, bgm, -1])
     if (bgse !== null) out.push(['#', 114, bgse])
     return out

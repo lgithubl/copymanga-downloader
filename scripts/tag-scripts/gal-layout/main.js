@@ -1015,6 +1015,7 @@ export const ADAPTER_RULES = {
       121,
       9999
     ],
+    "layerModel": "engine",
     "retainLayers": true,
     "clearFrom": 816,
     "bgmBase": 6018,
