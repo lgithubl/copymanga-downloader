@@ -60,13 +60,9 @@ with tarfile.open(fileobj=io.BytesIO(b''.join(p.read_bytes() for p in parts)), m
     assert cards[0]['png_width'] == '128' and cards[0]['png_height'] == '64'
     assert any(r['category'] == 'bgm' for r in inventory)
     assert not any(n.endswith('.ogg') for n in names), 'audio payload collected'
-    assert sum(n.endswith('.png') and '/Recommend/' in n for n in names) == 2
-    assert not any('recommend_2.png' in n for n in names), 'oldest image selected'
-    assert any(n.endswith('.book.json') for n in names)
-    assert any(n.endswith('.atlas.txt') for n in names)
-    assert any(n.endswith('.skel.bytes') for n in names)
+    assert set(names) == {'g01/' + n for n in ['__listing.tsv', '__tsk_inventory.tsv', '__tsk_recent12h.tsv', '__tsk_categories.tsv', '__tsk_audit.txt']}, names
     assert not any('save000' in n for n in names)
     assert not any('Another Game' in n for n in names)
     assert not any('recommend_1.png' in r['rel'] for r in recent)
-print('PASS: TSK-only, read-only, recent-mtime inventory, PNG dimensions, bounded samples, spine companions, no audio payloads')
+print('PASS: TSK-only, read-only, recent-mtime inventory, PNG dimensions, metadata only, no game file payloads')
 print('Fixture retained:', base)
