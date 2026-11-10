@@ -1,5 +1,5 @@
 // Filter assets before download planning, while preserving dependencies of retained assets.
-export function filterCategories(plan, skipCategories = []) {
+export function filterCategories(plan, skipCategories = [], parents = {}) {
   if (!Array.isArray(skipCategories) || skipCategories.some((c) => typeof c !== 'string' || !c)) throw new Error('skipCategories 必须是分类字符串数组')
   const skip = new Set(skipCategories), classification = Object.create(null), skippedAssets = []
   const entries = plan.entries.map((entry) => {
@@ -9,7 +9,7 @@ export function filterCategories(plan, skipCategories = []) {
       if (typeof category !== 'string' || !category) throw new Error('资源 category 必须是非空字符串')
       const counts = classification[category] ||= { total: 0, selected: 0, skipped: 0 }
       counts.total++
-      if (skip.has(category)) {
+      if (skip.has(category) || (Object.hasOwn(parents, category) && skip.has(parents[category]))) {
         counts.skipped++
         skippedAssets.push({ source: asset.source, target: asset.target, category, reason: 'skip-category' })
       } else { counts.selected++; assets.push({ ...asset, category }) }

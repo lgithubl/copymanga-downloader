@@ -6,13 +6,13 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.2.1'
-import { archiveToTmp } from './archive.mjs?v=2.2.1'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.1'
-import { createTaskLog } from './task-log.mjs?v=2.2.1'
-import { filterCategories } from './category-filter.mjs?v=2.2.1'
-import { TSK_CATEGORIES } from './tsk-categories.mjs?v=2.2.1'
-import { summarizeCategories } from './category-summary.mjs?v=2.2.1'
+import { nativeTask } from './worker-runner.mjs?v=2.2.2'
+import { archiveToTmp } from './archive.mjs?v=2.2.2'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.2'
+import { createTaskLog } from './task-log.mjs?v=2.2.2'
+import { filterCategories } from './category-filter.mjs?v=2.2.2'
+import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.2'
+import { summarizeCategories } from './category-summary.mjs?v=2.2.2'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -168,7 +168,7 @@ async function sourceStamp(task, root) {
     const absolute = await realpath(filename), info = await stat(absolute)
     sources.push({ path: absolute, size: info.size, mtimeMs: info.mtimeMs })
   }
-  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, skipCategories: [...new Set(task.skipCategories || [])].sort(), categoryPolicy: 1, game: task.game || null, adapters: [...task.adapters].sort() }))
+  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, skipCategories: [...new Set(task.skipCategories || [])].sort(), categoryPolicy: 2, game: task.game || null, adapters: [...task.adapters].sort() }))
 }
 
 async function executeTask(ctx, task, index, timeoutMs) {
@@ -224,7 +224,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
         plan = { entries: entries.map((e) => ({ ...e, assets: [{ target: e.target, kind: 'file', category: e.category ?? 'other' }] })) }
       }
       if (stamp !== await sourceStamp(task, root)) throw new Error('规划期间源文件变化，请重新 dryRun')
-      plan = { ...filterCategories(plan, task.skipCategories), schema: 'gal-download-plan/2', taskId: id, root, sourceStamp: stamp, createdAt: new Date().toISOString() }
+      plan = { ...filterCategories(plan, task.skipCategories, (task.provider || task.game) === 'tsk' ? TSK_CATEGORY_PARENTS : {}), schema: 'gal-download-plan/2', taskId: id, root, sourceStamp: stamp, createdAt: new Date().toISOString() }
     } else {
       await phase('读取此 task 已保存的 plan')
       try { plan = JSON.parse(await readFile(planPath, 'utf8')) } catch (error) {

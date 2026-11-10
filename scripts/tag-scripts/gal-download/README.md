@@ -81,7 +81,36 @@ skipCategories 放在每个 task 内，默认 []，不擅自跳过任何分类�
 | item | Sprites/Item 道具图片 |
 | announcement | Sprites/StartupNotification 启动公告 |
 | banner | 其他 Sprites/Banner 横幅 |
+| recommend | Sprites/Recommend：推荐展示 |
+| skill | Sprites/Skill：技能图标 / 按钮 |
+| login-bonus | Sprites/LoginBonus：登录奖励图片 |
+| home-background | Sprites/Bg：主页背景 / 分层图片 |
+| world-raid | Sprites/WorldRaidEvent：世界 Raid 图片 / 背景骨架 |
+| profile | Sprites/Profile：个人资料装饰 |
+| trophy | Sprites/Trophy：奖杯 / 成就图片 |
+| sub-tutorial | Sprites/SubTutorial：子教程图片 |
+| special-site | Sprites/SpecialSite：专题页素材 |
+| mini-game | Sprites/MiniGame：小游戏素材 |
+| common-icon | Sprites/Icon：通用图标 |
+| theme | Sprites/Theme：主题图片 |
+| ui | Sprites/UI：通用 UI |
+| story-ui | Sprites/Story：剧情菜单图片 / 骨架 |
+| stamp | Sprites/Stamp：印章图片 |
+| campaign | Sprites/Campaign：活动加成图片 |
+| home-ui | Sprites/Home：主页按钮 |
+| tutorial | Sprites/Tutorial：教程图片 |
+| home-shade | Sprites/HomeShade：主页角色阴影 |
+| mission | Sprites/Mission：任务界面图片 |
+| character-thumb-001 … character-thumb-009 | Sprites/Chara/Thumb_001 … Thumb_009，按原始目录分别筛选，未推测用途 |
 | other | 其他已支持但用途未识别的资源，默认保留 |
+
+兼容旧配置：skip `character-icon` 同时排除九组 `character-thumb-*`；skip `other` 同时排除从 other 拆出的上述目录分类。新分类可单独 skip；未知的新目录仍归 other。日志按细分类分别统计。
+
+例如在 task 内按需添加（不是默认跳过清单）：
+
+```json
+"skipCategories": ["recommend", "skill", "profile", "trophy", "sub-tutorial", "character-thumb-005"]
+```
 
 分类按 catalog 原始路径判断，不下载文件来猜测用途。被跳过的文件不会导出或删除；日志逐项输出 skip-category [分类]，plan.classification 保存文件计数，plan.skippedAssets 保存完整跳过列表。
 同一个 bundle 或依赖被其他保留资源需要时，bundle 仍可能下载，但只导出保留资源；仅属于被跳过类别的孤立 bundle/依赖会移出 plan。

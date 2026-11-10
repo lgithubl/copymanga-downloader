@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import http from 'node:http'
-import { classifyTskAsset, TSK_CATEGORIES } from '../tag-scripts/gal-download/tsk-categories.mjs'
+import { classifyTskAsset, TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from '../tag-scripts/gal-download/tsk-categories.mjs'
 import { filterCategories } from '../tag-scripts/gal-download/category-filter.mjs'
 import { generateTags } from '../tag-scripts/gal-download/main.js'
 import { archiveToTmp } from '../tag-scripts/gal-download/archive.mjs'
@@ -13,7 +13,17 @@ test('TSK catalog paths distinguish requested UI categories and keep playable re
     'Sprites/Shop/Product/product_00156.png': 'shop',
     'Sprites/Equip/L/equip_3300274.png': 'equipment',
     'Sprites/Chara/Thumb_005/S/enemy_3312004.png': 'enemy-icon',
-    'Sprites/Chara/Thumb_005/L/chara_1001001.png': 'character-icon',
+    'Sprites/Chara/Thumb_005/L/chara_1001001.png': 'character-thumb-005',
+    'Sprites/Chara/Thumb_007/sd_1001001.png': 'character-thumb-007',
+    'Sprites/Chara/Thumb_010/new.png': 'character-icon',
+    'Sprites/Recommend/recommend_00503.png': 'recommend',
+    'Sprites/Skill/Base/btn_skill_attack.png': 'skill',
+    'Sprites/LoginBonus/login_bg_event_8005.png': 'login-bonus',
+    'Sprites/Bg/Home/a.png': 'home-background',
+    'Sprites/WorldRaidEvent/BgSpine/a.atlas.txt': 'world-raid',
+    'Sprites/WorldRaidEvent/BgSpine/a.skel.bytes': 'world-raid',
+    'Sprites/Story/MainParts/a.png': 'story-ui',
+    'Sprites/constructor/a.png': 'other',
     'Sprites/StartupNotification/announce_other_0708.png': 'announcement',
     'Sprites/Banner/L/m_event_70202.png': 'event',
     'Sprites/Banner/L/m_gacha_0301.png': 'gacha-ui',
@@ -33,6 +43,23 @@ test('TSK catalog paths distinguish requested UI categories and keep playable re
     assert.ok(TSK_CATEGORIES[expected])
   }
   assert.equal(classifyTskAsset('Assets/Adventure/ImportChara/1001001.chapter.asset'), 'scenario')
+})
+
+test('fine categories preserve parent skips and dependencies without skipping sibling thumbnails', () => {
+  const raw = { entries: [
+    { url: 'thumb5', assets: [{ target: '5.png', category: 'character-thumb-005', dependencies: ['shared'] }] },
+    { url: 'thumb6', assets: [{ target: '6.png', category: 'character-thumb-006', dependencies: ['shared'] }] },
+    { url: 'recommend', assets: [{ target: 'recommend.png', category: 'recommend', dependencies: [] }] },
+    { url: 'unknown', assets: [{ target: 'unknown.png', category: 'other', dependencies: [] }] },
+    { url: 'shared', assets: [] }
+  ] }
+  const filter = (skip) => filterCategories(raw, skip, TSK_CATEGORY_PARENTS)
+  assert.deepEqual(filter(['character-thumb-005']).entries.map((e) => e.url), ['thumb6', 'recommend', 'unknown', 'shared'])
+  assert.deepEqual(filter(['character-icon']).entries.map((e) => e.url), ['recommend', 'unknown'])
+  assert.deepEqual(filter(['other']).entries.map((e) => e.url), ['thumb5', 'thumb6', 'shared'])
+  assert.deepEqual(filter(['recommend']).entries.map((e) => e.url), ['thumb5', 'thumb6', 'unknown', 'shared'])
+  // Custom files-provider categories do not inherit TSK semantics.
+  assert.equal(filterCategories(raw, ['other']).entries.some((e) => e.url === 'recommend'), true)
 })
 
 test('category skip removes orphan bundles but retains dependencies required by another category', () => {
