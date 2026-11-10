@@ -4,13 +4,13 @@ import { createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.1.1'
-import { archiveToTmp } from './archive.mjs?v=2.1.1'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.1.1'
-import { createTaskLog } from './task-log.mjs?v=2.1.1'
-import { filterCategories } from './category-filter.mjs?v=2.1.1'
-import { TSK_CATEGORIES } from './tsk-categories.mjs?v=2.1.1'
-import { summarizeCategories } from './category-summary.mjs?v=2.1.1'
+import { nativeTask } from './worker-runner.mjs?v=2.1.2'
+import { archiveToTmp } from './archive.mjs?v=2.1.2'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.1.2'
+import { createTaskLog } from './task-log.mjs?v=2.1.2'
+import { filterCategories } from './category-filter.mjs?v=2.1.2'
+import { TSK_CATEGORIES } from './tsk-categories.mjs?v=2.1.2'
+import { summarizeCategories } from './category-summary.mjs?v=2.1.2'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')

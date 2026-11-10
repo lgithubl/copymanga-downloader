@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.1.1）
+# Gal 数据下载 / 本地采集（纯 Node，v2.1.2）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
