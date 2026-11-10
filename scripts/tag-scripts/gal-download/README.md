@@ -63,6 +63,10 @@ skipCategories 放在每个 task 内，默认 []，不擅自跳过任何分类�
 | 分类 id | 含义 / 路径判据 |
 | --- | --- |
 | scenario | 剧情、Master 表 |
+| cutin | Cutin 演出骨架、atlas、纹理；高质量 adult/general 合并到 Cutin/角色号，优先 adult |
+| adventure-spine | Adventure/Spine 剧情特效骨架、atlas、纹理 |
+| adventure-texture | Adventure/Textures 剧情特效图片、骨架、atlas |
+| event-entry | Sprites/EventEntry 活动入口图片；仅在当前 APK catalog 存在时可规划 |
 | still | Stills 下的 CG、场景骨架和 atlas |
 | character | Characters 下的角色立绘、骨架 |
 | background | Adventure/BackGrounds 剧情背景 |
@@ -117,6 +121,21 @@ skipCategories 放在每个 task 内，默认 []，不擅自跳过任何分类�
 分类统计单位是文件，下载上限与候选计数单位是 bundle，不能混为一谈。
 修改分类后必须先重新 dryRun:true；false 拒绝执行筛选规则不同的旧 plan。TSK 未知分类名直接报错，避免拼写错误导致下载范围失控。
 通用 files provider 也支持 skipCategories，entries[].category 可提供自定义分类，未标记的归 other。
+
+### APK catalog 全量审计（2.2.3）
+
+两个 catalog 的每个条目都必须计入审计，计数不闭合或有未定结果则拒绝生成 plan。日志逐分类打印 `APK分类审计 [分类]`，包括 `other` 的各类 skip 数量；完整条目索引、源 key、分类和原因写入每次运行的 `catalog-audit.json`，并打印路径。dryRun:false 复用 plan 中的审计，不重新解析 APK。
+
+- `mapped`：已映射为候选目标，后续还会做 skipCategories、目录存在检查和 limit 筛选。
+- `skip-low-quality`：低清副本。
+- `skip-duplicate-target`：多个源指向同一目标，选定优先版本。
+- `skip-include`：被 task.include 排除。
+- `skip-no-bundle`：没有可用 CDN bundle，同时列入 unresolved。
+- `skip-unsupported-format`：未实现导出的 Unity 内部格式，如材质、prefab；不会伪装成已导出的骨架文件。
+- `skip-unsupported-path-or-format`：尚未支持的路径或格式，保留完整源 key。
+- `skip-catalog-key`：catalog 的 bundle/内部键，不是独立目标文件；相关 bundle 仍可作为已保留资源的依赖下载。
+
+这是 APK 目录的处理覆盖审计，不代表每个资源都能成功解码或当前 APK 包含旧库的所有文件。解码失败仍明确记录 failed，已有文件继续 skip，APK 中不存在的旧资源不会被删除或凭空生成。
 
 真实 APK 01.03.14 中，跳过示例四类会排除 7383 个文件，候选 bundle 从 26976 降为 19593；这不是当前库的实际缺失数。
 

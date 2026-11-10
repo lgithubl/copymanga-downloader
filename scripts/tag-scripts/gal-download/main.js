@@ -6,13 +6,13 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.2.2'
-import { archiveToTmp } from './archive.mjs?v=2.2.2'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.2'
-import { createTaskLog } from './task-log.mjs?v=2.2.2'
-import { filterCategories } from './category-filter.mjs?v=2.2.2'
-import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.2'
-import { summarizeCategories } from './category-summary.mjs?v=2.2.2'
+import { nativeTask } from './worker-runner.mjs?v=2.2.3'
+import { archiveToTmp } from './archive.mjs?v=2.2.3'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.3'
+import { createTaskLog } from './task-log.mjs?v=2.2.3'
+import { filterCategories } from './category-filter.mjs?v=2.2.3'
+import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.3'
+import { summarizeCategories } from './category-summary.mjs?v=2.2.3'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -168,7 +168,7 @@ async function sourceStamp(task, root) {
     const absolute = await realpath(filename), info = await stat(absolute)
     sources.push({ path: absolute, size: info.size, mtimeMs: info.mtimeMs })
   }
-  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, skipCategories: [...new Set(task.skipCategories || [])].sort(), categoryPolicy: 2, game: task.game || null, adapters: [...task.adapters].sort() }))
+  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, skipCategories: [...new Set(task.skipCategories || [])].sort(), categoryPolicy: 3, game: task.game || null, adapters: [...task.adapters].sort() }))
 }
 
 async function executeTask(ctx, task, index, timeoutMs) {
@@ -235,6 +235,13 @@ async function executeTask(ctx, task, index, timeoutMs) {
       logger.log(`使用已有 plan: ${planPath}；不再解压 APK、重新生成目录`)
     }
     if (!Array.isArray(plan.entries)) throw new Error('plan 缺少 entries 数组')
+    if (plan.catalogAudit) {
+      const { byCategory, totalEntries, mappedAssets } = plan.catalogAudit
+      result.catalogAudit = { totalEntries, mappedAssets, byCategory, path: path.join(runDir, 'catalog-audit.json') }
+      await json(result.catalogAudit.path, plan.catalogAudit)
+      report(`APK catalog 审计: 总条目 ${totalEntries}，候选目标 ${mappedAssets}；完整 skip 原因: ${result.catalogAudit.path}`)
+      for (const [category, counts] of Object.entries(byCategory)) report(`APK分类审计 [${category}]: ${JSON.stringify(counts)}`)
+    }
     result.warnings = plan.warnings || []
     for (const warning of result.warnings) logger.log(`提示: ${warning}`)
     result.classification = plan.classification || {}

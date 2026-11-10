@@ -2,6 +2,10 @@
 // Unknown resources stay in other and are retained unless explicitly skipped.
 export const TSK_CATEGORIES = {
   scenario: '剧情 / Master 表',
+  cutin: 'Cutin 演出骨架 / 纹理',
+  'adventure-spine': '剧情特效骨架',
+  'adventure-texture': '剧情特效图片 / 骨架',
+  'event-entry': '活动入口图片',
   still: 'CG / 场景骨架',
   character: '角色立绘 / 骨架',
   background: '剧情背景',
@@ -111,6 +115,10 @@ export const TSK_CATEGORY_PARENTS = {
 export function classifyTskAsset(asset) {
   const relative = asset.replace(/^Assets\/AssetBundles\//i, '').replace(/^Assets\//i, '').toLowerCase()
   if (relative.startsWith('adventure/backgrounds/')) return 'background'
+  if (relative.startsWith('cutin/')) return 'cutin'
+  if (relative.startsWith('adventure/spine/')) return 'adventure-spine'
+  if (relative.startsWith('adventure/textures/')) return 'adventure-texture'
+  if (relative.startsWith('sprites/evententry/')) return 'event-entry'
   if (relative.startsWith('adventure/')) return 'scenario'
   if (relative.startsWith('stills/')) return 'still'
   if (relative.startsWith('characters/')) return 'character'

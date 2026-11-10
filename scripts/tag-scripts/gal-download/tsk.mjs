@@ -54,7 +54,7 @@ export function catalogEntries(catalog) {
   })
 }
 
-export function destination(asset) {
+function mappedDestination(asset) {
   if (asset === 'Assets/Adventure/Master.chapter.asset') return { target: 'Adventure/Master.chapter.json', kind: 'master', category: 'scenario', rank: 10 }
   let m = /^Assets\/Adventure\/ImportChara\/(\d+)\.chapter\.asset$/.exec(asset)
   if (m) return { target: `Adventure/CharaScenario/CharaScenario${m[1]}.book.json`, kind: 'book', category: 'scenario', rank: 10 }
@@ -62,7 +62,7 @@ export function destination(asset) {
   if (m) return { target: `Adventure/${m[1]}/${m[2]}.book.json`, kind: 'book', category: 'scenario', rank: 10 }
   if (!asset.startsWith('Assets/AssetBundles/')) return null
   let relative = asset.slice('Assets/AssetBundles/'.length)
-  if (!/^(Stills|Characters|Adventure\/BackGrounds|Sound|Sprites|GachaCharaAnim)\//.test(relative) || relative.includes('/LowQuality/')) return null
+  if (!/^(Stills|Characters|Cutin|Adventure\/(?:BackGrounds|Spine|Textures)|Sound|Sprites|GachaCharaAnim)\//.test(relative) || relative.includes('/LowQuality/')) return null
   let rank = relative.includes('/HighQuality/') ? 10 : 0
   if (/^(Characters|GachaCharaAnim|Adventure\/BackGrounds)\//.test(relative)) relative = relative.replaceAll('/HighQuality/', '/')
   relative = relative.replace(/^Characters\/(general|adult)\//, 'Characters/')
@@ -70,10 +70,24 @@ export function destination(asset) {
     if (relative.includes('/adult/')) rank++
     relative = relative.replace(/^GachaCharaAnim\/(general|adult)\//, 'GachaCharaAnim/GachaCharaAnim/')
   }
+  if (relative.startsWith('Cutin/')) {
+    if (relative.includes('/adult/')) rank++
+    relative = relative.replace(/^Cutin\/Characters\/HighQuality\/(?:general|adult)\//, 'Cutin/')
+  }
   const kind = relative.endsWith('.png') ? 'png' : /\.(skel\.bytes|atlas\.txt)$/.test(relative) ? 'raw' : relative.endsWith('.ogg') ? 'ogg' : ''
   if (!kind) return null
   return { target: relative, kind, category: { png: 'image', raw: 'spine', ogg: 'voice' }[kind], rank }
 }
+
+export function destinationDecision(asset) {
+  if (typeof asset !== 'string' || !asset.startsWith('Assets/')) return { reason: 'skip-catalog-key' }
+  if (asset.includes('/LowQuality/')) return { reason: 'skip-low-quality' }
+  const mapped = mappedDestination(asset)
+  if (mapped) return { mapped }
+  if (/\.(?:asset|mat|prefab|shader|controller|anim|obj)$/i.test(asset)) return { reason: 'skip-unsupported-format' }
+  return { reason: 'skip-unsupported-path-or-format' }
+}
+export const destination = (asset) => destinationDecision(asset).mapped || null
 
 function textAsset(obj) {
   const buffer = obj.data
@@ -106,8 +120,8 @@ export async function planTsk(request, progress = () => {}) {
   } else throw new Error('TSK source.type 必须是 apk 或 catalog；URL TSV 无法映射目标资源')
   const include = request.include || ['scenario', 'image', 'spine', 'voice']
   if (!Array.isArray(include) || include.some((v) => !['scenario', 'image', 'spine', 'voice'].includes(v))) throw new Error('include 不合法')
-  const selected = new Map(), unresolved = []
-  for (const catalog of catalogs) {
+  const selected = new Map(), unresolved = [], auditRows = []
+  for (const [catalogIndex, catalog] of catalogs.entries()) {
     progress('解析 Addressables 资源键和依赖')
     const entries = catalogEntries(catalog)
     function bundles(index, seen = new Set()) {
@@ -119,14 +133,31 @@ export async function planTsk(request, progress = () => {}) {
       return [...new Set([...own, ...entry.deps.flatMap((dep) => bundles(dep, seen))])]
     }
     entries.forEach((entry, index) => {
-      if (typeof entry.key !== 'string') return
-      const mapped = destination(entry.key)
-      if (!mapped || !include.includes(mapped.category)) return
+      const row = { catalog: catalogIndex, index, source: entry.key, category: typeof entry.key === 'string' && entry.key.startsWith('Assets/') ? classifyTskAsset(entry.key) : 'other', status: 'candidate' }
+      auditRows.push(row)
+      const decision = destinationDecision(entry.key), mapped = decision.mapped
+      if (!mapped) { row.status = decision.reason; return }
+      if (!include.includes(mapped.category)) { row.status = 'skip-include'; return }
       const urls = bundles(index)
-      if (!urls.length) { unresolved.push(entry.key); return }
-      if (!selected.has(mapped.target) || mapped.rank > selected.get(mapped.target).rank) selected.set(mapped.target, { ...mapped, source: entry.key, urls })
+      if (!urls.length) { unresolved.push(entry.key); row.status = 'skip-no-bundle'; return }
+      const previous = selected.get(mapped.target)
+      if (!previous || mapped.rank > previous.rank) {
+        if (previous) previous.audit.status = 'skip-duplicate-target'
+        selected.set(mapped.target, { ...mapped, source: entry.key, urls, audit: row })
+        row.status = 'mapped'
+      } else row.status = 'skip-duplicate-target'
     })
   }
+  const catalogAudit = { totalEntries: auditRows.length, mappedAssets: selected.size, byCategory: Object.create(null), skipped: [] }
+  for (const row of auditRows) {
+    const counts = catalogAudit.byCategory[row.category] ||= Object.create(null)
+    counts[row.status] = (counts[row.status] || 0) + 1
+    if (row.status !== 'mapped') catalogAudit.skipped.push(row)
+  }
+  const accounted = Object.values(catalogAudit.byCategory).flatMap(Object.values).reduce((a,b) => a+b,0)
+  if (accounted !== catalogAudit.totalEntries || auditRows.some(row => row.status === 'candidate')) throw new Error('Catalog 审计不完整，拒绝生成 plan')
+  progress(`APK catalog 全量审计: ${catalogAudit.totalEntries} 条，候选目标 ${selected.size}，skip ${catalogAudit.skipped.length}；完整原因写入 catalog-audit.json`)
+
   const groups = new Map()
   for (const asset of selected.values()) {
     for (const url of asset.urls) if (!groups.has(url)) groups.set(url, { url, bundle: true, assets: [], dependencies: [] })
@@ -134,7 +165,7 @@ export async function planTsk(request, progress = () => {}) {
     owner.assets.push({ source: asset.source, target: asset.target, kind: asset.kind, category: classifyTskAsset(asset.source), dependencies: asset.urls.slice(1) })
     owner.dependencies = [...new Set([...owner.dependencies, ...asset.urls.slice(1)])]
   }
-  return { entries: [...groups.values()], unresolved, warnings: ['活动 banner_id 映射保留现有数据，不从网络补取。', `${unresolved.length} 个资源无远端 bundle；详见 unresolved。`] }
+  return { entries: [...groups.values()], unresolved, catalogAudit, warnings: ['活动 banner_id 映射保留现有数据，不从网络补取。', `${unresolved.length} 个资源无远端 bundle；详见 unresolved。`] }
 }
 
 function texturePixels(texture, resources) {
