@@ -1,0 +1,20 @@
+{
+  "id": "gal-download",
+  "name": "Gal 数据下载 / 本地采集",
+  "version": "1.1.0",
+  "description": "纯 Node Gal 下载及本地采集。只下载配置指定的游戏数据，不下载解释器、依赖、工具或类型数据库。支持 TSK APK/catalog、files、dryRun、额度、缓存、原子落盘和完整日志。",
+  "scope": ["item"],
+  "libraryTypes": ["gal"],
+  "defaultEnabled": false,
+  "main": "main.js",
+  "options": {
+    "dryRun": true,
+    "logPrefix": "gal-download",
+    "downloadLimit": 0,
+    "concurrency": 2,
+    "requestTimeoutMs": 120000,
+    "runTimeoutMs": 1500000,
+    "scriptTimeoutMs": 1560000,
+    "tasks": []
+  }
+}
