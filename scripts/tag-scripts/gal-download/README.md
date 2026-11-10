@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.2.0）
+# Gal 数据下载 / 本地采集（纯 Node，v2.2.1）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -18,6 +18,8 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
       "logPrefix": "tsk-debug",
       "downloadLimit": 3,
       "concurrency": 2,
+      "requestIntervalMs": 1000,
+      "retryDelayMs": 2000,
       "skipCategories": ["shop", "equipment", "enemy-icon", "announcement"],
       "actions": ["download", "extract", "verify"],
       "source": {"type": "apk", "path": "/data/packages/base.apk"},
@@ -27,7 +29,7 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 }
 ```
 
-- tasks 按顺序执行，每项独立管理 dryRun、logPrefix、downloadLimit、concurrency、runTimeoutMs、plan、日志和进度。
+- tasks 按顺序执行，每项独立管理 dryRun、logPrefix、downloadLimit、concurrency、requestIntervalMs、retryDelayMs、runTimeoutMs、plan、日志和进度。
 - adapters 必填且非空，至少一项必须出现在当前媒体的 item.adapters 中；game 若配置也必须匹配 config.game.id。不匹配直接 skip，不扫描、不下载。
 - id 应保持不变且唯一，用于寻找本 task 的 plan；省略时使用 task-<数组下标>，调整任务顺序后可能找不到原 plan。
 - 上层只保留 tasks 和宿主技术参数 scriptTimeoutMs（默认 1560000）。v1 的顶层 dryRun 等配置需移入各 task，不做静默继承。
@@ -40,11 +42,14 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 
 正式执行不再解压 APK 或重新生成资源目录，只检查源文件路径/大小/mtime 和关键配置是否一致。
 没有 plan、源文件变化、目标目录/adapters/game/include/source/skipCategories 等关键配置变化时明确报错，要求先重新 dryRun:true。
-修改 downloadLimit、concurrency、logPrefix、dryRun 不使 plan 失效。
+修改 downloadLimit、concurrency、requestIntervalMs、retryDelayMs、logPrefix、dryRun 不使 plan 失效。
 存在的文件一律 skip-existing 并逐路径记入日志，包括本工具以前生成的文件；不会自行覆盖或修复已有文件。需要补某个文件时，先自行将它移动到别处，再执行已有 plan。
 
 - downloadLimit 为本次最多下载的唯一 bundle/文件 URL 数，0 不限。它**不截断 plan**；缓存命中不占额度，依赖未到齐时不导出残缺资源。
 - concurrency 为下载并发 1–8；依赖下载结束后逐 bundle 解包。
+- requestIntervalMs 为同一 task 内任意两次网络请求启动的最小间隔，所有并发 worker 和重试共用；首个请求立即开始，不阻塞已在传输的请求。默认 0 不等待。
+- retryDelayMs 为失败后到下次重试至少等待的毫秒数（最多尝试 3 次）。重试仍遵守 requestIntervalMs；两个限制同时满足才开始请求，不固定相加。默认 0。两个值必须为 0–2147483647 的整数，示例的 1000/2000 分别是一秒/两秒。
+- dryRun、缓存命中、已有文件 skip 不等待。等待会记录请求 URL、间隔和重试原因，并可被 task 超时中断；requestTimeoutMs 从实际发起请求开始计时。配置只管理 task 内请求，不额外设置 task 之间的休眠。
 - 下载流写 cache/bundles/*.part，校验大小/可选 SHA256/UnityFS 头后 rename 成缓存文件。
 - 解包在线程中完成，主任务再次检查目标存在性，在目标目录写临时文件再 rename。已完成的文件在下一次执行时直接 skip，下载缓存可复用。
 - plan 保留全量映射，执行结果和完整列表写入本次 result.json；缺依赖/limit 截断为 partial，错误为 failed。

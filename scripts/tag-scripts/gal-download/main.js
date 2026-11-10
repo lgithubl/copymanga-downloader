@@ -2,15 +2,17 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename, readdir, stat, realpath, utimes } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.2.0'
-import { archiveToTmp } from './archive.mjs?v=2.2.0'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.0'
-import { createTaskLog } from './task-log.mjs?v=2.2.0'
-import { filterCategories } from './category-filter.mjs?v=2.2.0'
-import { TSK_CATEGORIES } from './tsk-categories.mjs?v=2.2.0'
-import { summarizeCategories } from './category-summary.mjs?v=2.2.0'
+import { nativeTask } from './worker-runner.mjs?v=2.2.1'
+import { archiveToTmp } from './archive.mjs?v=2.2.1'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.1'
+import { createTaskLog } from './task-log.mjs?v=2.2.1'
+import { filterCategories } from './category-filter.mjs?v=2.2.1'
+import { TSK_CATEGORIES } from './tsk-categories.mjs?v=2.2.1'
+import { summarizeCategories } from './category-summary.mjs?v=2.2.1'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -36,7 +38,46 @@ export async function targetPath(root, relative) {
   return target
 }
 
-async function download(entry, cache, signal, timeout) {
+function createRequestPacing(task, signal, log) {
+  const duration = (key) => {
+    const value = Number(task[key] ?? 0)
+    if (!Number.isSafeInteger(value) || value < 0 || value > 2147483647) throw new Error(`${key} 必须是 0–2147483647 的整数（毫秒）`)
+    return value
+  }
+  const requestIntervalMs = duration('requestIntervalMs'), retryDelayMs = duration('retryDelayMs')
+  let queue = Promise.resolve(), lastStarted
+  return {
+    requestIntervalMs, retryDelayMs,
+    start(url, timeout) {
+      const turn = queue.then(async () => {
+        signal.throwIfAborted()
+        if (lastStarted !== undefined) {
+          let remaining = requestIntervalMs - (performance.now() - lastStarted)
+          if (remaining > 0) log(`请求间隔等待: ${Math.ceil(remaining)}ms ${url}`)
+          while (remaining > 0) {
+            await sleep(Math.ceil(remaining), undefined, { signal })
+            remaining = requestIntervalMs - (performance.now() - lastStarted)
+          }
+        }
+        signal.throwIfAborted()
+        lastStarted = performance.now()
+        const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(timeout)])
+        // Release the shared gate immediately after starting fetch, so requests
+        // can overlap. The per-request timeout starts after interval waiting.
+        return { requestSignal, pending: fetch(url, { signal: requestSignal }) }
+      })
+      queue = turn.then(() => {}, () => {})
+      return turn
+    },
+    async retry(url, nextAttempt, error) {
+      log(`重试等待: ${retryDelayMs}ms，第 ${nextAttempt}/3 次 ${url}，原因: ${error.message}`)
+      signal.throwIfAborted()
+      if (retryDelayMs) await sleep(retryDelayMs, undefined, { signal })
+    }
+  }
+}
+
+async function download(entry, cache, signal, timeout, pacing) {
   const key = sha(entry.url)
   const file = path.join(cache, key)
   const metadata = `${file}.json`
@@ -55,9 +96,12 @@ async function download(entry, cache, signal, timeout) {
   try {
     for (let attempt = 0; ; attempt++) {
       try {
-        const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(timeout)])
-        const response = await fetch(entry.url, { signal: requestSignal })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const { requestSignal, pending } = await pacing.start(entry.url, timeout)
+        const response = await pending
+        if (!response.ok) {
+          await response.body?.cancel()
+          throw new Error(`HTTP ${response.status}`)
+        }
         await pipeline(response.body, createWriteStream(part), { signal: requestSignal })
         const bytes = await readFile(part)
         if (!bytes.length || (entry.size && bytes.length !== entry.size)) throw new Error('下载长度不符')
@@ -69,6 +113,7 @@ async function download(entry, cache, signal, timeout) {
         return { file, status: 'downloaded' }
       } catch (error) {
         if (attempt >= 2 || signal.aborted) throw error
+        await pacing.retry(entry.url, attempt + 2, error)
       }
     }
   } finally { await archiveToTmp(part) }
@@ -149,6 +194,8 @@ async function executeTask(ctx, task, index, timeoutMs) {
   const lock = path.join(cache, `lock-${sha(rootMedia)}`)
   let locked = false, changed = false
   try {
+    const pacing = createRequestPacing(task, signal, logger.log)
+    report(`请求节奏: requestIntervalMs=${pacing.requestIntervalMs}，retryDelayMs=${pacing.retryDelayMs}；缓存不等待`)
     await json(path.join(planDir, 'current.json'), { id, runDir, logFile: logger.logFile, progressFile: logger.progressFile, planPath })
     try { await mkdir(lock); locked = true } catch (error) { if (error.code !== 'EEXIST') throw error; throw new Error(`媒体正在同步或有遗留锁: ${lock}`) }
     await json(path.join(lock, 'owner.json'), { pid: process.pid, id, runId })
@@ -260,7 +307,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
           const { entry, row, cached } = queue.shift()
           try {
             logger.log(`下载/读取缓存: ${entry.url}`)
-            const got = cached || await download(entry, bundleCache, signal, Math.max(1000, Number(task.requestTimeoutMs) || 120000))
+            const got = cached || await download(entry, bundleCache, signal, Math.max(1000, Number(task.requestTimeoutMs) || 120000), pacing)
             row.cache = got.file; row.status = got.status; row.downloadStatus = got.status
             logger.log(`${row.status}: ${entry.url}`)
           } catch (error) { row.status = 'failed'; row.error = error.message; logger.log(`failed: ${entry.url} ${error.message}`) }
