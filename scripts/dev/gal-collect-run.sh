@@ -33,6 +33,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.35 本轮只采 Twinkle Star Knights X：资源分类清单（含最近12h修改、大小、PNG尺寸）、剧情JSON（上限128MB）、每类最新两张PNG及配套骨架（上限128MB）；声音只列清单。原目录只读，不删除文件。
 # 1.34 本轮只收一样：友恵的图（规则 chakra:cgs，Data00x 的目录清单照旧）——验证补丁 / 图层规则用：① ch12 s11~s12 缺的 30 张图（背景 + 整图 + 补丁，≈66MB；GAL_TOMOE_CGS 换成别的图号，逗号分隔）② CG 画廊的 144 张 382×215 缩略图（≈22MB；GAL_TOMOE_THUMBS=0 不收）——缩略图是游戏自己合成出来的 CG，拿来对「整图 + 哪些补丁」才是对的
 # 1.33 之前一轮只收一样：友恵の探偵物語（TinkerBell / tomoe 引擎）的「图层语义」要看引擎本体——规则 tomoe:core：tomoe.exe（≈4MB，逆向 $204 画图 / #35 / #13 / #29 / #70 / #87 这些指令怎么决定哪层可见、谁在上面）、Arc00~Arc04.dat（小表 + 剧本 + 声音表，Arc04 ≈ 4.8MB）、arc/.stamp.json、几个原始 .tomoe 剧本样本（GAL_TOMOE_RAW 换，逗号分隔、小写相对路径）。合计 ≈ 9MB
 # 1.32 之前一轮只收一样：スイートホームメイド 场景 story1020043 里的 Spine 角色 cast001001（iroha_001 的 atlas / json / png，3 个文件 ≈ 600KB；规则 gc:cast，GAL_GC_CASTS 换角色，逗号分隔）——场景本身（帧 / 脚本）1.31 已收到，帧没有黑帧，要在真实环境里复现黑屏就缺这个角色
@@ -53,10 +54,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.34"
+VERSION="1.35"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^chakra:cgs'
+ROUND_RULES='^tsk:audit'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
@@ -89,17 +90,26 @@ upload_one() { # upload_one <file>；失败重试 3 次
   return 1
 }
 
+archive_tmp() {
+  local f dst
+  dst="$(mktemp -d /tmp/gal-collect-archive.XXXXXXXX)" || return 1
+  for f in "$@"; do
+    [ ! -e "$f" ] && [ ! -L "$f" ] && continue
+    mv -- "$f" "$dst/" || return 1
+  done
+}
+
 ERROR_DONE=0
 on_exit() {
   local rc=$?
   trap - EXIT
   if [ "$rc" -ne 0 ] && [ "$ERROR_DONE" = 0 ]; then
     ERROR_DONE=1
-    log "出错（退出码 $rc），打包出错日志"
+    log "出错（退出码 ${rc}），打包出错日志"
     scrub "$LOG"
     local eb="$OUT/gal-collect-$TS-${HOST_TAG}-ERROR.tar.gz"
     tar -czf "$eb" -C "$OUT" --ignore-failed-read run.log games.tsv manifest.tsv 2>/dev/null || tar -czf "$eb" -C "$OUT" run.log 2>/dev/null
-    upload_one "$eb" && rm -f "$eb" || log "出错日志没传上去，留在 $eb"
+    upload_one "$eb" && archive_tmp "$eb" || log "出错日志没传上去，留在 $eb"
   fi
   exit "$rc"
 }
@@ -227,6 +237,8 @@ def pick(items, eng):
             key = (m.group(1), m.group(2))
             if key not in best or e.size < best[key][0]: best[key] = (e.size, e.rel.lower())
         imys_chars = {v[1] for v in best.values()}
+    if any('/streamingassets/twinkle star knights x/' in e.rel.lower() for e in items):
+        for e in tsk_audit_picks(items): addf(e, 'full', 'tsk:audit')
     for e in items:
         low = e.rel.lower(); base = low.rsplit('/', 1)[-1]; depth = low.count('/')
         if 'otogi' in eng:   # 1.30：先于 common:text（add 先到先得，.json 会被它抢走）
@@ -1044,8 +1056,106 @@ def mhp_pick(path, size):
             except Exception: pass
     return cat, out
 
+
+# TSK survey: classifications describe current player usage, not permission to delete.
+TSK_PREFIX = 'twinkle star knights x_data/streamingassets/twinkle star knights x/'
+TSK_SPRITES = {'recommend':'recommend','skill':'skill','loginbonus':'login-bonus','bg':'home-background',
+    'worldraidevent':'world-raid','profile':'profile','trophy':'trophy','subtutorial':'sub-tutorial',
+    'specialsite':'special-site','minigame':'mini-game','icon':'common-icon','theme':'theme','ui':'ui',
+    'story':'story-ui','stamp':'stamp','campaign':'campaign','home':'home-ui','tutorial':'tutorial',
+    'homeshade':'home-shade','mission':'mission','shop':'shop','equip':'equipment','item':'item',
+    'startupnotification':'announcement','picturebook':'picturebook','eventquest':'event','gacha':'gacha-ui','banner':'banner'}
+
+def tsk_kind(rel):
+    low = rel.lower()
+    if not low.startswith(TSK_PREFIX): return 'game-support', 'review', rel
+    sub = rel[len(TSK_PREFIX):]; low = sub.lower()
+    for prefix, category in [('adventure/backgrounds/','background'),('adventure/','scenario'),
+        ('characters/','character'),('stills/','still'),('gachacharaanim/','gacha-animation'),
+        ('sound/voice/','voice'),('sound/bgvoice/','bgvoice'),('sound/bgm/','bgm'),
+        ('sound/bgse/','se'),('sound/se/','se')]:
+        if low.startswith(prefix): return category, 'playback-keep', sub
+    if low.startswith('sprites/chara/'):
+        if re.search(r'/enemy_[^/]+$', low): return 'enemy-icon', 'ui-candidate', sub
+        m = re.match(r'sprites/chara/thumb_(00[1-9])/', low)
+        category = 'character-thumb-' + m.group(1) if m else 'character-icon'
+        return category, 'gallery-card-keep' if m and m.group(1) in ('005','006') else 'ui-candidate', sub
+    if low.startswith('sprites/'):
+        category = TSK_SPRITES.get(low.split('/')[1], 'other')
+        if category == 'banner' and re.search(r'/m_event_', low): category = 'event'
+        if category == 'banner' and re.search(r'/m_gacha_', low): category = 'gacha-ui'
+        return category, 'gallery-cover-optional' if category == 'picturebook' else 'review' if category in ('event','home-background','world-raid','other') else 'ui-candidate', sub
+    return 'other', 'review', sub
+
+def tsk_audit_picks(items):
+    chosen = {}; text_bytes = image_bytes = 0; skipped_texts = 0
+    def take(e): chosen[e.rel] = e
+    for e in sorted(items, key=lambda x: x.rel):
+        cat, _use, sub = tsk_kind(e.rel)
+        # Master/book tables enable later reference analysis; no game executables or audio payloads.
+        if cat == 'scenario' and sub.lower().endswith('.json'):
+            if e.size <= 8 * MB and text_bytes + e.size <= 128 * MB:
+                take(e); text_bytes += e.size
+            else: skipped_texts += 1
+        elif e.rel.lower().endswith(('.json','.tsv')) and e.size <= 2 * MB and (e.rel.count('/') <= 1 or '/event/' in e.rel.lower()): take(e)
+    groups = collections.defaultdict(list)
+    for e in items:
+        cat, _use, sub = tsk_kind(e.rel)
+        if sub.lower().endswith('.png') and e.rel.lower().startswith(TSK_PREFIX) and e.size <= 8 * MB:
+            # Keep a/b, L/S and adult variants separate for thumbnail comparisons.
+            group = cat + ':' + os.path.dirname(sub) if cat.startswith('character-thumb-') else cat
+            groups[group].append(e)
+    byrel = {e.rel: e for e in items}
+    for group in sorted(groups):
+        for e in sorted(groups[group], key=lambda x: (-x.mtime, x.rel))[:2]:
+            companions = [e]
+            for suffix in ('.atlas.txt', '.skel.bytes', '.json'):
+                c = byrel.get(e.rel[:-4] + suffix)
+                if c and c.size <= 8 * MB: companions.append(c)
+            cost = sum(c.size for c in companions if c.rel not in chosen)
+            if image_bytes + cost > 128 * MB: continue
+            for c in companions: take(c)
+            image_bytes += cost
+    say('   TSK audit: 剧情 %.1fMB，图片/配套 %.1fMB；超限未收剧情 %d（清单仍完整）' % (text_bytes/MB, image_bytes/MB, skipped_texts))
+    return list(chosen.values())
+
+def tsk_reports(items):
+    counts = collections.defaultdict(lambda: [0,0,0]); now = time.time()
+    rows = ['rel\tcategory\tusage\tsize\tmtime\tmodified_last_12h\tpng_width\tpng_height\n']
+    recent = [rows[0]]
+    for e in items:
+        cat, usage, _sub = tsk_kind(e.rel); is_recent = 0 <= now - e.mtime < 12 * 3600
+        counts[(cat,usage)][0] += 1; counts[(cat,usage)][1] += e.size; counts[(cat,usage)][2] += int(is_recent)
+        w = h = ''
+        if e.rel.lower().endswith('.png'):
+            try:
+                with open(e.path,'rb') as f: head = f.read(24)
+                if len(head) == 24 and head[:8] == b'\x89PNG\r\n\x1a\n': w,h = struct.unpack('>II',head[16:24])
+            except OSError: pass
+        line = '%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n' % (e.rel,cat,usage,e.size,e.mtime,is_recent,w,h)
+        rows.append(line)
+        if is_recent: recent.append(line)
+    summary = ['category\tusage\tfiles\tbytes\tmodified_last_12h\n']
+    for (cat,use), (n,b,r) in sorted(counts.items()): summary.append('%s\t%s\t%d\t%d\t%d\n' % (cat,use,n,b,r))
+    notes = ('TSK resource audit v1.35\nRead-only inventory; no game files moved/deleted.\n'
+        'modified_last_12h uses mtime, not birth/creation time. It is evidence of recent writes, not downloader attribution.\n'
+        'playback-keep: script/character/CG/background/audio resources supported by player; not proof every file is referenced.\n'
+        'gallery-card-keep: Thumb_005 primary / Thumb_006 fallback used by current gal-layout.\n'
+        'gallery-cover-optional: PictureBook used by gallery cover.\n'
+        'ui-candidate: optional skip candidates for story-only use, not verified unused files.\n'
+        'review: event/home/Raid assets need script reference and sample verification.\n'
+        'All Adventure JSON <=8MB collected, total <=128MB; bounded omissions logged.\n'
+        'Newest 2 PNG per category/thumbnail variant with same-stem atlas/skel/json; total <=128MB. Audio payloads excluded.\n')
+    return {'__tsk_inventory.tsv': ''.join(rows), '__tsk_recent12h.tsv': ''.join(recent), '__tsk_categories.tsv': ''.join(summary), '__tsk_audit.txt': notes}
+
 def main():
-    games = [g for g in walk_games() if not ONLY or ONLY.search(os.path.relpath(g, root))]
+    if RULES_RE is not None and RULES_RE.pattern == '^tsk:audit':
+        tsk = os.path.join(root, 'Twinkle Star Knights X')
+        games = [tsk] if os.path.isdir(tsk) else []
+        if not games: say('未找到 Twinkle Star Knights X，未采集其他游戏')
+        if ONLY: games = [g for g in games if ONLY.search(os.path.relpath(g, root))]
+    else:
+        games = [g for g in walk_games() if not ONLY or ONLY.search(os.path.relpath(g, root))]
     say('游戏根 %d 个' % len(games))
     gl = open(os.path.join(out, 'games.tsv'), 'w', encoding='utf-8'); gl.write('gid\trelpath\tengines\tfiles\tpicked\tpicked_bytes\n')
     mf = open(os.path.join(out, 'manifest.tsv'), 'w', encoding='utf-8'); mf.write('gid\trel\tmode\trule\tsize\tstored_bytes\tsha256\n')
@@ -1068,6 +1178,10 @@ def main():
         gz = gzip.GzipFile(fileobj=sp, mode='wb', compresslevel=6, mtime=0)
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
+            if any(rule == 'tsk:audit' for _e, _m, rule in picks):
+                for name, value in tsk_reports(items).items():
+                    data = value.encode('utf-8'); ti = tarfile.TarInfo('%s/%s' % (gid,name))
+                    ti.size = len(data); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(data))
             for e, mode, rule in picks:
                 if total >= TOTAL_MAX: say('  ! 总量达到上限 %d MB，后面的不收' % (TOTAL_MAX // MB)); break
                 eff = mode
@@ -1221,23 +1335,23 @@ UP_COUNT=0
 log "扫描：$ROOT"
 "$PY" "$HELPER" "$ROOT" "$OUT" "$TS" "$HOST_TAG" | while IFS=$'\t' read -r kind path; do
   [ "$kind" = PART ] || continue
-  if upload_one "$path"; then [ "$DRYRUN" = 1 ] || rm -f "$path"; echo "OK $path" >> "$OUT/.uploaded"; else echo "FAIL $path" >> "$OUT/.failed"; fi
+  if upload_one "$path"; then [ "$DRYRUN" = 1 ] || archive_tmp "$path"; echo "OK $path" >> "$OUT/.uploaded"; else echo "FAIL $path" >> "$OUT/.failed"; fi
 done
 PYRC=${PIPESTATUS[0]}
-[ "$PYRC" -eq 0 ] || { log "采集出错（python 退出码 $PYRC）"; exit 1; }
+[ "$PYRC" -eq 0 ] || { log "采集出错（python 退出码 ${PYRC}）"; exit 1; }
 
 # 元数据包（games.tsv / manifest.tsv / info.json / 日志）
 scrub "$LOG"
 META="$OUT/gal-collect-$TS-$HOST_TAG-meta.tar.gz"
 tar -czf "$META" -C "$OUT" games.tsv manifest.tsv info.json run.log || { log "元数据打包失败"; exit 1; }
-if upload_one "$META"; then [ "$DRYRUN" = 1 ] || rm -f "$META"; else echo "FAIL $META" >> "$OUT/.failed"; fi
+if upload_one "$META"; then [ "$DRYRUN" = 1 ] || archive_tmp "$META"; else echo "FAIL $META" >> "$OUT/.failed"; fi
 
 if [ -s "$OUT/.failed" ]; then
-  log "有文件上传失败（留在 $OUT）："; cat "$OUT/.failed"
+  log "有文件上传失败（留在 ${OUT}）："; cat "$OUT/.failed"
   ERROR_DONE=1
   exit 2
 fi
-if [ "$DRYRUN" = 1 ]; then log "DRYRUN 完成：分卷和元数据留在 $OUT，没有上传"; else log "全部完成：$(wc -l < "$OUT/.uploaded" 2>/dev/null || echo 0) 个文件（分卷 + 元数据）已上传到 $REPO release $TAG"; fi
-[ "$DRYRUN" = 1 ] || { rm -f "$HELPER" "$OUT/games.tsv" "$OUT/manifest.tsv" "$OUT/info.json"; }
+if [ "$DRYRUN" = 1 ]; then log "DRYRUN 完成：分卷和元数据留在 ${OUT}，没有上传"; else log "全部完成：$(wc -l < "$OUT/.uploaded" 2>/dev/null || echo 0) 个文件（分卷 + 元数据）已上传到 $REPO release $TAG"; fi
+[ "$DRYRUN" = 1 ] || { archive_tmp "$HELPER" "$OUT/games.tsv" "$OUT/manifest.tsv" "$OUT/info.json"; }
 ERROR_DONE=1
 exit 0

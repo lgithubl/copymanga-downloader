@@ -42,11 +42,11 @@ on_exit() {
   local rc=$?
   trap - EXIT
   if [ "$rc" -ne 0 ]; then
-    log "失败（退出码 $rc）"
+    log "失败（退出码 ${rc}）"
     # 退出码 2 = 有分卷没传上去（文件留在本地，上传本来就有问题，不再重复传）；其余（含实际脚本自己出错，它已经传过它的出错包）这里再传一份启动脚本的日志
     if [ "$rc" -ne 2 ]; then upload_error_log; fi
   fi
-  rm -rf "$TMP"
+  [ ! -e "$TMP" ] || mv -- "$TMP" "/tmp/gal-collect-bootstrap-archive-$TS-$$"
   exit "$rc"
 }
 trap on_exit EXIT
@@ -58,7 +58,7 @@ if [ ! -x "$GH" ] && [ -f "$DIR/gh-linux-amd64.tar.gz" ]; then
 fi
 [ -x "$GH" ] || { log "同目录没有可执行的 gh（也没有 gh-linux-amd64.tar.gz）"; exit 1; }
 # 2) 令牌：从文件读进环境变量（不回显）
-[ -r "$TOKEN_FILE" ] || { log "读不了令牌文件：$TOKEN_FILE（用 GH_TOKEN_FILE 指定）"; exit 1; }
+[ -r "$TOKEN_FILE" ] || { log "读不了令牌文件：${TOKEN_FILE}（用 GH_TOKEN_FILE 指定）"; exit 1; }
 GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")"
 [ -n "$GH_TOKEN" ] || { log "令牌文件是空的：$TOKEN_FILE"; exit 1; }
 export GH_TOKEN GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_NO_EXTENSION_AUTO_INSTALL=1
@@ -69,8 +69,8 @@ log "取实际脚本：$SRC_REPO@$SRC_REF:$SRC_PATH"
 "$GH" api -H "Accept: application/vnd.github.raw" "repos/$SRC_REPO/contents/$SRC_PATH?ref=$SRC_REF" > "$TMP/run.sh" || { log "取脚本失败"; exit 1; }
 [ -s "$TMP/run.sh" ] || { log "取到的脚本是空的"; exit 1; }
 SUM="$(sha256sum "$TMP/run.sh" | cut -d' ' -f1)"
-log "实际脚本 sha256=$SUM（$(wc -l < "$TMP/run.sh") 行）版本 v$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$TMP/run.sh" | head -1)"
-if [ -n "${GAL_COLLECT_SHA256:-}" ] && [ "$GAL_COLLECT_SHA256" != "$SUM" ]; then log "sha256 对不上（期望 $GAL_COLLECT_SHA256），不执行"; exit 1; fi
+log "实际脚本 sha256=${SUM}（$(wc -l < "$TMP/run.sh") 行）版本 v$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$TMP/run.sh" | head -1)"
+if [ -n "${GAL_COLLECT_SHA256:-}" ] && [ "$GAL_COLLECT_SHA256" != "$SUM" ]; then log "sha256 对不上（期望 ${GAL_COLLECT_SHA256}），不执行"; exit 1; fi
 head -1 "$TMP/run.sh" | grep -q '^#!.*bash' || { log "实际脚本第一行不是 bash 脚本，不执行"; exit 1; }
 # 4) 执行
 export GAL_COLLECT_TS="$TS" GAL_COLLECT_TAG="$TAG" GAL_COLLECT_REPO="$REPO" GAL_COLLECT_GH="$GH"
