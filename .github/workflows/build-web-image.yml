@@ -72,6 +72,17 @@ jobs:
         run: |
           docker pull "${{ steps.image.outputs.image }}"
           docker run -d --name copymanga-web-smoke -p 8080:8080 "${{ steps.image.outputs.image }}"
+          # Gal tag scripts use only encoders already present in the image.
+          # Verify actual pipe conversion too, rather than assuming the package has libvorbis.
+          docker exec copymanga-web-smoke sh -ec '
+            encoders="$(ffmpeg -hide_banner -encoders 2>/dev/null)"
+            if printf "%s" "$encoders" | grep -qw libvorbis; then codec=libvorbis
+            elif printf "%s" "$encoders" | grep -qw libopus; then codec=libopus
+            else echo "No existing Ogg audio encoder" >&2; exit 1; fi
+            ffmpeg -v error -f lavfi -i anullsrc=r=48000:cl=mono -t 0.1 -f wav pipe:1 |
+              ffmpeg -v error -protocol_whitelist pipe -i pipe:0 -c:a "$codec" -f ogg pipe:1 |
+              ffmpeg -v error -protocol_whitelist pipe -i pipe:0 -f null -
+          '
           for i in $(seq 1 60); do
             HEALTH="$(curl -fsS http://127.0.0.1:8080/health 2>/dev/null || true)"
             if grep -q '"ok":true' <<<"$HEALTH"; then

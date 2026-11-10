@@ -5,6 +5,9 @@ import path from 'node:path'
 import { openBundles, resourceBytes } from './unity.mjs'
 import { encodePng } from './png.mjs'
 import { classifyTskAsset } from './tsk-categories.mjs'
+import { decodeASTC } from './vendor/astc.mjs'
+import { decodeETC2RGBA8 } from './vendor/etc2.mjs'
+import { unpackFsb5 } from './fsb5.mjs'
 const exec = promisify(execFile)
 
 function keyObject(data, offset) {
@@ -139,6 +142,15 @@ function texturePixels(texture, resources) {
   if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w * h > 64 * 1024 * 1024) throw new Error('纹理尺寸无效')
   const stream = texture.m_StreamData
   const raw = texture['image data']?.length ? texture['image data'] : resourceBytes(resources, stream.path, stream.offset, stream.size)
+  if (format === 47 || format === 50) {
+    const block = format === 50 ? 6 : 4
+    const size = Math.ceil(w / block) * Math.ceil(h / block) * 16
+    if (raw.length < size) throw new Error('压缩纹理数据截断')
+    const decoded = format === 50 ? decodeASTC(raw.subarray(0, size), w, h, 6, 6) : decodeETC2RGBA8(raw.subarray(0, size), w, h)
+    const pixels = Buffer.alloc(w * h * 4), stride = w * 4
+    for (let y = 0; y < h; y++) pixels.set(decoded.subarray((h - 1 - y) * stride, (h - y) * stride), y * stride)
+    return { w, h, pixels }
+  }
   const bpp = { 1: 1, 3: 3, 4: 4, 5: 4, 14: 4 }[format]
   if (!bpp) throw new Error(`尚未实现纹理格式 ${format} 的 Node 解码；保留缓存，不下载解码器`)
   if (raw.length < w * h * bpp) throw new Error('纹理数据截断')
@@ -153,11 +165,21 @@ function texturePixels(texture, resources) {
   return { w, h, pixels }
 }
 
-function ogg(bytes) {
+let audioEncoder
+async function ogg(bytes) {
+  if (bytes.subarray(0, 4).toString() === 'FSB5') bytes = unpackFsb5(bytes).bytes
   if (bytes.subarray(0, 4).toString() === 'OggS') return Promise.resolve(bytes)
+  // Use only codecs already installed in the host. Both encoders produce Ogg
+  // playable by the web player; Vorbis remuxing above never re-encodes audio.
+  audioEncoder ||= exec('ffmpeg', ['-hide_banner', '-encoders']).then(({ stdout }) => {
+    if (/\blibvorbis\b/.test(stdout)) return 'libvorbis'
+    if (/\blibopus\b/.test(stdout)) return 'libopus'
+    throw new Error('现有 ffmpeg 缺少 libvorbis/libopus 编码器；保留缓存，不安装工具')
+  })
+  const encoder = await audioEncoder
   // Existing ffmpeg is the only external executable used for audio. Missing/unsupported = explicit failure.
   return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', ['-v', 'error', '-protocol_whitelist', 'pipe', '-i', 'pipe:0', '-f', 'ogg', '-c:a', 'libvorbis', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn('ffmpeg', ['-v', 'error', '-protocol_whitelist', 'pipe', '-i', 'pipe:0', '-f', 'ogg', '-c:a', encoder, 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] })
     const parts = []; let error = '', size = 0
     child.on('error', reject)
     child.stdin.on('error', () => {})
@@ -185,8 +207,10 @@ export async function extractTsk(request) {
     if (asset.kind === 'master' || asset.kind === 'book') {
       const field = asset.kind === 'master' ? 'settingList' : 'importGridList'
       const candidates = objects.filter((o) => o.classId === 114).map(decode).filter((v) => v[field])
-      const exact = candidates.filter((v) => (v.m_Name || '').replace(/\.(book|chapter)$/, '') === stem)
-      const values = exact.length === 1 ? exact : candidates
+      const expected = new Set([stem, path.posix.basename(asset.target).replace(/\.(?:book|chapter)\.json$/, '')])
+      if (/^Assets\/Adventure\/ImportChara\/\d+\.chapter\.asset$/.test(asset.source)) expected.add(`CharaScenario${stem}`)
+      const exact = candidates.filter((v) => expected.has((v.m_Name || '').replace(/\.(book|chapter)$/, '')))
+      const values = exact.length ? exact : candidates
       if (values.length !== 1) throw new Error(`剧情对象缺失或不唯一: ${asset.source}`)
       data = Buffer.from(JSON.stringify(values[0]))
     } else {
