@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 友恵の探偵物語（TinkerBell，tomoe.exe）：LZSS / Arc / 声音表 / Ogg 解密 / 图条目 → PNG / JPEG + Arc04 剧本切章 + tomoe::arc04 适配器 + containers（hybrid 虚拟索引）
 //   真实样本（可选）：TOMOE_SAMPLE=<游戏目录（里面有 Arc04.dat / Arc03.dat）> 时额外把真实剧本整份切章 + 解析一遍
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { archiveToTmp } from '../tag-scripts/gal-download/archive.mjs'
 import os from 'node:os'
 import path from 'node:path'
 import { inflateSync } from 'node:zlib'
@@ -24,7 +25,7 @@ const lzssLiteral = (buf) => { const out = []; for (let i = 0; i < buf.length; i
 const dec8 = (n) => Buffer.from(String(n).padStart(8, '0').split('').map((d) => Number(d) ^ 0x7f))
 const arcFile = (plain) => { const packed = lzssLiteral(plain); return Buffer.concat([dec8(plain.length), dec8(packed.length), packed]) }
 const tinkEncrypt = (ogg) => { const x = tinkDecrypt(ogg); x.write('Tink', 0, 'latin1'); return x }
-const bitmap = (w, h, flag, extra) => { const head = Buffer.alloc(33); head[0] = 0x61; head.writeUInt32LE(w, 9); head.writeUInt32LE(h, 13); head.writeUInt32LE(flag, 17); if (flag === 1) head.writeUInt32LE(extra.mask.length, 25); return flag === 1 ? Buffer.concat([head, extra.mask, extra.color]) : Buffer.concat([head, extra.color]) }
+const bitmap = (w, h, flag, extra) => { const head = Buffer.alloc(33); head[0] = 0x61; head.writeUInt32LE(w, 9); head.writeUInt32LE(h, 13); head.writeUInt32LE(flag, 17); if (flag === 1) { head.writeUInt32LE(extra.mask.length, 25); head.writeUInt32LE(10000001, 1) }; return flag === 1 ? Buffer.concat([head.subarray(0,29), extra.mask, u32(extra.color.length), extra.color]) : Buffer.concat([head, extra.color]) }
 const ogg = (n) => { const b = Buffer.alloc(40 + n, 7); b.write('OggS', 0, 'latin1'); b[26] = 1; b[27] = 4 + n; return b }   // 一页：1 个段，段长 = 4 + n ... 只用来比对字节
 const tok = { N: (v) => { const b = Buffer.alloc(5); b[0] = 0x4e; b.writeInt32LE(v, 1); return b }, T: (s) => { const n = s.length; const b = Buffer.alloc(9 + 2 * n); b[0] = 0x54; b.writeUInt32LE(1, 1); b.writeUInt32LE(n, 5); for (let i = 0; i < n; i++) b.writeUInt16LE(s.charCodeAt(i) ^ n, 9 + 2 * i); return b } }
 const rec = (body) => Buffer.concat([u32(body.length + 4), body, u32(9999)])
@@ -106,6 +107,8 @@ try {
   await writeFile(path.join(root, 'Arc03.dat'), arcFile(tableBuf))
   await writeFile(path.join(root, 'Arc06.dat'), Buffer.concat([Buffer.alloc(24), ...parts]))
   await writeFile(path.join(root, 'Arc04.dat'), Buffer.concat([SCRIPT, Buffer.alloc(100, 1)]))
+  const scriptIndex = Buffer.concat([u32(23, 0, SCRIPT.length, SCRIPT.length, 0), Buffer.from([97,48,0,0,0,0,0])])
+  await writeFile(path.join(root, 'Arc01.dat'), arcFile(scriptIndex))
   await writeFile(path.join(root, 'tomoe.exe'), 'MZ')
   const containers = { enabled: true, dir: 'arc', scan: ['.', 'Resources'], scriptDecoder: 'tomoe-arc04', scriptExt: 'tomoe', mode: 'hybrid', format: 'tomoe', rules: [{ match: '^Arc04\\.dat$', kinds: ['script'] }, { match: '^(Arc03|Arc06|Data\\d+)\\.dat$', kinds: ['res'] }], maxEntries: 200000, maxTotalMB: 8192 }
   const norm = normalizeGalConfigWithWarnings({ game: { id: 'tomoe::fixture' }, containers, scriptExtensions: ['tomoe'] })
@@ -114,9 +117,9 @@ try {
   const media = path.join(work, 'tomoe')
   const report = await ensureContainers({ mediaDir: media, config: c })
   // Arc04 里夹具只有 8 行 < 20：展开 0 章（默认阈值）
-  check('展开：Arc04.dat 的章节数 = 文本够多的块（夹具不够 = 0），别的文件算虚拟资源', report.arcs['./Arc04.dat']?.scripts === 0 && report.arcs['./Arc03.dat']?.lazy === 1 && report.arcs['Resources/Data000.dat']?.lazy === 1, J(report.arcs))
+  check('展开：Arc01 指定的短剧情也保留，别的文件算虚拟资源', report.arcs['./Arc04.dat']?.scripts === 1 && report.arcs['./Arc03.dat']?.lazy === 1 && report.arcs['Resources/Data000.dat']?.lazy === 1, J(report.arcs))
   const vf = await virtualFiles({ mediaDir: media, config: c })
-  const expected = ['arc/res/img/0.jpg', 'arc/res/img/1.png', 'arc/res/img/2.p.png', 'arc/res/img/3.png', 'arc/res/snd/0.ogg', 'arc/res/snd/1.ogg', 'arc/res/snd/2.ogg']
+  const expected = ['arc/res/img/0.jpg', 'arc/res/img/1.png', 'arc/res/img/2.p.png', 'arc/res/img/2.png', 'arc/res/img/3.png', 'arc/res/snd/0.ogg', 'arc/res/snd/1.ogg', 'arc/res/snd/2.ogg']
   check('虚拟索引：图按类型分 .jpg / .png / .p.png（补丁），声音 snd/<声音号>.ogg（声音号 = 表里的序号 - 1：表的第 0 条是文件头）', J([...vf.files].sort()) === J(expected), J(vf.files))
   const n = await materialize({ mediaDir: media, config: c, rels: expected })
   check('取资源：全部落盘', n === expected.length, String(n))
@@ -125,7 +128,7 @@ try {
   const png1 = inflateSync((await read('arc/res/img/1.png')).subarray(41, -12))
   check('取资源：位图 → PNG（BGR → RGB；压缩条目先 LZSS 解压）', (await read('arc/res/img/1.png')).toString('latin1', 1, 4) === 'PNG' && png1.equals(Buffer.from([0, 3, 2, 1, 6, 5, 4])), J([...png1]))
   const png2 = inflateSync((await read('arc/res/img/2.p.png')).subarray(41, -12))
-  check('取资源：补丁 → RGBA PNG（遮罩为 1 的像素有颜色、其余透明）', png2.equals(Buffer.from([0, 0, 0, 0, 0, 7, 8, 9, 255])), J([...png2]))
+  check('取资源：差分按声明底图重建完整 RGBA PNG', png2.equals(Buffer.from([0, 3, 2, 1, 255, 7, 8, 9, 255])), J([...png2]))
   check('取资源：PNG = 去掉 6 字节头', (await read('arc/res/img/3.png')).equals(pngEntry.subarray(6)))
   check('取资源：声音解密成 Ogg（前 3615 字节），后面原样', (await read('arc/res/snd/0.ogg')).equals(voice) && (await read('arc/res/snd/1.ogg')).equals(bgm) && (await read('arc/res/snd/2.ogg')).equals(se))
 
@@ -133,14 +136,14 @@ try {
   const chapter = splitChapters(SCRIPT, { minTexts: 3 }).chapters[0]
   const text = J({ format: 'tomoe-arc04/1', arc: 'Arc04.dat', name: '01', events: chapter.events })
   check('sniff：认 tomoe-arc04/1', adapter.sniff(text) && !adapter.sniff('{"format":"other"}'))
-  const ctx = adapter.prepare({ options: { bgmBase: 0 }, files: vf.files, toResourcePath: (rel) => rel.replace(/^arc\/res\//, '') })
-  const scene = buildScene('tomoe::arc04', text, ctx, { options: { bgmBase: 0 } })
+  const ctx = adapter.prepare({ options: { bgmBase: 0, seBase: 0, imageMode: 'legacy' }, files: vf.files, toResourcePath: (rel) => rel.replace(/^arc\/res\//, '') })
+  const scene = buildScene('tomoe::arc04', text, ctx, { options: { bgmBase: 0, seBase: 0, imageMode: 'legacy' } })
   const flat = scene.steps.flatMap((s) => s.commands.map((cmd) => ({ ...cmd, step: s.index })))
   const textOf = (cmd) => cmd.segments.map((s) => s.text).join('')
   const texts = flat.filter((x) => x.op === 'text')
   check('适配器：每个点击一步；默认一句句（只显示这一次点击的那一段，不累计整页）', texts.length === 7 && textOf(texts[0]) === '序の0行目' && textOf(texts[1]) === '序の1行目', J(texts.map(textOf)))
   {
-    const pageScene = buildScene('tomoe::arc04', text, adapter.prepare({ options: { bgmBase: 0, pageMode: 'page' }, files: vf.files, toResourcePath: (rel) => rel.replace(/^arc\/res\//, '') }), { options: { bgmBase: 0, pageMode: 'page' } })
+    const pageScene = buildScene('tomoe::arc04', text, adapter.prepare({ options: { bgmBase: 0, seBase: 0, imageMode: 'legacy', pageMode: 'page' }, files: vf.files, toResourcePath: (rel) => rel.replace(/^arc\/res\//, '') }), { options: { bgmBase: 0, seBase: 0, imageMode: 'legacy', pageMode: 'page' } })
     const pageTexts = pageScene.steps.flatMap((st) => st.commands).filter((x) => x.op === 'text').map(textOf)
     check('适配器：pageMode = page 还是游戏原样（同一页的行累计到页末）', pageTexts[1] === '序の0行目\n序の1行目', J(pageTexts))
   }
@@ -184,7 +187,7 @@ try {
     }
     check(`真实样本：Arc04.dat 切成 ${real.chapters.length} 章（${real.records} 条记录）、解析出 ${messages} 页`, real.records > 60000 && real.chapters.length >= 10 && messages > 15000, J([real.records, real.chapters.length, messages]))
   } else console.log('SKIP 真实样本（TOMOE_SAMPLE=<游戏目录> 才跑）')
-} finally { await rm(work, { recursive: true, force: true }) }
+} finally { await archiveToTmp(work) }
 
 // —— #132 毫秒 = BGM 淡出（真实剧本里 99 处，后面跟换场景；#131 -1 只有 1 处）——
 {
@@ -201,7 +204,7 @@ try {
 {
   const files = ['arc/res/img/1.jpg', 'arc/res/img/2.p.png', 'arc/res/img/3.png', 'arc/res/img/4.png', 'arc/res/img/5.p.png']
   const run = (ev, options = {}) => {
-    const sc = buildScene('tomoe::arc04', J({ format: 'tomoe-arc04/1', arc: 'Arc04.dat', name: 'x', events: [...ev, ['T', 'x'], ['#', 87]] }), adapter.prepare({ options, files, toResourcePath: (r) => r.replace(/^arc\/res\//, '') }), { options })
+    const sc = buildScene('tomoe::arc04', J({ format: 'tomoe-arc04/1', arc: 'Arc04.dat', name: 'x', events: [...ev, ['T', 'x'], ['#', 87]] }), adapter.prepare({ options: {imageMode:'legacy',...options}, files, toResourcePath: (r) => r.replace(/^arc\/res\//, '') }), { options })
     let bg = null; const ov = new Map()
     for (const c of sc.steps.flatMap((st) => st.commands)) { if (c.op === 'bg') bg = c.src || null; else if (c.op === 'overlay') ov.set(c.slot, c); else if (c.op === 'overlayOff') ov.delete(c.slot) }
     return { bg, ov: [...ov.keys()].sort(), z: Object.fromEntries([...ov].map(([k, v]) => [k, v.z])) }
@@ -221,14 +224,14 @@ try {
   check('引擎图层：前层只有补丁 → 叠在后面第一张整图（背景）上；z 比背景层的补丁大', onlyPatch.bg === 'img/1.jpg' && J(onlyPatch.ov) === J(['L4p0']), J(onlyPatch))
   // #35 不隐藏
   const withEffect = run([d(1, 132), ['#', 29, 2], ['#', 35, 9999], d(3, 140), ['#', 13, 2]])
-  check('#35 9999 只是选转场效果：之前画的 132 层背景还在（不隐藏、不清）', withEffect.bg === 'img/1.jpg', J(withEffect))
+  check('#35 清理旧对象：新画面没有上一场景的 132 层背景', withEffect.bg === 'img/3.png', J(withEffect))
   // 清空
   const cleared = run([d(1, 132), d(3, 140), d(817, 132)])
   check('清空（图号 ≥ 816）去掉这一层；后面的 140 层的整图露出来', cleared.bg === 'img/3.png', J(cleared))
   const legacy = run([d(3, 140), ['#', 29, 2], ['#', 35, 9999], d(2, 140)], { layerModel: 'legacy' })
   check('layerModel: legacy 还是旧行为（#35 9999 藏起来，之后的补丁叠在保留的整图上）', J(legacy.ov) === J(['L140', 'L140p0']), J(legacy))
   const sp = splitScenesForTest([['$', 204, 1, 0, 1, 0, 120, 1], ['$', 204, 1, 0, 3, 0, 140, 1], ['T', 'a'], ['T', 'b'], ['#', 35, 9999], ['#', 29, 2], ['$', 204, 1, 0, 5, 0, 132, 1], ['T', 'c']], { sceneTexts: 2, sceneMax: 300 })
-  check('分节：「接上一节的现场」带上各层还留着的绘制（120 / 140）；#35 不隐藏，所以不补 #35', sp.length === 2 && J(sp[1].events.slice(0, 2)) === J([['$', 204, 1, 0, 1, 0, 120, 1], ['$', 204, 1, 0, 3, 0, 140, 1]]) && !sp[1].events.some((ev) => ev[0] === '#' && ev[1] === 35 && ev[2] !== 9999), J(sp.map((x) => x.events.slice(0, 5))))
+  check('分节：#35 之后的快照不带旧场景 120 / 140 层', sp.length === 2 && !sp[1].events.some(ev => ev[0] === '$' && [1,3].includes(ev[4])), J(sp.map((x) => x.events.slice(0, 5))))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

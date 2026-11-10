@@ -1015,10 +1015,13 @@ export const ADAPTER_RULES = {
       121,
       9999
     ],
+    "imageMode": "reconstructed",
     "layerModel": "engine",
     "retainLayers": true,
     "clearFrom": 816,
-    "bgmBase": 6018,
+    "voiceBase": 0,
+    "seBase": 4327,
+    "bgmBase": 6017,
     "fade": 0.5,
     "pageMode": "sentence",
     "pageLimit": 12,
@@ -2148,7 +2151,7 @@ export const LAYOUTS = {
     config: { scriptExtensions: ['tomoe'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { cg: 'CG 场景' }, merge: [], views: [{ parent: 'Arc04', as: 'cg', label: 'CG 场景', dirs: ['*'], match: '_cg$' }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { overlays: true, prefer: ['cg', 'stand', 'bg'], skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', '\\.p$'] }, pageSize: 100 },   // CG 场景的图在叠加层上（背景是黑的）：overlays 让兜底封面也收叠加层的整张图，补丁（<编号>.p）不要
     count: [{ dir: 'arc/script', ext: '.tomoe', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
-    notes: ['Arc04.dat 在第一次浏览时由服务端按 ML 记录切成章节（文本 >= 20 行的块；真实数据 12 章、2.5 万页）；图（Data000–025，LZSS + 位图 / JPEG / PNG / 带遮罩的补丁）/ 声音（Arc06 的 Ogg，前 3615 字节解密）只在虚拟索引里，被请求时才转出来', '文字（含注音）/ 语音（声道 → 说话人）/ BGM / 音效 / 背景 / 叠加图层都有；选项、跳转（剧情是一条线）、层的叠放顺序和补丁盖在哪一层没有游戏截图对照，不一定对；章节标题卡（Data004）的触发方式没查出来'],
+    notes: ['Arc04.dat 按 Arc01 索引切分正式剧情（排除菜单与调试段）；图片由 f204 映射编号，差分按声明底图重建；声音按语音 / 音效 / BGM 分类索引，被请求时才解码', '文字（含注音）/ 语音（声道 → 说话人）/ BGM / 音效 / 背景 / 叠加图层都有；选项、跳转（剧情是一条线）、层的叠放顺序和补丁盖在哪一层没有游戏截图对照，不一定对；章节标题卡（Data004）的触发方式没查出来'],
   },
   // ---- Artemis（pf8 档案 .pfs / .pfs.000 …，脚本 .ast = Lua 表）家族：game.id = artemis::<游戏>（任何以 artemis:: 开头的 id 都走这一项）。
   //   目录：<根>/{*.exe, *.pfs（脚本 / 声音 / 系统）, *.pfs.000 …（图）}。pf8 由引擎（config.containers，format: pf8）在服务端读：.ast 解密后展开到 <根>/arc/script/<pfs 名>/<脚本>.ast；

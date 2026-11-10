@@ -2,13 +2,11 @@
 // 指令（对照 tomoe.exe 反汇编 + 引擎自带测试脚本 + 真实 Arc04.dat 的 68611 条记录；统计见 README）：
 //   ['T', 文本]：一行文字（连续的 T = 同一行折行，每段末尾的 \n 是折行不是换行）；ÿÿ<注音长度><注音><正文长度><正文> = 注音（ルビ）
 //   ['#', 87]：行末等点击；['#', 70]：页末（点击后清页）
-//   ['#', 43, 声音号, 声道]：语音（声道 = 说话人序号，见选项 speakers）；['#', 46, 声音号]：音效；['#', 114, 声音号]：循环音效（-1 = 停）；['#', 131, n, -1]：BGM（声音号 = 6018 + n；n = -1 停）
+//   ['#', 43, 声音号, 声道]：语音（声道 = 说话人序号，见选项 speakers）；['#', 46, 声音号]：音效；['#', 114, 声音号]：循环音效（-1 = 停）；['#', 131, n, -1]：BGM（优先按 Arc03 类型命名空间解析；n = -1 停）
 //   ['#', 132, 毫秒]：BGM 淡出（99 处全是 2000，后面跟换场景；整个剧本 ['#', 131, -1, -1] 只有 1 处，游戏靠它停音乐）
-//   ['#', 35, 层]：清掉这一层（9999 = 全部层，每次换场景都有一条）
-//   ['$', 204, 1, a, 图号, b, 层, 1]：在「层」上显示图（图号 ≥ 816 = 清掉这一层）；['#', 29, 2] … ['#', 13, 2]：画面切换（淡入淡出）的开始 / 提交
-//   层：132 / 120 / 127 / 117 / 121 / 9999 = 背景（Data000 的 JPEG / 位图）；2 / 140 / 141 / 4 = 叠在上面的图层（CG / 补丁）。每一层是「整张图 + 之后累计叠上去的补丁」：整张图换掉这一层的全部内容，带遮罩的补丁图（<编号>.p.png，只含和上一帧不同的像素）一张一张累计盖在上面（H 场景的 CG 差分就是这样连着来的；只画最后一张补丁会得到碎片），清空（图号 >= 816）把这一层清掉
-// 没处理：选项（#134 … #136，只在调试菜单里）、跳转 / 变量（#1 #2 #3 #8 #10，剧情是一条线）、#150 #66 #132 #54 #100 …（作用不明，记在 stats.ignored）
-// 没验证（没有游戏截图对照）：层的叠放顺序（现在按「最近画的在上面」，不看层号）、补丁盖在哪一层、图号 817 / 818 当「清空」用、切换时间；章节切分和章节的先后（c01… 按在文件里的顺序）
+//   #35 清理绘制对象并选择转场；$204 的图片编号使用 Arc01 f204 的映射，差分图按声明的底图重建为完整 PNG。
+//   正式剧情按 Arc01 的脚本资源边界切分；菜单与调试控制流不作为剧情导入。
+//   尚未模拟完整 VM、选择分支与所有演出效果；未知指令保留在 stats.ignored。
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader } from './options-merge.mjs'
 
@@ -19,10 +17,13 @@ export const DEFAULT_OPTIONS = {
   sndDir: 'snd',
   stage: [1920, 1080],
   bgLayers: [132, 120, 127, 117, 121, 9999],
-  layerModel: 'engine',                            // 'engine' = 按引擎的图层：每层留着整张图 + 累计补丁，号小的在前（2 层最前，9999 最后），#35 只是选转场效果（tomoe.exe 的 0x4748f0 → 0x47bd70），不隐藏图层；'legacy' = 旧模型（#35 隐藏、最近画的在上）
-  retainLayers: true,                              // 只在 layerModel = legacy 时有用：                              // #35 只是把层「藏起来」（可见 = 上一次 #35 之后画过的层），层里的整张图 + 补丁还留着，再往这一层画（补丁）时连同以前的内容一起显示出来——CG 的底图在 140 层上一直留着，场景之间只靠 #35 + 817 切换（用 v1.29 的真实图核对：不留 = 抠图补丁没有底图 = 碎片）；false = #35 清掉所有层的内容（旧）
+  imageMode: 'reconstructed',
+  layerModel: 'engine',                            // engine 按层号排列，图片已重建为完整画面；legacy 兼容旧补丁缓存。
+  retainLayers: true,                              // 仅用于显式选择 legacy 的旧补丁模型。
   clearFrom: 816,                                  // 图号 >= 这个 = 清空这一层
-  bgmBase: 6018,                                   // BGM n → 声音号 bgmBase + n
+  voiceBase: 0,
+  seBase: 4327,
+  bgmBase: 6017,                                   // BGM n → 声音号 bgmBase + n
   fade: 0.5,                                       // 画面切换的淡入淡出秒数
   pageMode: 'sentence',                            // 'sentence' = 一次点击一步，只显示这一次点击对应的那一段（一句句）；'page' = 游戏原样：同一页的行累计显示到页末（#70）才清
   pageLimit: 12,                                   // pageMode = page 时，一页最多累计几行（防止没有页末记号时无限变长）
@@ -91,7 +92,9 @@ export function parse(text, ctx = null, meta = {}) {
   }
   const sound = (bucket, id) => {
     stats[bucket].referenced += 1
-    const src = find(`${opt.sndDir}/${id}`, ['ogg'])
+    const namespace = { voices: 'voice', sounds: 'se', bgm: 'bgm' }[bucket]
+    const base = { voices: opt.voiceBase, sounds: opt.seBase, bgm: opt.bgmBase }[bucket] || 0
+    const src = find(`${opt.sndDir}/${namespace}/${id}`, ['ogg']) || find(`${opt.sndDir}/${Number(id) + Number(base)}`, ['ogg'])
     if (src) stats[bucket].resolved += 1; else { stats[bucket].unresolved += 1; if (hasIndex) count('unresolved', `${bucket}:${id}`) }
     return src
   }
@@ -111,9 +114,9 @@ export function parse(text, ctx = null, meta = {}) {
   const layerState = (layer) => { let s = layers.get(layer); if (!s) { s = { stack: [], visible: false, seq: 0 }; layers.set(layer, s) } return s }
   const imageSrc = (id) => {
     stats.images.referenced += 1
-    for (const ext of ['p.png', 'png', 'jpg']) {
-      const src = find(`${opt.imgDir}/${id}`, [ext])
-      if (src) { stats.images.resolved += 1; return { src, patch: ext === 'p.png' } }
+    for (const ext of opt.imageMode === 'legacy' ? ['p.png', 'png', 'jpg'] : ['png', 'jpg', 'p.png']) {
+      const src = find(`${data.imageDir || opt.imgDir}/${id}`, [ext])
+      if (src) { stats.images.resolved += 1; return { src, patch: opt.imageMode === 'legacy' && ext === 'p.png' } }
     }
     stats.images.unresolved += 1
     if (hasIndex) count('unresolved', `image:${id}`)
@@ -160,7 +163,7 @@ export function parse(text, ctx = null, meta = {}) {
   }
   // 引擎模型：所有有内容的层都在，前面（号小）的盖住后面的。从前往后找第一个有整张图的层：它的整张图 = 背景，它的补丁和更前面的层 = 叠加层；更后面的层被盖住，不发
   const applyEngine = (fade) => {
-    const present = [...layers.entries()].filter(([, s]) => s.stack.length).sort((a, b) => a[0] - b[0])
+    const present = [...layers.entries()].filter(([, s]) => s.visible && s.stack.length).sort((a, b) => a[0] - b[0])
     let at = present.findIndex(([, s]) => s.stack.some((x) => !x.patch))
     const used = at < 0 ? present : present.slice(0, at + 1)
     const bgLayer = at < 0 ? null : used[used.length - 1]
@@ -224,8 +227,8 @@ export function parse(text, ctx = null, meta = {}) {
       else if (op === 46) { const src = sound('sounds', ev[2]); if (src) emit({ op: 'se', src }) }
       else if (op === 114) { if (ev[2] >= 0) { const src = sound('sounds', ev[2]); if (src) emit({ op: 'bgse', src, loop: true }) } else emit({ op: 'bgseStop' }) }
       else if (op === 132) emit({ op: 'bgmStop', fade: Math.max(0, Math.min(10, (Number(ev[2]) || 0) / 1000)) })   // #132 毫秒 = BGM 淡出
-      else if (op === 131) { if (ev[2] >= 0) { const src = sound('bgm', opt.bgmBase + ev[2]); if (src) emit({ op: 'bgm', src }) } else emit({ op: 'bgmStop' }) }
-      else if (op === 35 && opt.layerModel === 'engine') { /* 转场效果选择，不隐藏图层 */ }
+      else if (op === 131) { if (ev[2] >= 0) { const src = sound('bgm', ev[2]); if (src) emit({ op: 'bgm', src }) } else emit({ op: 'bgmStop' }) }
+      else if (op === 35 && opt.layerModel === 'engine') { for (const state of layers.values()) { state.visible = false; state.stack = [] } }
       else if (op === 35) {   // #35 层：9999 = 全部层；retainLayers（默认）只是藏起来，内容还在；false = 清掉
         const target = Number(ev[2])
         const hit = target === 9999 ? [...layers.values()] : [layerState(target)]

@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -26,7 +26,7 @@ import { imysDecrypt, readTextAssets } from './unity-bundle.mjs'
 import { readAcb, readAcbCues } from './cri-acb.mjs'
 import { backgroundPng, tatiComposePng } from './unity-assets.mjs'
 import { IMYS_HCA_KEY, decodeHca, pcmToWav } from './cri-hca.mjs'
-import { decodeArc, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt, tomoeImageTransform } from './tomoe.mjs'
+import { decodeArc, parseDrawImageKeys, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt, tomoeImageTransform } from './tomoe.mjs'
 import { DSM_MAX_BYTES, decryptDsm, isPsm, psmToPng, splitDsm } from './unity-dsm.mjs'
 import { normalizeKeyBundles } from './config.mjs'
 import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
@@ -42,6 +42,14 @@ import { pf8Decrypt, readPf8Index } from './pf8.mjs'
 import { convertEmotePsb, findEmoteSeed } from './emote-psb.mjs'
 import { unpremultiplyPng } from './png-unpremultiply.mjs'
 import { compileSafeRegex } from './voice.mjs'
+
+async function archiveContainerPath(target) {
+  try { await stat(target) } catch (error) { if (error.code === 'ENOENT') return; throw error }
+  const archive = await mkdtemp(path.join(os.tmpdir(), 'gal-container-archive-'))
+  // mv handles separate mounts; never remove a user's old generated files.
+  await execFileP('mv', [target, path.join(archive, path.basename(target))])
+}
+
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
 export const CONTAINER_FORMAT_VERSION = 20
@@ -251,9 +259,14 @@ async function ogvToMp4(ogv, crf) {
     await writeFile(input, ogv)
     await execFileP('ffmpeg', ['-v', 'error', '-y', '-i', input, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf || 23), '-pix_fmt', 'yuv420p', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output], { timeout: 10 * 60 * 1000, maxBuffer: 1 << 20 })
     return await readFile(output)
-  } finally { await rm(dir, { recursive: true, force: true }).catch(() => {}) }
+  } finally { await archiveContainerPath(dir).catch(() => {}) }
 }
 async function transformDataAsync(data, hit) {
+  if (hit.transform === 'tomoe-img' && hit.base) {
+    const h = await open(hit.base.file, 'r')
+    try { return tomoeImageTransform(data, hit, await readRange(h, hit.base.offset, hit.base.size)) }
+    finally { await h.close() }
+  }
   if (hit.transform === 'pf8-ogv-mp4') return ogvToMp4(pf8Decrypt(data, hit.key), hit.crf)
   if (hit.transform === 'cbg-png') return runCbg(data, hit.crop ? { cropHeight: hit.crop } : {})
   if (hit.transform === 'wcg-png') return runWcg(data)
@@ -369,7 +382,7 @@ function compileRules(cfg) {
     gallery: rule.gallery || null,
   }))
 }
-const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, cfg.video || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex')])).digest('hex').slice(0, 16)
+const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, cfg.video || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex'), ...(cfg.format === 'tomoe' ? [3] : [])])).digest('hex').slice(0, 16)
 const kindOf = (name, scriptKinds) => {
   const ext = extOf(name)
   if (SCRIPT_EXTS.has(ext)) return scriptKinds
@@ -446,16 +459,22 @@ async function expandTomoe({ file, arcName, rule, cfg, outRoot, budget }) {
   if (!rule.kinds.has('script')) { result.skipped = 1; return result }
   const info = await stat(file)
   if (info.size > 256 * 1024 * 1024) throw new Error(`${arcName} 太大（${info.size} 字节）`)
-  const { chapters, records } = splitChapters(await readFile(file))
+  const indexName = (await readdir(path.dirname(file))).find(name => /^arc01\.dat$/i.test(name))
+  if (!indexName) throw new Error('缺少 Arc01.dat 剧本索引，拒绝将调试段混入正式剧情')
+  const script = await readFile(file), indexTable = decodeArc(await readFile(path.join(path.dirname(file), indexName)))
+  const imageKeys = parseDrawImageKeys(indexTable, script)
+  const { chapters, records, skipped } = splitChapters(script, { indexTable })
+  result.chapterScheme = 'Arc01 resource index'
+  result.skippedResources = skipped
   if (!records) throw new Error('不是 TinkerBell 剧本（没有认出任何记录）')
   result.entries = chapters.length
   let written = 0
   for (const chapter of chapters) {
-    const chapterName = String(chapter.index + 1).padStart(2, '0')
+    const chapterName = String(chapter.resource ?? chapter.index + 1).padStart(2, '0')
     for (const scene of chapter.scenes) {
       if (written >= cfg.maxEntries) break
-      const name = `${chapterName}/${chapterName}_${String(scene.index + 1).padStart(2, '0')}${scene.cg ? '_cg' : ''}`   // 有 CG 的小节名字带 _cg（虚拟目录「CG 场景」按它收集）； script/Arc04/<章>/<节>.tomoe：章 = 剧本里的 ML 块，节 = 章里按场景切开的小节
-      const text = JSON.stringify({ format: 'tomoe-arc04/1', arc: arcName, name, chapter: chapter.index + 1, scene: scene.index + 1, record: chapter.start, texts: scene.texts, events: scene.events })
+      const name = `${chapterName}/${chapterName}_${String(scene.index + 1).padStart(2, '0')}${scene.cg ? '_cg' : ''}`   // 有 CG 的小节名字带 _cg（虚拟目录「CG 场景」按它收集）； script/Arc04/<章>/<节>.tomoe：章 = Arc01 的正式剧情资源，节 = 章里按场景切开的小节
+      const text = JSON.stringify({ format: 'tomoe-arc04/1', arc: arcName, name, resource: chapter.resource, imageMode: 'reconstructed-v3', ...(imageKeys.length ? { imageDir: 'img/native' } : {}), chapter: chapter.index + 1, scene: scene.index + 1, record: chapter.start, texts: scene.texts, events: scene.events })
       budget.bytes += text.length
       if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
       const target = path.join(outRoot, 'script', stem, `${name}.${cfg.scriptExt || 'tomoe'}`)
@@ -1113,7 +1132,14 @@ async function listArcs(mediaDir, cfg) {
       const file = path.join(dir, arcName)
       let info
       try { info = await stat(file) } catch { continue }
-      if (info.isFile()) out.push({ arcName, file, rule, sig: `${arcName}:${info.size}:${Math.floor(info.mtimeMs)}` })
+      if (info.isFile()) {
+        let sig = `${arcName}:${info.size}:${Math.floor(info.mtimeMs)}`
+        if (cfg.format === 'tomoe' && /^arc04\.dat$/i.test(arcName)) {
+          const index = names.find(name => /^arc01\.dat$/i.test(name))
+          if (index) { const metadata = await stat(path.join(dir, index)); sig += `:${metadata.size}:${metadata.mtimeMs}` }
+        }
+        out.push({ arcName, file, rule, sig })
+      }
     }
   }
   return out
@@ -1292,7 +1318,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
     return { map, files, sig }
   }
   if (cfg.format === 'tomoe') {
-    // TinkerBell：Data00.dat 是图索引（全局图编号 = 按 Data000, 001, … 连续编），每张图看开头的类型分文件名：<编号>.jpg（JPEG）/ .png（整张位图 / PNG）/ .p.png（带遮罩的补丁，透明底）；
+    // TinkerBell：Data00.dat 索引物理条目，Arc01 f204 将剧情图号映射到 Data 文件与条目；native 路径隔离旧的顺序编号缓存。
     // 声音：Arc03 的声音表 + Arc06 → snd/<编号>.ogg（前 3615 字节要解密）。取出来时才解压 / 转格式
     const by = new Map(arcs.map((a) => [a.arcName.toLowerCase(), a]))
     const allowed = (name, rule) => rule.kinds.has('res') && !(rule.include.length && !rule.include.some((re) => re.test(name))) && !rule.exclude.some((re) => re.test(name))
@@ -1300,6 +1326,15 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
     if (indexArc && allowed('img', indexArc.rule)) {
       let table = []
       try { table = parseImageIndex(await readFile(indexArc.file)) } catch { table = [] }
+      let imageKeys = []
+      const scriptData = by.get('arc04.dat')
+      if (scriptData) {
+        const index = (await readdir(path.dirname(scriptData.file))).find(name => /^arc01\.dat$/i.test(name))
+        if (!index) throw new Error('缺少 Arc01.dat 绘图索引')
+        imageKeys = parseDrawImageKeys(decodeArc(await readFile(path.join(path.dirname(scriptData.file), index))), await readFile(scriptData.file))
+      }
+      const logicalIds = new Map()
+      imageKeys.forEach((key, id) => { if (!logicalIds.has(key)) logicalIds.set(key, []); logicalIds.get(key).push(id) })
       if (table.length <= cfg.maxEntries) {
         const perFile = new Map()
         table.forEach((entry, gid) => { if (!perFile.has(entry.file)) perFile.set(entry.file, []); perFile.get(entry.file).push({ entry, gid }) })
@@ -1315,7 +1350,18 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
               const head = await readRange(handle, entry.offset, Math.min(entry.size, 96))
               const probe = probeImage(head, entry.a > 0)
               if (!probe.type) continue
-              add(`${cfg.dir}/res/img/${gid}.${probe.type === 'jpg' ? 'jpg' : probe.type === 'patch' ? 'p.png' : 'png'}`, { file: arc.file, offset: entry.offset, size: entry.size, transform: 'tomoe-img', a: entry.a, ...(probe.w ? { w: probe.w, h: probe.h } : {}) })
+              const hit = { file: arc.file, offset: entry.offset, size: entry.size, transform: 'tomoe-img', a: entry.a, version: 3, ...(probe.w ? { w: probe.w, h: probe.h } : {}) }
+              if (probe.flag === 1) {
+                const fi = Math.floor(probe.baseKey / 10000000) - 1, k = probe.baseKey % 10000000
+                const baseEntry = table.find(e => e.file === fi && e.k === k)
+                const baseArc = by.get(`data${String(fi).padStart(3, '0')}.dat`)
+                if (!baseEntry || !baseArc) throw new Error(`差分图 ${gid} 缺少底图 ${probe.baseKey}`)
+                hit.base = { file: baseArc.file, offset: baseEntry.offset, size: baseEntry.size, a: baseEntry.a }
+              }
+              // All difference images now become complete PNGs. Keep an alias for old scripts.
+              for (const id of logicalIds.get((entry.file + 1) * 10000000 + entry.k) || []) add(`${cfg.dir}/res/img/native/${id}.${probe.type === 'jpg' ? 'jpg' : 'png'}`, hit)
+              add(`${cfg.dir}/res/img/${gid}.${probe.type === 'jpg' ? 'jpg' : 'png'}`, hit)
+              if (probe.flag === 1) add(`${cfg.dir}/res/img/${gid}.p.png`, hit)
             }
           } finally { await handle.close().catch(() => {}) }
         }
@@ -1327,7 +1373,14 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
       let sounds = []
       let size = 0
       try { sounds = parseSoundTable(decodeArc(await readFile(tableArc.file))); size = (await stat(dataArc.file)).size } catch { sounds = [] }
-      if (sounds.length <= cfg.maxEntries) for (const snd of sounds) if (snd.id > 0 && snd.size > 64 && snd.offset + snd.size <= size && snd.size <= MAX_ENTRY_BYTES) add(`${cfg.dir}/res/snd/${snd.id - 1}.ogg`, { file: dataArc.file, offset: snd.offset, size: snd.size, transform: 'tomoe-snd' })
+      const namespaces = { j: 'voice', k: 'se', u: 'bgm' }, counters = { j: 0, k: 0, u: 0 }
+      if (sounds.length <= cfg.maxEntries) for (const snd of sounds) {
+        const namespace = namespaces[snd.type], logical = namespace ? counters[snd.type]++ : null
+        if (snd.id <= 0 || snd.size <= 64 || snd.offset + snd.size > size || snd.size > MAX_ENTRY_BYTES) continue
+        const hit = { file: dataArc.file, offset: snd.offset, size: snd.size, transform: 'tomoe-snd' }
+        add(`${cfg.dir}/res/snd/${snd.id - 1}.ogg`, hit)
+        if (namespace) add(`${cfg.dir}/res/snd/${namespace}/${logical}.ogg`, hit)
+      }
     }
     return { map, files, sig }
   }
@@ -1499,7 +1552,7 @@ export async function virtualEntry({ mediaDir, config, rels }) {
     if (!hit) continue
     const st = await stat(hit.file).catch(() => null)
     if (!st) continue
-    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.crf || 0, hit.cue || '', hit.expr || 0, hit.emote ? JSON.stringify(hit.emote) : '', hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION])).digest('hex')
+    const key = createHash('sha1').update(JSON.stringify([hit.file, st.size, Math.round(st.mtimeMs), hit.offset, hit.size, Boolean(hit.unpremultiply), hit.transform || '', hit.crop || 0, hit.crf || 0, hit.cue || '', hit.expr || 0, hit.emote ? JSON.stringify(hit.emote) : '', hit.krkr ? [hit.krkr.id, hit.krkr.mode || '', hit.krkr.layer || '', hit.krkr.member || '', hit.krkr.overlays || ''] : 0, CONTAINER_FORMAT_VERSION, ...(hit.version ? [hit.version] : [])])).digest('hex')
     return {
       key,
       rel: hit.rel,
@@ -1603,12 +1656,12 @@ async function runImys(mediaDir, cfg) {
     const startedAt = Date.now()
     await Promise.all(Array.from({ length: 16 }, async () => { for (;;) { const f = todo[cursor++]; if (!f) return; await expandOne(f) } }))
     console.log(`[gal] Imys 剧本展开：${result.scripts} 份（${todo.length} 个 bundle），${Date.now() - startedAt} ms`)
-    await rm(path.join(outRoot, 'script'), { recursive: true, force: true })
+    await archiveContainerPath(path.join(outRoot, 'script'))
     try { await stat(path.join(tmp, 'script')); await mkdir(outRoot, { recursive: true }); await rename(path.join(tmp, 'script'), path.join(outRoot, 'script')) } catch { /* 一个都没有 */ }
     await mkdir(outRoot, { recursive: true })
     await writeFile(stampFile, JSON.stringify({ version: CONTAINER_FORMAT_VERSION, sig, result }))
     report.arcs.scenarios = result
-  } catch (error) { report.arcs.scenarios = { error: String(error.message || error).slice(0, 300) } } finally { await rm(tmp, { recursive: true, force: true }).catch(() => {}) }
+  } catch (error) { report.arcs.scenarios = { error: String(error.message || error).slice(0, 300) } } finally { await archiveContainerPath(tmp).catch(() => {}) }
   lastReport.set(mediaDir, report)
   return report
 }
@@ -1644,7 +1697,11 @@ async function run(mediaDir, cfg) {
       let info
       try { info = await stat(file) } catch { continue }
       if (!info.isFile()) continue
-      const sig = `${info.size}:${Math.floor(info.mtimeMs)}:${fp}`
+      let sig = `${info.size}:${Math.floor(info.mtimeMs)}:${fp}`
+      if (cfg.format === 'tomoe' && /^arc04\.dat$/i.test(arcName)) {
+        const index = (await readdir(dir)).find(name => /^arc01\.dat$/i.test(name))
+        if (index) { const metadata = await stat(path.join(dir, index)); sig += `:${metadata.size}:${metadata.mtimeMs}` }
+      }
       if (stamp.arcs[key]?.sig === sig) { report.arcs[key] = { ...stamp.arcs[key].result, cached: true }; continue }
       const stem = cfg.format === 'pf8' ? pf8Stem(arcName) : withoutExt(arcName)
       const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
@@ -1654,7 +1711,7 @@ async function run(mediaDir, cfg) {
         for (const part of ['script', 'res', 'refs']) {
           const from = path.join(tmp, part, stem)
           const to = path.join(outRoot, part, stem)
-          await rm(to, { recursive: true, force: true })
+          await archiveContainerPath(to)
           try { await stat(from) } catch { continue }
           await mkdir(path.dirname(to), { recursive: true })
           await rename(from, to)
@@ -1665,7 +1722,7 @@ async function run(mediaDir, cfg) {
         await writeFile(stampFile, JSON.stringify(stamp))
       } catch (error) {
         report.arcs[key] = { error: String(error.message || error).slice(0, 300) }
-      } finally { await rm(tmp, { recursive: true, force: true }).catch(() => {}) }
+      } finally { await archiveContainerPath(tmp).catch(() => {}) }
     }
   }
   lastReport.set(mediaDir, report)

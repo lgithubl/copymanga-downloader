@@ -2,7 +2,7 @@
 //   Arc00–03（头 16 字节 = 两个 8 位十进制数，每个数字字节 = 数字 ^ 0x7f，0xff = 0：解压后大小 A / 压缩后大小 B；后面是 Okumura LZSS：N=4096 F=18 阈值 2 环初值 0 写指针 4078，标志位 LSB 先，1 = 原样字节，
 //     0 = 引用 pos=a|((b&0xf0)<<4)、len=(b&0xf)+2、复制 len+1 个）；Arc03 解压后 = 声音表（每条 27 字节：[u32 len=0x17][u32 id][u32 size][u32 size][u32 offset][u16 type][u32 -1][u8 0]；第 k 条 = 声音 k，数据 = Arc06[offset, offset+size]）
 //   Arc06：Ogg Vorbis，前 3615 字节加密（头 4 字节被换成 'Tink'，4..3614 与密钥流异或，密钥 = exe 里的版权字符串，周期 98）
-//   Resources/Data00.dat：u32 文件数，每个 Data 文件 3 张表（u32 个数 + 16 字节记录 (解压大小, 存储大小, 偏移, 0)），只有第一张非空；解压大小 = 0 表示没压缩。全局图编号 = 按 Data000, 001, … 顺序连续编
+//   Resources/Data00.dat：u32 文件数，每个 Data 文件 3 张表（u32 个数 + 16 字节记录 (解压大小, 存储大小, 偏移, 0)），只有第一张非空；解压大小 = 0 表示没压缩。物理条目按文件顺序排列；剧情图号由 Arc01 的 f204 描述符映射
 //   图条目（解压后）：第 0 字节 0x61 = 位图（头 33 字节：w@9 h@13 标志@17；0 = BGR 24 位自上而下；7 = Alpha 平面（3 字节 / 像素取第一个）+ BGR；1 = 1 位遮罩（大小@25，LSB 先）+ 遮罩里为 1 的像素的 BGR = 差分 / 抠图补丁），0x62 = JPEG（找 ff d8 ff），0x63 = PNG（头 6 字节）
 //   剧本 Arc04.dat（没压缩）：前面是记录流 [u32 长度（含自己）][正文][u32 9999]，正文 = 令牌：M# / M$ / ML + 若干项 N（i32）/ A（u32）/ T（u32 id, u32 n, n 个 UTF-16 单元各异或 n）；后面是对象表 + JS 源，不用
 import { deflateSync } from 'node:zlib'
@@ -50,20 +50,30 @@ export function decodeArc(buf) {
   return lzssDecode(buf.subarray(16, 16 + b), a)
 }
 
-// Arc03 解压后 → 声音表 [{ id, size, offset }]（第 0 条是视频名，没有声音数据：size 很小时跳过由调用方判断）
-export function parseSoundTable(table) {
-  const out = []
-  let p = 0
-  let id = 0
-  while (p + 27 <= table.length) {
-    if (table.readUInt32LE(p) !== 0x17) break
-    const size = table.readUInt32LE(p + 8)
-    const offset = table.readUInt32LE(p + 16)
-    out.push({ id, size, offset })
-    id += 1
-    p += 27
+// Arc01/03 use 27-byte rows. Keep native type and stored length, not just table position.
+export function parseResourceTable(table) {
+  if (table.length % 27) throw new Error('TinkerBell 资源表长度无效')
+  const rows = []
+  for (let p = 0; p < table.length; p += 27) {
+    if (table.readUInt32LE(p) !== 0x17) throw new Error('TinkerBell 资源表记录无效')
+    rows.push({ id: p / 27, nativeId: table.readUInt32LE(p + 4), decodedSize: table.readUInt32LE(p + 8), size: table.readUInt32LE(p + 12), offset: table.readUInt32LE(p + 16), type: String.fromCharCode(table.readUInt16LE(p + 20) ^ 0x3000) })
   }
-  return out
+  return rows
+}
+// $204 selects an image from f descriptor index 204, not from Data00 file order.
+export function parseDrawImageKeys(indexTable, script) {
+  const descriptor = parseResourceTable(indexTable).filter(row => row.type === 'f')[204]
+  if (!descriptor) return []
+  if (descriptor.offset + descriptor.size > script.length) throw new Error('绘图资源表被截断')
+  const stored = script.subarray(descriptor.offset, descriptor.offset + descriptor.size)
+  const data = descriptor.decodedSize !== descriptor.size ? lzssDecode(stored, descriptor.decodedSize) : stored
+  if (data.length < 4) throw new Error('绘图资源表为空')
+  const count = data.readUInt32LE(0)
+  if (!count || count > 100000 || 4 + count * 4 > data.length) throw new Error('绘图资源表长度无效')
+  return Array.from({ length: count }, (_, i) => data.readUInt32LE(4 + i * 4))
+}
+export function parseSoundTable(table) {
+  return parseResourceTable(table).map(({ id, size, offset, type }) => ({ id, size, offset, ...(['j','k','u'].includes(type) ? { type } : {}) }))
 }
 
 // ---- Arc06 的 Ogg 解密 ----
@@ -79,7 +89,7 @@ export function tinkDecrypt(data) {
 }
 
 // ---- Data00.dat：图索引 ----
-// 返回 [{ file: Data 文件序号, k: 文件内序号, a: 解压大小（0 = 没压缩）, size, offset }]，下标 = 全局图编号
+// 返回 [{ file: Data 文件序号, k: 文件内序号, a: 解压大小（0 = 没压缩）, size, offset }]，下标仅是物理条目顺序，不是剧情图号
 export function parseImageIndex(buf) {
   if (buf.length < 4) throw new Error('Data00.dat 太小')
   const files = buf.readUInt32LE(0)
@@ -110,7 +120,7 @@ export function probeImage(stored, compressed) {
     const w = head.readUInt32LE(9)
     const h = head.readUInt32LE(13)
     if (w < 1 || h < 1 || w > 16384 || h > 16384) return { type: '' }
-    return { type: flag === 1 ? 'patch' : flag === 0 || flag === 7 ? 'bmp' : '', w, h, flag }
+    return { type: flag === 1 ? 'patch' : flag === 0 || flag === 7 ? 'bmp' : '', w, h, flag, baseKey: head.readUInt32LE(1) }
   }
   return { type: '' }
 }
@@ -136,7 +146,7 @@ export function encodePng(w, h, pixels, channels) {
 }
 
 // 位图（0x61）→ { w, h, channels, pixels }
-export function decodeBitmap(d) {
+export function decodeBitmap(d, { base } = {}) {
   const w = d.readUInt32LE(9)
   const h = d.readUInt32LE(13)
   const flag = d.readUInt32LE(17)
@@ -160,24 +170,40 @@ export function decodeBitmap(d) {
     const colorAt = 33 + maskSize
     if (maskSize < Math.ceil(n / 8) || colorAt > d.length) throw new Error('补丁遮罩被截断')
     const rgba = Buffer.alloc(n * 4)
+    if (base) {
+      const decoded = decodeBitmap(base)
+      if (decoded.w !== w || decoded.h !== h) throw new Error('差分图与指定底图尺寸不一致')
+      for (let i = 0; i < n; i++) { decoded.pixels.copy(rgba, i * 4, i * decoded.channels, i * decoded.channels + 3); rgba[i * 4 + 3] = decoded.channels === 4 ? decoded.pixels[i * 4 + 3] : 255 }
+    }
+    const declared = d.readUInt32LE(29 + maskSize)
+    if (declared !== d.length - colorAt || declared % 3) throw new Error('差分图色彩长度无效')
     let ci = colorAt
     for (let i = 0; i < n; i++) {
-      if ((d[33 + (i >> 3)] >> (i & 7)) & 1 && ci + 3 <= d.length) { rgba[i * 4] = d[ci + 2]; rgba[i * 4 + 1] = d[ci + 1]; rgba[i * 4 + 2] = d[ci]; rgba[i * 4 + 3] = 255; ci += 3 }
+      if ((d[29 + (i >> 3)] >> (i & 7)) & 1) {
+        if (ci + 3 > d.length) throw new Error('差分图色彩数据被截断')
+        rgba[i * 4] = d[ci + 2]; rgba[i * 4 + 1] = d[ci + 1]; rgba[i * 4 + 2] = d[ci]; rgba[i * 4 + 3] = 255; ci += 3
+      }
     }
+    if (ci !== d.length) throw new Error('差分遮罩与色彩像素数量不一致')
     return { w, h, channels: 4, pixels: rgba }
   }
+
   throw new Error(`不认识的位图标志 ${flag}`)
 }
 
 // 解压后的图条目 → PNG / JPEG 字节
-export function imageToBytes(d) {
+export function imageToBytes(d, options) {
   if (d[0] === 0x63) return d.subarray(6)
   if (d[0] === 0x62) { const at = d.indexOf(Buffer.from([0xff, 0xd8, 0xff])); if (at < 0) throw new Error('JPEG 条目里没有 FF D8 FF'); return d.subarray(at) }
-  if (d[0] === 0x61) { const bmp = decodeBitmap(d); return encodePng(bmp.w, bmp.h, bmp.pixels, bmp.channels) }
+  if (d[0] === 0x61) { const bmp = decodeBitmap(d, options); return encodePng(bmp.w, bmp.h, bmp.pixels, bmp.channels) }
   throw new Error(`不认识的图类型 0x${(d[0] || 0).toString(16)}`)
 }
 // hit.transform = 'tomoe-img'：data = 存储的字节，hit.a = 解压大小（0 = 没压缩）
-export const tomoeImageTransform = (data, hit) => imageToBytes(hit.a ? lzssDecode(data, hit.a) : data)
+export const tomoeImageTransform = (data, hit, baseData) => {
+  const decoded = hit.a ? lzssDecode(data, hit.a) : data
+  if (decoded[0] === 0x61 && decoded.readUInt32LE(17) === 1 && !baseData) throw new Error('差分图缺少指定底图，拒绝输出错误画面')
+  return imageToBytes(decoded, { base: baseData ? (hit.base.a ? lzssDecode(baseData, hit.base.a) : baseData) : undefined })
+}
 
 // ---- 剧本 Arc04.dat ----
 // 记录流 → [{ at, items }]；items：{ m: '#'|'$'|'L' | 'T', v: [数字 | 字符串] }
@@ -227,8 +253,28 @@ const BG_LAYERS = new Set([132, 120, 127, 117, 121, 9999])
 const CLEAR_FROM = 816
 const CG_LAYERS = new Set([2, 140, 141])   // H 场景的 CG 画在这几层（4 层多是标题 / 字幕）
 const CG_MIN_DRAWS = 4                    // 一节里这几层上画了至少这么多张图才算「有 CG」
-export function splitChapters(buf, { minTexts = 20, sceneTexts = 80, sceneMax = 300 } = {}) {
+export function splitChapters(buf, { minTexts = 20, sceneTexts = 80, sceneMax = 300, indexTable } = {}) {
   const records = parseScriptRecords(buf)
+  if (indexTable) {
+    const table = parseResourceTable(indexTable).filter(row => row.type === 'a')
+    const chapters = [], skipped = []
+    let cursor = 0
+    for (const entry of table) {
+      if (entry.offset + entry.size > buf.length) throw new Error('Arc01 剧本索引越界')
+      while (cursor < records.length && records[cursor].at < entry.offset) cursor++
+      const first = cursor, events = []
+      while (cursor < records.length && records[cursor].at < entry.offset + entry.size) {
+        const parsed = parseRecord(records[cursor++].body)
+        if (parsed?.kind === 'T') events.push(['T', parsed.text])
+        else if (parsed && parsed.kind !== 'L') events.push([parsed.kind, ...parsed.args])
+      }
+      const texts = events.filter(ev => ev[0] === 'T').length
+      const control = events.filter(ev => ev[0] === '#' && [1,2,8,10,134,135,136].includes(ev[1]))
+      if (!texts || control.length) { skipped.push({ resource: entry.id, texts, reason: control.length ? 'control-flow/menu/debug' : 'not-story', controls: [...new Set(control.map(ev => ev[1]))] }); continue }
+      chapters.push({ index: chapters.length, resource: entry.id, offset: entry.offset, start: first, events, texts, scenes: splitScenes(events, { sceneTexts, sceneMax }) })
+    }
+    return { records: records.length, chapters, skipped, indexed: true, total: table.length }
+  }
   const chapters = []
   let cur = null
   const begin = (at) => { cur = { start: at, events: [], texts: 0 }; chapters.push(cur) }
@@ -251,12 +297,12 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
   const scenes = []
   let list = []
   let texts = 0
-  const live = []          // 各层里还留着的绘制（按时间顺序）：整张图 / 补丁都留着，清空（图号 >= 816）去掉这一层的；#35 只是把层藏起来（visible），内容还在
+  const live = []          // 每层最后一张完整画面；差分已按声明底图重建。
   const visible = new Set()   // 上一次 #35 之后画过的层
   let bgm = null
   let bgse = null
   const snapshot = () => {
-    const out = live.map((ev) => ev.slice())
+    const out = live.filter(ev => visible.has(Number(ev[6]))).map((ev) => ev.slice())
     if (bgm !== null) out.push(['#', 131, bgm, -1])
     if (bgse !== null) out.push(['#', 114, bgse])
     return out
@@ -287,13 +333,12 @@ function splitScenes(events, { sceneTexts, sceneMax }) {
       const layer = Number(ev[6])
       if (Number(ev[4]) >= CLEAR_FROM) { for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === layer) live.splice(k, 1); visible.delete(layer) }
       else {
+        for (let k = live.length - 1; k >= 0; k--) if (Number(live[k][6]) === layer) live.splice(k, 1)
         live.push(ev)
         visible.add(layer)
-        const same = live.filter((x) => Number(x[6]) === layer)
-        if (same.length > 200) live.splice(live.indexOf(same[0]), 1)   // 防止无限增长（整张图一般很快把前面的盖掉，这里只管补丁连发）
       }
-    } else if (ev[0] === '#' && ev[1] === 35) {   // #35 层：9999 = 全部层藏起来；内容不清
-      if (Number(ev[2]) === 9999) visible.clear(); else visible.delete(Number(ev[2]))
+    } else if (ev[0] === '#' && ev[1] === 35) {   // #35 清理绘制对象，快照不继承旧场景
+      visible.clear(); live.length = 0
     } else if (ev[0] === '#' && ev[1] === 131) bgm = Number(ev[2]) >= 0 ? Number(ev[2]) : null
     else if (ev[0] === '#' && ev[1] === 132) bgm = null   // #132 2000 = BGM 淡出（99 处全是 2000，紧跟换场景；整个剧本 #131 -1 只出现 1 次，游戏靠 #132 停音乐）：之后没有新的 #131 就是没有 BGM
     else if (ev[0] === '#' && ev[1] === 114) bgse = Number(ev[2]) >= 0 ? Number(ev[2]) : null
