@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 import { openBundles, resourceBytes } from './unity.mjs'
 import { encodePng } from './png.mjs'
+import { classifyTskAsset } from './tsk-categories.mjs'
 const exec = promisify(execFile)
 
 function keyObject(data, offset) {
@@ -127,7 +128,7 @@ export async function planTsk(request, progress = () => {}) {
   for (const asset of selected.values()) {
     for (const url of asset.urls) if (!groups.has(url)) groups.set(url, { url, bundle: true, assets: [], dependencies: [] })
     const owner = groups.get(asset.urls[0])
-    owner.assets.push({ source: asset.source, target: asset.target, kind: asset.kind })
+    owner.assets.push({ source: asset.source, target: asset.target, kind: asset.kind, category: classifyTskAsset(asset.source), dependencies: asset.urls.slice(1) })
     owner.dependencies = [...new Set([...owner.dependencies, ...asset.urls.slice(1)])]
   }
   return { entries: [...groups.values()], unresolved, warnings: ['活动 banner_id 映射保留现有数据，不从网络补取。', `${unresolved.length} 个资源无远端 bundle；详见 unresolved。`] }

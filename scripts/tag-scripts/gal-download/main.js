@@ -4,10 +4,12 @@ import { createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.0.1'
-import { archiveToTmp } from './archive.mjs?v=2.0.1'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.0.1'
-import { createTaskLog } from './task-log.mjs?v=2.0.1'
+import { nativeTask } from './worker-runner.mjs?v=2.1.0'
+import { archiveToTmp } from './archive.mjs?v=2.1.0'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.1.0'
+import { createTaskLog } from './task-log.mjs?v=2.1.0'
+import { filterCategories } from './category-filter.mjs?v=2.1.0'
+import { TSK_CATEGORIES } from './tsk-categories.mjs?v=2.1.0'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -120,7 +122,7 @@ async function sourceStamp(task, root) {
     const absolute = await realpath(filename), info = await stat(absolute)
     sources.push({ path: absolute, size: info.size, mtimeMs: info.mtimeMs })
   }
-  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, game: task.game || null, adapters: [...task.adapters].sort() }))
+  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, skipCategories: [...new Set(task.skipCategories || [])].sort(), categoryPolicy: 1, game: task.game || null, adapters: [...task.adapters].sort() }))
 }
 
 async function executeTask(ctx, task, index, timeoutMs) {
@@ -159,6 +161,10 @@ async function executeTask(ctx, task, index, timeoutMs) {
       report(`采集 ${result.collected} 个文件，样本 ${result.samples.length} 个: ${result.inventory}`)
     }
     if (actions.length && actions.every((a) => a === 'collect')) return { logs, result }
+    if (task.skipCategories !== undefined && (!Array.isArray(task.skipCategories) || task.skipCategories.some((c) => typeof c !== 'string' || !c))) throw new Error('skipCategories 必须是分类字符串数组')
+    if ((task.provider || task.game) === 'tsk') for (const category of task.skipCategories || []) {
+      if (!Object.hasOwn(TSK_CATEGORIES, category)) throw new Error(`未知 TSK 分类 ${category}，可用分类: ${Object.keys(TSK_CATEGORIES).join(', ')}`)
+    }
     const stamp = await sourceStamp(task, root)
     let plan
     if (dryRun) {
@@ -167,10 +173,10 @@ async function executeTask(ctx, task, index, timeoutMs) {
       else {
         const entries = task.source?.entries || JSON.parse(await readFile(task.source.path, 'utf8')).entries
         if (!Array.isArray(entries)) throw new Error('files 输入缺少 entries 数组')
-        plan = { entries: entries.map((e) => ({ ...e, assets: [{ target: e.target, kind: 'file' }] })) }
+        plan = { entries: entries.map((e) => ({ ...e, assets: [{ target: e.target, kind: 'file', category: e.category ?? 'other' }] })) }
       }
       if (stamp !== await sourceStamp(task, root)) throw new Error('规划期间源文件变化，请重新 dryRun')
-      plan = { ...plan, schema: 'gal-download-plan/2', taskId: id, root, sourceStamp: stamp, createdAt: new Date().toISOString() }
+      plan = { ...filterCategories(plan, task.skipCategories), schema: 'gal-download-plan/2', taskId: id, root, sourceStamp: stamp, createdAt: new Date().toISOString() }
     } else {
       await phase('读取此 task 已保存的 plan')
       try { plan = JSON.parse(await readFile(planPath, 'utf8')) } catch (error) {
@@ -183,6 +189,14 @@ async function executeTask(ctx, task, index, timeoutMs) {
     if (!Array.isArray(plan.entries)) throw new Error('plan 缺少 entries 数组')
     result.warnings = plan.warnings || []
     for (const warning of result.warnings) logger.log(`提示: ${warning}`)
+    result.classification = plan.classification || {}
+    result.categorySkipped = plan.skippedAssets?.length || 0
+    for (const [category, counts] of Object.entries(result.classification)) {
+      const label = Object.hasOwn(TSK_CATEGORIES, category) ? TSK_CATEGORIES[category] : ''
+      report(`分类 ${category}${label ? `（${label}）` : ''}: 文件 ${counts.total}，保留 ${counts.selected}，skip-category ${counts.skipped}`)
+    }
+    for (const asset of plan.skippedAssets || []) logger.log(`skip-category [${asset.category}]: ${asset.target}`)
+    if (result.categorySkipped) report(`分类跳过 ${result.categorySkipped} 个文件；完整列表见 plan.json.skippedAssets`)
     const inspector = createPathInspector(root, signal)
     const urls = new Set(), targets = new Set(), prepared = []
     const total = plan.entries.reduce((n, e) => n + (e.assets?.length || 0), 0)

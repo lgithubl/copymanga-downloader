@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.0.1）
+# Gal 数据下载 / 本地采集（纯 Node，v2.1.0）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -18,6 +18,7 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
       "logPrefix": "tsk-debug",
       "downloadLimit": 3,
       "concurrency": 2,
+      "skipCategories": ["shop", "equipment", "enemy-icon", "announcement"],
       "actions": ["download", "extract", "verify"],
       "source": {"type": "apk", "path": "/data/packages/base.apk"},
       "include": ["scenario", "image", "spine", "voice"]
@@ -38,7 +39,7 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 2. 确认日志后，仅把该 task.dryRun 改为 false：读取本 task 的已有 plan，重新检查目标文件，存在就 skip，缺失才下载、解包、校验、原子写入。
 
 正式执行不再解压 APK 或重新生成资源目录，只检查源文件路径/大小/mtime 和关键配置是否一致。
-没有 plan、源文件变化、目标目录/adapters/game/include/source 等关键配置变化时明确报错，要求先重新 dryRun:true。
+没有 plan、源文件变化、目标目录/adapters/game/include/source/skipCategories 等关键配置变化时明确报错，要求先重新 dryRun:true。
 修改 downloadLimit、concurrency、logPrefix、dryRun 不使 plan 失效。
 存在的文件一律 skip-existing 并逐路径记入日志，包括本工具以前生成的文件；不会自行覆盖或修复已有文件。需要补某个文件时，先自行将它移动到别处，再执行已有 plan。
 
@@ -49,6 +50,41 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 - plan 保留全量映射，执行结果和完整列表写入本次 result.json；缺依赖/limit 截断为 partial，错误为 failed。
 - 同一媒体独占锁。进程异常终止遗留 lock-* 时，确认无运行任务后将它移动到 /tmp/，不要直接删除。
 - 清理临时文件、释放锁和测试目录统一移动到 /tmp/gal-download-archive/，跨文件系统使用已有 mv 命令。
+
+## 按资源分类 skip
+
+skipCategories 放在每个 task 内，默认 []，不擅自跳过任何分类。include 仍是 scenario/image/spine/voice 这四种粗粒度资源类型；skipCategories 是下面的用途分类。
+
+| 分类 id | 含义 / 路径判据 |
+| --- | --- |
+| scenario | 剧情、Master 表 |
+| still | Stills 下的 CG、场景骨架和 atlas |
+| character | Characters 下的角色立绘、骨架 |
+| background | Adventure/BackGrounds 剧情背景 |
+| voice | Sound/Voice 角色语音 |
+| bgvoice | Sound/BgVoice 背景语音 |
+| bgm | Sound/Bgm 音乐 |
+| se | Sound/Se、Sound/BgSe 音效 |
+| character-icon | Sprites/Chara 中的其他角色图标、头像 |
+| enemy-icon | Sprites/Chara 中 basename 为 enemy_* 的图片，仅凭明确命名识别 |
+| picturebook | Sprites/PictureBook 图鉴图片 |
+| event | Sprites/EventQuest 和 m_event_* 活动横幅 |
+| gacha-animation | GachaCharaAnim 角色动画 |
+| gacha-ui | Sprites/Gacha 和 m_gacha_* 抽卡横幅 |
+| shop | Sprites/Shop 商品图片 |
+| equipment | Sprites/Equip 装备图片 |
+| item | Sprites/Item 道具图片 |
+| announcement | Sprites/StartupNotification 启动公告 |
+| banner | 其他 Sprites/Banner 横幅 |
+| other | 其他已支持但用途未识别的资源，默认保留 |
+
+分类按 catalog 原始路径判断，不下载文件来猜测用途。被跳过的文件不会导出或删除；日志逐项输出 skip-category [分类]，plan.classification 保存文件计数，plan.skippedAssets 保存完整跳过列表。
+同一个 bundle 或依赖被其他保留资源需要时，bundle 仍可能下载，但只导出保留资源；仅属于被跳过类别的孤立 bundle/依赖会移出 plan。
+分类统计单位是文件，下载上限与候选计数单位是 bundle，不能混为一谈。
+修改分类后必须先重新 dryRun:true；false 拒绝执行筛选规则不同的旧 plan。TSK 未知分类名直接报错，避免拼写错误导致下载范围失控。
+通用 files provider 也支持 skipCategories，entries[].category 可提供自定义分类，未标记的归 other。
+
+真实 APK 01.03.14 中，跳过示例四类会排除 7383 个文件，候选 bundle 从 26976 降为 19593；这不是当前库的实际缺失数。
 
 ## 实时日志与进度
 
