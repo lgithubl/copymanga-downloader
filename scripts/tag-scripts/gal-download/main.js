@@ -325,7 +325,7 @@ export async function generateTags(ctx) {
   if (ctx.type !== 'gal') throw new Error('gal-download 只支持 Gal 媒体')
   if (ctx.scope === 'units' || ctx.selectedUnitIds?.length) throw new Error('gal-download 只支持条目级执行')
   if (!Array.isArray(options.tasks)) throw new Error('tasks 必须是数组')
-  const moved = ['dryRun', 'logPrefix', 'downloadLimit', 'concurrency', 'runTimeoutMs'].filter((key) => options[key] !== undefined)
+  const moved = Object.keys(options).filter((key) => !['tasks', 'scriptTimeoutMs'].includes(key))
   if (moved.length) throw new Error(`${moved.join(', ')} 请移入各 tasks 配置；每个 task 独立管理`)
   const adapters = new Set(ctx.item?.adapters || [])
   const logs = [], tasks = [], results = [], ids = new Set()

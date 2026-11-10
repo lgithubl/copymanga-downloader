@@ -95,6 +95,7 @@ test('a nonmatching adapter does not touch media/cache or request any download',
   assert.equal(out.details.tasks[0].status, 'skipped')
   assert.equal(out.details.runDir, undefined)
   await assert.rejects(() => generateTags({ type: 'gal', script: { options: { dryRun: true, tasks: [] } } }), /移入各 tasks/)
+  await assert.rejects(() => generateTags({ type: 'gal', script: { options: { skipCategories: ['shop'], tasks: [] } } }), /移入各 tasks/)
 })
 
 test('uploading a new script package bypasses previously cached helper modules without a server restart', async () => {
