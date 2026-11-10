@@ -80,16 +80,19 @@ function textAsset(obj) {
   return { name: buffer.toString('utf8', 4, 4 + nameLength), bytes: buffer.subarray(start + 4, start + 4 + size) }
 }
 
-export async function planTsk(request) {
+export async function planTsk(request, progress = () => {}) {
   const source = request.source || {}, catalogs = []
   if (source.type === 'apk') {
     if (!source.path || !path.isAbsolute(source.path)) throw new Error('APK path 必须是本地绝对路径')
     for (const name of ['catalog.bundle', 'catalog_sound.bundle']) {
+      progress(`读取 APK: ${name}`)
       // unzip already exists in the application image; never download APKs, tools or dependencies here.
       const { stdout } = await exec('unzip', ['-p', source.path, `assets/aa/${name}`], { encoding: 'buffer', maxBuffer: 128 * 1024 * 1024 })
+      progress(`本地解压 / 解码: ${name} (${stdout.length} bytes)`)
       const found = openBundles([stdout]).objects.filter((o) => o.classId === 49).map((o) => JSON.parse(textAsset(o).bytes.toString('utf8'))).filter((c) => c?.m_EntryDataString)
       if (found.length !== 1) throw new Error(`${name}: 未找到唯一完整 catalog`)
       catalogs.push(...found)
+      progress(`已读取: ${name}`)
     }
   } else if (source.type === 'catalog') {
     for (const filename of source.paths || [source.path]) {
@@ -101,6 +104,7 @@ export async function planTsk(request) {
   if (!Array.isArray(include) || include.some((v) => !['scenario', 'image', 'spine', 'voice'].includes(v))) throw new Error('include 不合法')
   const selected = new Map(), unresolved = []
   for (const catalog of catalogs) {
+    progress('解析 Addressables 资源键和依赖')
     const entries = catalogEntries(catalog)
     function bundles(index, seen = new Set()) {
       if (seen.has(index)) return []

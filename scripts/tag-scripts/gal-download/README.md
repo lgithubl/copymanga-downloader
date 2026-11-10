@@ -1,94 +1,109 @@
-# Gal 数据下载 / 本地采集（纯 Node）
+# Gal 数据下载 / 本地采集（纯 Node，v2）
 
-只在 download 操作中请求用户配置的游戏数据 URL（files 清单或本地 APK/catalog 中的 bundle URL）。
-**不安装或下载 Python、UnityPy、uv、npm 包、解码器、类型数据库、APK 或其他工具。dryRun 不发起网络请求。**
-无需改服务端、Dockerfile 或 package.json。解码在 Node worker 中完成，避免阻塞服务器；媒体写入统一由主任务校验并原子 rename。
-APK 读取使用镜像原有 unzip，非 OGG 音频转换使用镜像原有 ffmpeg；缺少工具或不支持格式时明确报错，不自动补装。
+只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
+dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
 
-## 安装及配置
-
-```sh
-tar --exclude='__pycache__' -czf /tmp/gal-download-1.1.0.tgz -C scripts/tag-scripts gal-download
-```
-
-上传脚本包，在元数据脚本设置中配置 options，对 Gal 媒体执行。仅支持条目级执行。
+## 配置：所有下载选项归 task
 
 ```json
 {
-  "dryRun": true,
-  "logPrefix": "debug-tsk",
-  "downloadLimit": 3,
-  "concurrency": 2,
   "tasks": [
     {
+      "id": "tsk",
       "game": "tsk",
+      "adapters": ["utage-book"],
       "provider": "tsk",
-      "actions": ["collect", "download", "extract", "verify"],
-      "source": {"type": "apk", "path": "/data/packages/tsk.apk"},
+      "enabled": true,
+      "dryRun": true,
+      "logPrefix": "tsk-debug",
+      "downloadLimit": 3,
+      "concurrency": 2,
+      "actions": ["download", "extract", "verify"],
+      "source": {"type": "apk", "path": "/data/packages/base.apk"},
       "include": ["scenario", "image", "spine", "voice"]
     }
   ]
 }
 ```
 
-- tasks 按顺序执行；game 必须匹配当前条目的 config.game.id，enabled:false 跳过。
-- TSK 也支持 source:{type:"catalog",paths:["/data/catalog.json","/data/catalog_sound.json"]}，必须是本地完整 Addressables JSON。Release tsk 的 URL TSV 不含资源键及依赖映射，不能单独用它计算差集。
-- TSK 优先使用 gal-layout 写入的 config.resourceRoots[0] 作为目标目录；其他情况使用条目的 source.path。task.targetDir 可指定媒体内部相对目录。
-- 全局或 task.dryRun:true：读取本地输入，写 cache 中的计划和日志，不请求资源，不修改媒体数据。
-- downloadLimit：每个 task 本次最多下载多少个唯一 bundle/文件 URL，0 不限。缓存命中不占额度；顺序固定；依赖未到齐时不解包、不写残缺文件。
-- concurrency：下载并发 1–8；依赖下载结束后再解包。
-- 下载到 cache/bundles/*.part，校验后 rename 成缓存文件。校验大小、已提供的 SHA256、UnityFS 文件头；没有上游 SHA 时，本地摘要只检测缓存损坏。
-- 解包全部成功后才把该 bundle 的结果交给主任务；每个目标文件在自身目录写临时文件再 rename。已有非本工具管理的文件默认 preserved，避免无意义下载和覆盖；overwriteExisting:true 才替换。
-- 管理过的文件按来源指纹和文件 SHA 判定 unchanged。force:true 从缓存重新导出；refreshDownloads:true 重新请求清单中已配置的 URL，并计入 limit。不会自动删除媒体文件。
-- 同一媒体独占锁；异常退出遗留 lock-* 时需确认无运行任务后手动移除。runTimeoutMs 默认 25 分钟，scriptTimeoutMs 必须至少多 5 秒；截止时取消请求和解码线程。
-- 不生成永久状态标签，因此每次主动执行都会重新检查，不受宿主的同版本 tag 跳过影响。
+- tasks 按顺序执行，每项独立管理 dryRun、logPrefix、downloadLimit、concurrency、runTimeoutMs、plan、日志和进度。
+- adapters 必填且非空，至少一项必须出现在当前媒体的 item.adapters 中；game 若配置也必须匹配 config.game.id。不匹配直接 skip，不扫描、不下载。
+- id 应保持不变且唯一，用于寻找本 task 的 plan；省略时使用 task-<数组下标>，调整任务顺序后可能找不到原 plan。
+- 上层只保留 tasks 和宿主技术参数 scriptTimeoutMs（默认 1560000）。v1 的顶层 dryRun 等配置需移入各 task，不做静默继承。
+- TSK 默认使用 gal-layout 的 config.resourceRoots[0] 作为目标目录，否则使用 source.path；task.targetDir 可指定媒体内相对目录。
 
-## 本地采集和日志
+## 两阶段流程
 
-actions:["collect"] 可单独采集，不要求 source，也不访问网络。
-文件清单默认最多 100000 项（collectLimit），跳过符号链接和存档目录。
-collectPatterns 配置样本 glob，例如 ["Adventure/Master.chapter.json","Adventure/CharaScenario/*.book.json"]；默认不复制资源。
-collectSampleLimit 默认 10，collectMaxBytes 默认单文件 16 MiB；样本写入本次 cache 的 samples/。`**` 匹配至少一层目录。不自动上传。
+1. dryRun:true：解析本地 APK/catalog，按目录快照对比目标文件，保存**完整 plan**。
+2. 确认日志后，仅把该 task.dryRun 改为 false：读取本 task 的已有 plan，重新检查目标文件，存在就 skip，缺失才下载、解包、校验、原子写入。
 
-ctx.cacheDir/runs/<logPrefix>-<时间>-<runId>/ 保存 run.log、result.json、各任务的 plan.json / inventory.json / samples/。
-返回系统的日志包含摘要、前 30 项及完整日志绝对路径；更多条目在 result.json 和 plan.json。
-日志路径是服务器/容器内路径。日志不自动清理；保留 bundles 可避免重复下载。
-清理失败临时文件、释放锁和测试目录时统一移动到 /tmp/gal-download-archive/，不直接删除；跨文件系统使用现有 mv 命令。
-同步结果在 details.status 区分 completed / partial / failed；limit、缺依赖或未解析资源为 partial。
-宿主任务的完成状态表示脚本已经返回，具体结果以摘要和 result.json 为准。
+正式执行不再解压 APK 或重新生成资源目录，只检查源文件路径/大小/mtime 和关键配置是否一致。
+没有 plan、源文件变化、目标目录/adapters/game/include/source 等关键配置变化时明确报错，要求先重新 dryRun:true。
+修改 downloadLimit、concurrency、logPrefix、dryRun 不使 plan 失效。
+存在的文件一律 skip-existing 并逐路径记入日志，包括本工具以前生成的文件；不会自行覆盖或修复已有文件。需要补某个文件时，先自行将它移动到别处，再执行已有 plan。
 
-## 其他游戏
+- downloadLimit 为本次最多下载的唯一 bundle/文件 URL 数，0 不限。它**不截断 plan**；缓存命中不占额度，依赖未到齐时不导出残缺资源。
+- concurrency 为下载并发 1–8；依赖下载结束后逐 bundle 解包。
+- 下载流写 cache/bundles/*.part，校验大小/可选 SHA256/UnityFS 头后 rename 成缓存文件。
+- 解包在线程中完成，主任务再次检查目标存在性，在目标目录写临时文件再 rename。已完成的文件在下一次执行时直接 skip，下载缓存可复用。
+- plan 保留全量映射，执行结果和完整列表写入本次 result.json；缺依赖/limit 截断为 partial，错误为 failed。
+- 同一媒体独占锁。进程异常终止遗留 lock-* 时，确认无运行任务后将它移动到 /tmp/，不要直接删除。
+- 清理临时文件、释放锁和测试目录统一移动到 /tmp/gal-download-archive/，跨文件系统使用已有 mv 命令。
 
-通用 files provider 不需要 Unity 解码，可使用本地 JSON 清单或内联 entries：
+## 实时日志与进度
 
-```json
-{
-  "game": "another-game",
-  "provider": "files",
-  "source": {"entries": [{"url": "https://example.com/bg.png", "target": "images/bg.png"}]}
-}
+默认 cache 是 /data/cache/library/tag-script-cache/gal-download/（/data 由 DATA_DIR 决定）。
+每个 task 启动立即打印并创建：
+
+```text
+<cache>/runs/<logPrefix>-<时间>-<runId>/run.log
+<cache>/runs/<logPrefix>-<时间>-<runId>/progress.json
+<cache>/runs/<logPrefix>-<时间>-<runId>/result.json
 ```
 
-entries 中可提供 sha256 和 size。也可 source.path 指向 {entries:[...]} 的本地文件。
-游戏专有协议通过增加本地 provider 扩展，不能借此下载或安装运行环境。
+- run.log 实时追加阶段、每 5000 个文件的目录对比进度/当前路径、下载起止、解包、written、逐文件 skip-existing、错误；长阶段每 5 秒有进行中记录。
+- progress.json 实时保存阶段、compared/total/current 或下载 completed/total，以及耗时。result.json 在结束时保存结构化结果。
+- 系统的任务详情在函数返回后收到摘要和日志位置；运行中直接看 run.log / progress.json。容器 stdout 启动时也会打印日志路径。
+- 持久 plan 在 <cache>/plans/<媒体及task标识>/plan.json；同目录 current.json 指向本 task 最新日志。返回系统的日志会打印准确绝对路径。
+- 日志和 bundle 缓存不自动删除。
 
-## TSK 原生解码范围
+查看最新 tsk 日志（容器内）：
 
-- UnityFS：未压缩 / LZ4 / LZMA（包括 APK 内 catalog）；SerializedFile v17–22；读取包内 type tree，不获取外部数据库。
-- 剧情：MonoBehaviour 中的 importGridList / settingList → book/master JSON。
-- 骨架和 atlas：TextAsset 原始字节导出。
-- 图片：Alpha8 / RGB24 / RGBA32 / ARGB32 / BGRA32，及非旋转矩形 Sprite 裁剪 → PNG，编码使用 Node zlib。
-- 音频：原始 OGG 直接导出，其他格式交给现有 ffmpeg；它不能解码的 FSB 变体会失败并保留缓存。
-- 尚未支持：压缩纹理（ASTC/ETC/BC 等）、外部 SpriteAtlas/旋转 Sprite、缺失 type tree 的剧情对象，以及 APK 内置 bundle 导出。不把这些情况记为成功，也不会联网补工具。
-- 活动 banner_id 映射、游戏内 mod、机翻不在此脚本范围；保留已有文件。
+```sh
+GDL_LOG=$(find /data/cache/library/tag-script-cache/gal-download/runs -path '*/tsk-debug-*/run.log' | sort | tail -n 1)
+tail -f "$GDL_LOG"
+```
 
-UnityFS / PNG 编码复用仓库 unity-bundle.mjs / tomoe.mjs 的实现；公共字符串偏移是 Unity 文件格式常量（亦见 AssetStudio/CommonString.cs），不依赖这些项目的运行环境。
+runTimeoutMs 每 task 默认 1500000；总运行时间受宿主 scriptTimeoutMs 限制，临近总截止时不再启动后续 task。
+
+## 本地输入与采集
+
+TSK 支持 source:{type:"apk",path:"/data/packages/base.apk"} 或 source:{type:"catalog",paths:["/data/catalog.json","/data/catalog_sound.json"]}。
+必须使用完整 Addressables JSON；Release tsk 的 URL TSV 不含资源键/依赖映射，不能单独生成 plan。
+
+其他游戏可使用 provider:"files"，source:{entries:[{url:"https://example.com/bg.png",target:"images/bg.png",sha256:"可选完整SHA256",size:1234}]}；也可 source.path 指向 {entries:[...]} 的本地 JSON。
+
+单独本地采集设置 actions:["collect"]，无需 source/plan，不访问网络。默认下载流程不采集。
+collectLimit 默认清单最多 100000 项；collectPatterns 选择样本 glob，例如 ["Adventure/Master.chapter.json","Adventure/CharaScenario/*.book.json"]。
+collectSampleLimit 默认 10，collectMaxBytes 默认单文件 16 MiB；样本放本次 samples/，跳过符号链接和存档目录，不自动上传。
+
+## 原生解码范围
+
+Node worker 内解码，不阻塞服务端线程；没有运行时安装路径。
+APK 读取使用镜像原有 unzip，非 OGG 音频使用原有 ffmpeg（只允许 pipe 协议）。缺工具或不支持格式时失败并保留缓存。
+
+支持 UnityFS 未压缩/LZ4/LZMA，SerializedFile v17–22 包内 type tree，TextAsset 骨架/atlas，Utage book/master JSON，Alpha8/RGB24/RGBA32/ARGB32/BGRA32 和非旋转矩形 Sprite → PNG。
+暂不支持 ASTC/ETC/BC 压缩纹理、外部 SpriteAtlas/旋转 Sprite、缺少 type tree 的剧情对象，以及 APK 内置 bundle 导出。
+活动 banner_id、游戏内 mod、机翻不在范围内；不为这些功能额外联网。
+
+UnityFS/PNG 代码复用仓库实现，公共字符串偏移是 Unity 文件格式常量，不依赖外部项目运行环境。
 
 ## 验证
 
 ```sh
-node --test scripts/dev/gal-download-selftest.mjs scripts/dev/gal-download-native-selftest.mjs
-# 使用已有本地样本，不下载测试资源：
-GAL_TSK_SAMPLE_BUNDLE=/path/to/0000d4b46602cbae91e473ef0e25bbe1.bundle node --test scripts/dev/gal-download-native-selftest.mjs
-GAL_TSK_APK=/path/to/twinklestarknightsx-01.03.14-206.apk node --test scripts/dev/gal-download-native-selftest.mjs
+node --test scripts/dev/gal-download*selftest.mjs
+GAL_TSK_APK=/path/to/base.apk GAL_TSK_SAMPLE_BUNDLE=/path/to/sample.bundle node --test scripts/dev/gal-download*selftest.mjs
 ```
+
+性能回归覆盖缺失目录的实际 fs 调用数；日志回归在下载未完成时读取 run.log 和 progress.json。
+本机同一真实 APK 的完整 dryRun 从约 159 秒降到约 9.2 秒；这是本机空目标目录的数据，不代表所有存储设备的耗时。

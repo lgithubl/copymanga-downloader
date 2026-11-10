@@ -19,13 +19,17 @@ test('download lifecycle: dryRun, limit, atomic output, cache repair, collection
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${server.address().port}`
-  const ctx = (options) => ({ type: 'gal', item: { source: { path: media }, config: { game: { id: 'demo' } } }, cacheDir: path.join(dir, 'cache'), script: { options } })
+  const ctx = ({ tasks, ...taskOptions }) => ({ type: 'gal', item: { adapters: ['test-adapter'], source: { path: media }, config: { game: { id: 'demo' } } }, cacheDir: path.join(dir, 'cache'), script: { options: { tasks: tasks.map((task) => ({ adapters: ['test-adapter'], dryRun: false, ...taskOptions, ...task })) } } })
   const tasks = [{ game: 'demo', provider: 'files', source: { entries: [
     { url: `${base}/a`, target: 'images/a.bin' },
     { url: `${base}/b`, target: 'images/b.bin' },
   ] } }]
   const run = async (options) => {
-    const output = await generateTags(ctx({ tasks, ...options }))
+    const configured = ctx({ tasks, ...options })
+    if (configured.script.options.tasks.some((task) => !task.dryRun && !task.actions?.every((a) => a === 'collect'))) {
+      await generateTags({ ...configured, script: { options: { tasks: configured.script.options.tasks.map((task) => ({ ...task, dryRun: true })) } } })
+    }
+    const output = await generateTags(configured)
     const full = JSON.parse(await readFile(path.join(output.details.runDir, 'result.json')))
     assert.deepEqual(output.itemTags, [])
     assert.match(await readFile(output.details.logFile, 'utf8'), /日志:/)
@@ -45,10 +49,14 @@ test('download lifecycle: dryRun, limit, atomic output, cache repair, collection
     assert.equal(requests, 2)
     const again = await run({ downloadLimit: 1 })
     assert.equal(requests, 2)
-    assert.equal(again.full.results[0].summary.unchanged, 2)
+    assert.equal(again.full.results[0].summary['skip-existing'], 2)
     await writeFile(path.join(media, 'images/a.bin'), 'corrupted')
     await run({ downloadLimit: 1 })
     assert.equal(requests, 2, 'repair from cache without network')
+    assert.equal(await readFile(path.join(media, 'images/a.bin'), 'utf8'), 'corrupted', 'existing targets are skipped, even if changed externally')
+    await archiveToTmp(path.join(media, 'images/a.bin'))
+    await run({ downloadLimit: 1 })
+    assert.equal(requests, 2, 'missing target is restored from existing bundle/file cache')
     assert.equal(await readFile(path.join(media, 'images/a.bin'), 'utf8'), 'payload:/a')
     assert.ok(!(await readdir(path.join(media, 'images'))).some((name) => name.endsWith('.part')))
     const collect = await run({ tasks: [{ game: 'demo', actions: ['collect'], collectPatterns: ['images/*.bin'], collectSampleLimit: 1 }] })
@@ -63,11 +71,11 @@ test('download lifecycle: dryRun, limit, atomic output, cache repair, collection
     assert.equal(checksum.details.status, 'failed')
     assert.equal(requests, 5, 'invalid cache is not used; bounded retries')
     const mixed = await run({ tasks: [{ provider: 'invalid' }, { actions: ['collect'] }] })
-    assert.equal(mixed.full.results[0].status, 'failed')
-    assert.equal(mixed.full.results[1].status, 'completed')
+    assert.equal(mixed.details.tasks[0].status, 'failed')
+    assert.equal(mixed.details.tasks[1].status, 'completed')
     await writeFile(path.join(media, 'images/manual.bin'), 'manual')
     const readonly = await run({ tasks: [{ provider: 'files', source: { entries: [{ url: `${base}/b`, target: 'images/manual.bin' }] } }] })
-    assert.equal(readonly.full.results[0].summary.preserved, 1)
+    assert.equal(readonly.full.results[0].summary['skip-existing'], 1)
     assert.equal(await readFile(path.join(media, 'images/manual.bin'), 'utf8'), 'manual')
   } finally {
     server.closeAllConnections()
@@ -83,9 +91,9 @@ test('deadline aborts requests and releases the media lock without publishing pa
   const server = http.createServer((req, res) => { res.writeHead(200); res.write('partial') })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   try {
-    const result = await generateTags({ type: 'gal', item: { source: { path: root } }, cacheDir: path.join(dir, 'cache'), script: { options: {
-      runTimeoutMs: 1000,
-      tasks: [{ provider: 'files', source: { entries: [{ url: `http://127.0.0.1:${server.address().port}/slow`, target: 'output' }] } }],
+    await generateTags({ type: 'gal', item: { adapters: ['test-adapter'], source: { path: root } }, cacheDir: path.join(dir, 'cache'), script: { options: { tasks: [{ adapters: ['test-adapter'], dryRun: true, provider: 'files', source: { entries: [{ url: `http://127.0.0.1:${server.address().port}/slow`, target: 'output' }] } }] } } })
+    const result = await generateTags({ type: 'gal', item: { adapters: ['test-adapter'], source: { path: root } }, cacheDir: path.join(dir, 'cache'), script: { options: {
+      tasks: [{ adapters: ['test-adapter'], dryRun: false, runTimeoutMs: 1000, provider: 'files', source: { entries: [{ url: `http://127.0.0.1:${server.address().port}/slow`, target: 'output' }] } }],
     } } })
     assert.equal(result.details.status, 'failed')
     assert.deepEqual(await readdir(root), [])

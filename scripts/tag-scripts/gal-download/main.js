@@ -5,6 +5,8 @@ import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 import { nativeTask } from './worker-runner.mjs'
 import { archiveToTmp } from './archive.mjs'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs'
+import { createTaskLog } from './task-log.mjs'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -17,8 +19,7 @@ const json = async (p, v) => {
 }
 
 export async function targetPath(root, relative) {
-  if (typeof relative !== 'string' || !relative || relative.includes('\\') || relative.includes('\0') || path.isAbsolute(relative) || relative.split('/').some((s) => s === '..' || s === '.' || !s)) throw new Error(`不合法的目标路径: ${relative}`)
-  const target = path.resolve(root, relative)
+  const target = relativeTarget(root, relative)
   // Existing parent symlinks must stay inside the actual media directory.
   let parent = path.dirname(target)
   while (!await exists(parent)) parent = path.dirname(parent)
@@ -105,222 +106,234 @@ async function inventory(root, output, signal, options = {}) {
   return { count, samples }
 }
 
+const taskStatus = (entries, unresolved = []) => entries.some((e) => e.status === 'failed') ? 'failed' : unresolved.length || entries.some((e) => ['limited', 'missing-cache', 'dependency-skipped'].includes(e.status)) ? 'partial' : 'completed'
+
+async function sourceStamp(task, root) {
+  const provider = task.provider || task.game
+  if (!['tsk', 'files'].includes(provider)) throw new Error(`不支持 provider: ${provider}`)
+  const source = task.source || {}
+  const files = provider === 'tsk' ? (source.type === 'catalog' ? source.paths || [source.path] : [source.path]) : source.entries ? [] : [source.path]
+  const sources = []
+  for (const filename of files) {
+    if (typeof filename !== 'string' || !filename) throw new Error('source 必须指定本地 APK/catalog/清单路径')
+    const absolute = await realpath(filename), info = await stat(absolute)
+    sources.push({ path: absolute, size: info.size, mtimeMs: info.mtimeMs })
+  }
+  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, game: task.game || null, adapters: [...task.adapters].sort() }))
+}
+
+async function executeTask(ctx, task, index, timeoutMs) {
+  const id = task.id || `task-${index}`
+  const rootMedia = await realpath(ctx.item?.source?.path || '')
+  const relativeRoot = task.targetDir ?? ((task.provider || task.game) === 'tsk' ? ctx.item?.config?.resourceRoots?.[0] : '')
+  const root = relativeRoot && relativeRoot !== '.' ? await realpath(await targetPath(rootMedia, relativeRoot)) : rootMedia
+  if (!(await stat(root)).isDirectory()) throw new Error('目标必须是目录')
+  const cache = path.resolve(ctx.cacheDir)
+  if (cache === rootMedia || cache.startsWith(rootMedia + path.sep)) throw new Error('cacheDir 必须在媒体目录外')
+  const dryRun = task.dryRun !== false
+  const prefix = safe(task.logPrefix || id)
+  const runId = `${prefix}-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
+  const runDir = path.join(cache, 'runs', runId)
+  const logger = await createTaskLog(runDir, id)
+  const signal = AbortSignal.timeout(timeoutMs)
+  const planDir = path.join(cache, 'plans', `${sha(root).slice(0, 20)}-${sha(id).slice(0, 12)}`)
+  const planPath = path.join(planDir, 'plan.json')
+  const logs = [`任务 ${id} 日志: ${logger.logFile}`, `进度: ${logger.progressFile}`, `完整 plan: ${planPath}`]
+  const result = { index, id, dryRun, status: 'completed', entries: [], plan: planPath, runDir, logFile: logger.logFile, progressFile: logger.progressFile }
+  const report = (line) => { logs.push(line); logger.log(line) }
+  const phase = async (name, values = {}) => { signal.throwIfAborted(); await logger.progress(name, values) }
+  const lock = path.join(cache, `lock-${sha(rootMedia)}`)
+  let locked = false, changed = false
+  try {
+    await json(path.join(planDir, 'current.json'), { id, runDir, logFile: logger.logFile, progressFile: logger.progressFile, planPath })
+    try { await mkdir(lock); locked = true } catch (error) { if (error.code !== 'EEXIST') throw error; throw new Error(`媒体正在同步或有遗留锁: ${lock}`) }
+    await json(path.join(lock, 'owner.json'), { pid: process.pid, id, runId })
+    const actions = task.actions || ['download', 'extract', 'verify']
+    if (!Array.isArray(actions) || actions.some((a) => !['collect', 'plan', 'download', 'extract', 'verify'].includes(a))) throw new Error('actions 不合法')
+    if (actions.includes('collect')) {
+      await phase('本地采集')
+      result.inventory = path.join(runDir, 'inventory.json')
+      const inventoryResult = await inventory(root, result.inventory, signal, task)
+      result.collected = inventoryResult.count; result.samples = inventoryResult.samples
+      report(`采集 ${result.collected} 个文件，样本 ${result.samples.length} 个: ${result.inventory}`)
+    }
+    if (actions.length && actions.every((a) => a === 'collect')) return { logs, result }
+    const stamp = await sourceStamp(task, root)
+    let plan
+    if (dryRun) {
+      await phase('生成 plan：解析 APK / 资源目录')
+      if ((task.provider || task.game) === 'tsk') plan = await nativeTask('plan', { source: task.source, include: task.include }, { signal, log: logger.log })
+      else {
+        const entries = task.source?.entries || JSON.parse(await readFile(task.source.path, 'utf8')).entries
+        if (!Array.isArray(entries)) throw new Error('files 输入缺少 entries 数组')
+        plan = { entries: entries.map((e) => ({ ...e, assets: [{ target: e.target, kind: 'file' }] })) }
+      }
+      if (stamp !== await sourceStamp(task, root)) throw new Error('规划期间源文件变化，请重新 dryRun')
+      plan = { ...plan, schema: 'gal-download-plan/2', taskId: id, root, sourceStamp: stamp, createdAt: new Date().toISOString() }
+    } else {
+      await phase('读取此 task 已保存的 plan')
+      try { plan = JSON.parse(await readFile(planPath, 'utf8')) } catch (error) {
+        if (error.code === 'ENOENT') throw new Error(`没有 plan，请先为此 task 执行 dryRun:true: ${planPath}`)
+        throw error
+      }
+      if (plan.schema !== 'gal-download-plan/2' || plan.taskId !== id || plan.root !== root || plan.sourceStamp !== stamp) throw new Error('plan 与 APK/关键配置不一致，请先重新 dryRun:true')
+      logger.log(`使用已有 plan: ${planPath}；不再解压 APK、重新生成目录`)
+    }
+    if (!Array.isArray(plan.entries)) throw new Error('plan 缺少 entries 数组')
+    result.warnings = plan.warnings || []
+    for (const warning of result.warnings) logger.log(`提示: ${warning}`)
+    const inspector = createPathInspector(root, signal)
+    const urls = new Set(), targets = new Set(), prepared = []
+    const total = plan.entries.reduce((n, e) => n + (e.assets?.length || 0), 0)
+    let compared = 0, skipped = 0
+    await phase(dryRun ? '对比目录并完善完整 plan' : '执行 plan：检查存在文件并 skip', { compared: 0, total })
+    for (const entry of plan.entries) {
+      signal.throwIfAborted()
+      if (typeof entry.url !== 'string' || !/^https?:\/\//.test(entry.url) || urls.has(entry.url)) throw new Error(`plan URL 无效或重复: ${entry.url}`)
+      urls.add(entry.url)
+      const assets = [], preserved = []
+      for (const asset of entry.assets || []) {
+        if (targets.has(asset.target)) throw new Error(`重复目标文件: ${asset.target}`)
+        targets.add(asset.target)
+        const current = await inspector.inspect(asset.target)
+        if (current.exists) { preserved.push(asset.target); skipped++; logger.log(`skip-existing: ${asset.target}`) }
+        else assets.push(asset)
+        if (++compared % 5000 === 0) await phase('对比目录', { compared, total, skipped, current: asset.target })
+      }
+      prepared.push({ ...entry, assets, preserved })
+    }
+    result.preflight = inspector.stats
+    report(`目录对比完成: ${compared}/${total}，已存在 skip=${skipped}，读取目录 ${inspector.stats.directoriesRead} 个`)
+    if (dryRun) {
+      await phase('保存完整 plan（不受 downloadLimit 截断）', { compared, total, skipped })
+      await json(planPath, plan)
+      report(`已保存完整 plan: ${planPath}`)
+    }
+    const limit = Number(task.downloadLimit ?? 0)
+    if (!Number.isInteger(limit) || limit < 0) throw new Error('downloadLimit 必须是非负整数')
+    const required = new Set(prepared.filter((e) => e.assets.length).flatMap((e) => e.dependencies || []))
+    const bundleCache = path.join(cache, 'bundles')
+    const cacheNames = new Set(await readdir(bundleCache).catch((error) => { if (error.code === 'ENOENT') return []; throw error }))
+    const queue = []
+    let used = 0, checked = 0
+    await phase('检查缓存 / 应用本次下载 limit', { checked: 0, total: prepared.length })
+    for (const entry of prepared.sort((a, b) => a.url.localeCompare(b.url))) {
+      if (++checked % 1000 === 0) await phase('检查缓存 / 应用本次下载 limit', { checked, total: prepared.length })
+      const row = { url: entry.url, files: entry.assets.map((a) => a.target), skipped: entry.preserved, status: 'planned' }
+      result.entries.push(row)
+      if (!entry.assets.length && !required.has(entry.url)) { row.status = entry.preserved.length ? 'skip-existing' : 'unneeded'; continue }
+      const key = sha(entry.url)
+      let cached
+      if (cacheNames.has(key) && cacheNames.has(`${key}.json`)) try { cached = await download({ ...entry, cachedOnly: true }, bundleCache, signal, 1000) } catch {}
+      if (!cached && limit && used >= limit) { row.status = 'limited'; continue }
+      if (!cached) used++
+      if (dryRun) { row.status = cached ? 'would-use-cache' : 'would-download'; logger.log(`${row.status}: ${entry.url}，缺失文件 ${entry.assets.length} 个`); continue }
+      if (!actions.includes('download') && !cached) { row.status = 'missing-cache'; logger.log(`missing-cache: ${entry.url}`); continue }
+      queue.push({ entry, row, cached })
+    }
+    if (!dryRun) {
+      let completed = 0
+      const selected = queue.length
+      await phase('下载 bundle / 读取缓存', { completed, total: selected })
+      const work = async () => {
+        while (queue.length) {
+          signal.throwIfAborted()
+          const { entry, row, cached } = queue.shift()
+          try {
+            logger.log(`下载/读取缓存: ${entry.url}`)
+            const got = cached || await download(entry, bundleCache, signal, Math.max(1000, Number(task.requestTimeoutMs) || 120000))
+            row.cache = got.file; row.status = got.status
+            logger.log(`${row.status}: ${entry.url}`)
+          } catch (error) { row.status = 'failed'; row.error = error.message; logger.log(`failed: ${entry.url} ${error.message}`) }
+          completed++
+          await phase('下载 bundle / 读取缓存', { completed, total: selected, current: entry.url })
+        }
+      }
+      const workers = await Promise.allSettled(Array.from({ length: Math.min(8, Math.max(1, Math.floor(Number(task.concurrency) || 2))) }, work))
+      if (workers.some((w) => w.status === 'rejected')) throw new Error('运行超时或下载中断')
+      const preparedByUrl = new Map(prepared.map((e) => [e.url, e]))
+      const resultsByUrl = new Map(result.entries.map((r) => [r.url, r]))
+      for (const row of result.entries) {
+        if (!actions.includes('extract') || !row.cache || !row.files.length) continue
+        const entry = preparedByUrl.get(row.url)
+        try {
+          const dependencies = [], remaining = []
+          for (const asset of entry.assets) {
+            const target = await targetPath(root, asset.target)
+            if (await exists(target)) { logger.log(`skip-existing（写入前复查）: ${asset.target}`); row.skipped.push(asset.target) }
+            else remaining.push(asset)
+          }
+          if (!remaining.length) { row.status = 'skip-existing'; continue }
+          let blocked = false
+          for (const url of entry.dependencies || []) {
+            const dependency = resultsByUrl.get(url)
+            if (!dependency?.cache) { row.status = dependency?.status === 'failed' ? 'failed' : 'dependency-skipped'; row.error = `依赖不可用: ${url} (${dependency?.status})`; logger.log(`${row.status}: ${row.error}`); blocked = true; break }
+            dependencies.push(dependency.cache)
+          }
+          if (blocked) continue
+          await phase('解包 / 校验 / 原子写入', { bundle: row.url, files: remaining.length })
+          const exported = entry.bundle ? (await nativeTask('extract', { bundle: row.cache, dependencies, assets: remaining }, { signal, log: logger.log })).exports : [{ target: remaining[0].target, data: await readFile(row.cache) }]
+          row.written = []
+          for (const file of exported) {
+            signal.throwIfAborted()
+            const target = await targetPath(root, file.target)
+            if (await exists(target)) { row.skipped.push(file.target); logger.log(`skip-existing（写入前复查）: ${file.target}`); continue }
+            const bytes = Buffer.from(file.data)
+            if (!bytes.length) throw new Error(`导出结果为空: ${file.target}`)
+            await mkdir(path.dirname(target), { recursive: true })
+            const temp = `${target}.${runId}.part`
+            try { await writeFile(temp, bytes); signal.throwIfAborted(); await rename(temp, target) } finally { await archiveToTmp(temp) }
+            changed = true
+            if (sha(await readFile(target)) !== sha(bytes)) throw new Error(`写入校验失败: ${file.target}`)
+            row.written.push(file.target); logger.log(`written: ${file.target}`)
+          }
+          row.status = row.written.length ? 'written' : 'skip-existing'
+        } catch (error) { row.status = 'failed'; row.error = error.message; logger.log(`failed: ${row.url} ${error.message}`) }
+      }
+    }
+    if (changed) { const now = new Date(); await utimes(root, now, now); if (root !== rootMedia) await utimes(rootMedia, now, now) }
+    result.summary = result.entries.reduce((counts, e) => ({ ...counts, [e.status]: (counts[e.status] || 0) + 1 }), {})
+    result.status = dryRun ? 'completed' : taskStatus(result.entries, plan.unresolved)
+    report(`任务 ${id}: ${JSON.stringify(result.summary)}`)
+    for (const row of result.entries.slice(0, 30)) report(`${row.status}: ${[...row.files, ...row.skipped.map((f) => `${f} (skip-existing)`)].join(', ')}${row.error ? ` — ${row.error}` : ''}`)
+    if (result.entries.length > 30) report(`另 ${result.entries.length - 30} 项见完整 plan / result.json`)
+  } catch (error) { result.status = 'failed'; result.error = error.message; report(`任务 ${id} 失败: ${error.message}`) }
+  finally {
+    try { await json(path.join(runDir, 'result.json'), { runId, root, results: [result] }); await logger.close(result.status, result.summary) }
+    finally { if (locked) await archiveToTmp(lock) }
+  }
+  return { logs, result }
+}
+
 export async function generateTags(ctx) {
   const options = ctx.script?.options || {}
   if (ctx.type !== 'gal') throw new Error('gal-download 只支持 Gal 媒体')
   if (ctx.scope === 'units' || ctx.selectedUnitIds?.length) throw new Error('gal-download 只支持条目级执行')
   if (!Array.isArray(options.tasks)) throw new Error('tasks 必须是数组')
-  if (!ctx.item?.source?.path) throw new Error('条目缺少 source.path')
-  const root = await realpath(ctx.item.source.path)
-  const mediaRoot = root
-  const cache = path.resolve(ctx.cacheDir)
-  if (cache === root || cache.startsWith(root + path.sep)) throw new Error('cacheDir 必须在媒体目录外')
-  const prefix = safe(options.logPrefix)
-  const runId = `${prefix}-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
-  const runDir = path.join(cache, 'runs', runId)
-  await mkdir(runDir, { recursive: true })
-  const logFile = path.join(runDir, 'run.log')
-  const logs = [`日志: ${logFile}`, `完整列表: ${path.join(runDir, 'result.json')}`]
-  const allLogs = []
-  const log = (line) => { if (line) allLogs.push(`[${new Date().toISOString()}] ${line}`) }
-  const results = []
-  const timeoutMs = Math.max(1000, Number(options.runTimeoutMs) || 1500000)
-  if (timeoutMs + 5000 >= (Number(options.scriptTimeoutMs) || 1560000)) throw new Error('scriptTimeoutMs 必须比 runTimeoutMs 多至少 5 秒')
-  const signal = AbortSignal.timeout(timeoutMs)
-  const lock = path.join(cache, `lock-${sha(root)}`)
-  let locked = false
-  let changed = false
-  const changedRoots = new Set()
-  try {
-    try { await mkdir(lock); locked = true } catch { throw new Error(`媒体正在同步，或上次进程异常退出留下锁: ${lock}`) }
-    await json(path.join(lock, 'owner.json'), { pid: process.pid, runId, root })
-    for (const [index, task] of options.tasks.entries()) {
-      signal.throwIfAborted()
-      const result = { index, game: task?.game, entries: [], status: 'completed' }
-      results.push(result)
-      try {
-        if (!task || task.enabled === false || (task.game && ctx.item?.config?.game?.id !== task.game)) {
-          result.status = 'skipped'; result.message = '已禁用或 game.id 不匹配'; continue
-        }
-        const opts = { ...options, ...task }
-        const relativeRoot = task.targetDir ?? ((task.provider || task.game) === 'tsk' ? ctx.item?.config?.resourceRoots?.[0] : '')
-        const root = relativeRoot && relativeRoot !== '.' ? await realpath(await targetPath(mediaRoot, relativeRoot)) : mediaRoot
-        if (!(await stat(root)).isDirectory()) throw new Error('目标必须是目录')
-        const dryRun = options.dryRun === true || task.dryRun === true
-        const actions = task.actions || ['collect', 'download', 'extract', 'verify']
-        if (!Array.isArray(actions) || actions.some((x) => !['collect', 'plan', 'download', 'extract', 'verify'].includes(x))) throw new Error('actions 不合法')
-        const taskDir = path.join(runDir, String(index))
-        await mkdir(taskDir, { recursive: true })
-        if (actions.includes('collect')) {
-          result.inventory = path.join(taskDir, 'inventory.json')
-          const collected = await inventory(root, result.inventory, signal, opts)
-          result.collected = collected.count
-          result.samples = collected.samples
-        }
-        if (actions.length && actions.every((action) => action === 'collect')) {
-          logs.push(`任务 ${index}: 本地采集 ${result.collected} 个文件，${result.inventory}`)
-          continue
-        }
-        let plan
-        const statePath = path.join(cache, 'state', `${sha(root)}-${safe(task.provider || task.game)}.json`)
-        const state = JSON.parse(await readFile(statePath, 'utf8').catch(() => '{}'))
-        const ownedPaths = new Set(Object.values(state).flatMap((s) => (s.files || []).map((f) => f.path)))
-        const context = { signal, log }
-        if ((task.provider || task.game) === 'tsk') {
-          const source = task.source || {}
-          const request = { source, root, include: task.include, state, dryRun }
-          plan = await nativeTask('plan', request, context)
-        } else if (task.provider === 'files') {
-          const entries = task.source?.entries || JSON.parse(await readFile(task.source?.path, 'utf8')).entries
-          if (!Array.isArray(entries)) throw new Error('files 输入必须包含 entries 数组')
-          plan = { entries: entries.map((entry) => ({ ...entry, assets: [{ target: entry.target, kind: 'file' }] })) }
-        } else throw new Error(`不支持 provider: ${task.provider || task.game}`)
-        if (!Array.isArray(plan.entries)) throw new Error('计划缺少 entries')
-        // Validate the whole plan before any requests or writes.
-        const targets = new Set()
-        const urls = new Set()
-        for (const entry of plan.entries) {
-          if (typeof entry.url !== 'string') throw new Error('清单缺少 URL')
-          if (urls.has(entry.url)) throw new Error(`重复 URL: ${entry.url}`)
-          urls.add(entry.url)
-          for (const asset of entry.assets || []) {
-            await targetPath(root, asset.target)
-            if (targets.has(asset.target)) throw new Error(`重复目标文件: ${asset.target}`)
-            targets.add(asset.target)
-          }
-        }
-        await json(path.join(taskDir, 'plan.json'), plan)
-        result.plan = path.join(taskDir, 'plan.json')
-        result.warnings = plan.warnings || []
-        const limit = Number(opts.downloadLimit ?? 0)
-        if (!Number.isInteger(limit) || limit < 0) throw new Error('downloadLimit 必须是非负整数')
-        let used = 0
-        const queue = []
-        const prepared = []
-        for (const planned of [...plan.entries].sort((a, b) => a.url.localeCompare(b.url))) {
-          const entry = { ...planned, assets: [] }
-          const preserved = []
-          for (const asset of planned.assets || []) {
-            if (!opts.overwriteExisting && !ownedPaths.has(asset.target) && await exists(await targetPath(root, asset.target))) preserved.push(asset.target)
-            else entry.assets.push(asset)
-          }
-          const fingerprint = sha(JSON.stringify([entry.url, entry.sha256 || '', entry.assets, entry.dependencies || []]))
-          const previous = state[fingerprint]
-          let unchanged = false
-          if (!opts.force && !opts.refreshDownloads && entry.assets?.length && previous && (await Promise.all((previous.files || []).map(async (f) => {
-            const target = await targetPath(root, f.path)
-            return await exists(target) && sha(await readFile(target)) === f.sha256
-          }))).every(Boolean) && previous.files?.length === entry.assets?.length) {
-            unchanged = true
-          }
-          prepared.push({ ...entry, preserved, fingerprint, unchanged })
-        }
-        const requiredDependencies = new Set(prepared.filter((entry) => entry.assets.length && !entry.unchanged).flatMap((entry) => entry.dependencies || []))
-        for (const entry of prepared) {
-          const preserved = entry.preserved
-          const item = { url: entry.url, assets: entry.assets, preserved, fingerprint: entry.fingerprint, status: 'planned' }
-          result.entries.push(item)
-          if (!entry.assets.length && !requiredDependencies.has(entry.url)) { item.status = preserved.length ? 'preserved' : 'unneeded'; continue }
-          if (entry.unchanged && !requiredDependencies.has(entry.url)) { item.status = 'unchanged'; continue }
-          let cached = false
-          try { if (!opts.refreshDownloads) { await download({ ...entry, cachedOnly: true }, path.join(cache, 'bundles'), signal, 1000); cached = true } } catch {}
-          if (!cached && limit && used >= limit) { item.status = 'limited'; continue }
-          if (!cached) used++
-          if (dryRun || !actions.some((a) => a === 'download' || a === 'extract')) { item.status = cached ? 'would-use-cache' : 'would-download'; continue }
-          if (!actions.includes('download') && !cached) { item.status = 'missing-cache'; continue }
-          queue.push({ entry, item })
-        }
-        const work = async () => {
-          while (queue.length) {
-            signal.throwIfAborted()
-            const { entry, item } = queue.shift()
-            try {
-              const got = await download({ ...entry, refresh: opts.refreshDownloads, cachedOnly: !actions.includes('download') }, path.join(cache, 'bundles'), signal, Math.max(1000, Number(opts.requestTimeoutMs) || 120000))
-              item.cache = got.file; item.status = got.status
-            } catch (error) { item.status = 'failed'; item.error = error.message; result.status = 'failed' }
-          }
-        }
-        const workers = await Promise.allSettled(Array.from({ length: Math.min(8, Math.max(1, Math.floor(Number(opts.concurrency) || 2))) }, work))
-        if (workers.some((worker) => worker.status === 'rejected')) {
-          for (const item of result.entries) if (item.status === 'planned') { item.status = 'failed'; item.error = '运行超时或下载任务中断' }
-          result.status = 'failed'
-        }
-        const plannedByUrl = new Map(plan.entries.map((entry) => [entry.url, entry]))
-        const resultByUrl = new Map(result.entries.map((entry) => [entry.url, entry]))
-        // Wait for all downloads before extraction: a book or texture can refer to another dependency bundle.
-        for (const item of result.entries) {
-          if (!actions.includes('extract') || !['downloaded', 'cached'].includes(item.status) || !item.assets.length) continue
-          const entry = { ...plannedByUrl.get(item.url), assets: item.assets }
-          try {
-              const dependencies = []
-              let blocked = false
-              for (const url of entry.dependencies || []) {
-                const dependency = resultByUrl.get(url)
-                if (!dependency?.cache) {
-                  item.status = dependency?.status === 'failed' ? 'failed' : 'dependency-skipped'
-                  item.error = `依赖不可用: ${url} (${dependency?.status || 'missing'})`
-                  blocked = true
-                  if (item.status === 'failed') result.status = 'failed'
-                  break
-                }
-                dependencies.push(dependency.cache)
-              }
-              if (blocked) continue
-              // Do not replace unrelated existing files without an explicit request.
-              for (const asset of entry.assets) {
-                const target = await targetPath(root, asset.target)
-                const owned = ownedPaths.has(asset.target)
-                if (await exists(target) && !owned && !opts.overwriteExisting) throw new Error(`已有未托管文件，保留: ${asset.target}；确认替换时设置 overwriteExisting`)
-              }
-              const exports = entry.bundle
-                ? (await nativeTask('extract', { bundle: item.cache, dependencies, assets: entry.assets }, context)).exports
-                : [{ target: entry.assets[0].target, data: await readFile(item.cache) }]
-              item.files = []
-              for (const exported of exports) {
-                signal.throwIfAborted()
-                const bytes = Buffer.from(exported.data)
-                const target = await targetPath(root, exported.target)
-                await mkdir(path.dirname(target), { recursive: true })
-                const temp = `${target}.${runId}.part`
-                try { await writeFile(temp, bytes); signal.throwIfAborted(); await rename(temp, target) } finally { await archiveToTmp(temp) }
-                item.files.push({ path: exported.target, sha256: sha(bytes) })
-              }
-              changed = true
-              changedRoots.add(root)
-              changedRoots.add(mediaRoot)
-              for (const file of item.files) {
-                const bytes = await readFile(await targetPath(root, file.path))
-                if (!bytes.length || sha(bytes) !== file.sha256) throw new Error(`写入校验失败: ${file.path}`)
-              }
-              state[item.fingerprint] = { url: entry.url, files: item.files }
-              for (const file of item.files) ownedPaths.add(file.path)
-              await json(statePath, state)
-              item.status = 'written'
-            } catch (error) { item.status = 'failed'; item.error = error.message; result.status = 'failed' }
-            log(`${index} ${item.status} ${entry.assets.map((a) => a.target).join(', ')}`)
-        }
-        if (!dryRun) await json(statePath, state)
-        result.dryRun = dryRun
-        result.summary = result.entries.reduce((counts, e) => ({ ...counts, [e.status]: (counts[e.status] || 0) + 1 }), {})
-        if (!dryRun && result.status !== 'failed' && (plan.unresolved?.length || result.entries.some((e) => ['limited', 'missing-cache', 'dependency-skipped'].includes(e.status)))) result.status = 'partial'
-        logs.push(`任务 ${index} (${task.game || task.provider}): ${JSON.stringify(result.summary)}`)
-        for (const item of result.entries.slice(0, 30)) logs.push(`${item.status}: ${[...item.assets.map((a) => a.target), ...(item.preserved || []).map((p) => `${p} (保留已有)`)].join(', ')}${item.error ? ` — ${item.error}` : ''}`)
-        if (result.entries.length > 30) logs.push(`另 ${result.entries.length - 30} 条见 ${result.plan} / result.json`)
-      } catch (error) { result.status = 'failed'; result.error = error.message; logs.push(`任务 ${index} 失败: ${error.message}`) }
-    }
-    if (changed) {
-      // Context caches include root and immediate child mtimes; touching root invalidates deep resource additions.
-      const now = new Date()
-      for (const root of changedRoots) await utimes(root, now, now)
-    }
-  } catch (error) { results.push({ status: 'failed', error: error.message }); logs.push(`失败: ${error.message}`) }
-  finally {
+  const moved = ['dryRun', 'logPrefix', 'downloadLimit', 'concurrency', 'runTimeoutMs'].filter((key) => options[key] !== undefined)
+  if (moved.length) throw new Error(`${moved.join(', ')} 请移入各 tasks 配置；每个 task 独立管理`)
+  const adapters = new Set(ctx.item?.adapters || [])
+  const logs = [], tasks = [], results = [], ids = new Set()
+  const deadline = Date.now() + (Number(options.scriptTimeoutMs) || 1560000) - 10000
+  for (const [index, task] of options.tasks.entries()) { const id = task?.id || `task-${index}`; if (ids.has(id)) throw new Error(`task id 重复: ${id}`); ids.add(id) }
+  for (const [index, task] of options.tasks.entries()) {
+    const id = task?.id || `task-${index}`
     try {
-      await json(path.join(runDir, 'result.json'), { runId, root, results })
-      await writeFile(logFile, [...logs, ...allLogs].join('\n') + '\n')
-    } finally { if (locked) await archiveToTmp(lock) }
+      if (!task || typeof task !== 'object') throw new Error('task 必须是对象')
+      if (task.enabled === false) { tasks.push({ index, id, status: 'skipped', message: '任务已禁用' }); continue }
+      if (!Array.isArray(task.adapters) || !task.adapters.length || task.adapters.some((v) => typeof v !== 'string' || !v)) throw new Error('task.adapters 必须显式配置非空数组，例如 ["utage-book"]')
+      if (!task.adapters.some((adapter) => adapters.has(adapter)) || (task.game && task.game !== ctx.item?.config?.game?.id)) {
+        const message = `skip ${id}：adapters/game 不匹配，当前 adapters=${[...adapters].join(',')}`
+        logs.push(message); tasks.push({ index, id, status: 'skipped', message }); continue
+      }
+      const remaining = deadline - Date.now()
+      if (remaining < 1000) throw new Error('宿主任务剩余时间不足，未启动此 task')
+      if (!ctx.item?.source?.path) throw new Error('条目缺少 source.path')
+      const out = await executeTask(ctx, task, index, Math.max(1000, Math.min(Number(task.runTimeoutMs) || 1500000, remaining)))
+      results.push(out.result); logs.push(...out.logs)
+      tasks.push({ index, id, status: out.result.status, runDir: out.result.runDir, logFile: out.result.logFile, progressFile: out.result.progressFile, planPath: out.result.plan })
+    } catch (error) { tasks.push({ index, id, status: 'failed', error: error.message }); logs.push(`任务 ${id} 失败: ${error.message}`) }
   }
-  // Empty generated tags deliberately bypass the host's same-version tag skip.
-  const status = results.some((r) => r.status === 'failed') ? 'failed' : results.some((r) => r.status === 'partial') ? 'partial' : 'completed'
-  return { itemTags: [], logs, details: { status, runDir, logFile, results: results.map(({ entries, ...r }) => ({ ...r, entryCount: entries?.length || 0 })) } }
+  const status = tasks.some((r) => r.status === 'failed') ? 'failed' : tasks.some((r) => r.status === 'partial') ? 'partial' : 'completed'
+  return { itemTags: [], logs, details: { status, runDir: tasks.find((t) => t.runDir)?.runDir, logFile: tasks.find((t) => t.logFile)?.logFile, tasks, results: results.map(({ entries, ...r }) => ({ ...r, entryCount: entries.length })) } }
 }
