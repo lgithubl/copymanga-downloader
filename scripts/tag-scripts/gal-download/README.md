@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.1.0）
+# Gal 数据下载 / 本地采集（纯 Node，v2.1.1）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -102,6 +102,26 @@ skipCategories 放在每个 task 内，默认 []，不擅自跳过任何分类�
 - 系统的任务详情在函数返回后收到摘要和日志位置；运行中直接看 run.log / progress.json。容器 stdout 启动时也会打印日志路径。
 - 持久 plan 在 <cache>/plans/<媒体及task标识>/plan.json；同目录 current.json 指向本 task 最新日志。返回系统的日志会打印准确绝对路径。
 - 日志和 bundle 缓存不自动删除。
+
+每个 task 的日志末尾和系统返回值均有「分类下载汇总」，无需自己汇总 URL 明细。
+result.json / details.results 中的 categorySummary 按分类给出：
+
+| 字段 | 单位与口径 |
+| --- | --- |
+| missingFiles | 本轮开始时缺失、需要导出的文件数，包含受 limit 限制的文件 |
+| downloadBundles | 本轮开始时没有可用缓存、全量需要下载的唯一 bundle URL 数，不受 limit 截断 |
+| selectedDownloadBundles | 本次按 limit 选中的计划下载数，缓存不计入 |
+| cachedBundles | 所需 bundle 中已有有效缓存的数量 |
+| limitedBundles | 本次被 limit 跳过的 bundle 数 |
+| existingFiles | 本地已存在并 skip 的文件数 |
+| categorySkippedFiles | 被 skipCategories 排除的文件数 |
+| downloadedBundles | 实际下载成功数（正式执行时显示） |
+| writtenFiles | 实际写入文件数（正式执行时显示） |
+| failedBundles | 执行失败的 bundle 数（正式执行时显示） |
+
+分类内的 URL 会去重；一个共享 bundle 可能同时为多个分类服务，各分类数不能直接相加。
+categoryTotals 是全局按 URL 去重的总计。依赖跟随需要它的分类计数；已经存在的文件不再引入仅供它使用的依赖。
+本版为统计增强，已有 v2.1 plan 可继续使用，配置不需要改变。
 
 查看最新 tsk 日志（容器内）：
 

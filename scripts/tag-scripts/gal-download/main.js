@@ -4,12 +4,13 @@ import { createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.1.0'
-import { archiveToTmp } from './archive.mjs?v=2.1.0'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.1.0'
-import { createTaskLog } from './task-log.mjs?v=2.1.0'
-import { filterCategories } from './category-filter.mjs?v=2.1.0'
-import { TSK_CATEGORIES } from './tsk-categories.mjs?v=2.1.0'
+import { nativeTask } from './worker-runner.mjs?v=2.1.1'
+import { archiveToTmp } from './archive.mjs?v=2.1.1'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.1.1'
+import { createTaskLog } from './task-log.mjs?v=2.1.1'
+import { filterCategories } from './category-filter.mjs?v=2.1.1'
+import { TSK_CATEGORIES } from './tsk-categories.mjs?v=2.1.1'
+import { summarizeCategories } from './category-summary.mjs?v=2.1.1'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -215,7 +216,8 @@ async function executeTask(ctx, task, index, timeoutMs) {
         else assets.push(asset)
         if (++compared % 5000 === 0) await phase('对比目录', { compared, total, skipped, current: asset.target })
       }
-      prepared.push({ ...entry, assets, preserved })
+      const dependencies = assets.every((asset) => Array.isArray(asset.dependencies)) ? [...new Set(assets.flatMap((asset) => asset.dependencies))] : entry.dependencies || []
+      prepared.push({ ...entry, assets, preserved, dependencies })
     }
     result.preflight = inspector.stats
     report(`目录对比完成: ${compared}/${total}，已存在 skip=${skipped}，读取目录 ${inspector.stats.directoriesRead} 个`)
@@ -240,10 +242,12 @@ async function executeTask(ctx, task, index, timeoutMs) {
       const key = sha(entry.url)
       let cached
       if (cacheNames.has(key) && cacheNames.has(`${key}.json`)) try { cached = await download({ ...entry, cachedOnly: true }, bundleCache, signal, 1000) } catch {}
+      row.cacheAvailable = !!cached
       if (!cached && limit && used >= limit) { row.status = 'limited'; continue }
       if (!cached) used++
-      if (dryRun) { row.status = cached ? 'would-use-cache' : 'would-download'; logger.log(`${row.status}: ${entry.url}，缺失文件 ${entry.assets.length} 个`); continue }
+      if (dryRun) { row.transfer = cached ? 'cache' : 'download'; row.status = cached ? 'would-use-cache' : 'would-download'; logger.log(`${row.status}: ${entry.url}，缺失文件 ${entry.assets.length} 个`); continue }
       if (!actions.includes('download') && !cached) { row.status = 'missing-cache'; logger.log(`missing-cache: ${entry.url}`); continue }
+      row.transfer = cached ? 'cache' : 'download'
       queue.push({ entry, row, cached })
     }
     if (!dryRun) {
@@ -257,7 +261,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
           try {
             logger.log(`下载/读取缓存: ${entry.url}`)
             const got = cached || await download(entry, bundleCache, signal, Math.max(1000, Number(task.requestTimeoutMs) || 120000))
-            row.cache = got.file; row.status = got.status
+            row.cache = got.file; row.status = got.status; row.downloadStatus = got.status
             logger.log(`${row.status}: ${entry.url}`)
           } catch (error) { row.status = 'failed'; row.error = error.message; logger.log(`failed: ${entry.url} ${error.message}`) }
           completed++
@@ -312,6 +316,15 @@ async function executeTask(ctx, task, index, timeoutMs) {
     report(`任务 ${id}: ${JSON.stringify(result.summary)}`)
     for (const row of result.entries.slice(0, 30)) report(`${row.status}: ${[...row.files, ...row.skipped.map((f) => `${f} (skip-existing)`)].join(', ')}${row.error ? ` — ${row.error}` : ''}`)
     if (result.entries.length > 30) report(`另 ${result.entries.length - 30} 项见完整 plan / result.json`)
+    const categorySummary = summarizeCategories(plan, prepared, result.entries)
+    result.categorySummary = categorySummary.categories
+    result.categoryTotals = categorySummary.totals
+    report(`分类下载汇总（按本轮开始时的缺失/缓存状态统计；共享 bundle 可能属于多个分类，总计按 URL 去重）：`)
+    for (const [category, counts] of Object.entries(result.categorySummary)) {
+      const label = Object.hasOwn(TSK_CATEGORIES, category) ? TSK_CATEGORIES[category] : category
+      report(`${category}（${label}）: 待导出文件 ${counts.missingFiles}，需下载 bundle ${counts.downloadBundles}，本次计划下载 ${counts.selectedDownloadBundles}，缓存 ${counts.cachedBundles}，limit 跳过 ${counts.limitedBundles}，已有 skip ${counts.existingFiles}，分类 skip ${counts.categorySkippedFiles}${dryRun ? '' : `，已下载 ${counts.downloadedBundles}，已写入文件 ${counts.writtenFiles}，失败 bundle ${counts.failedBundles}`}`)
+    }
+    report(`分类总计（bundle 去重）: ${JSON.stringify(result.categoryTotals)}`)
   } catch (error) { result.status = 'failed'; result.error = error.message; report(`任务 ${id} 失败: ${error.message}`) }
   finally {
     try { await json(path.join(runDir, 'result.json'), { runId, root, results: [result] }); await logger.close(result.status, result.summary) }
