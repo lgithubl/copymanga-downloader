@@ -1,7 +1,7 @@
 {
   "id": "gal-download",
   "name": "Gal 数据下载 / 本地采集",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "纯 Node Gal 数据下载：每个 task 按 adapters/game 匹配并独立配置。dryRun:true 保存完整 plan，false 按已有 plan 下载，存在文件 skip。实时阶段日志及目录对比进度，不下载任何运行环境或工具。",
   "scope": ["item"],
   "libraryTypes": ["gal"],

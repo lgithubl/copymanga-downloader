@@ -3,10 +3,11 @@ import { mkdir, readFile, writeFile, rename, readdir, stat, realpath, utimes } f
 import { createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
-import { nativeTask } from './worker-runner.mjs'
-import { archiveToTmp } from './archive.mjs'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs'
-import { createTaskLog } from './task-log.mjs'
+// The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
+import { nativeTask } from './worker-runner.mjs?v=2.0.1'
+import { archiveToTmp } from './archive.mjs?v=2.0.1'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.0.1'
+import { createTaskLog } from './task-log.mjs?v=2.0.1'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')

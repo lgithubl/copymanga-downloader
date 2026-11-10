@@ -2,7 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, mkdir, readdir, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, cp, writeFile } from 'node:fs/promises'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import path from 'node:path'
 import http from 'node:http'
 import { generateTags } from '../tag-scripts/gal-download/main.js'
@@ -94,4 +95,23 @@ test('a nonmatching adapter does not touch media/cache or request any download',
   assert.equal(out.details.tasks[0].status, 'skipped')
   assert.equal(out.details.runDir, undefined)
   await assert.rejects(() => generateTags({ type: 'gal', script: { options: { dryRun: true, tasks: [] } } }), /移入各 tasks/)
+})
+
+test('uploading a new script package bypasses previously cached helper modules without a server restart', async () => {
+  const base = await mkdtemp('/tmp/gdl-hot-upload-')
+  const pkg = path.join(base, 'package'), media = path.join(base, 'media')
+  await cp(fileURLToPath(new URL('../tag-scripts/gal-download/', import.meta.url)), pkg, { recursive: true })
+  await mkdir(media)
+  await writeFile(path.join(pkg, 'package.json'), '{"type":"module"}')
+  const helper = path.join(pkg, 'worker-runner.mjs'), current = await readFile(helper)
+  await writeFile(helper, 'export async function nativeTask(){throw Error("cached old helper was used")}')
+  await import(pathToFileURL(helper).href)
+  await writeFile(helper, current)
+  const catalog = path.join(base, 'catalog.json'), zero = Buffer.alloc(4).toString('base64')
+  await writeFile(catalog, JSON.stringify({ m_BucketDataString: zero, m_KeyDataString: zero, m_EntryDataString: zero, m_InternalIds: [], m_InternalIdPrefixes: [] }))
+  try {
+    const fresh = await import(pathToFileURL(path.join(pkg, 'main.js')).href + '?uploaded=new')
+    const out = await fresh.generateTags({ type: 'gal', item: { adapters: ['utage-book'], source: { path: media } }, cacheDir: path.join(base, 'cache'), script: { options: { tasks: [{ id: 'hot', adapters: ['utage-book'], provider: 'tsk', dryRun: true, source: { type: 'catalog', path: catalog } }] } } })
+    assert.equal(out.details.status, 'completed', out.logs.join('\n'))
+  } finally { await archiveToTmp(base) }
 })

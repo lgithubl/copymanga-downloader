@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2）
+# Gal 数据下载 / 本地采集（纯 Node，v2.0.1）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -90,6 +90,7 @@ collectSampleLimit 默认 10，collectMaxBytes 默认单文件 16 MiB；样本�
 ## 原生解码范围
 
 Node worker 内解码，不阻塞服务端线程；没有运行时安装路径。
+辅助模块导入带脚本版本，上传新包不会复用旧模块缓存，无需重启容器；维护时同时更新 manifest.version 和 main.js 的 helper 版本查询参数。
 APK 读取使用镜像原有 unzip，非 OGG 音频使用原有 ffmpeg（只允许 pipe 协议）。缺工具或不支持格式时失败并保留缓存。
 
 支持 UnityFS 未压缩/LZ4/LZMA，SerializedFile v17–22 包内 type tree，TextAsset 骨架/atlas，Utage book/master JSON，Alpha8/RGB24/RGBA32/ARGB32/BGRA32 和非旋转矩形 Sprite → PNG。
