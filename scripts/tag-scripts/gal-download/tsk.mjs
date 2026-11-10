@@ -173,11 +173,11 @@ function texturePixels(texture, resources) {
   if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w * h > 64 * 1024 * 1024) throw new Error('纹理尺寸无效')
   const stream = texture.m_StreamData
   const raw = texture['image data']?.length ? texture['image data'] : resourceBytes(resources, stream.path, stream.offset, stream.size)
-  if (format === 47 || format === 50) {
+  if (format === 47 || format === 48 || format === 50) {
     const block = format === 50 ? 6 : 4
     const size = Math.ceil(w / block) * Math.ceil(h / block) * 16
     if (raw.length < size) throw new Error('压缩纹理数据截断')
-    const decoded = format === 50 ? decodeASTC(raw.subarray(0, size), w, h, 6, 6) : decodeETC2RGBA8(raw.subarray(0, size), w, h)
+    const decoded = format !== 47 ? decodeASTC(raw.subarray(0, size), w, h, block, block) : decodeETC2RGBA8(raw.subarray(0, size), w, h)
     const pixels = Buffer.alloc(w * h * 4), stride = w * 4
     for (let y = 0; y < h; y++) pixels.set(decoded.subarray((h - 1 - y) * stride, (h - y) * stride), y * stride)
     return { w, h, pixels }
@@ -237,11 +237,31 @@ export async function extractTsk(request) {
     const stem = path.posix.basename(asset.source).replace(/\.chapter\.asset$/, '')
     if (asset.kind === 'master' || asset.kind === 'book') {
       const field = asset.kind === 'master' ? 'settingList' : 'importGridList'
-      const candidates = objects.filter((o) => o.classId === 114).map(decode).filter((v) => v[field])
-      const expected = new Set([stem, path.posix.basename(asset.target).replace(/\.(?:book|chapter)\.json$/, '')])
-      if (/^Assets\/Adventure\/ImportChara\/\d+\.chapter\.asset$/.test(asset.source)) expected.add(`CharaScenario${stem}`)
-      const exact = candidates.filter((v) => expected.has((v.m_Name || '').replace(/\.(book|chapter)$/, '')))
-      const values = exact.length ? exact : candidates
+      const mono = objects.filter((o) => o.classId === 114)
+      const ids = containers.get(asset.source.toLowerCase()) || []
+      const chapters = mono.filter(o => ids.includes(o.pathId))
+      let values
+      if (chapters.length) {
+        if (chapters.length !== 1) throw new Error(`剧情入口不唯一: ${asset.source}`)
+        const chapter = decode(chapters[0])
+        if (asset.kind === 'book' && Array.isArray(chapter.dataList)) {
+          // Catalog chapter aliases need not share the referenced book's name.
+          values = chapter.dataList.flatMap(pointer => {
+            if (pointer.m_FileID !== 0) throw new Error(`剧情外部文件引用尚未支持: ${asset.source}`)
+            const matches = mono.filter(o => o.pathId === String(pointer.m_PathID))
+            if (matches.length !== 1) throw new Error(`剧情引用缺失或不唯一: ${asset.source}`)
+            const value = decode(matches[0])
+            if (!value[field]) throw new Error(`剧情引用不是 Utage book: ${asset.source}`)
+            return [value]
+          })
+        } else values = chapter[field] ? [chapter] : []
+      } else {
+        const candidates = mono.map(decode).filter(v => v[field])
+        const expected = new Set([stem, path.posix.basename(asset.target).replace(/\.(?:book|chapter)\.json$/, '')])
+        if (/^Assets\/Adventure\/ImportChara\/\d+\.chapter\.asset$/.test(asset.source)) expected.add(`CharaScenario${stem}`)
+        const exact = candidates.filter(v => expected.has((v.m_Name || '').replace(/\.(book|chapter)$/, '')))
+        values = exact.length ? exact : candidates
+      }
       if (values.length !== 1) throw new Error(`剧情对象缺失或不唯一: ${asset.source}`)
       data = Buffer.from(JSON.stringify(values[0]))
     } else {
@@ -254,7 +274,10 @@ export async function extractTsk(request) {
         while (true) { namesToMatch.add(name); if (!name.includes('.')) break; name = name.slice(0, name.lastIndexOf('.')) }
         candidates = objects.filter((o) => types.includes(o.classId) && namesToMatch.has(names(o)))
       }
-      if (asset.kind === 'png' && candidates.some((o) => o.classId === 213)) candidates = candidates.filter((o) => o.classId === 213)
+      // The PNG container can expose both its full texture and a trimmed Sprite subasset.
+      // Prefer the Texture2D to preserve atlas page coordinates and original PNG size.
+      if (asset.kind === 'png' && candidates.some(o => o.classId === 28)) candidates = candidates.filter(o => o.classId === 28)
+      else if (asset.kind === 'png' && candidates.some(o => o.classId === 213)) candidates = candidates.filter(o => o.classId === 213)
       if (candidates.length !== 1) throw new Error(`资源对象缺失或不唯一: ${asset.source}`)
       const obj = candidates[0]
       if (asset.kind === 'raw') data = textAsset(obj).bytes

@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.2.1）
+# Gal 数据下载 / 本地采集（纯 Node，v2.2.4）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -7,6 +7,7 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 
 ```json
 {
+  "scriptTimeoutMs": 7260000,
   "tasks": [
     {
       "id": "tsk",
@@ -20,6 +21,8 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
       "concurrency": 2,
       "requestIntervalMs": 1000,
       "retryDelayMs": 2000,
+      "runTimeoutMs": 7200000,
+      "requestTimeoutMs": 180000,
       "skipCategories": ["shop", "equipment", "enemy-icon", "announcement"],
       "actions": ["download", "extract", "verify"],
       "source": {"type": "apk", "path": "/data/packages/base.apk"},
@@ -42,7 +45,7 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 
 正式执行不再解压 APK 或重新生成资源目录，只检查源文件路径/大小/mtime 和关键配置是否一致。
 没有 plan、源文件变化、目标目录/adapters/game/include/source/skipCategories 等关键配置变化时明确报错，要求先重新 dryRun:true。
-修改 downloadLimit、concurrency、requestIntervalMs、retryDelayMs、logPrefix、dryRun 不使 plan 失效。
+修改 downloadLimit、concurrency、requestIntervalMs、retryDelayMs、runTimeoutMs、requestTimeoutMs、scriptTimeoutMs、logPrefix、dryRun 不使 plan 失效。
 存在的文件一律 skip-existing 并逐路径记入日志，包括本工具以前生成的文件；不会自行覆盖或修复已有文件。需要补某个文件时，先自行将它移动到别处，再执行已有 plan。
 
 - downloadLimit 为本次最多下载的唯一 bundle/文件 URL 数，0 不限。它**不截断 plan**；缓存命中不占额度，依赖未到齐时不导出残缺资源。
@@ -183,7 +186,15 @@ GDL_LOG=$(find /data/cache/library/tag-script-cache/gal-download/runs -path '*/t
 tail -f "$GDL_LOG"
 ```
 
-runTimeoutMs 每 task 默认 1500000；总运行时间受宿主 scriptTimeoutMs 限制，临近总截止时不再启动后续 task。
+### 超时配置（毫秒）
+
+- `scriptTimeoutMs`：放顶层，整个 tasks 数组共用的宿主时间上限，默认 1560000（26 分钟）。宿主直接读取配置，无需更新镜像。脚本预留最后 10 秒保存结果、日志和释放锁。
+- `tasks[].runTimeoutMs`：单个 task 的上限，覆盖规划、对比、下载及解包。未配置时使用整体剩余时间；显式配置超过剩余时间时会被截短。旧配置里若仍有 1500000，仍会在 25 分钟时停止，需修改或移除。
+- `tasks[].requestTimeoutMs`：每次 HTTP 请求连同响应体传输的上限，默认 120000（2 分钟），不控制本地解包；失败按重试配置处理。
+- 三项均为 1000–2147483647 的整数，0 不表示无限。多个 task 时整体时间需覆盖各 task 的预期耗时。
+- 上面的示例为整体 121 分钟、tsk 120 分钟、单次请求 3 分钟。启动日志打印 task 实际可用时间，便于确认是否被整体剩余时间截短。
+- task 到时立即停止：正在执行的 URL 标记 `interrupted`，本轮未处理的 URL 标记 `deferred`，不再连发失败日志。结果记为 partial（已有其他真正失败则 failed）。已完成文件与完整 bundle 缓存保留，再执行相同 plan 时跳过已有文件并复用缓存；未写出的资源重新导出。
+
 
 ## 本地输入与采集
 
@@ -202,7 +213,7 @@ Node worker 内解码，不阻塞服务端线程；没有运行时安装路径�
 辅助模块导入带脚本版本，上传新包不会复用旧模块缓存，无需重启容器；维护时同时更新 manifest.version 和 main.js 的 helper 版本查询参数。
 APK 读取使用镜像原有 unzip。FSB5 Vorbis 在 Node 内无损重建 OGG；PCM/MPEG 解封装后使用已有 ffmpeg（只允许 pipe 协议）转 OGG，优先 libvorbis，宿主仅有 libopus 时使用 Ogg Opus。缺少这两个编码器时明确失败并保留缓存，不安装或升级工具。
 
-支持 UnityFS 未压缩/LZ4/LZMA，SerializedFile v17–22 包内 type tree，TextAsset 骨架/atlas，Utage book/master JSON（含 ImportChara 编号与 CharaScenario 对象名关联），Alpha8/RGB24/RGBA32/ARGB32/BGRA32、ASTC 6×6（格式 50）、ETC2 RGBA8（格式 47）和非旋转矩形 Sprite → PNG。
+支持 UnityFS 未压缩/LZ4/LZMA，SerializedFile v17–22 包内 type tree，TextAsset 骨架/atlas，Utage book/master JSON（沿 chapter.dataList 引用读取实际 book，同时兼容 ImportChara 编号与 CharaScenario 对象名关联），Alpha8/RGB24/RGBA32/ARGB32/BGRA32、ASTC 4×4 / 6×6（格式 48 / 50）、ETC2 RGBA8（格式 47）和非旋转矩形 Sprite → PNG。同一 PNG 容器同时暴露 Texture2D / Sprite 时优先完整 Texture2D，保持 Spine atlas 坐标及页面尺寸。
 FSB5 支持单样本 Vorbis、PCM8/16/24/32/float 和 MPEG。Vorbis 完整静态 setup 头部表随包携带，缺少 CRC 时明确报错，不联网补取。图片解码源码和静态表的来源、固定版本与 MIT 许可证见 THIRD_PARTY_NOTICES.txt；无需 Python、UnityPy、WASM、npm install 或修改镜像依赖。
 暂不支持其他 ASTC/ETC/BC 格式、外部 SpriteAtlas/旋转 Sprite、缺少 type tree 的剧情对象，以及 APK 内置 bundle 导出。
 活动 banner_id、游戏内 mod、机翻不在范围内；不为这些功能额外联网。

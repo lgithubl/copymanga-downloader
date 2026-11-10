@@ -95,7 +95,9 @@ test('deadline aborts requests and releases the media lock without publishing pa
     const result = await generateTags({ type: 'gal', item: { adapters: ['test-adapter'], source: { path: root } }, cacheDir: path.join(dir, 'cache'), script: { options: {
       tasks: [{ adapters: ['test-adapter'], dryRun: false, runTimeoutMs: 1000, provider: 'files', source: { entries: [{ url: `http://127.0.0.1:${server.address().port}/slow`, target: 'output' }] } }],
     } } })
-    assert.equal(result.details.status, 'failed')
+    assert.equal(result.details.status, 'partial')
+    assert.equal(result.details.results[0].stopReason, 'timeout')
+    assert.equal(result.details.results[0].summary.interrupted, 1)
     assert.deepEqual(await readdir(root), [])
     assert.ok(!(await readdir(path.join(dir, 'cache'))).some((name) => name.startsWith('lock-')))
     assert.ok(!(await readdir(path.join(dir, 'cache/bundles'))).some((name) => name.endsWith('.part')))

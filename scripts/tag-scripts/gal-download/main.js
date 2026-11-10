@@ -6,13 +6,15 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.2.3'
-import { archiveToTmp } from './archive.mjs?v=2.2.3'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.3'
-import { createTaskLog } from './task-log.mjs?v=2.2.3'
-import { filterCategories } from './category-filter.mjs?v=2.2.3'
-import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.3'
-import { summarizeCategories } from './category-summary.mjs?v=2.2.3'
+import { nativeTask } from './worker-runner.mjs?v=2.2.4'
+import { archiveToTmp } from './archive.mjs?v=2.2.4'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.4'
+import { createTaskLog } from './task-log.mjs?v=2.2.4'
+import { filterCategories } from './category-filter.mjs?v=2.2.4'
+import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.4'
+import { summarizeCategories } from './category-summary.mjs?v=2.2.4'
+
+import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.4'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -155,7 +157,7 @@ async function inventory(root, output, signal, options = {}) {
   return { count, samples }
 }
 
-const taskStatus = (entries, unresolved = []) => entries.some((e) => e.status === 'failed') ? 'failed' : unresolved.length || entries.some((e) => ['limited', 'missing-cache', 'dependency-skipped'].includes(e.status)) ? 'partial' : 'completed'
+const taskStatus = (entries, unresolved = []) => entries.some((e) => e.status === 'failed') ? 'failed' : unresolved.length || entries.some((e) => ['limited', 'missing-cache', 'dependency-skipped', 'interrupted', 'deferred'].includes(e.status)) ? 'partial' : 'completed'
 
 async function sourceStamp(task, root) {
   const provider = task.provider || task.game
@@ -192,8 +194,12 @@ async function executeTask(ctx, task, index, timeoutMs) {
   const report = (line) => { logs.push(line); logger.log(line) }
   const phase = async (name, values = {}) => { signal.throwIfAborted(); await logger.progress(name, values) }
   const lock = path.join(cache, `lock-${sha(rootMedia)}`)
-  let locked = false, changed = false
+  let locked = false, changed = false, plan
+  const prepared = []
   try {
+    const requestTimeoutMs = readTimeoutMs(task.requestTimeoutMs, 120000, 'requestTimeoutMs')
+    result.timeouts = { runTimeoutMs: timeoutMs, requestTimeoutMs }
+    report(`超时配置（毫秒）: runTimeoutMs=${timeoutMs}，requestTimeoutMs=${requestTimeoutMs}；task 未配置 runTimeoutMs 时使用整体剩余时间`)
     const pacing = createRequestPacing(task, signal, logger.log)
     report(`请求节奏: requestIntervalMs=${pacing.requestIntervalMs}，retryDelayMs=${pacing.retryDelayMs}；缓存不等待`)
     await json(path.join(planDir, 'current.json'), { id, runDir, logFile: logger.logFile, progressFile: logger.progressFile, planPath })
@@ -214,7 +220,6 @@ async function executeTask(ctx, task, index, timeoutMs) {
       if (!Object.hasOwn(TSK_CATEGORIES, category)) throw new Error(`未知 TSK 分类 ${category}，可用分类: ${Object.keys(TSK_CATEGORIES).join(', ')}`)
     }
     const stamp = await sourceStamp(task, root)
-    let plan
     if (dryRun) {
       await phase('生成 plan：解析 APK / 资源目录')
       if ((task.provider || task.game) === 'tsk') plan = await nativeTask('plan', { source: task.source, include: task.include }, { signal, log: logger.log })
@@ -253,7 +258,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
     for (const asset of plan.skippedAssets || []) logger.log(`skip-category [${asset.category}]: ${asset.target}`)
     if (result.categorySkipped) report(`分类跳过 ${result.categorySkipped} 个文件；完整列表见 plan.json.skippedAssets`)
     const inspector = createPathInspector(root, signal)
-    const urls = new Set(), targets = new Set(), prepared = []
+    const urls = new Set(), targets = new Set()
     const total = plan.entries.reduce((n, e) => n + (e.assets?.length || 0), 0)
     let compared = 0, skipped = 0
     await phase(dryRun ? '对比目录并完善完整 plan' : '执行 plan：检查存在文件并 skip', { compared: 0, total })
@@ -314,19 +319,21 @@ async function executeTask(ctx, task, index, timeoutMs) {
           const { entry, row, cached } = queue.shift()
           try {
             logger.log(`下载/读取缓存: ${entry.url}`)
-            const got = cached || await download(entry, bundleCache, signal, Math.max(1000, Number(task.requestTimeoutMs) || 120000), pacing)
+            const got = cached || await download(entry, bundleCache, signal, requestTimeoutMs, pacing)
             row.cache = got.file; row.status = got.status; row.downloadStatus = got.status
             logger.log(`${row.status}: ${entry.url}`)
-          } catch (error) { row.status = 'failed'; row.error = error.message; logger.log(`failed: ${entry.url} ${error.message}`) }
+          } catch (error) { if (signal.aborted) { row.status = 'interrupted'; throw error }; row.status = 'failed'; row.error = error.message; logger.log(`failed: ${entry.url} ${error.message}`) }
           completed++
           await phase('下载 bundle / 读取缓存', { completed, total: selected, current: entry.url })
         }
       }
       const workers = await Promise.allSettled(Array.from({ length: Math.min(8, Math.max(1, Math.floor(Number(task.concurrency) || 2))) }, work))
-      if (workers.some((w) => w.status === 'rejected')) throw new Error('运行超时或下载中断')
+      if (signal.aborted) signal.throwIfAborted()
+      if (workers.some((w) => w.status === 'rejected')) throw workers.find(w => w.status === 'rejected').reason
       const preparedByUrl = new Map(prepared.map((e) => [e.url, e]))
       const resultsByUrl = new Map(result.entries.map((r) => [r.url, r]))
       for (const row of result.entries) {
+        signal.throwIfAborted()
         if (!actions.includes('extract') || !row.cache || !row.files.length) continue
         const entry = preparedByUrl.get(row.url)
         try {
@@ -361,7 +368,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
             row.written.push(file.target); logger.log(`written: ${file.target}`)
           }
           row.status = row.written.length ? 'written' : 'skip-existing'
-        } catch (error) { row.status = 'failed'; row.error = error.message; logger.log(`failed: ${row.url} ${error.message}`) }
+        } catch (error) { if (signal.aborted) { row.status = 'interrupted'; throw error }; row.status = 'failed'; row.error = error.message; logger.log(`failed: ${row.url} ${error.message}`) }
       }
     }
     if (changed) { const now = new Date(); await utimes(root, now, now); if (root !== rootMedia) await utimes(rootMedia, now, now) }
@@ -379,7 +386,21 @@ async function executeTask(ctx, task, index, timeoutMs) {
       report(`${category}（${label}）: 待导出文件 ${counts.missingFiles}，需下载 bundle ${counts.downloadBundles}，本次计划下载 ${counts.selectedDownloadBundles}，缓存 ${counts.cachedBundles}，limit 跳过 ${counts.limitedBundles}，已有 skip ${counts.existingFiles}，分类 skip ${counts.categorySkippedFiles}${dryRun ? '' : `，已下载 ${counts.downloadedBundles}，已写入文件 ${counts.writtenFiles}，失败 bundle ${counts.failedBundles}`}`)
     }
     report(`分类总计（bundle 去重）: ${JSON.stringify(result.categoryTotals)}`)
-  } catch (error) { result.status = 'failed'; result.error = error.message; report(`任务 ${id} 失败: ${error.message}`) }
+  } catch (error) {
+    if (signal.aborted) {
+      result.stopReason = 'timeout'
+      result.error = `task 到达时间上限 ${timeoutMs}ms，停止执行；缓存与已写入文件保留，下次使用原 plan 继续`
+      for (const row of result.entries) {
+        if (['planned', 'downloaded', 'cached'].includes(row.status)) row.status = 'deferred'
+        if (row.status === 'interrupted') row.error = result.error
+      }
+      result.status = dryRun || result.entries.some(row => row.status === 'failed') ? 'failed' : 'partial'
+      result.summary = result.entries.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {})
+      if (plan?.entries) { const summary = summarizeCategories(plan, prepared, result.entries); result.categorySummary = summary.categories; result.categoryTotals = summary.totals }
+      report(`任务 ${id} 超时停止: ${result.error}`)
+      report(`任务 ${id}: ${JSON.stringify(result.summary)}；interrupted=本次中断，deferred=下次待处理，完整列表见 result.json`)
+    } else { result.status = 'failed'; result.error = error.message; report(`任务 ${id} 失败: ${error.message}`) }
+  }
   finally {
     try { await json(path.join(runDir, 'result.json'), { runId, root, results: [result] }); await logger.close(result.status, result.summary) }
     finally { if (locked) await archiveToTmp(lock) }
@@ -396,7 +417,7 @@ export async function generateTags(ctx) {
   if (moved.length) throw new Error(`${moved.join(', ')} 请移入各 tasks 配置；每个 task 独立管理`)
   const adapters = new Set(ctx.item?.adapters || [])
   const logs = [], tasks = [], results = [], ids = new Set()
-  const deadline = Date.now() + (Number(options.scriptTimeoutMs) || 1560000) - 10000
+  const deadline = Date.now() + readTimeoutMs(options.scriptTimeoutMs, 1560000, 'scriptTimeoutMs') - 10000
   for (const [index, task] of options.tasks.entries()) { const id = task?.id || `task-${index}`; if (ids.has(id)) throw new Error(`task id 重复: ${id}`); ids.add(id) }
   for (const [index, task] of options.tasks.entries()) {
     const id = task?.id || `task-${index}`
@@ -411,7 +432,7 @@ export async function generateTags(ctx) {
       const remaining = deadline - Date.now()
       if (remaining < 1000) throw new Error('宿主任务剩余时间不足，未启动此 task')
       if (!ctx.item?.source?.path) throw new Error('条目缺少 source.path')
-      const out = await executeTask(ctx, task, index, Math.max(1000, Math.min(Number(task.runTimeoutMs) || 1500000, remaining)))
+      const out = await executeTask(ctx, task, index, taskTimeoutMs(task, remaining))
       results.push(out.result); logs.push(...out.logs)
       tasks.push({ index, id, status: out.result.status, runDir: out.result.runDir, logFile: out.result.logFile, progressFile: out.result.progressFile, planPath: out.result.plan })
     } catch (error) { tasks.push({ index, id, status: 'failed', error: error.message }); logs.push(`任务 ${id} 失败: ${error.message}`) }
