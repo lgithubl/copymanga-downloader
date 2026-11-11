@@ -6,16 +6,17 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.2.6'
-import { archiveToTmp, archiveToDirectory } from './archive.mjs?v=2.2.6'
-import { auditAtlasPages, filePngSize, pngSize } from './atlas-audit.mjs?v=2.2.6'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.6'
-import { createTaskLog } from './task-log.mjs?v=2.2.6'
-import { filterCategories } from './category-filter.mjs?v=2.2.6'
-import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.6'
-import { summarizeCategories } from './category-summary.mjs?v=2.2.6'
+import { nativeTask } from './worker-runner.mjs?v=2.2.7'
+import { archiveToTmp, archiveToDirectory } from './archive.mjs?v=2.2.7'
+import { auditAtlasPages, filePngSize, pngSize } from './atlas-audit.mjs?v=2.2.7'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.7'
+import { createTaskLog } from './task-log.mjs?v=2.2.7'
+import { filterCategories } from './category-filter.mjs?v=2.2.7'
+import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.7'
+import { summarizeCategories } from './category-summary.mjs?v=2.2.7'
 
-import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.6'
+import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.7'
+import { mergeMaster } from './master-sync.mjs?v=2.2.7'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -172,7 +173,7 @@ async function sourceStamp(task, root) {
     const absolute = await realpath(filename), info = await stat(absolute)
     sources.push({ path: absolute, size: info.size, mtimeMs: info.mtimeMs })
   }
-  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, skipCategories: [...new Set(task.skipCategories || [])].sort(), categoryPolicy: 3, game: task.game || null, adapters: [...task.adapters].sort() }))
+  return sha(JSON.stringify({ root, provider, source, sources, include: task.include || null, skipCategories: [...new Set(task.skipCategories || [])].sort(), categoryPolicy: 3, masterPolicy: 1, syncMaster: task.syncMaster !== false, game: task.game || null, adapters: [...task.adapters].sort() }))
 }
 
 async function executeTask(ctx, task, index, timeoutMs) {
@@ -199,7 +200,9 @@ async function executeTask(ctx, task, index, timeoutMs) {
   let locked = false, changed = false, plan
   const prepared = []
   let repairCandidates = new Map()
+  const masterTargets = new Set()
   result.repairs = { candidateFiles: 0, repairedFiles: 0, verifiedExistingFiles: 0, backupDir: path.join(cache, 'repair-backups', runId) }
+  result.masterSync = { enabled: task.syncMaster !== false, candidateFiles: 0, checkedFiles: 0, updatedFiles: 0, unchangedFiles: 0, addedRows: 0, updatedRows: 0, backupDir: path.join(cache, 'metadata-backups', runId), report: path.join(runDir, 'master-sync.json') }
   const failureCounts = { download: 0, extract: 0, write: 0 }
   try {
     const requestTimeoutMs = readTimeoutMs(task.requestTimeoutMs, 120000, 'requestTimeoutMs')
@@ -224,6 +227,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
     if ((task.provider || task.game) === 'tsk') for (const category of task.skipCategories || []) {
       if (!Object.hasOwn(TSK_CATEGORIES, category)) throw new Error(`未知 TSK 分类 ${category}，可用分类: ${Object.keys(TSK_CATEGORIES).join(', ')}`)
     }
+    if (task.syncMaster !== undefined && typeof task.syncMaster !== 'boolean') throw new Error('syncMaster 必须是布尔值')
     const stamp = await sourceStamp(task, root)
     if (dryRun) {
       await phase('生成 plan：解析 APK / 资源目录')
@@ -263,6 +267,9 @@ async function executeTask(ctx, task, index, timeoutMs) {
     for (const asset of plan.skippedAssets || []) logger.log(`skip-category [${asset.category}]: ${asset.target}`)
     if (result.categorySkipped) report(`分类跳过 ${result.categorySkipped} 个文件；完整列表见 plan.json.skippedAssets`)
     const inspector = createPathInspector(root, signal)
+    if (result.masterSync.enabled) for (const entry of plan.entries) for (const asset of entry.assets || []) if (asset.kind === 'master') masterTargets.add(asset.target)
+    result.masterSync.candidateFiles = masterTargets.size
+    for (const target of masterTargets) report(`master-sync-check: ${target}；${dryRun ? '仅规划：正式执行将核对官方内容，不修改已有文件' : '核对官方映射，保留已有中文显示名；变化时先备份到 cache'}`)
     await phase('检查已有骨架贴图与 atlas 尺寸')
     repairCandidates = await auditAtlasPages(plan, inspector, signal, values => phase('检查已有骨架贴图与 atlas 尺寸', values))
     result.repairs.candidateFiles = repairCandidates.size
@@ -282,7 +289,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
         if (targets.has(asset.target)) throw new Error(`重复目标文件: ${asset.target}`)
         targets.add(asset.target)
         const current = await inspector.inspect(asset.target)
-        if (current.exists && !repairCandidates.has(asset.target)) { preserved.push(asset.target); skipped++; logger.log(`skip-existing: ${asset.target}`) }
+        if (current.exists && !repairCandidates.has(asset.target) && !masterTargets.has(asset.target)) { preserved.push(asset.target); skipped++; logger.log(`skip-existing: ${asset.target}`) }
         else assets.push(asset)
         if (++compared % 5000 === 0) await phase('对比目录', { compared, total, skipped, current: asset.target })
       }
@@ -293,6 +300,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
     report(`目录对比完成: ${compared}/${total}，已存在 skip=${skipped}，读取目录 ${inspector.stats.directoriesRead} 个`)
     if (dryRun) {
       plan.repairCandidates = [...repairCandidates.values()]
+      plan.masterSyncCandidates = [...masterTargets]
       await phase('保存完整 plan（不受 downloadLimit 截断）', { compared, total, skipped })
       await json(planPath, plan)
       report(`已保存完整 plan: ${planPath}`)
@@ -316,7 +324,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
       row.cacheAvailable = !!cached
       if (!cached && limit && used >= limit) { row.status = 'limited'; continue }
       if (!cached) used++
-      if (dryRun) { row.transfer = cached ? 'cache' : 'download'; row.status = cached ? 'would-use-cache' : 'would-download'; logger.log(`${row.status}: ${entry.url}，缺失文件 ${entry.assets.length} 个`); continue }
+      if (dryRun) { row.transfer = cached ? 'cache' : 'download'; row.status = cached ? 'would-use-cache' : 'would-download'; logger.log(`${row.status}: ${entry.url}，待处理文件 ${entry.assets.length} 个（Master核对 ${entry.assets.filter(a => masterTargets.has(a.target)).length}，贴图核对 ${entry.assets.filter(a => repairCandidates.has(a.target)).length}）`); continue }
       if (!actions.includes('download') && !cached) { row.status = 'missing-cache'; logger.log(`missing-cache: ${entry.url}`); continue }
       row.transfer = cached ? 'cache' : 'download'
       queue.push({ entry, row, cached })
@@ -358,7 +366,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
           const dependencies = [], remaining = []
           for (const asset of entry.assets) {
             const target = await targetPath(root, asset.target)
-            if (await exists(target) && !repairCandidates.has(asset.target)) { logger.log(`skip-existing（写入前复查）: ${asset.target}`); row.skipped.push(asset.target) }
+            if (await exists(target) && !repairCandidates.has(asset.target) && !masterTargets.has(asset.target)) { logger.log(`skip-existing（写入前复查）: ${asset.target}`); row.skipped.push(asset.target) }
             else remaining.push(asset)
           }
           if (!remaining.length) { row.status = 'skip-existing'; continue }
@@ -377,13 +385,32 @@ async function executeTask(ctx, task, index, timeoutMs) {
           row.written = []
           for (const file of exported) {
             signal.throwIfAborted()
+            errorStage = 'write'
             const target = await targetPath(root, file.target)
-            const bytes = Buffer.from(file.data)
+            let bytes = Buffer.from(file.data)
             if (!bytes.length) throw new Error(`导出结果为空: ${file.target}`)
             const repair = repairCandidates.get(file.target)
+            const isMaster = masterTargets.has(file.target)
+            let metadata = null, previousDigest = null
+            if (isMaster) {
+              errorStage = 'extract'
+              const previous = await exists(target) ? await readFile(target) : null
+              previousDigest = previous ? sha(previous) : null
+              const merged = mergeMaster(previous, bytes)
+              bytes = merged.bytes
+              metadata = { target: file.target, ...merged.report, status: merged.changed ? 'pending' : 'unchanged', backup: null }
+              row.metadata ||= []; row.metadata.push(metadata); result.masterSync.checkedFiles++
+              if (!merged.changed) {
+                result.masterSync.unchangedFiles++; row.skipped.push(file.target)
+                logger.log(`master-sync-unchanged: ${file.target}；官方内容及本地显示名一致，保留原文件`)
+                continue
+              }
+              errorStage = 'write'
+            }
             let replace = false
             if (await exists(target)) {
-              if (repair) {
+              if (isMaster) replace = true
+              else if (repair) {
                 const canonical = pngSize(bytes), current = await filePngSize(target)
                 if (!canonical) throw new Error(`修复导出结果不是有效 PNG: ${file.target}`)
                 if (!current || current.width !== canonical.width || current.height !== canonical.height) replace = true
@@ -400,12 +427,17 @@ async function executeTask(ctx, task, index, timeoutMs) {
               if (replace && sha(await readFile(temp)) !== sha(bytes)) throw new Error(`临时文件写入校验失败: ${file.target}`)
               signal.throwIfAborted()
               if (replace) {
-                backup = await archiveToDirectory(target, result.repairs.backupDir)
+                if (isMaster && (previousDigest === null || sha(await readFile(target)) !== previousDigest)) throw new Error(`Master 在同步期间被修改，保留原文件，请重试: ${file.target}`)
+                backup = await archiveToDirectory(target, isMaster ? result.masterSync.backupDir : result.repairs.backupDir)
                 if (!backup) throw new Error(`待修复文件已变化或消失: ${file.target}`)
-                row.repairs ||= []
-                row.repairs.push({ target: file.target, backup, before: repair.png, after: pngSize(bytes), status: 'backed-up' })
-                logger.log(`repair-backup: ${file.target} → ${backup}`)
+                if (isMaster) { metadata.backup = backup; metadata.status = 'backed-up'; logger.log(`master-sync-backup: ${file.target} → ${backup}`) }
+                else {
+                  row.repairs ||= []
+                  row.repairs.push({ target: file.target, backup, before: repair.png, after: pngSize(bytes), status: 'backed-up' })
+                  logger.log(`repair-backup: ${file.target} → ${backup}`)
+                }
               }
+              if (isMaster && !replace && await exists(target)) throw new Error(`Master 在同步期间出现，保留原文件，请重试: ${file.target}`)
               await rename(temp, target)
             } catch (error) {
               if (backup && !await exists(target)) {
@@ -418,7 +450,10 @@ async function executeTask(ctx, task, index, timeoutMs) {
             changed = true
             if (sha(await readFile(target)) !== sha(bytes)) throw new Error(`写入校验失败: ${file.target}`)
             row.written.push(file.target); logger.log(`written: ${file.target}`)
-            if (replace) { result.repairs.repairedFiles++; row.repairs.at(-1).status = 'repaired'; logger.log(`repair-written: ${file.target}，${JSON.stringify(repair.png)} → ${JSON.stringify(pngSize(bytes))}，旧文件备份: ${backup}`) }
+            if (isMaster) {
+              metadata.status = 'updated'; result.masterSync.updatedFiles++; result.masterSync.addedRows += metadata.addedRows; result.masterSync.updatedRows += metadata.updatedRows
+              logger.log(`master-sync-written: ${file.target}，新增映射 ${metadata.addedRows}，更新映射 ${metadata.updatedRows}，保留显示名 ${metadata.preservedNames}；备份: ${backup || '原文件不存在'}`)
+            } else if (replace) { result.repairs.repairedFiles++; row.repairs.at(-1).status = 'repaired'; logger.log(`repair-written: ${file.target}，${JSON.stringify(repair.png)} → ${JSON.stringify(pngSize(bytes))}，旧文件备份: ${backup}`) }
           }
           row.writeStatus = 'completed'
           row.status = row.written.length ? 'written' : 'skip-existing'
@@ -462,6 +497,10 @@ async function executeTask(ctx, task, index, timeoutMs) {
   }
   finally {
     try {
+      if (masterTargets.size) {
+        await json(result.masterSync.report, { ...result.masterSync, candidates: [...masterTargets], files: result.entries.flatMap(row => row.metadata || []) })
+        report(`Master同步汇总: 待核对 ${result.masterSync.candidateFiles}，已核对 ${result.masterSync.checkedFiles}，更新 ${result.masterSync.updatedFiles}，内容一致 skip ${result.masterSync.unchangedFiles}，新增映射 ${result.masterSync.addedRows}；详情: ${result.masterSync.report}；备份: ${result.masterSync.backupDir}`)
+      }
       await json(result.repairs.report || path.join(runDir, 'repairs.json'), { ...result.repairs, candidates: [...repairCandidates.values()], files: result.entries.flatMap(row => row.repairs || []) })
       if (result.repairs.candidateFiles) report(`贴图核对汇总: 候选 ${result.repairs.candidateFiles}，已修复 ${result.repairs.repairedFiles}，原始尺寸一致 skip ${result.repairs.verifiedExistingFiles}；旧文件备份在 cache: ${result.repairs.backupDir}；详情: ${result.repairs.report}`)
       result.failureSummary = { ...failureCounts }

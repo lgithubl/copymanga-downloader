@@ -1,10 +1,14 @@
 {
   "id": "gal-download",
   "name": "Gal 数据下载 / 本地采集",
-  "version": "2.2.6",
-  "description": "纯 Node Gal 数据下载：每个 task 按 adapters/game 匹配并独立配置。dryRun:true 保存完整 plan，false 按已有 plan 下载，正常已有文件 skip，骨架贴图尺寸异常时核对原始纹理并备份到 cache 后修复。实时阶段日志及目录对比进度，不下载任何运行环境或工具。",
-  "scope": ["item"],
-  "libraryTypes": ["gal"],
+  "version": "2.2.7",
+  "description": "纯 Node Gal 数据下载：每个 task 独立匹配、配置与日志。dryRun 保存完整 plan，正式执行跳过已有资源；Master 内容同步保留中文显示名并备份到 cache，骨架贴图核对原始纹理后修复。不下载运行环境或工具。",
+  "scope": [
+    "item"
+  ],
+  "libraryTypes": [
+    "gal"
+  ],
   "defaultEnabled": false,
   "main": "main.js",
   "options": {

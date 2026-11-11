@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.2.6）
+# Gal 数据下载 / 本地采集（纯 Node，v2.2.7）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -16,6 +16,7 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
       "provider": "tsk",
       "enabled": true,
       "dryRun": true,
+      "syncMaster": true,
       "logPrefix": "tsk-debug",
       "downloadLimit": 3,
       "concurrency": 2,
@@ -41,11 +42,22 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 ## 两阶段流程
 
 1. dryRun:true：解析本地 APK/catalog，按目录快照对比目标文件，保存**完整 plan**。
-2. 确认日志后，仅把该 task.dryRun 改为 false：读取本 task 的已有 plan，重新检查目标文件，正常存在文件 skip，缺失文件按需下载、解包、校验、原子写入；骨架贴图尺寸异常则核对原始纹理后备份修复。
+2. 确认日志后，仅把该 task.dryRun 改为 false：读取本 task 的已有 plan，重新检查目标文件，正常存在文件 skip，缺失文件按需下载、解包、校验、原子写入；Master 表按下述规则同步，骨架贴图尺寸异常则核对原始纹理后备份修复。
 
 正式执行不再解压 APK 或重新生成资源目录，只检查源文件路径/大小/mtime 和关键配置是否一致。
 没有 plan、源文件变化、目标目录/adapters/game/include/source/skipCategories 等关键配置变化时明确报错，要求先重新 dryRun:true。
 修改 downloadLimit、concurrency、requestIntervalMs、retryDelayMs、runTimeoutMs、requestTimeoutMs、scriptTimeoutMs、logPrefix、dryRun 不使 plan 失效。
+
+### Master 内容同步
+
+`task.syncMaster` 默认 `true`，只作用于当前 plan 中选中、未被分类 skip 的 `kind: master` 资源。角色映射表已存在也必须核对官方内容；否则会出现新剧情/骨架已下载、旧 Master 缺角色键而无法显示立绘的问题。`syncMaster:false` 显式恢复已有文件直接 skip。此配置属于 plan 关键配置，切换后需重新 dryRun；从2.2.6升级也要先重新生成 plan。
+
+- dryRun 只记录 `master-sync-check` 和 `plan.masterSyncCandidates`，不取 CDN、不改媒体，不宣称已确定需要更新；实际核对在正式执行时进行。Master及其依赖缺少有效缓存时按下载 limit/间隔下载，之后使用已校验缓存。
+- 正式执行以官方表更新运行映射，按角色键保留已有 `NameText`、本地额外别名与 `_tsk_*` 翻译标记。新增角色可通过相同官方显示名的已有映射继承译名；存在多个不同译名时保留官方名，不猜译名。Character/Texture/Sound 表按列名合并，保留本地额外表。
+- 写入前完成解析和临时文件校验；变化时旧 Master 移到 `cacheDir/metadata-backups/<runId>/`，再原子替换。官方表无效、已有表不可解析或写入前被修改会报错并保留旧文件；提交失败会尝试从备份恢复，备份仍保留。内容一致输出 `master-sync-unchanged`，不会反复覆盖或下载。
+- 每次运行输出 `master-sync.json`，记录待核对/已核对/已更新/一致skip数量、新增/更新映射及逐表键清单、备份位置；`result.json.masterSync` 与系统日志有汇总。分类中的“待导出文件”包含待核对 Master，不代表该文件不存在或已确认过时。
+- 此更新只需更新统一 tag 包，无需为 Master 同步更新镜像。完成后刷新游戏列表索引/重新进入场景，使播放器取得新上下文；不需删除重下角色贴图。
+
 正常已有文件 skip-existing。对当前 task 已选中、未被分类 skip 的骨架图集，自动读取 PNG 头部与 atlas 声明尺寸：不一致只作为修复候选（也可能是正常缩放）。dryRun:true 在 plan.repairCandidates 记录候选，不移动文件；false 使用已有 plan 并重新核对本地文件，从已校验的 bundle 缓存导出原始纹理。若原始纹理尺寸与现有 PNG 一致则继续 skip；确实不一致时，先完成并校验新 PNG，再将旧 PNG 移到 cacheDir/repair-backups/<runId>/ 下备份，然后原子替换。缺少有效 bundle 缓存时按正常下载 limit 下载。无需人工查找或移走旧图，也不需要重新生成已有 plan。
 
 - downloadLimit 为本次最多下载的唯一 bundle/文件 URL 数，0 不限。它**不截断 plan**；缓存命中不占额度，依赖未到齐时不导出残缺资源。
