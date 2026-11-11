@@ -137,3 +137,71 @@ with tarfile.open(fileobj=io.BytesIO(part.read_bytes()), mode='r:gz') as archive
     assert archive.extractfile(prefix + row['payload']).read() == b'cmp'
 assert before_probe == (exe.stat().st_size, exe.stat().st_mtime_ns, exe.read_bytes())
 print('PASS: EVB file table, resource offsets, selected JSON/plugin stored blocks, compressed blocks preserved, media/save/runtime excluded, EXE read-only')
+
+# New media mode must collect only the exact requested samples across three games.
+import ast
+source = Path('scripts/dev/gal-collect-run.sh').read_text()
+config = ast.literal_eval(next(line.split(' = ', 1)[1] for line in source.splitlines() if line.startswith('RPG_MEDIA_SAMPLES = ')))
+for game_id in ['RJ01282923', 'RJ01402662']:
+    for rel in config[game_id]['files']:
+        put(game_id + '/' + rel, 'media fixture ' + rel)
+    put(game_id + '/data/System.json', '{}')
+    put(game_id + '/audio/se/never-upload.ogg', 'unrequested media')
+# Build packed MV media files and extra data that must remain unselected.
+entries = {rel: b'packed media ' + rel.encode('utf-8') for rel in config['RJ01220265']['files']}
+entries['data/System.json'] = b'{}'
+entries['js/plugins.js'] = b'var $plugins=[];'
+entries['audio/voice/never-upload.rpgmvo'] = b'unrequested media'
+tree = {}
+for rel, data in entries.items():
+    node = tree
+    pieces = rel.split('/')
+    for part in pieces[:-1]:
+        node = node.setdefault(part, {})
+    node[pieces[-1]] = data
+contents = []
+def node_tree(name, node):
+    if isinstance(node, dict):
+        return vfs_node(name, children=[node_tree(k, v) for k, v in node.items()])
+    return vfs_node(name, data=node)
+stream = node_tree('www', tree)
+length = 79 + len(stream)
+resource = b'EVB\0' + b'\0'*60 + struct.pack('<I8sI', length-68, b'\0'*8, 1) + stream[1:] + b''.join(contents)
+loader_offset = ((4096+len(resource)+511)//512)*512
+new_image = bytearray(loader_offset+256)
+new_image[:512] = image[:512]
+for index, (offset, size) in enumerate([(4096, len(resource)), (loader_offset, 256)]):
+    at = 128+24+224+index*40
+    struct.pack_into('<IIII', new_image, at+8, size, offset, size, offset)
+new_image[4096:4096+len(resource)] = resource
+exe.write_bytes(new_image)
+media_out = base / 'media-out'
+run = subprocess.run(['bash', 'scripts/dev/gal-collect-run.sh', str(root)], env=dict(env, GAL_COLLECT_RULES='^rpgmaker:media-samples$', GAL_COLLECT_OUT=str(media_out)), capture_output=True, text=True)
+assert run.returncode == 0, run.stdout + run.stderr
+parts = sorted(media_out.glob('*-g*.tar.gz.part-000'))
+assert len(parts) == 3, parts
+selected_count = 0
+for part in parts:
+    with tarfile.open(fileobj=io.BytesIO(part.read_bytes()), mode='r:gz') as archive:
+        names = archive.getnames()
+        plan = json.load(archive.extractfile(next(n for n in names if n.endswith('__media_sample_plan.json'))))
+        assert not plan['missingLoose'], plan
+        if plan['packed']:
+            index_name = next(n for n in names if n.endswith('/vfs-index.json'))
+            ix = json.load(archive.extractfile(index_name))
+            assert ix['status'] == 'indexed' and not ix['missingRequested'], ix
+            assert len(ix['selected']) == len(config[plan['game']]['files'])
+            assert not any(n.endswith(('vfs-table.bin', 'head.bin', 'tail.bin')) for n in names), names
+            for row in ix['selected']:
+                logical = row['path'].removeprefix('www/')
+                assert logical in config['RJ01220265']['files']
+                payload = archive.extractfile(index_name.removesuffix('vfs-index.json') + row['payload']).read()
+                assert payload == entries[logical]
+            selected_count += len(ix['selected'])
+        else:
+            selected_count += len(plan['selectedLoose'])
+            assert len(plan['selectedLoose']) == len(config[plan['game']]['files'])
+            assert not any(n.endswith(('System.json', 'plugins.js', 'never-upload.ogg')) for n in names), names
+assert selected_count == 24, selected_count
+assert exe.read_bytes() == new_image
+print('PASS: exact 24 requested media samples across loose MZ and packed MV; no duplicate source data or unrequested media, no full EXE, source unchanged')
