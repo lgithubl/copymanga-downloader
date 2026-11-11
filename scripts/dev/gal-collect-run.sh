@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.47 RJ01220265补采封装资源表及data/plugin源码原始块（压缩块原样保留），仅Python标准库、只读；格式不符保留小段头并报告。
 # 1.46 本轮仅补采RJ01220265：readme及EXE各256KB头尾，用来识别单文件封装；不收完整1.8GB EXE，不重收两个MZ游戏。
 # 1.45 本轮采新RJ游戏（排除已采RJ01482469）：目录清单、data JSON、引擎/插件JS、小配置；不收图片/声音/视频/EXE或运行时库。
 # 1.44 GAL_COLLECT_TSK_LOG=N 采最近N次TSK日志，空值兼容1次；无关游戏日志不计入N。
@@ -66,7 +67,7 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.46"
+VERSION="1.47"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^rpgmaker:packed-probe$'
@@ -1190,6 +1191,111 @@ def new_rpgmaker_picks(items):
     say('新RJ采集: %d 个数据/源码/配置文件，%.2fMB，省略%d；不收媒体和运行时' % (audit['selectedFiles'], (data_bytes + script_bytes) / MB, len(omitted)))
     return picks, audit
 
+def packed_rpg_payload(entry, pe_head):
+    """Bounded EVB VFS inspection; never execute PE or load extractor packages.
+    Format reference: mos9527/evbunpack (Apache-2.0), const.py and pe_external_tree.
+    This reads table metadata and copies selected stored blocks without decompressing.
+    """
+    result = {'source': entry.rel, 'sourceBytes': entry.size, 'files': [], 'selected': [], 'omitted': [], 'fileTableComplete': False}
+    payloads = []
+    before = os.stat(entry.path)
+    with open(entry.path, 'rb') as f:
+        try:
+            if pe_head[:2] != b'MZ': raise ValueError('not a PE executable')
+            pe = struct.unpack_from('<I', pe_head, 60)[0]
+            if pe_head[pe:pe+4] != b'PE\0\0': raise ValueError('invalid PE header')
+            number = struct.unpack_from('<H', pe_head, pe+6)[0]
+            optional = struct.unpack_from('<H', pe_head, pe+20)[0]
+            sections = {}
+            for i in range(min(number, 128)):
+                at = pe+24+optional+i*40
+                if at+40 > len(pe_head): raise ValueError('section table outside collected header')
+                name = pe_head[at:at+8].rstrip(b'\0').decode('ascii', 'replace')
+                size, offset = struct.unpack_from('<II', pe_head, at+16)
+                if offset+size > entry.size: raise ValueError('section exceeds executable')
+                sections[name] = (offset, size)
+            result['sections'] = {k: {'offset': v[0], 'bytes': v[1]} for k,v in sections.items() if k.startswith('.enigma')}
+            if '.enigma1' not in sections: raise ValueError('no .enigma1 section')
+            start, size = sections['.enigma1']
+            for name in ('.enigma1', '.enigma2'):
+                if name in sections:
+                    off, length = sections[name]; f.seek(off)
+                    payloads.append((name.lstrip('.')+'.head.bin', f.read(min(length, MB if name == '.enigma1' else 128*1024))))
+            # Find the filesystem marker within the first 16MB of the resource
+            # section, never scan or upload the whole multi-GB executable.
+            magic = -1; scanned = 0; overlap = b''
+            f.seek(start)
+            while scanned < min(size, 16*MB):
+                chunk = f.read(min(MB, min(size, 16*MB)-scanned))
+                if not chunk: break
+                hit = (overlap+chunk).find(b'EVB\0')
+                if hit >= 0: magic = start+scanned-len(overlap)+hit; break
+                scanned += len(chunk); overlap = chunk[-3:]
+            if magic < 0: raise ValueError('EVB filesystem marker not found in bounded section scan')
+            result['magicOffset'] = magic
+            f.seek(magic+64); main = f.read(16)
+            if len(main) != 16: raise ValueError('truncated root node')
+            length, count = struct.unpack_from('<I', main)[0], struct.unpack_from('<I', main, 12)[0]
+            end = magic+68+length
+            if length < 12 or end > start+size or end-(magic+79) > 16*MB or count > 200000: raise ValueError('unsupported or oversized VFS table')
+            f.seek(magic); table = f.read(end-magic)
+            if len(table) != end-magic: raise ValueError('truncated VFS table')
+            payloads.append(('vfs-table.bin', table)); cursor = io.BytesIO(table); cursor.seek(79)
+            data_offset = end; nodes = 0
+            def take(n):
+                b = cursor.read(n)
+                if len(b) != n: raise ValueError('truncated filesystem node')
+                return b
+            def walk(parent, depth):
+                nonlocal data_offset, nodes
+                nodes += 1
+                if nodes > 200000 or depth > 64: raise ValueError('VFS node/depth limit exceeded')
+                header = take(16); children = struct.unpack_from('<I', header, 12)[0]
+                name = bytearray()
+                for _ in range(2048):
+                    pair = take(2)
+                    if pair == b'\0\0': break
+                    name.extend(pair)
+                else: raise ValueError('VFS filename length exceeded')
+                name = name.decode('utf-16-le'); kind = take(1)[0]
+                if not name or name in ('.','..') or any(c in name for c in '/\\:\0'): raise ValueError('invalid VFS node name')
+                rel = parent+'/'+name if parent else name
+                if kind == 3:
+                    take(25)
+                    if children > 200000: raise ValueError('VFS child count limit exceeded')
+                    for _ in range(children): walk(rel, depth+1)
+                elif kind == 2:
+                    record = take(53)
+                    original, stored = struct.unpack_from('<I', record, 2)[0], struct.unpack_from('<I', record, 49)[0]
+                    if data_offset+stored > start+size: raise ValueError('VFS content exceeds resource section')
+                    result['files'].append({'path': rel, 'offset': data_offset, 'originalBytes': original, 'storedBytes': stored, 'compressed': stored != original})
+                    data_offset += stored
+                else: raise ValueError('unsupported VFS node type %d (may require legacy layout)' % kind)
+            for _ in range(count): walk('', 0)
+            if not result['files']: raise ValueError('empty VFS file table')
+            result['fileTableComplete'] = True
+            selected_bytes = 0
+            for item in result['files']:
+                low = item['path'].lower()
+                wanted = bool(re.search(r'(^|/)data/[^/]+\.json$', low) or re.search(r'(^|/)js/(?:plugins(?:/[^/]+)?|rpg_[^/]+|rmmz_[^/]+|main)\.js$', low) or re.search(r'(^|/)(package\.json|index\.html)$', low))
+                if not wanted or re.search(r'(^|/)(save|savedata|userdata|backup)(/|$)', low): continue
+                if max(item['originalBytes'], item['storedBytes']) > 16*MB or selected_bytes+item['storedBytes'] > 64*MB:
+                    result['omitted'].append({**item, 'reason': 'selected file/total size cap'}); continue
+                f.seek(item['offset']); data = f.read(item['storedBytes'])
+                if len(data) != item['storedBytes']: raise ValueError('truncated selected resource')
+                name = 'stored/'+hashlib.sha256(item['path'].encode('utf-8')).hexdigest()[:24]+'.bin'
+                payloads.append((name, data)); selected_bytes += len(data)
+                result['selected'].append({**item, 'payload': name, 'sha256': hashlib.sha256(data).hexdigest()})
+            result['status'] = 'indexed'; result['selectedBytes'] = selected_bytes
+            say('EVB索引: %d文件；选中%d个事件/插件/配置块，%.2fMB；压缩块保持原样，媒体不采' % (len(result['files']), len(result['selected']), selected_bytes/MB))
+        except (ValueError, OSError, UnicodeError, struct.error) as error:
+            result['status'] = 'needs-format-analysis'; result['error'] = str(error)
+            say('EVB索引暂未解析：%s；保留有界段头/表样本，不采完整EXE' % error)
+    after = os.stat(entry.path)
+    if (before.st_size,before.st_mtime_ns) != (after.st_size,after.st_mtime_ns): raise RuntimeError('EXE在采集期间变化，请重试')
+    payloads.append(('vfs-index.json', json.dumps(result, ensure_ascii=False, indent=2).encode('utf-8')))
+    return payloads
+
 def latest_download_logs():
     game = os.path.join(root, 'gal-download')
     runs = os.path.join(game, 'runs')
@@ -1432,6 +1538,11 @@ def main():
                             if ends: probe['sectionEnd'] = max(ends); probe['overlayBytes'] = max(0, e.size-max(ends))
                     for suffix, data in [('head.bin', head), ('tail.bin', tail)]:
                         name = '%s/__exe_probe/%s.%s' % (gid, os.path.basename(e.rel), suffix)
+                        ti = tarfile.TarInfo(name); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data))
+                        picked_bytes += len(data); total += len(data)
+                    for rel, data in packed_rpg_payload(e, head):
+                        if total+len(data) > TOTAL_MAX: raise RuntimeError('封装诊断超过总量上限，未静默截断')
+                        name = '%s/__exe_probe/%s/%s' % (gid, os.path.basename(e.rel), rel)
                         ti = tarfile.TarInfo(name); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data))
                         picked_bytes += len(data); total += len(data)
                     probes.append(probe)
