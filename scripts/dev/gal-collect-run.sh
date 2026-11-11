@@ -24,7 +24,7 @@
 #   GAL_COLLECT_TOTAL_MAX_MB 一次运行最多收多少 MB（原始大小），默认 6000
 #   GAL_COLLECT_ONLY    只处理相对路径匹配这个正则的游戏（不区分大小写）
 #   GAL_COLLECT_RULES   只收规则名匹配这个正则的文件（规则名见清单里的 rule 列，如 ^chakra:）；默认值 = 本版「这一轮要的」（见下面 ROUND_RULES，随版本变），不再把以前要过的东西每次都重收；GAL_COLLECT_RULES=all 恢复全收；没有任何文件命中的游戏整个跳过（不出分卷）
-#   GAL_COLLECT_TSK_LOG 变量存在即只采最新一次 TSK 日志，优先于默认规则及 GAL_COLLECT_RULES；例如 GAL_COLLECT_TSK_LOG=1 bash gal-collect.sh .
+#   GAL_COLLECT_TSK_LOG 设置正整数 N 即只采最近 N 次 TSK 日志；空值兼容为1次，优先于默认规则及 GAL_COLLECT_RULES；例如 GAL_COLLECT_TSK_LOG=3 bash gal-collect.sh .
 #   GAL_COLLECT_BINARIES=1  也收 GameAssembly.dll / UnityPlayer.dll 这类大二进制（给以后逆向用），默认不收
 #   GAL_COLLECT_DRYRUN=1    只扫描 + 打包到本地，不上传
 #   GAL_COLLECT_OUT     本地输出目录，默认 /tmp/gal-collect-<时间>（传完的分卷会删掉；DRYRUN 保留）
@@ -34,6 +34,8 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.44 GAL_COLLECT_TSK_LOG=N 采最近N次TSK日志，空值兼容1次；无关游戏日志不计入N。
+# 1.43 本轮只采 RJ Map002/004 使用的瓦片和人物图，含玩家行走图；不采声音和剧情CG。
 # 1.42 GAL_COLLECT_TSK_LOG 存在时，只采最新TSK日志（不选更新的其他游戏日志），覆盖当前默认采集规则。
 # 1.41 本轮只采 Ch10340034：Master/CharaScenario1034003 和1034003/3332001/3301001的角色骨架图集贴图；旧日志规则仍可显式指定。
 # 1.40 不打包完整 plan，只记录来源/体积；大 result 保留完整汇总及条目状态计数，明示列表取样；大文本明示只收末尾1MB。修复大于64MB的plan导致采集中断。
@@ -62,7 +64,7 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.43"
+VERSION="1.44"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^rpgmaker:map-sample$'
@@ -1160,6 +1162,10 @@ def latest_download_logs():
     game = os.path.join(root, 'gal-download')
     runs = os.path.join(game, 'runs')
     if not os.path.isdir(runs): raise RuntimeError('gal/gal-download 必须指向包含 runs/ 的缓存目录；不会扫描 bundles')
+    requested = env.get('GAL_COLLECT_TSK_LOG', '').strip() or '1'
+    if not re.fullmatch(r'[0-9]+', requested) or int(requested) < 1:
+        raise RuntimeError('GAL_COLLECT_TSK_LOG 必须是正整数N（最近N次TSK运行），空值按1次')
+    count = int(requested)
     candidates = []
     for entry in os.scandir(runs):
         if not entry.is_dir(): continue
@@ -1179,8 +1185,11 @@ def latest_download_logs():
         reports = [p for p in os.scandir(entry.path) if p.is_file() and p.name.endswith(('.json', '.log', '.txt', '.jsonl'))]
         if reports: candidates.append((max(p.stat().st_mtime for p in reports), entry.path, reports))
     if not candidates: raise RuntimeError('gal-download/runs 下没有运行日志')
-    _mtime, latest, reports = max(candidates, key=lambda x: (x[0], x[1]))
-    say('只采最近运行: %s；不采 bundles/APK/repair-backups；源目录只读' % latest)
+    selected = sorted(candidates, key=lambda x: (x[0], x[1]), reverse=True)[:count]
+    say('采集最近 %d 次运行（请求 %d 次，符合条件共 %d 次）；不采 bundles/APK/repair-backups；源目录只读' % (len(selected), count, len(candidates)))
+    for _mtime, latest, _reports in selected: say('  选中运行: ' + latest)
+    selected_names = {os.path.basename(latest) for _mtime, latest, _reports in selected}
+    reports = [p for _mtime, _latest, files in selected for p in files]
     paths = {p.path for p in reports}
     plans = os.path.join(game, 'plans')
     if os.path.isdir(plans):
@@ -1189,7 +1198,7 @@ def latest_download_logs():
             current = os.path.join(task.path, 'current.json')
             try:
                 with open(current, encoding='utf-8') as f: pointer = json.load(f)
-                if os.path.basename(str(pointer.get('runDir', '')).rstrip('/')) != os.path.basename(latest): continue
+                if os.path.basename(str(pointer.get('runDir', '')).rstrip('/')) not in selected_names: continue
                 paths.add(current)
                 plan = os.path.join(task.path, 'plan.json')
                 if os.path.isfile(plan): paths.add(plan)
@@ -1224,7 +1233,7 @@ def latest_download_logs():
             if is_plan:
                 # Download/missing/cache/repair counts are recorded in result.json and
                 # repairs.json. Do not load hundreds of MB of catalog data for them.
-                summary.update({'omitted': 'Full plan excluded; use latest result categoryTotals/categorySummary and repairs.json for this run. A saved plan is not a live directory comparison.'})
+                summary.update({'omitted': 'Full plan excluded; use each collected run result categoryTotals/categorySummary and repairs.json. A shared saved plan may have changed after older runs; it is not a historical or live directory comparison.'})
             elif filename.endswith('.json'):
                 try:
                     with open(filename, encoding='utf-8') as f: summary['data'] = compact(json.load(f))
