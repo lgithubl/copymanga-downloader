@@ -82,3 +82,58 @@ with tarfile.open(fileobj=io.BytesIO(parts[0].read_bytes()), mode='r:gz') as arc
     assert 'g01/■readme.txt' in archive.getnames()
 assert exe.stat().st_size == 1800000000
 print('PASS: packed-RJ probe selects one game, reads only 512KB of 1.8GB EXE, includes readme, source unchanged')
+
+# A native-layout EVB table exercises seek-based collection, not just PE heads.
+import struct
+contents = []
+def vfs_node(name, children=None, data=None, original=None):
+    kind = 3 if children is not None else 2
+    header = struct.pack('<I8sI', 256, b'\0'*8, len(children or []))
+    named = name.encode('utf-16-le') + b'\0\0' + bytes([kind])
+    if kind == 3:
+        return header + named + b'\0'*25 + b''.join(children)
+    original = len(data) if original is None else original
+    contents.append(data)
+    optional = b'\0'*2 + struct.pack('<I', original) + b'\0'*43 + struct.pack('<I', len(data))
+    assert len(optional) == 53
+    return header + named + optional
+stream = vfs_node('www', children=[
+    vfs_node('data', children=[vfs_node('System.json', data=b'{"gameTitle":"Packed fixture"}'), vfs_node('CommonEvents.json', data=b'[null]')]),
+    vfs_node('js', children=[vfs_node('plugins.js', data=b'var $plugins=[];'), vfs_node('plugins', children=[vfs_node('MyPlugin.js', data=b'cmp', original=123)]), vfs_node('libs', children=[vfs_node('runtime.js', data=b'runtime excluded')])]),
+    vfs_node('img', children=[vfs_node('CG.png', data=b'media excluded')]),
+    vfs_node('save', children=[vfs_node('file1.rpgsave', data=b'save excluded')]),
+])
+assert stream[0] == 0
+length = 79 + len(stream)
+table = b'EVB\0' + b'\0'*60 + struct.pack('<I8sI', length-68, b'\0'*8, 1) + stream[1:]
+assert len(table) == length
+resource = table + b''.join(contents)
+section_offset = 4096
+loader_offset = ((section_offset + len(resource) + 511)//512)*512
+image = bytearray(loader_offset+256)
+image[:2] = b'MZ'; struct.pack_into('<I', image, 60, 128)
+image[128:132] = b'PE\0\0'; struct.pack_into('<H', image, 134, 2); struct.pack_into('<H', image, 148, 224)
+for index, (name, offset, size) in enumerate([(b'.enigma1', section_offset, len(resource)), (b'.enigma2', loader_offset, 256)]):
+    at = 128+24+224+index*40
+    image[at:at+8] = name
+    struct.pack_into('<IIII', image, at+8, size, offset, size, offset)
+image[section_offset:section_offset+len(resource)] = resource
+exe.write_bytes(image)
+before_probe = (exe.stat().st_size, exe.stat().st_mtime_ns, exe.read_bytes())
+vfs_out = base / 'vfs-out'
+probe = subprocess.run(['bash', 'scripts/dev/gal-collect-run.sh', str(root)], env=dict(probe_env, GAL_COLLECT_OUT=str(vfs_out)), capture_output=True, text=True)
+assert probe.returncode == 0, probe.stdout + probe.stderr
+part = next(vfs_out.glob('*-g01.tar.gz.part-000'))
+with tarfile.open(fileobj=io.BytesIO(part.read_bytes()), mode='r:gz') as archive:
+    prefix = 'g01/__exe_probe/HypnosisNTR.exe/'
+    index = json.load(archive.extractfile(prefix + 'vfs-index.json'))
+    assert index['status'] == 'indexed', index
+    assert len(index['files']) == 7 and len(index['selected']) == 4, index
+    assert not any('/libs/' in row['path'] or '/img/' in row['path'] or '/save/' in row['path'] for row in index['selected'])
+    row = next(row for row in index['selected'] if row['path'].endswith('/System.json'))
+    assert json.load(archive.extractfile(prefix + row['payload']))['gameTitle'] == 'Packed fixture'
+    row = next(row for row in index['selected'] if row['path'].endswith('/MyPlugin.js'))
+    assert row['compressed'] and row['originalBytes'] == 123
+    assert archive.extractfile(prefix + row['payload']).read() == b'cmp'
+assert before_probe == (exe.stat().st_size, exe.stat().st_mtime_ns, exe.read_bytes())
+print('PASS: EVB file table, resource offsets, selected JSON/plugin stored blocks, compressed blocks preserved, media/save/runtime excluded, EXE read-only')
