@@ -1,5 +1,6 @@
 import { createThumbLoader, thumbSettingsFromConfig } from '/thumb-loader.js'
 import { createGalBrowser } from '/gal-browse.js'
+import { loadReaderWithRecovery, readerRouteSectionId } from '/gal-resume.js'
 import { createExprReview } from '/gal-expr.js'
 import { createGalPlayer } from '/gal-player.js'
 import { ratioOfStep } from '/gal-engine.js'
@@ -645,7 +646,7 @@ async function api(path, options = {}) {
     },
   })
   const data = await resp.json()
-  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`)
+  if (!resp.ok) throw Object.assign(new Error(data.error || `HTTP ${resp.status}`), { status: resp.status })
   return data
 }
 
@@ -3841,7 +3842,7 @@ async function resumeLibraryItem(type, itemId) {
   await selectLibraryItem(type, itemId)
   const targetUnitId = history?.lastUnitId || currentLibraryUnits.find((unit) => unit.mediaKind !== 'subtitle')?.unitId
   if (!targetUnitId) return
-  await openMediaUnit(targetUnitId, history?.lastSectionId || '', { position: history?.position || null })
+  await openMediaUnit(targetUnitId, history?.lastSectionId || '', { position: history?.position || null, resume: true })
 }
 
 async function loadLibraryHistory() {
@@ -4129,12 +4130,17 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     if (owner.type === 'gal') {
       try { const saved = JSON.parse(localStorage.getItem(`copymanga.gal.view.${owner.itemId}`) || 'null'); if (saved?.showMosaic !== undefined) params.set('mosaic', saved.showMosaic ? '1' : '0'); if (saved?.viewRules && typeof saved.viewRules === 'object') params.set('vr', JSON.stringify(saved.viewRules)) } catch { /* 读不了就按适配器配置 */ }
     }
-    const suffix = params.toString() ? `?${params}` : ''
-    const reader = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)
+    const load = (requestedSection) => {
+      const query = new URLSearchParams(params)
+      if (requestedSection) query.set('sectionId', requestedSection); else query.delete('sectionId')
+      const suffix = query.toString() ? `?${query}` : ''
+      return api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)
+    }
+    const { reader, recovered } = await loadReaderWithRecovery({ load, type: owner.type, sectionId, resume: options.resume === true })
     currentMediaReader = reader
     // 记下这个阅读器对应的路由，并把 URL 同步过去：刷新能回到同一章，链接能直接发给别的标签页。
     // 后台续播（自动连播）也更新路由，但只有媒体浏览是当前视图时才会真的写进 URL。
-    currentMediaRoute = { type: owner.type, itemId: owner.itemId, unitId, sectionId: reader.section?.sectionId || sectionId || '' }
+    currentMediaRoute = { type: owner.type, itemId: owner.itemId, unitId, sectionId: readerRouteSectionId(reader, sectionId) }
     els.mediaReaderTitle.textContent = reader.section?.title || reader.unit?.title || unitId
     // Gal：整个媒体只有一个单元，上一章/下一章是播放页在同一级列表里的上一个/下一个脚本
     const galSteps = reader.type === 'gal' && !galIsBrowsing(reader) ? reader.sectionNavigation : null
@@ -4150,7 +4156,7 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
         ? currentLibraryProgress.lastScrollRatio
         : 0
     await saveLibraryProgress(resumeRatio, reader)
-    await recordCurrentLibraryHistory({ visit: true, reader, position: options.position || historyPositionForReader(reader) }).catch(() => {})
+    await recordCurrentLibraryHistory({ visit: true, reader, position: recovered ? historyPositionForReader(reader) : options.position || historyPositionForReader(reader) }).catch(() => {})
     if (isLibraryPageOwner(owner)) {
       currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/progress`)
       renderLibraryUnits()
