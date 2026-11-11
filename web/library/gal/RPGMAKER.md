@@ -14,7 +14,7 @@
 
 ## 列表的三个公共能力
 
-1. **缩略图筛选**：图片命令按 `pictures.cgMatch/backgroundMatch` 标注 CG/背景，立绘独立标注；继续复用 `thumbFallback`（优先级、only/skip、扫描范围、最大张数）及 `thumbSkip`（路径、体积、尺寸）。普通 UI 小图不会因为是叠加层就自动充当 CG。
+1. **缩略图筛选**：图片命令按 `pictures.cgMatch/backgroundMatch` 标注 CG/背景，立绘独立标注。未命中命名规则的原生/字面量“显示图片”也可通过 `pictures.thumbnailMatch` 提供缩略图候选（默认 `.`），排在明确 CG 之后；只影响卡片，不改变 CG 标记、特殊场景分类或跳转点。`pictures.thumbnailSkip` 排除常见按钮/图标名称，插件立绘表中的图片不作此兜底。继续复用 `thumbFallback`（优先级、only/skip、扫描范围、最大张数）及 `thumbSkip`（路径、体积、尺寸）。布局默认排除 system/faces/characters 目录，以及宽小于256且高小于144的 pictures 小图；均可配置。不能保证靠名称过滤识别所有游戏 UI。
 2. **中途开始**：复用 `sceneMarkers`，可按 CG 图片、循环语音、BGM 切换生成卡片按钮。目标在选择分支内时，按钮携带到达目标所需的选择记录，播放器从头重建变量/画面/持续声音状态后定位；最多尝试 128 条选择历史，无法到达的不生成误导按钮。无需执行任意游戏脚本。
 3. **特殊场景汇总**：按事件名、地图名、CG 资源名匹配；支持开关、最少文本数、公共事件调用去重。汇总是附加入口，正常公共事件、地图列表仍保留。回想菜单只有简单提示并转调公共事件时，优先收实际事件，避免菜单套一层重复卡片。
 
@@ -25,7 +25,11 @@
   "adapterOptions": {
     "rpgmaker-json": {
       "root": "www",
-      "pictures": {"cgMatch": "(^|/)(CG|EV)_"},
+      "pictures": {
+        "cgMatch": "(^|/)(CG|EV)_",
+        "thumbnailMatch": ".",
+        "thumbnailSkip": "(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)"
+      },
       "special": {
         "enabled": true,
         "nameMatch": "回想|回憶|replay",
@@ -50,6 +54,8 @@
 MV 的 `.rpgmvp/.rpgmvo/.rpgmvm` 和 MZ 的 `.png_/.ogg_/.m4a_` 使用本地 `System.json` 密钥解密，仅在请求该资源时写到 `cache/gal-rpgmaker-res`。先验证加密头和解密后的媒体签名。缓存键含源路径/体积/mtime 和 System.json 内容；换文件或换密钥不会复用旧缓存。
 
 游戏原目录只读，不全量解包，不下载运行时或解码器。缩略图和正常媒体接口均使用解密缓存，因此卡片过滤、浏览器图片加载及音频 Range 请求可复用现有流程。
+
+任意命名图片的缩略图兜底需要包含该修复的镜像；更新后重跑 `gal-layout` 2.49.1 应用筛选规则，并在游戏列表刷新索引，无需重新导入游戏。纯地图瓦片场景没有独立图片时仍不会生成地图截图。后续地图支持范围为静态地图、人物和剧情演出；玩家操控不在当前范围，这一轮未新增地图渲染。
 
 ## 验证
 

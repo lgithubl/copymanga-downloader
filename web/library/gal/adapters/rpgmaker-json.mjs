@@ -11,7 +11,7 @@ export const DEFAULT_OPTIONS = {
   initialVariables: {}, initialSwitches: {},
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
   special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(hcg|cg|ev|event)[_-]' },
-  pictures: { folder: 'img/pictures', cgMatch: '(^|/)(hcg|cg|ev|event)[_-]', backgroundMatch: '(^|/)(bg|background)[_-]' },
+  pictures: { folder: 'img/pictures', cgMatch: '(^|/)(hcg|cg|ev|event)[_-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
   plugins: { simpleVoice: true, standingPicture: true, pictureCalls: true, commands: [] },
 }
 export const optionsOf = createOptionsReader(DEFAULT_OPTIONS)

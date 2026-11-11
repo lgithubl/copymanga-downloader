@@ -40,6 +40,20 @@ test('pictures use MV event and literal script argument layouts; arbitrary JS is
  const state=stateAt(scene,markers[0].step);assert.equal(state.overlays[0].src,'img/pictures/cg_example.png')
 })
 
+test('unnamed RPG pictures provide thumbnail candidates without labelling UI or standing pictures as CG', async () => {
+ const events=common([...message('intro'),C(231,[1,'KA_010101',0,0,0,0,100,100,255,0]),C(231,[2,'button_ok',0,0,0,0,100,100,255,0]),C(231,[3,'actor_portrait',0,0,0,0,100,100,255,0]),...message('end')])
+ const ctx=await prep(events);ctx.standing.set('1',{imageName:'actor_portrait'})
+ const scene=rpg.parse(JSON.stringify(events),ctx,{scene:'common-1'})
+ const thumbs=collectFallbackImages(scene,{prefer:['cg','bg'],overlays:false})
+ assert.deepEqual(thumbs.images.map(v=>v.src),['img/pictures/KA_010101.png'])
+ assert.ok(!commands(scene).find(v=>v.src?.includes('KA_')).cg,'thumbnail fallback must not alter CG/scene classification')
+ const blocked=await prep(events,{pictures:{thumbnailMatch:'^never$'}})
+ assert.equal(collectFallbackImages(rpg.parse(JSON.stringify(events),blocked,{scene:'common-1'}),{prefer:['cg','bg']}).images.length,0)
+ events[1].list.push(C(231,[4,'cg_preferred',0,0,0,0,100,100,255,0]))
+ const preferred=await prep(events);preferred.standing=ctx.standing
+ assert.deepEqual(collectFallbackImages(rpg.parse(JSON.stringify(events),preferred,{scene:'common-1'}),{prefer:['cg','bg']}).images.map(v=>v.src),['img/pictures/cg_preferred.png','img/pictures/KA_010101.png'])
+})
+
 test('catalog is configurable across games: matching specials preserves normal entries; recursive calls are bounded',async()=>{
  const events=common([...message('intro'),C(117,[2]),...message('end')]);events[2].list.push(C(117,[1]))
  const ctx=await prep(events,{special:{minText:2}})
@@ -91,6 +105,14 @@ test('real RJ01482469: layout, plugin metadata, map catalog and media samples', 
   for(const child of node.children||[])await checkCatalog(child)
  }
  await checkCatalog(ctx.catalogTree)
+ // A user choosing the generic preset must get pictures even without the RJ profile.
+ const genericOptions={root:'www'},generic=await rpg.prepare({options:genericOptions,texts,files,toResourcePath:r=>r.replace(/^www\//,''),mediaDir:real})
+ let genericPictures=0
+ for(const node of generic.catalogTree.children.find(n=>n.id==='special').children){
+  const [rel,scene]=node.script.split('::'),data=texts[rel]||JSON.stringify(generic.maps.get(rel))
+  if(collectFallbackImages(rpg.parse(data,generic,{rel,scene,options:genericOptions}),{prefer:['cg','bg'],scanSteps:2000}).images.length)genericPictures++
+ }
+ assert.ok(genericPictures>=100,`real generic-preset special cards with picture candidates: ${genericPictures}`)
  const tmp=await mkdtemp('/tmp/rpg-media-')
  try {
   const cache=createRpgMakerResourceCache(tmp), key=ctx.system.encryptionKey

@@ -11,6 +11,8 @@ export function compileRpgEvents(list, ctx, meta) {
   const o = meta.options, stage = ctx.stage || o.stage, steps = [], stats = { commands: 0, text: 0, choices: 0, raw: {}, warnings: [...(ctx.warnings || [])], scene: meta.scene }
   const initial = new Map(), calls = [], guards = [], pictures = new Map()
   const cgMatch = safeRegex(o.pictures.cgMatch), bgMatch = safeRegex(o.pictures.backgroundMatch)
+  const thumbnailMatch = safeRegex(o.pictures.thumbnailMatch), thumbnailSkip = safeRegex(o.pictures.thumbnailSkip)
+  const standingImages = new Set([...(ctx.standing?.values() || [])].map(item => String(item.imageName || '').replace(/\.png$/i, '').toLowerCase()))
   let pending = [], serial = 0, standingHold = false
   const flush = () => { if (pending.length) { steps.push({ index: steps.length, commands: pending }); pending = [] } }
   const when = () => guards.flatMap(g => g.conditions || [])
@@ -41,7 +43,12 @@ export function compileRpgEvents(list, ctx, meta) {
     const offset = 0, origin = Number(p[2]), variablePos = Number(p[3]) === 1
     const x = Number(p[4 - offset]) || 0, y = Number(p[5 - offset]) || 0
     const cmd = { op: 'overlay', slot: `rpg-picture-${id}`, stage, x: x - stage[0] / 2, y: y - stage[1] / 2, anchor: origin ? [0.5, 0.5] : [0, 0], scaleX: Math.abs(Number(p[6 - offset]) || 0) / 100, scaleY: Math.abs(Number(p[7 - offset]) || 0) / 100, alpha: Number(p[8 - offset] ?? 255) / 255, z: id, fit: 'none', flipX: Number(p[6 - offset]) < 0 }
-    if (src) { cmd.src = src; pictures.set(id, src); if (cgMatch?.test(src)) cmd.cg = true; else if (bgMatch?.test(src)) cmd.kind = 'bg' }
+    if (src) {
+      cmd.src = src; pictures.set(id, src)
+      if (cgMatch?.test(src)) cmd.cg = true
+      else if (bgMatch?.test(src)) cmd.kind = 'bg'
+      else if (thumbnailMatch?.test(src) && !thumbnailSkip?.test(src) && !standingImages.has(String(p[1]).replace(/\.png$/i, '').toLowerCase())) cmd.thumb = src
+    }
     if (variablePos) Object.assign(cmd, { xVar: variable(x), yVar: variable(y), xOffset: -stage[0] / 2, yOffset: -stage[1] / 2 })
     emit(cmd)
     if (move && p[11]) emit({ op: 'wait', seconds: Math.min(60, Number(p[10] || 0) / 60) })

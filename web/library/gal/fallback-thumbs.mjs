@@ -40,6 +40,7 @@ export function collectFallbackImages(scene, options = {}) {
   const only = compileSkip(cfg.only)   // 白名单：写了就只要完整路径命中其中一条的图（同一套「安全编译正则」）
   const caps = cfg.kindMax && typeof cfg.kindMax === 'object' ? cfg.kindMax : {}
   const buckets = { cg: [], stand: [], movie: [], bg: [] }
+  const pictureFallbacks = new Set()
   const seen = new Set()
   const counts = { cg: 0, stand: 0, movie: 0, bg: 0 }
   let skipped = 0
@@ -80,6 +81,7 @@ export function collectFallbackImages(scene, options = {}) {
         case 'overlay':   // 叠加层的图（tomoe 的 CG 是画在 2 / 140 层上的整张图，背景是黑的）：overlays: true 才算 CG（别的游戏的叠加层多是小部件）；补丁（skip 里写 \.p$）不要
           if (flagged || cfg.overlays) add('cg', command.src)
           else if (command.kind === 'bg' || command.kind === 'stand') add(command.kind, command.src)
+          else if (typeof command.thumb === 'string' && pictureFallbacks.size < want * 3) pictureFallbacks.add(command.thumb)
           break
         case 'spine':
           if (typeof command.thumb === 'string' && IMAGE_RE.test(command.thumb)) add(command.kind === 'still' || flagged ? 'cg' : 'stand', command.thumb)
@@ -90,6 +92,8 @@ export function collectFallbackImages(scene, options = {}) {
     }
     if (full()) break
   }
+  // Explicit CGs keep priority over arbitrarily named picture candidates.
+  for (const src of pictureFallbacks) add('cg', src)
   const images = []
   for (const kind of kinds) for (const src of buckets[kind]) images.push({ src, kind })
   return { images: images.slice(0, want), scanned, truncated: steps.length > scanned, counts, skipped }

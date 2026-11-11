@@ -18,18 +18,24 @@ const put = async (rel, bytes) => { const f = path.join(media, 'www', rel); awai
 const c = (code, parameters=[], indent=0) => ({code,parameters,indent})
 const msg = text => [c(101,['',0,0,2,'Alice']),c(401,[text])]
 const common = [null,{id:1,name:'回想 Branch',list:[...msg('Intro one'),...msg('Intro two'),c(102,[['A','B'],-1,0,2,0]),c(402,[0,'A']),...msg('A branch').map(x=>({...x,indent:1})),c(402,[1,'B']),c(231,[10,'cg_sample',0,0,0,0,100,100,255,0],1),...msg('B target').map(x=>({...x,indent:1})),c(404),...msg('After one'),...msg('After two'),...msg('After three')]}]
+common.push({id:2,name:'回想 Arbitrary picture',list:[c(231,[1,'button_ok',0,0,0,0,100,100,255,0]),c(231,[2,'tiny_decoration',0,0,0,0,100,100,255,0]),c(231,[3,'scene_0042',0,0,0,0,100,100,255,0]),...msg('Picture one'),...msg('Picture two'),...msg('Picture three'),...msg('Picture four')]})
 await put('data/CommonEvents.json',JSON.stringify(common))
 await put('data/System.json',JSON.stringify({gameTitle:'Generic fixture',encryptionKey:key,hasEncryptedImages:true,advanced:{screenWidth:640,screenHeight:360}}))
 await put('data/Actors.json','[null]'); await put('data/MapInfos.json','[null]');await put('js/plugins.js','var $plugins = [];')
 const pixels=Buffer.alloc(640*360*4);for(let i=0;i<pixels.length;i+=4){pixels[i]=18;pixels[i+1]=172;pixels[i+2]=88;pixels[i+3]=255}
 const png=encodePng(640,360,pixels,4),body=Buffer.from(png),mask=Buffer.from(key,'hex');for(let i=0;i<16;i++)body[i]^=mask[i]
 await put('img/pictures/cg_sample.rpgmvp',Buffer.concat([Buffer.from('5250474d560000000003010000000000','hex'),body]))
+await put('img/pictures/scene_0042.rpgmvp',Buffer.concat([Buffer.from('5250474d560000000003010000000000','hex'),body]))
+await put('img/pictures/button_ok.png',png)
+await put('img/pictures/tiny_decoration.png',encodePng(8,8,Buffer.alloc(8*8*4,255),4))
 const handler=createGalHandler({dataDir,safeSegment:v=>String(v).replace(/[^\w.-]/g,'_'),pathExists:async p=>existsSync(p),getConfig:()=>({mediaImportProfiles:{'gal-import':{rootDir:media}}})})
 const imported=await handler.importFromSource({sourcePath:media,options:{adapters:['rpgmaker-json']}}),itemId=imported.items[0].itemId
-const layout=await generateTags({type:'gal',item:imported.items[0],script:{version:'2.49.0',options:{}},tags:[]})
+const layout=await generateTags({type:'gal',item:imported.items[0],script:{version:'2.49.1',options:{}},tags:[]})
 await handler.patchItemMetadata(itemId,layout.itemPatch)
 const home=await handler.getReaderContent(itemId,'main'),special=home.node.items.find(n=>n.title==='特殊场景');assert.ok(special)
 const cards=await handler.getReaderContent(itemId,'main',{sectionId:special.node}),card=cards.node.items.find(n=>n.title==='回想 Branch');assert.ok(card?.markers?.length);assert.ok(card.thumbs?.some(p=>p.includes('cg_sample')))
+const arbitrary=cards.node.items.find(n=>n.title==='回想 Arbitrary picture')
+assert.deepEqual(arbitrary.thumbs,['img/pictures/scene_0042.png'],'arbitrary names work, UI and decrypted-size filters still apply')
 const mark=card.markers.find(m=>Object.keys(m.choices||{}).length);assert.ok(mark);assert.equal(Object.values(mark.choices)[0],2)
 await handler.patchItemMetadata(itemId,{gal:{config:{thumbSkip:[{match:'cg_sample',minWidth:1000}]}}})
 const filtered=await handler.getReaderContent(itemId,'main',{sectionId:special.node})
@@ -47,6 +53,8 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{})})
  const page=await browser.newPage({viewport:{width:1200,height:800}}),errors=[];page.on('pageerror',e=>errors.push(e.message))
  await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(special.node)}`)
+ await page.waitForFunction(()=>{const img=document.querySelector('.gal-card[data-title="回想 Arbitrary picture"] img');return img?.complete&&img.naturalWidth>0})
+ await page.screenshot({path:path.join(work,'rpg-arbitrary-thumbnail.png')})
  await page.waitForSelector('.gal-card-mark')
  const button=page.locator(`.gal-card-mark[data-step="${mark.step}"]`);assert.equal(await button.count(),1)
  await button.click();await page.waitForSelector('.gal-player')
@@ -57,6 +65,6 @@ try{
  assert.equal(await page.locator('.gal-choices:visible').count(),0,'marker carries its branch history without asking an earlier choice')
  assert.deepEqual(errors,[])
  await page.screenshot({path:path.join(work,'rpg-marker-player.png')})
- console.log('PASS full app: import, layout, special list, filtered encrypted thumbnail, branch marker, restored pixels/text; no page errors')
+ console.log('PASS full app: import, layout, special list, arbitrary-name encrypted thumbnail visible, UI/tiny image filtering, branch marker, restored pixels/text; no page errors')
  console.log('Artifacts retained:',work)
 }finally{await browser?.close();server.kill('SIGTERM');await writeFile(path.join(work,'server.log'),logs.join(''))}

@@ -86,7 +86,9 @@ export const ADAPTER_RULES = {
     "pictures": {
       "folder": "img/pictures",
       "cgMatch": "(^|/)(hcg|cg|ev|event)[_-]",
-      "backgroundMatch": "(^|/)(bg|background)[_-]"
+      "backgroundMatch": "(^|/)(bg|background)[_-]",
+      "thumbnailMatch": ".",
+      "thumbnailSkip": "(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)"
     },
     "plugins": {
       "simpleVoice": true,
@@ -1666,6 +1668,11 @@ export const LAYOUTS = {
       "thumbSkip": [
         {
           "match": "(^|/)img/(system|faces|characters)/"
+        },
+        {
+          "match": "(^|/)img/pictures/",
+          "minWidth": 256,
+          "minHeight": 144
         }
       ],
       "sceneMarkers": [
