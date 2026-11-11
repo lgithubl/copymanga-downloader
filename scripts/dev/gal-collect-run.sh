@@ -62,10 +62,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.42"
+VERSION="1.43"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^tsk:ch10340034$'
+ROUND_RULES='^rpgmaker:map-sample$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1247,11 +1247,20 @@ def latest_download_logs():
 def main():
     download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
     tsk_scene = RULES_RE is not None and RULES_RE.pattern == '^tsk:ch10340034$'
+    rpg_maps = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:map-sample$'
     rj_inventory = RULES_RE is not None and RULES_RE.pattern == '^rj01482469:inventory'
     requested_diagnostics = RULES_RE is not None and RULES_RE.pattern == '^(rj01482469:core|tsk:ch10380048)$'
     if download_logs:
         game, log_items = latest_download_logs()
         games = [game]
+    elif rpg_maps:
+        games = []
+        for d, ds, _fs in walk_follow(root):
+            if re.search(r'(?<![A-Za-z0-9])RJ01482469(?![0-9])', os.path.basename(d), re.I):
+                games.append(d); ds[:] = []
+            else:
+                ds[:] = sorted(x for x in ds if x.lower() not in ('gal-download', 'bundles', 'runs', 'repair-backups') and not EXCL.search(x + '/'))
+        if not games: raise RuntimeError('未找到 RJ01482469，未采集其他游戏')
     elif tsk_scene:
         games = []
         for d, ds, _fs in walk_follow(root):
@@ -1292,8 +1301,30 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
-        picks = ([] if tsk_scene else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
+        picks = ([] if tsk_scene or rpg_maps else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
+        if rpg_maps:
+            wanted = {'www/data/system.json', 'www/data/actors.json', 'www/data/tilesets.json', 'www/data/map002.json', 'www/data/map004.json'}
+            def read_game(rel):
+                with open(os.path.join(game, rel), encoding='utf-8-sig') as f: return json.load(f)
+            tilesets = read_game('www/data/Tilesets.json')
+            names, characters = set(), set()
+            for map_id in (2, 4):
+                data = read_game('www/data/Map%03d.json' % map_id)
+                names.update(n for n in tilesets[data['tilesetId']].get('tilesetNames', []) if n)
+                for event in data.get('events', []):
+                    if event:
+                        characters.update(p.get('image', {}).get('characterName', '') for p in event.get('pages', []))
+            system, actors = read_game('www/data/System.json'), read_game('www/data/Actors.json')
+            for actor_id in system.get('partyMembers', [1]):
+                if 0 < actor_id < len(actors) and actors[actor_id]: characters.add(actors[actor_id].get('characterName', ''))
+            for folder, values in [('tilesets', names), ('characters', characters)]:
+                for name in values:
+                    if name:
+                        for ext in ('.png', '.rpgmvp', '.png_'): wanted.add(('www/img/%s/%s%s' % (folder, name, ext)).lower())
+            picks = [(e, 'full', 'rpgmaker:map-sample') for e in items if e.rel.replace('\\', '/').lower() in wanted]
+            if sum(e.size for e, _m, _r in picks) > 64 * MB: raise RuntimeError('地图样本超过64MB，未采集其他资料')
+            say('RPG地图样本: 仅Map002/004、使用的瓦片/人物图及3份数据，共%d项，%.2fMB；不收声音/剧情CG' % (len(picks), sum(e.size for e, _m, _r in picks) / MB))
         if tsk_scene:
             picks = []
             for e in items:
