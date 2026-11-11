@@ -14,9 +14,9 @@ const numeric = (v) => v !== '' && v !== null && Number.isFinite(Number(v))
 export function condMet(when, vars = {}) {
   for (const cond of when || []) {
     // 变量还没设过（选项还没选）：所有条件都不成立——分支只有在选了之后才出现
-    if (vars[cond.var] === undefined) return false
+    if (!Object.hasOwn(vars, cond.var)) return false
     const left = String(vars[cond.var])
-    const right = String(cond.value)
+    const right = String(cond.valueVar ? vars[cond.valueVar] ?? 0 : cond.value)
     const both = numeric(left) && numeric(right)
     let ok
     switch (cond.op) {
@@ -38,6 +38,20 @@ const recordChoice = (vars, command, choices) => {
   if (picked !== undefined && picked !== null) vars[command.var] = String(picked)
 }
 
+function assignVariable(vars, command) {
+  const key = String(command.var || '')
+  if (!key || ['__proto__', 'prototype', 'constructor'].includes(key)) return
+  const right = command.test ? (condMet([command.test], vars) ? 1 : 0) : command.valueVar ? vars[command.valueVar] ?? 0 : command.value
+  const left = Number(vars[key] || 0), n = Number(right)
+  const calc = command.calc || 'set'
+  const value = calc === 'add' ? left + n : calc === 'sub' ? left - n : calc === 'mul' ? left * n : calc === 'div' ? (n ? Math.floor(left / n) : 0) : calc === 'mod' ? (n ? left % n : 0) : right
+  if (typeof value === 'number' && !Number.isFinite(value)) return
+  if (!['string', 'number', 'boolean'].includes(typeof value)) return
+  Object.defineProperty(vars, key, { value, writable: true, configurable: true, enumerable: true })
+}
+
+const variableSegments = (segments, vars) => (segments || []).map(s => s.var ? { ...s, text: String(vars[s.var] ?? 0) } : s)
+
 // 按当前选择走一遍：visit(step, command, active, vars)；返回每一步是否有指令会执行
 function walk(scene, last, choices, visit) {
   const vars = {}
@@ -50,6 +64,7 @@ function walk(scene, last, choices, visit) {
       if (on) {
         any = true
         if (command.op === 'choice') recordChoice(vars, command, choices)
+        if (command.op === 'set') assignVariable(vars, command)
       }
       visit?.(i, command, on, vars)
     }
@@ -69,6 +84,29 @@ export function activePath(scene, choices = {}) {
 // 这一步里的选项（没有就是 null）
 export const choiceIn = (scene, stepIndex) => scene?.steps?.[stepIndex]?.commands.find((c) => c.op === 'choice') || null
 
+// Bounded choice history for entering a guarded scene marker. No game code.
+export function choicesForCommand(scene, targetStep, targetCommand, maxStates = 128) {
+  let states = [{ vars: {}, choices: {} }]
+  for (let i = 0; i <= targetStep; i++) for (let k = 0; k < (scene.steps[i]?.commands.length || 0); k++) {
+    const command = scene.steps[i].commands[k]
+    if (i === targetStep && k === targetCommand) return states.find(s => condMet(command.when, s.vars))?.choices ?? null
+    const next = []
+    for (const state of states) {
+      if (!condMet(command.when, state.vars)) { next.push(state); continue }
+      if (command.op === 'choice') {
+        for (const option of command.options || []) {
+          const choices = { ...state.choices, [command.id]: option.value }, vars = { ...state.vars }
+          recordChoice(vars, command, choices); next.push({ vars, choices })
+          if (next.length >= maxStates) break
+        }
+      } else { if (command.op === 'set') assignVariable(state.vars, command); next.push(state) }
+      if (next.length >= maxStates) break
+    }
+    states = next.slice(0, maxStates)
+  }
+  return null
+}
+
 // 从第 fromStep 步起（含）的所有选择作废——回到选项那一步重选时用
 export function dropChoicesFrom(choices, fromStep) {
   const next = {}
@@ -80,6 +118,9 @@ export function dropChoicesFrom(choices, fromStep) {
 export function applyCommand(state, command, choices = null) {
   if (command.when && !condMet(command.when, state.vars)) return state
   switch (command.op) {
+    case 'set':
+      assignVariable(state.vars, command)
+      break
     case 'choice':
       recordChoice(state.vars, command, choices)
       break
@@ -109,10 +150,10 @@ export function applyCommand(state, command, choices = null) {
       break
     }
     case 'speaker':
-      state.speaker = command.segments || []
+      state.speaker = variableSegments(command.segments, state.vars)
       break
     case 'text':
-      state.text = command.segments || []
+      state.text = variableSegments(command.segments, state.vars)
       break
     case 'bgm':
       state.bgm = command.src
@@ -169,6 +210,7 @@ export function applyCommand(state, command, choices = null) {
       if (typeof command.slot !== 'string' || !command.slot) break
       const { op: _op, when: _when, ...spec } = command
       const at = state.overlays.findIndex((o) => o.slot === command.slot)
+      for (const axis of ['x', 'y']) if (spec[`${axis}Var`]) spec[axis] = Number(state.vars[spec[`${axis}Var`]] || 0) + Number(spec[`${axis}Offset`] || 0)
       state.overlays = at < 0 ? [...state.overlays, spec] : state.overlays.map((o, i) => (i === at ? (command.src ? spec : { ...o, ...spec }) : o))
       break
     }
@@ -194,6 +236,7 @@ export function applyCommand(state, command, choices = null) {
       state.bgvoices = { ...state.bgvoices, [command.slot]: { src: command.src, volume: command.volume ?? 1 } }
       break
     case 'bgvoiceOff': {
+      if (!command.slot) { state.bgvoices = {}; break }
       const next = { ...state.bgvoices }
       delete next[command.slot]
       state.bgvoices = next
@@ -270,10 +313,10 @@ export const segmentsText = (segments) => (segments || []).map((segment) => segm
 export function backlog(scene, index, choices = {}) {
   const lines = []
   let speaker = []
-  walk(scene, index, choices, (i, command, on) => {
+  walk(scene, index, choices, (i, command, on, vars) => {
     if (!on) return
-    if (command.op === 'speaker') speaker = command.segments || []
-    else if (command.op === 'text' && segmentsText(command.segments).trim()) lines.push({ step: i, speaker, text: command.segments })
+    if (command.op === 'speaker') speaker = variableSegments(command.segments, vars)
+    else if (command.op === 'text' && segmentsText(command.segments).trim()) lines.push({ step: i, speaker, text: variableSegments(command.segments, vars) })
   })
   return lines
 }

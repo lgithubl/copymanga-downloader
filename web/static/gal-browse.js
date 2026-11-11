@@ -568,7 +568,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
         button.type = 'button'
         button.title = `从第 ${mark.step + 1} 步开始（约 ${Math.round((mark.ratio || 0) * 100)}%）`
         button.dataset.step = String(mark.step)
-        button.addEventListener('click', (event) => { event.stopPropagation(); onOpen(item.node, 'child', { at: mark.step }) })
+        button.addEventListener('click', (event) => { event.stopPropagation(); onOpen(item.node, 'child', { at: mark.step, ...(mark.choices ? { choices: mark.choices } : {}) }) })
         marks.append(button)
       }
       card.append(marks)

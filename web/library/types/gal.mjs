@@ -18,6 +18,7 @@ import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normali
 import { createArcResCache } from '../gal/arc-res-cache.mjs'
 import { extractExeIcon } from '../gal/pe-icon.mjs'
 import { ensureContainers, setKeysFile, virtualEntry, virtualHas } from '../gal/containers.mjs'
+import { createRpgMakerResourceCache } from '../gal/rpgmaker.mjs'
 import { IMAGE_THUMB_EXT, bucketOf, createImageThumbCache } from '../gal/image-thumb.mjs'
 import { resolveOnDisk } from '../gal/resolve.mjs'
 import { isVideoPath } from '../gal/thumbs.mjs'
@@ -62,6 +63,7 @@ export function normalizeGalOptions(value = {}) {
 export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathExists, getConfig }) {
   setKeysFile(path.join(dataDir, 'gal-krkr-keys.json'))   // KiriKiri Z（Hxv4）的密钥包（可选；也可以写在 config.containers.keys 里）
   const metaRoot = path.join(dataDir, 'library-meta', type)
+  const rpgResources = createRpgMakerResourceCache(path.join(dataDir, 'cache', 'gal-rpgmaker-res'))
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
   const arcRes = createArcResCache({ dir: path.join(dataDir, 'cache', 'gal-arc-res') })   // .arc 里的资源取原图 / 原音频：写这里（有总量上限、LRU），不再写进媒体目录
   const imageThumbs = createImageThumbCache({ dir: path.join(dataDir, 'cache', 'gal-img-thumbs') })   // 卡片 / 画廊的图片缩略图（WebP）
@@ -218,7 +220,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       }
       const variants = [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))]
       const hit = await resolveOnDisk({ work, rootRels: config.resourceRoots, variants, cfg: config.resourceResolve })
-      if (hit) return hit
+      if (hit) return skipMaterialize ? hit : rpgResources(hit, work, config.adapterOptions?.['rpgmaker-json'])
       throw bad('资源不存在', 404)
     }
     if (skipMaterialize) return onDisk()
@@ -252,7 +254,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       const wanted = []
       let source = null
       try {
-        const onDisk = await resolveAsset(item, resourcePath, { skipMaterialize: true, wantedOut: wanted })
+        const original = await resolveAsset(item, resourcePath, { skipMaterialize: true, wantedOut: wanted })
+        const onDisk = await rpgResources(original, workDirOf(item), normalizeGalConfig(item.config).adapterOptions?.['rpgmaker-json'])
         const tallTop = await imageThumbs.tallTopOf(onDisk, bucketOf(width), normalizeGalConfig(item.config).coverCrop)   // 超长图取顶部一段（卡片居中裁会裁到中段）
         if (tallTop) return { file: tallTop, contentType: 'image/webp', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
         source = await imageThumbs.fileSource(onDisk)

@@ -41,6 +41,7 @@
 
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 
 const ADAPTER_OPTIONS_BYTES = 16384   // 引擎 config.mjs 的 ADAPTER_OPTIONS_MAX.perAdapter
 const TAG_GROUPS = ['Gal配置', 'Gal配置version', 'Gal游戏']
@@ -57,6 +58,43 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  'rpgmaker-json': {
+    "root": "",
+    "stage": [
+      816,
+      624
+    ],
+    "maxCommands": 100000,
+    "maxCallDepth": 32,
+    "initialVariables": {},
+    "initialSwitches": {},
+    "catalog": {
+      "common": true,
+      "maps": true,
+      "minText": 2,
+      "skipNames": "^$"
+    },
+    "special": {
+      "enabled": true,
+      "label": "特殊场景",
+      "minText": 4,
+      "deduplicateCalls": true,
+      "nameMatch": "回想|回憶|recollection|replay|h[-_ ]?scene",
+      "mapNameMatch": "回想|回憶|recollection|replay",
+      "imageMatch": "(^|/)(hcg|cg|ev|event)[_-]"
+    },
+    "pictures": {
+      "folder": "img/pictures",
+      "cgMatch": "(^|/)(hcg|cg|ev|event)[_-]",
+      "backgroundMatch": "(^|/)(bg|background)[_-]"
+    },
+    "plugins": {
+      "simpleVoice": true,
+      "standingPicture": true,
+      "pictureCalls": true,
+      "commands": []
+    }
+  },
   'renpy-legeclo': {
     aliasFiles: ['script/movie.rpy'],
     imageDirs: ['images'],
@@ -1528,6 +1566,172 @@ export const RULE_DEVIATIONS = {}
 // 所有「列表」字段都是数组；探测函数里没有任何写死的目录名（数据依赖的判断除外）。
 // ======================================================================
 export const LAYOUTS = {
+  rpgmaker: {
+    "title": "RPG Maker MV/MZ",
+    "kind": "rpgmaker",
+    "detector": "rpgmaker",
+    "autoOrder": 137,
+    "family": "rpgmaker::",
+    "bases": [
+      "www",
+      ".",
+      "*/www",
+      "*"
+    ],
+    "searchDepth": 4,
+    "anchors": [
+      "data/System.json",
+      "data/CommonEvents.json",
+      "js/plugins.js"
+    ],
+    "siblings": [],
+    "markers": [],
+    "scriptRoots": [
+      {
+        "id": "events",
+        "dir": "data",
+        "label": "事件"
+      }
+    ],
+    "resourceRoots": [
+      "."
+    ],
+    "adapters": [
+      "rpgmaker-json"
+    ],
+    "adapterOptions": {
+      "rpgmaker-json": {
+        "root": {
+          "path": [
+            "."
+          ]
+        }
+      }
+    },
+    "ruleTables": [
+      "rpgmaker-json"
+    ],
+    "ruleOverrides": {},
+    "profiles": [
+      {
+        "match": "RJ01482469|催眠アプリNTR",
+        "id": "rpgmaker::rj01482469"
+      }
+    ],
+    "engine": {
+      "classify": [],
+      "resourceResolve": {
+        "extensionFallbacks": {
+          ".png": [
+            ".rpgmvp",
+            ".png_"
+          ],
+          ".ogg": [
+            ".rpgmvo",
+            ".ogg_",
+            ".m4a",
+            ".rpgmvm",
+            ".m4a_"
+          ]
+        }
+      },
+      "limits": {
+        "walkFiles": 400000,
+        "scriptBytes": 67108864
+      }
+    },
+    "config": {
+      "scriptExtensions": [
+        "json"
+      ],
+      "namesFiles": [],
+      "thumbsDirs": [],
+      "hiddenDirs": [],
+      "labels": {},
+      "merge": [],
+      "views": [],
+      "groups": [],
+      "dirThumbs": [],
+      "scriptThumbs": [],
+      "scriptIndex": [],
+      "thumbFallback": {
+        "prefer": [
+          "cg",
+          "bg"
+        ],
+        "scanSteps": 2000,
+        "max": 3,
+        "cgFirst": true
+      },
+      "thumbSkip": [
+        {
+          "match": "(^|/)img/(system|faces|characters)/"
+        }
+      ],
+      "sceneMarkers": [
+        {
+          "label": "场景开始",
+          "kind": "cmd",
+          "op": "overlay",
+          "match": "(^|/)(hcg|cg|ev|event)[_-]",
+          "pick": "each",
+          "max": 6
+        },
+        {
+          "label": "循环语音开始",
+          "kind": "cmd",
+          "op": "bgvoice",
+          "pick": "first",
+          "max": 1
+        },
+        {
+          "label": "BGM切换",
+          "kind": "cmd",
+          "op": "bgm",
+          "pick": "each",
+          "max": 3
+        }
+      ],
+      "pageSize": 100
+    },
+    "count": [
+      {
+        "dir": "data",
+        "ext": ".json",
+        "depth": 1
+      }
+    ],
+    "avatars": [],
+    "expectedDirs": [
+      "img",
+      "audio"
+    ],
+    "cover": [
+      {
+        "dir": "icon",
+        "files": [
+          "icon.png"
+        ]
+      }
+    ],
+    "notes": [
+      "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
+    ]
+  },
+  'rpgmaker::rj01482469': {
+    "extends": "rpgmaker",
+    "ruleOverrides": {
+      "rpgmaker-json": {
+        "pictures": {
+          "cgMatch": "(^|/)(KA|CO|SI)_\\d{6}"
+        },
+        "special": {
+          "imageMatch": "(^|/)(KA|CO|SI)_\\d{6}",
+          "minText": 10
+        }
+      }
+    }
+  },
   // ---- UViewer 系：resources/download/adv/text（resource_path 在 user_data/settings.json 里，见 detectUviewerGame）
   uviewer: {
     title: 'UViewer 资源包', kind: 'uviewer', detector: 'uviewer', autoOrder: 140,
@@ -2658,6 +2862,7 @@ const autoNodes = (entries) => {
 // 入口
 // ======================================================================
 const DETECTORS = {
+  rpgmaker: scope => detectRpgMaker(scope),
   legeclo: (scope) => detectLegeclo(scope),
   monmusu: (scope) => detectMonmusu(scope),
   angelic: (scope) => detectAngelic(scope),
@@ -4070,4 +4275,27 @@ function keepOwn(ctx, logs, { skipped = false, changes } = {}) {
     logs,
     details: { changes: changes || { summary: '没有改动（未识别 / 已跳过）', added: [], changed: [], removed: [], unchanged: [], kept, skipped: true } },
   }
+}
+
+// Engine mechanics are shared; profile selection and matching remain table data.
+async function detectRpgMaker(scope) {
+  let loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const system = JSON.parse((await readFile(path.join(scope.media, ...splitRel(join(loc.base, 'data/System.json'))), 'utf8')).replace(/^\uFEFF/, ''))
+  const common = JSON.parse((await readFile(path.join(scope.media, ...splitRel(join(loc.base, 'data/CommonEvents.json'))), 'utf8')).replace(/^\uFEFF/, ''))
+  if (!Array.isArray(common) || !common.some(e => e && Array.isArray(e.list))) return null
+  let id = scope.gameId || ''
+  if (!id) {
+    const profile = (loc.entry.profiles || []).find(p => { try { return new RegExp(p.match, 'i').test(scope.media + '/' + system.gameTitle) } catch { return false } })
+    id = profile?.id || 'rpgmaker::' + (path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g, '') || createHash('sha1').update(path.basename(scope.media)).digest('hex').slice(0, 12))
+    if (profile) loc = { ...loc, entry: resolveLayout(id, scope.layouts, []) }
+  }
+  announce(scope.logs, id, loc)
+  const config = await buildConfig(scope.media, loc.entry, loc.base)
+  config.sceneMarkers[0].match = config.adapterOptions['rpgmaker-json'].pictures.cgMatch
+  scope.logs.push('RPG Maker: ' + system.gameTitle + '；公共事件槽位 ' + (common.length - 1) + '；原始媒体按请求解密到 cache，不全量解包')
+  for (const line of loc.entry.notes) scope.logs.push(line)
+  const found = makeFound(scope, loc.entry, loc, config)
+  found.id = id
+  return found
 }

@@ -24,6 +24,7 @@ import { tenkeiprdxJsonAdapter } from './tenkeiprdx-json.mjs'
 import { tyranoKsAdapter } from './tyrano-ks.mjs'
 import { utageBookAdapter } from './utage-book.mjs'
 import { uviewerCsvAdapter } from './uviewer-csv.mjs'
+import { rpgMakerJsonAdapter } from './rpgmaker-json.mjs'
 
 const adapters = new Map()
 export function registerGalAdapter(adapter) {
@@ -31,6 +32,7 @@ export function registerGalAdapter(adapter) {
   adapters.set(adapter.id, adapter)
 }
 registerGalAdapter(uviewerCsvAdapter)
+registerGalAdapter(rpgMakerJsonAdapter)
 registerGalAdapter(renpyLegecloAdapter)     // 先于 monmusu：它的 sniff 要求 label H_xxx + $ enable_skip() / play voice，monmusu 的 label 是 h<数字>
 registerGalAdapter(renpyMinashigoAdapter)   // 先于 monmusu：它的 sniff 要求独有写法（$ name= / xyz "…"），monmusu 的脚本不会被它认走
 registerGalAdapter(renpyMonmusuAdapter)

@@ -4316,7 +4316,7 @@ function galChain(reader, nodeId) {
 let galRestoreScroll = null   // { id, top }：renderGalBrowse 渲染到这个节点时用一次
 let galPendingStart = null   // 卡片上的场景跳转点按钮：{ base（节点 id）, step }，renderGal 打开那个脚本时用一次
 function galNavigate(reader, nodeId, kind = 'self', extra = null) {
-  galPendingStart = kind === 'chain' ? { base: galBase(nodeId), step: 0 } : Number.isInteger(extra?.at) && extra.at > 0 ? { base: galBase(nodeId), step: extra.at } : null   // chain：脚本接着播下一个脚本——从头开始，不用那份脚本上次的进度 / 选项
+  galPendingStart = kind === 'chain' ? { base: galBase(nodeId), step: 0 } : Number.isInteger(extra?.at) && extra.at > 0 ? { base: galBase(nodeId), step: extra.at, choices: extra.choices || {} } : null   // chain：脚本接着播下一个脚本——从头开始，不用那份脚本上次的进度 / 选项
   const unitId = reader.unit.unitId
   const current = reader.node?.id ?? reader.section?.sectionId ?? ''
   let target = nodeId
@@ -4420,13 +4420,13 @@ function renderGal(reader) {
   const pendingStart = galPendingStart && galBase(sectionId) === galPendingStart.base ? galPendingStart : null   // 从卡片上的跳转点进来：从那一步开始，不用上次的进度 / 选项
   galPendingStart = null
   const savedChoices = pendingStart ? {} : mine?.nodes?.[sectionId]?.choices || {}
-  galChoices = resume >= 0.98 || pendingStart ? {} : { ...savedChoices }
+  galChoices = pendingStart ? { ...(pendingStart.choices || {}) } : resume >= 0.98 ? {} : { ...savedChoices }
   galPlayer = createGalPlayer({
     container: els.mediaReaderContent,
     reader,
     startRatio: pendingStart || resume >= 0.98 ? 0 : resume,   // 上次已经看完就从头来
     startStep: pendingStart ? pendingStart.step : null,   // 场景跳转点：从这一步（脚本里的步号）开始
-    startChoices: pendingStart || resume >= 0.98 ? {} : savedChoices,
+    startChoices: pendingStart ? pendingStart.choices || {} : resume >= 0.98 ? {} : savedChoices,
     viewKey: readerOwner(reader)?.itemId || '',   // 画面放大 / 中心按媒体（条目）存
     // 台词翻译（设置页 → Gal 翻译；没启用 / 没填模型地址 = 播放器里不出「翻译」按钮）
     // 台词朗读（设置页 → Gal 朗读；TTS 服务地址用「朗读（TTS）」那组；没启用 = 播放器里不出「朗读」按钮）

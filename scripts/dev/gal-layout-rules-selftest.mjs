@@ -24,6 +24,7 @@ const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v)
 
 // 适配器 id → 导出 DEFAULT_OPTIONS 的模块文件（girlscreation-line / -tag 共用同一份）
 const MODULES = {
+  'rpgmaker-json': 'rpgmaker-json',
   'renpy-legeclo': 'renpy-legeclo', 'renpy-monmusu': 'renpy-monmusu', 'renpy-minashigo': 'renpy-minashigo', 'uviewer-csv': 'uviewer-csv',
   'girlscreation-tag': 'girlscreation-tag', 'girlscreation-line': 'girlscreation-line', 'tenkeiprdx-json': 'tenkeiprdx-json', 'misttrain-json': 'misttrain-json',
   'utage-book': 'utage-book', 'artwhirl-json': 'artwhirl-json', 'tyrano-ks': 'tyrano-ks', 'bokusen-json': 'bokusen-json', 'grenze-xml': 'grenze-xml',
