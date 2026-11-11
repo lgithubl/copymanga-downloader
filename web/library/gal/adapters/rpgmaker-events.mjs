@@ -1,4 +1,5 @@
 import { safeRegex } from './options-merge.mjs'
+import { mapSnapshot } from './rpgmaker-maps.mjs'
 
 const v = id => `rpg:v:${Number(id)}`
 const s = id => `rpg:s:${Number(id)}`
@@ -18,6 +19,19 @@ export function compileRpgEvents(list, ctx, meta) {
   const when = () => guards.flatMap(g => g.conditions || [])
   const emit = cmd => { if ((stats.emitted = (stats.emitted || 0) + 1) > o.maxCommands) throw new Error('RPG Maker 导出指令达到上限'); const w = when(); pending.push(w.length ? { ...cmd, when: [...w] } : cmd) }
   const raw = (key, args) => { stats.raw[key] = (stats.raw[key] || 0) + 1; emit({ op: 'raw', cmd: key, args: JSON.stringify(args).slice(0, 1000) }) }
+  let mapId=Number(/Map(\d+)\.json$/i.exec(meta.rel||'')?.[1]||0)
+  const characterId=id=>Number(id)===0?meta.eventId:Number(id)
+  const showMap=(id,eventId=0,page=-1,player=null)=>{
+    if(o.maps?.enabled===false)return
+    const snapshot=mapSnapshot(ctx,id,eventId,page,player)
+    if(snapshot){
+      mapId=id;emit({op:'rpgMap',map:snapshot})
+      const native=ctx.maps.get(`${o.root?o.root+'/':''}data/Map${String(id).padStart(3,'0')}.json`)
+      emit(native?.parallaxName?{op:'bg',src:resource('img/parallaxes',native.parallaxName)}:{op:'bg',color:[0,0,0]})
+      if(native?.autoplayBgm)audio('bgm',native.bgm)
+    }
+    else {raw('map-missing',id);emit({op:'rpgMap',map:null})}
+  }
   const variable = (id, kind = 'v') => { const key = kind === 's' ? s(id) : v(id); let value = (kind === 's' ? o.initialSwitches : o.initialVariables)[id] ?? 0; if (kind === 's' && typeof value === 'boolean') value = Number(value); if (!initial.has(key)) initial.set(key, value); return key }
   const resource = (folder, name, ext = 'png') => {
     const clean = String(name || '').replace(/\\/g, '/').replace(/^\/+/, '')
@@ -143,6 +157,30 @@ export function compileRpgEvents(list, ctx, meta) {
         if (p[3] !== 0 && p[3] !== 1) { raw('variable-operand-unhandled', p); continue }
         for (let id = p[0]; id <= Math.min(p[1], p[0] + 10000); id++) emit({ op: 'set', var: variable(id), calc: ['set', 'add', 'sub', 'mul', 'div', 'mod'][p[2]], ...(p[3] === 0 ? { value: p[4] } : { valueVar: variable(p[4]) }) }); continue
       }
+      if (c.code === 123) { emit({op:'set',var:`rpg:self:${mapId}:${meta.eventId}:${p[0]}`,value:p[1]===0?1:0});continue }
+      if (c.code === 201) {
+        if(p[0]!==0){raw('map-transfer-variable',p);continue}
+        showMap(Number(p[1]),0,-1,{x:Number(p[2]),y:Number(p[3]),direction:Number(p[4])||2});continue
+      }
+      if (c.code === 203) {
+        const patch={...(p[4]?{direction:p[4]}:{})}
+        if(p[1]===0)Object.assign(patch,{x:p[2],y:p[3]})
+        if(p[1]===1)Object.assign(patch,{xVar:p[2],yVar:p[3]})
+        emit({op:'rpgEvent',id:characterId(p[0]),patch,...(p[1]===2?{exchange:characterId(p[2])}:{})});continue
+      }
+      if (c.code === 205) {
+        const route=p[1]||{},actions=[]
+        for(const action of route.list||[]){
+          if(++stats.commands>o.maxCommands)throw Error('RPG Maker 移动路线超过指令上限')
+          if([9,23,24,45].includes(action.code)){raw('map-route-unhandled',action);continue}
+          if(action.code===44){audio('se',action.parameters?.[0]);continue}
+          actions.push({...action,...(action.code===41?{src:resource('img/characters',action.parameters?.[0])}:{})})
+        }
+        if(route.repeat)raw('map-route-repeat-once',p[0])
+        emit({op:'rpgRoute',id:characterId(p[0]),serial:`route-${serial++}`,actions,wait:!!route.wait});continue
+      }
+      if (c.code === 211) { emit({op:'rpgEvent',id:-1,patch:{visible:p[0]!==0}});continue }
+      if (c.code === 214) { emit({op:'rpgEvent',id:meta.eventId,patch:{visible:false,erased:true}});continue }
       if (c.code === 231) { picture(p); continue }
       if (c.code === 232) { picture(p, true); continue }
       if (c.code === 235) { emit({ op: 'overlayOff', slot: `rpg-picture-${Number(p[0])}` }); pictures.delete(Number(p[0])); continue }
@@ -164,15 +202,17 @@ export function compileRpgEvents(list, ctx, meta) {
     guards.splice(guardBase); calls.pop()
   }
   const conditions = meta.pageConditions
+  for(const [id,value]of Object.entries(o.initialVariables||{}))if(Number.isInteger(Number(id))&&Number(id)>0)initial.set(v(id),value)
+  for(const [id,value]of Object.entries(o.initialSwitches||{}))if(Number.isInteger(Number(id))&&Number(id)>0)initial.set(s(id),Number(!!value))
   if (conditions) {
     if (conditions.switch1Valid) initial.set(variable(conditions.switch1Id, 's'), 1)
     if (conditions.switch2Valid) initial.set(variable(conditions.switch2Id, 's'), 1)
     if (conditions.variableValid) { const key = variable(conditions.variableId); initial.set(key, Math.max(Number(initial.get(key)) || 0, Number(conditions.variableValue || 0))) }
+    if (conditions.selfSwitchValid) initial.set(`rpg:self:${mapId}:${meta.eventId}:${conditions.selfSwitchCh}`,1)
   }
   emit({ op: 'bg', color: [0, 0, 0] })
-  if (meta.map?.parallaxName) emit({ op: 'bg', src: resource('img/parallaxes', meta.map.parallaxName) })
-  else if (meta.map) stats.warnings.push('地图瓦片/行走角色未渲染；使用黑底播放事件对话与图片，未模拟地图探索')
-  if (meta.map?.autoplayBgm) audio('bgm', meta.map.bgm)
+  if(meta.map&&mapId)showMap(mapId,meta.eventId,meta.pageIndex)
+  if(meta.map&&o.maps?.enabled!==false)stats.warnings.push('地图为事件初始快照；无游戏存档时玩家位置取系统起点或事件附近，不执行自主移动/并行事件或玩家操控')
   run(list, 0, Array.isArray(ctx.common) && String(meta.scene).startsWith('common-') ? String(meta.eventId) : '')
   flush()
   const initialization = [...initial].map(([key, value]) => ({ op: 'set', var: key, value }))

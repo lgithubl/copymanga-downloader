@@ -9,6 +9,7 @@ export const ADAPTER_ID = 'rpgmaker-json'
 export const DEFAULT_OPTIONS = {
   root: '', stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
   initialVariables: {}, initialSwitches: {},
+  maps: { enabled: true, tileSize: 48, player: true, follow: 'event' },
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
   special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(hcg|cg|ev|event)[_-]' },
   pictures: { folder: 'img/pictures', cgMatch: '(^|/)(hcg|cg|ev|event)[_-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
@@ -18,7 +19,7 @@ export const optionsOf = createOptionsReader(DEFAULT_OPTIONS)
 const join = (...s) => s.filter(Boolean).join('/')
 const rootOf = o => cleanDir(o?.root)
 const decodeJson = s => JSON.parse(String(s).replace(/^\uFEFF/, ''))
-export const contextFiles = o => ['data/System.json', 'data/Actors.json', 'data/CommonEvents.json', 'data/MapInfos.json', 'js/plugins.js'].map(p => join(rootOf(o), p))
+export const contextFiles = o => ['data/System.json', 'data/Actors.json', 'data/CommonEvents.json', 'data/MapInfos.json', 'data/Tilesets.json', 'js/plugins.js'].map(p => join(rootOf(o), p))
 export const contextDirs = o => ['data', 'img', 'audio'].map(p => join(rootOf(o), p))
 export const contextWalkLimit = 400000
 
@@ -38,7 +39,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   if (!Array.isArray(plugins)) plugins = []
   if (!Array.isArray(common)) throw new Error('RPG Maker CommonEvents.json 必须是公共事件数组')
   const enabled = plugins.filter(p => p?.status === true)
-  const ctx = { options: o, common, system, actors, mapInfo, plugins: enabled, maps: new Map(), files: new Set((files || []).map(toResourcePath || (x => x))), warnings: [], evidenceCache: new WeakMap(), evidenceBusy: new Set() }
+  const ctx = { options: o, common, system, actors, mapInfo, tilesets: read('data/Tilesets.json', []), plugins: enabled, maps: new Map(), files: new Set((files || []).map(toResourcePath || (x => x))), warnings: [], evidenceCache: new WeakMap(), evidenceBusy: new Set() }
   if (truncated) ctx.warnings.push('资源索引达到上限，部分资源未收录')
   if (get('js/plugins.js') && !plugins.length) ctx.warnings.push('plugins.js 不是可解析的插件 JSON 配置；没有执行游戏 JS')
   ctx.standing = new Map()
@@ -130,7 +131,7 @@ function buildCatalog(ctx) {
 export function parse(text, ctx, meta = {}) {
   const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : decodeJson(text), o = optionsOf(meta.options || ctx?.options)
   const scene = String(meta.scene || '')
-  let list, pageConditions = null, eventId = 0, map = null
+  let list, pageConditions = null, eventId = 0, map = null, pageIndex = -1
   if (Array.isArray(data)) {
     const id = /^common-(\d+)$/.exec(scene)?.[1]
     if (!id || !Array.isArray(data[Number(id)]?.list)) throw new Error('请选择一个公共事件，不能将全部事件按ID串联')
@@ -139,10 +140,10 @@ export function parse(text, ctx, meta = {}) {
     const selected = /^event-(\d+)-(\d+)$/.exec(scene)
     const event = selected && data.events.find(e => e?.id === Number(selected[1])), page = event?.pages?.[Number(selected[2]) - 1]
     if (!page?.list) throw new Error('请选择具体地图事件及页码')
-    list = page.list; pageConditions = page.conditions; eventId = event.id
+    list = page.list; pageConditions = page.conditions; eventId = event.id; pageIndex = Number(selected[2]) - 1
     map = data
   } else throw new Error('不是 RPG Maker 事件文件')
-  return compileRpgEvents(list, ctx || { common: data, actors: [], standing: new Map(), options: o, stage: o.stage, warnings: [] }, { ...meta, options: o, pageConditions, eventId, map })
+  return compileRpgEvents(list, ctx || { common: data, actors: [], standing: new Map(), options: o, stage: o.stage, warnings: [] }, { ...meta, options: o, pageConditions, eventId, pageIndex, map })
 }
 
 export const rpgMakerJsonAdapter = { id: ADAPTER_ID, label: 'RPG Maker MV/MZ 事件', sniff, parse, prepare, contextFiles, contextDirs, contextWalkLimit, sceneInPath: true, sceneThumbs: true, catalog: ctx => ctx?.catalogTree, health: ctx => (ctx?.warnings || []).map(message => ({ level: 'warn', code: 'rpgmaker-context', message })) }

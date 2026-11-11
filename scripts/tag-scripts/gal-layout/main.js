@@ -68,6 +68,7 @@ export const ADAPTER_RULES = {
     "maxCallDepth": 32,
     "initialVariables": {},
     "initialSwitches": {},
+    "maps": {"enabled": true, "tileSize": 48, "player": true, "follow": "event"},
     "catalog": {
       "common": true,
       "maps": true,
@@ -1722,7 +1723,7 @@ export const LAYOUTS = {
       }
     ],
     "notes": [
-      "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
+      "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音、静态地图/人物及剧情移动演出；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
     ]
   },
   'rpgmaker::rj01482469': {

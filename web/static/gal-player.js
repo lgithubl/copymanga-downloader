@@ -8,6 +8,7 @@ import { createTranslateClient } from '/gal-translate.js'
 import { createTtsClient, ttsKey } from '/gal-tts-client.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 import { createEmoteLayer } from '/gal-emote.js'
+import { createRpgMakerMapLayer } from '/gal-rpgmaker-map.js'
 import { attachBarLock } from '/gal-barlock.js'
 import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
@@ -1257,6 +1258,12 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera, blend: views.blend, expressions: expressionTable() } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
   }
+  let rpgMapLayer=null
+  function paintRpgMap(live=false){
+    if(!rpgMapLayer&&!state.rpgMap)return Promise.resolve()
+    if(!rpgMapLayer){rpgMapLayer=createRpgMakerMapLayer({parent:world,url,onMissing:markMissing});if(!wantBgm)rpgMapLayer.setPaused(true)}
+    return rpgMapLayer.set(state.rpgMap,{live})
+  }
   // Live2D（live2d 指令：KiriKiri 的 .l2d）：第一次要画时才建 canvas；在背景 / 视频之上、立绘 / 骨骼之下
   let live2dLayer = null
   function paintLive2d() {
@@ -1349,6 +1356,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     paintMovie(true)
     paintLive2d()
     paintSpines(false)
+    paintRpgMap(false)
     paintStand()
     paintOverlays()
     paintCamera(false)
@@ -1411,6 +1419,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       const seconds = skipping ? 0 : commandDuration(scaled)
       applyCommand(state, scaled, choices)
       switch (command.op) {
+        case 'set':
+          if(state.rpgMap)paintRpgMap(!skipping)
+          break
+        case 'rpgMap':
+        case 'rpgEvent':
+        case 'rpgFocus':
+          await paintRpgMap(!skipping)
+          break
+        case 'rpgRoute':
+          await paintRpgMap(!skipping)
+          if(command.wait&&!skipping)await sleep(state.rpgMap?.lastDuration||0)
+          break
         case 'bg':
         case 'bgoff':
           paintBg(state.bg, seconds, false)
@@ -1497,6 +1517,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (destroyed || mine !== gen) return
     // 跳过时动画被截断，收尾把画面对齐到这一步该有的状态
     if (skipping) {
+      paintRpgMap(false)
       paintBg(state.bg, 0, true)
       paintBgFx(false)
       paintBlack(true)
@@ -2266,6 +2287,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const visibility = new IntersectionObserver((entries) => {
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
+    rpgMapLayer?.setPaused(!visible)
     if (visible) { tr?.pause(!transOn || fast); ttsClient?.pause(!ttsOn || fast); spineLayer?.setPaused(false); live2dLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
     else { tr?.pause(true); ttsClient?.pause(true); ttsRecord?.audio?.pause(); spineLayer?.setPaused(true); live2dLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
   })
@@ -2294,6 +2316,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     for (const video of spareVideos.values()) { video.removeAttribute('src'); video.load?.() }
     spareVideos.clear()
     spineLayer?.destroy()
+    rpgMapLayer?.destroy()
     live2dLayer?.destroy()
     tr?.destroy()
     stopTts()

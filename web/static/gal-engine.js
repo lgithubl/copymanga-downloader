@@ -2,8 +2,10 @@
 // 输入是规范场景（见 web/library/gal/scene.mjs）。状态 = 播放到某一步之后画面/声音「应该是什么样」，
 // 前进时按指令逐条动画执行，后退/续播/跳转时直接 stateAt() 一步到位。
 
+import { applyRpgMapCommand, refreshRpgMapPages } from './gal-rpgmaker-map-model.js'
+
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, live2d: null, spines: {}, stand: null, stands: [], overlays: [], camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, bgPan: null, white: false, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, live2d: null, spines: {}, stand: null, stands: [], overlays: [], rpgMap: null, camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, bgPan: null, white: false, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -118,8 +120,10 @@ export function dropChoicesFrom(choices, fromStep) {
 export function applyCommand(state, command, choices = null) {
   if (command.when && !condMet(command.when, state.vars)) return state
   switch (command.op) {
+    case 'rpgMap': case 'rpgEvent': case 'rpgRoute': case 'rpgFocus': applyRpgMapCommand(state,command); break
     case 'set':
       assignVariable(state.vars, command)
+      refreshRpgMapPages(state)
       break
     case 'choice':
       recordChoice(state.vars, command, choices)
