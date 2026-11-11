@@ -2148,7 +2148,12 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 200, sampleBytes: 262144, scriptBytes: 67108864 },
       containers: { enabled: true, dir: 'arc', scan: ['.', 'Resources'], scriptDecoder: 'tomoe-arc04', scriptExt: 'tomoe', mode: 'hybrid', format: 'tomoe', flat: false, rules: [{ match: '^Arc04\\.dat$', kinds: ['script'] }, { match: '^(Arc03|Arc06|Data\\d+)\\.dat$', kinds: ['res'] }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['tomoe'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { cg: 'CG 场景' }, merge: [], views: [{ parent: 'Arc04', as: 'cg', label: 'CG 场景', dirs: ['*'], match: '_cg$' }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { overlays: true, prefer: ['cg', 'stand', 'bg'], skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', '\\.p$'] }, pageSize: 100 },   // CG 场景的图在叠加层上（背景是黑的）：overlays 让兜底封面也收叠加层的整张图，补丁（<编号>.p）不要
+    config: { sceneMarkers: [
+      { label: '背景人声开始', kind: 'cmd', op: 'bgse', pick: 'first', max: 1 },
+      { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 3 },
+      { label: 'BGM 切换', kind: 'cmd', op: 'bgm', pick: 'each', max: 3 },
+      { label: '画面切换', kind: 'cmd', op: 'bg', match: '(?:^|/)img/', pick: 'each', max: 4 },
+    ], scriptExtensions: ['tomoe'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { cg: 'CG 场景' }, merge: [], views: [{ parent: 'Arc04', as: 'cg', label: 'CG 场景', dirs: ['*'], match: '_cg$' }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { overlays: true, prefer: ['cg', 'stand', 'bg'], skip: ['(?:^|[^a-z])(?:black|white|blank)(?:[^a-z]|$)', '\\.p$'] }, pageSize: 100 },   // CG 场景的图在叠加层上（背景是黑的）：overlays 让兜底封面也收叠加层的整张图，补丁（<编号>.p）不要
     count: [{ dir: 'arc/script', ext: '.tomoe', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['Arc04.dat 按 Arc01 索引切分正式剧情（排除菜单与调试段）；图片由 f204 映射编号，差分按声明底图重建；声音按语音 / 音效 / BGM 分类索引，被请求时才解码', '文字（含注音）/ 语音（声道 → 说话人）/ BGM / 音效 / 背景 / 叠加图层都有；选项、跳转（剧情是一条线）、层的叠放顺序和补丁盖在哪一层没有游戏截图对照，不一定对；章节标题卡（Data004）的触发方式没查出来'],
@@ -2171,6 +2176,13 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
       containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'artemis-ast', scriptExt: 'ast', mode: 'hybrid', format: 'pf8', flat: true, rules: [{ match: '\\.pfs(?:\\.\\d+)?$' }], maxEntries: 200000, maxTotalMB: 8192, emote: { enabled: true, seed: 'auto', textureOrder: 'auto', driver: 'emotedriver.dll' }, video: { enabled: true, crf: 23 } },
     },
+    // Game-specific marker rules selected by the source archive name.
+    sceneMarkersByArchive: { 'yugamase.pfs': [
+      { label: 'CG 开始', kind: 'bg', match: '(?:^|/)image/ev/', pick: 'run', max: 3 },
+      { label: '视频开始', kind: 'cmd', op: 'movie', pick: 'first', max: 1 },
+      { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 3 },
+      { label: 'BGM 切换', kind: 'cmd', op: 'bgm', pick: 'each', max: 3 },
+    ] },
     config: { scriptExtensions: ['ast'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '\\dh$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'movie', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.ast', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
@@ -3517,6 +3529,11 @@ async function detectArtemis(scope) {
   if (magic !== 'pf8') { if (declared) logs.push(`Artemis：${pfs[0] || '.pfs'} 的魔数不是 pf8（${JSON.stringify(magic)}），这个版本只支持 pf8`); return null }
   announce(logs, scope.gameId || scope.id, loc)
   const config = await buildConfig(media, entry, base)
+  const markers = pfs.map(name => entry.sceneMarkersByArchive?.[name.toLowerCase()]).find(Array.isArray)
+  if (markers && config.sceneMarkers === undefined) {
+    config.sceneMarkers = structuredClone(markers)
+    logs.push('列表卡片跳转点：CG 开始 / 视频开始 / BGM 停止 / BGM 切换（按 yugamase.pfs 匹配）')
+  }
   if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
   const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
   const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
