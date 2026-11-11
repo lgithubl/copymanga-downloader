@@ -109,7 +109,7 @@ export function parse(text, ctx = null, meta = {}) {
     const zoom = Math.max(0.05, char.scale / 100)
     const place = { zoom, vcenter: true, shiftX: char.x, shiftY: char.y - 540 }
     const parts = [{ src: baseSrc, x: 0, y: 0, ...place }]
-    const wanted = [['cheek', char.cheek], ['eye', char.eye], ['brow', char.brow], ['mouth', char.mouth], ['tear', char.tear]]
+    const wanted = [['cheek', char.cheek], ['eye', char.eye], ['brow', char.brow], ['mouth', char.mouth], ['tear', char.tear], ...Object.entries(char.extra || {})]
     for (const [kind, value] of wanted) {
       if (value === undefined || value === null) continue
       const part = kind === 'eye' || kind === 'mouth' ? value.part : kind
@@ -209,13 +209,14 @@ export function parse(text, ctx = null, meta = {}) {
         else if (args[2] === 'mouth-open' || args[2] === 'mouth-close') char.mouth = { part: args[2], idx }
         else if (args[2] === 'cheek') char.cheek = idx
         else if (args[2] === 'tear') char.tear = idx
-        else count('ignored', `char-part:${args[2]}`)
+        else { char.extra ||= {}; char.extra[args[2]]=idx }
       } else if (method === 103) count('ignored', 'char:103')
       else if (method === 104) { charShown = Boolean(char) }
       else if (method === 105 || method === 106) { charShown = false; if (method === 106) char = null }
       else count('ignored', `char:${method}`)
       dirty = true
-    } else count('ignored', String(kind))
+    } else if(kind==='u')count('ignored',`unhandled:${ev[1]}`)
+    else count('ignored', String(kind))
   }
   commit()
   let next = null

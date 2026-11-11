@@ -35,13 +35,13 @@ function hitsOf(steps, rule) {
   return hits
 }
 
-export function computeMarkers(scene, rules) {
+export function computeMarkers(scene, rules, { includeEndpoints = false } = {}) {
   const steps = Array.isArray(scene?.steps) ? scene.steps : []
-  if (!rules?.length || steps.length < 2) return []
+  if (!rules?.length || !steps.length) return []
   const found = new Map()   // 步号 → 标签
   for (const rule of rules) {
     const choices = new Map()
-    const all = hitsOf(steps, rule).filter((i) => i > 0 && i < steps.length - 2).filter(i => {
+    const all = hitsOf(steps, rule).filter((i) => includeEndpoints || (i > 0 && i < steps.length - 2)).filter(i => {
       if (rule.kind !== 'cmd') return true
       const matching = steps[i].commands.map((c, k) => ({ c, k })).filter(({c}) => c.op === rule.op && (!rule.re || commandKeys(c).some(x => rule.re.test(x))))
       if (matching.some(({c}) => !c.when?.length)) return true
@@ -51,5 +51,5 @@ export function computeMarkers(scene, rules) {
     const hits = rule.pick === 'first' ? all.slice(0, 1) : rule.pick === 'last' ? all.slice(-1) : all.slice(0, rule.max)
     hits.forEach((step, k) => { if (!found.has(step)) found.set(step, { label: hits.length > 1 ? `${rule.label} ${k + 1}` : rule.label, ...(Object.keys(choices.get(step) || {}).length ? { choices: choices.get(step) } : {}) }) })
   }
-  return [...found].sort((a, b) => a[0] - b[0]).slice(0, TOTAL_LIMIT).map(([step, fields]) => ({ step, ...fields, ratio: Math.round((step / (steps.length - 1)) * 1000) / 1000 }))
+  return [...found].sort((a, b) => a[0] - b[0]).slice(0, TOTAL_LIMIT).map(([step, fields]) => ({ step, ...fields, ratio: Math.round((step / Math.max(1, steps.length - 1)) * 1000) / 1000 }))
 }

@@ -1477,3 +1477,9 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 - **层的叠放**（数据核对，没有逆到画帧函数）：每层留着整张图 + 累计的补丁（图号 ≥ 817 清空这一层）；**号小的在前**（2 层最前，9999 最后），前面第一张整图盖住后面所有层。核对：ch12 s3 的 H-CG = 2 层的 685 + 补丁 687…；140 层里留着上一个 CG（772 + 683），2 层盖住它才和台词对得上；把 140 放前面就成了另一个蓝发女孩。
 - 适配器：从前往后找第一个有整张图的层 → 它的整图 = `bg`，它的补丁和更前面的层 = 叠加层（z 按层号）；更后面的层被盖住，不发。`layerModel: 'legacy'` 保留旧行为。
 - 还没验证 / 没逆到：画帧函数里真实的排序（只是「号小在前」和数据一致）；03_21 第 67 步以后 319/320 的画面和台词对不上，可能是图号 → 内容的对应问题（本次没有这些图）。
+
+### Debonosu PAC 外置剧情（`pac::script`）与新版 eomaia
+
+`pac::script` 读取 `data/Script` / `data/AdditionalScript` 的 `#MSG` 文本；资源由 `format: pac, mode: hybrid, flat: true` 按 PAC 索引延迟读取。背景、CG、立绘及声音命名模板在 `adapterOptions`，未命中的资源计入 `stats.unresolved`，未实现指令保留 raw。战斗/奖励不模拟。新家族的实际验证范围及未完成项目见 [采集与接入状态](../../../scripts/dev/gal-new-games-status.md)。
+
+`arcfam::scre` 兼容夜勤病棟新版 audio/角色调用及不带括号的说话人；未知调用计数，不执行原始游戏代码。`systeminfo.json` 提供舞台尺寸，布局表的 `systemProfiles` 提供游戏命名/分类差异。CG 仅在首句出现的场景仍可归入特殊场景；卡片中途开始按钮继续省略起止位置。

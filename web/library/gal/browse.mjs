@@ -178,7 +178,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
   const groupRules = config.groups.map((rule) => ({ ...rule, test: parentRegExp(rule.parent), re: new RegExp(rule.pattern) }))
   // 虚拟目录（config.views）：<parent>/<as> 这个路径磁盘上没有，列它时把来源目录（dirs，没写 = parent 自己）里 stem 匹配 match 的脚本收进来
   // parent 可以是通配（* ?）：每个匹配的目录下各有一个这样的视图——规则（viewRules）按 parent 匹配，实例（把 parent / rel 换成真实目录）才交给后面的代码用
-  const baseViewRules = config.views.map((rule) => ({ ...rule, on: 'name', test: rule.parent ? parentRegExp(rule.parent) : /^$/, re: rule.match ? new RegExp(rule.match) : null }))
+  const baseViewRules = config.views.map((rule) => ({ ...rule, on: rule.on || 'name', test: rule.parent ? parentRegExp(rule.parent) : /^$/, re: rule.match ? new RegExp(rule.match) : null }))
   // 本地覆盖（浏览器里「更多」的规则框，存在浏览器本地、随请求带来，不写服务端配置）：{ <视图名>: { match, on: 'name' | 'path' | 'marker' } }。
   // 请求级上下文（AsyncLocalStorage）：provider 里很多函数都用到视图规则，不用一路改签名；每个请求各用各的。
   const viewStore = new AsyncLocalStorage()
@@ -201,7 +201,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
   async function viewTakesAsync(set, rule, script) {
     if (rule.on !== 'marker') return viewTakes(rule, script)
     const info = await scriptInfo(set, script.rel).catch(() => null)
-    return Boolean(info?.markers?.length) && (!rule.re || info.markers.some((m) => rule.re.test(m.label)))
+    return Boolean(info?.viewMarkers?.length) && (!rule.re || info.viewMarkers.some((m) => rule.re.test(m.label)))
   }
   const filterViewScripts = async (set, rule, scripts, want = true) => {
     if (rule.on !== 'marker') return scripts.filter((script) => viewTakes(rule, script) === want)
@@ -916,7 +916,8 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     }
     const shownThumbs = filmRenders.length ? [] : thumbs   // 有胶片渲染图时，兜底的灰底图不要
     const markers = scene && config.sceneMarkers.length ? computeMarkers(scene, config.sceneMarkers.map((rule) => ({ ...rule, re: rule.match ? new RegExp(rule.match, 'i') : null }))) : []
-    const result = { adapterId, renderKey, filmRenders, ...(markers.length ? { markers } : {}), ...(innerRenders.length ? { innerRenders, ...(ruleHit ? { ruleCover: true } : {}) } : {}), thumb: shownThumbs[0] || '', thumbs: shownThumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: shownThumbs.length || filmRenders.length ? [] : why, issues }
+    const viewMarkers = scene && config.sceneMarkers.length ? computeMarkers(scene, config.sceneMarkers.map(rule => ({ ...rule, re: rule.match ? new RegExp(rule.match, 'i') : null })), { includeEndpoints: true }) : []
+    const result = { adapterId, renderKey, filmRenders, viewMarkers, ...(markers.length ? { markers } : {}), ...(innerRenders.length ? { innerRenders, ...(ruleHit ? { ruleCover: true } : {}) } : {}), thumb: shownThumbs[0] || '', thumbs: shownThumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: shownThumbs.length || filmRenders.length ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
     return result
   }

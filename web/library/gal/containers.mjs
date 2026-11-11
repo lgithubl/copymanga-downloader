@@ -18,6 +18,7 @@ import { decodeWs2, ror2 } from './adapters/advhd-ws2-decode.mjs'
 import { bwToOgg, cbgToPng, dscDecode, encodePng, isBurikoScript, parseBgiFaceSet, readBurikoArcIndex, runBurikoScript, sniffEntry } from './bgi.mjs'
 import { decodeScre } from './arcfam-decode.mjs'
 import { runCbg, runKtx, runWcg } from './decode-pool.mjs'
+import { readPacIndex } from './pac.mjs'
 import { readArcfamIndex } from './arcfam.mjs'
 import { isVorbisRiff, parseGsc, readXflIndex, riffVorbisToOgg } from './rscript-gsc.mjs'
 import { decodeGscScript, runGsc } from './rscript-run.mjs'
@@ -192,10 +193,10 @@ export const SCRIPT_DECODERS = Object.freeze({
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
-const arcRegex = (cfg) => (cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
+const arcRegex = (cfg) => (cfg.format === 'pac' ? /\.pac$/i : cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
-const readIndexFor = (file, cfg) => (cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
+const readIndexFor = (file, cfg) => (cfg?.format === 'pac' ? readPacIndex(file) : cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
 // pf8（Artemis）：按扩展名分——.ast = 脚本（解密后交给解码器），图 / 声音 = 资源（取出来时解密），别的（lua / csv / psb …）跳过
 function classifyPf8(name) {
   const ext = extOf(name)
@@ -382,7 +383,7 @@ function compileRules(cfg) {
     gallery: rule.gallery || null,
   }))
 }
-const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, cfg.video || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex'), ...(cfg.format === 'tomoe' ? [3] : [])])).digest('hex').slice(0, 16)
+const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, cfg.video || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex'), ...(cfg.format === 'tomoe' ? [3] : cfg.scriptDecoder === 'arcfam-scre' ? ['scre2'] : [])])).digest('hex').slice(0, 16)
 const kindOf = (name, scriptKinds) => {
   const ext = extOf(name)
   if (SCRIPT_EXTS.has(ext)) return scriptKinds
@@ -1403,7 +1404,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
     try { ({ entries, key } = await readIndexFor(file, cfg)) } catch { continue }
     if (entries.length > cfg.maxEntries) continue
     const stem = cfg.format === 'pf8' ? pf8Stem(arcName) : withoutExt(arcName)
-    const base = `${cfg.dir}/res/${stem}`
+    const base = cfg.format==='pac' && cfg.flat ? `${cfg.dir}/res` : `${cfg.dir}/res/${stem}`
     let handle = null
     try {
       if (cfg.format === 'xfl') {

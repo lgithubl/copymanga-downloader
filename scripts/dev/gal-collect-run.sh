@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.51 仅补采夜勤和国度的有界媒体样本及完整PAC索引，验证CG/立绘/语音；不重收脚本或整个资源包。
 # 1.50 五作二轮：AI的sx/存储索引、国度外置文本/PAC头尾、シロクロ元数据/首个bundle/索引、ツヴァイXP3索引/原始剧情样本/原EXE、夜勤script/data及资源索引；每作16MB上限，原目录只读。
 # 1.49 定向采五个新游戏的目录/配置/有界EXE及资源包头尾，用于引擎复用分析；AI按完整目录名匹配，不采完整媒体或大二进制。
 # 1.48 三作媒体验证样本：按已采剧情/地图引用定向取24个图片/声音/瓦片/人物文件，约8.8MB；封装MV只读原始资源块，不重复脚本数据。
@@ -70,10 +71,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.50"
+VERSION="1.51"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:detail$'
+ROUND_RULES='^new-games:media$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1584,8 +1585,69 @@ def new_game_detail_files(items, label):
     for row in payload:yield row
     yield '__followup/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
+
+def new_game_media_files(items,label):
+    """Small real resource evidence for the first two adapters; source read-only."""
+    lookup={e.rel.casefold():e for e in items};payload=[];used=0
+    report={'game':label,'sourceReadOnly':True,'files':[],'omitted':[],'maxBytes':16*MB}
+    def take(e,offset,length,target):
+        nonlocal used
+        if offset<0 or length<0 or offset+length>e.size:raise RuntimeError('Invalid media range '+e.rel)
+        if length>6*MB or used+length>16*MB:
+            report['omitted'].append({'path':e.rel,'entry':target,'reason':'explicit media budget','bytes':length});return
+        with open(e.path,'rb') as f:f.seek(offset);b=f.read(length)
+        if len(b)!=length:raise RuntimeError('Media source changed '+e.rel)
+        payload.append((target,b,e.mtime));used+=length
+        report['files'].append({'path':e.rel,'artifact':target,'offset':offset,'bytes':length,'sourceBytes':e.size,'sha256':hashlib.sha256(b).hexdigest()})
+    if label=='夜勤病棟リメイク':
+        wants={'image.arc':{'OP001.PNG','A001_01.PNG','FG_REN04A01L.CHAR','FG_REN04A01L_0.PNG','FG_REN04A01L_FACE.JSON','FG_REN04A01L_FACE.PNG'},'voice.arc':{'VOICE/00_PROLOGUE_001.OGG'}}
+        for archive,names in wants.items():
+            e=lookup.get(archive)
+            if not e:continue
+            with open(e.path,'rb') as f:
+                h=f.read(4);hs=struct.unpack('<I',h)[0] if len(h)==4 else 0
+                if not 4<=hs<=2*MB or hs+4>e.size:raise RuntimeError('Unknown arcfam header '+archive)
+                b=f.read(hs);q=0;found=set()
+                while q<len(b):
+                    n=b[q];q+=1;raw=b[q:q+n];q+=n
+                    size,original,off=struct.unpack_from('>III',b,q);q+=12
+                    name=''.join(chr((v+n-i)&255) for i,v in enumerate(raw))
+                    if name not in names:continue
+                    found.add(name)
+                    if size!=original:report['omitted'].append({'entry':name,'reason':'compressed resource not silently decoded'});continue
+                    take(e,off,size,'__media/'+name)
+                for name in sorted(names-found):report['omitted'].append({'entry':name,'reason':'not in archive'})
+    elif label.startswith('How to Build'):
+        for archive in ['Game','Bgm','Se','Voice']:
+            e=lookup.get('pac/'+archive.lower()+'.pac')
+            if not e:continue
+            with open(e.path,'rb') as f:
+                h=f.read(16)
+                if len(h)!=16 or h[:4]!=bytes.fromhex('82cf82ad'):raise RuntimeError('Unknown PAC header')
+                count,start=struct.unpack_from('<IQ',h,4)
+                if count>200000 or start!=16+count*272 or start>6*MB or start>e.size:raise RuntimeError('Invalid PAC index')
+                table=f.read(count*272)
+                if len(table)!=count*272:raise RuntimeError('PAC table truncated')
+            take(e,0,start,'__media/index/'+archive+'.pac.table.bin')
+            selected=[]
+            for i in range(count):
+                rec=table[i*272:(i+1)*272];off,size,n=struct.unpack_from('<QII',rec,256)
+                if not 1<=n<=255 or start+off+size>e.size:raise RuntimeError('Invalid PAC entry')
+                name=rec[:n].decode('cp932').replace('\\','/')
+                if name.startswith('/') or any(v in ('','.','..') for v in name.split('/')):raise RuntimeError('Unsafe PAC name')
+                low=name.casefold()
+                exact=low in ('data/graphics/bg/0070.png','data/graphics/bu/000_00.png','data/sound/bgm/401.ogg','data/sound/se/000.wav','data/sound/voice/nyan01_0070_00.ogg')
+                cg=archive=='Game' and '/cg/' in low and len([x for x in selected if '/CG/' in x[0].upper()])<2
+                if exact or cg:selected.append((name,start+off,size))
+            for name,off,size in selected:take(e,off,size,'__media/'+name)
+    else:raise RuntimeError('Unrequested media target '+label)
+    report['sampleBytes']=used
+    yield from payload
+    yield '__media/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
+
 def main():
-    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:probe$','^new-games:detail$')
+    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:probe$','^new-games:detail$','^new-games:media$')
+    new_games_media = new_games and RULES_RE.pattern == '^new-games:media$'
     new_games_detail = new_games and RULES_RE.pattern == '^new-games:detail$'
     download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
     tsk_scene = RULES_RE is not None and RULES_RE.pattern == '^tsk:ch10340034$'
@@ -1600,14 +1662,16 @@ def main():
         for d,ds,_fs in walk_follow(root):
             depth=os.path.relpath(d,root).count(os.sep)
             label=new_game_label(os.path.basename(d))
+            if label and new_games_media and label not in ('How to Build a Magnificent Kingdom v1.05','夜勤病棟リメイク'):
+                ds[:]=[];continue
             if label and (not ONLY or ONLY.search(os.path.relpath(d,root))):
                 games.append(d);found.add(label);ds[:]=[]
             elif any(MARK.search(f) for f in _fs) or any(x.lower().endswith('_data') for x in ds):
                 ds[:]=[]  # Other games cannot contain a requested game; avoid scanning their media/runtime trees.
             else:
                 ds[:]=sorted(x for x in ds if depth<7 and x.lower() not in ('gal-download','bundles','runs','repair-backups','bundle-backups','node_modules','img','audio','movies') and not EXCL.search(x+'/'))
-        missing=[name for name,_pattern in NEW_GAME_PATTERNS if name not in found]
-        say('本轮五作引擎探测；找到%d个目录；未找到：%s' % (len(games),'；'.join(missing) or '无'))
+        missing=[name for name,_pattern in NEW_GAME_PATTERNS if name not in found and (not new_games_media or name in ('How to Build a Magnificent Kingdom v1.05','夜勤病棟リメイク'))]
+        say('本轮%s；找到%d个目录；未找到：%s' % ('两作定向媒体验证' if new_games_media else '五作引擎探测',len(games),'；'.join(missing) or '无'))
         if not games: raise RuntimeError('未找到指定五作目录；未采其他游戏')
     elif download_logs:
         game, log_items = latest_download_logs()
@@ -1673,7 +1737,7 @@ def main():
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
         picks = ([] if new_games or tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
-        if new_games and items: picks=[(items[0],'inventory','new-games:detail' if new_games_detail else 'new-games:probe')]
+        if new_games and items: picks=[(items[0],'inventory','new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
         if rpg_media:
             sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
             sample = RPG_MEDIA_SAMPLES[sample_id]
@@ -1741,7 +1805,7 @@ def main():
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
             if new_games:
-                for name,data,mtime in (new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else new_game_probe_files(items)):
+                for name,data,mtime in (new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else new_game_probe_files(items)):
                     if total+len(data)>min(TOTAL_MAX,64*MB): raise RuntimeError('五作探测证据超过64MB总量上限')
                     ti=tarfile.TarInfo(gid+'/'+name);ti.size=len(data);ti.mtime=mtime;tar.addfile(ti,io.BytesIO(data));total+=len(data);picked_bytes+=len(data)
             if rpg_media:

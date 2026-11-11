@@ -46,6 +46,24 @@ function charCalls(buf, start) {
   return out
 }
 
+// Literal static calls only. Unknown bytecode clears the operand stack; no VM/game code runs.
+export function literalScreCalls(buf, start) {
+  const calls=[];let stack=[]
+  for(let i=start;i<buf.length;){
+    const op=buf[i]
+    if(op===0x32&&i+5<=buf.length){stack.push(buf.readInt32BE(i+1));i+=5}
+    else if(op===0x33){const end=buf.indexOf(0,i+1);if(end<0)break;stack.push(buf.toString('utf8',i+1,end));i=end+1}
+    else if(op===0x17){
+      if(stack.length===5&&typeof stack[0]==='string'&&stack.slice(1).join(',')==='0,0,7,23')calls.push({at:i,object:'speaker',method:7,args:[stack[0]]})
+      if(stack.length>=4&&typeof stack.at(-3)==='string'&&stack.at(-2)===2&&stack.at(-1)===11&&Number.isInteger(stack.at(-4)))calls.push({at:i,object:stack.at(-3),method:stack.at(-4),args:stack.slice(0,-4)})
+      stack=[];i++
+    }else if(op===0x14){const end=buf.indexOf(0,i+1);if(end<0)break;i=end+1;stack=[]}
+    else{stack=[];i+=op===0x18?9:op===0x15||op===0x16?5:1}
+    if(stack.length>1024)stack=[]
+  }
+  return calls
+}
+
 export function decodeScre(buf) {
   if (!isScre(buf)) throw new Error('不是 SCRE 剧本')
   const count = buf.readUInt32LE(8)
@@ -80,7 +98,25 @@ export function decodeScre(buf) {
     if (m.index >= 9 && buf[m.index - 9] === 0x18) line = buf.readUInt32BE(m.index - 8)
     events.push({ at: m.index, e: ['t', utf8(m[1]), line] })
   }
-  for (const call of charCalls(buf, start)) if (call.e[1] >= 101 && call.e[1] <= 106) events.push(call)
+  const calls=literalScreCalls(buf,start)
+  const modern=calls.some(c=>c.object==='eomaia_image'&&c.method===103&&c.args.length===2&&c.args[0]===1&&typeof c.args[1]==='string'&&/\.png$/i.test(c.args[1]))||calls.some(c=>c.object==='audio'&&[105,118,130].includes(c.method))||calls.some(c=>c.object==='eomaia_char'&&c.method===102&&c.args.some(a=>typeof a==='string'&&/\.char$/i.test(a)))
+  for(const call of calls){
+    const {object,method,args,at}=call, file=args.find(a=>typeof a==='string'&&/\.(ogg|wav|png|char)$/i.test(a))
+    if(object==='speaker'&&!/^【.*】$/.test(args[0]))events.push({at,e:['w',args[0]]})
+    if(object==='audio'){
+      const kind=({105:'b',118:'s',130:'v'})[method]
+      if(kind&&file)events.push({at,e:[kind,file]})
+      else events.push({at,e:['u',`audio:${method}`]})
+    }
+    if(modern&&object==='eomaia_image'&&method===103&&file)events.push({at,e:['i',102,file]})
+    if(modern&&object==='eomaia_char'){
+      if(method===102&&file&&args.length>=7)events.push({at,e:['m',101,[args[3],args[4],file,args[6]],[args[1],args[2],19]]})
+      else if(method===103)events.push({at,e:['m',102,args]})
+      else if(method>=104&&method<=107)events.push({at,e:['m',method-1,args]})
+      else events.push({at,e:['u',`char:${method}`]})
+    }
+  }
+  if(!modern)for (const call of charCalls(buf, start)) if (call.e[1] >= 101 && call.e[1] <= 106) events.push(call)
   events.sort((a, b) => a.at - b.at)
   return events.map((x) => x.e)
 }

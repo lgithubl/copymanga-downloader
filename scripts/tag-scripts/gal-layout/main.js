@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.53.0'
+import { findPackedRpg } from './evb.mjs?v=2.54.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -59,6 +59,38 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  "pac::script": {
+  "resDir": "arc/res",
+  "scriptDir": "data/Script",
+  "additionalScriptDir": "data/AdditionalScript",
+  "stage": [
+    1280,
+    720
+  ],
+  "fps": 60,
+  "maxCommands": 100000,
+  "images": {
+    "bg": [
+      "data/Graphics/BG/{id4}.png"
+    ],
+    "cg": [
+      "data/Graphics/CG/{id3}_{variant2}.png",
+      "data/Graphics/CG/{id2}_{variant2}.png"
+    ],
+    "bust": [
+      "data/Graphics/BU/{id3}_{variant2}.png"
+    ]
+  },
+  "audio": {
+    "bgm": "data/Sound/BGM/{id3}.ogg",
+    "se": "data/Sound/SE/{id3}.wav",
+    "voice": "data/Sound/voice/{name}.ogg"
+  },
+  "special": {
+    "enabled": true,
+    "label": "特殊场景"
+  }
+},
   'rpgmaker-json': {
     "root": "",
     "packedExe": "",
@@ -1580,6 +1612,15 @@ export const RULE_DEVIATIONS = {}
 // 所有「列表」字段都是数组；探测函数里没有任何写死的目录名（数据依赖的判断除外）。
 // ======================================================================
 export const LAYOUTS = {
+  pac: {
+    title:'Debonosu PAC / 外置剧情',kind:'pac',detector:'pac',autoOrder:137.5,family:'pac::',bases:[''],searchDepth:3,
+    anchors:['Pac/Game.pac','data/Script'],siblings:[],markers:[],
+    scriptRoots:[{id:'story',dir:'data/Script',label:'剧情'},{id:'additional',dir:'data/AdditionalScript',label:'追加剧情'}],resourceRoots:['arc/res'],
+    adapters:['pac::script'],adapterOptions:{'pac::script':{resDir:{path:['arc/res']},scriptDir:{path:['data/Script']},additionalScriptDir:{path:['data/AdditionalScript']}}},ruleTables:['pac::script'],ruleOverrides:{},
+    engine:{classify:[],resourceResolve:{},limits:{walkFiles:800000,sampleFiles:8000,sampleBytes:262144,scriptBytes:16777216},containers:{enabled:true,dir:'arc',scan:['Pac'],format:'pac',mode:'hybrid',flat:true,rules:[{match:'\\.pac$',kinds:['res']}],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['txt'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{prefer:['cg','stand','bg']},sceneMarkers:[{label:'CG 开始',kind:'cmd',op:'bg',match:'/CG/',pick:'each',max:6},{label:'BGM 切换',kind:'cmd',op:'bgm',pick:'each',max:4}],pageSize:100},
+    count:[{dir:'data/Script',ext:'.txt',depth:1},{dir:'data/AdditionalScript',ext:'.txt',depth:1}],avatars:[],expectedDirs:[],cover:[],notes:['原始文本只读；PAC图片/音频按请求读入缓存，不展开完整资源包。战斗、奖励、地图控制及未知指令不模拟，保留raw。']
+  },
   rpgmaker: {
     "title": "RPG Maker MV/MZ",
     "kind": "rpgmaker",
@@ -2192,6 +2233,7 @@ export const LAYOUTS = {
   //   目录：<根>/{script.arc, data.arc, image.arc | layer.arc, voice.arc, music.arc, effect.arc, systeminfo.json | FileInfo.xml, *.exe}。arc 由引擎（config.containers，format: arcfam）在服务端读：
   //   script.arc 里的 .SCRIPT（SCRE）认字节模式解成事件流，展开到 <根>/arc/script/<arc 名>/<脚本>.arcfam；图 / 声音只在 hybrid 的虚拟索引里（<根>/arc/res/<名字，大写>），被请求时才取出。压缩的（g11 的 .MES）不展开。
   arcfam: {
+    systemProfiles: { '__FG_REMAKE_YAKIN_RE__': { id: 'arcfam::yakin_re', sceneMarkers: [{label:'CG 开始',kind:'cmd',op:'bg',match:'(?:^|/)[a-z][0-9]{3}(?:[a-z0-9]*)_',pick:'each',max:6},{label:'BGM 切换',kind:'cmd',op:'bgm',pick:'each',max:4}], views: [{parent:'',as:'special',label:'特殊场景',dirs:['*'],on:'marker',match:'CG 开始',exclusive:false,badges:{}}] } },
     title: '自有 arc（eomaia 引擎）', kind: 'arcfam', detector: 'arcfam', autoOrder: 139.7, family: 'arcfam::',   // 紧跟 artemis，uviewer（通用）之前；探测时还要看 script.arc 的条目表对得上
     bases: [''], searchDepth: 3,
     anchors: ['/^script\\.arc$/i'], siblings: [], markers: [['systeminfo.json', '/^fileinfo\\.xml$/i'], ['image.arc', 'layer.arc']],
@@ -2899,6 +2941,7 @@ const DETECTORS = {
   bgi: (scope) => detectBgi(scope),
   artemis: (scope) => detectArtemis(scope),
   arcfam: (scope) => detectArcfam(scope),
+  pac: (scope) => detectPac(scope),
   krkr: (scope) => detectKrkr(scope),
   rscript: (scope) => detectRscript(scope),
   unity: (scope) => detectUnity(scope),
@@ -3167,8 +3210,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
         emote: (() => {   // 和 config.mjs 的 DEFAULT_CONTAINERS.emote / 校验一致
@@ -3795,6 +3838,18 @@ async function arcfamTableOk(file) {
     return total > 0 && good >= total * 0.8
   } catch { return false } finally { await handle?.close().catch(() => {}) }
 }
+async function detectPac(scope){
+ const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null
+ const file=path.join(scope.media,...splitRel(join(loc.base,'Pac/Game.pac'))),handle=await open(file,'r').catch(()=>null)
+ if(!handle)return null
+ let valid=false;try{const b=Buffer.alloc(16);await handle.read(b,0,16,0);valid=b.subarray(0,4).equals(Buffer.from([0x82,0xcf,0x82,0xad]))&&Number(b.readBigUInt64LE(8))===16+b.readUInt32LE(4)*272}finally{await handle.close()}
+ if(!valid)return null
+ const config=await buildConfig(scope.media,loc.entry,loc.base)
+ config.containers.scan=[join(loc.base,'Pac')];config.containers.dir=join(loc.base,'arc')
+ const found=makeFound(scope,loc.entry,loc,config);found.id=scope.gameId||'pac::'+(path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,40)||'game')
+ scope.logs.push('识别 PAC 索引及外置#MSG剧情；复用通用资源缓存/播放器/卡片，中途开始与特殊场景由原始CG指令生成')
+ return found
+}
 async function detectArcfam(scope) {
   const { media, declared, logs } = scope
   const loc = await locateGame(scope, scope.gameId || scope.id)
@@ -3805,10 +3860,15 @@ async function detectArcfam(scope) {
   if (!(await arcfamTableOk(scriptArc))) { if (declared) logs.push('自有 arc：script.arc 的条目表对不上（头大小 / 名字），不是已知的自有 arc'); return null }
   announce(logs, scope.gameId || scope.id, loc)
   const config = await buildConfig(media, entry, base)
+  const systemInfo=await readFile(path.join(media,...splitRel(join(base,'systeminfo.json'))),'utf8').then(JSON.parse).catch(()=>null)
+  const size=systemInfo?.Screen?.Size
+  if(Number.isInteger(size?.width)&&Number.isInteger(size?.height)&&size.width>=320&&size.height>=240&&size.width<=8192&&size.height<=8192)config.adapterOptions['arcfam::scre'].stage=[size.width,size.height]
+  const systemProfile=entry.systemProfiles?.[systemInfo?.System?.UniqueGameID]
+  if(systemProfile)for(const field of ['sceneMarkers','views'])if(systemProfile[field])config[field]=structuredClone(systemProfile[field])
   if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
   const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
   const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
-  found.id = scope.gameId || `arcfam::${slug || 'game'}`
+  found.id = scope.gameId || (systemProfile?.id || `arcfam::${slug || 'game'}`)
   found.kind = entry.kind || 'arcfam'
   const arcs = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.arc$/i.test(n))
   logs.push(`自有 arc 游戏根：${base || '.'}；${arcs.length} 个 arc（${arcs.slice(0, 6).join(' / ')}）；game.id：${found.id}`)
