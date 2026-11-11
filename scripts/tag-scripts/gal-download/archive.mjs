@@ -14,7 +14,10 @@ const missing = async (source) => {
 
 // Keep failed partial files, released locks and test fixtures for inspection. Never delete them.
 export async function archiveToTmp(source) {
-  const directory = '/tmp/gal-download-archive'
+  return archiveToDirectory(source, '/tmp/gal-download-archive')
+}
+
+export async function archiveToDirectory(source, directory) {
   await mkdir(directory, { recursive: true })
   const target = path.join(directory, `${Date.now()}-${randomUUID()}-${path.basename(source)}`)
   try { await rename(source, target) } catch (error) {

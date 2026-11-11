@@ -1,20 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile, rename, readdir, stat, realpath, utimes } from 'node:fs/promises'
-import { createWriteStream } from 'node:fs'
+import { mkdir, readFile, writeFile, rename, readdir, stat, realpath, utimes, copyFile } from 'node:fs/promises'
+import { createWriteStream, constants } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.2.5'
-import { archiveToTmp } from './archive.mjs?v=2.2.5'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.5'
-import { createTaskLog } from './task-log.mjs?v=2.2.5'
-import { filterCategories } from './category-filter.mjs?v=2.2.5'
-import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.5'
-import { summarizeCategories } from './category-summary.mjs?v=2.2.5'
+import { nativeTask } from './worker-runner.mjs?v=2.2.6'
+import { archiveToTmp, archiveToDirectory } from './archive.mjs?v=2.2.6'
+import { auditAtlasPages, filePngSize, pngSize } from './atlas-audit.mjs?v=2.2.6'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.6'
+import { createTaskLog } from './task-log.mjs?v=2.2.6'
+import { filterCategories } from './category-filter.mjs?v=2.2.6'
+import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.6'
+import { summarizeCategories } from './category-summary.mjs?v=2.2.6'
 
-import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.5'
+import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.6'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -197,6 +198,8 @@ async function executeTask(ctx, task, index, timeoutMs) {
   const lock = path.join(cache, `lock-${sha(rootMedia)}`)
   let locked = false, changed = false, plan
   const prepared = []
+  let repairCandidates = new Map()
+  result.repairs = { candidateFiles: 0, repairedFiles: 0, verifiedExistingFiles: 0, backupDir: path.join(cache, 'repair-backups', runId) }
   const failureCounts = { download: 0, extract: 0, write: 0 }
   try {
     const requestTimeoutMs = readTimeoutMs(task.requestTimeoutMs, 120000, 'requestTimeoutMs')
@@ -260,6 +263,12 @@ async function executeTask(ctx, task, index, timeoutMs) {
     for (const asset of plan.skippedAssets || []) logger.log(`skip-category [${asset.category}]: ${asset.target}`)
     if (result.categorySkipped) report(`分类跳过 ${result.categorySkipped} 个文件；完整列表见 plan.json.skippedAssets`)
     const inspector = createPathInspector(root, signal)
+    await phase('检查已有骨架贴图与 atlas 尺寸')
+    repairCandidates = await auditAtlasPages(plan, inspector, signal, values => phase('检查已有骨架贴图与 atlas 尺寸', values))
+    result.repairs.candidateFiles = repairCandidates.size
+    result.repairs.report = path.join(runDir, 'repairs.json')
+    for (const candidate of repairCandidates.values()) report(`repair-check: ${candidate.target}，PNG=${JSON.stringify(candidate.png)}，atlas=${JSON.stringify(candidate.declared)}；${dryRun ? '仅规划，不移动旧文件' : '待对照缓存中的原始纹理，确认后备份到 cache'}`)
+    if (repairCandidates.size) report(`已有贴图需核对 ${repairCandidates.size} 张；完整清单: ${result.repairs.report}；备份目录: ${result.repairs.backupDir}`)
     const urls = new Set(), targets = new Set()
     const total = plan.entries.reduce((n, e) => n + (e.assets?.length || 0), 0)
     let compared = 0, skipped = 0
@@ -273,7 +282,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
         if (targets.has(asset.target)) throw new Error(`重复目标文件: ${asset.target}`)
         targets.add(asset.target)
         const current = await inspector.inspect(asset.target)
-        if (current.exists) { preserved.push(asset.target); skipped++; logger.log(`skip-existing: ${asset.target}`) }
+        if (current.exists && !repairCandidates.has(asset.target)) { preserved.push(asset.target); skipped++; logger.log(`skip-existing: ${asset.target}`) }
         else assets.push(asset)
         if (++compared % 5000 === 0) await phase('对比目录', { compared, total, skipped, current: asset.target })
       }
@@ -283,6 +292,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
     result.preflight = inspector.stats
     report(`目录对比完成: ${compared}/${total}，已存在 skip=${skipped}，读取目录 ${inspector.stats.directoriesRead} 个`)
     if (dryRun) {
+      plan.repairCandidates = [...repairCandidates.values()]
       await phase('保存完整 plan（不受 downloadLimit 截断）', { compared, total, skipped })
       await json(planPath, plan)
       report(`已保存完整 plan: ${planPath}`)
@@ -348,7 +358,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
           const dependencies = [], remaining = []
           for (const asset of entry.assets) {
             const target = await targetPath(root, asset.target)
-            if (await exists(target)) { logger.log(`skip-existing（写入前复查）: ${asset.target}`); row.skipped.push(asset.target) }
+            if (await exists(target) && !repairCandidates.has(asset.target)) { logger.log(`skip-existing（写入前复查）: ${asset.target}`); row.skipped.push(asset.target) }
             else remaining.push(asset)
           }
           if (!remaining.length) { row.status = 'skip-existing'; continue }
@@ -368,15 +378,47 @@ async function executeTask(ctx, task, index, timeoutMs) {
           for (const file of exported) {
             signal.throwIfAborted()
             const target = await targetPath(root, file.target)
-            if (await exists(target)) { row.skipped.push(file.target); logger.log(`skip-existing（写入前复查）: ${file.target}`); continue }
             const bytes = Buffer.from(file.data)
             if (!bytes.length) throw new Error(`导出结果为空: ${file.target}`)
+            const repair = repairCandidates.get(file.target)
+            let replace = false
+            if (await exists(target)) {
+              if (repair) {
+                const canonical = pngSize(bytes), current = await filePngSize(target)
+                if (!canonical) throw new Error(`修复导出结果不是有效 PNG: ${file.target}`)
+                if (!current || current.width !== canonical.width || current.height !== canonical.height) replace = true
+                else { result.repairs.verifiedExistingFiles++; logger.log(`skip-existing（原始纹理尺寸核对通过，不按 atlas 尺寸盲目替换）: ${file.target}`) }
+              }
+              if (!replace) { row.skipped.push(file.target); logger.log(`skip-existing（写入前复查）: ${file.target}`); continue }
+            }
             await mkdir(path.dirname(target), { recursive: true })
             const temp = `${target}.${runId}.part`
-            try { await writeFile(temp, bytes); signal.throwIfAborted(); await rename(temp, target) } finally { await archiveToTmp(temp) }
+            let backup = null
+            try {
+              // Finish and verify the replacement before moving a usable old file.
+              await writeFile(temp, bytes)
+              if (replace && sha(await readFile(temp)) !== sha(bytes)) throw new Error(`临时文件写入校验失败: ${file.target}`)
+              signal.throwIfAborted()
+              if (replace) {
+                backup = await archiveToDirectory(target, result.repairs.backupDir)
+                if (!backup) throw new Error(`待修复文件已变化或消失: ${file.target}`)
+                row.repairs ||= []
+                row.repairs.push({ target: file.target, backup, before: repair.png, after: pngSize(bytes), status: 'backed-up' })
+                logger.log(`repair-backup: ${file.target} → ${backup}`)
+              }
+              await rename(temp, target)
+            } catch (error) {
+              if (backup && !await exists(target)) {
+                // Backups may be on another mount. Keep the backup even after rollback.
+                await copyFile(backup, target, constants.COPYFILE_EXCL)
+                logger.log(`repair-restored: ${file.target}，保留备份 ${backup}`)
+              }
+              throw error
+            } finally { await archiveToTmp(temp) }
             changed = true
             if (sha(await readFile(target)) !== sha(bytes)) throw new Error(`写入校验失败: ${file.target}`)
             row.written.push(file.target); logger.log(`written: ${file.target}`)
+            if (replace) { result.repairs.repairedFiles++; row.repairs.at(-1).status = 'repaired'; logger.log(`repair-written: ${file.target}，${JSON.stringify(repair.png)} → ${JSON.stringify(pngSize(bytes))}，旧文件备份: ${backup}`) }
           }
           row.writeStatus = 'completed'
           row.status = row.written.length ? 'written' : 'skip-existing'
@@ -420,6 +462,8 @@ async function executeTask(ctx, task, index, timeoutMs) {
   }
   finally {
     try {
+      await json(result.repairs.report || path.join(runDir, 'repairs.json'), { ...result.repairs, candidates: [...repairCandidates.values()], files: result.entries.flatMap(row => row.repairs || []) })
+      if (result.repairs.candidateFiles) report(`贴图核对汇总: 候选 ${result.repairs.candidateFiles}，已修复 ${result.repairs.repairedFiles}，原始尺寸一致 skip ${result.repairs.verifiedExistingFiles}；旧文件备份在 cache: ${result.repairs.backupDir}；详情: ${result.repairs.report}`)
       result.failureSummary = { ...failureCounts }
       result.errorFiles = {}
       for (const stage of ['download', 'extract', 'write']) {

@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.2.5）
+# Gal 数据下载 / 本地采集（纯 Node，v2.2.6）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -41,12 +41,12 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 ## 两阶段流程
 
 1. dryRun:true：解析本地 APK/catalog，按目录快照对比目标文件，保存**完整 plan**。
-2. 确认日志后，仅把该 task.dryRun 改为 false：读取本 task 的已有 plan，重新检查目标文件，存在就 skip，缺失才下载、解包、校验、原子写入。
+2. 确认日志后，仅把该 task.dryRun 改为 false：读取本 task 的已有 plan，重新检查目标文件，正常存在文件 skip，缺失文件按需下载、解包、校验、原子写入；骨架贴图尺寸异常则核对原始纹理后备份修复。
 
 正式执行不再解压 APK 或重新生成资源目录，只检查源文件路径/大小/mtime 和关键配置是否一致。
 没有 plan、源文件变化、目标目录/adapters/game/include/source/skipCategories 等关键配置变化时明确报错，要求先重新 dryRun:true。
 修改 downloadLimit、concurrency、requestIntervalMs、retryDelayMs、runTimeoutMs、requestTimeoutMs、scriptTimeoutMs、logPrefix、dryRun 不使 plan 失效。
-存在的文件一律 skip-existing 并逐路径记入日志，包括本工具以前生成的文件；不会自行覆盖或修复已有文件。需要补某个文件时，先自行将它移动到别处，再执行已有 plan。
+正常已有文件 skip-existing。对当前 task 已选中、未被分类 skip 的骨架图集，自动读取 PNG 头部与 atlas 声明尺寸：不一致只作为修复候选（也可能是正常缩放）。dryRun:true 在 plan.repairCandidates 记录候选，不移动文件；false 使用已有 plan 并重新核对本地文件，从已校验的 bundle 缓存导出原始纹理。若原始纹理尺寸与现有 PNG 一致则继续 skip；确实不一致时，先完成并校验新 PNG，再将旧 PNG 移到 cacheDir/repair-backups/<runId>/ 下备份，然后原子替换。缺少有效 bundle 缓存时按正常下载 limit 下载。无需人工查找或移走旧图，也不需要重新生成已有 plan。
 
 - downloadLimit 为本次最多下载的唯一 bundle/文件 URL 数，0 不限。它**不截断 plan**；缓存命中不占额度，依赖未到齐时不导出残缺资源。
 - concurrency 为下载并发 1–8；依赖下载结束后逐 bundle 解包。
@@ -182,7 +182,7 @@ result.json / details.results 中的 categorySummary 按分类给出：
 
 分类内的 URL 会去重；一个共享 bundle 可能同时为多个分类服务，各分类数不能直接相加。
 categoryTotals 是全局按 URL 去重的总计。依赖跟随需要它的分类计数；已经存在的文件不再引入仅供它使用的依赖。
-本版为统计增强，已有 v2.1 plan 可继续使用，配置不需要改变。
+本版增加已有骨架贴图尺寸核对和缓存备份修复；已有 plan 可继续使用，配置不需要改变。
 
 查看最新 tsk 日志（容器内）：
 
@@ -234,3 +234,5 @@ GAL_TSK_APK=/path/to/base.apk GAL_TSK_SAMPLE_BUNDLE=/path/to/sample.bundle node 
 
 性能回归覆盖缺失目录的实际 fs 调用数；日志回归在下载未完成时读取 run.log 和 progress.json。
 本机同一真实 APK 的完整 dryRun 从约 159 秒降到约 9.2 秒；这是本机空目标目录的数据，不代表所有存储设备的耗时。
+
+修复日志：`repair-check`、`repair-backup`、`repair-written`；`repairs.json` 包含完整候选、备份路径与结果，`result.json` 中各 task 的 `repairs` 提供候选/已修复/原始尺寸一致 skip 数。解析失败不提前移动旧图，替换发布失败时尝试从 cache 备份恢复。仅核对当前 plan 选中且 atlas 已存在的 PNG；不是全库像素内容或所有损坏格式检测。
