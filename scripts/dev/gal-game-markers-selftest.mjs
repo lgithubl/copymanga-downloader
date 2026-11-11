@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { LAYOUTS, generateTags } from '../tag-scripts/gal-layout/main.js'
 import { computeMarkers } from '../../web/library/gal/markers.mjs'
-import { initialState, applyCommand, stateAt } from '../../web/static/gal-engine.js'
+import { initialState, applyCommand, stateAt, adjacentSceneMarker } from '../../web/static/gal-engine.js'
 import * as artemis from '../../web/library/gal/adapters/artemis-ast.mjs'
 import * as tomoe from '../../web/library/gal/adapters/tomoe-arc04.mjs'
 import { decodeArc, parseDrawImageKeys, parseSoundTable, splitChapters } from '../../web/library/gal/tomoe.mjs'
@@ -62,4 +62,29 @@ test('real yugamase scripts expose CG, movie and music markers using their archi
     if(name==='01_共通_03.ast'){assert.equal(markers.find(m=>m.label==='CG 开始').step,96);checkJumpState(scene,markers)}
   }
   assert.equal(total,83);assert.equal(withButtons,50);assert.ok(movieMarkers>0)
+})
+
+test('previous/next markers are strict, sorted, handle boundaries and absent markers',()=>{
+ const markers=[{step:8,label:'B'},{step:2,label:'A'}]
+ assert.equal(adjacentSceneMarker(markers,0,-1),null)
+ assert.equal(adjacentSceneMarker(markers,0,1).step,2)
+ assert.equal(adjacentSceneMarker(markers,2,-1),null)
+ assert.equal(adjacentSceneMarker(markers,2,1).step,8)
+ assert.equal(adjacentSceneMarker(markers,8,-1).step,2)
+ assert.equal(adjacentSceneMarker(markers,8,1),null)
+ assert.equal(adjacentSceneMarker(markers,9,-1).step,8)
+ assert.equal(adjacentSceneMarker([],0,1),null)
+})
+test('BGI, arcfam and AdvHD layouts declare generic card markers',()=>{
+ const scene={steps:Array.from({length:10},(_,index)=>({index,commands:[{op:'text',segments:[{text:String(index)}]}]}))}
+ scene.steps[2].commands.unshift({op:'overlay',src:'EV_01.png'})
+ scene.steps[3].commands.unshift({op:'bg',src:'EV_01.png'})
+ scene.steps[4].commands.unshift({op:'bgm',src:'track.ogg'})
+ scene.steps[5].commands.unshift({op:'bgmStop'})
+ for(const id of ['bgi','arcfam','advhd']){
+  const markers=computeMarkers(scene,compile(LAYOUTS[id].config.sceneMarkers))
+  assert.ok(markers.some(m=>m.step===4),id)
+  assert.ok(markers.some(m=>m.step===(id==='bgi'?2:3)),id)
+  assert.ok(markers.some(m=>m.step===5),id)
+ }
 })

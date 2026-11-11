@@ -35,6 +35,11 @@ export function condMet(when, vars = {}) {
   return true
 }
 
+// Strictly before/after the current step; cards and player share the same markers.
+export function adjacentSceneMarker(markers, step, direction) {
+  const ordered = (markers || []).filter(m => Number.isInteger(m.step) && m.step >= 0).sort((a,b) => a.step-b.step)
+  return direction < 0 ? ordered.filter(m => m.step < step).at(-1) || null : ordered.find(m => m.step > step) || null
+}
 export function visibleChoiceOptions(command, vars = {}) {
   return (command.options || []).filter(o => !o.when || condMet(o.when, vars)).map((o,i) => command.reindex ? {...o,value:o.resultValue || i+1} : o)
 }

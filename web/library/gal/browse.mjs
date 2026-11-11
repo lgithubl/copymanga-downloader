@@ -1114,12 +1114,13 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     warmScene(scene)   // 后台把场景里要用的图预先取出来 / 解码好（BGI 的 CBG 要解码，第一次要几百毫秒到几秒）：不等它，进了播放器图已经在缓存里
     await linkScene(set, rel, scene)   // goto / next 指令的目标脚本名 → 节点 id（同一个目录里按名字找，忽略大小写）；找不到的不补，播放器当没有
 
+    const markers = computeMarkers(scene, config.sceneMarkers.map(rule => ({ ...rule, re: rule.match ? new RegExp(rule.match, 'i') : null })))
     if (entry) {
       const siblings = catalogChildren(catalog, holderId).filter((c) => c.script)
       const at = siblings.findIndex((c) => c.script === rel)
       const neighbour = (c) => (c ? { sectionId: idOf(set, 'script', c.script), title: c.title } : null)
       return {
-        node: { id: idOf(set, 'script', rel), kind: 'player', title: entry.title, ...base, rawIgnore: config.rawIgnore, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
+        node: { id: idOf(set, 'script', rel), kind: 'player', title: entry.title, ...base, markers, rawIgnore: config.rawIgnore, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
         scene,
         sectionNavigation: { prev: at > 0 ? neighbour(siblings[at - 1]) : null, next: at >= 0 && at < siblings.length - 1 ? neighbour(siblings[at + 1]) : null },
       }
@@ -1132,7 +1133,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     const at = scripts.findIndex((s) => s.rel === rel)
     const neighbour = (entry) => (entry ? { sectionId: idOf(set, 'script', entry.rel), title: entry.stem } : null)
     return {
-      node: { id: idOf(set, 'script', rel), kind: 'player', title: stemOf(rel), ...base, rawIgnore: config.rawIgnore, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
+      node: { id: idOf(set, 'script', rel), kind: 'player', title: stemOf(rel), ...base, markers, rawIgnore: config.rawIgnore, page: 1, pageCount: 1, total: scene.steps.length, items: [] },
       scene,
       sectionNavigation: { prev: at > 0 ? neighbour(scripts[at - 1]) : null, next: at >= 0 && at < scripts.length - 1 ? neighbour(scripts[at + 1]) : null },
     }

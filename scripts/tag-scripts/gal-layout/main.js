@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.51.0'
+import { findPackedRpg } from './evb.mjs?v=2.52.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -2183,7 +2183,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
       containers: { enabled: true, dir: 'arc', scan: ['Archive', '.'], scriptDecoder: 'bgi-bs', scriptExt: 'bgi', mode: 'hybrid', format: 'buriko', flat: true, rules: [{ match: '^(?:sysprg|system)\\.arc$', skip: true }, { match: '^data01[0-4]\\d\\d\\.arc$', skip: true }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },   // data0100x~0149x = 系统 / 库脚本（flow / function / main / clear_* / complete_* / root_* / eye_* / sys_* …），剧情从 data0150x 起（g02 / g03 / g07 核对过）；别的游戏编号不一样就改这条
     },
-    config: { scriptExtensions: ['bgi'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '(_|\\d)h\\d*$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { sceneMarkers: [{ label: '事件图切换', kind: 'cmd', op: 'overlay', pick: 'each', max: 4 }, { label: 'BGM 切换', kind: 'cmd', op: 'bgm', pick: 'each', max: 4 }, { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 3 }], scriptExtensions: ['bgi'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '(_|\\d)h\\d*$', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.bgi', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['arc 在第一次浏览时由服务端展开剧本到 <根>/arc/script/（图 / 声音不展开，被请求时才取、才转格式；之后按 arc 的大小 + 修改时间判断要不要重做）', '剧本是「执行」一遍得到的事件序列：选择（SelectEx）按选项分支、汇合点之后一份；条件跳转的值未知时按 0（没走到的分支在 stats.run 里看不到，见 README 的 BGI 一节）', '立绘的位置 / 大小没有样本验证（见适配器开头的推断一栏）'],
@@ -2206,7 +2206,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },
       containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'arcfam-scre', scriptExt: 'arcfam', mode: 'hybrid', format: 'arcfam', flat: true, rules: [{ match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['arcfam'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '(_H\\d+$)|(\\dH_)', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    config: { sceneMarkers: [{ label: 'CG 开始', kind: 'bg', match: '(?:^|/)(?:ev|cg)', pick: 'run', max: 4 }, { label: 'BGM 切换', kind: 'cmd', op: 'bgm', pick: 'each', max: 4 }, { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 3 }], scriptExtensions: ['arcfam'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: {}, merge: [], views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], match: '(_H\\d+$)|(\\dH_)', exclusive: false, badges: {} }], groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.arcfam', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [],
     notes: ['arc 在第一次浏览时由服务端展开剧本到 <根>/arc/script/（图 / 声音不展开，被请求时才取、放进缓存目录）；g11（シルキーズプラス）的剧本是压缩的（.MES），算法没识别，列表是空的', '剧本只认了字节模式：选择 / 分支 / 跳转没做，按出现顺序线性输出（见适配器开头的说明）'],
@@ -2429,7 +2429,7 @@ export const LAYOUTS = {
       limits: { walkFiles: 800000, sampleFiles: 20000, sampleBytes: 262144, scriptBytes: 16777216 },   // 立绘 PNA 的帧索引（index.json）要读全；ws2 解出来的指令流一个脚本可达几 MB
       containers: { enabled: true, dir: 'arc', scan: ['.'], scriptDecoder: 'advhd-ws2', scriptExt: 'advhd', mode: 'hybrid', rules: [{ match: '^(?:Script\\d*|DX11Effect|Model)\\.arc$', skip: true }, { match: '^Rio\\.arc$', kinds: ['script'], include: ['^CG_PAGE\\.ws2$'], gallery: { functions: ['openCgBrowser'], pageFlags: [105], minCalls: 20, group: '_\\d+$' } }, { match: '\\.arc$' }], maxEntries: 200000, maxTotalMB: 8192 },
     },
-    config: { scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Rio: 'CG 画廊' }, merge: [], views: [{ parent: '*', as: 'special', label: '特殊场景', dirs: [], match: '_[hH]$', exclusive: false, badges: {} }],   // 每个剧情 arc 目录下多一个「特殊场景」（脚本名以 _H 结尾的，要改规则改 match；全量列表照旧）
+    config: { sceneMarkers: [{ label: 'CG 开始', kind: 'bg', match: '(?:^|/)(?:ev|cg)', pick: 'run', max: 4 }, { label: '背景人声开始', kind: 'cmd', op: 'bgvoice', pick: 'first', max: 1 }, { label: 'BGM 切换', kind: 'cmd', op: 'bgm', pick: 'each', max: 4 }, { label: 'BGM 停止', kind: 'cmd', op: 'bgmStop', pick: 'each', max: 3 }], scriptExtensions: ['advhd'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { Rio: 'CG 画廊' }, merge: [], views: [{ parent: '*', as: 'special', label: '特殊场景', dirs: [], match: '_[hH]$', exclusive: false, badges: {} }],   // 每个剧情 arc 目录下多一个「特殊场景」（脚本名以 _H 结尾的，要改规则改 match；全量列表照旧）
     groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'arc/script', ext: '.advhd', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [{ dir: '/^manual$/i', files: ['Manual.jpg'], fromMedia: true, abs: true }, { dir: '*/manual', files: ['Manual.jpg'], fromMedia: true, abs: true }, { dir: '/^manual$/i', match: '\\.(?:png|jpe?g|webp|bmp)$', flags: 'i', pick: 'first', fromMedia: true }],   // 封面 = 游戏目录里 Manual 目录（普通目录，不是 Manual.arc）的第一张图（路径相对媒体目录）

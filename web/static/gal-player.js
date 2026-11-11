@@ -11,7 +11,7 @@ import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-sta
 import { createEmoteLayer } from '/gal-emote.js'
 import { createRpgMakerMapLayer } from '/gal-rpgmaker-map.js'
 import { attachBarLock } from '/gal-barlock.js'
-import { activePath, applyCommand, visibleChoiceOptions, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
+import { adjacentSceneMarker, activePath, applyCommand, visibleChoiceOptions, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
 // se = 旧版「语音/音效」合在一起的那一个（只读：新的几个滑块没存过时拿它当初始值，升级后听感不变）
 // 自动进入下一章时，自动播放 / 快进的状态带给下一章的播放器（每章是新建的播放器实例）
@@ -202,6 +202,25 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   ttsBtn.setAttribute('aria-pressed', 'false')
   const fastBtn = btn('快进', '快进开关（X；点一下开始，再点停止，遇到选项停下；也可以按住 Ctrl 快进）', 'gal-fast-btn')
   fastBtn.setAttribute('aria-pressed', 'false')
+  const markPrevBtn = btn('上个标签', '跳到上一个中途开始标签', 'gal-mark-prev')
+  const markNextBtn = btn('下个标签', '跳到下一个中途开始标签', 'gal-mark-next')
+  const sceneMarkers = (reader.node?.markers || []).filter(m => Number.isInteger(m.step) && m.step >= 0 && m.step < scene.steps.length)
+  function updateMarkerButtons() {
+    for (const [button, direction] of [[markPrevBtn,-1],[markNextBtn,1]]) {
+      const target = adjacentSceneMarker(sceneMarkers,index,direction)
+      button.disabled = !target
+      button.title = target ? `${direction < 0 ? '上一个' : '下一个'}中途开始标签：${target.label}` : `没有${direction < 0 ? '上一个' : '下一个'}中途开始标签`
+    }
+  }
+  function jumpMarker(direction) {
+    const target = adjacentSceneMarker(sceneMarkers,index,direction)
+    if (!target || destroyed) return
+    fastLatched = false; setFast(false); stopAuto()
+    choices = { ...dropChoicesFrom(choices,target.step), ...(target.choices || {}) }
+    path = activePath(scene,choices)
+    onChoices({ ...choices })
+    enterStep(target.step)
+  }
   const autoSelBtn = btn('自选', '自动选择选项开关（具体选第几个在「设置」里设置）', 'gal-autosel')
   // 设置 / 更多合成一个按钮：.gal-cfg 和 .gal-more-btn 两个类都留着（老的选择器还能用）
   const cfgBtn = btn('设置 ▾', '设置：显示（字体 / 透明度 / 沉浸 / 全屏）、音频、播放、画面', 'gal-cfg gal-more-btn')
@@ -317,7 +336,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const note = el('span', 'muted gal-note', '')
   note.setAttribute('role', 'button')
   note.tabIndex = 0
-  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, transBtn, ttsBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
+  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, markPrevBtn, markNextBtn, transBtn, ttsBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
 
   // 设置弹层（原来的 ⚙ 设置和「更多」菜单合在这里）：显示 / 音频 / 播放 / 画面 四组。.gal-more 和 .gal-settings 两个类都留着
   // 立绘大小 / 偏移（只对 stand 立绘，Spine 角色不受影响）：存在这个媒体里
@@ -1591,6 +1610,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   function reportStep() { onStep(Math.max(0, posNow()), path.length) }
   function updateCount() {
     const pos = posNow()
+    updateMarkerButtons()
     count.textContent = path.length ? `${Math.max(0, pos) + 1} / ${path.length}` : '0 / 0'
     prevBtn.disabled = pos <= 0
     updateContinue()
@@ -2191,6 +2211,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   cfgBtn.addEventListener('click', () => toggleSettings())
   fsBtn.addEventListener('click', () => { toggleSettings(false); toggleFullscreen() })
   immBtn.addEventListener('click', () => { toggleSettings(false); onToggleImmersive?.() })
+  markPrevBtn.addEventListener('click', () => jumpMarker(-1))
+  markNextBtn.addEventListener('click', () => jumpMarker(1))
   fastBtn.addEventListener('click', () => { fastLatched = !fastLatched; setFast(fastLatched) })
   contBtn.addEventListener('click', () => chapter?.next?.())
   note.addEventListener('click', toggleDiag)
