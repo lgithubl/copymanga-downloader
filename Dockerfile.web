@@ -26,6 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
   && (sh /tmp/fetch-emote-runtime.sh /app/web/static/vendor || echo 'E-mote 运行时没下载到：E-mote 立绘不可用（退回静态立绘）') \
   && rm -rf /var/lib/apt/lists/* /tmp/fetch-spine-runtime.sh /tmp/fetch-emote-runtime.sh
 COPY scripts/tag-scripts /opt/copymanga/tag-scripts
+# Packed RPG resources share the read-only EVB parser with the standalone tag.
+# The server's relative import requires this file under /app as well.
+COPY scripts/tag-scripts/gal-layout/evb.mjs ./scripts/tag-scripts/gal-layout/evb.mjs
+# Fail during build if the production tree misses a server import.
+RUN node --input-type=module -e "await import('./web/library/types/gal.mjs')"
 
 RUN mkdir -p /data/downloads
 

@@ -104,6 +104,13 @@ jobs:
           docker rm -f copymanga-web-smoke || true
           exit 1
 
+      - name: Diagnose failed smoke container
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          docker inspect copymanga-web-smoke --format '{{json .State}}' || true
+          docker logs --tail 120 copymanga-web-smoke || true
+
       - name: Export image tarball
         if: ${{ github.event_name == 'push' || inputs.export_artifact == 'true' }}
         shell: bash
