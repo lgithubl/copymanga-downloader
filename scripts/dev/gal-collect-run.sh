@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.45 本轮采新RJ游戏（排除已采RJ01482469）：目录清单、data JSON、引擎/插件JS、小配置；不收图片/声音/视频/EXE或运行时库。
 # 1.44 GAL_COLLECT_TSK_LOG=N 采最近N次TSK日志，空值兼容1次；无关游戏日志不计入N。
 # 1.43 本轮只采 RJ Map002/004 使用的瓦片和人物图，含玩家行走图；不采声音和剧情CG。
 # 1.42 GAL_COLLECT_TSK_LOG 存在时，只采最新TSK日志（不选更新的其他游戏日志），覆盖当前默认采集规则。
@@ -64,10 +65,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.44"
+VERSION="1.45"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^rpgmaker:map-sample$'
+ROUND_RULES='^rpgmaker:new-rj$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -218,6 +219,8 @@ def engines_of(items):
     if 'list.json' in base and any(n.startswith('typeadv/mscenes/') for n in names): eng.append('otogi')   # 1.30：Otogi Frontier R 离线网页版
     if any(re.search(r'(^|/)scenes/[^/]+/script\.txt$', n) for n in names): eng.append('gc')   # 1.31：Girls Creation Viewer 系（NW.js，<根>/scenes/<场景>/script.txt）
     if any(n.endswith('.xfl') for n in base): eng.append('xfl')
+    if any(re.search(r'(^|/)data/system\.json$', n) for n in names):
+        eng.append('rpgmaker-mz' if any(n.endswith('/rmmz_core.js') for n in names) else 'rpgmaker-mv' if any(n.endswith('/rpg_core.js') for n in names) else 'rpgmaker')
     if any(n.endswith('.agf') for n in base) or 'data2.alf' in base: eng.append('age')
     return eng or ['unknown']
 
@@ -1158,6 +1161,34 @@ def requested_diagnostic_picks(items, is_tsk):
     say('  diagnostic payload: %d files, %.2f MB; library is read-only' % (len(picks), total / MB))
     return picks
 
+def new_rpgmaker_picks(items):
+    picks, omitted = [], []
+    data_bytes = script_bytes = 0
+    # Payload is only structured game data and inspectable source/configuration.
+    # Large media and executable/runtime libraries stay in the NAS library.
+    for e in sorted(items, key=lambda e: e.rel.lower()):
+        low = e.rel.lower().replace('\\', '/')
+        if re.search(r'(^|/)(save|savedata|userdata|backup)(/|$)', low): continue
+        data = bool(re.search(r'(^|/)data/[^/]+\.json$', low))
+        script = bool(re.search(r'(^|/)js/(?:plugins(?:/[^/]+)?|rpg_[^/]+|rmmz_[^/]+|main)\.js$', low))
+        config = bool(re.search(r'(^|/)(package\.json|index\.html|game\.ini|rpg_rt\.ini)$', low) or low.endswith(('.rpgproject', '.rmmzproject')))
+        if not (data or script or config): continue
+        max_file = 16 * MB if data else 4 * MB
+        used, cap = (data_bytes, 64 * MB) if data else (script_bytes, 16 * MB)
+        if e.size > max_file or used + e.size > cap:
+            omitted.append({'path': e.rel, 'bytes': e.size, 'reason': 'per-file or per-game data/source size cap'})
+            say('  ! 超过采集上限，仅列目录：%s (%d bytes)' % (e.rel, e.size)); continue
+        picks.append((e, 'full', 'rpgmaker:new-rj'))
+        if data: data_bytes += e.size
+        else: script_bytes += e.size
+    roots = sorted(e.rel for e in items if re.search(r'(^|/)data/System\.json$', e.rel, re.I))
+    counts = collections.Counter(os.path.splitext(e.rel)[1].lower() or '(no extension)' for e in items)
+    audit = {'mode': 'rpgmaker:new-rj', 'systemFiles': roots, 'totalFiles': len(items), 'extensionCounts': dict(counts), 'selectedFiles': len(picks), 'dataBytes': data_bytes, 'sourceConfigBytes': script_bytes, 'omitted': omitted,
+             'notes': ['Source directory is read-only. No game JavaScript executed.', 'No images, audio, videos, EXE/DLL/runtime libraries or save payloads.', 'Full relative file/size/mtime inventory is in __listing.tsv; size exclusions are explicit.', 'No MV/MZ System.json means another RPG Maker generation or a packed layout may require a later targeted collection.']}
+    if not picks and items: picks = [(items[0], 'inventory', 'rpgmaker:new-rj')]
+    say('新RJ采集: %d 个数据/源码/配置文件，%.2fMB，省略%d；不收媒体和运行时' % (audit['selectedFiles'], (data_bytes + script_bytes) / MB, len(omitted)))
+    return picks, audit
+
 def latest_download_logs():
     game = os.path.join(root, 'gal-download')
     runs = os.path.join(game, 'runs')
@@ -1256,12 +1287,24 @@ def latest_download_logs():
 def main():
     download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
     tsk_scene = RULES_RE is not None and RULES_RE.pattern == '^tsk:ch10340034$'
+    rpg_new = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:new-rj$'
     rpg_maps = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:map-sample$'
     rj_inventory = RULES_RE is not None and RULES_RE.pattern == '^rj01482469:inventory'
     requested_diagnostics = RULES_RE is not None and RULES_RE.pattern == '^(rj01482469:core|tsk:ch10380048)$'
     if download_logs:
         game, log_items = latest_download_logs()
         games = [game]
+    elif rpg_new:
+        games = []
+        for d, ds, _fs in walk_follow(root):
+            match = re.match(r'^\[?(RJ[0-9]+)(?=$|[^0-9])', os.path.basename(d), re.I)
+            if match:
+                if match.group(1).upper() != 'RJ01482469' and (not ONLY or ONLY.search(os.path.relpath(d, root))): games.append(d)
+                ds[:] = []
+            else:
+                ds[:] = sorted(x for x in ds if x.lower() not in ('gal-download', 'bundles', 'runs', 'repair-backups', 'bundle-backups') and not EXCL.search(x + '/'))
+        if not games: raise RuntimeError('未找到新的RJ开头目录（已排除RJ01482469）；未采其他游戏')
+        say('本轮新RJ目录：' + '；'.join(os.path.relpath(g, root) for g in games))
     elif rpg_maps:
         games = []
         for d, ds, _fs in walk_follow(root):
@@ -1310,8 +1353,10 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
-        picks = ([] if tsk_scene or rpg_maps else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
+        picks = ([] if tsk_scene or rpg_maps or rpg_new else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
+        if rpg_new:
+            picks, rpg_audit = new_rpgmaker_picks(items)
         if rpg_maps:
             wanted = {'www/data/system.json', 'www/data/actors.json', 'www/data/tilesets.json', 'www/data/map002.json', 'www/data/map004.json'}
             def read_game(rel):
@@ -1360,6 +1405,9 @@ def main():
         gz = gzip.GzipFile(fileobj=sp, mode='wb', compresslevel=6, mtime=0)
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
+            if rpg_new:
+                payload = json.dumps(rpg_audit, ensure_ascii=False, indent=2).encode('utf-8')
+                ti = tarfile.TarInfo('%s/__rpgmaker_audit.json' % gid); ti.size = len(payload); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(payload))
             if rj_inventory:
                 counts = collections.defaultdict(lambda: [0, 0])
                 for e in items:
