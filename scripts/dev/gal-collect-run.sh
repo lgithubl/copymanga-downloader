@@ -33,6 +33,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.41 本轮只采 Ch10340034：Master/CharaScenario1034003 和1034003/3332001/3301001的角色骨架图集贴图；旧日志规则仍可显式指定。
 # 1.40 不打包完整 plan，只记录来源/体积；大 result 保留完整汇总及条目状态计数，明示列表取样；大文本明示只收末尾1MB。修复大于64MB的plan导致采集中断。
 # 1.39 本轮只采 gal/gal-download（允许软链接）最近运行的日志、result/repairs/error JSON 和关联 plan；不遍历 bundles，不采 APK 或修复备份。
 # 1.38 本轮补采 RJ01482469 的 RPG Maker 数据/插件与少量加密媒体样本；TSK 仅采 Ch10380048/1038004 的骨架、图集、贴图及相关剧情 JSON，总量上限128MB。
@@ -59,10 +60,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.40"
+VERSION="1.41"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^gal-download:latest$'
+ROUND_RULES='^tsk:ch10340034$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
@@ -1229,11 +1230,20 @@ def latest_download_logs():
 
 def main():
     download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
+    tsk_scene = RULES_RE is not None and RULES_RE.pattern == '^tsk:ch10340034$'
     rj_inventory = RULES_RE is not None and RULES_RE.pattern == '^rj01482469:inventory'
     requested_diagnostics = RULES_RE is not None and RULES_RE.pattern == '^(rj01482469:core|tsk:ch10380048)$'
     if download_logs:
         game, log_items = latest_download_logs()
         games = [game]
+    elif tsk_scene:
+        games = []
+        for d, ds, _fs in walk_follow(root):
+            if os.path.basename(d).lower() == 'twinkle star knights x':
+                games.append(d); ds[:] = []
+            else:
+                ds[:] = sorted(x for x in ds if x.lower() not in ('gal-download', 'bundles', 'runs', 'repair-backups') and not EXCL.search(x + '/'))
+        if not games: raise RuntimeError('未找到 Twinkle Star Knights X，未采集其他游戏')
     elif requested_diagnostics:
         games = []
         for d, ds, _fs in walk_follow(root):
@@ -1266,8 +1276,19 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
-        picks = ([(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
+        picks = ([] if tsk_scene else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
+        if tsk_scene:
+            picks = []
+            for e in items:
+                rel = e.rel.replace('\\', '/').lower()
+                sub = rel.split(TSK_PREFIX, 1)[-1] if TSK_PREFIX in rel else rel
+                wanted = sub in ('adventure/master.chapter.json', 'adventure/charascenario/charascenario1034003.book.json')
+                wanted = wanted or bool(re.match(r'^characters/ch_(1034003|3332001|3301001)/[^/]+\.(png|atlas\.txt|skel\.bytes)$', sub))
+                if wanted: picks.append((e, 'full', 'tsk:ch10340034'))
+            if not picks: raise RuntimeError('TSK 目录未发现 Ch10340034 所需的剧情/立绘，未静默采集其他资料')
+            if sum(e.size for e, _mode, _rule in picks) > 64 * MB: raise RuntimeError('指定场景诊断文件超过64MB，未采集其他资料')
+            say('Ch10340034: 只收剧情、Master及3套引用角色文件，共%d项，%.2fMB；不收声音/CDN缓存，不修改原目录' % (len(picks), sum(e.size for e, _mode, _rule in picks) / MB))
         if 'bgi' in eng and RULES_RE is not None and RULES_RE.search('bgi:named'):
             picks = picks + [(e, 'bginamed', 'bgi:named') for e in bgi_named(items)]
         if RULES_RE is not None:
