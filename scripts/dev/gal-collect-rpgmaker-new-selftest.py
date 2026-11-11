@@ -37,8 +37,8 @@ big = root / 'RJ01500001 game/www/data/Huge.json'
 with big.open('wb') as f:
     f.truncate(17 * 1024 * 1024)
 before = {str(p): (p.stat().st_size, p.stat().st_mtime_ns) for p in root.rglob('*') if p.is_file()}
-env = dict(os.environ, GAL_COLLECT_DRYRUN='1', GAL_COLLECT_OUT=str(out), GAL_COLLECT_TS='fixture', GH_TOKEN='')
-for key in ['GAL_COLLECT_TSK_LOG', 'GAL_COLLECT_RULES', 'GAL_COLLECT_ONLY']:
+env = dict(os.environ, GAL_COLLECT_DRYRUN='1', GAL_COLLECT_OUT=str(out), GAL_COLLECT_TS='fixture', GAL_COLLECT_RULES='^rpgmaker:new-rj$', GH_TOKEN='')
+for key in ['GAL_COLLECT_TSK_LOG', 'GAL_COLLECT_ONLY']:
     env.pop(key, None)
 run = subprocess.run(['bash', 'scripts/dev/gal-collect-run.sh', str(root)], env=env, capture_output=True, text=True)
 assert run.returncode == 0, run.stdout + run.stderr
@@ -60,3 +60,25 @@ for part in groups:
 assert sum(p.stat().st_size for p in groups) < 100000
 print('PASS: three new RJ games, MV/MZ and nested roots, old/unrelated games excluded, source read-only, no media/runtime/save payloads, explicit size omissions')
 print('Fixture retained:', base)
+
+packed = root / 'RJ01220265'
+packed.mkdir()
+(packed / '■readme.txt').write_text('fixture readme')
+exe = packed / 'HypnosisNTR.exe'
+with exe.open('wb') as f:
+    f.write(b'MZ'); f.seek(1800000000-4); f.write(b'GDPC')
+probe_out = base / 'probe-out'
+probe_env = dict(env, GAL_COLLECT_RULES='^rpgmaker:packed-probe$', GAL_COLLECT_OUT=str(probe_out))
+probe = subprocess.run(['bash', 'scripts/dev/gal-collect-run.sh', str(root)], env=probe_env, capture_output=True, text=True)
+assert probe.returncode == 0, probe.stdout + probe.stderr
+parts = sorted(probe_out.glob('*-g*.tar.gz.part-000'))
+assert len(parts) == 1
+with tarfile.open(fileobj=io.BytesIO(parts[0].read_bytes()), mode='r:gz') as archive:
+    assert not any(n.endswith('.exe') for n in archive.getnames())
+    index = json.load(archive.extractfile('g01/__exe_probe/index.json'))
+    assert index['probes'][0]['sourceBytes'] == 1800000000
+    assert index['probes'][0]['headBytes'] == index['probes'][0]['tailBytes'] == 256*1024
+    assert archive.extractfile('g01/__exe_probe/HypnosisNTR.exe.tail.bin').read().endswith(b'GDPC')
+    assert 'g01/■readme.txt' in archive.getnames()
+assert exe.stat().st_size == 1800000000
+print('PASS: packed-RJ probe selects one game, reads only 512KB of 1.8GB EXE, includes readme, source unchanged')
