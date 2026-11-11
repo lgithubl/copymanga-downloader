@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.49 定向采五个新游戏的目录/配置/有界EXE及资源包头尾，用于引擎复用分析；AI按完整目录名匹配，不采完整媒体或大二进制。
 # 1.48 三作媒体验证样本：按已采剧情/地图引用定向取24个图片/声音/瓦片/人物文件，约8.8MB；封装MV只读原始资源块，不重复脚本数据。
 # 1.47 RJ01220265补采封装资源表及data/plugin源码原始块（压缩块原样保留），仅Python标准库、只读；格式不符保留小段头并报告。
 # 1.46 本轮仅补采RJ01220265：readme及EXE各256KB头尾，用来识别单文件封装；不收完整1.8GB EXE，不重收两个MZ游戏。
@@ -68,10 +69,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.48"
+VERSION="1.49"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^rpgmaker:media-samples$'
+ROUND_RULES='^new-games:probe$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1408,7 +1409,51 @@ def latest_download_logs():
     if sum(e.size for e in items) > 128 * MB: raise RuntimeError('本轮日志超过128MB，未采集其他数据')
     return game, items
 
+NEW_GAME_PATTERNS = [
+ ('シロクロv1.1', r'シロクロ(?:\s*v?1\.1)?'),
+ ('ツヴァイトリガー', r'ツヴァイトリガー(?:\s+v?[0-9.]+)?'),
+ ('AI', r'AI(?:\s+v?[0-9.]+)?'),
+ ('夜勤病棟リメイク', r'夜勤病棟\s*リメイク(?:\s+v?[0-9.]+)?'),
+ ('How to Build a Magnificent Kingdom v1.05', r'How\s+to\s+Build\s+a\s+Magnificent\s+Kingdom(?:\s+v?1\.05)?'),
+]
+def new_game_label(name):
+    import unicodedata
+    name = unicodedata.normalize('NFKC', name).strip()
+    name = re.sub(r'^(?:\[[^\]]+\]\s*)+', '', name)
+    return next((label for label, pattern in NEW_GAME_PATTERNS if re.fullmatch(pattern, name, re.I)), None)
+
+def new_game_probe_files(items):
+    """Yield bounded evidence bytes; never execute code or copy full archives/EXEs."""
+    report = {'sourceReadOnly': True, 'partialBinaries': True, 'files': [], 'omitted': [], 'engines': engines_of(items)}
+    total = 0; binaries = 0; texts = 0
+    for e in sorted(items, key=lambda e: (not bool(re.search(r'(^|/)(system\.json|plugins\.js|package\.json)$',e.rel,re.I)),e.rel.casefold())):
+        rel=e.rel.replace('\\','/'); low=rel.lower(); base=low.rsplit('/',1)[-1]
+        if re.search(r'(^|/)(save|savedata|userdata|backup|node_modules)(/|$)|(^|/)(save[^/]*\.(dat|bak|sav)|unins[^/]*|setup[^/]*|config\.exe)$',low): continue
+        small = bool(re.search(r'(^|/)(system\.json|plugins\.js|package\.json|systeminfo\.json|fileinfo\.xml|bg[i]\.gdb|readme[^/]*\.txt|[^/]*\.(ini|cfg|cf))$',low))
+        binary = bool(re.search(r'\.(xp3|arc|pfs|xfl|agf|alf|dat|bin|pak|pack|dsm|mhp)$',low)) or low.endswith('.exe') and rel.count('/')<=1
+        core = bool(re.search(r'(^|/)(rmmz_core|rpg_core|tyrano)\.js$',low))
+        if not (small or binary or core): continue
+        if binary and binaries>=24 or not binary and texts>=24:
+            report['omitted'].append({'path':rel,'reason':'sample count limit'});continue
+        limit=128*1024
+        if small and e.size<=512*1024:
+            with open(e.path,'rb') as f: parts=[(rel,f.read(512*1024+1),0)]
+        else:
+            with open(e.path,'rb') as f:
+                head=f.read(limit); offset=max(len(head),e.size-limit); f.seek(offset);tail=f.read(limit)
+            parts=[('__engine_probe/files/'+rel+'.head.bin',head,0)]
+            if tail: parts.append(('__engine_probe/files/'+rel+'.tail.bin',tail,offset))
+        size=sum(len(data) for _name,data,_off in parts)
+        if total+size>8*MB:
+            report['omitted'].append({'path':rel,'reason':'8MB game evidence limit'});continue
+        binaries+=int(binary);texts+=int(not binary);total+=size
+        report['files'].append({'path':rel,'sourceBytes':e.size,'parts':[{'name':name,'offset':offset,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()} for name,data,offset in parts]})
+        for name,data,_offset in parts: yield name,data,e.mtime
+    report['sampleBytes']=total
+    yield '__engine_probe/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
+
 def main():
+    new_games = RULES_RE is not None and RULES_RE.pattern == '^new-games:probe$'
     download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
     tsk_scene = RULES_RE is not None and RULES_RE.pattern == '^tsk:ch10340034$'
     rpg_media = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:media-samples$'
@@ -1417,7 +1462,21 @@ def main():
     rpg_maps = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:map-sample$'
     rj_inventory = RULES_RE is not None and RULES_RE.pattern == '^rj01482469:inventory'
     requested_diagnostics = RULES_RE is not None and RULES_RE.pattern == '^(rj01482469:core|tsk:ch10380048)$'
-    if download_logs:
+    if new_games:
+        games=[];found=set()
+        for d,ds,_fs in walk_follow(root):
+            depth=os.path.relpath(d,root).count(os.sep)
+            label=new_game_label(os.path.basename(d))
+            if label and (not ONLY or ONLY.search(os.path.relpath(d,root))):
+                games.append(d);found.add(label);ds[:]=[]
+            elif any(MARK.search(f) for f in _fs) or any(x.lower().endswith('_data') for x in ds):
+                ds[:]=[]  # Other games cannot contain a requested game; avoid scanning their media/runtime trees.
+            else:
+                ds[:]=sorted(x for x in ds if depth<7 and x.lower() not in ('gal-download','bundles','runs','repair-backups','bundle-backups','node_modules','img','audio','movies') and not EXCL.search(x+'/'))
+        missing=[name for name,_pattern in NEW_GAME_PATTERNS if name not in found]
+        say('本轮五作引擎探测；找到%d个目录；未找到：%s' % (len(games),'；'.join(missing) or '无'))
+        if not games: raise RuntimeError('未找到指定五作目录；未采其他游戏')
+    elif download_logs:
         game, log_items = latest_download_logs()
         games = [game]
     elif rpg_new or rpg_probe or rpg_media:
@@ -1479,8 +1538,9 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
-        picks = ([] if tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
+        picks = ([] if new_games or tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
+        if new_games and items: picks=[(items[0],'inventory','new-games:probe')]
         if rpg_media:
             sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
             sample = RPG_MEDIA_SAMPLES[sample_id]
@@ -1547,6 +1607,10 @@ def main():
         gz = gzip.GzipFile(fileobj=sp, mode='wb', compresslevel=6, mtime=0)
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
+            if new_games:
+                for name,data,mtime in new_game_probe_files(items):
+                    if total+len(data)>TOTAL_MAX: raise RuntimeError('探测证据超过总量上限')
+                    ti=tarfile.TarInfo(gid+'/'+name);ti.size=len(data);ti.mtime=mtime;tar.addfile(ti,io.BytesIO(data));total+=len(data);picked_bytes+=len(data)
             if rpg_media:
                 packed = [e for e in items if e.rel.lower().endswith('.exe')] if sample_id == 'RJ01220265' else []
                 selected = [e.rel for e,m,_r in picks if m == 'full']
