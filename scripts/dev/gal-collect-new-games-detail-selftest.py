@@ -13,7 +13,7 @@ put(names[2],'SHIROKURO_Data/il2cpp_data/Metadata/global-metadata.dat',b'metadat
 bundle=b'UnityFS\0'+struct.pack('>I',8)+b'5.x.x\0'+b'6000.0.23f1\0';bundle+=struct.pack('>Q',128)+bytes(128-len(bundle)-8)
 for i in range(2):
  b=bytearray(b'@ARCH000\x0e20241122095209'+bundle+bytes(128)+b'index');idx=len(b)-5;b+=struct.pack('<Q',idx);put(names[2],f'Archives/base_div{i}_archive.arc',b)
-name='l02.txt.scn';body=chunk(b'info',struct.pack('<IQQH',0x80000000,5,5,len(name))+name.encode('utf-16le'))+chunk(b'segm',struct.pack('<IQQQ',0,64,5,5));index=chunk(b'File',body)
+name='l02.txt.scn';body=chunk(b'info',struct.pack('<IQQH',0x80000000,5,5,len(name))+name.encode('utf-16le')+b'\0\0')+chunk(b'segm',struct.pack('<IQQQ',0,64,5,5));index=chunk(b'File',body)
 xp3=bytearray(b'XP3\r\n \n\x1a\x8b\x67\x01'+struct.pack('<Q',96)+bytes(77));xp3[64:69]=b'abcde';xp3+=b'\0'+struct.pack('<Q',len(index))+index
 for n in ['data','patch','bgimage','evimage','fgimage','voice']:put(names[3],n+'.xp3',xp3)
 put(names[3],'original/ツヴァイトリガー.exe',b'MZ-original');put(names[3],'plugin/KAGParserEx.dll',b'dll');put(names[3],'plugin/psbfile.dll',b'dll')
