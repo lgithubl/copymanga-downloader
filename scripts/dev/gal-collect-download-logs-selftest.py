@@ -1,0 +1,53 @@
+"""Collect latest run through a symlink without packaging a >64MB plan."""
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import tarfile
+import tempfile
+
+base = Path(tempfile.mkdtemp(prefix='gal-download-log-test-'))
+root, cache, out = base / 'gal', base / 'cache', base / 'out'
+root.mkdir()
+for rel in ['runs/old', 'runs/latest', 'plans/task', 'bundles']:
+    (cache / rel).mkdir(parents=True)
+(root / 'gal-download').symlink_to(cache, target_is_directory=True)
+(cache / 'bundles/never-upload').write_text('bundle payload')
+old = cache / 'runs/old/result.json'
+old.write_text('{}')
+os.utime(old, (1, 1))
+plan = cache / 'plans/task/plan.json'
+with plan.open('wb') as f:
+    f.truncate(70 * 1024 * 1024)
+before = (plan.stat().st_size, plan.stat().st_mtime_ns)
+pointer = {'runDir': '/data/cache/gal-download/runs/latest', 'planPath': '/data/cache/gal-download/plans/task/plan.json'}
+(cache / 'plans/task/current.json').write_text(json.dumps(pointer))
+result = {'results': [{'plan': pointer['planPath'], 'categoryTotals': {'downloadBundles': 42, 'cachedBundles': 7}, 'repairs': {'candidateFiles': 12}, 'entries': [{'status': 'would-download'}] * 100}]}
+# Exercise large-result summarization too, preserving real counts.
+(cache / 'runs/latest/result.json').write_text(json.dumps(result) + ' ' * (9 * 1024 * 1024))
+(cache / 'runs/latest/run.log').write_text('latest run log')
+(cache / 'runs/latest/repairs.json').write_text('{"candidateFiles":12}')
+env = dict(os.environ, GAL_COLLECT_DRYRUN='1', GAL_COLLECT_OUT=str(out), GAL_COLLECT_TS='fixture',
+           GAL_COLLECT_RULES='^gal-download:latest$', GH_TOKEN='')
+p = subprocess.run(['bash', 'scripts/dev/gal-collect-run.sh', str(root)], env=env, capture_output=True, text=True)
+assert p.returncode == 0, p.stdout + p.stderr
+assert (plan.stat().st_size, plan.stat().st_mtime_ns) == before
+parts = sorted(out.glob('*-g01.tar.gz.part-*'))
+assert parts
+with tarfile.open(fileobj=io.BytesIO(b''.join(f.read_bytes() for f in parts)), mode='r:gz') as archive:
+    names = archive.getnames()
+    assert not any('/bundles/' in n or '/old/' in n for n in names), names
+    assert 'g01/plans/task/plan.json' not in names
+    summaries = [json.load(archive.extractfile(n)) for n in names if n.endswith('.summary.json')]
+    plan_summary = next(v for v in summaries if v['source'] == 'plans/task/plan.json')
+    assert plan_summary['sourceBytes'] == before[0] and 'omitted' in plan_summary
+    row = next(v for v in summaries if v['source'].endswith('result.json'))['data']['results'][0]
+    assert row['categoryTotals'] == {'downloadBundles': 42, 'cachedBundles': 7}
+    assert row['repairs']['candidateFiles'] == 12
+    assert row['entries']['totalItems'] == 100
+    assert row['entries']['statusCounts'] == {'would-download': 100}
+    assert len(row['entries']['sample']) == 20
+assert sum(p.stat().st_size for p in parts) < 1024 * 1024
+print('PASS: >64MB plan, large result, exact counts, latest-only symlink collection; source unchanged')
+print('Fixture retained:', base)

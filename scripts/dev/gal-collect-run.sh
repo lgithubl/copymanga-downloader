@@ -33,6 +33,8 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.40 不打包完整 plan，只记录来源/体积；大 result 保留完整汇总及条目状态计数，明示列表取样；大文本明示只收末尾1MB。修复大于64MB的plan导致采集中断。
+# 1.39 本轮只采 gal/gal-download（允许软链接）最近运行的日志、result/repairs/error JSON 和关联 plan；不遍历 bundles，不采 APK 或修复备份。
 # 1.38 本轮补采 RJ01482469 的 RPG Maker 数据/插件与少量加密媒体样本；TSK 仅采 Ch10380048/1038004 的骨架、图集、贴图及相关剧情 JSON，总量上限128MB。
 # 1.37 本轮只采 RJ01482469 目录元数据：路径、大小、mtime、扩展名统计；不读取或打包游戏文件内容。
 # 1.36 本轮仅采 TSK 目录元数据：路径、大小、mtime、分类与最近12h统计，不打包任何游戏文件。
@@ -57,10 +59,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.38"
+VERSION="1.40"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^(rj01482469:core|tsk:ch10380048)$'
+ROUND_RULES='^gal-download:latest$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
@@ -1150,10 +1152,89 @@ def requested_diagnostic_picks(items, is_tsk):
     say('  diagnostic payload: %d files, %.2f MB; library is read-only' % (len(picks), total / MB))
     return picks
 
+def latest_download_logs():
+    game = os.path.join(root, 'gal-download')
+    runs = os.path.join(game, 'runs')
+    if not os.path.isdir(runs): raise RuntimeError('gal/gal-download 必须指向包含 runs/ 的缓存目录；不会扫描 bundles')
+    candidates = []
+    for entry in os.scandir(runs):
+        if not entry.is_dir(): continue
+        reports = [p for p in os.scandir(entry.path) if p.is_file() and p.name.endswith(('.json', '.log', '.txt', '.jsonl'))]
+        if reports: candidates.append((max(p.stat().st_mtime for p in reports), entry.path, reports))
+    if not candidates: raise RuntimeError('gal-download/runs 下没有运行日志')
+    _mtime, latest, reports = max(candidates, key=lambda x: (x[0], x[1]))
+    say('只采最近运行: %s；不采 bundles/APK/repair-backups；源目录只读' % latest)
+    paths = {p.path for p in reports}
+    plans = os.path.join(game, 'plans')
+    if os.path.isdir(plans):
+        for task in os.scandir(plans):
+            if not task.is_dir(): continue
+            current = os.path.join(task.path, 'current.json')
+            try:
+                with open(current, encoding='utf-8') as f: pointer = json.load(f)
+                if os.path.basename(str(pointer.get('runDir', '')).rstrip('/')) != os.path.basename(latest): continue
+                paths.add(current)
+                plan = os.path.join(task.path, 'plan.json')
+                if os.path.isfile(plan): paths.add(plan)
+            except (ValueError, OSError, AttributeError, TypeError): pass
+    for p in reports:
+        if p.name != 'result.json': continue
+        try:
+            with open(p.path, encoding='utf-8') as f: data = json.load(f)
+            for row in data.get('results', []):
+                # Container absolute paths differ from the NAS mount. Map plans/ only.
+                plan = row.get('plan', '')
+                if not isinstance(plan, str) or '/plans/' not in plan: continue
+                candidate = os.path.join(game, 'plans', plan.split('/plans/', 1)[1])
+                if os.path.isfile(candidate) and os.path.commonpath([os.path.realpath(game), os.path.realpath(candidate)]) == os.path.realpath(game): paths.add(candidate)
+        except (ValueError, OSError, AttributeError, TypeError): pass
+    items = []
+    summaries = os.path.join(out, 'download-log-summaries')
+    os.makedirs(summaries, exist_ok=True)
+    def compact(value):
+        if isinstance(value, dict): return {k: compact(v) for k, v in value.items()}
+        if isinstance(value, list):
+            if len(value) <= 40: return [compact(v) for v in value]
+            statuses = collections.Counter(str(v.get('status', '(none)')) for v in value if isinstance(v, dict))
+            return {'totalItems': len(value), 'statusCounts': dict(statuses), 'sample': [compact(v) for v in value[:20]], 'sampleOnly': True}
+        return value
+    for filename in sorted(paths):
+        st = os.stat(filename)
+        rel = os.path.relpath(filename, game)
+        is_plan = rel.startswith('plans' + os.sep) and os.path.basename(filename) == 'plan.json'
+        if is_plan or st.st_size > 8 * MB:
+            summary = {'source': rel, 'sourceBytes': st.st_size, 'sourceMtime': int(st.st_mtime), 'originalUnchanged': True}
+            if is_plan:
+                # Download/missing/cache/repair counts are recorded in result.json and
+                # repairs.json. Do not load hundreds of MB of catalog data for them.
+                summary.update({'omitted': 'Full plan excluded; use latest result categoryTotals/categorySummary and repairs.json for this run. A saved plan is not a live directory comparison.'})
+            elif filename.endswith('.json'):
+                try:
+                    with open(filename, encoding='utf-8') as f: summary['data'] = compact(json.load(f))
+                except (ValueError, OSError) as error: summary['readError'] = str(error)
+            else:
+                with open(filename, 'rb') as f:
+                    f.seek(max(0, st.st_size - MB)); summary['tail'] = f.read(MB).decode('utf-8', 'replace')
+                summary['tailOnly'] = True
+            name = hashlib.sha256(rel.encode()).hexdigest()[:12] + '-' + os.path.basename(filename) + '.summary.json'
+            filename = os.path.join(summaries, name)
+            with open(filename, 'w', encoding='utf-8') as f: json.dump(summary, f, ensure_ascii=False, indent=2)
+            say('  摘要代替完整文件: %s (%d bytes)；源文件保留' % (rel, st.st_size))
+            rel = '__diagnostics/' + name
+            st = os.stat(filename)
+        e = Entry(); e.path = filename; e.rel = rel; e.size = st.st_size; e.mtime = int(st.st_mtime)
+        items.append(e)
+    if sum(e.size for e in items) > 128 * MB: raise RuntimeError('本轮日志超过128MB，未采集其他数据')
+    return game, items
+
 def main():
+    download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
     rj_inventory = RULES_RE is not None and RULES_RE.pattern == '^rj01482469:inventory'
     requested_diagnostics = RULES_RE is not None and RULES_RE.pattern == '^(rj01482469:core|tsk:ch10380048)$'
-    if requested_diagnostics:
+    if download_logs:
+        game, log_items = latest_download_logs()
+        games = [game]
+    elif requested_diagnostics:
         games = []
         for d, ds, _fs in walk_follow(root):
             if os.path.basename(d).lower() == 'twinkle star knights x' or re.search(r'(?<![A-Za-z0-9])RJ01482469(?![0-9])', os.path.basename(d), re.I):
@@ -1184,8 +1265,8 @@ def main():
     total = 0
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
-        items = list_files(game); eng = engines_of(items)
-        picks = (requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
+        items = log_items if download_logs else list_files(game); eng = engines_of(items)
+        picks = ([(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
         if 'bgi' in eng and RULES_RE is not None and RULES_RE.search('bgi:named'):
             picks = picks + [(e, 'bginamed', 'bgi:named') for e in bgi_named(items)]
