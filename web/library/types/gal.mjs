@@ -18,7 +18,7 @@ import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normali
 import { createArcResCache } from '../gal/arc-res-cache.mjs'
 import { extractExeIcon } from '../gal/pe-icon.mjs'
 import { ensureContainers, setKeysFile, virtualEntry, virtualHas } from '../gal/containers.mjs'
-import { createRpgMakerResourceCache } from '../gal/rpgmaker.mjs'
+import { createRpgMakerResourceCache, isRpgMakerEncryptedFile } from '../gal/rpgmaker.mjs'
 import { IMAGE_THUMB_EXT, bucketOf, createImageThumbCache } from '../gal/image-thumb.mjs'
 import { resolveOnDisk } from '../gal/resolve.mjs'
 import { isVideoPath } from '../gal/thumbs.mjs'
@@ -215,7 +215,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       if (fromMedia) {
         if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
         const hit = await resolveOnDisk({ work, rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: false })   // ~/ 路径：只认媒体目录内的原路径，不套任何解析规则 / allowedRoots
-        if (hit) return hit
+        if (hit) return skipMaterialize ? hit : rpgResources(hit, work, config.adapterOptions?.['rpgmaker-json'])
         throw bad('资源不存在', 404)
       }
       const variants = [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))]
@@ -360,6 +360,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       mediaDir: workDirOf(item),
       config: item.config,
       adapters: item.adapters,
+      isEncodedAsset: file => Boolean(item.config?.adapterOptions?.['rpgmaker-json']) && isRpgMakerEncryptedFile(file),
       resolveAsset: (rel) => resolveExists(item, rel),
       warmAsset: (rel) => resolveAsset(item, rel),   // 预热：取场景时后台把要用的图取出来 / 解码进缓存
       storedSize: (rel) => storedSizeOf(item, rel),   // 诊断用：容器里这张图转格式之前的大小

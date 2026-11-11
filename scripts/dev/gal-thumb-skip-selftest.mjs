@@ -1,5 +1,6 @@
 // 缩略图黑名单 thumbSkip：配置校验 + 提取引擎里按大小 / 路径 / 尺寸跳过
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, stat, writeFile } from 'node:fs/promises'
+import { archiveToTmp } from '../tag-scripts/gal-download/archive.mjs'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeGalConfigWithWarnings } from '../../web/library/gal/config.mjs'
@@ -81,7 +82,7 @@ try {
   }
   const sz = await imageSizeOf(path.join(media, 'img/cha_wide.png'))
   check('imageSizeOf：PNG 宽高（只读文件头）；不是图 = null', sz.width === 900 && sz.height === 20 && (await imageSizeOf(path.join(work, 'nope'))) === null)
-} finally { await rm(work, { recursive: true, force: true }) }
+} finally { await archiveToTmp(work) }
 
 
 // ---- 一阶段什么时候解压：只有「通过了便宜条件、还有要解压才能量的条件」的容器图才会取出来 ----
@@ -111,7 +112,7 @@ try {
     check('maxStoredMB：解压前大小 > 2MB 的丢掉（huge），不解压', J(r.names.sort()) === J(['mid.png', 'tiny.png', 'unknown.png']) && r.extracted === 0, J(r))
     r = await run([{ minStoredMB: 0.5, minWidth: 800 }], all)
     check('混合规则（解压前 < 0.5MB 且 宽 < 800，AND）：只有解压前大小通过的图（tiny）才解压去量宽度（宽 300 < 800 → 丢）；mid / huge / 量不出来的先被便宜条件排除，不解压', J(r.names.sort()) === J(['huge.png', 'mid.png', 'unknown.png']) && r.extracted === 1 && r.why.length === 1 && /tiny/.test(r.why[0]), J(r))
-  } finally { await rm(dir, { recursive: true, force: true }) }
+  } finally { await archiveToTmp(dir) }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

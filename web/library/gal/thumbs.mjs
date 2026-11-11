@@ -192,7 +192,7 @@ export async function thumbSkipReason(rules, real, candidate, stored = null) {
 // 配了需要「转换后大小 / 宽高」的 thumbSkip 规则时，通过了便宜条件（路径 / 解压前大小）的候选图才取出来量（每个引擎最多 MATERIALIZE_BUDGET 张，超了的当作量不出来、不过滤）；没有这类规则就不解压
 const MATERIALIZE_BUDGET = 200
 // storedSize(rel) → 容器里这张图的原始大小（可选，只有诊断用）；trace 开着时（setTrace(数组)）addPaths 把每个候选的处理过程记进去（诊断用，平时是 null）
-export function createThumbEngine({ mediaDir, config, resolveAsset, materialize = null, storedSize = null }) {
+export function createThumbEngine({ mediaDir, config, resolveAsset, materialize = null, storedSize = null, isEncodedFile = () => false }) {
   let materializeLeft = MATERIALIZE_BUDGET
   let trace = null
   const roots = config.resourceRoots
@@ -291,7 +291,7 @@ export function createThumbEngine({ mediaDir, config, resolveAsset, materialize 
             let reason = plan.reason
             let file = onDisk ? real : ''
             // 第二步：要量转换后的大小 / 宽高（或诊断要显示）才把容器里的图取出来
-            if (!reason && (plan.needExtract || row) && !onDisk) {
+            if (!reason && (plan.needExtract || row) && (!onDisk || isEncodedFile(real))) {
               const spend = plan.needExtract   // 诊断自己要看的不占一阶段的名额
               if (materialize && (!spend || materializeLeft > 0)) { if (spend) materializeLeft -= 1; try { const got = await materialize(one); if (typeof got === 'string') file = got } catch { /* 取不出来：不过滤 */ } }
               else if (materialize) why.push(`${from}：${one} → 解压名额用完（${MATERIALIZE_BUDGET}），没法量大小，不过滤`)

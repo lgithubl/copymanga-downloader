@@ -16,6 +16,7 @@ export function decryptRpgMaker(bytes, key) {
 }
 
 const encrypted = /\.(?:rpgmvp|rpgmvo|rpgmvm|png_|ogg_|m4a_)$/i
+export const isRpgMakerEncryptedFile = file => encrypted.test(String(file))
 export function createRpgMakerResourceCache(directory) {
   const inflight = new Map()
   return async function materialize(file, mediaDir, options) {
