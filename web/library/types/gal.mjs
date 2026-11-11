@@ -1,3 +1,5 @@
+import { packedRpgView } from '../gal/rpgmaker-packed.mjs'
+import { candidatePaths } from '../gal/resolve.mjs'
 // Gal（视觉小说 / 剧情脚本）：一个目录 = 一个媒体条目，条目只有一个单元（'main'）；单元里是一棵由后端按需给出的「浏览节点」树
 //   首页 → 一层层目录 → 脚本列表 → 播放页，节点怎么来见 web/library/gal/browse.mjs。前端走通用的 reader?sectionId=<节点 id>。
 // 目录本身就是数据，不 mv、不拷贝、不改——导入只是给它建一份元数据 JSON：来源路径 source.path + adapters（脚本格式适配器）+ 标题。
@@ -156,7 +158,12 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     return item
   }
 
-  const readItem = async (itemId) => normalizeItem(JSON.parse(await readFile(metaPath(itemId), 'utf8')))
+  const readItem = async (itemId) => {
+    const item = normalizeItem(JSON.parse(await readFile(metaPath(itemId), 'utf8')))
+    const packedExe = item.config?.adapterOptions?.['rpgmaker-json']?.packedExe
+    if (packedExe) Object.defineProperty(item, 'packedView', { value: await packedRpgView(item.source.path, packedExe, path.join(dataDir, 'cache', 'gal-rpgmaker-packed')), enumerable: false })
+    return item
+  }
   const itemExists = (itemId) => pathExists(metaPath(itemId))
   async function writeItem(item) {
     const normalized = normalizeItem(item)
@@ -190,7 +197,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
 
   const workDirOf = (item) => {
     if (!item.source.path) throw new Error('条目没有记录来源目录')
-    return path.resolve(item.source.path)
+    return item.packedView?.root || path.resolve(item.source.path)
   }
 
   // 把脚本里的相对路径解析成磁盘上的真实文件。路径相对「资源根」（config.resourceRoots，按顺序找，取第一个存在的）；
@@ -211,6 +218,17 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const roots = (config.resourceRoots?.length ? config.resourceRoots : ['']).map((root) => String(root || '').replace(/^\.\/?/, '').replace(/\/+$/, ''))
     const wanted = fromMedia ? [rel] : [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))].flatMap((variant) => roots.map((root) => (root ? `${root}/${variant}` : variant)))
     if (wantedOut) wantedOut.push(...wanted)
+    if (item.packedView && !fromMedia) {
+      const variants = [rel, ...config.stripPrefixes.filter(prefix => rel.startsWith(prefix)).map(prefix => rel.slice(prefix.length))]
+      const candidates = variants.flatMap(v => candidatePaths(v, config.resourceResolve)).flatMap(v => roots.map(root => root ? `${root}/${v}` : v))
+      const hit = item.packedView.find(candidates)
+      if (hit) {
+        if (wantedOut) wantedOut.push(hit)
+        if (skipMaterialize) return path.join(work, ...hit.split('/'))
+        const file = await item.packedView.materialize(hit)
+        return rpgResources(file, work, config.adapterOptions?.['rpgmaker-json'])
+      }
+    }
     const onDisk = async () => {
       if (fromMedia) {
         if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
@@ -254,7 +272,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       const wanted = []
       let source = null
       try {
-        const original = await resolveAsset(item, resourcePath, { skipMaterialize: true, wantedOut: wanted })
+        const original = await resolveAsset(item, resourcePath, { skipMaterialize: !item.packedView, wantedOut: wanted })
         const onDisk = await rpgResources(original, workDirOf(item), normalizeGalConfig(item.config).adapterOptions?.['rpgmaker-json'])
         const tallTop = await imageThumbs.tallTopOf(onDisk, bucketOf(width), normalizeGalConfig(item.config).coverCrop)   // 超长图取顶部一段（卡片居中裁会裁到中段）
         if (tallTop) return { file: tallTop, contentType: 'image/webp', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
@@ -306,7 +324,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   async function exeIconFile(item, coverPath) {
     const rel = String(coverPath).slice(4)
     if (!/\.exe$/i.test(rel)) throw Object.assign(new Error('不是 exe'), { statusCode: 404 })
-    const exe = await resolveOnDisk({ work: workDirOf(item), rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: true })
+    const exe = await resolveOnDisk({ work: path.resolve(item.source.path), rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: true })
     if (!exe) throw Object.assign(new Error('exe 不存在'), { statusCode: 404 })
     const info = await stat(exe)
     const key = createHash('sha1').update(JSON.stringify([exe, info.size, Math.round(info.mtimeMs), 'v1'])).digest('hex')
@@ -349,7 +367,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   // 容器（hybrid）里这个资源的原始大小；磁盘上本来就有的文件 / 不在容器里 = null
   async function storedSizeOf(item, rel) {
     const wanted = []
-    try { await resolveAsset(item, rel, { skipMaterialize: true, wantedOut: wanted }); return null } catch { /* 磁盘上没有：看容器 */ }
+    try { const file = await resolveAsset(item, rel, { skipMaterialize: true, wantedOut: wanted }); return item.packedView?.index.files.get(path.relative(item.packedView.root, file).split(path.sep).join('/').toLowerCase())?.size ?? null } catch { /* 磁盘上没有：看容器 */ }
     if (!wanted.length) return null
     const entry = await virtualEntry({ mediaDir: workDirOf(item), config: normalizeGalConfig(item.config), rels: wanted })
     return entry?.size ?? null
@@ -358,6 +376,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   function providerOf(item) {
     return createBrowseProvider({
       mediaDir: workDirOf(item),
+      sourceFiles: item.packedView?.files || [],
       config: item.config,
       adapters: item.adapters,
       isEncodedAsset: file => Boolean(item.config?.adapterOptions?.['rpgmaker-json']) && isRpgMakerEncryptedFile(file),

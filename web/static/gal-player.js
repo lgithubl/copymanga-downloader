@@ -1,3 +1,4 @@
+import { createRpgUiLayer } from '/gal-rpgmaker-ui.js'
 // Gal 播放器（DOM + 音频）。纯逻辑在 gal-engine.js。输入是服务端给的规范场景（见 web/library/gal/scene.mjs）。
 // 目前渲染：背景（渐变/纯色）、说话人和台词（含描边/颜色等样式片段）、BGM/语音/音效、黑场、wait、视频。
 // 另外：Spine 骨骼动画（站位立绘、整幅静态画面，gal-spine.js）、镜头（整个画面一起平移/缩放）、背景音效声道、闪屏。
@@ -10,7 +11,7 @@ import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-sta
 import { createEmoteLayer } from '/gal-emote.js'
 import { createRpgMakerMapLayer } from '/gal-rpgmaker-map.js'
 import { attachBarLock } from '/gal-barlock.js'
-import { activePath, applyCommand, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
+import { activePath, applyCommand, visibleChoiceOptions, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
 // se = 旧版「语音/音效」合在一起的那一个（只读：新的几个滑块没存过时拿它当初始值，升级后听感不变）
 // 自动进入下一章时，自动播放 / 快进的状态带给下一章的播放器（每章是新建的播放器实例）
@@ -822,17 +823,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const bgVoices = new Map()   // 槽 → { src, audio, volume }
   function setBgVoices(spec = {}) {
     for (const [slot, voice] of [...bgVoices]) {
-      if (spec[slot]?.src === voice.src) continue
+      if (spec[slot]?.src === voice.src && spec[slot]?.token === voice.token && (spec[slot]?.loop !== false) === voice.audio.loop) continue
       voice.audio.pause()
       bgVoices.delete(slot)
     }
     for (const [slot, want] of Object.entries(spec)) {
       if (bgVoices.has(slot) || !want?.src) continue
       const audio = new Audio(url(want.src))
-      audio.loop = true
-      audio.volume = Math.max(0, Math.min(1, gainOf('bgvoice') * (Number.isFinite(Number(want.volume)) ? Number(want.volume) : 1)))
+      audio.loop = want.loop !== false
+      audio.playbackRate = Math.max(.5,Math.min(2,Number(want.pitch)||1))
+      audio.volume = Math.max(0, Math.min(1, gainOf(want.kind || 'bgvoice') * (Number.isFinite(Number(want.volume)) ? Number(want.volume) : 1)))
       audio.addEventListener('error', () => markMissing(want.src))
-      bgVoices.set(slot, { src: want.src, audio, volume: want.volume })
+      bgVoices.set(slot, { src: want.src, token: want.token, kind: want.kind || 'bgvoice', audio, volume: want.volume })
       if (wantBgm) audio.play().catch(() => {})
     }
   }
@@ -1258,6 +1260,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera, blend: views.blend, expressions: expressionTable() } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
   }
+  let rpgUiLayer=null
+  function paintRpgUi(){ if(!rpgUiLayer&&!Object.keys(state.rpgUi||{}).length)return; rpgUiLayer ||= createRpgUiLayer(world);const stage=Object.values(state.rpgUi||{}).find(s=>s.stage)?.stage||state.rpgMap?.stage||[816,624];rpgUiLayer.set(state,stage) }
   let rpgMapLayer=null
   function paintRpgMap(live=false){
     if(!rpgMapLayer&&!state.rpgMap)return Promise.resolve()
@@ -1357,6 +1361,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     paintLive2d()
     paintSpines(false)
     paintRpgMap(false)
+    paintRpgUi()
     paintStand()
     paintOverlays()
     paintCamera(false)
@@ -1391,6 +1396,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       if (destroyed || mine !== gen) return
       if (!condMet(command.when, state.vars)) continue   // 没选中的分支：整条跳过
       if (command.op === 'choice') {
+        if (!visibleChoiceOptions(command,state.vars).length) continue
         let picked = choices[command.id]
         if (picked === undefined) {
           skipping = false
@@ -1419,7 +1425,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       const seconds = skipping ? 0 : commandDuration(scaled)
       applyCommand(state, scaled, choices)
       switch (command.op) {
+        case 'rpgText':
+          paintRpgUi()
+          break
         case 'set':
+          paintRpgUi()
           if(state.rpgMap)paintRpgMap(!skipping)
           break
         case 'rpgMap':
@@ -1790,7 +1800,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // ---------- 选项（画面正中、竖排；可以自动选） ----------
   let choiceState = null   // { resolve, command }
   let autoChoiceTimer = 0
+  const pictureChoiceHits = new Set()
+  const clearPictureChoices = () => { for(const hit of pictureChoiceHits) hit.remove(); pictureChoiceHits.clear() }
   function askChoice(command) {
+    command = {...command, options: visibleChoiceOptions(command,state.vars)}
+    if(!command.options.length)return Promise.resolve(null)
     return new Promise((resolve) => {
       cancelChoice()
       choiceBox.replaceChildren()
@@ -1803,6 +1817,18 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
         button.append(el('span', 'gal-choice-num', String(option.value)), text)
         button.addEventListener('click', () => pickChoice(option.value))
         choiceBox.append(button)
+        if(option.pictureSlot){
+          const spec=state.overlays.find(p=>p.slot===option.pictureSlot)
+          if(spec?.src&&spec.alpha!==0){
+            const image=new Image();image.onload=()=>{
+              if(choiceState?.command.id!==command.id)return
+              const stage=spec.stage||[816,624],w=image.naturalWidth*Math.abs(spec.scaleX??1),h=image.naturalHeight*Math.abs(spec.scaleY??1),hit=el('button','gal-rpg-picture-choice')
+              hit.type='button';hit.title=segmentsText(option.segments);hit.setAttribute('aria-label',hit.title);hit.dataset.value=String(option.value)
+              Object.assign(hit.style,{left:`${((spec.x||0)+stage[0]/2-w*(spec.anchor?.[0]||0))/stage[0]*100}%`,top:`${((spec.y||0)+stage[1]/2-h*(spec.anchor?.[1]||0))/stage[1]*100}%`,width:`${w/stage[0]*100}%`,height:`${h/stage[1]*100}%`})
+              hit.addEventListener('click',event=>{event.stopPropagation();pickChoice(option.value)});world.append(hit);pictureChoiceHits.add(hit)
+            };image.src=url(spec.src)
+          }
+        }
       }
       choiceBox.hidden = false
       choiceState = { resolve, command }
@@ -1813,6 +1839,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (!choiceState) return
     const state_ = choiceState
     choiceState = null
+    clearPictureChoices()
     clearTimeout(autoChoiceTimer)
     choiceBox.hidden = true
     state_.resolve(value)
@@ -1821,6 +1848,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (!choiceState) return
     const state_ = choiceState
     choiceState = null
+    clearPictureChoices()
     clearTimeout(autoChoiceTimer)
     choiceBox.hidden = true
     state_.resolve(null)
@@ -2216,7 +2244,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     else if (key === 'bgse') { if (bgseAudio) bgseAudio.volume = gain }
     else if (key === 'voice') { if (voiceAudio) voiceAudio.volume = gain }
     else if (key === 'tts') { if (ttsRecord?.audio) ttsRecord.audio.volume = gain }
-    else if (key === 'bgvoice') for (const v of bgVoices.values()) v.audio.volume = Math.max(0, Math.min(1, gain * (Number.isFinite(Number(v.volume)) ? Number(v.volume) : 1)))
+    for (const v of bgVoices.values()) if((v.kind||'bgvoice')===key) v.audio.volume = Math.max(0, Math.min(1, gain * (Number.isFinite(Number(v.volume)) ? Number(v.volume) : 1)))
   }
   for (const g of AUDIO_GROUPS) {
     audioRanges[g.key].range.addEventListener('input', () => {
@@ -2317,6 +2345,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     spareVideos.clear()
     spineLayer?.destroy()
     rpgMapLayer?.destroy()
+    rpgUiLayer?.destroy()
     live2dLayer?.destroy()
     tr?.destroy()
     stopTts()

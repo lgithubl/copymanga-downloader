@@ -1,3 +1,4 @@
+import { eventEvidence } from './rpgmaker-plugins.mjs'
 // RPG Maker MV/MZ event JSON -> gal-scene. Engine mechanics live here; each
 // game's naming, gallery/image matching and plugin overrides live in options.
 import { readFile, stat } from 'node:fs/promises'
@@ -7,13 +8,13 @@ import { compileRpgEvents } from './rpgmaker-events.mjs'
 
 export const ADAPTER_ID = 'rpgmaker-json'
 export const DEFAULT_OPTIONS = {
-  root: '', stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
+  root: '', packedExe: '', stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
   initialVariables: {}, initialSwitches: {},
   maps: { enabled: true, tileSize: 48, player: true, follow: 'event' },
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
-  special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(hcg|cg|ev|event)[_-]' },
-  pictures: { folder: 'img/pictures', cgMatch: '(^|/)(hcg|cg|ev|event)[_-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
-  plugins: { simpleVoice: true, standingPicture: true, pictureCalls: true, commands: [] },
+  special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
+  pictures: { folder: 'img/pictures', cgMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
+  plugins: { simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, commands: [] },
 }
 export const optionsOf = createOptionsReader(DEFAULT_OPTIONS)
 const join = (...s) => s.filter(Boolean).join('/')
@@ -44,7 +45,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   if (get('js/plugins.js') && !plugins.length) ctx.warnings.push('plugins.js 不是可解析的插件 JSON 配置；没有执行游戏 JS')
   ctx.standing = new Map()
   const voice = enabled.find(p => p.name === 'SimpleVoice')
-  ctx.voiceFolder = 'audio/' + String(voice?.parameters?.FolderName || 'voice').replace(/^\/+|\/+$/g, '')
+  ctx.voiceFolder = 'audio/' + String(voice?.parameters?.FolderName || voice?.parameters?.['フォルダ名'] || (Boolean(system.advanced) ? 'se' : 'voice')).replace(/^\/+|\/+$/g, '')
   const standing = enabled.find(p => p.name === 'LL_StandingPictureMV')
   if (standing && o.plugins.standingPicture) {
     try { for (const item of decodeJson(standing.parameters.sPictures || '[]')) { const v = typeof item === 'string' ? decodeJson(item) : item; if (v?.id) ctx.standing.set(String(v.id), v) } }
@@ -70,7 +71,8 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
 }
 
 function evidence(list, ctx, seen = new Set()) {
-  let text = 0; const pictures = [], calls = new Set()
+  const pluginEvidence = eventEvidence(list)
+  let text = pluginEvidence.text; const pictures = [...pluginEvidence.pictures], calls = new Set(pluginEvidence.calls)
   if (!Array.isArray(list)) return { text, pictures, calls }
   if (ctx.evidenceCache.has(list)) return ctx.evidenceCache.get(list)
   if (ctx.evidenceBusy.has(list)) return { text, pictures, calls }
@@ -95,7 +97,8 @@ function evidence(list, ctx, seen = new Set()) {
 function buildCatalog(ctx) {
   const o = ctx.options, commonNodes = [], mapNodes = [], specials = new Map(), galleryCalls = new Set()
   const nameMatch = safeRegex(o.special.nameMatch), mapMatch = safeRegex(o.special.mapNameMatch), imageMatch = safeRegex(o.special.imageMatch), skip = safeRegex(o.catalog.skipNames)
-  const special = (name, ev) => Boolean(nameMatch?.test(name) || ev.pictures.some(p => imageMatch?.test(p) || imageMatch?.test(`img/pictures/${p}`)))
+  const specialSkip = safeRegex(o.special.skipNameMatch)
+  const special = (name, ev) => !specialSkip?.test(name) && Boolean(nameMatch?.test(name) || ev.pictures.some(p => imageMatch?.test(p) || imageMatch?.test(`img/pictures/${p}`)))
   if (o.catalog.maps) for (const [rel, map] of ctx.maps) {
     const id = Number(/Map(\d+)\.json$/i.exec(rel)?.[1]), title = ctx.mapInfo[id]?.name || `Map ${id}`, children = []
     for (const event of map.events.filter(Boolean)) for (const [pi, page] of (event.pages || []).entries()) {
@@ -119,7 +122,8 @@ function buildCatalog(ctx) {
     if (ev.text < o.catalog.minText || skip?.test(name)) continue
     const node = { id: `common-${event.id}`, title: name, subtitle: `${ev.text} 文本行`, script: `${join(rootOf(o), 'data/CommonEvents.json')}::common-${event.id}` }
     commonNodes.push(node)
-    if (ev.text >= o.special.minText && (galleryCalls.has(event.id) || special(name, ev))) specials.set(node.script, { ...node, id: `special-${node.id}` })
+    const wrapper = o.special.deduplicateCalls && event.list.filter(c=>c.code===401||c.code===357&&c.parameters?.[0]==='LogDisplayPlugin'&&['setNewText','addToText'].includes(c.parameters?.[1])).length < o.special.minText && [...ev.calls].some(id=>ctx.common[id]&&evidence(ctx.common[id].list,ctx).text>=o.special.minText)
+    if (!wrapper && ev.text >= o.special.minText && (galleryCalls.has(event.id) || special(name, ev))) specials.set(node.script, { ...node, id: `special-${node.id}` })
   }
   return { title: ctx.system.gameTitle || 'RPG Maker', children: [
     ...(o.special.enabled && specials.size ? [{ id: 'special', title: o.special.label, children: [...specials.values()] }] : []),

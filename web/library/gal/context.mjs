@@ -68,7 +68,7 @@ function compileSkip(config) {
 const clampInt = (value, min, max, fallback) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Math.max(min, Math.min(max, Math.floor(Number(value)))) : fallback)
 
 // adapter：适配器对象；返回 ctx（适配器没有 prepare 就返回 null）
-export async function loadAdapterContext({ adapter, mediaDir, config }) {
+export async function loadAdapterContext({ adapter, mediaDir, config, sourceFiles = [] }) {
   if (typeof adapter?.prepare !== 'function') return null
   const options = config.adapterOptions?.[adapter.id] || {}
   const fileRels = cleanRels(adapter.contextFiles?.(options))
@@ -121,6 +121,7 @@ export async function loadAdapterContext({ adapter, mediaDir, config }) {
   const walkLimit = clampInt(limits.walkFiles, 1, MAX_WALK_FILES_CEILING, Number(adapter.contextWalkLimit) > 0 ? Math.min(MAX_WALK_FILES_CEILING, Number(adapter.contextWalkLimit)) : MAX_WALK_FILES)
   const walkDepth = clampInt(limits.walkDepth, 1, 12, MAX_WALK_DEPTH)
   for (const rel of dirRels) await walk(mediaDir, rel, 0, files, walkLimit, walkDepth, skip)
+  if (sourceFiles.length) { const seen = new Set(files); for (const rel of sourceFiles) if (!seen.has(rel) && dirRels.some(dir => rel.startsWith(dir + "/"))) { files.push(rel); seen.add(rel) } }
   if (virt.files.length) {   // 虚拟文件（hybrid）：在 adapter 要的目录里的都算；磁盘上已经取出来的（和遍历到的重复）不重复加
     const seen = new Set(files)
     for (const rel of virt.files) if (!seen.has(rel) && dirRels.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) files.push(rel)

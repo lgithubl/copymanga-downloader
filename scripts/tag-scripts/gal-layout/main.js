@@ -1,3 +1,4 @@
+import { findPackedRpg } from './evb.mjs?v=2.51.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -60,6 +61,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 export const ADAPTER_RULES = {
   'rpgmaker-json': {
     "root": "",
+    "packedExe": "",
     "stage": [
       816,
       624
@@ -68,7 +70,12 @@ export const ADAPTER_RULES = {
     "maxCallDepth": 32,
     "initialVariables": {},
     "initialSwitches": {},
-    "maps": {"enabled": true, "tileSize": 48, "player": true, "follow": "event"},
+    "maps": {
+      "enabled": true,
+      "tileSize": 48,
+      "player": true,
+      "follow": "event"
+    },
     "catalog": {
       "common": true,
       "maps": true,
@@ -80,13 +87,14 @@ export const ADAPTER_RULES = {
       "label": "特殊场景",
       "minText": 4,
       "deduplicateCalls": true,
-      "nameMatch": "回想|回憶|recollection|replay|h[-_ ]?scene",
+      "nameMatch": "回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生",
+      "skipNameMatch": "削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン",
       "mapNameMatch": "回想|回憶|recollection|replay",
-      "imageMatch": "(^|/)(hcg|cg|ev|event)[_-]"
+      "imageMatch": "(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]"
     },
     "pictures": {
       "folder": "img/pictures",
-      "cgMatch": "(^|/)(hcg|cg|ev|event)[_-]",
+      "cgMatch": "(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]",
       "backgroundMatch": "(^|/)(bg|background)[_-]",
       "thumbnailMatch": ".",
       "thumbnailSkip": "(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)"
@@ -95,6 +103,9 @@ export const ADAPTER_RULES = {
       "simpleVoice": true,
       "standingPicture": true,
       "pictureCalls": true,
+      "structured": true,
+      "pictureActions": true,
+      "maxPictureActions": 16,
       "commands": []
     }
   },
@@ -4288,7 +4299,22 @@ function keepOwn(ctx, logs, { skipped = false, changes } = {}) {
 // Engine mechanics are shared; profile selection and matching remain table data.
 async function detectRpgMaker(scope) {
   let loc = await locateGame(scope, scope.gameId || scope.id)
-  if (!loc) return null
+  if (!loc) {
+    const packed = await findPackedRpg(scope.media)
+    if (!packed) return null
+    const prefix = packed.root ? packed.root + '/' : ''
+    const system = JSON.parse((await packed.read(prefix + 'data/System.json')).toString('utf8').replace(/^\uFEFF/, ''))
+    const common = JSON.parse((await packed.read(prefix + 'data/CommonEvents.json')).toString('utf8').replace(/^\uFEFF/, ''))
+    const entry = resolveLayout('rpgmaker', scope.layouts, [])
+    loc = { base: packed.root, entry }
+    const config = await buildConfig(scope.media, entry, packed.root)
+    config.adapterOptions['rpgmaker-json'].packedExe = packed.exe
+    config.scriptCount = common.filter(e => e?.list?.some(c => c.code === 401)).length
+    const found = makeFound(scope, entry, loc, config, {count: async () => config.scriptCount})
+    found.id = scope.gameId || 'rpgmaker::' + path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g, '')
+    scope.logs.push(`RPG Maker 封装：${packed.exe}；${system.gameTitle}；${packed.files.size}个索引文件；事件缓存到应用cache，媒体按请求读取；原目录只读`)
+    return found
+  }
   const system = JSON.parse((await readFile(path.join(scope.media, ...splitRel(join(loc.base, 'data/System.json'))), 'utf8')).replace(/^\uFEFF/, ''))
   const common = JSON.parse((await readFile(path.join(scope.media, ...splitRel(join(loc.base, 'data/CommonEvents.json'))), 'utf8')).replace(/^\uFEFF/, ''))
   if (!Array.isArray(common) || !common.some(e => e && Array.isArray(e.list))) return null

@@ -160,7 +160,7 @@ const excerptOf = (scene) => {
 // mediaDir：媒体目录（绝对路径）。config：条目元数据里的 config（原样传，这里规整）。
 // resolveAsset(rel) → 磁盘真实路径（找不到抛错）；用来确认缩略图存在。
 // extraWarnings：调用方（handler）在 config 之外发现的、要报给管理员的丢弃项 [{ field, reason, snippet }]（比如不认识的适配器 id）
-export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, maxScriptBytes: defaultMaxScriptBytes = MAX_SCRIPT_BYTES, resolveAsset, warmAsset = null, storedSize = null, isEncodedAsset = () => false, extraWarnings = [] }) {
+export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawConfig, adapters, maxScriptBytes: defaultMaxScriptBytes = MAX_SCRIPT_BYTES, resolveAsset, warmAsset = null, storedSize = null, isEncodedAsset = () => false, extraWarnings = [] }) {
   const config = normalizeGalConfig(rawConfig)
   const configWarnings = []
   for (const w of [...config.warnings, ...(Array.isArray(extraWarnings) ? extraWarnings : [])]) if (!configWarnings.some((x) => x.field === w.field && x.reason === w.reason && x.snippet === w.snippet)) configWarnings.push(w)
@@ -612,7 +612,7 @@ export function createBrowseProvider({ mediaDir, config: rawConfig, adapters, ma
   async function contextOf(adapterId) {
     if (!adapterId) return null
     if (!adapterContexts.has(adapterId)) {
-      adapterContexts.set(adapterId, await loadAdapterContext({ adapter: galAdapter(adapterId), mediaDir, config }).catch(() => null))
+      adapterContexts.set(adapterId, await loadAdapterContext({ adapter: galAdapter(adapterId), mediaDir, config, sourceFiles }).catch(() => null))
     }
     return adapterContexts.get(adapterId)
   }

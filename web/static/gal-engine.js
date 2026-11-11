@@ -5,7 +5,7 @@
 import { applyRpgMapCommand, refreshRpgMapPages } from './gal-rpgmaker-map-model.js'
 
 export function initialState() {
-  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, live2d: null, spines: {}, stand: null, stands: [], overlays: [], rpgMap: null, camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, bgPan: null, white: false, vars: {} }
+  return { bg: null, speaker: [], text: [], bgm: '', black: false, movie: null, live2d: null, spines: {}, stand: null, stands: [], overlays: [], rpgMap: null, rpgUi: {}, camera: null, bgse: null, bgvoices: {}, ui: true, bgfx: null, bgZoom: null, bgPan: null, white: false, vars: {} }
 }
 
 // ---------- 分支：选项 + 条件 ----------
@@ -35,15 +35,20 @@ export function condMet(when, vars = {}) {
   return true
 }
 
+export function visibleChoiceOptions(command, vars = {}) {
+  return (command.options || []).filter(o => !o.when || condMet(o.when, vars)).map((o,i) => command.reindex ? {...o,value:o.resultValue || i+1} : o)
+}
 const recordChoice = (vars, command, choices) => {
   const picked = choices?.[command.id]
-  if (picked !== undefined && picked !== null) vars[command.var] = String(picked)
+  if (picked !== undefined && picked !== null && visibleChoiceOptions(command,vars).some(o=>String(o.value)===String(picked))) vars[command.var] = String(picked)
 }
 
 function assignVariable(vars, command) {
   const key = String(command.var || '')
   if (!key || ['__proto__', 'prototype', 'constructor'].includes(key)) return
-  const right = command.test ? (condMet([command.test], vars) ? 1 : 0) : command.valueVar ? vars[command.valueVar] ?? 0 : command.value
+  let randomValue
+  if(command.random){const {min,max,seed}=command.random;if(Number.isSafeInteger(min)&&Number.isSafeInteger(max)&&max>=min&&max-min<2147483647){let hash=2166136261;for(const c of String(seed))hash=Math.imul(hash^c.charCodeAt(0),16777619);randomValue=min+(hash>>>0)%(max-min+1)}}
+  const right = command.random ? randomValue : command.test ? (condMet([command.test], vars) ? 1 : 0) : command.valueVar ? vars[command.valueVar] ?? 0 : command.value
   const left = Number(vars[key] || 0), n = Number(right)
   const calc = command.calc || 'set'
   const value = calc === 'add' ? left + n : calc === 'sub' ? left - n : calc === 'mul' ? left * n : calc === 'div' ? (n ? Math.floor(left / n) : 0) : calc === 'mod' ? (n ? left % n : 0) : right
@@ -96,7 +101,7 @@ export function choicesForCommand(scene, targetStep, targetCommand, maxStates = 
     for (const state of states) {
       if (!condMet(command.when, state.vars)) { next.push(state); continue }
       if (command.op === 'choice') {
-        for (const option of command.options || []) {
+        for (const option of visibleChoiceOptions(command,state.vars)) {
           const choices = { ...state.choices, [command.id]: option.value }, vars = { ...state.vars }
           recordChoice(vars, command, choices); next.push({ vars, choices })
           if (next.length >= maxStates) break
@@ -236,11 +241,16 @@ export function applyCommand(state, command, choices = null) {
     case 'bgZoom':    // 整个背景区域缩放 + 平移（ZOOM）：不跟换背景走；角色缩放另算
       state.bgZoom = command.scale === 1 && !command.x && !command.y ? null : { scale: command.scale, x: command.x || 0, y: command.y || 0 }
       break
+    case 'rpgText': {
+      const old = state.rpgUi?.[command.slot] || {}, segments = command.append ? [...(old.segments || []),{text:'\n'},...(command.segments || [])] : command.segments ?? old.segments ?? []
+      state.rpgUi = {...state.rpgUi, [command.slot]: {...old,...command,segments}}
+      break
+    }
     case 'bgvoice':   // 循环的背景人声（多个槽同时播）：{ slot, src, volume }
-      state.bgvoices = { ...state.bgvoices, [command.slot]: { src: command.src, volume: command.volume ?? 1 } }
+      state.bgvoices = { ...state.bgvoices, [command.slot]: { src: command.src, volume: command.volume ?? 1, loop: command.loop !== false, token: command.token, kind: command.kind, pitch: command.pitch } }
       break
     case 'bgvoiceOff': {
-      if (!command.slot) { state.bgvoices = {}; break }
+      if (!command.slot) { state.bgvoices = command.prefix ? Object.fromEntries(Object.entries(state.bgvoices).filter(([key,value])=>!key.startsWith(command.prefix)||command.src&&value.src!==command.src)) : {}; break }
       const next = { ...state.bgvoices }
       delete next[command.slot]
       state.bgvoices = next
