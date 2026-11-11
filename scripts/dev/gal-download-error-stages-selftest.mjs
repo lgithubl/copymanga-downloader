@@ -19,6 +19,10 @@ test('download, extract and write errors have separate reports; extraction failu
   assert.equal(result.status,'failed')
   assert.deepEqual(result.entries.map(e=>e.status),['download-failed','extract-failed','written','write-failed'])
   assert.deepEqual(result.failureSummary,{download:1,extract:1,write:1})
+  assert.equal(out.logs.length,3)
+  assert.match(out.logs[0],/成功处理 1 个 bundle，实际下载 3，复用缓存 0，写入 1 个文件/)
+  assert.match(out.logs[0],/失败 3（下载 1 \/ 解析 1 \/ 写入 1）/)
+  assert.ok(!out.logs.join('\n').includes('a-download'))
   const broken=result.entries[1];assert.equal(broken.downloadStatus,'downloaded');assert.equal(broken.extractStatus,'failed');assert.ok(broken.cache);assert.match((await readFile(broken.cache)).toString(),/^UnityFS/)
   assert.equal(await readFile(path.join(root,'good.bin'),'utf8'),'valid file')
   for(const stage of ['download','extract','write']){const report=JSON.parse(await readFile(result.errorFiles[stage]));assert.equal(report.stage,stage);assert.equal(report.errors.length,1);assert.equal(report.errors[0].errorStage,stage)}

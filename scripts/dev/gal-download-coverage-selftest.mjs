@@ -47,7 +47,7 @@ test('every catalog entry is accounted for, rejected other assets are visible, a
  const root=path.join(base,'media');await mkdir(root)
  const result=await generateTags({type:'gal',item:{adapters:['utage-book'],source:{path:root},config:{game:{id:'tsk'}}},cacheDir:path.join(base,'cache'),script:{options:{tasks:[{id:'tsk',game:'tsk',adapters:['utage-book'],provider:'tsk',dryRun:true,skipCategories:['cutin'],source:{type:'catalog',path:source}}]}}})
  assert.equal(result.details.status,'completed')
- assert.match(result.logs.join('\n'),/APK分类审计 \[other\].*skip-unsupported/)
+ assert.match(await readFile(result.details.logFile,'utf8'),/APK分类审计 \[other\].*skip-unsupported/)
  const task=result.details.results[0];const saved=JSON.parse(await readFile(task.catalogAudit.path))
  assert.equal(saved.totalEntries,keys.length+1)
  assert.equal(task.classification.cutin.skipped,1)

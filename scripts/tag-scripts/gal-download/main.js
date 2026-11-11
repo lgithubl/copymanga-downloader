@@ -6,17 +6,17 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.2.7'
-import { archiveToTmp, archiveToDirectory } from './archive.mjs?v=2.2.7'
-import { auditAtlasPages, filePngSize, pngSize } from './atlas-audit.mjs?v=2.2.7'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.7'
-import { createTaskLog } from './task-log.mjs?v=2.2.7'
-import { filterCategories } from './category-filter.mjs?v=2.2.7'
-import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.7'
-import { summarizeCategories } from './category-summary.mjs?v=2.2.7'
+import { nativeTask } from './worker-runner.mjs?v=2.2.8'
+import { archiveToTmp, archiveToDirectory } from './archive.mjs?v=2.2.8'
+import { auditAtlasPages, filePngSize, pngSize } from './atlas-audit.mjs?v=2.2.8'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.8'
+import { createTaskLog } from './task-log.mjs?v=2.2.8'
+import { filterCategories } from './category-filter.mjs?v=2.2.8'
+import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.8'
+import { summarizeCategories } from './category-summary.mjs?v=2.2.8'
 
-import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.7'
-import { mergeMaster } from './master-sync.mjs?v=2.2.7'
+import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.8'
+import { mergeMaster } from './master-sync.mjs?v=2.2.8'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -192,9 +192,9 @@ async function executeTask(ctx, task, index, timeoutMs) {
   const signal = AbortSignal.timeout(timeoutMs)
   const planDir = path.join(cache, 'plans', `${sha(root).slice(0, 20)}-${sha(id).slice(0, 12)}`)
   const planPath = path.join(planDir, 'plan.json')
-  const logs = [`任务 ${id} 日志: ${logger.logFile}`, `进度: ${logger.progressFile}`, `完整 plan: ${planPath}`]
+  const logs = [`任务 ${id} 完整日志: ${logger.logFile}`, `结果: ${path.join(runDir, 'result.json')}；进度: ${logger.progressFile}；plan: ${planPath}`]
   const result = { index, id, dryRun, status: 'completed', entries: [], plan: planPath, runDir, logFile: logger.logFile, progressFile: logger.progressFile }
-  const report = (line) => { logs.push(line); logger.log(line) }
+  const report = (line) => logger.log(line)
   const phase = async (name, values = {}) => { signal.throwIfAborted(); await logger.progress(name, values) }
   const lock = path.join(cache, `lock-${sha(rootMedia)}`)
   let locked = false, changed = false, plan
@@ -514,6 +514,16 @@ async function executeTask(ctx, task, index, timeoutMs) {
       }
       if (!dryRun) report(`错误分阶段汇总: ${JSON.stringify(result.failureSummary)}；解析失败的完整缓存保留，修复解码后可用原 plan 重试`)
       await json(path.join(runDir, 'result.json'), { runId, root, results: [result] })
+      const totals = result.categoryTotals || {}, rows = result.entries
+      const successful = rows.filter(row => ['written', 'downloaded', 'cached'].includes(row.status)).length
+      const downloaded = rows.filter(row => row.downloadStatus === 'downloaded').length
+      const cached = rows.filter(row => row.downloadStatus === 'cached').length
+      const failed = rows.filter(failedRow).length
+      const written = new Set(rows.flatMap(row => row.written || [])).size
+      const line = `任务 ${id} ${result.status}${dryRun ? '（dryRun，仅生成计划）' : ''}: 成功处理 ${successful} 个 bundle，实际下载 ${downloaded}，复用缓存 ${cached}，写入 ${written} 个文件，已有 skip ${totals.existingFiles || 0}，分类 skip ${totals.categorySkippedFiles || 0}，limit 跳过 ${totals.limitedBundles || 0}；失败 ${failed}（下载 ${failureCounts.download} / 解析 ${failureCounts.extract} / 写入 ${failureCounts.write}）；修复替换 ${result.repairs.repairedFiles}，Master更新 ${result.masterSync.updatedFiles}（新增映射 ${result.masterSync.addedRows}）${dryRun ? `；计划下载 ${totals.selectedDownloadBundles || 0} 个 bundle，缓存 ${totals.cachedBundles || 0}，待处理 ${totals.missingFiles || 0} 个文件` : ''}${result.collected !== undefined ? `；本地采集 ${result.collected} 个文件` : ''}`
+      logs.unshift(line)
+      if (result.error) logs.push(`任务错误: ${String(result.error).replace(/\s+/g, ' ').slice(0, 500)}；完整错误见日志`)
+      logger.log(line)
       await logger.close(result.status, result.summary)
     }
     finally { if (locked) await archiveToTmp(lock) }

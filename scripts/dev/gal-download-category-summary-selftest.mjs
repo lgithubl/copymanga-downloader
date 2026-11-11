@@ -61,6 +61,11 @@ test('dryRun returns and ends its log with missing/download/limit/existing/categ
   try {
     const out = await generateTags(ctx)
     assert.equal(out.details.status, 'completed')
+    assert.equal(out.logs.length, 3, 'system receives only summary and artifact paths')
+    assert.match(out.logs[0], /计划下载 1 个 bundle.*待处理 2 个文件/)
+    assert.match(out.logs[0], /已有 skip 1，分类 skip 1，limit 跳过 1/)
+    assert.ok(!out.logs.join('\n').includes('分类下载汇总'))
+    assert.ok(!out.logs.join('\n').includes('missing-voice'))
     const summary = out.details.results[0].categorySummary
     assert.equal(summary.voice.existingFiles, 1)
     assert.equal(summary.voice.downloadBundles, 1)

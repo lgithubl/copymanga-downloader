@@ -57,6 +57,7 @@ test('existing Master is checked, backed up in cache, atomically refreshed, then
   await writeFile(dry.details.tasks[0].planPath,JSON.stringify(plan));task.dryRun=false
   const output=await generateTags(ctx),result=JSON.parse(await readFile(path.join(output.details.runDir,'result.json'))).results[0]
   assert.equal(result.status,'completed');assert.equal(result.masterSync.updatedFiles,1);assert.equal(requests,1)
+  assert.match(output.logs[0],/Master更新 1/)
   const row=result.entries[0].metadata[0];assert.equal(row.status,'updated');assert.ok(row.backup.startsWith(cache+path.sep));assert.equal(await readFile(row.backup,'utf8'),original)
   assert.equal(utage.readMaster(await readFile(path.join(root,target))).chars.get('hero-new').name,'中文名字')
   const again=await generateTags(ctx),checked=JSON.parse(await readFile(path.join(again.details.runDir,'result.json'))).results[0]

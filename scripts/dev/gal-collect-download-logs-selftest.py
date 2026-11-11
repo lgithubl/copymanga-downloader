@@ -10,13 +10,19 @@ import tempfile
 base = Path(tempfile.mkdtemp(prefix='gal-download-log-test-'))
 root, cache, out = base / 'gal', base / 'cache', base / 'out'
 root.mkdir()
-for rel in ['runs/old', 'runs/latest', 'runs/newer-imys', 'plans/task', 'bundles']:
+for rel in ['runs/previous', 'runs/old', 'runs/latest', 'runs/newer-imys', 'plans/task', 'bundles']:
     (cache / rel).mkdir(parents=True)
 (root / 'gal-download').symlink_to(cache, target_is_directory=True)
 (cache / 'bundles/never-upload').write_text('bundle payload')
 old = cache / 'runs/old/result.json'
 old.write_text('{}')
 os.utime(old, (1, 1))
+old_progress = cache / 'runs/old/progress.json'
+old_progress.write_text('{"taskId":"tsk"}')
+os.utime(old_progress, (1, 1))
+previous = cache / 'runs/previous/progress.json'
+previous.write_text('{"taskId":"tsk-second"}')
+os.utime(previous, (2, 2))
 plan = cache / 'plans/task/plan.json'
 with plan.open('wb') as f:
     f.truncate(70 * 1024 * 1024)
@@ -40,7 +46,7 @@ parts = sorted(out.glob('*-g01.tar.gz.part-*'))
 assert parts
 with tarfile.open(fileobj=io.BytesIO(b''.join(f.read_bytes() for f in parts)), mode='r:gz') as archive:
     names = archive.getnames()
-    assert not any('/bundles/' in n or '/old/' in n or '/newer-imys/' in n for n in names), names
+    assert not any('/bundles/' in n or '/old/' in n or '/previous/' in n or '/newer-imys/' in n for n in names), names
     assert 'g01/plans/task/plan.json' not in names
     summaries = [json.load(archive.extractfile(n)) for n in names if n.endswith('.summary.json')]
     plan_summary = next(v for v in summaries if v['source'] == 'plans/task/plan.json')
@@ -54,3 +60,20 @@ with tarfile.open(fileobj=io.BytesIO(b''.join(f.read_bytes() for f in parts)), m
 assert sum(p.stat().st_size for p in parts) < 1024 * 1024
 print('PASS: >64MB plan, large result, exact counts, latest-only symlink collection; source unchanged')
 print('Fixture retained:', base)
+
+for count, expected in [('2', {'latest', 'previous'}), ('10', {'latest', 'previous', 'old'})]:
+    target = base / ('out-' + count)
+    run_env = dict(env, GAL_COLLECT_TSK_LOG=count, GAL_COLLECT_OUT=str(target))
+    run = subprocess.run(['bash', 'scripts/dev/gal-collect-run.sh', str(root)], env=run_env, capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout + run.stderr
+    parts = sorted(target.glob('*-g01.tar.gz.part-*'))
+    with tarfile.open(fileobj=io.BytesIO(b''.join(f.read_bytes() for f in parts)), mode='r:gz') as archive:
+        names = archive.getnames()
+        actual = {n.split('/')[2] for n in names if n.startswith('g01/runs/') and len(n.split('/')) > 3}
+        assert actual == expected, (count, actual, names)
+        assert not any('/bundles/' in n or '/newer-imys/' in n for n in names)
+    assert (plan.stat().st_size, plan.stat().st_mtime_ns) == before
+for count in ['0', '-1', 'abc', '1.5']:
+    run = subprocess.run(['bash', 'scripts/dev/gal-collect-run.sh', str(root)], env=dict(env, GAL_COLLECT_TSK_LOG=count, GAL_COLLECT_OUT=str(base / ('invalid-' + count))), capture_output=True, text=True)
+    assert run.returncode != 0 and 'GAL_COLLECT_TSK_LOG 必须是正整数' in run.stdout + run.stderr
+print('PASS: N=2, N greater than available, invalid N rejected; non-TSK excluded, source unchanged')

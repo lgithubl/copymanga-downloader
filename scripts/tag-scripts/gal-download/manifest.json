@@ -1,7 +1,7 @@
 {
   "id": "gal-download",
   "name": "Gal 数据下载 / 本地采集",
-  "version": "2.2.7",
+  "version": "2.2.8",
   "description": "纯 Node Gal 数据下载：每个 task 独立匹配、配置与日志。dryRun 保存完整 plan，正式执行跳过已有资源；Master 内容同步保留中文显示名并备份到 cache，骨架贴图核对原始纹理后修复。不下载运行环境或工具。",
   "scope": [
     "item"

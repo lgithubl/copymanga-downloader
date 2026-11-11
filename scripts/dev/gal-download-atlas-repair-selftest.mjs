@@ -64,6 +64,7 @@ test('real TSK cropped CG is backed up inside cache and repaired from bundle; ex
     const output = await run(false), result = JSON.parse(await readFile(path.join(output.details.runDir, 'result.json'))).results[0]
     assert.equal(result.status, 'completed')
     assert.equal(result.repairs.repairedFiles, 1)
+    assert.match(output.logs[0], /修复替换 1/)
     assert.deepEqual(await filePngSize(png), { width: 2048, height: 2048 })
     const backup = result.entries[0].repairs[0].backup
     assert.ok(backup.startsWith(path.join(cache, 'repair-backups') + path.sep), backup)

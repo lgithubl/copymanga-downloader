@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.2.7）
+# Gal 数据下载 / 本地采集（纯 Node，v2.2.8）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -71,7 +71,7 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 - 错误按阶段拆分：`download-failed`（HTTP/响应体/下载校验）、`extract-failed`（本地解析/解码）、`write-failed`（目标写入/写后校验）。每类分别统计，任务有错误时仍为 failed；单个 bundle 的错误不会阻止后续独立 bundle 继续处理。
 - 已下载并验证的 bundle 不因解析失败而移走或重下。修复解码脚本后直接用原 plan 再执行；有效缓存不占 downloadLimit，已有目标文件继续 skip。一个 bundle 的导出仍先在 worker 中完成，再逐文件原子写入；没有写出的文件下次重新导出。
 - `run.log` 实时打印上述阶段前缀和解析失败项的缓存位置；分类汇总新增 `downloadFailedBundles` / `extractFailedBundles` / `writeFailedBundles`，保留总 `failedBundles`。
-- 运行结束时，失败项分别输出到本次日志目录的 `download-errors.json`、`extract-errors.json`、`write-errors.json`（有该类失败才生成）。系统日志打印路径，`result.json` 中各 task 的 `failureSummary` / `errorFiles` 也给出数量及位置。依赖下载失败单独标记 dependency-skipped，不冒充解析错误。
+- 运行结束时，失败项分别输出到本次日志目录的 `download-errors.json`、`extract-errors.json`、`write-errors.json`（有该类失败才生成）。完整文件日志打印路径，系统摘要给出运行日志/结果位置，`result.json` 中各 task 的 `failureSummary` / `errorFiles` 也给出数量及位置。依赖下载失败单独标记 dependency-skipped，不冒充解析错误。
 
 - 同一媒体独占锁。进程异常终止遗留 lock-* 时，确认无运行任务后将它移动到 /tmp/，不要直接删除。
 - 清理临时文件、释放锁和测试目录统一移动到 /tmp/gal-download-archive/，跨文件系统使用已有 mv 命令。
@@ -176,7 +176,7 @@ skipCategories 放在每个 task 内，默认 []，不擅自跳过任何分类�
 - 持久 plan 在 <cache>/plans/<媒体及task标识>/plan.json；同目录 current.json 指向本 task 最新日志。返回系统的日志会打印准确绝对路径。
 - 日志和 bundle 缓存不自动删除。
 
-每个 task 的日志末尾和系统返回值均有「分类下载汇总」，无需自己汇总 URL 明细。
+每个 task 的完整 run.log 末尾有「分类下载汇总」，result.json/details 保留全部分类统计。返回系统的日志每个 task 仅包含总统计和文件路径：成功处理/实际下载/复用缓存 bundle 数、写入/已有/分类 skip 文件数、limit、分阶段失败、修复替换与 Master 更新；dryRun 另列计划下载与待处理数。逐文件、逐分类及审计明细保留在文件中，不回灌系统任务日志。
 result.json / details.results 中的 categorySummary 按分类给出：
 
 | 字段 | 单位与口径 |
@@ -248,3 +248,12 @@ GAL_TSK_APK=/path/to/base.apk GAL_TSK_SAMPLE_BUNDLE=/path/to/sample.bundle node 
 本机同一真实 APK 的完整 dryRun 从约 159 秒降到约 9.2 秒；这是本机空目标目录的数据，不代表所有存储设备的耗时。
 
 修复日志：`repair-check`、`repair-backup`、`repair-written`；`repairs.json` 包含完整候选、备份路径与结果，`result.json` 中各 task 的 `repairs` 提供候选/已修复/原始尺寸一致 skip 数。解析失败不提前移动旧图，替换发布失败时尝试从 cache 备份恢复。仅核对当前 plan 选中且 atlas 已存在的 PNG；不是全库像素内容或所有损坏格式检测。
+
+
+采集最近 N 次 TSK 执行日志（从 gal 目录运行既有启动脚本）：
+
+```sh
+GAL_COLLECT_TSK_LOG=3 bash ./gal-collect.sh .
+```
+
+值必须为正整数；`=1` 或空值只采最近一次。只筛选 TSK，其他游戏日志不占次数；不足 N 次时收全部可用 TSK 运行并打印实际数量。仍不采 bundles/APK/repair-backups，完整 plan 仅记录来源，过大日志显式生成摘要；各轮 result 是当轮统计，共享 plan 可能已被后续运行覆盖。
