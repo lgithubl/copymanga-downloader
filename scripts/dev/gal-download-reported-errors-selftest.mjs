@@ -58,3 +58,13 @@ test('task deadline during real texture extraction stops once and defers later b
     assert.match(log, /解包 \/ 校验/); assert.doesNotMatch(log, /failed: https/)
   } finally { globalThis.fetch = oldFetch; await archiveToTmp(dir) }
 })
+
+const astc8Bundle = path.join(root, '18beff6e380b25fcd99071263a73c064.bundle')
+test('reported mixed ASTC 4/6/8 bundle exports all six complete character triplets', { skip: !existsSync(astc8Bundle) }, async()=>{
+  const variants=['b','b2','c','f','m0','m1'],assets=variants.flatMap(v=>['png','atlas.txt','skel.bytes'].map(ext=>({source:`Assets/AssetBundles/Characters/HighQuality/adult/ch_1038004/ch_1038004_${v}.${ext}`,target:`Characters/ch_1038004/ch_1038004_${v}.${ext}`,kind:ext==='png'?'png':'raw'})))
+  const out=await nativeTask('extract',{bundle:astc8Bundle,assets})
+  assert.equal(out.exports.length,18)
+  for(const file of out.exports){const bytes=Buffer.from(file.data);assert.ok(bytes.length,file.target);if(file.target.endsWith('.png')){const size=file.target.endsWith('_f.png')?1024:2048;assert.equal(bytes.readUInt32BE(16),size);assert.equal(bytes.readUInt32BE(20),size)}
+    if(process.env.GAL_TSK_WRITE_VERIFY){const dest=path.join(root,'verified-51',file.target);await mkdir(path.dirname(dest),{recursive:true});await writeFile(dest,bytes)}
+  }
+})

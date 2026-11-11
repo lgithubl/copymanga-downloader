@@ -6,15 +6,15 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 // The host versions main.js on upload; version helper imports too, so a running server cannot reuse v1 helpers.
-import { nativeTask } from './worker-runner.mjs?v=2.2.4'
-import { archiveToTmp } from './archive.mjs?v=2.2.4'
-import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.4'
-import { createTaskLog } from './task-log.mjs?v=2.2.4'
-import { filterCategories } from './category-filter.mjs?v=2.2.4'
-import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.4'
-import { summarizeCategories } from './category-summary.mjs?v=2.2.4'
+import { nativeTask } from './worker-runner.mjs?v=2.2.5'
+import { archiveToTmp } from './archive.mjs?v=2.2.5'
+import { createPathInspector, relativeTarget } from './path-inspector.mjs?v=2.2.5'
+import { createTaskLog } from './task-log.mjs?v=2.2.5'
+import { filterCategories } from './category-filter.mjs?v=2.2.5'
+import { TSK_CATEGORIES, TSK_CATEGORY_PARENTS } from './tsk-categories.mjs?v=2.2.5'
+import { summarizeCategories } from './category-summary.mjs?v=2.2.5'
 
-import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.4'
+import { readTimeoutMs, taskTimeoutMs } from './timeouts.mjs?v=2.2.5'
 
 const sha = (v) => createHash('sha256').update(v).digest('hex')
 const safe = (v) => String(v || 'gal-download').replace(/[^\w.-]/g, '_').slice(0, 70).replace(/^\.+$/, '_')
@@ -157,7 +157,8 @@ async function inventory(root, output, signal, options = {}) {
   return { count, samples }
 }
 
-const taskStatus = (entries, unresolved = []) => entries.some((e) => e.status === 'failed') ? 'failed' : unresolved.length || entries.some((e) => ['limited', 'missing-cache', 'dependency-skipped', 'interrupted', 'deferred'].includes(e.status)) ? 'partial' : 'completed'
+const failedRow = row => row.status === 'failed' || ['download-failed', 'extract-failed', 'write-failed'].includes(row.status)
+const taskStatus = (entries, unresolved = []) => entries.some(failedRow) ? 'failed' : unresolved.length || entries.some((e) => ['limited', 'missing-cache', 'dependency-skipped', 'interrupted', 'deferred'].includes(e.status)) ? 'partial' : 'completed'
 
 async function sourceStamp(task, root) {
   const provider = task.provider || task.game
@@ -196,6 +197,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
   const lock = path.join(cache, `lock-${sha(rootMedia)}`)
   let locked = false, changed = false, plan
   const prepared = []
+  const failureCounts = { download: 0, extract: 0, write: 0 }
   try {
     const requestTimeoutMs = readTimeoutMs(task.requestTimeoutMs, 120000, 'requestTimeoutMs')
     result.timeouts = { runTimeoutMs: timeoutMs, requestTimeoutMs }
@@ -322,9 +324,14 @@ async function executeTask(ctx, task, index, timeoutMs) {
             const got = cached || await download(entry, bundleCache, signal, requestTimeoutMs, pacing)
             row.cache = got.file; row.status = got.status; row.downloadStatus = got.status
             logger.log(`${row.status}: ${entry.url}`)
-          } catch (error) { if (signal.aborted) { row.status = 'interrupted'; throw error }; row.status = 'failed'; row.error = error.message; logger.log(`failed: ${entry.url} ${error.message}`) }
+          } catch (error) {
+            if (signal.aborted) { row.status = 'interrupted'; throw error }
+            row.status = 'download-failed'; row.downloadStatus = 'failed'; row.errorStage = 'download'
+            row.error = row.downloadError = error.message; failureCounts.download++
+            logger.log(`download-failed: ${entry.url} ${error.message}`)
+          }
           completed++
-          await phase('下载 bundle / 读取缓存', { completed, total: selected, current: entry.url })
+          await phase('下载 bundle / 读取缓存', { completed, total: selected, current: entry.url, failures: { ...failureCounts } })
         }
       }
       const workers = await Promise.allSettled(Array.from({ length: Math.min(8, Math.max(1, Math.floor(Number(task.concurrency) || 2))) }, work))
@@ -336,6 +343,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
         signal.throwIfAborted()
         if (!actions.includes('extract') || !row.cache || !row.files.length) continue
         const entry = preparedByUrl.get(row.url)
+        let errorStage = 'write'
         try {
           const dependencies = [], remaining = []
           for (const asset of entry.assets) {
@@ -347,12 +355,15 @@ async function executeTask(ctx, task, index, timeoutMs) {
           let blocked = false
           for (const url of entry.dependencies || []) {
             const dependency = resultsByUrl.get(url)
-            if (!dependency?.cache) { row.status = dependency?.status === 'failed' ? 'failed' : 'dependency-skipped'; row.error = `依赖不可用: ${url} (${dependency?.status})`; logger.log(`${row.status}: ${row.error}`); blocked = true; break }
+            if (!dependency?.cache) { row.status = 'dependency-skipped'; row.errorStage = 'dependency'; row.error = `依赖不可用: ${url} (${dependency?.status})`; logger.log(`${row.status}: ${row.error}`); blocked = true; break }
             dependencies.push(dependency.cache)
           }
           if (blocked) continue
-          await phase('解包 / 校验 / 原子写入', { bundle: row.url, files: remaining.length })
+          errorStage = 'extract'
+          await phase('解包 / 校验 / 原子写入', { bundle: row.url, files: remaining.length, failures: { ...failureCounts } })
           const exported = entry.bundle ? (await nativeTask('extract', { bundle: row.cache, dependencies, assets: remaining }, { signal, log: logger.log })).exports : [{ target: remaining[0].target, data: await readFile(row.cache) }]
+          row.extractStatus = 'completed'
+          errorStage = 'write'
           row.written = []
           for (const file of exported) {
             signal.throwIfAborted()
@@ -367,8 +378,14 @@ async function executeTask(ctx, task, index, timeoutMs) {
             if (sha(await readFile(target)) !== sha(bytes)) throw new Error(`写入校验失败: ${file.target}`)
             row.written.push(file.target); logger.log(`written: ${file.target}`)
           }
+          row.writeStatus = 'completed'
           row.status = row.written.length ? 'written' : 'skip-existing'
-        } catch (error) { if (signal.aborted) { row.status = 'interrupted'; throw error }; row.status = 'failed'; row.error = error.message; logger.log(`failed: ${row.url} ${error.message}`) }
+        } catch (error) {
+          if (signal.aborted) { row.status = 'interrupted'; row.errorStage = errorStage; throw error }
+          row.status = `${errorStage}-failed`; row.errorStage = errorStage; row[`${errorStage}Status`] = 'failed'
+          row.error = row[`${errorStage}Error`] = error.message; failureCounts[errorStage]++
+          logger.log(`${row.status}: ${row.url} ${error.message}；缓存保留: ${row.cache}；继续后续 bundle`)
+        }
       }
     }
     if (changed) { const now = new Date(); await utimes(root, now, now); if (root !== rootMedia) await utimes(rootMedia, now, now) }
@@ -383,7 +400,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
     report(`分类下载汇总（按本轮开始时的缺失/缓存状态统计；共享 bundle 可能属于多个分类，总计按 URL 去重）：`)
     for (const [category, counts] of Object.entries(result.categorySummary)) {
       const label = Object.hasOwn(TSK_CATEGORIES, category) ? TSK_CATEGORIES[category] : category
-      report(`${category}（${label}）: 待导出文件 ${counts.missingFiles}，需下载 bundle ${counts.downloadBundles}，本次计划下载 ${counts.selectedDownloadBundles}，缓存 ${counts.cachedBundles}，limit 跳过 ${counts.limitedBundles}，已有 skip ${counts.existingFiles}，分类 skip ${counts.categorySkippedFiles}${dryRun ? '' : `，已下载 ${counts.downloadedBundles}，已写入文件 ${counts.writtenFiles}，失败 bundle ${counts.failedBundles}`}`)
+      report(`${category}（${label}）: 待导出文件 ${counts.missingFiles}，需下载 bundle ${counts.downloadBundles}，本次计划下载 ${counts.selectedDownloadBundles}，缓存 ${counts.cachedBundles}，limit 跳过 ${counts.limitedBundles}，已有 skip ${counts.existingFiles}，分类 skip ${counts.categorySkippedFiles}${dryRun ? '' : `，已下载 ${counts.downloadedBundles}，已写入文件 ${counts.writtenFiles}，下载失败 ${counts.downloadFailedBundles}，解析失败 ${counts.extractFailedBundles}，写入失败 ${counts.writeFailedBundles}，失败 bundle ${counts.failedBundles}`}`)
     }
     report(`分类总计（bundle 去重）: ${JSON.stringify(result.categoryTotals)}`)
   } catch (error) {
@@ -394,7 +411,7 @@ async function executeTask(ctx, task, index, timeoutMs) {
         if (['planned', 'downloaded', 'cached'].includes(row.status)) row.status = 'deferred'
         if (row.status === 'interrupted') row.error = result.error
       }
-      result.status = dryRun || result.entries.some(row => row.status === 'failed') ? 'failed' : 'partial'
+      result.status = dryRun || result.entries.some(failedRow) ? 'failed' : 'partial'
       result.summary = result.entries.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {})
       if (plan?.entries) { const summary = summarizeCategories(plan, prepared, result.entries); result.categorySummary = summary.categories; result.categoryTotals = summary.totals }
       report(`任务 ${id} 超时停止: ${result.error}`)
@@ -402,7 +419,20 @@ async function executeTask(ctx, task, index, timeoutMs) {
     } else { result.status = 'failed'; result.error = error.message; report(`任务 ${id} 失败: ${error.message}`) }
   }
   finally {
-    try { await json(path.join(runDir, 'result.json'), { runId, root, results: [result] }); await logger.close(result.status, result.summary) }
+    try {
+      result.failureSummary = { ...failureCounts }
+      result.errorFiles = {}
+      for (const stage of ['download', 'extract', 'write']) {
+        const errors = result.entries.filter(row => row.status === `${stage}-failed`).map(row => ({ url: row.url, files: row.files, errorStage: stage, error: row.error, cache: row.cache || null, downloadStatus: row.downloadStatus, written: row.written || [] }))
+        if (!errors.length) continue
+        const file = path.join(runDir, `${stage}-errors.json`)
+        await json(file, { stage, errors }); result.errorFiles[stage] = file
+        report(`${stage} 失败 ${errors.length} 项，完整列表: ${file}`)
+      }
+      if (!dryRun) report(`错误分阶段汇总: ${JSON.stringify(result.failureSummary)}；解析失败的完整缓存保留，修复解码后可用原 plan 重试`)
+      await json(path.join(runDir, 'result.json'), { runId, root, results: [result] })
+      await logger.close(result.status, result.summary)
+    }
     finally { if (locked) await archiveToTmp(lock) }
   }
   return { logs, result }

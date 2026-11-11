@@ -168,13 +168,15 @@ export async function planTsk(request, progress = () => {}) {
   return { entries: [...groups.values()], unresolved, catalogAudit, warnings: ['活动 banner_id 映射保留现有数据，不从网络补取。', `${unresolved.length} 个资源无远端 bundle；详见 unresolved。`] }
 }
 
-function texturePixels(texture, resources) {
+// Unity LDR ASTC enums form one family; dispatch every square block size.
+const ASTC_BLOCKS = Object.freeze({ 48: 4, 49: 5, 50: 6, 51: 8, 52: 10, 53: 12 })
+export function texturePixels(texture, resources) {
   const w = texture.m_Width, h = texture.m_Height, format = texture.m_TextureFormat
   if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w * h > 64 * 1024 * 1024) throw new Error('纹理尺寸无效')
   const stream = texture.m_StreamData
   const raw = texture['image data']?.length ? texture['image data'] : resourceBytes(resources, stream.path, stream.offset, stream.size)
-  if (format === 47 || format === 48 || format === 50) {
-    const block = format === 50 ? 6 : 4
+  if (format === 47 || Object.hasOwn(ASTC_BLOCKS, format)) {
+    const block = format === 47 ? 4 : ASTC_BLOCKS[format]
     const size = Math.ceil(w / block) * Math.ceil(h / block) * 16
     if (raw.length < size) throw new Error('压缩纹理数据截断')
     const decoded = format !== 47 ? decodeASTC(raw.subarray(0, size), w, h, block, block) : decodeETC2RGBA8(raw.subarray(0, size), w, h)

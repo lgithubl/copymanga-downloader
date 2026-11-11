@@ -5,7 +5,7 @@ export function summarizeCategories(plan, prepared, rows) {
   const rowsByUrl = new Map(rows.map((row) => [row.url, row]))
   const ensure = (category) => {
     if (!categories[category]) {
-      categories[category] = { missingFiles: 0, downloadBundles: 0, selectedDownloadBundles: 0, downloadedBundles: 0, cachedBundles: 0, limitedBundles: 0, failedBundles: 0, existingFiles: 0, categorySkippedFiles: 0, writtenFiles: 0 }
+      categories[category] = { missingFiles: 0, downloadBundles: 0, selectedDownloadBundles: 0, downloadedBundles: 0, cachedBundles: 0, limitedBundles: 0, failedBundles: 0, downloadFailedBundles: 0, extractFailedBundles: 0, writeFailedBundles: 0, existingFiles: 0, categorySkippedFiles: 0, writtenFiles: 0 }
       bundles.set(category, new Set())
     }
     return categories[category]
@@ -33,7 +33,7 @@ export function summarizeCategories(plan, prepared, rows) {
     }
   }
   const countBundles = (urls) => {
-    const counts = { downloadBundles: 0, selectedDownloadBundles: 0, downloadedBundles: 0, cachedBundles: 0, limitedBundles: 0, failedBundles: 0 }
+    const counts = { downloadBundles: 0, selectedDownloadBundles: 0, downloadedBundles: 0, cachedBundles: 0, limitedBundles: 0, failedBundles: 0, downloadFailedBundles: 0, extractFailedBundles: 0, writeFailedBundles: 0 }
     for (const url of urls) {
       const row = rowsByUrl.get(url)
       if (!row || row.status === 'unneeded' || (row.status === 'skip-existing' && row.cacheAvailable === undefined)) continue
@@ -42,7 +42,8 @@ export function summarizeCategories(plan, prepared, rows) {
       if (row.transfer === 'download') counts.selectedDownloadBundles++
       if (row.downloadStatus === 'downloaded') counts.downloadedBundles++
       if (row.status === 'limited') counts.limitedBundles++
-      if (row.status === 'failed') counts.failedBundles++
+      if (row.status === 'failed' || ['download-failed', 'extract-failed', 'write-failed'].includes(row.status)) counts.failedBundles++
+      for (const stage of ['download', 'extract', 'write']) if (row.status === `${stage}-failed`) counts[`${stage}FailedBundles`]++
     }
     return counts
   }

@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.2.4）
+# Gal 数据下载 / 本地采集（纯 Node，v2.2.5）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -56,6 +56,11 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 - 下载流写 cache/bundles/*.part，校验大小/可选 SHA256/UnityFS 头后 rename 成缓存文件。
 - 解包在线程中完成，主任务再次检查目标存在性，在目标目录写临时文件再 rename。已完成的文件在下一次执行时直接 skip，下载缓存可复用。
 - plan 保留全量映射，执行结果和完整列表写入本次 result.json；缺依赖/limit 截断为 partial，错误为 failed。
+- 错误按阶段拆分：`download-failed`（HTTP/响应体/下载校验）、`extract-failed`（本地解析/解码）、`write-failed`（目标写入/写后校验）。每类分别统计，任务有错误时仍为 failed；单个 bundle 的错误不会阻止后续独立 bundle 继续处理。
+- 已下载并验证的 bundle 不因解析失败而移走或重下。修复解码脚本后直接用原 plan 再执行；有效缓存不占 downloadLimit，已有目标文件继续 skip。一个 bundle 的导出仍先在 worker 中完成，再逐文件原子写入；没有写出的文件下次重新导出。
+- `run.log` 实时打印上述阶段前缀和解析失败项的缓存位置；分类汇总新增 `downloadFailedBundles` / `extractFailedBundles` / `writeFailedBundles`，保留总 `failedBundles`。
+- 运行结束时，失败项分别输出到本次日志目录的 `download-errors.json`、`extract-errors.json`、`write-errors.json`（有该类失败才生成）。系统日志打印路径，`result.json` 中各 task 的 `failureSummary` / `errorFiles` 也给出数量及位置。依赖下载失败单独标记 dependency-skipped，不冒充解析错误。
+
 - 同一媒体独占锁。进程异常终止遗留 lock-* 时，确认无运行任务后将它移动到 /tmp/，不要直接删除。
 - 清理临时文件、释放锁和测试目录统一移动到 /tmp/gal-download-archive/，跨文件系统使用已有 mv 命令。
 
@@ -213,9 +218,9 @@ Node worker 内解码，不阻塞服务端线程；没有运行时安装路径�
 辅助模块导入带脚本版本，上传新包不会复用旧模块缓存，无需重启容器；维护时同时更新 manifest.version 和 main.js 的 helper 版本查询参数。
 APK 读取使用镜像原有 unzip。FSB5 Vorbis 在 Node 内无损重建 OGG；PCM/MPEG 解封装后使用已有 ffmpeg（只允许 pipe 协议）转 OGG，优先 libvorbis，宿主仅有 libopus 时使用 Ogg Opus。缺少这两个编码器时明确失败并保留缓存，不安装或升级工具。
 
-支持 UnityFS 未压缩/LZ4/LZMA，SerializedFile v17–22 包内 type tree，TextAsset 骨架/atlas，Utage book/master JSON（沿 chapter.dataList 引用读取实际 book，同时兼容 ImportChara 编号与 CharaScenario 对象名关联），Alpha8/RGB24/RGBA32/ARGB32/BGRA32、ASTC 4×4 / 6×6（格式 48 / 50）、ETC2 RGBA8（格式 47）和非旋转矩形 Sprite → PNG。同一 PNG 容器同时暴露 Texture2D / Sprite 时优先完整 Texture2D，保持 Spine atlas 坐标及页面尺寸。
+支持 UnityFS 未压缩/LZ4/LZMA，SerializedFile v17–22 包内 type tree，TextAsset 骨架/atlas，Utage book/master JSON（沿 chapter.dataList 引用读取实际 book，同时兼容 ImportChara 编号与 CharaScenario 对象名关联），Alpha8/RGB24/RGBA32/ARGB32/BGRA32、ASTC 4×4 / 5×5 / 6×6 / 8×8 / 10×10 / 12×12（格式 48–53）、ETC2 RGBA8（格式 47）和非旋转矩形 Sprite → PNG。同一 PNG 容器同时暴露 Texture2D / Sprite 时优先完整 Texture2D，保持 Spine atlas 坐标及页面尺寸。
 FSB5 支持单样本 Vorbis、PCM8/16/24/32/float 和 MPEG。Vorbis 完整静态 setup 头部表随包携带，缺少 CRC 时明确报错，不联网补取。图片解码源码和静态表的来源、固定版本与 MIT 许可证见 THIRD_PARTY_NOTICES.txt；无需 Python、UnityPy、WASM、npm install 或修改镜像依赖。
-暂不支持其他 ASTC/ETC/BC 格式、外部 SpriteAtlas/旋转 Sprite、缺少 type tree 的剧情对象，以及 APK 内置 bundle 导出。
+暂不支持 ASTC HDR、其他 ETC/BC 格式、外部 SpriteAtlas/旋转 Sprite、缺少 type tree 的剧情对象，以及 APK 内置 bundle 导出。
 活动 banner_id、游戏内 mod、机翻不在范围内；不为这些功能额外联网。
 
 UnityFS/PNG 代码复用仓库实现，公共字符串偏移是 Unity 文件格式常量，不依赖外部项目运行环境。
