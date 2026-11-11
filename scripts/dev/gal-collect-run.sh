@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.46 本轮仅补采RJ01220265：readme及EXE各256KB头尾，用来识别单文件封装；不收完整1.8GB EXE，不重收两个MZ游戏。
 # 1.45 本轮采新RJ游戏（排除已采RJ01482469）：目录清单、data JSON、引擎/插件JS、小配置；不收图片/声音/视频/EXE或运行时库。
 # 1.44 GAL_COLLECT_TSK_LOG=N 采最近N次TSK日志，空值兼容1次；无关游戏日志不计入N。
 # 1.43 本轮只采 RJ Map002/004 使用的瓦片和人物图，含玩家行走图；不采声音和剧情CG。
@@ -65,10 +66,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.45"
+VERSION="1.46"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^rpgmaker:new-rj$'
+ROUND_RULES='^rpgmaker:packed-probe$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1287,6 +1288,7 @@ def latest_download_logs():
 def main():
     download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
     tsk_scene = RULES_RE is not None and RULES_RE.pattern == '^tsk:ch10340034$'
+    rpg_probe = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:packed-probe$'
     rpg_new = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:new-rj$'
     rpg_maps = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:map-sample$'
     rj_inventory = RULES_RE is not None and RULES_RE.pattern == '^rj01482469:inventory'
@@ -1294,12 +1296,12 @@ def main():
     if download_logs:
         game, log_items = latest_download_logs()
         games = [game]
-    elif rpg_new:
+    elif rpg_new or rpg_probe:
         games = []
         for d, ds, _fs in walk_follow(root):
             match = re.match(r'^\[?(RJ[0-9]+)(?=$|[^0-9])', os.path.basename(d), re.I)
             if match:
-                if match.group(1).upper() != 'RJ01482469' and (not ONLY or ONLY.search(os.path.relpath(d, root))): games.append(d)
+                if match.group(1).upper() != 'RJ01482469' and (not rpg_probe or match.group(1).upper() == 'RJ01220265') and (not ONLY or ONLY.search(os.path.relpath(d, root))): games.append(d)
                 ds[:] = []
             else:
                 ds[:] = sorted(x for x in ds if x.lower() not in ('gal-download', 'bundles', 'runs', 'repair-backups', 'bundle-backups') and not EXCL.search(x + '/'))
@@ -1353,8 +1355,11 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
-        picks = ([] if tsk_scene or rpg_maps or rpg_new else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
+        picks = ([] if tsk_scene or rpg_maps or rpg_new or rpg_probe else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
+        if rpg_probe:
+            picks = [(e, 'full', 'rpgmaker:packed-probe') for e in items if 'readme' in os.path.basename(e.rel).lower() and e.rel.lower().endswith('.txt') and e.size <= 128 * 1024]
+            if not picks and items: picks = [(items[0], 'inventory', 'rpgmaker:packed-probe')]
         if rpg_new:
             picks, rpg_audit = new_rpgmaker_picks(items)
         if rpg_maps:
@@ -1405,6 +1410,34 @@ def main():
         gz = gzip.GzipFile(fileobj=sp, mode='wb', compresslevel=6, mtime=0)
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
+            if rpg_probe:
+                probes = []
+                for e in items:
+                    if not e.rel.lower().endswith('.exe'): continue
+                    with open(e.path, 'rb') as binary:
+                        head = binary.read(256 * 1024)
+                        offset = max(len(head), e.size - 256 * 1024)
+                        binary.seek(offset); tail = binary.read(256 * 1024)
+                    probe = {'path': e.rel, 'sourceBytes': e.size, 'headBytes': len(head), 'tailOffset': offset, 'tailBytes': len(tail), 'partialOnly': True, 'sourceReadOnly': True}
+                    if head[:2] == b'MZ' and len(head) >= 64:
+                        pe = struct.unpack_from('<I', head, 60)[0]
+                        if pe + 24 <= len(head) and head[pe:pe+4] == b'PE\0\0':
+                            sections = struct.unpack_from('<H', head, pe+6)[0]; optional = struct.unpack_from('<H', head, pe+20)[0]
+                            table = pe+24+optional; ends = []
+                            for index in range(min(sections, 128)):
+                                at = table+index*40
+                                if at+40 > len(head): break
+                                size, start = struct.unpack_from('<II', head, at+16); ends.append(size+start)
+                            probe['sections'] = sections
+                            if ends: probe['sectionEnd'] = max(ends); probe['overlayBytes'] = max(0, e.size-max(ends))
+                    for suffix, data in [('head.bin', head), ('tail.bin', tail)]:
+                        name = '%s/__exe_probe/%s.%s' % (gid, os.path.basename(e.rel), suffix)
+                        ti = tarfile.TarInfo(name); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data))
+                        picked_bytes += len(data); total += len(data)
+                    probes.append(probe)
+                    say('EXE识别样本: %s，源%d bytes；只读头%d+尾%d bytes' % (e.rel, e.size, len(head), len(tail)))
+                payload = json.dumps({'probes': probes, 'note': 'Only bounded executable header/footer bytes, not a runnable EXE or full embedded game.'}, ensure_ascii=False, indent=2).encode('utf-8')
+                ti = tarfile.TarInfo('%s/__exe_probe/index.json' % gid); ti.size = len(payload); tar.addfile(ti, io.BytesIO(payload))
             if rpg_new:
                 payload = json.dumps(rpg_audit, ensure_ascii=False, indent=2).encode('utf-8')
                 ti = tarfile.TarInfo('%s/__rpgmaker_audit.json' % gid); ti.size = len(payload); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(payload))
