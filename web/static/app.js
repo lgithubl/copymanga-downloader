@@ -2503,6 +2503,7 @@ const GAL_PRESETS = {
   arcrecord: { adapters: ['arcrecord::dialog'], game: { id: 'arcrecord::game', title: '' } },
   tomoe: { adapters: ['tomoe::arc04'], game: { id: 'tomoe::game', title: '' } },
   imys: { adapters: ['imys::adv'], game: { id: 'imys::game', title: '' } },
+  rpgmaker: { adapters: ['rpgmaker-json'], game: { id: 'rpgmaker::game', title: '' } },
 }
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]
