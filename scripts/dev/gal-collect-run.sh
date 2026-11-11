@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.48 三作媒体验证样本：按已采剧情/地图引用定向取24个图片/声音/瓦片/人物文件，约8.8MB；封装MV只读原始资源块，不重复脚本数据。
 # 1.47 RJ01220265补采封装资源表及data/plugin源码原始块（压缩块原样保留），仅Python标准库、只读；格式不符保留小段头并报告。
 # 1.46 本轮仅补采RJ01220265：readme及EXE各256KB头尾，用来识别单文件封装；不收完整1.8GB EXE，不重收两个MZ游戏。
 # 1.45 本轮采新RJ游戏（排除已采RJ01482469）：目录清单、data JSON、引擎/插件JS、小配置；不收图片/声音/视频/EXE或运行时库。
@@ -67,10 +68,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.47"
+VERSION="1.48"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^rpgmaker:packed-probe$'
+ROUND_RULES='^rpgmaker:media-samples$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1191,13 +1192,16 @@ def new_rpgmaker_picks(items):
     say('新RJ采集: %d 个数据/源码/配置文件，%.2fMB，省略%d；不收媒体和运行时' % (audit['selectedFiles'], (data_bytes + script_bytes) / MB, len(omitted)))
     return picks, audit
 
-def packed_rpg_payload(entry, pe_head):
+RPG_MEDIA_SAMPLES = {'RJ01282923': {'map': 'data/Map001.json', 'files': ['img/pictures/Ero_Event/Event02/51_手足陰毛有.png', 'img/pictures/Ero_Event/Left_wipe back.png', 'audio/se/ero_voice/orgasm_yuruoho_01.ogg', 'audio/se/ero_voice/general_ero_02.ogg', 'audio/bgs/ero/粘液系04.ogg', 'img/tilesets/Inside_A5.png', 'img/characters/01_主人公.png']}, 'RJ01402662': {'map': 'data/Map001.json', 'files': ['img/pictures/10_Ero_Scene/CG01/50_Scene_01_01.png', 'img/pictures/10_Ero_Scene/CG01/51_clothes.png', 'audio/se/actor_EroScene_Voice/E01_01.ogg', 'audio/se/actor_EroScene_Voice/E01_02.ogg', 'audio/bgs/Ero_Scene_Loop/eroEve_cat_loop_01.ogg', 'img/tilesets/World_A2.png']}, 'RJ01220265': {'map': 'data/Map001.json', 'files': ['img/pictures/フィオ通常催眠.rpgmvp', 'img/pictures/エリーゼ通常催眠.rpgmvp', 'audio/voice/1080.rpgmvo', 'audio/voice/1082.rpgmvo', 'audio/bgm/01_催眠エッチ.rpgmvo', 'audio/bgs/メリダ喘ぎ.rpgmvo', 'img/tilesets/World_A1.rpgmvp', 'img/tilesets/World_A2.rpgmvp', 'img/tilesets/World_B.rpgmvp', 'img/tilesets/World_C.rpgmvp', 'img/characters/Actor_original_man.rpgmvp']}}
+
+def packed_rpg_payload(entry, pe_head, selection=None):
     """Bounded EVB VFS inspection; never execute PE or load extractor packages.
     Format reference: mos9527/evbunpack (Apache-2.0), const.py and pe_external_tree.
     This reads table metadata and copies selected stored blocks without decompressing.
     """
     result = {'source': entry.rel, 'sourceBytes': entry.size, 'files': [], 'selected': [], 'omitted': [], 'fileTableComplete': False}
     payloads = []
+    requested = {p.casefold() for p in selection} if selection is not None else None
     before = os.stat(entry.path)
     with open(entry.path, 'rb') as f:
         try:
@@ -1220,7 +1224,7 @@ def packed_rpg_payload(entry, pe_head):
             for name in ('.enigma1', '.enigma2'):
                 if name in sections:
                     off, length = sections[name]; f.seek(off)
-                    payloads.append((name.lstrip('.')+'.head.bin', f.read(min(length, MB if name == '.enigma1' else 128*1024))))
+                    if selection is None: payloads.append((name.lstrip('.')+'.head.bin', f.read(min(length, MB if name == '.enigma1' else 128*1024))))
             # Find the filesystem marker within the first 16MB of the resource
             # section, never scan or upload the whole multi-GB executable.
             magic = -1; scanned = 0; overlap = b''
@@ -1240,7 +1244,8 @@ def packed_rpg_payload(entry, pe_head):
             if length < 12 or end > start+size or end-(magic+79) > 16*MB or count > 200000: raise ValueError('unsupported or oversized VFS table')
             f.seek(magic); table = f.read(end-magic)
             if len(table) != end-magic: raise ValueError('truncated VFS table')
-            payloads.append(('vfs-table.bin', table)); cursor = io.BytesIO(table); cursor.seek(79)
+            if selection is None: payloads.append(('vfs-table.bin', table))
+            cursor = io.BytesIO(table); cursor.seek(79)
             data_offset = end; nodes = 0
             def take(n):
                 b = cursor.read(n)
@@ -1278,6 +1283,10 @@ def packed_rpg_payload(entry, pe_head):
             for item in result['files']:
                 low = item['path'].lower()
                 wanted = bool(re.search(r'(^|/)data/[^/]+\.json$', low) or re.search(r'(^|/)js/(?:plugins(?:/[^/]+)?|rpg_[^/]+|rmmz_[^/]+|main)\.js$', low) or re.search(r'(^|/)(package\.json|index\.html)$', low))
+                if requested is not None:
+                    logical = re.sub(r'^%[^/]+%/', '', item['path'])
+                    if logical.lower().startswith('www/'): logical = logical[4:]
+                    wanted = logical.casefold() in requested
                 if not wanted or re.search(r'(^|/)(save|savedata|userdata|backup)(/|$)', low): continue
                 if max(item['originalBytes'], item['storedBytes']) > 16*MB or selected_bytes+item['storedBytes'] > 64*MB:
                     result['omitted'].append({**item, 'reason': 'selected file/total size cap'}); continue
@@ -1287,7 +1296,15 @@ def packed_rpg_payload(entry, pe_head):
                 payloads.append((name, data)); selected_bytes += len(data)
                 result['selected'].append({**item, 'payload': name, 'sha256': hashlib.sha256(data).hexdigest()})
             result['status'] = 'indexed'; result['selectedBytes'] = selected_bytes
-            say('EVB索引: %d文件；选中%d个事件/插件/配置块，%.2fMB；压缩块保持原样，媒体不采' % (len(result['files']), len(result['selected']), selected_bytes/MB))
+            if selection is not None:
+                selected_paths = set()
+                for item in result['selected']:
+                    logical = re.sub(r'^%[^/]+%/', '', item['path'])
+                    if logical.lower().startswith('www/'): logical = logical[4:]
+                    selected_paths.add(logical.casefold())
+                result['missingRequested'] = [p for p in selection if p.casefold() not in selected_paths]
+                say('EVB媒体样本: 选中%d/%d个指定资源块，%.2fMB；缺失或超限: %s' % (len(result['selected']), len(selection), selected_bytes/MB, result['missingRequested']))
+            else: say('EVB索引: %d文件；选中%d个事件/插件/配置块，%.2fMB；压缩块保持原样，媒体不采' % (len(result['files']), len(result['selected']), selected_bytes/MB))
         except (ValueError, OSError, UnicodeError, struct.error) as error:
             result['status'] = 'needs-format-analysis'; result['error'] = str(error)
             say('EVB索引暂未解析：%s；保留有界段头/表样本，不采完整EXE' % error)
@@ -1394,6 +1411,7 @@ def latest_download_logs():
 def main():
     download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
     tsk_scene = RULES_RE is not None and RULES_RE.pattern == '^tsk:ch10340034$'
+    rpg_media = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:media-samples$'
     rpg_probe = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:packed-probe$'
     rpg_new = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:new-rj$'
     rpg_maps = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:map-sample$'
@@ -1402,12 +1420,12 @@ def main():
     if download_logs:
         game, log_items = latest_download_logs()
         games = [game]
-    elif rpg_new or rpg_probe:
+    elif rpg_new or rpg_probe or rpg_media:
         games = []
         for d, ds, _fs in walk_follow(root):
             match = re.match(r'^\[?(RJ[0-9]+)(?=$|[^0-9])', os.path.basename(d), re.I)
             if match:
-                if match.group(1).upper() != 'RJ01482469' and (not rpg_probe or match.group(1).upper() == 'RJ01220265') and (not ONLY or ONLY.search(os.path.relpath(d, root))): games.append(d)
+                if match.group(1).upper() != 'RJ01482469' and (not rpg_media or match.group(1).upper() in RPG_MEDIA_SAMPLES) and (not rpg_probe or match.group(1).upper() == 'RJ01220265') and (not ONLY or ONLY.search(os.path.relpath(d, root))): games.append(d)
                 ds[:] = []
             else:
                 ds[:] = sorted(x for x in ds if x.lower() not in ('gal-download', 'bundles', 'runs', 'repair-backups', 'bundle-backups') and not EXCL.search(x + '/'))
@@ -1461,8 +1479,21 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
-        picks = ([] if tsk_scene or rpg_maps or rpg_new or rpg_probe else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
+        picks = ([] if tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
+        if rpg_media:
+            sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
+            sample = RPG_MEDIA_SAMPLES[sample_id]
+            wanted = {p.casefold() for p in sample['files']}
+            picks = []
+            for e in items:
+                logical = e.rel.replace('\\', '/')
+                if logical.lower().startswith('www/'): logical = logical[4:]
+                if logical.casefold() in wanted:
+                    if e.size > 16*MB: say('媒体样本超过16MB，仅列目录: '+e.rel); continue
+                    picks.append((e, 'full', 'rpgmaker:media-samples'))
+            if sum(e.size for e,_m,_r in picks) > 32*MB: raise RuntimeError('媒体样本超过32MB，未静默截断')
+            if not picks and items: picks = [(items[0], 'inventory', 'rpgmaker:media-samples')]
         if rpg_probe:
             picks = [(e, 'full', 'rpgmaker:packed-probe') for e in items if 'readme' in os.path.basename(e.rel).lower() and e.rel.lower().endswith('.txt') and e.size <= 128 * 1024]
             if not picks and items: picks = [(items[0], 'inventory', 'rpgmaker:packed-probe')]
@@ -1516,6 +1547,21 @@ def main():
         gz = gzip.GzipFile(fileobj=sp, mode='wb', compresslevel=6, mtime=0)
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
+            if rpg_media:
+                packed = [e for e in items if e.rel.lower().endswith('.exe')] if sample_id == 'RJ01220265' else []
+                selected = [e.rel for e,m,_r in picks if m == 'full']
+                for e in packed:
+                    with open(e.path, 'rb') as binary: pe_head = binary.read(256*1024)
+                    for rel, data in packed_rpg_payload(e, pe_head, sample['files']):
+                        if total+len(data) > TOTAL_MAX: raise RuntimeError('媒体样本超过总量上限，未静默截断')
+                        name = '%s/__evb_media/%s/%s' % (gid, os.path.basename(e.rel), rel)
+                        ti = tarfile.TarInfo(name); ti.size = len(data); ti.mtime = e.mtime; tar.addfile(ti, io.BytesIO(data))
+                        picked_bytes += len(data); total += len(data)
+                logical_selected = [p[4:] if p.lower().startswith('www/') else p for p in selected]
+                plan = {'game': sample_id, 'map': sample['map'], 'requested': sample['files'], 'selectedLoose': selected, 'packed': bool(packed), 'missingLoose': [] if packed else [p for p in sample['files'] if p not in logical_selected], 'note': 'Targeted media verification samples only. Packed files remain stored blocks with index metadata; no game execution or new dependencies.'}
+                say('媒体样本 %s: 普通文件%d，封装EXE%d；缺失: %s' % (sample_id, len(selected), len(packed), plan['missingLoose']))
+                data = json.dumps(plan, ensure_ascii=False, indent=2).encode('utf-8')
+                ti = tarfile.TarInfo('%s/__media_sample_plan.json' % gid); ti.size = len(data); tar.addfile(ti, io.BytesIO(data))
             if rpg_probe:
                 probes = []
                 for e in items:
