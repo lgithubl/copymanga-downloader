@@ -1,4 +1,4 @@
-# Gal 数据下载 / 本地采集（纯 Node，v2.2.8）
+# Gal 数据下载 / 本地采集（纯 Node，v2.2.9）
 
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
@@ -60,16 +60,16 @@ dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改
 
 正常已有文件 skip-existing。对当前 task 已选中、未被分类 skip 的骨架图集，自动读取 PNG 头部与 atlas 声明尺寸：不一致只作为修复候选（也可能是正常缩放）。dryRun:true 在 plan.repairCandidates 记录候选，不移动文件；false 使用已有 plan 并重新核对本地文件，从已校验的 bundle 缓存导出原始纹理。若原始纹理尺寸与现有 PNG 一致则继续 skip；确实不一致时，先完成并校验新 PNG，再将旧 PNG 移到 cacheDir/repair-backups/<runId>/ 下备份，然后原子替换。缺少有效 bundle 缓存时按正常下载 limit 下载。无需人工查找或移走旧图，也不需要重新生成已有 plan。
 
-- downloadLimit 为本次最多下载的唯一 bundle/文件 URL 数，0 不限。它**不截断 plan**；缓存命中不占额度，依赖未到齐时不导出残缺资源。
+- downloadLimit 为本次最多下载的唯一 bundle/文件 URL 数，0 不限。它**不截断 plan**；缓存未变不占额度；缓存刷新实际下载新版时占额度，依赖未到齐时不导出残缺资源。
 - concurrency 为下载并发 1–8；依赖下载结束后逐 bundle 解包。
 - requestIntervalMs 为同一 task 内任意两次网络请求启动的最小间隔，所有并发 worker 和重试共用；首个请求立即开始，不阻塞已在传输的请求。默认 0 不等待。
 - retryDelayMs 为失败后到下次重试至少等待的毫秒数（最多尝试 3 次）。重试仍遵守 requestIntervalMs；两个限制同时满足才开始请求，不固定相加。默认 0。两个值必须为 0–2147483647 的整数，示例的 1000/2000 分别是一秒/两秒。
-- dryRun、缓存命中、已有文件 skip 不等待。等待会记录请求 URL、间隔和重试原因，并可被 task 超时中断；requestTimeoutMs 从实际发起请求开始计时。配置只管理 task 内请求，不额外设置 task 之间的休眠。
+- dryRun、同来源版本的缓存命中、已有文件 skip 不等待。等待会记录请求 URL、间隔和重试原因，并可被 task 超时中断；requestTimeoutMs 从实际发起请求开始计时。配置只管理 task 内请求，不额外设置 task 之间的休眠。
 - 下载流写 cache/bundles/*.part，校验大小/可选 SHA256/UnityFS 头后 rename 成缓存文件。
 - 解包在线程中完成，主任务再次检查目标存在性，在目标目录写临时文件再 rename。已完成的文件在下一次执行时直接 skip，下载缓存可复用。
 - plan 保留全量映射，执行结果和完整列表写入本次 result.json；缺依赖/limit 截断为 partial，错误为 failed。
 - 错误按阶段拆分：`download-failed`（HTTP/响应体/下载校验）、`extract-failed`（本地解析/解码）、`write-failed`（目标写入/写后校验）。每类分别统计，任务有错误时仍为 failed；单个 bundle 的错误不会阻止后续独立 bundle 继续处理。
-- 已下载并验证的 bundle 不因解析失败而移走或重下。修复解码脚本后直接用原 plan 再执行；有效缓存不占 downloadLimit，已有目标文件继续 skip。一个 bundle 的导出仍先在 worker 中完成，再逐文件原子写入；没有写出的文件下次重新导出。
+- 有效 bundle 在一般解析/解码失败后保留，修复脚本后可用原 plan 再执行。剧情对象/入口/引用缺失或不唯一时，允许对本体及所需依赖强制刷新后仅重试一次；仍失败记 extract-failed，刷新下载失败记 download-failed，并继续后续资源。已有目标文件继续 skip。一个 bundle 的导出仍先在 worker 中完成，再逐文件原子写入；没有写出的文件下次重新导出。
 - `run.log` 实时打印上述阶段前缀和解析失败项的缓存位置；分类汇总新增 `downloadFailedBundles` / `extractFailedBundles` / `writeFailedBundles`，保留总 `failedBundles`。
 - 运行结束时，失败项分别输出到本次日志目录的 `download-errors.json`、`extract-errors.json`、`write-errors.json`（有该类失败才生成）。完整文件日志打印路径，系统摘要给出运行日志/结果位置，`result.json` 中各 task 的 `failureSummary` / `errorFiles` 也给出数量及位置。依赖下载失败单独标记 dependency-skipped，不冒充解析错误。
 
@@ -257,3 +257,16 @@ GAL_COLLECT_TSK_LOG=3 bash ./gal-collect.sh .
 ```
 
 值必须为正整数；`=1` 或空值只采最近一次。只筛选 TSK，其他游戏日志不占次数；不足 N 次时收全部可用 TSK 运行并打印实际数量。仍不采 bundles/APK/repair-backups，完整 plan 仅记录来源，过大日志显式生成摘要；各轮 result 是当轮统计，共享 plan 可能已被后续运行覆盖。
+
+
+## 同 URL 的 CDN 更新（2.2.9）
+
+缓存元信息增加 plan 的 sourceStamp（APK/catalog路径、大小、mtime及关键配置生成的来源指纹）、ETag、Last-Modified。旧缓存没有来源版本，或换APK重新生成plan后来源变化，仅对本次待处理的资源核验；已有且无需核对的目标文件保持 skip。
+
+- dryRun 全程离线，保留缓存文件，结果中的 cacheNeedsValidation/pendingValidation 标记正式执行需联网校验的缓存，缓存数不保证CDN版本尚未变化。
+- 正式执行优先条件 GET（ETag，其次 Last-Modified）；304沿用原缓存并记录已核验版本。无校验头时读取响应，内容 SHA 未变则保留缓存原文件，只更新元信息。相同来源版本后续无需重复核验；剧情对象缺失仍触发一次强制刷新兜底。
+- 新内容先写 `.part` 并完整校验；之后将旧缓存和元信息移到 `cache/bundle-backups/<runId>/`，再原子发布新版。发布失败恢复旧缓存。失败或相同内容的临时响应也留在该备份目录的 partials 下，不自动删除。
+- 需要下载新响应的缓存刷新计入 downloadLimit（按唯一URL），304不占额度；达上限时标记limited，保留旧缓存但本轮不拿旧版本继续导出。缓存核验和刷新均遵守 task 请求间隔、重试延迟和超时配置。actions不含download时只用本地缓存，不核验CDN、不刷新重试。
+- result.json 的 cacheStats 和系统摘要包含待核验、已核验、未变、刷新、刷新后恢复、重试仍失败数量；逐项原因、缓存备份位置保留在完整run.log/entries.cacheBackups中。
+
+测试：`node --test scripts/dev/gal-download-cache-version-selftest.mjs` 覆盖条件304、版本更新、limit、非法响应保留旧缓存，以及本次真实旧/新剧情bundle从缓存失败到刷新后导出的完整task流程。
