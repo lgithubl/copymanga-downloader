@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.50 五作二轮：AI的sx/存储索引、国度外置文本/PAC头尾、シロクロ元数据/首个bundle/索引、ツヴァイXP3索引/原始剧情样本/原EXE、夜勤script/data及资源索引；每作16MB上限，原目录只读。
 # 1.49 定向采五个新游戏的目录/配置/有界EXE及资源包头尾，用于引擎复用分析；AI按完整目录名匹配，不采完整媒体或大二进制。
 # 1.48 三作媒体验证样本：按已采剧情/地图引用定向取24个图片/声音/瓦片/人物文件，约8.8MB；封装MV只读原始资源块，不重复脚本数据。
 # 1.47 RJ01220265补采封装资源表及data/plugin源码原始块（压缩块原样保留），仅Python标准库、只读；格式不符保留小段头并报告。
@@ -69,10 +70,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.49"
+VERSION="1.50"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:probe$'
+ROUND_RULES='^new-games:detail$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1452,8 +1453,140 @@ def new_game_probe_files(items):
     report['sampleBytes']=total
     yield '__engine_probe/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
+def new_game_detail_files(items, label):
+    """Focused second pass. Bytes stay raw; no game/EXE/DLL is executed."""
+    lookup={e.rel.replace('\\','/').casefold():e for e in items}
+    payload=[]; used=0
+    report={'game':label,'sourceReadOnly':True,'files':[],'omitted':[],'notes':[],'maxBytes':16*MB}
+    def part(rel,offset,length,target=None):
+        nonlocal used
+        e=lookup.get(rel.casefold())
+        if not e:
+            report['omitted'].append({'path':rel,'reason':'not found'});return None
+        if offset<0 or offset>e.size: raise RuntimeError('Invalid evidence offset '+rel)
+        length=min(length,e.size-offset)
+        if length>12*MB or used+length>16*MB:
+            report['omitted'].append({'path':rel,'reason':'explicit byte limit','requestedBytes':length});return None
+        with open(e.path,'rb') as f:f.seek(offset);data=f.read(length)
+        if len(data)!=length:raise RuntimeError('Source changed or truncated '+rel)
+        name=target or e.rel
+        payload.append((name,data,e.mtime));used+=length
+        report['files'].append({'path':e.rel,'artifact':name,'offset':offset,'sourceBytes':e.size,'bytes':length,'sha256':hashlib.sha256(data).hexdigest()})
+        return data
+    def whole(rel,limit=2*MB):
+        e=lookup.get(rel.casefold())
+        if e and e.size<=limit:return part(rel,0,e.size)
+        report['omitted'].append({'path':rel,'reason':'missing or exceeds full-file limit','limit':limit})
+    def ends(rel,n=256*1024):
+        e=lookup.get(rel.casefold())
+        if not e:return
+        part(rel,0,min(e.size,n),'__followup/files/'+e.rel+'.head.bin')
+        off=max(n,e.size-n)
+        if off<e.size:part(rel,off,n,'__followup/files/'+e.rel+'.tail.bin')
+    def arcfam_table(rel):
+        e=lookup.get(rel.casefold())
+        if not e:return
+        with open(e.path,'rb') as f:head=f.read(4)
+        n=struct.unpack('<I',head)[0] if len(head)==4 else 0
+        if 4<=n<=2*MB and n+4<=e.size:part(rel,0,n+4,'__followup/index/'+e.rel+'.table.bin')
+        else:report['omitted'].append({'path':rel,'reason':'unrecognized arcfam table header','tableBytes':n})
+    def xp3(rel, samples=False):
+        nonlocal used
+        e=lookup.get(rel.casefold())
+        if not e:return
+        entries=[];prefix='__followup/xp3/'+os.path.basename(e.rel)
+        with open(e.path,'rb') as f:
+            if f.read(11)!=b'XP3\r\n \n\x1a\x8b\x67\x01':return
+            ptr=11
+            for block in range(8):
+                if ptr+8>e.size:raise RuntimeError('XP3 pointer outside file')
+                f.seek(ptr);at=struct.unpack('<Q',f.read(8))[0]
+                if at+9>e.size:raise RuntimeError('XP3 index outside file')
+                f.seek(at);flag=f.read(1)[0]
+                if flag&7==0:stored=orig=struct.unpack('<Q',f.read(8))[0];head=9
+                elif flag&7==1:stored,orig=struct.unpack('<QQ',f.read(16));head=17
+                else:report['notes'].append(rel+': unsupported XP3 index codec');break
+                if stored>2*MB or orig>8*MB or at+head+stored>e.size:raise RuntimeError('XP3 index exceeds bounds')
+                raw=part(rel,at,head+stored,prefix+'/index-%d.bin'%block)
+                if raw is None:break
+                blob=raw[head:]
+                if flag&7==1:
+                    z=zlib.decompressobj();decoded=z.decompress(blob,8*MB+1)
+                    if len(decoded)>8*MB or not z.eof:raise RuntimeError('XP3 index inflate exceeds bounds')
+                else:decoded=blob
+                q=0
+                while q+12<=len(decoded):
+                    tag=decoded[q:q+4];ln=struct.unpack_from('<Q',decoded,q+4)[0];body=decoded[q+12:q+12+ln];q+=12+ln
+                    if tag==b'Hxv4' and len(body)==14:
+                        off,sz,kind=struct.unpack('<QIH',body)
+                        if sz<=2*MB:part(rel,off,sz,prefix+'/hxv4-%d.bin'%block)
+                        report['notes'].append({'archive':rel,'hxv4':True,'kind':kind,'offset':off,'stored':sz})
+                    if tag!=b'File':continue
+                    sub=0;entry={'segments':[]}
+                    while sub+12<=len(body):
+                        key=body[sub:sub+4];size=struct.unpack_from('<Q',body,sub+4)[0];value=body[sub+12:sub+12+size];sub+=12+size
+                        if key==b'info' and len(value)>=22:
+                            entry.update(name=value[22:].decode('utf-16le','replace').rstrip('\0'),flags=struct.unpack_from('<I',value)[0],size=struct.unpack_from('<Q',value,4)[0])
+                        if key==b'segm' and len(value)%28==0:entry['segments']=[struct.unpack_from('<IQQQ',value,k) for k in range(0,len(value),28)]
+                        if key==b'adlr' and len(value)>=4:entry['adler']=struct.unpack_from('<I',value)[0]
+                    if entry.get('name'):entries.append(entry)
+                if not flag&128:break
+                ptr=at+head+stored
+        if samples:
+            selected=[(i,x) for i,x in enumerate(entries) if re.search(r'\.(tjs|ini|txt\.scn|ks|scn)$',x['name'],re.I) and x.get('size',0)<=256*1024]
+            selected=selected[:6]+selected[6:][::max(1,len(selected[6:])//10)][:10]
+            if not selected:selected=[(i,x) for i,x in enumerate(entries) if x.get('flags') and 32<x.get('size',0)<=64*1024][:6]
+            for i,x in selected:
+                for k,(_flag,off,original,stored) in enumerate(x['segments']):
+                    if stored<=256*1024:part(rel,off,stored,prefix+'/entries/%06d-%d.bin'%(i,k))
+        data=json.dumps({'archive':rel,'entries':entries,'note':'Raw stored bytes only; protected flag retained; no decryption or game execution.'},ensure_ascii=False,indent=2).encode('utf-8')
+        if len(data)<=2*MB and used+len(data)<=16*MB:payload.append((prefix+'/entries.json',data,int(time.time())));used+=len(data)
+        else:report['omitted'].append({'path':rel,'reason':'entry summary exceeds metadata limit; raw index retained'})
+    if label=='AI':
+        for e in items:
+            if e.rel.lower().endswith('.sx'):whole(e.rel,128*1024)
+            elif e.rel.lower().endswith('.sxstorage'):ends(e.rel)
+        whole('aiduma.exe',MB);whole('sakanagl.dll',4*MB)
+    elif label.startswith('How to Build'):
+        whole('data/strlist.txt',256*1024)
+        scripts=sorted(e.rel for e in items if re.match(r'^data/(?:AdditionalScript|Script)/[^/]+\.txt$',e.rel,re.I))
+        chosen=scripts[:5]+scripts[5:][::max(1,len(scripts[5:])//16)][:16]
+        for name in dict.fromkeys(chosen):whole(name,512*1024)
+        for name in ['Pac/Game.pac','Pac/Bgm.pac','Pac/Se.pac','Pac/Voice.pac']:ends(name)
+    elif label.startswith('シロクロ'):
+        for name in ['SHIROKURO_Data/app.info','SHIROKURO_Data/boot.config','SHIROKURO_Data/ScriptingAssemblies.json','SHIROKURO_Data/RuntimeInitializeOnLoads.json','SHIROKURO_Data/globalgamemanagers','SHIROKURO_Data/globalgamemanagers.assets','SHIROKURO_Data/resources.assets']:whole(name,MB)
+        whole('SHIROKURO_Data/il2cpp_data/Metadata/global-metadata.dat',12*MB)
+        ends('SHIROKURO_Data/sharedassets0.assets',128*1024)
+        for e in items:
+            if not re.match(r'^Archives/base_div[01]_archive\.arc$',e.rel,re.I):continue
+            with open(e.path,'rb') as f:
+                h=f.read(256);at=h.find(b'UnityFS\0');q=at+12
+                if at<0:continue
+                try:
+                    for _ in range(2):q=h.index(0,q)+1
+                    size=struct.unpack_from('>Q',h,q)[0]
+                except (ValueError,struct.error):continue
+                if size<=MB:part(e.rel,at,size,'__followup/unity/'+os.path.basename(e.rel)+'.first.bundle')
+                f.seek(e.size-8);offset=struct.unpack('<Q',f.read(8))[0]
+            if 0<=offset<e.size-8 and e.size-8-offset<=2*MB:part(e.rel,offset,e.size-offset,'__followup/unity/'+os.path.basename(e.rel)+'.index.bin')
+            else:report['notes'].append(e.rel+': trailing index offset not recognized')
+    elif label=='ツヴァイトリガー':
+        original=next((e.rel for e in items if os.path.basename(e.rel)=='ツヴァイトリガー.exe'),None) or next((e.rel for e in items if e.rel=='ツヴァイトリガー.exe.back'),None)
+        if original:whole(original,6*MB)
+        for rel in ['plugin/KAGParserEx.dll','plugin/psbfile.dll']:whole(rel,MB)
+        for rel in ['data.xp3','patch.xp3','bgimage.xp3','evimage.xp3','fgimage.xp3','voice.xp3']:xp3(rel,rel in ('data.xp3','patch.xp3'))
+    elif label=='夜勤病棟リメイク':
+        whole('script.arc',12*MB);whole('data.arc',MB);whole('systeminfo.json',64*1024)
+        for rel in ['image.arc','voice.arc','music.arc','effect.arc']:arcfam_table(rel)
+    else:raise RuntimeError('Unrequested detail target '+label)
+    report['sampleBytes']=sum(len(data) for _name,data,_mtime in payload)
+    if report['sampleBytes']>16*MB:raise RuntimeError('Followup evidence exceeds16MB')
+    for row in payload:yield row
+    yield '__followup/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
+
 def main():
-    new_games = RULES_RE is not None and RULES_RE.pattern == '^new-games:probe$'
+    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:probe$','^new-games:detail$')
+    new_games_detail = new_games and RULES_RE.pattern == '^new-games:detail$'
     download_logs = RULES_RE is not None and RULES_RE.pattern == '^gal-download:latest$'
     tsk_scene = RULES_RE is not None and RULES_RE.pattern == '^tsk:ch10340034$'
     rpg_media = RULES_RE is not None and RULES_RE.pattern == '^rpgmaker:media-samples$'
@@ -1540,7 +1673,7 @@ def main():
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
         picks = ([] if new_games or tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
-        if new_games and items: picks=[(items[0],'inventory','new-games:probe')]
+        if new_games and items: picks=[(items[0],'inventory','new-games:detail' if new_games_detail else 'new-games:probe')]
         if rpg_media:
             sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
             sample = RPG_MEDIA_SAMPLES[sample_id]
@@ -1608,8 +1741,8 @@ def main():
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
             if new_games:
-                for name,data,mtime in new_game_probe_files(items):
-                    if total+len(data)>TOTAL_MAX: raise RuntimeError('探测证据超过总量上限')
+                for name,data,mtime in (new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else new_game_probe_files(items)):
+                    if total+len(data)>min(TOTAL_MAX,64*MB): raise RuntimeError('五作探测证据超过64MB总量上限')
                     ti=tarfile.TarInfo(gid+'/'+name);ti.size=len(data);ti.mtime=mtime;tar.addfile(ti,io.BytesIO(data));total+=len(data);picked_bytes+=len(data)
             if rpg_media:
                 packed = [e for e in items if e.rel.lower().endswith('.exe')] if sample_id == 'RJ01220265' else []

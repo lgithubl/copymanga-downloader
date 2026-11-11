@@ -10,7 +10,7 @@ for name in names:
     (game/'data').mkdir();(game/'data'/'System.json').write_text('{"gameTitle":"test"}')
 out=base/'out'
 env={k:v for k,v in os.environ.items() if k not in ('GAL_COLLECT_TSK_LOG','GAL_COLLECT_RULES','GAL_COLLECT_ONLY')}
-env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
+env.update(GAL_COLLECT_RULES='^new-games:probe$',GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
 result=subprocess.run(['bash','scripts/dev/gal-collect-run.sh',str(root)],env=env,text=True,capture_output=True)
 assert result.returncode==0,result.stdout+result.stderr
 rows=(out/'games.tsv').read_text().splitlines()[1:];assert len(rows)==5,rows
