@@ -1,6 +1,7 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import * as rpg from '../../web/library/gal/adapters/rpgmaker-json.mjs'
+import {collectVoices} from '../../web/library/gal/voice.mjs'
 import {stateAt,activePath,visibleChoiceOptions,segmentsText} from '../../web/static/gal-engine.js'
 const c=(code,parameters=[],indent=0)=>({code,parameters,indent}),mz=(name,action,args={})=>c(357,[name,action,'',args]),msg=text=>[c(101,['',0,0,2,'A']),c(401,[text])]
 async function scene(list,plugins=[],others=[]){const events=[null,{id:1,name:'回想 scene',list},...others],ctx=await rpg.prepare({options:{},texts:{'data/System.json':JSON.stringify({advanced:{screenWidth:640,screenHeight:360}}),'data/CommonEvents.json':JSON.stringify(events),'js/plugins.js':'var $plugins='+JSON.stringify(plugins)+';'},files:[]});return rpg.parse(JSON.stringify(events),ctx,{rel:'data/CommonEvents.json',scene:'common-1'})}
@@ -9,6 +10,7 @@ const flat=s=>s.steps.flatMap(x=>x.commands)
 test('MZ and Japanese MV voice channels are non-looping unless declared; stop preserves independent BGS lines',async()=>{
  const s=await scene([mz('ParallelBgs','CHANGE_LINE',{line:'2'}),c(245,[{name:'rain',volume:50}]),mz('SimpleVoice','PLAY_VOICE',{name:'talk/a',volume:'80',channel:'1',loop:'false'}),...msg('one'),mz('VisuMZ_2_VoiceActControl','SoundPlayAsVoiceLine',{'name:str':'talk/b','volume:num':'70'}),...msg('two'),mz('VisuMZ_2_VoiceActControl','SoundStopAllVoiceLines'),...msg('stopped'),c(356,['SV_ボイスのループ演奏 ambient 90 100 0 2']),...msg('loop'),c(356,['SV_ボイスの停止 2']),...msg('stop-loop')],[{name:'SimpleVoice',status:true,parameters:{}}])
  assert.equal(stateAt(s,0).bgvoices['rpg-voice-1'].src,'audio/se/talk/a.ogg');assert.equal(stateAt(s,0).bgvoices['rpg-voice-1'].loop,false)
+ assert.ok(collectVoices(s).some(v=>v.src==='audio/se/talk/a.ogg'&&v.kind==='voice'))
  assert.equal(stateAt(s,1).bgvoices['rpg-voice-1'].src,'audio/se/talk/b.ogg')
  assert.deepEqual(Object.keys(stateAt(s,2).bgvoices),['rpg-bgs-2'])
  assert.equal(stateAt(s,3).bgvoices['rpg-voice-2'].loop,true)

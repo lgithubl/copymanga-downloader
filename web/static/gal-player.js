@@ -193,6 +193,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const count = el('span', 'gal-count', '')
   const nextBtn = btn('下一句 ▶', '下一句（空格 / 回车 / →；按住 Ctrl 或点「快进」快进）', 'gal-next-btn')
   const autoBtn = btn('自动', '自动播放（A / 单按 Alt）', 'gal-auto')
+  const replayBtn = btn('重播', '重新播放当前句的语音', 'gal-replay-btn')
   const logBtn = btn('记录', '台词记录（L）', 'gal-log-btn')
   const transBtn = btn('翻译', '显示译文（原文先显示，译文在后台翻好了再填；需要在设置页配好翻译模型）', 'gal-trans-btn')
   transBtn.hidden = !translate?.enabled
@@ -205,15 +206,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const markPrevBtn = btn('上个标签', '跳到上一个中途开始标签', 'gal-mark-prev')
   const markNextBtn = btn('下个标签', '跳到下一个中途开始标签', 'gal-mark-next')
   const sceneMarkers = (reader.node?.markers || []).filter(m => Number.isInteger(m.step) && m.step >= 0 && m.step < scene.steps.length)
+  function markerTarget(direction) {
+    const first=path[0],last=path.at(-1)
+    if(first===undefined || (direction<0 ? index<=first : index>=last))return null
+    return adjacentSceneMarker([{step:first,label:'首页'},...sceneMarkers.filter(m=>m.step>first&&m.step<last),{step:last,label:'末页'}],index,direction)
+  }
   function updateMarkerButtons() {
     for (const [button, direction] of [[markPrevBtn,-1],[markNextBtn,1]]) {
-      const target = adjacentSceneMarker(sceneMarkers,index,direction)
+      const target = markerTarget(direction)
       button.disabled = !target
       button.title = target ? `${direction < 0 ? '上一个' : '下一个'}中途开始标签：${target.label}` : `没有${direction < 0 ? '上一个' : '下一个'}中途开始标签`
     }
   }
   function jumpMarker(direction) {
-    const target = adjacentSceneMarker(sceneMarkers,index,direction)
+    const target = markerTarget(direction)
     if (!target || destroyed) return
     fastLatched = false; setFast(false); stopAuto()
     choices = { ...dropChoicesFrom(choices,target.step), ...(target.choices || {}) }
@@ -336,7 +342,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const note = el('span', 'muted gal-note', '')
   note.setAttribute('role', 'button')
   note.tabIndex = 0
-  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, markPrevBtn, markNextBtn, transBtn, ttsBtn, logBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
+  bar.append(upBtn, prevBtn, count, nextBtn, contBtn, autoBtn, autoSelBtn, fastBtn, markPrevBtn, markNextBtn, transBtn, ttsBtn, logBtn, replayBtn, cfgBtn, chPrevBtn, chNextBtn, lockBtn, backBtn, note)
 
   // 设置弹层（原来的 ⚙ 设置和「更多」菜单合在这里）：显示 / 音频 / 播放 / 画面 四组。.gal-more 和 .gal-settings 两个类都留着
   // 立绘大小 / 偏移（只对 stand 立绘，Spine 角色不受影响）：存在这个媒体里
@@ -471,7 +477,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const legacyVolume = loadVolume('se', 1)
   const vol = Object.fromEntries(AUDIO_GROUPS.map((g) => [g.key, loadVolume(g.key, legacyVolume)]))   // 组 key → 滑块位置
   const gainOf = (key) => volumeGain(vol[key])
-  const usedOps = new Set(scene.steps.flatMap((step) => step.commands.map((c) => c.op)))
+  const usedOps = new Set(scene.steps.flatMap((step) => step.commands.map((c) => c.op === 'bgvoice' && ['voice','bgse'].includes(c.kind) ? c.kind : c.op)))
   for (const g of AUDIO_GROUPS) audioRanges[g.key].row.hidden = g.always === 'tts' ? !tts?.enabled : !g.ops.some((op) => usedOps.has(op))
   bgmRange.value = String(bgmVolume)
   for (const g of AUDIO_GROUPS) { audioRanges[g.key].range.value = String(vol[g.key]); }
@@ -566,7 +572,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   ttsVoicedCtl.input.checked = ttsVoiced
   const ttsClient = tts?.enabled ? createTtsClient({ lookahead: tts.lookahead ?? 6, onChange: () => onTtsChange() }) : null
   const voicedSteps = new Map()
-  const stepHasVoice = (stepIndex) => { if (!voicedSteps.has(stepIndex)) voicedSteps.set(stepIndex, (scene.steps[stepIndex]?.commands || []).some((c) => c.op === 'voice')); return voicedSteps.get(stepIndex) }
+  const stepHasVoice = (stepIndex) => { if (!voicedSteps.has(stepIndex)) voicedSteps.set(stepIndex, (scene.steps[stepIndex]?.commands || []).some((c) => c.op === 'voice' || c.op === 'bgvoice' && c.kind === 'voice' && c.loop === false)); return voicedSteps.get(stepIndex) }
   let speakers = null   // 每步的说话人（没有 speaker 指令的步沿用上一步）
   const speakerAt = (stepIndex) => {
     if (!speakers) {
@@ -854,7 +860,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       audio.volume = Math.max(0, Math.min(1, gainOf(want.kind || 'bgvoice') * (Number.isFinite(Number(want.volume)) ? Number(want.volume) : 1)))
       audio.addEventListener('error', () => markMissing(want.src))
       bgVoices.set(slot, { src: want.src, token: want.token, kind: want.kind || 'bgvoice', audio, volume: want.volume })
-      if (wantBgm) audio.play().catch(() => {})
+      let record=null
+      if(want.kind==='voice' && want.loop===false){
+        record={step:gen,endedAt:0,failed:fast};stepVoice=record;bgVoices.get(slot).record=record
+        audio.addEventListener('ended',()=>{record.endedAt=performance.now();if(stepVoice===record)scheduleAuto()})
+        audio.addEventListener('error',()=>{record.failed=true;if(stepVoice===record)scheduleAuto()})
+      }
+      if (wantBgm && !(fast && record)) audio.play().catch(() => {if(record){record.failed=true;if(stepVoice===record)scheduleAuto()}})
     }
   }
   // 文本框显示 / 隐藏（UI_DISP）：隐藏时文本框透明且不挡点击
@@ -920,6 +932,21 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     audio.play().catch(() => { if (record) { record.failed = true; if (stepVoice === record) scheduleAuto() } })
   }
 
+  function currentVoiceCommands() {
+    return (scene.steps[index]?.commands || []).filter(c => condMet(c.when,state.vars) && (c.op === 'voice' || c.op === 'bgvoice' && c.kind === 'voice' && c.loop === false) && c.src)
+  }
+  function replayVoice() {
+    if (destroyed) return
+    setFast(false);stopAuto()
+    for (const c of currentVoiceCommands()) {
+      if (c.op === 'voice') playOnce(c.src,'voice')
+      else {
+        const voice = bgVoices.get(c.slot)
+        if (voice && voice.src === c.src) { if(voice.record){Object.assign(voice.record,{step:gen,endedAt:0,failed:false});stepVoice=voice.record} voice.audio.currentTime=0; voice.audio.play().catch(()=>{if(voice.record){voice.record.failed=true;scheduleAuto()}}) }
+        else setBgVoices({...state.bgvoices,[c.slot]:{src:c.src,volume:c.volume,loop:false,kind:'voice',pitch:c.pitch,token:`replay-${Date.now()}`}})
+      }
+    }
+  }
   // ---------- 画面 ----------
   let state = stateAt(scene, -1, choices)
   let frontLayer = 0
@@ -1611,6 +1638,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   function updateCount() {
     const pos = posNow()
     updateMarkerButtons()
+    replayBtn.disabled = !currentVoiceCommands().length
     count.textContent = path.length ? `${Math.max(0, pos) + 1} / ${path.length}` : '0 / 0'
     prevBtn.disabled = pos <= 0
     updateContinue()
@@ -1738,6 +1766,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   function setFast(on) {
     if (on === fast || destroyed) return
     fast = on
+    maybeAutoChoose()
     if (!on) fastLatched = false
     fastBtn.classList.toggle('active', on)
     fastBtn.setAttribute('aria-pressed', String(on))
@@ -1876,9 +1905,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // 自动选择：-1 关；0 随机；n 选第 n 项（没有就随机）。选项出现后稍等一下再选
   function maybeAutoChoose() {
     clearTimeout(autoChoiceTimer)
-    if (!choiceState || autoChoice < 0) return
+    if (!choiceState || autoChoice < 0 || !(auto || fast || fastLatched)) return
     autoChoiceTimer = setTimeout(() => {
-      if (!choiceState) return
+      if (!choiceState || !(auto || fast || fastLatched)) return
       const options = choiceState.command.options
       const chosen = options.find((option) => option.value === autoChoice) || options[Math.floor(Math.random() * options.length)]
       pickChoice(chosen.value)
@@ -1888,6 +1917,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     auto = !auto
     autoBtn.classList.toggle('active', auto)
     autoBtn.textContent = auto ? '自动中' : '自动'
+    maybeAutoChoose()
     scheduleAuto()
   }
   function renderLog() {
@@ -2208,6 +2238,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   prevBtn.addEventListener('click', prev)
   autoBtn.addEventListener('click', toggleAuto)
   logBtn.addEventListener('click', toggleLog)
+  replayBtn.addEventListener('click', replayVoice)
   cfgBtn.addEventListener('click', () => toggleSettings())
   fsBtn.addEventListener('click', () => { toggleSettings(false); toggleFullscreen() })
   immBtn.addEventListener('click', () => { toggleSettings(false); onToggleImmersive?.() })

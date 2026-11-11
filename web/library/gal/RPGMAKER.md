@@ -79,3 +79,5 @@ LogDisplayPlugin 窗口保留显示、追加、隐藏和回退状态；VariableS
 - `node --test scripts/dev/gal-rpgmaker-plugins-selftest.mjs`：结构化/日文语音、多路BGS、条件选择、插件文本窗口、图片按钮、前向标签跳转、确定性随机值、回退状态。
 - `node --test scripts/dev/gal-rpgmaker-collected-selftest.mjs`：本地存在采集时，验证 RJ01220265/RJ01282923/RJ01402662 的真实布局、场景目录和全部24个媒体样本；图片经过实际解密及缩略图接口，音频校验 Ogg 签名；提供 `PLAYWRIGHT_PATH`/`CHROME_PATH` 时另验证浏览器解码及有效时长。封装游戏使用保留原始偏移的采集副本，验证4200项索引和11个样本。未采集的媒体不计为已验证。
 - 完整 app 浏览器测试另验证插件文本窗口实际画布和图片按钮回调；不宣称已模拟完整 RPG 游戏玩法。
+
+布局2.53.0：保留手动媒体标题，显式标题覆盖项优先；标题仍是目录名时使用配置的游戏标题，最后回退 System.json 标题。优先用游戏目录/icon目录中的 PNG/ICO 图标，ICO复用内置PNG/DIB解码后写到应用cache，无新增依赖。非循环插件语音归到普通语音设置、自动播放等待和当前句重播，也能进入随机语音列表。

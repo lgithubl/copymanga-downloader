@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.52.0'
+import { findPackedRpg } from './evb.mjs?v=2.53.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -2988,7 +2988,7 @@ export async function generateTags(ctx) {
   }
 
   // 2) 覆盖（按媒体路径匹配）；记下每条覆盖改了哪些字段
-  let title = ''
+  let title = found.kind === 'rpgmaker' && (!ctx.item?.title || ctx.item.title.normalize('NFC') === path.basename(media).normalize('NFC')) ? String(game?.title || found.gameTitle || '') : ''
   let coverOverride = ''
   const applied = []
   const appliedFields = []
@@ -3015,7 +3015,7 @@ export async function generateTags(ctx) {
   config.scriptCount = result.count
   // 布局表里写了 cover 规则的，不管探测函数有没有自己找封面，规则命中就用规则的（第一个有结果的）；没写 / 没命中才用探测函数找到的
   const ruled = found.entry?.cover?.length ? await coverFromRules(media, found.entry, found.base ?? '') : ''
-  let cover = coverOverride || ruled || result.cover
+  let cover = coverOverride || (found.kind === 'rpgmaker' ? await pickRpgIcon(media,found.base || '') : '') || ruled || result.cover
   // 都没有封面：用游戏根目录里 exe 的图标（config.coverExe 的 include 白名单 / exclude 黑名单匹配 exe 文件名；没写就用默认黑名单：卸载 / 安装 / 配置 / 崩溃上报之类）。服务端取封面时才从 exe 里提取图标（exe:<路径>）
   let exeRules = null
   if (!cover) {
@@ -4297,6 +4297,14 @@ function keepOwn(ctx, logs, { skipped = false, changes } = {}) {
 }
 
 // Engine mechanics are shared; profile selection and matching remain table data.
+async function pickRpgIcon(media,base){
+  for(const dir of [...new Set([join(base,'icon'),'icon',base,'.'])]){
+    const entries=await readdir(path.join(media,...splitRel(dir)),{withFileTypes:true}).catch(()=>[])
+    const names=entries.filter(e=>e.isFile()&&(/\.ico$/i.test(e.name)||/^(?:icon|gameicon)\.(?:png|jpe?g|webp)$/i.test(e.name))).map(e=>e.name).sort((a,b)=>Number(!/^icon\./i.test(a))-Number(!/^icon\./i.test(b))||a.localeCompare(b))
+    if(names[0])return 'icon:'+join(dir==='.'?'':dir,names[0])
+  }
+  return ''
+}
 async function detectRpgMaker(scope) {
   let loc = await locateGame(scope, scope.gameId || scope.id)
   if (!loc) {
@@ -4311,6 +4319,7 @@ async function detectRpgMaker(scope) {
     config.adapterOptions['rpgmaker-json'].packedExe = packed.exe
     config.scriptCount = common.filter(e => e?.list?.some(c => c.code === 401)).length
     const found = makeFound(scope, entry, loc, config, {count: async () => config.scriptCount})
+    found.gameTitle = system.gameTitle
     found.id = scope.gameId || 'rpgmaker::' + path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g, '')
     scope.logs.push(`RPG Maker 封装：${packed.exe}；${system.gameTitle}；${packed.files.size}个索引文件；事件缓存到应用cache，媒体按请求读取；原目录只读`)
     return found
@@ -4330,6 +4339,7 @@ async function detectRpgMaker(scope) {
   scope.logs.push('RPG Maker: ' + system.gameTitle + '；公共事件槽位 ' + (common.length - 1) + '；原始媒体按请求解密到 cache，不全量解包')
   for (const line of loc.entry.notes) scope.logs.push(line)
   const found = makeFound(scope, loc.entry, loc, config)
+  found.gameTitle = system.gameTitle
   found.id = id
   return found
 }

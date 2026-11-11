@@ -33,6 +33,7 @@ const readPref = (key) => { try { return localStorage.getItem(key) || '' } catch
 const writePref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key) } catch { /* 存不了就只对这次有效 */ } }
 let keepMenuOpen = null    // 在「更多」里改了搜索 / 排序 / 每页条数 → 重绘后把菜单重新打开（还要接着改别的）
 export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, thumbLoader = null, onRefreshIndex = null }) {
+  const markerPrefKey = `gal.cardMarkers.${reader.item?.itemId || ''}`
   const node = reader.node
   const root = el('div', 'gal-browse')
   // 渲染缩略图（骨骼 / 立绘场景，见 gal-thumb-render.js）：卡片带 item.render.key 时先取服务器缓存（命中 = 直接是图），没有（404）才入队离屏渲染并传回缓存
@@ -311,6 +312,13 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   diagBox.title = '打开后每张卡片左上角出现一个「诊」按钮，点它只是打开诊断窗口；窗口里点具体的诊断项才会运行'
   diagBox.addEventListener('change', () => { writePref(PREF_DIAG, diagBox.checked ? 'on' : ''); keepMenuOpen = node.viewBase; go(node.id) })
   moreMenu.append(field('诊断按钮', diagBox))
+  const markerBox = el('input', 'gal-browse-markers-toggle')
+  markerBox.type = 'checkbox'
+  markerBox.checked = readPref(markerPrefKey) !== 'off'
+  markerBox.title = '显示卡片上的中途开始标签；仅影响这个G，不影响播放器跳转'
+  const applyMarkerVisibility = () => { for(const marks of root.querySelectorAll('.gal-card-marks')) marks.hidden = !markerBox.checked }
+  markerBox.addEventListener('change',()=>{writePref(markerPrefKey,markerBox.checked?'on':'off');applyMarkerVisibility()})
+  moreMenu.append(field('中途开始标签', markerBox))
   const diagOn = () => readPref(PREF_DIAG) === 'on'
   const diagDialog = createDiagnosticsDialog({ apiBase, resourceBase: reader.resourceBase })
   const immBtn = el('button', 'gal-browse-imm', '沉浸')
@@ -563,6 +571,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     // 场景跳转点（config.sceneMarkers，服务端按规则算好的 item.markers）：每个一个小按钮，点了从那一步开始播（不触发整张卡片的点击）
     if (item.type === 'script' && item.markers?.length) {
       const marks = el('div', 'gal-card-marks')
+      marks.hidden = !markerBox.checked
       for (const mark of item.markers.slice(0, 12)) {
         const button = el('button', 'gal-card-mark', mark.label)
         button.type = 'button'

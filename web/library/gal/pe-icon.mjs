@@ -54,6 +54,14 @@ function dibToPng(dib) {
   return encodePng(width, height, 4, out)
 }
 
+// Standalone ICO uses the same PNG/DIB payloads as PE icon resources.
+export function decodeIco(bytes){
+ if(bytes.length<6||bytes.readUInt16LE(0)!==0||bytes.readUInt16LE(2)!==1)return null
+ const count=bytes.readUInt16LE(4);if(!count||count>256||6+count*16>bytes.length)return null
+ const entries=Array.from({length:count},(_,i)=>{const p=6+i*16;return{width:bytes[p]||256,height:bytes[p+1]||256,size:bytes.readUInt32LE(p+8),offset:bytes.readUInt32LE(p+12)}}).sort((a,b)=>b.width*b.height-a.width*a.height)
+ for(const e of entries){if(e.offset<6+count*16||e.offset+e.size>bytes.length)continue;const b=bytes.subarray(e.offset,e.offset+e.size);if(b.subarray(0,8).equals(PNG_SIG))return b;const png=dibToPng(b);if(png)return png}
+ return null
+}
 // → PNG Buffer | null
 export async function extractExeIcon(file) {
   const handle = await open(file, 'r')

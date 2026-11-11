@@ -18,7 +18,7 @@ import { galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
 import { createArcResCache } from '../gal/arc-res-cache.mjs'
-import { extractExeIcon } from '../gal/pe-icon.mjs'
+import { extractExeIcon, decodeIco } from '../gal/pe-icon.mjs'
 import { ensureContainers, setKeysFile, virtualEntry, virtualHas } from '../gal/containers.mjs'
 import { createRpgMakerResourceCache, isRpgMakerEncryptedFile } from '../gal/rpgmaker.mjs'
 import { IMAGE_THUMB_EXT, bucketOf, createImageThumbCache } from '../gal/image-thumb.mjs'
@@ -337,7 +337,20 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     try { await writeFile(tmp, png); await rename(tmp, file) } finally { await rm(tmp, { force: true }).catch(() => {}) }
     return file
   }
-  const coverFileOf = (item) => (String(item.coverPath).startsWith('exe:') ? exeIconFile(item, item.coverPath) : resolveAsset(item, item.coverPath, { allowMedia: true }))
+  async function coverFileOf(item) {
+    if(String(item.coverPath).startsWith('exe:')) return exeIconFile(item,item.coverPath)
+    if(!String(item.coverPath).startsWith('icon:')) return resolveAsset(item,item.coverPath,{allowMedia:true})
+    const rel=item.coverPath.slice(5)
+    if(!rel||rel.split(/[\\/]/).some(p=>!p||p==='..'||p==='.'))throw Error('图标路径无效')
+    const file=await resolveOnDisk({work:path.resolve(item.source.path),rootRels:[''],variants:[rel],cfg:null,caseInsensitiveFallback:true})
+    if(!file)throw Error('图标不存在')
+    if(!/\.ico$/i.test(file))return file
+    const info=await stat(file);if(info.size>16*1024*1024)throw Error('图标超过大小上限')
+    const key=createHash('sha1').update(JSON.stringify([file,info.size,info.mtimeMs])).digest('hex'),target=path.join(dataDir,'cache','gal-exe-icons',key+'.png')
+    if(await stat(target).catch(()=>null))return target
+    const png=decodeIco(await readFile(file));if(!png)throw Error('图标格式不支持')
+    await mkdir(path.dirname(target),{recursive:true});const tmp=target+'.'+process.pid+'-'+Date.now()+'.part';await writeFile(tmp,png);await rename(tmp,target);return target
+  }
 
   async function getThumbnail(itemId) {
     const item = await readItem(itemId)

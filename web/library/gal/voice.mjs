@@ -92,12 +92,12 @@ export function collectVoices(scene, { withBg = false } = {}) {
     for (const command of step.commands || []) {
       if (command.op === 'speaker') speaker = (command.segments || []).map((s) => s.text).join('').replace(/\s+/g, ' ').trim().slice(0, 40)
       else if (command.op === 'text' && !text) text = (command.segments || []).map((s) => s.text).join('').replace(/\s+/g, ' ').trim()
-      else if ((command.op === 'voice' || (withBg && command.op === 'bgvoice')) && typeof command.src === 'string' && command.src) found.push(command)
+      else if ((command.op === 'voice' || command.op === 'bgvoice' && (command.kind === 'voice' || withBg)) && typeof command.src === 'string' && command.src) found.push(command)
     }
     for (const command of found) {
       if (seen.has(command.src)) continue
       seen.add(command.src)
-      out.push({ src: command.src, step: step.index, speaker, text: text.length > 80 ? `${text.slice(0, 80)}…` : text, kind: command.op })
+      out.push({ src: command.src, step: step.index, speaker, text: text.length > 80 ? `${text.slice(0, 80)}…` : text, kind: command.kind === 'voice' ? 'voice' : command.op })
       if (out.length >= MAX_VOICES_PER_SCRIPT) return out
     }
   }

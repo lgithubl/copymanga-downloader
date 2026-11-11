@@ -99,7 +99,7 @@ try{
  await page.locator('.gal-mark-next').click()
  await page.waitForFunction(()=>document.querySelector('.gal-text')?.textContent.includes('B target'))
  assert.equal(await page.locator('.gal-choices:visible').count(),0,'toolbar marker restores branch choices too')
- assert.equal(await page.locator('.gal-mark-next').isDisabled(),true)
+ assert.equal(await page.locator('.gal-mark-next').isEnabled(),true)
  await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(special.node)}`)
  await page.locator('.gal-card[data-title="回想 Plugin windows"]').click()
  await page.waitForSelector('canvas.gal-rpg-ui')
