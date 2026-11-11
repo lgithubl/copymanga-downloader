@@ -10,7 +10,7 @@ import tempfile
 base = Path(tempfile.mkdtemp(prefix='gal-download-log-test-'))
 root, cache, out = base / 'gal', base / 'cache', base / 'out'
 root.mkdir()
-for rel in ['runs/old', 'runs/latest', 'plans/task', 'bundles']:
+for rel in ['runs/old', 'runs/latest', 'runs/newer-imys', 'plans/task', 'bundles']:
     (cache / rel).mkdir(parents=True)
 (root / 'gal-download').symlink_to(cache, target_is_directory=True)
 (cache / 'bundles/never-upload').write_text('bundle payload')
@@ -28,8 +28,11 @@ result = {'results': [{'plan': pointer['planPath'], 'categoryTotals': {'download
 (cache / 'runs/latest/result.json').write_text(json.dumps(result) + ' ' * (9 * 1024 * 1024))
 (cache / 'runs/latest/run.log').write_text('latest run log')
 (cache / 'runs/latest/repairs.json').write_text('{"candidateFiles":12}')
+(cache / 'runs/latest/progress.json').write_text('{"taskId":"tsk"}')
+(cache / 'runs/newer-imys/progress.json').write_text('{"taskId":"imys"}')
+os.utime(cache / 'runs/newer-imys/progress.json', (2100000000, 2100000000))
 env = dict(os.environ, GAL_COLLECT_DRYRUN='1', GAL_COLLECT_OUT=str(out), GAL_COLLECT_TS='fixture',
-           GAL_COLLECT_RULES='^gal-download:latest$', GH_TOKEN='')
+           GAL_COLLECT_RULES='^tsk:ch10340034$', GAL_COLLECT_TSK_LOG='', GH_TOKEN='')
 p = subprocess.run(['bash', 'scripts/dev/gal-collect-run.sh', str(root)], env=env, capture_output=True, text=True)
 assert p.returncode == 0, p.stdout + p.stderr
 assert (plan.stat().st_size, plan.stat().st_mtime_ns) == before
@@ -37,7 +40,7 @@ parts = sorted(out.glob('*-g01.tar.gz.part-*'))
 assert parts
 with tarfile.open(fileobj=io.BytesIO(b''.join(f.read_bytes() for f in parts)), mode='r:gz') as archive:
     names = archive.getnames()
-    assert not any('/bundles/' in n or '/old/' in n for n in names), names
+    assert not any('/bundles/' in n or '/old/' in n or '/newer-imys/' in n for n in names), names
     assert 'g01/plans/task/plan.json' not in names
     summaries = [json.load(archive.extractfile(n)) for n in names if n.endswith('.summary.json')]
     plan_summary = next(v for v in summaries if v['source'] == 'plans/task/plan.json')
