@@ -33,6 +33,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.38 本轮补采 RJ01482469 的 RPG Maker 数据/插件与少量加密媒体样本；TSK 仅采 Ch10380048/1038004 的骨架、图集、贴图及相关剧情 JSON，总量上限128MB。
 # 1.37 本轮只采 RJ01482469 目录元数据：路径、大小、mtime、扩展名统计；不读取或打包游戏文件内容。
 # 1.36 本轮仅采 TSK 目录元数据：路径、大小、mtime、分类与最近12h统计，不打包任何游戏文件。
 # 1.35 之前一轮采 Twinkle Star Knights X：资源分类清单（含最近12h修改、大小、PNG尺寸）、剧情JSON（上限128MB）、每类最新两张PNG及配套骨架（上限128MB）；声音只列清单。原目录只读，不删除文件。
@@ -56,10 +57,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.37"
+VERSION="1.38"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^rj01482469:inventory'
+ROUND_RULES='^(rj01482469:core|tsk:ch10380048)$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
@@ -1122,9 +1123,46 @@ def tsk_reports(items):
         'Only path, size, mtime, classifications and PNG header dimensions; no JSON/images/spines/audio payloads.\n')
     return {'__tsk_inventory.tsv': ''.join(rows), '__tsk_recent12h.tsv': ''.join(recent), '__tsk_categories.tsv': ''.join(summary), '__tsk_audit.txt': notes}
 
+def requested_diagnostic_picks(items, is_tsk):
+    picks = []
+    total = 0
+    samples = collections.Counter()
+    for e in sorted(items, key=lambda e: (e.size, e.rel)):
+        low = e.rel.lower()
+        if is_tsk:
+            # Accept the reported UI name as well as the on-disk ch_1038004 family.
+            wanted = '1038004' in low and low.endswith(('.png', '.atlas.txt', '.skel.bytes', '.json', '.asset', '.bytes'))
+            rule = 'tsk:ch10380048'
+        else:
+            wanted = (low == 'package.json' or low in ('www/index.html', 'www/js/main.js', 'www/js/plugins.js')
+                or (low.startswith('www/data/') and low.endswith('.json'))
+                or (low.startswith('www/js/') and low.endswith('.js') and '/libs/' not in low)
+                or (low.startswith('www/text/') and low.endswith('.txt')))
+            parent = low.rsplit('/', 1)[0]
+            if not wanted and parent in ('www/img/pictures', 'www/img/parallaxes', 'www/img/characters', 'www/img/faces', 'www/img/system', 'www/audio/bgm', 'www/audio/voice'):
+                if low.endswith(('.rpgmvp', '.rpgmvo', '.png', '.ogg')) and 0 < e.size <= 2 * MB and samples[parent] < 2:
+                    wanted = True; samples[parent] += 1
+            rule = 'rj01482469:core'
+        if wanted:
+            if e.size > 32 * MB or total + e.size > 128 * MB:
+                say('  ! diagnostic size cap, not collected: %s (%d bytes)' % (e.rel, e.size)); continue
+            picks.append((e, 'full', rule)); total += e.size
+    say('  diagnostic payload: %d files, %.2f MB; library is read-only' % (len(picks), total / MB))
+    return picks
+
 def main():
     rj_inventory = RULES_RE is not None and RULES_RE.pattern == '^rj01482469:inventory'
-    if rj_inventory:
+    requested_diagnostics = RULES_RE is not None and RULES_RE.pattern == '^(rj01482469:core|tsk:ch10380048)$'
+    if requested_diagnostics:
+        games = []
+        for d, ds, _fs in walk_follow(root):
+            if os.path.basename(d).lower() == 'twinkle star knights x' or re.search(r'(?<![A-Za-z0-9])RJ01482469(?![0-9])', os.path.basename(d), re.I):
+                games.append(d); ds[:] = []
+            else:
+                ds[:] = sorted(x for x in ds if not EXCL.search(x + '/'))
+        if ONLY: games = [g for g in games if ONLY.search(os.path.relpath(g, root))]
+        if not games: raise RuntimeError('未找到 RJ01482469 或 Twinkle Star Knights X，未采集其他游戏')
+    elif rj_inventory:
         games = []
         for d, ds, _fs in walk_follow(root):
             if re.search(r'(?<![A-Za-z0-9])RJ01482469(?![0-9])', os.path.basename(d), re.I):
@@ -1147,7 +1185,8 @@ def main():
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = list_files(game); eng = engines_of(items)
-        picks = [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng)
+        picks = (requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
+            else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
         if 'bgi' in eng and RULES_RE is not None and RULES_RE.search('bgi:named'):
             picks = picks + [(e, 'bginamed', 'bgi:named') for e in bgi_named(items)]
         if RULES_RE is not None:
