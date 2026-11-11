@@ -556,9 +556,16 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
   function applySpec(inst, spec, live) {
     inst.spec = spec
-    if ((typeof spec.skin === 'string' ? spec.skin : '') !== (inst.skinRequested || '')) {   // 脚本换了皮肤
+    const skinChanged = (typeof spec.skin === 'string' ? spec.skin : '') !== (inst.skinRequested || '')
+    if (skinChanged) {
       const pick = skinFor(inst.data, spec)
       inst.skeleton.setSkin(pick.skin)
+      // setSkin's attachAll only replaces currently attached items. A new
+      // expression can populate a slot that the previous expression left empty.
+      // Rebuild slots, then reapply the current tracks without restarting time.
+      inst.skeleton.setSlotsToSetupPose()
+      inst.state.apply(inst.skeleton)
+      updateWorld(inst.backend, inst.skeleton)
       Object.assign(inst, { skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found })
     }
     // 多轨道（girlscreation 的角色：轨道 0 身体、轨道 1 表情，同时播）：spec.tracks = [{ track, anim, loop }]；名字对不上的轨道跳过并记下来（诊断面板里看）
@@ -633,8 +640,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       inst.bounceId = spec.bounce.id
       inst.bounce = live ? { x: Number(spec.bounce.x) || 0, y: Number(spec.bounce.y) || 0, seconds: Math.max(0.01, Number(spec.bounce.seconds) || 0.3), count: Math.max(1, Math.floor(Number(spec.bounce.count)) || 2), ease: spec.bounce.ease, began: performance.now() } : null
     }
-    // 包围盒不是从初始姿势来的（附件由动画打开）：换了动画 / 皮肤就重新量一次（第一次在 create 里量）
-    if (inst.boundsSource && inst.boundsSource !== 'setup' && (changed || inst.boundsAnim !== inst.anim)) { inst.boundsAnim = inst.anim; refreshBounds(inst) }
+    // 换皮肤重新量包围盒；依赖动画才有附件的骨架，换动画也重新量（第一次在 create 里量）。
+    if (inst.boundsSource && (skinChanged || (inst.boundsSource !== 'setup' && (changed || inst.boundsAnim !== inst.anim)))) { inst.boundsAnim = inst.anim; refreshBounds(inst) }
   }
 
   async function create(slot, spec, live, token) {

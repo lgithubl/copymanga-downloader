@@ -883,6 +883,7 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 
 ### TSK：按原版代码（gal-samples21：Assembly-CSharp.dll 反编译出的 `DIALOGUE.DialogueSystem`）
 
+- **表情皮肤切换**：同一骨架换 Skin 时先 `setSkin`，再恢复插槽 setup pose、应用当前动画轨道并重算边界，保留动画时间。Spine 的 `attachAll` 只替换已有附件，不能激活上一个皮肤留空的槽；例如 Ch10340034 第45→46句的 face1→face6，旧实现把 `face_eye_etc` 留空，直接进入46却正常。`scripts/dev/fe-gal-spine-skin-selftest.mjs` 通过真实WebGL检查稀疏皮肤正反切换，并在有采集数据时复核该场景的 `face_6_eye5`、连续/直接进入一致、动画不重启。此修复在播放器镜像，不依赖重新下载角色文件。
 - **摆放**：立绘原点（舞台 1280×720、中心为原点、y 向上）= (Master X + Arg4 偏移, Master Y − 10)，一个骨架单位 = Master Scale 个舞台像素（`spine.place` + `stage`）。依据：`SetCharacterSpineAnimation` 的 `(posX + 偏移, posY − 130)`、`scale × 100`、骨架缩放 0.01，`Characters` 的 RectTransform 轴心 (0.5, 1.7)、Chara1~4 都在轴心上（`level2` 里解析出来的）。每个有说话人的台词行都会重新摆一次（纵向偏移回 0，横向偏移保留）。
 - **Tween**：`pingPong=N` → `bounce`（x / y 位移来回 N 段，每段 time 秒，缓动 easeOutQuad / easeInQuad / 线性）；`MoveBy` / `MoveTo`（非 pingPong）时长 = time / 2、MoveTo 是绝对本地坐标；WaitType 不是 NoWait 时脚本等它播完（`wait`）。ColorTo 等原版没处理的记 raw。
 - **Shake**：目标 `Graphics` / `BG` = 整屏抖动，角色 = 随机抖（`spine.shake`）。
