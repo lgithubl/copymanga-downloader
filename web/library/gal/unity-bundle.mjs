@@ -43,7 +43,7 @@ const align = (n, a) => (n + a - 1) & ~(a - 1)
 const cstr = (buf, pos) => { const end = buf.indexOf(0, pos); return { text: buf.toString('utf8', pos, end), next: end + 1 } }
 
 // → [{ name, data }]：bundle 里的每个文件（通常 1 个 CAB-…）
-export function readUnityFS(buf) {
+export function readUnityFS(buf, {maxOutputBytes=512*1024*1024}={}) {
   if (buf.toString('latin1', 0, 7) !== 'UnityFS') throw new Error('不是 UnityFS')
   let p = 8
   const version = buf.readUInt32BE(p); p += 4
@@ -52,6 +52,7 @@ export function readUnityFS(buf) {
   p += 8   // 文件总大小
   const cs = buf.readUInt32BE(p); const us = buf.readUInt32BE(p + 4); const flags = buf.readUInt32BE(p + 8); p += 12
   if (version >= 7 && (flags & 0x200)) p = align(p, 16)
+  if(us>Math.min(maxOutputBytes,32*1024*1024)||cs>buf.length)throw Error('UnityFS 索引超过读取上限')
   const infoRaw = buf.subarray(flags & 0x80 ? buf.length - cs : p, (flags & 0x80 ? buf.length - cs : p) + cs)
   const comp = flags & 0x3f
   if (comp !== 0 && comp !== 2 && comp !== 3) throw new Error(`blocks info 压缩方式 ${comp} 没做（只做了 LZ4 / 不压缩）`)
@@ -60,6 +61,7 @@ export function readUnityFS(buf) {
   const blockCount = info.readUInt32BE(q); q += 4
   const blocks = []
   for (let i = 0; i < blockCount; i++) { blocks.push({ u: info.readUInt32BE(q), c: info.readUInt32BE(q + 4), f: info.readUInt16BE(q + 8) }); q += 10 }
+  if(blocks.reduce((n,b)=>n+b.u,0)>maxOutputBytes)throw Error('UnityFS 解压数据超过读取上限')
   const dirCount = info.readUInt32BE(q); q += 4
   const dirs = []
   for (let i = 0; i < dirCount; i++) {
@@ -71,14 +73,15 @@ export function readUnityFS(buf) {
   if (version >= 7 && (flags & 0x200) && !(flags & 0x80)) pos = align(pos, 16)
   const parts = []
   for (const b of blocks) {
+    if(pos+b.c>buf.length)throw Error('UnityFS 数据块截断')
     const raw = buf.subarray(pos, pos + b.c); pos += b.c
     const t = b.f & 0x3f
-    if (t === 0) parts.push(raw)
+    if (t === 0) {if(raw.length!==b.u)throw Error('UnityFS 未压缩块长度不符');parts.push(raw)}
     else if (t === 2 || t === 3) parts.push(lz4Block(raw, b.u))
     else throw new Error(`数据块压缩方式 ${t} 没做（只做了 LZ4 / 不压缩）`)
   }
   const data = Buffer.concat(parts)
-  return dirs.map((d) => ({ name: d.name, data: data.subarray(d.offset, d.offset + d.size) }))
+  return dirs.map((d) => {if(!Number.isSafeInteger(d.offset)||!Number.isSafeInteger(d.size)||d.offset<0||d.size<0||d.offset+d.size>data.length)throw Error('UnityFS 文件范围无效');return { name: d.name, data: data.subarray(d.offset, d.offset + d.size) }})
 }
 
 // SerializedFile → 对象表 [{ pathId, start, size, classId }]（v >= 17；Unity 6 = v22）

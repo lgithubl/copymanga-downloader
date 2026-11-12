@@ -13,7 +13,7 @@ await cp('web',path.join(app,'web'),{recursive:true,filter:source=>!source.split
 await symlink(path.join(root,'web/node_modules'),path.join(app,'web/node_modules'),'dir')
 // External application modules must be explicitly copied into the runtime tree.
 for(const line of dockerfile.split('\n')){
- const m=/^COPY (scripts\/[^ ]+\.mjs) (\.\/scripts\/[^ ]+\.mjs)$/.exec(line)
+ const m=/^COPY (scripts\/[^ ]+\.(?:mjs|gz)) (\.\/scripts\/[^ ]+\.(?:mjs|gz))$/.exec(line)
  if(m){const target=path.join(app,m[2]);await mkdir(path.dirname(target),{recursive:true});await cp(m[1],target)}
 }
 const result=spawnSync(process.execPath,['--input-type=module','-e',"await import('./web/library/types/gal.mjs')"],{cwd:app,encoding:'utf8'})

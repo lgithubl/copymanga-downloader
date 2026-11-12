@@ -1,3 +1,4 @@
+import { readEdoIndex, edoPayload } from './edo.mjs'
 // 容器（打包格式）读取：服务端自己读 .arc，把里面的剧情脚本 / 图片 / 音频展开到媒体目录下的一个缓存目录（config.containers.dir，默认 arc/），
 // 之后引擎、适配器、资源解析都按普通文件工作（不用用户在本机解包）。
 //   arc/script/<容器名>/<脚本名>.<scriptExt>     脚本：二进制脚本按 config.containers.scriptDecoder 解成 JSON 文本（适配器吃文本）
@@ -134,6 +135,7 @@ const ARCRECORD_DIALOG_DECODER = {
 }
 // 友恵の探偵物語（TinkerBell，Arc04.dat 剧本字节码）：展开时由 expandTomoe 按章节切成 tomoe-arc04/1 JSON；这里的解码器只用来校验 config.containers.scriptDecoder
 // Imys：展开时由 runImys 逐个 .encrypted bundle 解密 → UnityFS → TextAsset → imys-adv/1 JSON；这里的解码器只用来校验 config.containers.scriptDecoder
+const EDO_LUA_DECODER = { ext: 'edo', decode(buffer, {name}) { return JSON.stringify({format:'edo-lua/1',name,text:edoPayload(buffer,{text:true})}) } }
 const IMYS_ADV_DECODER = {
   ext: 'imys',
   decode(buffer, { arc, name }) { const t = readTextAssets(imysDecrypt(buffer))[0]; return JSON.stringify({ format: 'imys-adv/1', arc, name, text: t?.text || '' }) },
@@ -148,6 +150,7 @@ export const SCRIPT_DECODERS = Object.freeze({
   'artemis-ast': ARTEMIS_AST_DECODER,
   'arcfam-scre': ARCFAM_SCRE_DECODER,
   'krkr-scn': KRKR_SCN_DECODER,
+  'edo-lua': EDO_LUA_DECODER,
   'rscript-gsc': RSCRIPT_GSC_DECODER,
   'unity-dsm': UNITY_DSM_DECODER,
   'mahotan-json': MAHOTAN_JSON_DECODER,
@@ -196,7 +199,7 @@ export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 const arcRegex = (cfg) => (cfg.format === 'pac' ? /\.pac$/i : cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
-const readIndexFor = (file, cfg) => (cfg?.format === 'pac' ? readPacIndex(file) : cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
+const readIndexFor = (file, cfg) => (cfg?.format === 'edo' ? readEdoIndex(file) : cfg?.format === 'pac' ? readPacIndex(file) : cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
 // pf8（Artemis）：按扩展名分——.ast = 脚本（解密后交给解码器），图 / 声音 = 资源（取出来时解密），别的（lua / csv / psb …）跳过
 function classifyPf8(name) {
   const ext = extOf(name)
@@ -598,6 +601,7 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
   const pf8 = cfg.format === 'pf8'
   const arcfam = cfg.format === 'arcfam'
   const xfl = cfg.format === 'xfl'
+  const edo = cfg.format === 'edo'
   const stem = pf8 ? pf8Stem(arcName) : withoutExt(arcName)
   const decoder = SCRIPT_DECODERS[cfg.scriptDecoder]
   const result = { entries: entries.length, scripts: 0, res: 0, pna: 0, pnaFrames: 0, skipped: 0, excluded: 0, bad: [], truncatedScripts: 0 }
@@ -624,17 +628,17 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
   }
   try {
     for (const entry of entries) {
-      const name = safeEntryName(entry.name)
+      const name = safeEntryName(entry.name, edo ? 12 : 5)
       if (!name) { result.bad.push(entry.name.slice(0, 60)); continue }
       // buriko（BGI）的条目没有扩展名，按内容分：DSC = 剧本、CompressedBG = 图、BW = 声音（图 / 声音只在 hybrid 的虚拟索引里，取出来时才转）
-      const cls = buriko ? await classifyBuriko(handle, entry) : pf8 ? classifyPf8(name) : arcfam ? classifyArcfam(name, entry) : xfl ? classifyXfl(name) : null
-      const kind = buriko || pf8 || arcfam || xfl ? cls.kind : kindOf(name, 'script')
+      const cls = buriko ? await classifyBuriko(handle, entry) : pf8 ? classifyPf8(name) : arcfam ? classifyArcfam(name, entry) : xfl ? classifyXfl(name) : edo ? {kind:entry.kind} : null
+      const kind = buriko || pf8 || arcfam || xfl || edo ? cls.kind : kindOf(name, 'script')
       if (arcfam && cls.compressed) { result.unsupported = (result.unsupported || 0) + 1 }
       if (!kind || !rule.kinds.has(kind) || (kind === 'pna' && rule.pna === 'skip')) { result.skipped += 1; continue }
       if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) { result.excluded += 1; continue }
       if (entry.size > MAX_ENTRY_BYTES) { result.bad.push(`${name}（${entry.size} 字节太大）`); continue }
       // hybrid（默认）：图 / 声音 / 视频 / PNA 帧不展开（被请求时才从 .arc 读那一个条目，见 materialize）；PNA 只写 index.json（读头和记录表，不读像素）
-      const lazy = (cfg.mode !== 'files' || buriko || pf8 || arcfam || xfl) && (kind === 'res' || kind === 'pna')
+      const lazy = (cfg.mode !== 'files' || buriko || pf8 || arcfam || xfl || edo) && (kind === 'res' || kind === 'pna')
       if (lazy && (kind === 'res' || rule.pna === 'raw')) { result.res += 1; result.lazy = (result.lazy || 0) + 1; continue }
       if (lazy) {
         try {
@@ -1095,6 +1099,7 @@ function hitFor(v, rel) {
 }
 // 取一个虚拟条目的字节（转好格式 / 解好密的）
 async function readHit(hit) {
+  if(hit.transform==='edo'){const f=await open(hit.file,'r');try{return edoPayload(await readRange(f,hit.offset,hit.size))}finally{await f.close()}}
   if (hit.krkr) return readKrkrHit(hit)
   if (hit.transform === 'imys-hca' || hit.transform === 'imys-bg' || hit.transform === 'imys-tati') return transformData(await readFile(hit.file), hit)   // ACB 整个读进来（索引阶段只读了元数据，没有记大小）
   const handle = await open(hit.file, 'r')
@@ -1291,6 +1296,9 @@ function imysAcbToWav(data, hit) {
 }
 
 async function buildVirtual(mediaDir, cfg, arcs, sig) {
+  if (cfg.format === 'edo') {
+    const map=new Map(),files=[];for(const {file,rule} of arcs){if(!rule.kinds.has('res'))continue;const {entries}=await readEdoIndex(file);if(entries.length>cfg.maxEntries)throw Error('Edoire 条目超过配置上限');for(const e of entries){if((rule.include.length&&!rule.include.some(re=>re.test(e.name)))||rule.exclude.some(re=>re.test(e.name)))continue;if(e.kind!=='res'||e.size>MAX_ENTRY_BYTES)continue;const rel=`${cfg.dir}/res/${e.logical}`;if(map.has(rel.toLowerCase()))continue;map.set(rel.toLowerCase(),{rel,file,offset:e.offset,size:e.size,transform:'edo'});files.push(rel)}}return{map,files,sig}
+  }
   if (cfg.format === 'krkr') return buildKrkrVirtual(mediaDir, cfg, arcs, sig)
   const map = new Map()
   const files = []

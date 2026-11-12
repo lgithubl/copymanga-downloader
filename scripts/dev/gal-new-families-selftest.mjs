@@ -59,3 +59,5 @@ test('Night layout reuses arcfam, reads native stage and includes first-line CG 
  assert.deepEqual(layout.itemPatch.gal.config.adapterOptions['arcfam::scre'].stage,[1920,1080]);await h.patchItemMetadata(item.itemId,layout.itemPatch)
  const home=await h.getReaderContent(item.itemId,'main'),special=home.node.items.find(c=>c.title==='特殊场景');assert.ok(special,JSON.stringify(home.node));const group=await h.getReaderContent(item.itemId,'main',{sectionId:special.node});assert.equal(group.node.items.length,1);const reader=await h.getReaderContent(item.itemId,'main',{sectionId:group.node.items[0].node});assert.ok(reader.scene.steps.flatMap(s=>s.commands).some(c=>c.op==='speaker'&&c.segments[0]?.text==='看護婦'))
 })
+
+test('PAC background effects resolve BGM archive separately from ordinary SE',()=>{const s=pac.parse('#BGSPLAY,5\n#SEPLAY,5\n#MSG\nA\nline\n#END\n',pac.prepare({files:[],texts:{},options:{}})),c=s.steps.flatMap(s=>s.commands);assert.ok(c.some(c=>c.op==='bgse'&&c.src==='data/Sound/BGM/005.ogg'));assert.ok(c.some(c=>c.op==='se'&&c.src==='data/Sound/SE/005.wav'))})

@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.54.0'
+import { findPackedRpg } from './evb.mjs?v=2.55.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -59,6 +59,23 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  "edo::lua": {
+  "resDir": "arc/res",
+  "scriptDir": "arc/script",
+  "stage": [
+    1920,
+    1080
+  ],
+  "maxPasses": 4,
+  "maxCommands": 150000,
+  "initialVariables": {
+    "IS_GALLERY": 1,
+    "IS_BEGIN_ADV_ENDLIST": 0
+  },
+  "cgMatch": "(?:^|/)(?:ev-|ev_|eventcg/)",
+  "specialMatch": "(?:H-|H_|アダルト|エンディング)",
+  "maxWait": 5
+},
   "pac::script": {
   "resDir": "arc/res",
   "scriptDir": "data/Script",
@@ -82,6 +99,7 @@ export const ADAPTER_RULES = {
     ]
   },
   "audio": {
+    "bgse": "data/Sound/BGM/{id3}.ogg",
     "bgm": "data/Sound/BGM/{id3}.ogg",
     "se": "data/Sound/SE/{id3}.wav",
     "voice": "data/Sound/voice/{name}.ogg"
@@ -1612,6 +1630,127 @@ export const RULE_DEVIATIONS = {}
 // 所有「列表」字段都是数组；探测函数里没有任何写死的目录名（数据依赖的判断除外）。
 // ======================================================================
 export const LAYOUTS = {
+  edo:{
+  "title": "Edoire / シロクロ",
+  "kind": "edo",
+  "detector": "edo",
+  "autoOrder": 137.6,
+  "family": "edo::",
+  "bases": [
+    ""
+  ],
+  "searchDepth": 3,
+  "anchors": [
+    "base_div0_archive.arc",
+    "base_div1_archive.arc"
+  ],
+  "siblings": [],
+  "markers": [],
+  "scriptRoots": [
+    {
+      "id": "story",
+      "dir": "arc/script",
+      "label": "剧情"
+    }
+  ],
+  "resourceRoots": [
+    "arc/res"
+  ],
+  "adapters": [
+    "edo::lua"
+  ],
+  "adapterOptions": {
+    "edo::lua": {
+      "resDir": {
+        "path": [
+          "arc/res"
+        ]
+      },
+      "scriptDir": {
+        "path": [
+          "arc/script"
+        ]
+      }
+    }
+  },
+  "ruleTables": [
+    "edo::lua"
+  ],
+  "ruleOverrides": {},
+  "engine": {
+    "classify": [],
+    "resourceResolve": {},
+    "limits": {
+      "walkFiles": 800000,
+      "sampleFiles": 20000,
+      "sampleBytes": 262144,
+      "scriptBytes": 16777216
+    },
+    "containers": {
+      "enabled": true,
+      "dir": "arc",
+      "scan": [
+        "."
+      ],
+      "format": "edo",
+      "mode": "hybrid",
+      "flat": true,
+      "scriptDecoder": "edo-lua",
+      "scriptExt": "edo",
+      "rules": [
+        {
+          "match": "^base_div\\d+_archive\\.arc$",
+          "kinds": [
+            "script",
+            "res"
+          ]
+        }
+      ],
+      "maxEntries": 200000,
+      "maxTotalMB": 8192
+    }
+  },
+  "config": {
+    "scriptExtensions": [
+      "edo"
+    ],
+    "namesFiles": [],
+    "thumbsDirs": [],
+    "hiddenDirs": [],
+    "labels": {},
+    "merge": [],
+    "views": [],
+    "groups": [],
+    "dirThumbs": [],
+    "scriptThumbs": [],
+    "scriptIndex": [],
+    "thumbFallback": {
+      "prefer": [
+        "cg",
+        "stand",
+        "bg"
+      ]
+    },
+    "sceneMarkers": [
+      {
+        "label": "CG 开始",
+        "kind": "cmd",
+        "op": "overlay",
+        "match": "(?:ev-|ev_)",
+        "pick": "each",
+        "max": 6
+      }
+    ],
+    "pageSize": 100
+  },
+  "count": [],
+  "avatars": [],
+  "expectedDirs": [],
+  "cover": [],
+  "notes": [
+    "ARCH000只读索引；UnityFS图片/语音按请求取出。静态Lua剧情调用、选择及标签跳转；养成与任意Lua代码不执行。特殊场景按实际CG调用匹配，测试回想表不使用。"
+  ]
+},
   pac: {
     title:'Debonosu PAC / 外置剧情',kind:'pac',detector:'pac',autoOrder:137.5,family:'pac::',bases:[''],searchDepth:3,
     anchors:['Pac/Game.pac','data/Script'],siblings:[],markers:[],
@@ -2942,6 +3081,7 @@ const DETECTORS = {
   artemis: (scope) => detectArtemis(scope),
   arcfam: (scope) => detectArcfam(scope),
   pac: (scope) => detectPac(scope),
+  edo: (scope) => detectEdo(scope),
   krkr: (scope) => detectKrkr(scope),
   rscript: (scope) => detectRscript(scope),
   unity: (scope) => detectUnity(scope),
@@ -3210,7 +3350,7 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'edo'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
         mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
@@ -3837,6 +3977,17 @@ async function arcfamTableOk(file) {
     }
     return total > 0 && good >= total * 0.8
   } catch { return false } finally { await handle?.close().catch(() => {}) }
+}
+async function detectEdo(scope){
+ const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null
+ const f=await open(path.join(scope.media,...splitRel(join(loc.base,'base_div0_archive.arc'))),'r').catch(()=>null);if(!f)return null
+ let valid=false;try{const b=Buffer.alloc(8);await f.read(b,0,8,0);valid=b.toString()==='@ARCH000'}finally{await f.close()}
+ if(!valid)return null
+ const config=await buildConfig(scope.media,loc.entry,loc.base)
+ config.containers.scan=[loc.base||'.'];config.containers.dir=join(loc.base,'arc')
+ const found=makeFound(scope,loc.entry,loc,config);found.id=scope.gameId||'edo::'+(path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,40)||'game')
+ for(const line of loc.entry.notes)scope.logs.push(line)
+ return found
 }
 async function detectPac(scope){
  const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null

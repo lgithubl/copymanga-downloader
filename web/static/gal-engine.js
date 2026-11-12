@@ -74,7 +74,7 @@ function walk(scene, last, choices, visit) {
     for (const command of scene.steps[i].commands) {
       const on = condMet(command.when, vars)
       if (on) {
-        any = true
+        if (!scene.steps[i].flow || ['text','choice','goto','movie'].includes(command.op)) any = true
         if (command.op === 'choice') recordChoice(vars, command, choices)
         if (command.op === 'set') assignVariable(vars, command)
       }
@@ -224,6 +224,7 @@ export function applyCommand(state, command, choices = null) {
       if (typeof command.slot !== 'string' || !command.slot) break
       const { op: _op, when: _when, ...spec } = command
       const at = state.overlays.findIndex((o) => o.slot === command.slot)
+      if(command.relative)for(const axis of ['x','y'])if(Number.isFinite(spec[axis]))spec[axis]+=Number(state.overlays[at]?.[axis]||0)
       for (const axis of ['x', 'y']) if (spec[`${axis}Var`]) spec[axis] = Number(state.vars[spec[`${axis}Var`]] || 0) + Number(spec[`${axis}Offset`] || 0)
       state.overlays = at < 0 ? [...state.overlays, spec] : state.overlays.map((o, i) => (i === at ? (command.src ? spec : { ...o, ...spec }) : o))
       break
@@ -244,6 +245,7 @@ export function applyCommand(state, command, choices = null) {
       state.bgfx = { ...(state.bgfx || {}), blur: command.radius }
       break
     case 'bgZoom':    // 整个背景区域缩放 + 平移（ZOOM）：不跟换背景走；角色缩放另算
+      if(command.merge){const fields=Object.fromEntries(['scale','x','y'].filter(k=>Number.isFinite(command[k])).map(k=>[k,command[k]+(command.relative&&k!=='scale'?(state.bgZoom?.[k]||0):0)]));state.bgZoom={scale:1,x:0,y:0,...state.bgZoom,...fields};break}
       state.bgZoom = command.scale === 1 && !command.x && !command.y ? null : { scale: command.scale, x: command.x || 0, y: command.y || 0 }
       break
     case 'rpgText': {

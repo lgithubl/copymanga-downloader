@@ -1437,11 +1437,21 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     reportStep()
     updateCount()
     const step = scene.steps[i]
+    let flowChoice=false, flowText=false
+    if (step.flow) {
+      // Hidden CFG control steps still affect state; restore the chosen path.
+      state = stateAt(scene, i - 1, choices)
+      paintBg(state.bg, 0, true); paintBgFx(false); paintBlack(true); paintWhite(true)
+      paintStand(); paintOverlays(); paintCamera(false); paintUi(true)
+      setBgm(state.bgm); setBgse(state.bgse); setBgVoices(state.bgvoices)
+    }
     for (const st of state.stands) if (st.moves) delete st.moves   // 上一步的立绘动画已经开过了：这一步只放这一步新开的
     for (const command of step.commands) {
       if (destroyed || mine !== gen) return
       if (!condMet(command.when, state.vars)) continue   // 没选中的分支：整条跳过
+      if (command.op === 'text') flowText=true
       if (command.op === 'choice') {
+        flowChoice=true
         if (!visibleChoiceOptions(command,state.vars).length) continue
         let picked = choices[command.id]
         if (picked === undefined) {
@@ -1582,6 +1592,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     running = false
     skipping = false
+    if(step.flow&&flowChoice&&!flowText){const target=path[path.indexOf(i)+1];if(target!==undefined){await runStep(target);return}}
     afterStep()
     preloadNext(path[path.indexOf(i) + 1])
   }

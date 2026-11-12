@@ -2,7 +2,7 @@
 import {createOptionsReader,fillTemplate} from './options-merge.mjs'
 import {createIndexResolver} from '../resolve.mjs'
 export const ADAPTER_ID='pac::script'
-export const DEFAULT_OPTIONS={resDir:'arc/res',scriptDir:'data/Script',additionalScriptDir:'data/AdditionalScript',stage:[1280,720],fps:60,maxCommands:100000,images:{bg:['data/Graphics/BG/{id4}.png'],cg:['data/Graphics/CG/{id3}_{variant2}.png','data/Graphics/CG/{id2}_{variant2}.png'],bust:['data/Graphics/BU/{id3}_{variant2}.png']},audio:{bgm:'data/Sound/BGM/{id3}.ogg',se:'data/Sound/SE/{id3}.wav',voice:'data/Sound/voice/{name}.ogg'},special:{enabled:true,label:'特殊场景'}}
+export const DEFAULT_OPTIONS={resDir:'arc/res',scriptDir:'data/Script',additionalScriptDir:'data/AdditionalScript',stage:[1280,720],fps:60,maxCommands:100000,images:{bg:['data/Graphics/BG/{id4}.png'],cg:['data/Graphics/CG/{id3}_{variant2}.png','data/Graphics/CG/{id2}_{variant2}.png'],bust:['data/Graphics/BU/{id3}_{variant2}.png']},audio:{bgse:'data/Sound/BGM/{id3}.ogg',bgm:'data/Sound/BGM/{id3}.ogg',se:'data/Sound/SE/{id3}.wav',voice:'data/Sound/voice/{name}.ogg'},special:{enabled:true,label:'特殊场景'}}
 const readOptions=createOptionsReader(DEFAULT_OPTIONS)
 export const sniff=text=>/^\s*#(?:MSG|MSGVOICE|BGSET|BUSET[23]?|BGMPLAY|CG|FADE)(?:,|\s*$)/m.test(String(text))
 export const contextDirs=o=>[readOptions(o).resDir,readOptions(o).scriptDir,readOptions(o).additionalScriptDir]
@@ -44,7 +44,7 @@ export function parse(text,ctx={},meta={}){
    const slot='pac-bust-'+(code.slice(5)||'1'),src=image('bust',args[0],args[1]);if(src)emit({op:'overlay',slot,kind:'stand',src,stage:o.stage,x:(number(2)-1)*o.stage[0]*.3,y:0,anchor:[.5,.5],fit:'contain',z:10})
   }else if(code==='BUOUT')emit({op:'overlayOff',slot:'pac-bust-'+String(number(0)+1)})
   else if(['BGMPLAY','SEPLAY','BGSPLAY'].includes(code)){
-   const kind=code==='BGMPLAY'?'bgm':code==='SEPLAY'?'se':'bgse',src=audio(kind==='bgm'?'bgm':'se',args[0]);if(src)emit({op:kind,src,...(kind==='bgse'?{loop:true}:{})})
+   const kind=code==='BGMPLAY'?'bgm':code==='SEPLAY'?'se':'bgse',src=audio(kind,args[0]);if(src)emit({op:kind,src,...(kind==='bgse'?{loop:true}:{})})
   }else if(code==='VOICESTOP')emit({op:'bgvoiceOff',prefix:'pac-voice-'})
   else if(code==='BGMSTOP')emit({op:'bgmStop'})
   else if(code==='BGSSTOP')emit({op:'bgseStop'})
