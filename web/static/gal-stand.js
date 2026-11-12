@@ -277,6 +277,7 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
 //   overlay = { slot, src?, rect?: [x, y, w, h], color?, alpha?, x?, y?, scaleX?, scaleY?, fit?, fade?, z?, stage? }（同 slot 再来一条 = 引擎已经合并好了，这里只管画）
 //   src：图（资源路径），以「舞台中心 + (x, y)」为中心画（y 向下为正），大小 = 原图 × fit 系数 × (scaleX, scaleY)；fit：none（默认）| contain | cover（先把图缩放到舞台大小再乘 scale）
 //   rect：舞台像素里的矩形（左上角 + 宽高，y 向下；再加上 x / y 偏移、宽高乘 scaleX / scaleY）。没有 src 时用 color 填它（color 缺省黑色；rect 缺省整个舞台）；有 src 时 rect 是裁剪窗口（图只在它里面可见）
+//   tint：[R,G,B]（各0~255），乘原图RGB、保留原透明度；不改变无tint的绘制。
 //   alpha：0~1（默认 1）；alpha / scaleX / scaleY <= 0 = 隐藏；z：越大越靠上（同 z 按出现顺序）；fade：第一次出现淡入（秒，实时播放时）。图缺了报 onMissing。
 export function createOverlayLayer({ parent, url, onMissing = () => {}, media = null, under = false }) {
   const canvas = document.createElement('canvas')
@@ -290,6 +291,23 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
   let seq = 0
   let frameRaf = 0
   let drawn = []   // [{ spec, geo, img }]
+
+  // Multiply RGB while preserving original transparency; keep at most four variants per image.
+  const tinted = new WeakMap()
+  function tintImage(img, tint) {
+    if (!Array.isArray(tint) || tint.length !== 3 || !tint.every(v => Number.isInteger(v) && v >= 0 && v <= 255) || tint.every(v => v === 255)) return img
+    let variants = tinted.get(img)
+    if (!variants) { variants = new Map(); tinted.set(img, variants) }
+    const key = tint.join(',')
+    if (variants.has(key)) return variants.get(key)
+    const surface = document.createElement('canvas'); surface.width = img.naturalWidth; surface.height = img.naturalHeight
+    const paint = surface.getContext('2d'); paint.drawImage(img, 0, 0)
+    const pixels = paint.getImageData(0, 0, surface.width, surface.height)
+    for (let i = 0; i < pixels.data.length; i += 4) for (let c = 0; c < 3; c++) pixels.data[i+c] = Math.round(pixels.data[i+c] * tint[c] / 255)
+    paint.putImageData(pixels, 0, 0)
+    if (variants.size >= 4) variants.delete(variants.keys().next().value)
+    variants.set(key, surface); return surface
+  }
 
   function drawOne({ spec, geo, img }, fade) {
     const alpha = clamp01(spec.alpha) * fade
@@ -315,8 +333,9 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
       const ay = Array.isArray(spec.anchor) ? Math.max(0, Math.min(1, num(spec.anchor[1], 0.5))) : 0.5
       const left = geo.cx + k * num(spec.x) - w * (spec.flipX ? 1 - ax : ax), top = geo.cy + k * num(spec.y) - h * ay
       if (spec.flipX) { ctx.translate(left * 2 + w, 0); ctx.scale(-1, 1) }
-      if(crop)ctx.drawImage(img,...crop,left,top,w,h)
-      else ctx.drawImage(img, left, top, w, h)
+      const bitmap = tintImage(img, spec.tint)
+      if(crop)ctx.drawImage(bitmap,...crop,left,top,w,h)
+      else ctx.drawImage(bitmap, left, top, w, h)
     } else {
       const r = rect || [0, 0, geo.sw, geo.sh]
       ctx.fillStyle = typeof spec.color === 'string' && COLOR_RE.test(spec.color) ? spec.color : '#000'

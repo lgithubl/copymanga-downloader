@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.57.0'
+import { findPackedRpg } from './evb.mjs?v=2.58.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -2008,7 +2008,7 @@ export const LAYOUTS = {
     anchors:['ver00d0.arc','ver00d3.arc'],
     bases:['Archives'], autoOrder:137.59, archiveName:'ver00d0.arc',
     ruleOverrides:{'edo::lua':{coordinates:'canvas',stage:[1600,900],cgMatch:'(?:^|/)(?:ev[0-9]|\\$[0-9]\\$ev)',specialMatch:'^$'}},
-    engine:{"classify":[],"resourceResolve":{},"limits":{"walkFiles":800000,"sampleFiles":20000,"sampleBytes":262144,"scriptBytes":16777216},"containers":{"enabled":true,"dir":"arc","scan":["."],"format":"edo","mode":"hybrid","flat":true,"scriptDecoder":"edo-lua","scriptExt":"edo","rules":[{"match":"^(?:Append/)?ver[0-9a-z]+\\.arc$","kinds":["script","res"],"exclude":["(?:^|/)!?99_test"]}],"maxEntries":200000,"maxTotalMB":8192}},
+    engine:{"classify":[],"resourceResolve":{},"limits":{"walkFiles":800000,"sampleFiles":20000,"sampleBytes":262144,"scriptBytes":16777216},"containers":{"enabled":true,"dir":"arc","scan":[".","Append"],"format":"edo","mode":"hybrid","flat":true,"scriptDecoder":"edo-lua","scriptExt":"edo","rules":[{"match":"^(?:Append/)?ver[0-9a-z]+\\.arc$","kinds":["script","res"],"exclude":["(?:^|/)!?99_test"]}],"maxEntries":200000,"maxTotalMB":8192}},
     config:{"scriptExtensions":["edo"],"namesFiles":[],"thumbsDirs":[],"hiddenDirs":[],"labels":{},"merge":[],"views":[],"groups":[],"dirThumbs":[],"scriptThumbs":[],"scriptIndex":[],"thumbFallback":{"prefer":["cg","stand","bg"]},"sceneMarkers":[{"label":"CG 开始","kind":"cmd","op":"overlay","match":"(?:^|/)(?:ev[0-9]|\\$[0-9]\\$ev)","pick":"each","max":6}],"pageSize":100},
     notes:['Edoire Remastered：UTF-8/UTF-16文本，追加包资源按原文件名解析；原生画布锚点与位置和シロクロ分开配置。']
   },
@@ -4249,7 +4249,7 @@ async function detectEdo(scope){
  let valid=false;try{const b=Buffer.alloc(8);await f.read(b,0,8,0);valid=b.toString()==='@ARCH000'}finally{await f.close()}
  if(!valid)return null
  const config=await buildConfig(scope.media,loc.entry,loc.base)
- config.containers.scan=[loc.base||'.'];config.containers.dir=join(loc.base,'arc')
+ config.containers.scan=(config.containers.scan||['.']).map(rel=>join(loc.base,rel==='.'?'':rel)||'.');config.containers.dir=join(loc.base,'arc')
  const found=makeFound(scope,loc.entry,loc,config);found.id=scope.gameId||(scope.id.includes('::')?scope.id:'')||'edo::'+(path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,40)||'game')
  for(const line of loc.entry.notes)scope.logs.push(line)
  return found
