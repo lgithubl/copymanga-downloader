@@ -307,13 +307,16 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
         ctx.clip()
       }
       const f = spec.fit === 'contain' ? Math.min(geo.sw / img.naturalWidth, geo.sh / img.naturalHeight) : spec.fit === 'cover' ? Math.max(geo.sw / img.naturalWidth, geo.sh / img.naturalHeight) : 1
-      const w = img.naturalWidth * f * sx * k
-      const h = img.naturalHeight * f * sy * k
+      const crop=Array.isArray(spec.crop)&&spec.crop.length===4?spec.crop:null
+      if(crop&&(!crop.every(Number.isFinite)||crop[0]<0||crop[1]<0||crop[2]<=0||crop[3]<=0||crop[0]+crop[2]>img.naturalWidth||crop[1]+crop[3]>img.naturalHeight)){ctx.restore();return false}
+      const w = (crop?crop[2]:img.naturalWidth) * f * sx * k
+      const h = (crop?crop[3]:img.naturalHeight) * f * sy * k
       const ax = Array.isArray(spec.anchor) ? Math.max(0, Math.min(1, num(spec.anchor[0], 0.5))) : 0.5
       const ay = Array.isArray(spec.anchor) ? Math.max(0, Math.min(1, num(spec.anchor[1], 0.5))) : 0.5
       const left = geo.cx + k * num(spec.x) - w * (spec.flipX ? 1 - ax : ax), top = geo.cy + k * num(spec.y) - h * ay
       if (spec.flipX) { ctx.translate(left * 2 + w, 0); ctx.scale(-1, 1) }
-      ctx.drawImage(img, left, top, w, h)
+      if(crop)ctx.drawImage(img,...crop,left,top,w,h)
+      else ctx.drawImage(img, left, top, w, h)
     } else {
       const r = rect || [0, 0, geo.sw, geo.sh]
       ctx.fillStyle = typeof spec.color === 'string' && COLOR_RE.test(spec.color) ? spec.color : '#000'

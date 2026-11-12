@@ -12,7 +12,7 @@ export function createRpgUiLayer(parent){
    if(Number(spec.opacity)>0){context.save();context.fillStyle=`rgba(0,0,0,${Math.min(.8,Number(spec.opacity)/255)})`;context.fillRect(x,y,w,h);context.restore()}
    const text=segmentsText((spec.segments||[]).map(s=>s.var?{...s,text:String(state.vars?.[s.var]??0)}:s)),lines=[];let line=''
    for(const char of text){if(char==='\n'){lines.push(line);line='';continue}if(line&&context.measureText(line+char).width>w-8){lines.push(line);line=''}line+=char}lines.push(line)
-   lines.slice(0,Math.ceil(h/(size+4))).forEach((line,i)=>{context.strokeText(line,x+4,y+i*(size+4));context.fillText(line,x+4,y+i*(size+4))});context.restore()
+   ;(spec.scroll==='bottom'?lines.slice(-Math.max(1,Math.floor(h/(size+4)))):lines.slice(0,Math.ceil(h/(size+4)))).forEach((line,i)=>{context.strokeText(line,x+4,y+i*(size+4));context.fillText(line,x+4,y+i*(size+4))});context.restore()
   }
  }
  const observer=new ResizeObserver(draw);observer.observe(parent)

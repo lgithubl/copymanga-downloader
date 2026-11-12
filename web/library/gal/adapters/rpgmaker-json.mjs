@@ -1,3 +1,5 @@
+import {prepareSkit} from './rpgmaker-skit.mjs'
+import { completeJsonSamples } from '../context-complete-json.mjs'
 import { eventEvidence } from './rpgmaker-plugins.mjs'
 // RPG Maker MV/MZ event JSON -> gal-scene. Engine mechanics live here; each
 // game's naming, gallery/image matching and plugin overrides live in options.
@@ -10,6 +12,7 @@ export const ADAPTER_ID = 'rpgmaker-json'
 export const DEFAULT_OPTIONS = {
   root: '', packedExe: '', stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
   initialVariables: {}, initialSwitches: {},
+  skit: { expressionPoses: {} },
   maps: { enabled: true, tileSize: 48, player: true, follow: 'event' },
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
   special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
@@ -32,8 +35,9 @@ export function sniff(text) {
 
 export async function prepare({ options, texts, files, toResourcePath, mediaDir, truncated }) {
   const o = optionsOf(options), root = rootOf(o)
+  if (mediaDir) { const wanted = new Set(contextFiles(o).filter(p => p.endsWith('.json'))); texts = await completeJsonSamples({texts, files: [...new Set([...(files || []), ...wanted])], mediaDir}, rel => wanted.has(rel)) }
   const get = rel => texts[join(root, rel)] || ''
-  const read = (rel, fallback) => { try { return decodeJson(get(rel)) } catch { return fallback } }
+  const read = (rel, fallback) => { const value=get(rel); if(!value)return fallback; try { return decodeJson(value) } catch { throw Error('RPG Maker JSON无法完整解析: '+join(root,rel)) } }
   const common = read('data/CommonEvents.json', []), system = read('data/System.json', {}), actors = read('data/Actors.json', []), mapInfo = read('data/MapInfos.json', [])
   let plugins = []
   try { const txt = get('js/plugins.js'); plugins = decodeJson(txt.slice(txt.indexOf('[')).trim().replace(/;\s*$/, '')) } catch { /* diagnose below */ }
@@ -54,6 +58,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   const sizePlugin = enabled.find(p => p.parameters?.screenWidth && p.parameters?.screenHeight)
   ctx.stage = [Number(system.advanced?.screenWidth || sizePlugin?.parameters.screenWidth || o.stage[0]), Number(system.advanced?.screenHeight || sizePlugin?.parameters.screenHeight || o.stage[1])]
   ctx.stage = ctx.stage.map((n, i) => Math.max(1, Math.min(8192, Number.isFinite(n) && n > 0 ? n : DEFAULT_OPTIONS.stage[i])))
+  ctx.skit=await prepareSkit(ctx,{mediaDir,files:files||[],root})
   let bytes = 0
   for (const rel of files || []) {
     if (!rel.startsWith(join(root, 'data') + '/') || !/\/Map\d+\.json$/i.test(rel)) continue
@@ -122,7 +127,7 @@ function buildCatalog(ctx) {
     if (ev.text < o.catalog.minText || skip?.test(name)) continue
     const node = { id: `common-${event.id}`, title: name, subtitle: `${ev.text} 文本行`, script: `${join(rootOf(o), 'data/CommonEvents.json')}::common-${event.id}` }
     commonNodes.push(node)
-    const wrapper = o.special.deduplicateCalls && event.list.filter(c=>c.code===401||c.code===357&&c.parameters?.[0]==='LogDisplayPlugin'&&['setNewText','addToText'].includes(c.parameters?.[1])).length < o.special.minText && [...ev.calls].some(id=>ctx.common[id]&&evidence(ctx.common[id].list,ctx).text>=o.special.minText)
+    const wrapper = o.special.deduplicateCalls && event.list.filter(c=>c.code===401||c.code===357&&((c.parameters?.[0]==='LogDisplayPlugin'&&['setNewText','addToText'].includes(c.parameters?.[1]))||(c.parameters?.[0]==='LogMessage'&&c.parameters?.[1]==='add'))).length < o.special.minText && [...ev.calls].some(id=>ctx.common[id]&&evidence(ctx.common[id].list,ctx).text>=o.special.minText)
     if (!wrapper && ev.text >= o.special.minText && (galleryCalls.has(event.id) || special(name, ev))) specials.set(node.script, { ...node, id: `special-${node.id}` })
   }
   return { title: ctx.system.gameTitle || 'RPG Maker', children: [
@@ -133,7 +138,7 @@ function buildCatalog(ctx) {
 }
 
 export function parse(text, ctx, meta = {}) {
-  const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : decodeJson(text), o = optionsOf(meta.options || ctx?.options)
+  const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : (ctx?.maps?.get(meta.rel) || decodeJson(text)), o = optionsOf(meta.options || ctx?.options)
   const scene = String(meta.scene || '')
   let list, pageConditions = null, eventId = 0, map = null, pageIndex = -1
   if (Array.isArray(data)) {
@@ -150,4 +155,7 @@ export function parse(text, ctx, meta = {}) {
   return compileRpgEvents(list, ctx || { common: data, actors: [], standing: new Map(), options: o, stage: o.stage, warnings: [] }, { ...meta, options: o, pageConditions, eventId, pageIndex, map })
 }
 
-export const rpgMakerJsonAdapter = { id: ADAPTER_ID, label: 'RPG Maker MV/MZ 事件', sniff, parse, prepare, contextFiles, contextDirs, contextWalkLimit, sceneInPath: true, sceneThumbs: true, catalog: ctx => ctx?.catalogTree, health: ctx => (ctx?.warnings || []).map(message => ({ level: 'warn', code: 'rpgmaker-context', message })) }
+// The context already owns the decoded event database, keyed by file mtime.
+// A scene card need not reread/decode the same38MB file for every event.
+export function contextScriptText(ctx,meta){return (/CommonEvents\.json$/i.test(meta.rel||'')&&/^common-[0-9]+$/.test(meta.scene||'')&&ctx?.common?.length)||ctx?.maps?.has(meta.rel)?'':null}
+export const rpgMakerJsonAdapter = { id: ADAPTER_ID, label: 'RPG Maker MV/MZ 事件', sniff, parse, prepare, contextScriptText, contextFiles, contextDirs, contextWalkLimit, sceneInPath: true, sceneThumbs: true, catalog: ctx => ctx?.catalogTree, health: ctx => (ctx?.warnings || []).map(message => ({ level: 'warn', code: 'rpgmaker-context', message })) }

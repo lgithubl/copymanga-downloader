@@ -1,8 +1,9 @@
+import {completeJsonSamples} from '../context-complete-json.mjs'
 import {createOptionsReader,safeRegex} from './options-merge.mjs'
 import {createIndexResolver} from '../resolve.mjs'
 import {compileReadGraph} from '../read-graph.mjs'
 export const ADAPTER_ID='edo::lua'
-export const DEFAULT_OPTIONS={resDir:'arc/res',scriptDir:'arc/script',stage:[1920,1080],maxPasses:4,maxCommands:150000,initialVariables:{IS_GALLERY:1,IS_BEGIN_ADV_ENDLIST:0},cgMatch:'(?:^|/)(?:ev-|ev_|eventcg/)',specialMatch:'(?:H-|H_|アダルト|エンディング)',maxWait:5}
+export const DEFAULT_OPTIONS={resDir:'arc/res',scriptDir:'arc/script',stage:[1920,1080],coordinates:'center',maxPasses:4,maxCommands:150000,initialVariables:{IS_GALLERY:1,IS_BEGIN_ADV_ENDLIST:0},cgMatch:'(?:^|/)(?:ev-|ev_|eventcg/)',specialMatch:'(?:H-|H_|アダルト|エンディング)',maxWait:5}
 const options=createOptionsReader(DEFAULT_OPTIONS)
 export const sniff=text=>/^\s*\{\s*"format"\s*:\s*"edo-lua\/1"/.test(String(text))
 export const contextDirs=o=>[options(o).resDir,options(o).scriptDir]
@@ -17,9 +18,10 @@ export function luaArgs(text){
 }
 const value=(x)=>typeof x==='object'&&x?.expr?x.expr:x
 const data=text=>{try{const d=JSON.parse(text);return d.format==='edo-lua/1'?d:null}catch{return null}}
-export function prepare({options:o,files=[],texts={},toResourcePath,resourceResolve}){
+export function prepare({options:o,files=[],texts={},toResourcePath,resourceResolve,mediaDir,_complete=false}){
+ if(mediaDir&&!_complete)return completeJsonSamples({texts,files,mediaDir},rel=>/\.edo$/i.test(rel)).then(texts=>prepare({options:o,files,texts,toResourcePath,resourceResolve,mediaDir,_complete:true}))
  const cfg=options(o),resolver=createIndexResolver({index:new Set(files.map(x=>toResourcePath?toResourcePath(x):x)),cfg:{...resourceResolve,caseInsensitive:true}}),all=[],special=[],sp=safeRegex(cfg.specialMatch),cg=safeRegex(cfg.cgMatch)
- for(const[rel,t]of Object.entries(texts)){const d=data(t);if(!d||!/^src\/game\//i.test(d.name)||!/(?:^|\n)\s*text\(/.test(d.text))continue;const node={id:rel,script:rel,title:d.name.split('/').at(-1).replace(/\.txt$/i,'')};all.push(node);if(sp?.test(node.title)||[...d.text.matchAll(/"([^"\n]+\.png)"/g)].some(m=>cg?.test(m[1])))special.push(node)}
+ for(const[rel,t]of Object.entries(texts)){const d=data(t);if(!d||!/^(?:src\/game\/|!app[^/]+\/)/i.test(d.name)||!/(?:^|\n)\s*text\(/.test(d.text)||/(?:^|\/)!?99_test/i.test(d.name))continue;const node={id:rel,script:rel,title:d.name.split('/').at(-1).replace(/\.txt$/i,'')};all.push(node);if(sp?.test(node.title)||[...d.text.matchAll(/"([^"\n]+\.png)"/g)].some(m=>cg?.test(m[1])))special.push(node)}
  all.sort((a,b)=>a.title.localeCompare(b.title,'ja',{numeric:true}));special.sort((a,b)=>a.title.localeCompare(b.title,'ja',{numeric:true}));return{cfg,resolver,hasIndex:files.length>0,catalogTree:all.length?{children:[...(special.length?[{id:'special',title:'特殊场景',children:special}]:[]),{id:'story',title:'剧情',children:all}]}:null}
 }
 export const catalog=ctx=>ctx?.catalogTree
@@ -31,7 +33,7 @@ export function parse(text,ctx={},meta={}){
  const test=s=>{s=s.trim().replace(/^\((.*)\)$/,'$1');let m=/^([\w\[\]"'.]+)\s*(==|~=|>=|<=|>|<)\s*(.+)$/.exec(s);if(m)return{var:ensure(m[1]),op:m[2]==='~='?'!=':m[2],...literal(m[3])};m=/^(not\s+)?([\w\[\]"'.]+)$/.exec(s);return m?{var:ensure(m[2]),op:m[1]?'==':'!=',value:0}:null}
  const find=(name,kind='image')=>{if(typeof name!=='string'||!name||name==='non.png')return'';const dirs=kind==='voice'?['ogg/voice']:kind==='bgm'?['ogg/bgm']:kind==='se'?['ogg/se','ogg/bgv']:['img'];let hit=ctx?.resolver?.resolve(name)||ctx?.resolver?.resolveByName(name);if(hit)return hit;if(!ctx?.hasIndex)return dirs[0]+'/'+name;stats.unresolved[name]=(stats.unresolved[name]||0)+1;return''}
  const raw=(n,cmd,args)=>{stats.raw[cmd]=(stats.raw[cmd]||0)+1;n.commands.push({op:'raw',cmd,args:String(args).slice(0,400)})}
- const layerId=x=>String(value(x)||'BG'),slot=x=>'edo:'+layerId(x),layerCmd=(n,l,file)=>{const id=layerId(l),src=find(file);if(file==='non.png'){n.commands.push(id==='BG'?{op:'bgoff'}:{op:'overlayOff',slot:slot(l)});return}if(!src)return;if(id==='BG')n.commands.push({op:'bg',src,cg:Boolean(cg?.test(src))});else n.commands.push({op:'overlay',slot:slot(l),src,cg:id==='EV'||Boolean(cg?.test(src)),z:id==='EV'?5:id==='EF'?100:10+(Number(id.slice(1))||0),stage:o.stage,fit:'none',...(id.startsWith('C')?{kind:'stand'}:{})})}
+ const layerId=x=>String(value(x)||'BG'),slot=x=>'edo:'+layerId(x),layerCmd=(n,l,file)=>{const id=layerId(l),src=find(file);if(file==='non.png'){n.commands.push(id==='BG'&&o.coordinates!=='canvas'?{op:'bgoff'}:{op:'overlayOff',slot:slot(l)});return}if(!src)return;if(id==='BG'&&o.coordinates!=='canvas')n.commands.push({op:'bg',src,cg:Boolean(cg?.test(src))});else n.commands.push({op:'overlay',slot:slot(l),src,cg:id==='EV'||Boolean(cg?.test(src)),z:id==='EV'?5:id==='EF'?100:10+(Number(id.slice(1))||0),stage:o.stage,fit:'none',...(o.coordinates==='canvas'?{anchor:[0.5,1],x:0,y:o.stage[1]/2}:{}),...(id.startsWith('C')?{kind:'stand'}:{})})}
  initial['edo:lineName']='对方'
  const lines=d.text.replace(/--\[\[[\s\S]*?\]\]/g,'').split(/\r?\n/)
  let tableName='',lastChoice='edo:choice',nextScript=''
@@ -65,6 +67,8 @@ export function parse(text,ctx={},meta={}){
   else if(['set','set2','drawImage','drawImage2','set_colscl'].includes(fn))layerCmd(n,args[0],args[1])
   else if(fn==='fade_set'){layerCmd(n,args[0],args[1]);n.commands.push({op:'wait',seconds:Math.min(o.maxWait,num(2))})}
   else if(['setEx','setEx2','setExCol'].includes(fn)){const start=(num(0,1)-1)*3+1;for(let k=0;k<3;k++){const l='C'+(start+k);layerCmd(n,l,args[k+1]);let shift=fn==='setExCol'?1:0;n.commands.push({op:'overlay',slot:slot(l),scaleX:num(4+shift,1),scaleY:num(4+shift,1),x:num(5+shift),y:num(6+shift),stage:o.stage})}}
+  else if(o.coordinates==='canvas'&&['setc','setp','sets','setmove','setms','setme','setma','setml'].includes(fn)){const cmd={op:'overlay',slot:slot(args[0]),stage:o.stage};if(fn==='setc')cmd.anchor=[num(1,0.5),num(2,1)];else if(fn==='sets'){cmd.scaleX=num(1,1);cmd.scaleY=num(2,1)}else{const constant=x=>x==='DOWN'?o.stage[1]:x==='UP'?0:x==='LEFT'?0:x==='RIGHT'?o.stage[0]:null;const x=constant(arg(1))??num(1),y=constant(arg(2))??num(2);const relative=!['setp','setmove'].includes(fn);Object.assign(cmd,{x:relative?x:x-o.stage[0]/2,y:relative?y:y-o.stage[1]/2,relative})}n.commands.push(cmd)}
+  else if(o.coordinates==='canvas'&&['allstop_setmove','allstop_slidea','allstop_slides'].includes(fn)){}
   else if(['setp','setmove','sets','setms','setme','setma','setml'].includes(fn)){n.commands.push(layerId(args[0])==='BG'?{op:'bgZoom',merge:true,relative:!['sets','setp'].includes(fn),...(fn==='sets'?{scale:num(1,1)}:{x:num(1)*720/o.stage[1],y:num(2)*720/o.stage[1]})}:{op:'overlay',slot:slot(args[0]),relative:!['sets','setp'].includes(fn),...(fn==='sets'?{scaleX:num(1,1),scaleY:num(2,1)}:{x:num(1),y:num(2)}),stage:o.stage})}
   else if(fn==='clear')n.commands.push({op:'overlayOff',slot:'edo:EF'})
   else if(fn==='black'||fn==='white')n.commands.push({op:'overlay',slot:'edo:EF',color:fn==='black'?'#000000':'#ffffff',z:100,stage:o.stage})
@@ -72,7 +76,7 @@ export function parse(text,ctx={},meta={}){
   else if(fn==='slides')n.commands.push(layerId(args[0])==='BG'?{op:'bgZoom',merge:true,scale:num(2,1)}:{op:'overlay',slot:slot(args[0]),scaleX:num(2,1),scaleY:num(3,1)})
   else if(fn==='slidea'){const hex=String(arg(2)||'');if(/^[0-9a-f]{8}$/i.test(hex)&&layerId(args[0])!=='BG')n.commands.push({op:'overlay',slot:slot(args[0]),alpha:parseInt(hex.slice(6),16)/255});else raw(n,fn,m[2])}
   else if(fn==='set_gblur'&&layerId(args[0])==='BG')n.commands.push({op:'bgBlur',radius:Math.max(0,Math.min(100,num(1)))})
-  else if(fn==='del'||fn==='fade_del')n.commands.push(layerId(args[0])==='BG'?{op:'bgoff'}:{op:'overlayOff',slot:slot(args[0])})
+  else if(fn==='del'||fn==='fade_del')n.commands.push(layerId(args[0])==='BG'&&o.coordinates!=='canvas'?{op:'bgoff'}:{op:'overlayOff',slot:slot(args[0])})
   else if(fn==='alldel')n.commands.push({op:'bgoff'},{op:'bgZoom',scale:1,x:0,y:0},{op:'overlayOff'},{op:'standOff'})
   else if(['playVoice','playBgm','playSe','playBgv'].includes(fn)){const kind=fn==='playVoice'?'voice':fn==='playBgm'?'bgm':fn==='playBgv'?'bgvoice':'se',src=find(args[0],kind==='bgvoice'?'se':kind);if(src)n.commands.push({op:kind,src,...(kind==='bgvoice'?{slot:'edo:bgv',loop:args[1]!==false,volume:1}:{})})}
   else if(['stopVoice','stopBgm','stopSe','stopBgv','fadeBgm'].includes(fn))n.commands.push(fn==='stopBgm'||fn==='fadeBgm'?{op:'bgmStop',fade:num(0)}:fn==='stopBgv'?{op:'bgvoiceOff'}:{op:'raw',cmd:fn,args:''})

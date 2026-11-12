@@ -52,3 +52,8 @@ test('conditional forward label jumps skip only the active branch and RNG is sta
  const a=stateAt(s,s.steps.length-1),b=stateAt(s,s.steps.length-1)
  assert.ok(a.vars['rpg:v:2']>=3&&a.vars['rpg:v:2']<=9);assert.equal(a.vars['rpg:v:2'],b.vars['rpg:v:2'])
 })
+
+test('LogMessage native add is dialogue and retains geometry/clear/visibility across seek',async()=>{
+ const s=await scene([mz('LogMessage','init',{x:'30',y:'40',width:'500',height:'200'}),mz('LogMessage','add',{text:'first'}),mz('LogMessage','add',{text:'second'}),mz('LogMessage','clear'),mz('LogMessage','add',{text:'fresh'}),mz('LogMessage','hide'),...msg('normal')]);
+ assert.equal(s.stats.text,4);assert.equal(segmentsText(stateAt(s,0).text),'first');assert.equal(stateAt(s,0).rpgUi['rpg-log-message'].x,30);assert.equal(segmentsText(stateAt(s,1).rpgUi['rpg-log-message'].segments),'first\nsecond');assert.equal(segmentsText(stateAt(s,2).rpgUi['rpg-log-message'].segments),'fresh');assert.equal(stateAt(s,3).rpgUi['rpg-log-message'].visible,false);assert.ok(!s.stats.raw['plugin:LogMessage']);
+});

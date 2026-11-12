@@ -790,6 +790,11 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     return { dirs, groups, scripts: rest, allScripts: scripts, all: [...dirs, ...groups, ...rest], rejected, compiledOnly }
   }
 
+  async function sceneFromFile(adapterId,file,meta){
+    const ctx=await contextOf(adapterId),text=galAdapter(adapterId).contextScriptText?.(ctx,meta)
+    return buildScene(adapterId,typeof text==='string'?text:decodeTextFile(await readFile(file)).text,ctx,meta)
+  }
+
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
   async function scriptInfo(set, scriptRel, { fresh = false } = {}) {
     // 路径带 ::<场景>（一个文件装多个场景，utage-book 的章）：磁盘上是 ::前面的文件，场景号交给适配器（meta.scene）；只有适配器声明 sceneThumbs 的才算封面（grenze 这类一个文件几十个场景，每个都整份解析太贵）
@@ -812,7 +817,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     let scene = null
     let parseError = ''
     try {
-      scene = buildScene(adapterId, decodeTextFile(await readFile(abs)).text, await contextOf(adapterId), metaFor(adapterId, { rel, stem: stemOf(rel), ...(sceneKey ? { scene: sceneKey } : {}) }))
+      scene = await sceneFromFile(adapterId, abs, metaFor(adapterId, { rel, stem: stemOf(rel), ...(sceneKey ? { scene: sceneKey } : {}) }))
       excerpt = excerptOf(scene)
       hasMovie = scene.steps.some((step) => step.commands.some((c) => c.op === 'movie'))
     } catch (error) { parseError = error?.message || String(error) /* 解析失败：照样列出来，打开时再报错 */ }
@@ -1111,7 +1116,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
 
     // script
     const { fileRel, sceneKey, real, adapterId } = await resolveScript(set, rel)
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, await contextOf(adapterId), metaFor(adapterId, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) }))
+    const scene = await sceneFromFile(adapterId, real, metaFor(adapterId, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}), ...(opts.showMosaic !== undefined ? { showMosaic: opts.showMosaic } : {}) }))
     warmScene(scene)   // 后台把场景里要用的图预先取出来 / 解码好（BGI 的 CBG 要解码，第一次要几百毫秒到几秒）：不等它，进了播放器图已经在缓存里
     await linkScene(set, rel, scene)   // goto / next 指令的目标脚本名 → 节点 id（同一个目录里按名字找，忽略大小写）；找不到的不补，播放器当没有
 
@@ -1271,7 +1276,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     const hit = voiceCacheGet(key)
     if (hit) return { ...hit, cached: true }
     voiceStats.parses += 1
-    const scene = buildScene(adapterId, decodeTextFile(await readFile(real)).text, ctx, metaFor(adapterId, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}) }))
+    const scene = await sceneFromFile(adapterId, real, metaFor(adapterId, { rel: fileRel, stem: stemOf(fileRel), ...(sceneKey ? { scene: sceneKey } : {}) }))
     const value = { voices: collectVoices(scene, { withBg: true }), adapterId }
     voiceCacheSet(key, value)
     return { ...value, cached: false }

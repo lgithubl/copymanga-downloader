@@ -15,7 +15,7 @@ export function eventEvidence(list){
  for(const c of list||[]){const p=c.parameters||[]
   if(c.code===357){
    const [plugin,action,,args={}]=p
-   if(plugin==='LogDisplayPlugin'&&['setNewText','addToText'].includes(action)&&args.text)text++
+   if(((plugin==='LogDisplayPlugin'&&['setNewText','addToText'].includes(action))||(plugin==='LogMessage'&&action==='add'))&&args.text)text++
    if(plugin==='PictureCallCommon'&&action==='ADD_PICTURE_EVENT'&&Number(args.commonEventId)>0)calls.push(Number(args.commonEventId))
   }
  }

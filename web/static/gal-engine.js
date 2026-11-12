@@ -97,27 +97,25 @@ export function activePath(scene, choices = {}) {
 export const choiceIn = (scene, stepIndex) => scene?.steps?.[stepIndex]?.commands.find((c) => c.op === 'choice') || null
 
 // Bounded choice history for entering a guarded scene marker. No game code.
-export function choicesForCommand(scene, targetStep, targetCommand, maxStates = 128) {
-  let states = [{ vars: {}, choices: {} }]
-  for (let i = 0; i <= targetStep; i++) for (let k = 0; k < (scene.steps[i]?.commands.length || 0); k++) {
-    const command = scene.steps[i].commands[k]
-    if (i === targetStep && k === targetCommand) return states.find(s => condMet(command.when, s.vars))?.choices ?? null
-    const next = []
-    for (const state of states) {
-      if (!condMet(command.when, state.vars)) { next.push(state); continue }
-      if (command.op === 'choice') {
-        for (const option of visibleChoiceOptions(command,state.vars)) {
-          const choices = { ...state.choices, [command.id]: option.value }, vars = { ...state.vars }
-          recordChoice(vars, command, choices); next.push({ vars, choices })
-          if (next.length >= maxStates) break
-        }
-      } else { if (command.op === 'set') assignVariable(state.vars, command); next.push(state) }
-      if (next.length >= maxStates) break
+export function choiceHistoriesForCommands(scene, targets, maxStates = 128) {
+  const wanted=new Set(targets.map(t=>`${t.step}:${t.command}`)),result=new Map();if(!wanted.size)return result
+  const last=targets.reduce((n,t)=>Math.max(n,t.step),0);let states=[{vars:{},choices:{}}]
+  for(let i=0;i<=last;i++)for(let k=0;k<(scene.steps[i]?.commands.length||0);k++){
+    const command=scene.steps[i].commands[k],key=`${i}:${k}`
+    if(wanted.has(key)){result.set(key,states.find(s=>condMet(command.when,s.vars))?.choices??null);if(result.size===wanted.size)return result}
+    const next=[]
+    for(const state of states){
+      if(!condMet(command.when,state.vars)){next.push(state);continue}
+      if(command.op==='choice'){
+        for(const option of visibleChoiceOptions(command,state.vars)){const choices={...state.choices,[command.id]:option.value},vars={...state.vars};recordChoice(vars,command,choices);next.push({vars,choices});if(next.length>=maxStates)break}
+      }else{if(command.op==='set')assignVariable(state.vars,command);next.push(state)}
+      if(next.length>=maxStates)break
     }
-    states = next.slice(0, maxStates)
+    states=next.slice(0,maxStates)
   }
-  return null
+  return result
 }
+export function choicesForCommand(scene,targetStep,targetCommand,maxStates=128){return choiceHistoriesForCommands(scene,[{step:targetStep,command:targetCommand}],maxStates).get(`${targetStep}:${targetCommand}`)??null}
 
 // 从第 fromStep 步起（含）的所有选择作废——回到选项那一步重选时用
 export function dropChoicesFrom(choices, fromStep) {
@@ -249,7 +247,7 @@ export function applyCommand(state, command, choices = null) {
       state.bgZoom = command.scale === 1 && !command.x && !command.y ? null : { scale: command.scale, x: command.x || 0, y: command.y || 0 }
       break
     case 'rpgText': {
-      const old = state.rpgUi?.[command.slot] || {}, segments = command.append ? [...(old.segments || []),{text:'\n'},...(command.segments || [])] : command.segments ?? old.segments ?? []
+      const old = state.rpgUi?.[command.slot] || {}, segments = command.append ? [...(old.segments || []),...(old.segments?.length?[{text:'\n'}]:[]),...(command.segments || [])] : command.segments ?? old.segments ?? []
       state.rpgUi = {...state.rpgUi, [command.slot]: {...old,...command,segments}}
       break
     }

@@ -8,7 +8,7 @@
 //     max：每条规则最多几个（默认 6）；标签：同一条规则命中不止一个时加序号（「H 开始 2」）
 //   结果 [{ step, label, ratio }]：按步号排序，第 0 步和最后两步不要（从头开始本来就是默认；跳到末尾没意义），同一步只留第一条规则的，总数最多 12
 const TOTAL_LIMIT = 12
-import { choicesForCommand } from '../../static/gal-engine.js'
+import { choiceHistoriesForCommands } from '../../static/gal-engine.js'
 
 const textOf = (command) => (Array.isArray(command.segments) ? command.segments.map((s) => s?.text ?? '').join('') : '')
 const commandKeys = (command) => [command.src, command.name, command.slot, command.over, textOf(command)].filter((x) => typeof x === 'string' && x)
@@ -38,17 +38,26 @@ function hitsOf(steps, rule) {
 export function computeMarkers(scene, rules, { includeEndpoints = false } = {}) {
   const steps = Array.isArray(scene?.steps) ? scene.steps : []
   if (!rules?.length || !steps.length) return []
+  const targets=[]
+  steps.forEach((step,i)=>{if(!includeEndpoints&&!(i>0&&i<steps.length-2))return;step.commands?.forEach((c,k)=>{if(c.when?.length&&rules.some(rule=>rule.kind==='cmd'&&c.op===rule.op&&(!rule.re||commandKeys(c).some(x=>rule.re.test(x)))))targets.push({step:i,command:k})})})
+  const histories=choiceHistoriesForCommands(scene,targets)
   const found = new Map()   // 步号 → 标签
   for (const rule of rules) {
     const choices = new Map()
-    const all = hitsOf(steps, rule).filter((i) => includeEndpoints || (i > 0 && i < steps.length - 2)).filter(i => {
-      if (rule.kind !== 'cmd') return true
-      const matching = steps[i].commands.map((c, k) => ({ c, k })).filter(({c}) => c.op === rule.op && (!rule.re || commandKeys(c).some(x => rule.re.test(x))))
-      if (matching.some(({c}) => !c.when?.length)) return true
-      for (const {k} of matching) { const picked = choicesForCommand(scene, i, k); if (picked) { choices.set(i, picked); return true } }
-      return false
-    })
-    const hits = rule.pick === 'first' ? all.slice(0, 1) : rule.pick === 'last' ? all.slice(-1) : all.slice(0, rule.max)
+    const candidates=hitsOf(steps,rule),hits=[]
+    const limit=rule.pick==='first'||rule.pick==='last'?1:Number.isFinite(rule.max)?Math.max(0,rule.max):Infinity
+    if(rule.pick==='last')candidates.reverse()
+    for(const i of candidates){
+      if(hits.length>=limit)break
+      if(!includeEndpoints&&!(i>0&&i<steps.length-2))continue
+      let reachable=rule.kind!=='cmd'
+      if(!reachable){
+        const matching=steps[i].commands.map((c,k)=>({c,k})).filter(({c})=>c.op===rule.op&&(!rule.re||commandKeys(c).some(x=>rule.re.test(x))))
+        reachable=matching.some(({c})=>!c.when?.length)
+        if(!reachable)for(const{k}of matching){const picked=histories.get(`${i}:${k}`);if(picked){choices.set(i,picked);reachable=true;break}}
+      }
+      if(reachable)hits.push(i)
+    }
     hits.forEach((step, k) => { if (!found.has(step)) found.set(step, { label: hits.length > 1 ? `${rule.label} ${k + 1}` : rule.label, ...(Object.keys(choices.get(step) || {}).length ? { choices: choices.get(step) } : {}) }) })
   }
   return [...found].sort((a, b) => a[0] - b[0]).slice(0, TOTAL_LIMIT).map(([step, fields]) => ({ step, ...fields, ratio: Math.round((step / Math.max(1, steps.length - 1)) * 1000) / 1000 }))

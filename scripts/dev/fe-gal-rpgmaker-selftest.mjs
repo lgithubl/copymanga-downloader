@@ -103,7 +103,7 @@ try{
  await page.goto(`${base}/#/media/gal/${itemId}/main?section=${encodeURIComponent(special.node)}`)
  await page.locator('.gal-card[data-title="回想 Plugin windows"]').click()
  await page.waitForSelector('canvas.gal-rpg-ui')
- await page.waitForFunction(()=>document.querySelector('.gal-text')?.textContent.includes('Plugin first'))
+ try{await page.waitForFunction(()=>document.querySelector('.gal-text')?.textContent.includes('Plugin first'))}catch(error){await page.screenshot({path:path.join(work,'plugin-window-failure.png')});console.log('plugin failure diagnostic',work,errors,await page.locator('body').innerText());throw error}
  const painted=await page.evaluate(()=>{const c=document.querySelector('canvas.gal-rpg-ui'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let count=0;for(let i=3;i<d.length;i+=4)if(d[i])count++;return count})
  assert.ok(painted>100,'plugin text window actually painted')
  for(let i=0;i<6&&await page.locator('.gal-rpg-picture-choice').count()===0;i++){await page.locator('.gal-next-btn').click();await page.waitForTimeout(100)}

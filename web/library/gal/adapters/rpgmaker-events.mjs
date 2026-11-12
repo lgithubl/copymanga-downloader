@@ -1,3 +1,4 @@
+import {skitCommands} from './rpgmaker-skit.mjs'
 import { structValue, pluginData } from './rpgmaker-plugins.mjs'
 import { safeRegex } from './options-merge.mjs'
 import { mapSnapshot } from './rpgmaker-maps.mjs'
@@ -19,7 +20,7 @@ export function compileRpgEvents(list, ctx, meta) {
   const bindings = [], logStyles = new Map(pluginData(ctx,'LogDisplayPlugin','logSettings').map(x=>[x.name,x])), imageSprites = new Map(pluginData(ctx,'VariableSpriteDisplay','imageSprites').map(x=>[x.displayName,x])), variableGroups = new Map(pluginData(ctx,'VariableSpriteDisplay','variableGroups').map(x=>[x.name,x]))
   const flush = () => { if (pending.length) { steps.push({ index: steps.length, commands: pending }); pending = [] } }
   const when = () => guards.flatMap(g => g.conditions || [])
-  const emit = cmd => { if(cmd.op==='rpgText')cmd={stage,...cmd}; if ((stats.emitted = (stats.emitted || 0) + 1) > o.maxCommands) throw new Error('RPG Maker 导出指令达到上限'); const w = when(); pending.push(w.length ? { ...cmd, when: [...w] } : cmd) }
+  const emit = cmd => { if(cmd.op==='rpgText')cmd={stage,...cmd}; if ((stats.emitted = (stats.emitted || 0) + 1) > o.maxCommands) throw new Error('RPG Maker 导出指令达到上限'); const w = when(); pending.push(w.length ? { ...cmd, when: [...w,...(cmd.when||[])] } : cmd) }
   const raw = (key, args) => { stats.raw[key] = (stats.raw[key] || 0) + 1; emit({ op: 'raw', cmd: key, args: JSON.stringify(args).slice(0, 1000) }) }
   let mapId=Number(/Map(\d+)\.json$/i.exec(meta.rel||'')?.[1]||0)
   const characterId=id=>Number(id)===0?meta.eventId:Number(id)
@@ -89,8 +90,10 @@ export function compileRpgEvents(list, ctx, meta) {
     if (hold && !standingHold && !matches.length) for (let n = 1; n <= 8; n++) emit({ op: 'overlayOff', slot: `rpg-standing-${n}` })
     return text.replace(/\\(?:F[1-8]?|F{2,4}|M[1-8]?|M{2,4}|FH|AA)\[[^\]]*\]/gi, '')
   }
+  const skit=skitCommands(ctx,{emit,raw,initial,stage})
   const plugin = text => {
     const words = String(text).trim().split(/\s+/), command = words.shift(), arg = words
+    if(command.toLowerCase()==='skit'){const [action,name,wait,value]=arg;if(skit(({exp:'expression'})[action]||action,{name,expression:value,pose:value,position:value}))return;raw('skit-command-unhandled',text);return}
     if (['PB_BGS_CHANGE_LINE','PB_BGS_CHANGE_LINE2','S_CHANGE_LINE'].includes(command)) { bgsLine=Number(arg[0])||1;return }
     if (command==='PB_BGS_ALL_STOP') { emit({op:'bgvoiceOff',prefix:'rpg-bgs-'});return }
     if (command==='D_TEXT') { dynamicText={text:arg.slice(0,-1).join(' '),size:Math.max(8,Math.min(96,Number(arg.at(-1))||28))};return }
@@ -118,7 +121,9 @@ export function compileRpgEvents(list, ctx, meta) {
     raw(`plugin:${command || 'empty'}`, text)
   }
   const mzPlugin = (name, action, args, depth) => {
+    name=String(name).split('/').at(-1)
     if(o.plugins.structured===false){raw(`plugin:${name}`,{action,args});return}
+    if(name==='TRP_SkitMZ'&&skit(action,args))return
     const voice=name==='SimpleVoice',visu=name==='VisuMZ_2_VoiceActControl'
     if((voice&&o.plugins.simpleVoice)||visu){
       if(['PLAY_VOICE','SoundPlayAsVoiceLine'].includes(action)){
@@ -136,6 +141,12 @@ export function compileRpgEvents(list, ctx, meta) {
       const options=choices.slice(0,128).map((x,i)=>({value:i+1,resultValue:Number(x.resultNumber)||0,segments:textParts(x.label||''),...(Number(x.switchId)?{when:[{var:variable(x.switchId,'s'),op:'===',value:1}]}:{})}))
       if(args.cancelType===true||args.cancelType==='true')options.push({value:-1,resultValue:-1,segments:textParts('取消')})
       emit({op:'choice',id:`${steps.length}:${pending.length}`,var:variable(args.variableNumber),reindex:true,options});stats.choices++;flush();return
+    }
+    if(name==='LogMessage'){
+      const slot='rpg-log-message'
+      if(action==='init'){logStyles.set(slot,{scroll:'bottom',fontSize:Number(ctx.plugins?.find(p=>p.name.split('/').at(-1)==='LogMessage')?.parameters?.fontSize)||28,x:Number(args.x)||0,y:Number(args.y)||0,width:Number(args.width)||stage[0],height:Number(args.height)||stage[1]});emit({op:'rpgText',slot,segments:[],visible:true,...logStyles.get(slot)});return}
+      if(action==='add'){const segments=textParts(args.text||'');emit({op:'rpgText',slot,...(logStyles.get(slot)||{}),segments,append:true,visible:true});emit({op:'ui',visible:false});emit({op:'speaker',segments:[]});emit({op:'text',segments});stats.text++;flush();return}
+      if(['hide','show','clear','remove'].includes(action)){emit({op:'rpgText',slot,...(['clear','remove'].includes(action)?{segments:[]}:{}),visible:!['hide','remove'].includes(action)});return}
     }
     if(name==='LogDisplayPlugin'){
       const slot='rpg-log-'+args.logName,style=logStyles.get(args.logName)||{}
