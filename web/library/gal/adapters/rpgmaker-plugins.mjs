@@ -21,3 +21,11 @@ export function eventEvidence(list){
  }
  return {text,pictures,calls}
 }
+
+// Literal RX-T map-event calls; event pages are selected by their native conditions.
+export function mapEventCall(command) {
+  const p=command.parameters||[]
+  if(command.code===356){const m=/^call_ev\s+(\d+)(?:\s|$)/.exec(String(p[0]||'').trim());return m?Number(m[1]):null}
+  if(command.code===357&&String(p[0]).split('/').at(-1)==='RX_T_CallEvent_in_Map'&&p[1]==='callev'&&/^\d+$/.test(String(p[3]?.eventID)))return Number(p[3].eventID)
+  return null
+}

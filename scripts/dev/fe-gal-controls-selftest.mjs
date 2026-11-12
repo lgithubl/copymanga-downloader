@@ -7,6 +7,7 @@ import net from 'node:net'
 import path from 'node:path'
 import os from 'node:os'
 import {createGalHandler} from '../../web/library/types/gal.mjs'
+import {computeMarkers} from '../../web/library/gal/markers.mjs'
 import {generateTags} from '../tag-scripts/gal-layout/main.js'
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_PATH||'@playwright/test')
 const work=await mkdtemp(path.join(os.tmpdir(),'gal-controls-')),dataDir=path.join(work,'data'),probe=net.createServer()
@@ -20,7 +21,7 @@ try{
  const page=await browser.newPage({viewport:{width:1200,height:800}})
  await page.addInitScript(()=>{const NativeAudio=window.Audio;window.__audios=[];window.__plays=[];window.Audio=function(src){const a=new NativeAudio(src);window.__audios.push(a);const play=a.play.bind(a);a.play=()=>{window.__plays.push({src:a.src,loop:a.loop,volume:a.volume});return play()};return a};window.Audio.prototype=NativeAudio.prototype})
  await page.goto(base);await page.waitForLoadState('networkidle')
- const mount=async(reader,startStep=0)=>page.evaluate(async({reader,startStep})=>{window.__testPlayer?.destroy();document.body.replaceChildren();const host=document.createElement('div');host.style.cssText='width:1200px;height:800px';document.body.append(host);localStorage.setItem('copymanga.gal.autoChoice','1');const {createGalPlayer}=await import('/gal-player.js');window.__testPlayer=createGalPlayer({container:host,reader,startStep})},{reader,startStep})
+ const mount=async(reader,startStep=0,startChoices={})=>page.evaluate(async({reader,startStep,startChoices})=>{window.__testPlayer?.destroy();document.body.replaceChildren();const host=document.createElement('div');host.style.cssText='width:1200px;height:800px';document.body.append(host);localStorage.setItem('copymanga.gal.autoChoice','1');const {createGalPlayer}=await import('/gal-player.js');window.__testPlayer=createGalPlayer({container:host,reader,startStep,startChoices})},{reader,startStep,startChoices})
  const commands=[{op:'text',segments:[{text:'start'}]},{op:'choice',id:'1:0',var:'picked',options:[{value:1,segments:[{text:'A'}]},{value:2,segments:[{text:'B'}]}]},{op:'text',segments:[{text:'after'}]},{op:'text',segments:[{text:'end'}]}]
  await mount({resourceBase:base,node:{markers:[]},scene:{format:'gal-scene/1',steps:commands.map((c,index)=>({index,commands:[c]})),stats:{}}})
  await page.click('.gal-next-btn');await page.waitForSelector('.gal-choices:visible');await page.waitForTimeout(1100)
@@ -46,6 +47,14 @@ try{
   await page.click('.gal-cfg');assert.equal(await page.locator('[data-audio-group="voice"]').isVisible(),true)
   assert.ok(await page.evaluate(()=>window.__plays.some(x=>/1080\.ogg/.test(x.src)&&x.loop===false&&x.volume>0)))
   console.log('PASS RJ01220265: actual packed/encrypted1080 voice plays, is non-looping, voice controls visible, replay restarts current voice')
+  const special=home.node.items.find(x=>x.title==='特殊场景');assert.ok(special)
+  const replayCards=await handler.getReaderContent(id,'main',{sectionId:special.node.split('|')[0]+'|q=EV160'}),replay=replayCards.node.items.find(x=>x.title==='EV160');assert.ok(replay,'native map-call gallery entry must be discoverable')
+  const replayReader=await handler.getReaderContent(id,'main',{sectionId:replay.node}),mark=computeMarkers(replayReader.scene,[{kind:'cmd',op:'bgvoice',re:/voice\/1080\.ogg$/,pick:'each',max:1}])[0];assert.ok(mark?.choices&&Object.keys(mark.choices).length)
+  replayReader.resourceBase=base+replayReader.resourceBase;await mount(replayReader,mark.step,mark.choices)
+  await page.waitForFunction(()=>window.__audios.some(a=>/1080\.ogg/.test(a.src)&&a.currentTime>0&&!a.paused&&!a.error),null,{timeout:15000})
+  assert.ok(!replayReader.scene.stats.raw['map-event-call-page-state']);assert.ok(await page.locator('.gal-replay-btn').isEnabled())
+  console.log('PASS actual gallery EV160: import -> special card -> map transfer/call -> guarded marker choices -> native encrypted1080 voice playback')
+
  }
  console.log('Artifacts retained:',work)
 }finally{await browser?.close();server.kill('SIGTERM');await writeFile(path.join(work,'server.log'),logs.join(''))}

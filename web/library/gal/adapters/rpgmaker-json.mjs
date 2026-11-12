@@ -1,6 +1,6 @@
 import {prepareSkit} from './rpgmaker-skit.mjs'
 import { completeJsonSamples } from '../context-complete-json.mjs'
-import { eventEvidence } from './rpgmaker-plugins.mjs'
+import { eventEvidence, mapEventCall } from './rpgmaker-plugins.mjs'
 // RPG Maker MV/MZ event JSON -> gal-scene. Engine mechanics live here; each
 // game's naming, gallery/image matching and plugin overrides live in options.
 import { readFile, stat } from 'node:fs/promises'
@@ -75,27 +75,32 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   return ctx
 }
 
-function evidence(list, ctx, seen = new Set()) {
+function evidence(list, ctx, seen = new Set(), mapId = 0) {
   const pluginEvidence = eventEvidence(list)
   let text = pluginEvidence.text; const pictures = [...pluginEvidence.pictures], calls = new Set(pluginEvidence.calls)
   if (!Array.isArray(list)) return { text, pictures, calls }
-  if (ctx.evidenceCache.has(list)) return ctx.evidenceCache.get(list)
+  if (ctx.evidenceCache.get(list)?.has(mapId)) return ctx.evidenceCache.get(list).get(mapId)
   if (ctx.evidenceBusy.has(list)) return { text, pictures, calls }
   if (seen.size > 32) return { text, pictures, calls }
   ctx.evidenceBusy.add(list)
+  let activeMap=mapId
+  const merge=inner=>{text+=inner.text;pictures.push(...inner.pictures);for(const id of inner.calls)calls.add(id)}
   for (const c of list || []) {
+    if(c.code===201&&c.parameters?.[0]===0)activeMap=Number(c.parameters[1])
+    const mapCall=mapEventCall(c)
+    if(mapCall!==null){const key=`map:${activeMap}:${mapCall}`,target=ctx.maps.get(join(rootOf(ctx.options),'data',`Map${String(activeMap).padStart(3,'0')}.json`))?.events?.find(e=>e?.id===mapCall);if(!seen.has(key))for(const page of target?.pages||[])merge(evidence(page.list,ctx,new Set([...seen,key]),activeMap))}
     if (c.code === 401) text++
     if (c.code === 231) pictures.push(String(c.parameters?.[1] || ''))
     if (c.code === 355 || c.code === 655) for (const m of String(c.parameters?.[0] || '').matchAll(/\$gameScreen\.showPicture\(\s*\d+\s*,\s*["']([^"']+)["']/g)) pictures.push(m[1])
     if (c.code === 117) {
       const id = Number(c.parameters?.[0]); calls.add(id)
       if (seen.has(id)) continue
-      const inner = evidence(ctx.common[id]?.list, ctx, new Set([...seen, id]))
+      const inner = evidence(ctx.common[id]?.list, ctx, new Set([...seen, id]),activeMap)
       text += inner.text; pictures.push(...inner.pictures); for (const v of inner.calls) calls.add(v)
     }
   }
   const result = { text, pictures: [...new Set(pictures)], calls }
-  ctx.evidenceBusy.delete(list); ctx.evidenceCache.set(list, result)
+  ctx.evidenceBusy.delete(list);if(!ctx.evidenceCache.has(list))ctx.evidenceCache.set(list,new Map());ctx.evidenceCache.get(list).set(mapId,result)
   return result
 }
 
@@ -107,12 +112,12 @@ function buildCatalog(ctx) {
   if (o.catalog.maps) for (const [rel, map] of ctx.maps) {
     const id = Number(/Map(\d+)\.json$/i.exec(rel)?.[1]), title = ctx.mapInfo[id]?.name || `Map ${id}`, children = []
     for (const event of map.events.filter(Boolean)) for (const [pi, page] of (event.pages || []).entries()) {
-      const ev = evidence(page.list, ctx), titleEvent = event.name || `Event ${event.id}`
+      const ev = evidence(page.list, ctx, new Set(),id), titleEvent = event.name || `Event ${event.id}`
       if (ev.text < o.catalog.minText || skip?.test(titleEvent)) continue
       const node = { id: `map-${id}-event-${event.id}-page-${pi + 1}`, title: `${titleEvent}${event.pages.length > 1 ? ` · 页${pi + 1}` : ''}`, subtitle: `${ev.text} 文本行`, script: `${rel}::event-${event.id}-${pi + 1}` }
       children.push(node)
       if (ev.text >= o.special.minText && (mapMatch?.test(title) || special(titleEvent, ev))) {
-        const wrapper = o.special.deduplicateCalls && o.catalog.common && page.list.filter(c => c.code === 401).length <= 3 && [...ev.calls].some(id => {
+        const wrapper = !page.list.some(c=>mapEventCall(c)!==null) && o.special.deduplicateCalls && o.catalog.common && page.list.filter(c => c.code === 401).length <= 3 && [...ev.calls].some(id => {
           const target = ctx.common[id]
           return target && !skip?.test(target.name || '') && evidence(target.list, ctx).text >= Math.max(o.special.minText, o.catalog.minText)
         })
