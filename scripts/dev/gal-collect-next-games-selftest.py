@@ -9,7 +9,7 @@ for name in targets+decoys:
  (game/'Game.rgss3a').write_bytes(b'RGSSAD\0\3'+b'x'*200000)
  (game/'image.png').write_bytes(b'private image');(game/'save').mkdir();(game/'save'/'secret.json').write_text('{"private":true}')
 snapshot={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
-env={k:v for k,v in os.environ.items() if k not in ('GAL_COLLECT_TSK_LOG','GAL_COLLECT_RULES','GAL_COLLECT_ONLY','GAL_COLLECT_RULES_DEFAULT')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
+env={k:v for k,v in os.environ.items() if k not in ('GAL_COLLECT_TSK_LOG','GAL_COLLECT_RULES','GAL_COLLECT_ONLY','GAL_COLLECT_RULES_DEFAULT')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out),GAL_COLLECT_RULES='^new-games:next$')
 r=subprocess.run(['bash','scripts/dev/gal-collect-run.sh',str(root)],env=env,text=True,capture_output=True);assert r.returncode==0,r.stdout+r.stderr
 rows=(out/'games.tsv').read_text().splitlines()[1:];assert len(rows)==5,rows
 assert set(row.split('\t')[1] for row in rows)==set(targets),rows
