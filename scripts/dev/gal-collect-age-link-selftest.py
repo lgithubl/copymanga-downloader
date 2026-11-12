@@ -1,0 +1,14 @@
+"""AGE-only exact dependency collection; source untouched, stale offsets rejected."""
+import pathlib,tempfile,re,json,zlib,base64,hashlib,subprocess,os,tarfile
+src=pathlib.Path('scripts/dev/gal-collect-run.sh').read_text();match=re.search(r"AGE_LINK_PLAN = '([^']+)'",src);plan=json.loads(zlib.decompress(base64.b64decode(match[1])));assert list(plan)==['天結いラビリンスマイスター'];rows=plan['天結いラビリンスマイスター']['ranges'];assert len(rows)==25;assert sum(x['bytes']for x in rows)<12*1024*1024;assert all(x['source'].endswith('.ALF')and x['bytes']<=8*1024*1024 and x['offset']+x['bytes']<=x['sourceBytes'] for x in rows);assert any(x['logicalName']=='SN0000.BIN'and x['bytes']==100668 for x in rows)
+base=pathlib.Path(tempfile.mkdtemp(prefix='collect-age-link-'));root=base/'gal';root.mkdir();before={}
+for name in ['天結いラビリンスマイスター','Remastered','RJ01646655','RJ328940','RJ01271506','AI']:
+ d=root/name;d.mkdir();f=d/'source.bin';f.write_bytes(b'0123456789ABCDEF');before[f]=f.read_bytes();(d/'AGE.EXE').write_bytes(b'never execute or collect executable')
+fixture={'天結いラビリンスマイスター':{'guards':[dict(source='source.bin',offset=0,bytes=4,sha256=hashlib.sha256(b'0123').hexdigest())],'ranges':[dict(source='source.bin',sourceBytes=16,offset=4,bytes=6,artifact='__verify/payload.bin')]}}
+packed=base64.b64encode(zlib.compress(json.dumps(fixture).encode())).decode();script=base/'collector.sh';script.write_text(src[:match.start(1)]+packed+src[match.end(1):]);env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out));r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
+parts=list(out.glob('*.part-*'));assert len(parts)==1
+with tarfile.open(parts[0])as t:
+ names=t.getnames();assert not any(n.endswith('AGE.EXE')for n in names);report=json.load(t.extractfile(next(n for n in names if n.endswith('__verify/index.json'))));assert report['game']=='天結いラビリンスマイスター'and report['sourceReadOnly']and report['sampleBytes']==6;assert t.extractfile(next(n for n in names if n.endswith('payload.bin'))).read()==b'456789'
+assert all(p.read_bytes()==b for p,b in before.items());p=root/'天結いラビリンスマイスター'/'source.bin';p.write_bytes(b'changed-version!');env['GAL_COLLECT_OUT']=str(base/'rejected');r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode!=0 and 'refusing stale offsets' in r.stdout+r.stderr
+p.write_bytes(b'0123456789ABCDEFG');env['GAL_COLLECT_OUT']=str(base/'size-rejected');r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode!=0 and 'source size changed' in r.stdout+r.stderr
+print('PASS AGE-only default, 25 exact dependency ranges/11MiB, hash+size guards, no other games/EXE/runtime execution, source unchanged; retained:',base)

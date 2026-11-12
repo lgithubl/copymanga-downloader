@@ -10,7 +10,7 @@ base=pathlib.Path(tempfile.mkdtemp(prefix='collect-next-verify-'));root=base/'ga
 for label in plan:
  d=root/label;d.mkdir();p=d/'source.bin';b=b'0123456789ABCDEF';p.write_bytes(b);before[p]=b
  fixture[label]={'guards':[dict(source='source.bin',offset=0,bytes=4,sha256=hashlib.sha256(b[:4]).hexdigest())],'ranges':[dict(source='source.bin',sourceBytes=16,offset=4,bytes=6,artifact='__verify/payload.bin')]}
-script=base/'collector.sh';packed=base64.b64encode(zlib.compress(json.dumps(fixture).encode())).decode();script.write_text(src[:match.start(1)]+packed+src[match.end(1):]);env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out));r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
+script=base/'collector.sh';packed=base64.b64encode(zlib.compress(json.dumps(fixture).encode())).decode();script.write_text(src[:match.start(1)]+packed+src[match.end(1):]);env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_RULES='^new-games:next-verify$',GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out));r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
 parts=list(out.glob('*.part-*'));assert len(parts)==5
 for part in parts:
  with tarfile.open(part) as t:

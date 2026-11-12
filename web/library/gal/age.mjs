@@ -8,7 +8,7 @@ const ARITY={"1":0,"2":0,"3":1,"4":2,"5":0,"6":2,"7":1,"8":1,"9":0,"10":2,"11":1
 const sjis=b=>new TextDecoder('shift_jis',{fatal:true}).decode(b)
 function lzss(src,size){if(!Number.isInteger(size)||size<1||size>MAX)throw Error('AGE index output limit');const out=Buffer.alloc(size),ring=Buffer.alloc(4096);let p=0,o=0,r=4078,flags=0;const push=c=>{if(o>=size)throw Error('AGE LZSS output overrun');out[o++]=c;ring[r]=c;r=(r+1)&4095};while(p<src.length&&o<size){flags>>=1;if(!(flags&256))flags=src[p++]|0xff00;if(flags&1){if(p>=src.length)throw Error('AGE LZSS literal truncated');push(src[p++])}else{if(p+2>src.length)throw Error('AGE LZSS match truncated');const a=src[p++],b=src[p++],at=a|((b&240)<<4),n=(b&15)+3;for(let i=0;i<n;i++)push(ring[(at+i)&4095])}}if(o!==size||p!==src.length)throw Error('AGE index decompression length mismatch');return out}
 export function readAgeIndex(bytes,{archiveSizes={}}={}){
- if(bytes.length<320||bytes.length>MAX)throw Error('AGE index size invalid');const magic=bytes.toString('ascii',0,8),append=magic.startsWith('S4AC');if(!append&&!magic.startsWith('S4IC'))throw Error('Unsupported AGE index header');const at=append?0x114:0x134,size=bytes.readUInt32LE(at-8),copy=bytes.readUInt32LE(at-4),packed=bytes.readUInt32LE(at);if(size!==copy||at+4+packed!==bytes.length)throw Error('AGE index compressed bounds mismatch');const b=lzss(bytes.subarray(at+4),size);let p=0;const take=n=>{if(p+n>b.length)throw Error('AGE directory truncated');const v=b.subarray(p,p+n);p+=n;return v},u32=()=>take(4).readUInt32LE(),str=n=>{const raw=take(n),end=raw.indexOf(0);if(end<0)throw Error('AGE name missing terminator');return sjis(raw.subarray(0,end))},safe=name=>name&&!/[\\/\0]/.test(name)&&name!=='.'&&name!=='..',count=u32();if(count<1||count>64)throw Error('AGE archive count invalid');const archives=Array.from({length:count},()=>str(256));if(archives.some(a=>!safe(a)||!a.toLowerCase().endsWith('.alf')))throw Error('AGE archive name invalid');const n=u32();if(n>200000)throw Error('AGE entry count invalid');const entries=[];for(let i=0;i<n;i++){const name=str(64),arc=u32(),id=u32(),offset=u32(),size=u32();if(arc>=count)throw Error('AGE archive reference invalid');if(name==='@')continue;if(!safe(name))throw Error('AGE resource name invalid');const archive=archives[arc],limit=archiveSizes[archive]??archiveSizes[archive.toLowerCase()];if(limit!==undefined&&offset+size>limit)throw Error('AGE resource outside archive: '+name);entries.push({name,archive,id,offset,size})}return{format:'age-index/1',entries,archives,trailingBytes:b.length-p}
+ if(bytes.length<320||bytes.length>MAX)throw Error('AGE index size invalid');const magic=bytes.toString('ascii',0,8),append=magic.startsWith('S4AC');if(!append&&!magic.startsWith('S4IC'))throw Error('Unsupported AGE index header');const at=append?0x114:0x134,size=bytes.readUInt32LE(at-8),copy=bytes.readUInt32LE(at-4),packed=bytes.readUInt32LE(at);if(size!==copy||at+4+packed!==bytes.length)throw Error('AGE index compressed bounds mismatch');const b=lzss(bytes.subarray(at+4),size);let p=0;const take=n=>{if(p+n>b.length)throw Error('AGE directory truncated');const v=b.subarray(p,p+n);p+=n;return v},u32=()=>take(4).readUInt32LE(),str=n=>{const raw=take(n),end=raw.indexOf(0);if(end<0)throw Error('AGE name missing terminator');return sjis(raw.subarray(0,end))},safe=name=>name&&!/[\\/\0]/.test(name)&&name!=='.'&&name!=='..',count=u32();if(count<1||count>64)throw Error('AGE archive count invalid');const archives=Array.from({length:count},()=>str(256));if(archives.some(a=>!safe(a)||!a.toLowerCase().endsWith('.alf')))throw Error('AGE archive name invalid');const n=u32();if(n>200000)throw Error('AGE entry count invalid');const entries=[];for(let i=0;i<n;i++){const name=str(64),arc=u32(),id=u32(),offset=u32(),size=u32();if(arc>=count)throw Error('AGE archive reference invalid');if(name==='@')continue;if(!safe(name))throw Error('AGE resource name invalid');const archive=archives[arc],limit=archiveSizes[archive]??archiveSizes[archive.toLowerCase()];if(limit!==undefined&&offset+size>limit)throw Error('AGE resource outside archive: '+name);entries.push({ordinal:i,name,archive,id,offset,size})}const metadata=readAgeIndexMetadata(b,p);return{format:'age-index/1',entries,archives,metadata,trailingBytes:metadata?metadata.trailingBytes:b.length-p}
 }
 export function decodeAgeScript(bytes){
  if(bytes.length<60||bytes.length>MAX||!/^SYS4[0-9]{3} $/.test(bytes.toString('ascii',0,8)))throw Error('Unsupported AGE script header');if(bytes.readUInt32LE(32)!==28)throw Error('AGE script subheader size mismatch');const tables=[36,44,52].map(at=>({length:bytes.readUInt32LE(at),offset:bytes.readUInt32LE(at+4)}));if(tables.some(t=>60+t.offset*4+t.length*4>bytes.length))throw Error('AGE footer table outside file');let end=60+4*Math.min(...tables.map(t=>t.offset)),p=60;const instructions=[];if(end>bytes.length)throw Error('AGE script table range invalid');const u32=()=>{if(p+4>bytes.length)throw Error('AGE instruction truncated');const v=bytes.readUInt32LE(p);p+=4;return v};while(p<end){const offset=(p-60)/4,opcode=u32(),n=ARITY[opcode];if(n===undefined)throw Error('Unknown AGE opcode '+opcode.toString(16)+' at '+offset);const args=[];for(let i=0;i<n;i++){const type=u32(),value=u32(),a={type,value};if(!((type>=0&&type<=14)||[0x8003,0x8005,0x8009,0x800b].includes(type)))throw Error('AGE operand type invalid');if(type===2){const at=60+value*4;if(at<60||at>=bytes.length)throw Error('AGE string offset invalid');end=Math.min(end,at);const stop=bytes.indexOf(255,at);if(stop<at||stop-at>65536)throw Error('AGE string unterminated');a.text=sjis(Buffer.from(bytes.subarray(at,stop)).map(x=>x^255))}if(opcode===0x64&&i===1){const at=60+value*4;if(at+4>bytes.length)throw Error('AGE local array offset invalid');end=Math.min(end,at);if(at+4+bytes.readUInt32LE(at)*4>bytes.length)throw Error('AGE local array truncated')}args.push(a)}if(p>end)throw Error('AGE instruction crosses data boundary');instructions.push({offset,opcode,args});if(instructions.length>200000)throw Error('AGE instruction count limit')}if(p!==end)throw Error('AGE code boundary mismatch');return{format:'age-script/1',tables,instructions}
@@ -29,4 +29,88 @@ export function decodeAgeImage(bytes){
  if(end!==bytes.length)throw Error('AGE AGF trailing data unsupported')
  const rgba=Buffer.alloc(width*height*4);for(let y=0;y<height;y++)for(let x=0;x<width;x++){const row=(height-y-1)*stride,src=palette?(bpp===8?pixels[row+x]:(pixels[row+(x>>1)]>>(x%2?0:4))&15)*4:row+x*(bpp/8),data=palette||pixels,dst=(y*width+x)*4;rgba[dst]=data[src+2];rgba[dst+1]=data[src+1];rgba[dst+2]=data[src];rgba[dst+3]=alpha?alpha[y*width+x]:255}
  return{width,height,rgba}
+}
+
+
+// SYS4INI tail: number table followed by bounded Shift-JIS key/value settings.
+// Keep unknown trailing bytes visible instead of claiming the entire format is known.
+function readAgeIndexMetadata(bytes,start){
+ if(start===bytes.length)return null
+ let p=start
+ const u32=()=>{if(p+4>bytes.length)throw Error('AGE metadata truncated');const n=bytes.readUInt32LE(p);p+=4;return n}
+ const size=u32(),flags=u32(),count=u32()
+ if(count>65536||size!==8+count*4||p+count*4>bytes.length)throw Error('AGE metadata number table bounds invalid')
+ const numbers=Array.from({length:count},u32),settingsBytes=u32(),settingsCount=u32(),end=p+settingsBytes
+ if(settingsCount>4096||end>bytes.length)throw Error('AGE metadata settings bounds invalid')
+ const str=()=>{const z=bytes.indexOf(0,p);if(z<0||z>=end)throw Error('AGE metadata string truncated');const s=sjis(bytes.subarray(p,z));p=z+1;return s}
+ const settings=Array.from({length:settingsCount},()=>({name:str(),value:str()}))
+ if(p!==end)throw Error('AGE metadata settings size mismatch')
+ return{flags,numbers,settings,trailingBytes:bytes.length-p}
+}
+
+// Targets are word offsets relative to the SYS4 code start. A0 is a two-way
+// branch (condition, true target, false target); -1 means fall through.
+export function ageControlFlow(program){
+ const instructions=program.instructions
+ if(!Array.isArray(instructions)||!instructions.length)throw Error('AGE empty instruction stream')
+ const offsets=new Set();let previous=-1
+ for(const i of instructions){if(!Number.isInteger(i.offset)||i.offset<=previous)throw Error('AGE instruction offsets invalid');previous=i.offset;offsets.add(i.offset)}
+ const unresolved=[]
+ const nodes=instructions.map((instruction,index)=>{
+  const {offset,opcode,args}=instruction,next=instructions[index+1]?.offset??null,node={offset,opcode,next}
+  const target=(a,fallthrough=false)=>{if(a?.type!==0){unresolved.push({offset,opcode,operand:a});return{operand:a}}if(a.value===0xffffffff&&fallthrough)return next;if(!offsets.has(a.value))throw Error('AGE target is not an instruction boundary: '+offset+' -> '+a.value);return a.value}
+  if(opcode===0xa0){node.test=args[0];node.yes=target(args[1],true);node.no=target(args[2],true);delete node.next}
+  else if(opcode===0x8c)node.next=target(args[0])
+  else if(opcode===0x8f)node.call=target(args[0])
+  else if(opcode===3)node.script=args[0]
+  else if([2,5,9].includes(opcode)){node.next=null;node.end=opcode===5?'return':'exit'}
+  return node
+ })
+ return{entry:nodes[0].offset,nodes,unresolved}
+}
+
+// Pure literal initialization only. Never skip an unknown operation and claim
+// the resulting globals are valid for playback.
+export function ageLiteralInitializer(program){
+ const integers={},strings={};let ended=false
+ for(const i of program.instructions){if([2,5,9].includes(i.opcode)){ended=true;break}const [dst,src]=i.args
+  if(i.opcode===0x55&&dst?.type===3&&src?.type===0)integers[dst.value]=src.value|0
+  else if(i.opcode===0x192&&dst?.type===5&&src?.type===2&&typeof src.text==='string')strings[dst.value]=src.text
+  else if(![0x1a7,0x1a8].includes(i.opcode))throw Error('AGE initializer needs instruction semantics: '+i.opcode.toString(16)+' at '+i.offset)
+ }
+ if(!ended)throw Error('AGE initializer has no exit')
+ return{integers,strings}
+}
+
+// Bounded data-only trace for confirmed scalar/control operations. Unknown
+// instructions stop the trace; this is not a registered playback adapter.
+export function traceAgeProgram(program,{integers={},strings={},maxSteps=100000,maxStack=64,entry}={}){
+ const flow=ageControlFlow(program),nodes=new Map(flow.nodes.map(n=>[n.offset,n])),code=new Map(program.instructions.map(i=>[i.offset,i])),sequential=new Map(program.instructions.map((i,k)=>[i.offset,program.instructions[k+1]?.offset??null])),memory=new Map(),aliases=new Map(),stack=[],trace=[]
+ for(const [key,value]of Object.entries(integers))memory.set('3:'+key,Number(value)|0)
+ for(const [key,value]of Object.entries(strings))memory.set('5:'+key,String(value))
+ const key=a=>{if(!a||![3,5,9,11,12].includes(a.type))throw Error('AGE operand storage unsupported');if(a.type===12){const ref=aliases.get('12:'+a.value);if(!ref)throw Error('AGE pointer is not initialized');return ref}return a.type+':'+a.value}
+ const read=a=>a.type===0?a.value|0:a.type===2?a.text:memory.get(key(a))??([5,11].includes(a.type)?'':0)
+ const write=(a,value)=>{const k=key(a);if(memory.size>=250000&&!memory.has(k))throw Error('AGE memory slot limit');if([5,11].includes(a.type)&&String(value).length>1048576)throw Error('AGE string size limit');memory.set(k,[5,11].includes(a.type)?String(value):Number(value)|0)}
+ const destination=value=>{if(!Number.isInteger(value)||!code.has(value))throw Error('AGE computed target is not an instruction boundary: '+value);return value}
+ let pc=destination(entry??flow.entry),status='limit',stopped=null
+ const operations={0x50:(a,b)=>a+b,0x51:(a,b)=>a-b,0x52:(a,b)=>Math.imul(a,b),0x53:(a,b)=>{if(!b)throw Error('AGE division by zero');return Math.trunc(a/b)},0x54:(a,b)=>{if(!b)throw Error('AGE modulo by zero');return a%b},0x56:(a,b)=>a&b,0x57:(a,b)=>a|b,0x58:(a,b)=>a>>b,0x59:(a,b)=>a<<b,0x5a:(a,b)=>Number(a===b),0x5b:(a,b)=>Number(a!==b),0x5c:(a,b)=>Number(a<b),0x5d:(a,b)=>Number(a<=b),0x5e:(a,b)=>Number(a>b),0x5f:(a,b)=>Number(a>=b)}
+ if(!Number.isInteger(maxSteps)||maxSteps<1||maxSteps>1000000||!Number.isInteger(maxStack)||maxStack<1||maxStack>256)throw Error('AGE trace budget invalid')
+ for(let step=0;step<maxSteps;step++){
+  const i=code.get(pc),node=nodes.get(pc),a=i.args;trace.push({offset:pc,opcode:i.opcode});let next=node.next
+  if(operations[i.opcode])write(a[0],operations[i.opcode](read(a[1]),read(a[2])))
+  else if([0x55,0x192].includes(i.opcode))write(a[0],read(a[1]))
+  else if(i.opcode===0x193)write(a[0],String(read(a[1]))+String(read(a[2])))
+  else if(i.opcode===0xa0){const target=read(a[0])?a[1]:a[2];next=target.value===0xffffffff&&target.type===0?sequential.get(pc):destination(read(target))}
+  else if(i.opcode===0x8c)next=destination(read(a[0]))
+  else if(i.opcode===0x8f){if(stack.length>=maxStack)throw Error('AGE call stack limit');stack.push(node.next);next=destination(read(a[0]))}
+  else if(i.opcode===5){if(!stack.length){status='returned';break}next=stack.pop()}
+  else if([2,9].includes(i.opcode)){status='exited';break}
+  else if([0x61,0x12c].includes(i.opcode)){
+   if(a[0].type!==12||a[1].type!==3){status='unsupported';stopped=i;break}
+   const address=a[1].value+(i.opcode===0x61?read(a[2]):read(a[2])*read(a[3])+read(a[4]));if(!Number.isInteger(address)||address<0||address>=0x1000000)throw Error('AGE array address out of range');aliases.set('12:'+a[0].value,'3:'+address)
+  }
+  else if(![0x1a7,0x1a8].includes(i.opcode)){status='unsupported';stopped=i;break}
+  if(next===null||next===undefined){status='fell-through';break}pc=destination(next)
+ }
+ return{status,stopped:stopped?{offset:stopped.offset,opcode:stopped.opcode}:null,trace,integers:Object.fromEntries([...memory].filter(([k])=>k.startsWith('3:')).map(([k,v])=>[k.slice(2),v])),strings:Object.fromEntries([...memory].filter(([k])=>k.startsWith('5:')).map(([k,v])=>[k.slice(2),v]))}
 }
