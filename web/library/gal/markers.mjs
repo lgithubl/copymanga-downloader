@@ -62,3 +62,23 @@ export function computeMarkers(scene, rules, { includeEndpoints = false } = {}) 
   }
   return [...found].sort((a, b) => a[0] - b[0]).slice(0, TOTAL_LIMIT).map(([step, fields]) => ({ step, ...fields, ratio: Math.round((step / Math.max(1, steps.length - 1)) * 1000) / 1000 }))
 }
+
+// Shared by every adapter. Explicit game markers win; otherwise use actual CG
+// commands, then reachable dialogue checkpoints. The card visibility switch is
+// a reader preference and does not depend on the adapter's layout rules.
+export function computeSceneMarkers(scene,rules=[],options={}){
+  const explicit=computeMarkers(scene,rules,options);if(explicit.length)return explicit
+  const steps=scene?.steps||[];if(steps.length<3)return[]
+  const cg=/(?:^|[/_])(?:(?:ev|cg|hcg|event)[0-9_/-]|scene[0-9a-z_/-])/i
+  const candidates=[]
+  steps.forEach((step,i)=>{if(i===0||i===steps.length-1)return;step.commands?.forEach((c,k)=>{if(c.cg||['live2d','movie'].includes(c.op)||['bg','overlay'].includes(c.op)&&cg.test(c.src||''))candidates.push({step:i,command:k,label:'CG 开始'})})})
+  const reachable=targets=>{
+    const histories=choiceHistoriesForCommands(scene,targets),found=new Map()
+    for(const t of targets){if(found.has(t.step)||found.size>=6)continue;const c=steps[t.step].commands[t.command],choices=histories.get(`${t.step}:${t.command}`);if(c.when?.length&&!choices)continue;found.set(t.step,{step:t.step,label:t.label,ratio:Math.round(t.step/(steps.length-1)*1000)/1000,...(choices&&Object.keys(choices).length?{choices}:{})})}
+    return[...found.values()].sort((a,b)=>a.step-b.step)
+  }
+  const actual=reachable(candidates);if(actual.length)return actual.map((m,i)=>({...m,label:actual.length>1?`CG 开始 ${i+1}`:m.label}))
+  const text=[];steps.forEach((step,i)=>{const k=step.commands?.findIndex(c=>c.op==='text');if(k>=0&&i>0&&i<steps.length-1)text.push({step:i,command:k})})
+  if(!text.length)return[]
+  return reachable([.25,.5,.75].map(p=>({...text[Math.min(text.length-1,Math.floor((text.length-1)*p))],label:`剧情 ${Math.round(p*100)}%`})))
+}

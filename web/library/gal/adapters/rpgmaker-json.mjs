@@ -95,6 +95,7 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
     if(mapCall!==null){const key=`map:${activeMap}:${mapCall}`,target=ctx.maps.get(join(rootOf(ctx.options),'data',`Map${String(activeMap).padStart(3,'0')}.json`))?.events?.find(e=>e?.id===mapCall);if(!seen.has(key))for(const page of target?.pages||[])merge(evidence(page.list,ctx,new Set([...seen,key]),activeMap))}
     if (c.code === 401) text++
     if (c.code === 231) pictures.push(String(c.parameters?.[1] || ''))
+    if(c.code===284&&c.parameters?.[0])pictures.push('img/parallaxes/'+String(c.parameters[0])+'.png')
     if (c.code === 355 || c.code === 655) for (const m of String(c.parameters?.[0] || '').matchAll(/\$gameScreen\.showPicture\(\s*\d+\s*,\s*["']([^"']+)["']/g)) pictures.push(m[1])
     if (c.code === 117) {
       const id = Number(c.parameters?.[0]); calls.add(id)

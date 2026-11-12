@@ -3,7 +3,7 @@ import {createOptionsReader,safeRegex} from './options-merge.mjs'
 import {createIndexResolver} from '../resolve.mjs'
 import {compileReadGraph} from '../read-graph.mjs'
 export const ADAPTER_ID='edo::lua'
-export const DEFAULT_OPTIONS={resDir:'arc/res',scriptDir:'arc/script',stage:[1920,1080],coordinates:'top-left',maxPasses:4,maxCommands:150000,initialVariables:{IS_GALLERY:1,IS_BEGIN_ADV_ENDLIST:0},cgMatch:'(?:^|/)(?:ev-|ev_|eventcg/)',specialMatch:'(?:H-|H_|アダルト|エンディング)',maxWait:5}
+export const DEFAULT_OPTIONS={resDir:'arc/res',scriptDir:'arc/script',stage:[1920,1080],coordinates:'top-left',branchFlags:'',maxPasses:4,maxCommands:150000,initialVariables:{IS_GALLERY:1,IS_BEGIN_ADV_ENDLIST:0},cgMatch:'(?:^|/)(?:ev-|ev_|eventcg/)',specialMatch:'(?:H-|H_|アダルト|エンディング)',maxWait:5}
 const options=createOptionsReader(DEFAULT_OPTIONS)
 export const sniff=text=>/^\s*\{\s*"format"\s*:\s*"edo-lua\/1"/.test(String(text))
 export const contextDirs=o=>[options(o).resDir,options(o).scriptDir]
@@ -20,7 +20,10 @@ const value=(x)=>typeof x==='object'&&x?.expr?x.expr:x
 const data=text=>{try{const d=JSON.parse(text);return d.format==='edo-lua/1'?d:null}catch{return null}}
 export function prepare({options:o,files=[],texts={},toResourcePath,resourceResolve,mediaDir,_complete=false}){
  if(mediaDir&&!_complete)return completeJsonSamples({texts,files,mediaDir},rel=>/\.edo$/i.test(rel)).then(texts=>prepare({options:o,files,texts,toResourcePath,resourceResolve,mediaDir,_complete:true}))
- const cfg=options(o),resolver=createIndexResolver({index:new Set(files.map(x=>toResourcePath?toResourcePath(x):x)),cfg:{...resourceResolve,caseInsensitive:true}}),all=[],special=[],sp=safeRegex(cfg.specialMatch),cg=safeRegex(cfg.cgMatch)
+ const cfg=options(o),nativeDefaults={}
+ for(const t of Object.values(texts)){const d=data(t);if(!d||!/^src\/sys\/(?:global_config|global2)\.txt$/i.test(d.name))continue;for(const line of d.text.split(/\r?\n/)){const m=/^\s*(\w+)\s*=\s*(-?\d+(?:\.\d+)?|true|false|"[^"\r\n]*"|'[^'\r\n]*')\s*(?:--.*)?$/.exec(line);if(m){const v=luaArgs(m[2])[0];if(['number','string','boolean'].includes(typeof v))nativeDefaults[m[1]]=v}}}
+ cfg.initialVariables={...nativeDefaults,...cfg.initialVariables}
+ const resolver=createIndexResolver({index:new Set(files.map(x=>toResourcePath?toResourcePath(x):x)),cfg:{...resourceResolve,caseInsensitive:true}}),all=[],special=[],sp=safeRegex(cfg.specialMatch),cg=safeRegex(cfg.cgMatch)
  for(const[rel,t]of Object.entries(texts)){const d=data(t);if(!d||!/^(?:src\/game\/|!app[^/]+\/)/i.test(d.name)||!/(?:^|\n)\s*text\(/.test(d.text)||/(?:^|\/)!?99_test/i.test(d.name))continue;const node={id:rel,script:rel,title:d.name.split('/').at(-1).replace(/\.txt$/i,'')};all.push(node);if(sp?.test(node.title)||[...d.text.matchAll(/"([^"\n]+\.png)"/g)].some(m=>cg?.test(m[1])))special.push(node)}
  all.sort((a,b)=>a.title.localeCompare(b.title,'ja',{numeric:true}));special.sort((a,b)=>a.title.localeCompare(b.title,'ja',{numeric:true}));return{cfg,resolver,hasIndex:files.length>0,catalogTree:all.length?{children:[...(special.length?[{id:'special',title:'特殊场景',children:special}]:[]),{id:'story',title:'剧情',children:all}]}:null}
 }
@@ -59,7 +62,7 @@ export function parse(text,ctx={},meta={}){
   m=/^(?:local\s+)?([\w]+)\s*=\s*([\s\S]+)$/.exec(line);if(m){const v=luaArgs(m[2])[0];if(v===null||['string','number','boolean'].includes(typeof v))n.commands.push({op:'set',var:ensure(m[1]),value:v??0});else{const sum=/^(\w+)\s*([+-])\s*(\d+)$/.exec(m[2]);if(sum&&sum[1]===m[1])n.commands.push({op:'set',var:ensure(m[1]),calc:sum[2]==='+'?'add':'sub',value:Number(sum[3])});else raw(n,'assignment',line)}continue}
   m=/^([\w]+)\s*\(([\s\S]*)\)\s*;?$/.exec(line);if(!m){raw(n,'lua-unhandled',line);continue}
   const fn=m[1],args=luaArgs(m[2]),arg=k=>value(args[k]),num=(k,def=0)=>Number.isFinite(Number(arg(k)))?Number(arg(k)):def
-  if(['text','textl','textr'].includes(fn)){if(fn!=='text')n.commands.push({op:'speaker',segments:fn==='textl'?[{var:'edo:lineName'}]:[{text:'我'}]},{op:'ui',visible:true});if(typeof args[0]!=='string'){raw(n,'dynamic-text',m[2]);continue}n.commands.push({op:'text',segments:[{text:args[0]}]});n.endStep=true;stats.messages++}
+  if(['text','textl','textr'].includes(fn)){if(fn!=='text')n.commands.push({op:'speaker',segments:fn==='textl'?[{var:'edo:lineName'}]:[{text:'我'}]});if(typeof args[0]!=='string'){raw(n,'dynamic-text',m[2]);continue}n.commands.push({op:'ui',visible:true},{op:'text',segments:[{text:args[0]}]});n.endStep=true;stats.messages++}
   else if(fn==='seticon'||fn==='setnoicon')n.commands.push({op:'set',var:'edo:lineName',value:fn==='seticon'&&typeof args[0]==='string'?args[0]:'对方'})
   else if(fn==='setname')n.commands.push({op:'speaker',segments:typeof args[0]==='string'?[{text:args[0]}]:[]})
   else if(fn==='noname')n.commands.push({op:'speaker',segments:[]})
@@ -89,6 +92,12 @@ export function parse(text,ctx={},meta={}){
   else raw(n,fn,m[2])
  }
  for(let i=0;i<nodes.length;i++){const n=nodes[i];if(n.nextLabel){if(labels.has(n.nextLabel))n.next=labels.get(n.nextLabel);else{raw(n,'label-missing',n.nextLabel);n.next=-1}}if(n.yesLabel){if(labels.has(n.yesLabel))n.yes=labels.get(n.yesLabel);else{raw(n,'label-missing',n.yesLabel);n.yes=-1}}if(n.test){n.yes??=i+1;n.no??=i+1}for(const key of['next','yes','no'])if(n[key]>=nodes.length)n[key]=-1}
+ const branchFlags=safeRegex(o.branchFlags)
+ if(branchFlags)for(const n of nodes){const flag=n.test?.var?.replace(/^edo:/,''),t=n.test;if(!flag||!branchFlags.test(flag)||!stats.externalVariables.some(v=>v.replace(/\s/g,'')===flag)||!/^\s*(?:if|elseif)\b/.test(lines[n.source]||'')||![0,1].includes(t.value))continue
+  const matches=v=>t.op==='=='||t.op==='==='?v===t.value:t.op==='!='||t.op==='!=='?v!==t.value:t.op==='>'?v>t.value:t.op==='<'?v<t.value:t.op==='>='?v>=t.value:t.op==='<='?v<=t.value:false,yes=[0,1].find(matches),no=[0,1].find(v=>!matches(v));if(yes===undefined||no===undefined)continue
+  const seen='edo:branch-seen:'+flag,offer='edo:branch-offer:'+n.source,key='edo:branch-choice:'+n.source;initial[seen]??=0;initial[offer]=0
+  n.commands.unshift({op:'set',var:offer,value:0},{op:'set',var:offer,value:1,when:[{var:seen,op:'==',value:0}]},{op:'choice',var:key,when:[{var:offer,op:'==',value:1}],options:[{value:1,segments:[{text:'查看分支一'}]},{value:2,segments:[{text:'查看分支二'}]}]},{op:'set',var:t.var,value:yes,when:[{var:offer,op:'==',value:1},{var:key,op:'==',value:1}]},{op:'set',var:t.var,value:no,when:[{var:offer,op:'==',value:1},{var:key,op:'==',value:2}]},{op:'set',var:seen,value:1,when:[{var:offer,op:'==',value:1}]});n.endStep=true;stats.choices++
+ }
  const result=compileReadGraph(nodes,{initial,maxPasses:o.maxPasses,maxCommands:o.maxCommands,stats});return result
 }
 export const edoLuaAdapter={id:ADAPTER_ID,label:'Edoire Lua 剧情',sniff,parse,prepare,contextDirs,contextTextFilter,contextWalkLimit,contextSampleLimit,catalog}

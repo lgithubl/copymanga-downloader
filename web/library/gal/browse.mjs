@@ -37,7 +37,7 @@ import { createThumbEngine, invalidateThumbCaches } from './thumbs.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { collectFallbackImages } from './fallback-thumbs.mjs'
-import { computeMarkers } from './markers.mjs'
+import { computeSceneMarkers as computeMarkers } from './markers.mjs'
 import { compileSafeRegex } from './voice.mjs'
 import { pickRenderSteps } from '../../static/gal-thumb-pick.js'
 export const RENDER_THUMB_VERSION = 'r2'   // 渲染缩略图的版本：渲染逻辑变了就加一，服务器缓存跟着换
@@ -920,8 +920,8 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
       for (let k = ruleHit || !renderKey ? 0 : 1; k < n; k++) innerRenders.push({ key: keyOf(k), variant: k })   // 规则没给图时第 0 个就是 renderKey（缓存 key 和以前一样）
     }
     const shownThumbs = filmRenders.length ? [] : thumbs   // 有胶片渲染图时，兜底的灰底图不要
-    const markers = scene && config.sceneMarkers.length ? computeMarkers(scene, config.sceneMarkers.map((rule) => ({ ...rule, re: rule.match ? new RegExp(rule.match, 'i') : null }))) : []
-    const viewMarkers = scene && config.sceneMarkers.length ? computeMarkers(scene, config.sceneMarkers.map(rule => ({ ...rule, re: rule.match ? new RegExp(rule.match, 'i') : null })), { includeEndpoints: true }) : []
+    const markers = scene ? computeMarkers(scene, config.sceneMarkers.map((rule) => ({ ...rule, re: rule.match ? new RegExp(rule.match, 'i') : null }))) : []
+    const viewMarkers = scene ? computeMarkers(scene, config.sceneMarkers.map(rule => ({ ...rule, re: rule.match ? new RegExp(rule.match, 'i') : null })), { includeEndpoints: true }) : []
     const result = { adapterId, renderKey, filmRenders, viewMarkers, ...(markers.length ? { markers } : {}), ...(innerRenders.length ? { innerRenders, ...(ruleHit ? { ruleCover: true } : {}) } : {}), thumb: shownThumbs[0] || '', thumbs: shownThumbs, excerpt, hasMovie, badge: indexed?.badge || '', thumbWhy: shownThumbs.length || filmRenders.length ? [] : why, issues }
     cacheSet(scriptInfoCache, key, result, 30000)
     return result

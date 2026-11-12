@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.59.0'
+import { findPackedRpg } from './evb.mjs?v=2.60.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -78,6 +78,7 @@ export const ADAPTER_RULES = {
     1080
   ],
   "coordinates": "top-left",
+  "branchFlags": "",
   "maxPasses": 4,
   "maxCommands": 150000,
   "initialVariables": {
@@ -1769,7 +1770,7 @@ export const LAYOUTS = {
  "krkr::twiv":{
   "extends": "krkr",
   "title": "ツヴァイトリガー",
-  "autoOrder": 139.75,
+  "autoOrder": null,
   "scriptArchive": "data.xp3",
   "bases": [
     ""
@@ -1873,6 +1874,7 @@ export const LAYOUTS = {
     "pageSize": 100
   }
 },
+  'krkr::zweitrigger': { extends:'krkr::twiv', title:'ツヴァイトリガー' },
   edo:{
   "title": "Edoire / シロクロ",
   "kind": "edo",
@@ -2008,11 +2010,12 @@ export const LAYOUTS = {
     extends:'edo', title:'闇夜のPARENTE 幻燐の姫将軍Remastered',
     anchors:['ver00d0.arc','ver00d3.arc'],
     bases:['Archives'], autoOrder:137.59, archiveName:'ver00d0.arc',
-    ruleOverrides:{'edo::lua':{coordinates:'canvas',stage:[1600,900],cgMatch:'(?:^|/)(?:ev[0-9]|\\$[0-9]\\$ev)',specialMatch:'^$'}},
+    ruleOverrides:{'edo::lua':{coordinates:'canvas',stage:[1600,900],branchFlags:'^AdvG\\[\\d+\\]$',cgMatch:'(?:^|/)(?:ev[0-9]|\\$[0-9]\\$ev)',specialMatch:'^$'}},
     engine:{"classify":[],"resourceResolve":{},"limits":{"walkFiles":800000,"sampleFiles":20000,"sampleBytes":262144,"scriptBytes":16777216},"containers":{"enabled":true,"dir":"arc","scan":[".","Append"],"format":"edo","mode":"hybrid","flat":true,"scriptDecoder":"edo-lua","scriptExt":"edo","rules":[{"match":"^(?:Append/)?ver[0-9a-z]+\\.arc$","kinds":["script","res"],"exclude":["(?:^|/)!?99_test"]}],"maxEntries":200000,"maxTotalMB":8192}},
     config:{"scriptExtensions":["edo"],"namesFiles":[],"thumbsDirs":[],"hiddenDirs":[],"labels":{},"merge":[],"views":[],"groups":[],"dirThumbs":[],"scriptThumbs":[],"scriptIndex":[],"thumbFallback":{"prefer":["cg","stand","bg"]},"sceneMarkers":[{"label":"CG 开始","kind":"cmd","op":"overlay","match":"(?:^|/)(?:ev[0-9]|\\$[0-9]\\$ev)","pick":"each","max":6}],"pageSize":100},
     notes:['Edoire Remastered：UTF-8/UTF-16文本，追加包资源按原文件名解析；原生画布锚点与位置和シロクロ分开配置。']
   },
+  'edo::Remastered': { extends:'edo::parente', title:'Remastered' },
   rpgmaker: {
     "title": "RPG Maker MV/MZ",
     "kind": "rpgmaker",
@@ -3404,15 +3407,7 @@ export async function generateTags(ctx) {
       scope.gameId = game.id   // 布局按这个 id 解析（resolveLayout 会落到家族项，再叠上选项 layouts 里这个游戏 / 这个家族的覆盖）
       logs.push(`game.id「${game.id}」不在布局表里，按家族「${handler.id}」（${handler.family}*）处理${(options.layouts || {})[game.id] ? '，叠上选项 layouts 里这个游戏的覆盖' : ''}`)
     }
-    // A custom game id identifies the user's entry, not its archive variant.
-    // Check concrete layouts in this family before its generic archive names.
-    if (viaFamily && !Object.prototype.hasOwnProperty.call(options.layouts || {}, game.id)) {
-      for (const candidate of handlers.filter(g => g.id.includes('::') && g.family && game.id.startsWith(g.family) && g.detector === handler.detector && g.autoOrder !== null).sort((a,b) => a.autoOrder-b.autoOrder)) {
-        found = await candidate.detect(scopeOf(candidate, false))
-        if (found) { logs.push(`按实际档案选择布局 ${candidate.id}，保留用户 game.id「${game.id}」`); found.id = game.id; break }
-      }
-    }
-    if (!found) found = await handler.detect(scope)
+    found = await handler.detect(scope)
     if (!found && handler.detector === 'uviewer') found = genericLayout()   // 探测不到结构时 UViewer 系退回通用配置
     if (!found) {
       logs.push(`config.game.id 是「${game.id}」，但目录里没认出它的结构：不改任何配置（可以用 overrides 指定路径，或检查 rootDir）`)
@@ -4331,8 +4326,13 @@ async function xp3IsHxv4(file) {
 }
 async function detectKrkr(scope) {
   const { media, declared, logs } = scope
-  const loc = await locateGame(scope, scope.gameId || scope.id)
+  let loc = await locateGame(scope, scope.gameId || scope.id)
   if (!loc) return null
+  let repairedLegacy = false
+  if(loc.entry.scriptArchive==='data.xp3' && await xp3IsHxv4(path.join(media,...splitRel(join(loc.base,'scn.xp3'))))){
+    logs.push('发现原版 scn.xp3；撤回误命中的ツヴァイトリガー布局，恢复 KiriKiri 家族脚本规则')
+    loc=await locateGame({...scope,gameId:undefined},'krkr');if(!loc)return null;repairedLegacy=true
+  }
   const { entry, base } = loc
   if (!declared && !(await markersOk(media, entry, base, declared))) return null
   const scn = path.join(media, ...splitRel(join(base, entry.scriptArchive||'scn.xp3')))
@@ -4342,7 +4342,7 @@ async function detectKrkr(scope) {
   if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
   const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
   const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
-  found.id = scope.gameId || (entry.scriptArchive==='data.xp3'?'krkr::twiv':`krkr::${slug || 'game'}`)
+  found.id = repairedLegacy ? `krkr::${slug || 'game'}` : scope.gameId || (declared&&scope.id.startsWith('krkr::')?scope.id:entry.scriptArchive==='data.xp3'?'krkr::twiv':`krkr::${slug || 'game'}`)
   found.kind = entry.kind || 'krkr'
   const xp3s = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.xp3$/i.test(n))
   logs.push(`KiriKiri Z 游戏根：${base || '.'}；${xp3s.length} 个 xp3（${xp3s.slice(0, 6).join(' / ')}）；game.id：${found.id}`)

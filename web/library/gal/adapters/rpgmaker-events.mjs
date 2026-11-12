@@ -303,6 +303,7 @@ export function compileRpgEvents(list, ctx, meta) {
       if (c.code === 231) { picture(p); continue }
       if (c.code === 232) { picture(p, true); continue }
       if (c.code === 235) { emit({op:'set',var:`rpg:picture:${Number(p[0])}`,value:0});emit({op:'rpgText',slot:`rpg-picture-${Number(p[0])}`,visible:false}); emit({ op: 'overlayOff', slot: `rpg-picture-${Number(p[0])}` }); pictures.delete(Number(p[0])); continue }
+      if(c.code===284){const src=resource('img/parallaxes',p[0]);emit(src?{op:'bg',src,...(cgMatch?.test(src)?{cg:true}:{})}:{op:'bgoff'});if(p[1]||p[2])raw('parallax-scroll-static-snapshot',p);continue}
       if (c.code === 241 || c.code === 245 || c.code === 249 || c.code === 250) { audio(({241:'bgm',245:'bgse',249:'me',250:'se'})[c.code], p[0]); continue }
       if (c.code === 242) { emit({ op: 'bgmStop', fade: Number(p[0] || 0) }); continue }
       if (c.code === 246) { emit({ op: 'bgvoiceOff',slot:`rpg-bgs-${bgsLine}` }); continue }
