@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.61 Twi动态CG索引/小脚本、Remastered sc0561完整叠层图、两RJ全地图事件投影与语音/DLC映射；不重采天結已收到的25份数据。
 # 1.60 默认仅采 RJ01271506 的 TemplateEvent 配置指定的8张模板地图（约5MiB），源只读。
 # 1.59 仅补国度30_8021及引用图、RJ01271506指定剧情地图/立绘、RJ328940远景CG、Remastered三张指定图；不重采其他G/运行时。
 # 1.58 仅国度00_1250/该场景背景、シロクロ指定立绘与预制体、RJ328940目标地图；只读有界采样，不重采AGE/运行时。
@@ -80,10 +81,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.60"
+VERSION="1.61"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:mz-templates$'
+ROUND_RULES='^new-games:scene-audit$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1902,13 +1903,235 @@ def new_game_remaining_files(items,label):
     for item in payload:yield item
     yield '__remaining/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
+SCENE_AUDIT_PLAN = 'eJy1lE1u2zAQRq8SaN1GM5zhkOyuPUAX3RZBwF/HgB0DkhI0CHz3Uk4bSLWapo0K0ABN0Z/fEznz2HzJe98Pucup+XDx2GzufJf6Ov362PSHuy7mOm8+dvFme5/79j53AAkufRebdxfNoZQ+D3UHgiEjmhzU1fAw5DFCK1RSv/c3XmkZc3wJEiAEQhEdo3PiLUOxIQuoIuAzlKLEQiI3PigsYOoqlaQixtIc3128wIVLXCzIQm7KZUnxjIt0iKlACoYCRtaJstJKI8QikSuwDo6sTiFEzy5lbzKDB64Pi3VF/sBFC1yITrQ2MuESiyB2BpaBKbOyJmDVdyWLN4GSd0EbjJrrSizKpeTBRrLCCq0twQtWEU6qOV7VvM7fbvKrD/Vpx6cfUOPJWjQaZcov7NCA01N8UsJMVFd2h802+t1nvz/90Xa/acM4AJT3u8unH9R9vhu2xccxsLm+7mO+ze/9XdoObfd8K6d07XLSKy/FmReLUU5odi4a6is0oKZeyFpgWSv2dQCID/9khc9WZ0ErShl0p9s2lUK2tTDUslW+rwO0eP9Gq7OgNa0UaWFLMLMyyp5q/SWrtJZV+g9WhAC1kGlq5diw1S9ambXOyrzyrOh3VrXns9ROMCsri9oBzMoKtSJz7tRXnE2dt32srxgvh2/DXyqdyNqlnFWNqErJqV0/NwrnFrrfCNI/9O1mdwh+p94k9GvOukIKjHU8FTKw0PfmINfxcFu2m5W0pmnrymkmVrOqUrjU1X/y1M+Q92/WmsQcr47H763r6AA='
+SCENE_AUDIT_REUSED = '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'
+
+def scene_audit_files(items,label):
+    """Scene call trees, native voice routing, and bounded dynamic-CG evidence."""
+    lookup={e.rel.replace('\\','/').casefold():e for e in items}
+    report={'game':label,'sourceReadOnly':True,'files':[],'reused':[],'notes':[],'missing':[]};used=0
+    plan=json.loads(zlib.decompress(base64.b64decode(SCENE_AUDIT_PLAN)))
+    reused=json.loads(zlib.decompress(base64.b64decode(SCENE_AUDIT_REUSED))).get(label,{})
+    def read(e,off=0,n=None):
+        n=e.size if n is None else n
+        if off<0 or n<0 or off+n>e.size or n>32*MB:raise RuntimeError('Scene audit read bounds: '+e.rel)
+        with open(e.path,'rb')as f:f.seek(off);b=f.read(n)
+        if len(b)!=n:raise RuntimeError('Scene audit truncated: '+e.rel)
+        return b
+    def artifact(name,b,e=None,**fields):
+        nonlocal used
+        if name.startswith('/')or'\\'in name or any(x in ('','.','..')for x in name.split('/')):raise RuntimeError('Scene audit artifact path invalid')
+        used+=len(b)
+        if used>(96 if label=='ツヴァイトリガー'else 64)*MB:raise RuntimeError('Scene audit per-game byte limit exceeded: '+label)
+        report['files'].append(dict(artifact=name,bytes=len(b),sha256=hashlib.sha256(b).hexdigest(),**({'source':e.rel,'sourceBytes':e.size}if e else {}),**fields))
+        return name,b,e.mtime if e else int(time.time())
+    def full(key,required=True):
+        e=lookup.get(key.casefold())
+        if not e:
+            report['missing'].append(key)
+            if required:raise RuntimeError('Required scene audit source missing: '+key)
+            return None
+        b=read(e);sha=hashlib.sha256(b).hexdigest()
+        if reused.get(e.rel.casefold())==sha:
+            report['reused'].append(dict(source=e.rel,bytes=len(b),sha256=sha,reason='Previously collected exact source; local SHA matches'))
+            return None
+        return artifact(e.rel,b,e,offset=0)
+    if label=='Remastered':
+        rows=plan[label]
+        for guard in rows['guards']:
+            e=lookup.get(guard['source'].casefold())
+            if not e or hashlib.sha256(read(e,guard['offset'],guard['bytes'])).hexdigest()!=guard['sha256']:raise RuntimeError('Remastered index changed; refusing stale scene offsets')
+        for row in rows['ranges']:
+            e=lookup.get(row['source'].casefold())
+            if not e or e.size!=row['sourceBytes']:raise RuntimeError('Remastered source size changed')
+            yield artifact(row['artifact'],read(e,row['offset'],row['bytes']),e,offset=row['offset'],logicalName=row['logicalName'])
+        report['notes'].append('sc0561 native script/system defaults plus BG002AAL, CS006AB, EV056AA/AD and EV057AA: validate the actual layered scene, not an isolated CG.')
+    elif label=='ツヴァイトリガー':
+        model_count=0;small_count=0;header_count=0
+        for archive in ('data.xp3','patch.xp3','evimage.xp3','video.xp3'):
+            e=lookup.get(archive)
+            if not e:raise RuntimeError('Required Twi archive missing: '+archive)
+            prefix='__scene-audit/xp3/'+archive;head=read(e,0,min(64,e.size))
+            if not head.startswith(b'XP3\r\n \n\x1a\x8b\x67\x01'):raise RuntimeError('Twi XP3 signature changed: '+archive)
+            yield artifact(prefix+'/header.bin',head,e,offset=0)
+            ptr=11;entries=[];seen=set()
+            for block in range(16):
+                if ptr in seen:raise RuntimeError('XP3 index pointer cycle')
+                seen.add(ptr);pointer=read(e,ptr,8);at=struct.unpack('<Q',pointer)[0];flag=read(e,at,1)[0]
+                yield artifact(prefix+'/pointer-%d.bin'%block,pointer,e,offset=ptr)
+                if flag&7==0:stored=original=struct.unpack('<Q',read(e,at+1,8))[0];header=9
+                elif flag&7==1:stored,original=struct.unpack('<QQ',read(e,at+1,16));header=17
+                else:raise RuntimeError('Unsupported XP3 index codec')
+                if stored>4*MB or original>16*MB:raise RuntimeError('XP3 index exceeds audit bounds')
+                raw=read(e,at,header+stored);yield artifact(prefix+'/index-%d.bin'%block,raw,e,offset=at)
+                if flag&7==1:
+                    z=zlib.decompressobj();decoded=z.decompress(raw[header:],16*MB+1)
+                    if not z.eof or len(decoded)!=original:raise RuntimeError('XP3 index inflate bounds/length')
+                else:decoded=raw[header:]
+                pos=0
+                while pos<len(decoded):
+                    if pos+12>len(decoded):raise RuntimeError('XP3 truncated chunk')
+                    tag=decoded[pos:pos+4];length=struct.unpack_from('<Q',decoded,pos+4)[0];body=decoded[pos+12:pos+12+length];pos+=12+length
+                    if len(body)!=length:raise RuntimeError('XP3 chunk bounds')
+                    if tag==b'Hxv4':
+                        if length!=14:raise RuntimeError('XP3 special descriptor bounds')
+                        off,size,kind=struct.unpack('<QIH',body)
+                        if size>4*MB:raise RuntimeError('XP3 special index exceeds audit bounds')
+                        yield artifact(prefix+'/hxv4-%d.bin'%block,read(e,off,size),e,offset=off)
+                    if tag!=b'File':continue
+                    entry={'segments':[]};sub=0
+                    while sub<len(body):
+                        if sub+12>len(body):raise RuntimeError('XP3 file chunk truncated')
+                        key=body[sub:sub+4];size=struct.unpack_from('<Q',body,sub+4)[0];value=body[sub+12:sub+12+size];sub+=12+size
+                        if len(value)!=size:raise RuntimeError('XP3 file chunk bounds')
+                        if key==b'info'and len(value)>=22:
+                            chars=struct.unpack_from('<H',value,20)[0]
+                            if 22+chars*2>len(value):raise RuntimeError('XP3 filename bounds')
+                            entry.update(name=value[22:22+chars*2].decode('utf-16le'),size=struct.unpack_from('<Q',value,4)[0])
+                        elif key==b'segm':
+                            if len(value)%28:raise RuntimeError('XP3 segment shape')
+                            entry['segments']=[struct.unpack_from('<IQQQ',value,k)for k in range(0,len(value),28)]
+                        elif key==b'adlr'and len(value)==4:entry['adler']=struct.unpack('<I',value)[0]
+                    for flags,off,original,stored in entry['segments']:
+                        if off<0 or off+stored>e.size:raise RuntimeError('XP3 entry segment outside archive')
+                    if entry.get('name'):entries.append(entry)
+                if not flag&128:break
+                ptr=at+header+stored
+            else:raise RuntimeError('XP3 index chain exceeds audit limit')
+            if len(entries)>20000:raise RuntimeError('Twi entry count exceeds audit limit')
+            for i,entry in enumerate(entries):
+                size=entry.get('size',0);stored=sum(sg[3]for sg in entry['segments'])
+                small=(archive=='data.xp3'and size<=128*1024 or archive=='patch.xp3'and size<=256*1024 or archive=='evimage.xp3'and size<=4096)and stored<=512*1024
+                model=bool(re.search(r'(?:\.l2d$|(?:live2d|cubism|model)[^/]*\.zip$)',entry['name'],re.I))and model_count<2 and stored<=32*MB
+                if model:model_count+=1
+                if small:small_count+=1
+                for si,sg in enumerate(entry['segments']):
+                    flags,off,original,stored=sg
+                    # Unknown/encrypted payloads need only a bounded prefix to
+                    # identify their real codec/model type locally after decryption.
+                    n=stored if small or model else min(1024,stored)
+                    if not n:continue
+                    header_count+=not(small or model)
+                    yield artifact(prefix+'/entry-%d-segment-%d.bin'%(i,si),read(e,off,n),e,offset=off,entry=i,segment=si,fullSegment=n==stored)
+            yield artifact(prefix+'/entries.json',json.dumps(entries,ensure_ascii=False,separators=(',',':')).encode())
+        report['notes'].append(dict(fullSmallEntries=small_count,completeModelPackages=model_count,prefixSegments=header_count,modelLimit=2,modelPackageLimitBytes=32*MB))
+        report['notes'].append('All archive indexes include video.xp3; bounded script/config entries identify native Live2D setup and H-scene callers. Encrypted/unidentified large entries are prefixes only, explicitly marked; no complete model is claimed when completeModelPackages=0. No EXE/DLL or full XP3 copied.')
+    elif label in ('RJ01271506','RJ328940'):
+        prefix=''if label=='RJ01271506'else'www/'
+        common=lookup.get(prefix+'data/commonevents.json');info=lookup.get(prefix+'data/mapinfos.json')
+        if not common or not info:raise RuntimeError('RPG core scene sources missing')
+        core=json.loads(read(common));map_info=json.loads(read(info));voice_hints=[]
+        extra=['js/plugins.js','data/System.json','data/MapInfos.json','data/CommonEvents.json']
+        if label=='RJ01271506':extra+=['audio/voice/voice_list.json','js/plugins/inazuma/Sound.js','js/plugins/inazuma/dlc/DLC.js','js/plugins/inazuma/i18n/i18n.js','js/plugins/inazuma/core/text/EscapeCharacterEx.js','js/plugins/triacontane/TemplateEvent.js']
+        else:extra+=['js/plugins/SimpleVoice.js']
+        for rel in extra:
+            result=full(prefix+rel,required=rel in ('js/plugins.js','data/System.json','data/MapInfos.json','data/CommonEvents.json','audio/voice/voice_list.json','js/plugins/SimpleVoice.js'))
+            if result:yield result
+        if label=='RJ01271506':
+            for key,e in sorted(lookup.items()):
+                if re.fullmatch(r'dlc/[^/]+/list\.json',key)or re.fullmatch(r'data/[^/]*deploy[^/]*\.json',key):
+                    result=full(key)
+                    if result:yield result
+        else:
+            source=lookup.get(prefix+'js/plugins/simplevoice.js')
+            voice_hints=re.findall(r'se\.name\.includes\("([^"\n]+)"\)',read(source).decode('utf-8-sig'))
+        totals=collections.Counter();catalog=[];trn=set();audio=[];pictures=[]
+        def commands_of(event_list,where):
+            counts=collections.Counter();calls=[]
+            for command in event_list or []:
+                code=command.get('code');p=command.get('parameters',[]);totals[str(code)]+=1
+                if code==401 and p:
+                    counts['textLines']+=1;trn.update(int(n)for n in re.findall(r'\\TRN\[(\d+)\]',str(p[0])))
+                if code==117 and p:calls.append(p[0])
+                if code==231 and len(p)>1 and p[1]:pictures.append(dict(name=p[1],folder='img/pictures',where=where))
+                if code==284 and p and p[0]:pictures.append(dict(name=p[0],folder='img/parallaxes',where=where))
+                if code==250 and p and isinstance(p[0],dict)and any(h in str(p[0].get('name',''))for h in voice_hints):
+                    counts['seVoice']+=1;audio.append(dict(name=p[0]['name'],folder='audio/se',where=where,kind='native-se-voice'))
+                if code==356 and p:
+                    m=re.match(r'SV_(?:ボイスの演奏|PLAY_VOICE|ボイスのループ演奏|PLAY_LOOP_VOICE)\s+(\S+)',str(p[0]))
+                    if m:counts['explicitVoice']+=1;audio.append(dict(name=m[1],folder='audio/se',where=where,kind='plugin-voice'))
+            return dict(counts=dict(counts),calls=calls)
+        for ce in core:
+            if ce:catalog.append(dict(common=ce['id'],name=ce.get('name',''),**commands_of(ce.get('list',[]),{'common':ce['id']})))
+        map_bytes=0;map_count=0
+        for key,e in sorted(lookup.items()):
+            if not re.fullmatch(re.escape(prefix)+r'data/map\d+\.json',key):continue
+            if e.size>16*MB:raise RuntimeError('RPG map exceeds16MiB: '+e.rel)
+            map_bytes+=e.size
+            if map_bytes>128*MB:raise RuntimeError('RPG original maps exceed128MiB read budget')
+            raw=read(e);document=json.loads(raw);map_id=int(re.search(r'map(\d+)\.json$',key)[1]);map_count+=1
+            for event in document.get('events',[]):
+                if not event:continue
+                for pi,page in enumerate(event.get('pages',[]),1):
+                    where={'map':map_id,'event':event['id'],'page':pi};catalog.append(dict(**where,name=event.get('name',''),note=event.get('note',''),conditions=page.get('conditions',{}),**commands_of(page.get('list',[]),where)))
+            # Explicit projection: retain every event/page/condition/command and
+            # map metadata. Tile cells are omitted, never event commands/text.
+            omitted=['data']if'data'in document else[];document.pop('data',None)
+            payload=json.dumps(document,ensure_ascii=False,separators=(',',':')).encode()
+            yield artifact('__scene-audit/event-maps/'+e.rel,payload,e,sourceSha256=hashlib.sha256(raw).hexdigest(),projection={'omittedFields':omitted,'allEventsAndCommandsPreserved':True})
+        declared=None
+        if label=='RJ01271506':
+            voice_list=json.loads(read(lookup['audio/voice/voice_list.json']))
+            if not isinstance(voice_list.get('uniqueIds'),list):raise RuntimeError('Native voice list lacks uniqueIds')
+            declared=set(int(n)for n in voice_list['uniqueIds'])
+            # Read the actual enabled plugin's template list, rather than assume
+            # that collecting arbitrary dialogue maps covers the CG callers.
+            plugin_text=read(lookup['js/plugins.js']).decode('utf-8-sig')
+            match=re.search(r'\$plugins\s*=\s*(\[[\s\S]*\])\s*;?\s*$',plugin_text)
+            if not match:raise RuntimeError('Cannot read native RPG plugin configuration as JSON data')
+            plugins=json.loads(match[1]);templates=[]
+            for plugin in plugins:
+                if plugin.get('status')is True and plugin.get('name','').split('/')[-1]=='TemplateEvent':
+                    params=plugin.get('parameters',{});ids=json.loads(params.get('TemplateMapIdList','[]'))+[params.get('TemplateMapId',0)]
+                    templates=sorted(set(int(n)for n in ids if int(n)>0))
+            report['templateMapIds']=templates
+            for n in templates:
+                if 'data/map%03d.json'%n not in lookup:raise RuntimeError('Plugin-declared CG template map missing: %d'%n)
+        for n in sorted(trn):audio.append(dict(name='unique/'+str(n),folder='audio/voice',where={'TRN':n},kind='trn-auto-voice',nativeDeclared=n in declared if declared is not None else None))
+        audio_index={};coverage=collections.Counter();candidates=[]
+        for key,e in sorted(lookup.items()):
+            logical=re.sub(r'^dlc/[^/]+/','',key)if label=='RJ01271506'else key
+            if not re.search(r'\.(?:ogg_|rpgmvo|ogg)$',logical):continue
+            stem=re.sub(r'\.(?:ogg_|rpgmvo|ogg)$','',logical);audio_index.setdefault(stem,[]).append(e.rel)
+        for row in audio:
+            sources=audio_index.get((prefix+row['folder']+'/'+row['name']).casefold(),[]);row['physicalSources']=sources
+            coverage[row['kind']+(':present'if sources else':absent')]+=1
+            if sources and len(candidates)<3 and row.get('nativeDeclared')is not False:
+                for rel in sources:
+                    if rel not in candidates:candidates.append(rel);break
+        report['sceneCoverage']={'maps':map_count,'originalMapBytesRead':map_bytes,'pagesAndCommon':len(catalog),'commandCodes':dict(totals),'trnIds':len(trn),'nativeSeVoiceHints':voice_hints,'audioReferences':dict(coverage),'declaredTrnVoiceIds':len(trn&declared)if declared is not None else None}
+        yield artifact('__scene-audit/callers.json',json.dumps(catalog,ensure_ascii=False,separators=(',',':')).encode())
+        yield artifact('__scene-audit/audio-references.json',json.dumps(audio,ensure_ascii=False,separators=(',',':')).encode())
+        yield artifact('__scene-audit/picture-references.json',json.dumps(pictures,ensure_ascii=False,separators=(',',':')).encode())
+        for rel in candidates:
+            result=full(rel)
+            if result:yield result
+        images=[]
+        for row in pictures:
+            name=str(row['name'])
+            if not re.search(r'(?:^|/)(?:still/.*?/h/|_?[^/]*scene)',name,re.I):continue
+            stem=prefix+row['folder']+'/'+name
+            hit=next((lookup.get((stem+ext).casefold())for ext in('.png_','.rpgmvp','.png')if lookup.get((stem+ext).casefold())),None)
+            if hit and hit.rel not in images and hit.size<=8*MB:images.append(hit.rel)
+            if len(images)==3:break
+        for rel in images:
+            result=full(rel)
+            if result:yield result
+        report['notes'].append(dict(nativeAudioSampleSources=candidates,nativeImageSampleSources=images))
+        report['notes'].append('All map event/page/caller trees retained; only map tile-cell arrays excluded explicitly. Complete native voice and CG references plus DLC manifests distinguish missing playback support from resources absent in the original installation. Three reference-matched audio and up to three CG samples, not bulk media.')
+    else:raise RuntimeError('Unexpected scene-audit game: '+label)
+    report['sampleBytes']=used
+    yield '__scene-audit/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode(),int(time.time())
+
 def main():
-    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:mz-templates$','^new-games:followup$','^new-games:bug-cases$','^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$')
+    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:scene-audit$','^new-games:mz-templates$','^new-games:followup$','^new-games:bug-cases$','^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$')
+    scene_audit = RULES_RE is not None and RULES_RE.pattern == '^new-games:scene-audit$'
     mz_templates = RULES_RE is not None and RULES_RE.pattern == '^new-games:mz-templates$'
     followup = RULES_RE is not None and RULES_RE.pattern == '^new-games:followup$'
-    bug_cases = mz_templates or RULES_RE is not None and RULES_RE.pattern in ('^new-games:bug-cases$','^new-games:followup$')
+    bug_cases = scene_audit or mz_templates or RULES_RE is not None and RULES_RE.pattern in ('^new-games:bug-cases$','^new-games:followup$')
     bug_labels = {'How to Build a Magnificent Kingdom v1.05','Remastered','RJ01271506','RJ328940'} if followup else {'How to Build a Magnificent Kingdom v1.05','シロクロv1.1','RJ328940'}
     if mz_templates:bug_labels={'RJ01271506'}
+    if scene_audit:bug_labels={'ツヴァイトリガー','Remastered','RJ01271506','RJ328940'}
     new_games_next = new_games and RULES_RE.pattern in ('^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$')
     age_link = new_games_next and RULES_RE.pattern == '^new-games:age-link$'
     new_games_next_verify = new_games_next and RULES_RE.pattern in ('^new-games:next-verify$','^new-games:age-link$')
@@ -2011,7 +2234,7 @@ def main():
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
         picks = ([] if new_games or tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
-        if new_games and items: picks=[(items[0],'inventory','new-games:mz-templates' if mz_templates else 'new-games:followup' if followup else 'new-games:bug-cases' if bug_cases else 'new-games:age-link' if age_link else 'new-games:next-verify' if new_games_next_verify else 'new-games:next-detail' if new_games_next_detail else 'new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
+        if new_games and items: picks=[(items[0],'inventory','new-games:scene-audit' if scene_audit else 'new-games:mz-templates' if mz_templates else 'new-games:followup' if followup else 'new-games:bug-cases' if bug_cases else 'new-games:age-link' if age_link else 'new-games:next-verify' if new_games_next_verify else 'new-games:next-detail' if new_games_next_detail else 'new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
         if rpg_media:
             sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
             sample = RPG_MEDIA_SAMPLES[sample_id]
@@ -2079,8 +2302,8 @@ def main():
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
             if new_games:
-                for name,data,mtime in (bug_case_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game)),followup=followup) if bug_cases else next_game_verify_files(items,next_game_label(os.path.basename(game)),age_link=age_link) if new_games_next_verify else next_game_detail_files(items,next_game_label(os.path.basename(game))) if new_games_next_detail else new_game_remaining_files(items,new_game_label(os.path.basename(game))) if new_games_remaining else new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else new_game_probe_files(items)):
-                    if total+len(data)>min(TOTAL_MAX,(32 if new_games_next_verify else 128 if new_games_next_detail else 64)*MB): raise RuntimeError('五作证据超过本轮总量上限')
+                for name,data,mtime in (scene_audit_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game))) if scene_audit else bug_case_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game)),followup=followup) if bug_cases else next_game_verify_files(items,next_game_label(os.path.basename(game)),age_link=age_link) if new_games_next_verify else next_game_detail_files(items,next_game_label(os.path.basename(game))) if new_games_next_detail else new_game_remaining_files(items,new_game_label(os.path.basename(game))) if new_games_remaining else new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else new_game_probe_files(items)):
+                    if total+len(data)>min(TOTAL_MAX,(256 if scene_audit else 32 if new_games_next_verify else 128 if new_games_next_detail else 64)*MB): raise RuntimeError('五作证据超过本轮总量上限')
                     ti=tarfile.TarInfo(gid+'/'+name);ti.size=len(data);ti.mtime=mtime;tar.addfile(ti,io.BytesIO(data));total+=len(data);picked_bytes+=len(data)
             if rpg_media:
                 packed = [e for e in items if e.rel.lower().endswith('.exe')] if sample_id == 'RJ01220265' else []

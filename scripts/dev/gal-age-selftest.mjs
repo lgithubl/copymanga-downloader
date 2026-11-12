@@ -1,9 +1,17 @@
 import{test}from'node:test'
 import assert from'node:assert/strict'
 import{readFile,readdir}from'node:fs/promises'
+import{createHash}from'node:crypto'
 import{existsSync}from'node:fs'
-import{readAgeIndex,decodeAgeScript,ageControlFlow,ageLiteralInitializer}from'../../web/library/gal/age.mjs'
+import{readAgeIndex,decodeAgeScript,decodeAgeImage,ageControlFlow,ageLiteralInitializer,traceAgeProgram}from'../../web/library/gal/age.mjs'
 const old='.cache/new-games-043952/extracted/g05',extra='.cache/new-games-052443/extracted/g05/__verify/age'
+test('received AGE1.57 dependency batch is complete; remaining prologue blocker is unsupported semantics, not a missing SN0000 file',{skip:!existsSync('.cache/age-072229/extracted/g01/__verify/index.json')},async()=>{
+ const root='.cache/age-072229/extracted/g01/',report=JSON.parse(await readFile(root+'__verify/index.json'));assert.equal(report.files.length,25);let bytes=0,scripts=0,images=0
+ for(const r of report.files){const b=await readFile(root+r.artifact);assert.equal(b.length,r.bytes);assert.equal(createHash('sha256').update(b).digest('hex'),r.sha256);bytes+=b.length;if(r.logicalName.endsWith('.BIN')){ageControlFlow(decodeAgeScript(b));scripts++}if(r.logicalName.endsWith('.AGF')){const image=decodeAgeImage(b);assert.ok(image.width>0&&image.height>0);images++}}
+ assert.equal(bytes,11329945);assert.equal(scripts,17);assert.equal(images,6)
+ const sn=decodeAgeScript(await readFile(root+'__verify/age/SN0000.BIN')),state=traceAgeProgram(sn);assert.equal(sn.instructions.length,4335);assert.equal(state.status,'unsupported');assert.equal(state.stopped.opcode,0x1f4)
+ console.log('AGE received/verified:25files,17scripts,6images,2audio; next implementation blocker SN0000 opcode0x1f4')
+})
 test('two-way branches retain both targets; fallthrough and dynamic calls stay explicit',()=>{const a=value=>({type:0,value}),r=ageControlFlow({instructions:[{offset:0,opcode:0xa0,args:[a(1),a(10),a(0xffffffff)]},{offset:7,opcode:0x8f,args:[{type:3,value:12}]},{offset:10,opcode:5,args:[]}]});assert.deepEqual([r.nodes[0].yes,r.nodes[0].no],[10,7]);assert.equal(r.nodes[1].call.operand.type,3);assert.equal(r.unresolved.length,1);assert.equal(r.nodes[2].end,'return');assert.throws(()=>ageControlFlow({instructions:[{offset:0,opcode:0x8c,args:[a(1)]}]}),/boundary/)})
 test('unknown initializer operations fail closed',()=>{assert.throws(()=>ageLiteralInitializer({instructions:[{offset:0,opcode:0x2ff,args:[]}]}),/semantics/);const s=ageLiteralInitializer({instructions:[{offset:0,opcode:0x55,args:[{type:3,value:7},{type:0,value:0xffffffff}]},{offset:5,opcode:2,args:[]}]});assert.equal(s.integers[7],-1)})
 test('native index ordinals and stage settings, all captured direct branch targets, pure initialization globals',{skip:!existsSync(old)},async()=>{const index=readAgeIndex(await readFile(old+'/SYS4INI.BIN'));assert.equal(index.entries[77].ordinal,77);assert.equal(index.entries[77].name,'BG054AA.AGF');assert.equal(index.entries[140].name,'CF002AAO.AGF');assert.equal(index.trailingBytes,19);assert.equal(index.metadata.numbers.length,61);assert.ok(index.metadata.settings.some(x=>x.name==='SCREENY'&&x.value==='900'));

@@ -20,8 +20,8 @@ const value=(x)=>typeof x==='object'&&x?.expr?x.expr:x
 const data=text=>{try{const d=JSON.parse(text);return d.format==='edo-lua/1'?d:null}catch{return null}}
 export function prepare({options:o,files=[],texts={},toResourcePath,resourceResolve,mediaDir,_complete=false}){
  if(mediaDir&&!_complete)return completeJsonSamples({texts,files,mediaDir},rel=>/\.edo$/i.test(rel)).then(texts=>prepare({options:o,files,texts,toResourcePath,resourceResolve,mediaDir,_complete:true}))
- const cfg=options(o),nativeDefaults={}
- for(const t of Object.values(texts)){const d=data(t);if(!d||!/^src\/sys\/(?:global_config|global2)\.txt$/i.test(d.name))continue;for(const line of d.text.split(/\r?\n/)){const m=/^\s*(\w+)\s*=\s*(-?\d+(?:\.\d+)?|true|false|"[^"\r\n]*"|'[^'\r\n]*')\s*(?:--.*)?$/.exec(line);if(m){const v=luaArgs(m[2])[0];if(['number','string','boolean'].includes(typeof v))nativeDefaults[m[1]]=v}}}
+ const base=options(o),cfg={...base,initialVariables:{...base.initialVariables}},nativeDefaults={}
+ for(const t of Object.values(texts)){const d=data(t);if(!d||!/^src\/sys\/(?:global_config|global2)(?:\.txt)?$/i.test(d.name))continue;for(const line of d.text.split(/\r?\n/)){const m=/^\s*(\w+)\s*=\s*(-?\d+(?:\.\d+)?|true|false|"[^"\r\n]*"|'[^'\r\n]*')\s*(?:--.*)?$/.exec(line);if(m){const v=luaArgs(m[2])[0];if(['number','string','boolean'].includes(typeof v))nativeDefaults[m[1]]=v}}}
  cfg.initialVariables={...nativeDefaults,...cfg.initialVariables}
  const resolver=createIndexResolver({index:new Set(files.map(x=>toResourcePath?toResourcePath(x):x)),cfg:{...resourceResolve,caseInsensitive:true}}),all=[],special=[],sp=safeRegex(cfg.specialMatch),cg=safeRegex(cfg.cgMatch)
  for(const[rel,t]of Object.entries(texts)){const d=data(t);if(!d||!/^(?:src\/game\/|!app[^/]+\/)/i.test(d.name)||!/(?:^|\n)\s*text\(/.test(d.text)||/(?:^|\/)!?99_test/i.test(d.name))continue;const node={id:rel,script:rel,title:d.name.split('/').at(-1).replace(/\.txt$/i,'')};all.push(node);if(sp?.test(node.title)||[...d.text.matchAll(/"([^"\n]+\.png)"/g)].some(m=>cg?.test(m[1])))special.push(node)}

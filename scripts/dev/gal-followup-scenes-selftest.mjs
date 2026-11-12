@@ -1,11 +1,15 @@
 import{test}from'node:test'
 import assert from'node:assert/strict'
-import{readFile,writeFile,mkdir}from'node:fs/promises'
+import{readFile,writeFile,mkdir,mkdtemp}from'node:fs/promises'
+import{existsSync}from'node:fs'
+import os from'node:os'
+import path from'node:path'
 import{edoPayload}from'../../web/library/gal/edo.mjs'
 import{prepare,parse}from'../../web/library/gal/adapters/edo-lua.mjs'
 import{prepare as rpgPrepare,parse as rpgParse}from'../../web/library/gal/adapters/rpgmaker-json.mjs'
 import{activePath,stateAt,choiceHistoriesForCommands}from'../../web/static/gal-engine.js'
-import{resolveLayout}from'../tag-scripts/gal-layout/main.js'
+import{resolveLayout,generateTags}from'../tag-scripts/gal-layout/main.js'
+import{createGalHandler}from'../../web/library/types/gal.mjs'
 import{computeSceneMarkers}from'../../web/library/gal/markers.mjs'
 import{parse as pacParse}from'../../web/library/gal/adapters/pac-script.mjs'
 import{decodeTextFile}from'../../web/library/text-decode.mjs'
@@ -45,6 +49,20 @@ test('actual Shiro white4 sentence85 reopens the native message window after ear
 test('actual Remastered sc6000 uses native global_config H-scene default; explicit reader override remains respected',async()=>{
  const text=await readFile('.cache/new-games-052443/analysis/remastered/src__game__sc6000.txt','utf8'),global=await readFile('.cache/new-games-052443/analysis/remastered/src__sys__global_config.txt','utf8'),texts={'arc/script/global_config.edo':JSON.stringify({format:'edo-lua/1',name:'src/sys/global_config.txt',text:global})}
  const run=initialVariables=>{const ctx=prepare({options:{...resolveLayout('edo::parente').ruleOverrides['edo::lua'],initialVariables},files:[],texts});return parse(JSON.stringify({format:'edo-lua/1',text}),ctx)},native=run({}),off=run({IS_USE_HSCENE:0});assert.ok(activePath(native).length>300);assert.ok(activePath(off).length<200);const targets=[];native.steps.forEach((s,i)=>s.commands.forEach((c,k)=>{if(c.src?.includes('EV156'))targets.push({step:i,command:k})}));const histories=choiceHistoriesForCommands(native,targets),target=targets.find(t=>histories.has(`${t.step}:${t.command}`));assert.ok(target,'EV156 can actually be reached through offered native story branches');const choices=histories.get(`${target.step}:${target.command}`);assert.ok(stateAt(native,target.step,choices).overlays.some(o=>o.src?.includes('EV156')));assert.ok(native.stats.choices>=5);console.log('sc6000 native/default-disabled steps',activePath(native).length,activePath(off).length)
+})
+test('actual Remastered import/containers/context/reader preserves extensionless native system names and exposes sc0561 CG',async()=>{
+ const{source}=JSON.parse(await readFile('.cache/next-native-fixtures/Remastered.json')),dataDir=await mkdtemp(path.join(os.tmpdir(),'remastered-sc0561-reader-')),h=createGalHandler({dataDir,safeSegment:String,pathExists:async p=>existsSync(p),getConfig:()=>({mediaImportProfiles:{'gal-import':{rootDir:source}}})})
+ const item=(await h.importFromSource({sourcePath:source,options:{adapters:['edo::lua'],config:{game:{id:'edo::Remastered'}}}})).items[0],layout=await generateTags({item,script:{version:'test',options:{}}});await h.patchItemMetadata(item.itemId,layout.itemPatch)
+ const home=await h.getReaderContent(item.itemId,'main'),story=home.node.items.find(x=>x.title==='剧情'),cards=await h.getReaderContent(item.itemId,'main',{sectionId:story.node}),card=cards.node.items.find(x=>x.title==='sc0561');assert.ok(card)
+ const reader=await h.getReaderContent(item.itemId,'main',{sectionId:card.node}),scene=reader.scene,initial=scene.steps[0].commands.find(c=>c.op==='set'&&c.var==='edo:IS_USE_HSCENE');assert.equal(initial?.value,1,'native global_config is loaded through actual generated .edo envelope')
+ const live=activePath(scene),cg=live.filter(i=>stateAt(scene,i).overlays.some(o=>/ev05[67]/i.test(o.src||'')));assert.ok(cg.length>100,'CG remains visible along the actual reader path');console.log('native sc0561 reader',live.length,'reachable CG dialogue steps',cg.length,'retained',dataDir)
+})
+test('native system defaults refresh without modifying or leaking through a reused options object',()=>{
+ const options={},native=value=>({'arc/script/global_config.edo':JSON.stringify({format:'edo-lua/1',name:'src/sys/global_config',text:'IS_USE_HSCENE='+value})})
+ assert.equal(prepare({options,texts:native(1)}).cfg.initialVariables.IS_USE_HSCENE,1)
+ assert.equal(prepare({options,texts:native(0)}).cfg.initialVariables.IS_USE_HSCENE,0)
+ assert.equal(prepare({options,texts:{}}).cfg.initialVariables.IS_USE_HSCENE,undefined)
+ assert.deepEqual(options,{})
 })
 test('MV native Map081 parallax commands become visible CG backgrounds rather than raw-only events',async()=>{
  const map=JSON.parse(await readFile('.cache/bugs-073723/extracted/g02/www/data/Map081.json')),ctx=await rpgPrepare({texts:{'data/CommonEvents.json':'[null]','data/System.json':'{}'},files:[],options:{maps:{enabled:false}}});ctx.maps.set('data/Map081.json',map);const scene=rpgParse('',ctx,{rel:'data/Map081.json',scene:'event-1-1'}),first=activePath(scene).find(i=>stateAt(scene,i).text.length);assert.equal(stateAt(scene,first).bg.src,'img/parallaxes/_Lize_SceneA_00.png');assert.equal(scene.steps.flatMap(s=>s.commands).filter(c=>c.op==='bg'&&c.src?.includes('SceneA')).length,42);assert.ok(!scene.stats.raw['event:284'])
