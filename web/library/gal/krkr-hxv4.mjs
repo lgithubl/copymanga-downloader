@@ -385,6 +385,7 @@ function fakeId(name) {   // info 里的名字是 id 的 14 位一组编码（0x
 export const adler32 = (buf) => { let a = 1; let b = 0; for (let i = 0; i < buf.length; i++) { a = (a + buf[i]) % 65521; b = (b + a) % 65521 } return ((b << 16) | a) >>> 0 }
 
 async function readAt(handle, offset, length) {
+  if(!Number.isSafeInteger(offset)||!Number.isSafeInteger(length)||offset<0||length<0||length>256*1024*1024)throw Error('XP3读取范围无效或超过256MB')
   const buf = Buffer.alloc(length)
   let done = 0
   while (done < length) {
@@ -418,7 +419,7 @@ function parseFileChunk(body) {
 }
 
 // 打开 Hxv4 档案 → { size, kind, entries, special, find(目录, 名字), readEntry(条目), close() }
-export async function openHxv4Archive(file, bundle, { filter = null } = {}) {
+export async function openHxv4Archive(file, bundle, { filter = null, allowPlain = false } = {}) {
   const handle = await open(file, 'r')
   try {
     const { size } = await handle.stat()
@@ -456,6 +457,14 @@ export async function openHxv4Archive(file, bundle, { filter = null } = {}) {
       }
       if (!(flags & 0x80)) break
       pointerPos = pos
+    }
+    if(!hxv4&&allowPlain){
+      for(const [id,e] of entries.entries()){
+        if(!e.name||e.name.split(/[\\/]/).some(x=>x==='..')||e.originalSize>256*1024*1024||e.segments.some(s=>!Number.isSafeInteger(s.offset)||!Number.isSafeInteger(s.archiveSize)||s.offset<19||s.offset+s.archiveSize>size))throw Error('XP3 明文条目范围无效')
+        e.hxv4Id=id+1;e.meta={plain:true,entryKey:0n,filterFlag:0,archiveSlot:0,id:id+1,nameHash:nameHash(e.name.split('/').at(-1)).toString('hex').toUpperCase()}
+      }
+      const readEntry=async e=>{const parts=[];for(const s of e.segments){const raw=await readAt(handle,s.offset,s.archiveSize);if((s.flags&7)===0)parts.push(raw);else if((s.flags&7)===1)parts.push(inflateSync(raw,{maxOutputLength:256*1024*1024}));else throw Error('XP3 明文段编码不支持')}const data=Buffer.concat(parts);if(data.length!==e.originalSize||e.adler!==null&&adler32(data)!==e.adler)throw Error('XP3 明文条目长度/校验不符');return data}
+      return{size,kind:'plain',entries,special:entries.map(e=>e.meta),find:(_dir,name)=>entries.find(e=>e.name===name),readEntry,readEntryRange:async(e,start,length)=>{if(start<0||length<0||start+length>e.originalSize)throw Error('XP3 范围无效');if(e.segments.length===1&&!(e.segments[0].flags&7))return readAt(handle,e.segments[0].offset+start,length);return(await readEntry(e)).subarray(start,start+length)},close:()=>handle.close()}
     }
     if (!hxv4) throw new Error('这个 XP3 没有 Hxv4 描述符（不是 Hxv4 加密档案）')
     const key = Buffer.from(bundle.key, 'hex')

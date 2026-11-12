@@ -1,3 +1,4 @@
+import{completeJsonSamples}from'../context-complete-json.mjs'
 // 适配器：KiriKiri Z（Wamsoft，Hxv4 加密的 xp3）的场景脚本（scn.xp3 里的 PSB，由 containers.mjs 解密 + krkr-scn.mjs 压成 JSON）→ 规范场景（gal-scene/1）。
 // id = krkr::scn：引擎家族 krkr 的脚本适配器，家族里所有游戏（game.id = krkr::<游戏>）共用。
 //
@@ -20,6 +21,7 @@
 //   · 每步的图层是脚本自带的「此刻的环境快照」（texts[i][4].data），不重放 envupdate；没有台词也没有等待的画面变化会并进下一句
 //   · 转场：envupdate 的 trans（crossfade / universal 遮罩擦除 / mosaic / ripple / rotateswap，时长毫秒）→ 换背景 / 事件图时的 fade 秒数（全部近似成淡入淡出，方式记 stats.transitions）；没写时长的转场不淡
 //   · 镜头动作（xpos / ypos / zpos / zoom）不渲染：真实脚本里背景 / 事件图上没有 MoveAction（只有立绘上的 RandomAction / SinAction 抖动），静态的偏移 / 缩放量的原点和单位没法对照验证
+import {krkrReadingGraph} from './krkr-reading-graph.mjs'
 import { createIndexResolver } from '../resolve.mjs'
 import { createOptionsReader } from './options-merge.mjs'
 import { pickPimgLayers } from '../krkr-pimg.mjs'
@@ -64,6 +66,8 @@ export function krkrStandGeometry({ act = {}, posName = null, stand = null, stag
 
 export const ADAPTER_ID = 'krkr::scn'
 export const DEFAULT_OPTIONS = {
+  followGraph:false,
+  scriptDir:'',
   resDir: 'arc/res',
   stage: [1920, 1080],
   imageExts: ['png', 'jpg'],
@@ -114,12 +118,14 @@ export const sniff = (text) => HEAD.test(String(text || '').replace(/^﻿/, '').
 export const explainSniff = () => '开头不是 {"format":"krkr-scn/1"…（这个适配器吃 containers 从 KiriKiri 的 scn.xp3 里解出来的场景 JSON，不是原始 PSB）'
 
 export const contextFiles = () => []
-export const contextDirs = (options) => { const opt = readOptions(options); return [opt.resDir, ...opt.extraDirs].map((dir) => String(dir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter(Boolean) }
-export const contextTextFilter = () => (rel) => /\.(pimg|sinfo|stand)\.json$/i.test(rel)   // 立绘的层表 / 选项表 / 位置配置（containers 虚拟出来的，很小）
+export const contextDirs = (options) => { const opt = readOptions(options); return [opt.resDir,opt.scriptDir, ...opt.extraDirs].map((dir) => String(dir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')).filter(Boolean) }
+export const contextTextFilter = () => (rel) => /\.(pimg|sinfo|stand)\.json$|\.krkr$/i.test(rel)   // 立绘的层表 / 选项表 / 位置配置（containers 虚拟出来的，很小）
 export const contextWalkLimit = 800000
 export const contextSampleLimit = 2000
 
-export function prepare({ options, files, texts, toResourcePath, resourceResolve, truncated }) {
+export function prepare(args) {
+ if(args.options?.followGraph&&args.mediaDir&&!args.full)return completeJsonSamples(args,rel=>rel.endsWith('.krkr')).then(texts=>prepare({...args,texts,full:true}))
+ const{options,files,texts,toResourcePath,resourceResolve,truncated}=args
   const opt = readOptions(options)
   const toRes = toResourcePath || ((rel) => rel)
   const resources = new Set()
@@ -134,7 +140,9 @@ export function prepare({ options, files, texts, toResourcePath, resourceResolve
     if (!json.has(key)) { try { json.set(key, JSON.parse(lowerTexts.get(key) || 'null')) } catch { json.set(key, null) } }
     return json.get(key)
   }
-  return { opts: opt, resources, resolver, hasIndex: Boolean(files?.length), truncated: Boolean(truncated), readJson }
+  let catalogTree
+  if(opt.followGraph){const chosen=new Map();for(const[rel,text]of Object.entries(texts||{})){if(!rel.endsWith('.krkr'))continue;let d;try{d=JSON.parse(text)}catch{continue}if(d.format!=='krkr-scn/1')continue;const old=chosen.get(d.name);if(!old||/\/patch\d*\//i.test(rel))chosen.set(d.name,{rel,data:d})}const all=[...chosen.values()].map(({rel,data})=>({id:data.name,title:data.scenes.find(s=>s.title)?.title||data.name,script:rel})),special=[...chosen.values()].filter(({data})=>data.scenes.some(s=>s.steps.some(t=>t.l?.some(l=>l[1]==='event'&&l[5]===3)))).map(({rel,data})=>({id:data.name,title:data.scenes.find(s=>s.title)?.title||data.name,script:rel}));catalogTree={children:[...(special.length?[{id:'special',title:'特殊场景',children:special}]:[]),{id:'story',title:'剧情',children:all}]}}
+  return {catalogTree, opts: opt, resources, resolver, hasIndex: Boolean(files?.length), truncated: Boolean(truncated), readJson }
 }
 
 const str = (v) => (typeof v === 'string' ? v : '')
@@ -147,6 +155,7 @@ export function parse(text, ctx = null, meta = {}) {
   let data
   try { data = JSON.parse(String(text || '').replace(/^﻿/, '')) } catch { throw new Error('不是有效的 JSON') }
   if (!data || data.format !== 'krkr-scn/1' || !Array.isArray(data.scenes)) throw new Error('不是 krkr-scn/1 场景')
+  if(opt.followGraph||meta.scene)return krkrReadingGraph(data,scene=>parse(JSON.stringify({...data,scenes:[scene]}),{...ctx,opts:{...opt,followGraph:false}},{...meta,scene:undefined}),meta.scene?'*'+String(meta.scene).replace(/^\*/, ''):'*start')
   const hasIndex = Boolean(ctx?.hasIndex)
   const stats = { events: 0, messages: 0, choices: 0, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, images: { referenced: 0, resolved: 0, unresolved: 0 }, stands: 0, live2d: 0, raw: {}, ignored: {}, unresolved: {}, links: {}, transitions: {} }
   const count = (bucket, key) => { stats[bucket][key] = (stats[bucket][key] || 0) + 1 }
@@ -191,16 +200,19 @@ export function parse(text, ctx = null, meta = {}) {
   const stageH = opt.stage[1]
   function standOf(layer) {
     const [name, , file, options, posName, , actions] = layer
-    const stem = String(file || '').replace(/\.[^.]+$/, '')
-    if (!stem) return null
+    const rootStem = String(file || '').replace(/\.[^.]+$/, '')
+    if (!rootStem) return null
+    const standPath = ctx.resolver.resolveByName(`${rootStem}.stand.json`)
+    const config = standPath ? ctx.readJson?.(standPath) : null
+    const variant=config?.variants?.find(v=>v.name===options?.pose)||config?.variants?.[0]
+    const stem=variant?.filename||rootStem
     const infoPath = hasIndex ? ctx.resolver.resolveByName(`${stem}.pimg.json`) : ''
     const info = infoPath ? ctx.readJson?.(infoPath) : null
     if (!info?.layers) { if (hasIndex) count('unresolved', `pimg:${stem}`); return null }
     const act = Object.fromEntries((actions || []).map((a) => [a[0], a[1]]))
-    const standPath = ctx.resolver.resolveByName(`${stem}.stand.json`)
-    const standInfo = standPath ? ctx.readJson?.(standPath) : null
+    const standInfo=variant||config
     const geo = krkrStandGeometry({ act, posName, stand: standInfo, stage: [stageW, stageH] })
-    const sinfoPath = ctx.resolver.resolveByName(`${stem}.sinfo.json`)
+    const sinfoPath = ctx.resolver.resolveByName(`${rootStem}.sinfo.json`)
     const { ids, missing } = pickPimgLayers(info, options || {}, sinfoPath ? ctx.readJson?.(sinfoPath) : null)
     for (const m of missing) count('ignored', `pimg-layer:${m}`)
     if (!ids.length) return null
@@ -316,4 +328,5 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps, stats, ...(next ? { next } : {}) }
 }
 
-export const krkrScnAdapter = { id: ADAPTER_ID, label: 'KiriKiri Z（Hxv4，经 containers 解密）', sniff, explainSniff, parse, contextFiles, contextDirs, contextTextFilter, contextWalkLimit, contextSampleLimit, prepare }
+export const catalog=ctx=>ctx?.catalogTree
+export const krkrScnAdapter = { sceneInPath:true, sceneThumbs:true, catalog, id: ADAPTER_ID, label: 'KiriKiri Z（Hxv4，经 containers 解密）', sniff, explainSniff, parse, contextFiles, contextDirs, contextTextFilter, contextWalkLimit, contextSampleLimit, prepare }

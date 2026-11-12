@@ -230,7 +230,7 @@ export function applyCommand(state, command, choices = null) {
       break
     }
     case 'overlayOff':   // 带 slot = 去掉这个叠加层；不带 = 全部
-      state.overlays = typeof command.slot === 'string' && command.slot ? state.overlays.filter((o) => o.slot !== command.slot) : []
+      state.overlays = command.prefix ? state.overlays.filter(o=>!o.slot.startsWith(command.prefix)) : typeof command.slot === 'string' && command.slot ? state.overlays.filter((o) => o.slot !== command.slot) : []
       break
     case 'camera':
       state.camera = { to: command.to, from: command.from || null, seconds: command.seconds || 0, ui: Boolean(command.ui) }

@@ -110,7 +110,7 @@ export function decodeScre(buf) {
     }
     if(modern&&object==='eomaia_image'&&method===103&&file)events.push({at,e:['i',102,file]})
     if(modern&&object==='eomaia_char'){
-      if(method===102&&file&&args.length>=7)events.push({at,e:['m',101,[args[3],args[4],file,args[6]],[args[1],args[2],19]]})
+      if(method===102&&file&&args.length>=7)events.push({at,e:['m',101,[args[3],args[4],file,args[6]],[args[1],args[2],19],{coordMode:'canvas-top-center',slot:args[0]}]})
       else if(method===103)events.push({at,e:['m',102,args]})
       else if(method>=104&&method<=107)events.push({at,e:['m',method-1,args]})
       else events.push({at,e:['u',`char:${method}`]})

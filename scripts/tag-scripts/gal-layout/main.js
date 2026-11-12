@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.55.0'
+import { findPackedRpg } from './evb.mjs?v=2.56.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -59,6 +59,17 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+ "sakana::ks":{
+  "resDir": "arc/res",
+  "scriptDir": "arc/script",
+  "stage": [
+    1280,
+    720
+  ],
+  "maxWait": 5,
+  "maxCommands": 300000,
+  "maxPasses": 4
+},
   "edo::lua": {
   "resDir": "arc/res",
   "scriptDir": "arc/script",
@@ -902,6 +913,8 @@ export const ADAPTER_RULES = {
   },
   // krkr::scn：KiriKiri Z（Hxv4）家族的脚本适配器（PSB 场景 JSON → 场景）。抄自 web/library/gal/adapters/krkr-scn.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'krkr::scn': {
+    followGraph:false,
+    scriptDir:'',
       "resDir": "arc/res",
       "stage": [
           1920,
@@ -1630,6 +1643,234 @@ export const RULE_DEVIATIONS = {}
 // 所有「列表」字段都是数组；探测函数里没有任何写死的目录名（数据依赖的判断除外）。
 // ======================================================================
 export const LAYOUTS = {
+ sakana:{
+  "title": "SakanaGL KAG",
+  "kind": "sakana",
+  "detector": "sakana",
+  "family": "sakana::",
+  "autoOrder": 137.7,
+  "bases": [
+    ""
+  ],
+  "searchDepth": 3,
+  "anchors": [
+    "pkg",
+    "sakanagl.dll"
+  ],
+  "siblings": [],
+  "markers": [],
+  "scriptRoots": [
+    {
+      "id": "story",
+      "dir": "arc/script",
+      "label": "剧情"
+    }
+  ],
+  "resourceRoots": [
+    "arc/res"
+  ],
+  "adapters": [
+    "sakana::ks"
+  ],
+  "adapterOptions": {
+    "sakana::ks": {
+      "resDir": {
+        "path": [
+          "arc/res"
+        ]
+      },
+      "scriptDir": {
+        "path": [
+          "arc/script"
+        ]
+      }
+    }
+  },
+  "ruleTables": [
+    "sakana::ks"
+  ],
+  "ruleOverrides": {},
+  "engine": {
+    "classify": [],
+    "resourceResolve": {},
+    "limits": {
+      "walkFiles": 800000,
+      "sampleFiles": 20000,
+      "sampleBytes": 262144,
+      "scriptBytes": 67108864
+    },
+    "containers": {
+      "enabled": true,
+      "dir": "arc",
+      "scan": [
+        "pkg"
+      ],
+      "format": "sakana",
+      "mode": "hybrid",
+      "flat": true,
+      "scriptExt": "sakana",
+      "scriptDecoder": "sakana",
+      "rules": [
+        {
+          "match": "\\.sx$",
+          "kinds": [
+            "script",
+            "res"
+          ]
+        }
+      ],
+      "maxEntries": 200000,
+      "maxTotalMB": 8192
+    }
+  },
+  "config": {
+    "scriptExtensions": [
+      "sakana"
+    ],
+    "namesFiles": [],
+    "thumbsDirs": [],
+    "hiddenDirs": [],
+    "labels": {},
+    "merge": [],
+    "views": [],
+    "groups": [],
+    "dirThumbs": [],
+    "scriptThumbs": [],
+    "scriptIndex": [],
+    "thumbFallback": {
+      "prefer": [
+        "cg",
+        "stand",
+        "bg"
+      ]
+    },
+    "sceneMarkers": [
+      {
+        "label": "CG 开始",
+        "kind": "cmd",
+        "op": "bg",
+        "match": "img/cg/",
+        "pick": "each",
+        "max": 6
+      }
+    ],
+    "pageSize": 100
+  },
+  "count": [],
+  "avatars": [],
+  "expectedDirs": [],
+  "cover": [],
+  "notes": [
+    "SX索引与存储只读；真实CG/角色/回想表和UI层表。剧情选择跳转复用通用播放器，静态表情首帧；不执行Squirrel/SCP代码，不安装运行时。"
+  ]
+},
+ "krkr::twiv":{
+  "extends": "krkr",
+  "title": "ツヴァイトリガー",
+  "autoOrder": 139.75,
+  "scriptArchive": "data.xp3",
+  "bases": [
+    ""
+  ],
+  "anchors": [
+    "data.xp3",
+    "fgimage.xp3",
+    "evimage.xp3"
+  ],
+  "markers": [],
+  "adapterOptions": {
+    "krkr::scn": {
+      "resDir": {
+        "path": [
+          "arc/res"
+        ]
+      },
+      "scriptDir": {
+        "path": [
+          "arc/script"
+        ]
+      }
+    }
+  },
+  "ruleOverrides": {
+    "krkr::scn": {
+      "followGraph": true,
+      "scriptDir": "arc/script"
+    }
+  },
+  "engine": {
+    "classify": [],
+    "resourceResolve": {},
+    "limits": {
+      "walkFiles": 800000,
+      "sampleFiles": 20000,
+      "sampleBytes": 262144,
+      "scriptBytes": 67108864
+    },
+    "containers": {
+      "enabled": true,
+      "dir": "arc",
+      "scan": [
+        "."
+      ],
+      "scriptDecoder": "krkr-scn",
+      "scriptExt": "krkr",
+      "mode": "hybrid",
+      "format": "krkr",
+      "flat": true,
+      "rules": [
+        {
+          "match": "^(?:data|patch\\d*)\\.xp3$",
+          "kinds": [
+            "script",
+            "res"
+          ]
+        },
+        {
+          "match": "\\.xp3$",
+          "kinds": [
+            "res"
+          ]
+        }
+      ],
+      "maxEntries": 200000,
+      "maxTotalMB": 8192
+    }
+  },
+  "config": {
+    "scriptExtensions": [
+      "krkr"
+    ],
+    "namesFiles": [],
+    "thumbsDirs": [],
+    "hiddenDirs": [],
+    "labels": {},
+    "merge": [],
+    "views": [],
+    "groups": [],
+    "dirThumbs": [],
+    "scriptThumbs": [],
+    "scriptIndex": [],
+    "thumbFallback": {
+      "prefer": [
+        "cg",
+        "stand",
+        "bg"
+      ]
+    },
+    "sceneMarkers": [
+      {
+        "label": "CG 开始",
+        "kind": "cmd",
+        "op": "bg",
+        "match": "(?:^|/)ev",
+        "pick": "each",
+        "max": 6
+      }
+    ],
+    "pageSize": 100
+  }
+},
   edo:{
   "title": "Edoire / シロクロ",
   "kind": "edo",
@@ -3082,6 +3323,7 @@ const DETECTORS = {
   arcfam: (scope) => detectArcfam(scope),
   pac: (scope) => detectPac(scope),
   edo: (scope) => detectEdo(scope),
+  sakana:(scope)=>detectSakana(scope),
   krkr: (scope) => detectKrkr(scope),
   rscript: (scope) => detectRscript(scope),
   unity: (scope) => detectUnity(scope),
@@ -3350,7 +3592,7 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'edo'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'edo', 'sakana'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
         mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
@@ -3978,6 +4220,12 @@ async function arcfamTableOk(file) {
     return total > 0 && good >= total * 0.8
   } catch { return false } finally { await handle?.close().catch(() => {}) }
 }
+async function detectSakana(scope){
+ const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null
+ const dir=path.join(scope.media,...splitRel(join(loc.base,'pkg'))),names=await listNames(dir),name=names.find(x=>/\.sx$/i.test(x));if(!name)return null
+ const f=await open(path.join(dir,name),'r');let valid=false;try{const b=Buffer.alloc(8);await f.read(b,0,8,0);valid=b.toString()==='SSXXDEFL'}finally{await f.close()}if(!valid)return null
+ const config=await buildConfig(scope.media,loc.entry,loc.base);config.containers.scan=[join(loc.base,'pkg')];config.containers.dir=join(loc.base,'arc');const found=makeFound(scope,loc.entry,loc,config);found.id=scope.gameId||'sakana::'+path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]/g,'');for(const line of loc.entry.notes)scope.logs.push(line);return found
+}
 async function detectEdo(scope){
  const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null
  const f=await open(path.join(scope.media,...splitRel(join(loc.base,'base_div0_archive.arc'))),'r').catch(()=>null);if(!f)return null
@@ -4061,14 +4309,14 @@ async function detectKrkr(scope) {
   if (!loc) return null
   const { entry, base } = loc
   if (!declared && !(await markersOk(media, entry, base, declared))) return null
-  const scn = path.join(media, ...splitRel(join(base, 'scn.xp3')))
+  const scn = path.join(media, ...splitRel(join(base, entry.scriptArchive||'scn.xp3')))
   if (!(await xp3IsHxv4(scn))) { if (declared) logs.push('KiriKiri：scn.xp3 不是 Hxv4 加密的 xp3（没有 Hxv4 描述符），不是已知的 KiriKiri Z'); return null }
   announce(logs, scope.gameId || scope.id, loc)
   const config = await buildConfig(media, entry, base)
   if (config.containers) config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'arc'), scan: (config.containers.scan || ['.']).map((rel) => join(base, rel === '.' ? '' : rel) || '.') }
   const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
   const slug = path.basename(path.resolve(media)).toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 30)
-  found.id = scope.gameId || `krkr::${slug || 'game'}`
+  found.id = scope.gameId || (entry.scriptArchive==='data.xp3'?'krkr::twiv':`krkr::${slug || 'game'}`)
   found.kind = entry.kind || 'krkr'
   const xp3s = (await listNames(path.join(media, ...splitRel(base)))).filter((n) => /\.xp3$/i.test(n))
   logs.push(`KiriKiri Z 游戏根：${base || '.'}；${xp3s.length} 个 xp3（${xp3s.slice(0, 6).join(' / ')}）；game.id：${found.id}`)

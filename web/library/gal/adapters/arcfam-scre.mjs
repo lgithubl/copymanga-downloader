@@ -84,6 +84,7 @@ export function parse(text, ctx = null, meta = {}) {
 
   // ---- eomaia_char 立绘：当前角色 + 是否显示 ----
   let char = null              // { stem, scale, x, y, base, brow, cheek, tear, eye: { part, idx }, mouth: { part, idx } }
+  const modernChars=new Map(),modernShown=new Map()
   let charShown = false
   let shownChar = ''
   const stemOf2 = (name) => String(name || '').replace(/\\/g, '/').replace(/^.*\//, '').replace(/\.[^.]+$/, '').toLowerCase()
@@ -118,6 +119,7 @@ export function parse(text, ctx = null, meta = {}) {
       if (!frame) { count('ignored', `char-part:${part}`); continue }
       parts.push({ src: frame.sheet, crop: frame.crop, x: frame.x * zoom, y: frame.y * zoom, ...place })
     }
+    if(char.modern){const stage=opt.stage,canvas=def.size||{width:stage[0],height:stage[1]},cx=char.y,top=char.x;return parts.map((p,i)=>{const frame=i===0?{x:Number(baseEntry.x)||0,y:Number(baseEntry.y)||0,w:Number(baseEntry.width)||canvas.width,h:Number(baseEntry.height)||canvas.height}:{x:p.x/zoom,y:p.y/zoom,w:p.crop[2],h:p.crop[3]};return{src:p.src,...(p.crop?{crop:p.crop}:{}),x:cx-stage[0]/2+(frame.x+frame.w/2-canvas.width/2)*zoom,y:top-stage[1]/2+(frame.y+frame.h/2)*zoom,scale:zoom}})}
     return parts
   }
 
@@ -137,7 +139,10 @@ export function parse(text, ctx = null, meta = {}) {
     }
     for (const slot of [...shown.overlays.keys()]) if (!overlays.has(slot)) { emit({ op: 'overlayOff', slot }); shown.overlays.delete(slot) }
     for (const [slot, src] of overlays) if (shown.overlays.get(slot) !== src) { emit({ op: 'overlay', slot, src, fit: opt.overlay.fit }); shown.overlays.set(slot, src) }
-    const charPartList = charParts()
+    const legacy=char;const legacyShown=charShown
+    for(const[slot,c]of modernChars){char=c;charShown=Boolean(c.shown);const parts=charParts(),sig=JSON.stringify(parts);if(sig!==modernShown.get(slot)){emit(parts?{op:'stand',slot:'eomaia:'+slot,parts,stage:opt.stage}:{op:'standOff',slot:'eomaia:'+slot});modernShown.set(slot,sig)}}
+    char=legacy;charShown=legacyShown
+    const charPartList = char?.modern?null:charParts()
     const charSig = charPartList ? JSON.stringify(charPartList) : ''
     if (charSig !== shownChar) { if (charPartList) { emit({ op: 'stand', parts: charPartList }); stats.stands += 1 } else if (shownChar) emit({ op: 'standOff' }); shownChar = charSig }
   }
@@ -201,8 +206,10 @@ export function parse(text, ctx = null, meta = {}) {
       if (method === 101) {
         const triple = Array.isArray(ev[3]) ? ev[3] : []
         char = { stem: stemOf2(args[2]), scale: Number(args[0]) || 100, x: Number(triple[0]) || 0, y: Number.isFinite(Number(triple[1])) ? Number(triple[1]) : 640, base: Number(args[1]) || 0, brow: 0, eye: { part: 'eye-open', idx: 0 }, mouth: { part: 'mouth-close', idx: 0 }, cheek: undefined, tear: undefined }
+        char.modern=ev[4]?.coordMode==='canvas-top-center';char.slot=ev[4]?.slot??0;if(char.modern)modernChars.set(char.slot,char)
         charShown = false
       } else if (char && method === 102 && typeof args[2] === 'string') {
+        if(modernChars.has(args[0]))char=modernChars.get(args[0])
         const idx = Number(args[1]) || 0
         if (args[2] === 'brow') char.brow = idx
         else if (args[2] === 'eye-open' || args[2] === 'eye-close') char.eye = { part: args[2], idx }
@@ -211,8 +218,8 @@ export function parse(text, ctx = null, meta = {}) {
         else if (args[2] === 'tear') char.tear = idx
         else { char.extra ||= {}; char.extra[args[2]]=idx }
       } else if (method === 103) count('ignored', 'char:103')
-      else if (method === 104) { charShown = Boolean(char) }
-      else if (method === 105 || method === 106) { charShown = false; if (method === 106) char = null }
+      else if (method === 104) {charShown=Boolean(char);if(modernChars.size)for(const[slot,c]of modernChars)if(args[0]===-1||args[0]===slot)c.shown=true}
+      else if (method === 105 || method === 106) {if(modernChars.size)for(const[slot,c]of modernChars)if(method===106||args[0]===-1||args[0]===slot)c.shown=false; charShown = false; if (method === 106) char = null }
       else count('ignored', `char:${method}`)
       dirty = true
     } else if(kind==='u')count('ignored',`unhandled:${ev[1]}`)

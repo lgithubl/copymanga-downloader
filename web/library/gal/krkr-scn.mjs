@@ -7,13 +7,14 @@
 //   图层快照 data = [[名字, 类别, { class, name, showmode（3 显示 / 0 隐藏）, redraw: { imageFile: { file, options }, posName }, action: [[键, 值]…] }]…]
 //     类别：stage（背景，名字 bg）/ character（立绘，imageFile.file = 立绘定义名如 cha001.stand，options = { dress, face, pose, add } 选图层）/ event（事件 CG，名字 ev）/ layer / evdanmen / evcutin；bgm / se 是声音；udmask / msgwin 是遮罩 / 对话框的脸
 // 输出：每个台词一步 { t: 文字, n: 说话人, v: 语音名, l: [压缩后的图层], b: [bgm 文件, 状态, 音量, 循环], tr: [转场方式, 毫秒, 遮罩]（envupdate 里 "trans" 后面那个：crossfade / universal（带遮罩图 rule）/ mosaic / ripple / rotateswap），pre: [[命令, 参数…]…] }；没有台词但有「等待 + 画面变化」的也出一步（无 t）。
+import {inflateSync} from 'node:zlib'
 import { Psb } from './psb.mjs'
 
 const LAYER_CLASSES = new Set(['stage', 'character', 'event', 'layer', 'evdanmen', 'evcutin'])
 const KEEP_ACTIONS = new Set(['xpos', 'ypos', 'zpos', 'zoomx', 'zoomy', 'leveloffset', 'originx', 'originy', 'order', 'rotate', 'opacity'])
 const MAX_STEPS = 60000
 
-const looksName = (v) => typeof v === 'string' && /^[\w\-.@]{1,64}$/.test(v) && !/^(0x|@|\.)/.test(v)
+const looksName = (v) => typeof v === 'string' && /^[\p{L}\p{N}_\-.@（）]{1,100}$/u.test(v) && !/^(0x|@|\.)/.test(v)
 
 // 图层 → 紧凑数组 [名字, 类别, 文件, options|null, posName|null, showmode, actions|null]
 function compactLayer(entry) {
@@ -102,12 +103,13 @@ export function decodeKrkrScn(root, { arc = '' } = {}) {
       }
       if (cmd === 'stopvoice' || cmd === 'quake' || cmd === 'stopquake') pre.push([cmd, ln[ln.indexOf('time') + 1] ?? null])
     }
-    scenes.push({ label: scene.label ?? '', title: scene.title ?? '', nexts: Array.isArray(scene.nexts) ? scene.nexts.map((n) => ({ storage: n?.storage ?? '', target: n?.target ?? '', type: n?.type ?? 0 })) : [], steps })
+    scenes.push({ label: scene.label ?? '', title: scene.title ?? '', nexts: Array.isArray(scene.nexts) ? scene.nexts.map((n) => ({ storage: n?.storage ?? '', target: n?.target ?? '', type: n?.type ?? 0,...(n?.flag?{flag:n.flag}:{}),...(n?.eval?{eval:n.eval}:{}) })) : [], steps })
   }
   const out = { format: 'krkr-scn/1', arc, name: base, scenes }
   return { name: base, text: JSON.stringify(out), refs: { img: [...refs.img], bgm: [...refs.bgm], voice: [...refs.voice] } }
 }
 
 export function decodeKrkrScnBuffer(buffer, meta = {}) {
+  if(buffer.toString('latin1',0,4)==='mdf\0'){const expected=buffer.readUInt32LE(4);if(expected>64*1024*1024)throw Error('MDF 剧情超过64MB');buffer=inflateSync(buffer.subarray(8),{maxOutputLength:64*1024*1024});if(buffer.length!==expected)throw Error('MDF 剧情长度不符')}
   return decodeKrkrScn(new Psb(buffer).root(), meta)
 }

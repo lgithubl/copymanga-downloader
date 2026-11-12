@@ -19,7 +19,7 @@ import{buildPac}from'./make-pac-fixture.mjs'
 test('new eomaia dialect normalizes literal image/audio/character calls; legacy decoder remains supported',()=>{
  const s=new Scre();s.int(1).res('eomaia_image',103,'a001_01.png').int(1).int(0).int(1).res('audio',105,'m01.ogg').int(0).int(0).int(0).res('audio',130,'00_prologue_001.ogg').charCall(102,0,0,960,100,0,'fg_ren.char',1).charCall(103,0,3,'face',1).charCall(105,-1,0).say('test');const ev=decodeScre(s.build())
  assert.ok(ev.some(e=>e[0]==='i'&&e[1]===102&&e[2]==='a001_01.png'));assert.ok(ev.some(e=>e[0]==='v'));assert.ok(ev.some(e=>e[0]==='b'))
- const load=ev.find(e=>e[0]==='m'&&e[1]===101);assert.deepEqual(load.slice(2),[[100,0,'fg_ren.char',1],[0,960,19]])
+ const load=ev.find(e=>e[0]==='m'&&e[1]===101);assert.deepEqual(load.slice(2),[[100,0,'fg_ren.char',1],[0,960,19],{coordMode:'canvas-top-center',slot:0}])
  assert.ok(ev.some(e=>e[0]==='m'&&e[1]===104));assert.ok(decodeScre(new Scre().voice('old.ogg').say('old').build()).some(e=>e[0]==='v'&&e[1]==='old.ogg'))
 })
 test('PAC parser validates index bounds and actual resource pipeline returns lazy image/audio bytes',async()=>{
@@ -61,3 +61,9 @@ test('Night layout reuses arcfam, reads native stage and includes first-line CG 
 })
 
 test('PAC background effects resolve BGM archive separately from ordinary SE',()=>{const s=pac.parse('#BGSPLAY,5\n#SEPLAY,5\n#MSG\nA\nline\n#END\n',pac.prepare({files:[],texts:{},options:{}})),c=s.steps.flatMap(s=>s.commands);assert.ok(c.some(c=>c.op==='bgse'&&c.src==='data/Sound/BGM/005.ogg'));assert.ok(c.some(c=>c.op==='se'&&c.src==='data/Sound/SE/005.wav'))})
+
+test('actual Night REN301 uses native1920x1080 canvas coordinates and a real face atlas frame',async()=>{
+ const {arcfamScreAdapter}=await import('../../web/library/gal/adapters/arcfam-scre.mjs'),root='.cache/new-games-155817/extracted/g02/__media',names=['FG_REN04A01L.CHAR','FG_REN04A01L_FACE.JSON','FG_REN04A01L_0.PNG','FG_REN04A01L_FACE.PNG'],texts={};for(const n of names.filter(n=>/\.(char|json)$/i.test(n)))texts['arc/res/'+n]=await readFile(root+'/'+n,'utf8');const ctx=arcfamScreAdapter.prepare({options:{stage:[1920,1080]},files:names.map(n=>'arc/res/'+n),texts,toResourcePath:r=>r.replace(/^arc\/res\//,'')})
+ const idx=await readArcfamIndex('.cache/new-games-085514/extracted/g05/script.arc'),entry=idx.entries.find(e=>e.name==='REN301.SCRIPT'),f=await open('.cache/new-games-085514/extracted/g05/script.arc','r'),b=Buffer.alloc(entry.size);try{await f.read(b,0,b.length,entry.offset)}finally{await f.close()}const events=decodeScre(b),at=events.findIndex(e=>e[0]==='m'&&e[1]===101&&String(e[2]?.[2]).toLowerCase()==='fg_ren04a01l.char'),scene=arcfamScreAdapter.parse(JSON.stringify({format:'arcfam-scre/1',events:events.slice(at,at+9)}),ctx),stand=scene.steps.flatMap(s=>s.commands).find(c=>c.op==='stand'&&c.parts?.length>=2)
+ assert.ok(stand);assert.equal(stand.slot,'eomaia:1');assert.deepEqual(stand.stage,[1920,1080]);assert.equal(stand.parts[0].x,0);assert.equal(stand.parts[0].y,0);const face=stand.parts.find(p=>p.crop);assert.equal(face.x,739+356/2-960);assert.equal(face.y,211+311/2-540);assert.ok(face.crop.every(Number.isFinite))
+})

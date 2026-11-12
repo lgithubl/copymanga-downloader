@@ -84,6 +84,7 @@ async function resolvePart(media, part) {
   }
   if (part.src) {
     const img = await media.image(part.src)
+    if(img&&part.crop){const c=part.crop;if(!Array.isArray(c)||c.length!==4||!c.every(Number.isFinite)||c[0]<0||c[1]<0||c[2]<=0||c[3]<=0||c[0]+c[2]>img.naturalWidth||c[1]+c[3]>img.naturalHeight){media.missing(part.src+'#crop');return null}}
     return img ? { part, image: img, frames: null } : null
   }
   return null
@@ -100,7 +101,9 @@ function drawResolved(ctx, geo, item, alpha, off = [0, 0]) {
   ctx.globalCompositeOperation = BLEND_OPS[part.blend] || 'source-over'   // part.blend：AdvHD 的 PNA 帧用的混合方式（腮红 / 阴影 / 高光层，普通叠加会变成黑斑）
   ctx.globalAlpha = alpha * (Number(part.alpha) > 0 && Number(part.alpha) < 1 ? Number(part.alpha) : 1)   // part.alpha：这一部件自己的透明度（AdvHD 的 PNA 帧记录里有）
   ctx.filter = Number(part.dim) > 0 && Number(part.dim) < 1 ? `brightness(${Number(part.dim)})` : 'none'
-  if (!frames) {
+  if (!frames&&part.crop) {
+    const [x,y,w,h]=part.crop;ctx.drawImage(image,x,y,w,h,px-w*s/2,py-h*s/2,w*s,h*s)
+  } else if (!frames) {
     ctx.drawImage(image, px - (image.naturalWidth * s) / 2, py - (image.naturalHeight * s) / 2, image.naturalWidth * s, image.naturalHeight * s)
   } else {
     for (const frame of frames) {

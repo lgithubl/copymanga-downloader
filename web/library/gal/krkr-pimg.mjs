@@ -17,7 +17,7 @@ export function parseSinfo(text) {
     const c = line.split('\t')
     const layer = (v) => (v === undefined || v === '' || v === 'ダミー' ? null : v)
     if (c[0] === 'dress' && c.length >= 5) out.dress.push([c[1], c[3], layer(c[4])])
-    else if (c[0] === 'face' && c.length >= 3) out.face.push([c[1], c[2]])
+    else if (c[0] === 'face' && c.length >= 3) out.face.push([c[1], c.length>=4&&c[2]==='base'?c[3]:c[2]])
     else if (c[0] === 'add' && c.length >= 3) out.add.push([c[1], layer(c[2])])
   }
   return out
@@ -48,7 +48,7 @@ export function pickPimgLayers(info, options = {}, sinfo = null) {
   const images = info.layers.filter((l) => l[8] === 'image' && l[9] !== null)
   const byName = new Map()
   for (const l of images) { const k = norm(l[1]); if (!byName.has(k)) byName.set(k, l) }
-  const exact = (value) => byName.get(norm(value)) || null
+  const exact = (value) => byName.get(norm(value)) || images.find(l=>norm(l[1].split('/').at(-1))===norm(String(value).split('/').at(-1))) || null
   const ids = []
   const missing = []
   const push = (kind, value, layer) => { if (layer) { if (!ids.includes(layer[0])) ids.push(layer[0]) } else missing.push(`${kind}:${value}`) }
@@ -61,7 +61,7 @@ export function pickPimgLayers(info, options = {}, sinfo = null) {
   if (options?.pose && !sinfo) { const layer = exact(options.pose); if (layer) push('pose', options.pose, layer) }   // 没有 sinfo 时 pose 可能是单独的层；pose 没有对应的层很常见，不算缺
   if (options?.face) {
     const row = sinfo?.face.find(([f]) => norm(f) === norm(options.face))
-    const name = row ? row[1].split('/').pop() : options.face
+    const name = row ? row[1] : options.face
     push('face', options.face, exact(name) || exact(options.face))
   }
   const adds = String(options?.add ?? '').split(':').map((x) => x.trim()).filter(Boolean)
@@ -75,3 +75,6 @@ export function pickPimgLayers(info, options = {}, sinfo = null) {
   }
   return { ids, missing }
 }
+
+// Plain TJS dictionary fields only; never evaluate .stand code.
+export function parseStandVariants(text){return String(text).split(/%\[/).slice(1).map(s=>{const filename=/"filename"\s*=>\s*"([^"\r\n]+)"/.exec(s)?.[1],name=/"name"\s*=>\s*"([^"\r\n]+)"/.exec(s)?.[1];return filename?{...parseStandInfo(s),filename,name:name||''}:null}).filter(Boolean)}

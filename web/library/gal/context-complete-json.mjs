@@ -1,0 +1,4 @@
+// Some adapters need whole generated JSON, beyond the generic text sniff sample.
+import{open}from'node:fs/promises'
+import path from'node:path'
+export async function completeJsonSamples({texts={},files=[],mediaDir},match,{fileLimit=64*1024*1024,totalLimit=128*1024*1024}={}){const out={...texts};let total=0;for(const rel of files){if(!match(rel))continue;try{JSON.parse(out[rel]);continue}catch{}if(!rel||rel.includes('\\')||rel.split('/').some(s=>s==='..'||s==='.'||!s))throw Error('JSON上下文路径无效');const f=await open(path.join(mediaDir,...rel.split('/')),'r').catch(e=>{if(e.code==='ENOENT')return null;throw e});if(!f)continue;try{const{size}=await f.stat();total+=size;if(size>fileLimit||total>totalLimit)throw Error('完整JSON上下文超过读取上限');const b=Buffer.alloc(size);let p=0;while(p<size){const r=await f.read(b,p,size-p,p);if(!r.bytesRead)throw Error('JSON上下文截断');p+=r.bytesRead}out[rel]=b.toString('utf8')}finally{await f.close()}}return out}

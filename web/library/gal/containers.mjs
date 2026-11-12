@@ -1,3 +1,6 @@
+import {readSakanaIndex,readSakanaEntry,decodeSxEntry,sakanaMetadata,fafaValue,sakanaStorageSig} from './sakana.mjs'
+import {readPbd} from './krkr-pbd.mjs'
+import {parseStandVariants} from './krkr-pimg.mjs'
 import { readEdoIndex, edoPayload } from './edo.mjs'
 // 容器（打包格式）读取：服务端自己读 .arc，把里面的剧情脚本 / 图片 / 音频展开到媒体目录下的一个缓存目录（config.containers.dir，默认 arc/），
 // 之后引擎、适配器、资源解析都按普通文件工作（不用用户在本机解包）。
@@ -31,7 +34,7 @@ import { IMYS_HCA_KEY, decodeHca, pcmToWav } from './cri-hca.mjs'
 import { decodeArc, parseDrawImageKeys, parseImageIndex, parseSoundTable, probeImage, splitChapters, tinkDecrypt, tomoeImageTransform } from './tomoe.mjs'
 import { DSM_MAX_BYTES, decryptDsm, isPsm, psmToPng, splitDsm } from './unity-dsm.mjs'
 import { normalizeKeyBundles } from './config.mjs'
-import { Hxv4Filter, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
+import { Hxv4Filter, adler32, applyState, decodeKirikiriText, nameHash, openHxv4Archive } from './krkr-hxv4.mjs'
 import { parseSinfo, parseStandInfo, pimgInfo } from './krkr-pimg.mjs'
 import { decodeTlg, isTlg, tlgToPng } from './tlg.mjs'
 import { inflateRawSync, inflateSync } from 'node:zlib'
@@ -54,7 +57,7 @@ async function archiveContainerPath(target) {
 
 
 // 展开结果的格式版本（进缓存签名）：脚本解码器 / index.json / 文件命名一变就加一，否则已展开过的游戏会一直用旧结果（2→3：解码器改成引擎自己的操作数表、PNA 帧按序号命名并带 kind / alpha；3→4：展开方式 mode（hybrid / files）进签名；4→5：PNAP 的帧还原成直通 alpha、WebP 帧也认、index.json 带 format / premultiplied；6→7：BGI 剧本的执行结果变了（jump_scenario 目标取 set_label 的字符串、事件数上限），已展开的要重新展开）
-export const CONTAINER_FORMAT_VERSION = 20
+export const CONTAINER_FORMAT_VERSION = 21
 const MAX_DIR_BYTES = 64 * 1024 * 1024
 const MAX_ENTRY_BYTES = 1024 * 1024 * 1024
 const MAX_NAME_CHARS = 200
@@ -151,6 +154,7 @@ export const SCRIPT_DECODERS = Object.freeze({
   'arcfam-scre': ARCFAM_SCRE_DECODER,
   'krkr-scn': KRKR_SCN_DECODER,
   'edo-lua': EDO_LUA_DECODER,
+  'sakana': {ext:'sakana',decode(){throw Error('SX独立展开器处理')}},
   'rscript-gsc': RSCRIPT_GSC_DECODER,
   'unity-dsm': UNITY_DSM_DECODER,
   'mahotan-json': MAHOTAN_JSON_DECODER,
@@ -196,7 +200,7 @@ export const SCRIPT_DECODERS = Object.freeze({
 export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 
 // 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
-const arcRegex = (cfg) => (cfg.format === 'pac' ? /\.pac$/i : cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
+const arcRegex = (cfg) => (cfg.format === 'sakana' ? /\.sx$/i : cfg.format === 'pac' ? /\.pac$/i : cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
 const readIndexFor = (file, cfg) => (cfg?.format === 'edo' ? readEdoIndex(file) : cfg?.format === 'pac' ? readPacIndex(file) : cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
@@ -736,6 +740,7 @@ function fileKeys() {
 const effectiveKeys = (cfg) => (cfg?.keys?.length ? cfg.keys : fileKeys())
 // 用密钥包里第一套能打开这个 xp3 的打开它 → { arc, bundle, index }
 async function openKrkr(file, cfg) {
+  try{const arc=await openHxv4Archive(file,null,{allowPlain:true});return{arc,bundle:{plain:true},index:-1}}catch{}
   const keys = effectiveKeys(cfg)
   if (!keys.length) throw new Error('没有密钥包（config.containers.keys 或服务端密钥文件 gal-krkr-keys.json）')
   let last = null
@@ -743,6 +748,10 @@ async function openKrkr(file, cfg) {
     try { return { arc: await openHxv4Archive(file, bundle, { filter: krkrFilterFor(bundle) }), bundle, index } } catch (error) { last = error }
   }
   throw new Error(`密钥包里没有一套能打开 ${path.basename(file)}：${last?.message || last}`)
+}
+async function expandSakana({file,cfg,outRoot,budget}){
+ const index=await readSakanaIndex(file),stem=withoutExt(path.basename(file)),result={entries:index.entries.length,scripts:0,res:0,skipped:0,bad:[]};if(index.entries.length>cfg.maxEntries)throw Error('SX 条目超过上限')
+ for(const e of index.entries){const script=/^scenario\/.*\.ks$/i.test(e.name),metadata=/^conf\/(character|cg|scene|bgm)\.conf$/i.test(e.name),ui=/\.ui$/i.test(e.name)&&/^img\//.test(e.name);if(!script&&!metadata&&!ui){result.skipped++;continue}try{const data=await readSakanaEntry(index,e);budget.bytes+=data.length;if(budget.bytes>budget.limit)throw Error('SX 展开超过配置总量');let rel,value;if(script){const text=new TextDecoder('utf-8',{fatal:true}).decode(data);if(!/\[cpg(?:\s|\])/.test(text)||/\[macro\s/.test(text)){result.skipped++;continue}rel=`script/${stem}/${e.name.replace(/\.ks$/i,'.sakana')}`;value={format:'sakana-ks/1',name:e.name,text};result.scripts++}else{rel=`res/${stem}/${e.name}.json`;value=metadata?sakanaMetadata(e.name,data):{format:'sakana-ui/1',data:fafaValue(data)};result.res++}const dest=path.join(outRoot,...rel.split('/'));await mkdir(path.dirname(dest),{recursive:true});await writeFile(dest,JSON.stringify(value))}catch(error){result.bad.push(`${e.name}: ${error.message}`)}}return result
 }
 async function expandKrkr({ file, arcName, rule, cfg, outRoot, budget }) {
   const stem = withoutExt(arcName)
@@ -755,11 +764,13 @@ async function expandKrkr({ file, arcName, rule, cfg, outRoot, budget }) {
     const refs = { img: new Set(), bgm: new Set(), voice: new Set() }
     for (const entry of arc.entries) {
       if (!entry.meta || entry.hxv4Id === 0) { result.skipped += 1; continue }   // id 0 = 「禁止解包」的警告占位条目
+      let head;try{head=await arc.readEntryRange(entry,0,Math.min(4,entry.originalSize))}catch(error){result.bad.push(`#${entry.hxv4Id}（${error.message}）`);continue}
+      if(!['PSB\0','mdf\0'].includes(head.toString('latin1'))){result.skipped++;continue}
       budget.bytes += entry.originalSize
       if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
       let data
       try { data = await arc.readEntry(entry) } catch (error) { result.bad.push(`#${entry.hxv4Id}（${error.message}）`); continue }
-      if (!isPsb(data)) { result.skipped += 1; result.notScript = (result.notScript || 0) + 1; continue }
+      if (!isPsb(data)&&data.toString('latin1',0,4)!=='mdf\0') { result.skipped += 1; result.notScript = (result.notScript || 0) + 1; continue }
       let decoded
       try { decoded = decodeKrkrScnBuffer(data, { arc: stem }) } catch (error) { result.skipped += 1; result.notScript = (result.notScript || 0) + 1; continue }
       const name = safeEntryName(decoded.name)
@@ -840,11 +851,11 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
   }
   for (const kind of ['bgm', 'voice']) for (const n of names[kind]) for (const ext of KRKR_AUDIO_EXTS) addCandidate(`${n}.${ext}`, `${n}.${ext}`, 'raw')
   if (!candidates.size) return { map, files, sig }
-  const entryHit = (entry, record, file, extra) => ({ file, offset: 0, size: entry.originalSize, transform: 'krkr', krkr: { id: entry.hxv4Id, segments: entry.segments, entryKey: record.entryKey.toString(), filterFlag: record.filterFlag, originalSize: entry.originalSize, archiveSize: entry.archiveSize, adler: entry.adler, ...extra } })
+  const entryHit = (entry, record, file, extra) => ({ file, offset: 0, size: entry.originalSize, transform: 'krkr', krkr: { plain:Boolean(record.plain), id: entry.hxv4Id, segments: entry.segments, entryKey: record.entryKey.toString(), filterFlag: record.filterFlag, originalSize: entry.originalSize, archiveSize: entry.archiveSize, adler: entry.adler, ...extra } })
   const redirects = new Map()   // 成员名（无扩展名）→ { dpak 文件名, 成员文件名, 所在 xp3 }
   const redirectEntries = []    // 每个重定向条目：{ id, dpak, member（底图 TLG）, overlays（叠加层 PNG 成员名）, … }（变体按 id 顺序对名字用）
   const pending = []            // 稍后处理的 { archive, byName }
-  for (const { file, rule } of arcs) {
+  for (const { file, rule } of [...arcs].sort((a,b)=>Number(/^patch/i.test(path.basename(b.file)))-Number(/^patch/i.test(path.basename(a.file))))) {
     if (!rule.kinds.has('res')) continue
     let opened
     try { opened = await openKrkr(file, cfg) } catch { continue }
@@ -893,6 +904,22 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
   // dpak 的成员表：每个重定向指向的 dpak 打开头部（PSB 的名字 / 字符串 / 根，不碰资源）列出所有 .tlg 成员（一个 dpak = 一组 CG：cg005_06 / cg005_06r1 / …）；成员名 = 去掉 ev 的逻辑名
   const memberIndex = new Map()   // 成员 stem（小写）→ { member, record, entry, file, bundle }
   try {
+    // Stand definitions may name multiple pose files. PBD_2 is the 100% LOD;
+    // keep its native layer coordinates and reuse the PIMG selection/player.
+    const lookup=(name)=>{for(const p of pending){const entry=p.arc.find('',name);if(entry)return{...p,entry,record:entry.meta}}return null}
+    const jsonHit=(base,data)=>({...entryHit(base.entry,base.record,base.file,{mode:'json-data',json:data}),bundleJson:base.bundle})
+    for(const n of names.img){const def=lookup(n+'.stand');if(!def)continue
+      let variants;try{variants=parseStandVariants(decodeKirikiriText(await def.arc.readEntry(def.entry))||'')}catch{continue}
+      if(!variants.length)continue
+      // Preserve the original stand metadata and pose-to-file mapping.
+      map.set(`${cfg.dir}/res/${n}.stand.json`.toLowerCase(),{rel:`${cfg.dir}/res/${n}.stand.json`,...jsonHit(def,{...variants[0],variants})})
+      for(const v of variants){const stem=v.filename,pbd=lookup(stem+'_2.pbd');if(!pbd)continue;let root;try{root=readPbd(await pbd.arc.readEntry(pbd.entry))}catch{continue}
+        const dimensions=root[0],layers=root.slice(1),byId=new Map(layers.map(l=>[l.layer_id,l])),full=l=>{const parts=[l.name];let g=l.group_layer_id,seen=new Set();while(g!==undefined&&byId.has(g)&&!seen.has(g)){seen.add(g);const p=byId.get(g);parts.unshift(p.name);g=p.group_layer_id}return parts.join('/')}
+        const info={width:dimensions.width,height:dimensions.height,layers:[]}
+        for(const l of layers){const texture=l.layer_type===2?null:lookup(`${stem}_2_${l.layer_id}.tlg`);info.layers.push([l.layer_id,full(l),l.group_layer_id??null,l.left||0,l.top||0,l.width||0,l.height||0,l.visible?1:0,l.layer_type===2?'group':'image',texture?0:null]);if(texture){const hit=entryHit(texture.entry,texture.record,texture.file,{mode:'tlg-png'});hit.bundleJson=texture.bundle;add(`${cfg.dir}/res/${stem}.pimg/${l.layer_id}.png`,hit)}}
+        add(`${cfg.dir}/res/${stem}.pimg.json`,jsonHit(pbd,info))
+      }
+    }
     const dpaks = new Map()
     for (const r of redirects.values()) { const record = r.byHash.get(hashHex(r.dpak)); const entry = record && r.byRecord.get(record); if (entry && !dpaks.has(record)) dpaks.set(record, { r, record, entry }) }
     for (const { r, record, entry } of dpaks.values()) {
@@ -995,6 +1022,7 @@ async function buildKrkrVirtual(mediaDir, cfg, arcs, sig) {
 }
 async function readKrkrHit(hit) {
   const k = hit.krkr
+  if(k.mode==='json-data')return Buffer.from(JSON.stringify(k.json))
   const isL2d = k.mode === 'l2d-member' || k.mode === 'l2d-texture'
   const l2dKey = isL2d ? `${hit.file}:${k.id}` : ''
   let cached = isL2d ? l2dZips.get(l2dKey) : null
@@ -1011,7 +1039,8 @@ async function readKrkrHit(hit) {
     }
     data = Buffer.concat(parts)
     if (data.length !== k.originalSize && data.length === k.archiveSize) data = inflateSync(data)
-    applyState(krkrFilterFor(hit.bundleJson).stateFor(BigInt(k.entryKey), k.filterFlag), 0, data)
+    if(!k.plain)applyState(krkrFilterFor(hit.bundleJson).stateFor(BigInt(k.entryKey), k.filterFlag), 0, data)
+    if(data.length!==k.originalSize||k.adler!==null&&k.adler!==undefined&&adler32(data)!==k.adler)throw Error('XP3资源完整性校验失败，保留原档案')
     }
   } finally { await handle?.close().catch(() => {}) }
   if (isL2d && !cached) { l2dZips.set(l2dKey, data); while (l2dZips.size > 2) l2dZips.delete(l2dZips.keys().next().value) }
@@ -1021,7 +1050,7 @@ async function readKrkrHit(hit) {
     case 'tlg-png': return tlgToPng(data)
     case 'pimg-json': return Buffer.from(JSON.stringify(pimgInfo(new Psb(data).root())))
     case 'sinfo-json': return Buffer.from(JSON.stringify(parseSinfo(decodeKirikiriText(data) ?? data.toString('utf8'))))
-    case 'stand-json': return Buffer.from(JSON.stringify(parseStandInfo(decodeKirikiriText(data) ?? data.toString('utf8'))))
+    case 'stand-json': return Buffer.from(JSON.stringify((()=>{const text=decodeKirikiriText(data)??data.toString('utf8');return{...parseStandInfo(text),variants:parseStandVariants(text)}})()))
     case 'pimg-layer': {
       const psb = new Psb(data)
       const root = psb.root()
@@ -1099,6 +1128,7 @@ function hitFor(v, rel) {
 }
 // 取一个虚拟条目的字节（转好格式 / 解好密的）
 async function readHit(hit) {
+  if(hit.transform==='sakana'){const f=await open(hit.file,'r');try{return decodeSxEntry(await readRange(f,hit.offset,hit.size),hit.sx)}finally{await f.close()}}
   if(hit.transform==='edo'){const f=await open(hit.file,'r');try{return edoPayload(await readRange(f,hit.offset,hit.size))}finally{await f.close()}}
   if (hit.krkr) return readKrkrHit(hit)
   if (hit.transform === 'imys-hca' || hit.transform === 'imys-bg' || hit.transform === 'imys-tati') return transformData(await readFile(hit.file), hit)   // ACB 整个读进来（索引阶段只读了元数据，没有记大小）
@@ -1140,6 +1170,7 @@ async function listArcs(mediaDir, cfg) {
       try { info = await stat(file) } catch { continue }
       if (info.isFile()) {
         let sig = `${arcName}:${info.size}:${Math.floor(info.mtimeMs)}`
+        if(cfg.format==='sakana')sig+='|'+await sakanaStorageSig(file)
         if (cfg.format === 'tomoe' && /^arc04\.dat$/i.test(arcName)) {
           const index = names.find(name => /^arc01\.dat$/i.test(name))
           if (index) { const metadata = await stat(path.join(dir, index)); sig += `:${metadata.size}:${metadata.mtimeMs}` }
@@ -1296,6 +1327,8 @@ function imysAcbToWav(data, hit) {
 }
 
 async function buildVirtual(mediaDir, cfg, arcs, sig) {
+  if(cfg.format==='sakana'){const map=new Map(),files=[];for(const{file,rule}of arcs){const index=await readSakanaIndex(file);if(index.entries.length>cfg.maxEntries)throw Error('SX 条目超过上限');for(const e of index.entries){if(!/\.(?:png|webp|jpe?g|ogg|wav|mp3|mp4|webm)$/i.test(e.name))continue;if((rule.include.length&&!rule.include.some(re=>re.test(e.name)))||rule.exclude.some(re=>re.test(e.name)))continue;const rel=`${cfg.dir}/res/${e.name}`,key=rel.toLowerCase();if(!map.has(key)){files.push(rel);map.set(key,{rel,file:index.arcs[e.arc].file,offset:e.offset,size:e.size,transform:'sakana',sx:e})}}}return{map,files,sig}}
+
   if (cfg.format === 'edo') {
     const map=new Map(),files=[];for(const {file,rule} of arcs){if(!rule.kinds.has('res'))continue;const {entries}=await readEdoIndex(file);if(entries.length>cfg.maxEntries)throw Error('Edoire 条目超过配置上限');for(const e of entries){if((rule.include.length&&!rule.include.some(re=>re.test(e.name)))||rule.exclude.some(re=>re.test(e.name)))continue;if(e.kind!=='res'||e.size>MAX_ENTRY_BYTES)continue;const rel=`${cfg.dir}/res/${e.logical}`;if(map.has(rel.toLowerCase()))continue;map.set(rel.toLowerCase(),{rel,file,offset:e.offset,size:e.size,transform:'edo'});files.push(rel)}}return{map,files,sig}
   }
@@ -1707,6 +1740,7 @@ async function run(mediaDir, cfg) {
       try { info = await stat(file) } catch { continue }
       if (!info.isFile()) continue
       let sig = `${info.size}:${Math.floor(info.mtimeMs)}:${fp}`
+      if(cfg.format==='sakana')sig+='|'+await sakanaStorageSig(file)
       if (cfg.format === 'tomoe' && /^arc04\.dat$/i.test(arcName)) {
         const index = (await readdir(dir)).find(name => /^arc01\.dat$/i.test(name))
         if (index) { const metadata = await stat(path.join(dir, index)); sig += `:${metadata.size}:${metadata.mtimeMs}` }
@@ -1715,7 +1749,7 @@ async function run(mediaDir, cfg) {
       const stem = cfg.format === 'pf8' ? pf8Stem(arcName) : withoutExt(arcName)
       const tmp = path.join(outRoot, `.tmp-${process.pid}-${Date.now()}`)
       try {
-        const result = await (cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'mhp' ? expandMhp({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'tomoe' ? expandTomoe({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'arcdrama' ? expandArcdrama({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
+        const result = await (cfg.format === 'sakana' ? expandSakana({file,cfg,outRoot:tmp,budget}) : cfg.format === 'krkr' ? expandKrkr({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'dsm' ? expandDsm({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'mhp' ? expandMhp({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'tomoe' ? expandTomoe({ file, arcName, rule, cfg, outRoot: tmp, budget }) : cfg.format === 'arcdrama' ? expandArcdrama({ file, arcName, rule, cfg, outRoot: tmp, budget }) : expandArc({ file, arcName, rule, cfg, outRoot: tmp, budget }))
         // 先展开到临时目录，再整体换掉这个容器的两个子目录（中途失败不会留下半截内容）
         for (const part of ['script', 'res', 'refs']) {
           const from = path.join(tmp, part, stem)
