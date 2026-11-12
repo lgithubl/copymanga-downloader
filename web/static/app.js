@@ -1,3 +1,4 @@
+import { GAL_PRESETS } from '/gal-import-presets.js'
 import { createThumbLoader, thumbSettingsFromConfig } from '/thumb-loader.js'
 import { createGalBrowser } from '/gal-browse.js'
 import { loadReaderWithRecovery, readerRouteSectionId } from '/gal-resume.js'
@@ -2466,45 +2467,11 @@ function currentMediaImportProfileConfig() {
 }
 
 // Gal 导入页的「游戏」预设：选一个游戏点「刷新 json」，把它的 adapters + config.game 填进方案 JSON 文本框（只动前端文本框，
-// rootDir / dryRun / defaultMetadataActions 沿用文本框里现有的）。新增支持的游戏时在这里加一行，并在 index.html 的 #gal-preset 里加 option。
-const GAL_PRESETS = {
-  uviewer: { adapters: ['uviewer-csv'], game: { id: 'uviewer', title: 'UViewer 资源包' } },
-  deepone: { adapters: ['uviewer-csv'], game: { id: 'deepone', title: 'deepone' } },
-  legeclo: { adapters: ['renpy-legeclo'], game: { id: 'legeclo', title: 'Legeclo' } },
-  monmusu: { adapters: ['renpy-monmusu'], game: { id: 'monmusu', title: 'Monmusu' } },
-  minashigo: { adapters: ['renpy-minashigo'], game: { id: 'minashigo', title: 'Minashigo' } },
-  girlscreation: { adapters: ['girlscreation-tag'], game: { id: 'girlscreation', title: 'Girls Creation' } },
-  girlscreation282: { adapters: ['girlscreation-tag'], game: { id: 'girlscreation282', title: 'Girls Creation R Viewer 282寝' } },
-  aster: { adapters: ['girlscreation-tag'], game: { id: 'aster', title: 'Angelica Aster' } },
-  jaxin: { adapters: ['girlscreation-tag'], game: { id: 'jaxin', title: 'jaxin' } },
-  maid: { adapters: ['girlscreation-tag'], game: { id: 'maid', title: 'maid' } },
-  aku: { adapters: ['girlscreation-tag'], game: { id: 'aku', title: 'Aku No Onna Kanbu' } },
-  fruits: { adapters: ['girlscreation-tag'], game: { id: 'fruits', title: 'Fruits Fulcute!' } },
-  tenkeiprdx: { adapters: ['tenkeiprdx-json'], game: { id: 'tenkeiprdx', title: 'Tenkeiprdx X' } },
-  misttrain: { adapters: ['misttrain-json'], game: { id: 'misttrain', title: 'MistTrainGirls X' } },
-  angelic: { adapters: ['renpy-monmusu'], game: { id: 'angelic', title: 'Angelic' } },
-  artwhirl: { adapters: ['artwhirl-json'], game: { id: 'artwhirl', title: '魔法学园的少女们' } },
-  kamihime: { adapters: ['tyrano-ks'], game: { id: 'kamihime', title: 'Kamihime Player' } },
-  minashigo_r: { adapters: ['uviewer-csv'], game: { id: 'minashigo_r', title: 'ミナシゴノシゴトR' } },
-  bokusen: { adapters: ['bokusen-json'], game: { id: 'bokusen', title: 'ぼくらの放課後戦争' } },
-  grenze: { adapters: ['grenze-xml'], game: { id: 'grenze', title: 'Grenze' } },
-  tsk: { adapters: ['utage-book'], game: { id: 'tsk', title: 'Twinkle Star Knights X' } },
-  otogi: { adapters: ['otogi-json'], game: { id: 'otogi', title: 'Otogi Frontier R' } },
-  // WillPlus AdvHD 家族：id 用 :: 分段（advhd::<游戏>），同引擎的新游戏在这里加一行（或直接在方案 JSON 里写 advhd::<名字>——gal-layout 按家族处理，不用改脚本）
-  advhd_lpsl: { adapters: ['advhd::ws2'], game: { id: 'advhd::lpsl', title: 'Lovey-dovey Part-time Sex Life' } },
-  // BGI / Ethornell（bgi::<游戏>，Archive/data*.arc）、Artemis（artemis::<游戏>，*.pfs）、自有 arc / eomaia（arcfam::<游戏>，script.arc + image.arc …）：每个家族一项，刷新后把 JSON 里的 config.game.id（<家族>::<自己起的名>）和 title 改成自己的
-  bgi: { adapters: ['bgi::bs'], game: { id: 'bgi::game', title: '' } },
-  artemis: { adapters: ['artemis::ast'], game: { id: 'artemis::game', title: '' } },
-  arcfam: { adapters: ['arcfam::scre'], game: { id: 'arcfam::game', title: '' } },
-  krkr: { adapters: ['krkr::scn'], game: { id: 'krkr::game', title: '' } },
-  rscript: { adapters: ['rscript::gsc'], game: { id: 'rscript::game', title: '' } },
-  unity: { adapters: ['unity::dsm'], game: { id: 'unity::game', title: '' } },
-  mahotan: { adapters: ['mahotan::json'], game: { id: 'mahotan::game', title: '' } },
-  arcrecord: { adapters: ['arcrecord::dialog'], game: { id: 'arcrecord::game', title: '' } },
-  tomoe: { adapters: ['tomoe::arc04'], game: { id: 'tomoe::game', title: '' } },
-  imys: { adapters: ['imys::adv'], game: { id: 'imys::game', title: '' } },
-  rpgmaker: { adapters: ['rpgmaker-json'], game: { id: 'rpgmaker::game', title: '' } },
+// rootDir / dryRun / defaultMetadataActions 沿用文本框里现有的）。预设及下拉标签统一维护在 gal-import-presets.js。
+for (const [value, preset] of Object.entries(GAL_PRESETS)) {
+  els.galPreset.add(new Option(preset.label, value))
 }
+
 function refreshGalPresetJson() {
   const preset = GAL_PRESETS[els.galPreset.value]
   if (!preset) return

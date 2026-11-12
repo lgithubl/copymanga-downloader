@@ -1102,12 +1102,13 @@ tenkeiprdx / misttrain / girlscreation 的列表原来是适配器里写死的�
 
 ### 导入页「Gal 游戏」下拉里的预设（BGI / Artemis / 自有 arc）
 
-- 导入页（媒体导入 → Gal 导入方案）的「Gal 游戏」下拉 + 「刷新 json」= 把所选预设的 `adapters` 和 `config.game`（id / title）填进导入方案 JSON 文本框（`web/static/app.js` 的 `GAL_PRESETS` + `index.html` 的 `#gal-preset`；只改前端文本框，不保存）。新写的家族要在这两处各加一行，否则下拉里选不到——之前漏了，现在补上：
+- 导入页（媒体导入 → Gal 导入方案）的「Gal 游戏」下拉 + 「刷新 json」= 把所选预设的 `adapters` 和 `config.game`（id / title）填进导入方案 JSON 文本框（`web/static/gal-import-presets.js` 的 `GAL_PRESETS` 同时生成下拉和JSON；只改前端文本框，不保存）。新增通用家族只维护这一处；镜像构建和浏览器自测均检查全部已注册播放适配器都有入口，漏项直接失败：
   - `bgi` → `bgi::bs`，`game.id = bgi::game`
   - `artemis` → `artemis::ast`，`game.id = artemis::game`
   - `arcfam` → `arcfam::scre`，`game.id = arcfam::game`
   - 每个家族只一项（不再一个游戏一项）：刷新后把 JSON 里的 `config.game.id`（`<家族>::<自己起的名>`）和 `title`、路径改成自己的。
-- 浏览器自测 `fe-gal-selftest.mjs` 里加了这些预设的检查。
+- `pac` → `pac::script`、`edo` → `edo::lua`、`sakana` → `sakana::ks` 已补齐通用入口；RPG Maker沿用通用项，不增加RJ专属预设。
+- 浏览器自测：`scripts/dev/fe-gal-import-presets-selftest.mjs`，逐项选中并点击刷新，核对配置保留、适配器覆盖及无保存/提交请求。
 
 ### exe 图标当封面（`coverExe`）
 

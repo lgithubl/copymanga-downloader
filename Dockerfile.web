@@ -34,6 +34,8 @@ COPY scripts/tag-scripts/gal-download/fsb5.mjs ./scripts/tag-scripts/gal-downloa
 COPY scripts/tag-scripts/gal-download/vendor/vorbis-headers.bin.gz ./scripts/tag-scripts/gal-download/vendor/vorbis-headers.bin.gz
 # Fail during build if the production tree misses a server import.
 RUN node --input-type=module -e "await import('./web/library/types/gal.mjs')"
+# Every registered playback adapter must be selectable in the import preset UI.
+RUN node --input-type=module -e "import assert from 'node:assert/strict'; import {GAL_PRESETS} from './web/static/gal-import-presets.js'; import {galAdapterIds} from './web/library/gal/adapters/index.mjs'; for (const p of Object.values(GAL_PRESETS)) { assert.ok(p.label && p.game?.id && p.adapters?.length); } assert.deepEqual([...new Set(Object.values(GAL_PRESETS).flatMap(p => p.adapters))].sort(), galAdapterIds().sort());"
 
 RUN mkdir -p /data/downloads
 
