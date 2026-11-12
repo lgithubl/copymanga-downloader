@@ -479,7 +479,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const item = normalizeItem({
       ...(existing || {}),
       itemId,
-      title: existing?.title || path.basename(real).normalize('NFC'),
+      title: String(importApplied?.config?.game?.title || existing?.config?.game?.title || existing?.title || path.basename(real).normalize('NFC')),
       tags: [...new Set([...(existing?.tags || []), ...parseTags(tags)])],
       sourceProfile: GAL_PROFILE,
       adapters: opts.adapters,

@@ -1,5 +1,5 @@
 import {skitCommands} from './rpgmaker-skit.mjs'
-import { structValue, pluginData } from './rpgmaker-plugins.mjs'
+import { structValue, pluginData, replayVariants } from './rpgmaker-plugins.mjs'
 import { safeRegex } from './options-merge.mjs'
 import { mapSnapshot } from './rpgmaker-maps.mjs'
 
@@ -44,6 +44,7 @@ export function compileRpgEvents(list, ctx, meta) {
   }
   const textParts = text => {
     let value = String(text).replace(/\\N\[(\d+)\]/gi, (_, id) => ctx.actors?.[Number(id)]?.name || `Actor ${id}`)
+    if(ctx.plugins?.some(p=>/(?:^|\/)i18n\/i18n$/.test(p.name)))value=value.replace(/\\TRN\[\d+\]/gi,'').replace(/\\n(?![<\[])/g,'\n')
     value = value.replace(/\\(?:C|I|FS|PX|PY|OW|OC)\[[^\]]*\]/gi, '').replace(/\\[.!|><^{}$]/g, '').replace(/\\G\b/g, ctx.system?.currencyUnit || '')
     const parts = []; let at = 0
     for (const m of value.matchAll(/\\V\[(\d+)\]/gi)) { if (m.index > at) parts.push({ text: value.slice(at, m.index) }); parts.push({ text: '0', var: variable(m[1]) }); at = m.index + m[0].length }
@@ -92,7 +93,7 @@ export function compileRpgEvents(list, ctx, meta) {
     return text.replace(/\\(?:F[1-8]?|F{2,4}|M[1-8]?|M{2,4}|FH|AA)\[[^\]]*\]/gi, '')
   }
   const skit=skitCommands(ctx,{emit,raw,initial,stage})
-  const callMapEvent = (eventId,depth) => {
+  const callMapEvent = (eventId,depth,autorunOnly=false) => {
     const targetMapId=mapId||ctx.system?.startMapId||0,map=ctx.maps?.get(`${o.root?o.root+'/':''}data/Map${String(targetMapId).padStart(3,'0')}.json`),event=map?.events?.find(e=>e?.id===eventId)
     if(!event?.pages?.length){raw('map-event-call-missing',{map:targetMapId,event:eventId});return}
     if(event.pages.some(p=>p.conditions?.itemValid)){raw('map-event-call-inventory-condition',{map:targetMapId,event:eventId});return}
@@ -109,6 +110,7 @@ export function compileRpgEvents(list, ctx, meta) {
     }
     const caller=activeEventId,callerMap=mapId
     for(const [i,page]of event.pages.entries()){
+      if(autorunOnly&&page.trigger!==3)continue
       guards.push({type:'map-page',indent:-1,conditions:[{var:chosen,op:'===',value:i}]})
       activeEventId=eventId;mapId=targetMapId
       run(page.list||[],depth+1,`map:${targetMapId}:${eventId}`)
@@ -219,6 +221,7 @@ export function compileRpgEvents(list, ctx, meta) {
   const condition = p => {
     if (p[0] === 0) return { var: variable(p[1], 's'), op: '===', value: p[2] === 0 ? 1 : 0 }
     if (p[0] === 1) return { var: variable(p[1]), op: ['===', '>=', '<=', '>', '<', '!=='][p[4]] || '===', ...(p[2] === 0 ? { value: p[3] } : { valueVar: variable(p[3]) }) }
+    if(p[0]===2){const key=`rpg:self:${mapId}:${activeEventId}:${p[1]}`;if(!initial.has(key))initial.set(key,0);return{var:key,op:'===',value:p[2]===0?1:0}}
     if(p[0]===4&&p[2]===0){const key=`rpg:party:${p[1]}`;if(!initial.has(key))initial.set(key,ctx.system?.partyMembers?.includes(Number(p[1]))?1:0);return {var:key,op:'===',value:1}}
     raw('condition-unhandled', p)
     return null
@@ -267,7 +270,16 @@ export function compileRpgEvents(list, ctx, meta) {
       if (c.code === 123) { emit({op:'set',var:`rpg:self:${mapId}:${activeEventId}:${p[0]}`,value:p[1]===0?1:0});continue }
       if (c.code === 201) {
         if(p[0]!==0){raw('map-transfer-variable',p);continue}
-        showMap(Number(p[1]),0,-1,{x:Number(p[2]),y:Number(p[3]),direction:Number(p[4])||2});continue
+        showMap(Number(p[1]),0,-1,{x:Number(p[2]),y:Number(p[3]),direction:Number(p[4])||2})
+        // Transfer starts a new map's automatic event, not every interaction or
+        // parallel process on that map. Native page conditions still select it.
+        const target=ctx.maps?.get(`${o.root?o.root+'/':''}data/Map${String(Number(p[1])).padStart(3,'0')}.json`)
+        const events=(target?.events||[]).filter(Boolean),automatic=events.filter(e=>e.pages?.some(page=>page.trigger===3))
+        // A story-only map is a deterministic continuation. Mixed gameplay maps
+        // can have competing autoruns/parallel state machines; keep them explicit.
+        if(events.length===1&&events[0].pages?.length===1&&automatic.length===1)callMapEvent(events[0].id,depth,true)
+        else if(automatic.length)raw('map-autorun-ambiguous',{map:Number(p[1]),events:automatic.map(e=>e.id)})
+        continue
       }
       if (c.code === 203) {
         const patch={...(p[4]?{direction:p[4]}:{})}
@@ -320,6 +332,14 @@ export function compileRpgEvents(list, ctx, meta) {
   emit({ op: 'bg', color: [0, 0, 0] })
   if(meta.map&&mapId)showMap(mapId,meta.eventId,meta.pageIndex)
   if(meta.map&&o.maps?.enabled!==false)stats.warnings.push('地图为事件初始快照；无游戏存档时玩家位置取系统起点或事件附近，不执行自主移动/并行事件或玩家操控')
+  const variants=replayVariants(list,ctx.common)
+  if(variants.length){
+    const missing=`rpg:replay-unselected:${serial++}`,key=`rpg:replay-variant:${serial++}`;initial.set(missing,0)
+    emit({op:'set',var:missing,value:1,when:variants.map(x=>({var:variable(x.switchId,'s'),op:'===',value:0}))})
+    emit({op:'choice',id:`${steps.length}:${pending.length}`,var:key,when:[{var:missing,op:'===',value:1}],options:variants.map((x,i)=>({value:i+1,segments:[{text:String(ctx.system?.switches?.[x.switchId]||ctx.common[x.eventId].name||x.eventId).split(/[:：]/).at(-1)}]}))});stats.choices++;flush();steps.at(-1).flow=true
+    variants.forEach((x,i)=>emit({op:'set',var:variable(x.switchId,'s'),value:1,when:[{var:missing,op:'===',value:1},{var:key,op:'===',value:i+1}]}))
+    stats.warnings.push('回想入口缺少原存档分支状态时，先选择原生分支；已有初始开关时沿用。')
+  }
   run(list, 0, Array.isArray(ctx.common) && String(meta.scene).startsWith('common-') ? String(meta.eventId) : '')
   flush()
   if(o.plugins.pictureActions&&bindings.length){
@@ -348,6 +368,9 @@ export function compileRpgEvents(list, ctx, meta) {
   const initialization = [...initial].map(([key, value]) => ({ op: 'set', var: key, value }))
   if (!steps.length) steps.push({ index: 0, commands: [] })
   steps[0].commands.unshift(...initialization)
+  // Switch assignments/setup in unselected branches still participate in state
+  // reconstruction, but must not become blank dialogue pages or stop a choice.
+  for(const step of steps)step.flow=true
   stats.steps = steps.length
   if (Object.keys(stats.raw).length) stats.warnings.push('未支持的游戏指令已记入 raw；不执行任意游戏JavaScript，也不模拟地图探索/战斗')
   return { steps, stats }

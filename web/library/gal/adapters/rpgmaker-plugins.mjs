@@ -29,3 +29,20 @@ export function mapEventCall(command) {
   if(command.code===357&&String(p[0]).split('/').at(-1)==='RX_T_CallEvent_in_Map'&&p[1]==='callev'&&/^\d+$/.test(String(p[3]?.eventID)))return Number(p[3].eventID)
   return null
 }
+
+// A literal replay dispatcher: mutually exclusive ON-switch branches call one
+// common event and jump to the same end label. Do not infer arbitrary game JS.
+export function replayVariants(list,common){
+ const rows=(list||[]).filter(c=>![0,108,408,657].includes(c.code));let at=0
+ while(rows[at]?.code===121)at++
+ const prelude=rows.slice(0,at),variants=[];let end=null
+ while(rows[at]?.code===111){
+  const [test,call,jump,close]=rows.slice(at,at+4),p=test.parameters||[]
+  if(p[0]!==0||p[2]!==0||call?.code!==117||jump?.code!==119||close?.code!==412||close.indent!==test.indent||call.indent!==test.indent+1||jump.indent!==call.indent||!common?.[Number(call.parameters?.[0])]?.list)return[]
+  const label=String(jump.parameters?.[0]||'');if(!label||end!==null&&label!==end)return[];end=label
+  variants.push({switchId:Number(p[1]),eventId:Number(call.parameters[0])});at+=4
+ }
+ if(variants.length<2||variants.length>8||new Set(variants.map(x=>x.switchId)).size!==variants.length||rows[at]?.code!==118||rows[at].parameters?.[0]!==end||at!==rows.length-1)return[]
+ if(prelude.some(c=>variants.some(v=>v.switchId>=Number(c.parameters?.[0])&&v.switchId<=Number(c.parameters?.[1]))))return[]
+ return variants
+}

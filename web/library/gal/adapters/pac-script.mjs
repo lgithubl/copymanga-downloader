@@ -17,7 +17,7 @@ export function prepare({options,files=[],texts={},toResourcePath}){
 }
 export const catalog=ctx=>ctx?.catalogTree
 export function parse(text,ctx={},meta={}){
- const o=ctx.o||readOptions(meta.options),steps=[],stats={messages:0,raw:{},unresolved:{},notes:['仅阅读原始剧情脚本；战斗/奖励/地图操控不模拟。未识别指令保留raw。']};let pending=[],serial=0
+ const o=ctx.o||readOptions(meta.options),steps=[],stats={messages:0,raw:{},unresolved:{},notes:['仅阅读原始剧情脚本；战斗/奖励/地图操控不模拟。未识别指令保留raw。']};let pending=[],serial=0,background='',cgActive=false
  const emit=c=>pending.push(c),flush=()=>{if(pending.length){steps.push({index:steps.length,commands:pending});pending=[]}},raw=(cmd,args)=>{stats.raw[cmd]=(stats.raw[cmd]||0)+1;emit({op:'raw',cmd,args})}
  const values=(id,variant=0)=>({id:String(id),id2:String(id).padStart(2,'0'),id3:String(id).padStart(3,'0'),id4:String(id).padStart(4,'0'),variant:String(variant),variant2:String(variant).padStart(2,'0')})
  const resolve=candidates=>{for(const name of candidates){const found=ctx.resolver?.resolve(name);if(found)return found}if(!ctx.hasIndex)return candidates[0]||'';const key=candidates[0]||'empty';stats.unresolved[key]=(stats.unresolved[key]||0)+1;return''}
@@ -38,8 +38,9 @@ export function parse(text,ctx={},meta={}){
   }else if(['VOICE','VOICE2'].includes(code)){
    const body=block(),name=body.at(-1)||args.at(-1);if(name)voice(name,code==='VOICE2'?String(parseInt(body[0])||0):'main')
   }else if(code==='BGSET'||code==='CG'){
-   const src=image(code==='CG'?'cg':'bg',args[0],args[1]);if(src)emit({op:'bg',src,...(code==='CG'?{cg:true}:{})})
-  }else if(code==='BGOUT'||code==='CGOUT')emit({op:'bgoff'})
+   const src=image(code==='CG'?'cg':'bg',args[0],args[1]);if(code==='BGSET'){background=src;if(src&&!cgActive)emit({op:'bg',src})}else if(src){cgActive=true;emit({op:'bg',src,cg:true})}
+  }else if(code==='CGOUT'){cgActive=false;emit(background?{op:'bg',src:background}:{op:'bgoff'})}
+  else if(code==='BGOUT'){background='';if(!cgActive)emit({op:'bgoff'})}
   else if(/^BUSET[23]?$/.test(code)){
    const slot='pac-bust-'+(code.slice(5)||'1'),src=image('bust',args[0],args[1]);if(src)emit({op:'overlay',slot,kind:'stand',src,stage:o.stage,x:(number(2)-1)*o.stage[0]*.3,y:0,anchor:[.5,.5],fit:'contain',z:10})
   }else if(code==='BUOUT')emit({op:'overlayOff',slot:'pac-bust-'+String(number(0)+1)})

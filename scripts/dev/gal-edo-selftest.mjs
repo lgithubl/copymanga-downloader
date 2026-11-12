@@ -36,4 +36,4 @@ test('actual ARCH000 imports scripts and lazily reads PNG/Vorbis through applica
  console.log('Edo actual app retained:',dir)
 })
 
-test('phone text preserves literal icon speaker and static movement accumulates',()=>{const s=scene('seticon("黒")\ntextl("left")\ntextr("right")\nsetEx2(1,"body.png","face.png","non.png",1,100,20)\nsetmsEx(1,0.2,30,40)\ntext("done")\nend');assert.equal(stateAt(s,0).speaker[0].text,'黒');assert.equal(stateAt(s,1).speaker[0].text,'我');const state=stateAt(s,s.steps.length-1);assert.equal(state.overlays.find(x=>x.slot==='edo:C1').x,130);assert.equal(state.overlays.find(x=>x.slot==='edo:C1').y,60)})
+test('phone text preserves literal icon speaker and static movement accumulates',()=>{const s=scene('seticon("黒")\ntextl("left")\ntextr("right")\nsetEx2(1,"body.png","face.png","non.png",1,100,20)\nsetmsEx(1,0.2,30,40)\ntext("done")\nend');assert.equal(stateAt(s,0).speaker[0].text,'黒');assert.equal(stateAt(s,1).speaker[0].text,'我');const state=stateAt(s,s.steps.length-1);assert.equal(state.overlays.find(x=>x.slot==='edo:C1').x+960,130);assert.equal(state.overlays.find(x=>x.slot==='edo:C1').y+540,60)})

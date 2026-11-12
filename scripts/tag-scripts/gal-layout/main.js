@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.58.0'
+import { findPackedRpg } from './evb.mjs?v=2.59.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -77,7 +77,7 @@ export const ADAPTER_RULES = {
     1920,
     1080
   ],
-  "coordinates": "center",
+  "coordinates": "top-left",
   "maxPasses": 4,
   "maxCommands": 150000,
   "initialVariables": {
@@ -1975,6 +1975,7 @@ export const LAYOUTS = {
       ]
     },
     "sceneMarkers": [
+      {"label":"CG 开始","kind":"cmd","op":"bg","match":"(?:ev-|ev_)","pick":"each","max":6},
       {
         "label": "CG 开始",
         "kind": "cmd",
@@ -3403,7 +3404,15 @@ export async function generateTags(ctx) {
       scope.gameId = game.id   // 布局按这个 id 解析（resolveLayout 会落到家族项，再叠上选项 layouts 里这个游戏 / 这个家族的覆盖）
       logs.push(`game.id「${game.id}」不在布局表里，按家族「${handler.id}」（${handler.family}*）处理${(options.layouts || {})[game.id] ? '，叠上选项 layouts 里这个游戏的覆盖' : ''}`)
     }
-    found = await handler.detect(scope)
+    // A custom game id identifies the user's entry, not its archive variant.
+    // Check concrete layouts in this family before its generic archive names.
+    if (viaFamily && !Object.prototype.hasOwnProperty.call(options.layouts || {}, game.id)) {
+      for (const candidate of handlers.filter(g => g.id.includes('::') && g.family && game.id.startsWith(g.family) && g.detector === handler.detector && g.autoOrder !== null).sort((a,b) => a.autoOrder-b.autoOrder)) {
+        found = await candidate.detect(scopeOf(candidate, false))
+        if (found) { logs.push(`按实际档案选择布局 ${candidate.id}，保留用户 game.id「${game.id}」`); found.id = game.id; break }
+      }
+    }
+    if (!found) found = await handler.detect(scope)
     if (!found && handler.detector === 'uviewer') found = genericLayout()   // 探测不到结构时 UViewer 系退回通用配置
     if (!found) {
       logs.push(`config.game.id 是「${game.id}」，但目录里没认出它的结构：不改任何配置（可以用 overrides 指定路径，或检查 rootDir）`)
@@ -3430,7 +3439,7 @@ export async function generateTags(ctx) {
   }
 
   // 2) 覆盖（按媒体路径匹配）；记下每条覆盖改了哪些字段
-  let title = found.kind === 'rpgmaker' && (!ctx.item?.title || ctx.item.title.normalize('NFC') === path.basename(media).normalize('NFC')) ? String(game?.title || found.gameTitle || '') : ''
+  let title = String(game?.title || ctx.item?.title || path.basename(media))
   let coverOverride = ''
   const applied = []
   const appliedFields = []

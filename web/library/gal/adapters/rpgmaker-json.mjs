@@ -86,7 +86,11 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
   let activeMap=mapId
   const merge=inner=>{text+=inner.text;pictures.push(...inner.pictures);for(const id of inner.calls)calls.add(id)}
   for (const c of list || []) {
-    if(c.code===201&&c.parameters?.[0]===0)activeMap=Number(c.parameters[1])
+    if(c.code===201&&c.parameters?.[0]===0){
+      activeMap=Number(c.parameters[1]);const key=`autorun:${activeMap}`,target=ctx.maps.get(join(rootOf(ctx.options),'data',`Map${String(activeMap).padStart(3,'0')}.json`))
+      const events=(target?.events||[]).filter(Boolean)
+      if(!seen.has(key)&&events.length===1&&events[0].pages?.length===1&&events[0].pages[0].trigger===3)merge(evidence(events[0].pages[0].list,ctx,new Set([...seen,key]),activeMap))
+    }
     const mapCall=mapEventCall(c)
     if(mapCall!==null){const key=`map:${activeMap}:${mapCall}`,target=ctx.maps.get(join(rootOf(ctx.options),'data',`Map${String(activeMap).padStart(3,'0')}.json`))?.events?.find(e=>e?.id===mapCall);if(!seen.has(key))for(const page of target?.pages||[])merge(evidence(page.list,ctx,new Set([...seen,key]),activeMap))}
     if (c.code === 401) text++

@@ -220,8 +220,9 @@ export function applyCommand(state, command, choices = null) {
       break
     case 'overlay': {   // 叠加层（静态图 / 矩形）：同 slot 再来一条 = 合并（后写的字段覆盖，没写的保留；imgconf 这类只改布局的指令靠它；带 src 的 = 换了一张图，整条替换；merge:true 保留原位置/颜色），位置不变
       if (typeof command.slot !== 'string' || !command.slot) break
-      const { op: _op, when: _when, ...spec } = command
+      const { op: _op, when: _when, defaults, ...fields } = command
       const at = state.overlays.findIndex((o) => o.slot === command.slot)
+      const spec = { ...(at < 0 && defaults && typeof defaults === 'object' ? defaults : {}), ...fields }
       if(command.relative)for(const axis of ['x','y'])if(Number.isFinite(spec[axis]))spec[axis]+=Number(state.overlays[at]?.[axis]||0)
       for (const axis of ['x', 'y']) if (spec[`${axis}Var`]) spec[axis] = Number(state.vars[spec[`${axis}Var`]] || 0) + Number(spec[`${axis}Offset`] || 0)
       state.overlays = at < 0 ? [...state.overlays, spec] : state.overlays.map((o, i) => (i === at ? (command.src && !command.merge ? spec : { ...o, ...spec }) : o))

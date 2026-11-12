@@ -316,6 +316,7 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
     if (!(alpha > 0) || !(sx > 0) || !(sy > 0)) return false
     const k = geo.k
     const rect = Array.isArray(spec.rect) && spec.rect.length >= 4 ? spec.rect.slice(0, 4).map((v) => num(v)) : null
+    if(!img&&!rect&&!spec.color)return false   // Geometry-only slots have no visible surface yet.
     ctx.save()
     ctx.globalAlpha = alpha
     if (img) {
