@@ -13,7 +13,7 @@ p=put('シロクロv1.1','Archives/sample.arc',b'HEADpayload')
 put('AI','source.bin',b'unrelated');put('天結いラビリンスマイスター','AGE.EXE',b'do not collect')
 fixture={'シロクロv1.1':{'guards':[dict(source='Archives/sample.arc',offset=0,bytes=4,sha256=hashlib.sha256(b'HEAD').hexdigest())],'ranges':[dict(source='Archives/sample.arc',sourceBytes=11,offset=4,bytes=7,artifact='__bugs/shiro/image.bin')]}}
 match=re.search(r"BUG_CASE_PLAN = '([^']+)'",src);packed=base64.b64encode(zlib.compress(json.dumps(fixture).encode())).decode();script=base/'collector.sh';script.write_text(src[:match.start(1)]+packed+src[match.end(1):])
-env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
+env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_RULES='^new-games:bug-cases$',GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
 r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
 parts=list(out.glob('*.part-*'));assert len(parts)==3,r.stdout+r.stderr
 reports={}
