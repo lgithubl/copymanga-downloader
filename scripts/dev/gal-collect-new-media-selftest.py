@@ -18,7 +18,7 @@ put(night,'voice.arc',arc([('VOICE/00_PROLOGUE_001.OGG',b'voice')]))
 for archive,rows in [('Game',[('data/Graphics/BG/0070.png',b'bg'),('data/Graphics/BU/000_00.png',b'bu'),('data/Graphics/CG/023_50.png',b'cg'),('data/Graphics/CG/023_51.png',b'cg2'),('data/Graphics/CG/023_52.png',b'unrequested')]),('Bgm',[('data/Sound/BGM/401.ogg',b'bgm')]),('Se',[('data/Sound/SE/000.wav',b'se')]),('Voice',[('data/Sound/voice/Nyan01_0070_00.ogg',b'voice')])]:put(king,'Pac/'+archive+'.pac',pac(rows))
 for game in [night,king,'AI','シロクロv1.1','ツヴァイトリガー']:
  put(game,'saves/secret.dat',b'save');put(game,'unrequested.exe',b'EXE')
-env={k:v for k,v in os.environ.items() if k not in ['GAL_COLLECT_RULES','GAL_COLLECT_TSK_LOG','GAL_COLLECT_ONLY']};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
+env={k:v for k,v in os.environ.items() if k not in ['GAL_COLLECT_RULES','GAL_COLLECT_TSK_LOG','GAL_COLLECT_ONLY']};out=base/'out';env.update(GAL_COLLECT_RULES='^new-games:media$',GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
 r=subprocess.run(['bash','scripts/dev/gal-collect-run.sh',str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
 parts=list(out.glob('*.part-*'));assert len(parts)==2
 found={}
