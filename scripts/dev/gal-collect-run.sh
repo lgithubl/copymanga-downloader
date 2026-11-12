@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.60 默认仅采 RJ01271506 的 TemplateEvent 配置指定的8张模板地图（约5MiB），源只读。
 # 1.59 仅补国度30_8021及引用图、RJ01271506指定剧情地图/立绘、RJ328940远景CG、Remastered三张指定图；不重采其他G/运行时。
 # 1.58 仅国度00_1250/该场景背景、シロクロ指定立绘与预制体、RJ328940目标地图；只读有界采样，不重采AGE/运行时。
 # 1.57 仅AGE序章伴随文件/映射表及按原索引选出的少量图音，25项约11MiB；不重收其他游戏，不采EXE/DLL，不执行源游戏。
@@ -79,10 +80,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.59"
+VERSION="1.60"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:followup$'
+ROUND_RULES='^new-games:mz-templates$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1472,7 +1473,14 @@ def bug_case_files(items,label,followup=False):
         if name.startswith('/') or '\\' in name or any(x in ('','.','..') for x in name.split('/')):raise RuntimeError('Invalid scene artifact')
         report['files'].append(dict(source=e.rel,sourceBytes=e.size,offset=offset,bytes=len(b),artifact=name,sha256=hashlib.sha256(b).hexdigest()))
         return name,b,e.mtime
-    if label=='シロクロv1.1' or followup and label=='Remastered':
+    if RULES_RE is not None and RULES_RE.pattern == '^new-games:mz-templates$':
+        if label!='RJ01271506':raise RuntimeError('Template round may only collect RJ01271506')
+        for map_id in (93,94,95,96,97,98,251,252):
+            e=lookup.get('data/map%03d.json'%map_id)
+            if not e or e.size>8*MB:raise RuntimeError('Plugin-declared template map missing/oversize: %d'%map_id)
+            yield part(e.rel,0,e.size)
+        report['notes'].append('Only the eight maps declared by the enabled TemplateEvent plugin; no media, runtime, saves or other games. These contain the CG initialization/caller templates missing from ordinary story maps.')
+    elif label=='シロクロv1.1' or followup and label=='Remastered':
         plan=json.loads(zlib.decompress(base64.b64decode(FOLLOWUP_PLAN if followup else BUG_CASE_PLAN)))[label]
         for guard in plan['guards']:
             _e,b=read(guard['source'],guard['offset'],guard['bytes'])
@@ -1895,10 +1903,12 @@ def new_game_remaining_files(items,label):
     yield '__remaining/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
 def main():
-    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:followup$','^new-games:bug-cases$','^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$')
+    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:mz-templates$','^new-games:followup$','^new-games:bug-cases$','^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$')
+    mz_templates = RULES_RE is not None and RULES_RE.pattern == '^new-games:mz-templates$'
     followup = RULES_RE is not None and RULES_RE.pattern == '^new-games:followup$'
-    bug_cases = RULES_RE is not None and RULES_RE.pattern in ('^new-games:bug-cases$','^new-games:followup$')
+    bug_cases = mz_templates or RULES_RE is not None and RULES_RE.pattern in ('^new-games:bug-cases$','^new-games:followup$')
     bug_labels = {'How to Build a Magnificent Kingdom v1.05','Remastered','RJ01271506','RJ328940'} if followup else {'How to Build a Magnificent Kingdom v1.05','シロクロv1.1','RJ328940'}
+    if mz_templates:bug_labels={'RJ01271506'}
     new_games_next = new_games and RULES_RE.pattern in ('^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$')
     age_link = new_games_next and RULES_RE.pattern == '^new-games:age-link$'
     new_games_next_verify = new_games_next and RULES_RE.pattern in ('^new-games:next-verify$','^new-games:age-link$')
@@ -2001,7 +2011,7 @@ def main():
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
         picks = ([] if new_games or tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
-        if new_games and items: picks=[(items[0],'inventory','new-games:followup' if followup else 'new-games:bug-cases' if bug_cases else 'new-games:age-link' if age_link else 'new-games:next-verify' if new_games_next_verify else 'new-games:next-detail' if new_games_next_detail else 'new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
+        if new_games and items: picks=[(items[0],'inventory','new-games:mz-templates' if mz_templates else 'new-games:followup' if followup else 'new-games:bug-cases' if bug_cases else 'new-games:age-link' if age_link else 'new-games:next-verify' if new_games_next_verify else 'new-games:next-detail' if new_games_next_detail else 'new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
         if rpg_media:
             sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
             sample = RPG_MEDIA_SAMPLES[sample_id]
