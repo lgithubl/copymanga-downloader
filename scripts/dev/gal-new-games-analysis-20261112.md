@@ -1,6 +1,6 @@
 # 五作接入：补采后的格式验证结果
 
-2026-11-12；分支 `feat/gal-download`。最新样本为 `gal-collect-20261111-162126`。本次已完成シロクロ的 Edoire 档案与静态剧情适配器（gal-layout 2.55.0），通过真实采集数据导入、资源读取和浏览器验证。另两作仍待 1.53 小配置补采。
+2026-11-12；分支 `feat/gal-download`。最新样本为 `gal-collect-20261112-033525`（补齐162126缺少的定义）。本次已完成シロクロ的 Edoire 档案与静态剧情适配器（gal-layout 2.55.0），通过真实采集数据导入、资源读取和浏览器验证。另两作的 1.53 补采已于 2026-11-12 收到并完成传输哈希、解密和条目校验，仍需实现适配器扩展。
 
 ## 当前结论
 
@@ -76,7 +76,7 @@ SakanaGL 索引已完整解密和 Zstd 解压，76,632 字节的预期长度匹�
 - CG 通过 `gamesetting.cg[id].graphics[index]` 映射。
 - OnName 使用角色表；SCENE/回想需要章节配置。
 
-目前缺的是 `conf/` 的 11 个小文件，包括 `cg.conf`、`character.conf`、`scene.conf`、`bgm.conf` 等，原始存储总计仅 8,572 字节。它们未在上一轮按目录选择的范围内。不能猜 CG 数字 ID 与图片文件名的对应关系。
+162126轮缺的是 `conf/` 的 11 个小文件，包括 `cg.conf`、`character.conf`、`scene.conf`、`bgm.conf` 等，原始存储总计仅 8,572 字节。它们当时未在按目录选择的范围内；033525已补齐，见末节。CG数字ID与图片文件名应读取真实配置。
 
 ## 首批两作的附带核验
 
@@ -110,4 +110,18 @@ SakanaGL 索引已完整解密和 Zstd 解压，76,632 字节的预期长度匹�
 - Kingdom 的 BGSPLAY 改为原表的 Sound/BGM 路径，与普通SE分开。
 - 专项后端/浏览器、规则表漂移、生产目录依赖检查通过。旧 gal-selftest / gal-layout-selftest 因本机没有 ImageMagick convert，停在既有fixture生成阶段；未把它们计作通过。
 
-待补采的命令与范围仍为下节1.53方案；Release31目前最新数据仍是162126，未收到该补采。
+## 1.53 补采已收齐（033525）
+
+`gal-collect-20261112-033525` 已下载至 `.cache/new-games-033525/`，所有186条传输SHA-256通过。
+
+- AI：11份conf均解密成功；压缩项校验解压长度。FAFA词元和字符串表已取出，`character.conf`含角色名，`cg.conf`含CG编号→graphics/UI及缩略图，`scene.conf`含回想入口→剧情label/ks。此前缺失的映射已有真实数据，不用再猜图片编号，也不需重采剧情。
+- ツヴァイトリガー：175份定义全部完整、解密/解压后adler32均匹配；12份stand、90份sinfo、72份pbd、1份flowchart.ini。stand明确引用不同姿势的文件名，例如同一角色的全角Ａ/Ｂ；不能要求“角色名.pimg”一一对应。sinfo给出服装、表情、分层名字，PBD完整二进制已取得，下一步据此实现读取及合成。
+- 本轮只验证数据和映射，不把“配置解开”记作整作适配器/画面验收。解码数据与报告均留在本地缓存，不提交游戏内容。
+
+## 下一轮采集1.54
+
+默认只探测：天結いラビリンスマイスター、Remastered、RJ01646655、RJ328940、RJ01271506。命令仍为 `bash gal-collect.sh .`，不重采上一批。
+
+每作输出目录清单、引擎识别所需的小配置（如System.json/plugins.js/package.json）及有界档案/EXE头尾；EXE不执行、不整包复制，排除save及整张媒体，证据每作最多8MiB、总计最多64MiB。补充识别RGSS档案/WOLF/ldb/lmt/RPA/ASAR等头信息。
+
+未收到五作目录前不根据标题或RJ编号认定引擎。若实际为MV/MZ，优先复用rpgmaker-json；其他格式对照已实现的适配器与容器能力再判断。Remastered名称尤其不能唯一确定引擎。
