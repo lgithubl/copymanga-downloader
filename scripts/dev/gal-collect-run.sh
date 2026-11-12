@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.54 下一批五作只采目录/引擎配置/有界头尾：天結いラビリンスマイスター、Remastered、RJ01646655、RJ328940、RJ01271506；不重采上一批。
 # 1.53 正文验证后仅补AI的11个配置及ツヴァイ的完整立绘定义/流程表；不重收正文或媒体样本，索引守卫保持。
 # 1.52 剩余三作：按已验证索引的精确偏移收少量剧情/资源；约6.7MB，索引SHA256守卫防版本错配；只读、不执行游戏或下载依赖。
 # 1.51 仅补采夜勤和国度的有界媒体样本及完整PAC索引，验证CG/立绘/语音；不重收脚本或整个资源包。
@@ -73,10 +74,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.53"
+VERSION="1.54"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:remaining$'
+ROUND_RULES='^new-games:next$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1420,6 +1421,22 @@ NEW_GAME_PATTERNS = [
  ('夜勤病棟リメイク', r'夜勤病棟\s*リメイク(?:\s+v?[0-9.]+)?'),
  ('How to Build a Magnificent Kingdom v1.05', r'How\s+to\s+Build\s+a\s+Magnificent\s+Kingdom(?:\s+v?1\.05)?'),
 ]
+NEXT_GAME_PATTERNS = [
+ ('天結いラビリンスマイスター', r'天結いラビリンスマイスター(?:\s+v?[0-9.]+)?'),
+ ('Remastered', r'Remastered(?:\s+v?[0-9.]+)?'),
+ ('RJ01646655', r'RJ01646655'),
+ ('RJ328940', r'RJ328940'),
+ ('RJ01271506', r'RJ01271506'),
+]
+def next_game_label(name):
+    import unicodedata
+    name=unicodedata.normalize('NFKC',name).strip()
+    # Keep bracketed RJ identifiers before removing publisher decoration.
+    for label,_ in NEXT_GAME_PATTERNS:
+        if label.startswith('RJ') and re.match(r'^(?:\[[^\]]+\]\s*)*\[?'+re.escape(label)+r'(?=$|[^0-9])',name,re.I):return label
+    name=re.sub(r'^(?:\[[^\]]+\]\s*)+','',name)
+    return next((label for label,pattern in NEXT_GAME_PATTERNS if re.fullmatch(pattern,name,re.I)),None)
+
 def new_game_label(name):
     import unicodedata
     name = unicodedata.normalize('NFKC', name).strip()
@@ -1434,7 +1451,7 @@ def new_game_probe_files(items):
         rel=e.rel.replace('\\','/'); low=rel.lower(); base=low.rsplit('/',1)[-1]
         if re.search(r'(^|/)(save|savedata|userdata|backup|node_modules)(/|$)|(^|/)(save[^/]*\.(dat|bak|sav)|unins[^/]*|setup[^/]*|config\.exe)$',low): continue
         small = bool(re.search(r'(^|/)(system\.json|plugins\.js|package\.json|systeminfo\.json|fileinfo\.xml|bg[i]\.gdb|readme[^/]*\.txt|[^/]*\.(ini|cfg|cf))$',low))
-        binary = bool(re.search(r'\.(xp3|arc|pfs|xfl|agf|alf|dat|bin|pak|pack|dsm|mhp)$',low)) or low.endswith('.exe') and rel.count('/')<=1
+        binary = bool(re.search(r'\.(xp3|arc|pfs|xfl|agf|alf|dat|bin|pak|pack|dsm|mhp|wolf|ldb|lmt|rgssad|rgss2a|rgss3a|asar|rpa|rpyc)$',low)) or low.endswith('.exe') and rel.count('/')<=1
         core = bool(re.search(r'(^|/)(rmmz_core|rpg_core|tyrano)\.js$',low))
         if not (small or binary or core): continue
         if binary and binaries>=24 or not binary and texts>=24:
@@ -1680,7 +1697,8 @@ def new_game_remaining_files(items,label):
     yield '__remaining/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
 def main():
-    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$')
+    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$')
+    new_games_next = new_games and RULES_RE.pattern == '^new-games:next$'
     new_games_remaining = new_games and RULES_RE.pattern == '^new-games:remaining$'
     remaining_labels=set(json.loads(zlib.decompress(base64.b64decode(REMAINING_RANGE_PLAN)))) if new_games_remaining else set()
     new_games_media = new_games and RULES_RE.pattern == '^new-games:media$'
@@ -1697,7 +1715,7 @@ def main():
         games=[];found=set()
         for d,ds,_fs in walk_follow(root):
             depth=os.path.relpath(d,root).count(os.sep)
-            label=new_game_label(os.path.basename(d))
+            label=(next_game_label if new_games_next else new_game_label)(os.path.basename(d))
             if label and new_games_remaining and label not in remaining_labels:
                 ds[:]=[];continue
             if label and new_games_media and label not in ('How to Build a Magnificent Kingdom v1.05','夜勤病棟リメイク'):
@@ -1708,9 +1726,9 @@ def main():
                 ds[:]=[]  # Other games cannot contain a requested game; avoid scanning their media/runtime trees.
             else:
                 ds[:]=sorted(x for x in ds if depth<7 and x.lower() not in ('gal-download','bundles','runs','repair-backups','bundle-backups','node_modules','img','audio','movies') and not EXCL.search(x+'/'))
-        missing=[name for name,_pattern in NEW_GAME_PATTERNS if name not in found and (not new_games_remaining or name in remaining_labels) and (not new_games_media or name in ('How to Build a Magnificent Kingdom v1.05','夜勤病棟リメイク'))]
-        say('本轮%s；找到%d个目录；未找到：%s' % ('剩余三作定向剧情/格式验证' if new_games_remaining else '两作定向媒体验证' if new_games_media else '五作引擎探测',len(games),'；'.join(missing) or '无'))
-        if not games: raise RuntimeError('未找到指定五作目录；未采其他游戏')
+        missing=[name for name,_pattern in (NEXT_GAME_PATTERNS if new_games_next else NEW_GAME_PATTERNS) if name not in found and (not new_games_remaining or name in remaining_labels) and (not new_games_media or name in ('How to Build a Magnificent Kingdom v1.05','夜勤病棟リメイク'))]
+        say('本轮%s；找到%d个目录；未找到：%s' % ('下一批五作引擎探测' if new_games_next else '两作缺失定义验证' if new_games_remaining else '两作定向媒体验证' if new_games_media else '五作引擎探测',len(games),'；'.join(missing) or '无'))
+        if not games: raise RuntimeError('未找到本轮指定目录；未采其他游戏')
     elif download_logs:
         game, log_items = latest_download_logs()
         games = [game]
@@ -1775,7 +1793,7 @@ def main():
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
         picks = ([] if new_games or tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
-        if new_games and items: picks=[(items[0],'inventory','new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
+        if new_games and items: picks=[(items[0],'inventory','new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
         if rpg_media:
             sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
             sample = RPG_MEDIA_SAMPLES[sample_id]
