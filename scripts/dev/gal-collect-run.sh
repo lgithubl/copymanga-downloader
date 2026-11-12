@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.55 下一批已识别：只补MV/MZ剧情JSON/插件源码、ARCH000完整索引与文本条目、AGE脚本/AAI；不重采EXE/运行时/媒体。
 # 1.54 下一批五作只采目录/引擎配置/有界头尾：天結いラビリンスマイスター、Remastered、RJ01646655、RJ328940、RJ01271506；不重采上一批。
 # 1.53 正文验证后仅补AI的11个配置及ツヴァイ的完整立绘定义/流程表；不重收正文或媒体样本，索引守卫保持。
 # 1.52 剩余三作：按已验证索引的精确偏移收少量剧情/资源；约6.7MB，索引SHA256守卫防版本错配；只读、不执行游戏或下载依赖。
@@ -74,10 +75,10 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.54"
+VERSION="1.55"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:next$'
+ROUND_RULES='^new-games:next-detail$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1443,6 +1444,93 @@ def new_game_label(name):
     name = re.sub(r'^(?:\[[^\]]+\]\s*)+', '', name)
     return next((label for label, pattern in NEW_GAME_PATTERNS if re.fullmatch(pattern, name, re.I)), None)
 
+def next_game_detail_files(items, label):
+    """Read bounded story/config evidence from the five already identified games."""
+    lookup={e.rel.replace('\\','/').casefold():e for e in items}
+    report={'game':label,'sourceReadOnly':True,'files':[],'omitted':[],'maxBytes':56*MB}
+    used=0
+    def part(e,offset,length,name):
+        nonlocal used
+        if offset<0 or length<0 or offset+length>e.size:raise RuntimeError('Invalid source range: '+e.rel)
+        if used+length>report['maxBytes']:raise RuntimeError('Detail evidence exceeds56MB: '+label)
+        with open(e.path,'rb') as f:f.seek(offset);data=f.read(length)
+        if len(data)!=length:raise RuntimeError('Source truncated: '+e.rel)
+        used+=length;report['files'].append({'path':e.rel,'artifact':name,'offset':offset,'sourceBytes':e.size,'bytes':length,'sha256':hashlib.sha256(data).hexdigest()})
+        return name,data,e.mtime
+    if label.startswith('RJ'):
+        # Exclude MTool and all save trees; main game roots have System.json.
+        roots=[key[:-len('data/system.json')] for key in lookup if key in ('data/system.json','www/data/system.json')]
+        if not roots:raise RuntimeError('Main MV/MZ System.json missing: '+label)
+        for prefix in roots:
+            selected=set(prefix+'data/'+n.lower()+'.json' for n in ('System','MapInfos','Actors','Tilesets','CommonEvents'))
+            maps=sorted([key for key,e in lookup.items() if re.fullmatch(re.escape(prefix)+r'data/map[0-9]+\.json',key) and e.size<=2*MB])
+            for candidates in (maps,sorted(maps,key=lambda k:lookup[k].size)):
+                if candidates:
+                    for i in (0,len(candidates)//2,len(candidates)-1):selected.add(candidates[i])
+            # Plugin source is inspected as text only; nested plugin paths matter.
+            plugins=[key for key,e in lookup.items() if key.startswith(prefix+'js/plugins/') and key.endswith('.js') and e.size<=512*1024]
+            source_used=0
+            for key in sorted(plugins):
+                if source_used+lookup[key].size>8*MB:
+                    report['omitted'].append({'path':lookup[key].rel,'reason':'8MB plugin source budget'});continue
+                selected.add(key);source_used+=lookup[key].size
+            for key in sorted(selected):
+                e=lookup.get(key)
+                if not e:report['omitted'].append({'path':key,'reason':'missing'});continue
+                if e.size>40*MB:raise RuntimeError('Required JSON exceeds40MB: '+e.rel)
+                yield part(e,0,e.size,e.rel)
+    elif label=='Remastered':
+        for key,e in sorted(lookup.items()):
+            if not(key.startswith('archives/') and key.endswith('.arc')):continue
+            with open(e.path,'rb') as f:
+                if f.read(8)!=b'@ARCH000':raise RuntimeError('ARCH000 changed: '+e.rel)
+                f.seek(e.size-8);at=struct.unpack('<Q',f.read(8))[0]
+            length=e.size-8-at
+            if at<23 or not 4<=length<=4*MB:raise RuntimeError('ARCH000 index bounds: '+e.rel)
+            yield part(e,0,23,'__next/files/'+e.rel+'.head.bin')
+            record=part(e,at,length+8,'__next/files/'+e.rel+'.index.bin');yield record
+            b=record[1][:-8];count=struct.unpack_from('<I',b)[0];p=4
+            if count>100000:raise RuntimeError('ARCH000 entry count')
+            def string():
+                nonlocal p
+                n=0
+                for shift in range(0,35,7):
+                    if p>=len(b):raise RuntimeError('ARCH000 string truncated')
+                    v=b[p];p+=1;n|=(v&127)<<shift
+                    if v<128:break
+                else:raise RuntimeError('ARCH000 string length')
+                if n>4096 or p+n>len(b):raise RuntimeError('ARCH000 string bounds')
+                result=b[p:p+n].decode('utf-8');p+=n;return result
+            rows=[]
+            for i in range(count):
+                leaf=string()
+                if p+17>len(b):raise RuntimeError('ARCH000 record truncated')
+                off,size,flag=struct.unpack_from('<QQB',b,p);p+=17;directory=string();name=(directory.strip('/')+'/'+leaf).strip('/')
+                if any(x in ('','.','..') for x in name.split('/')) or '\\' in name or flag!=78 or off<23 or off+size>at:raise RuntimeError('ARCH000 entry range/path')
+                rows.append({'name':name,'offset':off,'bytes':size})
+            if p!=len(b):raise RuntimeError('ARCH000 index trailing data')
+            table=json.dumps({'path':e.rel,'entries':rows},ensure_ascii=False).encode('utf-8')
+            yield '__next/index/'+e.rel+'.json',table,e.mtime
+            selected=[row for row in rows if row['name'].lower().endswith(('.txt','.lua')) and row['bytes']<=512*1024]
+            selected.sort(key=lambda row:(not bool(re.search(r'(^|/)(src|game|scenario)(/|$)|sc[0-9]',row['name'],re.I)),row['name']))
+            for i,row in enumerate(selected):
+                if i>=120 or used+row['bytes']>48*MB:
+                    report['omitted'].append({'path':row['name'],'reason':'script sample budget'});continue
+                yield part(e,row['offset'],row['bytes'],'__next/entries/'+e.rel+'/'+str(i)+'.bin')
+                report['files'][-1]['logicalName']=row['name']
+    elif label=='天結いラビリンスマイスター':
+        wanted={'sc0000.bin','sc0010.bin','sc1000.bin','sc6690.bin','$1$sc6870.bin','$1$scjump.bin','$1$scinit.bin','sys4ini.bin','evinit.bin','viinit.bin'}
+        for key,e in sorted(lookup.items()):
+            if '/' in key:continue
+            if key in wanted or key.endswith('.aai'):
+                if e.size>2*MB:raise RuntimeError('AGE sample exceeds2MB: '+e.rel)
+                yield part(e,0,e.size,e.rel)
+            elif key.endswith('.alf'):
+                for suffix,off,n in [('head',0,min(e.size,128*1024)),('tail',max(128*1024,e.size-128*1024),min(e.size,128*1024))]:
+                    if off<e.size:yield part(e,off,min(n,e.size-off),'__next/files/'+e.rel+'.'+suffix+'.bin')
+    report['sampleBytes']=used
+    yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
+
 def new_game_probe_files(items):
     """Yield bounded evidence bytes; never execute code or copy full archives/EXEs."""
     report = {'sourceReadOnly': True, 'partialBinaries': True, 'files': [], 'omitted': [], 'engines': engines_of(items)}
@@ -1697,8 +1785,9 @@ def new_game_remaining_files(items,label):
     yield '__remaining/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
 def main():
-    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$')
-    new_games_next = new_games and RULES_RE.pattern == '^new-games:next$'
+    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$')
+    new_games_next = new_games and RULES_RE.pattern in ('^new-games:next$','^new-games:next-detail$')
+    new_games_next_detail = new_games_next and RULES_RE.pattern == '^new-games:next-detail$'
     new_games_remaining = new_games and RULES_RE.pattern == '^new-games:remaining$'
     remaining_labels=set(json.loads(zlib.decompress(base64.b64decode(REMAINING_RANGE_PLAN)))) if new_games_remaining else set()
     new_games_media = new_games and RULES_RE.pattern == '^new-games:media$'
@@ -1793,7 +1882,7 @@ def main():
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
         picks = ([] if new_games or tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
-        if new_games and items: picks=[(items[0],'inventory','new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
+        if new_games and items: picks=[(items[0],'inventory','new-games:next-detail' if new_games_next_detail else 'new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
         if rpg_media:
             sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
             sample = RPG_MEDIA_SAMPLES[sample_id]
@@ -1861,8 +1950,8 @@ def main():
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
             if new_games:
-                for name,data,mtime in (new_game_remaining_files(items,new_game_label(os.path.basename(game))) if new_games_remaining else new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else new_game_probe_files(items)):
-                    if total+len(data)>min(TOTAL_MAX,64*MB): raise RuntimeError('五作探测证据超过64MB总量上限')
+                for name,data,mtime in (next_game_detail_files(items,next_game_label(os.path.basename(game))) if new_games_next_detail else new_game_remaining_files(items,new_game_label(os.path.basename(game))) if new_games_remaining else new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else new_game_probe_files(items)):
+                    if total+len(data)>min(TOTAL_MAX,(128 if new_games_next_detail else 64)*MB): raise RuntimeError('五作证据超过本轮总量上限')
                     ti=tarfile.TarInfo(gid+'/'+name);ti.size=len(data);ti.mtime=mtime;tar.addfile(ti,io.BytesIO(data));total+=len(data);picked_bytes+=len(data)
             if rpg_media:
                 packed = [e for e in items if e.rel.lower().endswith('.exe')] if sample_id == 'RJ01220265' else []
