@@ -1,4 +1,5 @@
 import {skitCommands} from './rpgmaker-skit.mjs'
+import {skitScriptScope} from './rpgmaker-skit-scripts.mjs'
 import { structValue, pluginData, replayVariants } from './rpgmaker-plugins.mjs'
 import { safeRegex } from './options-merge.mjs'
 import { mapSnapshot } from './rpgmaker-maps.mjs'
@@ -93,6 +94,8 @@ export function compileRpgEvents(list, ctx, meta) {
     return text.replace(/\\(?:F[1-8]?|F{2,4}|M[1-8]?|M{2,4}|FH|AA)\[[^\]]*\]/gi, '')
   }
   const skit=skitCommands(ctx,{emit,raw,initial,stage})
+  const extend=ctx.plugins?.find(p=>p.name.split('/').at(-1)==='CommonEventExtend'&&p.parameters?.DefaultCommandOverride==='true')
+  const argumentIds=o.skit?.wrapperScripts&&ctx.skit&&extend?structValue(extend.parameters.DefaultArguments||'[]').map(Number).filter(n=>Number.isInteger(n)&&n>0).slice(0,32):[]
   const callMapEvent = (eventId,depth,autorunOnly=false) => {
     const targetMapId=mapId||ctx.system?.startMapId||0,map=ctx.maps?.get(`${o.root?o.root+'/':''}data/Map${String(targetMapId).padStart(3,'0')}.json`),event=map?.events?.find(e=>e?.id===eventId)
     if(!event?.pages?.length){raw('map-event-call-missing',{map:targetMapId,event:eventId});return}
@@ -202,7 +205,8 @@ export function compileRpgEvents(list, ctx, meta) {
     // Harmless presentation/system plugins still remain diagnosed instead of executing JS.
     plugin(`${name} ${action} ${Object.values(args||{}).join(' ')}`)
   }
-  const script = text => {
+  const script = (text,scope) => {
+    if(scope?.(text))return
     const remaining = text.replace(/\$gameScreen\.(?:showPicture|movePicture|erasePicture|clearPictures)\([^;\n]*\)\s*;?/g, '').replace(/\/\/[^\n]*/g, '').trim()
     if (remaining) { raw('script-unhandled', text); return }
     let count = 0
@@ -231,6 +235,8 @@ export function compileRpgEvents(list, ctx, meta) {
     calls.push(callId); const guardBase = guards.length, live = `rpg:scope:${serial++}`
     emit({ op: 'set', var: live, value: 1 })
     guards.push({ type: 'scope', indent: -1, conditions: [{ var: live, op: '===', value: 1 }] })
+    const argumentVars=argumentIds.map((id,i)=>{const key=`${live}:arg:${i}`;emit({op:'set',var:key,valueVar:variable(id)});return key})
+    const scriptScope=argumentVars.length?skitScriptScope({id:live,arguments:argumentVars,emit,initial,skit,actors:ctx.skit.actors,conditional:(conditions,fn)=>{guards.push({conditions});try{fn()}finally{guards.pop()}}}):null
     const labels = new Map(commands.map((c, i) => c.code === 118 ? [String(c.parameters?.[0]), i] : [null, -1]))
     for (let i = 0; i < commands.length; i++) {
       if (++stats.commands > o.maxCommands) throw new Error(`RPG Maker 指令超过 ${o.maxCommands} 上限，停止解析`)
@@ -313,9 +319,9 @@ export function compileRpgEvents(list, ctx, meta) {
       if (c.code === 261) { const src = resource('movies', p[0], 'webm'); if (src) emit({ op: 'movie', srcs: [src], loop: false }); continue }
       if (c.code === 356) { plugin(p[0],depth); continue }
       if (c.code === 357) { mzPlugin(p[0],p[1],p[3]||{},depth); continue }
-      if (c.code === 355) { let text = String(p[0] || ''); while (commands[i + 1]?.code === 655) text += '\n' + String(commands[++i].parameters?.[0] || ''); script(text); continue }
+      if (c.code === 355) { let text = String(p[0] || ''); while (commands[i + 1]?.code === 655) text += '\n' + String(commands[++i].parameters?.[0] || ''); script(text,scriptScope); continue }
       if (c.code === 119) { const at = labels.get(String(p[0])); if (at > i) {const key=`rpg:jump:${serial++}`;initial.set(key,0);emit({op:'set',var:key,value:1});guards.push({type:'forwardJump',owner:live,end:at,indent:-2,conditions:[{var:key,op:'!==',value:1}]})} else raw('jump-unhandled', p); continue }
-      if (c.code === 115) { emit({ op: 'set', var: live, value: 0 }); continue }
+      if (c.code === 115) { for(const id of argumentIds)emit({op:'set',var:variable(id),value:0});emit({ op: 'set', var: live, value: 0 }); continue }
       if ([0, 108, 408, 118, 505, 657].includes(c.code)) continue
       raw(`event:${c.code}`, p)
     }

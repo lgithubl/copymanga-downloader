@@ -12,7 +12,7 @@ export const ADAPTER_ID = 'rpgmaker-json'
 export const DEFAULT_OPTIONS = {
   root: '', packedExe: '', stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
   initialVariables: {}, initialSwitches: {},
-  skit: { expressionPoses: {} },
+  skit: { expressionPoses: {}, wrapperScripts: false },
   maps: { enabled: true, tileSize: 48, player: true, follow: 'event' },
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
   special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },

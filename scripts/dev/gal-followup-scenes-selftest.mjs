@@ -7,6 +7,38 @@ import{prepare as rpgPrepare,parse as rpgParse}from'../../web/library/gal/adapte
 import{activePath,stateAt,choiceHistoriesForCommands}from'../../web/static/gal-engine.js'
 import{resolveLayout}from'../tag-scripts/gal-layout/main.js'
 import{computeSceneMarkers}from'../../web/library/gal/markers.mjs'
+import{parse as pacParse}from'../../web/library/gal/adapters/pac-script.mjs'
+import{decodeTextFile}from'../../web/library/text-decode.mjs'
+import{skitScriptScope}from'../../web/library/gal/adapters/rpgmaker-skit-scripts.mjs'
+test('skit wrapper translator rejects complete unrecognized JS without executing or partially applying it',()=>{
+ const commands=[],scope=skitScriptScope({id:'test',arguments:['arg0'],emit:c=>commands.push(c),initial:new Map(),conditional:(_,fn)=>fn(),skit:()=>{throw Error('unexpected call')},actors:new Map()})
+ assert.equal(scope('this._name = "bisty"; globalThis.__nativeGameExecuted = true;'),false);assert.equal(globalThis.__nativeGameExecuted,undefined);assert.equal(commands.length,0)
+ assert.equal(scope('switch(this._arguments[0]){case 0: this._position = "left"; break; default: arbitraryCall();}'),false);assert.equal(commands.length,0)
+})
+test('native Kingdom30_8021 keeps BG1831 under transparent CG083 variants',async()=>{
+ const root='.cache/followup-083838/extracted/g01/',text=decodeTextFile(await readFile(root+'data/Script/30_8021.txt')).text,scene=pacParse(text)
+ const cg=scene.steps.flatMap(s=>s.commands).filter(c=>c.op==='bg'&&c.cg)
+ assert.ok(cg.length>3);assert.ok(cg.every(c=>c.src==='data/Graphics/BG/1831.png'));assert.ok(cg.some(c=>c.over==='data/Graphics/CG/083_02.png'))
+ const sample=pacParse('#BGSET,1\n#CG,2,1\n#BGSET,3\n#MSG\nA\nline\n#BGOUT\n#MSG\nA\nline\n#CGOUT\n#END'),path=activePath(sample)
+ assert.deepEqual(stateAt(sample,path[0]).bg,{src:'data/Graphics/BG/0003.png',over:'data/Graphics/CG/002_01.png'})
+ assert.equal(stateAt(sample,path[1]).bg.src,'data/Graphics/CG/002_01.png');assert.equal(stateAt(sample,path[1]).bg.over,undefined)
+})
+test('native MZ Map062 calls its actual CommonEventExtend wrappers and shows Bisty body with expression',async()=>{
+ const root='.cache/new-games-043952/extracted/g01/',mediaDir='.cache/followup-083838/extracted/g02',texts={}
+ for(const rel of ['data/CommonEvents.json','data/System.json','data/Actors.json'])texts[rel]=await readFile(root+rel,'utf8')
+ texts['js/plugins.js']=await readFile('.cache/new-games-043202/extracted/g01/js/plugins.js','utf8')
+ const map=JSON.parse(await readFile(mediaDir+'/data/Map062.json')),files=['img/pictures/busts/bisty/normal.png_','img/pictures/busts/bisty/texture.png_','img/pictures/busts/bisty/texture.json']
+ const run=async(enabled,position=0)=>{const options={...resolveLayout('rpgmaker::rj01271506').ruleOverrides['rpgmaker-json'],initialVariables:{1:position},maps:{enabled:false}};options.skit={...options.skit,wrapperScripts:enabled};const ctx=await rpgPrepare({options,files,texts,mediaDir});ctx.maps.set('data/Map062.json',map);return rpgParse('',ctx,{rel:'data/Map062.json',scene:'event-1-2'})}
+ const broken=await run(false),fixed=await run(true),first=s=>activePath(s).find(i=>stateAt(s,i).text.length),state=stateAt(fixed,first(fixed))
+ assert.ok(!stateAt(broken,first(broken)).overlays.some(o=>o.src?.endsWith('bisty/normal.png')))
+ assert.ok(state.overlays.some(o=>o.src?.endsWith('bisty/normal.png')),'native common12 makes Bisty visible before first dialogue')
+ assert.ok(state.overlays.some(o=>o.src?.endsWith('bisty/texture.png')&&o.crop),'native expression atlas accompanies the body')
+ assert.ok(fixed.stats.raw['script-unhandled']>=1,'unknown save-state costume logic stays diagnosed')
+ assert.ok(fixed.stats.raw['script-unhandled']<broken.stats.raw['script-unhandled'])
+ assert.ok(fixed.steps.flatMap(s=>s.commands).some(c=>c.op==='overlayOff'&&c.slot==='rpg-skit-body:bisty'),'native common10 emits body cleanup')
+ const right=await run(true,5),rightState=stateAt(right,first(right)),body=rightState.overlays.find(o=>o.slot==='rpg-skit-body:bisty');assert.equal(body.x,(8.5/10-.5)*body.stage[0],'native argument5 resolves configured right position')
+ await writeFile('.cache/reported-scenes-fixtures/mz-bisty.json',JSON.stringify({scene:fixed,target:first(fixed)}))
+})
 test('actual Shiro white4 sentence85 reopens the native message window after earlier close',async()=>{
  const text=edoPayload(await readFile('.cache/new-games-162126/extracted/g02/__remaining/shiro/src/game/12_エンディング白4■.txt'),{text:true}),scene=parse(JSON.stringify({format:'edo-lua/1',text})),live=activePath(scene),target=live.find(i=>stateAt(scene,i).text.some(t=>t.text.includes('白のことはホントに愛してる')));assert.ok(target>0);assert.equal(stateAt(scene,target).ui,true);await mkdir('.cache/reported-scenes-fixtures',{recursive:true});await writeFile('.cache/reported-scenes-fixtures/shiro-window.json',JSON.stringify({scene,target}))
 })

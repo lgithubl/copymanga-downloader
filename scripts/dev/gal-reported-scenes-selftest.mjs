@@ -24,7 +24,7 @@ test('reported samples match every length and SHA256; native Shiro body/face dim
 test('native PAC00_1250 restores BG0723 after each CGOUT, including sentence12',{skip:!available},async()=>{
  const text=decodeTextFile(await readFile(`${sampled}/g01/data/Script/00_1250.txt`)).text,scene=pacParse(text)
  assert.ok(scene.steps.length>=12);assert.ok(stateAt(scene,11).bg?.src.endsWith('/0723.png'))
- const srcs=scene.steps.flatMap(s=>s.commands).filter(c=>c.op==='bg').map(c=>c.src);assert.ok(srcs.some((s,i)=>s.endsWith('590_02.png')&&srcs[i+1]?.endsWith('0723.png')))
+ const backgrounds=scene.steps.flatMap(s=>s.commands).filter(c=>c.op==='bg');assert.ok(backgrounds.some((c,i)=>c.over?.endsWith('590_02.png')&&c.src.endsWith('0723.png')&&!backgrounds[i+1]?.over&&backgrounds[i+1]?.src.endsWith('0723.png')))
  await writeFile(output+'/pac-scene.json',JSON.stringify(scene))
  const report=JSON.parse(await readFile(`${sampled}/g01/__bugs/index.json`));for(const r of report.files.filter(r=>r.artifact.endsWith('.png')))await writeFile(output+'/'+path.basename(r.artifact),await readFile(`${sampled}/g01/${r.artifact}`))
 })

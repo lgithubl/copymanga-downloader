@@ -19,7 +19,7 @@ test('RPG titles honor configured/manual titles; directory icons precede executa
  const run=(item,options={})=>generateTags({item,script:{version:'2.53.0',options},tags:[]})
  const configured={...item,config:{...item.config,game:{id:'rpgmaker::fixture',title:'Configured title'}}},out=await run(configured)
  assert.equal(out.itemPatch.title,'Configured title');assert.equal(out.itemPatch.gal.config.cover,'icon:Game.ico')
- const custom=await run({...configured,title:'Manual title'});assert.equal(custom.itemPatch.title||'Manual title','Manual title')
+ const custom=await run({...configured,title:'Manual title'});assert.equal(custom.itemPatch.title,'Configured title')
  assert.equal((await run(configured,{overrides:[{path:'*',title:'Override title'}]})).itemPatch.title,'Override title')
  await handler.patchItemMetadata(item.itemId,out.itemPatch);const cover=await handler.getThumbnailFile(item.itemId);assert.equal(cover.contentType,'image/png');assert.deepEqual(await readFile(cover.file),png)
  await mkdir(path.join(media,'icon'));await writeFile(path.join(media,'icon/icon.png'),png)

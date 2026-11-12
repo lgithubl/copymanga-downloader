@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.60.0'
+import { findPackedRpg } from './evb.mjs?v=2.61.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -133,7 +133,7 @@ export const ADAPTER_RULES = {
     "maxCallDepth": 32,
     "initialVariables": {},
     "initialSwitches": {},
-    "skit": {"expressionPoses": {}},
+    "skit": {"expressionPoses": {}, "wrapperScripts": false},
   "maps": {
       "enabled": true,
       "tileSize": 48,
@@ -1651,7 +1651,7 @@ export const LAYOUTS = {
   "kind": "sakana",
   "detector": "sakana",
   "family": "sakana::",
-  "autoOrder": 137.7,
+  "autoOrder": 139.994,
   "bases": [
     ""
   ],
@@ -1879,7 +1879,7 @@ export const LAYOUTS = {
   "title": "Edoire / シロクロ",
   "kind": "edo",
   "detector": "edo",
-  "autoOrder": 137.6,
+  "autoOrder": 139.993,
   "family": "edo::",
   "bases": [
     ""
@@ -1998,7 +1998,7 @@ export const LAYOUTS = {
   ]
 },
   pac: {
-    title:'Debonosu PAC / 外置剧情',kind:'pac',detector:'pac',autoOrder:137.5,family:'pac::',bases:[''],searchDepth:3,
+    title:'Debonosu PAC / 外置剧情',kind:'pac',detector:'pac',autoOrder:139.992,family:'pac::',bases:[''],searchDepth:3,
     anchors:['Pac/Game.pac','data/Script'],siblings:[],markers:[],
     scriptRoots:[{id:'story',dir:'data/Script',label:'剧情'},{id:'additional',dir:'data/AdditionalScript',label:'追加剧情'}],resourceRoots:['arc/res'],
     adapters:['pac::script'],adapterOptions:{'pac::script':{resDir:{path:['arc/res']},scriptDir:{path:['data/Script']},additionalScriptDir:{path:['data/AdditionalScript']}}},ruleTables:['pac::script'],ruleOverrides:{},
@@ -2009,7 +2009,7 @@ export const LAYOUTS = {
   'edo::parente': {
     extends:'edo', title:'闇夜のPARENTE 幻燐の姫将軍Remastered',
     anchors:['ver00d0.arc','ver00d3.arc'],
-    bases:['Archives'], autoOrder:137.59, archiveName:'ver00d0.arc',
+    bases:['Archives'], autoOrder:139.991, archiveName:'ver00d0.arc',
     ruleOverrides:{'edo::lua':{coordinates:'canvas',stage:[1600,900],branchFlags:'^AdvG\\[\\d+\\]$',cgMatch:'(?:^|/)(?:ev[0-9]|\\$[0-9]\\$ev)',specialMatch:'^$'}},
     engine:{"classify":[],"resourceResolve":{},"limits":{"walkFiles":800000,"sampleFiles":20000,"sampleBytes":262144,"scriptBytes":16777216},"containers":{"enabled":true,"dir":"arc","scan":[".","Append"],"format":"edo","mode":"hybrid","flat":true,"scriptDecoder":"edo-lua","scriptExt":"edo","rules":[{"match":"^(?:Append/)?ver[0-9a-z]+\\.arc$","kinds":["script","res"],"exclude":["(?:^|/)!?99_test"]}],"maxEntries":200000,"maxTotalMB":8192}},
     config:{"scriptExtensions":["edo"],"namesFiles":[],"thumbsDirs":[],"hiddenDirs":[],"labels":{},"merge":[],"views":[],"groups":[],"dirThumbs":[],"scriptThumbs":[],"scriptIndex":[],"thumbFallback":{"prefer":["cg","stand","bg"]},"sceneMarkers":[{"label":"CG 开始","kind":"cmd","op":"overlay","match":"(?:^|/)(?:ev[0-9]|\\$[0-9]\\$ev)","pick":"each","max":6}],"pageSize":100},
@@ -2176,7 +2176,7 @@ export const LAYOUTS = {
       "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音、静态地图/人物及剧情移动演出；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
     ]
   },
-  'rpgmaker::rj01271506': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{skit:{expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
+  'rpgmaker::rj01271506': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
   'rpgmaker::rj01646655': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'},special:{imageMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'}}}},
   'rpgmaker::rj328940': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{special:{mapNameMatch:'回想|回憶|♥イベントシーン'}}}},
   'rpgmaker::rj01482469': {
@@ -3397,7 +3397,7 @@ export async function generateTags(ctx) {
     // 精确 id 优先；没有就按家族前缀（advhd::<游戏> → 家族 advhd）：新游戏不用在表里加一条，家族的默认配置直接用；某个游戏的差异写在选项 layouts['advhd::<游戏>'] 里（叠在家族项之上）
     let handler = handlers.find((g) => g.id === game.id)
     let viaFamily = false
-    if (!handler) { handler = handlers.find((g) => g.family && game.id.startsWith(g.family) && game.id.length > g.family.length); viaFamily = Boolean(handler) }
+    if (!handler) { handler = handlers.find((g) => LAYOUTS[g.id]?.family && g.family && game.id.startsWith(g.family) && game.id.length > g.family.length); viaFamily = Boolean(handler) }
     if (!handler) {
       logs.push(`这个媒体的 config.game.id 是「${game.id}」，本脚本不认识这个游戏（认识：${handlers.map((g) => g.id).join(' / ')}）：跳过`)
       return keepOwn(ctx, logs, { skipped: true })
@@ -3415,6 +3415,10 @@ export async function generateTags(ctx) {
     }
   } else {
     for (const handler of handlers.filter((g) => g.autoOrder !== null).sort((a, b) => a.autoOrder - b.autoOrder)) {
+      if (['pac','edo','sakana'].includes(handler.detector) && Array.isArray(ctx.item?.adapters) && ctx.item.adapters.length) {
+        const entry = resolveLayout(handler.id, options.layouts, [])
+        if (!entry?.adapters.some(id => ctx.item.adapters.includes(id))) continue
+      }
       found = await handler.detect(scopeOf(handler, false))
       if (found) break
     }
