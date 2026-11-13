@@ -6,6 +6,59 @@ import{existsSync}from'node:fs'
 import{readAgeIndex,decodeAgeScript,decodeAgeImage,ageControlFlow,ageLiteralInitializer,traceAgeProgram}from'../../web/library/gal/age.mjs'
 import{createAgeGraphics}from'../../web/library/gal/age-graphics.mjs'
 const old='.cache/new-games-043952/extracted/g05',extra='.cache/new-games-052443/extracted/g05/__verify/age'
+test('ordered bootstrap shares typed globals, isolates locals, and never enters the scene after an initialization failure',()=>{
+ const a=(type,value)=>({type,value}),i=(offset,opcode,...args)=>({offset,opcode,args})
+ const bits=Buffer.alloc(4);bits.writeFloatLE(0.1)
+ const first={instructions:[i(0,0x55,a(3,1),a(0,7)),i(5,0x55,a(9,0),a(0,99)),i(10,0x2d5,a(4,1),a(1,bits.readUInt32LE())),i(15,2)]}
+ const second={instructions:[i(0,0x50,a(3,2),a(3,1),a(9,0)),i(7,5)]}
+ const main={instructions:[i(0,0x50,a(3,3),a(3,2),a(0,1)),i(7,0x2d5,a(4,2),a(4,1)),i(12,2)]},seen=[]
+ const result=traceAgeProgram(main,{programName:'main',bootstrap:[{name:'first',program:first},{name:'second',program:second}],onTrace:(row,m)=>seen.push([m.script,m.phase,row.offset])})
+ assert.equal(result.status,'exited');assert.equal(result.integers[2],7);assert.equal(result.integers[3],8)
+ assert.deepEqual(result.floats,{'1':Math.fround(0.1),'2':Math.fround(0.1)})
+ assert.deepEqual(result.initialization,{requested:2,completed:[{script:'first',status:'exited'},{script:'second',status:'returned'}],complete:true})
+ assert.deepEqual(seen.map(row=>row[1]),['initialization','initialization','initialization','initialization','initialization','initialization','scene','scene','scene'])
+ const failed=traceAgeProgram(main,{bootstrap:[{name:'unknown',program:{instructions:[i(0,0x35b,a(0,2),a(0,0)),i(5,2)]}}]})
+ assert.equal(failed.status,'unsupported');assert.equal(failed.initialization.complete,false)
+ assert.equal(failed.integers[3],undefined);assert.equal(failed.trace.some(row=>row.script===''),false)
+ const limited=traceAgeProgram(main,{bootstrap:[{name:'first',program:first}],maxSteps:4})
+ assert.equal(limited.status,'limit');assert.equal(limited.integers[3],undefined,'one instruction budget covers bootstrap and scene')
+ assert.throws(()=>traceAgeProgram(main,{bootstrap:[{name:'bad',program:first,entry:1}]}),/instruction boundary/)
+ assert.throws(()=>traceAgeProgram(main,{bootstrap:Array(33).fill({name:'first',program:first})}),/initialization sequence/)
+})
+
+test('native float assignment keeps float32 values and rejects nonfinite values or integer-opcode coercion',()=>{
+ const a=(type,value)=>({type,value}),i=(offset,opcode,...args)=>({offset,opcode,args})
+ const p={instructions:[i(0,0x2d5,a(10,0),a(0,16777217)),i(5,0x2d5,a(4,0),a(10,0)),i(10,2)]}
+ assert.equal(traceAgeProgram(p).floats[0],16777216)
+ assert.throws(()=>traceAgeProgram({instructions:[i(0,0x2d5,a(4,0),a(1,0x7f800000)),i(5,2)]}),/non-finite/)
+ assert.throws(()=>traceAgeProgram({instructions:[i(0,0x55,a(3,0),a(4,0)),i(5,2)]}),/floating-point operation/)
+ assert.throws(()=>traceAgeProgram({instructions:[i(0,0x55,a(4,0),a(0,1)),i(5,2)]}),/write to float/)
+})
+
+test('callback return restores the interrupted PC and function stack across a linked BIN call',()=>{
+ const a=(type,value)=>({type,value}),i=(offset,opcode,...args)=>({offset,opcode,args}),exited=[]
+ const p={instructions:[i(0,0x55,a(9,0),a(0,7)),i(5,0x8f,a(0,14)),i(8,0x55,a(3,100),a(9,0)),i(13,2),
+  i(14,0x50,a(9,0),a(9,0),a(0,1)),i(21,5),i(22,0x55,a(9,0),a(0,9)),i(27,3,a(0,1)),i(30,0x55,a(3,101),a(9,0)),i(35,0x7c)]}
+ const child={instructions:[i(0,0x55,a(9,0),a(0,99)),i(5,0x55,a(3,102),a(9,0)),i(10,2)]}
+ let sent=false
+ const options={programName:'main',resolveScript:()=>({name:'child',program:child}),onTrace:(row,m)=>{if(m.script==='main'&&row.offset===14&&!sent){sent=true;m.dispatchCallback(22)}},onScriptExit:m=>exited.push([m.script,m.scriptInstance])}
+ const result=traceAgeProgram(p,options)
+ assert.equal(result.status,'exited');assert.deepEqual([100,101,102].map(k=>result.integers[k]),[10,9,99])
+ assert.deepEqual(result.callbacks,{dispatched:1,returned:1,active:null});assert.deepEqual(exited,[['child',1],['main',0]])
+ assert.equal(result.trace.filter(row=>row.script==='main'&&row.offset===14).length,1,'interrupted instruction executes once after callback return')
+ assert.equal(traceAgeProgram({instructions:[i(0,0x7c)]}).status,'unsupported')
+ for(const opcode of [2,5]) {
+  let injected=false
+  assert.throws(()=>traceAgeProgram({instructions:[i(0,0x55,a(3,0),a(0,1)),i(5,2),i(6,opcode)]},{onTrace:(row,m)=>{if(!injected){injected=true;m.dispatchCallback(6)}}}),/callback.*0x7c/)
+ }
+})
+
+test('real INIT2 float initialization precedes its first unresolved dependency',{skip:!existsSync('.cache/age-072229/extracted/g01/__verify/age/INIT2.BIN')},async()=>{
+ const program=decodeAgeScript(await readFile('.cache/age-072229/extracted/g01/__verify/age/INIT2.BIN'))
+ const result=traceAgeProgram(program,{programName:'INIT2.BIN'})
+ assert.equal(result.status,'missing-script');assert.equal(result.missingScript,22929)
+ assert.equal(Object.keys(result.floats).length,12);assert.equal(result.floats[22],1);assert.equal(result.floats[17],0)
+})
 test('native integer clear handles pointer bases, local storage and nonpositive counts without touching neighbours',()=>{
  const a=(type,value)=>({type,value}),i=(offset,opcode,...args)=>({offset,opcode,args})
  const result=traceAgeProgram({instructions:[

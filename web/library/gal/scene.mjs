@@ -4,7 +4,7 @@
 //   bg {src|color:[r,g,b], fade}   bgoff {fade}
 //   speaker {segments}             text {segments}        （片段 { text, ruby?, style?: { outline?, color?, size?, bold?, italic? } }）
 //   choice {id, var, options: [{ value, segments }]}   弹选项（选的序号记进变量 var）；id = 步序号:指令序号，进度里按它存选择
-//   bgm {src}  bgmStop {fade}      se {src}   voice {src}
+//   bgm {src}  bgmStop {fade}      se {src}   voice {src}   voiceStop {}（停止单句语音）
 //   movie {srcs[], loop, rate?, fade?}    movieOff {}        （rate = 播放速度，缺省 1；Fruits 的 VIDEO_PLAY 带速度；fade = 换视频时新的淡入秒数，旧的留到新的盖满，缺省 = 直接换）
 //   fade {to: 'black'|'clear', seconds}     wait {seconds}
 //   任何指令都可以带 when: [{ var, op, value, not? }]（全部成立才执行；变量没设过时一律不成立）——if/elseif/else 分支编译成它

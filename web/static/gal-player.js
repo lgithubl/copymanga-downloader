@@ -824,7 +824,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   applyOpacity()
   let bgmAudio = null
   let bgmSrc = ''
-  let voiceAudio = null
+  let voiceAudio = null, voiceRecord = null
   let wantBgm = true   // 播放器不可见时暂停，可见了再恢复
 
   const markMissing = (src) => { missing.add(src); updateNote() }
@@ -935,11 +935,20 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       voiceAudio?.pause()
       voiceAudio = audio
       record = { step: gen, endedAt: 0, failed: false }
+      voiceRecord = record
       stepVoice = record
       audio.addEventListener('ended', () => { record.endedAt = performance.now(); if (stepVoice === record) scheduleAuto() })
       audio.addEventListener('error', () => { record.failed = true; if (stepVoice === record) scheduleAuto() })
     }
     audio.play().catch(() => { if (record) { record.failed = true; if (stepVoice === record) scheduleAuto() } })
+  }
+  function stopVoice() {
+    voiceAudio?.pause(); voiceAudio = null
+    if (voiceRecord) {
+      voiceRecord.endedAt = Math.max(Number.EPSILON, performance.now())
+      if (stepVoice === voiceRecord) scheduleAuto()
+      voiceRecord = null
+    }
   }
 
   function currentVoiceCommands() {
@@ -1403,6 +1412,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   function renderInstant(i) {
     gen += 1
     stopTts()
+    stopVoice()
     cancelChoice()
     running = false
     skipping = false
@@ -1541,6 +1551,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
           break
         case 'voice':
           if (!skipping) playOnce(command.src, 'voice')
+          break
+        case 'voiceStop':
+          stopVoice()
           break
         case 'se':
           if (!skipping) playOnce(command.src, 'se')

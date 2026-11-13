@@ -93,39 +93,72 @@ export function ageLiteralInitializer(program){
 // Bounded data-only trace for confirmed scalar/control operations. Unknown
 // instructions stop the trace; this is not a registered playback adapter.
 export function traceAgeProgram(program, {
- integers = {}, strings = {}, maxSteps = 100000, maxStack = 64, entry,
- programName = '', resolveScript, onInstruction,
+ integers = {}, strings = {}, floats = {}, maxSteps = 100000, maxStack = 64, entry,
+ programName = '', resolveScript, onInstruction, onTrace, onScriptExit, bootstrap = [],
 } = {}) {
  if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000000 || !Number.isInteger(maxStack) || maxStack < 1 || maxStack > 256) throw Error('AGE trace budget invalid')
+ if (!Array.isArray(bootstrap) || bootstrap.length > 32) throw Error('AGE initialization sequence invalid')
  const units = new Map(), globals = new Map(), stack = [], trace = []
- const compile = (source, name) => {
+ let compiledInstructions = 0
+ const compile = (source, name, rootEntry) => {
+  if ((compiledInstructions += source.instructions?.length || 0) > 1000000) throw Error('AGE compiled instruction budget exceeded')
   const flow = ageControlFlow(source)
-  return { name, code: new Map(source.instructions.map(i => [i.offset, i])), nodes: new Map(flow.nodes.map(n => [n.offset, n])), entry: flow.entry,
+  if (rootEntry !== undefined && !source.instructions.some(i => i.offset === rootEntry)) throw Error('AGE initialization entry is not an instruction boundary')
+  return { name, code: new Map(source.instructions.map(i => [i.offset, i])), nodes: new Map(flow.nodes.map(n => [n.offset, n])), entry: rootEntry ?? flow.entry,
    sequential: new Map(source.instructions.map((i, k) => [i.offset, source.instructions[k + 1]?.offset ?? null])) }
  }
- let unit = compile(program, programName), locals = new Map(), aliases = new Map(), scriptInstance = 0, instanceSequence = 0, arrayWrites = 0
+ const sceneUnit = compile(program, programName, entry)
+ const roots = [...bootstrap.map(row => {
+  if (!row || typeof row.name !== 'string' || !row.name || row.name.length > 256 || !row.program) throw Error('AGE initialization program invalid')
+  return compile(row.program, row.name, row.entry)
+ }), sceneUnit], initialized = []
+ let rootIndex = 0, unit = roots[0], locals = new Map(), aliases = new Map(), scriptInstance = 0, instanceSequence = 0, arrayWrites = 0
  const destination = value => { if (!Number.isInteger(value) || !unit.code.has(value)) throw Error('AGE computed target is not an instruction boundary: ' + value); return value }
  for (const [id, value] of Object.entries(integers)) globals.set('3:' + id, Number(value) | 0)
  for (const [id, value] of Object.entries(strings)) globals.set('5:' + id, String(value))
  const key = a => {
-  if (!a || ![3, 5, 9, 11, 12, 14].includes(a.type)) throw Error('AGE operand storage unsupported')
-  if ([12, 14].includes(a.type)) { const ref = aliases.get(a.type + ':' + a.value); if (!ref) throw Error('AGE pointer is not initialized'); return ref }
+  if (!a || ![3, 4, 5, 9, 10, 11, 12, 13, 14].includes(a.type)) throw Error('AGE operand storage unsupported')
+  if ([12, 13, 14].includes(a.type)) { const ref = aliases.get(a.type + ':' + a.value); if (!ref) throw Error('AGE pointer is not initialized'); return ref }
   if (!Number.isInteger(a.value) || a.value < 0 || a.value >= 0x1000000) throw Error('AGE storage address out of range')
   return a.type + ':' + a.value
  }
- const storage = k => k.startsWith('9:') || k.startsWith('11:') ? locals : globals
+ const storage = k => /^(?:9|10|11):/.test(k) ? locals : globals
  const textKey = k => k.startsWith('5:') || k.startsWith('11:')
+ const floatKey = k => k.startsWith('4:') || k.startsWith('10:')
  const read = a => {
   if (a.type === 0) return a.value | 0
   if (a.type === 2) return a.text
-  const k = key(a); return storage(k).get(k) ?? (textKey(k) ? '' : 0)
+  const k = key(a)
+  if (floatKey(k)) throw Error('AGE float operand requires a floating-point operation')
+  return storage(k).get(k) ?? (textKey(k) ? '' : 0)
  }
  const write = (a, value) => {
   const k = key(a), target = storage(k)
+  if (floatKey(k)) throw Error('AGE integer/string write to float storage')
   if (globals.size + locals.size >= 250000 && !target.has(k)) throw Error('AGE memory slot limit')
   if (textKey(k) && String(value).length > 1048576) throw Error('AGE string size limit')
   target.set(k, textKey(k) ? String(value) : Number(value) | 0)
  }
+ const floatBits = Buffer.alloc(4)
+ const finiteFloat = value => {
+  const result = Math.fround(value)
+  if (!Number.isFinite(result)) throw Error('AGE non-finite float is unsupported')
+  return result
+ }
+ const readFloat = a => {
+  if (a.type === 1) { floatBits.writeUInt32LE(a.value >>> 0); return finiteFloat(floatBits.readFloatLE()) }
+  if ([0, 3, 9, 12].includes(a.type)) return finiteFloat(read(a))
+  const k = key(a)
+  if (!floatKey(k)) throw Error('AGE float source storage invalid')
+  return storage(k).get(k) ?? 0
+ }
+ const writeFloat = (a, value) => {
+  const k = key(a), target = storage(k)
+  if (!floatKey(k)) throw Error('AGE float destination storage invalid')
+  if (globals.size + locals.size >= 250000 && !target.has(k)) throw Error('AGE memory slot limit')
+  target.set(k, finiteFloat(value))
+ }
+ for (const [id, value] of Object.entries(floats)) writeFloat({ type: 4, value: Number(id) }, value)
  const operations = { 0x50:(a,b)=>a+b, 0x51:(a,b)=>a-b, 0x52:(a,b)=>Math.imul(a,b),
   0x53:(a,b)=>{if(!b)throw Error('AGE division by zero');return Math.trunc(a/b)},
   0x54:(a,b)=>{if(!b)throw Error('AGE modulo by zero');return a%b},
@@ -134,14 +167,41 @@ export function traceAgeProgram(program, {
   0x5d:(a,b)=>Number(a<=b), 0x5e:(a,b)=>Number(a>b), 0x5f:(a,b)=>Number(a>=b) }
  const push = (kind, next) => { if (stack.length >= maxStack) throw Error('AGE call stack limit'); stack.push({ kind, unit, locals, aliases, scriptInstance, next }) }
  const restore = frame => { ({ unit, locals, aliases, scriptInstance } = frame); return frame.next }
- let pc = destination(entry ?? unit.entry), status = 'limit', stopped = null, missingScript = null
+ const nextRoot = status => {
+  initialized.push({ script: unit.name, status })
+  unit = roots[++rootIndex]; locals = new Map(); aliases = new Map(); scriptInstance = ++instanceSequence
+  return destination(unit.entry)
+ }
+ let pc = destination(unit.entry), status = 'limit', stopped = null, missingScript = null
+ let activeCallback = null, dispatchedCallbacks = 0, returnedCallbacks = 0
  for (let step = 0; step < maxSteps; step++) {
   const i = unit.code.get(pc), node = unit.nodes.get(pc), a = i.args
+  let interruptTarget = null, atTraceBoundary = true
+  const machine = { read, write, readFloat, writeFloat, key, script: unit.name, scriptInstance,
+   phase: rootIndex < bootstrap.length ? 'initialization' : 'scene',
+   // A native 7b callback saves one PC/slot (411e58..411eb8). It is not
+   // a function call and 7c restores that PC (41a629). Keep caller locals
+   // and its function stack intact; nested callbacks are not supported.
+   dispatchCallback(target) {
+    if (!atTraceBoundary) throw Error('AGE callback dispatch requires a trace boundary')
+    if (activeCallback || interruptTarget !== null) throw Error('AGE nested callback dispatch is unsupported')
+    interruptTarget = destination(target)
+   },
+   isCodeOffset: value => unit.code.has(value), stackDepth: stack.length }
+  onTrace?.(i, machine)
+  atTraceBoundary = false
+  if (interruptTarget !== null) {
+   activeCallback = { script: unit.name, instance: scriptInstance, resume: pc, depth: stack.length }
+   dispatchedCallbacks++; pc = interruptTarget; continue
+  }
   trace.push({ ...(unit.name ? { script: unit.name } : {}), offset: pc, opcode: i.opcode })
   let next = node.next
   if (operations[i.opcode]) write(a[0], operations[i.opcode](read(a[1]), read(a[2])))
   else if ([0x55, 0x192].includes(i.opcode)) write(a[0], read(a[1]))
   else if (i.opcode === 0x193) write(a[0], String(read(a[1])) + String(read(a[2])))
+  // 42f690 -> 41bae0/42a430: typed float assignment, rounded to native
+  // single precision. Integer opcodes still reject float storage.
+  else if (i.opcode === 0x2d5) writeFloat(a[0], readFloat(a[1]))
   else if (i.opcode === 0x64) {
    const values = a[1]?.values, base = key(a[0]), [type, start] = base.split(':').map(Number)
    if (![3, 9].includes(type) || !Array.isArray(values) || values.length > 250000 || start + values.length > 0x1000000) throw Error('AGE local array destination/size invalid')
@@ -172,16 +232,33 @@ export function traceAgeProgram(program, {
    }
    push('script', node.next); unit = units.get(ordinal); locals = new Map(); aliases = new Map(); scriptInstance = ++instanceSequence; next = unit.entry
   }
+  else if (i.opcode === 0x7c) {
+   if (!activeCallback) { status = 'unsupported'; stopped = i; break }
+   if (activeCallback.instance !== scriptInstance || activeCallback.depth !== stack.length) throw Error('AGE callback return crosses an execution slot or unbalanced stack')
+   next = destination(activeCallback.resume); activeCallback = null; returnedCallbacks++
+  }
   else if (i.opcode === 5) {
-   if (!stack.length) { status = 'returned'; break }
-   next = restore(stack.pop())
+   if (activeCallback?.instance === scriptInstance && stack.length <= activeCallback.depth) throw Error('AGE callback must return with 0x7c')
+   if (!stack.length) {
+    onScriptExit?.({ script: unit.name, scriptInstance })
+    if (rootIndex < bootstrap.length) next = nextRoot('returned')
+    else { status = 'returned'; break }
+   } else {
+    const frame = stack.pop()
+    if (frame.kind === 'script') onScriptExit?.({ script: unit.name, scriptInstance })
+    next = restore(frame)
+   }
   }
   else if ([2, 9].includes(i.opcode)) {
    // An exit inside a called BIN unwinds its local functions and returns to the caller BIN.
+   if (activeCallback?.instance === scriptInstance) throw Error('AGE callback exited without returning with 0x7c')
+   onScriptExit?.({ script: unit.name, scriptInstance })
    let frame
    while (stack.length) { const candidate = stack.pop(); if (candidate.kind === 'script') { frame = candidate; break } }
-   if (!frame) { status = 'exited'; break }
-   next = restore(frame)
+   if (!frame) {
+    if (rootIndex < bootstrap.length) next = nextRoot('exited')
+    else { status = 'exited'; break }
+   } else next = restore(frame)
   }
   else if ([0x61, 0x12c].includes(i.opcode)) {
    const [type, start] = key(a[1]).split(':').map(Number)
@@ -190,12 +267,15 @@ export function traceAgeProgram(program, {
    if (!Number.isInteger(address) || address < 0 || address >= 0x1000000) throw Error('AGE array address out of range')
    aliases.set(a[0].type + ':' + a[0].value, type + ':' + address)
   }
-  else if (![0x1a7, 0x1a8].includes(i.opcode) && onInstruction?.(i, { read, write, key, script: unit.name, scriptInstance, isCodeOffset: value => unit.code.has(value), stackDepth: stack.length }) !== true) { status = 'unsupported'; stopped = i; break }
+  else if (![0x1a7, 0x1a8].includes(i.opcode) && onInstruction?.(i, machine) !== true) { status = 'unsupported'; stopped = i; break }
   if (next === null || next === undefined) { status = 'fell-through'; break }
   pc = destination(next)
  }
  return { status, stopped: stopped ? { ...(unit.name ? { script: unit.name } : {}), offset: stopped.offset, opcode: stopped.opcode } : null,
+  initialization: { requested: bootstrap.length, completed: initialized, complete: rootIndex === bootstrap.length },
+  callbacks: { dispatched: dispatchedCallbacks, returned: returnedCallbacks, active: activeCallback ? { ...activeCallback } : null },
   ...(missingScript !== null ? { missingScript } : {}), trace,
   integers: Object.fromEntries([...globals].filter(([k]) => k.startsWith('3:')).map(([k,v]) => [k.slice(2),v])),
+  floats: Object.fromEntries([...globals].filter(([k]) => k.startsWith('4:')).map(([k,v]) => [k.slice(2),v])),
   strings: Object.fromEntries([...globals].filter(([k]) => k.startsWith('5:')).map(([k,v]) => [k.slice(2),v])) }
 }

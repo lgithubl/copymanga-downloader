@@ -27,8 +27,8 @@ export async function prepare({ options = {}, mediaDir, toResourcePath }) {
 const safeSrc = src => typeof src === 'string' && src.length <= 1024 && !src.includes('\\') && !src.startsWith('/') && !src.includes(':') && src.split('/').every(part => part && part !== '.' && part !== '..')
 const IMPLEMENTED = new Set([
   2, 3, 5, 9, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
-  0x61, 0x64, 0x6c, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xb8, 0xbf, 0xc2, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8,
-  0x7b, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1c7, 0x1cc, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f7, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21b, 0x21c, 0x220, 0x224,
+  0x61, 0x64, 0x6c, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xb8, 0xbf, 0xc2, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8, 0x2d5, 0x2f6, 0x2f8,
+  0x7b, 0x7c, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1c7, 0x1cc, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f7, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21b, 0x21c, 0x220, 0x224,
 ])
 function binary(encoded) {
   if (typeof encoded !== 'string' || encoded.length > 22369624 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw Error('AGE BIN base64 invalid/oversized')
@@ -60,6 +60,8 @@ export function analyzeAgeScene(data, options = {}) {
     }
   }
   inventory(program, data.name || '')
+  stats.voices.resetChannels = [0, 0, 0]
+  stats.voices.centeredChannels = [0, 0, 0]
   let commands = [], segments = [], source = null, displayBatchDepth = 0
   const flushText = () => { if (segments.length) { commands.push({ op: 'text', segments }); segments = [] } }
   const finish = () => {
@@ -85,12 +87,41 @@ export function analyzeAgeScene(data, options = {}) {
     if (!safeSrc(src)) { stats[bucket].unresolved++; throw Error('AGE ' + op + ' mapping missing: ' + id) }
     stats[bucket].resolved++; commands.push({ op, src })
   }
-  let run, failure, current
+  let run, failure, current, sceneStarted = false, replayEvents = []
   try {
+    if (options.nativeEvents !== undefined && (!Array.isArray(options.nativeEvents) || options.nativeEvents.length > 128)) throw Error('AGE native event sequence invalid')
+    // Explicit analysis/replay input, never invented from a registered menu
+    // address or browser click. Ordinary parsing supplies no native events.
+    replayEvents = (options.nativeEvents || []).map(row => {
+      if (!row || typeof row.script !== 'string' || row.script.length > 256 || !Number.isInteger(row.offset) || row.offset < 0 || ![0, 1].includes(row.callback)) throw Error('AGE native event invalid')
+      return { ...row, consumed: false }
+    })
+    if (data.initialization !== undefined && (!Array.isArray(data.initialization) || data.initialization.length > 32)) throw Error('AGE initialization sequence invalid')
+    const bootstrap = (data.initialization || []).map(row => {
+      if (!row || typeof row.name !== 'string' || !row.name || row.name.length > 256) throw Error('AGE initialization program invalid')
+      const program = binary(row.script)
+      inventory(program, row.name)
+      return { name: row.name, program, entry: row.entry }
+    })
     run = traceAgeProgram(program, {
       programName: data.name || '', entry: profile.entry,
-      integers: options.integers || {}, strings: options.strings || {},
+      integers: options.integers || {}, strings: options.strings || {}, floats: options.floats || {}, bootstrap,
       maxSteps: options.maxSteps ?? DEFAULT_OPTIONS.maxSteps,
+      onTrace(i, machine) {
+        current = { script: machine.script, offset: i.offset, opcode: i.opcode, phase: machine.phase }
+        if (machine.phase === 'scene' && !sceneStarted) {
+          sceneStarted = true
+          if (displayBatchDepth || timeline.pending) throw Error('AGE initialization left an uncommitted display batch or timer')
+        }
+        const event = replayEvents.find(row => !row.consumed && row.script === machine.script && row.offset === i.offset)
+        if (event) {
+          if (machine.phase !== 'scene') throw Error('AGE initialization cannot replay a native callback event')
+          event.consumed = true
+          const target = runtime.callbackTarget(machine.scriptInstance, event.callback)
+          if (target !== -1) machine.dispatchCallback(target)
+        }
+      },
+      onScriptExit({ scriptInstance }) { runtime.releaseScript(scriptInstance) },
       resolveScript: ordinal => {
         const row = data.links?.[ordinal]
         if (!row) return null
@@ -99,7 +130,6 @@ export function analyzeAgeScene(data, options = {}) {
         return { name: row.name, program }
       },
       onInstruction(i, machine) {
-        current = { script: machine.script, offset: i.offset, opcode: i.opcode }
         const op = '0x' + i.opcode.toString(16), read = k => machine.read(i.args[k])
         stats.operations ||= {}
         stats.operations[op] = (stats.operations[op] || 0) + 1
@@ -127,11 +157,31 @@ export function analyzeAgeScene(data, options = {}) {
           if (read(0) !== 0) return unsupported()
           if (segments.length) segments.push({ text: '\n' }); return true
         }
-        if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); if (timeline.pending) throw Error('AGE input wait with pending update timer'); if (runtime.hasCallbacks()) throw Error('AGE callback dispatch at input wait is not implemented'); finish(); return true }
+        if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (machine.phase === 'initialization') throw Error('AGE initialization requires native input'); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); if (timeline.pending) throw Error('AGE input wait with pending update timer'); if (runtime.requiresRegionDispatch()) throw Error('AGE input region dispatch at input wait is not implemented'); finish(); return true }
         // 419100 -> 47a8b0 stops the current BGM immediately; any native
         // fade-out attenuation is reset for the next track. The browser's
         // bgmStop cancels its fade and each new track restores volume too.
         if (i.opcode === 0xb8 || i.opcode === 0xbf && read(0) === 0) { commands.push({ op: 'bgmStop' }); return true }
+        if (i.opcode === 0x2f6) {
+          // 425d60 -> 4a9d00 -> dsStop(12 + slot); zero its mode and
+          // deferred-play fields. 420670 (c4) uses slot 0. Slots 1/2 have
+          // no accepted producers yet, so they cannot hide playing audio.
+          const slot = read(0)
+          if (!Number.isInteger(slot) || slot < 0 || slot > 2) throw Error('AGE voice channel invalid')
+          stats.voices.resetChannels[slot]++
+          if (slot === 0) commands.push({ op: 'voiceStop' })
+          return true
+        }
+        if (i.opcode === 0x2f8) {
+          // 425e00 -> 4a4e60 -> 4a5630 calls IDirectSoundBuffer::SetPan
+          // (+40); the error string explicitly says dsbSetPan. Zero is
+          // centered, NOT muted. Only centered playback is supported so
+          // far; nonzero attenuation cannot be approximated by volume=0.
+          const slot = read(0), pan = read(1)
+          if (!Number.isInteger(slot) || slot < 0 || slot > 2) throw Error('AGE voice channel invalid')
+          if (pan !== 0) return unsupported()
+          stats.voices.centeredChannels[slot]++; return true
+        }
         if (i.opcode === 0xc2) {
           // 420500 -> 47aa70/47abb0: interpolate BGM gain toward arg 1.
           // Only zero gain (fade out) maps to the existing scene contract.
@@ -170,15 +220,20 @@ export function analyzeAgeScene(data, options = {}) {
   } catch (error) { failure = String(error.message || error) }
   if (!failure && ['returned', 'exited'].includes(run?.status) && displayBatchDepth) failure = 'AGE uncommitted display batch at script end'
   if (!failure && ['returned', 'exited'].includes(run?.status) && timeline.pending) failure = 'AGE pending update timer at script end'
-  if (!failure && ['returned', 'exited'].includes(run?.status) && runtime.hasCallbacks()) failure = 'AGE callback dispatch at script exit is not implemented'
+  if (!failure && ['returned', 'exited'].includes(run?.status) && runtime.requiresRegionDispatch()) failure = 'AGE input region dispatch at script exit is not implemented'
+  if (!failure && ['returned', 'exited'].includes(run?.status) && replayEvents.some(row => !row.consumed)) failure = 'AGE native event location was not reached'
   const complete = !failure && ['returned', 'exited'].includes(run?.status)
   // Preserve partial output exclusively for diagnostics; parse() below does
   // not hand it to the player as a successfully reconstructed scene.
   finish()
   stats.run = run ? { status: run.status, stopped: run.stopped, missingScript: run.missingScript, steps: run.trace.length } : { status: 'error', stopped: current || null }
   stats.complete = complete
+  stats.initialization = run?.initialization || { requested: Array.isArray(data.initialization) ? data.initialization.length : 0, complete: false }
   stats.displayBatchDepth = displayBatchDepth
   stats.state = runtime.snapshot()
+  Object.assign(stats.state.nativeEvents, { mode: replayEvents.length ? 'explicit-callback-replay' : 'normal-forward-only', requested: replayEvents.length,
+    consumed: replayEvents.filter(row => row.consumed).length, dispatched: run?.callbacks.dispatched || 0, returned: run?.callbacks.returned || 0,
+    active: run?.callbacks.active || null })
   stats.timeline = timeline.snapshot()
   if (failure) stats.error = failure
   return { steps, stats, complete }

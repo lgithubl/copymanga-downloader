@@ -7,7 +7,8 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { decodeAgeScript, decodeAgeImage, readAgeIndex, traceAgeProgram } from '../../web/library/gal/age.mjs'
-import { analyzeAgeScene, encodeAgeScriptPackage } from '../../web/library/gal/adapters/age-sys4.mjs'
+import { analyzeAgeScene, encodeAgeScriptPackage, parse } from '../../web/library/gal/adapters/age-sys4.mjs'
+import { computeMarkers } from '../../web/library/gal/markers.mjs'
 import { encodePng } from '../../web/library/gal/bgi.mjs'
 import { normalizeGalConfig } from '../../web/library/gal/config.mjs'
 import { virtualEntry } from '../../web/library/gal/containers.mjs'
@@ -46,6 +47,26 @@ assert.ok(voiceEntry); assets.set(voicePath, await voiceEntry.read())
 const scene = { format: 'gal-scene/1', adapter: 'age::sys4', steps: [{ index: 0, commands: [
   ...draw(0, 77), ...draw(2, 16485), { op: 'voice', src: voicePath }, ...narration.steps[0].commands,
 ] }], stats: { diagnosticOnly: true } }
+// A controlled bytecode scene exercises the complete parser/player path.
+// Original CVINIT/SNINIT and AGF/WAV are used; this is not original plot flow.
+const manifest = JSON.parse(await readFile('.cache/age-upstream-20261113/manifest.json'))
+const initialization = await Promise.all(['link-SNINIT.BIN','verify-CVINIT.BIN'].map(async key => ({ name: key.replace(/^[^-]*-/, ''), script: (await readFile(manifest.records.find(r => r.key === key).source)).toString('base64') })))
+const names = traceAgeProgram(decodeAgeScript(Buffer.from(initialization[1].script,'base64'))).strings
+const nameKey = Number(Object.entries(names).find(([,v]) => v === 'ナレーション')[0])
+const words = [], emit = (op, ...args) => { words.push(op); for (const [type,value] of args) words.push(type,value) }, n = v => [0,v]
+emit(0x1f9,n(77),n(10),n(-1)); emit(0x1fb,...[20,10,0,0,1600,900,0,0].map(n))
+emit(0x6e,n(0),[5,nameKey]); emit(0x72,n(0))
+emit(0x1f9,n(16485),n(11),n(-1)); emit(0x1fb,...[21,11,0,0,512,900,0,0].map(n))
+emit(0xc4,n(7)); emit(0x6e,n(0),[5,nameKey]); emit(0x72,n(0))
+emit(0x2f6,n(0)); emit(0x6e,n(0),[5,nameKey]); emit(0x72,n(0))
+emit(0x6e,n(0),[5,nameKey]); emit(0x72,n(0)); emit(2)
+const controlBin=Buffer.alloc(60+words.length*4);controlBin.write('SYS4485 ');controlBin.writeUInt32LE(28,32)
+for(const at of [40,48,56])controlBin.writeUInt32LE(words.length,at)
+words.forEach((v,i)=>controlBin.writeUInt32LE(v>>>0,60+i*4))
+const parsedScene=parse(JSON.stringify({ ...JSON.parse(encodeAgeScriptPackage(controlBin,{name:'controlled.BIN'})),initialization,resources:{images,voice:{7:voicePath}} }))
+assert.equal(parsedScene.stats.initialization.complete,true);assert.equal(parsedScene.steps.length,4)
+const markers=computeMarkers(parsedScene,[{kind:'cmd',op:'overlay',re:/CS001AAA/,label:'CG',pick:'each',max:6}])
+assert.deepEqual(markers.map(m=>m.step),[1])
 await writeFile(out + '/diagnostic-scene.json', JSON.stringify(scene, null, 2))
 const server = createServer(async (req, res) => {
   try {
@@ -229,6 +250,56 @@ try {
   assert.equal(await page.evaluate(() => window.__audios.every(a => a.paused)), true, 'destroy stops detached fading BGM too')
   assert.deepEqual(errors, [])
   await writeFile(out + '/bgm-stop-verification.json', JSON.stringify({ immediateStopDuringFade: true, nextTrackRestoresVolume: true, backwardSeekStopsAudio: true, destroyStopsFade: true }, null, 2))
+  // Real browser audio: stopping voice keeps BGM playing; a visibility
+  // transition must not restart the stopped voice. Seeking stops it as well.
+  await page.evaluate(async ({ base, voicePath }) => {
+    window.__audios = []
+    const { createGalPlayer } = await import('/gal-player.js')
+    const scene = { format: 'gal-scene/1', steps: [
+      { index: 0, commands: [{ op: 'bgm', src: voicePath }, { op: 'voice', src: voicePath }, { op: 'text', segments: [{ text: 'voice start' }] }] },
+      { index: 1, commands: [{ op: 'voiceStop' }, { op: 'text', segments: [{ text: 'voice stopped' }] }] },
+      { index: 2, commands: [{ op: 'voice', src: voicePath }, { op: 'text', segments: [{ text: 'voice again' }] }] },
+    ] }
+    window.player = createGalPlayer({ container: document.querySelector('#host'), reader: { node: {}, scene, resourceBase: base + '/fixture' } })
+  }, { base, voicePath })
+  await page.waitForFunction(() => window.__audios.some(a => a.loop && a.currentTime > 0 && !a.paused) && window.__audios.some(a => !a.loop && a.currentTime > 0 && !a.paused))
+  await page.evaluate(() => { window.__voice = window.__audios.find(a => !a.loop && a.currentTime > 0 && !a.paused); window.__bgm = window.__audios.find(a => a.loop && !a.paused) })
+  await page.evaluate(() => window.player.next())
+  await page.waitForFunction(() => window.player.index === 1 && !window.__bgm.paused && window.__voice.paused)
+  await page.locator('#host').evaluate(el => { el.style.display = 'none' })
+  await page.waitForFunction(() => window.__bgm.paused)
+  await page.locator('#host').evaluate(el => { el.style.display = '' })
+  await page.waitForFunction(() => !window.__bgm.paused)
+  await page.waitForTimeout(150)
+  assert.equal(await page.evaluate(() => window.__voice.paused), true, 'visibility must not resume stopped voice')
+  await page.evaluate(() => window.player.next())
+  await page.waitForFunction(() => window.__audios.some(a => !a.loop && a !== window.__voice && a.currentTime > 0 && !a.paused))
+  await page.evaluate(() => { window.__voice2 = window.__audios.find(a => !a.loop && a !== window.__voice && a.currentTime > 0 && !a.paused); window.player.prev() })
+  await page.waitForFunction(() => window.__voice2.paused)
+  await page.evaluate(() => window.player.destroy())
+  assert.equal(await page.evaluate(() => window.__audios.every(a => a.paused)), true)
+  assert.deepEqual(errors, [])
+  await writeFile(out + '/voice-stop-verification.json', JSON.stringify({ stopPreservesBgm: true, visibilityDoesNotResumeVoice: true, seekStopsVoice: true, destroyStopsAudio: true }, null, 2))
+  await page.evaluate(async ({ scene, markers, base }) => {
+    const { createGalPlayer } = await import('/gal-player.js')
+    window.player=createGalPlayer({container:document.querySelector('#host'),reader:{node:{markers},scene,resourceBase:base+'/fixture'},startStep:markers[0].step})
+  }, {scene:parsedScene,markers,base})
+  await page.waitForFunction(()=>window.player.index===1 && document.querySelector('canvas.gal-overlay')?.dataset.parts==='2')
+  await page.waitForFunction(()=>document.querySelector('.gal-text')?.textContent.includes('ナレーション'))
+  await page.evaluate(()=>window.player.prev())
+  await page.waitForFunction(()=>window.player.index===0 && document.querySelector('canvas.gal-overlay')?.dataset.parts==='1')
+  await page.evaluate(()=>window.player.destroy())
+  const thumb=await page.evaluate(async({scene,base})=>{
+    const {renderSceneThumb}=await import('/gal-thumb-render.js')
+    const blob=await renderSceneThumb({apiBase:base,resourceBase:base+'/fixture',node:'controlled',width:640},{fetchImpl:async()=>({ok:true,json:async()=>({scene})})})
+    const img=await createImageBitmap(blob),c=document.createElement('canvas');c.width=img.width;c.height=img.height;c.getContext('2d').drawImage(img,0,0)
+    const pixels=c.getContext('2d').getImageData(0,0,c.width,c.height).data
+    let colored=0;for(let i=0;i<pixels.length;i+=124)if(pixels[i]+pixels[i+1]+pixels[i+2]>40)colored++
+    return{width:img.width,height:img.height,bytes:blob.size,colored}
+  },{scene:parsedScene,base})
+  assert.equal(thumb.width,640);assert.equal(thumb.height,360);assert.ok(thumb.bytes>1000&&thumb.colored>100)
+  assert.deepEqual(errors,[])
+  await writeFile(out+'/parsed-scene-verification.json',JSON.stringify({controlledBytecode:true,originalPlotFlow:false,realInitializers:true,markerStartStep:1,backwardReconstruction:true,thumb},null,2))
   await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, prologuePixels, errors, placementHelperReturned: true, stops: ['SN0000 prefix:0x35c', 'text-tail:0x305'] }, null, 2))
   console.log('PASS native AGE component display (not full scene playback)', pixels, out)
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

@@ -38,6 +38,88 @@ function bin(rows) {
 const pkg = (rows, extra = {}) => ({ ...JSON.parse(encodeAgeScriptPackage(bin(rows), { name: 'case.BIN' })), ...extra })
 const lit = n => arg(0, n), str = text => ({ type: 2, text }), global = n => arg(3, n)
 
+test('explicit callback replay enters the registered target, returns to the interrupted text and rejects unresolved events', () => {
+  const data = pkg([[0x7b, lit(19), lit(-1)], [0x192, arg(5,100), str('normal')], [0x6e, lit(0), arg(5,100)],
+    [0x72, lit(0)], [2], [0x192, arg(5,100), str('callback')], [0x7c]])
+  const plain = parse(JSON.stringify(data))
+  assert.equal(plain.steps[0].commands[0].segments[0].text, 'normal')
+  const options = { nativeEvents: [{ script: 'case.BIN', offset: 10, callback: 0 }] }
+  const replay = parse(JSON.stringify(data), null, { options })
+  assert.equal(replay.steps[0].commands[0].segments[0].text, 'callback')
+  assert.deepEqual([replay.stats.state.nativeEvents.dispatched, replay.stats.state.nativeEvents.returned], [1,1])
+  const disabled = parse(JSON.stringify(data), null, { options: { nativeEvents: [{ script: 'case.BIN', offset: 10, callback: 1 }] } })
+  assert.equal(disabled.steps[0].commands[0].segments[0].text, 'normal')
+  assert.equal(disabled.stats.state.nativeEvents.consumed,1); assert.equal(disabled.stats.state.nativeEvents.dispatched,0)
+  assert.throws(() => parse(JSON.stringify(data), null, { options: { nativeEvents: [{ script: 'case.BIN', offset: 999, callback: 0 }] } }), /not reached/)
+  assert.throws(() => parse(JSON.stringify(data), null, { options: { nativeEvents: [...options.nativeEvents, { script: 'case.BIN', offset: 19, callback: 0 }] } }), /nested callback/)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x7c], [2]]))), /0x7c/)
+})
+
+test('completed linked slots release callbacks while preserving their parent registration', () => {
+  const data = pkg([[0x7b, lit(0), lit(-1)], ...Array.from({ length: 300 }, () => [3,lit(22)]), [2]],
+    { links: { 22: { name:'child.BIN', script:bin([[0x7b,lit(0),lit(-1)],[2]]).toString('base64') } } })
+  const scene = parse(JSON.stringify(data))
+  assert.equal(scene.stats.state.nativeEvents.registrations,301)
+  assert.equal(scene.stats.state.nativeEvents.released,301)
+  assert.deepEqual(scene.stats.state.registeredCallbacks,[])
+})
+
+test('bootstrap gates production parsing and shares initialized strings without auto-selecting native menus', () => {
+  const boot = { name:'bootstrap.BIN', script:bin([[0x192,arg(5,100),str('initialized')],[2]]).toString('base64') }
+  const data = pkg([[0x6e,lit(0),arg(5,100)],[0x72,lit(0)],[2]], { initialization:[boot] })
+  const scene = parse(JSON.stringify(data))
+  assert.equal(scene.steps[0].commands[0].segments[0].text,'initialized')
+  assert.equal(scene.stats.initialization.complete,true)
+  assert.deepEqual(scene.stats.initialization.completed,[{script:'bootstrap.BIN',status:'exited'}])
+  const bad = { name:'bootstrap.BIN', script:bin([[0x35b,lit(2),lit(0)],[2]]).toString('base64') }
+  const result = analyzeAgeScene({...data,initialization:[bad]})
+  assert.equal(result.complete,false);assert.equal(result.stats.run.stopped.script,'bootstrap.BIN')
+  assert.equal(result.stats.run.stopped.opcode,0x35b);assert.equal(result.stats.initialization.complete,false)
+  assert.equal(result.steps.length,0,'no main-script text is emitted from partial initialization')
+  for (const rows of [[[0x72,lit(0)],[2]], [[0x1f4],[2]], [[0x238,lit(100)],[2]]]) {
+    const row={name:'bootstrap.BIN',script:bin(rows).toString('base64')}
+    assert.throws(()=>parse(JSON.stringify({...data,initialization:[row]})),/initialization/)
+  }
+})
+
+test('real data initializer sequence is reusable; full SYSTEM4 still stops at its newer opaque instruction', {skip:!existsSync('.cache/age-upstream-20261113/manifest.json')}, async()=>{
+  const manifest=JSON.parse(await readFile('.cache/age-upstream-20261113/manifest.json'))
+  const load=async key=>{
+    const row=manifest.records.find(row=>row.key===key)
+    return { name:key.replace(/^[^-]*-/,''),script:(await readFile(row.source)).toString('base64') }
+  }
+  const names=await load('verify-CVINIT.BIN'), sound=await load('link-SNINIT.BIN')
+  const globals=traceAgeProgram(decodeAgeScript(Buffer.from(names.script,'base64'))).strings
+  const key=Number(Object.entries(globals).find(([,value])=>value==='ナレーション')[0])
+  const data=pkg([[0x6e,lit(0),arg(5,key)],[0x72,lit(0)],[2]],{initialization:[sound,names]})
+  const scene=parse(JSON.stringify(data))
+  assert.equal(scene.steps[0].commands[0].segments[0].text,'ナレーション')
+  assert.equal(scene.stats.initialization.completed.length,2)
+  const full=analyzeAgeScene({...data,initialization:[await load('verify-SYSTEM4.BIN')]})
+  assert.equal(full.complete,false);assert.equal(full.stats.initialization.complete,false)
+  assert.equal(full.stats.run.stopped.script,'SYSTEM4.BIN');assert.equal(full.stats.run.stopped.opcode,0x35b)
+  assert.deepEqual(full.stats.voices.resetChannels,[1,1,1])
+  assert.deepEqual(full.stats.voices.centeredChannels,[1,1,1])
+  assert.equal(full.steps.flatMap(row=>row.commands).some(row=>row.op==='text'),false)
+})
+
+test('native channel reset stops slot-zero voice without stopping the BGM or freeing resources',()=>{
+  const data=pkg([[0xbf,lit(3)],[0xc4,lit(7)],[0x2f6,lit(0)],[0x2f6,lit(1)],[0x2f6,lit(2)],[2]],
+    {resources:{bgm:{3:'age/res/bgm.wav'},voice:{7:'age/res/voice.wav'}}})
+  const scene=parse(JSON.stringify(data))
+  assert.deepEqual(scene.steps[0].commands.map(row=>row.op),['bgm','voice','voiceStop'])
+  assert.deepEqual(scene.stats.voices.resetChannels,[1,1,1])
+  assert.equal(stateAt(scene,0).bgm,'age/res/bgm.wav')
+  assert.throws(()=>parse(JSON.stringify(pkg([[0x2f6,lit(3)],[2]]))),/voice channel/)
+})
+
+test('centered native voice pan preserves audio and rejects unimplemented nonzero pan',()=>{
+  const scene=parse(JSON.stringify(pkg([[0x2f8,lit(0),lit(0)],[0x2f8,lit(1),lit(0)],[0x2f8,lit(2),lit(0)],[2]])))
+  assert.deepEqual(scene.stats.voices.centeredChannels,[1,1,1])
+  assert.equal(analyzeAgeScene(pkg([[0x2f8,lit(0),lit(500)],[2]])).complete,false)
+  assert.throws(()=>parse(JSON.stringify(pkg([[0x2f8,lit(3),lit(0)],[2]]))),/voice channel/)
+})
+
 test('auxiliary clear preserves persistent images; object erase uses half-open ranges and keeps textures', () => {
   const load = [0x1f9, lit(77), lit(10), lit(-1)]
   const draw = id => [0x1fb, lit(id), lit(10), lit(0), lit(0), lit(16), lit(16), lit(0), lit(0)]
@@ -159,15 +241,17 @@ test('native flag masks overwrite both bits, reset every slot, and reject invali
   for (const slot of [-1, 1000]) assert.throws(() => parse(JSON.stringify(pkg([[0x258, lit(slot), lit(1)], [2]]))), /slot\/mask invalid/)
 })
 
-test('callbacks register without jumping, cancellation clears them, and unresolved dispatch cannot complete', () => {
+test('callbacks stay dormant during ordinary advance and are released with their execution slot', () => {
   const data = pkg([[0x7b, lit(15), lit(-1)], [0x6e, lit(0), str('registered')], [0x7b, lit(-1), lit(-1)], [2], [0x6e, lit(0), str('callback')], [5]])
   const scene = parse(JSON.stringify(data))
   assert.equal(scene.steps[0].commands[0].segments[0].text, 'registered')
-  assert.deepEqual(scene.stats.state.pendingCallbacks, [])
+  assert.deepEqual(scene.stats.state.registeredCallbacks, [])
   for (const tail of [[[2]], [[0x72, lit(0)], [2]]]) {
     const result = analyzeAgeScene(pkg([[0x7b, lit(0), lit(-1)], ...tail]))
-    assert.equal(result.complete, false); assert.match(result.stats.error, /callback dispatch/)
-    assert.deepEqual(result.stats.state.pendingCallbacks[0].targets, [0, -1])
+    assert.equal(result.complete, true)
+    assert.deepEqual(result.stats.state.registeredCallbacks, [])
+    assert.equal(result.stats.state.nativeEvents.dispatched, 0)
+    assert.equal(result.stats.state.nativeEvents.released, 1)
   }
   assert.throws(() => parse(JSON.stringify(pkg([[0x7b, lit(1), lit(-1)], [2]]))), /instruction boundary/)
 })
@@ -188,7 +272,7 @@ test('input regions preserve native rectangle matching, first-match binding and 
   assert.throws(() => execute(0x90, 2, 3, 4, 5, -1, 98, -1), /instruction boundary/)
   for (let n = 2; n < 100; n++) execute(0x90, 2, 3, 4, 5, -1, -1, 99)
   assert.throws(() => execute(0x90, 2, 3, 4, 5, -1, -1, 99), /rectangle limit/)
-  assert.throws(() => parse(JSON.stringify(pkg([[0x90, lit(0), lit(0), lit(1), lit(1), lit(-1), lit(-1), lit(0)], [2]]))), /callback dispatch/)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x90, lit(0), lit(0), lit(1), lit(1), lit(-1), lit(-1), lit(0)], [2]]))), /input region dispatch/)
 })
 
 test('input activation is sequential registration, not a jump, wait or callback cancellation', () => {
@@ -197,7 +281,7 @@ test('input activation is sequential registration, not a jump, wait or callback 
   assert.equal(scene.steps[0].commands[0].segments[0].text, 'after input setup')
   assert.deepEqual(scene.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'case.BIN', instance: 0 }, nativeSkip: false, nativeAdvance: false, queries: 0 })
   const pending = analyzeAgeScene(pkg([[0x7b, lit(0), lit(-1)], [0x94], [0x1ad], [2]]))
-  assert.equal(pending.complete, false); assert.match(pending.stats.error, /callback dispatch/)
+  assert.equal(pending.complete, true); assert.equal(pending.stats.state.nativeEvents.released, 1)
 })
 
 test('native restore checkpoint takes only the supported fresh-run path', () => {
@@ -212,8 +296,9 @@ test('fresh normal-path input queries write zero without cancelling registered c
   assert.equal(scene.stats.state.graphicsInputGuard, true)
   assert.equal(scene.stats.state.input.queries, 2)
   const result = analyzeAgeScene(pkg([[0x7b, lit(0), lit(-1)], [0x1c7, global(1)], [0x1cc, global(2)], [2]]))
-  assert.equal(result.complete, false); assert.match(result.stats.error, /callback dispatch/)
-  assert.equal(result.stats.state.pendingCallbacks.length, 1)
+  assert.equal(result.complete, true)
+  assert.equal(result.stats.state.nativeEvents.registrations, 1)
+  assert.equal(result.stats.state.nativeEvents.released, 1)
 })
 
 test('native zero-gain BGM control uses an asynchronous fade and rejects other unimplemented gains', () => {
@@ -271,7 +356,7 @@ test('native SN0000 fails explicitly; native first narration preserves ruby in d
   const bytes = await readFile(native + '/SN0000.BIN'), data = JSON.parse(encodeAgeScriptPackage(bytes, { name: 'SN0000.BIN' }))
   assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @23131 opcode 0x1f9.*image mapping missing: 4814/)
   const start = analyzeAgeScene(data)
-  assert.deepEqual(start.stats.run.stopped, { script: 'SN0000.BIN', offset: 23131, opcode: 0x1f9 })
+  assert.deepEqual(start.stats.run.stopped, { script: 'SN0000.BIN', offset: 23131, opcode: 0x1f9, phase: 'scene' })
   assert.equal(start.stats.run.status, 'error')
   assert.deepEqual(start.stats.timeline, { elapsedMs: 5500, pendingMs: 0, barriers: 1 })
   assert.deepEqual(start.steps[0].commands, [{ op: 'bgmStop', fade: 5 }, { op: 'wait', seconds: 5.5 }])
@@ -279,7 +364,7 @@ test('native SN0000 fails explicitly; native first narration preserves ruby in d
   assert.deepEqual(start.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'SN0000.BIN', instance: 0 }, nativeSkip: false, nativeAdvance: false, queries: 0 })
   assert.deepEqual(start.stats.state.restore, { nativeSaveLoaded: false, checks: 1 })
   assert.equal(start.stats.state.flags.length, 34)
-  assert.deepEqual(start.stats.state.pendingCallbacks[0].targets, [2555, 2607])
+  assert.deepEqual(start.stats.state.registeredCallbacks[0].targets, [2555, 2607])
   assert.deepEqual(start.stats.state.inputRegions.map(r => [r.rect, r.inputBit, r.targets[2]]), [
     [[-1000, -1000, -999, -999], 0, 1543], [[-1000, -1001, -999, -1000], 1, 1704],
     [[-1000, -1002, -999, -1001], 2, 1853], [[-1000, -1003, -999, -1002], 3, 2060],

@@ -4,7 +4,7 @@
 // keyboard input, or any other unverified consumer-facing behavior.
 export function createAgeState() {
   const flagsA = new Uint8Array(1000), flagsB = new Uint8Array(1000), callbacks = new Map(), regions = []
-  let resets = 0, writes = 0, inputEnabled = false, inputColumns = 0, inputOwner = null, restoreChecks = 0, controlMask = 0, graphicsInputGuard = false, inputQueries = 0
+  let resets = 0, writes = 0, inputEnabled = false, inputColumns = 0, inputOwner = null, restoreChecks = 0, controlMask = 0, graphicsInputGuard = false, inputQueries = 0, callbackRegistrations = 0, releasedCallbacks = 0
   function instruction(i, machine) {
     const read = k => machine.read(i.args[k])
     const targetsValid = targets => {
@@ -70,6 +70,7 @@ export function createAgeState() {
       else {
         if (callbacks.size >= 256 && !callbacks.has(machine.scriptInstance)) throw Error('AGE callback instance limit')
         callbacks.set(machine.scriptInstance, { script: machine.script, instance: machine.scriptInstance, registeredAt: i.offset, targets })
+        callbackRegistrations++
       }
       return true
     }
@@ -99,11 +100,23 @@ export function createAgeState() {
     return false
   }
   return { instruction,
+    callbackTarget(instance, index) {
+      if (index !== 0 && index !== 1) throw Error('AGE callback index invalid')
+      return callbacks.get(instance)?.targets[index] ?? -1
+    },
+    // Native call-script creates a new execution slot (41bf1c), initializes
+    // both targets to -1 (40efa6), and slot teardown resets them (40ecaf).
+    // Function return within the same slot must not release its registration.
+    releaseScript(instance) { if (callbacks.delete(instance)) releasedCallbacks++ },
     hasCallbacks: () => callbacks.size > 0 || regions.length > 0,
+    // 408f4b/411e35 enter the first 7b target only on event bit 0x20;
+    // 412ac4 and 4189d3 gate the second target separately. Registration is
+    // not a pending call on normal text advance. Region targets can instead
+    // contain plot choices and remain a hard boundary until implemented.
+    requiresRegionDispatch: () => regions.some(row => row.targets.some(target => target !== -1)),
     snapshot: () => ({ resets, writes, controlMask, graphicsInputGuard, restore: { nativeSaveLoaded: false, checks: restoreChecks }, input: { enabled: inputEnabled, columns: inputColumns, owner: inputOwner ? { ...inputOwner } : null, nativeSkip: false, nativeAdvance: false, queries: inputQueries }, flags: Array.from(flagsA).flatMap((mask, slot) => mask ? [{ slot, mask }] : []),
-      // Callback dispatch still needs native event/exit semantics. Keep these
-      // visible and prevent a scene from being reported complete with them.
-      pendingCallbacks: [...callbacks.values()].map(value => ({ ...value, targets: [...value.targets] })),
+      nativeEvents: { mode: 'normal-forward-only', dispatched: 0, registrations: callbackRegistrations, released: releasedCallbacks },
+      registeredCallbacks: [...callbacks.values()].map(value => ({ ...value, targets: [...value.targets] })),
       inputRegions: regions.map(value => ({ ...value, rect: [...value.rect], targets: [...value.targets] })) }),
   }
 }
