@@ -84,33 +84,94 @@ export function ageLiteralInitializer(program){
 
 // Bounded data-only trace for confirmed scalar/control operations. Unknown
 // instructions stop the trace; this is not a registered playback adapter.
-export function traceAgeProgram(program,{integers={},strings={},maxSteps=100000,maxStack=64,entry}={}){
- const flow=ageControlFlow(program),nodes=new Map(flow.nodes.map(n=>[n.offset,n])),code=new Map(program.instructions.map(i=>[i.offset,i])),sequential=new Map(program.instructions.map((i,k)=>[i.offset,program.instructions[k+1]?.offset??null])),memory=new Map(),aliases=new Map(),stack=[],trace=[]
- for(const [key,value]of Object.entries(integers))memory.set('3:'+key,Number(value)|0)
- for(const [key,value]of Object.entries(strings))memory.set('5:'+key,String(value))
- const key=a=>{if(!a||![3,5,9,11,12].includes(a.type))throw Error('AGE operand storage unsupported');if(a.type===12){const ref=aliases.get('12:'+a.value);if(!ref)throw Error('AGE pointer is not initialized');return ref}return a.type+':'+a.value}
- const read=a=>a.type===0?a.value|0:a.type===2?a.text:memory.get(key(a))??([5,11].includes(a.type)?'':0)
- const write=(a,value)=>{const k=key(a);if(memory.size>=250000&&!memory.has(k))throw Error('AGE memory slot limit');if([5,11].includes(a.type)&&String(value).length>1048576)throw Error('AGE string size limit');memory.set(k,[5,11].includes(a.type)?String(value):Number(value)|0)}
- const destination=value=>{if(!Number.isInteger(value)||!code.has(value))throw Error('AGE computed target is not an instruction boundary: '+value);return value}
- let pc=destination(entry??flow.entry),status='limit',stopped=null
- const operations={0x50:(a,b)=>a+b,0x51:(a,b)=>a-b,0x52:(a,b)=>Math.imul(a,b),0x53:(a,b)=>{if(!b)throw Error('AGE division by zero');return Math.trunc(a/b)},0x54:(a,b)=>{if(!b)throw Error('AGE modulo by zero');return a%b},0x56:(a,b)=>a&b,0x57:(a,b)=>a|b,0x58:(a,b)=>a>>b,0x59:(a,b)=>a<<b,0x5a:(a,b)=>Number(a===b),0x5b:(a,b)=>Number(a!==b),0x5c:(a,b)=>Number(a<b),0x5d:(a,b)=>Number(a<=b),0x5e:(a,b)=>Number(a>b),0x5f:(a,b)=>Number(a>=b)}
- if(!Number.isInteger(maxSteps)||maxSteps<1||maxSteps>1000000||!Number.isInteger(maxStack)||maxStack<1||maxStack>256)throw Error('AGE trace budget invalid')
- for(let step=0;step<maxSteps;step++){
-  const i=code.get(pc),node=nodes.get(pc),a=i.args;trace.push({offset:pc,opcode:i.opcode});let next=node.next
-  if(operations[i.opcode])write(a[0],operations[i.opcode](read(a[1]),read(a[2])))
-  else if([0x55,0x192].includes(i.opcode))write(a[0],read(a[1]))
-  else if(i.opcode===0x193)write(a[0],String(read(a[1]))+String(read(a[2])))
-  else if(i.opcode===0xa0){const target=read(a[0])?a[1]:a[2];next=target.value===0xffffffff&&target.type===0?sequential.get(pc):destination(read(target))}
-  else if(i.opcode===0x8c)next=destination(read(a[0]))
-  else if(i.opcode===0x8f){if(stack.length>=maxStack)throw Error('AGE call stack limit');stack.push(node.next);next=destination(read(a[0]))}
-  else if(i.opcode===5){if(!stack.length){status='returned';break}next=stack.pop()}
-  else if([2,9].includes(i.opcode)){status='exited';break}
-  else if([0x61,0x12c].includes(i.opcode)){
-   if(a[0].type!==12||a[1].type!==3){status='unsupported';stopped=i;break}
-   const address=a[1].value+(i.opcode===0x61?read(a[2]):read(a[2])*read(a[3])+read(a[4]));if(!Number.isInteger(address)||address<0||address>=0x1000000)throw Error('AGE array address out of range');aliases.set('12:'+a[0].value,'3:'+address)
-  }
-  else if(![0x1a7,0x1a8].includes(i.opcode)){status='unsupported';stopped=i;break}
-  if(next===null||next===undefined){status='fell-through';break}pc=destination(next)
+export function traceAgeProgram(program, {
+ integers = {}, strings = {}, maxSteps = 100000, maxStack = 64, entry,
+ programName = '', resolveScript, onInstruction,
+} = {}) {
+ if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000000 || !Number.isInteger(maxStack) || maxStack < 1 || maxStack > 256) throw Error('AGE trace budget invalid')
+ const units = new Map(), globals = new Map(), stack = [], trace = []
+ const compile = (source, name) => {
+  const flow = ageControlFlow(source)
+  return { name, code: new Map(source.instructions.map(i => [i.offset, i])), nodes: new Map(flow.nodes.map(n => [n.offset, n])), entry: flow.entry,
+   sequential: new Map(source.instructions.map((i, k) => [i.offset, source.instructions[k + 1]?.offset ?? null])) }
  }
- return{status,stopped:stopped?{offset:stopped.offset,opcode:stopped.opcode}:null,trace,integers:Object.fromEntries([...memory].filter(([k])=>k.startsWith('3:')).map(([k,v])=>[k.slice(2),v])),strings:Object.fromEntries([...memory].filter(([k])=>k.startsWith('5:')).map(([k,v])=>[k.slice(2),v]))}
+ let unit = compile(program, programName), locals = new Map(), aliases = new Map()
+ const destination = value => { if (!Number.isInteger(value) || !unit.code.has(value)) throw Error('AGE computed target is not an instruction boundary: ' + value); return value }
+ for (const [id, value] of Object.entries(integers)) globals.set('3:' + id, Number(value) | 0)
+ for (const [id, value] of Object.entries(strings)) globals.set('5:' + id, String(value))
+ const key = a => {
+  if (!a || ![3, 5, 9, 11, 12, 14].includes(a.type)) throw Error('AGE operand storage unsupported')
+  if ([12, 14].includes(a.type)) { const ref = aliases.get(a.type + ':' + a.value); if (!ref) throw Error('AGE pointer is not initialized'); return ref }
+  if (!Number.isInteger(a.value) || a.value < 0 || a.value >= 0x1000000) throw Error('AGE storage address out of range')
+  return a.type + ':' + a.value
+ }
+ const storage = k => k.startsWith('9:') || k.startsWith('11:') ? locals : globals
+ const textKey = k => k.startsWith('5:') || k.startsWith('11:')
+ const read = a => {
+  if (a.type === 0) return a.value | 0
+  if (a.type === 2) return a.text
+  const k = key(a); return storage(k).get(k) ?? (textKey(k) ? '' : 0)
+ }
+ const write = (a, value) => {
+  const k = key(a), target = storage(k)
+  if (globals.size + locals.size >= 250000 && !target.has(k)) throw Error('AGE memory slot limit')
+  if (textKey(k) && String(value).length > 1048576) throw Error('AGE string size limit')
+  target.set(k, textKey(k) ? String(value) : Number(value) | 0)
+ }
+ const operations = { 0x50:(a,b)=>a+b, 0x51:(a,b)=>a-b, 0x52:(a,b)=>Math.imul(a,b),
+  0x53:(a,b)=>{if(!b)throw Error('AGE division by zero');return Math.trunc(a/b)},
+  0x54:(a,b)=>{if(!b)throw Error('AGE modulo by zero');return a%b},
+  0x56:(a,b)=>a&b, 0x57:(a,b)=>a|b, 0x58:(a,b)=>a>>b, 0x59:(a,b)=>a<<b,
+  0x5a:(a,b)=>Number(a===b), 0x5b:(a,b)=>Number(a!==b), 0x5c:(a,b)=>Number(a<b),
+  0x5d:(a,b)=>Number(a<=b), 0x5e:(a,b)=>Number(a>b), 0x5f:(a,b)=>Number(a>=b) }
+ const push = (kind, next) => { if (stack.length >= maxStack) throw Error('AGE call stack limit'); stack.push({ kind, unit, locals, aliases, next }) }
+ const restore = frame => { ({ unit, locals, aliases } = frame); return frame.next }
+ let pc = destination(entry ?? unit.entry), status = 'limit', stopped = null, missingScript = null
+ for (let step = 0; step < maxSteps; step++) {
+  const i = unit.code.get(pc), node = unit.nodes.get(pc), a = i.args
+  trace.push({ ...(unit.name ? { script: unit.name } : {}), offset: pc, opcode: i.opcode })
+  let next = node.next
+  if (operations[i.opcode]) write(a[0], operations[i.opcode](read(a[1]), read(a[2])))
+  else if ([0x55, 0x192].includes(i.opcode)) write(a[0], read(a[1]))
+  else if (i.opcode === 0x193) write(a[0], String(read(a[1])) + String(read(a[2])))
+  else if (i.opcode === 0xa0) { const target = read(a[0]) ? a[1] : a[2]; next = target.value === 0xffffffff && target.type === 0 ? unit.sequential.get(pc) : destination(read(target)) }
+  else if (i.opcode === 0x8c) next = destination(read(a[0]))
+  else if (i.opcode === 0x8f) { push('function', node.next); next = destination(read(a[0])) }
+  else if (i.opcode === 3) {
+   const ordinal = read(a[0])
+   if (ordinal < 0 || ordinal >= 200000) throw Error('AGE script ordinal invalid')
+   if (!units.has(ordinal)) {
+    const resolved = resolveScript?.(ordinal)
+    if (!resolved) { status = 'missing-script'; missingScript = ordinal; stopped = i; break }
+    if (units.size >= 256) throw Error('AGE linked script count limit')
+    units.set(ordinal, compile(resolved.program, resolved.name || String(ordinal)))
+   }
+   push('script', node.next); unit = units.get(ordinal); locals = new Map(); aliases = new Map(); next = unit.entry
+  }
+  else if (i.opcode === 5) {
+   if (!stack.length) { status = 'returned'; break }
+   next = restore(stack.pop())
+  }
+  else if ([2, 9].includes(i.opcode)) {
+   // An exit inside a called BIN unwinds its local functions and returns to the caller BIN.
+   let frame
+   while (stack.length) { const candidate = stack.pop(); if (candidate.kind === 'script') { frame = candidate; break } }
+   if (!frame) { status = 'exited'; break }
+   next = restore(frame)
+  }
+  else if ([0x61, 0x12c].includes(i.opcode)) {
+   const [type, start] = key(a[1]).split(':').map(Number)
+   if (!([3, 9].includes(type) && a[0].type === 12 || [5, 11].includes(type) && a[0].type === 14)) { status = 'unsupported'; stopped = i; break }
+   const address = start + (i.opcode === 0x61 ? read(a[2]) : read(a[2]) * read(a[3]) + read(a[4]))
+   if (!Number.isInteger(address) || address < 0 || address >= 0x1000000) throw Error('AGE array address out of range')
+   aliases.set(a[0].type + ':' + a[0].value, type + ':' + address)
+  }
+  else if (![0x1a7, 0x1a8].includes(i.opcode) && onInstruction?.(i, { read, write, key, script: unit.name, stackDepth: stack.length }) !== true) { status = 'unsupported'; stopped = i; break }
+  if (next === null || next === undefined) { status = 'fell-through'; break }
+  pc = destination(next)
+ }
+ return { status, stopped: stopped ? { ...(unit.name ? { script: unit.name } : {}), offset: stopped.offset, opcode: stopped.opcode } : null,
+  ...(missingScript !== null ? { missingScript } : {}), trace,
+  integers: Object.fromEntries([...globals].filter(([k]) => k.startsWith('3:')).map(([k,v]) => [k.slice(2),v])),
+  strings: Object.fromEntries([...globals].filter(([k]) => k.startsWith('5:')).map(([k,v]) => [k.slice(2),v])) }
 }

@@ -33,7 +33,7 @@ for game,prefix in [(mz,''),(mv,'www/')]:
   rel=p.relative_to(root/game).as_posix();known[game][rel.casefold()]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),**({'projection':True}if re.search(r'/Map\d+\.json$',rel)else{})}
 # One new CG and one new voice must be transferred, not only referenced.
 known[mz].pop('img/pictures/still/bisty/h/h001_02.png_');known[mv].pop('www/audio/voice/voice_clip.rpgmvo')
-encoded=base64.b64encode(zlib.compress(json.dumps(known).encode())).decode();src=re.sub(r"(?m)^PLAYBACK_REUSED = '[^']*'$",'PLAYBACK_REUSED = '+repr(encoded),src);script=base/'collector.sh';script.write_text(src);out=base/'out';env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out));r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
+encoded=base64.b64encode(zlib.compress(json.dumps(known).encode())).decode();src=re.sub(r"(?m)^PLAYBACK_REUSED = '[^']*'$",'PLAYBACK_REUSED = '+repr(encoded),src);script=base/'collector.sh';script.write_text(src);out=base/'out';env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};env.update(GAL_COLLECT_RULES='^new-games:playback$',GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out));r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
 reports={}
 for part in out.glob('*.part-*'):
  with tarfile.open(part)as t:
@@ -50,7 +50,7 @@ for part in out.glob('*.part-*'):
    refs=json.load(t.extractfile(next(n for n in names if n.endswith('/__playback/media-references.json'))));assert any(x['logical']=='www/audio/voice/voice_clip'and x['physicalSources']for x in refs);assert any(n.endswith('voice_clip.rpgmvo')for n in names)
    candidates=json.load(t.extractfile(next(n for n in names if n.endswith('ev009-candidates.json'))));assert {x['map']for x in candidates}=={402,459};assert any(x['event']==1 and x['kind']=='common'for x in report['dependencies'])
 assert set(reports)=={mz,mv,twi};assert all(hashlib.sha256(p.read_bytes()).hexdigest()==sha for p,sha in before.items())
-print('PASS default3-game route, saved config redaction, full native tile/TE pages, all EV009 names, common dependencies, numbered CG cells, DLC/voice folder, SHA reuse, original sources unchanged; retained:',base)
+print('PASS explicit3-game playback route, saved config redaction, full native tile/TE pages, all EV009 names, common dependencies, numbered CG cells, DLC/voice folder, SHA reuse, original sources unchanged; retained:',base)
 
 # Actual user invokes from gal/[G]/[]: metadata still lives beside data/library.
 nested=root/'[G]/[]';nested.mkdir(parents=True)
