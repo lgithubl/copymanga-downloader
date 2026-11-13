@@ -17,12 +17,15 @@ original = game/'AGE.EXE.org'; original.write_bytes(payload)
 (game/'DATA1.ALF').write_bytes(b'do not collect archives')
 (game/'SYS4INI.BIN').write_bytes(b'index version guard')
 other = root/'RJ328940'; other.mkdir(); (other/'Game.exe').write_bytes(b'other game ignored')
+cache = root/'cache/gal-collect'
+cached_game = cache/'天結いラビリンスマイスター'; cached_game.mkdir(parents=True)
+(cached_game/'AGE.EXE').write_bytes(b'never recursively collect bootstrap output')
 before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
 fixture = {'天結いラビリンスマイスター': {'guards': [dict(source='SYS4INI.BIN', offset=0, bytes=19, sha256=hashlib.sha256(b'index version guard').hexdigest())], 'ranges': [dict(source='AGE.EXE.org', sourceBytes=len(payload), offset=0, bytes=len(payload), artifact='__verify/age/AGE.EXE.org')]}}
 encoded = base64.b64encode(zlib.compress(json.dumps(fixture).encode())).decode()
 script = base/'collector.sh'; script.write_text(src[:match.start(1)]+encoded+src[match.end(1):])
 env = {k:v for k,v in os.environ.items() if not k.startswith('GAL_COLLECT_')}
-out = base/'out'; env.update(GAL_COLLECT_DRYRUN='1', GAL_COLLECT_OUT=str(out))
+out = base/'out'; env.update(GAL_COLLECT_DRYRUN='1', GAL_COLLECT_OUT=str(out), GAL_COLLECT_CACHE_DIR=str(cache))
 run = subprocess.run(['bash', str(script), str(root)], env=env, capture_output=True, text=True)
 assert run.returncode == 0, run.stdout+run.stderr
 parts = list(out.glob('*.part-*')); assert len(parts) == 1

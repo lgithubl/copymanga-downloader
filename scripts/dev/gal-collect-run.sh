@@ -28,8 +28,11 @@
 #   GAL_COLLECT_TSK_LOG 设置正整数 N 即只采最近 N 次 TSK 日志；空值兼容为1次，优先于默认规则及 GAL_COLLECT_RULES；例如 GAL_COLLECT_TSK_LOG=3 bash gal-collect.sh .
 #   GAL_COLLECT_BINARIES=1  也收 GameAssembly.dll / UnityPlayer.dll 这类大二进制（给以后逆向用），默认不收
 #   GAL_COLLECT_DRYRUN=1    只扫描 + 打包到本地，不上传
-#   GAL_COLLECT_OUT     本地输出目录，默认 /tmp/gal-collect-<时间>（传完的分卷会删掉；DRYRUN 保留）
+#   GAL_COLLECT_OUT     本地输出目录，默认 /tmp/gal-collect-<时间>（传完的分卷移入归档；DRYRUN 原地保留）
 #   GAL_COLLECT_GH      gh 命令，默认 gh（测试时可以换成桩）
+#   GAL_COLLECT_UPLOAD_TIMEOUT 单次上传超时秒数，默认600；失败保留分卷
+#   GAL_COLLECT_STOP_GRACE_SECONDS 上传超时后等待退出秒数，默认15
+#   GAL_COLLECT_ARCHIVE_DIR 已完成临时文件的归档目录，默认 <OUT>/archive
 # 还原：同一个游戏的分卷按序号 cat 起来再解压：cat gal-collect-<时间>-g01.tar.gz.part-* | tar xzf -
 # 退出码：0 全部成功；1 出错（出错日志已打包上传）；2 有分卷上传失败（留在本地输出目录）
 set -uo pipefail
@@ -83,10 +86,11 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
+# 1.67 上传独立超时可配置；启动器缓存目录内保留归档，供循环重传与排查。
 # 1.66 仅天結い原版AGE.EXE.org（约4.23MiB）静态分析；不执行、不收其他游戏/档案/媒体。
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
-VERSION="1.66"
+VERSION="1.67"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:age-code$'
@@ -117,7 +121,25 @@ upload_one() { # upload_one <file>；失败重试 3 次
   local f="$1" n
   [ "$DRYRUN" = 1 ] && { log "DRYRUN 不上传 $(basename "$f")"; return 0; }
   for n in 1 2 3; do
-    if "$GH" release upload "$TAG" "$f" --repo "$REPO" --clobber; then return 0; fi
+    if "$PY" - "$GH" release upload "$TAG" "$f" --repo "$REPO" --clobber <<'UPLOAD_TIMEOUT'
+import math, os, subprocess, sys
+try:
+    timeout=float(os.environ.get('GAL_COLLECT_UPLOAD_TIMEOUT','600'))
+    grace=float(os.environ.get('GAL_COLLECT_STOP_GRACE_SECONDS','15'))
+    if not all(math.isfinite(v) and v>0 for v in (timeout,grace)):raise ValueError()
+except ValueError:
+    print('上传超时/退出等待必须是正数秒数',file=sys.stderr);sys.exit(2)
+# Keep the CLI in the collector's process group so its outer watchdog also stops it.
+p=subprocess.Popen(sys.argv[1:])
+try:sys.exit(p.wait(timeout=timeout))
+except subprocess.TimeoutExpired:
+    print('上传超时（%s秒），保留分卷等待重传'%timeout,file=sys.stderr,flush=True)
+    p.terminate()
+    try:p.wait(timeout=grace)
+    except subprocess.TimeoutExpired:p.kill();p.wait()
+    sys.exit(124)
+UPLOAD_TIMEOUT
+    then return 0; fi
     log "上传失败（第 $n 次）：$(basename "$f")"; sleep $((n * 3))
   done
   return 1
@@ -125,7 +147,9 @@ upload_one() { # upload_one <file>；失败重试 3 次
 
 archive_tmp() {
   local f dst
-  dst="$(mktemp -d /tmp/gal-collect-archive.XXXXXXXX)" || return 1
+  local base="${GAL_COLLECT_ARCHIVE_DIR:-$OUT/archive}"
+  mkdir -p "$base" || return 1
+  dst="$(mktemp -d "$base/archive.XXXXXXXX")" || return 1
   for f in "$@"; do
     [ ! -e "$f" ] && [ ! -L "$f" ] && continue
     mv -- "$f" "$dst/" || return 1
@@ -186,8 +210,11 @@ MARK = re.compile(r'\.(exe|xp3|arc|xfl|pfs|agf|alf)$|\.pfs\.\d+$', re.I)
 def walk_follow(top):
     """os.walk，但跟着软连接（目录 / 文件都算）；按真实路径去重，免得软连接成环或同一个目录被扫两遍。"""
     seen = set()
+    bootstrap_cache = os.path.realpath(env['GAL_COLLECT_CACHE_DIR']) if env.get('GAL_COLLECT_CACHE_DIR') else None
     for d, ds, fs in os.walk(top, followlinks=True):
         real = os.path.realpath(d)
+        if bootstrap_cache and (real == bootstrap_cache or real.startswith(bootstrap_cache + os.sep)):
+            ds[:] = []; continue  # Never recursively collect the supervisor's own cached outputs.
         if real in seen: ds[:] = []; continue
         seen.add(real)
         yield d, ds, fs
@@ -2487,6 +2514,7 @@ def main():
     gl = open(os.path.join(out, 'games.tsv'), 'w', encoding='utf-8'); gl.write('gid\trelpath\tengines\tfiles\tpicked\tpicked_bytes\n')
     mf = open(os.path.join(out, 'manifest.tsv'), 'w', encoding='utf-8'); mf.write('gid\trel\tmode\trule\tsize\tstored_bytes\tsha256\n')
     total = 0
+    read_failures = 0
     for i, game in enumerate(games, 1):
         gid = 'g%02d' % i; rel_game = os.path.relpath(game, root)
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
@@ -2768,6 +2796,7 @@ def main():
                                     say('   bgi %s：目录清单 + 样本图 %d 张' % (e.rel, len(picked)))
                     total += stored; picked_bytes += stored
                 except OSError as ex:
+                    read_failures += 1
                     say('  ! 读不了 %s: %s' % (e.rel, ex)); mf.write('%s\t%s\tERROR\t%s\t%d\t0\t%s\n' % (gid, e.rel, rule, e.size, ex))
         gz.close(); sp.close()
         gl.write('%s\t%s\t%s\t%d\t%d\t%d\n' % (gid, rel_game, ','.join(eng), len(items), len(picks), picked_bytes)); gl.flush(); mf.flush()
@@ -2776,6 +2805,8 @@ def main():
     # 元数据包：games.tsv / manifest.tsv / 运行信息（日志在最后由 shell 补进去）
     info = {'version': VERSION, 'ts': ts, 'host': host, 'root_name': os.path.basename(root), 'part_mb': PART // MB, 'full_max_mb': FULL_MAX // MB, 'ht_mb': HT // MB, 'total_mb': total // MB, 'games': len(games), 'python': sys.version.split()[0], 'binaries': BINARIES}
     json.dump(info, open(os.path.join(out, 'info.json'), 'w'), ensure_ascii=False, indent=1)
+    if read_failures:
+        raise RuntimeError('有%d个采集文件读取失败，本轮不能记为成功；详见manifest.tsv' % read_failures)
 
 main()
 PYEOF
