@@ -34,6 +34,7 @@
 set -uo pipefail
 # 版本号：每次改采集规则就加一，运行时第一行打印，也写进 info.json / 日志，方便对上「这批数据是哪版脚本采的」
 # 1.0 初版；1.1 Artemis(pf8) 按索引只取脚本 / lua / tbl；Unity 补 *.dsm / *.cof / system 小文件 / psm 样本；AGE 补 .aai；启动时打印版本
+# 1.62 修正全事件数据的容量预算：两RJ各192MiB、四作合计640MiB（均为压缩前）；保留全部事件，不改变40MiB压缩分卷。
 # 1.61 Twi动态CG索引/小脚本、Remastered sc0561完整叠层图、两RJ全地图事件投影与语音/DLC映射；不重采天結已收到的25份数据。
 # 1.60 默认仅采 RJ01271506 的 TemplateEvent 配置指定的8张模板地图（约5MiB），源只读。
 # 1.59 仅补国度30_8021及引用图、RJ01271506指定剧情地图/立绘、RJ328940远景CG、Remastered三张指定图；不重采其他G/运行时。
@@ -81,7 +82,7 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
-VERSION="1.61"
+VERSION="1.62"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:scene-audit$'
@@ -1910,6 +1911,9 @@ def scene_audit_files(items,label):
     """Scene call trees, native voice routing, and bounded dynamic-CG evidence."""
     lookup={e.rel.replace('\\','/').casefold():e for e in items}
     report={'game':label,'sourceReadOnly':True,'files':[],'reused':[],'notes':[],'missing':[]};used=0
+    output_limit=(192 if label in ('RJ01271506','RJ328940')else 96 if label=='ツヴァイトリガー'else 64)*MB
+    report['outputLimitBytes']=output_limit
+    say('场景采集 %s：原始输出上限%dMiB，按压缩后的%dMiB分卷；不截断事件/正文' % (label,output_limit//MB,PART//MB))
     plan=json.loads(zlib.decompress(base64.b64decode(SCENE_AUDIT_PLAN)))
     reused=json.loads(zlib.decompress(base64.b64decode(SCENE_AUDIT_REUSED))).get(label,{})
     def read(e,off=0,n=None):
@@ -1922,7 +1926,7 @@ def scene_audit_files(items,label):
         nonlocal used
         if name.startswith('/')or'\\'in name or any(x in ('','.','..')for x in name.split('/')):raise RuntimeError('Scene audit artifact path invalid')
         used+=len(b)
-        if used>(96 if label=='ツヴァイトリガー'else 64)*MB:raise RuntimeError('Scene audit per-game byte limit exceeded: '+label)
+        if used>output_limit:raise RuntimeError('Scene audit per-game byte limit exceeded: %s; attempted %.1fMiB, limit %dMiB'%(label,used/MB,output_limit//MB))
         report['files'].append(dict(artifact=name,bytes=len(b),sha256=hashlib.sha256(b).hexdigest(),**({'source':e.rel,'sourceBytes':e.size}if e else {}),**fields))
         return name,b,e.mtime if e else int(time.time())
     def full(key,required=True):
@@ -2303,7 +2307,7 @@ def main():
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
             if new_games:
                 for name,data,mtime in (scene_audit_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game))) if scene_audit else bug_case_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game)),followup=followup) if bug_cases else next_game_verify_files(items,next_game_label(os.path.basename(game)),age_link=age_link) if new_games_next_verify else next_game_detail_files(items,next_game_label(os.path.basename(game))) if new_games_next_detail else new_game_remaining_files(items,new_game_label(os.path.basename(game))) if new_games_remaining else new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else new_game_probe_files(items)):
-                    if total+len(data)>min(TOTAL_MAX,(256 if scene_audit else 32 if new_games_next_verify else 128 if new_games_next_detail else 64)*MB): raise RuntimeError('五作证据超过本轮总量上限')
+                    if total+len(data)>min(TOTAL_MAX,(640 if scene_audit else 32 if new_games_next_verify else 128 if new_games_next_detail else 64)*MB): raise RuntimeError('五作证据超过本轮总量上限')
                     ti=tarfile.TarInfo(gid+'/'+name);ti.size=len(data);ti.mtime=mtime;tar.addfile(ti,io.BytesIO(data));total+=len(data);picked_bytes+=len(data)
             if rpg_media:
                 packed = [e for e in items if e.rel.lower().endswith('.exe')] if sample_id == 'RJ01220265' else []

@@ -47,6 +47,11 @@ for part in parts:
   if report['game']==twi:
    assert any(n.endswith('/video.xp3/entries.json')for n in names);assert any(x.get('fullSegment')is False for x in report['files']);assert any(isinstance(n,dict)and n.get('completeModelPackages')==1 for n in report['notes'])
 assert set(reports)=={twi,'RJ01271506','RJ328940','Remastered'};assert all(p.read_bytes()==b for p,b in before.items())
+env['GAL_COLLECT_ONLY']='RJ328940|Remastered|ツヴァイトリガー';env['GAL_COLLECT_OUT']=str(base/'remaining-three');r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
+remaining=set()
+for part in (base/'remaining-three').glob('*.part-*'):
+ with tarfile.open(part)as t:remaining.add(json.load(t.extractfile(next(n for n in t.getnames()if n.endswith('__scene-audit/index.json'))))['game'])
+assert remaining=={twi,'RJ328940','Remastered'},remaining;env.pop('GAL_COLLECT_ONLY')
 p=root/'Remastered/source.arc';p.write_bytes(b'BAD!payload');env['GAL_COLLECT_OUT']=str(base/'reject-stale');r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode!=0 and'refusing stale'in r.stdout+r.stderr;p.write_bytes(before[p])
 p=root/twi/'video.xp3';p.write_bytes(b'not an archive');env['GAL_COLLECT_OUT']=str(base/'reject-index');r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode!=0 and'XP3 signature'in r.stdout+r.stderr;p.write_bytes(before[p])
 assert all(p.read_bytes()==b for p,b in before.items())
