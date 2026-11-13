@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.62.0'
+import { findPackedRpg } from './evb.mjs?v=2.63.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -134,6 +134,7 @@ export const ADAPTER_RULES = {
     "maxCallDepth": 32,
     "initialVariables": {},
     "initialSwitches": {},
+    "party": {"mode": "initial", "members": null},
     "skit": {"expressionPoses": {}, "wrapperScripts": false},
   "maps": {
       "enabled": true,
@@ -2185,7 +2186,7 @@ export const LAYOUTS = {
   },
   'rpgmaker::rj01271506': {extends:'rpgmaker',resourceRoots:['dlc/dlc_10000','.'],resourceRootsForce:true,ruleOverrides:{'rpgmaker-json':{extraDirs:['dlc/dlc_10000'],plugins:{trnVoice:{enabled:true}},skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{preferMapCallers:true,imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
   'rpgmaker::rj01646655': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'},special:{imageMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'}}}},
-  'rpgmaker::rj328940': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{plugins:{seVoiceMatch:'_(?:meifa|ouka|sfy|lize|lavia|elnor|lana|flaw|myco|claire|yuzuki|mirage|colette|stellar|cypher)'},special:{mapNameMatch:'回想|回憶|♥イベントシーン'}}}},
+  'rpgmaker::rj328940': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{party:{mode:'choose'},plugins:{seVoiceMatch:'_(?:meifa|ouka|sfy|lize|lavia|elnor|lana|flaw|myco|claire|yuzuki|mirage|colette|stellar|cypher)'},special:{mapNameMatch:'回想|回憶|♥イベントシーン'}}}},
   'rpgmaker::rj01482469': {
     "extends": "rpgmaker",
     "ruleOverrides": {

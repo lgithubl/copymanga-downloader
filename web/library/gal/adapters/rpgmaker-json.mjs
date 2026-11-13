@@ -13,6 +13,7 @@ export const ADAPTER_ID = 'rpgmaker-json'
 export const DEFAULT_OPTIONS = {
   root: '', packedExe: '', extraDirs: [], stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
   initialVariables: {}, initialSwitches: {},
+  party: { mode: 'initial', members: null },
   skit: { expressionPoses: {}, wrapperScripts: false },
   maps: { enabled: true, tileSize: 48, player: true, follow: 'event', maxBytes: 134217728 },
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
@@ -153,7 +154,7 @@ function buildCatalog(ctx) {
 }
 
 export function parse(text, ctx, meta = {}) {
-  const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : (ctx?.maps?.get(meta.rel) || decodeJson(text)), o = optionsOf(meta.options || ctx?.options)
+  const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : (ctx?.maps?.get(meta.sourceRel || meta.rel) || decodeJson(text)), o = optionsOf(meta.options || ctx?.options)
   const scene = String(meta.scene || '')
   let list, pageConditions = null, eventId = 0, map = null, pageIndex = -1
   if (Array.isArray(data)) {
@@ -172,5 +173,5 @@ export function parse(text, ctx, meta = {}) {
 
 // The context already owns the decoded event database, keyed by file mtime.
 // A scene card need not reread/decode the same38MB file for every event.
-export function contextScriptText(ctx,meta){return (/CommonEvents\.json$/i.test(meta.rel||'')&&/^common-[0-9]+$/.test(meta.scene||'')&&ctx?.common?.length)||ctx?.maps?.has(meta.rel)?'':null}
+export function contextScriptText(ctx,meta){return (/CommonEvents\.json$/i.test(meta.rel||'')&&/^common-[0-9]+$/.test(meta.scene||'')&&ctx?.common?.length)||ctx?.maps?.has(meta.sourceRel || meta.rel)?'':null}
 export const rpgMakerJsonAdapter = { id: ADAPTER_ID, label: 'RPG Maker MV/MZ 事件', sniff, parse, prepare, contextScriptText, contextFiles, contextDirs, contextWalkLimit, sceneInPath: true, sceneThumbs: true, catalog: ctx => ctx?.catalogTree, health: ctx => (ctx?.warnings || []).map(message => ({ level: 'warn', code: 'rpgmaker-context', message })) }

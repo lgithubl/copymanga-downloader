@@ -15,6 +15,8 @@ const literalArgs = text => {
 export function compileRpgEvents(list, ctx, meta) {
   const o = meta.options, stage = ctx.stage || o.stage, steps = [], stats = { commands: 0, text: 0, choices: 0, raw: {}, warnings: [...(ctx.warnings || [])], scene: meta.scene }
   const initial = new Map(), calls = [], guards = [], pictures = new Map()
+  const nativeParty=new Set((Array.isArray(o.party?.members)?o.party.members:ctx.system?.partyMembers||[]).map(Number)),usedParty=new Set()
+  const partyVariable=id=>{id=Number(id);const key=`rpg:party:${id}`;usedParty.add(id);if(!initial.has(key))initial.set(key,o.party?.mode==='all'||nativeParty.has(id)?1:0);return key}
   const cgMatch = safeRegex(o.pictures.cgMatch), bgMatch = safeRegex(o.pictures.backgroundMatch)
   const seVoiceMatch=safeRegex(o.plugins.seVoiceMatch)
   const thumbnailMatch = safeRegex(o.pictures.thumbnailMatch), thumbnailSkip = safeRegex(o.pictures.thumbnailSkip)
@@ -114,7 +116,7 @@ export function compileRpgEvents(list, ctx, meta) {
       for(const n of[1,2])if(cond[`switch${n}Valid`])tests.push({var:variable(cond[`switch${n}Id`],'s'),op:'===',value:1})
       if(cond.variableValid)tests.push({var:variable(cond.variableId),op:'>=',value:Number(cond.variableValue)||0})
       if(cond.selfSwitchValid){const key=`rpg:self:${targetMapId}:${eventId}:${cond.selfSwitchCh}`;if(!initial.has(key))initial.set(key,0);tests.push({var:key,op:'===',value:1})}
-      if(cond.actorValid){const key=`rpg:party:${cond.actorId}`;if(!initial.has(key))initial.set(key,ctx.system?.partyMembers?.includes(Number(cond.actorId))?1:0);tests.push({var:key,op:'===',value:1})}
+      if(cond.actorValid){const key=partyVariable(cond.actorId);tests.push({var:key,op:'===',value:1})}
       emit({op:'set',var:chosen,value:i,when:tests})
     }
     const caller=activeEventId,callerMap=mapId,callerPage=activePageIndex
@@ -245,7 +247,7 @@ export function compileRpgEvents(list, ctx, meta) {
     if (p[0] === 0) return { var: variable(p[1], 's'), op: '===', value: p[2] === 0 ? 1 : 0 }
     if (p[0] === 1) return { var: variable(p[1]), op: ['===', '>=', '<=', '>', '<', '!=='][p[4]] || '===', ...(p[2] === 0 ? { value: p[3] } : { valueVar: variable(p[3]) }) }
     if(p[0]===2){const key=`rpg:self:${mapId}:${activeEventId}:${p[1]}`;if(!initial.has(key))initial.set(key,0);return{var:key,op:'===',value:p[2]===0?1:0}}
-    if(p[0]===4&&p[2]===0){const key=`rpg:party:${p[1]}`;if(!initial.has(key))initial.set(key,ctx.system?.partyMembers?.includes(Number(p[1]))?1:0);return {var:key,op:'===',value:1}}
+    if(p[0]===4&&p[2]===0){const key=partyVariable(p[1]);return {var:key,op:'===',value:1}}
     raw('condition-unhandled', p)
     return null
   }
@@ -391,6 +393,15 @@ export function compileRpgEvents(list, ctx, meta) {
         flush();guards.pop()
       }
     }
+  }
+  if(o.party?.mode==='choose'&&usedParty.size){
+    const key='rpg:party-mode',id='rpg:party-selection'
+    const setup=[...usedParty].flatMap(actor=>[{op:'set',var:partyVariable(actor),value:1,when:[{var:key,op:'===',value:1}]},{op:'set',var:partyVariable(actor),value:nativeParty.has(actor)?1:0,when:[{var:key,op:'===',value:2}]}])
+    if(!steps.length)steps.push({index:0,commands:[]})
+    steps[0].commands.unshift(...setup)
+    steps.unshift({index:0,flow:true,commands:[{op:'choice',id,var:key,options:[{value:1,segments:[{text:'全员入队'}]},{value:2,segments:[{text:'新游戏初始队伍'}]}]}]})
+    steps.forEach((step,i)=>{step.index=i});stats.choices++
+    stats.warnings.push('未读取原游戏存档；本段演出的同伴入队状态由入口选择决定。')
   }
   const initialization = [...initial].map(([key, value]) => ({ op: 'set', var: key, value }))
   if (!steps.length) steps.push({ index: 0, commands: [] })

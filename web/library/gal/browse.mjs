@@ -791,8 +791,11 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
   }
 
   async function sceneFromFile(adapterId,file,meta){
-    const ctx=await contextOf(adapterId),text=galAdapter(adapterId).contextScriptText?.(ctx,meta)
-    return buildScene(adapterId,typeof text==='string'?text:decodeTextFile(await readFile(file)).text,ctx,meta)
+    // Node paths are relative to the selected script root; adapter context
+    // indexes use paths relative to the media directory. Preserve both.
+    const sourceMeta={...meta,sourceRel:path.relative(mediaDir,file).split(path.sep).join('/')}
+    const ctx=await contextOf(adapterId),text=galAdapter(adapterId).contextScriptText?.(ctx,sourceMeta)
+    return buildScene(adapterId,typeof text==='string'?text:decodeTextFile(await readFile(file)).text,ctx,sourceMeta)
   }
 
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存

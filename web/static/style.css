@@ -3958,6 +3958,9 @@ h2 {
   z-index: 1;
 }
 
+/* Dynamic model canvas must paint above backgrounds and video, below UI. */
+.gal-live2d { z-index: 3; }
+
 .gal-spine {
   height: 100%;
   inset: 0;

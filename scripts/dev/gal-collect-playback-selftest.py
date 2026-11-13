@@ -51,3 +51,14 @@ for part in out.glob('*.part-*'):
    candidates=json.load(t.extractfile(next(n for n in names if n.endswith('ev009-candidates.json'))));assert {x['map']for x in candidates}=={402,459};assert any(x['event']==1 and x['kind']=='common'for x in report['dependencies'])
 assert set(reports)=={mz,mv,twi};assert all(hashlib.sha256(p.read_bytes()).hexdigest()==sha for p,sha in before.items())
 print('PASS default3-game route, saved config redaction, full native tile/TE pages, all EV009 names, common dependencies, numbered CG cells, DLC/voice folder, SHA reuse, original sources unchanged; retained:',base)
+
+# Actual user invokes from gal/[G]/[]: metadata still lives beside data/library.
+nested=root/'[G]/[]';nested.mkdir(parents=True)
+for game in [mz,mv,twi]:(nested/game).symlink_to(root/game,target_is_directory=True)
+env['GAL_COLLECT_OUT']=str(base/'nested-out');r=subprocess.run(['bash',str(script),str(nested)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
+found=0
+for part in (base/'nested-out').glob('*.part-*'):
+ with tarfile.open(part)as t:
+  report=json.load(t.extractfile(next(n for n in t.getnames()if n.endswith('__playback/index.json'))));assert len(report['runtime']['matchingItems'])==1;found+=1
+assert found==3;assert all(hashlib.sha256(p.read_bytes()).hexdigest()==sha for p,sha in before.items())
+print('PASS nested gal/[G]/[] root discovers only named ancestor metadata directories')
