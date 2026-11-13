@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.63.0'
+import { findPackedRpg } from './evb.mjs?v=2.64.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -59,6 +59,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  'age::sys4': { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000 },
  "sakana::ks":{
   "resDir": "arc/res",
   "scriptDir": "arc/script",
@@ -1653,6 +1654,21 @@ export const RULE_DEVIATIONS = {}
 // 所有「列表」字段都是数组；探测函数里没有任何写死的目录名（数据依赖的判断除外）。
 // ======================================================================
 export const LAYOUTS = {
+  age: {
+    title: 'AGE SYS4', kind: 'age', detector: 'age', family: 'age::',
+    bases: [''], searchDepth: 6, anchors: ['SYS4INI.BIN', '/^.*\\.alf$/i'], siblings: [], markers: [],
+    scriptRoots: [{ id: 'age', dir: 'age/script', label: 'AGE 剧情' }], resourceRoots: ['.'],
+    adapters: ['age::sys4'], adapterOptions: { 'age::sys4': { root: { path: ['.'] }, resDir: { path: ['age/res'] } } },
+    ruleTables: ['age::sys4'], ruleOverrides: {},
+    engine: { classify: [], containers: { enabled: true, dir: 'age', scan: ['.'], scriptDecoder: 'age-sys4', scriptExt: 'age', mode: 'hybrid', format: 'age', flat: false, rules: [{ match: '\\.alf$' }], maxEntries: 200000, maxTotalMB: 8192 } },
+    config: { scriptExtensions: ['age'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { sys4ini: '主包' }, merge: [],
+      views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], on: 'marker', match: 'CG 开始', exclusive: false, badges: {} }],
+      sceneMarkers: [{ label: 'CG 开始', kind: 'cmd', op: 'overlay', match: '(?:^|/)(?:EV|CG)', pick: 'each', max: 6 }, { label: 'BGM 切换', kind: 'cmd', op: 'bgm', pick: 'each', max: 4 }],
+      groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { overlays: true, prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
+    count: [{ dir: 'age/script', ext: '.age', depth: 3 }], avatars: [], expectedDirs: [],
+    cover: [{ dir: '.', match: '\\.(?:png|jpe?g|webp|ico)$', flags: 'i', pick: 'first', fromMedia: true }],
+    notes: ['AGE 主包/追加包索引分别维护；资源按需解码，临时音频保留在 age/cache；尚未支持的场景指令会报告脚本和偏移，不能把成功导入当作完整播放验证通过'],
+  },
  sakana:{
   "title": "SakanaGL KAG",
   "kind": "sakana",
@@ -3332,6 +3348,7 @@ const autoNodes = (entries) => {
 // 入口
 // ======================================================================
 const DETECTORS = {
+  age: scope => detectAge(scope),
   rpgmaker: scope => detectRpgMaker(scope),
   legeclo: (scope) => detectLegeclo(scope),
   monmusu: (scope) => detectMonmusu(scope),
@@ -3625,8 +3642,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'edo', 'sakana'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'edo', 'sakana', 'age'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'age'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
         emote: (() => {   // 和 config.mjs 的 DEFAULT_CONTAINERS.emote / 校验一致
@@ -4270,6 +4287,22 @@ async function detectEdo(scope){
  for(const line of loc.entry.notes)scope.logs.push(line)
  return found
 }
+async function detectAge(scope) {
+  const { media, logs } = scope, loc = await locateGame(scope, scope.gameId || scope.id)
+  if (!loc) return null
+  const { entry, base } = loc
+  const file = path.join(media, ...splitRel(join(base, 'SYS4INI.BIN')))
+  const handle = await open(file, 'r')
+  try { const head = Buffer.alloc(4); await handle.read(head, 0, 4, 0); if (head.toString('ascii') !== 'S4IC') { logs.push('AGE：SYS4INI.BIN 不是 S4IC 索引'); return null } } finally { await handle.close() }
+  const config = await buildConfig(media, entry, base)
+  config.containers = { ...config.containers, dir: join(base, config.containers.dir || 'age'), scan: [base || '.'] }
+  const found = makeFound(scope, entry, loc, config, { cover: await coverFromRules(media, entry, base) })
+  found.id = scope.gameId || 'age::game'; found.kind = 'age'
+  logs.push(`AGE 根：${base || '.'}；game.id：${found.id}`)
+  for (const note of entry.notes) logs.push(note)
+  return found
+}
+
 async function detectPac(scope){
  const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null
  const file=path.join(scope.media,...splitRel(join(loc.base,'Pac/Game.pac'))),handle=await open(file,'r').catch(()=>null)

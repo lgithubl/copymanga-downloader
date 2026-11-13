@@ -8,6 +8,9 @@ import path from 'node:path'
 import { decodeAgeScript, decodeAgeImage, readAgeIndex, traceAgeProgram } from '../../web/library/gal/age.mjs'
 import { analyzeAgeScene, encodeAgeScriptPackage } from '../../web/library/gal/adapters/age-sys4.mjs'
 import { encodePng } from '../../web/library/gal/bgi.mjs'
+import { normalizeGalConfig } from '../../web/library/gal/config.mjs'
+import { virtualEntry } from '../../web/library/gal/containers.mjs'
+import { makeAgeNativeFixture } from './make-age-native-fixture.mjs'
 
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_PATH || '@playwright/test')
 const root = '.cache/age-072229/extracted/g01/__verify/age', out = '.cache/age-adapter-display'
@@ -29,15 +32,19 @@ const sn = JSON.parse(encodeAgeScriptPackage(await readFile(root + '/SN0000.BIN'
 const first = decodeAgeScript(Buffer.from(sn.script, 'base64')).instructions.find(i => i.opcode === 0x6e)
 const narration = analyzeAgeScene(sn, { scripts: { 'SN0000.BIN': { entry: first.offset } } })
 assert.equal(narration.complete, false); assert.equal(narration.stats.run.stopped.opcode, 0x305)
+const nativeFixture = await makeAgeNativeFixture('.cache/age-native-browser')
+const nativeConfig = normalizeGalConfig({ containers: { enabled: true, format: 'age', mode: 'hybrid', dir: 'age', scan: ['.'], rules: [{ match: '\\.alf$' }] } })
+const voicePath = 'age/res/sys4ini/FIA0026.wav', voiceEntry = await virtualEntry({ mediaDir: nativeFixture.root, config: nativeConfig, rels: [voicePath] })
+assert.ok(voiceEntry); assets.set(voicePath, await voiceEntry.read())
 const scene = { format: 'gal-scene/1', adapter: 'age::sys4', steps: [{ index: 0, commands: [
-  ...draw(0, 77), ...draw(2, 16485), ...narration.steps[0].commands,
+  ...draw(0, 77), ...draw(2, 16485), { op: 'voice', src: voicePath }, ...narration.steps[0].commands,
 ] }], stats: { diagnosticOnly: true } }
 await writeFile(out + '/diagnostic-scene.json', JSON.stringify(scene, null, 2))
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost')
     if (url.pathname === '/') { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><link rel="stylesheet" href="/style.css"><div id="host" style="width:1280px;height:850px"></div>'); return }
-    if (url.pathname === '/fixture') { const bytes = assets.get(url.searchParams.get('path')); if (!bytes) { res.writeHead(404); res.end(); return }; res.setHeader('Content-Type', 'image/png'); res.end(bytes); return }
+    if (url.pathname === '/fixture') { const rel = url.searchParams.get('path'), bytes = assets.get(rel); if (!bytes) { res.writeHead(404); res.end(); return }; res.setHeader('Content-Type', rel.endsWith('.wav') ? 'audio/wav' : 'image/png'); res.end(bytes); return }
     const file = url.pathname.slice(1)
     if (!/^[a-zA-Z0-9_.-]+\.(?:js|css)$/.test(file)) { res.writeHead(404); res.end(); return }
     res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : 'text/css')
@@ -48,9 +55,10 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const base = 'http://127.0.0.1:' + server.address().port, errors = []
 let browser
 try {
-  browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) })
+  browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required'], ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) })
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   page.on('pageerror', e => errors.push(e.message))
+  await page.addInitScript(() => { const Native = window.Audio; window.__audios = []; window.Audio = function(src) { const audio = new Native(src); window.__audios.push(audio); return audio }; window.Audio.prototype = Native.prototype })
   await page.goto(base)
   await page.evaluate(async ({ scene, base }) => {
     const { createGalPlayer } = await import('/gal-player.js')
@@ -59,6 +67,7 @@ try {
   await page.waitForFunction(() => document.querySelector('.gal-text')?.textContent.includes('がありました。'))
   await page.waitForFunction(() => { const c = document.querySelector('canvas.gal-overlay'); return c && c.getContext('2d').getImageData(600, 200, 1, 1).data[3] > 0 })
   assert.ok(await page.locator('.gal-text ruby').count() > 0, 'native furigana renders')
+  await page.waitForFunction(() => window.__audios.some(a => a.currentTime > 0 && !a.paused && !a.error && !a.loop), null, { timeout: 15000 })
   const pixels = await page.evaluate(async base => {
     const actual = document.querySelector('canvas.gal-overlay'), ref = document.createElement('canvas')
     ref.width = actual.width; ref.height = actual.height
@@ -75,6 +84,6 @@ try {
   assert.ok(pixels.checked > 1000); assert.equal(pixels.mismatches, 0)
   assert.deepEqual(errors, [])
   await page.screenshot({ path: out + '/native-components.png' })
-  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, fullGamePlayback: false, pixels, errors, stops: ['SN0000:0x1f4', 'placement:0x242', 'text-tail:0x305'] }, null, 2))
+  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, errors, stops: ['SN0000:0x259', 'placement:0x242', 'text-tail:0x305'] }, null, 2))
   console.log('PASS native AGE component display (not full scene playback)', pixels, out)
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

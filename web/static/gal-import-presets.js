@@ -39,4 +39,5 @@ export const GAL_PRESETS = {
   pac: { label: 'Debonosu PAC（pac::script，Game.pac + 外置剧情；改 id / title）', adapters: ['pac::script'], game: { id: 'pac::game', title: '' } },
   edo: { label: 'Edoire（edo::lua，ARCH000 / Lua；改 id / title）', adapters: ['edo::lua'], game: { id: 'edo::game', title: '' } },
   sakana: { label: 'SakanaGL（sakana::ks，pkg / KAG；改 id / title）', adapters: ['sakana::ks'], game: { id: 'sakana::game', title: '' } },
+  age: { label: 'AGE SYS4（age::sys4，SYS4INI.BIN + ALF；开发中；改 id / title）', adapters: ['age::sys4'], game: { id: 'age::game', title: '' } },
 }

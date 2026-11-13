@@ -51,6 +51,7 @@ test('registered AGE adapter uses execution order, ruby, input boundaries and sc
   assert.deepEqual(segments, [{ text: 'hello ' }, { text: 'world', ruby: 'ruby' }, { text: '\n' }, { text: 'line 2' }])
   assert.deepEqual(commands.find(c => c.op === 'voice'), { op: 'voice', src: 'age/res/voice.wav' })
   assert.equal(scene.stats.complete, true)
+  assert.deepEqual(scene.stats.raw, {}, 'confirmed operations are not reported as unrendered instructions')
   assert.ok(stateAt(scene, 0))
 })
 
@@ -71,11 +72,11 @@ test('array initialization feeds pointer lookup and linked scripts restore calle
 })
 
 test('unknown operations, missing links, invalid resources and budget exhaustion never become successful scenes', () => {
-  const unknown = pkg([[0x6e, lit(0), str('partial')], [0x1f4], [2]])
+  const unknown = pkg([[0x6e, lit(0), str('partial')], [0x259], [2]])
   const detail = analyzeAgeScene(unknown)
-  assert.equal(detail.complete, false); assert.equal(detail.stats.run.stopped.opcode, 0x1f4)
-  assert.deepEqual(detail.stats.staticUnimplemented['0x1f4'], { count: 1, examples: [{ script: 'case.BIN', offset: 5 }] })
-  assert.throws(() => parse(JSON.stringify(unknown)), error => Boolean(error.ageDiagnostic) && /0x1f4/.test(error.message))
+  assert.equal(detail.complete, false); assert.equal(detail.stats.run.stopped.opcode, 0x259)
+  assert.deepEqual(detail.stats.staticUnimplemented['0x259'], { count: 1, examples: [{ script: 'case.BIN', offset: 5 }] })
+  assert.throws(() => parse(JSON.stringify(unknown)), error => Boolean(error.ageDiagnostic) && /0x259/.test(error.message))
   assert.throws(() => parse(JSON.stringify(pkg([[3, lit(2)], [2]]))), /missing-script/)
   for (const src of ['../outside.wav', '/tmp/out.wav', 'https://example.com/out.wav'])
     assert.throws(() => parse(JSON.stringify(pkg([[0xc4, lit(3)], [2]], { resources: { voice: { 3: src } } }))), /mapping missing/)
@@ -94,6 +95,15 @@ test('texture source crops and integer array storage use the existing scene cont
   assert.deepEqual([overlay.x, overlay.y], [100 + 2 - 800, 200 + 2.5 - 450])
   data.resources.images[77].width = 3
   assert.throws(() => parse(JSON.stringify(data)), /rectangle outside/)
+})
+
+test('display update batches preserve nesting and reject an input wait before commit', () => {
+  const data = pkg([[0x1f4], [0x1f4], [0x6e, lit(0), str('batched')], [0x1f5], [0x1f5], [0x72, lit(0)], [2]])
+  assert.equal(parse(JSON.stringify(data)).stats.displayBatchDepth, 0)
+  assert.equal(parse(JSON.stringify(data)).steps.length, 1)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x1f4], [0x72, lit(0)], [2]]))), /uncommitted/)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x1f4], [2]]))), /uncommitted/)
+  assert.deepEqual(parse(JSON.stringify(pkg([[0xbf, lit(0)], [2]]))).steps[0].commands, [{ op: 'bgmStop' }])
 })
 
 const corpus = '.cache/age-upstream-20261113/manifest.json'
@@ -116,7 +126,7 @@ test('all 146 native arrays match upstream element-for-element; all 30 instructi
 const native = '.cache/age-072229/extracted/g01/__verify/age'
 test('native SN0000 fails explicitly; native first narration preserves ruby in diagnostic output without claiming playback', { skip: !existsSync(native) }, async () => {
   const bytes = await readFile(native + '/SN0000.BIN'), data = JSON.parse(encodeAgeScriptPackage(bytes, { name: 'SN0000.BIN' }))
-  assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @0 opcode 0x1f4/)
+  assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @1 opcode 0x259/)
   const first = decodeAgeScript(bytes).instructions.find(i => i.opcode === 0x6e)
   const result = analyzeAgeScene(data, { scripts: { 'SN0000.BIN': { entry: first.offset } } })
   assert.equal(result.complete, false); assert.equal(result.stats.run.stopped.opcode, 0x305)

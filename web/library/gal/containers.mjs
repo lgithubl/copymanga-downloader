@@ -1,5 +1,7 @@
 import {readSakanaIndex,readSakanaEntry,decodeSxEntry,sakanaMetadata,fafaValue,sakanaStorageSig} from './sakana.mjs'
 import { encodeAgeScriptPackage } from './adapters/age-sys4.mjs'
+import { readAgeCatalog, expandAgeScripts, ageRuleFilter } from './age-archive.mjs'
+import { decodeAgeImage } from './age.mjs'
 import {readPbd} from './krkr-pbd.mjs'
 import {parseStandVariants} from './krkr-pimg.mjs'
 import { readEdoIndex, edoPayload } from './edo.mjs'
@@ -272,6 +274,16 @@ async function ogvToMp4(ogv, crf) {
   } finally { await archiveContainerPath(dir).catch(() => {}) }
 }
 async function transformDataAsync(data, hit) {
+  if (hit.transform === 'age-audio') {
+    if (data.length < 12 || data.toString('ascii', 0, 4) !== 'RIFF' || !['XWMA', 'WAVE'].includes(data.toString('ascii', 8, 12))) throw Error('AGE XWM is not a local RIFF audio stream')
+    await mkdir(hit.cacheDir, { recursive: true })
+    const tmp = await mkdtemp(path.join(hit.cacheDir, 'work-'))
+    const input = path.join(tmp, 'source.xwm'), output = path.join(tmp, 'decoded.wav')
+    await writeFile(input, data)
+    await execFileP('ffmpeg', ['-v', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe', '-i', input, '-vn', '-acodec', 'pcm_s16le', output], { timeout: 120000, maxBuffer: 1024 * 1024 })
+    if ((await stat(output)).size > 256 * 1024 * 1024) throw Error('AGE decoded audio exceeds 256 MiB')
+    return await readFile(output)
+  }
   if (hit.transform === 'tomoe-img' && hit.base) {
     const h = await open(hit.base.file, 'r')
     try { return tomoeImageTransform(data, hit, await readRange(h, hit.base.offset, hit.base.size)) }
@@ -283,6 +295,7 @@ async function transformDataAsync(data, hit) {
   return transformData(data, hit)
 }
 function transformData(data, hit) {
+  if (hit.transform === 'age-agf') { const image = decodeAgeImage(data); return encodePng(image.width, image.height, 4, image.rgba) }
   if (hit.transform === 'cbg-png') return cbgToPng(data, hit.crop ? { cropHeight: hit.crop } : {})
   if (hit.transform === 'bw-ogg') return bwToOgg(data)
   if (hit.transform === 'wcg-png') return wcgToPng(data)
@@ -1158,6 +1171,11 @@ const materializing = new Map()   // 目标文件 → Promise（同一个文件�
 const isHybrid = (cfg) => Boolean(cfg?.enabled) && cfg.mode !== 'files'
 
 async function listArcs(mediaDir, cfg) {
+  if (cfg.format === 'age') {
+    if (cfg.scan.length !== 1) throw Error('AGE requires one scan root')
+    const catalog = await readAgeCatalog(mediaDir, { root: cfg.scan[0], dir: cfg.dir, maxEntries: cfg.maxEntries })
+    return [{ arcName: 'SYS4INI.BIN', file: path.join(catalog.source, catalog.indexes[0].name), sig: catalog.sig }]
+  }
   const rules = compileRules(cfg)
   const out = []
   for (const scanDir of cfg.scan) {
@@ -1330,6 +1348,21 @@ function imysAcbToWav(data, hit) {
 }
 
 async function buildVirtual(mediaDir, cfg, arcs, sig) {
+  if (cfg.format === 'age') {
+    if (cfg.scan.length !== 1) throw Error('AGE requires one scan root')
+    const catalog = await readAgeCatalog(mediaDir, { root: cfg.scan[0], dir: cfg.dir, maxEntries: cfg.maxEntries }), map = new Map(), files = []
+    const allowed = ageRuleFilter(cfg)
+    for (const row of catalog.entries) {
+      if (!row.file || !/\.(?:agf|xwm|wav|ogg)$/i.test(row.name)) continue
+      if (!allowed(row, 'res')) continue
+      const hit = { rel: row.src, file: row.file, offset: row.offset, size: row.size,
+        cacheDir: path.join(mediaDir, ...cfg.dir.split('/'), 'cache', 'audio'),
+        transform: /\.agf$/i.test(row.name) ? 'age-agf' : /\.xwm$/i.test(row.name) ? 'age-audio' : '' }
+      if (map.has(row.src.toLowerCase())) throw Error('AGE virtual resource path collision: ' + row.src)
+      map.set(row.src.toLowerCase(), hit); files.push(row.src)
+    }
+    return { map, files, sig }
+  }
   if(cfg.format==='sakana'){const map=new Map(),files=[];for(const{file,rule}of arcs){const index=await readSakanaIndex(file);if(index.entries.length>cfg.maxEntries)throw Error('SX 条目超过上限');for(const e of index.entries){if(!/\.(?:png|webp|jpe?g|ogg|wav|mp3|mp4|webm)$/i.test(e.name))continue;if((rule.include.length&&!rule.include.some(re=>re.test(e.name)))||rule.exclude.some(re=>re.test(e.name)))continue;const rel=`${cfg.dir}/res/${e.name}`,key=rel.toLowerCase();if(!map.has(key)){files.push(rel);map.set(key,{rel,file:index.arcs[e.arc].file,offset:e.offset,size:e.size,transform:'sakana',sx:e})}}}return{map,files,sig}}
 
   if (cfg.format === 'edo') {
@@ -1712,6 +1745,14 @@ async function runImys(mediaDir, cfg) {
 }
 
 async function run(mediaDir, cfg) {
+  if (cfg.format === 'age') {
+    try { const report = await expandAgeScripts(mediaDir, cfg); lastReport.set(mediaDir, report); return report }
+    catch (error) {
+      const message = String(error.message || error)
+      const report = { at: Date.now(), ...(error.ageReport || {}), error: message, arcs: { ...(error.ageReport?.arcs || {}), 'SYS4INI.BIN': { error: message } } }
+      lastReport.set(mediaDir, report); return report
+    }
+  }
   if (cfg.format === 'imys') {   // 6000 多个 bundle：每次请求都 stat 一遍太慢，20 秒内复用上一次的结果（目录 / 规则变了 invalidateContainers 会清）
     const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
     const hit = imysRuns.get(key)

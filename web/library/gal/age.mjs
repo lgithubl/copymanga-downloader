@@ -16,12 +16,20 @@ export function decodeAgeScript(bytes){
 
 // AGF section/palette/alpha layout: GARbro Eushully/ImageAGF.cs.
 // Returns raw RGBA only; callers must still establish the script's resource mapping.
+export function readAgeImageHeader(bytes) {
+ if(bytes.length<24||![0,0x46474341].includes(bytes.readUInt32LE(0)))throw Error('AGE AGF header invalid')
+ const kind=bytes.readUInt32LE(4),headerSize=bytes.readUInt32LE(12),headerPacked=bytes.readUInt32LE(20)
+ if(![1,2].includes(kind))throw Error('AGE AGF type unsupported')
+ if(headerSize<32||headerSize>65536||headerPacked<1||headerPacked>65536||24+headerPacked>bytes.length)throw Error('AGE AGF bitmap header bounds invalid')
+ const src=bytes.subarray(24,24+headerPacked),header=headerPacked===headerSize?Buffer.from(src):lzss(src,headerSize)
+ const width=header.readUInt32LE(20),height=header.readUInt32LE(24),bpp=header.readUInt16LE(30)
+ if(!width||!height||width*height>4*1024*1024||![4,8,24,32].includes(bpp))throw Error('AGE AGF bitmap dimensions/bpp unsupported')
+ return{kind,width,height,bpp,headerSize,headerPacked,header}
+}
 export function decodeAgeImage(bytes){
- if(bytes.length<24||bytes.length>MAX||![0,0x46474341].includes(bytes.readUInt32LE(0)))throw Error('AGE AGF header invalid')
- const kind=bytes.readUInt32LE(4);if(![1,2].includes(kind))throw Error('AGE AGF type unsupported')
+ if(bytes.length>MAX)throw Error('AGE AGF size exceeds limit')
+ const{kind,width,height,bpp,headerPacked,header:h}=readAgeImageHeader(bytes)
  const section=(at,size,packed)=>{if(!Number.isInteger(size)||size<1||size>MAX||packed<1||at+packed>bytes.length)throw Error('AGE AGF section bounds invalid');const src=bytes.subarray(at,at+packed);return packed===size?Buffer.from(src):lzss(src,size)}
- const headerSize=bytes.readUInt32LE(12),headerPacked=bytes.readUInt32LE(20),h=section(24,headerSize,headerPacked);if(h.length<32)throw Error('AGE AGF bitmap header truncated')
- const width=h.readUInt32LE(20),height=h.readUInt32LE(24),bpp=h.readUInt16LE(30);if(!width||!height||width*height>4*1024*1024||![4,8,24,32].includes(bpp))throw Error('AGE AGF bitmap dimensions/bpp unsupported')
  const palette=bpp<=8?h.subarray(56):null;if(palette&&palette.length<(1<<bpp)*4)throw Error('AGE AGF palette truncated')
  const at=24+headerPacked;if(at+12>bytes.length)throw Error('AGE AGF pixels header truncated');const packed=bytes.readUInt32LE(at+8),pixels=section(at+12,bytes.readUInt32LE(at+4),packed),stride=Math.ceil(width*bpp/32)*4;if(pixels.length!==stride*height)throw Error('AGE AGF pixel size mismatch')
  let alpha=null,end=at+12+packed;
