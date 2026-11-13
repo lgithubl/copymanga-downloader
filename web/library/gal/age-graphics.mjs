@@ -1,10 +1,10 @@
 // Data-only AGE drawing primitives used by the native image-placement helper.
 // Unsupported operations return false; callers must stop, never silently skip.
 // Placement/query meanings are cross-checked against SC0000's native helper.
-export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, maxObjects = 2048, metadataOnly = false } = {}) {
+export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, maxObjects = 2048, metadataOnly = false, now = () => 0 } = {}) {
  if (!Number.isInteger(maxBytes) || maxBytes < 16 || maxBytes > 512 * 1024 * 1024 || !Number.isInteger(maxObjects) || maxObjects < 1 || maxObjects > 8192) throw Error('AGE graphics budget invalid')
  const textures = new Map(), objects = new Map(), referenced = new Set()
- let bytes = 0
+ let bytes = 0, motionSequence = 0
  const id = value => { if (!Number.isInteger(value) || value < 0 || value >= 0x1000000) throw Error('AGE graphics id invalid'); return value }
  const dimensions = (w, h) => { if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w * h > 4 * 1024 * 1024) throw Error('AGE graphics dimensions invalid') }
  const object = key => {
@@ -38,7 +38,23 @@ export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, max
    case 0x216: put(0, textures.get(id(n(1)))?.ordinal ?? -1); return true
    case 0x217: object(n(0)).pivot = [n(1), n(2), n(3)]; return true
    case 0x218: { const pivot = objects.get(id(n(0)))?.pivot || [0, 0, 0]; for (let k = 0; k < 3; k++) put(k + 1, pivot[k]); return true }
-   case 0x21a: { const o = objects.get(id(n(0))); put(1, o?.x || 0); put(2, o?.y || 0); put(3, o?.z || 0); return true }
+   case 0x21a: {
+    const o = objects.get(id(n(0)))
+    if (o?.motion && now() < o.motion.started + o.motion.delay + o.motion.duration) return false
+    put(1, (o?.x || 0) + (o?.motion?.to[0] || 0)); put(2, (o?.y || 0) + (o?.motion?.to[1] || 0)); put(3, o?.z || 0); return true
+   }
+   case 0x220: {
+    // 423460 -> 49c990: delayed linear interpolation of the translation
+    // matrix (delay +44, duration +58, target +1ac). 48c2bf..48c641 blends
+    // matrix elements; 48c659 commits the target. Only planar translation is
+    // supported here, with integer/variable scalar operands already decoded.
+    const o = object(n(0)), delay = n(1), duration = n(2), to = [n(3), n(4), n(5)]
+    if (!o.crop || ![delay, duration, ...to].every(Number.isFinite) || delay < 0 || duration < 0 || delay + duration > 120000 || to[2] !== 0) return false
+    if (o.motion && now() < o.motion.started + o.motion.delay + o.motion.duration) return false
+    const from = o.motion?.to || [0, 0, 0]
+    o.motion = { token: ++motionSequence, from: [...from], to, started: now(), delay, duration }
+    return true
+   }
    case 0x242: {
     // 4247c0 -> 49cf70 writes +2d0 in the draw record. Its consumers
     // 48b94f/48c854 use bit 0 during timed property updates; this is NOT
@@ -52,10 +68,14 @@ export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, max
    case 0x1fb: {
     const target = id(n(0)), key = id(n(1)), t = texture(key), crop = [n(2), n(3), n(4), n(5)], x = n(6), y = n(7)
     if (crop.some(v => !Number.isInteger(v)) || crop[0] < 0 || crop[1] < 0 || crop[2] < 1 || crop[3] < 1 || crop[0] + crop[2] > t.width || crop[1] + crop[3] > t.height) throw Error('AGE draw rectangle outside texture')
-    Object.assign(object(target), { texture: key, ordinal: t.ordinal, crop, x, y }); return true
+    const o = object(target)
+    if (o.motion && now() < o.motion.started + o.motion.delay + o.motion.duration) return false
+    delete o.motion
+    Object.assign(o, { texture: key, ordinal: t.ordinal, crop, x, y }); return true
    }
    default: return false
   }
  }
- return { instruction, textures, objects, referenced, get bytes() { return bytes } }
+ return { instruction, textures, objects, referenced, get bytes() { return bytes },
+  get blockingMs() { return Math.max(0, ...[...objects.values()].filter(o => o.motion && o.updatePolicy !== 1).map(o => o.motion.started + o.motion.delay + o.motion.duration - now())) } }
 }

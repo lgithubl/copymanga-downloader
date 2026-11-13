@@ -291,6 +291,12 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
   let seq = 0
   let frameRaf = 0
   let drawn = []   // [{ spec, geo, img }]
+  const motions = new Map()
+  const pose = (m, now) => {
+    if (!m) return null
+    const p = m.done ? 1 : m.seconds > 0 ? Math.max(0, Math.min(1, ((now - m.at) / 1000 - m.delay) / m.seconds)) : now >= m.at + m.delay * 1000 ? 1 : 0
+    return { x: m.from[0] + (m.to[0] - m.from[0]) * p, y: m.from[1] + (m.to[1] - m.from[1]) * p, moving: p < 1 }
+  }
 
   // Multiply RGB while preserving original transparency; keep at most four variants per image.
   const tinted = new WeakMap()
@@ -350,25 +356,43 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
     frameRaf = 0
     ctx.clearRect(0, 0, DESIGN_W, DESIGN_H)
     let count = 0
-    for (const item of drawn) if (drawOne(item, fades.alpha(String(item.spec.slot), now))) count += 1
+    let moving = false
+    for (const item of drawn) {
+      const at = pose(motions.get(String(item.spec.slot)), now)
+      if (at?.moving) moving = true
+      const paintItem = at ? { ...item, spec: { ...item.spec, x: at.x, y: at.y } } : item
+      if (drawOne(paintItem, fades.alpha(String(item.spec.slot), now))) count += 1
+    }
     canvas.dataset.parts = String(count)
-    if (fades.active(now)) frameRaf = requestAnimationFrame(paint)
+    if (moving || fades.active(now)) frameRaf = requestAnimationFrame(paint)
   }
 
-  async function set(overlays, { live = false } = {}) {
+  async function set(overlays, { live = false, reset = false } = {}) {
     const mine = ++seq
     cancelAnimationFrame(frameRaf)
     frameRaf = 0
     const specs = (Array.isArray(overlays) ? overlays : []).filter((o) => o && typeof o === 'object' && (o.src || o.rect || o.color) && clamp01(o.alpha) > 0 && num(o.scaleX, 1) > 0 && num(o.scaleY, 1) > 0)   // 隐藏的（alpha / scale <= 0）不加载
     const images = await Promise.all(specs.map((spec) => (spec.src ? shared.image(String(spec.src)) : null)))
     if (mine !== seq) return
+    const now = performance.now(), previous = new Map(drawn.map(item => [String(item.spec.slot), item]))
+    if (reset) motions.clear()
+    const keep = new Set()
+    for (const spec of specs) {
+      const key = String(spec.slot), m = spec.motion, old = motions.get(key)
+      if (!m || typeof m.key !== 'string' || !Array.isArray(m.from) || !Array.isArray(m.to) || m.from.length !== 2 || m.to.length !== 2 || ![...m.from, ...m.to].every(Number.isFinite)) { motions.delete(key); continue }
+      keep.add(key)
+      if (old?.key === m.key) continue // Repaint/next sentence must not restart a long pan.
+      const prev = previous.get(key), current = old && prev?.spec.src === spec.src ? pose(old, now) : null
+      motions.set(key, { key: m.key, from: current ? [current.x, current.y] : [...m.from], to: [...m.to],
+        seconds: Math.max(0, Math.min(120, num(m.seconds))), delay: Math.max(0, Math.min(120, num(m.delay))), at: now, done: !live })
+    }
+    for (const key of motions.keys()) if (!keep.has(key)) motions.delete(key)
     drawn = specs.map((spec, i) => ({ spec, geo: geometry(spec.stage), img: images[i] })).filter((item) => !item.spec.src || item.img)
       .map((item, i) => ({ ...item, order: i })).sort((a, b) => num(a.spec.z) - num(b.spec.z) || a.order - b.order)
-    const now = performance.now()
     fades.sync(drawn.map((d) => String(d.spec.slot)), live, (key) => num(drawn.find((d) => String(d.spec.slot) === key)?.spec.fade), now)
     canvas.dataset.slots = JSON.stringify(specs.map((o) => String(o.slot)))
     paint(now)
   }
 
-  return { set, canvas, destroy: () => { seq += 1; cancelAnimationFrame(frameRaf); canvas.remove() } }
+  return { set, canvas, destroy: () => { seq += 1; cancelAnimationFrame(frameRaf); motions.clear(); canvas.remove() } }
 }

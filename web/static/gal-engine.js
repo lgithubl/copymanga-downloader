@@ -228,6 +228,13 @@ export function applyCommand(state, command, choices = null) {
       state.overlays = at < 0 ? [...state.overlays, spec] : state.overlays.map((o, i) => (i === at ? (command.src && !command.merge ? spec : { ...o, ...spec }) : o))
       break
     }
+    case 'overlayMove': {
+      if (typeof command.key !== 'string' || !Array.isArray(command.to) || command.to.length !== 2 || !command.to.every(Number.isFinite)) break
+      const seconds = Math.max(0, Math.min(120, Number(command.seconds) || 0)), delay = Math.max(0, Math.min(120, Number(command.delay) || 0))
+      state.overlays = state.overlays.map(o => o.slot !== command.slot ? o : { ...o, x: command.to[0], y: command.to[1],
+        motion: { key: command.key, from: [Number(o.x) || 0, Number(o.y) || 0], to: [...command.to], seconds, delay } })
+      break
+    }
     case 'overlayOff':   // 带 slot = 去掉这个叠加层；不带 = 全部
       state.overlays = command.prefix ? state.overlays.filter(o=>!o.slot.startsWith(command.prefix)) : typeof command.slot === 'string' && command.slot ? state.overlays.filter((o) => o.slot !== command.slot) : []
       break

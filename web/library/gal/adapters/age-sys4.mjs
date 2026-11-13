@@ -28,7 +28,7 @@ const safeSrc = src => typeof src === 'string' && src.length <= 1024 && !src.inc
 const IMPLEMENTED = new Set([
   2, 3, 5, 9, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
   0x61, 0x64, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xbf, 0xc2, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8,
-  0x7b, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21c,
+  0x7b, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1c7, 0x1cc, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21b, 0x21c, 0x220,
 ])
 function binary(encoded) {
   if (typeof encoded !== 'string' || encoded.length > 22369624 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw Error('AGE BIN base64 invalid/oversized')
@@ -72,9 +72,9 @@ export function analyzeAgeScene(data, options = {}) {
     if (!row || !safeSrc(row.src)) { stats.images.unresolved++; throw Error('AGE image mapping missing: ' + ordinal) }
     stats.images.resolved++; return row
   }
-  const gpu = createAgeGraphics({ loadImage: image, metadataOnly: true })
+  const gpu = createAgeGraphics({ loadImage: image, metadataOnly: true, now: () => timeline.now })
   const runtime = createAgeState()
-  const timeline = createAgeTimeline({ wait: seconds => {
+  const timeline = createAgeTimeline({ blocking: () => gpu.blockingMs, wait: seconds => {
     if (displayBatchDepth) throw Error('AGE update barrier inside uncommitted display batch')
     flushText(); commands.push({ op: 'wait', seconds })
   } })
@@ -142,6 +142,12 @@ export function analyzeAgeScene(data, options = {}) {
         // Other sound operations have incompletely understood looping/channel
         // semantics and deliberately stop execution instead of being guessed.
         if (gpu.instruction(i, machine)) {
+          if (i.opcode === 0x220) {
+            const row = gpu.objects.get(read(0)), m = row.motion
+            const x = row.x + row.crop[2] / 2 - stage[0] / 2, y = row.y + row.crop[3] / 2 - stage[1] / 2
+            flushText(); commands.push({ op: 'overlayMove', slot: 'age:' + row.id, key: 'age:' + machine.script + ':' + m.token,
+              to: [x + m.to[0], y + m.to[1]], seconds: m.duration / 1000, delay: m.delay / 1000 })
+          }
           if (i.opcode === 0x1fb) {
             const row = gpu.objects.get(read(0)), texture = gpu.textures.get(row.texture)
             const [cx, cy, width, height] = row.crop

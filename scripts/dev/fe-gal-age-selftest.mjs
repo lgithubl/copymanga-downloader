@@ -94,9 +94,9 @@ try {
   let prologuePixels = null
   if (images[4814]) {
     const prefix = analyzeAgeScene({ ...sn, resources: { images } })
-    assert.equal(prefix.complete, false); assert.equal(prefix.stats.run.stopped.opcode, 0x220)
-    assert.deepEqual(prefix.stats.timeline, { elapsedMs: 5500, pendingMs: 0, barriers: 1 })
-    const prefixScene = { format: 'gal-scene/1', steps: prefix.steps, stats: { diagnosticOnly: true } }
+    assert.equal(prefix.complete, false); assert.equal(prefix.stats.run.stopped.opcode, 0x224)
+    assert.deepEqual(prefix.stats.timeline, { elapsedMs: 5500, pendingMs: 0, barriers: 2 })
+    const prefixScene = { format: 'gal-scene/1', steps: prefix.steps.map(s => ({ ...s, commands: s.commands.filter(c => c.op !== 'overlayMove') })), stats: { diagnosticOnly: true } }
     await writeFile(out + '/native-prologue-prefix.json', JSON.stringify(prefix, null, 2))
     const probe = await browser.newPage({ viewport: { width: 1320, height: 900 } })
     probe.on('pageerror', e => errors.push(e.message))
@@ -120,7 +120,76 @@ try {
     assert.equal(prologuePixels.mismatches, 0); assert.deepEqual(errors, [])
     await probe.screenshot({ path: out + '/native-prologue-prefix.png' })
     await probe.close()
+    // Render the native 80-second pan with a deterministic RAF clock. The
+    // scene is a diagnostic prefix, not a claim that the remaining BIN runs.
+    const pan = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+    pan.on('pageerror', e => errors.push(e.message))
+    await pan.addInitScript(() => {
+      window.__clock = 0
+      // Repeated readbacks otherwise switch Chrome's actual canvas from GPU
+      // to CPU while each fresh reference remains GPU-backed (different
+      // resampling). Use the same deterministic 2D backend for pixel checks.
+      const getContext = HTMLCanvasElement.prototype.getContext
+      HTMLCanvasElement.prototype.getContext = function(kind, options) { return getContext.call(this, kind, kind === '2d' ? { ...options, willReadFrequently: true } : options) }
+      Object.defineProperty(performance, 'now', { value: () => window.__clock })
+      const raf = requestAnimationFrame.bind(window)
+      window.requestAnimationFrame = cb => raf(() => cb(window.__clock))
+    })
+    await pan.goto(base)
+    const panCommands = prefix.steps.flatMap(s => s.commands).filter(c => c.op === 'overlay' || c.op === 'overlayMove')
+    await pan.evaluate(async ({ commands, base }) => {
+      const { createGalPlayer } = await import('/gal-player.js')
+      const scene = { format: 'gal-scene/1', steps: [
+        { index: 0, commands: [...commands, { op: 'text', segments: [{ text: 'pan start' }] }] },
+        { index: 1, commands: [{ op: 'text', segments: [{ text: 'pan continues' }] }] },
+      ] }
+      window.panScene = scene
+      window.player = createGalPlayer({ container: document.querySelector('#host'), reader: { node: {}, scene, resourceBase: base + '/fixture' } })
+    }, { commands: panCommands, base })
+    await pan.waitForFunction(() => document.querySelector('canvas.gal-overlay')?.dataset.parts === '1')
+    const frames = []
+    for (const [ms, expectedY] of [[0, -944], [40000, -472], [80000, 0]]) {
+      await pan.evaluate(ms => { window.__clock = ms }, ms)
+      await pan.waitForTimeout(100)
+      if (ms === 40000) {
+        await pan.evaluate(() => window.player.next())
+        await pan.waitForTimeout(100)
+        assert.equal(await pan.evaluate(() => window.player.index), 1)
+      }
+      const result = await pan.evaluate(async ({ base, expectedY }) => {
+        const actual = document.querySelector('canvas.gal-overlay'), ref = document.createElement('canvas')
+        ref.width = actual.width; ref.height = actual.height
+        const img = new Image(); img.src = base + '/fixture?path=age/res/EV901A.png'; await img.decode()
+        const k = ref.width / 1600
+        ref.getContext('2d').drawImage(img, 0, 0, 1600, 1844, 0, expectedY * k, 1600 * k, 1844 * k)
+        const a = actual.getContext('2d').getImageData(0, 0, ref.width, ref.height).data, b = ref.getContext('2d').getImageData(0, 0, ref.width, ref.height).data
+        window.__panReference = b
+        let checked = 0, mismatches = 0, max = 0; const examples=[]
+        for (let i = 0; i < a.length; i += 124) { checked++; const d=Math.max(...[0,1,2,3].map(c=>Math.abs(a[i+c]-b[i+c]))); max=Math.max(max,d); if(d>2) { mismatches++; if(examples.length<3) examples.push({x:(i/4)%ref.width,y:Math.floor(i/4/ref.width),a:[...a.slice(i,i+4)],b:[...b.slice(i,i+4)]}) } }
+        return { checked, mismatches, max, examples }
+      }, { base, expectedY })
+      assert.equal(result.mismatches, 0, `native pan frame ${ms}ms`)
+      frames.push({ ms, ...result })
+    }
+    // Backward seek reconstructs final state, without replaying a stale tween.
+    await pan.evaluate(() => window.player.prev())
+    await pan.waitForTimeout(100)
+    const seekState = await pan.evaluate(async () => {
+      const { stateAt } = await import('/gal-engine.js')
+      return stateAt(window.panScene, 0).overlays[0]
+    })
+    assert.equal(seekState.y, 472)
+    const seekPixels = await pan.evaluate(() => {
+      const c = document.querySelector('canvas.gal-overlay'), a = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, b = window.__panReference
+      let mismatches = 0
+      for (let i = 0; i < a.length; i += 124) if ([0,1,2,3].some(k => Math.abs(a[i+k]-b[i+k]) > 2)) mismatches++
+      return { mismatches }
+    })
+    assert.equal(seekPixels.mismatches, 0, 'backward seek paints the final pose')
+    assert.deepEqual(errors, [])
+    await writeFile(out + '/native-pan-verification.json', JSON.stringify({ frames, nextSentenceContinues: true, seekPixels, seekFinalY: seekState.y }, null, 2))
+    await pan.close()
   }
-  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, prologuePixels, errors, placementHelperReturned: true, stops: ['SN0000 prefix:0x220', 'text-tail:0x305'] }, null, 2))
+  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, prologuePixels, errors, placementHelperReturned: true, stops: ['SN0000 prefix:0x224', 'text-tail:0x305'] }, null, 2))
   console.log('PASS native AGE component display (not full scene playback)', pixels, out)
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

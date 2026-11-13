@@ -38,6 +38,29 @@ function bin(rows) {
 const pkg = (rows, extra = {}) => ({ ...JSON.parse(encodeAgeScriptPackage(bin(rows), { name: 'case.BIN' })), ...extra })
 const lit = n => arg(0, n), str = text => ({ type: 2, text }), global = n => arg(3, n)
 
+test('native planar motion preserves delay, duration, final pose and blocking policy', () => {
+  const setup = [[0x1f9, lit(77), lit(10), lit(-1)], [0x1fb, lit(21), lit(10), lit(0), lit(0), lit(16), lit(16), lit(100), lit(200)]]
+  const move = [0x220, lit(21), lit(500), lit(1000), lit(30), lit(40), lit(0)]
+  const resources = { images: { 77: { src: 'age/res/atlas.png', width: 16, height: 16 } } }
+  const scene = parse(JSON.stringify(pkg([...setup, move, [0x238, lit(100)], [0x21c], [0x21a, lit(21), global(10), global(11), global(12)], [2]], { resources })))
+  assert.deepEqual(scene.steps[0].commands.find(c => c.op === 'wait'), { op: 'wait', seconds: 1.5 })
+  const state = stateAt(scene, 0), overlay = state.overlays[0]
+  assert.deepEqual([overlay.x, overlay.y], [138 - 800, 248 - 450])
+  assert.deepEqual(overlay.motion.from, [108 - 800, 208 - 450])
+  assert.deepEqual(overlay.motion.to, [138 - 800, 248 - 450])
+  assert.deepEqual([overlay.motion.seconds, overlay.motion.delay], [1, 0.5])
+  const asyncScene = analyzeAgeScene(pkg([...setup, move, [0x242, lit(21), lit(1)], [0x238, lit(100)], [0x21c], [0x21a, lit(21), global(10), global(11), global(12)], [2]], { resources }))
+  assert.equal(asyncScene.complete, false, 'active position queries must not invent a completed pose')
+  assert.equal(asyncScene.stats.run.stopped.opcode, 0x21a)
+  assert.equal(asyncScene.stats.timeline.elapsedMs, 100)
+  const overlap = analyzeAgeScene(pkg([...setup, move, move, [2]], { resources }))
+  assert.equal(overlap.complete, false); assert.equal(overlap.stats.run.stopped.opcode, 0x220)
+  for (const bad of [[0, 1000, 0, 0, 1], [-1, 1000, 0, 0, 0], [0, 120001, 0, 0, 0]]) {
+    const result = analyzeAgeScene(pkg([...setup, [0x220, lit(21), ...bad.map(lit)], [2]], { resources }))
+    assert.equal(result.complete, false)
+  }
+})
+
 test('registered AGE adapter uses execution order, ruby, input boundaries and scene state', () => {
   const data = pkg([
     [0x6e, lit(0), str('hello ')], [0x196, lit(0), str('world'), str('ruby')],
@@ -152,7 +175,7 @@ test('input activation is sequential registration, not a jump, wait or callback 
   const data = pkg([[0x94], [0x1ad], [0x6e, lit(0), str('after input setup')], [2]])
   const scene = parse(JSON.stringify(data))
   assert.equal(scene.steps[0].commands[0].segments[0].text, 'after input setup')
-  assert.deepEqual(scene.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'case.BIN', instance: 0 } })
+  assert.deepEqual(scene.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'case.BIN', instance: 0 }, nativeSkip: false, nativeAdvance: false, queries: 0 })
   const pending = analyzeAgeScene(pkg([[0x7b, lit(0), lit(-1)], [0x94], [0x1ad], [2]]))
   assert.equal(pending.complete, false); assert.match(pending.stats.error, /callback dispatch/)
 })
@@ -162,6 +185,15 @@ test('native restore checkpoint takes only the supported fresh-run path', () => 
   assert.equal(scene.steps[0].commands[0].segments[0].text, 'fresh')
   assert.deepEqual(scene.stats.state.restore, { nativeSaveLoaded: false, checks: 2 })
   assert.throws(() => parse(JSON.stringify(pkg([[0xae], [0x305], [2]]))), /0x305/)
+})
+
+test('fresh normal-path input queries write zero without cancelling registered callbacks', () => {
+  const scene = parse(JSON.stringify(pkg([[0x1c7, global(1)], [0x1cc, global(2)], [0x21b, lit(1)], [0xa0, global(1), lit(17), lit(-1)], [2], [0x305]])))
+  assert.equal(scene.stats.state.graphicsInputGuard, true)
+  assert.equal(scene.stats.state.input.queries, 2)
+  const result = analyzeAgeScene(pkg([[0x7b, lit(0), lit(-1)], [0x1c7, global(1)], [0x1cc, global(2)], [2]]))
+  assert.equal(result.complete, false); assert.match(result.stats.error, /callback dispatch/)
+  assert.equal(result.stats.state.pendingCallbacks.length, 1)
 })
 
 test('native zero-gain BGM control uses an asynchronous fade and rejects other unimplemented gains', () => {
@@ -224,7 +256,7 @@ test('native SN0000 fails explicitly; native first narration preserves ruby in d
   assert.deepEqual(start.stats.timeline, { elapsedMs: 5500, pendingMs: 0, barriers: 1 })
   assert.deepEqual(start.steps[0].commands, [{ op: 'bgmStop', fade: 5 }, { op: 'wait', seconds: 5.5 }])
   assert.equal(start.stats.state.resets, 1); assert.equal(start.stats.state.writes, 34)
-  assert.deepEqual(start.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'SN0000.BIN', instance: 0 } })
+  assert.deepEqual(start.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'SN0000.BIN', instance: 0 }, nativeSkip: false, nativeAdvance: false, queries: 0 })
   assert.deepEqual(start.stats.state.restore, { nativeSaveLoaded: false, checks: 1 })
   assert.equal(start.stats.state.flags.length, 34)
   assert.deepEqual(start.stats.state.pendingCallbacks[0].targets, [2555, 2607])

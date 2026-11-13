@@ -4,11 +4,24 @@
 // keyboard input, or any other unverified consumer-facing behavior.
 export function createAgeState() {
   const flagsA = new Uint8Array(1000), flagsB = new Uint8Array(1000), callbacks = new Map(), regions = []
-  let resets = 0, writes = 0, inputEnabled = false, inputColumns = 0, inputOwner = null, restoreChecks = 0, controlMask = 0
+  let resets = 0, writes = 0, inputEnabled = false, inputColumns = 0, inputOwner = null, restoreChecks = 0, controlMask = 0, graphicsInputGuard = false, inputQueries = 0
   function instruction(i, machine) {
     const read = k => machine.read(i.args[k])
     const targetsValid = targets => {
       for (const target of targets) if (target !== -1 && (!Number.isInteger(target) || !machine.isCodeOffset?.(target))) throw Error('AGE callback is not an instruction boundary')
+    }
+    if (i.opcode === 0x1c7 || i.opcode === 0x1cc) {
+      // Fresh-run, normal-speed path only. 42bdc0 reads +aa9c4 bit
+      // 0x08000000; 42be40 reads +77864. Both are zero at 40cacd/40cb03.
+      // Native skip/event handlers may set them; those handlers remain
+      // unsupported rather than silently changing this normal-path result.
+      // Browser fast-forward operates on the resulting scene, not this VM.
+      machine.write(i.args[0], 0); inputQueries++; return true
+    }
+    if (i.opcode === 0x21b) {
+      // 4232a0 normalizes arg 1 to bool and writes +a2f58. Native event
+      // dispatch consumes the guard; this is not a graphics wait or a jump.
+      graphicsInputGuard = read(0) !== 0; return true
     }
     if (i.opcode === 0x1cf) {
       // 420a70 writes +778a4. Consumers 406fa8/41261d gate skip/advance.
@@ -87,7 +100,7 @@ export function createAgeState() {
   }
   return { instruction,
     hasCallbacks: () => callbacks.size > 0 || regions.length > 0,
-    snapshot: () => ({ resets, writes, controlMask, restore: { nativeSaveLoaded: false, checks: restoreChecks }, input: { enabled: inputEnabled, columns: inputColumns, owner: inputOwner ? { ...inputOwner } : null }, flags: Array.from(flagsA).flatMap((mask, slot) => mask ? [{ slot, mask }] : []),
+    snapshot: () => ({ resets, writes, controlMask, graphicsInputGuard, restore: { nativeSaveLoaded: false, checks: restoreChecks }, input: { enabled: inputEnabled, columns: inputColumns, owner: inputOwner ? { ...inputOwner } : null, nativeSkip: false, nativeAdvance: false, queries: inputQueries }, flags: Array.from(flagsA).flatMap((mask, slot) => mask ? [{ slot, mask }] : []),
       // Callback dispatch still needs native event/exit semantics. Keep these
       // visible and prevent a scene from being reported complete with them.
       pendingCallbacks: [...callbacks.values()].map(value => ({ ...value, targets: [...value.targets] })),

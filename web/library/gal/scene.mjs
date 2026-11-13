@@ -25,6 +25,7 @@
 //                                  src = 图的资源路径，以「舞台中心 + (x, y)」为中心（y 向下为正）画，大小 = 原图 × fit 系数 × (scaleX, scaleY)（默认 1），fit = none | contain | cover（先缩放到舞台大小）；
 //                                  rect = [x, y, w, h]（舞台像素、左上角、y 向下；再加 x / y 偏移、宽高乘 scaleX / scaleY）：没有 src 时用 color（默认黑）填这块（rect 缺省 = 整个舞台）；有 src 时 rect 是裁剪窗口；
 //                                  alpha 0~1（默认 1）；alpha / scaleX / scaleY <= 0 = 隐藏；z 越大越靠上（同 z 按出现顺序），叠加层整体画在立绘之上；fade = 第一次出现淡入的秒数（只在实时播放）
+//   overlayMove {slot, key, to:[x,y], seconds, delay?} 平移现有叠加层；key 标识一次移动，翻句重绘不重启，中途跳入取终点。
 //   overlayOff {slot?}             去掉某个叠加层；不写 slot = 全部
 //   live2d {src, motion?, loop?, variables?}   Live2D 模型（moc3，WebGL，gal-live2d.js）：src = model3.json 的资源路径（同目录的 moc3 / 纹理 / motions / cdi3 由它引用）；motion = 动作名（motion3.json 文件名去掉后缀，或 r3h 这种「_03h」简写）；loop = 动作循环；variables = { 参数显示名或 Id: 值 }（动作之前的初始参数）。再来一条 = 换；live2dOff 去掉
 //   live2dOff              去掉 Live2D 模型
