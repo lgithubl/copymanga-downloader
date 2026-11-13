@@ -31,7 +31,7 @@ test('AGE dropdown -> layout -> native ALF script expansion, lazy PNG/voice and 
   assert.equal((await ensureContainers({ mediaDir: root, config: normalized })).cached, true)
   const script = await readFile(path.join(root, 'age/script/sys4ini/SN0000.age'), 'utf8')
   const ctx = await prepare({ options: normalized.adapterOptions['age::sys4'], mediaDir: root })
-  assert.throws(() => parse(script, ctx, {}), /SN0000.BIN @1 opcode 0x259/)
+  assert.throws(() => parse(script, ctx, {}), /SN0000.BIN @715 opcode 0x94/)
   const catalog = await readAgeCatalog(root), main = catalog.indexes[0], imageRow = main.entries.find(r => r.name === 'BG054AA.AGF')
   const image = decodeAgeImage(readAgeEntry(imageRow)), resources = ageResourceContext(catalog)
   assert.deepEqual([resources.resources.images[imageRow.ordinal].width, resources.resources.images[imageRow.ordinal].height], [1600, 900])
@@ -59,7 +59,7 @@ test('AGE dropdown -> layout -> native ALF script expansion, lazy PNG/voice and 
   const cards = await handler.getReaderContent(item.itemId, 'main', { sectionId: mainNode.node || mainNode.id })
   const sn = cards.node.items.find(row => /SN0000/.test(row.title))
   assert.ok(sn, JSON.stringify(cards.node))
-  await assert.rejects(() => handler.getReaderContent(item.itemId, 'main', { sectionId: sn.node || sn.id }), /SN0000.BIN @1 opcode 0x259/)
+  await assert.rejects(() => handler.getReaderContent(item.itemId, 'main', { sectionId: sn.node || sn.id }), /SN0000.BIN @715 opcode 0x94/)
   const excluded = { ...normalized, containers: { ...normalized.containers, rules: [{ match: '\\.alf$', exclude: ['^BG054AA\\.AGF$'] }] } }
   assert.equal(await virtualEntry({ mediaDir: root, config: excluded, rels: [mediaPath] }), null, 'resource rules apply before virtual media lookup')
   const previous = await readFile(path.join(root, 'age/script/sys4ini/SN0000.age'))

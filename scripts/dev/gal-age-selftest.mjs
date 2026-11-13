@@ -48,6 +48,17 @@ test('linked BIN calls share globals, preserve caller locals and return after ca
  assert.throws(()=>traceAgeProgram({instructions:[i(0,3,a(0,1))]},{resolveScript:()=>({program:{instructions:[i(0,3,a(0,1))]}}),maxStack:3}),/call stack limit/)
 })
 
+test('script invocation identities survive function return and distinguish repeated calls of the same BIN',()=>{
+ const a=value=>({type:0,value}),i=(offset,opcode,...args)=>({offset,opcode,args}),seen=[]
+ const caller={instructions:[i(0,0x7b),i(1,3,a(1)),i(4,0x7b),i(5,3,a(1)),i(8,0x7b),i(9,2)]}
+ const child={instructions:[i(0,0x7b),i(1,0x8f,a(6)),i(4,0x7b),i(5,2),i(6,0x7b),i(7,5)]}
+ const result=traceAgeProgram(caller,{programName:'parent',resolveScript:()=>({name:'child',program:child}),onInstruction:(instruction,machine)=>{
+  seen.push([machine.script,machine.scriptInstance,instruction.offset]);assert.equal(machine.isCodeOffset(instruction.offset),true);assert.equal(machine.isCodeOffset(999),false);return true
+ }})
+ assert.equal(result.status,'exited')
+ assert.deepEqual(seen,[['parent',0,0],['child',1,0],['child',1,6],['child',1,4],['parent',0,4],['child',2,0],['child',2,6],['child',2,4],['parent',0,8]])
+})
+
 test('native caller actually executes CSINIT and preserves exact body/patch mapping',{skip:!existsSync(old)},async()=>{
  const index=readAgeIndex(await readFile(old+'/SYS4INI.BIN')),entry=index.entries.find(x=>x.name==='CSINIT.BIN'),mapping=decodeAgeScript(await readFile('.cache/age-072229/extracted/g01/__verify/age/CSINIT.BIN'))
  const a=(type,value)=>({type,value}),caller={instructions:[{offset:0,opcode:3,args:[a(0,entry.ordinal)]},{offset:3,opcode:2,args:[]}]}

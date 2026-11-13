@@ -3,6 +3,7 @@
 // analyzeAgeScene(). No EXE/DLL execution, native runtime, or network downloads.
 import { decodeAgeScript, traceAgeProgram } from '../age.mjs'
 import { createAgeGraphics } from '../age-graphics.mjs'
+import { createAgeState } from '../age-state.mjs'
 import { readAgeCatalog, ageResourceContext } from '../age-archive.mjs'
 
 export const ADAPTER_ID = 'age::sys4'
@@ -26,7 +27,7 @@ const safeSrc = src => typeof src === 'string' && src.length <= 1024 && !src.inc
 const IMPLEMENTED = new Set([
   2, 3, 5, 9, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
   0x61, 0x64, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xbf, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8,
-  0x1f4, 0x1f5, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a,
+  0x7b, 0x90, 0x97, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a,
 ])
 function binary(encoded) {
   if (typeof encoded !== 'string' || encoded.length > 22369624 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw Error('AGE BIN base64 invalid/oversized')
@@ -71,6 +72,7 @@ export function analyzeAgeScene(data, options = {}) {
     stats.images.resolved++; return row
   }
   const gpu = createAgeGraphics({ loadImage: image, metadataOnly: true })
+  const runtime = createAgeState()
   const audio = (op, id) => {
     const bucket = op === 'voice' ? 'voices' : 'bgm'
     stats[bucket].referenced++
@@ -98,6 +100,7 @@ export function analyzeAgeScene(data, options = {}) {
         stats.operations[op] = (stats.operations[op] || 0) + 1
         const unsupported = () => { stats.raw[op] = (stats.raw[op] || 0) + 1; return false }
         source ||= { script: machine.script, offset: i.offset }
+        if (runtime.instruction(i, machine)) return true
         // Static native handlers (older unpacked AGE: 419a60/419ab0), checked
         // against the paired use in collected SYS4485 scripts: suspend display
         // updates with nesting, then release them. This is state, not a blanket
@@ -118,7 +121,7 @@ export function analyzeAgeScene(data, options = {}) {
           if (read(0) !== 0) return unsupported()
           if (segments.length) segments.push({ text: '\n' }); return true
         }
-        if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); finish(); return true }
+        if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); if (runtime.hasCallbacks()) throw Error('AGE callback dispatch at input wait is not implemented'); finish(); return true }
         if (i.opcode === 0xbf && read(0) === 0) { commands.push({ op: 'bgmStop' }); return true }
         if (i.opcode === 0xc4 || i.opcode === 0xbf) { audio(i.opcode === 0xc4 ? 'voice' : 'bgm', read(0)); return true }
         // Other sound operations have incompletely understood looping/channel
@@ -138,6 +141,7 @@ export function analyzeAgeScene(data, options = {}) {
     })
   } catch (error) { failure = String(error.message || error) }
   if (!failure && ['returned', 'exited'].includes(run?.status) && displayBatchDepth) failure = 'AGE uncommitted display batch at script end'
+  if (!failure && ['returned', 'exited'].includes(run?.status) && runtime.hasCallbacks()) failure = 'AGE callback dispatch at script exit is not implemented'
   const complete = !failure && ['returned', 'exited'].includes(run?.status)
   // Preserve partial output exclusively for diagnostics; parse() below does
   // not hand it to the player as a successfully reconstructed scene.
@@ -145,6 +149,7 @@ export function analyzeAgeScene(data, options = {}) {
   stats.run = run ? { status: run.status, stopped: run.stopped, missingScript: run.missingScript, steps: run.trace.length } : { status: 'error', stopped: current || null }
   stats.complete = complete
   stats.displayBatchDepth = displayBatchDepth
+  stats.state = runtime.snapshot()
   if (failure) stats.error = failure
   return { steps, stats, complete }
 }

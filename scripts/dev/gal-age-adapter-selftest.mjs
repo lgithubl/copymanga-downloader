@@ -7,6 +7,7 @@ import { analyzeAgeScene, encodeAgeScriptPackage, parse } from '../../web/librar
 import { buildScene } from '../../web/library/gal/scene.mjs'
 import { sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { stateAt } from '../../web/static/gal-engine.js'
+import { createAgeState } from '../../web/library/gal/age-state.mjs'
 
 // Small binary assembler for control-flow/array edge cases, independent of the
 // JSON transport. Native corpus tests below are the format compatibility oracle.
@@ -72,11 +73,11 @@ test('array initialization feeds pointer lookup and linked scripts restore calle
 })
 
 test('unknown operations, missing links, invalid resources and budget exhaustion never become successful scenes', () => {
-  const unknown = pkg([[0x6e, lit(0), str('partial')], [0x259], [2]])
+  const unknown = pkg([[0x6e, lit(0), str('partial')], [0x305], [2]])
   const detail = analyzeAgeScene(unknown)
-  assert.equal(detail.complete, false); assert.equal(detail.stats.run.stopped.opcode, 0x259)
-  assert.deepEqual(detail.stats.staticUnimplemented['0x259'], { count: 1, examples: [{ script: 'case.BIN', offset: 5 }] })
-  assert.throws(() => parse(JSON.stringify(unknown)), error => Boolean(error.ageDiagnostic) && /0x259/.test(error.message))
+  assert.equal(detail.complete, false); assert.equal(detail.stats.run.stopped.opcode, 0x305)
+  assert.deepEqual(detail.stats.staticUnimplemented['0x305'], { count: 1, examples: [{ script: 'case.BIN', offset: 5 }] })
+  assert.throws(() => parse(JSON.stringify(unknown)), error => Boolean(error.ageDiagnostic) && /0x305/.test(error.message))
   assert.throws(() => parse(JSON.stringify(pkg([[3, lit(2)], [2]]))), /missing-script/)
   for (const src of ['../outside.wav', '/tmp/out.wav', 'https://example.com/out.wav'])
     assert.throws(() => parse(JSON.stringify(pkg([[0xc4, lit(3)], [2]], { resources: { voice: { 3: src } } }))), /mapping missing/)
@@ -106,6 +107,47 @@ test('display update batches preserve nesting and reject an input wait before co
   assert.deepEqual(parse(JSON.stringify(pkg([[0xbf, lit(0)], [2]]))).steps[0].commands, [{ op: 'bgmStop' }])
 })
 
+test('native flag masks overwrite both bits, reset every slot, and reject invalid slots', () => {
+  const data = pkg([[0x258, lit(0), lit(3)], [0x258, lit(999), lit(6)], [0x258, lit(0), lit(4)], [2]])
+  const scene = parse(JSON.stringify(data))
+  assert.deepEqual(scene.stats.state.flags, [{ slot: 999, mask: 2 }])
+  assert.equal(scene.stats.state.writes, 3)
+  assert.deepEqual(parse(JSON.stringify(pkg([[0x258, lit(999), lit(3)], [0x259], [2]]))).stats.state.flags, [])
+  for (const slot of [-1, 1000]) assert.throws(() => parse(JSON.stringify(pkg([[0x258, lit(slot), lit(1)], [2]]))), /slot\/mask invalid/)
+})
+
+test('callbacks register without jumping, cancellation clears them, and unresolved dispatch cannot complete', () => {
+  const data = pkg([[0x7b, lit(15), lit(-1)], [0x6e, lit(0), str('registered')], [0x7b, lit(-1), lit(-1)], [2], [0x6e, lit(0), str('callback')], [5]])
+  const scene = parse(JSON.stringify(data))
+  assert.equal(scene.steps[0].commands[0].segments[0].text, 'registered')
+  assert.deepEqual(scene.stats.state.pendingCallbacks, [])
+  for (const tail of [[[2]], [[0x72, lit(0)], [2]]]) {
+    const result = analyzeAgeScene(pkg([[0x7b, lit(0), lit(-1)], ...tail]))
+    assert.equal(result.complete, false); assert.match(result.stats.error, /callback dispatch/)
+    assert.deepEqual(result.stats.state.pendingCallbacks[0].targets, [0, -1])
+  }
+  assert.throws(() => parse(JSON.stringify(pkg([[0x7b, lit(1), lit(-1)], [2]]))), /instruction boundary/)
+})
+
+test('input regions preserve native rectangle matching, first-match binding and pending dispatch', () => {
+  const state = createAgeState(), machine = { read: a => a.value, isCodeOffset: n => n === 99, script: 'case', scriptInstance: 0 }
+  const execute = (opcode, ...values) => state.instruction({ opcode, offset: 0, args: values.map(lit) }, machine)
+  execute(0x97, 2, 3, 4, 5, 7)
+  assert.deepEqual(state.snapshot().inputRegions, [], 'binding does not invent a missing region')
+  execute(0x90, 2, 3, 4, 5, -1, -1, 99)
+  execute(0x90, 2, 3, 4, 5, -1, -1, 99)
+  execute(0x97, 2, 3, 4, 5, 7)
+  assert.deepEqual(state.snapshot().inputRegions.map(r => [r.rect, r.inputBit]), [[[2, 3, 6, 8], 7], [[2, 3, 6, 8], -1]])
+  execute(0x259)
+  assert.equal(state.hasCallbacks(), true, 'flag reset does not clear unrelated input registrations')
+  const snapshot = state.snapshot(); snapshot.inputRegions[0].rect[0] = 123
+  assert.equal(state.snapshot().inputRegions[0].rect[0], 2)
+  assert.throws(() => execute(0x90, 2, 3, 4, 5, -1, 98, -1), /instruction boundary/)
+  for (let n = 2; n < 100; n++) execute(0x90, 2, 3, 4, 5, -1, -1, 99)
+  assert.throws(() => execute(0x90, 2, 3, 4, 5, -1, -1, 99), /rectangle limit/)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x90, lit(0), lit(0), lit(1), lit(1), lit(-1), lit(-1), lit(0)], [2]]))), /callback dispatch/)
+})
+
 const corpus = '.cache/age-upstream-20261113/manifest.json'
 test('all 146 native arrays match upstream element-for-element; all 30 instruction streams retain compatibility', { skip: !existsSync(corpus) }, async () => {
   const manifest = JSON.parse(await readFile(corpus)), comparison = JSON.parse(await readFile('.cache/age-upstream-20261113/comparison.json'))
@@ -126,7 +168,18 @@ test('all 146 native arrays match upstream element-for-element; all 30 instructi
 const native = '.cache/age-072229/extracted/g01/__verify/age'
 test('native SN0000 fails explicitly; native first narration preserves ruby in diagnostic output without claiming playback', { skip: !existsSync(native) }, async () => {
   const bytes = await readFile(native + '/SN0000.BIN'), data = JSON.parse(encodeAgeScriptPackage(bytes, { name: 'SN0000.BIN' }))
-  assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @1 opcode 0x259/)
+  assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @715 opcode 0x94/)
+  const start = analyzeAgeScene(data)
+  assert.deepEqual(start.stats.run.stopped, { script: 'SN0000.BIN', offset: 715, opcode: 0x94 })
+  assert.equal(start.stats.run.status, 'unsupported'); assert.equal(start.stats.run.steps, 80)
+  assert.equal(start.stats.state.resets, 1); assert.equal(start.stats.state.writes, 34)
+  assert.equal(start.stats.state.flags.length, 34)
+  assert.deepEqual(start.stats.state.pendingCallbacks[0].targets, [2555, 2607])
+  assert.deepEqual(start.stats.state.inputRegions.map(r => [r.rect, r.inputBit, r.targets[2]]), [
+    [[-1000, -1000, -999, -999], 0, 1543], [[-1000, -1001, -999, -1000], 1, 1704],
+    [[-1000, -1002, -999, -1001], 2, 1853], [[-1000, -1003, -999, -1002], 3, 2060],
+    [[-1000, -1008, -999, -1007], 8, 2540], [[-1000, -1007, -999, -1006], 7, 2413],
+  ])
   const first = decodeAgeScript(bytes).instructions.find(i => i.opcode === 0x6e)
   const result = analyzeAgeScene(data, { scripts: { 'SN0000.BIN': { entry: first.offset } } })
   assert.equal(result.complete, false); assert.equal(result.stats.run.stopped.opcode, 0x305)

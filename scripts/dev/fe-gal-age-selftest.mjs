@@ -84,6 +84,6 @@ try {
   assert.ok(pixels.checked > 1000); assert.equal(pixels.mismatches, 0)
   assert.deepEqual(errors, [])
   await page.screenshot({ path: out + '/native-components.png' })
-  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, errors, stops: ['SN0000:0x259', 'placement:0x242', 'text-tail:0x305'] }, null, 2))
+  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, errors, stops: ['SN0000@715:0x94', 'placement:0x242', 'text-tail:0x305'] }, null, 2))
   console.log('PASS native AGE component display (not full scene playback)', pixels, out)
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

@@ -103,7 +103,7 @@ export function traceAgeProgram(program, {
   return { name, code: new Map(source.instructions.map(i => [i.offset, i])), nodes: new Map(flow.nodes.map(n => [n.offset, n])), entry: flow.entry,
    sequential: new Map(source.instructions.map((i, k) => [i.offset, source.instructions[k + 1]?.offset ?? null])) }
  }
- let unit = compile(program, programName), locals = new Map(), aliases = new Map()
+ let unit = compile(program, programName), locals = new Map(), aliases = new Map(), scriptInstance = 0, instanceSequence = 0
  const destination = value => { if (!Number.isInteger(value) || !unit.code.has(value)) throw Error('AGE computed target is not an instruction boundary: ' + value); return value }
  for (const [id, value] of Object.entries(integers)) globals.set('3:' + id, Number(value) | 0)
  for (const [id, value] of Object.entries(strings)) globals.set('5:' + id, String(value))
@@ -132,8 +132,8 @@ export function traceAgeProgram(program, {
   0x56:(a,b)=>a&b, 0x57:(a,b)=>a|b, 0x58:(a,b)=>a>>b, 0x59:(a,b)=>a<<b,
   0x5a:(a,b)=>Number(a===b), 0x5b:(a,b)=>Number(a!==b), 0x5c:(a,b)=>Number(a<b),
   0x5d:(a,b)=>Number(a<=b), 0x5e:(a,b)=>Number(a>b), 0x5f:(a,b)=>Number(a>=b) }
- const push = (kind, next) => { if (stack.length >= maxStack) throw Error('AGE call stack limit'); stack.push({ kind, unit, locals, aliases, next }) }
- const restore = frame => { ({ unit, locals, aliases } = frame); return frame.next }
+ const push = (kind, next) => { if (stack.length >= maxStack) throw Error('AGE call stack limit'); stack.push({ kind, unit, locals, aliases, scriptInstance, next }) }
+ const restore = frame => { ({ unit, locals, aliases, scriptInstance } = frame); return frame.next }
  let pc = destination(entry ?? unit.entry), status = 'limit', stopped = null, missingScript = null
  for (let step = 0; step < maxSteps; step++) {
   const i = unit.code.get(pc), node = unit.nodes.get(pc), a = i.args
@@ -160,7 +160,7 @@ export function traceAgeProgram(program, {
     if (units.size >= 256) throw Error('AGE linked script count limit')
     units.set(ordinal, compile(resolved.program, resolved.name || String(ordinal)))
    }
-   push('script', node.next); unit = units.get(ordinal); locals = new Map(); aliases = new Map(); next = unit.entry
+   push('script', node.next); unit = units.get(ordinal); locals = new Map(); aliases = new Map(); scriptInstance = ++instanceSequence; next = unit.entry
   }
   else if (i.opcode === 5) {
    if (!stack.length) { status = 'returned'; break }
@@ -180,7 +180,7 @@ export function traceAgeProgram(program, {
    if (!Number.isInteger(address) || address < 0 || address >= 0x1000000) throw Error('AGE array address out of range')
    aliases.set(a[0].type + ':' + a[0].value, type + ':' + address)
   }
-  else if (![0x1a7, 0x1a8].includes(i.opcode) && onInstruction?.(i, { read, write, key, script: unit.name, stackDepth: stack.length }) !== true) { status = 'unsupported'; stopped = i; break }
+  else if (![0x1a7, 0x1a8].includes(i.opcode) && onInstruction?.(i, { read, write, key, script: unit.name, scriptInstance, isCodeOffset: value => unit.code.has(value), stackDepth: stack.length }) !== true) { status = 'unsupported'; stopped = i; break }
   if (next === null || next === undefined) { status = 'fell-through'; break }
   pc = destination(next)
  }
