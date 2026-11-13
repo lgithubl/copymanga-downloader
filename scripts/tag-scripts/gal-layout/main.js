@@ -1,4 +1,4 @@
-import { findPackedRpg } from './evb.mjs?v=2.61.1'
+import { findPackedRpg } from './evb.mjs?v=2.62.0'
 // Gal 布局配置脚本（所有 Gal 游戏合一）：探测目录的实际结构，把条目 config 里的参数调到「真的能读到」，再挑封面、数脚本。
 // 引擎和这个脚本之间只通过条目的 config 交互（字段见 web/library/gal/config.mjs）；引擎缺的字段用默认（标准结构 = UViewer 资源包的布局），
 // 这里写「实际探测到的 / 表里的规则配置（适配器参数全表、classify / resourceResolve / limits …）/ 你覆盖的」字段。和别的 tag 脚本一样：改了就上传新版本（manifest.version 加一）重跑，不用改镜像。
@@ -125,6 +125,7 @@ export const ADAPTER_RULES = {
   'rpgmaker-json': {
     "root": "",
     "packedExe": "",
+    "extraDirs": [],
     "stage": [
       816,
       624
@@ -138,7 +139,8 @@ export const ADAPTER_RULES = {
       "enabled": true,
       "tileSize": 48,
       "player": true,
-      "follow": "event"
+      "follow": "event",
+      "maxBytes": 134217728
     },
     "catalog": {
       "common": true,
@@ -151,6 +153,7 @@ export const ADAPTER_RULES = {
       "label": "特殊场景",
       "minText": 4,
       "deduplicateCalls": true,
+      "preferMapCallers": false,
       "nameMatch": "回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生",
       "skipNameMatch": "削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン",
       "mapNameMatch": "回想|回憶|recollection|replay",
@@ -170,6 +173,8 @@ export const ADAPTER_RULES = {
       "structured": true,
       "pictureActions": true,
       "maxPictureActions": 16,
+      "seVoiceMatch": "",
+      "trnVoice": {"enabled": false, "list": "audio/voice/voice_list.json", "folder": "audio/voice/unique"},
       "commands": []
     }
   },
@@ -917,6 +922,7 @@ export const ADAPTER_RULES = {
   // krkr::scn：KiriKiri Z（Hxv4）家族的脚本适配器（PSB 场景 JSON → 场景）。抄自 web/library/gal/adapters/krkr-scn.mjs 的 DEFAULT_OPTIONS（漂移由 gal-layout-rules-selftest 把关）
   'krkr::scn': {
     followGraph:false,
+    eventClasses: ['event'],
     scriptDir:'',
       "resDir": "arc/res",
       "stage": [
@@ -1798,6 +1804,7 @@ export const LAYOUTS = {
   "ruleOverrides": {
     "krkr::scn": {
       "followGraph": true,
+      "eventClasses": ["event", "eventx"],
       "scriptDir": "arc/script"
     }
   },
@@ -2176,9 +2183,9 @@ export const LAYOUTS = {
       "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音、静态地图/人物及剧情移动演出；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
     ]
   },
-  'rpgmaker::rj01271506': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
+  'rpgmaker::rj01271506': {extends:'rpgmaker',resourceRoots:['dlc/dlc_10000','.'],resourceRootsForce:true,ruleOverrides:{'rpgmaker-json':{extraDirs:['dlc/dlc_10000'],plugins:{trnVoice:{enabled:true}},skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{preferMapCallers:true,imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
   'rpgmaker::rj01646655': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'},special:{imageMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'}}}},
-  'rpgmaker::rj328940': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{special:{mapNameMatch:'回想|回憶|♥イベントシーン'}}}},
+  'rpgmaker::rj328940': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{plugins:{seVoiceMatch:'_(?:meifa|ouka|sfy|lize|lavia|elnor|lana|flaw|myco|claire|yuzuki|mirage|colette|stellar|cypher)'},special:{mapNameMatch:'回想|回憶|♥イベントシーン'}}}},
   'rpgmaker::rj01482469': {
     "extends": "rpgmaker",
     "ruleOverrides": {

@@ -87,6 +87,18 @@ export function applyVariables(model, nameToId, variables, params) {
   return hit
 }
 
+// Apply the model's declared expression after motion evaluation, as Cubism
+// expressions blend parameter values rather than replacing the motion itself.
+export function applyExpression(model, expression, params) {
+  for (const p of expression?.Parameters || []) {
+    const i = model.paramIndex.get(p.Id), value = Number(p.Value)
+    if (i === undefined || !Number.isFinite(value)) continue
+    if (p.Blend === 'Multiply') params[i] *= value
+    else if (p.Blend === 'Overwrite') params[i] = value
+    else if (!p.Blend || p.Blend === 'Add') params[i] += value
+  }
+}
+
 export function createLive2dLayer({ parent, before = null, url, onMissing = () => {}, onUnavailable = () => {} }) {
   const canvas = document.createElement('canvas')
   canvas.className = 'gal-live2d'
@@ -154,7 +166,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       }
       const files = []
       for (const group of Object.values(json.FileReferences?.Motions || {})) for (const m of group) if (m?.File) files.push(m.File)
-      return { model, textures, motions: new Map(), cdi, files, dir, mosaic, nameToId: new Map((cdi?.Parameters || []).map((p) => [p.Name, p.Id])) }
+      return { model, textures, motions: new Map(), expressions: new Map(), expressionFiles: refs.Expressions || [], cdi, files, dir, mosaic, nameToId: new Map((cdi?.Parameters || []).map((p) => [p.Name, p.Id])) }
     })()
     promise.catch(() => models.delete(src))
     models.set(src, promise)
@@ -346,6 +358,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
     if (!r || !gl) return
     r.params.set(r.base)
     if (r.motion) evaluateMotion(r.motion, seconds, r.entry.model, r.params, r.frame, r.loop)   // 不循环：停在最后一帧
+    applyExpression(r.entry.model, r.expression, r.params)
     updateModel(r.entry.model, r.frame, r.params)
     draw(r.entry, r.frame)
   }
@@ -362,7 +375,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
   }
   const kick = () => { if (!raf && !paused && runtime) raf = requestAnimationFrame(loop) }
 
-  const sig = (spec) => (spec ? JSON.stringify([spec.src, spec.motion || '', Boolean(spec.loop), spec.variables || null]) : '')
+  const sig = (spec) => (spec ? JSON.stringify([spec.src, spec.motion || '', spec.expression || '', Boolean(spec.loop), spec.variables || null]) : '')
   let currentSig = ''
   let showMosaic = false
 
@@ -382,10 +395,19 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       const file = pickMotionFile(entry.files, spec.motion)
       const motion = await loadMotion(entry, file)
       if (destroyed || mine !== token) return
+      let expression = null
+      if (spec.expression) {
+        const ref = entry.expressionFiles.find(x => x.Name === spec.expression)
+        if (ref?.File) {
+          if (!entry.expressions.has(ref.File)) entry.expressions.set(ref.File, fetchJson(entry.dir + ref.File).catch(() => { onMissing(entry.dir + ref.File); return null }))
+          expression = await entry.expressions.get(ref.File)
+        }
+      }
+      if (destroyed || mine !== token) return
       const frame = createFrame(entry.model)
       const base = Float32Array.from(entry.model.paramDefault)
       applyVariables(entry.model, entry.nameToId, spec.variables, base)
-      runtime = { entry, frame, base, params: Float32Array.from(base), motion, loop: Boolean(spec.loop), t0: 0, last: 0, drawnOnce: false, spec }
+      runtime = { entry, frame, base, params: Float32Array.from(base), motion, expression, loop: Boolean(spec.loop), t0: 0, last: 0, drawnOnce: false, spec }
       canvas.hidden = false
       renderAt(0)
       kick()

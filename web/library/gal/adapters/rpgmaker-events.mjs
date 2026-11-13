@@ -1,5 +1,6 @@
 import {skitCommands} from './rpgmaker-skit.mjs'
 import {skitScriptScope} from './rpgmaker-skit-scripts.mjs'
+import {pictureAnimation} from './rpgmaker-picture-animation.mjs'
 import { structValue, pluginData, replayVariants } from './rpgmaker-plugins.mjs'
 import { safeRegex } from './options-merge.mjs'
 import { mapSnapshot } from './rpgmaker-maps.mjs'
@@ -15,6 +16,7 @@ export function compileRpgEvents(list, ctx, meta) {
   const o = meta.options, stage = ctx.stage || o.stage, steps = [], stats = { commands: 0, text: 0, choices: 0, raw: {}, warnings: [...(ctx.warnings || [])], scene: meta.scene }
   const initial = new Map(), calls = [], guards = [], pictures = new Map()
   const cgMatch = safeRegex(o.pictures.cgMatch), bgMatch = safeRegex(o.pictures.backgroundMatch)
+  const seVoiceMatch=safeRegex(o.plugins.seVoiceMatch)
   const thumbnailMatch = safeRegex(o.pictures.thumbnailMatch), thumbnailSkip = safeRegex(o.pictures.thumbnailSkip)
   const standingImages = new Set([...(ctx.standing?.values() || [])].map(item => String(item.imageName || '').replace(/\.png$/i, '').toLowerCase()))
   let pending = [], serial = 0, standingHold = false, bgsLine = 1, dynamicText = null
@@ -23,7 +25,9 @@ export function compileRpgEvents(list, ctx, meta) {
   const when = () => guards.flatMap(g => g.conditions || [])
   const emit = cmd => { if(cmd.op==='rpgText')cmd={stage,...cmd}; if ((stats.emitted = (stats.emitted || 0) + 1) > o.maxCommands) throw new Error('RPG Maker 导出指令达到上限'); const w = when(); pending.push(w.length ? { ...cmd, when: [...w,...(cmd.when||[])] } : cmd) }
   const raw = (key, args) => { stats.raw[key] = (stats.raw[key] || 0) + 1; emit({ op: 'raw', cmd: key, args: JSON.stringify(args).slice(0, 1000) }) }
-  let activeEventId=meta.eventId, mapId=Number(/Map(\d+)\.json$/i.exec(meta.rel||'')?.[1]||0)
+  const paEnabled=o.plugins.structured!==false&&ctx.plugins?.some(p=>p.name.split('/').at(-1)==='PictureAnimation')
+  const pa=pictureAnimation({emit,raw,initial,guard:(conditions,fn)=>{guards.push({conditions});try{fn()}finally{guards.pop()}}})
+  let activePageIndex=meta.pageIndex??-1, activeEventId=meta.eventId, mapId=Number(/Map(\d+)\.json$/i.exec(meta.rel||'')?.[1]||0)
   const characterId=id=>Number(id)===0?activeEventId:Number(id)
   const showMap=(id,eventId=0,page=-1,player=null)=>{
     mapId=id
@@ -53,6 +57,7 @@ export function compileRpgEvents(list, ctx, meta) {
     return parts.length ? parts : [{ text: '' }]
   }
   const audio = (kind, sound) => {
+    if(kind==='se'&&seVoiceMatch?.test(String(sound?.name||''))) {kind='voice';sound={...sound,folder:'audio/se'}}
     const folder = kind === 'bgm' ? 'bgm' : kind === 'bgse' ? 'bgs' : kind === 'voice' || kind === 'bgvoice' ? 'voice' : kind === 'me' ? 'me' : 'se'
     const src = resource(sound?.folder || (kind === 'voice' || kind === 'bgvoice' ? ctx.voiceFolder || 'audio/voice' : 'audio/' + folder), sound?.name, 'ogg')
     if (kind === 'bgse') { if (src) emit({op:'bgvoice',slot:`rpg-bgs-${bgsLine}`,src,loop:true,kind:'bgse',volume:Number(sound.volume??100)/100,token:`rpg-${serial++}`}); return }
@@ -75,6 +80,7 @@ export function compileRpgEvents(list, ctx, meta) {
     }
     if (variablePos) Object.assign(cmd, { xVar: variable(x), yVar: variable(y), xOffset: -stage[0] / 2, yOffset: -stage[1] / 2 })
     emit({op:'set',var:`rpg:picture:${id}`,value:1}); emit(cmd)
+    if(!move&&paEnabled)pa.show(id,src)
     if (move && p[11]) emit({ op: 'wait', seconds: Math.min(60, Number(p[10] || 0) / 60) })
   }
   const standing = text => {
@@ -96,7 +102,7 @@ export function compileRpgEvents(list, ctx, meta) {
   const skit=skitCommands(ctx,{emit,raw,initial,stage})
   const extend=ctx.plugins?.find(p=>p.name.split('/').at(-1)==='CommonEventExtend'&&p.parameters?.DefaultCommandOverride==='true')
   const argumentIds=o.skit?.wrapperScripts&&ctx.skit&&extend?structValue(extend.parameters.DefaultArguments||'[]').map(Number).filter(n=>Number.isInteger(n)&&n>0).slice(0,32):[]
-  const callMapEvent = (eventId,depth,autorunOnly=false) => {
+  const callMapEvent = (eventId,depth,autorunOnly=false,keepCaller=false) => {
     const targetMapId=mapId||ctx.system?.startMapId||0,map=ctx.maps?.get(`${o.root?o.root+'/':''}data/Map${String(targetMapId).padStart(3,'0')}.json`),event=map?.events?.find(e=>e?.id===eventId)
     if(!event?.pages?.length){raw('map-event-call-missing',{map:targetMapId,event:eventId});return}
     if(event.pages.some(p=>p.conditions?.itemValid)){raw('map-event-call-inventory-condition',{map:targetMapId,event:eventId});return}
@@ -111,15 +117,15 @@ export function compileRpgEvents(list, ctx, meta) {
       if(cond.actorValid){const key=`rpg:party:${cond.actorId}`;if(!initial.has(key))initial.set(key,ctx.system?.partyMembers?.includes(Number(cond.actorId))?1:0);tests.push({var:key,op:'===',value:1})}
       emit({op:'set',var:chosen,value:i,when:tests})
     }
-    const caller=activeEventId,callerMap=mapId
+    const caller=activeEventId,callerMap=mapId,callerPage=activePageIndex
     for(const [i,page]of event.pages.entries()){
       if(autorunOnly&&page.trigger!==3)continue
       guards.push({type:'map-page',indent:-1,conditions:[{var:chosen,op:'===',value:i}]})
-      activeEventId=eventId;mapId=targetMapId
+      activeEventId=keepCaller?caller:eventId;mapId=targetMapId;activePageIndex=i
       run(page.list||[],depth+1,`map:${targetMapId}:${eventId}`)
       guards.pop()
     }
-    activeEventId=caller;mapId=callerMap
+    activeEventId=caller;mapId=callerMap;activePageIndex=callerPage
   }
   const plugin = (text,depth=0) => {
     const words = String(text).trim().split(/\s+/), command = words.shift(), arg = words
@@ -150,7 +156,20 @@ export function compileRpgEvents(list, ctx, meta) {
     name=String(name).split('/').at(-1)
     if(o.plugins.structured===false){raw(`plugin:${name}`,{action,args});return}
     if(name==='RX_T_CallEvent_in_Map'&&action==='callev'){callMapEvent(Number(args.eventID),depth);return}
+    if(name==='TemplateEvent'&&['CALL_ORIGIN_EVENT','CALL_MAP_EVENT'].includes(action)){
+      const eventKey=`${mapId}:${activeEventId}`,map=ctx.maps?.get(`${o.root?o.root+'/':''}data/Map${String(mapId).padStart(3,'0')}.json`)
+      let event=action==='CALL_ORIGIN_EVENT'?ctx.templateOrigins?.get(eventKey):map?.events?.find(e=>e&&(String(e.id)===String(args.eventId)||e.name===args.eventId))
+      if(action==='CALL_MAP_EVENT'&&Number(args.eventId)===0)event=map?.events?.find(e=>e?.id===activeEventId)
+      const keep=ctx.plugins.find(p=>p.name.split('/').at(-1)==='TemplateEvent')?.parameters?.KeepEventId,requested=Number(args.pageIndex)
+      if(action==='CALL_MAP_EVENT'&&requested===0&&event){callMapEvent(event.id,depth,false,keep===true||keep==='true');return}
+      const pi=requested===0?activePageIndex:requested-1,page=Number.isInteger(pi)?event?.pages?.[pi]:null
+      if(!page){raw('template-event-page-missing',{action,mapId,eventId:args.eventId,pageIndex:args.pageIndex});return}
+      const caller=activeEventId,callerPage=activePageIndex
+      if(action==='CALL_MAP_EVENT'&&keep!==true&&keep!=='true')activeEventId=event.id
+      activePageIndex=pi;run(page.list||[],depth+1,`template:${action}:${mapId}:${event.id}:${pi}`);activeEventId=caller;activePageIndex=callerPage;return
+    }
     if(name==='TRP_SkitMZ'&&skit(action,args))return
+    if(name==='PictureAnimation'&&paEnabled&&pa.command(action,args))return
     const voice=name==='SimpleVoice',visu=name==='VisuMZ_2_VoiceActControl'
     if((voice&&o.plugins.simpleVoice)||visu){
       if(['PLAY_VOICE','SoundPlayAsVoiceLine'].includes(action)){
@@ -246,7 +265,8 @@ export function compileRpgEvents(list, ctx, meta) {
         const text = []
         while (commands[i + 1]?.code === 401) text.push(String(commands[++i].parameters?.[0] || ''))
         emit({op:'ui',visible:true})
-        let body = standing(text.join('\n')), name = String(p[4] || '')
+        const nativeText=text.join('\n');if(o.plugins.trnVoice.enabled){const ids=[...nativeText.matchAll(/\\TRN\[(\d+)\]/gi)].map(m=>Number(m[1])).filter(id=>ctx.trnVoiceIds?.has(id));if(ids.length)audio('voice',{name:String(ids[0]),folder:o.plugins.trnVoice.folder,volume:100})}
+        let body = standing(nativeText), name = String(p[4] || '')
         body = body.replace(/\\n<([^>]+)>/gi, (_, who) => { name = who; return '' })
         emit({ op: 'speaker', segments: textParts(name) }); emit({ op: 'text', segments: textParts(body) }); stats.text++; flush(); continue
       }
@@ -308,7 +328,7 @@ export function compileRpgEvents(list, ctx, meta) {
       if (c.code === 214) { emit({op:'rpgEvent',id:meta.eventId,patch:{visible:false,erased:true}});continue }
       if (c.code === 231) { picture(p); continue }
       if (c.code === 232) { picture(p, true); continue }
-      if (c.code === 235) { emit({op:'set',var:`rpg:picture:${Number(p[0])}`,value:0});emit({op:'rpgText',slot:`rpg-picture-${Number(p[0])}`,visible:false}); emit({ op: 'overlayOff', slot: `rpg-picture-${Number(p[0])}` }); pictures.delete(Number(p[0])); continue }
+      if (c.code === 235) { if(paEnabled)pa.erase(Number(p[0]));emit({op:'set',var:`rpg:picture:${Number(p[0])}`,value:0});emit({op:'rpgText',slot:`rpg-picture-${Number(p[0])}`,visible:false}); emit({ op: 'overlayOff', slot: `rpg-picture-${Number(p[0])}` }); pictures.delete(Number(p[0])); continue }
       if(c.code===284){const src=resource('img/parallaxes',p[0]);emit(src?{op:'bg',src,...(cgMatch?.test(src)?{cg:true}:{})}:{op:'bgoff'});if(p[1]||p[2])raw('parallax-scroll-static-snapshot',p);continue}
       if (c.code === 241 || c.code === 245 || c.code === 249 || c.code === 250) { audio(({241:'bgm',245:'bgse',249:'me',250:'se'})[c.code], p[0]); continue }
       if (c.code === 242) { emit({ op: 'bgmStop', fade: Number(p[0] || 0) }); continue }

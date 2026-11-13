@@ -67,6 +67,7 @@ export function krkrStandGeometry({ act = {}, posName = null, stand = null, stag
 export const ADAPTER_ID = 'krkr::scn'
 export const DEFAULT_OPTIONS = {
   followGraph:false,
+  eventClasses: ['event'],
   scriptDir:'',
   resDir: 'arc/res',
   stage: [1920, 1080],
@@ -141,7 +142,7 @@ export function prepare(args) {
     return json.get(key)
   }
   let catalogTree
-  if(opt.followGraph){const chosen=new Map();for(const[rel,text]of Object.entries(texts||{})){if(!rel.endsWith('.krkr'))continue;let d;try{d=JSON.parse(text)}catch{continue}if(d.format!=='krkr-scn/1')continue;const old=chosen.get(d.name);if(!old||/\/patch\d*\//i.test(rel))chosen.set(d.name,{rel,data:d})}const all=[...chosen.values()].map(({rel,data})=>({id:data.name,title:data.scenes.find(s=>s.title)?.title||data.name,script:rel})),special=[...chosen.values()].filter(({data})=>data.scenes.some(s=>s.steps.some(t=>t.l?.some(l=>l[1]==='event'&&l[5]===3)))).map(({rel,data})=>({id:data.name,title:data.scenes.find(s=>s.title)?.title||data.name,script:rel}));catalogTree={children:[...(special.length?[{id:'special',title:'特殊场景',children:special}]:[]),{id:'story',title:'剧情',children:all}]}}
+  if(opt.followGraph){const chosen=new Map();for(const[rel,text]of Object.entries(texts||{})){if(!rel.endsWith('.krkr'))continue;let d;try{d=JSON.parse(text)}catch{continue}if(d.format!=='krkr-scn/1')continue;const old=chosen.get(d.name);if(!old||/\/patch\d*\//i.test(rel))chosen.set(d.name,{rel,data:d})}const all=[...chosen.values()].map(({rel,data})=>({id:data.name,title:data.scenes.find(s=>s.title)?.title||data.name,script:rel})),special=[...chosen.values()].filter(({data})=>data.scenes.some(s=>s.steps.some(t=>t.l?.some(l=>opt.eventClasses.includes(l[1])&&l[5]===3)))).map(({rel,data})=>({id:data.name,title:data.scenes.find(s=>s.title)?.title||data.name,script:rel}));catalogTree={children:[...(special.length?[{id:'special',title:'特殊场景',children:special}]:[]),{id:'story',title:'剧情',children:all}]}}
   return {catalogTree, opts: opt, resources, resolver, hasIndex: Boolean(files?.length), truncated: Boolean(truncated), readJson }
 }
 
@@ -236,7 +237,7 @@ export function parse(text, ctx = null, meta = {}) {
     const base = options && typeof options === 'object' ? { ...options, ...(fromList || {}) } : (fromList || {})
     const o = mvMotion ? { ...base, motion: mvMotion, loop: true } : base
     const variables = o.variables && typeof o.variables === 'object' && Object.keys(o.variables).length ? o.variables : null
-    return { src, ...(typeof o.motion === 'string' && o.motion ? { motion: o.motion } : {}), ...(o.loop === true || o.loop === 'true' ? { loop: true } : {}), ...(variables ? { variables } : {}) }
+    return { src, ...(typeof o.exp === 'string' && o.exp ? { expression: o.exp } : {}), ...(typeof o.motion === 'string' && o.motion ? { motion: o.motion } : {}), ...(o.loop === true || o.loop === 'true' ? { loop: true } : {}), ...(variables ? { variables } : {}) }
   }
   function applyLayers(layers, tr) {
     let bg = null
@@ -247,7 +248,7 @@ export function parse(text, ctx = null, meta = {}) {
       const [name, cls, file, options, , showmode] = l
       if (showmode !== 3) continue
       if (cls === 'stage' && name === 'bg' && file) bg = file
-      else if (cls === 'event' && name === 'ev' && file) {
+      else if (opt.eventClasses.includes(cls) && ['ev','evx'].includes(name) && file) {
         const mv = options && typeof options === 'object' && options.variables && typeof options.variables === 'object' ? mvOf(file) : null
         if (/\.l2d$/i.test(file)) l2d = { file, options }
         else if (mv && hasIndex && mv.stems.find((st) => ctx.resolver.resolveByName(`${st}.model3.json`))) l2d = { file: mv.stems.find((st) => ctx.resolver.resolveByName(`${st}.model3.json`)), options, motion: mv.motion }

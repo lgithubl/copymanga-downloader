@@ -82,7 +82,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
   const metaPath = (itemId) => shardedPath(metaRoot, assertId(itemId))
   const progressPath = (itemId) => shardedPath(progressRoot, assertId(itemId))
   const resourceBase = (itemId) => `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/resource`
-  const coverUrl = (itemId) => `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/thumbnail/script/cover`
+  const coverUrl = (itemId, version = '') => `/api/library/items/${encodeURIComponent(type)}/${encodeURIComponent(itemId)}/thumbnail/script/cover${version ? '?v=' + encodeURIComponent(version) : ''}`
 
   // ---------- 元数据 ----------
 
@@ -149,7 +149,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     // 封面、脚本数来自 config（卡片/索引读的是 item.cover / item.scriptCount，这里同步出来）
     if (warnings.length) item.configWarnings = warnings.slice(0, 20)
     item.coverPath = item.config.cover || ''
-    item.cover = item.coverPath ? coverUrl(item.itemId) : ''
+    const coverVersion = createHash('sha1').update(JSON.stringify([item.coverPath,item.config.coverCrop||null,item.config.script?.ranAt||''])).digest('hex').slice(0,12)
+    item.cover = item.coverPath ? coverUrl(item.itemId,coverVersion) : ''
     item.scriptCount = Math.max(0, Number(item.config.scriptCount) || 0)
     // 一个媒体只有一个单元：浏览、选脚本都在这个单元里面（节点树）
     const prevTags = Array.isArray(raw?.mediaUnits) ? raw.mediaUnits.find((unit) => unit?.unitId === GAL_MAIN_UNIT)?.tags : []
@@ -370,8 +371,8 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       const file = await coverFileOf(item)
       // 超长图（整本说明书拼成一张的 Manual.jpg 之类）：卡片居中裁会裁到正文里，取顶部一段缩小当封面；普通图原样
       const top = IMAGE_THUMB_EXT.test(file) ? await imageThumbs.tallTopOf(file, 960, normalizeGalConfig(item.config).coverCrop) : null
-      if (top) return { file: top, contentType: 'image/webp' }
-      return { file, contentType: contentTypeOf(file) }
+      if (top) return { file: top, contentType: 'image/webp', cacheControl: 'public, max-age=0, must-revalidate' }
+      return { file, contentType: contentTypeOf(file), cacheControl: 'public, max-age=0, must-revalidate' }
     } catch {
       throw Object.assign(new Error('缩略图不存在'), { statusCode: 404 })
     }

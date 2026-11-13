@@ -10,7 +10,7 @@
 import {inflateSync} from 'node:zlib'
 import { Psb } from './psb.mjs'
 
-const LAYER_CLASSES = new Set(['stage', 'character', 'event', 'layer', 'evdanmen', 'evcutin'])
+const LAYER_CLASSES = new Set(['stage', 'character', 'event', 'eventx', 'layer', 'evdanmen', 'evcutin'])
 const KEEP_ACTIONS = new Set(['xpos', 'ypos', 'zpos', 'zoomx', 'zoomy', 'leveloffset', 'originx', 'originy', 'order', 'rotate', 'opacity'])
 const MAX_STEPS = 60000
 

@@ -5396,7 +5396,7 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
         // 有 getThumbnailFile 的类型：给出磁盘文件，这里统一做 ETag / 304 / 流式发送
         if (handler.getThumbnailFile) {
           const thumb = await handler.getThumbnailFile(itemId, unitId, parts[7] || 'cover')
-          return await sendCachedFile(req, res, thumb.file, thumb.contentType)
+          return await sendCachedFile(req, res, thumb.file, thumb.contentType, thumb.cacheControl)
         }
         if (!handler.getThumbnail) return json(res, 400, { error: 'This library type does not support thumbnails' })
         const thumb = await handler.getThumbnail(itemId, unitId, parts[7] || 'cover')

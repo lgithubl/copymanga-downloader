@@ -28,7 +28,7 @@ put('Remastered','source.arc',b'HEADpayload');put('天結いラビリンスマ�
 plan={'Remastered':{'guards':[dict(source='source.arc',offset=0,bytes=4,sha256=hashlib.sha256(b'HEAD').hexdigest())],'ranges':[dict(source='source.arc',sourceBytes=11,offset=4,bytes=7,logicalName='img/ev/ev056aa.bytes',artifact='__scene-audit/remastered/ev056aa.bytes')]}}
 def constant(s,name,value):return re.sub(r"(?m)^"+name+r" = '[^']*'$",name+" = '"+base64.b64encode(zlib.compress(json.dumps(value).encode())).decode()+"'",s)
 src=constant(src,'SCENE_AUDIT_PLAN',plan);src=constant(src,'SCENE_AUDIT_REUSED',{'RJ01271506':{'js/plugins.js':hashlib.sha256(before[root/'RJ01271506/js/plugins.js']).hexdigest()}});script=base/'collector.sh';script.write_text(src)
-env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out));r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
+env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_RULES='^new-games:scene-audit$',GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out));r=subprocess.run(['bash',str(script),str(root)],env=env,capture_output=True,text=True);assert r.returncode==0,r.stdout+r.stderr
 parts=list(out.glob('*.part-*'));assert len(parts)==4,(len(parts),r.stdout);reports={}
 for part in parts:
  with tarfile.open(part)as t:

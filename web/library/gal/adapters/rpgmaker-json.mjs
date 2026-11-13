@@ -1,4 +1,5 @@
 import {prepareSkit} from './rpgmaker-skit.mjs'
+import {prepareTemplates} from './rpgmaker-templates.mjs'
 import { completeJsonSamples } from '../context-complete-json.mjs'
 import { eventEvidence, mapEventCall } from './rpgmaker-plugins.mjs'
 // RPG Maker MV/MZ event JSON -> gal-scene. Engine mechanics live here; each
@@ -10,21 +11,21 @@ import { compileRpgEvents } from './rpgmaker-events.mjs'
 
 export const ADAPTER_ID = 'rpgmaker-json'
 export const DEFAULT_OPTIONS = {
-  root: '', packedExe: '', stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
+  root: '', packedExe: '', extraDirs: [], stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
   initialVariables: {}, initialSwitches: {},
   skit: { expressionPoses: {}, wrapperScripts: false },
-  maps: { enabled: true, tileSize: 48, player: true, follow: 'event' },
+  maps: { enabled: true, tileSize: 48, player: true, follow: 'event', maxBytes: 134217728 },
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
-  special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
+  special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, preferMapCallers: false, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
   pictures: { folder: 'img/pictures', cgMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
-  plugins: { simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, commands: [] },
+  plugins: { simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
 }
 export const optionsOf = createOptionsReader(DEFAULT_OPTIONS)
 const join = (...s) => s.filter(Boolean).join('/')
 const rootOf = o => cleanDir(o?.root)
 const decodeJson = s => JSON.parse(String(s).replace(/^\uFEFF/, ''))
-export const contextFiles = o => ['data/System.json', 'data/Actors.json', 'data/CommonEvents.json', 'data/MapInfos.json', 'data/Tilesets.json', 'js/plugins.js'].map(p => join(rootOf(o), p))
-export const contextDirs = o => ['data', 'img', 'audio'].map(p => join(rootOf(o), p))
+export const contextFiles = o => ['data/System.json', 'data/Actors.json', 'data/CommonEvents.json', 'data/MapInfos.json', 'data/Tilesets.json', 'js/plugins.js', ...(o?.plugins?.trnVoice?.enabled ? [o.plugins.trnVoice.list] : [])].map(p => join(rootOf(o), p))
+export const contextDirs = o => ['data', 'img', 'audio', ...(o?.extraDirs || [])].map(p => join(rootOf(o), p))
 export const contextWalkLimit = 400000
 
 export function sniff(text) {
@@ -58,19 +59,22 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   const sizePlugin = enabled.find(p => p.parameters?.screenWidth && p.parameters?.screenHeight)
   ctx.stage = [Number(system.advanced?.screenWidth || sizePlugin?.parameters.screenWidth || o.stage[0]), Number(system.advanced?.screenHeight || sizePlugin?.parameters.screenHeight || o.stage[1])]
   ctx.stage = ctx.stage.map((n, i) => Math.max(1, Math.min(8192, Number.isFinite(n) && n > 0 ? n : DEFAULT_OPTIONS.stage[i])))
+  ctx.trnVoiceIds=new Set(o.plugins.trnVoice.enabled?(read(o.plugins.trnVoice.list,{}).uniqueIds||[]).map(Number):[])
   ctx.skit=await prepareSkit(ctx,{mediaDir,files:files||[],root})
   let bytes = 0
+  const maxMapBytes=Math.min(256*1024*1024,Math.max(16*1024*1024,Number(o.maps.maxBytes)||134217728))
   for (const rel of files || []) {
     if (!rel.startsWith(join(root, 'data') + '/') || !/\/Map\d+\.json$/i.test(rel)) continue
     try {
       if (mediaDir && (await stat(path.join(mediaDir, ...rel.split('/')))).size > 16 * 1024 * 1024) { ctx.warnings.push(`地图超过16MB上限: ${rel}`); continue }
       const text = texts[rel] || (mediaDir ? await readFile(path.join(mediaDir, ...rel.split('/')), 'utf8') : '')
       bytes += Buffer.byteLength(text)
-      if (bytes > 64 * 1024 * 1024) { ctx.warnings.push('地图 JSON 超过64MB上下文上限，后续地图未读取'); break }
+      if (bytes > maxMapBytes) { ctx.warnings.push('地图 JSON 超过'+Math.round(maxMapBytes/1024/1024)+'MB上下文上限，后续地图未读取'); break }
       const map = decodeJson(text)
       if (Array.isArray(map.events)) ctx.maps.set(rel, map)
     } catch { ctx.warnings.push(`地图无法读取: ${rel}`) }
   }
+  prepareTemplates(ctx)
   ctx.catalogTree = buildCatalog(ctx)
   return ctx
 }
@@ -110,7 +114,7 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
 }
 
 function buildCatalog(ctx) {
-  const o = ctx.options, commonNodes = [], mapNodes = [], specials = new Map(), galleryCalls = new Set()
+  const o = ctx.options, commonNodes = [], mapNodes = [], specials = new Map(), galleryCalls = new Set(), contextualCalls = new Set()
   const nameMatch = safeRegex(o.special.nameMatch), mapMatch = safeRegex(o.special.mapNameMatch), imageMatch = safeRegex(o.special.imageMatch), skip = safeRegex(o.catalog.skipNames)
   const specialSkip = safeRegex(o.special.skipNameMatch)
   const special = (name, ev) => !specialSkip?.test(name) && Boolean(nameMatch?.test(name) || ev.pictures.some(p => imageMatch?.test(p) || imageMatch?.test(`img/pictures/${p}`)))
@@ -122,11 +126,12 @@ function buildCatalog(ctx) {
       const node = { id: `map-${id}-event-${event.id}-page-${pi + 1}`, title: `${titleEvent}${event.pages.length > 1 ? ` · 页${pi + 1}` : ''}`, subtitle: `${ev.text} 文本行`, script: `${rel}::event-${event.id}-${pi + 1}` }
       children.push(node)
       if (ev.text >= o.special.minText && (mapMatch?.test(title) || special(titleEvent, ev))) {
-        const wrapper = !page.list.some(c=>mapEventCall(c)!==null) && o.special.deduplicateCalls && o.catalog.common && page.list.filter(c => c.code === 401).length <= 3 && [...ev.calls].some(id => {
+        const directPictures=page.list.some(c=>c.code===231)
+        const wrapper = !directPictures && !page.list.some(c=>mapEventCall(c)!==null) && o.special.deduplicateCalls && o.catalog.common && page.list.filter(c => c.code === 401).length <= 3 && [...ev.calls].some(id => {
           const target = ctx.common[id]
           return target && !skip?.test(target.name || '') && evidence(target.list, ctx).text >= Math.max(o.special.minText, o.catalog.minText)
         })
-        if (!wrapper) specials.set(node.script, { ...node, id: `special-${node.id}`, subtitle: `${title} · ${node.subtitle}` })
+        if (!wrapper) {specials.set(node.script, { ...node, id: `special-${node.id}`, subtitle: `${title} · ${node.subtitle}` });if(directPictures&&o.special.preferMapCallers)for(const call of ev.calls)contextualCalls.add(call)}
         if (mapMatch?.test(title)) for (const call of ev.calls) galleryCalls.add(call)
       }
     }
@@ -138,7 +143,7 @@ function buildCatalog(ctx) {
     const node = { id: `common-${event.id}`, title: name, subtitle: `${ev.text} 文本行`, script: `${join(rootOf(o), 'data/CommonEvents.json')}::common-${event.id}` }
     commonNodes.push(node)
     const wrapper = o.special.deduplicateCalls && event.list.filter(c=>c.code===401||c.code===357&&((c.parameters?.[0]==='LogDisplayPlugin'&&['setNewText','addToText'].includes(c.parameters?.[1]))||(c.parameters?.[0]==='LogMessage'&&c.parameters?.[1]==='add'))).length < o.special.minText && [...ev.calls].some(id=>ctx.common[id]&&evidence(ctx.common[id].list,ctx).text>=o.special.minText)
-    if (!wrapper && ev.text >= o.special.minText && (galleryCalls.has(event.id) || special(name, ev))) specials.set(node.script, { ...node, id: `special-${node.id}` })
+    if (!wrapper && !contextualCalls.has(event.id) && ev.text >= o.special.minText && (galleryCalls.has(event.id) || special(name, ev))) specials.set(node.script, { ...node, id: `special-${node.id}` })
   }
   return { title: ctx.system.gameTitle || 'RPG Maker', children: [
     ...(o.special.enabled && specials.size ? [{ id: 'special', title: o.special.label, children: [...specials.values()] }] : []),

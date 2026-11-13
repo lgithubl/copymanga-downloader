@@ -390,7 +390,7 @@ function compileRules(cfg) {
     gallery: rule.gallery || null,
   }))
 }
-const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, cfg.video || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex'), ...(cfg.format === 'tomoe' ? [3] : cfg.scriptDecoder === 'arcfam-scre' ? ['scre2'] : [])])).digest('hex').slice(0, 16)
+const fingerprint = (cfg) => createHash('sha1').update(JSON.stringify([CONTAINER_FORMAT_VERSION, cfg.rules, cfg.scriptDecoder, cfg.scriptExt, cfg.dir, cfg.mode || 'hybrid', cfg.format || 'willplus', Boolean(cfg.flat), cfg.maxEntries, cfg.maxTotalMB, cfg.emote || null, cfg.video || null, createHash('sha1').update(JSON.stringify(effectiveKeys(cfg))).digest('hex'), ...(cfg.format === 'tomoe' ? [3] : cfg.scriptDecoder === 'arcfam-scre' ? ['scre2'] : cfg.scriptDecoder === 'krkr-scn' ? ['scn-eventx1'] : [])])).digest('hex').slice(0, 16)
 const kindOf = (name, scriptKinds) => {
   const ext = extOf(name)
   if (SCRIPT_EXTS.has(ext)) return scriptKinds
