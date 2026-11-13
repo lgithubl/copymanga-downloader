@@ -1,7 +1,7 @@
 // Data-only AGE drawing primitives used by the native image-placement helper.
 // Unsupported operations return false; callers must stop, never silently skip.
 // Placement/query meanings are cross-checked against SC0000's native helper.
-export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, maxObjects = 2048 } = {}) {
+export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, maxObjects = 2048, metadataOnly = false } = {}) {
  if (!Number.isInteger(maxBytes) || maxBytes < 16 || maxBytes > 512 * 1024 * 1024 || !Number.isInteger(maxObjects) || maxObjects < 1 || maxObjects > 8192) throw Error('AGE graphics budget invalid')
  const textures = new Map(), objects = new Map(), referenced = new Set()
  let bytes = 0
@@ -15,10 +15,10 @@ export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, max
  const texture = key => { const value = textures.get(id(key)); if (!value) throw Error('AGE texture is not initialized: ' + key); return value }
  const setTexture = (key, value) => {
   id(key); dimensions(value.width, value.height)
-  if (!Buffer.isBuffer(value.rgba) || value.rgba.length !== value.width * value.height * 4) throw Error('AGE texture RGBA length invalid')
-  const size = bytes - (textures.get(key)?.rgba.length || 0) + value.rgba.length
+  if (!metadataOnly && (!Buffer.isBuffer(value.rgba) || value.rgba.length !== value.width * value.height * 4)) throw Error('AGE texture RGBA length invalid')
+  const size = bytes - (textures.get(key)?.byteLength || 0) + value.width * value.height * 4
   if (size > maxBytes || textures.size >= 2048 && !textures.has(key)) throw Error('AGE texture memory limit')
-  textures.set(key, { ...value, rgba: Buffer.from(value.rgba) }); bytes = size
+  textures.set(key, { ...value, byteLength: value.width * value.height * 4, ...(metadataOnly ? {} : { rgba: Buffer.from(value.rgba) }) }); bytes = size
  }
  function instruction(i, { read, write }) {
   const a = i.args, n = k => read(a[k]), put = (k, value) => write(a[k], value)
@@ -32,7 +32,7 @@ export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, max
     if (!image) throw Error('AGE image resource missing: ' + ordinal)
     setTexture(target, { ...image, ordinal }); return true
    }
-   case 0x1fa: { const key = id(n(0)); bytes -= textures.get(key)?.rgba.length || 0; textures.delete(key); return true }
+   case 0x1fa: { const key = id(n(0)); bytes -= textures.get(key)?.byteLength || 0; textures.delete(key); return true }
    case 0x208: { const t = texture(n(0)); put(1, t.width); put(2, t.height); return true }
    case 0x215: put(0, objects.get(id(n(1)))?.texture ?? -1); return true
    case 0x216: put(0, textures.get(id(n(1)))?.ordinal ?? -1); return true

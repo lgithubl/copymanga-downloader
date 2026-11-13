@@ -1,5 +1,6 @@
 import{sakanaKsAdapter}from './sakana-ks.mjs'
 import { edoLuaAdapter } from './edo-lua.mjs'
+import { ageSys4Adapter } from './age-sys4.mjs'
 // 适配器注册表。新增原始格式：写一个 { id, label, sniff(text), explainSniff?(text, options) → string（可选：sniff 没认时一句话说明原因）, parse(text, ctx, meta) → { steps, stats }（meta = { rel, stem }：这份脚本的路径和文件名） }，在这里登记即可。
 // 需要查别的文件才能解析的格式（别名表、图片目录…）再实现 contextFiles / contextDirs / prepare，见 ../context.mjs。
 import { advhdWs2Adapter } from './advhd-ws2.mjs'
@@ -37,6 +38,7 @@ export function registerGalAdapter(adapter) {
 registerGalAdapter(uviewerCsvAdapter)
 registerGalAdapter(pacScriptAdapter)
 registerGalAdapter(edoLuaAdapter)
+registerGalAdapter(ageSys4Adapter)
 registerGalAdapter(sakanaKsAdapter)
 registerGalAdapter(rpgMakerJsonAdapter)
 registerGalAdapter(renpyLegecloAdapter)     // 先于 monmusu：它的 sniff 要求 label H_xxx + $ enable_skip() / play voice，monmusu 的 label 是 h<数字>

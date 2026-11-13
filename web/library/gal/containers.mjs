@@ -1,4 +1,5 @@
 import {readSakanaIndex,readSakanaEntry,decodeSxEntry,sakanaMetadata,fafaValue,sakanaStorageSig} from './sakana.mjs'
+import { encodeAgeScriptPackage } from './adapters/age-sys4.mjs'
 import {readPbd} from './krkr-pbd.mjs'
 import {parseStandVariants} from './krkr-pimg.mjs'
 import { readEdoIndex, edoPayload } from './edo.mjs'
@@ -149,6 +150,7 @@ const TOMOE_ARC04_DECODER = {
 }
 // 脚本解码器：id → { ext 的默认值, decode(buffer, { arc, name }) → 文本 }
 export const SCRIPT_DECODERS = Object.freeze({
+  'age-sys4': { ext: 'age', decode: encodeAgeScriptPackage },
   'bgi-bs': BGI_BS_DECODER,
   'artemis-ast': ARTEMIS_AST_DECODER,
   'arcfam-scre': ARCFAM_SCRE_DECODER,
