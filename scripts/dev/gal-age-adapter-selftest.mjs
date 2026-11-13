@@ -3,11 +3,16 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { decodeAgeScript, decodeAgeImage, readAgeIndex, traceAgeProgram } from '../../web/library/gal/age.mjs'
-import { analyzeAgeScene, encodeAgeScriptPackage, parse } from '../../web/library/gal/adapters/age-sys4.mjs'
+import { analyzeAgeScene as analyzePreview, encodeAgeScriptPackage, parse as parsePreview } from '../../web/library/gal/adapters/age-sys4.mjs'
 import { buildScene } from '../../web/library/gal/scene.mjs'
 import { sniffGalAdapter } from '../../web/library/gal/adapters/index.mjs'
 import { stateAt } from '../../web/static/gal-engine.js'
 import { createAgeState } from '../../web/library/gal/age-state.mjs'
+
+// Preserve strict coverage checks while separately testing the user-selected
+// warning policy through the real default parse/analyze exports.
+const analyzeAgeScene = (data, options = {}) => analyzePreview(data, { unverifiedPolicy: 'error', ...options })
+const parse = (text, ctx = null, meta = {}) => parsePreview(text, ctx, { ...meta, options: { unverifiedPolicy: 'error', ...meta.options } })
 
 // Small binary assembler for control-flow/array edge cases, independent of the
 // JSON transport. Native corpus tests below are the format compatibility oracle.
@@ -37,6 +42,23 @@ function bin(rows) {
 }
 const pkg = (rows, extra = {}) => ({ ...JSON.parse(encodeAgeScriptPackage(bin(rows), { name: 'case.BIN' })), ...extra })
 const lit = n => arg(0, n), str = text => ({ type: 2, text }), global = n => arg(3, n)
+
+test('selected unverified instructions continue and retain every scene position and initialization source', () => {
+  const boot = { name: 'boot.BIN', script: bin([[0x35b,lit(2),lit(0)],[2]]).toString('base64') }
+  const data=pkg([[0x6e,lit(0),str('first')],[0x305],[0x72,lit(0)],
+    [0x35c,lit(0),lit(0)],[0x6e,lit(0),str('second')],[0x305],[0x72,lit(0)],[2]],{initialization:[boot]})
+  const scene=parsePreview(JSON.stringify(data))
+  assert.equal(scene.steps.length,2)
+  assert.equal(scene.stats.initialization.complete,true)
+  assert.deepEqual(scene.stats.opcodeWarnings.map(r=>[r.opcode,r.step,r.phase,r.script]),[
+    ['0x35b',null,'initialization','boot.BIN'],['0x305',0,'scene','case.BIN'],
+    ['0x35c',1,'scene','case.BIN'],['0x305',1,'scene','case.BIN']])
+  assert.deepEqual(scene.stats.ignored,{'0x35b':1,'0x305':2,'0x35c':1})
+  assert.ok(scene.stats.opcodeWarnings.every(r=>Number.isInteger(r.offset)&&Array.isArray(r.args)))
+  assert.throws(()=>parsePreview(JSON.stringify(data),null,{options:{unverifiedPolicy:'error'}}),/0x35b/)
+  assert.throws(()=>parsePreview(JSON.stringify(pkg([[0x304],[2]]))),/0x304/)
+  assert.throws(()=>analyzePreview(data,{unverifiedPolicy:'ignore-everything'}),/unverifiedPolicy/)
+})
 
 test('explicit callback replay enters the registered target, returns to the interrupted text and rejects unresolved events', () => {
   const data = pkg([[0x7b, lit(19), lit(-1)], [0x192, arg(5,100), str('normal')], [0x6e, lit(0), arg(5,100)],

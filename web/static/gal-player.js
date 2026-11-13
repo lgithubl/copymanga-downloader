@@ -155,7 +155,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const missing = new Set()
   // 渲染诊断的「适配器统计」：scene.stats 里除了上面单独处理的（raw / unresolved / notes / arrayGuess / arrayUnknown）之外的字段——所有游戏统一在这里露出来，不再只有认识的几个字段才显示。
   // 纯结构计数（指令数 / 行数 / 立绘数…）只在诊断文本里列出，不算「有问题」；别的非空字段（missing / fallbacks / ignored / frameEffects / indexTruncated / unmatchedEndif…）会让右下角提示可点
-  const STATS_HANDLED = new Set(['raw', 'unresolved', 'notes', 'arrayGuess', 'arrayUnknown'])
+  const STATS_HANDLED = new Set(['raw', 'unresolved', 'notes', 'arrayGuess', 'arrayUnknown', 'opcodeWarnings'])
   const STATS_STRUCTURE = new Set(['commands', 'rows', 'grids', 'frames', 'stands', 'live2d', 'movies', 'spines', 'choices', 'scene', 'scenes', 'form', 'dialect', 'classified'])
   const emptyStat = (value) => value === 0 || value === '' || value === false || value == null || (typeof value === 'object' && !Object.keys(value).length)
   const extraStats = Object.entries(scene.stats || {}).filter(([key, value]) => !STATS_HANDLED.has(key) && !emptyStat(value))
@@ -1685,6 +1685,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   function updateNote() {
     const parts = []
+    if (scene.stats?.opcodeWarnings?.length) parts.push(`跳过未确认指令 ${scene.stats.opcodeWarnings.length} 处（点开查看句子位置）`)
     if (rawIgnored) parts.push(`立绘/特效等 ${rawIgnored} 条指令暂未渲染`)
     if (spineUnavailable) parts.push('Spine 运行时缺失：立绘/动画未渲染')
     if (live2dUnavailable) parts.push('Live2D 需要 WebGL：模型未渲染')
@@ -2009,6 +2010,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     for (const info of spineLayer?.glInfo?.() || []) lines.push(`WebGL（Spine ${info.runtime}）：显卡 ${info.renderer} · 上下文${info.lost ? '【已丢失】' : '正常'} · 画布 ${info.canvas} · 最大贴图 ${info.maxTexture} · 最近 GL 错误 ${info.lastError}`)
     const extra = scene.stats || {}
+    if (extra.opcodeWarnings?.length) {
+      lines.push(`跳过未确认指令（${extra.opcodeWarnings.length} 处；不代表原生效果已实现）：`)
+      for (const row of extra.opcodeWarnings) {
+        const at = row.phase === 'initialization' ? '初始化（正文前）' : row.step === null ? '正文前（未生成句子）' : `第 ${row.step + 1} 句`
+        lines.push(`  ${at}：${row.opcode} · ${row.script || 'BIN'} @${row.offset} · 参数 ${JSON.stringify(row.args)}`)
+      }
+    }
     for (const note of extra.notes || []) lines.push(`提示：${note}`)
     if (extra.arrayGuess) lines.push(`数组形剧情：${extra.arrayGuess}`)
     if (extra.arrayUnknown) lines.push(`数组形里认不出的字符串位置：${JSON.stringify(extra.arrayUnknown).slice(0, 600)}`)

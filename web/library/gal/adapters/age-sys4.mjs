@@ -1,5 +1,6 @@
 // AGE SYS4: execute confirmed instructions, never flatten every code block into
-// dialogue. Unknown operations abort normal playback and remain inspectable via
+// dialogue. Three explicitly selected unverified opcodes may be skipped with diagnostics;
+// other unknown operations abort normal playback and remain inspectable via
 // analyzeAgeScene(). No EXE/DLL execution, native runtime, or network downloads.
 import { decodeAgeScript, traceAgeProgram } from '../age.mjs'
 import { createAgeGraphics } from '../age-graphics.mjs'
@@ -8,7 +9,7 @@ import { createAgeTimeline } from '../age-timeline.mjs'
 import { readAgeCatalog, ageResourceContext } from '../age-archive.mjs'
 
 export const ADAPTER_ID = 'age::sys4'
-export const DEFAULT_OPTIONS = { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000 }
+export const DEFAULT_OPTIONS = { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn' }
 export const sniff = text => /^\s*\{\s*"format"\s*:\s*"age-sys4\/1"/.test(String(text || '').slice(0, 256))
 export const explainSniff = () => '需要 age-sys4/1 脚本包；不把 SYS4INI 索引或原始 BIN 当作文本'
 export const contextFiles = () => []
@@ -25,6 +26,7 @@ export async function prepare({ options = {}, mediaDir, toResourcePath }) {
 }
 
 const safeSrc = src => typeof src === 'string' && src.length <= 1024 && !src.includes('\\') && !src.startsWith('/') && !src.includes(':') && src.split('/').every(part => part && part !== '.' && part !== '..')
+const UNVERIFIED = new Set([0x35b, 0x35c, 0x305])
 const IMPLEMENTED = new Set([
   2, 3, 5, 9, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
   0x61, 0x64, 0x6c, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xb8, 0xbf, 0xc2, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8, 0x2d5, 0x2f6, 0x2f8,
@@ -47,7 +49,9 @@ export function analyzeAgeScene(data, options = {}) {
   const program = binary(data.script), stage = options.stage || [1600, 900]
   if (!Array.isArray(stage) || stage.length !== 2 || stage.some(n => !Number.isInteger(n) || n < 1 || n > 8192)) throw Error('AGE stage invalid')
   const profile = options.scripts?.[data.name] || {}, resources = data.resources || {}
-  const steps = [], stats = { messages: 0, images: { referenced: 0, resolved: 0, unresolved: 0 }, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, raw: {}, ignored: {} }
+  const unverifiedPolicy = options.unverifiedPolicy ?? DEFAULT_OPTIONS.unverifiedPolicy
+  if (!['warn', 'error'].includes(unverifiedPolicy)) throw Error('AGE unverifiedPolicy must be warn or error')
+  const steps = [], stats = { opcodeWarnings: [], messages: 0, images: { referenced: 0, resolved: 0, unresolved: 0 }, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, raw: {}, ignored: {} }
   // Static inventory includes unreachable branches too; it is a coverage
   // report, not an instruction to skip these operations during execution.
   stats.staticUnimplemented = {}
@@ -135,6 +139,12 @@ export function analyzeAgeScene(data, options = {}) {
         stats.operations[op] = (stats.operations[op] || 0) + 1
         const unsupported = () => { stats.raw[op] = (stats.raw[op] || 0) + 1; return false }
         source ||= { script: machine.script, offset: i.offset }
+        if (UNVERIFIED.has(i.opcode) && unverifiedPolicy === 'warn') {
+          stats.ignored[op] = (stats.ignored[op] || 0) + 1
+          stats.opcodeWarnings.push({ step: machine.phase === 'initialization' ? null : steps.length, phase: machine.phase,
+            script: machine.script, offset: i.offset, opcode: op, args: i.args.map(a => ({ type: a.type, value: a.value })) })
+          return true
+        }
         if (runtime.instruction(i, machine)) return true
         if (timeline.instruction(i, machine)) return true
         // Static native handlers (older unpacked AGE: 419a60/419ab0), checked
@@ -226,8 +236,10 @@ export function analyzeAgeScene(data, options = {}) {
   // Preserve partial output exclusively for diagnostics; parse() below does
   // not hand it to the player as a successfully reconstructed scene.
   finish()
+  for (const row of stats.opcodeWarnings) if (row.step !== null && row.step >= steps.length) row.step = steps.length ? steps.length - 1 : null
   stats.run = run ? { status: run.status, stopped: run.stopped, missingScript: run.missingScript, steps: run.trace.length } : { status: 'error', stopped: current || null }
   stats.complete = complete
+  stats.approximate = stats.opcodeWarnings.length > 0
   stats.initialization = run?.initialization || { requested: Array.isArray(data.initialization) ? data.initialization.length : 0, complete: false }
   stats.displayBatchDepth = displayBatchDepth
   stats.state = runtime.snapshot()
@@ -257,4 +269,4 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps: result.steps, stats: result.stats }
 }
 
-export const ageSys4Adapter = { id: ADAPTER_ID, label: 'AGE SYS4（已确认指令；未支持指令明确报错）', sniff, explainSniff, parse, prepare, contextFiles, contextDirs }
+export const ageSys4Adapter = { id: ADAPTER_ID, label: 'AGE SYS4（指定未确认指令跳过并记录；开发中）', sniff, explainSniff, parse, prepare, contextFiles, contextDirs }
