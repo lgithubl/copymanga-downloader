@@ -11,7 +11,7 @@ test('received AGE1.57 dependency batch is complete; remaining prologue blocker 
  for(const r of report.files){const b=await readFile(root+r.artifact);assert.equal(b.length,r.bytes);assert.equal(createHash('sha256').update(b).digest('hex'),r.sha256);bytes+=b.length;if(r.logicalName.endsWith('.BIN')){ageControlFlow(decodeAgeScript(b));scripts++}if(r.logicalName.endsWith('.AGF')){const image=decodeAgeImage(b);assert.ok(image.width>0&&image.height>0);images++}}
  assert.equal(bytes,11329945);assert.equal(scripts,17);assert.equal(images,6)
  const sn=decodeAgeScript(await readFile(root+'__verify/age/SN0000.BIN')),state=traceAgeProgram(sn);assert.equal(sn.instructions.length,4335);assert.equal(state.status,'unsupported');assert.equal(state.stopped.opcode,0x1f4)
- console.log('AGE received/verified:25files,17scripts,6images,2audio; next implementation blocker SN0000 opcode0x1f4')
+ console.log('AGE received/verified:25files,17scripts,6images,2audio; core-only tracer stops at SN0000 opcode0x1f4; adapter extensions are verified separately')
 })
 test('two-way branches retain both targets; fallthrough and dynamic calls stay explicit',()=>{const a=value=>({type:0,value}),r=ageControlFlow({instructions:[{offset:0,opcode:0xa0,args:[a(1),a(10),a(0xffffffff)]},{offset:7,opcode:0x8f,args:[{type:3,value:12}]},{offset:10,opcode:5,args:[]}]});assert.deepEqual([r.nodes[0].yes,r.nodes[0].no],[10,7]);assert.equal(r.nodes[1].call.operand.type,3);assert.equal(r.unresolved.length,1);assert.equal(r.nodes[2].end,'return');assert.throws(()=>ageControlFlow({instructions:[{offset:0,opcode:0x8c,args:[a(1)]}]}),/boundary/)})
 test('unknown initializer operations fail closed',()=>{assert.throws(()=>ageLiteralInitializer({instructions:[{offset:0,opcode:0x2ff,args:[]}]}),/semantics/);const s=ageLiteralInitializer({instructions:[{offset:0,opcode:0x55,args:[{type:3,value:7},{type:0,value:0xffffffff}]},{offset:5,opcode:2,args:[]}]});assert.equal(s.integers[7],-1)})
@@ -76,13 +76,14 @@ test('native placement helper uses source dimensions and keeps the bottom anchor
  for(const name of ['BG054AA.AGF','CS001AAA.AGF','CS002AAA.AGF']){const row=index.entries.find(x=>x.name===name);images.set(row.ordinal,decodeAgeImage(await readFile(root+name)))}
  const gpu=createAgeGraphics({loadImage:n=>images.get(n)}),globals={...ids.integers,970752:101000,970753:101020,970754:101040}
  const draw=(slot,ordinal)=>traceAgeProgram(script,{entry:155991,integers:{...globals,970746:slot,970711:ordinal},onInstruction:gpu.instruction})
- const bg=draw(0,77);assert.equal(bg.status,'unsupported');assert.equal(bg.stopped.opcode,0x242)
+ const bg=draw(0,77);assert.equal(bg.status,'returned');assert.equal(bg.stopped,null)
  assert.deepEqual([gpu.objects.get(101000).x,gpu.objects.get(101000).y],[0,0])
- const first=draw(2,16485);assert.equal(first.stopped.opcode,0x242)
+ const first=draw(2,16485);assert.equal(first.status,'returned')
  assert.deepEqual([gpu.objects.get(101040).x,gpu.objects.get(101040).y],[128,-28])
- const second=draw(2,index.entries.find(x=>x.name==='CS002AAA.AGF').ordinal);assert.equal(second.stopped.opcode,0x242)
+ const second=draw(2,index.entries.find(x=>x.name==='CS002AAA.AGF').ordinal);assert.equal(second.status,'returned')
  assert.deepEqual([gpu.objects.get(101040).x,gpu.objects.get(101040).y],[224,36])
  const rect=gpu.objects.get(101040);assert.equal(rect.x+rect.crop[2]/2,800);assert.equal(rect.y+rect.crop[3],900)
- assert.equal(gpu.instruction({opcode:0x242,args:[]},{read:()=>0,write:()=>{}}),false)
+ assert.equal(rect.updatePolicy,0);assert.equal(rect.visible,true)
+ assert.equal(gpu.instruction({opcode:0x242,args:[]},{read:()=>2,write:()=>{}}),false)
  const limited=createAgeGraphics({maxBytes:16,loadImage:n=>images.get(n)});assert.throws(()=>traceAgeProgram(script,{entry:155991,integers:{...globals,970746:0,970711:77},onInstruction:limited.instruction}),/memory limit/)
 })

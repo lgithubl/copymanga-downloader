@@ -148,6 +148,43 @@ test('input regions preserve native rectangle matching, first-match binding and 
   assert.throws(() => parse(JSON.stringify(pkg([[0x90, lit(0), lit(0), lit(1), lit(1), lit(-1), lit(-1), lit(0)], [2]]))), /callback dispatch/)
 })
 
+test('input activation is sequential registration, not a jump, wait or callback cancellation', () => {
+  const data = pkg([[0x94], [0x1ad], [0x6e, lit(0), str('after input setup')], [2]])
+  const scene = parse(JSON.stringify(data))
+  assert.equal(scene.steps[0].commands[0].segments[0].text, 'after input setup')
+  assert.deepEqual(scene.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'case.BIN', instance: 0 } })
+  const pending = analyzeAgeScene(pkg([[0x7b, lit(0), lit(-1)], [0x94], [0x1ad], [2]]))
+  assert.equal(pending.complete, false); assert.match(pending.stats.error, /callback dispatch/)
+})
+
+test('native restore checkpoint takes only the supported fresh-run path', () => {
+  const scene = parse(JSON.stringify(pkg([[0xae], [0x6e, lit(0), str('fresh')], [0xae], [2]])))
+  assert.equal(scene.steps[0].commands[0].segments[0].text, 'fresh')
+  assert.deepEqual(scene.stats.state.restore, { nativeSaveLoaded: false, checks: 2 })
+  assert.throws(() => parse(JSON.stringify(pkg([[0xae], [0x305], [2]]))), /0x305/)
+})
+
+test('native zero-gain BGM control uses an asynchronous fade and rejects other unimplemented gains', () => {
+  const result = parse(JSON.stringify(pkg([[0xc2, lit(0), lit(5000)], [0x6e, lit(0), str('next')], [2]])))
+  assert.deepEqual(result.steps[0].commands.map(c => c.op), ['bgmStop', 'text'])
+  assert.deepEqual(result.steps[0].commands[0], { op: 'bgmStop', fade: 5 })
+  assert.deepEqual(parse(JSON.stringify(pkg([[0xc2, lit(0), lit(0)], [2]]))).steps[0].commands[0], { op: 'bgmStop', fade: 0 })
+  for (const [gain, ms] of [[5000, 5000], [0, -1], [0, 120001]])
+    assert.throws(() => parse(JSON.stringify(pkg([[0xc2, lit(gain), lit(ms)], [2]]))), /0xc2/)
+})
+
+test('static update policy changes neither visible image nor position; unknown policy/animation still fails', () => {
+  const data = pkg([[0x1f9, lit(77), lit(10), lit(-1)],
+    [0x1fb, lit(21), lit(10), lit(0), lit(0), lit(4), lit(5), lit(100), lit(200)],
+    [0x242, lit(21), lit(1)], [0x242, lit(21), lit(0)], [2]],
+    { resources: { images: { 77: { src: 'age/res/image.png', width: 4, height: 5 } } } })
+  const result = parse(JSON.stringify(data)), overlay = stateAt({ format: 'gal-scene/1', steps: result.steps }, 0).overlays[0]
+  assert.equal(overlay.src, 'age/res/image.png')
+  assert.deepEqual([overlay.x, overlay.y], [102 - 800, 202.5 - 450])
+  assert.throws(() => parse(JSON.stringify(pkg([[0x242, lit(21), lit(2)], [2]]))), /0x242/)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x238, lit(100)], [2]]))), /0x238/)
+})
+
 const corpus = '.cache/age-upstream-20261113/manifest.json'
 test('all 146 native arrays match upstream element-for-element; all 30 instruction streams retain compatibility', { skip: !existsSync(corpus) }, async () => {
   const manifest = JSON.parse(await readFile(corpus)), comparison = JSON.parse(await readFile('.cache/age-upstream-20261113/comparison.json'))
@@ -168,11 +205,13 @@ test('all 146 native arrays match upstream element-for-element; all 30 instructi
 const native = '.cache/age-072229/extracted/g01/__verify/age'
 test('native SN0000 fails explicitly; native first narration preserves ruby in diagnostic output without claiming playback', { skip: !existsSync(native) }, async () => {
   const bytes = await readFile(native + '/SN0000.BIN'), data = JSON.parse(encodeAgeScriptPackage(bytes, { name: 'SN0000.BIN' }))
-  assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @715 opcode 0x94/)
+  assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @2682 opcode 0x1cf/)
   const start = analyzeAgeScene(data)
-  assert.deepEqual(start.stats.run.stopped, { script: 'SN0000.BIN', offset: 715, opcode: 0x94 })
-  assert.equal(start.stats.run.status, 'unsupported'); assert.equal(start.stats.run.steps, 80)
+  assert.deepEqual(start.stats.run.stopped, { script: 'SN0000.BIN', offset: 2682, opcode: 0x1cf })
+  assert.equal(start.stats.run.status, 'unsupported'); assert.equal(start.stats.run.steps, 92)
   assert.equal(start.stats.state.resets, 1); assert.equal(start.stats.state.writes, 34)
+  assert.deepEqual(start.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'SN0000.BIN', instance: 0 } })
+  assert.deepEqual(start.stats.state.restore, { nativeSaveLoaded: false, checks: 1 })
   assert.equal(start.stats.state.flags.length, 34)
   assert.deepEqual(start.stats.state.pendingCallbacks[0].targets, [2555, 2607])
   assert.deepEqual(start.stats.state.inputRegions.map(r => [r.rect, r.inputBit, r.targets[2]]), [
@@ -188,7 +227,7 @@ test('native SN0000 fails explicitly; native first narration preserves ruby in d
   assert.ok(segments.map(s => s.text).join('').includes('がありました。'))
 })
 
-test('native image-placement helper feeds actual standard scene overlays; unsupported visibility remains explicit', { skip: !existsSync(native) }, async () => {
+test('native image-placement helper returns normally and feeds actual standard scene overlays', { skip: !existsSync(native) }, async () => {
   const base = '.cache/new-games-043952/extracted/g05', index = readAgeIndex(await readFile(base + '/SYS4INI.BIN'))
   const images = {}
   for (const name of ['BG054AA.AGF', 'CS001AAA.AGF', 'CS002AAA.AGF']) {
@@ -198,7 +237,7 @@ test('native image-placement helper feeds actual standard scene overlays; unsupp
   const system = traceAgeProgram(decodeAgeScript(await readFile('.cache/new-games-052443/extracted/g05/__verify/age/SYSTEM4.BIN')), { entry: 2040 })
   const data = { ...JSON.parse(encodeAgeScriptPackage(await readFile(base + '/SC0000.BIN'), { name: 'SC0000.BIN' })), resources: { images } }
   const result = analyzeAgeScene(data, { scripts: { 'SC0000.BIN': { entry: 155991 } }, integers: { ...system.integers, 970752: 101000, 970753: 101020, 970754: 101040, 970746: 2, 970711: 16485 } })
-  assert.equal(result.complete, false); assert.equal(result.stats.run.stopped.opcode, 0x242)
+  assert.equal(result.complete, true); assert.equal(result.stats.run.status, 'returned')
   const overlay = result.steps.flatMap(s => s.commands).find(c => c.op === 'overlay')
   assert.deepEqual([overlay.x, overlay.y, overlay.stage], [0, -14, [1600, 900]])
   assert.equal(overlay.src, 'age/res/CS001AAA.png')

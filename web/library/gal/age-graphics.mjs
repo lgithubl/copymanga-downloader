@@ -39,6 +39,16 @@ export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, max
    case 0x217: object(n(0)).pivot = [n(1), n(2), n(3)]; return true
    case 0x218: { const pivot = objects.get(id(n(0)))?.pivot || [0, 0, 0]; for (let k = 0; k < 3; k++) put(k + 1, pivot[k]); return true }
    case 0x21a: { const o = objects.get(id(n(0))); put(1, o?.x || 0); put(2, o?.y || 0); put(3, o?.z || 0); return true }
+   case 0x242: {
+    // 4247c0 -> 49cf70 writes +2d0 in the draw record. Its consumers
+    // 48b94f/48c854 use bit 0 during timed property updates; this is NOT
+    // object visibility. Static draws have no pending interpolation. Preserve
+    // the flag without changing the image. Timed update opcodes still fail
+    // closed, so their behavior cannot be silently flattened by this subset.
+    const policy = n(1)
+    if (policy !== 0 && policy !== 1) return false
+    object(n(0)).updatePolicy = policy; return true
+   }
    case 0x1fb: {
     const target = id(n(0)), key = id(n(1)), t = texture(key), crop = [n(2), n(3), n(4), n(5)], x = n(6), y = n(7)
     if (crop.some(v => !Number.isInteger(v)) || crop[0] < 0 || crop[1] < 0 || crop[2] < 1 || crop[3] < 1 || crop[0] + crop[2] > t.width || crop[1] + crop[3] > t.height) throw Error('AGE draw rectangle outside texture')

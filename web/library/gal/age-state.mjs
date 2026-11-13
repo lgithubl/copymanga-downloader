@@ -4,11 +4,30 @@
 // keyboard input, or any other unverified consumer-facing behavior.
 export function createAgeState() {
   const flagsA = new Uint8Array(1000), flagsB = new Uint8Array(1000), callbacks = new Map(), regions = []
-  let resets = 0, writes = 0
+  let resets = 0, writes = 0, inputEnabled = false, inputColumns = 0, inputOwner = null, restoreChecks = 0
   function instruction(i, machine) {
     const read = k => machine.read(i.args[k])
     const targetsValid = targets => {
       for (const target of targets) if (target !== -1 && (!Number.isInteger(target) || !machine.isCodeOffset?.(target))) throw Error('AGE callback is not an instruction boundary')
+    }
+    if (i.opcode === 0xae) {
+      // 418cd0: +5d798 is zero on a fresh VM (40cacd). Nonzero is set
+      // only by native save loading (4106c3/4109be/410ea9/41161a), then
+      // SaveVersion1/2 select a restored thread/PC. This adapter never loads
+      // a native save snapshot; only the confirmed fresh-run branch applies.
+      restoreChecks++; return true
+    }
+    if (i.opcode === 0x94) {
+      // 418c10 enables input (+c9d0) and calls 403fb0(10000). The latter
+      // activates the region table with a 10000-column navigation stride.
+      // It does not wait or call a script target. Native dispatch happens in
+      // the outer interpreter (411be1 / 411fd5), only when an event is ready.
+      inputEnabled = true; inputColumns = 10000; return true
+    }
+    if (i.opcode === 0x1ad) {
+      // 4190d0 records the current execution slot in +a2f50; no jump/wait.
+      // Keep our invocation identity for diagnostics, not as a native thread id.
+      inputOwner = { script: machine.script, instance: machine.scriptInstance }; return true
     }
     if (i.opcode === 0x259) {
       // 419d70: clear fields +0/+4 in two 1000-element, 20-byte-stride tables.
@@ -60,7 +79,7 @@ export function createAgeState() {
   }
   return { instruction,
     hasCallbacks: () => callbacks.size > 0 || regions.length > 0,
-    snapshot: () => ({ resets, writes, flags: Array.from(flagsA).flatMap((mask, slot) => mask ? [{ slot, mask }] : []),
+    snapshot: () => ({ resets, writes, restore: { nativeSaveLoaded: false, checks: restoreChecks }, input: { enabled: inputEnabled, columns: inputColumns, owner: inputOwner ? { ...inputOwner } : null }, flags: Array.from(flagsA).flatMap((mask, slot) => mask ? [{ slot, mask }] : []),
       // Callback dispatch still needs native event/exit semantics. Keep these
       // visible and prevent a scene from being reported complete with them.
       pendingCallbacks: [...callbacks.values()].map(value => ({ ...value, targets: [...value.targets] })),

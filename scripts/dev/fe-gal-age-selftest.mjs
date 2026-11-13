@@ -25,7 +25,7 @@ const ids = traceAgeProgram(decodeAgeScript(await readFile('.cache/new-games-052
 const data = { ...JSON.parse(encodeAgeScriptPackage(await readFile('.cache/new-games-043952/extracted/g05/SC0000.BIN'), { name: 'SC0000.BIN' })), resources: { images } }
 const draw = (slot, ordinal) => {
   const result = analyzeAgeScene(data, { scripts: { 'SC0000.BIN': { entry: 155991 } }, integers: { ...ids.integers, 970752: 101000, 970753: 101020, 970754: 101040, 970746: slot, 970711: ordinal } })
-  assert.equal(result.complete, false); assert.equal(result.stats.run.stopped.opcode, 0x242)
+  assert.equal(result.complete, true); assert.equal(result.stats.run.status, 'returned')
   return result.steps.flatMap(s => s.commands)
 }
 const sn = JSON.parse(encodeAgeScriptPackage(await readFile(root + '/SN0000.BIN'), { name: 'SN0000.BIN' }))
@@ -84,6 +84,6 @@ try {
   assert.ok(pixels.checked > 1000); assert.equal(pixels.mismatches, 0)
   assert.deepEqual(errors, [])
   await page.screenshot({ path: out + '/native-components.png' })
-  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, errors, stops: ['SN0000@715:0x94', 'placement:0x242', 'text-tail:0x305'] }, null, 2))
+  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, errors, placementHelperReturned: true, stops: ['SN0000@2682:0x1cf', 'text-tail:0x305'] }, null, 2))
   console.log('PASS native AGE component display (not full scene playback)', pixels, out)
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }
