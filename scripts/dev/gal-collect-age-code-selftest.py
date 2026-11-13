@@ -1,7 +1,7 @@
-"""Default AGE collection copies one exact backup binary as data, never executes it."""
+"""Explicit AGE collection copies one exact backup binary as data, never executes it."""
 import pathlib, tempfile, re, json, zlib, base64, hashlib, subprocess, os, tarfile
 src = pathlib.Path('scripts/dev/gal-collect-run.sh').read_text()
-assert "ROUND_RULES='^new-games:age-code$'" in src
+assert "ROUND_RULES='^new-games:age-scene$'" in src
 match = re.search(r"AGE_CODE_PLAN = '([^']+)'", src)
 plan = json.loads(zlib.decompress(base64.b64decode(match[1])))
 row = plan['天結いラビリンスマイスター']['ranges'][0]
@@ -25,7 +25,7 @@ fixture = {'天結いラビリンスマイスター': {'guards': [dict(source='S
 encoded = base64.b64encode(zlib.compress(json.dumps(fixture).encode())).decode()
 script = base/'collector.sh'; script.write_text(src[:match.start(1)]+encoded+src[match.end(1):])
 env = {k:v for k,v in os.environ.items() if not k.startswith('GAL_COLLECT_')}
-out = base/'out'; env.update(GAL_COLLECT_DRYRUN='1', GAL_COLLECT_OUT=str(out), GAL_COLLECT_CACHE_DIR=str(cache))
+out = base/'out'; env.update(GAL_COLLECT_RULES='^new-games:age-code$', GAL_COLLECT_DRYRUN='1', GAL_COLLECT_OUT=str(out), GAL_COLLECT_CACHE_DIR=str(cache))
 run = subprocess.run(['bash', str(script), str(root)], env=env, capture_output=True, text=True)
 assert run.returncode == 0, run.stdout+run.stderr
 parts = list(out.glob('*.part-*')); assert len(parts) == 1
@@ -41,4 +41,4 @@ original.write_bytes(payload+b'changed')
 env['GAL_COLLECT_OUT'] = str(base/'rejected')
 run = subprocess.run(['bash', str(script), str(root)], env=env, capture_output=True, text=True)
 assert run.returncode != 0 and 'source size changed' in run.stdout+run.stderr
-print('PASS default AGE-only backup engine, exact version/size guards, no other sources or execution; retained:', base)
+print('PASS explicit AGE-only backup engine, exact version/size guards, no other sources or execution; retained:', base)

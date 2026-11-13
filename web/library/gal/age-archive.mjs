@@ -82,7 +82,7 @@ export function readAgeEntry(row, byteLength = row.size) {
 export function ageResourceContext(catalog, namespace = 'sys4ini', toResourcePath = value => value) {
   const table = catalog.indexes.find(index => index.namespace === namespace)
   if (!table) throw Error('AGE resource namespace missing: ' + namespace)
-  const images = {}, voice = {}, links = {}, decoded = new Map()
+  const images = {}, voice = {}, bgm = {}, links = {}, decoded = new Map()
   for (const row of table.entries) {
     if (/\.agf$/i.test(row.name)) Object.defineProperty(images, row.ordinal, { enumerable: true, get() {
       if (!decoded.has(row.ordinal)) {
@@ -99,9 +99,21 @@ export function ageResourceContext(catalog, namespace = 'sys4ini', toResourcePat
       return { name: row.name, script: bytes.toString('base64') }
     } })
   }
+  // Native file-music player 47eac0 indexes its vector with (logical id - 2).
+  // SYS4INI's zero-flags number table stores archive resource ordinals, not
+  // filenames or repeated per-ALF entry ids. Id 0 stops; id 1 is not a track.
+  // High-byte additional groups use a different native table and stay unmapped.
+  if (table.metadata?.flags === 0) {
+    const entries = new Map(table.entries.map(row => [row.ordinal, row]))
+    for (const [k, ordinal] of table.metadata.numbers.entries()) {
+      const row = entries.get(ordinal)
+      if (!row || !/\.(?:wav|xwm|ogg)$/i.test(row.name)) throw Error('AGE BGM table references a non-audio ordinal: ' + ordinal)
+      bgm[k + 2] = toResourcePath(row.src)
+    }
+  }
   const settings = Object.fromEntries((catalog.indexes[0].metadata?.settings || []).map(row => [row.name, row.value]))
   const stage = [Number(settings.SCREENX), Number(settings.SCREENY)]
-  return { resources: { images, voice }, links, ...(stage.every(n => Number.isInteger(n) && n > 0 && n <= 8192) ? { stage } : {}) }
+  return { resources: { images, voice, bgm }, links, ...(stage.every(n => Number.isInteger(n) && n > 0 && n <= 8192) ? { stage } : {}) }
 }
 
 // Build only script packages; media remain in ALF until actually requested.

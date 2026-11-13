@@ -4,11 +4,19 @@
 // keyboard input, or any other unverified consumer-facing behavior.
 export function createAgeState() {
   const flagsA = new Uint8Array(1000), flagsB = new Uint8Array(1000), callbacks = new Map(), regions = []
-  let resets = 0, writes = 0, inputEnabled = false, inputColumns = 0, inputOwner = null, restoreChecks = 0
+  let resets = 0, writes = 0, inputEnabled = false, inputColumns = 0, inputOwner = null, restoreChecks = 0, controlMask = 0
   function instruction(i, machine) {
     const read = k => machine.read(i.args[k])
     const targetsValid = targets => {
       for (const target of targets) if (target !== -1 && (!Number.isInteger(target) || !machine.isCodeOffset?.(target))) throw Error('AGE callback is not an instruction boundary')
+    }
+    if (i.opcode === 0x1cf) {
+      // 420a70 writes +778a4. Consumers 406fa8/41261d gate skip/advance.
+      // Only the default zero mask is supported; nonzero needs native input
+      // policy, not a silent override of the player's own controls.
+      const value = read(0)
+      if (value !== 0) return false
+      controlMask = value; return true
     }
     if (i.opcode === 0xae) {
       // 418cd0: +5d798 is zero on a fresh VM (40cacd). Nonzero is set
@@ -79,7 +87,7 @@ export function createAgeState() {
   }
   return { instruction,
     hasCallbacks: () => callbacks.size > 0 || regions.length > 0,
-    snapshot: () => ({ resets, writes, restore: { nativeSaveLoaded: false, checks: restoreChecks }, input: { enabled: inputEnabled, columns: inputColumns, owner: inputOwner ? { ...inputOwner } : null }, flags: Array.from(flagsA).flatMap((mask, slot) => mask ? [{ slot, mask }] : []),
+    snapshot: () => ({ resets, writes, controlMask, restore: { nativeSaveLoaded: false, checks: restoreChecks }, input: { enabled: inputEnabled, columns: inputColumns, owner: inputOwner ? { ...inputOwner } : null }, flags: Array.from(flagsA).flatMap((mask, slot) => mask ? [{ slot, mask }] : []),
       // Callback dispatch still needs native event/exit semantics. Keep these
       // visible and prevent a scene from being reported complete with them.
       pendingCallbacks: [...callbacks.values()].map(value => ({ ...value, targets: [...value.targets] })),

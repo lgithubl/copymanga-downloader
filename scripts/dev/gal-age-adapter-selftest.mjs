@@ -182,7 +182,19 @@ test('static update policy changes neither visible image nor position; unknown p
   assert.equal(overlay.src, 'age/res/image.png')
   assert.deepEqual([overlay.x, overlay.y], [102 - 800, 202.5 - 450])
   assert.throws(() => parse(JSON.stringify(pkg([[0x242, lit(21), lit(2)], [2]]))), /0x242/)
-  assert.throws(() => parse(JSON.stringify(pkg([[0x238, lit(100)], [2]]))), /0x238/)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x220, lit(1), lit(0), lit(0), lit(1), lit(1), lit(0)], [2]]))), /0x220/)
+})
+
+test('update timer barriers retain sequence, replace earlier timers and never sleep in parsing', () => {
+  const result = parse(JSON.stringify(pkg([[0x6e, lit(0), str('before')], [0x238, lit(5000)], [0x238, lit(5500)], [0x21c],
+    [0x6e, lit(0), str('after')], [0x21c], [2]])))
+  assert.deepEqual(result.steps[0].commands.map(c => c.op), ['text', 'wait', 'text'])
+  assert.deepEqual(result.steps[0].commands[1], { op: 'wait', seconds: 5.5 })
+  assert.deepEqual(result.stats.timeline, { elapsedMs: 5500, pendingMs: 0, barriers: 2 })
+  for (const value of [-1, 120001]) assert.throws(() => parse(JSON.stringify(pkg([[0x238, lit(value)], [0x21c], [2]]))), /timer out of range/)
+  for (const end of [[[2]], [[0x72, lit(0)], [2]]]) assert.throws(() => parse(JSON.stringify(pkg([[0x238, lit(10)], ...end]))), /pending update timer/)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x1f4], [0x238, lit(10)], [0x21c], [2]]))), /uncommitted display batch/)
+  assert.throws(() => parse(JSON.stringify(pkg([[0x1cf, lit(1)], [2]]))), /0x1cf/)
 })
 
 const corpus = '.cache/age-upstream-20261113/manifest.json'
@@ -205,10 +217,12 @@ test('all 146 native arrays match upstream element-for-element; all 30 instructi
 const native = '.cache/age-072229/extracted/g01/__verify/age'
 test('native SN0000 fails explicitly; native first narration preserves ruby in diagnostic output without claiming playback', { skip: !existsSync(native) }, async () => {
   const bytes = await readFile(native + '/SN0000.BIN'), data = JSON.parse(encodeAgeScriptPackage(bytes, { name: 'SN0000.BIN' }))
-  assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @2682 opcode 0x1cf/)
+  assert.throws(() => parse(JSON.stringify(data)), /SN0000.BIN @23131 opcode 0x1f9.*image mapping missing: 4814/)
   const start = analyzeAgeScene(data)
-  assert.deepEqual(start.stats.run.stopped, { script: 'SN0000.BIN', offset: 2682, opcode: 0x1cf })
-  assert.equal(start.stats.run.status, 'unsupported'); assert.equal(start.stats.run.steps, 92)
+  assert.deepEqual(start.stats.run.stopped, { script: 'SN0000.BIN', offset: 23131, opcode: 0x1f9 })
+  assert.equal(start.stats.run.status, 'error')
+  assert.deepEqual(start.stats.timeline, { elapsedMs: 5500, pendingMs: 0, barriers: 1 })
+  assert.deepEqual(start.steps[0].commands, [{ op: 'bgmStop', fade: 5 }, { op: 'wait', seconds: 5.5 }])
   assert.equal(start.stats.state.resets, 1); assert.equal(start.stats.state.writes, 34)
   assert.deepEqual(start.stats.state.input, { enabled: true, columns: 10000, owner: { script: 'SN0000.BIN', instance: 0 } })
   assert.deepEqual(start.stats.state.restore, { nativeSaveLoaded: false, checks: 1 })

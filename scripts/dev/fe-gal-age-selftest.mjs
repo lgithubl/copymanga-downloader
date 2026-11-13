@@ -5,6 +5,7 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { existsSync } from 'node:fs'
 import { decodeAgeScript, decodeAgeImage, readAgeIndex, traceAgeProgram } from '../../web/library/gal/age.mjs'
 import { analyzeAgeScene, encodeAgeScriptPackage } from '../../web/library/gal/adapters/age-sys4.mjs'
 import { encodePng } from '../../web/library/gal/bgi.mjs'
@@ -18,6 +19,12 @@ await mkdir(out, { recursive: true })
 const index = readAgeIndex(await readFile('.cache/new-games-043952/extracted/g05/SYS4INI.BIN')), assets = new Map(), images = {}
 for (const name of ['BG054AA.AGF', 'CS001AAA.AGF', 'CS002AAA.AGF']) {
   const decoded = decodeAgeImage(await readFile(root + '/' + name)), src = 'age/res/' + name.replace('.AGF', '.png')
+  images[index.entries.find(e => e.name === name).ordinal] = { src, width: decoded.width, height: decoded.height }
+  assets.set(src, encodePng(decoded.width, decoded.height, 4, decoded.rgba))
+}
+const prologueRoot = '.cache/age-prologue-065112/extracted/g01/__verify/age'
+if (existsSync(prologueRoot)) for (const name of ['EV901A.AGF', 'EV902A.AGF']) {
+  const decoded = decodeAgeImage(await readFile(prologueRoot + '/' + name)), src = 'age/res/' + name.replace('.AGF', '.png')
   images[index.entries.find(e => e.name === name).ordinal] = { src, width: decoded.width, height: decoded.height }
   assets.set(src, encodePng(decoded.width, decoded.height, 4, decoded.rgba))
 }
@@ -84,6 +91,36 @@ try {
   assert.ok(pixels.checked > 1000); assert.equal(pixels.mismatches, 0)
   assert.deepEqual(errors, [])
   await page.screenshot({ path: out + '/native-components.png' })
-  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, errors, placementHelperReturned: true, stops: ['SN0000@2682:0x1cf', 'text-tail:0x305'] }, null, 2))
+  let prologuePixels = null
+  if (images[4814]) {
+    const prefix = analyzeAgeScene({ ...sn, resources: { images } })
+    assert.equal(prefix.complete, false); assert.equal(prefix.stats.run.stopped.opcode, 0x220)
+    assert.deepEqual(prefix.stats.timeline, { elapsedMs: 5500, pendingMs: 0, barriers: 1 })
+    const prefixScene = { format: 'gal-scene/1', steps: prefix.steps, stats: { diagnosticOnly: true } }
+    await writeFile(out + '/native-prologue-prefix.json', JSON.stringify(prefix, null, 2))
+    const probe = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+    probe.on('pageerror', e => errors.push(e.message))
+    await probe.goto(base)
+    await probe.evaluate(async ({ scene, base }) => {
+      const { createGalPlayer } = await import('/gal-player.js')
+      window.player = createGalPlayer({ container: document.querySelector('#host'), reader: { node: {}, scene, resourceBase: base + '/fixture' } })
+    }, { scene: prefixScene, base })
+    await probe.waitForFunction(() => { const c = document.querySelector('canvas.gal-overlay'); return c && c.getContext('2d').getImageData(400, 200, 1, 1).data[3] > 0 }, null, { timeout: 20000 })
+    prologuePixels = await probe.evaluate(async base => {
+      const actual = document.querySelector('canvas.gal-overlay'), ref = document.createElement('canvas')
+      ref.width = actual.width; ref.height = actual.height
+      const image = new Image(); image.src = base + '/fixture?path=age/res/EV901A.png'; await image.decode()
+      const k = ref.width / 1600
+      ref.getContext('2d').drawImage(image, 0, (900 - 1844) * k, 1600 * k, 1844 * k)
+      const a = actual.getContext('2d').getImageData(0, 0, ref.width, ref.height).data, b = ref.getContext('2d').getImageData(0, 0, ref.width, ref.height).data
+      let checked = 0, mismatches = 0
+      for (let i = 0; i < a.length; i += 4 * 31) { checked++; if ([0,1,2,3].some(c => Math.abs(a[i+c]-b[i+c]) > 2)) mismatches++ }
+      return { checked, mismatches }
+    }, base)
+    assert.equal(prologuePixels.mismatches, 0); assert.deepEqual(errors, [])
+    await probe.screenshot({ path: out + '/native-prologue-prefix.png' })
+    await probe.close()
+  }
+  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, prologuePixels, errors, placementHelperReturned: true, stops: ['SN0000 prefix:0x220', 'text-tail:0x305'] }, null, 2))
   console.log('PASS native AGE component display (not full scene playback)', pixels, out)
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

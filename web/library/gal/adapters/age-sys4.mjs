@@ -4,6 +4,7 @@
 import { decodeAgeScript, traceAgeProgram } from '../age.mjs'
 import { createAgeGraphics } from '../age-graphics.mjs'
 import { createAgeState } from '../age-state.mjs'
+import { createAgeTimeline } from '../age-timeline.mjs'
 import { readAgeCatalog, ageResourceContext } from '../age-archive.mjs'
 
 export const ADAPTER_ID = 'age::sys4'
@@ -27,7 +28,7 @@ const safeSrc = src => typeof src === 'string' && src.length <= 1024 && !src.inc
 const IMPLEMENTED = new Set([
   2, 3, 5, 9, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
   0x61, 0x64, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xbf, 0xc2, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8,
-  0x7b, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a,
+  0x7b, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21c,
 ])
 function binary(encoded) {
   if (typeof encoded !== 'string' || encoded.length > 22369624 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw Error('AGE BIN base64 invalid/oversized')
@@ -73,6 +74,10 @@ export function analyzeAgeScene(data, options = {}) {
   }
   const gpu = createAgeGraphics({ loadImage: image, metadataOnly: true })
   const runtime = createAgeState()
+  const timeline = createAgeTimeline({ wait: seconds => {
+    if (displayBatchDepth) throw Error('AGE update barrier inside uncommitted display batch')
+    flushText(); commands.push({ op: 'wait', seconds })
+  } })
   const audio = (op, id) => {
     const bucket = op === 'voice' ? 'voices' : 'bgm'
     stats[bucket].referenced++
@@ -101,6 +106,7 @@ export function analyzeAgeScene(data, options = {}) {
         const unsupported = () => { stats.raw[op] = (stats.raw[op] || 0) + 1; return false }
         source ||= { script: machine.script, offset: i.offset }
         if (runtime.instruction(i, machine)) return true
+        if (timeline.instruction(i, machine)) return true
         // Static native handlers (older unpacked AGE: 419a60/419ab0), checked
         // against the paired use in collected SYS4485 scripts: suspend display
         // updates with nesting, then release them. This is state, not a blanket
@@ -121,7 +127,7 @@ export function analyzeAgeScene(data, options = {}) {
           if (read(0) !== 0) return unsupported()
           if (segments.length) segments.push({ text: '\n' }); return true
         }
-        if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); if (runtime.hasCallbacks()) throw Error('AGE callback dispatch at input wait is not implemented'); finish(); return true }
+        if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); if (timeline.pending) throw Error('AGE input wait with pending update timer'); if (runtime.hasCallbacks()) throw Error('AGE callback dispatch at input wait is not implemented'); finish(); return true }
         if (i.opcode === 0xbf && read(0) === 0) { commands.push({ op: 'bgmStop' }); return true }
         if (i.opcode === 0xc2) {
           // 420500 -> 47aa70/47abb0: interpolate BGM gain toward arg 1.
@@ -150,6 +156,7 @@ export function analyzeAgeScene(data, options = {}) {
     })
   } catch (error) { failure = String(error.message || error) }
   if (!failure && ['returned', 'exited'].includes(run?.status) && displayBatchDepth) failure = 'AGE uncommitted display batch at script end'
+  if (!failure && ['returned', 'exited'].includes(run?.status) && timeline.pending) failure = 'AGE pending update timer at script end'
   if (!failure && ['returned', 'exited'].includes(run?.status) && runtime.hasCallbacks()) failure = 'AGE callback dispatch at script exit is not implemented'
   const complete = !failure && ['returned', 'exited'].includes(run?.status)
   // Preserve partial output exclusively for diagnostics; parse() below does
@@ -159,6 +166,7 @@ export function analyzeAgeScene(data, options = {}) {
   stats.complete = complete
   stats.displayBatchDepth = displayBatchDepth
   stats.state = runtime.snapshot()
+  stats.timeline = timeline.snapshot()
   if (failure) stats.error = failure
   return { steps, stats, complete }
 }
