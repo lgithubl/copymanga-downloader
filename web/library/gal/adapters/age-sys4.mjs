@@ -27,8 +27,8 @@ export async function prepare({ options = {}, mediaDir, toResourcePath }) {
 const safeSrc = src => typeof src === 'string' && src.length <= 1024 && !src.includes('\\') && !src.startsWith('/') && !src.includes(':') && src.split('/').every(part => part && part !== '.' && part !== '..')
 const IMPLEMENTED = new Set([
   2, 3, 5, 9, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
-  0x61, 0x64, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xbf, 0xc2, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8,
-  0x7b, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1c7, 0x1cc, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21b, 0x21c, 0x220,
+  0x61, 0x64, 0x6c, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xb8, 0xbf, 0xc2, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8,
+  0x7b, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1c7, 0x1cc, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f7, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21b, 0x21c, 0x220, 0x224,
 ])
 function binary(encoded) {
   if (typeof encoded !== 'string' || encoded.length > 22369624 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw Error('AGE BIN base64 invalid/oversized')
@@ -128,7 +128,10 @@ export function analyzeAgeScene(data, options = {}) {
           if (segments.length) segments.push({ text: '\n' }); return true
         }
         if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); if (timeline.pending) throw Error('AGE input wait with pending update timer'); if (runtime.hasCallbacks()) throw Error('AGE callback dispatch at input wait is not implemented'); finish(); return true }
-        if (i.opcode === 0xbf && read(0) === 0) { commands.push({ op: 'bgmStop' }); return true }
+        // 419100 -> 47a8b0 stops the current BGM immediately; any native
+        // fade-out attenuation is reset for the next track. The browser's
+        // bgmStop cancels its fade and each new track restores volume too.
+        if (i.opcode === 0xb8 || i.opcode === 0xbf && read(0) === 0) { commands.push({ op: 'bgmStop' }); return true }
         if (i.opcode === 0xc2) {
           // 420500 -> 47aa70/47abb0: interpolate BGM gain toward arg 1.
           // Only zero gain (fade out) maps to the existing scene contract.
@@ -141,7 +144,11 @@ export function analyzeAgeScene(data, options = {}) {
         if (i.opcode === 0xc4 || i.opcode === 0xbf) { audio(i.opcode === 0xc4 ? 'voice' : 'bgm', read(0)); return true }
         // Other sound operations have incompletely understood looping/channel
         // semantics and deliberately stop execution instead of being guessed.
+        const beforeErase = i.opcode === 0x1f7 ? [...gpu.objects.keys()] : null
         if (gpu.instruction(i, machine)) {
+          if (beforeErase) for (const id of beforeErase) if (!gpu.objects.has(id)) {
+            flushText(); commands.push({ op: 'overlayOff', slot: 'age:' + id })
+          }
           if (i.opcode === 0x220) {
             const row = gpu.objects.get(read(0)), m = row.motion
             const x = row.x + row.crop[2] / 2 - stage[0] / 2, y = row.y + row.crop[3] / 2 - stage[1] / 2

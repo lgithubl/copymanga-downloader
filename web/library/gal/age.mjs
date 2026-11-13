@@ -103,7 +103,7 @@ export function traceAgeProgram(program, {
   return { name, code: new Map(source.instructions.map(i => [i.offset, i])), nodes: new Map(flow.nodes.map(n => [n.offset, n])), entry: flow.entry,
    sequential: new Map(source.instructions.map((i, k) => [i.offset, source.instructions[k + 1]?.offset ?? null])) }
  }
- let unit = compile(program, programName), locals = new Map(), aliases = new Map(), scriptInstance = 0, instanceSequence = 0
+ let unit = compile(program, programName), locals = new Map(), aliases = new Map(), scriptInstance = 0, instanceSequence = 0, arrayWrites = 0
  const destination = value => { if (!Number.isInteger(value) || !unit.code.has(value)) throw Error('AGE computed target is not an instruction boundary: ' + value); return value }
  for (const [id, value] of Object.entries(integers)) globals.set('3:' + id, Number(value) | 0)
  for (const [id, value] of Object.entries(strings)) globals.set('5:' + id, String(value))
@@ -146,7 +146,17 @@ export function traceAgeProgram(program, {
    const values = a[1]?.values, base = key(a[0]), [type, start] = base.split(':').map(Number)
    if (![3, 9].includes(type) || !Array.isArray(values) || values.length > 250000 || start + values.length > 0x1000000) throw Error('AGE local array destination/size invalid')
    if (values.some(value => !Number.isInteger(value) || value < 0 || value > 0xffffffff)) throw Error('AGE local array value invalid')
+   if ((arrayWrites += values.length) > 4000000) throw Error('AGE array write budget exceeded')
    for (let k = 0; k < values.length; k++) write({ type, value: start + k }, values[k])
+  }
+  else if (i.opcode === 0x6c) {
+   // 42b8a0 fills count consecutive integer cells with +5eb98. That is
+   // encoded zero, not a script constant: 405450 constructs rol(key,21),
+   // while 429ee0 encodes actual writes. This VM stores decoded integers.
+   const [type, start] = key(a[0]).split(':').map(Number), count = read(a[1])
+   if (![3, 9].includes(type) || !Number.isInteger(count) || count > 250000 || start + Math.max(0, count) > 0x1000000) throw Error('AGE array clear destination/size invalid')
+   if ((arrayWrites += Math.max(0, count)) > 4000000) throw Error('AGE array write budget exceeded')
+   for (let k = 0; k < count; k++) write({ type, value: start + k }, 0)
   }
   else if (i.opcode === 0xa0) { const target = read(a[0]) ? a[1] : a[2]; next = target.value === 0xffffffff && target.type === 0 ? unit.sequential.get(pc) : destination(read(target)) }
   else if (i.opcode === 0x8c) next = destination(read(a[0]))

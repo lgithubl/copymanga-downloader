@@ -7,6 +7,7 @@
 已在 macOS 编译并实际运行上游工具，处理当前采集的全部 30 个 SYS4 脚本 BIN。无需 Windows，也无需先解开 AGE.EXE 才能进行这一步。此前将 EXE 解包视为继续分析的前置条件过于绝对。
 
 - 上游：https://github.com/Kelebek1/Eushully-Decompiler
+- 本机源码：`/tmp/Eushully-Decompiler`（按用户要求复用；原 `.cache/eushully-decompiler-src` 为兼容既有构建的软链接）。
 - 固定版本：`21da1e80b992241027737b67310fa999690f02c1`
 - 30 个文件全部反编译成功。
 - 上游 `-x` 反编译后重编译：30/30 与原始 BIN 逐字节一致。

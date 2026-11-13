@@ -32,7 +32,7 @@ test('AGE dropdown -> layout -> native ALF script expansion, lazy PNG/voice and 
   const script = await readFile(path.join(root, 'age/script/sys4ini/SN0000.age'), 'utf8')
   const ctx = await prepare({ options: normalized.adapterOptions['age::sys4'], mediaDir: root })
   const prologueCaptured = fixture.written.includes('EV901A.AGF')
-  const expectedStop = prologueCaptured ? /SN0000.BIN @20984 opcode 0x224/ : /SN0000.BIN @23131 opcode 0x1f9/
+  const expectedStop = prologueCaptured ? /SN0000.BIN @2833 opcode 0x35c/ : /SN0000.BIN @23131 opcode 0x1f9/
   assert.throws(() => parse(script, ctx, {}), expectedStop)
   const catalog = await readAgeCatalog(root), main = catalog.indexes[0], imageRow = main.entries.find(r => r.name === 'BG054AA.AGF')
   const image = decodeAgeImage(readAgeEntry(imageRow)), resources = ageResourceContext(catalog)

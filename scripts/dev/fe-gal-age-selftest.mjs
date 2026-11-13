@@ -94,7 +94,7 @@ try {
   let prologuePixels = null
   if (images[4814]) {
     const prefix = analyzeAgeScene({ ...sn, resources: { images } })
-    assert.equal(prefix.complete, false); assert.equal(prefix.stats.run.stopped.opcode, 0x224)
+    assert.equal(prefix.complete, false); assert.equal(prefix.stats.run.stopped.opcode, 0x35c)
     assert.deepEqual(prefix.stats.timeline, { elapsedMs: 5500, pendingMs: 0, barriers: 2 })
     const prefixScene = { format: 'gal-scene/1', steps: prefix.steps.map(s => ({ ...s, commands: s.commands.filter(c => c.op !== 'overlayMove') })), stats: { diagnosticOnly: true } }
     await writeFile(out + '/native-prologue-prefix.json', JSON.stringify(prefix, null, 2))
@@ -190,6 +190,45 @@ try {
     await writeFile(out + '/native-pan-verification.json', JSON.stringify({ frames, nextSentenceContinues: true, seekPixels, seekFinalY: seekState.y }, null, 2))
     await pan.close()
   }
-  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, prologuePixels, errors, placementHelperReturned: true, stops: ['SN0000 prefix:0x224', 'text-tail:0x305'] }, null, 2))
+  // Use the captured XWM-derived WAV to verify actual Audio lifecycle. The
+  // fixture intentionally reuses it as BGM; this is not a native track binding.
+  await page.bringToFront()
+  await page.evaluate(async ({ base, voicePath }) => {
+    window.player.destroy(); window.__audios = []
+    const { createGalPlayer } = await import('/gal-player.js')
+    const scene = { format: 'gal-scene/1', steps: [
+      { index: 0, commands: [{ op: 'bgm', src: voicePath }, { op: 'text', segments: [{ text: 'A' }] }] },
+      { index: 1, commands: [{ op: 'bgmStop', fade: 80 }, { op: 'text', segments: [{ text: 'B' }] }] },
+      { index: 2, commands: [{ op: 'bgmStop' }, { op: 'text', segments: [{ text: 'C' }] }] },
+      { index: 3, commands: [{ op: 'bgm', src: voicePath }, { op: 'text', segments: [{ text: 'D' }] }] },
+    ] }
+    window.player = createGalPlayer({ container: document.querySelector('#host'), reader: { node: {}, scene, resourceBase: base + '/fixture' } })
+  }, { base, voicePath })
+  await page.waitForFunction(() => window.__audios.some(a => a.currentTime > 0 && !a.paused && !a.error))
+  await page.waitForTimeout(150)
+  await page.evaluate(() => window.player.next())
+  await page.waitForFunction(() => window.player.index === 1 && !window.__audios[0].paused)
+  await page.waitForTimeout(150)
+  await page.evaluate(() => window.player.next())
+  await page.waitForFunction(() => window.player.index === 2 && window.__audios.every(a => a.paused))
+  await page.waitForTimeout(150)
+  await page.evaluate(() => window.player.next())
+  await page.waitForFunction(() => window.player.index === 3 && window.__audios.length === 2 && !window.__audios[1].paused && window.__audios[1].volume > 0)
+  await page.waitForTimeout(150)
+  await page.evaluate(() => window.player.prev())
+  await page.waitForFunction(() => window.__audios.every(a => a.paused))
+  await page.waitForTimeout(150)
+  await page.evaluate(() => window.player.prev())
+  await page.waitForTimeout(150)
+  await page.evaluate(() => window.player.prev())
+  await page.waitForFunction(() => window.__audios.some(a => !a.paused))
+  await page.waitForTimeout(150)
+  await page.evaluate(() => window.player.next())
+  await page.waitForFunction(() => window.player.index === 1)
+  await page.evaluate(() => window.player.destroy())
+  assert.equal(await page.evaluate(() => window.__audios.every(a => a.paused)), true, 'destroy stops detached fading BGM too')
+  assert.deepEqual(errors, [])
+  await writeFile(out + '/bgm-stop-verification.json', JSON.stringify({ immediateStopDuringFade: true, nextTrackRestoresVolume: true, backwardSeekStopsAudio: true, destroyStopsFade: true }, null, 2))
+  await writeFile(out + '/verification.json', JSON.stringify({ componentRendering: true, nativeXwmVoicePlayback: true, fullGamePlayback: false, pixels, prologuePixels, errors, placementHelperReturned: true, stops: ['SN0000 prefix:0x35c', 'text-tail:0x305'] }, null, 2))
   console.log('PASS native AGE component display (not full scene playback)', pixels, out)
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

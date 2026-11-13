@@ -6,6 +6,20 @@ import{existsSync}from'node:fs'
 import{readAgeIndex,decodeAgeScript,decodeAgeImage,ageControlFlow,ageLiteralInitializer,traceAgeProgram}from'../../web/library/gal/age.mjs'
 import{createAgeGraphics}from'../../web/library/gal/age-graphics.mjs'
 const old='.cache/new-games-043952/extracted/g05',extra='.cache/new-games-052443/extracted/g05/__verify/age'
+test('native integer clear handles pointer bases, local storage and nonpositive counts without touching neighbours',()=>{
+ const a=(type,value)=>({type,value}),i=(offset,opcode,...args)=>({offset,opcode,args})
+ const result=traceAgeProgram({instructions:[
+  i(0,0x55,a(9,0),a(0,9)),i(5,0x55,a(9,1),a(0,8)),
+  i(10,0x61,a(12,0),a(3,100),a(0,1)),i(17,0x6c,a(12,0),a(0,2)),
+  i(22,0x6c,a(3,100),a(0,0)),i(27,0x6c,a(3,103),a(0,-1)),
+  i(32,0x6c,a(9,0),a(0,1)),i(37,0x55,a(3,200),a(9,0)),i(42,0x55,a(3,201),a(9,1)),i(47,2),
+ ]},{integers:{100:7,101:6,102:5,103:4}})
+ assert.equal(result.status,'exited')
+ assert.deepEqual([100,101,102,103,200,201].map(k=>result.integers[k]),[7,0,0,4,0,8])
+ for(const [base,count]of[[a(5,0),1],[a(3,0),250001],[a(3,0xffffff),2]])
+  assert.throws(()=>traceAgeProgram({instructions:[i(0,0x6c,base,a(0,count)),i(5,2)]}),/clear destination\/size/)
+ assert.throws(()=>traceAgeProgram({instructions:[i(0,0x6c,a(12,0),a(0,1)),i(5,2)]}),/not initialized/)
+})
 test('received AGE1.57 dependency batch is complete; remaining prologue blocker is unsupported semantics, not a missing SN0000 file',{skip:!existsSync('.cache/age-072229/extracted/g01/__verify/index.json')},async()=>{
  const root='.cache/age-072229/extracted/g01/',report=JSON.parse(await readFile(root+'__verify/index.json'));assert.equal(report.files.length,25);let bytes=0,scripts=0,images=0
  for(const r of report.files){const b=await readFile(root+r.artifact);assert.equal(b.length,r.bytes);assert.equal(createHash('sha256').update(b).digest('hex'),r.sha256);bytes+=b.length;if(r.logicalName.endsWith('.BIN')){ageControlFlow(decodeAgeScript(b));scripts++}if(r.logicalName.endsWith('.AGF')){const image=decodeAgeImage(b);assert.ok(image.width>0&&image.height>0);images++}}

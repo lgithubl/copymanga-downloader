@@ -888,7 +888,15 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     world.animate(frames, { duration: ms, easing: 'steps(1)' })
   }
+  const fadingBgm = new Map()
+  function stopBgmFades() {
+    for (const [audio, raf] of fadingBgm) { cancelAnimationFrame(raf); audio.pause() }
+    fadingBgm.clear()
+  }
   function setBgm(src, fade = 0) {
+    // A previous fade already detached its Audio from bgmAudio. A later
+    // immediate stop must still silence it, including when bgmSrc is empty.
+    if (!src && !fade) stopBgmFades()
     if (src === bgmSrc) return
     const old = bgmAudio
     bgmSrc = src
@@ -906,11 +914,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (!seconds) { audio.pause(); return }
     const start = audio.volume
     const began = performance.now()
+    fadingBgm.set(audio, 0)
     const tick = () => {
+      if (!fadingBgm.has(audio)) return
       const t = Math.min(1, (performance.now() - began) / (seconds * 1000))
       audio.volume = start * (1 - t)
-      if (t < 1 && !destroyed) requestAnimationFrame(tick)
-      else audio.pause()
+      if (t < 1 && !destroyed) fadingBgm.set(audio, requestAnimationFrame(tick))
+      else { audio.pause(); fadingBgm.delete(audio) }
     }
     tick()
   }
@@ -2401,6 +2411,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     clearInterval(fastLoop)
     visibility.disconnect()
     bgmAudio?.pause()
+    stopBgmFades()
     bgseAudio?.pause()
     for (const v of bgVoices.values()) v.audio.pause()
     voiceAudio?.pause()

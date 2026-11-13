@@ -38,6 +38,26 @@ function bin(rows) {
 const pkg = (rows, extra = {}) => ({ ...JSON.parse(encodeAgeScriptPackage(bin(rows), { name: 'case.BIN' })), ...extra })
 const lit = n => arg(0, n), str = text => ({ type: 2, text }), global = n => arg(3, n)
 
+test('auxiliary clear preserves persistent images; object erase uses half-open ranges and keeps textures', () => {
+  const load = [0x1f9, lit(77), lit(10), lit(-1)]
+  const draw = id => [0x1fb, lit(id), lit(10), lit(0), lit(0), lit(16), lit(16), lit(0), lit(0)]
+  const resources = { images: { 77: { src: 'age/res/atlas.png', width: 16, height: 16 } } }
+  const scene = parse(JSON.stringify(pkg([load, draw(20), draw(21), draw(22), [0x224], [0x72, lit(0)],
+    [0x1f7, lit(20), lit(2)], [0x72, lit(0)], draw(23), [0x1f7, lit(22), lit(0)], [2]], { resources })))
+  assert.deepEqual(stateAt(scene, 0).overlays.map(o => o.slot), ['age:20', 'age:21', 'age:22'])
+  assert.deepEqual(stateAt(scene, 1).overlays.map(o => o.slot), ['age:22'])
+  assert.deepEqual(stateAt(scene, 2).overlays.map(o => o.slot), ['age:23'], 'erase leaves the texture reusable')
+  const unknown = analyzeAgeScene(pkg([[0x223, ...Array(8).fill(lit(0))], [2]]))
+  assert.equal(unknown.complete, false); assert.equal(unknown.stats.run.stopped.opcode, 0x223, 'unknown auxiliary producers are not accepted')
+  assert.throws(() => parse(JSON.stringify(pkg([[0x1f7, lit(0xffffff), lit(2)], [2]]))), /erase range/)
+})
+
+test('native BGM stop cancels a prior fade before the next track', () => {
+  const scene = parse(JSON.stringify(pkg([[0xbf, lit(13)], [0xc2, lit(0), lit(5000)], [0xb8], [0xbf, lit(14)], [2]],
+    { resources: { bgm: { 13: 'age/res/BGM013.wav', 14: 'age/res/BGM014.wav' } } })))
+  assert.deepEqual(scene.steps[0].commands, [{ op: 'bgm', src: 'age/res/BGM013.wav' }, { op: 'bgmStop', fade: 5 }, { op: 'bgmStop' }, { op: 'bgm', src: 'age/res/BGM014.wav' }])
+})
+
 test('native planar motion preserves delay, duration, final pose and blocking policy', () => {
   const setup = [[0x1f9, lit(77), lit(10), lit(-1)], [0x1fb, lit(21), lit(10), lit(0), lit(0), lit(16), lit(16), lit(100), lit(200)]]
   const move = [0x220, lit(21), lit(500), lit(1000), lit(30), lit(40), lit(0)]

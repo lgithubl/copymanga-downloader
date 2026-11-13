@@ -3,7 +3,7 @@
 // Placement/query meanings are cross-checked against SC0000's native helper.
 export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, maxObjects = 2048, metadataOnly = false, now = () => 0 } = {}) {
  if (!Number.isInteger(maxBytes) || maxBytes < 16 || maxBytes > 512 * 1024 * 1024 || !Number.isInteger(maxObjects) || maxObjects < 1 || maxObjects > 8192) throw Error('AGE graphics budget invalid')
- const textures = new Map(), objects = new Map(), referenced = new Set()
+ const textures = new Map(), objects = new Map(), auxiliary = new Map(), referenced = new Set()
  let bytes = 0, motionSequence = 0
  const id = value => { if (!Number.isInteger(value) || value < 0 || value >= 0x1000000) throw Error('AGE graphics id invalid'); return value }
  const dimensions = (w, h) => { if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w * h > 4 * 1024 * 1024) throw Error('AGE graphics dimensions invalid') }
@@ -23,6 +23,22 @@ export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, max
  function instruction(i, { read, write }) {
   const a = i.args, n = k => read(a[k]), put = (k, value) => write(a[k], value)
   switch (i.opcode) {
+   case 0x1f7: {
+    // 422270 selects single-object erase (49b060) for count <= 1,
+    // otherwise 49b230 erases the half-open id range [start,start+count).
+    // Neither operation frees the separately indexed texture resources.
+    const start = id(n(0)), count = n(1), size = Math.max(1, count)
+    if (!Number.isInteger(count) || start + size > 0x1000000) throw Error('AGE object erase range invalid')
+    for (const key of objects.keys()) if (key >= start && key < start + size) objects.delete(key)
+    return true
+   }
+   case 0x224: {
+    // 419c60 -> 499a80 -> 4994e0 clears ONLY the +418 tree. Persistent
+    // draw records live at +408 (49a350). Auxiliary producers such as
+    // 0x223/49d2d0 remain unsupported; therefore this tree is empty on all
+    // currently accepted paths. Do not clear images, textures or motion.
+    auxiliary.clear(); return true
+   }
    case 0x1f9: {
     const ordinal = id(n(0)), target = id(n(1)), mode = n(2)
     // Only the native helper's full image load mode has been verified.
