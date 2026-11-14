@@ -30,7 +30,9 @@ export function decodeAkb(b,baseline=null){
   for(let i=stride;i<part.length;i++)part[i]=(part[i]+part[i-stride])&255
   for(let row=0;row<h;row++)for(let col=0;col<w;col++){const at=(row*w+col)*channels;if(baseline&&part[at]===0&&part[at+1]===255&&part[at+2]===0)continue;part.copy(pixels,((row+y)*width+col+x)*channels,at,at+channels)}
  }
- const rgba=Buffer.alloc(width*height*4);for(let i=0,j=0;i<pixels.length;i+=channels,j+=4){rgba[j]=pixels[i+2];rgba[j+1]=pixels[i+1];rgba[j+2]=pixels[i];rgba[j+3]=channels===4&&(m.flags&0x80000000)?pixels[i+3]:255}
+ // The transparency flag also applies to BGR24: native blitting keys pure green.
+ // Keep opaque BGR24 green and BGRA32 alpha unchanged.
+ const rgba=Buffer.alloc(width*height*4);for(let i=0,j=0;i<pixels.length;i+=channels,j+=4){rgba[j]=pixels[i+2];rgba[j+1]=pixels[i+1];rgba[j+2]=pixels[i];rgba[j+3]=!(m.flags&0x80000000)?255:channels===4?pixels[i+3]:(pixels[i]===0&&pixels[i+1]===255&&pixels[i+2]===0?0:255)}
  return{...m,pixels,rgba}
 }
 export function akbPng(image){return encodePng(image.width,image.height,4,image.rgba)}

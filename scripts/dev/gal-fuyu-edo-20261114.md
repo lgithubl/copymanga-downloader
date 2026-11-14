@@ -77,3 +77,14 @@ Edoire 示例根目录是包含 `Archives` 的游戏目录。`game.title` 优先
 - [GARbro ArcAzurite](https://github.com/morkt/GARbro/blob/master/ArcFormats/Silky/ArcAzurite.cs)：ARC 索引与文件名混淆。
 - [GARbro ImageAKB](https://github.com/morkt/GARbro/blob/master/ArcFormats/Silky/ImageAKB.cs)：AKB 像素和差分。
 - [AI6WINScriptTool](https://github.com/TesterTesterov/AI6WINScriptTool/blob/main/ai6win_mes.py)：基础操作码表；本作头部、选项和原生分发另以实际字节核对。
+
+## 2026-11-14：FK_SCENE_07 绿色差分修复与动态 CG 核对
+
+- 自动采集 1.80 补取 `EV003` 与 H02/H03/H04，仅约 1.2 MiB。第 29–32 句实际叠加 `EV003_H03`。
+- 原因：三张差分均为 `0xc00000ff` 的 BGR24 透明图片，有效矩形 `(442,106,320,275)`，外面 833,600 个像素为纯绿色占位。旧解码仅给 BGRA32 保留 alpha，把 BGR24 透明标志遗漏了，结果遮住底图。
+- 修复：仅在 BGR24 的透明标志存在时将精确的 `(0,255,0)` 转为透明；普通 BGR24 的绿色和 BGRA32 的原始 alpha 保持不变。Silky 资源缓存版本独立更新，旧 PNG 自动重新生成；不需要删除源素材或重采游戏。
+- 真实样本回归：三张差分的透明区域与有效矩形、原生剧情指令、浏览器逐句/直接进入/回退再前进，以及资源容器读取。证据 `.cache/fuyu-green-debug/browser/verification.json`。
+- 动态 CG：えどわ～る原始剧情有 74 处 `PLAY_MOVIE` 调用，引用 72 个不同影片（75 的初始粗计数包含一条函数定义）。`scsg01h` 第 15 / 27 / 44 句开始 msg01a / msg01b / msg01c，最后一个已验证原始 MP4 播放。
+- fuyukuru 的完整文件清单和已解析档案中没有发现视频、Live2D 或 Spine 资源；当前确认的是静态 CG 与差分/镜头演出，不能把切换差分说成骨骼动态 CG。
+
+本次解码修复需要更新镜像，layout 配置没有变化。
