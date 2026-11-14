@@ -93,7 +93,7 @@ set -uo pipefail
 # 1.66 仅天結い原版AGE.EXE.org（约4.23MiB）静态分析；不执行、不收其他游戏/档案/媒体。
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
-VERSION="1.70"
+VERSION="1.71"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:age-display$'
@@ -1576,7 +1576,7 @@ def bug_case_files(items,label,followup=False):
 
 AGE_CODE_PLAN = 'eJxtjsFKw0AQht9lziHNZjebbW4WiuSSSy+KlDK72cRANbBJhRJyMOsDCN499VKv4kEQfJil+BpG1IPF2zDf/898HRx2+4+Xe3d75+ze2Qdnn5x9dsOrs49u2H0Nw7uzb5B0UG7Q5A0kFx009cYoDQkszhcszVJ/lmbgQV0UjW4hCTyQ21aPWcapoMKD5hLDiI+FSFPBqEYVIuGU0UJpyQkGNNcxzaOpiEQgOVciZEjDUEqURE9lTJXmJBYx9EsPDF6X+sjk5HTuz8/mfm3K0eR7PfuRYJRwwv/1+0Vo2qpANUJYrW60qYrtBEs9+Xt2XZeVwnWGV8cv+2XffwIV3nMb'
 
-AGE_DISPLAY_PLAN = 'eJyt1s+LEzEUB/B/pcx56ebl5ceLt+kvKUgvK4LIUjLTtBZWC21XWEoPdvwDBO+e9rJexYMg+McM4r9hWl1JFdKBzS1NZtoPL3nfdJP9uL37+eV9/fZdXd3V1Ye6+lRXn+vd17r6WO9u94Pd97r6lj1qbbLZtV1OVn74YpOtFtfL0vlxdvH8QgxHw3ZnOMrOWtliOl25tV9g/kNxs3b7F4RCQvITq5eWS7V/TTokgc6W3IJCgdPSFQosw4nTOJGGJLFCqZK4sMh5UdgCnCk0lk6BJp1tL/33Le3rmfuP1Muf5rydPxnsQb+nO38kwEAjQ04QWqWQWnIgE5iRKckl+hm7XM+nttw/mI3Hb9xyPr05tzN33n8GyPJ2/vjwQ1eL2by0VyP76oAIFrdnrQfyiBCEhoAHBgn4Sd0478R898sPFxrGJScMhFwzdnjqhLATreD9cgIhNxKVCIUMhGggzHvxGvZSCYVRxOQ/QmANhP24sJ9KqAxxkEfnkBTpBsJBXDhII5SM+3jQ/EgoFW+yy924sJuqhuSryEKhP5WkG+xyN94p3USdIpmPQzRhL6PfZmNOEiEGhFQ81FwIHjayRHNo7DguvsOQbId9ymimFDsC6kbAWFhDsrDelwsFhUfQ34BoGgBjSQjJktCXS/s/DBR2sWakT3YxxG8TSHabSMGAGIejPQZ+MgghHtWQLKo9UAOIsIS+rFw2AMaSGtIltQCuhA5TBoigSZtEc/Dv8vZyu/0FVJMXtA=='
+AGE_DISPLAY_PLAN = 'eJyt1s9rE0EUB/B/pey5pvPemx9vvG1+tBQklwZRpITZzSYWqoEkFUrJwcY/QPDuqZd6FQ+C4B+ziP+Gk2hhUnWy0LlNdmaTD2/mfSdX2Y+b259f3tdv39Wr23r1oV59qlef6+uv9epjfX2zHlx/r1ffssd7V9nkws1Gcz98cZXNpxezsvLj7OT5iTzuH7fax/1sfy+bjsfzauEnhP9QXC6q9QtSExP7B/OXDpVev6YqYkmVK9GBJknjsio0OEGjytBIWVYsCq1LRukIsShcAZUtDJWVBsMmW57675u515PqL1I3H+TYyp8crkG/H7f/SECAIUHIEFqVVEYhsA3MJLRCRf6Jmy3Oxq5cL8yGwzfV7Gx8eeAm1UHvKZDIW/nR5ofOp5Oz0p333asNIphc7u89kMdMIA0EPLDEgDt1w7wd891NP1xoBSpkCoRohNis2iFsRyt4N51AiFaRlqFQgJQNhHk3XsNuKqG0moW6JwTRQNiLC3uphNoygto6h6zZNBAexoWHaYRKoI8Hg1tCpbHJLnfiwk6qGrKvogiF/lSyabDLnXindBJ1ihI+DsmGvUx+m63dSYQYEFLxyKCUGDayIrtp7DguvsOQbId9yhihtdgCmkbAWFhDsrBel4skh0fQ34BkGwBjSQjJktCXy/g/DBx2sRFsdnYxxG8TSHabKCmABcLWHgPuDEKIRzUki2oPNAAyLKEvK6oGwFhSQ7qkloBamjBlgBmatEk0ByGSg/AfoQXfr0prDIVgpAx7mNAHD8d0+VHvUe/ZoNfvtgaDf/nuLVieLpe/AHc9RZ4='
 
 AGE_SCENE_PLAN = 'eJydzs1Kw0AQB/B3mXNod3eS/cgtxQ8K0ktFEClld7uJhWohaYVScrDxAQTvnnqpV/EgCD7MIr6GCZUqgh68DTP/mfkt4W29eX+69dc3vtr46s5XD7569KtnX9371bopVq++eoF4Cdlc56MC4rMlFNN5bh3E0D/th91et9Xp9iCAaZoWbgYxCcAsZq7OhhwlygCKc80iXi9EDmWITlumKccQU+sMp5rgyAkcRUpGkhjOrWShRsaM0YY6ZQRax6mQAspBALm+zNwPyV5ynLBWcnRQO7bNzpZACRVIkEn6BWRSREiR75xSRhSVCEDns3GqbZ2B4fDK5eN00daZa++fKEKTVnLY3J9Ms7HVk56+aD5/G5XBf0WSIuVK7kCoOKGK/A1iv4M+R+WgLD8AueCckw=='
 
@@ -1585,7 +1585,7 @@ def next_game_verify_files(items,label,age_link=False):
     age_scene=RULES_RE.pattern=='^new-games:age-scene$'
     age_code=RULES_RE.pattern=='^new-games:age-code$'
     plan=json.loads(zlib.decompress(base64.b64decode(AGE_DISPLAY_PLAN if age_display else AGE_SCENE_PLAN if age_scene else AGE_CODE_PLAN if age_code else AGE_LINK_PLAN if age_link else NEXT_VERIFY_PLAN)))[label]
-    lookup={e.rel.replace('\\','/').casefold():e for e in items};report={'game':label,'sourceReadOnly':True,'files':[],'guards':plan['guards'],'notes':['SP0023 render verification: only16 traced EV130/EV131 original images and differences, about8.2MiB; no scripts/audio/EXE/DLL/whole archives.' if age_display else 'Original backup engine for static opcode analysis only. Never execute or install; no archives/media/other games.' if age_code else 'Only EV901A/EV902A original prologue images, about 12.2MiB; no EXE/DLL/scripts/other games.' if age_scene else 'Exact prologue dependencies and sampled image/voice assets; no EXE/DLL/save payloads.' if age_link else 'Only explicitly selected verification media/definitions. AGE EXE/DLL are static analysis input; never execute them.']};used=0
+    lookup={e.rel.replace('\\','/').casefold():e for e in items};report={'game':label,'sourceReadOnly':True,'files':[],'guards':plan['guards'],'notes':['SP0023 render verification: only16 traced EV130/EV131 images plus original AGE-EXTEND.TTF, about8.5MiB; no scripts/audio/EXE/DLL/whole archives.' if age_display else 'Original backup engine for static opcode analysis only. Never execute or install; no archives/media/other games.' if age_code else 'Only EV901A/EV902A original prologue images, about 12.2MiB; no EXE/DLL/scripts/other games.' if age_scene else 'Exact prologue dependencies and sampled image/voice assets; no EXE/DLL/save payloads.' if age_link else 'Only explicitly selected verification media/definitions. AGE EXE/DLL are static analysis input; never execute them.']};used=0
     def read(source,offset,length,expected=None):
         e=lookup.get(source.casefold())
         if not e:raise RuntimeError('Missing requested verification source: '+source)
