@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="1.83"
+VERSION="1.84"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1708,6 +1708,17 @@ def fuyu_edo_detail_files(items,label):
     plan=json.loads(zlib.decompress(base64.b64decode(PAIR_MEDIA_PLAN))).get(label,[])
     if label=='meshiagirl' and not plan:
         yield from new_game_probe_files(items)
+        samples=[];sample_bytes=0
+        candidates=[e for e in items if re.search(r'\.(json|csv|tsv|yaml|yml|atlas|txt)$',e.rel,re.I) and not re.search(r'(^|/)(save|savedata|userdata|node_modules)(/|$)',e.rel,re.I)]
+        for e in sorted(candidates,key=lambda e:(not bool(re.search(r'scenario|story|adventure|script|master',e.rel,re.I)),e.rel.casefold()))[:8]:
+            length=min(e.size,1024*1024)if e.size<=1024*1024 else min(e.size,128*1024)
+            with open(e.path,'rb')as f:b=f.read(length)
+            sample_bytes+=len(b)
+            if len(b)!=length or sample_bytes>8*MB:raise RuntimeError('Meshi probe bounds')
+            name='__meshi_probe/files/'+e.rel+(''if length==e.size else'.head.bin')
+            samples.append({'path':e.rel,'sourceBytes':e.size,'offset':0,'bytes':len(b),'name':name,'sha256':hashlib.sha256(b).hexdigest()})
+            yield name,b,e.mtime
+        yield '__meshi_probe/index.json',json.dumps({'sourceReadOnly':True,'files':samples},ensure_ascii=False,indent=2).encode(),int(time.time())
         return
     lookup={e.rel.replace('\\','/'):e for e in items}
     for r in plan:
