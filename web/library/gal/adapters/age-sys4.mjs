@@ -50,7 +50,7 @@ export function analyzeAgeScene(data, options = {}) {
   if (!Array.isArray(stage) || stage.length !== 2 || stage.some(n => !Number.isInteger(n) || n < 1 || n > 8192)) throw Error('AGE stage invalid')
   const profile = options.scripts?.[data.name] || {}, resources = data.resources || {}
   const unverifiedPolicy = options.unverifiedPolicy ?? DEFAULT_OPTIONS.unverifiedPolicy
-  if (!['warn', 'error'].includes(unverifiedPolicy)) throw Error('AGE unverifiedPolicy must be warn or error')
+  if (!['warn', 'error', 'preview'].includes(unverifiedPolicy)) throw Error('AGE unverifiedPolicy must be warn, error or preview')
   const steps = [], stats = { opcodeWarnings: [], messages: 0, images: { referenced: 0, resolved: 0, unresolved: 0 }, voices: { referenced: 0, resolved: 0, unresolved: 0 }, bgm: { referenced: 0, resolved: 0, unresolved: 0 }, raw: {}, ignored: {} }
   // Static inventory includes unreachable branches too; it is a coverage
   // report, not an instruction to skip these operations during execution.
@@ -137,15 +137,23 @@ export function analyzeAgeScene(data, options = {}) {
         const op = '0x' + i.opcode.toString(16), read = k => machine.read(i.args[k])
         stats.operations ||= {}
         stats.operations[op] = (stats.operations[op] || 0) + 1
-        const unsupported = () => { stats.raw[op] = (stats.raw[op] || 0) + 1; return false }
-        source ||= { script: machine.script, offset: i.offset }
-        if (UNVERIFIED.has(i.opcode) && unverifiedPolicy === 'warn') {
+        const recordWarning = (reason = '未实现指令，诊断试播跳过') => {
           stats.ignored[op] = (stats.ignored[op] || 0) + 1
           stats.opcodeWarnings.push({ step: machine.phase === 'initialization' ? null : steps.length, phase: machine.phase,
-            script: machine.script, offset: i.offset, opcode: op, args: i.args.map(a => ({ type: a.type, value: a.value })) })
+            script: machine.script, offset: i.offset, opcode: op, reason, args: i.args.map(a => ({ type: a.type, value: a.value })) })
           return true
         }
+        const unsupported = () => {
+          stats.raw[op] = (stats.raw[op] || 0) + 1
+          return unverifiedPolicy === 'preview' ? recordWarning() : false
+        }
+        source ||= { script: machine.script, offset: i.offset }
+        if (UNVERIFIED.has(i.opcode) && unverifiedPolicy !== 'error') return recordWarning()
         if (runtime.instruction(i, machine)) return true
+        if (unverifiedPolicy === 'preview' && i.opcode === 0x21c && displayBatchDepth) {
+          recordWarning('诊断试播强制提交未闭合绘图批次，再执行更新屏障')
+          displayBatchDepth = 0
+        }
         if (timeline.instruction(i, machine)) return true
         // Static native handlers (older unpacked AGE: 419a60/419ab0), checked
         // against the paired use in collected SYS4485 scripts: suspend display
@@ -167,7 +175,7 @@ export function analyzeAgeScene(data, options = {}) {
           if (read(0) !== 0) return unsupported()
           if (segments.length) segments.push({ text: '\n' }); return true
         }
-        if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (machine.phase === 'initialization') throw Error('AGE initialization requires native input'); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); if (timeline.pending) throw Error('AGE input wait with pending update timer'); if (runtime.requiresRegionDispatch()) throw Error('AGE input region dispatch at input wait is not implemented'); finish(); return true }
+        if (i.opcode === 0x72) { if (read(0) !== 0) return unsupported(); if (machine.phase === 'initialization') throw Error('AGE initialization requires native input'); if (displayBatchDepth) throw Error('AGE wait inside uncommitted display batch'); if (timeline.pending) throw Error('AGE input wait with pending update timer'); if (runtime.requiresRegionDispatch()) { if (unverifiedPolicy !== 'preview') throw Error('AGE input region dispatch at input wait is not implemented'); recordWarning('诊断试播未派发原生输入区域，按当前执行路径继续') }; finish(); return true }
         // 419100 -> 47a8b0 stops the current BGM immediately; any native
         // fade-out attenuation is reset for the next track. The browser's
         // bgmStop cancels its fade and each new track restores volume too.
@@ -205,7 +213,19 @@ export function analyzeAgeScene(data, options = {}) {
         // Other sound operations have incompletely understood looping/channel
         // semantics and deliberately stop execution instead of being guessed.
         const beforeErase = i.opcode === 0x1f7 ? [...gpu.objects.keys()] : null
-        if (gpu.instruction(i, machine)) {
+        if (unverifiedPolicy === 'preview' && i.opcode === 0x1fb) {
+          const object = gpu.objects.get(read(0))
+          if (object?.motion) {
+            recordWarning('诊断试播无法复原输入耗时；重画时结束旧平移')
+            delete object.motion
+          }
+        }
+        let graphicsAccepted
+        try { graphicsAccepted = gpu.instruction(i, machine) } catch (error) {
+          if (unverifiedPolicy === 'preview' && /^AGE (?:texture is not initialized|image mapping missing|image resource missing|AGF )/.test(error.message)) return recordWarning('诊断试播缺少绘图资源：' + error.message)
+          throw error
+        }
+        if (graphicsAccepted) {
           if (beforeErase) for (const id of beforeErase) if (!gpu.objects.has(id)) {
             flushText(); commands.push({ op: 'overlayOff', slot: 'age:' + id })
           }
@@ -230,7 +250,7 @@ export function analyzeAgeScene(data, options = {}) {
   } catch (error) { failure = String(error.message || error) }
   if (!failure && ['returned', 'exited'].includes(run?.status) && displayBatchDepth) failure = 'AGE uncommitted display batch at script end'
   if (!failure && ['returned', 'exited'].includes(run?.status) && timeline.pending) failure = 'AGE pending update timer at script end'
-  if (!failure && ['returned', 'exited'].includes(run?.status) && runtime.requiresRegionDispatch()) failure = 'AGE input region dispatch at script exit is not implemented'
+  if (!failure && ['returned', 'exited'].includes(run?.status) && runtime.requiresRegionDispatch() && unverifiedPolicy !== 'preview') failure = 'AGE input region dispatch at script exit is not implemented'
   if (!failure && ['returned', 'exited'].includes(run?.status) && replayEvents.some(row => !row.consumed)) failure = 'AGE native event location was not reached'
   const complete = !failure && ['returned', 'exited'].includes(run?.status)
   // Preserve partial output exclusively for diagnostics; parse() below does
@@ -240,6 +260,8 @@ export function analyzeAgeScene(data, options = {}) {
   stats.run = run ? { status: run.status, stopped: run.stopped, missingScript: run.missingScript, steps: run.trace.length } : { status: 'error', stopped: current || null }
   stats.complete = complete
   stats.approximate = stats.opcodeWarnings.length > 0
+  if (unverifiedPolicy === 'preview') stats.previewMode = 'best-effort'
+  if (unverifiedPolicy === 'preview') stats.notes = ['诊断试播：未实现指令仅记录并跳过，原生状态/分支/音频效果未验证；不是完整原版还原']
   stats.initialization = run?.initialization || { requested: Array.isArray(data.initialization) ? data.initialization.length : 0, complete: false }
   stats.displayBatchDepth = displayBatchDepth
   stats.state = runtime.snapshot()

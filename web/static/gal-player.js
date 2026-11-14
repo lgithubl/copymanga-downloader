@@ -1685,6 +1685,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   function updateNote() {
     const parts = []
+    if (scene.stats?.previewMode) parts.push('诊断试播：未实现指令已跳过')
     if (scene.stats?.previewStopped) parts.push('诊断预览已停止，后续未解析（点开查看）')
     if (scene.stats?.opcodeWarnings?.length) parts.push(`跳过未确认指令 ${scene.stats.opcodeWarnings.length} 处（点开查看句子位置）`)
     if (rawIgnored) parts.push(`立绘/特效等 ${rawIgnored} 条指令暂未渲染`)
@@ -2015,7 +2016,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       lines.push(`跳过未确认指令（${extra.opcodeWarnings.length} 处；不代表原生效果已实现）：`)
       for (const row of extra.opcodeWarnings) {
         const at = row.phase === 'initialization' ? '初始化（正文前）' : row.step === null ? '正文前（未生成句子）' : `第 ${row.step + 1} 句`
-        lines.push(`  ${at}：${row.opcode} · ${row.script || 'BIN'} @${row.offset} · 参数 ${JSON.stringify(row.args)}`)
+        lines.push(`  ${at}：${row.opcode} · ${row.script || 'BIN'} @${row.offset} · 参数 ${JSON.stringify(row.args)}${row.reason ? ' · ' + row.reason : ''}`)
       }
     }
     for (const note of extra.notes || []) lines.push(`提示：${note}`)

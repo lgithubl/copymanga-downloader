@@ -71,6 +71,18 @@ test('explicit partial preview exposes only the executed native prefix and keeps
   assert.throws(()=>parsePreview(JSON.stringify(pkg([[0x304],[2]])),null,{options:{partialPreview:true}}),/0x304/)
 })
 
+test('best-effort preview keeps actual text boundaries while unknown instructions and unavailable textures become located warnings', () => {
+  const rows = [[0x35d,lit(0),lit(0),lit(0)],[0x6e,lit(0),str('first')],[0x305],[0x73,...Array(10).fill(lit(0))],[0x72,lit(0)],
+    [0x1fb,...[20,17,0,0,1,1,0,0].map(lit)],[0x6e,lit(0),str('second')],[0x72,lit(0)],[2]]
+  const scene=parsePreview(JSON.stringify(pkg(rows)),null,{options:{unverifiedPolicy:'preview'}})
+  assert.equal(scene.steps.length,2);assert.equal(scene.stats.approximate,true)
+  assert.equal(scene.stats.previewMode,'best-effort')
+  assert.deepEqual(scene.steps.map(s=>s.commands.find(c=>c.op==='text').segments[0].text),['first','second'])
+  assert.deepEqual(scene.stats.opcodeWarnings.map(r=>r.opcode),['0x35d','0x305','0x73','0x1fb'])
+  assert.match(scene.stats.opcodeWarnings.at(-1).reason,/texture is not initialized/)
+  assert.throws(()=>parsePreview(JSON.stringify(pkg([[0x8c,lit(0)]])),null,{options:{unverifiedPolicy:'preview',maxSteps:3}}),/limit/)
+})
+
 test('explicit callback replay enters the registered target, returns to the interrupted text and rejects unresolved events', () => {
   const data = pkg([[0x7b, lit(19), lit(-1)], [0x192, arg(5,100), str('normal')], [0x6e, lit(0), arg(5,100)],
     [0x72, lit(0)], [2], [0x192, arg(5,100), str('callback')], [0x7c]])
@@ -427,4 +439,21 @@ test('native image-placement helper returns normally and feeds actual standard s
   assert.equal(overlay.src, 'age/res/CS001AAA.png')
   const state = stateAt({ format: 'gal-scene/1', steps: result.steps }, 0)
   assert.equal(state.overlays.length, 1)
+})
+
+// This reproduces the reported HTTP failure at the real adapter boundary: a
+// one-image prefix is insufficient, even if that image and its tween render.
+test('captured original SN0000 preview yields all 25 original dialogue groups and two CG resources', {skip:!existsSync('.cache/age-http-demo/game/SYS4INI.BIN')}, async()=>{
+  const {prepare}=await import('../../web/library/gal/adapters/age-sys4.mjs')
+  const profile=JSON.parse(await readFile('.cache/age-http-demo/profile.json'))
+  const root='.cache/age-http-demo/game',ctx=await prepare({mediaDir:root,options:profile.config.adapterOptions['age::sys4']})
+  const scene=parsePreview(await readFile(root+'/age/script/sys4ini/SN0000.age','utf8'),ctx)
+  const text=scene.steps.filter(s=>s.commands.some(c=>c.op==='text'))
+  assert.equal(text.length,25);assert.equal(scene.steps.length,26)
+  assert.equal(scene.stats.previewMode,'best-effort');assert.equal(scene.stats.approximate,true)
+  assert.equal(stateAt(scene,0).overlays[0]?.src,'age/res/sys4ini/EV901A.png','text-window cleanup must not erase CG slot')
+  assert.equal(stateAt(scene,13).overlays[0]?.src,'age/res/sys4ini/EV902A.png','INIT2 layer IDs must preserve CG2 when erasing CG1')
+  assert.ok(text[0].commands.find(c=>c.op==='text').segments.some(s=>s.ruby==='フィユシア聖戦'))
+  assert.ok(text.at(-1).commands.find(c=>c.op==='text').segments.some(s=>s.text.includes('ろ我慢の限界')))
+  assert.deepEqual([...new Set(scene.steps.flatMap(s=>s.commands.filter(c=>c.op==='overlay').map(c=>c.src)))],['age/res/sys4ini/EV901A.png','age/res/sys4ini/EV902A.png'])
 })
