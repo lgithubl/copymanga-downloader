@@ -8,7 +8,7 @@ meta=base/'library-meta'/'gal';meta.mkdir(parents=True)
 (meta/'test-pair.json').write_text(json.dumps({'title':'fuyukuru','config':{'game':{'id':'silky::fuyukuru'},'password':'never-leak'}}))
 (root/'[publisher] fuyukuru v1.0'/'EV003_H03.png').write_bytes(b'old-materialized-png')
 other=root/'OtherGame';other.mkdir();(other/'AGE.EXE').write_bytes(b'must not collect')
-script=pathlib.Path('scripts/dev/gal-collect-run.sh').read_text();encoded=base64.b64encode(zlib.compress(json.dumps(plan).encode())).decode();script=re.sub(r"PAIR_MEDIA_PLAN='[^']+'","PAIR_MEDIA_PLAN='"+encoded+"'",script)
+script=pathlib.Path('scripts/dev/gal-collect-run.sh').read_text();script=re.sub(r'PAIR_ACTIVE_GAMES = \[[^\n]*\]',"PAIR_ACTIVE_GAMES = ['fuyukuru', 'えどわ～る']",script);encoded=base64.b64encode(zlib.compress(json.dumps(plan).encode())).decode();script=re.sub(r"PAIR_MEDIA_PLAN='[^']+'","PAIR_MEDIA_PLAN='"+encoded+"'",script)
 runner=base/'collect.sh';runner.write_text(script);env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
 run=subprocess.run(['bash',str(runner),str(root)],env=env,text=True,capture_output=True);assert run.returncode==0,run.stdout+run.stderr
 parts=sorted(out.glob('*.part-*'));assert len(parts)==2,run.stdout

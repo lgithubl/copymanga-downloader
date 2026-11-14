@@ -340,7 +340,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // 一个骨架数据只加载一次（按 skel 路径缓存）。顺序：取骨骼 / atlas 文件 → 读版本、选运行时 → 取图集 → 解析。
   // 每一步失败都报对应的原因：取不到文件 = onMissing（缺资源）；版本不支持 / 解析失败 = onError（带识别出的版本），不再冒充缺资源
   function loadData(spec) {
-    if (dataCache.has(spec.skel)) return dataCache.get(spec.skel)
+    const dataKey = spec.textureMap ? JSON.stringify([spec.skel, spec.atlas, spec.textureMap]) : spec.skel
+    if (dataCache.has(dataKey)) return dataCache.get(dataKey)
     const promise = (async () => {
       let bytes
       let atlasText
@@ -367,7 +368,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const images = new Map()
       const missingPages = []
       for (const page of pageNames) {
-        try { images.set(page, await loadImage(dir + page)) } catch { onMissing(dir + page); missingPages.push(dir + page) }
+        const source = spec.textureMap?.[page] || dir + page
+        try { images.set(page, await loadImage(source)) } catch { onMissing(source); missingPages.push(source) }
       }
       if (missingPages.length) return { error: { ...base, kind: 'missing', message: `取不到图集图片 ${missingPages.join('、')}（atlas 声明 ${pageNames.length} 页，缺 ${missingPages.length} 页）`, missingPages, atlasPages: pageNames.length } }
       // 图集页的 PNG 比 atlas 声明的小几十像素、内容没缩（TSK Stills：声明 2048×2048，PNG 2048×2003，顶上 45 行被裁掉）：贴回声明大小的画布，UV 才对（见 gal-spine-atlas.js）
@@ -439,7 +441,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         return fail({ kind: 'parse', message: `骨骼解析失败（Spine ${detected.version}，运行时 ${detected.runtime}）：${String(error?.message || error).slice(0, 200)}` })
       }
     })()
-    dataCache.set(spec.skel, promise)
+    dataCache.set(dataKey, promise)
     return promise
   }
 
@@ -627,7 +629,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       else inst.state.timeScale = speed * slowTo
     }
     const shade = spec.dim ? 0.5 : 1
-    inst.skeleton.color.set(shade, shade, shade, 1)
+    inst.skeleton.color.set(shade, shade, shade, Number.isFinite(spec.opacity) ? Math.max(0, Math.min(1, spec.opacity)) : 1)
     // 角色抖动（SPINE_ACTOR_SHAKE）：同一个 id 只在播放中抖一次；一步到位（后退 / 续播）只记下 id，不补抖
     if (spec.shake && spec.shake.id !== inst.shakeId) {
       inst.shakeId = spec.shake.id
@@ -726,7 +728,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     let scale
     let px
     let py
-    if (inst.spec.kind === 'still' && inst.spec.place && typeof inst.spec.place === 'object') {
+    if (inst.spec.place && typeof inst.spec.place === 'object') {
       // 精确摆放的静态画面（TSK BgEvent：原版 1 个骨架 1:1 像素画在舞台中心，不缩放）
       const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
       const unit = width / stage
@@ -826,8 +828,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     }
     inst.skeleton.x = px
     inst.skeleton.y = py
-    inst.skeleton.scaleX = scale
-    inst.skeleton.scaleY = scale
+    inst.skeleton.scaleX = scale * (Number.isFinite(inst.spec.place?.scaleX) ? inst.spec.place.scaleX : 1)
+    inst.skeleton.scaleY = scale * (Number.isFinite(inst.spec.place?.scaleY) ? inst.spec.place.scaleY : 1)
   }
 
   function frame(now) {
@@ -856,7 +858,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         if (inst.fadeIn) {
           const t = Math.min(1, (performance.now() - inst.fadeIn.began) / inst.fadeIn.ms)
           const shade = inst.spec.dim ? 0.5 : 1
-          inst.skeleton.color.set(shade, shade, shade, t)
+          inst.skeleton.color.set(shade, shade, shade, t * (Number.isFinite(inst.spec.opacity) ? Math.max(0, Math.min(1, inst.spec.opacity)) : 1))
           if (t >= 1) inst.fadeIn = null
         }
         if (inst.slow) {

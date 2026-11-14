@@ -1,3 +1,4 @@
+import{meshiagirlJsonAdapter}from'./meshiagirl-json.mjs'
 import{silkyMesAdapter}from './silky-mes.mjs'
 import{edoIkunyuAdapter}from './edo-ikunyu.mjs'
 import{sakanaKsAdapter}from './sakana-ks.mjs'
@@ -37,6 +38,7 @@ export function registerGalAdapter(adapter) {
   if (!adapter?.id || typeof adapter.parse !== 'function') throw new Error('gal adapter needs id and parse()')
   adapters.set(adapter.id, adapter)
 }
+registerGalAdapter(meshiagirlJsonAdapter)
 registerGalAdapter(uviewerCsvAdapter)
 registerGalAdapter(pacScriptAdapter)
 registerGalAdapter(edoLuaAdapter)

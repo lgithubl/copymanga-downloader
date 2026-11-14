@@ -59,6 +59,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  'meshiagirl-json': {root:'',excludeScripts:['test','testall'],protagonist:'主人公',tavern:'まんぷく亭',stage:[1170,640],spineScale:0.8,maxInstructions:200000,maxSteps:20000,maxBranches:64,maxCommands:300000},
   "silky::mes": {
   "resDir": "arc/res",
   "scriptDir": "arc/script",
@@ -3203,6 +3204,16 @@ export const LAYOUTS = {
     avatars: [], expectedDirs: ['assets/resources/patchres'],
     notes: ['按 next_id 链拆场景（每个文件几百个）；立绘 = merc/pic/<hero_group_id>/body.webp|png 整张；screen_effect / pic_action / effect 含义未知，记为未渲染指令（stats.raw）'],
   },
+  meshiagirl: {
+    title:'meshiagirl',kind:'meshiagirl',detector:'meshiagirl',autoOrder:134,
+    bases:['resource/webdata/*/1/bin',''],searchDepth:7,
+    anchors:['assets/adventure','assets/spineChara','index.html'],siblings:[],markers:['assets/audiosVoice','src'],
+    adapters:['meshiagirl-json'],scriptRoots:[{id:'main',dir:'assets/adventure/import',label:'剧情'}],resourceRoots:['.'],
+    adapterOptions:{'meshiagirl-json':{root:{path:['.']}}},ruleTables:['meshiagirl-json'],ruleOverrides:{},
+    config:{scriptExtensions:['json'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[{as:'special',label:'特殊场景',dirs:['**'],match:'_dekoEP_H[0-9]*$'}],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg']},pageSize:100},
+    engine:{limits:{walkFiles:500000,sampleFiles:6000,walkDepth:8}},count:[],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],
+    notes:['Cocos Creator 活跃 bundle 清单索引；直接读取本地 JSON / PNG / MP3 / Spine，无运行时下载；粒子及部分滤镜保留诊断；中途开始与缩略图共用标准播放器'],
+  },
   otogi: {
     title: 'Otogi Frontier R（离线网页版）', kind: 'otogi', detector: 'otogi', autoOrder: 135,   // <根>/list.json + typeadv/MScenes/<id>（没有扩展名的 JSON）+ json/<id>（成人剧情）
     bases: [''], searchDepth: 4,
@@ -3647,6 +3658,7 @@ const DETECTORS = {
   kamihime: (scope) => detectKamihime(scope),
   bokusen: (scope) => detectBokusen(scope),
   grenze: (scope) => detectGrenze(scope),
+  meshiagirl: (scope) => detectMeshiagirl(scope),
   otogi: (scope) => detectOtogi(scope),
   advhd: (scope) => detectAdvhd(scope),
   bgi: (scope) => detectBgi(scope),
@@ -5175,4 +5187,22 @@ async function detectRpgMaker(scope) {
   found.gameTitle = system.gameTitle
   found.id = id
   return found
+}
+
+// Cocos Creator2 web cache; only the explicitly named asset families are matched.
+async function detectMeshiagirl(scope){
+ const loc=await locateGame(scope,scope.id);if(!loc)return null
+ const{entry,base}=loc,root=path.join(scope.media,...splitRel(base))
+ const html=await readFile(path.join(root,'index.html'),'utf8'),setting=/\bsettings\.[a-z0-9]+\.js\b/.exec(html)?.[0]
+ if(!setting)return null
+ const settings=await readFile(path.join(root,'src',setting),'utf8'),table=/bundleVers\s*:\s*\{([^}]+)\}/.exec(settings)?.[1]||'',version=/(?:"adventure"|adventure)\s*:\s*"([a-z0-9]+)"/.exec(table)?.[1]
+ if(!version)return null
+ const manifest=JSON.parse(await readFile(path.join(root,'assets/adventure','config.'+version+'.json'),'utf8'))
+ const config=await buildConfig(scope.media,entry,base),excluded=config.adapterOptions['meshiagirl-json'].excludeScripts
+ const count=Object.values(manifest.paths||{}).filter(x=>manifest.types?.[x[1]]==='cc.JsonAsset'&&x[0].startsWith('json/')&&!excluded.includes(x[0].split('/').at(-1))).length
+ if(!count)return null
+ announce(scope.logs,scope.id,loc)
+ scope.logs.push('meshiagirl: Cocos Creator2；当前 adventure '+version+'；剧情 '+count+' 个；配置排除内部测试脚本：'+(excluded.join(' / ')||'无'))
+ for(const line of entry.notes)scope.logs.push(line)
+ return makeFound(scope,entry,loc,config,{cover:await coverFromRules(scope.media,entry,base),count:async()=>count})
 }

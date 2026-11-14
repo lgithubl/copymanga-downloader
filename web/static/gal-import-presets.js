@@ -1,6 +1,7 @@
 // Shared source for the import dropdown and its JSON presets.
 // Only registered playback adapters belong here; format probes are not importable adapters.
 export const GAL_PRESETS = {
+  meshiagirl: {label:'meshiagirl（Cocos Creator；部分特效未还原）',adapters:['meshiagirl-json'],game:{id:'meshiagirl',title:'meshiagirl'}},
   uviewer: { label: "UViewer 资源包（通用）", adapters: ['uviewer-csv'], game: { id: 'uviewer', title: 'UViewer 资源包' } },
   deepone: { label: "deepone（UViewer 系）", adapters: ['uviewer-csv'], game: { id: 'deepone', title: 'deepone' } },
   legeclo: { label: "Legeclo", adapters: ['renpy-legeclo'], game: { id: 'legeclo', title: 'Legeclo' } },

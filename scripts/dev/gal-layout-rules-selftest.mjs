@@ -24,6 +24,7 @@ const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v)
 
 // 适配器 id → 导出 DEFAULT_OPTIONS 的模块文件（girlscreation-line / -tag 共用同一份）
 const MODULES = {
+  'meshiagirl-json': 'meshiagirl-json',
   'silky::mes':'silky-mes',
   'edo::ikunyu':'edo-ikunyu',
   'age::sys4': 'age-sys4',

@@ -594,7 +594,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
       const script = child.script.split('::')[0], dir = path.posix.dirname(script), parent = dir === '.' ? '' : dir
       return !rule.dirs.length ? !parent : rule.dirs.some(d => d === '**' || d === '*' && parent && !parent.includes('/') || d === parent)
     })
-    const rows = await mapLimit(candidates, 6, async child => ({ child, ok: await viewTakesAsync(defaultSet, rule, { rel: child.script, stem: stemOf(child.script.split('::')[0]) }) }))
+    const rows = await mapLimit(candidates, 6, async child => ({ child, ok: await viewTakesAsync(defaultSet, rule, { rel: child.script, stem: child.viewName || stemOf(child.script.split('::')[0]) }) }))
     return rows.filter(row => row.ok).map(row => row.child)
   }
   async function catalogNode(catalog, id, page, view) {
