@@ -86,15 +86,16 @@ set -uo pipefail
 # 1.4 BGI 目录清单加每张图头里 0x18..0x2d 的 22 字节（hdr18），样本图多收 12 个 32 位、宽 ≤1400 的小图（立绘表情 / 嘴 / 眼部件），核对部件位置偏移
 # 1.3 自有 arc / XFL：只收头的档案补「条目清单（带每条开头 16 字节）」+ 8 个样本条目；Unity 的 GameAssembly.dll（≤120MB）默认也收（找解密逻辑用）
 # 1.2 BGI：太大只收头尾的 data*.arc 再按 ARC20 索引补收样本图（立绘 / 背景 / CompressedBG v2 各挑几张）+ 全部图的目录清单（名字 / 宽 / 高 / 位数 / 版本），用来核对立绘位置和 CBG v2
+# 1.69 天結 SP0023 等场景故障：仅 SP 原脚本及初始化表约10MiB；不采 EXE/DLL/完整档案或媒体。
 # 1.68 仅补天結开场EV901A/EV902A两张CG约12.2MiB，索引哈希及档案大小守卫，不重采脚本/引擎。
 # 1.67 上传独立超时可配置；启动器缓存目录内保留归档，供循环重传与排查。
 # 1.66 仅天結い原版AGE.EXE.org（约4.23MiB）静态分析；不执行、不收其他游戏/档案/媒体。
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
-VERSION="1.68"
+VERSION="1.69"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:age-scene$'
+ROUND_RULES='^new-games:age-display$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -1574,13 +1575,16 @@ def bug_case_files(items,label,followup=False):
 
 AGE_CODE_PLAN = 'eJxtjsFKw0AQht9lziHNZjebbW4WiuSSSy+KlDK72cRANbBJhRJyMOsDCN499VKv4kEQfJil+BpG1IPF2zDf/898HRx2+4+Xe3d75+ze2Qdnn5x9dsOrs49u2H0Nw7uzb5B0UG7Q5A0kFx009cYoDQkszhcszVJ/lmbgQV0UjW4hCTyQ21aPWcapoMKD5hLDiI+FSFPBqEYVIuGU0UJpyQkGNNcxzaOpiEQgOVciZEjDUEqURE9lTJXmJBYx9EsPDF6X+sjk5HTuz8/mfm3K0eR7PfuRYJRwwv/1+0Vo2qpANUJYrW60qYrtBEs9+Xt2XZeVwnWGV8cv+2XffwIV3nMb'
 
+AGE_DISPLAY_PLAN = 'eJytm8Fum8cRx1/F0DlIdnd2ZnZzoyhKIiJShkk7KIogoGTKNZDWgOwUCAwfavUBCuTeUy7pteihQIE+jFDkNTJfJZLfsPhmjXIQI5A5K/vn2Z2Z/8yu3h/956eff/nHX+7/9Of7u5/v7368v/vb/d3f7z/+8/7ur/cff+q++Pjv+7t/HX355P3Rq+9Xty/fype/fX/09s33t9dr+fpo8ZtFns6nnx9P50efPTl6c3Pzdv1ODEF+c/XDu3X3DZmgQJEP3v5ulZC6b8M1lAzr1XVaRYIMN9frK4qrAC/XDC+xFizhiui6pLyClK6uVldxXa8YrtcUufDRh2/kz7td/eHV+n+QTkbLUfx8dHHaAT18fPxIEmsMREiU+qwxZwCuJfWYU4ISuw9Wt+9e36yuu3VH3377x/Xt65sfvli9Wn+xeBpCgs0//Ls3r15fr76br37/4Jad8cNnTw6jo5xT5Zz7dJGBQpMOLTr0oatBPo+Vle+QuOm7bPku+/gupYgoriK9s3L2mnSW77KP7xIwA0JQvhNXAjXp2KJjHzqqhUn+r3zHhZq+I2tnyWdnIeSaKf43rWzoIkmiaUZFyQbdo/FgulhKohhVzAYO0IqKGAzfbYwH01WmKjHbz9GSA3MoLTprZ6PTzmbEmGopKmZjybUVFWj5Dp18lyvLNlDsR0WEXEMrKhAsOvChQ6gVMLDKKJmhee4I4zDdxngwXZZ0LPuoszFTbp07wmTRJR86zglyQrWzCVNq7Sxb546dzh1yKUGyscp3EibNbMzBqGQb46F0FOTcRY6KDmpp7ixHo5JtjAfTpSAlX4JM5TssqUmXjHO3MR5OVziLmgvad5KOW3Rg7Sw47SyEKBkFUdXZUJrZmKFadNWHTmoWkXQEiq5yO2YzGXSPxsPpYiil5qTOHSA2fZct32Uv3yWMSEHTYW3HrJWN2SkbUyas8kudO+CHMLHpDH23MTrQSdmCGJXvQsBWnWW08h065buSqYjrVEYhLi3fxRjCIN3WeDBdlZIaS1XnDqXBbdIliy750HHIKZeoM0oW1zUySkxxWEFtjQ50UEn+uD6dCNLWLEC+Y1ijbI0OdNL4x6LoUD5sRIUADMfs1ng4HReps0XpOyzcmvIIwHDMbo2H00m8lsw6KkQBNWpFTKkYdI/Gg+miNJ9St3THGEurr5Cu0oiKjdGBrmtydEYBCKkVFdmYQW2NDnQiPnPUdLWpAgRgWN9tjQ50GGvVfUU3cGzvrBEV2WkG1aU20Sn63EmTFtu+G1ZQW+PhdFInUtLKHXNuZpRsdNtbowMdJNHGe+euXWczWlGBXlERMxGgpiNuZxS0ogK9okJ6HAilP7+LidsqIBv6bmt0oGMI0lr06URCfcLOWlGBblFRUTp/RcdyFpu+I0PfbYwH31cUpAQJQn9r0Z4aT+fT5fhyfjo9GwLcX+FEWdQBtC8tOoRnk7Ovp3ODsbfACXGvcthlY+emofy3v8KHEqKqIGAHyo5hqM/dX+FEibqStA+lbOdssrD3e7PAiZFKn7ExHN35aaii7K9woqwqvGOjIj96anH5fH5iO3O3xAcUIfaH4dHu43bOGiqB+yucKDP3KYs5IHr01HT+9PnSduZuiQ8mlf/vbI4uLpru3KzxIKWQWN2BNETPjmKoS95f4UKZqKY+JX1q1hyarO6vcKAswOnh2nJbytuhfjaaTQzErflwPgqSxPd6+swNETnuIIaE0M7oQlcxqtAWEWm6bzTr/v6hsti3+uARK3kB0R4lfX1i+K5n9IGrNel6ne2NPbd817d64KUgO6s0bteZmnt7YTivZ3ShQwAVtpKsq403nRl4PaMHXuaSVGcKjTnc5TMDrmd0gSsxp77v5Hf2xp5aG3vqDIesJg7YeFUynhtwPaMLXO2uCfrbupmPDOJNjg28ntEDr0R+UAI9OUiNJmBpBcXSFa9y0UPMBN3c1Ux5X1m17CtPPNnYmkG9LMm1oaushDd1TXgxQXf10Nd82Bhiji+twLh0pYPQTWz6KQWDnfBOnht0PaMLHWZS/TuhLaEuRgZcz+gCRzGSHhNm+wb90kopl64pJQKDHgAjV1tCPbMyyjPXjBKz6DnlOwjUSChLU0MtXTVUzJSiHmMWskvtuXXyzn1PXi6hqNYCWkLgZGoF7dSVDrv/dGvReH8wPrH2tm914etyXp8vU7Z7n5nlvZmz95gfssi2mIVG63NmyeMzV3ncPdbQz9VSSfZ7sLOJRTdxpaOED6/TtvOqxlht/MKqtC984SAHHRaEdtBePu0AhublfasLH4aHOc8uJX8C3VDQ9q1OdFX/HEzjRf3Zwjp3C9+txVT1MEUkn+m88Zl18M586YhBbyy1HiBY2v2pLxyHqkI2V7trnFnyc+YrP4lx/zqhMeixWtqFa0srcLKtqlDYR25iOW7i7Tjee30QyA7XU0s+nfrKJyolqVzC3Xt1i+6FJQBe+AoAppSSFgDJfq4+tujGznTiOlXFAKIt3I8tumNfuhIR1U2QLDThllZQLH2DQsQIqWOHstR23XI0t4qstjswpsyZVTru7gns25+JpaEmrhoqEdWqJj1R1GdjmGLpgLGrDkhcK6rhsaxphK515TN2vfJJhZD1NSnZpXZkNRYj18ZC4Arohrs2fp7TSisL17SSCgc9woMSwG5pZ5aGmrlqKEii3PWEMeXS+Elia9azcJ31QGXEsDfrsQXo2LrMG7te5uUQSD8RqtB4AHtuue7cF07qmX4nmRHst82bmtAoGU6IzIFKjmpEa9e03VOA5lsBJ8YSGUW3KB0fG160qq5nxRU26WzVRAXbj2wMsAeubz58+BW8PyJ4'
+
 AGE_SCENE_PLAN = 'eJydzs1Kw0AQB/B3mXNod3eS/cgtxQ8K0ktFEClld7uJhWohaYVScrDxAQTvnnqpV/EgCD7MIr6GCZUqgh68DTP/mfkt4W29eX+69dc3vtr46s5XD7569KtnX9371bopVq++eoF4Cdlc56MC4rMlFNN5bh3E0D/th91et9Xp9iCAaZoWbgYxCcAsZq7OhhwlygCKc80iXi9EDmWITlumKccQU+sMp5rgyAkcRUpGkhjOrWShRsaM0YY6ZQRax6mQAspBALm+zNwPyV5ynLBWcnRQO7bNzpZACRVIkEn6BWRSREiR75xSRhSVCEDns3GqbZ2B4fDK5eN00daZa++fKEKTVnLY3J9Ms7HVk56+aD5/G5XBf0WSIuVK7kCoOKGK/A1iv4M+R+WgLD8AueCckw=='
 
 def next_game_verify_files(items,label,age_link=False):
+    age_display=RULES_RE.pattern=='^new-games:age-display$'
     age_scene=RULES_RE.pattern=='^new-games:age-scene$'
     age_code=RULES_RE.pattern=='^new-games:age-code$'
-    plan=json.loads(zlib.decompress(base64.b64decode(AGE_SCENE_PLAN if age_scene else AGE_CODE_PLAN if age_code else AGE_LINK_PLAN if age_link else NEXT_VERIFY_PLAN)))[label]
-    lookup={e.rel.replace('\\','/').casefold():e for e in items};report={'game':label,'sourceReadOnly':True,'files':[],'guards':plan['guards'],'notes':['Original backup engine for static opcode analysis only. Never execute or install; no archives/media/other games.' if age_code else 'Only EV901A/EV902A original prologue images, about 12.2MiB; no EXE/DLL/scripts/other games.' if age_scene else 'Exact prologue dependencies and sampled image/voice assets; no EXE/DLL/save payloads.' if age_link else 'Only explicitly selected verification media/definitions. AGE EXE/DLL are static analysis input; never execute them.']};used=0
+    plan=json.loads(zlib.decompress(base64.b64decode(AGE_DISPLAY_PLAN if age_display else AGE_SCENE_PLAN if age_scene else AGE_CODE_PLAN if age_code else AGE_LINK_PLAN if age_link else NEXT_VERIFY_PLAN)))[label]
+    lookup={e.rel.replace('\\','/').casefold():e for e in items};report={'game':label,'sourceReadOnly':True,'files':[],'guards':plan['guards'],'notes':['SP scene rendering/text diagnosis: all main-package SP scripts and initialization tables, about10MiB; no images/audio/EXE/DLL/whole archives.' if age_display else 'Original backup engine for static opcode analysis only. Never execute or install; no archives/media/other games.' if age_code else 'Only EV901A/EV902A original prologue images, about 12.2MiB; no EXE/DLL/scripts/other games.' if age_scene else 'Exact prologue dependencies and sampled image/voice assets; no EXE/DLL/save payloads.' if age_link else 'Only explicitly selected verification media/definitions. AGE EXE/DLL are static analysis input; never execute them.']};used=0
     def read(source,offset,length,expected=None):
         e=lookup.get(source.casefold())
         if not e:raise RuntimeError('Missing requested verification source: '+source)
@@ -2410,7 +2414,7 @@ def scene_audit_files(items,label):
     yield '__scene-audit/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode(),int(time.time())
 
 def main():
-    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:playback$','^new-games:twi-model$','^new-games:scene-audit$','^new-games:mz-templates$','^new-games:followup$','^new-games:bug-cases$','^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$')
+    new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:playback$','^new-games:twi-model$','^new-games:scene-audit$','^new-games:mz-templates$','^new-games:followup$','^new-games:bug-cases$','^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$','^new-games:age-display$')
     scene_audit = RULES_RE is not None and RULES_RE.pattern in ('^new-games:playback$','^new-games:scene-audit$','^new-games:twi-model$')
     twi_model = scene_audit and RULES_RE.pattern=='^new-games:twi-model$'
     mz_templates = RULES_RE is not None and RULES_RE.pattern == '^new-games:mz-templates$'
@@ -2421,9 +2425,9 @@ def main():
     if scene_audit:bug_labels={'ツヴァイトリガー','Remastered','RJ01271506','RJ328940'}
     if twi_model:bug_labels={'ツヴァイトリガー'}
     if scene_audit and RULES_RE.pattern=='^new-games:playback$':bug_labels={'RJ01271506','RJ328940','ツヴァイトリガー'}
-    new_games_next = new_games and RULES_RE.pattern in ('^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$')
-    age_link = new_games_next and RULES_RE.pattern in ('^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$')
-    new_games_next_verify = new_games_next and RULES_RE.pattern in ('^new-games:next-verify$','^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$')
+    new_games_next = new_games and RULES_RE.pattern in ('^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$','^new-games:age-display$')
+    age_link = new_games_next and RULES_RE.pattern in ('^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$','^new-games:age-display$')
+    new_games_next_verify = new_games_next and RULES_RE.pattern in ('^new-games:next-verify$','^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$','^new-games:age-display$')
     new_games_next_detail = new_games_next and RULES_RE.pattern == '^new-games:next-detail$'
     new_games_remaining = new_games and RULES_RE.pattern == '^new-games:remaining$'
     remaining_labels=set(json.loads(zlib.decompress(base64.b64decode(REMAINING_RANGE_PLAN)))) if new_games_remaining else set()
@@ -2457,7 +2461,7 @@ def main():
             else:
                 ds[:]=sorted(x for x in ds if depth<7 and x.lower() not in ('gal-download','bundles','runs','repair-backups','bundle-backups','node_modules','img','audio','movies') and not EXCL.search(x+'/'))
         missing=sorted(bug_labels-found) if bug_cases else [name for name,_pattern in (NEXT_GAME_PATTERNS if new_games_next else NEW_GAME_PATTERNS) if name not in found and (not age_link or name=='天結いラビリンスマイスター') and (not new_games_remaining or name in remaining_labels) and (not new_games_media or name in ('How to Build a Magnificent Kingdom v1.05','夜勤病棟リメイク'))]
-        say('本轮%s；找到%d个目录；未找到：%s' % ('指定场景故障定向采集' if bug_cases else 'AGE开场两张CG定向采集' if RULES_RE.pattern=='^new-games:age-scene$' else 'AGE原版备份引擎静态分析采集' if RULES_RE.pattern=='^new-games:age-code$' else 'AGE序章依赖定向采集' if age_link else '下一批五作引擎探测' if new_games_next else '两作缺失定义验证' if new_games_remaining else '两作定向媒体验证' if new_games_media else '五作引擎探测',len(games),'；'.join(missing) or '无'))
+        say('本轮%s；找到%d个目录；未找到：%s' % ('指定场景故障定向采集' if bug_cases else 'AGE SP剧情及初始化表诊断采集' if RULES_RE.pattern=='^new-games:age-display$' else 'AGE开场两张CG定向采集' if RULES_RE.pattern=='^new-games:age-scene$' else 'AGE原版备份引擎静态分析采集' if RULES_RE.pattern=='^new-games:age-code$' else 'AGE序章依赖定向采集' if age_link else '下一批五作引擎探测' if new_games_next else '两作缺失定义验证' if new_games_remaining else '两作定向媒体验证' if new_games_media else '五作引擎探测',len(games),'；'.join(missing) or '无'))
         if not games: raise RuntimeError('未找到本轮指定目录；未采其他游戏')
     elif download_logs:
         game, log_items = latest_download_logs()
@@ -2524,7 +2528,7 @@ def main():
         items = log_items if download_logs else list_files(game); eng = engines_of(items)
         picks = ([] if new_games or tsk_scene or rpg_maps or rpg_new or rpg_probe or rpg_media else [(e, 'full', 'gal-download:latest') for e in items] if download_logs else requested_diagnostic_picks(items, os.path.basename(game).lower() == 'twinkle star knights x') if requested_diagnostics
             else [(e, 'inventory', 'rj01482469:inventory') for e in items[:1]] if rj_inventory else pick(items, eng))
-        if new_games and items: picks=[(items[0],'inventory','new-games:playback' if RULES_RE.pattern=='^new-games:playback$' else 'new-games:twi-model' if twi_model else 'new-games:scene-audit' if scene_audit else 'new-games:mz-templates' if mz_templates else 'new-games:followup' if followup else 'new-games:bug-cases' if bug_cases else 'new-games:age-scene' if RULES_RE.pattern=='^new-games:age-scene$' else 'new-games:age-code' if RULES_RE.pattern=='^new-games:age-code$' else 'new-games:age-link' if age_link else 'new-games:next-verify' if new_games_next_verify else 'new-games:next-detail' if new_games_next_detail else 'new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
+        if new_games and items: picks=[(items[0],'inventory','new-games:playback' if RULES_RE.pattern=='^new-games:playback$' else 'new-games:twi-model' if twi_model else 'new-games:scene-audit' if scene_audit else 'new-games:mz-templates' if mz_templates else 'new-games:followup' if followup else 'new-games:bug-cases' if bug_cases else 'new-games:age-display' if RULES_RE.pattern=='^new-games:age-display$' else 'new-games:age-scene' if RULES_RE.pattern=='^new-games:age-scene$' else 'new-games:age-code' if RULES_RE.pattern=='^new-games:age-code$' else 'new-games:age-link' if age_link else 'new-games:next-verify' if new_games_next_verify else 'new-games:next-detail' if new_games_next_detail else 'new-games:next' if new_games_next else 'new-games:remaining' if new_games_remaining else 'new-games:media' if new_games_media else 'new-games:detail' if new_games_detail else 'new-games:probe')]
         if rpg_media:
             sample_id = re.search(r'RJ[0-9]+', os.path.basename(game), re.I).group(0).upper()
             sample = RPG_MEDIA_SAMPLES[sample_id]
