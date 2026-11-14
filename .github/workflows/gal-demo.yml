@@ -22,6 +22,15 @@ on:
         required: true
         default: "60"
 
+      native_fixture_url:
+        description: Optional short-lived URL for one captured AGE diagnostic fixture
+        required: false
+        default: ""
+      native_fixture_sha256:
+        description: SHA256 of the captured AGE fixture archive
+        required: false
+        default: ""
+
 permissions:
   contents: write
   packages: read
@@ -46,7 +55,41 @@ jobs:
       - name: Pull image
         run: docker pull "${{ inputs.image || 'ghcr.io/lgithubl/copymanga-downloader:vibe-test-20261008' }}"
 
+      - name: Prepare one captured AGE scene
+        if: inputs.native_fixture_url != ''
+        env:
+          FIXTURE_URL: ${{ inputs.native_fixture_url }}
+          FIXTURE_SHA256: ${{ inputs.native_fixture_sha256 }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$FIXTURE_URL"
+          curl -fL --max-time 180 "$FIXTURE_URL" -o "$RUNNER_TEMP/age-fixture.tar.gz"
+          printf '%s  %s\n' "$FIXTURE_SHA256" "$RUNNER_TEMP/age-fixture.tar.gz" | sha256sum -c -
+          python3 - <<'PYAGE'
+          import json, os, pathlib, re, tarfile
+          base = pathlib.Path(os.environ['RUNNER_TEMP']) / 'data'
+          game = base / 'gal' / 'AGE'
+          game.mkdir(parents=True, exist_ok=True)
+          total = 0
+          with tarfile.open(pathlib.Path(os.environ['RUNNER_TEMP']) / 'age-fixture.tar.gz') as archive:
+              for member in archive:
+                  if not member.isfile() or not re.fullmatch(r'[A-Za-z0-9_.-]+', member.name):
+                      raise RuntimeError('Unexpected fixture path/type')
+                  total += member.size
+                  if total > 64 * 1024 * 1024:
+                      raise RuntimeError('Fixture exceeds 64 MiB')
+                  target = base / ('age-' + member.name) if member.name.endswith('.json') else game / member.name
+                  target.write_bytes(archive.extractfile(member).read())
+          for name, size in json.loads((base / 'age-archive-sizes.json').read_text()).items():
+              if not re.fullmatch(r'[A-Za-z0-9_.-]+\.[Aa][Ll][Ff]', name) or not isinstance(size, int) or not 0 < size < 64 * 1024**3:
+                  raise RuntimeError('Invalid sparse archive declaration')
+              with (game / name).open('wb') as file:
+                  file.truncate(size)
+          print('One original SN0000 scene prepared; only captured loose files contain resource bytes.')
+          PYAGE
+
       - name: Generate synthetic Gal demo data
+        if: inputs.native_fixture_url == ''
         run: |
           set -e
           mkdir -p "$RUNNER_TEMP/data/gal"
@@ -61,6 +104,8 @@ jobs:
           ls -la "$RUNNER_TEMP/data/gal"
 
       - name: Start web (HTTP) and import the demos
+        env:
+          NATIVE_FIXTURE_URL: ${{ inputs.native_fixture_url }}
         run: |
           set -e
           docker run -d --name copymanga-web \
@@ -80,6 +125,12 @@ jobs:
             curl -fsS -X POST "http://127.0.0.1:8080/api/library/items?type=gal" -F importProfile=gal-import -F "sourcePath=/data/gal/$1" -F "profileOptions=$2" "${extra[@]}" | head -c 200 || echo "$1 import failed"
             echo
           }
+          if [ -n "$NATIVE_FIXTURE_URL" ]; then
+            import_gal 'AGE' "$(cat "$RUNNER_TEMP/data/age-profile.json")" 0
+            curl -fsS 'http://127.0.0.1:8080/api/library/items?type=gal' > "$RUNNER_TEMP/age-import.json"
+            node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1]));const items=Array.isArray(d)?d:d.items;if(items.length!==1)throw Error("Expected one original AGE item");console.log("Original AGE import:",items[0].itemId)' "$RUNNER_TEMP/age-import.json"
+            exit 0
+          fi
           import_gal 'UViewer演示' '{}' 0
           import_gal 'monmusu演示' '{"adapters":["renpy-monmusu"],"config":{"game":{"id":"monmusu"}}}' 1
           import_gal 'tenkeiprdx演示' '{"adapters":["tenkeiprdx-json"],"config":{"game":{"id":"tenkeiprdx"}}}' 1

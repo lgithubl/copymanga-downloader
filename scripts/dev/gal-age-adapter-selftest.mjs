@@ -60,6 +60,17 @@ test('selected unverified instructions continue and retain every scene position 
   assert.throws(()=>analyzePreview(data,{unverifiedPolicy:'ignore-everything'}),/unverifiedPolicy/)
 })
 
+test('explicit partial preview exposes only the executed native prefix and keeps incomplete status', () => {
+  const data=pkg([[0x6e,lit(0),str('actual prefix')],[0x304],[2]])
+  assert.throws(()=>parsePreview(JSON.stringify(data)),/0x304/)
+  const scene=parsePreview(JSON.stringify(data),null,{options:{partialPreview:true}})
+  assert.equal(scene.stats.complete,false)
+  assert.equal(scene.stats.previewStopped.opcode,0x304)
+  assert.equal(scene.steps[0].commands[0].segments[0].text,'actual prefix')
+  assert.match(scene.stats.notes[0],/后续未解析/)
+  assert.throws(()=>parsePreview(JSON.stringify(pkg([[0x304],[2]])),null,{options:{partialPreview:true}}),/0x304/)
+})
+
 test('explicit callback replay enters the registered target, returns to the interrupted text and rejects unresolved events', () => {
   const data = pkg([[0x7b, lit(19), lit(-1)], [0x192, arg(5,100), str('normal')], [0x6e, lit(0), arg(5,100)],
     [0x72, lit(0)], [2], [0x192, arg(5,100), str('callback')], [0x7c]])

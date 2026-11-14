@@ -9,7 +9,7 @@ import { createAgeTimeline } from '../age-timeline.mjs'
 import { readAgeCatalog, ageResourceContext } from '../age-archive.mjs'
 
 export const ADAPTER_ID = 'age::sys4'
-export const DEFAULT_OPTIONS = { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn' }
+export const DEFAULT_OPTIONS = { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn', partialPreview: false }
 export const sniff = text => /^\s*\{\s*"format"\s*:\s*"age-sys4\/1"/.test(String(text || '').slice(0, 256))
 export const explainSniff = () => '需要 age-sys4/1 脚本包；不把 SYS4INI 索引或原始 BIN 当作文本'
 export const contextFiles = () => []
@@ -264,6 +264,12 @@ export function parse(text, ctx = null, meta = {}) {
     const where = stop ? `${stop.script || data.name || 'BIN'} @${stop.offset} opcode 0x${stop.opcode.toString(16)}` : data.name || 'BIN'
     const error = Error(`AGE 场景尚未完整解析：${where}；${result.stats.error || result.stats.run.status}；未把部分台词当成完整场景`)
     error.ageDiagnostic = result
+    if (options.partialPreview === true && result.steps.length) {
+      result.stats.previewStopped = { ...(stop || {}), reason: result.stats.error || result.stats.run.status }
+      result.stats.approximate = true
+      result.stats.notes = [...(result.stats.notes || []), `诊断预览：${where} 已停止，后续未解析/未播放；${result.stats.error || result.stats.run.status}`]
+      return { steps: result.steps, stats: result.stats }
+    }
     throw error
   }
   return { steps: result.steps, stats: result.stats }

@@ -1685,6 +1685,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   function updateNote() {
     const parts = []
+    if (scene.stats?.previewStopped) parts.push('诊断预览已停止，后续未解析（点开查看）')
     if (scene.stats?.opcodeWarnings?.length) parts.push(`跳过未确认指令 ${scene.stats.opcodeWarnings.length} 处（点开查看句子位置）`)
     if (rawIgnored) parts.push(`立绘/特效等 ${rawIgnored} 条指令暂未渲染`)
     if (spineUnavailable) parts.push('Spine 运行时缺失：立绘/动画未渲染')
