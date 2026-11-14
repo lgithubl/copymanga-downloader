@@ -126,6 +126,11 @@ jobs:
             echo
           }
           if [ -n "$NATIVE_FIXTURE_URL" ]; then
+            # The bundle already contains a verified layout. Auto layout would
+            # replace its explicit diagnostic-only partialPreview option.
+            curl -fsS http://127.0.0.1:8080/api/config > "$RUNNER_TEMP/age-config.json"
+            node -e 'const fs=require("fs"),p=process.argv[1],c=JSON.parse(fs.readFileSync(p));c.mediaImportProfiles["gal-import"].defaultMetadataActions=[];fs.writeFileSync(p,JSON.stringify(c))' "$RUNNER_TEMP/age-config.json"
+            curl -fsS -X POST http://127.0.0.1:8080/api/config -H 'Content-Type: application/json' --data-binary "@$RUNNER_TEMP/age-config.json" > /dev/null
             import_gal 'AGE' "$(cat "$RUNNER_TEMP/data/age-profile.json")" 0
             curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null
             for i in $(seq 1 30); do

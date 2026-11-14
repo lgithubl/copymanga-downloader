@@ -185,3 +185,14 @@ VM 新增的是本地 BIN **调用身份**：重复调用同一 BIN 会有不同
 以上其他未实现操作码仍停止，没有因为这次三项豁免而自动全部跳过。缺资源、无效地址、执行预算、原生输入区域等原有边界仍保留。已向用户询问是否扩大到其他未实现指令，未收到答复前只保持这三个的范围。
 
 浏览器验证包含：受控两句/初始化用例经过正式 parse，完整警告数量与句号匹配；实际图像、音频、跳入/后退和缩略图继续通过；右下角诊断实际点击展开并核对第 2 句的 305、脚本与偏移，截图/全文在 `.cache/age-adapter-display/opcode-warning-diagnostics.{png,txt}`。原始开场跳过 35c 后生成的诊断前缀另存 `native-skip-preview.json`，可显示已采开场图，但这份前缀不是正式入口的完整播放成功。
+
+
+## HTTP Action 单个真实场景诊断站（2026-11-14）
+
+按用户要求使用 Gal Interactive Demo Action（43531930908）启动 HTTP 容器与临时隧道，只导入原始 SN0000.BIN 一个场景；原始索引及 EV901A/EV902A 字节未改。素材包约 11.8 MB，仅上传私有 private-scripts 仓库的 age-http-demo release，Action 通过短期签名链接读取，未把素材提交到公开源码。
+
+新增 `partialPreview:false` 默认参数；仅该演示显式启用 true，让正式 AGE 适配器返回已执行前缀，同时保留 complete:false、previewStopped 和显著停止提示。默认不放行其他场景的残缺结果。真实开场依然在 @2867 / 35d 停止，无后续台词；不是替代字节码或合成剧情。
+
+部署时发现默认导入元数据动作会重新跑 layout 并重置 partialPreview；已仅在原生演示的隔离站点禁用该自动动作，再应用已经验证的包内配置。CI 流程同步修正，旧合成演示分支保留。
+
+实际外网 Chrome 直接访问通过（首次导航网络超时，重试后成功）；真实开场长图显示，间隔 2.5 秒的画布采样 hash 不同，确认平移在运行，JS 错误和 HTTP 失败均为 0。右下角展开包含第 1 句 35c 跳过及 35d 停止信息。截图和核验保留在 `.cache/age-http-demo/live-scene.png`、`live-diagnostics.png`、`live-verification-direct.json`。站点保持 60 分钟，约北京时间 09:07 关闭；不是完整开场通过验收。
