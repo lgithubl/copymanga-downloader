@@ -95,7 +95,7 @@ set -uo pipefail
 # 1.66 仅天結い原版AGE.EXE.org（约4.23MiB）静态分析；不执行、不收其他游戏/档案/媒体。
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
-VERSION="1.78"
+VERSION="1.79"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1699,7 +1699,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJyrVkorrSzNLi0qVbJSiK5WKkgsyQCylHJLizOT9RKLkpV0FJSK80uLklOdKktSi4FyJhZGxpYmRgYWQJn8tLTi1BKgoKGlpYmxhbkJUCwJqs7I0MzQ0szIACiUl5ibCjI1Pr4gMbMoPjc1JTNRH26FvoGRXrhjmFKtjgIFDrCwMDAxNDEyQ3aBkZGpibG5GWEXGBpCXBALVPq4seNx48rHTf3v98573NQNCpfYWgBXF1xv'
+PAIR_MEDIA_PLAN='eJytkM1KAzEUhV+lZF0mNz/Nj7sWF4pI1yIlpNO0Hew4JdMZKaWLdiW48A3c+xA+zTyAr2BKVWakBaVmFc69556Ps0LjYlncFb5AZ63bFZrbxTT80MwunY+sj1G7hfKs8LHrLRcuDzMltKRaCBIm2Xicu0UQGRBNlJA8iMPPRQodRQUE5d6mbnfVmLlNvEndKLH4OwJ3zU3/vH99aYAagKh71UPrdusEGMI0Vxx0DYZrLpn+K4u5oGTPMwjWavNYbV6r7fP720u1fWo21vXxNCldjkvngzGBw8AEZAekltBp1qepVBSawJQcLe9gGk7SCbazGY6nNrXAQET7a402f1gzMOWRbiXjhAHwOillioRya6CCc2C/5PwKw9lkgsssiR1+gN2jqY2C9p+kTAsgitRIJRfiZFKWDvekg/UHgZL/cA=='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
