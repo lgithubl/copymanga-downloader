@@ -728,7 +728,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     let scale
     let px
     let py
-    if (inst.spec.place && typeof inst.spec.place === 'object') {
+    if ((inst.spec.kind === 'still' || inst.spec.nativePlace === true) && inst.spec.place && typeof inst.spec.place === 'object') {
       // 精确摆放的静态画面（TSK BgEvent：原版 1 个骨架 1:1 像素画在舞台中心，不缩放）
       const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
       const unit = width / stage

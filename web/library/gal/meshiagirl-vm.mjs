@@ -43,7 +43,7 @@ export function runMeshi(data,ctx={},cfg={}){
   default:raw(t)
  }}
  const snapshot=()=>{const now=new Map(),frontOpaque=[...objects.values()].some(o=>o.buffer===active&&o.asset&&o.alpha===1&&(o.kind==='bg'||o.kind==='still'&&o.index===0));for(const o of objects.values()){if(!o.asset||o.alpha<=0||o.sx===0||o.sy===0||frontOpaque&&o.buffer!==active)continue;if(o.kind==='face'){continue}const a=o.asset,slot='meshi:'+o.key,stage=cfg.stage||[1170,640];let spec
-  if(a.skel){const scale=cfg.spineScale??0.8;spec={op:'spine',slot,kind:'actor',name:a.name,skel:a.skel,atlas:a.atlas,textureMap:a.textureMap,tracks:Object.values(o.tracks),place:{x:o.x,y:o.y,scale,scaleX:o.sx,scaleY:o.sy},stage,order:o.order+(o.buffer===active?1000000:0)};if(o.alpha!==1)spec.opacity=o.alpha}
+  if(a.skel){const scale=cfg.spineScale??0.8;spec={op:'spine',slot,kind:'actor',nativePlace:true,name:a.name,skel:a.skel,atlas:a.atlas,textureMap:a.textureMap,tracks:Object.values(o.tracks),place:{x:o.x,y:o.y,scale,scaleX:o.sx,scaleY:o.sy},stage,order:o.order+(o.buffer===active?1000000:0)};if(o.alpha!==1)spec.opacity=o.alpha}
   else spec={op:'overlay',slot,name:a.name,src:a.src,x:o.x+(a.offset?.[0]||0)*o.sx,y:-o.y-(a.offset?.[1]||0)*o.sy,...(a.crop?{crop:a.crop}:{}),scaleX:Math.abs(o.sx),scaleY:Math.abs(o.sy),flipX:o.sx<0,alpha:o.alpha,stage,anchor:[0.5,0.5],z:(o.kind==='bg'?-10000:o.kind==='still'?10000:0)+o.order+(o.buffer===active?1000000:0),under:o.kind==='bg',cg:o.kind==='still'}
   now.set(slot,spec);if(JSON.stringify(spec)!==JSON.stringify(last.get(slot)))emit(spec)
  }for(const[slot,spec]of last)if(!now.has(slot))emit({op:spec.op==='spine'?'spineOff':'overlayOff',slot});last.clear();for(const pair of now)last.set(...pair)}
