@@ -1,3 +1,4 @@
+import {memoryTargets} from './rpgmaker-memory.mjs'
 import {skitCommands} from './rpgmaker-skit.mjs'
 import {skitScriptScope} from './rpgmaker-skit-scripts.mjs'
 import {pictureAnimation} from './rpgmaker-picture-animation.mjs'
@@ -25,7 +26,36 @@ export function compileRpgEvents(list, ctx, meta) {
   const bindings = [], logStyles = new Map(pluginData(ctx,'LogDisplayPlugin','logSettings').map(x=>[x.name,x])), imageSprites = new Map(pluginData(ctx,'VariableSpriteDisplay','imageSprites').map(x=>[x.displayName,x])), variableGroups = new Map(pluginData(ctx,'VariableSpriteDisplay','variableGroups').map(x=>[x.name,x]))
   const flush = () => { if (pending.length) { steps.push({ index: steps.length, commands: pending }); pending = [] } }
   const when = () => guards.flatMap(g => g.conditions || [])
-  const emit = cmd => { if(cmd.op==='rpgText')cmd={stage,...cmd}; if ((stats.emitted = (stats.emitted || 0) + 1) > o.maxCommands) throw new Error('RPG Maker 导出指令达到上限'); const w = when(); pending.push(w.length ? { ...cmd, when: [...w,...(cmd.when||[])] } : cmd) }
+  // Conservative constants for replay expansion: discard only paths proven
+  // unreachable. A choice or conditional write makes its result unknown.
+  const abstract=new Map(),unknown=Symbol('unknown')
+  const valueOf=key=>abstract.has(key)?abstract.get(key):initial.has(key)?initial.get(key):unknown
+  const truth=conditions=>{
+    let result=true
+    for(const c of conditions||[]){
+      const a=valueOf(c.var),b=c.valueVar?valueOf(c.valueVar):c.value
+      if(a===unknown||b===unknown){result=null;continue}
+      const left=String(a),right=String(b),numeric=x=>x!==''&&Number.isFinite(Number(x)),both=numeric(left)&&numeric(right),equal=both?Number(left)===Number(right):left===right
+      let yes=({'===':()=>equal,'==':()=>equal,'!==':()=>!equal,'!=':()=>!equal,'>=':()=>both&&Number(left)>=Number(right),'<=':()=>both&&Number(left)<=Number(right),'>':()=>both&&Number(left)>Number(right),'<':()=>both&&Number(left)<Number(right)})[c.op]?.()??true
+      if(c.not)yes=!yes
+      if(!yes)return false
+    }
+    return result
+  }
+  const emit = cmd => {
+    if(cmd.op==='rpgText')cmd={stage,...cmd}
+    const w=[...when(),...(cmd.when||[])],on=meta.memoryReplay?truth(w):null
+    if(on===false)return
+    if(meta.memoryReplay&&['set','choice'].includes(cmd.op)){
+      const a=valueOf(cmd.var),b=cmd.valueVar?valueOf(cmd.valueVar):cmd.test?(truth([cmd.test])===null?unknown:Number(truth([cmd.test]))):cmd.value
+      let next=b
+      if(cmd.op==='choice'||on!==true||cmd.random||b===unknown)next=unknown
+      else if(cmd.calc&&cmd.calc!=='set')next=a===unknown?unknown:({add:()=>Number(a)+Number(b),sub:()=>Number(a)-Number(b),mul:()=>Number(a)*Number(b),div:()=>b?Math.floor(Number(a)/Number(b)):0,mod:()=>b?Number(a)%Number(b):0})[cmd.calc]?.()??unknown
+      abstract.set(cmd.var,next)
+    }
+    if ((stats.emitted = (stats.emitted || 0) + 1) > o.maxCommands) throw new Error('RPG Maker 导出指令达到上限')
+    pending.push(w.length?{...cmd,when:w}:cmd)
+  }
   const raw = (key, args) => { stats.raw[key] = (stats.raw[key] || 0) + 1; emit({ op: 'raw', cmd: key, args: JSON.stringify(args).slice(0, 1000) }) }
   const paEnabled=o.plugins.structured!==false&&ctx.plugins?.some(p=>p.name.split('/').at(-1)==='PictureAnimation')
   const pa=pictureAnimation({emit,raw,initial,guard:(conditions,fn)=>{guards.push({conditions});try{fn()}finally{guards.pop()}}})
@@ -104,10 +134,15 @@ export function compileRpgEvents(list, ctx, meta) {
   const skit=skitCommands(ctx,{emit,raw,initial,stage})
   const extend=ctx.plugins?.find(p=>p.name.split('/').at(-1)==='CommonEventExtend'&&p.parameters?.DefaultCommandOverride==='true')
   const argumentIds=o.skit?.wrapperScripts&&ctx.skit&&extend?structValue(extend.parameters.DefaultArguments||'[]').map(Number).filter(n=>Number.isInteger(n)&&n>0).slice(0,32):[]
-  const callMapEvent = (eventId,depth,autorunOnly=false,keepCaller=false) => {
+  const memorySwitches=new Set(meta.memoryReplay?.switches||[]),memoryVariables=new Set(meta.memoryReplay?.variables||[])
+  const memoryEntry=()=>({...meta.memoryReplay,switches:[...memorySwitches],variables:[...memoryVariables]})
+  let memoryFrame=null
+  const memoryMaps=[]
+  const callMapEvent = (eventId,depth,autorunOnly=false,keepCaller=false,onlyPage=null) => {
     const targetMapId=mapId||ctx.system?.startMapId||0,map=ctx.maps?.get(`${o.root?o.root+'/':''}data/Map${String(targetMapId).padStart(3,'0')}.json`),event=map?.events?.find(e=>e?.id===eventId)
     if(!event?.pages?.length){raw('map-event-call-missing',{map:targetMapId,event:eventId});return}
     if(event.pages.some(p=>p.conditions?.itemValid)){raw('map-event-call-inventory-condition',{map:targetMapId,event:eventId});return}
+    let handoff=null
     const chosen=`rpg:map-page:${serial++}`
     emit({op:'set',var:chosen,value:-1})
     // Higher pages win. Snapshot selection before the child can change its conditions.
@@ -121,13 +156,57 @@ export function compileRpgEvents(list, ctx, meta) {
     }
     const caller=activeEventId,callerMap=mapId,callerPage=activePageIndex
     for(const [i,page]of event.pages.entries()){
-      if(autorunOnly&&page.trigger!==3)continue
+      if(onlyPage!==null&&i!==onlyPage||autorunOnly&&page.trigger!==3)continue
       guards.push({type:'map-page',indent:-1,conditions:[{var:chosen,op:'===',value:i}]})
+      const reachable=meta.memoryReplay?truth(when()):null,saved=meta.memoryReplay?new Map(abstract):null
+      if(meta.memoryReplay&&reachable===false){guards.pop();continue}
+      if(meta.memoryReplay){
+        // Analyse this native page under its own selection constraints. Keep the
+        // emitted guards: this is path-sensitive compilation, not forced playback.
+        for(const test of when())if(['===','=='].includes(test.op)&&!test.not&&!test.valueVar)abstract.set(test.var,test.value)
+        const c=page.conditions||{}
+        if(c.variableValid&&valueOf(v(c.variableId))===unknown){
+          const next=event.pages.slice(i+1).filter(p=>p.conditions?.variableValid&&p.conditions.variableId===c.variableId&&p.conditions.variableValue>c.variableValue).map(p=>p.conditions.variableValue)
+          if(next.length&&Math.min(...next)===c.variableValue+1)abstract.set(v(c.variableId),c.variableValue)
+        }
+      }
       activeEventId=keepCaller?caller:eventId;mapId=targetMapId;activePageIndex=i
+      const parentFrame=memoryFrame
+      if(meta.memoryReplay&&autorunOnly)memoryFrame={map:targetMapId,next:[]}
       run(page.list||[],depth+1,`map:${targetMapId}:${eventId}`)
+      const transfers=meta.memoryReplay&&autorunOnly?memoryFrame.next:[]
+      memoryFrame=parentFrame
+      for(const next of transfers){
+        if(next.map===targetMapId||truth(next.when)===false)continue
+        const same=event.template&&memoryTargets(ctx,memoryEntry(),next.map,true).find(e=>e.template?.map===event.template.map&&e.template?.event===event.template.event)
+        if(same&&transfers.length===1)handoff={map:next.map,event:same}
+        else {guards.push({conditions:next.when});mapId=next.map;dispatchMemory(next.map,depth+1,true);guards.pop()}
+      }
+      if(saved){const result=new Map(abstract);abstract.clear();for(const[k,value]of saved)abstract.set(k,value);for(const[k,value]of result)if(value!==saved.get(k))abstract.set(k,reachable===true?value:unknown)}
       guards.pop()
     }
     activeEventId=caller;mapId=callerMap;activePageIndex=callerPage
+    return handoff
+  }
+  const dispatchMemory=(id,depth,continuation)=>{
+    const state=JSON.stringify([id,...[...memoryVariables].map(n=>{const value=valueOf(v(n));return value===unknown?'unknown':value})])
+    if(memoryMaps.some(x=>x.state===state)){raw('memory-map-cycle',{maps:[...memoryMaps.map(x=>x.id),id],state});return}
+    const targets=memoryTargets(ctx,memoryEntry(),id,continuation)
+    if(!targets.length){
+      if(continuation&&ctx.maps.has(`${o.root?o.root+'/':''}data/Map${String(id).padStart(3,'0')}.json`)){stats.replayStops??=[];stats.replayStops.push({map:id,reason:'no-related-autorun'});stats.warnings.push(`回想到达地图 ${id}，没有后续自动剧情；地图探索不自动执行。`)}
+      else raw('memory-route-unresolved',{map:id,switches:meta.memoryReplay.switches,variables:meta.memoryReplay.variables})
+      return
+    }
+    memoryMaps.push({id,state})
+    for(const target of targets){let current=target,location=id
+      for(let pi=0;pi<current.pages.length;pi++){
+        if(current.pages[pi].trigger!==3)continue
+        guards.push({conditions:[{var:variable(1054,'s'),op:'===',value:1}]})
+        mapId=location;const next=callMapEvent(current.id,depth,true,false,pi);guards.pop()
+        if(next){current=next.event;location=next.map}
+      }
+    }
+    memoryMaps.pop()
   }
   const plugin = (text,depth=0) => {
     const words = String(text).trim().split(/\s+/), command = words.shift(), arg = words
@@ -169,6 +248,10 @@ export function compileRpgEvents(list, ctx, meta) {
       const caller=activeEventId,callerPage=activePageIndex
       if(action==='CALL_MAP_EVENT'&&keep!==true&&keep!=='true')activeEventId=event.id
       activePageIndex=pi;run(page.list||[],depth+1,`template:${action}:${mapId}:${event.id}:${pi}`);activeEventId=caller;activePageIndex=callerPage;return
+    }
+    if(name==='SelfSwitchesEx'&&action==='set'){
+      if(!/^\d+$/.test(String(args.mapId))||!/^\d+$/.test(String(args.eventId))||!['A','B','C','D'].includes(args.name)||!['true','false',true,false].includes(args.value)){raw('self-switch-invalid',args);return}
+      emit({op:'set',var:`rpg:self:${Number(args.mapId)}:${Number(args.eventId)}:${args.name}`,value:args.value===true||args.value==='true'?1:0});return
     }
     if(name==='TRP_SkitMZ'&&skit(action,args))return
     if(name==='PictureAnimation'&&paEnabled&&pa.command(action,args))return
@@ -227,6 +310,12 @@ export function compileRpgEvents(list, ctx, meta) {
     plugin(`${name} ${action} ${Object.values(args||{}).join(' ')}`)
   }
   const script = (text,scope) => {
+    if(meta.memoryReplay){
+      if(/^\s*Iz\.Life\.MemoryUtil\.start\(\)\s*;?\s*$/.test(text)){emit({op:'set',var:variable(1054,'s'),value:1});return}
+      if(/^\s*Iz\.Life\.MemoryUtil\.back\(\)\s*;?\s*$/.test(text)){emit({op:'set',var:variable(1054,'s'),value:0});return}
+      // Quest.js explicitly returns without game-state side effects in memory mode.
+      if(/^\s*Iz\.Life\.QuestUtil\.(?:start|restart|forward|complete|forceComplete)\(\d+\)\s*;?\s*$/.test(text))return
+    }
     if(scope?.(text))return
     const remaining = text.replace(/\$gameScreen\.(?:showPicture|movePicture|erasePicture|clearPictures)\([^;\n]*\)\s*;?/g, '').replace(/\/\/[^\n]*/g, '').trim()
     if (remaining) { raw('script-unhandled', text); return }
@@ -243,7 +332,10 @@ export function compileRpgEvents(list, ctx, meta) {
     // a single known call inside it; uncovered source is still diagnosed.
     if (!count || remaining) raw('script-unhandled', text)
   }
-  const condition = p => {
+  const condition = (p,argumentsOfCall=[]) => {
+    const argument=p[0]===12&&/^this\._arguments\[(\d+)\]\s*(===|!==|>=|<=|>|<|==|!=)\s*(-?\d+)$/.exec(String(p[1]).trim())
+    if(argument&&argumentsOfCall[Number(argument[1])])return {var:argumentsOfCall[Number(argument[1])],op:argument[2],value:Number(argument[3])}
+    if(meta.memoryReplay&&p[0]===12&&/^Iz\.Life\.MemoryUtil\.isMemoryScene\(\)$/.test(String(p[1]).trim()))return {var:variable(1054,'s'),op:'===',value:1}
     if (p[0] === 0) return { var: variable(p[1], 's'), op: '===', value: p[2] === 0 ? 1 : 0 }
     if (p[0] === 1) return { var: variable(p[1]), op: ['===', '>=', '<=', '>', '<', '!=='][p[4]] || '===', ...(p[2] === 0 ? { value: p[3] } : { valueVar: variable(p[3]) }) }
     if(p[0]===2){const key=`rpg:self:${mapId}:${activeEventId}:${p[1]}`;if(!initial.has(key))initial.set(key,0);return{var:key,op:'===',value:p[2]===0?1:0}}
@@ -252,7 +344,15 @@ export function compileRpgEvents(list, ctx, meta) {
     return null
   }
   const run = (commands, depth = 0, callId = '') => {
+    if(meta.memoryReplay&&truth(when())===false)return
     if (depth > o.maxCallDepth || calls.includes(callId) && callId) { raw('common-event-cycle-or-depth', callId); return }
+    // This native timing selector depends on the game's previous-viewing save.
+    // Reader bookmarks provide continuation; without that save use the authored
+    // from-start arm, rather than inventing a last-viewed native scenario state.
+    if(meta.memoryReplay&&commands.length===8&&commands[0]?.code===102&&commands[1]?.code===402&&commands[1].parameters?.[0]===0&&commands[2]?.code===0&&commands[3]?.code===402&&commands[3].parameters?.[0]===1&&commands[4]?.code===121&&JSON.stringify(commands[4].parameters)==='[1009,1009,0]')return
+    // Memory's native return restores the pre-replay save and clears the map
+    // interpreter. The rest of this common event belongs to normal gameplay.
+    if(meta.memoryReplay&&commands[0]?.code===111&&JSON.stringify(commands[0].parameters)==='[0,1004,0]'&&commands[1]?.code===355&&/^Iz\.Life\.MemoryUtil\.back\(\)\s*;?$/.test(commands[1].parameters?.[0])&&commands[2]?.code===115)commands=[commands[1],commands[2]]
     calls.push(callId); const guardBase = guards.length, live = `rpg:scope:${serial++}`
     emit({ op: 'set', var: live, value: 1 })
     guards.push({ type: 'scope', indent: -1, conditions: [{ var: live, op: '===', value: 1 }] })
@@ -263,6 +363,7 @@ export function compileRpgEvents(list, ctx, meta) {
       if (++stats.commands > o.maxCommands) throw new Error(`RPG Maker 指令超过 ${o.maxCommands} 上限，停止解析`)
       for(let n=guards.length-1;n>=guardBase;n--)if(guards[n].type==='forwardJump'&&guards[n].owner===live&&guards[n].end<=i)guards.splice(n,1)
       const c = commands[i], p = c.parameters || [], indent = Number(c.indent || 0)
+      if(meta.memoryReplay&&truth(when())===false&&![102,111,402,403,404,411,412].includes(c.code))continue
       if (c.code === 101) {
         const text = []
         while (commands[i + 1]?.code === 401) text.push(String(commands[++i].parameters?.[0] || ''))
@@ -281,17 +382,23 @@ export function compileRpgEvents(list, ctx, meta) {
       if (c.code === 402 || c.code === 403) { const g = [...guards].reverse().find(g => g.type === 'choice' && g.indent === indent); if (g) g.conditions = [{ var: g.key, op: '===', value: c.code === 403 ? 0 : Number(p[0]) + 1 }]; continue }
       if (c.code === 404 || c.code === 412) { const n = guards.findLastIndex(g => g.indent === indent); if (n >= guardBase) guards.splice(n, 1); continue }
       if (c.code === 111) {
-        const test = condition(p), key = `rpg:branch:${serial++}`
+        const test = condition(p,argumentVars), key = `rpg:branch:${serial++}`
         if (test) emit({ op: 'set', var: key, test })
         const cond = { var: key, op: '===', value: 1 }
         guards.push({ indent, type: 'if', condition: cond, conditions: [cond] }); continue
       }
       if (c.code === 411) { const g = [...guards].reverse().find(g => g.type === 'if' && g.indent === indent); if (g) g.conditions = [{ ...g.condition, not: true }]; continue }
       if (c.code === 117) { const id = Number(p[0]), inner = ctx.common?.[id]; if (inner?.list) run(inner.list, depth + 1, String(id)); else raw('common-event-missing', id); continue }
+      if(meta.memoryReplay&&memoryFrame&&String(calls.at(-1)).startsWith('map:')&&c.code===121&&p[2]===0)for(let n=p[0];n<=Math.min(p[1],p[0]+10000);n++){memorySwitches.add(n);memoryVariables.add(n)}
       if (c.code === 121) { for (let id = p[0]; id <= Math.min(p[1], p[0] + 10000); id++) emit({ op: 'set', var: variable(id, 's'), value: p[2] === 0 ? 1 : 0 }); continue }
       if (c.code === 122) {
         if (p[3]===2) { for(let id=p[0];id<=Math.min(p[1],p[0]+10000);id++)emit({op:'set',var:variable(id),calc:['set','add','sub','mul','div','mod'][p[2]],random:{min:Number(p[4]),max:Number(p[5]),seed:`rpg-${serial++}`}});continue }
-        if (p[3] !== 0 && p[3] !== 1) { raw('variable-operand-unhandled', p); continue }
+        const round=p[2]===0&&p[3]===4&&/^Math\.ceil\(\$gameVariables\.value\((\d+)\) \/ (\d+)\) \* (\d+)$/.exec(String(p[4]))
+        if(round&&Number.isSafeInteger(Number(round[2]))&&Number(round[2])>0&&round[2]===round[3]){
+          const key=`rpg:ceil:${serial++}`,n=Number(round[2]);emit({op:'set',var:key,valueVar:variable(round[1])});emit({op:'set',var:key,calc:'add',value:n-1});emit({op:'set',var:key,calc:'div',value:n});emit({op:'set',var:key,calc:'mul',value:n})
+          for(let id=p[0];id<=Math.min(p[1],p[0]+10000);id++)emit({op:'set',var:variable(id),valueVar:key});continue
+        }
+        if (p[3] !== 0 && p[3] !== 1) { if(meta.memoryReplay)for(let id=p[0];id<=Math.min(p[1],p[0]+10000);id++)abstract.set(variable(id),unknown);raw('variable-operand-unhandled', p); continue }
         for (let id = p[0]; id <= Math.min(p[1], p[0] + 10000); id++) emit({ op: 'set', var: variable(id), calc: ['set', 'add', 'sub', 'mul', 'div', 'mod'][p[2]], ...(p[3] === 0 ? { value: p[4] } : { valueVar: variable(p[4]) }) }); continue
       }
       if(c.code===129){emit({op:'set',var:`rpg:party:${Number(p[0])}`,value:p[1]===0?1:0});continue}
@@ -305,7 +412,13 @@ export function compileRpgEvents(list, ctx, meta) {
         const events=(target?.events||[]).filter(Boolean),automatic=events.filter(e=>e.pages?.some(page=>page.trigger===3))
         // A story-only map is a deterministic continuation. Mixed gameplay maps
         // can have competing autoruns/parallel state machines; keep them explicit.
-        if(events.length===1&&events[0].pages?.length===1&&automatic.length===1)callMapEvent(events[0].id,depth,true)
+        if(meta.memoryReplay){
+          // Native transfers refresh autoruns only after the current interpreter
+          // finishes; starting them here recurses before its progress increment.
+          if(memoryFrame){const key=`rpg:memory-transfer:${serial++}`;initial.set(key,0);emit({op:'set',var:key,value:1});memoryFrame.next.push({map:Number(p[1]),when:[{var:key,op:'===',value:1}]})}
+          else dispatchMemory(Number(p[1]),depth,false)
+        }
+        else if(events.length===1&&events[0].pages?.length===1&&automatic.length===1)callMapEvent(events[0].id,depth,true)
         else if(automatic.length)raw('map-autorun-ambiguous',{map:Number(p[1]),events:automatic.map(e=>e.id)})
         continue
       }
@@ -358,6 +471,7 @@ export function compileRpgEvents(list, ctx, meta) {
     if (conditions.variableValid) { const key = variable(conditions.variableId); initial.set(key, Math.max(Number(initial.get(key)) || 0, Number(conditions.variableValue || 0))) }
     if (conditions.selfSwitchValid) initial.set(`rpg:self:${mapId}:${meta.eventId}:${conditions.selfSwitchCh}`,1)
   }
+  if(meta.memoryReplay){initial.set(variable(1004,'s'),1);initial.set(variable(1054,'s'),1);stats.warnings.push('未读取原游戏的最近回想存档；入口从头播放，中途续播使用阅读器记录。')}
   emit({ op: 'bg', color: [0, 0, 0] })
   if(meta.map&&mapId)showMap(mapId,meta.eventId,meta.pageIndex)
   if(meta.map&&o.maps?.enabled!==false)stats.warnings.push('地图为事件初始快照；无游戏存档时玩家位置取系统起点或事件附近，不执行自主移动/并行事件或玩家操控')

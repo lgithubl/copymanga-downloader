@@ -1,3 +1,4 @@
+import {memoryEntries,memoryTargets} from './rpgmaker-memory.mjs'
 import {prepareSkit} from './rpgmaker-skit.mjs'
 import {prepareTemplates} from './rpgmaker-templates.mjs'
 import { completeJsonSamples } from '../context-complete-json.mjs'
@@ -19,7 +20,7 @@ export const DEFAULT_OPTIONS = {
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
   special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, preferMapCallers: false, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
   pictures: { folder: 'img/pictures', cgMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
-  plugins: { simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
+  plugins: { memoryReplay: false, simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
 }
 export const optionsOf = createOptionsReader(DEFAULT_OPTIONS)
 const join = (...s) => s.filter(Boolean).join('/')
@@ -76,6 +77,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
     } catch { ctx.warnings.push(`地图无法读取: ${rel}`) }
   }
   prepareTemplates(ctx)
+  ctx.memoryReplays = new Map()
   ctx.catalogTree = buildCatalog(ctx)
   return ctx
 }
@@ -123,6 +125,12 @@ function buildCatalog(ctx) {
     const id = Number(/Map(\d+)\.json$/i.exec(rel)?.[1]), title = ctx.mapInfo[id]?.name || `Map ${id}`, children = []
     for (const event of map.events.filter(Boolean)) for (const [pi, page] of (event.pages || []).entries()) {
       const ev = evidence(page.list, ctx, new Set(),id), titleEvent = event.name || `Event ${event.id}`
+      if(o.plugins.memoryReplay&&ctx.plugins.some(p=>p.name==='inazuma/Memory'))for(const entry of memoryEntries(page.list)){
+        const script=`${rel}::event-${event.id}-${pi+1}-replay-${entry.index}`,targets=memoryTargets(ctx,entry)
+        const label=entry.label.replace(/\\TRN\[\d+\]/g,'').replace(/if\(s\[\d+\]\)/g,'').replace(/\\n\[(\d+)\]/gi,(_,id)=>ctx.actors[id]?.name||`Actor ${id}`)
+        const node={id:`memory-${id}-${event.id}-${pi+1}-${entry.index}`,title:`${titleEvent}${label?' · '+label:''}`,subtitle:targets.length?`${targets.map(e=>e.name).join(' / ')} · 回想入口`:'回想入口（接续待诊断）',script}
+        ctx.memoryReplays.set(script,entry);children.push(node);specials.set(script,{...node,id:'special-'+node.id})
+      }
       if (ev.text < o.catalog.minText || skip?.test(titleEvent)) continue
       const node = { id: `map-${id}-event-${event.id}-page-${pi + 1}`, title: `${titleEvent}${event.pages.length > 1 ? ` · 页${pi + 1}` : ''}`, subtitle: `${ev.text} 文本行`, script: `${rel}::event-${event.id}-${pi + 1}` }
       children.push(node)
@@ -156,6 +164,12 @@ function buildCatalog(ctx) {
 export function parse(text, ctx, meta = {}) {
   const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : (ctx?.maps?.get(meta.sourceRel || meta.rel) || decodeJson(text)), o = optionsOf(meta.options || ctx?.options)
   const scene = String(meta.scene || '')
+  const replay=ctx?.memoryReplays?.get(`${meta.sourceRel||meta.rel}::${scene}`)
+  if(replay){
+    const selected=/^event-(\d+)-(\d+)-replay-/.exec(scene)
+    return compileRpgEvents(replay.commands,ctx,{...meta,options:o,eventId:Number(selected[1]),pageIndex:Number(selected[2])-1,memoryReplay:replay})
+  }
+
   let list, pageConditions = null, eventId = 0, map = null, pageIndex = -1
   if (Array.isArray(data)) {
     const id = /^common-(\d+)$/.exec(scene)?.[1]

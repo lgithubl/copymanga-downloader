@@ -176,6 +176,7 @@ export const ADAPTER_RULES = {
       "pictureActions": true,
       "maxPictureActions": 16,
       "seVoiceMatch": "",
+      "memoryReplay": false,
       "trnVoice": {"enabled": false, "list": "audio/voice/voice_list.json", "folder": "audio/voice/unique"},
       "commands": []
     }
@@ -2200,7 +2201,7 @@ export const LAYOUTS = {
       "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音、静态地图/人物及剧情移动演出；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
     ]
   },
-  'rpgmaker::rj01271506': {extends:'rpgmaker',resourceRoots:['dlc/dlc_10000','.'],resourceRootsForce:true,ruleOverrides:{'rpgmaker-json':{extraDirs:['dlc/dlc_10000'],plugins:{trnVoice:{enabled:true}},skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{preferMapCallers:true,imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
+  'rpgmaker::rj01271506': {extends:'rpgmaker',resourceRoots:['dlc/dlc_10000','.'],resourceRootsForce:true,ruleOverrides:{'rpgmaker-json':{extraDirs:['dlc/dlc_10000'],plugins:{memoryReplay:true,trnVoice:{enabled:true}},skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{preferMapCallers:true,imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
   'rpgmaker::rj01646655': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'},special:{imageMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'}}}},
   'rpgmaker::rj328940': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{party:{mode:'choose'},plugins:{seVoiceMatch:'_(?:meifa|ouka|sfy|lize|lavia|elnor|lana|flaw|myco|claire|yuzuki|mirage|colette|stellar|cypher)'},special:{mapNameMatch:'回想|回憶|♥イベントシーン'}}}},
   'rpgmaker::rj01482469': {
