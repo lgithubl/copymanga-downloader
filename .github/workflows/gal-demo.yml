@@ -127,9 +127,15 @@ jobs:
           }
           if [ -n "$NATIVE_FIXTURE_URL" ]; then
             import_gal 'AGE' "$(cat "$RUNNER_TEMP/data/age-profile.json")" 0
-            curl -fsS 'http://127.0.0.1:8080/api/library/items?type=gal' > "$RUNNER_TEMP/age-import.json"
-            node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1]));const items=Array.isArray(d)?d:d.items;if(items.length!==1)throw Error("Expected one original AGE item");console.log("Original AGE import:",items[0].itemId)' "$RUNNER_TEMP/age-import.json"
-            exit 0
+            curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null
+            for i in $(seq 1 30); do
+              curl -fsS 'http://127.0.0.1:8080/api/library/items?type=gal' > "$RUNNER_TEMP/age-import.json"
+              if node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1]));const items=Array.isArray(d)?d:d.items;process.exit(items?.length===1?0:1)' "$RUNNER_TEMP/age-import.json"; then
+                echo 'One original AGE item imported'; exit 0
+              fi
+              sleep 2
+            done
+            echo 'Expected exactly one original AGE item'; exit 1
           fi
           import_gal 'UViewer演示' '{}' 0
           import_gal 'monmusu演示' '{"adapters":["renpy-monmusu"],"config":{"game":{"id":"monmusu"}}}' 1
