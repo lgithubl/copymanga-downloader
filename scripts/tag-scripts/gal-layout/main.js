@@ -3082,14 +3082,19 @@ function deepMerge(a, b) {
 function regexOk(source, flags) { try { new RegExp(source, String(flags || '').replace(/[^imsu]/g, '')); return true } catch { return false } }
 
 // 解析 id 的布局：沿 extends 往上合并（子项的字段替换父项的），再叠上选项 layouts 里的覆盖；覆盖写坏了退回内置的；内置的也坏了返回 null
+// Only known RPG Maker profile IDs have case-insensitive aliases. Preserve
+// custom IDs and every other engine family's existing matching semantics.
+const knownRpgLayoutKey = id => Object.prototype.hasOwnProperty.call(LAYOUTS,id)||!String(id).startsWith('rpgmaker::')?id:Object.keys(LAYOUTS).find(key=>key.startsWith('rpgmaker::')&&key.toLowerCase()===String(id).toLowerCase())||id
+
 export function resolveLayout(id, overrides = {}, problems = []) {
   // 引擎家族：表里没有这个 id、但有一项声明了 family 前缀（advhd:: → LAYOUTS.advhd）且 id 以它开头 → 用家族项（新游戏不用在表里加一条）；选项 layouts 里家族 key 和这个 id 的覆盖都生效（id 的叠在家族的上面）
-  const familyKey = (key) => (Object.prototype.hasOwnProperty.call(LAYOUTS, key) ? '' : Object.entries(LAYOUTS).find(([, own]) => own && typeof own.family === 'string' && own.family && key.startsWith(own.family) && key.length > own.family.length)?.[0] || '')
+  const familyKey = (key) => (Object.prototype.hasOwnProperty.call(LAYOUTS, knownRpgLayoutKey(key)) ? '' : Object.entries(LAYOUTS).find(([, own]) => own && typeof own.family === 'string' && own.family && key.startsWith(own.family) && key.length > own.family.length)?.[0] || '')
   const table = (key, withOverride) => {
-    const fam = familyKey(key)
-    const base = Object.prototype.hasOwnProperty.call(LAYOUTS, key) ? LAYOUTS[key] : fam ? (({ family: _f, autoOrder: _a, ...rest }) => rest)(LAYOUTS[fam]) : null
+    const builtinKey=knownRpgLayoutKey(key),fam = familyKey(key)
+    const base = Object.prototype.hasOwnProperty.call(LAYOUTS, builtinKey) ? LAYOUTS[builtinKey] : fam ? (({ family: _f, autoOrder: _a, ...rest }) => rest)(LAYOUTS[fam]) : null
     const pick = (k) => (withOverride && overrides && typeof overrides === 'object' ? overrides[k] : undefined)
-    let over = pick(key)
+    let over = pick(builtinKey)
+    if(builtinKey!==key&&pick(key)!==undefined)over=isPlain(over)&&isPlain(pick(key))?{...over,...pick(key)}:pick(key)
     if (fam) { const famOver = pick(fam); if (famOver !== undefined && isPlain(famOver)) over = { ...famOver, ...(isPlain(over) ? over : {}) } }
     if (over === undefined) return base
     if (!over || typeof over !== 'object' || Array.isArray(over)) { problems.push(`选项 layouts.${key} 不是对象：忽略`); return base }
@@ -3421,7 +3426,8 @@ export async function generateTags(ctx) {
   let found = null
   if (game?.id) {
     // 精确 id 优先；没有就按家族前缀（advhd::<游戏> → 家族 advhd）：新游戏不用在表里加一条，家族的默认配置直接用；某个游戏的差异写在选项 layouts['advhd::<游戏>'] 里（叠在家族项之上）
-    let handler = handlers.find((g) => g.id === game.id)
+    const lookupId=knownRpgLayoutKey(game.id)
+    let handler = handlers.find((g) => g.id === lookupId)
     let viaFamily = false
     if (!handler) { handler = handlers.find((g) => LAYOUTS[g.id]?.family && g.family && game.id.startsWith(g.family) && game.id.length > g.family.length); viaFamily = Boolean(handler) }
     if (!handler) {
@@ -3429,6 +3435,7 @@ export async function generateTags(ctx) {
       return keepOwn(ctx, logs, { skipped: true })
     }
     const scope = scopeOf(handler, true)
+    if(lookupId!==game.id){scope.gameId=game.id;logs.push(`game.id「${game.id}」命中已知 RPG Maker 配置「${lookupId}」（忽略大小写）；保留原 game.id`)}
     if (viaFamily) {
       scope.gameId = game.id   // 布局按这个 id 解析（resolveLayout 会落到家族项，再叠上选项 layouts 里这个游戏 / 这个家族的覆盖）
       logs.push(`game.id「${game.id}」不在布局表里，按家族「${handler.id}」（${handler.family}*）处理${(options.layouts || {})[game.id] ? '，叠上选项 layouts 里这个游戏的覆盖' : ''}`)

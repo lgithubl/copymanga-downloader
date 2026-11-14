@@ -310,6 +310,14 @@ export function compileRpgEvents(list, ctx, meta) {
     plugin(`${name} ${action} ${Object.values(args||{}).join(' ')}`)
   }
   const script = (text,scope) => {
+    if(o.plugins.trnVoice.enabled){
+      const sound=/^\s*Iz\.Life\.SoundUtil\.(playVoiceBgs|stopVoiceBgs|stopVoice)\(([^;\n]*)\)\s*;?\s*$/.exec(text)
+      if(sound){const args=literalArgs(sound[2]),slot='rpg-native-voice-bgs'
+        if(sound[1]==='playVoiceBgs'&&args?.length===1&&typeof args[0]==='string'){audio('bgvoice',{name:args[0],folder:'audio/voice/bgs',slot,loop:true,token:`rpg-${serial++}`,volume:100});return}
+        if(args?.length===0&&sound[1]==='stopVoiceBgs'){emit({op:'bgvoiceOff',slot});return}
+        if(args?.length===0&&sound[1]==='stopVoice'){emit({op:'voiceStop'});return}
+      }
+    }
     if(meta.memoryReplay){
       if(/^\s*Iz\.Life\.MemoryUtil\.start\(\)\s*;?\s*$/.test(text)){emit({op:'set',var:variable(1054,'s'),value:1});return}
       if(/^\s*Iz\.Life\.MemoryUtil\.back\(\)\s*;?\s*$/.test(text)){emit({op:'set',var:variable(1054,'s'),value:0});return}
