@@ -88,8 +88,8 @@ export function ageResourceContext(catalog, namespace = 'sys4ini', toResourcePat
       if (!decoded.has(row.ordinal)) {
         const head = readAgeEntry(row, 24), packed = head.readUInt32LE(20)
         if (packed < 1 || packed > 65536) throw Error('AGE AGF bitmap header bounds invalid')
-        const { width, height } = readAgeImageHeader(readAgeEntry(row, 24 + packed))
-        decoded.set(row.ordinal, { src: toResourcePath(row.src), width, height })
+        const { width, height, kind } = readAgeImageHeader(readAgeEntry(row, 24 + packed))
+        decoded.set(row.ordinal, { src: toResourcePath(row.src), width, height, opaque: kind === 1 })
       }
       return decoded.get(row.ordinal)
     } })
@@ -113,7 +113,9 @@ export function ageResourceContext(catalog, namespace = 'sys4ini', toResourcePat
   }
   const settings = Object.fromEntries((catalog.indexes[0].metadata?.settings || []).map(row => [row.name, row.value]))
   const stage = [Number(settings.SCREENX), Number(settings.SCREENY)]
-  return { resources: { images, voice, bgm }, links, ...(stage.every(n => Number.isInteger(n) && n > 0 && n <= 8192) ? { stage } : {}) }
+  let font=table.entries.find(row=>row.file&&row.name.toUpperCase()==='AGE-EXTEND.TTF'&&row.size<=1024*1024)
+  try{if(font&&readAgeEntry(font,4).readUInt32BE(0)!==0x00010000)font=null}catch{font=null}
+  return { resources: { images, voice, bgm }, links, ...(font?{fonts:[{src:toResourcePath(font.src),unicodeRange:'U+E000-E004'}]}:{}), ...(stage.every(n => Number.isInteger(n) && n > 0 && n <= 8192) ? { stage } : {}) }
 }
 
 // Build only script packages; media remain in ALF until actually requested.

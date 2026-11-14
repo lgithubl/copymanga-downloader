@@ -1353,7 +1353,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
     const catalog = await readAgeCatalog(mediaDir, { root: cfg.scan[0], dir: cfg.dir, maxEntries: cfg.maxEntries }), map = new Map(), files = []
     const allowed = ageRuleFilter(cfg)
     for (const row of catalog.entries) {
-      if (!row.file || !/\.(?:agf|xwm|wav|ogg)$/i.test(row.name)) continue
+      if (!row.file || !/\.(?:agf|xwm|wav|ogg|ttf)$/i.test(row.name)) continue
       if (!allowed(row, 'res')) continue
       const hit = { rel: row.src, file: row.file, offset: row.offset, size: row.size,
         cacheDir: path.join(mediaDir, ...cfg.dir.split('/'), 'cache', 'audio'),

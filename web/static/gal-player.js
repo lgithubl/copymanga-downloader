@@ -1,4 +1,5 @@
 import { createRpgUiLayer } from '/gal-rpgmaker-ui.js'
+import { mountSceneFonts } from '/gal-fonts.js'
 // Gal 播放器（DOM + 音频）。纯逻辑在 gal-engine.js。输入是服务端给的规范场景（见 web/library/gal/scene.mjs）。
 // 目前渲染：背景（渐变/纯色）、说话人和台词（含描边/颜色等样式片段）、BGM/语音/音效、黑场、wait、视频。
 // 另外：Spine 骨骼动画（站位立绘、整幅静态画面，gal-spine.js）、镜头（整个画面一起平移/缩放）、背景音效声道、闪屏。
@@ -2421,6 +2422,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
 
   function destroy() {
     destroyed = true
+    fontCleanup()
     stopAuto()
     cancelChoice()
     document.removeEventListener('keydown', onKey)
@@ -2457,6 +2459,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
 
   // ---------- 启动 ----------
+  const fontCleanup = mountSceneFonts(root, scene.fonts, url, (src, error) => {
+    scene.stats ||= {}; scene.stats.notes ||= []
+    scene.stats.notes.push(`原始字体加载失败：${src}；${error.message}`)
+    updateNote()
+  })
   // startStep（场景跳转点）：路径里第一个步号 >= startStep 的位置（那一步在没选的分支上就取后面最近的）；没有就用进度比例
   const posOfStep = (step) => { const at = path.findIndex((n) => n >= step); return at < 0 ? Math.max(0, path.length - 1) : at }
   const startPos = Number.isInteger(startStep) && startStep > 0 ? posOfStep(startStep) : stepOfRatio(startRatio, path.length)

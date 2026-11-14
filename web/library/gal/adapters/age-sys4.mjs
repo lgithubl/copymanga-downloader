@@ -13,7 +13,7 @@ import { createAgeTimeline } from '../age-timeline.mjs'
 import { readAgeCatalog, ageResourceContext } from '../age-archive.mjs'
 
 export const ADAPTER_ID = 'age::sys4'
-export const DEFAULT_OPTIONS = { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn', partialPreview: false, nativeInitialization: true }
+export const DEFAULT_OPTIONS = { root: '.', resDir: 'age/res', stage: null, maxSteps: 500000, unverifiedPolicy: 'warn', partialPreview: false, nativeInitialization: true }
 export const sniff = text => /^\s*\{\s*"format"\s*:\s*"age-sys4\/1"/.test(String(text || '').slice(0, 256))
 export const explainSniff = () => '需要 age-sys4/1 脚本包；不把 SYS4INI 索引或原始 BIN 当作文本'
 export const contextFiles = () => []
@@ -55,7 +55,7 @@ const UNVERIFIED = new Set([0x35b, 0x35c, 0x305])
 const IMPLEMENTED = new Set([
   2, 3, 5, 9, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
   0x61, 0x64, 0x6c, 0x6e, 0x6f, 0x72, 0x8c, 0x8f, 0xa0, 0xb8, 0xbf, 0xc2, 0xc4, 0x12c, 0x192, 0x193, 0x196, 0x1a7, 0x1a8, 0x2d5, 0x2f6, 0x2f8,
-  0x7b, 0x7c, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1c7, 0x1cc, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f7, 0x1f9, 0x1fa, 0x1fb, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21b, 0x21c, 0x220, 0x224,
+  0x7b, 0x7c, 0x90, 0x94, 0x97, 0xae, 0x1ad, 0x1c7, 0x1cc, 0x1cf, 0x238, 0x242, 0x258, 0x259, 0x1f4, 0x1f5, 0x1f7, 0x1f9, 0x1fa, 0x1fb, 0x207, 0x208, 0x215, 0x216, 0x217, 0x218, 0x21a, 0x21b, 0x21c, 0x220, 0x224,
 ])
 function binary(encoded) {
   if (typeof encoded !== 'string' || encoded.length > 22369624 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw Error('AGE BIN base64 invalid/oversized')
@@ -253,6 +253,7 @@ export function analyzeAgeScene(data, options = {}) {
         if (graphicsAccepted) {
           if (beforeErase) for (const id of beforeErase) if (!gpu.objects.has(id)) {
             flushText(); commands.push({ op: 'overlayOff', slot: 'age:' + id })
+            commands.push({op:'overlayOff',prefix:'age:'+id+':patch:'})
           }
           if (i.opcode === 0x220) {
             const row = gpu.objects.get(read(0)), m = row.motion
@@ -260,12 +261,22 @@ export function analyzeAgeScene(data, options = {}) {
             flushText(); commands.push({ op: 'overlayMove', slot: 'age:' + row.id, key: 'age:' + machine.script + ':' + m.token,
               to: [x + m.to[0], y + m.to[1]], seconds: m.duration / 1000, delay: m.delay / 1000 })
           }
-          if (i.opcode === 0x1fb) {
-            const row = gpu.objects.get(read(0)), texture = gpu.textures.get(row.texture)
+          if (i.opcode === 0x1fb || i.opcode === 0x207) {
+           // Texture copies also update objects that already refer to it.
+           const changed=i.opcode===0x1fb?[gpu.objects.get(read(0))]:[...gpu.objects.values()].filter(row=>row.texture===read(1)&&row.crop)
+           for(const row of changed){
+            const texture = gpu.textures.get(row.texture)
             const [cx, cy, width, height] = row.crop
+            commands.push({op:'overlayOff',prefix:'age:'+row.id+':patch:'})
             commands.push({ op: 'overlay', slot: 'age:' + row.id, src: texture.src, fit: 'none', stage,
               crop: [cx, cy, width, height],
               x: row.x + width / 2 - stage[0] / 2, y: row.y + height / 2 - stage[1] / 2, z: row.z })
+            for(const [k,p]of(texture.parts||[]).entries()){
+              const left=Math.max(cx,p.x),top=Math.max(cy,p.y),right=Math.min(cx+width,p.x+p.crop[2]),bottom=Math.min(cy+height,p.y+p.crop[3])
+              if(right<=left||bottom<=top)continue
+              commands.push({op:'overlay',slot:'age:'+row.id+':patch:'+k,src:p.src,fit:'none',stage,crop:[p.crop[0]+left-p.x,p.crop[1]+top-p.y,right-left,bottom-top],x:row.x+left-cx+(right-left)/2-stage[0]/2,y:row.y+top-cy+(bottom-top)/2-stage[1]/2,z:row.z+(k+1)/2048})
+            }
+           }
           }
           return true
         }
@@ -321,12 +332,12 @@ export function parse(text, ctx = null, meta = {}) {
       result.stats.previewStopped = { ...(stop || {}), reason: result.stats.error || result.stats.run.status }
       result.stats.approximate = true
       result.stats.notes = [...(result.stats.notes || []), `诊断预览：${where} 已停止，后续未解析/未播放；${result.stats.error || result.stats.run.status}`]
-      return { steps: result.steps, stats: result.stats }
+      return { steps: result.steps, stats: result.stats, ...(context?.fonts?{fonts:context.fonts}:{}) }
     }
     throw error
   }
   if(ctx?.catalogTree&&!displayable)throw Error('AGE 入口未产生可显示正文：'+(data.name||'BIN')+'；请从首页选择「开场 SN0000」或具体剧情章节')
-  return { steps: result.steps, stats: result.stats }
+  return { steps: result.steps, stats: result.stats, ...(context?.fonts?{fonts:context.fonts}:{}) }
 }
 
 export const ageSys4Adapter = { id: ADAPTER_ID, label: 'AGE SYS4（指定未确认指令跳过并记录；开发中）', sniff, explainSniff, parse, prepare, contextFiles, contextDirs, sceneInPath:true, catalog:ctx=>ctx?.catalogTree }

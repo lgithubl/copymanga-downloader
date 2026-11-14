@@ -43,6 +43,7 @@ const MIME = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml',
   mp3: 'audio/mpeg', ogg: 'audio/ogg', opus: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac',
   mp4: 'video/mp4', webm: 'video/webm', m4v: 'video/mp4', ogv: 'video/ogg',
+  ttf: 'font/ttf',
 }
 const extOf = (file) => path.extname(file).slice(1).toLowerCase()
 const contentTypeOf = (file) => MIME[extOf(file)] || 'application/octet-stream'

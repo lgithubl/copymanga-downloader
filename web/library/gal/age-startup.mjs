@@ -1,7 +1,7 @@
 // Verified native scalar initialization for the collected Tenyui SYS4 version.
 // This is not full engine startup: no EXE, DLL, input handlers or game JS runs.
 import {createHash} from 'node:crypto'
-import {decodeAgeScript,traceAgeProgram} from './age.mjs'
+import {decodeAgeScript,traceAgeProgram,ageLiteralInitializer} from './age.mjs'
 import {readAgeEntry} from './age-archive.mjs'
 const HASHES={
  'SYSTEM4.BIN':'3cbd3c3c9582333df361eb9ba85f58bf555468ac4d29dfc2b548b5b1d9973553',
@@ -33,8 +33,40 @@ export function nativeAgeStartup(catalog,namespace){
   try{const program=decodeAgeScript(raw);linked.push({script:row.name,sha256:createHash('sha256').update(raw).digest('hex')});return{name:row.name,program}}
   catch{missingReason='初始化数据不可读取：'+row.name;return null}
  }})
+ // The fingerprinted INIT2 has a separate straight-line dispatch table after
+ // the bulk initializer calls. It only assigns literal global ordinals; the
+ // following native operation is deliberately not executed. Recovering this
+ // table must not depend on successfully executing unrelated flag/UI setup.
+ const block=programs['INIT2.BIN'].instructions.filter(i=>i.offset>=460&&i.offset<640)
+ if(block.length!==36||block.some(i=>i.opcode!==0x55||i.args[0]?.type!==3||i.args[1]?.type!==0)||programs['INIT2.BIN'].instructions.find(i=>i.offset===640)?.opcode!==0x143)throw Error('AGE verified dispatch table boundary changed')
+ const supplemental=[]
+ const missingDispatch=[]
+ for(const i of block){
+  const row=byOrdinal.get(i.args[1].value)
+  // An absent link must not replace a usable direct path with a call into a
+  // missing archive (sparse collected fixtures deliberately have such holes).
+  let present=false
+  try{present=Boolean(row?.file&&readAgeEntry(row,8).toString('ascii',0,4)==='SYS4')}catch{}
+  if(present)init.integers[i.args[0].value]=i.args[1].value|0
+  else missingDispatch.push(row?.name||String(i.args[1].value))
+ }
+ supplemental.push({script:'INIT2.BIN',entry:460,end:640,literalOnly:true})
+ // Only complete literal tables from the original startup call list qualify.
+ // No branches, reads, dynamic pointers, bit operations or graphics are skipped
+ // here. A nonliteral table remains unapplied and full startup remains stopped.
+ for(const call of programs['INIT2.BIN'].instructions.filter(i=>i.offset>=340&&i.offset<460&&i.opcode===3)){
+  const row=byOrdinal.get(call.args[0]?.value)
+  if(!row?.file||row.size>2*1024*1024)continue
+  try{
+   const raw=readAgeEntry(row),table=ageLiteralInitializer(decodeAgeScript(raw))
+   // Globals already reached by strict startup take precedence.
+   for(const [key,value]of Object.entries(table.integers))if(!(key in init.integers))init.integers[key]=value
+   for(const [key,value]of Object.entries(table.strings))if(!(key in init.strings))init.strings[key]=value
+   supplemental.push({script:row.name,literalOnly:true,sha256:createHash('sha256').update(raw).digest('hex')})
+  }catch{ /* Not a complete independent literal table: retain strict diagnostic. */ }
+ }
  return{available:true,integers:init.integers,floats:init.floats,strings:init.strings,
-  sources:[{script:'SYSTEM4.BIN',entry:2040},{script:'INIT2.BIN',dataOnly:true},...linked],
-  dataPrefix:{status:init.status,stopped:init.stopped,missingScript:init.missingScript,reason:missingReason||undefined,steps:init.trace.length},
+  sources:[{script:'SYSTEM4.BIN',entry:2040},{script:'INIT2.BIN',dataOnly:true},...linked,...supplemental],
+  dataPrefix:{status:init.status,stopped:init.stopped,missingScript:init.missingScript,reason:missingReason||undefined,steps:init.trace.length,missingDispatch},
   note:'从原始脚本读取标量/数组初始化；遇到缺失数据或非数据指令即停止，未执行完整原游戏启动/地图系统。'}
 }

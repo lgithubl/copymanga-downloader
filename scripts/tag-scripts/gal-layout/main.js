@@ -59,7 +59,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
-  'age::sys4': { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn', partialPreview: false, nativeInitialization: true },
+  'age::sys4': { root: '.', resDir: 'age/res', stage: null, maxSteps: 500000, unverifiedPolicy: 'warn', partialPreview: false, nativeInitialization: true },
  "sakana::ks":{
   "resDir": "arc/res",
   "scriptDir": "arc/script",

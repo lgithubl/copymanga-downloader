@@ -49,6 +49,19 @@ export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, max
     setTexture(target, { ...image, ordinal }); return true
    }
    case 0x1fa: { const key = id(n(0)); bytes -= textures.get(key)?.byteLength || 0; textures.delete(key); return true }
+   case 0x207: {
+    // SP's EVINIT supplies opaque difference rectangles: source texture,
+    // destination texture, source rectangle, destination x/y. Keep each copy
+    // in texture coordinates until the native draw-texture presents it.
+    const source=texture(n(0)),target=texture(n(1)),[sx,sy,w,h,dx,dy]=[2,3,4,5,6,7].map(n)
+    if(source===target||!source.opaque||source.parts?.length)return false
+    if([sx,sy,w,h,dx,dy].some(v=>!Number.isInteger(v))||w<1||h<1||sx<0||sy<0||dx<0||dy<0||sx+w>source.width||sy+h>source.height||dx+w>target.width||dy+h>target.height)throw Error('AGE texture copy rectangle outside texture')
+    if((target.parts?.length||0)>=1024)throw Error('AGE texture copy layer limit')
+    target.parts=(target.parts||[]).filter(p=>!(p.x>=dx&&p.y>=dy&&p.x+p.crop[2]<=dx+w&&p.y+p.crop[3]<=dy+h))
+    target.parts.push({src:source.src,crop:[sx,sy,w,h],x:dx,y:dy})
+    if(!metadataOnly)for(let y=0;y<h;y++)source.rgba.copy(target.rgba,((dy+y)*target.width+dx)*4,((sy+y)*source.width+sx)*4,((sy+y)*source.width+sx+w)*4)
+    return true
+   }
    case 0x208: { const t = texture(n(0)); put(1, t.width); put(2, t.height); return true }
    case 0x215: put(0, objects.get(id(n(1)))?.texture ?? -1); return true
    case 0x216: put(0, textures.get(id(n(1)))?.ordinal ?? -1); return true

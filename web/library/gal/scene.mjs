@@ -1,5 +1,6 @@
 // 规范场景（gal-scene/1）：所有适配器的输出、前端播放器的输入。
-//   { format: 'gal-scene/1', adapter, steps: [{ index, commands: [command] }], stats }
+//   { format: 'gal-scene/1', adapter, steps: [{ index, commands: [command] }], stats, fonts? }
+//   fonts: [{src, unicodeRange:'U+E000-E004'}] 为本地原始私用字体；播放器离开时释放。
 // 一步（step）= 玩家点一下之前要执行的全部指令。指令（op）：
 //   bg {src|color:[r,g,b], fade}   bgoff {fade}
 //   speaker {segments}             text {segments}        （片段 { text, ruby?, style?: { outline?, color?, size?, bold?, italic? } }）
@@ -41,8 +42,9 @@ export const SCENE_FORMAT = 'gal-scene/1'
 //   options = config.adapterOptions[适配器 id]（没有 = {}），config = 引擎配置的只读视图 { classify, resourceResolve, player, limits, indexSkip }（见 config.mjs galConfigView）。
 //   没有 prepare 的适配器只能从 meta.options 拿到自己的参数。parse 之后统一过一遍 meta.config.classify（见下）。
 export function buildScene(adapterId, text, ctx = null, meta = {}) {
-  const { steps, stats, next } = galAdapter(adapterId).parse(text, ctx, meta)
+  const { steps, stats, next, fonts } = galAdapter(adapterId).parse(text, ctx, meta)
   const after = next?.script ? { next: { script: String(next.script) } } : {}   // 看完这份接着播哪个脚本（适配器给的名字，服务端再补 node）
+  if (fonts?.length) after.fonts = fonts
   const rules = meta?.config?.classify
   if (Array.isArray(rules) && rules.length) {
     const classified = applyClassify(steps, rules)
