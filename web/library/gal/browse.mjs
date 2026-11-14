@@ -822,7 +822,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     // Node paths are relative to the selected script root; adapter context
     // indexes use paths relative to the media directory. Preserve both.
     const sourceMeta={...meta,sourceRel:path.relative(mediaDir,file).split(path.sep).join('/')}
-    const ctx=await contextOf(adapterId),text=galAdapter(adapterId).contextScriptText?.(ctx,sourceMeta)
+    const ctx=await contextOf(adapterId),text=await galAdapter(adapterId).contextScriptText?.(ctx,sourceMeta)
     return buildScene(adapterId,typeof text==='string'?text:decodeTextFile(await readFile(file)).text,ctx,sourceMeta)
   }
 

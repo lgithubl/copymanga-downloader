@@ -581,7 +581,9 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         if (!inst.data.findAnimation(t.anim)) { inst.missingAnims.push(t.anim); continue }
         const sig = `${t.anim}:${t.loop !== false}`
         if (inst.trackSig[t.track] === sig) continue
-        inst.state.setAnimation(t.track, t.anim, t.loop !== false)
+        const previous = inst.state.tracks[t.track]
+        const entry = inst.state.setAnimation(t.track, t.anim, t.loop !== false)
+        if (live && previous && Number(t.mix) > 0) entry.mixDuration = Math.min(1, Number(t.mix))
         inst.trackSig[t.track] = sig
         changed = true
       }

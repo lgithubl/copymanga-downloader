@@ -1,3 +1,5 @@
+import{readMeshiMetadata,buildMeshiCatalog}from'../meshiagirl-catalog.mjs'
+import{groupMeshiEpisodes,mergeMeshiEpisodes}from'../meshiagirl-episodes.mjs'
 // Native Cocos Creator2 JsonAssets, paired with the active bundle manifests.
 // No game JS execution, external runtime, extraction or network access.
 import{cocosBundleAssets,cocosJsonAsset,cocosUuid}from'../cocos2-assets.mjs'
@@ -6,7 +8,7 @@ import{createOptionsReader}from'./options-merge.mjs'
 import{runMeshi}from'../meshiagirl-vm.mjs'
 import{compileReadGraph}from'../read-graph.mjs'
 export const ADAPTER_ID='meshiagirl-json'
-export const DEFAULT_OPTIONS={root:'',excludeScripts:['test','testall'],protagonist:'主人公',tavern:'まんぷく亭',stage:[1170,640],spineScale:0.8,maxInstructions:200000,maxSteps:20000,maxBranches:64,maxCommands:300000}
+export const DEFAULT_OPTIONS={root:'',excludeScripts:['test','testall'],catalogDatabase:'meshiamitm.db',mergeEpisodes:true,expressionMix:0.18,protagonist:'主人公',tavern:'まんぷく亭',stage:[1170,640],spineScale:0.8,maxInstructions:200000,maxSteps:20000,maxBranches:64,maxCommands:300000}
 const options=createOptionsReader(DEFAULT_OPTIONS),join=(...p)=>p.filter(Boolean).join('/')
 export const contextDirs=o=>{const r=options(o).root;return[join(r,'assets'),join(r,'src')]}
 export const contextFiles=o=>[join(options(o).root,'index.html')]
@@ -25,6 +27,7 @@ export async function prepare({options:o,files=[],texts={},toResourcePath,mediaD
  for(const name of needed){const file=join(root,'assets',name,'config.'+versions[name]+'.json');if(!texts[file])throw Error('缺少当前 Cocos bundle 清单: '+file);const config=JSON.parse(texts[file]),entries=cocosBundleAssets(config,join(root,'assets',name));bundles.set(name,entries);for(const e of entries)byUuid.set(e.uuid,e)}
  for(const file of files){const m=/\/native\/[0-9a-f]{2}\/([0-9a-f-]{36})\.([a-z0-9]+)\.(png|jpg|webp|bin|atlas|mp3|ogg|wav)$/.exec(file);if(m)native.set(m[1]+':'+m[2]+':'+m[3],toRes(file))}
  const nativeOf=(e,ext)=>e&&native.get(e.uuid+':'+e.nativeVersion+':'+ext)||''
+ for(const name of ['spriteCharaThum_00','spriteCharaThum_10']){const file=join(root,'assets',name,'config.'+versions[name]+'.json');if(texts[file]){const entries=cocosBundleAssets(JSON.parse(texts[file]),join(root,'assets',name));bundles.set(name,entries);for(const e of entries)byUuid.set(e.uuid,e)}}
  // SpriteFrame rect/offset is needed for cropped CG facial layers (not just its PNG).
  const frameFiles=new Set([...bundles.values()].flat().filter(e=>e.type==='cc.SpriteFrame').map(e=>e.import))
  if(mediaDir)texts=await completeJsonSamples({texts,files,mediaDir},rel=>frameFiles.has(rel))
@@ -39,12 +42,19 @@ export async function prepare({options:o,files=[],texts={},toResourcePath,mediaD
  }
  const adventure=bundles.get('adventure'),story=adventure.filter(e=>e.type==='cc.JsonAsset'&&e.name.startsWith('json/')&&!cfg.excludeScripts.includes(e.name.split('/').at(-1))),all=story.filter(e=>set.has(e.import)).map(e=>({id:e.import,script:e.import,title:e.name.split('/').at(-1),viewName:e.name.slice(5)})).sort((a,b)=>a.title.localeCompare(b.title,'ja',{numeric:true}))
  let emotions={};const emotion=adventure.find(e=>e.type==='cc.JsonAsset'&&e.name==='scriptEngine/emotion');if(emotion&&mediaDir){const extra=await completeJsonSamples({texts:{},files:[emotion.import],mediaDir},()=>true);if(extra[emotion.import])emotions=cocosJsonAsset(extra[emotion.import]).json}
- return{cfg,assets,emotions,missing,storyCount:story.length,catalogTree:{children:[{id:'story',title:'全部剧情',children:all}]}}
+ const metadata=mediaDir?await readMeshiMetadata(mediaDir,cfg.catalogDatabase):{characters:new Map(),costumes:new Map(),episodes:new Map(),exec:new Map(),warnings:[]},groups=cfg.mergeEpisodes?groupMeshiEpisodes(story.filter(e=>set.has(e.import)),metadata.exec):story.filter(e=>set.has(e.import)).map(e=>({name:e.name.split('/').at(-1),parts:[e]})),episodes=new Map(groups.filter(g=>g.parts.length>1).map(g=>[g.parts[0].import,g])),catalogTree=buildMeshiCatalog(groups,metadata,assets)
+ return{cfg,assets,emotions,missing,mediaDir,episodes,metadata,storyCount:story.length,sceneCount:groups.length,sourceScripts:all,catalogTree}
 }
 export const catalog=ctx=>ctx?.catalogTree
+export async function contextScriptText(ctx,meta){
+ if(meta.scene!=='episode')return null
+ const group=ctx.episodes?.get(meta.sourceRel||meta.rel);if(!group)throw Error('meshiagirl 连续场景索引不存在，请刷新列表')
+ const files=group.parts.map(p=>p.import),texts=await completeJsonSamples({texts:{},files,mediaDir:ctx.mediaDir},()=>true,{fileLimit:32*1024*1024,totalLimit:64*1024*1024}),parts=files.map((file,i)=>({...cocosJsonAsset(texts[file]),name:group.parts[i].name})),merged=mergeMeshiEpisodes(parts)
+ return JSON.stringify({__type__:'cc.JsonAsset',_name:merged.name,json:merged.json})
+}
 export function parse(text,ctx={},meta={}){
  const d=cocosJsonAsset(text);if(!Array.isArray(d.json.tokenData)||!Array.isArray(d.json.loadData))throw Error('不是 meshiagirl 剧情 JsonAsset')
- const cfg=ctx.cfg||options(meta.options),nodes=[],stats={messages:0,choices:0,raw:{},unresolved:{},notes:['原生 Cocos 剧情；移动/缩放过渡采用终点；漫画情绪符号（Spine3.8.75）、原版人像窗皮肤、BGM前奏衔接及部分粒子/滤镜未还原；相关指令逐条记录脚本/行号。']};const sharedChoices=new Map();let branches=0
+ const cfg=ctx.cfg||options(meta.options),nodes=[],stats={messages:0,choices:0,raw:{},unresolved:{},notes:['原生 Cocos 剧情；移动/缩放过渡采用终点；漫画情绪符号（Spine3.8.75）、原版人像窗皮肤、BGM前奏衔接及部分粒子/滤镜未还原；相关指令逐条记录脚本/行号。']};stats.notes.push(...(ctx.metadata?.warnings||[]));const sharedChoices=new Map();let branches=0
  const compile=(decisions,prefix=0)=>{
   const run=runMeshi(d,ctx,{...cfg,decisions});Object.assign(stats.raw,run.diagnostics)
   const start=nodes.length;for(const e of run.events.slice(prefix)){nodes.push({commands:e.commands,source:e.source,endStep:true,next:nodes.length+1});if(e.commands.some(c=>c.op==='text'))stats.messages++}
@@ -63,4 +73,4 @@ export function parse(text,ctx={},meta={}){
  let graph=nodes;if(order.length===nodes.length){const index=new Map(order.map((n,i)=>[n,i]));graph=order.map(i=>{const n={...nodes[i]};for(const key of ['next','yes','no'])if(Number.isInteger(n[key])&&n[key]>=0)n[key]=index.get(n[key]);return n})}
  return compileReadGraph(graph,{maxCommands:Math.max(1000,Math.min(1000000,cfg.maxCommands)),stats})
 }
-export const meshiagirlJsonAdapter={id:ADAPTER_ID,label:'meshiagirl / Cocos Creator',catalogViews:true,sniff,parse,prepare,contextDirs,contextFiles,contextTextFilter,contextWalkLimit,contextSampleLimit,catalog}
+export const meshiagirlJsonAdapter={id:ADAPTER_ID,label:'meshiagirl / Cocos Creator',catalogViews:true,sniff,parse,prepare,contextDirs,contextFiles,contextTextFilter,contextWalkLimit,contextSampleLimit,catalog,contextScriptText,sceneInPath:true,sceneThumbs:true,health:ctx=>(ctx?.metadata?.warnings||[]).map(message=>({level:'warn',code:'meshi-catalog',message}))}

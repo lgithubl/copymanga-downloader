@@ -59,7 +59,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
-  'meshiagirl-json': {root:'',excludeScripts:['test','testall'],protagonist:'主人公',tavern:'まんぷく亭',stage:[1170,640],spineScale:0.8,maxInstructions:200000,maxSteps:20000,maxBranches:64,maxCommands:300000},
+  'meshiagirl-json': {root:'',excludeScripts:['test','testall'],catalogDatabase:'meshiamitm.db',mergeEpisodes:true,expressionMix:0.18,protagonist:'主人公',tavern:'まんぷく亭',stage:[1170,640],spineScale:0.8,maxInstructions:200000,maxSteps:20000,maxBranches:64,maxCommands:300000},
   "silky::mes": {
   "resDir": "arc/res",
   "scriptDir": "arc/script",
@@ -3210,7 +3210,7 @@ export const LAYOUTS = {
     anchors:['assets/adventure','assets/spineChara','index.html'],siblings:[],markers:['assets/audiosVoice','src'],
     adapters:['meshiagirl-json'],scriptRoots:[{id:'main',dir:'assets/adventure/import',label:'剧情'}],resourceRoots:['.'],
     adapterOptions:{'meshiagirl-json':{root:{path:['.']}}},ruleTables:['meshiagirl-json'],ruleOverrides:{},
-    config:{scriptExtensions:['json'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[{as:'special',label:'特殊场景',dirs:['**'],match:'_dekoEP_H[0-9]*$'}],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg']},pageSize:100},
+    config:{scriptExtensions:['json'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],sceneMarkers:[{label:'主体开始',kind:'cmd',op:'label',match:'^meshi-part:主体$',pick:'first',max:1},{label:'后篇开始',kind:'cmd',op:'label',match:'^meshi-part:后篇$',pick:'first',max:1},{label:'CG开始',kind:'cmd',op:'overlay',match:'^hs[0-9]+_[0-9]+_[0-9]+$',pick:'each',max:5}],views:[{as:'special',label:'特殊场景',dirs:['**'],match:'_(?:dekoEP|charaEP)_H[0-9]*$'}],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg']},pageSize:100},
     engine:{limits:{walkFiles:500000,sampleFiles:6000,walkDepth:8}},count:[],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],
     notes:['Cocos Creator 活跃 bundle 清单索引；直接读取本地 JSON / PNG / MP3 / Spine，无运行时下载；粒子及部分滤镜保留诊断；中途开始与缩略图共用标准播放器'],
   },

@@ -8,7 +8,7 @@ export function runMeshi(data,ctx={},cfg={}){
  const tokens=data.json.tokenData,loads=data.json.loadData,events=[],diagnostics={},objects=new Map(),labels=new Map(),last=new Map(),commands=[];let active=2,queue=[],pc=0,executed=0,body='',speaker='',hasText=false,decision=0,pending=null,at=0
  tokens.forEach((t,i)=>{if(t.type===2){if(!labels.has(t.label))labels.set(t.label,i)}})
  const txt=s=>String(s??'').replace(/%name/g,cfg.protagonist||'主人公').replace(/%tavern/g,cfg.tavern||'まんぷく亭')
- const emit=c=>commands.push(c),raw=(t,reason)=>{const cmd='meshi:'+(reason||names[t.commandIdx]||('opcode-'+t.commandIdx));diagnostics[cmd]=(diagnostics[cmd]||0)+1;emit({op:'raw',cmd,args:JSON.stringify({script:data.name,token:t._token??at,line:t.line,command:t.commandIdx,name:names[t.commandIdx],params:t.params})})}
+ const emit=c=>commands.push(c),raw=(t,reason)=>{const cmd='meshi:'+(reason||names[t.commandIdx]||('opcode-'+t.commandIdx));diagnostics[cmd]=(diagnostics[cmd]||0)+1;emit({op:'raw',cmd,args:JSON.stringify({script:t._script??data.name,token:t._sourceToken??t._token??at,line:t.line,command:t.commandIdx,name:names[t.commandIdx],params:t.params})})}
  const load=(kind,id)=>{const n=kinds[kind];return loads.find(x=>x.type===n&&(typeof id==='string'?x.name===id:x.id===id))}
  const asset=(kind,id,t)=>{const a=load(kind,id);if(!a){raw(t,'asset-not-in-loadData:'+kind+':'+id);return null}const prefix={2:'sprite/still/',3:'sprite/face/',8:'sprite/other/',9:'sprite/mask/'}[a.type]||'',b=bundles[a.type],key=b+':'+prefix+a.name;let v=ctx.assets?.get(key)
   if(a.type===10){raw(t,'comic-mark-not-rendered');return null}
@@ -27,7 +27,7 @@ export function runMeshi(data,ctx={},cfg={}){
   case 10:o.alpha=1;break
   case 11:o.alpha=0;break
   case 21:o.tracks[p[4]]={track:Number(p[4]),anim:p[2],loop:Boolean(p[3])};break
-  case 22:{const e=ctx.emotions?.[p[2]];if(!e){raw(t,'missing-emotion:'+p[2]);break}for(const[i,k]of ['cheek','eye_L','eye_R','eyebrow_L','eyebrow_R','mouth'].entries())if(e[k])o.tracks[i+1]={track:i+1,anim:e[k],loop:false};break}
+  case 22:{const e=ctx.emotions?.[p[2]];if(!e){raw(t,'missing-emotion:'+p[2]);break}for(const[i,k]of ['cheek','eye_L','eye_R','eyebrow_L','eyebrow_R','mouth'].entries())if(e[k])o.tracks[i+1]={track:i+1,anim:e[k],loop:false,mix:Math.max(0,Math.min(1,cfg.expressionMix||0))};break}
   case 25:o.alpha=Math.max(0,Math.min(1,Number(p[2])/255));break
   case 34:for(const[k,v]of objects)if(v.buffer===(p[0]===1?1:2))objects.delete(k);break
   case 39:emit({op:'overlay',slot:'meshi:screen',rect:[0,0,cfg.stage?.[0]||1170,cfg.stage?.[1]||640],color:`rgb(${p[1]??255},${p[2]??255},${p[3]??255})`,alpha:1,z:999,stage:cfg.stage});break
