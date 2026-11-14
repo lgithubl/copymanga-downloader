@@ -2,7 +2,7 @@
 // This is not full engine startup: no EXE, DLL, input handlers or game JS runs.
 import {createHash} from 'node:crypto'
 import {decodeAgeScript,traceAgeProgram,ageLiteralInitializer} from './age.mjs'
-import {readAgeEntry} from './age-archive.mjs'
+import {readAgeEntry,ageIndexGroup} from './age-archive.mjs'
 const HASHES={
  'SYSTEM4.BIN':'3cbd3c3c9582333df361eb9ba85f58bf555468ac4d29dfc2b548b5b1d9973553',
  'INIT2.BIN':'55616d4b5ee2a963c96ee1472fe3f3c524af9155d7444d07cca7bae68451f406',
@@ -64,6 +64,30 @@ export function nativeAgeStartup(catalog,namespace){
    for(const [key,value]of Object.entries(table.strings))if(!(key in init.strings))init.strings[key]=value
    supplemental.push({script:row.name,literalOnly:true,sha256:createHash('sha256').update(raw).digest('hex')})
   }catch{ /* Not a complete independent literal table: retain strict diagnostic. */ }
+ }
+ // Each additional index occupies its native high-byte resource group. The
+ // dispatch arrays reserve 32 slots per helper; main keeps slot zero. Additional
+ // literal tables extend the same globals, rather than replacing main globals
+ // with unrelated local ordinals or reading append resources through main.
+ for(const [position,index]of catalog.indexes.entries()){
+  const group=ageIndexGroup(index,position)
+  if(!group)continue
+  const extra=new Map(index.entries.map(row=>[row.name,row]))
+  if(group>=32){missingDispatch.push(index.name+': dispatch group exceeds32 slots');continue}
+  for(const i of block){
+   if(i.args[0].value<6597705||i.args[0].value>6598377)continue
+   const base=byOrdinal.get(i.args[1].value),row=extra.get('$'+group+'$'+base?.name)
+   try{if(row?.file&&readAgeEntry(row,8).toString('ascii',0,4)==='SYS4')init.integers[i.args[0].value+group]=group*0x1000000+row.ordinal}catch{}
+  }
+  for(const call of programs['INIT2.BIN'].instructions.filter(i=>i.offset>=340&&i.offset<460&&i.opcode===3)){
+   const base=byOrdinal.get(call.args[0]?.value),row=extra.get('$'+group+'$'+base?.name)
+   if(!row?.file||row.size>2*1024*1024)continue
+   try{
+    const raw=readAgeEntry(row),table=ageLiteralInitializer(decodeAgeScript(raw))
+    Object.assign(init.integers,table.integers);Object.assign(init.strings,table.strings)
+    supplemental.push({script:row.name,group,literalOnly:true,sha256:createHash('sha256').update(raw).digest('hex')})
+   }catch{ /* Dynamic append startup remains unsupported; do not guess it. */ }
+  }
  }
  return{available:true,integers:init.integers,floats:init.floats,strings:init.strings,
   sources:[{script:'SYSTEM4.BIN',entry:2040},{script:'INIT2.BIN',dataOnly:true},...linked,...supplemental],

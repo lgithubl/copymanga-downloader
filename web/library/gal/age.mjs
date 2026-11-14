@@ -223,7 +223,7 @@ export function traceAgeProgram(program, {
   else if (i.opcode === 0x8f) { push('function', node.next); next = destination(read(a[0])) }
   else if (i.opcode === 3) {
    const ordinal = read(a[0])
-   if (ordinal < 0 || ordinal >= 200000) throw Error('AGE script ordinal invalid')
+   if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= 0x41000000 || (ordinal & 0xffffff) >= 200000) throw Error('AGE script ordinal invalid')
    if (!units.has(ordinal)) {
     const resolved = resolveScript?.(ordinal)
     if (!resolved) { status = 'missing-script'; missingScript = ordinal; stopped = i; break }

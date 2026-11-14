@@ -118,6 +118,8 @@ candidatePaths(path, cfg)   // → 按顺序要试的候选路径（含原路径
 适配器可以实现 `catalog(ctx) → { children: [节点] }`，节点 = `{ id, title, subtitle?, thumb?, badge?, children? | script? }`（`script` = 相对媒体目录的脚本路径）。有它时首页和所有列表都由它给（节点 id `v:<编码后的 id>[#页码]`），
 脚本卡片仍是 `s:<路径>`；`ctx` 来自 `prepare`，所以列表数据（名称表、缩略图目录…）和脚本解析用同一套「上下文」，文件变了就跟着变。没有 catalog 的适配器仍按真实目录树浏览（UViewer / monmusu）。
 
+适配器可声明 `catalogViews: true`，将首页的 `config.views` 同样应用到目录树的脚本叶子。视图按名称、路径或场景标记匹配，读取时使用「更多」里的当前覆盖规则；只提供额外入口，脚本 ID、进度和原目录父子关系不变。显式 `config.nodes` 仍由用户独立管理，不自动追加视图。AGE 默认按原生 SP 脚本匹配「特殊场景」，包含主包和追加包及字母后缀；可改用 CG 标记匹配。
+
 ### 适配器的媒体上下文（context）
 
 适配器本身只做 `text → scene`。有些格式的脚本里只写别名（Ren'Py 的 `scene 10001A1-10` 要查 `script/movie.rpy` 才知道是哪个 webm），

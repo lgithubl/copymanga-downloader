@@ -25,6 +25,9 @@ export async function makeAgeNativeFixture(parent = '.cache/age-native-tests', {
       const row = indexes.flatMap(index => index.entries).find(r => r.name === name)
       if (!row || !/\.(?:bin|agf|xwm|ttf)$/i.test(name)) continue
       const bytes = await readFile(path.join(source, name))
+      // Later captures supersede an earlier loose override inside this local
+      // fixture as well as the sparse archive. Original captures stay read-only.
+      if(existsSync(path.join(root,name)))await writeFile(path.join(root,name),bytes)
       if (bytes.length !== row.size) {
         mismatches.push({ name, source, expected: row.size, captured: bytes.length, kind: 'captured loose override' })
         await writeFile(path.join(root, name), bytes); written.add(name); continue

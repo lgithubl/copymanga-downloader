@@ -6,10 +6,10 @@ assert "ROUND_RULES='^new-games:age-display$'" in src
 match = re.search(r"AGE_DISPLAY_PLAN = '([^']+)'", src)
 plan = json.loads(zlib.decompress(base64.b64decode(match[1])))
 rows = plan['天結いラビリンスマイスター']['ranges']
-assert any(r['logicalName']=='EV130A.AGF' for r in rows)
-assert sum(r['bytes'] for r in rows) < 11 * 1024 * 1024
-assert len(rows)==17 and sum(r['logicalName'].endswith('.AGF') for r in rows)==16
-assert any(r['logicalName']=='AGE-EXTEND.TTF' for r in rows)
+assert len(rows)==23
+assert sum(r['bytes'] for r in rows) < 18 * 1024 * 1024
+assert all(r['logicalName'].endswith('.AGF') for r in rows)
+assert all(r['source'].startswith('APPEND') for r in rows)
 base = pathlib.Path(tempfile.mkdtemp(prefix='collect-age-scene-'))
 root = base/'gal'; game = root/'天結いラビリンスマイスター'; game.mkdir(parents=True)
 (root/'OtherGame').mkdir(); (root/'OtherGame/AGE.EXE').write_bytes(b'ignore')
@@ -37,4 +37,4 @@ assert hashlib.sha256(source.read_bytes()).hexdigest() == before
 env['GAL_COLLECT_OUT'] = str(base/'rejected')
 run = subprocess.run(['bash', str(script), str(root)], env=env, text=True, capture_output=True)
 assert run.returncode != 0 and 'refusing stale offsets' in run.stdout + run.stderr
-print('PASS default SP evidence routing, all16 traced AGF ranges, full payload, hash rejection, no runtime/other games, source unchanged; retained:', base)
+print('PASS default SP evidence routing, 23 traced append CG/difference ranges, full payload, hash rejection, no runtime/other games, source unchanged; retained:', base)

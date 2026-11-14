@@ -40,7 +40,8 @@ export function createAgeGraphics({ loadImage, maxBytes = 128 * 1024 * 1024, max
     auxiliary.clear(); return true
    }
    case 0x1f9: {
-    const ordinal = id(n(0)), target = id(n(1)), mode = n(2)
+    const ordinal = n(0), target = id(n(1)), mode = n(2)
+    if(!Number.isInteger(ordinal)||ordinal<0||ordinal>=0x41000000)throw Error('AGE archive resource id invalid')
     // Only the native helper's full image load mode has been verified.
     if (mode !== -1) return false
     referenced.add(ordinal)

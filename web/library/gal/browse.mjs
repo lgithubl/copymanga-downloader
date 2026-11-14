@@ -484,6 +484,15 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
         }
       }
       walk(tree, '')
+      // Opt-in catalogs use the same configurable virtual views as physical
+      // script directories. Index canonical parents first: a view is another
+      // entry point, never another progress ID or a replacement parent.
+      if (catalogAdapter?.catalogViews && !config.nodes) for (const rule of viewsUnder('')) {
+        const id = 'catalog-view-' + rule.as
+        if (byId.has(id)) continue
+        const child = { id, title: rule.label || rule.as, children: [], catalogView: rule.as }
+        tree.children.push(child); byId.set(id, child); parentOfId.set(id, '')
+      }
       catalogCache = { tree, byId, parentOfId, scriptParent, scriptEntry }
     }
     return catalogCache
@@ -579,10 +588,28 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     return out
   }
 
+  async function catalogViewChildren(catalog, rule) {
+    const candidates = [...catalog.scriptEntry.values()].filter(child => {
+      if (!rule) return false
+      const script = child.script.split('::')[0], dir = path.posix.dirname(script), parent = dir === '.' ? '' : dir
+      return !rule.dirs.length ? !parent : rule.dirs.some(d => d === '**' || d === '*' && parent && !parent.includes('/') || d === parent)
+    })
+    const rows = await mapLimit(candidates, 6, async child => ({ child, ok: await viewTakesAsync(defaultSet, rule, { rel: child.script, stem: stemOf(child.script.split('::')[0]) }) }))
+    return rows.filter(row => row.ok).map(row => row.child)
+  }
   async function catalogNode(catalog, id, page, view) {
     const holder = id ? catalog.byId.get(id) : catalog.tree
     if (!holder?.children) throw fail('目录不存在', 404)
-    const paged = await pageOfView(holder.children, view, page, (child) => ({ title: child.title, extra: `${child.subtitle || ''} ${child.script ? stemOf(child.script) : child.id}` }))
+    const currentRule = holder.catalogView ? viewsUnder('').find(rule => rule.as === holder.catalogView) : null
+    const children = holder.catalogView ? await catalogViewChildren(catalog, currentRule) : holder.children
+    const exposedRules = catalogAdapter?.catalogViews && !config.nodes && (!id || holder.catalogView)
+      ? viewsUnder('').filter(rule => !holder.catalogView || rule.as === holder.catalogView) : []
+    const viewRulesList = await Promise.all(exposedRules.map(async rule => ({
+      as: rule.as, label: rule.label || rule.as, match: rule.re?.source || '', on: rule.on, local: Boolean(rule.local),
+      defaultMatch: baseViewRules.find(r => r.as === rule.as)?.re?.source || '',
+      count: currentRule?.as === rule.as ? children.length : (await catalogViewChildren(catalog, rule)).length,
+    })))
+    const paged = await pageOfView(children, view, page, (child) => ({ title: child.title, extra: `${child.subtitle || ''} ${child.script ? stemOf(child.script) : child.id}` }))
     const parentId = id ? catalog.parentOfId.get(id) : null
     const items = await enrichCatalogItems(paged.slice, holder)
     return {
@@ -601,6 +628,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
         pageCount: paged.pageCount,
         total: paged.total,
         items,
+        ...(viewRulesList.length ? { viewRules: viewRulesList } : {}),
         ...(holder.text ? { text: holder.text } : {}),
         ...(holder.related?.length ? { related: holder.related.map((rel) => ({ title: rel.title, node: virtualNodeId(rel.id, 1) })) } : {}),
         ...viewInfo(view, paged, id ? virtualNodeId(id, 1) : ''),

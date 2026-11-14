@@ -27,7 +27,7 @@ export async function prepare({ options = {}, mediaDir, toResourcePath }) {
   const startup=options.nativeInitialization===false?{available:false,reason:'原生初始化已关闭'}:nativeAgeStartup(catalog,main)
   const groups=new Map()
   for(const row of catalog.entries){
-    if(!/^(?:\$\d+\$)?(?:SN|SC|SG|SP)\d+\.BIN$/i.test(row.name))continue
+    if(!/^(?:\$\d+\$)?(?:SN|SC|SG|SP)\d+[A-Z]*\.BIN$/i.test(row.name))continue
     const script=`${scriptDir}/${row.namespace}/${row.name.replace(/\.bin$/i,'.age')}`
     if(!(await stat(path.join(mediaDir,...script.split('/'))).catch(()=>null))?.isFile())continue
     const opening=row.namespace===main&&row.name.toUpperCase()==='SN0000.BIN'
@@ -340,4 +340,4 @@ export function parse(text, ctx = null, meta = {}) {
   return { steps: result.steps, stats: result.stats, ...(context?.fonts?{fonts:context.fonts}:{}) }
 }
 
-export const ageSys4Adapter = { id: ADAPTER_ID, label: 'AGE SYS4（指定未确认指令跳过并记录；开发中）', sniff, explainSniff, parse, prepare, contextFiles, contextDirs, sceneInPath:true, catalog:ctx=>ctx?.catalogTree }
+export const ageSys4Adapter = { id: ADAPTER_ID, label: 'AGE SYS4（指定未确认指令跳过并记录；开发中）', sniff, explainSniff, parse, prepare, contextFiles, contextDirs, sceneInPath:true, catalogViews:true, catalog:ctx=>ctx?.catalogTree }

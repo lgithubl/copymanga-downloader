@@ -1,5 +1,5 @@
-// AGE indexed ALF access. Index ordinals are scoped to their INI/AAI; append
-// ordinals are never merged into the main table or confused with repeated IDs.
+// AGE indexed ALF access. Local INI/AAI ordinals remain scoped; runtime IDs
+// encode the additional group in the high byte. Plain IDs always mean main.
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { openSync, readSync, closeSync, fstatSync } from 'node:fs'
@@ -83,29 +83,37 @@ export function ageResourceContext(catalog, namespace = 'sys4ini', toResourcePat
   const table = catalog.indexes.find(index => index.namespace === namespace)
   if (!table) throw Error('AGE resource namespace missing: ' + namespace)
   const images = {}, voice = {}, bgm = {}, links = {}, decoded = new Map()
-  for (const row of table.entries) {
-    if (/\.agf$/i.test(row.name)) Object.defineProperty(images, row.ordinal, { enumerable: true, get() {
-      if (!decoded.has(row.ordinal)) {
+  const groups=new Set()
+  for(const [position,index]of catalog.indexes.entries()){
+   const group=ageIndexGroup(index,position)
+   if(groups.has(group))throw Error('AGE duplicate archive group: '+group)
+   groups.add(group)
+   for (const row of index.entries) {
+    const resourceId=group*0x1000000+row.ordinal
+    if (/\.agf$/i.test(row.name)) Object.defineProperty(images, resourceId, { enumerable: true, get() {
+      if (!decoded.has(resourceId)) {
         const head = readAgeEntry(row, 24), packed = head.readUInt32LE(20)
         if (packed < 1 || packed > 65536) throw Error('AGE AGF bitmap header bounds invalid')
         const { width, height, kind } = readAgeImageHeader(readAgeEntry(row, 24 + packed))
-        decoded.set(row.ordinal, { src: toResourcePath(row.src), width, height, opaque: kind === 1 })
+        decoded.set(resourceId, { src: toResourcePath(row.src), width, height, opaque: kind === 1 })
       }
-      return decoded.get(row.ordinal)
+      return decoded.get(resourceId)
     } })
-    if (/\.(?:wav|xwm|ogg)$/i.test(row.name)) voice[row.ordinal] = toResourcePath(row.src)
-    if (/\.bin$/i.test(row.name)) Object.defineProperty(links, row.ordinal, { enumerable: true, get() {
+    if (/\.(?:wav|xwm|ogg)$/i.test(row.name)) voice[resourceId] = toResourcePath(row.src)
+    if (/\.bin$/i.test(row.name)) Object.defineProperty(links, resourceId, { enumerable: true, get() {
       const bytes = readAgeEntry(row); decodeAgeScript(bytes)
       return { name: row.name, script: bytes.toString('base64') }
     } })
+   }
   }
   // Native file-music player 47eac0 indexes its vector with (logical id - 2).
   // SYS4INI's zero-flags number table stores archive resource ordinals, not
   // filenames or repeated per-ALF entry ids. Id 0 stops; id 1 is not a track.
   // High-byte additional groups use a different native table and stay unmapped.
-  if (table.metadata?.flags === 0) {
-    const entries = new Map(table.entries.map(row => [row.ordinal, row]))
-    for (const [k, ordinal] of table.metadata.numbers.entries()) {
+  const main=catalog.indexes[0]
+  if (main.metadata?.flags === 0) {
+    const entries = new Map(main.entries.map(row => [row.ordinal, row]))
+    for (const [k, ordinal] of main.metadata.numbers.entries()) {
       const row = entries.get(ordinal)
       if (!row || !/\.(?:wav|xwm|ogg)$/i.test(row.name)) throw Error('AGE BGM table references a non-audio ordinal: ' + ordinal)
       bgm[k + 2] = toResourcePath(row.src)
@@ -113,9 +121,17 @@ export function ageResourceContext(catalog, namespace = 'sys4ini', toResourcePat
   }
   const settings = Object.fromEntries((catalog.indexes[0].metadata?.settings || []).map(row => [row.name, row.value]))
   const stage = [Number(settings.SCREENX), Number(settings.SCREENY)]
-  let font=table.entries.find(row=>row.file&&row.name.toUpperCase()==='AGE-EXTEND.TTF'&&row.size<=1024*1024)
+  let font=main.entries.find(row=>row.file&&row.name.toUpperCase()==='AGE-EXTEND.TTF'&&row.size<=1024*1024)
   try{if(font&&readAgeEntry(font,4).readUInt32BE(0)!==0x00010000)font=null}catch{font=null}
   return { resources: { images, voice, bgm }, links, ...(font?{fonts:[{src:toResourcePath(font.src),unicodeRange:'U+E000-E004'}]}:{}), ...(stage.every(n => Number.isInteger(n) && n > 0 && n <= 8192) ? { stage } : {}) }
+}
+
+export function ageIndexGroup(index,position=0){
+ if(index.namespace==='sys4ini'||index.name?.toUpperCase()==='SYS4INI.BIN')return 0
+ const prefixes=new Set(index.entries.map(row=>/^\$(\d+)\$/.exec(row.name)?.[1]).filter(Boolean))
+ const group=prefixes.size===1?Number([...prefixes][0]):NaN
+ if(!Number.isInteger(group)||group<1||group>64||index.entries.some(row=>!row.name.startsWith('$'+group+'$')))throw Error('AGE additional archive group is ambiguous: '+(index.name||position))
+ return group
 }
 
 // Build only script packages; media remain in ALF until actually requested.
