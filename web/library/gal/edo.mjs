@@ -19,7 +19,7 @@ export async function readEdoIndex(file){
    const leaf=string();if(p+17>b.length)throw Error('Edoire 记录截断');const offset=Number(b.readBigUInt64LE(p)),bytes=Number(b.readBigUInt64LE(p+8)),flag=b[p+16];p+=17;const dir=string(),name=(dir.replace(/^\//,'')+'/'+leaf).replace(/^\//,'')
    if(!name||name.includes('\\')||name.split('/').some(v=>!v||v==='.'||v==='..')||seen.has(name.toLowerCase()))throw Error('Edoire 条目路径无效或重复')
    if(flag!==78||!Number.isSafeInteger(offset)||!Number.isSafeInteger(bytes)||offset<23||bytes<=0||offset+bytes>start)throw Error('Edoire 条目编码或范围不支持')
-   seen.add(name.toLowerCase());const kind=/^(?:src\/.*|!app[^/]+\/[^/]*sc[0-9][^/]*)\.txt$/i.test(name)?'script':/^img\/.*\.bytes$/i.test(name)||/^ogg\/.*\.ogg$/i.test(name)||/^!app[^/]+\/[^/]+\.(?:bytes|ogg)$/i.test(name)?'res':''
+   seen.add(name.toLowerCase());const kind=/^(?:src\/.*|!app[^/]+\/[^/]*sc[0-9][^/]*)\.txt$/i.test(name)?'script':/^img\/.*\.bytes$/i.test(name)||/^(?:ogg\/.*\.ogg|mp4\/.*\.mp4)$/i.test(name)||/^!app[^/]+\/[^/]+\.(?:bytes|ogg)$/i.test(name)?'res':''
    entries.push({name,offset,size:bytes,kind,logical:name.replace(/^img\/(.*)\.bytes$/i,'img/$1.png').replace(/^!app[^/]+\/([^/]+)\.bytes$/i,'img/append/$1.png').replace(/^!app[^/]+\/([^/]+)\.ogg$/i,'ogg/append/$1.ogg')})
   }
   if(p!==b.length)throw Error('Edoire 索引存在未解释尾部')
@@ -27,12 +27,14 @@ export async function readEdoIndex(file){
  }finally{await f.close()}
 }
 export function edoPayload(bundle,{text=false}={}){
+ if(!text&&bundle.length>=12&&bundle.toString('ascii',4,8)==='ftyp')return bundle
  if(bundle.length>MAX)throw Error('Edoire bundle 超过64MB')
- const out=[];let resource=null,audio=false
+ const out=[];let resource=null,audio=false,video=false
  for(const file of readUnityFS(bundle,{maxOutputBytes:MAX})){
   if(/\.(resource|resS)$/.test(file.name)){resource=file.data;continue}
   for(const o of readSerialized(file.data)){
    if(o.classId===83)audio=true
+   if(o.classId===329)video=true
    if(o.classId!==49)continue
    let p=o.start;const n=file.data.readUInt32LE(p);p+=4;if(n>4096||p+n>o.start+o.size)throw Error('Edoire TextAsset 名称截断');const name=file.data.toString('utf8',p,p+n);p=(p+n+3)&~3
    const bytes=file.data.readUInt32LE(p);p+=4;if(bytes>MAX||p+bytes>o.start+o.size)throw Error('Edoire TextAsset 数据截断');out.push({name,bytes:Buffer.from(file.data.subarray(p,p+bytes))})
@@ -40,6 +42,8 @@ export function edoPayload(bundle,{text=false}={}){
  }
  if(text){if(out.length!==1)throw Error('Edoire 剧本 TextAsset 不唯一');return decodeTextFile(out[0].bytes).text.replace(/^\uFEFF/,'')}
  if(out.length===1&&out[0].bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return out[0].bytes
+ if(!text&&video&&resource?.length>=12&&resource.toString('ascii',4,8)==='ftyp')return resource
+ if(!text&&out.length===1&&out[0].bytes.toString('ascii',4,8)==='ftyp')return out[0].bytes
  if(audio&&resource){if(resource.subarray(0,4).toString()==='FSB5'){const result=unpackFsb5(resource);if(result.format!=='ogg')throw Error('Edoire AudioClip 非 Vorbis，保留原资源');return result.bytes}if(resource.subarray(0,4).toString()==='OggS')return resource}
  throw Error('Edoire 资源不含唯一PNG/受支持音频')
 }

@@ -59,6 +59,38 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  "silky::mes": {
+  "resDir": "arc/res",
+  "scriptDir": "arc/script",
+  "library": "LIBLARY",
+  "entryFrom": {},
+  "maxInstructions": 2000000,
+  "maxSteps": 20000,
+  "maxBranches": 8,
+  "maxPasses": 8,
+  "maxCommands": 200000,
+  "cgMatch": "(?:^|/)EV[0-9]"
+},
+  "edo::ikunyu": {
+  "resDir": "arc/res",
+  "scriptDir": "arc/script",
+  "stage": [
+    1920,
+    1080
+  ],
+  "coordinates": "canvas",
+  "branchFlags": "",
+  "maxPasses": 8,
+  "maxCommands": 150000,
+  "initialVariables": {
+    "IS_GALLERY": 1,
+    "IS_BEGIN_ADV_ENDLIST": 0
+  },
+  "cgMatch": "(?:^|/)evcg/",
+  "specialMatch": "h$",
+  "maxWait": 5
+},
+
   'age::sys4': { root: '.', resDir: 'age/res', stage: null, maxSteps: 500000, unverifiedPolicy: 'warn', partialPreview: false, nativeInitialization: true },
  "sakana::ks":{
   "resDir": "arc/res",
@@ -1900,6 +1932,253 @@ export const LAYOUTS = {
   }
 },
   'krkr::zweitrigger': { extends:'krkr::twiv', title:'ツヴァイトリガー' },
+  "silky": {
+  "title": "Silky / Azurite MES",
+  "kind": "silky",
+  "detector": "silky",
+  "family": "silky::",
+  "autoOrder": 139.9925,
+  "bases": [
+    ""
+  ],
+  "searchDepth": 4,
+  "anchors": [
+    "script.arc",
+    "layer.arc"
+  ],
+  "siblings": [],
+  "markers": [],
+  "scriptRoots": [
+    {
+      "id": "story",
+      "dir": "arc/script",
+      "label": "剧情"
+    }
+  ],
+  "resourceRoots": [
+    "arc/res"
+  ],
+  "adapters": [
+    "silky::mes"
+  ],
+  "adapterOptions": {
+    "silky::mes": {
+      "resDir": {
+        "path": [
+          "arc/res"
+        ]
+      },
+      "scriptDir": {
+        "path": [
+          "arc/script"
+        ]
+      }
+    }
+  },
+  "ruleTables": [
+    "silky::mes"
+  ],
+  "ruleOverrides": {"silky::mes":{"entryFrom":{"FK004A":{"script":"FK004","decisions":[1]}}}},
+  "engine": {
+    "classify": [],
+    "resourceResolve": {},
+    "limits": {
+      "walkFiles": 800000,
+      "sampleFiles": 10000,
+      "sampleBytes": 262144,
+      "scriptBytes": 16777216
+    },
+    "containers": {
+      "enabled": true,
+      "dir": "arc",
+      "scan": [
+        "."
+      ],
+      "format": "silky",
+      "mode": "hybrid",
+      "flat": true,
+      "scriptDecoder": "silky-mes",
+      "scriptExt": "smes",
+      "rules": [
+        {
+          "match": "^(?:script|layer|voice|music|effect)\\.arc$",
+          "kinds": [
+            "script",
+            "res"
+          ],
+          "exclude": [
+            "^_SAMPLE\\.MES$"
+          ]
+        }
+      ],
+      "maxEntries": 200000,
+      "maxTotalMB": 8192
+    }
+  },
+  "config": {
+    "scriptExtensions": [
+      "smes"
+    ],
+    "namesFiles": [],
+    "thumbsDirs": [],
+    "hiddenDirs": [],
+    "labels": {},
+    "merge": [],
+    "views": [
+      {
+        "parent": "",
+        "as": "special",
+        "label": "特殊场景",
+        "dirs": [
+          "**"
+        ],
+        "on": "name",
+        "match": "^FK_SCENE_[0-9]+$",
+        "exclusive": false,
+        "badges": {}
+      }
+    ],
+    "groups": [],
+    "dirThumbs": [],
+    "scriptThumbs": [],
+    "scriptIndex": [],
+    "thumbFallback": {
+      "prefer": [
+        "cg",
+        "stand",
+        "bg"
+      ]
+    },
+    "sceneMarkers": [
+      {
+        "label": "CG 开始",
+        "kind": "cmd",
+        "op": "bg",
+        "match": "(?:^|/)EV[0-9]",
+        "pick": "each",
+        "max": 12
+      },
+      {
+        "label": "CG 差分",
+        "kind": "cmd",
+        "op": "overlay",
+        "match": "(?:^|/)EV[0-9]",
+        "pick": "each",
+        "max": 12
+      }
+    ],
+    "pageSize": 100
+  },
+  "count": [],
+  "avatars": [],
+  "expectedDirs": [],
+  "cover": [],
+  "notes": [
+    "Silky MES：独立于旧 eomaia/SCRE；压缩剧本、AKB底图/表情层、语音和选项只读加载。过渡/遮罩及原生动态特效尚不模拟。"
+  ]
+},
+  "silky::fuyukuru": {
+  "extends": "silky",
+  "title": "fuyukuru"
+},
+  "edo::ikunyu": {
+  "extends": "edo",
+  "title": "Edoire DRAW_* / えどわ～る",
+  "anchors": [
+    "ver00_s0.arc",
+    "ver00_i0.arc"
+  ],
+  "bases": [
+    "Archives"
+  ],
+  "autoOrder": 139.99,
+  "archiveName": "ver00_s0.arc",
+  "countNativeStories": true,
+  "adapters": [
+    "edo::ikunyu"
+  ],
+  "ruleTables": [
+    "edo::ikunyu"
+  ],
+  "ruleOverrides": {},
+  "adapterOptions": {
+    "edo::ikunyu": {
+      "resDir": {
+        "path": [
+          "arc/res"
+        ]
+      },
+      "scriptDir": {
+        "path": [
+          "arc/script"
+        ]
+      }
+    }
+  },
+  "engine": {
+    "classify": [],
+    "resourceResolve": {},
+    "limits": {
+      "walkFiles": 800000,
+      "sampleFiles": 20000,
+      "sampleBytes": 262144,
+      "scriptBytes": 16777216
+    },
+    "containers": {
+      "enabled": true,
+      "dir": "arc",
+      "scan": [
+        "."
+      ],
+      "format": "edo",
+      "mode": "hybrid",
+      "flat": true,
+      "scriptDecoder": "edo-lua",
+      "scriptExt": "edo",
+      "rules": [
+        {
+          "match": "^ver[0-9a-z_]+\\.arc$",
+          "kinds": [
+            "script",
+            "res"
+          ]
+        }
+      ],
+      "maxEntries": 200000,
+      "maxTotalMB": 8192
+    }
+  },
+  "config": {
+    "scriptExtensions": ["edo"], "namesFiles": [], "thumbsDirs": [], "hiddenDirs": [], "labels": {}, "merge": [], "groups": [], "dirThumbs": [], "scriptThumbs": [], "scriptIndex": [], "thumbFallback": {"prefer":["cg","stand","bg"]}, "pageSize":100,
+    "views": [
+      {
+        "parent": "",
+        "as": "special",
+        "label": "特殊场景",
+        "dirs": [
+          "**"
+        ],
+        "on": "name",
+        "match": "h$",
+        "exclusive": false,
+        "badges": {}
+      }
+    ],
+    "sceneMarkers": [
+      {
+        "label": "CG 开始",
+        "kind": "cmd",
+        "op": "overlay",
+        "match": "(?:^|/)evcg/",
+        "pick": "each",
+        "max": 16
+      }
+    ]
+  },
+  "notes": [
+    "复用Edoire容器；独立DRAW_*解析器按原始SYSTEMEX的图层和坐标展开，不改变旧Edoire游戏规则。"
+  ]
+},
   edo:{
   "title": "Edoire / シロクロ",
   "kind": "edo",
@@ -3375,6 +3654,7 @@ const DETECTORS = {
   arcfam: (scope) => detectArcfam(scope),
   pac: (scope) => detectPac(scope),
   edo: (scope) => detectEdo(scope),
+  silky: (scope) => detectSilky(scope),
   sakana:(scope)=>detectSakana(scope),
   krkr: (scope) => detectKrkr(scope),
   rscript: (scope) => detectRscript(scope),
@@ -4284,14 +4564,20 @@ async function detectSakana(scope){
  const f=await open(path.join(dir,name),'r');let valid=false;try{const b=Buffer.alloc(8);await f.read(b,0,8,0);valid=b.toString()==='SSXXDEFL'}finally{await f.close()}if(!valid)return null
  const config=await buildConfig(scope.media,loc.entry,loc.base);config.containers.scan=[join(loc.base,'pkg')];config.containers.dir=join(loc.base,'arc');const found=makeFound(scope,loc.entry,loc,config);found.id=scope.gameId||'sakana::'+path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]/g,'');for(const line of loc.entry.notes)scope.logs.push(line);return found
 }
+async function countEdoStories(file){
+ const f=await open(file,'r');try{const{size}=await f.stat();if(size<35)throw Error('Edoire archive truncated');const tail=Buffer.alloc(8);await f.read(tail,0,8,size-8);const at=Number(tail.readBigUInt64LE()),n=size-8-at;if(!Number.isSafeInteger(at)||at<23||n<4||n>16*1024*1024)throw Error('Edoire story index invalid');const b=Buffer.alloc(n);if((await f.read(b,0,n,at)).bytesRead!==n)throw Error('Edoire story index truncated');const count=b.readUInt32LE();if(count>200000)throw Error('Edoire story index count limit');let p=4,total=0
+ const string=()=>{let len=0,mul=1;for(let j=0;j<5;j++){if(p>=b.length)throw Error('Edoire story name truncated');const v=b[p++];len+=(v&127)*mul;if(!(v&128)){if(len>4096||p+len>b.length)throw Error('Edoire story name invalid');const text=b.toString('utf8',p,p+len);p+=len;return text}mul*=128}throw Error('Edoire story name invalid')}
+ for(let i=0;i<count;i++){const leaf=string();if(p+17>b.length)throw Error('Edoire story row truncated');p+=17;const dir=string().replace(/^\//,'');if(/^src\/game(?:\/|$)/i.test(dir)&&/\.txt$/i.test(leaf)&&!/^!?99_test/i.test(leaf))total++}if(p!==b.length)throw Error('Edoire story index trailing bytes');return total
+ }finally{await f.close()}
+}
 async function detectEdo(scope){
  const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null
- const f=await open(path.join(scope.media,...splitRel(join(loc.base,loc.entry.archiveName||'base_div0_archive.arc'))),'r').catch(()=>null);if(!f)return null
+ const archivePath=path.join(scope.media,...splitRel(join(loc.base,loc.entry.archiveName||'base_div0_archive.arc')));const f=await open(archivePath,'r').catch(()=>null);if(!f)return null
  let valid=false;try{const b=Buffer.alloc(8);await f.read(b,0,8,0);valid=b.toString()==='@ARCH000'}finally{await f.close()}
  if(!valid)return null
  const config=await buildConfig(scope.media,loc.entry,loc.base)
  config.containers.scan=(config.containers.scan||['.']).map(rel=>join(loc.base,rel==='.'?'':rel)||'.');config.containers.dir=join(loc.base,'arc')
- const found=makeFound(scope,loc.entry,loc,config);found.id=scope.gameId||(scope.id.includes('::')?scope.id:'')||'edo::'+(path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,40)||'game')
+ const count=loc.entry.countNativeStories?async()=>countEdoStories(archivePath):undefined;const found=makeFound(scope,loc.entry,loc,config,{count});found.id=scope.gameId||(scope.id.includes('::')?scope.id:'')||'edo::'+(path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,40)||'game')
  for(const line of loc.entry.notes)scope.logs.push(line)
  return found
 }
@@ -4323,6 +4609,15 @@ async function detectPac(scope){
  scope.logs.push('识别 PAC 索引及外置#MSG剧情；复用通用资源缓存/播放器/卡片，中途开始与特殊场景由原始CG指令生成')
  return found
 }
+async function detectSilky(scope){
+ const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null
+ const file=path.join(scope.media,...splitRel(join(loc.base,'script.arc')));if(!await arcfamTableOk(file))return null
+ const f=await open(file,'r');let count=0
+ try{const h=Buffer.alloc(4);await f.read(h,0,4,0);const size=h.readUInt32LE();if(size>64*1024*1024)return null;const table=Buffer.alloc(size);if((await f.read(table,0,size,4)).bytesRead!==size)return null;let p=0,mes=0;while(p<size){const n=table[p++];let name='';for(let i=0;i<n;i++)name+=String.fromCharCode((table[p+i]+n-i)&255);p+=n+12;if(/\.MES$/i.test(name))mes++;if(/^FK[0-9_].*\.MES$/i.test(name))count++}if(!mes)return null}finally{await f.close()}
+ const config=await buildConfig(scope.media,loc.entry,loc.base);config.containers.dir=join(loc.base,'arc');config.containers.scan=[loc.base||'.']
+ const found=makeFound(scope,loc.entry,loc,config,{count:async()=>count,cover:await coverFromRules(scope.media,loc.entry,loc.base)});found.id=scope.gameId||'silky::fuyukuru';for(const note of loc.entry.notes)scope.logs.push(note);return found
+}
+
 async function detectArcfam(scope) {
   const { media, declared, logs } = scope
   const loc = await locateGame(scope, scope.gameId || scope.id)

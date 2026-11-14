@@ -37,6 +37,8 @@ export const GAL_PRESETS = {
   imys: { label: "Imys（imys::adv，bundles/scenarios 的 .encrypted 剧本；现在只有文字；改 id / title）", adapters: ['imys::adv'], game: { id: 'imys::game', title: '' } },
   rpgmaker: { label: "RPG Maker MV/MZ（rpgmaker-json，www/data 或 data；改 id / title）", adapters: ['rpgmaker-json'], game: { id: 'rpgmaker::game', title: '' } },
   pac: { label: 'Debonosu PAC（pac::script，Game.pac + 外置剧情；改 id / title）', adapters: ['pac::script'], game: { id: 'pac::game', title: '' } },
+  silky: {label:'Silky / Azurite（silky::mes，fuyukuru；部分演出未还原；改 id / title）',adapters:['silky::mes'],game:{id:'silky::fuyukuru',title:''}},
+  edoIkunyu: {label:'Edoire DRAW_*（edo::ikunyu，えどわ～る / ver00_s0.arc；改 title）',adapters:['edo::ikunyu'],game:{id:'edo::ikunyu',title:''}},
   edo: { label: 'Edoire（edo::lua，ARCH000 / Lua；改 id / title）', adapters: ['edo::lua'], game: { id: 'edo::game', title: '' } },
   sakana: { label: 'SakanaGL（sakana::ks，pkg / KAG；改 id / title）', adapters: ['sakana::ks'], game: { id: 'sakana::game', title: '' } },
   age: { label: 'AGE SYS4（age::sys4，SYS4INI.BIN + ALF；开发中；改 id / title）', adapters: ['age::sys4'], game: { id: 'age::game', title: '' } },

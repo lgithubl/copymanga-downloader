@@ -12,7 +12,7 @@ import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-sta
 import { createEmoteLayer } from '/gal-emote.js'
 import { createRpgMakerMapLayer } from '/gal-rpgmaker-map.js'
 import { attachBarLock } from '/gal-barlock.js'
-import { adjacentSceneMarker, activePath, applyCommand, visibleChoiceOptions, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
+import { adjacentSceneMarker, activeCommandsAt, activePath, applyCommand, visibleChoiceOptions, assetUrl, backlog, choiceIn, commandDuration, condMet, dropChoicesFrom, easeOf, galPlayerDefaults, ratioOfStep, scaleCommandTime, segmentsText, stateAt, stepOfRatio, volumeGain } from '/gal-engine.js'
 
 // se = 旧版「语音/音效」合在一起的那一个（只读：新的几个滑块没存过时拿它当初始值，升级后听感不变）
 // 自动进入下一章时，自动播放 / 快进的状态带给下一章的播放器（每章是新建的播放器实例）
@@ -953,7 +953,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
 
   function currentVoiceCommands() {
-    return (scene.steps[index]?.commands || []).filter(c => condMet(c.when,state.vars) && (c.op === 'voice' || c.op === 'bgvoice' && c.kind === 'voice' && c.loop === false) && c.src)
+    return activeCommandsAt(scene,index,choices).filter(c => (c.op === 'voice' || c.op === 'bgvoice' && c.kind === 'voice' && c.loop === false) && c.src)
   }
   function replayVoice() {
     if (destroyed) return

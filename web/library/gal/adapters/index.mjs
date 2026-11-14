@@ -1,3 +1,5 @@
+import{silkyMesAdapter}from './silky-mes.mjs'
+import{edoIkunyuAdapter}from './edo-ikunyu.mjs'
 import{sakanaKsAdapter}from './sakana-ks.mjs'
 import { edoLuaAdapter } from './edo-lua.mjs'
 import { ageSys4Adapter } from './age-sys4.mjs'
@@ -38,6 +40,8 @@ export function registerGalAdapter(adapter) {
 registerGalAdapter(uviewerCsvAdapter)
 registerGalAdapter(pacScriptAdapter)
 registerGalAdapter(edoLuaAdapter)
+registerGalAdapter(silkyMesAdapter)
+registerGalAdapter(edoIkunyuAdapter)
 registerGalAdapter(ageSys4Adapter)
 registerGalAdapter(sakanaKsAdapter)
 registerGalAdapter(rpgMakerJsonAdapter)

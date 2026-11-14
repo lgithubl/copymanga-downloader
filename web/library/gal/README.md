@@ -1486,3 +1486,11 @@ Unity 2018 Mono，`Assembly-CSharp.dll` 没混淆（私有仓库 `arcrecord-d/` 
 `pac::script` 读取 `data/Script` / `data/AdditionalScript` 的 `#MSG` 文本；资源由 `format: pac, mode: hybrid, flat: true` 按 PAC 索引延迟读取。背景、CG、立绘及声音命名模板在 `adapterOptions`，未命中的资源计入 `stats.unresolved`，未实现指令保留 raw。战斗/奖励不模拟。新家族的实际验证范围及未完成项目见 [采集与接入状态](../../../scripts/dev/gal-new-games-status.md)。
 
 `arcfam::scre` 兼容夜勤病棟新版 audio/角色调用及不带括号的说话人；未知调用计数，不执行原始游戏代码。`systeminfo.json` 提供舞台尺寸，布局表的 `systemProfiles` 提供游戏命名/分类差异。CG 仅在首句出现的场景仍可归入特殊场景；卡片中途开始按钮继续省略起止位置。
+
+## Silky MES / Edoire DRAW_*（layout 2.64.8）
+
+`fuyukuru` 使用独立 `silky::mes`（`silky::fuyukuru` 配置），不改变旧 `arcfam::scre` 对 SCRE 的识别。支持 LZSS MES、AKB/AKB+、角色/表情、CG、原始图音、选择及可配置回想视图；续章可通过 `entryFrom` 指定父剧本与分支恢复初始状态；部分原生演出尚未还原，保留脚本/偏移/message 诊断。
+
+`えどわ～る` 使用隔离的 `edo::ikunyu` 配置，复用 ARCH000 容器，并按原始 SYSTEMEX 展开 DRAW_*；支持原始 VideoClip/resource 中的 MP4，沿用共享播放器。旧 `edo::lua` 的坐标/家族匹配不变。导入下拉、layout、参数表、缩略图、CG 中途进入和特殊场景视图一同提供。
+
+两者需要新版镜像与统一 tag 包，执行 layout 2.64.8。采集证据、配置示例、实测范围及已知限制见 [本轮分析](../../../scripts/dev/gal-fuyu-edo-20261114.md)。

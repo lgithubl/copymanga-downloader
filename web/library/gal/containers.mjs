@@ -1,3 +1,4 @@
+import{silkyPayload,decodeMes,akbInfo,decodeAkb,akbPng}from './silky.mjs'
 import {readSakanaIndex,readSakanaEntry,decodeSxEntry,sakanaMetadata,fafaValue,sakanaStorageSig} from './sakana.mjs'
 import { encodeAgeScriptPackage } from './adapters/age-sys4.mjs'
 import { readAgeCatalog, expandAgeScripts, ageRuleFilter } from './age-archive.mjs'
@@ -158,6 +159,7 @@ export const SCRIPT_DECODERS = Object.freeze({
   'arcfam-scre': ARCFAM_SCRE_DECODER,
   'krkr-scn': KRKR_SCN_DECODER,
   'edo-lua': EDO_LUA_DECODER,
+  'silky-mes': {ext:'smes',decode(buffer,{name}){return JSON.stringify(decodeMes(buffer,name))}},
   'sakana': {ext:'sakana',decode(){throw Error('SX独立展开器处理')}},
   'rscript-gsc': RSCRIPT_GSC_DECODER,
   'unity-dsm': UNITY_DSM_DECODER,
@@ -207,7 +209,7 @@ export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
 const arcRegex = (cfg) => (cfg.format === 'sakana' ? /\.sx$/i : cfg.format === 'pac' ? /\.pac$/i : cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
 // ---------- ARC 读取 ----------
 // 按 config.containers.format：willplus（默认）/ buriko（BGI 的 BURIKO ARC20）。两种都返回 { size, entries: [{ name, offset, size }] }
-const readIndexFor = (file, cfg) => (cfg?.format === 'edo' ? readEdoIndex(file) : cfg?.format === 'pac' ? readPacIndex(file) : cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : cfg?.format === 'arcfam' ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
+const readIndexFor = (file, cfg) => (cfg?.format === 'edo' ? readEdoIndex(file) : cfg?.format === 'pac' ? readPacIndex(file) : cfg?.format === 'buriko' ? readBurikoArcIndex(file) : cfg?.format === 'pf8' ? readPf8Index(file) : ['arcfam','silky'].includes(cfg?.format) ? readArcfamIndex(file) : cfg?.format === 'xfl' ? readXflIndex(file) : readArcIndex(file))
 // pf8（Artemis）：按扩展名分——.ast = 脚本（解密后交给解码器），图 / 声音 = 资源（取出来时解密），别的（lua / csv / psb …）跳过
 function classifyPf8(name) {
   const ext = extOf(name)
@@ -284,6 +286,9 @@ async function transformDataAsync(data, hit) {
     if ((await stat(output)).size > 256 * 1024 * 1024) throw Error('AGE decoded audio exceeds 256 MiB')
     return await readFile(output)
   }
+  if (hit.transform === 'silky-akb') return akbPng(await readSilkyAkb(hit))
+  if (hit.transform === 'silky-ui') {const image=await readSilkyAkb(hit);if(image.width<1536||image.height<1024)throw Error('Silky portrait source rectangle invalid');const rgba=Buffer.alloc(1024*1024*4);for(let y=0;y<1024;y++)image.rgba.copy(rgba,y*1024*4,(y*image.width+512)*4,(y*image.width+1536)*4);return encodePng(1024,1024,4,rgba)}
+  if (hit.transform === 'silky-audio') return silkyPayload(data,hit)
   if (hit.transform === 'tomoe-img' && hit.base) {
     const h = await open(hit.base.file, 'r')
     try { return tomoeImageTransform(data, hit, await readRange(h, hit.base.offset, hit.base.size)) }
@@ -619,6 +624,7 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
   const buriko = cfg.format === 'buriko'
   const pf8 = cfg.format === 'pf8'
   const arcfam = cfg.format === 'arcfam'
+  const silky = cfg.format === 'silky'
   const xfl = cfg.format === 'xfl'
   const edo = cfg.format === 'edo'
   const stem = pf8 ? pf8Stem(arcName) : withoutExt(arcName)
@@ -650,14 +656,14 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
       const name = safeEntryName(entry.name, edo ? 12 : 5)
       if (!name) { result.bad.push(entry.name.slice(0, 60)); continue }
       // buriko（BGI）的条目没有扩展名，按内容分：DSC = 剧本、CompressedBG = 图、BW = 声音（图 / 声音只在 hybrid 的虚拟索引里，取出来时才转）
-      const cls = buriko ? await classifyBuriko(handle, entry) : pf8 ? classifyPf8(name) : arcfam ? classifyArcfam(name, entry) : xfl ? classifyXfl(name) : edo ? {kind:entry.kind} : null
-      const kind = buriko || pf8 || arcfam || xfl || edo ? cls.kind : kindOf(name, 'script')
+      const cls = buriko ? await classifyBuriko(handle, entry) : pf8 ? classifyPf8(name) : arcfam ? classifyArcfam(name, entry) : silky ? {kind:/\.(mes|lib)$/i.test(name)?'script':/\.(akb|ogg|wav|mp3)$/i.test(name)?'res':''} : xfl ? classifyXfl(name) : edo ? {kind:entry.kind} : null
+      const kind = buriko || pf8 || arcfam || silky || xfl || edo ? cls.kind : kindOf(name, 'script')
       if (arcfam && cls.compressed) { result.unsupported = (result.unsupported || 0) + 1 }
       if (!kind || !rule.kinds.has(kind) || (kind === 'pna' && rule.pna === 'skip')) { result.skipped += 1; continue }
       if ((rule.include.length && !rule.include.some((re) => re.test(name))) || rule.exclude.some((re) => re.test(name))) { result.excluded += 1; continue }
       if (entry.size > MAX_ENTRY_BYTES) { result.bad.push(`${name}（${entry.size} 字节太大）`); continue }
       // hybrid（默认）：图 / 声音 / 视频 / PNA 帧不展开（被请求时才从 .arc 读那一个条目，见 materialize）；PNA 只写 index.json（读头和记录表，不读像素）
-      const lazy = (cfg.mode !== 'files' || buriko || pf8 || arcfam || xfl || edo) && (kind === 'res' || kind === 'pna')
+      const lazy = (cfg.mode !== 'files' || buriko || pf8 || arcfam || silky || xfl || edo) && (kind === 'res' || kind === 'pna')
       if (lazy && (kind === 'res' || rule.pna === 'raw')) { result.res += 1; result.lazy = (result.lazy || 0) + 1; continue }
       if (lazy) {
         try {
@@ -675,13 +681,14 @@ async function expandArc({ file, arcName, rule, cfg, outRoot, budget }) {
       if (budget.bytes > budget.limit) throw new Error(`展开的总大小超过上限 ${cfg.maxTotalMB} MB（config.containers.maxTotalMB）`)
       let data = siblings?.whole ? siblings.whole.subarray(entry.offset, entry.offset + entry.size) : await readRange(handle, entry.offset, entry.size)
       if (pf8) data = pf8Decrypt(data, key)
+      if (silky) data = silkyPayload(data,entry)
       if (kind === 'script') {
         if (!decoder) throw new Error(`没有脚本解码器 ${cfg.scriptDecoder}`)
         const base = buriko ? name : pf8 ? withoutExt(name.replace(/^script\//i, '')) : withoutExt(name)   // arcfam 同 willplus：去扩展名
         let text
         try { text = decoder.decode(data, { arc: stem, name: base, siblings }) } catch (error) {
-          if (!buriko && !pf8 && !arcfam && !xfl && !edo) throw error
-          if(edo)result.bad.push(`${name}（${error.message}）`)
+          if (!buriko && !pf8 && !arcfam && !silky && !xfl && !edo) throw error
+          if(edo||silky)result.bad.push(`${name}（${error.message}）`)
           result.skipped += 1; result.notScript = (result.notScript || 0) + 1   // DSC 里不是剧本的（动画表之类）
           continue
         }
@@ -1369,6 +1376,7 @@ async function buildVirtual(mediaDir, cfg, arcs, sig) {
     const map=new Map(),files=[];for(const {file,rule} of arcs){if(!rule.kinds.has('res'))continue;const {entries}=await readEdoIndex(file);if(entries.length>cfg.maxEntries)throw Error('Edoire 条目超过配置上限');for(const e of entries){if((rule.include.length&&!rule.include.some(re=>re.test(e.name)))||rule.exclude.some(re=>re.test(e.name)))continue;if(e.kind!=='res'||e.size>MAX_ENTRY_BYTES)continue;const rel=`${cfg.dir}/res/${e.logical}`;if(map.has(rel.toLowerCase()))continue;map.set(rel.toLowerCase(),{rel,file,offset:e.offset,size:e.size,transform:'edo'});files.push(rel)}}return{map,files,sig}
   }
   if (cfg.format === 'krkr') return buildKrkrVirtual(mediaDir, cfg, arcs, sig)
+  if (cfg.format === 'silky') return buildSilkyVirtual(cfg,arcs,sig)
   const map = new Map()
   const files = []
   const add = (rel, hit) => { const key = rel.toLowerCase(); if (!map.has(key)) { map.set(key, { rel, ...hit }); files.push(rel) } }
@@ -1583,6 +1591,24 @@ function markFrameSheets(map) {
       else if (hit.h >= frame * 1.4) for (const n of [3, 4]) if (hit.h % n === 0 && Math.abs(hit.h / n - frame) <= frame * 0.06) { hit.crop = hit.h / n; break }   // 4650 = 3 × 1550，同组最矮是 1490（no04_l）：差 6% 以内也按 3 / 4 帧算
     }
   }
+}
+
+async function buildSilkyVirtual(cfg,arcs,sig){
+ const map=new Map(),files=[],lookup=new Map(),version=createHash('sha1').update(sig).digest('hex')
+ for(const{file,rule}of arcs){if(!rule.kinds.has('res'))continue;const{entries}=await readArcfamIndex(file);if(entries.length>cfg.maxEntries)throw Error('Silky index entry limit')
+  for(const e of entries){if(!/\.(akb|ogg|wav|mp3)$/i.test(e.name)||e.size>64*1024*1024)continue;if((rule.include.length&&!rule.include.some(r=>r.test(e.name)))||rule.exclude.some(r=>r.test(e.name)))continue
+   const leaf=safeEntryName(e.name);if(!leaf)continue;const rel=`${cfg.dir}/${resRel(cfg,withoutExt(path.basename(file)),leaf.replace(/\.akb$/i,'.png'))}`,hit={...e,file,rel,version,transform:/\.akb$/i.test(leaf)?'silky-akb':'silky-audio',lookup}
+   lookup.set(leaf.toUpperCase(),hit);map.set(rel.toLowerCase(),hit);files.push(rel)
+   if(/^A_.*\.AKB$/i.test(leaf)){const ui=rel.replace(/\.png$/i,'.ui.png');map.set(ui.toLowerCase(),{...hit,rel:ui,transform:'silky-ui'});files.push(ui)}
+  }
+ }
+ return{map,files,sig}
+}
+async function readSilkyAkb(hit,seen=new Set()){
+ const key=hit.file+':'+hit.offset;if(seen.has(key)||seen.size>=16)throw Error('Silky AKB base cycle/depth limit');seen.add(key)
+ const f=await open(hit.file,'r');let raw;try{raw=silkyPayload(await readRange(f,hit.offset,hit.size),hit)}finally{await f.close()}
+ const info=akbInfo(raw);let base=null;if(info.base){const target=hit.lookup.get(info.base.toUpperCase().replace(/(?:\.[^.]*)?$/,'.AKB'));if(!target)throw Error('Silky AKB base missing: '+info.base);base=await readSilkyAkb(target,seen)}
+ return decodeAkb(raw,base)
 }
 
 // 当前的虚拟索引（不是 hybrid / 没启用 = null）。.arc 没变就沿用；并发调用共用一次重建

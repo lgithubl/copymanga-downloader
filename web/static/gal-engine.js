@@ -93,6 +93,14 @@ export function activePath(scene, choices = {}) {
   return path
 }
 
+// Evaluate guards at each command's original execution point. A compiled graph
+// often advances its program counter later in the same step.
+export function activeCommandsAt(scene, index, choices = {}) {
+  const out = []
+  walk(scene, index, choices, (step, command, active) => { if (step === index && active) out.push(command) })
+  return out
+}
+
 // 这一步里的选项（没有就是 null）
 export const choiceIn = (scene, stepIndex) => scene?.steps?.[stepIndex]?.commands.find((c) => c.op === 'choice') || null
 
