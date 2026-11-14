@@ -20,6 +20,8 @@ test('AGE dropdown -> layout -> native ALF script expansion, lazy PNG/voice and 
   const config = { game: { id: 'age::test', title: '用户设置的标题' } }
   const tagged = await generateTags({ item: { itemId: 'age-native', source: { path: root }, title: '目录标题', adapters: GAL_PRESETS.age.adapters, config }, script: { version: '2.64.0', options: {} } })
   const raw = tagged.itemPatch?.gal?.config
+  // This regression intentionally exercises strict opt-out; normal layout now enables diagnostic playback.
+  raw.adapterOptions['age::sys4'].unverifiedPolicy='warn';raw.adapterOptions['age::sys4'].partialPreview=false
   assert.ok(raw, tagged.logs.join('\n')); assert.equal(raw.game.id, 'age::test')
   assert.equal(raw.game.title, '用户设置的标题')
   assert.equal(raw.scriptRoots[0].dir, 'age/script'); assert.equal(raw.containers.format, 'age')
@@ -61,12 +63,11 @@ test('AGE dropdown -> layout -> native ALF script expansion, lazy PNG/voice and 
   assert.ok(item)
   const layout = await generateTags({ item, script: { version: '2.64.0', options: {} } })
   await handler.patchItemMetadata(item.itemId, layout.itemPatch)
-  const home = await handler.getReaderContent(item.itemId, 'main'), mainNode = home.node.items.find(row => row.title === '主包' || row.title === 'sys4ini')
-  assert.ok(mainNode, JSON.stringify(home.node))
-  const cards = await handler.getReaderContent(item.itemId, 'main', { sectionId: mainNode.node || mainNode.id })
-  const sn = cards.node.items.find(row => /SN0000/.test(row.title))
-  assert.ok(sn, JSON.stringify(cards.node))
-  await assert.rejects(() => handler.getReaderContent(item.itemId, 'main', { sectionId: sn.node || sn.id }), expectedStop)
+  const home = await handler.getReaderContent(item.itemId, 'main'),sn=home.node.items.find(row=>/SN0000/.test(row.title))
+  assert.ok(sn,JSON.stringify(home.node))
+  const opened=await handler.getReaderContent(item.itemId,'main',{sectionId:sn.node||sn.id})
+  assert.equal(opened.scene.steps.filter(s=>s.commands.some(c=>c.op==='text')).length,25)
+  assert.equal(opened.scene.stats.nativeStartup.available,true)
   const excluded = { ...normalized, containers: { ...normalized.containers, rules: [{ match: '\\.alf$', exclude: ['^BG054AA\\.AGF$'] }] } }
   assert.equal(await virtualEntry({ mediaDir: root, config: excluded, rels: [mediaPath] }), null, 'resource rules apply before virtual media lookup')
   const previous = await readFile(path.join(root, 'age/script/sys4ini/SN0000.age'))

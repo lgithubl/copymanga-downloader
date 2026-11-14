@@ -59,7 +59,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
-  'age::sys4': { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn', partialPreview: false },
+  'age::sys4': { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn', partialPreview: false, nativeInitialization: true },
  "sakana::ks":{
   "resDir": "arc/res",
   "scriptDir": "arc/script",
@@ -1660,7 +1660,7 @@ export const LAYOUTS = {
     bases: [''], searchDepth: 6, anchors: ['SYS4INI.BIN', '/^.*\\.alf$/i'], siblings: [], markers: [],
     scriptRoots: [{ id: 'age', dir: 'age/script', label: 'AGE 剧情' }], resourceRoots: ['.'],
     adapters: ['age::sys4'], adapterOptions: { 'age::sys4': { root: { path: ['.'] }, resDir: { path: ['age/res'] } } },
-    ruleTables: ['age::sys4'], ruleOverrides: {},
+    ruleTables: ['age::sys4'], ruleOverrides: {'age::sys4':{unverifiedPolicy:'preview',partialPreview:true}},
     engine: { classify: [], containers: { enabled: true, dir: 'age', scan: ['.'], scriptDecoder: 'age-sys4', scriptExt: 'age', mode: 'hybrid', format: 'age', flat: false, rules: [{ match: '\\.alf$' }], maxEntries: 200000, maxTotalMB: 8192 } },
     config: { scriptExtensions: ['age'], namesFiles: [], thumbsDirs: [], hiddenDirs: [], labels: { sys4ini: '主包' }, merge: [],
       views: [{ parent: '', as: 'special', label: '特殊场景', dirs: ['*'], on: 'marker', match: 'CG 开始', exclusive: false, badges: {} }],
@@ -1668,7 +1668,7 @@ export const LAYOUTS = {
       groups: [], dirThumbs: [], scriptThumbs: [], scriptIndex: [], thumbFallback: { overlays: true, prefer: ['cg', 'stand', 'bg'] }, pageSize: 100 },
     count: [{ dir: 'age/script', ext: '.age', depth: 3 }], avatars: [], expectedDirs: [],
     cover: [{ dir: '.', match: '\\.(?:png|jpe?g|webp|ico)$', flags: 'i', pick: 'first', fromMedia: true }],
-    notes: ['AGE 主包/追加包索引分别维护；资源按需解码，临时音频保留在 age/cache；尚未支持的场景指令会报告脚本和偏移，不能把成功导入当作完整播放验证通过'],
+    notes: ['AGE 为诊断播放：已验证版本自动读取原生标量初始化；首页选择「开场 SN0000」；内部例程不列为剧情，未知指令在右下诊断记录，不能视为完整原版还原', 'AGE 主包/追加包索引分别维护；资源按需解码，临时音频保留在 age/cache；尚未支持的场景指令会报告脚本和偏移，不能把成功导入当作完整播放验证通过'],
   },
  sakana:{
   "title": "SakanaGL KAG",

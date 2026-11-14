@@ -1,3 +1,7 @@
+import {nativeAgeStartup} from '../age-startup.mjs'
+import {stat,readFile} from 'node:fs/promises'
+import {ageSceneEntries} from '../age-scenes.mjs'
+import path from 'node:path'
 // AGE SYS4: execute confirmed instructions, never flatten every code block into
 // dialogue. Three explicitly selected unverified opcodes may be skipped with diagnostics;
 // other unknown operations abort normal playback and remain inspectable via
@@ -9,7 +13,7 @@ import { createAgeTimeline } from '../age-timeline.mjs'
 import { readAgeCatalog, ageResourceContext } from '../age-archive.mjs'
 
 export const ADAPTER_ID = 'age::sys4'
-export const DEFAULT_OPTIONS = { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn', partialPreview: false }
+export const DEFAULT_OPTIONS = { root: '.', resDir: 'age/res', stage: null, maxSteps: 100000, unverifiedPolicy: 'warn', partialPreview: false, nativeInitialization: true }
 export const sniff = text => /^\s*\{\s*"format"\s*:\s*"age-sys4\/1"/.test(String(text || '').slice(0, 256))
 export const explainSniff = () => '需要 age-sys4/1 脚本包；不把 SYS4INI 索引或原始 BIN 当作文本'
 export const contextFiles = () => []
@@ -18,8 +22,29 @@ export async function prepare({ options = {}, mediaDir, toResourcePath }) {
   const resDir = options.resDir || DEFAULT_OPTIONS.resDir
   if (!resDir.endsWith('/res')) throw Error('AGE resDir must end with /res')
   const catalog = await readAgeCatalog(mediaDir, { root: options.root || '.', dir: resDir.slice(0, -4) })
-  const namespaces = new Map()
-  return { options, context(namespace = 'sys4ini') {
+  const namespaces = new Map(),sceneEntries=new Map(),catalogTree={title:'AGE 剧情',children:[]},scriptDir=resDir.slice(0,-4)+'/script'
+  const main=catalog.indexes[0]?.namespace
+  const startup=options.nativeInitialization===false?{available:false,reason:'原生初始化已关闭'}:nativeAgeStartup(catalog,main)
+  const groups=new Map()
+  for(const row of catalog.entries){
+    if(!/^(?:\$\d+\$)?(?:SN|SC|SG|SP)\d+\.BIN$/i.test(row.name))continue
+    const script=`${scriptDir}/${row.namespace}/${row.name.replace(/\.bin$/i,'.age')}`
+    if(!(await stat(path.join(mediaDir,...script.split('/'))).catch(()=>null))?.isFile())continue
+    const opening=row.namespace===main&&row.name.toUpperCase()==='SN0000.BIN'
+    const node={id:`age-${row.namespace}-${row.ordinal}`,title:opening?'开场 SN0000':row.name.replace(/\.BIN$/i,''),script,
+      subtitle:opening&&startup.available?'已验证连续台词与换图；诊断播放，未完整还原原引擎':'剧情脚本 · 尚未逐场验证；未支持指令会记入诊断'}
+    let chapters=[]
+    if(!opening){
+      const raw=JSON.parse(await readFile(path.join(mediaDir,...script.split('/')),'utf8'))
+      chapters=ageSceneEntries(binary(raw.script))
+      for(const entry of chapters)sceneEntries.set(`${row.namespace}/${row.name}::chapter-${entry.id}`,entry)
+    }
+    if(opening)catalogTree.children.unshift(node)
+    else {if(!groups.has(row.namespace))groups.set(row.namespace,{id:`age-story-${row.namespace}`,title:`剧情脚本（${row.namespace}，未逐场验证）`,children:[]});groups.get(row.namespace).children.push(chapters.length?{id:node.id,title:node.title,children:chapters.map(entry=>({id:`${node.id}-${entry.id}`,title:entry.title,subtitle:'原生章节入口 · 诊断播放，未完整验证',script:`${script}::chapter-${entry.id}`}))}:node)}
+  }
+  catalogTree.children.push(...groups.values())
+  if(!catalogTree.children.length)catalogTree.children.push({id:'age-no-story',title:'没有可读取的剧情脚本',subtitle:'请检查主包；内部例程不作为剧情入口',children:[]})
+  return { options,catalogTree,startup,sceneEntries,context(namespace = 'sys4ini') {
     if (!namespaces.has(namespace)) namespaces.set(namespace, ageResourceContext(catalog, namespace, toResourcePath))
     return namespaces.get(namespace)
   } }
@@ -277,16 +302,22 @@ export function parse(text, ctx = null, meta = {}) {
   const input = String(text || '').replace(/^\uFEFF/, '')
   if (input.length > 32 * 1024 * 1024) throw Error('AGE package exceeds 32 MiB')
   const data = JSON.parse(input)
+  if(/^RTN_/i.test(data.name||''))throw Error('AGE 内部例程不能作为独立剧情进入：'+data.name+'；请返回首页选择「开场 SN0000」或剧情脚本')
   const context = ctx?.context(data.namespace)
   const options = { ...(context?.stage ? { stage: context.stage } : {}), ...(ctx?.options || {}), ...(meta.options || {}) }
   if (!Array.isArray(options.stage) && context?.stage) options.stage = context.stage
+  if(ctx?.startup?.available&&options.nativeInitialization!==false){options.integers={...ctx.startup.integers,...options.integers};options.floats={...ctx.startup.floats,...options.floats};options.strings={...ctx.startup.strings,...options.strings}}
+  if(meta.scene){const entry=ctx?.sceneEntries?.get(`${data.namespace}/${data.name}::${meta.scene}`);if(!entry)throw Error('未知 AGE 章节入口：'+meta.scene);options.integers={...options.integers,[entry.selector.variable]:entry.selector.value}}
+  else if(ctx?.sceneEntries&&[...ctx.sceneEntries.keys()].some(key=>key.startsWith(`${data.namespace}/${data.name}::`)))throw Error('请选择具体 AGE 剧情章节：'+data.name+'；不能从章节控制脚本开头直接播放')
   const result = analyzeAgeScene({ ...data, resources: data.resources || context?.resources, links: data.links || context?.links }, options)
+  if(ctx?.startup){result.stats.nativeStartup={available:ctx.startup.available,sources:ctx.startup.sources,reason:ctx.startup.reason,dataPrefix:ctx.startup.dataPrefix};result.stats.notes=[...(result.stats.notes||[]),ctx.startup.note||('原生初始化未应用：'+ctx.startup.reason)]}
+  const displayable=result.steps.some(step=>step.commands.some(c=>['text','overlay','movie'].includes(c.op)))
   if (!result.complete) {
     const stop = result.stats.run.stopped
     const where = stop ? `${stop.script || data.name || 'BIN'} @${stop.offset} opcode 0x${stop.opcode.toString(16)}` : data.name || 'BIN'
     const error = Error(`AGE 场景尚未完整解析：${where}；${result.stats.error || result.stats.run.status}；未把部分台词当成完整场景`)
     error.ageDiagnostic = result
-    if (options.partialPreview === true && result.steps.length) {
+    if (options.partialPreview === true && displayable) {
       result.stats.previewStopped = { ...(stop || {}), reason: result.stats.error || result.stats.run.status }
       result.stats.approximate = true
       result.stats.notes = [...(result.stats.notes || []), `诊断预览：${where} 已停止，后续未解析/未播放；${result.stats.error || result.stats.run.status}`]
@@ -294,7 +325,8 @@ export function parse(text, ctx = null, meta = {}) {
     }
     throw error
   }
+  if(ctx?.catalogTree&&!displayable)throw Error('AGE 入口未产生可显示正文：'+(data.name||'BIN')+'；请从首页选择「开场 SN0000」或具体剧情章节')
   return { steps: result.steps, stats: result.stats }
 }
 
-export const ageSys4Adapter = { id: ADAPTER_ID, label: 'AGE SYS4（指定未确认指令跳过并记录；开发中）', sniff, explainSniff, parse, prepare, contextFiles, contextDirs }
+export const ageSys4Adapter = { id: ADAPTER_ID, label: 'AGE SYS4（指定未确认指令跳过并记录；开发中）', sniff, explainSniff, parse, prepare, contextFiles, contextDirs, sceneInPath:true, catalog:ctx=>ctx?.catalogTree }
