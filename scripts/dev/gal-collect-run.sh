@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="1.80"
+VERSION="1.82"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1700,7 +1700,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJyt0VELgjAQB/CvInsO3ea8c70lBEHvvUSMZZOkTJnuQcTv3qKI6knIt/G/4+7HbSCF693FWUeWwX4gje7O/kWuujc21DYni4C0tbO5yfrOtL6WgkQuAZiv1EXRms6HwADjBBn68PhqlBRioD646co8hirV6NKqypxKHb03ROsdpXG42mZkXAT/EBAEp/hJYIyiSCcS1IbyWRiY8JQnXwwhBZ/OmOcaKSDCzzWkmPohniGejMN4B8GyoHM='
+PAIR_MEDIA_PLAN='eJyt0ktqwzAQBuCrGK2DNZrRy92112iKkV058UKJkR9QQu5eOe4ihixC480w+iVGH0gXth8JpJ2rLuZqm/3YNMrf+oq9ZZ8X1rnhmDr2HutjO/meTz4ClC3mLtZsl7H+PMbaf/wMvk/niBBJaDRp59w0vR9SiESFQZGi6u9YSgzdkpMLfp5flp1rYxn8d+v4w8t4Gw7cT/WB9wcQEUS+TLvusm2YUhsDEldMScLql5i4NdMAAqJdMbUCfI1JTzCDeMwUoFAWpEWxfnWFkDK6k6ZVIUWBT1KXC3noJA8z0+Wp3ZKopAYgq+6INn0CS+qfwmoRfl1/AbZsBTU='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
@@ -1717,6 +1717,52 @@ def fuyu_edo_detail_files(items,label):
         report['files'].append({**r,'sha256':hashlib.sha256(data).hexdigest()})
         yield r['name'],data,e.mtime
     yield '__pair_media/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode(),int(time.time())
+
+    # Installed configuration and previously materialized assets, strictly read-only.
+    def scrub(v):
+        if isinstance(v,dict):return {k:('[redacted]'if re.search(r'key|token|password|secret|cookie|authorization',k,re.I)else scrub(x))for k,x in v.items()}
+        if isinstance(v,list):return [scrub(x)for x in v]
+        return v
+    runtime={'game':label,'sourceReadOnly':True,'metadataRoots':[],'files':[]};total=0
+    for e in items:
+        rel=e.rel.replace('\\','/')
+        if not (re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
+        if e.size>4*MB:raise RuntimeError('Pair runtime file exceeds4MiB: '+rel)
+        with open(e.path,'rb')as f:b=f.read(4*MB+1)
+        total+=len(b)
+        if len(b)!=e.size or total>24*MB:raise RuntimeError('Pair runtime data changed/exceeded24MiB')
+        runtime['files'].append({'path':rel,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()})
+        yield '__pair_runtime/files/'+rel,b,e.mtime
+    ancestors=[];ancestor=os.path.realpath(root)
+    for _ in range(8):
+        ancestors.append(ancestor);parent=os.path.dirname(ancestor)
+        if parent==ancestor:break
+        ancestor=parent
+    candidates=[env['GAL_COLLECT_META_DIR']]if env.get('GAL_COLLECT_META_DIR')else[p for a in ancestors for p in [os.path.join(a,'library-meta','gal'),os.path.join(a,'cache','library-meta','gal')]]
+    seen=set();read_bytes=0
+    for candidate in candidates:
+        base=os.path.realpath(candidate)
+        if base in seen or not os.path.isdir(base):continue
+        seen.add(base);runtime['metadataRoots'].append(base)
+        for d,ds,fs in os.walk(base):
+            depth=os.path.relpath(d,base).count(os.sep)+(d!=base);ds[:]=sorted(ds)if depth<2 else[]
+            for name in sorted(fs):
+                if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}\.json',name):continue
+                file=os.path.join(d,name);st=os.stat(file)
+                if st.st_size>2*MB:continue
+                read_bytes+=st.st_size
+                if read_bytes>64*MB:raise RuntimeError('Pair metadata scan exceeds64MiB')
+                try:
+                    with open(file,'rb')as f:doc=json.load(f)
+                except(ValueError,UnicodeError):continue
+                match=' '.join(str(doc.get(k,''))for k in ['title','source'])+' '+str(doc.get('config',{}).get('game',{}))
+                if label.casefold()not in match.casefold()and not(label=='fuyukuru'and 'silky::fuyukuru'in match):continue
+                projection={k:doc[k]for k in ['itemId','title','source','adapters','config','configWarnings','updatedAt']if k in doc}
+                b=json.dumps(scrub(projection),ensure_ascii=False,indent=2).encode();total+=len(b)
+                if total>24*MB:raise RuntimeError('Pair runtime evidence exceeds24MiB')
+                aid=hashlib.sha256(file.encode()).hexdigest()[:20]
+                yield '__pair_runtime/items/'+aid+'.json',b,int(st.st_mtime)
+    yield '__pair_runtime/index.json',json.dumps(runtime,ensure_ascii=False,indent=2).encode(),int(time.time())
 
 def new_game_probe_files(items):
     """Yield bounded evidence bytes; never execute code or copy full archives/EXEs."""

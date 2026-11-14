@@ -26,7 +26,7 @@ export function expandIkunyu(text){
   else if(fn==='DEL_ALLCHAR')out=['C1','C2','C3','C4','C5','C6','C7','C8','C9','B1','B2'].map(s=>`del(${quote(s)})`)
   else if(fn==='FREE_TWO_DRAW'&&typeof arg(0)==='string'&&typeof arg(1)==='string'&&typeof arg(4)==='string'&&typeof arg(5)==='string')out=[...draw(arg(0),arg(1),Number(arg(2))||0,Number(arg(3))||0),...draw(arg(4),arg(5),Number(arg(6))||0,Number(arg(7))||0)]
   else if(fn==='FREE_TWO_DEL')out=[`del(${quote(a)})`,`del(${quote(b)})`]
-  else if(fn==='PLAY_MOVIE'&&typeof a==='string'&&typeof b==='string')out=['alldel()',`set("EV",${quote(png(a))})`,`playVideoEx(${quote(b+'.mp4')},true)`]
+  else if(fn==='PLAY_MOVIE'&&typeof a==='string'&&typeof b==='string')out=['alldel()',`playVideoCg(${quote(b+'.mp4')},${quote(png(a))})`]
   else if(['main_menu_open','main_menu_close','SetWinCountdown','EYE_CATCH'].includes(fn))out=[]
   rendered.push(...(out||[line]))
  }

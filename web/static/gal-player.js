@@ -131,7 +131,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   let path = activePath(scene, choices)
   const hasSteps = scene.steps.length > 0
   const base = reader.resourceBase
-  const url = (src) => assetUrl(base, src)
+  const url = (src) => assetUrl(base, src, reader.resourceVersion)
   // 暂未渲染的指令：按指令名汇总（数量、样例参数）；config.rawIgnore（node.rawIgnore，正则列表）里匹配的算「已允许」，不计入提示
   const pd = galPlayerDefaults(reader.node?.player)   // 这个游戏的默认值；浏览器里存过的设置优先
   const rawAllow = (Array.isArray(reader.node?.rawIgnore) ? reader.node.rawIgnore : []).map((source) => { try { return new RegExp(source, 'i') } catch { return null } }).filter(Boolean)

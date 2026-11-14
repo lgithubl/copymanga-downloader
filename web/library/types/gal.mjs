@@ -1,3 +1,4 @@
+import { SILKY_RESOURCE_VERSION } from '../gal/silky.mjs'
 import { packedRpgView } from '../gal/rpgmaker-packed.mjs'
 import { candidatePaths } from '../gal/resolve.mjs'
 // Gal（视觉小说 / 剧情脚本）：一个目录 = 一个媒体条目，条目只有一个单元（'main'）；单元里是一棵由后端按需给出的「浏览节点」树
@@ -449,6 +450,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       node,
       scene,
       resourceBase: resourceBase(itemId),
+      ...(item.config?.containers?.format === 'silky' ? { resourceVersion: SILKY_RESOURCE_VERSION } : {}),
     }
   }
 

@@ -4,6 +4,9 @@ base=pathlib.Path(tempfile.mkdtemp(prefix='collect-fuyu-edo-'));root=base/'gal';
 for label,name in [('fuyukuru','[publisher] fuyukuru v1.0'),('えどわ～る','えどわ～る')]:
     game=root/name;game.mkdir();data=b'header-WANTED-payload-that-is-not-collected';p=game/'sample.arc';p.write_bytes(data);files.append((p,hashlib.sha256(data).hexdigest()))
     plan[label]=[{'path':'sample.arc','sourceBytes':len(data),'offset':7,'bytes':6,'name':'__pair_media/sample.bin'}]
+meta=base/'library-meta'/'gal';meta.mkdir(parents=True)
+(meta/'test-pair.json').write_text(json.dumps({'title':'fuyukuru','config':{'game':{'id':'silky::fuyukuru'},'password':'never-leak'}}))
+(root/'[publisher] fuyukuru v1.0'/'EV003_H03.png').write_bytes(b'old-materialized-png')
 other=root/'OtherGame';other.mkdir();(other/'AGE.EXE').write_bytes(b'must not collect')
 script=pathlib.Path('scripts/dev/gal-collect-run.sh').read_text();encoded=base64.b64encode(zlib.compress(json.dumps(plan).encode())).decode();script=re.sub(r"PAIR_MEDIA_PLAN='[^']+'","PAIR_MEDIA_PLAN='"+encoded+"'",script)
 runner=base/'collect.sh';runner.write_text(script);env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
@@ -14,6 +17,9 @@ for p in parts:
         names=a.getnames();assert not any('OtherGame'in x or x.endswith('.exe')for x in names)
         sample=next(x for x in names if x.endswith('__pair_media/sample.bin'));assert a.extractfile(sample).read()==b'WANTED'
         assert any(x.endswith('__pair_media/index.json')for x in names)
+        if any(x.endswith('EV003_H03.png')for x in names):
+            runtime=next(x for x in names if '/__pair_runtime/items/'in x);doc=json.load(a.extractfile(runtime));assert doc['config']['password']=='[redacted]'
+            assert a.extractfile(next(x for x in names if x.endswith('EV003_H03.png'))).read()==b'old-materialized-png'
 for p,digest in files:assert hashlib.sha256(p.read_bytes()).hexdigest()==digest
 # Changed archive sizes must stop collection, rather than silently reading wrong bytes.
 (root/'えどわ～る'/'sample.arc').write_bytes(b'changed')

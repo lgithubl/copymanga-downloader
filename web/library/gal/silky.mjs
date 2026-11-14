@@ -2,6 +2,7 @@
 // Format references: GARbro ArcAzurite/ImageAKB; AI6WINScriptTool opcode table.
 // Fuyukuru uses the two-count MES header, BE operands and an extended option opcode.
 import {encodePng} from './bgi.mjs'
+export const SILKY_RESOURCE_VERSION='silky-bgr24-alpha2'
 const MAX=64*1024*1024
 const sjis=new TextDecoder('shift_jis',{fatal:true})
 export function silkyLzss(src,size){

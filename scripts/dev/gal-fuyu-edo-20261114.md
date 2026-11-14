@@ -88,3 +88,15 @@ Edoire 示例根目录是包含 `Archives` 的游戏目录。`game.title` 优先
 - fuyukuru 的完整文件清单和已解析档案中没有发现视频、Live2D 或 Spine 资源；当前确认的是静态 CG 与差分/镜头演出，不能把切换差分说成骨骼动态 CG。
 
 本次解码修复需要更新镜像，layout 配置没有变化。
+
+## 2026-11-14：实际部署链路补测（上次验证遗漏）
+
+用户加载的 digest `847e80f932309af530a6d4bd333615edbcbfd1847398535185ad72f0c8c4b0ef` 与 Action 43594090385 完全一致，不能归因于用户未更新。自动采集 1.81/1.82 取回安装中的两个条目配置及指定生成文件；均为正确 adapter、layout 2.64.8、hybrid 模式；fuyukuru 未发现落在游戏目录里的旧 EV003 PNG。
+
+- 绿色问题：真实 HTTP 的资源仍用不带解码版本的 URL，并允许浏览器缓存一小时。回归先在同一 Chrome 缓存旧的不透明绿色 PNG，再切换服务器为已修复 PNG；使用真实配置和实际大小写路径时，新播放器仍拿旧图，确实失败。此前虚拟资源 route / 新浏览器没有覆盖这种升级场景。
+- 修复：后端 Silky reader 下发与解码器统一的 `resourceVersion`；播放器 URL 附加 `v`，避开浏览器旧图。不清理浏览器、不删除素材或旧缓存、不改变其他 adapter 的 URL。更新镜像并重新打开场景即可，无需重跑 layout。
+- 动态 CG：`PLAY_MOVIE` 原展开把静态 CG 写进 `edo:EV` overlay；canvas 在 z=4，视频在 z=2，导致视频有播放进度却不可见。独立 MP4 测试不带原始 overlay，因此此前通过并不能证明原场景可见。
+- 修复：DRAW profile 生成专用 `playVideoCg`，将加载底图放到背景层，然后播放影片。普通旧 Edoire `playVideoEx` 的行为不变。
+- 回归 `fe-gal-pair-http-selftest.mjs` 使用采回的实际配置、原始 scsg01h 与 FK_SCENE_07、真实 getReaderContent/getResource 及 HTTP 路由（无资源拦截）。保留升级前浏览器缓存后，FK_SCENE_07 第30句角落 alpha=0；scsg01h 第15/27/44句均无不透明上层遮挡，实际影片前后帧不同、时间推进。记录 `.cache/pair-http-regression/verification.json`。
+
+这次验证覆盖了实际资源接口、升级缓存和原场景叠放，但仍不等于所有剧情的完整原生复现。

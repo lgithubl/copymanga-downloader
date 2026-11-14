@@ -1,4 +1,4 @@
-import{silkyPayload,decodeMes,akbInfo,decodeAkb,akbPng}from './silky.mjs'
+import{SILKY_RESOURCE_VERSION,silkyPayload,decodeMes,akbInfo,decodeAkb,akbPng}from './silky.mjs'
 import {readSakanaIndex,readSakanaEntry,decodeSxEntry,sakanaMetadata,fafaValue,sakanaStorageSig} from './sakana.mjs'
 import { encodeAgeScriptPackage } from './adapters/age-sys4.mjs'
 import { readAgeCatalog, expandAgeScripts, ageRuleFilter } from './age-archive.mjs'
@@ -1594,7 +1594,7 @@ function markFrameSheets(map) {
 }
 
 async function buildSilkyVirtual(cfg,arcs,sig){
- const map=new Map(),files=[],lookup=new Map(),version=createHash('sha1').update('silky-akb-alpha/2:'+sig).digest('hex')
+ const map=new Map(),files=[],lookup=new Map(),version=createHash('sha1').update(SILKY_RESOURCE_VERSION+':'+sig).digest('hex')
  for(const{file,rule}of arcs){if(!rule.kinds.has('res'))continue;const{entries}=await readArcfamIndex(file);if(entries.length>cfg.maxEntries)throw Error('Silky index entry limit')
   for(const e of entries){if(!/\.(akb|ogg|wav|mp3)$/i.test(e.name)||e.size>64*1024*1024)continue;if((rule.include.length&&!rule.include.some(r=>r.test(e.name)))||rule.exclude.some(r=>r.test(e.name)))continue
    const leaf=safeEntryName(e.name);if(!leaf)continue;const rel=`${cfg.dir}/${resRel(cfg,withoutExt(path.basename(file)),leaf.replace(/\.akb$/i,'.png'))}`,hit={...e,file,rel,version,transform:/\.akb$/i.test(leaf)?'silky-akb':'silky-audio',lookup}

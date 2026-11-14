@@ -4,9 +4,10 @@ import{readFile}from'node:fs/promises'
 import{existsSync}from'node:fs'
 import{decodeAkb}from'../../web/library/gal/silky.mjs'
 import{parse}from'../../web/library/gal/adapters/silky-mes.mjs'
-import{activePath,stateAt}from'../../web/static/gal-engine.js'
+import{activePath,stateAt,assetUrl}from'../../web/static/gal-engine.js'
 const captured='.cache/fuyu-green-capture/extracted/g01/__pair_media/layer.arc/'
 function solid(flags,bgra){const b=Buffer.alloc(32);b.write('AKB ');b.writeUInt16LE(1,4);b.writeUInt16LE(1,6);b.writeUInt32LE(flags>>>0,8);Buffer.from(bgra).copy(b,12);return b}
+test('versioned resource URL invalidates only explicitly versioned readers and encodes arguments',()=>{assert.equal(assetUrl('/res','a b.png'),'/res?path=a%20b.png');assert.equal(assetUrl('/res','a b.png','alpha/2'),'/res?path=a%20b.png&v=alpha%2F2')})
 test('24-bit transparent AKB keys exact green, retains opaque green and native 32-bit alpha',()=>{
  assert.deepEqual([...decodeAkb(solid(0xc00000ff,[0,255,0,255])).rgba],[0,255,0,0])
  assert.deepEqual([...decodeAkb(solid(0x400000ff,[0,255,0,255])).rgba],[0,255,0,255])
