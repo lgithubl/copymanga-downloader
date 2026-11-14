@@ -95,7 +95,7 @@ set -uo pipefail
 # 1.66 仅天結い原版AGE.EXE.org（约4.23MiB）静态分析；不执行、不收其他游戏/档案/媒体。
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
-VERSION="1.75"
+VERSION="1.76"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1699,9 +1699,24 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-def fuyu_edo_detail_files(items):
+PAIR_MEDIA_PLAN='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'
+def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
+    plan=json.loads(zlib.decompress(base64.b64decode(PAIR_MEDIA_PLAN))).get(label,[])
+    lookup={e.rel.replace('\\','/'):e for e in items}
+    for r in plan:
+        e=lookup.get(r['path'])
+        if not e or e.size!=r['sourceBytes']:raise RuntimeError('Pair media source changed '+r['path'])
+        if r['offset']<0 or r['offset']+r['bytes']>e.size:raise RuntimeError('Pair range invalid')
+        used+=r['bytes']
+        if used>64*MB:raise RuntimeError('Pair media byte limit')
+        with open(e.path,'rb')as f:f.seek(r['offset']);data=f.read(r['bytes'])
+        if len(data)!=r['bytes']:raise RuntimeError('Pair media truncated')
+        report['files'].append({**r,'sha256':hashlib.sha256(data).hexdigest()})
+        yield r['name'],data,e.mtime
+    yield '__pair_media/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode(),int(time.time())
+    return
     for e in items:
         rel=e.rel.replace('\\','/');low=rel.lower();parts=[]
         if low in ('script.arc','data.arc','archives/ver00_s0.arc'):
@@ -2630,7 +2645,7 @@ def main():
         with tarfile.open(fileobj=gz, mode='w|') as tar:
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
             if new_games:
-                for name,data,mtime in (scene_audit_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game))) if scene_audit else bug_case_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game)),followup=followup) if bug_cases else next_game_verify_files(items,next_game_label(os.path.basename(game)),age_link=age_link) if new_games_next_verify else next_game_detail_files(items,next_game_label(os.path.basename(game))) if new_games_next_detail else new_game_remaining_files(items,new_game_label(os.path.basename(game))) if new_games_remaining else new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else fuyu_edo_detail_files(items) if RULES_RE.pattern=='^new-games:fuyu-edo$' else new_game_probe_files(items)):
+                for name,data,mtime in (scene_audit_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game))) if scene_audit else bug_case_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game)),followup=followup) if bug_cases else next_game_verify_files(items,next_game_label(os.path.basename(game)),age_link=age_link) if new_games_next_verify else next_game_detail_files(items,next_game_label(os.path.basename(game))) if new_games_next_detail else new_game_remaining_files(items,new_game_label(os.path.basename(game))) if new_games_remaining else new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else fuyu_edo_detail_files(items,new_game_label(os.path.basename(game))) if RULES_RE.pattern=='^new-games:fuyu-edo$' else new_game_probe_files(items)):
                     if total+len(data)>min(TOTAL_MAX,(336 if RULES_RE is not None and RULES_RE.pattern=='^new-games:playback$'else 640 if scene_audit else 32 if new_games_next_verify else 128 if new_games_next_detail else 64)*MB): raise RuntimeError('五作证据超过本轮总量上限')
                     ti=tarfile.TarInfo(gid+'/'+name);ti.size=len(data);ti.mtime=mtime;tar.addfile(ti,io.BytesIO(data));total+=len(data);picked_bytes+=len(data)
             if rpg_media:
