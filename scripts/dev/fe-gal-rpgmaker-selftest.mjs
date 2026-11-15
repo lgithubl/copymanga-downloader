@@ -83,6 +83,7 @@ try{
  assert.ok((await page.locator('.media-detail-panel').innerText()).includes('回想 地図演出'))
  assert.equal(await page.locator('.media-detail-panel .tag-pill[data-tag="标签:详情测试"]').count(),1)
  assert.equal(await page.locator('.gal-settings').isHidden(),true)
+ await page.screenshot({path:path.join(work,'gal-player-details.png')})
  await page.keyboard.press('Escape');assert.ok((await page.locator('.gal-text').innerText()).includes('Map start'),'opening details never advances dialogue')
  console.log('PASS Gal browse/player details: current title, path and clickable escaped tags; Escape works')
  const mapPixel=async(x,y)=>page.evaluate(({x,y})=>{const c=document.querySelector('canvas.gal-rpgmaker-map');return [...c.getContext('2d').getImageData(Math.floor(x*c.width/640),Math.floor(y*c.height/360),1,1).data]},{x,y})
