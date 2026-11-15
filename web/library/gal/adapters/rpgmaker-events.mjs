@@ -21,6 +21,13 @@ export function compileRpgEvents(list, ctx, meta) {
   const initial = new Map(), calls = [], guards = [], pictures = new Map()
   const nativeParty=new Set((Array.isArray(o.party?.members)?o.party.members:ctx.system?.partyMembers||[]).map(Number)),usedParty=new Set()
   const partyVariable=id=>{id=Number(id);const key=`rpg:party:${id}`;usedParty.add(id);if(!initial.has(key))initial.set(key,o.party?.mode==='all'||nativeParty.has(id)?1:0);return key}
+  const usedActorStates=new Set()
+  const actorState=(actor,state)=>{
+    actor=Number(actor);state=Number(state);const key=`rpg:actor:${actor}:state:${state}`
+    usedActorStates.add(actor)
+    if(!initial.has(key))initial.set(key,Array.isArray(o.actors?.states?.[actor])&&o.actors.states[actor].map(Number).includes(state)?1:0)
+    return key
+  }
   const cgMatch = safeRegex(o.pictures.cgMatch), bgMatch = safeRegex(o.pictures.backgroundMatch)
   const seVoiceMatch=safeRegex(o.plugins.seVoiceMatch),meVoiceMatch=safeRegex(o.plugins.meVoiceMatch),skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)
   const thumbnailMatch = safeRegex(o.pictures.thumbnailMatch), thumbnailSkip = safeRegex(o.pictures.thumbnailSkip)
@@ -374,6 +381,7 @@ export function compileRpgEvents(list, ctx, meta) {
     if (p[0] === 0) return { var: variable(p[1], 's'), op: '===', value: p[2] === 0 ? 1 : 0 }
     if (p[0] === 1) return { var: variable(p[1]), op: ['===', '>=', '<=', '>', '<', '!=='][p[4]] || '===', ...(p[2] === 0 ? { value: p[3] } : { valueVar: variable(p[3]) }) }
     if(p[0]===2){const key=`rpg:self:${mapId}:${activeEventId}:${p[1]}`;if(!initial.has(key))initial.set(key,0);return{var:key,op:'===',value:p[2]===0?1:0}}
+    if(p[0]===4&&p[2]===6)return {var:actorState(p[1],p[3]),op:'===',value:1}
     if(p[0]===4&&p[2]===0){const key=partyVariable(p[1]);return {var:key,op:'===',value:1}}
     raw('condition-unhandled', p)
     return null
@@ -403,6 +411,23 @@ export function compileRpgEvents(list, ctx, meta) {
       // hook is never populated by a game JSON file or import configuration.
       if(ctx.commandCompiler?.(c,{emit,flush,variable,raw,stats,serial:()=>serial++}))continue
       if(meta.memoryReplay&&truth(when())===false&&![102,111,402,403,404,411,412].includes(c.code))continue
+      if(c.code===112){
+        const key=`rpg:loop:${serial++}`;emit({op:'set',var:key,value:1})
+        guards.push({type:'loop',indent,key,conditions:[{var:key,op:'===',value:1}]});continue
+      }
+      if(c.code===113){
+        const loop=guards.slice(guardBase).findLast(g=>g.type==='loop')
+        if(loop)emit({op:'set',var:loop.key,value:0});else raw('loop-break-without-loop',p)
+        continue
+      }
+      if(c.code===413){
+        const at=guards.findLastIndex(g=>g.type==='loop'&&g.indent===indent)
+        if(at<guardBase){raw('loop-end-without-loop',p);continue}
+        // A native break completes the one visited iteration. Repeating an
+        // unresolved gameplay loop is diagnosed, not executed indefinitely.
+        raw('loop-repeat-not-simulated',{reason:'no active break in this iteration'})
+        guards.splice(at,1);continue
+      }
       if (c.code === 101) {
         const text = []
         while (commands[i + 1]?.code === 401) text.push(String(commands[++i].parameters?.[0] || ''))
@@ -443,6 +468,17 @@ export function compileRpgEvents(list, ctx, meta) {
         }
         if (p[3] !== 0 && p[3] !== 1) { if(meta.memoryReplay)for(let id=p[0];id<=Math.min(p[1],p[0]+10000);id++)abstract.set(variable(id),unknown);raw('variable-operand-unhandled', p); continue }
         for (let id = p[0]; id <= Math.min(p[1], p[0] + 10000); id++) emit({ op: 'set', var: variable(id), calc: ['set', 'add', 'sub', 'mul', 'div', 'mod'][p[2]], ...(p[3] === 0 ? { value: p[4] } : { valueVar: variable(p[4]) }) }); continue
+      }
+      if(c.code===313){
+        if(![0,1].includes(p[0])||!Number.isInteger(p[1])||p[1]<0||![0,1].includes(p[2])||!Number.isInteger(p[3])||p[3]<=0){raw('actor-state-change-invalid',p);continue}
+        const set=(actor,conditions=[])=>emit({op:'set',var:actorState(actor,p[3]),value:p[2]===0?1:0,when:conditions})
+        if(p[0]===0&&p[1]>0)set(p[1])
+        else for(const actor of (ctx.actors||[]).filter(Boolean)){
+          const party={var:partyVariable(actor.id),op:'===',value:1}
+          if(p[0]===0)set(actor.id,[party])
+          else{const key=variable(p[1]);set(actor.id,[{var:key,op:'===',value:actor.id}]);set(actor.id,[{var:key,op:'===',value:0},party])}
+        }
+        continue
       }
       if(c.code===129){emit({op:'set',var:`rpg:party:${Number(p[0])}`,value:p[1]===0?1:0});continue}
       if (c.code === 123) { emit({op:'set',var:`rpg:self:${mapId}:${activeEventId}:${p[0]}`,value:p[1]===0?1:0});continue }
@@ -552,6 +588,7 @@ export function compileRpgEvents(list, ctx, meta) {
       }
     }
   }
+  if(usedActorStates.size)stats.warnings.push('角色状态按 actors.states 配置初始化，未配置时按新游戏无状态处理；原生状态增减指令按本段剧情执行，未读取原存档。')
   if(o.party?.mode==='choose'&&usedParty.size){
     const key='rpg:party-mode',id='rpg:party-selection'
     const setup=[...usedParty].flatMap(actor=>[{op:'set',var:partyVariable(actor),value:1,when:[{var:key,op:'===',value:1}]},{op:'set',var:partyVariable(actor),value:nativeParty.has(actor)?1:0,when:[{var:key,op:'===',value:2}]}])

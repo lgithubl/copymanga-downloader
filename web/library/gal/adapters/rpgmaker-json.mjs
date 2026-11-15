@@ -21,6 +21,7 @@ export const DEFAULT_OPTIONS = {
   effects: { shake: true },
   localization: { language: '' },
   party: { mode: 'initial', members: null },
+  actors: { states: {} },
   skit: { expressionPoses: {}, wrapperScripts: false },
   maps: { enabled: true, tileSize: 48, player: true, follow: 'event', maxBytes: 134217728 },
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },

@@ -176,6 +176,7 @@ export const ADAPTER_RULES = {
     "initialSwitches": {},
     "effects": {"shake": true},
     localization: { language: '' },
+    actors: { states: {} },
     "party": {"mode": "initial", "members": null},
     "skit": {"expressionPoses": {}, "wrapperScripts": false},
   "maps": {
