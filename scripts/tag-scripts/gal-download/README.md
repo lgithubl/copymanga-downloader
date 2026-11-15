@@ -1,5 +1,7 @@
 # Gal 数据下载 / 本地采集（纯 Node，v2.2.9）
 
+DeepOne / ddd 的采集、CDN 访问及旧鉴权测试记录见 [ddd 分析 README](../../dev/ddd/README.md)。当前仅完成分析和清单转换 dryRun，尚未接入自动更新资源清单。
+
 只请求已生成 plan 中的游戏数据 URL。不安装或下载解释器、依赖、工具、类型数据库或 APK。
 dryRun:true 全程无网络请求。服务端、Dockerfile、package.json 无改动，只更新 tag 脚本包。
 
