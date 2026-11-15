@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.38"
+VERSION="2.39"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1712,7 +1712,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJyVlsGO2jAURX8FZT0Q27Edu7uOBo3UbqqZTaVSRQkxEAQJiklpNeLf6zZOKQPPdsQCwnlyTuyXa79FparrppuW26poq130YfLtLTrkx4359Y7FCKHZUuvoYRLppmuX6vHXUWlTSCUT5s9mtdLqaK6RuSiuWZ3vlWPI83dT8/IJYZJQIdJrjdPpFOddWTWxVvFztZo+7prTtikyhGftYb3/0dwqYUYw6DTAQSrgBueHSYgQgYVSgSUoZKFfiIwUSmChhDAOClnoF0pGClHHDHFO4BnqoV+IjhRisBBFCJ4hC/1CbKQQdyyZEHAPWegX4iOFBCxEGKagkIV+ITFSSMJCArEUFLLQLyTDhD5XWjtDiEoKd7SFoM270UNUHPGDGINbx0KPSmD29MVw8Jg2ZZCJZR6RwMzpix2Bg7iAm8VCj0pg2vTFrqgREsGd0kOPSmDO9MWOkGGSguszQI9KYML8LcbIES8JS+B46aFb5TK6W+VLfjAf7HybzbEB3g4sBG1ubxAiRJzvNGEMXikLPUIk6LV+nU/1Rm2reu1KGIoc+/dA7/rcGT9ExnG4QTihcOsM1CMTkDOXYsemxBEi8MwM1CNz2ZOGszLDnFBxfVZedLxIi0WXSqYWHWOULzopiXiZ/5x/zZ7yYx6/HluV782IH7Wx0XH+5ytDKFu3+WFTLe8c8AlLzQJKcdVtGONEUs7I//lN+qLhWbKs6Opyp7K9Kqv89lazf4PMiqo2j3b+DQSL7ws='
+PAIR_MEDIA_PLAN='eJyNlF9PwyAUxb/K0me3AoUWfHO6xBiji/pg4kxDV9zQtTSl7E/MvruY2WV1Q3lq6blwfveE3s8gF2WpTD9/l1ktF8F57+UzqHgzt2+/tBAAMJhqHZz1Aq1MPRXDTSO0LcSMUPtRvb1p0dg1sIusq5W8EH8cuX21NQ83AKIIU5p0MVarVchNLlVYiBBE6aWoRaHKTQoAHtTVrFiqYyYIIYORi2qvtlw+HtuznhcUcUIxzCLmYmpFDyTyPxIk6djU4lYthd0A3TkhmgB3Tq16Esrh4QvlzgkjFDmZWtEDyZ2TLGZhJaeNrdXhnVg9qYUs+S0Yci12m6oTWRGKAHFm1aqHYD4+vnDomst66KZjCMSJk65VPei6Rr540WhdjWH//oNv/kgQMDfij+hBeMLLFxNfLlQz74+hExJBCty/xF71wDzy2s85AmOEaXfOTUycJdnEJIyIiSEExxPDGKIPo/XoOb3iDQ8fm1rwQpazC23JdMi/H/aip7OaV3M5PTGcEUkgwIx27q2dfxHDMUEHjVG0K2r7StPMlPlCpIXIJT+2GuwPGWSytK1tvwBXO/2D'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
