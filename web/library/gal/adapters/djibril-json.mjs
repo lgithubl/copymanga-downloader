@@ -51,7 +51,8 @@ export function parse(text,ctx,meta={}){
    if(option==='Off'){bg=null;emit({op:'overlayOff',slot:'djibril-bg'});continue}
    const row=ctx.backgrounds.get(id),p=c.bg_option||{};if(!row){raw(c,'background-id-missing:'+id);continue}
    const src=resource('res/pc/bg/'+(row.type==='still'?'still/'+row.character_id:'adv')+'/'+row.file+'.png',c);if(!src)continue
-   bg={op:'overlay',slot:'djibril-bg',src,kind:row.type==='still'?'still':'background',cg:row.type==='still',under:row.type!=='still',fit:'contain',stage,anchor:[.5,.5],x:Number(p.position_x)||0,y:-(Number(p.position_y)||0),scaleX:Number(p.scale)||1,scaleY:Number(p.scale)||1,z:-1000,fade:seconds};emit(bg);continue
+   const previous=option!=='On'&&bg?.src===src?bg:{},pick=(key,field,fallback)=>p[key]===null||p[key]===undefined?previous[field]??fallback:Number(p[key]);
+   bg={op:'overlay',slot:'djibril-bg',src,kind:row.type==='still'?'still':'background',cg:row.type==='still',under:row.type!=='still',fit:'contain',stage,anchor:[.5,.5],x:pick('position_x','x',0),y:p.position_y===null||p.position_y===undefined?previous.y??0:-Number(p.position_y),scaleX:pick('scale','scaleX',1),scaleY:pick('scale','scaleY',1),z:-1000,fade:seconds};emit(bg);continue
   }
   if(type==='Character'){
    // The supplied viewer treats an empty Character option as its clear sentinel.
