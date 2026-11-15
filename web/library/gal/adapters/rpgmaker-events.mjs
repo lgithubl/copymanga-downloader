@@ -44,6 +44,7 @@ export function compileRpgEvents(list, ctx, meta) {
     return result
   }
   const emit = cmd => {
+    if(cmd.op==='shake'&&o.effects?.shake===false){if(cmd.wait&&cmd.seconds)cmd={op:'wait',seconds:cmd.seconds};else return}
     if(cmd.op==='rpgText')cmd={stage,...cmd}
     const w=[...when(),...(cmd.when||[])],on=meta.memoryReplay?truth(w):null
     if(on===false)return
@@ -60,7 +61,7 @@ export function compileRpgEvents(list, ctx, meta) {
   const raw = (key, args) => { stats.raw[key] = (stats.raw[key] || 0) + 1; emit({ op: 'raw', cmd: key, args: JSON.stringify(args).slice(0, 1000) }) }
   const paEnabled=o.plugins.structured!==false&&ctx.plugins?.some(p=>p.name.split('/').at(-1)==='PictureAnimation')
   const pa=pictureAnimation({emit,raw,initial,guard:(conditions,fn)=>{guards.push({conditions});try{fn()}finally{guards.pop()}}})
-  let activePageIndex=meta.pageIndex??-1, activeEventId=meta.eventId, mapId=Number(/Map(\d+)\.json$/i.exec(meta.rel||'')?.[1]||0)
+  let activePageIndex=meta.pageIndex??-1, activeEventId=meta.eventId, mapId=Number(meta.initialMap?.id||/Map(\d+)\.json$/i.exec(meta.rel||'')?.[1]||0)
   const characterId=id=>Number(id)===0?activeEventId:Number(id)
   const showMap=(id,eventId=0,page=-1,player=null)=>{
     mapId=id
@@ -495,7 +496,8 @@ export function compileRpgEvents(list, ctx, meta) {
   }
   if(meta.memoryReplay){initial.set(variable(1004,'s'),1);initial.set(variable(1054,'s'),1);stats.warnings.push('未读取原游戏的最近回想存档；入口从头播放，中途续播使用阅读器记录。')}
   emit({ op: 'bg', color: [0, 0, 0] })
-  if(meta.map&&mapId)showMap(mapId,meta.eventId,meta.pageIndex)
+  if(meta.initialMap)showMap(mapId,0,-1,meta.initialMap.player)
+  else if(meta.map&&mapId)showMap(mapId,meta.eventId,meta.pageIndex)
   if(meta.map&&o.maps?.enabled!==false)stats.warnings.push('地图为事件初始快照；无游戏存档时玩家位置取系统起点或事件附近，不执行自主移动/并行事件或玩家操控')
   const variants=replayVariants(list,ctx.common)
   if(variants.length){

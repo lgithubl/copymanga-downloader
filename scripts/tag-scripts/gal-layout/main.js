@@ -172,6 +172,7 @@ export const ADAPTER_RULES = {
     "maxCallDepth": 32,
     "initialVariables": {},
     "initialSwitches": {},
+    "effects": {"shake": true},
     "party": {"mode": "initial", "members": null},
     "skit": {"expressionPoses": {}, "wrapperScripts": false},
   "maps": {

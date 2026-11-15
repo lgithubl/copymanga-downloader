@@ -16,6 +16,7 @@ import{stateAt,activePath}from'../../web/static/gal-engine.js'
 import{pickRenderStep}from'../../web/static/gal-thumb-pick.js'
 import{createGalHandler}from'../../web/library/types/gal.mjs'
 import{generateTags}from'../tag-scripts/gal-layout/main.js'
+import * as unite from'../../web/library/gal/adapters/rpgmaker-unite.mjs'
 
 test('trimmed sprites restore their original canvas, keeping body/face alignment',async()=>{
  const sharp=requireWeb('sharp'),png=await sharp({create:{width:4,height:4,channels:4,background:'#ff0000'}}).png().toBuffer(),sprite={m_Rect:{width:6,height:8},m_RD:{textureRect:{x:1,y:1,width:2,height:2},textureRectOffset:{x:3,y:1},settingsRaw:0}},out=await unitySpritePng(sprite,{m_Width:4,m_Height:4},png),{data,info}=await sharp(out).raw().toBuffer({resolveWithObject:true});assert.deepEqual([info.width,info.height],[6,8]);const pixel=(x,y)=>[...data.subarray((y*6+x)*4,(y*6+x+1)*4)];assert.deepEqual(pixel(3,5),[255,0,0,255]);assert.equal(pixel(0,0)[3],0);await assert.rejects(unitySpritePng({...sprite,m_RD:{...sprite.m_RD,textureRectOffset:{x:6,y:0}}},{m_Width:4,m_Height:4},png),/outside original canvas/)
@@ -57,6 +58,14 @@ for(const[name,adapter,id,section,step]of cases)test('captured '+name+': import 
   const card=cards.node.items.find(i=>i.title==='みくアフター１');assert.ok(card,JSON.stringify(cards.node.items.map(i=>i.title)));assert.ok(card.thumb,'native gallery cover preserved');assert.ok(card.markers?.length,'native gallery cover must not suppress middle-start markers')
  }
  if(name==='unite'){
+  const native=await readFile(path.join(source,'GirlReno_Data/arc/native.json'),'utf8'),ctx=await unite.prepare({texts:{'arc/native.json':native}}),specials=ctx.catalogTree.children.find(n=>n.id==='special').children
+  assert.equal(specials.length,77)
+  for(const card of specials){const scene=card.script.split('::')[1],id=Number(scene.slice(7));assert.equal(ctx.uniteReplayMaps.get(id)?.length,1,card.title+' has exactly one native gallery destination');const parsed=unite.parse(JSON.stringify({format:'rpgmaker-unite/1',rel:'data/CommonEvents.json'}),ctx,{scene});assert.ok(parsed.steps.flatMap(s=>s.commands).some(c=>c.op==='rpgMap'),card.title+' restores its background')}
+  assert.equal(ctx.uniteReplayMaps.get(26)[0].id,13);assert.equal(ctx.uniteReplayMaps.get(25)[0].id,20)
+  const openingMap=reader.scene.steps.flatMap(s=>s.commands).find(c=>c.op==='rpgMap')?.map
+  assert.ok(openingMap?.nativeImage,'standalone gallery common retains its authored destination map')
+  const special=await handler.getReaderContent(item.itemId,'main',{sectionId:'s:data/CommonEvents.unite::common-26'}),specialMap=special.scene.steps.flatMap(s=>s.commands).find(c=>c.op==='rpgMap')?.map
+  assert.ok(specialMap?.nativeImage,'HS2 native map13 must appear behind its characters')
   const mapReader=await handler.getReaderContent(item.itemId,'main',{sectionId:'s:data/Map021.unite::event-1-1'}),map=mapReader.scene.steps.flatMap(s=>s.commands).find(c=>c.op==='rpgMap')?.map
   assert.ok(map?.nativeImage,'native train event retains its actual Tilemap');assert.equal(map.tileSize,96)
   const image=await handler.getResource(item.itemId,map.nativeImage),sharp=requireWeb('sharp'),metadata=await sharp(image.file).metadata(),pixels=await sharp(image.file).stats();assert.equal(metadata.width,1344);assert.equal(metadata.height,672);assert.ok(pixels.channels.some(c=>c.stdev>20),'native Tilemap must contain visible original pixels')

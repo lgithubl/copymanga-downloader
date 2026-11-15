@@ -25,9 +25,25 @@ export async function prepare({texts={},options}){
   }
   diag();return true
  }
+ // Native gallery events transfer to the authored map before calling the
+ // common scene. Preserve that context even when opening its stable common ID.
+ ctx.uniteReplayMaps=new Map()
+ const replayIds=new Set((ctx.catalogTree.children.find(n=>n.id==='special')?.children||[]).map(n=>Number(/::common-(\d+)$/.exec(n.script||'')?.[1])))
+ for(const [rel,map]of ctx.maps){
+  const id=Number(/Map(\d+)\.json$/i.exec(rel)?.[1]);if(!/回想|recollection|replay/i.test(ctx.mapInfo[id]?.name||''))continue
+  for(const event of map.events.filter(Boolean))for(const page of event.pages||[])for(let i=0;i<page.list.length;i++){
+   const c=page.list[i];if(c.code!==117||!replayIds.has(Number(c.parameters[0])))continue
+   let transfer
+   for(let j=i-1;j>=0;j--){const before=page.list[j];if(before.indent<c.indent||before.code===411&&before.indent===c.indent)break;if(before.code===201&&before.parameters[0]===0&&before.indent===c.indent){transfer=before;break}}
+   if(!transfer)continue
+   const p=transfer.parameters,entry={id:Number(p[1]),player:{x:Number(p[2]),y:Number(p[3]),direction:Number(p[4])||2}},entries=ctx.uniteReplayMaps.get(Number(c.parameters[0]))||[]
+   if(!entries.some(old=>JSON.stringify(old)===JSON.stringify(entry)))entries.push(entry)
+   ctx.uniteReplayMaps.set(Number(c.parameters[0]),entries)
+  }
+ }
  const rewrite=node=>{if(node.script){const[rel,scope]=node.script.split('::');if(d.packetMap[rel])node.script=d.packetMap[rel]+(scope?'::'+scope:'')}for(const child of node.children||[])rewrite(child)};rewrite(ctx.catalogTree)
  return ctx
 }
-export function parse(text,ctx,meta={}){const d=JSON.parse(text);if(d.format!=='rpgmaker-unite/1')throw Error('Not native Unite event');return rpg.parse('',ctx,{...meta,rel:d.rel,sourceRel:d.rel,options:ctx.options})}
+export function parse(text,ctx,meta={}){const d=JSON.parse(text);if(d.format!=='rpgmaker-unite/1')throw Error('Not native Unite event');const id=Number(/^common-(\d+)$/.exec(meta.scene||'')?.[1]),maps=ctx.uniteReplayMaps?.get(id)||[];if(maps.length>1)throw Error('Unite 回想地图上下文不唯一，请从原生地图事件进入: '+meta.scene);return rpg.parse('',ctx,{...meta,...(maps.length?{initialMap:maps[0]}:{}),rel:d.rel,sourceRel:d.rel,options:ctx.options})}
 export const catalog=ctx=>ctx.catalogTree
 export const rpgmakerUniteAdapter={id:ADAPTER_ID,label:'RPG Maker Unite 原生事件',sniff,parse,prepare,catalog,contextFiles,contextDirs,contextTextFilter,sceneInPath:true,sceneThumbs:true}

@@ -16,6 +16,7 @@ export const ADAPTER_ID = 'rpgmaker-json'
 export const DEFAULT_OPTIONS = {
   root: '', packedExe: '', extraDirs: [], stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
   initialVariables: {}, initialSwitches: {},
+  effects: { shake: true },
   party: { mode: 'initial', members: null },
   skit: { expressionPoses: {}, wrapperScripts: false },
   maps: { enabled: true, tileSize: 48, player: true, follow: 'event', maxBytes: 134217728 },

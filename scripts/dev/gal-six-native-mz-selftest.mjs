@@ -7,6 +7,7 @@ import * as rpg from'../../web/library/gal/adapters/rpgmaker-json.mjs'
 import{initialState,applyCommand,stateAt}from'../../web/static/gal-engine.js'
 import{parseMoc3,createFrame,parseMotion,evaluateMotion,updateModel}from'../../web/static/gal-moc3.js'
 import{rpgShakeFrames}from'../../web/static/gal-shake.js'
+import{skitCommands}from'../../web/library/gal/adapters/rpgmaker-skit.mjs'
 const cmd=(code,parameters=[],indent=0)=>({code,parameters,indent}),text=t=>[cmd(101,['',0,0,2,'']),cmd(401,[t])]
 test('RPG shake preserves native power/speed/wait and returns to zero',async()=>{
  const values=rpgShakeFrames(3,3,27)
@@ -14,6 +15,14 @@ test('RPG shake preserves native power/speed/wait and returns to zero',async()=>
  assert.ok(Math.max(...values)<7);assert.deepEqual(rpgShakeFrames(0,5,60),[0])
  const texts={'data/System.json':'{}','data/CommonEvents.json':JSON.stringify([null,{id:1,list:[cmd(225,[3,3,27,true]),...text('shake')]}])},ctx=await rpg.prepare({texts,files:Object.keys(texts),options:{maps:{enabled:false}}}),scene=rpg.parse('',ctx,{rel:'data/CommonEvents.json',scene:'common-1'}),shake=scene.steps.flatMap(s=>s.commands).find(c=>c.op==='shake')
  assert.equal(shake.native,'rpgmaker');assert.equal(shake.power,3);assert.equal(shake.speed,3);assert.equal(shake.wait,true);assert.deepEqual(shake.stage,[816,624])
+ const quiet=await rpg.prepare({texts,files:Object.keys(texts),options:{maps:{enabled:false},effects:{shake:false}}}),disabled=rpg.parse('',quiet,{rel:'data/CommonEvents.json',scene:'common-1'}),commands=disabled.steps.flatMap(s=>s.commands)
+ assert.ok(!commands.some(c=>c.op==='shake'));assert.ok(commands.some(c=>c.op==='wait'&&c.seconds===27/60));assert.equal(stateAt(disabled,0).text[0].text,'shake')
+})
+test('TRP native zOrder places both body and face behind pictures, or in front when configured',()=>{
+ for(const zOrder of['2','1']){
+  const actor={fileName:'actor',poses:[{name:'normal'}],sizes:new Map([['normal',[200,400]]]),looseFaces:new Map([['normal',new Map([['default','face.png']])]])},commands=[],run=skitCommands({options:{},skit:{cfg:{zOrder},actors:new Map([['actor',actor]]),positions:new Map()}},{emit:c=>commands.push(c),raw:()=>{},initial:new Map(),stage:[816,624]})
+  run('show',{name:'actor'});const parts=commands.filter(c=>c.op==='overlay');assert.equal(parts.length,2);assert.ok(parts.every(c=>c.under===(zOrder==='2')));if(zOrder==='1')assert.ok(parts.every(c=>c.z>100))
+ }
 })
 test('native recollection uses exact catalog and follows the unique autorun without playing unrelated map events',async()=>{
  const map={autoplayBgm:false,scrollType:0,parallaxName:'',tilesetId:0,width:1,height:1,data:[],events:[null,{id:1,pages:[{trigger:0,conditions:{},list:text('not this interaction')}]},{id:2,pages:[{trigger:3,conditions:{},list:[...text('native story'),cmd(357,['RecollectionModeMZ','backToRecoMode','',{}]),...text('unreachable')]}]}]},common=[null,{id:1,name:'wrapper',list:[cmd(201,[0,2,0,0,2,0])]}],texts={'data/System.json':'{}','data/CommonEvents.json':JSON.stringify(common),'data/Map002.json':JSON.stringify(map),'js/plugins.js':'var $plugins='+JSON.stringify([{name:'RecollectionModeMZ',status:true,parameters:{}}])+';','img/system/RecollectionModeMZData.json':JSON.stringify([{title:'Original gallery title',common_event_id:1,thumbnail:'gallery/thumb'}])}
@@ -30,6 +39,10 @@ const fixture=path.resolve('.cache/six-games-20261115/mz-work')
 for(const [game,id,count]of[['night',474,42],['yuri',205,30]])test('real '+game+': native gallery and story output',{skip:!await fs.stat(path.join(fixture,game)).catch(()=>null)},async()=>{
  const mediaDir=path.join(fixture,game),walk=async(d,p='')=>(await Promise.all((await fs.readdir(d,{withFileTypes:true})).map(e=>e.isDirectory()?walk(path.join(d,e.name),p+e.name+'/'):[p+e.name]))).flat(),files=await walk(mediaDir),texts={};for(const f of files.filter(f=>/^data\/.*\.json$|^js\/plugins.js$/.test(f)))texts[f]=await fs.readFile(path.join(mediaDir,f),'utf8')
  const ctx=await rpg.prepare({mediaDir,files,texts}),scene=rpg.parse('',ctx,{rel:'data/CommonEvents.json',scene:'common-'+id});assert.equal(ctx.catalogTree.children[0].children.length,count);assert.ok(scene.stats.text>5);assert.ok(!scene.stats.raw['map-autorun-ambiguous']);if(game==='night')assert.ok(scene.steps.flatMap(s=>s.commands).some(c=>c.op==='live2d'))
+ if(game==='yuri'){
+  const strip=rpg.parse('',ctx,{rel:'data/CommonEvents.json',scene:'common-216'}),first=stateAt(strip,0),cg=first.overlays.find(c=>c.slot==='rpg-picture-1'),actors=first.overlays.filter(c=>c.slot.startsWith('rpg-skit-'))
+  assert.ok(cg.src.includes('b9_1'));assert.ok(actors.length,'native scene explicitly shows the actor');assert.ok(actors.every(c=>c.under===true),'CG must cover the native Skit actors');assert.ok(!cg.under)
+ }
 })
 test('real R018 moc3 v5 has visible animated geometry, not merely a parsed header',{skip:!await fs.stat(path.join(fixture,'night/Assets/R018/R018.moc3')).catch(()=>null)},async()=>{
  const dir=path.join(fixture,'night/Assets/R018'),m=parseMoc3(await fs.readFile(path.join(dir,'R018.moc3'))),f=createFrame(m),j=JSON.parse(await fs.readFile(path.join(dir,'R018.model3.json'),'utf8')),motion=parseMotion(JSON.parse(await fs.readFile(path.join(dir,Object.values(j.FileReferences.Motions)[0][0].File),'utf8'))),params=Float32Array.from(m.paramDefault),snap=[];for(const t of[0,.5]){evaluateMotion(motion,t,m,params,f,true);updateModel(m,f,params);assert.ok(f.renderOrder.length>20);assert.ok(f.vertices.every(v=>v.every(Number.isFinite)));snap.push([...f.vertices[0]])}assert.notDeepEqual(snap[0],snap[1])
