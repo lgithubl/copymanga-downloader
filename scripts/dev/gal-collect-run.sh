@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="1.98"
+VERSION="1.99"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1703,7 +1703,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJydk81O6zAQhV+lyhoS23Fihx0UCQkBC1hcIVRVTjwpBseuYgdUob77NdDL7Y9cCjvbx3PmmxnNW3KjZo9+dOd7q3VyMnp4S+bCP4ZTIoUX2d3CeejSJ2dNcjRKnB36Bs4WHlz4wipchEfbtg58uKNwqTc1Izp4N5tO50L10w6kElmrNLhsx385CQG3lwhTRjElmzQXqte3YOz0/COs6dXcKzM7dQ66WitwEUZaIBZjXGl7GA/M+kVeYoQ53yIP9tm97YcQKVZGvgfRrYy8y8T7kzBSaGvgjzLSvrqSZgVqUNUQycq2rFBL8lxASxFgJtuqRSytByM17BaNKeIYk4KsV8443RhQkSNaklj9Rhh1PD49O661bZ5dWqv1MkvEGdsdkBvrof7xhEhVRSf0qX0zoUPSLo9GUdZrYcQMZHalXoCcp+OhVq5LZViIHViCKOE8hvulHg4cz73WbcoY/uly5rTMaQz0n/ir9Sw5o2x7PYPRquWLSOcwqxjf07v/+r7ubedZTpZ/ARrOgz4='
+PAIR_MEDIA_PLAN='eJy1Vslu2zAQ/RXB5yDivvTWJkWBHnpIDkVRBAaXoaOWlgJRRhEE/vfSsbO6dJXYvol85PC9pxly7ibfmtn1UF0OfRfj5EP1825yY4br/DXxZjD15W0aYH76K3Xt5KSapG7RO/h0O0DKS6TGPE92ISQY8hjlgX2JtWYOq2DT6Y1p+ukcfGPq0ERI9Vb85VXecPEVYSYZZuQlmy9NHy+g7abn99tc39wMTTv7mBLMbWwgFTgyjmSJ4wbbwXHkqY/MBUZYqVfMc/j6R9cv8k6zCTT0YOabQEOqzWrKtN7EroXvTeu7P0mwGktARCvrCXJCOG84R84Jq4hQnhJ3ahetj7AtmgiNpCrJfkR3CT866eVJdQiPAvdGIYGFc0hwQMxLB8xx4x3jFOQuj7DCOzxao0fxaCzpA3kEzmGwgRsRKHfaCA1KWs5Aa+d0IEWPMGaomEYP4FEcGkv5QA5xqa0Eo5lGSBikrEZcAVpVs8UW+6JDCtOiQRvsKP6MJXwgfxBl1ErvA1ApUchFncfGEcIUlzbooj9aSF3yZ4MdxZ+xhA+VP8gh7YiXIuTLNRBKDQSGAEsfdEDlW2hVQxgTTopV9mzBcTJpJPWnN04gJeX265zO4sK++XkmupgfG+w/z/OYY59xZ1Lit/Y5lAnKSiwfwHd1OkJJJl91Ouem/119jqE6h+SgHaqmHbrqrOv7RRbXtWuts9hZE2f50LlpzQz6dGru//M/ckxyTlAxwR7QHQL2pfSiysYF62EtoiyLUZStp6KYPk/43tK22LxD0Zh6rN3M4On6jKmJsXxvUJbFkWL7/QzfW/w+xJdXy7/S3hD3'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
