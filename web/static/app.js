@@ -418,7 +418,7 @@ function syncMediaHash() {
 }
 
 // 这个标签页是不是被「新标签页打开」开出来的（URL 带 tab=new 启动）。决定「返回」是关标签页还是回媒体库页。
-const mediaTabIsNew = Boolean(parseMediaRoute()?.newTab)
+const mediaTabIsNew = Boolean(parseMediaRoute()?.newTab || parseLibraryRoute()?.newTab)
 
 // 点标签搜索用新标签页的判断：和「打开媒体」那份配置分开（tagSearchOpenInNewTabRules）。
 // kind / profile 取自标签所在容器的 data-kind / data-profile（卡片/章节行/详情/历史）；认不出（比如标签管理页）时只看 Ctrl/⌘。
@@ -934,8 +934,6 @@ function showView(id) {
   for (const tab of els.tabs) tab.classList.toggle('active', tab.dataset.view === id)
   els.searchToolbar.classList.toggle('hidden', id !== 'search-view')
   els.app.classList.toggle('media-viewer-focused', id === 'media-viewer-view')
-  // 顶栏的「返回」只在两个阅读视图里有意义，别的页没有「上一处」可回
-  if (els.globalBack) els.globalBack.hidden = !['media-viewer-view', 'viewer-view'].includes(id)
   // 从 URL 直接落在阅读器上的标签页不建 EventSource、不轮询（阅读器用不上，见
   // startBackgroundSync）；一旦离开阅读器去别的页，那些页面要实时更新，这时才启动。
   // 普通标签页启动时已经启动过了，这里是空操作。
@@ -8479,7 +8477,7 @@ els.mediaWidthAdjust?.addEventListener('click', toggleWidthAdjust)
 // 目标 tab 自己的点击处理器把它加载出来，效果和用户手点那个 tab 完全一样。普通标签页
 // 不走这条：它的媒体库页早就加载好了，重载会丢掉滚动位置。
 let readerTabNeedsLibraryLoad = Boolean(bootMediaRoute)
-els.mediaReaderBack.addEventListener('click', () => {
+function returnFromMedia() {
   // 新标签页打开的阅读器：返回 = 关掉这个标签页（沉浸里的返回最终也走这里）。
   // window.close() 只对脚本开的标签页有效，被浏览器拒绝时标签页还在，退回下面「回到媒体库页」的老行为。
   if (mediaTabIsNew && appConfig?.mediaCloseNewTabOnBack !== false) {
@@ -8488,7 +8486,8 @@ els.mediaReaderBack.addEventListener('click', () => {
     return
   }
   goBackToLibrary()
-})
+}
+els.mediaReaderBack.addEventListener('click', returnFromMedia)
 
 function goBackToLibrary() {
   const target = mediaReturnView || 'library-view'
@@ -8612,12 +8611,12 @@ els.viewerRefresh.addEventListener('click', () => {
   if (viewerState) openChapterViewer(viewerState)
 })
 els.viewerPrev.addEventListener('click', () => openAdjacentViewer('prev'))
-// 顶栏的「返回」按当前视图分流，目标和各自页内那个「返回」一致。
+// 顶栏各页复用阅读器的返回；图片浏览保留原返回目标，新标签页统一走关闭开关。
 // 沉浸态下顶栏贴上边缘才会滑出，但它确实够得到，比 chapter-head 里那个强。
 els.globalBack?.addEventListener('click', () => {
   const active = els.views.find((view) => view.classList.contains('active'))?.id
-  if (active === 'media-viewer-view') els.mediaReaderBack?.click()
-  else if (active === 'viewer-view') els.viewerBack?.click()
+  if (active === 'viewer-view' && !(mediaTabIsNew && appConfig?.mediaCloseNewTabOnBack !== false)) els.viewerBack?.click()
+  else returnFromMedia()
 })
 els.viewerNext.addEventListener('click', () => openAdjacentViewer('next'))
 // 图片浏览 tab 没有整本的章节表（navigation 只给 prev/next），所以 toc: false
