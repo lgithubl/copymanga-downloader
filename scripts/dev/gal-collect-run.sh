@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="1.90"
+VERSION="1.93"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1490,7 +1490,7 @@ def new_game_label(name):
     name = unicodedata.normalize('NFKC', name).strip()
     patterns = PAIR_GAME_PATTERNS if RULES_RE is not None and RULES_RE.pattern=='^new-games:fuyu-edo$' else NEW_GAME_PATTERNS
     for label,_pattern in patterns:
-        if label.startswith('RJ') and re.match(r'^(?:\[(?!RJ[0-9]+\])[^\]]+\]\s*)*\[?'+re.escape(label)+r'(?=$|[^0-9])',name,re.I):return label
+        if label.startswith('RJ') and re.search(r'(?<![A-Za-z0-9])'+re.escape(label)+r'(?![0-9])',name,re.I):return label
     name = re.sub(r'^(?:\[[^\]]+\]\s*)+', '', name)
     return next((label for label, pattern in patterns if re.fullmatch(pattern, name, re.I)), None)
 
@@ -1703,7 +1703,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJyrrgUAAXUA+Q=='
+PAIR_MEDIA_PLAN='eJzFmF1v0zAUhv9K1WtYffxt7oAhJCS4ACQuEKqc1u0CaTIlGR9C++94a5I1jHN2JCS4a/KmOY8d+4mdn8s35f6iX7zr26aqlk8WH38uL2N/kX8tt7GPq3c/uj4dzj53Tb18tFh2zVW7Sc9+9KnLl7gAJp9sdrsu9flY5INintXxkG5utl5fxrJdH9K2jKtdWaVude/+15/yH96+EqCdBi3nNC/Ltnqb6mZ9fvu3vk3xUNb7p10u3a3izalYb2PV1OlDWW+bb53Vq6a/SG23jrcXrbtmnb6mut80h0NTn92eXTu50bZwG+ljLApvhNnZLVi9sTvnIKqz4qreVul+44MUAWv8kBGN/9/NmfraWuGdu9/X3fPqqjjS7aumiNU+N+YQ67jPCMdi3f1O0fmG2mPdMqUPdAyr9vWjBUrcXcQ2bY8XChRWKi0cgMVwT3I+8B9Ln/S2zo/hD/PsdbzUXiHzDLxTWmOYU/rQXDutMeu9u1RjBEqBRJ/rlLIINElg0D6QgiAYUxaBIQksQiBzCfwpTCmLwJIEDiHIWsEn1xiy6juyvsd87wNIVPhDyKrvyfoBGwNSOAvoGBhTFkGgCILAxoDSxqNdMKUcgrEGQgAIgYIgvcIIppRFACSBRAi8sAGdBmPIqi/J+qgNtRcGN8GYsghIGwbUhs4K/OU/pSwC0oYBt2FeI6GjYEpZBKQNA2ZDENoYdCZMKYuAtGHAbJjfzEKh688pZRGQPgyYD0GGYAXuoyFlEZBGDKgRAYzCVwZjyiKgjGgEZkTwBgQxEoeUQTDVQAgwI4JyEBy+NhlSFgFlRCMwIwYvDb4XGEJWfcqIRqBGVNoqfByOKYuAMqIRmBFV1q5D5+KUsggoI+b9DDoXrRS4DcaURUAZ0QjUiOBtwFcnY8oioIxoBGpEIYUlnDykLALKiEagRgQVJNEHQ8oioIxoBGbEvApVqI7GkFWf9CGgPgRhDGHkIeUQAOlDQH2opSSewZiyCEgfAuZDkGAc3gdjyiJAjfj+5sK8uUYYNDgFBt3b38UPUczr3O3kvdPut29U57H9snhR7Rbnqdukul+Udd8snjdte3XZl009fOzZtGU+PH7sORRVmbA2KMB3O0NG0P8lzazHefdq05Gf+D6kRH4ZqdljUTqrUdnZEDHBenSI9Ol7f1vgsVHurCj/KWt+mR732ScbDg6o/w+gUszkZwNq/1PS8M9JTd6O2/nYZoBqcQT9dP0Llm4Rag=='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
