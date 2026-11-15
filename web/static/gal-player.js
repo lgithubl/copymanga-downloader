@@ -125,7 +125,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
 //   chapter: { jump(节点 id)（脚本里的 goto：直接接着播那个脚本，返回 true = 已经跳走）, canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
-export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, chapter = null, viewKey = '', onReload = null, translate = null, tts = null }) {
+export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, onDetails = null, chapter = null, viewKey = '', onReload = null, translate = null, tts = null }) {
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
   let choices = { ...(startChoices || {}) }
@@ -231,7 +231,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   const autoSelBtn = btn('自选', '自动选择选项开关（具体选第几个在「设置」里设置）', 'gal-autosel')
   // 设置 / 更多合成一个按钮：.gal-cfg 和 .gal-more-btn 两个类都留着（老的选择器还能用）
-  const cfgBtn = btn('设置 ▾', '设置：显示（字体 / 透明度 / 沉浸 / 全屏）、音频、播放、画面', 'gal-cfg gal-more-btn')
+  const cfgBtn = btn('设置 ▾', '详情 / 设置：显示（字体 / 透明度 / 沉浸 / 全屏）、音频、播放、画面', 'gal-cfg gal-more-btn')
   const chPrevBtn = btn('上话', '上一话', 'gal-ch-prev gal-imm-only')
   const chNextBtn = btn('下话', '下一话', 'gal-ch-next gal-imm-only')
   const contBtn = btn('继续下一章 ▶', '这一章看完了，继续下一章', 'gal-continue')
@@ -357,6 +357,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   standRow.append(el('span', '', '立绘'), standScaleInput, el('span', '', '%'), el('span', '', '偏移'), standXInput, standYInput, standResetBtn)
   const settings = el('div', 'gal-settings gal-more')
   settings.hidden = true
+  const detailBtn = btn('详情', '当前游戏、场景标题和标签', 'gal-detail-btn')
+  detailBtn.hidden = !onDetails
+  detailBtn.addEventListener('click', (event) => { event.stopPropagation(); settings.hidden = true; onDetails?.() })
   const range = (min, max, step, title) => { const r = el('input'); r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.title = title; return r }
   const row = (label, control, valueEl) => { const r = el('label', 'gal-set-row'); r.append(el('span', 'gal-set-label', label), control); if (valueEl) r.append(valueEl); return r }
   const opacityRange = range(0, 100, 5, '文本框背景不透明度')
@@ -415,7 +418,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // 分组标题用 ::before 画（data-title），不占子元素位置：每组里的行序号保持稳定
   const section = (title, ...rows) => { const d = el('div', 'gal-set-section'); d.dataset.title = title; d.append(...rows); return d }
   settings.append(
-    section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), colorRow, immBtn, fsBtn),
+    section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), colorRow, detailBtn, immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
     section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow, ttsSourceRow, ttsVoicedCtl.row),
     section('画面', animRow, slowRow, fpsRow, seamRow, movieBrightnessCtl.row, movieContrastCtl.row, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow, emoteRow),

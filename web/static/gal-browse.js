@@ -32,7 +32,7 @@ const newSeed = () => 1 + Math.floor(Math.random() * 999999999)
 const readPref = (key) => { try { return localStorage.getItem(key) || '' } catch { return '' } }
 const writePref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key) } catch { /* 存不了就只对这次有效 */ } }
 let keepMenuOpen = null    // 在「更多」里改了搜索 / 排序 / 每页条数 → 重绘后把菜单重新打开（还要接着改别的）
-export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, thumbLoader = null, onRefreshIndex = null }) {
+export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, onDetails = null, thumbLoader = null, onRefreshIndex = null }) {
   const markerPrefKey = `gal.cardMarkers.${reader.item?.itemId || ''}`
   const node = reader.node
   const root = el('div', 'gal-browse')
@@ -136,7 +136,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   const more = el('div', 'gal-browse-more')
   const moreBtn = el('button', 'gal-btn gal-browse-more-btn', '更多 ▾')
   moreBtn.type = 'button'
-  moreBtn.title = '搜索 / 排序 / 每页条数 / 沉浸 / 全屏'
+  moreBtn.title = '详情 / 搜索 / 排序 / 每页条数 / 沉浸 / 全屏'
   const moreMenu = el('div', 'gal-browse-more-menu')
   moreMenu.hidden = true
   moreMenu.append(crumbRow)
@@ -358,7 +358,12 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     row.append(text, refresh)
     moreMenu.append(row)
   }
-  moreMenu.append(immBtn, fsBtn, diagBtn)
+  const detailBtn = el('button', 'gal-browse-detail-btn', '详情')
+  detailBtn.type = 'button'
+  detailBtn.title = '当前游戏、目录标题和标签'
+  detailBtn.hidden = !onDetails
+  detailBtn.addEventListener('click', (event) => { event.stopPropagation(); closeMenu(); onDetails?.() })
+  moreMenu.append(detailBtn, immBtn, fsBtn, diagBtn)
   more.append(moreBtn, moreMenu, diagPanel)
   const lockBtn = el('button', 'gal-btn gal-lock')
   lockBtn.type = 'button'

@@ -4318,6 +4318,7 @@ function galNavigate(reader, nodeId, kind = 'self', extra = null) {
 const galThumbLoader = createThumbLoader({ getSettings: () => thumbSettingsFromConfig(appConfig || {}) })
 // 首页/分类/角色这些浏览节点：只有选项，没有播放器。点选项 = 再取一次 reader（sectionId = 节点 id）
 function renderGalBrowse(reader) {
+  hideMediaDetail()
   exitWidthAdjust({ apply: false })
   exitEpubImmersive()
   retireImageBatch(galleryBatch)
@@ -4337,6 +4338,7 @@ function renderGalBrowse(reader) {
   galBrowser = createGalBrowser({
     container: els.mediaReaderContent,
     reader,
+    onDetails: toggleMediaDetail,
     progress: Object.fromEntries(Object.entries(nodes).map(([id, entry]) => [id, { ratio: Number(entry?.ratio) || 0, completedAt: entry?.completedAt || '' }])),
     thumbLoader: galThumbLoader,
     onOpen: (nodeId, kind, extra) => { galNavigate(reader, nodeId, kind, extra).catch((error) => alert(error.message)) },
@@ -4367,6 +4369,7 @@ function renderGalBrowse(reader) {
 }
 
 function renderGal(reader) {
+  hideMediaDetail()
   if (reader.node && reader.node.kind !== 'player') { renderGalBrowse(reader); return }
   galBrowser?.destroy()
   galBrowser = null
@@ -4392,6 +4395,7 @@ function renderGal(reader) {
   galPlayer = createGalPlayer({
     container: els.mediaReaderContent,
     reader,
+    onDetails: toggleMediaDetail,
     startRatio: pendingStart || resume >= 0.98 ? 0 : resume,   // 上次已经看完就从头来
     startStep: pendingStart ? pendingStart.step : null,   // 场景跳转点：从这一步（脚本里的步号）开始
     startChoices: pendingStart ? pendingStart.choices || {} : resume >= 0.98 ? {} : savedChoices,
@@ -7544,13 +7548,17 @@ function toggleImageWidthAdjust({ scroller, buttons = [] }) {
 // —— 阅读页「更多 › 详情」：标题 / 单元 / 标签。标签就是 .tag-pill[data-tag]，点击走全局那套（和媒体库卡片上的标签一样，含新标签页规则） ——
 let mediaDetailPanel = null
 function hideMediaDetail() {
-  if (mediaDetailPanel) mediaDetailPanel.hidden = true
+  if (mediaDetailPanel) {
+    mediaDetailPanel.hidden = true
+    if (mediaDetailPanel.parentElement !== document.body) document.body.append(mediaDetailPanel)
+  }
   els.mediaDetailToggle?.classList.remove('active')
 }
 function renderMediaDetail() {
   const reader = currentMediaReader
-  const item = { ...(currentLibraryItem || {}), ...(reader?.item || {}) }
-  const tags = [...new Set([...(reader?.item?.tags || []), ...(currentLibraryItem?.tags || [])])]
+  const stored = currentLibraryItem?.itemId === reader?.item?.itemId && currentLibraryItem?.type === reader?.item?.type ? currentLibraryItem : {}
+  const item = { ...stored, ...(reader?.item || {}) }
+  const tags = [...new Set([...(reader?.item?.tags || []), ...(stored.tags || [])])]
   if (!mediaDetailPanel) {
     mediaDetailPanel = document.createElement('div')
     mediaDetailPanel.className = 'media-detail-panel'
@@ -7559,13 +7567,28 @@ function renderMediaDetail() {
     document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !mediaDetailPanel.hidden) hideMediaDetail() })
     // 点面板和「详情」按钮以外的地方收起；点标签（跳去搜索）时面板也跟着收起
     document.addEventListener('click', (event) => {
-      if (mediaDetailPanel.hidden || mediaDetailPanel.contains(event.target) || els.mediaDetailToggle?.contains(event.target)) { if (event.target.closest?.('.media-detail-panel .tag-pill')) hideMediaDetail(); return }
+      if (mediaDetailPanel.hidden) return
+      if (mediaDetailPanel.contains(event.target)) {
+        if (event.target.closest?.('.tag-pill')) {
+          hideMediaDetail()
+          if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
+        }
+        return
+      }
+      if (els.mediaDetailToggle?.contains(event.target) || event.target.closest?.('.gal-detail-btn, .gal-browse-detail-btn')) return
       hideMediaDetail()
     }, true)
   }
   const rows = []
   const row = (label, value) => { if (value) rows.push(`<div class="media-detail-row"><span class="media-detail-label">${escapeHtml(label)}</span><span class="media-detail-value">${escapeHtml(String(value))}</span></div>`) }
-  row('标题', item.title)
+  const displayTitle = libraryDisplayTitle(item)
+  row('标题', displayTitle)
+  if (item.title && item.title !== displayTitle) row('原始标题', item.title)
+  if (reader?.type === 'gal') {
+    if (item.config?.game?.title !== displayTitle) row('游戏', item.config?.game?.title)
+    row('游戏 ID', item.config?.game?.id)
+    row('位置', reader.node?.breadcrumb?.map(n => n.title).filter(Boolean).join(' / ') || reader.node?.title)
+  }
   row('当前单元', reader?.unit?.title)
   row('章节', reader?.section?.title)
   row('类型', libraryItemSummary(item).typeLabel)
@@ -7577,8 +7600,10 @@ function renderMediaDetail() {
 function toggleMediaDetail() {
   if (!currentMediaReader) return
   renderMediaDetail()
+  const host = document.fullscreenElement || document.body
+  if (mediaDetailPanel.parentElement !== host) host.append(mediaDetailPanel)
   mediaDetailPanel.hidden = !mediaDetailPanel.hidden
-  els.mediaDetailToggle.classList.toggle('active', !mediaDetailPanel.hidden)
+  els.mediaDetailToggle?.classList.toggle('active', !mediaDetailPanel.hidden)
   els.mediaMore?.removeAttribute('open')
 }
 els.mediaDetailToggle?.addEventListener('click', toggleMediaDetail)
