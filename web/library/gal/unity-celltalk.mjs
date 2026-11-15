@@ -41,7 +41,8 @@ export async function indexCellTalk(api){
  const cgPaths=new Set();const scan=(node,fields)=>{for(const c of node.commands||[])if(c.method==='ReplayScene.CGLoad'){let p=c.args[1];if(p?.field)p=fields[p.field];if(typeof p==='string'&&p)cgPaths.add(p)}if(node.no)scan(node.no,fields);if(node.yes)scan(node.yes,fields)}
  for(const c of controllers)scan(c.profile,c.fields)
  for(const name of cgPaths){const loc=api.catalog.find(l=>l.internal.toLowerCase()===('Assets/'+name+'.prefab').toLowerCase());if(!loc){diagnostics.push({cg:name,reason:'native-prefab-reference-absent'});continue}try{media.cg[name]=await cellTalkCg(api,loc)}catch(e){diagnostics.push({cg:name,reason:e.message})}}
- for(const c of controllers)scripts.push({name:c.type+'.cell',data:{format:'celltalk-script/1',...c}})
+ const readable=node=>(node.commands||[]).some(c=>c.method==='EventEngine.Text')||node.no&&readable(node.no)||node.yes&&readable(node.yes)
+ for(const c of controllers){if(!readable(c.profile)){diagnostics.push({type:c.type,reason:'native-subcoroutine-has-no-lifted-text'});continue}scripts.push({name:c.type+'.cell',data:{format:'celltalk-script/1',...c}})}
  api.context={format:'celltalk-context/1',media,diagnostics,scenes:scripts.map(s=>({name:s.data.type,script:api.cfg.dir+'/script/'+s.name}))}
 }
 export async function cellTalkCg(api,location){
