@@ -6,7 +6,15 @@ import os from'node:os'
 import * as rpg from'../../web/library/gal/adapters/rpgmaker-json.mjs'
 import{initialState,applyCommand,stateAt}from'../../web/static/gal-engine.js'
 import{parseMoc3,createFrame,parseMotion,evaluateMotion,updateModel}from'../../web/static/gal-moc3.js'
+import{rpgShakeFrames}from'../../web/static/gal-shake.js'
 const cmd=(code,parameters=[],indent=0)=>({code,parameters,indent}),text=t=>[cmd(101,['',0,0,2,'']),cmd(401,[t])]
+test('RPG shake preserves native power/speed/wait and returns to zero',async()=>{
+ const values=rpgShakeFrames(3,3,27)
+ assert.equal(values[0],0);assert.equal(values[1],.9);assert.equal(values.at(-1),0)
+ assert.ok(Math.max(...values)<7);assert.deepEqual(rpgShakeFrames(0,5,60),[0])
+ const texts={'data/System.json':'{}','data/CommonEvents.json':JSON.stringify([null,{id:1,list:[cmd(225,[3,3,27,true]),...text('shake')]}])},ctx=await rpg.prepare({texts,files:Object.keys(texts),options:{maps:{enabled:false}}}),scene=rpg.parse('',ctx,{rel:'data/CommonEvents.json',scene:'common-1'}),shake=scene.steps.flatMap(s=>s.commands).find(c=>c.op==='shake')
+ assert.equal(shake.native,'rpgmaker');assert.equal(shake.power,3);assert.equal(shake.speed,3);assert.equal(shake.wait,true);assert.deepEqual(shake.stage,[816,624])
+})
 test('native recollection uses exact catalog and follows the unique autorun without playing unrelated map events',async()=>{
  const map={autoplayBgm:false,scrollType:0,parallaxName:'',tilesetId:0,width:1,height:1,data:[],events:[null,{id:1,pages:[{trigger:0,conditions:{},list:text('not this interaction')}]},{id:2,pages:[{trigger:3,conditions:{},list:[...text('native story'),cmd(357,['RecollectionModeMZ','backToRecoMode','',{}]),...text('unreachable')]}]}]},common=[null,{id:1,name:'wrapper',list:[cmd(201,[0,2,0,0,2,0])]}],texts={'data/System.json':'{}','data/CommonEvents.json':JSON.stringify(common),'data/Map002.json':JSON.stringify(map),'js/plugins.js':'var $plugins='+JSON.stringify([{name:'RecollectionModeMZ',status:true,parameters:{}}])+';','img/system/RecollectionModeMZData.json':JSON.stringify([{title:'Original gallery title',common_event_id:1,thumbnail:'gallery/thumb'}])}
  const ctx=await rpg.prepare({texts,files:Object.keys(texts),options:{maps:{enabled:false}}}),scene=rpg.parse('',ctx,{rel:'data/CommonEvents.json',scene:'common-1'})

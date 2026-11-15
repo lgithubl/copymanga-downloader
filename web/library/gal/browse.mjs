@@ -566,7 +566,8 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
         const child = children[i]
         const item = catalogItem(child)
         out[i] = item
-        if (item.thumb) continue
+        // Native gallery covers must not suppress scene marker enrichment.
+        if (item.thumb && !child.script) continue
         try {
           if (child.children) {
             const why = []
@@ -579,7 +580,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
             }
           } else if (child.script) {
             const info = await scriptInfo(defaultSet, child.script)
-            if (info.thumbs.length || info.renderKey || info.filmRenders?.length || info.markers?.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: info.thumb, thumbs: info.thumbs, ...renderFieldsOf(info) } } else if (info.thumbWhy?.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
+            if (info.thumbs.length || info.renderKey || info.filmRenders?.length || info.markers?.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: item.thumb || info.thumb, thumbs: item.thumb ? item.thumbs : info.thumbs, ...renderFieldsOf(info) } } else if (info.thumbWhy?.length && !item.thumb) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
           }
         } catch { /* 取不到图就保持适配器给的样子（没有图） */ }
       }

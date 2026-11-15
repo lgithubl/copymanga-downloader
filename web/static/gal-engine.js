@@ -327,6 +327,7 @@ export function commandDuration(command) {
   if (command.op === 'bg' || command.op === 'bgoff') return command.fade || 0
   if (command.op === 'fade') return command.seconds || 0
   if (command.op === 'wait') return command.seconds || 0
+  if (command.op === 'shake' && command.native === 'rpgmaker' && command.wait) return command.seconds || 0
   if (command.op === 'ui' || command.op === 'bgScale') return 0   // 文本框淡入淡出、背景缩放都不等它
   return 0
 }

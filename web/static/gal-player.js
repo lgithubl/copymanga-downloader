@@ -1,4 +1,5 @@
 import { createRpgUiLayer } from '/gal-rpgmaker-ui.js'
+import { rpgShakeFrames } from '/gal-shake.js'
 import { mountSceneFonts } from '/gal-fonts.js'
 // Gal 播放器（DOM + 音频）。纯逻辑在 gal-engine.js。输入是服务端给的规范场景（见 web/library/gal/scene.mjs）。
 // 目前渲染：背景（渐变/纯色）、说话人和台词（含描边/颜色等样式片段）、BGM/语音/音效、黑场、wait、视频。
@@ -877,8 +878,21 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     box.style.pointerEvents = state.ui ? '' : 'none'
   }
   // 画面抖动（EFFECT_QUAKE / SCREEN_SHAKE）：纯装饰，不进状态
+  let shakeAnimation = null
+  function stopShake() { shakeAnimation?.cancel(); shakeAnimation = null }
   function playShake(command) {
     if (typeof world.animate !== 'function') return
+    stopShake()
+    if (command.native === 'rpgmaker') {
+      const values = rpgShakeFrames(command.power, command.speed, command.frames)
+      if (values.length < 2) return
+      const size = command.stage || [816, 624], box = stage.getBoundingClientRect()
+      const scale = Math.min(box.width / size[0], box.height / size[1])
+      const frames = values.map(value => ({ translate: `${value * scale}px 0` }))
+      const factor = command.frames > 0 ? command.seconds / (command.frames / 60) : 1
+      shakeAnimation = world.animate(frames, { duration: (values.length - 1) / 60 * 1000 * factor, easing: 'linear' })
+      return
+    }
     const ms = Math.max(100, Math.min(5000, (command.seconds || 0.5) * 1000))
     const amp = Math.max(1, Math.min(30, (Number(command.strength) || 0.2) * 40))
     const axis = command.axis || 'horizontal'
@@ -887,7 +901,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       const d = k === 10 ? 0 : (k % 2 ? -amp : amp) * (1 - k / 10)
       frames.push({ transform: axis === 'vertical' ? `translateY(${d}px)` : axis === 'overall' ? `translate(${d}px, ${-d}px)` : `translateX(${d}px)` })
     }
-    world.animate(frames, { duration: ms, easing: 'steps(1)' })
+    shakeAnimation = world.animate(frames, { duration: ms, easing: 'steps(1)' })
   }
   const fadingBgm = new Map()
   function stopBgmFades() {
@@ -1412,6 +1426,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // 一步到位渲染第 i 步之后的状态（后退 / 续播 / 开头）。不播语音和音效——那是一次性的
   function renderInstant(i) {
     gen += 1
+    stopShake()
     stopTts()
     stopVoice()
     cancelChoice()
@@ -1597,6 +1612,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
           break
         case 'shake':
           if (!skipping) playShake(scaled)
+          await sleep(seconds)
+          if (skipping) stopShake()
           break
         case 'flash':
         case 'wash':
@@ -1816,6 +1833,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (on) stopTts(); else if (ttsOn) { focusTts(true); ttsTryPlay() }
     if (on) {
       stopAuto()
+      stopShake()
       voiceAudio?.pause()
       fastLoop = setInterval(fastTick, pd.fastInterval ?? 70)
     } else {
@@ -2422,6 +2440,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
 
   function destroy() {
     destroyed = true
+    stopShake()
     fontCleanup()
     stopAuto()
     cancelChoice()

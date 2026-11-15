@@ -56,3 +56,14 @@
 已导出控制器内，原生 `Animator`、`Stand*`、部分摄像机/系统调用仍带 native 地址记 raw；因此不承诺这些场景与原游戏演出完全一致。采集表中还存在控制器引用但文本表没有的 ID：はぐれ兵凌辱 的「非処女」「処女」、サキュバス凌辱 的「暗転」，单独记录 missing-text-id，不猜台词替代。存档条件以手动选择呈现。
 
 后续修改 native profile/导出协议需更新 UNITY_NATIVE_VERSION，避免继续读取旧导出。只升级 tag 脚本无法启用此次新增的解析器和 Moc3 v5，必须更新镜像。
+
+
+## 2026-11-15 用户复核后的修正与缺口
+
+- RJ01664771：RPG code 225 不能套通用归一化 strength。现保留 power/speed/frames/wait，并按原生 60Hz updateShake 轨迹和舞台比例播放；单独 translate 不覆盖镜头 transform。跳转、快进、跳过等待及销毁时取消震动。真实浏览器 power=3/speed=3 的测试振幅约 6.56 CSS px，跳过后恢复零。
+- RJ01660877：catalog 卡片已有原生缩略图时，enrichCatalogItems 曾直接 continue，导致未计算中途开始 markers。现在带 script 的叶节点继续补 markers，保留原生封面。真实导入→layout→特殊场景卡片（みくアフター１）和 MH1 播放接口验证通过。
+- RJ01474142：**地图背景尚未实现**。normalizeUnite 曾只合成 width=1/data=[] 的空地图，adapter 显式 maps.enabled=false。2.10 追加采集的 37 个 Map/SO 定义均没有背景 PNG/Parallax，实际绘图来自 SavedMaps/*.prefab 的 Unity Tilemap。2.12 已请求 37 个原始 prefab，总计 632824 字节；不能用随机 CG 替代地图，也不能声称当前已支持地图演出。
+- RJ01687472：**普通 Stand 与原生世界场景尚未实现**，目前 CGLoad 的分层 CG 与普通 Stand 是两套逻辑。资源管理表有 stand/ナタリア、ノエル、ミラ、ライラ，已经确认 saveinfo/defaultparts/poses 等序列化布局及 StandLayerInfo 的资源路径。原生控制器内 Stand、StandChangeCloth、StandSetActive 等目前仍为 unsupported；需要保留参数并还原 Animator 的站位、显隐与服装状态。根 Transform 的零缩放是运行时占位，不能直接按零缩放或猜坐标输出。背景涉及原始 Unity 场景/相机，而非缺少某个导入开关。
+- RJ01610188：全量导出 playlist 计 4939 条 PrintText，可匹配 2577 条语音（条件执行后略少）。匹配角色：yorutina 2483、isari 75、yoruko 15、mahousyouzyoisari 4；很多路人整段无 Voice ID。0001_Story_Opening1 的真实样本在浏览器实际播放通过。已追加采集 sharedassets0..3 元数据头；其中仅 sharedassets0 另有 22 个 AudioClip（总对象数据2232字节），尚需读取名称排除其他语音库。没有用户具体场景，不能断言其遇到的全部无声均属正常。
+
+本轮采集/分析文件保存在 `.cache/six-games-20261115/`，未把游戏资源写入仓库。

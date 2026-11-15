@@ -472,7 +472,7 @@ export function compileRpgEvents(list, ctx, meta) {
       if (c.code === 246) { emit({ op: 'bgvoiceOff',slot:`rpg-bgs-${bgsLine}` }); continue }
       if (c.code === 230) { emit({ op: 'wait', seconds: Math.min(60, Number(p[0] || 0) / 60) }); continue }
       if (c.code === 221 || c.code === 222) { emit({ op: 'fade', to: c.code === 221 ? 'black' : 'clear', seconds: 0.4 }); continue }
-      if (c.code === 225) { emit({ op: 'shake', strength: Number(p[0] || 0), seconds: Number(p[2] || 0) / 60 }); continue }
+      if (c.code === 225) { emit({ op: 'shake', native: 'rpgmaker', power: Number(p[0] || 0), speed: Number(p[1] || 0), frames: Number(p[2] || 0), seconds: Number(p[2] || 0) / 60, wait: !!p[3], stage }); continue }
       if (c.code === 261) { const src = resource('movies', p[0], 'webm'); if (src) emit({ op: 'movie', srcs: [src], loop: false }); continue }
       if (c.code === 356) { plugin(p[0],depth); continue }
       if (c.code === 357) { mzPlugin(p[0],p[1],p[3]||{},depth); continue }
