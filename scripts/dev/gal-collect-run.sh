@@ -98,11 +98,14 @@ set -uo pipefail
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
 # 2.22 用户指定 ddd 完整目录：流式全文件/哈希/空目录/软链接，不截成头尾样本，不采其他目录。
+# 2.29 三作元数据：MV全事件/插件、Djibril全剧情及菜单索引、死神商館文本bundle/程序集/归档索引；总量256MiB上限。
+# 2.28 仅四作引擎探测：RJ01743835 / dennou-djibril / RJ01516248 / RJ01234887；dennou另采有限剧情和角色表样本。
+# 2.27 RJ01746557 无人声诊断：仅回想scene4原生人声367KB、当前导出配置/脚本和匹配元数据；源只读。
 # 2.26 RJ01746557：仅两种真实画面引用的纹理/音频范围约38.3MiB，源只读，不收完整纹理流。
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.26"
+VERSION="2.36"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1488,8 +1491,8 @@ def next_game_label(name):
     name=re.sub(r'^(?:\[[^\]]+\]\s*)+','',name)
     return next((label for label,pattern in NEXT_GAME_PATTERNS if re.fullmatch(pattern,name,re.I)),None)
 
-PAIR_ACTIVE_GAMES = ['RJ01746557']
-PAIR_GAME_PATTERNS = [(name,pattern) for name,pattern in [('RJ01746557', r'RJ01746557(?:[^0-9].*)?'), ('fuyukuru', r'fuyukuru(?:[ _-]*v?[0-9.]+)?'), ('えどわ～る', r'えどわ[~〜～ー]?る(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('meshiagirl', r'meshiagirl(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01687472', r'RJ01687472(?:[^0-9].*)?'), ('RJ01610188', r'RJ01610188(?:[^0-9].*)?'), ('RJ01660877', r'RJ01660877(?:[^0-9].*)?'), ('RJ01474142', r'RJ01474142(?:[^0-9].*)?'), ('RJ01664771', r'RJ01664771(?:[^0-9].*)?'), ('Night Stroll',r'Night[ _-]+Stroll(?:[ _-]*(?:ver|v)?[0-9.]+)?')] if name in PAIR_ACTIVE_GAMES]
+PAIR_ACTIVE_GAMES = ['RJ01743835','dennou-djibril','RJ01516248','RJ01234887']
+PAIR_GAME_PATTERNS = [(name,pattern) for name,pattern in [('RJ01743835', r'RJ01743835(?:[^0-9].*)?'), ('dennou-djibril', r'dennou[ _-]+djibril(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01516248', r'RJ01516248(?:[^0-9].*)?'), ('RJ01234887', r'RJ01234887(?:[^0-9].*)?'), ('RJ01746557', r'RJ01746557(?:[^0-9].*)?'), ('fuyukuru', r'fuyukuru(?:[ _-]*v?[0-9.]+)?'), ('えどわ～る', r'えどわ[~〜～ー]?る(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('meshiagirl', r'meshiagirl(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01687472', r'RJ01687472(?:[^0-9].*)?'), ('RJ01610188', r'RJ01610188(?:[^0-9].*)?'), ('RJ01660877', r'RJ01660877(?:[^0-9].*)?'), ('RJ01474142', r'RJ01474142(?:[^0-9].*)?'), ('RJ01664771', r'RJ01664771(?:[^0-9].*)?'), ('Night Stroll',r'Night[ _-]+Stroll(?:[ _-]*(?:ver|v)?[0-9.]+)?')] if name in PAIR_ACTIVE_GAMES]
 
 def new_game_label(name):
     import unicodedata
@@ -1709,14 +1712,14 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJy10k1LAzEQBuC/suTcbjMfyUw8iiePehKRJZUUC25bNulBSv+7KVVYFBZ62NvwZkIeZnIyT48WhL1zYu6a15M5xPJRK/NyHNK2g6Vd2u4hlrgaUt4fh/eU25hzKrmtwbNZNOYa33+VlOtFlGBZRa3Wo/1mU1tr6oE9EvmarX8axSK6gDXZxT5dnuy6XIYU+y7H/vCZ8sq26+3OnBfNXCwQRQdgVUcwABYfpmVwk+y3+s8Ccqr0R6VghZXHJmICgUkSzj0sQQpSRzN2qbcizFMumtuFlyiQ6o0wnnOHGIIERh5/+AqlyRW6OUUA4JDQjkQYPOLkjPxV9Hb+BpAiQ4g='
+PAIR_MEDIA_PLAN='eJzFmktv4zYQgP9K4POuzccMh+yti+6lx+2lQLMwZEfruFjbgR0nLRb57x2Lkk0q2UqEA0yAIA8bn/SZM5whqR+Tu3q73R0/3v29XuzX3ye/3Pz1Y/JQPd7zb73XZkqp6fJwmHy4mRx2x/2y/vTvY33gN0JAz//cfft2qB/5b8V/LPLXttWm/h/ky1d+z5fflTYWvKf8Np6fn2fV8W69my1Wm9nhfr3fzVfMm6831aoO0/3DavO0e31bOnjlgX52Z5eXu5sbeaHzzaJ2Bnx+s7dHt6DF7ZEC1rdHRHC3xxCM//L5n89/zn+rHqvZH4/7utqst6tfD3xXh1l1+jFXar7aVw/36+Ubn7BB0gqCx1RGa20DODSJlDfxTZ3SfL44bu++1/NNfbeuXl9qeoZMF+vt5OXDjZQKEDlLiUoIulErUYmQ91VpIuK1h7WARgULmQeQJ619SOPMakVjRJoLTc8ISQuvlDFOX2PRIkQttD19XWUREaIWxgEovMoiIkQtbEDOzqssIkLUAo1DuCq7W4SghQFHEHoWiovAeIsOIWrhFfqAPQsNJRYRIWoRrPOqPxYYSiwiQtIClePK66/Iiw4hasEtoQfVGwsqyYsWIWphuQfULrfgprrEIiJELcApUrZnEVSJRUSIWiA3saHfgeiiiIoIUQviTq4/RxEUZXdEiFp4tBZf9bRFERUR72jxtFsva77EGxY8lfDVnEstjPXkeMWme3kxPNN2F5qeEXIWyLOqZ3xPwg4WvbNER5B0MCbYPLV50hwOp8QhEuQcgnN8/V4sxbwZp9ACBPPBO/JcqnpdIA1Xu0s+dIh3tKiflqvTvPGWB9cw73yztj5rWKXJWJt2HkErNbiRc7nOtEOIWhjHa+VsLDRQ0EUakSGooS1oUiptoDjKiwajQwhaELpTHUznJ0Ryg7mdWHQIybEg6xWYtFIgKWdLxqJFCFpwM+K0xTSigNAPlorEokMIWmAA4wlSCzLK+QKLDiFqgUp5nfUeXLhtSUh1DMmQQs2fJGUhZb0pmaQ6hGR6u1NuYlr3MJAuKRgd4n1XFsv7al+90YMEzWtKRTYre/wxKi5z2TGMs2bMRlRznemZICsRtM62DYx1o/Y+LhINQVQi6N5IGEN6MLdTiUiQlbCE2Ya/sTTqVO8i0RBkJRx/p5ltvMUxm1AXiYYgK+GDg/TQwnJwDFa8TKIhSEpwSw0AaThxTzfqZLWTaAmyEi5QSEcCTDBj9m4uEg1BVII7DdJZOAXAwWqXSkSCrAQanW31WwquKJwiQVYiKJ2tt8G5spyIBFGJU4H2abFDDvGSOtESZCVOtSrNCeR1Z0nv1BJEJSzybegsnMzwPloqEQmyEhw8mNUJDo8xB5EXiYYgKgGWwdl+AS85S7rYliArwetknc9OyhYVu0gQlUDgtiFb2ukQisIpEmQlgjE2PfmCdmTGSzQEUQlnHWSPe1iPVNKKtwRZCV7RmHR5aq0Z3pTNJBqCqAQpb/IDlzDuTPssEQmyEsbrrNgh2KJoigBZBy64mD2vUlglIkDYATykpQ68K0qICJBz4GXA6WGI7KFfZYaPgc8OHUBSwSgF2WER8VQ5fougA4gqkPP5abwOqEqGIRIks4GnIKLsacBgsWgx1BJEJYBOM3y6kax10TqiJchJOA9caXU6tXoDNN6hA8gpgOY7sNnCOpDV43cHOoBgKHHHBhgfg7gktXYlC+sOES2+vvwHqm/0/g=='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
     plan=json.loads(zlib.decompress(base64.b64decode(PAIR_MEDIA_PLAN))).get(label,[])
     if not plan:
         yield from new_game_probe_files(items)
-        if label!='meshiagirl':return
+        if label not in ('meshiagirl','dennou-djibril'):return
         samples=[];sample_bytes=0
         candidates=[e for e in items if re.search(r'\.(json|csv|tsv|yaml|yml|atlas|txt)$',e.rel,re.I) and not re.search(r'(^|/)(save|savedata|userdata|node_modules)(/|$)',e.rel,re.I)]
         for e in sorted(candidates,key=lambda e:(not bool(re.search(r'scenario|story|adventure|script|master',e.rel,re.I)),e.rel.casefold()))[:8]:
@@ -1735,7 +1738,7 @@ def fuyu_edo_detail_files(items,label):
         if not e or e.size!=r['sourceBytes']:raise RuntimeError('Pair media source changed '+r['path'])
         if r['offset']<0 or r['offset']+r['bytes']>e.size:raise RuntimeError('Pair range invalid')
         used+=r['bytes']
-        if used>(128 if label=='meshiagirl'else 64)*MB:raise RuntimeError('Pair media byte limit')
+        if used>(128 if label in ('meshiagirl','dennou-djibril','RJ01234887')else 64)*MB:raise RuntimeError('Pair media byte limit')
         with open(e.path,'rb')as f:f.seek(r['offset']);data=f.read(r['bytes'])
         if len(data)!=r['bytes']:raise RuntimeError('Pair media truncated')
         report['files'].append({**r,'sha256':hashlib.sha256(data).hexdigest()})
@@ -1750,7 +1753,7 @@ def fuyu_edo_detail_files(items,label):
     runtime={'game':label,'sourceReadOnly':True,'metadataRoots':[],'files':[]};total=0
     for e in items:
         rel=e.rel.replace('\\','/')
-        if not (re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
+        if not (label=='RJ01746557' and re.search(r'(?:^|/)arc/(?:native\.json|\.unity-stamp\.json|script/replay/scene4\.nani)$',rel,re.I) or re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
         if e.size>4*MB:raise RuntimeError('Pair runtime file exceeds4MiB: '+rel)
         with open(e.path,'rb')as f:b=f.read(4*MB+1)
         total+=len(b)
@@ -2810,7 +2813,7 @@ def main():
             ti = tarfile.TarInfo('%s/__listing.tsv' % gid); ti.size = len(listing.getvalue()); ti.mtime = int(time.time()); tar.addfile(ti, io.BytesIO(listing.getvalue()))
             if new_games:
                 for name,data,mtime in (scene_audit_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game))) if scene_audit else bug_case_files(items,next_game_label(os.path.basename(game)) or new_game_label(os.path.basename(game)),followup=followup) if bug_cases else next_game_verify_files(items,next_game_label(os.path.basename(game)),age_link=age_link) if new_games_next_verify else next_game_detail_files(items,next_game_label(os.path.basename(game))) if new_games_next_detail else new_game_remaining_files(items,new_game_label(os.path.basename(game))) if new_games_remaining else new_game_media_files(items,new_game_label(os.path.basename(game))) if new_games_media else new_game_detail_files(items,new_game_label(os.path.basename(game))) if new_games_detail else fuyu_edo_detail_files(items,new_game_label(os.path.basename(game))) if RULES_RE.pattern=='^new-games:fuyu-edo$' else new_game_probe_files(items)):
-                    if total+len(data)>min(TOTAL_MAX,(128 if RULES_RE is not None and RULES_RE.pattern=='^new-games:fuyu-edo$' and PAIR_MEDIA_PLAN else 336 if RULES_RE is not None and RULES_RE.pattern=='^new-games:playback$'else 640 if scene_audit else 32 if new_games_next_verify else 128 if new_games_next_detail or RULES_RE is not None and RULES_RE.pattern=='^new-games:fuyu-edo$' and new_game_label(os.path.basename(game))=='meshiagirl' else 64)*MB): raise RuntimeError('定向证据超过本轮总量上限')
+                    if total+len(data)>min(TOTAL_MAX,(256 if RULES_RE is not None and RULES_RE.pattern=='^new-games:fuyu-edo$' and PAIR_MEDIA_PLAN else 336 if RULES_RE is not None and RULES_RE.pattern=='^new-games:playback$'else 640 if scene_audit else 32 if new_games_next_verify else 128 if new_games_next_detail or RULES_RE is not None and RULES_RE.pattern=='^new-games:fuyu-edo$' and new_game_label(os.path.basename(game))=='meshiagirl' else 64)*MB): raise RuntimeError('定向证据超过本轮总量上限')
                     ti=tarfile.TarInfo(gid+'/'+name);ti.size=len(data);ti.mtime=mtime;tar.addfile(ti,io.BytesIO(data));total+=len(data);picked_bytes+=len(data)
             if rpg_media:
                 packed = [e for e in items if e.rel.lower().endswith('.exe')] if sample_id == 'RJ01220265' else []

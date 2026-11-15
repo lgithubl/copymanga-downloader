@@ -6,14 +6,14 @@ import {binaryCatalog,jsonCatalog,catalogBundleRefs} from './unity-addressables.
 
 // Native Unity files stay read-only. Only small scripts are exported; image and
 // audio ranges are decoded on demand through the normal container resource API.
-export const UNITY_NATIVE_VERSION=7
+export const UNITY_NATIVE_VERSION=8
 const runs=new Map(),recent=new Map(),safe=p=>typeof p==='string'&&p&&!path.isAbsolute(p)&&!p.split(/[\\/]/).some(s=>s==='..')
 export function invalidateUnityNative(mediaDir){for(const cache of[runs,recent])for(const k of cache.keys())if(k.startsWith(mediaDir+'|'))cache.delete(k)}
 export async function unityNativeIndex(mediaDir,cfg){
  const scope=mediaDir+'|'+cfg.dir+'|'+JSON.stringify(cfg),cached=recent.get(scope);if(cached&&Date.now()-cached.at<20000)return cached.promise
  if(cfg.scan?.length!==1)throw Error('Unity native containers require one Data directory')
  const scan=cfg.scan[0];if(scan!=='.'&&!safe(scan))throw Error('Invalid Unity Data directory')
- const root=path.join(mediaDir,scan),store=await new UnityStore(root).init(),source=[]
+ const root=path.join(mediaDir,scan),store=await new UnityStore(root).init({extensionlessBundles:cfg.scriptDecoder==='rexex'}),source=[]
  const names=[...store.files.values(),...(cfg.scriptDecoder==='celltalk'?[path.join(root,'il2cpp_data','Metadata','global-metadata.dat'),path.join(root,'..','GameAssembly.dll')]:[])].sort();let cursor=0
  await Promise.all(Array.from({length:16},async()=>{for(;;){const i=cursor++;if(i>=names.length)return;const f=names[i],s=await stat(f);source[i]=[f,s.size,s.mtimeMs]}}))
  const sig=createHash('sha256').update(JSON.stringify([UNITY_NATIVE_VERSION,cfg,source])).digest('hex'),key=mediaDir+'|'+cfg.dir+'|'+sig
@@ -24,7 +24,9 @@ export async function unityNativeIndex(mediaDir,cfg){
    if(!safe(name))throw Error('Invalid Unity virtual resource: '+name)
    if(files.length>=(Number(cfg.maxEntries)||200000))throw Error('Unity virtual resource count exceeds configured limit')
    const rel=prefix+name,key=rel.toLowerCase();if(map.has(key))throw Error('Unity resource collision: '+name)
-   const file=descriptor.file||[...store.files.values()][0],hit={rel,file,offset:descriptor.offset||0,size:descriptor.size||0,version:sig,transform:'unity-native',readNative:read};map.set(key,hit);files.push(rel);resources.set(name,rel);return rel
+   // Manifest-backed media resolve their real object lazily. Their names must
+   // distinguish cache entries even when no physical object offset is known yet.
+   const file=descriptor.file||[...store.files.values()][0],hit={rel,file,offset:descriptor.offset||0,size:descriptor.size||0,version:descriptor.identity?sig+':'+createHash('sha256').update(descriptor.identity).digest('hex'):sig,transform:'unity-native',readNative:read};map.set(key,hit);files.push(rel);resources.set(name,rel);return rel
   }
   const object=(name,o)=>add(name,{file:o.asset.file,offset:o.offset,size:o.size},()=>store.media(o))
   const json=(name,data,file)=>add(name,{file},async()=>Buffer.from(JSON.stringify(data)))
@@ -35,6 +37,7 @@ export async function unityNativeIndex(mediaDir,cfg){
   if(cfg.scriptDecoder==='naninovel')await (await import('./unity-naninovel.mjs')).indexNaninovel(api)
   else if(cfg.scriptDecoder==='unity-utage')await (await import('./unity-utage.mjs')).indexUtage(api)
   else if(cfg.scriptDecoder==='rpgmaker-unite')await (await import('./unity-unite.mjs')).indexUnite(api)
+  else if(cfg.scriptDecoder==='rexex')await (await import('./unity-rexex.mjs')).indexRexex(api)
   else if(cfg.scriptDecoder==='celltalk')await (await import('./unity-celltalk.mjs')).indexCellTalk(api)
   else throw Error('Unknown native Unity decoder: '+cfg.scriptDecoder)
   if(!scripts.length)throw Error('Native Unity scene index is empty')

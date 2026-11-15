@@ -24,6 +24,8 @@ const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v)
 
 // 适配器 id → 导出 DEFAULT_OPTIONS 的模块文件（girlscreation-line / -tag 共用同一份）
 const MODULES = {
+  'rexex::event':'rexex-event',
+  'djibril-json':'djibril-json',
   'celltalk::native':'celltalk-native',
   'naninovel::script':'naninovel-script',
   'utage::native':'unity-utage',

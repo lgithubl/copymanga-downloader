@@ -20,7 +20,7 @@ export function compileRpgEvents(list, ctx, meta) {
   const nativeParty=new Set((Array.isArray(o.party?.members)?o.party.members:ctx.system?.partyMembers||[]).map(Number)),usedParty=new Set()
   const partyVariable=id=>{id=Number(id);const key=`rpg:party:${id}`;usedParty.add(id);if(!initial.has(key))initial.set(key,o.party?.mode==='all'||nativeParty.has(id)?1:0);return key}
   const cgMatch = safeRegex(o.pictures.cgMatch), bgMatch = safeRegex(o.pictures.backgroundMatch)
-  const seVoiceMatch=safeRegex(o.plugins.seVoiceMatch)
+  const seVoiceMatch=safeRegex(o.plugins.seVoiceMatch),skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)
   const thumbnailMatch = safeRegex(o.pictures.thumbnailMatch), thumbnailSkip = safeRegex(o.pictures.thumbnailSkip)
   const standingImages = new Set([...(ctx.standing?.values() || [])].map(item => String(item.imageName || '').replace(/\.png$/i, '').toLowerCase()))
   let pending = [], serial = 0, standingHold = false, bgsLine = 1, dynamicText = null
@@ -411,7 +411,7 @@ export function compileRpgEvents(list, ctx, meta) {
         guards.push({ indent, type: 'if', condition: cond, conditions: [cond] }); continue
       }
       if (c.code === 411) { const g = [...guards].reverse().find(g => g.type === 'if' && g.indent === indent); if (g) g.conditions = [{ ...g.condition, not: true }]; continue }
-      if (c.code === 117) { const id = Number(p[0]), inner = ctx.common?.[id]; if (inner?.list) run(inner.list, depth + 1, String(id)); else raw('common-event-missing', id); continue }
+      if (c.code === 117) { const id = Number(p[0]), inner = ctx.common?.[id]; if(inner&&skipCommonEvent?.test(String(inner.name||'')))raw('common-event-skipped-by-config',{id,name:inner.name});else if (inner?.list) run(inner.list, depth + 1, String(id)); else raw('common-event-missing', id); continue }
       if(meta.memoryReplay&&memoryFrame&&String(calls.at(-1)).startsWith('map:')&&c.code===121&&p[2]===0)for(let n=p[0];n<=Math.min(p[1],p[0]+10000);n++){memorySwitches.add(n);memoryVariables.add(n)}
       if (c.code === 121) { for (let id = p[0]; id <= Math.min(p[1], p[0] + 10000); id++) emit({ op: 'set', var: variable(id, 's'), value: p[2] === 0 ? 1 : 0 }); continue }
       if (c.code === 122) {

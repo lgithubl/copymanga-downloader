@@ -16,6 +16,14 @@ tag 脚本    gal-layout（scripts/tag-scripts，三种游戏合一，按 config
 前端        gal-browse.js（卡片）、gal-player.js（播放）；沉浸等页面状态两者共用。
 ```
 
+### Djibril 与 RexEX 原生资源包
+
+- `djibril-json` / `djibril::自定义id`：读取本地 `res/json/adv` 与角色图集。列表按角色 → 服装 → 场景组织；角色和服装用各自头像，场景用原始剧情缩略图，重复序章只保留一份。主目录和外层 `dennou-djibril` 目录均可探测。使用“导入方案 → 刷新 JSON”的 Djibril 选项。
+- `rexex::event` / `rexex::自定义id`：读取 RexEX 的 `asset_00_text` / 追加包 TSV 与原生 Unity bundle；脚本导出到 Data 目录的 `arc/script`，图片和音频按需读取，不执行游戏程序集。回想表生成“特殊场景”和角色分类，保留未实现指令的事件 Seq / EventNo 诊断。目前验证静态分层 CG、立绘、背景、原始对白语音；原版动作/高潮动画等演出仍有未还原项，不能视作原游戏完整执行。
+- `RJ01234887` 复用 `rpgmaker-json`，使用 `game.id: "rpgmaker::RJ01234887"` 后 layout 写入该游戏的 `plugins.skipCommonEventNames`：跳过结算 / 睡觉等玩法公共事件，并在 raw 诊断记录调用。默认值为空，其他 RPG Maker 游戏保持原行为。
+
+新增适配器需要更新镜像，再执行新版 `gal-layout`。用户传入的 `config.game.title` 优先于目录名。运行时没有新增下载、安装依赖或执行游戏 JS 的步骤。
+
 ### config 字段（全是数据，没有代码）
 
 | 字段 | 含义（默认值 = 标准结构） |

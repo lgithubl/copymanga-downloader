@@ -1,3 +1,5 @@
+import {rexexEventAdapter}from'./rexex-event.mjs'
+import {djibrilJsonAdapter} from './djibril-json.mjs'
 import {cellTalkNativeAdapter} from './celltalk-native.mjs'
 import{meshiagirlJsonAdapter}from'./meshiagirl-json.mjs'
 import {naninovelScriptAdapter} from './naninovel-script.mjs'
@@ -42,6 +44,8 @@ export function registerGalAdapter(adapter) {
   if (!adapter?.id || typeof adapter.parse !== 'function') throw new Error('gal adapter needs id and parse()')
   adapters.set(adapter.id, adapter)
 }
+registerGalAdapter(rexexEventAdapter)
+registerGalAdapter(djibrilJsonAdapter)
 registerGalAdapter(meshiagirlJsonAdapter)
 registerGalAdapter(cellTalkNativeAdapter)
 registerGalAdapter(naninovelScriptAdapter)

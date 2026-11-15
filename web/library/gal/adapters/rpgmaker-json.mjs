@@ -23,7 +23,7 @@ export const DEFAULT_OPTIONS = {
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
   special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, preferMapCallers: false, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
   pictures: { folder: 'img/pictures', cgMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
-  plugins: { memoryReplay: false, simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
+  plugins: { memoryReplay: false, skipCommonEventNames: '', simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
 }
 export const optionsOf = createOptionsReader(DEFAULT_OPTIONS)
 const join = (...s) => s.filter(Boolean).join('/')
@@ -53,6 +53,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   const ctx = { options: o, common, system, actors, mapInfo, tilesets: read('data/Tilesets.json', []), plugins: enabled, maps: new Map(), files: new Set((files || []).map(toResourcePath || (x => x))), warnings: [], evidenceCache: new WeakMap(), evidenceBusy: new Set() }
   if (truncated) ctx.warnings.push('资源索引达到上限，部分资源未收录')
   if (get('js/plugins.js') && !plugins.length) ctx.warnings.push('plugins.js 不是可解析的插件 JSON 配置；没有执行游戏 JS')
+  ctx.skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)
   ctx.standing = new Map()
   const voice = enabled.find(p => p.name === 'SimpleVoice')
   ctx.voiceFolder = 'audio/' + String(voice?.parameters?.FolderName || voice?.parameters?.['フォルダ名'] || (Boolean(system.advanced) ? 'se' : 'voice')).replace(/^\/+|\/+$/g, '')
@@ -112,7 +113,7 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
     if(c.code===284&&c.parameters?.[0])pictures.push('img/parallaxes/'+String(c.parameters[0])+'.png')
     if (c.code === 355 || c.code === 655) for (const m of String(c.parameters?.[0] || '').matchAll(/\$gameScreen\.showPicture\(\s*\d+\s*,\s*["']([^"']+)["']/g)) pictures.push(m[1])
     if (c.code === 117) {
-      const id = Number(c.parameters?.[0]); calls.add(id)
+      const id = Number(c.parameters?.[0]);if(ctx.skipCommonEvent?.test(String(ctx.common[id]?.name||''))){calls.delete(id);continue} calls.add(id)
       if (seen.has(id)) continue
       const inner = evidence(ctx.common[id]?.list, ctx, new Set([...seen, id]),activeMap)
       text += inner.text; pictures.push(...inner.pictures); for (const v of inner.calls) calls.add(v)
@@ -154,6 +155,7 @@ function buildCatalog(ctx) {
     if (children.length) mapNodes.push({ id: `map-${id}`, title, children })
   }
   if (o.catalog.common) for (const event of ctx.common.filter(Boolean)) {
+    if(ctx.skipCommonEvent?.test(String(event.name||'')))continue
     const ev = evidence(event.list, ctx, new Set([event.id])), name = event.name || `Common ${event.id}`
     if (ev.text < o.catalog.minText || skip?.test(name)) continue
     const node = { id: `common-${event.id}`, title: name, subtitle: `${ev.text} 文本行`, script: `${join(rootOf(o), 'data/CommonEvents.json')}::common-${event.id}` }

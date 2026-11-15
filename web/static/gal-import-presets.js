@@ -2,6 +2,8 @@
 // Only registered playback adapters belong here; format probes are not importable adapters.
 export const GAL_PRESETS = {
   celltalk:{label:'CellTalk 原生控制器预览（celltalk::native；已核对的 IL2CPP 版本）',adapters:['celltalk::native'],game:{id:'celltalk::game',title:''}},
+  rexex:{label:'RexEX 原生 Unity 事件（开发中；改 id / title）',adapters:['rexex::event'],game:{id:'rexex::game',title:''}},
+  djibril:{label:'電脳天使ジブリール（角色 / 服装 / 剧情 JSON；改 title）',adapters:['djibril-json'],game:{id:'djibril::game',title:''}},
   naninovel:{label:'Naninovel 原生 Unity（Resources / Addressables；改 id / title）',adapters:['naninovel::script'],game:{id:'naninovel::game',title:''}},
   utageNative:{label:'Utage 原生 Unity（utage::native；改 id / title）',adapters:['utage::native'],game:{id:'utage::game',title:''}},
   rpgmakerUnite:{label:'RPG Maker Unite（rpgmaker-unite；改 id / title）',adapters:['rpgmaker-unite'],game:{id:'unite::game',title:''}},

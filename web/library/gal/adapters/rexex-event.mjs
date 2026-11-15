@@ -1,0 +1,45 @@
+import{createOptionsReader}from'./options-merge.mjs'
+export const ADAPTER_ID='rexex::event'
+export const DEFAULT_OPTIONS={dir:'arc',stage:[1100,720],maxCommands:200000}
+// Native GetAudio resolves the exact clip name across loaded packs; the raw
+// TSV ReleaseKbVoice field is often0 and is filled by event context in-game.
+const mediaIndexes=new WeakMap();function mediaIndex(ctx){if(!mediaIndexes.has(ctx)){const map=new Map();for(const key of Object.keys(ctx.assets)){const stem=key.slice(key.lastIndexOf('/')+1);if(!map.has(stem))map.set(stem,[]);map.get(stem).push(key)}mediaIndexes.set(ctx,map)}return mediaIndexes.get(ctx)}
+const optionsOf=createOptionsReader(DEFAULT_OPTIONS),pad=(n,w=4)=>String(n).padStart(w,'0'),clean=v=>v&&v!=='-'?String(v):'',segments=text=>[{text:String(text??'').replace(/<br\s*\/?>/gi,'\n').replace(/<\/?(?:color|size|b|i)(?:=[^>]*)?>/gi,'').replace(/<pl>/g,'主人公')}]
+export const contextFiles=o=>[(o?.dir||'arc')+'/native.json']
+export const contextDirs=o=>[(o?.dir||'arc')+'/res']
+export const contextTextFilter=()=>()=>false
+export const sniff=text=>/^\s*\{\s*"format"\s*:\s*"rexex-event\/1"/.test(String(text).slice(0,128))
+export function prepare({texts={},options}){const o=optionsOf(options),d=JSON.parse(texts[contextFiles(o)[0]]||'null');if(d?.format!=='rexex-context/1')throw Error('RexEX native context missing; run gal-layout');return{...d,options:o}}
+export function catalog(ctx){const special=(ctx.special||[]).map(s=>({id:'special-'+s.Seq,script:s.script,title:s.title,...(s.thumb?{thumb:s.thumb}:{}),subtitle:clean(ctx.tables.EventChara[s.EventChara]?.Name)})),characters=new Map();for(const s of special){const name=s.subtitle||'其他';if(!characters.has(name))characters.set(name,[]);characters.get(name).push({...s,id:'character-'+s.id})}return{title:'RexEX',children:[{id:'special',title:'特殊场景',children:special},{id:'characters',title:'角色场景',children:[...characters].map(([name,children])=>({id:name,title:name,children}))},{id:'all',title:'全部剧情',children:ctx.scenes.filter(s=>s.text>0).map(s=>({id:s.script,script:s.script,title:s.name,subtitle:s.text+' 句'}))}]}}
+export function parse(text,ctx,meta={}){
+ const data=JSON.parse(text);if(data.format!=='rexex-event/1'||!ctx)throw Error('RexEX native event/context required');const rows=data.rows;if(!Array.isArray(rows)||rows.length>ctx.options.maxCommands)throw Error('RexEX command bounds exceeded')
+ const{tables:t,assets,options:{stage}}=ctx,steps=[],stats={messages:0,voices:0,raw:{},unresolved:{},warnings:[...(ctx.warnings||[])]};let pending=[],cg=0;const actors=new Map()
+ const emit=(...c)=>pending.push(...c),flush=()=>{if(pending.length){steps.push({index:steps.length,commands:pending});pending=[]}},raw=(row,reason='event-'+row.EventCmd)=>{stats.raw[reason]=(stats.raw[reason]||0)+1;emit({op:'raw',cmd:reason,args:[meta.rel,row.Seq,row.EventNo,row]})},resource=(key,row,required=true)=>{const src=assets[key];if(!src&&required){stats.unresolved[key]=(stats.unresolved[key]||0)+1;raw(row,'missing:'+key)}return src},find=(stem,pattern,row,required=true)=>{const keys=(mediaIndex(ctx).get(stem)||[]).filter(k=>pattern.test(k));if(keys.length!==1){if(required)raw(row,'resource-not-unique:'+stem);return''}return assets[keys[0]]}
+ const mapping=(name,id)=>{const rows=Object.values(t[name]||{}).filter(r=>r.Parent===id&&[0,2,7,17].includes(r.ProjectChild));return rows.find(r=>r.ProjectChild!==0)||rows.find(r=>r.ProjectChild===0)}
+ const background=(id,row)=>{if(!id||id===96){emit({op:'overlayOff',slot:'rex-bg'});return}const m=mapping('ResourceImageBgUseInfo',id),src=resource('asset_'+pad(m?.ReleaseKb||0,2)+'_graphics/bg_'+pad(m?.Src??25),row);if(src)emit({op:'overlay',slot:'rex-bg',src,kind:'background',under:true,fit:'cover',stage,z:-1000})}
+ const renderCg=(id,template,row,slot='rex-cg')=>{const image=t.ImageStill[id],info=t.ImageStillTemplateInfo[template];if(!id){emit({op:'overlayOff',prefix:slot+':'});return}if(!image||!info){raw(row,'cg-table-missing');return}if(image.IsCustom){raw(row,'custom-cg-not-supported');return}const bundle='asset_evcg_'+pad(image.ReleaseKb||0,2)+'_'+pad(image.ReleaseKbHcg||0,2),prefix='hcg_'+pad(id)+'_',parts=[],add=(suffix,z,required=false)=>{const src=resource(bundle+'/'+prefix+suffix,row,required);if(src)parts.push({src,z})};const order=t.ImageStillPartsOrder[info.Base];add('base'+pad(info.Base,2),(order?.SortingOrderType||1)*100+(order?.SortingOrder||0),![6,7].includes(info.Base));add('eye'+pad(info.Option_eye,2)+'a',500);if(info.IsEyeHL)add('eye'+pad(info.Option_eye,2)+'b',501);add('eye'+pad(info.Option_eye,2)+'c',502);add('brow'+pad(info.Option_brow,2),503);add('mouth'+pad(info.Option_mouth,2),504);for(const[k,value]of Object.entries(info))if(k.startsWith('Option_option_')&&value){const o=t.ImageStillOption[value];add('opt'+pad(value,2),(o?.SortingOrderType||0)*100+(o?.SortingOrder||0))}if(!parts.length)raw(row,'cg-no-visible-parts');emit({op:'overlayOff',prefix:slot+':'});for(const[p,part]of parts.entries())emit({op:'overlay',slot:slot+':'+p,src:part.src,kind:'still',cg:true,stage,fit:'contain',z:part.z+1000,fade:0});cg=id}
+ const renderActors=row=>{if(cg||!row.Messenger||row.MessengerFace===28)return;const actor=t.EventChara[row.Messenger];if(!actor||actor.IsExcludeTatie)return;if(actor.ImageTatie_silhouette){raw(row,'silhouette-character');return}const id=actor.ImageTatie_normal,image=t.ImageCharaTatie[id],face=t.ImageCharaTatieFace[row.MessengerFace||1];if(!id||!image||!face){raw(row,'character-table-missing');return}if(!actors.has(row.Messenger)){if(actors.size===1){for(const a of actors.values())a.position=1;actors.set(row.Messenger,{position:2})}else{if(actors.size>=2){emit({op:'standOff'});actors.clear()}actors.set(row.Messenger,{position:3})}}actors.get(row.Messenger).face=row.MessengerFace||1
+  for(const[actorId,state]of actors){const character=t.EventChara[actorId],imageId=character.ImageTatie_normal,img=t.ImageCharaTatie[imageId],f=t.ImageCharaTatieFace[state.face],wide=state.position===3?1:0,scale=wide?.75:.5,rootX=state.position===1?-250:state.position===2?250:0,xs=Object.entries(img).filter(([k])=>k.startsWith('EventBodyPlusX_')).map(([,v])=>v),ys=Object.entries(img).filter(([k])=>k.startsWith('EventBodyPlusY_')).map(([,v])=>v),x=rootX+(xs[wide]||0),y=80-(ys[wide]||0),parts=[],stem='chara_t_'+pad(imageId)+'_',add=(suffix,px=x,py=y,required=true)=>{const src=find(stem+suffix,/^asset_\d+_chara\//,row,required);if(src)parts.push({src,x:px,y:py,scale})};add('body');const fx=x+(-img.AssetBaseWidth/2+250+img.EventFaceX)*scale,fy=y-(img.AssetBaseHeight/2-250-img.EventFaceY)*scale;add('base'+pad(f.Type_hada,2),fx,fy);if(f.Type_eye===1)add('eye01',fx,fy);else{add('eye'+pad(f.Type_eye,2)+'a1',fx,fy);if(f.IsEyeHL)add('eye'+pad(f.Type_eye,2)+'a2',fx,fy,false)}add('brow'+pad(f.Type_mayu,2),fx,fy);add('mouth'+pad(f.Type_mouth,2)+'a',fx,fy);emit({op:'stand',slot:'rex-actor:'+actorId,stage,parts})}
+ }
+ const initial=ctx.special.find(s=>s.EventSeq===data.event);if(initial?.Background)background(initial.Background,{Seq:0,EventNo:0,EventCmd:4})
+ for(const row of rows){
+  if(row.FilterCloth){raw(row,'conditional-costume');continue}
+  const cmd=row.EventCmd
+  if(cmd===21||cmd===55){
+   const body=clean(row.MessageValue);if(!body)continue;if(row.IsAngou){raw(row,'encrypted-text');continue}
+   renderActors(row);emit({op:'voiceStop'},{op:'ui',visible:true},{op:'speaker',segments:segments(clean(row.MessengerName)||clean(t.EventChara[row.Messenger]?.Name))},{op:'text',segments:segments(body)})
+   if(clean(row.VoiceFile)&&!row.IsVoiceMute){const src=find(row.VoiceFile,/^asset_voice_\d+\//,row);if(src){emit({op:'voice',src});stats.voices++}}stats.messages++;flush();continue
+  }
+  if(cmd===4){background(row.Bg,row);continue}
+  if(cmd===5){if(!row.Bgm||row.Bgm===19){emit({op:'bgmStop'});continue}const m=mapping('ResourceSoundBgmUseInfo',row.Bgm),src=resource('asset_'+pad(m?.ReleaseKb||0,2)+'_audio/bgm_'+pad(m?.Src??row.Bgm,3),row);if(src)emit({op:'bgm',src,loop:true});continue}
+  if(cmd===6){actors.clear();emit({op:'standOff'});continue}
+  if(cmd===17){actors.clear();emit({op:'standOff'});renderCg(row.Hcg,row.Hcg_template,row);continue}
+  if(cmd===64){cg=0;emit({op:'overlayOff',prefix:'rex-cg:'});continue}
+  if(cmd===66||cmd===76){const template=cmd===66?row.Hcg_cutin1_template:row.Hcg_cutin2_template,slot='rex-cutin-'+cmd;if(template===(cmd===66?890:891)){emit({op:'overlayOff',prefix:slot+':'});continue}renderCg(cg||row.Hcg,template,row,slot);continue}
+  if(cmd===70){const src=find(row.VoiceFile,/^asset_voice_\d+\//,row);if(src)emit(t.MessagePartnerCommon[row.MessagePartnerCommon]?.IsBgv?{op:'bgvoice',slot:'rex-bgv',src,loop:true,kind:'bgvoice'}:{op:'voice',src});continue}
+  if(cmd===75){emit({op:'bgvoiceOff',slot:'rex-bgv'});continue}
+  raw(row)
+ }
+ flush();return{steps,stats}
+}
+export const rexexEventAdapter={id:ADAPTER_ID,label:'RexEX 原生事件（开发中）',sniff,parse,prepare,catalog,contextFiles,contextDirs,contextTextFilter,sceneInPath:true,sceneThumbs:true}

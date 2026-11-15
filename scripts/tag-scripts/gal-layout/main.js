@@ -59,6 +59,8 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  'rexex::event':{dir:'arc',stage:[1100,720],maxCommands:200000},
+  'djibril-json':{root:'',stage:[1280,720],maxCommands:200000},
   'celltalk::native':{dir:'arc',maxCommands:200000},
   'naninovel::script':{dir:'arc'},
   'utage::native':{dir:'arc',maxInstructions:200000,maxBranches:64},
@@ -215,6 +217,7 @@ export const ADAPTER_RULES = {
       "maxPictureActions": 16,
       "seVoiceMatch": "",
       "memoryReplay": false,
+      "skipCommonEventNames": "",
       "trnVoice": {"enabled": false, "list": "audio/voice/voice_list.json", "folder": "audio/voice/unique"},
       "commands": []
     }
@@ -1693,6 +1696,13 @@ export const RULE_DEVIATIONS = {}
 // 所有「列表」字段都是数组；探测函数里没有任何写死的目录名（数据依赖的判断除外）。
 // ======================================================================
 export const LAYOUTS = {
+  djibril:{
+    title:'電脳天使ジブリール',kind:'djibril',detector:'djibril',family:'djibril::',autoOrder:133.5,
+    bases:['','dennou-djibril'],searchDepth:5,anchors:['res/json/adv/common/Character.json','res/json/adv/script','list.json'],siblings:[],markers:[],
+    adapters:['djibril-json'],scriptRoots:[{id:'main',dir:'res/json/adv/script',label:'角色剧情'},{id:'prologue',dir:'序章/res/json/adv/script',label:'序章'}],resourceRoots:['.'],adapterOptions:{'djibril-json':{root:{path:['.']}}},ruleTables:['djibril-json'],ruleOverrides:{},
+    config:{scriptExtensions:['json'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'CG 开始',kind:'cmd',op:'overlay',match:'/bg/still/',pick:'each',max:8}],pageSize:100},
+    engine:{limits:{walkFiles:400000,walkDepth:8}},count:[{dir:'res/json/adv/script',ext:'.json',depth:1},{dir:'序章/res/json/adv/script',ext:'.json',depth:1}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:['res/pc'],notes:['按原始角色表与场景标题组织角色 / 服装 / 场景；角色与服装使用各自头像；支持表情图集合成、原始语音与 CG 缩略图；未知指令保留诊断'],
+  },
   unite:{
     title:'RPG Maker Unite',kind:'unite',detector:'unityNative',family:'unite::',autoOrder:137.2,
     bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['StreamingAssets/aa/catalog.bin','Managed/RPGMaker.CodeBase.CoreSystem.dll'],siblings:[],markers:[],
@@ -1716,7 +1726,16 @@ export const LAYOUTS = {
     engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'celltalk',scriptExt:'cell',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
     config:{scriptExtensions:['cell'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'画面切换',kind:'cmd',op:'overlay',pick:'each',max:8}],pageSize:100},
     count:[{dir:'arc/script',ext:'.cell',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['CellTalk 原生控制器静态预览；仅核对的 metadata 版本；存档条件手动选择，未还原演出报告 native 地址'],
-  },  naninovel:{
+  },
+  rexex:{
+    title:'RexEX 原生 Unity',kind:'rexex',detector:'unityNative',family:'rexex::',autoOrder:136.9,
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['StreamingAssets/asset_00_text','Managed/Assembly-CSharp.dll'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'RexEX 剧情'}],resourceRoots:[''],adapters:['rexex::event'],adapterOptions:{'rexex::event':{dir:{path:['arc']}}},ruleTables:['rexex::event'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'rexex',scriptExt:'rex',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['rex'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'画面切换',kind:'cmd',op:'overlay',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.rex',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取 RexEX 原生事件 TSV 和 Unity bundle；开发中：未还原指令记录事件 Seq / EventNo，不能视为完整原版执行'],
+  },
+  naninovel:{
     title:'Naninovel 原生 Unity',kind:'naninovel',detector:'unityNative',family:'naninovel::',autoOrder:137,
     bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','Managed/Elringus.Naninovel.Runtime.dll'],siblings:[],markers:[],
     scriptRoots:[{id:'native',dir:'arc/script',label:'Naninovel 剧情'}],resourceRoots:[''],adapters:['naninovel::script'],adapterOptions:{'naninovel::script':{dir:{path:['arc']}}},ruleTables:['naninovel::script'],ruleOverrides:{},
@@ -2404,6 +2423,7 @@ export const LAYOUTS = {
     ],
     "ruleOverrides": {},
     "profiles": [
+      {"match":"RJ01234887","id":"rpgmaker::rj01234887"},
       {"match":"RJ01271506|フォレスティア","id":"rpgmaker::rj01271506"},
       {"match":"RJ01646655|痴漢願望シンドローム","id":"rpgmaker::rj01646655"},
       {"match":"RJ328940|カルティベーター|耕拓者","id":"rpgmaker::rj328940"},
@@ -2517,6 +2537,7 @@ export const LAYOUTS = {
       "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音、静态地图/人物及剧情移动演出；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
     ]
   },
+  'rpgmaker::rj01234887':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{plugins:{skipCommonEventNames:'^(?:补魔结算.*|(?:.*-)?睡到第二天)$'}}}},
   'rpgmaker::rj01271506': {extends:'rpgmaker',resourceRoots:['dlc/dlc_10000','.'],resourceRootsForce:true,ruleOverrides:{'rpgmaker-json':{extraDirs:['dlc/dlc_10000'],plugins:{memoryReplay:true,trnVoice:{enabled:true}},skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{preferMapCallers:true,imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
   'rpgmaker::rj01646655': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'},special:{imageMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'}}}},
   'rpgmaker::rj328940': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{party:{mode:'choose'},plugins:{seVoiceMatch:'_(?:meifa|ouka|sfy|lize|lavia|elnor|lana|flaw|myco|claire|yuzuki|mirage|colette|stellar|cypher)'},special:{mapNameMatch:'回想|回憶|♥イベントシーン'}}}},
@@ -3680,6 +3701,7 @@ const autoNodes = (entries) => {
 // 入口
 // ======================================================================
 const DETECTORS = {
+  djibril:scope=>detectDjibril(scope),
   unityNative: scope=>detectUnityNative(scope),
   age: scope => detectAge(scope),
   rpgmaker: scope => detectRpgMaker(scope),
@@ -5255,4 +5277,12 @@ async function detectMeshiagirl(scope){
  scope.logs.push('meshiagirl: Cocos Creator2；当前 adventure '+version+'；剧情 '+count+' 个；配置排除内部测试脚本：'+(excluded.join(' / ')||'无'))
  for(const line of entry.notes)scope.logs.push(line)
  return makeFound(scope,entry,loc,config,{cover:await coverFromRules(scope.media,entry,base),count:async()=>count})
+}
+
+async function detectDjibril(scope){
+ const loc=await locateGame(scope,scope.id);if(!loc)return null
+ const config=await buildConfig(scope.media,loc.entry,loc.base)
+ announce(scope.logs,scope.id,loc)
+ for(const note of loc.entry.notes)scope.logs.push(note)
+ return makeFound(scope,loc.entry,loc,config,{cover:await coverFromRules(scope.media,loc.entry,loc.base)})
 }
