@@ -26,13 +26,15 @@ const encrypted = /\.(?:rpgmvp|rpgmvo|rpgmvm|png_|ogg_|m4a_)$/i
 export const isRpgMakerEncryptedFile = file => encrypted.test(String(file))
 export function createRpgMakerResourceCache(directory) {
   const inflight = new Map()
-  return async function materialize(file, mediaDir, options) {
+  return async function materialize(file, mediaDir, options, assetDir = mediaDir) {
     if (!options || !encrypted.test(file)) return file
     const root = await realpath(path.resolve(mediaDir, options.root || '.'))
     const media = await realpath(mediaDir)
     if (root !== media && !root.startsWith(media + path.sep)) throw new Error('RPG Maker 游戏目录越界')
+    const assetRoot=await realpath(path.resolve(assetDir,options.root||'.')),assetMedia=await realpath(assetDir)
+    if(assetRoot!==assetMedia&&!assetRoot.startsWith(assetMedia+path.sep))throw Error('RPG Maker asset root escapes media')
     const source = await realpath(file)
-    if (!source.startsWith(root + path.sep)) throw new Error('RPG Maker 资源越界')
+    if (!source.startsWith(assetRoot + path.sep)) throw new Error('RPG Maker 资源越界')
     const system = await realpath(path.join(root, 'data/System.json'))
     if (!system.startsWith(root + path.sep)) throw new Error('RPG Maker System.json 越界')
     const [info, systemBytes] = await Promise.all([stat(source), readFile(system)])

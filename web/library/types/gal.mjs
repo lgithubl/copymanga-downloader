@@ -237,13 +237,14 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const onDisk = async () => {
       if (fromMedia) {
         if (!allowMedia && !config.thumbsDirs.some((dir) => rel === dir || rel.startsWith(`${dir}/`))) throw bad('不允许的路径', 403)
-        const hit = await resolveOnDisk({ work, rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: false })   // ~/ 路径：只认媒体目录内的原路径，不套任何解析规则 / allowedRoots
-        if (hit) return skipMaterialize ? hit : rpgResources(hit, work, config.adapterOptions?.['rpgmaker-json'])
+        const hit = await resolveOnDisk({ work: item.packedView?.source || work, rootRels: [''], variants: [rel], cfg: null, caseInsensitiveFallback: false })   // ~/ 路径：只认媒体目录内的原路径，不套任何解析规则 / allowedRoots
+        if (hit) return skipMaterialize ? hit : rpgResources(hit, work, config.adapterOptions?.['rpgmaker-json'], item.packedView?.source || work)
         throw bad('资源不存在', 404)
       }
       const variants = [rel, ...config.stripPrefixes.filter((prefix) => rel.startsWith(prefix)).map((prefix) => rel.slice(prefix.length))]
       const hit = await resolveOnDisk({ work, rootRels: config.resourceRoots, variants, cfg: config.resourceResolve })
-      if (hit) return skipMaterialize ? hit : rpgResources(hit, work, config.adapterOptions?.['rpgmaker-json'])
+        || (item.packedView ? await resolveOnDisk({work:item.packedView.source,rootRels:config.resourceRoots,variants,cfg:{...config.resourceResolve,allowedRoots:[]}}) : null)
+      if (hit) return skipMaterialize ? hit : rpgResources(hit, work, config.adapterOptions?.['rpgmaker-json'], item.packedView?.source || work)
       throw bad('资源不存在', 404)
     }
     if (skipMaterialize) return onDisk()
@@ -395,6 +396,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     return createBrowseProvider({
       mediaDir: workDirOf(item),
       sourceFiles: item.packedView?.files || [],
+      assetDir: item.packedView?.source || workDirOf(item),
       config: item.config,
       adapters: item.adapters,
       isEncodedAsset: file => Boolean(item.config?.adapterOptions?.['rpgmaker-json']) && isRpgMakerEncryptedFile(file),

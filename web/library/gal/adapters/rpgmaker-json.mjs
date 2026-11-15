@@ -1,3 +1,4 @@
+import {prepareLocalization} from './rpgmaker-localization.mjs'
 import {prepareActionSequences,parseActionGallery} from './rpgmaker-action-sequence.mjs'
 import {prepareRecollection,recollectionCatalog} from './rpgmaker-recollection.mjs'
 import {prepareRpgLive2d} from './rpgmaker-live2d.mjs'
@@ -5,7 +6,7 @@ import {memoryEntries,memoryTargets} from './rpgmaker-memory.mjs'
 import {prepareSkit} from './rpgmaker-skit.mjs'
 import {prepareTemplates} from './rpgmaker-templates.mjs'
 import { completeJsonSamples } from '../context-complete-json.mjs'
-import { eventEvidence, mapEventCall } from './rpgmaker-plugins.mjs'
+import { pluginData, eventEvidence, mapEventCall } from './rpgmaker-plugins.mjs'
 // RPG Maker MV/MZ event JSON -> gal-scene. Engine mechanics live here; each
 // game's naming, gallery/image matching and plugin overrides live in options.
 import { readFile, stat } from 'node:fs/promises'
@@ -18,6 +19,7 @@ export const DEFAULT_OPTIONS = {
   root: '', packedExe: '', extraDirs: [], stage: [816, 624], maxCommands: 100000, maxCallDepth: 32,
   initialVariables: {}, initialSwitches: {},
   effects: { shake: true },
+  localization: { language: '' },
   party: { mode: 'initial', members: null },
   skit: { expressionPoses: {}, wrapperScripts: false },
   maps: { enabled: true, tileSize: 48, player: true, follow: 'event', maxBytes: 134217728 },
@@ -31,7 +33,7 @@ const join = (...s) => s.filter(Boolean).join('/')
 const rootOf = o => cleanDir(o?.root)
 const decodeJson = s => JSON.parse(String(s).replace(/^\uFEFF/, ''))
 export const contextFiles = o => ['data/System.json', 'data/Actors.json', 'data/CommonEvents.json', 'data/MapInfos.json', 'data/Tilesets.json', 'js/plugins.js', ...(o?.plugins?.trnVoice?.enabled ? [o.plugins.trnVoice.list] : [])].map(p => join(rootOf(o), p))
-export const contextDirs = o => [...new Set(['data', 'img', 'audio', 'Assets', 'assets', ...(o?.extraDirs || [])])].map(p => join(rootOf(o), p))
+export const contextDirs = o => [...new Set(['data', 'img', 'audio', 'Audio', 'locales', 'Assets', 'assets', ...(o?.extraDirs || [])])].map(p => join(rootOf(o), p))
 export const contextWalkLimit = 400000
 
 export function sniff(text) {
@@ -40,7 +42,7 @@ export function sniff(text) {
     || /^\s*\{/.test(head) && /"autoplayBgm"\s*:/.test(head) && /"(?:parallaxName|scrollType)"\s*:/.test(head)
 }
 
-export async function prepare({ options, texts, files, toResourcePath, mediaDir, truncated }) {
+export async function prepare({ options, texts, files, toResourcePath, mediaDir, assetDir = mediaDir, truncated }) {
   const o = optionsOf(options), root = rootOf(o)
   if (mediaDir) { const wanted = new Set(contextFiles(o).filter(p => p.endsWith('.json'))); texts = await completeJsonSamples({texts, files: [...new Set([...(files || []), ...wanted])], mediaDir}, rel => wanted.has(rel)) }
   const get = rel => texts[join(root, rel)] || ''
@@ -54,15 +56,18 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   const ctx = { options: o, common, system, actors, mapInfo, tilesets: read('data/Tilesets.json', []), plugins: enabled, maps: new Map(), files: new Set((files || []).map(toResourcePath || (x => x))), warnings: [], evidenceCache: new WeakMap(), evidenceBusy: new Set() }
   if (truncated) ctx.warnings.push('资源索引达到上限，部分资源未收录')
   if (get('js/plugins.js') && !plugins.length) ctx.warnings.push('plugins.js 不是可解析的插件 JSON 配置；没有执行游戏 JS')
+  ctx.localize=await prepareLocalization({plugins:enabled,options:o,files:files||[],texts,mediaDir,root,warnings:ctx.warnings})
+  for(const row of [system,...actors,...mapInfo,...common].filter(Boolean))for(const key of ['name','gameTitle','displayName'])if(typeof row[key]==='string')row[key]=ctx.localize(row[key])
   ctx.skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)
   ctx.meVoiceMatch=safeRegex(o.plugins.meVoiceMatch)
   ctx.standing = new Map()
   const voice = enabled.find(p => p.name === 'SimpleVoice')
   ctx.voiceFolder = 'audio/' + String(voice?.parameters?.FolderName || voice?.parameters?.['フォルダ名'] || (Boolean(system.advanced) ? 'se' : 'voice')).replace(/^\/+|\/+$/g, '')
-  const standing = enabled.find(p => p.name === 'LL_StandingPictureMV')
-  if (standing && o.plugins.standingPicture) {
-    try { for (const item of decodeJson(standing.parameters.sPictures || '[]')) { const v = typeof item === 'string' ? decodeJson(item) : item; if (v?.id) ctx.standing.set(String(v.id), v) } }
-    catch { ctx.warnings.push('LL_StandingPictureMV 的 sPictures 配置无法解析') }
+  const standing = enabled.find(p => ['LL_StandingPictureMV','MIP_StandingPicture'].includes(p.name))
+  if(standing&&o.plugins.standingPicture){
+    const rows=pluginData(ctx,standing.name,'sPictures')
+    if(!rows.length&&standing.parameters.sPictures&&!/^\s*\[\s*\]\s*$/.test(standing.parameters.sPictures))ctx.warnings.push(standing.name+' 的 sPictures 配置无法解析或为空')
+    for(const item of rows)if(item?.id)ctx.standing.set(String(item.id),item)
   }
   const sizePlugin = [...enabled].reverse().map(p => {
     if(p.name==='YEP_CoreEngine')return [p.parameters?.['Screen Width']||p.parameters?.['屏幕宽度'],p.parameters?.['Screen Height']||p.parameters?.['屏幕高度']]
@@ -71,7 +76,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   ctx.stage = [Number(system.advanced?.screenWidth || sizePlugin?.[0] || o.stage[0]), Number(system.advanced?.screenHeight || sizePlugin?.[1] || o.stage[1])]
   ctx.stage = ctx.stage.map((n, i) => Math.max(1, Math.min(8192, Number.isFinite(n) && n > 0 ? n : DEFAULT_OPTIONS.stage[i])))
   ctx.trnVoiceIds=new Set(o.plugins.trnVoice.enabled?(read(o.plugins.trnVoice.list,{}).uniqueIds||[]).map(Number):[])
-  ctx.skit=await prepareSkit(ctx,{mediaDir,files:files||[],root})
+  ctx.skit=await prepareSkit(ctx,{mediaDir:assetDir,files:files||[],root})
   let bytes = 0
   const maxMapBytes=Math.min(256*1024*1024,Math.max(16*1024*1024,Number(o.maps.maxBytes)||134217728))
   for (const rel of files || []) {
@@ -86,6 +91,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
     } catch { ctx.warnings.push(`地图无法读取: ${rel}`) }
   }
   await prepareRecollection(ctx,{texts,mediaDir,root})
+  ctx.loopAnimations=new Map(pluginData(ctx,'LL_LoopAnimation','animations').map(r=>[r.id,r]))
   prepareRpgLive2d(ctx)
   prepareTemplates(ctx)
   ctx.memoryReplays = new Map()
@@ -118,6 +124,7 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
       const stem='audio/me/'+c.parameters[0].name
       if(['.ogg','.rpgmvo'].some(ext=>ctx.files.has(stem+ext)||ctx.files.has(join(rootOf(ctx.options),stem+ext))))voices.add(stem+'.ogg')
     }
+    if(c.code===357&&c.parameters?.[0]==='LL_LoopAnimation'&&['playAnimation','clippingAnimation'].includes(c.parameters?.[1])){const row=ctx.loopAnimations.get(c.parameters?.[3]?.id),name=String(row?.animationFrames||'').split(/\r?\n/).find(Boolean)?.split(',')[0];if(name)pictures.push('img/ll_loopanimation/'+name+'.png')}
     if (c.code === 401) text++
     if (c.code === 231) pictures.push(String(c.parameters?.[1] || ''))
     if(c.code===284&&c.parameters?.[0])pictures.push('img/parallaxes/'+String(c.parameters[0])+'.png')

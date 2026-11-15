@@ -175,6 +175,7 @@ export const ADAPTER_RULES = {
     "initialVariables": {},
     "initialSwitches": {},
     "effects": {"shake": true},
+    localization: { language: '' },
     "party": {"mode": "initial", "members": null},
     "skit": {"expressionPoses": {}, "wrapperScripts": false},
   "maps": {
@@ -2425,6 +2426,9 @@ export const LAYOUTS = {
     ],
     "ruleOverrides": {},
     "profiles": [
+      {"match":"RJ01610452(?:[^0-9]|$)","id":"rpgmaker::rj01610452"},
+      {"match":"RJ01319586(?:[^0-9]|$)","id":"rpgmaker::rj01319586"},
+      {"match":"RJ01007726(?:[^0-9]|$)","id":"rpgmaker::rj01007726"},
       {"match":"RJ01234887","id":"rpgmaker::rj01234887"},
       {"match":"RJ01271506|フォレスティア","id":"rpgmaker::rj01271506"},
       {"match":"RJ01646655|痴漢願望シンドローム","id":"rpgmaker::rj01646655"},
@@ -2540,6 +2544,9 @@ export const LAYOUTS = {
       "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音、静态地图/人物及剧情移动演出；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
     ]
   },
+  'rpgmaker::rj01007726':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{localization:{language:'zh-CN'},extraDirs:['Audio','locales'],plugins:{seVoiceMatch:'^voice/'},pictures:{cgMatch:'(?:^|/)(?:cg|ll_loopanimation)/'},special:{imageMatch:'(?:^|/)(?:cg|ll_loopanimation)/'}}}},
+  'rpgmaker::rj01610452':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:^|/)Prism(?:_| )(?!Po_|PantsCut|full)'},special:{imageMatch:'(?:^|/)Prism(?:_| )(?!Po_|PantsCut|full)'}}}},
+  'rpgmaker::rj01319586':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{plugins:{seVoiceMatch:'^voice/',skipCommonEventNames:'^(?:休日\\|時間経過|シナリオ実行\\((?:朝|夜|深夜)\\)|マップ操作|自室自由行動|自由行動\\|ルームチェッカー|小悪魔配置喋りかけイベント|｜小悪魔アイテム基礎|シーン回想\\|(?:オープン|呼び出し))$'}}}},
   'rpgmaker::rj01234887':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{special:{voiced:true},plugins:{skipCommonEventNames:'^(?:补魔结算.*|(?:.*-)?睡到第二天)$',meVoiceMatch:'^(?:(?:0[2-9]|1[0-7])_[A-Za-z0-9_]+|(?:Bad|Good|Nomal)_ending|Ouji_[AB])_[0-9]+[A-Za-z]?(?:[_-][A-Za-z0-9]+)?$'}}}},
   'rpgmaker::rj01271506': {extends:'rpgmaker',resourceRoots:['dlc/dlc_10000','.'],resourceRootsForce:true,ruleOverrides:{'rpgmaker-json':{extraDirs:['dlc/dlc_10000'],plugins:{memoryReplay:true,trnVoice:{enabled:true}},skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{preferMapCallers:true,imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
   'rpgmaker::rj01646655': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'},special:{imageMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'}}}},
@@ -5233,14 +5240,16 @@ async function detectRpgMaker(scope) {
     const prefix = packed.root ? packed.root + '/' : ''
     const system = JSON.parse((await packed.read(prefix + 'data/System.json')).toString('utf8').replace(/^\uFEFF/, ''))
     const common = JSON.parse((await packed.read(prefix + 'data/CommonEvents.json')).toString('utf8').replace(/^\uFEFF/, ''))
-    const entry = resolveLayout('rpgmaker', scope.layouts, [])
+    const family=resolveLayout('rpgmaker',scope.layouts,[]),profile=(family.profiles||[]).find(p=>new RegExp(p.match,'i').test(scope.media+'/'+system.gameTitle))
+    const packedId=scope.gameId||profile?.id||'rpgmaker::'+path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g,'')
+    const entry = resolveLayout(packedId, scope.layouts, [])
     loc = { base: packed.root, entry }
     const config = await buildConfig(scope.media, entry, packed.root)
     config.adapterOptions['rpgmaker-json'].packedExe = packed.exe
     config.scriptCount = common.filter(e => e?.list?.some(c => c.code === 401)).length
     const found = makeFound(scope, entry, loc, config, {count: async () => config.scriptCount})
     found.gameTitle = system.gameTitle
-    found.id = scope.gameId || 'rpgmaker::' + path.basename(scope.media).toLowerCase().replace(/[^a-z0-9]+/g, '')
+    found.id = packedId
     scope.logs.push(`RPG Maker 封装：${packed.exe}；${system.gameTitle}；${packed.files.size}个索引文件；事件缓存到应用cache，媒体按请求读取；原目录只读`)
     return found
   }
@@ -5260,7 +5269,7 @@ async function detectRpgMaker(scope) {
   scope.logs.push('RPG Maker: ' + system.gameTitle + '；公共事件槽位 ' + (common.length - 1) + '；原始媒体按请求解密到 cache，不全量解包')
   for (const line of loc.entry.notes) scope.logs.push(line)
   const found = makeFound(scope, loc.entry, loc, config)
-  found.gameTitle = system.gameTitle
+  found.gameTitle = id.toLowerCase()==='rpgmaker::rj01007726'&&/^\{.*\}$/.test(system.gameTitle)?'苍蓝魔导士露娜 ～天才魔导士与传奇魔导士～':system.gameTitle
   found.id = id
   return found
 }

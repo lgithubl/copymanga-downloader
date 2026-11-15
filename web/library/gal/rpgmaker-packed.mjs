@@ -1,4 +1,4 @@
-import {mkdir,writeFile,rename,stat,realpath} from 'node:fs/promises'
+import {mkdir,writeFile,rename,stat,realpath,readdir} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import path from 'node:path'
 import {findPackedRpg} from '../../../scripts/tag-scripts/gal-layout/evb.mjs'
@@ -22,7 +22,11 @@ export async function packedRpgView(source,exe,cacheDir){
   }
   await mkdir(root,{recursive:true})
   const real=await realpath(root),find=rels=>{for(const rel of rels){const hit=index.files.get(rel.toLowerCase());if(hit)return hit.rel}return''}
-  return {root:real,files:[...index.files.values()].map(e=>e.rel),find,materialize,index}
+  const files=[...index.files.values()].map(e=>e.rel)
+  const walk=async(rel,depth=0)=>{if(depth>10||files.length>400000)throw Error('Packed RPG external index exceeds limit');for(const e of await readdir(path.join(source,rel),{withFileTypes:true}).catch(()=>[])){const next=rel+'/'+e.name;if(e.isDirectory())await walk(next,depth+1);else if(e.isFile())files.push(next)}}
+  for(const name of ['img','audio','Audio','Assets','assets','locales'])await walk((index.root?index.root+'/':'')+name)
+  return {root:real,source:await realpath(source),files:[...new Set(files)],find,materialize,index}
+
  })()
  views.set(root,pending);pending.catch(()=>views.delete(root));if(views.size>20)views.delete(views.keys().next().value)
  return pending

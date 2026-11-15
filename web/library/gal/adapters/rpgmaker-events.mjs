@@ -1,3 +1,5 @@
+import {koakumaCommands} from './rpgmaker-koakuma.mjs'
+import {loopAnimationCommands} from './rpgmaker-loop-animation.mjs'
 import {rpgLive2dCommands} from './rpgmaker-live2d.mjs'
 import {memoryTargets} from './rpgmaker-memory.mjs'
 import {skitCommands} from './rpgmaker-skit.mjs'
@@ -23,7 +25,7 @@ export function compileRpgEvents(list, ctx, meta) {
   const seVoiceMatch=safeRegex(o.plugins.seVoiceMatch),meVoiceMatch=safeRegex(o.plugins.meVoiceMatch),skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)
   const thumbnailMatch = safeRegex(o.pictures.thumbnailMatch), thumbnailSkip = safeRegex(o.pictures.thumbnailSkip)
   const standingImages = new Set([...(ctx.standing?.values() || [])].map(item => String(item.imageName || '').replace(/\.png$/i, '').toLowerCase()))
-  let pending = [], serial = 0, standingHold = false, bgsLine = 1, dynamicText = null
+  let pending = [], serial = 0, standingHold = false, standingEnabled = true, bgsLine = 1, dynamicText = null
   const bindings = [], logStyles = new Map(pluginData(ctx,'LogDisplayPlugin','logSettings').map(x=>[x.name,x])), imageSprites = new Map(pluginData(ctx,'VariableSpriteDisplay','imageSprites').map(x=>[x.displayName,x])), variableGroups = new Map(pluginData(ctx,'VariableSpriteDisplay','variableGroups').map(x=>[x.name,x]))
   const flush = () => { if (pending.length) { steps.push({ index: steps.length, commands: pending }); pending = [] } }
   const when = () => guards.flatMap(g => g.conditions || [])
@@ -82,7 +84,7 @@ export function compileRpgEvents(list, ctx, meta) {
     return `${folder}/${clean.replace(new RegExp(`\\.${ext}$`, 'i'), '')}.${ext}`
   }
   const textParts = text => {
-    let value = String(text).replace(/\\N\[(\d+)\]/gi, (_, id) => ctx.actors?.[Number(id)]?.name || `Actor ${id}`)
+    let value = (ctx.localize?ctx.localize(text):String(text)).replace(/\\N\[(\d+)\]/gi, (_, id) => ctx.actors?.[Number(id)]?.name || `Actor ${id}`)
     if(ctx.plugins?.some(p=>/(?:^|\/)i18n\/i18n$/.test(p.name)))value=value.replace(/\\TRN\[\d+\]/gi,'').replace(/\\n(?![<\[])/g,'\n')
     value = value.replace(/\\(?:C|I|FS|PX|PY|OW|OC)\[[^\]]*\]/gi, '').replace(/\\[.!|><^{}$]/g, '').replace(/\\G\b/g, ctx.system?.currencyUnit || '')
     const parts = []; let at = 0
@@ -121,6 +123,7 @@ export function compileRpgEvents(list, ctx, meta) {
   }
   const standing = text => {
     if (!o.plugins.standingPicture) return text
+    if (!standingEnabled) return String(text).replace(/\\(?:F[1-8]?|F{2,4}|M[1-8]?|M{2,4}|FH|AA)\[[^\]]*\]/gi, '')
     text = String(text).replace(/\\\\/g, '\\')
     if (!standingHold) for (let n = 1; n <= 8; n++) emit({ op: 'overlayOff', slot: `rpg-standing-${n}` })
     const matches = [...text.matchAll(/\\F([1-8]?|F{1,3})\[([^\]]*)\]/gi)]
@@ -239,9 +242,25 @@ export function compileRpgEvents(list, ctx, meta) {
     }
     raw(`plugin:${command || 'empty'}`, text)
   }
+  const koakuma=koakumaCommands({audio,emit,raw})
+  const loopAnimation=loopAnimationCommands(ctx,{emit,raw,resource,variable,stage})
   const mzPlugin = (name, action, args, depth) => {
     name=String(name).split('/').at(-1)
     if(o.plugins.structured===false){raw(`plugin:${name}`,{action,args});return}
+    if(koakuma(name,action,args))return
+    if(name==='LL_LoopAnimation'&&loopAnimation(action,args))return
+    if(name==='MIP_MapBattlebacks_MZ'){
+      if(action==='SetBattlebacks'){
+        for(let n=1;n<=2;n++){const key='bb'+n,name=args[key],scale=args[key+'ScaleEnabled']==='true'?Number(args[key+'Scale']||1):1;emit(name?{op:'overlay',slot:'rpg-mip-battleback-'+n,src:resource('img/battlebacks'+n,name),kind:'bg',stage,fit:args[key+'ScaleEnabled']==='true'?'none':'cover',anchor:[.5,.5],x:0,y:Number(args[key+'YOffset']||0),scaleX:scale,scaleY:scale,z:-1000+n}:{op:'overlayOff',slot:'rpg-mip-battleback-'+n})}return
+      }
+      if(['Disable','Clear'].includes(action)){for(let n=1;n<=2;n++)emit({op:'overlayOff',slot:'rpg-mip-battleback-'+n});return}
+    }
+    if(name==='MIP_LoopRangeBgm'&&action==='playLoopBgm'){audio('bgm',args);if(Number(args.loopStart)||Number(args.loopEnd))raw('bgm-custom-loop-range',args);return}
+    if(name==='MIP_MessageLog'&&action==='PlayVoice'){audio('voice',{...args,name:args.voiceName,folder:'audio/vo'});return}
+    if(name==='MIP_StandingPicture'&&o.plugins.standingPicture){
+      if(action==='processChar'){standing(args.text||'');return}
+      if(action==='setEnabled'){standingEnabled=args.enabled!==false&&args.enabled!=='false';if(!standingEnabled)for(let n=1;n<=8;n++)emit({op:'overlayOff',slot:`rpg-standing-${n}`});return}
+    }
     if(name==='RX_T_CallEvent_in_Map'&&action==='callev'){callMapEvent(Number(args.eventID),depth);return}
     if(name==='TemplateEvent'&&['CALL_ORIGIN_EVENT','CALL_MAP_EVENT'].includes(action)){
       const eventKey=`${mapId}:${activeEventId}`,map=ctx.maps?.get(`${o.root?o.root+'/':''}data/Map${String(mapId).padStart(3,'0')}.json`)
@@ -274,7 +293,7 @@ export function compileRpgEvents(list, ctx, meta) {
       if(action==='CHANGE_LINE'){bgsLine=Number(args.line??Object.values(args)[0])||1;return}
       if(action==='ALL_STOP'){emit({op:'bgvoiceOff',prefix:'rpg-bgs-'});return}
     }
-    if(name==='LL_GalgeChoiceWindow'&&action==='showChoice'){
+    if(['LL_GalgeChoiceWindow','MIP_GalgeChoiceWindow'].includes(name)&&action==='showChoice'){
       if(args.messageText){emit({op:'ui',visible:true});emit({op:'text',segments:textParts(args.messageText)});stats.text++;flush()}
       const choices=structValue(args.choices||'[]');if(!Array.isArray(choices)){raw('plugin-choice-invalid',args);return}
       const options=choices.slice(0,128).map((x,i)=>({value:i+1,resultValue:Number(x.resultNumber)||0,segments:textParts(x.label||''),...(Number(x.switchId)?{when:[{var:variable(x.switchId,'s'),op:'===',value:1}]}:{})}))
@@ -389,7 +408,7 @@ export function compileRpgEvents(list, ctx, meta) {
         while (commands[i + 1]?.code === 401) text.push(String(commands[++i].parameters?.[0] || ''))
         emit({op:'ui',visible:true})
         const nativeText=text.join('\n');if(o.plugins.trnVoice.enabled){const ids=[...nativeText.matchAll(/\\TRN\[(\d+)\]/gi)].map(m=>Number(m[1])).filter(id=>ctx.trnVoiceIds?.has(id));if(ids.length)audio('voice',{name:String(ids[0]),folder:o.plugins.trnVoice.folder,volume:100})}
-        let body = standing(nativeText), name = String(p[4] || '')
+        let body = standing(ctx.localize?ctx.localize(nativeText):nativeText), name = ctx.localize?ctx.localize(p[4]||''):String(p[4] || '')
         body = body.replace(/\\n<([^>]+)>/gi, (_, who) => { name = who; return '' })
         if(ctx.skit?.singleLayer){
           if(name)skit('speaker',{name})

@@ -344,6 +344,7 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
       const ax = Array.isArray(spec.anchor) ? Math.max(0, Math.min(1, num(spec.anchor[0], 0.5))) : 0.5
       const ay = Array.isArray(spec.anchor) ? Math.max(0, Math.min(1, num(spec.anchor[1], 0.5))) : 0.5
       const left = geo.cx + k * num(spec.x) - w * (spec.flipX ? 1 - ax : ax), top = geo.cy + k * num(spec.y) - h * ay
+      if(Number.isFinite(spec.rotation)&&spec.rotation){const px=geo.cx+k*num(spec.x),py=geo.cy+k*num(spec.y);ctx.translate(px,py);ctx.rotate(spec.rotation*Math.PI/180);ctx.translate(-px,-py)}
       if (spec.flipX) { ctx.translate(left * 2 + w, 0); ctx.scale(-1, 1) }
       const bitmap = tintImage(img, spec.tint)
       if(crop)ctx.drawImage(bitmap,...crop,left,top,w,h)

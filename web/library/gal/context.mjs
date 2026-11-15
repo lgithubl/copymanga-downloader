@@ -68,7 +68,7 @@ function compileSkip(config) {
 const clampInt = (value, min, max, fallback) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Math.max(min, Math.min(max, Math.floor(Number(value)))) : fallback)
 
 // adapter：适配器对象；返回 ctx（适配器没有 prepare 就返回 null）
-export async function loadAdapterContext({ adapter, mediaDir, config, sourceFiles = [] }) {
+export async function loadAdapterContext({ adapter, mediaDir, config, sourceFiles = [], assetDir = mediaDir }) {
   if (typeof adapter?.prepare !== 'function') return null
   const options = config.adapterOptions?.[adapter.id] || {}
   const fileRels = cleanRels(adapter.contextFiles?.(options))
@@ -79,7 +79,7 @@ export async function loadAdapterContext({ adapter, mediaDir, config, sourceFile
   const resDir = config.containers?.enabled && config.containers.mode !== 'files' ? `${config.containers.dir}/res` : ''
   const virt = resDir ? await virtualFiles({ mediaDir, config }) : { files: [], sig: '' }
   const isVirtualDir = (rel) => Boolean(resDir) && (rel === resDir || rel.startsWith(`${resDir}/`))
-  const key = `${mediaDir}|${adapter.id}|${JSON.stringify(options)}|${config.resourceRoots.join(',')}|${JSON.stringify([skip.map((re) => re.source), limits, config.resourceResolve || null])}`
+  const key = `${mediaDir}|${adapter.id}|${assetDir}|${JSON.stringify(options)}|${config.resourceRoots.join(',')}|${JSON.stringify([skip.map((re) => re.source), limits, config.resourceResolve || null])}`
   const parts = []
   for (const rel of fileRels) {
     try {
@@ -163,7 +163,7 @@ export async function loadAdapterContext({ adapter, mediaDir, config, sourceFile
     }
   }
   if (sampleTruncated) console.warn(`[gal] ${adapter.id}：${mediaDir} 的脚本抽样超过上限 ${sampleLimit} 个，只读了前 ${sampleLimit} 个（列表 / 标题可能不全）`)
-  const ctx = await adapter.prepare({ options, resourceResolve: config.resourceResolve, texts, files, toResourcePath, truncated: Boolean(files.truncated), sampleTruncated, mediaDir })
+  const ctx = await adapter.prepare({ options, resourceResolve: config.resourceResolve, texts, files, toResourcePath, truncated: Boolean(files.truncated), sampleTruncated, mediaDir, assetDir })
   if (cache.size > 200) cache.clear()
   const stats = { adapter: adapter.id, builtAt: new Date().toISOString(), files: files.length, truncated: Boolean(files.truncated), sampleTruncated, sampleLimit, limit: walkLimit, ms: Date.now() - startedAt, dirs: dirRels }
   cache.set(key, { fileKey, builtAt: Date.now(), ctx, stats })
