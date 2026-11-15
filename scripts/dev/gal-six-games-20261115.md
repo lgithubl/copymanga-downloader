@@ -78,3 +78,24 @@
 - 导出协议版本升为 UNITY_NATIVE_VERSION=5，已有导出自动归档到 arc/cache/script-backups 后重建，无需删除游戏文件。导入配置不变；旧 RPG Maker 的地图路径不变。本项只覆盖静态地图背景，Unite UUID 角色小人/行走素材和完整交互游戏不因此算已支持。
 - Naninovel sharedassets0 的22个 AudioClip 名称已全部核对，均为 BGM/SE/UI，并非漏掉的语音库。其余 sharedassets1..3 无 AudioClip；原始开场第7、8句存在真实 Voice ID 且浏览器播放通过。不能据此把所有无声场景判为错误或正常，需对照用户最近阅读位置。
 - 采集脚本2.16增加每个已匹配游戏的阅读进度 JSON（只读，单文件2MiB/总24MiB限制，沿用敏感键脱敏），并同时采集六作实际元数据，后续可精确定位用户打开的节点。默认请求改为各作的小型标记文件，避免无关大媒体采集。
+
+
+## 用户实际阅读位置复核（采集2.16）
+
+- RJ01610188 实际阅读的是 `0117_Mob_SaintTarina1`（59条 PrintText，0条可匹配 Voice）和 `0211_Mob_Rabbipyon2`（56条 PrintText，0条可匹配 Voice）。原始目录、Addressables、Resources 和共享资源的 AudioClip 已交叉核对；这两段不是解析器漏播了已有的逐句配音。
+- RJ01687472 实际阅读的是 `オーク凌辱` 和 `ミラ輪姦`；实际资源根是合法的空字符串根，decoder=celltalk，排除了导入根配错。
+- `オーク凌辱` 第一帧应有 CG。此前 CG pose 根（path=''、part=当前pose）也被套上衣服/defaultparts过滤；该根 Sprite 是必须保留的底层整图。修复保留根图，只对其余服装/差分执行可选部件过滤，增加独立回归测试和真实 API 断言。
+- `ミラ輪姦` 普通立绘与原生世界演出出现在前45个阅读步骤，原始 CGLoad 到第46步才执行；用户停留在约第28步，正好属于未还原的导入演出。该范围仍未支持，不能拿后面 CG 能显示当成前45句已修复。已有「画面切换」中途开始按钮可以定位真实 CG 起点；不删改前面的原始台词，不自动跳过。
+- Unity导出缓存协议跟进到6，强制重建旧脚本并更新缩略图mtime，旧导出归档到游戏arc/cache/script-backups。
+
+
+## Naninovel 人声循环通道修正（用户实际无声场景）
+
+前面的 Voice ID 数量只表示逐句配音，不能推导为没有任何人声。进一步核对两段完整原始命令：SaintTarina1 使用 Bgv_20501/20502/20503，Rabbipyon2 使用 Bgv_20404，并与 Bgs 环境声同时循环。旧解析把所有 Loop PlaySfx 放入同一个 bgse 槽，后播放的循环覆盖前者；且 StopSfx 忽略具体 SfxPath，总是清空该槽。这是实际漏人声的原因。
+
+现按原始资源路径分配 `nani-sfx:<path>` 独立槽；BGV 使用背景人声音量，其他循环使用背景音效音量；保留 Loop/Volume 与每次播放token。指定路径的 StopSfx 只停止该槽，无路径才停止该脚本的全部SFX循环，BGM与逐句Voice不受影响。增加真实两段API状态断言和独立音轨/指定停止的回归，继续采集原始人声/环境音资源验证真正的浏览器并行播放。
+
+
+最终回归：`オーク凌辱` 全部当前/预载CG部件在真实Chrome中加载，原生CG底图＋其余部件共7层、音乐和语音播放，无资源错误；旧 `ゴブリン凌辱` 增加必须底图后共8层，同样通过。`ミラ輪姦` 第46步支持的CG在Chrome缩略图组件实际绘制，前45步仍明确未覆盖。
+
+Naninovel 对用户两段原始剧情提取当时的真实音频状态做专门浏览器音频检查（不把该音频检查冒充两段全部CG也已验证）：两段均有原始BGM、Bgv、Bgs三路实际播放。SaintTarina的无路径StopSfx同时停止人声和环境音；Rabbipyon的指定Bgs停止后环境音暂停、人声继续播放。均无资源/音频错误。测试产物保存在 `browser-verified/nani-*-audio-verification.json`。

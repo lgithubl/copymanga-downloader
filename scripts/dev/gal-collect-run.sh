@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="2.16"
+VERSION="2.19"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1703,7 +1703,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJyl1EFvgjAUB/Cv0nA2o4VCcbdNlyU77KCnZTGkatFuhZq2LDGG775uYjbFit1uwB/6fjSvbxc889XagKlRUojgFrzugg01a3sVLKmh4XSrDStv3rSsggEItKzVgt1vDdP2FTJEiX0oi0IzY++hvZkfZxUt2ddieb6hXOUlW3IaFlwwHXbWb2b2g8kTRJhghKNjzSNXYsIqmY+/P1sovjG8Wt1pzcq54Ew7jDiBxGVsswvGK6s2A+CSCvbBBOy6siROMxfsEF4ta6v0OdAZB4kgdjra0M+Beh3RmV7C2LkdbeaniHoVcVcRZbaWi3EI/RxxrwN3HQlMnYw281Pgn9OVIoiy7OR02cXCF6lq293U94glGDuPWJtdwnqU/vmHFGaEdCeEHol67j0iouHQOSL2Wc9mX1P2lx0TgnxnbYzT2NkSh/BP0za1bU1Opu2YqnfwIAowZnrBKgN4ZSQYSaVq+3Oy8t3i2HadE7/PLtj/qWlmzSeO3zqv'
+PAIR_MEDIA_PLAN='eJy1lk9v1DAQxb9KtOeq6/F/c4MWIXHg0B4QQtVqbI/bQDap4qxQVe13J0VLl7byksLmFufF4ze/WKN3v/hUX98M1eXQd02zeFN9vV/c4nAzPi0iDri8vMsDrU+/5a5dnFSL3G36QO/uBsrjJ8aBGl92KWUaxjUbF/6p1uKaHoqtVrdY96s1xRqXqW4oL1/U316NGy4+MpBGguRP3Xyo++aC2m51/mtb6OvboW6v3+ZMa9/UlAsepWKm5HGnHfA48dRH5xoYWPvM+Vh++aXrN+NO3BUaesL1rtCQl/jwCtuITdfS57qN3Y+s5ZIznTAy5ZzzSjITTYQojFMSWAjKnPpNGxt62TSXxlgLpb738qHWZ7e9PamOQckwy7RxTFDQAXTUFpnjkUOSwjOpi5S01FoDL1Hay7NQmmr7WJQ4F5yBcgEgBPKgLCiFGAJYp2Io3yVnNStfpd/qPIwmmj4SIystCnSaREqJkzcspvFE4TmCSEoUGYEBw60rQdrLs1CaavtIlLxmqIzWhjmfTPKoQwIp0QUPkngqU3IgdfEmPaqzMJpq+kiMAskUgAfpLFFA7UmjCALAMZKYDjAS0snyTNrLs1CaavtIlMgLZgHYOArRJRMMYeQ8kJIWSDAqUhJMq/JMelRnYTTV9D4TaGaNeZlm8lmz8a+OM9wVx8xO+0ucmXLsH97HqACvzYVCaiGLf2cn/lMy1NZI8ywZnmP/vXrfpOqccqB2qOp26Kqzru83Y3Nd+1rEAspDaqcd8P6fbrZX25/posG+'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0

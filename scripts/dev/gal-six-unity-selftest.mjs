@@ -10,6 +10,7 @@ import os from'node:os'
 import{unitySpritePng,unityTexturePng,unityAudio}from'../../web/library/gal/unity-media.mjs'
 import{cellTalkTable}from'../../web/library/gal/unity-celltalk.mjs'
 import{parse as cellParse}from'../../web/library/gal/adapters/celltalk-native.mjs'
+import{parse as naniParse}from'../../web/library/gal/adapters/naninovel-script.mjs'
 import{utageExpression}from'../../web/library/gal/utage-expression.mjs'
 import{stateAt,activePath}from'../../web/static/gal-engine.js'
 import{pickRenderStep}from'../../web/static/gal-thumb-pick.js'
@@ -30,6 +31,14 @@ test('CellTalk uses native ID ranges and separate save-condition branches',()=>{
 })
 test('Utage expressions cannot execute JavaScript; Live2D-only scenes have thumbnail candidates',()=>{
  assert.equal(utageExpression('a >= 2 && a < 4',{a:3}),true);assert.throws(()=>utageExpression('process.exit()'),/./);let scene={steps:[{commands:[{op:'live2d',slot:'x',src:'A.model3.json',stage:[1280,720],x:640,y:360}]}]};assert.equal(pickRenderStep(scene).score,30)
+})
+test('CellTalk pose root is the mandatory base image, independent of optional clothes',()=>{
+ const call=(method,args)=>({op:'call',method,args}),data={defaultparts:['hair'],saveinfo:{spose:'A',clothes:[]},subinfo:[],faceGroups:{},poses:{A:[{part:'A',path:'',src:'base.png'},{part:'hair',path:'hair',src:'hair.png'},{part:'extra',path:'extra',src:'extra.png'}]}},scene=cellParse(JSON.stringify({format:'celltalk-script/1',type:'fixture',source:'level:1',fields:{},rows:[{ID:'Start','日本語':'first'}],profile:{commands:[call('ReplayScene.CGLoad',[{},'CGB/example','','']),call('EventEngine.Text',[{},'ID:Start',64])]}}),{media:{audio:{},cg:{'CGB/example':data}}})
+ assert.deepEqual(stateAt(scene,0).overlays.map(o=>o.src),['base.png','hair.png']);assert.equal(scene.stats.messages,1)
+})
+test('Naninovel human and environment loops coexist; named stop preserves the other track',()=>{
+ const text=id=>({type:'PrintText',data:{Text:{parts:[{id,text:id}]}},source:id}),scene=naniParse(JSON.stringify({format:'naninovel-script/1',name:'fixture',texts:{},commands:[{type:'PlaySfx',data:{SfxPath:'Bgv_human',Loop:1},source:0},{type:'PlaySfx',data:{SfxPath:'Bgs_room',Loop:1},source:1},text('first'),{type:'StopSfx',data:{SfxPath:'Bgs_room'},source:3},text('second'),{type:'StopSfx',data:{},source:5},text('third')]}),{assets:{'Naninovel/Audio/Bgv_human':'human.ogg','Naninovel/Audio/Bgs_room':'room.ogg'},configs:{CameraConfiguration:{ReferenceResolution:{x:1920,y:1080},ReferencePPU:100},CharactersConfiguration:{Metadata:{ids:[],metas:[]},DefaultMetadata:{}},AudioConfiguration:{EnableAutoVoicing:true}}})
+ assert.deepEqual(Object.keys(stateAt(scene,0).bgvoices),['nani-sfx:Bgv_human','nani-sfx:Bgs_room']);assert.equal(stateAt(scene,0).bgvoices['nani-sfx:Bgs_room'].kind,'bgse');assert.equal(stateAt(scene,1).bgvoices['nani-sfx:Bgv_human'].src,'human.ogg');assert.equal(Object.keys(stateAt(scene,1).bgvoices).length,1);assert.deepEqual(stateAt(scene,2).bgvoices,{});assert.equal(scene.stats.backgroundVoices,1)
 })
 
 const base=path.resolve(process.env.GAL_SIX_FIXTURES||'.cache/six-games-20261115/integration'),cases=[
@@ -52,6 +61,18 @@ for(const[name,adapter,id,section,step]of cases)test('captured '+name+': import 
   assert.ok(map?.nativeImage,'native train event retains its actual Tilemap');assert.equal(map.tileSize,96)
   const image=await handler.getResource(item.itemId,map.nativeImage),sharp=requireWeb('sharp'),metadata=await sharp(image.file).metadata(),pixels=await sharp(image.file).stats();assert.equal(metadata.width,1344);assert.equal(metadata.height,672);assert.ok(pixels.channels.some(c=>c.stdev>20),'native Tilemap must contain visible original pixels')
   const output=path.resolve('.cache/six-games-20261115/verified');await mkdir(output,{recursive:true});await writeFile(path.join(output,'unite-map.json'),JSON.stringify({name:'unite-map',source,section:'s:data/Map021.unite::event-1-1',step:0,reader:mapReader,config:layout.itemPatch.gal.config},null,2))
+ }
+ if(name==='cell'){
+  const reader=await handler.getReaderContent(item.itemId,'main',{sectionId:'s:オーク凌辱.cell'}),baseImage=reader.scene.steps[0].commands.find(c=>c.op==='overlay'&&c.path==='')
+  assert.ok(baseImage,'Orc CG root base image must not be filtered as an optional outfit')
+  const mira=await handler.getReaderContent(item.itemId,'main',{sectionId:'s:ミラ輪姦.cell'});assert.ok(mira.node.markers.some(m=>m.step===45),'native Mira CG begins on line46 and must be reachable by its marker')
+  const miraOutput=path.resolve('.cache/six-games-20261115/verified');await mkdir(miraOutput,{recursive:true});await writeFile(path.join(miraOutput,'cell-mira.json'),JSON.stringify({name:'cell-mira',source,step:45,reader:mira,config:layout.itemPatch.gal.config},null,2))
+  const output=path.resolve('.cache/six-games-20261115/verified');await mkdir(output,{recursive:true});await writeFile(path.join(output,'cell-orc.json'),JSON.stringify({name:'cell-orc',source,section:'s:オーク凌辱.cell',step:0,reader,config:layout.itemPatch.gal.config},null,2))
+ }
+ if(name==='nani')for(const [script,label]of[['0117_Mob_SaintTarina1','tarina'],['0211_Mob_Rabbipyon2','rabbipyon']]){
+  const reader=await handler.getReaderContent(item.itemId,'main',{sectionId:'s:'+script+'.nani'}),step=reader.scene.steps.findIndex((_,i)=>{const tracks=Object.values(stateAt(reader.scene,i).bgvoices);return tracks.some(t=>t.kind==='bgvoice')&&tracks.some(t=>t.kind==='bgse')})
+  assert.equal(reader.scene.stats.voices,0,'these native scripts have no line-by-line Voice IDs');assert.ok(step>=0,'actual human and environment loops must coexist')
+  const output=path.resolve('.cache/six-games-20261115/verified');await mkdir(output,{recursive:true});await writeFile(path.join(output,'nani-'+label+'-audio.json'),JSON.stringify({name:'nani-'+label+'-audio',source,section:'s:'+script+'.nani',step,reader,config:layout.itemPatch.gal.config},null,2))
  }
  const output=path.resolve('.cache/six-games-20261115/verified');await mkdir(output,{recursive:true});await writeFile(path.join(output,name+'.json'),JSON.stringify({name,source,section,step,reader,config:layout.itemPatch.gal.config},null,2));console.log('Verified',name,reader.scene.stats.messages||reader.scene.stats.text,'messages; original resource',resource.contentType,sound.contentType)
 })

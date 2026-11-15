@@ -19,7 +19,9 @@ export function parse(text,ctx){
    if(!cg)return
    const data=ctx.media.cg[cg.path];if(!data)return
    push({op:'overlayOff',prefix:'celltalk:'})
-   for(const s of data.poses[cg.pose]||[]){if(!cg.parts.includes(s.part)||s.active===false)continue;let image=s;if(s.faceGroup){const exact=data.faceGroups[s.faceGroup]?.[cg.emotion];if(exact)image={...s,...exact}}
+   // Native CG keeps the selected pose root (body/background) active. Only
+   // its child clothing/difference layers are selected by the parts list.
+   for(const s of data.poses[cg.pose]||[]){const base=s.path===''&&s.part===cg.pose;if((!base&&!cg.parts.includes(s.part))||s.active===false)continue;let image=s;if(s.faceGroup){const exact=data.faceGroups[s.faceGroup]?.[cg.emotion];if(exact)image={...s,...exact}}
     push({op:'overlay',...image,slot:'celltalk:'+s.path,stage:[1920,1080],fit:'none',cg:true})}
   }
   const emotion=(value,source)=>{if(!value||!cg)return;const data=ctx.media.cg[cg.path];for(const item of value.split(',')){if(item.startsWith('On')){const part=item.slice(2);if(!cg.parts.includes(part))cg.parts.push(part)}else if(item.startsWith('Off'))cg.parts=cg.parts.filter(p=>p!==item.slice(3));else if(Object.values(data?.faceGroups||{}).some(g=>g[item]))cg.emotion=item;else raw(source,'CG animation/emotion:'+item)}render()}

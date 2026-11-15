@@ -47,10 +47,15 @@ export function parse(text,ctx,meta={}){
    for(const[k,s]of actors)if((type==='HideAllCharacters'?k.startsWith('character:'):ids.includes(k.slice(k.indexOf(':')+1)))){s.visible=false;push({op:'overlayOff',slot:'nani:'+k})}continue
   }
   if(type==='PlayBgm'||type==='PlaySfx'||type==='PlaySfxFast'){
-   const key=v.BgmPath||v.SfxPath,src=find('Naninovel/Audio/'+key,c);if(src)push({op:type==='PlayBgm'?'bgm':v.Loop?'bgse':'se',src,volume:v.Volume??1,loop:!!v.Loop});continue
+   const key=v.BgmPath||v.SfxPath,src=find('Naninovel/Audio/'+key,c)
+   if(src){
+    if(type==='PlayBgm')push({op:'bgm',src,volume:v.Volume??1,loop:!!v.Loop})
+    else if(v.Loop||/^Bgv_/i.test(key)){const human=/^Bgv_/i.test(key);push({op:'bgvoice',slot:'nani-sfx:'+key,src,kind:human?'bgvoice':'bgse',volume:v.Volume??1,loop:!!v.Loop,token:d.name+':'+c.source});if(human)stats.backgroundVoices=(stats.backgroundVoices||0)+1}
+    else push({op:'se',src,volume:v.Volume??1,loop:false})
+   }continue
   }
   if(type==='StopBgm'){push({op:'bgmStop'});continue}
-  if(type==='StopSfx'){push({op:'bgseStop'});continue}
+  if(type==='StopSfx'){push(v.SfxPath?{op:'bgvoiceOff',slot:'nani-sfx:'+v.SfxPath}:{op:'bgvoiceOff',prefix:'nani-sfx:'});continue}
   if(type==='Wait'){const seconds=Number(v.WaitMode);if(Number.isFinite(seconds))push({op:'wait',seconds});else raw(c);continue}
   if(type==='HidePrinter'){push({op:'ui',visible:false});continue}
   if(type==='FadeInCommand'){push({op:'fade',to:'clear',seconds:v.time??0});continue}
