@@ -22,9 +22,9 @@ export const DEFAULT_OPTIONS = {
   skit: { expressionPoses: {}, wrapperScripts: false },
   maps: { enabled: true, tileSize: 48, player: true, follow: 'event', maxBytes: 134217728 },
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
-  special: { enabled: true, label: '特殊场景', minText: 4, deduplicateCalls: true, preferMapCallers: false, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
+  special: { enabled: true, label: '特殊场景', voiced: false, minText: 4, deduplicateCalls: true, preferMapCallers: false, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
   pictures: { folder: 'img/pictures', cgMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
-  plugins: { memoryReplay: false, skipCommonEventNames: '', simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
+  plugins: { memoryReplay: false, skipCommonEventNames: '', simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', meVoiceMatch: '', trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
 }
 export const optionsOf = createOptionsReader(DEFAULT_OPTIONS)
 const join = (...s) => s.filter(Boolean).join('/')
@@ -55,6 +55,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   if (truncated) ctx.warnings.push('资源索引达到上限，部分资源未收录')
   if (get('js/plugins.js') && !plugins.length) ctx.warnings.push('plugins.js 不是可解析的插件 JSON 配置；没有执行游戏 JS')
   ctx.skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)
+  ctx.meVoiceMatch=safeRegex(o.plugins.meVoiceMatch)
   ctx.standing = new Map()
   const voice = enabled.find(p => p.name === 'SimpleVoice')
   ctx.voiceFolder = 'audio/' + String(voice?.parameters?.FolderName || voice?.parameters?.['フォルダ名'] || (Boolean(system.advanced) ? 'se' : 'voice')).replace(/^\/+|\/+$/g, '')
@@ -97,14 +98,14 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
 
 function evidence(list, ctx, seen = new Set(), mapId = 0) {
   const pluginEvidence = eventEvidence(list)
-  let text = pluginEvidence.text; const pictures = [...pluginEvidence.pictures], calls = new Set(pluginEvidence.calls)
-  if (!Array.isArray(list)) return { text, pictures, calls }
+  let text = pluginEvidence.text; const pictures = [...pluginEvidence.pictures], calls = new Set(pluginEvidence.calls), voices = new Set()
+  if (!Array.isArray(list)) return { text, pictures, calls, voices }
   if (ctx.evidenceCache.get(list)?.has(mapId)) return ctx.evidenceCache.get(list).get(mapId)
-  if (ctx.evidenceBusy.has(list)) return { text, pictures, calls }
-  if (seen.size > 32) return { text, pictures, calls }
+  if (ctx.evidenceBusy.has(list)) return { text, pictures, calls, voices }
+  if (seen.size > 32) return { text, pictures, calls, voices }
   ctx.evidenceBusy.add(list)
   let activeMap=mapId
-  const merge=inner=>{text+=inner.text;pictures.push(...inner.pictures);for(const id of inner.calls)calls.add(id)}
+  const merge=inner=>{text+=inner.text;pictures.push(...inner.pictures);for(const id of inner.calls)calls.add(id);for(const src of inner.voices)voices.add(src)}
   for (const c of list || []) {
     if(c.code===201&&c.parameters?.[0]===0){
       activeMap=Number(c.parameters[1]);const key=`autorun:${activeMap}`,target=ctx.maps.get(join(rootOf(ctx.options),'data',`Map${String(activeMap).padStart(3,'0')}.json`))
@@ -113,6 +114,10 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
     }
     const mapCall=mapEventCall(c)
     if(mapCall!==null){const key=`map:${activeMap}:${mapCall}`,target=ctx.maps.get(join(rootOf(ctx.options),'data',`Map${String(activeMap).padStart(3,'0')}.json`))?.events?.find(e=>e?.id===mapCall);if(!seen.has(key))for(const page of target?.pages||[])merge(evidence(page.list,ctx,new Set([...seen,key]),activeMap))}
+    if(c.code===249&&ctx.meVoiceMatch?.test(String(c.parameters?.[0]?.name||''))){
+      const stem='audio/me/'+c.parameters[0].name
+      if(['.ogg','.rpgmvo'].some(ext=>ctx.files.has(stem+ext)||ctx.files.has(join(rootOf(ctx.options),stem+ext))))voices.add(stem+'.ogg')
+    }
     if (c.code === 401) text++
     if (c.code === 231) pictures.push(String(c.parameters?.[1] || ''))
     if(c.code===284&&c.parameters?.[0])pictures.push('img/parallaxes/'+String(c.parameters[0])+'.png')
@@ -121,16 +126,16 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
       const id = Number(c.parameters?.[0]);if(ctx.skipCommonEvent?.test(String(ctx.common[id]?.name||''))){calls.delete(id);continue} calls.add(id)
       if (seen.has(id)) continue
       const inner = evidence(ctx.common[id]?.list, ctx, new Set([...seen, id]),activeMap)
-      text += inner.text; pictures.push(...inner.pictures); for (const v of inner.calls) calls.add(v)
+      text += inner.text; pictures.push(...inner.pictures); for (const v of inner.calls) calls.add(v); for(const src of inner.voices)voices.add(src)
     }
   }
-  const result = { text, pictures: [...new Set(pictures)], calls }
+  const result = { text, pictures: [...new Set(pictures)], calls, voices }
   ctx.evidenceBusy.delete(list);if(!ctx.evidenceCache.has(list))ctx.evidenceCache.set(list,new Map());ctx.evidenceCache.get(list).set(mapId,result)
   return result
 }
 
 function buildCatalog(ctx) {
-  const o = ctx.options, commonNodes = [], mapNodes = [], specials = new Map(), galleryCalls = new Set(), contextualCalls = new Set()
+  const o = ctx.options, commonNodes = [], mapNodes = [], specials = new Map(), voiceByScript = new Map(), galleryCalls = new Set(), contextualCalls = new Set()
   const nameMatch = safeRegex(o.special.nameMatch), mapMatch = safeRegex(o.special.mapNameMatch), imageMatch = safeRegex(o.special.imageMatch), skip = safeRegex(o.catalog.skipNames)
   const specialSkip = safeRegex(o.special.skipNameMatch)
   const special = (name, ev) => !specialSkip?.test(name) && Boolean(nameMatch?.test(name) || ev.pictures.some(p => imageMatch?.test(p) || imageMatch?.test(`img/pictures/${p}`)))
@@ -146,7 +151,7 @@ function buildCatalog(ctx) {
       }
       if (ev.text < o.catalog.minText || skip?.test(titleEvent)) continue
       const node = { id: `map-${id}-event-${event.id}-page-${pi + 1}`, title: `${titleEvent}${event.pages.length > 1 ? ` · 页${pi + 1}` : ''}`, subtitle: `${ev.text} 文本行`, script: `${rel}::event-${event.id}-${pi + 1}` }
-      children.push(node)
+      children.push(node); voiceByScript.set(node.script,ev.voices)
       if (ev.text >= o.special.minText && (mapMatch?.test(title) || special(titleEvent, ev))) {
         const directPictures=page.list.some(c=>c.code===231)
         const wrapper = !directPictures && !page.list.some(c=>mapEventCall(c)!==null) && o.special.deduplicateCalls && o.catalog.common && page.list.filter(c => c.code === 401).length <= 3 && [...ev.calls].some(id => {
@@ -164,11 +169,13 @@ function buildCatalog(ctx) {
     const ev = evidence(event.list, ctx, new Set([event.id])), name = event.name || `Common ${event.id}`
     if (ev.text < o.catalog.minText || skip?.test(name)) continue
     const node = { id: `common-${event.id}`, title: name, subtitle: `${ev.text} 文本行`, script: `${join(rootOf(o), 'data/CommonEvents.json')}::common-${event.id}` }
-    commonNodes.push(node)
+    commonNodes.push(node); voiceByScript.set(node.script,ev.voices)
     const wrapper = o.special.deduplicateCalls && event.list.filter(c=>c.code===401||c.code===357&&((c.parameters?.[0]==='LogDisplayPlugin'&&['setNewText','addToText'].includes(c.parameters?.[1]))||(c.parameters?.[0]==='LogMessage'&&c.parameters?.[1]==='add'))).length < o.special.minText && [...ev.calls].some(id=>ctx.common[id]&&evidence(ctx.common[id].list,ctx).text>=o.special.minText)
     if (!wrapper && !contextualCalls.has(event.id) && ev.text >= o.special.minText && (galleryCalls.has(event.id) || special(name, ev))) specials.set(node.script, { ...node, id: `special-${node.id}` })
   }
+  const voiced=o.special.enabled&&o.special.voiced?[...specials.values()].filter(n=>voiceByScript.get(n.script)?.size).map(n=>({...n,id:'voiced-'+n.id,subtitle:`${n.subtitle} · ${voiceByScript.get(n.script).size} 个对白配音资源`})) : []
   return { title: ctx.system.gameTitle || 'RPG Maker', children: [
+    ...(voiced.length?[{id:'special-voiced',title:'特殊场景（有配音）',children:voiced}]:[]),
     ...(o.special.enabled && specials.size ? [{ id: 'special', title: o.special.label, children: [...specials.values()] }] : []),
     ...(commonNodes.length ? [{ id: 'common', title: '公共事件', children: commonNodes }] : []),
     ...(mapNodes.length ? [{ id: 'maps', title: '地图事件', children: mapNodes }] : []),

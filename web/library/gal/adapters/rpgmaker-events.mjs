@@ -20,7 +20,7 @@ export function compileRpgEvents(list, ctx, meta) {
   const nativeParty=new Set((Array.isArray(o.party?.members)?o.party.members:ctx.system?.partyMembers||[]).map(Number)),usedParty=new Set()
   const partyVariable=id=>{id=Number(id);const key=`rpg:party:${id}`;usedParty.add(id);if(!initial.has(key))initial.set(key,o.party?.mode==='all'||nativeParty.has(id)?1:0);return key}
   const cgMatch = safeRegex(o.pictures.cgMatch), bgMatch = safeRegex(o.pictures.backgroundMatch)
-  const seVoiceMatch=safeRegex(o.plugins.seVoiceMatch),skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)
+  const seVoiceMatch=safeRegex(o.plugins.seVoiceMatch),meVoiceMatch=safeRegex(o.plugins.meVoiceMatch),skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)
   const thumbnailMatch = safeRegex(o.pictures.thumbnailMatch), thumbnailSkip = safeRegex(o.pictures.thumbnailSkip)
   const standingImages = new Set([...(ctx.standing?.values() || [])].map(item => String(item.imageName || '').replace(/\.png$/i, '').toLowerCase()))
   let pending = [], serial = 0, standingHold = false, bgsLine = 1, dynamicText = null
@@ -91,6 +91,7 @@ export function compileRpgEvents(list, ctx, meta) {
     return parts.length ? parts : [{ text: '' }]
   }
   const audio = (kind, sound) => {
+    if(kind==='me'&&meVoiceMatch?.test(String(sound?.name||''))){kind='voice';sound={...sound,folder:'audio/me'}}
     if(kind==='se'&&seVoiceMatch?.test(String(sound?.name||''))) {kind='voice';sound={...sound,folder:'audio/se'}}
     const folder = kind === 'bgm' ? 'bgm' : kind === 'bgse' ? 'bgs' : kind === 'voice' || kind === 'bgvoice' ? 'voice' : kind === 'me' ? 'me' : 'se'
     const src = resource(sound?.folder || (kind === 'voice' || kind === 'bgvoice' ? ctx.voiceFolder || 'audio/voice' : 'audio/' + folder), sound?.name, 'ogg')
