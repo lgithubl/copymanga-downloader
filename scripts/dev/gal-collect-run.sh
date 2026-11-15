@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="2.19"
+VERSION="2.20"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1703,7 +1703,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJy1lk9v1DAQxb9KtOeq6/F/c4MWIXHg0B4QQtVqbI/bQDap4qxQVe13J0VLl7byksLmFufF4ze/WKN3v/hUX98M1eXQd02zeFN9vV/c4nAzPi0iDri8vMsDrU+/5a5dnFSL3G36QO/uBsrjJ8aBGl92KWUaxjUbF/6p1uKaHoqtVrdY96s1xRqXqW4oL1/U316NGy4+MpBGguRP3Xyo++aC2m51/mtb6OvboW6v3+ZMa9/UlAsepWKm5HGnHfA48dRH5xoYWPvM+Vh++aXrN+NO3BUaesL1rtCQl/jwCtuITdfS57qN3Y+s5ZIznTAy5ZzzSjITTYQojFMSWAjKnPpNGxt62TSXxlgLpb738qHWZ7e9PamOQckwy7RxTFDQAXTUFpnjkUOSwjOpi5S01FoDL1Hay7NQmmr7WJQ4F5yBcgEgBPKgLCiFGAJYp2Io3yVnNStfpd/qPIwmmj4SIystCnSaREqJkzcspvFE4TmCSEoUGYEBw60rQdrLs1CaavtIlLxmqIzWhjmfTPKoQwIp0QUPkngqU3IgdfEmPaqzMJpq+kiMAskUgAfpLFFA7UmjCALAMZKYDjAS0snyTNrLs1CaavtIlMgLZgHYOArRJRMMYeQ8kJIWSDAqUhJMq/JMelRnYTTV9D4TaGaNeZlm8lmz8a+OM9wVx8xO+0ucmXLsH97HqACvzYVCaiGLf2cn/lMy1NZI8ywZnmP/vXrfpOqccqB2qOp26Kqzru83Y3Nd+1rEAspDaqcd8P6fbrZX25/posG+'
+PAIR_MEDIA_PLAN='eJyllM9PgzAUx/8VwtmsLSsUvKkzJh486MkYQ8oorFpa0h+Hxex/t+rcZLNs0wtQvrz3/bwX3nuL73i7sNGD1UqI+Dx6eot7ahf+Ka6ppeBhaSzrJi9Gyfgsio1yes4ul5YZ/wkpUOpfqqYxzPoz9IdqqEnasY9kZdlTrsuO1ZyChgtmwF7+1bMPuL+FCBOMcDKkueFa3DOpytln2Fzz3nLZXhjDukpwZgKMOIUkxLjWRhiPdN2QZwiiPN8h9+nBo9LOR9JT8VOMg/hrbQz/BOttDRnMCdnvvrkSrjq5/UlRBNv/pR1o/zG2P9gxIWjITl3NFajaDizMgnO5VC6ZqLYt92lRlpBkmoeAt/IIc9hudRbtUhkGNNc+9vN6WXzfS4hCiEmCYXDqNupBwIPOA1retaDnc+u0T1AVJZr08lc6//cXWRhvI4/wBbxGeJyxBrBaAal0R0WALUUIZtPgMH2rR5P96no8ZVmzhjphQ50s8hQG+7gW/8o69N5OT04w2dm7M6pfo2vRRDNm5kzaiEuroiultfOjqOSpC2Hqd2SorLU2UtU/aVbPq3d01kPP'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
