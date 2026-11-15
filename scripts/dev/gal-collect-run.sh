@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="2.06"
+VERSION="2.07"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1703,7 +1703,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJy9VE1P3DAQ/StRzojYWX9yo2yFxKEHOFRVhSLHnoBbx17ZTiuE9r/X0IUWVlkWVHqz/TzPb8bz5rb+ZK+uc3WRY3CuPqq+3tYrla/LqjYqq+biJmUYD7+l4OuDqk5hiho+3GRI5QqXmJbDMAwJctmjsumfYl6NcEfWdStlYzeCsaoZrIPUbPGvL0vA+RnChBNM2qdqTm105+BDt7wP09GusvVXxynB2DsLaUYjoYjPadxgOzTu+eqjcoYRFuKZ8kLffAlxKpFqQ5QjqHFDlFOj7o6UN8oFD5+tN+FnYqRppQYqWkGkgB4po1tBBQWKesok0eiwn7xxsJ20YIzMJb3BdiX97oLXB9W/qE+vB5CoN4wNhnKpqBQtl2LB9EJjM8zXp3SYRHMFegDfpUL7Sv7TUQwJzre9kE7c1L/aDK2Us2b4jb1ghn2e/Us74Ry/dqosCFvMdu8D+Ka5wgQn/NlcWar4vfrohmoJSYPPlfU5VCchxqkkF/z+v9v8CFZDGhHu1P2tTjk3b9GWYSnYrEsf4R2Z/ift68v1L73zA+c='
+PAIR_MEDIA_PLAN='eJzNl8uO0zAUhl8lynpofI0ddjBFSCxYzCwQQqPKadw24CaV7QqNRn133AswM42L4yotu/Y48fk//+fE9lP6uZ4vbHJvdatU+jb59pSuhF24X2klrMjuH42Vy9F30zbpTZKadq2n8v2jlcY9wgpIXbCdzYy07j9wf8qXY41Yyu1kk8lK1HqylFUtslmtpMmO5t88uBfuPgFIGIEEvVTzsdbqTjbtZLx7barrla2b+Ttj5LJUtTQejYQC5tN4GDuhMTDrH+U5BJDzV8rd9NnXVq/dm6KvfEqIV/5h7JT8Hqn/MuSAM3a8+uZWrcvey4+Kwrv8+7F/LH9I2mfaCWOwbx1jkmPiU/l7MKqSc84Ie1XJY6F/JB/ULBlLM5WNTerGtsltq/XawbXNgdVqKZYHVmsysQ2JphKqbeSXuqnanyabzgWaiN0DE6HUqFw3lZLHgJA5HZwhHyMEhFOW+ygXUlRS+9KNtsPp5ib57xBdDBQY589Ic0pxLKcVtRqQs4QhnJgiCiDyNlWwlV3phrYyHhFTyAktcH8rOzmHtjKoZB0TBRx4t9BwK6/QlfGI2EUoyosIK6/QldOgkoUUcwL9W12wlV3phrYyHtHFIM/ziK7s5BzayrCSdedPgKn3PBBu5RW6Mh4RA+D2T8gjrLxCV1ZBJYvc+QvvvzTnWdmVbmgr4xFdDDKGI7qyk3NoK4NKFrntHxUUnG/lFboyHhE5I7eX4QgrL96VZhsxYVtJkbvznPdiG2imL+Gwdp6HCSkvttG+hnpZL2BpGCwG1B3cz/3WejNewtRoUHdZ4azofzvx08baahZCy2o/H8QjLffiO742wF2y0IlTDisoAj4As1tUk83bUtXNm3K+HM1MmW4eNr8A3OHTcQ=='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
