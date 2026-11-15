@@ -99,7 +99,7 @@ export function applyExpression(model, expression, params) {
   }
 }
 
-export function createLive2dLayer({ parent, before = null, url, onMissing = () => {}, onUnavailable = () => {} }) {
+export function createLive2dLayer({ parent, before = null, url, onMissing = () => {}, onUnavailable = () => {}, capture = false }) {
   const canvas = document.createElement('canvas')
   canvas.className = 'gal-live2d'
   canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none'
@@ -116,7 +116,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
 
   function init() {
     if (gl || unavailable) return gl
-    const opts = { alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: false }
+    const opts = { alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: Boolean(capture) }
     gl = canvas.getContext('webgl2', opts) || canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts)
     if (!gl) { unavailable = true; onUnavailable(); return null }
     const compile = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s }
@@ -166,7 +166,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       }
       const files = []
       for (const group of Object.values(json.FileReferences?.Motions || {})) for (const m of group) if (m?.File) files.push(m.File)
-      return { model, textures, motions: new Map(), expressions: new Map(), expressionFiles: refs.Expressions || [], cdi, files, dir, mosaic, nameToId: new Map((cdi?.Parameters || []).map((p) => [p.Name, p.Id])) }
+      return { model, textures, groups:refs.Motions||{}, motions: new Map(), expressions: new Map(), expressionFiles: refs.Expressions || [], cdi, files, dir, mosaic, nameToId: new Map((cdi?.Parameters || []).map((p) => [p.Name, p.Id])) }
     })()
     promise.catch(() => models.delete(src))
     models.set(src, promise)
@@ -375,16 +375,24 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
   }
   const kick = () => { if (!raf && !paused && runtime) raf = requestAnimationFrame(loop) }
 
-  const sig = (spec) => (spec ? JSON.stringify([spec.src, spec.motion || '', spec.expression || '', Boolean(spec.loop), spec.variables || null]) : '')
+  function layout(entry,spec){
+    if(Array.isArray(spec?.stage)){
+      const [w,h]=spec.stage,[cw,ch]=[entry.model.canvas.width,entry.model.canvas.height]
+      canvas.style.inset='auto';canvas.style.left=(Number(spec.x??w/2)/w*100)+'%';canvas.style.top=(Number(spec.y??h/2)/h*100)+'%'
+      canvas.style.width=(cw*Math.abs(Number(spec.scaleX??1))/w*100)+'%';canvas.style.height=(ch*Math.abs(Number(spec.scaleY??1))/h*100)+'%';canvas.style.transform='translate(-50%,-50%)';canvas.style.zIndex=String(spec.z??3)
+    }else {canvas.style.inset='0';canvas.style.width=canvas.style.height='100%';canvas.style.transform='';canvas.style.zIndex=''}
+  }
+  const sig = (spec) => (spec ? JSON.stringify([spec.src, spec.motion || '', spec.motionGroup || '', spec.motionIndex||0, spec.motionToken||0, spec.expression || '', Boolean(spec.loop), spec.variables || null]) : '')
   let currentSig = ''
   let showMosaic = false
 
   return {
+    canvas,
     // spec = null → 隐藏并停掉
     async set(spec) {
       if (destroyed) return
       const next = sig(spec)
-      if (next === currentSig) return
+      if (next === currentSig) {if(runtime)layout(runtime.entry,spec);return}
       currentSig = next
       const mine = ++token
       if (!spec || !spec.src) { canvas.hidden = true; runtime = null; if (raf) { cancelAnimationFrame(raf); raf = 0 } return }
@@ -392,7 +400,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       let entry
       try { entry = await loadModel(spec.src) } catch { return }
       if (destroyed || mine !== token) return
-      const file = pickMotionFile(entry.files, spec.motion)
+      const file = spec.motionGroup ? entry.groups[spec.motionGroup]?.[Number(spec.motionIndex)||0]?.File || '' : pickMotionFile(entry.files, spec.motion)
       const motion = await loadMotion(entry, file)
       if (destroyed || mine !== token) return
       let expression = null
@@ -408,6 +416,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       const base = Float32Array.from(entry.model.paramDefault)
       applyVariables(entry.model, entry.nameToId, spec.variables, base)
       runtime = { entry, frame, base, params: Float32Array.from(base), motion, expression, loop: Boolean(spec.loop), t0: 0, last: 0, drawnOnce: false, spec }
+      layout(entry,spec)
       canvas.hidden = false
       renderAt(0)
       kick()
@@ -418,4 +427,18 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
     glInfo() { return gl ? [{ renderer: gl.getParameter(gl.RENDERER), lost: gl.isContextLost?.() ?? false, canvas: `${canvas.width}×${canvas.height}` }] : [] },
     destroy() { destroyed = true; if (raf) cancelAnimationFrame(raf); runtime = null; canvas.remove(); try { gl?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* 没有就算了 */ } },
   }
+}
+
+
+// Multiple native slots share the player lifecycle; the legacy default model
+// keeps its original canvas/layout and does not enter any RPG-specific path.
+export function createLive2dLayers(options){
+ const layers=new Map(),settings={paused:false,mosaic:false}
+ return{
+  async set(specs){const pending=[];for(const [slot,spec]of Object.entries(specs||{})){if(!spec||spec.visible===false)continue;let layer=layers.get(slot);if(!layer){layer=createLive2dLayer(options);layer.setPaused(settings.paused);layer.setMosaic(settings.mosaic);layers.set(slot,layer)}pending.push(layer.set(spec))}for(const [slot,layer]of layers)if(!specs?.[slot]||specs[slot].visible===false)pending.push(layer.set(null));await Promise.all(pending);for(const [slot,spec]of Object.entries(specs||{}).filter(([,s])=>s&&s.visible!==false).sort((a,b)=>(a[1].nativeOrder||0)-(b[1].nativeOrder||0))){const canvas=layers.get(slot)?.canvas;if(canvas)options.parent.insertBefore(canvas,options.before||null)}},
+  setPaused(value){settings.paused=value;for(const l of layers.values())l.setPaused(value)},
+  setMosaic(value){settings.mosaic=value;for(const l of layers.values())l.setMosaic(value)},
+  info(){return [...layers.values()].flatMap(l=>l.info())},glInfo(){return [...layers.values()].flatMap(l=>l.glInfo())},
+  destroy(){for(const l of layers.values())l.destroy();layers.clear()}
+ }
 }

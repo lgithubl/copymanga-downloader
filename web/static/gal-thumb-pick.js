@@ -4,11 +4,14 @@ import { stateAt } from './gal-engine.js'
 // 画面选哪一步：要「真正的场景」——CG（bg 带 over / 静态画面骨骼 still / 铺满的叠加图）优先，其次有立绘 / 骨骼角色的画面，最后才是纯背景。
 //   分数：CG 100（bg.over）/ 90（spine kind still）/ 60（overlay 带 src）；角色 30（spine / stand）；纯背景 1。取分数最高的，同分取最早的；
 //   角色画面往后推 2 步（表情通常紧跟着出来），CG 就用它出现的那一步。只在有画面指令的步重新算状态（台词步状态不变）
-const VISUAL_OPS = new Set(['bg', 'spine', 'spineOff', 'stand', 'standOff', 'overlay', 'overlayOff', 'movie', 'movieOff'])
+const VISUAL_OPS = new Set(['bg', 'spine', 'spineOff', 'stand', 'standOff', 'overlay', 'overlayOff', 'movie', 'movieOff', 'live2d', 'live2dOff'])
 export function scoreState(state) {
   if (state.bg?.over) return 100
   if (Object.values(state.spines || {}).some((spec) => spec?.kind === 'still')) return 90
+  const models=[state.live2d,...Object.values(state.live2ds||{})].filter(s=>s?.src&&s.visible!==false)
+  if(models.some(s=>s.cg||s.kind==='still'))return 90
   if ((state.overlays || []).some((o) => o?.src)) return 60
+  if(models.length)return 30
   if (Object.keys(state.spines || {}).length || state.stand?.parts?.length || (state.stands || []).length) return 30
   return state.bg?.src ? 1 : 0
 }
@@ -39,6 +42,7 @@ function signatureOf(state) {
     (state.overlays || []).map((o) => o?.src || ''),
     state.stand?.parts?.map((p) => p?.src || '') || [],
     (state.stands || []).map((st) => (st?.parts || []).map((p) => p?.src || '')),
+    [state.live2d,...Object.values(state.live2ds||{})].filter(s=>s?.src&&s.visible!==false).map(s=>[s.src,s.motion,s.motionGroup,s.motionIndex,s.variables]),
   ])
 }
 export function pickRenderSteps(scene, scanSteps = 150, count = 3, after = 2) {

@@ -6,6 +6,7 @@
 // 选哪一帧：CG 优先（bg.over / 静态画面骨骼 / 铺满的叠加图），其次有立绘 / 骨骼角色的画面（见 pickRenderStep）；整个画面（背景 + 立绘 + 骨骼 + 叠加层）都画，和播放页同一套摆放。
 import { assetUrl } from '/gal-engine.js'
 import { createSpineLayer } from '/gal-spine.js'
+import { createLive2dLayers } from '/gal-live2d.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
 
 const loadImage = (url) => new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => reject(new Error(`图片加载失败：${url}`)); img.src = url })
@@ -88,12 +89,15 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
   const underLayer = createOverlayLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media, under: true })
   const hasSpines = Object.keys(state.spines || {}).length > 0
   const spineLayer = hasSpines ? createSpineLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), onUnavailable: (v) => errors.push(`运行时 ${v}`), onError: (e) => errors.push(String(e)) }) : null
+  const models={default:state.live2d,...state.live2ds},hasModels=Object.values(models).some(s=>s?.src&&s.visible!==false)
+  const modelLayer=hasModels?createLive2dLayers({parent:host,url,capture:true,onMissing:s=>errors.push(`缺 ${s}`),onError:e=>errors.push(String(e))}):null
   try {
     await withTimeout((async () => {
       await standLayer.set(state.stand, state.stands, { live: false })
       await overlayLayer.set(state.overlays.filter((o) => !o.under), { live: false })
       await underLayer.set(state.overlays.filter((o) => o.under), { live: false })
       if (spineLayer) { await spineLayer.set(seekAll(state.spines, cfg.seek), { live: false, view: { camera: { mode: cfg.cameraMode === 'fixed' || cfg.cameraMode === 'widget' ? cfg.cameraMode : 'fit' } } }); await spineLayer.ready() }
+      if(modelLayer){modelLayer.setPaused(true);await modelLayer.set(models);if(!modelLayer.info().length)throw Error('Live2D 缩略图模型未加载：'+errors.join('；'))}
       await frame(); await frame()
     })(), timeoutMs, '渲染画面')
     if (spineLayer) {
@@ -101,11 +105,11 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
       if (!info.length || info.some((r) => !r.loaded || r.error)) throw new Error(`骨骼没加载好：${errors.concat(info.map((r) => r.error?.message || r.error || '')).filter(Boolean).join('；') || '未知原因'}`)
     }
     // 叠放顺序和播放页一致：立绘 → 骨骼 → 叠加层
-    const order = [underLayer.canvas, standLayer.canvas, ...(spineLayer ? [...host.querySelectorAll('canvas.gal-spine')] : []), overlayLayer.canvas]
+    const order = [underLayer.canvas, standLayer.canvas, ...(spineLayer ? [...host.querySelectorAll('canvas.gal-spine')] : []),...[...host.querySelectorAll('canvas.gal-live2d')].filter(c=>!c.hidden), overlayLayer.canvas]
     let drew = 0
-    for (const cv of order) { if (cv?.width && cv?.height) { ctx.drawImage(cv, 0, 0, width, height); drew += 1 } }
+    for (const cv of order) { if (cv?.width && cv?.height) { if(cv.classList.contains('gal-live2d')){const box=cv.getBoundingClientRect(),origin=host.getBoundingClientRect();ctx.drawImage(cv,box.left-origin.left,box.top-origin.top,box.width,box.height)}else ctx.drawImage(cv, 0, 0, width, height); drew += 1 } }
     if (!drew) throw new Error('没有可画的层')
-  } finally { spineLayer?.destroy(); standLayer.destroy(); overlayLayer.destroy(); underLayer.destroy(); host.remove() }
+  } finally { modelLayer?.destroy();spineLayer?.destroy(); standLayer.destroy(); overlayLayer.destroy(); underLayer.destroy(); host.remove() }
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82))
   if (!blob || blob.size < 200) throw new Error('导出图片失败')
   return blob

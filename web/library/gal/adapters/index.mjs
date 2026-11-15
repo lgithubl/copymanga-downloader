@@ -1,4 +1,8 @@
+import {cellTalkNativeAdapter} from './celltalk-native.mjs'
 import{meshiagirlJsonAdapter}from'./meshiagirl-json.mjs'
+import {naninovelScriptAdapter} from './naninovel-script.mjs'
+import {unityUtageAdapter} from './unity-utage.mjs'
+import {rpgmakerUniteAdapter} from './rpgmaker-unite.mjs'
 import{silkyMesAdapter}from './silky-mes.mjs'
 import{edoIkunyuAdapter}from './edo-ikunyu.mjs'
 import{sakanaKsAdapter}from './sakana-ks.mjs'
@@ -39,6 +43,10 @@ export function registerGalAdapter(adapter) {
   adapters.set(adapter.id, adapter)
 }
 registerGalAdapter(meshiagirlJsonAdapter)
+registerGalAdapter(cellTalkNativeAdapter)
+registerGalAdapter(naninovelScriptAdapter)
+registerGalAdapter(unityUtageAdapter)
+registerGalAdapter(rpgmakerUniteAdapter)
 registerGalAdapter(uviewerCsvAdapter)
 registerGalAdapter(pacScriptAdapter)
 registerGalAdapter(edoLuaAdapter)

@@ -1,4 +1,4 @@
-// Live2D Cubism 的 .moc3（版本 1~4.02）读取 + 求值（参数 → 每个 ArtMesh 的顶点 / 不透明度 / 绘制顺序 / 颜色）+ motion3.json 播放。纯 JS、不碰 DOM（浏览器和 Node 都能用）。
+// Live2D Cubism 的 .moc3（moc3 版本 1~5）读取 + 求值（参数 → 每个 ArtMesh 的顶点 / 不透明度 / 绘制顺序 / 颜色）+ motion3.json 播放。纯 JS、不碰 DOM（浏览器和 Node 都能用）。
 // 不用官方 Cubism Core：移植自 MahouTechnologies/moc3-rs（MIT OR Apache-2.0，https://github.com/MahouTechnologies/moc3-rs）的 data.rs / puppet / deformer（偏移表、关键形态插值、变形器链、胶水、绘制顺序）；
 // 渲染（WebGL）在 gal-live2d.js，这里只出数据。
 // 不处理：混合形状（moc3 4.02 的 blend shape 参数，moc3-rs 也没做完）、物理（physics3.json）、姿势（pose3.json）、表情（exp3.json）。
@@ -28,7 +28,7 @@ const OFF = {
 
 const COUNT_NAMES = ['parts', 'deformers', 'warpDeformers', 'rotationDeformers', 'artMeshes', 'parameters', 'partKeyforms', 'warpDeformerKeyforms', 'rotationDeformerKeyforms', 'artMeshKeyforms',
   'keyformPositions', 'parameterBindingIndices', 'keyformBindings', 'parameterBindings', 'keys', 'uvs', 'vertexIndices', 'artMeshMasks', 'drawOrderGroups', 'drawOrderGroupObjects', 'glues', 'glueInfos', 'glueKeyforms',
-  'keyformMultiplyColors', 'keyformScreenColors', 'blendShapeParameterBindings', 'blendShapeKeyformBindings', 'blendShapeWarpDeformers', 'blendShapeArtMeshes', 'blendShapeConstraintIndices', 'blendShapeConstraints', 'blendShapeConstraintValues']
+  'keyformMultiplyColors', 'keyformScreenColors', 'blendShapeParameterBindings', 'blendShapeKeyformBindings', 'blendShapeWarpDeformers', 'blendShapeArtMeshes', 'blendShapeConstraintIndices', 'blendShapeConstraints', 'blendShapeConstraintValues', 'blendShapeParts', 'blendShapeRotationDeformers', 'blendShapeGlues']
 
 const rescale = (t, lower, upper) => (t - lower) / (upper - lower)
 
@@ -41,11 +41,11 @@ export function parseMoc3(input) {
   const dv = new DataView(buf)
   if (copy.length < 64 + 8 || String.fromCharCode(copy[0], copy[1], copy[2], copy[3]) !== 'MOC3') throw new Error('不是 moc3')
   const version = copy[4]
-  if (version < 1 || version > 4) throw new Error(`不支持的 moc3 版本 ${version}（支持 1~4）`)
+  if (version < 1 || version > 5) throw new Error(`不支持的 moc3 版本 ${version}（支持 1~5）`)
   if (copy[5] !== 0) throw new Error('不支持大端 moc3')
   const u32 = (off) => dv.getUint32(off, true)
   const base = u32(OFF.countInfo)
-  const nCounts = version >= 4 ? COUNT_FIELDS_V402 : COUNT_FIELDS_BASE
+  const nCounts = version >= 5 ? 35 : version >= 4 ? COUNT_FIELDS_V402 : COUNT_FIELDS_BASE
   const counts = {}
   COUNT_NAMES.forEach((name, i) => { counts[name] = i < nCounts ? u32(base + i * 4) : 0 })
   const arr = (Type, fieldOff, count) => {
@@ -149,6 +149,22 @@ export function parseMoc3(input) {
     bsArtTarget: c.blendShapeArtMeshes ? arr(Uint32Array, OFF.bsArtMeshes, c.blendShapeArtMeshes) : null,
     bsArtStart: c.blendShapeArtMeshes ? arr(Uint32Array, OFF.bsArtMeshes + 4, c.blendShapeArtMeshes) : null,
     bsArtCount: c.blendShapeArtMeshes ? arr(Uint32Array, OFF.bsArtMeshes + 8, c.blendShapeArtMeshes) : null,
+    // Cubism 5 appends scalar blend-shape targets and per-keyform color indices.
+    bsPartTarget: version>=5?arr(Uint32Array,636,c.blendShapeParts):null,
+    bsPartStart: version>=5?arr(Uint32Array,640,c.blendShapeParts):null,
+    bsPartCount: version>=5?arr(Uint32Array,644,c.blendShapeParts):null,
+    bsRotTarget: version>=5?arr(Uint32Array,648,c.blendShapeRotationDeformers):null,
+    bsRotStart: version>=5?arr(Uint32Array,652,c.blendShapeRotationDeformers):null,
+    bsRotCount: version>=5?arr(Uint32Array,656,c.blendShapeRotationDeformers):null,
+    bsGlueTarget: version>=5?arr(Uint32Array,660,c.blendShapeGlues):null,
+    bsGlueStart: version>=5?arr(Uint32Array,664,c.blendShapeGlues):null,
+    bsGlueCount: version>=5?arr(Uint32Array,668,c.blendShapeGlues):null,
+    warpMulIndex: version>=5?arr(Uint32Array,612,c.warpDeformerKeyforms):null,
+    warpScrIndex: version>=5?arr(Uint32Array,616,c.warpDeformerKeyforms):null,
+    rotMulIndex: version>=5?arr(Uint32Array,620,c.rotationDeformerKeyforms):null,
+    rotScrIndex: version>=5?arr(Uint32Array,624,c.rotationDeformerKeyforms):null,
+    artMulIndex: version>=5?arr(Uint32Array,628,c.artMeshKeyforms):null,
+    artScrIndex: version>=5?arr(Uint32Array,632,c.artMeshKeyforms):null,
     // keyforms
     partKeyformDrawOrder: arr(Float32Array, OFF.partKeyforms, c.partKeyforms),
     warpKeyformOpacity: arr(Float32Array, OFF.warpDeformerKeyforms, c.warpDeformerKeyforms),
@@ -570,7 +586,7 @@ function bsBindingParam(m) {
   m.bsParamOf = of
   return of
 }
-function applyBlendShape(m, frame, first, count, posStartOf, target, vertexCount) {
+function applyBlendShape(m, frame, first, count, posStartOf, target, vertexCount, onForm=null) {
   const paramOf = bsBindingParam(m)
   for (let j = 0; j < count; j++) {
     const kb = first + j
@@ -600,7 +616,8 @@ function applyBlendShape(m, frame, first, count, posStartOf, target, vertexCount
     for (const [key, w0] of [[k0, 1 - t], [k0 + 1, t]]) {
       const w = w0 * scale
       if (!w || key >= keyCount) continue
-      const p = posStartOf(m.bsKbKeyformStart[kb] + key) / 2
+      if(onForm)onForm(m.bsKbKeyformStart[kb]+key,w)
+      const p = vertexCount?posStartOf(m.bsKbKeyformStart[kb] + key) / 2:0
       for (let v = 0; v < vertexCount; v++) { target[v * 2] += m.positions[(p + v) * 2] * w; target[v * 2 + 1] += m.positions[(p + v) * 2 + 1] * w }
     }
   }
@@ -614,6 +631,8 @@ function applyKeyforms(m, frame) {
   const colorAt = (start, k, outArr, o) => { outArr[o] = m.mulR[start + k]; outArr[o + 1] = m.mulG[start + k]; outArr[o + 2] = m.mulB[start + k]; outArr[o + 3] = m.scrR[start + k]; outArr[o + 4] = m.scrG[start + k]; outArr[o + 5] = m.scrB[start + k] }
   const setDefaultColor = (arr, o) => { arr[o] = 1; arr[o + 1] = 1; arr[o + 2] = 1; arr[o + 3] = 0; arr[o + 4] = 0; arr[o + 5] = 0 }
   const accColor = (arr, o, start, index, w) => { arr[o] += m.mulR[start + index] * w; arr[o + 1] += m.mulG[start + index] * w; arr[o + 2] += m.mulB[start + index] * w; arr[o + 3] += m.scrR[start + index] * w; arr[o + 4] += m.scrG[start + index] * w; arr[o + 5] += m.scrB[start + index] * w }
+  const accV5=(out,o,mul,scr,w)=>{out[o]+=(m.mulR[mul]??1)*w;out[o+1]+=(m.mulG[mul]??1)*w;out[o+2]+=(m.mulB[mul]??1)*w;out[o+3]+=(m.scrR[scr]??0)*w;out[o+4]+=(m.scrG[scr]??0)*w;out[o+5]+=(m.scrB[scr]??0)*w}
+  const accV5Blend=(out,o,mul,scr,w)=>{out[o]+=(m.mulR[mul]??0)*w;out[o+1]+=(m.mulG[mul]??0)*w;out[o+2]+=(m.mulB[mul]??0)*w;out[o+3]+=(m.scrR[scr]??0)*w;out[o+4]+=(m.scrG[scr]??0)*w;out[o+5]+=(m.scrB[scr]??0)*w}
   void colorAt
   // 弯曲变形器
   for (let s = 0; s < m.counts.warpDeformers; s++) {
@@ -629,13 +648,13 @@ function applyKeyforms(m, frame) {
       const p = m.warpKeyformPosStart[kStart + index] / 2
       for (let v = 0; v < vc; v++) { grid[v * 2] += m.positions[(p + v) * 2] * w; grid[v * 2 + 1] += m.positions[(p + v) * 2 + 1] * w }
       frame.warpOpacity[s] += m.warpKeyformOpacity[kStart + index] * w
-      if (colorCap) accColor(frame.warpColor, s * 6, m.warpColorStart[s], index, w)
+      if(colorCap){if(m.warpMulIndex)accV5(frame.warpColor,s*6,m.warpMulIndex[kStart+index],m.warpScrIndex[kStart+index],w);else accColor(frame.warpColor,s*6,m.warpColorStart[s],index,w)}
     })
   }
   if (m.bsWarpTarget) {
     for (let e = 0; e < m.bsWarpTarget.length; e++) {
       const s = m.bsWarpTarget[e]   // 弯曲变形器的序号（不是变形器总表里的序号）
-      applyBlendShape(m, frame, m.bsWarpStart[e], m.bsWarpCount[e], (k) => m.warpKeyformPosStart[k], frame.warpGrids[s], m.warpVertexCount[s])
+      applyBlendShape(m, frame, m.bsWarpStart[e], m.bsWarpCount[e], (k) => m.warpKeyformPosStart[k], frame.warpGrids[s], m.warpVertexCount[s],m.version>=5?(k,w)=>{frame.warpOpacity[s]+=m.warpKeyformOpacity[k]*w;accV5Blend(frame.warpColor,s*6,m.warpMulIndex[k],m.warpScrIndex[k],w)}:null)
     }
   }
   // 旋转变形器
@@ -653,7 +672,7 @@ function applyKeyforms(m, frame) {
       frame.rot[s * 4 + 2] += m.rotKeyformScale[k] * w
       frame.rot[s * 4 + 3] += m.rotKeyformAngle[k] * w
       frame.rotOpacity[s] += m.rotKeyformOpacity[k] * w
-      if (colorCap) accColor(frame.rotColor, s * 6, m.rotColorStart[s], index, w)
+      if(colorCap){if(m.rotMulIndex)accV5(frame.rotColor,s*6,m.rotMulIndex[k],m.rotScrIndex[k],w);else accColor(frame.rotColor,s*6,m.rotColorStart[s],index,w)}
     })
   }
   // 网格
@@ -673,13 +692,13 @@ function applyKeyforms(m, frame) {
       for (let v = 0; v < vc; v++) { verts[v * 2] += m.positions[(p + v) * 2] * w; verts[v * 2 + 1] += m.positions[(p + v) * 2 + 1] * w }
       frame.artDrawOrder[i] += m.artKeyformDrawOrder[k] * w
       frame.opacities[i] += m.artKeyformOpacity[k] * w
-      if (colorCap) accColor(frame.colors, i * 6, m.artColorStart[i], index, w)
+      if(colorCap){if(m.artMulIndex)accV5(frame.colors,i*6,m.artMulIndex[k],m.artScrIndex[k],w);else accColor(frame.colors,i*6,m.artColorStart[i],index,w)}
     })
   }
   if (m.bsArtTarget) {
     for (let e = 0; e < m.bsArtTarget.length; e++) {
       const i = m.bsArtTarget[e]
-      applyBlendShape(m, frame, m.bsArtStart[e], m.bsArtCount[e], (k) => m.artKeyformPosStart[k], frame.vertices[i], m.artVertexCount[i])
+      applyBlendShape(m, frame, m.bsArtStart[e], m.bsArtCount[e], (k) => m.artKeyformPosStart[k], frame.vertices[i], m.artVertexCount[i],m.version>=5?(k,w)=>{frame.opacities[i]+=m.artKeyformOpacity[k]*w;frame.artDrawOrder[i]+=m.artKeyformDrawOrder[k]*w;accV5Blend(frame.colors,i*6,m.artMulIndex[k],m.artScrIndex[k],w)}:null)
     }
   }
   // 胶水强度
@@ -692,6 +711,10 @@ function applyKeyforms(m, frame) {
     frame.partDrawOrder[p] = 0
     interpolate(m.bindingTables[m.partBinding[p]], params, (index, w) => { frame.partDrawOrder[p] += m.partKeyformDrawOrder[m.partKeyformStart[p] + index] * w })
   }
+  for(let e=0;e<(m.bsPartTarget?.length||0);e++){const p=m.bsPartTarget[e];applyBlendShape(m,frame,m.bsPartStart[e],m.bsPartCount[e],null,null,0,(k,w)=>{frame.partDrawOrder[p]+=m.partKeyformDrawOrder[k]*w})}
+  for(let e=0;e<(m.bsGlueTarget?.length||0);e++){const g=m.bsGlueTarget[e];applyBlendShape(m,frame,m.bsGlueStart[e],m.bsGlueCount[e],null,null,0,(k,w)=>{frame.glueIntensity[g]+=m.glueIntensities[k]*w})}
+  for(let e=0;e<(m.bsRotTarget?.length||0);e++){const r=m.bsRotTarget[e];applyBlendShape(m,frame,m.bsRotStart[e],m.bsRotCount[e],null,null,0,(k,w)=>{frame.rot[r*4]+=m.rotKeyformX[k]*w;frame.rot[r*4+1]+=m.rotKeyformY[k]*w;frame.rot[r*4+2]+=m.rotKeyformScale[k]*w;frame.rot[r*4+3]+=m.rotKeyformAngle[k]*w;frame.rotOpacity[r]+=m.rotKeyformOpacity[k]*w})}
+  if(m.version>=5){for(let i=0;i<frame.warpOpacity.length;i++)frame.warpOpacity[i]=Math.min(1,Math.max(0,frame.warpOpacity[i]));for(let i=0;i<frame.opacities.length;i++)frame.opacities[i]=Math.min(1,Math.max(0,frame.opacities[i]))}
   void ONE3
   void ZERO3
 }

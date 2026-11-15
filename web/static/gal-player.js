@@ -5,7 +5,7 @@ import { mountSceneFonts } from '/gal-fonts.js'
 // 另外：Spine 骨骼动画（站位立绘、整幅静态画面，gal-spine.js）、镜头（整个画面一起平移/缩放）、背景音效声道、闪屏。
 // 立绘 / 遮罩等 raw 指令先忽略（脚本里保留着，后面接对应渲染方式时再用），播放器会在栏里提示忽略了多少条。
 import { castKeysOf, createSpineLayer, mergeExpressions, resolveExpression } from '/gal-spine.js'
-import { createLive2dLayer } from '/gal-live2d.js'
+import { createLive2dLayers } from '/gal-live2d.js'
 import { createTranslateClient } from '/gal-translate.js'
 import { createTtsClient, ttsKey } from '/gal-tts-client.js'
 import { createOverlayLayer, createStageMedia, createStandLayer } from '/gal-stand.js'
@@ -1337,13 +1337,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // Live2D（live2d 指令：KiriKiri 的 .l2d）：第一次要画时才建 canvas；在背景 / 视频之上、立绘 / 骨骼之下
   let live2dLayer = null
   function paintLive2d() {
-    if (!live2dLayer && !state.live2d) return
+    if (!live2dLayer && !state.live2d && !Object.keys(state.live2ds||{}).length) return
     if (!live2dLayer) {
-      live2dLayer = createLive2dLayer({ parent: world, before: movie.nextSibling, url, onMissing: markMissing, onUnavailable: () => { live2dUnavailable = true; updateNote() } })
+      live2dLayer = createLive2dLayers({ parent: world, before: movie.nextSibling, url, onMissing: markMissing, onUnavailable: () => { live2dUnavailable = true; updateNote() } })
       if (!wantBgm) live2dLayer.setPaused(true)
     }
     live2dLayer.setMosaic(views.showMosaic ?? false)   // Live2D 的马赛克网格：默认不显示，和「显示马赛克层」同一个开关
-    live2dLayer.set(state.live2d)
+    live2dLayer.set({default:state.live2d,...state.live2ds})
   }
   let live2dUnavailable = false
   // 立绘（stand 指令，renpy-minashigo；带 slot / atlas 的按槽位立绘）：第一次要画时才建 canvas；放在背景和视频之上、Spine 之下

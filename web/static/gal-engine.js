@@ -191,12 +191,14 @@ export function applyCommand(state, command, choices = null) {
       state.white = false
       break
     case 'live2d': {   // Live2D 模型（moc3，WebGL）：src = model3.json 的资源路径，motion / loop / variables = 动作和参数；再来一条 = 换（动作 / 参数变了）
-      const { op: _op, when: _when, ...spec } = command
-      state.live2d = spec.src ? spec : null
+      const { op: _op, when: _when, patch, defaults, ...spec } = command
+      if(spec.slot){state.live2ds ||= {};const old=state.live2ds[spec.slot];state.live2ds[spec.slot]=patch?{...defaults,...old,...spec}:spec}
+      else state.live2d = spec.src ? spec : null
       break
     }
     case 'live2dOff':
-      state.live2d = null
+      if(command.slot){if(state.live2ds)delete state.live2ds[command.slot]}
+      else {state.live2d = null;if(command.all)state.live2ds={}}
       break
     case 'movie':
       state.movie = { srcs: command.srcs, loop: Boolean(command.loop), ...(command.rate > 0 && command.rate !== 1 ? { rate: command.rate } : {}), ...(command.fade > 0 ? { fade: Math.min(5, command.fade) } : {}) }

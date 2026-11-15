@@ -1,4 +1,5 @@
 import{SILKY_RESOURCE_VERSION,silkyPayload,decodeMes,akbInfo,decodeAkb,akbPng}from './silky.mjs'
+import {unityNativeIndex,expandUnityNative,invalidateUnityNative} from './unity-native.mjs'
 import {readSakanaIndex,readSakanaEntry,decodeSxEntry,sakanaMetadata,fafaValue,sakanaStorageSig} from './sakana.mjs'
 import { encodeAgeScriptPackage } from './adapters/age-sys4.mjs'
 import { readAgeCatalog, expandAgeScripts, ageRuleFilter } from './age-archive.mjs'
@@ -203,7 +204,7 @@ export const SCRIPT_DECODERS = Object.freeze({
     },
   },
 })
-export const SCRIPT_DECODER_IDS = Object.freeze(Object.keys(SCRIPT_DECODERS))
+export const SCRIPT_DECODER_IDS = Object.freeze([...Object.keys(SCRIPT_DECODERS),'naninovel','unity-utage','rpgmaker-unite','celltalk'])
 
 // 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
 const arcRegex = (cfg) => (cfg.format === 'sakana' ? /\.sx$/i : cfg.format === 'pac' ? /\.pac$/i : cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)
@@ -1151,6 +1152,7 @@ function hitFor(v, rel) {
 }
 // 取一个虚拟条目的字节（转好格式 / 解好密的）
 async function readHit(hit) {
+  if(hit.transform==='unity-native')return hit.readNative()
   if(hit.transform==='sakana'){const f=await open(hit.file,'r');try{return decodeSxEntry(await readRange(f,hit.offset,hit.size),hit.sx)}finally{await f.close()}}
   if(hit.transform==='edo'){const f=await open(hit.file,'r');try{return edoPayload(await readRange(f,hit.offset,hit.size))}finally{await f.close()}}
   if (hit.krkr) return readKrkrHit(hit)
@@ -1615,6 +1617,7 @@ async function readSilkyAkb(hit,seen=new Set()){
 export async function virtualIndex({ mediaDir, config }) {
   const cfg = config?.containers
   if (!isHybrid(cfg) || !mediaDir) return null
+  if(cfg.format==='unity-native')return unityNativeIndex(mediaDir,cfg)
   const arcs = await listArcs(mediaDir, cfg)
   const sig = arcs.map((a) => a.sig).join('|') + (cfg.format === 'krkr' ? await krkrRefsSig(mediaDir, cfg) : cfg.format === 'imys' ? `|acb:${(await listImysAcb(mediaDir, cfg)).sig}|b:${(await listImysBundles(mediaDir, cfg)).sig}` : '')
   const key = `${mediaDir}|${cfg.dir}|${fingerprint(cfg)}`
@@ -1699,7 +1702,7 @@ export async function materialize({ mediaDir, config, rels }) {
 const inflight = new Map()   // mediaDir|dir → Promise
 const lastReport = new Map() // mediaDir → { at, arcs: { 名字: 结果 | { error } } }
 export const containerReport = (mediaDir) => lastReport.get(mediaDir) || null
-export function invalidateContainers(mediaDir) { for (const key of [...inflight.keys()]) if (key.startsWith(`${mediaDir}|`)) inflight.delete(key); for (const key of [...virtuals.keys()]) if (key.startsWith(`${mediaDir}|`)) virtuals.delete(key); lastReport.delete(mediaDir); for (const key of [...imysRuns.keys()]) if (key.startsWith(`${mediaDir}|`)) imysRuns.delete(key); for (const key of [...imysLists.keys()]) if (key.startsWith(`${mediaDir}|`)) imysLists.delete(key); for (const key of [...imysBundleLists.keys()]) if (key.startsWith(`${mediaDir}|`)) imysBundleLists.delete(key) }
+export function invalidateContainers(mediaDir) { invalidateUnityNative(mediaDir); for (const key of [...inflight.keys()]) if (key.startsWith(`${mediaDir}|`)) inflight.delete(key); for (const key of [...virtuals.keys()]) if (key.startsWith(`${mediaDir}|`)) virtuals.delete(key); lastReport.delete(mediaDir); for (const key of [...imysRuns.keys()]) if (key.startsWith(`${mediaDir}|`)) imysRuns.delete(key); for (const key of [...imysLists.keys()]) if (key.startsWith(`${mediaDir}|`)) imysLists.delete(key); for (const key of [...imysBundleLists.keys()]) if (key.startsWith(`${mediaDir}|`)) imysBundleLists.delete(key) }
 
 // 保证容器已展开（没配置 / 没启用 = 什么都不做）。幂等：容器没变（大小 + mtime + 规则指纹）就跳过；同一个目录并发调用只做一次
 export function ensureContainers({ mediaDir, config }) {
@@ -1771,6 +1774,7 @@ async function runImys(mediaDir, cfg) {
 }
 
 async function run(mediaDir, cfg) {
+  if(cfg.format==='unity-native')return expandUnityNative(mediaDir,cfg)
   if (cfg.format === 'age') {
     try { const report = await expandAgeScripts(mediaDir, cfg); lastReport.set(mediaDir, report); return report }
     catch (error) {

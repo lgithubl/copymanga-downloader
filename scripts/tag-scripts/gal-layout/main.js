@@ -59,6 +59,10 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  'celltalk::native':{dir:'arc',maxCommands:200000},
+  'naninovel::script':{dir:'arc'},
+  'utage::native':{dir:'arc',maxInstructions:200000,maxBranches:64},
+  'rpgmaker-unite':{dir:'arc'},
   'meshiagirl-json': {root:'',excludeScripts:['test','testall'],catalogDatabase:'meshiamitm.db',mergeEpisodes:true,expressionMix:0.18,protagonist:'主人公',tavern:'まんぷく亭',stage:[1170,640],spineScale:0.8,maxInstructions:200000,maxSteps:20000,maxBranches:64,maxCommands:300000},
   "silky::mes": {
   "resDir": "arc/res",
@@ -1688,6 +1692,37 @@ export const RULE_DEVIATIONS = {}
 // 所有「列表」字段都是数组；探测函数里没有任何写死的目录名（数据依赖的判断除外）。
 // ======================================================================
 export const LAYOUTS = {
+  unite:{
+    title:'RPG Maker Unite',kind:'unite',detector:'unityNative',family:'unite::',autoOrder:137.2,
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['StreamingAssets/aa/catalog.bin','Managed/RPGMaker.CodeBase.CoreSystem.dll'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'Unite 剧情'}],resourceRoots:['arc/res'],adapters:['rpgmaker-unite'],adapterOptions:{'rpgmaker-unite':{dir:{path:['arc']}}},ruleTables:['rpgmaker-unite'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'rpgmaker-unite',scriptExt:'unite',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['unite'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'CG 切换',kind:'cmd',op:'overlay',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.unite',depth:3}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['Unite 的 UUID/字符串参数先转换，再复用 RPG 静态阅读器；支持 VoiceEvent / 原生选择支；未读取存档的条件需手动选择，不渲染 Unite 地图探索或战斗'],
+  },
+  utageNative:{
+    title:'Utage 原生 Unity',kind:'utage',detector:'unityNative',family:'utage::',autoOrder:137.1,
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','Managed/Utage.dll'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'Utage 剧情'}],resourceRoots:[''],adapters:['utage::native'],adapterOptions:{'utage::native':{dir:{path:['arc']}}},ruleTables:['utage::native'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'unity-utage',scriptExt:'json',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['json'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'CG 切换',kind:'cmd',op:'overlay',match:'(?:hcg|eventcg)',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.json',depth:2}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取原生 Utage 工作簿和 ResourceManager 精确路径；原生回想表生成特殊场景；Cubism 纹理和动作按预制体引用匹配'],
+  },
+  celltalk:{
+    title:'CellTalk 原生 Unity',kind:'celltalk',detector:'unityNative',family:'celltalk::',
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','il2cpp_data/Metadata/global-metadata.dat'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'CellTalk 剧情'}],resourceRoots:[''],adapters:['celltalk::native'],adapterOptions:{'celltalk::native':{dir:{path:['arc']}}},ruleTables:['celltalk::native'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'celltalk',scriptExt:'cell',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['cell'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'画面切换',kind:'cmd',op:'overlay',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.cell',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['CellTalk 原生控制器静态预览；仅核对的 metadata 版本；存档条件手动选择，未还原演出报告 native 地址'],
+  },  naninovel:{
+    title:'Naninovel 原生 Unity',kind:'naninovel',detector:'unityNative',family:'naninovel::',autoOrder:137,
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','Managed/Elringus.Naninovel.Runtime.dll'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'Naninovel 剧情'}],resourceRoots:[''],adapters:['naninovel::script'],adapterOptions:{'naninovel::script':{dir:{path:['arc']}}},ruleTables:['naninovel::script'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'naninovel',scriptExt:'nani',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['nani'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'画面切换',kind:'cmd',op:'overlay',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.nani',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取原生 Naninovel playlist / 配置 / Addressables；图片和声音按需读取，未还原命令报告原始脚本及行号'],
+  },
   age: {
     title: 'AGE SYS4', kind: 'age', detector: 'age', family: 'age::',
     bases: [''], searchDepth: 6, anchors: ['SYS4INI.BIN', '/^.*\\.alf$/i'], siblings: [], markers: [],
@@ -3644,6 +3679,7 @@ const autoNodes = (entries) => {
 // 入口
 // ======================================================================
 const DETECTORS = {
+  unityNative: scope=>detectUnityNative(scope),
   age: scope => detectAge(scope),
   rpgmaker: scope => detectRpgMaker(scope),
   legeclo: (scope) => detectLegeclo(scope),
@@ -3942,8 +3978,8 @@ function canonField(key, value) {
         scan: scan.length ? [...new Set(scan)] : ['.'],
         scriptDecoder: typeof value.scriptDecoder === 'string' && value.scriptDecoder ? value.scriptDecoder : 'advhd-ws2',
         scriptExt: typeof value.scriptExt === 'string' && /^[a-z0-9]{1,10}$/.test(value.scriptExt) ? value.scriptExt : 'advhd',
-        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'edo', 'sakana', 'age'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
-        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'age'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
+        format: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'edo', 'sakana', 'age', 'unity-native'].includes(value.format) ? value.format : 'willplus', flat: value.flat === true,
+        mode: ['buriko', 'pf8', 'arcfam', 'krkr', 'xfl', 'dsm', 'mhp', 'arcdrama', 'tomoe', 'imys', 'pac', 'age', 'unity-native'].includes(value.format) || value.mode !== 'files' ? 'hybrid' : 'files',
         rules,
         maxEntries: numIn(value.maxEntries, 200000, 1, 1000000), maxTotalMB: numIn(value.maxTotalMB, 8192, 1, 65536),
         emote: (() => {   // 和 config.mjs 的 DEFAULT_CONTAINERS.emote / 校验一致
@@ -4804,6 +4840,19 @@ async function detectArcrecord(scope) {
   found.kind = entry.kind || 'arcrecord'
   logs.push(`ArcRecord_D 根：${base || '.'}；game.id：${found.id}`)
   for (const line of entry.notes) logs.push(line)
+  return found
+}
+
+// Native Unity families use separate anchors and never broaden GameMaterial/TSK matching.
+async function detectUnityNative(scope){
+  const loc=await locateGame(scope,scope.gameId||scope.id);if(!loc)return null
+  const{entry,base}=loc;announce(scope.logs,scope.gameId||scope.id,loc)
+  const config=await buildConfig(scope.media,entry,base)
+  config.containers={...config.containers,dir:join(base,config.containers.dir),scan:[base||'.']}
+  if(config.containers.scriptDecoder!=='rpgmaker-unite')config.resourceRoots=['']
+  const found=makeFound(scope,entry,loc,config,{cover:await coverFromRules(scope.media,entry,base)})
+  found.id=scope.gameId||entry.kind+'::'+path.basename(scope.media);found.kind=entry.kind
+  for(const line of entry.notes)scope.logs.push(line)
   return found
 }
 

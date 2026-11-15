@@ -1,3 +1,4 @@
+import {rpgLive2dCommands} from './rpgmaker-live2d.mjs'
 import {memoryTargets} from './rpgmaker-memory.mjs'
 import {skitCommands} from './rpgmaker-skit.mjs'
 import {skitScriptScope} from './rpgmaker-skit-scripts.mjs'
@@ -104,6 +105,7 @@ export function compileRpgEvents(list, ctx, meta) {
     const offset = 0, origin = Number(p[2]), variablePos = Number(p[3]) === 1
     const x = Number(p[4 - offset]) || 0, y = Number(p[5 - offset]) || 0
     const cmd = { op: 'overlay', slot: `rpg-picture-${id}`, stage, x: x - stage[0] / 2, y: y - stage[1] / 2, anchor: origin ? [0.5, 0.5] : [0, 0], scaleX: Math.abs(Number(p[6 - offset]) || 0) / 100, scaleY: Math.abs(Number(p[7 - offset]) || 0) / 100, alpha: Number(p[8 - offset] ?? 255) / 255, z: id, fit: 'none', flipX: Number(p[6 - offset]) < 0 }
+    if(ctx.rpgLive2d&&id<=Number(ctx.rpgLive2d.cfg.pictpriority||0))cmd.under=true
     if (src) {
       cmd.src = src; pictures.set(id, src)
       if (cgMatch?.test(src)) cmd.cg = true
@@ -132,6 +134,8 @@ export function compileRpgEvents(list, ctx, meta) {
     return text.replace(/\\(?:F[1-8]?|F{2,4}|M[1-8]?|M{2,4}|FH|AA)\[[^\]]*\]/gi, '')
   }
   const skit=skitCommands(ctx,{emit,raw,initial,stage})
+  const live2d=rpgLive2dCommands(ctx,{emit,raw,stage,cg:ctx.recollection?.has(Number(/^common-(\d+)$/.exec(meta.scene)?.[1]))})
+  let recollectionReturned=false
   const extend=ctx.plugins?.find(p=>p.name.split('/').at(-1)==='CommonEventExtend'&&p.parameters?.DefaultCommandOverride==='true')
   const argumentIds=o.skit?.wrapperScripts&&ctx.skit&&extend?structValue(extend.parameters.DefaultArguments||'[]').map(Number).filter(n=>Number.isInteger(n)&&n>0).slice(0,32):[]
   const memorySwitches=new Set(meta.memoryReplay?.switches||[]),memoryVariables=new Set(meta.memoryReplay?.variables||[])
@@ -253,6 +257,8 @@ export function compileRpgEvents(list, ctx, meta) {
       if(!/^\d+$/.test(String(args.mapId))||!/^\d+$/.test(String(args.eventId))||!['A','B','C','D'].includes(args.name)||!['true','false',true,false].includes(args.value)){raw('self-switch-invalid',args);return}
       emit({op:'set',var:`rpg:self:${Number(args.mapId)}:${Number(args.eventId)}:${args.name}`,value:args.value===true||args.value==='true'?1:0});return
     }
+    if(name==='Live2DInterfaceMZ'&&live2d(action,args))return
+    if(name==='RecollectionModeMZ'&&action==='backToRecoMode'){recollectionReturned=true;return}
     if(name==='TRP_SkitMZ'&&skit(action,args))return
     if(name==='PictureAnimation'&&paEnabled&&pa.command(action,args))return
     const voice=name==='SimpleVoice',visu=name==='VisuMZ_2_VoiceActControl'
@@ -368,9 +374,13 @@ export function compileRpgEvents(list, ctx, meta) {
     const scriptScope=argumentVars.length?skitScriptScope({id:live,arguments:argumentVars,emit,initial,skit,actors:ctx.skit.actors,conditional:(conditions,fn)=>{guards.push({conditions});try{fn()}finally{guards.pop()}}}):null
     const labels = new Map(commands.map((c, i) => c.code === 118 ? [String(c.parameters?.[0]), i] : [null, -1]))
     for (let i = 0; i < commands.length; i++) {
+      if(recollectionReturned)break
       if (++stats.commands > o.maxCommands) throw new Error(`RPG Maker 指令超过 ${o.maxCommands} 上限，停止解析`)
       for(let n=guards.length-1;n>=guardBase;n--)if(guards[n].type==='forwardJump'&&guards[n].owner===live&&guards[n].end<=i)guards.splice(n,1)
       const c = commands[i], p = c.parameters || [], indent = Number(c.indent || 0)
+      // Trusted adapter boundary for native event formats (e.g. Unite). This
+      // hook is never populated by a game JSON file or import configuration.
+      if(ctx.commandCompiler?.(c,{emit,flush,variable,raw,stats,serial:()=>serial++}))continue
       if(meta.memoryReplay&&truth(when())===false&&![102,111,402,403,404,411,412].includes(c.code))continue
       if (c.code === 101) {
         const text = []
@@ -379,6 +389,10 @@ export function compileRpgEvents(list, ctx, meta) {
         const nativeText=text.join('\n');if(o.plugins.trnVoice.enabled){const ids=[...nativeText.matchAll(/\\TRN\[(\d+)\]/gi)].map(m=>Number(m[1])).filter(id=>ctx.trnVoiceIds?.has(id));if(ids.length)audio('voice',{name:String(ids[0]),folder:o.plugins.trnVoice.folder,volume:100})}
         let body = standing(nativeText), name = String(p[4] || '')
         body = body.replace(/\\n<([^>]+)>/gi, (_, who) => { name = who; return '' })
+        if(ctx.skit?.singleLayer){
+          if(name)skit('speaker',{name})
+          body=body.replace(/\\(SE|SP|SM|SA)\[([^\]]*)\]/gi,(_,kind,value)=>{const [first,...rest]=value.trim().split(/\s+/);if(kind.toUpperCase()==='SE')skit('expression',{name,expression:first});else if(kind.toUpperCase()==='SP')skit('pose',{name,pose:first,expression:rest[0]});else raw('skit-text-motion',{kind,value,speaker:name});return ''})
+        }
         emit({ op: 'speaker', segments: textParts(name) }); emit({ op: 'text', segments: textParts(body) }); stats.text++; flush(); continue
       }
       if (c.code === 102) {
@@ -426,7 +440,7 @@ export function compileRpgEvents(list, ctx, meta) {
           if(memoryFrame){const key=`rpg:memory-transfer:${serial++}`;initial.set(key,0);emit({op:'set',var:key,value:1});memoryFrame.next.push({map:Number(p[1]),when:[{var:key,op:'===',value:1}]})}
           else dispatchMemory(Number(p[1]),depth,false)
         }
-        else if(events.length===1&&events[0].pages?.length===1&&automatic.length===1)callMapEvent(events[0].id,depth,true)
+        else if(automatic.length===1&&((events.length===1&&events[0].pages?.length===1)||(meta.nativeRecollection&&ctx.recollectionMaps?.has(Number(p[1])))))callMapEvent(automatic[0].id,depth,true)
         else if(automatic.length)raw('map-autorun-ambiguous',{map:Number(p[1]),events:automatic.map(e=>e.id)})
         continue
       }

@@ -1,3 +1,5 @@
+import {prepareRecollection,recollectionCatalog} from './rpgmaker-recollection.mjs'
+import {prepareRpgLive2d} from './rpgmaker-live2d.mjs'
 import {memoryEntries,memoryTargets} from './rpgmaker-memory.mjs'
 import {prepareSkit} from './rpgmaker-skit.mjs'
 import {prepareTemplates} from './rpgmaker-templates.mjs'
@@ -27,7 +29,7 @@ const join = (...s) => s.filter(Boolean).join('/')
 const rootOf = o => cleanDir(o?.root)
 const decodeJson = s => JSON.parse(String(s).replace(/^\uFEFF/, ''))
 export const contextFiles = o => ['data/System.json', 'data/Actors.json', 'data/CommonEvents.json', 'data/MapInfos.json', 'data/Tilesets.json', 'js/plugins.js', ...(o?.plugins?.trnVoice?.enabled ? [o.plugins.trnVoice.list] : [])].map(p => join(rootOf(o), p))
-export const contextDirs = o => ['data', 'img', 'audio', ...(o?.extraDirs || [])].map(p => join(rootOf(o), p))
+export const contextDirs = o => [...new Set(['data', 'img', 'audio', 'Assets', 'assets', ...(o?.extraDirs || [])])].map(p => join(rootOf(o), p))
 export const contextWalkLimit = 400000
 
 export function sniff(text) {
@@ -76,9 +78,13 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
       if (Array.isArray(map.events)) ctx.maps.set(rel, map)
     } catch { ctx.warnings.push(`地图无法读取: ${rel}`) }
   }
+  await prepareRecollection(ctx,{texts,mediaDir,root})
+  prepareRpgLive2d(ctx)
   prepareTemplates(ctx)
   ctx.memoryReplays = new Map()
   ctx.catalogTree = buildCatalog(ctx)
+  const recollection=recollectionCatalog(ctx)
+  if(recollection&&o.special.enabled)ctx.catalogTree.children=[recollection,...ctx.catalogTree.children.filter(n=>n.id!=='special')]
   return ctx
 }
 
@@ -182,7 +188,7 @@ export function parse(text, ctx, meta = {}) {
     list = page.list; pageConditions = page.conditions; eventId = event.id; pageIndex = Number(selected[2]) - 1
     map = data
   } else throw new Error('不是 RPG Maker 事件文件')
-  return compileRpgEvents(list, ctx || { common: data, actors: [], standing: new Map(), options: o, stage: o.stage, warnings: [] }, { ...meta, options: o, pageConditions, eventId, pageIndex, map })
+  return compileRpgEvents(list, ctx || { common: data, actors: [], standing: new Map(), options: o, stage: o.stage, warnings: [] }, { ...meta, options: o, nativeRecollection:Boolean(ctx?.recollection?.has(eventId)&&Array.isArray(data)), pageConditions, eventId, pageIndex, map })
 }
 
 // The context already owns the decoded event database, keyed by file mtime.

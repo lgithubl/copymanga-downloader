@@ -1,6 +1,10 @@
 // Shared source for the import dropdown and its JSON presets.
 // Only registered playback adapters belong here; format probes are not importable adapters.
 export const GAL_PRESETS = {
+  celltalk:{label:'CellTalk 原生控制器预览（celltalk::native；已核对的 IL2CPP 版本）',adapters:['celltalk::native'],game:{id:'celltalk::game',title:''}},
+  naninovel:{label:'Naninovel 原生 Unity（naninovel::script；改 id / title）',adapters:['naninovel::script'],game:{id:'naninovel::game',title:''}},
+  utageNative:{label:'Utage 原生 Unity（utage::native；改 id / title）',adapters:['utage::native'],game:{id:'utage::game',title:''}},
+  rpgmakerUnite:{label:'RPG Maker Unite（rpgmaker-unite；改 id / title）',adapters:['rpgmaker-unite'],game:{id:'unite::game',title:''}},
   meshiagirl: {label:'meshiagirl（Cocos Creator；部分特效未还原）',adapters:['meshiagirl-json'],game:{id:'meshiagirl',title:'meshiagirl'}},
   uviewer: { label: "UViewer 资源包（通用）", adapters: ['uviewer-csv'], game: { id: 'uviewer', title: 'UViewer 资源包' } },
   deepone: { label: "deepone（UViewer 系）", adapters: ['uviewer-csv'], game: { id: 'deepone', title: 'deepone' } },
