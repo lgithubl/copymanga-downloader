@@ -98,10 +98,11 @@ set -uo pipefail
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
 # 2.22 用户指定 ddd 完整目录：流式全文件/哈希/空目录/软链接，不截成头尾样本，不采其他目录。
-VERSION="2.22"
+# 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
+VERSION="2.23"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^directory:ddd$'
+ROUND_RULES='^directory:ddd-access$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -2514,6 +2515,48 @@ def scene_audit_files(items,label):
     report['sampleBytes']=used
     yield '__scene-audit/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode(),int(time.time())
 
+def collect_ddd_access():
+    """Small unauthenticated network comparison; never run bundled code or read tokens."""
+    import urllib.request,urllib.error,socket
+    game=root if os.path.basename(root).casefold()=='ddd'else os.path.join(root,'ddd')
+    if not os.path.isdir(game):raise RuntimeError('未找到已采集的 ddd 目录；不扫描其他游戏')
+    cdn='https://tonofura-r-cdn-resource.deepone-online.com/deep_one/'
+    script=cdn+'download_adv/da/04/0b/f0/1cb84c652b90a5f8c968de640347a5d0.txt'
+    browser={'User-Agent':'Mozilla/5.0','Referer':'https://tonofura-web-r.deepone-online.com/','Origin':'https://tonofura-web-r.deepone-online.com'}
+    tests=[('script-basic',script,{},None),('script-browser',script,browser,None),
+      ('voice',cdn+'download_adv/ef/54/7ebc86543b6bd0bd2c4987a9e8291fb1.mp3',{},None),
+      ('preview',cdn+'download_game_hd/0b/99/de/0b/990b0bde874c6d019a527ab70ddf8345.png',{},None),
+      ('manifest-no-credentials','https://tonofura-web-r.deepone-online.com/deep-one/api/story/getResource',{'Content-Type':'application/json'},b'{"storyIds":"10010204","adult":1}')]
+    has_proxy=bool(urllib.request.getproxies().get('https'));routes=[('environment',urllib.request.build_opener())]
+    if has_proxy:routes.append(('direct',urllib.request.build_opener(urllib.request.ProxyHandler({}))))
+    report={'version':VERSION,'sourceReadOnly':True,'bundledCodeExecuted':False,'accountCredentialsUsed':False,'proxyConfigured':has_proxy,'maxResponseBytes':512,'rows':[],'dns':{}}
+    for domain in['tonofura-r-cdn-resource.deepone-online.com','tonofura-web-r.deepone-online.com']:
+        try:report['dns'][domain]=sorted({r[4][0]for r in socket.getaddrinfo(domain,443,type=socket.SOCK_STREAM)})
+        except OSError as error:report['dns'][domain]={'errorType':type(error).__name__}
+    for route,opener in routes:
+        for label,url,headers,data in tests:
+            req=urllib.request.Request(url,data=data,headers={'Range':'bytes=0-127',**headers}if data is None else headers,method='GET'if data is None else'POST')
+            row={'label':label,'route':route,'url':url,'method':req.get_method()}
+            try:
+                try:response=opener.open(req,timeout=12)
+                except urllib.error.HTTPError as error:response=error
+                with response:
+                    body=response.read(512);row.update(status=response.code,bytesRead=len(body),headers={k.lower():v for k,v in response.headers.items()if k.lower()in('server','content-type','content-length','content-range','x-cache','x-amz-cf-pop','www-authenticate')})
+                    found=re.search(rb'<Code>([^<]{1,100})</Code>',body)
+                    if found:row['errorCode']=found[1].decode('ascii',errors='replace')
+                    elif response.code>=400:row['errorType']='http-error'
+                    else:row['prefixHex']=body[:16].hex()
+            except Exception as error:row['errorType']=type(error).__name__
+            report['rows'].append(row);say('ddd 网络诊断 %s/%s: %s'%(route,label,row.get('status',row.get('errorType'))))
+    payload=json.dumps(report,ensure_ascii=False,indent=2).encode()
+    split=Split(os.path.join(out,'gal-collect-%s-%s-g01.tar.gz'%(ts,host)),lambda p:print('PART\t%s'%p,flush=True))
+    with gzip.GzipFile(fileobj=split,mode='wb',mtime=0)as gz:
+        with tarfile.open(fileobj=gz,mode='w|')as archive:
+            info=tarfile.TarInfo('g01/__access_probe.json');info.size=len(payload);archive.addfile(info,io.BytesIO(payload))
+    split.close()
+    for name,data in{'games.tsv':'gid\trelpath\tengines\tfiles\tpicked\tpicked_bytes\ng01\tddd\tnetwork-probe\t0\t1\t%d\n'%len(payload),'manifest.tsv':'gid\trel\tmode\trule\tsize\tstored_bytes\tsha256\ng01\t__access_probe.json\tmetadata\tdirectory:ddd-access\t%d\t%d\t%s\n'%(len(payload),len(payload),hashlib.sha256(payload).hexdigest()),'info.json':json.dumps({'version':VERSION,'games':1,'mode':'ddd-network-probe','sourceReadOnly':True,'requests':len(report['rows'])})}.items():
+        with open(os.path.join(out,name),'w',encoding='utf-8')as output:output.write(data)
+
 def collect_ddd_directory():
     """Explicit full-directory request; no game/media/cache/hidden-file exclusions."""
     games=[]
@@ -2577,6 +2620,8 @@ def collect_ddd_directory():
     with open(os.path.join(out,'info.json'),'w',encoding='utf-8')as info:json.dump({'version':VERSION,'ts':ts,'host':host,'root_name':os.path.basename(root),'games':len(games),'mode':'full-ddd-directory','complete':True,'sourceReadOnly':True,'totalBytes':total},info,ensure_ascii=False,indent=2)
 
 def main():
+    if RULES_RE is not None and RULES_RE.pattern=='^directory:ddd-access$':
+        collect_ddd_access();return
     if RULES_RE is not None and RULES_RE.pattern=='^directory:ddd$':
         collect_ddd_directory();return
     new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:playback$','^new-games:twi-model$','^new-games:scene-audit$','^new-games:mz-templates$','^new-games:followup$','^new-games:bug-cases$','^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$','^new-games:age-display$','^new-games:fuyu-edo$')
