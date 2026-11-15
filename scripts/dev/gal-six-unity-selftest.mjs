@@ -47,5 +47,11 @@ for(const[name,adapter,id,section,step]of cases)test('captured '+name+': import 
   const cards=await handler.getReaderContent(item.itemId,'main',{sectionId:special.node})
   const card=cards.node.items.find(i=>i.title==='みくアフター１');assert.ok(card,JSON.stringify(cards.node.items.map(i=>i.title)));assert.ok(card.thumb,'native gallery cover preserved');assert.ok(card.markers?.length,'native gallery cover must not suppress middle-start markers')
  }
+ if(name==='unite'){
+  const mapReader=await handler.getReaderContent(item.itemId,'main',{sectionId:'s:data/Map021.unite::event-1-1'}),map=mapReader.scene.steps.flatMap(s=>s.commands).find(c=>c.op==='rpgMap')?.map
+  assert.ok(map?.nativeImage,'native train event retains its actual Tilemap');assert.equal(map.tileSize,96)
+  const image=await handler.getResource(item.itemId,map.nativeImage),sharp=requireWeb('sharp'),metadata=await sharp(image.file).metadata(),pixels=await sharp(image.file).stats();assert.equal(metadata.width,1344);assert.equal(metadata.height,672);assert.ok(pixels.channels.some(c=>c.stdev>20),'native Tilemap must contain visible original pixels')
+  const output=path.resolve('.cache/six-games-20261115/verified');await mkdir(output,{recursive:true});await writeFile(path.join(output,'unite-map.json'),JSON.stringify({name:'unite-map',source,section:'s:data/Map021.unite::event-1-1',step:0,reader:mapReader,config:layout.itemPatch.gal.config},null,2))
+ }
  const output=path.resolve('.cache/six-games-20261115/verified');await mkdir(output,{recursive:true});await writeFile(path.join(output,name+'.json'),JSON.stringify({name,source,section,step,reader,config:layout.itemPatch.gal.config},null,2));console.log('Verified',name,reader.scene.stats.messages||reader.scene.stats.text,'messages; original resource',resource.contentType,sound.contentType)
 })

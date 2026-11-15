@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="2.09"
+VERSION="2.16"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1703,7 +1703,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJyl1F1vmzAUBuC/grjuYjuYGHbXNdWkXewiuZqmChlyQj2MjfwxKavy3+c1a/qRmJLtBgEvh/NwMDykX0V775K1M1rK9GPy/SEduLsPe+m13wiN6rZHFiQ0DvlfvuedtzvFBwsz3bZVepWkVnvTwKedAxvKKKZ5UebhvN5uLbhwCoeD+iRWvIc/bapq4MJUPWwER1shwaJJnfdXyanVovVtpRVXAjnouSLVznedN6LKLTQxMsGUlVHxUzoBPKX9GbcFtMKkeNyEaz5gnEWo+ZyxnMSox/RdarTjJB2N6ApcZmQe0x3Tf9DRMzrRt2gQjfMmFMJPUA7VkjfdbFBn33JW0ug7PmQjsPFm+7tQvfqCCWWU0Pnr7+izMHIFSldL7jhaN0YMTqj22lroaynAzn5Yrc6Ac8yi4EM2Ap7Y9ShfkDDs4o083B5908aHSn4pP6c0yv+bjfEvaP38DAtcMHY6fXsjfX3x+Odl/J9wyN4Z/5S2L+yUMfLavnks3dnwL4kgM7rIoqv6KRxhnnR49hSMsjcreclNl9zKbbIE24RPIBHK6eRGG+PDw2l16YizsOqi+EM2Yv9Pzf5u/xswqkDf'
+PAIR_MEDIA_PLAN='eJyl1EFvgjAUB/Cv0nA2o4VCcbdNlyU77KCnZTGkatFuhZq2LDGG775uYjbFit1uwB/6fjSvbxc889XagKlRUojgFrzugg01a3sVLKmh4XSrDStv3rSsggEItKzVgt1vDdP2FTJEiX0oi0IzY++hvZkfZxUt2ddieb6hXOUlW3IaFlwwHXbWb2b2g8kTRJhghKNjzSNXYsIqmY+/P1sovjG8Wt1pzcq54Ew7jDiBxGVsswvGK6s2A+CSCvbBBOy6siROMxfsEF4ta6v0OdAZB4kgdjra0M+Beh3RmV7C2LkdbeaniHoVcVcRZbaWi3EI/RxxrwN3HQlMnYw281Pgn9OVIoiy7OR02cXCF6lq293U94glGDuPWJtdwnqU/vmHFGaEdCeEHol67j0iouHQOSL2Wc9mX1P2lx0TgnxnbYzT2NkSh/BP0za1bU1Opu2YqnfwIAowZnrBKgN4ZSQYSaVq+3Oy8t3i2HadE7/PLtj/qWlmzSeO3zqv'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
@@ -1780,6 +1780,16 @@ def fuyu_edo_detail_files(items,label):
                 if total>24*MB:raise RuntimeError('Pair runtime evidence exceeds24MiB')
                 aid=hashlib.sha256(file.encode()).hexdigest()[:20]
                 yield '__pair_runtime/items/'+aid+'.json',b,int(st.st_mtime)
+                item_id=str(doc.get('itemId',''))
+                if re.fullmatch(r'[0-9a-f]{40}',item_id):
+                    progress=os.path.normpath(os.path.join(base,'..','..','cache','library','reading-progress','gal',item_id[:2],item_id[2:4],item_id+'.json'))
+                    if os.path.isfile(progress):
+                        pst=os.stat(progress)
+                        if pst.st_size>2*MB:raise RuntimeError('Pair reading progress exceeds2MiB')
+                        with open(progress,'rb')as pf:progress_doc=json.load(pf)
+                        payload=json.dumps(scrub(progress_doc),ensure_ascii=False,separators=(',',':')).encode();total+=len(payload)
+                        if total>24*MB:raise RuntimeError('Pair runtime evidence exceeds24MiB')
+                        yield '__pair_runtime/progress/'+aid+'.json',payload,int(pst.st_mtime)
     yield '__pair_runtime/index.json',json.dumps(runtime,ensure_ascii=False,indent=2).encode(),int(time.time())
 
 def new_game_probe_files(items):

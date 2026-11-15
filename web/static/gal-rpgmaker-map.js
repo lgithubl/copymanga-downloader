@@ -42,6 +42,7 @@ export function createRpgMakerMapLayer({parent,url,onMissing=()=>{}}){
    else{const bitmap=value(a.src);if(bitmap){const prefix=/^[!$]+/.exec(a.characterName||'')?.[0]||'',big=prefix.includes('$'),pw=bitmap.width/(big?3:12),ph=bitmap.height/(big?4:8),index=big?0:a.characterIndex||0,pattern=a.stepAnime?[0,1,2,1][Math.floor(now/150)%4]:Math.min(2,a.pattern??1),sx=((index%4)*3+pattern)*pw,sy=(Math.floor(index/4)*4+Math.max(0,Math.min(3,(a.direction-2)/2)))*ph;context.drawImage(bitmap,sx,sy,pw,ph,(a.x+.5)*tile-left-pw/2,(a.y+1)*tile-top-ph-(prefix.includes('!')?0:6),pw,ph)}}
    context.restore()
   }
+  const nativeImage=value(map.nativeImage);if(nativeImage)context.drawImage(nativeImage,-left,-top)
   layer(false);actors.filter(a=>a.priority===0).sort((a,b)=>a.y-b.y).forEach(actor);actors.filter(a=>a.priority!==0&&a.priority!==2).sort((a,b)=>a.y-b.y||a.id-b.id).forEach(actor);layer(true);actors.filter(a=>a.priority===2).forEach(actor)
   canvas.dataset.map=String(map.id);canvas.dataset.events=String(actors.filter(a=>a.visible!==false&&(a.src||a.tileId)).length)
  }
@@ -53,7 +54,7 @@ export function createRpgMakerMapLayer({parent,url,onMissing=()=>{}}){
    live=animate;map=next;canvas.hidden=!map;if(!map){context.clearRect(0,0,canvas.width,canvas.height);tracks.clear();return}
    for(const [id,track]of Object.entries(map.tracks||{}))if(tracks.get(id)?.value.serial!==track.serial)tracks.set(id,{value:track,started:performance.now()})
    for(const key of tracks.keys())if(!map.tracks?.[key])tracks.delete(key)
-   const sources=[...map.tileset,...Object.values(map.events).map(a=>a.src)];ready=Promise.all([...new Set(sources.filter(Boolean))].map(image));await ready;draw(performance.now());kick()
+   const sources=[map.nativeImage,...map.tileset,...Object.values(map.events).map(a=>a.src)];ready=Promise.all([...new Set(sources.filter(Boolean))].map(image));await ready;draw(performance.now());kick()
   },ready:()=>ready,setPaused(value){paused=!!value;if(paused){cancelAnimationFrame(raf);raf=0}else kick()},destroy(){destroyed=true;cancelAnimationFrame(raf);observer.disconnect();images.clear();tracks.clear();canvas.remove()},canvas
  }
 }

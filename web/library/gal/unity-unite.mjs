@@ -38,15 +38,27 @@ export function normalizeUnite(data,strings={}){
 }
 export async function indexUnite(api){
  const{store,catalog,catalogResource,cfg,scripts}=api,raw={}
- for(const file of store.files.keys())if(/^others_assets_(?:event_|so_)/.test(file)){const b=await store.bundle(file);for(const a of b.assets)for(const o of a.objects.filter(o=>o.classId===114))raw[file]=await store.decode(o)}
+ for(const file of store.files.keys())if(/^others_assets_(?:event_|so_|map_[0-9a-f-]+\.asset_)/.test(file)){const b=await store.bundle(file);for(const a of b.assets)for(const o of a.objects.filter(o=>o.classId===114))raw[file]=await store.decode(o)}
  const files=[],seen=new Map(),folders={Pictures:'img/pictures',Faces:'img/faces',Parallaxes:'img/parallaxes',BGM:'audio/bgm',BGS:'audio/bgs',SE:'audio/se',ME:'audio/me',VOICE:'audio/voice'},strings={}
  const locale=catalog.find(l=>l.key==='SystemTable_ja')
  if(locale){const o=await store.catalogAsset(locale),d=await store.decode(o),sharedLocation=catalog.find(l=>l.internal.endsWith('/SystemTable Shared Data.asset'));if(!sharedLocation)throw Error('Unite SystemTable shared keys missing');const shared=await store.catalogAsset(sharedLocation),table=await store.decode(shared),keys=new Map(table.m_Entries.map(e=>[String(e.m_Id),e.m_Key]));for(const e of d.m_TableData){const key=keys.get(String(e.m_Id));if(key)strings[key]=e.m_Localized}}
  const normalized=normalizeUnite(raw,strings)
+ const definitions=new Map(Object.values(raw).filter(v=>v.dataModel?.width&&v.dataModel?.height&&v.dataModel?.layerJsons).map(v=>[v.dataModel.id,v.dataModel]))
+ let nativeMaps=false
+ for(const map of normalized.maps){
+  const definition=definitions.get(map.sourceId),location=catalog.find(l=>l.key==='SavedMaps/'+map.sourceId+'.prefab')
+  if(!definition||!location)continue
+  const width=Number(definition.width),height=Number(definition.height)
+  if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1||width*height>65536)throw Error('Unite native map dimensions invalid: '+map.sourceId)
+  Object.assign(map,{width,height,data:Array(width*height*4).fill(0),nativeImage:'img/maps/'+map.sourceId+'.png'})
+  files.push(api.add(map.nativeImage,{file:store.files.get(location.bundles[0].toLowerCase())},async()=>{const{renderUniteMap}=await import('./unity-unite-map.mjs');return renderUniteMap(store,location,{id:map.sourceId,width,height})}))
+  nativeMaps=true
+ }
+ if(nativeMaps){normalized.system.tileSize=96;for(const map of normalized.maps)if(!map.data.length)map.data=[0,0,0,0]}
  for(const loc of catalog){const split=loc.key.indexOf('/'),kind=loc.key.slice(0,split),folder=folders[kind];if(!folder||! /\.(?:png|ogg|mp3|wav)$/i.test(loc.internal))continue;const name=folder+'/'+loc.key.slice(split+1).replace(/\.(?:mp3|wav)$/i,'.ogg');if(seen.has(name)){if(seen.get(name)!==loc.internal)throw Error('Unite ambiguous resource '+name);continue}seen.set(name,loc.internal);files.push(catalogResource(name,loc))}
  const root=cfg.dir+'/res',texts={},packets=[];const add=(rel,data)=>{const key=root+'/'+rel;texts[key]=JSON.stringify(data);files.push(key);packets.push({rel:key,data});scripts.push({name:rel.replace(/\.json$/,'.unite'),data:{format:'rpgmaker-unite/1',rel:key}})}
  add('data/CommonEvents.json',normalized.common);for(const m of normalized.maps)add('data/Map'+String(m.id).padStart(3,'0')+'.json',m)
- for(const[name,data]of Object.entries({'System':normalized.system,'Actors':normalized.actors,'MapInfos':normalized.mapInfo,'Tilesets':[]}))texts[root+'/data/'+name+'.json']=JSON.stringify(data)
+ for(const[name,data]of Object.entries({'System':normalized.system,'Actors':normalized.actors,'MapInfos':normalized.mapInfo,'Tilesets':nativeMaps?[{tilesetNames:[],flags:[]}]:[]}))texts[root+'/data/'+name+'.json']=JSON.stringify(data)
  texts[root+'/js/plugins.js']='var $plugins=[{"name":"SimpleVoice","status":true,"parameters":{"FolderName":"voice"}}];'
- api.context={format:'rpgmaker-unite-context/1',root,texts,files,selectionVariable:normalized.selectionVariable,unknownConditionVariable:normalized.unknownConditionVariable,strings,packetMap:Object.fromEntries(packets.map(p=>[p.rel,cfg.dir+'/script/'+p.rel.slice(root.length+1).replace(/\.json$/,'.unite')]))}
+ api.context={format:'rpgmaker-unite-context/1',root,texts,files,nativeMaps,selectionVariable:normalized.selectionVariable,unknownConditionVariable:normalized.unknownConditionVariable,strings,packetMap:Object.fromEntries(packets.map(p=>[p.rel,cfg.dir+'/script/'+p.rel.slice(root.length+1).replace(/\.json$/,'.unite')]))}
 }

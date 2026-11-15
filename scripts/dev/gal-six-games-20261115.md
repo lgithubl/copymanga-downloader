@@ -67,3 +67,14 @@
 - RJ01610188：全量导出 playlist 计 4939 条 PrintText，可匹配 2577 条语音（条件执行后略少）。匹配角色：yorutina 2483、isari 75、yoruko 15、mahousyouzyoisari 4；很多路人整段无 Voice ID。0001_Story_Opening1 的真实样本在浏览器实际播放通过。已追加采集 sharedassets0..3 元数据头；其中仅 sharedassets0 另有 22 个 AudioClip（总对象数据2232字节），尚需读取名称排除其他语音库。没有用户具体场景，不能断言其遇到的全部无声均属正常。
 
 本轮采集/分析文件保存在 `.cache/six-games-20261115/`，未把游戏资源写入仓库。
+
+
+## Unite 地图跟进验证
+
+- 已补齐 SavedMaps Tilemap → 按需 PNG → 普通 RPG 地图层的链路。Sprite 使用原生 PPtr、完整画布/pivot、ppu、色彩/透明度、SortingOrder 和瓦片坐标，不使用 MV/MZ 自动瓦片猜测。只在读取该地图时解码本地资源，图片裁切跟随事件位置。没有新增依赖或运行时下载。
+- 37 张原始地图全部完成合成检查；初始化空地图原样保持黑色，未误报解析失败。活跃瓦片矩阵已校验，未支持矩阵显式报错。静态 PNG 有 64M 像素上限。
+- 原生 ResolutionManager 构造器给定 1920×1080，CameraResolutionManager 基于此基准设置 assetsPPU=96；不是人为把地图放大填满屏幕。
+- 真实导入→layout→Map021 event-1-1 电车开场→原生地图 PNG（1344×672）通过。Chrome 实际显示电车、人物 cs001aaa，并播放 ren0280；预载前五句资源也已采齐，无资源/音频错误。37 张合成审计见缓存 `unite-map-render-audit.json`，实际截图 `browser-verified/unite-map.png`。
+- 导出协议版本升为 UNITY_NATIVE_VERSION=5，已有导出自动归档到 arc/cache/script-backups 后重建，无需删除游戏文件。导入配置不变；旧 RPG Maker 的地图路径不变。本项只覆盖静态地图背景，Unite UUID 角色小人/行走素材和完整交互游戏不因此算已支持。
+- Naninovel sharedassets0 的22个 AudioClip 名称已全部核对，均为 BGM/SE/UI，并非漏掉的语音库。其余 sharedassets1..3 无 AudioClip；原始开场第7、8句存在真实 Voice ID 且浏览器播放通过。不能据此把所有无声场景判为错误或正常，需对照用户最近阅读位置。
+- 采集脚本2.16增加每个已匹配游戏的阅读进度 JSON（只读，单文件2MiB/总24MiB限制，沿用敏感键脱敏），并同时采集六作实际元数据，后续可精确定位用户打开的节点。默认请求改为各作的小型标记文件，避免无关大媒体采集。

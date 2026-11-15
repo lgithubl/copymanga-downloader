@@ -4,7 +4,7 @@ export const sniff=t=>/^\s*\{\s*"format"\s*:\s*"rpgmaker-unite\/1"/.test(String(
 export const contextFiles=o=>[(o?.dir||'arc')+'/native.json'],contextDirs=o=>[(o?.dir||'arc')+'/res'],contextTextFilter=()=>()=>false
 export async function prepare({texts={},options}){
  const d=JSON.parse(texts[contextFiles(options)[0]]||'null');if(d?.format!=='rpgmaker-unite-context/1')throw Error('Unite native context missing')
- const o=rpg.optionsOf({root:d.root,maps:{enabled:false}}),ctx=await rpg.prepare({texts:d.texts,files:d.files,options:o,toResourcePath:p=>p.startsWith(d.root+'/')?p.slice(d.root.length+1):p})
+ const o=rpg.optionsOf({root:d.root,maps:{enabled:!!d.nativeMaps}}),ctx=await rpg.prepare({texts:d.texts,files:d.files,options:o,toResourcePath:p=>p.startsWith(d.root+'/')?p.slice(d.root.length+1):p})
  ctx.unite=d;ctx.commandCompiler=(c,{emit,flush,variable,raw,stats,serial})=>{
   if(c.code!==90707)return false
   const[kind,r]=c.parameters,p=r.parameters||[],diag=()=>raw('unite:'+r.code,{source:r,kind})
