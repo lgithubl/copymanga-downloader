@@ -98,9 +98,11 @@ set -uo pipefail
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
 # 2.22 用户指定 ddd 完整目录：流式全文件/哈希/空目录/软链接，不截成头尾样本，不采其他目录。
+# 2.26 RJ01746557：仅两种真实画面引用的纹理/音频范围约38.3MiB，源只读，不收完整纹理流。
+# 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.24"
+VERSION="2.26"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1707,7 +1709,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJylk11PwjAUhv9Ks2vDVih0807BmHjhBVwZQ5bCzkZ1a2c/YgjZf7cqiHx0sni37u0573Pe9GyCR16sDJoZJcsyuEbPm6BmZuW+gowZFs7W2kDVe9FSBFco0NKqJdyuDWh3hSZ46H7KPNdg3Dlyh8WhJlgFn83StGZcpRVknIU5L0GHJ/2buSuYPkSYUIJJ/5DmnqtyCkKmk6+ypeK14aK40RqqRclBexjJMKI+xq3Wwnih6w/5CEc4jo/IXfvwSSrrKllX/CEhXvyt1obfwXo/wyiKKT1NX49Lu+gcfz9JvPF/a3/Ef4ntL3ZCKT5kZzbjMtQQwpvl9aAniyI9BcXRCBMf6U5sQT3r0lyhMxyVFfAuM6atNDL28PQxTbzLtRMv4Tnnts8rpoQebdqEqVd0V+ZoAnoJwiAujERjqZR14UvR9QkM3Fb4BtlqLXP8k6aZNx9MNZiC'
+PAIR_MEDIA_PLAN='eJy10k1LAzEQBuC/suTcbjMfyUw8iiePehKRJZUUC25bNulBSv+7KVVYFBZ62NvwZkIeZnIyT48WhL1zYu6a15M5xPJRK/NyHNK2g6Vd2u4hlrgaUt4fh/eU25hzKrmtwbNZNOYa33+VlOtFlGBZRa3Wo/1mU1tr6oE9EvmarX8axSK6gDXZxT5dnuy6XIYU+y7H/vCZ8sq26+3OnBfNXCwQRQdgVUcwABYfpmVwk+y3+s8Ccqr0R6VghZXHJmICgUkSzj0sQQpSRzN2qbcizFMumtuFlyiQ6o0wnnOHGIIERh5/+AqlyRW6OUUA4JDQjkQYPOLkjPxV9Hb+BpAiQ4g='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0

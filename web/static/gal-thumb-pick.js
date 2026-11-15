@@ -10,10 +10,11 @@ export function scoreState(state) {
   if (Object.values(state.spines || {}).some((spec) => spec?.kind === 'still')) return 90
   const models=[state.live2d,...Object.values(state.live2ds||{})].filter(s=>s?.src&&s.visible!==false)
   if(models.some(s=>s.cg||s.kind==='still'))return 90
-  if ((state.overlays || []).some((o) => o?.src)) return 60
+  if ((state.overlays || []).some((o) => o?.src&&o.kind==='still')) return 90
+  if ((state.overlays || []).some((o) => o?.src&&o.kind!=='background')) return 60
   if(models.length)return 30
   if (Object.keys(state.spines || {}).length || state.stand?.parts?.length || (state.stands || []).length) return 30
-  return state.bg?.src ? 1 : 0
+  return state.bg?.src || (state.overlays || []).some(o=>o?.src&&o.kind==='background') ? 1 : 0
 }
 export function pickRenderStep(scene, scanSteps = 150, after = 2) {
   const steps = Array.isArray(scene?.steps) ? scene.steps : []

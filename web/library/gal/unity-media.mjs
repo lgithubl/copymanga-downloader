@@ -42,9 +42,14 @@ export async function unitySpritePng(sprite,texture,png){
  const{default:sharp}=await import('sharp');let image=sharp(png).extract({left,top,width:cw,height:ch}),w=cw,h=ch
  const rotation=(Number(sprite.m_RD.settingsRaw)>>>2)&15
  if(rotation===1)image=image.flop();else if(rotation===2)image=image.flip();else if(rotation===3)image=image.rotate(180);else if(rotation===4){image=image.rotate(270);w=ch;h=cw}else if(rotation!==0)throw Error('Unity sprite packing rotation unsupported: '+rotation)
- const x=Math.round(offset.x),y=Math.round(height-offset.y-h)
- if(x<0||y<0||x+w>width||y+h>height)throw Error('Unity sprite trim offset outside original canvas')
- return sharp({create:{width,height,channels:4,background:{r:0,g:0,b:0,alpha:0}}}).composite([{input:await image.png().toBuffer(),left:x,top:y}]).png().toBuffer()
+ const x=Math.round(offset.x),y=Math.round(height-offset.y-h),fractional=[rect.width,rect.height,r.x,r.y].some(n=>!Number.isInteger(n)),over=Math.max(-x,-y,x+w-width,y+h-height)
+ // Tight sprite meshes can have fractional logical edges and a one-pixel
+ // raster padding (captured 906.777 logical pixels vs 908 stored pixels).
+ // Clip that border only; genuinely out-of-bounds trim metadata still fails.
+ if(over>0&&(!fractional||over>1))throw Error('Unity sprite trim offset outside original canvas')
+ let pixels=await image.png().toBuffer(),dx=Math.max(0,x),dy=Math.max(0,y)
+ if(over>0)pixels=await sharp(pixels).extract({left:Math.max(0,-x),top:Math.max(0,-y),width:Math.min(w,width-dx),height:Math.min(h,height-dy)}).png().toBuffer()
+ return sharp({create:{width,height,channels:4,background:{r:0,g:0,b:0,alpha:0}}}).composite([{input:pixels,left:dx,top:dy}]).png().toBuffer()
 }
 let encoderPromise
 async function oggEncoder(){
