@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="2.07"
+VERSION="2.08"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1703,7 +1703,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJzNl8uO0zAUhl8lynpofI0ddjBFSCxYzCwQQqPKadw24CaV7QqNRn133AswM42L4yotu/Y48fk//+fE9lP6uZ4vbHJvdatU+jb59pSuhF24X2klrMjuH42Vy9F30zbpTZKadq2n8v2jlcY9wgpIXbCdzYy07j9wf8qXY41Yyu1kk8lK1HqylFUtslmtpMmO5t88uBfuPgFIGIEEvVTzsdbqTjbtZLx7barrla2b+Ttj5LJUtTQejYQC5tN4GDuhMTDrH+U5BJDzV8rd9NnXVq/dm6KvfEqIV/5h7JT8Hqn/MuSAM3a8+uZWrcvey4+Kwrv8+7F/LH9I2mfaCWOwbx1jkmPiU/l7MKqSc84Ie1XJY6F/JB/ULBlLM5WNTerGtsltq/XawbXNgdVqKZYHVmsysQ2JphKqbeSXuqnanyabzgWaiN0DE6HUqFw3lZLHgJA5HZwhHyMEhFOW+ygXUlRS+9KNtsPp5ib57xBdDBQY589Ic0pxLKcVtRqQs4QhnJgiCiDyNlWwlV3phrYyHhFTyAktcH8rOzmHtjKoZB0TBRx4t9BwK6/QlfGI2EUoyosIK6/QldOgkoUUcwL9W12wlV3phrYyHtHFIM/ziK7s5BzayrCSdedPgKn3PBBu5RW6Mh4RA+D2T8gjrLxCV1ZBJYvc+QvvvzTnWdmVbmgr4xFdDDKGI7qyk3NoK4NKFrntHxUUnG/lFboyHhE5I7eX4QgrL96VZhsxYVtJkbvznPdiG2imL+Gwdp6HCSkvttG+hnpZL2BpGCwG1B3cz/3WejNewtRoUHdZ4azofzvx08baahZCy2o/H8QjLffiO742wF2y0IlTDisoAj4As1tUk83bUtXNm3K+HM1MmW4eNr8A3OHTcQ=='
+PAIR_MEDIA_PLAN='eJylmF1z4jYYhf8KZXq5E1uWLMu9S0jaaS/2Itubnc6ORxABWozFSHZn0p3894qAnQR8/LU3gDmyz8NrSe/BP+af9WZbzr6U1uT5/LfZPz/mB1lu/ae53m+Cg16VlVUuUP+qogyWuVztbg7FJpt/ms2dqexK3T2XyvnxjKbMf2nWa6dKfxz6g+VHrZB7dbxylh2kttlePWkZrHXur99t9vLNn/34V0hYwgiLPnL+oW3+qAqT3ctSBl9WVh9KXWxunVP7Za6Vu/nuTNECHIcJBD5pHcADXRtyTkIixAW5v3zw1djKnynH4seMQfyz1oU/wvrtN/BQJMl19d0ir5ajyx+lKSz/Sesp/xDbd+wsSchHdlk9aRMsN/tgp/8zu6ow5lm6rd7pG7Npm+MRE4IzirDf5A7yPtOXT7NLQqeC79X+EEYAi4RRDOdCLfYiXbi0c1ht/Wmvr7ekfs9CAshESiOOyGpxCFm3bzurq0plZeDH+6GIkFESR3jfOolDCNvcBnChe+pna0Ig11kczdV2b49b72orrVz5gS745fdcbly2lEWhbPZn4fSTAls+j2MO724t9mz6g5w7eT2T2/qFlD2byhe+HTVKOUlgf2rUEbBttsM5I8BJRBinMVzLtTqVMxrLGcN6spDC+dmoUznjfs5fH/7+/Oh3AFhJGlPYYGpxON+FXRfZQlqHVgwTBLaPWhwO9ebUxSOlXvpAZQATFZwKxFSLw5k+unVxqSeTSVv5xgfA/OYLt+ZaHA52YddF9tpf0MwXNMUJ4CwOp3pn1UV02sUREotEiEPJSRyO9N7riqkJ6cvKlWf8oDB2L3NAl/CU4szUqEP/HCDfMaRZgirJQwqnXC1OJ619+1jda8vurioTLIHNt1HHsV77jiHNKKoqFTif1uJ00tp3FCuaAZTQCOaEWvwJVjQD3LMftg/uZJ4bU6CelvAEbtW12APXZnRFUx6HK89+C+8p51zgQFWrPTBXPphk7fbZ4pwKQ5Ldo6THhQ9JMJk06lAwYNvDKV2ZH4ffQkoeM9zcGnUU5aXpUEaUoARJGc6ijTqNEeUoMJwhxph1/E9q1GmMbBwjysoxixmBy7ZRpzGipNw+/A51E8o5gRGiUSch3o0iXKAihiINYZ5v1EmEi1GED6iGx+djcEk36iTCh4vnoFwkLLl4Dnov7W72kK9n98qtfAKfaZ/CZwtjbXUotSnGPqCjhMOFddY6fstP0rx8e/kfS3VZ0g=='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
