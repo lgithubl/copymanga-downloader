@@ -637,11 +637,12 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     }
   }
 
+  const contextErrors = new Map()
   const adapterContexts = new Map()   // 适配器 id → ctx（本次请求内）
   async function contextOf(adapterId) {
     if (!adapterId) return null
     if (!adapterContexts.has(adapterId)) {
-      adapterContexts.set(adapterId, await loadAdapterContext({ adapter: galAdapter(adapterId), mediaDir, config, sourceFiles }).catch(() => null))
+      adapterContexts.set(adapterId, await loadAdapterContext({ adapter: galAdapter(adapterId), mediaDir, config, sourceFiles }).catch(error => { contextErrors.set(adapterId,String(error?.message||error));return null }))
     }
     return adapterContexts.get(adapterId)
   }
@@ -824,7 +825,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     // indexes use paths relative to the media directory. Preserve both.
     const sourceMeta={...meta,sourceRel:path.relative(mediaDir,file).split(path.sep).join('/')}
     const ctx=await contextOf(adapterId),text=await galAdapter(adapterId).contextScriptText?.(ctx,sourceMeta)
-    return buildScene(adapterId,typeof text==='string'?text:decodeTextFile(await readFile(file)).text,ctx,sourceMeta)
+    return buildScene(adapterId,typeof text==='string'?text:decodeTextFile(await readFile(file)).text,ctx,{...sourceMeta,...(contextErrors.has(adapterId)?{contextError:contextErrors.get(adapterId)}:{})})
   }
 
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
@@ -1198,6 +1199,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], config: rawCo
     const problems = []
     const add = (level, code, message, details = null) => problems.push({ level, code, message, ...(details?.length ? { details } : {}) })
     const status = indexStatus()
+    for(const [adapterId,error]of contextErrors)add('error','adapter-context-failed',`${adapterId} 上下文建立失败：${error}`)
     if (status?.truncated) add('warn', 'index-truncated', `文件索引超过上限 ${status.limit} 个被截断，部分场景 / 资源会找不到（现有 ${status.files} 个）`)
     if (status?.sampleTruncated) add('warn', 'sample-truncated', `脚本抽样超过上限（config.limits.sampleFiles / 适配器 contextSampleLimit）被截断，列表 / 标题可能不全`)
     // config 里被丢掉 / 夹住 / 退回默认的内容（以前悄悄丢）：每条一行，最多 10 条

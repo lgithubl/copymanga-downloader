@@ -1,3 +1,4 @@
+import { createDjibrilResourceCache } from '../gal/djibril-assets.mjs'
 import { SILKY_RESOURCE_VERSION } from '../gal/silky.mjs'
 import { packedRpgView } from '../gal/rpgmaker-packed.mjs'
 import { candidatePaths } from '../gal/resolve.mjs'
@@ -67,6 +68,7 @@ export function normalizeGalOptions(value = {}) {
 export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathExists, getConfig }) {
   setKeysFile(path.join(dataDir, 'gal-krkr-keys.json'))   // KiriKiri Z（Hxv4）的密钥包（可选；也可以写在 config.containers.keys 里）
   const metaRoot = path.join(dataDir, 'library-meta', type)
+  const djibrilResources=createDjibrilResourceCache(path.join(dataDir,'cache','gal-djibril-res'))
   const rpgResources = createRpgMakerResourceCache(path.join(dataDir, 'cache', 'gal-rpgmaker-res'))
   const progressRoot = path.join(dataDir, 'cache', 'library', 'reading-progress', type)
   const arcRes = createArcResCache({ dir: path.join(dataDir, 'cache', 'gal-arc-res') })   // .arc 里的资源取原图 / 原音频：写这里（有总量上限、LRU），不再写进媒体目录
@@ -289,7 +291,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       const thumb = source ? await imageThumbs.thumbOf(source, width) : null
       if (thumb) return { file: thumb, contentType: 'image/webp', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }
     }
-    const file = await resolveAsset(item, resourcePath)
+    const file = await djibrilResources(await resolveAsset(item, resourcePath),item.adapters.includes('djibril-json'))
     if (frame) {
       if (!isVideoPath(file)) throw Object.assign(new Error('不是视频文件'), { statusCode: 415 })
       return { file: await frames.frameOf(file, normalizeGalConfig(item.config).thumbFrame), contentType: 'image/jpeg', cacheControl: 'public, max-age=604800, stale-while-revalidate=2592000' }

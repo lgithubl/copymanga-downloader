@@ -5288,5 +5288,7 @@ async function detectDjibril(scope){
  const config=await buildConfig(scope.media,loc.entry,loc.base)
  announce(scope.logs,scope.id,loc)
  for(const note of loc.entry.notes)scope.logs.push(note)
- return makeFound(scope,loc.entry,loc,config,{cover:await coverFromRules(scope.media,loc.entry,loc.base)})
+ const found=makeFound(scope,loc.entry,loc,config,{cover:await coverFromRules(scope.media,loc.entry,loc.base)})
+ found.id=scope.gameId||scope.id
+ return found
 }
