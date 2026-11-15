@@ -1,3 +1,4 @@
+import {prepareKoakumaAnimation,parseKoakumaGallery} from './rpgmaker-koakuma-animation.mjs'
 import {prepareLocalization} from './rpgmaker-localization.mjs'
 import {prepareActionSequences,parseActionGallery} from './rpgmaker-action-sequence.mjs'
 import {prepareRecollection,recollectionCatalog} from './rpgmaker-recollection.mjs'
@@ -27,13 +28,13 @@ export const DEFAULT_OPTIONS = {
   catalog: { common: true, maps: true, minText: 2, skipNames: '^$' },
   special: { enabled: true, label: '特殊场景', voiced: false, minText: 4, deduplicateCalls: true, preferMapCallers: false, nameMatch: '回想|回憶|recollection|replay|h[-_ ]?scene|(?:エロ|エッチ|お触り).*?(?:イベント|シーン)|シーン再生', skipNameMatch: '削除|初期化|準備|非表示|エフェクト|並列|吐息|擬音|判断|UI|ボタン', mapNameMatch: '回想|回憶|recollection|replay', imageMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]' },
   pictures: { folder: 'img/pictures', cgMatch: '(^|/)(?:[0-9]+_)?(?:hcg|cg|ev|event|ero_event|ero_scene|touching_scene)[_/-]', backgroundMatch: '(^|/)(bg|background)[_-]', thumbnailMatch: '.', thumbnailSkip: '(^|/)(button|btn|cursor|icon|window|balloon|loading)([_./]|$)' },
-  plugins: { memoryReplay: false, skipCommonEventNames: '', simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', meVoiceMatch: '', trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
+  plugins: { memoryReplay: false, skipCommonEventNames: '', simpleVoice: true, standingPicture: true, pictureCalls: true, structured: true, pictureActions: true, maxPictureActions: 16, seVoiceMatch: '', meVoiceMatch: '', koakumaAnimation: {enabled:false,data:'js/plugins/fm001_Koakuma_Data.js'}, trnVoice: { enabled: false, list: 'audio/voice/voice_list.json', folder: 'audio/voice/unique' }, commands: [] },
 }
 export const optionsOf = createOptionsReader(DEFAULT_OPTIONS)
 const join = (...s) => s.filter(Boolean).join('/')
 const rootOf = o => cleanDir(o?.root)
 const decodeJson = s => JSON.parse(String(s).replace(/^\uFEFF/, ''))
-export const contextFiles = o => ['data/System.json', 'data/Actors.json', 'data/CommonEvents.json', 'data/MapInfos.json', 'data/Tilesets.json', 'js/plugins.js', ...(o?.plugins?.trnVoice?.enabled ? [o.plugins.trnVoice.list] : [])].map(p => join(rootOf(o), p))
+export const contextFiles = o => ['data/System.json', 'data/Actors.json', 'data/CommonEvents.json', 'data/MapInfos.json', 'data/Tilesets.json', 'js/plugins.js', ...(o?.plugins?.trnVoice?.enabled ? [o.plugins.trnVoice.list] : []), ...(o?.plugins?.koakumaAnimation?.enabled ? [o.plugins.koakumaAnimation.data] : [])].map(p => join(rootOf(o), p))
 export const contextDirs = o => [...new Set(['data', 'img', 'audio', 'Audio', 'locales', 'Assets', 'assets', ...(o?.extraDirs || [])])].map(p => join(rootOf(o), p))
 export const contextWalkLimit = 400000
 
@@ -100,6 +101,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   const recollection=recollectionCatalog(ctx)
   if(recollection&&o.special.enabled)ctx.catalogTree.children=[recollection,...ctx.catalogTree.children.filter(n=>n.id!=='special')]
   prepareActionSequences(ctx)
+  ctx.koakumaAnimation=await prepareKoakumaAnimation(ctx,{texts,mediaDir,root})
   return ctx
 }
 
@@ -193,6 +195,8 @@ function buildCatalog(ctx) {
 export function parse(text, ctx, meta = {}) {
   const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : (ctx?.maps?.get(meta.sourceRel || meta.rel) || decodeJson(text)), o = optionsOf(meta.options || ctx?.options)
   const scene = String(meta.scene || '')
+  const nativeAnimation=/^koakuma-animation-(\d{4})$/.exec(scene),koakuma=nativeAnimation&&ctx?.koakumaAnimation?.families.get(nativeAnimation[1])
+  if(koakuma)return parseKoakumaGallery(koakuma,ctx)
   const action=ctx?.actionGalleries?.get(`${meta.sourceRel||meta.rel}::${scene}`)
   if(action)return parseActionGallery(action,ctx,meta)
   const replay=ctx?.memoryReplays?.get(`${meta.sourceRel||meta.rel}::${scene}`)
@@ -218,5 +222,5 @@ export function parse(text, ctx, meta = {}) {
 
 // The context already owns the decoded event database, keyed by file mtime.
 // A scene card need not reread/decode the same38MB file for every event.
-export function contextScriptText(ctx,meta){return (/CommonEvents\.json$/i.test(meta.rel||'')&&/^common-[0-9]+$/.test(meta.scene||'')&&ctx?.common?.length)||ctx?.maps?.has(meta.sourceRel || meta.rel)?'':null}
+export function contextScriptText(ctx,meta){return (/CommonEvents\.json$/i.test(meta.rel||'')&&/^(?:common-[0-9]+|koakuma-animation-[0-9]{4})$/.test(meta.scene||'')&&ctx?.common?.length)||ctx?.maps?.has(meta.sourceRel || meta.rel)?'':null}
 export const rpgMakerJsonAdapter = { id: ADAPTER_ID, label: 'RPG Maker MV/MZ 事件', sniff, parse, prepare, contextScriptText, contextFiles, contextDirs, contextWalkLimit, sceneInPath: true, sceneThumbs: true, catalog: ctx => ctx?.catalogTree, health: ctx => (ctx?.warnings || []).map(message => ({ level: 'warn', code: 'rpgmaker-context', message })) }

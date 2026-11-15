@@ -249,7 +249,7 @@ export function compileRpgEvents(list, ctx, meta) {
     }
     raw(`plugin:${command || 'empty'}`, text)
   }
-  const koakuma=koakumaCommands({audio,emit,raw})
+  const koakuma=koakumaCommands({audio,emit,raw,ctx,variable,initial,pause:when=>{emit({op:'ui',visible:false,when});emit({op:'speaker',segments:[],when});emit({op:'label',name:'动态CG',when});emit({op:'text',segments:[{text:'动态CG'}],when});stats.text++;flush()}})
   const loopAnimation=loopAnimationCommands(ctx,{emit,raw,resource,variable,stage})
   const mzPlugin = (name, action, args, depth) => {
     name=String(name).split('/').at(-1)
@@ -411,6 +411,13 @@ export function compileRpgEvents(list, ctx, meta) {
       // hook is never populated by a game JSON file or import configuration.
       if(ctx.commandCompiler?.(c,{emit,flush,variable,raw,stats,serial:()=>serial++}))continue
       if(meta.memoryReplay&&truth(when())===false&&![102,111,402,403,404,411,412].includes(c.code))continue
+      if(c.code===109){
+        let comments=1
+        while(++i<commands.length&&comments){if(commands[i].code===109)comments++;else if(commands[i].code===409)comments--}
+        i--
+        if(comments)raw('comment-block-unclosed',{callId})
+        continue
+      }
       if(c.code===112){
         const key=`rpg:loop:${serial++}`;emit({op:'set',var:key,value:1})
         guards.push({type:'loop',indent,key,conditions:[{var:key,op:'===',value:1}]});continue

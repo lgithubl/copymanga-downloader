@@ -222,6 +222,7 @@ export const ADAPTER_RULES = {
       "meVoiceMatch": "",
       "memoryReplay": false,
       "skipCommonEventNames": "",
+      koakumaAnimation: {enabled:false,data:'js/plugins/fm001_Koakuma_Data.js'},
       "trnVoice": {"enabled": false, "list": "audio/voice/voice_list.json", "folder": "audio/voice/unique"},
       "commands": []
     }
@@ -2547,7 +2548,7 @@ export const LAYOUTS = {
   },
   'rpgmaker::rj01007726':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{localization:{language:'zh-CN'},extraDirs:['Audio','locales'],plugins:{seVoiceMatch:'^voice/'},pictures:{cgMatch:'(?:^|/)(?:cg|ll_loopanimation)/'},special:{imageMatch:'(?:^|/)(?:cg|ll_loopanimation)/'}}}},
   'rpgmaker::rj01610452':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:^|/)Prism(?:_| )(?!Po_|PantsCut|full)'},special:{imageMatch:'(?:^|/)Prism(?:_| )(?!Po_|PantsCut|full)'}}}},
-  'rpgmaker::rj01319586':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{plugins:{seVoiceMatch:'^voice/',skipCommonEventNames:'^(?:休日\\|時間経過|シナリオ実行\\((?:朝|夜|深夜)\\)|マップ操作|自室自由行動|自由行動\\|ルームチェッカー|小悪魔配置喋りかけイベント|｜小悪魔アイテム基礎|シーン回想\\|(?:オープン|呼び出し))$'}}}},
+  'rpgmaker::rj01319586':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{plugins:{koakumaAnimation:{enabled:true},seVoiceMatch:'^voice/',skipCommonEventNames:'^(?:休日\\|時間経過|シナリオ実行\\((?:朝|夜|深夜)\\)|マップ操作|自室自由行動|自由行動\\|ルームチェッカー|小悪魔配置喋りかけイベント|｜小悪魔アイテム基礎|シーン回想\\|(?:オープン|呼び出し))$'}}}},
   'rpgmaker::rj01234887':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{special:{voiced:true},plugins:{skipCommonEventNames:'^(?:补魔结算.*|(?:.*-)?睡到第二天)$',meVoiceMatch:'^(?:(?:0[2-9]|1[0-7])_[A-Za-z0-9_]+|(?:Bad|Good|Nomal)_ending|Ouji_[AB])_[0-9]+[A-Za-z]?(?:[_-][A-Za-z0-9]+)?$'}}}},
   'rpgmaker::rj01271506': {extends:'rpgmaker',resourceRoots:['dlc/dlc_10000','.'],resourceRootsForce:true,ruleOverrides:{'rpgmaker-json':{extraDirs:['dlc/dlc_10000'],plugins:{memoryReplay:true,trnVoice:{enabled:true}},skit:{wrapperScripts:true,expressionPoses:{zana:{swimwear:'swimwear',halloween:'swimwear'}}},pictures:{cgMatch:'(?:^|/)still/[^/]+/h/'},special:{preferMapCallers:true,imageMatch:'(?:^|/)still/[^/]+/h/'}}}},
   'rpgmaker::rj01646655': {extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'},special:{imageMatch:'(?:ご奉仕モード|睡眠お触りpart_イラスト|お触りcg|痴漢.*cg)'}}}},
@@ -5233,6 +5234,10 @@ async function pickRpgIcon(media,base){
   }
   return ''
 }
+function configureRpgAnimationMarkers(config){
+  if(!config.adapterOptions?.['rpgmaker-json']?.plugins?.koakumaAnimation?.enabled)return
+  const marker=config.sceneMarkers?.find(r=>r.op==='label');if(marker)Object.assign(marker,{match:'^rpg-action:|^动作 [0-9]|^动态CG$',max:12})
+}
 async function detectRpgMaker(scope) {
   let loc = await locateGame(scope, scope.gameId || scope.id)
   if (!loc) {
@@ -5247,6 +5252,7 @@ async function detectRpgMaker(scope) {
     loc = { base: packed.root, entry }
     const config = await buildConfig(scope.media, entry, packed.root)
     config.adapterOptions['rpgmaker-json'].packedExe = packed.exe
+    configureRpgAnimationMarkers(config)
     config.scriptCount = common.filter(e => e?.list?.some(c => c.code === 401)).length
     const found = makeFound(scope, entry, loc, config, {count: async () => config.scriptCount})
     found.gameTitle = system.gameTitle
@@ -5265,6 +5271,7 @@ async function detectRpgMaker(scope) {
   }
   announce(scope.logs, id, loc)
   const config = await buildConfig(scope.media, loc.entry, loc.base)
+  configureRpgAnimationMarkers(config)
   const cgMarker=config.sceneMarkers.find(rule=>rule.op==='overlay')
   if(cgMarker)cgMarker.match = config.adapterOptions['rpgmaker-json'].pictures.cgMatch
   scope.logs.push('RPG Maker: ' + system.gameTitle + '；公共事件槽位 ' + (common.length - 1) + '；原始媒体按请求解密到 cache，不全量解包')

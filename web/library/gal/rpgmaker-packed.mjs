@@ -16,7 +16,7 @@ export async function packedRpgView(source,exe,cacheDir){
    return inflight.get(target)
   }
   let bytes=0
-  for(const entry of index.files.values())if(/(^|\/)data\/[^/]+\.json$/i.test(entry.rel)||/(^|\/)js\/plugins\.js$/i.test(entry.rel)){
+  for(const entry of index.files.values())if(/(^|\/)data\/[^/]+\.json$/i.test(entry.rel)||/(^|\/)js\/plugins\.js$/i.test(entry.rel)||/(^|\/)js\/plugins\/fm001_Koakuma_Data\.js$/i.test(entry.rel)){
    bytes+=entry.size;if(entry.size>32*1048576||bytes>64*1048576)throw Error('Packed RPG context exceeds limit')
    await materialize(entry.rel)
   }
