@@ -98,11 +98,12 @@ set -uo pipefail
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
 # 2.22 用户指定 ddd 完整目录：流式全文件/哈希/空目录/软链接，不截成头尾样本，不采其他目录。
+# 2.27 RJ01746557 无人声诊断：仅回想scene4原生人声367KB、当前导出配置/脚本和匹配元数据；源只读。
 # 2.26 RJ01746557：仅两种真实画面引用的纹理/音频范围约38.3MiB，源只读，不收完整纹理流。
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.26"
+VERSION="2.27"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1709,7 +1710,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJy10k1LAzEQBuC/suTcbjMfyUw8iiePehKRJZUUC25bNulBSv+7KVVYFBZ62NvwZkIeZnIyT48WhL1zYu6a15M5xPJRK/NyHNK2g6Vd2u4hlrgaUt4fh/eU25hzKrmtwbNZNOYa33+VlOtFlGBZRa3Wo/1mU1tr6oE9EvmarX8axSK6gDXZxT5dnuy6XIYU+y7H/vCZ8sq26+3OnBfNXCwQRQdgVUcwABYfpmVwk+y3+s8Ccqr0R6VghZXHJmICgUkSzj0sQQpSRzN2qbcizFMumtuFlyiQ6o0wnnOHGIIERh5/+AqlyRW6OUUA4JDQjkQYPOLkjPxV9Hb+BpAiQ4g='
+PAIR_MEDIA_PLAN='eJw1jcEOgjAQRH+F7FmgpbRUj8aTR2/GmKbgghsjNbSYEMK/W6LeXt7MZGY4HRmvSiVlBbvkMsPLhnskOI8DkuEpS5k52GDzAb0bhwZ99ifYJPCl/RTQxxUXUmuhmY6Ja1uPIcpiK2Up1OrqX08oVckiit4+cX0z5u2oQXMj2/XOB2ryyTBugqMHZTX1sFyXD4qlNSI='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
@@ -1750,7 +1751,7 @@ def fuyu_edo_detail_files(items,label):
     runtime={'game':label,'sourceReadOnly':True,'metadataRoots':[],'files':[]};total=0
     for e in items:
         rel=e.rel.replace('\\','/')
-        if not (re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
+        if not (label=='RJ01746557' and re.search(r'(?:^|/)arc/(?:native\.json|\.unity-stamp\.json|script/replay/scene4\.nani)$',rel,re.I) or re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
         if e.size>4*MB:raise RuntimeError('Pair runtime file exceeds4MiB: '+rel)
         with open(e.path,'rb')as f:b=f.read(4*MB+1)
         total+=len(b)
