@@ -13,6 +13,7 @@
 #   · Unity 补：*_Data/Caches/masterdata（抽样）、Caches/assetbundles（抽样）、BepInEx/plugins/*.dll、任何层级的 StaticData 目录（整个）
 #   · 家族 7（ChakraCore）：Arc*.dat、Resources/*.dat       · XFL：scr.xfl 整个、别的 xfl 的头 + 尾       · AGE：SC*.BIN、ALF 的头 + 尾
 # 一律不收：存档（save / savedata / UserData / *.sud / SAVE*.DAT）、视频 / 音频 / 图片、安装包 / 卸载程序、pdf、lnk。
+# 例外：显式的 ^directory:ddd$ 完整目录模式保留所有普通文件、隐藏目录及软链接，不应用上述游戏样本筛选；源只读。
 #
 # 配置（环境变量，都有默认值）：
 #   GAL_ROOT            游戏库目录（也可以作为第一个参数）；必填
@@ -96,10 +97,11 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="2.21"
+# 2.22 用户指定 ddd 完整目录：流式全文件/哈希/空目录/软链接，不截成头尾样本，不采其他目录。
+VERSION="2.22"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:fuyu-edo$'
+ROUND_RULES='^directory:ddd$'
 export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
@@ -190,7 +192,7 @@ fi
 
 HELPER="$OUT/collect.py"
 cat > "$HELPER" <<'PYEOF'
-import base64, collections, gzip, hashlib, io, os, re, struct, sys, tarfile, time, json, zlib
+import base64, collections, gzip, hashlib, io, os, re, stat as statmod, struct, sys, tarfile, time, json, zlib
 root = os.path.abspath(sys.argv[1]); out = sys.argv[2]; ts = sys.argv[3]; host = sys.argv[4]
 env = os.environ
 MB = 1 << 20
@@ -2512,7 +2514,71 @@ def scene_audit_files(items,label):
     report['sampleBytes']=used
     yield '__scene-audit/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode(),int(time.time())
 
+def collect_ddd_directory():
+    """Explicit full-directory request; no game/media/cache/hidden-file exclusions."""
+    games=[]
+    for directory,dirs,_files in walk_follow(root):
+        rel=os.path.relpath(directory,root)
+        if os.path.basename(directory).casefold()=='ddd':
+            if not ONLY or ONLY.search(rel):games.append(directory)
+            dirs[:]=[]
+        else:
+            depth=0 if rel=='.' else len(rel.split(os.sep))
+            dirs[:]=sorted(d for d in dirs if depth<8)
+    if not games:raise RuntimeError('未找到 ddd 目录；本轮未采其他目录')
+    sources=[];total=0
+    for game in games:
+        if os.path.commonpath([os.path.realpath(out),os.path.realpath(game)])==os.path.realpath(game):
+            raise RuntimeError('采集输出不能位于 ddd 源目录内')
+        entries=[]
+        def failed(error):raise error
+        for directory,dirs,files in os.walk(game,followlinks=False,onerror=failed):
+            dirs.sort();files.sort()
+            for name in dirs+files:
+                file=os.path.join(directory,name);st=os.lstat(file)
+                kind='link'if statmod.S_ISLNK(st.st_mode)else'directory'if statmod.S_ISDIR(st.st_mode)else'file'if statmod.S_ISREG(st.st_mode)else'unsupported'
+                if kind=='unsupported':raise RuntimeError('ddd 中存在无法完整打包的特殊文件: '+os.path.relpath(file,game))
+                entries.append((os.path.relpath(file,game).replace(os.sep,'/'),file,st,kind))
+                if kind=='file':total+=st.st_size
+        sources.append((game,entries))
+    if total>TOTAL_MAX:raise RuntimeError('ddd 完整目录共%.1fMiB，超过总量上限%dMiB；没有截断或退成头尾采样'%(total/MB,TOTAL_MAX//MB))
+    say('仅完整采集 ddd：%d 个目录，%d 项，原始%.2fMiB；包含隐藏文件、依赖、缓存和媒体；软链接保留链接本身；源目录只读'%(len(sources),sum(len(v)for _g,v in sources),total/MB))
+    class HashedReader:
+        def __init__(self,file):self.file=file;self.hash=hashlib.sha256();self.size=0
+        def read(self,n=-1):
+            data=self.file.read(n);self.hash.update(data);self.size+=len(data);return data
+    done=0
+    with open(os.path.join(out,'games.tsv'),'w',encoding='utf-8')as gl,open(os.path.join(out,'manifest.tsv'),'w',encoding='utf-8')as mf:
+        gl.write('gid\trelpath\tengines\tfiles\tpicked\tpicked_bytes\n');mf.write('gid\trel\tmode\trule\tsize\tstored_bytes\tsha256\n')
+        for number,(game,entries)in enumerate(sources,1):
+            gid='g%02d'%number;index=[];stored=0
+            split=Split(os.path.join(out,'gal-collect-%s-%s-%s.tar.gz'%(ts,host,gid)),lambda p:print('PART\t%s'%p,flush=True))
+            with gzip.GzipFile(fileobj=split,mode='wb',compresslevel=6,mtime=0)as gz:
+                with tarfile.open(fileobj=gz,mode='w|')as archive:
+                    for count,(rel,file,st,kind)in enumerate(entries,1):
+                        current=os.lstat(file)
+                        if(current.st_ino,current.st_size,current.st_mtime_ns,current.st_mode)!=(st.st_ino,st.st_size,st.st_mtime_ns,st.st_mode):raise RuntimeError('ddd 源文件在采集前改变: '+rel)
+                        info=tarfile.TarInfo(gid+'/files/'+rel);info.mode=st.st_mode&0o777;info.mtime=int(st.st_mtime)
+                        row={'path':rel,'kind':kind,'size':st.st_size if kind=='file'else 0,'mtimeNs':st.st_mtime_ns,'mode':info.mode}
+                        if kind=='directory':info.type=tarfile.DIRTYPE;archive.addfile(info)
+                        elif kind=='link':
+                            info.type=tarfile.SYMTYPE;info.linkname=os.readlink(file);row['target']=info.linkname;archive.addfile(info)
+                        else:
+                            info.size=st.st_size
+                            with open(file,'rb')as source:
+                                reader=HashedReader(source);archive.addfile(info,reader);after=os.fstat(source.fileno())
+                            if reader.size!=st.st_size or(after.st_size,after.st_mtime_ns)!=(st.st_size,st.st_mtime_ns):raise RuntimeError('ddd 源文件在采集中改变: '+rel)
+                            row['sha256']=reader.hash.hexdigest();stored+=reader.size;done+=reader.size
+                        index.append(row);mf.write('%s\t%s\t%s\tdirectory:ddd\t%d\t%d\t%s\n'%(gid,json.dumps(rel,ensure_ascii=False),kind,row['size'],row['size'],row.get('sha256','')))
+                        if count%100==0 or count==len(entries):say('ddd %s: %d/%d 项，完整读取%.2f/%.2fMiB'%(gid,count,len(entries),done/MB,total/MB))
+                    report={'version':VERSION,'root':os.path.relpath(game,root),'sourceReadOnly':True,'complete':True,'regularFileBytes':stored,'symlinkPolicy':'preserve-links-without-following','entries':index}
+                    data=json.dumps(report,ensure_ascii=False,indent=2).encode();info=tarfile.TarInfo(gid+'/__directory-index.json');info.size=len(data);archive.addfile(info,io.BytesIO(data))
+            split.close();gl.write('%s\t%s\tfull-directory\t%d\t%d\t%d\n'%(gid,os.path.relpath(game,root),len(entries),len(entries),stored))
+    with open(os.path.join(out,'info.json'),'w',encoding='utf-8')as info:json.dump({'version':VERSION,'ts':ts,'host':host,'root_name':os.path.basename(root),'games':len(games),'mode':'full-ddd-directory','complete':True,'sourceReadOnly':True,'totalBytes':total},info,ensure_ascii=False,indent=2)
+
 def main():
+    if RULES_RE is not None and RULES_RE.pattern=='^directory:ddd$':
+        collect_ddd_directory();return
     new_games = RULES_RE is not None and RULES_RE.pattern in ('^new-games:playback$','^new-games:twi-model$','^new-games:scene-audit$','^new-games:mz-templates$','^new-games:followup$','^new-games:bug-cases$','^new-games:probe$','^new-games:detail$','^new-games:media$','^new-games:remaining$','^new-games:next$','^new-games:next-detail$','^new-games:next-verify$','^new-games:age-link$','^new-games:age-code$','^new-games:age-scene$','^new-games:age-display$','^new-games:fuyu-edo$')
     scene_audit = RULES_RE is not None and RULES_RE.pattern in ('^new-games:playback$','^new-games:scene-audit$','^new-games:twi-model$')
     twi_model = scene_audit and RULES_RE.pattern=='^new-games:twi-model$'
