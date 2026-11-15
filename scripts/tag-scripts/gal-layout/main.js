@@ -2509,7 +2509,8 @@ export const LAYOUTS = {
           "op": "bgm",
           "pick": "each",
           "max": 3
-        }
+        },
+        { "label": "动作切换", "kind": "cmd", "op": "label", "match": "^rpg-action:", "pick": "each", "max": 10 }
       ],
       "pageSize": 100
     },
@@ -5252,7 +5253,8 @@ async function detectRpgMaker(scope) {
   }
   announce(scope.logs, id, loc)
   const config = await buildConfig(scope.media, loc.entry, loc.base)
-  config.sceneMarkers[0].match = config.adapterOptions['rpgmaker-json'].pictures.cgMatch
+  const cgMarker=config.sceneMarkers.find(rule=>rule.op==='overlay')
+  if(cgMarker)cgMarker.match = config.adapterOptions['rpgmaker-json'].pictures.cgMatch
   scope.logs.push('RPG Maker: ' + system.gameTitle + '；公共事件槽位 ' + (common.length - 1) + '；原始媒体按请求解密到 cache，不全量解包')
   for (const line of loc.entry.notes) scope.logs.push(line)
   const found = makeFound(scope, loc.entry, loc, config)

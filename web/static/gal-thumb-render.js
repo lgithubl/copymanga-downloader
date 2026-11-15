@@ -85,8 +85,8 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
   const errors = []
   const media = createStageMedia({ url, onMissing: (s) => errors.push(`缺 ${s}`) })
   const standLayer = createStandLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media })
-  const overlayLayer = createOverlayLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media })
-  const underLayer = createOverlayLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media, under: true })
+  const overlayLayer = createOverlayLayer({ animated: false, parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media })
+  const underLayer = createOverlayLayer({ animated: false, parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), media, under: true })
   const hasSpines = Object.keys(state.spines || {}).length > 0
   const spineLayer = hasSpines ? createSpineLayer({ parent: host, url, onMissing: (s) => errors.push(`缺 ${s}`), onUnavailable: (v) => errors.push(`运行时 ${v}`), onError: (e) => errors.push(String(e)) }) : null
   const models={default:state.live2d,...state.live2ds},hasModels=Object.values(models).some(s=>s?.src&&s.visible!==false)

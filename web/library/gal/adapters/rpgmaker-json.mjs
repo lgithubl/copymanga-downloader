@@ -1,3 +1,4 @@
+import {prepareActionSequences,parseActionGallery} from './rpgmaker-action-sequence.mjs'
 import {prepareRecollection,recollectionCatalog} from './rpgmaker-recollection.mjs'
 import {prepareRpgLive2d} from './rpgmaker-live2d.mjs'
 import {memoryEntries,memoryTargets} from './rpgmaker-memory.mjs'
@@ -62,8 +63,11 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
     try { for (const item of decodeJson(standing.parameters.sPictures || '[]')) { const v = typeof item === 'string' ? decodeJson(item) : item; if (v?.id) ctx.standing.set(String(v.id), v) } }
     catch { ctx.warnings.push('LL_StandingPictureMV 的 sPictures 配置无法解析') }
   }
-  const sizePlugin = enabled.find(p => p.parameters?.screenWidth && p.parameters?.screenHeight)
-  ctx.stage = [Number(system.advanced?.screenWidth || sizePlugin?.parameters.screenWidth || o.stage[0]), Number(system.advanced?.screenHeight || sizePlugin?.parameters.screenHeight || o.stage[1])]
+  const sizePlugin = [...enabled].reverse().map(p => {
+    if(p.name==='YEP_CoreEngine')return [p.parameters?.['Screen Width']||p.parameters?.['屏幕宽度'],p.parameters?.['Screen Height']||p.parameters?.['屏幕高度']]
+    return [p.parameters?.screenWidth,p.parameters?.screenHeight]
+  }).find(a=>a.every(v=>Number(v)>0))
+  ctx.stage = [Number(system.advanced?.screenWidth || sizePlugin?.[0] || o.stage[0]), Number(system.advanced?.screenHeight || sizePlugin?.[1] || o.stage[1])]
   ctx.stage = ctx.stage.map((n, i) => Math.max(1, Math.min(8192, Number.isFinite(n) && n > 0 ? n : DEFAULT_OPTIONS.stage[i])))
   ctx.trnVoiceIds=new Set(o.plugins.trnVoice.enabled?(read(o.plugins.trnVoice.list,{}).uniqueIds||[]).map(Number):[])
   ctx.skit=await prepareSkit(ctx,{mediaDir,files:files||[],root})
@@ -87,6 +91,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   ctx.catalogTree = buildCatalog(ctx)
   const recollection=recollectionCatalog(ctx)
   if(recollection&&o.special.enabled)ctx.catalogTree.children=[recollection,...ctx.catalogTree.children.filter(n=>n.id!=='special')]
+  prepareActionSequences(ctx)
   return ctx
 }
 
@@ -173,6 +178,8 @@ function buildCatalog(ctx) {
 export function parse(text, ctx, meta = {}) {
   const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : (ctx?.maps?.get(meta.sourceRel || meta.rel) || decodeJson(text)), o = optionsOf(meta.options || ctx?.options)
   const scene = String(meta.scene || '')
+  const action=ctx?.actionGalleries?.get(`${meta.sourceRel||meta.rel}::${scene}`)
+  if(action)return parseActionGallery(action,ctx,meta)
   const replay=ctx?.memoryReplays?.get(`${meta.sourceRel||meta.rel}::${scene}`)
   if(replay){
     const selected=/^event-(\d+)-(\d+)-replay-/.exec(scene)

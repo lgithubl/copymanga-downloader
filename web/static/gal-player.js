@@ -944,9 +944,10 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   // 这一步触发的语音。自动播放要等它播完（再多等 voiceDelay 秒）；放不出来（缺文件 / 浏览器拒绝自动播放）就按没有语音处理
   let stepVoice = null   // { step, endedAt, failed }
-  function playOnce(src, kind) {
+  function playOnce(src, kind, spec = {}) {
     const audio = new Audio(url(src))
-    audio.volume = gainOf(kind === 'voice' ? 'voice' : 'sfx')
+    audio.volume = gainOf(kind === 'voice' ? 'voice' : 'sfx') * Math.max(0,Math.min(1,Number(spec.volume??1)))
+    if(spec.pitch){audio.playbackRate=Math.max(.25,Math.min(4,Number(spec.pitch)||1));audio.preservesPitch=false}
     audio.addEventListener('error', () => markMissing(src))
     let record = null
     if (kind === 'voice') {
@@ -959,6 +960,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       audio.addEventListener('error', () => { record.failed = true; if (stepVoice === record) scheduleAuto() })
     }
     audio.play().catch(() => { if (record) { record.failed = true; if (stepVoice === record) scheduleAuto() } })
+    return audio
   }
   function stopVoice() {
     voiceAudio?.pause(); voiceAudio = null
@@ -1385,15 +1387,21 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     standLayer.set(stand, state.stands, { live })
   }
   let underLayer = null   // spec.under 的叠加层：画在立绘 / 骨骼之下（背景的前景部件）
+  function overlayEvent(event) {
+    if(destroyed||fast)return null
+    if(event.flash)playFlash(event.flash)
+    const randomRange=(r,fallback)=>{r=Array.isArray(r)?r:[fallback,fallback];const a=Math.round(r[0]*100),b=Math.round(r[1]*100);return(a+Math.floor(Math.random()*(Math.max(0,b-a)+1)))/100}
+    return [...(event.sounds?.length?[event]:[]),...(event.extraSounds||[])].filter(s=>s.sounds?.length).map(s=>playOnce(s.sounds[Math.floor(Math.random()*s.sounds.length)],'se',{volume:randomRange(s.volume,.9),pitch:randomRange(s.pitch,1)}))
+  }
   function paintOverlays(live = false, reset = false) {
     const over = state.overlays.filter((o) => !o.under)
     const under = state.overlays.filter((o) => o.under)
     if (overlayLayer || over.length) {
-      if (!overlayLayer) overlayLayer = createOverlayLayer({ parent: world, url, onMissing: markMissing, media: media() })
+      if (!overlayLayer) overlayLayer = createOverlayLayer({ parent: world, url, onMissing: markMissing, onEvent: overlayEvent, media: media() })
       overlayLayer.set(over, { live, reset })
     }
     if (underLayer || under.length) {
-      if (!underLayer) underLayer = createOverlayLayer({ parent: world, url, onMissing: markMissing, media: media(), under: true })
+      if (!underLayer) underLayer = createOverlayLayer({ parent: world, url, onMissing: markMissing, onEvent: overlayEvent, media: media(), under: true })
       underLayer.set(under, { live, reset })
     }
   }
@@ -1422,8 +1430,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     flashEl.style.backgroundColor = /^[a-z]{3,20}$|^#[0-9a-f]{3,8}$/i.test(command.color || '') ? command.color : 'white'
     const ms = Math.max(50, Math.min(10000, (command.seconds || 0.3) * 1000))
     if (command.op === 'wash') { flashEl.style.transition = 'none'; flashEl.style.opacity = '0' }
-    if (command.op === 'wash') flashEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'linear' })
-    else flashEl.animate([{ opacity: 0 }, { opacity: 0.9 }, { opacity: 0 }], { duration: ms, iterations: Math.max(1, Math.min(5, command.count || 1)) })
+    const peak=Math.max(0,Math.min(1,Number(command.peak??(command.op==='wash'?1:.9))))
+    if (command.op === 'wash') flashEl.animate([{ opacity: peak }, { opacity: 0 }], { duration: ms, easing: 'linear' })
+    else flashEl.animate([{ opacity: 0 }, { opacity: peak }, { opacity: 0 }], { duration: ms, iterations: Math.max(1, Math.min(5, command.count || 1)) })
   }
 
   // 一步到位渲染第 i 步之后的状态（后退 / 续播 / 开头）。不播语音和音效——那是一次性的
@@ -2436,8 +2445,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
     rpgMapLayer?.setPaused(!visible)
-    if (visible) { tr?.pause(!transOn || fast); ttsClient?.pause(!ttsOn || fast); spineLayer?.setPaused(false); live2dLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
-    else { tr?.pause(true); ttsClient?.pause(true); ttsRecord?.audio?.pause(); spineLayer?.setPaused(true); live2dLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
+    if (visible) { tr?.pause(!transOn || fast); ttsClient?.pause(!ttsOn || fast); spineLayer?.setPaused(false); live2dLayer?.setPaused(false); overlayLayer?.setPaused(false); underLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
+    else { tr?.pause(true); ttsClient?.pause(true); ttsRecord?.audio?.pause(); spineLayer?.setPaused(true); live2dLayer?.setPaused(true); overlayLayer?.setPaused(true); underLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
   })
   visibility.observe(stage)
 

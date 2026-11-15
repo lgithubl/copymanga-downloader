@@ -18,6 +18,7 @@
 // 叠加层（overlay 指令）在 createOverlayLayer：静态图 / 矩形，见该函数上面的注释。
 import { atlasFrames, framePlacement, parsePlist, resolveAtlasFrames } from '/gal-atlas.js'
 import { easeOf } from '/gal-engine.js'
+import { animationFrame, cyclePose } from '/gal-overlay-animation.js'
 
 const DESIGN_W = 1920
 const DESIGN_H = 1080
@@ -279,7 +280,7 @@ export function createStandLayer({ parent, url, onMissing = () => {}, media = nu
 //   rect：舞台像素里的矩形（左上角 + 宽高，y 向下；再加上 x / y 偏移、宽高乘 scaleX / scaleY）。没有 src 时用 color 填它（color 缺省黑色；rect 缺省整个舞台）；有 src 时 rect 是裁剪窗口（图只在它里面可见）
 //   tint：[R,G,B]（各0~255），乘原图RGB、保留原透明度；不改变无tint的绘制。
 //   alpha：0~1（默认 1）；alpha / scaleX / scaleY <= 0 = 隐藏；z：越大越靠上（同 z 按出现顺序）；fade：第一次出现淡入（秒，实时播放时）。图缺了报 onMissing。
-export function createOverlayLayer({ parent, url, onMissing = () => {}, media = null, under = false }) {
+export function createOverlayLayer({ parent, url, onMissing = () => {}, media = null, under = false, animated = true, onEvent = () => null }) {
   const canvas = document.createElement('canvas')
   canvas.className = under ? 'gal-overlay gal-overlay-under' : 'gal-overlay'   // under：画在立绘 / 骨骼之下（背景的前景部件）
   canvas.width = DESIGN_W
@@ -292,6 +293,9 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
   let frameRaf = 0
   let drawn = []   // [{ spec, geo, img }]
   const motions = new Map()
+  const clocks = new Map()
+  const seenFrames = new Map(), effectAudio = new Set()
+  let paused = !animated, pausedAt = 0
   const pose = (m, now) => {
     if (!m) return null
     const p = m.done ? 1 : m.seconds > 0 ? Math.max(0, Math.min(1, ((now - m.at) / 1000 - m.delay) / m.seconds)) : now >= m.at + m.delay * 1000 ? 1 : 0
@@ -325,6 +329,7 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
     if(!img&&!rect&&!spec.color)return false   // Geometry-only slots have no visible surface yet.
     ctx.save()
     ctx.globalAlpha = alpha
+    ctx.imageSmoothingEnabled = !spec.pixelated
     if (img) {
       if (rect) {   // 有图又有 rect：rect 是裁剪窗口
         ctx.beginPath()
@@ -360,7 +365,20 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
     for (const item of drawn) {
       const at = pose(motions.get(String(item.spec.slot)), now)
       if (at?.moving) moving = true
-      const paintItem = at ? { ...item, spec: { ...item.spec, x: at.x, y: at.y } } : item
+      let paintItem = at ? { ...item, spec: { ...item.spec, x: at.x, y: at.y } } : item
+      const a = item.spec.animation, c = item.spec.cycle, clock = clocks.get(String(a?.key || c?.key || item.spec.slot))
+      if (clock != null && (a || c)) {
+        const time = ((paused ? pausedAt : now) - clock) / 1000
+        const frame = animationFrame(a, time), pose = cyclePose(c, time)
+        paintItem = {...paintItem, img: frame ? item.frames?.get(frame.src) : item.img, spec: {...paintItem.spec, pixelated: frame?.pixelated ?? item.spec.pixelated, scaleX: num(item.spec.scaleX,1)*pose.scale, scaleY: num(item.spec.scaleY,1)*pose.scale, alpha: clamp01(item.spec.alpha)*pose.alpha}}
+        if (frame) {
+          canvas.dataset.animationFrame = String(frame.index)
+          const key=String(item.spec.slot),token=String(a.key)+':'+frame.token,old=seenFrames.get(key)
+          if(animated&&!paused&&old&&old!==token&&frame.event){for(const audio of [onEvent(frame.event)].flat().filter(Boolean)){if(effectAudio.size>=32){const old=effectAudio.values().next().value;old.pause();effectAudio.delete(old)}effectAudio.add(audio);const done=()=>effectAudio.delete(audio);audio.addEventListener('ended',done,{once:true});audio.addEventListener('error',done,{once:true})}}
+          seenFrames.set(key,token)
+        }
+        if (!paused && animated) moving = true
+      }
       if (drawOne(paintItem, fades.alpha(String(item.spec.slot), now))) count += 1
     }
     canvas.dataset.parts = String(count)
@@ -373,9 +391,16 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
     frameRaf = 0
     const specs = (Array.isArray(overlays) ? overlays : []).filter((o) => o && typeof o === 'object' && (o.src || o.rect || o.color) && clamp01(o.alpha) > 0 && num(o.scaleX, 1) > 0 && num(o.scaleY, 1) > 0)   // 隐藏的（alpha / scale <= 0）不加载
     const images = await Promise.all(specs.map((spec) => (spec.src ? shared.image(String(spec.src)) : null)))
+    const animationImages = await Promise.all(specs.map(async spec => {
+      const names = [...new Set((spec.animation?.frames || []).slice(0,10000).map(f => f.src).filter(Boolean))]
+      return new Map(await Promise.all(names.map(async src => [src, await shared.image(String(src))])))
+    }))
     if (mine !== seq) return
     const now = performance.now(), previous = new Map(drawn.map(item => [String(item.spec.slot), item]))
-    if (reset) motions.clear()
+    if (reset) { motions.clear(); clocks.clear(); seenFrames.clear() }
+    const clockKeys = new Set()
+    for (const spec of specs) if (spec.animation || spec.cycle) { const key=String(spec.animation?.key || spec.cycle?.key || spec.slot); clockKeys.add(key); if (!clocks.has(key)) clocks.set(key,paused?pausedAt:now) }
+    for (const key of clocks.keys()) if (!clockKeys.has(key)) clocks.delete(key)
     const keep = new Set()
     for (const spec of specs) {
       const key = String(spec.slot), m = spec.motion, old = motions.get(key)
@@ -387,12 +412,21 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
         seconds: Math.max(0, Math.min(120, num(m.seconds))), delay: Math.max(0, Math.min(120, num(m.delay))), at: now, done: !live })
     }
     for (const key of motions.keys()) if (!keep.has(key)) motions.delete(key)
-    drawn = specs.map((spec, i) => ({ spec, geo: geometry(spec.stage), img: images[i] })).filter((item) => !item.spec.src || item.img)
+    drawn = specs.map((spec, i) => ({ spec, geo: geometry(spec.stage), img: images[i], frames: animationImages[i] })).filter((item) => !item.spec.src || item.img)
       .map((item, i) => ({ ...item, order: i })).sort((a, b) => num(a.spec.z) - num(b.spec.z) || a.order - b.order)
     fades.sync(drawn.map((d) => String(d.spec.slot)), live, (key) => num(drawn.find((d) => String(d.spec.slot) === key)?.spec.fade), now)
     canvas.dataset.slots = JSON.stringify(specs.map((o) => String(o.slot)))
     paint(now)
   }
 
-  return { set, canvas, destroy: () => { seq += 1; cancelAnimationFrame(frameRaf); motions.clear(); canvas.remove() } }
+  function setPaused(value) {
+    value=Boolean(value)||!animated
+    if (value===paused) return
+    const now=performance.now()
+    if(value) pausedAt=now
+    else for(const [key,at]of clocks) clocks.set(key,at+now-pausedAt)
+    paused=value; for(const audio of effectAudio) { if(value)audio.pause();else audio.play().catch(()=>{}) }
+    cancelAnimationFrame(frameRaf);paint(now)
+  }
+  return { set, canvas, setPaused, destroy: () => { seq += 1; cancelAnimationFrame(frameRaf); motions.clear(); clocks.clear(); seenFrames.clear(); for(const audio of effectAudio)audio.pause();effectAudio.clear(); canvas.remove() } }
 }
