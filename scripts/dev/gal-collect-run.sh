@@ -96,7 +96,7 @@ set -uo pipefail
 # 1.65 嵌套采集根向上查固定元数据目录，已收到的图音按SHA复用。
 # 1.64 两RJ播放故障：实际Gal配置/进度、原始事件页及图音依赖；所有EV009同名候选，MZ模板/编号CG/DLC配音；同SHA复用，Twi只收已生成脚本/引用/报告，不重收档案或模型。
 # 1.79 两作验证最后补件：Edoire预加载图音与Silky主舞台本体/表情；范围及大小守卫，源目录只读。
-VERSION="1.90"
+VERSION="1.91"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1490,7 +1490,7 @@ def new_game_label(name):
     name = unicodedata.normalize('NFKC', name).strip()
     patterns = PAIR_GAME_PATTERNS if RULES_RE is not None and RULES_RE.pattern=='^new-games:fuyu-edo$' else NEW_GAME_PATTERNS
     for label,_pattern in patterns:
-        if label.startswith('RJ') and re.match(r'^(?:\[(?!RJ[0-9]+\])[^\]]+\]\s*)*\[?'+re.escape(label)+r'(?=$|[^0-9])',name,re.I):return label
+        if label.startswith('RJ') and re.search(r'(?<![A-Za-z0-9])'+re.escape(label)+r'(?![0-9])',name,re.I):return label
     name = re.sub(r'^(?:\[[^\]]+\]\s*)+', '', name)
     return next((label for label, pattern in patterns if re.fullmatch(pattern, name, re.I)), None)
 
@@ -1703,7 +1703,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJyrrgUAAXUA+Q=='
+PAIR_MEDIA_PLAN='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'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
