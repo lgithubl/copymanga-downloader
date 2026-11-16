@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.59"
+VERSION="2.67"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1491,7 +1491,7 @@ def next_game_label(name):
     name=re.sub(r'^(?:\[[^\]]+\]\s*)+','',name)
     return next((label for label,pattern in NEXT_GAME_PATTERNS if re.fullmatch(pattern,name,re.I)),None)
 
-PAIR_ACTIVE_GAMES = ['RJ01743835']
+PAIR_ACTIVE_GAMES = ['underworld']
 PAIR_GAME_PATTERNS = [(name,pattern) for name,pattern in [('RJ01562637', r'RJ01562637(?:[^0-9].*)?'), ('RJ01375307', r'RJ01375307(?:[^0-9].*)?'), ('future', r'future(?:[ _-]*v?[0-9.]+)?'), ('underworld', r'underworld(?:[ _-]*v?[0-9.]+)?'), ('RJ01743835', r'(?:RJ01743835(?:[^0-9].*)?|OrcX(?:[ _-]*(?:ver|v)?[0-9.]+)?)'), ('RJ01610452', r'RJ01610452(?:[^0-9].*)?'), ('RJ01319586', r'RJ01319586(?:[^0-9].*)?'), ('RJ01007726', r'RJ01007726(?:[^0-9].*)?'), ('dennou-djibril', r'dennou[ _-]+djibril(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01516248', r'RJ01516248(?:[^0-9].*)?'), ('RJ01234887', r'RJ01234887(?:[^0-9].*)?'), ('RJ01746557', r'RJ01746557(?:[^0-9].*)?'), ('fuyukuru', r'fuyukuru(?:[ _-]*v?[0-9.]+)?'), ('えどわ～る', r'えどわ[~〜～ー]?る(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('meshiagirl', r'meshiagirl(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01687472', r'RJ01687472(?:[^0-9].*)?'), ('RJ01610188', r'RJ01610188(?:[^0-9].*)?'), ('RJ01660877', r'RJ01660877(?:[^0-9].*)?'), ('RJ01474142', r'RJ01474142(?:[^0-9].*)?'), ('RJ01664771', r'RJ01664771(?:[^0-9].*)?'), ('Night Stroll',r'Night[ _-]+Stroll(?:[ _-]*(?:ver|v)?[0-9.]+)?')] if name in PAIR_ACTIVE_GAMES]
 
 def new_game_label(name):
@@ -1712,7 +1712,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJzFml1rWzEMQP9Kuc+lkWzJtva2j6fBGGwvgzFCmqVdYUlKkj6U0v8+Jb5L7cIgo9MEJe1123tykG1JvnkYPr0HzBRL5OHV2deH4Xa2+6E/DR838y/Td7PdbPJ5t1nMljer69fb7WK3nXyY3awmS335fr/S8fl0dhifbm83N7vF9uLybvX952I4Pxu267vNfPHmXkf1liHGUBLql/5qfXWl/6SjoBeX418QCkUgHdEbL/bvYjrdzFbXi+3kpW/nAobH87P/r4ehBOJIwI1njliKieUTzk+XQ2KJjW7KzMlMt+IcdYWQpNUFiNlO94Dz001MOtzqIhUw0604P92MnFKnyyHY6Vaco26B0kdXOLGd7gHnp1sYiLHVTVzETLfi/HQFM1CbcPUy2elWnKNuyQztzqyrq0Q73QPOTTcCC0hodUPdqU10R5yfLkbU/aPbqrSSNdOtOD/dABCkLSK1EOBgpltxjrosmXKrm0u0m8wV56cbMdet6Sm6wnaTueIcdXPmLhGlyGI3mSvOT5cIMYZuMudolndHnKOulJLbqooZgl10K85PlzmWZ/1uyWbt/Yjz000BcxfdLLp4zXQrzk83gy6mrmbOIHaJqOIcdXMJoWsAtUuzW7sV56dbKOn20SWignaTueL8dAUhYldVUU520a04H92YCEhf2uDmlMTmdPlIc5PFAJFCt3AFbE5ujjQ/2SKh6w4SRUQz2QPNTTaw5vx2GmvpHsxkK81NVsNYcneaHtDoNP1I85PNBNgl2yRGRxhHmpssEUjsy2TJNoXUkeYmy6C7bzeNhYz6+SPNT3Z/NNNOYy1iySz1VJqbrOZ4RuwjC2aRrTQ32YxZsKugIBk1P0ean2zRMepSD5Od7IHmJrufVqlta3nf11rJVpqbrOyfMra7MRc0eoh7pPnJahFRutSDEMy6nkrzkmUIBbArKkIyW7MjzU9WIHE3jVnMauOR5iaLpPS2qNCrYCZbaW6yAVII7TTOuYDVBjXS/GQLQSerqmb97Ehzkz0cDLVFRY4iZpGtNDdZigViV0FpfjCTrTQ3Wc0GIp0sslkFNdJOlX27Xi7Xq8n88O35vdd60z/7EksG1hXZ6r74Q7onv6HTP6f7rx0Di452EcWI8LcPP043/Q0cHr89/gK0sTK3'
+PAIR_MEDIA_PLAN='eJy1kl1LwzAUhv9KyfXoTj5Oknop/gMRL0RKtKm7mK0kHSKj/93UuTVSGStr7tI3yXsenmZPdk1l3WfrthW5yZ725MN0m7AiD0P+OOTlnenM2m+Ms5Xx3nYecmd9u3OvlqwycljdfnXWh4tcCVVIHfK2rsPhEEH4eJlsN+bdDoPK0pnmzfr1ZRNzIP0qS8L5EzEd0Qq4ArRu286687THw/4MqRCAStECY1aqOSIrZKy2kFRewjsdmh/rEtH+hoiz3f7DOs/r4bcMt++nsJRphVxRLsSfhyAFKqDIY71UKqXYXMPR+HysTQl/ikFcYTvmTi9coyyQQaGWFT7WJhVOQQIDgZQtSh/1JsWHgMo4lUIviz/2Jn06wRBQzpd+Oqda0j/330aEScc='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
@@ -1738,7 +1738,7 @@ def fuyu_edo_detail_files(items,label):
         if not e or e.size!=r['sourceBytes']:raise RuntimeError('Pair media source changed '+r['path'])
         if r['offset']<0 or r['offset']+r['bytes']>e.size:raise RuntimeError('Pair range invalid')
         used+=r['bytes']
-        if used>(256 if label=='future'else 128 if label in ('meshiagirl','dennou-djibril','RJ01234887','RJ01562637')else 64)*MB:raise RuntimeError('Pair media byte limit')
+        if used>(256 if label in ('future','underworld')else 128 if label in ('meshiagirl','dennou-djibril','RJ01234887','RJ01562637')else 64)*MB:raise RuntimeError('Pair media byte limit')
         with open(e.path,'rb')as f:f.seek(r['offset']);data=f.read(r['bytes'])
         if len(data)!=r['bytes']:raise RuntimeError('Pair media truncated')
         report['files'].append({**r,'sha256':hashlib.sha256(data).hexdigest()})
@@ -1753,11 +1753,17 @@ def fuyu_edo_detail_files(items,label):
     runtime={'game':label,'sourceReadOnly':True,'metadataRoots':[],'files':[]};total=0
     for e in items:
         rel=e.rel.replace('\\','/')
-        if not (label=='RJ01746557' and re.search(r'(?:^|/)arc/(?:native\.json|\.unity-stamp\.json|script/replay/scene4\.nani)$',rel,re.I) or re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
-        if e.size>4*MB:raise RuntimeError('Pair runtime file exceeds4MiB: '+rel)
-        with open(e.path,'rb')as f:b=f.read(4*MB+1)
+        if not (label in ('RJ01746557','future','RJ01562637','RJ01375307') and re.search(r'(?:^|/)arc/(?:native\.json|\.unity-stamp\.json|script/replay/scene4\.nani)$',rel,re.I) or re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
+        if re.search(r'(^|/)(cache|script-backups|repair-backups|bundles)(/|$)',rel,re.I):continue
+        if e.size>16*MB:raise RuntimeError('Pair runtime file exceeds16MiB: '+rel)
+        with open(e.path,'rb')as f:b=f.read(e.size+1)
         total+=len(b)
-        if len(b)!=e.size or total>24*MB:raise RuntimeError('Pair runtime data changed/exceeded24MiB')
+        if len(b)!=e.size:raise RuntimeError('Pair runtime data changed: '+rel)
+        if label=='future'and rel.endswith('/arc/native.json'):
+            native=json.loads(b);digest=hashlib.sha256(b).hexdigest();locales=native.pop('locales',[])
+            native['__collectionProjection']={'originalBytes':e.size,'sourceSha256':digest,'omittedLocales':len(locales),'reason':'native locale books already captured; retain full configs/models/presentation'}
+            original_bytes=len(b);b=json.dumps(native,ensure_ascii=False,separators=(',',':')).encode();total+=len(b)-original_bytes
+        if total>24*MB:raise RuntimeError('Pair runtime evidence exceeds24MiB: '+rel)
         runtime['files'].append({'path':rel,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()})
         yield '__pair_runtime/files/'+rel,b,e.mtime
     ancestors=[];ancestor=os.path.realpath(root)

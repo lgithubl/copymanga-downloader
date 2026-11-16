@@ -1744,12 +1744,12 @@ export const LAYOUTS = {
     count:[{dir:'arc/script',ext:'.uspine',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取原生CG场景、互动片段、原始对话/配音及 Spine 多轨道；原生按钮连续互动、已知状态自动判断；未知存档数值手动选择，未模拟经营及触摸控制器'],
   },
   catpaw:{
-    title:'CatPaw future 原生 Unity',kind:'catpaw',detector:'unityNative',family:'catpaw::',
+    title:'CatPaw future / underworld 原生 Unity',kind:'catpaw',detector:'unityNative',family:'catpaw::',
     bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','globalgamemanagers'],siblings:[],markers:[],
-    scriptRoots:[{id:'native',dir:'arc/script',label:'CatPaw future 剧情'}],resourceRoots:[''],adapters:['catpaw::script'],adapterOptions:{'catpaw::script':{dir:{path:['arc']}}},ruleTables:['catpaw::script'],ruleOverrides:{},
+    scriptRoots:[{id:'native',dir:'arc/script',label:'CatPaw 原生剧情'}],resourceRoots:[''],adapters:['catpaw::script'],adapterOptions:{'catpaw::script':{dir:{path:['arc']}}},ruleTables:['catpaw::script'],ruleOverrides:{},
     engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'catpaw',scriptExt:'catpaw',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
     config:{scriptExtensions:['catpaw'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'原生动作',kind:'cmd',op:'live2d',pick:'each',max:8}],pageSize:100},
-    count:[{dir:'arc/script',ext:'.catpaw',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取 CatPaw future 的本地 SENS 资源、剧情/回想表及 I2 翻译；Live2D 动作由原生 Animator 精确引用；未还原演出记录源行诊断'],
+    count:[{dir:'arc/script',ext:'.catpaw',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取 CatPaw future / underworld 的本地 SENS 资源、剧情/回想表及 I2 翻译；Live2D 动作由原生 Animator 精确引用；未还原演出记录源行诊断'],
   },
   orcx:{
     title:'OrcX 原生 Unity',kind:'orcx',detector:'unityNative',family:'orcx::',autoOrder:136.8,

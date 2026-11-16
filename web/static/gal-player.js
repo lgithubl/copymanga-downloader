@@ -1355,10 +1355,11 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   // Live2D（live2d 指令：KiriKiri 的 .l2d）：第一次要画时才建 canvas；在背景 / 视频之上、立绘 / 骨骼之下
   let live2dLayer = null
+  const live2dLoading=new Set(),live2dErrors=new Map()
   function paintLive2d() {
     if (!live2dLayer && !state.live2d && !Object.keys(state.live2ds||{}).length) return
     if (!live2dLayer) {
-      live2dLayer = createLive2dLayers({ parent: world, before: movie.nextSibling, url, onMissing: markMissing, onUnavailable: () => { live2dUnavailable = true; updateNote() } })
+      live2dLayer = createLive2dLayers({ parent: world, before: movie.nextSibling, url, onMissing: markMissing, onLoading:(src,active)=>{if(active){live2dLoading.add(src);live2dErrors.delete(src)}else live2dLoading.delete(src);updateNote()},onError:error=>{live2dErrors.set(error.src,error.message);updateNote()}, onUnavailable: () => { live2dUnavailable = true; updateNote() } })
       if (!wantBgm) live2dLayer.setPaused(true)
     }
     live2dLayer.setMosaic(views.showMosaic ?? false)   // Live2D 的马赛克网格：默认不显示，和「显示马赛克层」同一个开关
@@ -1720,6 +1721,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     if (scene.stats?.opcodeWarnings?.length) parts.push(`跳过未确认指令 ${scene.stats.opcodeWarnings.length} 处（点开查看句子位置）`)
     if (rawIgnored) parts.push(`立绘/特效等 ${rawIgnored} 条指令暂未渲染`)
     if (spineUnavailable) parts.push('Spine 运行时缺失：立绘/动画未渲染')
+    if(live2dLoading.size)parts.push('Live2D 加载中 '+live2dLoading.size+' 个')
+    if(live2dErrors.size)parts.push('Live2D 加载/解析失败 '+live2dErrors.size+' 个')
     if (live2dUnavailable) parts.push('Live2D 需要 WebGL：模型未渲染')
     const badVersion = [...spineErrors.values()].filter((e) => e.kind === 'version').length
     const badParse = [...spineErrors.values()].filter((e) => e.kind === 'parse').length
@@ -2014,6 +2017,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       for (const sample of g.samples) lines.push(`    步 ${sample.step}：${sample.args}`)
     }
     if (rawAllow.length) lines.push(`rawIgnore：${(reader.node.rawIgnore || []).join('  |  ')}`)
+    for(const[src,message]of live2dErrors)lines.push('Live2D '+src+'：'+message)
     if (spineUnavailable) lines.push(`Spine 运行时缺失：立绘/动画未渲染${unavailableRuntimes.size ? `（缺 ${[...unavailableRuntimes].join(' / ')}）` : ''}`)
     const spineInfo = spineLayer?.info?.() || []
     if (spineInfo.length) {

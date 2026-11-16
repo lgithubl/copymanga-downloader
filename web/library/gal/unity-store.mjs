@@ -3,7 +3,7 @@ import {readFileSync}from'node:fs'
 import path from'node:path'
 import {openUnityAsset,openUnityBundle,readRange,readTextObject,readMonoScript,monoHeader,UnityReader}from'./unity-io.mjs'
 import {decodeTree}from'./unity-type-tree.mjs'
-import {unityTexturePng,unityAudio,unitySpritePng}from'./unity-media.mjs'
+import {unityTexturePng,unityTextureMip,unityAudio,unitySpritePng}from'./unity-media.mjs'
 const BUILTINS=JSON.parse(readFileSync(new URL('./unity-builtin-types.json',import.meta.url)))
 const BUILTINS_2021=JSON.parse(readFileSync(new URL('./unity-2021-types.json',import.meta.url)))
 const BUILTINS_2022=JSON.parse(readFileSync(new URL('./unity-2022-types.json',import.meta.url)))
@@ -26,15 +26,17 @@ export class UnityStore{
   if(o.asset.archive){const e=o.asset.archive.entries.find(e=>e.name.toLowerCase()===leaf.toLowerCase());if(!e||offset<0||offset+size>e.size)throw Error('Unity bundle stream missing/outside entry');return o.asset.archive.read(e.offset+offset,size)}
   const file=this.files.get(leaf.toLowerCase());if(!file)throw Error('Unity stream file missing: '+leaf);return readRange(file,offset,size)
  }
- media(o){
-  const key=o.asset.file+':'+(o.asset.entry?.name||'')+':'+o.pathId,hit=this.mediaCache.get(key)
+ media(o,options={}){
+  const key=o.asset.file+':'+(o.asset.entry?.name||'')+':'+o.pathId+':'+(options.maxTextureSize||0),hit=this.mediaCache.get(key)
   if(hit){this.mediaCache.delete(key);this.mediaCache.set(key,hit);return hit.promise}
-  const entry={bytes:0,promise:null};entry.promise=this.decodeMedia(o).then(bytes=>{if(this.mediaCache.get(key)===entry){entry.bytes=bytes.length;this.mediaBytes+=bytes.length;while(this.mediaBytes>64*1024*1024&&this.mediaCache.size){const[k,v]=this.mediaCache.entries().next().value;this.mediaCache.delete(k);this.mediaBytes-=v.bytes}}return bytes},e=>{if(this.mediaCache.get(key)===entry)this.mediaCache.delete(key);throw e});this.mediaCache.set(key,entry)
+  const entry={bytes:0,promise:null};entry.promise=this.decodeMedia(o,options).then(bytes=>{if(this.mediaCache.get(key)===entry){entry.bytes=bytes.length;this.mediaBytes+=bytes.length;while(this.mediaBytes>64*1024*1024&&this.mediaCache.size){const[k,v]=this.mediaCache.entries().next().value;this.mediaCache.delete(k);this.mediaBytes-=v.bytes}}return bytes},e=>{if(this.mediaCache.get(key)===entry)this.mediaCache.delete(key);throw e});this.mediaCache.set(key,entry)
   while(this.mediaCache.size>64){const[k,v]=this.mediaCache.entries().next().value;this.mediaCache.delete(k);this.mediaBytes-=v.bytes}return entry.promise
  }
- async decodeMedia(o){
+ async decodeMedia(o,options={}){
   if(o.classId===49){const d=await this.decode(o);return d.bytes||Buffer.from(d.m_Script||'')}
-  if(o.classId===28){const t=await this.decode(o),raw=t['image data']?.length?t['image data']:await this.stream(o,t.m_StreamData);return unityTexturePng(t,raw)}
+  if(o.classId===28){const t=await this.decode(o),mip=unityTextureMip(t,options.maxTextureSize);let raw
+   if(mip){if(t['image data']?.length){if(mip.offset+mip.size>t['image data'].length)throw Error('Unity inline mip outside image');raw=t['image data'].subarray(mip.offset,mip.offset+mip.size)}else{if(mip.offset+mip.size>Number(t.m_StreamData.size))throw Error('Unity mip outside texture stream');raw=await this.stream(o,{...t.m_StreamData,offset:Number(t.m_StreamData.offset)+mip.offset,size:mip.size})}return unityTexturePng(mip.texture,raw,options)}
+   raw=t['image data']?.length?t['image data']:await this.stream(o,t.m_StreamData);return unityTexturePng(t,raw)}
   if(o.classId===83){const t=await this.decode(o);return unityAudio(await this.stream(o,t.m_Resource))}
   if(o.classId===213){const s=await this.decode(o),texture=await this.ptr(o.asset,s.m_RD?.texture);if(!texture)throw Error('Unity sprite texture missing');return unitySpritePng(s,await this.decode(texture),await this.media(texture))}
   throw Error('Unity object is not supported media: '+o.classId)

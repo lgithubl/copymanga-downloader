@@ -12,25 +12,36 @@ async function unpackUnityCrunch(raw){
  if(!result?.length||result.length>128*1024*1024)throw Error('Unity Crunch payload invalid')
  return Buffer.from(result)
 }
-export async function unityTexturePng(t,raw){
+// Original mip levels are contiguous, largest first. Choosing a native mip
+// avoids allocating/decoding an 8192 RGBA base image just to show a 720p scene.
+export function unityTextureMip(t,maxSize){
+ if(!Number.isInteger(maxSize)||maxSize<=0)return null
+ const stride=({10:8,12:16,25:16})[t.m_TextureFormat],bpp=({1:1,3:3,4:4,5:4,14:4})[t.m_TextureFormat];if(!stride&&!bpp)return null
+ let w=t.m_Width,h=t.m_Height,offset=0,level=0;const count=Math.max(1,Math.min(32,Number(t.m_MipCount)||1)),bytes=()=>stride?Math.ceil(w/4)*Math.ceil(h/4)*stride:w*h*bpp
+ if(!Number.isInteger(w)||!Number.isInteger(h)||w<1||h<1||w*h>64*1024*1024)throw Error('Unity mip dimensions invalid')
+ while(Math.max(w,h)>maxSize&&level+1<count){offset+=bytes();w=Math.max(1,Math.floor(w/2));h=Math.max(1,Math.floor(h/2));level++}
+ return{texture:{...t,m_Width:w,m_Height:h},offset,size:bytes(),level}
+}
+export async function unityTexturePng(t,raw,options={}){
  const w=t.m_Width,h=t.m_Height,format=t.m_TextureFormat;if(!Number.isInteger(w)||!Number.isInteger(h)||w<=0||h<=0||w*h>64*1024*1024)throw Error('Unity texture dimensions invalid')
  if(format===28||format===29)return unityTexturePng({...t,m_TextureFormat:format===28?10:12},await unpackUnityCrunch(raw))
+ const sample=[10,12].includes(format)&&Number.isInteger(options.maxTextureSize)&&options.maxTextureSize>0?2**Math.max(0,Math.ceil(Math.log2(Math.max(w,h)/options.maxTextureSize))):1,outW=Math.ceil(w/sample),outH=Math.ceil(h/sample)
  let pixels
  if(format===25)pixels=decodeBc7(raw,w,h)
  else if(format===10||format===12){
-  const stride=format===10?8:16,bw=Math.ceil(w/4),bh=Math.ceil(h/4);if(raw.length<bw*bh*stride)throw Error('Unity DXT blocks truncated');pixels=Buffer.alloc(w*h*4)
+  const stride=format===10?8:16,bw=Math.ceil(w/4),bh=Math.ceil(h/4);if(raw.length<bw*bh*stride)throw Error('Unity DXT blocks truncated');pixels=Buffer.alloc(outW*outH*4)
   for(let by=0;by<bh;by++)for(let bx=0;bx<bw;bx++){
    const p=(by*bw+bx)*stride,c=p+(format===12?8:0),c0=raw.readUInt16LE(c),c1=raw.readUInt16LE(c+2),colors=[rgb565(c0),rgb565(c1)],bits=raw.readUInt32LE(c+4),alpha=[]
    if(c0>c1||format===12){colors.push(colors[0].map((v,k)=>Math.floor((2*v+colors[1][k])/3)),colors[0].map((v,k)=>Math.floor((v+2*colors[1][k])/3)))}else colors.push(colors[0].map((v,k)=>Math.floor((v+colors[1][k])/2)),[0,0,0])
    if(format===12){alpha.push(raw[p],raw[p+1]);if(alpha[0]>alpha[1])for(let k=1;k<=6;k++)alpha.push(Math.floor(((7-k)*alpha[0]+k*alpha[1])/7));else{for(let k=1;k<=4;k++)alpha.push(Math.floor(((5-k)*alpha[0]+k*alpha[1])/5));alpha.push(0,255)}}
-   for(let i=0;i<16;i++){const x=bx*4+i%4,y=by*4+(i>>2);if(x>=w||y>=h)continue;const v=(bits>>>(i*2))&3,d=(y*w+x)*4;pixels[d]=colors[v][0];pixels[d+1]=colors[v][1];pixels[d+2]=colors[v][2];if(format===12){const bit=i*3,at=p+2+(bit>>3),value=(raw[at]|((raw[at+1]||0)<<8))>>>(bit&7);pixels[d+3]=alpha[value&7]}else pixels[d+3]=c0<=c1&&v===3?0:255}
+   for(let i=0;i<16;i++){const x=bx*4+i%4,y=by*4+(i>>2);if(x>=w||y>=h||x%sample||y%sample)continue;const v=(bits>>>(i*2))&3,d=((y/sample)*outW+x/sample)*4;pixels[d]=colors[v][0];pixels[d+1]=colors[v][1];pixels[d+2]=colors[v][2];if(format===12){const bit=i*3,at=p+2+(bit>>3),value=(raw[at]|((raw[at+1]||0)<<8))>>>(bit&7);pixels[d+3]=alpha[value&7]}else pixels[d+3]=c0<=c1&&v===3?0:255}
   }
  }else{
   const bpp=({1:1,3:3,4:4,5:4,14:4})[format];if(!bpp)throw Error('Unity texture format unsupported: '+format);if(raw.length<w*h*bpp)throw Error('Unity texture pixels truncated');pixels=Buffer.alloc(w*h*4)
   for(let i=0;i<w*h;i++){const p=i*bpp,d=i*4;if(format===1){pixels[d]=pixels[d+1]=pixels[d+2]=255;pixels[d+3]=raw[p]}else if(format===5){pixels[d]=raw[p+1];pixels[d+1]=raw[p+2];pixels[d+2]=raw[p+3];pixels[d+3]=raw[p]}else{pixels[d]=raw[p+(format===14?2:0)];pixels[d+1]=raw[p+1];pixels[d+2]=raw[p+(format===14?0:2)];pixels[d+3]=bpp===4?raw[p+3]:255}}
  }
- const row=w*4,flipped=Buffer.alloc(pixels.length);for(let y=0;y<h;y++)pixels.copy(flipped,y*row,(h-1-y)*row,(h-y)*row)
- return encodePng(w,h,flipped,4)
+ const row=outW*4,flipped=Buffer.alloc(pixels.length);for(let y=0;y<outH;y++)pixels.copy(flipped,y*row,(outH-1-y)*row,(outH-y)*row)
+ return encodePng(outW,outH,flipped,4)
 }
 // Unity trims transparent sprite borders in the atlas. Restore the original
 // canvas before placement, otherwise faces and costume layers drift apart.

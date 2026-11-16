@@ -19,7 +19,7 @@ export function hakuboxCommands({ctx,emit,raw,resource,audio,stage}){
  const picture=(name,layer='bg',fade=0)=>{emit({op:'overlayOff',prefix:'rpg-hakubox:'+layer+':'});const names=Array.isArray(name)?name:name?[name]:[];bgLayers.set(layer,names);for(const[n,item]of names.entries()){const src=resource('img/pictures',item);if(src)emit({op:'overlay',slot:'rpg-hakubox:'+layer+':'+n,kind:layer==='bg'?'background':'still',src,stage,under:true,z:(layer==='bg'?-1000:-900)+n,fit:'contain',fade,cg:!/^bg\//i.test(item)})}}
  const paint=(key,state,extra={})=>{if(!state.visible){emit({op:'spineOff',slot:'rpg-hakubox:'+key});return}emit({op:'spine',slot:'rpg-hakubox:'+key,skel:resource('spine',state.file,'json'),atlas:resource('spine',state.file,'atlas'),skins:state.skins,...(ctx.hakuboxTextures?.[state.file]?{textureMap:ctx.hakuboxTextures[state.file]}:{}),anim:state.anim||'idle',kind:key.endsWith('Tachie')?'actor':'still',nativePlace:true,place:{x:state.x-stage[0]/2,y:stage[1]/2-state.y,scale:state.scale},stage,loop:state.loop!==false,opacity:state.alpha??1,order:state.order||0,...extra})}
  const show=(key,args={})=>{const source=spines[key];if(!source){raw('hakubox-spine-unknown',{key,args});return}const actor=key.endsWith('Tachie'),location={left:400,center:650,right:900},state={...source,skins:array(args.skinList??args.skin).length?array(args.skinList??args.skin):[...source.skins],anim:args.motion??source.anim??'idle',visible:args.visible!=='false',alpha:Number(args.alpha??1),x:actor?location[args.location]??650:Number(args.x)||0,y:actor?1000:Number(args.y)||0,loop:args.loop!=='false',scale:Number(args.scale)||source.scale,order:Number(args.extraLevel)||0};states.set(key,state);paint(key,state)}
- return(name,action,a={})=>{
+ const command=(name,action,a={})=>{
   if(!enabled||!name.startsWith('Hakubox_'))return false
   if(name==='Hakubox_Config'){
    if(action==='playCV'){audio('voice',{name:a.cvName,folder:'audio/cv',volume:Number(a.cvVolume||100)});return true}
@@ -47,5 +47,24 @@ export function hakuboxCommands({ctx,emit,raw,resource,audio,stage}){
   // Gameplay, gift/relationship bookkeeping, custom script hooks and visual
   // effects need distinct evidence. Preserve their original names and args.
   raw('hakubox-unhandled:'+name+':'+action,a);return true
+ }
+ command.script=hakuboxAdventure({enabled,emit,raw,resource,stage});return command
+}
+
+// A closed declarative reader for the original adventure panel. Game JS is never executed.
+export function hakuboxAdventure({enabled,emit,raw,resource,stage}){
+ const state={Direction:'front',Face:'01',FaceAtta:'',IsNude:false,IsBroken:false,IsWet:false,IsWound:false,IsClimax:false,IsReached:true,SkirtState:'normal',PantState:'normal',SexState:''};let serial=0
+ const layer=(name,n,extra={})=>{const src=resource('img/pictures','adventure/tachie/'+name);if(src)emit({op:'overlay',slot:'rpg-hakubox:adventure:'+n,kind:'actor',src,stage,anchor:[0,0],x:stage[0]/2-427,y:-stage[1]/2,fit:'none',z:100+n,...extra})}
+ const paint=()=>{emit({op:'overlayOff',prefix:'rpg-hakubox:adventure:'});const paths=[],dir=state.Direction==='front'?'front':state.IsReached?'back_reached':'back',variant=state.IsBroken&&state.IsWet?'04':state.IsWet?'03':state.IsBroken?'02':'01'
+  paths.push('body_'+dir);if(state.SexState==='01')paths.push('sex/01/base');if(state.IsWound)paths.push('wound/'+(state.Direction==='front'?'front':'back'));if(state.IsClimax)paths.push('sex/06/05')
+  if(state.PantState==='normal'){paths.push('pants/'+variant);if(state.SkirtState==='half')paths.push('pants/05')}else if(state.PantState==='half')paths.push('pants/s_'+variant)
+  if(!state.IsNude){if(state.SkirtState==='normal')paths.push('skirt/'+variant+(!state.IsBroken&&state.PantState==='normal'?'_1':''));paths.push('clothes/'+(state.SkirtState==='half'?'s_':'')+dir+'_'+variant);if(state.SkirtState==='half')paths.push('skirt/s_'+variant)}
+  paths.push('hair/hair_'+(state.Direction==='front'?'front':'back'));if(state.IsWet)paths.push('wet/'+(state.Direction==='front'?'front':'back'));if(state.Direction==='back'){paths.push('face/'+state.Face);if(state.FaceAtta)paths.push('face/'+state.FaceAtta)}
+  paths.forEach((p,i)=>layer(p,i))
+ }
+ return text=>{if(!enabled||!/_scene\.(?:tachie|updateTachie|showSexAction)/.test(text))return false
+  const operations=[],pattern=/const\s+_scene\s*=\s*SceneManager\._scene\s*;|_scene\.tachie([A-Za-z]+)\s*=\s*('([^']*)'|"([^"]*)"|true|false)\s*;|_scene\.updateTachie\((?:true|false)?\)\s*;|_scene\.showSexAction\(['"]([0-9]{2})['"]\)\s*;|Utils_Tachie\.startAction\(['"]rumble['"],\s*_scene\.tachieContainer,\s*\{[^{}]*\}\)\s*;/g
+  let residue=text.replace(pattern,(match,field,value,single,double,action)=>{operations.push({match,field,value,single,double,action});return''}).trim();if(residue||operations.some(o=>o.field&&!Object.hasOwn(state,o.field)))return false
+  for(const o of operations){if(o.field){state[o.field]=o.value==='true'?true:o.value==='false'?false:o.single??o.double;continue}if(o.match.includes('updateTachie')){paint();continue}if(o.action){state.SexState=o.action;if(o.action!=='02'){raw('hakubox-adventure-action-not-lifted',o.action);continue}const names=['sex/02/01','sex/02/02'],srcs=names.map(n=>resource('img/pictures','adventure/tachie/'+n));if(srcs.every(Boolean))layer(names[0],90,{animation:{key:'hakubox-adventure-action:'+serial++,loop:false,frames:[...Array.from({length:6},(_,i)=>({src:srcs[i%2],seconds:.5})),{src:'',seconds:1/60}]}});continue}if(o.match.startsWith('Utils_'))raw('hakubox-adventure-effect-not-lifted',o.match)}return true
  }
 }

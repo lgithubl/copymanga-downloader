@@ -9,7 +9,12 @@ export const contextDirs=o=>[(o?.dir||'arc')+'/res']
 export const contextTextFilter=()=>()=>false
 export const sniff=text=>/^\s*\{\s*"format"\s*:\s*"orcx-script\/1"/.test(String(text).slice(0,128))
 export function prepare({texts={},options}){const o=optionsOf(options),d=JSON.parse(texts[contextFiles(o)[0]]||'null');if(d?.format!=='orcx-context/1')throw Error('OrcX context missing; run gal-layout');return{...d,options:o}}
-export function catalog(ctx){const node=s=>({id:s.name,script:s.script,title:s.name,thumb:ctx.assets[s.pack+'/'+s.name+'_A.png']||''}),all=ctx.scenes.map(node);return{title:'OrcX',children:[{id:'special',title:'特殊场景',children:ctx.scenes.filter(s=>/^50_ap_/.test(s.name)).map(node)},{id:'opening',title:'开场剧情',children:ctx.scenes.filter(s=>/^00_op_/.test(s.name)).map(node)},{id:'ending',title:'结局',children:ctx.scenes.filter(s=>/^01_ed_/.test(s.name)).map(node)},{id:'all',title:'全部剧情',children:all}]}}
+export function catalog(ctx){
+ const node=s=>({id:s.name,script:s.script,title:s.name,thumb:ctx.assets[s.pack+'/'+s.name+'_A.png']||''}),groups=new Map()
+ for(const s of ctx.scenes){const match=/^50_ap_(\d+)_/.exec(s.name);if(!match)continue;const key=match[1];if(!groups.has(key))groups.set(key,[]);groups.get(key).push(node(s))}
+ return{title:'OrcX',children:[{id:'special',title:'特殊场景',children:[...groups].sort(([a],[b])=>a.localeCompare(b)).map(([key,children])=>({id:'character-'+key,title:'角色 '+key,children}))},{id:'opening',title:'开场剧情',children:ctx.scenes.filter(s=>/^00_op_/.test(s.name)).map(node)},{id:'ending',title:'结局',children:ctx.scenes.filter(s=>/^01_ed_/.test(s.name)).map(node)},{id:'all',title:'全部剧情',children:ctx.scenes.map(node)}]}
+}
+
 export function parse(text,ctx,meta={}){
  const d=JSON.parse(text);if(d.format!=='orcx-script/1'||typeof d.text!=='string')throw Error('OrcX scenario invalid')
  const {assets,options:{stage,maxCommands}}=ctx,steps=[],stats={messages:0,voices:0,raw:{},unresolved:{}},pos={'左左':-480,'左':-320,'中':0,'右':320,'右右':480};let commands=[],body='',line=0,choices=[],cg=false

@@ -347,6 +347,7 @@ export function compileRpgEvents(list, ctx, meta) {
     plugin(`${name} ${action} ${Object.values(args||{}).join(' ')}`)
   }
   const script = (text,scope) => {
+    if(hakubox.script?.(text))return
     if(o.plugins.trnVoice.enabled){
       const sound=/^\s*Iz\.Life\.SoundUtil\.(playVoiceBgs|stopVoiceBgs|stopVoice)\(([^;\n]*)\)\s*;?\s*$/.exec(text)
       if(sound){const args=literalArgs(sound[2]),slot='rpg-native-voice-bgs'

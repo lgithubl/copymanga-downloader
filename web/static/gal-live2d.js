@@ -99,7 +99,13 @@ export function applyExpression(model, expression, params) {
   }
 }
 
-export function createLive2dLayer({ parent, before = null, url, onMissing = () => {}, onUnavailable = () => {}, capture = false }) {
+// Bound decoded atlas memory before GPU upload. UV coordinates stay normalized.
+export function live2dTextureSize(width,height,count=1,maxSize=4096){
+ const budget=192*1024*1024,k=Math.min(1,maxSize/width,maxSize/height,Math.sqrt(budget/(4*Math.max(1,count)*width*height*4/3)))
+ return{width:Math.max(1,Math.floor(width*k)),height:Math.max(1,Math.floor(height*k))}
+}
+
+export function createLive2dLayer({ parent, before = null, url, onMissing = () => {}, onUnavailable = () => {}, onLoading = () => {}, onError = () => {}, capture = false }) {
   const canvas = document.createElement('canvas')
   canvas.className = 'gal-live2d'
   canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none'
@@ -141,6 +147,8 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
   function loadModel(src) {
     if (models.has(src)) return models.get(src)
     const promise = (async () => {
+      onLoading(src,true)
+      try{
       let json
       try { json = await fetchJson(src) } catch { onMissing(src); throw new Error('model3.json') }
       const refs = json.FileReferences || {}
@@ -152,7 +160,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       for (const t of refs.Textures || []) {
         const res = await fetch(url(dir + t))
         if (!res.ok) { onMissing(dir + t); throw new Error('texture') }
-        textures.push(await createImageBitmap(await res.blob(), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }))
+        let bitmap=await createImageBitmap(await res.blob(), {premultiplyAlpha:'none',colorSpaceConversion:'none'});const size=live2dTextureSize(bitmap.width,bitmap.height,refs.Textures.length,Math.min(4096,gl.getParameter(gl.MAX_TEXTURE_SIZE)));if(size.width!==bitmap.width||size.height!==bitmap.height){const resized=await createImageBitmap(bitmap,{resizeWidth:size.width,resizeHeight:size.height,resizeQuality:'high',premultiplyAlpha:'none',colorSpaceConversion:'none'});bitmap.close();bitmap=resized}textures.push(bitmap)
       }
       let cdi = null
       if (refs.DisplayInfo) { try { cdi = await fetchJson(dir + refs.DisplayInfo) } catch { /* 没有显示名表：variables 的键要直接是 Id */ } }
@@ -167,6 +175,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       const files = []
       for (const group of Object.values(json.FileReferences?.Motions || {})) for (const m of group) if (m?.File) files.push(m.File)
       return { model, textures, groups:refs.Motions||{}, motions: new Map(), expressions: new Map(), expressionFiles: refs.Expressions || [], cdi, files, dir, mosaic, nameToId: new Map((cdi?.Parameters || []).map((p) => [p.Name, p.Id])) }
+      }catch(error){onError({src,message:String(error?.message||error)});throw error}finally{onLoading(src,false)}
     })()
     promise.catch(() => models.delete(src))
     models.set(src, promise)
@@ -189,6 +198,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
+      if(gl.getError()!==gl.NO_ERROR)throw Error('Live2D atlas upload failed or GPU texture memory exhausted')
       const pot = (n) => (n & (n - 1)) === 0
       if (pot(bitmap.width) && pot(bitmap.height)) { gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR) } else gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
@@ -407,7 +417,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       if (!spec || !spec.src) { canvas.hidden = true; runtime = null; if (raf) { cancelAnimationFrame(raf); raf = 0 } return }
       if (!init()) return
       let entry
-      try { entry = await loadModel(spec.src) } catch { return }
+      try { entry = await loadModel(spec.src) } catch { if(mine===token)currentSig='';return }
       if (destroyed || mine !== token) return
       const file = spec.motionGroup ? entry.groups[spec.motionGroup]?.[Number(spec.motionIndex)||0]?.File || '' : pickMotionFile(entry.files, spec.motion)
       const motion = await loadMotion(entry, file)
@@ -429,12 +439,11 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       runtime = { entry, frame, base, params: Float32Array.from(base), motion, motions, expression, loop: Boolean(spec.loop), t0: 0, last: 0, drawnOnce: false, spec }
       layout(entry,spec)
       canvas.hidden = false
-      renderAt(0)
-      kick()
+      try{renderAt(0);kick()}catch(error){canvas.hidden=true;runtime=null;onError({src:spec.src,message:String(error?.message||error)})}
     },
     setMosaic(value) { const next = Boolean(value); if (next === showMosaic) return; showMosaic = next; if (runtime) { renderAt(runtime.last ? (runtime.last - runtime.t0) / 1000 : 0); kick() } },
     setPaused(value) { paused = Boolean(value); if (paused) { if (raf) { cancelAnimationFrame(raf); raf = 0 } } else { if (runtime) runtime.last = 0; kick() } },
-    info() { return runtime ? [{ src: runtime.spec.src, motion: Object.values(runtime.spec.motionGroups||{}).join(' / ') || runtime.spec.motionGroup || runtime.spec.motion || '', motionGroups:runtime.spec.motionGroups||null, motionFiles:Object.values(runtime.spec.motionGroups||{}).map(g=>runtime.entry.groups[g]?.[0]?.File||''), motionFile: runtime.spec.motionGroup ? runtime.entry.groups[runtime.spec.motionGroup]?.[Number(runtime.spec.motionIndex)||0]?.File || '' : pickMotionFile(runtime.entry.files, runtime.spec.motion), meshes: runtime.entry.model.counts.artMeshes, drawn: runtime.frame.renderOrder.length }] : [] },
+    info() { return runtime ? [{ src: runtime.spec.src, motion: Object.values(runtime.spec.motionGroups||{}).join(' / ') || runtime.spec.motionGroup || runtime.spec.motion || '', motionGroups:runtime.spec.motionGroups||null, motionFiles:Object.values(runtime.spec.motionGroups||{}).map(g=>runtime.entry.groups[g]?.[0]?.File||''), motionFile: runtime.spec.motionGroup ? runtime.entry.groups[runtime.spec.motionGroup]?.[Number(runtime.spec.motionIndex)||0]?.File || '' : pickMotionFile(runtime.entry.files, runtime.spec.motion), textures:runtime.entry.textures.map(t=>[t.width,t.height]),meshes: runtime.entry.model.counts.artMeshes, drawn: runtime.frame.renderOrder.length }] : [] },
     glInfo() { return gl ? [{ renderer: gl.getParameter(gl.RENDERER), lost: gl.isContextLost?.() ?? false, canvas: `${canvas.width}×${canvas.height}` }] : [] },
     destroy() { destroyed = true; if (raf) cancelAnimationFrame(raf); runtime = null; canvas.remove(); try { gl?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* 没有就算了 */ } },
   }

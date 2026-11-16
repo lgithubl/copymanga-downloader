@@ -6,7 +6,7 @@ import {binaryCatalog,jsonCatalog,catalogBundleRefs} from './unity-addressables.
 
 // Native Unity files stay read-only. Only small scripts are exported; image and
 // audio ranges are decoded on demand through the normal container resource API.
-export const UNITY_NATIVE_VERSION=15
+export const UNITY_NATIVE_VERSION=16
 const runs=new Map(),recent=new Map(),safe=p=>typeof p==='string'&&p&&!path.isAbsolute(p)&&!p.split(/[\\/]/).some(s=>s==='..')
 export function invalidateUnityNative(mediaDir){for(const cache of[runs,recent])for(const k of cache.keys())if(k.startsWith(mediaDir+'|'))cache.delete(k)}
 export async function unityNativeIndex(mediaDir,cfg){
@@ -29,7 +29,7 @@ export async function unityNativeIndex(mediaDir,cfg){
    // distinguish cache entries even when no physical object offset is known yet.
    const file=descriptor.file||[...store.files.values()][0],hit={rel,file,offset:descriptor.offset||0,size:descriptor.size||0,version:descriptor.identity?sig+':'+createHash('sha256').update(descriptor.identity).digest('hex'):sig,transform:'unity-native',readNative:read};map.set(key,hit);files.push(rel);resources.set(name,rel);return rel
   }
-  const object=(name,o)=>add(name,{file:o.asset.file,offset:o.offset,size:o.size},()=>store.media(o))
+  const object=(name,o,options)=>add(name,{file:o.asset.file,offset:o.offset,size:o.size,...(options?{identity:'media:'+name+':'+JSON.stringify(options)}:{})},()=>store.media(o,options))
   const json=(name,data,file)=>add(name,{file,identity:'json:'+name},async()=>Buffer.from(JSON.stringify(data)))
   const catalogFile=store.files.get('catalog.bin')||store.files.get('catalog.json')
   const catalog=catalogFile?catalogBundleRefs(catalogFile.endsWith('.bin')?binaryCatalog(await readFile(catalogFile)):jsonCatalog(await readFile(catalogFile,'utf8'))):[]
