@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.70"
+VERSION="2.71"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1714,7 +1714,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJy1lstOwzAQRX+l8rpqx/aMHywRf4AQC4SqQF1YQIKSVAhV/XcmbR4uLKBpvHMn7fHRzdWoO7HN16H8LMq3tbiaPezER1a/8kncNfP7Zr66yepsWYaq2JbPoVp0JzGfiePp+qsOFf8IEcha6YmfFJtNFWoeSuO90dI4Hj61X1ReOeDPefYemstWqzLLX0K1/PvWRc8T+/ksgW87JIp8cazspijqUCYylYbQSAKMkwXv1ehkW14qX8WvjeikCQSGzFjfjpcsX02OnIrzRXlJc1teKl+UgJZc7OsI7eg+dLxUviA1cigq8uUZHAIfJdwB/yucVWxyANz+duY3bUlbRmJsrQDIeXmMtdc21lolz2xydP1iwKaU78cnS+Pc9RZ7n7fhRjmDIy7Fj2JfnnjETanvgbSxRjk3qf2ATSmPhmSTkYJJ5Qds0uJIbyUajRNHH3FT6pNCqzmniWs/YJO23gN61/4ZmbD1PTbtxtGNqIeJd3zEFfvH/TecraIE'
+PAIR_MEDIA_PLAN='eJy1lcFOwzAMhl9lynna7NROHI6IV0AcEJoKy+AALUo7ITT13clGMzUnpKDcErf98+nvb+ekjt3eh68+vO/VzerxpD7b8S2u1P25/nCu7+7asd0GP/TH8OKHTVqp9Ur9rm6/Rz/Ej4iArUXH8Ul/OAx+jEU0zpkGjcTi8/yidlog7rv2w58P2+1C2736Yfv3qZurnprWqwq8c5F5wUulsIe+H32oRIqGySADLZ0F53Sxs7NeLV4dfxtzlgQGw6aUN+lV87dhYdFLfwn/k9xZrxYvIZBlWfIKky3OQ9KrxQvYUDRFL3hjDS6GFwEnwUrAhgFtQ1kewF7yXIKb5GrZy2y1SGZvI1w+HpJeJV5hE3srw6W4Le22JFdtmDnQmkwWBiYoDcNVrxYviharM15r0BQPs6RX6xqOXmDeaxYES++KJKemp+kHWijadQ=='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
