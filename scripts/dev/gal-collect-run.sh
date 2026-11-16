@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.52"
+VERSION="2.53"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1491,7 +1491,7 @@ def next_game_label(name):
     name=re.sub(r'^(?:\[[^\]]+\]\s*)+','',name)
     return next((label for label,pattern in NEXT_GAME_PATTERNS if re.fullmatch(pattern,name,re.I)),None)
 
-PAIR_ACTIVE_GAMES = ['RJ01375307','RJ01562637','future']
+PAIR_ACTIVE_GAMES = ['RJ01562637','future']
 PAIR_GAME_PATTERNS = [(name,pattern) for name,pattern in [('RJ01562637', r'RJ01562637(?:[^0-9].*)?'), ('RJ01375307', r'RJ01375307(?:[^0-9].*)?'), ('future', r'future(?:[ _-]*v?[0-9.]+)?'), ('underworld', r'underworld(?:[ _-]*v?[0-9.]+)?'), ('RJ01743835', r'(?:RJ01743835(?:[^0-9].*)?|OrcX(?:[ _-]*(?:ver|v)?[0-9.]+)?)'), ('RJ01610452', r'RJ01610452(?:[^0-9].*)?'), ('RJ01319586', r'RJ01319586(?:[^0-9].*)?'), ('RJ01007726', r'RJ01007726(?:[^0-9].*)?'), ('dennou-djibril', r'dennou[ _-]+djibril(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01516248', r'RJ01516248(?:[^0-9].*)?'), ('RJ01234887', r'RJ01234887(?:[^0-9].*)?'), ('RJ01746557', r'RJ01746557(?:[^0-9].*)?'), ('fuyukuru', r'fuyukuru(?:[ _-]*v?[0-9.]+)?'), ('えどわ～る', r'えどわ[~〜～ー]?る(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('meshiagirl', r'meshiagirl(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01687472', r'RJ01687472(?:[^0-9].*)?'), ('RJ01610188', r'RJ01610188(?:[^0-9].*)?'), ('RJ01660877', r'RJ01660877(?:[^0-9].*)?'), ('RJ01474142', r'RJ01474142(?:[^0-9].*)?'), ('RJ01664771', r'RJ01664771(?:[^0-9].*)?'), ('Night Stroll',r'Night[ _-]+Stroll(?:[ _-]*(?:ver|v)?[0-9.]+)?')] if name in PAIR_ACTIVE_GAMES]
 
 def new_game_label(name):
@@ -1712,7 +1712,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJy9mF1vmzAUQP9KxXMS/AHGzlurqQ97XB+nCbnESVADRNh0jar+9xkCWxIuDg3VpEpUvtTnYF/b1333fnxHmEYhRZG3/Pnu7aXZeksvzTb+Pk1MVSrtP2/8bZGpudpp5b+kJtmqPF7Jg0kztdjnG2/m6aIqE/VwMEp7S8JCRvjMK9ZrrYy3RDPv+TySy0x9mvIxg/XqP5inRmXaz9VvvZd7VUJaAaKCU0iri0Bag70P6Zx9h8zTuCyKDPKhAcI8gHy6yNVhOut+lNC2qLSK12WRG9AJE0wR6NRGrjpdEhxa2pRKGd/oqqwOMi72Kp/LtLx7tq/H9zjOi7k2SoKjFzBOQ3g228iA6aegt8uDzgRRREDnNnKbs1M12fg4tD8xAp0iKggVkFMXgZwuO70OJyA8YIKAA9JF3HAyEk7hLw85iuAvP0bccDoSHoBwFgYMhrcRNzwYCQ9BeMQCCu48XcQND0fCGQTnyG4k4Jx3ETecjYRH4JdzziJ42NuIGx6NhHMQLggK4aXWRtxwPhY+sNQpQYzAB04bucIfv9r50IIXmIQMHoJj5KrC2DUv4ORDBIGlSRdx88U4OEYDy44zeLdrI0542+kI+ND845AweP7byBX+6PnH8FEjAjqU/8eIm9+Dy2qVFn7y6r/IXNpnXD9jWzotik2PLlBEwXqhDbRsd58QPNmmubRHc/1y97vdKTAkgQNbR4H510UuNZy9QzqH6iWtX66f9pASoAZmEQWXYRe51AB7/fg1a+4Ptqhn9Oz+8Fi83T2pt7tHWWbxN2mk/2RLGJml+eZeW6T2m8dDla92yteJym0xmyRFlZu0nzgCgSVp09yKTgSeDOQtPSXyVfW2Gg6metM8QbpBTdVNzaGnKzCoWzdP0a1RE3XXqdqteimMBJzATfsE4yNtqnJhty7TH2M4JcS0lGhhE5XrG9x/SooGNVE3k2ney4mB2xU+vVvdDPsCYdLf2UBh8QW+ZLJwpbf1Pxf6SQHWEE3zFOcON1Fbq51KzE7mG1ltehktELgEm+YJ8hfQiZ9gUrPrm2O4esF0kvmRVZ/k66ouuE5PcdtSVurYk91iGhu9kE1XPT3OKMEcPqj/xlpRZ8cng+d6b2Ebnno7gGAoEiiw96l/Il0j56f/8vsrE8elnTdbaV6lLdZFYVRpR+vjD7DgBzY='
+PAIR_MEDIA_PLAN='eJy1mEFrGzEQhf9K0HlJpJE0knwsIYce22MJZtus60ITh901pAT/9ypkZbswQ2cMORn8QPsxo31vZl/Nl8/WRQT0yay+vZrnft6albnbvVx9HV6u7vrxcX3bz/3NtO3H4aGfpmGe7PX7r+nMtNuPP4ZPf+ZhMqtQj0rQmd1mU2Wzsp35/q/y1D8O8uMPnRDIMUDgCloIFNFREiE5PRJXJPTWZRKpKTKiC6rElckXi5HsW1NkSBdUCbjOhRxppKbIkECP5Lkq5VxsJqu0KDIkr0cKXJVizljoMjVJBhX0UJFzgWxtQdIFFkWGFPVIyCBFtDaRSE2RIaEeKXFVigHozjVFhpT0SJm7TWgz3bimyJCyHqlw75zzBSz5zi2KDKmokThjcj5gsXTnTpqISu9NwIWKhxQsXadFkRHpQwW4UHHoUqIt/CjJoPSxAlz3wluLSA9vigzpgtZxsRIgRU8bwaLIkPSxAlyshOhDIEeUpsiQ9KECXKggFETygjdFhqQPFeBCBTEiXaWmyJD0oQJcqHjvIm1NTZEh6UMFuFDBkjztTE2RIelDBdhQwWyZcXdRZEj6UOE8oFif650hjSnX6RLPpsv1euyffg7TjexR19uhf/gIwmIdhPC2QR2HBHBnt17LOfe/fis42R201PGJvG9NETXX65PQs+tVLnUYpxeHd0WGpM9BzuCdq8Wg9+KjJGLSOzxn8FDqIE5vMosiAtL7O2fvkD0ynw4WRQSkd3d2Y7COmYWbIgLSezu7L6QQ6IW4KSIgvbNzxl73Jov03LIoIqCTr993ZrOf9+Nw/m2s/jPuB/lXMZfqNMBwnbSF7L+HH+4PfwFAiIpm'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
