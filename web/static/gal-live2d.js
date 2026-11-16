@@ -1,3 +1,4 @@
+import{hitModelAreas,canvasModelPoint}from'./gal-live2d-hit.js'
 // Live2D Cubism（.moc3）模型层（WebGL）：把 gal-moc3.js 求出来的顶点 / 不透明度 / 绘制顺序 / 颜色画到一块 canvas 上，盖在舞台里（world 的子元素）。
 // 数据来自服务端把 .l2d（ZIP：moc3 / model3.json / motion3.json / cdi3.json / KTX 纹理）展开成的虚拟文件（containers.mjs）；纹理是服务端解好的 PNG。
 // 约定（真实 g08 的 ev_cg*.l2d 对过）：顶点 y 向下、画布像素 = 位置 × pixelsPerUnit + 画布原点；UV 直接用，纹理按解出来的原样（第一行在上）。
@@ -441,6 +442,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       canvas.hidden = false
       try{renderAt(0);kick()}catch(error){canvas.hidden=true;runtime=null;onError({src:spec.src,message:String(error?.message||error)})}
     },
+    hitTest(clientX,clientY,areas){if(!runtime||canvas.hidden)return[];const p=canvasModelPoint(canvas,runtime.entry.model,clientX,clientY,runtime.spec);return p?hitModelAreas(runtime.entry.model,runtime.frame,areas,...p):[]},
     setMosaic(value) { const next = Boolean(value); if (next === showMosaic) return; showMosaic = next; if (runtime) { renderAt(runtime.last ? (runtime.last - runtime.t0) / 1000 : 0); kick() } },
     setPaused(value) { paused = Boolean(value); if (paused) { if (raf) { cancelAnimationFrame(raf); raf = 0 } } else { if (runtime) runtime.last = 0; kick() } },
     info() { return runtime ? [{ src: runtime.spec.src, motion: Object.values(runtime.spec.motionGroups||{}).join(' / ') || runtime.spec.motionGroup || runtime.spec.motion || '', motionGroups:runtime.spec.motionGroups||null, motionFiles:Object.values(runtime.spec.motionGroups||{}).map(g=>runtime.entry.groups[g]?.[0]?.File||''), motionFile: runtime.spec.motionGroup ? runtime.entry.groups[runtime.spec.motionGroup]?.[Number(runtime.spec.motionIndex)||0]?.File || '' : pickMotionFile(runtime.entry.files, runtime.spec.motion), textures:runtime.entry.textures.map(t=>[t.width,t.height]),meshes: runtime.entry.model.counts.artMeshes, drawn: runtime.frame.renderOrder.length }] : [] },
@@ -458,6 +460,7 @@ export function createLive2dLayers(options){
   async set(specs){const pending=[];for(const [slot,spec]of Object.entries(specs||{})){if(!spec||spec.visible===false)continue;let layer=layers.get(slot);if(!layer){layer=createLive2dLayer(options);layer.setPaused(settings.paused);layer.setMosaic(settings.mosaic);layers.set(slot,layer)}pending.push(layer.set(spec))}for(const [slot,layer]of layers)if(!specs?.[slot]||specs[slot].visible===false)pending.push(layer.set(null));await Promise.all(pending);for(const [slot,spec]of Object.entries(specs||{}).filter(([,s])=>s&&s.visible!==false).sort((a,b)=>(a[1].nativeOrder||0)-(b[1].nativeOrder||0))){const canvas=layers.get(slot)?.canvas;if(canvas)options.parent.insertBefore(canvas,options.before||null)}},
   setPaused(value){settings.paused=value;for(const l of layers.values())l.setPaused(value)},
   setMosaic(value){settings.mosaic=value;for(const l of layers.values())l.setMosaic(value)},
+  hitTest(slot,x,y,areas){return layers.get(slot)?.hitTest(x,y,areas)||[]},
   info(){return [...layers.values()].flatMap(l=>l.info())},glInfo(){return [...layers.values()].flatMap(l=>l.glInfo())},
   destroy(){for(const l of layers.values())l.destroy();layers.clear()}
  }

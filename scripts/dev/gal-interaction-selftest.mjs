@@ -1,0 +1,27 @@
+import assert from'node:assert/strict'
+import{test}from'node:test'
+import{hitModelAreas,canvasModelPoint}from'../../web/static/gal-live2d-hit.js'
+import{roleState,interactionSpec,interactionFeedback}from'../../web/static/gal-interaction-state.js'
+import{buildScene}from'../../web/library/gal/scene.mjs'
+import{prepare,catalog}from'../../web/library/gal/adapters/catpaw-script.mjs'
+test('native hit precision, animated bounds and CSS coordinate conversion',()=>{
+ const model={canvas:{width:200,height:400,originX:100,originY:200,pixelsPerUnit:100},artIndexStart:[0],artIndexCount:[3],vertexIndices:[0,1,2]},frame={vertices:[[-1,-1,1,-1,-1,1]],artEnabled:[1]},areas=[{id:'box',mesh:0,precision:0},{id:'tri',mesh:0,precision:1}]
+ assert.deepEqual(hitModelAreas(model,frame,areas,.8,.8),['box']);assert.deepEqual(hitModelAreas(model,frame,areas,-.5,-.5),['box','tri']);assert.deepEqual(hitModelAreas(model,frame,areas,2,0),[])
+ frame.vertices=[[-3,-3,-1,-3,-3,-1]];assert.deepEqual(hitModelAreas(model,frame,areas,0,0),[])
+ const canvas={getBoundingClientRect:()=>({left:50,top:100,right:250,bottom:500,width:200,height:400})};assert.deepEqual(canvasModelPoint(canvas,model,150,300),[0,0]);assert.deepEqual(canvasModelPoint(canvas,model,200,300,{nativeOrigin:{scaleX:-1}}),[-.5,0]);assert.equal(canvasModelPoint(canvas,model,0,0),null)
+})
+const role={id:'a',model:{src:'model',motionGroups:{0:'idle',1:'face0'}},outfits:[{id:'one',groups:[{id:'body',default:'dressed',choices:[{id:'dressed',variables:{Cloth:1}},{id:'torn',variables:{Cloth:2}}]}]},{id:'two',groups:[{id:'body',default:'new',choices:[{id:'new',variables:{Cloth:3}}]}]}],faces:[{id:'smile',layer:1}],tools:[{id:'tool',areas:[{id:'head',motion:'pat',layer:2,replies:[{id:'line1'},{id:'line2'}]},{id:'arm',motion:'wave',layer:2,replies:[{id:'line3'}]}]}]}
+test('restore validates selections, outfit changes reset dependent state and repeated touches cycle replies',()=>{
+ const state=roleState(role,{outfit:'one',values:{body:'torn'},face:'smile',tool:'tool'});assert.deepEqual(interactionSpec(role,state).variables,{Cloth:2});assert.equal(interactionSpec(role,state).motionGroups[1],'smile');assert.equal(interactionFeedback(role,state,['none']),null)
+ const a=interactionFeedback(role,state,['head']);assert.equal(a.reply.id,'line1');assert.equal(interactionFeedback(role,state,['head']).reply.id,'line2');const spec=interactionSpec(role,state,a.action,4);assert.equal(spec.motionGroups[2],'pat');assert.equal(spec.motionGroups[0],'idle');assert.equal(spec.motionToken,4)
+ assert.equal(interactionFeedback(role,state,['head','arm']).action.motion,'wave');const next=roleState(role,{...state,outfit:'two'});assert.equal(next.values.body,'new');assert.deepEqual(interactionSpec(role,next).variables,{Cloth:3});assert.equal(roleState(role,{tool:'fake',face:'fake'}).tool,'')
+})
+test('interaction scene survives buildScene and remains isolated from future and ordinary recall playback',()=>{
+ const d={format:'catpaw-context/1',variant:'underworld',prefix:'underworld',locales:[],media:{},prefabs:{'underworld/model/role/actor':'model'},models:{model:{src:'model.json',hitAreas:[{id:'head',mesh:0,precision:0}],motions:['pat'],defaultMotions:{0:'idle'},motionLayers:{pat:2}}},configs:{roleConfig:{a:{id:'a',nameKey:'Actor',dreamBoxRole:'actor',cloths:[],faces:[],dbsm:['tool']}},dbsmConfig:{tool:{id:'tool',touchArea:[{area:'head',key:'pat',talks:['t']}]}},simpleTalkConfig:{t:{talk:'line'}}},scenes:[{name:'interaction/a.catpaw',script:'arc/script/interaction/a.catpaw',kind:'interaction',title:'Actor'}]},ctx=prepare({texts:{'arc/native.json':JSON.stringify(d)}}),scene=buildScene('catpaw::script',JSON.stringify({format:'catpaw-script/1',kind:'interaction',id:'a',rows:[]}),ctx);assert.equal(scene.interaction.initialRole,'a');assert.equal(scene.interaction.roles[0].tools[0].areas[0].replies[0].text,'line');assert.deepEqual(scene.interaction.diagnostics,[]);assert.equal(scene.steps[0].commands[0].op,'live2d');assert.equal(catalog(ctx).children.at(-1).title,'角色互动');assert.equal(catalog({...ctx,variant:'future'}).children.length,2)
+})
+
+test('corrupt or unsupported saved selections cannot select disabled controls',()=>{const copy=structuredClone(role);copy.outfits[0].groups[0].choices.push({id:'unsupported',disabled:true,variables:{bad:1}});assert.equal(roleState(copy,null).values.body,'dressed');assert.equal(roleState(copy,{values:{body:'unsupported'}}).values.body,'dressed')})
+
+test('accessory off state follows native controller suffix, not an icon-like cloth key2 field',async()=>{
+ const{catpawInteraction}=await import('../../web/library/gal/adapters/catpaw-interaction.mjs'),ctx={variant:'underworld',prefix:'underworld',translations:{},media:{},prefabs:{'underworld/model/role/actor':'m'},models:{m:{src:'m.json',motions:[],hitAreas:[]}},configs:{roleConfig:{a:{id:'a',dreamBoxRole:'actor',cloths:['c'],roleTool:[{name:'cloth',key1:'p',value1:0},{name:'decor',key1:'d',value1:10},{name:'decor_off',key1:'d',value1:0}]}},clothConfig:{c:{cloth1:{key:'cloth'},defaultClothes:{other:[{key:'decor',value:true}]},fourthRow:[{key:'decor',key2:'hat_on',icon:'hat_off',icon2:'hat_on'}]}}}},result=catpawInteraction(ctx,{id:'a'}),r=result.interaction.roles[0],group=r.outfits[0].groups.find(g=>g.id==='decor');assert.deepEqual(group.choices.map(c=>c.id),['decor_off','decor']);assert.equal(group.default,'decor');assert.deepEqual(result.interaction.diagnostics,[]);assert.equal(result.steps[0].commands[0].variables.d,10)
+})

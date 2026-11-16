@@ -15,7 +15,7 @@ export async function indexCatpaw(api){
   const image=pick(key,[28,213]),audio=pick(key,[83]),text=pick(key,[49]);if(image)put(key,object('Media/'+key+'.png',image.o));if(audio)put(key,object('Audio/'+key+'.ogg',audio.o))
   if(text){const d=readTextObject(await store.data(text.o));if(/config$/i.test(d.name)){const table=JSON.parse(d.text.replace(/^\uFEFF/,''));if(configs[d.name])throw Error('CatPaw duplicate config: '+d.name);configs[d.name]=table}}
  }
- if(underworld){for(const[key,value]of Object.entries({...configs})){const canonical={talkconfig:'talkConfig',recallconfig:'recallConfig',eventsconfig:'eventConfig',roleconfig:'roleConfig',cgaudioconfig:'cgAudioConfig'}[key.toLowerCase()];if(canonical)configs[canonical]=value}}
+ if(underworld){for(const[key,value]of Object.entries({...configs})){const canonical={talkconfig:'talkConfig',recallconfig:'recallConfig',eventsconfig:'eventConfig',roleconfig:'roleConfig',cgaudioconfig:'cgAudioConfig',clothconfig:'clothConfig',dbsmconfig:'dbsmConfig',simpletalkconfig:'simpleTalkConfig'}[key.toLowerCase()];if(canonical)configs[canonical]=value}}
  for(const key of ['talkConfig','recallConfig','eventConfig'])if(!configs[key])throw Error('CatPaw required native table absent: '+key)
  for(const[key,hits]of entries){if(!key.startsWith(prefix+'talkbackground/'))continue;const go=hits.find(h=>h.o.classId===1)?.o;if(!go)continue;const d=await store.decode(go),images=[];for(const c of d.m_Component){const o=await store.ptr(go.asset,c.component);if(o?.classId!==114||await store.type(o)!=='Image')continue;const ui=unityUiImagePrefix(await store.data(o)),sprite=await store.ptr(o.asset,ui.sprite);if(sprite?.classId===213&&ui.color.a>0)images.push(sprite)}if(images.length===1)put(key,object('Backgrounds/'+key+'.png',images[0]))}
  // Original model3 files explicitly declare every atlas and motion. This also
@@ -41,15 +41,18 @@ export async function indexCatpaw(api){
  // Resolve declared prefab -> actual CubismMoc identity using native children.
  const controllerOf=async(o)=>decodeTree(await store.data(o),ANIMATION_TYPES[o.classId],{requireEnd:true})
  const modelOf=async(root)=>{
-  const queue=[root],seen=new Set(),mocs=new Set(),controllers=[]
+  const queue=[root],seen=new Set(),mocs=new Set(),controllers=[],hitAreas=[]
   for(let i=0;i<queue.length;i++){
    const go=queue[i],id=go.asset.file+':'+go.pathId;if(seen.has(id))continue;seen.add(id);if(seen.size>10000)throw Error('CatPaw prefab hierarchy exceeds bounds')
-   const d=await store.decode(go)
+   const d=await store.decode(go);let drawable=null,precision=null
    for(const c of d.m_Component){const o=await store.ptr(go.asset,c.component);if(!o)continue
     if(o.classId===114&&await store.type(o)==='CubismModel'){const h=monoHeader(await store.data(o)),moc=await store.ptr(o.asset,h.r.ptr());const model=mocModels.get(moc?.asset.file+':'+moc?.pathId);if(model)mocs.add(model)}
     if(o.classId===95){const d=await controllerOf(o),controller=await store.ptr(o.asset,d.m_Controller);if(controller)controllers.push(controller)}
+    if(o.classId===114&&await store.type(o)==='CubismDrawable')drawable=monoHeader(await store.data(o)).r.i()
+    if(o.classId===114&&await store.type(o)==='CubismRaycastable')precision=monoHeader(await store.data(o)).r.i()
     if(o.classId===4||o.classId===224){const td=unityTransformPrefix(await store.data(o));for(const p of td.m_Children){const tr=await store.ptr(o.asset,p),child=await store.ptr(tr.asset,unityTransformPrefix(await store.data(tr)).m_GameObject);if(child)queue.push(child)}}
    }
+   if(drawable!==null&&precision!==null)hitAreas.push({id:d.m_Name,mesh:drawable,precision})
   }
   if(mocs.size!==1)return'';const model=[...mocs][0],doc=modelDocs.get(model)
   for(let controller of controllers){if(controller.classId!==91)continue;const data=await controllerOf(controller),names=new Map(data.m_TOS.map(p=>[p.first,p.second]))
@@ -60,10 +63,11 @@ export async function indexCatpaw(api){
     const layers=data.m_Controller.m_LayerArray.map((l,i)=>({i,data:l.data})).filter(l=>l.data.m_StateMachineIndex===mi);if(layers.length===1){models[model].motionLayers[alias]=layers[0].i;if(si===machine.data.m_DefaultState)models[model].defaultMotions[layers[0].i]=alias}
    }
   }
-  models[model].motions=Object.keys(doc.clone.FileReferences.Motions);return model
+  models[model].motions=Object.keys(doc.clone.FileReferences.Motions);if(hitAreas.length)models[model].hitAreas=hitAreas;return model
  }
  const names=new Set(Object.values(configs.recallConfig).map(c=>prefix+'recall/'+c.role));for(const c of Object.values(configs.talkConfig)){if(c.talkHeadLive2d)names.add(prefix+'model/live2dhead/'+c.talkHeadLive2d);for(const a of (underworld?c.figure:c.fgimage)||[])if(a.key)names.add(prefix+(underworld?'model/role/':'model/talkrole/')+a.key)}
  if(underworld)for(const c of Object.values(configs.talkConfig))if(c.background)names.add(prefix+'talkbackground/'+c.background)
+ if(underworld)for(const role of Object.values(configs.roleConfig||{}))if(role.dreamBoxRole)names.add(prefix+'model/role/'+role.dreamBoxRole)
  for(const name of names){const hits=entries.get(lower(name))?.filter(x=>x.o.classId===1)||[];if(hits.length!==1)continue;const root=hits[0].o,model=await modelOf(root);if(model){prefabs[lower(name)]=model;if(name.startsWith(prefix+'recall/'))prefabs[name.slice((prefix+'recall/').length)]=model;const go=await store.decode(root);for(const c of go.m_Component){const o=await store.ptr(root.asset,c.component);if([4,224].includes(o?.classId)){const t=unityTransformPrefix(await store.data(o));prefabLayouts[lower(name)]={position:t.position,scale:t.scale,rotation:t.rotation}}}}}
  const talkRoot=pick(prefix+'prefab/talkprefab',[1])?.o
  if(talkRoot){const go=await store.decode(talkRoot);for(const c of go.m_Component){const t=await store.ptr(talkRoot.asset,c.component);if(t?.classId!==224)continue;for(const p of unityTransformPrefix(await store.data(t)).m_Children){const tr=await store.ptr(t.asset,p);if(tr?.classId!==224)continue;const d=await store.decode(tr),child=await store.ptr(tr.asset,d.m_GameObject),name=(await store.decode(child)).m_Name;if(name==='backGround'&&d.m_SizeDelta.x>0&&d.m_SizeDelta.y>0&&d.m_SizeDelta.x*d.m_SizeDelta.y>(presentation.talkStage?.[0]*presentation.talkStage?.[1]||0))presentation.talkStage=[d.m_SizeDelta.x,d.m_SizeDelta.y];if(name==='role')presentation.roleContainer={position:d.m_AnchoredPosition,scale:d.m_LocalScale}}}}
@@ -81,5 +85,6 @@ export async function indexCatpaw(api){
  for(const file of ['resources.assets',...(underworld?['level0','level1']:[])]){const native=await store.asset(file);for(const o of native.objects.filter(o=>o.classId===114)){const type=await store.type(o);if(['LanguageSourceAsset','LanguageSource'].includes(type))locales.push(readI2Source(await store.data(o),{legacy:type==='LanguageSource'}))}}
  for(const row of Object.values(configs.eventConfig)){for(const[n,node]of(row.Node||row.node||[]).entries()){if(node.type!=='talkScene')continue;scripts.push({name:'story/'+row.id+'-'+n+'.catpaw',data:{format:'catpaw-script/1',kind:'story',id:row.id,title:node.name||row.desc||row.name||row.id,rows:node.process||[]}})}}
  for(const row of Object.values(configs.recallConfig))scripts.push({name:'replay/'+row.id+'.catpaw',data:{format:'catpaw-script/1',kind:'replay',id:row.id,title:row.name,rows:row.node||[]}})
+ if(underworld)for(const role of Object.values(configs.roleConfig||{}))scripts.push({name:'interaction/'+role.id+'.catpaw',data:{format:'catpaw-script/1',kind:'interaction',id:role.id,title:role.nameKey,rows:[]}})
  api.context={format:'catpaw-context/1',prefix:roots[0],variant:underworld?'underworld':'future',configs,media,models,prefabs,prefabLayouts,presentation,locales,notes:['本地剧情及CG回放；未执行经营/小游戏控制器；未还原演出保留源行诊断'],scenes:scripts.map(s=>({name:s.name,script:api.cfg.dir+'/script/'+s.name,...s.data}))}
 }

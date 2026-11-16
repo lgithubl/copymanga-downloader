@@ -1,3 +1,4 @@
+import {createGalInteraction} from '/gal-interaction.js'
 import { createRpgUiLayer } from '/gal-rpgmaker-ui.js'
 import { rpgShakeFrames } from '/gal-shake.js'
 import { mountSceneFonts } from '/gal-fonts.js'
@@ -126,6 +127,7 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 // onToggleImmersive / onEscape / chapter 由页面传入：沉浸模式、上下一话、返回都属于页面层，播放器只负责放按钮和调用。
 //   chapter: { jump(节点 id)（脚本里的 goto：直接接着播那个脚本，返回 true = 已经跳走）, canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
 export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, onDetails = null, chapter = null, viewKey = '', onReload = null, translate = null, tts = null }) {
+  if(reader.scene?.interaction?.format==='gal-interaction/1')return createGalInteraction({container,reader,chapter,onEscape,onToggleImmersive,onDetails,viewKey})
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
   let choices = { ...(startChoices || {}) }

@@ -42,9 +42,10 @@ export const SCENE_FORMAT = 'gal-scene/1'
 //   options = config.adapterOptions[适配器 id]（没有 = {}），config = 引擎配置的只读视图 { classify, resourceResolve, player, limits, indexSkip }（见 config.mjs galConfigView）。
 //   没有 prepare 的适配器只能从 meta.options 拿到自己的参数。parse 之后统一过一遍 meta.config.classify（见下）。
 export function buildScene(adapterId, text, ctx = null, meta = {}) {
-  const { steps, stats, next, fonts } = galAdapter(adapterId).parse(text, ctx, meta)
+  const { steps, stats, next, fonts, interaction } = galAdapter(adapterId).parse(text, ctx, meta)
   const after = next?.script ? { next: { script: String(next.script) } } : {}   // 看完这份接着播哪个脚本（适配器给的名字，服务端再补 node）
   if (fonts?.length) after.fonts = fonts
+  if (interaction?.format === 'gal-interaction/1') after.interaction = interaction
   const rules = meta?.config?.classify
   if (Array.isArray(rules) && rules.length) {
     const classified = applyClassify(steps, rules)
