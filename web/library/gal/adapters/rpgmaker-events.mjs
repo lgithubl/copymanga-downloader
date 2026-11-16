@@ -347,7 +347,7 @@ export function compileRpgEvents(list, ctx, meta) {
     plugin(`${name} ${action} ${Object.values(args||{}).join(' ')}`)
   }
   const script = (text,scope) => {
-    if(hakubox.script?.(text))return
+    if(hakubox.script?.(text,truth(when())!==false))return
     if(o.plugins.trnVoice.enabled){
       const sound=/^\s*Iz\.Life\.SoundUtil\.(playVoiceBgs|stopVoiceBgs|stopVoice)\(([^;\n]*)\)\s*;?\s*$/.exec(text)
       if(sound){const args=literalArgs(sound[2]),slot='rpg-native-voice-bgs'
@@ -379,6 +379,7 @@ export function compileRpgEvents(list, ctx, meta) {
     if (!count || remaining) raw('script-unhandled', text)
   }
   const condition = (p,argumentsOfCall=[]) => {
+    if(p[0]===12){const value=hakubox.condition?.(p[1],truth(when())!==false);if(value!==undefined){const key=`rpg:hakubox-condition:${serial++}`;initial.set(key,Number(value));return{var:key,op:'===',value:1}}}
     const argument=p[0]===12&&/^this\._arguments\[(\d+)\]\s*(===|!==|>=|<=|>|<|==|!=)\s*(-?\d+)$/.exec(String(p[1]).trim())
     if(argument&&argumentsOfCall[Number(argument[1])])return {var:argumentsOfCall[Number(argument[1])],op:argument[2],value:Number(argument[3])}
     if(meta.memoryReplay&&p[0]===12&&/^Iz\.Life\.MemoryUtil\.isMemoryScene\(\)$/.test(String(p[1]).trim()))return {var:variable(1054,'s'),op:'===',value:1}
@@ -462,7 +463,7 @@ export function compileRpgEvents(list, ctx, meta) {
       if (c.code === 404 || c.code === 412) { const n = guards.findLastIndex(g => g.indent === indent); if (n >= guardBase) guards.splice(n, 1); continue }
       if (c.code === 111) {
         const test = condition(p,argumentVars), key = `rpg:branch:${serial++}`
-        if (test) emit({ op: 'set', var: key, test })
+        if (test) {if(test.var?.startsWith('rpg:hakubox-condition:'))initial.set(key,Number(truth([test])));emit({ op: 'set', var: key, test })}
         const cond = { var: key, op: '===', value: 1 }
         guards.push({ indent, type: 'if', condition: cond, conditions: [cond] }); continue
       }
@@ -536,6 +537,8 @@ export function compileRpgEvents(list, ctx, meta) {
       if (c.code === 235) { if(paEnabled)pa.erase(Number(p[0]));emit({op:'set',var:`rpg:picture:${Number(p[0])}`,value:0});emit({op:'rpgText',slot:`rpg-picture-${Number(p[0])}`,visible:false}); emit({ op: 'overlayOff', slot: `rpg-picture-${Number(p[0])}` }); pictures.delete(Number(p[0])); continue }
       if(c.code===284){const src=resource('img/parallaxes',p[0]);emit(src?{op:'bg',src,...(cgMatch?.test(src)?{cg:true}:{})}:{op:'bgoff'});if(p[1]||p[2])raw('parallax-scroll-static-snapshot',p);continue}
       if (c.code === 241 || c.code === 245 || c.code === 249 || c.code === 250) { audio(({241:'bgm',245:'bgse',249:'me',250:'se'})[c.code], p[0]); continue }
+      if(c.code===251){emit({op:'seStop'});continue}
+      if(c.code===224){const color=Array.isArray(p[0])?p[0]:[255,255,255,255],seconds=Math.max(0,Number(p[1])||0)/60;emit({op:'wash',color:'#'+color.slice(0,3).map(n=>Math.max(0,Math.min(255,Math.round(n))).toString(16).padStart(2,'0')).join(''),peak:Number(color[3]||0)/255,seconds});if(p[2])emit({op:'wait',seconds});continue}
       if (c.code === 242) { emit({ op: 'bgmStop', fade: Number(p[0] || 0) }); continue }
       if (c.code === 246) { emit({ op: 'bgvoiceOff',slot:`rpg-bgs-${bgsLine}` }); continue }
       if (c.code === 230) { emit({ op: 'wait', seconds: Math.min(60, Number(p[0] || 0) / 60) }); continue }

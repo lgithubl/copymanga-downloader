@@ -12,7 +12,7 @@ export function prepare({texts={},options}){const o=optionsOf(options),d=JSON.pa
 export function catalog(ctx){
  const node=s=>({id:s.name,script:s.script,title:s.name,thumb:ctx.assets[s.pack+'/'+s.name+'_A.png']||''}),groups=new Map()
  for(const s of ctx.scenes){const match=/^50_ap_(\d+)_/.exec(s.name);if(!match)continue;const key=match[1];if(!groups.has(key))groups.set(key,[]);groups.get(key).push(node(s))}
- return{title:'OrcX',children:[{id:'special',title:'特殊场景',children:[...groups].sort(([a],[b])=>a.localeCompare(b)).map(([key,children])=>({id:'character-'+key,title:'角色 '+key,children}))},{id:'opening',title:'开场剧情',children:ctx.scenes.filter(s=>/^00_op_/.test(s.name)).map(node)},{id:'ending',title:'结局',children:ctx.scenes.filter(s=>/^01_ed_/.test(s.name)).map(node)},{id:'all',title:'全部剧情',children:ctx.scenes.map(node)}]}
+ return{title:'OrcX',children:[{id:'special',title:'特殊场景',children:[...groups].sort(([a],[b])=>a.localeCompare(b)).map(([key,children])=>{const available=[...new Set(children.map(c=>c.thumb).filter(Boolean))],thumbs=[...new Set([0,Math.floor((available.length-1)/2),available.length-1].map(i=>available[i]).filter(Boolean))];return{id:'character-'+key,title:'角色 '+key,children,...(thumbs.length?{thumb:thumbs[0],thumbs}:{} )}})},{id:'opening',title:'开场剧情',children:ctx.scenes.filter(s=>/^00_op_/.test(s.name)).map(node)},{id:'ending',title:'结局',children:ctx.scenes.filter(s=>/^01_ed_/.test(s.name)).map(node)},{id:'all',title:'全部剧情',children:ctx.scenes.map(node)}]}
 }
 
 export function parse(text,ctx,meta={}){

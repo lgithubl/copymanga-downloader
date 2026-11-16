@@ -509,9 +509,9 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
   }
   const catalogNodeRef = (parentId, page) => (parentId ? virtualNodeId(parentId, page) : dirNodeId(defaultSet, '', page))
   const catalogCrumbs = (catalog, id, tail) => [{ id: dirNodeId(defaultSet, '', 1), title: '首页' }, ...catalogAncestors(catalog, id).map((c) => ({ id: virtualNodeId(c.id, 1), title: c.title })), ...(tail ? [tail] : [])]
-  const catalogItem = (child) => (child.children
-    ? { type: 'dir', id: child.id, title: child.title, subtitle: child.subtitle ?? `${child.children.length} 项`, thumb: child.thumb || '', thumbs: child.thumb ? [child.thumb] : [], ...(child.thumb ? {} : { thumbWhy: ['适配器目录（catalog）没有给缩略图'] }), badge: child.badge || '', node: virtualNodeId(child.id, 1) }
-    : { type: 'script', id: child.script, title: child.title, subtitle: child.subtitle || '', thumb: child.thumb || '', thumbs: child.thumb ? [child.thumb] : [], ...(child.thumb ? {} : { thumbWhy: ['适配器目录（catalog）没有给缩略图'] }), badge: child.badge || '', node: idOf(defaultSet, 'script', child.script) })
+  const catalogItem = (child) => {const thumbs=[...new Set([child.thumb,...(Array.isArray(child.thumbs)?child.thumbs:[])].filter(p=>typeof p==='string'&&p))].slice(0,12),thumb=thumbs[0]||'';return (child.children
+    ? { type: 'dir', id: child.id, title: child.title, subtitle: child.subtitle ?? `${child.children.length} 项`, thumb, thumbs,...(thumbs.length>1?{carousel:thumbs.length}:{}), ...(thumb ? {} : { thumbWhy: ['适配器目录（catalog）没有给缩略图'] }), badge: child.badge || '', node: virtualNodeId(child.id, 1) }
+    : { type: 'script', id: child.script, title: child.title, subtitle: child.subtitle || '', thumb, thumbs,...(thumbs.length>1?{carousel:thumbs.length}:{}), ...(thumb ? {} : { thumbWhy: ['适配器目录（catalog）没有给缩略图'] }), badge: child.badge || '', node: idOf(defaultSet, 'script', child.script) })}
 
   // 适配器的目录（catalog）节点：适配器自己给了 thumb 就用它；没给的，目录卡片走 thumbSources / dirThumbs 规则（名字 = 卡片标题），
   // 脚本卡片走和文件系统列表同一套（scriptInfo：规则 → 兜底：脚本里的 CG / 立绘 / 背景，topUp），以前这两种卡片在 catalog 里一律没图。

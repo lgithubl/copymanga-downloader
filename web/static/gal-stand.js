@@ -367,11 +367,11 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
       const at = pose(motions.get(String(item.spec.slot)), now)
       if (at?.moving) moving = true
       let paintItem = at ? { ...item, spec: { ...item.spec, x: at.x, y: at.y } } : item
-      const a = item.spec.animation, c = item.spec.cycle, clock = clocks.get(String(a?.key || c?.key || item.spec.slot))
+      const a = item.spec.animation, c = item.spec.cycle, clock = clocks.get(String(a?.key || c?.key || item.spec.slot)), cycleClock=clocks.get(String(c?.key||item.spec.slot))
       if (clock != null && (a || c)) {
         const time = ((paused ? pausedAt : now) - clock) / 1000
-        const frame = animationFrame(a, time), pose = cyclePose(c, time)
-        paintItem = {...paintItem, img: frame ? item.frames?.get(frame.src) : item.img, spec: {...paintItem.spec, pixelated: frame?.pixelated ?? item.spec.pixelated, scaleX: num(item.spec.scaleX,1)*pose.scale, scaleY: num(item.spec.scaleY,1)*pose.scale, alpha: clamp01(item.spec.alpha)*pose.alpha}}
+        const frame = animationFrame(a, time), pose = cyclePose(c,cycleClock==null?time:((paused?pausedAt:now)-cycleClock)/1000)
+        paintItem = {...paintItem, img: frame ? item.frames?.get(frame.src) : item.img, spec: {...paintItem.spec, x:num(paintItem.spec.x)+(pose.x||0),y:num(paintItem.spec.y)+(pose.y||0),pixelated: frame?.pixelated ?? item.spec.pixelated, scaleX: num(item.spec.scaleX,1)*pose.scale, scaleY: num(item.spec.scaleY,1)*pose.scale, alpha: clamp01(item.spec.alpha)*pose.alpha}}
         if (frame) {
           canvas.dataset.animationFrame = String(frame.index)
           const key=String(item.spec.slot),token=String(a.key)+':'+frame.token,old=seenFrames.get(key)
@@ -400,7 +400,7 @@ export function createOverlayLayer({ parent, url, onMissing = () => {}, media = 
     const now = performance.now(), previous = new Map(drawn.map(item => [String(item.spec.slot), item]))
     if (reset) { motions.clear(); clocks.clear(); seenFrames.clear() }
     const clockKeys = new Set()
-    for (const spec of specs) if (spec.animation || spec.cycle) { const key=String(spec.animation?.key || spec.cycle?.key || spec.slot); clockKeys.add(key); if (!clocks.has(key)) clocks.set(key,paused?pausedAt:now) }
+    for(const spec of specs)for(const timeline of[spec.animation,spec.cycle].filter(Boolean)){const key=String(timeline.key||spec.slot);clockKeys.add(key);if(!clocks.has(key))clocks.set(key,paused?pausedAt:now)}
     for (const key of clocks.keys()) if (!clockKeys.has(key)) clocks.delete(key)
     const keep = new Set()
     for (const spec of specs) {

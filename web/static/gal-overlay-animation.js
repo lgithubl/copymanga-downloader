@@ -23,5 +23,14 @@ export function cyclePose(cycle, seconds) {
     const inside = v.windows.some(([a,b]) => t >= a && t < b)
     alpha = (v.invert ? !inside : inside) ? 1 : 0
   }
+  const o=cycle?.offset
+  if(o?.duration>0){
+    const total=o.duration*Math.max(1,Math.min(16,o.loops||1));let x=0,y=0
+    if(seconds<total){const p=Math.max(0,seconds)%o.duration/o.duration,power=Math.max(0,Math.min(100,Number(o.power)||0))
+      if(o.kind==='shake'){const amplitude=power*(p<.5?1-(1-p)**2:1-(p-.5)*2),d=Math.sin(p*Math.PI*2*(o.frequency||1))*amplitude;if(o.dir==='vertical')y=d;else x=d}
+      else if(o.kind==='rumble'){const frames=o.duration*60,step=Math.max(1,o.frequency||1),at=p*frames/step,index=Math.floor(at),u=at-index,ease=u<.5?2*u*u:1-(-2*u+2)**2/2,point=i=>{if(i<1)return[0,0];const r=n=>{const f=Math.sin(n*127.1+31.7)*43758.5453;return f-Math.floor(f)},angle=r(i)*Math.PI*2,strength=(.7+.3*r(i+59))*power*Math.max(0,1-i*step/frames);return[Math.cos(angle)*strength,Math.sin(angle)*strength]},a=point(index),b=point(index+1);x=a[0]+(b[0]-a[0])*ease;y=a[1]+(b[1]-a[1])*ease}
+    }
+    return{scale,alpha,x,y}
+  }
   return { scale, alpha }
 }

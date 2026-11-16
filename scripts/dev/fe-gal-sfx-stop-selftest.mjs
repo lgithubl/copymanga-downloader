@@ -1,0 +1,12 @@
+import assert from'node:assert/strict'
+import{createServer}from'node:http'
+import{readFile}from'node:fs/promises'
+import{createRequire}from'node:module'
+const{chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_PATH||'@playwright/test'),errors=[],server=createServer(async(req,res)=>{try{const u=new URL(req.url,'http://localhost');if(u.pathname==='/'){res.setHeader('Content-Type','text/html');return res.end('<!doctype html><div id="host" style="height:720px"></div>')}if(u.pathname==='/favicon.ico'){res.writeHead(204);return res.end()}if(!/^\/[\w.-]+\.js$/.test(u.pathname))throw Error('route');res.setHeader('Content-Type','text/javascript');res.end(await readFile('web/static'+u.pathname))}catch{res.writeHead(404);res.end()}});await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser
+try{
+ browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});const page=await browser.newPage();page.on('pageerror',e=>errors.push(String(e)));await page.goto('http://127.0.0.1:'+server.address().port)
+ await page.evaluate(async()=>{
+  window.audios=[];window.Audio=class extends EventTarget{constructor(src=''){super();Object.assign(this,{src,paused:true,currentTime:0,duration:10,volume:1,ended:false,pauses:0});audios.push(this)}play(){this.paused=false;return Promise.resolve()}pause(){this.paused=true;this.pauses++}load(){}removeAttribute(){}};
+  const{createGalPlayer}=await import('/gal-player.js');window.player=createGalPlayer({container:document.getElementById('host'),reader:{item:{itemId:'sfx-test',title:'channel check'},node:{id:'test'},resourceBase:'/media/',scene:{stats:{},steps:[{commands:[{op:'bgm',src:'music'},{op:'voice',src:'voice'},{op:'se',src:'effect'},{op:'seStop'},{op:'text',segments:[{text:'line'}]}]}]}}})
+ });await page.waitForFunction(()=>audios.some(a=>a.src.includes('effect')&&a.pauses));const channels=await page.evaluate(()=>audios.map(a=>({src:a.src,pauses:a.pauses})));assert.equal(channels.find(a=>a.src.includes('effect')).pauses,1);assert.equal(channels.find(a=>a.src.includes('voice')).pauses,0);assert.equal(channels.find(a=>a.src.includes('music')).pauses,0);await page.evaluate(()=>player.destroy());assert.deepEqual(errors,[]);console.log('PASS full player: seStop pauses effects while preserving voice/BGM; destruction cleans up')
+}finally{await browser?.close();server.close()}

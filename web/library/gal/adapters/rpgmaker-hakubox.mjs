@@ -1,3 +1,5 @@
+import{hakuboxAdventure}from'./rpgmaker-hakubox-adventure.mjs'
+export{hakuboxAdventure}from'./rpgmaker-hakubox-adventure.mjs'
 import{readFile,stat}from'node:fs/promises'
 import path from'node:path'
 // Declarative Hakubox commands; never load or execute game plugin JavaScript.
@@ -48,23 +50,5 @@ export function hakuboxCommands({ctx,emit,raw,resource,audio,stage}){
   // effects need distinct evidence. Preserve their original names and args.
   raw('hakubox-unhandled:'+name+':'+action,a);return true
  }
- command.script=hakuboxAdventure({enabled,emit,raw,resource,stage});return command
-}
-
-// A closed declarative reader for the original adventure panel. Game JS is never executed.
-export function hakuboxAdventure({enabled,emit,raw,resource,stage}){
- const state={Direction:'front',Face:'01',FaceAtta:'',IsNude:false,IsBroken:false,IsWet:false,IsWound:false,IsClimax:false,IsReached:true,SkirtState:'normal',PantState:'normal',SexState:''};let serial=0
- const layer=(name,n,extra={})=>{const src=resource('img/pictures','adventure/tachie/'+name);if(src)emit({op:'overlay',slot:'rpg-hakubox:adventure:'+n,kind:'actor',src,stage,anchor:[0,0],x:stage[0]/2-427,y:-stage[1]/2,fit:'none',z:100+n,...extra})}
- const paint=()=>{emit({op:'overlayOff',prefix:'rpg-hakubox:adventure:'});const paths=[],dir=state.Direction==='front'?'front':state.IsReached?'back_reached':'back',variant=state.IsBroken&&state.IsWet?'04':state.IsWet?'03':state.IsBroken?'02':'01'
-  paths.push('body_'+dir);if(state.SexState==='01')paths.push('sex/01/base');if(state.IsWound)paths.push('wound/'+(state.Direction==='front'?'front':'back'));if(state.IsClimax)paths.push('sex/06/05')
-  if(state.PantState==='normal'){paths.push('pants/'+variant);if(state.SkirtState==='half')paths.push('pants/05')}else if(state.PantState==='half')paths.push('pants/s_'+variant)
-  if(!state.IsNude){if(state.SkirtState==='normal')paths.push('skirt/'+variant+(!state.IsBroken&&state.PantState==='normal'?'_1':''));paths.push('clothes/'+(state.SkirtState==='half'?'s_':'')+dir+'_'+variant);if(state.SkirtState==='half')paths.push('skirt/s_'+variant)}
-  paths.push('hair/hair_'+(state.Direction==='front'?'front':'back'));if(state.IsWet)paths.push('wet/'+(state.Direction==='front'?'front':'back'));if(state.Direction==='back'){paths.push('face/'+state.Face);if(state.FaceAtta)paths.push('face/'+state.FaceAtta)}
-  paths.forEach((p,i)=>layer(p,i))
- }
- return text=>{if(!enabled||!/_scene\.(?:tachie|updateTachie|showSexAction)/.test(text))return false
-  const operations=[],pattern=/const\s+_scene\s*=\s*SceneManager\._scene\s*;|_scene\.tachie([A-Za-z]+)\s*=\s*('([^']*)'|"([^"]*)"|true|false)\s*;|_scene\.updateTachie\((?:true|false)?\)\s*;|_scene\.showSexAction\(['"]([0-9]{2})['"]\)\s*;|Utils_Tachie\.startAction\(['"]rumble['"],\s*_scene\.tachieContainer,\s*\{[^{}]*\}\)\s*;/g
-  let residue=text.replace(pattern,(match,field,value,single,double,action)=>{operations.push({match,field,value,single,double,action});return''}).trim();if(residue||operations.some(o=>o.field&&!Object.hasOwn(state,o.field)))return false
-  for(const o of operations){if(o.field){state[o.field]=o.value==='true'?true:o.value==='false'?false:o.single??o.double;continue}if(o.match.includes('updateTachie')){paint();continue}if(o.action){state.SexState=o.action;if(o.action!=='02'){raw('hakubox-adventure-action-not-lifted',o.action);continue}const names=['sex/02/01','sex/02/02'],srcs=names.map(n=>resource('img/pictures','adventure/tachie/'+n));if(srcs.every(Boolean))layer(names[0],90,{animation:{key:'hakubox-adventure-action:'+serial++,loop:false,frames:[...Array.from({length:6},(_,i)=>({src:srcs[i%2],seconds:.5})),{src:'',seconds:1/60}]}});continue}if(o.match.startsWith('Utils_'))raw('hakubox-adventure-effect-not-lifted',o.match)}return true
- }
+ command.script=hakuboxAdventure({enabled,emit,raw,resource,stage});command.condition=command.script.condition;return command
 }

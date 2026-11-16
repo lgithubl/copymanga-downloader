@@ -944,6 +944,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
   // 这一步触发的语音。自动播放要等它播完（再多等 voiceDelay 秒）；放不出来（缺文件 / 浏览器拒绝自动播放）就按没有语音处理
   let stepVoice = null   // { step, endedAt, failed }
+  const sfxPlaying=new Set()
+  function stopSe(){for(const a of sfxPlaying)a.pause();sfxPlaying.clear()}
   function playOnce(src, kind, spec = {}) {
     const audio = new Audio(url(src))
     audio.volume = gainOf(kind === 'voice' ? 'voice' : 'sfx') * Math.max(0,Math.min(1,Number(spec.volume??1)))
@@ -959,7 +961,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       audio.addEventListener('ended', () => { record.endedAt = performance.now(); if (stepVoice === record) scheduleAuto() })
       audio.addEventListener('error', () => { record.failed = true; if (stepVoice === record) scheduleAuto() })
     }
-    audio.play().catch(() => { if (record) { record.failed = true; if (stepVoice === record) scheduleAuto() } })
+    if(kind==='se'){if(sfxPlaying.size>=64){const old=sfxPlaying.values().next().value;old.pause();sfxPlaying.delete(old)}sfxPlaying.add(audio);const done=()=>sfxPlaying.delete(audio);audio.addEventListener('ended',done,{once:true});audio.addEventListener('error',done,{once:true})}
+    audio.play().catch(() => { if(kind==='se')sfxPlaying.delete(audio);if (record) { record.failed = true; if (stepVoice === record) scheduleAuto() } })
     return audio
   }
   function stopVoice() {
@@ -1583,6 +1586,9 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
           break
         case 'voiceStop':
           stopVoice()
+          break
+        case 'seStop':
+          stopSe()
           break
         case 'se':
           if (!skipping) playOnce(command.src, 'se')
@@ -2455,6 +2461,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   visibility.observe(stage)
 
   function destroy() {
+    stopSe()
     destroyed = true
     stopShake()
     fontCleanup()
