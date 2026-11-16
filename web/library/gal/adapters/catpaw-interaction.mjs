@@ -20,7 +20,8 @@ export function catpawInteraction(ctx,entry){
    const replies=(a.talks||[]).filter(id=>id!=null).map(id=>{const row=ctx.configs.simpleTalkConfig?.[id];if(!row){missing.push('互动台词：'+id);return null}const voice=row.voice?media('voice/'+row.voice):'',sound=row.sound?media('sound/'+row.sound):'';if(row.voice&&!voice)missing.push('互动语音：'+row.voice);return{id,text:tr(row.talk),voice,sound}}).filter(Boolean)
    return{id:a.area,motion:a.key,layer:group??0,replies}
   })}}).filter(Boolean)
-  roles.push({id:r.id,title:tr(r.nameKey),model:{src:model.src,fit:'contain',kind:'actor',loop:true,variablesAfterMotion:true,motionGroups:{...model.defaultMotions}},hitAreas:model.hitAreas||[],outfits,faces:(r.faces||[]).map((f,i)=>({id:f.key,title:'表情 '+(i+1),layer:model.motionLayers?.[f.key]??1,icon:media('ui/faceIcon/'+f.icon)})),tools})
+  const background=media('ui/dreamboxbackground/'+r.dreamBoxBackground)
+  roles.push({id:r.id,title:tr(r.nameKey),backgrounds:[...(background?[{id:'native',title:'原作背景',short:'原作',src:background}]:[]),{id:'plain',title:'纯色'}],model:{src:model.src,fit:'contain',kind:'actor',loop:true,variablesAfterMotion:true,motionGroups:{...model.defaultMotions}},hitAreas:model.hitAreas||[],outfits,faces:(r.faces||[]).map((f,i)=>({id:f.key,title:'表情 '+(i+1),layer:model.motionLayers?.[f.key]??1,icon:media('ui/faceIcon/'+f.icon)})),tools})
  }
  if(!roles.length)throw Error('Underworld character models are missing; run gal-layout')
  const selected=roles.find(r=>r.id===entry.id)||roles[0],initialVariables=Object.assign({},...(selected.outfits[0]?.groups||[]).map(g=>g.choices.find(c=>c.id===g.default)?.variables||{})),interaction={format:'gal-interaction/1',initialRole:selected.id,roles,diagnostics:[...new Set(missing)]}

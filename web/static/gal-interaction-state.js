@@ -3,7 +3,7 @@ export function roleState(role,saved={}){
  saved=saved&&typeof saved==='object'?saved:{}
  const outfit=role.outfits.find(o=>o.id===saved.outfit)||role.outfits[0],values={}
  for(const g of outfit?.groups||[])values[g.id]=g.choices.some(c=>!c.disabled&&c.id===saved.values?.[g.id])?saved.values[g.id]:(g.choices.find(c=>!c.disabled&&c.id===g.default)||g.choices.find(c=>!c.disabled))?.id
- return{outfit:outfit?.id||'',values,face:role.faces.some(f=>f.id===saved.face)?saved.face:'',tool:role.tools.some(t=>t.id===saved.tool)?saved.tool:'',replies:{}}
+ return{background:(role.backgrounds||[]).some(b=>b.id===saved.background)?saved.background:role.backgrounds?.[0]?.id||'',outfit:outfit?.id||'',values,face:role.faces.some(f=>f.id===saved.face)?saved.face:'',tool:role.tools.some(t=>t.id===saved.tool)?saved.tool:'',replies:{}}
 }
 export function interactionSpec(role,state,action=null,serial=0){
  const outfit=role.outfits.find(o=>o.id===state.outfit),variables={},motionGroups={...role.model.motionGroups}
