@@ -24,5 +24,5 @@ export async function indexSpineGallery(api){
   if(matches.length!==1)throw Error('Native CG Main skeleton absent/ambiguous: '+source)
   const model=matches[0],name=path.posix.basename(source,'.unity')+'.uspine',room=await foxRoom(api,scene,skeleton,model);scripts.push({name,data:{format:'unity-spine-gallery/1',name:path.posix.basename(source,'.unity'),source:file,model:model.id,room}})
  }
- api.context={format:'unity-spine-gallery-context/1',models:Object.fromEntries(models),...story,scenes:scripts.map(s=>({name:s.data.name,script:api.cfg.dir+'/script/'+s.name,model:s.data.model,functions:Object.keys(s.data.room.functions)})),notes:['原生CG互动片段：动作多轨道、原生对话/配音及声音开关；未模拟经营、触摸命中与连续数值状态，数值条件由手动选择并保留诊断']}
+ api.context={format:'unity-spine-gallery-context/1',models:Object.fromEntries(models),...story,scenes:scripts.map(s=>({name:s.data.name,script:api.cfg.dir+'/script/'+s.name,model:s.data.model,functions:Object.keys(s.data.room.functions),interactions:s.data.room.interactions})),notes:['原生CG互动片段：动作多轨道、原生对话/配音及声音开关；原生按钮支持连续互动和已知状态条件；未知存档数值需手动选，未模拟经营及触摸命中']}
 }

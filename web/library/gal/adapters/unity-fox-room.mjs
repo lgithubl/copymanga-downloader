@@ -1,9 +1,10 @@
 const segments=text=>[{text:String(text||'')}]
 export function parseFoxRoom(d,ctx,meta={}){
- const room=d.room,steps=[],stats={messages:0,voices:0,raw:{},unresolved:{},notes:ctx.notes},guards=[];let pending=[],serial=0,emitted=0
+ const room=d.room,steps=[],stats={messages:0,voices:0,raw:{},unresolved:{},notes:ctx.notes},guards=[],stateNames=new Set(),UNKNOWN='__fox_unknown__';let pending=[],serial=0,emitted=0
  const emit=c=>{if(++emitted>ctx.options.maxCommands)throw Error('Fox room command limit exceeded');pending.push(guards.length?{...c,when:[...guards,...c.when||[]]}:c)},flush=()=>{if(pending.length){steps.push({index:steps.length,flow:true,commands:pending});pending=[]}},raw=(reason,source,args)=>{stats.raw[reason]=(stats.raw[reason]||0)+1;emit({op:'raw',cmd:reason,args:[room.source,source,args]})}
- const guarded=(key,value,fn)=>{guards.push({var:key,op:'===',value});try{fn()}finally{guards.pop()}},select=(label,options,source)=>{const key='fox-choice:'+serial++;emit({op:'speaker',segments:[]});emit({op:'text',segments:segments(label)});emit({op:'choice',id:steps.length+':'+pending.length,var:key,options:options.map((s,i)=>({value:i,segments:segments(s)}))});flush();return key}
- const modelFor=target=>ctx.models[room.models[target||'']],paint=(target,changes={})=>{const model=modelFor(target);if(!model){raw('native-skeleton-target-missing',target);return}emit({op:'spine',slot:'fox:'+target,kind:target?'actor':'still',skel:model.skel,atlas:model.atlas,textureMap:model.textureMap,patchTracks:true,...changes})}
+ const stateKey=(girl,name)=>{const key='fox-state:'+girl+':'+name;stateNames.add(key);return key},guardMany=(conditions,fn)=>{guards.push(...conditions);try{fn()}finally{guards.splice(guards.length-conditions.length,conditions.length)}}
+ const guarded=(key,value,fn)=>{guards.push({var:key,op:'===',value});try{fn()}finally{guards.pop()}},select=(label,options,source,menu=false)=>{const key='fox-choice:'+serial++;emit({op:'speaker',segments:[]});if(menu)emit({op:'ui',visible:false});else emit({op:'text',segments:segments(label)});emit({op:'choice',id:steps.length+':'+pending.length,var:key,options:options.map((s,i)=>({value:i,segments:segments(s)}))});flush();return key}
+ const modelFor=target=>ctx.models[room.models[target||'']],paint=(target,changes={})=>{const model=modelFor(target);if(!model){raw('native-skeleton-target-missing',target);return}emit({op:'spine',slot:'fox:'+target,kind:target?'actor':'still',skel:model.skel,atlas:model.atlas,textureMap:model.textureMap,patchTracks:true,...(room.graphics?.[target]?{stage:room.graphics[target].stage,place:room.graphics[target].place}:{}),...changes})}
  const track=(c,source)=>{const model=modelFor(c.target),anim=model?.animations.find(a=>a.name===c.animationName);if(!model||c.animationName&&!anim){raw('native-animation-missing',source,{target:c.target,anim:c.animationName});return}if(c.add){raw('native-animation-queue-not-lifted',source,c.animationName);return}paint(c.target,{tracks:[{track:c.trackIndex||0,anim:c.animationName||'',loop:!!c.loop,timeScale:c.timeScale,trackTime:c.startTime||0,mix:c.mixDuration,token:serial++}]});if(c.wait&&anim){emit({op:'wait',seconds:anim.duration/Math.max(.01,c.timeScale||1)});flush()}}
  const voice=id=>{const src=ctx.voices[id];if(src){emit({op:'voice',src});stats.voices++}else{stats.unresolved['voice:'+id]=(stats.unresolved['voice:'+id]||0)+1;raw('native-voice-missing',id)}}
  const dialogue=(label,stack=[])=>{
@@ -19,8 +20,18 @@ export function parseFoxRoom(d,ctx,meta={}){
    if(text){emit({op:'voiceStop'});if(row.Voice)voice(row.Voice);emit({op:'ui',visible:true});emit({op:'speaker',segments:segments(row.Arg1)});emit({op:'text',segments:segments(text)});stats.messages++;flush()}
   }
  }
- const audio=(name,on,source,force=false)=>{const go=room.gameObjects[name];if(!go){raw('native-object-missing',source,name);return}if(go.visual)raw('native-object-visual-toggle-not-lifted',source,{name,on});emit({op:'bgvoiceOff',slot:'fox-audio:'+name});if(!on)return;const sounds=go.audio.filter(a=>force||a.playOnAwake);if(sounds.length===1){const s=sounds[0];emit({op:s.loop?'bgvoice':'se',slot:'fox-audio:'+name,src:s.src,volume:s.volume,loop:s.loop})}else if(sounds.length>1)raw('native-state-audio-selection-required',source,{name,variants:sounds.length})}
+ const audio=(name,on,source,force=false)=>{const go=room.gameObjects[name];if(!go){raw('native-object-missing',source,name);return}if(go.unmappedImages)raw('native-object-image-toggle-not-lifted',source,{name,on});if(go.visual){if(go.object&&room.graphics&&Object.values(room.graphics).some(g=>g.chain.includes(go.object))){emit({op:'set',var:'fox-active:'+go.object,value:Number(on)});for(const[target,g]of Object.entries(room.graphics)){emit({op:'set',var:'fox-visible:'+target,value:1});for(const id of g.chain)guarded('fox-active:'+id,0,()=>emit({op:'set',var:'fox-visible:'+target,value:0}));guarded('fox-visible:'+target,1,()=>paint(target,{visible:true}));guarded('fox-visible:'+target,0,()=>paint(target,{visible:false}))}}else raw('native-object-visual-toggle-not-lifted',source,{name,on})}emit({op:'bgvoiceOff',slot:'fox-audio:'+name});if(!on)return;const sounds=go.audio.filter(a=>force||a.playOnAwake);if(sounds.length===1){const s=sounds[0];emit({op:s.loop?'bgvoice':'se',slot:'fox-audio:'+name,src:s.src,volume:s.volume,loop:s.loop})}else if(sounds.length>1)raw('native-state-audio-selection-required',source,{name,variants:sounds.length})}
  const call=(name,stack=[])=>{if(stack.includes(name)||stack.length>24){raw('native-call-cycle',name);return}const block=room.functions[name];if(!block){raw('native-function-missing',name);return}blockRun(block,[...stack,name])}
+ const branch=(c,source,stack)=>{
+  // The native coroutine falls back to falseBlock when trueBlock is absent.
+  if(!c.trueBlock){blockRun(c.falseBlock,stack);return}
+  const conditions=c.condition?.valueConditionals||[],key=stateKey(c.girlName,c.girlInfomation),result='fox-cond:'+serial++,needsState=conditions.some(x=>x.compareOperator<6),known=needsState?[{var:key,op:'!==',value:UNKNOWN}]:[]
+  if(conditions.length>128)throw Error('Fox native condition group exceeds bounds')
+  const testSequence=conditions.map(row=>{if(!Number.isInteger(row.compareOperator)||row.compareOperator<0||row.compareOperator>7||![0,1].includes(row.logicOperator))throw Error('Fox native condition enum not supported: '+source);return{join:row.logicOperator===0?'and':'or',...(row.compareOperator>=6?{value:row.compareOperator===6}:{test:{var:key,op:['>','<','>=','<=','===','!=='][row.compareOperator],value:row.b}})}})
+  guardMany(known,()=>emit({op:'set',var:result,testSequence}))
+  if(needsState)guarded(key,UNKNOWN,()=>{raw('native-state-condition-manual',source,{girl:c.girlName,state:c.girlInfomation,condition:c.condition});const choice=select(c.girlName+' / '+c.girlInfomation+'（未知存档数值，手动选择）',['满足条件','不满足条件'],source);guarded(choice,0,()=>emit({op:'set',var:result,value:1}));guarded(choice,1,()=>emit({op:'set',var:result,value:0}))})
+  guarded(result,1,()=>blockRun(c.trueBlock,stack));guarded(result,0,()=>blockRun(c.falseBlock,stack))
+ }
  const blockRun=(block,stack)=>{
   if(!block)return;for(const c of block.interactiveFlows||[]){if(c.disable)continue;const source=(block.$source||room.source)+'@'+c.$offset
    if(c.$type==='ChangeSpine')track(c,source)
@@ -30,13 +41,23 @@ export function parseFoxRoom(d,ctx,meta={}){
    else if(c.$type==='CallAVG')dialogue(c.label)
    else if(c.$type==='SetActive')audio(c.GOName,!!c.active,source)
    else if(c.$type==='PlaySound')audio(c.GOName,true,source,true)
-   else if(c.$type==='GrilInfomationBranch'){raw('native-state-condition-manual',source,{girl:c.girlName,state:c.girlInfomation,condition:c.condition});const key=select(c.girlName+' / '+c.girlInfomation+'（原生数值条件，手动选择）',['满足条件','不满足条件'],source);guarded(key,0,()=>blockRun(c.trueBlock,stack));guarded(key,1,()=>blockRun(c.falseBlock,stack))}
+   else if(c.$type==='GrilInfomationBranch')branch(c,source,stack)
    else if(c.$type==='InteractiveWait'){emit({op:'wait',seconds:Math.max(0,c.waitSecond_停止秒數||0)});flush()}
-   else if(['SetIntState','SetFloatState','AddIntState'].includes(c.$type)){emit({op:'set',var:'fox-state:'+c.girlName+':'+c.stateName,value:c.intValue??c.floatValue??0,calc:c.$type==='AddIntState'?'add':'set'})}
+   else if(['SetIntState','SetFloatState','AddIntState'].includes(c.$type)){const key=stateKey(c.girlName,c.stateName),command={op:'set',var:key,value:c.intValue??c.floatValue??c.value??0,calc:c.$type==='AddIntState'?'add':'set'};if(c.$type==='AddIntState')guardMany([{var:key,op:'!==',value:UNKNOWN}],()=>emit(command));else emit(command)}
+   else if(c.$type==='AddStateTo'){const target=stateKey(c.girlName,c.targetStateName),inputs=(c.addFromStateArray||[]).map(n=>stateKey(c.girlName,n));guardMany(inputs.map(varName=>({var:varName,op:'!==',value:UNKNOWN})),()=>{emit({op:'set',var:target,value:0});for(const valueVar of inputs)emit({op:'set',var:target,valueVar,calc:'add'})});for(const key of inputs)guarded(key,UNKNOWN,()=>emit({op:'set',var:target,value:UNKNOWN}))}
    else raw('native-flow-command:'+c.$type,source,Object.fromEntries(Object.entries(c).filter(([k])=>!['error','notOk'].includes(k))))
   }
  }
  const functions=Object.keys(room.functions),selected=/^flow-(\d+)$/.exec(meta.scene||''),name=selected?functions[Number(selected[1])]:'init';if(!name||!room.functions[name])throw Error('Fox native scene entry missing')
- const main=modelFor('');paint('',{skin:room.initial.skin||ctx.options.skin,tracks:main.animations.some(a=>a.name==='view')?[{track:0,anim:'view',loop:true}]:[]})
- emit({op:'label',name});call(name);flush();if(!steps.length)steps.push({index:0,commands:[]});stats.commands=emitted;return{steps,stats}
+ for(const warning of room.warnings||[])raw(warning.reason,room.source,warning)
+ for(const[id,active]of Object.entries(room.objectStates||{}))emit({op:'set',var:'fox-active:'+id,value:Number(active)})
+ for(const[target,g]of Object.entries(room.graphics||{})){const model=modelFor(target);paint(target,{visible:g.chain.every(id=>room.objectStates[id]),...(g.skin?{skin:g.skin}:{}),tracks:g.animation&&model.animations.some(a=>a.name===g.animation)?[{track:0,anim:g.animation,loop:g.loop,timeScale:g.timeScale}]:[]})}
+ const main=modelFor('');paint('',{skin:room.initial.skin||ctx.options.skin,tracks:!room.graphics?.['']&&main.animations.some(a=>a.name==='view')?[{track:0,anim:'view',loop:true}]:[]})
+ emit({op:'label',name});call(name);flush();
+ if(meta.scene==='interactive'){
+  const actions=room.interactions||[];if(!actions.length)throw Error('Fox native interaction buttons absent');const running='fox-interactive-running',limit=Math.max(1,Math.min(16,Math.floor(ctx.options.interactionLimit)||8));emit({op:'set',var:running,value:1})
+  for(let round=0;round<limit;round++)guarded(running,1,()=>{const choice=select('原生互动 · '+(round+1)+'/'+limit,[...actions,'结束互动'],room.source,true);actions.forEach((action,i)=>guarded(choice,i,()=>{emit({op:'label',name:action});call(action);flush()}));guarded(choice,actions.length,()=>emit({op:'set',var:running,value:0}));flush()})
+  guarded(running,1,()=>{raw('native-interaction-limit',room.source,limit);emit({op:'ui',visible:true});emit({op:'text',segments:segments('本次互动预览已达到 '+limit+' 轮；可重播，或调整 interactionLimit。')})});guarded(running,0,()=>{emit({op:'ui',visible:true});emit({op:'text',segments:segments('互动结束')})});flush()
+ }
+ if(!steps.length)steps.push({index:0,commands:[]});steps[0].commands.unshift(...[...stateNames].map(varName=>({op:'set',var:varName,value:UNKNOWN})));stats.commands=emitted;return{steps,stats}
 }

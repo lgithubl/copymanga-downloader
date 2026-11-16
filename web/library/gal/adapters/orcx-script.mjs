@@ -1,6 +1,8 @@
 import {createOptionsReader} from './options-merge.mjs'
 export const ADAPTER_ID='orcx::script'
 export const DEFAULT_OPTIONS={dir:'arc',stage:[1280,720],maxCommands:200000}
+// Verified against ScenarioScript.LoadData (Unity 6000.3, original GameAssembly).
+export const ORCX_NATIVE_MACROS={射精:'[効果音 f=se_903射精音][背景 f=白 t=100][スチルx1][待時間 t=500][背景 f=白 t=100][スチルx2]',ぶっかけ:'[効果音 f=se_904ぶっかけ][背景 f=白 t=100][スチルy1][待時間 t=500][背景 f=白 t=100][スチルy2]',潮吹:'[効果音 f=se_905潮噴き][背景 f=白 t=100][スチルz1][待時間 t=500][背景 f=白 t=100][スチルz2]',白フラッシュ:'[背景エフェクト f=白 t=10][背景エフェクト消 t=400]'}
 const optionsOf=createOptionsReader(DEFAULT_OPTIONS),segments=text=>text?[{text}]:[]
 export const contextFiles=o=>[(o?.dir||'arc')+'/native.json']
 export const contextDirs=o=>[(o?.dir||'arc')+'/res']
@@ -14,18 +16,21 @@ export function parse(text,ctx,meta={}){
  const emit=c=>{if(++stats.commands>maxCommands)throw Error('OrcX command limit exceeded');commands.push(c)},raw=(tag,reason='unsupported')=>{const key=reason+':'+tag;stats.raw[key]=(stats.raw[key]||0)+1;emit({op:'raw',cmd:key,args:[meta.rel||d.name,line,tag]})},resource=(name,kind='image')=>{const packs=[d.pack||'main','common'];const src=packs.map(pack=>assets[pack+'/'+name]).find(Boolean);if(src)return src;if(name&&!/\.[^./]+$/.test(name)){for(const pack of [...new Set(packs)]){const candidates=[...new Set((kind==='audio'?['.ogg','.wav']:['.png','.jpg','.jpeg']).map(ext=>assets[pack+'/'+name+ext]).filter(Boolean))];if(candidates.length===1){stats.resolvedExtensionless=(stats.resolvedExtensionless||0)+1;return candidates[0]}if(candidates.length>1)break}}stats.unresolved[name]=(stats.unresolved[name]||0)+1;raw(name,'missing-resource');return''},flush=()=>{if(body.trim()){let who='',m=/^【([^】]+)】/.exec(body);if(m){who=m[1];body=body.slice(m[0].length)}emit({op:'speaker',segments:segments(who)});emit({op:'text',segments:segments(body.trim())});stats.messages++}if(commands.length){steps.push({index:steps.length,commands});commands=[]}body=''}
  stats.commands=0
  for(const [i,source]of d.text.replace(/\r/g,'').split('\n').entries()){
-  line=i+1;const row=source.trim();if(!row||row.startsWith(';'))continue
+  line=i+1;const row=source.trim().replace(/\[([^\]\s]+)(?:\s[^\]]*)?\]/g,(tag,name)=>ORCX_NATIVE_MACROS[name]||tag);if(!row||row.startsWith(';'))continue
   if(row.startsWith('*')){flush();emit({op:'label',name:row.slice(1)});continue}
   let at=0;for(const m of row.matchAll(/\[([^\]]*)\]/g)){
    body+=row.slice(at,m.index);at=m.index+m[0].length
    const name=/^\S+/.exec(m[1])?.[0]||'',a=Object.fromEntries([...m[1].matchAll(/(\w+)=(?:"([^"]*)"|([^\s]+))/g)].map(v=>[v[1],v[2]??v[3]])),fade=Math.max(0,Number(a.t)||0)/1000
    if(name==='待'){flush();continue}
    if(name==='落'||name==='r'){if(name==='r')body+='\n';continue}
-   if(name==='背景'||name==='スチルA'||name==='スチルB'){
-    const still=name!=='背景',file=still?d.name+'_'+(name==='スチルA'?'A':'B')+'.png':a.f;cg=still
+   if(name==='背景'||/^スチル(?:[A-Za-z][0-9]?)?$/.test(name)){
+    const still=name!=='背景',file=still?d.name+(name==='スチル'?'':'_'+name.slice(3))+'.png':a.f;cg=still
     emit({op:'standOff',prefix:'orcx:'});if(!file){emit({op:'overlayOff',slot:'orcx:bg'});emit({op:'bgoff'});continue}
-    const src=resource(file);if(src)emit({op:'overlay',slot:'orcx:bg',kind:still?'still':'background',cg:still,under:true,src,fit:'contain',stage,z:-1000,fade});continue
+    const src=file==='白'?'':resource(file),seconds=a.t===undefined?.5:fade;if(src||file==='白'){if(!src)emit({op:'overlayOff',slot:'orcx:bg'});emit({op:'overlay',slot:'orcx:bg',kind:still?'still':'background',cg:still,under:true,...(src?{src}:{color:'#fff'}),fit:'contain',stage,z:-1000,fade:seconds});if(seconds)emit({op:'wait',seconds})}continue
    }
+   if(name==='背景エフェクト'){const src=a.f==='白'?'':resource(a.f);if(src||a.f==='白'){emit({op:'overlayOff',slot:'orcx:effect'});emit({op:'overlay',slot:'orcx:effect',kind:'effect',...(src?{src}:{color:'#fff'}),fit:'contain',stage,z:1000,fade});if(fade)emit({op:'wait',seconds:fade})}continue}
+   if(name==='背景エフェクト消'){emit({op:'overlayOff',slot:'orcx:effect',fade});if(fade)emit({op:'wait',seconds:fade});continue}
+   if(name==='振動'){emit({op:'shake',seconds:a.t===undefined?.5:Math.max(0,Number(a.t)||0)/1000,axis:!Number(a.h??20)?'vertical':!Number(a.v??20)?'horizontal':'overall',strength:Math.max(Math.abs(Number(a.h??20)),Math.abs(Number(a.v??20)))/40});continue}
    if(name==='立絵'){const f=(a.f||'')+(/\.[^.]+$/.test(a.f||'')?'':'.png'),src=resource(f),position=a.p||'中';if(src)emit({op:'stand',slot:'orcx:'+position,parts:[{src,x:pos[position]??0,y:0}],stage,fade});continue}
    if(name==='退場'){emit(a.p?{op:'standOff',slot:'orcx:'+a.p,fade}:{op:'standOff',prefix:'orcx:',fade});continue}
    const sound={音楽:'bgm',声:'voice',効果音:'se',ループ声:'bgvoice',ループ効果音:'bgse'}[name];if(sound){const src=resource(a.f||'','audio');if(src){emit({op:sound,src,...(sound==='bgvoice'?{slot:'orcx:voice'}:{}),loop:!['voice','se'].includes(sound)});if(sound==='voice')stats.voices++}continue}

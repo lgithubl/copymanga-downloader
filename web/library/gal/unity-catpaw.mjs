@@ -7,7 +7,7 @@ import{UnityReader,readTextObject,monoHeader}from'./unity-io.mjs'
 import{readI2Source}from'./unity-i2.mjs'
 const lower=s=>String(s||'').replace(/\\/g,'/').toLowerCase(),join=(a,b)=>path.posix.normalize(path.posix.join(path.posix.dirname(a),b))
 export async function indexCatpaw(api){
- const{store,object,add,json,scripts}=api,a=await store.asset('globalgamemanagers'),r=new UnityReader(await store.data(a.objects.find(o=>o.classId===147))),rows=r.list(()=>({name:r.str(),ptr:r.ptr()})),entries=new Map(),configs={},media={},models={},prefabs={},locales=[]
+ const{store,object,add,json,scripts}=api,a=await store.asset('globalgamemanagers'),r=new UnityReader(await store.data(a.objects.find(o=>o.classId===147))),rows=r.list(()=>({name:r.str(),ptr:r.ptr()})),entries=new Map(),configs={},media={},models={},prefabs={},prefabLayouts={},presentation={},locales=[]
  for(const row of rows){if(!row.name.startsWith('future/'))continue;const o=await store.ptr(a,row.ptr);if(!o)continue;const key=lower(row.name);if(!entries.has(key))entries.set(key,[]);if(!entries.get(key).some(x=>x.o.asset===o.asset&&x.o.pathId===o.pathId))entries.get(key).push({name:row.name,o})}
  const pick=(key,classes)=>{const hits=(entries.get(lower(key))||[]).filter(x=>classes.includes(x.o.classId));return hits.find(x=>x.o.classId===213)||hits[0]},put=(key,src)=>{media[lower(key)]=src;return src}
  for(const[key,hits]of entries){
@@ -61,10 +61,12 @@ export async function indexCatpaw(api){
   models[model].motions=Object.keys(doc.clone.FileReferences.Motions);return model
  }
  const names=new Set(Object.values(configs.recallConfig).map(c=>'future/recall/'+c.role));for(const c of Object.values(configs.talkConfig)){if(c.talkHeadLive2d)names.add('future/model/live2dhead/'+c.talkHeadLive2d);for(const a of c.fgimage||[])if(a.key)names.add('future/model/talkrole/'+a.key)}
- for(const name of names){const hits=entries.get(lower(name))?.filter(x=>x.o.classId===1)||[];if(hits.length!==1)continue;const model=await modelOf(hits[0].o);if(model){prefabs[lower(name)]=model;if(name.startsWith('future/recall/'))prefabs[name.slice('future/recall/'.length)]=model}}
+ for(const name of names){const hits=entries.get(lower(name))?.filter(x=>x.o.classId===1)||[];if(hits.length!==1)continue;const root=hits[0].o,model=await modelOf(root);if(model){prefabs[lower(name)]=model;if(name.startsWith('future/recall/'))prefabs[name.slice('future/recall/'.length)]=model;const go=await store.decode(root);for(const c of go.m_Component){const o=await store.ptr(root.asset,c.component);if([4,224].includes(o?.classId)){const t=unityTransformPrefix(await store.data(o));prefabLayouts[lower(name)]={position:t.position,scale:t.scale,rotation:t.rotation}}}}}
+ const talkRoot=pick('future/prefab/talkprefab',[1])?.o
+ if(talkRoot){const go=await store.decode(talkRoot);for(const c of go.m_Component){const t=await store.ptr(talkRoot.asset,c.component);if(t?.classId!==224)continue;for(const p of unityTransformPrefix(await store.data(t)).m_Children){const tr=await store.ptr(t.asset,p);if(tr?.classId!==224)continue;const d=await store.decode(tr),child=await store.ptr(tr.asset,d.m_GameObject),name=(await store.decode(child)).m_Name;if(name==='backGround'&&d.m_SizeDelta.x>0&&d.m_SizeDelta.y>0&&d.m_SizeDelta.x*d.m_SizeDelta.y>(presentation.talkStage?.[0]*presentation.talkStage?.[1]||0))presentation.talkStage=[d.m_SizeDelta.x,d.m_SizeDelta.y];if(name==='role')presentation.roleContainer={position:d.m_AnchoredPosition,scale:d.m_LocalScale}}}}
 
  const native=await store.asset('resources.assets');for(const o of native.objects.filter(o=>o.classId===114)){const type=await store.type(o);if(['LanguageSourceAsset','LanguageSource'].includes(type))locales.push(readI2Source(await store.data(o),{legacy:type==='LanguageSource'}))}
  for(const row of Object.values(configs.eventConfig)){for(const[n,node]of(row.Node||row.node||[]).entries()){if(node.type!=='talkScene')continue;scripts.push({name:'story/'+row.id+'-'+n+'.catpaw',data:{format:'catpaw-script/1',kind:'story',id:row.id,title:node.name||row.desc||row.name||row.id,rows:node.process||[]}})}}
  for(const row of Object.values(configs.recallConfig))scripts.push({name:'replay/'+row.id+'.catpaw',data:{format:'catpaw-script/1',kind:'replay',id:row.id,title:row.name,rows:row.node||[]}})
- api.context={format:'catpaw-context/1',configs,media,models,prefabs,locales,notes:['本地剧情及CG回放；未执行经营/小游戏控制器；未还原演出保留源行诊断'],scenes:scripts.map(s=>({name:s.name,script:api.cfg.dir+'/script/'+s.name,...s.data}))}
+ api.context={format:'catpaw-context/1',configs,media,models,prefabs,prefabLayouts,presentation,locales,notes:['本地剧情及CG回放；未执行经营/小游戏控制器；未还原演出保留源行诊断'],scenes:scripts.map(s=>({name:s.name,script:api.cfg.dir+'/script/'+s.name,...s.data}))}
 }

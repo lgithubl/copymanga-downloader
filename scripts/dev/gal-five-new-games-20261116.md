@@ -1,17 +1,17 @@
 # OrcX、RJ01375307、future、RJ01562637 接入记录
 
-日期：2026-11-16。布局脚本版本：2.74.0。需要更新统一镜像；仅替换 tag 脚本不能提供这些新增解析器。
+日期：2026-11-16。布局脚本版本：2.75.0。需要更新统一镜像；仅替换 tag 脚本不能提供这些新增解析器。
 
 ## 导入配置
 
-在“导入方案 → 刷新 JSON”左侧可选 OrcX、CatPaw future、Unity Spine 原生 CG 动作预览；RJ01375307 继续用现有 RPG Maker 选项。每个游戏分别建立方案，修改 rootDir 和 title。
+在“导入方案 → 刷新 JSON”左侧可选 OrcX、CatPaw future、Unity Spine 原生 CG 互动；RJ01375307 继续用现有 RPG Maker 选项。每个游戏分别建立方案，修改 rootDir 和 title。
 
 | 目录 | adapters | config.game.id | 当前范围 |
 | --- | --- | --- | --- |
 | RJ01743835/OrcX | `["orcx::script"]` | `orcx::RJ01743835` | 原生剧情、背景、立绘、CG、声音；部分演出标签待核对 |
 | RJ01375307 | `["rpgmaker-json"]` | `rpgmaker::rj01375307` | 复用 RPG Maker MZ，增加原生 Hakubox 插件命令、配音及 Spine 多皮肤支持 |
-| future | `["catpaw::script"]` | `catpaw::future` | 本地主线、回想、Live2D、声音；部分摆放和控制器演出尚未还原 |
-| RJ01562637 | `["unityspine::gallery"]` | `unityspine::RJ01562637` | 原生开场/对话、配音、多轨动作及互动片段；数值条件手动选择，未模拟经营/触摸控制器 |
+| future | `["catpaw::script"]` | `catpaw::future` | 本地主线、回想、Live2D、声音；普通角色原生坐标/缩放、分层动作及回想；部分控制器演出尚未还原 |
+| RJ01562637 | `["unityspine::gallery"]` | `unityspine::RJ01562637` | 原生开场/对话、配音、多轨动作及互动片段；连续原生按钮、已知条件自动判断、附加骨架显隐；未知存档状态手动选择，未模拟经营/触摸控制器 |
 
 ```json
 {
@@ -30,7 +30,7 @@
 
 其他游戏按上表替换三个字段。用户提供的标题保留。新增家族均有缩略图候选、特殊场景汇总及中途开始标记；标记只覆盖已解析的画面/动作切换，不代表原生所有控制流均已实现。
 
-## 采集事实与验证
+## 采集事实与验证（2.74.0 基线，本轮差异见 2.75.0）
 
 原始数据、样本和测试报告仅放本地 `.cache/five-new-games-20261116/`，未提交游戏素材。源目录只读，未执行游戏 EXE、DLL 或 JS。稀疏样本只保证明确采集的字节区间有效，不拿空洞作为真实素材验证。
 
@@ -99,3 +99,43 @@
 - 新增 gal-fox-room-selftest.mjs 和 gal-catpaw-native-selftest.mjs；前者验证数据边界、原始配音引用、手动分支、禁用指令、多轨 seek；后者用本地真实元数据回归同源不同模型缓存及重启后的身份。无新增运行时依赖或运行时下载。
 
 Odin 数据格式参考：[BinaryEntryType](https://github.com/TeamSirenix/odin-serializer/blob/master/OdinSerializer/Core/DataReaderWriters/Binary/BinaryEntryType.cs)、[BinaryDataReader](https://github.com/TeamSirenix/odin-serializer/blob/master/OdinSerializer/Core/DataReaderWriters/Binary/BinaryDataReader.cs)。仅据格式读取原始数据，不加载其运行时库。
+
+
+## 2.75.0 演出补完与验证
+
+本轮没有新增运行时依赖、安装器或网络下载。服务端和播放器都有修改，需要更新统一 `gal-download` 镜像，再重跑 `gal-layout`；只替换脚本不够。原生索引版本升至 15，重新生成小型元数据，原游戏资源只读。
+
+### RJ01562637
+
+入口：特殊场景 → 对应房间 → **原生互动演出**。28 个房间都从原场景 `SexInteractiveArea_色色互動區塊.callAndIcons` 提取实际按钮，避免把内部函数当作玩家入口。连续轮数由 `adapterOptions["unityspine::gallery"].interactionLimit` 管理，默认 8、范围 1–16；编译命令超预算会降低轮数并报告 requested/actual，仍保留每种按钮和分支。
+
+- 连续选择保留已经赋值的整数/浮点状态；原生 `AddStateTo` 求和可执行。条件采用原版 CompareGroup 的顺序短路，忽略原版也会覆盖的序列化旧操作数，不能套用 JS 的运算优先级。
+- 原版没有 trueBlock 时会直接执行 falseBlock，按其实际实现处理。
+- 对未知存档数值继续手动选择，保留原文件、偏移及条件。`SetXState` 的整数截断/ClampFloat 上下界、经营数值、触摸命中、部分状态选音和队列动作仍未完整还原，不能说成完整模拟原游戏。
+- 从原始 CanvasScaler、RectTransform、SkeletonGraphic 和 SkeletonDataAsset 计算 1920×1080 舞台的位置/缩放、翻转与父级显隐。隐藏的附加骨架首次不加载图集，后续显示仍可恢复原轨道。尚未映射的 UI Image 开关和场景对象继续给出诊断。
+- 28 个互动入口及全部 2,424 个原生函数入口通过解析审计；第一房间真实骨架、分层动作、语音 A195/A196 在 Chrome 播放和暂停验证通过。验证覆盖真实样本，未逐个观看全部房间。
+
+### future
+
+普通剧情角色从原始 `talkPrefab` 的 backGround/role 和角色预制体获取坐标，按原生 3840×2160 舞台、角色 offset、scale、模型画布原点和 pixels-per-unit 计算，不再统一缩放成全身。新建角色先计算摆位再首次显示。
+
+主线 `100000-0` 第 100 个解析步骤的 angleRoleTalkPrefab 使用 offset=(-183,-1017)、原生 scale=2000；真实立绘的身体、服装、表情/说话层和暂停均通过浏览器验证。回想样本的多图集 Live2D 及语音也保留验证。未知布局继续记录源行诊断；未声称全部原生界面/小游戏已经模拟。
+
+### OrcX
+
+采集版本 2.58 取得原始 GameAssembly.dll（仅静态分析，没有执行游戏代码），使用本地 Cpp2IL 及反汇编确认：
+
+- `ScenarioScript.LoadData @ 0x18042dbb0`：射精 / ぶっかけ / 潮吹 分别展开为原音效 903/904/905、白色过渡、x1/x2、y1/y2、z1/z2 差分序列；间隔 500ms。
+- `ScenarioScript.ReadLine @ 0x180430050`：スチル 后缀原样拼接到脚本名，大小写保留。无后缀也有定义；日夜/怀孕相关存档变体未假装自动判断。
+- 普通 CG 默认过渡 500ms；背景特效和其关闭命令也按时序输出，振动复用当前播放器效果（随机轨迹未逐帧对齐原版）。未支持的指令仍有文件/行号。
+- 2.59 进一步只读采集约 11MiB 的精确压缩块，包括 `50_ap_001_02_02_00_x1/x2` 和原音效；本地稀疏验证目录的其他空洞不算真实样本。
+
+### 回归记录
+
+`gal-native-presentation-selftest.mjs` 覆盖原生条件顺序、已知/未知状态、缺失 trueBlock、连续按钮及退出、骨架显隐、future 坐标和 OrcX 大小写差分。
+
+旧 TSK `Ch10340034` 45→46 表情顺序播放/直接跳转一致；旧 Krkr/BGI、RPG Maker、Live2D、导入预设及参数漂移检查通过。导入下拉 49 项覆盖 41 个注册适配器；刷新保留用户其他配置，且不提交保存。
+
+浏览器补验：OrcX 原始 x1、x2 均有实际像素且画面不同；637 完整 reader → 原生对话选择 → 互动菜单 → 退出通过，未请求未使用的图集，没有浏览器错误。
+
+本地证据保存在 `.cache/five-new-games-20261116/`：`fox-player-report.json`、`fox-browser-report.json`、`future-standing-browser-report.json`、`browser-report.json` 及各项回归日志。

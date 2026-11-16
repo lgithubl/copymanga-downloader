@@ -48,12 +48,25 @@ const recordChoice = (vars, command, choices) => {
   if (picked !== undefined && picked !== null && visibleChoiceOptions(command,vars).some(o=>String(o.value)===String(picked))) vars[command.var] = String(picked)
 }
 
+// Ordered short-circuit checks, used by serialized native condition groups.
+// This deliberately follows authored order rather than JS operator precedence.
+export function evaluateTestSequence(rows,vars={}){
+  if(!Array.isArray(rows)||rows.length>128)throw Error('Native condition sequence exceeds bounds')
+  let result=true
+  for(const[i,row]of rows.entries()){
+    const value=typeof row.value==='boolean'?row.value:condMet([row.test],vars)
+    if(row.join==='and'){if(!value)return false;if(i===0)result=true}
+    else if(row.join==='or'){if(value)return true;result=false}
+    else throw Error('Unknown native condition join')
+  }
+  return result
+}
 function assignVariable(vars, command) {
   const key = String(command.var || '')
   if (!key || ['__proto__', 'prototype', 'constructor'].includes(key)) return
   let randomValue
   if(command.random){const {min,max,seed}=command.random;if(Number.isSafeInteger(min)&&Number.isSafeInteger(max)&&max>=min&&max-min<2147483647){let hash=2166136261;for(const c of String(seed))hash=Math.imul(hash^c.charCodeAt(0),16777619);randomValue=min+(hash>>>0)%(max-min+1)}}
-  const right = command.random ? randomValue : command.test ? (condMet([command.test], vars) ? 1 : 0) : command.valueVar ? vars[command.valueVar] ?? 0 : command.value
+  const right = command.random ? randomValue : command.testSequence ? Number(evaluateTestSequence(command.testSequence,vars)) : command.test ? (condMet([command.test], vars) ? 1 : 0) : command.valueVar ? vars[command.valueVar] ?? 0 : command.value
   const left = Number(vars[key] || 0), n = Number(right)
   const calc = command.calc || 'set'
   const value = calc === 'add' ? left + n : calc === 'sub' ? left - n : calc === 'mul' ? left * n : calc === 'div' ? (n ? Math.floor(left / n) : 0) : calc === 'mod' ? (n ? left % n : 0) : right

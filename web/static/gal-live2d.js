@@ -378,7 +378,11 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
   const kick = () => { if (!raf && !paused && runtime) raf = requestAnimationFrame(loop) }
 
   function layout(entry,spec){
-    if(Array.isArray(spec?.stage)){
+    if(Array.isArray(spec?.stage)&&spec.nativeOrigin){
+      const [w,h]=spec.stage,{width:cw,height:ch,pixelsPerUnit:ppu,originX,originY}=entry.model.canvas,n=spec.nativeOrigin,sx=n.scaleX/ppu,sy=n.scaleY/ppu
+      canvas.style.inset='auto';canvas.style.left=((w/2+n.x+(cw/2-originX)*sx)/w*100)+'%';canvas.style.top=((h/2-n.y+(ch/2-originY)*sy)/h*100)+'%'
+      canvas.style.width=(cw*Math.abs(sx)/w*100)+'%';canvas.style.height=(ch*Math.abs(sy)/h*100)+'%';canvas.style.transform=`translate(-50%,-50%) scale(${Math.sign(sx)||1},${Math.sign(sy)||1})`;canvas.style.zIndex=String(spec.z??3)
+    }else if(Array.isArray(spec?.stage)){
       const [w,h]=spec.stage,[cw,ch]=[entry.model.canvas.width,entry.model.canvas.height]
       canvas.style.inset='auto';canvas.style.left=(Number(spec.x??w/2)/w*100)+'%';canvas.style.top=(Number(spec.y??h/2)/h*100)+'%'
       canvas.style.width=(cw*Math.abs(Number(spec.scaleX??1))/w*100)+'%';canvas.style.height=(ch*Math.abs(Number(spec.scaleY??1))/h*100)+'%';canvas.style.transform='translate(-50%,-50%)';canvas.style.zIndex=String(spec.z??3)

@@ -718,6 +718,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const current = instances.get(slot)
       if (current && current.spec.skel === spec.skel && current.skeleton) { applySpec(current, spec, live); continue }
       if (current && current.spec.skel === spec.skel) { current.spec = spec; continue }   // 还在加载：只记最新的
+      // A disabled native GameObject must not fetch/decode an unused atlas.
+      if (spec.visible === false) continue
       const token = Symbol(slot)
       instances.set(slot, { spec, token, skeleton: null, ...(Number(spec.ttl) > 0 ? { expires: performance.now() + Number(spec.ttl) * 1000 } : {}) })
       create(slot, spec, live, token)
@@ -857,7 +859,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     const dt = Math.min(0.1, (now - (last || now)) / 1000)
     last = now
     const dpr = Math.min(2, globalThis.devicePixelRatio || 1)
-    const sorted = [...instances.values()].filter((inst) => inst.skeleton).sort((a, b) => (a.spec.kind === b.spec.kind ? (a.spec.order || 0) - (b.spec.order || 0) : a.spec.kind === 'still' ? -1 : 1))
+    const sorted = [...instances.values()].filter((inst) => inst.skeleton && inst.spec.visible !== false).sort((a, b) => (a.spec.kind === b.spec.kind ? (a.spec.order || 0) - (b.spec.order || 0) : a.spec.kind === 'still' ? -1 : 1))
     let drawnCount = 0
     for (const backend of readyBackends) {   // 每个运行时一块 canvas：各画各的
       const { canvas: cv, gl, renderer } = backend
