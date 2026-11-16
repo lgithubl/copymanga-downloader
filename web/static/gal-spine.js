@@ -340,7 +340,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // 一个骨架数据只加载一次（按 skel 路径缓存）。顺序：取骨骼 / atlas 文件 → 读版本、选运行时 → 取图集 → 解析。
   // 每一步失败都报对应的原因：取不到文件 = onMissing（缺资源）；版本不支持 / 解析失败 = onError（带识别出的版本），不再冒充缺资源
   function loadData(spec) {
-    const dataKey = spec.textureMap ? JSON.stringify([spec.skel, spec.atlas, spec.textureMap]) : spec.skel
+    const dataKey = JSON.stringify([spec.skel,spec.atlas,spec.textureMap||null,spec.alphaMode||'auto'])
     if (dataCache.has(dataKey)) return dataCache.get(dataKey)
     const promise = (async () => {
       let bytes
@@ -413,7 +413,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         if (detected.format === 'json') skeletonJson = JSON.parse(new TextDecoder().decode(u8))
         else if (detected.runtime === '3.6') skeletonJson = spine36BinaryToJson(u8)
         const noFancyBlend = Array.isArray(skeletonJson?.slots) && skeletonJson.slots.every((slot) => !slot?.blend || slot.blend === 'normal')
-        const straight = !atlasPma && !detectedPma && noFancyBlend
+        // Hakubox uses ordinary straight-alpha PNGs; do not inherit Aku's special upload path.
+        const straight = spec.alphaMode!=='premultiply' && !atlasPma && !detectedPma && noFancyBlend
         const premultiplyOnUpload = !atlasPma && !detectedPma && !straight
         const gl = backend.gl
         if (premultiplyOnUpload) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
@@ -716,8 +717,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     for (const slot of [...instances.keys()]) if (!wanted[slot]) instances.delete(slot)
     for (const [slot, spec] of Object.entries(wanted)) {
       const current = instances.get(slot)
-      if (current && current.spec.skel === spec.skel && current.skeleton) { applySpec(current, spec, live); continue }
-      if (current && current.spec.skel === spec.skel) { current.spec = spec; continue }   // 还在加载：只记最新的
+      if (current && current.spec.skel === spec.skel && current.spec.alphaMode===spec.alphaMode && current.skeleton) { applySpec(current, spec, live); continue }
+      if (current && current.spec.skel === spec.skel && current.spec.alphaMode===spec.alphaMode) { current.spec = spec; continue }   // 还在加载：只记最新的
       // A disabled native GameObject must not fetch/decode an unused atlas.
       if (spec.visible === false) continue
       const token = Symbol(slot)

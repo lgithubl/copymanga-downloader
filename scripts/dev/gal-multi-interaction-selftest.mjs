@@ -18,3 +18,8 @@ test('native interaction functions preserve existing variables and do not initia
  assert.ok(commands.some(c=>c.ifAbsent&&c.var==='fox-state:A:count'));assert.ok(!commands.some(c=>c.value===3));assert.ok(!commands.some(c=>c.tracks?.some(t=>t.track===0)))
  const view=foxInteraction(d,ctx);assert.equal(view.interaction.roles.length,1);assert.equal(view.interaction.destinations[0].node,'s:room.uspine::touch');assert.equal(view.interaction.roles[0].characterId,'Ch01')
 })
+
+test('Hakubox room actions expose nine original controller voices; onsen standing uses scoped alpha upload',{skip:!existsSync(base+'/rpg-source-regular/data/CommonEvents.json')},async()=>{
+ const rpg=await import('../../web/library/gal/adapters/rpgmaker-json.mjs'),texts={};for(const p of['data/System.json','data/CommonEvents.json','js/plugins.js'])texts[p]=await readFile(base+'/rpg-source-regular/'+p,'utf8');const ctx=await rpg.prepare({texts,files:[]}),scene=rpg.parse('',ctx,{rel:'data/CommonEvents.json',scene:'hakubox-interaction'}),role=scene.interaction.roles.find(r=>r.id==='native-off'),voice=role.tools[0].areas.find(a=>a.id==='jiurutou').commands.find(c=>c.op==='interactionVoiceChoice');assert.equal(voice.options.length,9);assert.equal(voice.options[8].voice,'audio/cv/fragment/kana-groan-fragment-9.ogg');assert.ok(!role.tools[0].areas.find(a=>a.id==='motou').commands.some(c=>c.op==='interactionVoiceChoice'))
+ const onsen=rpg.parse('',ctx,{rel:'data/CommonEvents.json',scene:'common-131'}),spines=onsen.steps.flatMap(s=>s.commands).filter(c=>c.op==='spine');assert.ok(spines.length);assert.ok(spines.every(c=>c.alphaMode==='premultiply'))
+})
