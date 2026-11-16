@@ -447,6 +447,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
       ...node,
       ...(node.children ? { children: node.children.map(localize).filter((c) => c.children || c.script) } : {}),
       ...(node.script !== undefined ? { script: node.script.startsWith(prefix) ? node.script.slice(prefix.length) : '' } : {}),
+      ...(node.coverScript ? {coverScript:node.coverScript.startsWith(prefix)?node.coverScript.slice(prefix.length):''}:{}),
     })
     let raw = null
     graphProblems = []
@@ -517,7 +518,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
   // 脚本卡片走和文件系统列表同一套（scriptInfo：规则 → 兜底：脚本里的 CG / 立绘 / 背景，topUp），以前这两种卡片在 catalog 里一律没图。
   // 并发限制 6：每个脚本要解析一次（scriptInfo 按文件 mtime 缓存）；路径带 :: 的（一个文件装很多场景）不是真文件，跳过。
   // 目录卡片的取图名 = 适配器给的 key（没给用标题）：标题常常是显示名（角色名），文件按编号命名（misttrain：Bases/<底号>201.png）
-  const scriptsOf = (node, depth, limit, out = []) => { for (const c of node.children || []) { if (out.length >= limit) break; if (c.script) out.push(c.script); else if (depth > 1) scriptsOf(c, depth - 1, limit, out) } return out }
+  const scriptsOf = (node, depth, limit, out = []) => {if(node.coverScript){if(out.length<limit)out.push(node.coverScript);return out}for (const c of node.children || []) { if (out.length >= limit) break; if(c.coverScript)out.push(c.coverScript);else if (c.script) out.push(c.script); else if (depth > 1) scriptsOf(c, depth - 1, limit, out) } return out }
   // dirCover.scriptOrder：脚本名（不含扩展名）命中第 k 条正则的排在前面（k 小的先），没命中的跟在后面，同档保持原来的先后；写了它就在全部候选（最多 2000 个）里排好再截 scan 个
   const coverOrderRes = (config.dirCover.scriptOrder || []).map((source) => { try { return new RegExp(source, 'i') } catch { return null } }).filter(Boolean)
   const orderCoverScripts = (list) => {
@@ -576,7 +577,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
               // 规则没给图：目录用它里面脚本的封面（config.dirCover：优先级 / 黑白名单 / 张数；默认 render > image，最多 6 张）
               const dc = dirCoverActive() ? await dirCoverOf(child) : null
               if (dc) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: dc.thumbs[0] || '', thumbs: dc.thumbs, carousel: config.dirCover.max, ...(dc.renders.length ? { render: dc.renders[0], renders: dc.renders } : {}) } }
-              else if (why.length) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }
+              else {if(!config.thumbRender.enabled&&adapterHasSceneThumbs)why.push('thumbRender.enabled=false：当前游戏已关闭骨架画面缩略图渲染');if(why.length)out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }}
             }
           } else if (child.script) {
             const info = await scriptInfo(defaultSet, child.script)
@@ -915,7 +916,9 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
     // 渲染缩略图：脚本里有骨骼 / 立绘 / 叠加图（spine / stand / overlay 指令），而规则（thumbSources / scriptThumbs / scriptIndex）没给图时，列表页让浏览器离屏渲染一帧传回来（见 gal-thumb-render.js）；
     // key = 脚本路径 + mtime + 大小 + 版本 + 宽度，脚本改了 key 就变，服务器缓存按 key 存
     const renderCfg = config.thumbRender
-    const hasSpine = Boolean(scene) && renderCfg.enabled && scene.steps.slice(0, Math.max(renderCfg.scanSteps * 4, 600)).some((step) => step.commands.some((c) => c.op === 'spine' || (c.op === 'stand' && c.parts?.length) || (c.op === 'overlay' && c.src)))   // 有骨骼 / 立绘 / 叠加图（CG）的脚本
+    const hasRenderable = Boolean(scene) && scene.steps.slice(0, Math.max(renderCfg.scanSteps * 4, 600)).some((step) => step.commands.some((c) => c.op === 'spine' || c.op === 'live2d' || (c.op === 'stand' && c.parts?.length) || (c.op === 'overlay' && c.src)))
+    const hasSpine = hasRenderable && renderCfg.enabled
+    if(hasRenderable&&!renderCfg.enabled)why.push('thumbRender.enabled=false：已关闭骨架 / 立绘画面缩略图渲染')   // 有骨骼 / 立绘 / 叠加图（CG）的脚本
     const renderKey = hasSpine && !ruleHit ? createHash('sha1').update(JSON.stringify([abs, ...(sceneKey ? [sceneKey] : []), info.mtimeMs, info.size, RENDER_THUMB_VERSION, renderCfg.width])).digest('hex') : ''
     // 胶片场景（bg.film：Kamihime harem 场景，整张竖排条带转了 90° 存的）：兜底封面不能直接用条带，只有一张灰底；每段不同的胶片渲染一帧（thumbRender.filmFrame 处），最多 filmMax 段，卡片轮播
     const filmRenders = []
