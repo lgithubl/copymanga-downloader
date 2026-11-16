@@ -423,7 +423,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
     },
     setMosaic(value) { const next = Boolean(value); if (next === showMosaic) return; showMosaic = next; if (runtime) { renderAt(runtime.last ? (runtime.last - runtime.t0) / 1000 : 0); kick() } },
     setPaused(value) { paused = Boolean(value); if (paused) { if (raf) { cancelAnimationFrame(raf); raf = 0 } } else { if (runtime) runtime.last = 0; kick() } },
-    info() { return runtime ? [{ src: runtime.spec.src, motion: runtime.spec.motion || '', motionFile: pickMotionFile(runtime.entry.files, runtime.spec.motion), meshes: runtime.entry.model.counts.artMeshes, drawn: runtime.frame.renderOrder.length }] : [] },
+    info() { return runtime ? [{ src: runtime.spec.src, motion: runtime.spec.motionGroup || runtime.spec.motion || '', motionFile: runtime.spec.motionGroup ? runtime.entry.groups[runtime.spec.motionGroup]?.[Number(runtime.spec.motionIndex)||0]?.File || '' : pickMotionFile(runtime.entry.files, runtime.spec.motion), meshes: runtime.entry.model.counts.artMeshes, drawn: runtime.frame.renderOrder.length }] : [] },
     glInfo() { return gl ? [{ renderer: gl.getParameter(gl.RENDERER), lost: gl.isContextLost?.() ?? false, canvas: `${canvas.width}×${canvas.height}` }] : [] },
     destroy() { destroyed = true; if (raf) cancelAnimationFrame(raf); runtime = null; canvas.remove(); try { gl?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* 没有就算了 */ } },
   }

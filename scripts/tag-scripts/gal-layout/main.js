@@ -59,6 +59,9 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  'unityspine::gallery':{dir:'arc',skin:'default',maxCommands:200000},
+  'catpaw::script':{dir:'arc',language:'zh-CN',stage:[1280,720],maxCommands:200000},
+  'orcx::script':{dir:'arc',stage:[1280,720],maxCommands:200000},
   'rexex::event':{dir:'arc',stage:[1100,720],maxCommands:200000},
   'djibril-json':{root:'',stage:[1280,720],maxCommands:200000},
   'celltalk::native':{dir:'arc',maxCommands:200000},
@@ -1732,6 +1735,30 @@ export const LAYOUTS = {
     config:{scriptExtensions:['cell'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'画面切换',kind:'cmd',op:'overlay',pick:'each',max:8}],pageSize:100},
     count:[{dir:'arc/script',ext:'.cell',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['CellTalk 原生控制器静态预览；仅核对的 metadata 版本；存档条件手动选择，未还原演出报告 native 地址'],
   },
+  unityspine:{
+    title:'Unity Spine CG预览 原生 Unity',kind:'unityspine',detector:'unityNative',family:'unityspine::',
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','globalgamemanagers'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'Unity Spine CG预览 剧情'}],resourceRoots:[''],adapters:['unityspine::gallery'],adapterOptions:{'unityspine::gallery':{dir:{path:['arc']}}},ruleTables:['unityspine::gallery'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'unity-spine-gallery',scriptExt:'uspine',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['uspine'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'原生动作',kind:'cmd',op:'spine',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.uspine',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取原生CG场景的 SkeletonGraphic 引用、Spine 骨架及材质贴图；提供原生动作预览，未执行经营/触摸/剧情控制器'],
+  },
+  catpaw:{
+    title:'CatPaw future 原生 Unity',kind:'catpaw',detector:'unityNative',family:'catpaw::',
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','globalgamemanagers'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'CatPaw future 剧情'}],resourceRoots:[''],adapters:['catpaw::script'],adapterOptions:{'catpaw::script':{dir:{path:['arc']}}},ruleTables:['catpaw::script'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'catpaw',scriptExt:'catpaw',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['catpaw'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'原生动作',kind:'cmd',op:'live2d',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.catpaw',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取 CatPaw future 的本地 SENS 资源、剧情/回想表及 I2 翻译；Live2D 动作由原生 Animator 精确引用；未还原演出记录源行诊断'],
+  },
+  orcx:{
+    title:'OrcX 原生 Unity',kind:'orcx',detector:'unityNative',family:'orcx::',autoOrder:136.8,
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['StreamingAssets/Common/commondynamic_assets_scenario_sc.bundle','StreamingAssets/Main/maindynamic_assets_scenario_sc.bundle'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'OrcX 剧情'}],resourceRoots:[''],adapters:['orcx::script'],adapterOptions:{'orcx::script':{dir:{path:['arc']}}},ruleTables:['orcx::script'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'orcx',scriptExt:'orcx',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['orcx'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'画面切换',kind:'cmd',op:'overlay',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.orcx',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取 OrcX 原生多语言剧情及 AssetBundle 精确资源名；图片与语音按需解码；尚未核对的演出指令保留行号诊断'],
+  },
   rexex:{
     title:'RexEX 原生 Unity',kind:'rexex',detector:'unityNative',family:'rexex::',autoOrder:136.9,
     bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['StreamingAssets/asset_00_text','Managed/Assembly-CSharp.dll'],siblings:[],markers:[],
@@ -2428,6 +2455,7 @@ export const LAYOUTS = {
     ],
     "ruleOverrides": {},
     "profiles": [
+      {"match":"RJ01375307(?:[^0-9]|$)","id":"rpgmaker::rj01375307"},
       {"match":"RJ01610452(?:[^0-9]|$)","id":"rpgmaker::rj01610452"},
       {"match":"RJ01319586(?:[^0-9]|$)","id":"rpgmaker::rj01319586"},
       {"match":"RJ01007726(?:[^0-9]|$)","id":"rpgmaker::rj01007726"},
@@ -2546,6 +2574,7 @@ export const LAYOUTS = {
       "RPG Maker MV/MZ 事件适配：公共事件调用、选项与变量分支、图片/立绘、BGM/语音、静态地图/人物及剧情移动演出；未支持指令记入 raw，不运行游戏 JavaScript，不模拟地图探索或战斗。缩略图与中途开始规则可配置；特殊场景按事件名、回想地图和CG资源规则汇总。"
     ]
   },
+  'rpgmaker::rj01375307':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{extraDirs:['spine','movies'],pictures:{cgMatch:'(?:^|/)(?:cg|hcg)/'},special:{nameMatch:'回想|回憶|recollection|replay|涩涩|睡奸|夜袭|温泉|色色|乳交|足交|手交',imageMatch:'(?:^|/)(?:cg|hcg)/'}}}},
   'rpgmaker::rj01007726':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{localization:{language:'zh-CN'},extraDirs:['Audio','locales'],plugins:{seVoiceMatch:'^voice/'},pictures:{cgMatch:'(?:^|/)(?:cg|ll_loopanimation)/'},special:{imageMatch:'(?:^|/)(?:cg|ll_loopanimation)/'}}}},
   'rpgmaker::rj01610452':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{pictures:{cgMatch:'(?:^|/)Prism(?:_| )(?!Po_|PantsCut|full)'},special:{imageMatch:'(?:^|/)Prism(?:_| )(?!Po_|PantsCut|full)'}}}},
   'rpgmaker::rj01319586':{extends:'rpgmaker',ruleOverrides:{'rpgmaker-json':{plugins:{koakumaAnimation:{enabled:true},seVoiceMatch:'^voice/',skipCommonEventNames:'^(?:休日\\|時間経過|シナリオ実行\\((?:朝|夜|深夜)\\)|マップ操作|自室自由行動|自由行動\\|ルームチェッカー|小悪魔配置喋りかけイベント|｜小悪魔アイテム基礎|シーン回想\\|(?:オープン|呼び出し))$'}}}},

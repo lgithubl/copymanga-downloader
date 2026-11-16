@@ -1,0 +1,10 @@
+import assert from'node:assert/strict'
+import{mkdtemp,mkdir,writeFile,readFile}from'node:fs/promises'
+import path from'node:path'
+import{createHash}from'node:crypto'
+import{unitySource}from'../../web/library/gal/unity-source.mjs'
+await mkdir('.cache/unity-source-selftest',{recursive:true});const root=await mkdtemp(path.resolve('.cache/unity-source-selftest/run-')),plain=Buffer.from(Array.from({length:10073},(_,i)=>(i*67+(i>>>4))&255)),key=Buffer.from('00112233445566778899aabbccddeeff','hex'),block=4096
+const s=Array.from({length:256},(_,i)=>i);let j=0;for(let i=0;i<256;i++){j=(j+s[i]+key[i%16])&255;[s[i],s[j]]=[s[j],s[i]]}let i=0;j=0;const stream=[];for(let n=0;n<block;n++){i=(i+1)&255;j=(j+s[i])&255;[s[i],s[j]]=[s[j],s[i]];stream.push(s[(s[i]+s[j])&255])}
+const footer=Buffer.alloc(40);footer.write('SENS');key.copy(footer,4);footer.writeUInt32LE(block,20);footer.writeBigUInt64LE(BigInt(Math.ceil(plain.length/block)),24);footer.writeBigUInt64LE(BigInt(plain.length),32);const encrypted=Buffer.concat([Buffer.from(plain.map((v,i)=>v^stream[i%block])),footer]),file=root+'/encrypted.assets';await writeFile(file,encrypted);const hash=createHash('sha256').update(encrypted).digest('hex'),src=await unitySource(file);assert.equal(src.size,plain.length);assert.equal(src.encrypted,true);for(const[offset,size]of[[0,32],[4087,20],[8190,100],[10000,73],[0,plain.length]])assert.deepEqual(await src.read(offset,size),plain.subarray(offset,offset+size));await assert.rejects(()=>src.read(plain.length-2,4),/range/);assert.equal(createHash('sha256').update(await readFile(file)).digest('hex'),hash)
+await writeFile(root+'/plain.assets',plain);const old=await unitySource(root+'/plain.assets');assert.equal(old.encrypted,false);assert.deepEqual(await old.read(123,50),plain.subarray(123,173));const bad=Buffer.from(encrypted);bad.writeUInt32LE(0,bad.length-20);await writeFile(root+'/bad.assets',bad);await assert.rejects(()=>unitySource(root+'/bad.assets'),/footer invalid/)
+console.log('PASS plaintext compatibility, SENS independent block/cross-boundary/logical-size reads, bad footer/offset bounds and unchanged source; cache retained:',root)

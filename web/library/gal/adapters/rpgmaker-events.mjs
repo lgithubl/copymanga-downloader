@@ -1,3 +1,4 @@
+import {hakuboxCommands} from './rpgmaker-hakubox.mjs'
 import {koakumaCommands} from './rpgmaker-koakuma.mjs'
 import {loopAnimationCommands} from './rpgmaker-loop-animation.mjs'
 import {rpgLive2dCommands} from './rpgmaker-live2d.mjs'
@@ -251,9 +252,11 @@ export function compileRpgEvents(list, ctx, meta) {
   }
   const koakuma=koakumaCommands({audio,emit,raw,ctx,variable,initial,pause:when=>{emit({op:'ui',visible:false,when});emit({op:'speaker',segments:[],when});emit({op:'label',name:'动态CG',when});emit({op:'text',segments:[{text:'动态CG'}],when});stats.text++;flush()}})
   const loopAnimation=loopAnimationCommands(ctx,{emit,raw,resource,variable,stage})
+  const hakubox=hakuboxCommands({ctx,emit,raw,resource,audio,stage})
   const mzPlugin = (name, action, args, depth) => {
     name=String(name).split('/').at(-1)
     if(o.plugins.structured===false){raw(`plugin:${name}`,{action,args});return}
+    if(hakubox(name,action,args))return
     if(koakuma(name,action,args))return
     if(name==='LL_LoopAnimation'&&loopAnimation(action,args))return
     if(name==='MIP_MapBattlebacks_MZ'){

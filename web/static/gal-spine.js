@@ -462,7 +462,17 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
 
   // 皮肤：脚本指定了（spec.skin，utage 的 Skin 列）且骨架里有 = 用它；指定了但没有 = 退回 pickSpineSkin 的选择并记下来（渲染诊断报「要的皮肤没有」）
   function skinFor(data, spec) {
-    const requested = typeof spec?.skin === 'string' ? spec.skin : ''
+    const names = Array.isArray(spec?.skins) ? spec.skins.filter(n => typeof n === 'string' && n) : null
+    const requested = names?.length ? JSON.stringify(names) : typeof spec?.skin === 'string' ? spec.skin : ''
+    if (names?.length) {
+      const found = names.map(name => (data.skins || []).find(skin => skin.name === name))
+      if (found.every(Boolean)) {
+        const skin = new found[0].constructor('composite:' + requested)
+        for (const part of found) skin.addSkin(part)
+        return { skin, requested, found: true }
+      }
+      return { skin: pickSpineSkin(data), requested, found: false }
+    }
     if (requested) {
       const hit = (data.skins || []).find((skin) => skin.name === requested)
       if (hit) return { skin: hit, requested, found: true }
@@ -558,7 +568,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
   function applySpec(inst, spec, live) {
     inst.spec = spec
-    const skinChanged = (typeof spec.skin === 'string' ? spec.skin : '') !== (inst.skinRequested || '')
+    const skinChanged = (Array.isArray(spec.skins) && spec.skins.length ? JSON.stringify(spec.skins.filter(n => typeof n === 'string' && n)) : typeof spec.skin === 'string' ? spec.skin : '') !== (inst.skinRequested || '')
     if (skinChanged) {
       const pick = skinFor(inst.data, spec)
       inst.skeleton.setSkin(pick.skin)

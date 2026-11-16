@@ -1,3 +1,4 @@
+import{prepareHakubox}from'./rpgmaker-hakubox.mjs'
 import {prepareKoakumaAnimation,parseKoakumaGallery} from './rpgmaker-koakuma-animation.mjs'
 import {prepareLocalization} from './rpgmaker-localization.mjs'
 import {prepareActionSequences,parseActionGallery} from './rpgmaker-action-sequence.mjs'
@@ -58,6 +59,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   const ctx = { options: o, common, system, actors, mapInfo, tilesets: read('data/Tilesets.json', []), plugins: enabled, maps: new Map(), files: new Set((files || []).map(toResourcePath || (x => x))), warnings: [], evidenceCache: new WeakMap(), evidenceBusy: new Set() }
   if (truncated) ctx.warnings.push('资源索引达到上限，部分资源未收录')
   if (get('js/plugins.js') && !plugins.length) ctx.warnings.push('plugins.js 不是可解析的插件 JSON 配置；没有执行游戏 JS')
+  await prepareHakubox(ctx,{mediaDir:assetDir||mediaDir,root})
   ctx.localize=await prepareLocalization({plugins:enabled,options:o,files:files||[],texts,mediaDir,root,warnings:ctx.warnings})
   for(const row of [system,...actors,...mapInfo,...common].filter(Boolean))for(const key of ['name','gameTitle','displayName'])if(typeof row[key]==='string')row[key]=ctx.localize(row[key])
   ctx.skipCommonEvent=safeRegex(o.plugins.skipCommonEventNames)

@@ -1,0 +1,32 @@
+import{createOptionsReader}from'./options-merge.mjs'
+export const ADAPTER_ID='catpaw::script',DEFAULT_OPTIONS={dir:'arc',language:'zh-CN',stage:[1280,720],maxCommands:200000}
+const optionsOf=createOptionsReader(DEFAULT_OPTIONS),segments=text=>text?[{text:String(text).replace(/<br\s*\/?>/gi,'\n')}]:[],lower=x=>String(x||'').toLowerCase()
+export const contextFiles=o=>[(o?.dir||'arc')+'/native.json'],contextDirs=o=>[(o?.dir||'arc')+'/res'],contextTextFilter=()=>()=>false
+export const sniff=t=>/^\s*\{\s*"format"\s*:\s*"catpaw-script\/1"/.test(String(t).slice(0,128))
+export function prepare({texts={},options}){const o=optionsOf(options),d=JSON.parse(texts[contextFiles(o)[0]]||'null');if(d?.format!=='catpaw-context/1')throw Error('CatPaw context missing; run gal-layout');const translations={};for(const source of d.locales){const column=source.languages.findIndex(l=>lower(l.code)===lower(o.language));if(column<0)continue;for(const t of source.terms)if(t.languages[column])translations[t.key]=t.languages[column]}return{...d,options:o,translations}}
+const tr=(ctx,key)=>ctx.translations[key]??String(key||'')
+export function catalog(ctx){const node=s=>({id:s.name,script:s.script,title:tr(ctx,s.title),...(s.kind==='replay'?{thumb:ctx.media[lower('future/ui/recallsmallimage/'+ctx.configs.recallConfig[s.id]?.menuSmallImage)]||''}:{})});return{title:'CatPaw',children:[{id:'special',title:'特殊场景',children:ctx.scenes.filter(s=>s.kind==='replay').map(node)},{id:'story',title:'主线剧情',children:ctx.scenes.filter(s=>s.kind==='story').map(node)}]}}
+export function parse(text,ctx,meta={}){
+ const d=JSON.parse(text);if(d.format!=='catpaw-script/1'||!Array.isArray(d.rows))throw Error('CatPaw scenario invalid');const steps=[],stats={messages:0,voices:0,raw:{},unresolved:{},notes:ctx.notes||[]},actors=new Map();let commands=[],budget=0,source='',recall=null
+ const emit=c=>{if(++budget>ctx.options.maxCommands)throw Error('CatPaw command bounds exceeded');commands.push(c)},raw=(reason,args)=>{stats.raw[reason]=(stats.raw[reason]||0)+1;emit({op:'raw',cmd:reason,args:[meta.rel||d.id,source,args]})},flush=()=>{if(commands.length){steps.push({index:steps.length,commands});commands=[]}},media=(key,optional=false)=>{const src=ctx.media[lower(key)];if(!src&&!optional){stats.unresolved[key]=(stats.unresolved[key]||0)+1;raw('native-media-missing',key)}return src},paint=(key)=>{const spec=actors.get(key);if(spec)emit({op:'live2d',...structuredClone(spec)})}
+ const addActor=(key,kind='actor')=>{const model=ctx.models[ctx.prefabs[key]||ctx.prefabs[lower('future/model/talkrole/'+key)]];if(!model){raw('native-model-missing',key);return}if(!actors.has(key))actors.set(key,{slot:'catpaw:'+key,src:model.src,kind,loop:true,variables:{}});paint(key)}
+ const setRecall=id=>{const data=ctx.configs.recallConfig[id];if(!data){raw('recall-reference-missing',id);return}if(recall?.id===id)return;recall=data;actors.clear();emit({op:'live2dOff',all:true});emit({op:'standOff'});addActor(data.role,'still');for(const name of data.defaultTools||[]){const t=data.roleTool?.find(t=>t.name===name);if(t&&actors.has(data.role))actors.get(data.role).variables[t.key]=t.value}paint(data.role)}
+ if(d.kind==='replay')setRecall(d.id)
+ for(const id of d.rows){source=id;const row=ctx.configs.talkConfig[id];if(!row){raw('talk-row-missing',id);continue}
+  if(row.background){const src=media('future/talkbackground/'+row.background);if(src)emit({op:'bg',src})}
+  if(row.recallBackground)setRecall(String(row.recallBackground))
+  if(Array.isArray(row.fgimage)){emit({op:'live2dOff',all:true});actors.clear();for(const item of row.fgimage){addActor(item.key);if(item.scale!==undefined||item.offset)raw('native-character-placement-not-lifted',item)}}
+  if(row.talkHeadLive2d&&!actors.has(row.talkHeadLive2d))raw('native-head-panel-placement-not-lifted',row.talkHeadLive2d)
+  if(row.talkHead){const src=media('future/ui/head/'+row.talkHead,true);if(src)emit({op:'overlay',slot:'catpaw:head',src,kind:'portrait',stage:ctx.options.stage,fit:'none',z:20});else raw('native-portrait-reference-not-lifted',row.talkHead)}
+  for(const action of row.playAction||[]){const keys=action.key?[action.key]:recall?[recall.role]:[...actors.keys()];for(const key of keys){const spec=actors.get(key),model=ctx.models[ctx.prefabs[key]||ctx.prefabs[lower('future/model/talkrole/'+key)]];if(!spec){raw('motion-actor-not-on-stage',{key,action});continue}for(const name of action.actions||[]){const group=model?.motions.find(m=>m===name);if(!group){raw('native-motion-state-missing',{key,name});continue}spec.motionGroup=group;spec.motionIndex=0;paint(key)}}}
+  for(const action of row.roleTools||[]){const keys=action.key?[action.key]:recall?[recall.role]:[...actors.keys()];for(const key of keys){const spec=actors.get(key);if(!spec)continue;for(const name of action.tools||[]){const def=recall?.roleTool?.find(t=>t.name===name);if(def)spec.variables[def.key]=def.value;else raw('native-tool-mapping-not-lifted',{key,name})}paint(key)}}
+  for(const action of row.talkTools||[]){const spec=actors.get(action.key);if(!spec){raw('native-parameter-actor-missing',action);continue}for(const t of action.tools||[])if(typeof t.key==='string'&&Number.isFinite(Number(t.value)))spec.variables[t.key]=Number(t.value);paint(action.key)}
+  if(row.bgmStop)emit({op:'bgmStop'});if(row.bgm){const src=media('future/bgm/'+row.bgm);if(src)emit({op:'bgm',src,loop:true})}
+  emit({op:'voiceStop'});if(row.voice){const src=media('future/voice/'+row.voice,true);if(src){emit({op:'voice',src});stats.voices++}else stats.unresolved['optional-voice:'+row.voice]=(stats.unresolved['optional-voice:'+row.voice]||0)+1}
+  if(row.sound){const src=media('future/sound/'+row.sound);if(src)emit({op:'se',src})}
+  if(row.transitions)raw('native-transition-not-lifted',row.transitions)
+  if(row.talkContent){for(const key of[row.talkContent,row.roleName].filter(Boolean))if(!ctx.translations[key]&&/^(?:talk|roleName)[0-9]/.test(key))raw('native-translation-missing',key);emit({op:'speaker',segments:segments(tr(ctx,row.roleName))});emit({op:'text',segments:segments(tr(ctx,row.talkContent))});stats.messages++;flush()}
+ }
+ flush();return{steps,stats}
+}
+export const catpawScriptAdapter={id:ADAPTER_ID,label:'CatPaw future 剧情（部分演出待核对）',sniff,prepare,parse,catalog,contextFiles,contextDirs,contextTextFilter,sceneInPath:true,sceneThumbs:true}

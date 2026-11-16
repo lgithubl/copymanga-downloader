@@ -7,7 +7,7 @@ for name in targets+decoys:
  game=root/name;(game/'data').mkdir(parents=True);(game/'data/System.json').write_text('{"gameTitle":"routing fixture"}');(game/'readme.txt').write_text('fixture');(game/'image.png').write_bytes(b'private image');(game/'save').mkdir();(game/'save/secret.json').write_text('private save')
 before={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()for p in root.rglob('*')if p.is_file()}
 env={k:v for k,v in os.environ.items()if not k.startswith('GAL_COLLECT_')};out=base/'out';env.update(GAL_COLLECT_DRYRUN='1',GAL_COLLECT_OUT=str(out))
-script=base/'collect.sh';script.write_text(re.sub("PAIR_MEDIA_PLAN='[^']+'","PAIR_MEDIA_PLAN='"+base64.b64encode(zlib.compress(b'{}')).decode()+"'",pathlib.Path('scripts/dev/gal-collect-run.sh').read_text()))
+script=base/'collect.sh';source=re.sub(r'^PAIR_ACTIVE_GAMES = .*$',"PAIR_ACTIVE_GAMES = ['RJ01743835','RJ01610452','RJ01319586','RJ01007726']",pathlib.Path('scripts/dev/gal-collect-run.sh').read_text(),flags=re.M);script.write_text(re.sub("PAIR_MEDIA_PLAN='[^']+'","PAIR_MEDIA_PLAN='"+base64.b64encode(zlib.compress(b'{}')).decode()+"'",source))
 r=subprocess.run(['bash',str(script),str(root)],env=env,text=True,capture_output=True);assert r.returncode==0,r.stdout+r.stderr
 rows=(out/'games.tsv').read_text().splitlines()[1:];assert len(rows)==4,rows;assert set(row.split('\t')[1]for row in rows)==set(targets),rows
 for part in out.glob('*.part-*'):

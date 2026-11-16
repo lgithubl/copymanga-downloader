@@ -204,7 +204,7 @@ export const SCRIPT_DECODERS = Object.freeze({
     },
   },
 })
-export const SCRIPT_DECODER_IDS = Object.freeze([...Object.keys(SCRIPT_DECODERS),'naninovel','unity-utage','rpgmaker-unite','celltalk','rexex'])
+export const SCRIPT_DECODER_IDS = Object.freeze([...Object.keys(SCRIPT_DECODERS),'naninovel','unity-utage','rpgmaker-unite','celltalk','rexex','orcx','catpaw','unity-spine-gallery'])
 
 // 各格式的「容器文件」文件名：dsm 里 .dsm = 脚本、.psm = 图（一个文件一个条目）
 const arcRegex = (cfg) => (cfg.format === 'sakana' ? /\.sx$/i : cfg.format === 'pac' ? /\.pac$/i : cfg.format === 'pf8' ? /\.pfs(\.\d+)?$/i : cfg.format === 'krkr' ? /\.xp3$/i : cfg.format === 'xfl' ? /\.xfl$/i : cfg.format === 'dsm' ? /\.(dsm|psm)$/i : cfg.format === 'mhp' ? /\.mhp$/i : cfg.format === 'tomoe' ? /^(Arc0\d|Data\d+)\.dat$/i : cfg.format === 'imys' ? /\.encrypted$/i : cfg.format === 'arcdrama' ? /\.txt$/i : /\.arc$/i)

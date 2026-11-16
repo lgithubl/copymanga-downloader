@@ -1,6 +1,9 @@
 // Shared source for the import dropdown and its JSON presets.
 // Only registered playback adapters belong here; format probes are not importable adapters.
 export const GAL_PRESETS = {
+  unitySpine:{label:'Unity Spine 原生CG动作预览（经营/触摸控制器未执行；改 id / title）',adapters:['unityspine::gallery'],game:{id:'unityspine::game',title:''}},
+  catpaw:{label:'CatPaw future 原生剧情（部分演出待核对；改 title）',adapters:['catpaw::script'],game:{id:'catpaw::future',title:''}},
+  orcx:{label:'OrcX 原生剧情（部分演出待核对；改 id / title）',adapters:['orcx::script'],game:{id:'orcx::game',title:''}},
   celltalk:{label:'CellTalk 原生控制器预览（celltalk::native；已核对的 IL2CPP 版本）',adapters:['celltalk::native'],game:{id:'celltalk::game',title:''}},
   rexex:{label:'RexEX 原生 Unity 事件（开发中；改 id / title）',adapters:['rexex::event'],game:{id:'rexex::game',title:''}},
   djibril:{label:'電脳天使ジブリール（角色 / 服装 / 剧情 JSON；改 title）',adapters:['djibril-json'],game:{id:'djibril::game',title:''}},
