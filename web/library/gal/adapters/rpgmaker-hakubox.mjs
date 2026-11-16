@@ -50,5 +50,7 @@ export function hakuboxCommands({ctx,emit,raw,resource,audio,stage}){
   // effects need distinct evidence. Preserve their original names and args.
   raw('hakubox-unhandled:'+name+':'+action,a);return true
  }
- command.script=hakuboxAdventure({enabled,emit,raw,resource,stage});command.condition=command.script.condition;return command
+ const presentation=hakuboxAdventure({enabled,emit,raw,resource,stage})
+ command.script=ctx.hakuboxInteraction?(text,active=true)=>{if(ctx.hakuboxInteraction&&/^SpineManager\.(?:setMotion|addMotion)\((?:SceneManager\._scene|_scene)\.spineInteract,\s*['"][^'"]+['"],\s*(?:true|false),\s*\d+\);?$/.test(text.trim())){if(active)emit({op:'interactionSpineSource',source:text.trim()});return true}if(!enabled||!/(?:_scene\.tachie|_scene\.(?:updateTachie|showSexAction)|Utils_Tachie\.startAction)/.test(text))return false;if(active)emit({op:'interactionPresentation',source:text});return true}:presentation
+ command.condition=presentation.condition;return command
 }

@@ -3,7 +3,7 @@ const lower=s=>String(s||'').toLowerCase()
 const labels={Tentacle:'触手',Whip:'鞭子',Vibrator:'震动器',Hand:'手',Finger:'手指',candle:'蜡烛',jj:'互动 5',jjshoot:'互动 6',cloth:'服装',socks:'袜子'}
 const label=(s,fallback)=>labels[String(s||'').replace(/[0-9_]+$/g,'')]||fallback||s
 export function catpawInteraction(ctx,entry){
- if(ctx.variant!=='underworld')throw Error('CatPaw character interaction is not available for this game')
+ if(ctx.variant==='future')return futureInteraction(ctx,entry)
  const missing=[],prefix=ctx.prefix+'/',media=k=>ctx.media[lower(prefix+k)]||'',tr=k=>ctx.translations[k]||String(k||''),roles=[]
  for(const r of Object.values(ctx.configs.roleConfig||{})){
   const key=ctx.prefabs[lower(prefix+'model/role/'+r.dreamBoxRole)],model=ctx.models[key]
@@ -27,4 +27,28 @@ export function catpawInteraction(ctx,entry){
  const selected=roles.find(r=>r.id===entry.id)||roles[0],initialVariables=Object.assign({},...(selected.outfits[0]?.groups||[]).map(g=>g.choices.find(c=>c.id===g.default)?.variables||{})),interaction={format:'gal-interaction/1',initialRole:selected.id,roles,diagnostics:[...new Set(missing)]}
  // The initial model also permits the existing card thumbnail renderer to work.
  return{steps:[{index:0,commands:[{op:'live2d',slot:'interaction',...selected.model,variables:initialVariables}]}],stats:{notes:['角色互动预览；选装状态单独保存在浏览器，不读写原作存档'],unresolved:Object.fromEntries(interaction.diagnostics.map(x=>[x,1]))},interaction}
+}
+
+// Future's standalone roles use Animator clothing states, not Underworld parameter tables.
+function futureInteraction(ctx,entry){
+ const roles=[],missing=[],prefix=ctx.prefix+'/',media=k=>ctx.media[lower(prefix+k)]||'',tr=k=>ctx.translations[k]||String(k||'')
+ const replies=ids=>(ids||[]).filter(id=>id!=null).map(id=>{const row=ctx.configs.simpleTalkConfig?.[id];if(!row){missing.push('互动台词：'+id);return null}return{id,text:tr(row.talk),voice:media('voice/'+row.voice),sound:row.sound?media('sound/'+row.sound):''}}).filter(Boolean)
+ for(const r of Object.values(ctx.configs.roleConfig||{})){
+  if(!r.dreamBoxRole)continue
+  const key=lower(r.dreamBoxRole),model=ctx.models[ctx.prefabs[key.startsWith(prefix)?key:prefix+'model/role/'+key]]
+  if(!model){missing.push('角色模型：'+r.id);continue}
+  const motion=(key,title,icon)=>{const supported=model.motions.includes(key);if(!supported)missing.push('服装动作：'+r.id+'/'+key);return{id:key,title,icon:media('ui/clothesicon/'+icon),motionGroups:{[model.motionLayers?.[key]??1]:key},disabled:!supported}}
+  const outfits=(r.cloths||[]).map((id,i)=>{const c=ctx.configs.clothConfig?.[id];if(!c){missing.push('服装配置：'+id);return null}const choices=[]
+   for(const [key,title] of [['cloth1','完整'],['clothDam1','破损'],...Array.from({length:4},(_,i)=>[['subCloth'+(i+1),'状态 '+(i+1)],['subCloth'+(i+1)+'Dam','状态 '+(i+1)+' · 破损']]).flat()])if(c[key]?.key&&!choices.some(x=>x.id===c[key].key))choices.push(motion(c[key].key,title,c[key].icon))
+   const groups=[{id:'clothes',title:'服装状态',choices,default:choices.find(c=>!c.disabled)?.id}]
+   for(const [j,t]of[...new Map([...(r.tools||[]),...(c.tools||[])].map(t=>[t.key,t])).values()].entries())groups.push({id:'tool-'+j,title:'装饰 '+(j+1),default:'on',choices:[{id:'on',title:'开启',icon:media('ui/clothesicon/'+t.openIcon),variables:{[t.key]:t.openValue}},{id:'off',title:'关闭',icon:media('ui/clothesicon/'+t.closeIcon),variables:{[t.key]:t.closeValue}}]})
+   return{id,title:'服装 '+(i+1),icon:media('ui/clothesicon/'+c.cloth1?.icon),groups}
+  }).filter(Boolean)
+  const tools=(r.dbsm||[]).map((ids,i)=>{const areas=(Array.isArray(ids)?ids:[ids]).map(id=>{const a=ctx.configs.dbsmConfig?.[id];if(!a){missing.push('互动配置：'+id);return null}const motion=model.motions.includes(a.key)?a.key:model.motions.includes(a.key.trim())?a.key.trim():null;if(!motion)missing.push('互动动作：'+r.id+'/'+a.key);return{id,disabled:!motion,title:'动作 '+(i+1)+(ids.length>1?' · '+(ids.indexOf(id)+1):''),buttonOnly:true,motion,layer:model.motionLayers?.[motion]??0,icon:media('ui/dbsmicon/'+a.icon),replies:replies(a.talks)}}).filter(Boolean);return{id:String(i),title:label(ctx.configs.dbsmConfig?.[ids[0]]?.icon,'互动 '+(i+1)),icon:areas[0]?.icon,areas}}).filter(t=>t.areas.length)
+  roles.push({id:r.id,title:tr(r.nameKey),model:{src:model.src,fit:'contain',kind:'actor',loop:true,variablesAfterMotion:true,motionGroups:{...model.defaultMotions}},hitAreas:[],outfits,faces:(r.faces||[]).filter(f=>model.motions.includes(f.key)).map((f,i)=>({id:f.key,title:'表情 '+(i+1),layer:model.motionLayers?.[f.key]??2,icon:media('ui/faceicon/'+f.icon)})),tools})
+ }
+ if(!roles.length)throw Error('Future character models are missing; run gal-layout')
+ const selected=roles.find(r=>r.id===entry.id)||roles[0],outfit=selected.outfits[0],motionGroups={...selected.model.motionGroups};for(const g of outfit?.groups||[])Object.assign(motionGroups,g.choices.find(c=>c.id===g.default)?.motionGroups||{})
+ const interaction={format:'gal-interaction/1',initialRole:selected.id,roles,diagnostics:[...new Set(missing)]}
+ return{steps:[{index:0,commands:[{op:'live2d',slot:'interaction',...selected.model,motionGroups}]}],stats:{notes:['原作角色互动；动作由原生 dbsm 分组提供；未伪造模型触摸区域或姿势'],unresolved:Object.fromEntries(interaction.diagnostics.map(x=>[x,1]))},interaction}
 }

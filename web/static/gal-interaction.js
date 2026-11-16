@@ -1,3 +1,4 @@
+import{createCommandInteractionLayers}from'./gal-interaction-commands.js'
 import {interactionPreferences,interactionTriggerMode,toolModeKey,areaModeKey,TRIGGER_MODES,TRIGGER_LABELS,createInteractionTriggers,bindInteractionTrigger} from './gal-interaction-triggers.js'
 import {createInteractionHighlight} from './gal-interaction-highlight.js'
 import {createLive2dLayers} from './gal-live2d.js'
@@ -8,10 +9,12 @@ const icon=(kind)=>{const n=document.createElementNS('http://www.w3.org/2000/svg
 export function shortInteractionLabel(title){return String(title).replace(/^(服装|表情|区域|互动|袜子)\s*/,'').replace(/\s*·\s*破损/,'破').replace('完整','整').replace('关闭','关').replace('开启','开').slice(0,3)||'—'}
 export function createGalInteraction({container,reader,chapter,onEscape,onToggleImmersive,onDetails,viewKey=''}){
  const data=reader.scene.interaction,root=el('div','gal-player gal-interaction'),viewport=el('div','gal-interaction-view'),stage=el('div','gal-interaction-stage'),backdrop=el('div','gal-interaction-background'),world=el('div','gal-interaction-world'),speech=el('div','gal-interaction-speech'),rail=el('div','gal-interaction-rail'),panel=el('div','gal-interaction-controls'),status=el('div','gal-interaction-status'),bar=el('div','gal-bar'),errors=new Set(data.diagnostics||[])
+ const audioEffects=new Set()
  const key='copymanga.gal.interaction.'+(viewKey||reader.itemId||reader.resourceBase||reader.node?.id||'default')
- let saved={},role,state,action=null,serial=0,destroyed=false,loading=false,visible=true,renderToken=0,audioToken=0,voice=null,sound=null,lastReply=null,pendingPaint=null,voiceBusy=false
+ let saved={},role,state,action=null,serial=0,destroyed=false,loading=false,visible=true,renderToken=0,audioToken=0,voice=null,sound=null,lastReply=null,pendingPaint=null,voiceBusy=false,nativeChoice=false
  let hoverRegion='',focusRegion='',flashRegion='',flashTimer=0
  try{saved=JSON.parse(localStorage.getItem(key)||'{}');if(!saved||typeof saved!=='object')saved={}}catch{saved={}}
+ root.dataset.commandInteraction=String(data.roles.some(r=>r.model.commandModel));
  const defaults=galPlayerDefaults(reader.node?.player),legacy=(k,f)=>{try{const v=localStorage.getItem('copymanga.gal.'+k);return v!==null&&Number.isFinite(Number(v))?Number(v):f}catch{return f}}
  const preferences=interactionPreferences(saved.preferences,{textOpacity:legacy('boxOpacity',defaults.textOpacity??.74),fontScale:legacy('fontScale',defaults.fontScale??1),voiceVolume:legacy('voiceVolume',.8),sfxVolume:legacy('sfxVolume',.8)});saved.preferences=preferences
  const persist=()=>{try{localStorage.setItem(key,JSON.stringify(saved))}catch{}}
@@ -27,25 +30,29 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
   return details
  }
  const regionsBody=el('div','gal-interaction-region-list'),settingsPanel=dock('settings','角色与互动设置',panel,'settingsOpen'),regionsPanel=dock('regions','可触发区域',regionsBody,'regionsOpen');rail.append(settingsPanel,regionsPanel)
- const triggers=createInteractionTriggers({fire:perform,blocked:()=>destroyed||!visible||loading||(preferences.waitVoice&&voiceBusy),interval:()=>preferences.interval,onChange:updateModeIndicators})
+ const triggers=createInteractionTriggers({fire:perform,blocked:()=>destroyed||!visible||loading||nativeChoice||(preferences.waitVoice&&voiceBusy),interval:()=>preferences.interval,onChange:updateModeIndicators})
  function modeFor(tool,area){return interactionTriggerMode(preferences,role.id,tool,area)}
  function updateModeIndicators(){root.dataset.activeTriggers=String(triggers.size);for(const b of root.querySelectorAll('[data-mode-kind]')){const m=modeFor(b.dataset.tool,b.dataset.modeKind==='area'?b.dataset.area:undefined);b.textContent={single:'1',repeat:'↻',hold:'▥'}[m];b.dataset.mode=m;b.title=(b.dataset.modeKind==='tool'?'此互动的默认模式：':'此区域的模式：')+TRIGGER_LABELS[m]+'；点击切换';b.setAttribute('aria-label',b.title)}for(const b of regionsBody.querySelectorAll('[data-region]'))b.classList.toggle('is-repeating',triggers.has(areaModeKey(role.id,state.tool,b.dataset.region)));if(typeof stopTriggers!=='undefined')stopTriggers.disabled=!triggers.size&&!triggers.pending}
  function modeButton(kind,tool,area){const b=button('',e=>{});b.className='gal-interaction-mode';b.dataset.modeKind=kind;b.dataset.tool=tool;if(area!==undefined)b.dataset.area=area;b.addEventListener('click',e=>{e.stopPropagation();const current=modeFor(tool,area),next=TRIGGER_MODES[(TRIGGER_MODES.indexOf(current)+1)%TRIGGER_MODES.length];if(kind==='tool'){preferences.toolModes[toolModeKey(role.id,tool)]=next;for(const a of role.tools.find(t=>t.id===tool)?.areas||[]){const key=areaModeKey(role.id,tool,a.id);if(!Object.hasOwn(preferences.areaModes,key))triggers.stop(key)}}else{preferences.areaModes[areaModeKey(role.id,tool,area)]=next;triggers.stop(areaModeKey(role.id,tool,area))}persist();updateModeIndicators()});return b}
  function payload(area){return area?{key:areaModeKey(role.id,state.tool,area),role:role.id,tool:state.tool,area}:null}
  const triggerBinding=element=>bindInteractionTrigger(element,{controller:triggers,mode:p=>modeFor(p.tool,p.area),resolve:e=>{if(!state.tool||destroyed||!visible)return null;return payload(element.dataset.region||resolveHit(layers.hitTest('interaction',e.clientX,e.clientY,role.hitAreas)))}})
- const layers=createLive2dLayers({parent:world,url,onMissing:src=>report('资源缺失：'+src),onError:e=>report('模型解析：'+e.message),onUnavailable:()=>report('WebGL 不可用')})
+ const layerOptions={parent:world,url,onMissing:src=>report('资源缺失：'+src),onError:e=>report('演出诊断：'+e.message),onUnavailable:()=>report('WebGL 不可用')}
+ const choices=el('div','gal-interaction-native-choices');speech.after(choices)
+ const commands=data.roles.some(r=>r.model.commandModel)?createCommandInteractionLayers({...layerOptions,onBusy:()=>triggers.notify(),onChoice:c=>{nativeChoice=!!c;choices.replaceChildren();if(c)for(const option of c.options)choices.append(button((option.segments||[]).map(s=>s.text||'').join(''),()=>c.select(option.value)))},onMessage:reply=>{speech.textContent=reply.text;play(reply)},onAudio:(kind,c)=>{if(kind==='voiceStop')stopAudio();else if(kind==='se'){const a=new Audio(url(c.src));audioEffects.add(a);a.addEventListener('ended',()=>audioEffects.delete(a));a.volume=volume('sfx');a.play().catch(()=>report('音效失败：'+c.src))}}}):null
+ const layers=commands||createLive2dLayers(layerOptions)
+ speech.addEventListener('click',()=>commands?.advance())
  const highlight=createInteractionHighlight({parent:world,layers})
  function paintHighlight(){const id=hoverRegion||focusRegion||flashRegion;highlight.set(role?.hitAreas.filter(a=>a.id===id)||[],{pulse:!!flashRegion&&flashRegion===id})}
  function resetRegions(){hoverRegion=focusRegion=flashRegion='';clearTimeout(flashTimer);paintHighlight();stage.style.cursor='default';delete stage.dataset.hit;delete stage.dataset.motion}
  function regions(){
   regionsBody.replaceChildren();const list=interactionRegions(role,state);regionsPanel.querySelector('summary').title='可触发区域'+(list.length?' · '+list.length:'')
   if(!list.length)regionsBody.append(el('p','','选择互动方式后显示触发点'))
-  for(const area of list){const b=button(shortInteractionLabel(area.title),()=>{});b.title=area.title;b.setAttribute('aria-label',area.title);b.dataset.region=area.id;b.disabled=loading
+  for(const area of list){const b=button(shortInteractionLabel(area.title),()=>{});b.title=area.title;b.setAttribute('aria-label',area.title);b.dataset.region=area.id;b.disabled=loading||!!area.disabled
    b.addEventListener('pointerenter',()=>{hoverRegion=area.id;paintHighlight()});b.addEventListener('pointerleave',()=>{if(hoverRegion===area.id){hoverRegion='';paintHighlight()}})
    b.addEventListener('focus',()=>{focusRegion=area.id;paintHighlight()});b.addEventListener('blur',()=>{if(focusRegion===area.id){focusRegion='';paintHighlight()}});const shell=el('span','gal-interaction-choice-shell');shell.append(b,modeButton('area',state.tool,area.id));regionsBody.append(shell);triggerBinding(b)
   }
  }
- function regionBusy(){for(const b of regionsBody.querySelectorAll('[data-region]'))b.disabled=loading&&!triggers.has(areaModeKey(role.id,state.tool,b.dataset.region))}
+ function regionBusy(){for(const b of regionsBody.querySelectorAll('[data-region]'))b.disabled=!!role.tools.find(t=>t.id===state.tool)?.areas.find(a=>a.id===b.dataset.region)?.disabled||loading&&!triggers.has(areaModeKey(role.id,state.tool,b.dataset.region))}
  function choiceGrid(name,choices,value,change){
   const field=el('fieldset','gal-interaction-group'),legend=el('legend','',name),grid=el('div','gal-interaction-options');field.dataset.control=name;field.append(legend,grid)
   for(const c of choices){
@@ -56,30 +63,30 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
   }
   return field
  }
- const stopAudio=()=>{voiceBusy=false;audioToken++;for(const a of[voice,sound])if(a){a.pause();a.removeAttribute('src');a.load()}voice=sound=null}
+ const stopAudio=()=>{voiceBusy=false;audioToken++;for(const a of[voice,sound])if(a){a.pause();a.removeAttribute('src');a.load()}voice=sound=null;for(const a of audioEffects)a.pause();audioEffects.clear()}
  const volume=kind=>volumeGain(kind==='voice'?preferences.voiceVolume:preferences.sfxVolume)
  function paintTextSettings(){speech.style.backgroundColor=`rgba(17,17,17,${preferences.textOpacity})`;speech.style.fontSize=preferences.fontScale+'em'}
- function play(reply){stopAudio();const mine=audioToken;lastReply=reply;for(const[kind,src]of[['voice',reply?.voice],['sfx',reply?.sound]])if(src){const a=new Audio(url(src));a.volume=volume(kind);if(kind==='voice'){voice=a;voiceBusy=true}else sound=a;const release=()=>{if(kind==='voice'&&mine===audioToken){voiceBusy=false;triggers.notify()}};a.addEventListener('ended',release);a.addEventListener('error',()=>{if(mine===audioToken&&!destroyed){report('音频失败：'+src);release()}});a.play().catch(()=>{if(mine===audioToken&&!destroyed){if(visible)report('声音未开始；可点击重播重试');release()}})}}
+ function play(reply){stopAudio();const mine=audioToken;lastReply=reply;for(const[kind,src]of[['voice',reply?.voice],['sfx',reply?.sound]])if(src){const a=new Audio(url(src));a.volume=volume(kind);if(kind==='voice'){voice=a;voiceBusy=true}else sound=a;const release=()=>{if(kind==='voice'&&mine===audioToken){voiceBusy=false;commands?.advance();triggers.notify()}};a.addEventListener('ended',release);a.addEventListener('error',()=>{if(mine===audioToken&&!destroyed){report('音频失败：'+src);release()}});a.play().catch(()=>{if(mine===audioToken&&!destroyed){if(visible)report('声音未开始；可点击重播重试');release()}})}}
  function paintBackground(){const src=(role.backgrounds||[]).find(b=>b.id===state.background)?.src;backdrop.style.backgroundImage=src?`url("${url(src)}")`:''}
  async function paint(){
   const token=++renderToken,spec={interaction:interactionSpec(role,state,action,serial)},sig=JSON.stringify(spec);loading=true;regionBusy();paintStatus();paintBackground()
   const task=pendingPaint?.sig===sig?pendingPaint:{sig,promise:layers.set(spec)};pendingPaint=task
   try{await task.promise}catch(e){report(String(e.message||e))}finally{if(pendingPaint===task)pendingPaint=null;if(token===renderToken&&!destroyed){loading=false;regionBusy();paintStatus();triggers.notify()}}
  }
- function chooseRole(id){triggers.stopAll();layers.set({});stopAudio();role=data.roles.find(r=>r.id===id)||data.roles[0];state=roleState(role,saved[role.id]);resetRegions();action=null;serial++;speech.textContent='';lastReply=null;controls();save();paint()}
+ function chooseRole(id){const destination=data.destinations?.find(r=>r.id===id);if(role&&destination&&id!==role.id&&chapter?.select){triggers.stopAll();stopAudio();chapter.select(destination.node);return}triggers.stopAll();layers.set({});stopAudio();role=data.roles.find(r=>r.id===id)||data.roles[0];state=roleState(role,saved[role.id]);resetRegions();action=null;serial++;speech.textContent='';lastReply=null;controls();save();paint()}
  function controls(){
-  regions();panel.replaceChildren(choiceGrid('角色',data.roles,role.id,chooseRole))
+  regions();panel.replaceChildren();const allRoles=data.destinations||data.roles,people=[...new Map(allRoles.map(r=>[r.characterId||r.id,{id:r.characterId||r.id,title:r.characterTitle||r.title}])).values()];panel.append(choiceGrid('角色',people,role.characterId||role.id,id=>chooseRole(allRoles.find(r=>(r.characterId||r.id)===id)?.id)));const siblings=allRoles.filter(r=>(r.characterId||r.id)===(role.characterId||role.id)),scenes=[...new Map(siblings.map(r=>[r.sceneId||r.id,{id:r.sceneId||r.id,title:r.sceneTitle||r.title}])).values()];if(scenes.length>1)panel.append(choiceGrid('场景',scenes,role.sceneId||role.id,id=>chooseRole(siblings.find(r=>(r.sceneId||r.id)===id)?.id)));const variants=siblings.filter(r=>(r.sceneId||r.id)===(role.sceneId||role.id));if(variants.length>1)panel.append(choiceGrid(role.variantControl||'姿势',variants,role.id,chooseRole))
   if(role.outfits.length)panel.append(choiceGrid('服装',role.outfits,state.outfit,id=>{triggers.stopAll();stopAudio();speech.textContent='';lastReply=null;state=roleState(role,{...state,outfit:id,values:{}});resetRegions();action=null;serial++;controls();save();paint()}))
   const outfit=role.outfits.find(o=>o.id===state.outfit)
-  for(const g of outfit?.groups||[])panel.append(choiceGrid(g.title,g.choices,state.values[g.id],id=>{state.values[g.id]=id;save();paint()}))
+  for(const g of outfit?.groups||[])panel.append(choiceGrid(g.title,g.choices,state.values[g.id],id=>{triggers.stopAll();stopAudio();state.values[g.id]=id;action=null;serial++;save();paint()}))
   if(role.faces.length)panel.append(choiceGrid('表情',[{id:'',title:'默认'},...role.faces],state.face,id=>{state.face=id;save();paint()}))
   if(role.backgrounds?.length)panel.append(choiceGrid('背景',role.backgrounds,state.background,id=>{state.background=id;save();paintBackground()}))
   panel.append(choiceGrid('互动方式',[{id:'',title:'不选择'},...role.tools],state.tool,id=>{triggers.stopAll();state.tool=id;resetRegions();regions();action=null;serial++;stopAudio();lastReply=null;speech.textContent='';save();paint();updateModeIndicators()}))
   updateModeIndicators()
  }
  function resolveHit(hits){let found=null;const tool=role.tools.find(t=>t.id===state.tool);for(const hit of hits)for(const a of tool?.areas||[])if(a.id===hit)found=hit;return found}
- function perform(p){if(p.kind==='replay'){play(p.reply);return}if(p.role!==role.id||p.tool!==state.tool)return;const feedback=interactionFeedback(role,state,[p.area]);if(!feedback)return;action=feedback.action;serial++;speech.textContent=feedback.reply?.text||'';speech.dataset.reply=feedback.reply?.id||'';stage.dataset.hit=action.id;stage.dataset.motion=action.motion;play(feedback.reply);flashRegion=action.id;clearTimeout(flashTimer);paintHighlight();flashTimer=setTimeout(()=>{flashRegion='';paintHighlight()},650);paint()}
- const stageBinding=triggerBinding(stage),releaseHolds=()=>triggers.stopHolds(),releaseKeys=e=>{if([' ','Enter'].includes(e.key))releaseHolds()},stopForBlur=()=>triggers.stopAll(),stopForHidden=()=>{if(document.hidden){triggers.stopAll();stopAudio()}};window.addEventListener('keyup',releaseKeys);document.addEventListener('visibilitychange',stopForHidden);window.addEventListener('pointerup',releaseHolds);window.addEventListener('pointercancel',releaseHolds);window.addEventListener('blur',stopForBlur)
+ function perform(p){if(p.kind==='replay'){play(p.reply);return}if(p.role!==role.id||p.tool!==state.tool)return;const feedback=interactionFeedback(role,state,[p.area]);if(!feedback||feedback.action.disabled)return;action=feedback.action;serial++;speech.textContent=feedback.reply?.text||'';speech.dataset.reply=feedback.reply?.id||'';stage.dataset.hit=action.id;stage.dataset.motion=action.motion;if(!commands)play(feedback.reply);flashRegion=action.id;clearTimeout(flashTimer);paintHighlight();flashTimer=setTimeout(()=>{flashRegion='';paintHighlight()},650);paint()}
+ const stageBinding=triggerBinding(stage),releaseHolds=()=>triggers.stopHolds(),releaseKeys=e=>{if([' ','Enter'].includes(e.key))releaseHolds()},stopForBlur=()=>{triggers.stopAll();commands?.cancel()},stopForHidden=()=>{if(document.hidden){triggers.stopAll();commands?.cancel();stopAudio()}};window.addEventListener('keyup',releaseKeys);document.addEventListener('visibilitychange',stopForHidden);window.addEventListener('pointerup',releaseHolds);window.addEventListener('pointercancel',releaseHolds);window.addEventListener('blur',stopForBlur)
  stage.addEventListener('pointermove',e=>{stage.style.cursor=!loading&&role.tools.find(t=>t.id===state.tool)?.areas.some(a=>layers.hitTest('interaction',e.clientX,e.clientY,role.hitAreas).includes(a.id))?'pointer':'default'})
  const up=button('↑ 列表',()=>chapter?.up?.()),back=button('返回',()=>chapter?.back?.()),settings=button('设置',()=>{settingsPanel.open=!settingsPanel.open}),replay=button('重播',()=>{if(lastReply)triggers.request('replay',{kind:'replay',reply:lastReply})}),reset=button('重置角色',()=>{saved[role.id]={};chooseRole(role.id)}),diag=el('details','gal-interaction-diag'),summary=el('summary','','诊断'),details=el('pre');diag.append(summary,details);diag.addEventListener('toggle',()=>{details.textContent=[...errors].join('\n')||'无错误'})
  up.disabled=!chapter?.up;back.disabled=!chapter?.back;bar.append(up,back,settings,replay,reset)
@@ -92,7 +99,7 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
  slider('触发间隔','interval',.2,10,.1,.001,' 秒');slider('文本背景不透明度','textOpacity',0,100,1,100,'%');slider('文字大小','fontScale',60,200,1,100,'%');slider('语音音量','voiceVolume',0,100,1,100,'%');slider('音效音量','sfxVolume',0,100,1,100,'%')
  const waitLabel=el('label','gal-interaction-more-field'),wait=el('input');wait.type='checkbox';wait.checked=preferences.waitVoice;wait.setAttribute('aria-label','语音结束再触发');wait.addEventListener('change',()=>{preferences.waitVoice=wait.checked;persist();triggers.notify()});waitLabel.append(wait,el('span','','语音结束再触发'));moreBody.append(waitLabel,el('p','','模式：1 单次；↻ 点击后重复，再点停止；▥ 按住重复。区域模式可覆盖当前互动的默认模式。'))
  paintTextSettings()
- stage.append(backdrop,world,speech);viewport.append(stage,rail);root.append(viewport,bar,status,diag);container.replaceChildren(root)
+ stage.append(backdrop,world,speech,choices);viewport.append(stage,rail);root.append(viewport,bar,status,diag);container.replaceChildren(root)
  const observer=new ResizeObserver(()=>{viewport.style.setProperty('--gal-interaction-height',stage.clientHeight+'px');if(role&&!destroyed)paint()});observer.observe(stage)
  const visibility=new IntersectionObserver(entries=>{visible=entries.some(e=>e.isIntersecting);layers.setPaused(!visible);if(!visible){triggers.stopAll();stopAudio()}});visibility.observe(root)
  root.tabIndex=0;root.addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.fullscreenElement)onEscape?.()})

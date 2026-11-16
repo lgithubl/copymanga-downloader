@@ -4413,6 +4413,7 @@ function renderGal(reader) {
     onToggleImmersive: toggleGalImmersive,
     onEscape: () => exitGalImmersive({ remember: true }),
     chapter: {
+      select: nodeId => galNavigate(reader, nodeId, 'self').catch(error => alert(error.message)),
       // 脚本里的 goto（选项跳到别的脚本）：把这份标成看完，直接接着播目标脚本；返回 true = 已经跳走
       jump: async (nodeId) => {
         if (!nodeId || !galChainAllowed()) return false

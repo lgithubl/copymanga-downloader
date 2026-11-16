@@ -379,10 +379,11 @@ export function compileRpgEvents(list, ctx, meta) {
     if (!count || remaining) raw('script-unhandled', text)
   }
   const condition = (p,argumentsOfCall=[]) => {
-    if(p[0]===12){const value=hakubox.condition?.(p[1],truth(when())!==false);if(value!==undefined){const key=`rpg:hakubox-condition:${serial++}`;initial.set(key,Number(value));return{var:key,op:'===',value:1}}}
+    if(p[0]===12){const value=hakubox.condition?.(p[1],truth(when())!==false);if(value!==undefined){const key=`rpg:hakubox-condition:${serial++}`;if(ctx.hakuboxInteraction)emit({op:'interactionCondition',source:p[1],var:key});else initial.set(key,Number(value));return{var:key,op:'===',value:1}}}
     const argument=p[0]===12&&/^this\._arguments\[(\d+)\]\s*(===|!==|>=|<=|>|<|==|!=)\s*(-?\d+)$/.exec(String(p[1]).trim())
     if(argument&&argumentsOfCall[Number(argument[1])])return {var:argumentsOfCall[Number(argument[1])],op:argument[2],value:Number(argument[3])}
     if(meta.memoryReplay&&p[0]===12&&/^Iz\.Life\.MemoryUtil\.isMemoryScene\(\)$/.test(String(p[1]).trim()))return {var:variable(1054,'s'),op:'===',value:1}
+    if(ctx.hakuboxInteraction&&p[0]===12){const key=`rpg:interaction-condition:${serial++}`;emit({op:'choice',id:key,var:key,options:[{value:1,segments:[{text:'条件成立：'+p[1]}]},{value:0,segments:[{text:'条件不成立：'+p[1]}]}]});return{var:key,op:'===',value:1}}
     if (p[0] === 0) return { var: variable(p[1], 's'), op: '===', value: p[2] === 0 ? 1 : 0 }
     if (p[0] === 1) return { var: variable(p[1]), op: ['===', '>=', '<=', '>', '<', '!=='][p[4]] || '===', ...(p[2] === 0 ? { value: p[3] } : { valueVar: variable(p[3]) }) }
     if(p[0]===2){const key=`rpg:self:${mapId}:${activeEventId}:${p[1]}`;if(!initial.has(key))initial.set(key,0);return{var:key,op:'===',value:p[2]===0?1:0}}

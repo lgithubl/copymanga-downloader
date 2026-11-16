@@ -1,3 +1,4 @@
+import{hakuboxInteraction}from'./rpgmaker-hakubox-interaction.mjs'
 import{prepareHakubox}from'./rpgmaker-hakubox.mjs'
 import {prepareKoakumaAnimation,parseKoakumaGallery} from './rpgmaker-koakuma-animation.mjs'
 import {prepareLocalization} from './rpgmaker-localization.mjs'
@@ -100,6 +101,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   prepareTemplates(ctx)
   ctx.memoryReplays = new Map()
   ctx.catalogTree = buildCatalog(ctx)
+  if(ctx.plugins?.some(p=>p.name==='Hakubox_Core')&&ctx.common[302]?.name?.startsWith('涩涩动作:'))ctx.catalogTree.children.push({id:'interaction',title:'角色互动',children:[{id:'hakubox',title:'加奈 · 房间 / 冒险互动',script:join(root,'data/CommonEvents.json')+'::hakubox-interaction'}]})
   const recollection=recollectionCatalog(ctx)
   if(recollection&&o.special.enabled)ctx.catalogTree.children=[recollection,...ctx.catalogTree.children.filter(n=>n.id!=='special')]
   prepareActionSequences(ctx)
@@ -197,6 +199,7 @@ function buildCatalog(ctx) {
 export function parse(text, ctx, meta = {}) {
   const data = /(^|\/)CommonEvents\.json$/i.test(meta.rel || '') && ctx?.common?.length ? ctx.common : (ctx?.maps?.get(meta.sourceRel || meta.rel) || decodeJson(text)), o = optionsOf(meta.options || ctx?.options)
   const scene = String(meta.scene || '')
+  if(scene==='hakubox-interaction')return hakuboxInteraction(ctx)
   const nativeAnimation=/^koakuma-animation-(\d{4})$/.exec(scene),koakuma=nativeAnimation&&ctx?.koakumaAnimation?.families.get(nativeAnimation[1])
   if(koakuma)return parseKoakumaGallery(koakuma,ctx)
   const action=ctx?.actionGalleries?.get(`${meta.sourceRel||meta.rel}::${scene}`)

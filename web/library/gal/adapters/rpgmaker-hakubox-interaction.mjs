@@ -1,0 +1,21 @@
+import{hakuboxAdventure}from'./rpgmaker-hakubox-adventure.mjs'
+// Explicit native controls from the captured Hakubox plugins. No game JS executes.
+import{compileRpgEvents}from'./rpgmaker-events.mjs'
+const present=source=>({op:'interactionPresentation',source:'const _scene = SceneManager._scene;'+source+';_scene.updateTachie();'})
+export function hakuboxInteraction(ctx){
+ if(!ctx.plugins?.some(p=>p.name==='Hakubox_Core'))throw Error('Hakubox interaction context missing')
+ const compile=id=>{const e=ctx.common[id];if(!e)throw Error('Native interaction common event missing: '+id);return compileRpgEvents(e.list,{...ctx,hakuboxInteraction:true},{options:ctx.options,rel:'data/CommonEvents.json',scene:'common-'+id,eventId:id}).steps.flatMap(s=>s.commands)},resources=Object.fromEntries([...ctx.files].filter(f=>/img\/pictures\/adventure\/tachie\/.+\.png$/i.test(f)).map(f=>[f.replace(/\.png$/i,''),f])),base={outfits:[],faces:[],hitAreas:[]},roles=[]
+ const groups=[['Face','表情',Array.from({length:9},(_,i)=>String(i+1).padStart(2,'0'))],['SkirtState','裙子状态',['normal','half','none']],['PantState','服装状态',['normal','half','none']],...['IsNude','IsBroken','IsWet','IsWound'].map(n=>[n,({IsNude:'脱衣',IsBroken:'破损',IsWet:'湿身',IsWound:'伤痕'})[n],[false,true]])].map(([name,title,values])=>({id:name,title,default:String(values[0]),choices:values.map(value=>({id:String(value),title:typeof value==='boolean'?(value?'开启':'关闭'):({normal:'正常',half:'半脱',none:'脱下'})[value]||String(value),commands:[present('_scene.tachie'+name+' = '+JSON.stringify(value))]}))}))
+ for(const [id,title,Direction,IsReached]of[['front','正面','front',true],['back-a','背面 · 姿势 A','back',true],['back-b','背面 · 姿势 B','back',false]]){
+  const initial=[present('_scene.tachieDirection = '+JSON.stringify(Direction)+';_scene.tachieIsReached = '+IsReached)]
+  roles.push({...base,id:'adventure-'+id,sceneId:'adventure',sceneTitle:'冒险互动',variantControl:'姿势',title:'冒险互动 · '+title,characterId:'kana',characterTitle:'加奈',model:{commandModel:'hakubox-adventure-'+id,hakuboxAdventure:true,stage:ctx.stage,resources,initialCommands:initial},outfits:[{id:'native',title:'原作服装',groups}],faces:[],tools:[{id:'native',title:'原作互动',areas:[302,303,304,305,306,307,308].map(id=>({id:String(id),title:ctx.common[id].name.replace(/^.*[:：]/,''),buttonOnly:true,replies:[],commands:compile(id)}))}]})
+ }
+ // The standalone Spine scene has its own native camera and clothing skins.
+ const path='spine/kana_interact/jianai',skinSpec=skin=>({op:'spine',slot:'hakubox:interact',skel:path+'.json',atlas:path+'.atlas',textureMap:ctx.hakuboxTextures?.['kana_interact/jianai'],skin,stage:ctx.stage,nativePlace:true,kind:'still',place:{x:750-ctx.stage[0]/2,y:ctx.stage[1]/2-910,scale:.84},loop:true,patchTracks:true}),idle=skin=>({...skinSpec(skin),tracks:[{track:0,anim:skin==='03'?'idle_03':'idle_xx',loop:true},{track:1,anim:'face_01',loop:true}]}),motion=(anim,loop=false)=>({op:'spine',slot:'hakubox:interact',patchTracks:true,tracks:[{track:2,anim,loop,token:anim}]})
+ for(const [cloth,title,skin]of[['on','校服','01'],['half','半脱','02'],['off','脱衣','03']]){
+  const definitions=[['motou','摸头','motou_xx',66],['motui','摸腿','motui_xx',67],...cloth!=='on'?[['rounai','原作动作','rounai_'+skin,cloth==='half'?75:77]]:[],...cloth==='off'?[['jiurutou','原作动作 2','jiurutou_03',71],['tianru','原作动作 3','tianru_03',73],['lu','原作动作 4','lu_1_03',69],['rujiao','原作动作 5','rujiao_1_03',79]]:[]]
+  roles.push({...base,id:'native-'+cloth,sceneId:'room',sceneTitle:'房间互动',variantControl:'服装',title:'房间互动 · '+title,characterId:'kana',characterTitle:'加奈',model:{commandModel:'hakubox-native-'+cloth,initialCommands:[idle(skin)]},tools:[{id:'native',title:'原作互动',areas:definitions.map(([id,title,anim,event])=>({id,title:ctx.common[event].name.replace(/^\[.*?\]/,''),buttonOnly:true,replies:[],commands:[motion(anim,['lu','rujiao'].includes(id)),...compile(event)]}))}]})
+ }
+ const cover=[],render=hakuboxAdventure({enabled:true,stage:ctx.stage,emit:c=>cover.push(c),raw:()=>{},resource:(folder,name)=>resources[folder+'/'+name]||''});for(const c of roles[0].model.initialCommands)render(c.source)
+ return{steps:[{index:0,commands:cover}],stats:{notes:['原作冒险分层互动及房间 Spine 互动；方向与姿势使用原生模型；未读取或修改游戏存档，未知条件手动选择'],unresolved:{}},interaction:{format:'gal-interaction/1',initialRole:roles[0].id,roles,diagnostics:[]}}
+}

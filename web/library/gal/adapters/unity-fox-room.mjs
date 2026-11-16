@@ -50,11 +50,13 @@ export function parseFoxRoom(d,ctx,meta={}){
    else raw('native-flow-command:'+c.$type,source,Object.fromEntries(Object.entries(c).filter(([k])=>!['error','notOk'].includes(k))))
   }
  }
- const functions=Object.keys(room.functions),selected=/^flow-(\d+)$/.exec(meta.scene||''),name=selected?functions[Number(selected[1])]:'init';if(!name||!room.functions[name])throw Error('Fox native scene entry missing')
+ const actionOnly=typeof meta.interactionAction==='string',functions=Object.keys(room.functions),selected=/^flow-(\d+)$/.exec(meta.scene||''),name=actionOnly?meta.interactionAction:selected?functions[Number(selected[1])]:'init';if(!name||!room.functions[name])throw Error('Fox native scene entry missing')
+ if(!actionOnly){
  for(const warning of room.warnings||[])raw(warning.reason,room.source,warning)
  for(const[id,active]of Object.entries(room.objectStates||{}))emit({op:'set',var:'fox-active:'+id,value:Number(active)})
  for(const[target,g]of Object.entries(room.graphics||{})){const model=modelFor(target);paint(target,{visible:g.chain.every(id=>room.objectStates[id]),...(g.skin?{skin:g.skin}:{}),tracks:g.animation&&model.animations.some(a=>a.name===g.animation)?[{track:0,anim:g.animation,loop:g.loop,timeScale:g.timeScale}]:[]})}
  const main=modelFor('');paint('',{skin:room.initial.skin||ctx.options.skin,tracks:!room.graphics?.['']&&main.animations.some(a=>a.name==='view')?[{track:0,anim:'view',loop:true}]:[]})
+ }
  if(selected&&name!=='init'&&room.functions.init){bootstrap=true;try{call('init')}finally{bootstrap=false}}
  emit({op:'label',name});call(name);drainDialogue();flush();
  if(meta.scene==='interactive'){
@@ -62,5 +64,5 @@ export function parseFoxRoom(d,ctx,meta={}){
   for(let round=0;round<limit;round++)guarded(running,1,()=>{const choice=select('原生互动 · '+(round+1)+'/'+limit,[...actions,'结束互动'],room.source,true);actions.forEach((action,i)=>guarded(choice,i,()=>{emit({op:'label',name:action});call(action);drainDialogue();flush()}));guarded(choice,actions.length,()=>emit({op:'set',var:running,value:0}));flush()})
   guarded(running,1,()=>{raw('native-interaction-limit',room.source,limit);emit({op:'ui',visible:true});emit({op:'text',segments:segments('本次互动预览已达到 '+limit+' 轮；可重播，或调整 interactionLimit。')})});guarded(running,0,()=>{emit({op:'ui',visible:true});emit({op:'text',segments:segments('互动结束')})});flush()
  }
- if(thumbnail){const commands=steps.flatMap(s=>s.commands).filter(c=>!['wait','text','speaker','choice','ui'].includes(c.op));steps.splice(0,steps.length,{index:0,commands})}if(!steps.length)steps.push({index:0,commands:[]});steps[0].commands.unshift(...[...stateNames].map(varName=>({op:'set',var:varName,value:UNKNOWN})));stats.commands=emitted;return{steps,stats}
+ if(thumbnail){const commands=steps.flatMap(s=>s.commands).filter(c=>!['wait','text','speaker','choice','ui'].includes(c.op));steps.splice(0,steps.length,{index:0,commands})}if(!steps.length)steps.push({index:0,commands:[]});steps[0].commands.unshift(...[...stateNames].map(varName=>({op:'set',var:varName,value:UNKNOWN,...(actionOnly?{ifAbsent:true}:{})})));stats.commands=emitted;return{steps,stats}
 }

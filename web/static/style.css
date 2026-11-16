@@ -5011,3 +5011,9 @@ h2 {
 .gal-interaction-more-field>span { flex:1; min-width:5rem; }
 .gal-interaction-more-body input[type=range] { flex:1; width:7rem!important; min-width:4rem; }
 .gal-interaction-more-body p { margin:0; font-size:.75rem; color:#ffffffb0; }
+
+.gal-interaction-speech { pointer-events:auto; cursor:pointer; }
+.gal-interaction-native-choices { position:absolute; z-index:20; inset:20% 15% auto; display:flex; flex-direction:column; gap:.5rem; background:#151820ee; border-radius:.5rem; padding:.7rem; }
+.gal-interaction-native-choices:empty { display:none; }
+
+@media(min-width:800px) { .gal-interaction[data-command-interaction=true] .gal-interaction-view { box-sizing:border-box; padding-right:11.8rem; } .gal-interaction[data-command-interaction=true] .gal-interaction-rail { right:.3rem; } }
