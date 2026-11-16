@@ -2,10 +2,11 @@ import path from'node:path'
 import{UnityReader,monoHeader,readTextObject}from'./unity-io.mjs'
 import{unityUiImagePrefix}from'./unity-scene.mjs'
 import{spineMetadata}from'./spine-metadata.mjs'
+import{foxDialogue,foxRoom}from'./unity-fox-room.mjs'
 // Native scene -> SkeletonGraphic -> SkeletonDataAsset -> atlas/material/texture.
 // This is a CG/animation gallery; interactive game controllers are not executed.
 export async function indexSpineGallery(api){
- const{store,scripts,add,object}=api,a=await store.asset('globalgamemanagers'),settings=a.objects.find(o=>o.classId===141);if(!settings)throw Error('Native Unity BuildSettings absent');const r=new UnityReader(await store.data(settings)),scenes=r.list(()=>r.str()),models=new Map()
+ const{store,scripts,add,object}=api,a=await store.asset('globalgamemanagers'),settings=a.objects.find(o=>o.classId===141);if(!settings)throw Error('Native Unity BuildSettings absent');const r=new UnityReader(await store.data(settings)),scenes=r.list(()=>r.str()),models=new Map(),story=await foxDialogue(api)
  const skeleton=async(o)=>{
   const identity=path.basename(o.asset.file)+':'+o.pathId;if(models.has(identity))return models.get(identity)
   if(await store.type(o)!=='SkeletonDataAsset')throw Error('Native SkeletonGraphic data reference is not SkeletonDataAsset')
@@ -21,7 +22,7 @@ export async function indexSpineGallery(api){
   const file='level'+i;if(!store.files.has(file))throw Error('Native CG scene file absent: '+file);const scene=await store.asset(file),matches=[]
   for(const o of scene.objects.filter(o=>o.classId===114)){if(await store.type(o)!=='SkeletonGraphic')continue;const h=monoHeader(await store.data(o)),go=await store.ptr(o.asset,h.gameObject),d=await store.decode(go);if(d.m_Name!=='Main')continue;const ui=unityUiImagePrefix(await store.data(o)),asset=await store.ptr(o.asset,ui.sprite);if(!asset)continue;matches.push(await skeleton(asset))}
   if(matches.length!==1)throw Error('Native CG Main skeleton absent/ambiguous: '+source)
-  const model=matches[0],name=path.posix.basename(source,'.unity')+'.uspine';scripts.push({name,data:{format:'unity-spine-gallery/1',name:path.posix.basename(source,'.unity'),source:file,model:model.id}})
+  const model=matches[0],name=path.posix.basename(source,'.unity')+'.uspine',room=await foxRoom(api,scene,skeleton,model);scripts.push({name,data:{format:'unity-spine-gallery/1',name:path.posix.basename(source,'.unity'),source:file,model:model.id,room}})
  }
- api.context={format:'unity-spine-gallery-context/1',models:Object.fromEntries(models),scenes:scripts.map(s=>({name:s.data.name,script:api.cfg.dir+'/script/'+s.name,model:s.data.model})),notes:['原生CG骨架/动作资源预览；未执行经营、触摸、参数控制或剧情控制器']}
+ api.context={format:'unity-spine-gallery-context/1',models:Object.fromEntries(models),...story,scenes:scripts.map(s=>({name:s.data.name,script:api.cfg.dir+'/script/'+s.name,model:s.data.model,functions:Object.keys(s.data.room.functions)})),notes:['原生CG互动片段：动作多轨道、原生对话/配音及声音开关；未模拟经营、触摸命中与连续数值状态，数值条件由手动选择并保留诊断']}
 }

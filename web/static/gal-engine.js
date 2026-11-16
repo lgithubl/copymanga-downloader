@@ -208,7 +208,11 @@ export function applyCommand(state, command, choices = null) {
       break
     case 'spine': {
       const { op: _op, when: _when, ...spec } = command
-      state.spines[command.slot] = spec
+      if(spec.patchTracks){
+        const old=state.spines[command.slot]||{},tracks=new Map((old.tracks||[]).map(t=>[t.track,t]))
+        for(const t of spec.tracks||[])if(t.anim)tracks.set(t.track,t);else tracks.delete(t.track)
+        state.spines[command.slot]={...old,...spec,exactTracks:true,tracks:[...tracks.values()].sort((a,b)=>a.track-b.track)}
+      }else state.spines[command.slot] = spec
       break
     }
     case 'spineOff':

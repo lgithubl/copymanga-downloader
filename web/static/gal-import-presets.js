@@ -1,7 +1,7 @@
 // Shared source for the import dropdown and its JSON presets.
 // Only registered playback adapters belong here; format probes are not importable adapters.
 export const GAL_PRESETS = {
-  unitySpine:{label:'Unity Spine 原生CG动作预览（经营/触摸控制器未执行；改 id / title）',adapters:['unityspine::gallery'],game:{id:'unityspine::game',title:''}},
+  unitySpine:{label:'Unity Spine 原生CG互动片段（数值条件手动选；经营/触摸未模拟；改 id / title）',adapters:['unityspine::gallery'],game:{id:'unityspine::game',title:''}},
   catpaw:{label:'CatPaw future 原生剧情（部分演出待核对；改 title）',adapters:['catpaw::script'],game:{id:'catpaw::future',title:''}},
   orcx:{label:'OrcX 原生剧情（部分演出待核对；改 id / title）',adapters:['orcx::script'],game:{id:'orcx::game',title:''}},
   celltalk:{label:'CellTalk 原生控制器预览（celltalk::native；已核对的 IL2CPP 版本）',adapters:['celltalk::native'],game:{id:'celltalk::game',title:''}},

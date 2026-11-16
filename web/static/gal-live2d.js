@@ -357,7 +357,9 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
     const r = runtime
     if (!r || !gl) return
     r.params.set(r.base)
-    if (r.motion) evaluateMotion(r.motion, seconds, r.entry.model, r.params, r.frame, r.loop)   // 不循环：停在最后一帧
+    if(r.motions?.length)for(const motion of r.motions)evaluateMotion(motion,seconds,r.entry.model,r.params,r.frame,r.loop)
+    else if (r.motion) evaluateMotion(r.motion, seconds, r.entry.model, r.params, r.frame, r.loop)   // 不循环：停在最后一帧
+    if(r.spec.variablesAfterMotion)applyVariables(r.entry.model,r.entry.nameToId,r.spec.variables,r.params)
     applyExpression(r.entry.model, r.expression, r.params)
     updateModel(r.entry.model, r.frame, r.params)
     draw(r.entry, r.frame)
@@ -371,7 +373,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       if (!runtime.t0) runtime.t0 = now
       renderAt((now - runtime.t0) / 1000)
     }
-    if (runtime.motion || !runtime.drawnOnce) { runtime.drawnOnce = true; raf = requestAnimationFrame(loop) }
+    if (runtime.motion || runtime.motions?.length || !runtime.drawnOnce) { runtime.drawnOnce = true; raf = requestAnimationFrame(loop) }
   }
   const kick = () => { if (!raf && !paused && runtime) raf = requestAnimationFrame(loop) }
 
@@ -380,9 +382,12 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       const [w,h]=spec.stage,[cw,ch]=[entry.model.canvas.width,entry.model.canvas.height]
       canvas.style.inset='auto';canvas.style.left=(Number(spec.x??w/2)/w*100)+'%';canvas.style.top=(Number(spec.y??h/2)/h*100)+'%'
       canvas.style.width=(cw*Math.abs(Number(spec.scaleX??1))/w*100)+'%';canvas.style.height=(ch*Math.abs(Number(spec.scaleY??1))/h*100)+'%';canvas.style.transform='translate(-50%,-50%)';canvas.style.zIndex=String(spec.z??3)
+    }else if(spec?.fit==='contain'){
+      const w=parent.clientWidth||1,h=parent.clientHeight||1,cw=entry.model.canvas.width,ch=entry.model.canvas.height,k=Math.min(w/cw,h/ch)
+      canvas.style.inset='auto';canvas.style.left=canvas.style.top='50%';canvas.style.width=(cw*k/w*100)+'%';canvas.style.height=(ch*k/h*100)+'%';canvas.style.transform='translate(-50%,-50%)';canvas.style.zIndex=String(spec.z??3)
     }else {canvas.style.inset='0';canvas.style.width=canvas.style.height='100%';canvas.style.transform='';canvas.style.zIndex=''}
   }
-  const sig = (spec) => (spec ? JSON.stringify([spec.src, spec.motion || '', spec.motionGroup || '', spec.motionIndex||0, spec.motionToken||0, spec.expression || '', Boolean(spec.loop), spec.variables || null]) : '')
+  const sig = (spec) => (spec ? JSON.stringify([spec.src, spec.motion || '', spec.motionGroup || '', spec.motionGroups||null, spec.motionIndex||0, spec.motionToken||0, spec.expression || '', Boolean(spec.loop), spec.variables || null,Boolean(spec.variablesAfterMotion)]) : '')
   let currentSig = ''
   let showMosaic = false
 
@@ -402,6 +407,8 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       if (destroyed || mine !== token) return
       const file = spec.motionGroup ? entry.groups[spec.motionGroup]?.[Number(spec.motionIndex)||0]?.File || '' : pickMotionFile(entry.files, spec.motion)
       const motion = await loadMotion(entry, file)
+      const motionGroups=Object.entries(spec.motionGroups||{}).sort(([a],[b])=>Number(a)-Number(b)),motions=[]
+      for(const[,group]of motionGroups){const file=entry.groups[group]?.[0]?.File;if(!file){onMissing(spec.src+'#motion:'+group);continue}const m=await loadMotion(entry,file);if(m)motions.push(m)}
       if (destroyed || mine !== token) return
       let expression = null
       if (spec.expression) {
@@ -415,7 +422,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
       const frame = createFrame(entry.model)
       const base = Float32Array.from(entry.model.paramDefault)
       applyVariables(entry.model, entry.nameToId, spec.variables, base)
-      runtime = { entry, frame, base, params: Float32Array.from(base), motion, expression, loop: Boolean(spec.loop), t0: 0, last: 0, drawnOnce: false, spec }
+      runtime = { entry, frame, base, params: Float32Array.from(base), motion, motions, expression, loop: Boolean(spec.loop), t0: 0, last: 0, drawnOnce: false, spec }
       layout(entry,spec)
       canvas.hidden = false
       renderAt(0)
@@ -423,7 +430,7 @@ export function createLive2dLayer({ parent, before = null, url, onMissing = () =
     },
     setMosaic(value) { const next = Boolean(value); if (next === showMosaic) return; showMosaic = next; if (runtime) { renderAt(runtime.last ? (runtime.last - runtime.t0) / 1000 : 0); kick() } },
     setPaused(value) { paused = Boolean(value); if (paused) { if (raf) { cancelAnimationFrame(raf); raf = 0 } } else { if (runtime) runtime.last = 0; kick() } },
-    info() { return runtime ? [{ src: runtime.spec.src, motion: runtime.spec.motionGroup || runtime.spec.motion || '', motionFile: runtime.spec.motionGroup ? runtime.entry.groups[runtime.spec.motionGroup]?.[Number(runtime.spec.motionIndex)||0]?.File || '' : pickMotionFile(runtime.entry.files, runtime.spec.motion), meshes: runtime.entry.model.counts.artMeshes, drawn: runtime.frame.renderOrder.length }] : [] },
+    info() { return runtime ? [{ src: runtime.spec.src, motion: Object.values(runtime.spec.motionGroups||{}).join(' / ') || runtime.spec.motionGroup || runtime.spec.motion || '', motionGroups:runtime.spec.motionGroups||null, motionFiles:Object.values(runtime.spec.motionGroups||{}).map(g=>runtime.entry.groups[g]?.[0]?.File||''), motionFile: runtime.spec.motionGroup ? runtime.entry.groups[runtime.spec.motionGroup]?.[Number(runtime.spec.motionIndex)||0]?.File || '' : pickMotionFile(runtime.entry.files, runtime.spec.motion), meshes: runtime.entry.model.counts.artMeshes, drawn: runtime.frame.renderOrder.length }] : [] },
     glInfo() { return gl ? [{ renderer: gl.getParameter(gl.RENDERER), lost: gl.isContextLost?.() ?? false, canvas: `${canvas.width}×${canvas.height}` }] : [] },
     destroy() { destroyed = true; if (raf) cancelAnimationFrame(raf); runtime = null; canvas.remove(); try { gl?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* 没有就算了 */ } },
   }

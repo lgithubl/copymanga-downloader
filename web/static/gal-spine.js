@@ -567,6 +567,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
 
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
   function applySpec(inst, spec, live) {
+    const oldOpacity=inst.skeleton.color.a,oldTarget=inst.spec?.opacity
     inst.spec = spec
     const skinChanged = (Array.isArray(spec.skins) && spec.skins.length ? JSON.stringify(spec.skins.filter(n => typeof n === 'string' && n)) : typeof spec.skin === 'string' ? spec.skin : '') !== (inst.skinRequested || '')
     if (skinChanged) {
@@ -581,18 +582,21 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       Object.assign(inst, { skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found })
     }
     // 多轨道（girlscreation 的角色：轨道 0 身体、轨道 1 表情，同时播）：spec.tracks = [{ track, anim, loop }]；名字对不上的轨道跳过并记下来（诊断面板里看）
-    const tracked = Array.isArray(spec.tracks) && spec.tracks.length > 0
+    const tracked = Array.isArray(spec.tracks) && (spec.tracks.length > 0 || spec.exactTracks)
     const name = tracked ? (spec.tracks.find((t) => inst.data.findAnimation(t.anim))?.anim || '') : pickAnimation(inst.data, spec.anim, spec.kind)
     let changed = false
     if (tracked) {
       inst.trackSig = inst.trackSig || {}
       inst.missingAnims = []
+      if(spec.exactTracks)for(const track of Object.keys(inst.trackSig))if(!spec.tracks.some(t=>t.track===Number(track))){inst.state.clearTrack(Number(track));delete inst.trackSig[track];changed=true}
       for (const t of spec.tracks) {
         if (!inst.data.findAnimation(t.anim)) { inst.missingAnims.push(t.anim); continue }
-        const sig = `${t.anim}:${t.loop !== false}`
+        const sig = `${t.anim}:${t.loop !== false}:${t.token??''}`
         if (inst.trackSig[t.track] === sig) continue
         const previous = inst.state.tracks[t.track]
         const entry = inst.state.setAnimation(t.track, t.anim, t.loop !== false)
+        if(Number.isFinite(t.timeScale))entry.timeScale=Math.max(0,t.timeScale)
+        if(Number.isFinite(t.trackTime)&&t.trackTime>=0)entry.trackTime=t.trackTime
         if (live && previous && Number(t.mix) > 0) entry.mixDuration = Math.min(1, Number(t.mix))
         inst.trackSig[t.track] = sig
         changed = true
@@ -642,6 +646,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     }
     const shade = spec.dim ? 0.5 : 1
     inst.skeleton.color.set(shade, shade, shade, Number.isFinite(spec.opacity) ? Math.max(0, Math.min(1, spec.opacity)) : 1)
+    if(live&&Number(spec.opacitySeconds)>0&&oldTarget!==spec.opacity){inst.opacityFade={from:oldOpacity,to:inst.skeleton.color.a,began:performance.now(),ms:Number(spec.opacitySeconds)*1000};inst.skeleton.color.a=oldOpacity}
+    else if(!live)inst.opacityFade=null
     // 角色抖动（SPINE_ACTOR_SHAKE）：同一个 id 只在播放中抖一次；一步到位（后退 / 续播）只记下 id，不补抖
     if (spec.shake && spec.shake.id !== inst.shakeId) {
       inst.shakeId = spec.shake.id
@@ -873,6 +879,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
           inst.skeleton.color.set(shade, shade, shade, t * (Number.isFinite(inst.spec.opacity) ? Math.max(0, Math.min(1, inst.spec.opacity)) : 1))
           if (t >= 1) inst.fadeIn = null
         }
+        if(inst.opacityFade){const t=Math.min(1,(performance.now()-inst.opacityFade.began)/inst.opacityFade.ms);inst.skeleton.color.a=inst.opacityFade.from+(inst.opacityFade.to-inst.opacityFade.from)*t;if(t>=1)inst.opacityFade=null}
         if (inst.slow) {
           const t = Math.min(1, (performance.now() - inst.slow.began) / 1000)
           inst.state.timeScale = inst.slow.from + (inst.slow.to - inst.slow.from) * t

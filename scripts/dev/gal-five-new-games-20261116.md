@@ -1,6 +1,6 @@
 # OrcX、RJ01375307、future、RJ01562637 接入记录
 
-日期：2026-11-16。布局脚本版本：2.73.0。需要更新统一镜像；仅替换 tag 脚本不能提供这些新增解析器。
+日期：2026-11-16。布局脚本版本：2.74.0。需要更新统一镜像；仅替换 tag 脚本不能提供这些新增解析器。
 
 ## 导入配置
 
@@ -11,7 +11,7 @@
 | RJ01743835/OrcX | `["orcx::script"]` | `orcx::RJ01743835` | 原生剧情、背景、立绘、CG、声音；部分演出标签待核对 |
 | RJ01375307 | `["rpgmaker-json"]` | `rpgmaker::rj01375307` | 复用 RPG Maker MZ，增加原生 Hakubox 插件命令、配音及 Spine 多皮肤支持 |
 | future | `["catpaw::script"]` | `catpaw::future` | 本地主线、回想、Live2D、声音；部分摆放和控制器演出尚未还原 |
-| RJ01562637 | `["unityspine::gallery"]` | `unityspine::RJ01562637` | 原生 CG／动作预览；未执行经营、触摸或剧情控制器 |
+| RJ01562637 | `["unityspine::gallery"]` | `unityspine::RJ01562637` | 原生开场/对话、配音、多轨动作及互动片段；数值条件手动选择，未模拟经营/触摸控制器 |
 
 ```json
 {
@@ -61,11 +61,14 @@
 
 ### RJ01562637
 
-- Fox Sex Farm，Unity 2021.3.45f2。目录里的 Utage 示例不是主游戏剧情，未错误套用 Utage。
+- Fox Sex Farm，Unity 2021.3.45f2。上一版漏接了 sharedassets2.assets 中的正式 Story books，不能把这些对话都视为 Utage 示例；2.74.0 已沿原生控制器的 CallAVG 标签串回这些原始文本和配音。
 - BuildSettings 有 32 个场景，其中 28 个原生 CG 房间。沿实际 level → Main SkeletonGraphic → SkeletonDataAsset → atlas/material/Texture2D 引用读取。
 - 全部 28 个 CG 骨架及动作表解析通过；每个含 14–137 个动作，总计 2,092 个动作预览步骤。
 - 实际导入列表有“特殊场景”和“角色CG”。`Ch02_Hcg01_黃毛正常位` 的 `z.premix/sex_lv1` 用真实 4096 图集在浏览器播放，Spine 4.2.43，无缺页/缺动作；连续帧变化、暂停稳定。
-- 当前是 CG 资源/动作预览，未接经营、触摸、配音调度、剧情控制器。界面选项、列表和 raw 诊断均注明这一范围。
+- 2.74.0 每个 CG 下有“原生开场 / 对话”“原生互动片段”“动作资源预览”。CG 控制数据用只读 Odin 二进制数据解析，不执行其 C# formatter、回调或游戏代码。7 本原始书籍中有 736 个标签，唯一名称的语音索引为 1,595 条；重复的音效名保留歧义诊断，不任选一个。
+- 28 个开场批量解析得到 119 步、64 条配音指令（包含随机分支展开，非去重台词数）；2,424 个原生函数入口均解析无异常。原生随机对话和依赖游戏数值的条件均供手动选择。原版禁用的指令不执行；调用循环有界并保留来源诊断。
+- 首个房间真实浏览器验证：身体轨道 0 `body/IdleBit_未插入待機` 与表情轨道 2 `face/IdleBit_未插入待機_Lv1` 同时显示、运动；A195、A196 对白音频分别实播 5.242/3.320 秒，PCM RMS 0.126/0.155。
+- 仍未模拟经营、触摸命中、连续数值状态、完整并发调度、依赖状态挑选的多音源，以及部分子对象视觉显隐。对应来源、字段与偏移进入 raw 诊断；不能称为完整游戏控制器复现。
 
 ### underworld 阻塞原因
 
@@ -86,3 +89,13 @@
 - Unity 2021 类布局来自 AssetRipper/TypeTreeDumps 的 2021.3.45f2；Animator 类布局来自 2022.3.0f1。SpineAtlasAsset/AtlasAssetBase 的字段结构与官方 spine-runtimes 4.2 源码及实际序列化字节核对。
 - 参数漂移守卫通过：42 个注册适配器、64 个布局配置；导入下拉浏览器测试通过。旧 krkr 布局、BGI、RPG Maker、Djibril、RexEX、Utage、Naninovel、Unity Unite/CellTalk 回归通过。
 - 真实浏览器报告：`browser-report.json`、`future-browser-report.json`、`fox-browser-report.json`；静态场景扫描报告：`all-scenes-report.json`、`rpg-audit.json`。这些报告留在上述本地 cache。
+
+## 2.74.0 演出补充
+
+- future：真实 angleRoleTalkPrefab 在 story/100000-0 第 100 个导出步骤（0-based 99）验证 185 网格、79 绘制网格；身体 await、服装 cloth_2、表情 face8、talk_fast 四条原生动作同时加载、播放及暂停通过，无缺失资源。高立绘按其原始画布比例显示，避免压扁。按原生 Animator 层号组合身体、衣服、表情及说话 motion3；同一句多个动作不再只留最后一个。保留未改动层，支持 roleTool 的第二组 key2/value2，显式参数在动画曲线后覆盖。精确普通立绘摆位及部分工具别名仍需继续核对。
+- Unity 虚拟模型缓存修复：同一物理 assets 中的不同生成 JSON 现在按虚拟名称区分缓存身份，Native 版本升到 13 自动失效旧缓存。真实 alose/anglerole 两份模型在重新创建 handler 后仍各自返回自己的 moc、图集和动作，避免模型串用。
+- RJ01375307：增加原生相对移动、帧数→秒的等待，以及渐隐目标透明度的实时过渡。真实浏览器读取到渐隐前/中/后 alpha 总量 31,184,414 / 28,318,700 / 0；逐步降低而非瞬间移除。
+- OrcX：没有扩展名的音效只在相同原生作用域内查唯一精确文件；存在多个候选时保留诊断，不靠近似文件名猜测。特殊 CG 差分等演出仍待可靠的原生映射。
+- 新增 gal-fox-room-selftest.mjs 和 gal-catpaw-native-selftest.mjs；前者验证数据边界、原始配音引用、手动分支、禁用指令、多轨 seek；后者用本地真实元数据回归同源不同模型缓存及重启后的身份。无新增运行时依赖或运行时下载。
+
+Odin 数据格式参考：[BinaryEntryType](https://github.com/TeamSirenix/odin-serializer/blob/master/OdinSerializer/Core/DataReaderWriters/Binary/BinaryEntryType.cs)、[BinaryDataReader](https://github.com/TeamSirenix/odin-serializer/blob/master/OdinSerializer/Core/DataReaderWriters/Binary/BinaryDataReader.cs)。仅据格式读取原始数据，不加载其运行时库。

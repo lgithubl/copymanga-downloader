@@ -34,7 +34,7 @@ export async function indexCatpaw(api){
   for(const[k,v]of Object.entries(refs.Motions||{}))clone.FileReferences.Motions[k]=v.map(m=>({...m,File:relative(file(m.File,'text'))}))
   if(refs.Physics)clone.FileReferences.Physics=relative(file(refs.Physics,'text'));if(refs.DisplayInfo)clone.FileReferences.DisplayInfo=relative(file(refs.DisplayInfo,'text'))
   if(refs.Expressions)clone.FileReferences.Expressions=refs.Expressions.map(e=>({...e,File:relative(file(e.File,'text'))}))
-  const src=json('Model-'+path.posix.basename(key)+'.json',clone,text.o.asset.file);models[key]={src,motions:Object.keys(refs.Motions||{})};modelDocs.set(key,{clone,file,relative})
+  const src=json('Model-'+path.posix.basename(key)+'.json',clone,text.o.asset.file);models[key]={src,motions:Object.keys(refs.Motions||{}),motionLayers:{},defaultMotions:{}};modelDocs.set(key,{clone,file,relative})
  }
  // Resolve declared prefab -> actual CubismMoc identity using native children.
  const controllerOf=async(o)=>decodeTree(await store.data(o),ANIMATION_TYPES[o.classId],{requireEnd:true})
@@ -51,10 +51,11 @@ export async function indexCatpaw(api){
   }
   if(mocs.size!==1)return'';const model=[...mocs][0],doc=modelDocs.get(model)
   for(let controller of controllers){if(controller.classId!==91)continue;const data=await controllerOf(controller),names=new Map(data.m_TOS.map(p=>[p.first,p.second]))
-   for(const machine of data.m_Controller.m_StateMachineArray)for(const entry of machine.data.m_StateConstantArray){const state=entry.data,alias=names.get(state.m_NameID);if(!alias)continue
+   for(const[mi,machine]of data.m_Controller.m_StateMachineArray.entries())for(const[si,entry]of machine.data.m_StateConstantArray.entries()){const state=entry.data,alias=names.get(state.m_NameID);if(!alias)continue
     const nodes=state.m_BlendTreeConstantArray.flatMap(t=>t.data.m_NodeArray).map(n=>n.data).filter(n=>!n.m_ChildIndices.length&&Number.isInteger(n.m_ClipID)&&data.m_AnimationClips[n.m_ClipID]);if(nodes.length!==1)continue
     const clip=await store.ptr(controller.asset,data.m_AnimationClips[nodes[0].m_ClipID]),source=clipPaths.get(clip?.asset.file+':'+clip?.pathId);if(!source||!pick(source+'.motion3',[49])||!source.startsWith(path.posix.dirname(model)+'/'))continue
     const relative=doc.relative(doc.file(path.posix.relative(path.posix.dirname(model),source)+'.motion3','text'));const existing=doc.clone.FileReferences.Motions[alias];if(existing&&existing[0]?.File!==relative)throw Error('CatPaw ambiguous native motion state: '+model+'/'+alias);doc.clone.FileReferences.Motions[alias]=[{File:relative}]
+    const layers=data.m_Controller.m_LayerArray.map((l,i)=>({i,data:l.data})).filter(l=>l.data.m_StateMachineIndex===mi);if(layers.length===1){models[model].motionLayers[alias]=layers[0].i;if(si===machine.data.m_DefaultState)models[model].defaultMotions[layers[0].i]=alias}
    }
   }
   models[model].motions=Object.keys(doc.clone.FileReferences.Motions);return model

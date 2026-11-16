@@ -59,7 +59,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
-  'unityspine::gallery':{dir:'arc',skin:'default',maxCommands:200000},
+  'unityspine::gallery':{dir:'arc',skin:'default',language:'zh-CN',maxCommands:200000},
   'catpaw::script':{dir:'arc',language:'zh-CN',stage:[1280,720],maxCommands:200000},
   'orcx::script':{dir:'arc',stage:[1280,720],maxCommands:200000},
   'rexex::event':{dir:'arc',stage:[1100,720],maxCommands:200000},
@@ -1736,12 +1736,12 @@ export const LAYOUTS = {
     count:[{dir:'arc/script',ext:'.cell',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['CellTalk 原生控制器静态预览；仅核对的 metadata 版本；存档条件手动选择，未还原演出报告 native 地址'],
   },
   unityspine:{
-    title:'Unity Spine CG预览 原生 Unity',kind:'unityspine',detector:'unityNative',family:'unityspine::',
+    title:'Unity Spine 原生CG / 互动片段',kind:'unityspine',detector:'unityNative',family:'unityspine::',
     bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','globalgamemanagers'],siblings:[],markers:[],
-    scriptRoots:[{id:'native',dir:'arc/script',label:'Unity Spine CG预览 剧情'}],resourceRoots:[''],adapters:['unityspine::gallery'],adapterOptions:{'unityspine::gallery':{dir:{path:['arc']}}},ruleTables:['unityspine::gallery'],ruleOverrides:{},
+    scriptRoots:[{id:'native',dir:'arc/script',label:'Unity Spine 原生CG / 对话'}],resourceRoots:[''],adapters:['unityspine::gallery'],adapterOptions:{'unityspine::gallery':{dir:{path:['arc']}}},ruleTables:['unityspine::gallery'],ruleOverrides:{},
     engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'unity-spine-gallery',scriptExt:'uspine',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
     config:{scriptExtensions:['uspine'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'原生动作',kind:'cmd',op:'spine',pick:'each',max:8}],pageSize:100},
-    count:[{dir:'arc/script',ext:'.uspine',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取原生CG场景的 SkeletonGraphic 引用、Spine 骨架及材质贴图；提供原生动作预览，未执行经营/触摸/剧情控制器'],
+    count:[{dir:'arc/script',ext:'.uspine',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取原生CG场景、互动片段、原始对话/配音及 Spine 多轨道；数值条件手动选择，未模拟经营及触摸控制器'],
   },
   catpaw:{
     title:'CatPaw future 原生 Unity',kind:'catpaw',detector:'unityNative',family:'catpaw::',
