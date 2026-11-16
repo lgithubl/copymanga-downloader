@@ -26,6 +26,12 @@ on:
         description: Optional short-lived URL for one captured AGE diagnostic fixture
         required: false
         default: ""
+      native_fixture_kind:
+        description: Captured fixture family
+        type: choice
+        options: [age, underworld]
+        default: age
+
       native_fixture_sha256:
         description: SHA256 of the captured AGE fixture archive
         required: false
@@ -56,7 +62,7 @@ jobs:
         run: docker pull "${{ inputs.image || 'ghcr.io/lgithubl/copymanga-downloader:vibe-test-20261008' }}"
 
       - name: Prepare one captured AGE scene
-        if: inputs.native_fixture_url != ''
+        if: inputs.native_fixture_url != '' && inputs.native_fixture_kind != 'underworld'
         env:
           FIXTURE_URL: ${{ inputs.native_fixture_url }}
           FIXTURE_SHA256: ${{ inputs.native_fixture_sha256 }}
@@ -88,6 +94,35 @@ jobs:
           print('One original SN0000 scene prepared; only captured loose files contain resource bytes.')
           PYAGE
 
+      - name: Prepare captured Underworld interaction data
+        if: inputs.native_fixture_url != '' && inputs.native_fixture_kind == 'underworld'
+        env:
+          FIXTURE_URL: ${{ inputs.native_fixture_url }}
+          FIXTURE_SHA256: ${{ inputs.native_fixture_sha256 }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$FIXTURE_URL"
+          curl -fL --max-time 180 "$FIXTURE_URL" -o "$RUNNER_TEMP/underworld-fixture.tar.gz"
+          printf '%s  %s\n' "$FIXTURE_SHA256" "$RUNNER_TEMP/underworld-fixture.tar.gz" | sha256sum -c -
+          python3 - <<'PYUW'
+          import os, pathlib, tarfile
+          base = pathlib.Path(os.environ['RUNNER_TEMP']) / 'data' / 'gal' / 'Underworld'
+          base.mkdir(parents=True, exist_ok=True)
+          total = 0
+          with tarfile.open(pathlib.Path(os.environ['RUNNER_TEMP']) / 'underworld-fixture.tar.gz') as archive:
+              for member in archive:
+                  rel = pathlib.PurePosixPath(member.name)
+                  if rel.is_absolute() or '..' in rel.parts or not member.isfile():
+                      raise RuntimeError('Unexpected fixture path/type')
+                  total += member.size
+                  if total > 192 * 1024**2:
+                      raise RuntimeError('Interaction fixture exceeds 192 MiB')
+                  target = base.joinpath(*rel.parts)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(archive.extractfile(member).read())
+          print('Original Underworld interaction resources prepared; no native game binaries.')
+          PYUW
+
       - name: Generate synthetic Gal demo data
         if: inputs.native_fixture_url == ''
         run: |
@@ -106,6 +141,7 @@ jobs:
       - name: Start web (HTTP) and import the demos
         env:
           NATIVE_FIXTURE_URL: ${{ inputs.native_fixture_url }}
+          NATIVE_FIXTURE_KIND: ${{ inputs.native_fixture_kind }}
         run: |
           set -e
           docker run -d --name copymanga-web \
@@ -131,12 +167,16 @@ jobs:
             curl -fsS http://127.0.0.1:8080/api/config > "$RUNNER_TEMP/age-config.json"
             node -e 'const fs=require("fs"),p=process.argv[1],c=JSON.parse(fs.readFileSync(p));c.mediaImportProfiles["gal-import"].defaultMetadataActions=[];fs.writeFileSync(p,JSON.stringify(c))' "$RUNNER_TEMP/age-config.json"
             curl -fsS -X POST http://127.0.0.1:8080/api/config -H 'Content-Type: application/json' --data-binary "@$RUNNER_TEMP/age-config.json" > /dev/null
-            import_gal 'AGE' "$(cat "$RUNNER_TEMP/data/age-profile.json")" 0
+            if [ "$NATIVE_FIXTURE_KIND" = underworld ]; then
+              import_gal 'Underworld' "$(cat "$RUNNER_TEMP/data/gal/Underworld/profile.json")" 0
+            else
+              import_gal 'AGE' "$(cat "$RUNNER_TEMP/data/age-profile.json")" 0
+            fi
             curl -fsS -X POST http://127.0.0.1:8080/api/library/index/rebuild >/dev/null
             for i in $(seq 1 30); do
               curl -fsS 'http://127.0.0.1:8080/api/library/items?type=gal' > "$RUNNER_TEMP/age-import.json"
               if node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1]));const items=Array.isArray(d)?d:d.items;process.exit(items?.length===1?0:1)' "$RUNNER_TEMP/age-import.json"; then
-                echo 'One original AGE item imported'; exit 0
+                echo 'One original item imported'; exit 0
               fi
               sleep 2
             done
@@ -296,7 +336,17 @@ jobs:
           exit 1
 
       # job 要 sleep 几十分钟，期间日志不开放下载，所以把 URL 单独发成 commit 评论（和 archive-gallery-demo 一样）
+      - name: Save connection info
+        run: |
+          printf '%s\n' '${{ steps.tunnel.outputs.url }}' > "$RUNNER_TEMP/gal-preview-url.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gal-preview-connection
+          path: ${{ runner.temp }}/gal-preview-url.txt
+          retention-days: 1
+
       - name: Post connection info as a commit comment
+        if: inputs.native_fixture_kind != 'underworld'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

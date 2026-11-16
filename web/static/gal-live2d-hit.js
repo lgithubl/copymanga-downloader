@@ -22,3 +22,15 @@ export function canvasModelPoint(canvas, model, clientX, clientY, spec={}) {
  if(spec.nativeOrigin?.scaleX<0)x=1-x;if(spec.nativeOrigin?.scaleY<0)y=1-y
  const c=model.canvas;return[(x*c.width-c.originX)/c.pixelsPerUnit,(y*c.height-c.originY)/c.pixelsPerUnit]
 }
+
+export function modelAreaPolygons(model,frame,area){
+ const i=area.mesh,v=frame.vertices[i];if(!v?.length||frame.artEnabled?.[i]===0)return[]
+ if(area.precision===0){let l=Infinity,r=-Infinity,t=Infinity,b=-Infinity;for(let n=0;n<v.length;n+=2){l=Math.min(l,v[n]);r=Math.max(r,v[n]);t=Math.min(t,v[n+1]);b=Math.max(b,v[n+1])}return[[[l,t],[r,t],[r,b],[l,b]]]}
+ if(area.precision!==1)return[]
+ const polygons=[];for(let n=model.artIndexStart[i];n<model.artIndexStart[i]+model.artIndexCount[i];n+=3)polygons.push([0,1,2].map(k=>{const p=model.vertexIndices[n+k]*2;return[v[p],v[p+1]]}));return polygons
+}
+export function modelCanvasPoint(canvas,model,x,y,spec={}){
+ const r=canvas.getBoundingClientRect(),c=model.canvas;let u=(x*c.pixelsPerUnit+c.originX)/c.width,v=(y*c.pixelsPerUnit+c.originY)/c.height
+ if(spec.nativeOrigin?.scaleX<0)u=1-u;if(spec.nativeOrigin?.scaleY<0)v=1-v
+ return[r.left+u*r.width,r.top+v*r.height]
+}

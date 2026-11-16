@@ -20,3 +20,7 @@ export function interactionFeedback(role,state,hits){
  const index=state.replies[tool.id]||0,reply=action.replies[index%Math.max(1,action.replies.length)]||null;state.replies[tool.id]=(index+1)%Math.max(1,action.replies.length)
  return{action,reply}
 }
+
+export function interactionRegions(role,state){
+ const tool=role.tools.find(t=>t.id===state.tool),known=new Set(role.hitAreas.map(a=>a.id));return[...new Set((tool?.areas||[]).map(a=>a.id))].filter(id=>known.has(id)).map((id,i)=>({id,title:role.hitAreas.find(a=>a.id===id)?.title||'区域 '+(/(\d+)$/.exec(id)?.[1]||i+1)}))
+}
