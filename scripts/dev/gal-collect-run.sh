@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.62"
+VERSION="2.63"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1756,7 +1756,7 @@ def fuyu_edo_detail_files(items,label):
         if not (label in ('RJ01746557','future','RJ01562637','RJ01375307') and re.search(r'(?:^|/)arc/(?:native\.json|\.unity-stamp\.json|script/replay/scene4\.nani)$',rel,re.I) or re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
         if re.search(r'(^|/)(cache|script-backups|repair-backups|bundles)(/|$)',rel,re.I):continue
         if e.size>16*MB:raise RuntimeError('Pair runtime file exceeds16MiB: '+rel)
-        with open(e.path,'rb')as f:b=f.read(4*MB+1)
+        with open(e.path,'rb')as f:b=f.read(e.size+1)
         total+=len(b)
         if len(b)!=e.size:raise RuntimeError('Pair runtime data changed: '+rel)
         if label=='future'and rel.endswith('/arc/native.json'):
