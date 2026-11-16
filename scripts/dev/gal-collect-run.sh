@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.61"
+VERSION="2.62"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1491,7 +1491,7 @@ def next_game_label(name):
     name=re.sub(r'^(?:\[[^\]]+\]\s*)+','',name)
     return next((label for label,pattern in NEXT_GAME_PATTERNS if re.fullmatch(pattern,name,re.I)),None)
 
-PAIR_ACTIVE_GAMES = ['underworld','future','RJ01375307']
+PAIR_ACTIVE_GAMES = ['underworld','future']
 PAIR_GAME_PATTERNS = [(name,pattern) for name,pattern in [('RJ01562637', r'RJ01562637(?:[^0-9].*)?'), ('RJ01375307', r'RJ01375307(?:[^0-9].*)?'), ('future', r'future(?:[ _-]*v?[0-9.]+)?'), ('underworld', r'underworld(?:[ _-]*v?[0-9.]+)?'), ('RJ01743835', r'(?:RJ01743835(?:[^0-9].*)?|OrcX(?:[ _-]*(?:ver|v)?[0-9.]+)?)'), ('RJ01610452', r'RJ01610452(?:[^0-9].*)?'), ('RJ01319586', r'RJ01319586(?:[^0-9].*)?'), ('RJ01007726', r'RJ01007726(?:[^0-9].*)?'), ('dennou-djibril', r'dennou[ _-]+djibril(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01516248', r'RJ01516248(?:[^0-9].*)?'), ('RJ01234887', r'RJ01234887(?:[^0-9].*)?'), ('RJ01746557', r'RJ01746557(?:[^0-9].*)?'), ('fuyukuru', r'fuyukuru(?:[ _-]*v?[0-9.]+)?'), ('えどわ～る', r'えどわ[~〜～ー]?る(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('meshiagirl', r'meshiagirl(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01687472', r'RJ01687472(?:[^0-9].*)?'), ('RJ01610188', r'RJ01610188(?:[^0-9].*)?'), ('RJ01660877', r'RJ01660877(?:[^0-9].*)?'), ('RJ01474142', r'RJ01474142(?:[^0-9].*)?'), ('RJ01664771', r'RJ01664771(?:[^0-9].*)?'), ('Night Stroll',r'Night[ _-]+Stroll(?:[ _-]*(?:ver|v)?[0-9.]+)?')] if name in PAIR_ACTIVE_GAMES]
 
 def new_game_label(name):
@@ -1754,10 +1754,16 @@ def fuyu_edo_detail_files(items,label):
     for e in items:
         rel=e.rel.replace('\\','/')
         if not (label in ('RJ01746557','future','RJ01562637','RJ01375307') and re.search(r'(?:^|/)arc/(?:native\.json|\.unity-stamp\.json|script/replay/scene4\.nani)$',rel,re.I) or re.search(r'(^|/)(EV003(?:_H0[234])?\.png|FK_SCENE_07\.smes|scsg01h\.edo|\.stamp\.json)$',rel,re.I)):continue
+        if re.search(r'(^|/)(cache|script-backups|repair-backups|bundles)(/|$)',rel,re.I):continue
         if e.size>16*MB:raise RuntimeError('Pair runtime file exceeds16MiB: '+rel)
         with open(e.path,'rb')as f:b=f.read(4*MB+1)
         total+=len(b)
-        if len(b)!=e.size or total>24*MB:raise RuntimeError('Pair runtime data changed/exceeded24MiB')
+        if len(b)!=e.size:raise RuntimeError('Pair runtime data changed: '+rel)
+        if label=='future'and rel.endswith('/arc/native.json'):
+            native=json.loads(b);digest=hashlib.sha256(b).hexdigest();locales=native.pop('locales',[])
+            native['__collectionProjection']={'originalBytes':e.size,'sourceSha256':digest,'omittedLocales':len(locales),'reason':'native locale books already captured; retain full configs/models/presentation'}
+            original_bytes=len(b);b=json.dumps(native,ensure_ascii=False,separators=(',',':')).encode();total+=len(b)-original_bytes
+        if total>24*MB:raise RuntimeError('Pair runtime evidence exceeds24MiB: '+rel)
         runtime['files'].append({'path':rel,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()})
         yield '__pair_runtime/files/'+rel,b,e.mtime
     ancestors=[];ancestor=os.path.realpath(root)
