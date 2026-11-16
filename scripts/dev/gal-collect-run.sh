@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.53"
+VERSION="2.54"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1712,7 +1712,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJy1mEFrGzEQhf9K0HlJpJE0knwsIYce22MJZtus60ITh901pAT/9ypkZbswQ2cMORn8QPsxo31vZl/Nl8/WRQT0yay+vZrnft6albnbvVx9HV6u7vrxcX3bz/3NtO3H4aGfpmGe7PX7r+nMtNuPP4ZPf+ZhMqtQj0rQmd1mU2Wzsp35/q/y1D8O8uMPnRDIMUDgCloIFNFREiE5PRJXJPTWZRKpKTKiC6rElckXi5HsW1NkSBdUCbjOhRxppKbIkECP5Lkq5VxsJqu0KDIkr0cKXJVizljoMjVJBhX0UJFzgWxtQdIFFkWGFPVIyCBFtDaRSE2RIaEeKXFVigHozjVFhpT0SJm7TWgz3bimyJCyHqlw75zzBSz5zi2KDKmokThjcj5gsXTnTpqISu9NwIWKhxQsXadFkRHpQwW4UHHoUqIt/CjJoPSxAlz3wluLSA9vigzpgtZxsRIgRU8bwaLIkPSxAlyshOhDIEeUpsiQ9KECXKggFETygjdFhqQPFeBCBTEiXaWmyJD0oQJcqHjvIm1NTZEh6UMFuFDBkjztTE2RIelDBdhQwWyZcXdRZEj6UOE8oFif650hjSnX6RLPpsv1euyffg7TjexR19uhf/gIwmIdhPC2QR2HBHBnt17LOfe/fis42R201PGJvG9NETXX65PQs+tVLnUYpxeHd0WGpM9BzuCdq8Wg9+KjJGLSOzxn8FDqIE5vMosiAtL7O2fvkD0ynw4WRQSkd3d2Y7COmYWbIgLSezu7L6QQ6IW4KSIgvbNzxl73Jov03LIoIqCTr993ZrOf9+Nw/m2s/jPuB/lXMZfqNMBwnbSF7L+HH+4PfwFAiIpm'
+PAIR_MEDIA_PLAN='eJytlEuLwjAUhf+K3HWn3jyaR5fD4GJgNuNyEMloqoK2kqSgSP/7VJwaGQd80F04Sc/9cu5ND1DUoXYW8q8DbE1YQn5UXG2nbyaYobO+qt3M+tR4b4NPW2EMCZzU132wHnKiBUqNXFNMoCqK9iDkQmLGBOOoEvg+nVOaS5URmkBpNm1JmE6dKRfWD2+WTKMdNEnPqJ2oFJ5ZOT5DWVRVsK5/QoVC8EygFr2EGe1uo3arK05UnBKNTF4EiZRwykRsOWdMiruj7Fbp2ahvvqOmtJZP9PkMd2+THyLLKGsHEOMAMkGVejy4zqf/GaSMtI+QSsVjeJKoTD81gtENmkkCn+9IMkEFk5d/olG1G4ztbjAybnMy+zClWdj50G9XpX2Z+aVx23S+Xv+9AUWUyCN8zLXb+UV+oMRFore+qstV2P/HRSTLjs/jmqvbuZMrVmgmzQ/yceQQ'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     report={'sourceReadOnly':True,'files':[]};used=0
@@ -1738,7 +1738,7 @@ def fuyu_edo_detail_files(items,label):
         if not e or e.size!=r['sourceBytes']:raise RuntimeError('Pair media source changed '+r['path'])
         if r['offset']<0 or r['offset']+r['bytes']>e.size:raise RuntimeError('Pair range invalid')
         used+=r['bytes']
-        if used>(128 if label in ('meshiagirl','dennou-djibril','RJ01234887','RJ01562637','future')else 64)*MB:raise RuntimeError('Pair media byte limit')
+        if used>(256 if label=='future'else 128 if label in ('meshiagirl','dennou-djibril','RJ01234887','RJ01562637')else 64)*MB:raise RuntimeError('Pair media byte limit')
         with open(e.path,'rb')as f:f.seek(r['offset']);data=f.read(r['bytes'])
         if len(data)!=r['bytes']:raise RuntimeError('Pair media truncated')
         report['files'].append({**r,'sha256':hashlib.sha256(data).hexdigest()})
