@@ -1,6 +1,6 @@
 # Kaiju Princess 2 and multi-selection interaction verification
 
-Implementation: `kaiju::unity`; import preset → Kaiju Princess 原生 Unity. `gal-layout` 2.88.0; Unity native cache generation 30. Update the unified image and tag package, then rerun layout. Existing originals remain read-only; generated scripts/resources/cache live in the normal media container cache. No original assembly/JavaScript execution, save modification, new runtime package, or runtime decoder download.
+Implementation: `kaiju::unity`; import preset → Kaiju Princess 原生 Unity. `gal-layout` 2.88.0; Unity native cache generation 31. Update the unified image and tag package, then rerun layout. Existing originals remain read-only; generated scripts/resources/cache live in the normal media container cache. No original assembly/JavaScript execution, save modification, new runtime package, or runtime decoder download.
 
 ```json
 {
@@ -104,3 +104,41 @@ Reproductions: white/fringed interaction hair and Drama 10007 step 20; CG still 
 - Native generation 30 / rendered thumbnails r6 refresh the formerly fringed resources and prior views. No new library, runtime download or original modification. Collector 2.92 read only 47.28 MiB of missing original CG ranges; 2.93 read 13.45 MiB of missing music/voice ranges needed to run these two real samples without sparse-fixture audio errors. Source sizes, per-range sizes and SHA256 are verified before applying to local fixtures. The original files on the NAS remain read-only.
 
 `gal-kaiju-cg-browser-selftest.mjs` verifies the real PMA pixels, 10007 step 112's visible layers, 5031/5042 actual pixels, per-game zoom across scene switches/reset, actual intermediate camera poses, expression continuity, concurrent rotation/placement and left-aligned interaction controls. `gal-kaiju-presentation-selftest.mjs` includes failing-before-fix PMA/hide regressions plus overview and animation-speed checks. Browser fixtures use the correct available reader width; the omitted application sidebar grid must not shrink a minimal test host to its 288px column. Cold generated-atlas tests wait for actual nontransparent rendered pixels (up to 120 seconds), rather than treating network idle as all pages uploaded. GPU-heavy regression suites run sequentially.
+
+
+## Full dynamic CG audit (2026-11-17)
+
+Scope: all 40 special scripts, 20 scripts with visible dynamic CG, 13 distinct CG skeletons and 45 atlas pages. The browser uses the real resource handler, original captured textures/models and production Spine layer. All 20 scenes also produced a nonzero native animation frame delta. All 1,034 visible-CG dialogue states rendered with no blank/offscreen result, missing resource, JavaScript exception or lost WebGL context. Each scene has first/middle/last screenshots; these were visually reviewed. All 2,545 dialogue boundaries across the 40 special scripts also match original opcode-43 visibility. This is not a claim of pixel-identical native game playback or an exhaustive audio audit.
+
+The full audit found additional defects after the initial four-scene regression:
+
+- Georgy is a script-declared CG although its model name lacks `HCG`. Texture policy now follows opcode-43 references rather than only model names. All 13 CG prefab references use the CG 4096px policy, including shared skeletons indexed first as CGs.
+- Drama 5051 hides and recreates the same CG. Its full-frame reference must remain stable across these commands, rather than being inferred independently from a later close-up.
+- Drama 10005 restores centered placement and neutral rotation with independent commands. Requiring rotation to already be neutral missed the original 0.4 overview. Centered framing now considers independent camera command ordering. Scripts 5012, 5021 and 5041 also benefit from the corrected reference; these five affected scripts passed a second browser pass (267 additional dialogue states), with refreshed first/middle/last screenshots reviewed.
+
+The screenshots still contain original tilted views and close-ups: these are explicit original rotation/movement commands, not auto-fit oscillation. The shared per-game CG zoom remains available. Shader transitions, minor 3D projection and other presentation limits listed above remain approximations/diagnostics; no new runtime package or runtime download is added.
+
+| Drama | Title key | Visible CG dialogue frames |
+| --- | --- | ---: |
+| 5011 | Memories_EventTitle_8 | 57 |
+| 5012 | Memories_EventTitle_9 | 51 |
+| 5021 | Memories_EventTitle_10 | 60 |
+| 5022 | Memories_EventTitle_11 | 50 |
+| 5031 | Memories_EventTitle_12 | 54 |
+| 5032 | Memories_EventTitle_13 | 53 |
+| 5041 | Memories_EventTitle_14 | 41 |
+| 5042 | Memories_EventTitle_15 | 49 |
+| 5051 | Memories_EventTitle_16 | 54 |
+| 5052 | Memories_EventTitle_17 | 51 |
+| 5091 | Memories_EventTitle_18 | 19 |
+| 5092 | Memories_EventTitle_19 | 24 |
+| 5093 | Memories_EventTitle_20 | 31 |
+| 10001 | Memories_EventTitle_22 | 58 |
+| 10002 | Memories_EventTitle_23 | 67 |
+| 10003 | Memories_EventTitle_24 | 45 |
+| 10004 | Memories_EventTitle_25 | 72 |
+| 10005 | Memories_EventTitle_26 | 61 |
+| 10006 | Memories_EventTitle_27 | 70 |
+| 10007 | Memories_EventTitle_28 | 67 |
+
+Validation artifacts (local): `.cache/kaiju-20261117/all-cg-browser.log`, `all-cg-browser-report.json`, `all-cg-frames/`, `all-cg-presentation.log`, `all-cg-policy.log`, and selected-scene follow-up logs. Test commands: `node scripts/dev/gal-kaiju-all-cg-browser-selftest.mjs`, `node scripts/dev/gal-kaiju-presentation-selftest.mjs`, `node scripts/dev/gal-kaiju-texture-bindings-selftest.mjs`. `KAIJU_CG_SCENES=5012,5021,5041,5051,10005` limits browser reruns after camera-only changes. Source NAS files remain read-only; collector 2.94 obtained only the missing bounded source ranges with length/SHA256 checks.

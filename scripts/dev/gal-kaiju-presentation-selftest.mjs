@@ -79,3 +79,14 @@ test('swimsuit and wedding CGs use their authored overview, not their offscreen 
 test('playback speed scales native CG movement and rotation with the matching waits',async()=>{
  const{scaleCommandTime}=await import('../../web/static/gal-engine.js'),original={op:'spine',cgPlaceMotion:{id:1,seconds:3,ease:16},cgRotationMotion:{id:2,seconds:2,ease:15}},fast=scaleCommandTime(original,2);assert.equal(fast.cgPlaceMotion.seconds,1.5);assert.equal(fast.cgRotationMotion.seconds,1);assert.equal(original.cgPlaceMotion.seconds,3)
 })
+
+test('all 40 special scripts preserve source CG visibility at every dialogue boundary',async()=>{
+ const base=process.env.GAL_KAIJU_FIXTURE||'.cache/kaiju-20261117',native=JSON.parse(await fs.readFile(base+'/context.json')),ctx=prepare({texts:{'arc/native.json':JSON.stringify(native)},options:{}}),{kaijuDrama}=await import('../../web/library/gal/kaiju-data.mjs'),rows=JSON.parse(await fs.readFile(base+'/scripts.json')),ids=new Set(native.events.map(e=>e.dramaID));let count=0,dialogue=0;
+ for(const row of rows.filter(s=>ids.has(s.data.id))){count++;let visible=false;const expected=new Map();for(const e of kaijuDrama(row.data.xml).events){if(e.op===43)visible=!!e.args[0]&&![1,3].includes(e.args[2]);if(e.op===1)expected.set('事件 '+e.id,visible)}const scene=parse(JSON.stringify(row.data),ctx);for(let i=0;i<scene.steps.length;i++){const label=scene.steps[i].commands.find(c=>c.op==='label');if(!label)continue;assert.equal(stateAt(scene,i).spines['kaiju:cg']?.visible===true,expected.get(label.name),row.data.id+' step '+(i+1));dialogue++}}
+ assert.equal(count,40);assert.ok(dialogue>2500)
+})
+
+test('CG overview survives hide/reopen and independent rotation command ordering',async()=>{
+ const base=process.env.GAL_KAIJU_FIXTURE||'.cache/kaiju-20261117',ctx=prepare({texts:{'arc/native.json':await fs.readFile(base+'/context.json','utf8')},options:{}}),scripts=JSON.parse(await fs.readFile(base+'/scripts.json'));
+ for(const id of ['5051','10005']){const scene=parse(JSON.stringify(scripts.find(s=>s.data.id===id).data),ctx),references=scene.steps.flatMap(s=>s.commands).filter(c=>c.op==='spine'&&c.slot==='kaiju:cg'&&c.visible&&c.viewportFrame).map(c=>c.viewportFrame.scale);assert.ok(references.length);assert.ok(references.every(scale=>scale===.4),id+' must retain the same authored full-frame scale across camera transitions')}
+})

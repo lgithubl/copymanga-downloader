@@ -25,8 +25,8 @@ export function kaijuEventSounds(model,ctx,mode='hcgsoundexcelentity'){
  return result
 }
 // Keep small facial/hair details readable without loading every outfit atlas at CG resolution.
-export function kaijuPageTextureSize(modelName,pageText){
- if(/hcg/i.test(modelName))return 4096
+export function kaijuPageTextureSize(modelName,pageText,isCg=false){
+ if(isCg||/hcg/i.test(modelName))return 4096
  if(/stand/i.test(modelName))return 2048
  return /\n[^:\n]*(?:Hair|Head|Face)[^:\n]*\n/i.test(pageText)?2048:1024
 }
@@ -42,14 +42,15 @@ export function kaijuDefaultStandSkins(tables,model){
  return['default',...new Set(skins.filter(n=>model.skins.includes(n)))];
 }
 
-// The loading pose can be offscreen or a close-up, so it is not the full-frame
-// camera reference. Prefer the authored neutral overview within this CG instance.
+// Keep one authored overview for the same CG across hide/reopen commands.
+// Rotation and placement are independent channels: the centered zoom command
+// can precede the command that restores its neutral rotation.
 export function kaijuCgOverview(events,index){
- const first=events[index],initial=(first.args[6]||100)/100,candidates=[];let turn=0
- if(Math.abs(first.args[4]||0)<=10000&&Math.abs(first.args[5]||0)<=10000)candidates.push(initial)
- for(let i=index+1;i<events.length&&events[i].op!==43;i++){
-  const e=events[i],p=e.args;if(e.op===45)turn=(p[2]||0)/100
-  if(e.op===46&&Math.abs(turn)<1&&Math.abs(p[0]||0)<=100&&Math.abs(p[1]||0)<=100&&p[2]>0)candidates.push(p[2]/100)
+ const first=events[index],id=first.args[0],initial=(first.args[6]||100)/100,candidates=[];let current=0,visible=false
+ for(const e of events){
+  const p=e.args
+  if(e.op===43){current=p[0];visible=!!current&&![1,3].includes(p[2]);if(visible&&current===id&&p[6]>0&&Math.abs(p[4]||0)<=10000&&Math.abs(p[5]||0)<=10000)candidates.push(p[6]/100)}
+  else if(e.op===46&&visible&&current===id&&Math.abs(p[0]||0)<=100&&Math.abs(p[1]||0)<=100&&p[2]>0)candidates.push(p[2]/100)
  }
  return candidates.length?Math.min(...candidates):initial
 }
