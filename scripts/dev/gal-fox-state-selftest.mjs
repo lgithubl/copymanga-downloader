@@ -24,3 +24,12 @@ test('native automatic sound groups defer behind active voices, rotate fairly an
  globalThis.Audio=class extends EventTarget{constructor(src){super();this.src=src;this.paused=true}play(){this.paused=false;played.push(this);return Promise.resolve()}pause(){this.paused=true}finish(){this.paused=true;this.dispatchEvent(new Event('ended'))}}
  try{const s=createInteractionSounds({url:v=>v,canPlay:()=>!blocked&&!s.audio(),onIdle:()=>idle++});s.set('x',[{id:'a',playOnEnable:true,auto:true,period:.1,clips:[{src:'a'}]},{id:'b',playOnEnable:true,auto:true,period:.1,clips:[{src:'b'}]}]);s.tick(.2,{});assert.equal(played.length,0);blocked=false;s.tick(.1,{});assert.equal(played[0].src,'a');s.tick(.3,{});assert.equal(played.length,1);played[0].finish();s.tick(.1,{});assert.equal(played[1].src,'b');assert.equal(idle,1);s.clear();s.tick(.1,{});assert.equal(played.length,2)}finally{globalThis.Audio=previous}
 })
+
+test('locked continuous meter holds values and thresholds, permits manual seeks and resumes after unlock',()=>{
+ const config={bars:{girl:{max:1,rate:1}},stageMax:3},m=createInteractionMeter(config,{count:1})
+ m.seek(.5);m.lock(true);for(let i=0;i<20;i++)assert.equal(m.tick(.25),null);assert.equal(m.snapshot().value,.5);assert.equal(m.snapshot().count,1)
+ m.seek(1);assert.equal(m.tick(.25),null);assert.equal(m.snapshot().value,1);assert.equal(m.pending(),null)
+ const restored=createInteractionMeter(config,m.snapshot());assert.equal(restored.snapshot().locked,true);assert.equal(restored.tick(.25),null)
+ restored.seek(.25);assert.equal(restored.snapshot().value,.25);restored.lock(false);restored.tick(.25);assert.equal(restored.snapshot().value,.5)
+ m.lock(false);assert.equal(m.tick(.1,{busy:true}),null);assert.equal(m.pending(),'iku');m.lock(true);assert.equal(m.pending(),null);assert.equal(m.tick(0),null)
+})

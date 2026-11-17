@@ -5041,3 +5041,7 @@ h2 {
 .gal-interaction-region-list .gal-btn img { width:100%;height:100%;object-fit:contain; }
 .gal-interaction-target-icon { font-size:.65rem;opacity:.85; }
 .gal-interaction-target-number { position:absolute;right:1px;bottom:1px;min-width:1em;padding:0 .15em;border-radius:.2em;background:#101722e6;color:white;font-weight:700; }
+
+.gal-interaction-meter-heading { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.gal-interaction-meter-lock { padding:2px 5px; min-width:28px; line-height:1.5; }
+.gal-interaction-meter-lock[aria-pressed="true"] { border-color:#71d7ef; background:#27434e; }

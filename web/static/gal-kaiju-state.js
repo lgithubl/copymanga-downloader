@@ -3,7 +3,7 @@ const list=v=>String(v||'').split(':').filter(Boolean),yes=v=>String(v).toLowerC
 const partOf={Mouth:'M',Breast:'B',LeftBreast:'B',RightBreast:'B',Clitoris:'C',Vagina:'V',Ass:'A'}
 const attributes={Item_Attr_Lubricating:'Smooth',Item_Attr_Favorability:'Favorability',Item_Attr_Dislike:'Hate'}
 export function createKaijuState(config,saved={}){
- const values={...Object.fromEntries(config.meters.map(m=>[m.id,0])),...saved.values},active=new Set(),clothes={},flags={...saved.flags},sticky=new Set(saved.sticky||[]);let last='',family=config.clothing.find(r=>r.SkinHModeClothe==='Clothe')?.SkinType||''
+ const values={...Object.fromEntries(config.meters.map(m=>[m.id,0])),...saved.values},active=new Set(),locks=Object.fromEntries(config.meters.map(m=>[m.id,saved.locks?.[m.id]===true])),clothes={},flags={...saved.flags},sticky=new Set(saved.sticky||[]);let last='',family=config.clothing.find(r=>r.SkinHModeClothe==='Clothe')?.SkinType||''
  const level=id=>Math.max(0,...config.levels.filter(r=>r.HModeLevelType===id&&num(r.TotalExp)<=num(values[id])).map(r=>num(r.Lv))),cap=(id,v)=>Math.max(0,Math.min(1e9,v)),pick=a=>a.length?a[Math.floor(Math.random()*a.length)]:null
  const valueOf=name=>num(values[attributes[name]||name]),isWearing=name=>config.clothing.some(r=>r.SkinType===family&&r.SkinHModeClothe===({InitPanty:'Panty',Bra:'Underwear',Pants:'Panty'}[name]||name)&&clothes[r.SkinID]!==false)
  function cond(row,current,visible){
@@ -38,21 +38,22 @@ export function createKaijuState(config,saved={}){
   for(const a of visible)for(let i=1;i<=3;i++)if(a['OpenSpread_'+i]){const animation=a['OpenSpread_'+i],model=config.spreads?.find(m=>m.animations.some(v=>v.name===animation));if(model)spreads[i]={...model.spec,anim:animation}}
   return{current,emotion,visible,skins:[...skins].filter(n=>config.modelSkins.includes(n)),slots,anim,spreads}
  }
- function snapshot(){return{values:{...values},flags:{...flags},sticky:[...sticky],meters:config.meters.map(m=>({...m,value:num(values[m.id]),level:level(m.id)}))}}
- return{snapshot,frame,seek(id,fraction){const m=config.meters.find(m=>m.id===id);if(m)values[id]=cap(id,Math.max(0,Math.min(1,Number(fraction)||0))*m.max);return snapshot()},cloth(id,on){const row=config.clothing.find(r=>r.SkinID===id);if(row)family=row.SkinType;clothes[id]=!!on;return frame()},action(id,on=true){
+ function snapshot(){return{locks:{...locks},values:{...values},flags:{...flags},sticky:[...sticky],meters:config.meters.map(m=>({...m,value:num(values[m.id]),level:level(m.id)}))}}
+ return{snapshot,frame,lock(id,on){if(Object.hasOwn(locks,id))locks[id]=on===true;return snapshot()},seek(id,fraction){const m=config.meters.find(m=>m.id===id);if(m)values[id]=cap(id,Math.max(0,Math.min(1,Number(fraction)||0))*m.max);return snapshot()},cloth(id,on){const row=config.clothing.find(r=>r.SkinID===id);if(row)family=row.SkinType;clothes[id]=!!on;return frame()},action(id,on=true){
   const row=config.actions.find(r=>r.ActionID===id);if(!row)throw Error('Kaiju original action missing: '+id)
   if(!on){active.delete(id);if(last===id)last=[...active].at(-1)||'';return{frame:frame(),snapshot:snapshot()}}
   active.add(id);last=id
   const before={...values},f0=frame(),currentPart=partOf[row.ClickPlace]||'M',local=config.levels.find(r=>r.HModeLevelType===currentPart&&num(r.Lv)===level(currentPart));let crossings=0
   // The original click GOP applies every compatible active action, including local multipliers.
   for(const a of f0.visible)for(const part of['M','B','C','V','A','Hate','Smooth','Cum']){
+   if(locks[part])continue
    const key={Hate:'DislikeExp',Smooth:'LubricatingExp',Cum:'CumExp'}[part]||part+'Exp',rate=config.levels.find(r=>r.HModeLevelType===part&&num(r.Lv)===level(part)),multi=(num(rate?.ValueMultiRate)||100)/100*(part==='Smooth'?(num(local?.LocalSmoothMultiRate)||100)/100:1)
    values[part]=cap(part,num(values[part])+Math.trunc(num(a[key])*multi))
   }
   for(const part of['M','B','C','V','A'])if(Math.floor(num(values[part])/10000)>Math.floor(num(before[part])/10000))crossings++
   if(crossings){flags.climax=true;flags.climaxCount=num(flags.climaxCount)+crossings;for(const[n,k]of[[2,'double'],[3,'quadruple'],[4,'octuple'],[5,'mega']])if(crossings>=n)flags[k]=true}
   let cum=false
-  if(num(values.Cum)>=config.cumMax){values.Cum=0;flags.cum=true;flags['cum:'+row.ClickPlace]=true;cum=true}
+  if(!locks.Cum&&num(values.Cum)>=config.cumMax){values.Cum=0;flags.cum=true;flags['cum:'+row.ClickPlace]=true;cum=true}
   const f=frame();if(crossings&&config.modelAnimations.includes('Act_Orgasm'))f.anim='Act_Orgasm'
   const soundFlag=crossings?'Sound_Climax_'+(flags.double?'2x':'1x'):null,sound=config.sounds?.find(r=>r.ID===soundFlag),voiceId=pick(list(sound?.VoiceID||f.emotion?.SoundIDs)),logs=String(row.LogList||'').split(';'),log=pick(list(logs[Math.min(logs.length-1,level(currentPart))])),text=config.logs[log]||''
   return{frame:f,snapshot:snapshot(),voiceId,text,crossings,cum}

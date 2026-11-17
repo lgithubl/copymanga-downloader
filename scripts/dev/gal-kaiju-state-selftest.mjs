@@ -14,6 +14,12 @@ for(const entry of scripts.filter(s=>s.data.kind==='interaction')){
  const before=crossing.snapshot.values.M;state.action(id);assert.ok(state.snapshot().values.M>before,'one-time seek does not freeze subsequent accumulation')
  state.action(id,false);assert.equal(state.frame().current,undefined)
  for(const tool of role.tools)for(const area of tool.areas){const output=createKaijuState(config).action(area.id);assert.ok(config.modelAnimations.includes(output.frame.anim),area.id+' animation exists')}
+ const locked=createKaijuState(config);locked.seek('M',.199);locked.seek('Cum',1);locked.lock('M',true);locked.lock('Cum',true)
+ const fixed=locked.snapshot().values;for(let i=0;i<20;i++){const r=locked.action(id);assert.equal(r.snapshot.values.M,fixed.M);assert.equal(r.snapshot.values.Cum,fixed.Cum);assert.equal(r.cum,false)}
+ assert.ok(locked.snapshot().values.Smooth>0,'other unlocked meters still accumulate')
+ locked.seek('M',.6);assert.equal(locked.snapshot().values.M,config.meters.find(m=>m.id==='M').max*.6)
+ const restored=createKaijuState(config,locked.snapshot());assert.equal(restored.snapshot().locks.M,true);assert.equal(restored.action(id).snapshot.values.M,locked.snapshot().values.M)
+ restored.lock('M',false);assert.ok(restored.action(id).snapshot.values.M>locked.snapshot().values.M)
  const cover=parse(JSON.stringify(entry.data),ctx,{scene:'cover'});assert.ok(!cover.interaction);assert.ok(cover.steps[0].commands.some(c=>c.op==='spine'))
 }
 const drama=parse(JSON.stringify(scripts.find(s=>s.data.id==='5011').data),ctx);assert.equal(drama.stats.messages,67);assert.equal(drama.stats.voices,38);assert.ok(drama.steps.some(s=>s.commands.some(c=>c.op==='spine'&&c.slot==='kaiju:cg')))
