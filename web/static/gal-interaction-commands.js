@@ -1,19 +1,27 @@
+import{createInteractionMeter}from'./gal-interaction-meters.js'
+import{createInteractionSounds}from'./gal-interaction-sounds.js'
 import{hakuboxAdventure}from'./gal-hakubox-adventure.js'
 // Persistent native presentation state. Only normalized Gal commands run here.
 import{initialState,applyCommand,condMet,visibleChoiceOptions}from'./gal-engine.js'
 import{createSpineLayer}from'./gal-spine.js'
 import{createOverlayLayer}from'./gal-stand.js'
-export function createCommandInteractionLayers({parent,url,onMissing,onError,onUnavailable,onMessage,onChoice,onBusy,onAudio,conditionState=()=>true,audioGain=()=>1}){
+export function createCommandInteractionLayers({parent,url,onMissing,onError,onUnavailable,onMessage,onChoice,onBusy,onAudio,conditionState=()=>true,onMeter=()=>{},canAutoTrigger=()=>true,audioGain=()=>1}){
  const under=createOverlayLayer({parent,url,onMissing,under:true}),spine=createSpineLayer({parent,url,onMissing,onError,onUnavailable}),over=createOverlayLayer({parent,url,onMissing}),loops=new Map()
- let state=initialState(),modelKey='',actionKey='',configuration='',generation=0,waiting=null,waitingKind='',timer=0,paused=false,presentation=null
+ let state=initialState(),modelKey='',actionKey='',configuration='',generation=0,waiting=null,waitingKind='',timer=0,paused=false,presentation=null,meter=null,model=null,running=false,visualOverrides={},lastTick=performance.now()
  const clearWait=()=>{clearTimeout(timer);waiting?.();waiting=null;waitingKind=''},finishWait=()=>{const resolve=waiting;waiting=null;waitingKind='';clearTimeout(timer);resolve?.()},advance=()=>{if(waitingKind!=='choice')finishWait()}
- function cancel(){generation++;clearWait();onChoice(null);onBusy(false)}
+ function cancel(){running=false;generation++;clearWait();onChoice(null);onBusy(false)}
  const wait=(ms,kind='delay')=>new Promise(resolve=>{waitingKind=kind;waiting=resolve;if(ms!==null)timer=setTimeout(advance,Math.min(120000,Math.max(0,ms)))})
- async function paint(){await Promise.all([spine.set(state.spines,{live:true}),under.set(state.overlays.filter(o=>o.under),{live:true}),over.set(state.overlays.filter(o=>!o.under),{live:true})])}
- function clearAudio(){for(const a of loops.values())a.pause();loops.clear()}
- async function run(commands,reset=false,selections={}){cancel();const mine=generation;onBusy(true);let reply={};try{
+ function nativeBranches(){for(let i=0;i<4;i++){let changed=false;for(const b of model?.nativeBranches||[]){const value=state.vars[b.var];if(value==='__fox_unknown__'||!Number.isFinite(Number(value)))continue;const enabled=b.chain.every(id=>Number(state.vars['fox-active:'+id]??model.nativeObjects[id]??1)!==0);for(const c of b.cases){const on=Number(enabled&&c.judge!==null&&(Number(value)===c.judge||c.keep&&Number(value)>c.judge));if(state.vars['fox-active:'+c.object]!==on){state.vars['fox-active:'+c.object]=on;changed=true}}}if(!changed)break}}
+ function meterState(){if(!meter)return;const snapshot=meter.snapshot();state.vars['fox-state:girl1:愛心']=snapshot.count;onMeter(snapshot)}
+ async function paint(){nativeBranches();const specs=Object.fromEntries(Object.entries(state.spines).map(([id,s])=>{const chain=model?.nativeGraphics?.[id],visible=typeof visualOverrides[id]==='boolean'?visualOverrides[id]:chain?chain.every(o=>Number(state.vars['fox-active:'+o]??model.nativeObjects[o]??1)!==0):s.visible;return[id,{...s,visible}]}));await Promise.all([spine.set(specs,{live:true}),under.set(state.overlays.filter(o=>o.under),{live:true}),over.set(state.overlays.filter(o=>!o.under),{live:true})])}
+ const sequences=createInteractionSounds({url,gain:audioGain,onError})
+ function clearAudio(){sequences.clear();for(const a of loops.values())a.pause();loops.clear()}
+ async function run(commands,reset=false,selections={}){cancel();const mine=generation;running=true;onBusy(true);let reply={};try{
   if(reset){state=initialState();clearAudio()}
   for(const [index,source] of (commands||[]).entries()){const c=structuredClone(source);if(c.tracks)c.tracks=c.tracks.map(t=>({...t,token:mine+':'+t.token}));if(mine!==generation)return;if(!condMet(c.when,state.vars)||c.ifAbsent&&Object.hasOwn(state.vars,c.var))continue
+   if(c.op==='interactionMeterRate'){meter?.rate(c.part,c.rate,c.scaled);continue}
+   if(c.op==='interactionSoundGroups'){sequences.set(c.slot,c.groups,c.objectStates);continue}
+   if(c.op==='interactionWaitAudio'){const audio=sequences.audio(c.slot)||loops.get(c.slot);if(audio&&!audio.loop&&!audio.ended){await new Promise(resolve=>{waiting=resolve;waitingKind='audio';const release=()=>{if(mine===generation&&waiting===resolve)finishWait()};audio.addEventListener('ended',release,{once:true});audio.addEventListener('error',release,{once:true});timer=setTimeout(release,120000)})}continue}
    if(c.interactionConditionPrompt)continue
    if(c.op==='choice'&&c.interactionCondition){const condition=c.interactionCondition,value=conditionState(condition)?condition.trueValue:condition.falseValue;applyCommand(state,c,{[c.id]:value});continue}
    if(c.op==='interactionSpineSource'){const m=/^SpineManager\.(setMotion|addMotion)\([^,]+,\s*['"]([^'"]+)['"],\s*(true|false),\s*(\d+)\);?$/.exec(c.source);if(m){applyCommand(state,{op:'spine',slot:'hakubox:interact',patchTracks:true,tracks:[{track:Number(m[4]),anim:m[2],loop:m[3]==='true',queue:m[1]==='addMotion',token:mine+':'+c.source}]})}else onError(Error('未支持原生动作：'+c.source));continue}
@@ -24,18 +32,20 @@ export function createCommandInteractionLayers({parent,url,onMissing,onError,onU
    if(c.op==='voice'){reply.voice=c.src;continue}if(c.op==='voiceStop'){reply.voice='';onAudio('voiceStop');continue}
    if(c.op==='se'){onAudio('se',c);continue}
    if(['bgvoice','bgm','bgse'].includes(c.op)){const key=c.slot||c.op;loops.get(key)?.pause();if(c.src){const a=new Audio(url(c.src));a.loop=c.loop!==false;a.interactionKind=c.op==='bgvoice'&&c.kind!=='bgse'?'voice':'sfx';a.interactionVolume=Math.max(0,Math.min(1,c.volume??.7));a.volume=a.interactionVolume*audioGain(a.interactionKind);loops.set(key,a);if(!paused)a.play().catch(()=>onError(Error('音频无法播放：'+c.src)))}continue}
-   if(['bgvoiceOff','bgmStop','bgseStop'].includes(c.op)){const key=c.slot||({bgmStop:'bgm',bgseStop:'bgse'}[c.op]);if(key){loops.get(key)?.pause();loops.delete(key)}continue}
+   if(['bgvoiceOff','bgmStop','bgseStop'].includes(c.op)){const key=c.slot||({bgmStop:'bgm',bgseStop:'bgse'}[c.op]);if(key){sequences.stop(key);loops.get(key)?.pause();loops.delete(key)}continue}
    if(c.op==='wait'){await paint();if(mine!==generation)return;await wait(Math.max(0,c.seconds||0)*1000);continue}
    if(c.op==='raw'){onError(Error(c.cmd+(c.args?' · '+JSON.stringify(c.args).slice(0,500):'')));continue}
    applyCommand(state,c)
    if(c.op==='text'){await paint();if(mine!==generation)return;const text=(c.segments||[]).map(s=>s.text||'').join('');const voiced=!!reply.voice;onMessage({...reply,text});reply={};if(commands[index+1]?.op!=='choice')await wait(voiced?null:Math.max(1500,text.length*55),'text')}
   }
-  if(mine===generation)await paint()
- }catch(e){onError(e)}finally{if(mine===generation){onChoice(null);onBusy(false)}}}
- return{async set(specs){const spec=specs.interaction;if(!spec){modelKey='';actionKey='';configuration='';cancel();clearAudio();state=initialState();await paint();return}
+  if(mine===generation){meterState();await paint()}
+ }catch(e){onError(e)}finally{if(mine===generation){running=false;onChoice(null);onBusy(false)}}}
+ const clock=setInterval(()=>{const now=performance.now(),dt=Math.min(.25,(now-lastTick)/1000);lastTick=now;if(paused||document.hidden||!model)return;const event=meter?.tick(dt,{busy:running||!canAutoTrigger()});meterState();nativeBranches();sequences.tick(dt,state.vars);if(meter)void paint();if(event&&model.meter.events?.[event]?.length)void run(model.meter.events[event])},100)
+ return{async set(specs){const spec=specs.interaction;if(!spec){modelKey='';actionKey='';configuration='';meter=null;model=null;cancel();clearAudio();state=initialState();await paint();return}
+  const overrideChanged=JSON.stringify(visualOverrides)!==JSON.stringify(spec.visualOverrides||{});visualOverrides=spec.visualOverrides||{};
   const next=spec.commandModel,config=JSON.stringify(spec.configurationCommands||[])
-  if(next!==modelKey){presentation=spec.hakuboxAdventure?hakuboxAdventure({enabled:true,stage:spec.stage,resource:(folder,name)=>spec.resources[folder+'/'+name]||'',emit:c=>applyCommand(state,c),raw:(reason)=>onError(Error(reason))}):null;modelKey=next;actionKey='';configuration=config;void run([...(spec.initialCommands||[]),...(spec.configurationCommands||[])],true)}
+  if(next!==modelKey){model=spec;meter=spec.meter?createInteractionMeter(spec.meter,spec.meterInitial||{}):null;presentation=spec.hakuboxAdventure?hakuboxAdventure({enabled:true,stage:spec.stage,resource:(folder,name)=>spec.resources[folder+'/'+name]||'',emit:c=>applyCommand(state,c),raw:(reason)=>onError(Error(reason))}):null;modelKey=next;actionKey='';configuration=config;void run([...(spec.initialCommands||[]),...(spec.configurationCommands||[])],true)}
   else if(config!==configuration){configuration=config;actionKey='';void run(spec.configurationCommands||[])}
-  else if(spec.actionCommands&&actionKey!==String(spec.motionToken)){actionKey=String(spec.motionToken);void run(spec.actionCommands,false,spec.alternativeSelections)}
- },advance,advanceVoice(){if(waitingKind==='text')finishWait()},cancel,setVolume(){for(const a of loops.values())a.volume=a.interactionVolume*audioGain(a.interactionKind)},setPaused(v){paused=v;spine.setPaused(v);under.setPaused(v);over.setPaused(v);if(v){cancel();for(const a of loops.values())a.pause()}else for(const a of loops.values())a.play().catch(()=>{})},hitTest(){return[]},regionShapes(){return[]},destroy(){cancel();clearAudio();under.destroy();spine.destroy();over.destroy()}}
+  else if(spec.actionCommands&&actionKey!==String(spec.motionToken)){actionKey=String(spec.motionToken);void run(spec.actionCommands,false,spec.alternativeSelections)}else if(overrideChanged)void paint()
+ },seekMeter(fraction){meter?.seek(fraction);meterState()},advance,advanceVoice(){if(waitingKind==='text')finishWait()},cancel,setVolume(){sequences.setVolume();for(const a of loops.values())a.volume=a.interactionVolume*audioGain(a.interactionKind)},setPaused(v){paused=v;lastTick=performance.now();sequences.setPaused(v);spine.setPaused(v);under.setPaused(v);over.setPaused(v);if(v){cancel();for(const a of loops.values())a.pause()}else for(const a of loops.values())a.play().catch(()=>{})},hitTest(){return[]},regionShapes(){return[]},destroy(){clearInterval(clock);cancel();clearAudio();under.destroy();spine.destroy();over.destroy()}}
 }

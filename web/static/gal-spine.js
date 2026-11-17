@@ -727,6 +727,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     }
     for (const cv of canvases) cv.hidden = instances.size === 0
     parent.dataset.spines = JSON.stringify(Object.fromEntries([...instances].map(([slot, inst]) => [slot, inst.anim || inst.spec.anim || inst.spec.tracks?.[0]?.anim || ''])))
+    parent.dataset.spineVisibility=JSON.stringify(Object.fromEntries([...instances].map(([slot,inst])=>[slot,inst.spec.visible!==false])))
     kick()
     return ready()
   }

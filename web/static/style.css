@@ -5027,3 +5027,10 @@ h2 {
 .gal-interaction-condition { display:flex; flex-direction:column; gap:.25rem; margin-bottom:.6rem; font-size:.7rem; }
 .gal-interaction-condition>span { overflow-wrap:anywhere; }
 .gal-interaction-condition select { width:100%; min-width:0; }
+
+.gal-interaction-meter { margin-bottom:.75rem; font-size:.75rem; }
+.gal-interaction-meter input { width:100%; }
+.gal-interaction-meter output { display:block; }
+.gal-interaction-meter p { font-size:.7rem; opacity:.7; }
+.gal-interaction-meter-points { display:flex; flex-wrap:wrap; gap:.2rem; }
+.gal-interaction-meter-points button { padding:.2rem; font-size:.65rem; }
