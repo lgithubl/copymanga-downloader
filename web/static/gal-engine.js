@@ -359,6 +359,7 @@ export function scaleCommandTime(command, speed) {
   for (const key of ['seconds', 'fade', 'delay']) {
     if (typeof command[key] === 'number' && command[key] > 0) { if (out === command) out = { ...command }; out[key] = command[key] / k }
   }
+  for(const key of ['cgPlaceMotion','cgRotationMotion'])if(command[key]?.seconds>0){if(out===command)out={...command};out[key]={...command[key],seconds:command[key].seconds/k}}
   return out
 }
 

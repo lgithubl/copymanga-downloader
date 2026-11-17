@@ -41,3 +41,15 @@ export function kaijuDefaultStandSkins(tables,model){
  if(!skins.some(n=>n==='HairStyle/Hair_B_Long'||n==='HairStyle/Hair_B_Short'))skins.push('HairStyle/Hair_B_Long');
  return['default',...new Set(skins.filter(n=>model.skins.includes(n)))];
 }
+
+// The loading pose can be offscreen or a close-up, so it is not the full-frame
+// camera reference. Prefer the authored neutral overview within this CG instance.
+export function kaijuCgOverview(events,index){
+ const first=events[index],initial=(first.args[6]||100)/100,candidates=[];let turn=0
+ if(Math.abs(first.args[4]||0)<=10000&&Math.abs(first.args[5]||0)<=10000)candidates.push(initial)
+ for(let i=index+1;i<events.length&&events[i].op!==43;i++){
+  const e=events[i],p=e.args;if(e.op===45)turn=(p[2]||0)/100
+  if(e.op===46&&Math.abs(turn)<1&&Math.abs(p[0]||0)<=100&&Math.abs(p[1]||0)<=100&&p[2]>0)candidates.push(p[2]/100)
+ }
+ return candidates.length?Math.min(...candidates):initial
+}

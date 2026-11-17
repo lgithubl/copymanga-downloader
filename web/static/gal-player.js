@@ -298,6 +298,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const zoomRow = el('label', 'gal-more-field')
   const zoomLabel = el('span', '', '画面放大')
   zoomRow.append(zoomLabel, zoomInput, el('span', '', '倍'))
+  const cgZoomInput=el('input','gal-more-number');cgZoomInput.type='number';cgZoomInput.min=String(GAL_SETTINGS.viewZoomMin);cgZoomInput.max=String(GAL_SETTINGS.viewZoomMax);cgZoomInput.step='0.1';cgZoomInput.setAttribute('aria-label','场景 CG 缩放');cgZoomInput.title='当前游戏所有 Spine 场景 CG 共用的缩放倍率，1 为默认；不改变立绘大小'
+  const cgZoomRow=el('label','gal-more-field'),cgZoomReset=btn('重置','恢复场景 CG 默认大小','gal-btn');cgZoomRow.append(el('span','','场景 CG 缩放'),cgZoomInput,el('span','','倍'),cgZoomReset)
   const centerBtn = btn('选择中心', '在画面上拖动十字线，选放大时放在舞台正中的那一点（这个媒体自己的设置；Enter / 确定 保存，Esc 取消）', 'gal-center-btn')
   const centerText = el('span', 'gal-more-hint', '')
   const centerRow = el('div', 'gal-more-field')
@@ -424,7 +426,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     section('显示', row('字体大小', fontRange, fontValue), row('文本框透明度', opacityRange, opacityValue), colorRow, detailBtn, immBtn, fsBtn),
     section('音频', row('BGM 音量', bgmRange, bgmValue), ...AUDIO_GROUPS.map((g) => { const r = row(`${g.label}音量`, audioRanges[g.key].range, audioRanges[g.key].value); r.dataset.audioGroup = g.key; audioRanges[g.key].row = r; return r })),
     section('播放', row('自动：语音播完后等', delayInput, delayUnit), row('自动选择（-1 关 / 0 随机 / 1 2 3）', autoChoiceInput), fastResumeCtl.row, autoNextCtl.row, autoTransCtl.row, blockRow, ttsSourceRow, ttsVoicedCtl.row),
-    section('画面', animRow, slowRow, fpsRow, seamRow, movieBrightnessCtl.row, movieContrastCtl.row, standRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow, emoteRow),
+    section('画面', animRow, slowRow, fpsRow, seamRow, movieBrightnessCtl.row, movieContrastCtl.row, standRow, cgZoomRow, zoomRow, centerRow, camModeRow, camRow, blendRow, exprRow, mosaicRow, emoteRow),
   )
   hud.append(box)
   // 工具栏不再叠在舞台里：放在舞台下面、播放器最底部，和列表页底部固定条同一个位置、同一个顺序（↑ 在最左）
@@ -759,7 +761,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const syncViewInputs = () => {
     const kind = viewKind()
     const view = views[kind]
-    zoomLabel.textContent = kind === 'actor' ? '角色放大' : '静图放大'
+    zoomLabel.textContent = '角色放大';zoomRow.hidden=kind!=='actor';cgZoomInput.value=String(Math.round(views.still.zoom*100)/100)
     centerLabel.textContent = kind === 'actor' ? '角色中心' : '静图中心'
     zoomInput.value = String(Math.round(view.zoom * 100) / 100)
     centerText.textContent = `${Math.round(view.cx * 100)}%, ${Math.round(view.cy * 100)}%`
@@ -797,6 +799,8 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   for (const input of [standScaleInput, standXInput, standYInput]) input.addEventListener('change', applyStand)
   standResetBtn.addEventListener('click', () => { standScaleInput.value = '100'; standXInput.value = '0'; standYInput.value = '0'; applyStand() })
   syncStandInputs()
+  const applyCgZoom=()=>{views={...views,still:cleanView({...views.still,zoom:Number(cgZoomInput.value)})};syncViewInputs();saveViews();spineLayer?.setView('still',views.still)}
+  cgZoomInput.addEventListener('change',applyCgZoom);cgZoomReset.addEventListener('click',()=>{cgZoomInput.value='1';applyCgZoom()})
   zoomInput.addEventListener('change', () => {
     const kind = viewKind()
     views = { ...views, [kind]: cleanView({ ...views[kind], zoom: Math.round(Number(zoomInput.value) * 100) / 100 }) }

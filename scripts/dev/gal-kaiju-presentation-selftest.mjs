@@ -58,3 +58,24 @@ test('filtered Unity downsampling preserves subpixel edges instead of dropping e
  for(let y=0;y<16;y++)for(let x=0;x<16;x++){const i=(y*16+x)*4;raw[i]=raw[i+1]=raw[i+2]=(x+y)%2?255:0;raw[i+3]=255}
  const t={m_Width:16,m_Height:16,m_TextureFormat:4},plain=await sharp(await unityTexturePng(t,raw,{maxTextureSize:8})).raw().toBuffer(),filtered=await sharp(await unityTexturePng(t,raw,{maxTextureSize:8,textureFilter:'lanczos3'})).raw().toBuffer();assert.equal(plain[0],0,'baseline point sampling aliases the checkerboard to black');assert.ok(filtered[4*27]>100&&filtered[4*27]<155,'filtered reduction retains averaged source detail')
 })
+
+test('Kaiju premultiplied atlases retain associated RGB when filtered; edges cannot turn white',async()=>{
+ const{unityTexturePng}=await import('../../web/library/gal/unity-media.mjs'),{createRequire}=await import('node:module'),sharp=createRequire(new URL('../../web/package.json',import.meta.url))('sharp'),raw=Buffer.alloc(16*16*4);
+ for(let y=0;y<16;y++)for(let x=0;x<16;x++){const i=(y*16+x)*4,a=x%2?255:0;raw[i]=raw[i+1]=raw[i+2]=raw[i+3]=a}
+ const out=await sharp(await unityTexturePng({m_Width:16,m_Height:16,m_TextureFormat:4},raw,{maxTextureSize:8,textureFilter:'lanczos3',texturePma:true})).raw().toBuffer();
+ for(let i=0;i<out.length;i+=4)assert.ok(Math.abs(out[i]-out[i+3])<=1,'filtered associated RGB must equal its source coverage, not be unpremultiplied')
+})
+
+test('native CG hide commands remain hidden after later skin/slot changes',async()=>{
+ const base=process.env.GAL_KAIJU_FIXTURE||'.cache/kaiju-20261117',ctx=prepare({texts:{'arc/native.json':await fs.readFile(base+'/context.json','utf8')},options:{}}),scripts=JSON.parse(await fs.readFile(base+'/scripts.json')),scene=parse(JSON.stringify(scripts.find(s=>s.data.id==='10007').data),ctx),s=stateAt(scene,111);assert.ok(!s.spines['kaiju:cg']||s.spines['kaiju:cg'].visible===false,'the original CG hide event must remove the CG behind the standing actor')
+})
+
+test('swimsuit and wedding CGs use their authored overview, not their offscreen loading scale',async()=>{
+ const base=process.env.GAL_KAIJU_FIXTURE||'.cache/kaiju-20261117',ctx=prepare({texts:{'arc/native.json':await fs.readFile(base+'/context.json','utf8')},options:{}}),scripts=JSON.parse(await fs.readFile(base+'/scripts.json'));
+ for(const id of['5031','5042']){const scene=parse(JSON.stringify(scripts.find(s=>s.data.id===id).data),ctx),cg=scene.steps.flatMap(s=>s.commands).find(c=>c.op==='spine'&&c.slot==='kaiju:cg'&&c.visible);assert.equal(cg.viewportFrame.scale,.4,id+' neutral full-frame shot');assert.ok(scene.steps.flatMap(s=>s.commands).some(c=>c.cgPlaceMotion?.seconds===3),'original camera duration retained')}
+ const{interpolateSpinePose}=await import('../../web/static/gal-spine.js'),a={x:0,y:0,scale:1,rotation:0},b={x:100,y:-80,scale:2,rotation:60};assert.deepEqual(interpolateSpinePose(a,b,.5),{x:50,y:-40,scale:1.5,rotation:30});assert.deepEqual(interpolateSpinePose(a,b,1),b)
+})
+
+test('playback speed scales native CG movement and rotation with the matching waits',async()=>{
+ const{scaleCommandTime}=await import('../../web/static/gal-engine.js'),original={op:'spine',cgPlaceMotion:{id:1,seconds:3,ease:16},cgRotationMotion:{id:2,seconds:2,ease:15}},fast=scaleCommandTime(original,2);assert.equal(fast.cgPlaceMotion.seconds,1.5);assert.equal(fast.cgRotationMotion.seconds,1);assert.equal(original.cgPlaceMotion.seconds,3)
+})

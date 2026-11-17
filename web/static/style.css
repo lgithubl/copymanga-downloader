@@ -5052,4 +5052,4 @@ h2 {
    Letterboxing belongs above the controls, never in a spare row below them. */
 .media-viewer-view.stream-page-fullscreen .gal-interaction .gal-interaction-view,.gal-interaction:fullscreen .gal-interaction-view,.gal-interaction.is-immersive .gal-interaction-view { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; }
 .media-viewer-view.stream-page-fullscreen .gal-interaction .gal-interaction-stage,.gal-interaction:fullscreen .gal-interaction-stage,.gal-interaction.is-immersive .gal-interaction-stage { width:min(100%,calc((100dvh - var(--gal-interaction-bar-height,44px))*16/9)); }
-.media-viewer-view.stream-page-fullscreen .gal-interaction>.gal-bar,.gal-interaction:fullscreen>.gal-bar,.gal-interaction.is-immersive>.gal-bar { flex:none; align-self:stretch; margin-top:auto; justify-content:center; }
+.media-viewer-view.stream-page-fullscreen .gal-interaction>.gal-bar,.gal-interaction:fullscreen>.gal-bar,.gal-interaction.is-immersive>.gal-bar { flex:none; align-self:stretch; margin-top:auto; justify-content:flex-start; }

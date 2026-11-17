@@ -42,7 +42,17 @@ export async function unityTexturePng(t,raw,options={}){
   for(let i=0;i<outW*outH;i++){const p=(Math.floor(i/outW)*sample*w+(i%outW)*sample)*bpp,d=i*4;if(format===1){pixels[d]=pixels[d+1]=pixels[d+2]=255;pixels[d+3]=raw[p]}else if(format===5){pixels[d]=raw[p+1];pixels[d+1]=raw[p+2];pixels[d+2]=raw[p+3];pixels[d+3]=raw[p]}else{pixels[d]=raw[p+(format===14?2:0)];pixels[d+1]=raw[p+1];pixels[d+2]=raw[p+(format===14?0:2)];pixels[d+3]=bpp===4?raw[p+3]:255}}
  }
  const row=outW*4,flipped=Buffer.alloc(pixels.length);for(let y=0;y<outH;y++)pixels.copy(flipped,y*row,(outH-1-y)*row,(outH-y)*row)
- if(filtered){const{default:sharp}=await import('sharp');return sharp(flipped,{raw:{width:outW,height:outH,channels:4}}).resize({width:options.maxTextureSize,height:options.maxTextureSize,fit:'inside',withoutEnlargement:true,kernel:'lanczos3'}).png().toBuffer()}
+ if(filtered){
+  const{default:sharp}=await import('sharp'),input={raw:{width:outW,height:outH,channels:4}},resize={width:options.maxTextureSize,height:options.maxTextureSize,fit:'inside',withoutEnlargement:true,kernel:'lanczos3'}
+  if(options.texturePma){
+   // Native Spine PNGs already contain associated RGB. Sharp's ordinary RGBA
+   // resize unpremultiplies its result; filter RGB and coverage independently.
+   const rgb=await sharp(flipped,input).removeAlpha().resize(resize).raw().toBuffer({resolveWithObject:true}),alpha=await sharp(flipped,input).extractChannel(3).resize(resize).raw().toBuffer(),rgba=Buffer.alloc(alpha.length*4)
+   for(let i=0;i<alpha.length;i++){rgba[i*4+3]=alpha[i];for(let c=0;c<3;c++)rgba[i*4+c]=Math.min(alpha[i],rgb.data[i*3+c])}
+   return encodePng(rgb.info.width,rgb.info.height,rgba,4)
+  }
+  return sharp(flipped,input).resize(resize).png().toBuffer()
+ }
  return encodePng(outW,outH,flipped,4)
 }
 // Unity trims transparent sprite borders in the atlas. Restore the original

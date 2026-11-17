@@ -10,6 +10,19 @@ import { atlasPageGeometry, findCropOffset } from './gal-spine-atlas.js'
 import { spine36BinaryToJson } from './gal-spine36-binary.js'
 
 export const SPINE_RUNTIMES = { '3.6': '/vendor/spine-webgl-3.6.js', '3.8': '/vendor/spine-webgl.js', '4.0': '/vendor/spine-webgl-4.0.js', '4.1': '/vendor/spine-webgl-4.1.js', '4.2': '/vendor/spine-webgl-4.2.js' }
+// Native CG camera poses interpolate independently of skin/expression updates.
+export function interpolateSpinePose(from,to,t){const k=Math.max(0,Math.min(1,Number(t)||0));return Object.fromEntries(['x','y','scale','rotation'].map(n=>[n,from[n]+(to[n]-from[n])*k]))}
+const cgPoseOf=spec=>({x:Number(spec.place?.x)||0,y:Number(spec.place?.y)||0,scale:Number(spec.place?.scale)||1,rotation:Number(spec.rotation)||0})
+const cgEase=(id,t)=>id===14?1-Math.cos(t*Math.PI/2):id===15?Math.sin(t*Math.PI/2):id===16?(1-Math.cos(t*Math.PI))/2:t // Original LeanTweenType 14/15/16.
+const CG_CHANNELS={cgPlaceMotion:['x','y','scale'],cgRotationMotion:['rotation']}
+const currentCgPose=(inst,now=performance.now())=>{
+ const pose={...(inst.cgPose||cgPoseOf(inst.spec))}
+ for(const[channel,t]of Object.entries(inst.cgTweens||{})){
+  const fraction=Math.min(1,(now-t.began)/t.ms),value=interpolateSpinePose(t.from,t.to,cgEase(t.ease,fraction));for(const key of CG_CHANNELS[channel])pose[key]=value[key]
+  if(fraction>=1){for(const key of CG_CHANNELS[channel])inst.cgPose[key]=t.to[key];delete inst.cgTweens[channel]}
+ }
+ return pose
+}
 const runtimePromises = new Map()
 // version：SPINE_RUNTIMES 的键。3.8 沿用 <script>（全局 spine）；3.6 和 4.x 的包也是 `var spine = …`，几个都放全局会互相覆盖（3.6 和 3.8 要在同一个页面里共存），
 // 所以取文本、包进函数里执行，各自拿到自己的 spine 对象
@@ -574,9 +587,20 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
 
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
   function applySpec(inst, spec, live) {
-    const oldOpacity=inst.skeleton.color.a,oldTarget=inst.spec?.opacity
+    const oldOpacity=inst.skeleton.color.a,oldTarget=inst.spec?.opacity,priorCgPose=inst.spec.viewportFrame?currentCgPose(inst):null
     restoreSlotOverrides(inst)
     inst.spec = spec
+    if(spec.viewportFrame){
+      const target=cgPoseOf(spec);inst.cgTweens||={};inst.cgMotionIds||={};inst.cgPose||=target
+      for(const[channel,keys]of Object.entries(CG_CHANNELS)){
+        const motion=spec[channel],id=motion?.id??null
+        if(!live||inst.cgMotionIds[channel]!==id){
+          if(live&&motion?.seconds>0&&priorCgPose)inst.cgTweens[channel]={from:priorCgPose,to:target,began:performance.now(),ms:motion.seconds*1000,ease:motion.ease}
+          else{delete inst.cgTweens[channel];for(const key of keys)inst.cgPose[key]=target[key]}
+          inst.cgMotionIds[channel]=id
+        }
+      }
+    }
     const skinChanged = (Array.isArray(spec.skins) && spec.skins.length ? JSON.stringify(spec.skins.filter(n => typeof n === 'string' && n)) : typeof spec.skin === 'string' ? spec.skin : '') !== (inst.skinRequested || '')
     if (skinChanged) {
       const pick = skinFor(inst.data, spec)
@@ -761,11 +785,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     if(inst.spec.viewportFrame?.w>0&&inst.spec.viewportFrame?.h>0){
       // A render target's texture resolution is not a viewport zoom. Contain the
       // stable source frame; later script zooms remain relative to its first view.
-      const r=inst.spec.viewportFrame,base=inst.spec.nativeTransform,v=views.still
+      const r=inst.spec.viewportFrame,base=inst.spec.nativeTransform,v=views.still,pose=currentCgPose(inst);inst.renderRotation=pose.rotation;inst.renderPose=pose
       const sx=base?.scaleX??1,sy=base?.scaleY??1,fit=Math.min(width/(r.w*Math.abs(sx)),height/(r.h*Math.abs(sy)))
-      scale=fit*((Number(inst.spec.place?.scale)||1)/(r.scale||1))*v.zoom
-      px=width/2-((r.x+r.w/2)*sx+(base?.x||0))*scale+(Number(inst.spec.place?.x)||0)*width/(inst.spec.stage?.[0]||1920)
-      py=height/2-((r.y+r.h/2)*sy+(base?.y||0))*scale+(Number(inst.spec.place?.y)||0)*height/(inst.spec.stage?.[1]||1080)
+      scale=fit*(pose.scale/(r.scale||1))*v.zoom
+      px=width/2-((r.x+r.w/2)*sx+(base?.x||0))*scale+pose.x*width/(inst.spec.stage?.[0]||1920)
+      py=height/2-((r.y+r.h/2)*sy+(base?.y||0))*scale+pose.y*height/(inst.spec.stage?.[1]||1080)
       px+=(.5-v.cx)*width;py+=(v.cy-.5)*height
     } else if(inst.spec.screenRect){
       const r=inst.spec.screenRect;scale=Math.min(width*r.w/w,height*r.h/h);px=width*(r.x+r.w/2)-(x+w/2)*scale;py=height*(1-r.y-r.h/2)-(y+h/2)*scale
@@ -914,8 +938,9 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
         restoreSlotOverrides(inst);inst.state.apply(inst.skeleton);inst.emitting=false
         applySlotOverrides(inst)
         layout(inst, width, height)
-        const rotated=Number(inst.spec.rotation)?inst.skeleton.bones.filter(b=>!b.parent).map(b=>[b,b.rotation]):[]
-        for(const[b,r]of rotated)b.rotation=r+Number(inst.spec.rotation)
+        const renderRotation=inst.spec.viewportFrame?inst.renderRotation:inst.spec.rotation
+        const rotated=Number(renderRotation)?inst.skeleton.bones.filter(b=>!b.parent).map(b=>[b,b.rotation]):[]
+        for(const[b,r]of rotated)b.rotation=r+Number(renderRotation)
         updateWorld(backend, inst.skeleton)
         for(const[b,r]of rotated)b.rotation=r
         renderer.drawSkeleton(inst.skeleton, Boolean(inst.pma))
@@ -970,6 +995,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const names = inst.data ? inst.data.animations.map((animation) => animation.name) : []
       const requestedTracks = (inst.spec.tracks?.length ? inst.spec.tracks.map((t) => ({ track: t.track, anim: t.anim })) : inst.spec.anim ? [{ track: 0, anim: inst.spec.anim }] : []).map((t) => ({ ...t, found: Boolean(inst.data) && names.includes(t.anim) }))
       const item = {
+        ...(inst.renderPose?{pose:{...inst.renderPose},motionActive:Object.keys(inst.cgTweens||{}).length>0}:{}),
         slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
         slotOverrides: inst.spec.slotVisibility&&inst.skeleton?Object.fromEntries(Object.keys(inst.spec.slotVisibility).map(name=>{const s=inst.skeleton.findSlot(name);return[name,s?{alpha:s.color.a,attachment:slotAttachment(s)?.name||''}:null]})):null,
         requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
