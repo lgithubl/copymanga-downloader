@@ -1,6 +1,6 @@
 # Kaiju Princess 2 and multi-selection interaction verification
 
-Implementation: `kaiju::unity`; import preset → Kaiju Princess 原生 Unity. `gal-layout` 2.88.0; Unity native cache generation 24. Update the unified image and tag package, then rerun layout. Existing originals remain read-only; generated scripts/resources/cache live in the normal media container cache. No original assembly/JavaScript execution, save modification, new runtime package, or runtime decoder download.
+Implementation: `kaiju::unity`; import preset → Kaiju Princess 原生 Unity. `gal-layout` 2.88.0; Unity native cache generation 25. Update the unified image and tag package, then rerun layout. Existing originals remain read-only; generated scripts/resources/cache live in the normal media container cache. No original assembly/JavaScript execution, save modification, new runtime package, or runtime decoder download.
 
 ```json
 {
@@ -22,6 +22,15 @@ Native sources: Unity 2020.3.49f1 `data.unity3d`, ResourceManager exact paths, D
 - Native M/B/C/V/A experience, lubrication, dislike and accumulation meters are per game/heroine. One-time seek changes the current value, not the subsequent rate. Each meter has its own persistent lock button: while locked, automatic increments/decrements, resets and queued threshold events cannot change that meter. Manual slider/percentage changes remain available. Unlocking resumes the native rate. Locks are saved per game (Kaiju shares a heroine's locks between poses; Fox keeps each room's meter separately). Native table thresholds change expression/voice pools; crossing a sensitivity threshold records climax flags and selects the native climax animation/voice. No artificial condition-true/false chooser is inserted for Kaiju.
 - This is a presentation preview with no inventory/buffs/save data. Game economy, stamina costs and consumable buffs are not simulated. Original source tables choose the base rates and thresholds. Unknown presentation commands remain visible as diagnostics.
 
+## Expression, layer and audio completion (native cache 25)
+
+- Actor expression replacement now closes the original `SLOT_Emo` bone group (including immediate children), and clears the native `Talk_Mouth` group. It no longer guesses groups from slot names. New actors start with the native `Face_Normal` default.
+- References resolve inside the current skeleton only: exact, unique case correction, complete whitespace/slash-separated slot lists, or unique reordered underscore tokens. All 40 special scripts were audited: nine normalized references; 34 absent off references are recorded as native no-ops. Fifteen on-reference uses (14 unique scene/name pairs) genuinely have no slot in the selected original skeleton. These retain source-event diagnostics. In particular 995/996 request Lv3 hat slots on a lower-stage model; no unrelated model is substituted.
+- Hidden slots detach their attachment as well as setting alpha to zero, matching the native code and preventing invisible clipping attachments from cutting other layers. Overrides restore attachments before skin/animation changes.
+- Real Spine timeline callbacks now dispatch the original HCG/HMode EventName tables. HCG callbacks require the original prefab's `SpineSoundEvent` component; unmapped timeline names remain silent, as in the native table. Audio gain, pause, scene changes and destruction apply to these clips.
+- Interaction actions play the original direct short voice/SFX, followed by native emotion-stage voice pools. Stage loops wait for completion and share the existing voice queue; model/action changes cancel stale requests. Existing meter locks remain effective.
+- Actual Drama 5011 step 35: both blush layers have real attachments; toggling them changes 9,593 pixel channels. Native `JJNormal_Sound` repeatedly decodes/plays real audio. Pause and destruction stop new events. Step 13 ends in `Idle_0` with no sound event; sound is not fabricated there.
+
 ## RJ01562637 correction
 
 `database/girl` supplies 90 original numeric state defaults, including the native 0..3 stage bound. Known states now execute their original comparisons rather than exposing manual true/false switches. Authored inverse functions are paired with their matching action, preserving stable target IDs and independently closing supported actions. Missing inverses are not invented. Original component visibility controls and rendered interaction covers remain available. Three obsolete/absent durability state names in some room functions still use explicit unknown-state diagnostics; this is not claimed as emulating every game function.
@@ -38,11 +47,11 @@ Local fixtures/reports stay under `.cache/kaiju-20261117` and `.cache/interactio
 - Real Fox first room: no manual conditions for known states, two independently paired toggles, closing insertion preserves the other active layer, real audio, meter event and thumbnail pixels.
 - Regression: old TSK Ch10340034 step 45→46 skin/eye attachment; sequential and direct entry match. Import dropdown test covers the new preset and preserves existing options; layout default-rule guard passes.
 
-Commands: `node scripts/dev/gal-kaiju-state-selftest.mjs`; `node scripts/dev/gal-kaiju-browser-selftest.mjs`; queue/selection/Fox selftests; `gal-interaction-modes-browser-selftest.mjs`; `fe-gal-import-presets-selftest.mjs`; `fe-gal-spine-skin-selftest.mjs`; `gal-layout-rules-selftest.mjs`. Browser fixtures need the existing pinned local Spine runtime and local Playwright/Chrome; tests never download runtimes.
+Commands: `node scripts/dev/gal-kaiju-presentation-selftest.mjs`; `node scripts/dev/gal-kaiju-layer-browser-selftest.mjs`; `node scripts/dev/gal-kaiju-state-selftest.mjs`; `node scripts/dev/gal-kaiju-browser-selftest.mjs`; queue/selection/Fox selftests; `gal-interaction-modes-browser-selftest.mjs`; `fe-gal-import-presets-selftest.mjs`; `fe-gal-spine-skin-selftest.mjs`; `gal-layout-rules-selftest.mjs`. Browser fixtures need the existing pinned local Spine runtime and local Playwright/Chrome; tests never download runtimes.
 
 ## Presentation limits
 
-Screen fades 11/12 and background color are supported. Shader transitions 19/20 use a plain fade and report that fallback. Some shake/flash effects, static-image camera transforms, 3D rotation projection, isolated source slot-name mismatches, and gameplay events are not reproduced exactly. Those are reported in raw-command diagnostics instead of silently declaring full original-game fidelity. Continuation 200 follows original referenced Drama with a cycle/depth guard. The generated adapter is isolated; existing Unity/krkr/BGI layout IDs are not reassigned.
+Screen fades 11/12 and background color are supported. Shader transitions 19/20 use a plain fade and report that fallback. Some shake/flash effects, static-image camera transforms, 3D rotation projection, genuinely absent source slot references, and gameplay events are not reproduced exactly. Those are reported in raw-command diagnostics instead of silently declaring full original-game fidelity. Continuation 200 follows original referenced Drama with a cycle/depth guard. The generated adapter is isolated; existing Unity/krkr/BGI layout IDs are not reassigned.
 
 ## Static schema provenance
 

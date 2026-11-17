@@ -59,6 +59,8 @@ try{
  assert.equal(sequential.testTime,before.testTime,'skin switch must preserve the running animation time')
  const red=await page.evaluate(()=>{const c=document.querySelector('canvas.gal-spine'),copy=document.createElement('canvas');copy.width=c.width;copy.height=c.height;const ctx=copy.getContext('2d');ctx.drawImage(c,0,0);const d=ctx.getImageData(0,0,copy.width,copy.height).data;let count=0;for(let i=0;i<d.length;i+=4)if(d[i]>180&&d[i+1]<80&&d[i+2]<80&&d[i+3]>0)count++;return count})
  assert.ok(red>0,'the new skin must actually draw its eye attachment')
+ const hiddenOverride=await show({...base,skin:'face6',slotVisibility:{eyes:false}});assert.equal(hiddenOverride.testSlots.find(s=>s.name==='eyes').attachment,null,'hiding a slot detaches attachments, including native clipping geometry')
+ const shownOverride=await show({...base,skin:'face6',slotVisibility:{eyes:true},slotAttachments:{eyes:'eyes_setup'}});assert.equal(shownOverride.testSlots.find(s=>s.name==='eyes').attachment,'eyes_setup');const withoutOverride=await show({...base,skin:'face6'});assert.equal(withoutOverride.testSlots.find(s=>s.name==='eyes').attachment,'eyes_setup','removing overrides restores native animation/skin attachment')
  const restored=await show({...base,skin:'face1'})
  assert.equal(restored.testSlots.find(s=>s.name==='eyes').attachment,null,'returning to the old skin must remove attachments it does not contain')
  assert.equal(restored.testTime,before.testTime)

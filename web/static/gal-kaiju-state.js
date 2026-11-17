@@ -55,7 +55,7 @@ export function createKaijuState(config,saved={}){
   let cum=false
   if(!locks.Cum&&num(values.Cum)>=config.cumMax){values.Cum=0;flags.cum=true;flags['cum:'+row.ClickPlace]=true;cum=true}
   const f=frame();if(crossings&&config.modelAnimations.includes('Act_Orgasm'))f.anim='Act_Orgasm'
-  const soundFlag=crossings?'Sound_Climax_'+(flags.double?'2x':'1x'):null,sound=config.sounds?.find(r=>r.ID===soundFlag),voiceId=pick(list(sound?.VoiceID||f.emotion?.SoundIDs)),logs=String(row.LogList||'').split(';'),log=pick(list(logs[Math.min(logs.length-1,level(currentPart))])),text=config.logs[log]||''
-  return{frame:f,snapshot:snapshot(),voiceId,text,crossings,cum}
+  const direct=row.ClickPlace==='Mouth'?(list(row.NeedEquip).includes('Tongue')?'Sound_Shallow_Kiss':list(row.NeedEquip).some(id=>id.startsWith('Dick'))?'Sound_BlowJob':list(row.NeedEquip).some(id=>id.startsWith('Hand'))?'Mouth_Hand_Sound':null):['Vagina','Ass'].includes(row.ClickPlace)?list(row.NeedEquip).includes('LoveEgg')?'Sound_Shallow_Egg':list(row.NeedEquip).includes('Vibrator')?'Sound_Shallow_Vibrator':list(row.NeedEquip).some(id=>id.startsWith('Hand'))?'Sound_Shallow_Hand':list(row.NeedEquip).some(id=>id.startsWith('Dick'))?'Sound_Shallow_Dick':null:null,soundFlag=crossings?'Sound_Climax_'+(flags.double?'2x':'1x'):direct,sound=config.sounds?.find(r=>r.ID===soundFlag),voiceId=pick(list(sound?.VoiceID||f.emotion?.SoundIDs)),logs=String(row.LogList||'').split(';'),log=pick(list(logs[Math.min(logs.length-1,level(currentPart))])),text=config.logs[log]||''
+  return{frame:f,snapshot:snapshot(),voiceId,soundId:pick(list(sound?.SoundID)),text,crossings,cum}
  }}
 }

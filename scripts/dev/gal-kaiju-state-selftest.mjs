@@ -8,7 +8,7 @@ for(const entry of scripts.filter(s=>s.data.kind==='interaction')){
  const parsed=parse(JSON.stringify(entry.data),ctx),role=parsed.interaction.roles[0],config=role.model.kaiju,state=createKaijuState(config),id=role.tools[0].areas[0].id
  assert.ok(role.outfits.length>=6);assert.ok(role.model.initialCommands[0].skins.some(s=>s.includes('Stocking_Lv1')),'native leg/body skins assembled')
  const one=state.action(id);assert.ok(one.voiceId,'native level-zero voice');assert.ok(one.snapshot.values.M>0)
- state.seek('M',.6);const high=state.action(id);assert.equal(high.snapshot.meters.find(m=>m.id==='M').level,3);assert.notEqual(high.voiceId,one.voiceId,'original emotion rules change voice pool by stage')
+ state.seek('M',.6);const high=state.action(id);assert.equal(high.snapshot.meters.find(m=>m.id==='M').level,3);assert.notEqual(high.frame.emotion.SoundIDs,one.frame.emotion.SoundIDs,'original emotion rules change looping voice pool by stage');assert.ok(one.voiceId.includes('se91'),'native kiss short voice precedes the emotion loop')
  state.seek('M',.199);const crossing=state.action(id);assert.ok(crossing.crossings);assert.equal(crossing.snapshot.flags.climax,true)
  assert.ok(crossing.frame.spreads[1],'original action opens local cut-in')
  const before=crossing.snapshot.values.M;state.action(id);assert.ok(state.snapshot().values.M>before,'one-time seek does not freeze subsequent accumulation')

@@ -1,3 +1,4 @@
+import{createSpineEventAudio}from'/gal-spine-event-audio.js'
 import {createGalInteraction} from '/gal-interaction.js'
 import { createRpgUiLayer } from '/gal-rpgmaker-ui.js'
 import { rpgShakeFrames } from '/gal-shake.js'
@@ -485,6 +486,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const vol = Object.fromEntries(AUDIO_GROUPS.map((g) => [g.key, loadVolume(g.key, legacyVolume)]))   // 组 key → 滑块位置
   const gainOf = (key) => volumeGain(vol[key])
   const usedOps = new Set(scene.steps.flatMap((step) => step.commands.map((c) => c.op === 'bgvoice' && ['voice','bgse'].includes(c.kind) ? c.kind : c.op)))
+  for(const step of scene.steps)for(const c of step.commands)if(c.eventAudio)for(const mapping of Object.values(c.eventAudio)){if(mapping.sounds?.length)usedOps.add('se');if(mapping.voices?.length)usedOps.add('voice')}
   for (const g of AUDIO_GROUPS) audioRanges[g.key].row.hidden = g.always === 'tts' ? !tts?.enabled : !g.ops.some((op) => usedOps.has(op))
   bgmRange.value = String(bgmVolume)
   for (const g of AUDIO_GROUPS) { audioRanges[g.key].range.value = String(vol[g.key]); }
@@ -1341,11 +1343,13 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   let spineUnavailable = false
   const unavailableRuntimes = new Set()   // 缺哪几个版本的运行时
   const spineErrors = new Map()           // 骨骼路径 → { kind: version|parse, version, runtime, message }（文件都取到了但不能用）
+  const spineEventAudio=createSpineEventAudio({url,gain:gainOf,onError:error=>{scene.stats||={};scene.stats.notes||=[];scene.stats.notes.push(error.message);updateNote()},onVoice:request=>{if(!request.valid()||!wantBgm||fast){request.done();return}const audio=playOnce(request.src,'voice'),done=()=>request.done();audio.addEventListener('ended',done,{once:true});audio.addEventListener('error',done,{once:true});return()=>{audio.pause();done()}}})
   function paintSpines(live) {
+    spineEventAudio.sync(state.spines)
     const any = Object.keys(state.spines).length > 0
     if (!spineLayer && !any) return
     if (!spineLayer) {
-      spineLayer = createSpineLayer({ parent: world, url, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
+      spineLayer = createSpineLayer({ parent: world, url, onEvent:event=>{if(wantBgm&&!fast)spineEventAudio.event(event)}, onMissing: markMissing, onUnavailable: (version) => { spineUnavailable = true; if (version) unavailableRuntimes.add(version); updateNote() }, onError: (error) => { spineErrors.set(error.src, error); updateNote() } })
       if (!wantBgm) spineLayer.setPaused(true)
     }
     spineLayer.set(state.spines, { live, slow: slowFactor, view: { still: views.still, actor: views.actor, camera: views.camera, blend: views.blend, expressions: expressionTable() } }).then(() => { if (!destroyed) { syncViewInputs(); updateNote() } })
@@ -2380,6 +2384,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   bgmRange.addEventListener('input', () => { bgmVolume = Number(bgmRange.value); bgmValue.textContent = pct(bgmVolume); localStorage.setItem(VOL_KEY.bgm, String(bgmVolume)); if (bgmAudio) bgmAudio.volume = volumeGain(bgmVolume) })
   // 每组音频一个滑块：改了就存、并让正在播的同组声音马上跟着变
   const applyGroupGain = (key) => {
+    spineEventAudio.setVolume()
     const gain = gainOf(key)
     if (key === 'movie') movie.volume = gain
     else if (key === 'bgse') { if (bgseAudio) bgseAudio.volume = gain }
@@ -2456,6 +2461,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   const visibility = new IntersectionObserver((entries) => {
     const visible = entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
+    spineEventAudio.setPaused(!visible)
     rpgMapLayer?.setPaused(!visible)
     if (visible) { tr?.pause(!transOn || fast); ttsClient?.pause(!ttsOn || fast); spineLayer?.setPaused(false); live2dLayer?.setPaused(false); overlayLayer?.setPaused(false); underLayer?.setPaused(false); for (const v of bgVoices.values()) v.audio.play().catch(() => {}); bgseAudio?.play().catch(() => {}); bgmAudio?.play().catch(() => {}); if (!movie.hidden) movie.play().catch(() => {}); if (voiceAudio && !voiceAudio.ended && voiceAudio.paused) voiceAudio.play().catch(() => {}); scheduleAuto() }
     else { tr?.pause(true); ttsClient?.pause(true); ttsRecord?.audio?.pause(); spineLayer?.setPaused(true); live2dLayer?.setPaused(true); overlayLayer?.setPaused(true); underLayer?.setPaused(true); for (const v of bgVoices.values()) v.audio.pause(); bgseAudio?.pause(); bgmAudio?.pause(); voiceAudio?.pause(); movie.pause(); stopAuto() }
@@ -2488,6 +2494,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     movie.removeAttribute('src')
     for (const video of spareVideos.values()) { video.removeAttribute('src'); video.load?.() }
     spareVideos.clear()
+    spineEventAudio.destroy()
     spineLayer?.destroy()
     rpgMapLayer?.destroy()
     rpgUiLayer?.destroy()

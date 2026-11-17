@@ -253,7 +253,7 @@ export function spineProblemLines(item) {
 
 // onMissing(src)：文件取不到（骨骼 / atlas / 图集）；onUnavailable(version)：这个版本的运行时没有；
 // onError({ src, kind, version, runtime, message })：文件都取到了但不能用——kind: 'version'（版本不支持）| 'parse'（解析失败）
-export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavailable = () => {}, onError = () => {} }) {
+export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavailable = () => {}, onError = () => {}, onEvent = null }) {
   const canvases = []
   const makeCanvas = () => {
     const c = document.createElement('canvas')
@@ -449,11 +449,11 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // 更新世界变换。3.6 的 Skeleton 没有 scaleX / scaleY（3.8 起才有；3.6 只有 flipX / flipY，世界坐标 = 骨骼局部值 + skeleton.x / y），
   // layout() 写进 skeleton.scaleX / scaleY 的缩放在 3.6 里不会生效。所以 3.6 把缩放乘到根骨骼的局部 x / y / scaleX / scaleY 上再更新、更新完还原
   // （动画只覆盖有时间线的属性，不还原的话没动画的属性每帧会被再乘一次）。子骨骼都继承根的缩放，整个骨架等比放大
-  function restoreSlotOverrides(inst) { for(const [slot,alpha]of inst.slotOverrideAlpha||[])slot.color.a=alpha;inst.slotOverrideAlpha=null }
+  function restoreSlotOverrides(inst) { for(const [slot,[alpha,attachment]]of inst.slotOverrideAlpha||[]){slot.color.a=alpha;slot.setAttachment(attachment)}inst.slotOverrideAlpha=null }
   function applySlotOverrides(inst) {
     const overrides=inst.spec?.slotVisibility;if(!overrides)return
     inst.slotOverrideAlpha=new Map()
-    for(const [name,on]of Object.entries(overrides)){const slot=inst.skeleton.findSlot(name);if(!slot)continue;inst.slotOverrideAlpha.set(slot,slot.color.a);slot.color.a=on?1:0;if(on&&!slot.getAttachment()){const wanted=inst.spec.slotAttachments?.[name]||slot.data.attachmentName||name,attachment=inst.skeleton.getAttachment(slot.data.index,wanted);if(attachment)slot.setAttachment(attachment)}}
+    for(const [name,on]of Object.entries(overrides)){const slot=inst.skeleton.findSlot(name);if(!slot)continue;inst.slotOverrideAlpha.set(slot,[slot.color.a,slotAttachment(slot)]);slot.color.a=on?1:0;if(!on)slot.setAttachment(null);if(on&&!slot.getAttachment()){const wanted=inst.spec.slotAttachments?.[name]||slot.data.attachmentName||name,attachment=inst.skeleton.getAttachment(slot.data.index,wanted);if(attachment)slot.setAttachment(attachment)}}
   }
   function updateWorld(backend, skeleton) {
     if (backend.key !== '3.6') return skeleton.updateWorldTransform(backend.physics)
@@ -575,6 +575,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // spec 变了：同一个骨架只换动画 / 颜色 / 位置，不重新加载
   function applySpec(inst, spec, live) {
     const oldOpacity=inst.skeleton.color.a,oldTarget=inst.spec?.opacity
+    restoreSlotOverrides(inst)
     inst.spec = spec
     const skinChanged = (Array.isArray(spec.skins) && spec.skins.length ? JSON.stringify(spec.skins.filter(n => typeof n === 'string' && n)) : typeof spec.skin === 'string' ? spec.skin : '') !== (inst.skinRequested || '')
     if (skinChanged) {
@@ -691,12 +692,13 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       skeleton.setToSetupPose()
       updateWorld(backend, skeleton)
       const state = new sp.AnimationState(new sp.AnimationStateData(loaded.data))
+      if(onEvent&&current.spec.eventAudio&&typeof state.addListener==='function')state.addListener({event:(entry,event)=>{if(current.emitting&&!destroyed&&!paused&&instances.get(slot)===current&&current.spec.visible!==false)onEvent({slot,spec:current.spec,name:event.data?.name||'',animation:entry.animation?.name,track:entry.trackIndex})}})
       Object.assign(current, { backend, pma: Boolean(loaded.pma), pmaInfo: loaded.pmaInfo, atlasAlign: loaded.aligned || [], blends: loaded.blends, version: loaded.version, runtime: loaded.runtime, error: null, skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found, data: loaded.data, skeleton, state, boundsOk: false, bounds: { x: -960, y: -540, w: 1920, h: 1080 }, anim: '', loop: true })
       applySpec(current, current.spec || spec, live)   // 加载中又来了新指令（set 只记最新的 spec）：用最新的，不是第一次的（chmr_40101123 第 1 句没表情）
       refreshBounds(current)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
-      state.update(0)
-      state.apply(skeleton);applySlotOverrides(current)
+      current.emitting=live;state.update(0)
+      state.apply(skeleton);current.emitting=false;applySlotOverrides(current)
       updateWorld(backend, skeleton)
       kick()
     } finally {
@@ -897,8 +899,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
           inst.state.timeScale = inst.slow.from + (inst.slow.to - inst.slow.from) * t
           if (t >= 1) inst.slow = null
         }
-        inst.state.update(dt)
-        restoreSlotOverrides(inst);inst.state.apply(inst.skeleton)
+        inst.emitting=true;inst.state.update(dt)
+        restoreSlotOverrides(inst);inst.state.apply(inst.skeleton);inst.emitting=false
         applySlotOverrides(inst)
         layout(inst, width, height)
         const rotated=Number(inst.spec.rotation)?inst.skeleton.bones.filter(b=>!b.parent).map(b=>[b,b.rotation]):[]
@@ -958,6 +960,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const requestedTracks = (inst.spec.tracks?.length ? inst.spec.tracks.map((t) => ({ track: t.track, anim: t.anim })) : inst.spec.anim ? [{ track: 0, anim: inst.spec.anim }] : []).map((t) => ({ ...t, found: Boolean(inst.data) && names.includes(t.anim) }))
       const item = {
         slot, skel: inst.spec.skel, atlas: inst.spec.atlas, kind: inst.spec.kind,
+        slotOverrides: inst.spec.slotVisibility&&inst.skeleton?Object.fromEntries(Object.keys(inst.spec.slotVisibility).map(name=>{const s=inst.skeleton.findSlot(name);return[name,s?{alpha:s.color.a,attachment:slotAttachment(s)?.name||''}:null]})):null,
         requested: inst.spec.anim || (inst.spec.tracks || []).map((t) => `${t.track}:${t.anim}`).join(' '), requestedNames: inst.spec.tracks?.length ? inst.spec.tracks.map((t) => t.anim) : inst.spec.anim ? [inst.spec.anim] : [], used: inst.anim || '', loaded: Boolean(inst.skeleton), missingAnimations: inst.missingAnims || [],
         requestedTracks,
         faceDefaults: inst.faceDefaults || [], expression: inst.expression || null, missingRequested: inst.missingAnims || [],
