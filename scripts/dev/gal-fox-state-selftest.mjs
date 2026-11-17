@@ -1,5 +1,6 @@
 import assert from'node:assert/strict'
 import{test}from'node:test'
+import{createInteractionSounds}from'../../web/static/gal-interaction-sounds.js'
 import{foxStateDefaults}from'../../web/library/gal/unity-fox-state.mjs'
 import{foxToggleEntries}from'../../web/library/gal/adapters/unity-fox-toggles.mjs'
 import{parseFoxRoom}from'../../web/library/gal/adapters/unity-fox-room.mjs'
@@ -16,4 +17,10 @@ test('toggle entries call real inverse functions, preserve stable action ids and
 })
 test('full-meter stage waits in the shared queue, latches despite negative rate, and respects original max stage',()=>{
  const m=createInteractionMeter({bars:{girl:{max:1,rate:-.1}},stageMax:3,highSeconds:.1},{count:3});m.seek(1);assert.equal(m.tick(.1,{busy:true}),null);assert.equal(m.pending(),'iku');m.tick(.25,{busy:true});assert.equal(m.snapshot().value,1);assert.equal(m.tick(0),'iku');assert.equal(m.snapshot().count,3);assert.equal(m.pending(),null);m.tick(.2);m.tick(.1);assert.equal(m.snapshot().count,3)
+})
+
+test('native automatic sound groups defer behind active voices, rotate fairly and release the shared queue',()=>{
+ const previous=globalThis.Audio,played=[];let blocked=true,idle=0
+ globalThis.Audio=class extends EventTarget{constructor(src){super();this.src=src;this.paused=true}play(){this.paused=false;played.push(this);return Promise.resolve()}pause(){this.paused=true}finish(){this.paused=true;this.dispatchEvent(new Event('ended'))}}
+ try{const s=createInteractionSounds({url:v=>v,canPlay:()=>!blocked&&!s.audio(),onIdle:()=>idle++});s.set('x',[{id:'a',playOnEnable:true,auto:true,period:.1,clips:[{src:'a'}]},{id:'b',playOnEnable:true,auto:true,period:.1,clips:[{src:'b'}]}]);s.tick(.2,{});assert.equal(played.length,0);blocked=false;s.tick(.1,{});assert.equal(played[0].src,'a');s.tick(.3,{});assert.equal(played.length,1);played[0].finish();s.tick(.1,{});assert.equal(played[1].src,'b');assert.equal(idle,1);s.clear();s.tick(.1,{});assert.equal(played.length,2)}finally{globalThis.Audio=previous}
 })

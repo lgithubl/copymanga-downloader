@@ -6,7 +6,7 @@ import{hakuboxAdventure}from'./gal-hakubox-adventure.js'
 import{initialState,applyCommand,condMet,visibleChoiceOptions}from'./gal-engine.js'
 import{createSpineLayer}from'./gal-spine.js'
 import{createOverlayLayer}from'./gal-stand.js'
-export function createCommandInteractionLayers({parent,url,onMissing,onError,onUnavailable,onMessage,onChoice,onBusy,onAudio,conditionState=()=>true,onMeter=()=>{},onMeters=()=>{},onMeterReady=null,canAutoTrigger=()=>true,audioGain=()=>1}){
+export function createCommandInteractionLayers({parent,url,onMissing,onError,onUnavailable,onMessage,onChoice,onBusy,onAudio,conditionState=()=>true,onMeter=()=>{},onMeters=()=>{},onMeterReady=null,onAudioIdle=()=>{},waitForVoice=()=>false,canAutoTrigger=()=>true,audioGain=()=>1}){
  const under=createOverlayLayer({parent,url,onMissing,under:true}),spine=createSpineLayer({parent,url,onMissing,onError,onUnavailable}),over=createOverlayLayer({parent,url,onMissing}),loops=new Map()
  let state=initialState(),modelKey='',actionKey='',configuration='',generation=0,waiting=null,waitingKind='',timer=0,paused=false,presentation=null,meter=null,model=null,running=false,visualOverrides={},lastTick=performance.now(),kaiju=null
  const clearWait=()=>{clearTimeout(timer);waiting?.();waiting=null;waitingKind=''},finishWait=()=>{const resolve=waiting;waiting=null;waitingKind='';clearTimeout(timer);resolve?.()},advance=()=>{if(waitingKind!=='choice')finishWait()}
@@ -16,7 +16,7 @@ export function createCommandInteractionLayers({parent,url,onMissing,onError,onU
  function nativeBranches(){for(let i=0;i<4;i++){let changed=false;for(const b of model?.nativeBranches||[]){const value=state.vars[b.var];if(value==='__fox_unknown__'||!Number.isFinite(Number(value)))continue;const enabled=b.chain.every(id=>Number(state.vars['fox-active:'+id]??model.nativeObjects[id]??1)!==0);for(const c of b.cases){const on=Number(enabled&&c.judge!==null&&(Number(value)===c.judge||c.keep&&Number(value)>c.judge));if(state.vars['fox-active:'+c.object]!==on){state.vars['fox-active:'+c.object]=on;changed=true}}}if(!changed)break}}
  function meterState(){if(!meter)return;const snapshot=meter.snapshot();state.vars['fox-state:girl1:愛心']=snapshot.count;onMeter(snapshot)}
  async function paint(){nativeBranches();const specs=Object.fromEntries(Object.entries(state.spines).map(([id,s])=>{const chain=model?.nativeGraphics?.[id],visible=typeof visualOverrides[id]==='boolean'?visualOverrides[id]:chain?chain.every(o=>Number(state.vars['fox-active:'+o]??model.nativeObjects[o]??1)!==0):s.visible;return[id,{...s,visible}]}));await Promise.all([spine.set(specs,{live:true}),under.set(state.overlays.filter(o=>o.under),{live:true}),over.set(state.overlays.filter(o=>!o.under),{live:true})])}
- const sequences=createInteractionSounds({url,gain:audioGain,onError})
+ const sequences=createInteractionSounds({url,gain:audioGain,onError,onIdle:onAudioIdle,canPlay:()=>!waitForVoice()||!running&&canAutoTrigger()&&!sequences.audio()})
  function clearAudio(){sequences.clear();for(const a of loops.values())a.pause();loops.clear()}
  async function run(input,reset=false,selections={}){const commands=structuredClone(input||[]);cancel();const mine=generation;running=true;onBusy(true);let reply={};try{
   if(reset){state=initialState();clearAudio()}
