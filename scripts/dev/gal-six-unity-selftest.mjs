@@ -85,3 +85,8 @@ for(const[name,adapter,id,section,step]of cases)test('captured '+name+': import 
  }
  const output=path.resolve('.cache/six-games-20261115/verified');await mkdir(output,{recursive:true});await writeFile(path.join(output,name+'.json'),JSON.stringify({name,source,section,step,reader,config:layout.itemPatch.gal.config},null,2));console.log('Verified',name,reader.scene.stats.messages||reader.scene.stats.text,'messages; original resource',resource.contentType,sound.contentType)
 })
+
+test('non-mipmapped RGBA textures retain the requested preview bound and original sampled colors',async()=>{
+ const sharp=requireWeb('sharp'),raw=Buffer.alloc(8*8*4);for(let y=0;y<8;y++)for(let x=0;x<8;x++){const p=(y*8+x)*4;raw[p]=x*20;raw[p+1]=y*20;raw[p+2]=100;raw[p+3]=255}
+ const png=await unityTexturePng({m_Width:8,m_Height:8,m_TextureFormat:4},raw,{maxTextureSize:4}),out=await sharp(png).raw().toBuffer({resolveWithObject:true});assert.equal(out.info.width,4);assert.equal(out.info.height,4);assert.deepEqual([...out.data.subarray(0,4)],[0,120,100,255])
+})

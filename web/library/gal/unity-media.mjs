@@ -24,8 +24,8 @@ export function unityTextureMip(t,maxSize){
 }
 export async function unityTexturePng(t,raw,options={}){
  const w=t.m_Width,h=t.m_Height,format=t.m_TextureFormat;if(!Number.isInteger(w)||!Number.isInteger(h)||w<=0||h<=0||w*h>64*1024*1024)throw Error('Unity texture dimensions invalid')
- if(format===28||format===29)return unityTexturePng({...t,m_TextureFormat:format===28?10:12},await unpackUnityCrunch(raw))
- const sample=[10,12].includes(format)&&Number.isInteger(options.maxTextureSize)&&options.maxTextureSize>0?2**Math.max(0,Math.ceil(Math.log2(Math.max(w,h)/options.maxTextureSize))):1,outW=Math.ceil(w/sample),outH=Math.ceil(h/sample)
+ if(format===28||format===29)return unityTexturePng({...t,m_TextureFormat:format===28?10:12},await unpackUnityCrunch(raw),options)
+ const sample=[1,3,4,5,10,12,14].includes(format)&&Number.isInteger(options.maxTextureSize)&&options.maxTextureSize>0?2**Math.max(0,Math.ceil(Math.log2(Math.max(w,h)/options.maxTextureSize))):1,outW=Math.ceil(w/sample),outH=Math.ceil(h/sample)
  let pixels
  if(format===25)pixels=decodeBc7(raw,w,h)
  else if(format===10||format===12){
@@ -37,8 +37,8 @@ export async function unityTexturePng(t,raw,options={}){
    for(let i=0;i<16;i++){const x=bx*4+i%4,y=by*4+(i>>2);if(x>=w||y>=h||x%sample||y%sample)continue;const v=(bits>>>(i*2))&3,d=((y/sample)*outW+x/sample)*4;pixels[d]=colors[v][0];pixels[d+1]=colors[v][1];pixels[d+2]=colors[v][2];if(format===12){const bit=i*3,at=p+2+(bit>>3),value=(raw[at]|((raw[at+1]||0)<<8))>>>(bit&7);pixels[d+3]=alpha[value&7]}else pixels[d+3]=c0<=c1&&v===3?0:255}
   }
  }else{
-  const bpp=({1:1,3:3,4:4,5:4,14:4})[format];if(!bpp)throw Error('Unity texture format unsupported: '+format);if(raw.length<w*h*bpp)throw Error('Unity texture pixels truncated');pixels=Buffer.alloc(w*h*4)
-  for(let i=0;i<w*h;i++){const p=i*bpp,d=i*4;if(format===1){pixels[d]=pixels[d+1]=pixels[d+2]=255;pixels[d+3]=raw[p]}else if(format===5){pixels[d]=raw[p+1];pixels[d+1]=raw[p+2];pixels[d+2]=raw[p+3];pixels[d+3]=raw[p]}else{pixels[d]=raw[p+(format===14?2:0)];pixels[d+1]=raw[p+1];pixels[d+2]=raw[p+(format===14?0:2)];pixels[d+3]=bpp===4?raw[p+3]:255}}
+  const bpp=({1:1,3:3,4:4,5:4,14:4})[format];if(!bpp)throw Error('Unity texture format unsupported: '+format);if(raw.length<w*h*bpp)throw Error('Unity texture pixels truncated');pixels=Buffer.alloc(outW*outH*4)
+  for(let i=0;i<outW*outH;i++){const p=(Math.floor(i/outW)*sample*w+(i%outW)*sample)*bpp,d=i*4;if(format===1){pixels[d]=pixels[d+1]=pixels[d+2]=255;pixels[d+3]=raw[p]}else if(format===5){pixels[d]=raw[p+1];pixels[d+1]=raw[p+2];pixels[d+2]=raw[p+3];pixels[d+3]=raw[p]}else{pixels[d]=raw[p+(format===14?2:0)];pixels[d+1]=raw[p+1];pixels[d+2]=raw[p+(format===14?0:2)];pixels[d+3]=bpp===4?raw[p+3]:255}}
  }
  const row=outW*4,flipped=Buffer.alloc(pixels.length);for(let y=0;y<outH;y++)pixels.copy(flipped,y*row,(outH-1-y)*row,(outH-y)*row)
  return encodePng(outW,outH,flipped,4)

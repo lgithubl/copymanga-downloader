@@ -37,7 +37,7 @@ export class UnityStore{
   if(o.classId===49){const d=await this.decode(o);return d.bytes||Buffer.from(d.m_Script||'')}
   if(o.classId===28){const t=await this.decode(o),mip=unityTextureMip(t,options.maxTextureSize);let raw
    if(mip){if(t['image data']?.length){if(mip.offset+mip.size>t['image data'].length)throw Error('Unity inline mip outside image');raw=t['image data'].subarray(mip.offset,mip.offset+mip.size)}else{if(mip.offset+mip.size>Number(t.m_StreamData.size))throw Error('Unity mip outside texture stream');raw=await this.stream(o,{...t.m_StreamData,offset:Number(t.m_StreamData.offset)+mip.offset,size:mip.size})}return unityTexturePng(mip.texture,raw,options)}
-   raw=t['image data']?.length?t['image data']:await this.stream(o,t.m_StreamData);return unityTexturePng(t,raw)}
+   raw=t['image data']?.length?t['image data']:await this.stream(o,t.m_StreamData);return unityTexturePng(t,raw,options)}
   if(o.classId===83){const t=await this.decode(o);return unityAudio(await this.stream(o,t.m_Resource))}
   if(o.classId===213){const s=await this.decode(o),texture=await this.ptr(o.asset,s.m_RD?.texture);if(!texture)throw Error('Unity sprite texture missing');return unitySpritePng(s,await this.decode(texture),await this.media(texture))}
   throw Error('Unity object is not supported media: '+o.classId)

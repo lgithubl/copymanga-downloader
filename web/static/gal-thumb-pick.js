@@ -7,15 +7,16 @@ import { stateAt } from './gal-engine.js'
 const VISUAL_OPS = new Set(['bg', 'spine', 'spineOff', 'stand', 'standOff', 'overlay', 'overlayOff', 'movie', 'movieOff', 'live2d', 'live2dOff'])
 export function scoreState(state) {
   if (state.bg?.over) return 100
-  if (Object.values(state.spines || {}).some((spec) => spec?.kind === 'still')) return 90
+  if (Object.values(state.spines || {}).some((spec) => spec?.visible!==false&&spec?.kind === 'still')) return 90
   const models=[state.live2d,...Object.values(state.live2ds||{})].filter(s=>s?.src&&s.visible!==false)
   if(models.some(s=>s.cg||s.kind==='still'))return 90
   if ((state.overlays || []).some((o) => o?.src&&o.kind==='still')) return 90
   if ((state.overlays || []).some((o) => o?.src&&o.kind!=='background')) return 60
   if(models.length)return 30
-  if (Object.keys(state.spines || {}).length || state.stand?.parts?.length || (state.stands || []).length) return 30
+  if (Object.values(state.spines || {}).some(spec=>spec?.visible!==false) || state.stand?.parts?.length || (state.stands || []).length) return 30
   return state.bg?.src || (state.overlays || []).some(o=>o?.src&&o.kind==='background') ? 1 : 0
 }
+function renderIndex(scene,index,score,after){const later=Math.min(scene.steps.length-1,index+after);return score>=60||scoreState(stateAt(scene,later))<score?index:later}
 export function pickRenderStep(scene, scanSteps = 150, after = 2) {
   const steps = Array.isArray(scene?.steps) ? scene.steps : []
   const limit = Math.min(steps.length, Math.max(scanSteps * 4, 600))
@@ -28,7 +29,7 @@ export function pickRenderStep(scene, scanSteps = 150, after = 2) {
     if (score >= 100) break
   }
   if (!best || best.score < 30) return null   // 只有背景（或什么都没有）：这种卡片用普通的图片缩略图就行
-  const index = best.score >= 60 ? best.index : Math.min(steps.length - 1, best.index + after)
+  const index = renderIndex(scene,best.index,best.score,after)
   return { index, score: best.score, state: stateAt(scene, index) }
 }
 
@@ -38,7 +39,7 @@ export function pickRenderStep(scene, scanSteps = 150, after = 2) {
 // 角色画面同样往后推 after 步（表情通常紧跟着出来）
 function signatureOf(state) {
   return JSON.stringify([
-    Object.entries(state.spines || {}).map(([slot, spec]) => [slot, spec?.kind || '', spec?.name || spec?.skel || spec?.src || '', spec?.anim || spec?.animation || '']),
+    Object.entries(state.spines || {}).filter(([,spec])=>spec?.visible!==false).map(([slot, spec]) => [slot, spec?.kind || '', spec?.name || spec?.skel || spec?.src || '', spec?.anim || spec?.animation || '']),
     state.bg?.over || '',
     (state.overlays || []).map((o) => o?.src || ''),
     state.stand?.parts?.map((p) => p?.src || '') || [],
@@ -58,7 +59,7 @@ export function pickRenderSteps(scene, scanSteps = 150, count = 3, after = 2) {
     const state = stateAt(scene, i)
     const score = scoreState(state)
     if (score < 30) continue
-    const index = score >= 60 ? i : Math.min(steps.length - 1, i + after)
+    const index = renderIndex(scene,i,score,after)
     const sig = signatureOf(state)
     if (seen.has(sig)) continue
     seen.add(sig)

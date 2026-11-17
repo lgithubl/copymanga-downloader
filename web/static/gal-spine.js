@@ -765,8 +765,10 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
       const unit = width / stage
       scale = unit * (Number(inst.spec.place.scale) > 0 ? Number(inst.spec.place.scale) : 1)
-      px = width / 2 + (Number(inst.spec.place.x) || 0) * unit
-      py = height / 2 + (Number(inst.spec.place.y) || 0) * unit
+      // Native prefab offsets are inside the script-controlled root transform.
+      const base=inst.spec.nativeTransform,rootScale=scale/unit
+      px = width / 2 + ((Number(inst.spec.place.x) || 0)+(base?.x||0)*rootScale*(inst.spec.place.scaleX??1)) * unit
+      py = height / 2 + ((Number(inst.spec.place.y) || 0)+(base?.y||0)*rootScale*(inst.spec.place.scaleY??1)) * unit
     } else if (inst.spec.kind === 'still') {
       // 静态画面的各层共用同一套变换（它们在游戏里是同一个原点、同一个缩放叠在一起）：以最底下那一层（序号最小，底图）的包围盒放进舞台，
       // 其它层（人物、特效，包围盒不一样）按同一个缩放和原点画——不能各按各的包围盒缩放居中，不然小的层会被放大、错位；
@@ -860,8 +862,8 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     }
     inst.skeleton.x = px
     inst.skeleton.y = py
-    inst.skeleton.scaleX = scale * (Number.isFinite(inst.spec.place?.scaleX) ? inst.spec.place.scaleX : 1)
-    inst.skeleton.scaleY = scale * (Number.isFinite(inst.spec.place?.scaleY) ? inst.spec.place.scaleY : 1)
+    inst.skeleton.scaleX = scale * (Number.isFinite(inst.spec.place?.scaleX) ? inst.spec.place.scaleX : 1) * (inst.spec.nativeTransform?.scaleX??1)
+    inst.skeleton.scaleY = scale * (Number.isFinite(inst.spec.place?.scaleY) ? inst.spec.place.scaleY : 1) * (inst.spec.nativeTransform?.scaleY??1)
   }
 
   function frame(now) {
