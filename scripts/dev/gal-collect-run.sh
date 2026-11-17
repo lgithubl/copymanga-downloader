@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.92"
+VERSION="2.93"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1714,7 +1714,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJzF1MFKAzEQBuBXkTkv7WRmksnsUbx58S5S1narFdxKd3sope9uQEgMHjyGQG758wX+zBUeh8PH+e7pdJi24zzfEfTPVzju9/O4QC8YTEycdPB6WcYZehfUVK2Dr2F5h/7P8c3DsAzrXdpW5+mwXHgHHczH82k73v8kMLpAojFSB9PwOaaQzeY0TG/jvP4/bZVJcOsKVH0wJXaaockZRbkdNJMqqFmIaQWfoRIDhYjtoJlUQR2isJAE90tqHqNrJy2mmsokGM0ZZaqiKTvfkJpNFZXIq4tIxIUq3qdr2lGLqaayeFRVV6pqyIZeG1KzqaZ6YxRFHzOVzCJTQ2km1VL1nlM1BMuvEmSVltRsqqkR01giF0pV04uEseGoKia4vdy+AcYfGf0='
+PAIR_MEDIA_PLAN='eJy1ms1uW0cMhV8luGsjGf7O0Mugu266LwJDLZQ2AeIUlrMoAr97eGXPXBrdFCG4kyzhu8T4kDzk6Pv26+nT529vfnv4dP/n+XJ5g9vt79+3f06Pf2+3//ns7pfT4+ndw/ny9duD/+XtfLXdbM8v3v/7eL5st72xaAfSm+3rx4+X8+N2qwSsHZVvtj+ev8TE6O/uT1/O/qi7u4fT/V/ny7v/+8y3i7g93VREzNQQpWtbEUNvqYgXsShixGY8/EyOiGH0kQl5IYtCVkaCbhgOWcgwI4tJrIqYOgJxGytitMF9/0pCyi/MophlDDAgDDGr7ML+6YgXseqUmzbzTDl04RpsmYgXsShiIs8Tkqjk4c9LRLyIVRErQicEXRF39K9lIp7EKh2rahtdg46pQ6ZaLGJVSRb0kt/GEbE2howqFrEoYkAjZuGjUXuepyryIlY16jEUSYOOPW9SfXoCq4qbV0/zLDlKBY0xUsVtEqsSr3m1b10OZ6FMKWOxiFVn7O+VpQdR+L90ZM54EqsiNjezRNFvsuSs0CSW2YrOhHSIwkRyongBVhUKdduDV91OFRv3zAkvYlHEw83wqw4Nu+vKtI9JLAq4e1qbxhFECFKaWMSqtOsGnTk4TTFNdehFrOrQjOiPaIeM/eNcNV7IMlNB/oCQeN0sJeMJrLLGQmOfFWItNk3NHwtZdcRdjKwH3zZabipdxLLZn0XgugSaERNaKvMmsUoWPt50CeOHqaTGjwksk3FzK4xhV8HaUrVtEatUbAJEQ8JM2vyJGRVPYtUZm7cnoJB3Xv8ZcrKYzKqptJE7y2bBHBtIJuJFrNKFiLR9BRQKMmiqWCxklRXSRgChWAAMS8liEquUDNSbxNwzvO4Bfl7Hk1jW83ZzOWKbboC5cjGRVTOTeGJjdBYqHTMRL2LZXGo+OVtYHg/MLY8XsWwIaV1xcIi4aWrOW8SqyZR9LgOLzsIwt8OaxLJrEDeHEpdu7m5zY9MklhULhIbXxryKxa7kVLF4QZZtNsELWtxhtVxBnsC6Lq08+NW+InlnupBVTY9NbGhY0AML5e5tJrLsYlobRlMvI2c3J7DKbbJ0aHH692F6jEzPW8iqLm29j+dRaVY3tlyXnsSqTSH5qB69m6ikVDyBVaIAdPctr7bdmPytwkSW6dj4tXUDT5rUUmgh6xYW/l75CHlfH6fWWJNY1UKGDEQNSyHukLqUXsTCW5C+39MfqfcsktQ1yJVY1UCsGQyK1+jeYHN2cyKr7CbsUxmPIGTMrbwXcXv68PQDoR2vjw=='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     if label=='Kaiju Princess 2'and not json.loads(zlib.decompress(base64.b64decode(PAIR_MEDIA_PLAN))).get(label):
