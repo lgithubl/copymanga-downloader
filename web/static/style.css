@@ -4995,7 +4995,7 @@ h2 {
 .gal-interaction-status { font-size:.8rem; padding:.3rem .75rem; }
 .gal-interaction-diag { padding:.3rem .75rem; font-size:.8rem; }
 .gal-interaction-diag pre { white-space:pre-wrap; max-height:12rem; overflow:auto; }
-.media-viewer-view.stream-page-fullscreen .gal-interaction,.gal-interaction:fullscreen,.gal-interaction.is-immersive { display:flex; flex-direction:column; align-content:start; overflow:auto; background:#111; }
+.media-viewer-view.stream-page-fullscreen .gal-interaction,.gal-interaction:fullscreen,.gal-interaction.is-immersive { display:flex; flex-direction:column; align-content:start; overflow:hidden; background:#111; height:100%; max-width:none; }
 .media-viewer-view.stream-page-fullscreen .gal-interaction .gal-interaction-stage,.gal-interaction:fullscreen .gal-interaction-stage,.gal-interaction.is-immersive .gal-interaction-stage { flex:none; width:min(100%,calc((100dvh - 100px)*16/9)); margin-inline:auto; }
 @media(max-width:640px) { .gal-interaction-rail>details[open] { width:10rem; } .gal-interaction-controls { max-height:max(3rem,calc(var(--gal-interaction-height,300px) - 9rem)); } }
 
@@ -5047,3 +5047,9 @@ h2 {
 .gal-interaction-meter-heading { display:flex; align-items:center; justify-content:space-between; gap:6px; }
 .gal-interaction-meter-lock { padding:2px 5px; min-width:28px; line-height:1.5; }
 .gal-interaction-meter-lock[aria-pressed="true"] { border-color:#71d7ef; background:#27434e; }
+
+/* Reserve the measured controls height in immersive/fullscreen interaction.
+   Letterboxing belongs above the controls, never in a spare row below them. */
+.media-viewer-view.stream-page-fullscreen .gal-interaction .gal-interaction-view,.gal-interaction:fullscreen .gal-interaction-view,.gal-interaction.is-immersive .gal-interaction-view { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; }
+.media-viewer-view.stream-page-fullscreen .gal-interaction .gal-interaction-stage,.gal-interaction:fullscreen .gal-interaction-stage,.gal-interaction.is-immersive .gal-interaction-stage { width:min(100%,calc((100dvh - var(--gal-interaction-bar-height,44px))*16/9)); }
+.media-viewer-view.stream-page-fullscreen .gal-interaction>.gal-bar,.gal-interaction:fullscreen>.gal-bar,.gal-interaction.is-immersive>.gal-bar { flex:none; align-self:stretch; margin-top:auto; justify-content:center; }

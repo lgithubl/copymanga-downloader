@@ -758,12 +758,21 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     let scale
     let px
     let py
-    if(inst.spec.screenRect){
+    if(inst.spec.viewportFrame?.w>0&&inst.spec.viewportFrame?.h>0){
+      // A render target's texture resolution is not a viewport zoom. Contain the
+      // stable source frame; later script zooms remain relative to its first view.
+      const r=inst.spec.viewportFrame,base=inst.spec.nativeTransform,v=views.still
+      const sx=base?.scaleX??1,sy=base?.scaleY??1,fit=Math.min(width/(r.w*Math.abs(sx)),height/(r.h*Math.abs(sy)))
+      scale=fit*((Number(inst.spec.place?.scale)||1)/(r.scale||1))*v.zoom
+      px=width/2-((r.x+r.w/2)*sx+(base?.x||0))*scale+(Number(inst.spec.place?.x)||0)*width/(inst.spec.stage?.[0]||1920)
+      py=height/2-((r.y+r.h/2)*sy+(base?.y||0))*scale+(Number(inst.spec.place?.y)||0)*height/(inst.spec.stage?.[1]||1080)
+      px+=(.5-v.cx)*width;py+=(v.cy-.5)*height
+    } else if(inst.spec.screenRect){
       const r=inst.spec.screenRect;scale=Math.min(width*r.w/w,height*r.h/h);px=width*(r.x+r.w/2)-(x+w/2)*scale;py=height*(1-r.y-r.h/2)-(y+h/2)*scale
     } else if ((inst.spec.kind === 'still' || inst.spec.nativePlace === true) && inst.spec.place && typeof inst.spec.place === 'object') {
       // 精确摆放的静态画面（TSK BgEvent：原版 1 个骨架 1:1 像素画在舞台中心，不缩放）
       const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
-      const unit = width / stage * (Number(inst.spec.nativeViewportScale)>0?Number(inst.spec.nativeViewportScale):1)
+      const unit = width / stage
       scale = unit * (Number(inst.spec.place.scale) > 0 ? Number(inst.spec.place.scale) : 1)
       // Native prefab offsets are inside the script-controlled root transform.
       const base=inst.spec.nativeTransform,rootScale=scale/unit

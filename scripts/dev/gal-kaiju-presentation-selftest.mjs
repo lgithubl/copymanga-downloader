@@ -46,3 +46,15 @@ test('thumbnails choose visible actors and never seek past them into an empty fr
 test('CG and detailed head atlases preserve detail without increasing every outfit page',()=>{
  assert.equal(kaijuPageTextureSize('TypeV-HCG3_SkeletonData',''),4096);assert.equal(kaijuPageTextureSize('KPQ_HMode_Normal','page.png\nsize: 4096,4096\nHair_Front\nbounds: 0,0,300,300\n'),2048);assert.equal(kaijuPageTextureSize('KPQ_HMode_Normal','page.png\nsize: 4096,4096\nSkirt\nbounds: 0,0,300,300\n'),1024)
 })
+
+test('Drama 10007 standing actors start with original default dress components and CG fits the viewport',async()=>{
+ const base=process.env.GAL_KAIJU_FIXTURE||'.cache/kaiju-20261117',ctx=prepare({texts:{'arc/native.json':await fs.readFile(base+'/context.json','utf8')},options:{}}),scripts=JSON.parse(await fs.readFile(base+'/scripts.json')),scene=parse(JSON.stringify(scripts.find(s=>s.data.id==='10007').data),ctx),actor=stateAt(scene,19).spines['kaiju:actor:2'];
+ for(const skin of['HairStyle/Hair_B_Long','HairStyle/Hair_Hat_F','Other/None_Arm_L','Other/None_Arm_R','Kaiju/Kaiju_Clothe'])assert.ok(actor.skins?.includes(skin),'missing native default skin: '+skin)
+ const cg=stateAt(scene,26).spines['kaiju:cg'];assert.ok(cg.viewportFrame?.w>0&&cg.viewportFrame?.h>0,'fit the source CG frame to both viewport dimensions');assert.equal(cg.nativeViewportScale,undefined,'do not treat the render texture size as a zoom multiplier')
+})
+
+test('filtered Unity downsampling preserves subpixel edges instead of dropping every other texel',async()=>{
+ const{unityTexturePng}=await import('../../web/library/gal/unity-media.mjs'),{createRequire}=await import('node:module'),sharp=createRequire(new URL('../../web/package.json',import.meta.url))('sharp'),raw=Buffer.alloc(16*16*4);
+ for(let y=0;y<16;y++)for(let x=0;x<16;x++){const i=(y*16+x)*4;raw[i]=raw[i+1]=raw[i+2]=(x+y)%2?255:0;raw[i+3]=255}
+ const t={m_Width:16,m_Height:16,m_TextureFormat:4},plain=await sharp(await unityTexturePng(t,raw,{maxTextureSize:8})).raw().toBuffer(),filtered=await sharp(await unityTexturePng(t,raw,{maxTextureSize:8,textureFilter:'lanczos3'})).raw().toBuffer();assert.equal(plain[0],0,'baseline point sampling aliases the checkerboard to black');assert.ok(filtered[4*27]>100&&filtered[4*27]<155,'filtered reduction retains averaged source detail')
+})

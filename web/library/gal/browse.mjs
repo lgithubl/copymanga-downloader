@@ -40,7 +40,7 @@ import { collectFallbackImages } from './fallback-thumbs.mjs'
 import { computeSceneMarkers as computeMarkers } from './markers.mjs'
 import { compileSafeRegex } from './voice.mjs'
 import { pickRenderSteps } from '../../static/gal-thumb-pick.js'
-export const RENDER_THUMB_VERSION = 'r4'   // 渲染缩略图的版本：渲染逻辑变了就加一，服务器缓存跟着换
+export const RENDER_THUMB_VERSION = 'r5'   // 渲染缩略图的版本：渲染逻辑变了就加一，服务器缓存跟着换
 import { explainRejectedFile } from './diagnostics.mjs'
 import { decodeTextFile } from '../text-decode.mjs'
 import { collectVoices, compileVoiceRegex, filterVoices, parseVoiceTargets, pickRandom, shuffled, voiceCacheClear, voiceCacheGet, voiceCacheSet, voiceStats } from './voice.mjs'

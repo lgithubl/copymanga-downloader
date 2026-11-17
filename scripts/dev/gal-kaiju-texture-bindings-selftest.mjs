@@ -12,4 +12,4 @@ if(process.env.KAIJU_VERIFY_TEXTURE_PIXELS==='1'){const{createRequire}=await imp
 
 const place=api.context.prefabPlaces?.spine0116;assert.ok(place,'native standing-pose placement is required');assert.ok(Math.abs(place.scaleX-.5)<1e-6);assert.ok(Math.abs(place.scaleY-.5)<1e-6);assert.equal(place.y,-350);console.log('PASS native Type-V standing pose scale and offset')
 
-assert.deepEqual(api.context.cgRender.imageSize,[2048,2048]);assert.deepEqual(api.context.cgRender.referenceSize,[1920,1080]);assert.equal(api.context.cgRender.pixelScale,2048/1080);const cg=api.context.models[api.context.prefabs.spine0307];assert.ok(Object.values(cg.textureBindings).every(b=>b.maxTextureSize===4096));console.log('PASS original square CG image dimensions and high-resolution texture policy')
+const cg=api.context.models[api.context.prefabs.spine0307];assert.ok(Object.values(cg.textureBindings).every(b=>b.maxTextureSize===4096));assert.deepEqual(cg.frame,{x:-1376,y:-1122,w:2752,h:2244});assert.ok(Object.values(actor.textureBindings).every(b=>b.maxTextureSize>=2048));console.log('PASS original source CG frame and high-resolution texture policy')

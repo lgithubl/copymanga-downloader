@@ -28,7 +28,7 @@ export class UnityStore{
   const file=this.files.get(leaf.toLowerCase());if(!file)throw Error('Unity stream file missing: '+leaf);return readRange(file,offset,size)
  }
  media(o,options={}){
-  const key=o.asset.file+':'+(o.asset.entry?.name||'')+':'+o.pathId+':'+(options.maxTextureSize||0),hit=this.mediaCache.get(key)
+  const key=o.asset.file+':'+(o.asset.entry?.name||'')+':'+o.pathId+':'+JSON.stringify(options),hit=this.mediaCache.get(key)
   if(hit){this.mediaCache.delete(key);this.mediaCache.set(key,hit);return hit.promise}
   const entry={bytes:0,promise:null};entry.promise=this.decodeMedia(o,options).then(bytes=>{if(this.mediaCache.get(key)===entry){entry.bytes=bytes.length;this.mediaBytes+=bytes.length;while(this.mediaBytes>64*1024*1024&&this.mediaCache.size){const[k,v]=this.mediaCache.entries().next().value;this.mediaCache.delete(k);this.mediaBytes-=v.bytes}}return bytes},e=>{if(this.mediaCache.get(key)===entry)this.mediaCache.delete(key);throw e});this.mediaCache.set(key,entry)
   while(this.mediaCache.size>64){const[k,v]=this.mediaCache.entries().next().value;this.mediaCache.delete(k);this.mediaBytes-=v.bytes}return entry.promise

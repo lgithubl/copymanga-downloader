@@ -27,5 +27,17 @@ export function kaijuEventSounds(model,ctx,mode='hcgsoundexcelentity'){
 // Keep small facial/hair details readable without loading every outfit atlas at CG resolution.
 export function kaijuPageTextureSize(modelName,pageText){
  if(/hcg/i.test(modelName))return 4096
+ if(/stand/i.test(modelName))return 2048
  return /\n[^:\n]*(?:Hair|Head|Face)[^:\n]*\n/i.test(pageText)?2048:1024
+}
+
+// DramaAction.PlayerChangeSkinList uses DEFAULT_SKIN_STRING when no save is loaded.
+// Keep table order and native combination replacements, then intersect this model.
+export function kaijuDefaultStandSkins(tables,model){
+ const rows=tables.dressstandexcelentity||[],items=['Hair_Long','Clothe_Kaiju','Underwear_Kaiju'],selected=items.map(item=>rows.find(r=>r.ItemName===item&&r.IsInside!=='TRUE')).filter(Boolean),clothed=selected.some(r=>r.Type==='Clothe'&&r.SkinType!=='None');
+ let skins=selected.flatMap(r=>kaijuList((clothed&&r.Type==='Underwear'?rows.find(i=>i.IsInside==='TRUE'&&i.SkinType===r.SkinType):null)?.OpenSkinNames||r.OpenSkinNames));
+ const combinations=(tables.spineskincombinexcelentity||[]).filter(r=>r.SpineType==='Stand'&&kaijuList(r.ConditionSkins).length&&kaijuList(r.ConditionSkins).every(n=>skins.includes(n)));
+ for(const row of combinations)skins=[...skins.filter(n=>!kaijuList(row.ConditionSkins).includes(n)),...kaijuList(row.CombinedSkin)];
+ if(!skins.some(n=>n==='HairStyle/Hair_B_Long'||n==='HairStyle/Hair_B_Short'))skins.push('HairStyle/Hair_B_Long');
+ return['default',...new Set(skins.filter(n=>model.skins.includes(n)))];
 }
