@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.94"
+VERSION="2.95"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1493,7 +1493,7 @@ def next_game_label(name):
     name=re.sub(r'^(?:\[[^\]]+\]\s*)+','',name)
     return next((label for label,pattern in NEXT_GAME_PATTERNS if re.fullmatch(pattern,name,re.I)),None)
 
-PAIR_ACTIVE_GAMES = ['Kaiju Princess 2']
+PAIR_ACTIVE_GAMES = ['underworld']
 PAIR_GAME_PATTERNS = [(name,pattern) for name,pattern in [('Kaiju Princess 2', r'Kaiju[ _-]+Princess[ _-]+2(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01562637', r'RJ01562637(?:[^0-9].*)?'), ('RJ01375307', r'RJ01375307(?:[^0-9].*)?'), ('future', r'future(?:[ _-]*v?[0-9.]+)?'), ('underworld', r'underworld(?:[ _-]*v?[0-9.]+)?'), ('RJ01743835', r'(?:RJ01743835(?:[^0-9].*)?|OrcX(?:[ _-]*(?:ver|v)?[0-9.]+)?)'), ('RJ01610452', r'RJ01610452(?:[^0-9].*)?'), ('RJ01319586', r'RJ01319586(?:[^0-9].*)?'), ('RJ01007726', r'RJ01007726(?:[^0-9].*)?'), ('dennou-djibril', r'dennou[ _-]+djibril(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01516248', r'RJ01516248(?:[^0-9].*)?'), ('RJ01234887', r'RJ01234887(?:[^0-9].*)?'), ('RJ01746557', r'RJ01746557(?:[^0-9].*)?'), ('fuyukuru', r'fuyukuru(?:[ _-]*v?[0-9.]+)?'), ('えどわ～る', r'えどわ[~〜～ー]?る(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('meshiagirl', r'meshiagirl(?:[ _-]*(?:ver|v)?[0-9.]+)?'), ('RJ01687472', r'RJ01687472(?:[^0-9].*)?'), ('RJ01610188', r'RJ01610188(?:[^0-9].*)?'), ('RJ01660877', r'RJ01660877(?:[^0-9].*)?'), ('RJ01474142', r'RJ01474142(?:[^0-9].*)?'), ('RJ01664771', r'RJ01664771(?:[^0-9].*)?'), ('Night Stroll',r'Night[ _-]+Stroll(?:[ _-]*(?:ver|v)?[0-9.]+)?')] if name in PAIR_ACTIVE_GAMES]
 
 def new_game_label(name):
@@ -1714,7 +1714,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJzF1z1vGzEMBuC/EtxsJPwm5bHo1qV7UQRu4rQp0KSInSEI8t/LoLBkXYeO9HCTfXhMidSr1+XT7v7n88Xnp/uHm/3hcEHL9svr8nh3d9gfly2B58cQNsu3l+P+sGwVVdVws/zeHX8s239+fv1xd9xd3ebj8vnh/vjCt8tmOTw+P93sP/x9AwMaiUfQZnnY/drnS66vn3YP3/eHq/+/7bKTlrfNgLKRcrQmHWqqAdHqoJ00Q10MjDA6FI2tmRRCT6QZGhEmFtyhDbmxeyH0RJqgAiKcK20dSoqh7xWugnbSBNVgRzcazRTEFpXQTpqhjTibXEczETYN00LoiTRBTVREm46l5+YYRHXQTpqgrkwS6KOZyCmsEtpJM9Q80Jx1VBRArRUO/E6aoAjQsszBOI4mM4HKkg7TitoCDCR8jFI2IeRK6sk0UzGaM0uMjrKcUWZQSO2mmSoOyGxIneq5+gaVG6CbZmr2D1GADCoymURlVbtppjqRkuRjHFLMpIWjf5BW0jxjiTK7jJmapQcqjHzDNFNDAR0c8Sz0KSS1cgJ01GQlAooM+HYep1p+sTClDNOKGqgs6qOsTXOoRWFEHaaZyigN3GC0lVmIt8IJMEwrKrFzSBtZhTnj9Hu+rqOeTCtqHgveGoygGsHZVZV7tZtW1PC85IWODSCWB1tlBhimmaoIeY61swmQxfdcgUJqN81UN1MXwLO2CsjJVrlXu2lFjbzDZOhrI682zb1aePEfphW15WhCPcurOSnUpLSqJ9NMzQsMssNZW+VfigaVbdVNy9vXtz9o2Anb'
+PAIR_MEDIA_PLAN='eJy9zb0KwjAUQOF3uXOo9yZp/kbxDUQcRCTaFAdpJEkRKX13Uzo66/px4EwwDl1Ir5geHbjTBE9f7uDgsOhx0cvOF79JIccx3UJufM6h5KbCHhisun2XkMERN7oVmoSUDGLf1xCcsmRb1IZXu66d0oTGKDmzH/yIC5QKyaD50xAtCilIEP8enucPWmhwSw=='
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     if label=='Kaiju Princess 2'and not json.loads(zlib.decompress(base64.b64decode(PAIR_MEDIA_PLAN))).get(label):
