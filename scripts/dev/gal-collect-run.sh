@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.84"
+VERSION="2.85"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1714,7 +1714,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJyrVvJOzMwqVQgoysxLTi0uVjBSslKIrlYqSCzJALIwZONdEksS9X0T8xLTU1P0U4oScxN1i0rzSjJzU/VScnKUdBSUivNLi5JTnSpLUouBJhiZWVgYGACF89PSilNLgCIgThK6bF5ibio59tXG1gIAKbw/WA=='
+PAIR_MEDIA_PLAN='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'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     if label=='Kaiju Princess 2'and not json.loads(zlib.decompress(base64.b64decode(PAIR_MEDIA_PLAN))).get(label):
@@ -1758,7 +1758,7 @@ def fuyu_edo_detail_files(items,label):
         if not e or e.size!=r['sourceBytes']:raise RuntimeError('Pair media source changed '+r['path'])
         if r['offset']<0 or r['offset']+r['bytes']>e.size:raise RuntimeError('Pair range invalid')
         used+=r['bytes']
-        if used>(256 if label in ('future','underworld')else 128 if label in ('meshiagirl','dennou-djibril','RJ01234887','RJ01562637')else 64)*MB:raise RuntimeError('Pair media byte limit')
+        if used>(192 if label=='Kaiju Princess 2'else 256 if label in ('future','underworld')else 128 if label in ('meshiagirl','dennou-djibril','RJ01234887','RJ01562637')else 64)*MB:raise RuntimeError('Pair media byte limit')
         with open(e.path,'rb')as f:f.seek(r['offset']);data=f.read(r['bytes'])
         if len(data)!=r['bytes']:raise RuntimeError('Pair media truncated')
         report['files'].append({**r,'sha256':hashlib.sha256(data).hexdigest()})
