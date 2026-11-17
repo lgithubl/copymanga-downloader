@@ -1,3 +1,4 @@
+import{kaijuScriptAdapter}from'./kaiju-script.mjs'
 import{unitySpineGalleryAdapter}from'./unity-spine-gallery.mjs'
 import{catpawScriptAdapter}from'./catpaw-script.mjs'
 import{orcxScriptAdapter}from'./orcx-script.mjs'
@@ -47,6 +48,7 @@ export function registerGalAdapter(adapter) {
   if (!adapter?.id || typeof adapter.parse !== 'function') throw new Error('gal adapter needs id and parse()')
   adapters.set(adapter.id, adapter)
 }
+registerGalAdapter(kaijuScriptAdapter)
 registerGalAdapter(unitySpineGalleryAdapter)
 registerGalAdapter(catpawScriptAdapter)
 registerGalAdapter(orcxScriptAdapter)

@@ -5036,3 +5036,8 @@ h2 {
 .gal-interaction-meter-points button { padding:.2rem; font-size:.65rem; }
 
 .gal-interaction [data-control="互动方式"] button[data-current="true"] { outline: 2px solid var(--accent, #55cce6); outline-offset: 1px; }
+.gal-interaction-region-list .gal-btn[aria-pressed=true] { background:#70e7ff25; border-color:#70e7ff80; }
+.gal-interaction-region-list .gal-btn[data-current=true] { outline:2px solid #70e7ff; outline-offset:1px; }
+.gal-interaction-region-list .gal-btn img { width:100%;height:100%;object-fit:contain; }
+.gal-interaction-target-icon { font-size:.65rem;opacity:.85; }
+.gal-interaction-target-number { position:absolute;right:1px;bottom:1px;min-width:1em;padding:0 .15em;border-radius:.2em;background:#101722e6;color:white;font-weight:700; }

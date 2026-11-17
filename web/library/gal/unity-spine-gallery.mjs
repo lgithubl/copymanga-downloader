@@ -1,3 +1,4 @@
+import{foxDefaultDatabase}from'./unity-fox-state.mjs'
 import path from'node:path'
 import{UnityReader,monoHeader,readTextObject}from'./unity-io.mjs'
 import{unityUiImagePrefix}from'./unity-scene.mjs'
@@ -6,7 +7,7 @@ import{foxDialogue,foxRoom}from'./unity-fox-room.mjs'
 // Native scene -> SkeletonGraphic -> SkeletonDataAsset -> atlas/material/texture.
 // This is a CG/animation gallery; interactive game controllers are not executed.
 export async function indexSpineGallery(api){
- const{store,scripts,add,object}=api,a=await store.asset('globalgamemanagers'),settings=a.objects.find(o=>o.classId===141);if(!settings)throw Error('Native Unity BuildSettings absent');const r=new UnityReader(await store.data(settings)),scenes=r.list(()=>r.str()),models=new Map(),story=await foxDialogue(api)
+ const{store,scripts,add,object}=api,a=await store.asset('globalgamemanagers'),settings=a.objects.find(o=>o.classId===141);if(!settings)throw Error('Native Unity BuildSettings absent');const r=new UnityReader(await store.data(settings)),scenes=r.list(()=>r.str()),models=new Map(),story={...await foxDialogue(api),...await foxDefaultDatabase(store)}
  const skeleton=async(o)=>{
   const identity=path.basename(o.asset.file)+':'+o.pathId;if(models.has(identity))return models.get(identity)
   if(await store.type(o)!=='SkeletonDataAsset')throw Error('Native SkeletonGraphic data reference is not SkeletonDataAsset')

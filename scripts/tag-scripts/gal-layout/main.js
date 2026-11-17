@@ -59,6 +59,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 //   · 只能写数据：数组 / 对象 / 字符串（正则写成源码字符串）/ 数字 / 布尔 / null。
 // ======================================================================
 export const ADAPTER_RULES = {
+  'kaiju::unity':{dir:'arc',language:'cn',voiceLanguage:'ja',maxCommands:200000},
   'unityspine::gallery':{dir:'arc',skin:'default',language:'zh-CN',interactionLimit:8,maxCommands:200000},
   'catpaw::script':{dir:'arc',language:'zh-CN',stage:[1280,720],maxCommands:200000},
   'orcx::script':{dir:'arc',stage:[1280,720],maxCommands:200000},
@@ -1734,6 +1735,14 @@ export const LAYOUTS = {
     engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'celltalk',scriptExt:'cell',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
     config:{scriptExtensions:['cell'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'画面切换',kind:'cmd',op:'overlay',pick:'each',max:8}],pageSize:100},
     count:[{dir:'arc/script',ext:'.cell',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['CellTalk 原生控制器静态预览；仅核对的 metadata 版本；存档条件手动选择，未还原演出报告 native 地址'],
+  },
+  kaiju:{
+    title:'Kaiju Princess 原生 Unity',kind:'kaiju',detector:'unityNative',family:'kaiju::',
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['data.unity3d','Managed/drama-runtime.dll'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'Kaiju 原生剧情 / 互动'}],resourceRoots:[''],adapters:['kaiju::unity'],adapterOptions:{'kaiju::unity':{dir:{path:['arc']}}},ruleTables:['kaiju::unity'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'kaiju',scriptExt:'kaiju',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['kaiju'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'原生动作',kind:'cmd',op:'spine',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.kaiju',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取本地 data.unity3d 索引、Drama XML、语言表及 Spine JSON；回想表汇总特殊场景，互动按原生动作和部位经验阶段预览；不执行游戏代码、不读写存档'],
   },
   unityspine:{
     title:'Unity Spine 原生CG / 互动片段',kind:'unityspine',detector:'unityNative',family:'unityspine::',

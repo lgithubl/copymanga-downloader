@@ -1,0 +1,52 @@
+# Kaiju Princess 2 and multi-selection interaction verification
+
+Implementation: `kaiju::unity`; import preset → Kaiju Princess 原生 Unity. `gal-layout` 2.88.0; Unity native cache generation 24. Update the unified image and tag package, then rerun layout. Existing originals remain read-only; generated scripts/resources/cache live in the normal media container cache. No original assembly/JavaScript execution, save modification, new runtime package, or runtime decoder download.
+
+```json
+{
+  "rootDir": "/data/library/gal/Kaiju Princess 2",
+  "adapters": ["kaiju::unity"],
+  "defaultMetadataActions": ["gal-layout"],
+  "dryRun": false,
+  "config": {"game": {"id": "kaiju::princess2", "title": "Kaiju Princess 2"}}
+}
+```
+
+Native sources: Unity 2020.3.49f1 `data.unity3d`, ResourceManager exact paths, Drama XML, CSV localization/recollection/action/skin/emotion/level tables, JSON Spine 4.1.17, local external `resources.resource` audio. Static IL inspection established argument positions and native level/click rules; DLLs never execute. Collection uses bounded read-only ranges plus source length/SHA256 validation, not a full archive upload.
+
+## Interaction behavior
+
+- Both tools and numbered targets support independent enabled sets. Enabled tint and current outline are distinct. Clicking a different enabled item focuses it; clicking the current enabled item turns it off. Tool icon + target number replaces anonymous 1/2/3 labels. Hover/title retains the full native target name.
+- With repeat and wait-for-voice enabled, all active tools/targets share one FIFO. Each target has at most one pending repeat (repeats coalesce while blocked). Native meter events join the same queue. Only one voice/command sequence runs at a time; closing one target cancels that target's pending repeat. Hold stops on release; disabling wait-for-voice permits interruption as before.
+- Kaiju has Normal, Cowgirl and DoggyStyle entries and pose navigation. Original equipment, compatible action sets, animation priority, skins, clothing controls, local animated cut-ins and Auto/Show/Hide controls are normalized to the shared interaction UI. Cut-ins use preview screen rectangles rather than reproducing the original game HUD layout.
+- Native M/B/C/V/A experience, lubrication, dislike and accumulation meters are per game/heroine. One-time seek changes the current value, not the subsequent rate. Native table thresholds change expression/voice pools; crossing a sensitivity threshold records climax flags and selects the native climax animation/voice. No artificial condition-true/false chooser is inserted for Kaiju.
+- This is a presentation preview with no inventory/buffs/save data. Game economy, stamina costs and consumable buffs are not simulated. Original source tables choose the base rates and thresholds. Unknown presentation commands remain visible as diagnostics.
+
+## RJ01562637 correction
+
+`database/girl` supplies 90 original numeric state defaults, including the native 0..3 stage bound. Known states now execute their original comparisons rather than exposing manual true/false switches. Authored inverse functions are paired with their matching action, preserving stable target IDs and independently closing supported actions. Missing inverses are not invented. Original component visibility controls and rendered interaction covers remain available. Three obsolete/absent durability state names in some room functions still use explicit unknown-state diagnostics; this is not claimed as emulating every game function.
+
+## Evidence
+
+Local fixtures/reports stay under `.cache/kaiju-20261117` and `.cache/interaction-queue-20261117` (not distributed):
+
+- Real import → layout → handler restart/resource path: 365 scripts (362 Drama XML + three interaction poses), 31 Spine models, 40 recollection/special-scene entries.
+- All 40 special scripts statically parsed. Dynamic and static CG mappings come from the original recollection/event tables. Not every image of every scene has been visually verified.
+- Browser rendered the real Normal pose with complete limbs/clothes/face and native cut-in; two captured frames differ. Real Japanese audio plays. Seeking mouth to Lv.3 changes the next clip from the original level-zero pool to `se904_ja`. Cut-in visibility override works.
+- Real special Drama 5011, first CG at displayed step 13: original animated Spine CG renders; captured frames differ. Whole drama has 67 text lines, 38 voice references; silent lines have no AudioClip in the native mapping.
+- Shared real Underworld model: two tools/two targets stay enabled, focus-before-close, serial FIFO voices, fair repeat rotation, cancellation and hold release.
+- Real Fox first room: no manual conditions for known states, two independently paired toggles, closing insertion preserves the other active layer, real audio, meter event and thumbnail pixels.
+- Regression: old TSK Ch10340034 step 45→46 skin/eye attachment; sequential and direct entry match. Import dropdown test covers the new preset and preserves existing options; layout default-rule guard passes.
+
+Commands: `node scripts/dev/gal-kaiju-state-selftest.mjs`; `node scripts/dev/gal-kaiju-browser-selftest.mjs`; queue/selection/Fox selftests; `gal-interaction-modes-browser-selftest.mjs`; `fe-gal-import-presets-selftest.mjs`; `fe-gal-spine-skin-selftest.mjs`; `gal-layout-rules-selftest.mjs`. Browser fixtures need the existing pinned local Spine runtime and local Playwright/Chrome; tests never download runtimes.
+
+## Presentation limits
+
+Screen fades 11/12 and background color are supported. Shader transitions 19/20 use a plain fade and report that fallback. Some shake/flash effects, static-image camera transforms, 3D rotation projection, isolated source slot-name mismatches, and gameplay events are not reproduced exactly. Those are reported in raw-command diagnostics instead of silently declaring full original-game fidelity. Continuation 200 follows original referenced Drama with a cycle/depth guard. The generated adapter is isolated; existing Unity/krkr/BGI layout IDs are not reassigned.
+
+## Static schema provenance
+
+`web/library/gal/unity-2020-types.json` contains only eight serialized class field layouts (1, 4, 21, 28, 82, 83, 213, 224), derived from the structural type-tree dump for Unity 2020.3.49f1:
+https://github.com/AssetRipper/TypeTreeDumps/blob/main/InfoJson/2020.3.49f1.json
+
+Original full dump SHA256: `e7a0aebfdd233e178dd76cb40b20d26fd2a621f6138545aec6149d6476300487`. No AssetRipper executable/library or game asset is bundled. This adds static field data to the existing decoder; existing build-time Spine 4.1 runtime is reused.

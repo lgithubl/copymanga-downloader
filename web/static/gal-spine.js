@@ -449,6 +449,12 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
   // 更新世界变换。3.6 的 Skeleton 没有 scaleX / scaleY（3.8 起才有；3.6 只有 flipX / flipY，世界坐标 = 骨骼局部值 + skeleton.x / y），
   // layout() 写进 skeleton.scaleX / scaleY 的缩放在 3.6 里不会生效。所以 3.6 把缩放乘到根骨骼的局部 x / y / scaleX / scaleY 上再更新、更新完还原
   // （动画只覆盖有时间线的属性，不还原的话没动画的属性每帧会被再乘一次）。子骨骼都继承根的缩放，整个骨架等比放大
+  function restoreSlotOverrides(inst) { for(const [slot,alpha]of inst.slotOverrideAlpha||[])slot.color.a=alpha;inst.slotOverrideAlpha=null }
+  function applySlotOverrides(inst) {
+    const overrides=inst.spec?.slotVisibility;if(!overrides)return
+    inst.slotOverrideAlpha=new Map()
+    for(const [name,on]of Object.entries(overrides)){const slot=inst.skeleton.findSlot(name);if(!slot)continue;inst.slotOverrideAlpha.set(slot,slot.color.a);slot.color.a=on?1:0;if(on&&!slot.getAttachment()){const wanted=inst.spec.slotAttachments?.[name]||slot.data.attachmentName||name,attachment=inst.skeleton.getAttachment(slot.data.index,wanted);if(attachment)slot.setAttachment(attachment)}}
+  }
   function updateWorld(backend, skeleton) {
     if (backend.key !== '3.6') return skeleton.updateWorldTransform(backend.physics)
     const sx = Number.isFinite(skeleton.scaleX) ? skeleton.scaleX : 1
@@ -578,7 +584,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       // expression can populate a slot that the previous expression left empty.
       // Rebuild slots, then reapply the current tracks without restarting time.
       inst.skeleton.setSlotsToSetupPose()
-      inst.state.apply(inst.skeleton)
+      restoreSlotOverrides(inst);inst.state.apply(inst.skeleton);applySlotOverrides(inst)
       updateWorld(inst.backend, inst.skeleton)
       Object.assign(inst, { skinName: pick.skin?.name || '', skinRequested: pick.requested, skinFound: pick.found })
     }
@@ -690,7 +696,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
       refreshBounds(current)
       if (live && Number(spec.fade) > 0) current.fadeIn = { began: performance.now(), ms: Number(spec.fade) * 1000 }
       state.update(0)
-      state.apply(skeleton)
+      state.apply(skeleton);applySlotOverrides(current)
       updateWorld(backend, skeleton)
       kick()
     } finally {
@@ -750,7 +756,9 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     let scale
     let px
     let py
-    if ((inst.spec.kind === 'still' || inst.spec.nativePlace === true) && inst.spec.place && typeof inst.spec.place === 'object') {
+    if(inst.spec.screenRect){
+      const r=inst.spec.screenRect;scale=Math.min(width*r.w/w,height*r.h/h);px=width*(r.x+r.w/2)-(x+w/2)*scale;py=height*(1-r.y-r.h/2)-(y+h/2)*scale
+    } else if ((inst.spec.kind === 'still' || inst.spec.nativePlace === true) && inst.spec.place && typeof inst.spec.place === 'object') {
       // 精确摆放的静态画面（TSK BgEvent：原版 1 个骨架 1:1 像素画在舞台中心，不缩放）
       const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
       const unit = width / stage
@@ -890,9 +898,13 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
           if (t >= 1) inst.slow = null
         }
         inst.state.update(dt)
-        inst.state.apply(inst.skeleton)
+        restoreSlotOverrides(inst);inst.state.apply(inst.skeleton)
+        applySlotOverrides(inst)
         layout(inst, width, height)
+        const rotated=Number(inst.spec.rotation)?inst.skeleton.bones.filter(b=>!b.parent).map(b=>[b,b.rotation]):[]
+        for(const[b,r]of rotated)b.rotation=r+Number(inst.spec.rotation)
         updateWorld(backend, inst.skeleton)
+        for(const[b,r]of rotated)b.rotation=r
         renderer.drawSkeleton(inst.skeleton, Boolean(inst.pma))
         drawnCount += 1
       }
