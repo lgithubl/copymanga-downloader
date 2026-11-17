@@ -3,7 +3,7 @@ import{hakuboxAdventure}from'./gal-hakubox-adventure.js'
 import{initialState,applyCommand,condMet,visibleChoiceOptions}from'./gal-engine.js'
 import{createSpineLayer}from'./gal-spine.js'
 import{createOverlayLayer}from'./gal-stand.js'
-export function createCommandInteractionLayers({parent,url,onMissing,onError,onUnavailable,onMessage,onChoice,onBusy,onAudio,audioGain=()=>1}){
+export function createCommandInteractionLayers({parent,url,onMissing,onError,onUnavailable,onMessage,onChoice,onBusy,onAudio,conditionState=()=>true,audioGain=()=>1}){
  const under=createOverlayLayer({parent,url,onMissing,under:true}),spine=createSpineLayer({parent,url,onMissing,onError,onUnavailable}),over=createOverlayLayer({parent,url,onMissing}),loops=new Map()
  let state=initialState(),modelKey='',actionKey='',configuration='',generation=0,waiting=null,waitingKind='',timer=0,paused=false,presentation=null
  const clearWait=()=>{clearTimeout(timer);waiting?.();waiting=null;waitingKind=''},finishWait=()=>{const resolve=waiting;waiting=null;waitingKind='';clearTimeout(timer);resolve?.()},advance=()=>{if(waitingKind!=='choice')finishWait()}
@@ -14,6 +14,8 @@ export function createCommandInteractionLayers({parent,url,onMissing,onError,onU
  async function run(commands,reset=false,selections={}){cancel();const mine=generation;onBusy(true);let reply={};try{
   if(reset){state=initialState();clearAudio()}
   for(const [index,source] of (commands||[]).entries()){const c=structuredClone(source);if(c.tracks)c.tracks=c.tracks.map(t=>({...t,token:mine+':'+t.token}));if(mine!==generation)return;if(!condMet(c.when,state.vars)||c.ifAbsent&&Object.hasOwn(state.vars,c.var))continue
+   if(c.interactionConditionPrompt)continue
+   if(c.op==='choice'&&c.interactionCondition){const condition=c.interactionCondition,value=conditionState(condition)?condition.trueValue:condition.falseValue;applyCommand(state,c,{[c.id]:value});continue}
    if(c.op==='interactionSpineSource'){const m=/^SpineManager\.(setMotion|addMotion)\([^,]+,\s*['"]([^'"]+)['"],\s*(true|false),\s*(\d+)\);?$/.exec(c.source);if(m){applyCommand(state,{op:'spine',slot:'hakubox:interact',patchTracks:true,tracks:[{track:Number(m[4]),anim:m[2],loop:m[3]==='true',queue:m[1]==='addMotion',token:mine+':'+c.source}]})}else onError(Error('未支持原生动作：'+c.source));continue}
    if(c.op==='interactionPresentation'){presentation?.(c.source);continue}if(c.op==='interactionCondition'){state.vars[c.var]=Number(presentation?.condition(c.source));continue}
    if(c.op==='interactionVoiceChoice'){const picked=selections['choice:'+c.id],options=c.options||[],option=options.find(o=>String(o.value)===String(picked))||options[Math.floor(Math.random()*options.length)];if(option?.voice)onAudio('voice',{src:option.voice});continue}

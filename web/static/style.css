@@ -5021,3 +5021,9 @@ h2 {
 .gal-interaction-alternative-list { padding:0 .55rem .55rem; max-height:16rem; overflow-y:auto; }
 .gal-interaction-alternative-list>p { font-size:.75rem; opacity:.75; }
 .gal-interaction-rail { overflow-y:auto; scrollbar-width:thin; }
+
+.gal-interaction-condition-list { padding:0 .55rem .55rem; max-height:20rem; overflow:auto; }
+.gal-interaction-condition-list>p { font-size:.7rem; opacity:.7; }
+.gal-interaction-condition { display:flex; flex-direction:column; gap:.25rem; margin-bottom:.6rem; font-size:.7rem; }
+.gal-interaction-condition>span { overflow-wrap:anywhere; }
+.gal-interaction-condition select { width:100%; min-width:0; }
