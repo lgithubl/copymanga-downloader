@@ -538,7 +538,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
   // 卡片上的渲染图：骨骼 / 立绘场景的一张（renderKey）+ 胶片场景每段胶片一张（filmRenders，Kamihime 的 harem 场景）；多张 = renders（轮播）
   const renderFieldsOf = (info) => (info.markers?.length ? { ...renderFieldsBase(info), markers: info.markers } : renderFieldsBase(info))   // markers = 场景跳转点（config.sceneMarkers）
   const renderFieldsBase = (info) => {
-    const list = [...(info.renderKey ? [{ key: info.renderKey }] : []), ...(info.filmRenders || []), ...(info.innerRenders || [])]
+    const list = [...(info.renderKey ? [{ key: info.renderKey }] : []), ...(info.filmRenders || []), ...(info.innerRenders || [])].map(r => info.renderNode ? { ...r, node: info.renderNode } : r)
     const carousel = info.innerRenders?.length || (config.thumbRender.inner && info.filmRenders?.length > 1) ? { carousel: config.thumbRender.innerMax } : {}   // 悬停轮播的张数跟着 innerMax（默认悬停只轮 4 张）
     if (info.ruleCover && list.length) return { renders: list, ruleCover: true, ...carousel }   // 规则给的图（thumbnail.png 之类）仍是封面，渲染图排在它后面轮播
     return list.length ? { render: list[0], ...(list.length > 1 ? { renders: list } : {}), ...carousel } : {}
@@ -580,7 +580,11 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
               else {if(!config.thumbRender.enabled&&adapterHasSceneThumbs)why.push('thumbRender.enabled=false：当前游戏已关闭骨架画面缩略图渲染');if(why.length)out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...why].slice(0, 6) }}
             }
           } else if (child.script) {
-            const info = await scriptInfo(defaultSet, child.script)
+            let info = await scriptInfo(defaultSet, child.script)
+            if (child.coverScript && child.coverScript !== child.script) {
+              const cover = await scriptInfo(defaultSet, child.coverScript)
+              if (cover.thumbs.length || cover.renderKey || cover.filmRenders?.length) info = { ...cover, markers: info.markers, renderNode: idOf(defaultSet, 'script', child.coverScript) }
+            }
             if (info.thumbs.length || info.renderKey || info.filmRenders?.length || info.markers?.length) { const { thumbWhy, ...rest } = item; out[i] = { ...rest, thumb: item.thumb || info.thumb, thumbs: item.thumb ? item.thumbs : info.thumbs, ...renderFieldsOf(info) } } else if (info.thumbWhy?.length && !item.thumb) out[i] = { ...item, thumbWhy: [...(item.thumbWhy || []), ...info.thumbWhy].slice(0, 6) }
           }
         } catch { /* 取不到图就保持适配器给的样子（没有图） */ }

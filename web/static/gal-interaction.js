@@ -5,7 +5,7 @@ import {interactionPreferences,interactionTriggerMode,toolModeKey,areaModeKey,TR
 import {createInteractionHighlight} from './gal-interaction-highlight.js'
 import {createLive2dLayers} from './gal-live2d.js'
 import {assetUrl,volumeGain,galPlayerDefaults} from './gal-engine.js'
-import {roleState,interactionSpec,interactionFeedback,interactionRegions} from './gal-interaction-state.js'
+import {roleState,interactionSpec,interactionFeedback,interactionRegions,toggleInteractionTool} from './gal-interaction-state.js'
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text)n.textContent=text;return n}
 const icon=(kind)=>{const n=document.createElementNS('http://www.w3.org/2000/svg','svg');n.setAttribute('viewBox','0 0 24 24');n.setAttribute('aria-hidden','true');n.innerHTML=kind==='regions'?'<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>':'<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/>';return n}
 export function shortInteractionLabel(title){return String(title).replace(/^(服装|表情|区域|互动|袜子)\s*/,'').replace(/\s*·\s*破损/,'破').replace('完整','整').replace('关闭','关').replace('开启','开').slice(0,3)||'—'}
@@ -21,7 +21,7 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
  const preferences=interactionPreferences(saved.preferences,{textOpacity:legacy('boxOpacity',defaults.textOpacity??.74),fontScale:legacy('fontScale',defaults.fontScale??1),voiceVolume:legacy('voiceVolume',.8),sfxVolume:legacy('sfxVolume',.8)});saved.preferences=preferences;saved.conditions=saved.conditions&&typeof saved.conditions==='object'?saved.conditions:{default:true,values:{}};saved.conditions.values=saved.conditions.values&&typeof saved.conditions.values==='object'?saved.conditions.values:{};saved.visuals||={};saved.meters||={}
  const persist=()=>{try{localStorage.setItem(key,JSON.stringify(saved))}catch{}}
  const url=src=>assetUrl(reader.resourceBase,src,reader.resourceVersion)
- const save=()=>{saved.role=role.id;saved[role.id]={background:state.background,outfit:state.outfit,values:state.values,face:state.face,tool:state.tool,selectedArea:state.selectedArea,alternatives:state.alternatives};persist()}
+ const save=()=>{saved.role=role.id;saved[role.id]={background:state.background,outfit:state.outfit,values:state.values,face:state.face,tool:state.tool,enabledTools:state.enabledTools,selectedArea:state.selectedArea,alternatives:state.alternatives};persist()}
  const report=message=>{errors.add(message);paintStatus()}
  function paintStatus(){root.dataset.loading=String(loading);if(root.querySelector('.gal-interaction-diag summary'))root.querySelector('.gal-interaction-diag summary').textContent='诊断'+(errors.size?'（'+errors.size+'）':'');if(root.querySelector('.gal-interaction-diag[open] pre'))root.querySelector('.gal-interaction-diag pre').textContent=[...errors].join('\n')||'无错误'}
  const button=(title,fn)=>{const b=el('button','gal-btn',title);b.type='button';b.addEventListener('click',fn);return b}
@@ -78,7 +78,7 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
  function choiceGrid(name,choices,value,change){
   const field=el('fieldset','gal-interaction-group'),legend=el('legend','',name),grid=el('div','gal-interaction-options');field.dataset.control=name;field.append(legend,grid)
   for(const c of choices){
-   const b=button('',()=>{change(c.id);for(const item of grid.querySelectorAll('button[data-value]'))item.setAttribute('aria-pressed',String(item.dataset.value===c.id))});b.dataset.value=c.id;b.title=c.title;b.setAttribute('aria-label',c.title);b.setAttribute('aria-pressed',String(c.id===value));b.disabled=!!c.disabled
+   const b=button('',()=>{change(c.id);for(const item of grid.querySelectorAll('button[data-value]')){item.setAttribute('aria-pressed',String(name==='互动方式'?state.enabledTools.includes(item.dataset.value):item.dataset.value===c.id));if(name==='互动方式')item.dataset.current=String(item.dataset.value===state.tool)}});b.dataset.value=c.id;b.title=c.title;b.setAttribute('aria-label',c.title);b.setAttribute('aria-pressed',String(name==='互动方式'?state.enabledTools.includes(c.id):c.id===value));if(name==='互动方式')b.dataset.current=String(c.id===state.tool);b.disabled=!!c.disabled
    const text=el('span','gal-interaction-choice-text',shortInteractionLabel(c.short||c.title));b.append(text)
    if(c.icon){const image=el('img');image.alt='';image.loading='lazy';image.addEventListener('load',()=>{text.hidden=true;b.classList.add('has-icon')});image.addEventListener('error',()=>{image.remove();text.hidden=false;report('图标无法加载：'+c.title)},{once:true});image.src=url(c.icon);b.prepend(image);if(c.title.includes('破损'))b.append(el('span','gal-interaction-choice-badge','破'))}
    if(name==='互动方式'&&c.id){const shell=el('span','gal-interaction-choice-shell');shell.append(b,modeButton('tool',c.id));grid.append(shell)}else grid.append(b)
@@ -103,7 +103,7 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
   for(const g of outfit?.groups||[])panel.append(choiceGrid(g.title,g.choices,state.values[g.id],id=>{triggers.stopAll();stopAudio();state.values[g.id]=id;action=null;serial++;save();paint()}))
   if(role.faces.length)panel.append(choiceGrid('表情',[{id:'',title:'默认'},...role.faces],state.face,id=>{state.face=id;save();paint()}))
   if(role.backgrounds?.length)panel.append(choiceGrid('背景',role.backgrounds,state.background,id=>{state.background=id;save();paintBackground()}))
-  panel.append(choiceGrid('互动方式',[{id:'',title:'不选择'},...role.tools],state.tool,id=>{triggers.stopAll();state.tool=id;state.selectedArea='';resetRegions();regions();alternatives();action=null;serial++;stopAudio();lastReply=null;speech.textContent='';save();paint();updateModeIndicators()}))
+  panel.append(choiceGrid('互动方式',role.tools,state.tool,id=>{const changed=toggleInteractionTool(role,state,id);if(changed){triggers.stopAll();state.selectedArea='';resetRegions();regions();alternatives();action=null;serial++;stopAudio();lastReply=null;speech.textContent='';paint()}save();updateModeIndicators()}))
   updateModeIndicators()
  }
  function resolveHit(hits){let found=null;const tool=role.tools.find(t=>t.id===state.tool);for(const hit of hits)for(const a of tool?.areas||[])if(a.id===hit)found=hit;return found}

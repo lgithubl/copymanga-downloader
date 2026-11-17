@@ -5034,3 +5034,5 @@ h2 {
 .gal-interaction-meter p { font-size:.7rem; opacity:.7; }
 .gal-interaction-meter-points { display:flex; flex-wrap:wrap; gap:.2rem; }
 .gal-interaction-meter-points button { padding:.2rem; font-size:.65rem; }
+
+.gal-interaction [data-control="互动方式"] button[data-current="true"] { outline: 2px solid var(--accent, #55cce6); outline-offset: 1px; }
