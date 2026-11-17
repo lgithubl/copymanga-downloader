@@ -66,7 +66,7 @@ export async function renderSceneThumb(cfg, { fetchImpl = fetch, timeoutMs = 300
     ctx.drawImage(img, (width - iw * k) / 2, (height - ih * k) / 2, iw * k, ih * k)
   }
   if (Array.isArray(state.bg?.color)) { ctx.fillStyle = `rgb(${state.bg.color.join(',')})`; ctx.fillRect(0, 0, width, height) }
-  const url = (src) => assetUrl(cfg.resourceBase, src)
+  const url = (src) => assetUrl(cfg.resourceBase, src, data.resourceVersion)
   for (const src of [state.bg?.src, state.bg?.over]) {
     if (!src) continue
     try {

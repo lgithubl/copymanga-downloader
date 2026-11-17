@@ -6,7 +6,7 @@ const base=process.env.GAL_KAIJU_FIXTURE||'.cache/kaiju-20261117',raw=await fs.r
 assert.equal(tree.children[0].children.length,40);assert.equal(tree.children[1].children.length,3)
 for(const entry of scripts.filter(s=>s.data.kind==='interaction')){
  const parsed=parse(JSON.stringify(entry.data),ctx),role=parsed.interaction.roles[0],config=role.model.kaiju,state=createKaijuState(config),id=role.tools[0].areas[0].id
- assert.ok(role.outfits.length>=6);assert.ok(role.model.initialCommands[0].skins.some(s=>s.includes('Stocking_Lv1')),'native leg/body skins assembled')
+ const nativeHair=config.clothing.find(r=>r.SkinID===config.pose+'_Hair_Long');for(const name of nativeHair.OpenSkinName.split(':'))assert.ok(state.frame().skins.includes(name),'native front/back hair part: '+config.pose+' / '+name);assert.ok(role.outfits.length>=6);assert.ok(role.model.initialCommands[0].skins.some(s=>s.includes('Stocking_Lv1')),'native leg/body skins assembled')
  const one=state.action(id);assert.ok(one.voiceId,'native level-zero voice');assert.ok(one.snapshot.values.M>0)
  state.seek('M',.6);const high=state.action(id);assert.equal(high.snapshot.meters.find(m=>m.id==='M').level,3);assert.notEqual(high.frame.emotion.SoundIDs,one.frame.emotion.SoundIDs,'original emotion rules change looping voice pool by stage');assert.ok(one.voiceId.includes('se91'),'native kiss short voice precedes the emotion loop')
  state.seek('M',.199);const crossing=state.action(id);assert.ok(crossing.crossings);assert.equal(crossing.snapshot.flags.climax,true)

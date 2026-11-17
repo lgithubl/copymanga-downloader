@@ -4959,6 +4959,7 @@ h2 {
 .gal-rpg-picture-choice {position:absolute;z-index:8;background:transparent;border:1px dashed rgba(255,255,255,.3);padding:0;cursor:pointer}.gal-rpg-picture-choice:hover,.gal-rpg-picture-choice:focus-visible {outline:2px solid #ffd37a;background:rgba(255,211,122,.08)}
 
 /* Independent interaction viewport and compact right-hand controls. */
+.gal-interaction:not(:fullscreen) { height:auto; grid-template-rows:auto auto; }
 .gal-interaction-stage { position:relative; width:100%; aspect-ratio:16/9; overflow:hidden; background:#171a21; touch-action:manipulation; }
 .gal-interaction-world,.gal-interaction-background { position:absolute; inset:0; overflow:hidden; }
 .gal-interaction-background { background-position:center; background-size:contain; background-repeat:no-repeat; }
@@ -4988,7 +4989,8 @@ h2 {
 .gal-interaction-highlight polygon { fill:#70e7ff25; stroke:#70e7ff; stroke-width:2; vector-effect:non-scaling-stroke; stroke-dasharray:7 4; filter:drop-shadow(0 0 4px #70e7ff); }
 .gal-interaction-highlight.is-triggered polygon { fill:#ffdc6b40; stroke:#ffdc6b; }
 .gal-interaction-field { display:inline-flex; align-items:center; gap:.4rem; font-size:.85rem; }
-.gal-interaction .gal-bar { position:static; flex-wrap:wrap; padding:.6rem; background:#222; }
+.gal-interaction .gal-bar { position:static; flex-wrap:wrap; padding:.45rem 0; background:transparent; }
+.gal-interaction .gal-bar .gal-btn,.gal-interaction .gal-bar .gal-interaction-more>summary { background:var(--site-secondary,#344158); color:#fff; border-radius:6px; font-size:13px; line-height:1.2; min-height:28px; padding:0 10px; display:inline-flex; align-items:center; }
 .gal-interaction .gal-bar input[type=range] { width:5rem; }
 .gal-interaction-status { font-size:.8rem; padding:.3rem .75rem; }
 .gal-interaction-diag { padding:.3rem .75rem; font-size:.8rem; }

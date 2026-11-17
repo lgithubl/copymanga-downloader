@@ -1,7 +1,7 @@
 import assert from'node:assert/strict'
 import{test}from'node:test'
 import fs from'node:fs/promises'
-import{resolveKaijuSlots,kaijuEventSounds}from'../../web/library/gal/kaiju-presentation.mjs'
+import{resolveKaijuSlots,kaijuEventSounds,kaijuPageTextureSize}from'../../web/library/gal/kaiju-presentation.mjs'
 import{spineJsonInfo}from'../../web/library/gal/kaiju-data.mjs'
 import{prepare,parse}from'../../web/library/gal/adapters/kaiju-script.mjs'
 import{stateAt}from'../../web/static/gal-engine.js'
@@ -41,4 +41,8 @@ test('normal playback keeps native CG background hidden only by streamer-only co
 test('thumbnails choose visible actors and never seek past them into an empty frame',()=>{
  const spine=visible=>({op:'spine',slot:'actor',skel:'actor.json',kind:'actor',visible}),scene={steps:[{commands:[{op:'bg',src:'room.png'},spine(false)]},{commands:[]},{commands:[]},{commands:[spine(true)]},{commands:[]},{commands:[{op:'spineOff',slot:'actor'}]}]}
  const picked=pickRenderStep(scene);assert.equal(picked.index,3);assert.equal(picked.state.spines.actor.visible,true);assert.ok(pickRenderSteps(scene,150,3).every(p=>p.state.spines.actor?.visible===true));assert.equal(pickRenderStep({steps:[{commands:[spine(false)]}]}),null)
+})
+
+test('CG and detailed head atlases preserve detail without increasing every outfit page',()=>{
+ assert.equal(kaijuPageTextureSize('TypeV-HCG3_SkeletonData',''),4096);assert.equal(kaijuPageTextureSize('KPQ_HMode_Normal','page.png\nsize: 4096,4096\nHair_Front\nbounds: 0,0,300,300\n'),2048);assert.equal(kaijuPageTextureSize('KPQ_HMode_Normal','page.png\nsize: 4096,4096\nSkirt\nbounds: 0,0,300,300\n'),1024)
 })

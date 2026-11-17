@@ -1,6 +1,6 @@
 # Kaiju Princess 2 and multi-selection interaction verification
 
-Implementation: `kaiju::unity`; import preset → Kaiju Princess 原生 Unity. `gal-layout` 2.88.0; Unity native cache generation 27. Update the unified image and tag package, then rerun layout. Existing originals remain read-only; generated scripts/resources/cache live in the normal media container cache. No original assembly/JavaScript execution, save modification, new runtime package, or runtime decoder download.
+Implementation: `kaiju::unity`; import preset → Kaiju Princess 原生 Unity. `gal-layout` 2.88.0; Unity native cache generation 28. Update the unified image and tag package, then rerun layout. Existing originals remain read-only; generated scripts/resources/cache live in the normal media container cache. No original assembly/JavaScript execution, save modification, new runtime package, or runtime decoder download.
 
 ```json
 {
@@ -40,6 +40,15 @@ Native sources: Unity 2020.3.49f1 `data.unity3d`, ResourceManager exact paths, D
 - Actual thumbnail pipeline verified for Normal/Cowgirl/DoggyStyle cover scripts and Drama 10007. Existing cards already request composited Spine thumbnails; their raw background fallback is shown until rendering completes. Fixed selection of hidden actors (four original dramas: 821/1004/1024/1087), and prevented the expression look-ahead from advancing into a frame after the actor disappears. Render cache version `r3` refreshes previous incorrect thumbnails without deleting originals.
 - Additional capture: only bounded original ranges for the two remaining pose atlases and Drama 10007's referenced images/audio, 163.15 MiB source reads, plus 28.40 MiB compressed bundle ranges for the real Type-V texture pages, SHA256 verified; no complete archive, source modification or executable execution.
 - Regression entry: `node scripts/dev/gal-kaiju-pose-browser-selftest.mjs`, plus `gal-kaiju-texture-bindings-selftest.mjs` (set `KAIJU_VERIFY_TEXTURE_PIXELS=1` for captured image decoding), Kaiju presentation tests and the shared thumbnail inner/film regression. First-dialogue validation waits for nontransparent skeleton pixels and checks actual frame colors, rather than treating a created canvas or visible background as success.
+
+## Follow-up: front hair, footer, browser cache and CG projection
+
+- Cowgirl/DoggyStyle native `*_Hair_Long` rows open both `Hair_B_Long` and `Hair_Normal_F`. The preview previously hardcoded only the former. It now initializes all declared hair pieces before the outfit/headgear overrides. Real frozen Cowgirl pixels differ when only the native front-hair skin is removed; screenshots cover all three poses.
+- Interaction no longer inherits the ordinary player's spare grid row / full-height footer. Its two rows follow their content; controls use the normal media button colors, with a transparent footer and no extra black band.
+- Unity resource responses could be cached for one hour while readers supplied no `resourceVersion`. A successful server-side native generation bump therefore did not change browser image URLs. Native readers now expose the source/decoder index signature; player textures, interaction textures, rendered thumbnails and raw card images include it. Fresh and source-updated readers get new URLs without asking the user to delete original/cache files. Existing Silky generation behavior remains intact.
+- Native `UI_Drama.DoCGBackgroundToSpine` renders to a 2048² target displayed by serialized `ImageSpineCG` (2048²), rather than drawing directly into the 1920×1080 UI plane. The native image size is read from the original UI prefab and converted into the CG projection scale (`2048/1080`). Script zoom remains applied inside this projection. This restores Drama 10007 UI step 27's framing; the old direct-plane rendering left a large white border.
+- CG atlases retain up to 4096px. Head/face/hair atlas pages retain up to 2048px, other outfit pages 1024px, avoiding raising all 52–55 pose pages to CG resolution. Original bytes needed for these samples were already captured; no additional collection/runtime download was needed. Generated native cache generation is 28; rendered-thumbnail cache is r4.
+- `gal-kaiju-review-browser-selftest.mjs` renders the actual three interaction poses and compact footers, checks the front-hair pixel difference, plays the first three spoken lines sequentially (UI 2→3→4) with versioned resource requests, and checks UI step 27's nonwhite side coverage. Local all-white side-band ratio dropped to zero. This does not claim a native-game screenshot comparison for every scene or original shader.
 
 ## RJ01562637 correction
 

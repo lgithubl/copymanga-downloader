@@ -763,7 +763,7 @@ export function createSpineLayer({ parent, url, onMissing = () => {}, onUnavaila
     } else if ((inst.spec.kind === 'still' || inst.spec.nativePlace === true) && inst.spec.place && typeof inst.spec.place === 'object') {
       // 精确摆放的静态画面（TSK BgEvent：原版 1 个骨架 1:1 像素画在舞台中心，不缩放）
       const stage = Array.isArray(inst.spec.stage) && Number(inst.spec.stage[0]) > 0 ? Number(inst.spec.stage[0]) : 1280
-      const unit = width / stage
+      const unit = width / stage * (Number(inst.spec.nativeViewportScale)>0?Number(inst.spec.nativeViewportScale):1)
       scale = unit * (Number(inst.spec.place.scale) > 0 ? Number(inst.spec.place.scale) : 1)
       // Native prefab offsets are inside the script-controlled root transform.
       const base=inst.spec.nativeTransform,rootScale=scale/unit

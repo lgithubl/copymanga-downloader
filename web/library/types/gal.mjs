@@ -21,7 +21,7 @@ import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
 import { createArcResCache } from '../gal/arc-res-cache.mjs'
 import { extractExeIcon, decodeIco } from '../gal/pe-icon.mjs'
-import { ensureContainers, setKeysFile, virtualEntry, virtualHas } from '../gal/containers.mjs'
+import { ensureContainers, setKeysFile, virtualEntry, virtualHas, virtualIndex } from '../gal/containers.mjs'
 import { createRpgMakerResourceCache, isRpgMakerEncryptedFile } from '../gal/rpgmaker.mjs'
 import { IMAGE_THUMB_EXT, bucketOf, createImageThumbCache } from '../gal/image-thumb.mjs'
 import { resolveOnDisk } from '../gal/resolve.mjs'
@@ -443,6 +443,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     const unit = item.mediaUnits[0]
     const { node, scene = null, sectionNavigation = { prev: null, next: null } } = await providerOf(item).getNode(sectionId, { ...(showMosaic === undefined ? {} : { showMosaic }), ...(viewRules ? { viewRules } : {}) })
     const { mediaUnits, ...publicItem } = item
+    const resourceVersion=item.config?.containers?.format==='unity-native'?(await virtualIndex({mediaDir:workDirOf(item),config:normalizeGalConfig(item.config)}))?.sig||'':item.config?.containers?.format==='silky'?SILKY_RESOURCE_VERSION:''
     return {
       type: 'gal',
       item: publicItem,
@@ -454,7 +455,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       node,
       scene,
       resourceBase: resourceBase(itemId),
-      ...(item.config?.containers?.format === 'silky' ? { resourceVersion: SILKY_RESOURCE_VERSION } : {}),
+      ...(resourceVersion ? { resourceVersion } : {}),
     }
   }
 

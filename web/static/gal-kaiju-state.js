@@ -20,7 +20,7 @@ export function createKaijuState(config,saved={}){
   return true
  }
  function frame(){
-  const current=config.actions.find(r=>r.ActionID===last),visible=[...active].map(id=>config.actions.find(r=>r.ActionID===id)).filter(Boolean).filter(a=>a===current||list(a.MultipleActions).includes(current?.ActionID)),hard=visible.some(r=>yes(r.IsHardMode)),skins=new Set(['default','HairStyle/Hair_B_Long']),slots={...config.defaultSlots}
+  const current=config.actions.find(r=>r.ActionID===last),visible=[...active].map(id=>config.actions.find(r=>r.ActionID===id)).filter(Boolean).filter(a=>a===current||list(a.MultipleActions).includes(current?.ActionID)),hard=visible.some(r=>yes(r.IsHardMode)),skins=new Set(['default',...list(config.clothing.find(r=>r.SkinHModeClothe==='Hair'&&r.SkinType==='Hair_Long')?.OpenSkinName)]),slots={...config.defaultSlots}
   for(const r of config.clothing.filter(r=>r.SkinType===family)){
    const on=clothes[r.SkinID]!==false,mode=hard?'Lv2':'Lv1'
    for(const name of list(on?r.OpenSkinName:r.CloseOpenSkinName))skins.add(name)

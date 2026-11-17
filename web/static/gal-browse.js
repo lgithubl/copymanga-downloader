@@ -428,7 +428,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     if (!thumbs.length && !render) problems.push({ kind: '没有图', title: item.title, node: item.node, lines: item.thumbWhy?.length ? item.thumbWhy : ['后端没有给出原因'] })
     if (!thumbs.length && item.type === 'dir') box.dataset.icon = '📁'
     if (thumbs.length || render) {
-      const thumbUrls = thumbs.map((path) => thumbUrl(reader.resourceBase, path, CARD_THUMB_WIDTH))
+      const thumbUrls = thumbs.map((path) => thumbUrl(reader.resourceBase, path, CARD_THUMB_WIDTH)+(reader.resourceVersion?'&v='+encodeURIComponent(reader.resourceVersion):''))
       const urls = ruleCover ? [thumbUrls[0], ...renders.map(renderUrlOf), ...thumbUrls.slice(1)] : [...renders.map(renderUrlOf), ...thumbUrls]
       const coverAt = ruleCover ? 0 : render ? 0 : pickCover(thumbs.length, cover)   // 有渲染缩略图就以它为封面（缓存里没有时先显示别的图，渲染好了换上）
       const img = el('img')

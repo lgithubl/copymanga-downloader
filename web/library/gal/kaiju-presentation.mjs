@@ -24,3 +24,8 @@ export function kaijuEventSounds(model,ctx,mode='hcgsoundexcelentity'){
  }
  return result
 }
+// Keep small facial/hair details readable without loading every outfit atlas at CG resolution.
+export function kaijuPageTextureSize(modelName,pageText){
+ if(/hcg/i.test(modelName))return 4096
+ return /\n[^:\n]*(?:Hair|Head|Face)[^:\n]*\n/i.test(pageText)?2048:1024
+}
