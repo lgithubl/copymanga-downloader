@@ -10,6 +10,9 @@ export function roleState(role,saved={}){
 }
 export function interactionSpec(role,state,action=null,serial=0){
  const outfit=role.outfits.find(o=>o.id===state.outfit),variables={...role.model.variables},motionGroups={...role.model.motionGroups},configurationCommands=[]
+ // Native action preparation is a default; explicit user state controls take precedence.
+ if(role.composeEnabledMotions)for(const selected of state.enabledAreas||[])Object.assign(variables,role.tools.find(t=>t.id===selected.tool)?.areas.find(a=>a.id===selected.area)?.variables||{})
+ Object.assign(variables,action?.variables||{})
  for(const g of outfit?.groups||[]){const c=g.choices.find(c=>c.id===state.values[g.id]);Object.assign(variables,c?.variables||{});Object.assign(motionGroups,c?.motionGroups||{});configurationCommands.push(...c?.commands||[])}
  if(role.composeEnabledMotions)for(const selected of state.enabledAreas||[]){const area=role.tools.find(t=>t.id===selected.tool)?.areas.find(a=>a.id===selected.area);if(area?.motion)motionGroups[area.layer]=area.motion}
  const face=role.faces.find(f=>f.id===state.face);if(face)motionGroups[face.layer]=face.id
