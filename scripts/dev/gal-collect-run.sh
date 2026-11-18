@@ -105,7 +105,7 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="2.99"
+VERSION="3.00"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
 ROUND_RULES='^new-games:fuyu-edo$'
@@ -1714,7 +1714,7 @@ def next_game_detail_files(items, label):
     report['sampleBytes']=used
     yield '__next/index.json',json.dumps(report,ensure_ascii=False,indent=2).encode('utf-8'),int(time.time())
 
-PAIR_MEDIA_PLAN='eJzVmF1vmzAUhv8L1/mwMcYkd9t6s6nTpOZiF8uEHHBSTwYibDptVf/7SIBUDYfGpAVpNyScFzgPL7bPgUfn7gvCHqELwpzlj0dnz829s3Rubj/NV4anMVdZKr7LNM5+a9+bR9yUkV0Yqyh8wLNfOkudiaOzIo/Exz9GaGeJCaauN3Gy7VYL4yzRxNm8VFKeiDJHGO65zMNExJLPt1IJPe+T9mlyor0TK6mNyMOb8rj5XZEamYjPqTSSK/lXfEtvMx5rkNbHDGSt4t2kfVJ2kq6iXO6NTHcftBbJRkkBQ1KMQcgqbgvZma2Tb6eyDVe78voJT/lO5PqcjLDA9UC2RrGlA3L14Jrx8p5MCw9TjAjzwcHYSNcDNkk7OZV4EAqdQ7ks8BCEVAu2QPXVX8+OW5Z4DKGFC1rSSL0I8AUCt0XAFgz5AUjQSL0I3AsEwTmBx3wvQOCwPUm9CIJuglxUqbuGKEEeKzOCU6iRbFlauTqp9D3PRVwdhbrIiEu9jsndSLZkYD4rOtxBt/BRh22Ncg0b7sXmdi07jDBECLzunLRr+NyLfCuTC57Uq7zRc86b6glX6wXCAQxaK9bl5ULiPsTl76FQwdUQ0wDDK/oh/gbcl1n78EI9i8qiQyvAjczS6fGpTQ3flCBTke6U1Pdh9ShDrtRsU6SxEq1KgQkDC8Ux/oY7fS/e4TxaFz4VtNwyN1oXAV8IG7soWNeq+Gh2WaEP6RyLXLwuvC0l64JuKLNxzgfX+So+onMW6IM6J7z/1rnL6O/vnJ5WxemyT2yBCNjy1cLgTr2COoQv16xfzGfwy2gtjODR+GvXcUdoi5nm+hScacf4kN50I76rE9rk5Qm9mwRcvq6AxtTCkM7YIg/o0zUTDQcYg41VLYxn2fjz7Tx//2YBM4rgBrwSxnRv7H6hlb93w1CaROGxVwmjuveGnkEqN9rvw/jw/6swPH7+RjZN6v1ZuWm/vRHmE/gD2LNm64I1xdPPp3+jFhMJ'
+PAIR_MEDIA_PLAN='eJzVmk9v4zYQxb+LzkFMDv9ObtsuUKDoaXPooSgM2qKyBhQ7sJwtFov97lVsU9hGnDLDxLvtyYGeI/44It8jaX1pPvwqpFYGlWtu/vjSPITDx+am+SXcx3fDEO9X/efrtu+bq2bYPe7X8afPhzg0N04DCKP1VbPruiEemhtx1ayea9vxLuPNlsuHsNkv72O7CYtu08dhMbv/16up7fe//by4PYRtG/rdNv6+2ba7vwarF/s4bIZD3C/bfr38JJf3u+1uWO83D4dhCQLtqgWJ0CFYqVC16yi76FXUxntxvXrctn183g0lvMl14XSdxr8k4jeV+BBvT7d7Hw5h0cdPsZfieR9AWzH+f64bk0T3JN9EgUFmGLRWQDCcJB6DLDHAjEEphSbPkCQeA5QY1HMGiVojZGfFJPEYVIlBzxg0otEiy5AkHoMuMZgZg0c/DvcsQ5J4DKbEYGcM4wyT+TE5STwGW2Jw82cBygjiWZwlHoMrMfh5HYQEnfWHSeIx+BIDzhmMEz4/L5LEY8ACA8x8EoVSeZtMCosASi4JM5eUVki0+SokicdQckmYuaRU2ol8bk8Sj6HkkjB3Se2RSKxJ4jGUXBKyLuktwXCWeAwll4S5S0ohrMq7ZJJ4DCWXhLlLauusyI+HJPEYSi4JM5cEcMLkGSaJx1BySZi7pEEhZf5ZJInHUHJJmLmkc/nly+k6r/WSP84mpRpHfbb1s8BqvjQf1cydvSWaPwu85kvenLEDg5IIySSxEEpuMDODcbLJbAHOAqv1kg/MbcCD9fl1yllhtV/ygLkFWEdsYU4Cq/XS7J8vT/To98RyNUksgn+ZfcPHsI9tGPe+h0GK69MfGUcESexlkvRSoHyDL+OTBJ9EbxTkp0uSqvgkjw+o+mmFLr/KmaQqPuDxKYrPGoX56T5JVXyKx6ep5yuVQ2LvlKQqPs3jMxSfHbcu+fkxSVV8hsdnKb5xwaBFfn4kqYrP8vgczScssQJPUhWf4/F5cvyhUcQuJUlVfJ7HhwQfWqVMNi+SUkWHLDqg0mN8fOiydEmpoQNedgCZHRJBO8JbzlIVHy87gMoO9BLyRzZJqaLjJQdQySHHBZEkTlKSVMXHSw6gkwOEzA++Sari4yUHkMkhhBbEQj9JVXy85AAyOaTzktiPJ6mKj5ccQCaHG/MV8juFJFXx8ZIDyOQApxThLkmq4uMlB1DJYVFljfnpchUXLzNIWxljnziHknVgPD9RVJZp6yVxPjVJVXi8NCPtzgjMnxk9Xa8B4/kcZXPKOoT8NJ2kGjqey1EmBz4/Q0/Xa7h47kaZmx3HU3Z2Hq/XcPFcjTI1NQKo/EHxJNXQ8TyNsrTjWTWxmUhSDV3Z2W4P+xjuN9u7d8cvLkLI/iqPESO0Xei0CaGTsls50wYx7mNdWIkV/ONnemGMEc6J0LXobatUfHo7Qto2RtXBqqPeJNA2/ybB8fpLu/8jO/TaKrexC4/9od+tQ3+33z0+LE+Pbxn6foljkwbQRQjrVvoggwtRdAaUWI8fSFTV2fELymejCQQ61kHYd+zHtbjeh+3d/6WozgpE9ZRY00+BUnCs+HuWNsG+VYX79URx/gjH13ekUGvorEdonQzWG6/ate2UNWgtaKCqi0IJq7KrgosN2Vf24e2G68WL6bxHNNZdfKi+tqQJ9I0qu499DEP8dsJoCKaLugvOaoFr6zsrnZZqXA9IBLRETY8FE+iz+5BLjdB6/DcbmxetoBwNSSFKeelx+YpCToxvVtD/zPuYP4z/659f/wa344P7'
 def fuyu_edo_detail_files(items,label):
     """Bounded scripts and original archive indexes; no engine execution."""
     if label=='Kaiju Princess 2'and not json.loads(zlib.decompress(base64.b64decode(PAIR_MEDIA_PLAN))).get(label):
@@ -1758,7 +1758,7 @@ def fuyu_edo_detail_files(items,label):
         if not e or e.size!=r['sourceBytes']:raise RuntimeError('Pair media source changed '+r['path'])
         if r['offset']<0 or r['offset']+r['bytes']>e.size:raise RuntimeError('Pair range invalid')
         used+=r['bytes']
-        if used>(192 if label=='Kaiju Princess 2'else 256 if label in ('future','underworld')else 128 if label in ('meshiagirl','dennou-djibril','RJ01234887','RJ01562637')else 64)*MB:raise RuntimeError('Pair media byte limit')
+        if used>(192 if label in ('Kaiju Princess 2','RJ01435937')else 256 if label in ('future','underworld')else 128 if label in ('meshiagirl','dennou-djibril','RJ01234887','RJ01562637')else 64)*MB:raise RuntimeError('Pair media byte limit')
         with open(e.path,'rb')as f:f.seek(r['offset']);data=f.read(r['bytes'])
         if len(data)!=r['bytes']:raise RuntimeError('Pair media truncated')
         report['files'].append({**r,'sha256':hashlib.sha256(data).hexdigest()})
