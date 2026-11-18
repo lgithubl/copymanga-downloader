@@ -4,7 +4,7 @@ const number=(v,f,min,max)=>typeof v==='boolean'||v==null||v===''||!Number.isFin
 export function interactionPreferences(raw={},defaults={}){
  raw=raw&&typeof raw==='object'?raw:{}
  const modes=value=>Object.fromEntries(Object.entries(value&&typeof value==='object'?value:{}).filter(([,v])=>TRIGGER_MODES.includes(v)).slice(0,2000))
- return{interval:number(raw.interval,1500,200,10000),waitVoice:raw.waitVoice===true,textOpacity:number(raw.textOpacity,defaults.textOpacity??.74,0,1),fontScale:number(raw.fontScale,defaults.fontScale??1,.6,2),voiceVolume:number(raw.voiceVolume,defaults.voiceVolume??.8,0,1),sfxVolume:number(raw.sfxVolume,defaults.sfxVolume??.8,0,1),toolModes:modes(raw.toolModes),areaModes:modes(raw.areaModes)}
+ return{interval:number(raw.interval,1500,200,10000),waitVoice:raw.waitVoice!==false,textOpacity:number(raw.textOpacity,defaults.textOpacity??.74,0,1),fontScale:number(raw.fontScale,defaults.fontScale??1,.6,2),voiceVolume:number(raw.voiceVolume,defaults.voiceVolume??.8,0,1),sfxVolume:number(raw.sfxVolume,defaults.sfxVolume??.8,0,1),toolModes:modes(raw.toolModes),areaModes:modes(raw.areaModes)}
 }
 export const toolModeKey=(role,tool)=>JSON.stringify([role,tool])
 export const areaModeKey=(role,tool,area)=>JSON.stringify([role,tool,area])

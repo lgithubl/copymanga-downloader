@@ -18,7 +18,7 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
  try{saved=JSON.parse(localStorage.getItem(key)||'{}');if(!saved||typeof saved!=='object')saved={}}catch{saved={}}
  root.dataset.commandInteraction=String(data.roles.some(r=>r.model.commandModel));
  const defaults=galPlayerDefaults(reader.node?.player),legacy=(k,f)=>{try{const v=localStorage.getItem('copymanga.gal.'+k);return v!==null&&Number.isFinite(Number(v))?Number(v):f}catch{return f}}
- const preferences=interactionPreferences(saved.preferences,{textOpacity:legacy('boxOpacity',defaults.textOpacity??.74),fontScale:legacy('fontScale',defaults.fontScale??1),voiceVolume:legacy('voiceVolume',.8),sfxVolume:legacy('sfxVolume',.8)});saved.preferences=preferences;saved.conditions=saved.conditions&&typeof saved.conditions==='object'?saved.conditions:{default:true,values:{}};saved.conditions.values=saved.conditions.values&&typeof saved.conditions.values==='object'?saved.conditions.values:{};saved.visuals||={};saved.meters||={};saved.kaijuStates||={}
+ const preferences=interactionPreferences(saved.voiceGateDefault===1?saved.preferences:{...saved.preferences,waitVoice:true},{textOpacity:legacy('boxOpacity',defaults.textOpacity??.74),fontScale:legacy('fontScale',defaults.fontScale??1),voiceVolume:legacy('voiceVolume',.8),sfxVolume:legacy('sfxVolume',.8)});saved.voiceGateDefault=1;saved.preferences=preferences;saved.conditions=saved.conditions&&typeof saved.conditions==='object'?saved.conditions:{default:true,values:{}};saved.conditions.values=saved.conditions.values&&typeof saved.conditions.values==='object'?saved.conditions.values:{};saved.visuals||={};saved.meters||={};saved.kaijuStates||={}
  const persist=()=>{try{localStorage.setItem(key,JSON.stringify(saved))}catch{}}
  const url=src=>assetUrl(reader.resourceBase,src,reader.resourceVersion)
  const save=()=>{saved.role=role.id;saved[role.id]={background:state.background,outfit:state.outfit,values:state.values,face:state.face,tool:state.tool,enabledTools:state.enabledTools,enabledAreas:state.enabledAreas,selectedArea:state.selectedArea,alternatives:state.alternatives};persist()}
@@ -31,7 +31,8 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
   details.addEventListener('toggle',()=>{saved[openKey]=details.open;persist();if(kind==='regions'&&!details.open){hoverRegion=focusRegion='';paintHighlight()}})
   return details
  }
- const regionsBody=el('div','gal-interaction-region-list'),settingsPanel=dock('settings','角色与互动设置',panel,'settingsOpen'),regionsPanel=dock('regions','可触发区域',regionsBody,'regionsOpen');const alternativesBody=el('div','gal-interaction-alternative-list'),alternativesPanel=dock('alternatives','随机语音与动作分支',alternativesBody,'alternativesOpen');const conditionsBody=el('div','gal-interaction-condition-list'),conditionsPanel=dock('conditions','互动状态',conditionsBody,'conditionsOpen');rail.append(settingsPanel,regionsPanel,alternativesPanel,conditionsPanel)
+ const regionsBody=el('div','gal-interaction-region-list'),settingsPanel=dock('settings','角色与互动设置',panel,'settingsOpen'),regionsPanel=dock('regions','可触发区域',regionsBody,'regionsOpen');const conditionsBody=el('div','gal-interaction-condition-list'),conditionsPanel=dock('conditions','互动状态',conditionsBody,'conditionsOpen');rail.append(settingsPanel,regionsPanel,conditionsPanel)
+ saved.folds||={};
  const triggers=createInteractionTriggers({fire:perform,blocked:()=>destroyed||!visible||loading||nativeChoice||(preferences.waitVoice&&(voiceBusy||commandBusy||commands?.audioBusy())),interval:()=>preferences.interval,onChange:updateModeIndicators})
  function modeFor(tool,area){return interactionTriggerMode(preferences,role.id,tool,area)}
  function updateModeIndicators(){root.dataset.activeTriggers=String(triggers.size);root.dataset.queuedTriggers=String(triggers.pending);for(const b of root.querySelectorAll('[data-mode-kind]')){const m=modeFor(b.dataset.tool,b.dataset.modeKind==='area'?b.dataset.area:undefined);b.textContent={single:'1',repeat:'↻',hold:'▥'}[m];b.dataset.mode=m;b.title=(b.dataset.modeKind==='tool'?'此互动的默认模式：':'此区域的模式：')+TRIGGER_LABELS[m]+'；点击切换';b.setAttribute('aria-label',b.title)}for(const b of regionsBody.querySelectorAll('[data-region]'))b.classList.toggle('is-repeating',triggers.has(areaModeKey(role.id,b.dataset.tool,b.dataset.region)));if(typeof stopTriggers!=='undefined')stopTriggers.disabled=!triggers.size&&!triggers.pending}
@@ -40,7 +41,7 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
  const triggerBinding=element=>bindInteractionTrigger(element,{controller:triggers,mode:p=>modeFor(p.tool,p.area),resolve:e=>{if(!state.tool||destroyed||!visible)return null;if(nativeChoice)commands?.cancel();return payload(element.dataset.region||resolveHit(layers.hitTest('interaction',e.clientX,e.clientY,role.hitAreas)))}})
  const layerOptions={parent:world,url,onMissing:src=>report('资源缺失：'+src),onError:e=>report('演出诊断：'+e.message),onUnavailable:()=>report('WebGL 不可用')}
  const choices=el('div','gal-interaction-native-choices');speech.after(choices)
- const commands=data.roles.some(r=>r.model.commandModel)?createCommandInteractionLayers({...layerOptions,onEventVoice:request=>{triggers.request(request.key,{kind:'event-voice',role:role.id,request});return()=>{triggers.stop(request.key);if(eventVoice===request)stopAudio()}},canAmbientVoice:()=>!voiceBusy&&!commandBusy&&!triggers.pending,onAudioIdle:()=>triggers.notify(),waitForVoice:()=>preferences.waitVoice,onMeters:snapshot=>{if(!role)return;saved.kaijuStates[role.characterId||role.id]={values:snapshot.values,flags:snapshot.flags,sticky:snapshot.sticky,locks:snapshot.locks};for(const m of snapshot.meters){const view=meterViews.get(m.id);if(view){view.range.value=String(m.value/m.max*100);view.lock.update(snapshot.locks?.[m.id]===true);view.value.textContent='Lv.'+m.level+' · '+(m.value/m.max*100).toFixed(0)+'%'}}persist()},onMeterReady:event=>triggers.request('native-meter',{kind:'meter',role:role.id,event}),canAutoTrigger:()=>!triggers.pending&&(!preferences.waitVoice||!voiceBusy),onMeter:snapshot=>{if(!role)return;saved.meters[role.id]=snapshot;if(meterView){meterView.lock.update(snapshot.locked===true);meterView.range.value=String(snapshot.value/snapshot.max*100);meterView.value.textContent=(snapshot.value/snapshot.max*100).toFixed(0)+'% · 次数 '+snapshot.count}if(performance.now()-lastMeterSave>1000){lastMeterSave=performance.now();persist()}},conditionState:c=>conditionValue(role,c,saved.conditions),audioGain:kind=>volume(kind),onBusy:value=>{commandBusy=value;triggers.notify()},onChoice:c=>{nativeChoice=!!c;choices.replaceChildren();if(c)for(const option of c.options)choices.append(button((option.segments||[]).map(s=>s.text||'').join(''),()=>c.select(option.value)))},onMessage:reply=>{speech.textContent=reply.text;play(reply,{keepVoice:true})},onAudio:(kind,c)=>{if(kind==='voiceStop')stopAudio();else if(kind==='voice')play({voice:c.src});else if(kind==='se'){const a=new Audio(url(c.src));audioEffects.add(a);a.addEventListener('ended',()=>audioEffects.delete(a));a.volume=volume('sfx');a.play().catch(()=>report('音效失败：'+c.src))}}}):null
+ const commands=data.roles.some(r=>r.model.commandModel)?createCommandInteractionLayers({...layerOptions,onEventVoice:request=>{triggers.request(request.key,{kind:'event-voice',role:role.id,request});return()=>{triggers.stop(request.key);if(eventVoice===request)stopAudio()}},canCommandVoice:()=>!voiceBusy,canAmbientVoice:()=>!voiceBusy&&!commandBusy&&!triggers.pending,onAudioIdle:()=>triggers.notify(),waitForVoice:()=>preferences.waitVoice,onMeters:snapshot=>{if(!role)return;saved.kaijuStates[role.characterId||role.id]={values:snapshot.values,flags:snapshot.flags,sticky:snapshot.sticky,locks:snapshot.locks};for(const m of snapshot.meters){const view=meterViews.get(m.id);if(view){view.range.value=String(m.value/m.max*100);view.lock.update(snapshot.locks?.[m.id]===true);view.value.textContent='Lv.'+m.level+' · '+(m.value/m.max*100).toFixed(0)+'%'}}persist()},onMeterReady:event=>triggers.request('native-meter',{kind:'meter',role:role.id,event}),canAutoTrigger:()=>!triggers.pending&&(!preferences.waitVoice||!voiceBusy),onMeter:snapshot=>{if(!role)return;saved.meters[role.id]=snapshot;if(meterView){meterView.lock.update(snapshot.locked===true);meterView.range.value=String(snapshot.value/snapshot.max*100);meterView.value.textContent=(snapshot.value/snapshot.max*100).toFixed(0)+'% · 次数 '+snapshot.count}if(performance.now()-lastMeterSave>1000){lastMeterSave=performance.now();persist()}},conditionState:c=>conditionValue(role,c,saved.conditions),audioGain:kind=>volume(kind),onBusy:value=>{commandBusy=value;triggers.notify()},onChoice:c=>{nativeChoice=!!c;choices.replaceChildren();if(c)for(const option of c.options)choices.append(button((option.segments||[]).map(s=>s.text||'').join(''),()=>c.select(option.value)))},onMessage:reply=>{speech.textContent=reply.text;play(reply,{keepVoice:true})},onAudio:(kind,c)=>{if(kind==='voiceStop')stopAudio();else if(kind==='voice')play({voice:c.src});else if(kind==='se'){const a=new Audio(url(c.src));audioEffects.add(a);a.addEventListener('ended',()=>audioEffects.delete(a));a.volume=volume('sfx');a.play().catch(()=>report('音效失败：'+c.src))}}}):null
  const layers=commands||createLive2dLayers(layerOptions)
  speech.addEventListener('click',()=>commands?.advance())
  const highlight=createInteractionHighlight({parent:world,layers})
@@ -62,18 +63,33 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
   if(result==='on'){const p=payload(area,tool,true),mode=modeFor(tool,area);if(mode==='single')triggers.request(p.key,p);else triggers.start(p.key,p,mode)}
   save();selectionIndicators();alternatives()
  }
+ function foldButton(key,body,title){
+  const b=button('',()=>{saved.folds[key]=!saved.folds[key];update();persist()});b.className='gal-interaction-fold'
+  function update(){body.hidden=!!saved.folds[key];b.textContent=body.hidden?'▸':'▾';b.title=(body.hidden?'展开':'收起')+title;b.setAttribute('aria-label',b.title);b.setAttribute('aria-expanded',String(!body.hidden))}update();return b
+ }
+ function selectTool(id){
+  const previous=[...(state.enabledAreas||[])];toggleInteractionTool(role,state,id);if(!state.enabledTools.includes(id))for(const t of previous.filter(t=>t.tool===id))closeTarget(t.tool,t.area)
+  resetRegions();save();selectionIndicators();const group=[...regionsBody.querySelectorAll('.gal-interaction-tool-group')].find(n=>n.dataset.tool===id);if(group){const body=group.querySelector('.gal-interaction-tool-body');if(state.tool===id&&body.hidden)group.querySelector('.gal-interaction-fold').click();regionsBody.scrollTo({top:Math.max(0,group.offsetTop-regionsBody.offsetTop-(regionsBody.querySelector('.gal-interaction-tool-nav')?.offsetHeight||0)),behavior:'smooth'})}
+ }
  function regions(){
   regionsBody.replaceChildren();let count=0
-  for(const tool of role.tools.filter(t=>state.enabledTools.includes(t.id)))for(const [i,area]of interactionRegions(role,{...state,tool:tool.id}).entries()){
-   count++;const b=button('',()=>{});b.title=tool.title+' · '+area.title;b.setAttribute('aria-label',b.title);b.dataset.region=area.id;b.dataset.tool=tool.id;b.disabled=!!area.disabled
-   if(tool.icon){const image=el('img');image.alt='';image.src=url(tool.icon);image.loading='lazy';image.addEventListener('error',()=>image.remove(),{once:true});b.append(image)}else b.append(el('span','gal-interaction-target-icon',shortInteractionLabel(tool.title)))
-   b.append(el('span','gal-interaction-target-number',String(i+1)))
-   b.addEventListener('pointerenter',()=>{hoverRegion=area.id;paintHighlight()});b.addEventListener('pointerleave',()=>{if(hoverRegion===area.id){hoverRegion='';paintHighlight()}})
-   b.addEventListener('focus',()=>{focusRegion=area.id;paintHighlight()});b.addEventListener('blur',()=>{if(focusRegion===area.id){focusRegion='';paintHighlight()}})
-   let held=false;b.addEventListener('pointerdown',e=>{if(e.button===0&&modeFor(tool.id,area.id)==='hold'){held=true;selectTarget(tool.id,area.id)}});b.addEventListener('click',()=>{if(held){held=false;return}selectTarget(tool.id,area.id)})
-   const shell=el('span','gal-interaction-choice-shell');shell.append(b,modeButton('area',tool.id,area.id));regionsBody.append(shell)
+  const nav=choiceGrid('互动方式',role.tools,state.tool,selectTool);nav.classList.add('gal-interaction-tool-nav');regionsBody.append(nav)
+  for(const tool of role.tools){
+   const group=el('section','gal-interaction-tool-group'),head=el('div','gal-interaction-tool-head'),body=el('div','gal-interaction-tool-body');group.dataset.tool=tool.id;head.dataset.control='互动方式'
+   const select=button(tool.title,()=>selectTool(tool.id));select.dataset.value=tool.id;select.disabled=!!tool.disabled;select.title=tool.title;select.setAttribute('aria-label',tool.title)
+   if(tool.icon){const image=el('img');image.alt='';image.src=url(tool.icon);image.loading='lazy';select.prepend(image)}
+   head.append(select,modeButton('tool',tool.id),foldButton(JSON.stringify([role.id,tool.id]),body,tool.title));group.append(head,body);regionsBody.append(group)
+   for(const [i,area]of interactionRegions(role,{...state,tool:tool.id}).entries()){
+    count++;const entry=el('section','gal-interaction-area-group'),row=el('div','gal-interaction-area-head'),b=button('',()=>{});b.title=tool.title+' · '+area.title;b.setAttribute('aria-label',b.title);b.dataset.region=area.id;b.dataset.tool=tool.id;b.disabled=!!tool.disabled||!!area.disabled
+    b.append(el('span','gal-interaction-target-number',String(i+1)),el('span','gal-interaction-area-title',area.title))
+    b.addEventListener('pointerenter',()=>{hoverRegion=area.id;paintHighlight()});b.addEventListener('pointerleave',()=>{if(hoverRegion===area.id){hoverRegion='';paintHighlight()}})
+    b.addEventListener('focus',()=>{focusRegion=area.id;paintHighlight()});b.addEventListener('blur',()=>{if(focusRegion===area.id){focusRegion='';paintHighlight()}})
+    let held=false;b.addEventListener('pointerdown',e=>{if(e.button===0&&modeFor(tool.id,area.id)==='hold'){held=true;selectTarget(tool.id,area.id)}});b.addEventListener('click',()=>{if(held){held=false;return}selectTarget(tool.id,area.id)})
+    const options=el('div','gal-interaction-alternative-list');options.dataset.tool=tool.id;options.dataset.area=area.id
+    row.append(b,modeButton('area',tool.id,area.id),foldButton(JSON.stringify([role.id,tool.id,area.id]),options,area.title+'的动作'));entry.append(row,options);body.append(entry)
+   }
   }
-  regionsPanel.querySelector('summary').title='可触发区域'+(count?' · '+count:'');selectionIndicators()
+  regionsPanel.querySelector('summary').title='互动与可触发区域'+(count?' · '+count:'');selectionIndicators()
  }
  function meterLock(title,locked,change){
   const b=button('',()=>change(b.getAttribute('aria-pressed')!=='true'));b.classList.add('gal-interaction-meter-lock');b.setAttribute('aria-label','锁定'+title+'累积值')
@@ -94,14 +110,17 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
   }
  }
  function alternatives(){
-  alternativesBody.replaceChildren();const groups=interactionAlternatives(role,state,state.selectedArea)
-  if(!state.selectedArea){alternativesBody.append(el('p','','选择触发点后显示分支'));return}
-  const key=alternativeKey(state.tool,state.selectedArea),selected=state.alternatives[key]||{}
-  for(const g of groups)alternativesBody.append(choiceGrid(g.title,[{id:'',title:'自动'},...g.choices],selected[g.id]??'',id=>{state.alternatives[key]||={};if(id==='')delete state.alternatives[key][g.id];else state.alternatives[key][g.id]=id;save();alternatives()}))
-  if(!groups.length)alternativesBody.append(el('p','','此触发点没有额外随机分支'))
-  alternativesBody.append(button('触发',()=>triggers.request('selected-alternative',payload(state.selectedArea))))
+  for(const body of regionsBody.querySelectorAll('.gal-interaction-alternative-list')){
+   const tool=body.dataset.tool,area=body.dataset.area,groups=interactionAlternatives(role,{...state,tool},area),key=alternativeKey(tool,area),selected=state.alternatives[key]||{};body.replaceChildren()
+   for(const g of groups){const field=el('fieldset','gal-interaction-group'),legend=el('legend','',g.title),grid=el('div','gal-interaction-options');field.dataset.control=g.title;field.append(legend,grid)
+    const values=Array.isArray(selected[g.id])?selected[g.id]:selected[g.id]===undefined?[]:[String(selected[g.id])]
+    for(const c of[{id:'',title:'随机'},...g.choices]){const b=button(shortInteractionLabel(c.title),()=>{state.alternatives[key]||={};const next=c.id===''?[]:values.includes(c.id)?values.filter(v=>v!==c.id):[...values,c.id];state.alternatives[key][g.id]=next;save();alternatives()});b.title=c.title;b.setAttribute('aria-label',c.title);b.dataset.value=c.id;b.setAttribute('aria-pressed',String(c.id===''?!values.length:values.includes(c.id)));grid.append(b)}body.append(field)
+   }
+   const trigger=button('触发',()=>{if(!state.enabledTools.includes(tool))state.enabledTools.push(tool);state.tool=tool;state.selectedArea=area;save();selectionIndicators();triggers.request('selected-alternative:'+alternativeKey(tool,area),payload(area,tool))});trigger.disabled=!!role.tools.find(t=>t.id===tool)?.disabled||!!role.tools.find(t=>t.id===tool)?.areas.find(a=>a.id===area)?.disabled;body.append(trigger)
+  }
  }
- function regionBusy(){for(const b of regionsBody.querySelectorAll('[data-region]'))b.disabled=!!role.tools.find(t=>t.id===b.dataset.tool)?.areas.find(a=>a.id===b.dataset.region)?.disabled}
+
+ function regionBusy(){for(const b of regionsBody.querySelectorAll('[data-region]'))b.disabled=!!role.tools.find(t=>t.id===b.dataset.tool)?.disabled||!!role.tools.find(t=>t.id===b.dataset.tool)?.areas.find(a=>a.id===b.dataset.region)?.disabled}
  function choiceGrid(name,choices,value,change){
   const field=el('fieldset','gal-interaction-group'),legend=el('legend','',name),grid=el('div','gal-interaction-options');field.dataset.control=name;field.append(legend,grid)
   for(const c of choices){
@@ -130,7 +149,6 @@ export function createGalInteraction({container,reader,chapter,onEscape,onToggle
   for(const g of outfit?.groups||[])panel.append(choiceGrid(g.title,g.choices,state.values[g.id],id=>{triggers.stopAll();stopAudio();state.values[g.id]=id;action=null;serial++;save();paint()}))
   if(role.faces.length)panel.append(choiceGrid('表情',[{id:'',title:'默认'},...role.faces],state.face,id=>{state.face=id;save();paint()}))
   if(role.backgrounds?.length)panel.append(choiceGrid('背景',role.backgrounds,state.background,id=>{state.background=id;save();paintBackground()}))
-  panel.append(choiceGrid('互动方式',role.tools,state.tool,id=>{const previous=[...(state.enabledAreas||[])];toggleInteractionTool(role,state,id);if(!state.enabledTools.includes(id))for(const t of previous.filter(t=>t.tool===id))closeTarget(t.tool,t.area);resetRegions();regions();alternatives();save();selectionIndicators()}))
   updateModeIndicators()
  }
  function resolveHit(hits){let found=null;const tool=role.tools.find(t=>t.id===state.tool);for(const hit of hits)for(const a of tool?.areas||[])if(a.id===hit)found=hit;return found}

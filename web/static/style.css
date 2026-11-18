@@ -5053,3 +5053,18 @@ h2 {
 .media-viewer-view.stream-page-fullscreen .gal-interaction .gal-interaction-view,.gal-interaction:fullscreen .gal-interaction-view,.gal-interaction.is-immersive .gal-interaction-view { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; }
 .media-viewer-view.stream-page-fullscreen .gal-interaction .gal-interaction-stage,.gal-interaction:fullscreen .gal-interaction-stage,.gal-interaction.is-immersive .gal-interaction-stage { width:min(100%,calc((100dvh - var(--gal-interaction-bar-height,44px))*16/9)); }
 .media-viewer-view.stream-page-fullscreen .gal-interaction>.gal-bar,.gal-interaction:fullscreen>.gal-bar,.gal-interaction.is-immersive>.gal-bar { flex:none; align-self:stretch; margin-top:auto; justify-content:flex-start; }
+
+/* One interaction tree; each branch folds independently of activation. */
+.gal-interaction-region-list { display:block; position:relative; max-height:max(8rem,calc(var(--gal-interaction-height,480px) - 9rem)); overflow-y:auto; scrollbar-width:thin; }
+.gal-interaction-tool-nav { position:sticky; top:0; z-index:2; background:#151923; padding:.3rem 0; }
+.gal-interaction-tool-nav legend { display:none; }
+.gal-interaction-tool-group { border-top:1px solid #ffffff25; padding:.35rem 0; }
+.gal-interaction-tool-head,.gal-interaction-area-head { display:flex; gap:2px; align-items:stretch; }
+.gal-interaction-tool-head>.gal-btn,.gal-interaction-area-head>.gal-btn { flex:1; min-width:0; display:flex; gap:.25rem; justify-content:flex-start; text-align:left; padding:.2rem; height:auto; min-height:2rem; }
+.gal-interaction-tool-head img { max-width:1.8rem; max-height:1.8rem; }
+.gal-interaction-fold { flex:none; width:18px; border:0; border-radius:.25rem; color:#fff; background:#ffffff16; cursor:pointer; }
+.gal-interaction-area-group { padding:.25rem 0 .15rem .3rem; border-left:1px solid #ffffff25; margin:.25rem 0 0 .2rem; }
+.gal-interaction-region-list .gal-interaction-alternative-list { padding:.25rem 0 0; max-height:none; overflow:visible; }
+.gal-interaction-region-list [hidden] { display:none; }
+.gal-interaction-tool-head .gal-btn[aria-pressed=true] { border-color:#70e7ff; background:#70e7ff25; }
+.gal-interaction-tool-head .gal-btn[data-current=true] { outline:1px solid #70e7ff; }

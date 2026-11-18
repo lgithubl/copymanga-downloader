@@ -1,4 +1,4 @@
-import{alternativeKey}from'./gal-interaction-alternatives.js'
+import{alternativeKey,alternativePool}from'./gal-interaction-alternatives.js'
 // Declarative UI state, kept outside ordinary dialogue progress.
 export function roleState(role,saved={}){
  saved=saved&&typeof saved==='object'?saved:{}
@@ -20,8 +20,8 @@ export function interactionFeedback(role,state,hits,toolId=state.tool){
  // Native dbsm iterates hit results then declared areas; the last match wins.
  for(const id of hits)for(const area of tool?.areas||[])if(area.id===id)action=area
  if(!action)return null
- const selected=state.alternatives?.[alternativeKey(tool.id,action.id)]||{},matches=tool.areas.filter(a=>a.id===action.id);if(selected.action!==undefined&&matches[Number(selected.action)])action=matches[Number(selected.action)]
- const index=selected.reply!==undefined&&action.replies[Number(selected.reply)]?Number(selected.reply):state.replies[tool.id]||0,reply=action.replies[index%Math.max(1,action.replies.length)]||null;state.replies[tool.id]=(index+1)%Math.max(1,action.replies.length)
+ const selected=state.alternatives?.[alternativeKey(tool.id,action.id)]||{},matches=tool.areas.filter(a=>a.id===action.id),cursorKey=(Array.isArray(selected.reply)&&selected.reply.length)||(Array.isArray(selected.action)&&selected.action.length)?alternativeKey(tool.id,action.id):tool.id;if(selected.action!==undefined){const pool=alternativePool(matches,selected.action,a=>String(matches.indexOf(a)));action=pool[(state.replies[cursorKey]||0)%pool.length]||action}
+ const pool=alternativePool(action.replies||[],selected.reply,r=>String(action.replies.indexOf(r))),index=state.replies[cursorKey]||0,reply=pool[index%Math.max(1,pool.length)]||null;state.replies[cursorKey]=index+1
  return{action,reply}
 }
 

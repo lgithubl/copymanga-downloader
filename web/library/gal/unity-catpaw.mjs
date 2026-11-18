@@ -1,3 +1,4 @@
+import{createHash}from'node:crypto'
 import{readFileSync}from'node:fs'
 import{decodeTree}from'./unity-type-tree.mjs'
 const ANIMATION_TYPES=JSON.parse(readFileSync(new URL('./unity-2022-animation-types.json',import.meta.url)))
@@ -20,13 +21,13 @@ export async function indexCatpaw(api){
  for(const[key,hits]of entries){if(!key.startsWith(prefix+'talkbackground/'))continue;const go=hits.find(h=>h.o.classId===1)?.o;if(!go)continue;const d=await store.decode(go),images=[];for(const c of d.m_Component){const o=await store.ptr(go.asset,c.component);if(o?.classId!==114||await store.type(o)!=='Image')continue;const ui=unityUiImagePrefix(await store.data(o)),sprite=await store.ptr(o.asset,ui.sprite);if(sprite?.classId===213&&ui.color.a>0)images.push(sprite)}if(images.length===1)put(key,object('Backgrounds/'+key+'.png',images[0]))}
  // Original model3 files explicitly declare every atlas and motion. This also
  // handles multi-atlas models; no renderer-order or similar-name matching.
- const mocModels=new Map(),modelDocs=new Map(),virtualFiles=new Map(),clipPaths=new Map()
- for(const[key,hits]of entries)for(const hit of hits)if(hit.o.classId===74)clipPaths.set(hit.o.asset.file+':'+hit.o.pathId,key)
+ const mocModels=new Map(),mocObjects=new Map(),mocSignatures=new Map(),modelDocs=new Map(),virtualFiles=new Map(),clipPaths=new Map(),clipObjects=new Map(),clipHashes=new Map()
+ for(const[key,hits]of entries)for(const hit of hits)if(hit.o.classId===74){clipPaths.set(hit.o.asset.file+':'+hit.o.pathId,key);clipObjects.set(hit.o.asset.file+':'+hit.o.pathId,hit.o)}
  for(const[key,hits]of entries){if(!key.endsWith('.model3'))continue;const text=pick(key,[49]);if(!text)continue;const d=JSON.parse(readTextObject(await store.data(text.o)).text),refs=d.FileReferences;if(!refs?.Moc||!Array.isArray(refs.Textures))throw Error('CatPaw model3 references missing: '+key)
   const file=(name,kind)=>{const native=join(key,name),without=native.replace(/\.(?:moc3|png|json)$/i,''),hit=pick(native,kind==='texture'?[28]:kind==='moc'?[114]:[49])||pick(without,kind==='texture'?[28]:kind==='moc'?[114]:[49]);if(!hit)throw Error('CatPaw model reference missing: '+native);let src
    if(virtualFiles.has(native))return virtualFiles.get(native)
    if(kind==='texture')src=object('ModelTextures/'+native.replace(/\.(?:png|jpe?g)$/i,'')+'.png',hit.o,{maxTextureSize:4096})
-   else if(kind==='moc'){src=add('Native/'+native,{file:hit.o.asset.file,offset:hit.o.offset,size:hit.o.size},async()=>{const h=monoHeader(await store.data(hit.o));const bytes=h.r.bytes();h.r.end();return bytes});mocModels.set(hit.o.asset.file+':'+hit.o.pathId,key)}
+   else if(kind==='moc'){src=add('Native/'+native,{file:hit.o.asset.file,offset:hit.o.offset,size:hit.o.size},async()=>{const h=monoHeader(await store.data(hit.o));const bytes=h.r.bytes();h.r.end();return bytes});mocModels.set(hit.o.asset.file+':'+hit.o.pathId,key);mocObjects.set(hit.o.asset.file+':'+hit.o.pathId,hit.o)}
    else src=add('Native/'+native,{file:hit.o.asset.file,offset:hit.o.offset,size:hit.o.size},async()=>readTextObject(await store.data(hit.o)).bytes)
    virtualFiles.set(native,src);return src
   }
@@ -38,6 +39,18 @@ export async function indexCatpaw(api){
   if(refs.Expressions)clone.FileReferences.Expressions=refs.Expressions.map(e=>({...e,File:relative(file(e.File,'text'))}))
   const src=json('Model-'+path.posix.basename(key)+'.json',clone,text.o.asset.file);models[key]={src,motions:Object.keys(refs.Motions||{}),motionLayers:{},defaultMotions:{}};modelDocs.set(key,{clone,file,relative})
  }
+ // Unity can serialize a byte-identical MOC twice: the model3 path and the
+ // prefab then reference distinct objects. Accept only a unique exact digest.
+ async function resolveMoc(moc){
+  if(!moc)return'';const id=moc.asset.file+':'+moc.pathId;if(mocModels.has(id))return mocModels.get(id)
+  async function signature(o){const key=o.asset.file+':'+o.pathId;if(!mocSignatures.has(key))mocSignatures.set(key,createHash('sha256').update(monoHeader(await store.data(o)).r.bytes()).digest('hex'));return mocSignatures.get(key)}
+  const hash=await signature(moc),matches=new Set();for(const[key,o]of mocObjects)if(await signature(o)===hash)matches.add(mocModels.get(key));return matches.size===1?[...matches][0]:''
+ }
+ async function resolveClip(clip,model){
+  if(!clip)return'';const id=clip.asset.file+':'+clip.pathId,directory=path.posix.dirname(model)+'/',direct=clipPaths.get(id);if(direct?.startsWith(directory))return direct
+  async function signature(o){const key=o.asset.file+':'+o.pathId;if(!clipHashes.has(key))clipHashes.set(key,createHash('sha256').update(await store.data(o)).digest('hex'));return clipHashes.get(key)}
+  const hash=await signature(clip),matches=[];for(const[key,o]of clipObjects)if(clipPaths.get(key).startsWith(directory)&&await signature(o)===hash)matches.push(clipPaths.get(key));return matches.length===1?matches[0]:''
+ }
  // Resolve declared prefab -> actual CubismMoc identity using native children.
  const controllerOf=async(o)=>decodeTree(await store.data(o),ANIMATION_TYPES[o.classId],{requireEnd:true})
  const modelOf=async(root)=>{
@@ -46,7 +59,7 @@ export async function indexCatpaw(api){
    const go=queue[i],id=go.asset.file+':'+go.pathId;if(seen.has(id))continue;seen.add(id);if(seen.size>10000)throw Error('CatPaw prefab hierarchy exceeds bounds')
    const d=await store.decode(go);let drawable=null,precision=null
    for(const c of d.m_Component){const o=await store.ptr(go.asset,c.component);if(!o)continue
-    if(o.classId===114&&await store.type(o)==='CubismModel'){const h=monoHeader(await store.data(o)),moc=await store.ptr(o.asset,h.r.ptr());const model=mocModels.get(moc?.asset.file+':'+moc?.pathId);if(model)mocs.add(model)}
+    if(o.classId===114&&await store.type(o)==='CubismModel'){const h=monoHeader(await store.data(o)),moc=await store.ptr(o.asset,h.r.ptr());const model=await resolveMoc(moc);if(model)mocs.add(model)}
     if(o.classId===95){const d=await controllerOf(o),controller=await store.ptr(o.asset,d.m_Controller);if(controller)controllers.push(controller)}
     if(o.classId===114&&await store.type(o)==='CubismDrawable')drawable=monoHeader(await store.data(o)).r.i()
     if(o.classId===114&&await store.type(o)==='CubismRaycastable')precision=monoHeader(await store.data(o)).r.i()
@@ -58,7 +71,7 @@ export async function indexCatpaw(api){
   for(let controller of controllers){if(controller.classId!==91)continue;const data=await controllerOf(controller),names=new Map(data.m_TOS.map(p=>[p.first,p.second]))
    for(const[mi,machine]of data.m_Controller.m_StateMachineArray.entries())for(const[si,entry]of machine.data.m_StateConstantArray.entries()){const state=entry.data,alias=names.get(state.m_NameID);if(!alias)continue
     const nodes=state.m_BlendTreeConstantArray.flatMap(t=>t.data.m_NodeArray).map(n=>n.data).filter(n=>!n.m_ChildIndices.length&&Number.isInteger(n.m_ClipID)&&data.m_AnimationClips[n.m_ClipID]);if(nodes.length!==1)continue
-    const clip=await store.ptr(controller.asset,data.m_AnimationClips[nodes[0].m_ClipID]),source=clipPaths.get(clip?.asset.file+':'+clip?.pathId);if(!source||!pick(source+'.motion3',[49])||!source.startsWith(path.posix.dirname(model)+'/'))continue
+    const clip=await store.ptr(controller.asset,data.m_AnimationClips[nodes[0].m_ClipID]),source=await resolveClip(clip,model);if(!source||!pick(source+'.motion3',[49])||!source.startsWith(path.posix.dirname(model)+'/'))continue
     const relative=doc.relative(doc.file(path.posix.relative(path.posix.dirname(model),source)+'.motion3','text'));const existing=doc.clone.FileReferences.Motions[alias];if(existing&&existing[0]?.File!==relative)throw Error('CatPaw ambiguous native motion state: '+model+'/'+alias);doc.clone.FileReferences.Motions[alias]=[{File:relative}]
     const layers=data.m_Controller.m_LayerArray.map((l,i)=>({i,data:l.data})).filter(l=>l.data.m_StateMachineIndex===mi);if(layers.length===1){models[model].motionLayers[alias]=layers[0].i;if(si===machine.data.m_DefaultState)models[model].defaultMotions[layers[0].i]=alias}
    }

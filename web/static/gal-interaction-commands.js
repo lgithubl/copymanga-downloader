@@ -1,3 +1,4 @@
+import{pickAlternative}from'./gal-interaction-alternatives.js'
 import{createSpineEventAudio}from'./gal-spine-event-audio.js'
 import{createKaijuState}from'./gal-kaiju-state.js'
 import{createInteractionMeter}from'./gal-interaction-meters.js'
@@ -7,7 +8,7 @@ import{hakuboxAdventure}from'./gal-hakubox-adventure.js'
 import{initialState,applyCommand,condMet,visibleChoiceOptions}from'./gal-engine.js'
 import{createSpineLayer}from'./gal-spine.js'
 import{createOverlayLayer}from'./gal-stand.js'
-export function createCommandInteractionLayers({parent,url,onMissing,onError,onUnavailable,onMessage,onChoice,onBusy,onAudio,conditionState=()=>true,onMeter=()=>{},onMeters=()=>{},onMeterReady=null,onAudioIdle=()=>{},onEventVoice=()=>{},canAmbientVoice=()=>true,waitForVoice=()=>false,canAutoTrigger=()=>true,audioGain=()=>1}){
+export function createCommandInteractionLayers({parent,url,onMissing,onError,onUnavailable,onMessage,onChoice,onBusy,onAudio,conditionState=()=>true,onMeter=()=>{},onMeters=()=>{},onMeterReady=null,onAudioIdle=()=>{},onEventVoice=()=>{},canAmbientVoice=()=>true,canCommandVoice=()=>true,waitForVoice=()=>false,canAutoTrigger=()=>true,audioGain=()=>1}){
  const under=createOverlayLayer({parent,url,onMissing,under:true}),spine=createSpineLayer({parent,url,onMissing,onError,onUnavailable,onEvent:event=>eventAudio.event(event)}),over=createOverlayLayer({parent,url,onMissing}),loops=new Map()
  let state=initialState(),modelKey='',actionKey='',configuration='',generation=0,waiting=null,waitingKind='',timer=0,paused=false,presentation=null,meter=null,model=null,running=false,visualOverrides={},lastTick=performance.now(),kaiju=null
  const clearWait=()=>{clearTimeout(timer);waiting?.();waiting=null;waitingKind=''},finishWait=()=>{const resolve=waiting;waiting=null;waitingKind='';clearTimeout(timer);resolve?.()},advance=()=>{if(waitingKind!=='choice')finishWait()}
@@ -19,7 +20,7 @@ export function createCommandInteractionLayers({parent,url,onMissing,onError,onU
  function meterState(){if(!meter)return;const snapshot=meter.snapshot();state.vars['fox-state:girl1:愛心']=snapshot.count;onMeter(snapshot)}
  async function paint(){nativeBranches();const specs=Object.fromEntries(Object.entries(state.spines).map(([id,s])=>{const chain=model?.nativeGraphics?.[id],visible=typeof visualOverrides[id]==='boolean'?visualOverrides[id]:chain?chain.every(o=>Number(state.vars['fox-active:'+o]??model.nativeObjects[o]??1)!==0):s.visible;return[id,{...s,visible}]}));eventAudio.sync(specs);await Promise.all([spine.set(specs,{live:true}),under.set(state.overlays.filter(o=>o.under),{live:true}),over.set(state.overlays.filter(o=>!o.under),{live:true})])}
  const eventAudio=createSpineEventAudio({url,gain:audioGain,onError,onVoice:onEventVoice,canAmbient:()=>!running&&canAmbientVoice()})
- const sequences=createInteractionSounds({url,gain:audioGain,onError,onIdle:onAudioIdle,canPlay:()=>!waitForVoice()||!running&&canAutoTrigger()&&!sequences.audio()})
+ const sequences=createInteractionSounds({url,gain:audioGain,onError,onIdle:onAudioIdle,canPlay:g=>!waitForVoice()||g.kind==='sfx'||canCommandVoice()&&!sequences.audio()&&(running||canAutoTrigger())})
  function clearAudio(){eventAudio.sync({});sequences.clear();for(const a of loops.values())a.pause();loops.clear()}
  async function run(input,reset=false,selections={}){const commands=structuredClone(input||[]);cancel();const mine=generation;running=true;onBusy(true);let reply={};try{
   if(reset){state=initialState();clearAudio()}
@@ -32,14 +33,14 @@ export function createCommandInteractionLayers({parent,url,onMissing,onError,onU
     if(reply.text||reply.voiceId)next.push({op:'text',segments:[{text:reply.text||''}]});commands.splice(index+1,0,...next);onMeters(reply.snapshot);continue
    }
    if(c.op==='interactionMeterRate'){meter?.rate(c.part,c.rate,c.scaled);continue}
-   if(c.op==='interactionSoundGroups'){sequences.set(c.slot,c.groups,c.objectStates);continue}
+   if(c.op==='interactionSoundGroups'){sequences.set(c.slot,c.groups,c.objectStates);sequences.tick(0,state.vars);continue}
    if(c.op==='interactionWaitAudio'){const audio=sequences.audio(c.slot)||loops.get(c.slot);if(audio&&!audio.loop&&!audio.ended){await new Promise(resolve=>{waiting=resolve;waitingKind='audio';const release=()=>{if(mine===generation&&waiting===resolve)finishWait()};audio.addEventListener('ended',release,{once:true});audio.addEventListener('error',release,{once:true});timer=setTimeout(release,120000)})}continue}
    if(c.interactionConditionPrompt)continue
    if(c.op==='choice'&&c.interactionCondition){const condition=c.interactionCondition,value=conditionState(condition)?condition.trueValue:condition.falseValue;applyCommand(state,c,{[c.id]:value});continue}
    if(c.op==='interactionSpineSource'){const m=/^SpineManager\.(setMotion|addMotion)\([^,]+,\s*['"]([^'"]+)['"],\s*(true|false),\s*(\d+)\);?$/.exec(c.source);if(m){applyCommand(state,{op:'spine',slot:'hakubox:interact',patchTracks:true,tracks:[{track:Number(m[4]),anim:m[2],loop:m[3]==='true',queue:m[1]==='addMotion',token:mine+':'+c.source}]})}else onError(Error('未支持原生动作：'+c.source));continue}
    if(c.op==='interactionPresentation'){presentation?.(c.source);continue}if(c.op==='interactionCondition'){state.vars[c.var]=Number(presentation?.condition(c.source));continue}
-   if(c.op==='interactionVoiceChoice'){const picked=selections['choice:'+c.id],options=c.options||[],option=options.find(o=>String(o.value)===String(picked))||options[Math.floor(Math.random()*options.length)];if(option?.voice)onAudio('voice',{src:option.voice});continue}
-   if(c.op==='choice'&&c.random){const picked=selections['choice:'+c.id],options=visibleChoiceOptions(c,state.vars),option=options.find(o=>String(o.value)===String(picked))||options[Math.floor(Math.random()*options.length)];if(option)applyCommand(state,c,{[c.id]:option.value});continue}
+   if(c.op==='interactionVoiceChoice'){const picked=selections['choice:'+c.id],options=c.options||[],option=pickAlternative(options,picked);if(option?.voice)onAudio('voice',{src:option.voice});continue}
+   if(c.op==='choice'&&c.random){const picked=selections['choice:'+c.id],options=visibleChoiceOptions(c,state.vars),option=pickAlternative(options,picked);if(option)applyCommand(state,c,{[c.id]:option.value});continue}
    if(c.op==='choice'){await paint();if(mine!==generation)return;let picked;await new Promise(resolve=>{waitingKind='choice';waiting=resolve;onChoice({options:visibleChoiceOptions(c,state.vars),select:value=>{picked=value;finishWait()}})});onChoice(null);if(mine!==generation)return;if(picked!==undefined)applyCommand(state,c,{[c.id]:picked});continue}
    if(c.op==='voice'){reply.voice=c.src;continue}if(c.op==='voiceStop'){reply.voice='';onAudio('voiceStop');continue}
    if(c.op==='se'){onAudio('se',c);continue}
