@@ -30,7 +30,38 @@ export async function indexResister(api){
   if(refs.Expressions){clone.FileReferences.Expressions=[];for(const e of refs.Expressions)clone.FileReferences.Expressions.push({...e,File:relative(await file(e.File,'text'))})}
   const moc=monoHeader(await store.data(await lookup(path.posix.join(directory,refs.Moc),[114]))).r.bytes(),data=parseMoc3(moc),display=refs.DisplayInfo?JSON.parse(await text(path.posix.join(directory,refs.DisplayInfo))):{},labels=new Map((display.Parameters||[]).map(p=>[p.Id,p.Name]));models[lower(l.internal)]={src:json('Model-'+hash(l.internal).slice(0,20)+'.model3.json',clone),motions:Object.keys(clone.FileReferences.Motions),parameters:data.paramIds.map((id,i)=>({id,title:labels.get(id)||id,min:data.paramMin[i],max:data.paramMax[i],default:data.paramDefault[i]}))}
  }
- async function world(go,seen=new Set()){const key=id(go);if(seen.has(key)||seen.size>32)throw Error('ReSister transform hierarchy invalid');seen.add(key);const d=await store.decode(go);for(const c of d.m_Component){const t=await store.ptr(go.asset,c.component);if(![4,224].includes(t?.classId))continue;const v=unityTransformPrefix(await store.data(t));if(Math.abs(v.rotation.x)+Math.abs(v.rotation.y)+Math.abs(v.rotation.z)>0.00001)throw Error('ReSister rotated scene transform not lifted: '+d.m_Name);let parent={x:0,y:0,sx:1,sy:1};if(v.parent.m_PathID!=='0'){const p=await store.ptr(t.asset,v.parent),pgo=await store.ptr(p.asset,unityTransformPrefix(await store.data(p)).m_GameObject);parent=await world(pgo,seen)}let sx=v.scale.x,sy=v.scale.y;if(v.parent.m_PathID==='0'&&sx===0&&sy===0){let canvas,scaler;for(const c of d.m_Component){const co=await store.ptr(go.asset,c.component);if(co?.classId===223)canvas=await store.decode(co);if(co?.classId===114&&await store.type(co)==='CanvasScaler')scaler=(await mono(co)).value}if(canvas?.m_RenderMode!==1||scaler?.m_UiScaleMode!==1||scaler.m_ReferenceResolution.x!==1920||scaler.m_ReferenceResolution.y!==1080)throw Error('ReSister runtime Canvas scale not lifted: '+d.m_Name);const camera=await store.ptr(go.asset,canvas.m_Camera),cd=await store.decode(camera);if(!cd.orthographic)throw Error('ReSister Canvas camera is perspective');sx=sy=2*cd['orthographic size']/scaler.m_ReferenceResolution.y}return{x:parent.x+v.position.x*parent.sx,y:parent.y+v.position.y*parent.sy,sx:parent.sx*sx,sy:parent.sy*sy}}throw Error('ReSister model transform missing')}
+ async function world(go,seen=new Set()){
+  const key=id(go);if(seen.has(key)||seen.size>32)throw Error('ReSister transform hierarchy invalid');seen.add(key)
+  const d=await store.decode(go)
+  for(const c of d.m_Component){
+   const t=await store.ptr(go.asset,c.component);if(![4,224].includes(t?.classId))continue
+   const v=unityTransformPrefix(await store.data(t));if(Math.abs(v.rotation.x)+Math.abs(v.rotation.y)+Math.abs(v.rotation.z)>0.00001)throw Error('ReSister rotated scene transform not lifted: '+d.m_Name)
+   let parent={x:0,y:0,sx:1,sy:1},rect=null,position={...v.position},sx=v.scale.x,sy=v.scale.y
+   if(v.parent.m_PathID!=='0'){const p=await store.ptr(t.asset,v.parent),pgo=await store.ptr(p.asset,unityTransformPrefix(await store.data(p)).m_GameObject);parent=await world(pgo,seen)}
+   if(t.classId===224){
+    const rt=await store.decode(t)
+    if(v.parent.m_PathID==='0'&&sx===0&&sy===0){
+     let canvas,scaler;for(const component of d.m_Component){const co=await store.ptr(go.asset,component.component);if(co?.classId===223)canvas=await store.decode(co);if(co?.classId===114&&await store.type(co)==='CanvasScaler')scaler=(await mono(co)).value}
+     if(canvas?.m_RenderMode!==1||scaler?.m_UiScaleMode!==1||scaler.m_ReferenceResolution.x!==1920||scaler.m_ReferenceResolution.y!==1080)throw Error('ReSister runtime Canvas scale not lifted: '+d.m_Name)
+     const camera=await store.ptr(go.asset,canvas.m_Camera),cd=await store.decode(camera);if(!cd.orthographic)throw Error('ReSister Canvas camera is perspective')
+     sx=sy=2*cd['orthographic size']/scaler.m_ReferenceResolution.y
+     const cameraWorld=await world(await store.ptr(camera.asset,cd.m_GameObject),new Set(seen));position.x=cameraWorld.x;position.y=cameraWorld.y
+     // ScreenSpaceCamera rebuilds the root rect around the camera centre.
+     // Its serialized layout fields are zero until that native update runs.
+     rect={width:1920,height:1080,pivot:{x:.5,y:.5}}
+    }else{
+     if(!parent.rect)throw Error('ReSister RectTransform parent layout missing: '+d.m_Name)
+     const pr=parent.rect,amin=rt.m_AnchorMin,amax=rt.m_AnchorMax,pivot=rt.m_Pivot
+     position.x=pr.width*(amin.x+(amax.x-amin.x)*pivot.x-pr.pivot.x)+rt.m_AnchoredPosition.x
+     position.y=pr.height*(amin.y+(amax.y-amin.y)*pivot.y-pr.pivot.y)+rt.m_AnchoredPosition.y
+     rect={width:pr.width*(amax.x-amin.x)+rt.m_SizeDelta.x,height:pr.height*(amax.y-amin.y)+rt.m_SizeDelta.y,pivot}
+    }
+   }
+   return{x:parent.x+position.x*parent.sx,y:parent.y+position.y*parent.sy,sx:parent.sx*sx,sy:parent.sy*sy,rect}
+  }
+  throw Error('ReSister model transform missing')
+ }
+
  async function placement(a,go){const cameras=a.objects.filter(o=>o.classId===20);if(cameras.length!==1)throw Error('ReSister camera missing or ambiguous');const camera=await store.decode(cameras[0]);if(!camera.orthographic||camera['orthographic size']<=0)throw Error('ReSister camera projection unsupported');const cg=await store.ptr(a,camera.m_GameObject),c=await world(cg),v=await world(go),scale=1080/(camera['orthographic size']*2);return{stage:[1920,1080],nativeOrigin:{x:(v.x-c.x)*scale,y:(v.y-c.y)*scale,scaleX:v.sx*scale,scaleY:v.sy*scale}}}
  const scenes=[],gallery=[],sceneNames=['TitleScene','OutgameScene','DLCOutgame','Shop','EventScene','ConfigScene','SaveDataScene','Minigame','Missionary','Tease','InGame8','InGame9','InGame10','InGame11','Bathroom','MovieH','Beach','Nelson','Onedari','Onsen','Kitchen','Fela','DLCSideStand','DLCSchoolWear','DLCFela','DLCKitchen','DLCBack','DLCWedding','DLCCheer','LoadingScene','GlobalScene']
  for(let i=0;i<sceneNames.length;i++){
