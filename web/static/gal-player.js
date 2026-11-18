@@ -1,3 +1,4 @@
+import{createInteractionCall,saveInteractionReturn,clearInteractionReturn}from'./gal-interaction-return.js'
 import{createSpineEventAudio}from'/gal-spine-event-audio.js'
 import {createGalInteraction} from '/gal-interaction.js'
 import { createRpgUiLayer } from '/gal-rpgmaker-ui.js'
@@ -129,6 +130,8 @@ export function renderSegments(target, segments, { plain = false } = {}) {
 //   chapter: { jump(节点 id)（脚本里的 goto：直接接着播那个脚本，返回 true = 已经跳走）, canPrev(), canNext(), prev(), next(), back()（离开这个媒体）, up()（回到上一级列表，没有上一级就不传）, finish()（可选：最后一句看完——存「已看完」再回上一级列表；不传就直接 up()） }
 export function createGalPlayer({ container, reader, startRatio = 0, startStep = null, startChoices = {}, onStep = () => {}, onChoices = () => {}, onToggleImmersive = null, onEscape = null, onDetails = null, chapter = null, viewKey = '', onReload = null, translate = null, tts = null }) {
   if(reader.scene?.interaction?.format==='gal-interaction/1')return createGalInteraction({container,reader,chapter,onEscape,onToggleImmersive,onDetails,viewKey})
+  let interactionCall=null,interactionActive=false
+  const interactionView=viewKey||reader.itemId||reader.resourceBase||'default',interactionSource=reader.section?.sectionId||reader.node?.id||''
   const scene = reader.scene
   // 选择 + 当前实际会走到的步（没选过的分支不在里面）。步数、进度比例、上一句/下一句都按这条路算
   let choices = { ...(startChoices || {}) }
@@ -1499,7 +1502,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     reportStep()
     updateCount()
     const step = scene.steps[i]
-    let flowChoice=false, flowText=false
+    let flowChoice=false, flowText=false,flowInteraction=false
     if (step.flow) {
       // Hidden CFG control steps still affect state; restore the chosen path.
       state = stateAt(scene, i - 1, choices)
@@ -1527,6 +1530,21 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
           updateCount()
         }
         applyCommand(state, command, choices)
+        continue
+      }
+      if(command.op==='interaction'){
+        if(!chapter?.loadInteraction){scene.stats||={};scene.stats.notes||=[];scene.stats.notes.push('互动加载入口不可用：'+command.node);updateNote();continue}
+        interactionActive=true;flowInteraction=true;skipping=false;clearTimeout(fastTimer);altPure=false;fastLatched=false;setFast(false);stopAuto();stopTts();stopVoice();stopSe()
+        wantBgm=false;bgmAudio?.pause();bgseAudio?.pause();for(const v of bgVoices.values())v.audio.pause();movie.pause()
+        spineEventAudio.setPaused(true);spineLayer?.setPaused(true);live2dLayer?.setPaused(true);rpgMapLayer?.setPaused(true);overlayLayer?.setPaused(true);underLayer?.setPaused(true)
+        saveInteractionReturn(interactionView,{node:interactionSource,step:i,choices:{...choices}})
+        const suspended=[...root.children].map(node=>({node,hidden:node.hidden}));for(const item of suspended)item.node.hidden=true
+        interactionCall=createInteractionCall({container:root,node:command.node,load:chapter.loadInteraction,render:createGalInteraction,chapter,viewKey,onEscape,onDetails,onToggleImmersive,immersive:root.classList.contains('is-immersive'),onError:e=>{scene.stats||={};scene.stats.notes||=[];scene.stats.notes.push('互动加载失败：'+e.message);updateNote()}})
+        const completed=await interactionCall.done
+        interactionCall=null;interactionActive=false;clearInteractionReturn(interactionView,interactionSource)
+        if(destroyed||mine!==gen||!completed)return
+        for(const item of suspended)item.node.hidden=item.hidden;flowText=false
+        // Visibility restoration resumes the suspended story's layers and BGM.
         continue
       }
       if (command.op === 'goto') {
@@ -1663,6 +1681,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
     running = false
     skipping = false
+    if(flowInteraction&&!flowText){const target=path[path.indexOf(i)+1];if(target!==undefined)await runStep(target);else await finish();return}
     if(step.flow&&flowChoice&&!flowText){const target=path[path.indexOf(i)+1];if(target!==undefined){await runStep(target);return}}
     afterStep()
     preloadNext(path[path.indexOf(i) + 1])
@@ -1716,7 +1735,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
 
   const posNow = () => path.indexOf(index)
   // 进度按「第几步 / 当前会走到的总步数」报给页面（存成 scrollRatio）
-  function reportStep() { onStep(Math.max(0, posNow()), path.length) }
+  function reportStep() { onStep(Math.max(0, posNow()), path.length,{interaction:!!scene.steps[index]?.commands?.some(c=>c.op==='interaction')}) }
   function updateCount() {
     const pos = posNow()
     updateMarkerButtons()
@@ -1772,6 +1791,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     updateContinue()
   }
   function setImmersive(active) {
+    interactionCall?.setImmersive(active)
     root.classList.toggle('is-immersive', Boolean(active))
     immBtn.textContent = active ? '退出沉浸' : '沉浸'
     updateChapterButtons()
@@ -1874,7 +1894,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
   }
   function fastTick() {
-    if (destroyed) return
+    if (destroyed || interactionActive) return
     if (choiceState) { if (fastLatched && !fastResume) setFast(false); return }   // 按钮开的快进在选项处停下（「快进：选完选项后继续」勾上就只暂停，选完接着快进）；按住 Ctrl 的快进只暂停，选完接着走
     if (posNow() >= path.length - 1) {   // 快进到头：不是停在最后一句，而是和「看完」一样回列表（有下一章就停在「继续下一章」）
       setFast(false)
@@ -1887,12 +1907,12 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   let fastLastKick = false
   // 在最后一步：这一步还在跑（渐变 / 等待）就先让它跳过，跑完（running 变 false）再收尾；别的情况直接收尾
   function finishOrWait() {
-    if (!path.length) return
-    if (running) { skipping = true; setTimeout(() => { if (running) { gen += 1; running = false; skipping = false } finish() }, 400); return }
+    if (interactionActive || !path.length) return
+    if (running) { skipping = true; setTimeout(() => { if(destroyed||interactionActive)return; if (running) { gen += 1; running = false; skipping = false } finish() }, 400); return }
     finish()
   }
   async function next() {
-    if (destroyed || !hasSteps || choiceState) return   // 选项开着：只能选，不能翻页
+    if (destroyed || interactionActive || !hasSteps || choiceState) return   // 选项开着：只能选，不能翻页
     if (posNow() >= path.length - 1 && path.length) { finishOrWait(); return }   // 最后一步上点击 / 按键 = 看完（running 卡住也不会吞掉）
     if (running) { skipping = true; return }
     const target = path[posNow() + 1]
@@ -1905,7 +1925,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   // 整个脚本看完：交给页面层存进度（已看完）并回到上一级列表；没有页面层的 finish 就直接 up()
   let finishing = false
   async function finish() {
-    if (destroyed || finishing || choiceState) return
+    if (destroyed || interactionActive || finishing || choiceState) return
     finishing = true
     stopAuto()
     const continueNext = autoNext && Boolean(chapter?.canNext?.())
@@ -1922,7 +1942,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
       path = activePath(scene, choices)
       onChoices({ ...choices })
     }
-    if (pending && choices[pending.id] === undefined) {
+    if ((pending && choices[pending.id] === undefined)||scene.steps[target]?.commands?.some(c=>c.op==='interaction')) {
       const k = path.indexOf(target)
       renderInstant(k > 0 ? path[k - 1] : -1)
       runStep(target)
@@ -1930,7 +1950,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     reportStep()
   }
   function prev() {
-    if (destroyed || !hasSteps) return
+    if (destroyed || interactionActive || !hasSteps) return
     enterStep(path[Math.max(0, posNow() - 1)], { backward: true })
   }
 
@@ -2406,7 +2426,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   }
 
   const onKey = (event) => {
-    if (destroyed || !root.isConnected || event.ctrlKey || event.metaKey || event.altKey) return
+    if (destroyed || interactionActive || !root.isConnected || event.ctrlKey || event.metaKey || event.altKey) return
     // 播放器不可见（切到别的页了）才忽略按键。不能用 offsetParent：全屏时根节点是 position:fixed，offsetParent 恒为 null，会把全屏里的按键全吞掉
     if (!root.getClientRects().length) return
     const tag = event.target?.tagName
@@ -2440,7 +2460,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   let altPure = false
   const typing = (event) => { const tag = event.target?.tagName; return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable }
   const onModDown = (event) => {
-    if (destroyed || !root.isConnected || !root.getClientRects().length || typing(event)) return
+    if (destroyed || interactionActive || !root.isConnected || !root.getClientRects().length || typing(event)) return
     if (event.key === 'Control') {
       if (!event.repeat) { clearTimeout(fastTimer); fastTimer = setTimeout(() => setFast(true), 250) }
     } else {
@@ -2449,6 +2469,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
     }
   }
   const onModUp = (event) => {
+    if(interactionActive)return
     if (event.key === 'Control') { clearTimeout(fastTimer); if (!fastLatched) setFast(false) }
     else if (event.key === 'Alt') {
       if (altPure && !destroyed && root.isConnected && root.getClientRects().length && !typing(event)) toggleAuto()
@@ -2463,7 +2484,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
 
   // 播放器不在屏幕上（切走了 / 被隐藏）：BGM 和视频先停，回来再继续
   const visibility = new IntersectionObserver((entries) => {
-    const visible = entries.some((entry) => entry.isIntersecting)
+    const visible = !interactionActive&&entries.some((entry) => entry.isIntersecting)
     wantBgm = visible
     spineEventAudio.setPaused(!visible)
     rpgMapLayer?.setPaused(!visible)
@@ -2473,6 +2494,7 @@ export function createGalPlayer({ container, reader, startRatio = 0, startStep =
   visibility.observe(stage)
 
   function destroy() {
+    interactionCall?.destroy();interactionCall=null;clearInteractionReturn(interactionView,interactionSource)
     stopSe()
     destroyed = true
     stopShake()

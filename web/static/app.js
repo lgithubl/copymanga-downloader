@@ -1,3 +1,4 @@
+import{loadInteractionReturn}from'./gal-interaction-return.js'
 import { GAL_PRESETS } from '/gal-import-presets.js'
 import { createThumbLoader, thumbSettingsFromConfig } from '/thumb-loader.js'
 import { createGalBrowser } from '/gal-browse.js'
@@ -4121,7 +4122,8 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
       : isLibraryPageOwner(owner) && reader.section?.sectionId === currentLibraryProgress?.lastSectionId
         ? currentLibraryProgress.lastScrollRatio
         : 0
-    await saveLibraryProgress(resumeRatio, reader)
+    const suspendedInteraction=reader.type==='gal'&&loadInteractionReturn(owner.itemId,reader.section?.sectionId||'',reader.scene)
+    await saveLibraryProgress(suspendedInteraction?Math.min(.97,resumeRatio):resumeRatio, reader)
     await recordCurrentLibraryHistory({ visit: true, reader, position: recovered ? historyPositionForReader(reader) : options.position || historyPositionForReader(reader) }).catch(() => {})
     if (isLibraryPageOwner(owner)) {
       currentLibraryProgress = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/progress`)
@@ -4386,7 +4388,8 @@ function renderGal(reader) {
     ? Number(mine.nodes?.[sectionId]?.ratio ?? (mine.lastSectionId === sectionId ? mine.lastScrollRatio : 0)) || 0
     : 0
   galRatio = resume
-  const pendingStart = galPendingStart && galBase(sectionId) === galPendingStart.base ? galPendingStart : null   // 从卡片上的跳转点进来：从那一步开始，不用上次的进度 / 选项
+  const interactionReturn=loadInteractionReturn(owner?.itemId||reader.itemId||reader.resourceBase||'default',sectionId,reader.scene)
+  const pendingStart = interactionReturn?{base:galBase(sectionId),step:interactionReturn.step,choices:interactionReturn.choices}:galPendingStart && galBase(sectionId) === galPendingStart.base ? galPendingStart : null   // 从卡片上的跳转点进来：从那一步开始，不用上次的进度 / 选项
   galPendingStart = null
   const savedChoices = pendingStart ? {} : mine?.nodes?.[sectionId]?.choices || {}
   galChoices = pendingStart ? { ...(pendingStart.choices || {}) } : resume >= 0.98 ? {} : { ...savedChoices }
@@ -4404,8 +4407,8 @@ function renderGal(reader) {
     translate: appConfig?.galTranslateEnabled && appConfig?.galTranslateApiBase ? { enabled: true, lookahead: appConfig.galTranslateLookahead ?? 40, batch: appConfig.galTranslateBatchSize ?? 15, context: appConfig.galTranslateContextSize ?? 2, color: appConfig.galTranslateColor || '' } : null,
     // 「更多 → 显示马赛克层」改了之后：按新的设置重取当前这份脚本
     onReload: () => { galNavigate(reader, reader.node?.id ?? reader.section?.sectionId ?? '', 'self').catch((error) => alert(error.message)) },
-    onStep: (step, total) => {
-      galRatio = ratioOfStep(step, total)
+    onStep: (step, total, detail) => {
+      galRatio = detail?.interaction ? Math.min(.97,ratioOfStep(step,total)) : ratioOfStep(step, total)
       scheduleLibraryProgressSave()
     },
     onChoices: (choices) => { galChoices = choices; scheduleLibraryProgressSave() },
@@ -4413,6 +4416,11 @@ function renderGal(reader) {
     onToggleImmersive: toggleGalImmersive,
     onEscape: () => exitGalImmersive({ remember: true }),
     chapter: {
+      loadInteraction: async nodeId=>{
+        const params=new URLSearchParams({sectionId:nodeId})
+        try{const saved=JSON.parse(localStorage.getItem(`copymanga.gal.view.${owner.itemId}`)||'null');if(saved?.showMosaic!==undefined)params.set('mosaic',saved.showMosaic?'1':'0');if(saved?.viewRules&&typeof saved.viewRules==='object')params.set('vr',JSON.stringify(saved.viewRules))}catch{}
+        return api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(reader.unit.unitId)}?${params}`)
+      },
       select: nodeId => galNavigate(reader, nodeId, 'self').catch(error => alert(error.message)),
       // 脚本里的 goto（选项跳到别的脚本）：把这份标成看完，直接接着播目标脚本；返回 true = 已经跳走
       jump: async (nodeId) => {

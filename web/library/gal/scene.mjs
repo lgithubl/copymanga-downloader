@@ -30,6 +30,7 @@
 //   overlayOff {slot?}             去掉某个叠加层；不写 slot = 全部
 //   live2d {src, motion?, loop?, variables?}   Live2D 模型（moc3，WebGL，gal-live2d.js）：src = model3.json 的资源路径（同目录的 moc3 / 纹理 / motions / cdi3 由它引用）；motion = 动作名（motion3.json 文件名去掉后缀，或 r3h 这种「_03h」简写）；loop = 动作循环；variables = { 参数显示名或 Id: 值 }（动作之前的初始参数）。再来一条 = 换；live2dOff 去掉
 //   live2dOff              去掉 Live2D 模型
+//   interaction {node}             暂停当前剧情，打开互动；手动结束后从下一条继续
 //   raw {cmd, args}                适配器认得、播放器暂未实现的指令（立绘/特效等）
 import { galAdapter } from './adapters/index.mjs'
 import { CLASSIFY_AS, CLASSIFY_FROM, CLASSIFY_ON } from './config.mjs'
