@@ -9,8 +9,9 @@ export function roleState(role,saved={}){
  return{background:(role.backgrounds||[]).some(b=>b.id===saved.background)?saved.background:role.backgrounds?.[0]?.id||'',outfit:outfit?.id||'',values,face:role.faces.some(f=>f.id===saved.face)?saved.face:'',selectedArea:typeof saved.selectedArea==='string'?saved.selectedArea:'',alternatives:saved.alternatives&&typeof saved.alternatives==='object'?saved.alternatives:{},enabledTools,enabledAreas,tool:enabledTools.includes(saved.tool)?saved.tool:enabledTools.at(-1)||'',replies:{}}
 }
 export function interactionSpec(role,state,action=null,serial=0){
- const outfit=role.outfits.find(o=>o.id===state.outfit),variables={},motionGroups={...role.model.motionGroups},configurationCommands=[]
+ const outfit=role.outfits.find(o=>o.id===state.outfit),variables={...role.model.variables},motionGroups={...role.model.motionGroups},configurationCommands=[]
  for(const g of outfit?.groups||[]){const c=g.choices.find(c=>c.id===state.values[g.id]);Object.assign(variables,c?.variables||{});Object.assign(motionGroups,c?.motionGroups||{});configurationCommands.push(...c?.commands||[])}
+ if(role.composeEnabledMotions)for(const selected of state.enabledAreas||[]){const area=role.tools.find(t=>t.id===selected.tool)?.areas.find(a=>a.id===selected.area);if(area?.motion)motionGroups[area.layer]=area.motion}
  const face=role.faces.find(f=>f.id===state.face);if(face)motionGroups[face.layer]=face.id
  if(action?.motion)motionGroups[action.layer]=action.motion
  return{...role.model,variables,motionGroups,configurationCommands,actionCommands:action?.commands,alternativeSelections:state.alternatives?.[alternativeKey(action?.tool||state.tool,action?.id)]||{},motionToken:serial}

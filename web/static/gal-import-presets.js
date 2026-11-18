@@ -1,6 +1,7 @@
 // Shared source for the import dropdown and its JSON presets.
 // Only registered playback adapters belong here; format probes are not importable adapters.
 export const GAL_PRESETS = {
+  resister:{label:'ReSister 原生 Unity（Live2D 动作 / 语音预览；部分控制器未还原；改 title）',adapters:['resister::unity'],game:{id:'resister::game',title:''}},
   kaiju:{label:'Kaiju Princess 原生 Unity（剧情 / 动态 CG / 互动；改 id / title）',adapters:['kaiju::unity'],game:{id:'kaiju::princess2',title:''}},
   unitySpine:{label:'Unity Spine 原生CG互动（未知存档条件手动选；经营/触摸未模拟；改 id / title）',adapters:['unityspine::gallery'],game:{id:'unityspine::game',title:''}},
   catpawUnderworld:{label:'CatPaw underworld 剧情 / CG / 角色互动（改 title）',adapters:['catpaw::script'],game:{id:'catpaw::underworld',title:''}},

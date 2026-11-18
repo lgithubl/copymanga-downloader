@@ -26,6 +26,7 @@ const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v)
 const MODULES = {
   'kaiju::unity':'kaiju-script',
   'unityspine::gallery':'unity-spine-gallery',
+  'resister::unity':'resister-script',
   'catpaw::script':'catpaw-script',
   'orcx::script':'orcx-script',
   'rexex::event':'rexex-event',

@@ -1,0 +1,966 @@
+{
+  "format": "resister-profile/1",
+  "metadataSha256": "113ad9acf0a6a3f4741e4990c5faeaaf37b54c92ed78435efb518acb3030b75d",
+  "backgrounds": {
+    "Bathroom": "Base/Images/Background/bathroom",
+    "BathroomEnter": "Base/Images/Background/bathroom_enter0",
+    "BathroomPeeking1": "Base/Images/Background/bathpeeking1",
+    "BathroomPeeking2": "Base/Images/Background/bathpeeking2",
+    "BathroomPeeking3": "Base/Images/Background/bathpeeking3",
+    "BathroomEnterWithSister": "Base/Images/Background/bathroom_enter",
+    "LivingMorning": "Base/Images/Background/living_morning",
+    "LivingAfternoon": "Base/Images/Background/living_afternoon",
+    "LivingEvening": "Base/Images/Background/living_evening",
+    "LivingNight": "Base/Images/Background/living_night",
+    "LivingMidNight": "Base/Images/Background/living_midnight",
+    "MyRoomMorning": "Base/Images/Background/myroom_morning",
+    "MyRoomAfternoon": "Base/Images/Background/myroom_afternoon",
+    "MyRoomEvening": "Base/Images/Background/myroom_evening",
+    "MyRoomNight": "Base/Images/Background/myroom_night",
+    "MyRoomMidNight": "Base/Images/Background/myroom_midnight",
+    "SisterRoomMorning": "Base/Images/Background/girlroom_morning",
+    "SisterRoomAfternoon": "Base/Images/Background/girlroom_afternoon",
+    "SisterRoomEvening": "Base/Images/Background/girlroom_evening",
+    "SisterRoomNight": "Base/Images/Background/girlroom_night",
+    "SisterRoomMidNight": "Base/Images/Background/girlroom_midnight",
+    "BeachNoon": "Base/Images/Background/beach_noon",
+    "BeachEvening": "Base/Images/Background/beach_evening",
+    "BeachNight": "Base/Images/Background/beach_night",
+    "Park": "Base/Images/Background/park",
+    "KissNormalStart": "Base/Images/Background/kiss_normal_start",
+    "KissNormalEnd": "Base/Images/Background/kiss_normal_end",
+    "KissHardStart": "Base/Images/Background/kiss_hard_start",
+    "KissHardEnd": "Base/Images/Background/kiss_hard_end",
+    "KissHotStart": "Base/Images/Background/kiss_hot_start",
+    "KissHotEnd": "Base/Images/Background/kiss_hot_end",
+    "KissOrgazmStart": "Base/Images/Background/kiss_girl_orgazm_start",
+    "KissOrgazmEnd": "Base/Images/Background/kiss_girl_orgazm_end",
+    "MiuMasturbation1": "Release/Images/Background/masturbation1",
+    "MiuMasturbation2": "Release/Images/Background/masturbation2",
+    "Rouka": "Release/Images/Background/rouka",
+    "Love1_1": "Base/Images/Background/love1_1",
+    "Love1_2": "Base/Images/Background/love1_2",
+    "Love2_1": "Base/Images/Background/love2_1",
+    "Love2_2": "Base/Images/Background/love2_2",
+    "Love2_3": "Base/Images/Background/love2_3",
+    "Love2_4": "Base/Images/Background/love2_4",
+    "Love3_1": "Base/Images/Background/love3_1",
+    "Love3_2": "Base/Images/Background/love3_2",
+    "Love4_1": "Base/Images/Background/love4_1",
+    "Love4_2": "Base/Images/Background/love4_2",
+    "KitchenMorning": "Base/Images/Background/kitchen_morning",
+    "KitchenNight": "Base/Images/Background/kitchen_night",
+    "BeachWithGirl1": "Release/Images/Background/beach1",
+    "BeachWithGirl2": "Release/Images/Background/beach2",
+    "BeachWithGirl3": "Release/Images/Background/beach3",
+    "RyokanMorning": "Release/Images/Background/ryokan_morning",
+    "RyokanEvening": "Release/Images/Background/ryokan_evening",
+    "RyokanNight": "Release/Images/Background/ryokan_night",
+    "RyokanMidnight": "Release/Images/Background/ryokan_midnight",
+    "RyokanFront": "Release/Images/Background/ryokan_front",
+    "OnsenLoad": "Release/Images/Background/onsen_load",
+    "OnsenNight": "Release/Images/Background/onsen_night",
+    "OnsenWithGirl1": "Release/Images/Background/onsen1_1",
+    "OnsenWithGirl2": "Release/Images/Background/onsen1_2",
+    "OnsenWithGirl3": "Release/Images/Background/onsen1_3",
+    "OnsenWithGirl4": "Release/Images/Background/onsen1_4",
+    "OnsenWithGirl5": "Release/Images/Background/onsen1_5",
+    "OnsenWithGirlH1": "Release/Images/Background/onsen2_1",
+    "OnsenWithGirlH2": "Release/Images/Background/onsen2_2",
+    "OnsenWithGirlH3": "Release/Images/Background/onsen2_3",
+    "OnsenWithGirlH4": "Release/Images/Background/onsen2_4",
+    "OnsenWithGirlH5": "Release/Images/Background/onsen2_5",
+    "OnsenWithGirlH6": "Release/Images/Background/onsen2_6",
+    "OnsenWithGirlH7": "Release/Images/Background/onsen2_7",
+    "OnsenWithGirlH8": "Release/Images/Background/onsen2_8",
+    "OnsenWithGirlH9": "Release/Images/Background/onsen2_9",
+    "OnsenWithGirlH10": "Release/Images/Background/onsen2_10",
+    "Izakaya": "Release/Images/Background/izakaya",
+    "OnsenRyokanH1": "Release/Images/Background/OnsenRyokanH1",
+    "OnsenRyokanH2": "Release/Images/Background/OnsenRyokanH2",
+    "OnsenRyokanH3": "Release/Images/Background/OnsenRyokanH3",
+    "Fishing": "Base/Images/Background/fishing",
+    "Street1": "Release/Images/Background/street1",
+    "Street2": "Release/Images/Background/street2",
+    "Cafe": "Release/Images/Background/cafe",
+    "Black": "Base/Images/Background/black",
+    "Town1": "Base/Images/Background/town1",
+    "Lab1": "Base/Images/Background/lab1",
+    "Lab2": "Base/Images/Background/lab2",
+    "LabMonotone": "Base/Images/Background/lab_monotone",
+    "LabEnterance": "Base/Images/Background/lab_enterance",
+    "LabRoom": "Base/Images/Background/lab_room",
+    "LabHouse": "Base/Images/Background/lab_house",
+    "DLCBathroomEnterMorning": "DLC/Images/Background/dlc_bathroom_enter_morning",
+    "DLCBathroomEnterAfternoon": "DLC/Images/Background/dlc_bathroom_enter_morning",
+    "DLCBathroomEnterEvening": "DLC/Images/Background/dlc_bathroom_enter_evening",
+    "DLCBathroomEnterNight": "DLC/Images/Background/dlc_bathroom_enter_night",
+    "DLCMyRoomMorning": "DLC/Images/Background/dlc_myroom_morning",
+    "DLCMyRoomAfternoon": "DLC/Images/Background/dlc_myroom_morning",
+    "DLCMyRoomEvening": "DLC/Images/Background/dlc_myroom_evening",
+    "DLCMyRoomNight": "DLC/Images/Background/dlc_myroom_night",
+    "DLCMyRoomMidnight": "DLC/Images/Background/dlc_myroom_night_off",
+    "DLCGirlRoomMorning": "DLC/Images/Background/dlc_girl_room_morning",
+    "DLCGirlRoomAfternoon": "DLC/Images/Background/dlc_girl_room_morning",
+    "DLCGirlRoomEvening": "DLC/Images/Background/dlc_girl_room_evening",
+    "DLCGirlRoomNight": "DLC/Images/Background/dlc_girl_room_night",
+    "DLCGirlRoomMidnight": "DLC/Images/Background/dlc_girl_room_night_off",
+    "DLCLivingMorning": "DLC/Images/Background/dlc_living_morning",
+    "DLCLivingAfternoon": "DLC/Images/Background/dlc_living_morning",
+    "DLCLivingEvening": "DLC/Images/Background/dlc_living_evening",
+    "DLCLivingNight": "DLC/Images/Background/dlc_living_night",
+    "DLCLivingMidnight": "DLC/Images/Background/dlc_living_night_off",
+    "DLCKitchenMorning": "DLC/Images/Background/dlc_kitchen_morning",
+    "DLCKitchenAfternoon": "DLC/Images/Background/dlc_kitchen_morning",
+    "DLCKitchenEvening": "DLC/Images/Background/dlc_kitchen_night",
+    "DLCKitchenNight": "DLC/Images/Background/dlc_kitchen_night",
+    "DLCKitchenMidnight": "DLC/Images/Background/dlc_kitchen_night_off",
+    "DLCParkMorning": "DLC/Images/Background/dlc_park_morning",
+    "DLCParkEvening": "DLC/Images/Background/dlc_park_evening",
+    "DLCDagashiya": "DLC/Images/Background/dlc_dagashiya",
+    "DLCBathroomH1": "DLC/Images/Background/dlc_bathroom_h1",
+    "DLCBathroomWash_1": "DLC/Images/Background/dlc_bathroom_wash_1",
+    "DLCBathroomHandjob_1": "DLC/Images/Background/dlc_bathroom_handjob_1",
+    "DLCBathroomHandjob_2": "DLC/Images/Background/dlc_bathroom_handjob_2",
+    "DLCBathroomHandjob_3": "DLC/Images/Background/dlc_bathroom_handjob_3",
+    "DLCBathroomH2_1": "DLC/Images/Background/dlc_bathroom_h2_1",
+    "DLCBathroomH2_2": "DLC/Images/Background/dlc_bathroom_h2_2",
+    "DLCBathroomH2_2_2": "DLC/Images/Background/dlc_bathroom_h2_2-2",
+    "DLCBathroomH2_3": "DLC/Images/Background/dlc_bathroom_h2_3",
+    "DLCBathroomH2_3_2": "DLC/Images/Background/dlc_bathroom_h2_3-2",
+    "DLCBathroomH2_4": "DLC/Images/Background/dlc_bathroom_h2_4",
+    "DLCBathroomH2_4_2": "DLC/Images/Background/dlc_bathroom_h2_4-2",
+    "DLCBathroomH2_5": "DLC/Images/Background/dlc_bathroom_h2_5",
+    "DLCBathroomH2_6": "DLC/Images/Background/dlc_bathroom_h2_6",
+    "DLCBathroomH2_6_2": "DLC/Images/Background/dlc_bathroom_h2_6-2",
+    "DLCBathroomH2_7": "DLC/Images/Background/dlc_bathroom_h2_7",
+    "DLCBathroomH2_7_2": "DLC/Images/Background/dlc_bathroom_h2_7-2"
+  },
+  "audio": {
+    "bgm": {
+      "TitleBGM": "BGM/title",
+      "Normal": "BGM/normal",
+      "NightEnv": "BGM/night_env",
+      "MorningEnv": "BGM/morning_env",
+      "HagallSlumber": "BGM/Hagall_Slumber",
+      "IsekaiShopping": "BGM/isekai_shopping",
+      "MeowMeowDay": "BGM/meow_meow_day",
+      "MoonlitOasis": "BGM/moonlit_oasis",
+      "FragrantOlive": "BGM/fragrant_olive",
+      "ShootingStar": "BGM/shooting_star",
+      "WinterWink": "BGM/winter_wink",
+      "SunnyDay": "BGM/sunny_day",
+      "LazyNight": "BGM/lazy_night",
+      "RoadToPolaris": "BGM/road_to_polaris",
+      "GroovyDance": "BGM/groovy_dance",
+      "Toyland": "BGM/toyland",
+      "SuperstarTimeMaster": "BGM/SuperstarTimeMaster",
+      "MadChase": "BGM/mad_chase",
+      "Alley": "BGM/alley",
+      "Otsukimi": "BGM/otsukimi",
+      "TVNoise": "BGM/tv_noise",
+      "DetectiveInJail": "BGM/detective_in_jail",
+      "QueSeraSera": "BGM/QueSeraSera",
+      "BeachEnv": "BGM/beachEnv",
+      "HappyHoliday": "BGM/HappyHoliday",
+      "HidamariWalkMaster": "BGM/HidamariWalkMaster",
+      "ParasolAndYou": "BGM/ParasolAndYou",
+      "OnsenEnv": "BGM/onsen_env",
+      "Uminari": "BGM/uminari",
+      "Afternoon": "BGM/afternoon",
+      "HotChocolate": "BGM/hot_chocolate",
+      "LetUsTryIt": "BGM/let_us_try_it",
+      "Makura": "BGM/makura",
+      "Usukouyou": "BGM/usukouyou"
+    },
+    "se": {
+      "OK": "SE/ok",
+      "OK1": "SE/ok1",
+      "OK2": "SE/ok2",
+      "NG": "SE/ng",
+      "Cancel": "SE/cancel",
+      "TitleSelect": "SE/titleSelect",
+      "DoorOpen": "SE/doorOpen",
+      "DoorClose": "SE/doorClose",
+      "DoorKnock": "SE/door_knock",
+      "DoorKnob": "SE/door_knob",
+      "DoorUnlock": "SE/door_unlock",
+      "Manuke": "SE/manuke",
+      "Accent": "SE/accent",
+      "Accept": "SE/accept",
+      "Popup": "SE/popup",
+      "PopupShow": "SE/popup_show",
+      "PopupHide": "SE/popup_hide",
+      "Kirarin": "SE/kirarin",
+      "Surprise": "SE/surprise",
+      "Inspiration": "SE/inspiration",
+      "Learned": "SE/learned",
+      "Footstep": "SE/footstep",
+      "FootstepSand": "SE/footstep_sand",
+      "Notion": "SE/notion",
+      "Select": "SE/select",
+      "StatusUp": "SE/status_up",
+      "StatusDown": "SE/status_down",
+      "Touch": "SE/touch",
+      "UseItem": "SE/use_item",
+      "Debuf": "SE/debuf",
+      "Hatena": "SE/hatena",
+      "Dash": "SE/dash",
+      "Negative": "SE/negative",
+      "EarnCredit": "SE/earnCredit",
+      "UsePotion": "SE/use_potion",
+      "SwitchON": "SE/switch_on",
+      "SwitchOFF": "SE/switch_off",
+      "Swing": "SE/swing",
+      "Typing": "SE/typing",
+      "Shower": "SE/shower",
+      "SelfPlay1": "SE/self_play1",
+      "SelfPlay2": "SE/self_play2",
+      "Fingering1": "SE/fingering",
+      "HighFingering": "SE/high_fingering",
+      "ClockAlarm": "SE/clock_alarm",
+      "Cloth": "SE/cloth",
+      "Kiss": "SE/kiss",
+      "WaterSwim": "SE/water_swim",
+      "NormalPiston": "SE/normal_piston",
+      "HighPiston": "SE/high_piston",
+      "MegaHighPiston": "SE/mega_high_piston",
+      "Insert": "SE/insert",
+      "CarBrake": "SE/car_brake",
+      "BirdSinging": "SE/bird_singing",
+      "WhiteNoiseShort": "SE/white_noise_short",
+      "Piercing": "SE/piercing",
+      "ChairSqueak": "SE/chair_squeak",
+      "Rumble": "SE/rumble",
+      "Handjob": "SE/handjob",
+      "Fela": "SE/fela",
+      "PhoneCall": "SE/phone_call",
+      "Squirt": "SE/squirt",
+      "CookingSizzle": "SE/cooking_sizzle",
+      "Faucet": "SE/faucet",
+      "Thermometer": "SE/thermometer",
+      "Rattle": "SE/rattle",
+      "BodyFall": "SE/body_fall",
+      "TowelScrub1": "SE/towel_scrub1",
+      "TowelScrub2": "SE/towel_scrub2",
+      "Fishing": "SE/fishing",
+      "ThrowSplash": "SE/throw_splash",
+      "FishSplash": "SE/fish_splash",
+      "FishReal": "SE/fish_reel",
+      "FishVC": "SE/fish_vc",
+      "Piston1": "SE/anime/piston1",
+      "Piston2": "SE/anime/piston2",
+      "Piston3": "SE/anime/piston3",
+      "Piston4": "SE/anime/piston4",
+      "Piston5": "SE/anime/piston5",
+      "WetPiston1": "SE/anime/wet_piston1",
+      "WetPiston2": "SE/anime/wet_piston2",
+      "WetPiston3": "SE/anime/wet_piston3",
+      "WetPiston4": "SE/anime/wet_piston4",
+      "WetPiston5": "SE/anime/wet_piston5",
+      "FingerPiston1": "SE/anime/finger_piston_1",
+      "FingerPiston2": "SE/anime/finger_piston_2",
+      "FingerPiston3": "SE/anime/finger_piston_3",
+      "FingerPiston4": "SE/anime/finger_piston_4",
+      "FingerPiston5": "SE/anime/finger_piston_5",
+      "FingerPiston6": "SE/anime/finger_piston_6",
+      "Handjob1": "SE/anime/handjob1",
+      "Handjob2": "SE/anime/handjob2",
+      "Handjob3": "SE/anime/handjob3",
+      "Handjob4": "SE/anime/handjob4",
+      "Handjob5": "SE/anime/handjob5",
+      "WetHandjob1": "SE/anime/wet_handjob1",
+      "WetHandjob2": "SE/anime/wet_handjob2",
+      "WetHandjob3": "SE/anime/wet_handjob3",
+      "WetHandjob4": "SE/anime/wet_handjob4",
+      "WetHandjob5": "SE/anime/wet_handjob5",
+      "GirlPiston1": "SE/anime/girl_piston1",
+      "GirlPiston2": "SE/anime/girl_piston2",
+      "GirlPiston3": "SE/anime/girl_piston3",
+      "GirlPiston4": "SE/anime/girl_piston4",
+      "Grind1": "SE/anime/grind1",
+      "Grind2": "SE/anime/grind2",
+      "Grind3": "SE/anime/grind3",
+      "Grind4": "SE/anime/grind4",
+      "Grind5": "SE/anime/grind5",
+      "Grind6": "SE/anime/grind6",
+      "WetGrind1": "SE/anime/wet_grind1",
+      "WetGrind2": "SE/anime/wet_grind2",
+      "WetGrind3": "SE/anime/wet_grind3",
+      "WetGrind4": "SE/anime/wet_grind4",
+      "WetGrind5": "SE/anime/wet_grind5",
+      "WetGrind6": "SE/anime/wet_grind6",
+      "UseCondom": "SE/anime/use_condom",
+      "CumShot1": "SE/anime/cumshot1",
+      "CumShot2": "SE/anime/cumshot2",
+      "DenmaLoop": "SE/anime/denma_loop",
+      "DenmaOnBodyLoop": "SE/anime/denma_onbody_loop",
+      "VibeLoop": "SE/anime/vibe_loop",
+      "RotorLoop": "SE/anime/rotor_loop",
+      "Spanking1": "SE/anime/spanking1",
+      "Spanking2": "SE/anime/spanking2",
+      "Spanking3": "SE/anime/spanking3",
+      "Spanking4": "SE/anime/spanking4",
+      "Spanking5": "SE/anime/spanking5",
+      "超速ピストン音": "SE/mega_high_piston",
+      "ピストン音": "SE/normal_piston",
+      "プニ": "SE/accent",
+      "ドアクローズ": "SE/doorClose",
+      "手コキ": "SE/handjob",
+      "スイッチオン": "SE/switch_on",
+      "水道水": "SE/faucet",
+      "ドア鍵解除": "SE/door_unlock",
+      "走る": "SE/dash",
+      "はてな": "SE/hatena",
+      "地鳴り": "SE/rumble",
+      "フェラ": "SE/fela",
+      "砂嵐ショート": "SE/white_noise_short",
+      "射精音": "SE/anime/cumshot1",
+      "タイピング": "SE/typing",
+      "布擦れ": "SE/cloth",
+      "落ち込む": "SE/negative",
+      "セルフプレイ2": "SE/self_play2",
+      "セルフプレイ1": "SE/self_play1",
+      "椅子鳴り": "SE/chair_squeak",
+      "タッチ音": "SE/touch",
+      "ドアオープン": "SE/doorOpen",
+      "潮吹き": "SE/squirt",
+      "通話コール": "SE/phone_call",
+      "倒れる": "SE/body_fall",
+      "手マン2": "SE/high_fingering",
+      "時計アラーム": "SE/clock_alarm",
+      "フットステップ": "SE/footstep",
+      "車ブレーキ": "SE/car_brake",
+      "フットステップ砂": "SE/footstep_sand",
+      "手マン1": "SE/fingering",
+      "速いピストン音": "SE/high_piston",
+      "びっくり": "SE/surprise",
+      "鳥の鳴き声": "SE/bird_singing",
+      "温泉水動き": "SE/water_swim",
+      "ゴシゴシ2": "SE/towel_scrub2",
+      "シャワー": "SE/shower",
+      "体温計": "SE/thermometer",
+      "ドアノック": "SE/door_knock",
+      "ゴシゴシ1": "SE/towel_scrub1",
+      "皿揺れ": "SE/rattle",
+      "耳鳴り": "SE/piercing",
+      "挿入音": "SE/insert",
+      "焼肉": "SE/cooking_sizzle",
+      "スパンキング": "SE/anime/spanking1",
+      "気づき": "SE/inspiration",
+      "スイッチオフ": "SE/switch_off",
+      "ドアノブ": "SE/door_knob",
+      "キス音": "SE/kiss"
+    },
+    "voice": {
+      "Aegi1": "Voice/aegi/aegi1",
+      "Aegi2": "Voice/aegi/aegi2",
+      "Aegi3": "Voice/aegi/aegi3",
+      "Aegi4": "Voice/aegi/aegi4",
+      "Aegi5": "Voice/aegi/aegi5",
+      "Aegi6": "Voice/aegi/aegi6",
+      "Aegi7": "Voice/aegi/aegi7",
+      "Aegi8": "Voice/aegi/aegi8",
+      "AegiH1": "Voice/aegi/aegiH1",
+      "AegiH2": "Voice/aegi/aegiH2",
+      "AegiH3": "Voice/aegi/aegiH3",
+      "AegiH4": "Voice/aegi/aegiH4",
+      "AegiH5": "Voice/aegi/aegiH5",
+      "AegiH6": "Voice/aegi/aegiH6",
+      "AegiH7": "Voice/aegi/aegiH7",
+      "AegiH8": "Voice/aegi/aegiH8",
+      "AegiSleep1": "Voice/aegi/aegi_sleep1",
+      "AegiSleep2": "Voice/aegi/aegi_sleep2",
+      "AegiSleep3": "Voice/aegi/aegi_sleep3",
+      "AegiSleep4": "Voice/aegi/aegi_sleep4",
+      "AegiSleep5": "Voice/aegi/aegi_sleep5",
+      "AegiSleep6": "Voice/aegi/aegi_sleep6",
+      "AegiSleep7": "Voice/aegi/aegi_sleep7",
+      "AegiSleep8": "Voice/aegi/aegi_sleep8",
+      "SerihuBro1": "Voice/serihu_bro1",
+      "SerihuBro2": "Voice/serihu_bro2",
+      "SerihuBro3": "Voice/serihu_bro3",
+      "SerihuBro4": "Voice/serihu_bro4",
+      "SerihuBro5": "Voice/serihu_bro5",
+      "SerihuBro6": "Voice/serihu_bro6",
+      "SerihuBro7": "Voice/serihu_bro7",
+      "SerihuBro8": "Voice/serihu_bro8",
+      "SerihuSuki1": "Voice/serihu_love1",
+      "SerihuSuki2": "Voice/serihu_love2",
+      "SerihuSuki3": "Voice/serihu_love3",
+      "SerihuSuki4": "Voice/serihu_love4",
+      "SerihuSuki5": "Voice/serihu_love5",
+      "SerihuSuki6": "Voice/serihu_love6",
+      "SerihuSuki7": "Voice/serihu_love7",
+      "SerihuSuki8": "Voice/serihu_love8",
+      "SerihuSuki9": "Voice/serihu_love9",
+      "OrgazmS1": "Voice/girl_orgazm_s1",
+      "OrgazmS2": "Voice/girl_orgazm_s2",
+      "OrgazmS3": "Voice/girl_orgazm_s3",
+      "OrgazmS4": "Voice/girl_orgazm_s4",
+      "OrgazmS5": "Voice/girl_orgazm_s5",
+      "OrgazmS6": "Voice/girl_orgazm_s6",
+      "OrgazmS7": "Voice/girl_orgazm_s7",
+      "OrgazmS8": "Voice/girl_orgazm_s8",
+      "OrgazmS9": "Voice/girl_orgazm_s9",
+      "OrgazmS10": "Voice/girl_orgazm_s10",
+      "OrgazmM1": "Voice/girl_orgazm_m1",
+      "OrgazmM2": "Voice/girl_orgazm_m2",
+      "OrgazmM3": "Voice/girl_orgazm_m3",
+      "OrgazmM4": "Voice/girl_orgazm_m4",
+      "OrgazmM5": "Voice/girl_orgazm_m5",
+      "OrgazmM6": "Voice/girl_orgazm_m6",
+      "OrgazmM7": "Voice/girl_orgazm_m7",
+      "OrgazmM8": "Voice/girl_orgazm_m8",
+      "OrgazmM9": "Voice/girl_orgazm_m9",
+      "OrgazmM10": "Voice/girl_orgazm_m10",
+      "OrgazmL1": "Voice/girl_orgazm_l1",
+      "OrgazmL2": "Voice/girl_orgazm_l2",
+      "OrgazmL3": "Voice/girl_orgazm_l3",
+      "OrgazmL4": "Voice/girl_orgazm_l4",
+      "OrgazmL5": "Voice/girl_orgazm_l5",
+      "OrgazmL6": "Voice/girl_orgazm_l6",
+      "OrgazmL7": "Voice/girl_orgazm_l7",
+      "OrgazmL8": "Voice/girl_orgazm_l8",
+      "OrgazmL9": "Voice/girl_orgazm_l9",
+      "OrgazmL10": "Voice/girl_orgazm_l10",
+      "OrgazmHS1": "Voice/girl_orgazm_h_s1",
+      "OrgazmHS2": "Voice/girl_orgazm_h_s2",
+      "OrgazmHS3": "Voice/girl_orgazm_h_s3",
+      "OrgazmHS4": "Voice/girl_orgazm_h_s4",
+      "OrgazmHS5": "Voice/girl_orgazm_h_s5",
+      "OrgazmHS6": "Voice/girl_orgazm_h_s6",
+      "OrgazmHS7": "Voice/girl_orgazm_h_s7",
+      "OrgazmHS8": "Voice/girl_orgazm_h_s8",
+      "OrgazmHS9": "Voice/girl_orgazm_h_s9",
+      "OrgazmHS10": "Voice/girl_orgazm_h_s10",
+      "OrgazmHM1": "Voice/girl_orgazm_h_m1",
+      "OrgazmHM2": "Voice/girl_orgazm_h_m2",
+      "OrgazmHM3": "Voice/girl_orgazm_h_m3",
+      "OrgazmHM4": "Voice/girl_orgazm_h_m4",
+      "OrgazmHM5": "Voice/girl_orgazm_h_m5",
+      "OrgazmHM6": "Voice/girl_orgazm_h_m6",
+      "OrgazmHM7": "Voice/girl_orgazm_h_m7",
+      "OrgazmHM8": "Voice/girl_orgazm_h_m8",
+      "OrgazmHM9": "Voice/girl_orgazm_h_m9",
+      "OrgazmHM10": "Voice/girl_orgazm_h_m10",
+      "OrgazmHL1": "Voice/girl_orgazm_h_l1",
+      "OrgazmHL2": "Voice/girl_orgazm_h_l2",
+      "OrgazmHL3": "Voice/girl_orgazm_h_l3",
+      "OrgazmHL4": "Voice/girl_orgazm_h_l4",
+      "OrgazmHL5": "Voice/girl_orgazm_h_l5",
+      "OrgazmHL6": "Voice/girl_orgazm_h_l6",
+      "OrgazmHL7": "Voice/girl_orgazm_h_l7",
+      "OrgazmHL8": "Voice/girl_orgazm_h_l8",
+      "OrgazmHL9": "Voice/girl_orgazm_h_l9",
+      "OrgazmHL10": "Voice/girl_orgazm_h_l10",
+      "FelaOrgazm1": "Voice/girl_orgazm_fela1",
+      "FelaOrgazm2": "Voice/girl_orgazm_fela2",
+      "FelaOrgazm3": "Voice/girl_orgazm_fela3",
+      "FelaOrgazm4": "Voice/girl_orgazm_fela4",
+      "BreathS": "Voice/breath_s_loop1",
+      "BreathM": "Voice/breath_m_loop1",
+      "BreathL": "Voice/breath_l_loop1",
+      "BreathHS": "Voice/breath_s_loop2",
+      "BreathHM": "Voice/breath_m_loop2",
+      "BreathHL": "Voice/breath_l_loop2",
+      "CowgirlInsert": "Voice/cowgirl_insert",
+      "AegiLoop1": "Voice/aegi/aegi_m_loop1",
+      "AegiLoopS": "Voice/aegi/aegi_s_loop1",
+      "AegiLoopM": "Voice/aegi/aegi_m_loop1",
+      "AegiLoopL": "Voice/aegi/aegi_l_loop1",
+      "AegiLoopHS": "Voice/aegi/aegi_s_loop2",
+      "AegiLoopHM": "Voice/aegi/aegi_m_loop2",
+      "AegiLoopHL": "Voice/aegi/aegi_l_loop2",
+      "Kiss1": "Voice/kiss1",
+      "Kiss2": "Voice/kiss2",
+      "KissEnd": "Voice/kiss_end",
+      "DevPortAegiLoop1": "Voice/aegi_l_loop1",
+      "FelaLoop1": "Voice/fl_s_loop",
+      "FelaLoop2": "Voice/fl_m_loop",
+      "FelaLoop3": "Voice/fl_l_loop",
+      "FelaTipLoop": "Voice/fl_t_loop",
+      "SerihuTalk1_1": "Voice/talk/serihu_talk_1_1",
+      "SerihuTalk1_2": "Voice/talk/serihu_talk_1_2",
+      "SerihuTalk2_1": "Voice/talk/serihu_talk_2_1",
+      "SerihuTalk3_1": "Voice/talk/serihu_talk_3_1",
+      "SerihuTalk3_2": "Voice/talk/serihu_talk_3_2",
+      "SerihuTalk4_1": "Voice/talk/serihu_talk_4_1",
+      "SerihuTalk4_2": "Voice/talk/serihu_talk_4_2",
+      "SerihuTalk5_1": "Voice/talk/serihu_talk_5_1",
+      "SerihuTalk5_2": "Voice/talk/serihu_talk_5_2",
+      "SerihuTalk6_1": "Voice/talk/serihu_talk_6_1",
+      "SerihuTalk6_2": "Voice/talk/serihu_talk_6_2",
+      "SerihuTalk6_3": "Voice/talk/serihu_talk_6_3",
+      "SerihuTalk7_1": "Voice/talk/serihu_talk_7_1",
+      "SerihuTalk7_2": "Voice/talk/serihu_talk_7_2",
+      "SerihuTalk8_1": "Voice/talk/serihu_talk_8_1",
+      "SerihuTalk8_2": "Voice/talk/serihu_talk_8_2",
+      "SerihuTalk8_3": "Voice/talk/serihu_talk_8_3",
+      "SerihuTalk9_1": "Voice/talk/serihu_talk_9_1",
+      "SerihuTalk9_2": "Voice/talk/serihu_talk_9_2",
+      "SerihuTalk10_1": "Voice/talk/serihu_talk_10_1",
+      "SerihuTalk10_2": "Voice/talk/serihu_talk_10_2",
+      "SerihuTalk10_3": "Voice/talk/serihu_talk_10_3",
+      "SerihuWakeup": "Voice/talk/serihu_wake_up",
+      "SerihuCheerS1": "Voice/cheer/serihu_cheer_s1",
+      "SerihuCheerS2": "Voice/cheer/serihu_cheer_s2",
+      "SerihuCheerS3": "Voice/cheer/serihu_cheer_s3",
+      "SerihuCheerS4": "Voice/cheer/serihu_cheer_s4",
+      "SerihuCheerS5": "Voice/cheer/serihu_cheer_s5",
+      "SerihuCheerM1": "Voice/cheer/serihu_cheer_m1",
+      "SerihuCheerM2": "Voice/cheer/serihu_cheer_m2",
+      "SerihuCheerM3": "Voice/cheer/serihu_cheer_m3",
+      "SerihuCheerM4": "Voice/cheer/serihu_cheer_m4",
+      "SerihuCheerM5": "Voice/cheer/serihu_cheer_m5",
+      "SerihuCheerL1": "Voice/cheer/serihu_cheer_l1",
+      "SerihuCheerL2": "Voice/cheer/serihu_cheer_l2",
+      "SerihuCheerL3": "Voice/cheer/serihu_cheer_l3",
+      "SerihuCheerL4": "Voice/cheer/serihu_cheer_l4",
+      "SerihuCheerL5": "Voice/cheer/serihu_cheer_l5",
+      "Fish": "Voice/minigame/minigame_fish"
+    }
+  },
+  "avatar": {
+    "emotions": {
+      "HotReset": {
+        "isHot": 0
+      },
+      "Hot": {
+        "isHot": 1
+      },
+      "Neutral": {
+        "mouth1": 1,
+        "mouth2": 0,
+        "mouth3": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 1.0,
+        "paramEyeSmile": 0,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0
+      },
+      "Smile": {
+        "mouth1": 1,
+        "mouth2": 0,
+        "mouth3": 0,
+        "mouth4": 0,
+        "paramEyeSmile": 1.0,
+        "paramEyeOpen": 0,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0
+      },
+      "SoftSmile": {
+        "mouth1": 1,
+        "mouth2": 0,
+        "mouth3": 0,
+        "mouth4": 0,
+        "paramEyeSmile": 1.0,
+        "paramEyeOpen": 0.625,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0
+      },
+      "LargeSmile": {
+        "mouth4": 1,
+        "mouth1": 0,
+        "mouth3": 0,
+        "mouth2": 0,
+        "paramEyeOpen": 0,
+        "paramEyeSmile": 1.0,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0
+      },
+      "Angry": {
+        "mouth2": 1,
+        "mouth1": 0,
+        "mouth3": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.6000000238418579,
+        "paramEyeSmile": 1.0,
+        "paramMayuAngry": 1.0,
+        "paramMayuKomari": 0
+      },
+      "Jitome": {
+        "mouth3": 1,
+        "mouth1": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.5799999833106995,
+        "paramEyeSmile": 0,
+        "paramMayuAngry": 0.5799999833106995,
+        "paramMayuKomari": 0.33000001311302185
+      },
+      "Akiregao": {
+        "mouth3": 1,
+        "mouth1": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.5799999833106995,
+        "paramEyeSmile": 0,
+        "paramMayuAngry": 0.5799999833106995,
+        "paramMayuKomari": 0.33000001311302185
+      },
+      "Confuse": {
+        "mouth3": 1,
+        "mouth1": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.6330000162124634,
+        "paramEyeSmile": 0.8999999761581421,
+        "paramMayuAngry": 0.3799999952316284,
+        "paramMayuKomari": 1.0
+      },
+      "Sad": {
+        "mouth3": 1,
+        "mouth1": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.6899999976158142,
+        "paramEyeSmile": 1.0,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0.75
+      },
+      "SadSmile": {
+        "mouth1": 1,
+        "mouth3": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.75,
+        "paramEyeSmile": 0,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0.5199999809265137
+      },
+      "Blush": {
+        "isHot": 0.3499999940395355
+      },
+      "H": {
+        "mouth3": 1,
+        "isHot": 1,
+        "mouth1": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.550000011920929,
+        "paramEyeSmile": 0.800000011920929,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0.5
+      },
+      "Hatena": {
+        "mouth3": 1,
+        "mouth1": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.949999988079071,
+        "paramEyeSmile": 0,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0.30000001192092896
+      },
+      "Doya": {
+        "mouth1": 1,
+        "mouth3": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.8500000238418579,
+        "paramEyeSmile": 1.0,
+        "paramMayuAngry": 0.800000011920929,
+        "paramMayuKomari": 0
+      },
+      "BitterSmile": {
+        "mouth1": 1,
+        "mouth3": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0.949999988079071,
+        "paramEyeSmile": 0,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0.6380000114440918
+      },
+      "Sleep": {
+        "mouth3": 1,
+        "mouth1": 0,
+        "mouth2": 0,
+        "mouth4": 0,
+        "paramEyeOpen": 0,
+        "paramEyeSmile": 0,
+        "paramMayuAngry": 0,
+        "paramMayuKomari": 0.4449999928474426
+      }
+    },
+    "aliases": {
+      "なし": [
+        {
+          "kind": "avatar",
+          "value": 0
+        }
+      ],
+      "金色": [
+        {
+          "kind": "eyeColor",
+          "value": 1
+        }
+      ],
+      "悲しみ": [
+        {
+          "kind": "emotion",
+          "value": "Sad"
+        }
+      ],
+      "チアガール": [
+        {
+          "kind": "cloth",
+          "value": 8
+        }
+      ],
+      "大笑顔": [
+        {
+          "kind": "emotion",
+          "value": "LargeSmile"
+        }
+      ],
+      "ソフトスマイル": [
+        {
+          "kind": "emotion",
+          "value": "SoftSmile"
+        }
+      ],
+      "苦笑い": [
+        {
+          "kind": "emotion",
+          "value": "BitterSmile"
+        }
+      ],
+      "ジト目": [
+        {
+          "kind": "emotion",
+          "value": "Jitome"
+        }
+      ],
+      "睡眠": [
+        {
+          "kind": "emotion",
+          "value": "Sleep"
+        }
+      ],
+      "驚き": [
+        {
+          "kind": "emotion",
+          "value": "Hatena"
+        }
+      ],
+      "通常": [
+        {
+          "kind": "emotion",
+          "value": "Neutral"
+        }
+      ],
+      "どや顔": [
+        {
+          "kind": "emotion",
+          "value": "Doya"
+        }
+      ],
+      "発情": [
+        {
+          "kind": "emotion",
+          "value": "H"
+        }
+      ],
+      "照れリセット": [
+        {
+          "kind": "emotion",
+          "value": "HotReset"
+        }
+      ],
+      "呆れ顔": [
+        {
+          "kind": "emotion",
+          "value": "Akiregao"
+        }
+      ],
+      "裸": [
+        {
+          "kind": "cloth",
+          "value": 6
+        }
+      ],
+      "制服": [
+        {
+          "kind": "cloth",
+          "value": 7
+        }
+      ],
+      "困惑": [
+        {
+          "kind": "emotion",
+          "value": "Confuse"
+        }
+      ],
+      "パジャマ": [
+        {
+          "kind": "avatar",
+          "value": 1
+        },
+        {
+          "kind": "cloth",
+          "value": 1
+        }
+      ],
+      "タオル": [
+        {
+          "kind": "avatar",
+          "value": 1
+        },
+        {
+          "kind": "cloth",
+          "value": 5
+        }
+      ],
+      "疑問": [
+        {
+          "kind": "emotion",
+          "value": "Hatena"
+        }
+      ],
+      "裸エプロン": [
+        {
+          "kind": "avatar",
+          "value": 2
+        }
+      ],
+      "悲しい笑顔": [
+        {
+          "kind": "emotion",
+          "value": "SadSmile"
+        }
+      ],
+      "怒り": [
+        {
+          "kind": "emotion",
+          "value": "Angry"
+        }
+      ],
+      "水着": [
+        {
+          "kind": "avatar",
+          "value": 1
+        },
+        {
+          "kind": "cloth",
+          "value": 2
+        }
+      ],
+      "笑顔": [
+        {
+          "kind": "emotion",
+          "value": "Smile"
+        }
+      ],
+      "ウェディング": [
+        {
+          "kind": "cloth",
+          "value": 9
+        }
+      ],
+      "普通服": [
+        {
+          "kind": "avatar",
+          "value": 1
+        },
+        {
+          "kind": "cloth",
+          "value": 0
+        }
+      ],
+      "緑色": [
+        {
+          "kind": "eyeColor",
+          "value": 0
+        }
+      ],
+      "浴衣": [
+        {
+          "kind": "avatar",
+          "value": 1
+        },
+        {
+          "kind": "cloth",
+          "value": 3
+        }
+      ],
+      "照れ": [
+        {
+          "kind": "emotion",
+          "value": "Hot"
+        }
+      ]
+    },
+    "clothes": {
+      "0": {
+        "switchCloth": 1,
+        "switchHair": 0,
+        "soxON": 1
+      },
+      "1": {
+        "switchCloth": 2,
+        "switchHair": 0,
+        "soxON": 0
+      },
+      "2": {
+        "switchCloth": 3,
+        "switchHair": 0,
+        "soxON": 0
+      },
+      "3": {
+        "switchCloth": 4,
+        "switchHair": 0,
+        "soxON": 0
+      },
+      "4": {
+        "switchCloth": 3,
+        "switchHair": 0,
+        "soxON": 1
+      },
+      "5": {
+        "switchCloth": 5,
+        "switchHair": 1,
+        "soxON": 0
+      },
+      "6": {
+        "switchCloth": 0,
+        "switchHair": 1,
+        "soxON": 0
+      },
+      "7": {
+        "switchCloth": 6,
+        "switchHair": 0,
+        "soxON": 1
+      },
+      "8": {
+        "switchCloth": 7,
+        "switchHair": 0,
+        "soxON": 1
+      },
+      "9": {
+        "switchCloth": 8,
+        "switchHair": 0,
+        "soxON": 0
+      }
+    },
+    "source": "AvatarController.<subscribeEmo>b__33_0 RVA 0x52e070, jump table0x52f79c; GameEventLine.Do MoveNext RVA0x5c58f0; static tween endpoints only",
+    "fieldIds": {
+      "mouth1": "Mouth1",
+      "mouth2": "Mouth2",
+      "mouth3": "Mouth3",
+      "mouth4": "Mouth4",
+      "avatarPat": "AvatarPattern",
+      "switchCloth": "SwitchCloth",
+      "switchHair": "SwitchHair",
+      "isHot": "IsHot",
+      "soxON": "SoxON",
+      "paramEyeOpen": "ParamEyeOpen",
+      "paramEyeSmile": "ParamEyeSmile",
+      "paramMayuAngry": "ParamMayuAngry",
+      "paramMayuKomari": "ParamMayuKomari",
+      "paramBreath": "ParamBreath",
+      "eyeColor": "EyeColor"
+    }
+  }
+}

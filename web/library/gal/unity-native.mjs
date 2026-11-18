@@ -6,7 +6,7 @@ import {binaryCatalog,jsonCatalog,catalogBundleRefs} from './unity-addressables.
 
 // Native Unity files stay read-only. Only small scripts are exported; image and
 // audio ranges are decoded on demand through the normal container resource API.
-export const UNITY_NATIVE_VERSION=33
+export const UNITY_NATIVE_VERSION=38
 const runs=new Map(),recent=new Map(),safe=p=>typeof p==='string'&&p&&!path.isAbsolute(p)&&!p.split(/[\\/]/).some(s=>s==='..')
 export function invalidateUnityNative(mediaDir){for(const cache of[runs,recent])for(const k of cache.keys())if(k.startsWith(mediaDir+'|'))cache.delete(k)}
 export async function unityNativeIndex(mediaDir,cfg){
@@ -16,7 +16,8 @@ export async function unityNativeIndex(mediaDir,cfg){
  const root=path.join(mediaDir,scan),store=await new UnityStore(root).init({extensionlessBundles:['rexex','kaiju'].includes(cfg.scriptDecoder)}),source=[]
  if(cfg.scriptDecoder==='orcx')for(const dir of ['Common','Main'])for(const e of await readdir(path.join(root,'StreamingAssets',dir),{withFileTypes:true}))if((e.isFile()||e.isSymbolicLink())&&e.name.endsWith('.bundle'))store.files.set(dir.toLowerCase()+'/'+e.name.toLowerCase(),path.join(root,'StreamingAssets',dir,e.name))
  if(cfg.scriptDecoder==='unity-spine-gallery'){const f=path.join(root,'StreamingAssets','AssetBundle','database','girl');try{await stat(f);store.files.set('fox-default-database',f)}catch(e){if(e.code!=='ENOENT')throw e}}
- const names=[...store.files.values(),...(cfg.scriptDecoder==='celltalk'?[path.join(root,'il2cpp_data','Metadata','global-metadata.dat'),path.join(root,'..','GameAssembly.dll')]:[])].sort();let cursor=0
+ if(cfg.scriptDecoder==='resister'&&!store.files.has('catalog_dlc_v1.json')){const f=path.join(root,'..','DLC','StandaloneWindows64','catalog_dlc_v1.json');try{await stat(f);store.files.set('catalog_dlc_v1.json',f)}catch(e){if(e.code!=='ENOENT')throw e}}
+ const names=[...store.files.values(),...(cfg.scriptDecoder==='resister'?[path.join(root,'il2cpp_data','Metadata','global-metadata.dat')]:[]),...(cfg.scriptDecoder==='celltalk'?[path.join(root,'il2cpp_data','Metadata','global-metadata.dat'),path.join(root,'..','GameAssembly.dll')]:[])].sort();let cursor=0
  await Promise.all(Array.from({length:16},async()=>{for(;;){const i=cursor++;if(i>=names.length)return;const f=names[i],s=await stat(f);source[i]=[f,s.size,s.mtimeMs]}}))
  const sig=createHash('sha256').update(JSON.stringify([UNITY_NATIVE_VERSION,cfg,source])).digest('hex'),key=mediaDir+'|'+cfg.dir+'|'+sig
  if(runs.has(key)){const promise=runs.get(key);recent.set(scope,{at:Date.now(),promise});return promise}
@@ -36,7 +37,8 @@ export async function unityNativeIndex(mediaDir,cfg){
   const catalog=catalogFile?catalogBundleRefs(catalogFile.endsWith('.bin')?binaryCatalog(await readFile(catalogFile)):jsonCatalog(await readFile(catalogFile,'utf8'))):[]
   const catalogResource=(name,location)=>add(name,{file:store.files.get(location.bundles[0]?.toLowerCase())||catalogFile},async()=>store.media(await store.catalogAsset(location)))
   const api={store,cfg,root,prefix,resources,add,object,json,catalog,catalogResource,scripts}
-  if(cfg.scriptDecoder==='naninovel')await (await import('./unity-naninovel.mjs')).indexNaninovel(api)
+  if(cfg.scriptDecoder==='resister')await (await import('./unity-resister.mjs')).indexResister(api)
+  else if(cfg.scriptDecoder==='naninovel')await (await import('./unity-naninovel.mjs')).indexNaninovel(api)
   else if(cfg.scriptDecoder==='unity-utage')await (await import('./unity-utage.mjs')).indexUtage(api)
   else if(cfg.scriptDecoder==='rpgmaker-unite')await (await import('./unity-unite.mjs')).indexUnite(api)
   else if(cfg.scriptDecoder==='kaiju')await (await import('./unity-kaiju.mjs')).indexKaiju(api)

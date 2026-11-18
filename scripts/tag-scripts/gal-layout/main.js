@@ -61,6 +61,7 @@ const SAFE_SEGMENT = /^[^/\\\0]+$/
 export const ADAPTER_RULES = {
   'kaiju::unity':{dir:'arc',language:'cn',voiceLanguage:'ja',maxCommands:200000},
   'unityspine::gallery':{dir:'arc',skin:'default',language:'zh-CN',interactionLimit:8,maxCommands:200000},
+  'resister::unity':{dir:'arc',language:'zh-CN',maxCommands:200000},
   'catpaw::script':{dir:'arc',language:'zh-CN',stage:[1280,720],maxCommands:200000},
   'orcx::script':{dir:'arc',stage:[1280,720],maxCommands:200000},
   'rexex::event':{dir:'arc',stage:[1100,720],maxCommands:200000},
@@ -1727,6 +1728,14 @@ export const LAYOUTS = {
     engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'unity-utage',scriptExt:'json',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
     config:{scriptExtensions:['json'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'CG 切换',kind:'cmd',op:'overlay',match:'(?:hcg|eventcg)',pick:'each',max:8}],pageSize:100},
     count:[{dir:'arc/script',ext:'.json',depth:2}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['读取原生 Utage 工作簿和 ResourceManager 精确路径；原生回想表生成特殊场景；Cubism 纹理和动作按预制体引用匹配'],
+  },
+  resister:{
+    title:'ReSister 原生 Unity',kind:'resister',detector:'unityNative',family:'resister::',
+    bases:['','*_Data','Game/*_Data'],searchDepth:5,anchors:['resources.assets','il2cpp_data/Metadata/global-metadata.dat'],siblings:[],markers:[],
+    scriptRoots:[{id:'native',dir:'arc/script',label:'ReSister 剧情'}],resourceRoots:[''],adapters:['resister::unity'],adapterOptions:{'resister::unity':{dir:{path:['arc']}}},ruleTables:['resister::unity'],ruleOverrides:{},
+    engine:{classify:[],containers:{enabled:true,dir:'arc',scan:['.'],scriptDecoder:'resister',scriptExt:'resister',mode:'hybrid',format:'unity-native',flat:false,rules:[],maxEntries:200000,maxTotalMB:8192}},
+    config:{scriptExtensions:['resister'],namesFiles:[],thumbsDirs:[],hiddenDirs:[],labels:{},merge:[],views:[],groups:[],dirThumbs:[],scriptThumbs:[],scriptIndex:[],thumbFallback:{overlays:true,prefer:['cg','stand','bg'],scanSteps:300,max:3},sceneMarkers:[{label:'原生动作',kind:'cmd',op:'live2d',pick:'each',max:8}],pageSize:100},
+    count:[{dir:'arc/script',ext:'.resister',depth:4}],cover:[{dir:'.',match:'\\.(?:png|jpe?g|webp|ico)$',flags:'i',pick:'first',fromMedia:true}],avatars:[],expectedDirs:[],notes:['ReSister 原生剧情、21 个 Live2D 互动场景及独立语音分组；原生经营/解锁/积累状态机未模拟，保留源行诊断'],
   },
   celltalk:{
     title:'CellTalk 原生 Unity',kind:'celltalk',detector:'unityNative',family:'celltalk::',
