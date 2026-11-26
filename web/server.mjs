@@ -463,6 +463,11 @@ function defaultConfig() {
         defaultMetadataActions: GAL_DEFAULT_OPTIONS.defaultMetadataActions,
         dryRun: false,
       },
+      // 文本媒体（EPUB / TXT）。workKeyFromTitle：新建合集时按合集名称写作品键 title:<名称>，
+      // 同名合集会出现在合并页里（还是要逐组确认才合并）。默认关，在导入页「导入方案配置」里打开
+      'text-media': {
+        workKeyFromTitle: false,
+      },
       // 初始化压缩包图集（LANraragi 迁移）。dryRun 默认开着：先出报告，确认后改成 false 才真的写
       'lrr-init': {
         dryRun: true,
@@ -717,6 +722,9 @@ function normalizeMediaImportProfiles(value, defaults) {
       defaultMetadataActions: parseTags(source['archive-gallery']?.defaultMetadataActions || defaults['archive-gallery'].defaultMetadataActions),
     },
     'lrr-init': normalizeArchiveImportOptions(source['lrr-init'], defaults['lrr-init']),
+    'text-media': {
+      workKeyFromTitle: Boolean(source['text-media']?.workKeyFromTitle ?? defaults['text-media'].workKeyFromTitle),
+    },
     [GAL_PROFILE]: { ...normalizeGalOptions({ ...defaults[GAL_PROFILE], ...(source[GAL_PROFILE] || {}) }), rootDir: String(source[GAL_PROFILE]?.rootDir || defaults[GAL_PROFILE].rootDir) },
   }
 }

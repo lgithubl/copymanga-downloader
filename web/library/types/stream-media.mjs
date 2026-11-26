@@ -195,6 +195,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     }
 
     const seedTitle = collectionTitle || seedTitleForImport({ sourcePath, fileInputs })
+    // 导入方案的配置：服务端已保存的，再被这次提交带来的 profileOptions（导入页输入框里的 JSON）覆盖
+    const profileOptions = importProfileOptions(importProfile, fields)
     const itemId = requestedItemId || uniqueItemId(seedTitle)
     const existing = requestedItemId && await pathExists(metadataPath(itemId))
       ? await readMetadata(itemId)
@@ -237,6 +239,8 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       title: collectionTitle || existing.title || seedTitle,
       tags: inputTags.length ? inputTags : existing.tags || [],
       sourceProfile: includeText ? TEXT_MEDIA_PROFILE : existing.sourceProfile,
+      // 新建合集且方案打开了 workKeyFromTitle：按合集名称写作品键，同名合集会进合并页的候选（追加导入、已有作品键都不动）
+      workKey: existing.workKey || (!requestedItemId && profileOptions.workKeyFromTitle === true ? titleWorkKey(collectionTitle || existing.title || seedTitle) : ''),
       // 追加导入时保留第一次记下的来源目录；上传的文件名累加
       origin: {
         sourcePath: existing.origin?.sourcePath || (sourcePath ? path.resolve(sourcePath) : ''),
@@ -250,6 +254,20 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     })
     await writeMetadata(itemId, next)
     return next
+  }
+
+  function importProfileOptions(profile, fields) {
+    const saved = (profile && getConfig()?.mediaImportProfiles?.[profile]) || {}
+    let override = {}
+    if (fields.profileOptions) {
+      try {
+        const parsed = JSON.parse(String(fields.profileOptions))
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) override = parsed
+      } catch {
+        throw new Error('导入方案配置不是合法的 JSON')
+      }
+    }
+    return { ...saved, ...override }
   }
 
   async function importRjDirectoryBatch({ sourcePath, inputTags = [] }) {
@@ -2636,6 +2654,13 @@ function finiteNumber(value, fallback) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
+}
+
+// 按合集名称生成的作品键。和「字段映射 / 回填」脚本给老数据补的规则必须一模一样（nfc → trim → 连续空白合成一个空格），
+// 新旧数据才会落进同一个合并候选组。macOS 上的文件名常是分解形式（NFD），不规范化看着一样却对不上
+export function titleWorkKey(title) {
+  const name = String(title || '').normalize('NFC').trim().replace(/\s+/g, ' ')
+  return name ? `title:${name}`.slice(0, 200) : ''
 }
 
 function uniqueItemId(title) {

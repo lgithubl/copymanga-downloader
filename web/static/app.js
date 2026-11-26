@@ -515,6 +515,10 @@ const defaultMediaImportProfiles = {
     dlsiteRequestMinIntervalMs: 1500,
     dlsiteRequestJitterMs: 800,
   },
+  // 文本媒体：workKeyFromTitle = 新建合集时按合集名称写作品键 title:<名称>（同名合集进合并页候选）。默认关
+  'text-media': {
+    workKeyFromTitle: false,
+  },
   // 原先靠 scriptHints 模糊匹配勾上字幕扫描，去掉模糊匹配后在这里显式列出，
   // 行为与之前一致（但不再误勾 AI 字幕/翻译）
   'normal-video': {
@@ -581,6 +585,8 @@ const mediaImportProfiles = {
     accept: '.epub,application/epub+zip,.txt,text/plain',
     filesLabel: '文本',
     noDefaultScripts: true,
+    // 「导入方案配置」JSON：workKeyFromTitle（默认 false）= 新建合集时按合集名称写作品键，同名合集进合并页候选
+    configJson: true,
   },
   // 压缩包图集：一个压缩包一个条目（现在只有 zip）。路径导入（目录里递归找 zip，mv 进受管目录）是后台任务；
   // 也可以直接上传。
@@ -2543,7 +2549,7 @@ function refreshGalPresetJson() {
   els.mediaImportProfileConfig.value = JSON.stringify({ ...rest, adapters: [...preset.adapters], config }, null, 2)
 }
 
-const JSON_CONFIG_PROFILES = new Set(['rj-media', 'archive-gallery', 'lrr-init', 'gal-import'])
+const JSON_CONFIG_PROFILES = new Set(['rj-media', 'archive-gallery', 'lrr-init', 'gal-import', 'text-media'])
 
 function renderMediaImportProfileConfig() {
   if (!els.mediaImportProfileConfig) return

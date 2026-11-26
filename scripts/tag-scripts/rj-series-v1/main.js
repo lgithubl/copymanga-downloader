@@ -7,7 +7,7 @@
 //               { "template": "${const.root}/${title}" } 模板：${字段路径}、${const.常量名}、${type}、${profile}；
 //                                                        引用的值有一个为空，整个模板就算空（不会拼出半截路径）
 //   transform 处理步骤，按顺序：
-//               "trim" / "upper" / "lower"
+//               "trim" / "upper" / "lower" / "nfc"（Unicode 规范化）
 //               { "regex": "RJ\\d+", "group": 0, "ignoreCase": true }  正则提取（不匹配 = 空）
 //               { "replace": "_", "with": " ", "ignoreCase": false }   正则替换（全部）
 //   map       值映射表 { "原值": "新值" }；mapIgnoreCase 控制键是否忽略大小写（规则里不写就用外层的 mapIgnoreCase）。
@@ -92,6 +92,7 @@ export function applyTransforms(value, steps = []) {
     if (step === 'trim') out = out.trim()
     else if (step === 'upper') out = out.toUpperCase()
     else if (step === 'lower') out = out.toLowerCase()
+    else if (step === 'nfc') out = out.normalize('NFC')   // Unicode 规范化：macOS 来的文件名常是分解形式（NFD），看着一样却不相等
     else if (typeof step === 'object' && step.regex !== undefined) {
       const match = out.match(regexOf(step.regex, step.ignoreCase === true))
       out = match ? String(match[Number(step.group) || 0] ?? '') : ''

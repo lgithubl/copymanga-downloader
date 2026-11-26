@@ -1,8 +1,8 @@
 {
   "id": "rj-series-v1",
   "name": "字段映射 / 回填（含 RJ 系列）",
-  "version": "2.0.0",
-  "description": "按配置里的规则表，从条目字段取值 → 处理 → 写成标签或补写条目字段。每条规则：from 候选列表（字段路径 / {const} 常量 / {template} 模板，取第一个有值的）→ transform（trim / upper / lower / 正则提取 / 正则替换）→ map 值映射表（mapIgnoreCase 控制是否忽略大小写；查不到有 default 用 default，没有就保留原值）→ to（{tag, exclusive} 产出标签，或 {field} 补写 title / workKey / origin.sourcePath / origin.sourceFile）；when 是执行条件（empty / notEmpty / match）；enabled、dryRun、overwrite 是每条规则的开关。写字段的规则默认只记日志（dryRun），要写入必须显式 dryRun: false，且默认不覆盖已有值。规则按名字存，byType / byProfile 里可以只改某一条。默认只有「系列」一条，行为和 1.x 一样：有原档用原档 ID、否则用自身 ID 生成「系列: ID」，依赖 RJ / DLsite 脚本先跑。另带一条默认关闭的「来源路径回填」示例：把 constants.sourceRoot + 标题补成 origin.sourcePath（给本次之前导入、没记来源路径的条目用）。",
+  "version": "2.1.0",
+  "description": "按配置里的规则表，从条目字段取值 → 处理 → 写成标签或补写条目字段。每条规则：from 候选列表（字段路径 / {const} 常量 / {template} 模板，取第一个有值的）→ transform（trim / upper / lower / nfc / 正则提取 / 正则替换）→ map 值映射表（mapIgnoreCase 控制是否忽略大小写；查不到有 default 用 default，没有就保留原值）→ to（{tag, exclusive} 产出标签，或 {field} 补写 title / workKey / origin.sourcePath / origin.sourceFile）；when 是执行条件（empty / notEmpty / match）；enabled、dryRun、overwrite 是每条规则的开关。写字段的规则默认只记日志（dryRun），要写入必须显式 dryRun: false，且默认不覆盖已有值。规则按名字存，byType / byProfile 里可以只改某一条。默认只有「系列」一条，行为和 1.x 一样：有原档用原档 ID、否则用自身 ID 生成「系列: ID」，依赖 RJ / DLsite 脚本先跑。另带一条默认关闭的「来源路径回填」示例：把 constants.sourceRoot + 标题补成 origin.sourcePath（给本次之前导入、没记来源路径的条目用）。",
   "scope": ["item"],
   "libraryTypes": [],
   "exclusiveTagGroups": ["系列"],

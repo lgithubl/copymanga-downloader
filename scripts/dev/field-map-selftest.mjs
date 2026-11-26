@@ -5,6 +5,8 @@
 //     写字段（默认 dryRun、不覆盖、白名单）、exclusive 互斥标签组
 //   - 接口：真实服务端上补写 origin.sourcePath（按字段合并，不冲掉 sourceFiles），互斥标签组由脚本输出声明，
 //     byProfile 里按规则名只改一条
+//   - 文本媒体导入的 workKeyFromTitle：默认关；打开后新建合集写 title:<名称>（nfc + 空白规范化），追加导入不改；
+//     同名合集进合并候选；老数据用回填规则补出来的键和导入时的一模一样
 //
 //   node scripts/dev/field-map-selftest.mjs [站点地址]      不给地址只跑纯函数部分
 import path from 'node:path'
@@ -70,6 +72,8 @@ const run = (item, userOptions = {}, extra = {}) => mod.generateTags({
   check('from：前一个候选映射后为空，接着试下一个', J(r.itemTags) === J(['语言: 日文']), J(r))
   r = await run({ title: '[RJ01234567] 作品 (完全版)' }, { rules: { 系列: { enabled: false }, 编号: { from: ['title'], transform: [{ regex: 'rj\\d+', ignoreCase: true }, 'upper'], to: { tag: '编号' } } } })
   check('transform：正则提取可以忽略大小写，再转大写', J(r.itemTags) === J(['编号: RJ01234567']), J(r.itemTags))
+  r = await run({ title: 'ガイド'.normalize('NFD') }, { rules: { 系列: { enabled: false }, t: { from: ['title'], transform: ['nfc'], to: { tag: 't' } } } })
+  check('transform：nfc 把分解形式（NFD）规范成组合形式', J(r.itemTags) === J(['t: ガイド']), J(r.itemTags))
   r = await run({ title: 'a_b_c' }, { rules: { 系列: { enabled: false }, t: { from: ['title'], transform: [{ replace: '_', with: ' ' }], to: { tag: 't' } } } })
   check('transform：正则替换（全部）', J(r.itemTags) === J(['t: a b c']), J(r.itemTags))
   r = await run({ title: 'x' }, { rules: { 系列: { enabled: false }, c: { from: [{ const: '固定值' }], to: { tag: 'c' } } } })
@@ -157,6 +161,53 @@ if (BASE) {
       const group = item.tags.filter((t) => t.startsWith('自测分组'))
       check('接口：值变了，同组只剩新值', J(group) === J(['自测分组: 乙']), J(item.tags))
     }
+
+    // ---------- 文本媒体导入：workKeyFromTitle ----------
+    const importText = async (title, { options = null, itemId = '' } = {}) => {
+      const f = new FormData()
+      f.set('importProfile', 'text-media')
+      if (title) f.set('collectionTitle', title)
+      if (itemId) f.set('itemId', itemId)
+      if (options !== null) f.set('profileOptions', typeof options === 'string' ? options : J(options))
+      f.append('file', new Blob([`第一章\n${title || 'x'} ${Math.random()}\n`]), `${Math.random().toString(16).slice(2)}.txt`)
+      return api('/api/library/items?type=media', { method: 'POST', body: f })
+    }
+    const NAME = '同名 归组测试'
+    const off = await importText(NAME)
+    check('workKeyFromTitle 默认关：导入后没有作品键', off.status < 300 && !(await getItem(off.body.itemId)).workKey, J(off.body).slice(0, 200))
+    const on1 = await importText(NAME, { options: { workKeyFromTitle: true } })
+    const key1 = (await getItem(on1.body.itemId)).workKey
+    check('本次提交带 workKeyFromTitle: true：作品键 = title:<合集名称>', key1 === `title:${NAME}`, key1)
+    const on2 = await importText(`  同名   归组测试 `, { options: { workKeyFromTitle: true } })
+    check('合集名称多了首尾 / 连续空格：作品键一样', (await getItem(on2.body.itemId)).workKey === key1, (await getItem(on2.body.itemId)).workKey)
+    const nfc = await importText('ガイド本', { options: { workKeyFromTitle: true } })
+    const nfd = await importText('ガイド本'.normalize('NFD'), { options: { workKeyFromTitle: true } })
+    check('合集名称是分解形式（NFD，macOS 文件名常见）：和组合形式的作品键一样', (await getItem(nfc.body.itemId)).workKey === (await getItem(nfd.body.itemId)).workKey && (await getItem(nfd.body.itemId)).workKey === 'title:ガイド本', J([(await getItem(nfc.body.itemId)).workKey, (await getItem(nfd.body.itemId)).workKey]))
+    const appended = await importText('另一个名字', { options: { workKeyFromTitle: true }, itemId: on1.body.itemId })
+    check('追加到已有合集：作品键不变', appended.status < 300 && (await getItem(on1.body.itemId)).workKey === key1, J([appended.status, (await getItem(on1.body.itemId)).workKey]))
+    const bad = await importText('坏配置', { options: '{bad' })
+    check('导入方案配置不是合法 JSON：导入报错，不建条目', bad.status >= 400, J(bad))
+    // 保存过的方案配置（不随请求带）也生效；配置能存住 text-media（原来服务端只认几个固定方案，存了会被丢掉）
+    const cfg = (await api('/api/config')).body
+    const saved = await postJson('/api/config', { mediaImportProfiles: { ...(cfg.mediaImportProfiles || {}), 'text-media': { workKeyFromTitle: true } } })
+    check('配置里能存住 text-media.workKeyFromTitle', saved.body?.mediaImportProfiles?.['text-media']?.workKeyFromTitle === true, J(saved.body?.mediaImportProfiles?.['text-media']))
+    const viaSaved = await importText('存配置导入')
+    check('用已保存的方案配置导入（请求里不带）：写了作品键', (await getItem(viaSaved.body.itemId)).workKey === 'title:存配置导入', (await getItem(viaSaved.body.itemId)).workKey)
+    await postJson('/api/config', { mediaImportProfiles: { ...(cfg.mediaImportProfiles || {}), 'text-media': { workKeyFromTitle: false } } })
+    // 老数据：开关关着时导入的那个，用回填规则补作品键 —— 必须和导入时生成的一模一样，才会进同一组
+    await postJson(`/api/tag-scripts/${ID}/config`, { options: { rules: { 系列: { enabled: false }, 按合集名归组: { when: { empty: 'workKey' }, from: [{ template: 'title:${title}' }], transform: ['nfc', 'trim', { replace: '\\s+', with: ' ' }], to: { field: 'workKey' }, dryRun: false } } } })
+    const fill = await runJob(off.body.itemId)
+    check('老数据：回填规则补出的作品键和导入时生成的一样', (await getItem(off.body.itemId)).workKey === key1, J([fill, (await getItem(off.body.itemId)).workKey]))
+    await postJson('/api/library/index/rebuild', {})
+    for (let i = 0; i < 60; i++) {
+      const st = (await api('/api/library/index/status')).body
+      if (st?.status === 'ready' && !st?.dirty && !st?.rebuildQueued) break
+      await sleep(500)
+    }
+    const groups = (await api(`/api/library/merge-candidates?page=1&limit=50&q=${encodeURIComponent(NAME)}`)).body?.items || []
+    const group = groups.find((g) => g.key === key1)
+    const ids = new Set((group?.members || []).map((m) => m.itemId))
+    check('合并页：同名的三个合集（两个导入时写的 + 一个回填的）在同一组；主条目是最早创建的那个', group?.count === 3 && [off, on1, on2].every((x) => ids.has(x.body.itemId)) && group.targetItemId === off.body.itemId, J(group))
   } finally {
     await api(`/api/tag-scripts/${ID}/config`, { method: 'DELETE' })
   }
