@@ -1,11 +1,11 @@
 {
   "id": "archive-gallery-thumbnail-v1",
-  "name": "压缩包图集缩略图 v1",
-  "version": "1.1.0",
-  "description": "从压缩包里取第一张图生成封面缩略图：只读 zip 的目录和这一张图，不解压整个包。封面已存在时跳过（迁移带来的 LANraragi 封面不会被覆盖），force 选项强制重新生成。previewCount > 0 时再生成一张预览动图（第一页 + 随机/均匀 N 页，章节列表和媒体库卡片悬停时显示），选页以条目 ID 为种子、重跑结果不变；默认 0 = 只要封面。",
+  "name": "压缩包图集封面 / 页数 / ComicInfo",
+  "version": "2.0.0",
+  "description": "所有需要打开压缩包的活都在这里，只读 zip 的目录和用到的那几个文件，不解压整个包。① 封面：取第一张图生成缩略图；封面已存在时跳过（迁移带来的 LANraragi 封面不会被覆盖），force 强制重新生成。② 预览动图：previewCount > 0 时生成（第一页 + 随机/均匀 N 页，章节列表和卡片悬停时显示），选页以条目 ID 为种子、重跑结果不变；默认 0 = 只要封面。③ 页数：pageCountTag 产出「页数: N」并回写条目页数。④ ComicInfo.xml：readComicInfo 把包内 ComicInfo 的 Writer / Penciller / Series / Genre / Tags / LanguageISO / Publisher 转成标签。页数和 ComicInfo 原来在「压缩包图集标签」脚本里，2.0.0 挪到了这里。",
   "scope": ["item"],
   "libraryTypes": ["archive"],
-  "exclusiveTagGroups": ["压缩包封面", "压缩包预览"],
+  "exclusiveTagGroups": ["压缩包封面", "压缩包预览", "页数"],
   "defaultEnabled": false,
   "main": "main.js",
   "options": {
@@ -13,6 +13,8 @@
     "previewCount": 0,
     "previewMode": "random",
     "previewWidth": 400,
+    "pageCountTag": true,
+    "readComicInfo": true,
     "scriptTimeoutMs": 120000
   }
 }

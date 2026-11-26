@@ -5085,3 +5085,9 @@ h2 {
 /* 沉浸条「更多」里的句尾留白：一行排开，文字不许被挤成竖排 */
 .epub-more .epub-tts-tail { align-items: center; color: #e8edf2; display: flex; font-size: 12px; gap: 8px; white-space: nowrap; }
 .epub-more .epub-tts-tail input[type="range"] { flex: none; padding: 0; width: 120px; }
+
+/* 元数据脚本配置：默认配置 / 按类型查看生效配置 */
+.tag-script-effective { margin-top: 8px; }
+.tag-script-effective summary { cursor: pointer; font-size: 13px; }
+.tag-script-effective pre { background: rgba(127, 127, 127, 0.1); border-radius: 6px; font-size: 12px; max-height: 260px; overflow: auto; padding: 8px; white-space: pre-wrap; }
+.tag-script-effective select { max-width: 220px; }

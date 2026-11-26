@@ -2091,6 +2091,17 @@ function renderTagManager() {
             <button class="tag-script-config-save" type="button">保存</button>
             <button class="secondary tag-script-config-cancel" type="button">取消</button>
           </div>
+          <details class="tag-script-effective">
+            <summary>默认配置 / 按类型查看生效配置</summary>
+            <p class="muted">上面只写想改的项；可以用 <code>byType</code>（按条目类型）和 <code>byProfile</code>（按导入方案）分别覆盖，越具体越优先：默认 → 全局 → byType → byProfile。<code>"$enabled": false</code> = 对这类条目不运行。${script.libraryTypes?.length ? ` 这个脚本只适用于：${escapeHtml(script.libraryTypes.join(' / '))}。` : ''}</p>
+            <pre class="tag-script-defaults">${escapeHtml(JSON.stringify(script.defaultOptions || {}, null, 2))}</pre>
+            <div class="tag-script-config-actions">
+              <select class="tag-script-effective-type" title="条目类型"></select>
+              <select class="tag-script-effective-profile" title="导入方案"></select>
+              <button class="secondary tag-script-effective-run" type="button">查看生效配置</button>
+            </div>
+            <pre class="tag-script-effective-result" hidden></pre>
+          </details>
         </div>
       </div>
     `
@@ -2108,6 +2119,7 @@ function renderTagManager() {
     card.querySelector('.tag-script-config-save')?.addEventListener('click', async () => {
       await saveTagScriptConfig(script, textarea.value)
     })
+    bindTagScriptEffectivePreview(card, script)
     card.querySelector('.tag-script-config-reset')?.addEventListener('click', async () => {
       if (!confirm(`重置 ${script.name} 的用户配置吗？`)) return
       await resetTagScriptConfig(script)
@@ -2289,6 +2301,47 @@ async function saveTagDisplayPriority() {
   }
 }
 
+// 配置页「按类型查看生效配置」：选条目类型 + 导入方案，让服务端按分层覆盖算出脚本实际拿到的配置。
+// 查看的是已保存的配置；文本框里没保存的改动不算。
+function bindTagScriptEffectivePreview(card, script) {
+  const typeSelect = card.querySelector('.tag-script-effective-type')
+  const profileSelect = card.querySelector('.tag-script-effective-profile')
+  const result = card.querySelector('.tag-script-effective-result')
+  if (!typeSelect || !profileSelect || !result) return
+  const option = (value, text) => Object.assign(document.createElement('option'), { value, textContent: text })
+  // 类型列表在面板展开时再填：渲染脚本卡片时媒体库类型可能还没加载（直接打开标签管理页就是这样）
+  const fillTypes = async () => {
+    if (typeSelect.options.length > 1) return
+    const types = libraryTypes.length ? libraryTypes : await api('/api/library/types').catch(() => [])
+    typeSelect.replaceChildren(option('', '不指定类型'), ...types.map((entry) => option(entry.type, entry.label || entry.type)))
+    syncProfiles()
+  }
+  typeSelect.replaceChildren(option('', '不指定类型'))
+  card.querySelector('.tag-script-effective')?.addEventListener('toggle', (event) => { if (event.target.open) fillTypes() })
+  const syncProfiles = () => {
+    const type = typeSelect.value
+    const profiles = Object.entries(mediaImportProfiles).filter(([, info]) => !type || (info.type || 'media') === type)
+    profileSelect.replaceChildren(option('', '不指定导入方案'), ...profiles.map(([id, info]) => option(id, `${info.label || id}（${id}）`)))
+  }
+  syncProfiles()
+  typeSelect.addEventListener('change', syncProfiles)
+  card.querySelector('.tag-script-effective-run')?.addEventListener('click', async () => {
+    const params = new URLSearchParams({ type: typeSelect.value, profile: profileSelect.value })
+    try {
+      const data = await api(`/api/tag-scripts/${encodeURIComponent(script.id)}/effective-options?${params}`)
+      const head = [
+        !data.applies ? `不适用：这个脚本只用于 ${data.libraryTypes.join(' / ')}` : '',
+        data.applies && !data.enabled ? '已关闭：$enabled 为 false，这类条目不会运行' : '',
+        `套用的覆盖层：${data.layers.length ? data.layers.join(' → ') : '无（只有默认 + 全局）'}`,
+      ].filter(Boolean).join('\n')
+      result.textContent = `${head}\n${JSON.stringify(data.options, null, 2)}`
+    } catch (error) {
+      result.textContent = `查询失败：${error.message}`
+    }
+    result.hidden = false
+  })
+}
+
 function tagScriptConfigSummary(script) {
   const userCount = Object.keys(script.userOptions || {}).length
   const defaultCount = Object.keys(script.defaultOptions || {}).length
@@ -2456,6 +2509,13 @@ function applyMediaImportProfile() {
     // 原先还有一套 scriptHints 子串模糊匹配，'subtitle' 会连 ai-subtitle-v1 /
     // ai-translate-subtitle-v1 一起勾上——这两个要调外部 ASR/LLM，必须用户自己勾。
     input.checked = profile.noDefaultScripts ? false : Boolean(script?.defaultEnabled || defaultScriptIds.has(input.value))
+    // manifest 声明了 libraryTypes 的脚本，对别的类型灰掉（跑了服务端也只会跳过）
+    const type = els.mediaImportType.value || profile.type || ''
+    const types = Array.isArray(script?.libraryTypes) ? script.libraryTypes : []
+    const applies = !type || !types.length || types.includes(type)
+    input.disabled = !applies
+    if (!applies) input.checked = false
+    input.closest('label')?.setAttribute('title', applies ? '' : `只适用于 ${types.join(' / ')}`)
   }
 }
 

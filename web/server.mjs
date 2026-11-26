@@ -21,6 +21,7 @@ import { hasGeneratedPreview } from './library/index-flags.mjs'
 import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
 import { padWavSilence } from './library/wav-pad.mjs'
+import { deepMerge, optionsFingerprint, resolveScriptOptions, scriptAppliesToType } from './library/script-options.mjs'
 import { createGalTranslator } from './library/gal-translate.mjs'
 import { cleanGalTtsRules, createGalTts } from './library/gal-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
@@ -3977,7 +3978,9 @@ async function scanTagScripts({ force = false } = {}) {
         if (seenIds.has(scriptId)) continue
         const userOptions = await readTagScriptOptions(script.id)
         script.userOptions = userOptions
-        script.options = mergePlainObject(script.defaultOptions, userOptions)
+        // 深合并：嵌套对象（namespaces 之类）只写想改的字段即可。按类型/导入方案的覆盖（byType/byProfile）
+        // 留在这份合并结果里，运行时再按条目解析成最终配置（见 library/script-options.mjs）
+        script.options = deepMerge(script.defaultOptions, userOptions)
         const mainPath = path.resolve(dir, script.main)
         const root = path.resolve(dir)
         if (!mainPath.startsWith(`${root}${path.sep}`) && mainPath !== root) throw new Error('main path escapes script dir')
@@ -4556,8 +4559,22 @@ async function runTagJob(job) {
         results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'completed', ...applied })
         continue
       }
+      // manifest 声明了只适用于某些类型（libraryTypes）：别的类型直接跳过，不运行、不动已有标签
+      if (!scriptAppliesToType(action, job.type)) {
+        results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'skipped', message: `不适用于此类型（只用于 ${action.libraryTypes.join(' / ')}）` })
+        continue
+      }
+      // 按条目类型 / 导入方案解析出这次实际生效的配置
+      const resolved = resolveScriptOptions({ defaultOptions: action.defaultOptions, userOptions: action.userOptions, type: job.type, profile: item?.sourceProfile || '' })
+      if (!resolved.enabled) {
+        results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'skipped', message: `配置里对这类条目关闭了（${resolved.layers.join(' + ') || '全局'} 里 $enabled: false），已有标签不动` })
+        continue
+      }
+      const optionsHash = optionsFingerprint(resolved.options)
       const previous = await readTagRun(job.type, job.itemId, action.id)
-      if (!job.force && !(job.unitIds || []).length && isCompletedSameVersionRun(previous, action, item, units)) {
+      // 同版本 + 同配置才算「已生成」；老的运行记录没有配置指纹，按原来的规则只比版本
+      const sameOptions = !previous?.optionsHash || previous.optionsHash === optionsHash
+      if (!job.force && !(job.unitIds || []).length && sameOptions && isCompletedSameVersionRun(previous, action, item, units)) {
         results.push({
           scriptId,
           actionId: action.id,
@@ -4571,8 +4588,8 @@ async function runTagJob(job) {
       const selectedUnits = (job.unitIds || []).length
         ? units.filter((unit) => job.unitIds.includes(unit.unitId))
         : units
-      const output = await executeTagScript(action, { type: job.type, item, units: selectedUnits, selectedUnitIds: job.unitIds || [] })
-      const applied = await applyTagScriptOutput({ type: job.type, itemId: job.itemId, script: action, output, unitIds: job.unitIds || [] })
+      const output = await executeTagScript(action, { type: job.type, item, units: selectedUnits, selectedUnitIds: job.unitIds || [], options: resolved.options })
+      const applied = await applyTagScriptOutput({ type: job.type, itemId: job.itemId, script: action, output, unitIds: job.unitIds || [], optionsHash })
       results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'completed', ...applied })
     } catch (error) {
       results.push({ scriptId, actionId: scriptId, scriptVersion: action?.version || '', status: 'failed', message: error.message })
@@ -4692,7 +4709,9 @@ function previousGeneratedTagsExist(previous, item, units = []) {
   return true
 }
 
-async function executeTagScript(script, { type, item, units, selectedUnitIds = [] }) {
+async function executeTagScript(script, { type, item, units, selectedUnitIds = [], options = null }) {
+  // options：按条目解析好的最终配置；没传（老调用方）就退回只合并全局的那份
+  const effectiveOptions = options || resolveScriptOptions({ defaultOptions: script.defaultOptions, userOptions: script.userOptions, type, profile: item?.sourceProfile || '' }).options
   const info = await stat(script.mainPath)
   const mod = await import(`${pathToFileURL(script.mainPath).href}?v=${encodeURIComponent(`${info.mtimeMs}-${script.version}`)}`)
   if (typeof mod.generateTags !== 'function') throw new Error('main.js 必须 export async function generateTags(ctx)')
@@ -4708,7 +4727,7 @@ async function executeTagScript(script, { type, item, units, selectedUnitIds = [
       id: script.id,
       name: script.name,
       version: script.version,
-      options: script.options || {},
+      options: effectiveOptions,
     },
     services: {
       epubTts: epubTtsScriptServices({ type, itemId: item?.itemId }),
@@ -4716,7 +4735,7 @@ async function executeTagScript(script, { type, item, units, selectedUnitIds = [
     },
     config,
   }
-  const timeoutMs = Number.isFinite(Number(script.options?.scriptTimeoutMs)) ? Number(script.options.scriptTimeoutMs) : 60000
+  const timeoutMs = Number.isFinite(Number(effectiveOptions.scriptTimeoutMs)) ? Number(effectiveOptions.scriptTimeoutMs) : 60000
   const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('脚本超时')), timeoutMs))
   return await Promise.race([Promise.resolve(mod.generateTags(ctx)), timeout])
 }
@@ -4923,7 +4942,7 @@ function normalizeScriptDetails(value) {
   }
 }
 
-async function applyTagScriptOutput({ type, itemId, script, output, unitIds = [] }) {
+async function applyTagScriptOutput({ type, itemId, script, output, unitIds = [], optionsHash = '' }) {
   const handler = libraryHandler(type)
   if (!handler.updateItemTags || !handler.updateUnitTags) throw new Error('当前媒体类型不支持 tag 更新')
   const previous = await readTagRun(type, itemId, script.id)
@@ -4944,6 +4963,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     const generatedItemTags = allRuns.flatMap((run) => run?.itemTags || [])
     const mergedItemTags = mergeGeneratedTags(item.tags || [], previousItemTags, next.itemTags, exclusiveGroups, {
       generatedTags: generatedItemTags,
+      ownedByOthers: allRuns.filter((run) => run?.scriptId && run.scriptId !== script.id).flatMap((run) => run?.itemTags || []),
       manualOverrides: overrides.item,
     })
     updatedItem = await handler.updateItemTags(itemId, mergedItemTags)
@@ -4977,6 +4997,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     ).filter((entry) => entry?.unitId === unitId).flatMap((entry) => entry.tags || []))
     const merged = mergeGeneratedTags(unit.tags || [], previousByUnit.get(unitId) || [], nextEntry?.tags || [], exclusiveGroups, {
       generatedTags: generatedUnitTags,
+      ownedByOthers: allRuns.filter((run) => run?.scriptId && run.scriptId !== script.id).flatMap((run) => (run?.unitTags || []).filter((entry) => entry?.unitId === unitId).flatMap((entry) => entry.tags || [])),
       manualOverrides: overrides.units?.[unitId] || {},
     })
     const updatedUnit = await handler.updateUnitTags(itemId, unitId, merged)
@@ -4989,6 +5010,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     itemId,
     scriptId: script.id,
     scriptVersion: script.version,
+    ...(optionsHash ? { optionsHash } : {}),
     itemTags: selectedUnitIds.size ? previousItemTags : next.itemTags,
     itemPatch: selectedUnitIds.size ? previous?.itemPatch || null : next.itemPatch,
     unitPatches: selectedUnitIds.size
@@ -5019,12 +5041,15 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
 function mergeGeneratedTags(currentTags, previousGenerated, nextGenerated, exclusiveGroups = new Set(), options = {}) {
   const previous = new Set((previousGenerated || []).map(normalizeTagName))
   const generated = new Set((options.generatedTags || []).map(normalizeTagName))
+  // 别的脚本最近一次运行也产出了这个标签：这个脚本不再产出它时不能删 —— 标签换了归属
+  // （比如「页数: N」从路径标签脚本挪到了缩略图脚本），先跑新归属方、再跑旧归属方时会被误删
+  const ownedByOthers = new Set((options.ownedByOthers || []).map(normalizeTagName))
   const manualOverrides = normalizeOverrideMap(options.manualOverrides || {})
   const nextGroups = new Set(parseTags(nextGenerated || []).map((tag) => exclusiveTagGroup(tag, exclusiveGroups)).filter(Boolean))
   const kept = canonicalizeExclusiveTags(parseTags(currentTags).filter((tag) => {
     const normalized = normalizeTagName(tag)
     const group = exclusiveTagGroup(tag, exclusiveGroups)
-    if (previous.has(normalized)) return false
+    if (previous.has(normalized) && !ownedByOthers.has(normalized)) return false
     if (group && manualOverrides[group]) return false
     if (group && nextGroups.has(group) && generated.has(normalized)) return false
     return true
@@ -5177,6 +5202,16 @@ async function route(req, res) {
       const form = await readMultipart(req)
       const file = form.files.find((item) => item.name === 'file') || form.files[0]
       return json(res, 201, await installTagScriptPackage(file))
+    }
+    // 配置页「查看生效配置」：给定条目类型 + 导入方案，按分层覆盖算出脚本实际拿到的配置
+    if ((pathname.startsWith('/api/metadata-actions/') || pathname.startsWith('/api/tag-scripts/')) && pathname.endsWith('/effective-options') && req.method === 'GET') {
+      const [, , scriptId] = pathname.split('/').filter(Boolean)
+      const script = (await scanMetadataActions()).find((action) => action.id === scriptId)
+      if (!script) return json(res, 404, { error: '脚本不存在' })
+      const type = url.searchParams.get('type') || ''
+      const profile = url.searchParams.get('profile') || ''
+      const resolved = resolveScriptOptions({ defaultOptions: script.defaultOptions || {}, userOptions: script.userOptions || {}, type, profile })
+      return json(res, 200, { scriptId, type, profile, applies: scriptAppliesToType(script, type), libraryTypes: script.libraryTypes || [], ...resolved })
     }
     if ((pathname.startsWith('/api/metadata-actions/') || pathname.startsWith('/api/tag-scripts/')) && req.method === 'POST') {
       const [, , scriptId, action] = pathname.split('/').filter(Boolean)

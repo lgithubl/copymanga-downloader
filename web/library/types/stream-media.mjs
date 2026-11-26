@@ -237,6 +237,11 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       title: collectionTitle || existing.title || seedTitle,
       tags: inputTags.length ? inputTags : existing.tags || [],
       sourceProfile: includeText ? TEXT_MEDIA_PROFILE : existing.sourceProfile,
+      // 追加导入时保留第一次记下的来源目录；上传的文件名累加
+      origin: {
+        sourcePath: existing.origin?.sourcePath || (sourcePath ? path.resolve(sourcePath) : ''),
+        sourceFiles: [...(existing.origin?.sourceFiles || []), ...fileInputs.map((file) => String(file.filename || '')).filter(Boolean)],
+      },
       cover: existing.cover || units.find((unit) => unit.cover)?.cover || '',
       unitCount: units.length,
       mediaUnits: units.map((unit, index) => normalizeMediaUnit({ ...unit, index })),
@@ -311,6 +316,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       title,
       productId: root.productId,
       sourceProfile: 'rj-media',
+      origin: { sourcePath: path.resolve(root.path) },
       dlsite,
       tags: inputTags,
       cover: '',
@@ -448,6 +454,7 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
       itemId,
       title,
       sourceProfile: 'monthly-ani',
+      origin: { sourceFile: path.resolve(video) },
       tags: inputTags,
       cover: coverNames.length ? itemResourceUrl(itemId, coverNames[0]) : (units.find((unit) => unit.cover)?.cover || ''),
       unitCount: units.length,
@@ -2036,6 +2043,15 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
   }
 }
 
+function normalizeOrigin(value) {
+  if (!value || typeof value !== 'object') return null
+  const sourcePath = String(value.sourcePath || '')   // 来源目录
+  const sourceFile = String(value.sourceFile || '')   // 来源文件（一个条目就是一个文件，比如月度 ANI 的单个视频）
+  const sourceFiles = Array.isArray(value.sourceFiles) ? [...new Set(value.sourceFiles.map(String).filter(Boolean))].slice(0, 200) : []
+  if (!sourcePath && !sourceFile && !sourceFiles.length) return null
+  return { ...(sourcePath ? { sourcePath } : {}), ...(sourceFile ? { sourceFile } : {}), ...(sourceFiles.length ? { sourceFiles } : {}) }
+}
+
 function normalizeItem(item) {
   const mediaUnits = Array.isArray(item?.mediaUnits) ? item.mediaUnits.map(normalizeMediaUnit) : []
   return {
@@ -2072,6 +2088,9 @@ function normalizeItem(item) {
       error: String(item.dlsite.error || ''),
       fetchedAt: String(item.dlsite.fetchedAt || ''),
     } : null,
+    // 导入时的原始位置（路径标签脚本按它解析）：sourcePath = 按路径导入的来源目录，sourceFile = 来源文件，
+    // sourceFiles = 上传的文件名。老条目没有这个字段（当时没记）。
+    ...(normalizeOrigin(item?.origin) ? { origin: normalizeOrigin(item.origin) } : {}),
     unitCount: Number(item?.unitCount || mediaUnits.length || 0),
     mediaUnits,
     createdAt: String(item?.createdAt || ''),

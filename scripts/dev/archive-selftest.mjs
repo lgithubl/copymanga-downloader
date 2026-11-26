@@ -240,14 +240,19 @@ async function runScript(itemId, scriptId, options) {
   }
   return { error: '脚本超时' }
 }
-let result = await runScript(expect.info.id, 'archive-gallery-tags-v1')
-check('标签脚本：完成', result.status === 'completed', JSON.stringify(result.results || result).slice(0, 1500))
+// 页数和 ComicInfo.xml 在缩略图脚本里（3.0.0 之前在标签脚本里）；标签脚本只解析路径
+let result = await runScript(expect.info.id, 'archive-gallery-thumbnail-v1')
+check('缩略图脚本（封面 / 页数 / ComicInfo）：完成', result.status === 'completed', JSON.stringify(result.results || result).slice(0, 1500))
 const infoItem = await getJson(`/api/library/items/archive/${expect.info.id}`)
 for (const tag of ['页数: 2', 'artist:作者甲', 'series:某系列', 'genre:冒险']) {
-  check(`标签脚本产出 ${tag}`, infoItem.tags.includes(tag), JSON.stringify(infoItem.tags))
+  check(`缩略图脚本产出 ${tag}`, infoItem.tags.includes(tag), JSON.stringify(infoItem.tags))
 }
-check('迁移来的条目：文件名解析只用 LRR 里的原始路径（info.zip 没有括号），不再从标题猜标签', !infoItem.tags.some((t) => /^(group|tag):/.test(t)), JSON.stringify(infoItem.tags))
-check('标签脚本回写页数', infoItem.pageCount === 2 && infoItem.mediaUnits?.[0]?.imageCount === 2, JSON.stringify([infoItem.pageCount, infoItem.mediaUnits?.[0]?.imageCount]))
+check('缩略图脚本回写页数', infoItem.pageCount === 2 && infoItem.mediaUnits?.[0]?.imageCount === 2, JSON.stringify([infoItem.pageCount, infoItem.mediaUnits?.[0]?.imageCount]))
+result = await runScript(expect.info.id, 'archive-gallery-tags-v1')
+check('路径标签脚本：完成', result.status === 'completed', JSON.stringify(result.results || result).slice(0, 1500))
+const infoAfterPath = await getJson(`/api/library/items/archive/${expect.info.id}`)
+check('路径标签脚本不碰页数 / ComicInfo：缩略图脚本产出的标签都还在', ['页数: 2', 'artist:作者甲', 'series:某系列', 'genre:冒险'].every((t) => infoAfterPath.tags.includes(t)), JSON.stringify(infoAfterPath.tags))
+check('迁移来的条目：文件名解析只用 LRR 里的原始路径（info.zip 没有括号），不再从标题猜标签', !infoAfterPath.tags.some((t) => /^(group|tag):/.test(t)), JSON.stringify(infoAfterPath.tags))
 result = await runScript(expect.nothumb.id, 'archive-gallery-thumbnail-v1')
 check('封面脚本：给没有封面的条目生成封面', result.status === 'completed', JSON.stringify(result.results || result).slice(0, 1500))
 const nothumbItem = await getJson(`/api/library/items/archive/${expect.nothumb.id}`)
@@ -351,7 +356,7 @@ for i,rel in enumerate(['fresh1.zip','[目录作者]/[社团 (作者)] 新书 (�
   check('namespaces 选项：group/tag 换成 circle/artist', ['artist:目录作者', 'circle:社团', 'artist:作者', 'artist:中国翻訳', 'artist:某原作'].every((t) => remapped.tags.includes(t)), JSON.stringify([result.status, remapped.tags]))
   check('namespaces 选项：脚本上次产出而这次没产出的 group:/tag: 标签被替换掉', !remapped.tags.some((t) => /^(group|tag):/.test(t)), JSON.stringify(remapped.tags))
   check('saveTitle：标题改成去掉括号后的文件名', remapped.title === '新书', remapped.title)
-  await postJson('/api/tag-scripts/archive-gallery-tags-v1/config', { options: { parseFilename: true, usePath: true, saveTitle: false, namespaces: { group: 'group', tag: 'tag' }, readComicInfo: true, pageCountTag: true } })
+  await postJson('/api/tag-scripts/archive-gallery-tags-v1/config', { options: { usePath: true, saveTitle: false, namespaces: { group: 'group', tag: 'tag' } } })
   res = await startJob({ importProfile: 'archive-gallery', sourcePath: '/etc', profileOptions: '{}' })
   check('路径导入：不在允许目录内的路径被拒绝（任务失败）', res.status >= 400 || (await waitJob()).status === 'failed')
 }
