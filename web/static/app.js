@@ -4128,9 +4128,12 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     els.mediaReaderPrev.disabled = !(reader.navigation?.prev || galSteps?.prev)
     els.mediaReaderNext.disabled = !(reader.navigation?.next || galSteps?.next)
     const galNodeRatio = reader.type === 'gal' && isLibraryPageOwner(owner) ? currentLibraryProgress?.nodes?.[reader.section?.sectionId]?.ratio : undefined
-    const resumeRatio = galNodeRatio !== undefined
-      ? galNodeRatio
-      : isLibraryPageOwner(owner) ? savedReaderRatio(reader, currentLibraryProgress) : 0
+    // jumpRatio：全书进度条拖到别的章时，要落在那一章里的这个比例上（优先于保存的进度）
+    const resumeRatio = Number.isFinite(options.jumpRatio)
+      ? Math.max(0, Math.min(1, options.jumpRatio))
+      : galNodeRatio !== undefined
+        ? galNodeRatio
+        : isLibraryPageOwner(owner) ? savedReaderRatio(reader, currentLibraryProgress) : 0
     renderMediaSectionSelect(reader)
     renderMediaReader(reader, { ...options, resumeRatio })
     syncMediaHash()
@@ -6141,6 +6144,62 @@ function mediaPageScrollLeft(pageIndex) {
   return Math.max(0, Math.min(mediaMaxScrollLeft, pageIndex * mediaPageStep))
 }
 
+// —— 全书进度（按字数加权）——
+// 阅读器一次只加载一章，别的章节没排版、不知道有几页，所以全书位置按字数估算：
+//   全书位置 =（前面各章字数 + 本章已读比例 × 本章字数）/ 全书字数
+// 每章字数由服务端算好放在 reader.sections[].chars（见 web/library/section-weights.mjs）。
+// chars 为 0 的章节（「图片集」之类）不占进度条的长度。
+let epubBookSliderSync = null
+
+function epubBookLayout(reader = currentMediaReader) {
+  const sections = reader?.type === 'html' ? reader.sections || [] : []
+  const total = sections.reduce((sum, section) => sum + Math.max(0, Number(section.chars) || 0), 0)
+  if (!total) return null
+  let before = 0
+  const spans = sections.map((section) => {
+    const chars = Math.max(0, Number(section.chars) || 0)
+    const span = { section, start: before / total, size: chars / total }
+    before += chars
+    return span
+  })
+  return { total, spans }
+}
+
+function mediaPageRatio() {
+  return mediaPageCount <= 1 ? 0 : Math.max(0, Math.min(1, mediaPageIndex / (mediaPageCount - 1)))
+}
+
+function epubBookPosition(reader = currentMediaReader) {
+  const layout = epubBookLayout(reader)
+  const span = layout?.spans.find((entry) => entry.section.sectionId === reader?.section?.sectionId)
+  if (!span) return null
+  return Math.max(0, Math.min(1, span.start + mediaPageRatio() * span.size))
+}
+
+// 全书位置 -> 落在哪一章、章内比例多少
+function epubBookTarget(position, reader = currentMediaReader) {
+  const layout = epubBookLayout(reader)
+  if (!layout) return null
+  const weighted = layout.spans.filter((entry) => entry.size > 0)
+  const t = Math.max(0, Math.min(1, position))
+  const span = weighted.find((entry) => t < entry.start + entry.size) || weighted[weighted.length - 1]
+  return { section: span.section, ratio: Math.max(0, Math.min(1, (t - span.start) / span.size)) }
+}
+
+function jumpToEpubBookPosition(position) {
+  const target = epubBookTarget(position)
+  const reader = currentMediaReader
+  if (!target || !reader?.unit?.unitId) return
+  // 正在朗读：拖进度条 = 换地方读，先停下（不然下一句会把页面拽回朗读的位置）
+  epubTtsAutoResume = false
+  stopEpubTts()
+  if (target.section.sectionId === reader.section?.sectionId) {
+    setMediaPage(Math.round(target.ratio * Math.max(mediaPageCount - 1, 0)))
+    return
+  }
+  openUnitInSession(reader.unit.unitId, target.section.sectionId, { jumpRatio: target.ratio })
+}
+
 // 原来是 enterEpubImmersive 里的局部闭包，挪到模块级——它只依赖模块级状态
 // （mediaPageIndex/mediaPageCount）和模块级函数（setMediaPage/mediaStepTarget），
 // 没有任何真正需要闭包的东西。挪出来是因为鼠标后退/前进键的全局路由需要
@@ -6203,6 +6262,22 @@ const normalizeEpubTtsVolume = (value) => {
   return Number.isFinite(number) ? Math.min(EPUB_TTS_VOLUME_MAX, Math.max(EPUB_TTS_VOLUME_MIN, number)) : 100
 }
 let epubTtsVolume = normalizeEpubTtsVolume(localStorage.getItem(EPUB_TTS_VOLUME_KEY) || 100)
+
+// 句尾留白：服务端发朗读音频时在句尾补的静音（毫秒）。倍速 != 1 时浏览器的变速算法会吃掉音频末尾
+// 一小截，GSV 的句子末尾没有留白，被吃的就是最后几个字；补的静音越长越不容易吃到字，但句间停顿也越长。
+// 和倍速/音量一样存本机；通过 ?pad= 带给服务端（见 server.mjs 的 /tts-chunk/<hash>.wav）。
+const EPUB_TTS_TAIL_KEY = 'copymanga.epubTtsTailPad'
+const EPUB_TTS_TAIL_DEFAULT = 300
+const EPUB_TTS_TAIL_MAX = 1000
+const normalizeEpubTtsTail = (value) => {
+  const number = Math.round(Number(value) / 50) * 50
+  return Number.isFinite(number) ? Math.min(EPUB_TTS_TAIL_MAX, Math.max(0, number)) : EPUB_TTS_TAIL_DEFAULT
+}
+let epubTtsTailPad = normalizeEpubTtsTail(localStorage.getItem(EPUB_TTS_TAIL_KEY) ?? EPUB_TTS_TAIL_DEFAULT)
+
+function epubTtsAudioUrl(url) {
+  return `${url}${url.includes('?') ? '&' : '?'}pad=${epubTtsTailPad}`
+}
 let epubTtsAudioContext = null
 
 function applyEpubTtsVolume(audio) {
@@ -6513,7 +6588,7 @@ async function playEpubTtsFrom(startIndex, content) {
     for (const el of entry.elements) el.classList.add('epub-tts-current')
     setEpubTtsProgress(entry, 0)
     ensureEpubTtsSentenceVisible(entry.element, content)
-    const audio = new Audio(chunk.url)
+    const audio = new Audio(epubTtsAudioUrl(chunk.url))
     applyEpubTtsRate(audio)
     applyEpubTtsVolume(audio)
     epubTtsCurrentAudio = audio
@@ -6570,7 +6645,7 @@ async function playSelectedText(btn) {
     const data = await res.json()
     const chunk = data.chunks?.[0]
     if (!chunk || chunk.error || chunk.skipped) return
-    audio = new Audio(chunk.url)
+    audio = new Audio(epubTtsAudioUrl(chunk.url))
     applyEpubTtsRate(audio)
     applyEpubTtsVolume(audio)
     epubTtsCurrentAudio = audio
@@ -6695,8 +6770,104 @@ function enterEpubImmersive({ remember = false } = {}) {
       if (next >= 0) playEpubTtsFrom(next, els.mediaReaderContent).catch(() => {})
     }
   })
+  // 「更多」：不常调的朗读设置（句尾留白）+ 详情。样式复用图集沉浸条的「更多」
+  const moreWrap = document.createElement('div')
+  moreWrap.className = 'gallery-more epub-more'
+  const moreBtn = mk('epub-more-btn', '更多 ▾', '更多')
+  const moreMenu = document.createElement('div')
+  moreMenu.className = 'gallery-more-menu'
+  moreMenu.hidden = true
+  const ttsGroup = document.createElement('div')
+  ttsGroup.className = 'gallery-more-group'
+  const ttsTitle = document.createElement('span')
+  ttsTitle.className = 'gallery-more-title'
+  ttsTitle.textContent = '朗读'
+  const tailWrap = document.createElement('label')
+  tailWrap.className = 'gallery-speed epub-tts-tail'
+  tailWrap.title = '每句末尾补的静音。倍速朗读时句尾最后几个字被吞掉就调大；嫌句子之间停顿太长就调小（0 = 不补）。从下一句开始生效'
+  const tailName = document.createElement('span')
+  tailName.textContent = '句尾留白'
+  const tailSlider = document.createElement('input')
+  tailSlider.type = 'range'
+  tailSlider.className = 'epub-tts-tail-input'
+  tailSlider.min = '0'
+  tailSlider.max = String(EPUB_TTS_TAIL_MAX)
+  tailSlider.step = '50'
+  tailSlider.value = String(epubTtsTailPad)
+  const tailVal = document.createElement('span')
+  tailVal.className = 'gallery-speed-val'
+  tailVal.textContent = `${epubTtsTailPad}ms`
+  tailSlider.addEventListener('input', () => {
+    epubTtsTailPad = normalizeEpubTtsTail(tailSlider.value)
+    localStorage.setItem(EPUB_TTS_TAIL_KEY, String(epubTtsTailPad))
+    tailVal.textContent = `${epubTtsTailPad}ms`
+  })
+  tailSlider.addEventListener('change', () => tailSlider.blur())
+  tailWrap.append(tailName, tailSlider, tailVal)
+  ttsGroup.append(ttsTitle, tailWrap)
+  const detailBtn = mk('epub-detail-btn', '详情', '标题、标签等详情；标签可点击搜索')
+  moreMenu.append(ttsGroup, detailBtn)
+  moreWrap.append(moreBtn, moreMenu)
+  moreBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = !moreMenu.hidden })
+  detailBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = true; toggleMediaDetail() })
+  const closeMore = (event) => { if (!moreMenu.hidden && !moreWrap.contains(event.target)) moreMenu.hidden = true }
+  document.addEventListener('click', closeMore)
+  // 全书进度条：单独一行放在控制条最上面。刻度是章节分界；拖动时只预览，松手才跳
+  const book = document.createElement('div')
+  book.className = 'epub-book-progress'
+  const bookTrack = document.createElement('div')
+  bookTrack.className = 'epub-book-track'
+  const bookTicks = document.createElement('div')
+  bookTicks.className = 'epub-book-ticks'
+  const bookSlider = document.createElement('input')
+  bookSlider.type = 'range'
+  bookSlider.className = 'epub-book-slider'
+  bookSlider.min = '0'
+  bookSlider.max = '1000'
+  bookSlider.step = '1'
+  bookSlider.title = '全书进度（按字数估算）：拖动预览，松手跳转'
+  const bookLabel = document.createElement('span')
+  bookLabel.className = 'epub-book-label'
+  bookTrack.append(bookTicks, bookSlider)
+  book.append(bookTrack, bookLabel)
+  let bookDragging = false
+  let bookTickSignature = ''
+  const percent = (value) => `${Math.round(value * 1000) / 10}%`
+  const syncBook = () => {
+    const layout = epubBookLayout()
+    const position = epubBookPosition()
+    book.hidden = !layout || position === null
+    if (book.hidden) return
+    const signature = layout.spans.map((entry) => entry.start).join(',')
+    if (signature !== bookTickSignature) {
+      bookTickSignature = signature
+      bookTicks.replaceChildren(...layout.spans.filter((entry) => entry.size > 0 && entry.start > 0).map((entry) => {
+        const tick = document.createElement('i')
+        tick.style.left = `${entry.start * 100}%`
+        return tick
+      }))
+    }
+    if (bookDragging) return
+    bookSlider.value = String(Math.round(position * 1000))
+    bookLabel.textContent = `全书 ${percent(position)}`
+    bookLabel.title = ''
+  }
+  bookSlider.addEventListener('input', () => {
+    bookDragging = true
+    const position = Number(bookSlider.value) / 1000
+    const target = epubBookTarget(position)
+    if (!target) return
+    bookLabel.textContent = `→ ${target.section.title || ''} · 本章 ${percent(target.ratio)} · 全书 ${percent(position)}`
+    bookLabel.title = bookLabel.textContent
+  })
+  bookSlider.addEventListener('change', () => {
+    bookDragging = false
+    jumpToEpubBookPosition(Number(bookSlider.value) / 1000)
+    bookSlider.blur()
+  })
+  epubBookSliderSync = syncBook
   const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, rateSelect, volumeWrap, exitBtn)
+  bar.append(book, back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, rateSelect, volumeWrap, moreWrap, exitBtn)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -6709,6 +6880,7 @@ function enterEpubImmersive({ remember = false } = {}) {
     prevPg.disabled = mediaPageIndex <= 0 && !mediaStepTarget('prev')
     nextPg.disabled = mediaPageIndex >= mediaPageCount - 1 && !mediaStepTarget('next')
     syncImmersiveToc(toc)
+    epubBookSliderSync?.()
   }
   epubImmersiveSync = syncInfo
 
@@ -6802,11 +6974,13 @@ function enterEpubImmersive({ remember = false } = {}) {
   })
 
   epubImmersive = () => {
+    epubBookSliderSync = null
     epubTtsAutoResume = false
     stopEpubTts()
     clearTimeout(timer)
     document.removeEventListener('mousemove', onPointerMove)
     document.removeEventListener('keydown', onKey)
+    document.removeEventListener('click', closeMore)
     content.removeEventListener('pointerdown', onDown)
     content.removeEventListener('pointerup', onUp)
     bar.remove()
@@ -7666,6 +7840,7 @@ function mediaScrollRatio() {
 }
 
 function updateMediaPageControls() {
+  epubBookSliderSync?.()
   // epub(html) 调阅读宽度，图集(images) 调图片宽度
   if (els.mediaWidthAdjust) els.mediaWidthAdjust.disabled = !['html', 'images'].includes(currentMediaReader?.type)
   if (els.mediaDetailToggle) els.mediaDetailToggle.disabled = !currentMediaReader
@@ -8552,8 +8727,8 @@ function goBackToLibrary() {
   showView(target)
 }
 // 阅读器导航（上一章/下一章/目录/翻页）作用在当前会话上，归属必须跟着会话走
-function openUnitInSession(unitId, sectionId = '') {
-  return openMediaUnit(unitId, sectionId, { owner: readerOwner(currentMediaReader) })
+function openUnitInSession(unitId, sectionId = '', extra = {}) {
+  return openMediaUnit(unitId, sectionId, { ...extra, owner: readerOwner(currentMediaReader) })
 }
 
 els.mediaReaderPrev.addEventListener('click', () => {

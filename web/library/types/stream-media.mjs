@@ -1729,7 +1729,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     if (info.size > MAX_TEXT_BYTES) throw new Error(`文本文件过大（${Math.round(info.size / 1024 / 1024)}MB，上限 ${MAX_TEXT_BYTES / 1024 / 1024}MB）`)
     const split = await textSections({ target, info, splitChars: unit.splitChars || 0 })
     // 文件在扫描之后被改过，段数可能变了：以实际切出来的为准，不能按 unit 里记的旧列表去取
-    const sections = split.sections.length > 1 ? textSectionList(split.sections.length) : unit.sections
+    // 每段的字数（chars）给全书进度条加权
+    const sectionChars = split.sections.map((paragraphs) => paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0))
+    const sections = (split.sections.length > 1 ? textSectionList(split.sections.length) : unit.sections)
+      .map((section, i) => ({ ...section, chars: sectionChars[i] ?? (split.sections.length > 1 ? 0 : sectionChars.reduce((a, c) => a + c, 0)) }))
     const found = sections.findIndex((section) => section.sectionId === sectionId)
     const at = found >= 0 ? found : 0
     return {

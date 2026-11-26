@@ -141,6 +141,11 @@ try {
     const body = Buffer.from(await res.arrayBuffer())
     const r = readWav(body)
     check('HTTP：/tts-chunk/<hash>.wav 发出去的音频句尾补了 300ms 静音，Content-Length 对得上', res.status === 200 && r.dataSize === 4800 + 14400 && Number(res.headers.get('content-length')) === body.length, J({ status: res.status, ...r, len: body.length }))
+    for (const [pad, extra] of [['0', 0], ['1000', 48000], ['99999', 96000], ['abc', 14400]]) {
+      const res2 = await fetch(`${BASE}/api/epub/${itemId}/tts-chunk/${hash}.wav?pad=${pad}`, { headers })
+      const r2 = readWav(Buffer.from(await res2.arrayBuffer()))
+      check(`HTTP：?pad=${pad} 补 ${extra / 48}ms（0 = 不补，上限 2000ms，非法值用默认 300ms）`, r2.dataSize === 4800 + extra, J(r2))
+    }
     const disk = await readFile(path.join(dir, `${hash}.wav`))
     check('HTTP：缓存文件本身不被改写', disk.equals(wav))
   }
@@ -203,6 +208,13 @@ try {
     if (!(await page.locator('#library-view.active').count())) await page.click('#media-reader-back')
     await page.locator('#library-units .library-unit', { hasText: title }).first().click()
     await waitReader()
+  }
+
+  // 沉浸控制条平时收在屏幕下面、鼠标贴边才出来：自测里直接钉在屏幕上。
+  // 用行内样式而不是插 <style>：站点的 CSP 不让注入样式表。每次进沉浸控制条都是新建的，要重新钉
+  const pinBar = async () => {
+    await page.waitForSelector('.epub-bar', { state: 'attached', timeout: 10000 })
+    await page.evaluate(() => { const bar = document.querySelector('.epub-bar'); bar.style.setProperty('transform', 'none', 'important'); bar.style.setProperty('transition', 'none', 'important') })
   }
 
   // ================= 1. 分页漂移 =================
@@ -268,6 +280,75 @@ try {
   await openDetail()
   await clickUnit('阅读自测甲')
   check('续读：存的章节已失效时退回从这本开头打开，不报加载失败', !/加载失败/.test((await pageInfo()).text) && (await pageInfo()).index === 0, (await pageInfo()).text)
+
+  // 沉浸条「更多 → 句尾留白」：滑块存本机，重新进沉浸还是这个值
+  await page.evaluate(() => localStorage.removeItem('copymanga.epubTtsTailPad'))
+  await page.click('#media-immersive')
+  await page.waitForSelector('.epub-bar .epub-more-btn', { timeout: 10000 })
+  await pinBar()
+  await page.click('.epub-bar .epub-more-btn', { force: true })
+  const tail = page.locator('.epub-bar .epub-tts-tail-input')
+  const initial = await tail.inputValue()
+  await tail.fill('650')
+  await sleep(200)
+  const stored = await page.evaluate(() => localStorage.getItem('copymanga.epubTtsTailPad'))
+  check('沉浸条「更多」里有句尾留白滑块：默认 300ms，拖到 650 存进本机', initial === '300' && stored === '650' && /650ms/.test(await page.textContent('.epub-bar .epub-tts-tail')), `${initial} ${stored}`)
+  await page.click('.epub-bar .epub-exit', { force: true })
+  await page.click('#media-immersive')
+  await page.waitForSelector('.epub-bar .epub-tts-tail-input', { state: 'attached', timeout: 10000 })
+  await pinBar()
+  check('重新进沉浸，句尾留白还是 650', (await page.locator('.epub-bar .epub-tts-tail-input').inputValue()) === '650')
+
+  // ================= 全书进度条（按字数加权）=================
+  {
+    const reader = (await api(`/api/library/items/media/${itemId}/reader/${encodeURIComponent(unitA.unitId)}`)).body
+    const chars = (reader.sections || []).map((section) => section.chars)
+    check('阅读器接口：每章带字数 chars（两章一样长，字数应接近）', chars.length === 2 && chars.every((n) => n > 5000) && Math.abs(chars[0] - chars[1]) / chars[0] < 0.05, J(chars))
+    const slider = page.locator('.epub-bar .epub-book-slider')
+    const sectionValue = () => page.$eval('#media-section-select', (el) => el.value)
+    const bookValue = async () => Number(await slider.inputValue()) / 1000
+    const waitSettled = async () => { await sleep(300); await waitReader() }
+    // 从第一章第 1 页开始
+    await page.click('.epub-bar .epub-exit', { force: true })
+    await page.selectOption('#media-section-select', sections[0])
+    await waitReader()
+    await goToPage(0)
+    await page.click('#media-immersive')
+    await page.waitForSelector('.epub-bar .epub-book-slider', { state: 'attached', timeout: 10000 })
+    await pinBar()
+    await sleep(500)
+    check('全书进度条：第一章第 1 页 = 全书 0%，有 1 个章节刻度', (await bookValue()) === 0 && (await page.locator('.epub-bar .epub-book-ticks i').count()) === 1 && /全书 0%/.test(await page.textContent('.epub-bar .epub-book-label')), `${await bookValue()} ${await page.textContent('.epub-bar .epub-book-label')}`)
+    // 拖到 75%：第二章的一半
+    await slider.fill('750')
+    await waitSettled()
+    let info = await pageInfo()
+    let ratio = info.index / Math.max(1, info.count - 1)
+    check('全书进度条：拖到 75% → 跳到第二章、章内约 50%', (await sectionValue()) === sections[1] && Math.abs(ratio - 0.5) < 0.06, `${await sectionValue()} ${info.text}`)
+    check('全书进度条：跳过去之后滑块回显约 75%', Math.abs((await bookValue()) - 0.75) < 0.03, String(await bookValue()))
+    // 同一章里拖：不换章，只翻页
+    await slider.fill('900')
+    await sleep(1200)
+    info = await pageInfo()
+    ratio = info.index / Math.max(1, info.count - 1)
+    check('全书进度条：同一章里拖到 90% → 还在第二章、章内约 80%', (await sectionValue()) === sections[1] && Math.abs(ratio - 0.8) < 0.06, `${await sectionValue()} ${info.text}`)
+    // 拖回第一章
+    await slider.fill('250')
+    await waitSettled()
+    info = await pageInfo()
+    ratio = info.index / Math.max(1, info.count - 1)
+    check('全书进度条：拖回 25% → 第一章、章内约 50%', (await sectionValue()) === sections[0] && Math.abs(ratio - 0.5) < 0.06, `${await sectionValue()} ${info.text}`)
+    // 跳转后的位置要记进进度：从目录再点这本，落在同一处
+    const landed = await pageInfo()
+    await sleep(800)
+    await page.click('.epub-bar .epub-exit', { force: true })
+    await openDetail()
+    await clickUnit('阅读自测甲')
+    // 沉浸和普通模式视口大小不同、一章的页数不同，所以按章内比例比（差一页以内）
+    const back = await pageInfo()
+    const landedRatio = landed.index / Math.max(1, landed.count - 1)
+    const backRatio = back.index / Math.max(1, back.count - 1)
+    check('全书进度条：跳转后的位置记进了进度，从目录再点这本回到同一处（按章内比例）', (await sectionValue()) === sections[0] && Math.abs(landedRatio - backRatio) <= 1 / Math.max(1, back.count - 1) + 0.01, `${landed.text} -> ${back.text}`)
+  }
 
   check('全程没有页面脚本错误', errors.length === 0, errors.slice(0, 3).join(' | '))
   await context.close()

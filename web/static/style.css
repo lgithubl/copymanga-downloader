@@ -5072,3 +5072,16 @@ h2 {
 .gal-interaction-region-list [hidden] { display:none; }
 .gal-interaction-tool-head .gal-btn[aria-pressed=true] { border-color:#70e7ff; background:#70e7ff25; }
 .gal-interaction-tool-head .gal-btn[data-current=true] { outline:1px solid #70e7ff; }
+
+/* 沉浸条上的全书进度：单独占控制条最上面一行；刻度 = 章节分界 */
+.epub-bar { flex-wrap: wrap; }
+.epub-book-progress { align-items: center; display: flex; flex-basis: 100%; gap: 10px; order: -1; }
+.epub-book-progress[hidden] { display: none; }
+.epub-book-track { flex: 1; min-width: 0; position: relative; }
+.epub-book-slider { display: block; margin: 0; padding: 0; position: relative; width: 100%; z-index: 1; }
+.epub-book-ticks { inset: 0; pointer-events: none; position: absolute; }
+.epub-book-ticks i { background: rgba(255, 255, 255, 0.8); height: 14px; position: absolute; top: 50%; transform: translate(-50%, -50%); width: 2px; }
+.epub-book-label { color: #e8edf2; flex: none; font-size: 12px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 沉浸条「更多」里的句尾留白：一行排开，文字不许被挤成竖排 */
+.epub-more .epub-tts-tail { align-items: center; color: #e8edf2; display: flex; font-size: 12px; gap: 8px; white-space: nowrap; }
+.epub-more .epub-tts-tail input[type="range"] { flex: none; padding: 0; width: 120px; }

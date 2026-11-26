@@ -1,3 +1,4 @@
+import { withSectionWeights } from '../section-weights.mjs'
 import { createHash } from 'node:crypto'
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -133,7 +134,8 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
       item: pickPublicItem(item),
       unit,
       section,
-      sections,
+      // 带上每章字数（chars），前端全书进度条按它加权
+      sections: await withSectionWeights(sections, (entry) => safeExtractedPath(itemId, entry.resourcePath)),
       navigation: {
         prev: units[index - 1] || null,
         next: units[index + 1] || null,
@@ -412,7 +414,8 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
         item: pickPublicItem(item),
         unit,
         section,
-        sections,
+        // 带上每章字数（chars），前端全书进度条按它加权
+        sections: await withSectionWeights(sections, (entry) => safeExtractedPathFromItemDir(itemDir, entry.resourcePath)),
         navigation,
         sectionNavigation: sectionNavigation(sections, section.sectionId),
         content: sanitizeHtml(raw, {
