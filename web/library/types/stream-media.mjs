@@ -2127,6 +2127,12 @@ function mergeItemPatch(item, patch = {}) {
     }
     next.dlsite = dlsite
   }
+  // 原始位置：按字段合并（只补 sourcePath 时不能把已有的 sourceFiles 冲掉）
+  if (patch.origin && typeof patch.origin === 'object') {
+    const merged = normalizeOrigin({ ...(item.origin || {}), ...patch.origin })
+    if (merged) next.origin = merged
+    else delete next.origin
+  }
   return { ...next, updatedAt: new Date().toISOString() }
 }
 

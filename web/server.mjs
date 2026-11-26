@@ -4851,6 +4851,8 @@ function normalizeTagScriptOutput(output) {
     logs: normalizeScriptLogs(output?.logs || output?.log || output?.messages || []),
     details: normalizeScriptDetails(output?.details || output?.detail || null),
     itemPatch: normalizeScriptItemPatch(output?.itemPatch || output?.metadataPatch || null),
+    // 脚本这次运行额外声明的互斥标签组（规则驱动的脚本，标签组由配置决定，manifest 里写不死）
+    exclusiveTagGroups: parseTags(Array.isArray(output?.exclusiveTagGroups) ? output.exclusiveTagGroups : []).slice(0, 50),
   }
 }
 
@@ -4911,6 +4913,15 @@ function normalizeScriptItemPatch(value) {
     }
     if (Object.keys(dlsite).length) patch.dlsite = dlsite
   }
+  // 导入时的原始位置（路径标签按它解析）：回填脚本（rj-series-v1 的字段规则）可以补写。只收这三个字段，都是字符串
+  if (value.origin && typeof value.origin === 'object' && !Array.isArray(value.origin)) {
+    const origin = {}
+    for (const key of ['sourcePath', 'sourceFile']) {
+      if (value.origin[key] !== undefined) origin[key] = String(value.origin[key] || '').slice(0, 2000)
+    }
+    if (Array.isArray(value.origin.sourceFiles)) origin.sourceFiles = value.origin.sourceFiles.map((entry) => String(entry || '').slice(0, 500)).filter(Boolean).slice(0, 200)
+    if (Object.keys(origin).length) patch.origin = origin
+  }
   return Object.keys(patch).length ? patch : null
 }
 
@@ -4955,7 +4966,7 @@ async function applyTagScriptOutput({ type, itemId, script, output, unitIds = []
     next.unitPatches = next.unitPatches.filter((entry) => selectedUnitIds.has(entry.unitId))
     next.itemTags = []
   }
-  const exclusiveGroups = scriptExclusiveGroups(script)
+  const exclusiveGroups = new Set([...scriptExclusiveGroups(script), ...next.exclusiveTagGroups.map(normalizeTagName)])
   const item = await handler.getItem(itemId)
   const previousItemTags = previous?.itemTags || []
   let updatedItem = item
