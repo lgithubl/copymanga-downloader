@@ -362,6 +362,8 @@ let mediaPageIndex = 0
 let mediaPageCount = 1
 let mediaPageStep = 1
 let mediaMaxScrollLeft = 0
+// 换章/打开后要恢复到的阅读比例，等 layoutMediaPages 真正排出版面时才换算成页码；null = 没有待恢复的
+let mediaPendingResumeRatio = null
 let libraryProgressTimer = null
 let currentStreamCleanup = null
 let currentStreamImmersiveToggle = null
@@ -3642,7 +3644,11 @@ function renderLibraryUnits() {
         openMediaRouteInNewTab({ type: currentLibraryItem.type, itemId: currentLibraryItem.itemId, unitId: unit.unitId })
         return
       }
-      openMediaUnit(unit.unitId)
+      // 点目录里的某一本：从它自己上次读到的章节接着读（页码由 openMediaUnit 按进度恢复）。
+      // 只对阅读类（EPUB/TXT）这样做；Gal、音视频、图集有各自的续播逻辑，保持原样
+      const resumable = ['epub', 'text'].includes(unit.mediaKind) || currentLibraryItem?.type === 'epub'
+      const savedSection = resumable ? savedUnitSection(unit.unitId) : ''
+      openMediaUnit(unit.unitId, savedSection, { savedSection: Boolean(savedSection) })
     })
     row.querySelector('.unit-tags')?.addEventListener('click', (event) => {
       event.stopPropagation()
@@ -4103,7 +4109,15 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
       const suffix = query.toString() ? `?${query}` : ''
       return api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(unitId)}${suffix}`)
     }
-    const { reader, recovered } = await loadReaderWithRecovery({ load, type: owner.type, sectionId, resume: options.resume === true })
+    let loaded
+    try {
+      loaded = await loadReaderWithRecovery({ load, type: owner.type, sectionId, resume: options.resume === true })
+    } catch (error) {
+      // 章节是从进度里自动带出来的（不是用户点的）：EPUB 重新导入后章节 id 可能变了，退回从这本开头打开，不报错
+      if (!options.savedSection || !sectionId) throw error
+      loaded = await loadReaderWithRecovery({ load, type: owner.type, sectionId: '', resume: false })
+    }
+    const { reader, recovered } = loaded
     currentMediaReader = reader
     // 记下这个阅读器对应的路由，并把 URL 同步过去：刷新能回到同一章，链接能直接发给别的标签页。
     // 后台续播（自动连播）也更新路由，但只有媒体浏览是当前视图时才会真的写进 URL。
@@ -4113,15 +4127,13 @@ async function openMediaUnit(unitId, sectionId = '', options = {}) {
     const galSteps = reader.type === 'gal' && !galIsBrowsing(reader) ? reader.sectionNavigation : null
     els.mediaReaderPrev.disabled = !(reader.navigation?.prev || galSteps?.prev)
     els.mediaReaderNext.disabled = !(reader.navigation?.next || galSteps?.next)
-    renderMediaSectionSelect(reader)
-    renderMediaReader(reader, options)
-    syncMediaHash()
     const galNodeRatio = reader.type === 'gal' && isLibraryPageOwner(owner) ? currentLibraryProgress?.nodes?.[reader.section?.sectionId]?.ratio : undefined
     const resumeRatio = galNodeRatio !== undefined
       ? galNodeRatio
-      : isLibraryPageOwner(owner) && reader.section?.sectionId === currentLibraryProgress?.lastSectionId
-        ? currentLibraryProgress.lastScrollRatio
-        : 0
+      : isLibraryPageOwner(owner) ? savedReaderRatio(reader, currentLibraryProgress) : 0
+    renderMediaSectionSelect(reader)
+    renderMediaReader(reader, { ...options, resumeRatio })
+    syncMediaHash()
     const suspendedInteraction=reader.type==='gal'&&loadInteractionReturn(owner.itemId,reader.section?.sectionId||'',reader.scene)
     await saveLibraryProgress(suspendedInteraction?Math.min(.97,resumeRatio):resumeRatio, reader)
     await recordCurrentLibraryHistory({ visit: true, reader, position: recovered ? historyPositionForReader(reader) : options.position || historyPositionForReader(reader) }).catch(() => {})
@@ -4155,7 +4167,7 @@ function renderMediaReader(reader, options = {}) {
   if (galPlayer && reader.type !== 'gal') { galPlayer.destroy(); galPlayer = null }
   if (reader.type !== 'gal') { exitGalImmersive(); galBrowser?.destroy(); galBrowser = null }
   if (reader.type === 'html') {
-    renderMediaHtml(reader)
+    renderMediaHtml(reader, Number(options.resumeRatio) || 0)
   } else if (reader.type === 'images') {
     renderMediaImages(reader)
   } else if (reader.type === 'audio' || reader.type === 'video') {
@@ -4572,7 +4584,7 @@ function setEpubTtsProgress(entry, ratio) {
   }
 }
 
-function renderMediaHtml(reader) {
+function renderMediaHtml(reader, resumeRatio = 0) {
   exitWidthAdjust({ apply: false })   // 换章节时参考线不能留着
   exitGalleryImmersive()              // 图集的沉浸态在 epub 上没有意义
   // 朗读跨章节续播靠 epubTtsAutoResume 这个信号：读到本章末尾时 playEpubTtsFrom
@@ -4591,10 +4603,11 @@ function renderMediaHtml(reader) {
   loadEpubTtsFlagMode(reader)   // 此时 currentMediaReader 可能还是上一章的，必须用传进来的 reader
   epubTtsFlagSelectSync?.()
   els.mediaReaderContent.replaceChildren(pages)
+  // 续读的页码交给 layoutMediaPages 在「真正排出版面」的那一刻换算：视图还没显示时它会直接返回、
+  // 页数还是 1，这时就按比例算页码只能得到第 0 页 —— 原来就是这样又回到了开头。
+  mediaPendingResumeRatio = Math.max(0, Math.min(1, resumeRatio))
   requestAnimationFrame(() => {
     layoutMediaPages()
-    const ratio = reader.section?.sectionId === currentLibraryProgress?.lastSectionId ? currentLibraryProgress.lastScrollRatio : 0
-    setMediaPage(Math.round(ratio * Math.max(mediaPageCount - 1, 0)), { save: false })
     // 沉浸态下换章不会重建控制条，页码/目录/上下章状态得在这里补一刀
     syncEpubImmersive()
     if (resumeTts && epubTtsSentences.length) playEpubTtsFrom(0, els.mediaReaderContent).catch(() => {})
@@ -5943,6 +5956,25 @@ function mediaPageAnchor() {
   return null
 }
 
+// 进度里这个阅读器（unit + 章节）上次读到的比例。优先用每个 unit 自己记的位置（同一合集多本 EPUB
+// 各读各的），老数据没有就退回合集级的「最后一次」，但必须 unit 和章节都对得上才算。
+function savedReaderRatio(reader, progress) {
+  const unitId = reader?.unit?.unitId || ''
+  const sectionId = reader?.section?.sectionId || ''
+  if (!progress || !unitId) return 0
+  const own = progress.readUnits?.[unitId]
+  if (own && typeof own.lastScrollRatio === 'number') return own.lastSectionId === sectionId ? own.lastScrollRatio : 0
+  if (progress.lastUnitId && progress.lastUnitId !== unitId) return 0
+  return progress.lastSectionId === sectionId ? Number(progress.lastScrollRatio) || 0 : 0
+}
+
+// 从目录点开某个 unit 时该落到哪一章：这个 unit 自己上次读到的章节；没有记录就空（= 从头）
+function savedUnitSection(unitId, progress = currentLibraryProgress) {
+  const own = progress?.readUnits?.[unitId]
+  if (own && typeof own.lastScrollRatio === 'number') return own.lastSectionId || ''
+  return progress?.lastUnitId === unitId ? progress.lastSectionId || '' : ''
+}
+
 function restoreMediaPageAnchor(anchor) {
   if (!anchor || !anchor.isConnected) return false
   const content = els.mediaReaderContent
@@ -5976,14 +6008,26 @@ function layoutMediaPages({ anchor = null } = {}) {
   content.style.setProperty('--media-page-width', `${pageWidth}px`)
   content.style.setProperty('--media-page-gap', `${gap}px`)
   content.style.setProperty('--media-page-gutter', `${gutter}px`)
-  content.style.setProperty('--media-page-port', `${pageWidth + gutter * 2}px`)
+  // 视口是 border-box，左右边框也吃 max-width：不加回来的话真实栏宽是 pageWidth-2，
+  // 而步长按 pageWidth 算，每翻一页多滚 2px，翻到后面整页越来越往左偏。
+  const chromeX = Math.max(0, content.offsetWidth - content.clientWidth)
+  content.style.setProperty('--media-page-port', `${pageWidth + gutter * 2 + chromeX}px`)
   pages.style.removeProperty('--media-page-width')
   pages.style.removeProperty('--media-page-gap')
   pages.style.removeProperty('--media-page-pad-x')
-  mediaPageStep = pageWidth + gap
+  // 步长按排版后真实的栏宽量，不靠推算：边框、浏览器缩放下的小数栏宽（799.5px 之类）
+  // 只要和推算值差一点点，翻几十页就会累积成肉眼可见的偏移。视口固定只放一栏，
+  // 多列元素去掉左右 padding 的内容宽度就是栏宽。
+  const pagesStyle = getComputedStyle(pages)
+  const columnWidth = pages.getBoundingClientRect().width - (parseFloat(pagesStyle.paddingLeft) || 0) - (parseFloat(pagesStyle.paddingRight) || 0)
+  mediaPageStep = (columnWidth > 0 ? columnWidth : pageWidth) + gap
   mediaMaxScrollLeft = Math.max(0, content.scrollWidth - content.clientWidth)
   mediaPageCount = mediaMaxScrollLeft <= 0 ? 1 : Math.ceil(mediaMaxScrollLeft / mediaPageStep) + 1
-  if (!restoreMediaPageAnchor(anchor)) {
+  if (mediaPendingResumeRatio !== null) {
+    mediaPageIndex = Math.round(mediaPendingResumeRatio * Math.max(mediaPageCount - 1, 0))
+    mediaPendingResumeRatio = null
+    content.scrollLeft = mediaPageScrollLeft(mediaPageIndex)
+  } else if (!restoreMediaPageAnchor(anchor)) {
     mediaPageIndex = Math.max(0, Math.min(mediaPageIndex, mediaPageCount - 1))
     content.scrollLeft = mediaPageScrollLeft(mediaPageIndex)
   }
@@ -8530,7 +8574,8 @@ els.mediaSectionSelect.addEventListener('change', () => {
 els.mediaReaderTheme.addEventListener('change', () => {
   localStorage.setItem('copymanga.mediaReaderTheme', els.mediaReaderTheme.value)
   applyMediaReaderTheme()
-  if (currentMediaReader) renderMediaReader(currentMediaReader)
+  // 换主题会整章重新渲染：html 阅读器带上当前阅读比例，不然会跳回本章第一页
+  if (currentMediaReader) renderMediaReader(currentMediaReader, currentMediaReader.type === 'html' && mediaPageCount > 1 ? { resumeRatio: mediaPageIndex / (mediaPageCount - 1) } : {})
 })
 els.configSiteTheme.addEventListener('change', () => {
   applySiteTheme(els.configSiteTheme.value)
@@ -9241,6 +9286,12 @@ async function openMediaRoute({ type, itemId, unitId, sectionId }) {
   // 带了章节：先选中条目（填好目录/阅读进度），再开章节，这样 EPUB 能从上次滚动位置接着读。
   // 这个顺序和"历史页打开"是同一套（见 resumeLibraryItem）。
   await selectLibraryItem(type, itemId)
+  // 链接只带了 unit 没带章节（目录里 Ctrl+点击开新标签页就是这样）：和当前页点目录一样，
+  // 从这个 unit 上次读到的章节接着读
+  if (!sectionId && type !== 'gal') {
+    const savedSection = savedUnitSection(unitId)
+    return openMediaUnit(unitId, savedSection, { savedSection: Boolean(savedSection) })
+  }
   return openMediaUnit(unitId, sectionId)
 }
 

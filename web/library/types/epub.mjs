@@ -180,6 +180,9 @@ export function createEpubHandler({ dataDir, safeSegment, pathExists, moveAside 
         title: String(patch.title || current.readUnits[unitId]?.title || unitId),
         enteredAt: current.readUnits[unitId]?.enteredAt || now,
         updatedAt: now,
+        // 每本 EPUB 各记各的位置（多本放在同一合集时，点哪本从哪本上次的位置接着读）
+        lastSectionId: current.lastSectionId,
+        lastScrollRatio: current.lastScrollRatio,
       }
       if (current.lastSectionId) {
         current.readUnits[unitId].sections ||= {}

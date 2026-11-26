@@ -627,6 +627,10 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
     const unitId = String(patch.unitId || patch.lastUnitId || '').trim()
     if (unitId) {
       current.lastUnitId = unitId
+      // 章节（EPUB 的 section / TXT 的分段）也要记：前端续读按「同一 unit + 同一章节」才套用比例，
+      // 原来这里不存，比对永远落空，EPUB/TXT 每次打开都从头开始
+      current.lastSectionId = String(patch.sectionId || '')
+      current.lastSectionTitle = String(patch.sectionTitle || '')
       current.lastScrollRatio = clampRatio(patch.scrollRatio ?? patch.lastScrollRatio ?? current.lastScrollRatio)
       current.readUnits ||= {}
       current.readUnits[unitId] = {
@@ -635,6 +639,9 @@ export function createStreamMediaHandler({ type, dataDir, safeSegment, pathExist
         title: String(patch.title || current.readUnits[unitId]?.title || unitId),
         enteredAt: current.readUnits[unitId]?.enteredAt || now,
         updatedAt: now,
+        // 每个 unit 各记各的位置：同一合集里有多本 EPUB 时，点哪本就从哪本自己上次的位置接着读
+        lastSectionId: current.lastSectionId,
+        lastScrollRatio: current.lastScrollRatio,
       }
       if (current.lastScrollRatio >= 0.9) current.readUnits[unitId].completedAt ||= now
     }
@@ -2679,6 +2686,8 @@ function normalizeProgress(value, itemId) {
   return {
     itemId,
     lastUnitId: String(value?.lastUnitId || ''),
+    lastSectionId: String(value?.lastSectionId || ''),
+    lastSectionTitle: String(value?.lastSectionTitle || ''),
     lastScrollRatio: clampRatio(value?.lastScrollRatio || 0),
     readUnits: value?.readUnits && typeof value.readUnits === 'object' ? value.readUnits : {},
     updatedAt: String(value?.updatedAt || ''),

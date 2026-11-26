@@ -20,6 +20,7 @@ import { runLrrMigration } from './library/archive-migration.mjs'
 import { hasGeneratedPreview } from './library/index-flags.mjs'
 import { bulkSetItemTags, initTagStore, listTags, normalizeTagName, parseTags, setItemTags, setUnitTags, syncItemTagIndex } from './library/tag-store.mjs'
 import { callGsvTtsBatched } from './library/epub-tts.mjs'
+import { padWavSilence } from './library/wav-pad.mjs'
 import { createGalTranslator } from './library/gal-translate.mjs'
 import { cleanGalTtsRules, createGalTts } from './library/gal-tts.mjs'
 import { annotateEpubSentences } from './library/epub-tts-sentences.mjs'
@@ -43,6 +44,8 @@ const TAG_SCRIPT_RUN_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-runs')
 const TAG_OVERRIDE_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-overrides')
 const TAG_SCRIPT_CONFIG_DIR = path.join(DATA_DIR, 'cache', 'library', 'tag-script-config')
 const EPUB_TTS_CACHE_DIR = path.join(DATA_DIR, 'cache', 'epub-tts')
+// 朗读句尾补的静音时长。2 倍速下约 150ms 的实际停顿，足够盖住变速算法吃掉的那截，又不显拖沓
+const EPUB_TTS_TAIL_PAD_MS = 300
 const GAL_TRANSLATE_CACHE_DIR = path.join(DATA_DIR, 'cache', 'gal-translate')
 const GAL_TTS_CACHE_DIR = path.join(DATA_DIR, 'cache', 'gal-tts')
 const DEFAULT_API_DOMAIN = process.env.COPYMANGA_API_DOMAIN || 'api.copy202601.com'
@@ -5566,7 +5569,12 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       const [, hash] = match
       const filePath = path.join(EPUB_TTS_CACHE_DIR, safeSegment(itemId), `${hash}.wav`)
       if (!(await pathExists(filePath))) return json(res, 404, { error: 'chunk not found' })
-      return streamFile(res, filePath, 'audio/wav')
+      // 发出去之前在句尾补一段静音（缓存文件本身不动，老缓存也能直接受益）：倍速朗读时浏览器的
+      // 变速算法会吃掉流末尾的一小截，不补的话被吃的是句尾的真实语音。见 library/wav-pad.mjs
+      const audio = await readFile(filePath)
+      const padded = padWavSilence(audio, EPUB_TTS_TAIL_PAD_MS) || audio
+      res.writeHead(200, webHeaders({ 'Content-Type': 'audio/wav', 'Content-Length': String(padded.length), 'Cache-Control': 'public, max-age=3600' }))
+      return res.end(padded)
     }
     if (pathname.startsWith('/api/library/items/') && req.method === 'DELETE') {
       const parts = pathname.split('/').filter(Boolean)

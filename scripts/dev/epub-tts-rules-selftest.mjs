@@ -167,7 +167,9 @@ const chunk = (texts, flags) => postJson(`/api/epub/${ITEM}/tts-chunk`, flags ==
   const again = await chunk([JA1, ZH1, JA2, ZH2], ['ja', 'zh', 'ja', 'zh'])
   check('再请求一次：全部命中缓存，不再打 GSV；地址不变', gsvCalls.length === 0 && J(again.body.chunks.map((c) => c.url)) === J(chunks.map((c) => c.url)))
   const audio = await fetch(base + chunks[0].url)
-  check('缓存的音频能取回（wav）', audio.status === 200 && (await audio.arrayBuffer()).byteLength === WAV.length)
+  // 发出去时句尾补了 300ms 静音（倍速朗读防吃尾，见 web/library/wav-pad.mjs）：22050Hz 16 位单声道 = 6615 帧 × 2 字节
+  const served = Buffer.from(await audio.arrayBuffer())
+  check('缓存的音频能取回（wav，句尾补了 300ms 静音）', audio.status === 200 && served.length === WAV.length + 6615 * 2 && served.readUInt32LE(40) === 2205 * 2 + 6615 * 2, `${served.length}`)
 }
 // 同一句话在不同 flag（不同音色）下是两份缓存
 {
