@@ -10,13 +10,15 @@
 // 生效顺序（越往后越具体、覆盖前面的）：manifest 默认值 → 用户全局配置 → byType[类型] → byProfile[导入方案]。
 // 各层都是深合并：嵌套对象（比如 namespaces）只写想改的字段就行；数组和其它值整个替换。
 //
-// 以 $ 开头的键是服务端自己用的，不会传给脚本：
-//   "$enabled": false  —— 对这一类条目不运行这个脚本（服务端直接跳过，已有的标签原样保留）。
-//   不用 "enabled" 这个名字：anidb-udp-v1 等脚本已经有叫 enabled 的选项了。
+// 服务端自己读的键（和 scriptTimeoutMs 一样以 script 开头，保留给服务端，脚本不要拿来当自己的选项名）：
+//   "scriptEnabled": false —— 对这一类条目不运行这个脚本（服务端直接跳过，已有的标签原样保留）；不会传给脚本。
+//   不叫 "enabled"：anidb-udp-v1 已经有一个叫 enabled 的选项（意思是「运行但什么都不做」），会撞名。
 
 import { createHash } from 'node:crypto'
 
 export const LAYER_KEYS = ['byType', 'byProfile']
+// 只给服务端用、不传给脚本的键
+export const SERVER_ONLY_KEYS = ['scriptEnabled']
 
 export function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -33,10 +35,10 @@ export function deepMerge(base, override) {
 }
 
 function stripServerKeys(options) {
-  return Object.fromEntries(Object.entries(options).filter(([key]) => !key.startsWith('$') && !LAYER_KEYS.includes(key)))
+  return Object.fromEntries(Object.entries(options).filter(([key]) => !SERVER_ONLY_KEYS.includes(key) && !LAYER_KEYS.includes(key)))
 }
 
-// 返回 { options, enabled, layers }：options 是交给脚本的最终配置（不含 byType/byProfile/$ 键），
+// 返回 { options, enabled, layers }：options 是交给脚本的最终配置（不含 byType / byProfile / scriptEnabled），
 // layers 记下实际套用了哪几层，方便配置页展示「这个值是从哪来的」。
 export function resolveScriptOptions({ defaultOptions = {}, userOptions = {}, type = '', profile = '' } = {}) {
   const merged = deepMerge(defaultOptions, userOptions)
@@ -52,7 +54,7 @@ export function resolveScriptOptions({ defaultOptions = {}, userOptions = {}, ty
     effective = deepMerge(effective, byProfile[profile])
     layers.push(`byProfile.${profile}`)
   }
-  return { options: stripServerKeys(effective), enabled: effective.$enabled !== false, layers }
+  return { options: stripServerKeys(effective), enabled: effective.scriptEnabled !== false, layers }
 }
 
 // 生效配置的指纹：记进脚本的运行记录。配置改了（哪怕脚本版本没变），「同版本已生成，跳过」就不再成立。

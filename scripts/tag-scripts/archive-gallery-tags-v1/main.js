@@ -17,7 +17,7 @@
 //
 // 原来这个脚本叫「压缩包图集标签」，还管页数和 ComicInfo.xml；3.0.0 起那两样挪到了缩略图脚本
 // （archive-gallery-thumbnail-v1），这里只剩路径解析。id 不变：已有的标签归属和导入方案的默认勾选都按 id 认。
-// 默认只对压缩包图集开：别的类型在配置里用 byType 打开（manifest 里默认 "$enabled": false），见脚本配置页的说明。
+// 默认只对压缩包图集开：别的类型在配置里用 byType 打开（manifest 里默认 "scriptEnabled": false），见脚本配置页的说明。
 // 本脚本产出的标签由服务端管理：下次运行没产出的会被移除，所以每次都完整产出一遍。
 
 // LANraragi 的 redis_decode：UTF-8 解两次（文件名可能被双重编码过）。只在合法时采用。

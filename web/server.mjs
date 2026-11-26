@@ -4567,7 +4567,7 @@ async function runTagJob(job) {
       // 按条目类型 / 导入方案解析出这次实际生效的配置
       const resolved = resolveScriptOptions({ defaultOptions: action.defaultOptions, userOptions: action.userOptions, type: job.type, profile: item?.sourceProfile || '' })
       if (!resolved.enabled) {
-        results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'skipped', message: `配置里对这类条目关闭了（${resolved.layers.join(' + ') || '全局'} 里 $enabled: false），已有标签不动` })
+        results.push({ scriptId, actionId: action.id, scriptVersion: action.version, status: 'skipped', message: `配置里对这类条目关闭了（${resolved.layers.join(' + ') || '全局'} 里 scriptEnabled: false），已有标签不动` })
         continue
       }
       const optionsHash = optionsFingerprint(resolved.options)

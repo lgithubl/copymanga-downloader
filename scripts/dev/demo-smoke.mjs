@@ -42,7 +42,20 @@ check('配置：统一的「新页里返回=关闭标签页」开关存在', typ
   check('列表接口带 ETag；带 If-None-Match 再取是 304', Boolean(etag) && (await raw('/api/library/items?type=all&page=1&limit=5', { 'if-none-match': etag })).status === 304)
   const staticBr = await raw('/app.js', { 'accept-encoding': 'br' })
   check('静态文件：br 压缩 + ETag，If-None-Match 命中 304', staticBr.headers.get('content-encoding') === 'br' && Boolean(staticBr.headers.get('etag')) && (await raw('/app.js', { 'if-none-match': staticBr.headers.get('etag') })).status === 304)
-  const first = (boot?.items?.items || []).find((i) => i.cover)
+  // 「缓存一天」只是 /thumbnail/ 接口（压缩包 / 媒体生成的缩略图）的约定：Gal 封面故意每次校验（library/types/gal.mjs），
+  // EPUB 封面走 /resource。原来取「第一个带封面的条目」，演示数据里排第一的刚好是 Gal 时就误报。
+  const thumbCover = (i) => i?.cover && i.type !== 'gal' && /\/thumbnail\//.test(i.cover)
+  let first = (boot?.items?.items || []).find(thumbCover)
+  for (const type of ['archive', 'media']) {
+    if (first) break
+    first = ((await get(`/api/library/items?type=${type}&page=1&limit=50`)).body?.items || []).find(thumbCover)
+  }
+  // 对外演示的数据目录是全新的（迁移、导入都还没做），可能还没有任何生成过的缩略图：这时只提示不算失败；
+  // 带 --expect-archive（自测里压缩包已经导入）就必须找得到
+  if (!first) {
+    if (EXPECT_ARCHIVE) check('缩略图：找到一个用 /thumbnail/ 封面的压缩包 / 媒体条目来测缓存头', false, '没有')
+    else console.log('SKIP 缩略图缓存头：还没有用 /thumbnail/ 封面的压缩包 / 媒体条目')
+  }
   if (first) {
     const t = await raw(first.cover)
     check('缩略图：ETag + Last-Modified + 长缓存，带 If-None-Match 是 304', t.status === 200 && Boolean(t.headers.get('etag')) && /max-age=86400/.test(t.headers.get('cache-control') || '') && (await raw(first.cover, { 'if-none-match': t.headers.get('etag') })).status === 304, J([...t.headers.entries()].slice(0, 8)))

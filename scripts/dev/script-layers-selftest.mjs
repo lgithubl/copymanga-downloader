@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // 元数据脚本「分层配置」+ 压缩包脚本拆分的自测：
-//   - library/script-options.mjs：byType / byProfile / $enabled / 深合并 / 配置指纹
+//   - library/script-options.mjs：byType / byProfile / scriptEnabled / 深合并 / 配置指纹
 //   - 路径标签（archive-gallery-tags-v1 3.x）：只解析路径、不限类型；pathDepth / exclude / 目录当名字
 //   - 缩略图脚本（archive-gallery-thumbnail-v1 2.x）：页数 + ComicInfo 挪到这里
-//   - 服务端：libraryTypes 不适用就跳过、$enabled: false 跳过且不动已有标签、配置变了不再「同版本跳过」、
+//   - 服务端：libraryTypes 不适用就跳过、scriptEnabled: false 跳过且不动已有标签、配置变了不再「同版本跳过」、
 //     标签换归属（页数从路径标签挪到缩略图脚本）时不会被旧归属方的重跑误删、查看生效配置接口
 //
 //   node scripts/dev/script-layers-selftest.mjs [站点地址]        只给纯函数部分就不传地址
@@ -30,22 +30,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ================= 纯函数：分层配置 =================
 {
-  const defaults = { a: 1, nested: { x: 1, y: 2 }, list: [1, 2], byType: { media: { a: 2, $enabled: false } } }
-  const user = { nested: { y: 3 }, byType: { media: { $enabled: true }, gal: { a: 9 } }, byProfile: { 'text-media': { a: 5, nested: { x: 7 } } } }
+  const defaults = { a: 1, nested: { x: 1, y: 2 }, list: [1, 2], byType: { media: { a: 2, scriptEnabled: false } } }
+  const user = { nested: { y: 3 }, byType: { media: { scriptEnabled: true }, gal: { a: 9 } }, byProfile: { 'text-media': { a: 5, nested: { x: 7 } } } }
   const base = resolveScriptOptions({ defaultOptions: defaults, userOptions: user })
   check('分层：不指定类型 = 默认 + 全局（嵌套对象深合并，只改 y）', J(base.options) === J({ a: 1, nested: { x: 1, y: 3 }, list: [1, 2] }) && base.enabled && base.layers.length === 0, J(base))
   const media = resolveScriptOptions({ defaultOptions: defaults, userOptions: user, type: 'media' })
-  check('分层：byType 的默认和用户覆盖也深合并（默认 a=2 保留，用户把 $enabled 改回 true）', media.options.a === 2 && media.enabled && J(media.layers) === J(['byType.media']), J(media))
+  check('分层：byType 的默认和用户覆盖也深合并（默认 a=2 保留，用户把 scriptEnabled 改回 true）', media.options.a === 2 && media.enabled && J(media.layers) === J(['byType.media']), J(media))
   const text = resolveScriptOptions({ defaultOptions: defaults, userOptions: user, type: 'media', profile: 'text-media' })
   check('分层：byProfile 比 byType 更优先', text.options.a === 5 && text.options.nested.x === 7 && text.options.nested.y === 3 && J(text.layers) === J(['byType.media', 'byProfile.text-media']), J(text))
-  check('分层：交给脚本的配置里没有 byType / byProfile / $ 开头的键', !('byType' in text.options) && !('byProfile' in text.options) && !Object.keys(text.options).some((k) => k.startsWith('$')))
+  check('分层：交给脚本的配置里没有 byType / byProfile / scriptEnabled', !('byType' in text.options) && !('byProfile' in text.options) && !('scriptEnabled' in text.options))
   const off = resolveScriptOptions({ defaultOptions: defaults, userOptions: {}, type: 'media' })
-  check('分层：$enabled: false → enabled 为 false', off.enabled === false)
+  check('分层：scriptEnabled: false → enabled 为 false', off.enabled === false)
   check('分层：数组整个替换，不拼接', J(deepMerge({ l: [1, 2] }, { l: [3] }).l) === J([3]))
   check('配置指纹：键顺序无关、值变了就变', optionsFingerprint({ a: 1, b: { c: 2, d: 3 } }) === optionsFingerprint({ b: { d: 3, c: 2 }, a: 1 }) && optionsFingerprint({ a: 1 }) !== optionsFingerprint({ a: 2 }))
   check('libraryTypes：空 = 不限；声明了就只认这些', scriptAppliesToType({ libraryTypes: [] }, 'gal') && scriptAppliesToType({ libraryTypes: ['archive'] }, 'archive') && !scriptAppliesToType({ libraryTypes: ['archive'] }, 'media'))
   const anidbLike = resolveScriptOptions({ defaultOptions: { enabled: false } })
-  check('脚本自己的 enabled 选项不受影响（服务端只认 $enabled）', anidbLike.enabled === true && anidbLike.options.enabled === false, J(anidbLike))
+  check('脚本自己的 enabled 选项不受影响（服务端只认 scriptEnabled）', anidbLike.enabled === true && anidbLike.options.enabled === false, J(anidbLike))
 }
 
 // ================= 纯函数：路径标签 =================
@@ -69,7 +69,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
       && src({ origin: { sourcePath: '/x' } }) === 'origin.sourcePath' && src({ origin: { sourceFiles: ['a.mp4'] } }) === 'origin.sourceFiles'
       && src({ origin: { sourceFiles: ['a', 'b'] }, title: 't' }) === 'title' && src({ source: { path: '/g' } }) === 'source.path'
       && src({}, [{ fileName: 'b.epub' }]) === 'unit.fileName' && src({ title: 't' }) === 'title')
-  check('路径标签 manifest：不限类型，默认对 media / gal / epub 关闭', J(pathManifest.libraryTypes) === '[]' && ['media', 'gal', 'epub'].every((t) => pathManifest.options.byType[t].$enabled === false))
+  check('路径标签 manifest：不限类型，默认对 media / gal / epub 关闭', J(pathManifest.libraryTypes) === '[]' && ['media', 'gal', 'epub'].every((t) => pathManifest.options.byType[t].scriptEnabled === false))
   const ci = thumb.parseComicInfo('<ComicInfo><Writer>甲、乙</Writer><Series>S</Series><Genre>g1,g2</Genre><Tags>x;y</Tags><LanguageISO>ZH</LanguageISO></ComicInfo>')
   check('缩略图脚本：ComicInfo 解析（挪过来后行为不变）', J(ci) === J(['artist:甲', 'artist:乙', 'series:S', 'genre:g1', 'genre:g2', 'x', 'y', 'language:zh']), J(ci))
 }
@@ -160,7 +160,7 @@ if (BASE) {
       r = await run('media', mediaId, PATH)
       let mediaItem = await getItem('media', mediaId)
       check('路径标签默认对媒体关闭：跳过，提示是 byType.media 里关的', r.status === 'skipped' && /byType\.media/.test(r.message) && !mediaItem.tags.some((t) => /^(group|tag):/.test(t)), J(r))
-      await setConfig(PATH, { byType: { media: { $enabled: true } } })
+      await setConfig(PATH, { byType: { media: { scriptEnabled: true } } })
       r = await run('media', mediaId, PATH)
       mediaItem = await getItem('media', mediaId)
       check('byType.media 打开后：解析出 group:社团B / tag:作者B；默认的 exclude 把 1080p 和 2023 挡掉了', r.status === 'completed' && ['group:社团B', 'tag:作者B'].every((t) => mediaItem.tags.includes(t)) && !mediaItem.tags.some((t) => /1080p|2023/.test(t)), J([r, mediaItem.tags]))

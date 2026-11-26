@@ -2093,7 +2093,7 @@ function renderTagManager() {
           </div>
           <details class="tag-script-effective">
             <summary>默认配置 / 按类型查看生效配置</summary>
-            <p class="muted">上面只写想改的项；可以用 <code>byType</code>（按条目类型）和 <code>byProfile</code>（按导入方案）分别覆盖，越具体越优先：默认 → 全局 → byType → byProfile。<code>"$enabled": false</code> = 对这类条目不运行。${script.libraryTypes?.length ? ` 这个脚本只适用于：${escapeHtml(script.libraryTypes.join(' / '))}。` : ''}</p>
+            <p class="muted">上面只写想改的项；可以用 <code>byType</code>（按条目类型）和 <code>byProfile</code>（按导入方案）分别覆盖，越具体越优先：默认 → 全局 → byType → byProfile。<code>"scriptEnabled": false</code> = 对这类条目不运行（<code>script</code> 开头的键归服务端，不传给脚本）。${script.libraryTypes?.length ? ` 这个脚本只适用于：${escapeHtml(script.libraryTypes.join(' / '))}。` : ''}</p>
             <pre class="tag-script-defaults">${escapeHtml(JSON.stringify(script.defaultOptions || {}, null, 2))}</pre>
             <div class="tag-script-config-actions">
               <select class="tag-script-effective-type" title="条目类型"></select>
@@ -2331,7 +2331,7 @@ function bindTagScriptEffectivePreview(card, script) {
       const data = await api(`/api/tag-scripts/${encodeURIComponent(script.id)}/effective-options?${params}`)
       const head = [
         !data.applies ? `不适用：这个脚本只用于 ${data.libraryTypes.join(' / ')}` : '',
-        data.applies && !data.enabled ? '已关闭：$enabled 为 false，这类条目不会运行' : '',
+        data.applies && !data.enabled ? '已关闭：scriptEnabled 为 false，这类条目不会运行' : '',
         `套用的覆盖层：${data.layers.length ? data.layers.join(' → ') : '无（只有默认 + 全局）'}`,
       ].filter(Boolean).join('\n')
       result.textContent = `${head}\n${JSON.stringify(data.options, null, 2)}`
