@@ -105,11 +105,12 @@ set -uo pipefail
 # 2.25 RJ01746557 Naninovel：仅资源元数据与剧情程序集约47MiB，不收2.8GB纹理流；后续按实际引用补样本。
 # 2.24 仅探测 RJ01746557：完整目录清单与至多8MiB引擎证据，不执行程序、不收其他游戏。
 # 2.23 只采 ddd 访问诊断：少量无凭据只读请求与状态/响应头，正文最多读取512字节，不重传程序或资源。
-VERSION="3.06"
+VERSION="3.07"
 export GAL_COLLECT_VERSION="$VERSION"
 # 这一轮要的规则（正则，对规则名）。每个版本只写当时需要的——以前要过的已经分析完的不再收，传的东西才不会越来越大。要全收：GAL_COLLECT_RULES=all
-ROUND_RULES='^new-games:fuyu-edo$'
-export GAL_BGI_NAMES_DEFAULT='^osev_m_08[a-d]$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
+ROUND_RULES='^bgi:named$'
+export GAL_BGI_SCENE_DEFAULT='312_movea02_02_h07'
+export GAL_BGI_NAMES_DEFAULT='^(312_movea02_02_h07|framework)(\._bs|\.bs|_bs)?$'   # 1.23：BGI 按图名收（不管在哪个 data*.arc 里）
 export GAL_COLLECT_RULES_DEFAULT="$ROUND_RULES"
 if [ "${GAL_COLLECT_TSK_LOG+x}" = x ]; then export GAL_COLLECT_RULES='^gal-download:latest$'; fi
 TS="${GAL_COLLECT_TS:-$(date +%Y%m%d-%H%M%S)}"
@@ -215,6 +216,7 @@ VERSION = env.get('GAL_COLLECT_VERSION', 'unknown')
 _rules = env.get('GAL_COLLECT_RULES') or env.get('GAL_COLLECT_RULES_DEFAULT') or ''
 RULES_RE = None if _rules in ('', 'all') else re.compile(_rules)
 BGI_NAMES_RE = re.compile(env.get('GAL_BGI_NAMES') or env.get('GAL_BGI_NAMES_DEFAULT') or '^$', re.I)
+BGI_REQUIRED_SCENE = (env.get('GAL_BGI_SCENE') or env.get('GAL_BGI_SCENE_DEFAULT') or '').lower()
 
 def say(msg): print(msg, file=sys.stderr, flush=True)
 
@@ -591,9 +593,9 @@ BGI_PAIR_EACH_MAX = 4 * MB
 
 def bgi_named(items):
     """按图名（GAL_BGI_NAMES，默认 BGI_NAMES_RE）找：读每个 data*.arc 的 ARC20 索引，返回 [Entry]（至少有一个条目名命中的档案）。"""
-    out = []
+    out = []; found_scene = not BGI_REQUIRED_SCENE
     for e in items:
-        if not re.fullmatch(r'(?i)(.*/)?data\d+\.arc', e.rel): continue
+        if not re.fullmatch(r'(?i)(.*/)?(?:data\d+|sysprg|system)\.arc', e.rel): continue
         try:
             with open(e.path, 'rb') as f:
                 head = f.read(16)
@@ -604,8 +606,9 @@ def bgi_named(items):
         except OSError: continue
         for i in range(cnt):
             name = idx[i * 0x80:i * 0x80 + 0x60].split(b'\0', 1)[0].decode('cp932', 'replace')
-            if BGI_NAMES_RE.search(name): out.append(e); break
-    return out
+            if re.sub(r'(?:\._bs|\.bs|_bs)$', '', name.lower()) == BGI_REQUIRED_SCENE: found_scene = True
+            if BGI_NAMES_RE.search(name) and e not in out: out.append(e)
+    return out if found_scene else []
 
 def bgi_named_pick(path, size):
     """返回 (命中的 [(名字, 偏移, 大小)], 目录清单文本)；索引读不了返回 None。"""
