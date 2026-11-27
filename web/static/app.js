@@ -4680,6 +4680,8 @@ function renderMediaHtml(reader, resumeRatio = 0) {
     // 沉浸态下换章不会重建控制条，页码/目录/上下章状态得在这里补一刀
     syncEpubImmersive()
     if (resumeTts && epubTtsSentences.length) playEpubTtsFrom(0, els.mediaReaderContent).catch(() => {})
+    // 整章没有文字（插画页 / 扉页）：停留几秒后接着翻到下一章读，不在这里卡住
+    else if (resumeTts) continueEpubTtsPastEmptySection()
   })
 }
 
@@ -6341,6 +6343,126 @@ const normalizeEpubTtsTail = (value) => {
 }
 let epubTtsTailPad = normalizeEpubTtsTail(localStorage.getItem(EPUB_TTS_TAIL_KEY) ?? EPUB_TTS_TAIL_DEFAULT)
 
+// 整章没有文字（插画页 / 扉页）时，连续朗读在这一章停留几秒再自动翻到下一章（0 = 不停留）。存本机
+const EPUB_TTS_EMPTY_DWELL_KEY = 'copymanga.epubTtsEmptyDwell'
+const EPUB_TTS_EMPTY_DWELL_DEFAULT = 3
+const EPUB_TTS_EMPTY_DWELL_MAX = 10
+const normalizeEpubTtsEmptyDwell = (value) => {
+  const number = Math.round(Number(value) * 2) / 2
+  return Number.isFinite(number) ? Math.min(EPUB_TTS_EMPTY_DWELL_MAX, Math.max(0, number)) : EPUB_TTS_EMPTY_DWELL_DEFAULT
+}
+let epubTtsEmptyDwell = normalizeEpubTtsEmptyDwell(localStorage.getItem(EPUB_TTS_EMPTY_DWELL_KEY) ?? EPUB_TTS_EMPTY_DWELL_DEFAULT)
+let epubTtsDwellTimer = null
+let epubTtsStatusSync = null   // 沉浸条上的朗读状态提示（「本章没有文字，3 秒后继续」），不在沉浸态时为 null
+
+function setEpubTtsStatus(text) {
+  epubTtsStatusSync?.(text || '')
+}
+
+// 朗读自动翻章的目标：先书内下一节，再合集里的下一本。跳过「图片集」（全书插图汇总的虚拟章节，
+// 不是正文，翻进去朗读就停了）。返回 { unitId, sectionId }，没有下一处返回 null
+function epubTtsNextLocation(reader) {
+  const section = reader?.sectionNavigation?.next
+  if (section && section.type !== 'gallery' && reader?.unit?.unitId) return { unitId: reader.unit.unitId, sectionId: section.sectionId }
+  const unit = reader?.navigation?.next
+  if (unit?.unitId) return { unitId: unit.unitId, sectionId: '' }
+  return null
+}
+
+function epubTtsAdvance() {
+  const target = epubTtsNextLocation(currentMediaReader)
+  if (!target) return false
+  epubTtsAutoResume = true
+  openUnitInSession(target.unitId, target.sectionId)
+  return true
+}
+
+// 整章没有可读的句子：停留 epubTtsEmptyDwell 秒（让人看一眼插图）后保持朗读状态翻到下一章。
+// 停留期间算「正在朗读」：点「朗读」= 暂停，会取消这次翻章
+function continueEpubTtsPastEmptySection() {
+  const target = epubTtsNextLocation(currentMediaReader)
+  if (!target) { stopEpubTts(); return }
+  const runToken = ++epubTtsRunToken
+  epubTtsPlaying = true
+  epubTtsToggleBtn?.classList.add('active')
+  const go = () => {
+    epubTtsDwellTimer = null
+    if (!epubTtsPlaying || runToken !== epubTtsRunToken) return
+    setEpubTtsStatus('')
+    epubTtsAdvance()
+  }
+  if (epubTtsEmptyDwell > 0) {
+    setEpubTtsStatus(`本章没有文字，${epubTtsEmptyDwell} 秒后继续`)
+    epubTtsDwellTimer = setTimeout(go, epubTtsEmptyDwell * 1000)
+  } else {
+    go()
+  }
+}
+
+// —— 下一章预加载 ——
+// 本章的句子都排进预加载之后，提前把下一章开头的几句也生成好：音频按「文本 + 音色」缓存在服务端，
+// 真翻到下一章时直接命中缓存，章与章之间不用等第一句现生成。只做「提前生成」，不播放。
+// 下一章没有文字（插画章）就继续往后找，最多看 EPUB_TTS_LOOKAHEAD_HOPS 章。
+const EPUB_TTS_NEXT_SECTION_SENTENCES = 5
+const EPUB_TTS_LOOKAHEAD_HOPS = 3
+let epubTtsLookaheadKey = ''
+
+function epubTtsSpeaksIn(sentences, entry) {
+  if (!entry?.text) return false
+  if (epubTtsFlagMode === 'all') return true
+  if (!sentences.some((item) => item?.flag)) return true
+  return entry.flag === epubTtsFlagMode
+}
+
+async function prefetchNextSectionTts(token) {
+  const reader = currentMediaReader
+  const owner = readerOwner(reader)
+  const itemId = epubTtsItemId()
+  if (!owner || !itemId) return
+  let location = epubTtsNextLocation(reader)
+  for (let hop = 0; location && hop < EPUB_TTS_LOOKAHEAD_HOPS; hop++) {
+    const key = `${itemId}:${location.unitId}:${location.sectionId}`
+    if (key === epubTtsLookaheadKey) return   // 这一章已经预加载过了
+    const query = location.sectionId ? `?sectionId=${encodeURIComponent(location.sectionId)}` : ''
+    let next
+    try {
+      next = await api(`/api/library/items/${encodeURIComponent(owner.type)}/${encodeURIComponent(owner.itemId)}/reader/${encodeURIComponent(location.unitId)}${query}`)
+    } catch {
+      return
+    }
+    if (!epubTtsPlaying || token !== epubTtsPrefetchToken || next?.type !== 'html') return
+    const sentences = Array.isArray(next.sentences) ? next.sentences : []
+    const picked = sentences.filter((entry) => epubTtsSpeaksIn(sentences, entry)).slice(0, EPUB_TTS_NEXT_SECTION_SENTENCES)
+    if (picked.length) {
+      epubTtsLookaheadKey = key
+      const maxChars = epubTtsBatchMaxChars()
+      const maxBatch = epubTtsMaxBatchSentences()
+      // 和本章的预加载一样攒批、占并发坑位；服务端缓存命中的句子不会再打 GSV
+      for (let start = 0; start < picked.length;) {
+        const batch = []
+        let total = 0
+        while (start < picked.length && batch.length < maxBatch && (!batch.length || total + picked[start].text.length <= maxChars)) {
+          total += picked[start].text.length
+          batch.push(picked[start++])
+        }
+        await epubTtsAcquireSlot()
+        try {
+          if (!epubTtsPlaying || token !== epubTtsPrefetchToken) return
+          await fetch(`/api/epub/${itemId}/tts-chunk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ texts: batch.map((entry) => entry.text), flags: batch.map((entry) => entry.flag || '') }),
+          }).then((res) => res.json()).catch(() => null)
+        } finally {
+          epubTtsReleaseSlot()
+        }
+      }
+      return
+    }
+    location = epubTtsNextLocation(next)
+  }
+}
+
 function epubTtsAudioUrl(url) {
   return `${url}${url.includes('?') ? '&' : '?'}pad=${epubTtsTailPad}`
 }
@@ -6455,6 +6577,8 @@ function clearEpubTtsHighlight() {
 function stopEpubTts() {
   epubTtsPlaying = false
   epubTtsRunToken++
+  if (epubTtsDwellTimer) { clearTimeout(epubTtsDwellTimer); epubTtsDwellTimer = null }
+  setEpubTtsStatus('')
   epubTtsPrefetchToken++ // 让还在跑/排队的预加载泵发现自己过期了，尽快退出
   if (epubTtsCurrentAudio) {
     epubTtsCurrentAudio.pause()
@@ -6551,13 +6675,13 @@ async function runEpubTtsPrefetchPump(startIndex) {
   let batchSeq = 0
   while (epubTtsPlaying && token === epubTtsPrefetchToken) {
     while (epubTtsSentences[cursor] && (!epubTtsSpeaks(epubTtsSentences[cursor]) || epubTtsSentences[cursor].chunk || epubTtsSentences[cursor].chunkPromise)) cursor++
-    if (!epubTtsSentences[cursor]) return // 这一章能攒的都攒完了，等翻到下一章再起新的泵
+    if (!epubTtsSentences[cursor]) { prefetchNextSectionTts(token).catch(() => {}); return } // 本章都排上了：提前生成下一章开头几句
     await epubTtsAcquireSlot()
     if (!epubTtsPlaying || token !== epubTtsPrefetchToken) { epubTtsReleaseSlot(); return }
     // 拿到坑位这段等待期间，cursor 指向的句子可能已经被主循环的
     // ensureEpubTtsChunks 抢先认领了（比如用户手速很快追上来），重新跳过。
     while (epubTtsSentences[cursor] && (!epubTtsSpeaks(epubTtsSentences[cursor]) || epubTtsSentences[cursor].chunk || epubTtsSentences[cursor].chunkPromise)) cursor++
-    if (!epubTtsSentences[cursor]) { epubTtsReleaseSlot(); return }
+    if (!epubTtsSentences[cursor]) { epubTtsReleaseSlot(); prefetchNextSectionTts(token).catch(() => {}); return }
     batchSeq++
     const targetCount = Math.min(batchSeq, epubTtsMaxBatchSentences())
     const maxChars = epubTtsBatchMaxChars()
@@ -6638,9 +6762,8 @@ async function playEpubTtsFrom(startIndex, content) {
   let index = startIndex
   while (epubTtsPlaying && runToken === epubTtsRunToken) {
     if (!epubTtsSentences[index]) {
-      // 本节读完了，接到下一章继续——不能直接 stop，交给 renderMediaHtml 续播
-      const next = mediaStepTarget('next')
-      if (next) { epubTtsAutoResume = true; next(); return }
+      // 本节读完了，接到下一章继续——不能直接 stop，交给 renderMediaHtml 续播（跳过「图片集」）
+      if (epubTtsAdvance()) return
       break
     }
     if (!epubTtsSpeaks(epubTtsSentences[index])) { index++; continue }   // 不在朗读范围内：页面照常显示，只是不读
@@ -6877,7 +7000,30 @@ function enterEpubImmersive({ remember = false } = {}) {
   const rateName = document.createElement('span')
   rateName.textContent = '倍速'
   rateWrap.append(rateName, rateSelect)
-  ttsGroup.append(ttsTitle, rateWrap, volumeWrap, tailWrap)
+  // 无文字章停留：整章没有文字时停几秒再翻到下一章（0 = 直接翻）
+  const dwellWrap = document.createElement('label')
+  dwellWrap.className = 'gallery-speed epub-tts-dwell'
+  dwellWrap.title = '连续朗读遇到整章没有文字（插画页 / 扉页）时，停留几秒让你看一眼，再自动翻到下一章继续读。0 = 不停留'
+  const dwellName = document.createElement('span')
+  dwellName.textContent = '无文字章停留'
+  const dwellSlider = document.createElement('input')
+  dwellSlider.type = 'range'
+  dwellSlider.className = 'epub-tts-dwell-input'
+  dwellSlider.min = '0'
+  dwellSlider.max = String(EPUB_TTS_EMPTY_DWELL_MAX)
+  dwellSlider.step = '0.5'
+  dwellSlider.value = String(epubTtsEmptyDwell)
+  const dwellVal = document.createElement('span')
+  dwellVal.className = 'gallery-speed-val'
+  dwellVal.textContent = `${epubTtsEmptyDwell}s`
+  dwellSlider.addEventListener('input', () => {
+    epubTtsEmptyDwell = normalizeEpubTtsEmptyDwell(dwellSlider.value)
+    localStorage.setItem(EPUB_TTS_EMPTY_DWELL_KEY, String(epubTtsEmptyDwell))
+    dwellVal.textContent = `${epubTtsEmptyDwell}s`
+  })
+  dwellSlider.addEventListener('change', () => dwellSlider.blur())
+  dwellWrap.append(dwellName, dwellSlider, dwellVal)
+  ttsGroup.append(ttsTitle, rateWrap, volumeWrap, tailWrap, dwellWrap)
   const navGroup = document.createElement('div')
   navGroup.className = 'gallery-more-group'
   const navTitle = document.createElement('span')
@@ -6951,7 +7097,15 @@ function enterEpubImmersive({ remember = false } = {}) {
     bookSlider.blur()
   })
   epubBookSliderSync = syncBook
-  bar.append(book, prevCh, info, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, moreWrap)
+  // 朗读状态提示（比如「本章没有文字，3 秒后继续」）：平时隐藏
+  const ttsStatus = document.createElement('span')
+  ttsStatus.className = 'epub-tts-status'
+  ttsStatus.hidden = true
+  epubTtsStatusSync = (text) => {
+    ttsStatus.textContent = text
+    ttsStatus.hidden = !text
+  }
+  bar.append(book, prevCh, info, nextCh, toc, widthBtn, ttsBtn, ttsStatus, selectionBtn, flagSelect, moreWrap)
   els.app.append(bar)
 
   const syncInfo = () => {
@@ -7066,6 +7220,7 @@ function enterEpubImmersive({ remember = false } = {}) {
 
   epubImmersive = () => {
     epubBookSliderSync = null
+    epubTtsStatusSync = null
     epubTtsAutoResume = false
     stopEpubTts()
     clearTimeout(timer)

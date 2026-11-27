@@ -292,7 +292,7 @@ try {
   await page.click('#media-immersive')
   await page.waitForSelector('.epub-bar .epub-more-btn', { state: 'attached', timeout: 10000 })
   const outside = await page.$$eval('.epub-bar > *', (els) => els.map((e) => e.className.split(' ').pop()))
-  check('沉浸条外面：全书进度、上章、章名页码、下章、目录、宽度、朗读、读选中、朗读范围、更多', JSON.stringify(outside) === JSON.stringify(['epub-book-progress', 'epub-chapter-prev', 'epub-page-info', 'epub-chapter-next', 'immersive-toc', 'epub-width', 'epub-tts-toggle', 'epub-tts-selection', 'epub-tts-flag', 'epub-more']), JSON.stringify(outside))
+  check('沉浸条外面：全书进度、上章、章名页码、下章、目录、宽度、朗读（+ 平时隐藏的朗读状态提示）、读选中、朗读范围、更多', JSON.stringify(outside) === JSON.stringify(['epub-book-progress', 'epub-chapter-prev', 'epub-page-info', 'epub-chapter-next', 'immersive-toc', 'epub-width', 'epub-tts-toggle', 'epub-tts-status', 'epub-tts-selection', 'epub-tts-flag', 'epub-more']), JSON.stringify(outside))
   const inMore = await page.$$eval('.epub-bar .epub-more .gallery-more-menu', (menus) => ['.epub-back', '.epub-page-prev', '.epub-page-next', '.epub-exit', '.epub-tts-rate', '.epub-tts-volume'].filter((sel) => menus[0]?.querySelector(sel)))
   check('「更多」里：返回、上页、下页、退出、倍速、音量', inMore.length === 6, JSON.stringify(inMore))
   await exitImmersive()

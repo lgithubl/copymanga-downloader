@@ -5103,3 +5103,9 @@ h2 {
 .epub-more .epub-tts-rate-wrap,
 .epub-more .epub-tts-volume-wrap { align-items: center; color: #e8edf2; display: flex; font-size: 12px; gap: 8px; white-space: nowrap; }
 .epub-more .epub-tts-rate-wrap select { min-height: 0; padding: 2px 6px; }
+
+/* 沉浸条上的朗读状态提示（「本章没有文字，3 秒后继续」） */
+.epub-tts-status { color: #fcd34d; font-size: 12px; white-space: nowrap; }
+.epub-tts-status[hidden] { display: none; }
+.epub-more .epub-tts-dwell { align-items: center; color: #e8edf2; display: flex; font-size: 12px; gap: 8px; white-space: nowrap; }
+.epub-more .epub-tts-dwell input[type="range"] { flex: none; padding: 0; width: 110px; }
