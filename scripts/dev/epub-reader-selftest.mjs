@@ -217,6 +217,13 @@ try {
     await page.evaluate(() => { const bar = document.querySelector('.epub-bar'); bar.style.setProperty('transform', 'none', 'important'); bar.style.setProperty('transition', 'none', 'important') })
   }
 
+  // 「退出」在沉浸条的「更多」里：菜单没开就先打开
+  const exitImmersive = async () => {
+    await pinBar()
+    if (await page.locator('.epub-bar .epub-more .gallery-more-menu').isHidden()) await page.click('.epub-bar .epub-more-btn', { force: true })
+    await page.click('.epub-bar .epub-exit', { force: true })
+  }
+
   // ================= 1. 分页漂移 =================
   for (const width of [517, 733, 0]) {
     await page.goto(`${BASE}/`)
@@ -281,6 +288,15 @@ try {
   await clickUnit('阅读自测甲')
   check('续读：存的章节已失效时退回从这本开头打开，不报加载失败', !/加载失败/.test((await pageInfo()).text) && (await pageInfo()).index === 0, (await pageInfo()).text)
 
+  // 沉浸条布局：外面只留阅读时一直要用的；返回 / 上页 / 下页 / 倍速 / 音量 / 退出收进「更多」
+  await page.click('#media-immersive')
+  await page.waitForSelector('.epub-bar .epub-more-btn', { state: 'attached', timeout: 10000 })
+  const outside = await page.$$eval('.epub-bar > *', (els) => els.map((e) => e.className.split(' ').pop()))
+  check('沉浸条外面：全书进度、上章、章名页码、下章、目录、宽度、朗读、读选中、朗读范围、更多', JSON.stringify(outside) === JSON.stringify(['epub-book-progress', 'epub-chapter-prev', 'epub-page-info', 'epub-chapter-next', 'immersive-toc', 'epub-width', 'epub-tts-toggle', 'epub-tts-selection', 'epub-tts-flag', 'epub-more']), JSON.stringify(outside))
+  const inMore = await page.$$eval('.epub-bar .epub-more .gallery-more-menu', (menus) => ['.epub-back', '.epub-page-prev', '.epub-page-next', '.epub-exit', '.epub-tts-rate', '.epub-tts-volume'].filter((sel) => menus[0]?.querySelector(sel)))
+  check('「更多」里：返回、上页、下页、退出、倍速、音量', inMore.length === 6, JSON.stringify(inMore))
+  await exitImmersive()
+
   // 沉浸条「更多 → 句尾留白」：滑块存本机，重新进沉浸还是这个值
   await page.evaluate(() => localStorage.removeItem('copymanga.epubTtsTailPad'))
   await page.click('#media-immersive')
@@ -293,7 +309,7 @@ try {
   await sleep(200)
   const stored = await page.evaluate(() => localStorage.getItem('copymanga.epubTtsTailPad'))
   check('沉浸条「更多」里有句尾留白滑块：默认 300ms，拖到 650 存进本机', initial === '300' && stored === '650' && /650ms/.test(await page.textContent('.epub-bar .epub-tts-tail')), `${initial} ${stored}`)
-  await page.click('.epub-bar .epub-exit', { force: true })
+  await exitImmersive()
   await page.click('#media-immersive')
   await page.waitForSelector('.epub-bar .epub-tts-tail-input', { state: 'attached', timeout: 10000 })
   await pinBar()
@@ -309,7 +325,7 @@ try {
     const bookValue = async () => Number(await slider.inputValue()) / 1000
     const waitSettled = async () => { await sleep(300); await waitReader() }
     // 从第一章第 1 页开始
-    await page.click('.epub-bar .epub-exit', { force: true })
+    await exitImmersive()
     await page.selectOption('#media-section-select', sections[0])
     await waitReader()
     await goToPage(0)
@@ -340,7 +356,7 @@ try {
     // 跳转后的位置要记进进度：从目录再点这本，落在同一处
     const landed = await pageInfo()
     await sleep(800)
-    await page.click('.epub-bar .epub-exit', { force: true })
+    await exitImmersive()
     await openDetail()
     await clickUnit('阅读自测甲')
     // 沉浸和普通模式视口大小不同、一章的页数不同，所以按章内比例比（差一页以内）

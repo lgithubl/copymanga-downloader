@@ -6870,9 +6870,28 @@ function enterEpubImmersive({ remember = false } = {}) {
   })
   tailSlider.addEventListener('change', () => tailSlider.blur())
   tailWrap.append(tailName, tailSlider, tailVal)
-  ttsGroup.append(ttsTitle, tailWrap)
+  // 不常用的控件收进「更多」，控制条只留阅读时一直要用的（上章/下章、目录、朗读…）。
+  // 翻页靠点屏幕左右两侧 / ←→ 键 / 鼠标侧键，退出有 Esc，所以这几个按钮收进来不影响日常操作
+  const rateWrap = document.createElement('label')
+  rateWrap.className = 'gallery-speed epub-tts-rate-wrap'
+  const rateName = document.createElement('span')
+  rateName.textContent = '倍速'
+  rateWrap.append(rateName, rateSelect)
+  ttsGroup.append(ttsTitle, rateWrap, volumeWrap, tailWrap)
+  const navGroup = document.createElement('div')
+  navGroup.className = 'gallery-more-group'
+  const navTitle = document.createElement('span')
+  navTitle.className = 'gallery-more-title'
+  navTitle.textContent = '导航'
+  const navRow = document.createElement('div')
+  navRow.className = 'epub-more-row'
+  const exitBtn = mk('epub-exit', '退出', '退出沉浸（Esc）')
+  prevPg.title = '上一页（←，或点屏幕左侧）'
+  nextPg.title = '下一页（→，或点屏幕右侧）'
+  navRow.append(back, prevPg, nextPg, exitBtn)
+  navGroup.append(navTitle, navRow)
   const detailBtn = mk('epub-detail-btn', '详情', '标题、标签等详情；标签可点击搜索')
-  moreMenu.append(ttsGroup, detailBtn)
+  moreMenu.append(navGroup, ttsGroup, detailBtn)
   moreWrap.append(moreBtn, moreMenu)
   moreBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = !moreMenu.hidden })
   detailBtn.addEventListener('click', (event) => { event.stopPropagation(); moreMenu.hidden = true; toggleMediaDetail() })
@@ -6932,14 +6951,20 @@ function enterEpubImmersive({ remember = false } = {}) {
     bookSlider.blur()
   })
   epubBookSliderSync = syncBook
-  const exitBtn = mk('epub-exit', '退出', '退出沉浸')
-  bar.append(book, back, prevCh, prevPg, info, nextPg, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, rateSelect, volumeWrap, moreWrap, exitBtn)
+  bar.append(book, prevCh, info, nextCh, toc, widthBtn, ttsBtn, selectionBtn, flagSelect, moreWrap)
   els.app.append(bar)
 
   const syncInfo = () => {
     // 原来只有页码，看不出在读哪一章；和图集沉浸条对齐
     const chapterTitle = currentMediaReader?.section?.title || currentMediaReader?.unit?.title || ''
-    info.textContent = [chapterTitle, `${mediaPageIndex + 1} / ${mediaPageCount}`].filter(Boolean).join(' · ')
+    // 章名和页码分开：章名太长时只截章名（超出显示「…」，悬停看全名），页码始终完整
+    const titleEl = document.createElement('span')
+    titleEl.className = 'epub-page-title'
+    titleEl.textContent = chapterTitle
+    const pageEl = document.createElement('span')
+    pageEl.className = 'epub-page-num'
+    pageEl.textContent = `${chapterTitle ? ' · ' : ''}${mediaPageIndex + 1} / ${mediaPageCount}`
+    info.replaceChildren(...(chapterTitle ? [titleEl] : []), pageEl)
     info.title = chapterTitle
     prevCh.disabled = !mediaStepTarget('prev')
     nextCh.disabled = !mediaStepTarget('next')

@@ -5091,3 +5091,15 @@ h2 {
 .tag-script-effective summary { cursor: pointer; font-size: 13px; }
 .tag-script-effective pre { background: rgba(127, 127, 127, 0.1); border-radius: 6px; font-size: 12px; max-height: 260px; overflow: auto; padding: 8px; white-space: pre-wrap; }
 .tag-script-effective select { max-width: 220px; }
+
+/* 沉浸条：章名 · 页码。只截断章名（最多约 16 个字，超出显示「…」，悬停看全名），页码始终完整 */
+.epub-page-info { align-items: baseline; display: inline-flex; max-width: 300px; white-space: nowrap; }
+.epub-page-title { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.epub-page-num { flex: none; }
+
+/* 沉浸条「更多」：导航一行按钮；朗读里倍速 / 音量 / 句尾留白各一行 */
+.epub-more .gallery-more-menu { min-width: 260px; }
+.epub-more-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.epub-more .epub-tts-rate-wrap,
+.epub-more .epub-tts-volume-wrap { align-items: center; color: #e8edf2; display: flex; font-size: 12px; gap: 8px; white-space: nowrap; }
+.epub-more .epub-tts-rate-wrap select { min-height: 0; padding: 2px 6px; }
