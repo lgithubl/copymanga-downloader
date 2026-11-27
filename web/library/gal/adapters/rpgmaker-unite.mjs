@@ -1,5 +1,5 @@
 import * as rpg from './rpgmaker-json.mjs'
-export const ADAPTER_ID='rpgmaker-unite',DEFAULT_OPTIONS={dir:'arc'}
+export const ADAPTER_ID='rpgmaker-unite',DEFAULT_OPTIONS={dir:'arc',special:{voiced:false}}
 export const sniff=t=>/^\s*\{\s*"format"\s*:\s*"rpgmaker-unite\/1"/.test(String(t).slice(0,128))
 export const contextFiles=o=>[(o?.dir||'arc')+'/native.json'],contextDirs=o=>[(o?.dir||'arc')+'/res'],contextTextFilter=()=>()=>false
 export async function prepare({texts={},options}){
@@ -41,9 +41,16 @@ export async function prepare({texts={},options}){
    ctx.uniteReplayMaps.set(Number(c.parameters[0]),entries)
   }
  }
+ ctx.options.special.voiced=options?.special?.voiced===true
+ rpg.refreshVoicedCatalog(ctx,(node,context)=>{
+  const [rel,scene]=node.script.split('::')
+  const maps=ctx.uniteReplayMaps.get(Number(/^common-(\d+)$/.exec(scene)?.[1]))||[]
+  if(maps.length>1)throw Error('回想地图上下文不唯一')
+  return rpg.parse('',context,{rel,scene,...(maps.length?{initialMap:maps[0]}:{})})
+ })
  const rewrite=node=>{if(node.script){const[rel,scope]=node.script.split('::');if(d.packetMap[rel])node.script=d.packetMap[rel]+(scope?'::'+scope:'')}for(const child of node.children||[])rewrite(child)};rewrite(ctx.catalogTree)
  return ctx
 }
 export function parse(text,ctx,meta={}){const d=JSON.parse(text);if(d.format!=='rpgmaker-unite/1')throw Error('Not native Unite event');const id=Number(/^common-(\d+)$/.exec(meta.scene||'')?.[1]),maps=ctx.uniteReplayMaps?.get(id)||[];if(maps.length>1)throw Error('Unite 回想地图上下文不唯一，请从原生地图事件进入: '+meta.scene);return rpg.parse('',ctx,{...meta,...(maps.length?{initialMap:maps[0]}:{}),rel:d.rel,sourceRel:d.rel,options:ctx.options})}
 export const catalog=ctx=>ctx.catalogTree
-export const rpgmakerUniteAdapter={id:ADAPTER_ID,label:'RPG Maker Unite 原生事件',sniff,parse,prepare,catalog,contextFiles,contextDirs,contextTextFilter,sceneInPath:true,sceneThumbs:true}
+export const rpgmakerUniteAdapter={id:ADAPTER_ID,label:'RPG Maker Unite 原生事件',sniff,parse,prepare,catalog,health:rpg.rpgMakerJsonAdapter.health,contextFiles,contextDirs,contextTextFilter,sceneInPath:true,sceneThumbs:true}

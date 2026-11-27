@@ -106,19 +106,20 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   if(recollection&&o.special.enabled)ctx.catalogTree.children=[recollection,...ctx.catalogTree.children.filter(n=>n.id!=='special')]
   prepareActionSequences(ctx)
   ctx.koakumaAnimation=await prepareKoakumaAnimation(ctx,{texts,mediaDir,root})
+  refreshVoicedCatalog(ctx)
   return ctx
 }
 
 function evidence(list, ctx, seen = new Set(), mapId = 0) {
   const pluginEvidence = eventEvidence(list)
-  let text = pluginEvidence.text; const pictures = [...pluginEvidence.pictures], calls = new Set(pluginEvidence.calls), voices = new Set()
-  if (!Array.isArray(list)) return { text, pictures, calls, voices }
+  let text = pluginEvidence.text; const pictures = [...pluginEvidence.pictures], calls = new Set(pluginEvidence.calls)
+  if (!Array.isArray(list)) return { text, pictures, calls }
   if (ctx.evidenceCache.get(list)?.has(mapId)) return ctx.evidenceCache.get(list).get(mapId)
-  if (ctx.evidenceBusy.has(list)) return { text, pictures, calls, voices }
-  if (seen.size > 32) return { text, pictures, calls, voices }
+  if (ctx.evidenceBusy.has(list)) return { text, pictures, calls }
+  if (seen.size > 32) return { text, pictures, calls }
   ctx.evidenceBusy.add(list)
   let activeMap=mapId
-  const merge=inner=>{text+=inner.text;pictures.push(...inner.pictures);for(const id of inner.calls)calls.add(id);for(const src of inner.voices)voices.add(src)}
+  const merge=inner=>{text+=inner.text;pictures.push(...inner.pictures);for(const id of inner.calls)calls.add(id)}
   for (const c of list || []) {
     if(c.code===201&&c.parameters?.[0]===0){
       activeMap=Number(c.parameters[1]);const key=`autorun:${activeMap}`,target=ctx.maps.get(join(rootOf(ctx.options),'data',`Map${String(activeMap).padStart(3,'0')}.json`))
@@ -127,10 +128,6 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
     }
     const mapCall=mapEventCall(c)
     if(mapCall!==null){const key=`map:${activeMap}:${mapCall}`,target=ctx.maps.get(join(rootOf(ctx.options),'data',`Map${String(activeMap).padStart(3,'0')}.json`))?.events?.find(e=>e?.id===mapCall);if(!seen.has(key))for(const page of target?.pages||[])merge(evidence(page.list,ctx,new Set([...seen,key]),activeMap))}
-    if(c.code===249&&ctx.meVoiceMatch?.test(String(c.parameters?.[0]?.name||''))){
-      const stem='audio/me/'+c.parameters[0].name
-      if(['.ogg','.rpgmvo'].some(ext=>ctx.files.has(stem+ext)||ctx.files.has(join(rootOf(ctx.options),stem+ext))))voices.add(stem+'.ogg')
-    }
     if(c.code===357&&c.parameters?.[0]==='LL_LoopAnimation'&&['playAnimation','clippingAnimation'].includes(c.parameters?.[1])){const row=ctx.loopAnimations.get(c.parameters?.[3]?.id),name=String(row?.animationFrames||'').split(/\r?\n/).find(Boolean)?.split(',')[0];if(name)pictures.push('img/ll_loopanimation/'+name+'.png')}
     if (c.code === 401) text++
     if (c.code === 231) pictures.push(String(c.parameters?.[1] || ''))
@@ -140,16 +137,16 @@ function evidence(list, ctx, seen = new Set(), mapId = 0) {
       const id = Number(c.parameters?.[0]);if(ctx.skipCommonEvent?.test(String(ctx.common[id]?.name||''))){calls.delete(id);continue} calls.add(id)
       if (seen.has(id)) continue
       const inner = evidence(ctx.common[id]?.list, ctx, new Set([...seen, id]),activeMap)
-      text += inner.text; pictures.push(...inner.pictures); for (const v of inner.calls) calls.add(v); for(const src of inner.voices)voices.add(src)
+      text += inner.text; pictures.push(...inner.pictures); for (const v of inner.calls) calls.add(v)
     }
   }
-  const result = { text, pictures: [...new Set(pictures)], calls, voices }
+  const result = { text, pictures: [...new Set(pictures)], calls }
   ctx.evidenceBusy.delete(list);if(!ctx.evidenceCache.has(list))ctx.evidenceCache.set(list,new Map());ctx.evidenceCache.get(list).set(mapId,result)
   return result
 }
 
 function buildCatalog(ctx) {
-  const o = ctx.options, commonNodes = [], mapNodes = [], specials = new Map(), voiceByScript = new Map(), galleryCalls = new Set(), contextualCalls = new Set()
+  const o = ctx.options, commonNodes = [], mapNodes = [], specials = new Map(), galleryCalls = new Set(), contextualCalls = new Set()
   const nameMatch = safeRegex(o.special.nameMatch), mapMatch = safeRegex(o.special.mapNameMatch), imageMatch = safeRegex(o.special.imageMatch), skip = safeRegex(o.catalog.skipNames)
   const specialSkip = safeRegex(o.special.skipNameMatch)
   const special = (name, ev) => !specialSkip?.test(name) && Boolean(nameMatch?.test(name) || ev.pictures.some(p => imageMatch?.test(p) || imageMatch?.test(`img/pictures/${p}`)))
@@ -165,7 +162,7 @@ function buildCatalog(ctx) {
       }
       if (ev.text < o.catalog.minText || skip?.test(titleEvent)) continue
       const node = { id: `map-${id}-event-${event.id}-page-${pi + 1}`, title: `${titleEvent}${event.pages.length > 1 ? ` · 页${pi + 1}` : ''}`, subtitle: `${ev.text} 文本行`, script: `${rel}::event-${event.id}-${pi + 1}` }
-      children.push(node); voiceByScript.set(node.script,ev.voices)
+      children.push(node)
       if (ev.text >= o.special.minText && (mapMatch?.test(title) || special(titleEvent, ev))) {
         const directPictures=page.list.some(c=>c.code===231)
         const wrapper = !directPictures && !page.list.some(c=>mapEventCall(c)!==null) && o.special.deduplicateCalls && o.catalog.common && page.list.filter(c => c.code === 401).length <= 3 && [...ev.calls].some(id => {
@@ -183,17 +180,53 @@ function buildCatalog(ctx) {
     const ev = evidence(event.list, ctx, new Set([event.id])), name = event.name || `Common ${event.id}`
     if (ev.text < o.catalog.minText || skip?.test(name)) continue
     const node = { id: `common-${event.id}`, title: name, subtitle: `${ev.text} 文本行`, script: `${join(rootOf(o), 'data/CommonEvents.json')}::common-${event.id}` }
-    commonNodes.push(node); voiceByScript.set(node.script,ev.voices)
+    commonNodes.push(node)
     const wrapper = o.special.deduplicateCalls && event.list.filter(c=>c.code===401||c.code===357&&((c.parameters?.[0]==='LogDisplayPlugin'&&['setNewText','addToText'].includes(c.parameters?.[1]))||(c.parameters?.[0]==='LogMessage'&&c.parameters?.[1]==='add'))).length < o.special.minText && [...ev.calls].some(id=>ctx.common[id]&&evidence(ctx.common[id].list,ctx).text>=o.special.minText)
     if (!wrapper && !contextualCalls.has(event.id) && ev.text >= o.special.minText && (galleryCalls.has(event.id) || special(name, ev))) specials.set(node.script, { ...node, id: `special-${node.id}` })
   }
-  const voiced=o.special.enabled&&o.special.voiced?[...specials.values()].filter(n=>voiceByScript.get(n.script)?.size).map(n=>({...n,id:'voiced-'+n.id,subtitle:`${n.subtitle} · ${voiceByScript.get(n.script).size} 个对白配音资源`})) : []
   return { title: ctx.system.gameTitle || 'RPG Maker', children: [
-    ...(voiced.length?[{id:'special-voiced',title:'特殊场景（有配音）',children:voiced}]:[]),
     ...(o.special.enabled && specials.size ? [{ id: 'special', title: o.special.label, children: [...specials.values()] }] : []),
     ...(commonNodes.length ? [{ id: 'common', title: '公共事件', children: commonNodes }] : []),
     ...(mapNodes.length ? [{ id: 'maps', title: '地图事件', children: mapNodes }] : []),
   ] }
+}
+
+// Use the playback compiler's own audio routing and call expansion. This keeps
+// native plugins, conditional branches and configured gameplay exclusions aligned
+// with the scene instead of maintaining a second plugin parser for card counts.
+// Unite calls this after installing its native command compiler, before packet paths
+// replace the normalized RPG paths. The optional resolver restores replay context.
+export function refreshVoicedCatalog(ctx, parseScene = (node, context) => {
+  const [rel, scene] = node.script.split('::')
+  return parse('', context, {rel, scene})
+}) {
+  const tree = ctx.catalogTree
+  if (!tree) return
+  tree.children = tree.children.filter(node => node.id !== 'special-voiced')
+  if (!ctx.options.special.enabled || !ctx.options.special.voiced) return
+  // Map painting is irrelevant to dialogue counts; logical transfers/calls still run.
+  const context = {...ctx, options: {...ctx.options, maps: {...ctx.options.maps, enabled: false}}}
+  const voiced = []
+  const visit = node => {
+    if (node.script) {
+      try {
+        const scene = parseScene(node, context), resources = new Set()
+        for (const step of scene.steps) for (const command of step.commands) {
+          if (command.op !== 'voice' && !(command.op === 'bgvoice' && command.loop === false && command.kind === 'voice')) continue
+          const src = command.src
+          if (typeof src !== 'string') continue
+          const candidates = [src, src.replace(/\.ogg$/i, '.rpgmvo'), src.replace(/\.ogg$/i, '.ogg_')]
+          if (candidates.some(file => ctx.files.has(file) || ctx.files.has(join(rootOf(ctx.options), file)))) resources.add(src)
+        }
+        if (resources.size) voiced.push({...node, id: 'voiced-' + node.id, subtitle: `${node.subtitle || ''} · 全分支去重：${resources.size} 个对白配音资源`})
+      } catch (error) {
+        ctx.warnings.push(`对白配音资源统计失败: ${node.script}: ${error.message}`)
+      }
+    }
+    for (const child of node.children || []) visit(child)
+  }
+  for (const node of tree.children.filter(node => node.id === 'special')) visit(node)
+  if (voiced.length) tree.children.unshift({id: 'special-voiced', title: '特殊场景（有配音）', children: voiced})
 }
 
 export function parse(text, ctx, meta = {}) {
