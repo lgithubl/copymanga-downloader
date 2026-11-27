@@ -6275,7 +6275,21 @@ function jumpToEpubBookPosition(position) {
 function goPage(delta) {
   const next = mediaPageIndex + delta
   if (next >= 0 && next <= mediaPageCount - 1) { setMediaPage(next); return }
-  mediaStepTarget(delta > 0 ? 'next' : 'prev')?.()
+  if (delta < 0) { openPreviousChapterAtEnd(); return }
+  mediaStepTarget('next')?.()
+}
+
+// 在本章第一页再往回翻：落到上一章的最后一页（「上一页」的意思），而不是上一章的第一页。
+// 「上章」按钮仍然是到上一章开头（mediaStepTarget）。上一处是合集里的上一本时，到那本书最后一章（跳过「图片集」）的最后一页
+function openPreviousChapterAtEnd() {
+  const reader = currentMediaReader
+  const section = reader?.sectionNavigation?.prev
+  if (section && reader?.unit?.unitId) return openUnitInSession(reader.unit.unitId, section.sectionId, { jumpRatio: 1 })
+  const unit = reader?.navigation?.prev
+  if (!unit?.unitId) return null
+  const sections = Array.isArray(unit.sections) ? unit.sections : []
+  const last = [...sections].reverse().find((entry) => entry?.type !== 'gallery')
+  return openUnitInSession(unit.unitId, last?.sectionId || '', { jumpRatio: 1 })
 }
 
 // EPUB 沉浸阅读。隐藏顶栏/头部那套直接复用视频的 stream-immersive +

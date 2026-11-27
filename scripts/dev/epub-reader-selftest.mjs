@@ -297,6 +297,57 @@ try {
   check('「更多」里：返回、上页、下页、退出、倍速、音量', inMore.length === 6, JSON.stringify(inMore))
   await exitImmersive()
 
+  // 在本章第一页往回翻（← / 点左侧 / 更多里的「上页」）：落到上一章的最后一页；「上章」按钮仍到上一章开头
+  {
+    const order = (await api(`/api/library/items/media/${itemId}/units`)).body.map((u) => u.unitId)
+    const [firstUnit, secondUnit] = order
+    const firstTitle = firstUnit === unitA.unitId ? '阅读自测甲' : '阅读自测乙'
+    const secondTitle = secondUnit === unitA.unitId ? '阅读自测甲' : '阅读自测乙'
+    const immersiveInfo = async () => {
+      const text = await page.textContent('.epub-bar .epub-page-num')
+      const m = /(\d+) \/ (\d+)/.exec(text || '')
+      return { index: m ? Number(m[1]) - 1 : -1, count: m ? Number(m[2]) : 0, section: await page.$eval('#media-section-select', (el) => el.value) }
+    }
+    const waitLanded = async () => { await sleep(400); await waitReader(); await sleep(600) }
+    await openDetail()
+    await clickUnit(firstTitle)
+    await page.selectOption('#media-section-select', sections[1])
+    await waitReader()
+    await goToPage(0)
+    await page.click('#media-immersive')
+    await page.waitForSelector('.epub-bar .epub-more-btn', { state: 'attached', timeout: 10000 })
+    await sleep(800)
+    await page.keyboard.press('ArrowLeft')
+    await waitLanded()
+    let at = await immersiveInfo()
+    check('第二章第 1 页按 ←：到第一章的最后一页（不是第一页）', at.section === sections[0] && at.count > 1 && at.index === at.count - 1, J(at))
+    await page.keyboard.press('ArrowRight')
+    await waitLanded()
+    at = await immersiveInfo()
+    check('第一章最后一页按 →：回到第二章第 1 页', at.section === sections[1] && at.index === 0, J(at))
+    await pinBar()
+    await page.click('.epub-bar .epub-chapter-prev', { force: true })
+    await waitLanded()
+    at = await immersiveInfo()
+    check('「上章」按钮：到第一章第 1 页（行为不变）', at.section === sections[0] && at.index === 0, J(at))
+    await exitImmersive()
+    // 跨本：第二本第一章第 1 页往回翻 → 第一本最后一章的最后一页
+    await openDetail()
+    await clickUnit(secondTitle)
+    await page.selectOption('#media-section-select', sections[0])
+    await waitReader()
+    await goToPage(0)
+    await page.click('#media-immersive')
+    await page.waitForSelector('.epub-bar .epub-more-btn', { state: 'attached', timeout: 10000 })
+    await sleep(800)
+    await page.keyboard.press('ArrowLeft')
+    await waitLanded()
+    at = await immersiveInfo()
+    const title = await page.textContent('#media-reader-title').catch(() => '')
+    check('合集第二本第一章第 1 页按 ←：到第一本最后一章的最后一页', at.section === sections[1] && at.index === at.count - 1 && at.count > 1, J({ at, title }))
+    await exitImmersive()
+  }
+
   // 沉浸条「更多 → 句尾留白」：滑块存本机，重新进沉浸还是这个值
   await page.evaluate(() => localStorage.removeItem('copymanga.epubTtsTailPad'))
   await page.click('#media-immersive')
