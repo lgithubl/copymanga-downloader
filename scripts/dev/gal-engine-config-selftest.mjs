@@ -383,6 +383,9 @@ const work = await realpath(await mkdtemp(path.join(os.tmpdir(), 'gal-engine-cfg
   const small = await read('').catch(() => ({ node: { items: [] } }))
   check('limits.scriptBytes：超过上限的脚本不被识别（列表里没有 big.txt），小的照常', !small.node.items.some((i) => i.id === 'big.txt') && small.node.items.some((i) => i.id === 's.txt'), J(small.node.items.map((i) => i.id)))
   await patch({ ...base }, ['eng-noprep'])
+  // A compatible old page stays available while the refresh is queued.
+  await handler.refreshIndex(itemId)
+  for(let n=0;n<200&&['queued','running'].includes((await handler.cacheStatus(itemId)).status);n++)await new Promise(r=>setTimeout(r,10))
   check('默认 scriptBytes（4MB）：big.txt 被识别', (await read('')).node.items.some((i) => i.id === 'big.txt'))
 }
 

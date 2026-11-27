@@ -4427,11 +4427,15 @@ function renderGalBrowse(reader) {
     onToggleImmersive: toggleGalImmersive,
     onEscape: () => exitGalImmersive({ remember: true }),
     onLeave: () => { exitGalImmersive(); els.mediaReaderBack?.click() },
-    // 「更多 → 刷新」：丢掉这个条目的文件索引 / 名称表等缓存，按磁盘现状重建，然后重取当前节点
+    onCacheStatus: () => api(`/api/library/items/gal/${encodeURIComponent(owner.itemId)}/cache-status`),
     onRefreshIndex: async () => {
       if (!owner?.itemId) return
-      await api(`/api/library/items/gal/${encodeURIComponent(owner.itemId)}/index-refresh`, { method: 'POST', body: '{}' })
-      await galNavigate(reader, reader.node.id, 'self')
+      let saved={};try{saved=JSON.parse(localStorage.getItem(`copymanga.gal.view.${owner.itemId}`)||'null')||{}}catch{}
+      return api(`/api/library/items/gal/${encodeURIComponent(owner.itemId)}/index-refresh`, {method:'POST',body:JSON.stringify({sectionId:reader.node.id,...(saved.showMosaic===undefined?{}:{showMosaic:Boolean(saved.showMosaic)}),viewRules:saved.viewRules||null})})
+    },
+    onCacheReload: async () => {
+      galRestoreScroll={id:reader.node.id,top:galScroller().scrollTop}
+      await openUnitInSession(reader.unit.unitId,reader.node.id)
     },
   })
   if (galImmersive) galBrowser.setImmersive(true)

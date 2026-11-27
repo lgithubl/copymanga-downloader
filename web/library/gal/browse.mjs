@@ -31,11 +31,12 @@ import { pickDirCover } from './dir-cover.mjs'
 import { expandTemplate, galConfigView, globToRegExp, normalizeGalConfig, parentRegExp } from './config.mjs'
 import { buildGraphCatalog } from './graph.mjs'
 import { containerReport, ensureContainers, invalidateContainers } from './containers.mjs'
-import { contextStats, invalidateContexts, loadAdapterContext } from './context.mjs'
+import { contextStats, contextMetadata, invalidateContexts, expireContexts, loadAdapterContext } from './context.mjs'
 import { safeRelPath } from './paths.mjs'
 import { createThumbEngine, invalidateThumbCaches } from './thumbs.mjs'
 import { buildScene, firstBackgroundSrc } from './scene.mjs'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import {galCachePhase} from './cache-jobs.mjs'
 import { collectFallbackImages } from './fallback-thumbs.mjs'
 import { computeSceneMarkers as computeMarkers } from './markers.mjs'
 import { compileSafeRegex } from './voice.mjs'
@@ -59,10 +60,11 @@ const entriesCache = new Map()
 const scriptInfoCache = new Map()
 const countCache = new Map()
 const expressionCache = new Map()
-// 手动刷新（界面「更多 → 刷新索引」）：丢掉这个媒体目录的全部缓存——适配器上下文（文件索引 + 名称表）、嗅探结果、目录列表、脚本摘要、数量
-export function invalidateBrowseCaches(mediaDir) {
+// 刷新任务内部使缓存过期：preserveContexts 保留旧上下文供正在浏览的请求使用；清理这个媒体目录的派生缓存——适配器上下文（文件索引 + 名称表）、嗅探结果、目录列表、脚本摘要、数量
+export function invalidateBrowseCaches(mediaDir, {preserveContexts = false} = {}) {
   invalidateContainers(mediaDir)   // 容器展开的单飞记录（下一次浏览按 stamp 重新检查容器有没有变）
-  let n = invalidateContexts(mediaDir) + invalidateThumbCaches(mediaDir)
+  if (preserveContexts) expireContexts(mediaDir)
+  let n = (preserveContexts ? 0 : invalidateContexts(mediaDir)) + invalidateThumbCaches(mediaDir)
   for (const map of [sniffCache, entriesCache, scriptInfoCache, countCache, expressionCache]) {
     for (const key of [...map.keys()]) if (String(key).startsWith(`${mediaDir}${path.sep}`) || String(key).startsWith(`${mediaDir}|`)) { map.delete(key); n += 1 }
   }
@@ -643,11 +645,12 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
   }
 
   const contextErrors = new Map()
+  const usedContextStats = new Map()
   const adapterContexts = new Map()   // 适配器 id → ctx（本次请求内）
   async function contextOf(adapterId) {
     if (!adapterId) return null
     if (!adapterContexts.has(adapterId)) {
-      adapterContexts.set(adapterId, await loadAdapterContext({ adapter: galAdapter(adapterId), mediaDir, config, sourceFiles, assetDir }).catch(error => { contextErrors.set(adapterId,String(error?.message||error));return null }))
+      adapterContexts.set(adapterId, loadAdapterContext({ adapter: galAdapter(adapterId), mediaDir, config, sourceFiles, assetDir }).then(ctx => { const stats=contextMetadata(ctx); if(stats)usedContextStats.set(adapterId,stats); return ctx }).catch(error => { contextErrors.set(adapterId,String(error?.message||error));return null }))
     }
     return adapterContexts.get(adapterId)
   }
@@ -835,6 +838,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
 
   // 脚本摘要：缩略图候选（config 里的模板 → 脚本里第一张存在的背景图）、台词摘要、是不是带视频。按 mtime 缓存
   async function scriptInfo(set, scriptRel, { fresh = false } = {}) {
+    galCachePhase('生成列表摘要与缩略图索引')
     // 路径带 ::<场景>（一个文件装多个场景，utage-book 的章）：磁盘上是 ::前面的文件，场景号交给适配器（meta.scene）；只有适配器声明 sceneThumbs 的才算封面（grenze 这类一个文件几十个场景，每个都整份解析太贵）
     const sceneAt = scriptRel.indexOf('::')
     const rel = sceneAt >= 0 ? scriptRel.slice(0, sceneAt) : scriptRel
@@ -1187,10 +1191,11 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
 
   // 文件索引的状态（适配器上下文的建立时间 / 文件数 / 是否被截断）：给界面「更多」里的索引信息和刷新按钮用
   function indexStatus() {
-    const stats = contextStats(mediaDir)
+    const stats = [...usedContextStats.values()]
     if (!stats.length) return null
     return {
       builtAt: stats.map((x) => x.builtAt).sort().at(-1),
+      ...(catalogCache?.scriptEntry ? {scenes:catalogCache.scriptEntry.size} : {}),
       files: stats.reduce((n, x) => n + x.files, 0),
       truncated: stats.some((x) => x.truncated),
       sampleTruncated: stats.some((x) => x.sampleTruncated),
@@ -1430,7 +1435,7 @@ export function createBrowseProvider({ mediaDir, sourceFiles = [], assetDir = me
   }
 
   // 容器（config.containers）：第一次浏览 / 取随机语音前先展开（幂等，没变的容器直接跳过）；失败不挡浏览，记在 problems 里
-  const prepareContainers = () => ensureContainers({ mediaDir, config }).catch((error) => { containerFailure = String(error.message || error).slice(0, 300) })
+  const prepareContainers = () => { galCachePhase('检查容器 / 按需展开脚本'); return ensureContainers({ mediaDir, config }).catch((error) => { containerFailure = String(error.message || error).slice(0, 300) }) }
   let containerFailure = ''
 
   async function getNode(nodeId, opts = {}) {

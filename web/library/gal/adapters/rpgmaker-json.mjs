@@ -106,7 +106,7 @@ export async function prepare({ options, texts, files, toResourcePath, mediaDir,
   if(recollection&&o.special.enabled)ctx.catalogTree.children=[recollection,...ctx.catalogTree.children.filter(n=>n.id!=='special')]
   prepareActionSequences(ctx)
   ctx.koakumaAnimation=await prepareKoakumaAnimation(ctx,{texts,mediaDir,root})
-  refreshVoicedCatalog(ctx)
+  await refreshVoicedCatalog(ctx)
   return ctx
 }
 
@@ -196,7 +196,7 @@ function buildCatalog(ctx) {
 // with the scene instead of maintaining a second plugin parser for card counts.
 // Unite calls this after installing its native command compiler, before packet paths
 // replace the normalized RPG paths. The optional resolver restores replay context.
-export function refreshVoicedCatalog(ctx, parseScene = (node, context) => {
+export async function refreshVoicedCatalog(ctx, parseScene = (node, context) => {
   const [rel, scene] = node.script.split('::')
   return parse('', context, {rel, scene})
 }) {
@@ -207,7 +207,9 @@ export function refreshVoicedCatalog(ctx, parseScene = (node, context) => {
   // Map painting is irrelevant to dialogue counts; logical transfers/calls still run.
   const context = {...ctx, options: {...ctx.options, maps: {...ctx.options.maps, enabled: false}}}
   const voiced = []
-  const visit = node => {
+  let visited = 0
+  const visit = async node => {
+    if (++visited % 8 === 0) await new Promise(resolve => setImmediate(resolve))
     if (node.script) {
       try {
         const scene = parseScene(node, context), resources = new Set()
@@ -223,9 +225,9 @@ export function refreshVoicedCatalog(ctx, parseScene = (node, context) => {
         ctx.warnings.push(`对白配音资源统计失败: ${node.script}: ${error.message}`)
       }
     }
-    for (const child of node.children || []) visit(child)
+    for (const child of node.children || []) await visit(child)
   }
-  for (const node of tree.children.filter(node => node.id === 'special')) visit(node)
+  for (const node of tree.children.filter(node => node.id === 'special')) await visit(node)
   if (voiced.length) tree.children.unshift({id: 'special-voiced', title: '特殊场景（有配音）', children: voiced})
 }
 

@@ -11,6 +11,7 @@
 // 上下文按（文本文件 mtime+size）缓存；目录：自己和下一层子目录的 mtime 一变就重建（新增文件马上能看到），更深的最多缓存 5 分钟。
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
+import {queueGalCacheBuild,inGalCacheBuild,galCachePhase} from './cache-jobs.mjs'
 import { DEFAULT_INDEX_SKIP } from './config.mjs'
 import { virtualEntry, virtualFiles } from './containers.mjs'
 import { safeRelPath } from './paths.mjs'
@@ -26,6 +27,8 @@ const SAMPLE_BYTES = 24 * 1024
 const SAMPLE_BYTES_CEILING = 256 * 1024
 const DIR_TTL_MS = 5 * 60 * 1000
 const cache = new Map()   // key → { fileKey, builtAt, ctx, stats }
+const metadata = new WeakMap()
+export const contextMetadata = ctx => ctx && (typeof ctx === 'object' || typeof ctx === 'function') ? metadata.get(ctx) : null
 const building = new Map()   // key → 正在重建的 Promise（单飞）
 
 // 文件索引的状态（给界面显示 + 刷新按钮用）：这个媒体目录下各适配器上下文的建立时间 / 文件数 / 有没有被截断
@@ -39,6 +42,10 @@ export function invalidateContexts(mediaDir) {
   let n = 0
   for (const key of [...cache.keys()]) if (key.startsWith(`${mediaDir}|`)) { cache.delete(key); n += 1 }
   return n
+}
+
+export function expireContexts(mediaDir) {
+  for (const [key, entry] of cache) if (key.startsWith(`${mediaDir}|`)) { entry.builtAt = 0; entry.fileKey = 'refresh:' + entry.fileKey }
 }
 
 const cleanRels = (list) => (Array.isArray(list) ? list : []).map(safeRelPath).filter((rel) => rel).slice(0, 10)
@@ -101,12 +108,13 @@ export async function loadAdapterContext({ adapter, mediaDir, config, sourceFile
   }
   const fileKey = parts.join('|')
   const cached = cache.get(key)
-  if (cached && cached.fileKey === fileKey && (!dirRels.length || Date.now() - cached.builtAt < DIR_TTL_MS)) return cached.ctx
+  if (cached && cached.fileKey === fileKey && (!dirRels.length || Date.now() - cached.builtAt < DIR_TTL_MS)) { cache.delete(key); cache.set(key,cached); return cached.ctx }
 
   // 重建（遍历目录 + 适配器 prepare，大游戏要好几秒）：同一个 key 同时只做一次（并发请求共用一个 Promise）；
-  // 过了 TTL 但目录 mtime 没变（fileKey 一样）= 旧索引大概率还对：先把旧的给调用方，后台重建，下次请求用新的（不让用户为「缓存到期」等几秒）
+  // 配置键兼容时先用旧上下文，文件变化或 TTL 到期走全局重建队列；重建任务内部等待新上下文，避免把旧结果当作新快照发布。
   async function build() {
 
+  galCachePhase(`建立 ${adapter.id} 资源索引`)
   const texts = {}
   for (const rel of fileRels) {
     try {
@@ -163,20 +171,26 @@ export async function loadAdapterContext({ adapter, mediaDir, config, sourceFile
     }
   }
   if (sampleTruncated) console.warn(`[gal] ${adapter.id}：${mediaDir} 的脚本抽样超过上限 ${sampleLimit} 个，只读了前 ${sampleLimit} 个（列表 / 标题可能不全）`)
+  galCachePhase(`解析 ${adapter.id} 场景目录`)
   const ctx = await adapter.prepare({ options, resourceResolve: config.resourceResolve, texts, files, toResourcePath, truncated: Boolean(files.truncated), sampleTruncated, mediaDir, assetDir })
-  if (cache.size > 200) cache.clear()
+  cache.delete(key)
+  while (cache.size >= 200) cache.delete(cache.keys().next().value)
   const stats = { adapter: adapter.id, builtAt: new Date().toISOString(), files: files.length, truncated: Boolean(files.truncated), sampleTruncated, sampleLimit, limit: walkLimit, ms: Date.now() - startedAt, dirs: dirRels }
+  if (ctx && (typeof ctx === 'object' || typeof ctx === 'function')) metadata.set(ctx, stats)
   cache.set(key, { fileKey, builtAt: Date.now(), ctx, stats })
     return ctx
   }
+  const queuedAt = Date.now()
+  const queuedBuild = () => { const latest = cache.get(key); return latest && latest !== cached && latest.builtAt >= queuedAt ? latest.ctx : build() }
   const pending = building.get(key)
-  const stale = cached && cached.fileKey === fileKey
+  const stale = cached && !inGalCacheBuild()
   if (stale && cached.ctx) {
-    if (!pending) { const job = build().catch((error) => console.warn(`[gal] ${adapter.id} 后台重建索引失败：${error?.message || error}`)).finally(() => building.delete(key)); building.set(key, job) }
+    if (!pending) { const job = queueGalCacheBuild('context:'+key, queuedBuild).catch((error) => console.warn(`[gal] ${adapter.id} 后台重建索引失败：${error?.message || error}`)).finally(() => building.delete(key)); building.set(key, job) }
     return cached.ctx
   }
-  if (pending) return pending
-  const job = build().finally(() => building.delete(key))
+  if (pending && !inGalCacheBuild()) return pending
+  if (inGalCacheBuild()) return build()
+  const job = queueGalCacheBuild('context:'+key, queuedBuild).finally(() => building.delete(key))
   building.set(key, job)
   return job
 }

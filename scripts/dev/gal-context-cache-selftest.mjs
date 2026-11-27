@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// 自测（纯 node）：文件索引（context）缓存——并发请求只重建一次（单飞）；过了 TTL 但目录没变 = 先用旧的、后台重建（调用方不等）；目录变了（mtime）= 必须等新的
-import { mkdir, mkdtemp, rm, writeFile, utimes } from 'node:fs/promises'
+// 自测（纯 node）：文件索引（context）缓存——并发请求只重建一次（单飞）；过了 TTL 但目录没变 = 先用旧的、后台重建（调用方不等）；目录变了（mtime）= 继续旧结果并后台更新
+import { mkdir, mkdtemp, rename, writeFile, utimes } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { loadAdapterContext } from '../../web/library/gal/context.mjs'
@@ -29,12 +29,14 @@ const waited = realNow() - t0
 check('过了 TTL、目录没变：立刻返回旧索引（不等重建，< 100ms），并在后台重建', stale.n === 1 && waited < 100, JSON.stringify([stale, waited]))
 await sleep(300)
 check('后台重建完成：下一次请求拿到新索引（n = 2），总共建了 2 次', (await load()).n === 2 && builds === 2, JSON.stringify([builds]))
-// 目录变了（子目录 / 文件变动 → mtime 变）：必须等新的
+// 目录变了：保留可用旧索引，在全局单任务队列里后台更新
 Date.now = realNow
 await mkdir(path.join(media, 'd', 'sub'))
 await utimes(path.join(media, 'd'), new Date(), new Date(Date.now() + 5000))
 const changed = await load()
-check('目录变了（mtime 变）：不用旧的，等新索引（n = 3）', changed.n === 3, JSON.stringify([changed, builds]))
-await rm(media, { recursive: true, force: true })
+check('目录变了：立即返回旧索引，后台更新', changed.n === 2, JSON.stringify([changed, builds]))
+await sleep(300)
+check('目录变化的后台任务完成后使用新索引', (await load()).n === 3, String(builds))
+await rename(media, media + '-archived')
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

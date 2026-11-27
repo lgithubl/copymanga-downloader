@@ -16,7 +16,8 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { withFileLock } from '../atomic-json-store.mjs'
-import { galAdapterIds } from '../gal/adapters/index.mjs'
+import {createGalBrowseCache,browseSourceSignature,galBrowseRevision} from '../gal/browse-cache.mjs'
+import { galAdapter, galAdapterIds } from '../gal/adapters/index.mjs'
 import { createBrowseProvider, invalidateBrowseCaches } from '../gal/browse.mjs'
 import { applyGalConfigPatchWithWarnings, cleanGalConfigRawWithWarnings, normalizeGalConfig } from '../gal/config.mjs'
 import { createArcResCache } from '../gal/arc-res-cache.mjs'
@@ -67,6 +68,7 @@ export function normalizeGalOptions(value = {}) {
 
 export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathExists, getConfig }) {
   setKeysFile(path.join(dataDir, 'gal-krkr-keys.json'))   // KiriKiri Z（Hxv4）的密钥包（可选；也可以写在 config.containers.keys 里）
+  const browseCache = createGalBrowseCache({dir:path.join(dataDir,'cache','gal-browse')})
   const metaRoot = path.join(dataDir, 'library-meta', type)
   const djibrilResources=createDjibrilResourceCache(path.join(dataDir,'cache','gal-djibril-res'))
   const rpgResources = createRpgMakerResourceCache(path.join(dataDir, 'cache', 'gal-rpgmaker-res'))
@@ -426,19 +428,38 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     return { id: def.id, title: def.title, params, tookMs: Date.now() - started, ...result, text: diagnosticText(def.title, result) }
   }
 
-  // 手动刷新文件索引：丢掉这个条目的全部浏览缓存（适配器上下文 = 文件索引 + 名称表、嗅探、目录列表、脚本摘要），马上按磁盘现状重建首页，返回新的索引状态
-  async function refreshIndex(itemId) {
-    const item = await readItem(itemId)
-    const cleared = invalidateBrowseCaches(workDirOf(item))
-    const { node } = await providerOf(item).getNode('')
-    return { cleared, index: node.index || null, problems: node.problems || [] }
+  async function browseRequest(item, unitId, opts = {}) {
+    const config=normalizeGalConfig(item.config),mediaDir=workDirOf(item)
+    const id=createHash('sha256').update(JSON.stringify([await galBrowseRevision(),item.itemId,mediaDir,config,item.adapters,item.title,item.configWarnings,item.adapterWarnings])).digest('hex')
+    const key=createHash('sha256').update(JSON.stringify([id,opts])).digest('hex')
+    return {id,key,persist:!opts.sectionId,build:()=>buildReaderContent(item,unitId,opts),
+      signature:()=>browseSourceSignature(mediaDir,config,(item.adapters||[]).map(id=>{try{return galAdapter(id)}catch{return{}}})),
+      invalidate:()=>invalidateBrowseCaches(mediaDir,{preserveContexts:true})}
+  }
+  async function cacheStatus(itemId) {
+    const item=await readItem(itemId),request=await browseRequest(item,GAL_MAIN_UNIT,{})
+    return browseCache.status(request.id)
+  }
+  // Refresh joins the serial queue; old pages remain usable until replacement.
+  async function refreshIndex(itemId, opts = {}) {
+    const item=await readItem(itemId),request=await browseRequest(item,GAL_MAIN_UNIT,readerOptions(opts))
+    return browseCache.refresh(request)
+  }
+  const readerOptions=({sectionId='',showMosaic,viewRules=null}={})=>({sectionId,...(showMosaic===undefined?{}:{showMosaic}),viewRules})
+  async function getReaderContent(itemId,unitId,opts={}) {
+    const item=await readItem(itemId)
+    if(unitId&&unitId!==GAL_MAIN_UNIT)throw Error(`Unit not found: ${unitId}`)
+    opts=readerOptions(opts)
+    if(/(^|\|)s:/.test(opts.sectionId)||opts.sectionId.startsWith('x:'))return buildReaderContent(item,unitId,opts)
+    const result=await browseCache.get(await browseRequest(item,unitId,opts))
+    const {mediaUnits,...publicItem}=item
+    return {...result.value,item:publicItem,unit:item.mediaUnits[0],cache:result.cache}
   }
 
   // ---------- 阅读 ----------
 
   // sectionId = 浏览节点 id（见 gal/browse.mjs）：空 = 首页；播放页节点带规范场景，其余节点只有选项列表
-  async function getReaderContent(itemId, unitId, { sectionId = '', showMosaic, viewRules = null } = {}) {
-    const item = await readItem(itemId)
+  async function buildReaderContent(item, unitId, { sectionId = '', showMosaic, viewRules = null } = {}) {
     if (unitId && unitId !== GAL_MAIN_UNIT) throw new Error(`Unit not found: ${unitId}`)
     const unit = item.mediaUnits[0]
     const { node, scene = null, sectionNavigation = { prev: null, next: null } } = await providerOf(item).getNode(sectionId, { ...(showMosaic === undefined ? {} : { showMosaic }), ...(viewRules ? { viewRules } : {}) })
@@ -454,7 +475,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
       sectionNavigation,
       node,
       scene,
-      resourceBase: resourceBase(itemId),
+      resourceBase: resourceBase(item.itemId),
       ...(resourceVersion ? { resourceVersion } : {}),
     }
   }
@@ -628,6 +649,7 @@ export function createGalHandler({ type = GAL_TYPE, dataDir, safeSegment, pathEx
     listUnits,
     getReaderContent,
     refreshIndex,
+    cacheStatus,
     listDiagnostics,
     runDiagnostic,
     getRandomVoice,

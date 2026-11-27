@@ -5109,3 +5109,8 @@ h2 {
 .epub-tts-status[hidden] { display: none; }
 .epub-more .epub-tts-dwell { align-items: center; color: #e8edf2; display: flex; font-size: 12px; gap: 8px; white-space: nowrap; }
 .epub-more .epub-tts-dwell input[type="range"] { flex: none; padding: 0; width: 110px; }
+
+.gal-cache-dialog { background: var(--site-panel); color: var(--site-text); border: 1px solid var(--site-border); border-radius: 10px; width: min(540px, 90vw); max-height: 75vh; overflow: auto; padding: 18px; }
+.gal-cache-dialog::backdrop { background: rgba(0,0,0,.5); }
+.gal-cache-status { display: grid; gap: 8px; margin: 16px 0; overflow-wrap: anywhere; font-size: 14px; }
+.gal-cache-actions { display: flex; flex-wrap: wrap; gap: 8px; }

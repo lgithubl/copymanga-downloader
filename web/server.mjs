@@ -5439,6 +5439,7 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       const handler = libraryHandler(type)
       if (!itemId) return json(res, 400, { error: 'itemId is required' })
       if (!action) return json(res, 200, await handler.getItem(itemId))
+      if (action === 'cache-status' && handler.cacheStatus) return json(res, 200, await handler.cacheStatus(itemId))
       if (action === 'units') return json(res, 200, await handler.listUnits(itemId))
       if (action === 'history') return json(res, 200, await readLibraryHistory(type, itemId) || null)
       if (action === 'reader') {
@@ -5507,7 +5508,7 @@ if (pathname === '/api/library/items/sample' && req.method === 'POST') {
       if (action === 'progress') return json(res, 200, await handler.saveProgress(itemId, await readJson(req)))
       if (action === 'index-refresh') {
         if (!handler.refreshIndex) return json(res, 400, { error: 'This library type has no file index' })
-        return json(res, 200, await handler.refreshIndex(itemId))
+        return json(res, 200, await handler.refreshIndex(itemId, await readJson(req)))
       }
       if (action === 'history') {
         const body = await readJson(req)

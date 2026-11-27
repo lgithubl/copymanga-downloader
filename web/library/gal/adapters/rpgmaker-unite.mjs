@@ -42,7 +42,7 @@ export async function prepare({texts={},options}){
   }
  }
  ctx.options.special.voiced=options?.special?.voiced===true
- rpg.refreshVoicedCatalog(ctx,(node,context)=>{
+ await rpg.refreshVoicedCatalog(ctx,(node,context)=>{
   const [rel,scene]=node.script.split('::')
   const maps=ctx.uniteReplayMaps.get(Number(/^common-(\d+)$/.exec(scene)?.[1]))||[]
   if(maps.length>1)throw Error('回想地图上下文不唯一')

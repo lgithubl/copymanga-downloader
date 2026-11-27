@@ -1,6 +1,7 @@
 // Gal 的浏览层：把后端给的「节点」（web/library/gal/browse.mjs）渲染成卡片网格 / 列表，选项自带下一个节点的 id，
 // 点了就 onOpen(节点 id)，由页面层再取一次（reader?sectionId=…）。这里不认识目录结构，只认 kind / items。
 // 全部用 textContent / setAttribute 写入后端给的文字，不拼 innerHTML。
+import {createGalCachePanel} from './gal-cache-panel.js'
 import { createDiagnosticsDialog } from './gal-diag.js'
 import { attachBarLock } from './gal-barlock.js'
 import { CARD_THUMB_WIDTH, DEFAULT_HOVER, attachThumbCycle, pickCover, thumbUrl } from './thumb-cycle.js'
@@ -32,7 +33,7 @@ const newSeed = () => 1 + Math.floor(Math.random() * 999999999)
 const readPref = (key) => { try { return localStorage.getItem(key) || '' } catch { return '' } }
 const writePref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key) } catch { /* 存不了就只对这次有效 */ } }
 let keepMenuOpen = null    // 在「更多」里改了搜索 / 排序 / 每页条数 → 重绘后把菜单重新打开（还要接着改别的）
-export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, onDetails = null, thumbLoader = null, onRefreshIndex = null }) {
+export function createGalBrowser({ container, reader, progress = {}, onOpen = () => {}, onToggleImmersive = null, onLeave = null, onEscape = null, onDetails = null, thumbLoader = null, onRefreshIndex = null, onCacheStatus = null, onCacheReload = null }) {
   const markerPrefKey = `gal.cardMarkers.${reader.item?.itemId || ''}`
   const node = reader.node
   const root = el('div', 'gal-browse')
@@ -339,25 +340,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   // 菜单里点别处（输入框、下拉框）不关；点菜单外面才关
   const onDocClick = (event) => { if (!more.contains(event.target)) closeMenu() }
   document.addEventListener('click', onDocClick)
-  // 文件索引（适配器要遍历资源目录建的索引）：什么时候建的、多少个文件、有没有被截断；「刷新」= 丢掉缓存按磁盘现状重建（新增 / 改名的文件马上能看到）
-  if (node.index) {
-    const row = el('div', 'gal-more-row gal-index-row')
-    const info = node.index
-    const when = info.builtAt ? new Date(info.builtAt).toLocaleString() : '未知'
-    const text = el('span', 'gal-index-text', `文件索引：${info.files} 个文件 · 建立于 ${when}${info.truncated ? ` · ⚠ 超过上限 ${info.limit} 已截断` : ''}`)
-    text.title = `适配器：${(info.adapters || []).join(' / ')} · 耗时 ${info.ms} ms`
-    const refresh = el('button', 'gal-btn gal-index-refresh', '刷新')
-    refresh.type = 'button'
-    refresh.title = '重新遍历资源目录、重新读名称表（改了文件 / 目录后点一下）'
-    refresh.hidden = !onRefreshIndex
-    refresh.addEventListener('click', async () => {
-      refresh.disabled = true
-      refresh.textContent = '刷新中…'
-      try { await onRefreshIndex() } catch (error) { refresh.textContent = '刷新失败'; refresh.title = String(error?.message || error); refresh.disabled = false }
-    })
-    row.append(text, refresh)
-    moreMenu.append(row)
-  }
+  const cachePanel = createGalCachePanel({reader,onStatus:onCacheStatus,onRefresh:onRefreshIndex,onReload:onCacheReload})
   const detailBtn = el('button', 'gal-browse-detail-btn', '详情')
   detailBtn.type = 'button'
   detailBtn.title = '当前游戏、目录标题和标签'
@@ -382,7 +365,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
   const onVoiceDocClick = (event) => { if (!voicePop.hidden && !voiceWrap.contains(event.target)) voicePop.hidden = true }
   document.addEventListener('click', onVoiceDocClick)
   voiceWrap.append(voice.attach(':list', node.id, { title: '从这一层列表里随机放一条语音（不打开脚本）', className: 'gal-btn gal-voice-list-btn', text: '随机语音' }), voiceFilterBtn, voicePop)
-  actions.append(voiceWrap, more, lockBtn, leaveBtn)
+  actions.append(voiceWrap, cachePanel.button, more, lockBtn, leaveBtn)
   barIn.append(actions)
   bar.append(barHot, barIn)
   attachBarLock({ root, button: lockBtn })
@@ -592,7 +575,7 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     for (const cycle of cardCycles.splice(0)) cycles.push(attachThumbCycle({ target: card, ...cycle }))
   }
 
-  root.append(body, bar)
+  root.append(body, bar, cachePanel.dialog)
   refreshDiag()
 
   container.replaceChildren(root)
@@ -606,5 +589,5 @@ export function createGalBrowser({ container, reader, progress = {}, onOpen = ()
     prerenderObserver = io
   }
   if (thumbLoader && thumbImages.length) thumbLoader.attach(thumbImages, { root: container })
-  return { destroy: () => { diagDialog.close(); prerenderObserver?.disconnect(); thumbRenderer.destroy(); voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
+  return { destroy: () => { cachePanel.destroy(); diagDialog.close(); prerenderObserver?.disconnect(); thumbRenderer.destroy(); voice.destroy(); document.removeEventListener('click', onVoiceDocClick); document.removeEventListener('keydown', onKey); document.removeEventListener('click', onDocClick); for (const cycle of cycles) cycle?.destroy(); thumbLoader?.reset(); root.remove() }, setImmersive, root }
 }
