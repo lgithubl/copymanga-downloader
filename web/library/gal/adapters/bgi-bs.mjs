@@ -9,7 +9,7 @@
 // 映射（全部可以用 adapterOptions['bgi::bs'] 改，见 DEFAULT_OPTIONS）：
 //   msg(文本, 说话人, …)                      → speaker + text（<Rふりがな>汉字</R> = ruby，别的 <…> 标记去掉；说话人空 = 旁白）
 //   _PlayVoice(槽, 名, …)                    → voice；_PlayBGM(槽, 名, …) → bgm；_FadeBGM(槽, 毫秒, 0) / SoundStopAll(毫秒) → bgmStop；_PlaySE / _PlayStreamSE(槽, 名, …) → se
-//   _DrawScene(名, …)                        → bg（BLACK / WHITE 这类纯色名 = bg.color）；换背景会清掉立绘
+//   _DrawScene(名, …)                        → bg（BLACK / WHITE 这类纯色名 = bg.color）；换幕清掉立绘与上批已提交的 SPR，保留本批新画入的 SPR
 //   _DrawBS(槽, 本体, …, 表情…)              → 立绘（stand）：本体 + 后面的字符串参数（表情 / 配件）叠在一起；横向位置按 x 参数的正负分左 / 中 / 右；_FadeBS(槽, 0, …) 去掉这个槽
 //   _DrawSPR(槽, 名, …) / _FadeSPR(槽, 0, …) → 事件图（CG / 过场 / 手的特写）：图 = 叠加层 overlay（按图原来的大小、以画面中心 + (x, y) 为中心，叠在立绘之上，z = eventImageZ + 槽；参数 x / y = args[6] / args[7]，放大率 = args[8]，淡入 = args[20] 毫秒），_FadeSPR 去掉；
 //                                            纯色（WHITE / BLACK）= bg.color 换掉背景（整屏闪白 / 闪黑，_FadeSPR 去掉后回到 _DrawScene 的背景）。以前图也当成整屏背景换掉：小于画面的特写被拉成全屏，而且盖在立绘后面（用户对照游戏发现的）
@@ -140,6 +140,7 @@ export function parse(text, ctx = null, meta = {}) {
   let bgState = null            // { src } | { color } | null：_DrawScene 的背景
   let eventImage = null         // _DrawSPR 的纯色事件图（整屏闪白 / 闪黑）：{ slot, color }
   let sprites = new Map()       // _DrawSPR 的图：槽 → { src, x, y, scale, fade }（叠加层）
+  let pendingSprites = new Set() // 本次台词提交前新画入的 SPR；换幕时保留这一批
   let busts = new Map()         // 槽 → { parts: [{ src, align }], x }
   let shown = { bg: null, stand: null, sprites: new Map() }
   let dirty = false
@@ -168,6 +169,7 @@ export function parse(text, ctx = null, meta = {}) {
       emit({ op: 'overlay', slot: `spr${slot}`, src: sprite.src, fit: 'none', stage: opt.stage, z: opt.eventImageZ + slot, ...(sprite.x ? { x: sprite.x } : {}), ...(sprite.y ? { y: sprite.y } : {}), ...(sprite.scale !== 1 ? { scaleX: sprite.scale, scaleY: sprite.scale } : {}), ...(sprite.fade ? { fade: sprite.fade } : {}) })
     }
     for (const slot of [...shown.sprites.keys()]) if (!sprites.has(slot)) { shown.sprites.delete(slot); emit({ op: 'overlayOff', slot: `spr${slot}` }) }
+    pendingSprites.clear()
   }
   const resetShown = () => { shown = { bg: null, stand: null, sprites: new Map() }; dirty = true }
 
@@ -196,30 +198,39 @@ export function parse(text, ctx = null, meta = {}) {
     } else if (rx.se.has(name)) {
       const hit = find(str(a[1]), opt.audioExts)
       if (hit) emit({ op: 'se', src: hit }); else if (hasIndex) count('unresolved', `se:${str(a[1])}`)
-    } else if (name === '_FadeBGM') { if (num(a[2], 1) === 0) emit({ op: 'bgmStop', fade: Math.min(10, num(a[1]) / 1000) }) }
+      // compactEvent 会省略参数末尾的 0；下面 Fade 调用的旧缓存缺省值也必须按 0 还原。
+    } else if (name === '_FadeBGM') { if (num(a[2]) === 0) emit({ op: 'bgmStop', fade: Math.min(10, num(a[1]) / 1000) }) }
     else if (name === 'SoundStopAll') emit({ op: 'bgmStop', fade: Math.min(10, num(a[0]) / 1000) })
     else if (rx.bg.has(name)) {
       const bg = bgOf(str(a[0]))
       bgState = bg
       eventImage = null
-      if (opt.clearBustsOnScene) busts = new Map()
+      if (opt.clearBustsOnScene) {
+        busts = new Map()
+        // framework._bs 的 SPR 实际使用 BS 的 10+slot 槽位，同样属于当前幕。
+        // 脚本也会先 DrawSPR 再 DrawScene：只清前一批已提交的图，保留本批新图。
+        for (const slot of sprites.keys()) if (!pendingSprites.has(slot)) sprites.delete(slot)
+      }
       dirty = true
     } else if (rx.eventImage.has(name)) {
       const slot = num(a[0])
       const img = bgOf(str(a[1]))
       if (eventImage?.slot === slot) eventImage = null
       sprites.delete(slot)
+      pendingSprites.delete(slot)
       if (img?.color) eventImage = { slot, ...img }
       else if (img?.src) {
         const off = (v) => (Number.isFinite(Number(v)) && Math.abs(Number(v)) < 10000 ? Number(v) : 0)   // 32767 = 默认（中心）
         const scale = num(a[8], 100)
+        pendingSprites.add(slot)
         sprites.set(slot, { src: img.src, x: off(a[6]), y: off(a[7]), scale: scale > 0 && scale < 10000 ? scale / 100 : 1, fade: Math.min(5, Math.max(0, num(a[20]) / 1000)) })
       }
       dirty = true
     } else if (name === '_FadeSPR') {
-      if (num(a[1], 1) === 0) {
+      if (num(a[1]) === 0) {
         const slot = num(a[0])
         if (eventImage && slot === eventImage.slot) { eventImage = null; dirty = true }
+        pendingSprites.delete(slot)
         if (sprites.delete(slot)) dirty = true
       }
     }
@@ -261,7 +272,7 @@ export function parse(text, ctx = null, meta = {}) {
       }
       if (parts.length) busts.set(num(a[0]), { parts, x })
       dirty = true
-    } else if (name === '_FadeBS') { if (num(a[1], 1) === 0 && busts.delete(num(a[0]))) dirty = true }
+    } else if (name === '_FadeBS') { if (num(a[1]) === 0 && busts.delete(num(a[0]))) dirty = true }
     else if (name === '_Wait') { if (opt.wait.enabled) { const seconds = Math.min(opt.wait.max, num(a[0]) / 1000); if (seconds > 0) emit({ op: 'wait', seconds }) } }
     else count('ignored', name)
   }
@@ -313,11 +324,12 @@ export function parse(text, ctx = null, meta = {}) {
     const outer = guard
     into.push({ op: 'choice', id: `${stepIndex}:${into.length}`, var: variable, options: opts.map((text, n) => ({ value: n + 1, segments: [{ text }] })), ...(guard.length ? { when: guard } : {}) })
     if (!host) { into.push({ op: 'text', segments: [], ...(guard.length ? { when: guard } : {}) }); endStep() }
-    const saved = { bgState, eventImage, sprites: new Map(sprites), busts: new Map(busts) }
+    const saved = { bgState, eventImage, sprites: new Map(sprites), pendingSprites: new Set(pendingSprites), busts: new Map(busts) }
     for (const [n, events] of (Array.isArray(branches) ? branches : []).entries()) {
       bgState = saved.bgState
       eventImage = saved.eventImage
       sprites = new Map(saved.sprites)
+      pendingSprites = new Set(saved.pendingSprites)
       busts = new Map(saved.busts)
       guard = [...outer, { var: variable, op: '==', value: n + 1 }]
       resetShown()
